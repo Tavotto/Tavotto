@@ -63,14 +63,15 @@ async function browser({pages=[{actor,packets:[{id:ID(1)}],nextCursor:null}],sta
 test('auto-selected expired incomplete record permits a fresh packet with cleared consent',async()=>{
   const b=await browser();
   assert.equal(b.elements.get('packets').value,ID(1));
-  assert.equal(b.elements.get('create').disabled,false);
+  assert.equal(b.elements.get('create').disabled,false);assert.equal(b.elements.get('restart').hidden,false);assert.equal(b.elements.get('sign-form').hidden,true);assert.equal(b.elements.get('record-time').textContent,'');assert.equal(b.elements.get('eligibility').textContent,'');
+  assert.match(b.elements.get('t-restart-hint').textContent,/7 天/);assert.equal(b.elements.get('create').textContent,'重新签署');
   b.elements.get('signature').value='OLD SYNTHETIC SIGNATURE';for(const input of b.inputs())input.checked=true;
   await b.click('create');
   assert.equal(b.calls.filter(call=>call.url==='/packets').length,1);
   assert.equal(b.elements.get('packets').value,ID(99));
   assert.equal(b.storage.get('cla.packet'),ID(99));
   assert.equal(b.elements.get('signature').value,'');assert.ok(b.inputs().every(input=>!input.checked));
-  assert.equal(b.elements.get('create').disabled,true);
+  assert.equal(b.elements.get('create').disabled,true);assert.equal(b.elements.get('restart').hidden,true);assert.equal(b.elements.get('sign-form').hidden,false);
   assert.ok(b.calls.every(call=>call.url!=='/sign'&&call.url!=='/intents'));
 });
 
@@ -96,8 +97,17 @@ test('holder and signing-disabled contributors cannot create expired replacement
   const off=await browser({signingEnabled:false});assert.equal(off.elements.get('create').disabled,true);
 });
 
-test('new contributor can create, but clearing a populated selection does not offer a duplicate',async()=>{
-  const empty=await browser({pages:[{actor,packets:[],nextCursor:null}]});assert.equal(empty.elements.get('create').disabled,false);
+test('a new contributor gets a signing record straight away, once, and lands on a ready form',async()=>{
+  const b=await browser({pages:[{actor,packets:[],nextCursor:null}]});
+  assert.equal(b.calls.filter(call=>call.url==='/packets').length,1);assert.equal(b.elements.get('packets').value,ID(99));
+  assert.ok(b.calls.some(call=>call.url==='/status?packet='+ID(99)));assert.equal(b.elements.get('personal-signature').hidden,false);
+  assert.equal(b.elements.get('restart').hidden,true);assert.equal(b.elements.get('record-picker').hidden,true);
+  assert.equal(b.elements.get('message').textContent,'');assert.ok(b.calls.every(call=>call.url!=='/sign'&&call.url!=='/intents'));
+  await b.click('refresh');assert.equal(b.calls.filter(call=>call.url==='/packets').length,1,'refresh never creates another');
+});
+for(const [label,options] of [['the holder',{pages:[{actor:{id:1,login:'synthetic-holder',role:'holder'},packets:[],nextCursor:null}]}],['paused signing',{pages:[{actor,packets:[],nextCursor:null}],signingEnabled:false}]])
+  test('no record is created automatically for '+label,async()=>{const b=await browser(options);assert.equal(b.calls.some(call=>call.url==='/packets'),false);});
+test('clearing a populated selection does not offer a duplicate',async()=>{
   const many=await browser({pages:[{actor,packets:[{id:ID(1)},{id:ID(2)}],nextCursor:null}]});
   assert.equal(many.elements.get('create').disabled,true);
   assert.equal(many.calls.some(call=>call.url.startsWith('/status')),false);
@@ -333,4 +343,10 @@ test('the signature style is a choice of four, previews the typed name, and is s
   b.elements.get('sign-form').onsubmit({preventDefault(){}});for(let i=0;i<5;i++)await b.settle();
   const sign=b.calls.find(call=>call.url==='/sign');assert.ok(sign,'sign must be called');
   const evidence=JSON.parse(sign.options.body).evidence;assert.equal(evidence.signature_style,'pen');assert.equal(evidence.signature,'Shang Moqi');
+});
+
+test('when an unavailable record was open, the picker stays visible so the contributor can choose their one record',async()=>{
+  const b=await browser({stored:ID(7),states:{[ID(1)]:status(),[ID(7)]:{error:'packet_unavailable'}}});
+  assert.equal(b.elements.get('packets').value,'');assert.equal(b.elements.get('record-picker').hidden,false);
+  assert.ok([...b.elements.get('packets').options].some(o=>o.value===ID(1)));
 });

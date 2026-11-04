@@ -3,7 +3,7 @@ export function client():void {
   const text=(id:string,value:unknown)=>{const el=$(id);if(el)el.textContent=String(value);};
   const show=(id:string,visible:boolean)=>{const el=$(id);if(el)el.hidden=!visible;};
   let packet=new URL(location.href).searchParams.get('packet') ?? sessionStorage.getItem('cla.packet') ?? '',state:any=null,busy=false,uncertain=false,cap:any={};
-  let nextCursor:string|null=null,hasPackets=false,lastActor:number|undefined,signedIn=false,holderName='',counterparty='',readDone=false,lastMessage:[string,unknown[],boolean]|null=null;
+  let nextCursor:string|null=null,hasPackets=false,lastActor:number|undefined,signedIn=false,holderName='',counterparty='',autoCreated=false,readDone=false,lastMessage:[string,unknown[],boolean]|null=null;
   // Wording version 2 (CONSENT_UI_VERSION in service.ts). The Chinese attestation texts are
   // version 1's, unchanged; the English ones are new. Attestation keys never change.
   const WORDS:Record<'en'|'zh',Record<string,string>>={en:{
@@ -24,14 +24,15 @@ export function client():void {
     style:'Signature style',styleHint:'This is how your signature looks on the signed PDF. Typing your name is what signs; the style only changes how it looks.',
     style_signature:'Signature',style_formal:'Formal script',style_pen:'Pen',style_hand:'Handwriting',stylePlaceholder:'Your name',legend:'Confirm each statement yourself',
     signContributor:'Sign the agreement',signHolder:'Countersign as rights holder',
-    recordTitle:'Your signing record',packets:'Record',choose:'Choose a signing record',noRecord:'No record yet',create:'Start a new signing record',more:'Load earlier records',
+    recordTitle:'Signing status',packets:'Record',choose:'Choose a signing record',noRecord:'No record yet',create:'Sign again',more:'Load earlier records',
+    restartHint:'Your last signing was not finished within 7 days, so it has lapsed. Start again here; you will read and confirm everything afresh.',
     pageMore:'Earlier records are available.',pageAll:'All your records are shown.',
     contributor:'Contributor',holder:'Rights holder',notSigned:'Not signed yet',signed:'Signed',holderSigned:'Countersigned',holderWaiting:'Waiting for countersignature',
     delegatedCurrent:'Countersigned automatically under a limited authorisation',delegatedHistory:'Automatic countersignature on record · {0}',
     d_disabled:'switched off',d_expired:'authorisation expired',d_revoked:'authorisation revoked',d_suspended:'authorisation suspended',d_superseded:'needs countersigning again',d_blocked:'eligibility stopped',d_unverifiable:'material cannot be verified right now',d_not_started:'authorisation not yet in force',d_other:'needs manual review',
     eBlocked:'This record has been withdrawn. A maintainer will review it with you.',eExpired:'This record has expired or applies to an older version.',
     eComplete:'Both parties have signed. Pull requests are checked separately.',eDelegated:'Signed and countersigned under a limited authorisation. Each pull request is still checked.',
-    eWaiting:'Waiting for the rights holder to countersign.',eChoose:'Choose one of your signing records.',eCreate:'Start a signing record to sign.',
+    eWaiting:'Waiting for the rights holder to countersign.',eChoose:'Choose one of your signing records.',eCreate:'Getting your signing form ready…',
     eGone:'The record you had open is not available to this account. Choose one of your own records.',eGoneCreate:'The record you had open is not available to this account. You can start your own.',
     tDelegated:'Automatic authorisation valid until {0}',tDeadline:'Please finish signing by {0}',
     thanksEyebrow:'Signed',thanksTitle:'Thank you. You’re all set.',thanksLede:'Both signatures are on the record, and every future contribution is already covered. Push any new commit to your pull request and the CLA check will pass within about 15 minutes. We’re glad to have you here.',
@@ -44,7 +45,7 @@ export function client():void {
     foot:'Questions about the agreement? Write to contact@tavotto.com. A real person reads every message.',foot2:'If a step seems stuck, choose Refresh first. Nothing is ever signed or sent again automatically.',
     mFailed:'That did not go through ({0}). Choose Refresh to check what was saved; if you have not signed yet, read, tick and submit again yourself. Nothing is resent automatically.',
     mLoadFailed:'The agreement or your identity could not be loaded ({0}). Sign in again or refresh later; signing stays unavailable until then.',
-    mCreated:'Your signing record is ready. Read the whole agreement, then decide for yourself.',mRefreshed:'Status refreshed. Refreshing never signs or submits anything.',mMore:'Earlier records loaded.',
+    mCreated:'Started again. Read the agreement, then sign below.',mRefreshed:'Status refreshed. Refreshing never signs or submits anything.',mMore:'Earlier records loaded.',
     mSignedDelegated:'Your signature is saved, and the limited authorisation countersigned it. Pull requests are still checked.',mSignedManual:'Your signature is saved. The automatic countersignature is not confirmed yet; the rights holder will review it.',
     mSigned:'Your signature is saved. Thank you. The rights holder will countersign separately.',mHeld:'Your signature is withdrawn and queued for review. Pull requests that already passed are re-checked in the background.',
     mEvidence:'Downloaded to your device. It contains personal details, so keep it safe.',mAudit:'Delegation audit downloaded. A historical record is not a verdict on any current pull request.',mPdf:'Your signed PDF is downloaded. Keep it with your records.',
@@ -69,14 +70,15 @@ export function client():void {
     style:'签名样式',styleHint:'签署 PDF 上的签名按这个样式显示。真正签署的是你键入的姓名，样式只影响外观。',
     style_signature:'签名体',style_formal:'正式花体',style_pen:'钢笔',style_hand:'手写',stylePlaceholder:'你的姓名',legend:'逐项确认本人的意愿',
     signContributor:'由我本人签署（贡献者）',signHolder:'由我本人签署（权利人）',
-    recordTitle:'你的签署记录',packets:'签署记录',choose:'选择签署记录',noRecord:'尚无记录',create:'新建签署记录',more:'加载更早的记录',
+    recordTitle:'签署进度',packets:'签署记录',choose:'选择签署记录',noRecord:'尚无记录',create:'重新签署',more:'加载更早的记录',
+    restartHint:'上一次签署超过 7 天没有完成，已经失效。点下面重新签一次，需要重新阅读和确认。',
     pageMore:'还有更早的记录，可继续加载。',pageAll:'已显示你的全部记录。',
     contributor:'贡献者',holder:'权利人',notSigned:'尚未签署',signed:'已签署',holderSigned:'本人已签署',holderWaiting:'等待权利人联署',
     delegatedCurrent:'已按限定授权自动会签',delegatedHistory:'自动会签历史记录 · {0}',
     d_disabled:'入口已关闭',d_expired:'授权已到期',d_revoked:'授权已撤销',d_suspended:'授权已暂停',d_superseded:'需重新会签',d_blocked:'资格已停止',d_unverifiable:'材料暂不可验证',d_not_started:'授权尚未生效',d_other:'需人工核对',
     eBlocked:'这条记录已撤回，维护者会和你一起核对。',eExpired:'这条记录已过期，或对应的是旧版本协议。',
     eComplete:'双方都已签署。每个 Pull Request 另行检查。',eDelegated:'已签署，并已按限定授权会签。每个 Pull Request 仍会另行检查。',
-    eWaiting:'等待权利人联署。',eChoose:'请选择你的一条签署记录。',eCreate:'新建签署记录后即可签署。',
+    eWaiting:'等待权利人联署。',eChoose:'请选择你的一条签署记录。',eCreate:'正在准备签署表单…',
     eGone:'之前打开的记录不属于当前账号。请选择你自己的记录。',eGoneCreate:'之前打开的记录不属于当前账号。你可以新建自己的记录。',
     tDelegated:'自动授权有效至 {0}',tDeadline:'请在 {0} 前完成签署',
     thanksEyebrow:'已签署',thanksTitle:'谢谢你，一切就绪。',thanksLede:'双方签名都已记录，你之后的所有贡献也都已覆盖。往你的 Pull Request 推一个新提交，大约 15 分钟内 CLA 检查就会通过。很高兴你加入。',
@@ -89,7 +91,7 @@ export function client():void {
     foot:'对协议有疑问？请写信到 contact@tavotto.com，每一封都有人亲自阅读。',foot2:'如果某一步像是卡住了，先点「刷新」。系统从不自动重签或重复提交。',
     mFailed:'操作没有确认完成（{0}）。请先点「刷新」核对已保存的内容；确认尚未签署后，再自己重新阅读、勾选并提交。系统不会自动重发。',
     mLoadFailed:'无法读取协议或你的身份（{0}）。请重新登录或稍后刷新；在此之前签署保持不可用。',
-    mCreated:'签署记录已创建。请完整阅读协议后，亲自决定是否签署。',mRefreshed:'状态已刷新。刷新不会签署或提交任何内容。',mMore:'已加载更早的记录。',
+    mCreated:'已重新开始。读完协议后在下方签署。',mRefreshed:'状态已刷新。刷新不会签署或提交任何内容。',mMore:'已加载更早的记录。',
     mSignedDelegated:'你的签署已保存，并已按限定授权会签。每个 Pull Request 仍会另行检查。',mSignedManual:'你的签署已保存。自动会签尚未确认，权利人会另行审阅。',
     mSigned:'你的签署已保存，谢谢。权利人会另行联署。',mHeld:'签署已撤回，并已登记待核对。已通过的 Pull Request 会在后台重新检查。',
     mEvidence:'已下载到你的设备。其中含有个人信息，请妥善保存。',mAudit:'已下载限定授权审计材料。历史记录不代表任何当前 Pull Request 的结论。',mPdf:'签署 PDF 已下载，请与你的记录一起保存。',
@@ -102,7 +104,7 @@ export function client():void {
   const STATIC:Record<string,string>={'t-product':'product',lang:'lang',refresh:'refresh','step-1':'step1','step-2':'step2','step-3':'step3','step-4':'step4',
     't-fingerprint':'fingerprint','t-sign-title':'signTitle','t-sign-hint':'signHint','t-name':'name','t-address':'address','t-address-hint':'addressHint',
     't-signature':'signature','t-signature-hint':'signatureHint','t-style':'style','t-style-hint':'styleHint',
-    't-style-signature':'style_signature','t-style-formal':'style_formal','t-style-pen':'style_pen','t-style-hand':'style_hand','t-record-title':'recordTitle','t-packets':'packets',create:'create','packets-more':'more',
+    't-style-signature':'style_signature','t-style-formal':'style_formal','t-style-pen':'style_pen','t-style-hand':'style_hand','t-record-title':'recordTitle','t-restart-hint':'restartHint','t-packets':'packets',create:'create','packets-more':'more',
     't-contributor':'contributor','t-holder':'holder','download-pdf':'pdf','t-records':'records','t-records-hint':'recordsHint','download-contributor':'dlContributor',
     'download-holder':'dlHolder','download-audit':'dlAudit','withdraw-open':'withdrawOpen','t-withdraw-title':'withdrawTitle','t-withdraw-body':'withdrawBody',
     't-withdraw-note':'withdrawNote','t-withdraw-confirm':'withdrawConfirm','withdraw-cancel':'withdrawCancel',hold:'withdraw','t-foot':'foot','t-foot-2':'foot2'};
@@ -196,8 +198,9 @@ export function client():void {
     if(!docInfo){text('version',t('loadingShort'));return;}
     text('version',t('version',t('kindIndividual'),docInfo.version));text('digest',docInfo.digest);
   }
-  async function agreement(path:string){const d=await api(path);docInfo=d;readDone=false;renderAgreementMeta();
-    if(typeof d.content==='string')markdown($('agreement'),d.content);readProgress();return d;}
+  // Loading the same text again (e.g. once the signing record exists) keeps the page, the scroll and "read to the end".
+  async function agreement(path:string){const d=await api(path),same=!!docInfo && docInfo.digest===d.digest && docInfo.content===d.content;
+    docInfo=d;renderAgreementMeta();if(!same){readDone=false;if(typeof d.content==='string')markdown($('agreement'),d.content);}readProgress();return d;}
   // How the typed signature is drawn on the PDF (src/pdf/styles.ts); stored with the evidence. Not a consent item.
   const STYLES=['signature','formal','pen','hand'];let sigStyle='signature';
   function renderStyles(){
@@ -258,6 +261,9 @@ export function client():void {
     if(legendEl)legendEl.textContent=t('legend');for(const {words,key} of consentLabels)words.textContent=t('a_'+key);
     text('sign',holder?t('signHolder'):t('signContributor'));
     show('withdraw-open',!!state?.canHold);
+    // A contributor only ever deals with "sign again" when their last signing lapsed; the record list is for the holder,
+    // for accounts with more than one record, and whenever records exist but none is selected (so "choose" is possible).
+    show('restart',canCreate());show('sign-form',!canCreate());show('record-picker',holder || (!state && hasPackets) || $<HTMLSelectElement>('packets').options.length>2 || !!nextCursor);
     if(state){
       text('contributor-state',signedBy('contributor')?t('signed'):t('notSigned'));
       const delegated=state.delegated;
@@ -268,6 +274,8 @@ export function client():void {
       text('record-time',state.signatures.length===2?'':delegated?.current?
         t('tDelegated',new Date(delegated.expiresAt*1000).toLocaleString(lang==='zh'?'zh-CN':'en-GB')):t('tDeadline',new Date(state.packet.valid_until*1000).toLocaleString(lang==='zh'?'zh-CN':'en-GB')));
     }
+    // A lapsed record is explained once, above "Sign again"; no stale deadline below it.
+    if(canCreate() && state){text('record-time','');text('eligibility','');}
     renderAgreementMeta();
     if(!state){text('contributor-state',t('notSigned'));text('holder-state',t('holderWaiting'));}
     if(!signedIn)text('t-sign-hint',t('signInFirst'));
@@ -282,6 +290,9 @@ export function client():void {
       if(packet && !/^[A-Za-z0-9_-]{43}$/.test(packet))throw new Error('packet_unavailable');
       if(!packet && own.packets.length===1 && !own.nextCursor)packet=own.packets[0].id;
       packetPage(own,true);
+      // A contributor with no record yet gets one straight away (creating it signs nothing), so the form is ready to fill.
+      if(!packet && !hasPackets && !autoCreated && canCreate()){autoCreated=true;packet=(await api('/packets',{kind:'individual'})).id;
+        own=await api('/session');lastActor=own.actor.id;packetPage(own,true);}
       if(packet){state=await api('/status?packet='+encodeURIComponent(packet));packetPage(own,true);sessionStorage.setItem('cla.packet',packet);
         history.replaceState(null,'','/?packet='+encodeURIComponent(packet));
         await agreement('/agreement?packet='+encodeURIComponent(packet));
