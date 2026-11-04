@@ -911,8 +911,14 @@ Function .onInstSuccess
   ${OrIf} ${Silent}
     ${GetOptions} $CMDLINE "/R" $R0
     ${IfNot} ${Errors}
-      ${GetOptions} $CMDLINE "/ARGS" $R0
-      nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" "$R0"
+      ; 应用内更新「退出时安装」（ADR 0121 §八）：用户已经退出了，装完不再把应用拉起来。
+      ; 插件在 passive 下总带 /R、参数又在 check 时就定死，所以由壳在退出前设这个环境变量
+      ; （ShellExecuteW 起的安装器继承它，app_update::install_ready_on_exit）；「现在重启」不设，照旧重启。
+      ReadEnvStr $R1 TAVOTTO_UPDATE_NO_RELAUNCH
+      ${If} $R1 != "1"
+        ${GetOptions} $CMDLINE "/ARGS" $R0
+        nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" "$R0"
+      ${EndIf}
     ${EndIf}
   ${EndIf}
 FunctionEnd

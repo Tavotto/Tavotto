@@ -160,3 +160,8 @@ origin 隔离，端口一变「已关闭」会悄悄复位成开。
 * 未验证（NOT_RUN）：§八 的真机退出时安装（macOS 就地替换 / Windows NSIS passive）；真实 COS（`dl.tavotto.cn`）上的清单 / 包；真机（含 Windows NSIS passive、macOS 公证后的 .app.tar.gz）上的完整更新；
   中国大陆真实网络下的体验。实现的状态机用「本地假 HTTP 服务 + 测试密钥签名的包」端到端验过（`src-tauri/src/app_update_flow_tests.rs`），安装步骤在测试里不执行。
 * 备案 / 主体：`dl.tavotto.cn` 的域名与云资源归属由维护者另行处理，客户端只认这个常量。
+
+* **Windows 退出时装完不重新拉起应用**：插件在 passive 模式下总给 NSIS 带 `/R`（装完重启），参数在 check 时就定死在 `Update`
+  里（私有字段，改不了）。所以退出时安装前，壳设环境变量 `TAVOTTO_UPDATE_NO_RELAUNCH=1`（`app_update::NO_RELAUNCH_ENV`），
+  `ShellExecuteW` 起的安装器继承它，`windows/installer.nsi` 的 `.onInstSuccess` 见到它就跳过 `RunAsUser`；「现在重启」不设，照旧重启。
+  看护：`tests/test_nsis_template.py::test_update_installed_on_quit_does_not_relaunch_the_app`（变量名与壳常量同源）。

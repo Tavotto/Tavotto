@@ -1081,8 +1081,15 @@ pub fn take_ready_any(state: &UpdateState) -> Option<Fetched> {
 /// 退出应用时安装后台下好的包。调用方必须已经收掉 sidecar 并写过 `clean`（`RunEvent::Exit` 里的既有顺序），
 /// 因为 Windows 上插件的 install 会起安装器并自行退出进程。没有已下好的包 = 什么都不做。失败只记日志——
 /// 应用本来就在退出，下次启动会重新查。
+/// 退出时装包后**不**把应用重新拉起来：Windows 上插件在 passive 模式下总给安装器带 `/R`（装完重启），
+/// 而安装器参数在 check 时就定死在 `Update` 里改不了；安装器由 `ShellExecuteW` 起、继承本进程环境，
+/// 我们自己的 `windows/installer.nsi` 见到这个变量就跳过重启。「现在重启」不设它。
+pub const NO_RELAUNCH_ENV: &str = "TAVOTTO_UPDATE_NO_RELAUNCH";
+
 pub fn install_ready_on_exit(state: &UpdateState) {
     if let Some(f) = take_ready_any(state) {
+        // 进程正在退出、sidecar 已收掉，这里没有别的线程会读环境
+        std::env::set_var(NO_RELAUNCH_ENV, "1");
         let _ = apply(f);
     }
 }
