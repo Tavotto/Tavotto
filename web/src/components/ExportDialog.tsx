@@ -2868,11 +2868,12 @@ export function ResultBlock({
   const warningCount = job.warnings?.length ?? 0;
   // 一件都没写出来：原因就在摘要行里（用户要的是「为什么」，不该再点开才知道）；有成功的才把失败原因折进详情
   const firstFailure = savedCount === 0 ? job.outputs.find((o) => !outputSaved(o)) : undefined
-  // 几件事同时成立时都要说（一句话里合并），不让优先级链吃掉任何一个：核验未通过 / 警告 / 导出期间又被编辑过
+  // 几件事同时成立时都要说（一句话里合并），不让优先级链吃掉任何一个：核验未通过 / 警告 / SVG 文字转了轮廓 / 导出期间又被编辑过
   const noteParts = [
     firstFailure ? outputFailureReason(firstFailure) : null,
     inspectionFailedCount > 0 ? ex("resultInspectionFailed", { count: inspectionFailedCount }) : null,
     warningCount > 0 ? ex("resultWarnings", { count: warningCount }) : null,
+    job.outputs.some((o) => outputSaved(o) && svgTextOutlined(o)) ? ex("svgTextOutlined") : null,
     edited ? ex("editedDuringExport") : null,
   ].filter((x): x is string => x !== null);
   const note = noteParts.length ? noteParts.join("；") : undefined;
@@ -2952,6 +2953,10 @@ const outputFailureReason = (o: ExportOutput) =>
 /** 这一件产物已被后端确认写出（`OutputRow` 画成功行的同一条判据） */
 const outputSaved = (o: ExportOutput) => o.status !== "failed" && !!o.name;
 
+/** 这一件 SVG 里的文字确实被画成了轮廓（QA-WIN-08）：后端明确报了才算，没报 = 文字还是文字 */
+const svgTextOutlined = (o: ExportOutput) =>
+  o.format === "svg" && o.manifest?.text_outlined === true;
+
 /**
  * 这次导出是不是**干净地全部成功**（没有失败的产物、没有核验未通过 / 警告 / 导出期间被编辑过）。
  * 干净时结果不插进对话框（对话框不位移），由浮在它上面的胶囊说一声；任何一条不干净，结果块照旧留在对话框里
@@ -2965,6 +2970,8 @@ export function exportResultClean(job: ExportJob, edited: boolean): boolean {
   const saved = job.outputs.filter(outputSaved);
   if (saved.length === 0 || saved.length !== job.outputs.length) return false;
   if ((job.warnings?.length ?? 0) > 0) return false;
+  // 文字转成了轮廓要在回执里说一句（`ResultBlock` 摘要行），所以这种结果不能只剩一个胶囊
+  if (saved.some(svgTextOutlined)) return false;
   return !saved.some((o) => inspectionState(o.manifest).tone === "failed");
 }
 

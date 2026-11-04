@@ -877,6 +877,7 @@ export default interface Resources {
       "strictTitle": "按所选规范重新打开写好的文件核对；不合格或无法核验的文件不会保存。EPS 不核验。",
       "strictToggle": "严格核验产物",
       "svgHint": "矢量 · 文字默认保留为文字",
+      "svgTextOutlined": "SVG 里的文字已转成路径，不能再当文字编辑。",
       "targetNoFigure": "当前没有图",
       "tiffHint": "位图 · 无损压缩",
       "title": "导出",

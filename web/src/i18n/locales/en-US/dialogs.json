@@ -279,6 +279,7 @@
     "sizeUnknownShort": "size unknown",
     "start": "Export",
     "targetNoFigure": "No current figure",
+    "svgTextOutlined": "Text in this SVG was converted to paths and can no longer be edited as text.",
     "svgHint": "Vector · text stays editable by default",
     "tiffHint": "Raster · lossless",
     "title": "Export",

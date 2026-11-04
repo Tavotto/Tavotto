@@ -1596,6 +1596,31 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     expect(badge()?.className).toContain('text-danger')
   })
 
+  it('SVG 的文字转成了轮廓（text_outlined）：回执摘要里说一句不能再当文字编辑；没转就不出现', async () => {
+    const svg = (extra: Record<string, unknown>) => ({
+      ...output(manifest({ integrity: 'verified', size: 'verified' })),
+      format: 'svg',
+      name: 'a.svg',
+      manifest: { ...manifest({ integrity: 'verified', size: 'verified' }), format: 'svg', ...extra },
+    })
+    jobWarnings = []
+    jobOutputs = [svg({ text_outlined: true })]
+    await setup(9)
+    await click(button('开始导出')!)
+    expect(document.body.querySelector('[data-export-result]')?.textContent).toContain(
+      'SVG 里的文字已转成路径，不能再当文字编辑。',
+    )
+  })
+
+  it('SVG 文字仍是文字（text_outlined 为 false / 缺席）：回执里没有那一句', async () => {
+    jobWarnings = ['预览与画布略有出入']
+    jobOutputs = [{ ...output(manifest({ integrity: 'verified', size: 'verified' })), format: 'svg', name: 'a.svg' }]
+    await setup(9)
+    await click(button('开始导出')!)
+    expect(document.body.querySelector('[data-export-result]')).not.toBeNull()
+    expect(document.body.querySelector('[data-export-result]')?.textContent).not.toContain('已转成路径')
+  })
+
   it('严格核验默认不勾（请求里没有 inspection 键）；勾上后带 strict 与当前规范', async () => {
     await setup(9)
     await click(button('开始导出')!)

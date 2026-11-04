@@ -271,6 +271,7 @@
     "sizeUnknownShort": "尺寸未知",
     "start": "开始导出",
     "targetNoFigure": "当前没有图",
+    "svgTextOutlined": "SVG 里的文字已转成路径，不能再当文字编辑。",
     "svgHint": "矢量 · 文字默认保留为文字",
     "tiffHint": "位图 · 无损压缩",
     "title": "导出",

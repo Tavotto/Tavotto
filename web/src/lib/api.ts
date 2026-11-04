@@ -2043,6 +2043,8 @@ export interface ArtifactManifestSummary {
   fonts_used?: string[]
   plan_identity?: string | null
   backend?: string | null
+  /** SVG 里的文字确实被画成了轮廓（不能再当文字编辑）；只有后端明确报了才是 true，老服务端没有 */
+  text_outlined?: boolean
   /** 四身份（U09，ADR 0070）：semantic / render / artifact / run 并列，谁也不含谁；旧后端没有 RenderPlan 时前两个是 null */
   identity?: ArtifactIdentity | null
   /** 来源：源产物公开身份、回执公开事实、节点表（U09）；老服务端没有 */
