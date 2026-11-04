@@ -278,3 +278,37 @@ def test_a_file_reached_through_a_directory_link_into_ssh_is_refused(home):
     assert bridge._argv_path_escapes(
         "keys/notes.txt", bridge.allowed_roots(), [str(home / "papers")]
     )
+
+
+def test_dotdot_after_a_directory_link_is_resolved_where_the_script_lands(home):
+    """`keys -> ~/.ssh/subdir` 时 `keys/../notes.txt` 实际读 `~/.ssh/notes.txt`：真实路径不能先折叠 `..`
+    再解析（Codex #1757 r4473502316）。相对、绝对两支都拦。"""
+    _file(home / ".ssh" / "subdir" / "x")
+    _file(home / ".ssh" / "notes.txt")
+    keys = home / "papers" / "keys"
+    try:
+        keys.symlink_to(home / ".ssh" / "subdir", target_is_directory=True)
+    except OSError:
+        pytest.skip("这台机器不能建符号链接")
+    roots_now = bridge.allowed_roots()
+    cwds = [str(home / "papers")]
+    assert bridge._argv_path_escapes("keys/../notes.txt", roots_now, cwds)
+    assert bridge._argv_path_escapes(str(keys) + "/../notes.txt", roots_now, cwds)
+
+
+def test_dotdot_after_a_directory_link_cannot_leave_explicit_roots(home, tmp_path, monkeypatch):
+    project = home / "papers" / "figs"
+    outside = tmp_path / "elsewhere" / "deep"
+    _file(outside / "x")
+    _file(tmp_path / "elsewhere" / "data.csv")
+    link = project / "ln"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("这台机器不能建符号链接")
+    monkeypatch.delenv(SCOPE_ENV)
+    monkeypatch.setenv(ROOTS_ENV, str(project))
+    bridge._ROOT_AUTHORITY.reset()
+    roots_now = bridge.allowed_roots()
+    assert bridge._argv_path_escapes("ln/../data.csv", roots_now, [str(project)])
+    assert bridge._argv_path_escapes(str(link) + "/../data.csv", roots_now, [str(project)])

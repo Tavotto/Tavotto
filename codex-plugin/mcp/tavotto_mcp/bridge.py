@@ -517,14 +517,18 @@ def _argv_path_escapes(
     if value.startswith("~") or os.path.isabs(value) or _WIN_ABS_RE.match(value):
         if _WIN_ABS_RE.match(value) and not os.path.isabs(value):
             return value  # 非本平台的绝对路径形状：无法证明它在根里
-        lexical = os.path.abspath(os.path.expanduser(value))
-        real = canonical_path(lexical)
+        # 真实路径从未折叠 `..` 的原样路径解析（`keys/../x` 里 keys 若是链接，`..` 落在链接目标的上一层）；
+        # 折叠过的词法路径只拿去对黑名单判名字（Codex #1757 r4473502316）
+        expanded = os.path.expanduser(value)
+        real = canonical_path(expanded)
+        lexical = os.path.abspath(expanded)
         return None if _in_scope(real, roots, lexical=lexical) else real
     if cwds is None:
         return value if ".." in re.split(r"[\\/]+", value) else None
     for cwd in cwds:
-        lexical = os.path.abspath(os.path.join(cwd, value))
-        real = canonical_path(lexical)
+        joined = os.path.join(cwd, value)
+        real = canonical_path(joined)
+        lexical = os.path.abspath(joined)
         if not _in_scope(real, roots, lexical=lexical):
             return real
     return None
