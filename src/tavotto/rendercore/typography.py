@@ -441,6 +441,9 @@ def interpreted_pieces(
             is_primary=cov.primary,
             is_drawable=lambda cp: glyphplan.layer_of(cp, cov) != "missing",
             mode=interpretation,
+            # 展开与否按批准字体的静态覆盖表定（与画布 `layerOf` 同一份）：原图字体自带 `℃` 时
+            # 画布不知道，导出也不能自己另作决定（见 `richtext.interpret_runs`）
+            letterlike_primary=glyphplan.canvas_coverage().primary,
         ):
             if run.script:
                 logical = r.text

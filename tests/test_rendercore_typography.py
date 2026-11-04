@@ -224,6 +224,22 @@ def test_the_expansion_is_not_applied_when_the_expanded_glyphs_are_missing():
     assert "".join(r.text for r in folded) == "25℃"
 
 
+def test_the_expansion_follows_the_static_table_even_when_the_users_font_has_the_sign():
+    """原图字体（ADR 0164）自带 `℃` 时，导出也照批准字体的静态表展开成 `°C`——画布只认得那张表
+    （`layerOf`），两边做同一个决定，宽度与换行才不分叉（Codex #1719 P2）。"""
+    from tavotto import glyphplan, richtext as rt
+
+    static = glyphplan.canvas_coverage().primary
+    assert not static(0x2103) and static(ord("°")) and static(ord("C"))
+    folded = rt.interpret_runs(
+        rt.parse_runs("25℃"),
+        is_primary=lambda cp: True,  # 用户那张脸：什么都有，含 ℃
+        is_drawable=lambda cp: True,
+        letterlike_primary=static,
+    )
+    assert "".join(r.text for r in folded) == "25°C"
+
+
 def test_a_drawable_unicode_superscript_stays_a_real_glyph_in_auto_mode():
     """`⁵` 合成脸画得出 → auto 档不折：真上标字形、文本层原样，不需要 ActualText。"""
     block = ty.layout_text(_text(text="10⁵"), FACES)

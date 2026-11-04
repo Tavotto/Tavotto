@@ -464,7 +464,9 @@ def has_scientific_chars(text: str) -> bool:
     return any(_script_of(ch) for ch in text)
 
 
-def interpret_runs(runs, is_primary=None, is_drawable=None, mode=DEFAULT_INTERPRETATION):
+def interpret_runs(
+    runs, is_primary=None, is_drawable=None, mode=DEFAULT_INTERPRETATION, letterlike_primary=None
+):
     """标记片段 → **渲染用**片段：受控地把 Unicode 上下标折成合成上下标。
 
     `is_primary(codepoint)`  正文那张脸自己画得出这个字吗
@@ -472,7 +474,10 @@ def interpret_runs(runs, is_primary=None, is_drawable=None, mode=DEFAULT_INTERPR
     `mode`                   `auto`（只救方框）/ `scientific`（一律合成）
 
     另有「字母式符号展开」（`℃` → `°C`）：不在正文脸、展开后全在正文脸的才展开，
-    两档都生效（理由见上方同名一节）。
+    两档都生效（理由见上方同名一节）。`letterlike_primary` 是只给这一步用的「正文脸」判据，
+    缺席 = `is_primary`；导出侧传**批准字体的静态覆盖表**（与画布 `layerOf` 同一份）——画布
+    不知道原图字体（ADR 0164）的 cmap，两边要按同一张表做同一个决定，否则用户字体自带 `℃`
+    时导出留原字、画布却画 `°C`，宽度与换行就分叉了。
 
     判据缺席（任一个是 `None`）时**一条都不折**——不猜一张默认覆盖表出来。
 
@@ -482,6 +487,7 @@ def interpret_runs(runs, is_primary=None, is_drawable=None, mode=DEFAULT_INTERPR
     if is_primary is None or is_drawable is None:
         return list(runs)
     scientific = mode == "scientific"
+    letterlike = letterlike_primary or is_primary
     out: list[TextRun] = []
 
     def emit(text: str, script: str, like: TextRun) -> None:
@@ -510,8 +516,8 @@ def interpret_runs(runs, is_primary=None, is_drawable=None, mode=DEFAULT_INTERPR
             expansion = LETTERLIKE_EXPANSION.get(text[i])
             if (
                 expansion is not None
-                and not is_primary(ord(text[i]))
-                and all(is_primary(ord(c)) for c in expansion)
+                and not letterlike(ord(text[i]))
+                and all(letterlike(ord(c)) for c in expansion)
             ):
                 emit(expansion, "", run)  # 两档都生效：见上方「字母式符号展开」
                 i += 1
