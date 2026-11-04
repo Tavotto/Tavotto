@@ -8,7 +8,16 @@ import {ensureFont} from '../scripts/fetch-pdf-font.mjs';
 export const root=new URL('../',import.meta.url);
 export const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 export const stagingMd=readFileSync(new URL('deployment/staging/assets/CLA_INDIVIDUAL.md',root));
-export const stagingPdf=new Uint8Array(readFileSync(new URL('deployment/staging/assets/CLA_INDIVIDUAL.pdf',root)));
+/** The committed staging agreement PDF as shipped (real text, signature-block `fields` in its metadata). */
+export const stagingPdfFull=new Uint8Array(readFileSync(new URL('deployment/staging/assets/CLA_INDIVIDUAL.pdf',root)));
+/** One page of it with the same hash keyword and only `publishedUrl` in its metadata: the separate-Signatures-page
+ * (fallback) path, with the agreement on page 1, the Signatures page 2 and the certificate page 3. */
+export const stagingPdf=await (async()=>{
+  const full=await PDFDocument.load(stagingPdfFull),d=await PDFDocument.create();
+  const [page]=await d.copyPages(full,[0]);d.addPage(page);d.setKeywords([full.getKeywords()??'']);
+  const meta=JSON.parse((full.getSubject()??'').replace(/^tavotto-agreement-meta:/,''));
+  d.setSubject('tavotto-agreement-meta:'+JSON.stringify({publishedUrl:meta.publishedUrl}));return new Uint8Array(await d.save());
+})();
 // Not committed: fetched once by hash (see scripts/fetch-pdf-font.mjs). Without the file and without network this fails loudly.
 export const font=new Uint8Array(readFileSync(await ensureFont()));
 export const AGREEMENT_SHA=sha(stagingMd);

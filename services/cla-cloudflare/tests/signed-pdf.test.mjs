@@ -7,7 +7,7 @@ import {PDFArray,PDFDocument,PDFName,decodePDFRawStream} from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import {build} from '../src/pdf/build.ts';
 import {buildPdfClient} from '../scripts/build-pdf-client.mjs';
-import {AGREEMENT_SHA,agreementPdf,evidence,fakeRasterizer,font,input,pdfWithKeyword,stagingPdf} from './pdf-fixture.mjs';
+import {AGREEMENT_SHA,agreementPdf,evidence,fakeRasterizer,font,input,pdfWithKeyword,stagingPdf,stagingPdfFull} from './pdf-fixture.mjs';
 
 async function pages(bytes){
   const doc=await PDFDocument.load(bytes);
@@ -224,3 +224,11 @@ for(const [label,mk] of [['Latin',n=>`Address line ${String(n).padStart(2,'0')}`
     assert.equal(t.filter(x=>x.text.includes('Thank you for')).length,1);
   });
 }
+
+test('the shipped staging agreement is filled in place: agreement pages plus the certificate, no separate Signatures page',async()=>{
+  const out=await pages(await build(await input({overrides:{agreementPdf:stagingPdfFull,rasterizer:fakeRasterizer()}})));
+  const n=(await PDFDocument.load(stagingPdfFull)).getPageCount();
+  assert.equal(out.length,n+1);assert.ok(!out.some(p=>p.flat.includes('Signatures')),'no separate Signatures page');
+  assert.ok(out[n-1].flat.includes('WanJiaqi')&&out[n-1].flat.includes('@synthetic-contributor')&&out[n-1].flat.includes('Rightsholder'));
+  assert.ok(out[n].flat.includes('Electronicsignaturecertificate')&&out[n].flat.includes('Thankyouforcontributing'));
+});

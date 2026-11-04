@@ -2,7 +2,7 @@
   "origin": "https://cla-staging.tavotto.com",
   "repository": "erwanjun/cla-e2e-sandbox-20261026",
   "repositoryId": 1434279607,
-  "referenceSha": "6c8e96cec1d3bf81bdf10da4362a571586474ce1",
+  "referenceSha": "3d71b48d569a12907bbe0cc1c7876b5efbdccfdf",
   "holderId": 88193520,
   "holderName": "Jiaqi Wan",
   "appId": 5480322,
@@ -18,7 +18,7 @@
       "individual": {
         "path": "docs/legal/CLA_INDIVIDUAL.md",
         "version": "1.0",
-        "sha256": "544e127b677cd1b7dc30e9c9cc6e9f42c8fc72ddc25633ddad75323f8e404847"
+        "sha256": "0720ad78d09d11138d63f0bb439ece63d1076b643c4117fbc0bfaf6f345f6890"
       },
       "corporate": {
         "path": "docs/legal/CLA_CORPORATE.md",

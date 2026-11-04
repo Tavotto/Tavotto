@@ -206,8 +206,10 @@ For production run, on the exact reviewed bytes,
       --published-url https://github.com/Tavotto/Tavotto/blob/main/docs/legal/CLA_INDIVIDUAL.md \
       --attribution "Derived from the Harmony Individual CLA 1.0, © 2011 Project Harmony, CC BY 3.0"
 
-and put `cla-pdf.js`, the font and its licence next to them. Staging passes only `--published-url`
-(the sandbox repository's text) and no attribution, because the staging text is not Harmony-derived.
+and put `cla-pdf.js`, the font and its licence next to them. Staging passes `--published-url`
+(the sandbox repository's copy) and `--banner "STAGING COPY - NO LEGAL EFFECT - cla-staging.tavotto.com"`, drawn at
+the top of every page; the staging Markdown is the real agreement preceded by a staging notice, so its digest differs
+from the real one and a staging signature can never carry the real agreement's fingerprint.
 `--published-url` and `--attribution` are stored in the PDF Subject as `tavotto-agreement-meta:{json}`; the
 builder reads them only after the hash check passes, ignores anything malformed or non-https, and lets
 values passed in `build()` input win.

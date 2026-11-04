@@ -48,7 +48,7 @@ async function viaDevTools(file,tag){
 }
 try{
   await mkdir(outDir,{recursive:true});
-  const agreementPdf=path.join(work,'agreement.pdf');await renderAgreementPdf(md,agreementPdf,{title:'Tavotto Individual Contributor License Agreement',publishedUrl:'https://github.com/example/example/blob/main/docs/legal/CLA_INDIVIDUAL.md',attribution:'Derived from the Harmony Individual CLA 1.0, \u00a9 2011 Project Harmony, CC BY 3.0'});
+  const agreementPdf=path.join(work,'agreement.pdf');await renderAgreementPdf(md,agreementPdf,{title:'Tavotto Individual Contributor License Agreement',banner:process.env.SAMPLE_BANNER,publishedUrl:'https://github.com/example/example/blob/main/docs/legal/CLA_INDIVIDUAL.md',attribution:'Derived from the Harmony Individual CLA 1.0, \u00a9 2011 Project Harmony, CC BY 3.0'});
   const b64=async f=>(await readFile(f)).toString('base64');
   const hex=n=>randomBytes(n).toString('hex'),packet='pkt_'+randomBytes(24).toString('base64url');
   const ev=(role,o)=>({protocol:'cla-signature-v1',packet,role,agreement_kind:'individual',agreement_version:'1.0',agreement_sha256:sha,consent_ui_version:'1',evidence_sha256:hex(32),
