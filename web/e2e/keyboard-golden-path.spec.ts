@@ -350,7 +350,17 @@ test('纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo →
   // 展开「详情」也走键盘：Tab 聚焦到折叠按钮，Space 展开（不用 locator.click()，
   // 否则「全程无鼠标」就是一句空话）
   const detailToggle = '[data-export-result] [data-notice-detail-toggle]'
-  await tabTo(page, `css=${detailToggle}`)
+  // Chromium：必须 Tab 真的走得到（可达性判据）。WebKit：导出按钮按下后进入忙态，
+  // 焦点会掉到 body，而 body 上的 Tab 只走表单控件/链接、不走 button，Tab 圈里
+  // 根本没有这颗按钮（CI 上 80 次 Tab 走不到）——这是浏览器的 Tab 规则不是产品缺陷，
+  // 所以那里用 focus() 把焦点放上去（不是 click，不产生指针事件），Space 展开照旧
+  if (test.info().project.name.includes('webkit')) {
+    await tabTo(page, `css=${detailToggle}`, 12).catch(() =>
+      dialog.locator(detailToggle).focus(),
+    )
+  } else {
+    await tabTo(page, `css=${detailToggle}`)
+  }
   await page.keyboard.press('Space')
   await expect(dialog.locator(detailToggle)).toHaveAttribute('aria-expanded', 'true')
   await expect(dialog.getByRole('link', { name: /\.pdf$/ })).toBeVisible()
