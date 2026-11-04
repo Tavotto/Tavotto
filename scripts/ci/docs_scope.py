@@ -212,9 +212,10 @@ def main(argv: list[str] | None = None) -> int:
             fh.write(f"### docs-only 分类：{result['reason']}（docs_only={result['docs_only']}）\n")
             for p in result.get("outside", []):
                 fh.write(f"- 范围外：`{p}`\n")
-            fh.write(f"### e2e 腿输入：e2e_specs_changed={result['e2e_specs_changed']}\n")
-            for p in result.get("e2e_paths", []):
-                fh.write(f"- `{p}`\n")
+            if "e2e_specs_changed" in result:  # 配置错误的结果里没有（也不写 output）
+                fh.write(f"### e2e 腿输入：e2e_specs_changed={result['e2e_specs_changed']}\n")
+                for p in result.get("e2e_paths", []):
+                    fh.write(f"- `{p}`\n")
     if code:
         print(f"::error::{result['error']}", file=sys.stderr)
     return code

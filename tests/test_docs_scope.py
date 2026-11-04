@@ -308,6 +308,18 @@ class TestMain:
         )
         assert rc == 2 and not out.exists()
 
+    def test_config_error_with_step_summary_set_still_exits_2(self, tmp_path, monkeypatch):
+        """CI 里 GITHUB_STEP_SUMMARY 恒存在：错误结果没有 e2e_specs_changed，摘要不许因此 KeyError。"""
+        out, summ = tmp_path / "out", tmp_path / "summary"
+        monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+        monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summ))
+        files = self._files(tmp_path, [f"{RN}v1.md"])
+        rc = DS.main(
+            ["--event", "pull_request", "--files-json", str(files), "--expected-files", "5"]
+        )
+        assert rc == 2 and not out.exists()
+        assert "e2e_specs_changed" not in summ.read_text(encoding="utf-8")
+
     @pytest.mark.parametrize("event", ["push", "schedule", ""])
     def test_undesigned_events_are_config_errors(self, event):
         assert DS.main(["--event", event]) == 2
