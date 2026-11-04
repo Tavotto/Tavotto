@@ -68,13 +68,13 @@ function intercept(db,handler){const exec=db.exec.bind(db);db.exec=sql=>handler(
 
 // All databases in this file are new in-memory synthetic fixtures. Evidence
 // fields are opaque synthetic storage values, not real signatures or consent.
-test('v2 upgrade preserves every old typed cell rowid tuple and manual cursor with31 DDL',()=>using(db=>{
+test('v2 upgrade preserves every old typed cell rowid tuple and manual cursor with34 DDL',()=>using(db=>{
   const original=specs(db),before=rows(db,original);let plan,result;
   assert.doesNotThrow(()=>{plan=prepareSyntheticV2Upgrade(db);result=apply(db,plan);});
   assert.equal(SOURCE_REF,'77e2cab77597318859f874d9319c47f15da0e1dd');assert.equal(TARGET_REF,'dc2431f725798bd78c40a3b07e0a8054690fe82c');
-  assert.equal(result.status,'upgraded_synthetic_only');assert.equal(result.ddl_statements,31);assert.equal(plan.statements.length,31);
+  assert.equal(result.status,'upgraded_synthetic_only');assert.equal(result.ddl_statements,34);assert.equal(plan.statements.length,34);
   assert.deepEqual(rows(db,original),before);assert.equal(db.prepare(`SELECT revision FROM ${P}state`).get().revision,7);
-  assert.equal(specs(db).length,26);assert.equal(plan.new_tables.length,7);
+  assert.equal(specs(db).length,27);assert.equal(plan.new_tables.length,8);
   for(const name of plan.new_tables)assert.equal(db.prepare('SELECT count(*) n FROM '+q(name)).get().n,0);
   assert.equal(db.prepare(`SELECT count(*) n FROM ${P}publication_attempts WHERE send_until IS NOT 0`).get().n,0);
   assert.equal(db.prepare(`SELECT status FROM ${P}refresh_requests`).get().status,'manual');
@@ -193,7 +193,7 @@ test('v2 upgrade lost COMMIT reply is recognized without repeating any DDL',()=>
     committed=true;assert.equal(db.isTransaction,false);throw Error('SYNTHETIC LOST COMMIT REPLY');
   }return result;});
   try{assert.throws(()=>apply(db,plan),/SYNTHETIC LOST COMMIT REPLY/);}finally{restore();}
-  assert.equal(committed,true);assert.equal(db.isTransaction,false);assert.equal(specs(db).length,26);assert.deepEqual(rows(db,original),before);
+  assert.equal(committed,true);assert.equal(db.isTransaction,false);assert.equal(specs(db).length,27);assert.deepEqual(rows(db,original),before);
   const executed=[],restoreRetry=intercept(db,(sql,exec)=>{executed.push(sql);return exec(sql);});let result;
   try{assert.doesNotThrow(()=>{result=apply(db,plan);});}finally{restoreRetry();}
   assert.equal(result.status,'already_applied');assert.deepEqual(executed,['BEGIN IMMEDIATE','COMMIT']);
@@ -255,8 +255,8 @@ test('v2 upgrade final verification rejects a nonzero historical fence',()=>usin
 
 test('v2 upgrade final verification rejects synthesized capability data',()=>using(db=>{
   const plan=prepareSyntheticV2Upgrade(db);let count=0;
-  const restore=intercept(db,(sql,exec)=>{const result=exec(sql);if(++count===31)exec(`INSERT INTO ${P}head_requests VALUES('SYNTHETIC-NEW',9,'c','manual','',0,0,'')`);return result;});
-  // BEGIN is also intercepted, so inject after the 30th DDL while all seven
+  const restore=intercept(db,(sql,exec)=>{const result=exec(sql);if(++count===34)exec(`INSERT INTO ${P}head_requests VALUES('SYNTHETIC-NEW',9,'c','manual','',0,0,'')`);return result;});
+  // BEGIN is also intercepted, so inject after the 33rd DDL while all eight
   // tables exist. No statement creates an authorization or real activation.
   try{deniedUnchanged(db,()=>apply(db,plan),/new_capability_data_must_remain_empty/);}finally{restore();}
 }));

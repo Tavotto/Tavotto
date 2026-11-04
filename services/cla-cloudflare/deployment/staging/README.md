@@ -54,18 +54,19 @@ All commands run from `services/cla-cloudflare/` after `npm ci --ignore-scripts`
 1. Schema and seed. **Not atomic**: unlike the production bootstrap (one
    `db.batch`, see the service README), staging applies a file with
    `d1 execute`. That is acceptable only because this database is new and
-   disposable. If the readiness query below is not `1 / 88193520 / 2 / 39`,
+   disposable. If the readiness query below is not `1 / 88193520 / 2 / 41`,
    delete and recreate the database instead of repairing it.
 
        node scripts/staging-d1.mjs deployment/staging/config.json > /tmp/cla-staging.sql
        $W d1 execute tavotto-cla-staging --remote $C --file /tmp/cla-staging.sql
        $W d1 execute tavotto-cla-staging --remote $C --command "SELECT (SELECT count(*) FROM cla_native_v2_authority) a,(SELECT holder FROM cla_native_v2_authority) h,(SELECT count(*) FROM cla_native_v2_agreements) g,(SELECT count(*) FROM sqlite_master WHERE type='trigger') t"
 
-   Rehearsed on local D1 (`--local`) on 2026-11-03: `1 / 88193520 / 2 / 39`.
+   Rehearsed on local D1 (`--local`) on 2026-11-03 (before holder releases, 39 triggers); the current schema gives `1 / 88193520 / 2 / 41` (in-memory SQLite, 2026-11-04).
 
    **Rebuild** (wipes every staging signature, cannot be undone): needed
    after changing `holderName` or the agreement text, or to clear a test
-   account's withdrawal (withdrawals are immutable by design). Same
+   account's withdrawal (withdrawals are immutable by design; the rights
+   holder can also release one in the signing page, which leaves the record). Same
    database ID; config and secrets stay. Then rerun the readiness query
    above and expect the same result.
 
@@ -74,6 +75,10 @@ All commands run from `services/cla-cloudflare/` after `npm ci --ignore-scripts`
 
    Used on 2026-11-04 to clear a held test account: 104 statements, readiness
    `1 / 88193520 / 2 / 39`, no withdrawals left.
+
+   The `eligibility_releases` table (holder release of a withdrawal) adds one
+   table and two triggers: a database built before it needs one `--rebuild`,
+   and every later readiness query reads `1 / 88193520 / 2 / 41`.
 
 2. First deploy, every flag off:
 

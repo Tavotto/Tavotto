@@ -231,6 +231,7 @@ export default {async scheduled(controller:{cron?:string},env:Env):Promise<void>
       if(url.pathname==='/intents'){const b=await body(req,['packet','role']);return json({intent:await s.intent(token,csrf,origin,b.packet,b.role)});}
       if(url.pathname==='/sign'){const b=await body(req,['packet','intent','role','evidence']);return json(await s.sign(token,csrf,origin,b.packet,b.intent,b.role,b.evidence));}
       if(url.pathname==='/hold'){const b=await body(req,['packet','intent']);return json(await s.hold(token,csrf,origin,b.packet,b.intent));}
+      if(url.pathname==='/release'){const b=await body(req,['packet']);return json(await s.release(token,csrf,origin,b.packet));}
       if(url.pathname==='/checks/pr'){
         await s.authorize(token,csrf,origin);const session=await s.session(token);
         if(session.actor!==c.holderId)throw new Rejected('holder_required');
