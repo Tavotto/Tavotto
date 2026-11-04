@@ -2,9 +2,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { chartBind, chartCompute, chartInspect } from '@/lib/chartApi'
-import type { PanelObject } from '@/types/document'
+import type { SceneInventory } from '@/lib/chartApi'
+import type { PanelChartState, PanelObject } from '@/types/document'
 import { chartBindConfirmReady, useChartBindStore } from './chartBindStore'
-import { DEFAULT_FORM } from './chartBindStore'
+import { DEFAULT_FORM, DEFAULT_SERIES } from './chartBindStore'
 
 vi.mock('@/lib/chartApi', () => ({
   chartInspect: vi.fn(),
@@ -43,7 +44,7 @@ function panel(id = 'p1'): PanelObject {
     y: 0,
     w: 100,
     h: 80,
-    fileId: 'chart.svg',
+    fileId: `${id}.svg`,
     fileKind: 'svg',
     nativeW: 360,
     nativeH: 252,
@@ -59,11 +60,14 @@ beforeEach(() => {
     open: false,
     panelId: null,
     file: null,
+    openSeq: 0,
     step: 'scene',
     scene: null,
-    form: useChartBindStore.getState().form,
+    form: DEFAULT_FORM,
+    formRev: 0,
     result: null,
     previewSvg: null,
+    previewOk: false,
     error: null,
     busy: false,
   })
@@ -77,7 +81,7 @@ describe('chartBindStore', () => {
     expect(s.open).toBe(true)
     expect(s.step).toBe('data')
     expect(s.scene?.scene_digest).toBe(SCENE.scene_digest)
-    expect(s.form.seriesNode).toBe('curve') // 候选识别只辅助：预填第一个图形节点
+    expect(s.form.series[0].node).toBe('curve') // 候选识别只辅助：预填第一个图形节点
     expect(s.form.rect).toEqual([0, 0, 360, 252])
   })
 
@@ -106,11 +110,17 @@ describe('chartBindStore', () => {
       scene_digest: CHART.model.scene_digest,
     })
     const store = useChartBindStore.getState()
-    useChartBindStore.setState({ file: 'chart.svg', form: { ...store.form, seriesNode: 'curve', xCol: 'x', yCol: 'y' } })
+    useChartBindStore.setState({
+      file: 'chart.svg',
+      form: {
+        ...store.form,
+        series: [{ ...store.form.series[0], node: 'curve', xCol: 'x', yCol: 'y' }],
+      },
+    })
     await useChartBindStore.getState().confirmBinding()
     const s = useChartBindStore.getState()
     expect(s.step).toBe('confirm')
-    expect(s.result).toEqual(CHART)
+    expect(s.result).toEqual({ ...CHART, formRev: expect.any(Number) })
     expect(s.previewSvg).toBe('<svg/>')
     // 证据按表单透传（判据在后端，这里只看形状）
     const bindCall = vi.mocked(chartBind).mock.calls[0]?.[0]
@@ -131,18 +141,36 @@ describe('chartBindStore', () => {
   it('confirm readiness mirrors required fields without judging data', () => {
     const base = useChartBindStore.getState()
     expect(chartBindConfirmReady({ ...base, file: null })).toBe(false)
+    // 无成功预览：即使有 result 也没有提交资格（F3）
     expect(
       chartBindConfirmReady({
         ...base,
         file: 'chart.svg',
-        form: { ...base.form, seriesNode: 'curve', xCol: 'x', yCol: 'y' },
+        form: { ...base.form, series: [{ ...base.form.series[0], node: 'curve', xCol: 'x', yCol: 'y' }] },
+        result: { ...staleChart, formRev: base.formRev } as never,
+        previewSvg: null,
+        previewOk: false,
+      }),
+    ).toBe(false)
+    expect(
+      chartBindConfirmReady({
+        ...base,
+        file: 'chart.svg',
+        form: { ...base.form, series: [{ ...base.form.series[0], node: 'curve', xCol: 'x', yCol: 'y' }] },
+        result: { ...staleChart, formRev: base.formRev } as never,
+        previewSvg: '<svg/>',
+        previewOk: true,
       }),
     ).toBe(true)
     expect(
       chartBindConfirmReady({
         ...base,
         file: 'chart.svg',
-        form: { ...base.form, kind: 'image', gridText: '' },
+        form: {
+          ...base.form,
+          series: [{ ...base.form.series[0], kind: 'image' }],
+          gridText: '',
+        },
       }),
     ).toBe(false)
   })
@@ -163,12 +191,13 @@ function deferred<T>() {
 const staleChart = {
   model: { rev: 1, scene_digest: 'old-scene', data_digest: 'old-data' },
   binding: { model_rev: 1 },
-} as never
+  formRev: 0,
+} as PanelChartState & { formRev: number }
 
 describe('chart bind state safety (F1-F3)', () => {
-  it.fails('F1: keeps B inventory when A inspect resolves after opening B', async () => {
-    const a = deferred<unknown>()
-    const b = deferred<unknown>()
+  it('F1: keeps B inventory when A inspect resolves after opening B', async () => {
+    const a = deferred<SceneInventory>()
+    const b = deferred<SceneInventory>()
     vi.mocked(chartInspect).mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise)
     useChartBindStore.getState().openFor(panel('A'))
     useChartBindStore.getState().openFor(panel('B'))
@@ -181,13 +210,17 @@ describe('chart bind state safety (F1-F3)', () => {
     expect(s.scene?.scene_digest).toBe('B')
   })
 
-  it.fails('F2: invalidates confirmed result and preview when the data form changes', () => {
+  it('F2: invalidates confirmed result and preview when the data form changes', () => {
     useChartBindStore.setState({
       file: 'A.svg',
       step: 'confirm',
       result: staleChart,
       previewSvg: '<svg id="old"/>',
-      form: { ...DEFAULT_FORM, seriesNode: 'curve', xCol: 'x', yCol: 'y', datasetText: 'x,y\n1,2' },
+      form: {
+        ...DEFAULT_FORM,
+        series: [{ ...DEFAULT_SERIES, node: 'curve', xCol: 'x', yCol: 'y' }],
+        datasetText: 'x,y\n1,2',
+      },
     })
     useChartBindStore.getState().patchForm({ datasetText: 'x,y\n1,999' })
     const s = useChartBindStore.getState()
@@ -195,13 +228,16 @@ describe('chart bind state safety (F1-F3)', () => {
     expect(s.previewSvg).toBeNull()
   })
 
-  it.fails('F3: does not permit final confirmation after replacement preview fails', async () => {
+  it('F3: does not permit final confirmation after replacement preview fails', async () => {
     useChartBindStore.setState({
       file: 'A.svg',
       step: 'confirm',
-      result: staleChart,
+      result: { ...staleChart, formRev: useChartBindStore.getState().formRev },
       previewSvg: '<svg id="old"/>',
-      form: { ...DEFAULT_FORM, seriesNode: 'curve', xCol: 'x', yCol: 'y' },
+      form: {
+        ...DEFAULT_FORM,
+        series: [{ ...DEFAULT_SERIES, node: 'curve', xCol: 'x', yCol: 'y' }],
+      },
     })
     vi.mocked(chartCompute).mockRejectedValue(
       Object.assign(new Error('wrong source'), { code: 'chart_source_mismatch' }),
@@ -210,5 +246,7 @@ describe('chart bind state safety (F1-F3)', () => {
     const s = useChartBindStore.getState()
     expect(chartBindConfirmReady(s)).toBe(false)
     expect(s.previewSvg).toBeNull()
+    expect(s.previewOk).toBe(false)
+    expect(s.error?.code).toBe('chart_source_mismatch')
   })
 })
