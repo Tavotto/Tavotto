@@ -30,7 +30,6 @@ export interface HostList {
   ok: boolean
   action: 'list'
   server: boolean
-  project_root: string | null
   hosts: HostRow[]
 }
 
@@ -86,7 +85,6 @@ export function parseHostList(raw: string): HostList {
     ok: d.ok === true,
     action: 'list',
     server: d.server === true,
-    project_root: typeof d.project_root === 'string' ? d.project_root : null,
     hosts,
   }
 }

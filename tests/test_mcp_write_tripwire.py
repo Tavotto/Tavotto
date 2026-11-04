@@ -469,9 +469,9 @@ def test_a_native_spec_cannot_carry_the_tripwire():
 # ============================================================ 桥：能力协商 / 回滚开关
 def test_without_the_engine_feature_the_bridge_sends_nothing(monkeypatch):
     monkeypatch.setattr(bridge, "allowed_roots", lambda: ["/ws"])
-    assert bridge._tripwire_roots() == ("/ws",)
+    assert bridge._tripwire_roots("/ws") == ("/ws",)
     monkeypatch.setattr(bridge, "engine_features", lambda: [])
-    assert bridge._tripwire_roots() is None, "引擎不宣告 = 回滚：不传参，旧引擎同理"
+    assert bridge._tripwire_roots("/ws") is None, "引擎不宣告 = 回滚：不传参，旧引擎同理"
     assert bridge.WRITE_ROOT_TRIPWIRE_FEATURE == capabilities.WRITE_ROOT_TRIPWIRE
     assert bridge.WRITE_OUTSIDE_ROOTS == writetripwire.CODE == engine_pool.WRITE_OUTSIDE_ROOTS_CODE
 

@@ -65,15 +65,19 @@ from . import sessionjournal
 from .roots import (
     CODE_AMBIGUOUS_ROOT,
     CODE_NO_WORKSPACE_ROOT,
+    CODE_PATH_DENIED,
     CODE_PATH_OUT_OF_SCOPE,
     CODE_ROOT_TOO_BROAD,
     CODE_ROOTS_ERROR,
     CODE_ROOTS_NO_RESPONSE,
     ROOTS_ENV,
+    SOURCE_HOME_SCOPE,
     WORKSPACE_ENVS,
     WORKSPACE_FAILURES,
     RootAuthority,
     canonical_path,
+    contains_home,
+    home_dirs,
 )
 
 # 这些负载只在完整渲染响应与按需快照里返回；摘要与诊断账本共用这一份字段表。
@@ -151,6 +155,7 @@ OPTIONAL_ENGINE_MODULES = (
     "envadvice",
     "envlease",
     "execspec",
+    "fixtools.readscope",
     "journals",
     "runconfig",
     "scriptargs",
@@ -348,7 +353,7 @@ def _nt_rooted_escape(value: str, roots: list[str], resolve=lambda p: p) -> str 
         except ValueError:
             continue
         if ntpath.normcase(common) == ntpath.normcase(root):
-            return None
+            return real if _home_scope_denied_if_active(real) else None
     return real
 
 
@@ -430,12 +435,12 @@ def _argv_path_escapes(
         if _WIN_ABS_RE.match(value) and not os.path.isabs(value):
             return value  # 非本平台的绝对路径形状：无法证明它在根里
         real = canonical_path(os.path.expanduser(value))
-        return None if any(_within(real, r) for r in roots) else real
+        return None if _in_scope(real, roots) else real
     if cwds is None:
         return value if ".." in re.split(r"[\\/]+", value) else None
     for cwd in cwds:
         real = canonical_path(os.path.join(cwd, value))
-        if not any(_within(real, r) for r in roots):
+        if not _in_scope(real, roots):
             return real
     return None
 
@@ -558,6 +563,37 @@ def root_diagnostics() -> dict:
     return _ROOT_AUTHORITY.diagnostics()
 
 
+def home_scope_active() -> bool:
+    """这条连接此刻的根是不是「主目录兜底」那一档（`roots.SOURCE_HOME_SCOPE`，ADR 0009 §1b）。"""
+    return _ROOT_AUTHORITY.snapshot().source == SOURCE_HOME_SCOPE
+
+
+def _home_scope_denied(real: str) -> bool:
+    """主目录兜底这一档的硬拦：主目录本身及上级、改图助手同一份敏感黑名单（`engine/fixtools/readscope.py`，
+    ADR 0149 §三：凭据目录、私钥形状、`.env`、浏览器 profile、Tavotto 自己的密钥文件；词法与解析后各判一次）。
+    引擎里没有那份黑名单（旧引擎）就一律拦——失败封闭，不退回「整个主目录都行」。"""
+    if contains_home(real):
+        return True
+    scope_cls = getattr(_optional_engine("fixtools.readscope"), "ReadScope", None)
+    if scope_cls is None:
+        return True
+    homes = home_dirs()
+    if not homes:
+        return True
+    home = next((h for h in homes if _within(real, h)), homes[0])
+    # 主目录外的那个根（安全 cwd）：固定位置表管不到，文件名形状与 Tavotto 自己的密钥文件照样拦
+    return scope_cls(home=home, project_root=home).is_denied(real)
+
+
+def _home_scope_denied_if_active(real: str) -> bool:
+    return home_scope_active() and _home_scope_denied(real)
+
+
+def _in_scope(real: str, roots) -> bool:
+    """`real`（已规范化）在允许的根之内，且不在主目录兜底的硬拦区里。**判「在不在范围内」只经这里**。"""
+    return any(_within(real, r) for r in roots) and not _home_scope_denied_if_active(real)
+
+
 def observe_mcp_client(protocol_version: str | None, capabilities, client_info) -> None:
     _ROOT_AUTHORITY.observe_client(protocol_version, capabilities, client_info)
 
@@ -667,7 +703,20 @@ def check_scope(path: str) -> str:
         target = os.path.join(roots[0], target)
     real = canonical_path(target)
     if any(_within(real, r) for r in roots):
-        return real
+        if not home_scope_active():
+            return real
+        # 主目录兜底：项目（目录本身 / 文件所在目录）不能是整个主目录，目标也不能在敏感位置
+        project = real if os.path.isdir(real) else os.path.dirname(real)
+        if not (_home_scope_denied(real) or _home_scope_denied(project)):
+            return real
+        failure = WORKSPACE_FAILURES[CODE_PATH_DENIED]
+        raise BridgeError(
+            f"{failure.summary}被拦的是 {real}。",
+            code=failure.code,
+            disposition=failure.disposition,
+            recovery=failure.next_step,
+            path=real,
+        )
     failure = WORKSPACE_FAILURES[CODE_PATH_OUT_OF_SCOPE]
     raise BridgeError(
         f"{failure.summary}不在范围内的是 {real}；当前允许的根: {os.pathsep.join(roots)}。",
@@ -766,22 +815,27 @@ def _spawn_worker(session: "Session", *, one_shot: bool):
     _recheck_run(run, session.project, session.script)
     # 无配置时调用形状与旧版一致（旧引擎的池函数不认识 `run=`）
     context = {"run": run} if run is not None else {}
-    roots = _tripwire_roots()
+    roots = _tripwire_roots(session.project)
     if roots is not None:
         context["write_roots"] = roots
     fn = engine_pool.one_shot if one_shot else engine_pool.get
     return fn(session.script, session.project, session.entry, **context)
 
 
-def _tripwire_roots() -> tuple[str, ...] | None:
+def _tripwire_roots(project: str) -> tuple[str, ...] | None:
     """MCP 来源的 safe 运行带给 worker 的写入根绊线授权根；None = 不装（引擎没宣告能力 / 已回滚）。
 
     根就是 `allowed_roots()`（`RootAuthority` 快照：用户绑定 / 宿主 roots / 显式环境变量里**可信**的那些，
     已拒 HOME 这类过宽的根）——与 `check_scope` 判「项目在不在范围内」的是同一份，所以脚本能写的地方不会
     比 Agent 能指向的地方更大。根是 spawn 时烤进 worker 的：根集合变了，池键也变（另一条会话）。
-    GUI / native / CLI 不经这里，不装。"""
+    GUI / native / CLI 不经这里，不装。
+
+    主目录兜底那一档（ADR 0009 §1b）的根是整个主目录，脚本能写的地方收窄到**这个项目**：否则脚本可以往
+    `~/.ssh` 这类硬拦区写。"""
     if WRITE_ROOT_TRIPWIRE_FEATURE not in engine_features():
         return None
+    if home_scope_active():
+        return (project,)
     return tuple(allowed_roots())
 
 
@@ -1257,12 +1311,7 @@ def _restore_session(session_id: str) -> Session | None:
         project = canonical_path(record["project"])
     except (OSError, ValueError):
         project = None
-    if (
-        not roots
-        or project is None
-        or not os.path.isdir(project)
-        or not any(_within(project, root) for root in roots)
-    ):
+    if not roots or project is None or not os.path.isdir(project) or not _in_scope(project, roots):
         raise BridgeError(
             f"会话 {session_id} 的项目不在当前工作区根内，不能在这里恢复，请重新打开。",
             code="workspace_root_changed",
@@ -1344,7 +1393,7 @@ def get_session(session_id: str) -> Session:
         not roots
         or current_project is None
         or not os.path.isdir(current_project)
-        or not any(_within(current_project, root) for root in roots)
+        or not _in_scope(current_project, roots)
     ):
         _SESSIONS.pop(session_id, None)
         s.apply_receipt = None

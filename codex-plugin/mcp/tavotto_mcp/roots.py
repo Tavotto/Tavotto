@@ -23,6 +23,19 @@ from urllib.parse import urlsplit
 from urllib.request import url2pathname
 
 ROOTS_ENV = "TAVOTTO_MCP_ROOTS"
+#: 「接入 AI 编辑器」按钮给不报项目目录的宿主写的兜底（用户 2026-11-04，ADR 0009 §1b）：``home`` = 宿主什么目录
+#: 都没给时，范围是主目录下的具体项目，主目录本身与敏感目录硬拦（硬拦在 ``bridge`` 里，用引擎 ``readscope``
+#: 那一份黑名单）。它排在宿主自己给的来源之后、cwd 之前，不扩宽 ``TAVOTTO_MCP_ROOTS``。
+#: 与 ``tavotto.engine.hostconnect`` 的同名常量同源。
+SCOPE_ENV = "TAVOTTO_MCP_SCOPE"
+SCOPE_HOME = "home"
+SOURCE_HOME_SCOPE = "home_scope"
+
+
+def home_scope_requested() -> bool:
+    return (os.environ.get(SCOPE_ENV) or "").strip().lower() == SCOPE_HOME
+
+
 WORKSPACE_ENVS = (
     "TAVOTTO_MCP_WORKSPACE",
     "CODEX_WORKSPACE_ROOT",
@@ -73,6 +86,7 @@ CODE_NO_WORKSPACE_ROOT = "no_workspace_root"
 CODE_PATH_OUT_OF_SCOPE = "path_out_of_scope"
 CODE_AMBIGUOUS_ROOT = "ambiguous_workspace_root"
 CODE_ROOT_TOO_BROAD = "workspace_root_too_broad"
+CODE_PATH_DENIED = "path_denied"
 
 
 @dataclass(frozen=True)
@@ -176,6 +190,12 @@ WORKSPACE_FAILURES: dict[str, WorkspaceFailure] = {
             "这条路径不在当前允许的工作区范围内。",
             "改用允许的根之内的路径；确实要放开别的目录，就把 "
             f"{ROOTS_ENV} 设成它们（{os.pathsep} 分隔）后{RESTART_HOST}。",
+        ),
+        _failure(
+            CODE_PATH_DENIED,
+            NARROW_THE_PATH,
+            "这条路径是整个主目录，或在敏感位置里（凭据、密钥、浏览器数据等），Tavotto 不打开也不让脚本写那里。",
+            "改用一个具体项目文件夹里的路径；不要换着写法重试同一个位置。",
         ),
         _failure(
             CODE_ROOT_TOO_BROAD,
@@ -616,15 +636,18 @@ class RootAuthority:
             roots, warnings = self._paths_from_config(raw, reject_plugin=True, reject_fs_root=True)
             return roots, "explicit_env", warnings
 
+        home_scope = home_scope_requested()
         if self._protocol_supported:
-            if self._protocol_state == "ready":
+            # 主目录兜底：宿主给了可用目录就用宿主的；清单为空 / 全被拒 / 查询失败才往下落（ADR 0009 §1b）
+            if self._protocol_state == "ready" and (self._protocol_roots or not home_scope):
                 return self._protocol_roots, "mcp_roots", self._protocol_warnings
             if self._protocol_state in {"pending", "stale"}:
                 return (), "mcp_roots_pending", ()
-            warnings = tuple(x for x in (self._protocol_error,) if x)
-            if self._protocol_state == "no_response":
-                return (), "mcp_roots_no_response", warnings
-            return (), "mcp_roots_error", warnings
+            if not home_scope:
+                warnings = tuple(x for x in (self._protocol_error,) if x)
+                if self._protocol_state == "no_response":
+                    return (), "mcp_roots_no_response", warnings
+                return (), "mcp_roots_error", warnings
 
         if self._user_root is not None:
             return (self._user_root,), "user_elicitation", ()
@@ -637,17 +660,32 @@ class RootAuthority:
                 )
                 return roots, f"workspace_env:{name}", warnings
 
+        cwd, why = self._safe_cwd()
+        if home_scope:
+            # 主目录 ∪ 安全的 cwd：ZCode 项目对话的 cwd 就是项目（可能在 D: 这类主目录外的盘）；Claude 桌面版的 cwd
+            # 是 `/` 之类、被 `_safe_cwd` 拒掉，只剩主目录（hosts.md）。cwd 在主目录里时不重复列
+            homes = home_dirs()
+            if not homes:
+                return (), "none", ("找不到当前账户的主目录",)
+            extra = (cwd,) if cwd and not any(_within(cwd, h) for h in homes) else ()
+            return homes + extra, SOURCE_HOME_SCOPE, ()
+        if cwd is None:
+            return (), "none", (why,)
+        return (cwd,), "cwd", ()
+
+    def _safe_cwd(self) -> tuple[str | None, str]:
+        """进程 cwd 能不能当工作区：(规范路径, "") 或 (None, 为什么不能)。"""
         try:
             cwd = self._normalise_dir(os.getcwd())
-        except OSError as exc:
-            return (), "none", (f"cwd 不可用：{exc}",)
+        except (OSError, ValueError) as exc:
+            return None, f"cwd 不可用：{exc}"
         if _within(cwd, self.plugin_dir):
-            return (), "none", ("进程 cwd 是插件目录，不作为用户工作区",)
+            return None, "进程 cwd 是插件目录，不作为用户工作区"
         if is_filesystem_root(cwd):
-            return (), "none", ("进程 cwd 是文件系统根目录，不作为工作区",)
+            return None, "进程 cwd 是文件系统根目录，不作为工作区"
         if contains_home(cwd):
-            return (), "none", (f"进程 cwd {cwd} {HOME_REJECTED}，不作为工作区",)
-        return (cwd,), "cwd", ()
+            return None, f"进程 cwd {cwd} {HOME_REJECTED}，不作为工作区"
+        return cwd, ""
 
     def _paths_from_config(
         self, raw: str, *, reject_plugin: bool, reject_fs_root: bool

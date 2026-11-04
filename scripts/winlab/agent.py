@@ -4932,8 +4932,12 @@ def driver_argv(
 #: ZCode 那份 enabled=false，WorkBuddy 没有它的信任记录就不加载
 CONNECT_DECOY = "lab-keep-me"
 CONNECT_DECOY_ENTRY = {"command": "cmd.exe", "args": ["/c", "exit", "0"], "env": {}}
-#: 按钮写的那一条里，授权根的环境变量（`TAVOTTO_MCP_ROOTS`，与服务端读的同名）
+#: 按钮写的那一条里，授权根的环境变量（`TAVOTTO_MCP_ROOTS`，与服务端读的同名）。点一下就接、不选文件夹之后（用户
+#: 2026-11-04，ADR 0009 §1b）按钮不再写它
 CONNECT_ROOTS_ENV = "TAVOTTO_MCP_ROOTS"
+#: 按钮应当给每个宿主写的 `env`——执行器自己的知识，不 import 产品：WorkBuddy 的服务 cwd 是会话工作目录、自己报项目，
+#: 什么都不写；ZCode 写主目录兜底（服务端的范围 = 主目录 ∪ 安全的 cwd，ZCode 项目对话的 cwd 就是项目）
+CONNECT_EXPECTED_ENV = {"zcode": {"TAVOTTO_MCP_SCOPE": "home"}, "workbuddy": {}}
 
 
 def connect_targets(host_id: str, home: Path) -> list[tuple[Path, tuple[str, ...]]]:
@@ -4998,7 +5002,7 @@ def _same_path(a: str, b: str) -> bool:
 
 def judge_connect_written(connect: dict) -> dict:
     """按钮写完之后逐字核对：每个目标文件里有且只多了 tavotto 一条；命令 = 安装目录里的 tavotto-cli.exe，参数 = ["mcp"]，
-    env 只有授权根 = 选的那个文件夹；几个文件里的那一条相同；WorkBuddy 另有这一条的信任记录（键按执行器自己的算法算）。"""
+    env = `CONNECT_EXPECTED_ENV` 里这个宿主的那一份；几个文件里的那一条相同；WorkBuddy 另有这一条的信任记录（键按执行器自己的算法算）。"""
     problems: list[str] = []
     written = None
     for f, path in connect["targets"]:
@@ -5020,10 +5024,9 @@ def judge_connect_written(connect: dict) -> dict:
         if entry.get("args") != ["mcp"]:
             problems.append(f"{f.name}: args {entry.get('args')!r} != ['mcp']")
         env = entry.get("env")
-        if not isinstance(env, dict) or set(env) != {CONNECT_ROOTS_ENV}:
-            problems.append(f"{f.name}: env keys {sorted(env or {})!r} != [{CONNECT_ROOTS_ENV}]")
-        elif not _same_path(str(env[CONNECT_ROOTS_ENV]), str(connect["proj"])):
-            problems.append(f"{f.name}: {CONNECT_ROOTS_ENV} is not the chosen folder")
+        want_env = CONNECT_EXPECTED_ENV[connect["host_id"]]
+        if env != want_env:
+            problems.append(f"{f.name}: env {env!r} != {want_env!r}")
         if written is None:
             written = entry
         elif entry != written:
@@ -5138,8 +5141,6 @@ def _connect_driver_round(
         connect["host_id"],
         "--action",
         action,
-        "--folder",
-        str(connect["proj"]),
         "--out-dir",
         str(ev),
         "--label",

@@ -2464,8 +2464,6 @@ export default interface Resources {
           "failed": "没有接好。",
           "ok": "完成。"
         },
-        "changeFolder": "更改文件夹",
-        "chooseFolder": "选择文件夹",
         "connect": "接入",
         "connected": "已接入",
         "disconnect": "断开",
@@ -2485,7 +2483,6 @@ export default interface Resources {
           "mcp_server_not_bundled": "这一版 Tavotto 不带 MCP 服务，请升级桌面版。",
           "not_desktop": "此操作仅在桌面版可用。",
           "other": "没有接好。展开详情看命令的原话。",
-          "project_root_missing": "先选一个项目文件夹。",
           "project_root_rejected": "不能选整个主目录或磁盘根目录，请选一个具体的项目文件夹。",
           "server_health_failed": "配置已写好，但 Tavotto 的服务没能启动。展开详情看原因。",
           "spawn_failed": "无法启动 Tavotto 命令行。再试一次。",
@@ -2493,7 +2490,6 @@ export default interface Resources {
         },
         "more": "{{host}} 的更多操作",
         "notDetected": "未检测到",
-        "pickFolderTitle": "让 {{host}} 用 Tavotto 处理哪个文件夹里的图？",
         "retry": "重试",
         "running": "接入中…",
         "step": {

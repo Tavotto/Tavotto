@@ -3,7 +3,7 @@
  *
  * 主语是**界面上真的出现了什么、按钮真的调了什么**：
  * - 没装的宿主只有「未检测到」，没有按钮；装了的一个「接入」；接好的「已接入」。
- * - 第一次接入先选文件夹，选的路径原样交给 `runHostIntegration('connect', host, 路径)`；取消选择就什么都不调。
+ * - 点「接入」就接，不弹选文件夹（用户 2026-11-04，ADR 0009 §1b）：只调 `runHostIntegration('connect', host)`。
  * - 失败显示翻译过的一句原因，**不是** `config_unreadable` 这串下划线英文。
  * - 浏览器模式整组不显示（不画按不动的按钮）。
  */
@@ -38,7 +38,6 @@ const LIST = (overrides: Record<string, unknown> = {}) =>
     ok: true,
     action: 'list',
     server: true,
-    project_root: null,
     hosts: [
       { id: 'codex', label: 'Codex', installed: true, connected: true },
       { id: 'cursor', label: 'Cursor', installed: true, connected: false },
@@ -97,42 +96,21 @@ describe('HostsPanel', () => {
     expect(connectButton('antigravity')?.textContent).toBe(tx('connect'))
   })
 
-  it('asks for the folder on the first connect and passes it through unchanged', async () => {
+  it('connects with one click: no folder dialog, nothing but the host goes to the shell', async () => {
     runMock.mockResolvedValueOnce(LIST())
-    pickMock.mockResolvedValue('/Users/me/论文/figs')
     runMock.mockResolvedValueOnce(
       JSON.stringify({ ok: true, host: 'cursor', action: 'connect', state: 'needs_new_session', steps: [] }),
     )
-    runMock.mockResolvedValue(LIST({ project_root: '/Users/me/论文/figs' }))
-    await mount()
-    await act(async () => connectButton('cursor')!.click())
-    expect(pickMock).toHaveBeenCalledTimes(1)
-    expect(runMock).toHaveBeenCalledWith('connect', 'cursor', '/Users/me/论文/figs')
-    expect(row('cursor')?.textContent).toContain(tx('doneNewSession', { host: 'Cursor' }))
-  })
-
-  it('does nothing when the folder dialog is cancelled', async () => {
     runMock.mockResolvedValue(LIST())
-    pickMock.mockResolvedValue(null)
-    await mount()
-    await act(async () => connectButton('cursor')!.click())
-    expect(runMock).toHaveBeenCalledTimes(1) // 只有最初那次 list
-  })
-
-  it('does not ask again once a folder is remembered', async () => {
-    runMock.mockResolvedValueOnce(LIST({ project_root: '/p' }))
-    runMock.mockResolvedValueOnce(
-      JSON.stringify({ ok: true, host: 'cursor', action: 'connect', state: 'connected', steps: [] }),
-    )
-    runMock.mockResolvedValue(LIST({ project_root: '/p' }))
     await mount()
     await act(async () => connectButton('cursor')!.click())
     expect(pickMock).not.toHaveBeenCalled()
-    expect(runMock).toHaveBeenCalledWith('connect', 'cursor', undefined)
+    expect(runMock).toHaveBeenCalledWith('connect', 'cursor')
+    expect(row('cursor')?.textContent).toContain(tx('doneNewSession', { host: 'Cursor' }))
   })
 
   it('shows a translated reason, never the raw code', async () => {
-    runMock.mockResolvedValueOnce(LIST({ project_root: '/p' }))
+    runMock.mockResolvedValueOnce(LIST())
     runMock.mockResolvedValueOnce(
       JSON.stringify({
         ok: false,
@@ -143,7 +121,7 @@ describe('HostsPanel', () => {
         steps: [{ step: 'config', ok: false, skipped: false, error_code: 'config_unreadable', detail: '/x/mcp.json' }],
       }),
     )
-    runMock.mockResolvedValue(LIST({ project_root: '/p' }))
+    runMock.mockResolvedValue(LIST())
     await mount()
     await act(async () => connectButton('cursor')!.click())
     const reason = tx('error.config_unreadable', { host: 'Cursor' })
@@ -152,33 +130,6 @@ describe('HostsPanel', () => {
       'config_unreadable',
     )
     expect(connectButton('cursor')?.textContent).toBe(tx('retry'))
-  })
-
-  it('lets the user pick another folder when the remembered one is rejected', async () => {
-    runMock.mockResolvedValueOnce(LIST({ project_root: '/gone' }))
-    runMock.mockResolvedValueOnce(
-      JSON.stringify({
-        ok: false,
-        host: 'cursor',
-        action: 'connect',
-        state: 'failed',
-        error_code: 'project_root_rejected',
-        steps: [{ step: 'project_root', ok: false, skipped: false, error_code: 'project_root_rejected' }],
-      }),
-    )
-    runMock.mockResolvedValueOnce(LIST({ project_root: '/gone' }))
-    pickMock.mockResolvedValue('/new/figs')
-    runMock.mockResolvedValueOnce(
-      JSON.stringify({ ok: true, host: 'cursor', action: 'connect', state: 'needs_new_session', steps: [] }),
-    )
-    runMock.mockResolvedValue(LIST({ project_root: '/new/figs' }))
-    await mount()
-    await act(async () => connectButton('cursor')!.click()) // 第一次：用记住的那个，被拒
-    expect(pickMock).not.toHaveBeenCalled()
-    expect(connectButton('cursor')?.textContent).toBe(tx('chooseFolder'))
-    await act(async () => connectButton('cursor')!.click()) // 第二次：先换文件夹
-    expect(pickMock).toHaveBeenCalledTimes(1)
-    expect(runMock).toHaveBeenCalledWith('connect', 'cursor', '/new/figs')
   })
 
   it('renders nothing in the browser', async () => {
