@@ -794,9 +794,13 @@ export function getUpdateOutcome(): UpdateOutcome | null {
 /**
  * 查有没有新版。没有新版返回 null；**浏览器模式也返回 null**——那条路由
  * Python updater 负责（/api/update/*），两条不能同时插手。
+ *
+ * `readyVersion`：后台已下好、验过签的那一版。查**失败**时若上一次的候选正是它，就保留候选——壳那边同样保留
+ * （`app_update::run_check`），「现在重启」不至于变成只会回 no_pending_update 的空按钮（Codex #1730）。
  */
-export async function checkDesktopUpdate(): Promise<DesktopUpdateInfo | null> {
+export async function checkDesktopUpdate(readyVersion?: string | null): Promise<DesktopUpdateInfo | null> {
   if (!isDesktop()) return null
+  const prev = pendingUpdate
   pendingUpdate = null
   const { invoke } = await import('@tauri-apps/api/core')
   let found: DesktopUpdateInfo | null
@@ -806,6 +810,7 @@ export async function checkDesktopUpdate(): Promise<DesktopUpdateInfo | null> {
   } catch (e) {
     const err = toUpdateError(e, 'update.desktopCheckFailed')
     updateOutcome = { ...updateOutcome, check: { at: Date.now(), ok: false, code: err.code, attempts: err.attempts } }
+    if (readyVersion && prev?.version === readyVersion) pendingUpdate = prev
     throw err
   }
   updateOutcome = { ...updateOutcome, check: { at: Date.now(), ok: true, found: !!found, source: found?.source } }

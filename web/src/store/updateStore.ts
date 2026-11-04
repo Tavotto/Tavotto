@@ -257,7 +257,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     if (get().desktopPhase !== 'idle') return
     set({ desktopPhase: 'checking', desktopError: null, desktopAttempts: [] })
     try {
-      const info = await checkDesktopUpdate()
+      const info = await checkDesktopUpdate(get().desktopReady?.version)
       const ready = get().desktopReady
       set({
         // 壳在查到别的版本 / 没有新版时会丢掉旧包；这边同步，别留一个指着已丢的包的胶囊
@@ -269,12 +269,15 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       })
     } catch (e) {
       // 离线是常态，但用户按下的按钮必须有下文——无声无息的按钮和坏掉没区别
+      // 重查失败时壳里的旧句柄已经作废（desktop.ts / run_check 都先清它），界面就不能还挂着
+      // 旧版本和一个只会回 no_pending_update 的「下载并安装」——一起撤掉。
+      // 例外：后台已下好、验过签的那一版——两边都保留它的候选（Codex #1730），「现在重启」照样能用
+      const ready = get().desktopReady
+      const keep = ready && get().desktopUpdate?.version === ready.version
       set({
-        // 重查失败时壳里的旧句柄已经作废（desktop.ts / run_check 都先清它），界面就不能还挂着
-        // 旧版本和一个只会回 no_pending_update 的「下载并安装」——一起撤掉
-        desktopUpdate: null,
-        desktopSource: null,
-        desktopReady: get().desktopReady,
+        desktopUpdate: keep ? get().desktopUpdate : null,
+        desktopSource: keep ? get().desktopSource : null,
+        desktopReady: keep ? ready : null,
         desktopError: e instanceof Error ? e.message : t('update.desktopCheckFailed', { ns: 'errors' }),
         desktopAttempts: attemptsOf(e),
       })

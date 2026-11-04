@@ -155,6 +155,30 @@ describe('现在重启', () => {
       status: { ...DESKTOP_STATUS, auto_download: true },
     })
 
+  it('下好之后离线再查一次失败：仍是就绪、「现在重启」照样能装（Codex #1730）', async () => {
+    ready()
+    vi.mocked(checkDesktopUpdate).mockRejectedValue(new Error('离线'))
+    await useUpdateStore.getState().checkDesktop()
+    // 壳与 desktop.ts 都把候选留成已下好的那一版：store 收到的就绪版本照样传下去
+    expect(checkDesktopUpdate).toHaveBeenCalledWith('9.9.9')
+    const s = useUpdateStore.getState()
+    expect(s.desktopUpdate?.version).toBe('9.9.9')
+    expect(s.desktopReady?.version).toBe('9.9.9')
+    expect(s.desktopError).toBeTruthy()
+    vi.mocked(installDesktopUpdate).mockResolvedValue('mirror')
+    vi.mocked(relaunchDesktop).mockResolvedValue()
+    await useUpdateStore.getState().restartNow()
+    expect(installDesktopUpdate).toHaveBeenCalledOnce()
+    expect(relaunchDesktop).toHaveBeenCalledOnce()
+  })
+
+  it('没有下好的包时查失败：照旧撤掉候选（不留只会回 no_pending_update 的按钮）', async () => {
+    useUpdateStore.setState({ desktopUpdate: INFO, status: { ...DESKTOP_STATUS, auto_download: true } })
+    vi.mocked(checkDesktopUpdate).mockRejectedValue(new Error('离线'))
+    await useUpdateStore.getState().checkDesktop()
+    expect(useUpdateStore.getState().desktopUpdate).toBeNull()
+  })
+
   it('装 + 重启各一次；装的是已下好的包（store 不再触发下载）', async () => {
     ready()
     vi.mocked(installDesktopUpdate).mockResolvedValue('mirror')

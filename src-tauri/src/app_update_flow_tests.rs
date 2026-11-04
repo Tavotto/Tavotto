@@ -1307,6 +1307,61 @@ async fn a_new_check_that_finds_another_version_or_none_drops_the_stale_package(
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_failed_check_keeps_the_downloaded_package_installable() {
+    // 后台下好之后用户离线再查一次：查失败不能把候选清掉——否则「现在重启」回 no_pending_update，
+    // 而那个验过签的包明明还在、退出时照样会装（Codex #1730）
+    let rig = Rig::both_healthy().await;
+    let make = rig.make();
+    let ep = rig.endpoints();
+    let state = UpdateState::default();
+    run_check(&make, &ep, &state, &CN, &limits()).await.unwrap();
+    run_download(&make, &ep, &state, &limits(), &|_| {})
+        .await
+        .unwrap();
+    let dead = Endpoints {
+        mirror: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
+        mirror_root: "http://127.0.0.1:9".into(),
+        github: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
+    };
+    assert!(run_check(&make, &dead, &state, &CN, &limits())
+        .await
+        .is_err());
+    let pending = state
+        .pending
+        .try_lock()
+        .unwrap()
+        .clone()
+        .expect("查失败后候选仍是已下好的那一版");
+    assert_eq!(pending.update.version, "9.9.9");
+    let hits = rig.mirror.hits(PKG_PATH);
+    let (seen, install) = recorder();
+    install_pending(&make, &ep, &state, &limits(), &pending, &|_| {}, install)
+        .await
+        .unwrap();
+    assert_eq!(seen.lock().unwrap().len(), 1);
+    assert_eq!(rig.mirror.hits(PKG_PATH), hits, "用的是已下好的包，不重下");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_check_without_a_downloaded_package_still_clears_the_candidate() {
+    let rig = Rig::both_healthy().await;
+    let make = rig.make();
+    let state = UpdateState::default();
+    run_check(&make, &rig.endpoints(), &state, &CN, &limits())
+        .await
+        .unwrap();
+    let dead = Endpoints {
+        mirror: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
+        mirror_root: "http://127.0.0.1:9".into(),
+        github: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
+    };
+    assert!(run_check(&make, &dead, &state, &CN, &limits())
+        .await
+        .is_err());
+    assert!(state.pending.try_lock().unwrap().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_failed_background_download_leaves_no_package_and_the_manual_install_still_works() {
     let rig = Rig::new(
         Keys::new(),

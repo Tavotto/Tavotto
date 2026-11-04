@@ -1130,9 +1130,27 @@ where
         .try_lock()
         .map_err(|_| Failure::code("busy"))?;
     // 先清掉旧句柄：这次查不到 / 查失败，就不该还留着上一次的
-    *slot = None;
+    let prev = slot.take();
     let order = state.cooldown.apply(order);
-    let found = check(make, endpoints, &order, limits, &state.cooldown).await?;
+    let found = match check(make, endpoints, &order, limits, &state.cooldown).await {
+        Ok(found) => found,
+        Err(e) => {
+            // 例外：后台已下好、验过签的包还在（退出时照样会装）——查失败（离线等）不该让「现在重启」变成空按钮。
+            // 候选恢复成那个包对应的上一次句柄，界面与壳一致（Codex #1730）
+            let ready_ver = state
+                .ready
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+                .map(|f| f.update.version.clone());
+            if let Some(p) = prev {
+                if ready_ver.as_deref() == Some(p.update.version.as_str()) {
+                    *slot = Some(p);
+                }
+            }
+            return Err(e);
+        }
+    };
     let out = found.as_ref().map(|p| CheckedUpdate {
         version: p.update.version.clone(),
         notes: p.update.body.clone(),
