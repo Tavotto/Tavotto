@@ -765,6 +765,7 @@
     "export": "Export to a file",
     "field": {
       "defaultFont": "Body font size",
+      "columns": "Column widths",
       "doubleWidth": "Double column",
       "exportDpi": "Suggested export resolution",
       "floorFont": "Absolute floor",
@@ -806,6 +807,7 @@
     "snapshotTitle": "Rules this project actually checks against",
     "unspecified": "Not specified",
     "adviceHint": "Suggested: {{pt}} pt",
+    "defaultHint": "Checked against the default {{value}} {{unit}}",
     "unset": "Not set",
     "useForProject": "Use this spec for the project",
     "usedForProject": "This project now checks against “{{name}}”",

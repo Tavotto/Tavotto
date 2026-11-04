@@ -1521,6 +1521,7 @@ export default interface Resources {
       "clearRow": "清除整行（{{row}}）：这一行的每一格都回到未设置",
       "conflict": "「{{name}}」已在别处被修改。请重新打开后再编辑。",
       "copyOf": "{{name}} 副本",
+      "defaultHint": "按默认 {{value}} {{unit}} 检查",
       "delete": "删除",
       "deleteBody": "已使用它的项目不受影响，各自保留独立副本。",
       "deleteTitle": "删除「{{name}}」？",
@@ -1560,6 +1561,7 @@ export default interface Resources {
         }
       },
       "field": {
+        "columns": "栏宽",
         "defaultFont": "正文字号",
         "doubleWidth": "双栏宽",
         "exportDpi": "推荐导出分辨率",
@@ -2914,7 +2916,7 @@ export default interface Resources {
       "neverScripts": "脚本与源码",
       "neverTitle": "绝不发送",
       "policy": "隐私政策",
-      "reconsentDelta": "比你上次同意时多了三项：导出怎样结束（含失败 / 取消）；AI Agent 调用了哪个 Tavotto 工具、成功与否（不含参数与内容）；以及你主动发送问题反馈时附带的一条不含内容的错误摘要。",
+      "reconsentDelta": "比上次多了一项：AI 编辑器查期刊列表的次数（只记查过，不含搜了什么、查的是哪本）。",
       "sendsErrorSummary": "你主动发送问题反馈时，随附一条不含内容的错误摘要",
       "sendsFeatures": "你使用了哪些功能",
       "sendsOutcome": "预检与导出的结果（成功、失败或取消）",

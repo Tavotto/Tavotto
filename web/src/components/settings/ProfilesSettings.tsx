@@ -58,6 +58,7 @@ import {
 } from './SettingRow'
 import { StyleSamplePreview } from './StyleSamplePreview'
 import { StyleProfileFields } from './StyleProfileFields'
+import { derivePageColumns } from '@/lib/profile'
 import { clearPath, rawValueText, readPath, writePath } from './profilePath'
 
 const st = (key: string, values?: Record<string, unknown>) =>
@@ -141,10 +142,30 @@ function ProfileFieldGroup({ group, children }: { group: string; children: React
  */
 const KEY_RULES = ['minFont', 'singleWidth', 'doubleWidth', 'minDpi'] as const
 
-function KeyRules({ profile }: { profile: Record<string, unknown> }) {
+function KeyRules({
+  profile,
+  journalSources,
+}: {
+  profile: Record<string, unknown>
+  /** 按期刊选的绑定里存的出处（路径 → {affects}）；没按期刊选过 = undefined，四个数照旧 */
+  journalSources?: Record<string, { affects?: string }>
+}) {
+  const journal = journalSources != null
+  // 期刊有自己的栏位表（Science 的 1 / 2 / 3 栏……）：单栏宽 + 双栏宽两格并成一格「栏宽」，列出它自己的全部栏位
+  const cols = derivePageColumns(profile as never)
+  const ownColumns = journal && Array.isArray(profile.page_columns) && profile.page_columns.length > 0 && cols.length > 0
+  const keys = ownColumns ? (['minFont', 'columns', 'minDpi'] as const) : KEY_RULES
   return (
     <dl data-spec-key-rules className="grid grid-cols-4 gap-x-4 gap-y-2">
-      {KEY_RULES.map((key) => {
+      {keys.map((key) => {
+        if (key === 'columns') {
+          return (
+            <div key={key} data-key-rule-columns className="col-span-2 flex min-w-0 flex-col-reverse gap-0.5">
+              <dt className="type-caption truncate">{st('field.columns')}</dt>
+              <dd className="type-heading truncate tabular-nums">{`${cols.map((c) => c.width_mm).join(' / ')} ${'mm'}`}</dd>
+            </div>
+          )
+        }
         const f = SPEC_FIELDS.find((x) => x.labelKey === key)!
         const raw = readPath(profile, f.path)
         // 最小字号 0 = 底规范（期刊底）没有硬性下限：说「未规定」，不露出底层的 0；期刊只给了建议值时在名字后小字提示
@@ -152,14 +173,18 @@ function KeyRules({ profile }: { profile: Record<string, unknown> }) {
         const advice = noFloor
           ? (profile.advisories as { role?: string; value_pt?: number }[] | undefined)?.find((a) => a.role === 'body_min')
           : undefined
+        // 分辨率由中性底兜底（期刊没规定、或只给了建议值）：大数字「未规定」，小字写实际按多少检查
+        const dpiFallback =
+          journal && key === 'minDpi' && typeof raw === 'number' && journalSources?.min_raster_dpi?.affects !== 'preflight'
         return (
           <div key={key} className="flex min-w-0 flex-col-reverse gap-0.5">
             <dt className="type-caption truncate">
               {st(`field.${f.labelKey}`)}
               {advice?.value_pt != null && <span data-key-rule-advice> · {st('adviceHint', { pt: advice.value_pt })}</span>}
+              {dpiFallback && <span data-key-rule-default> · {st('defaultHint', { value: raw, unit: f.unit ?? '' })}</span>}
             </dt>
             <dd className="type-heading truncate tabular-nums">
-              {noFloor ? st('unspecified') : formatValue(raw, f.unit)}
+              {noFloor || dpiFallback ? st('unspecified') : formatValue(raw, f.unit)}
             </dd>
           </div>
         )
@@ -526,7 +551,10 @@ export function ProfilesSettings({
               </DiagnosticDisclosure>
             )}
             <div>
-              <KeyRules profile={resolved.profile as unknown as Record<string, unknown>} />
+              <KeyRules
+                profile={resolved.profile as unknown as Record<string, unknown>}
+                journalSources={journalOn && doc.profile?.journalRef ? (doc.profile.journalSources ?? {}) : undefined}
+              />
             </div>
             {boundRecord && (
               <SettingRow label={st('follow')} controlId="profile-follow" data-settings-anchor="spec.follow">

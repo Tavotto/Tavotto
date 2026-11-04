@@ -755,6 +755,7 @@
     "export": "导出为文件",
     "field": {
       "defaultFont": "正文字号",
+      "columns": "栏宽",
       "doubleWidth": "双栏宽",
       "exportDpi": "推荐导出分辨率",
       "floorFont": "绝对下限",
@@ -796,6 +797,7 @@
     "snapshotTitle": "本项目实际检查的规则",
     "unspecified": "未规定",
     "adviceHint": "建议 {{pt}} pt",
+    "defaultHint": "按默认 {{value}} {{unit}} 检查",
     "unset": "未设置",
     "useForProject": "本项目用这套规范",
     "usedForProject": "本项目改按「{{name}}」检查",
