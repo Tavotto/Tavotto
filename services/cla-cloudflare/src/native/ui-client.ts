@@ -20,7 +20,9 @@ export function client():void {
     signTitle:'Sign as yourself',signHint:'Only you can sign for yourself. Nothing is pre-filled or ticked for you.',
     holderHint:'Your name must read exactly “{0}”, as registered for this service.',
     name:'Full legal name',address:'Postal address',addressHint:'Kept privately in the signed record and in your PDF copy. Never shown on GitHub.',addressHintNoPdf:'Kept privately in the signed record. Never shown on GitHub.',
-    signature:'Type your full name to sign',signatureHint:'Must match the name above exactly.',legend:'Confirm each statement yourself',
+    signature:'Type your full name to sign',signatureHint:'Must match the name above exactly.',
+    style:'Signature style',styleHint:'This is how your signature looks on the signed PDF. Typing your name is what signs; the style only changes how it looks.',
+    style_signature:'Signature',style_formal:'Formal script',style_pen:'Pen',style_hand:'Handwriting',stylePlaceholder:'Your name',legend:'Confirm each statement yourself',
     signContributor:'Sign the agreement',signHolder:'Countersign as rights holder',
     recordTitle:'Your signing record',packets:'Record',choose:'Choose a signing record',noRecord:'No record yet',create:'Start a new signing record',more:'Load earlier records',
     pageMore:'Earlier records are available.',pageAll:'All your records are shown.',
@@ -63,7 +65,9 @@ export function client():void {
     signTitle:'由你本人签署',signHint:'只有你本人能签。任何内容都不会预先填好或替你勾选。',
     holderHint:'姓名须与本服务登记的完全一致：「{0}」。',
     name:'本人的完整姓名',address:'本人地址',addressHint:'只保存在签署记录和你的 PDF 副本里，不会出现在 GitHub 上。',addressHintNoPdf:'只保存在签署记录里，不会出现在 GitHub 上。',
-    signature:'键入完整姓名作为电子签名',signatureHint:'必须与上方姓名完全一致。',legend:'逐项确认本人的意愿',
+    signature:'键入完整姓名作为电子签名',signatureHint:'必须与上方姓名完全一致。',
+    style:'签名样式',styleHint:'签署 PDF 上的签名按这个样式显示。真正签署的是你键入的姓名，样式只影响外观。',
+    style_signature:'签名体',style_formal:'正式花体',style_pen:'钢笔',style_hand:'手写',stylePlaceholder:'你的姓名',legend:'逐项确认本人的意愿',
     signContributor:'由我本人签署（贡献者）',signHolder:'由我本人签署（权利人）',
     recordTitle:'你的签署记录',packets:'签署记录',choose:'选择签署记录',noRecord:'尚无记录',create:'新建签署记录',more:'加载更早的记录',
     pageMore:'还有更早的记录，可继续加载。',pageAll:'已显示你的全部记录。',
@@ -97,7 +101,8 @@ export function client():void {
   const t=(key:string,...args:unknown[])=>(WORDS[lang][key] ?? WORDS.en[key] ?? key).replace(/\{(\d)\}/g,(_,i)=>String(args[Number(i)] ?? ''));
   const STATIC:Record<string,string>={'t-product':'product',lang:'lang',refresh:'refresh','step-1':'step1','step-2':'step2','step-3':'step3','step-4':'step4',
     't-fingerprint':'fingerprint','t-sign-title':'signTitle','t-sign-hint':'signHint','t-name':'name','t-address':'address','t-address-hint':'addressHint',
-    't-signature':'signature','t-signature-hint':'signatureHint','t-record-title':'recordTitle','t-packets':'packets',create:'create','packets-more':'more',
+    't-signature':'signature','t-signature-hint':'signatureHint','t-style':'style','t-style-hint':'styleHint',
+    't-style-signature':'style_signature','t-style-formal':'style_formal','t-style-pen':'style_pen','t-style-hand':'style_hand','t-record-title':'recordTitle','t-packets':'packets',create:'create','packets-more':'more',
     't-contributor':'contributor','t-holder':'holder','download-pdf':'pdf','t-records':'records','t-records-hint':'recordsHint','download-contributor':'dlContributor',
     'download-holder':'dlHolder','download-audit':'dlAudit','withdraw-open':'withdrawOpen','t-withdraw-title':'withdrawTitle','t-withdraw-body':'withdrawBody',
     't-withdraw-note':'withdrawNote','t-withdraw-confirm':'withdrawConfirm','withdraw-cancel':'withdrawCancel',hold:'withdraw','t-foot':'foot','t-foot-2':'foot2'};
@@ -193,7 +198,15 @@ export function client():void {
   }
   async function agreement(path:string){const d=await api(path);docInfo=d;readDone=false;renderAgreementMeta();
     if(typeof d.content==='string')markdown($('agreement'),d.content);readProgress();return d;}
-  function clearConsent(){($('signature') as HTMLInputElement).value='';text('sig-preview','');
+  // How the typed signature is drawn on the PDF (src/pdf/styles.ts); stored with the evidence. Not a consent item.
+  const STYLES=['signature','formal','pen','hand'];let sigStyle='signature';
+  function renderStyles(){
+    const typed=$<HTMLInputElement>('signature').value.trim() || $<HTMLInputElement>('name').value.trim();
+    for(const style of STYLES){const sample=$('sample-'+style),button=$('style-'+style);
+      if(sample){sample.textContent=typed || t('stylePlaceholder');sample.className='sample s-'+style+(typed?'':' empty');}
+      if(button){button.className=style===sigStyle?'sty on':'sty';button.setAttribute?.('aria-checked',String(style===sigStyle));}}
+  }
+  function clearConsent(){($('signature') as HTMLInputElement).value='';renderStyles();
     document.querySelectorAll<HTMLInputElement>('#attestations input').forEach(x=>{x.checked=false;});}
   function clearPersonalFields(){
     $<HTMLInputElement>('name').value='';$<HTMLTextAreaElement>('address').value='';$<HTMLInputElement>('hold-confirm').checked=false;show('withdraw-panel',false);
@@ -241,6 +254,7 @@ export function client():void {
     text('thanks-title',waiting?t('waitTitle'):holder?t('thanksHolderTitle'):t('thanksTitle'));
     text('thanks-lede',waiting?t(hasPdf()?'waitLede':'waitLedeNoPdf',counterparty || t('waitHolder')):holder?t(hasPdf()?'thanksHolderLede':'thanksHolderLedeNoPdf'):t('thanksLede'));
     show('holder-hint',holder && !!holderName);if(holder && holderName)text('holder-hint',t('holderHint',holderName));
+    renderStyles();
     if(legendEl)legendEl.textContent=t('legend');for(const {words,key} of consentLabels)words.textContent=t('a_'+key);
     text('sign',holder?t('signHolder'):t('signContributor'));
     show('withdraw-open',!!state?.canHold);
@@ -298,7 +312,8 @@ export function client():void {
   $('lang').onclick=()=>{lang=lang==='zh'?'en':'zh';try{localStorage.setItem('cla.lang',lang);}catch{}render();if(state || docInfo)readProgress();
     if(!state && $('eligibility'))text('eligibility',signedIn?(hasPackets?t('eChoose'):t('eCreate')):'');};
   $('agreement').onscroll=()=>readProgress();
-  $<HTMLInputElement>('signature').oninput=()=>text('sig-preview',$<HTMLInputElement>('signature').value);
+  $<HTMLInputElement>('signature').oninput=renderStyles;$<HTMLInputElement>('name').oninput=renderStyles;
+  for(const style of STYLES){const button=$('style-'+style);if(button)button.onclick=()=>{sigStyle=style;renderStyles();};}
   $('withdraw-open').onclick=()=>show('withdraw-panel',true);
   $('withdraw-cancel').onclick=()=>{$<HTMLInputElement>('hold-confirm').checked=false;show('withdraw-panel',false);};
   $('login').onclick=()=>void action(async()=>{sessionStorage.setItem('cla.packet',packet);const r=await api('/oauth/start',{});location.assign(r.authorizationURL);});
@@ -312,7 +327,7 @@ export function client():void {
   $<HTMLFormElement>('sign-form').onsubmit=event=>{event.preventDefault();void action(async()=>{
     if(!state?.canSign)throw new Error('signing_unavailable');
     const role=state.actor.role,input={name:$<HTMLInputElement>('name').value,address:$<HTMLTextAreaElement>('address').value,
-      signature:$<HTMLInputElement>('signature').value,attestations:Object.fromEntries([...document.querySelectorAll<HTMLInputElement>('#attestations input')].map(x=>[x.name,x.checked]))};
+      signature:$<HTMLInputElement>('signature').value,signature_style:sigStyle,attestations:Object.fromEntries([...document.querySelectorAll<HTMLInputElement>('#attestations input')].map(x=>[x.name,x.checked]))};
     const intent=(await api('/intents',{packet,role})).intent;
     const result=await api('/sign',{packet,intent,role,evidence:input});clearConsent();$<HTMLFormElement>('sign-form').reset();await refresh();
     message(result.countersignature==='recorded'?'mSignedDelegated':result.countersignature==='pending_manual_review'?'mSignedManual':'mSigned');

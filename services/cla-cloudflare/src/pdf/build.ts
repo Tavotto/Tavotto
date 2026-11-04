@@ -5,13 +5,16 @@ import {canvasRasterizer} from './raster.ts';
 import type {Rasterizer} from './raster.ts';
 import {Typesetter,clean,customFace,standardFace} from './text.ts';
 import type {Color,Face} from './text.ts';
+import {SIGNATURE_FONT_PATHS} from './styles.ts';
+import type {SignatureStyle} from './styles.ts';
 import {KINDS,checkInput,isoTime,longDate,longTime,validFields,validMeta} from './evidence.ts';
 import type {BuildInput,FieldBox,Party,SignatureFields} from './evidence.ts';
 
 export type {BuildInput,Evidence,AgreementInfo} from './evidence.ts';
 /** Same-origin fixed paths served by the Worker (see worker.ts); never derived from input. */
 export const AGREEMENT_PDF_PATH='/agreement.pdf';
-export const FONT_PATH='/cla-pdf-font.ttf';
+export const FONT_PATH=SIGNATURE_FONT_PATHS.formal;
+const STYLE_SCALE:Record<SignatureStyle,number>={signature:1.25,formal:1,pen:.72,hand:.95};
 /** The offline renderer writes the Markdown's SHA-256 into the PDF keywords under this prefix. */
 export const HASH_KEYWORD='tavotto-agreement-sha256:';
 /** PDF Subject written by the renderer: this prefix followed by JSON {publishedUrl?,attribution?,fields?}. */
@@ -57,13 +60,20 @@ async function buildPdf(input:BuildInput):Promise<Uint8Array> {
   if(subject.startsWith(META_SUBJECT)){try{const j=JSON.parse(subject.slice(META_SUBJECT.length));meta=validMeta(j?.publishedUrl,j?.attribution);fields=validFields(j?.fields,doc.getPages().map(p=>p.getSize()));}catch{meta={};fields=undefined;}}
   const publishedUrl=v.agreement.publishedUrl??meta.publishedUrl,attribution=v.agreement.attribution??meta.attribution;
   doc.registerFontkit(fontkit);
-  const fontBytes=over.font??await fetchAsset(FONT_PATH,2*1024*1024);
   const raster:Rasterizer=over.rasterizer??canvasRasterizer();
   const ts=new Typesetter(doc,raster);
   const sans=standardFace('sans',await doc.embedFont(StandardFonts.Helvetica)),sansB=standardFace('sansBold',await doc.embedFont(StandardFonts.HelveticaBold));
   const serifB=standardFace('serifBold',await doc.embedFont(StandardFonts.TimesRomanBold)),serifI=standardFace('serifItalic',await doc.embedFont(StandardFonts.TimesRomanItalic));
   const mono=standardFace('mono',await doc.embedFont(StandardFonts.Courier)),serif=standardFace('serif',await doc.embedFont(StandardFonts.TimesRoman));
-  const script=customFace('script',await doc.embedFont(fontBytes,{subset:true}));
+  // One script face per signature style actually used (src/pdf/styles.ts); fetched from its fixed same-origin path.
+  const scriptFaces=new Map<SignatureStyle,Face>();
+  for(const style of new Set([v.contributor.style,v.holder.style])){
+    const bytes=over.fonts?.[style]??(style==='formal'?over.font:undefined)??await fetchAsset(SIGNATURE_FONT_PATHS[style],2*1024*1024);
+    scriptFaces.set(style,customFace('script',await doc.embedFont(bytes,{subset:true})));
+  }
+  const faceOf=(p:Party)=>scriptFaces.get(p.style)!;
+  // The typefaces differ in how large a given point size looks; this evens them out.
+  const scaleOf=(face:Face)=>{for(const [style,f] of scriptFaces)if(f===face)return STYLE_SCALE[style];return 1;};
   const host=over.serviceHost??(typeof location!=='undefined'?location.host:'');
   const footLeft=new Map<PDFPage,string>();
   const heading=`${kind.title} · version ${v.agreement.version}`;
@@ -101,8 +111,8 @@ async function buildPdf(input:BuildInput):Promise<Uint8Array> {
   };
   // Signature sitting on a field line of width w: natural size, shrunk to fit; null when even the smallest size does not fit.
   const signature=(face:Face,t:string,box:FieldBox)=>{
-    const natural=sigWidth(face,t,26),size=natural>box.w?26*box.w/natural:26;
-    return size<12?null:(pg:PDFPage)=>drawSig(pg,face,t,box.x,box.y+3,size);
+    const base=26*scaleOf(face),natural=sigWidth(face,t,base),size=natural>box.w?base*box.w/natural:base;
+    return size<12*scaleOf(face)?null:(pg:PDFPage)=>drawSig(pg,face,t,box.x,box.y+3,size);
   };
   // One line of ordinary text on a field line: 11pt, shrunk down to 7pt to fit; null when it still does not fit.
   const onLine=(t:string,box:FieldBox)=>{
@@ -122,7 +132,7 @@ async function buildPdf(input:BuildInput):Promise<Uint8Array> {
     const pgs=doc.getPages(),jobs:[number,(pg:PDFPage)=>Promise<void>][]=[];
     const add=(box:FieldBox,job:((pg:PDFPage)=>Promise<void>)|null|undefined)=>{if(job===null)return false;if(job)jobs.push([box.page,job]);return true;};
     const text=(box:FieldBox,t:string)=>box.printed?undefined:onLine(t,box);
-    const party=(p:Party,b:typeof f.contributor)=>add(b.signature,signature(script,p.signature,b.signature)) && add(b.name,text(b.name,p.name)) &&
+    const party=(p:Party,b:typeof f.contributor)=>add(b.signature,signature(faceOf(p),p.signature,b.signature)) && add(b.name,text(b.name,p.name)) &&
       add(b.address[0]!,b.address.some(a=>a.printed)?undefined:onLines(p.address,b.address)) && add(b.date,text(b.date,longDate(new Date(p.signedAt*1000))));
     const ok=party(v.contributor,f.contributor) && add(f.contributor.github!,text(f.contributor.github!,`@${v.contributor.login}`)) &&
       party(v.holder,f.holder) && add(f.holder.title!,text(f.holder.title!,'Rights holder'));
@@ -137,7 +147,7 @@ async function buildPdf(input:BuildInput):Promise<Uint8Array> {
   // this page and the box continues, with a fresh border, on a continuation page. No unit is ever drawn below LIMIT.
   const partyBox=async(label:string,party:Party,rows:[string,string][])=>{
     const padX=20,padT=18,inner=CW-2*padX,labelW=92,gap=12,valueW=inner-labelW-gap,reserve=16,contTop=12;
-    let size=27;const natural=sigWidth(script,party.signature,size);if(natural>inner)size=Math.max(14,27*inner/natural);
+    const script=faceOf(party),k=scaleOf(script);let size=27*k;const natural=sigWidth(script,party.signature,size);if(natural>inner)size=Math.max(14*k,27*k*inner/natural);
     const sigH=Math.max(34,size*1.25),x0=MX+padX;
     const lineUnit=(k:string|null,line:string,last:boolean)=>({h:14+(last?5:0),draw:async(cy:number)=>{
       if(k!==null)await ts.draw(page,sans,k,x0,cy-9.5*.85,9.5,MUTED);

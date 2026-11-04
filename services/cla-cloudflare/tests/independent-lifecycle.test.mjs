@@ -49,3 +49,19 @@ test('independent readEvidence has no fingerprint for a role that has not signed
   await assert.rejects(f.svc.readEvidence(f.args('contributor')[0],p.id,'holder'),e=>e.code==='evidence_unavailable');
   await assert.rejects(f.svc.readEvidence(f.args('contributor')[0],p.id,'nobody'),e=>e.code==='role_rejected');
 }));
+const styled=(f,r,style)=>({name:r==='holder'?f.c.holderName:'SYNTHETIC CONTRIBUTOR',signature:r==='holder'?f.c.holderName:'SYNTHETIC CONTRIBUTOR',address:'SYNTHETIC ADDRESS',
+  attestations:Object.fromEntries(attestations(r).map(k=>[k,true])),...(style===undefined?{}:{signature_style:style})});
+for(const style of ['signature','formal','pen','hand'])test('independent signature style '+style+' is stored in the evidence and qualifies',()=>iso(async f=>{
+  const p=await f.create();
+  for(const r of ['contributor','holder'])await f.svc.sign(...f.args(r),p.id,await f.intent(p,r),r,styled(f,r,style));
+  for(const r of ['contributor','holder'])assert.equal((await f.svc.readEvidence(f.args(r)[0],p.id,r)).signature_style,style);
+  assert.equal((await f.svc.evaluate(9)).conclusion,'success');
+}));
+for(const style of ['comic','',5,null,'Formal'])test('independent signature style '+JSON.stringify(style)+' is rejected without recording anything',()=>iso(async f=>{
+  const p=await f.create();
+  await assert.rejects(f.svc.sign(...f.args('contributor'),p.id,await f.intent(p,'contributor'),'contributor',styled(f,'contributor',style)),e=>e.code==='personal_evidence_required');
+  assert.deepEqual(await f.store.signatures(p.id),[]);
+}));
+test('independent evidence without a signature style stays readable and has none',()=>iso(async f=>{
+  const p=await f.complete();assert.equal('signature_style' in await f.svc.readEvidence(f.args('contributor')[0],p.id,'contributor'),false);
+}));

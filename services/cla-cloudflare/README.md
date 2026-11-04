@@ -187,6 +187,8 @@ response:
 | `GET /agreement.pdf` | `/CLA_INDIVIDUAL.pdf` | `application/pdf` |
 | `GET /cla-pdf-font.ttf` | `/cla-pdf-font.ttf` | `font/ttf` |
 | `GET /cla-pdf-font-OFL.txt` | `/cla-pdf-font-OFL.txt` | `text/plain` |
+| `GET /cla-sig-{signature,pen,hand}.ttf` | same path | `font/ttf` |
+| `GET /cla-sig-signature-OFL.txt`, `/cla-sig-pen-LICENSE.txt`, `/cla-sig-hand-OFL.txt` | same path | `text/plain` |
 
 `GET /capabilities` gains `signedPdf: true` only while all four assets are actually retrievable from the binding with the expected types (probed on each call, nothing cached); otherwise the key is absent.
 
@@ -196,7 +198,7 @@ another type or too large gives 503 `pdf_asset_unavailable`.
 Preparing the assets (operator step, offline, never at request time):
 
     npm run render:agreement-pdf   # staging: CLA_INDIVIDUAL.md -> CLA_INDIVIDUAL.pdf (headless Chrome)
-    npm run fetch:pdf-font         # Great Vibes TTF -> assets/ (commit-pinned URL + SHA-256; not committed)
+    npm run fetch:pdf-font         # the four signature TTFs -> assets/ (commit-pinned URLs + SHA-256; not committed)
     npm run build:pdf-client       # fetches the font if missing, then esbuild bundle of src/pdf -> assets/cla-pdf.js
 
 For production run, on the exact reviewed bytes,
@@ -233,6 +235,13 @@ agreement page's footer says the copy is signed electronically; the certificate 
 signed. This ties the PDF to the pinned text by the renderer's claim, not by re-reading the pages: a PDF
 rendered from different text but stamped with the pinned hash would pass, so review the PDF like the
 Markdown. The signature typeface is Great Vibes (SIL OFL 1.1, licence committed beside it); the TTF itself is never committed (repository invariant) and is fetched by `scripts/fetch-pdf-font.mjs` from a pinned google/fonts commit and checked against a pinned SHA-256. Tests need network once to obtain it and fail loudly without it (stable codes `pdf_font_network_unreachable`, `pdf_font_http_status`, `pdf_font_hash_mismatch`); they never skip. CI fetches it in its own step, "Fetch signed-PDF font (sha256-pinned)", before `npm run check`. For production, `node scripts/fetch-pdf-font.mjs --dest assets-reviewed`. Text a standard
+
+Signature styles (`src/pdf/styles.ts`). The signing page offers four looks for the typed signature and stores the
+choice as `signature_style` in the signed evidence (optional; validated against the same list in `service.ts`):
+`signature` Mrs Saint Delafield, `formal` Great Vibes, `pen` Homemade Apple (Apache 2.0), `hand` Patrick Hand —
+all but `pen` SIL OFL 1.1, licences committed beside the fonts. Evidence without a style (everything signed before
+styles existed) draws in `formal`, exactly as before. The style is only appearance: the typed name is what signs. The
+page previews with the same fonts (`font-src 'self'`); the PDF builder fetches only the fonts of the styles in use.
 PDF font cannot encode (for example a Chinese name or address) is drawn by the browser onto a canvas at
 4x and embedded as an image, so nothing is dropped or replaced; without a canvas the builder fails
 instead of printing placeholders. The `devDependencies` pdf-lib, @pdf-lib/fontkit and marked exist only
@@ -253,7 +262,7 @@ fingerprint.
       contributorSha256?, holderSha256?,   // optional; evidence_sha256 inside the evidence is used first; row omitted if neither
     });                                    // -> Promise<Uint8Array> (a PDF); save with a Blob + download link
 
-`build` fetches `/agreement.pdf` and `/cla-pdf-font.ttf` itself (same origin, `redirect:'error'`) and throws an
+`build` fetches `/agreement.pdf` and the font of each party's signature style itself (same origin, `redirect:'error'`) and throws an
 `Error` whose `message` is a stable code: `agreement_input_invalid`, `evidence_role_mismatch`,
 `evidence_agreement_mismatch` (evidence hash/kind/version differ from `agreement`), `evidence_packet_mismatch`,
 `evidence_invalid`, `evidence_attestations_invalid`, `evidence_fingerprint_missing` (a fingerprint was given but malformed or contradictory),
