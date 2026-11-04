@@ -28,7 +28,7 @@
 
 锁里声明的顺序（codex：registry.npmjs.org → registry.npmmirror.com）是海外的顺序；**大陆环境把镜像来源整体挪到前面**
 （`cli_for` 里稳定重排，其余相对顺序不变；#1744）。「大陆环境」不在这里判：唯一出处是壳的 `app_update::source_order`
-（ADR 0121），壳拉起引擎时写进 `TAVOTTO_NETWORK_REGION`，这里只经 `contactsend.region_is_cn` 读它——与应用更新、联系作者
+（ADR 0121），壳拉起引擎时写进 `TAVOTTO_NETWORK_REGION`，这里只经 `netregion.region_is_cn` 读它——与应用更新、联系作者
 选线路同一个结论。为什么不是只靠「慢了换源」：大陆直连 npmjs 实测约 2 MB/s（Windows Lab 2026-11-04，codex 174 MB
 84.6 s，npmmirror 21.8 s），按 ETA 估剩余约一分钟，够不到 `SLOW_ETA_S`，判据不会触发，每次一键装都白等一分钟；
 首次测速 / 并行探测要多发请求、多一套缓存，而这个结论壳早就算好了。没有壳的安装（pip / 源码）没有这个信号，按锁的顺序。
@@ -84,7 +84,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from . import atomicio, brand, config, logsafe, msixmigrate, tlstrust
+from . import atomicio, brand, config, logsafe, msixmigrate, netregion, tlstrust
 from .runtime import CREATE_NO_WINDOW
 
 LOG = logging.getLogger("tavotto.managedcli")
@@ -140,7 +140,7 @@ STALE_STAGING_S = 3600
 
 #: 已发行的来源主机（固定常量，不从调用方传进来的 URL 现推——现推的判据恒真）：只有它们进日志时明文。
 SOURCE_HOSTS = frozenset({"registry.npmjs.org", "registry.npmmirror.com", "downloads.claude.ai"})
-#: 国内镜像主机：大陆环境（`contactsend.region_is_cn`）下这些来源排到最前（模块头「来源顺序」）。
+#: 国内镜像主机：大陆环境（`netregion.region_is_cn`）下这些来源排到最前（模块头「来源顺序」）。
 MIRROR_HOSTS = frozenset({"registry.npmmirror.com"})
 #: 锁里 URL 模板允许的前缀；`validate_lock` 钉着。
 NPM_PREFIX = "https://registry.npmjs.org/@openai/codex/-/"
@@ -412,9 +412,7 @@ def cli_for(
 
 def _region_order(sources: tuple[ArchiveSource, ...]) -> tuple[ArchiveSource, ...]:
     """大陆环境：镜像来源稳定地挪到最前；否则原样（锁的顺序）。判据只读壳的结论，不在这里另判（模块头）。"""
-    from .contactsend import region_is_cn
-
-    if not region_is_cn():
+    if not netregion.region_is_cn():
         return sources
     return tuple(sorted(sources, key=lambda s: s.host not in MIRROR_HOSTS))
 

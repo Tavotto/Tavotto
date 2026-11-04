@@ -544,22 +544,28 @@ def test_mainland_mirror_that_is_slow_still_switches_back_to_the_official_source
 
 
 def test_region_is_read_from_the_shell_not_rejudged_here():
-    """「大陆环境」唯一出处是壳（同源对总表那一行）：本模块不许有第二份时区 / 语言表，只经 contactsend 读结论。"""
+    """「大陆环境」唯一出处是壳（同源对总表那一行）：本模块不许有第二份时区 / 语言表，只经 `netregion` 读结论。"""
     import ast
+
+    from tavotto.engine import netregion
 
     src = Path(managedcli.__file__).read_text(encoding="utf-8")
     assert "Asia/Shanghai" not in src and "Asia/Chongqing" not in src
     tree = ast.parse(src)
+    assert not any(
+        isinstance(n, ast.Constant) and n.value == netregion.ENV_REGION for n in ast.walk(tree)
+    )
     fn = next(
         n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_region_order"
     )
-    imports = [n for n in ast.walk(fn) if isinstance(n, ast.ImportFrom)]
-    assert [(i.module, [a.name for a in i.names]) for i in imports] == [
-        ("contactsend", ["region_is_cn"])
+    calls = [
+        (n.func.value.id, n.func.attr)
+        for n in ast.walk(fn)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and isinstance(n.func.value, ast.Name)
     ]
-    assert not any(
-        isinstance(n, ast.Constant) and n.value == "TAVOTTO_NETWORK_REGION" for n in ast.walk(tree)
-    )
+    assert ("netregion", "region_is_cn") in calls
 
 
 def test_source_hosts_allowlist_matches_the_shipped_lock():
