@@ -5,8 +5,8 @@ import {canvasRasterizer} from './raster.ts';
 import type {Rasterizer} from './raster.ts';
 import {Typesetter,clean,customFace,standardFace} from './text.ts';
 import type {Color,Face} from './text.ts';
-import {KINDS,checkInput,isoTime,longDate,longTime,validMeta} from './evidence.ts';
-import type {BuildInput,Party} from './evidence.ts';
+import {KINDS,checkInput,isoTime,longDate,longTime,validFields,validMeta} from './evidence.ts';
+import type {BuildInput,FieldBox,Party,SignatureFields} from './evidence.ts';
 
 export type {BuildInput,Evidence,AgreementInfo} from './evidence.ts';
 /** Same-origin fixed paths served by the Worker (see worker.ts); never derived from input. */
@@ -14,11 +14,12 @@ export const AGREEMENT_PDF_PATH='/agreement.pdf';
 export const FONT_PATH='/cla-pdf-font.ttf';
 /** The offline renderer writes the Markdown's SHA-256 into the PDF keywords under this prefix. */
 export const HASH_KEYWORD='tavotto-agreement-sha256:';
-/** PDF Subject written by the renderer: this prefix followed by JSON {publishedUrl?,attribution?}. */
+/** PDF Subject written by the renderer: this prefix followed by JSON {publishedUrl?,attribution?,fields?}. */
 export const META_SUBJECT='tavotto-agreement-meta:';
 const PRODUCT='Tavotto';
 const W=612,H=792,MX=68.4,CW=W-2*MX,TOP=64.8,LIMIT=78,THANKS_TOP=104;
 const INK:Color=[.106,.106,.094],MUTED:Color=[.424,.424,.4],RULE:Color=[.851,.851,.831],ROW:Color=[.902,.902,.886],NOTE:Color=[.29,.29,.27],FOOT:Color=[.608,.608,.58];
+const SIGNED_FOOT='Signed electronically · see the certificate on the next page';
 const THANKS='Thank you for contributing to Tavotto. Every improvement you send makes the tool better for researchers everywhere.';
 const CERT_NOTE='The signed record is kept by the Tavotto CLA service. This PDF is a copy for your records: if it ever disagrees with the service record, the record governs. To check this copy, compare the agreement fingerprint above with the published text.';
 
@@ -52,8 +53,8 @@ async function buildPdf(input:BuildInput):Promise<Uint8Array> {
   const doc=await PDFDocument.load(agreementBytes);
   assertAgreementPdf(doc,v.agreement.sha256);
   // Hash-verified PDF metadata fills in what the caller did not pass; the caller's values win.
-  const subject=doc.getSubject()??'';let meta:{publishedUrl?:string;attribution?:string}={};
-  if(subject.startsWith(META_SUBJECT)){try{const j=JSON.parse(subject.slice(META_SUBJECT.length));meta=validMeta(j?.publishedUrl,j?.attribution);}catch{meta={};}}
+  const subject=doc.getSubject()??'';let meta:{publishedUrl?:string;attribution?:string}={},fields:SignatureFields|undefined;
+  if(subject.startsWith(META_SUBJECT)){try{const j=JSON.parse(subject.slice(META_SUBJECT.length));meta=validMeta(j?.publishedUrl,j?.attribution);fields=validFields(j?.fields,doc.getPages().map(p=>p.getSize()));}catch{meta={};fields=undefined;}}
   const publishedUrl=v.agreement.publishedUrl??meta.publishedUrl,attribution=v.agreement.attribution??meta.attribution;
   doc.registerFontkit(fontkit);
   const fontBytes=over.font??await fetchAsset(FONT_PATH,2*1024*1024);
@@ -61,7 +62,7 @@ async function buildPdf(input:BuildInput):Promise<Uint8Array> {
   const ts=new Typesetter(doc,raster);
   const sans=standardFace('sans',await doc.embedFont(StandardFonts.Helvetica)),sansB=standardFace('sansBold',await doc.embedFont(StandardFonts.HelveticaBold));
   const serifB=standardFace('serifBold',await doc.embedFont(StandardFonts.TimesRomanBold)),serifI=standardFace('serifItalic',await doc.embedFont(StandardFonts.TimesRomanItalic));
-  const mono=standardFace('mono',await doc.embedFont(StandardFonts.Courier));
+  const mono=standardFace('mono',await doc.embedFont(StandardFonts.Courier)),serif=standardFace('serif',await doc.embedFont(StandardFonts.TimesRoman));
   const script=customFace('script',await doc.embedFont(fontBytes,{subset:true}));
   const host=over.serviceHost??(typeof location!=='undefined'?location.host:'');
   const footLeft=new Map<PDFPage,string>();
@@ -91,19 +92,52 @@ async function buildPdf(input:BuildInput):Promise<Uint8Array> {
   };
 
   // Great Vibes' space glyph is too narrow to read as a word gap, so signature words are placed one by one.
-  // Text the script font cannot encode stays one raster run.
-  const sigWords=(t:string)=>script.covers(t)?clean(t).split(/ +/).filter(Boolean):[t];
+  // Text the face cannot encode stays one raster run. The face is a parameter so the signature style can be swapped.
+  const sigWords=(face:Face,t:string)=>face.covers(t)?clean(t).split(/ +/).filter(Boolean):[t];
   const sigGap=(size:number)=>size*.35;
-  const sigWidth=(t:string,size:number)=>{const w=sigWords(t);return w.reduce((n,x)=>n+ts.width(script,x,size),0)+sigGap(size)*(w.length-1);};
-  const drawSig=async(page:PDFPage,t:string,x:number,y:number,size:number)=>{
-    for(const word of sigWords(t))x+=await ts.draw(page,script,word,x,y,size,INK)+sigGap(size);
+  const sigWidth=(face:Face,t:string,size:number)=>{const w=sigWords(face,t);return w.reduce((n,x)=>n+ts.width(face,x,size),0)+sigGap(size)*(w.length-1);};
+  const drawSig=async(page:PDFPage,face:Face,t:string,x:number,y:number,size:number)=>{
+    for(const word of sigWords(face,t))x+=await ts.draw(page,face,word,x,y,size,INK)+sigGap(size);
   };
+  // Signature sitting on a field line of width w: natural size, shrunk to fit; null when even the smallest size does not fit.
+  const signature=(face:Face,t:string,box:FieldBox)=>{
+    const natural=sigWidth(face,t,26),size=natural>box.w?26*box.w/natural:26;
+    return size<12?null:(pg:PDFPage)=>drawSig(pg,face,t,box.x,box.y+3,size);
+  };
+  // One line of ordinary text on a field line: 11pt, shrunk down to 7pt to fit; null when it still does not fit.
+  const onLine=(t:string,box:FieldBox)=>{
+    let size=11;const natural=ts.width(serif,t,size);if(natural>box.w)size=Math.floor(11*box.w/natural*10)/10;
+    return size<7?null:async(pg:PDFPage)=>{await ts.draw(pg,serif,t,box.x,box.y+3,size,INK);};
+  };
+  // Address wrapped over the form's address lines at one common size (11pt down to 7pt).
+  const onLines=(t:string,boxes:FieldBox[])=>{
+    for(let size=11;size>=7;size-=.5){
+      const lines=ts.wrap(serif,t,size,Math.min(...boxes.map(b=>b.w)));
+      if(lines.length<=boxes.length)return async(pg:PDFPage)=>{for(const [i,line] of lines.entries())await ts.draw(pg,serif,line,boxes[i]!.x,boxes[i]!.y+3,size,INK);};
+    }
+    return null;
+  };
+  // Fills the agreement's own signature block. All-or-nothing: every value is planned (and must fit) before anything is drawn.
+  const fillInPlace=async(f:SignatureFields):Promise<boolean>=>{
+    const pgs=doc.getPages(),jobs:[number,(pg:PDFPage)=>Promise<void>][]=[];
+    const add=(box:FieldBox,job:((pg:PDFPage)=>Promise<void>)|null|undefined)=>{if(job===null)return false;if(job)jobs.push([box.page,job]);return true;};
+    const text=(box:FieldBox,t:string)=>box.printed?undefined:onLine(t,box);
+    const party=(p:Party,b:typeof f.contributor)=>add(b.signature,signature(script,p.signature,b.signature)) && add(b.name,text(b.name,p.name)) &&
+      add(b.address[0]!,b.address.some(a=>a.printed)?undefined:onLines(p.address,b.address)) && add(b.date,text(b.date,longDate(new Date(p.signedAt*1000))));
+    const ok=party(v.contributor,f.contributor) && add(f.contributor.github!,text(f.contributor.github!,`@${v.contributor.login}`)) &&
+      party(v.holder,f.holder) && add(f.holder.title!,text(f.holder.title!,'Rights holder'));
+    if(!ok)return false;
+    for(const [i,job] of jobs)await job(pgs[i]!);
+    footLeft.set(pgs[f.holder.signature.page]!,SIGNED_FOOT);
+    return true;
+  };
+
   // A party box is a list of units (the header with signature plus the first row line, then one unit per further line).
   // Units are placed top-down; when the next one cannot fit above the page's usable area the box's border is closed on
   // this page and the box continues, with a fresh border, on a continuation page. No unit is ever drawn below LIMIT.
   const partyBox=async(label:string,party:Party,rows:[string,string][])=>{
     const padX=20,padT=18,inner=CW-2*padX,labelW=92,gap=12,valueW=inner-labelW-gap,reserve=16,contTop=12;
-    let size=27;const natural=sigWidth(party.signature,size);if(natural>inner)size=Math.max(14,27*inner/natural);
+    let size=27;const natural=sigWidth(script,party.signature,size);if(natural>inner)size=Math.max(14,27*inner/natural);
     const sigH=Math.max(34,size*1.25),x0=MX+padX;
     const lineUnit=(k:string|null,line:string,last:boolean)=>({h:14+(last?5:0),draw:async(cy:number)=>{
       if(k!==null)await ts.draw(page,sans,k,x0,cy-9.5*.85,9.5,MUTED);
@@ -115,7 +149,7 @@ async function buildPdf(input:BuildInput):Promise<Uint8Array> {
     units.unshift({h:headH+first.h,draw:async(cy:number)=>{
       let cx=x0;for(const ch of label.toUpperCase())cx+=await ts.draw(page,sansB,ch,cx,cy-padT-8.5*.8,8.5,MUTED)+.68;
       const sy=cy-padT-8.5-14;
-      await drawSig(page,party.signature,x0,sy-sigH+size*.32+4,size);
+      await drawSig(page,script,party.signature,x0,sy-sigH+size*.32+4,size);
       page.drawLine({start:{x:x0,y:sy-sigH+4-3},end:{x:x0+inner,y:sy-sigH+4-3},thickness:.6,color:rgb(...INK)});
       await first.draw(cy-headH);}});
     await ensure(units[0]!.h+reserve+18);
@@ -128,7 +162,8 @@ async function buildPdf(input:BuildInput):Promise<Uint8Array> {
     close(reserve);y=cy-reserve-18;
   };
 
-  const youLabel=kind.you;
+  const youLabel=kind.you,inPlace=fields?await fillInPlace(fields):false;
+  if(!inPlace){
   await begin(heading,attribution);
   await h1('Signatures','This page completes the agreement on the preceding pages. Both parties signed electronically through the Tavotto CLA service.');
   const identity=(p:Party)=>`@${p.login} · ID ${p.githubId}`;
@@ -138,6 +173,7 @@ async function buildPdf(input:BuildInput):Promise<Uint8Array> {
   page.drawLine({start:{x:MX,y:THANKS_TOP},end:{x:W-MX,y:THANKS_TOP},thickness:.5,color:rgb(...RULE)});
   let ty=THANKS_TOP-14-10.5*.8;
   for(const line of ts.wrap(serifI,THANKS,10.5,CW)){await ts.draw(page,serifI,line,MX,ty,10.5,NOTE);ty-=15;}
+  }
 
   // Certificate
   await begin('Electronic signature certificate',`Generated ${longDate(now)}${host?` · ${host}`:''}`);
@@ -161,6 +197,15 @@ async function buildPdf(input:BuildInput):Promise<Uint8Array> {
   }
   y-=18;
   for(const line of ts.wrap(sans,CERT_NOTE,8.5,CW)){await ensure(14);await ts.draw(page,sans,line,MX,y-8.5*.85,8.5,NOTE);y-=13.2;}
+
+  if(inPlace){
+    // The thanks line closes the certificate: a quiet bordered box, italic.
+    const lines=ts.wrap(serifI,THANKS,10.5,CW-32),h=lines.length*14+18;
+    y-=12;if(y-h<54)await cont();
+    page.drawSvgPath(roundRect(CW,h,6),{x:MX,y,borderColor:rgb(...RULE),borderWidth:.6});
+    let ty=y-9-10.5*.8;for(const line of lines){await ts.draw(page,serifI,line,MX+16,ty,10.5,NOTE);ty-=14;}
+    y-=h;
+  }
 
   // Footers last, when the total page count is known.
   const all=doc.getPages(),total=all.length;
