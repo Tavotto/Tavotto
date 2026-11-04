@@ -71,12 +71,11 @@ from .roots import (
     CODE_ROOTS_ERROR,
     CODE_ROOTS_NO_RESPONSE,
     ROOTS_ENV,
-    SOURCE_HOME_SCOPE,
+    SOURCE_LOCAL_SCOPE,
     WORKSPACE_ENVS,
     WORKSPACE_FAILURES,
     RootAuthority,
     canonical_path,
-    contains_home,
     home_dirs,
 )
 
@@ -347,13 +346,15 @@ def _nt_rooted_escape(value: str, roots: list[str], resolve=lambda p: p) -> str 
     if not vdrive:
         return value  # `\x` / `/x` / `\` / `/`：有根无盘符，落点取决于 worker 的盘
     real = resolve(ntpath.normpath(value))
+    if local_scope_active():
+        return real if _scope_denied(real) else None
     for root in roots:
         try:
             common = ntpath.commonpath([real, root])
         except ValueError:
             continue
         if ntpath.normcase(common) == ntpath.normcase(root):
-            return real if _home_scope_denied_if_active(real) else None
+            return None
     return real
 
 
@@ -563,35 +564,31 @@ def root_diagnostics() -> dict:
     return _ROOT_AUTHORITY.diagnostics()
 
 
-def home_scope_active() -> bool:
-    """这条连接此刻的根是不是「主目录兜底」那一档（`roots.SOURCE_HOME_SCOPE`，ADR 0009 §1b）。"""
-    return _ROOT_AUTHORITY.snapshot().source == SOURCE_HOME_SCOPE
+def local_scope_active() -> bool:
+    """这条连接此刻的根是不是「本机兜底」那一档（`roots.SOURCE_LOCAL_SCOPE`，ADR 0009 §1b）。"""
+    return _ROOT_AUTHORITY.snapshot().source == SOURCE_LOCAL_SCOPE
 
 
-def _home_scope_denied(real: str) -> bool:
-    """主目录兜底这一档的硬拦：主目录本身及上级、改图助手同一份敏感黑名单（`engine/fixtools/readscope.py`，
-    ADR 0149 §三：凭据目录、私钥形状、`.env`、浏览器 profile、Tavotto 自己的密钥文件；词法与解析后各判一次）。
-    引擎里没有那份黑名单（旧引擎）就一律拦——失败封闭，不退回「整个主目录都行」。"""
-    if contains_home(real):
-        return True
+def _scope_denied(real: str) -> bool:
+    """本机兜底这一档**只拦凭据类文件**：改图助手同一份黑名单（`engine/fixtools/readscope.py`，ADR 0149 §三：`.env*`、
+    私钥形状、SSH / 云服务等凭据目录、浏览器登录数据、Tavotto 自己的密钥文件；词法与解析后各判一次，符号链接指进去也拦）。
+    位置不拦——用户的数据可能在任何盘、任何目录（维护者 2026-11-05）。引擎里没有那份黑名单（旧引擎）就一律拦：失败封闭。"""
     scope_cls = getattr(_optional_engine("fixtools.readscope"), "ReadScope", None)
     if scope_cls is None:
         return True
     homes = home_dirs()
-    if not homes:
-        return True
-    home = next((h for h in homes if _within(real, h)), homes[0])
-    # 主目录外的那个根（安全 cwd）：固定位置表管不到，文件名形状与 Tavotto 自己的密钥文件照样拦
+    home = next(
+        (h for h in homes if _within(real, h)), homes[0] if homes else os.path.expanduser("~")
+    )
     return scope_cls(home=home, project_root=home).is_denied(real)
 
 
-def _home_scope_denied_if_active(real: str) -> bool:
-    return home_scope_active() and _home_scope_denied(real)
-
-
 def _in_scope(real: str, roots) -> bool:
-    """`real`（已规范化）在允许的根之内，且不在主目录兜底的硬拦区里。**判「在不在范围内」只经这里**。"""
-    return any(_within(real, r) for r in roots) and not _home_scope_denied_if_active(real)
+    """`real`（已规范化）在不在范围内。**判「在不在范围内」只经这里**：本机兜底那一档不看根、只看凭据黑名单
+    （UNC 网络路径、新插的盘也算本机）；其余档看在不在允许的根之内。"""
+    if local_scope_active():
+        return not _scope_denied(real)
+    return any(_within(real, r) for r in roots)
 
 
 def observe_mcp_client(protocol_version: str | None, capabilities, client_info) -> None:
@@ -690,7 +687,9 @@ def check_scope(path: str) -> str:
     # doing this first would turn the same deleted-cwd case back into ENOENT.
     target = os.path.expanduser(str(path))
     if not os.path.isabs(target):
-        if len(roots) != 1:
+        if (
+            len(roots) != 1 or local_scope_active()
+        ):  # 本机兜底的根是 `/` / 盘符根：相对路径没有可靠的基准
             failure = WORKSPACE_FAILURES[CODE_AMBIGUOUS_ROOT]
             raise BridgeError(
                 failure.summary,
@@ -702,12 +701,8 @@ def check_scope(path: str) -> str:
             )
         target = os.path.join(roots[0], target)
     real = canonical_path(target)
-    if any(_within(real, r) for r in roots):
-        if not home_scope_active():
-            return real
-        # 主目录兜底：项目（目录本身 / 文件所在目录）不能是整个主目录，目标也不能在敏感位置
-        project = real if os.path.isdir(real) else os.path.dirname(real)
-        if not (_home_scope_denied(real) or _home_scope_denied(project)):
+    if local_scope_active():
+        if not _scope_denied(real):
             return real
         failure = WORKSPACE_FAILURES[CODE_PATH_DENIED]
         raise BridgeError(
@@ -830,12 +825,12 @@ def _tripwire_roots(project: str) -> tuple[str, ...] | None:
     比 Agent 能指向的地方更大。根是 spawn 时烤进 worker 的：根集合变了，池键也变（另一条会话）。
     GUI / native / CLI 不经这里，不装。
 
-    主目录兜底那一档（ADR 0009 §1b）的根是整个主目录，脚本能写的地方收窄到**这个项目**：否则脚本可以往
-    `~/.ssh` 这类硬拦区写。"""
+    本机兜底那一档（ADR 0009 §1b）不装：范围本来就是本机任意位置，与 GUI 里自己运行脚本同一条线（维护者 2026-11-05）。
+    `project` 留作参数：别的档将来要按项目收窄时不用改调用处。"""
     if WRITE_ROOT_TRIPWIRE_FEATURE not in engine_features():
         return None
-    if home_scope_active():
-        return (project,)
+    if local_scope_active():
+        return None
     return tuple(allowed_roots())
 
 

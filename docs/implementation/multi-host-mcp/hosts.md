@@ -149,7 +149,7 @@
   macOS `~/Library/Logs/Claude/mcp*.log`、Windows `%APPDATA%\Claude\logs`。
 - 官方排障：Windows 上 server 环境里可能没有 `APPDATA`，要在 `env` 里写展开后的值——Tavotto 的
   配置目录在 Windows 上正是 `%APPDATA%\Tavotto`，所以 Windows 上生成时带上 `APPDATA`。
-- 没有项目 cwd / Roots：配置生成器（`--project-root`）授权来自 `TAVOTTO_MCP_ROOTS`；桌面「接入」按钮写 `TAVOTTO_MCP_SCOPE=home`，范围是主目录下的具体项目、敏感目录硬拦（ADR 0009 §1b，2026-11-04）。
+- 没有项目 cwd / Roots：配置生成器（`--project-root`）授权来自 `TAVOTTO_MCP_ROOTS`；桌面「接入」按钮写 `TAVOTTO_MCP_SCOPE=local`，范围是本机任意位置、只拦凭据类文件（ADR 0009 §1b，2026-11-05）。
 - Linux 没有官方 Claude Desktop；`.mcpb` 扩展是可选包装，本轮不做。
 - 宿主内置的 Node / 云端代码执行环境不是本机 Python，路径也不是本机文件系统——不能传给本地 Tavotto。
 
@@ -217,6 +217,6 @@
 | 宿主 MCP 列表里 tavotto 红 / 起不来 | 服务器没启动 | 宿主日志；`<python> <包>/mcp/server.py --health` 在终端跑不跑得起来 | 重新生成配置（`--python` 指一个真能跑的解释器）；包目录挪过就重新生成 |
 | 列表里是绿的，但对话里没有工具 | 工具没发现 / 当前智能体未启用 | VS Code Configure Tools、Trae 智能体 MCP 栏、DSH 等 `mcp__tavotto__*` 出现 | 在所用智能体里启用；重开对话 |
 | 只有 `tavotto_health` 一个工具 | 引擎不可用（降级 server） | health 的 `code`：`desktop_only` / `tavotto_missing` / `engine_too_old` / `engine_incompatible` / `engine_unavailable` | 按 code 只修那一项（provision / pipx / 升级引擎） |
-| 工具在，但打开图报 `path_out_of_scope` / `no_workspace_root` | 项目未授权 | health 的 `roots` / `root_authority.source` | 用正确的 `--project-root` 重新生成；不要把 `TAVOTTO_MCP_ROOTS` 设成 HOME（主目录兜底只认按钮写的 `TAVOTTO_MCP_SCOPE=home`，带敏感目录硬拦，ADR 0009 §1b） |
+| 工具在，但打开图报 `path_out_of_scope` / `no_workspace_root` | 项目未授权 | health 的 `roots` / `root_authority.source` | 用正确的 `--project-root` 重新生成；要放开整台机器就用按钮写的 `TAVOTTO_MCP_SCOPE=local`（只拦凭据类文件，ADR 0009 §1b），不要把 `TAVOTTO_MCP_ROOTS` 设成 HOME（会被拒） |
 | 工具正常、没有画布 | UI 没显示 | `checks.canvas_resource.ok` 为真但宿主不渲染 MCP Apps | 这是宿主能力 / 设置；工具流程照常走完，不要把外部窗口叫「内嵌画布」 |
 | 宿主提示被管理员 / 策略禁止 | 组织策略 | 宿主的策略提示 | 找管理员；**不要**把「全部工具自动批准 / 关闭安全策略」当通用修复 |

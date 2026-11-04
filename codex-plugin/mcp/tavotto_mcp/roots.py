@@ -23,17 +23,31 @@ from urllib.parse import urlsplit
 from urllib.request import url2pathname
 
 ROOTS_ENV = "TAVOTTO_MCP_ROOTS"
-#: 「接入 AI 编辑器」按钮给不报项目目录的宿主写的兜底（用户 2026-11-04，ADR 0009 §1b）：``home`` = 宿主什么目录
-#: 都没给时，范围是主目录下的具体项目，主目录本身与敏感目录硬拦（硬拦在 ``bridge`` 里，用引擎 ``readscope``
-#: 那一份黑名单）。它排在宿主自己给的来源之后、cwd 之前，不扩宽 ``TAVOTTO_MCP_ROOTS``。
+#: 「接入 AI 编辑器」按钮给不报项目目录的宿主写的兜底（维护者 2026-11-05，ADR 0009 §1b）：``local`` = 宿主什么目录
+#: 都没给时，范围是**本机任意位置**——用户的数据可能在任何盘、任何目录，不替用户加锁；只拦凭据类文件（硬拦在
+#: ``bridge`` 里，用引擎 ``readscope`` 那一份黑名单：``.env*``、私钥形状、凭据目录、浏览器登录数据、Tavotto 的密钥
+#: 文件）。它排在宿主自己给的来源之后、cwd 之前，不扩宽 ``TAVOTTO_MCP_ROOTS``。
 #: 与 ``tavotto.engine.hostconnect`` 的同名常量同源。
 SCOPE_ENV = "TAVOTTO_MCP_SCOPE"
-SCOPE_HOME = "home"
-SOURCE_HOME_SCOPE = "home_scope"
+SCOPE_LOCAL = "local"
+SOURCE_LOCAL_SCOPE = "local_scope"
 
 
-def home_scope_requested() -> bool:
-    return (os.environ.get(SCOPE_ENV) or "").strip().lower() == SCOPE_HOME
+def local_scope_requested() -> bool:
+    return (os.environ.get(SCOPE_ENV) or "").strip().lower() == SCOPE_LOCAL
+
+
+def local_roots() -> tuple[str, ...]:
+    """本机的文件系统根：POSIX 是 ``/``；Windows 是现有的每个盘符根（诊断里列出来；判范围不靠它，见 ``bridge._in_scope``）。"""
+    if os.name != "nt":
+        return (os.path.abspath(os.sep),)
+    lister = getattr(os, "listdrives", None)
+    if callable(lister):
+        try:
+            return tuple(lister())
+        except OSError:
+            pass
+    return tuple(f"{c}:\\" for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" if os.path.isdir(f"{c}:\\"))
 
 
 WORKSPACE_ENVS = (
@@ -194,8 +208,8 @@ WORKSPACE_FAILURES: dict[str, WorkspaceFailure] = {
         _failure(
             CODE_PATH_DENIED,
             NARROW_THE_PATH,
-            "这条路径是整个主目录，或在敏感位置里（凭据、密钥、浏览器数据等），Tavotto 不打开也不让脚本写那里。",
-            "改用一个具体项目文件夹里的路径；不要换着写法重试同一个位置。",
+            "这条路径是凭据类文件或在凭据目录里（.env、私钥、SSH / 云服务凭据、浏览器登录数据等），Tavotto 不碰它。",
+            "改用别的路径；不要换着写法重试同一个位置。",
         ),
         _failure(
             CODE_ROOT_TOO_BROAD,
@@ -636,14 +650,14 @@ class RootAuthority:
             roots, warnings = self._paths_from_config(raw, reject_plugin=True, reject_fs_root=True)
             return roots, "explicit_env", warnings
 
-        home_scope = home_scope_requested()
+        local_scope = local_scope_requested()
         if self._protocol_supported:
-            # 主目录兜底：宿主给了可用目录就用宿主的；清单为空 / 全被拒 / 查询失败才往下落（ADR 0009 §1b）
-            if self._protocol_state == "ready" and (self._protocol_roots or not home_scope):
+            # 本机兜底：宿主给了可用目录就用宿主的；清单为空 / 全被拒 / 查询失败才往下落（ADR 0009 §1b）
+            if self._protocol_state == "ready" and (self._protocol_roots or not local_scope):
                 return self._protocol_roots, "mcp_roots", self._protocol_warnings
             if self._protocol_state in {"pending", "stale"}:
                 return (), "mcp_roots_pending", ()
-            if not home_scope:
+            if not local_scope:
                 warnings = tuple(x for x in (self._protocol_error,) if x)
                 if self._protocol_state == "no_response":
                     return (), "mcp_roots_no_response", warnings
@@ -660,15 +674,9 @@ class RootAuthority:
                 )
                 return roots, f"workspace_env:{name}", warnings
 
+        if local_scope:
+            return local_roots(), SOURCE_LOCAL_SCOPE, ()
         cwd, why = self._safe_cwd()
-        if home_scope:
-            # 主目录 ∪ 安全的 cwd：ZCode 项目对话的 cwd 就是项目（可能在 D: 这类主目录外的盘）；Claude 桌面版的 cwd
-            # 是 `/` 之类、被 `_safe_cwd` 拒掉，只剩主目录（hosts.md）。cwd 在主目录里时不重复列
-            homes = home_dirs()
-            if not homes:
-                return (), "none", ("找不到当前账户的主目录",)
-            extra = (cwd,) if cwd and not any(_within(cwd, h) for h in homes) else ()
-            return homes + extra, SOURCE_HOME_SCOPE, ()
         if cwd is None:
             return (), "none", (why,)
         return (cwd,), "cwd", ()

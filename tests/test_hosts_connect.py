@@ -2,7 +2,7 @@
 
 主语：**用户机器上宿主的配置文件**（这里在临时 HOME / APPDATA 里造）——写之前备份、只动 tavotto 一条、读不懂不写、
 断开只删 tavotto；以及写进去的那条命令真的起得来（health 用源码树的 `python -m tavotto mcp` 真跑一次）。
-点一下就接好、不选文件夹（用户 2026-11-04，ADR 0009 §1b）：会报项目目录的宿主 `env` 为空，其余写主目录兜底；
+点一下就接好、不选文件夹（用户 2026-11-04，ADR 0009 §1b）：会报项目目录的宿主 `env` 为空，其余写本机兜底（只拦凭据类文件）；
 旧版写过的 `TAVOTTO_MCP_ROOTS=<选的文件夹>` 在 `list` 时一次性迁移。
 """
 
@@ -42,7 +42,7 @@ def test_hosts_is_a_cli_command():
     assert "hosts" in engine_cli.COMMANDS
 
 
-HOME_SCOPE = {H.SCOPE_ENV: H.SCOPE_HOME}
+LOCAL_SCOPE = {H.SCOPE_ENV: H.SCOPE_LOCAL}
 
 
 def test_explicit_project_root_must_be_a_specific_folder(home, project, tmp_path):
@@ -71,7 +71,7 @@ def test_connect_cursor_adds_only_tavotto_backs_up_and_is_idempotent(home, proje
     entry = data["mcpServers"]["tavotto"]
     launch = H.mcp_launch()
     assert [entry["command"], *entry["args"]] == [launch["command"], *launch["args"]]
-    assert entry["env"] == HOME_SCOPE
+    assert entry["env"] == LOCAL_SCOPE
     backups = list(cfg.parent.glob("mcp.json.tavotto-backup-*"))
     assert len(backups) == 1 and json.loads(backups[0].read_text())["mcpServers"] == {
         "other": {"command": "x"}
@@ -89,7 +89,7 @@ def test_hosts_that_report_their_own_project_get_no_variable(home):
     for h in H.HOST_IDS:
         if h == "codex":
             continue
-        want = {} if h in H.HOSTS_WITH_OWN_WORKSPACE else HOME_SCOPE
+        want = {} if h in H.HOSTS_WITH_OWN_WORKSPACE else LOCAL_SCOPE
         assert H.env_for(h) == want, h
     user = H._appdata() / "Code" / "User"
     user.mkdir(parents=True)
@@ -127,7 +127,7 @@ def test_legacy_folder_entries_are_migrated_once(home, project, monkeypatch):
     monkeypatch.setattr(H, "_claude_argv", lambda: None)
 
     out = H.list_hosts()
-    assert json.loads(cursor.read_text())["mcpServers"]["tavotto"]["env"] == HOME_SCOPE
+    assert json.loads(cursor.read_text())["mcpServers"]["tavotto"]["env"] == LOCAL_SCOPE
     assert list(cursor.parent.glob("mcp.json.tavotto-backup-*"))
     assert json.loads(trae.read_text()) == hand
     by = {h["id"]: h for h in out["hosts"]}
@@ -230,7 +230,7 @@ def test_claude_desktop_standard_config(home, project):
     d.mkdir(parents=True)
     assert H.connect("claude-desktop")["ok"]
     entry = json.loads((d / "claude_desktop_config.json").read_text())["mcpServers"]["tavotto"]
-    assert entry["env"] == HOME_SCOPE  # 没有项目 cwd / roots：主目录兜底
+    assert entry["env"] == LOCAL_SCOPE  # 没有项目 cwd / roots：本机兜底
 
 
 def test_not_installed_is_reported_not_guessed(home):
@@ -341,7 +341,7 @@ def test_antigravity_writes_both_config_files_and_disconnect_drops_both(home, pr
     for f in _agy_files(home):
         entry = json.loads(f.read_text(encoding="utf-8"))["mcpServers"]["tavotto"]
         assert set(entry) == {"command", "args", "env"}  # 与 Cursor 同形，不加 type
-        assert entry["env"] == HOME_SCOPE
+        assert entry["env"] == LOCAL_SCOPE
     assert H.list_hosts()["hosts"][-1] == {
         "id": "antigravity",
         "label": "Antigravity",

@@ -232,7 +232,7 @@ L4 真宿主执行工具调用 → L5 科研绘图任务到编辑、保存、重
     - **按钮这一侧的判据是执行器自己的**（`connect_targets` / `judge_connect_written`，不 import 产品的 hostconnect）：接入前在
       每个目标文件里去掉残留的 tavotto、放一条旁人条目 `lab-keep-me`（ZCode 那份 `enabled=false`）；点完之后每个文件**只多出 tavotto
       一条**，命令 = 安装目录里的 `tavotto-cli.exe`、参数 = `["mcp"]`、env = 执行器自己的 `CONNECT_EXPECTED_ENV`（WorkBuddy 为空、
-      ZCode 为 `TAVOTTO_MCP_SCOPE=home`），几个文件里的那一条相同；WorkBuddy 另要有按执行器自己的指纹算法算出的信任记录。文件不符 → `connect=failed`，不跑宿主；文件对了但那一行没显示
+      ZCode 为 `TAVOTTO_MCP_SCOPE=local`），几个文件里的那一条相同；WorkBuddy 另要有按执行器自己的指纹算法算出的信任记录。文件不符 → `connect=failed`，不跑宿主；文件对了但那一行没显示
       「已接入」→ `connect=failed`，宿主照跑。报告带装好的 `tavotto-cli hosts list --json` 怎么看这一行（`connect.cli_list`）。
     - **宿主这一侧**：宿主仍跑在 desktop-live 那个隔离的家里（ZCode 的 `zdata`、WorkBuddy 的常驻家，落盘 key 与登录态的范围不变），
       执行器把按钮写的那一条放进宿主的家里**同样的相对位置**，并在跑宿主的那段时间给真实目录与宿主的家两处都包上录制器（只换

@@ -26,7 +26,7 @@ order: 80
   Claude 桌面版 `claude_desktop_config.json`；Claude Code 用它自己的 `claude mcp add --scope user`；Codex 委托
   `codexinstall`），条目是这一份 Tavotto 的 `tavotto-cli mcp`（`mcp_launch()`）。**点一下就接、不选文件夹**（2026-11-04，ADR 0009
   §1b）：会自己报项目的宿主（`HOSTS_WITH_OWN_WORKSPACE` = Claude Code / VS Code / WorkBuddy）`env` 为空；其余只写
-  `TAVOTTO_MCP_SCOPE=home`（服务端兜底 = 主目录 ∪ 安全 cwd，敏感目录硬拦）；命令行 `--project-root` 仍写
+  `TAVOTTO_MCP_SCOPE=local`（服务端兜底 = 本机任意位置，只拦凭据类文件）；命令行 `--project-root` 仍写
   `TAVOTTO_MCP_ROOTS`（根 / HOME / HOME 的上级拒绝）。旧按钮写的文件夹在 `hosts list` 时一次性迁移。三条纪律：写之前
   备份、只动 tavotto 一条、读不懂（JSONC 等）就不写并报 `config_unreadable`；断开只删 tavotto；WorkBuddy 额外在
   `mcp-approvals.json` 只信任 tavotto 这一条（用户点「接入」即同意，方案决策）。看护 `tests/test_hosts_connect.py`。

@@ -4936,8 +4936,8 @@ CONNECT_DECOY_ENTRY = {"command": "cmd.exe", "args": ["/c", "exit", "0"], "env":
 #: 2026-11-04，ADR 0009 §1b）按钮不再写它
 CONNECT_ROOTS_ENV = "TAVOTTO_MCP_ROOTS"
 #: 按钮应当给每个宿主写的 `env`——执行器自己的知识，不 import 产品：WorkBuddy 的服务 cwd 是会话工作目录、自己报项目，
-#: 什么都不写；ZCode 写主目录兜底（服务端的范围 = 主目录 ∪ 安全的 cwd，ZCode 项目对话的 cwd 就是项目）
-CONNECT_EXPECTED_ENV = {"zcode": {"TAVOTTO_MCP_SCOPE": "home"}, "workbuddy": {}}
+#: 什么都不写；ZCode 写本机兜底（服务端的范围 = 本机任意位置，只拦凭据类文件）
+CONNECT_EXPECTED_ENV = {"zcode": {"TAVOTTO_MCP_SCOPE": "local"}, "workbuddy": {}}
 
 
 def connect_targets(host_id: str, home: Path) -> list[tuple[Path, tuple[str, ...]]]:

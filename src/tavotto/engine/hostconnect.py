@@ -13,8 +13,9 @@ JSON；按钮背后不另写一套安装器，README / 命令行 / 按钮 / Wind
 
 * 会自己报项目目录的宿主（`HOSTS_WITH_OWN_WORKSPACE`：Claude Code 的 `roots/list`、VS Code / WorkBuddy 的工作区
   cwd）：`env` 为空，用宿主报的目录；写死一个文件夹反而把它们锁在那一个项目里。
-* 其余宿主：`env` 只有 `TAVOTTO_MCP_SCOPE=home`——宿主没报目录时，服务端的最后一档是「主目录下的具体项目，
-  敏感目录硬拦」（与改图助手的读取范围同一份黑名单，ADR 0149 §三）；宿主报了目录仍以宿主为准。
+* 其余宿主：`env` 只有 `TAVOTTO_MCP_SCOPE=local`——宿主没报目录时，服务端的最后一档是「本机任意位置，只拦凭据类
+  文件」（与改图助手同一份黑名单，ADR 0149 §三；维护者 2026-11-05：用户的数据可能在任何目录，不替用户加锁）；
+  宿主报了目录仍以宿主为准。
 * 命令行 `--project-root` 仍可显式指定一个文件夹（写 `TAVOTTO_MCP_ROOTS`，主目录 / 磁盘根不收）。
 
 旧版按钮写过 `TAVOTTO_MCP_ROOTS=<选的文件夹>`（记在配置目录的 `hosts.json`）：`list` 时一次性迁移成上面的形状。
@@ -62,9 +63,9 @@ HOST_IDS = (
 )
 SERVER_NAME = "tavotto"
 ROOTS_ENV = "TAVOTTO_MCP_ROOTS"
-#: 与 MCP 服务端 `tavotto_mcp/roots.py` 的 `SCOPE_ENV` / `SCOPE_HOME` 同源（`tests/test_hosts_connect.py` 对拍）
+#: 与 MCP 服务端 `tavotto_mcp/roots.py` 的 `SCOPE_ENV` / `SCOPE_LOCAL` 同源（`tests/test_hosts_connect.py` 对拍）
 SCOPE_ENV = "TAVOTTO_MCP_SCOPE"
-SCOPE_HOME = "home"
+SCOPE_LOCAL = "local"
 #: 会自己把项目目录报给 MCP 服务端的宿主（`docs/implementation/multi-host-mcp/hosts.md` 逐家核过）：
 #: Claude Code 回 `roots/list`（启动目录 + `/add-dir`）；VS Code 的 stdio 服务 cwd 默认是工作区；WorkBuddy 的服务
 #: cwd 是会话工作目录（Windows Lab 实测根来源 `cwd`）。Codex 走插件，不经这里。
@@ -564,12 +565,12 @@ def connected(host: str, launch: dict | None) -> bool:
 
 
 def env_for(host: str, root: str | None = None) -> dict:
-    """写进宿主那一条的 `env`：显式文件夹 → `TAVOTTO_MCP_ROOTS`；会自己报目录的宿主 → 空；其余 → 主目录兜底。"""
+    """写进宿主那一条的 `env`：显式文件夹 → `TAVOTTO_MCP_ROOTS`；会自己报目录的宿主 → 空；其余 → 本机兜底。"""
     if root:
         return {ROOTS_ENV: root}
     if host in HOSTS_WITH_OWN_WORKSPACE:
         return {}
-    return {SCOPE_ENV: SCOPE_HOME}
+    return {SCOPE_ENV: SCOPE_LOCAL}
 
 
 def _same_launch(got: dict | None, want: dict) -> bool:
@@ -772,7 +773,7 @@ def cli(argv: list[str]) -> int:
     ap.add_argument("host", nargs="?", choices=HOST_IDS)
     ap.add_argument(
         "--project-root",
-        help="只授权这一个项目文件夹（可选；不给时宿主报的项目目录优先，其余宿主是主目录下的具体项目）",
+        help="只授权这一个项目文件夹（可选；不给时宿主报的项目目录优先，其余宿主是本机任意位置、凭据类文件除外）",
     )
     ap.add_argument("--json", action="store_true", help="输出一行机器可读结果")
     args = ap.parse_args(argv)

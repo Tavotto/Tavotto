@@ -2,7 +2,7 @@
 
 状态：已实施；真实 Codex Desktop 视觉证据按
 [`../acceptance/codex-desktop-canvas.md`](../acceptance/codex-desktop-canvas.md) 收集
-（2026-08-24）；§1b 主目录兜底 2026-11-04 修订（维护者裁决）
+（2026-08-24）；§1b 本机兜底 2026-11-04 / 11-05 修订（维护者裁决）
 
 相关：[0006 Codex MCP App](0006-codex-mcp-app-and-publication-profile.md)
 
@@ -37,35 +37,34 @@
 版本/协议、initialize 实际声明的 capability 名称、Roots/工作区确认状态，以及当前
 这次失败属于哪一档（`authorization`）。它是诊断记录，不从版本号猜 capability。
 
-### 1b. 主目录兜底 `TAVOTTO_MCP_SCOPE=home`（2026-11-04 修订，维护者裁决）
+### 1b. 本机兜底 `TAVOTTO_MCP_SCOPE=local`（2026-11-04 / 11-05 修订，维护者裁决）
 
 **背景**：桌面设置「接入 AI 编辑器」原先第一次接入必须先选一个项目文件夹，写成 `TAVOTTO_MCP_ROOTS`。它排在
 来源 1，于是会自己报项目的宿主（Claude Code 的 `roots/list`、VS Code / WorkBuddy 的工作区 cwd）也被锁在那一个
 文件夹里，换个项目就 `path_out_of_scope`；不报项目的宿主（Claude 桌面版、Trae……）又只能靠它。维护者要求
-「点一下就自动加到宿主里」。
+「点一下就自动加到宿主里」；11-05 进一步裁决：「全部放开，除了 .env 和私钥凭据文件，用户可能把数据放在任何目录，
+我们不能自己加锁把自己锁住」。
 
 **决策**：
 
 * 按钮（`engine/hostconnect.py`）不再写 `TAVOTTO_MCP_ROOTS`。会自己报项目的宿主（`HOSTS_WITH_OWN_WORKSPACE`）
-  `env` 为空，走上面的 2–5；其余宿主只写 `TAVOTTO_MCP_SCOPE=home`。命令行 `--project-root` 照旧写来源 1。
-* `TAVOTTO_MCP_SCOPE=home` 只改**兜底**：来源 1 与宿主明确给出的可用目录（`roots/list` 非空、用户确认的目录、
+  `env` 为空，走上面的 2–5；其余宿主只写 `TAVOTTO_MCP_SCOPE=local`。命令行 `--project-root` 照旧写来源 1。
+* `TAVOTTO_MCP_SCOPE=local` 只改**兜底**：来源 1 与宿主明确给出的可用目录（`roots/list` 非空、用户确认的目录、
   工作区变量）照旧优先，**不被它扩宽**；`roots/list` 还没问过（`pending` / `stale`）时先问，不抢先落下来。
-  宿主没给可用目录时（清单为空 / 全被拒 / 查询失败 / 根本没有这条路），根是**当前账户的主目录 ∪ 安全 cwd**
-  （cwd 规则同来源 5；在主目录里的不重复列），来源记为 `home_scope`。cwd 一并收下，是因为 ZCode 项目对话的 cwd
-  就是项目，可能在 `D:` 这类主目录外的盘。
-* 这一档的硬拦在 `bridge`（`_in_scope` / `check_scope`）里、**每个判「在不在范围内」的地方都经过**：打开目标、MCP
-  来源的 `argv` 路径、会话恢复。拦的是：项目是整个主目录（或上级），以及改图助手同一份敏感黑名单
-  （`engine/fixtools/readscope.py`，ADR 0149 §三：凭据目录、私钥形状、`.env*`、浏览器 profile、Tavotto 自己的
-  密钥文件；词法与解析后各判一次，符号链接指进去也拦）。引擎里没有那份黑名单（旧引擎）就一律拦，失败封闭。
-  被拦回 `path_denied`（`narrow_the_path`）。
-* 这一档下 MCP 来源的 safe 运行，写入根绊线收窄到**这个项目**：根是整个主目录时，脚本不能顺手往硬拦区写。
-* 宿主交来的主目录本身照旧拒（ADR 0109）：主目录兜底是 Tavotto 自己写的一档，不是把宿主的 `roots = ~` 当真。
+  宿主没给可用目录时（清单为空 / 全被拒 / 查询失败 / 根本没有这条路），来源记为 `local_scope`，范围是**本机任意
+  位置**（任何盘、主目录本身、UNC 路径都算；`roots` 只列出 `/` 或各盘符根供诊断，判范围不靠它）。相对路径没有
+  可靠基准，要求绝对路径（`ambiguous_workspace_root`）。
+* **只拦凭据类文件**，用改图助手同一份黑名单（`engine/fixtools/readscope.py`，ADR 0149 §三：`.env*`、私钥形状、
+  SSH / 云服务等凭据目录、浏览器登录数据、Tavotto 自己的密钥文件；词法与解析后各判一次，符号链接指进去也拦）。
+  判「在不在范围内」**只经 `bridge._in_scope`**：打开目标、MCP 来源的 `argv` 路径、会话恢复都过。引擎里没有那份
+  黑名单（旧引擎）就一律拦，失败封闭。被拦回 `path_denied`（`narrow_the_path`）。
+* 这一档不装写入根绊线：范围本来就是本机任意位置，与 GUI 里自己运行脚本同一条线。
+* 宿主交来的主目录本身照旧拒（ADR 0109）：本机兜底是 Tavotto 自己写的一档，不是把宿主的 `roots = ~` 当真。
 * 旧按钮写过的 `TAVOTTO_MCP_ROOTS=<hosts.json 里记的文件夹>`，在 `hosts list` 时一次性迁移成新形状；用户手写的
   别的文件夹不碰。
 
-**代价**：没报项目的宿主里，模型能指向的范围从「一个文件夹」变成「主目录下的具体项目」；与改图助手的读取
-范围（ADR 0149 §三，维护者 11-01 定论「就是要可以读整个主目录」）同一条线。看护 `tests/test_mcp_home_scope.py`、
-`tests/test_hosts_connect.py`。
+**代价**：没报项目的宿主里，模型能让 Tavotto 打开、运行的脚本从「一个文件夹里的」变成「本机任意位置的」；
+维护者判断宿主模型本身足够安全，凭据类文件照拦。看护 `tests/test_mcp_local_scope.py`、`tests/test_hosts_connect.py`。
 
 ### 2. 模型给候选，用户给权限
 
