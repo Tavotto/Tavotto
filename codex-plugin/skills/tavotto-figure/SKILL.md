@@ -25,7 +25,8 @@ description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖�
    可用；只有用户需要宿主内嵌画布/MCP 工具时，才建议 provision 或
    `pipx install "tavotto[worker]"`。其余错误码（含 `engine_too_old` / `engine_incompatible`）按 `references/first-run-and-recovery.md` 处理。
 5. 当前会话没有 `tavotto_health` 这个工具：说明 Tavotto 没有在本会话加载。按**当前
-   宿主**给安装说明：Codex 给 README 的两条插件安装命令（见
+   宿主**给安装说明：用户装了 Tavotto 桌面版，最省事的是让他在桌面版「设置 › 改图助手 › 接入 AI 编辑器」
+   里点这一家的「接入」；否则 Codex 给 README 的两条插件安装命令（见
    `references/first-run-and-recovery.md`）；其他宿主按 `references/other-hosts.md` 里那一家
    的步骤；认不出宿主就给那里的中性步骤——**不要默认让所有人执行 `codex plugin add`**。
    然后要求**新开会话**（或按宿主要求重载 MCP 服务），然后**停止**；
@@ -41,7 +42,7 @@ description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖�
 | --- | --- |
 | 写任何画图脚本之前 | `references/figure-contract.md`（契约详解 + 模板）、`references/publication-style.md`（默认值 / 克制 / 组图） |
 | 工具缺失、引擎不可用、要装/升级/provision、工作区授权 | `references/first-run-and-recovery.md` |
-| 宿主不是 Codex（Cursor / Claude / VS Code / Trae / DSH / WorkBuddy / ZCode …）的安装、重载、能力差异 | `references/other-hosts.md` |
+| 宿主不是 Codex（Cursor / Claude / VS Code / Trae / Antigravity / DSH / WorkBuddy / ZCode …）的安装、重载、能力差异 | `references/other-hosts.md` |
 | 要交给 Tavotto 桌面窗口 | `references/desktop-handoff.md`（含全部错误码分诊） |
 | 用户撞上 Tavotto 的缺陷 | `references/issue-reporting.md` |
 | 用户要改的东西鼠标改不了 | `references/compatibility.md`（能改 / 必须回代码改） |
@@ -81,8 +82,9 @@ python3 scripts/prefs.py --json
 3. **产物名写成静态可解析的字面量**，不来自 argv/时间戳/随机串；一图一 stem。
 4. **交付物是矢量 PDF**（`imshow` 的位图除外，≥300 dpi）。
 5. **可复现**：固定随机种子，不 `plt.show()`。
-6. **只用 Matplotlib 出图、不弹窗不等输入**：tkinter / Qt 对话框、`input()`、Pillow 直接画图
-   在 Tavotto 里跑不起来。依赖：处处可用的只有 numpy / matplotlib / pillow；默认环境没有的包
+6. **新脚本只用 Matplotlib 出图、不弹窗不等输入**：tkinter / Qt 对话框、`input()`、Pillow 直接画图
+   在 Tavotto 里跑不起来。用户已有的 Pillow / plotly / R / MATLAB 脚本**不改原文件**，旁边另写
+   `<原名>_matplotlib.py`（见 `references/figure-contract.md` 第 6 节）。依赖：处处可用的只有 numpy / matplotlib / pillow；默认环境没有的包
    （如 ROOT）与改用户已有脚本的做法，细则见 `references/figure-contract.md` 第 6 节。缺包不要 `pip install --target` / `sys.path.insert` 自建依赖文件夹，走 Tavotto 的依赖准备。
 
 ## 图画完之后：MCP 工具顺序
@@ -180,7 +182,7 @@ python3 scripts/handoff.py <脚本路径>
 | 图例挪位置 / 字号 / 线宽 / 颜色 / marker 样式；刻度朝内朝外、刻度标签字号；标题、轴标签的文字与位置 | `tavotto_apply_overrides`（或画布里拖） |
 | 「这图合不合投稿规范」 | `tavotto_preflight` |
 | 出图 | `tavotto_export`（PDF/SVG/EPS 是真矢量，PNG/TIFF 按 dpi 栅格化） |
-| 多图拼版、加箭头标注、加 (a)(b) 编号、写回原图 | Tavotto 桌面窗口（`handoff.py`） |
+| 多图拼版、加箭头标注、加 (a)(b) 编号、版本历史、写回原图 | Tavotto 桌面窗口（`handoff.py`） |
 | 数据本身、坐标范围、对数/线性、加一条新曲线；colorbar 方向、子图数量与结构 | 代码（回来改脚本） |
 
 ## 修改绘图脚本之后：让 Tavotto 自己更新

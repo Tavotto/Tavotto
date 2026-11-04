@@ -173,8 +173,9 @@ asset fixtures, no real agreement asset upload or deployment configuration.
 
 ### Signed PDF copy (generated in the browser)
 
-After both parties have signed, the signing page can offer a PDF copy: the agreement text, a
-**Signatures** page and an **Electronic signature certificate** page, with "Page N of M" footers.
+After both parties have signed, the signing page can offer a PDF copy: the agreement text with its own
+signature block filled in place (or, when the agreement PDF carries no usable block positions, a separate **Signatures**
+page) and an **Electronic signature certificate** page, with "Page N of M" footers.
 The PDF is assembled entirely in the visitor's browser, so the Worker spends no CPU on it; the Worker
 only streams four fixed static files, always through explicit routes (no caller-derived path, no
 bypass; `assets.run_worker_first` stays `true`) and with the same security headers as every other
@@ -209,7 +210,23 @@ and put `cla-pdf.js`, the font and its licence next to them. Staging passes only
 (the sandbox repository's text) and no attribution, because the staging text is not Harmony-derived.
 `--published-url` and `--attribution` are stored in the PDF Subject as `tavotto-agreement-meta:{json}`; the
 builder reads them only after the hash check passes, ignores anything malformed or non-https, and lets
-values passed in `build()` input win. The signing page therefore does not need to know either. The renderer writes the Markdown's SHA-256 into the PDF keywords
+values passed in `build()` input win.
+
+**In-place signing (`fields`).** When the Markdown contains the usual `**You (...)**` / `**Us**` signature blocks (a fenced
+block of `Signature:` / `Name:` / `Address:` / `Date:` / `GitHub:` lines for the contributor; `Signature:` / `Name:` /
+`Title:` / `Address:` / `Date:` for the holder; anything else is rendered as plain Markdown), the renderer prints them as
+a form (monospace labels, one underlined line per field, the contributor address on as many lines as the block has) and adds
+`fields` to the same Subject JSON: `{contributor:{signature,name,address:[…],date,github},holder:{signature,name,title,address:[…],date}}`,
+each box `{page,x,y,w,printed?}` in PDF points (page index from 0, origin bottom-left, `y` = upper edge of the underline,
+`printed:true` for a value already in the Markdown, such as the holder's name, which the builder leaves alone). The positions
+are read back from the produced file with pdfjs-dist (dev dependency): the underlines Chrome painted and invisible marker words
+from a first pass; the shipped file is a second pass without markers whose underlines must be identical (otherwise the
+renderer fails). Nothing is computed from CSS. The builder reads `fields` only after the hash check and validates it
+strictly (exact key set, integer page index inside the document, finite numbers inside the page, 1 to 3 address lines);
+anything else, or any value that cannot fit its line (signature below 12 pt, text or address below 7 pt), leaves the
+agreement pages untouched and appends the Signatures page as before. In place, the signature is drawn on the line in the
+signature typeface, name, address (wrapped over the lines), long date, `@login` and "Rights holder" in a serif; the last
+agreement page's footer says the copy is signed electronically; the certificate page is last and ends with the thanks line. The signing page therefore does not need to know either. The renderer writes the Markdown's SHA-256 into the PDF keywords
 (`tavotto-agreement-sha256:<hex>`); the builder refuses to run unless that equals the agreement hash being
 signed. This ties the PDF to the pinned text by the renderer's claim, not by re-reading the pages: a PDF
 rendered from different text but stamped with the pinned hash would pass, so review the PDF like the

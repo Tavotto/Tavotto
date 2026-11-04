@@ -50,6 +50,7 @@ from . import (
     sysmem,
     texdiag,
     workdir,
+    writetripwire,
 )
 
 LOG = logging.getLogger("tavotto.engine")
@@ -4829,8 +4830,14 @@ def one_shot(
     run=None,
     pinned: EnvironmentDecision | None = None,
     write_roots=None,
+    isolate_writes=None,
 ):
     """一次性 worker：**不进池、目录独立、用完即毁**。写回前的干净重放用。
+
+    `isolate_writes`（仅写回校验用）：写回目标文件（项目里的原件）的绝对路径们。重放期间脚本对它们的**写**
+    （`open("wb")` / `savefig(handle)` / `os.open` / `os.replace` 到目标 ……）被换到本 worker 目录里的暂存副本，
+    原件在重放期间逐字节不变，所以调用方拿 prepare 时的指纹当基线就不会把重放自己的写误判成外部改动。
+    机制见 `writetripwire.install_isolation`；暂存副本随 `discard()` 删掉整个 worker 目录一起消失。不与 `write_roots` 同用。
 
     热会话是长期活着的：build 之后经历过任意多次 override / 还原，applied 与
     originals 两表就是一份增量历史。写回要保证的是「重开这个项目、按这组
@@ -4869,6 +4876,13 @@ def one_shot(
         if write_roots is not None:
             # #898：冷重放也装同一份绊线（verify_replay / 写回重放跑的是「再跑一遍用户脚本」）
             context["write_roots"] = write_roots
+        if isolate_writes:
+            if write_roots is not None:
+                raise ValueError("isolate_writes 不能与 write_roots 同用")
+            # 暂存区放在一次性 worker 自己的目录里：discard() 删整个 base 时一并清掉
+            context["write_roots"] = writetripwire.isolate_entries(
+                base / "isolate", [str(p) for p in isolate_writes]
+            )
         if pinned is not None and pinned.pinned:
             # 写回重放钉热会话自己的解释器与环境代：项目记录可能已被同项目的另一个脚本换成别的（#820 r4221133372）
             context["pinned"] = pinned

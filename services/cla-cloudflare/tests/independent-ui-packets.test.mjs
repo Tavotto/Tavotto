@@ -282,7 +282,29 @@ test('a blocked completed record does not show the thank-you state',async()=>{
 });
 test('the PDF download stays disabled until both parties have signed',async()=>{
   const b=await browser({states:{[ID(1)]:status(ID(1),{current:true,canSign:true,signatures:[{role:'contributor'}]})}});
-  assert.equal(b.elements.get('download-pdf').disabled,true);assert.equal(b.elements.get('thanks').hidden,true);
+  assert.equal(b.elements.get('download-pdf').disabled,true);
+});
+const contributorOnly=(extra={})=>({states:{[ID(1)]:status(ID(1),{current:true,signatures:[{role:'contributor',actor:actor.id,created:1793770000}],...extra})}});
+test('a contributor who has signed sees that their part is done, never the signing form again',async()=>{
+  const b=await browser({...contributorOnly(),signedPdf:true,pages:[{actor,holderName:'Synthetic Holder',packets:[{id:ID(1)}],nextCursor:null}]});
+  assert.equal(b.elements.get('thanks').hidden,false);assert.equal(b.elements.get('hero').hidden,true);
+  assert.equal(b.elements.get('personal-signature').hidden,true);assert.equal(b.elements.get('download-pdf').hidden,true);
+  assert.equal(b.elements.get('thanks-title').textContent,'谢谢你，你这边已经完成。');
+  assert.match(b.elements.get('thanks-lede').textContent,/Synthetic Holder 会来联署/);assert.match(b.elements.get('thanks-lede').textContent,/PDF/);
+  assert.match(b.elements.get('thanks-eyebrow').textContent,/^你已签署 · /);assert.equal(b.elements.get('thanks-seal').className,'seal wait');
+});
+test('the waiting state names the rights holder generically when the session does not',async()=>{
+  const b=await browser(contributorOnly());
+  assert.match(b.elements.get('thanks-lede').textContent,/^Tavotto 的维护者 权利人 /);assert.doesNotMatch(b.elements.get('thanks-lede').textContent,/PDF/);
+});
+for(const [label,extra] of [['expired',{current:false}],['withdrawn',{blocked:true}]])test('a contributor-only record that is '+label+' does not claim the contributor is done',async()=>{
+  const b=await browser(contributorOnly(extra));
+  assert.equal(b.elements.get('thanks').hidden,true);assert.equal(b.elements.get('hero').hidden,false);
+});
+test('the rights holder still sees the countersigning form on a contributor-only record',async()=>{
+  const holder={id:1,login:'synthetic-holder',role:'holder',holderName:'Synthetic Holder'};
+  const b=await browser({...contributorOnly(),pages:[{actor:holder,holderName:'Synthetic Holder',packets:[{id:ID(1)}],nextCursor:null}]});
+  assert.equal(b.elements.get('thanks').hidden,true);assert.equal(b.elements.get('personal-signature').hidden,false);
 });
 test('withdrawal is offered only when the server allows a hold and asks first',async()=>{
   let b=await browser({states:{[ID(1)]:status(ID(1),{canHold:false})}});assert.equal(b.elements.get('withdraw-open').hidden,true);

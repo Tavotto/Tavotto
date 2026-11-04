@@ -80,14 +80,18 @@ def _expand(ranges: list[list[int]]) -> set[int]:
 
 
 def coverage_evidence(provider: hbshaper.HbFaceProvider, out: Path, checks: list) -> dict:
-    faces = typography.faces_for(provider, "serif", False, False)
+    # CJK 层取各族实际用的 CJK 脸的交集（与 facade.coverage_ranges 同口径，ADR 0060 2026-11-04 修订）
+    cjk_covers = [
+        typography.coverage(typography.faces_for(provider, fam, False, False)).cjk
+        for fam in typography.CANVAS_TEXT_FAMILIES
+    ]
     # 12 张 Liberation 脸的 cmap **不完全相同**（Mono 缺 U+2000–200B 一段空格，Serif 缺几个占星符号，
     # PUA 各不同）：旧后端「所有 base-14 脸共用一张覆盖表」的假设在新集合上不成立。表里的 primary
     # 取**交集**——前端摆得出的族 × 样式，后端每一张都画得出，才叫「画得出」。
     lib = {
         fid: frozenset(rec.info.cmap)
         for fid, rec in provider.registry.faces.items()
-        if rec.approved.family != "cjk"
+        if rec.approved.family not in ("cjk", "cjk-serif")
     }
     inter = frozenset.intersection(*lib.values())
     union = frozenset.union(*lib.values())
@@ -101,14 +105,14 @@ def coverage_evidence(provider: hbshaper.HbFaceProvider, out: Path, checks: list
     )
     cov_inter = glyphplan.Coverage(
         primary=lambda cp: cp in inter,
-        cjk=typography.coverage(faces).cjk,
+        cjk=lambda cp: all(c(cp) for c in cjk_covers),
         fallback=lambda cp: False,
     )
     lo, hi = 0x20, typography.COVERAGE_MAX_CP
     table = {
         "schema": 1,
         "comment": (
-            "U06 evidence：批准字体集合（Liberation 2.1.5 + Noto Sans SC）下画布文字三层覆盖的区间表，"
+            "U06 evidence：批准字体集合（Liberation 2.1.5 + Noto Sans SC + Noto Serif SC）下画布文字三层覆盖的区间表，"
             "与 pdfbackend/canvas_coverage.json 同形。fallback 恒空（没有隐式回退脸）。"
             "不是产品用的那份：U06 不切默认，前端仍读旧表；这里是 D07 迁移 diff 的依据。"
         ),
@@ -124,9 +128,16 @@ def coverage_evidence(provider: hbshaper.HbFaceProvider, out: Path, checks: list
     }
     write_lf(out / "canvas_coverage.rendercore.json", _dump_coverage(table))
     old = json.loads(
-        (ROOT / "src" / "tavotto" / "pdfbackend" / "canvas_coverage.json").read_text(
-            encoding="utf-8"
-        )
+        # 旧后端（PyMuPDF）的覆盖表：U10 切默认之后产品那份是 RenderCore 自己的，旧表存档在 evidence/u10
+        (
+            ROOT
+            / "docs"
+            / "implementation"
+            / "tavotto-foundation"
+            / "evidence"
+            / "u10"
+            / "canvas_coverage.pymupdf.json"
+        ).read_text(encoding="utf-8")
     )
     diff: dict = {
         "old_backend": f"{old['backend']} {old['backend_version']}",

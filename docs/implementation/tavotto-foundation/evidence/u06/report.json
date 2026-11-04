@@ -3,11 +3,11 @@
  "platform": {
   "system": "Darwin",
   "machine": "arm64",
-  "python": "3.13.11"
+  "python": "3.13.16"
  },
  "versions": {
-  "uharfbuzz": "0.56.1",
-  "fonttools": "4.65.0",
+  "uharfbuzz": "0.56.2",
+  "fonttools": "4.66.0",
   "pikepdf": "10.13.0.post1",
   "pypdfium2": "5.13.0"
  },
@@ -26,9 +26,10 @@
    "LiberationSerif-BoldItalic": "f17db8af71e24d2066b587546021d4f0b296be389512b658dec3c09affeb11a7",
    "LiberationSerif-Italic": "0e3dea9f8d613e006ccfa62201f33e265d19167bd0907725c3e145368b04fc2e",
    "LiberationSerif-Regular": "058ea80864aef09a23f45cbec2bb5400bc3dfbdea01c3f10538a21fcb497fb74",
-   "NotoSansSC-Regular": "faa6c9df652116dde789d351359f3d7e5d2285a2b2a1f04a2d7244df706d5ea9"
+   "NotoSansSC-Regular": "faa6c9df652116dde789d351359f3d7e5d2285a2b2a1f04a2d7244df706d5ea9",
+   "NotoSerifSC-Regular": "c9f8dd8c035e22ea31607e5efbb2dabdf94836a92f5868267dd2b1a85eb0cd3b"
   },
-  "allowlist_sha256": "abd2b64e71edb2112972b23bf03c3aea34ed5b305e87b123dd867b6cb01e18b2"
+  "allowlist_sha256": "979a646e5072374862a4d8b828d3e82c665931479009d2105ebec704704386a3"
  },
  "outputs": {
   "u06.pdf": {
@@ -39,15 +40,15 @@
    "sha256": "acf4cd6b6e85690efe4b0dc826269d0abc5ceb570c8075f2c50e084a7683eb2b"
   },
   "canvas_coverage.rendercore.json": {
-   "sha256": "1f84172f1893a26fb9fea524a039024606615b8e8d974284575767cdfdf1e12d"
+   "sha256": "e4f65df2a558fce664d5e9ada02b35a5abd3ce0d1d1712f8dc212f624f7b4d9a"
   }
  },
  "coverage_diff": {
   "drawable": {
    "old": 61238,
-   "new": 32595,
-   "lost": 36554,
-   "gained": 7911,
+   "new": 32582,
+   "lost": 36555,
+   "gained": 7899,
    "lost_sample": [
     "U+007F ",
     "U+0080 ",
@@ -218,8 +219,8 @@
   "sha256": "868c419c73326031d6eb36957ea6890215e427cc3684770ec97f58a9b47ed093",
   "bytes": 14137,
   "versions": {
-   "uharfbuzz": "0.56.1",
-   "fonttools": "4.65.0",
+   "uharfbuzz": "0.56.2",
+   "fonttools": "4.66.0",
    "pikepdf": "10.13.0.post1",
    "pypdfium2": "5.13.0"
   }

@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {test} from 'node:test';
 import {deploymentPlan,STAGING_ORIGIN} from '../scripts/deployment-plan.mjs';
-import {stagingSQL} from '../scripts/staging-d1.mjs';
+import {stagingRebuildSQL,stagingSQL} from '../scripts/staging-d1.mjs';
 import {validateLive} from '../src/native/config.ts';
 import {LiveStore} from '../src/native/store.ts';
 const read=path=>fs.readFileSync(new URL('../deployment/staging/'+path,import.meta.url));
@@ -56,6 +56,20 @@ test('generated staging SQL seeds a fresh database to readiness',async()=>{
   // A config whose holder differs from the seeded row fails closed.
   await assert.rejects(new LiveStore(db,undefined,{...live,holderId:88193521,exemptionIds:{erwanjun:88193521}}).assertReady(),
     e=>e.code==='database_configuration_uninitialized_or_mismatched');
+});
+test('staging rebuild SQL clears immutable rows and returns the database to readiness',()=>{
+  const sql=new DatabaseSync(':memory:');sql.exec('PRAGMA foreign_keys=ON;');sql.exec(stagingSQL(config()));
+  const objects=()=>sql.prepare("SELECT type,count(*) n FROM sqlite_master GROUP BY type ORDER BY type").all().map(r=>`${r.type}:${r.n}`).join(' ');
+  const fresh=objects(),a=sql.prepare('SELECT kind,version,digest FROM cla_native_v2_agreements LIMIT 1').get();
+  sql.prepare('INSERT INTO cla_native_v2_packets VALUES (?,?,?,?,?,?,?)').run('p1',261183172,a.kind,a.version,a.digest,1,2);
+  sql.prepare("INSERT INTO cla_native_v2_eligibility_blocks VALUES ('p1',261183172,1,'party_requested_review')").run();
+  assert.throws(()=>sql.exec('DELETE FROM cla_native_v2_eligibility_blocks'),/immutable/);
+  sql.exec(stagingRebuildSQL(config()));
+  assert.equal(sql.prepare('SELECT count(*) n FROM cla_native_v2_eligibility_blocks').get().n,0);
+  assert.equal(sql.prepare('SELECT count(*) n FROM cla_native_v2_packets').get().n,0);
+  assert.equal(sql.prepare('SELECT holder FROM cla_native_v2_authority').get().holder,config().holderId);
+  assert.equal(objects(),fresh);
+  assert.throws(()=>stagingRebuildSQL({...config(),origin:'https://cla.tavotto.com'}),e=>e.message==='staging_origin_required');
 });
 test('staging CI config mirrors the service identity and passes the trusted consumer validation',async()=>{
   const {readOnly}=await import('../src/ci/consumer.ts');

@@ -2,8 +2,11 @@
 
 本文件展开 SKILL.md「会话入口」各状态的恢复动作。**健康会话一个字都不用读。**
 
-下面的安装命令是 **Codex** 的。用户在别的宿主里（Cursor、Claude、VS Code、Trae、DSH、
+下面的安装命令是 **Codex** 的。用户在别的宿主里（Cursor、Claude、VS Code、Trae、Antigravity、DSH、
 WorkBuddy、ZCode……）时，安装和重载看 `other-hosts.md`；引擎侧的恢复（provision、错误码）两边一样。
+
+**用户装了 Tavotto 桌面版**：先请他打开桌面版「设置 › 改图助手 › 接入 AI 编辑器」，在 Codex 那一行点
+「接入」、选好要处理的文件夹，再新开 Codex 会话——不用敲命令。那里没有 Codex、或接入失败，再用下面的命令。
 
 ## 插件没有在本会话加载（工具列表里没有 `tavotto_health`）
 

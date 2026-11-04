@@ -9,7 +9,7 @@
 | `source` | 应用源码集合（`SOURCE_ROOTS`：`src/tavotto`、MCP server、技能脚本、`packaging/entry.py` + `tavotto.spec`、发行链脚本） | **AST** 里没有 `import pymupdf / fitz`（含 `importlib.import_module` / `__import__` 的字面量）。注释 / docstring / 显示名字符串（`depresolve` 的 `"fitz": "PyMuPDF"`）AST 看不到——有意 |
 | `deps` | `--python` 环境里 `tavotto` 发行版**声明的**运行时依赖闭包（Requires-Dist 去掉带 extra 的、marker 按本平台求值、递归展开） | 闭包里没有 pymupdf。**装在同一个 site-packages 里但不在闭包里的不算**（测试的读取器） |
 | `block` | 干净新进程（`-I`）装上 meta_path 阻断器之后的主要路径：`import tavotto.app`、契约层的 probe / 文字 / 合成（PDF + PNG + TIFF）/ 预览 / 原图三格式 / 标注写回 / 字体清单 / 像素比较、`doctor --json`、MCP bridge | 每条路径跑通，且 `sys.modules` 里没有被阻断的名字；阻断器先在一个标准库模块上证明自己会咬（自检） |
-| `native` | 产物（`--dist` PyInstaller 目录 / `--wheel`）里的 `.so / .dylib / .pyd / .dll` 与 wheel 的 METADATA | 没有 mupdf / fitz；PDFium 与 qpdf 的库**在**（正例：新闭包真的进了产物）；批准字体 13 张脸随包 |
+| `native` | 产物（`--dist` PyInstaller 目录 / `--wheel`）里的 `.so / .dylib / .pyd / .dll` 与 wheel 的 METADATA | 没有 mupdf / fitz；PDFium 与 qpdf 的库**在**（正例：新闭包真的进了产物）；批准字体白名单里的脸全部随包 |
 | `sbom` | `--sbom` SPDX JSON 的 packages | 没有 pymupdf / mupdf。没给就记 `not_run`（不是绿） |
 | `run` | `--smoke`：`scripts/smoke_app.py --python` 全路径，父进程经 `sitecustomize` 带阻断器 | 冒烟退出 0，且目标解释器以 `-m tavotto` 起的那个进程自己记下了「阻断器已装上」（外层包装器的记录不算）；worker 子进程不带（`child_env` 摘 PYTHONPATH——那是用户的科学环境，不是主语） |
 
@@ -617,7 +617,7 @@ def selftest(python: Path) -> dict:
                 "ok": (not r["ok"]) and r["retired"] == ["pymupdf>=1.24,<2"],
             }
         )
-        # 负例 4：产物目录里有 libmupdf → 必须红；正例：有 pdfium + qpdf + 白名单那 13 张脸 → 绿，
+        # 负例 4：产物目录里有 libmupdf → 必须红；正例：有 pdfium + qpdf + 白名单里的脸 → 绿，
         # 内置 runtime 里 matplotlib 自己的字体目录不算批准字体、不影响判定（Codex #539）
         dist = root / "dist"
         approved = dist / "_internal" / "tavotto" / "resources" / "fonts"

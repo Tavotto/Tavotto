@@ -280,7 +280,7 @@ def test_fullwidth_punctuation_uses_the_vertical_glyphs(provider, tmp_path):
     """`，。「」（）` 在竖排里换 `vert` 字形：gid 与横排塑形的不同（写进 PDF 之前的 IR 就可以量）。"""
     text = "，。「」（）"
     compiled, _ = _export(provider, tmp_path, [_t(text)])
-    cjk = provider.cjk_face()
+    cjk = provider.cjk_face("serif")  # _t 的默认族是 serif
     horizontal = [g.gid for g in cjk.shape(text)]
     placed = [st.runs[0].glyphs[0].gid for st, _ in _shaped(compiled.page)]
     assert len(placed) == len(horizontal)
@@ -290,10 +290,11 @@ def test_fullwidth_punctuation_uses_the_vertical_glyphs(provider, tmp_path):
 
 
 def test_vertical_metrics_come_from_vmtx_for_noto_and_are_synthesised_for_liberation(provider):
-    noto = provider.cjk_face()
     lib = provider.face_for("serif", False, False)
-    (g,) = noto.shape_vertical("弹")
-    assert g.y_advance == noto.resource.units_per_em  # Noto Sans SC：vmtx 给 1 em
+    for family in ("serif", "sans-serif"):  # Noto Serif SC / Noto Sans SC：vmtx 都给 1 em
+        noto = provider.cjk_face(family)
+        (g,) = noto.shape_vertical("弹")
+        assert g.y_advance == noto.resource.units_per_em, family
     (a,) = lib.shape_vertical("×")
     # Liberation 没有 vmtx / vhea：HarfBuzz 合成（进退 = 上升 − 下降），字形落在字宽中线
     assert a.y_advance == lib._tt["hhea"].ascent - lib._tt["hhea"].descent

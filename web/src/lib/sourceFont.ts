@@ -62,7 +62,7 @@ const faceOf = (s: ManifestFaceSource): SourceFace => ({
  * 图内文字元素的 manifest 数据 → `TextObject.sourceFont`。**「复制为画布文字标注」取值的唯一入口。**
  *
  * 元素没有 `face_src`（解析不出脸 / 文件读不了 / 老引擎）→ undefined：标注就只带 `fontFamily`，
- * 不编一个身份。`cjk_src` 缺席则不写 `cjk`（汉字由批准的 Noto Sans SC 画）。
+ * 不编一个身份。`cjk_src` 缺席则不写 `cjk`（汉字由批准的 CJK 脸画）。
  */
 export function sourceFontFromElement(
   el: Pick<ManifestElement, 'face_src' | 'cjk_src'>,

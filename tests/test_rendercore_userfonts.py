@@ -296,7 +296,7 @@ def test_cjk_chars_still_use_the_approved_cjk_face_unless_the_source_names_one(
         provider, [_text(_ref(dejavu, "DejaVu Sans"), text="Ab 温度")], tmp_path
     )
     bases = [b.split("+")[-1] for b, _ in found]
-    assert "DejaVuSans" in bases and "NotoSansSC-Regular" in bases
+    assert "DejaVuSans" in bases and "NotoSerifSC-Regular" in bases  # 默认族 serif → 衬线 CJK 脸
     assert [p["code"] for p in problems] == ["cjk_face"]  # 既有的提示，不是新问题
     assert text.strip() == "Ab 温度"
 

@@ -145,8 +145,8 @@ def test_box_drawing_is_rescued_by_the_fourth_step():
 def test_cjk_is_not_reported_as_a_substitution():
     """中日韩落在 `cjk` 层，但**不进「换了脸」那张单子**。
 
-    它只有一张脸（能力限制），不随用户的任何选择变化——为一个恒定的、改不动
-    的限制在每一条中文标注上挂一条建议，只会训练用户忽略整个问题面板。
+    它由批准的 CJK 脸承担（随族：衬线配宋体、其余配黑体，用户没得选）——为一个
+    恒定的、改不动的限制在每一条中文标注上挂一条建议，只会训练用户忽略整个问题面板。
     真正值得说的是 `fallback`：那张脸是渲染器自己挑的，与族和字重都无关。
     """
     cov = glyphplan.canvas_coverage()

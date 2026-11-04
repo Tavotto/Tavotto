@@ -8,7 +8,7 @@
   glyph / cluster / advance / offset）、度量（`advance` / `ascender` / `descender`）。
   真实实现在 `hbshaper`（uharfbuzz + fontTools，native 适配层）；测试用一张合成的
   假脸就能把本模块跑完（纯模型不需要候选包）。
-* `FaceSet`：正文脸 + 唯一一张 CJK 脸。**没有 fallback 脸**——旧后端的第 3 层
+* `FaceSet`：正文脸 + 一张 CJK 脸（随族：serif → Noto Serif SC，其余 → Noto Sans SC，ADR 0060 2026-11-04 修订）。**没有 fallback 脸**——旧后端的第 3 层
   （渲染器自己挑一张 Noto Serif）在这条路上不存在，`coverage()` 的 fallback oracle 恒 False，
   于是 `glyphplan.layer_of` 只会给出 primary / cjk / missing 三档：画不出的字就是
   `missing`，进问题系统，**不暗中回退系统脸**（RC-037、任务书「本轮集合外明示限制」）。
@@ -16,7 +16,7 @@
 换行 / 对齐 / 行高 / 上下标 / 下划线的**用户合同**逐条从 `_draw_text` 搬过来（贪心按
 单元换行、CJK 逐字、拉丁按词、单词超宽逐字兜底、CSS 行盒基线、下划线画在正文基线、
 上下标比例走 `richtext`），前端 TextView 与它是同一套语义。会变的只有 D07 批准的那几项：
-脸换了（Liberation / Noto Sans SC），asc / desc 换成新脸的 OS/2 typo 度量。
+脸换了（Liberation / Noto Sans SC / Noto Serif SC），asc / desc 换成新脸的 OS/2 typo 度量。
 
 坐标：本模块在**页面 y 向下的 pt 空间**里算（与画布语义同向，公式照抄不用翻），
 `plan.compile_page()` 把每个基线点翻到 y 向上时只翻一次。
@@ -100,7 +100,7 @@ class FaceProvider(Protocol):
 
     def face_for(self, family: str, bold: bool, italic: bool) -> Face: ...
 
-    def cjk_face(self) -> Face | None: ...
+    def cjk_face(self, family: str) -> Face | None: ...
 
 
 def faces_for(
@@ -123,7 +123,7 @@ def faces_for(
         b, i = bool(bold) or run_bold, bool(italic) or run_italic
         return primary if (b, i) == (bool(bold), bool(italic)) else provider.face_for(fam, b, i)
 
-    return FaceSet(primary, user_cjk if user_cjk is not None else provider.cjk_face(), variant)
+    return FaceSet(primary, user_cjk if user_cjk is not None else provider.cjk_face(fam), variant)
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +250,7 @@ class TextBlock:
     underline: bool
     #: 这段文字里画不出来的字符（去重、原文顺序）——按**渲染表示**量（合成过上下标之后）。
     missing: tuple[str, ...]
-    #: 落在 cjk 层的字符（换族不换它；不算换脸）。
+    #: 落在 cjk 层的字符（CJK 脸随族，但不算换脸）。
     cjk_chars: tuple[str, ...]
     #: 排不出来的公式：(源码, 原因)。这些公式按源码原样画了（`$…$`），调用方把它们报成问题
     math_failures: tuple[tuple[str, str], ...] = ()

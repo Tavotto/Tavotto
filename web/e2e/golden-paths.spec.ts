@@ -82,6 +82,11 @@ test('打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启�
   // 双击素材把面板放上画布
   await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await expect(page.getByText('画布是空的')).toHaveCount(0)
+  // 等「进图内编辑」收尾再加第二张图：双击素材卡 = 编辑原图，进入是异步的，收尾（`finishElementEntry`）会把三栏下
+  // 左栏切成「图内元素」。收尾若落在后面的 Esc 之后，它会重设图内编辑态与选区，刚被 Esc 收起的上下文栏又出现
+  // （Windows 打包版 11-03 run 41695744921：Esc 后 `[data-context-bar]` 15s 里一直是 1）。
+  // 信号同 a11y.spec.ts（#1687）：元素树轨钮展开
+  await expect(page.locator('[data-rail="elements"]')).toHaveAttribute('aria-expanded', 'true', { timeout: 60_000 })
   // Prompt 09：双击 = 打开（单图编辑）。标注工具画的是**画布对象**，
   // 只在多图排版下有落点——画布上有第二张图才是排版（没有「回排版」按钮了）。
   await addSecondFigure(page)

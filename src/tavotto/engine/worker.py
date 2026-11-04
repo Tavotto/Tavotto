@@ -1508,6 +1508,18 @@ class Worker(wireproto.V1Handler):
         会话沙盒与会话缓存目录（`out/` 的上一级：out / sandbox / export / worker.log）是引擎自己的；
         matplotlib 的缓存 / 配置目录要在 matplotlib 已 import 之后才知道。其余基础设施目录（临时目录、平台缓存、
         seaborn / sklearn 数据目录）见 `writetripwire.infrastructure_roots`，每一项都带理由。"""
+        try:
+            rest, isolation = writetripwire.split_isolation(self.write_roots)
+        except ValueError as exc:
+            raise SystemExit(f"--write-roots: {exc}") from exc
+        if isolation is not None:
+            # 写回校验的隔离重放：只把写回目标的写换到暂存副本，不装授权根绊线（其它写原样）；不能与授权根混用
+            if rest:
+                raise SystemExit("--write-roots: 隔离重放条目不能与授权根 / 改道条目混用")
+            writetripwire.install_isolation(
+                isolation[0], isolation[1], display_base=str(self.figures_dir)
+            )
+            return
         extra = [self.sandbox, self.out_dir.parent]
         for getter in ("get_cachedir", "get_configdir"):
             try:
