@@ -925,6 +925,12 @@
     "exportPackage": "Export project package",
     "exportTip": "Export PNG / PDF",
     "fitCanvas": "Fit canvas",
+    "foreignOpen": {
+      "body": "This layout belongs to the project \"{{name}}\". Opened here, the script figures it uses can't be found.",
+      "bodyUnnamed": "This layout belongs to another project. Opened here, the script figures it uses can't be found.",
+      "confirm": "Open anyway",
+      "title": "Open another project's layout"
+    },
     "fromOtherProject": "· another project",
     "fromProject": "· in {{name}}",
     "importPackage": "Import project package…",
