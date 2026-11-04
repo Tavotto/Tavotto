@@ -316,3 +316,10 @@ describe('折叠语义', () => {
     expect(s['widths_mm.double'].link).toBe(s['widths_mm.double'].url)
   })
 })
+
+describe('出版社只给「建议」栏宽时不收窄页宽（#1745 Codex P2）', () => {
+  it('APS 原文允许单栏 / 1.5 栏 / 双栏、只给了单栏宽度：PRL 不把 85 mm 当唯一合规宽度', () => {
+    const spec = journalProfile('physical-review-letters') as { widths_mm?: { single?: number | null } }
+    expect(spec.widths_mm?.single ?? null).toBeNull()
+  })
+})

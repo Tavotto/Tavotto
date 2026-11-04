@@ -63,14 +63,15 @@
         "en": "single manuscript column"
        },
        "width_mm": 85,
-       "qualifier": "exact"
+       "qualifier": "recommended"
       }
      ],
      "mark": "8.5 cm",
      "derivation": "8.5 cm → 85 mm",
      "src": "s1",
      "quote": "Size to the width of a single manuscript column (8.5 cm or 3 3/8 in) or 1.5 or 2 columns for more detailed figures.",
-     "anchor": "#:~:text=Size%20to%20the,more%20detailed%20figures."
+     "anchor": "#:~:text=Size%20to%20the,more%20detailed%20figures.",
+     "note": "原文同时允许 1.5 栏或双栏（未给宽度），单栏 8.5 cm 只是建议，不作唯一合规宽度"
     }
    }
   },
