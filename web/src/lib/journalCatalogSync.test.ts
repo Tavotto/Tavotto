@@ -4,7 +4,6 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import vectors from '../../../tests/golden/journal_vectors.json'
-import { JOURNAL_UI_DEV_KEY } from '@/lib/journalUi'
 import { loadCatalog } from '@/lib/journals'
 import {
   BUNDLED_ASSET_BASE,
@@ -13,6 +12,13 @@ import {
   useJournalCatalogStore,
 } from '@/store/journalCatalogStore'
 import { ensureJournalReady, syncJournalCatalog } from './journalCatalogSync'
+
+// 入口常量已打开（ADR 0155 §11）；「入口关着」的用例靠这个开关模拟关闭
+let uiOn = true
+vi.mock('@/lib/journalUi', async (orig) => ({
+  ...(await orig<typeof import('@/lib/journalUi')>()),
+  journalCatalogUi: () => uiOn,
+}))
 
 type Json = Record<string, unknown>
 const cat = (rev: number) => ({ ...structuredClone(vectors.catalog), catalog_rev: rev })
@@ -32,7 +38,7 @@ let reply: (url: string, body: Json) => unknown
 
 beforeEach(() => {
   localStorage.clear()
-  localStorage.setItem(JOURNAL_UI_DEV_KEY, '1')
+  uiOn = true
   calls = []
   vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
     const body = JSON.parse(String(init.body)) as Json
@@ -56,7 +62,7 @@ afterEach(() => {
 
 describe('syncJournalCatalog', () => {
   it('入口关着时一个请求都不发', async () => {
-    localStorage.clear()
+    uiOn = false
     reply = () => ({})
     await syncJournalCatalog()
     expect(calls).toEqual([])
@@ -126,7 +132,7 @@ describe('ensureJournalReady', () => {
 
   it('入口关着时不发请求', async () => {
     remote()
-    localStorage.removeItem(JOURNAL_UI_DEV_KEY)
+    uiOn = false
     reply = () => ({})
     expect((await ensureJournalReady('fx-beta')).state).toBe('ready')
     expect(calls).toEqual([])
