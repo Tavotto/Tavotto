@@ -2422,6 +2422,55 @@ def _get_axes_lim(axis: str):
     return get
 
 
+def _positive_log_range(ax, axis: str, lo: float, hi: float) -> tuple[float, float]:
+    """对数轴上不存在 ≤0 的端点：把它换成按数据与 scale 算出的那一端（不经当前刻度定位器）。
+
+    不处理的话 `set_[xy]lim(0, 40)` 在 log 轴上被 matplotlib "忽略"，而忽略成
+    什么取决于轴此前停在哪：热会话停在上一次的范围，全新 worker 重放则从脚本
+    原样起步——同一份 patch 表，热 / 冷两个范围（QA-WIN-37）。自动缩放只看
+    数据与 scale，不看历史，所以两条路径必然一致。保持用户给的先后顺序
+    （降序仍表达翻转）。
+    """
+    if (ax.get_xscale() if axis == "x" else ax.get_yscale()) != "log":
+        return lo, hi
+    a, b = min(lo, hi), max(lo, hi)
+    if a > 0 and b > 0:
+        return lo, hi
+    # 只依赖数据与 scale：不能走 `autoscale_view()`——它会问当前装着的主刻度
+    # 定位器 `nonsingular()`，而热态可能已被「固定刻度」换成 FixedLocator，冷重放
+    # 时（刻度档晚于范围档）还是 LogLocator，退化数据（全是 10）扩出的范围不同。
+    import numpy as np  # noqa: PLC0415
+    from matplotlib.ticker import LogLocator  # noqa: PLC0415
+
+    # 共享轴（sharex / sharey）的范围是兄弟子图一起定的：数据要合起来看
+    sibs = ax._shared_axes[axis].get_siblings(ax)  # noqa: SLF001
+    highs: list[float] = []
+    poss: list[float] = []
+    for sib in sibs:
+        lim = sib.dataLim
+        d0, d1 = lim.intervalx if axis == "x" else lim.intervaly
+        mp = lim.minposx if axis == "x" else lim.minposy
+        if np.isfinite(d0) and np.isfinite(d1):
+            highs.append(float(max(d0, d1)))
+        if np.isfinite(mp) and mp > 0:
+            poss.append(float(mp))
+    lo_d = min(poss) if poss else 1.0
+    hi_d = max(highs) if highs else 0.0
+    if hi_d <= 0:
+        hi_d = lo_d * 10.0
+    fresh = LogLocator()  # 全新的，不碰轴上装着的那个
+    fresh.set_axis(ax.xaxis if axis == "x" else ax.yaxis)
+    auto_lo, auto_hi = fresh.nonsingular(lo_d, max(hi_d, lo_d))
+    auto_lo, auto_hi = min(auto_lo, auto_hi), max(auto_lo, auto_hi)
+    if a <= 0:
+        a = auto_lo
+    if b <= 0:
+        b = auto_hi
+    if a >= b:
+        a, b = auto_lo, auto_hi
+    return (b, a) if lo > hi else (a, b)
+
+
 def _set_axes_lim(axis: str):
     """坐标范围：吃一对数字（用户改的）或 `_AUTOSCALE`（还原时喂回来的）。
 
@@ -2455,6 +2504,7 @@ def _set_axes_lim(axis: str):
             ax.autoscale_view()
             return
         lo, hi = float(v[0]), float(v[1])
+        lo, hi = _positive_log_range(ax, axis, lo, hi)
         # **方向由「这一次该是什么方向」说了算，端点顺序只表达「范围是这两个数」。**
         #
         # 判据是 `_requested_inverted`：这一次的 patch 表里有 `invert_<axis>`
