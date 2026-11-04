@@ -806,7 +806,7 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 - **应用内托管安装 Codex（`engine/managedcli.py`，锁 `resources/managed_cli_lock.json`，2026-10-29）**：`start_install("codex")` 在锁里有
   的平台（darwin arm64/x64、win32 x64、linux x64）走托管：registry.npmjs.org 的 `@openai/codex@<版本>-<平台>` 主 → registry.npmmirror.com
   上同一个 tgz（字节相同、同一个 sha256 / integrity；解开后整棵树 `tree_sha256`）。2026-11-04 起不再用 GitHub 的
-  `codex-package-<triple>`：0.166.0 起它比 npm 包多一个 `bin/codex-exec-server`，两来源解不出同一棵树（#1716）；慢了换源（判据同私有 Python，ADR 0112）、hash 不符不重试不换源；装到 `data_dir()/cli/codex/<版本>-<树摘要>/`，
+  `codex-package-<triple>`：0.166.0 起它比 npm 包多一个 `bin/codex-exec-server`，两来源解不出同一棵树（#1716）；**大陆环境镜像在前**（`cli_for` 稳定重排；地区只读壳写进 `TAVOTTO_NETWORK_REGION` 的结论、经 `contactsend.region_is_cn`，ADR 0121 唯一判据；#1744：大陆直连 npmjs 约 2 MB/s，慢不到换源门槛，每次白等约一分钟）；慢了换源（判据同私有 Python，ADR 0112）、hash 不符不重试不换源；装到 `data_dir()/cli/codex/<版本>-<树摘要>/`，
   `current.json` 原子切换；`search_locations` 首位 / `candidates` 在 PATH 之前，source=`managed`。**装好不登录**
   （登录由前端在 done 后调既有 login 接口）。其余平台与其它 Agent 回落 npm。升版本用 `scripts/managed_cli_lock.py`
   （`--update` / `--check [--online]` / `--latest`）；**每次发版都升到 npm latest**（`docs/RELEASING.md`「发一个新版本」第 2 步，
