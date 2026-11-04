@@ -40,10 +40,14 @@ test('embedded CLA_CONFIG is config.json and validates with S4 capabilities on',
   validateLive({...c,githubEnabled:true,oauthEnabled:true,signingEnabled:true,checkPublishingEnabled:true,backgroundEnabled:true,
     automaticVerificationEnabled:true,automaticPublishingEnabled:true,confirmationSlotEnabled:true});
 });
-test('served agreement asset matches the pinned individual digest and is a staging text',()=>{
-  const bytes=read('assets/CLA_INDIVIDUAL.md');
+test('served agreement asset matches the pinned individual digest and is a marked staging copy of the real text',()=>{
+  const bytes=read('assets/CLA_INDIVIDUAL.md'),text=bytes.toString('utf8');
   assert.equal(createHash('sha256').update(bytes).digest('hex'),config().policy.agreements.individual.sha256);
-  assert.match(bytes.toString('utf8'),/^# STAGING TEST TEXT/);assert.match(bytes.toString('utf8'),/no legal effect/);
+  assert.match(text,/^> \*\*STAGING COPY — NO LEGAL EFFECT\.\*\*/);assert.match(text,/has no legal effect of any kind/);
+  // Everything after the staging notice is the real agreement, byte for byte.
+  const real=fs.readFileSync(new URL('../../../docs/legal/CLA_INDIVIDUAL.md',import.meta.url),'utf8');
+  assert.equal(text.slice(text.indexOf('\n\n')+2),real);
+  assert.notEqual(config().policy.agreements.individual.sha256,createHash('sha256').update(real).digest('hex'),'a staging signature never carries the real digest');
 });
 test('generated staging SQL seeds a fresh database to readiness',async()=>{
   const sql=new DatabaseSync(':memory:');sql.exec(stagingSQL(config()));

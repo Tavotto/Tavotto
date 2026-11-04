@@ -61,7 +61,10 @@ test('staging deployment still routes the worker first and the committed PDF ass
   assert.equal(sha(md),config.policy.agreements.individual.sha256);
   const bytes=fs.readFileSync(staging('assets/CLA_INDIVIDUAL.pdf')),doc=await PDFDocument.load(bytes);
   assert.deepEqual((doc.getKeywords()??'').split(/\s+/).filter(x=>x.startsWith(HASH_KEYWORD)),[HASH_KEYWORD+sha(md)],'PDF is stale: rerun npm run render:agreement-pdf');
-  assert.equal(doc.getSubject(),'tavotto-agreement-meta:'+JSON.stringify({publishedUrl:'https://github.com/erwanjun/cla-e2e-sandbox-20261026/blob/main/docs/legal/CLA_INDIVIDUAL.md'}),'staging metadata');
+  const meta=JSON.parse((doc.getSubject()??'').replace(/^tavotto-agreement-meta:/,''));
+  assert.equal(meta.publishedUrl,'https://github.com/erwanjun/cla-e2e-sandbox-20261026/blob/main/docs/legal/CLA_INDIVIDUAL.md','staging metadata');
+  assert.deepEqual(Object.keys(meta).sort(),['fields','publishedUrl'],'staging metadata');
+  assert.deepEqual(Object.keys(meta.fields).sort(),['contributor','holder'],'the real text carries its own signature block');
   assert.ok(doc.getPageCount()>=1);for(const p of doc.getPages())assert.deepEqual([p.getWidth(),p.getHeight()],[612,792],'US Letter');
   assert.ok(bytes.length<8*1024*1024);
 });
