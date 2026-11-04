@@ -11,7 +11,7 @@
 批准字体集合（`rendercore/fonts_allowlist.json`）变了、字形归属算法变了时，红的是这一格；
 不看护它的话，漂移的表现是「预览说画得出、导出上是一个方框」，而且只在某些字符上发作。
 表的 `primary` 是 12 张 Liberation 脸 cmap 的**交集**（前端摆得出的族 × 样式每一张都画得出才算），
-`cjk` 是 Noto Sans SC 子集，`fallback` 恒空（ADR 0060 §1：没有隐式回退脸）。
+`cjk` 是 Noto Sans SC 与 Noto Serif SC 子集的交集（CJK 脸随族，ADR 0060 2026-11-04 修订），`fallback` 恒空（ADR 0060 §1：没有隐式回退脸）。
 
 只依赖 `pdfbackend` 边界层（不直接 import 任何实现）。U08 时这里曾按 `--backend` 出两张表
 （旧 PyMuPDF 表与候选表），U10 切默认后只剩一张、落点只有 `pdfbackend/canvas_coverage.json`
@@ -48,7 +48,7 @@ def build() -> dict:
         "comment": (
             "生成物：画布文字三层字形覆盖的区间表（闭区间，[start, end]）。"
             "唯一产生者 scripts/gen_canvas_coverage.py；手改无效。"
-            "primary=批准字体集合里请求族的脸（Liberation）；cjk=Noto Sans SC 子集；"
+            "primary=批准字体集合里请求族的脸（Liberation）；cjk=Noto Sans SC 与 Noto Serif SC 子集的交集；"
             "fallback 恒空（ADR 0060 §1：没有隐式回退脸）。"
         ),
         "backend": pdfbackend.BACKEND_NAME,

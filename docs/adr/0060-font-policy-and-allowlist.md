@@ -13,6 +13,12 @@
 > **批准字体注册表（`FontRegistry`）不摸系统字体**；用户脸只经 `rendercore/userfonts.py` 一个入口、只按 sha256 认、不按名字猜。
 > §6 第一条「前端画布文字的同源预览」也由 0164 兑现（用户脸经本机端点供字节）；批准族的预览仍是 CSS 栈。
 
+> **修订 2026-11-04（CJK 脸随族）**：批准集合加第 14 张脸 **Noto Serif SC Regular**（noto-cjk 同一固定提交的
+> `Serif/SubsetOTF/SC/NotoSerifSC-Regular.otf`，OFL 1.1，allowlist `family: "cjk-serif"`）；下面「唯一一张 CJK 脸」「`cjk`（唯一一张
+> Noto 脸）」与 §4 里「换族不换 CJK」的语义由 §7 取代。理由：画布文字默认衬线，标注里的中文在画布上是宋体
+> （`--font-doc` = `'Times New Roman', 'Songti SC', 'Source Han Serif SC', serif`），导出却由黑体 Noto Sans SC 画——
+> 画布 ≠ 导出。
+
 ## 裁决摘要
 
 | 问题 | 裁决 | 落点 |
@@ -106,3 +112,39 @@ U06 的写入器只用到对象模型 / 流 / 序列化，这一半 pypdf 也做
 * `Image` / `ImportedPage` 的写入、透明组里的文字、栅格（PNG / TIFF）、`scope=original`：U07 / U08。
 * 多字形 cluster 里标记字形的 `y_offset` 不写（一个 Span 一个 `TJ` 的代价）；竖排 / bidi / 变量 / 彩色字体显式拒绝。
 * PDFium 把 CID 0 当空白：缺字在 PDFium 文字层里是空格——读取器规则，不在本轮修。
+
+## 7. 修订 2026-11-04：CJK 脸随族（取代「换族不换 CJK」）
+
+**规则。** 画布文字的 CJK 层按文字的族取脸：`serif` → **Noto Serif SC**（`cjk-serif`）；`sans-serif` / `monospace` →
+Noto Sans SC（`cjk`；等宽配黑体是常规做法）。认不出的族走默认族（serif）。唯一出处 `rendercore/fonts.cjk_family_of`；
+`FaceProvider.cjk_face(family)` 与 `FontRegistry.cjk_record(family)` 都要带族，没有「不带族的 CJK 脸」。批准集合里缺这张脸时回 `None`
+（汉字进 `missing`，**不**拿另一族的 CJK 脸顶）。ADR 0164 的用户原图字体（`user_cjk`）优先级不变：给了就替换，与族无关。
+行内样式的粗 / 斜变体、竖排（`vertical.py`）、公式都经 `faces_for` 取脸，随之自动跟族；SVG 的 `font-family` 链给 `cjk-serif`
+配 `'Songti SC', SimSun, 'Noto Serif CJK SC', serif`（`svgfonts.py`）。
+
+**覆盖。** 两张脸的 cmap 实测不同：Sans 独有 16 个码位（U+9FEB–9FEF 5 个、U+F900 等 6 个兼容汉字、U+25AD7 / U+27FB7 等 5 个扩展区字），Serif 独有 21
+个（多为兼容汉字与 U+2F920）。判据的主语是**导出时画这个字的那张脸**：
+* 后端（`typography.coverage(faces)`、`text_diagnostics` 的求值）本来就问 `FaceSet` 里实际那张 CJK 脸，随族后自然问对了脸；
+* 前端 / 预检读的 `canvas_coverage.json` 是一张与族无关的表，`primary` 早就取 12 张 Liberation 脸的**交集**，`cjk` 同理取各族实际
+  CJK 脸的**交集**（`facade.coverage_ranges`）。表说「画得出」，哪个族的导出都画得出——不会出现判据说能画、衬线脸画出方框；
+  代价是 Sans 独有的 13 个（`max_codepoint` 以内：U+9FEB–9FEF、U+F900 / F921 / F938 / F949 / F9B3 / F9DC、U+25AD7、U+27FB7）在前端被保守地
+  报成「画不出」（实际黑体能画），它们是 Unicode 10/11 新增字与兼容汉字，实际标注里几乎不出现。不为它们给表加族维度
+  （前端 `layerOf(cp)` 没有族参数，加了就是改同源对的签名）。
+* 重生成：`gen_canvas_coverage.py --write`：`cjk` 区间 446 → 444，少 13 个码位、多 0 个；`gen_glyph_plan_vectors.py --check` 无变化
+  （69 条向量不含这些码位）；`evidence/u06`（改读 `evidence/u10/canvas_coverage.pymupdf.json` 作旧表，因产品表早已是 RenderCore 自己的）：
+  `cjk` new 30 887 → 30 874、总可画 new 32 595 → 32 582，其余数字不变，`allowlist_sha256` / 字体表随之换；`evidence/u07`：u07.pdf 里
+  「图」改由 Noto Serif SC 画（默认族是 serif），pdf / png / 像素 hash 随之换，30 条核对仍全 ok。
+  `test_rendercore_glyph_vectors` 里 `cjk` 的 30 887 → 30 874 同理。
+
+**缓存与预热。** 字体政策版本 = allowlist 文件 sha256 前 16 位（`identity.fonts_policy_version`）：加了一张脸，预览缓存键和 render identity
+自动变，老预览不命中。预热（`facade.prewarm`）按默认族 serif 排一段中文，载的是 Noto Serif SC；Noto Sans SC 在第一次用无衬线 /
+等宽族写中文时才载。
+
+**体积。** `NotoSerifSC-Regular.otf` 11 607 284 字节（Sans 8 331 336），安装包 / wheel 原始 +11.6 MB，zlib 级别压缩约 +9.9 MB。
+打包路径都是整目录收（wheel `artifacts = resources/fonts/**`、PyInstaller `resources/` datas、`fetch_fonts.py` 读 allowlist、
+`retirement_scan` 的字体张数取自 allowlist），无需逐文件改清单，只改文字里写死的「13 张」。
+
+**看护。** `test_rendercore_app.py::test_chinese_in_canvas_text_is_drawn_by_the_cjk_face_of_its_family`（导出 PDF 页面里「温」「度」
+引用的字体程序，三族各一）、`test_typography_families.py::test_the_cjk_face_follows_the_family`、
+`test_rendercore_fonts.py::test_the_two_cjk_faces_differ_only_in_a_few_rare_codepoints`。反证：把 `_CJK_FAMILY_OF` 清空（衬线也取 Sans）
+上面几条变红。
