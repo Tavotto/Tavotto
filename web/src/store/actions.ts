@@ -68,7 +68,8 @@ import type {
   TextObject,
 } from '@/types/document'
 import { emptyProject, objectLabel, type ProjectDocument } from '@/types/document'
-import { findDocumentForProjectFile, type ProjectFileBinding } from '@/lib/projectFile'
+import { findDocumentsForProjectFile, type ProjectFileBinding } from '@/lib/projectFile'
+import { isDocHeldElsewhere } from '@/lib/docPresence'
 import { useAssetStore } from './assetStore'
 import { useEnvStore } from './envStore'
 import {
@@ -658,7 +659,17 @@ export async function openLayoutDocument(
   projectFile?: ProjectFileBinding,
 ): Promise<boolean> {
   // 重开同一个项目文件沿用上次的身份：时间线按 documentId 分存，新建身份会看不到命名节点（QA-WIN-46）
-  const reuse = projectFile ? findDocumentForProjectFile(projectFile.projectId, projectFile.file) : null
+  let reuse: string | null = null
+  if (projectFile) {
+    const cur = useDocumentStore.getState().documentId
+    for (const id of findDocumentsForProjectFile(projectFile.projectId, projectFile.file)) {
+      // 在别的窗口 / 标签开着的不沿用：同一个文件开两次仍是两个会话（ADR 0096）
+      if (id === cur || !(await isDocHeldElsewhere(id))) {
+        reuse = id
+        break
+      }
+    }
+  }
   if (reuse) await adoptSlotBaseline(reuse)
   if (!(await useDocumentStore.getState().switchDocument(doc, reuse ?? newId('d'), confirmLoss))) return false
   if (projectFile) setProjectFile(projectFile)

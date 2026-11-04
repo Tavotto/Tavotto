@@ -45,6 +45,6 @@ describe('写不进本机存储时本会话照常', () => {
   it('会话层空着（刷新之后）：读持久副本', () => {
     writeProjectFile('d1', B)
     forgetProjectFilesInSession()
-    expect(readProjectFile('d1')).toEqual(B)
+    expect(readProjectFile('d1')).toEqual({ ...B, at: expect.any(Number) })
   })
 })

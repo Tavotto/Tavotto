@@ -2055,10 +2055,10 @@ export function setProjectFile(
   binding: ProjectFileBinding | null,
   documentId = useDocumentStore.getState().documentId,
 ): void {
-  if (binding) writeProjectFile(documentId, binding)
-  else forgetProjectFile(documentId)
+  const stored = binding ? writeProjectFile(documentId, binding) : null
+  if (!binding) forgetProjectFile(documentId)
   if (useDocumentStore.getState().documentId === documentId) {
-    useDocumentStore.setState({ projectFile: binding })
+    useDocumentStore.setState({ projectFile: stored })
   }
 }
 

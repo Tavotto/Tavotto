@@ -186,3 +186,14 @@ docConflict；同一个项目文件被两份不同的会话打开（打开两次
   `web/src/components/topBarSaveDestination.test.tsx`（tooltip 去向、圆点）。
 - e2e `web/e2e/save-to-project.spec.ts`：项目里新建排版 → ⌘S 命名 → 改一处 → ⌘S →
   读磁盘上的 `tavottofile/<名>.json` → 刷新后从「项目里的排版」打开，内容一致。
+
+## 修订 2026-11-04：重开同一个项目文件，没人占用的旧身份会被沿用（QA-WIN-46）
+
+版本时间线按 documentId 分存（ADR 0101 / 0140），而「打开 = 新 documentId」让重开同一个项目文件
+后看不到旧身份下的命名节点。修订：从「项目里的排版」打开时，若本机已有绑定着**同一项目、同一文件**、
+且没有未保存修改（`dirty=false`）的排版身份，就沿用它（多份时取最近绑定 / 写成的，绑定里记 `at`）。
+
+「打开两次是两个会话」的语义保留：候选身份此刻在别的窗口 / 标签开着（`docPresence` 探测有回音）就跳过，
+都被占用则照旧新建。`dirty` 的旧绑定不沿用（它的本机槽位里有项目文件没有的编辑）。另存为把当前排版
+改绑新文件，原文件不再有绑定，副本不继承历史。沿用前记下旧槽位的磁盘基线，首次自动保存不误报外部修改。
+看护 `web/src/store/openProjectFileIdentity.test.ts`。

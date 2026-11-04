@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { emptyProject } from '@/types/document'
-import { forgetProjectFilesInSession, type ProjectFileBinding } from '@/lib/projectFile'
+import { __setPresenceChannelFactory } from '@/lib/docPresence'
+import { forgetProjectFilesInSession, writeProjectFile, type ProjectFileBinding } from '@/lib/projectFile'
 import { openLayoutDocument } from './actions'
 import { setProjectFile, useDocumentStore } from './documentStore'
 
@@ -62,5 +63,57 @@ describe('重开项目里的同一个排版文件', () => {
     const x = s().documentId
     await openLayoutDocument(emptyProject())
     expect(s().documentId).not.toBe(x)
+  })
+
+  it('多份候选：选最近绑定的那份，不按 id 排', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(1000)
+      writeProjectFile('d_zzz', bind('tavottofile/a.json'))
+      vi.setSystemTime(2000)
+      writeProjectFile('d_aaa', bind('tavottofile/a.json'))
+      vi.setSystemTime(3000)
+      writeProjectFile('d_mmm', bind('tavottofile/a.json')) // 最近
+    } finally {
+      vi.useRealTimers()
+    }
+    await openLayoutDocument(emptyProject(), bind('tavottofile/a.json'))
+    expect(s().documentId).toBe('d_mmm')
+  })
+
+  describe('旧身份正在别的窗口开着', () => {
+    afterEach(() => __setPresenceChannelFactory(null))
+
+    /** 别的标签页端着 held 里的文档：收到探测就回音 */
+    const otherTabHolds = (held: string[]) =>
+      __setPresenceChannelFactory(() => {
+        let listener: ((ev: { data: unknown }) => void) | null = null
+        return {
+          addEventListener: (_t, l) => { listener = l },
+          close: () => {},
+          postMessage: (d) => {
+            const m = d as { type: string; docId: string; reqId: string }
+            if (m.type === 'doc-probe' && held.includes(m.docId)) {
+              queueMicrotask(() => listener?.({ data: { type: 'doc-probe-ack', docId: m.docId, tabId: 'other', reqId: m.reqId } }))
+            }
+          },
+        }
+      })
+
+    it('被占用的不沿用，退到下一份没人占的；都占用就新建（打开两次是两个会话）', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(1000)
+      writeProjectFile('d_old', bind('tavottofile/a.json'))
+      vi.setSystemTime(2000)
+      writeProjectFile('d_new', bind('tavottofile/a.json'))
+      vi.useRealTimers()
+      otherTabHolds(['d_new'])
+      await openLayoutDocument(emptyProject(), bind('tavottofile/a.json'))
+      expect(s().documentId).toBe('d_old')
+      await s().switchDocument(emptyProject(), 'd_scratch')
+      otherTabHolds(['d_new', 'd_old'])
+      await openLayoutDocument(emptyProject(), bind('tavottofile/a.json'))
+      expect(['d_new', 'd_old']).not.toContain(s().documentId)
+    })
   })
 })

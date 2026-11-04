@@ -31,6 +31,8 @@ export interface ProjectFileBinding {
   /** 上次同步时项目文件的内容 hash；`null` = 不知道（写前按「没读过」处理） */
   revision: string | null
   dirty: boolean
+  /** 最近一次绑定 / 写成的时间（ms）；老数据没有 = 最旧。重开同一文件挑最近的那份身份用 */
+  at?: number
 }
 
 function isBinding(v: unknown): v is ProjectFileBinding {
@@ -43,6 +45,7 @@ function isBinding(v: unknown): v is ProjectFileBinding {
     !!b.name &&
     typeof b.file === 'string' &&
     (b.revision === null || typeof b.revision === 'string') &&
+    (b.at === undefined || typeof b.at === 'number') &&
     typeof b.dirty === 'boolean'
   )
 }
@@ -67,13 +70,15 @@ export function readProjectFile(documentId: string): ProjectFileBinding | null {
   }
 }
 
-export function writeProjectFile(documentId: string, binding: ProjectFileBinding): void {
-  inSession.set(documentId, binding)
+export function writeProjectFile(documentId: string, binding: ProjectFileBinding): ProjectFileBinding {
+  const stamped = { ...binding, at: Date.now() }
+  inSession.set(documentId, stamped)
   try {
-    localStorage.setItem(PREFIX + documentId, JSON.stringify(binding))
+    localStorage.setItem(PREFIX + documentId, JSON.stringify(stamped))
   } catch {
     /* 存不下只影响刷新之后 ⌘S 还认不认得这个文件（认不得就按第一次保存问一次名字） */
   }
+  return stamped
 }
 
 export function forgetProjectFile(documentId: string): void {
@@ -95,10 +100,11 @@ export const forgetProjectFilesInSession = (): void => inSession.clear()
  *
  * 只认**没有未保存修改**的绑定：`dirty` 的那份本机槽位里有项目文件里没有的编辑，
  * 重开项目文件会把槽位盖成项目文件的内容，所以那种情况仍给新身份、旧槽位留作「本机排版」。
- * 多份都绑着同一个文件（旧版本每次重开都新建一份）时取 id 字典序最小的，结果稳定。
+ * 多份都绑着同一个文件（旧版本每次重开都新建一份）时按最近绑定 / 写成的排前面。
+ * 调用方再逐个问「是不是在别的窗口开着」，开着的跳过（ADR 0096 的「打开两次是两个会话」不变）。
  * 另存为不受影响：它把当前排版改绑新文件，旧文件不再有绑定，副本不会继承别的文件的历史。
  */
-export function findDocumentForProjectFile(projectId: string, file: string): string | null {
+export function findDocumentsForProjectFile(projectId: string, file: string): string[] {
   const ids = new Set<string>()
   try {
     for (let i = 0; i < localStorage.length; i++) {
@@ -109,13 +115,14 @@ export function findDocumentForProjectFile(projectId: string, file: string): str
     /* 读不了持久副本就只看本会话 */
   }
   for (const id of inSession.keys()) ids.add(id)
-  let best: string | null = null
+  const hits: { id: string; at: number }[] = []
   for (const id of ids) {
     const b = readProjectFile(id)
     if (!b || b.dirty || b.projectId !== projectId || b.file !== file) continue
-    if (best === null || id < best) best = id
+    hits.push({ id, at: b.at ?? 0 })
   }
-  return best
+  // 最近绑定 / 写成的在前（它最可能带着用户的历史）；时间相同按 id 排，结果稳定
+  return hits.sort((x, y) => y.at - x.at || (x.id < y.id ? -1 : 1)).map((h) => h.id)
 }
 
 /**
