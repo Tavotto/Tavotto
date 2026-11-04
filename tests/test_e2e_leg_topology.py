@@ -85,6 +85,9 @@ PLATFORM_SKIPS = {
     # 大 Trace 性能预算：同一个假 `codex`（挂着不退出），只量前端。不进黄金路径（主配置 testIgnore），经
     # `playwright.perf.config.ts` 在 performance-agent workflow（Linux 的 Browser performance probe）里跑；Windows 上跳过
     "exec-trace-perf.spec.ts": 1,
+    # CLI 比模型清单旧（#1715）：同一类假 `codex`（POSIX shell 脚本，报旧版本号、执行时吐 404 的 turn.failed）→ posix-e2e 腿执行
+    # （chromium + chromium-en），Windows 腿跳过
+    "ai-cli-update.spec.ts": 1,
 }
 
 
