@@ -3403,6 +3403,11 @@ export interface AiAgentCaps {
   path_override: string | null
   /** 从哪儿找到的：path / homebrew / npm_global / chatgpt_bundle / codex_desktop_bundled …（闭集是后端 ai_agents.SOURCES） */
   detection_source: string | null
+  /**
+   * 模型清单来自比这份 CLI 新的版本（新型号可能用不了）时：怎么更新。没这回事 / 老后端 = 缺省或 null。
+   * `switch` = 本机已有更新的一份、改用它；`install` = 应用内装一份新的；`manual` = 只能自己更新（`source` 决定怎么说）。
+   */
+  cli_update?: AiCliUpdate | null
 
   models: string[]
   default_model: string | null
@@ -3618,6 +3623,13 @@ export interface AiVendor {
 }
 
 /** 已连接 / 需要重新登录的连接（模型选择器的一级）。订阅类 id = `sub:codex` / `sub:claude`；Key / OAuth 类 = provider id */
+export interface AiCliUpdate {
+  current: string
+  seen: string
+  source: string | null
+  action: 'switch' | 'install' | 'manual'
+}
+
 export interface AiConnection {
   id: string
   vendor: string
@@ -3639,6 +3651,8 @@ export interface AiConnection {
   error?: string
   /** 只给诊断 / 测试看，界面不显示 */
   route?: 'cli:codex' | 'cli:claude' | 'builtin'
+  /** 订阅类连接：背后那份 CLI 比它的模型清单旧时怎么更新（同 `AiAgentCaps.cli_update`） */
+  cli_update?: AiCliUpdate | null
 }
 
 export interface AiConnectBody {
@@ -3921,6 +3935,12 @@ export const patchAiAgent = (
 /** 一键安装 CLI（后台 `npm install -g`）；包名由后端注册表决定，这里不传 */
 export const startAiInstall = (agent: AiAgentId) =>
   jsonFetch<AiInstallState>(`/api/ai/agents/${encodeURIComponent(agent)}/install`, {
+    method: 'POST',
+  })
+
+/** 「更新 Codex」：改用本机更新的那份（立即 done）或应用内装一份（回安装进度，之后轮询 `fetchAiInstallStatus`） */
+export const startAiCliUpdate = (agent: AiAgentId) =>
+  jsonFetch<AiInstallState>(`/api/ai/agents/${encodeURIComponent(agent)}/update`, {
     method: 'POST',
   })
 

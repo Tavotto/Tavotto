@@ -10635,6 +10635,18 @@ def api_ai_agent_install(agent_id):
         return _agent_error(exc)
 
 
+@app.post("/api/ai/agents/<agent_id>/update")
+def api_ai_agent_update(agent_id):
+    """「更新 Codex」：CLI 比它的模型清单旧时，改用本机更新的那份或应用内装一份（`ai_bridge.start_cli_update`）。
+
+    请求体里不接受任何路径或包名：做什么由后端按 capabilities 的 `cli_update` 同一份判据现算。
+    """
+    try:
+        return jsonify(engine_ai.start_cli_update(agent_id))
+    except engine_ai.AgentError as exc:
+        return _agent_error(exc)
+
+
 @app.get("/api/ai/agents/<agent_id>/install")
 def api_ai_agent_install_status(agent_id):
     try:

@@ -645,6 +645,12 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict, npm_available: bo
         "efforts": list(caps.efforts) if effort_ok else [],
         "default_effort": caps.default_effort if effort_ok else None,
         "endpoint": ai_providers.public(endpoint) if endpoint else None,
+        # 加字段：模型清单来自比这份 CLI 新的版本（新型号可能用不了）时给出怎么更新；否则 None
+        "cli_update": (
+            None
+            if not installed or endpoint_backed or models_overridden
+            else cli_update_plan(agent, res)
+        ),
         "active_endpoint_id": (ai_providers.active_id(agent.id) if agent.endpoint_family else None),
         "features": {
             "third_party_endpoints": bool(agent.endpoint_family),
@@ -804,6 +810,86 @@ def set_agent_enabled(agent_id: str, enabled: bool) -> dict:
     config.set_ai_agent_settings(agent_id, {"enabled": bool(enabled)})
     invalidate_capabilities()
     return capabilities(refresh=True)
+
+
+# ---------------------------------------------------------------------------
+# CLI 比模型清单旧（2026-11-04 用户反馈：Codex 桌面版先升级、刷新了共用的 models_cache.json，
+# Tavotto 启动的那份旧 CLI 选到新型号就 404）
+# ---------------------------------------------------------------------------
+#: 怎么更新的闭集：switch = 本机已有一份够新的同名 CLI，改用它；install = 应用内托管安装的锁版本够新，装一份；
+#: manual = 两样都没有，只能用户自己更新（前端按 `source` 给一句怎么做）
+CLI_UPDATE_ACTIONS = ("switch", "install", "manual")
+
+
+def _newer_candidate(
+    agent: ai_agents.AgentDefinition, res: ai_agents.Resolution, wanted: str
+) -> str | None:
+    """候选里第一个版本不低于 `wanted`、且不是当前那份的可执行文件。只在已经判出「旧了」时才跑（多几次 `--version`）。"""
+    for cand in ai_agents.candidates(agent):
+        if cand.path == res.path or (res.argv and cand.path in res.argv):
+            continue
+        argv = ai_agents.resolve_shim(cand.path) or [cand.path]
+        if argv[-1] == res.path:
+            continue
+        got = ai_agents.probe_version(argv)
+        if got is not None and not ai_agents.older_than(got, wanted):
+            return cand.path
+    return None
+
+
+def _managed_lock_version(agent_id: str) -> str | None:
+    try:
+        cli = managedcli.cli_for(agent_id)
+    except (OSError, ValueError, KeyError):
+        return None
+    return cli.version if cli else None
+
+
+def _cli_update_target(
+    agent: ai_agents.AgentDefinition, res: ai_agents.Resolution
+) -> tuple[dict, str | None] | None:
+    """→ (公开的计划, switch 时要改用的路径)。CLI 不比模型清单旧 / 判不出 → None。"""
+    seen = agent.catalog_client_version()
+    if not ai_agents.older_than(res.version, seen):
+        return None
+    cur = ai_agents.version_key(res.version)
+    assert seen is not None and cur is not None
+    plan = {"current": ".".join(map(str, cur)), "seen": seen, "source": res.source}
+    # 用户自己指定了路径（custom）：那是他选的那份，不替他换成别的文件
+    if res.source != "custom":
+        newer = _newer_candidate(agent, res, seen)
+        if newer:
+            return {**plan, "action": "switch"}, newer
+    lock = _managed_lock_version(agent.id)
+    # 锁版本要追得上模型清单：装一份比清单还旧的，新型号照样用不了
+    if agent.install_spec and lock and not ai_agents.older_than(lock, seen):
+        return {**plan, "action": "install"}, None
+    return {**plan, "action": "manual"}, None
+
+
+def cli_update_plan(agent: ai_agents.AgentDefinition, res: ai_agents.Resolution) -> dict | None:
+    """capabilities 的 `cli_update`：`{current, seen, source, action}`（action ∈ `CLI_UPDATE_ACTIONS`），不旧 → None。
+    路径不公开——`start_cli_update` 自己再算一遍。"""
+    got = _cli_update_target(agent, res)
+    return got[0] if got else None
+
+
+def start_cli_update(agent_id: str) -> dict:
+    """「更新 Codex」：按 `cli_update_plan` 的结论做。switch = 设自定义路径（与设置页同一个入口、同一套验证）后回
+    `{"status": "done"}`；install = 应用内托管安装（回安装进度，前端轮询 `GET …/install`）；manual / 已经不旧 = 409。
+    请求体里不接受任何路径或包名。"""
+    agent = require_agent(agent_id)
+    res = ai_agents.resolve(agent)
+    got = _cli_update_target(agent, res) if res.argv else None
+    if got is None:
+        raise AgentError("ai_cli_update_unavailable", {"agent": agent_id})
+    plan, newer = got
+    if plan["action"] == "switch" and newer:
+        set_agent_path_override(agent_id, newer)
+        return {"status": "done", "via": "switch"}
+    if plan["action"] == "install":
+        return start_install(agent_id)
+    raise AgentError("ai_cli_update_unavailable", {"agent": agent_id})
 
 
 def set_agent_path_override(agent_id: str, path: str | None) -> dict:
@@ -2119,7 +2205,12 @@ def run(
     agent_runs = [0]
 
     def _consume():
-        st: dict = {}
+        # `endpoint_backed`：这次是不是真的走第三方接口（判据问注入方自己，与 `_agent_caps` 同一条）——适配器据此决定
+        # 某些失败码算不算数（Codex 的 404：官方登录下是「CLI 太旧不认识型号」，第三方接口下多半是地址错）
+        st: dict = {
+            "endpoint_backed": bool(endpoint)
+            and any(ai_providers.spawn_overrides(agent, endpoint, model))
+        }
         sess.pop("runner_error", None)
         sess.pop("runner_detail", None)
         sess.pop("failure_category", None)
@@ -2306,6 +2397,14 @@ def run(
                 _settle_task(sess, task)
             elif sess["status"] == "running":
                 sess["status"] = "done" if proc.returncode == 0 else "failed"
+                # 没走 TAF 时失败码也要随终态出去（适配器从结构化字段归出来的 `runner_error`）：否则 CLI 的
+                # 凭据失效 / 额度 / 型号用不了到了失败卡上只剩一个「失败」，主按钮也对不上
+                if (
+                    sess["status"] == "failed"
+                    and sess.get("runner_error")
+                    and not sess.get("error")
+                ):
+                    sess["error"] = sess["runner_error"]
             # 文件变了就接统一刷新——**不看 status**：CLI 超时 / 非零退出但文件
             # 已经改了，磁盘上的事实就是改了，watcher 迟早也会看到它。刷新在
             # `ai.done` 之前做完，前端收到那条事件时后端的注册表已经是新的。

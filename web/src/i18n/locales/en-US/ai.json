@@ -21,6 +21,21 @@
     "unifyLineWidth": "Unify line widths",
     "unifyTickFormat": "Unify tick formatting"
   },
+  "cliUpdate": {
+    "action": "Update {{agent}}",
+    "running": "Updating {{agent}}…",
+    "menuHint": "Newer models need the update",
+    "menuManual": "Newer models need a newer {{agent}}",
+    "how": {
+      "homebrew": "Run brew upgrade codex in Terminal",
+      "npm": "Run npm i -g @openai/codex in a terminal",
+      "chatgpt": "Update the ChatGPT desktop app",
+      "desktop": "Update the Codex desktop app",
+      "managed": "Coming in the next Tavotto update",
+      "other": "Update it the usual way"
+    },
+    "switchBack": "Switch back to {{model}}"
+  },
   "code": {
     "copied": "Copied",
     "copy": "Copy code",
@@ -109,6 +124,7 @@
     "agent_auth": "The model credential is invalid or expired.",
     "agent_quota": "The model service is out of quota or rate limited. Try again later.",
     "agent_network": "Couldn’t reach the model service.",
+    "agent_model_unavailable": "This model needs a newer Codex.",
     "agent_html_response": "The connection address opens a web page, not an API.",
     "agent_refused": "The model declined this edit.",
     "agent_budget": "This edit hit its usage limit and stopped.",

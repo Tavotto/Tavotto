@@ -346,6 +346,8 @@ def _subscription_connections(agents_info: dict[str, dict]) -> list[dict]:
                 "default_effort": caps.default_effort,
                 "route": f"cli:{agent_id}",
                 "method": f"{vid}:login",
+                # 背后那份 CLI 比它的模型清单旧时怎么更新（`ai_bridge.cli_update_plan`，capabilities 里算好的同一份）
+                "cli_update": info.get("cli_update"),
             }
         )
     return out

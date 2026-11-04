@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { backendErrorText, fetchAiInstallStatus, startAiInstall, type AiAgentId, type AiInstallState } from '@/lib/api'
+import { backendErrorText, fetchAiInstallStatus, startAiCliUpdate, startAiInstall, type AiAgentId, type AiInstallState } from '@/lib/api'
 
 /** 应用内安装的轮询间隔（毫秒） */
 export const INSTALL_POLL_MS = 2000
@@ -19,6 +19,8 @@ interface AgentInstallState {
   loginDue: Partial<Record<AiAgentId, string>>
   /** 起装：登记意图并开始轮询。轮询住在 store 里——capabilities 先报「已安装」把按钮卸掉也照样走完 */
   begin: (agent: AiAgentId, owner: string, afterDone: () => Promise<void> | void) => void
+  /** 「更新 Codex」（`POST …/update`）：改用本机新版时立即完成，应用内装新版时与安装同一套轮询。不留登录意图（早就登录过） */
+  beginUpdate: (agent: AiAgentId, afterDone: () => Promise<void> | void) => void
   /** 取走并清掉登录意图；owner 对不上返回 false */
   takeLoginDue: (agent: AiAgentId, owner: string) => boolean
 }
@@ -35,20 +37,22 @@ export const useAgentInstallStore = create<AgentInstallState>((set, get) => {
   const put = (agent: AiAgentId, entry: AgentInstallEntry | undefined) =>
     set((s) => ({ byAgent: { ...s.byAgent, [agent]: entry } }))
 
-  const finish = async (agent: AiAgentId, owner: string, afterDone: () => Promise<void> | void) => {
+  const finish = async (agent: AiAgentId, owner: string | null, afterDone: () => Promise<void> | void) => {
     put(agent, { status: 'done' })
     // 先重读状态（拿到 installed / needs_auth），再留下「该登录了」的意图
     try {
       await afterDone()
     } finally {
-      set((s) => ({ loginDue: { ...s.loginDue, [agent]: owner } }))
+      if (owner !== null) set((s) => ({ loginDue: { ...s.loginDue, [agent]: owner } }))
     }
   }
 
-  return {
-    byAgent: {},
-    loginDue: {},
-    begin: (agent, owner, afterDone) => {
+  const run = (
+    agent: AiAgentId,
+    owner: string | null,
+    afterDone: () => Promise<void> | void,
+    start: (agent: AiAgentId) => Promise<AiInstallState>,
+  ) => {
       stop(agent)
       put(agent, { status: 'running' })
       set((s) => {
@@ -76,7 +80,7 @@ export const useAgentInstallStore = create<AgentInstallState>((set, get) => {
       }
       void (async () => {
         try {
-          const s = await startAiInstall(agent)
+          const s = await start(agent)
           if (s.status === 'done') await finish(agent, owner, afterDone)
           else if (s.status === 'error') put(agent, { status: 'error', code: s.code })
           else {
@@ -87,7 +91,13 @@ export const useAgentInstallStore = create<AgentInstallState>((set, get) => {
           put(agent, { status: 'error', message: backendErrorText(e) })
         }
       })()
-    },
+  }
+
+  return {
+    byAgent: {},
+    loginDue: {},
+    begin: (agent, owner, afterDone) => run(agent, owner, afterDone, startAiInstall),
+    beginUpdate: (agent, afterDone) => run(agent, null, afterDone, startAiCliUpdate),
     takeLoginDue: (agent, owner) => {
       if (get().loginDue[agent] !== owner) return false
       set((s) => {

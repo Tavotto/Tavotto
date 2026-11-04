@@ -442,6 +442,15 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 非零退出默认写 `agent_exit_nonzero`；适配器的 `classify_event` 只凭**结构化字段**把失败归到 `RUNNER_ERRORS` 里的 `agent_auth` / `agent_quota` / `agent_network`，写进 `state["runner_error"]`（`ai_bridge` 对所有 Agent 取它）。
 Codex 只认 `turn.failed.error` 的 `message` 开头 Codex 自拼的 `unexpected status <三位码>`（真机 0.163.0 无结构化码字段；401/403 auth、429 quota、502/503/504 network）；Claude 只认 `assistant.error`（`authentication_failed` / `rate_limit` / `billing_error`）与 `result.api_error_status`。
 **不匹配任何自由文本、不保留原文**；字段没有或不认识就不判。失败卡「错误码 → 主按钮」的闭集表是前端 `AGENT_ERROR_ACTION`，与 `tests/golden/ai_error_action_vectors.json` 前后端对拍（`tests/test_ai_cli_error_classes.py`、`transcriptModel.test.ts`）。
+Codex 的 **404** 归 `agent_model_unavailable`（只有 CLI 适配器产出的码在 `ai_agents.CLI_RUNNER_ERRORS`，不进与 `DONE_REASONS` 对齐的 `RUNNER_ERRORS`）：旧版 codex 被选了它不认识的新型号。**只在走 CLI 自己的登录时采纳**——桥在 `_consume` 起点把 `endpoint_backed`（`spawn_overrides` 真的产出了注入，与 `_agent_caps` 同一判据）放进分类状态，第三方接口下的 404 多半是地址错，不归这一类。没走 TAF 的会话失败时同样把 `runner_error` 写进会话 `error`（否则失败卡只剩「失败」、主按钮对不上）。失败卡主按钮 `update_cli`：能一键更新 →「更新 Codex」；不能 →「换回默认型号」，怎么更新进「详情」；都没有 →「重试」。
+
+## CLI 比模型清单旧（`cli_update`，2026-11-04 用户反馈）
+
+同一家族的 CLI 共用一份目录缓存（Codex 桌面版 / IDE 插件 / 命令行都写 `models_cache.json`），桌面版先升级会把新型号写进去，Tavotto 启动的旧 CLI 选到就 404。
+判据：适配器 `catalog_client_version()`（Codex = 缓存顶层 `client_version`；默认 None = 不提示）严格新于已解析 CLI 的 `--version`（`ai_agents.older_than`，任一判不出就不提示）；第三方接口接管时不算。
+capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, source, action}`，`action` 闭集 `ai_bridge.CLI_UPDATE_ACTIONS`：
+`switch` = 候选里另有一份版本 ≥ 清单的（当前来源是 `custom` 时不替用户换）；`install` = 托管锁版本 ≥ 清单（锁追不上清单就不给，装了也没用）；`manual` = 都没有，前端按 `source` 说怎么更新。
+`POST /api/ai/agents/<id>/update` 现算同一份计划：switch 经 `set_agent_path_override`（同一套 `--version` 验证）、install 走 `start_install`、其余 409 `ai_cli_update_unavailable`；请求体不接受路径或包名。看护 `tests/test_ai_cli_update.py`、`web/e2e/ai-cli-update.spec.ts`。
 
 ## 内置执行器（`engine/agent_runner/`，ADR 0147，第一阶段核心循环 + 第二阶段已接入改图）
 
