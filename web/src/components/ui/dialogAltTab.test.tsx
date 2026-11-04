@@ -27,11 +27,13 @@ afterEach(async () => {
   host.remove()
 })
 
+const TITLE = 'T'
+
 async function open() {
   await act(async () =>
     root.render(
       <TooltipProvider>
-        <Dialog open onOpenChange={() => {}} title="T" anchor="alt" size="sm">
+        <Dialog open onOpenChange={() => {}} title={TITLE} anchor="alt" size="sm">
           <button data-b="1">a</button>
           <button data-b="2">b</button>
           <button data-b="3">c</button>
