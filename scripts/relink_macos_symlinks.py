@@ -38,6 +38,12 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# stdout / stderr 不是真控制台（CI 捕获、管道）时会退回系统区域编码，第一句中文就 UnicodeEncodeError。
+# 写法与 build_frontend.py 同源（tests/test_windows_regressions.py 看护）。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 #: .app 里 sidecar 目录相对 .app 根的位置（tauri.conf.json 的 bundle.resources 映射）
 SIDECAR_REL = Path("Contents") / "Resources" / "sidecar" / "Tavotto"
 
