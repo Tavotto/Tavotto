@@ -79,6 +79,23 @@ run，09:35:34Z 的 push 才起了 CI / CodeQL / conflict domains 三个。看�
 workflow 只要带同一行过滤（叠栈分支上的 `foundation-u06-rendercore.yml` /
 `private-python-targets.yml` 已经带了）。
 
+**同 SHA 不互相取消（2026-11-04）。** 规则：`ci.yml` 的 concurrency 组带 `pull_request.head.sha`、
+`cancel-in-progress` 恒为 `false`；同 PR 旧 SHA 的 run 由 job `cancel-superseded` 取消。
+事实：旧写法按 PR 号分组、PR 事件取消在跑的 run，同一 SHA 上出现第二个事件（推提交后补打 `full-ci`；
+`gh pr create --label a --label b` 的 opened + labeled；连打两个标签）就把已起 job 的第一个 run 整套取消，
+被取消 run 里 `if: always()` 的 CI fast gate / CI integration gate 以 FAILURE / CANCELLED 留在该 SHA 上，
+第二个 run 全绿后 required rollup 仍是 FAILURE + SUCCESS，PR 永久 BLOCKED，重跑翻不绿，只能推空提交换
+head。实证 5 个 PR：#1664 #1714 #1745 #1748 #1751；#1745 在 72b52b2c9 上 13:42:25 的 run 41840570035
+（29 job cancelled、gate FAILURE）被 13:43:15 labeled 的 run 41840677929 取消。Gate 侧修法（#1666，已关）
+无效：被取消 run 里的 Gate 被记为 CANCELLED 而非 skipped。为什么现在的写法成立：同 SHA 的事件进同一个组，
+在跑的跑完，后来的至多一个 pending，更新的 pending 顶掉旧 pending；被顶掉的 run 从没起过 job，不产生
+check run，SHA 上不留红（草稿 PR 实证见该 PR 描述）。不同 SHA 不同组，新 push 立刻起跑。代价与补偿：
+旧 SHA 的 run 不再被 concurrency 取消，由 `cancel-superseded`（只 pull_request、同仓库 PR、
+`continue-on-error`、不进任何 Gate 的 needs）取消同 PR 里 `head_sha` 不同的未完成 run；它失败只是旧 run
+多跑一会儿。merge_group / push 行为不变（本来就不取消）；`codeql.yml` 未改（默认三种 PR 事件类型，同 SHA
+不会有第二个事件）。看护：`tests/test_merge_queue_workflows.py::TestPullRequestEventTypes::
+test_same_sha_events_queue_and_never_cancel_each_other`、`TestConcurrency`。
+
 **合并组快速失败（2026-11-03）。** 事实：2026-10-13 ~ 11-02 的 525 个合入 PR 里 27% 被队列踢过，
 81% 的踢出是合并组检查红；抽样 46 条失败 run，第一个真实红 job 中位 38.6 分钟出现，而
 `CI integration gate` 要等五条重腿全结束，中位 69 分钟才红——每个红组白占 runner 约 30 分钟
