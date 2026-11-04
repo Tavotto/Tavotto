@@ -519,6 +519,24 @@ describe('一次改尺寸与它触发的自动重排是一个撤销步（QA-WIN-
     expect(s().doc.name).not.toBe('renamed')
     expect(obj('pa').w).toBe(60)
   })
+  it('统一宽度的组：重排改到的其他成员也带原生图幅基准，撤销后 B 的原生图幅变了再重做保持 150%（Codex #1733 P2）', async () => {
+    await mount('d_reflow_uniform_basis')
+    await commit('开统一宽度', (d) => {
+      d.layoutGroups![0].uniform = 'width'
+    })
+    await commit('缩放', widen)
+    expect(obj('pb').w).toBeCloseTo(60, 6) // 统一宽度把 B 也拉到 60（150%）
+    const depth = s().past.length
+    await undo()
+    expect([obj('pa').w, obj('pb').w]).toEqual([40, 40])
+    expect(s().past.length).toBe(depth - 1)
+    // 撤销之后 B 的渲染回来是原生 80 宽：按条目记的缩放比换算
+    await seed(obj('pb'), [80, 30])
+    expect(obj('pb').nativeW).toBe(80)
+    const before = obj('pb').w
+    await redo()
+    expect(obj('pb').w).toBeCloseTo(before * 1.5, 6)
+  })
 })
 
 describe('打开文档 / 切画布', () => {
