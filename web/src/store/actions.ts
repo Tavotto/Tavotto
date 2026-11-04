@@ -2372,8 +2372,15 @@ export function startLayoutAutoReflow(): () => void {
   // 也没有一条重排可以重做。锚在最新一条而不是排上重排的那条：防抖窗口里可能又落了
   // 不改尺寸的编辑，只重做到前一条就补排的话，这次 commit 会把还在 future 里的新条目冲掉
   let cancelled: { anchor: HistoryEntry; groups: string[] } | null = null
+  // 引发待发重排的那条用户编辑（改尺寸那一条）。到点时它仍是最后一条历史就把重排
+  // 并进它：用户的一次改动与它触发的自动重排是一个撤销步，一次 ⌘Z 同时退回尺寸与
+  // 位置（否则只退重排，尺寸还在，成员重叠，QA-WIN-38）。窗口里又落了别的编辑就不并
+  let trigger: HistoryEntry | null = null
+  // 并入重排时 amendLast 会让订阅回调再跑一遍：那是自己写的，不当用户编辑
+  let amending = false
 
   const unsub = store.subscribe((state, prev) => {
+    if (amending) return
     const move = historyMove(state, prev)
     if (move === 'none') return
     // 事务进行中不记尺寸：松手那一下（edit）要拿事务前的尺寸比
@@ -2411,8 +2418,11 @@ export function startLayoutAutoReflow(): () => void {
     if (!dirty.length) return
     window.clearTimeout(timer)
     pendingGroups = dirty.map((g) => g.id)
+    trigger = move === 'edit' ? (state.past.at(-1) ?? null) : null
     timer = window.setTimeout(() => {
       pendingGroups = null
+      const host = trigger
+      trigger = null
       // 自动重排是「文档自己动了」，不是用户在拖——不给动效的话相邻面板会
       // 凭空跳一下，看不出跟刚才那次改动的因果。**只播没被选中/悬停的那些**：
       // 选择框与手柄由 OverlaySvg 按文档坐标画，它不参与这段补间，
@@ -2426,12 +2436,25 @@ export function startLayoutAutoReflow(): () => void {
       const play = flipCapture(els)
 
       let moved = 0
-      commit(hist('autoReflow'), (d) => {
+      const recipe = (d: FigureDocument) => {
         for (const g of dirty) {
           const gg = d.layoutGroups?.find((x) => x.id === g.id)
           if (gg) moved += applyReflowDraft(d, gg)
         }
-      })
+      }
+      let merged = false
+      if (host) {
+        amending = true
+        try {
+          merged = store.getState().amendLast(host, recipe)
+        } finally {
+          amending = false
+        }
+      }
+      if (!merged) {
+        moved = 0
+        commit(hist('autoReflow'), recipe)
+      }
       snapshot(useDocumentStore.getState().doc)
       if (moved) {
         play()
