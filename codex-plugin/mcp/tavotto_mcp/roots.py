@@ -672,7 +672,9 @@ class RootAuthority:
                 roots, warnings = self._paths_from_config(
                     hint, reject_plugin=True, reject_fs_root=True
                 )
-                return roots, f"workspace_env:{name}", warnings
+                if roots or not local_scope:
+                    return roots, f"workspace_env:{name}", warnings
+                # 本机兜底：宿主的工作区变量指到主目录 / 已删除目录等不可用的位置，与不可用的 roots/list 同样往下落
 
         if local_scope:
             return local_roots(), SOURCE_LOCAL_SCOPE, ()

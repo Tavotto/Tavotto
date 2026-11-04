@@ -202,3 +202,79 @@ def test_no_write_tripwire_in_local_scope(home, monkeypatch):
     monkeypatch.delenv(SCOPE_ENV)
     monkeypatch.setenv(ROOTS_ENV, project)
     assert bridge._tripwire_roots(project) == (_real(project),)
+
+
+@pytest.mark.parametrize("name", [".env", "server.pem", "id_ed25519"])
+def test_a_credential_named_symlink_to_a_plain_file_is_refused(home, tmp_path, name):
+    """词法名字也要判（Codex #1757 P1）：`.env -> plain.txt` 解析后名字就丢了，不能因此放行。"""
+    plain = _file(tmp_path / "elsewhere" / "shared" / "plain.txt")
+    link = home / "papers" / "figs" / name
+    try:
+        link.symlink_to(plain)
+    except OSError:
+        pytest.skip("这台机器不能建符号链接")
+    with pytest.raises(bridge.BridgeError) as exc:
+        bridge.check_scope(str(link))
+    assert exc.value.code == roots.CODE_PATH_DENIED
+    roots_now = bridge.allowed_roots()
+    cwds = [str(home / "papers" / "figs")]
+    assert bridge._argv_path_escapes(str(link), roots_now, cwds)
+    assert bridge._argv_path_escapes(name, roots_now, cwds)
+    # 链接的目标本身是普通文件：直接指它照样能开
+    assert bridge.check_scope(str(plain)) == _real(plain)
+
+
+@pytest.mark.parametrize("bad", ["home", "missing"])
+def test_an_unusable_host_workspace_variable_falls_back_to_local_scope(
+    home, tmp_path, monkeypatch, bad
+):
+    """宿主的工作区变量指到主目录 / 不存在的目录：与不可用的 roots/list 一样落到本机兜底（Codex #1757 P2）。"""
+    monkeypatch.setenv(WORKSPACE_ENVS[0], str(home if bad == "home" else tmp_path / "gone"))
+    snap = RootAuthority(str(tmp_path / "plugin")).snapshot()
+    assert snap.source == SOURCE_LOCAL_SCOPE and snap.roots == roots.local_roots()
+
+
+def test_a_usable_host_workspace_variable_still_wins(home, tmp_path, monkeypatch):
+    project = home / "papers" / "figs"
+    monkeypatch.setenv(WORKSPACE_ENVS[0], str(project))
+    snap = RootAuthority(str(tmp_path / "plugin")).snapshot()
+    assert snap.source == f"workspace_env:{WORKSPACE_ENVS[0]}" and snap.roots == (_real(project),)
+
+
+def test_without_local_scope_an_unusable_workspace_variable_still_fails_closed(
+    home, tmp_path, monkeypatch
+):
+    monkeypatch.delenv(SCOPE_ENV)
+    monkeypatch.setenv(WORKSPACE_ENVS[0], str(home))
+    snap = RootAuthority(str(tmp_path / "plugin")).snapshot()
+    assert snap.source == f"workspace_env:{WORKSPACE_ENVS[0]}" and snap.roots == ()
+
+
+def test_a_plain_named_symlink_to_a_credential_file_is_refused(home):
+    """反方向：`plain.txt -> .env`，词法名字普通、解析后是凭据。"""
+    secret = _file(home / "papers" / "figs" / ".env")
+    link = home / "papers" / "plain.txt"
+    try:
+        link.symlink_to(secret)
+    except OSError:
+        pytest.skip("这台机器不能建符号链接")
+    with pytest.raises(bridge.BridgeError) as exc:
+        bridge.check_scope(str(link))
+    assert exc.value.code == roots.CODE_PATH_DENIED
+    assert bridge._argv_path_escapes(str(link), bridge.allowed_roots(), [str(home)])
+
+
+def test_a_file_reached_through_a_directory_link_into_ssh_is_refused(home):
+    """中间某一段目录是指向 `~/.ssh` 的链接：`papers/keys/notes.txt` 解析后在凭据目录里。"""
+    _file(home / ".ssh" / "notes.txt")
+    keys = home / "papers" / "keys"
+    try:
+        keys.symlink_to(home / ".ssh", target_is_directory=True)
+    except OSError:
+        pytest.skip("这台机器不能建符号链接")
+    with pytest.raises(bridge.BridgeError) as exc:
+        bridge.check_scope(str(keys / "notes.txt"))
+    assert exc.value.code == roots.CODE_PATH_DENIED
+    assert bridge._argv_path_escapes(
+        "keys/notes.txt", bridge.allowed_roots(), [str(home / "papers")]
+    )

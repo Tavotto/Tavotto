@@ -429,7 +429,7 @@ def _nt_rooted_escape(value: str, roots: list[str], resolve=lambda p: p) -> str 
         return value  # `\x` / `/x` / `\` / `/`：有根无盘符，落点取决于 worker 的盘
     real = resolve(ntpath.normpath(value))
     if local_scope_active():
-        return real if _scope_denied(real) else None
+        return real if _scope_denied(real, lexical=ntpath.normpath(value)) else None
     for root in roots:
         try:
             common = ntpath.commonpath([real, root])
@@ -517,13 +517,15 @@ def _argv_path_escapes(
     if value.startswith("~") or os.path.isabs(value) or _WIN_ABS_RE.match(value):
         if _WIN_ABS_RE.match(value) and not os.path.isabs(value):
             return value  # 非本平台的绝对路径形状：无法证明它在根里
-        real = canonical_path(os.path.expanduser(value))
-        return None if _in_scope(real, roots) else real
+        lexical = os.path.abspath(os.path.expanduser(value))
+        real = canonical_path(lexical)
+        return None if _in_scope(real, roots, lexical=lexical) else real
     if cwds is None:
         return value if ".." in re.split(r"[\\/]+", value) else None
     for cwd in cwds:
-        real = canonical_path(os.path.join(cwd, value))
-        if not _in_scope(real, roots):
+        lexical = os.path.abspath(os.path.join(cwd, value))
+        real = canonical_path(lexical)
+        if not _in_scope(real, roots, lexical=lexical):
             return real
     return None
 
@@ -651,7 +653,7 @@ def local_scope_active() -> bool:
     return _ROOT_AUTHORITY.snapshot().source == SOURCE_LOCAL_SCOPE
 
 
-def _scope_denied(real: str) -> bool:
+def _scope_denied(real: str, *, lexical: str | None = None) -> bool:
     """本机兜底这一档**只拦凭据类文件**：改图助手同一份黑名单（`engine/fixtools/readscope.py`，ADR 0149 §三：`.env*`、
     私钥形状、SSH / 云服务等凭据目录、浏览器登录数据、Tavotto 自己的密钥文件；词法与解析后各判一次，符号链接指进去也拦）。
     位置不拦——用户的数据可能在任何盘、任何目录（维护者 2026-11-05）。引擎里没有那份黑名单（旧引擎）就一律拦：失败封闭。"""
@@ -662,14 +664,20 @@ def _scope_denied(real: str) -> bool:
     home = next(
         (h for h in homes if _within(real, h)), homes[0] if homes else os.path.expanduser("~")
     )
-    return scope_cls(home=home, project_root=home).is_denied(real)
+    scope = scope_cls(home=home, project_root=home)
+    # `lexical`（解析符号链接之前的绝对路径）也要过：叫 `.env` 的链接指向 `plain.txt`，解析后名字就丢了。
+    # `check` 对给它的路径词法、解析后各判一次；只看它是不是 denied（「不在主目录里」这一档不拦位置）。
+    denied = getattr(_optional_engine("fixtools.readscope"), "REASON_DENIED", "denied")
+    return any(
+        scope.check(p).reason == denied for p in dict.fromkeys(x for x in (lexical, real) if x)
+    )
 
 
-def _in_scope(real: str, roots) -> bool:
+def _in_scope(real: str, roots, *, lexical: str | None = None) -> bool:
     """`real`（已规范化）在不在范围内。**判「在不在范围内」只经这里**：本机兜底那一档不看根、只看凭据黑名单
     （UNC 网络路径、新插的盘也算本机）；其余档看在不在允许的根之内。"""
     if local_scope_active():
-        return not _scope_denied(real)
+        return not _scope_denied(real, lexical=lexical)
     return any(_within(real, r) for r in roots)
 
 
@@ -785,7 +793,7 @@ def check_scope(path: str) -> str:
         target = os.path.join(roots[0], target)
     real = canonical_path(target)
     if local_scope_active():
-        if not _scope_denied(real):
+        if not _scope_denied(real, lexical=os.path.abspath(target)):
             return real
         failure = WORKSPACE_FAILURES[CODE_PATH_DENIED]
         raise BridgeError(
