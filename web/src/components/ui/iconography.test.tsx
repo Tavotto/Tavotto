@@ -84,6 +84,7 @@ const SVG_ALLOWLIST: Record<string, number> = {
   '/src/components/inspector/controls/ViewAngleDiagram.tsx': 1, // 三维三轴方向示意（按当前角度重画）
   '/src/components/settings/AgentIcon.tsx': 2, // Claude / OpenAI 两个品牌标
   '/src/components/settings/VendorIcon.tsx': 1, // 厂商标（lobe-icons 的 path 数据，单色 currentColor）
+  '/src/components/telemetry/ConsentArt.tsx': 3, // 首启询问框顶部的三幅插画（桌面 / 点阵 / 纸飞机），不是图标
   '/src/components/settings/CompanionDiagram.tsx': 1, // 「一同移动关联对象」的前后空间关系
   '/src/components/settings/StyleSamplePreview.tsx': 1, // 样式示例图（viewBox 单位就是 pt）
   // 图例位置：子图容器边界 + 图例此刻落在哪（跟着 loc / bbox_to_anchor 走）+ 六个
