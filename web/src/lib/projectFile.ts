@@ -90,6 +90,35 @@ export function forgetProjectFile(documentId: string): void {
 export const forgetProjectFilesInSession = (): void => inSession.clear()
 
 /**
+ * 同一个项目文件上次是哪份排版（documentId）绑着的——重开它时沿用这个身份，版本时间线
+ * （按 documentId 分存，ADR 0101 / 0140）才接得上（QA-WIN-46）。
+ *
+ * 只认**没有未保存修改**的绑定：`dirty` 的那份本机槽位里有项目文件里没有的编辑，
+ * 重开项目文件会把槽位盖成项目文件的内容，所以那种情况仍给新身份、旧槽位留作「本机排版」。
+ * 多份都绑着同一个文件（旧版本每次重开都新建一份）时取 id 字典序最小的，结果稳定。
+ * 另存为不受影响：它把当前排版改绑新文件，旧文件不再有绑定，副本不会继承别的文件的历史。
+ */
+export function findDocumentForProjectFile(projectId: string, file: string): string | null {
+  const ids = new Set<string>()
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (k?.startsWith(PREFIX)) ids.add(k.slice(PREFIX.length))
+    }
+  } catch {
+    /* 读不了持久副本就只看本会话 */
+  }
+  for (const id of inSession.keys()) ids.add(id)
+  let best: string | null = null
+  for (const id of ids) {
+    const b = readProjectFile(id)
+    if (!b || b.dirty || b.projectId !== projectId || b.file !== file) continue
+    if (best === null || id < best) best = id
+  }
+  return best
+}
+
+/**
  * 此刻这个标签页能用的绑定：**只认当前项目的**。一份在项目 A 里绑定的排版被从「最近
  * 排版」带进项目 B 时，⌘S 不能写回 A 的文件（那条请求带的是 B 的 pj，落不到 A），
  * 也不能把 A 的绑定抹掉（回到 A 还要用）——在 B 里它就是一份还没存进项目的排版。

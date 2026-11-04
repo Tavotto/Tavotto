@@ -68,10 +68,11 @@ import type {
   TextObject,
 } from '@/types/document'
 import { emptyProject, objectLabel, type ProjectDocument } from '@/types/document'
-import type { ProjectFileBinding } from '@/lib/projectFile'
+import { findDocumentForProjectFile, type ProjectFileBinding } from '@/lib/projectFile'
 import { useAssetStore } from './assetStore'
 import { useEnvStore } from './envStore'
 import {
+  adoptSlotBaseline,
   readAutosaveDoc,
   saveNowWithResult,
   setProjectFile,
@@ -656,7 +657,10 @@ export async function openLayoutDocument(
   doc: FigureDocument | ProjectDocument,
   projectFile?: ProjectFileBinding,
 ): Promise<boolean> {
-  if (!(await useDocumentStore.getState().switchDocument(doc, newId('d'), confirmLoss))) return false
+  // 重开同一个项目文件沿用上次的身份：时间线按 documentId 分存，新建身份会看不到命名节点（QA-WIN-46）
+  const reuse = projectFile ? findDocumentForProjectFile(projectFile.projectId, projectFile.file) : null
+  if (reuse) await adoptSlotBaseline(reuse)
+  if (!(await useDocumentStore.getState().switchDocument(doc, reuse ?? newId('d'), confirmLoss))) return false
   if (projectFile) setProjectFile(projectFile)
   afterSwitch()
   const s = useDocumentStore.getState()

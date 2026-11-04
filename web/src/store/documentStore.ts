@@ -1997,6 +1997,25 @@ export function acceptProbe(p: ProbeResult, _pj: string | null, token?: RestoreT
   return null
 }
 
+/**
+ * 沿用一份已有槽位的身份去装另一份内容之前：把槽位在磁盘上的现状记成基线，
+ * 否则第一次自动保存会把「从没读过的磁盘文档」当成外部修改弹冲突。
+ * 只记基线，不接收恢复副本（调用方保证这份槽位没有未保存的编辑）。
+ */
+export async function adoptSlotBaseline(id: string): Promise<void> {
+  const p = await probeAutosave(id, currentProjectId())
+  if (p.kind === 'found') {
+    disk.rememberRevision(id, { revision: p.revision })
+    if (typeof (p.doc as { updatedAt?: unknown })?.updatedAt === 'number') {
+      disk.setBaseline(id, (p.doc as { updatedAt: number }).updatedAt)
+    }
+  } else if (p.kind === 'missing') {
+    disk.rememberRevision(id, null)
+  } else {
+    disk.forgetRevision(id)
+  }
+}
+
 /** 读文档并落账（`probeDocument` + `acceptProbe`）：显式打开最近文档 / 教程装文档用，现有调用方不变 */
 export async function readAutosaveDoc(id: string): Promise<LoadedDoc> {
   const pj = currentProjectId()
