@@ -222,4 +222,27 @@ describe('逐 id 代次：旧响应不得覆盖新状态（#1348 Codex P2）', (
     await flush()
     expect(useRuntimeAssetStore.getState().byId[id]?.registered).toBe(true)
   })
+
+  it('QA-WIN-43：脚本改名又恢复后，刷新素材清单把画布角标用的状态一并拉回', async () => {
+    const id = 'runtime:fig.py#fig'
+    mockFetch.mockResolvedValue({
+      id, status: 'missing_source', script: 'fig.py', stem: 'fig', entry: '__main__', registered: true, cached: true,
+    })
+    useRuntimeAssetStore.getState().ensure(runtimePanel())
+    await flush()
+    expect(useRuntimeAssetStore.getState().byId[id].status).toBe('missing_source')
+
+    // 脚本恢复原名后重取清单：素材卡认为它已经新鲜
+    mockAssets.mockResolvedValue({
+      assets: [{ id, script: 'fig.py', stem: 'fig', entry: '__main__', status: 'fresh', cached: true,
+        size_mm: null, capture_source: null, descriptor: null }],
+    })
+    await useRuntimeAssetStore.getState().loadAssets()
+    expect(useRuntimeAssetStore.getState().byId[id]).toMatchObject({ status: 'fresh', cached: true, checked: true })
+
+    // 用户自己的重跑失败标记不被磁盘清单盖掉
+    useRuntimeAssetStore.getState().markRerunFailed(id)
+    await useRuntimeAssetStore.getState().loadAssets()
+    expect(useRuntimeAssetStore.getState().byId[id].status).toBe('rerun_failed')
+  })
 })
