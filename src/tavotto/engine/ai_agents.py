@@ -474,6 +474,21 @@ def probe_version(argv: list[str]) -> str | None:
     return probe_version_detailed(argv)[0]
 
 
+_VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+
+
+def version_key(text: str | None) -> tuple[int, int, int] | None:
+    """版本串里第一个 `主.次.修订` → 可比较的三元组（`codex-cli 0.166.0` → (0, 166, 0)）；没有 → None（不猜）。"""
+    m = _VERSION_RE.search(text or "")
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+
+
+def older_than(current: str | None, other: str | None) -> bool:
+    """`current` 明确比 `other` 旧（两个都解析得出才判；判不出 = False，不提示）。"""
+    a, b = version_key(current), version_key(other)
+    return a is not None and b is not None and a < b
+
+
 def _run_probe(argv: list[str], timeout: int = READINESS_TIMEOUT_S) -> tuple[int, str] | None:
     """跑一条**无副作用**的本地状态命令；→ (返回码, 合并输出) 或 None。
 
@@ -835,6 +850,14 @@ class AgentDefinition:
     def model_capabilities(self) -> ModelCapabilities:
         return ModelCapabilities()
 
+    def catalog_client_version(self) -> str | None:
+        """写下本机模型目录缓存的那个 CLI 的版本（`model_capabilities` 列出的型号来自它）。
+
+        同一个家族的 CLI 共用一份目录缓存（桌面版、IDE 插件、命令行都写它）：缓存比 Tavotto 实际启动的那份
+        CLI 新，列表里就可能有这份 CLI 还不认识的型号（选中后服务端 404）。**默认 None = 不知道**，不提示。
+        """
+        return None
+
     # -- 就绪 --------------------------------------------------------------
     def readiness(self, argv: list[str]) -> ReadinessResult:
         """无副作用就绪检查。**默认什么都不做**——不支持就老实说 unknown。
@@ -1072,6 +1095,16 @@ class CodexAgent(AgentDefinition):
         rows.sort(key=lambda r: (r[0], r[1]))
         return [r[2] for r in rows]
 
+    @classmethod
+    def catalog_client_version(cls) -> str | None:
+        """`models_cache.json` 顶层的 `client_version`（写这份缓存的 codex 版本，真机 0.166.0 抓到）。读不到 / 不是版本串 → None。"""
+        try:
+            data = json.loads((cls._home() / "models_cache.json").read_text(encoding="utf-8"))
+            ver = data.get("client_version") if isinstance(data, dict) else None
+        except (OSError, ValueError):
+            return None
+        return ver if isinstance(ver, str) and version_key(ver) is not None else None
+
     def model_capabilities(self) -> ModelCapabilities:
         cfg = self._config()
         catalog = self._catalog()
@@ -1241,7 +1274,9 @@ class CodexAgent(AgentDefinition):
             return [("action", "✎ 修改文件")]
         if etype in ("error", "turn.failed"):
             if etype == "turn.failed" and (cls := codex_failure_class(ev)):
-                state["runner_error"] = cls
+                # 404 只在走 CLI 自己的登录时才是「这份 CLI 不认识这个型号」；第三方接口的 404 多半是地址填错，不归这一类
+                if not (cls == "agent_model_unavailable" and state.get("endpoint_backed")):
+                    state["runner_error"] = cls
             return [("message", str(ev.get("error") or ev.get("message") or "出错"))]
         return []
 
@@ -1290,7 +1325,12 @@ def codex_failure_class(ev: dict) -> str | None:
     err = ev.get("error")
     msg = err.get("message") if isinstance(err, dict) else None
     m = _CODEX_STATUS_RE.match(msg) if isinstance(msg, str) else None
-    return _CLI_STATUS_CLASS.get(int(m.group(1))) if m else None
+    if not m:
+        return None
+    code = int(m.group(1))
+    # 404 只在 Codex 侧归类：旧版 codex 被选了一个它不认识的新型号时服务端回 404（2026-11-04 用户反馈）。
+    # 第三方接口时调用方（classify_event）不采纳这一类
+    return "agent_model_unavailable" if code == 404 else _CLI_STATUS_CLASS.get(code)
 
 
 def claude_failure_class(ev: dict) -> str | None:
@@ -1697,6 +1737,14 @@ RUNNER_ERRORS = frozenset(
         "no_done_event",
     }
 )
+
+#: 只有 CLI 适配器（Codex / Claude）会写的 `runner_error`（内置执行器不产出，不进上面那张与 `DONE_REASONS` 对齐的表）：
+#: `agent_model_unavailable` = 旧版 codex 不认识所选的新型号（404，2026-11-04 用户反馈）
+CLI_RUNNER_ERRORS = frozenset({"agent_model_unavailable"})
+
+#: 只有 CLI 适配器（Codex / Claude）会写的 `runner_error`（内置执行器不产出，不进上面那张与 `DONE_REASONS` 对齐的表）：
+#: `agent_model_unavailable` = 旧版 codex 不认识所选的新型号（404，2026-11-04 用户反馈）
+CLI_RUNNER_ERRORS = frozenset({"agent_model_unavailable"})
 
 #: 内置执行器的密钥环境变量名（与 `agent_runner.runner_cli.ENV_API_KEY` 同值，`tests/test_ai_connections.py` 钉死）
 BUILTIN_KEY_ENV = "TAVOTTO_AGENT_API_KEY"

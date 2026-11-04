@@ -23,6 +23,21 @@ export default interface Resources {
       "unifyLineWidth": "统一线宽",
       "unifyTickFormat": "统一刻度格式"
     },
+    "cliUpdate": {
+      "action": "更新 {{agent}}",
+      "how": {
+        "chatgpt": "更新 ChatGPT 桌面版",
+        "desktop": "更新 Codex 桌面版",
+        "homebrew": "终端里运行 brew upgrade codex",
+        "managed": "Tavotto 下个版本会带上",
+        "npm": "终端里运行 npm i -g @openai/codex",
+        "other": "按官方方式更新"
+      },
+      "menuHint": "新型号要新版才能用",
+      "menuManual": "新型号要新版 {{agent}}",
+      "running": "正在更新 {{agent}}…",
+      "switchBack": "换回 {{model}}"
+    },
     "code": {
       "copied": "已复制",
       "copy": "复制代码",
@@ -237,6 +252,7 @@ export default interface Resources {
       "agent_html_response": "连接地址打开的是网页，不是接口。",
       "agent_internal": "AI 这次运行出错了。",
       "agent_max_turns": "这次修改步骤过多，已停止。",
+      "agent_model_unavailable": "这个型号要新版 Codex 才能用。",
       "agent_network": "连不上模型服务。",
       "agent_output_truncated": "模型单次回复达到上限，没能写完。",
       "agent_quota": "模型服务额度不足或正在限流，稍后再试。",
@@ -3087,6 +3103,7 @@ export default interface Resources {
       "ai_agent_unknown": "无法识别该改图助手：{{agent}}。",
       "ai_candidate_changed": "脚本或待提交的修改在检查后发生了变化。请重新发送改图指令。",
       "ai_candidate_unavailable": "这次待提交的修改已不可用。请重新发送改图指令。",
+      "ai_cli_update_unavailable": "{{agent}} 没法在这里更新，请按官方方式更新后重启 Tavotto。",
       "ai_draft_too_large": "指令过长（超过 {{limit_kb}} KB），没有保存为草稿。",
       "ai_endpoint_incompatible": "“{{endpoint}}”用的接口协议，Codex 已不再支持。到设置里改由 Claude Code 接入，或把地址换成支持 Responses 协议的。",
       "ai_endpoint_needs_login": "“{{endpoint}}”的账号登录已失效。到设置里重新登录。",
