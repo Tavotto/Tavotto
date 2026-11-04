@@ -167,11 +167,24 @@ def _optional_engine(name: str):
         return None
 
 
+#: Agent 入口用到的引擎 API。旧引擎可能已有 `journals` 模块（桌面期刊库）却没有这几个——缺任何一个都当「关」
+JOURNAL_AGENT_API = ("agents_enabled", "select_for_agent", "search_journals")
+
+
+def _journal_agent_module():
+    """开着且新 API 齐全的 `journals` 模块；旧引擎（没模块 / 缺 API）或开关关着 → None。绝不抛 AttributeError。"""
+    journals = _optional_engine("journals")
+    if journals is None:
+        return None
+    if not all(callable(getattr(journals, name, None)) for name in JOURNAL_AGENT_API):
+        return None
+    return journals if journals.agents_enabled() else None
+
+
 def journal_catalog_enabled() -> bool:
     """Agent 侧能不能用内置期刊库：引擎里的总开关（与桌面 `JOURNAL_CATALOG_UI` 同值，ADR 0155 §9）。
-    旧引擎没有 `journals` 模块 = 关。"""
-    journals = _optional_engine("journals")
-    return journals is not None and bool(journals.agents_enabled())
+    旧引擎没有 `journals` 模块、或有模块却缺新 API = 关。"""
+    return _journal_agent_module() is not None
 
 
 def list_journals(query: str | None = None) -> dict:
@@ -184,8 +197,8 @@ def list_journals(query: str | None = None) -> dict:
 
 
 def _journal_module():
-    journals = _optional_engine("journals")
-    if journals is None or not journals.agents_enabled():
+    journals = _journal_agent_module()
+    if journals is None:
         raise BridgeError(
             "期刊标准库对 Agent 的入口尚未开放；这次没有改动任何设置。",
             code="journal_catalog_disabled",
@@ -199,7 +212,7 @@ def journal_selection(
     """`journal_id` → `(journal-base-v1, 折出的覆盖, journal_ref)`；没给就原样放行。解析全在引擎。"""
     if journal_id is None:
         return profile_id, journal, None
-    journals = _optional_engine("journals")
+    journals = _journal_agent_module()
     if journals is None:
         raise BridgeError(
             "期刊标准库对 Agent 的入口尚未开放；这次没有改动任何设置。",

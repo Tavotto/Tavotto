@@ -4169,3 +4169,25 @@ def test_journal_id_conflicts_and_unknown_are_structured(project, fake_pool, jou
         {"project_path": str(project), "stems": ["Fig1"], "journal_id": "no-such"},
     )
     assert batch["isError"] is True and _body(batch)["code"] == "journal_unknown"
+
+
+@pytest.fixture
+def old_engine_journals(monkeypatch):
+    """旧引擎：已有 `engine.journals`（桌面期刊库），但没有 Agent 入口的新 API。"""
+    import types
+
+    old = types.SimpleNamespace(list_journals=lambda *a, **k: [], catalog_rev=lambda *a, **k: 1)
+    real = bridge._optional_engine
+    monkeypatch.setattr(
+        bridge, "_optional_engine", lambda name: old if name == "journals" else real(name)
+    )
+
+
+def test_old_engine_journals_module_without_agent_api_means_off(old_engine_journals, project):
+    tools = {t["name"]: t for t in server._tools()}  # 不抛 AttributeError
+    assert "tavotto_list_journals" not in tools
+    assert "journal_id" not in tools["tavotto_preflight"]["inputSchema"]["properties"]
+    res = _call("tavotto_list_journals", {})
+    assert res["isError"] is True and _body(res)["code"] == "journal_catalog_disabled"
+    res = _call("tavotto_open_figure", {"project_path": str(project), "journal_id": "fx-alpha"})
+    assert res["isError"] is True and _body(res)["code"] == "journal_catalog_disabled"
