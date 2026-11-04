@@ -2761,11 +2761,10 @@ export default interface Resources {
         "attemptLine": "{{source}} · {{stage}} · {{kind}}",
         "attemptsTitle": "各来源的失败记录",
         "autoCheck": "每天自动检查",
-        "autoCheckDesktop": "启动时自动检查",
-        "autoCheckDesktopReason": "桌面版每次启动都会检查，暂时不能关闭",
         "autoCheckRetry": "重新保存",
         "autoCheckSaveFailed": "未能确认设置已保存。开关仍显示上次确认的值，请重试。",
         "autoCheckSaving": "正在保存…",
+        "autoDownload": "后台下载新版本",
         "available": "有新版本",
         "channelNote": "只查 GitHub Releases 的最新正式版。关掉自动检查就不会联网。",
         "check": "检查更新",
@@ -2800,6 +2799,7 @@ export default interface Resources {
         "releaseNotes": "查看发行说明",
         "restartAfter": "后生效。当前进程仍运行旧版本代码。",
         "restartBefore": "升级完成。",
+        "restartNow": "现在重启",
         "restartStrong": "请重启 Tavotto",
         "signatureNote": "更新包由官方签名，安装前会校验；校验不过不会安装。你的项目、排版与设置都不在应用的安装目录里，升级不受影响。",
         "sourceName": {
@@ -7196,6 +7196,11 @@ export default interface Resources {
     "update": {
       "banner": "工具已更新，刷新后使用新版本",
       "chip": "界面需要刷新"
+    },
+    "updateReady": {
+      "body": "新版 {{version}} 已下载好，退出时会自动装上。",
+      "chip": "新版已就绪",
+      "restart": "现在重启"
     }
   }
 }

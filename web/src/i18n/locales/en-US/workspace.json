@@ -998,6 +998,11 @@
     "banner": "Tavotto has been updated. Reload to use the new version.",
     "chip": "Reload needed"
   },
+  "updateReady": {
+    "chip": "Update ready",
+    "body": "Version {{version}} is downloaded and installs when you quit.",
+    "restart": "Restart now"
+  },
   "hints": {
     "panel_editable": "Double-click to edit inside the figure.",
     "panel_layout_only": "Lay out this figure; connect its source script to edit its elements.",

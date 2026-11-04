@@ -948,6 +948,11 @@
     "banner": "工具已更新，刷新后使用新版本",
     "chip": "界面需要刷新"
   },
+  "updateReady": {
+    "chip": "新版已就绪",
+    "body": "新版 {{version}} 已下载好，退出时会自动装上。",
+    "restart": "现在重启"
+  },
   "hints": {
     "panel_editable": "双击进入图内编辑。",
     "panel_layout_only": "这张图可在版面上摆放；连接源脚本后能改图里的内容。",

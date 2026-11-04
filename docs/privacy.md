@@ -9,7 +9,8 @@ remote mode, the interface communicates with the server through the user's tunne
 project files, scripts and generated exports are handled there. Other tools or
 export destinations are used when the user chooses them.
 
-Network activity includes update checks and user-approved update downloads,
+Network activity includes update checks and update downloads (on the desktop
+app, by default in the background, with an in-app switch to turn that off),
 package lookups and downloads for environment preparation or dependency
 installation, the optional AI assistant the user invokes, — only after
 an explicit opt-in — usage statistics, and — only when the user confirms each
@@ -59,8 +60,15 @@ backend's startup background check, not every update request.
 
 The desktop application uses a separate updater, checks at startup, and currently
 has no in-app switch to disable those checks. The browser preference and Python
-backend environment variable do not control this desktop channel. The desktop
-updater downloads the signed installer when the user accepts an update.
+backend environment variable do not control this desktop channel. By default the
+desktop app also downloads a newer version in the background as soon as a check
+finds one (**Settings → Updates → Download updates in the background**; turn it off
+and the installer is downloaded only after you accept the update prompt, as before).
+Either way it contacts only the two sources described below, verifies the installer's
+signature before keeping it, and never replaces the running app: a downloaded update is
+installed when you press *Restart now* or when you quit Tavotto, so the next launch is
+the new version. A failed background download is silent; the manual download stays
+available in Settings.
 
 The desktop updater has two sources: GitHub Releases and a mirror operated by the
 Tavotto maintainers at `dl.tavotto.cn` (mainland China). If the system time zone is
@@ -68,7 +76,7 @@ in mainland China or the system or interface language is Simplified Chinese
 (mainland), it asks the mirror first and GitHub second; otherwise GitHub first and the
 mirror second. The first source that answers decides: it is asked once per check, and
 the other one is contacted only when the first cannot answer, or when a download from
-it fails after you pressed *Download and install* (then the installer is fetched again
+it fails (after you pressed *Download and install*, or during the background download; then the installer is fetched again
 from the other source), or when that download is slow (then the other source is
 checked and its installer downloaded for a few seconds to compare speed; the faster
 one finishes the download and the other is dropped). Either source sees what any HTTPS request reveals (IP address,

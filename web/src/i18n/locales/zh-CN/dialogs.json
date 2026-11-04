@@ -1814,8 +1814,8 @@
       "lastCheckedUnknown": "尚未检查，无法判断是不是最新",
       "title": "更新",
       "notesTitle": "更新内容",
-      "autoCheckDesktop": "启动时自动检查",
-      "autoCheckDesktopReason": "桌面版每次启动都会检查，暂时不能关闭"
+      "autoDownload": "后台下载新版本",
+      "restartNow": "现在重启"
     },
     "tutorial": {
       "label": "新手教程",

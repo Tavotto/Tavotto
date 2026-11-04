@@ -21,6 +21,25 @@ beforeEach(() => {
   vi.unstubAllGlobals()
 })
 
+describe('桌面后台自动下载开着', () => {
+  it('查到新版不弹询问框（由后台下载 + 顶栏胶囊接手）；关着时照旧弹', () => {
+    const input = { ...base, desktopUpdate: { version: '0.15.0' } }
+    expect(pendingUpdateNotice({ ...input, desktopAutoDownload: true })).toBeNull()
+    expect(pendingUpdateNotice({ ...input, desktopAutoDownload: false })?.kind).toBe('desktop')
+    expect(pendingUpdateNotice(input)?.kind).toBe('desktop')
+  })
+
+  it('只管桌面形态：pip 通道的提示不受影响', () => {
+    expect(
+      pendingUpdateNotice({
+        ...base,
+        desktopAutoDownload: true,
+        status: { update_available: true, latest: '0.15.0', can_self_update: true },
+      })?.kind,
+    ).toBe('self')
+  })
+})
+
 describe('三种形态', () => {
   it('桌面：只看 desktopUpdate，status 为 null 也能说；说明链接退回 Releases 列表', () => {
     expect(pendingUpdateNotice({ ...base, desktopUpdate: { version: '0.15.0' } })).toEqual({

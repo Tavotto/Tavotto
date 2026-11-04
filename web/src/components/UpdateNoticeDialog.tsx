@@ -4,7 +4,7 @@ import { useRef } from 'react'
 import { pendingUpdateNotice, type UpdateNotice } from '@/lib/updateNotice'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
-import { useUpdateStore } from '@/store/updateStore'
+import { autoDownloadOn, useUpdateStore } from '@/store/updateStore'
 import { Markdown } from './ai/Markdown'
 import { LogDetails } from './UpdateLogDetails'
 import { UpdateRestartError } from './UpdateRestartError'
@@ -39,7 +39,8 @@ export function UpdateNoticeDialog() {
   const store = useUpdateStore()
   const consentPending = useTelemetryStore((s) => s.askOpen)
   const nativeConfirmPending = useNativeSessionStore((s) => s.pendingQueue.length > 0)
-  const current = pendingUpdateNotice(store)
+  // 桌面「后台自动下载」开着时新版走后台下载 + 顶栏胶囊（DesktopUpdateChip），不弹这个询问框
+  const current = pendingUpdateNotice({ ...store, desktopAutoDownload: autoDownloadOn(store.status) })
   const open = !!current && !consentPending && !nativeConfirmPending
   // 常驻挂载：关的那 90ms 里 notice 已经是 null（版本记成「稍后」了），正文仍按最后一份载荷画
   const last = useRef<UpdateNotice | null>(null)
