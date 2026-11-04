@@ -2,7 +2,7 @@
 
 > 原文出自 `.github/AGENTS.md`「CI 分层（1.0 稳定化，2026-08-21 起）」（2026-09-18 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_merge_queue_workflows.py`（含 `TestMergeGroupFailFast`）、`tests/test_aggregate_gate.py`（含 `TestMergeGroupFailFastAttribution`）
+> 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_merge_queue_workflows.py`（含 `TestMergeGroupFailFast`）、`tests/test_aggregate_gate.py`（含 `TestMergeGroupFailFastAttribution`、`TestE2eLegsOnPullRequest`）、`tests/test_docs_scope.py`（含 `TestE2eSpecsChanged`）
 > `.github/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：时机分工与覆盖面不变；三个稳定 Gate；`cancel-in-progress` 只对 PR 开；顶层 `TAVOTTO_NO_TELEMETRY=1`；目录里每个监听 `pull_request` 的 workflow 都带 `branches: [main]`（`TestPullRequestBaseFilter`，算出来的集合、不用登记）
 
 <!-- agents-route
@@ -51,6 +51,29 @@ docs-only。判定器与分类器都取默认分支。**bootstrap**：引入本�
 `docs_only` 恒 false 时两个 Gate 的调用与旧版逐字相同，不会判红；docs-only 的 run 在旧判定器下按
 fail-closed 红（不是假绿）。看护：`tests/test_docs_scope.py`、`tests/test_docs_only_fast_lane.py`
 （含冻结的旧判定器 `tests/fixtures/ci_gate/`）、`tests/test_aggregate_gate.py::TestDocsOnlyFastLane`。
+
+**改到 e2e 用例的 PR 在 PR 上也跑 e2e 腿（`e2e_specs_changed`，2026-11-04）。** 重型腿平时在 PR 上整体
+skipped、合并组里才第一次跑，这对「改的正是这些腿上的用例」的 PR 等于没验：#1736（`risk:low`，只把
+`keyboard-golden-path.spec.ts` 的一步从 click 改成键盘 Tab）PR 上 `posix-e2e` 与 `windows-exe-smoke`
+都 skipped，进合并组才第一次跑，Windows webkit 上红了被踢（merge group run 41817554523）；#1717 改
+`golden-paths.spec.ts` 同形，运气好才没出事。规则：PR 改动里**任一路径**（改名取新旧两条，删除也算）属于 e2e 腿
+的输入——`web/e2e/` 下任何文件（含 `fixtures.ts` 等共用支撑）、`web/playwright.config.ts`、`web/tsconfig.e2e.json`
+（`web/playwright.perf.config.ts` 不算：它只驱动 nightly 的 perf 用例，`testIgnore` 已把 perf 用例挡在这两条腿之外）——
+就在 PR 上跑 `windows-exe-smoke` 与 `posix-e2e`（与 full-ci 时同一套分片），**不管 risk 档、有没有 `full-ci`**；
+`backend-platforms` / `package` / `macos-app-smoke` 仍按原样只在 merge_group / full-ci 上跑（macOS 腿不跑 e2e）。
+实现：`docs_scope.py` 另输出 `e2e_specs_changed`（与 `docs_only` 同一次分类、同样取默认分支上的脚本，路径判据宁宽勿窄：
+漏判才是 #1736 的老路，多判只是多跑一遍），两条腿的 `if:` 在原条件上多一个
+`|| needs.docs-scope.outputs.e2e_specs_changed == 'true'`。**Gate 同步认**：integration gate 在普通 PR（`--allow-deferred`）
+且该输出为 `true` 时多传 `--e2e-classifier docs-scope --e2e-legs windows-exe-smoke,posix-e2e`，`aggregate_gate.py` 核对分类
+job success + 输出字面 `true` 后，要求两条腿**真实 success**（红 / 取消 / 本该跑却 skipped 都判红），其余三条重型须全
+skipped（status `success`、reason `e2e_legs_only`，仍推迟到 merge_group）或全 success，半跑半跳照旧判失败；证据不成立时参数
+不传，e2e 腿若仍跑了就是「半跑半跳」判红，不留 `if:` 与 Gate 互相以为的缝。**merge_group / push main / full-ci 不变**
+（merge_group 本来五条全跑、全必需；full-ci 走 `--require-heavy`，e2e 输出不参与）。**bootstrap**：默认分支上的 `docs_scope.py`
+还没有这个输出时它恒为空、两条腿不加跑，Gate 参数与旧版逐字相同；判定器是旧版时遇到 e2e 输出为 true 的 PR 会按「半跑半跳」
+红（fail-closed，不是假绿）。看护：`tests/test_docs_scope.py::TestE2eSpecsChanged`、
+`tests/test_aggregate_gate.py::TestE2eLegsOnPullRequest`、`tests/test_merge_queue_workflows.py::TestPullRequestEventTypes` 的
+`test_e2e_spec_changes_run_the_two_e2e_legs_on_a_plain_pull_request` / `test_gate_requires_the_e2e_legs_when_specs_changed`。
+新增 e2e 腿的输入目录（比如把 fixtures 挪到 `web/` 别处）要同步改 `docs_scope.py` 的 `E2E_PREFIXES` / `E2E_FILES`。
 
 **PR 级 CI 只对 base 是 main 的 PR 触发**（2026-09-21 用户拍板）：监听 `pull_request`
 的四个 workflow（`ci.yml` / `codeql.yml` / `pr-conflict-domains.yml` / `private-python-targets.yml`）

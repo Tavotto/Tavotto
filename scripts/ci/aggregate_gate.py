@@ -43,6 +43,15 @@
   照常必须 success。docs-only 通过时 status 仍是 `success`，reason 是
   `docs_only_fast_path`，summary 会列出被豁免跳过的 job。
 
+* `--e2e-classifier JOB --e2e-legs A,B,...`（PR 改到 e2e 用例，`scripts/ci/docs_scope.py` 的
+  `e2e_specs_changed`）：只在 `--allow-deferred`（普通 PR）下有意义。分类 job `success` **且**
+  `outputs.e2e_specs_changed == "true"` 时，`A,B,...`（须 ⊆ required）这些 e2e 腿**必须真实 success**
+  （它们在这个 PR 上本该跑；skipped 就是失败，等于「该验的没验」），其余 required 则要么全
+  skipped（照旧推迟到 merge_group，status `success`、reason `e2e_legs_only`）、要么全 success；
+  半跑半跳一律失败。证据不成立（分类失败 / 输出不是字面 `true`）：参数形同没传，走上面的普通
+  deferred 规则——此时 e2e 腿若仍 success、其余 skipped 就是「部分跑部分跳」，判失败，不给
+  「ci.yml 以为该跑、Gate 以为不该」的缝。与 `--require-heavy` 同用是配置错误（那档本就全必需）。
+
 * merge_group 快速失败（`fail_fast_attribution()`）：重腿红后 workflow 取消其余 job，
   结论里多出 `cancelled`。判红规则不变（非 success 即红），verdict 另给 `root_failures`
   与 `cancelled_by_fail_fast` 供人先看真红的那条；没有 failure 的 cancelled 不归因。
@@ -162,6 +171,8 @@ def decide(
     classifier: str | None = None,
     docs_only_skippable: list[str] | None = None,
     run_jobs: list[dict] | None = None,
+    e2e_classifier: str | None = None,
+    e2e_legs: list[str] | None = None,
 ) -> dict:
     """核心判定。返回 {"status": "success"|"failure"|"deferred", ...}。
 
@@ -195,12 +206,26 @@ def decide(
     if not_required:
         raise ConfigError(f"--docs-only-skippable 里有不在 required 的 job：{not_required}")
 
+    e2e = list(e2e_legs or [])
+    if e2e and not e2e_classifier:
+        raise ConfigError("--e2e-legs 必须同时给 --e2e-classifier")
+    if e2e_classifier and not e2e:
+        raise ConfigError("--e2e-classifier 必须同时给 --e2e-legs")
+    if e2e:
+        if mode != "integration" or not allow_deferred:
+            raise ConfigError("--e2e-legs 只用于 integration 的 --allow-deferred（普通 PR）")
+        if e2e_classifier in e2e:
+            raise ConfigError("e2e 分类 job 自己不能出现在 e2e 腿集合里——它是证据")
+        not_required = [j for j in e2e if j not in required]
+        if not_required:
+            raise ConfigError(f"--e2e-legs 里有不在 required 的 job：{not_required}")
+
     # ---- 闭集校验：缺一个、多一个都是失败 ----
     problems: list[str] = []
     missing = [j for j in required if j not in results]
     #: 分类 job 本身可以出现在 needs 里而不在 required 里（integration gate 就是这样），
     #: 但出现了就必须 success——它是豁免的证据，证据自己坏了不能当没看见。
-    allowed_extra = {classifier} if classifier and classifier not in required else set()
+    allowed_extra = {c for c in (classifier, e2e_classifier) if c and c not in required}
     unexpected = sorted(set(results) - set(required) - allowed_extra)
     for j in sorted(allowed_extra & set(results)):
         if results[j] != "success":
@@ -247,6 +272,35 @@ def decide(
             "problems": [],
         }
 
+    e2e_evidence = bool(
+        e2e
+        and results.get(e2e_classifier) == "success"
+        and (outputs or {}).get(e2e_classifier, {}).get("e2e_specs_changed") == "true"
+    )
+    if e2e_evidence:
+        bad = [f"{j}: {results[j]}" for j in e2e if results[j] != "success"]
+        rest = [j for j in required if j not in e2e]
+        rest_results = {results[j] for j in rest}
+        if rest_results not in (set(), {"skipped"}, {"success"}):
+            bad += [f"{j}: {results[j]}（其余重型须全 skipped 或全 success）" for j in rest]
+        if bad:
+            return {
+                **base,
+                "status": "failure",
+                "reason": "upstream_not_success",
+                "problems": bad,
+                **fail_fast_attribution(event, jobs, run_jobs),
+            }
+        if rest_results == {"skipped"} or not rest:
+            return {
+                **base,
+                "status": "success",
+                "reason": "e2e_legs_only",
+                "e2e_legs": e2e,
+                "problems": [],
+            }
+        return {**base, "status": "success", "reason": "all_required_success", "problems": []}
+
     req_results = [results[j] for j in required]
 
     if allow_deferred and all(r == "skipped" for r in req_results):
@@ -285,6 +339,13 @@ def render_summary(verdict: dict, required: list[str]) -> str:
             "docs-only 快车道：本次只改了 `docs/release-notes/`（分类 job 已核对），",
             "下列重型 job 按设计被跳过："
             + "、".join(f"`{j}`" for j in verdict["docs_only_skipped"]),
+        ]
+    if verdict.get("e2e_legs"):
+        lines += [
+            "",
+            "本 PR 改到了 e2e 用例 / 配置（分类 job 已核对）：下列 e2e 腿已在 PR 上真实通过："
+            + "、".join(f"`{j}`" for j in verdict["e2e_legs"]),
+            "其余重型资格仍推迟到 merge_group。",
         ]
     if verdict.get("cancelled_by_fail_fast"):
         lines += [
@@ -335,6 +396,15 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="逗号分隔：docs-only 证据成立时允许 skipped 的 required job（须 ⊆ required）",
     )
+    ap.add_argument(
+        "--e2e-classifier",
+        help="分类 job 的 id；其 success 且 outputs.e2e_specs_changed == 'true' 是 e2e 腿必须在 PR 上跑的证据",
+    )
+    ap.add_argument(
+        "--e2e-legs",
+        default="",
+        help="逗号分隔：e2e 证据成立时必须真实 success 的 required job（须 ⊆ required；仅普通 PR）",
+    )
     args = ap.parse_args(argv)
 
     required = [s.strip() for s in args.required.split(",") if s.strip()]
@@ -355,6 +425,8 @@ def main(argv: list[str] | None = None) -> int:
                 s.strip() for s in args.docs_only_skippable.split(",") if s.strip()
             ],
             run_jobs=run_jobs,
+            e2e_classifier=args.e2e_classifier,
+            e2e_legs=[s.strip() for s in args.e2e_legs.split(",") if s.strip()],
         )
     except ConfigError as exc:
         verdict = {
