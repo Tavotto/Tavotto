@@ -21,6 +21,13 @@ order: 90
   `raster-dpi` id 与同一张 severity 表。默认格式取**这次调用**的 profile，
   默认导出目录也要过 `check_scope`。强制导出与确认项都记进 proof。
 
+## 按期刊 id 导出（ADR 0155 §9；总开关关着时整段不存在）
+
+- `journal_id` 只是 `profile_id` + `journal` 的另一种写法：解析在引擎（`journals.select_for_agent`），桥的 `journal_selection` 只翻译，
+  `journals` 是**可选引擎模块**（`OPTIONAL_ENGINE_MODULES`，只经 `_optional_engine`，不进 `_BRIDGE_IMPORT` / `BRIDGE_IMPORTS_AT_MIN`，不抬高最低引擎版本；旧引擎 = 开关关）。
+- 与手写 `profile_id` / `journal` 同时给报 `journal_id_conflict`，不猜谁赢；开关关着报 `journal_catalog_disabled`；未知 id 报 `journal_unknown`。
+- 结果（open / preflight / export）与 proof report 带 `journal_ref {id, catalog_rev, retrieved}`（也在 `profile` 印章里），之后不带参数的调用沿用会话里的期刊。看护：`tests/test_mcp_server.py`「内置期刊库的 Agent 入口」一组、`tests/test_journal_agents.py`。
+
 ## 导出产物核验（原「导出产物核验」一节）
 
 - **`bridge.export` 与 HTTP 导出接的是同一份检查器接线** `engine/artifactinspect.inspect_produced`
