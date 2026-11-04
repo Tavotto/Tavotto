@@ -689,7 +689,7 @@ def journal_profile(journal_id: str, catalog: dict | None = None) -> dict:
 #: 关着时新工具不进 tools/list、`journal_id` 一律回 `journal_catalog_disabled`；数据就绪那个 PR
 #: 把两边一起改成 true。严格同源对，`tests/test_journal_agents.py` 从 TS 源文件读字面值对拍。
 #: 生产里没有任何用户入口能改它（不读环境变量）；测试 monkeypatch 这个常量。
-JOURNAL_CATALOG_AGENTS = False
+JOURNAL_CATALOG_AGENTS = True
 
 #: Agent 入口自己的失败码（不属于库校验的闭集 `ERROR_CODES`，TS 侧没有对应物）
 AGENT_ERROR_CODES = (

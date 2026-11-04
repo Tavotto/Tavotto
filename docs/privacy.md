@@ -176,7 +176,9 @@ explicitly opts in**, either in the one-time first-run prompt or under
   something else, and whether the result was trimmed. The tool's arguments and results —
   paths, script names, figure text, prompts — are never included. The MCP server uses the
   consent saved by the desktop app and never asks on its own; if you have not agreed there,
-  it sends nothing.
+  it sends nothing. Since consent version 4 the list of tools includes the journal-list tool
+  (`tavotto_list_journals`): only the fact that an AI agent looked up the journal list is counted — never the
+  search text, which journal, or any result.
 * **Consent version 2 (2026-09-02).** Adding those events widened the scope, so the
   consent version was raised: consent given for version 1 stopped being sufficient
   at that moment, no event is transmitted until the user is asked again, and the
@@ -187,6 +189,10 @@ explicitly opts in**, either in the one-time first-run prompt or under
   for version 2 stopped being sufficient at that moment: no event is transmitted until
   the user is asked again, the existing identifier is kept, and anyone who had declined
   is not asked again.
+* **Consent version 4 (2026-11-04).** One item was added: how many times an AI editor looks up the
+  built-in journal list (the tool name only, in the MCP tool-call event above). Consent given for
+  version 3 stopped being sufficient at that moment: no event is transmitted until the user is asked again,
+  the existing identifier is kept, and anyone who had declined is not asked again.
 * **How to turn it off.** The toggle under *Settings → Privacy, diagnostics &
   About* takes effect immediately; already-queued events are dropped. Setting
   `TAVOTTO_NO_TELEMETRY=1` disables transmission entirely regardless of the saved

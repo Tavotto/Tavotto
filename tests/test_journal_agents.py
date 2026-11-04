@@ -60,7 +60,10 @@ def test_the_parity_reader_fails_when_the_ts_constant_is_unreadable(tmp_path):
 
 
 # ------------------------------- 选期刊 ---------------------------------------
-def test_disabled_switch_refuses_before_anything_else():
+def test_disabled_switch_refuses_before_anything_else(monkeypatch):
+    monkeypatch.setattr(
+        journals, "JOURNAL_CATALOG_AGENTS", False
+    )  # 开关已随 ADR 0155 §11 打开；这里造「关着」
     assert (
         _code(journals.select_for_agent, "fx-alpha", None, None, _catalog())
         == "journal_catalog_disabled"
@@ -109,6 +112,7 @@ def test_search_lists_everything_and_filters_by_nfkc_lowercase(on):
     assert journals.search_journals("zzz-no-such", cat)["journals"] == []
 
 
-def test_empty_shipped_catalog_lists_empty():
+def test_shipped_catalog_lists_the_seed():
     out = journals.search_journals(None)
-    assert out["journals"] == [] and out["catalog_rev"] >= 1
+    assert len(out["journals"]) == len(journals.load_catalog()["journals"]) >= 30
+    assert out["catalog_rev"] >= 1
