@@ -205,41 +205,17 @@ describe('pasteObjects 正常路径不受影响', () => {
       expect(copy.overrides).toEqual(rtPanel().overrides)
     })
 
-    it('清单还没取回：先不落，取回后有这张图就直接粘贴', async () => {
+    it('清单为 null（未知）：保守走重链接，并在后台触发一次 loadAssets，不等它', async () => {
       setClipboard({ readText: vi.fn().mockResolvedValue(payload()) })
       const l = await load()
       const { useRuntimeAssetStore } = await import('@/store/runtimeAssetStore')
-      let release!: () => void
-      const gate = new Promise<void>((r) => (release = r))
-      useRuntimeAssetStore.setState({
-        assets: null,
-        loadAssets: async () => {
-          await gate
-          useRuntimeAssetStore.setState({ assets: [{ id: RT, script: 'panels/fig1.py', stem: 'Fig1_kinetics' }] } as never)
-        },
-      } as never)
+      const loadAssets = vi.fn(() => new Promise<void>(() => {}))
+      useRuntimeAssetStore.setState({ assets: null, loadAssets } as never)
 
       expect(await l.clipboard.pasteObjects()).toBe(true)
-      expect(l.useDocumentStore.getState().doc.objects, '清单未取回时不得先落').toHaveLength(0)
-      release()
-      await vi.waitFor(() => expect(l.useDocumentStore.getState().doc.objects).toHaveLength(1))
-      expect(l.clipboard.useClipboardStore.getState().pending).toBeNull()
-    })
-
-    it('清单还没取回：取回后没有这张图就进重链接', async () => {
-      setClipboard({ readText: vi.fn().mockResolvedValue(payload()) })
-      const l = await load()
-      const { useRuntimeAssetStore } = await import('@/store/runtimeAssetStore')
-      useRuntimeAssetStore.setState({
-        assets: null,
-        loadAssets: async () => {
-          useRuntimeAssetStore.setState({ assets: [] } as never)
-        },
-      } as never)
-
-      expect(await l.clipboard.pasteObjects()).toBe(true)
-      await vi.waitFor(() => expect(l.clipboard.useClipboardStore.getState().pending?.mode).toBe('paste'))
+      expect(l.clipboard.useClipboardStore.getState().pending?.mode).toBe('paste')
       expect(l.useDocumentStore.getState().doc.objects).toHaveLength(0)
+      expect(loadAssets).toHaveBeenCalledTimes(1)
     })
 
     it('清单已取回但没有这张图：仍走重链接（真缺失的行为不变）', async () => {
