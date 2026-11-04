@@ -72,6 +72,8 @@ def bind(
     }
     if axes_nodes:
         request["axes_nodes"] = axes_nodes
+    for key, value in extra.pop("series_update", {}).items():
+        request["series"][0][key] = value
     request.update(extra)
     out = chartbind.build_model_and_binding(request, engine_identity=ENGINE)
     frame = {
@@ -100,11 +102,6 @@ def texts_of(root: ET.Element) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="B1: binding has no axes ownership; compose keeps the old hand-drawn tick labels",
-    raises=AssertionError,
-)
 def test_axis_region_labels_follow_the_new_range():
     scene = SCENE
     out, _frame = bind(scene, dataset="x,y\n2,0\n8,1\n", xlim=(2, 8), axes_nodes=["old_xaxis"])
@@ -126,11 +123,6 @@ def test_axis_region_labels_follow_the_new_range():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="B2: scaffold renders in pt; compose splices pt coordinates into the user-unit scene",
-    raises=AssertionError,
-)
 def test_px_source_final_path_stays_in_user_units():
     px_scene = SCENE.replace(b'width="100pt" height="100pt"', b'width="100" height="100"')
     out, frame = bind(px_scene, dataset="x,y\n2,0\n8,1\n", xlim=(2, 8))
@@ -164,11 +156,6 @@ def _family_case(kind: str):
     return parse(result)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="B3: compose matches series by line2d_ prefix; bar patches never match",
-    raises=Exception,
-)
 def test_bar_composition_keeps_all_bars():
     root = _family_case("bar")
     # 两根柱（两个数据行）→ 最终 SVG 含两个填充矩形路径，颜色一致
@@ -176,11 +163,6 @@ def test_bar_composition_keeps_all_bars():
     assert len(rects) >= 2, "expected >=2 bar patches in the final SVG"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="B3: scatter markers live in marker/use groups the composer does not select",
-    raises=Exception,
-)
 def test_scatter_composition_keeps_markers():
     root = _family_case("scatter")
     # 散点 marker：最终 SVG 含 ≥2 个数据点图形（use 或带填充的小路径）
@@ -188,12 +170,6 @@ def test_scatter_composition_keeps_markers():
     assert len(marks) >= 2
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="B3/B3: errorbar's LineCollection members are "
-    "dropped; only the connecting line survives",
-    raises=AssertionError,
-)
 def test_errorbar_composition_keeps_error_members():
     root = _family_case("errorbar")
     # 误差线成员：竖直线段（每点上下界）+ 端帽；至少 2 条竖直小线段
@@ -211,11 +187,6 @@ def test_errorbar_composition_keeps_error_members():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="B4: compose keeps the source colorbar subtree; the fragment's new colorbar is dropped",
-    raises=AssertionError,
-)
 def test_heatmap_colorbar_follows_the_new_norm():
     heat = (CORPUS / "heatmap_colorbar.svg").read_bytes()
     root0 = parse(heat)
@@ -231,15 +202,21 @@ def test_heatmap_colorbar_follows_the_new_norm():
         x=evidence(0, 2),
         y=evidence(0, 2),
         axes_nodes=["axes_2"],
+        series_update={"cbar_node": "axes_2"},
     )
     frag = svgchart.scaffold_fragment(out["model"], frame)
     result = compose_scene(heat, out["binding"], frag["fragment"], out["model"])
     root1 = parse(result)
     old_sha = hashlib.sha256(ET.tostring(by_id(root0, "axes_2"))).hexdigest()
-    new_sha = hashlib.sha256(ET.tostring(by_id(root1, "axes_2"))).hexdigest()
+    # 组合合同：cbar_node 被片段的新色条子树整体接管（角色 id tv-colorbar-<sid>__后缀）
+    new_cbar = next(
+        (e for e in root1.iter() if (e.get("id") or "").startswith("tv-colorbar-s1")), None
+    )
+    assert new_cbar is not None, "fragment colorbar did not replace the bound region"
+    new_sha = hashlib.sha256(ET.tostring(new_cbar)).hexdigest()
     assert new_sha != old_sha, "colorbar subtree unchanged after norm edit"
-    # 新色条刻度反映新 norm（0.2..0.8 范围内）
-    cbar_texts = texts_of(by_id(root1, "axes_2") or root1)
+    # 旧 norm 的极端刻度不在新色条上（0.0/1.0 属于旧 [0,1] 范围的端点）
+    cbar_texts = texts_of(new_cbar)
     assert any(t for t in cbar_texts), f"colorbar has no tick texts: {cbar_texts}"
 
 
@@ -248,11 +225,6 @@ def test_heatmap_colorbar_follows_the_new_norm():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="B5: inventory logical ids are not resolvable by compose's XML id lookup",
-    raises=Exception,
-)
 def test_idless_node_binds_and_composes():
     noid = SCENE.replace(b'id="curve" ', b"")
     inv = scene_inventory(noid)

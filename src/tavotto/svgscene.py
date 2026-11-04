@@ -118,12 +118,8 @@ def scene_inventory(data: bytes) -> dict:
                     raise SceneError("svg_scene_invalid", f"duplicate element id {node_id!r}")
                 used_ids.add(node_id)
             else:
-                base = "n" + child_path.replace("/", "-")
-                node_id = base
-                n = 2
-                while node_id in used_ids:
-                    node_id = f"{base}#{n}"
-                    n += 1
+                # id 规则唯一出处：_logical_id（build_node_index 同源）
+                node_id = _logical_id(el, path, used_ids)
                 used_ids.add(node_id)
             entry: dict = {"id": node_id, "tag": tag}
             if tag == "text":
@@ -177,6 +173,44 @@ def scene_inventory(data: bytes) -> dict:
         "truncated": truncated,
         "node_budget": _SCENE_NODE_BUDGET,
     }
+
+
+def _logical_id(el: ET.Element, path: str, used: set[str]) -> str:
+    """inventory 与节点索引共用的 id 规则（唯一出处；改这里两处同步）。"""
+    node_id = el.attrib.get("id")
+    if node_id:
+        return node_id
+    tag = el.tag.split("}")[-1]
+    base = "n" + (f"{path}/{tag}" if path else tag).replace("/", "-")
+    logical = base
+    n = 2
+    while logical in used:
+        logical = f"{base}#{n}"
+        n += 1
+    return logical
+
+
+def build_node_index(root: ET.Element) -> dict[str, ET.Element]:
+    """同一走法下的 逻辑 id → 实际元素 映射（compose 解析绑定引用的唯一入口）。
+
+    与 `scene_inventory` 共用 `_logical_id` 与同一遍历次序：绑定里的逻辑 id 在
+    任何一次重新解析中指到同一个元素（B5）。
+    """
+    index: dict[str, ET.Element] = {}
+    used: set[str] = set()
+
+    def visit(el: ET.Element, path: str) -> None:
+        tag = el.tag.split("}")[-1]
+        child_path = f"{path}/{tag}" if path else tag
+        if tag in GRAPHIC_TAGS or tag == "svg":
+            logical = _logical_id(el, path, used)
+            used.add(logical)
+            index.setdefault(logical, el)
+        for i, child in enumerate(c for c in el if isinstance(c.tag, str)):
+            visit(child, f"{child_path}[{i}]" if tag != "svg" else f"{tag}[{i}]")
+
+    visit(root, "")
+    return index
 
 
 def read_scene(path: Path) -> dict:

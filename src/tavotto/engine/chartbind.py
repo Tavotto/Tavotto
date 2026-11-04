@@ -109,6 +109,8 @@ def build_model_and_binding(request: dict, *, engine_identity: dict) -> dict:
     if not isinstance(rect, list) or len(rect) != 4 or rect[2] <= 0 or rect[3] <= 0:
         raise BindError("bind_evidence_invalid", "rect must be [x,y,w,h] with positive size")
 
+    series_req = request.get("series") or []
+    image_only = bool(series_req) and all(sr.get("kind") == "image" for sr in series_req)
     if "dataset" in request and request["dataset"] is not None:
         parsed = request["dataset"]
         blocking = [
@@ -118,6 +120,9 @@ def build_model_and_binding(request: dict, *, engine_identity: dict) -> dict:
         ]
         if blocking:
             raise BindError("bind_evidence_invalid", f"dataset has issues: {blocking[:3]}")
+    elif image_only and not (request.get("dataset_text") or "").strip():
+        # 纯网格绑定：没有标量数据表是合法的
+        parsed = {"columns": {}, "text_columns": {}, "issues": []}
     else:
         parsed = chartdata.parse_table(request.get("dataset_text") or "")
         text_cols = parsed.get("text_columns") or {}
@@ -125,7 +130,7 @@ def build_model_and_binding(request: dict, *, engine_identity: dict) -> dict:
         if blocking:
             raise BindError("bind_evidence_invalid", f"dataset has issues: {blocking[:3]}")
     columns = parsed["columns"]
-    if not columns:
+    if not columns and not image_only:
         raise BindError("bind_column_missing", "no fully numeric columns in the dataset")
 
     y_ev = request.get("y") or {}
@@ -151,7 +156,6 @@ def build_model_and_binding(request: dict, *, engine_identity: dict) -> dict:
         x_ev = request.get("x") or {}
         xlo, xhi, xscale, xinv = axis_limits_from_evidence(x_ev)
 
-    series_req = request.get("series") or []
     if not series_req:
         raise BindError("bind_series_count", "at least one series is required")
     series: list[dict] = []
@@ -184,6 +188,18 @@ def build_model_and_binding(request: dict, *, engine_identity: dict) -> dict:
                 "style": dict(sr.get("style") or {}),
             }
         )
+    # image 系列的色条区域节点（可选）：组合时由片段的新色条整体接管
+    if any(sr.get("kind") == "image" for sr in series_req):
+        node_ids_pre = {n["id"] for n in (request.get("nodes") or []) if isinstance(n, dict)}
+        for i, sr in enumerate(series_req):
+            if sr.get("kind") == "image" and sr.get("cbar_node"):
+                if sr["cbar_node"] not in node_ids_pre:
+                    raise BindError(
+                        "bind_node_not_graphic",
+                        f"cbar_node {sr['cbar_node']!r} is not in the scene",
+                    )
+                series[i]["cbar_node"] = sr["cbar_node"]
+
     # 图像/网格系列（可选）：grid_text 是数值矩阵文本；样式带 cmap/vmin/vmax
     grids: dict = {}
     if any(sr.get("kind") == "image" for sr in series_req):
@@ -246,12 +262,17 @@ def build_model_and_binding(request: dict, *, engine_identity: dict) -> dict:
         "engine": engine_identity,
     }
     chartmodel.validate_model(model)
-    # 绑定条目 = 系列节点；轴区域由模型里的 rect 定义（用户划定的绘图区），
-    # 不要求场景里存在「轴框节点」——普通 SVG 的轴可能只是两条线段。
+    # 绑定条目 = 系列数据节点 + 用户确认的轴区域节点（旧刻度/标注/色条区域）。
+    # 轴区域由模型 rect 定义边界；axes_nodes 是**替换范围**（确认预览里列出）。
+    entries = [{"object": f"series:{sr['id']}", "node": sr["node"]} for sr in series]
+    for node_id in request.get("axes_nodes") or []:
+        if node_id not in node_ids:
+            raise BindError("bind_node_not_graphic", f"axes node {node_id!r} is not in the scene")
+        entries.append({"object": "axes:ax1", "node": node_id})
     binding = {
         "model_rev": model["rev"],
         "scene_digest": scene_digest,
-        "entries": [{"object": f"series:{sr['id']}", "node": sr["node"]} for sr in series],
+        "entries": entries,
     }
     chartmodel.validate_binding(binding, model)
     return {"model": model, "binding": binding}

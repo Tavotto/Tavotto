@@ -123,23 +123,60 @@ def compose_scene(
 ) -> bytes:
     """按绑定把片段接进场景；返回编辑后的场景字节（原字节不动）。
 
-    ``model``（可选）：图例手柄同步需要模型里的系列样式；缺省时手柄按原样保留。
+    合同（R01/R02）：
+    - 片段里每个语义对象带 ``tv-*`` 角色标记（脚手架经 matplotlib gid 写成
+      SVG id）：``tv-series-<id>[-N]`` / ``tv-axes-<id>`` / ``tv-axesbg-<id>`` /
+      ``tv-colorbar-<id>``。组合**按角色**取完整产物，不按 line2d_ 前缀或
+      遍历序号猜。
+    - 绑定引用经 `svgscene.build_node_index` 解析（与 inventory 同一 id 规则），
+      无 XML id 的节点可稳定选中（B5）。
+    - 系列数据节点 → 角色成员的包装组；``cbar_node`` → 色条子树整体接管（B4）；
+      轴区域节点（axes_nodes）退役后接入片段轴家具（刻度/标注/网格，B1）。
+    - 被外部引用的 defs 先上提到根 defs；片段根级 defs 随迁并加后缀隔离。
     """
     from tavotto.rendercore.svgcheck import parse_svg, strip_matplotlib_doctype
+    from tavotto.svgscene import build_node_index
 
+    if isinstance(scene_bytes, str):
+        scene_bytes = scene_bytes.encode("utf-8")
+    if isinstance(fragment_bytes, str):
+        fragment_bytes = fragment_bytes.encode("utf-8")
     scene = parse_svg(strip_matplotlib_doctype(scene_bytes))
     frag_root = parse_svg(strip_matplotlib_doctype(fragment_bytes))
     edited = copy.deepcopy(scene)
-    frag_axes = next(
-        (el for el in frag_root.iter() if el.attrib.get("id", "").startswith("axes_")), None
-    )
-    if frag_axes is None:
-        raise ComposeError("compose_fragment_invalid", "fragment has no axes subtree")
 
-    series_bindings = [e for e in binding["entries"] if e["object"].startswith("series:")]
-    axes_nodes = [e["node"] for e in binding["entries"] if e["object"].startswith("axes:")]
+    model_series = {f"series:{sr['id']}": sr for sr in (model or {}).get("series", [])}
+    axes_id = ((model or {}).get("axes") or [{}])[0].get("id", "")
+    tv_axes = next((el for el in frag_root.iter() if el.get("id") == f"tv-axes-{axes_id}"), None)
+    if tv_axes is None:
+        raise ComposeError("compose_fragment_invalid", "fragment has no role-marked axes")
 
-    parent_map = {id(c): p for p in edited.iter() for c in p}
+    # 片段角色成员索引——在整个片段上做：colorbar axes 是主轴的**兄弟**
+    # （fig.colorbar 生成），不在 tv-axes 子树内。
+    frag_series: dict[str, list[ET.Element]] = {}
+    frag_colorbar: dict[str, ET.Element] = {}
+    for el in frag_root.iter():
+        eid = el.get("id") or ""
+        if eid.startswith("tv-series-"):
+            sid = eid[len("tv-series-") :].split("-")[0]
+            frag_series.setdefault(sid, []).append(el)
+        elif eid.startswith("tv-colorbar-"):
+            frag_colorbar.setdefault(eid[len("tv-colorbar-") :], el)
+
+    def _is_role_subtree(el: ET.Element) -> bool:
+        """子树内含任何 tv-series/tv-colorbar 成员（无 id 的裁剪组也算）。"""
+        return any(
+            (e.get("id") or "").startswith(("tv-series-", "tv-colorbar-")) for e in el.iter()
+        )
+
+    axis_furniture = [
+        child
+        for child in list(tv_axes)
+        if not (child.get("id") or "").startswith(("tv-series-", "tv-colorbar-", "tv-axesbg-"))
+        and not _is_role_subtree(child)
+    ]
+
+    node_index = build_node_index(edited)
     root_defs = edited.find("s:defs", NS)
     if root_defs is None:
         root_defs = ET.SubElement(edited, f"{{{SVG_NS}}}defs")
@@ -154,78 +191,93 @@ def compose_scene(
                 if child.attrib.get("id") in def_ids & outside:
                     root_defs.append(copy.deepcopy(child))
 
-    # 1) 轴区域节点：先上提被外部引用的 defs，再整体移除
-    for node_id in axes_nodes:
-        target = _find_by_id(edited, node_id)
+    def resolve_target(node_id: str) -> tuple[ET.Element, list, int]:
+        target = node_index.get(node_id)
         if target is None:
             raise ComposeError("compose_node_missing", f"bound node {node_id!r} not in scene")
-        hoist_external_defs(target)
-        par = parent_map[id(target)]
-        par.remove(target)
+        par = _parent_of(edited, target)
+        return target, par, list(par).index(target)
 
-    # 2) 系列节点：以片段里对应的系列组替换（matplotlib line2d_N 按绘制序对应）
-    frag_series = [
-        g
-        for g in frag_axes.iter(f"{{{SVG_NS}}}g")
-        if g.attrib.get("id", "").startswith("line2d_") and g.find("s:path", NS) is not None
-    ]
     suffix = "__c1"
-    series_insert_parent = None
-    series_insert_index = None
-    model_series = {f"series:{sr['id']}": sr for sr in (model or {}).get("series", [])}
-    frag_slot = 0
+    series_bindings = [e for e in binding["entries"] if e["object"].startswith("series:")]
+    axes_nodes = [e["node"] for e in binding["entries"] if e["object"].startswith("axes:")]
+
+    insert_parent: list | None = None
+    insert_index = 0
+    consumed_axes_nodes: set[str] = set()
     for entry in series_bindings:
-        target = _find_by_id(edited, entry["node"])
-        if target is None:
-            raise ComposeError("compose_node_missing", f"bound node {entry['node']!r} not in scene")
         series_def = model_series.get(entry["object"]) or {}
+        sid = entry["object"].split(":", 1)[1]
+        target, par, idx = resolve_target(entry["node"])
         if entry["node"] != series_def.get("node"):
-            # 非数据节点（图例手柄等）：不替换，按模型样式同步描边/填充
-            ancestor_ids = {p.attrib.get("id", "") for p in _ancestors(edited, target)}
+            # 非数据节点：色条区域接管，或图例手柄同步
+            if series_def.get("kind") == "image" and entry["node"] == series_def.get("cbar_node"):
+                cbar = frag_colorbar.get(sid)
+                if cbar is None:
+                    raise ComposeError(
+                        "compose_fragment_invalid", "fragment has no colorbar for the image"
+                    )
+                frag_sub = copy.deepcopy(cbar)
+                _suffix_ids(frag_sub, suffix)
+                par[idx] = frag_sub
+                consumed_axes_nodes.add(entry["node"])
+                continue
+            ancestor_ids = {a.get("id", "") for a in _ancestors(edited, target)}
             if not any(a.startswith("legend_") for a in ancestor_ids):
                 raise ComposeError(
                     "compose_node_role_unknown",
-                    f"node {entry['node']!r} is neither the series data node nor a legend handle",
+                    f"node {entry['node']!r} is neither the data node, the colorbar region "
+                    "nor a legend handle",
                 )
             style = series_def.get("style") or {}
             color = style.get("color") or style.get("facecolor")
             if color:
                 _retint(target, str(color))
             continue
+        members = frag_series.get(sid)
+        if not members:
+            raise ComposeError(
+                "compose_fragment_invalid", f"fragment has no members for series {sid!r}"
+            )
         hoist_external_defs(target)
-        if series_def.get("kind") == "image":
-            # 图像系列：片段里 imshow 的 <image>（含裁剪组）整体替换
-            img = next((e for e in frag_axes.iter(f"{{{SVG_NS}}}image")), None)
-            if img is None:
-                raise ComposeError("compose_fragment_invalid", "fragment has no image")
-            frag = copy.deepcopy(_parent_of(frag_axes, img))
-        else:
-            if frag_slot >= len(frag_series):
+        wrapper = ET.Element(f"{{{SVG_NS}}}g", {"data-tavotto": f"series:{sid}"})
+        for member in members:
+            piece = copy.deepcopy(member)
+            _suffix_ids(piece, suffix)
+            wrapper.append(piece)
+        par[idx] = wrapper
+        if insert_parent is None:
+            insert_parent, insert_index = par, idx
+
+    # 轴区域节点：色条区域由片段新色条整体接管，其余退役；片段轴家具插到第一个系列位
+    cbar_sid_by_node = {
+        sr["cbar_node"]: sr["id"] for sr in (model or {}).get("series", []) if sr.get("cbar_node")
+    }
+    for node_id in axes_nodes:
+        if node_id in consumed_axes_nodes:
+            continue
+        target, par, idx = resolve_target(node_id)
+        sid = cbar_sid_by_node.get(node_id)
+        if sid is not None:
+            cbar = frag_colorbar.get(sid)
+            if cbar is None:
                 raise ComposeError(
-                    "compose_fragment_invalid",
-                    f"fragment has {len(frag_series)} series groups, binding needs more",
+                    "compose_fragment_invalid", "fragment has no colorbar for the image"
                 )
-            frag = copy.deepcopy(frag_series[frag_slot])
-            frag_slot += 1
-        _suffix_ids(frag, suffix)
-        par = parent_map[id(target)]
-        idx = list(par).index(target)
-        par[idx] = frag
-        if series_insert_parent is None:
-            series_insert_parent, series_insert_index = par, idx
-
-    # 3) 片段的 axis 子树（刻度/标注/网格）接进场景：插到第一个替换组之前（同一父层）
-    #    —— 普通 SVG 没有 matplotlib.axis_* 组；用户绑定轴区域节点后由片段接管。
-    if axes_nodes and series_insert_parent is not None:
-        frag_axis_subtrees = [
-            g for g in frag_axes if g.attrib.get("id", "").startswith("matplotlib.axis_")
-        ]
-        for j, subtree in enumerate(frag_axis_subtrees):
-            frag_sub = copy.deepcopy(subtree)
+            hoist_external_defs(target)
+            frag_sub = copy.deepcopy(cbar)
             _suffix_ids(frag_sub, suffix)
-            series_insert_parent.insert(series_insert_index + j, frag_sub)
+            par[idx] = frag_sub
+            continue
+        hoist_external_defs(target)
+        par.remove(target)
+    if axes_nodes and insert_parent is not None:
+        for j, furniture in enumerate(axis_furniture):
+            piece = copy.deepcopy(furniture)
+            _suffix_ids(piece, suffix)
+            insert_parent.insert(insert_index + j, piece)
 
-    # 4) 片段引用的根级 defs 随迁（clipPath 等）
+    # 片段根级 defs 随迁（clipPath 等，含系列/轴家具的引用目标）
     for sc_defs in frag_root.findall("s:defs", NS):
         for child in sc_defs:
             cc = copy.deepcopy(child)

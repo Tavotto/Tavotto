@@ -17,7 +17,7 @@ import io
 import re
 
 from tavotto.engine import chartmodel
-from tavotto.svgcoord import apply, viewbox_to_pt
+from tavotto.svgcoord import viewbox_to_pt
 
 #: 片段里允许出现的刻度标签字体大小上界（防御性；matplotlib 默认 10pt）。
 _MAX_LABEL_PT = 72.0
@@ -27,15 +27,24 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
     """模型 + 场景框 → ``{"fragment": bytes, "facts": {...}}``。
 
     ``frame``：``{"view_box": [x,y,w,h], "w_pt": float, "h_pt": float,
-    "preserve": str|None}``——场景的物理映射；片段用同一映射渲染，坐标与
-    场景 1:1 对齐（SG01 实验三的嫁接前提）。
+    "preserve": str|None}``——场景的物理映射。片段在**场景用户坐标系**渲染
+    （figure 1 单位 = 1 viewBox 用户单位），组合时与源坐标 1:1 对齐；
+    pt 类量（字号/线宽/marker/capsize）按 viewBox→pt 比例**换算成用户单位**，
+    使场景映射后视觉尺寸正确。每个语义对象带 ``data-tavotto`` 角色标记
+    （matplotlib gid → SVG id），组合按角色取完整产物。
+
+    非 uniform（preserveAspectRatio="none"）时 pt 换算取两轴比例的几何平均
+    并在 facts 里如实声明——位置的映射仍逐轴精确。
     """
     chartmodel.validate_model(model)
     view_box = frame.get("view_box")
     if not isinstance(view_box, list) or len(view_box) != 4:
         raise ValueError("frame.view_box must be [x,y,w,h]")
+    vb_x, vb_y, vb_w, vb_h = (float(v) for v in view_box)
     w_pt, h_pt = float(frame["w_pt"]), float(frame["h_pt"])
     u2pt = viewbox_to_pt(view_box, w_pt, h_pt, frame.get("preserve"))
+    scale_x, scale_y = u2pt[0], u2pt[3]
+    render_scale = (scale_x * scale_y) ** 0.5
 
     import matplotlib
 
@@ -44,20 +53,18 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
 
     ax_cfg = model["axes"][0]
     ax_x, ax_y, ax_w, ax_h = (float(v) for v in ax_cfg["rect"])
-    pt0 = apply(u2pt, ax_x, ax_y)
-    pt1 = apply(u2pt, ax_x + ax_w, ax_y + ax_h)
-    # viewBox 若有非零原点，映射后的 rect 以 pt0 为左上、pt1 为右下
-    left, right = sorted((pt0[0], pt1[0]))
-    top, bottom = sorted((pt0[1], pt1[1]))
-    fig = matplotlib.figure.Figure(figsize=(w_pt / 72.0, h_pt / 72.0), dpi=72)
+    left, bottom = ax_x, ax_y + ax_h
+    # figure 1 单位 = 1 场景用户单位（72dpi 下 1 display px = 1 用户单位）
+    fig = matplotlib.figure.Figure(figsize=(vb_w / 72.0, vb_h / 72.0), dpi=72)
     ax = fig.add_axes(
         [
-            left / w_pt,
-            1.0 - bottom / h_pt,  # matplotlib 是 y-up 的图分数
-            (right - left) / w_pt,
-            (bottom - top) / h_pt,
+            (left - vb_x) / vb_w,
+            1.0 - (bottom - vb_y) / vb_h,  # matplotlib 是 y-up 的图分数
+            ax_w / vb_w,
+            ax_h / vb_h,
         ]
     )
+    ax.set_gid(f"tv-axes-{ax_cfg['id']}")
     ax.set_xlim(*ax_cfg["xlim"])
     ax.set_ylim(*ax_cfg["ylim"])
     if ax_cfg["xscale"] != "linear":
@@ -79,6 +86,7 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
     for sr in model["series"]:
         kind = sr["kind"]
         style = dict(sr.get("style") or {})
+        role = f"tv-series-{sr['id']}"
         if kind == "image":
             grid = model["dataset"].get("grids", {}).get(sr.get("grid", ""))
             if grid is None:
@@ -87,7 +95,11 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
                 {k: v for k, v in style.items() if k in ("cmap", "vmin", "vmax", "alpha")}
             )
             mappable = ax.imshow(grid["values"], origin="upper", **imshow_kwargs)
-            fig.colorbar(mappable, ax=ax)
+            mappable.set_gid(role)
+            cbar = fig.colorbar(mappable, ax=ax)
+            cbar.ax.set_gid(f"tv-colorbar-{sr['id']}")
+            # 色条刻度字号同样按用户单位换算
+            cbar.ax.tick_params(labelsize=10.0 / render_scale)
             continue
         xs = model["dataset"]["columns"][sr["x"]]
         ys = model["dataset"]["columns"][sr["y"]]
@@ -99,6 +111,7 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
                 raise ValueError("series categories do not match the axis categories")
             xs = list(range(len(cats)))
         label = str(style.pop("label", "") or "")
+        artists = []
         if kind == "bar":
             kwargs = _safe_style(
                 {
@@ -111,7 +124,9 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
                 kwargs["width"] = kwargs.pop("bar_width")
             if "color" in kwargs and "facecolor" not in kwargs:
                 kwargs["facecolor"] = kwargs.pop("color")
-            ax.bar(xs, ys, yerr=yerr, capsize=4, label=label or None, **kwargs)
+            artists = ax.bar(
+                xs, ys, yerr=yerr, capsize=4.0 / render_scale, label=label or None, **kwargs
+            )
         elif kind == "errorbar":
             kwargs = _safe_style(
                 {
@@ -120,28 +135,48 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
                     if k in ("color", "linewidth", "linestyle", "alpha")
                 }
             )
-            ax.errorbar(xs, ys, yerr=yerr, capsize=4, label=label or None, **kwargs)
+            if "linewidth" in kwargs:
+                kwargs["linewidth"] = kwargs["linewidth"] / render_scale
+            artists = ax.errorbar(
+                xs, ys, yerr=yerr, capsize=4.0 / render_scale, label=label or None, **kwargs
+            )
         else:
             plot_style = _safe_style(style)
             if kind == "scatter":
                 plot_style.setdefault("marker", "o")
                 plot_style["linestyle"] = "none"
+            if "markersize" in plot_style:
+                plot_style["markersize"] = plot_style["markersize"] / render_scale
             ax.plot(
                 xs,
                 ys,
-                linewidth=float(plot_style.pop("linewidth", 2.0) or 2.0),
+                linewidth=float(plot_style.pop("linewidth", 2.0) or 2.0) / render_scale,
                 label=label or None,
                 **plot_style,
             )
+            artists = [ax.lines[-1]]
+        # 语义角色标记：完整产物（线/柱/marker/误差成员）都带角色 id（matplotlib gid → SVG id）
+        for j, artist in enumerate(_iter_artists(artists)):
+            artist.set_gid(f"{role}-{j + 1}" if j else role)
     if categorical:
         ax.set_xticks(list(range(len(cats))))
         ax.set_xticklabels(cats)
+    # 轴家具的 pt 量按用户单位换算（刻度字号/线长/线宽）
+    ax.tick_params(
+        labelsize=10.0 / render_scale, length=3.5 / render_scale, width=0.8 / render_scale
+    )
+    for spine in ax.spines.values():
+        spine.set_linewidth(0.8 / render_scale)
+    if ax_cfg.get("xlabel"):
+        ax.set_xlabel(str(ax_cfg["xlabel"]), fontsize=10.0 / render_scale)
+    if ax_cfg.get("ylabel"):
+        ax.set_ylabel(str(ax_cfg["ylabel"]), fontsize=10.0 / render_scale)
     fig.canvas.draw()  # realize transforms & locators（exp2 口径）
-    # 轴分数（matplotlib 原生、y-up）：display(72dpi=pt) 减轴原点、除轴尺寸。
-    # 轴在 display 空间的左/下：left(pt) 与 h_pt - bottom（SVG y-down 的 rect）。
-    ax_disp_left = left
-    ax_disp_bottom = h_pt - bottom
-    ax_w_px, ax_h_px = right - left, bottom - top
+    # 轴分数（matplotlib 原生、y-up）：display(72dpi) 减轴原点、除轴尺寸。
+    # figure 1 display px = 1 场景用户单位；display y-up 的轴底 = vb_h - (rect 底偏移)。
+    ax_disp_left = left - vb_x
+    ax_disp_bottom = vb_h - (bottom - vb_y)
+    ax_w_px, ax_h_px = ax_w, ax_h
     for sr in model["series"]:
         if sr["kind"] == "image":
             continue  # 网格系列的命中事实由图像矩形承担，不做逐点
@@ -168,6 +203,23 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
         "axes_rect_user": [ax_x, ax_y, ax_w, ax_h],
     }
     return {"fragment": text.encode("utf-8"), "facts": facts}
+
+
+def _iter_artists(container):
+    """bar/errorbar 容器或单个 artist → 全部成员（角色标记要覆盖完整产物）。
+
+    顺序关键：先判容器（BarContainer/ErrorbarContainer 是 tuple 子类），再把
+    其余一切当叶子——Line2D 这类 artist 自己也有 get_children（marker 子对象），
+    先查它会把 gid 设到不会单独成元素的子对象上。
+    """
+    if container is None:
+        return []
+    if isinstance(container, (list, tuple)):
+        out = []
+        for item in container:
+            out.extend(_iter_artists(item))
+        return out
+    return [container]
 
 
 def _safe_style(style: dict) -> dict:

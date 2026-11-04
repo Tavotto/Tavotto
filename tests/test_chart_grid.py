@@ -98,11 +98,12 @@ def test_heatmap_scaffold_renders_image_and_colorbar():
     root = parse_svg(strip_matplotlib_doctype(frag))
     images = [e for e in root.iter() if e.tag.endswith("image")]
     assert images, "imshow 产物是内嵌位图 image 元素"
-    # colorbar 是片段里的第二个 axes
-    axes_ids = [
-        e.attrib.get("id", "") for e in root.iter() if e.attrib.get("id", "").startswith("axes_")
-    ]
-    assert len(axes_ids) >= 2
+    # 角色标记：主轴 tv-axes-<id> 与新色条 tv-colorbar-<sid>（R02 组合合同）
+    role_ids = {
+        e.attrib.get("id", "") for e in root.iter() if (e.attrib.get("id") or "").startswith("tv-")
+    }
+    assert any(i.startswith("tv-axes-") for i in role_ids), role_ids
+    assert any(i.startswith("tv-colorbar-") for i in role_ids), role_ids
 
 
 def test_heatmap_scaffold_honors_vmin_vmax():

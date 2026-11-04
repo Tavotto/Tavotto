@@ -211,7 +211,7 @@ _AXES_KEYS = (
     "kind",
     "categories",
 )
-_SERIES_KEYS = ("id", "kind", "axes", "node", "x", "y", "yerr", "grid", "style")
+_SERIES_KEYS = ("id", "kind", "axes", "node", "x", "y", "yerr", "grid", "cbar_node", "style")
 _DATASET_KEYS = ("columns", "grids")
 
 
@@ -300,9 +300,14 @@ def validate_model(model: Any) -> dict:
 
     dataset = model.get("dataset")
     _keys(dataset, _DATASET_KEYS, "model.dataset")
-    columns = dataset.get("columns")
-    if not isinstance(columns, dict) or not columns:
-        raise ChartModelError("chart_model_invalid", "model.dataset.columns must be non-empty")
+    columns = dataset.get("columns", {})
+    grids = dataset.get("grids", {})
+    if not isinstance(columns, dict):
+        raise ChartModelError("chart_model_invalid", "model.dataset.columns must be an object")
+    if not isinstance(grids, dict):
+        raise ChartModelError("chart_model_invalid", "model.dataset.grids must be an object")
+    if not columns and not grids:
+        raise ChartModelError("chart_model_invalid", "model.dataset needs columns or grids")
     col_names = set()
     for name, col in columns.items():
         _str(name, "dataset column name")
@@ -321,10 +326,7 @@ def validate_model(model: Any) -> dict:
                 continue
             _finite(v, f"dataset column {name!r}[{j}]")
 
-    grids = model["dataset"].get("grids", {})
     grid_names: set[str] = set()
-    if not isinstance(grids, dict):
-        raise ChartModelError("chart_model_invalid", "model.dataset.grids must be an object")
     for name, grid in grids.items():
         _str(name, "grid name")
         grid_names.add(name)
