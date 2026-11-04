@@ -1411,6 +1411,8 @@ fn restore_main_window_state(win: &tauri::WebviewWindow) {
     if let Err(e) = win.restore_state(window_state_flags()) {
         eprintln!("restore main window state: {e}");
     }
+    // 插件把保存过的物理尺寸原样设回、不看工作区：换了屏幕 / 缩放后可能比屏幕还大（window_fit.rs）
+    window_fit::clamp_restored_window(win, (1024.0, 680.0));
 }
 
 /// Windows：主窗口的菜单栏藏起来（窗框形态见 `window_chrome`）。菜单仍挂在窗口上——加速键

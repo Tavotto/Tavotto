@@ -45,6 +45,43 @@ pub fn fit_to_primary(app: &tauri::AppHandle, desired: Size, min: Size) -> (Size
     }
 }
 
+/// 恢复上次窗口状态之后的二次夹取：`inner` 是此刻的内尺寸（逻辑像素）。超出可用区才返回要设的新尺寸，
+/// 没超出返回 None（不动用户保存的大小）。插件的 `restore_state` 用 `set_size` 原样设回保存过的
+/// 物理尺寸、不看工作区，换了显示器 / 缩放 / 任务栏之后旧值可能比屏幕还大。
+pub fn clamp_restored(inner: Size, min: Size, avail: Size) -> Option<Size> {
+    let (size, _) = fit(inner, min, avail);
+    (size != inner).then_some(size)
+}
+
+/// 主窗口恢复完状态后调用：非最大化、非全屏、且窗口大于所在显示器工作区时收回去。
+/// 读不到显示器信息或任何一步出错都保持原样。
+pub fn clamp_restored_window(win: &tauri::WebviewWindow, min: Size) {
+    if win.is_maximized().unwrap_or(false) || win.is_fullscreen().unwrap_or(false) {
+        return;
+    }
+    let Some(mon) = win
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| win.primary_monitor().ok().flatten())
+    else {
+        return;
+    };
+    let wa = mon.work_area().size;
+    let Some(avail) = avail_logical((wa.width, wa.height), mon.scale_factor()) else {
+        return;
+    };
+    let Ok(inner) = win.inner_size() else { return };
+    let scale = win.scale_factor().unwrap_or(1.0);
+    if !(scale.is_finite() && scale > 0.0) {
+        return;
+    }
+    let cur = (inner.width as f64 / scale, inner.height as f64 / scale);
+    if let Some((w, h)) = clamp_restored(cur, min, avail) {
+        let _ = win.set_size(tauri::LogicalSize::new(w, h));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,5 +116,61 @@ mod tests {
         assert!(avail_logical((1024, 728), 0.0).is_none());
         assert!(avail_logical((0, 0), 1.0).is_none());
         assert!(avail_logical((1024, 728), f64::NAN).is_none());
+    }
+
+    fn avail_for(work: (u32, u32), scale: f64) -> Size {
+        avail_logical(work, scale).unwrap()
+    }
+
+    #[test]
+    fn conversion_for_100_125_150_percent_on_1024x768() {
+        // 工作区 1024×728（任务栏 40 物理像素）
+        for (scale, w, h) in [
+            (1.0, 1024.0, 696.0),
+            (1.25, 819.2, 550.4),
+            (1.5, 1024.0 / 1.5, 728.0 / 1.5 - 32.0),
+        ] {
+            let a = avail_for((1024, 728), scale);
+            assert!(
+                (a.0 - w).abs() < 1e-9 && (a.1 - h).abs() < 1e-9,
+                "{scale}: {a:?}"
+            );
+            let (size, min) = fit(DESIRED, MIN, a);
+            assert!(min.0 <= a.0 && min.1 <= a.1, "{scale}: min {min:?} > {a:?}");
+            assert!(size.0 <= a.0 && size.1 <= a.1 && size.0 >= min.0 && size.1 >= min.1);
+        }
+        // 100%：宽度刚好够 1024，高度 696 < 680 以上的期望 860 → 夹到 696
+        let (size, min) = fit(DESIRED, MIN, avail_for((1024, 728), 1.0));
+        assert_eq!((size, min), ((1024.0, 696.0), (1024.0, 680.0)));
+    }
+
+    #[test]
+    fn conversion_for_100_125_150_percent_on_1920x1080() {
+        // 工作区 1920×1032（任务栏 48）
+        let a100 = avail_for((1920, 1032), 1.0);
+        assert_eq!(fit(DESIRED, MIN, a100), (DESIRED, MIN));
+        let a125 = avail_for((1920, 1032), 1.25); // 1536 × 793.6
+        assert_eq!(fit(DESIRED, MIN, a125), ((1280.0, 793.6), MIN));
+        let a150 = avail_for((1920, 1032), 1.5); // 1280 × 656
+        let (size, min) = fit(DESIRED, MIN, a150);
+        assert_eq!(size, (1280.0, 656.0));
+        assert_eq!(min, (1024.0, 656.0));
+    }
+
+    #[test]
+    fn restored_oversize_is_clamped_and_fitting_is_untouched() {
+        let avail = avail_for((1024, 728), 1.25); // 819.2 × 550.4
+                                                  // 老用户保存过一个 1600×1000 的窗口
+        assert_eq!(
+            clamp_restored((1600.0, 1000.0), MIN, avail),
+            Some((819.2, 550.4))
+        );
+        // 已经装得下就不动
+        assert_eq!(clamp_restored((800.0, 500.0), (640.0, 400.0), avail), None);
+        // 大屏上保存的大窗口在大屏上保持
+        assert_eq!(
+            clamp_restored((1600.0, 1000.0), MIN, (2400.0, 1300.0)),
+            None
+        );
     }
 }

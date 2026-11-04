@@ -381,6 +381,79 @@ def click(hwnd: int) -> None:
     post(hwnd, BM_CLICK)
 
 
+# ---------------------------------------------------------------- 窗口几何（只读 + 对被测窗口自己改尺寸）
+
+SWP_NOMOVE = 0x0002
+SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+MONITOR_DEFAULTTONEAREST = 2
+#: DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2（-4）：不然测试进程读到的是被虚拟化的坐标
+DPI_PER_MONITOR_V2 = -4
+
+
+class _MONITORINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("rcMonitor", wintypes.RECT),
+        ("rcWork", wintypes.RECT),
+        ("dwFlags", wintypes.DWORD),
+    ]
+
+
+user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+user32.MonitorFromWindow.restype = wintypes.HANDLE
+user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_MONITORINFO)]
+user32.SetWindowPos.argtypes = [
+    wintypes.HWND,
+    wintypes.HWND,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_uint,
+]
+user32.IsZoomed.argtypes = [wintypes.HWND]
+
+
+def make_dpi_aware() -> None:
+    """本测试进程按每显示器 DPI 取坐标（已设过 / 设不了都无妨：读到的仍是同一套坐标就行）。"""
+    try:
+        user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(DPI_PER_MONITOR_V2))
+    except (AttributeError, OSError):
+        pass
+
+
+def window_rect(hwnd: int) -> tuple[int, int, int, int]:
+    """`GetWindowRect`：(left, top, right, bottom)，屏幕坐标。"""
+    r = wintypes.RECT()
+    if not user32.GetWindowRect(hwnd, ctypes.byref(r)):
+        raise OSError(ctypes.get_last_error(), "GetWindowRect 失败")
+    return r.left, r.top, r.right, r.bottom
+
+
+def work_area_of(hwnd: int) -> tuple[int, int, int, int]:
+    """窗口所在显示器的工作区（扣掉任务栏）：(left, top, right, bottom)。"""
+    mon = user32.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
+    info = _MONITORINFO()
+    info.cbSize = ctypes.sizeof(_MONITORINFO)
+    if not user32.GetMonitorInfoW(mon, ctypes.byref(info)):
+        raise OSError(ctypes.get_last_error(), "GetMonitorInfoW 失败")
+    w = info.rcWork
+    return w.left, w.top, w.right, w.bottom
+
+
+def is_maximized(hwnd: int) -> bool:
+    return bool(user32.IsZoomed(hwnd))
+
+
+def resize_window(hwnd: int, width: int, height: int) -> None:
+    """只改被测窗口自己的外框尺寸（不动位置、不抢前台）；系统会按窗口的最小尺寸限制把它夹住。"""
+    flags = SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE
+    if not user32.SetWindowPos(hwnd, None, 0, 0, width, height, flags):
+        raise OSError(ctypes.get_last_error(), "SetWindowPos 失败")
+
+
 # ---------------------------------------------------------------- 菜单
 
 
