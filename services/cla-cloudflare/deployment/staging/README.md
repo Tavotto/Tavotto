@@ -94,7 +94,7 @@ sandbox repository must be public too: the token exchange is scoped with
 who cannot see a private repository.
 
 The holder countersigns with name and signature exactly equal to
-`holderName` in `config.json` (`Jiaqi Wan (staging)`); anything else is
+`holderName` in `config.json` (`Jiaqi Wan`); anything else is
 `personal_evidence_required`.
 
     $W deploy $C --var CLA_GITHUB_ENABLED:true --var CLA_OAUTH_ENABLED:true --var CLA_UI_ENABLED:true --var CLA_SIGNING_ENABLED:true

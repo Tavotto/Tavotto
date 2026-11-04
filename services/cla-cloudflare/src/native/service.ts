@@ -194,7 +194,9 @@ export class LiveService {
     const packets=rows.slice(0,20);
     return {actor:{id:s.actor,login:s.login,role:s.actor===this.c.holderId?'holder':'contributor',
       // The holder must sign with exactly this name (validateEvidence); show it instead of failing late.
-      ...(s.actor===this.c.holderId?{holderName:this.c.holderName}:{})},packets,
+      ...(s.actor===this.c.holderId?{holderName:this.c.holderName}:{})},
+      // The counterparty's name is printed in the published agreement ("Us"); a contributor sees who countersigns.
+      holderName:this.c.holderName,packets,
       nextCursor:rows.length>20?packets[packets.length-1]!.id:null};
   }
   private async qualified(subject:number,ceiling?:{expires:number},now?:number):Promise<boolean> {

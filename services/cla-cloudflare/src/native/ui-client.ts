@@ -3,7 +3,7 @@ export function client():void {
   const text=(id:string,value:unknown)=>{const el=$(id);if(el)el.textContent=String(value);};
   const show=(id:string,visible:boolean)=>{const el=$(id);if(el)el.hidden=!visible;};
   let packet=new URL(location.href).searchParams.get('packet') ?? sessionStorage.getItem('cla.packet') ?? '',state:any=null,busy=false,uncertain=false,cap:any={};
-  let nextCursor:string|null=null,hasPackets=false,lastActor:number|undefined,signedIn=false,holderName='',readDone=false,lastMessage:[string,unknown[],boolean]|null=null;
+  let nextCursor:string|null=null,hasPackets=false,lastActor:number|undefined,signedIn=false,holderName='',counterparty='',readDone=false,lastMessage:[string,unknown[],boolean]|null=null;
   // Wording version 2 (CONSENT_UI_VERSION in service.ts). The Chinese attestation texts are
   // version 1's, unchanged; the English ones are new. Attestation keys never change.
   const WORDS:Record<'en'|'zh',Record<string,string>>={en:{
@@ -33,6 +33,7 @@ export function client():void {
     eGone:'The record you had open is not available to this account. Choose one of your own records.',eGoneCreate:'The record you had open is not available to this account. You can start your own.',
     tDelegated:'Automatic authorisation valid until {0}',tDeadline:'Please finish signing by {0}',
     thanksEyebrow:'Signed',thanksTitle:'Thank you. You’re all set.',thanksLede:'Both signatures are on the record, and every future contribution is already covered. Push any new commit to your pull request and the CLA check will pass within about 15 minutes. We’re glad to have you here.',
+    waitEyebrow:'You signed · {0}',waitTitle:'Thank you. Your part is done.',waitLede:'{0}, who maintains Tavotto, will countersign, usually within a day or two. You don’t need to wait on this page or do anything else: once it is countersigned, the CLA check on your pull request turns green by itself. Come back here afterwards to download your signed PDF.',waitLedeNoPdf:'{0}, who maintains Tavotto, will countersign, usually within a day or two. You don’t need to wait on this page or do anything else: once it is countersigned, the CLA check on your pull request turns green by itself.',waitHolder:'The rights holder',
     thanksHolderTitle:'Countersigned. Thank you.',thanksHolderLede:'Both signatures are on the record. The contributor can now download their signed PDF, and their next push will pass the CLA check.',thanksHolderLedeNoPdf:'Both signatures are on the record. The contributor’s next push will pass the CLA check.',
     pdf:'Download signed PDF',records:'Technical records',recordsHint:'Machine-readable evidence for this record: the exact agreement text, its fingerprint and the chosen party’s signature. Only the two parties can download it.',
     dlContributor:'Contributor evidence',dlHolder:'Rights holder evidence',dlAudit:'Delegation audit',
@@ -75,6 +76,7 @@ export function client():void {
     eGone:'之前打开的记录不属于当前账号。请选择你自己的记录。',eGoneCreate:'之前打开的记录不属于当前账号。你可以新建自己的记录。',
     tDelegated:'自动授权有效至 {0}',tDeadline:'请在 {0} 前完成签署',
     thanksEyebrow:'已签署',thanksTitle:'谢谢你，一切就绪。',thanksLede:'双方签名都已记录，你之后的所有贡献也都已覆盖。往你的 Pull Request 推一个新提交，大约 15 分钟内 CLA 检查就会通过。很高兴你加入。',
+    waitEyebrow:'你已签署 · {0}',waitTitle:'谢谢你，你这边已经完成。',waitLede:'Tavotto 的维护者 {0} 会来联署，通常一两天内。你不用守在这个页面，也不用再做什么：联署完成后，你 Pull Request 上的 CLA 检查会自动变绿。之后回到这里就能下载签署好的 PDF。',waitLedeNoPdf:'Tavotto 的维护者 {0} 会来联署，通常一两天内。你不用守在这个页面，也不用再做什么：联署完成后，你 Pull Request 上的 CLA 检查会自动变绿。',waitHolder:'权利人',
     thanksHolderTitle:'已联署，谢谢。',thanksHolderLede:'双方签名都已记录。贡献者现在可以下载签署好的 PDF，下一次推送就会通过 CLA 检查。',thanksHolderLedeNoPdf:'双方签名都已记录。贡献者的下一次推送就会通过 CLA 检查。',
     pdf:'下载签署 PDF',records:'技术记录',recordsHint:'这条记录的机器可读证据：精确的协议全文、指纹和所选一方的签署。只有双方可以下载。',
     dlContributor:'贡献者证据',dlHolder:'权利人证据',dlAudit:'限定授权审计',
@@ -229,8 +231,15 @@ export function client():void {
     const stage=!signedIn?1:bothSigned()?4:signedBy('contributor')?3:2;
     for(let n=1;n<=4;n++){const li=$('step-'+n);if(li)li.className=n<stage?'done':n===stage?'now':'';}
     const done=bothSigned() && state?.current===true && state?.blocked!==true;
-    show('download-pdf',hasPdf());show('thanks',done);show('hero',!done);show('personal-signature',!done);
-    text('thanks-eyebrow',t('thanksEyebrow'));text('thanks-title',holder?t('thanksHolderTitle'):t('thanksTitle'));text('thanks-lede',holder?t(hasPdf()?'thanksHolderLede':'thanksHolderLedeNoPdf'):t('thanksLede'));
+    // A contributor whose own signature is recorded is finished: show where things stand, never the form again.
+    const waiting=!holder && !done && signedBy('contributor') && !signedBy('holder') && state?.current===true && state?.blocked!==true;
+    const own=state?.signatures?.find((row:any)=>row.role==='contributor');
+    const signedAt=Number.isSafeInteger(own?.created)?new Date(own.created*1000).toLocaleString(lang==='zh'?'zh-CN':'en-GB',{dateStyle:'long',timeStyle:'short'}):'';
+    show('download-pdf',done && hasPdf());show('thanks',done || waiting);show('hero',!done && !waiting);show('personal-signature',!done && !waiting);
+    const seal=$('thanks-seal');if(seal)seal.className=waiting?'seal wait':'seal';
+    text('thanks-eyebrow',waiting?(signedAt?t('waitEyebrow',signedAt):t('signed')):t('thanksEyebrow'));
+    text('thanks-title',waiting?t('waitTitle'):holder?t('thanksHolderTitle'):t('thanksTitle'));
+    text('thanks-lede',waiting?t(hasPdf()?'waitLede':'waitLedeNoPdf',counterparty || t('waitHolder')):holder?t(hasPdf()?'thanksHolderLede':'thanksHolderLedeNoPdf'):t('thanksLede'));
     show('holder-hint',holder && !!holderName);if(holder && holderName)text('holder-hint',t('holderHint',holderName));
     if(legendEl)legendEl.textContent=t('legend');for(const {words,key} of consentLabels)words.textContent=t('a_'+key);
     text('sign',holder?t('signHolder'):t('signContributor'));
@@ -255,7 +264,7 @@ export function client():void {
     let own:any;const previousActor=lastActor;
     cap=await api('/capabilities');
     try{own=await api('/session');if(previousActor!==undefined && previousActor!==own.actor.id){clearConsent();clearPersonalFields();}
-      lastActor=own.actor.id;cap.actor=own.actor;signedIn=true;holderName=typeof own.actor.holderName==='string'?own.actor.holderName:'';state=null;
+      lastActor=own.actor.id;cap.actor=own.actor;signedIn=true;holderName=typeof own.actor.holderName==='string'?own.actor.holderName:'';counterparty=typeof own.holderName==='string'?own.holderName:'';state=null;
       if(packet && !/^[A-Za-z0-9_-]{43}$/.test(packet))throw new Error('packet_unavailable');
       if(!packet && own.packets.length===1 && !own.nextCursor)packet=own.packets[0].id;
       packetPage(own,true);
@@ -273,7 +282,7 @@ export function client():void {
       }else{state=null;await agreement('/agreement');render();text('eligibility',hasPackets?t('eChoose'):t('eCreate'));}
     }catch(error){state=null;if((error as Error).message==='packet_unavailable' && own){
         discardPacket();packetPage(own,true);await agreement('/agreement');render();text('eligibility',hasPackets?t('eGone'):t('eGoneCreate'));
-      }else if((error as Error).message==='session_rejected'){signedIn=false;cap.actor=undefined;holderName='';await agreement('/agreement');render();}
+      }else if((error as Error).message==='session_rejected'){signedIn=false;cap.actor=undefined;holderName='';counterparty='';await agreement('/agreement');render();}
       else throw error;}
     uncertain=false;controls();
   }
