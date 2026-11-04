@@ -2143,6 +2143,13 @@ function BatchFieldRow({
 }
 
 /** 当前值：优先取尚未渲染回来的 override，保证输入即时反馈 */
+/** xlim / ylim 所在的轴此刻是不是对数刻度（对数轴没有 ≤0 的范围端点） */
+function isLogRange(prop: string, element: ManifestElement, panel: PanelObject): boolean {
+  const scaleProp = prop === 'xlim' ? 'xscale' : prop === 'ylim' ? 'yscale' : null
+  const f = scaleProp ? element.editable.find((x) => x.prop === scaleProp) : undefined
+  return !!f && currentValue(panel, element.gid, f) === 'log'
+}
+
 function currentValue(panel: PanelObject, gid: string, field: EditableField): unknown {
   const ov = effectiveOverride(panel.overrides, gid, field.prop)
   return ov ? (field.prop === 'fontfamily' ? figurePrimaryValue(ov.value, field.value) : ov.value) : field.value
@@ -2269,6 +2276,8 @@ function FieldRow({
   const labelBody = labeledWithState(label, overridden)
   const labelNode = hint ? <Tip label={hint} side="left">{labelBody}</Tip> : labelBody
   const gesture = useFieldGesture(panel, el('editProp', { label }))
+  // 对数轴上被拒的非正范围：框里的字要退回当前值，靠换 key 重挂
+  const [rejectTick, setRejectTick] = useState(0)
   const previewable = canPreviewStyle(element.role, field.prop)
 
   /**
@@ -2819,7 +2828,7 @@ function FieldRow({
           <div className={cn('grid flex-1 gap-1', pair ? 'grid-cols-2' : 'grid-cols-4')}>
             {arr.map((v, i) => (
               <NumberField
-                key={i}
+                key={`${i}:${rejectTick}`}
                 // 几何网格那一档：框撑满自己的格子（打磨 L3 / E1）——此前框是 6ch 定宽、
                 // 在 117px 的格里左靠，右缘与下一行的下拉对不上（「X 范围」两个框 zh-11）
                 fill
@@ -2831,6 +2840,12 @@ function FieldRow({
                 step={step}
                 precision={pair ? 2 : 3}
                 onChange={(nv) => {
+                  // 对数轴没有 ≤0 的位置：不存成引擎会悄悄改写的值（QA-WIN-37），
+                  // 框退回原数
+                  if (nv <= 0 && isLogRange(field.prop, element, panel)) {
+                    setRejectTick((n) => n + 1)
+                    return
+                  }
                   const next = [...arr]
                   next[i] = nv
                   write(next)

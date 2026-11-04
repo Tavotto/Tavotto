@@ -2422,6 +2422,33 @@ def _get_axes_lim(axis: str):
     return get
 
 
+def _positive_log_range(ax, axis: str, lo: float, hi: float) -> tuple[float, float]:
+    """对数轴上不存在 ≤0 的端点：把它换成该轴**自动缩放**给出的那一端。
+
+    不处理的话 `set_[xy]lim(0, 40)` 在 log 轴上被 matplotlib "忽略"，而忽略成
+    什么取决于轴此前停在哪：热会话停在上一次的范围，全新 worker 重放则从脚本
+    原样起步——同一份 patch 表，热 / 冷两个范围（QA-WIN-37）。自动缩放只看
+    数据与 scale，不看历史，所以两条路径必然一致。保持用户给的先后顺序
+    （降序仍表达翻转）。
+    """
+    if (ax.get_xscale() if axis == "x" else ax.get_yscale()) != "log":
+        return lo, hi
+    a, b = min(lo, hi), max(lo, hi)
+    if a > 0 and b > 0:
+        return lo, hi
+    ax.autoscale(enable=True, axis=axis)
+    ax.autoscale_view()
+    cur = ax.get_xlim() if axis == "x" else ax.get_ylim()
+    auto_lo, auto_hi = min(cur), max(cur)
+    if a <= 0:
+        a = auto_lo
+    if b <= 0:
+        b = auto_hi
+    if a >= b:
+        a, b = auto_lo, auto_hi
+    return (b, a) if lo > hi else (a, b)
+
+
 def _set_axes_lim(axis: str):
     """坐标范围：吃一对数字（用户改的）或 `_AUTOSCALE`（还原时喂回来的）。
 
@@ -2455,6 +2482,7 @@ def _set_axes_lim(axis: str):
             ax.autoscale_view()
             return
         lo, hi = float(v[0]), float(v[1])
+        lo, hi = _positive_log_range(ax, axis, lo, hi)
         # **方向由「这一次该是什么方向」说了算，端点顺序只表达「范围是这两个数」。**
         #
         # 判据是 `_requested_inverted`：这一次的 patch 表里有 `invert_<axis>`

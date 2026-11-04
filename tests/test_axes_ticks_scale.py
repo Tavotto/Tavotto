@@ -839,3 +839,35 @@ def test_new_ticks_become_editable_after_the_locator_changes(library):
         ],
     )
     assert "末" in _el(man2, after[-1])["label"]
+
+
+# ---------------------------------------------------------------------------
+# 对数轴 + 非正范围（QA-WIN-37）：热会话与全量重放必须是同一个范围
+# ---------------------------------------------------------------------------
+def _lims(man, axis):
+    return _field(man, "axes_0", f"{axis}lim")
+
+
+@pytest.mark.parametrize(
+    ("axis", "bad"),
+    [("x", [0.0, 40.0]), ("y", [-1.0, 1.05]), ("x", [-5.0, -1.0])],
+)
+def test_log_axis_nonpositive_limit_hot_equals_replay(library, axis, bad):
+    """对数轴上把下限设成 0 / 负数：matplotlib 会"忽略"这个端点，忽略成什么
+    取决于轴之前停在哪（热会话）还是从脚本原样自动缩放（重放），于是同一份
+    patch 表热、冷两个范围。规范化后两条路径必须一致，且范围必须为正。"""
+    pos = [{"gid": "axes_0", "prop": f"{axis}lim", "value": [1.0, 40.0]}]
+    log = {"gid": "axes_0", "prop": f"{axis}scale", "value": "log"}
+    final = [{"gid": "axes_0", "prop": f"{axis}lim", "value": bad}, log]
+
+    hot = _worker(library)
+    try:
+        hot.override(STEM, pos + [log])
+        hot_man = hot.override(STEM, final)["manifest"]
+    finally:
+        pool.discard(hot)
+    replay_man = _render(library, final)
+
+    assert _lims(hot_man, axis) == pytest.approx(_lims(replay_man, axis))
+    lo, hi = _lims(replay_man, axis)
+    assert lo > 0 and hi > 0
