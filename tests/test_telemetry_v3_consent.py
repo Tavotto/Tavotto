@@ -53,8 +53,8 @@ def _saved_v2(consent: str, *, with_id: bool = True) -> None:
     telemetry._save(patch)
 
 
-def test_the_version_is_3():
-    assert telemetry.CONSENT_VERSION == 3
+def test_the_version_is_at_least_3():
+    assert telemetry.CONSENT_VERSION >= 3
 
 
 def test_v2_consent_authorizes_nothing_after_the_upgrade(sent):
@@ -78,7 +78,7 @@ def test_reconsent_keeps_the_install_id_and_enables_export_result(sent):
     telemetry.set_consent(telemetry.CONSENT_ENABLED, source="first_run")
     _flush()
     assert telemetry.install_id() == V2_ID, "重新同意不换 install_id"
-    assert telemetry.settings()["consent_version"] == 3
+    assert telemetry.settings()["consent_version"] == telemetry.CONSENT_VERSION
     assert telemetry.public_settings()["needs_reconsent"] is False
     assert telemetry.capture("export_result", EXPORT_RESULT) is True
     _flush()
@@ -137,6 +137,61 @@ def test_malformed_saved_version_is_stale_consent_not_a_crash(sent, raw):
 def test_numeric_string_version_is_read_as_that_version(sent):
     telemetry._save({"consent": "enabled", "install_id": V2_ID, "ever_enabled": True})
     with telemetry.config.transaction() as cfg:
-        cfg["telemetry"]["consent_version"] = "3"
-    assert telemetry.settings()["consent_version"] == 3
+        cfg["telemetry"]["consent_version"] = str(telemetry.CONSENT_VERSION)
+    assert telemetry.settings()["consent_version"] == telemetry.CONSENT_VERSION
     assert telemetry.enabled() is True
+
+
+# ---------------- CONSENT_VERSION 3 -> 4（ADR 0155 §11：mcp_tool_call 加 tavotto_list_journals）----------------
+V3_ID = "66666666-7777-4888-8999-000000000000"
+LIST_JOURNALS_CALL = {
+    "tool": "tavotto_list_journals",
+    "outcome": "ok",
+    "error_class": "none",
+    "duration_bucket": "lt_1s",
+    "host": "claude",
+    "elided": False,
+}
+
+
+def _saved_v3(consent: str) -> None:
+    telemetry._save(
+        {
+            "consent": consent,
+            "consent_version": 3,
+            "ever_enabled": consent == "enabled",
+            "install_id": V3_ID,
+        }
+    )
+
+
+def test_the_version_is_4_and_the_new_tool_name_is_in_the_closed_set():
+    assert telemetry.CONSENT_VERSION == 4
+    assert "tavotto_list_journals" in telemetry.EVENTS["mcp_tool_call"]["tool"]["values"]
+
+
+def test_v3_consent_authorizes_nothing_after_the_v4_upgrade(sent):
+    _saved_v3("enabled")
+    assert telemetry.enabled() is False
+    assert telemetry.capture("mcp_tool_call", LIST_JOURNALS_CALL) is False
+    _flush()
+    assert sent == []
+    pub = telemetry.public_settings()
+    assert pub["needs_reconsent"] is True and pub["saved_consent_version"] == 3
+
+
+def test_v4_reconsent_keeps_the_id_and_sends_the_list_journals_call(sent):
+    _saved_v3("enabled")
+    telemetry.set_consent(telemetry.CONSENT_ENABLED, source="first_run")
+    assert telemetry.install_id() == V3_ID
+    assert telemetry.capture("mcp_tool_call", LIST_JOURNALS_CALL) is True
+    _flush()
+    assert [p["event"] for p in sent if p["event"] == "telemetry_enabled"] == [], "不是新用户"
+    assert {p["distinct_id"] for p in sent} == {V3_ID}
+
+
+def test_a_user_who_declined_at_v3_is_not_reprompted_at_v4(sent):
+    _saved_v3("disabled")
+    pub = telemetry.public_settings()
+    assert pub["needs_reconsent"] is False and pub["consent"] == "disabled"
+    assert telemetry.capture("mcp_tool_call", LIST_JOURNALS_CALL) is False

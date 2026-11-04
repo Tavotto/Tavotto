@@ -1,8 +1,8 @@
 /**
  * 首启询问框：出现条件、两个按钮写下的东西、以及**文案不许有硬编码英文/中文**。
  *
- * 「拒绝不比同意难点」是这里唯一的视觉硬约束：两个按钮同一个 variant，
- * 都在同一行、同样大小。深色主按钮留给导出那类真正的主动作。
+ * 「拒绝不比同意难点」是这里唯一的视觉硬约束：主次可分，但两个选项同尺寸（lg）、
+ * 同一行、都是真按钮；拒绝写 disabled 不再问。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -14,7 +14,7 @@ vi.mock('@/lib/api', () => ({
 }))
 
 import { fetchTelemetrySettings, patchTelemetryConsent } from '@/lib/api'
-import { TelemetryConsentDialog } from '@/components/TelemetryConsentDialog'
+import { CONSENT_VARIANTS, pickConsentVariant, TelemetryConsentDialog } from '@/components/TelemetryConsentDialog'
 import { setLocale, t } from '@/i18n'
 import { setTelemetryEnabled } from '@/lib/telemetry'
 import { useTelemetryStore } from '@/store/telemetryStore'
@@ -52,6 +52,11 @@ function mount() {
 const dlg = (key: string) => t(`telemetry.${key}`, { ns: 'dialogs' })
 
 /** Radix 把内容渲染到 portal 里，所以按整个 document 找 */
+const openDetails = () =>
+  act(() => {
+    ;(document.querySelector('[data-telemetry-details-toggle]') as HTMLButtonElement).click()
+  })
+
 const buttonByText = (text: string) =>
   [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === text)
 
@@ -130,11 +135,20 @@ describe('两个选择', () => {
     expect(document.body.textContent).not.toContain(dlg('title'))
   })
 
-  it('拒绝不比同意难点：两个按钮同一个视觉档位', () => {
-    const allow = buttonByText(dlg('allow'))
-    const decline = buttonByText(dlg('decline'))
+  it('拒绝不比同意难点：同尺寸、同一行、都是真按钮（不是文字链接）', () => {
+    const allow = buttonByText(dlg('allow'))!
+    const decline = buttonByText(dlg('decline'))!
     expect(allow && decline).toBeTruthy()
-    expect(decline!.className).toBe(allow!.className)
+    expect(allow.tagName).toBe('BUTTON')
+    expect(decline.tagName).toBe('BUTTON')
+    // lg 档：h-8 + text-base；任何一颗缩小或去掉底色都会掉出这里
+    for (const b of [allow, decline]) {
+      expect(b.className).toContain('h-8')
+      expect(b.className).toContain('text-base')
+      expect(b.className).toContain('rounded-full')
+    }
+    expect(decline.className).toContain('bg-surface-hover')
+    expect(decline.parentElement).toBe(allow.parentElement)
   })
 
   it('两颗按钮是仅有的出口：不画右上角 ×（画了却关不掉就是假控件）', () => {
@@ -151,23 +165,101 @@ describe('两个选择', () => {
     expect(document.body.textContent).toContain(dlg('title'))
   })
 
-  it('重新同意时多一句「比上次多了什么」，首启不显示', () => {
+  it('重新同意：delta 句在展开区里（默认收着），小字行链接换成「这次新增了什么」，主按钮写「继续」', () => {
     const q = () => document.querySelector('[data-telemetry-reconsent-delta]')
+    const toggle = () => document.querySelector('[data-telemetry-details-toggle]')!
     useTelemetryStore.setState({ settings: settings({ consent: 'unset' }), askOpen: true })
+    expect(toggle().textContent).toBe(dlg('details'))
+    openDetails()
     expect(q()).toBeNull()
     act(() => useTelemetryStore.setState({
       settings: settings({ consent: 'enabled', saved_consent_version: 2, needs_reconsent: true }),
     }))
+    expect(toggle().textContent).toBe(dlg('detailsReconsent'))
+    expect(buttonByText(dlg('allowReconsent'))).toBeTruthy()
+    // 展开态在重新询问时保留着：delta 句是展开区的第一个孩子
+    const details = document.querySelector('[data-telemetry-details]')!
+    expect(details.firstElementChild).toBe(q())
     expect(q()!.textContent).toBe(dlg('reconsentDelta'))
   })
 
-  it('说清楚发什么、不发什么', () => {
+  it('详情默认折叠；点开后「会发送 / 绝不发送」与隐私政策链接才出现', () => {
+    const sel = '[data-telemetry-sends], [data-telemetry-never], [data-telemetry-details]'
+    expect(document.querySelector(sel)).toBeNull()
+    const toggle = document.querySelector('[data-telemetry-details-toggle]')!
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    openDetails()
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
     const text = document.body.textContent ?? ''
     for (const key of ['sendsTitle', 'sendsVersion', 'sendsPlatform', 'sendsFeatures',
                        'sendsOutcome', 'sendsErrorSummary', 'neverTitle', 'neverFigures', 'neverScripts',
-                       'neverPaths', 'neverData', 'neverPrompts', 'later']) {
+                       'neverPaths', 'neverData', 'neverPrompts', 'policy']) {
       expect(text).toContain(dlg(key))
     }
+    expect(document.querySelector('[data-telemetry-sends]')).not.toBeNull()
+    expect(document.querySelector('[data-telemetry-never]')).not.toBeNull()
+  })
+
+  it('默认可见的事实：标题、第一句、事实句、设置里可改', () => {
+    const text = document.body.textContent ?? ''
+    for (const key of ['title', 'fact', 'later', 'details']) expect(text).toContain(dlg(key))
+    expect(document.querySelector('[data-telemetry-lead]')!.textContent).toBe(
+      dlg(CONSENT_VARIANTS[document.querySelector('[data-telemetry-variant]')!.getAttribute('data-telemetry-variant') as 'A'].lead),
+    )
+  })
+})
+
+describe('三套卡片', () => {
+  it('随机源可注入：落在 [0,1) 里各档对应一套，边界不越界', () => {
+    expect(pickConsentVariant(() => 0)).toBe('A')
+    expect(pickConsentVariant(() => 0.4)).toBe('B')
+    expect(pickConsentVariant(() => 0.99)).toBe('C')
+    expect(pickConsentVariant(() => 1)).toBe('C')
+  })
+
+  it('三套只有 lead 不同：共用同一组事实键（发什么、不发什么、在哪改、详情链接）', () => {
+    const ids = Object.keys(CONSENT_VARIANTS)
+    expect(ids).toEqual(['A', 'B', 'C'])
+    for (const v of Object.values(CONSENT_VARIANTS)) expect(Object.keys(v)).toEqual(['lead'])
+    expect(new Set(Object.values(CONSENT_VARIANTS).map((v) => v.lead)).size).toBe(3)
+    const bodies = ids.map((id) => {
+      vi.spyOn(Math, 'random').mockReturnValue(ids.indexOf(id) / 3 + 0.01)
+      fetchMock.mockResolvedValue(settings())
+      mount()
+      act(() => useTelemetryStore.setState({ settings: settings(), askOpen: true }))
+      openDetails()
+      expect(document.querySelector('[data-telemetry-variant]')!.getAttribute('data-telemetry-variant')).toBe(id)
+      expect(document.querySelector(`[data-telemetry-art="${id}"]`)).not.toBeNull()
+      // 去掉 lead 之后，其余文字逐字相同
+      const lead = document.querySelector('[data-telemetry-lead]')!
+      const clone = document.querySelector('[data-telemetry-variant]')!.cloneNode(true) as HTMLElement
+      clone.querySelector('[data-telemetry-lead]')!.remove()
+      void lead
+      const out = clone.textContent
+      act(() => root.unmount())
+      host.remove()
+      document.body.innerHTML = ''
+      vi.restoreAllMocks()
+      return out
+    })
+    expect(bodies[1]).toBe(bodies[0])
+    expect(bodies[2]).toBe(bodies[0])
+  })
+
+  it('同一次打开里固定：重渲染不换套；关了再开才重抽', () => {
+    const spy = vi.spyOn(Math, 'random').mockReturnValue(0.01)
+    mount()
+    act(() => useTelemetryStore.setState({ settings: settings(), askOpen: true }))
+    const cur = () => document.querySelector('[data-telemetry-variant]')!.getAttribute('data-telemetry-variant')
+    expect(cur()).toBe('A')
+    spy.mockReturnValue(0.99)
+    act(() => useTelemetryStore.setState({ settings: settings({ needs_reconsent: false }) }))
+    act(() => root.render(<TelemetryConsentDialog />))
+    expect(cur()).toBe('A')
+    act(() => useTelemetryStore.setState({ askOpen: false }))
+    act(() => useTelemetryStore.setState({ askOpen: true }))
+    expect(cur()).toBe('C')
+    spy.mockRestore()
   })
 })
 

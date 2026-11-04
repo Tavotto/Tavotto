@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { formatMessage, t as translate } from '@/i18n'
 import { formatDateTime } from '@/i18n/format'
 import type { UpdateStatus } from '@/lib/api'
-import { useUpdateStore } from '@/store/updateStore'
+import { autoDownloadOn, useUpdateStore } from '@/store/updateStore'
 import { UpdateRestartError } from '../UpdateRestartError'
 import { Button } from '../ui/Button'
 import { FieldGroup, FormSection } from '../ui/FormSection'
@@ -292,9 +292,8 @@ function UpdatesGroup({ children }: { children: ReactNode }) {
  *   * 装完不等于生效，重启才算换版本；
  *   * 失败要说人话并留退路（更新器连不上时仍给 Releases 链接）。
  *
- * **自动检查那一行两条通道都有**（2026-10-07 设计审计 §9.1：桌面 / 浏览器同形）：桌面版每次启动都检查一次、
- * 目前没有应用内关闭开关（后端的 updater 在桌面壳里停用、存不下这个偏好）——所以开关画成开着、停用，原因就在
- * 行内，而不是这一行在桌面版上整个消失、让人以为桌面版不检查。
+ * 桌面版每次启动都检查一次、没有应用内关闭开关：2026-11-04 起不再画一颗开着、停用的开关（用户：臃肿），
+ * 这件事由「隐私与数据」里那句「桌面版在启动时检查，目前没有应用内关闭开关」交代。
  *
  * 安装包的签名由壳里的公钥校验，校验不过当场失败——这里不做「忽略签名」的口子。
  */
@@ -314,6 +313,11 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
     relaunch,
     relaunching,
     relaunchFailed,
+    desktopReady,
+    restartNow,
+    setAutoDownload,
+    autoDownloadSaving,
+    autoDownloadFailure,
   } = useUpdateStore()
   useEffect(() => {
     if (!desktopChecked) void checkDesktop()
@@ -322,37 +326,73 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
   const busy = desktopPhase !== 'idle'
   const pct = desktopProgress === null ? null : Math.round(desktopProgress * 100)
 
+  const ready = !!desktopUpdate && desktopReady?.version === desktopUpdate.version
+  // 主行：标题说现状（有新版本 x / 检查更新），状态行说当前版本或进度，主动作贴右缘——与下面的开关行同一套行网格，
+  // 不再在组里套一张「有新版本」卡片（2026-11-04 用户：臃肿、没对齐）
+  const action =
+    desktopPhase === 'installed' ? (
+      <Button data-update-relaunch variant="primary" size="sm" onClick={() => void relaunch()} loading={relaunching}>
+        {st('update.relaunch')}
+      </Button>
+    ) : desktopPhase === 'downloading' ? null : ready ? (
+      // 后台已下好：主动作就是「现在重启」（用已下好的包，不再下载）
+      <Button data-update-relaunch variant="primary" size="sm" onClick={() => void restartNow()} loading={relaunching}>
+        {st('update.restartNow')}
+      </Button>
+    ) : desktopUpdate ? (
+      <Button variant="primary" size="sm" onClick={() => void installDesktop()}>
+        {st('update.downloadAndInstall')}
+      </Button>
+    ) : (
+      <Button variant="secondary" size="sm" onClick={() => void checkDesktop()} disabled={busy}>
+        {st(desktopPhase === 'checking' ? 'update.checking' : 'update.checkNow')}
+      </Button>
+    )
+
   return (
     <UpdatesGroup>
       <SettingRow
-        data-update-auto
-        label={st('update.autoCheckDesktop')}
-        controlId="setting-update-auto"
-        status={st('update.autoCheckDesktopReason')}
-      >
-        <Toggle
-          id="setting-update-auto"
-          aria-labelledby={settingRowLabelId('setting-update-auto')}
-          checked
-          disabled
-          onChange={() => {}}
-        />
-      </SettingRow>
-
-      <SettingRow
-        label={st('update.check')}
-        status={
-          <LastCheckStatus
-            checkedAtMs={desktopCheckedAtMs}
-            settled={
-              desktopChecked && !desktopUpdate && !desktopError && desktopPhase === 'idle'
-            }
-          />
+        data-update-available={desktopUpdate ? '' : undefined}
+        label={
+          desktopUpdate ? (
+            <>
+              {st('update.available')} <span className="font-mono">{desktopUpdate.version}</span>
+            </>
+          ) : (
+            st('update.check')
+          )
         }
+        status={
+          !desktopUpdate ? (
+            <LastCheckStatus
+              checkedAtMs={desktopCheckedAtMs}
+              settled={desktopChecked && !desktopError && desktopPhase === 'idle'}
+            />
+          ) : desktopPhase === 'installed' ? (
+            st('update.installedHint')
+          ) : desktopPhase === 'downloading' ? (
+            <span className="tabular-nums">
+              {pct === null ? st('update.downloading') : st('update.downloadingPct', { pct })}
+            </span>
+          ) : (
+            <>
+              {st('update.currentIs', { version: status.current })}
+              {' · '}
+              <a href={status.releases_url} target="_blank" rel="noreferrer" className="underline underline-offset-2">
+                {st('update.releaseNotes')}
+              </a>
+            </>
+          )
+        }
+        below={
+          desktopUpdate && desktopPhase === 'downloading' ? (
+            // 拿不到 Content-Length 就走不确定态，不假装卡在某个百分比
+            <ProgressBar pct={pct} label={st('update.downloadProgressAria')} />
+          ) : undefined
+        }
+        control="auto"
       >
-        <Button variant="secondary" size="sm" onClick={() => void checkDesktop()} disabled={busy}>
-          {st(desktopPhase === 'checking' ? 'update.checking' : 'update.checkNow')}
-        </Button>
+        {action}
       </SettingRow>
 
       {desktopError && !relaunchFailed && (
@@ -368,56 +408,30 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
           </a>
         </GroupNotice>
       )}
-
-      {desktopUpdate && (
-        <UpdateAvailable
-          version={desktopUpdate.version}
-          current={status.current}
-          notes={desktopUpdate.notes}
-          action={
-            desktopPhase === 'installed' ? (
-              <Button
-                data-update-relaunch
-                variant="primary"
-                size="lg"
-                onClick={() => void relaunch()}
-                loading={relaunching}
-              >
-                {st('update.relaunch')}
-              </Button>
-            ) : desktopPhase === 'downloading' ? undefined : (
-              <Button variant="primary" size="lg" onClick={() => void installDesktop()}>
-                {st('update.downloadAndInstall')}
-              </Button>
-            )
-          }
-        >
-          {desktopPhase === 'installed' ? (
-            <span className="mt-1 block">{st('update.installedHint')}</span>
-          ) : desktopPhase === 'downloading' ? (
-            <span className="mt-2 flex flex-col gap-1">
-              {/* 拿不到 Content-Length 就走不确定态，不假装卡在某个百分比 */}
-              <ProgressBar pct={pct} label={st('update.downloadProgressAria')} />
-              <span className="tabular-nums">
-                {pct === null ? st('update.downloading') : st('update.downloadingPct', { pct })}
-              </span>
-            </span>
-          ) : (
-            <a
-              href={status.releases_url}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-1 block w-fit underline underline-offset-2"
-            >
-              {st('update.releaseNotes')}
-            </a>
-          )}
-        </UpdateAvailable>
-      )}
       {desktopUpdate && desktopPhase === 'installed' && relaunchFailed && (
         <div>
           <UpdateRestartError detail={desktopError} />
         </div>
+      )}
+
+      <SettingRow
+        data-update-auto-download
+        label={st('update.autoDownload')}
+        controlId="setting-update-auto-download"
+        status={autoDownloadSaving ? st('update.autoCheckSaving') : undefined}
+      >
+        <Toggle
+          id="setting-update-auto-download"
+          aria-labelledby={settingRowLabelId('setting-update-auto-download')}
+          checked={autoDownloadOn(status)}
+          disabled={autoDownloadSaving}
+          onChange={(v) => void setAutoDownload(v)}
+        />
+      </SettingRow>
+      {autoDownloadFailure && (
+        <GroupNotice tone="danger" data-update-auto-download-error>
+          {st('update.autoCheckSaveFailed')} {formatMessage(autoDownloadFailure)}
+        </GroupNotice>
       )}
 
       <DiagnosticDisclosure variant="row" title={st('techDetails')}>

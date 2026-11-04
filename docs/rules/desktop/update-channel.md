@@ -31,4 +31,11 @@ order: 60
   换来源**重新 check + 重新下**，且回退来源必须报同一个版本；下载**慢**（`SLOW_RULE`）时先边下边试探下一个来源（同版本），
   实测更快（`should_switch`）才换、否则丢掉试探那一路留在原来源，每次更新只试探一次；③ 验签永远用内置公钥，来源不影响信任。
   e2e 触发口 `TAVOTTO_E2E_UPDATE_SOURCE=mirror|github` 钉死单来源且不回退。
-  看护：`app_update.rs` 的顺序单测 + `app_update_flow_tests.rs`（本地假 HTTP 服务 + 测试密钥签名的包，从不调用 `apply`）。
+  ④ **后台下载（ADR 0121 §八，2026-11-04）**：偏好「后台下载新版本」默认开（后端用户配置 `updates.auto_download`，不放 localStorage）。
+  开着时前端启动查到新版即调 `desktop_update_download`（走同一个 `fetch`，只下载 + 验签，包进 `UpdateState.ready` 槽，**不安装**）；
+  **安装只发生在「现在重启」（`desktop_update_install` 取槽里同版本的包、不再请求包地址）或退出时（`RunEvent::Exit` 里排在
+  `shutdown_sidecar()` + `mark_clean()` 之后的 `install_ready_on_exit`）**——两个平台一样，macOS 也不即时替换 .app（sidecar / worker 会按需
+  从包里载入代码，运行中换包会混用新旧版本）。后台失败静默；`run_check` 查到别的版本 / 无新版就作废旧包；下载期间 `pending` 锁被持有，
+  前端用 `desktopPhase` 挡住再次检查，不报 `busy`。新命令只许主窗口（三处 ACL 同步）。
+  看护：`app_update.rs` 的顺序单测 + `app_update_flow_tests.rs`（本地假 HTTP 服务 + 测试密钥签名的包，从不调用 `apply`；后台下载用 `install_pending` 注入「装」的替身）、
+  `main.rs` 的 `run_event_exit_writes_clean_after_the_sidecar_is_gone`（退出时装包排在 clean 之后、只有一处）。

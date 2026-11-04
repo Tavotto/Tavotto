@@ -17,7 +17,9 @@ Tests use synthetic identities, ephemeral test encryption keys, a test-only data
 
 Seven days limits completion of a pending packet. Valid, independently completed signatures remain technically eligible for the same agreement, subject to policy and hold checks. Every qualification decrypts and verifies evidence, immutable packet/actor/document binding and original signing timestamps. A holder timestamp cannot precede the contributor. Proof lifetime remains separately 120 seconds.
 
-Expired incomplete packets remain immutable history. A new packet requires fresh independent signatures; no old signatures or intents are transferred. Creation is transactional. A hold on any packet blocks the subject across all packets and digests, with no automatic release mechanism. A hold blocks automated qualification; it does not purport to revoke or amend a legal agreement.
+Expired incomplete packets remain immutable history. A new packet requires fresh independent signatures; no old signatures or intents are transferred. Creation is transactional. A hold on any packet blocks the subject across all packets and digests until the rights holder releases it; nothing releases a hold automatically. A hold blocks automated qualification; it does not purport to revoke or amend a legal agreement.
+
+A release (`POST /release {packet}`, rights holder only, once per hold) is append-only: it adds one immutable `eligibility_releases` row and never edits the hold or any signature. A hold keeps counting against a packet unless it was released **and** the packet was created strictly after the release, so the held packet and every earlier packet stay ineligible for good (no signature is revived). After a release the contributor creates and signs a new packet, the holder countersigns it and it qualifies normally; a later hold on that packet blocks again and can itself be released. A release is not a signature: it publishes no success check and nothing becomes eligible until a new signature. Packet creation and `/status` treat a subject as blocked while any hold is unreleased; `/status` reports `blocked`, `released`, `block` and `canRelease`. A packet created in the same second as the release is refused, so wait for the next second.
 
 The contributor must personally sign. Personal holder signing remains the default.
 The disabled delegated-authority candidate in src/native/delegation.ts requires a
@@ -300,7 +302,7 @@ attack. No cached successful verification or renewed old proof is introduced.
 
 Repeated authenticated packet creation may return an existing eligible-for-reuse
 packet only after checking its subject, configured agreement version/digest,
-immutable document hash and subject-wide holds. That metadata-only response
+immutable document hash and holds that still apply to it (a released hold never makes its own packet reusable). That metadata-only response
 makes no GitHub request, creates no intent or signature, and is not a fresh
 qualification result. Expired incomplete packets still require a new upstream
 policy/agreement validation before atomic replacement creation. Existing signing

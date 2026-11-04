@@ -212,6 +212,7 @@ def _run_gate(job_id, judge: Path, needs: dict, *, event="pull_request", full_ci
         "NEEDS_JSON": json.dumps(needs),
         "DOCS_ONLY": cls.get("outputs", {}).get("docs_only", ""),
         "DOCS_SCOPE_RESULT": cls.get("result", ""),
+        "E2E_SPECS_CHANGED": cls.get("outputs", {}).get("e2e_specs_changed", ""),
         "GATE_EVENT": event,
         "GATE_FULL_CI": full_ci,
     }

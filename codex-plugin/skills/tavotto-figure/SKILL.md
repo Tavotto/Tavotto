@@ -66,7 +66,8 @@ python3 scripts/prefs.py --json
 1. **画幅宽度**——单栏 **8 cm** / 双栏 **15 cm**；用户不清楚就按任务推荐并说明理由，推荐项放第一位。
 2. **字体**——选项**必须包括 Times New Roman 与 Arial**（默认推荐 Times New Roman）。
 3. **图例加不加框**——加框 / 无框（默认推荐无框）。用户选了加框，之后调
-   `tavotto_preflight` / `tavotto_export` 时带 `{"journal": {"legend_policy": {"frame": true}}}`。
+   `tavotto_preflight` / `tavotto_export` 时带 `{"journal": {"legend_policy": {"frame": true}}}`
+   （按期刊 `journal_id` 时不带：期刊规范不判图例框，两者同给会被拒）。
 
 推荐宽度的依据、偏好的写入（`--set` / `--unset`）与「图例加框」不当违规的原因，见
 `references/publication-style.md` 的「开工三问细则」。
@@ -118,7 +119,8 @@ tavotto_open_figure { "project_path": "/absolute/path/to/figures", "stem": "Fig1
   时它会拒绝——**先去修，或者问用户**；用户明确说「就这样导出」才带
   `explicit_confirm: true`（这次会记进 proof report）。
 * **收尾** `tavotto_close_session { session_id }`。
-期刊有自己的尺寸就带 `journal`（写法见 `references/publication-style.md`）。
+用户说要投某本期刊：先 `tavotto_list_journals { "query": "期刊名" }` 查 id，之后 open / preflight /
+export / normalize 都带 `journal_id`，别再手写尺寸；查不到才手写 `journal`（见 `references/publication-style.md`「按期刊」）。
 
 **这些工具不会动用户的 .py 源码。** 数据、坐标范围、加删曲线/子图、colorbar
 方向仍然只能回代码改（清单见 `references/compatibility.md`）。

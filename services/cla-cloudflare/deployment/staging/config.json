@@ -1,13 +1,13 @@
 {
   "origin": "https://cla-staging.tavotto.com",
-  "repository": "erwanjun/cla-e2e-sandbox-20261026",
-  "repositoryId": 1434279607,
-  "referenceSha": "3d71b48d569a12907bbe0cc1c7876b5efbdccfdf",
+  "repository": "tavotto-cla-sandbox/cla-mq-sandbox",
+  "repositoryId": 1445721664,
+  "referenceSha": "ebc70cc0829fb2287d0735325095f8e4edff058b",
   "holderId": 88193520,
   "holderName": "Jiaqi Wan",
   "appId": 5480322,
   "appSlug": "erwanjun-cla-e2e-20261026",
-  "installationId": 175465132,
+  "installationId": 178570638,
   "clientId": "Iv23liIfB3rp9SGapg1u",
   "checkName": "Tavotto CLA (staging)",
   "exemptionIds": {

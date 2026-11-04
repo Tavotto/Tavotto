@@ -7,7 +7,9 @@
 //! 不变的东西（信任不随来源变）：
 //! * 验签始终用 `tauri.conf.json` 里的内置公钥——来源只决定「从哪下」，不决定「信谁」。镜像清单的
 //!   `signature` 与上游逐字相同，镜像被篡改或过期都只会让验签失败、回退到下一个来源；
-//! * 只在用户按下按钮之后下载（`desktop_update_install`）；启动时只做 check。
+//! * 下载只有两个入口：用户按下按钮（`desktop_update_install`），或「后台自动下载」开着时前端在启动查到新版后
+//!   调的 `desktop_update_download`（ADR 0121 修订 2026-11-04；偏好在用户配置里，默认开、可关）。下好的包
+//!   只放进 [`UpdateState::ready`]，**绝不在运行中替换**；装上去只发生在用户点「现在重启」或退出应用时。
 //!
 //! 「无更新」不回退：第一个**答上来**的来源说没有，就是没有（ADR 0121 §3）。只有答不上来
 //! （超时 / 非 2xx / 清单坏 / 缺本平台）才换下一个来源。
@@ -1043,11 +1045,53 @@ pub struct CheckedUpdate {
     pub source: Source,
 }
 
-/// 上一次 check 留下的句柄。同一时刻只允许一个 check / install 在跑（`try_lock`，撞上回 `busy`）。
+/// 上一次 check 留下的句柄。同一时刻只允许一个 check / install / download 在跑（`try_lock`，撞上回 `busy`）。
+///
+/// `ready` = 后台已下好、验过签、**还没装**的包（字节在内存里，Windows 约 157 MB，ADR 0121 修订 2026-11-04）。
+/// 用 std 的锁：退出路径（`RunEvent::Exit`，同步）要取它。装上之前一直留着，装上（或装失败）即被取走。
 #[derive(Default)]
 pub struct UpdateState {
     pub pending: tokio::sync::Mutex<Option<Pending>>,
+    pub ready: std::sync::Mutex<Option<Fetched>>,
     pub cooldown: Cooldown,
+}
+
+/// `desktop_update_download` 的返回：下好的是哪一版、从哪个来源。
+#[derive(Debug, Clone, Serialize)]
+pub struct Downloaded {
+    pub version: String,
+    pub source: Source,
+}
+
+/// 取出已下好的包，**只在版本与 `version` 相同时**（用户看到的版本 == 装上的版本）；不同版本原样留着。
+pub fn take_ready(state: &UpdateState, version: &str) -> Option<Fetched> {
+    let mut g = state.ready.lock().unwrap_or_else(|e| e.into_inner());
+    if g.as_ref().is_some_and(|f| f.update.version == version) {
+        g.take()
+    } else {
+        None
+    }
+}
+
+/// 退出时用：取出已下好的包（不论版本——它是比当前新的、验过签的一版）。
+pub fn take_ready_any(state: &UpdateState) -> Option<Fetched> {
+    state.ready.lock().unwrap_or_else(|e| e.into_inner()).take()
+}
+
+/// 退出应用时安装后台下好的包。调用方必须已经收掉 sidecar 并写过 `clean`（`RunEvent::Exit` 里的既有顺序），
+/// 因为 Windows 上插件的 install 会起安装器并自行退出进程。没有已下好的包 = 什么都不做。失败只记日志——
+/// 应用本来就在退出，下次启动会重新查。
+/// 退出时装包后**不**把应用重新拉起来：Windows 上插件在 passive 模式下总给安装器带 `/R`（装完重启），
+/// 而安装器参数在 check 时就定死在 `Update` 里改不了；安装器由 `ShellExecuteW` 起、继承本进程环境，
+/// 我们自己的 `windows/installer.nsi` 见到这个变量就跳过重启。「现在重启」不设它。
+pub const NO_RELAUNCH_ENV: &str = "TAVOTTO_UPDATE_NO_RELAUNCH";
+
+pub fn install_ready_on_exit(state: &UpdateState) {
+    if let Some(f) = take_ready_any(state) {
+        // 进程正在退出、sidecar 已收掉，这里没有别的线程会读环境
+        std::env::set_var(NO_RELAUNCH_ENV, "1");
+        let _ = apply(f);
+    }
 }
 
 /// GitHub 的清单地址取自 `tauri.conf.json` 的 `plugins.updater.endpoints[0]`——它仍是那里
@@ -1086,9 +1130,27 @@ where
         .try_lock()
         .map_err(|_| Failure::code("busy"))?;
     // 先清掉旧句柄：这次查不到 / 查失败，就不该还留着上一次的
-    *slot = None;
+    let prev = slot.take();
     let order = state.cooldown.apply(order);
-    let found = check(make, endpoints, &order, limits, &state.cooldown).await?;
+    let found = match check(make, endpoints, &order, limits, &state.cooldown).await {
+        Ok(found) => found,
+        Err(e) => {
+            // 例外：后台已下好、验过签的包还在（退出时照样会装）——查失败（离线等）不该让「现在重启」变成空按钮。
+            // 候选恢复成那个包对应的上一次句柄，界面与壳一致（Codex #1730）
+            let ready_ver = state
+                .ready
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+                .map(|f| f.update.version.clone());
+            if let Some(p) = prev {
+                if ready_ver.as_deref() == Some(p.update.version.as_str()) {
+                    *slot = Some(p);
+                }
+            }
+            return Err(e);
+        }
+    };
     let out = found.as_ref().map(|p| CheckedUpdate {
         version: p.update.version.clone(),
         notes: p.update.body.clone(),
@@ -1098,7 +1160,55 @@ where
         }),
         source: p.source,
     });
+    // 已下好的包只对应「现在查到的这一版」：查到的是别的版本 / 没有新版，旧包作废（别白占内存，也别在退出时装旧的）
+    {
+        let keep = found.as_ref().map(|p| p.update.version.as_str());
+        let mut ready = state.ready.lock().unwrap_or_else(|e| e.into_inner());
+        if ready.as_ref().map(|f| f.update.version.as_str()) != keep {
+            *ready = None;
+        }
+    }
     *slot = found;
+    Ok(out)
+}
+
+/// 后台下载 `pending` 并放进 `state.ready`（不安装）。与 [`run_install`] 同一把锁：下载期间别的 check / install
+/// 回 `busy`。已经有同一版本的包就直接回，不再请求包地址。失败不动任何状态（用户仍可手动下载）。
+pub async fn run_download<F>(
+    make: &F,
+    endpoints: &Endpoints,
+    state: &UpdateState,
+    limits: &Limits,
+    emit: Emit<'_>,
+) -> Result<Downloaded, Failure>
+where
+    F: Fn() -> UpdaterBuilder,
+{
+    let slot = state
+        .pending
+        .try_lock()
+        .map_err(|_| Failure::code("busy"))?;
+    let pending = slot
+        .clone()
+        .ok_or_else(|| Failure::code("no_pending_update"))?;
+    {
+        let ready = state.ready.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(f) = ready
+            .as_ref()
+            .filter(|f| f.update.version == pending.update.version)
+        {
+            return Ok(Downloaded {
+                version: f.update.version.clone(),
+                source: f.source,
+            });
+        }
+    }
+    let f = fetch(make, endpoints, limits, &pending, emit, &state.cooldown).await?;
+    let out = Downloaded {
+        version: f.update.version.clone(),
+        source: f.source,
+    };
+    *state.ready.lock().unwrap_or_else(|e| e.into_inner()) = Some(f);
     Ok(out)
 }
 
@@ -1141,8 +1251,29 @@ where
             return Err(Failure::code("candidate_changed"));
         }
     }
+    install_pending(make, endpoints, state, limits, &pending, emit, apply).await
+}
+
+/// 装 `pending`：后台已下好**同一版本**的包就直接用它（不再请求包地址），否则现下现装。
+/// `install` 是真正动磁盘的那一步（生产里是 [`apply`]），拆出来是为了让测试不碰磁盘上的应用。
+pub(crate) async fn install_pending<F, A>(
+    make: &F,
+    endpoints: &Endpoints,
+    state: &UpdateState,
+    limits: &Limits,
+    pending: &Pending,
+    emit: Emit<'_>,
+    install: A,
+) -> Result<Source, Failure>
+where
+    F: Fn() -> UpdaterBuilder,
+    A: FnOnce(Fetched) -> Result<Source, Failure>,
+{
+    if let Some(f) = take_ready(state, &pending.update.version) {
+        return install(f);
+    }
     // 句柄保留到成功：失败后用户可以直接再按一次
-    apply(fetch(make, endpoints, limits, &pending, emit, &state.cooldown).await?)
+    install(fetch(make, endpoints, limits, pending, emit, &state.cooldown).await?)
 }
 
 /// 救援页「重新安装」专用的 `UpdaterBuilder` 工厂：在 `make` 之上换一个版本判据——**同版本也算可装**

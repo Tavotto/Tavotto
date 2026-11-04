@@ -67,8 +67,9 @@ SCHEMA_VERSION = 1
 #: 版本史：1 = 首版九条事件；2 = Session 22 加了刷新 / 接入状态 / 教程 /
 #: 多选栏 / 保存 / 恢复 / 包操作九条（`docs/analytics/telemetry-events.md`）；
 #: 3 = 两个新采集范围一并升版（ADR 0134）：(a) 导出终态事件 `export_result`；(b) 用户**明确点发送**的
-#: 诊断报告可随附一条不含内容的错误摘要（`engine/diagsummary.py`，走报告服务，不走本模块的事件通道）。
-CONSENT_VERSION = 3
+#: 诊断报告可随附一条不含内容的错误摘要（`engine/diagsummary.py`，走报告服务，不走本模块的事件通道）；
+#: 4 = `mcp_tool_call` 的工具名闭集加 `tavotto_list_journals`（AI 编辑器查期刊列表，ADR 0155 §11；只有工具名，不含查询词与期刊）。
+CONSENT_VERSION = 4
 
 #: 生产默认投递地址。**只发到 Tavotto 自己的代理**，应用里没有、也不该有
 #: 任何 PostHog 项目密钥：开源桌面应用里嵌的东西一律是公开的。
@@ -193,6 +194,7 @@ EVENTS: dict[str, dict[str, dict]] = {
             "tavotto_refresh_project",
             "tavotto_session_state",
             "tavotto_close_session",
+            "tavotto_list_journals",
             "other",
         ),
         "outcome": _enum("ok", "tool_error", "protocol_error", "internal_error"),

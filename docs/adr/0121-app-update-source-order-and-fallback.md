@@ -118,11 +118,37 @@ infra 契约 §6.2 对此的表述是「镜像 version ≤ 本机 = 已最新，
 `TAVOTTO_E2E_RUN_UPDATE=1` 的 headless 触发口走**同一份** `app_update::run_check` / `run_install`；新增 `TAVOTTO_E2E_UPDATE_SOURCE=mirror|github`
 把来源**钉死成单个且不回退**（否则坏掉的镜像会被 GitHub 悄悄兜住，CI 假绿），让 CI 能分别验两条来源；不设 = 与用户相同的自动顺序。退出码 40/41/42 不变。
 
+### 八、后台静默下载 + 退出时安装（2026-11-04 修订）
+
+此前「只在用户按下按钮之后下载」。现在桌面版有一个偏好 **「后台下载新版本」（默认开，设置 → 更新里可关）**，开着时：
+
+* 启动查到新版 → **不弹** `UpdateNoticeDialog`，前端立刻调新命令 `desktop_update_download`：走同一个 `fetch`（来源顺序、失败换来源、
+  §五·补的慢速试探、镜像冷却、内置公钥验签**一个字都没动**），下好的包（含 `Update` 句柄）放进 `UpdateState.ready` 槽，**不安装**。
+* 下好 → 顶栏出「新版已就绪」胶囊（形态同 `BuildMismatchChip`，点开一句话 + 「现在重启」）。
+* **安装只发生在两个时刻**：用户点「现在重启」（`desktop_update_install` 发现槽里有**同一版本**的包就直接装它，**不再请求包地址**；
+  版本不同则照旧现下现装）；或退出应用（`RunEvent::Exit` 里，在既有的 `shutdown_sidecar()` + `mark_clean()` **之后**调
+  `install_ready_on_exit`）。Windows 上插件的 install 会起 NSIS（passive）并自行结束进程，`updater_builder()` 挂的
+  `on_before_exit → mark_clean` 照旧生效。
+* **后台下载失败 → 静默**（不弹窗、不出错误胶囊）；「⋯」菜单圆点与设置页的手动「下载并安装」仍在。关掉偏好 = 回到此前的行为
+  （启动弹询问框、点了才下）。
+* 「用户看到的版本 == 装上的版本」：槽按版本取（`take_ready`），`run_check` 查到别的版本 / 没有新版时作废旧包；退出时装的是槽里那一版。
+
+**为什么 macOS 也不下好就立刻替换 .app**：sidecar 按需 `import` 模块、渲染 worker 之后还会从包里起进程，运行中换掉包会让同一会话混用
+新旧版本的代码。所以两个平台都放到退出时装（这也同时满足「运行中的会话不变」的可复现纪律）。
+
+**代价（接受）**：下好的包字节常驻内存直到安装（Windows 约 157 MB，macOS 更小）；后台下载期间 `pending` 锁一直被持有，
+设置页的「检查更新」不会撞 `busy` 报错——前端据 `desktopPhase` 直接显示后台下载的进度。退出时安装失败只记日志，
+下次启动会重新查；退出时装包前端记不到，所以遥测 `update_completed` 对这条路径**没有**记录（白名单不扩，不另造事件）。
+
+**偏好存哪**：后端用户配置 `config.json` 的 `updates.auto_download`（`engine/updater.py`），经桌面也放行的 `/api/update/settings`
+读写，值由桌面下的停用响应 `/api/update/check` 带回。**不放 localStorage**：桌面 Flask 端口可能变（`port_memory`），localStorage 按
+origin 隔离，端口一变「已关闭」会悄悄复位成开。
+
 ## 与既有承诺的冲突（已同步更新的面向用户文档）
 
 | 位置 | 原承诺 | 现状 |
 | --- | --- | --- |
-| `docs/privacy.md`「Update checks」 | 只写 GitHub Releases | 加：桌面版按顺序联系 `dl.tavotto.cn`（维护者运营，位于中国大陆）与 GitHub；镜像只收到标准 HTTPS 请求元数据（IP、UA、时间），无任何标识符 / 遥测 / 项目内容；顺序规则；下载仍只在用户确认之后；验签不依赖来源 |
+| `docs/privacy.md`「Update checks」 | 只写 GitHub Releases | （2026-11-04 再改：默认后台下载、可关、退出时安装，见 §八）加：桌面版按顺序联系 `dl.tavotto.cn`（维护者运营，位于中国大陆）与 GitHub；镜像只收到标准 HTTPS 请求元数据（IP、UA、时间），无任何标识符 / 遥测 / 项目内容；顺序规则；下载仍只在用户确认之后；验签不依赖来源 |
 | `README.md` / `README.zh-CN.md`「Everything runs on your machine」 | 「每天一次去 GitHub Releases」 | 加桌面版镜像一句 |
 | `docs/rules/frontend/desktop-and-update.md`、`src-tauri/AGENTS.md`、`docs/adr/0002` 末节 | 前端经插件检查 / 下载 | 改为经壳自有命令；不再放 `updater:default` |
 | 网站（`Tavotto/Tavotto_website`）隐私页 / 下载页 | 同 README | **仓库外**，需另行同步（本分支不动） |
@@ -131,6 +157,11 @@ infra 契约 §6.2 对此的表述是「镜像 version ≤ 本机 = 已最新，
 
 * 发版流程多一步：镜像的 `latest.json` + 安装包同步（infra 负责）。**镜像没同步时客户端自然落到 GitHub 或判「无更新」**——前者无害，后者是 §三 接受的滞后。
 * 镜像清单 `signature` 必须与上游**逐字相同**；若 infra 重新签名，会因公钥不符而全部回退到 GitHub（不会装错，但镜像等于白建）。
-* 未验证（NOT_RUN）：真实 COS（`dl.tavotto.cn`）上的清单 / 包；真机（含 Windows NSIS passive、macOS 公证后的 .app.tar.gz）上的完整更新；
+* 未验证（NOT_RUN）：§八 的真机退出时安装（macOS 就地替换 / Windows NSIS passive）；真实 COS（`dl.tavotto.cn`）上的清单 / 包；真机（含 Windows NSIS passive、macOS 公证后的 .app.tar.gz）上的完整更新；
   中国大陆真实网络下的体验。实现的状态机用「本地假 HTTP 服务 + 测试密钥签名的包」端到端验过（`src-tauri/src/app_update_flow_tests.rs`），安装步骤在测试里不执行。
 * 备案 / 主体：`dl.tavotto.cn` 的域名与云资源归属由维护者另行处理，客户端只认这个常量。
+
+* **Windows 退出时装完不重新拉起应用**：插件在 passive 模式下总给 NSIS 带 `/R`（装完重启），参数在 check 时就定死在 `Update`
+  里（私有字段，改不了）。所以退出时安装前，壳设环境变量 `TAVOTTO_UPDATE_NO_RELAUNCH=1`（`app_update::NO_RELAUNCH_ENV`），
+  `ShellExecuteW` 起的安装器继承它，`windows/installer.nsi` 的 `.onInstSuccess` 见到它就跳过 `RunAsUser`；「现在重启」不设，照旧重启。
+  看护：`tests/test_nsis_template.py::test_update_installed_on_quit_does_not_relaunch_the_app`（变量名与壳常量同源）。

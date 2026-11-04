@@ -37,7 +37,7 @@ classifiers = [
     "Topic :: Multimedia :: Graphics :: Editors :: Vector-Based",
 ]
 
-# Flask 父进程的运行时闭包：flask + packaging + RenderCore 的五个包 + truststore。科学栈刻意不在这里——
+# Flask 父进程的运行时闭包：flask + packaging + RenderCore 的五个包 + truststore + cryptography。科学栈刻意不在这里——
 # engine/registry.py、pool.py、ai_bridge.py 必须保持纯标准库可 import，matplotlib 由 worker 解释器提供。
 # `packaging` 是 PEP 508 / 440 的参考实现（pip / uv 认的就是它），纯 Python、零依赖、
 # Apache-2.0 OR BSD-2-Clause；U04（ADR 0061）起依赖声明的无损读法与 marker 求值靠它，
@@ -63,6 +63,11 @@ dependencies = [
     # 私有 Python 下载被误报成「检查网络」（2026-09-28 实测）。truststore 在 Windows 走 CryptoAPI 建链
     # （缺根按需拉取）、macOS 走 SecTrust、Linux 走 OpenSSL + 系统 CA。只在 tlstrust 里延后 import。
     "truststore>=0.10,<1",
+    # 远程期刊目录索引的 Ed25519 验签（engine/journalremote.py；Apache-2.0 OR BSD-3-Clause，原生轮子，含 OpenSSL，
+    # 依赖 cffi）：用户 2026-11-05 拍板用成熟库、不手写加密。只在验签函数里延后 import，Flask 父进程启动不加载；
+    # import 不了就当验签失败（目录保持内置种子）。上界钉在 48.x：49 起 PyPI 不再发 macOS x86_64 / universal2 与 win32 wheel（只剩 arm64 / win_amd64），而 macos-x86_64 是桌面版与 runtime-lock 的正式目标，
+    # Intel Mac 装 49+ 会退到 Rust 源码构建；48.x 仍有 universal2。升到 49+ 之前先定 Intel 目标怎么办。
+    "cryptography>=48,<49",
 ]
 
 [project.optional-dependencies]

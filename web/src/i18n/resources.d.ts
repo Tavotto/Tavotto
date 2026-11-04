@@ -947,7 +947,11 @@ export default interface Resources {
         "widths_mm_single": "单栏",
         "widths_mm_tolerance_mm": "栏宽容差"
       },
+      "formatsAccepted": "可接受 {{list}}",
+      "formatsPreferred": "推荐 {{list}}",
+      "hasRequirement": "有要求",
       "listAria": "期刊列表",
+      "needsNetwork": "这本期刊需要联网下载",
       "no": "否",
       "noJournal": "不按期刊",
       "noLimit": "不限",
@@ -956,6 +960,7 @@ export default interface Resources {
       "pick": "选择期刊",
       "picked": "已按「{{name}}」检查",
       "pickedWidth": "已按「{{name}}」检查，页宽改为 {{w}} mm",
+      "quotaLater": "期刊额度暂时用完了，稍后再试",
       "requirements": "期刊要求",
       "search": "搜索名称、缩写或 ISSN",
       "searchAria": "搜索期刊",
@@ -1498,6 +1503,7 @@ export default interface Resources {
       "title": "科研预设"
     },
     "profiles": {
+      "adviceHint": "建议 {{pt}} pt",
       "binding": {
         "builtinDefault": "默认规范",
         "current": "当前项目使用",
@@ -1518,6 +1524,7 @@ export default interface Resources {
       "clearRow": "清除整行（{{row}}）：这一行的每一格都回到未设置",
       "conflict": "「{{name}}」已在别处被修改。请重新打开后再编辑。",
       "copyOf": "{{name}} 副本",
+      "defaultHint": "默认 {{value}} {{unit}}",
       "delete": "删除",
       "deleteBody": "已使用它的项目不受影响，各自保留独立副本。",
       "deleteTitle": "删除「{{name}}」？",
@@ -1557,6 +1564,7 @@ export default interface Resources {
         }
       },
       "field": {
+        "columns": "栏宽",
         "defaultFont": "正文字号",
         "doubleWidth": "双栏宽",
         "exportDpi": "推荐导出分辨率",
@@ -1608,6 +1616,7 @@ export default interface Resources {
       "snapshotHint": "项目保存选中时的规则快照。全局规范之后的修改不影响本项目，除非打开「跟随更新」。",
       "snapshotTitle": "本项目实际检查的规则",
       "unset": "未设置",
+      "unspecified": "未规定",
       "useForCanvas": "用于当前画布",
       "useForCanvasSaveFirst": "先保存这份样式的改动，再用于画布",
       "useForProject": "本项目用这套规范",
@@ -2750,11 +2759,10 @@ export default interface Resources {
         "attemptLine": "{{source}} · {{stage}} · {{kind}}",
         "attemptsTitle": "各来源的失败记录",
         "autoCheck": "每天自动检查",
-        "autoCheckDesktop": "启动时自动检查",
-        "autoCheckDesktopReason": "桌面版每次启动都会检查，暂时不能关闭",
         "autoCheckRetry": "重新保存",
         "autoCheckSaveFailed": "未能确认设置已保存。开关仍显示上次确认的值，请重试。",
         "autoCheckSaving": "正在保存…",
+        "autoDownload": "后台下载新版本",
         "available": "有新版本",
         "channelNote": "只查 GitHub Releases 的最新正式版。关掉自动检查就不会联网。",
         "check": "检查更新",
@@ -2789,6 +2797,7 @@ export default interface Resources {
         "releaseNotes": "查看发行说明",
         "restartAfter": "后生效。当前进程仍运行旧版本代码。",
         "restartBefore": "升级完成。",
+        "restartNow": "现在重启",
         "restartStrong": "请重启 Tavotto",
         "signatureNote": "更新包由官方签名，安装前会校验；校验不过不会安装。你的项目、排版与设置都不在应用的安装目录里，升级不受影响。",
         "sourceName": {
@@ -2895,10 +2904,16 @@ export default interface Resources {
       "title": "本次问题的诊断"
     },
     "telemetry": {
-      "allow": "分享匿名用量",
+      "allow": "愿意匿名分享",
+      "allowReconsent": "继续匿名分享",
       "decline": "暂不",
-      "intro": "可发送匿名用量统计，了解哪些功能有人用。默认关闭，与账号无关。",
-      "later": "随时可在设置里改。",
+      "details": "具体会发送什么",
+      "detailsReconsent": "这次新增了什么",
+      "fact": "只发匿名的使用记录，不会发你的图、脚本、数据和文件名。",
+      "later": "随时可以在设置里改",
+      "leadA": "想知道哪些功能用得多、哪里不好用，好决定下一步先改什么。",
+      "leadB": "我们会看大家主要用哪些功能、哪里报错多，用来安排后面的修改。",
+      "leadC": "不分享也完全不影响使用。分享的话，我们能更快发现哪里出了问题。",
       "neverData": "科研数据与图内文字",
       "neverFigures": "你的图与项目文件",
       "neverPaths": "文件名与路径",
@@ -2906,10 +2921,10 @@ export default interface Resources {
       "neverScripts": "脚本与源码",
       "neverTitle": "绝不发送",
       "policy": "隐私政策",
-      "reconsentDelta": "比你上次同意时多了三项：导出怎样结束（含失败 / 取消）；AI Agent 调用了哪个 Tavotto 工具、成功与否（不含参数与内容）；以及你主动发送问题反馈时附带的一条不含内容的错误摘要。",
-      "sendsErrorSummary": "你主动发送问题反馈时，随附一条不含内容的错误摘要",
+      "reconsentDelta": "比上次多了一项：AI 编辑器查期刊列表的次数（只记查过，不含搜了什么、查的是哪本）。",
+      "sendsErrorSummary": "你主动反馈问题时附带的错误摘要（不含内容）",
       "sendsFeatures": "你使用了哪些功能",
-      "sendsOutcome": "预检与导出的结果（成功、失败或取消）",
+      "sendsOutcome": "预检和导出的结果",
       "sendsPlatform": "操作系统与处理器架构",
       "sendsTitle": "会发送",
       "sendsVersion": "Tavotto 的版本号",
@@ -3988,6 +4003,7 @@ export default interface Resources {
       },
       "fixNativeUnsupported": "用 {{product}} Run 打开的图暂不支持自动修复",
       "fixOption": {
+        "column": "改成{{name}}宽 {{mm}} mm",
         "double": "改成双栏宽 {{mm}} mm",
         "single": "改成单栏宽 {{mm}} mm"
       },
@@ -7184,6 +7200,11 @@ export default interface Resources {
     "update": {
       "banner": "工具已更新，刷新后使用新版本",
       "chip": "界面需要刷新"
+    },
+    "updateReady": {
+      "body": "新版 {{version}} 已下载好，退出时会自动装上。",
+      "chip": "新版已就绪",
+      "restart": "现在重启"
     }
   }
 }

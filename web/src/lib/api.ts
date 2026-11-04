@@ -4945,6 +4945,8 @@ export interface UpdateStatus {
   can_self_update?: boolean
   upgrade_command?: string
   auto_check: boolean
+  /** 桌面版：查到新版后台静默下载（默认开）。偏好存在用户配置里（`updates.auto_download`），不在 localStorage */
+  auto_download?: boolean
   /** true = 这次没联网，回的是上次的结果 */
   cached?: boolean
   checked_at_ms?: number
@@ -4967,8 +4969,8 @@ export interface UpdateApplyResult {
 export const checkUpdate = (force = false) =>
   jsonFetch<UpdateStatus>(`/api/update/check${force ? '?force=1' : ''}`)
 
-export const patchUpdateSettings = (patch: { auto_check: boolean }) =>
-  jsonFetch<{ auto_check: boolean }>('/api/update/settings', {
+export const patchUpdateSettings = (patch: { auto_check?: boolean; auto_download?: boolean }) =>
+  jsonFetch<{ auto_check: boolean; auto_download: boolean }>('/api/update/settings', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),

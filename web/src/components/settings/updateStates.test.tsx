@@ -203,7 +203,9 @@ describe('有更新', () => {
     await render()
     expect(text()).toContain('0.14.0')
     expect(byLabel(st('update.downloadAndInstall'))).toBeTruthy()
-    expect(verdict()).toBe('pending')
+    // 有新版本时这一行的状态说「当前 x」，不放检查结论（2026-11-04 合并成一行）
+    expect(verdict()).toBeNull()
+    expect(text()).toContain(st('update.currentIs', { version: '0.13.0' }))
     expect(text()).not.toContain(
       st('update.lastCheckedNoUpdate', { time: formatDateTime(CHECKED_AT) }),
     )

@@ -155,6 +155,7 @@ OPTIONAL_ENGINE_MODULES = (
     "envlease",
     "execspec",
     "fixtools.readscope",
+    "journalremote",
     "journals",
     "runconfig",
     "scriptargs",
@@ -191,13 +192,80 @@ def journal_catalog_enabled() -> bool:
     return _journal_agent_module() is not None
 
 
+#: 与引擎 `journalremote.client_type()` 同一个形状：`agent-<宿主名>`（只用于服务端统计，限额不按它分桶）
+_MCP_CLIENT_NAME: str | None = None
+_AGENT_HOST_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _remember_mcp_client_name(client_info) -> None:
+    global _MCP_CLIENT_NAME
+    name = client_info.get("name") if isinstance(client_info, dict) else None
+    if isinstance(name, str):
+        slug = _AGENT_HOST_RE.sub("-", name.strip().lower()).strip("-")[:31].strip("-")
+        _MCP_CLIENT_NAME = slug or None
+
+
+def _journal_remote():
+    """远程目录模块（旧引擎没有 = None，只用内置种子）。同时把客户端类型设成 `agent-<宿主名>`（环境变量优先）。"""
+    remote = _optional_engine("journalremote")
+    if remote is not None:
+        remote.set_client_type(
+            f"agent-{_MCP_CLIENT_NAME or 'mcp'}"
+        )  # 环境变量 TAVOTTO_JOURNAL_CLIENT 仍优先
+    return remote
+
+
+def _journal_error(res: dict) -> BridgeError | None:
+    """`agent_resolve` 的结果 → 给 Agent 的明确错误码（不静默退回）；可用 = None。"""
+    state = res.get("state")
+    if state == "quota":
+        wait = res.get("retry_after_s")
+        tail = (
+            f"，约 {max(1, int(wait) // 60)} 分钟后再试"
+            if isinstance(wait, int) and wait > 0
+            else "，稍后再试"
+        )
+        return BridgeError(
+            "这本期刊今天的下载额度用完了"
+            + tail
+            + "；不要换设备令牌重试，也不要凭记忆编这本期刊的规范。",
+            code="journal_quota_exceeded",
+            retry_after_s=wait if isinstance(wait, int) else None,
+        )
+    if state == "offline":
+        return BridgeError(
+            "这本期刊的标准还没下载到本机，需要联网；联网后再试，或改用内置种子里已有的期刊。",
+            code="journal_offline",
+        )
+    if state == "rejected":
+        return BridgeError(
+            "这本期刊的数据没有通过验签 / 校验，已整份弃用；不要采用任何来自它的数值。",
+            code="journal_verification_failed",
+        )
+    return None  # ready；unknown 交给引擎的 journal_unknown
+
+
 def list_journals(query: str | None = None) -> dict:
-    """只读：期刊库的期刊（`id/label/publisher/aliases`）与 `catalog_rev`；`query` 模糊过滤。"""
+    """只读：期刊库的期刊（`id/label/publisher/aliases`）与 `catalog_rev`；`query` 模糊过滤。
+    读「种子 + 缓存索引」：不计数、离线可用；远程目录里的刊多一个 `downloaded`（标准是否已在本机，没下载的在
+    open / preflight / export 用到它时才下载并计 1 次）。"""
     journals = _journal_module()
+    remote = _journal_remote()
+    catalog = None
+    if remote is not None:
+        try:
+            catalog = remote.agent_catalog()
+        except Exception:  # noqa: BLE001 — 远程目录出任何问题都只退回种子，列表本身不依赖网络
+            catalog = None
     try:
-        return journals.search_journals(query)
+        out = journals.search_journals(query, catalog)
     except engine_profiles.ProfileError as exc:  # JournalCatalogError 是它的子类
         raise BridgeError(str(exc), code=getattr(exc, "code", "journal_catalog_schema")) from exc
+    if catalog is not None:
+        loaded = set(remote.loaded_ids())
+        for item in out["journals"]:
+            item["downloaded"] = item["id"] in loaded
+    return out
 
 
 def _journal_module():
@@ -222,8 +290,22 @@ def journal_selection(
             "期刊标准库对 Agent 的入口尚未开放；这次没有改动任何设置。",
             code="journal_catalog_disabled",
         )
+    catalog = None
+    remote = _journal_remote()
+    # 与手写 profile_id / journal 冲突时不下载（引擎马上就会报 journal_id_conflict，别白白占一次额度）
+    if (
+        remote is not None
+        and profile_id is None
+        and journal is None
+        and isinstance(journal_id, str)
+    ):
+        res = remote.agent_resolve(journal_id)
+        err = _journal_error(res)
+        if err is not None:
+            raise err
+        catalog = res.get("catalog")
     try:
-        return journals.select_for_agent(journal_id, profile_id, journal)
+        return journals.select_for_agent(journal_id, profile_id, journal, catalog)
     except engine_profiles.ProfileError as exc:  # JournalCatalogError 是它的子类
         raise BridgeError(str(exc), code=getattr(exc, "code", "unknown_profile")) from exc
 
@@ -592,6 +674,7 @@ def _in_scope(real: str, roots) -> bool:
 
 
 def observe_mcp_client(protocol_version: str | None, capabilities, client_info) -> None:
+    _remember_mcp_client_name(client_info)
     _ROOT_AUTHORITY.observe_client(protocol_version, capabilities, client_info)
 
 

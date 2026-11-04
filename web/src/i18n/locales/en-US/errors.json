@@ -915,6 +915,7 @@
       "would_worsen": "This fix would make something else worse (for example, push text off the figure), so it was dropped. The figure was not changed."
     },
     "fixOption": {
+      "column": "Set to {{name}} width {{mm}} mm",
       "double": "Set to double-column width {{mm}} mm",
       "single": "Set to single-column width {{mm}} mm"
     },

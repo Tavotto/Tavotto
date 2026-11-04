@@ -22,6 +22,7 @@
     "allow-resolve-close-request",
     "allow-desktop-update-check",
     "allow-desktop-update-install",
+    "allow-desktop-update-download",
     "allow-take-previous-exit",
     "allow-current-engine-exit",
     "allow-current-fullscreen",

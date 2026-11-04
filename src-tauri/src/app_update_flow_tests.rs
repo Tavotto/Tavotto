@@ -1153,3 +1153,272 @@ async fn a_pinned_single_source_is_never_probed_even_when_slow() {
     assert_eq!(r.unwrap().source, Source::Mirror);
     assert_eq!(rig.github.hits("/latest.json"), 0);
 }
+
+/* ------------- 后台下载（ADR 0121 修订 2026-11-04）：下好 → 槽 → 装 ------------- */
+
+/// 一个「装」的替身：记下收到的包与来源，**不碰磁盘上的应用**。
+type Installed = Arc<Mutex<Vec<(Source, Vec<u8>)>>>;
+
+fn recorder() -> (Installed, impl FnOnce(Fetched) -> Result<Source, Failure>) {
+    let seen: Installed = Default::default();
+    let s2 = seen.clone();
+    (seen, move |f: Fetched| {
+        s2.lock().unwrap().push((f.source, f.bytes));
+        Ok(f.source)
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_background_download_fills_the_slot_and_install_uses_it_without_asking_for_the_package_again(
+) {
+    let rig = Rig::both_healthy().await;
+    let make = rig.make();
+    let ep = rig.endpoints();
+    let state = UpdateState::default();
+    run_check(&make, &ep, &state, &CN, &limits())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(state.ready.lock().unwrap().is_none());
+
+    let d = run_download(&make, &ep, &state, &limits(), &|_| {})
+        .await
+        .unwrap();
+    assert_eq!((d.version.as_str(), d.source), ("9.9.9", Source::Mirror));
+    assert_eq!(rig.mirror.hits(PKG_PATH), 1);
+    {
+        let ready = state.ready.lock().unwrap();
+        let f = ready.as_ref().expect("下好的包进槽");
+        assert_eq!(
+            (f.update.version.as_str(), f.bytes.as_slice()),
+            ("9.9.9", PKG)
+        );
+    }
+
+    // 再下一次同一版本：直接回，不再请求包地址
+    run_download(&make, &ep, &state, &limits(), &|_| {})
+        .await
+        .unwrap();
+    assert_eq!(rig.mirror.hits(PKG_PATH), 1, "槽里已有同版本的包，不重下");
+
+    // 装：取槽里的包交给「装」，包地址一次都不再被请求，槽被取空
+    let pending = state.pending.try_lock().unwrap().clone().unwrap();
+    let (seen, install) = recorder();
+    let events: Arc<Mutex<Vec<DownloadEvent>>> = Default::default();
+    let e2 = events.clone();
+    let emit = move |e: DownloadEvent| e2.lock().unwrap().push(e);
+    let src = install_pending(&make, &ep, &state, &limits(), &pending, &emit, install)
+        .await
+        .unwrap();
+    assert_eq!(src, Source::Mirror);
+    assert_eq!(
+        seen.lock().unwrap().as_slice(),
+        [(Source::Mirror, PKG.to_vec())]
+    );
+    assert_eq!(rig.mirror.hits(PKG_PATH), 1, "装的时候没有再下载");
+    assert_eq!(rig.github.hits(PKG_PATH), 0);
+    assert!(events.lock().unwrap().is_empty(), "槽里的包没有下载事件");
+    assert!(state.ready.lock().unwrap().is_none(), "装过的包被取走");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn install_downloads_normally_when_the_slot_is_empty() {
+    let rig = Rig::both_healthy().await;
+    let make = rig.make();
+    let ep = rig.endpoints();
+    let state = UpdateState::default();
+    run_check(&make, &ep, &state, &CN, &limits()).await.unwrap();
+    let pending = state.pending.try_lock().unwrap().clone().unwrap();
+    let (seen, install) = recorder();
+    install_pending(&make, &ep, &state, &limits(), &pending, &|_| {}, install)
+        .await
+        .unwrap();
+    assert_eq!(seen.lock().unwrap().len(), 1);
+    assert_eq!(rig.mirror.hits(PKG_PATH), 1, "槽空时照旧现下现装");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_slot_holding_another_version_than_the_candidate_is_never_installed() {
+    // 槽里是 9.9.9，用户看到并要装的是 9.9.10：装的必须是 9.9.10（现下），槽里那份原样不动
+    let old = Rig::both_healthy().await;
+    let state = UpdateState::default();
+    run_check(&old.make(), &old.endpoints(), &state, &CN, &limits())
+        .await
+        .unwrap();
+    run_download(&old.make(), &old.endpoints(), &state, &limits(), &|_| {})
+        .await
+        .unwrap();
+
+    const PKG2: &[u8] = b"the-newer-installer";
+    let newer = Rig::new(
+        Keys::new(),
+        |b, k| healthy(b, "9.9.10", &k.sign_b64(PKG2), PKG2),
+        |b, k| healthy(b, "9.9.10", &k.sign_b64(PKG2), PKG2),
+    )
+    .await;
+    let pending = newer.check(&CN).await.unwrap().unwrap();
+    assert_eq!(pending.update.version, "9.9.10");
+    let (seen, install) = recorder();
+    install_pending(
+        &newer.make(),
+        &newer.endpoints(),
+        &state,
+        &limits(),
+        &pending,
+        &|_| {},
+        install,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        seen.lock().unwrap().as_slice(),
+        [(Source::Mirror, PKG2.to_vec())]
+    );
+    assert_eq!(newer.mirror.hits("/releases/9.9.10/pkg"), 1);
+    assert_eq!(
+        state.ready.lock().unwrap().as_ref().unwrap().update.version,
+        "9.9.9",
+        "不同版本的包不被取走"
+    );
+    assert!(take_ready(&state, "9.9.10").is_none());
+    assert!(take_ready(&state, "9.9.9").is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_check_that_finds_another_version_or_none_drops_the_stale_package() {
+    let rig = Rig::both_healthy().await;
+    let make = rig.make();
+    let ep = rig.endpoints();
+    let state = UpdateState::default();
+    run_check(&make, &ep, &state, &CN, &limits()).await.unwrap();
+    run_download(&make, &ep, &state, &limits(), &|_| {})
+        .await
+        .unwrap();
+    // 再查到同一版本：包留着
+    run_check(&make, &ep, &state, &CN, &limits()).await.unwrap();
+    assert!(state.ready.lock().unwrap().is_some());
+    // 查到「没有新版」（更宽的版本判据换成永不更新）：旧包作废
+    let never = || make().version_comparator(|_, _| false);
+    assert!(run_check(&never, &ep, &state, &CN, &limits())
+        .await
+        .unwrap()
+        .is_none());
+    assert!(state.ready.lock().unwrap().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_check_keeps_the_downloaded_package_installable() {
+    // 后台下好之后用户离线再查一次：查失败不能把候选清掉——否则「现在重启」回 no_pending_update，
+    // 而那个验过签的包明明还在、退出时照样会装（Codex #1730）
+    let rig = Rig::both_healthy().await;
+    let make = rig.make();
+    let ep = rig.endpoints();
+    let state = UpdateState::default();
+    run_check(&make, &ep, &state, &CN, &limits()).await.unwrap();
+    run_download(&make, &ep, &state, &limits(), &|_| {})
+        .await
+        .unwrap();
+    let dead = Endpoints {
+        mirror: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
+        mirror_root: "http://127.0.0.1:9".into(),
+        github: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
+    };
+    assert!(run_check(&make, &dead, &state, &CN, &limits())
+        .await
+        .is_err());
+    let pending = state
+        .pending
+        .try_lock()
+        .unwrap()
+        .clone()
+        .expect("查失败后候选仍是已下好的那一版");
+    assert_eq!(pending.update.version, "9.9.9");
+    let hits = rig.mirror.hits(PKG_PATH);
+    let (seen, install) = recorder();
+    install_pending(&make, &ep, &state, &limits(), &pending, &|_| {}, install)
+        .await
+        .unwrap();
+    assert_eq!(seen.lock().unwrap().len(), 1);
+    assert_eq!(rig.mirror.hits(PKG_PATH), hits, "用的是已下好的包，不重下");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_check_without_a_downloaded_package_still_clears_the_candidate() {
+    let rig = Rig::both_healthy().await;
+    let make = rig.make();
+    let state = UpdateState::default();
+    run_check(&make, &rig.endpoints(), &state, &CN, &limits())
+        .await
+        .unwrap();
+    let dead = Endpoints {
+        mirror: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
+        mirror_root: "http://127.0.0.1:9".into(),
+        github: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
+    };
+    assert!(run_check(&make, &dead, &state, &CN, &limits())
+        .await
+        .is_err());
+    assert!(state.pending.try_lock().unwrap().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_background_download_leaves_no_package_and_the_manual_install_still_works() {
+    let rig = Rig::new(
+        Keys::new(),
+        |b, k| {
+            let mut r = healthy(b, "9.9.9", &k.sign_b64(PKG), PKG);
+            r[1].1 = Route::Status(500);
+            r
+        },
+        |b, k| {
+            let mut r = healthy(b, "9.9.9", &k.sign_b64(PKG), PKG);
+            r[1].1 = Route::Status(500);
+            r
+        },
+    )
+    .await;
+    let make = rig.make();
+    let ep = rig.endpoints();
+    let state = UpdateState::default();
+    run_check(&make, &ep, &state, &CN, &limits()).await.unwrap();
+    let e = run_download(&make, &ep, &state, &limits(), &|_| {})
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(e.code, "all_sources_failed");
+    assert!(state.ready.lock().unwrap().is_none());
+    assert!(
+        state.pending.try_lock().unwrap().is_some(),
+        "候选句柄还在：用户仍可手动再下"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn while_a_background_download_runs_check_and_install_report_busy() {
+    let rig = Rig::both_healthy().await;
+    let make = rig.make();
+    let ep = rig.endpoints();
+    let state = UpdateState::default();
+    run_check(&make, &ep, &state, &CN, &limits()).await.unwrap();
+    let _held = state.pending.try_lock().unwrap();
+    let e = run_download(&make, &ep, &state, &limits(), &|_| {})
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(e.code, "busy");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn exit_takes_whatever_is_ready_once() {
+    let rig = Rig::both_healthy().await;
+    let make = rig.make();
+    let ep = rig.endpoints();
+    let state = UpdateState::default();
+    assert!(take_ready_any(&state).is_none());
+    run_check(&make, &ep, &state, &CN, &limits()).await.unwrap();
+    run_download(&make, &ep, &state, &limits(), &|_| {})
+        .await
+        .unwrap();
+    assert_eq!(take_ready_any(&state).unwrap().update.version, "9.9.9");
+    assert!(take_ready_any(&state).is_none(), "取走后槽空：不会装两次");
+}

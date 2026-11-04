@@ -117,6 +117,7 @@ from .engine import (
     inputbroker as engine_inputbroker,
     inputremap as engine_inputremap,
     inputtranscript as engine_inputtranscript,
+    journalremote as engine_journalremote,
     launchctx as engine_launchctx,
     launcher as engine_launcher,
     layoutsession as engine_layoutsession,
@@ -13302,6 +13303,8 @@ def _updater_disabled_in_desktop():
             {
                 "desktop": True,
                 "auto_check": False,
+                # 唯一桌面还认的更新偏好：查到新版是否后台下载（壳侧下载，见 update-channel.md）
+                "auto_download": engine_updater.settings()["auto_download"],
                 "update_available": False,
                 "current": engine_updater.current_version(),
                 "repo_url": engine_brand.REPO_URL,
@@ -13322,10 +13325,13 @@ def api_update_check():
 
 @app.patch("/api/update/settings")
 def api_update_settings():
-    if resp := _updater_disabled_in_desktop():
-        return resp
     body = request.get_json(force=True)
     patch = {}
+    if "auto_download" in body:
+        patch["auto_download"] = bool(body["auto_download"])
+    if app.config.get("TAVOTTO_DESKTOP_MODE"):
+        # 桌面：Python updater 停用，只有 auto_download 这一个偏好还落在这里；auto_check 不收
+        return jsonify(engine_updater.set_settings(patch))
     if "auto_check" in body:
         patch["auto_check"] = bool(body["auto_check"])
     return jsonify(engine_updater.set_settings(patch))
@@ -13348,6 +13354,45 @@ def api_update_apply():
         result["command"],
     )
     return jsonify(result), (200 if result["ok"] else 500)
+
+
+# ------------------------- 远程期刊目录（ADR 0155 §10） -----------------------
+# 拉取 / 验签 / 缓存都在 engine/journalremote.py；这里只是三个薄端点，前端经它们拿「验过签的目录」。
+@app.post("/api/journal-catalog/sync")
+def api_journal_catalog_sync():
+    """同步索引（整份、服务端不计数）。回 `{fetch, code, rev, catalog, loaded}`；永不 5xx、不弹错。"""
+    body = request.get_json(silent=True) or {}
+    have = body.get("have")
+    return jsonify(
+        engine_journalremote.sync(
+            have=have if isinstance(have, int) and not isinstance(have, bool) else 0,
+            force=body.get("force") is True,
+            ui_locale=body.get("locale") if isinstance(body.get("locale"), str) else None,
+        )
+    )
+
+
+@app.post("/api/journal-catalog/journal")
+def api_journal_catalog_journal():
+    """选中某本刊时才下载它的标准（服务端按设备令牌对该刊的首次读取计数）。回 `{state, code, retry_after_s, bundle}`。"""
+    body = request.get_json(silent=True) or {}
+    loc = body.get("locale")
+    return jsonify(
+        engine_journalremote.ensure_journal(
+            body.get("id"), ui_locale=loc if isinstance(loc, str) else None
+        )
+    )
+
+
+@app.get("/api/journal-catalog/assets/<path:file>")
+def api_journal_catalog_asset(file: str):
+    """出处卡的高亮短图。`file` 必须是 `snapshots/<sha256>.webp`（内容寻址）；本地没有就带令牌拉一次。"""
+    path = engine_journalremote.snapshot_path(file)
+    if path is None:
+        return jsonify({"error": "snapshot unavailable", "code": "snapshot_unavailable"}), 404
+    resp = send_file(path, mimetype="image/webp", max_age=31536000)
+    resp.headers["Cache-Control"] = "private, max-age=31536000, immutable"
+    return resp
 
 
 # ------------------------- 卸载后重装 → 新手态（Windows，ADR 0136 修订） -----
