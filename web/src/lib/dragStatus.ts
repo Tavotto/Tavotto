@@ -22,6 +22,7 @@ export function scaleDragStatus(i: {
   toPt: number | null
   /** 低于当前期刊 / 规范下限（读不到下限 = false） */
   low: boolean
+  /** 整个落在图里的标注：`count` 个；`on` = 这一帧跟着缩（非等比那一帧留在原处） */
   follow: { on: boolean; count: number }
   box: Box
 }): DragStatus {
@@ -34,11 +35,12 @@ export function scaleDragStatus(i: {
           ptTo: round1(i.toPt).toFixed(1),
         })
       : cb('layoutScale', pct)
-  const detail = !i.follow.on
-    ? cb('layoutFollowNone')
-    : i.follow.count > 0
-      ? cb('layoutFollow', { count: i.follow.count })
-      : null
+  const detail =
+    i.follow.count === 0
+      ? null
+      : i.follow.on
+        ? cb('layoutFollow', { count: i.follow.count })
+        : cb('layoutFollowNone')
   return { tone: i.low ? 'warn' : 'normal', main, detail, box: i.box }
 }
 
