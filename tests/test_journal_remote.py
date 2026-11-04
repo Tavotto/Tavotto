@@ -91,6 +91,7 @@ def env(tmp_path, monkeypatch):
     # 生产代码只信 prod-1；夹具签名用测试钥，只在这里注入
     monkeypatch.setattr(jr, "TRUSTED_KEYS", {"test-1": b64(public_key(TEST_SEED))})
     monkeypatch.setattr(jr, "_SNAPSHOT_FAILED", {})
+    monkeypatch.setattr(jr, "_CLIENT_OVERRIDE", None)
     monkeypatch.setattr(jr, "seed_catalog", lambda: {"publishers": {}, "journals": {}})
     monkeypatch.setattr(jr, "seed_rev", lambda: 1)
     server = FakeServer()
@@ -231,8 +232,19 @@ def test_offline_with_cache_serves_cache(env):
 def test_only_the_journal_sync_switch_stops_requests(env, monkeypatch):
     monkeypatch.setenv("TAVOTTO_NO_JOURNAL_SYNC", "1")
     assert jr.sync(force=True)["fetch"] == "disabled"
-    assert jr.ensure_journal("fx-beta")["state"] == "offline"
+    # 同步关着且没有缓存 = 只有内置种子可用，种子里没有这个 id：不认识（不是「没网」）
+    assert jr.ensure_journal("fx-beta")["state"] == "unknown"
     assert env.calls == []
+
+
+def test_sync_switch_off_with_a_cached_index_means_offline_for_undownloaded_journals(
+    env, monkeypatch
+):
+    jr.sync(force=True)  # 先把索引缓存下来
+    monkeypatch.setenv("TAVOTTO_NO_JOURNAL_SYNC", "1")
+    out = jr.ensure_journal("fx-beta")
+    assert (out["state"], out["code"]) == ("offline", "disabled")
+    assert jr.ensure_journal("no-such")["state"] == "unknown"
 
 
 def test_no_telemetry_switch_does_not_stop_catalog_sync(env, monkeypatch):

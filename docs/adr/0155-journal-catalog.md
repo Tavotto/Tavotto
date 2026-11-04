@@ -207,6 +207,21 @@ Agent 宿主（Codex / Claude Code 插件、MCP 等）与 app 走**同一套接�
 7. **禁止**：不要把项目内容、路径、脚本、文件名带进任何请求；`TAVOTTO_NO_JOURNAL_SYNC=1` 时一个字节都不发。
 8. **不要信任未验签的东西**：索引必须验签，刊包必须对哈希，快照文件名必须等于内容的 sha256。
 
+**MCP 桥怎么接（实现，引用 §9 的 Agent 入口）**：`tavotto_list_journals` 读「种子 + 缓存索引」（`journalremote.agent_catalog()`：先静默同步索引、不计数，离线用缓存，没有缓存用内置种子；
+远程目录里的刊多一个 `downloaded`，标出标准是否已在本机）。`tavotto_open_figure` / `tavotto_normalize_figure` / `tavotto_preflight` / `tavotto_export` 的 `journal_id` 走 `bridge.journal_selection`：
+先看与手写 `profile_id` / `journal` 是否冲突（冲突直接 `journal_id_conflict`，**不下载、不占额度**），再 `journalremote.agent_resolve(id)`（本地没有才下载并计 1 次），最后交给 §9 的 `select_for_agent`（带上拼好的目录）。
+客户端类型自报 `agent-<MCP clientInfo.name 的 slug>`（没有则 `agent-mcp`），用户 / 宿主自己设了 `TAVOTTO_JOURNAL_CLIENT` 就尊重。
+
+**Agent 错误码**（并进 `journals.AGENT_ERROR_CODES`，与 `journal_catalog_disabled` / `journal_id_conflict` 同一个元组；不在库校验的闭集 `ERROR_CODES` 里；失败一律明确报给 Agent，**不静默退回别的数据**）：
+
+| code | 什么时候 | 话术要点（给 Agent 的 `error` 文本） | 额外字段 |
+|---|---|---|---|
+| `journal_quota_exceeded` | 服务端 429（令牌 / IP 限额） | 这本期刊今天的下载额度用完了，约 N 分钟后再试；不要换设备令牌重试，也不要凭记忆编这本期刊的规范 | `retry_after_s` |
+| `journal_offline` | 这本刊本地没有、联不上网，或 `TAVOTTO_NO_JOURNAL_SYNC=1` | 这本期刊的标准还没下载到本机，需要联网；联网后再试，或改用内置种子里已有的期刊 | — |
+| `journal_verification_failed` | 验签 / 哈希 / 目录校验没过 | 数据没有通过验签 / 校验，已整份弃用；不要采用任何来自它的数值 | — |
+
+已有的 `journal_unknown`（索引里没有这个 id）、`journal_catalog_disabled`、`journal_id_conflict` 口径不变。
+
 **部署**（不在本仓库部署；详见 `services/journal_catalog/DEPLOYMENT.md`）：索引、刊包、快照由发布工具生成到服务端 DATA 目录，随中国站现有服务器上的 WSGI 服务（sqlite 计数）提供；
 选 sqlite 单机而不是 KV / D1，因为用户主要在大陆、计数是强一致的单行事务、规模小；`schema.sql` 只用 SQLite / D1 共有语法，将来要搬 D1 不用改表。
 （`workerd/` 在本仓库是渲染 worker 的 Rust supervisor，与服务端无关。）

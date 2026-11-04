@@ -446,10 +446,22 @@ Requester = Callable[[str, str, int, dict[str, str]], tuple[int, bytes]]
 _request: Requester = _http
 
 
+_CLIENT_OVERRIDE: str | None = None
+
+
+def set_client_type(value: str | None) -> None:
+    """宿主进程（MCP 桥）自报客户端类型 `agent-<宿主名>`；不合法的忽略。环境变量 `TAVOTTO_JOURNAL_CLIENT` 优先于它。"""
+    global _CLIENT_OVERRIDE
+    _CLIENT_OVERRIDE = value if isinstance(value, str) and _CLIENT_RE.fullmatch(value) else None
+
+
 def client_type() -> str:
-    """`app`，或 Agent 宿主经环境变量 `TAVOTTO_JOURNAL_CLIENT=agent-<宿主名>` 自报；不合法一律按 `app`。"""
+    """`app`，或 Agent 宿主自报的 `agent-<宿主名>`（环境变量 `TAVOTTO_JOURNAL_CLIENT` 优先，其次 `set_client_type`）；
+    不合法一律按 `app`。"""
     raw = (os.environ.get(CLIENT_ENV) or "").strip().lower()
-    return raw if _CLIENT_RE.fullmatch(raw) else CLIENT_TYPE
+    if _CLIENT_RE.fullmatch(raw):
+        return raw
+    return _CLIENT_OVERRIDE or CLIENT_TYPE
 
 
 def _call(method: str, url: str, cap: int, headers: dict[str, str]) -> tuple[int, bytes]:
@@ -623,12 +635,15 @@ def ensure_journal(jid: str, *, now: float | None = None, ui_locale: str | None 
             return _ensure_out("ready", bundle=cached.bundles[jid])
         if jid in seed_catalog().get("journals", {}):
             return _ensure_out("ready")  # 种子里的刊：随包带着，不下载、不计数
+        if cached is None or jid not in cached.index["journals"]:
+            if disabled():
+                # 同步关着 = 能用的目录只有内置种子，而它里面没有这个 id：就是「不认识」，不是「没网」
+                return _ensure_out("unknown", "unknown_journal")
+            if cached is None:
+                return _ensure_out("offline", "network")
+            return _ensure_out("unknown", "unknown_journal")
         if disabled():
             return _ensure_out("offline", "disabled")
-        if cached is None:
-            return _ensure_out("offline", "network")
-        if jid not in cached.index["journals"]:
-            return _ensure_out("unknown", "unknown_journal")
         last: RemoteCatalogError | None = None
         remember_locale(ui_locale)
         for base in base_urls(ui_locale):
@@ -693,6 +708,37 @@ def _download_bundle(base: str, index: dict, jid: str) -> dict:
     atomicio.write_bytes(d / f"{entry['sha256']}.json", body)
     _write_state({"max_rev": max(rev_floor(), rev)})
     return bundle
+
+
+# ---------------------------------------------------------------------------
+# Agent 入口（MCP / 宿主插件）：与 app 同一份令牌、缓存与限额（ADR 0155 §10.1）
+# ---------------------------------------------------------------------------
+def agent_catalog(*, ui_locale: str | None = None) -> dict | None:
+    """列期刊用：先同步索引（节流、不计数；关着 / 离线都静默），再回缓存里「种子 + 索引骨架 + 已下载刊包」的完整目录；
+    没有缓存返回 None（调用方用内置种子）。读目录不计数、离线可用。"""
+    if not disabled():
+        sync(ui_locale=ui_locale)
+    cached = load_cached()
+    return cached.catalog if cached else None
+
+
+def loaded_ids() -> list[str]:
+    """已经能直接用（种子里的 + 已下载的）的刊 id；没有缓存时为空。"""
+    cached = load_cached()
+    return cached.loaded_ids() if cached else []
+
+
+def agent_resolve(jid: str, *, ui_locale: str | None = None) -> dict:
+    """Agent 要用某本刊：保证它的标准在本地，回 `{state, code, retry_after_s, catalog}`。
+
+    `state` 同 `ensure_journal`（ready / quota / offline / unknown / rejected）；`catalog` 是此刻能用的完整目录
+    （含刚下载的这本），没有缓存时为 None（调用方用种子）。本地已有的刊不发请求、服务端不计数。
+    永不抛；调用方必须把 quota / offline / rejected 当**明确的错误**报给 Agent，不许静默退回别的数据。"""
+    if not disabled() and load_cached() is None:
+        sync(ui_locale=ui_locale)  # 第一次用：先取索引（不计数）
+    out = ensure_journal(jid, ui_locale=ui_locale)
+    cached = load_cached()
+    return {**out, "catalog": cached.catalog if cached else None}
 
 
 # ---------------------------------------------------------------------------
