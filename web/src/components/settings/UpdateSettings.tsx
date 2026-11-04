@@ -292,9 +292,8 @@ function UpdatesGroup({ children }: { children: ReactNode }) {
  *   * 装完不等于生效，重启才算换版本；
  *   * 失败要说人话并留退路（更新器连不上时仍给 Releases 链接）。
  *
- * **自动检查那一行两条通道都有**（2026-10-07 设计审计 §9.1：桌面 / 浏览器同形）：桌面版每次启动都检查一次、
- * 目前没有应用内关闭开关（后端的 updater 在桌面壳里停用、存不下这个偏好）——所以开关画成开着、停用，原因就在
- * 行内，而不是这一行在桌面版上整个消失、让人以为桌面版不检查。
+ * 桌面版每次启动都检查一次、没有应用内关闭开关：2026-11-04 起不再画一颗开着、停用的开关（用户：臃肿），
+ * 这件事由「隐私与数据」里那句「桌面版在启动时检查，目前没有应用内关闭开关」交代。
  *
  * 安装包的签名由壳里的公钥校验，校验不过当场失败——这里不做「忽略签名」的口子。
  */
@@ -352,21 +351,6 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
 
   return (
     <UpdatesGroup>
-      {/* 桌面版每次启动都检查、目前关不掉：如实画成开着、停用（2026-10-07 设计审计 §9.1，隐私披露用例看护） */}
-      <SettingRow
-        data-update-auto
-        label={st('update.autoCheckDesktop')}
-        controlId="setting-update-auto"
-        status={st('update.autoCheckDesktopReason')}
-      >
-        <Toggle
-          id="setting-update-auto"
-          aria-labelledby={settingRowLabelId('setting-update-auto')}
-          checked
-          disabled
-          onChange={() => {}}
-        />
-      </SettingRow>
       <SettingRow
         data-update-available={desktopUpdate ? '' : undefined}
         label={

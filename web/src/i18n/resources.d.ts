@@ -2736,8 +2736,6 @@ export default interface Resources {
         "attemptLine": "{{source}} · {{stage}} · {{kind}}",
         "attemptsTitle": "各来源的失败记录",
         "autoCheck": "每天自动检查",
-        "autoCheckDesktop": "启动时自动检查",
-        "autoCheckDesktopReason": "桌面版每次启动都会检查，暂时不能关闭",
         "autoCheckRetry": "重新保存",
         "autoCheckSaveFailed": "未能确认设置已保存。开关仍显示上次确认的值，请重试。",
         "autoCheckSaving": "正在保存…",
