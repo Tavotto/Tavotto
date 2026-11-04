@@ -79,11 +79,13 @@ const bump = (id: string) => {
 function reconcileStatus(
   byId: Record<string, RuntimeAssetState>,
   assets: RuntimeAssetInfo[],
+  gens: ReadonlyMap<string, number>,
 ): Record<string, RuntimeAssetState> {
   let next = byId
   for (const a of assets) {
     const cur = byId[a.id]
     if (!cur?.checked || cur.status === 'rerun_failed') continue
+    if (genOf(a.id) !== (gens.get(a.id) ?? 0)) continue // 请求在途期间这个 id 被刷新 / 失效过
     if (cur.status === a.status && cur.cached === a.cached) continue
     bump(a.id) // 在飞的旧查询别再盖回来
     if (next === byId) next = { ...byId }
@@ -102,11 +104,13 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
   loadAssets: () => {
     if (assetsInflight) return assetsInflight
     const started = epoch
+    // 请求发出那一刻各 id 的代次：期间 markFresh / invalidate 过的，清单里的判定比它旧，不许覆盖
+    const gens = new Map(generation)
     set({ assetsLoading: true })
     assetsInflight = fetchRuntimeAssets()
       .then((r) => {
         if (epoch !== started) return // 切过项目：旧项目的清单作废
-        set((s) => ({ assets: r.assets, assetsError: null, byId: reconcileStatus(s.byId, r.assets) }))
+        set((s) => ({ assets: r.assets, assetsError: null, byId: reconcileStatus(s.byId, r.assets, gens) }))
       })
       .catch((e) => {
         if (epoch !== started) return

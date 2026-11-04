@@ -245,4 +245,21 @@ describe('逐 id 代次：旧响应不得覆盖新状态（#1348 Codex P2）', (
     await useRuntimeAssetStore.getState().loadAssets()
     expect(useRuntimeAssetStore.getState().byId[id].status).toBe('rerun_failed')
   })
+
+  it('QA-WIN-43 竞态：清单请求在 markFresh 之前发出、之后才回来，不盖掉更新的 fresh', async () => {
+    const id = 'runtime:fig.py#fig'
+    mockFetch.mockResolvedValue({
+      id, status: 'needs_rerun', script: 'fig.py', stem: 'fig', entry: '__main__', registered: true, cached: false,
+    })
+    useRuntimeAssetStore.getState().ensure(runtimePanel())
+    await flush()
+    let release!: (v: unknown) => void
+    mockAssets.mockReturnValue(new Promise((r) => { release = r }) as never)
+    const pending = useRuntimeAssetStore.getState().loadAssets()
+    useRuntimeAssetStore.getState().markFresh(id)
+    release({ assets: [{ id, script: 'fig.py', stem: 'fig', entry: '__main__', status: 'needs_rerun', cached: false,
+      size_mm: null, capture_source: null, descriptor: null }] })
+    await pending
+    expect(useRuntimeAssetStore.getState().byId[id]).toMatchObject({ status: 'fresh', cached: true })
+  })
 })
