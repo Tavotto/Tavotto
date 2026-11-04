@@ -180,3 +180,9 @@ def test_release_workflow_relinks_before_architecture_check_and_signing():
 def test_local_build_script_relinks_after_tauri():
     text = (ROOT / "scripts" / "build_desktop.py").read_text(encoding="utf-8")
     assert text.index("run(cmd)") < text.index("relink_macos_symlinks.py")
+    # 换链接破坏 Tauri 的 adhoc 封存（Codex #1728）：本地路径还原后必须重签、验收，再用新 .app 重打 dmg
+    relink = text.index("relink_macos_symlinks.py")
+    sign = text.index('"sign"', relink)
+    verify = text.index('"verify"', sign)
+    dmg = text.index('"hdiutil"', verify)
+    assert relink < sign < verify < dmg

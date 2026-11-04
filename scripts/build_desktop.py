@@ -420,6 +420,42 @@ def main() -> None:
                 str(app),
             ]
         )
+        # 换链接会破坏 Tauri 已打上的 adhoc 签名封存（Codex #1728）：本地这条路自己重签一遍并验收。
+        # 发行链在「还原符号链接」之后另有正式签名 / 公证 / 打 dmg，不走这里。
+        codesign = str(ROOT / "scripts" / "codesign_macos.py")
+        run(
+            [
+                sys.executable,
+                codesign,
+                "sign",
+                "--app",
+                str(app),
+                "--identity",
+                "-",
+                "--entitlements",
+                str(ROOT / "packaging" / "entitlements.plist"),
+            ]
+        )
+        run([sys.executable, codesign, "verify", "--app", str(app)])
+        # Tauri 的 dmg 打在还原之前（里面是带重复、签名已失效的旧 .app）：用还原并重签后的 .app 重打同名 dmg
+        if "dmg" in args.bundles.split(","):
+            for stale in sorted((out / "dmg").glob("*.dmg")):
+                stale.unlink()
+                run(
+                    [
+                        "hdiutil",
+                        "create",
+                        "-volname",
+                        app.stem,
+                        "-srcfolder",
+                        str(app),
+                        "-format",
+                        "UDZO",
+                        "-ov",
+                        str(stale),
+                    ]
+                )
+                print(f"* 重打 dmg（还原后的 .app；朴素版式，品牌安装界面只在发行链）: {stale}")
     print(f"* 产物目录: {out}")
 
 
