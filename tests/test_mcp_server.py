@@ -201,6 +201,7 @@ def test_tools_list_shape():
         "tavotto_refresh_project",
         "tavotto_session_state",
         "tavotto_close_session",
+        "tavotto_list_journals",  # 期刊库开关已打开（ADR 0155 §11）
     ]
     for t in tools:
         assert t["description"] and t["inputSchema"]["type"] == "object"
@@ -4094,14 +4095,24 @@ def _tool_names() -> list[str]:
     return [t["name"] for t in server._tools()]
 
 
-def test_journal_surface_is_absent_while_the_switch_is_off():
+@pytest.fixture
+def journal_catalog_off(monkeypatch):
+    """造「开关关着」：开关已随 ADR 0155 §11 打开，关着时的行为仍是契约（回滚时用）。"""
+    from tavotto.engine import journals
+
+    monkeypatch.setattr(journals, "JOURNAL_CATALOG_AGENTS", False)
+
+
+def test_journal_surface_is_absent_while_the_switch_is_off(journal_catalog_off):
     tools = {t["name"]: t for t in server._tools()}
     assert "tavotto_list_journals" not in tools
     for name in server.JOURNAL_ID_TOOLS:
         assert "journal_id" not in tools[name]["inputSchema"]["properties"]
 
 
-def test_journal_id_is_refused_with_a_structured_code_while_off(project, fake_pool):
+def test_journal_id_is_refused_with_a_structured_code_while_off(
+    project, fake_pool, journal_catalog_off
+):
     sid = _open(project)
     for name, args in (
         ("tavotto_preflight", {"session_id": sid, "journal_id": "fx-alpha"}),

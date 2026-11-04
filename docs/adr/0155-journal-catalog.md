@@ -1,6 +1,6 @@
 # ADR 0155：内置期刊标准库——期刊 = 覆盖 + 出处，未规定的项不补
 
-日期：2026-10-31 · 状态：**Accepted（PR 3 带着种子数据把入口打开，见 §10；此前 PR 2 合入但入口默认关闭（2026-11-01 用户决定）；PR 1：数据结构、双侧加载与校验、中性底 `journal-base-v1`；PR 2：选择器、出处卡、画布页宽跟栏；真实数据、出处巡检、远程目录另起 PR）**。
+日期：2026-10-31 · 状态：**Accepted（PR 3 带着种子数据把入口打开，见 §11；此前 PR 2 合入但入口默认关闭（2026-11-01 用户决定）；PR 1：数据结构、双侧加载与校验、中性底 `journal-base-v1`；PR 2：选择器、出处卡、画布页宽跟栏；真实数据、出处巡检、远程目录另起 PR）**。
 相关：[0006 版本化出版规范](0006-codex-mcp-app-and-publication-profile.md)、[0029 Style / Spec 与规范快照](0029-style-spec-profiles.md)；
 规则全文 `docs/rules/backend/profiles-and-preflight.md`「内置期刊标准库」。
 **1.0 豁免已由维护者 2026-10-31 登记（`docs/1.0-release-readiness.md` §1.8）。**
@@ -152,7 +152,7 @@
 * 两个实现靠 `tests/golden/journal_vectors.json`（`scripts/gen_journal_vectors.py`）对齐；每个校验失败码至少有一条向量。
 * 1.0 收敛纪律：用户 2026-10-31 裁决立项并给豁免，已登记在 `docs/1.0-release-readiness.md` §1.8；不选期刊时行为不变。
 
-## 10. 修订记录：PR 3 种子数据 + 打开入口（2026-11-04）
+## 11. 修订记录：PR 3 种子数据 + 打开入口（2026-11-04）
 
 * **种子**：`journals.json` 现在是 56 本头部期刊 + 9 个出版社的通用标准（156 条规则、43 张快照图），每一条都带原文出处与短摘录。把关方式（用户 2026-11-04 选定）：Codex 逐条对照原文复核 → 出一张核对页给用户抽看、拍板 → 通过的才进种子；**Codex 判「驳回」的与改不动的一律不进**，没核过的不进；**唯一例外**：用户 2026-11-04 看过核对页后裁决恢复两条被 Codex 驳回的栏位表——Science（自家栏名 2 栏 121 mm / 3 栏 184 mm，栏位限定词 typical）与 Elsevier（单栏 90 / 1.5 栏 140 / 双栏 190 mm，exact；摘录换成原文表格里从「Single column 90 mm」到「190 mm」的连续一段），核对页上标「用户裁决恢复，覆盖 Codex 驳回」。JACS / ES&T 栏位、Springer Nature 出版社级栏宽、Nature 7 pt 上限保持剔除。种子由私有仓库的 `tools/seed/build_seed.py` 从整理结果生成、可重跑；完整目录与采集产物仍不进本仓库（§4b）。PR 1 复审遗留的 7 本 `-sample` 假期刊已不在库里（测试看护）。
 * **id = 整理结果的 key**：期刊 id、出版社 id 直接用私有整理结果里的 key（即远程完整目录将来用的 id），项目绑在种子 id 上，远程目录一到才对得上。整理结果里没有 slug 形 publisher 的几本（科学通报、化学学报、中国激光）用稳定的 slug，将来远程目录若换 id 要在那一侧加别名。
@@ -162,4 +162,5 @@
 * **一键修复读栏位表**：`issueFix.fixOptions / planFix` 改读 `derivePageColumns`——选项是判据认的（`exact`）栏位，单栏 / 双栏沿用原措辞，期刊自有栏（如 Elsevier 的 1.5 栏）用它自己的栏名。
 * **`pageColumnsOf` 的回退（登记）**：规范里没有任何可用栏位（期刊底没规定栏宽，或栏宽都不在 `PAGE_MM_MIN`–`PAGE_MM_MAX` 内）时，画布页预设与拖边吸附退回**内置默认规范**的单栏 / 双栏（`FALLBACK_WIDTHS`）。这只是显示 / 吸附的回退，**不是判据**：预检 `page-width` 只读 `exact` 栏位，期刊没有 `exact` 栏位就不报 `page-width`；`resolvePageColumns().journal` 只在期刊自己写了可用栏位时为真。
 * **展示细节**：要求清单里展示项的对象值不露 JSON（文件格式说成「推荐 … ；可接受 …」，按图类 dpi 逐项列）；规范页四个关键数里 `null`（该规范没规定）显示「未规定」，不显示 `null`；最小字号 ≤ 0（底规范没有硬性下限，期刊只给建议值或没写）也显示「未规定」，有建议字号时在名字后小字「· 建议 N pt」；要求清单里只有原句、没有可标的数的行（色彩模式、字体名、1.5 栏等）值这一栏统一写「有要求」，原话留给出处卡。
+* **MCP 与遥测随开关一起打开（§9 的「数据就绪那个 PR」）**：`journals.JOURNAL_CATALOG_AGENTS = True`（与 `JOURNAL_CATALOG_UI` 同源对）；插件 `tavotto_list_journals` 处理器由 `JOURNAL_HANDLERS` 并进 `HANDLERS`，遥测枚举 `usage.TOOLS` / 引擎 `EVENTS["mcp_tool_call"].tool` / 代理 `contract.py` 同步加上这个工具名；工具名闭集扩了，**`CONSENT_VERSION` 3 → 4**（用户 2026-11-04 拍板这版升；`reconsentDelta` 只写「AI 编辑器查期刊列表的次数」一项，`docs/privacy.md` 同步版本记录）。技能文本由别的 PR 加。
 * **发行说明**：入口打开，补 `docs/release-notes/unreleased/journal-catalog.md`（§8 的约定）。
