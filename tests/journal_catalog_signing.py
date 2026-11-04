@@ -1,4 +1,4 @@
-"""期刊目录远程拉取用例的**测试夹具**：Ed25519 签名函数 + 测试密钥 + 假服务器内容构造。
+"""期刊目录远程拉取用例的**测试夹具**：Ed25519 签名函数（pyca `cryptography`） + 测试密钥 + 假服务器内容构造。
 
 **私钥只许出现在 `tests/`**（ADR 0155 §4b）：下面的 `TEST_SEED` 是公开的测试种子，对应的公钥就是
 `engine/journalremote.TRUSTED_KEYS["test-1"]`（占位，真钥由维护者生成后替换，见 ADR 0155 §9）。
@@ -11,30 +11,23 @@ import base64
 import hashlib
 import json
 
-from tavotto.engine import ed25519
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 TEST_SEED = hashlib.sha256(b"tavotto-journal-catalog-TEST-KEY-do-not-trust").digest()
 OTHER_SEED = hashlib.sha256(b"tavotto-journal-catalog-some-other-key").digest()
 
 
-def _expand(seed: bytes) -> tuple[int, bytes, bytes]:
-    h = hashlib.sha512(seed).digest()
-    a = int.from_bytes(h[:32], "little")
-    a &= (1 << 254) - 8
-    a |= 1 << 254
-    return a, h[32:], ed25519.point_compress(ed25519.point_mul(a, ed25519.BASE))
-
-
 def public_key(seed: bytes) -> bytes:
-    return _expand(seed)[2]
+    return (
+        Ed25519PrivateKey.from_private_bytes(seed)
+        .public_key()
+        .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    )
 
 
 def sign(seed: bytes, message: bytes) -> bytes:
-    a, prefix, pub = _expand(seed)
-    r = ed25519.hash_to_scalar(prefix + message)
-    r_bytes = ed25519.point_compress(ed25519.point_mul(r, ed25519.BASE))
-    k = ed25519.hash_to_scalar(r_bytes + pub + message)
-    return r_bytes + ((r + k * a) % ed25519.ORDER).to_bytes(32, "little")
+    return Ed25519PrivateKey.from_private_bytes(seed).sign(message)
 
 
 def b64(raw: bytes) -> str:

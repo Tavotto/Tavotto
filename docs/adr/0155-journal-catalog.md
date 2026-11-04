@@ -150,7 +150,7 @@
 
 > **隐私口径变更**：§4b 原写「不按单刊请求、服务端看不出用户在作哪本期刊」。用户 2026-11-04 决定改为**按需下载**——选中某本刊时才向服务端取它的标准，
 > 服务端**会记录「哪个设备令牌在什么时候首次读了哪本刊」，保留 1 年，到期删除，用途仅是统计热门刊与防刷**。§4b 其余（验签、`catalog_rev` 单调、整份校验失败弃用、项目快照不受服务端更新影响）不变。
-> 实现：`engine/journalremote.py`（客户端，纯标准库）、`engine/ed25519.py`（验签）、`services/journal_catalog/`（服务端，不进 wheel）、
+> 实现：`engine/journalremote.py`（客户端；Ed25519 验签用 pyca `cryptography`，见「签名与完整性」）、`services/journal_catalog/`（服务端，不进 wheel）、
 > 发布与签名工具在私有数据仓库 `tools/catalog/publish_catalog.py`。
 
 **两层数据。**
@@ -166,6 +166,8 @@
 发布时只签一次；换版本时只有变了的刊哈希变。公钥内置在 `journalremote.TRUSTED_KEYS`（`key_id → 公钥`，可同时放多把，轮换时新旧并存一个版本）。
 验签失败、签名缺失、`key_id` 未知、索引畸形、`catalog_rev` 低于「历史最高与内置种子」，一律整次作废，缓存原样；拼出的完整目录（种子 + 索引骨架 + 已下载刊包）过 `journals.validate_catalog`，
 不过整份弃用（前端 `setCatalog` 再过一道 `loadCatalog`）。种子里有的刊以种子为准，不下载、不计数。
+
+**验签用成熟库，不手写加密（用户 2026-11-05 拍板）。** 验签调 pyca `cryptography` 的 `Ed25519PublicKey.from_public_bytes(pk).verify(sig, msg)`（先判公钥 32 / 签名 64 字节；任何异常，含库缺失，一律当验签失败，目录保持种子）。早先一版是 `engine/ed25519.py` 里手写的纯标准库验签，已删除：为省一个原生依赖而自己实现签名算法，不如用被广泛审计的库。代价是 Flask 父进程的依赖闭包多了 `cryptography`（及其 `cffi`），安装包增大（见 PR 说明里的体积估算）；缓解是**延后 import**——只在拉索引验签的函数里 import，Flask 启动不加载（`tests/test_journal_remote.py` 看护 `import tavotto.app` 后 `cryptography` 不在 `sys.modules`），冻结产物由 `packaging/tavotto.spec` 点名收进 hiddenimports。
 
 **设备令牌与共享位置（app 与 Agent 共用）。** 令牌是服务端签发的匿名随机串（`POST device`），与遥测的 install_id 无关。
 令牌、索引、已下载刊包、快照都放在用户数据目录 `config.data_dir()/journal-catalog/`

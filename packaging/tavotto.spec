@@ -255,6 +255,23 @@ if "truststore" not in TRUSTSTORE_MODULES:
         "干净 Windows 上私有 Python 下载会因缺根证书失败")
 print(f"[tavotto.spec] truststore 子模块: {', '.join(TRUSTSTORE_MODULES)}")
 
+# 远程期刊目录索引的 Ed25519 验签（engine/journalremote.py，用户 2026-11-05 拍板用 pyca `cryptography`、不手写加密）：
+# 同样在函数里**延后** import；cryptography 是原生轮子（Rust 扩展，OpenSSL 静态在里面，pyinstaller-hooks-contrib 的
+# hook-cryptography 负责二进制与 cffi 后端）。这里把 `hazmat.primitives.asymmetric`（含 ed25519）与 `hazmat.bindings`
+# 整包子模块点名收进，打包环境里没装它就在这里失败——漏了的表现是冻结产物里验签一律失败、远程目录永远退回内置种子，
+# 而源码模式一切正常。
+CRYPTOGRAPHY_MODULES = [
+    "cryptography",
+    *collect_submodules("cryptography.hazmat.bindings"),
+    *collect_submodules("cryptography.hazmat.primitives.asymmetric"),
+]
+if "cryptography.hazmat.primitives.asymmetric.ed25519" not in CRYPTOGRAPHY_MODULES:
+    raise SystemExit(
+        "打包环境里没有 cryptography（pip install -r requirements.txt）——冻结产物的远程期刊目录验签会一律失败，"
+        "期刊目录永远停在内置种子"
+    )
+print(f"[tavotto.spec] cryptography 子模块: {len(CRYPTOGRAPHY_MODULES)} 个")
+
 # 「接入 AI 编辑器」（用户 2026-10-27）：`tavotto-cli mcp` 在进程内跑插件那一份 MCP 服务端（engine/mcpserve.py），
 # 宿主配置写这条命令，只装桌面版的用户不必再装 Python。服务端包在 `codex-plugin/mcp/tavotto_mcp/`（不在 src/ 下，
 # wheel 也不带它）；mcpserve 只在运行时按名字 import 它，静态分析看不见这条边——整包子模块点名收进 PYZ，
@@ -294,6 +311,8 @@ a = Analysis(
         *_pk_hidden,
         # 平台原生证书校验（见上；tlstrust 延后 import）
         *TRUSTSTORE_MODULES,
+        # 远程期刊目录索引验签（见上；journalremote 延后 import）
+        *CRYPTOGRAPHY_MODULES,
         # `tavotto-cli mcp` 的服务端（见上；mcpserve 运行时才 import）
         *MCP_SERVER_MODULES,
     ],

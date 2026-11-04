@@ -551,3 +551,123 @@ def test_quota_from_the_first_entry_does_not_try_the_second(env, monkeypatch):
     hosts.clear()
     out = jr.ensure_journal("fx-beta", ui_locale="zh-CN")
     assert out["state"] == "quota" and set(hosts) == {"https://tavotto.cn"}
+
+
+# ---------------------------------------------------------------- Ed25519 验签（pyca cryptography，用户 2026-11-05 拍板）
+
+
+def _real_keypair():
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    priv = Ed25519PrivateKey.generate()
+    pub = priv.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    return priv, pub
+
+
+def _flip(raw: bytes, bit: int = 0) -> bytes:
+    out = bytearray(raw)
+    bit %= len(out) * 8
+    out[bit // 8] ^= 1 << (bit % 8)
+    return bytes(out)
+
+
+def test_ed25519_verify_accepts_a_real_cryptography_signature():
+    priv, pub = _real_keypair()
+    msg = b"tavotto journal index payload"
+    assert jr._ed25519_verify(pub, msg, priv.sign(msg)) is True
+    # 夹具的签名函数与验签同一个库，测试钥的公钥就是 TRUSTED_KEYS["test-1"] 所用的那一把
+    assert jr._ed25519_verify(
+        public_key(TEST_SEED), msg, __import__("journal_catalog_signing").sign(TEST_SEED, msg)
+    )
+
+
+@pytest.mark.parametrize("which", ["sig", "msg", "pub"])
+@pytest.mark.parametrize("bit", [0, 7, 100, 255])
+def test_ed25519_verify_rejects_any_flipped_bit(which, bit):
+    priv, pub = _real_keypair()
+    msg = b"tavotto journal index payload"
+    sig = priv.sign(msg)
+    args = {"pub": pub, "msg": msg, "sig": sig}
+    args[which] = _flip(args[which], bit)
+    assert jr._ed25519_verify(args["pub"], args["msg"], args["sig"]) is False
+
+
+@pytest.mark.parametrize(
+    ("pub_len", "sig_len"), [(31, 64), (33, 64), (0, 64), (32, 63), (32, 65), (32, 0), (0, 0)]
+)
+def test_ed25519_verify_rejects_wrong_lengths_without_raising(pub_len, sig_len):
+    priv, pub = _real_keypair()
+    msg = b"m"
+    sig = priv.sign(msg)
+    bad_pub = (pub + b"\0" * 8)[:pub_len]
+    bad_sig = (sig + b"\0" * 8)[:sig_len]
+    assert jr._ed25519_verify(bad_pub, msg, bad_sig) is False
+    if pub_len != 32:
+        assert jr._ed25519_verify(bad_pub, msg, sig) is False
+    if sig_len != 64:
+        assert jr._ed25519_verify(pub, msg, bad_sig) is False
+
+
+@pytest.mark.parametrize("bad", [None, "", "abc", 0, 1.5, [], {}, object()])
+def test_ed25519_verify_rejects_non_bytes_without_raising(bad):
+    priv, pub = _real_keypair()
+    msg = b"m"
+    sig = priv.sign(msg)
+    assert jr._ed25519_verify(bad, msg, sig) is False
+    assert jr._ed25519_verify(pub, bad, sig) is False
+    assert jr._ed25519_verify(pub, msg, bad) is False
+    assert jr._ed25519_verify(b"", b"", b"") is False
+
+
+def test_ed25519_verify_fails_closed_when_cryptography_cannot_be_imported(monkeypatch):
+    import sys
+
+    priv, pub = _real_keypair()
+    msg = b"m"
+    monkeypatch.setitem(sys.modules, "cryptography", None)
+    monkeypatch.setitem(sys.modules, "cryptography.hazmat.primitives.asymmetric.ed25519", None)
+    assert jr._ed25519_verify(pub, msg, priv.sign(msg)) is False
+
+
+def test_importing_the_flask_app_does_not_load_cryptography():
+    """原生轮子只在拉索引验签时才加载（延后 import，与 truststore 同一写法）：Flask 父进程启动不为它付代价。
+    子进程里做，免得别的测试已经把它带进本进程的 sys.modules。"""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys; import tavotto.app, tavotto.engine.journalremote; "
+        "loaded = sorted(m for m in sys.modules if m.split('.')[0] == 'cryptography'); "
+        "print(loaded); sys.exit(1 if loaded else 0)"
+    )
+    env = {**__import__("os").environ, "PYTHONPATH": str(ROOT / "src")}
+    r = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, env=env, cwd=ROOT
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_cryptography_is_imported_only_inside_the_verify_function():
+    import ast
+
+    offenders = []
+    for path in sorted((ROOT / "src" / "tavotto").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for fn in ast.walk(tree):
+            for n in ast.walk(fn) if isinstance(fn, ast.FunctionDef) else ():
+                mods = []
+                if isinstance(n, ast.Import):
+                    mods = [a.name for a in n.names]
+                elif isinstance(n, ast.ImportFrom) and not n.level:
+                    mods = [n.module or ""]
+                if any(m.split(".")[0] == "cryptography" for m in mods):
+                    offenders.append((path.relative_to(ROOT).as_posix(), fn.name))
+    # 模块级 import 另查：整棵树里 cryptography 的 import 必须全在函数体内
+    for path in sorted((ROOT / "src" / "tavotto").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for n in tree.body:
+            if isinstance(n, ast.Import | ast.ImportFrom):
+                mods = [a.name for a in n.names] if isinstance(n, ast.Import) else [n.module or ""]
+                assert not any(m.split(".")[0] == "cryptography" for m in mods), path
+    assert set(offenders) == {("src/tavotto/engine/journalremote.py", "_ed25519_verify")}, offenders
