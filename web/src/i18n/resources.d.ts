@@ -570,7 +570,7 @@ export default interface Resources {
   },
   "dialogs": {
     "closeGuard": {
-      "body": "这份排版还有未保存的修改。选「不保存」，本机草稿也会留着，下次打开可以恢复。",
+      "body": "关闭前要保存吗？不保存的话，本机草稿也会留着，下次打开可以恢复。",
       "discard": "不保存",
       "save": "保存并关闭",
       "saveFailed": "保存失败，窗口保持打开。请先解决保存问题，或选择「不保存」直接关闭。",
