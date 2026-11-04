@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { formatMessage, t as translate } from '@/i18n'
 import { formatDateTime } from '@/i18n/format'
 import type { UpdateStatus } from '@/lib/api'
-import { useUpdateStore } from '@/store/updateStore'
+import { autoDownloadOn, useUpdateStore } from '@/store/updateStore'
 import { UpdateRestartError } from '../UpdateRestartError'
 import { Button } from '../ui/Button'
 import { FieldGroup, FormSection } from '../ui/FormSection'
@@ -314,6 +314,11 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
     relaunch,
     relaunching,
     relaunchFailed,
+    desktopReady,
+    restartNow,
+    setAutoDownload,
+    autoDownloadSaving,
+    autoDownloadFailure,
   } = useUpdateStore()
   useEffect(() => {
     if (!desktopChecked) void checkDesktop()
@@ -338,6 +343,26 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
           onChange={() => {}}
         />
       </SettingRow>
+
+      <SettingRow
+        data-update-auto-download
+        label={st('update.autoDownload')}
+        controlId="setting-update-auto-download"
+        status={autoDownloadSaving ? st('update.autoCheckSaving') : undefined}
+      >
+        <Toggle
+          id="setting-update-auto-download"
+          aria-labelledby={settingRowLabelId('setting-update-auto-download')}
+          checked={autoDownloadOn(status)}
+          disabled={autoDownloadSaving}
+          onChange={(v) => void setAutoDownload(v)}
+        />
+      </SettingRow>
+      {autoDownloadFailure && (
+        <GroupNotice tone="danger" data-update-auto-download-error>
+          {st('update.autoCheckSaveFailed')} {formatMessage(autoDownloadFailure)}
+        </GroupNotice>
+      )}
 
       <SettingRow
         label={st('update.check')}
@@ -385,7 +410,18 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
               >
                 {st('update.relaunch')}
               </Button>
-            ) : desktopPhase === 'downloading' ? undefined : (
+            ) : desktopPhase === 'downloading' ? undefined : desktopReady?.version === desktopUpdate.version ? (
+              // 后台已下好：主动作就是「现在重启」（用已下好的包，不再下载）
+              <Button
+                data-update-relaunch
+                variant="primary"
+                size="lg"
+                onClick={() => void restartNow()}
+                loading={relaunching}
+              >
+                {st('update.restartNow')}
+              </Button>
+            ) : (
               <Button variant="primary" size="lg" onClick={() => void installDesktop()}>
                 {st('update.downloadAndInstall')}
               </Button>

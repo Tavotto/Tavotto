@@ -13288,6 +13288,8 @@ def _updater_disabled_in_desktop():
             {
                 "desktop": True,
                 "auto_check": False,
+                # 唯一桌面还认的更新偏好：查到新版是否后台下载（壳侧下载，见 update-channel.md）
+                "auto_download": engine_updater.settings()["auto_download"],
                 "update_available": False,
                 "current": engine_updater.current_version(),
                 "repo_url": engine_brand.REPO_URL,
@@ -13308,10 +13310,13 @@ def api_update_check():
 
 @app.patch("/api/update/settings")
 def api_update_settings():
-    if resp := _updater_disabled_in_desktop():
-        return resp
     body = request.get_json(force=True)
     patch = {}
+    if "auto_download" in body:
+        patch["auto_download"] = bool(body["auto_download"])
+    if app.config.get("TAVOTTO_DESKTOP_MODE"):
+        # 桌面：Python updater 停用，只有 auto_download 这一个偏好还落在这里；auto_check 不收
+        return jsonify(engine_updater.set_settings(patch))
     if "auto_check" in body:
         patch["auto_check"] = bool(body["auto_check"])
     return jsonify(engine_updater.set_settings(patch))

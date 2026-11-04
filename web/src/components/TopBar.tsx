@@ -60,6 +60,7 @@ import { Tip } from './ui/Tooltip'
 import { useRenameFocusReturn } from './ui/useRenameFocusReturn'
 import type { StatusTone } from './ui/Notice'
 import { BuildMismatchChip } from './BuildMismatchChip'
+import { DesktopUpdateChip } from './DesktopUpdateChip'
 import { TutorialChip, useTutorialChipVisible } from './onboarding/TutorialChip'
 import { ContactButton } from './contact/ContactButton'
 import { ConflictActions, ConflictDetail } from './DocumentBanner'
@@ -124,6 +125,7 @@ export function TopBar() {
           导出是顶栏唯一填色主动作 */}
       <div className="flex min-w-0 shrink-0 items-center justify-end gap-2 max-[899px]:gap-1">
         <TutorialChip />
+        <DesktopUpdateChip />
         <BuildMismatchChip />
         <UndoRedo />
         {/* 联系作者（ADR 0145）：撤销重做与导出之间的次级胶囊，不抢导出这颗主按钮；窄于 900 只留图标。

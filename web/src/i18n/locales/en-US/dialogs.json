@@ -1828,7 +1828,9 @@
       "title": "Updates",
       "notesTitle": "What’s new",
       "autoCheckDesktop": "Check at startup",
-      "autoCheckDesktopReason": "The desktop app checks every time it starts; this can’t be turned off yet"
+      "autoCheckDesktopReason": "The desktop app checks every time it starts; this can’t be turned off yet",
+      "autoDownload": "Download updates in the background",
+      "restartNow": "Restart now"
     },
     "tutorial": {
       "label": "Tutorial",

@@ -819,11 +819,50 @@ export async function checkDesktopUpdate(): Promise<DesktopUpdateInfo | null> {
   return pendingUpdate
 }
 
+/** 进度事件的节流阈值：比例变化不到 0.5% 且距上次不到 100 ms 的 Progress 不往上发（Started / Finished 永远发） */
+export const PROGRESS_MIN_STEP = 0.005
+export const PROGRESS_MIN_GAP_MS = 100
+
+/**
+ * 壳的下载事件 → 0–1 的进度回调（前台安装与后台下载共用）。
+ * 一个 190 MB 的包会来上万个 chunk，逐个 `set` 会把整个界面重渲上万次：这里只在比例变了 ≥0.5%
+ * 或距上次 ≥100 ms 时才往上发。拿不到总长度时进度恒为 null（不确定态），Progress 不再发。
+ * `now` 可注入，给测试用。
+ */
+export function makeProgressHandler(
+  onProgress?: (fraction: number | null) => void,
+  now: () => number = () => Date.now(),
+) {
+  let total = 0
+  let got = 0
+  let lastSent = -1
+  let lastAt = 0
+  const send = (f: number | null) => {
+    lastSent = f ?? -1
+    lastAt = now()
+    onProgress?.(f)
+  }
+  return (e: { event: string; data?: { contentLength?: number | null; chunkLength?: number } }) => {
+    if (e.event === 'Started') {
+      total = e.data?.contentLength ?? 0
+      got = 0
+      send(total ? 0 : null)
+    } else if (e.event === 'Progress') {
+      got += e.data?.chunkLength ?? 0
+      if (!total) return
+      const f = Math.min(1, got / total)
+      if (f - lastSent >= PROGRESS_MIN_STEP || now() - lastAt >= PROGRESS_MIN_GAP_MS) send(f)
+    } else if (e.event === 'Finished') {
+      send(1)
+    }
+  }
+}
+
 /**
  * 下载并安装上一次查到的那一版。onProgress 收到 0–1 的进度；服务端没给
  * Content-Length 时收到 null——进度条该显示成不确定态，而不是假装卡在
  * 某个百分比上。**换来源重下时壳会再发一次 Started，进度随之归零。**
- * 返回实际用的来源。
+ * 后台已经下好同一版本的包时，壳直接用它安装（没有下载事件）。返回实际用的来源。
  *
  * 没有句柄就抛，不在这里偷偷补一次 check：用户看到的版本号与真正装上去的
  * 那一版必须是同一个。
@@ -833,21 +872,8 @@ export async function installDesktopUpdate(
 ): Promise<UpdateSource> {
   if (!pendingUpdate) throw new Error(t('update.noPendingUpdate', { ns: 'errors' }))
   const { invoke, Channel } = await import('@tauri-apps/api/core')
-  let total = 0
-  let got = 0
   const channel = new Channel<{ event: string; data?: { contentLength?: number | null; chunkLength?: number } }>()
-  channel.onmessage = (e) => {
-    if (e.event === 'Started') {
-      total = e.data?.contentLength ?? 0
-      got = 0
-      onProgress?.(total ? 0 : null)
-    } else if (e.event === 'Progress') {
-      got += e.data?.chunkLength ?? 0
-      onProgress?.(total ? Math.min(1, got / total) : null)
-    } else if (e.event === 'Finished') {
-      onProgress?.(1)
-    }
-  }
+  channel.onmessage = makeProgressHandler(onProgress)
   let source: UpdateSource
   try {
     source = await invoke<UpdateSource>('desktop_update_install', { onEvent: channel })
@@ -859,6 +885,25 @@ export async function installDesktopUpdate(
   updateOutcome = { ...updateOutcome, install: { at: Date.now(), ok: true, source } }
   pendingUpdate = null
   return source
+}
+
+/**
+ * 后台下载上一次查到的那一版（「后台自动下载」开着时，启动查到新版后调）：只下载并验签，**不安装**——
+ * 包留在壳里，等用户点「现在重启」（`installDesktopUpdate` 用它）或退出应用时装上。
+ * 进度回调同 `installDesktopUpdate`（同一份节流）。失败抛 `DesktopUpdateError`，调用方决定要不要吭声。
+ */
+export async function downloadDesktopUpdate(
+  onProgress?: (fraction: number | null) => void,
+): Promise<{ version: string; source: UpdateSource }> {
+  if (!pendingUpdate) throw new Error(t('update.noPendingUpdate', { ns: 'errors' }))
+  const { invoke, Channel } = await import('@tauri-apps/api/core')
+  const channel = new Channel<{ event: string; data?: { contentLength?: number | null; chunkLength?: number } }>()
+  channel.onmessage = makeProgressHandler(onProgress)
+  try {
+    return await invoke<{ version: string; source: UpdateSource }>('desktop_update_download', { onEvent: channel })
+  } catch (e) {
+    throw toUpdateError(e, 'update.desktopInstallFailed')
+  }
 }
 
 /** 装完重启到新版本。浏览器模式退化成刷新页面。 */

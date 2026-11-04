@@ -1938,6 +1938,23 @@ async fn update_install(
     .await
 }
 
+/// 应用内更新·后台下载的实现：只下载 + 验签，放进 `UpdateState::ready`，不安装。
+async fn update_download(
+    app: &tauri::AppHandle,
+    state: &app_update::UpdateState,
+    emit: app_update::Emit<'_>,
+) -> Result<app_update::Downloaded, app_update::Failure> {
+    let endpoints = app_update::endpoints(app)?;
+    app_update::run_download(
+        &|| updater_builder(app),
+        &endpoints,
+        state,
+        &app_update::Limits::default(),
+        emit,
+    )
+    .await
+}
+
 /// 救援页「重新安装」的实现：查 + 装一气呵成，允许同版本（`app_update::run_reinstall`）。
 /// 只有 `rescue::rescue_reinstall` 调它（先过 `gate_reinstall`）。
 async fn update_reinstall(
@@ -1983,6 +2000,24 @@ async fn desktop_update_install(
 ) -> Result<app_update::Source, app_update::Failure> {
     only_main_window(&window).map_err(|_| app_update::Failure::code("main_window_only"))?;
     update_install(&app, &state, None, &|ev| {
+        let _ = on_event.send(ev);
+    })
+    .await
+}
+
+/// 应用内更新·后台下载上一次查到的那一版（「后台自动下载」开着时，前端在启动查到新版后调）。
+/// 只下载 + 用内置公钥验签，包放进内存里的 `ready` 槽，**不安装**——装上去只发生在
+/// `desktop_update_install`（用户点「现在重启」，用槽里的包，不再下载）或退出应用时（`RunEvent::Exit`）。
+/// 与 check / install 同一把锁：下载期间它们回 `busy`。只许主窗口调。
+#[tauri::command]
+async fn desktop_update_download(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, app_update::UpdateState>,
+    on_event: tauri::ipc::Channel<app_update::DownloadEvent>,
+) -> Result<app_update::Downloaded, app_update::Failure> {
+    only_main_window(&window).map_err(|_| app_update::Failure::code("main_window_only"))?;
+    update_download(&app, &state, &|ev| {
         let _ = on_event.send(ev);
     })
     .await
@@ -2067,6 +2102,7 @@ fn main() {
             connect_remote,
             desktop_update_check,
             desktop_update_install,
+            desktop_update_download,
             show_app_menu,
             take_previous_exit,
             current_engine_exit,
@@ -2245,6 +2281,11 @@ fn main() {
                     m.mark_clean();
                 }
             }
+            // 最后：后台已下好的更新包在退出时装上（下次打开就是新版）。必须排在 sidecar 收掉与 clean 之后——
+            // Windows 上插件 install 会起安装器并自行退出进程（`updater_builder` 的 on_before_exit 也会写 clean）
+            if let Some(updates) = app_handle.try_state::<app_update::UpdateState>() {
+                app_update::install_ready_on_exit(&updates);
+            }
         }
     });
 }
@@ -2345,12 +2386,14 @@ mod tests {
         for cmd in [
             "async fn desktop_update_check(",
             "async fn desktop_update_install(",
+            "async fn desktop_update_download(",
         ] {
             let body = body_of(main, cmd);
             assert!(body.contains("only_main_window(&window)"), "{cmd}");
         }
         assert!(body_of(main, "async fn desktop_update_check(").contains("update_check(&app"));
         assert!(body_of(main, "async fn desktop_update_install(").contains("update_install(&app"));
+        assert!(body_of(main, "async fn desktop_update_download(").contains("update_download(&app"));
         let rescue = &production_sources()[3].1;
         assert_eq!(production_sources()[3].0, "rescue.rs");
         assert!(rescue.contains("crate::update_check(&app"));
@@ -2421,6 +2464,16 @@ mod tests {
         let shutdown = tail.find("shutdown_sidecar()").expect("先收 sidecar");
         let clean = tail.find("mark_clean()").expect("再写 clean");
         assert!(shutdown < clean, "clean 必须在 sidecar 收掉之后写");
+        // 退出时装后台下好的更新包：必须在 sidecar 收掉、clean 写过之后（Windows 的安装器会让进程自行退出）
+        let install = tail
+            .find("install_ready_on_exit(")
+            .expect("退出时要装已下好的更新包");
+        assert!(clean < install, "退出时装更新包必须排在 mark_clean 之后");
+        assert_eq!(
+            main.matches("install_ready_on_exit(").count(),
+            1,
+            "退出时装包只有 RunEvent::Exit 这一处"
+        );
     }
 
     #[test]
