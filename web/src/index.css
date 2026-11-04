@@ -50,6 +50,8 @@
   --color-paper-ink: #1b1b18;
   /* 纸上的荧光笔（出处卡摘录里命中的数）：浅黄，两套主题同值（纸不反相） */
   --color-paper-highlight: #fff3a3;
+  /* 插画里的荧光笔（遥测询问框 A）：浅色同纸上高亮黄；暗色换压暗的黄，不盖住上面的蓝线 */
+  --color-highlighter: #fff3a3;
   /* 纸上的二 / 三级墨（缩略图里的文字框 / 标注线、纸上的图形记号）：paper-ink 的 80% / 65%，合成到纸白上约等于浅色的
      ink-2 / ink-3。纸上不许用界面的 ink-2 / ink-3——它们在暗色里变浅，落在不变的白纸上只剩 1.8:1 / 2.8:1
      （foundation.test「纸上的东西用纸上的墨」+ tokenContrast.test 守着） */
@@ -1297,6 +1299,7 @@
   --color-dim: #7db6f5;
     --color-danger: #ef6e55;
     --color-warn: #d9a23a;
+    --color-highlighter: #5a5226;
     --color-ok: #4fb37a;
     --color-danger-content: color-mix(in oklab, var(--color-danger) 70%, white);
     --color-warn-content: color-mix(in oklab, var(--color-warn) 70%, white);
@@ -1334,6 +1337,7 @@
   --color-dim: #7db6f5;
   --color-danger: #ef6e55;
   --color-warn: #d9a23a;
+  --color-highlighter: #5a5226;
   --color-ok: #4fb37a;
   --color-danger-content: color-mix(in oklab, var(--color-danger) 70%, white);
   --color-warn-content: color-mix(in oklab, var(--color-warn) 70%, white);
