@@ -390,6 +390,31 @@ def main() -> None:
     cmd += arch_config
     run(cmd)
     out = ROOT / "src-tauri" / "target" / "release" / "bundle"
+    if sys.platform == "darwin":
+        # tauri 把 dist/Tavotto 里的符号链接复制成了真文件（同一份库在 .app 里存 2～3 次）；还原回去。
+        # 发行链在 CI 里于签名前做同一件事（desktop-tauri.yml「还原符号链接」）。
+        app = out / "macos" / "Tavotto.app"
+        if app.is_dir():
+            run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "relink_macos_symlinks.py"),
+                    "relink",
+                    "--src",
+                    str(ROOT / "dist" / "Tavotto"),
+                    "--app",
+                    str(app),
+                ]
+            )
+            run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "relink_macos_symlinks.py"),
+                    "check",
+                    "--app",
+                    str(app),
+                ]
+            )
     print(f"* 产物目录: {out}")
 
 

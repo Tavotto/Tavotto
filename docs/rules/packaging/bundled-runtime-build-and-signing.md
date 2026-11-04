@@ -26,6 +26,13 @@ order: 30
   最终再展开验同 sidecar Team ID、timestamp/runtime、架构/minOS；生成固定资源 manifest 后才能封 .app
   （ADR 0111 2026-10-04 修订）。原产品锁不改，重试原料仍核原 SHA / size。最终 .app 冒烟还必须从 frozen
   sidecar 真供应这份归档并建 managed venv / ensurepip，不能拿内置渲染 runtime 的冒烟替它交差。
+- **macOS .app 里不许有 Tauri 复制出来的重复二进制**：PyInstaller 的 `dist/Tavotto` 用相对符号链接让同一份库只存一次
+  （Python 解释器库 ×3、libqpdf ×2、PIL `.dylibs` ×2……），`tauri build` 搬 `bundle.resources` 时把文件链接解引用成真拷贝、
+  目录链接（`Versions/Current`）丢掉。`scripts/relink_macos_symlinks.py relink` 在 tauri build 之后、**签名之前**把链接还原
+  （签完每份拷贝带各自签名，字节就不同了），`check` 量最终 .app 的真文件（`_internal/runtime/` 除外：它是逐字节钉死的独立 venv，
+  与 sidecar 自带 PIL 的同名库是有意分离）。签名侧不用改：`codesign_macos.py` 的 `scan()` 本来就跳过符号链接。
+  Windows 没有等价手段（NSIS/zip 不带链接；numpy 的 ILP64 与 scipy 的 LP64 openblas 是两个不同的库，不是重复）。
+  看护：`tests/test_relink_macos_symlinks.py`（含 CI 步骤顺序）。
 - **CLI 双入口**：`packaging/tavotto.spec` 从同一个 Analysis 产出 GUI 的
   `Tavotto` 与 `console=True` 的 `tavotto-cli`（共用 `_internal/`）。GUI exe
   不能当 CLI 调（无终端时 stdout 落日志），交接与安装清单都指 `tavotto-cli`
