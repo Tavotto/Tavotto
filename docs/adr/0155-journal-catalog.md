@@ -169,15 +169,23 @@
 
 **验签用成熟库，不手写加密（用户 2026-11-05 拍板）。** 验签调 pyca `cryptography` 的 `Ed25519PublicKey.from_public_bytes(pk).verify(sig, msg)`（先判公钥 32 / 签名 64 字节；任何异常，含库缺失，一律当验签失败，目录保持种子）。早先一版是 `engine/ed25519.py` 里手写的纯标准库验签，已删除：为省一个原生依赖而自己实现签名算法，不如用被广泛审计的库。代价是 Flask 父进程的依赖闭包多了 `cryptography`（及其 `cffi`），安装包增大（见 PR 说明里的体积估算）；缓解是**延后 import**——只在拉索引验签的函数里 import，Flask 启动不加载（`tests/test_journal_remote.py` 看护 `import tavotto.app` 后 `cryptography` 不在 `sys.modules`），冻结产物由 `packaging/tavotto.spec` 点名收进 hiddenimports。
 
+**限流可调（用户 2026-11-05 拍板）。** 理由：学校 / 公司 / 宿舍整片人共用一个出口 IP，原先「每 IP 每天 5 个新令牌、100 本」会让第 6 个同学起拿不到令牌，而这个 IP 维度本来只是防「一个出口大规模刷」，不是防个人（个人由设备维度的 10 本 / 小时、20 本 / 天管）。所以：
+1. **默认放宽 IP 维度**：新令牌 5 → 200 / 天；首次读取 100 → 2000 / 天（约 200 台设备 × 日均约 10 本，设备自己的上限是 20 本 / 天，日均远低于上限）。设备维度不变。
+2. **规则运行时可调，不用重新部署**：规则存 sqlite 表（`rules` 全局默认值与紧急开关、`ip_cidr_rules` 网段例外、`rule_audit` 审计，只用 SQLite / D1 共有语法），服务每约 10 秒读一次（短 TTL 缓存）。环境变量 `TAVOTTO_JC_*` 保留，作为规则表没写时的缺省。
+3. **网段例外**：管理员写 CIDR（IPv4 段、IPv6 前缀）→ 放宽到指定值，或完全豁免 IP 维度（设备维度照常）；多条命中取最长前缀。判断在 HMAC **之前**、用请求里的明文 IP 在内存里做，明文 IP 不落库、不进日志、不进审计；比 `/8`（IPv6 `/32`）更宽的网段命令行拒收（要整体放开用紧急开关）。
+4. **紧急开关**：一键关掉所有 IP 维度限额，设备维度照常。
+5. **管理命令** `python -m services.journal_catalog.admin rules list|set|exempt-cidr|clear`、`kill-switch on|off`、`top --n N`；每次改动写审计表（操作者 `--by` 或 `$USER`、时间、改了什么；只有规则键、旧值 → 新值、管理员写的 CIDR）。
+6. **可观测**：按 `ip_key` 记当天不同设备数（设备只存 HMAC 派生的 16 位标签，不能回连 `devices` / `reads`）与被拒次数（按 code），`top` 只显示 `ip_key` 前 8 位；与 `ip_events` 同样只留 48 小时。
+
 **设备令牌与共享位置（app 与 Agent 共用）。** 令牌是服务端签发的匿名随机串（`POST device`），与遥测的 install_id 无关。
 令牌、索引、已下载刊包、快照都放在用户数据目录 `config.data_dir()/journal-catalog/`
 （macOS `~/Library/Application Support/Tavotto`，Windows `%LOCALAPPDATA%\Tavotto`，Linux `$XDG_DATA_HOME/tavotto`，`TAVOTTO_DATA_DIR` 可改）：
 `device.json`（0600，`{"token": ...}`）、`index.signed.json`、`bundles/<sha256>.json`、`snapshots/<sha256>.webp`、`state.json`、`lock`。
 **app 与 Agent 宿主同机共用这一份**：谁先需要谁领，后来的一方直接读盘复用；缓存命中不发请求，因此不计数。写入全部是原子替换；领令牌与改 `state.json` 在目录锁（`lock`，`O_EXCL`，30 秒视为遗弃）里「先重读再签发」，两个进程同时需要时只有一个去签发。
-文件损坏或丢失 → 重新领一枚（**占用当天该 IP 的 5 个新令牌名额**，且该机器的当日额度从头算起）；服务端回 `device_unknown` 时客户端换新令牌重试一次（若盘上已是对方刚换的新令牌则直接用）。
+文件损坏或丢失 → 重新领一枚（**占用当天该 IP 的一个新令牌名额**（默认每 IP 每天 200 个），且该机器的当日额度从头算起）；服务端回 `device_unknown` 时客户端换新令牌重试一次（若盘上已是对方刚换的新令牌则直接用）。
 
 **限额（服务端）。** 只数「令牌 × 刊」的首次读取；重复读、因 `catalog_rev` 更新重拉都不计。三道，**全部是滚动窗口**（不用日历日，所以没有 UTC / 服务器时区问题；回复里的 `retry_after_s` 就是最早一条过期的秒数）：
-令牌 10 本 / 小时、20 本 / 天；同一 IP 合计 100 本 / 天；同一 IP 24 小时内最多签发 5 个新令牌。**IP 级限额是 app 与 Agent 合计，不按客户端类型分桶**（请求头 `X-Tavotto-Client` 只用于统计，改头绕不过）。
+令牌 10 本 / 小时、20 本 / 天；同一 IP 合计 2000 本 / 天；同一 IP 24 小时内最多签发 200 个新令牌（IP 维度默认值 2026-11-05 放宽，理由与可调规则见下面「限流可调」）。**IP 级限额是 app 与 Agent 合计，不按客户端类型分桶**（请求头 `X-Tavotto-Client` 只用于统计，改头绕不过）。
 IP 不存明文，存 HMAC（IPv6 取 /64），只留 48 小时；读取记录（令牌、刊 id、时间、客户端类型）保留 1 年后删除。
 
 **超限的表现。** 客户端回 `quota`；界面不弹错，用一句话胶囊提示（文案待用户过目），这本刊暂时按「不按期刊」处理。断网又没缓存的刊在选择器里可见，选中时提示需要联网（同为胶囊）。
@@ -201,10 +209,10 @@ IP 不存明文，存 HMAC（IPv6 取 /64），只留 48 小时；读取记录�
 Agent 宿主（Codex / Claude Code 插件、MCP 等）与 app 走**同一套接口、同一份共享目录、同一个令牌**，没有第二条路：
 
 1. **读索引与缓存**：先读共享目录里的 `index.signed.json`（用内置公钥验签；没有就 `GET index.signed.json` 取）。已有 `bundles/<索引里该刊的 sha256>.json`（校验哈希）就直接用，不发请求、不计数。
-2. **令牌**：读 `device.json`；没有就在目录锁里先重读、仍没有再 `POST device`，用原子替换写回（权限 0600）。app 与 Agent 谁先到谁领，另一方复用；两方都没有才签发。服务端回 `device_unknown` 时重领一次。**不要为绕过限额反复换令牌**——IP 级限额会拦住，并占用当天的 5 个新令牌名额。
+2. **令牌**：读 `device.json`；没有就在目录锁里先重读、仍没有再 `POST device`，用原子替换写回（权限 0600）。app 与 Agent 谁先到谁领，另一方复用；两方都没有才签发。服务端回 `device_unknown` 时重领一次。**不要为绕过限额反复换令牌**——IP 级限额会拦住，并占用当天的新令牌名额（默认每 IP 每天 200 个）。
 3. **下载一本刊**：`GET journals/<id>?rev=<索引的 catalog_rev>`，头带 `X-Tavotto-Device` 与 `X-Tavotto-Client: agent-<宿主名>`（用 `TAVOTTO_JOURNAL_CLIENT=agent-<宿主名>` 环境变量时 `journalremote` 会自己带）。校验 `sha256` / 字节数等于索引条目，再写入 `bundles/<sha256>.json`（原子替换）。
 4. **优先复用实现**：宿主环境里装了 `tavotto` 包时，直接调 `tavotto.engine.journalremote.sync()` / `ensure_journal(id)` / `snapshot_path(file)`（永不抛，结果见各自文档字符串），不要自己再写一遍；没有就按上面三步实现。
-5. **计数**：只数该令牌对该刊的首次读取；重复读、`catalog_rev` 更新重拉、种子里的刊都不计。每令牌 10 本 / 小时、20 本 / 天，同 IP 合计 100 本 / 天、新令牌 5 个 / 天（app 与 Agent 合计）。
+5. **计数**：只数该令牌对该刊的首次读取；重复读、`catalog_rev` 更新重拉、种子里的刊都不计。每令牌 10 本 / 小时、20 本 / 天，同 IP 合计 2000 本 / 天、新令牌 200 个 / 天（app 与 Agent 合计；数字是服务端默认，可在不重新部署的情况下调，见 §10 的「限流可调」）。
 6. **超限**：收到 429 就停——读 `retry_after_s`（秒），期间不要重试同一类请求，也不要换令牌；对用户一句话说明额度用完、稍后再试即可。离线且没有缓存同理，说明需要联网。
 7. **禁止**：不要把项目内容、路径、脚本、文件名带进任何请求；`TAVOTTO_NO_JOURNAL_SYNC=1` 时一个字节都不发。
 8. **不要信任未验签的东西**：索引必须验签，刊包必须对哈希，快照文件名必须等于内容的 sha256。

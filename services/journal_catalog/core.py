@@ -12,14 +12,16 @@ import ipaddress
 import json
 import re
 import secrets
+import threading
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from urllib.parse import parse_qs
 
-from .store import Limits, Store
+from .store import RULE_NAMES, Limits, Store
 
+RULES_TTL_S = 10  # 规则表读缓存：改了规则最多这么久生效
 PREFIX = "/v1/journal-catalog"
 DEVICE_HEADER = "x-tavotto-device"
 JOURNAL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,95}$")
@@ -96,6 +98,62 @@ def ip_key(secret: bytes, ip: str | None) -> str:
     return hmac.new(secret, norm.encode("ascii"), hashlib.sha256).hexdigest()
 
 
+def _normalise_ip(ip: str | None) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    try:
+        addr = ipaddress.ip_address((ip or "").strip())
+    except ValueError:
+        return None
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        return addr.ipv4_mapped
+    return addr
+
+
+@dataclass(frozen=True)
+class Rules:
+    """某一刻的规则快照（来自规则表）。"""
+
+    defaults: dict
+    kill_switch: bool
+    # (网段, 完全豁免, 令牌上限 | None, 读取上限 | None)
+    cidrs: tuple
+
+    def limits_for(self, base: Limits, plain_ip: str | None) -> Limits:
+        """有效限额。**用明文 IP 在内存里比对网段**（在 HMAC 之前；明文 IP 不落库、不进日志）。
+        顺序：规则表默认值覆盖环境变量 / 内置默认；紧急开关 → IP 维度全不拦；命中网段（最长前缀优先）→ 豁免或放宽。"""
+        eff = replace(base, **{k: v for k, v in self.defaults.items() if k in RULE_NAMES})
+        if self.kill_switch:
+            return replace(eff, ip_tokens_per_day=None, ip_reads_per_day=None)
+        addr = _normalise_ip(plain_ip)
+        if addr is None:
+            return eff
+        best = None
+        for net, exempt, tokens, reads in self.cidrs:
+            if net.version == addr.version and addr in net:
+                if best is None or net.prefixlen > best[0].prefixlen:
+                    best = (net, exempt, tokens, reads)
+        if best is None:
+            return eff
+        _, exempt, tokens, reads = best
+        if exempt:
+            return replace(eff, ip_tokens_per_day=None, ip_reads_per_day=None)
+        return replace(
+            eff,
+            ip_tokens_per_day=tokens if tokens is not None else eff.ip_tokens_per_day,
+            ip_reads_per_day=reads if reads is not None else eff.ip_reads_per_day,
+        )
+
+
+def load_rules(store: Store) -> Rules:
+    raw = store.load_rules()
+    nets = []
+    for cidr, exempt, tokens, reads in raw["cidrs"]:
+        try:
+            nets.append((ipaddress.ip_network(cidr, strict=False), exempt, tokens, reads))
+        except ValueError:
+            continue  # 表里的脏行不影响其余规则
+    return Rules(raw["defaults"], raw["kill_switch"], tuple(nets))
+
+
 def parse_client(value: str | None) -> str:
     """X-Tavotto-Client：缺省 app；不合法记 unknown，不报错。只用于统计，限额不分桶。"""
     if value is None or value == "":
@@ -133,6 +191,32 @@ class Service:
         self.store = store or Store(config.db_path)
         self.clock = clock
         self._data_root = config.data_dir.resolve()
+        self._rules: Rules | None = None
+        self._rules_at = 0.0
+        self._rules_lock = threading.Lock()
+
+    def rules(self, now: float | None = None) -> Rules:
+        """规则快照，短 TTL 缓存（`RULES_TTL_S`）。读失败（库暂时锁住等）沿用旧快照，没有旧的就当空规则。"""
+        t = self.clock() if now is None else now
+        cur = self._rules
+        if cur is not None and 0 <= t - self._rules_at < RULES_TTL_S:
+            return cur
+        with self._rules_lock:
+            try:
+                self._rules = load_rules(self.store)
+            except Exception:  # noqa: BLE001 - 规则读不到不能让整个服务 500
+                if self._rules is None:
+                    self._rules = Rules({}, False, ())
+            self._rules_at = t
+            return self._rules
+
+    def _limits_for(self, plain_ip: str | None) -> Limits:
+        return self.rules().limits_for(self.config.limits, plain_ip)
+
+    def _dev_tag(self, token_hash: str) -> str:
+        return hmac.new(
+            self.config.ip_secret, b"dev:" + token_hash.encode("ascii"), hashlib.sha256
+        ).hexdigest()[:16]
 
     # ---- 工具 ----
     def client_ip(self, remote_addr: str | None, h: Mapping[str, str | None]) -> str | None:
@@ -194,14 +278,16 @@ class Service:
         if route == "/device":
             if method != "POST":
                 return _err(405, "method_not_allowed")
-            key = ip_key(self.config.ip_secret, self.client_ip(remote_addr, h))
+            plain = self.client_ip(remote_addr, h)
+            key = ip_key(self.config.ip_secret, plain)
             token = secrets.token_urlsafe(24)
             ok, retry = self.store.issue_device(
                 _hash_token(token),
                 key,
                 now,
-                self.config.limits,
+                self._limits_for(plain),
                 parse_client(h.get("x-tavotto-client")),
+                self._dev_tag(_hash_token(token)),
             )
             if not ok:
                 return _err(429, "ip_tokens", retry)
@@ -240,9 +326,16 @@ class Service:
             body = target.read_bytes()
         except OSError:
             return _err(404, "no_such_journal")
-        key = ip_key(self.config.ip_secret, self.client_ip(remote_addr, h))
+        plain = self.client_ip(remote_addr, h)
+        key = ip_key(self.config.ip_secret, plain)
         result, retry = self.store.first_read(
-            th, jid, key, now, self.config.limits, parse_client(h.get("x-tavotto-client"))
+            th,
+            jid,
+            key,
+            now,
+            self._limits_for(plain),
+            parse_client(h.get("x-tavotto-client")),
+            self._dev_tag(th),
         )
         if result == "unknown":
             return _err(401, "device_unknown")

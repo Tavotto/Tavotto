@@ -64,10 +64,14 @@ DATA/snapshots/<sha256>.webp                高亮短图，内容寻址
 |---|---|---|---|
 | 令牌 1 小时内首次读取 | 10 本 | 429 `quota_hour` | `TAVOTTO_JC_READS_PER_HOUR` |
 | 令牌 24 小时内首次读取 | 20 本 | 429 `quota_day` | `TAVOTTO_JC_READS_PER_DAY` |
-| 同一 IP 24 小时内首次读取合计 | 100 本 | 429 `ip_day` | `TAVOTTO_JC_IP_READS_PER_DAY` |
-| 同一 IP 24 小时内签发令牌 | 5 个（**待用户确认**） | 429 `ip_tokens` | `TAVOTTO_JC_IP_TOKENS_PER_DAY` |
+| 同一 IP 24 小时内首次读取合计 | 2000 本 | 429 `ip_day` | `TAVOTTO_JC_IP_READS_PER_DAY` |
+| 同一 IP 24 小时内签发令牌 | 200 个 | 429 `ip_tokens` | `TAVOTTO_JC_IP_TOKENS_PER_DAY` |
 
-IP 级两项对 app 与 agent **合计**，不分客户端类型。`retry_after_s` = 窗口内最早一条过期还要等的秒数（至少 1）。
+IP 级两项对 app 与 agent **合计**，不分客户端类型。
+
+**这些数字都可以运行时调**（用户 2026-11-05：学校 / 公司共用一个出口 IP，原先每 IP 5 个令牌不够）：环境变量是缺省，
+规则表（`rules` / `ip_cidr_rules`）覆盖它，服务约 10 秒内读到，不用重新部署；怎么改见 `DEPLOYMENT.md`「调限流规则」。
+IP 维度默认 200 个令牌 / 2000 本 per 天 ≈ 一个出口背后约 200 台设备 × 日均约 10 本；设备维度（10 本 / 小时、20 本 / 天）不变。`retry_after_s` = 窗口内最早一条过期还要等的秒数（至少 1）。
 三项都通过才写入 reads 行并返回刊包。
 
 ## 隐私与保留期
@@ -100,7 +104,7 @@ IP 级两项对 app 与 agent **合计**，不分客户端类型。`retry_after_
 
 1. **取索引**：`GET /v1/journal-catalog/index.signed.json`，无需令牌、不计数，可按 `max-age=300` 缓存。
 2. **取令牌**：`POST /v1/journal-catalog/device`（空体），得到 `{"token": "..."}`。**取一次、存下来反复用**
-   （建议 0600 权限的本地文件）；不要每次请求都新签——同一 IP 每天最多签 5 个。
+   （建议 0600 权限的本地文件）；不要每次请求都新签——同一 IP 每天的新令牌名额有限（默认 200 个）。
 3. **取刊包**：`GET /v1/journal-catalog/journals/<journal_id>?rev=<索引里的 catalog_rev>`，请求头
    `X-Tavotto-Device: <令牌>`。
 4. **取快照**（可选）：`GET /v1/journal-catalog/snapshots/<sha256>.webp`，同样带令牌，不计数。
@@ -113,7 +117,7 @@ IP 级两项对 app 与 agent **合计**，不分客户端类型。`retry_after_
 不符整包作废。快照的文件名就是其内容 sha256，下载后同样要核对。验签失败、`catalog_rev` 倒退都当作不可用。
 
 **计数**：只算该令牌对该刊的**首次读取**；重复读、rev 更新后重拉、种子刊都不计。每令牌 10 本/小时、20 本/天；
-同一 IP 合计 100 本/天、5 个新令牌/天（app 与 agent 合计）。
+同一 IP 合计 2000 本/天、200 个新令牌/天（app 与 agent 合计；服务端可调，以 429 为准）。
 
 **超限怎么办**：收到 429 就等 `retry_after_s` 秒后再试，或告诉用户稍后再来。**不要换新令牌重试**——
 IP 级限额（`ip_day`、`ip_tokens`）会照样拦住，还会白白消耗签发额度。401 `device_unknown`：重新 `POST /device`

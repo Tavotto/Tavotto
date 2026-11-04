@@ -9,7 +9,7 @@
   KV 是最终一致、没有事务，做不了；sqlite 的 `BEGIN IMMEDIATE` 天然满足。
 * 规模小：每次首次读取一次小事务，单机 WAL 绰绰有余。
 * 搬 D1 的路径：`schema.sql` 只用 D1/SQLite 共有语法，可直接 `wrangler d1 execute … --file schema.sql`；
-  `store.py` 的四个方法（`issue_device` / `first_read` / `purge` / `has_device`）换成 D1 的 `batch` 事务实现，
+  `store.py` 的方法（`issue_device` / `first_read` / `purge` / `has_device` 与规则读写 `load_rules` 等）换成 D1 的 `batch` 事务实现，
   `core.py` 不用动；DATA 改放 R2。除非大陆之外的流量成为主体，否则不必搬。
 
 ## 步骤
@@ -63,11 +63,35 @@
 8. **备份**：`sqlite3 catalog.sqlite ".backup '/backup/catalog-$(date +%F).sqlite'"` 每日一次（不要直接拷 WAL 活文件），
    保留 7 天。库里没有明文 IP 与令牌，但备份也要受 1 年保留期约束，别永久留存。
 9. **监控**：
-   * 429 比例（按 `code` 分，来自 nginx 状态码计数或 gunicorn `%(s)s`）：`ip_tokens` / `ip_day` 突增说明被刷或 NAT 后用户多，
+   * 429 比例（按 `code` 分，来自 nginx 状态码计数或 gunicorn `%(s)s`）：`ip_tokens` / `ip_day` 突增说明被刷或 NAT 后用户多（先 `top` 看出口，再决定是否 `exempt-cidr`，见上「调限流规则」），
      `quota_*` 偏高说明限额太紧。
    * 5xx、`index_unavailable`（503）、进程存活。
    * purge 任务最近一次成功时间（`reads` 里最早一条不应早于 1 年多几天）。
    * 磁盘与 sqlite 文件大小。
+
+## 调限流规则（不用重新部署）
+
+规则在 sqlite 里，服务约每 10 秒读一次，改完最多 10 秒生效；环境变量里的值是规则表没写时的缺省。管理命令在服务器上、
+与服务同一个库（`TAVOTTO_JC_DB`）、用能写库的账号运行（改动写进审计表，操作者取 `--by` 或 `$USER`）：
+
+```
+cd /opt/tavotto-jc/app && set -a && . /etc/tavotto-jc.env && set +a
+PY=/opt/tavotto-jc/venv/bin/python; A="$PY -m services.journal_catalog.admin"
+$A rules list                                              # 看现状 + 最近审计
+$A rules set ip_tokens_per_day 300                         # 改全局默认（也可 ip_reads_per_day / reads_per_hour / reads_per_day）
+$A rules exempt-cidr 203.0.113.0/24 --note 某大学出口       # 该网段完全豁免 IP 维度（设备维度照常）
+$A rules exempt-cidr 198.51.100.0/24 --tokens 1000 --reads 10000   # 或放宽到指定值
+$A rules exempt-cidr 2001:db8:aa::/48 --tokens 500         # IPv6 前缀（限额桶仍是 /64）
+$A rules clear 203.0.113.0/24                              # 删一条网段例外
+$A rules clear ip_tokens_per_day                           # 删一条默认值覆盖，回到环境变量 / 内置默认
+$A kill-switch on                                          # 紧急：所有 IP 维度限额一律不拦（设备维度照常）；off 恢复
+$A top --n 10                                              # 当天不同设备最多的 10 个出口（ip_key 前 8 位）与被拒次数
+```
+
+典型场景：监控里 `ip_tokens` / `ip_day` 的 429 突增 → `top` 看是哪个出口、设备数是否合理（几十到几百台 = 校园 / 公司网络）→ 与对方确认后
+`exempt-cidr` 放宽该网段；怀疑被刷则不加例外、必要时调低默认。`top` 里只有 ip_key 前 8 位，对不回具体 IP；要知道是哪段，
+请对方提供出口网段，或在放宽前后观察 `top` 里该前缀的变化。网段判断用请求里的明文 IP 在内存里比对，明文 IP 不落库。
+命令行拒收比 `/8`（IPv6 `/32`）更宽的网段；要整体放开用 `kill-switch on`。
 
 ## 回滚
 
@@ -92,7 +116,7 @@
    curl -si https://<preview>/v1/journal-catalog/admin                         # 404（白名单之外）
    ```
    若 `rev` 没带到源站（刊包返回 400 `bad_request`），说明 rewrite 没有保留原查询串，改 destination 写法后重验。
-4. **验 IP 限额算的是真实客户端**：从同一台机器经 `tavotto.com` 连签 6 个令牌，第 6 个应回 429 `ip_tokens`（默认每 IP 每天 5 个）；
+4. **验 IP 限额算的是真实客户端**：从同一台机器经 `tavotto.com` 连签 6 个令牌，第 6 个应回 429 `ip_tokens`（默认每 IP 每天 200 个，这一步要验的话先 `rules set ip_tokens_per_day 5`，验完 `rules clear ip_tokens_per_day`）；
    再从另一台出口不同的机器签一个，应成功。若第 2 台也被限，说明后端把反代出口当成了客户端——检查两边密钥是否一致。
 5. **验伪造无效**：直接对 `https://tavotto.cn/v1/journal-catalog/device` 带 `X-Tavotto-Client-IP: 1.2.3.4` 但不带或带错密钥头，限额仍按连接 IP 算。
 6. **缓存**：边缘只缓存 `index.signed.json`（5 分钟）；换版本发布后最多 5 分钟客户端才看到新索引，这期间旧索引指向的 `rev` 目录仍在源站（见上「DATA 同步」保留旧 rev），不会 404。

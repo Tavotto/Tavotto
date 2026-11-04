@@ -73,7 +73,7 @@ MAX_BUNDLE_BYTES = 4 << 20
 MAX_SNAPSHOT_BYTES = 4 << 20
 
 #: 客户端类型头 `X-Tavotto-Client`：桌面 / 浏览器版恒为 `app`；Agent 宿主写 `agent-<宿主名>`。服务端只记录用于统计，
-#: **限额不按它分桶**（IP 级的 100 本 / 5 个新令牌是 app 与 Agent 合计）。
+#: **限额不按它分桶**（IP 级限额是 app 与 Agent 合计；数字以服务端为准、可调）。
 CLIENT_TYPE = "app"
 CLIENT_ENV = "TAVOTTO_JOURNAL_CLIENT"
 _CLIENT_RE = re.compile(r"^(app|agent-[a-z0-9][a-z0-9-]{0,31})$")

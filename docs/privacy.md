@@ -105,9 +105,10 @@ token.
 What the server keeps: **which token first read which journal and when** (plus the
 client type). This is used only to see which journals are popular and to stop
 bulk scraping. **Records are kept for 1 year and then deleted.** IP addresses are
-not stored in clear: a keyed hash is kept for 48 hours to apply the limits below.
+not stored in clear: a keyed hash is kept for 48 hours to apply the limits below
+(together with how many different anonymous devices and how many refused requests that hash saw, to tune the limits).
 The server limits first-time journal downloads to 20 per day and 10 per hour per
-token, and 100 per day per IP address (app and assistants together); when a limit
+token, and 2,000 per day per IP address (app and assistants together; the limits can be adjusted on the server); when a limit
 is reached Tavotto keeps working and simply does not apply that journal until
 later.
 

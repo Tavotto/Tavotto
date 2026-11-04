@@ -165,7 +165,7 @@ def test_day_quota_20(tmp_path, data):
 
 
 def test_ip_day_quota_100_across_tokens_and_clients(tmp_path, data):
-    s, clk = make(tmp_path, data, ip_tokens_per_day=100)
+    s, clk = make(tmp_path, data, ip_tokens_per_day=100, ip_reads_per_day=100)
     toks = [new_token(s, client="app" if i % 2 else "agent-codex") for i in range(11)]
     n = 0
     for i, tok in enumerate(toks):
@@ -185,7 +185,7 @@ def test_ip_day_quota_100_across_tokens_and_clients(tmp_path, data):
 
 
 def test_ip_token_cap(tmp_path, data):
-    s, clk = make(tmp_path, data)
+    s, clk = make(tmp_path, data, ip_tokens_per_day=5)
     for _ in range(5):
         new_token(s)
         clk.t += 60
@@ -196,16 +196,16 @@ def test_ip_token_cap(tmp_path, data):
     assert call(s, "POST", "/device")[0] == 200
 
 
-def test_ip_tokens_shared_across_client_headers(svc):
-    s, _ = svc
+def test_ip_tokens_shared_across_client_headers(tmp_path, data):
+    s, _ = make(tmp_path, data, ip_tokens_per_day=5)
     clients = ["app", "agent-a", "agent-b", "bogus!", None]
     for c in clients:
         new_token(s, client=c)
     assert call(s, "POST", "/device", client="agent-zzz")[0] == 429
 
 
-def test_ipv6_same_64_shares_bucket(svc):
-    s, _ = svc
+def test_ipv6_same_64_shares_bucket(tmp_path, data):
+    s, _ = make(tmp_path, data, ip_tokens_per_day=5)
     for i in range(5):
         new_token(s, ip=f"2001:db8:1:2::{i + 1}")
     assert call(s, "POST", "/device", ip="2001:db8:1:2:ffff::9")[0] == 429
@@ -213,7 +213,9 @@ def test_ipv6_same_64_shares_bucket(svc):
 
 
 def test_xff_rightmost_mode(tmp_path, data):
-    cfg = Config(data, tmp_path / "x.sqlite", b"s" * 8, ip_mode="xff_rightmost")
+    cfg = Config(
+        data, tmp_path / "x.sqlite", b"s" * 8, Limits(ip_tokens_per_day=5), ip_mode="xff_rightmost"
+    )
     s = Service(cfg, clock=Clock())
     for _ in range(5):
         call(s, "POST", "/device", ip="10.0.0.1", xff="6.6.6.6, 7.7.7.7")
@@ -356,8 +358,10 @@ def test_purge_ip_events_48h(tmp_path, data):
     s, _ = make(tmp_path, data)
     new_token(s)
     assert s.purge(T0 + 48 * 3600 - 1)["ip_events"] == 0
-    assert s.purge(T0 + 48 * 3600)["ip_events"] == 1
+    # ip_events 一行 + 可观测的 ip_devices 一行，同一个 48 小时
+    assert s.purge(T0 + 48 * 3600)["ip_events"] == 2
     assert db_rows(s, "select * from ip_events") == []
+    assert db_rows(s, "select * from ip_devices") == []
 
 
 def test_ip_key_not_plaintext_and_secret_dependent(svc):
