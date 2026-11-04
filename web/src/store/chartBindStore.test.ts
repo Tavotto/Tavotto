@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { chartBind, chartCompute, chartInspect } from '@/lib/chartApi'
 import type { PanelObject } from '@/types/document'
 import { chartBindConfirmReady, useChartBindStore } from './chartBindStore'
+import { DEFAULT_FORM } from './chartBindStore'
 
 vi.mock('@/lib/chartApi', () => ({
   chartInspect: vi.fn(),
@@ -34,9 +35,9 @@ const CHART = {
   binding: { model_rev: 1, scene_digest: 'd'.repeat(64), entries: [] },
 }
 
-function panel(): PanelObject {
+function panel(id = 'p1'): PanelObject {
   return {
-    id: 'p1',
+    id,
     type: 'panel',
     x: 0,
     y: 0,
@@ -144,5 +145,70 @@ describe('chartBindStore', () => {
         form: { ...base.form, kind: 'image', gridText: '' },
       }),
     ).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// NEXT_PHASE R00：F1–F3 状态缺陷回归（当前实现 xfail；R04 修复后摘标记）
+// ---------------------------------------------------------------------------
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((r) => {
+    resolve = r
+  })
+  return { promise, resolve }
+}
+
+const staleChart = {
+  model: { rev: 1, scene_digest: 'old-scene', data_digest: 'old-data' },
+  binding: { model_rev: 1 },
+} as never
+
+describe('chart bind state safety (F1-F3)', () => {
+  it.fails('F1: keeps B inventory when A inspect resolves after opening B', async () => {
+    const a = deferred<unknown>()
+    const b = deferred<unknown>()
+    vi.mocked(chartInspect).mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise)
+    useChartBindStore.getState().openFor(panel('A'))
+    useChartBindStore.getState().openFor(panel('B'))
+    b.resolve({ ...SCENE, scene_digest: 'B' })
+    await Promise.resolve()
+    a.resolve({ ...SCENE, scene_digest: 'A' })
+    await Promise.resolve()
+    const s = useChartBindStore.getState()
+    expect(s.file).toBe('B.svg')
+    expect(s.scene?.scene_digest).toBe('B')
+  })
+
+  it.fails('F2: invalidates confirmed result and preview when the data form changes', () => {
+    useChartBindStore.setState({
+      file: 'A.svg',
+      step: 'confirm',
+      result: staleChart,
+      previewSvg: '<svg id="old"/>',
+      form: { ...DEFAULT_FORM, seriesNode: 'curve', xCol: 'x', yCol: 'y', datasetText: 'x,y\n1,2' },
+    })
+    useChartBindStore.getState().patchForm({ datasetText: 'x,y\n1,999' })
+    const s = useChartBindStore.getState()
+    expect(s.result).toBeNull()
+    expect(s.previewSvg).toBeNull()
+  })
+
+  it.fails('F3: does not permit final confirmation after replacement preview fails', async () => {
+    useChartBindStore.setState({
+      file: 'A.svg',
+      step: 'confirm',
+      result: staleChart,
+      previewSvg: '<svg id="old"/>',
+      form: { ...DEFAULT_FORM, seriesNode: 'curve', xCol: 'x', yCol: 'y' },
+    })
+    vi.mocked(chartCompute).mockRejectedValue(
+      Object.assign(new Error('wrong source'), { code: 'chart_source_mismatch' }),
+    )
+    await useChartBindStore.getState().runPreview()
+    const s = useChartBindStore.getState()
+    expect(chartBindConfirmReady(s)).toBe(false)
+    expect(s.previewSvg).toBeNull()
   })
 })
