@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { t as translate } from '@/i18n'
+import { msg, t as translate } from '@/i18n'
 import { ChevronDown } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Button } from '../ui/Button'
@@ -11,9 +11,11 @@ import { listRowClass } from '../ui/listRow'
 import { cn } from '@/lib/utils'
 import { listJournals } from '@/lib/journals'
 import { groupByPublisher, searchJournals } from '@/lib/journalPick'
+import { ensureJournalReady } from '@/lib/journalCatalogSync'
 import { clearJournal, selectJournal } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useJournalCatalogStore } from '@/store/journalCatalogStore'
+import { useUiStore } from '@/store/uiStore'
 
 const jt = (key: string, values?: Record<string, unknown>) =>
   translate(`journal.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -32,7 +34,23 @@ export function JournalPicker() {
   const groups = useMemo(() => groupByPublisher(searchJournals(all, query)), [all, query])
   const first = groups[0]?.journals[0]
 
-  const choose = (id: string) => {
+  const choose = async (id: string) => {
+    // 远程目录里还没下载的刊：先向服务端取这一本的标准（种子 / 已下载的不发请求）。
+    // 额度用完 → 这本刊暂时按「不按期刊」；没网又没缓存 → 保持现状。两种都只用一条胶囊提示。
+    const ready = await ensureJournalReady(id)
+    if (ready.state !== 'ready') {
+      if (ready.state === 'quota') clearJournal()
+      useUiStore
+        .getState()
+        .setStatus(
+          ready.state === 'quota'
+            ? msg('journal.quotaLater', undefined, 'dialogs')
+            : msg('journal.needsNetwork', undefined, 'dialogs'),
+          'info',
+        )
+      setOpen(false)
+      return
+    }
     selectJournal(id)
     setOpen(false)
     setQuery('')

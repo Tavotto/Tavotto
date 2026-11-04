@@ -2461,6 +2461,8 @@
     "unset": "Does not apply to this journal",
     "noJournal": "No journal",
     "cleared": "No longer checking against a journal",
+    "quotaLater": "Journal quota is used up for now, try again later",
+    "needsNetwork": "This journal needs a connection to download",
     "yes": "Yes",
     "no": "No",
     "noLimit": "No limit",

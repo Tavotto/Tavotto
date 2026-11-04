@@ -11,7 +11,7 @@ export destinations are used when the user chooses them.
 
 Network activity includes update checks and user-approved update downloads,
 package lookups and downloads for environment preparation or dependency
-installation, the optional AI assistant the user invokes, — only after
+installation, journal-standards downloads when the user picks a journal, the optional AI assistant the user invokes, — only after
 an explicit opt-in — usage statistics, and — only when the user confirms each
 send — a redacted diagnostics bundle or a letter written through *Contact the maker*. The sections below distinguish these operations; local rendering does
 not mean that every feature is offline.
@@ -76,6 +76,54 @@ time, the updater's user agent) and nothing else: no identifier, no telemetry, n
 project content. Which source the installer came from does not affect trust — the
 installer's signature is always verified with the public key built into the app, and
 an installer that fails verification is not installed.
+
+## Journal standards catalog
+
+Tavotto can offer figure requirements for journals, with a source quote for every
+number. The catalog is hosted by the Tavotto maintainers (the feature is off in
+releases until its data is ready). It works in two steps:
+
+* **The index** (journal names, ISSNs, publisher names and a checksum per journal)
+  is downloaded as a whole when Tavotto starts, at most once a day. It is the same
+  file for everyone and tells the server nothing about you. Searching and browsing
+  journals works offline from it.
+* **A journal's requirements** are downloaded only when you pick that journal, and
+  kept on your computer afterwards. Reading a journal you already downloaded sends
+  nothing.
+
+What the server receives: the journal id, a random anonymous **device token**
+issued by the server the first time it is needed, the catalog version number, a
+client type (`app`, or `agent-<name>` when an AI coding assistant's plugin on your
+computer asks), and what any HTTPS request reveals (IP address, time,
+`Tavotto/<version>` as user agent). Never your project, files, script, paths or
+figure content. The token is not the anonymous statistics identifier and is not
+derived from it; it lives in Tavotto's data folder (`journal-catalog/device.json`)
+and is shared by the app and by assistant plugins on the same computer, so they
+count as one device. Deleting that folder makes the next download request a new
+token.
+
+What the server keeps: **which token first read which journal and when** (plus the
+client type). This is used only to see which journals are popular and to stop
+bulk scraping. **Records are kept for 1 year and then deleted.** IP addresses are
+not stored in clear: a keyed hash is kept for 48 hours to apply the limits below.
+The server limits first-time journal downloads to 20 per day and 10 per hour per
+token, and 100 per day per IP address (app and assistants together); when a limit
+is reached Tavotto keeps working and simply does not apply that journal until
+later.
+
+Every catalog file is verified with a signature (or a checksum listed in the signed
+index) against a public key built into the app; anything that fails verification, is
+older than what is already installed, or fails the catalog's own validation is
+discarded in full and Tavotto falls back to the copy on your computer or the small
+built-in set. `TAVOTTO_NO_JOURNAL_SYNC=1` stops these requests entirely. They do
+not depend on the usage-statistics choice, and `TAVOTTO_NO_TELEMETRY` does not
+control them (it only governs usage statistics, as with update checks), because
+these requests carry no statistics identifier. The catalog is served from the same
+mainland-China host as the website and the diagnostics service, `tavotto.cn`;
+outside mainland China Tavotto tries `tavotto.com` first, which only forwards the request to
+`tavotto.cn` (it stores nothing and counts nothing, and passes on your IP address only so that
+the limits above apply to you rather than to the forwarder). Either way the request is handled by
+one service and recorded once: the same records, kept for 1 year.
 
 ## Package lookup and environment preparation
 

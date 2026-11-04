@@ -10,7 +10,8 @@ import { literal, setLocale } from '@/i18n'
 import { journalSources, loadCatalog } from '@/lib/journals'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
-import { useJournalCatalogStore } from '@/store/journalCatalogStore'
+import { BUNDLED_ASSET_BASE, useJournalCatalogStore } from '@/store/journalCatalogStore'
+import { useUiStore } from '@/store/uiStore'
 import { emptyProject } from '@/types/document'
 import { JournalPicker } from './JournalPicker'
 import { JournalRequirements } from './JournalRequirements'
@@ -288,5 +289,40 @@ describe('预检结果行的出处', () => {
     selectJournal('fx-delta')
     await mount(<IssueJournalSource issue={issue('page-width')} />)
     expect(q('[data-journal-source]')).toBeNull()
+  })
+})
+
+describe('远程目录里还没下载的刊：选中时的胶囊提示', () => {
+  const remote = () => {
+    useJournalCatalogStore.getState().setCatalog(vectors.catalog, '/api/journal-catalog/assets/')
+    useJournalCatalogStore.getState().setLoaded([])
+  }
+  const reply = (body: unknown) => {
+    globalThis.fetch = (async () => new Response(JSON.stringify(body), { status: 200 })) as typeof fetch
+  }
+  const statusKey = () => (useUiStore.getState().status as { key?: string } | null)?.key
+  afterEach(() => {
+    globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
+    useJournalCatalogStore.setState({ catalog: loadCatalog(), assetBase: BUNDLED_ASSET_BASE, loaded: null })
+  })
+
+  it('额度用完：不绑定，一条「稍后再试」胶囊', async () => {
+    remote()
+    reply({ state: 'quota', code: 'quota_day', retry_after_s: 60, bundle: null })
+    await mount(<JournalPicker />)
+    await click(q('[data-journal-picker]'))
+    await click(q('[data-journal-option="fx-beta"]'))
+    expect(useDocumentStore.getState().doc.profile?.journalRef).toBeUndefined()
+    expect(statusKey()).toBe('journal.quotaLater')
+  })
+
+  it('没网又没缓存：不绑定，一条「需要联网下载」胶囊', async () => {
+    remote()
+    reply({ state: 'offline', code: 'network', bundle: null })
+    await mount(<JournalPicker />)
+    await click(q('[data-journal-picker]'))
+    await click(q('[data-journal-option="fx-beta"]'))
+    expect(useDocumentStore.getState().doc.profile?.journalRef).toBeUndefined()
+    expect(statusKey()).toBe('journal.needsNetwork')
   })
 })
