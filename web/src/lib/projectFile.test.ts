@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   forgetProjectFile,
+  findDocumentsForProjectFile,
   forgetProjectFilesInSession,
   readProjectFile,
   writeProjectFile,
@@ -46,5 +47,22 @@ describe('写不进本机存储时本会话照常', () => {
     writeProjectFile('d1', B)
     forgetProjectFilesInSession()
     expect(readProjectFile('d1')).toEqual({ ...B, at: expect.any(Number) })
+  })
+})
+
+describe('findDocumentsForProjectFile 读最新的持久绑定（Codex #1734 P1）', () => {
+  it('别的窗口把它置 dirty 之后，本窗口缓存里的干净旧绑定不能让它被放行', () => {
+    writeProjectFile('d1', B)
+    const raw = JSON.parse(localStorage.getItem('tavotto.projectFile.d1')!)
+    localStorage.setItem('tavotto.projectFile.d1', JSON.stringify({ ...raw, dirty: true }))
+    expect(findDocumentsForProjectFile(B.projectId, B.file)).toEqual([])
+  })
+
+  it('存储写不进去时退回会话缓存', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('full', 'QuotaExceededError')
+    })
+    writeProjectFile('d1', B)
+    expect(findDocumentsForProjectFile(B.projectId, B.file)).toEqual(['d1'])
   })
 })

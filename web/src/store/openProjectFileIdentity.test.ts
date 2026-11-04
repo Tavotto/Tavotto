@@ -116,4 +116,39 @@ describe('重开项目里的同一个排版文件', () => {
       expect(['d_new', 'd_old']).not.toContain(s().documentId)
     })
   })
+
+  it('别的窗口后来把这份置 dirty（本窗口会话缓存仍是干净旧绑定）：不沿用，不盖它的槽位', async () => {
+    writeProjectFile('d_old', bind('tavottofile/a.json')) // 本窗口会话缓存：干净
+    // 窗口 B 之后在同一份上编辑未存项目文件：只改了持久副本
+    const raw = JSON.parse(localStorage.getItem('tavotto.projectFile.d_old')!)
+    localStorage.setItem('tavotto.projectFile.d_old', JSON.stringify({ ...raw, dirty: true }))
+    await openLayoutDocument(emptyProject(), bind('tavottofile/a.json'))
+    expect(s().documentId).not.toBe('d_old')
+  })
+
+  describe('探测占用期间项目或排版变了', () => {
+    afterEach(() => __setPresenceChannelFactory(null))
+
+    it('不把旧项目的排版装进新选的工作区，返回 false', async () => {
+      writeProjectFile('d_old', bind('tavottofile/a.json'))
+      __setPresenceChannelFactory(() => {
+        let listener: ((ev: { data: unknown }) => void) | null = null
+        return {
+          addEventListener: (_t, l) => { listener = l },
+          close: () => {},
+          postMessage: (d) => {
+            const m = d as { type: string; docId: string; reqId: string }
+            if (m.type !== 'doc-probe') return
+            // 探测还在等回音时，用户切到了另一份排版（loadSeq 变）
+            void s().switchDocument(emptyProject(), 'd_switched').then(() =>
+              listener?.({ data: { type: 'doc-probe-ack', docId: 'd_nobody', tabId: 'other', reqId: m.reqId } }),
+            )
+          },
+        }
+      })
+      const ok = await openLayoutDocument(emptyProject(), bind('tavottofile/a.json'))
+      expect(ok).toBe(false)
+      expect(s().documentId).toBe('d_switched')
+    })
+  })
 })

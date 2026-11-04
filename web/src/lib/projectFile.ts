@@ -70,6 +70,26 @@ export function readProjectFile(documentId: string): ProjectFileBinding | null {
   }
 }
 
+/**
+ * 判「能不能沿用旧身份」专用：**持久副本优先**。别的窗口可能在本窗口的会话缓存之后又改过
+ * 同一份（例如经最近文档打开、编辑了没存项目文件就关了——绑定被置 dirty），本窗口缓存里
+ * 还是干净的旧绑定；拿缓存判会把已经 dirty 的槽位放行、被项目文件内容盖掉（Codex #1734 P1）。
+ * 本会话明确解绑过（缓存里是 null）= 解绑；存储读不了才退回缓存。
+ */
+export function readLatestProjectFile(documentId: string): ProjectFileBinding | null {
+  if (inSession.has(documentId) && inSession.get(documentId) === null) return null
+  try {
+    const raw = localStorage.getItem(PREFIX + documentId)
+    if (raw) {
+      const v: unknown = JSON.parse(raw)
+      return isBinding(v) ? v : null
+    }
+  } catch {
+    /* 退回会话缓存 */
+  }
+  return inSession.get(documentId) ?? null
+}
+
 export function writeProjectFile(documentId: string, binding: ProjectFileBinding): ProjectFileBinding {
   const stamped = { ...binding, at: Date.now() }
   inSession.set(documentId, stamped)
@@ -117,7 +137,7 @@ export function findDocumentsForProjectFile(projectId: string, file: string): st
   for (const id of inSession.keys()) ids.add(id)
   const hits: { id: string; at: number }[] = []
   for (const id of ids) {
-    const b = readProjectFile(id)
+    const b = readLatestProjectFile(id)
     if (!b || b.dirty || b.projectId !== projectId || b.file !== file) continue
     hits.push({ id, at: b.at ?? 0 })
   }
