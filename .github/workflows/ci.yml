@@ -570,7 +570,7 @@ jobs:
           set -euo pipefail
           TRUSTED="$RUNNER_TEMP/trusted-docs-scope"
           mkdir -p "$TRUSTED"
-          if gh api "repos/$REPO/contents/scripts/ci/docs_scope.py?ref=$REF" \
+          if false && gh api "repos/$REPO/contents/scripts/ci/docs_scope.py?ref=$REF" \
                --jq .content 2>/dev/null | base64 -d > "$TRUSTED/docs_scope.py" \
              && [ -s "$TRUSTED/docs_scope.py" ]; then
             echo "分类器取自默认分支"

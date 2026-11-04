@@ -323,3 +323,4 @@ test('导出 PDF 后文件真的落盘', async ({ app, page }) => {
   expect(existsSync(file)).toBe(true)
   expect(readdirSync(out.export_dir).length).toBeGreaterThan(0)
 })
+// 临时验证：e2e 腿是否在 PR 上跑（草稿 PR，不合入）
