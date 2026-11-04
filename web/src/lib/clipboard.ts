@@ -9,9 +9,10 @@ import { exactPanelManifest, structuralPanelManifest, useRenderStore } from '@/s
 import { deferUserEntry } from '@/store/documentRestore'
 import { runDiscreteAction } from '@/store/gestureCoordinator'
 import { useSelectionStore } from '@/store/selectionStore'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useUiStore } from '@/store/uiStore'
 import type { CanvasObject, LayoutGroup, PanelObject } from '@/types/document'
-import { objectLabel } from '@/types/document'
+import { isRuntimePanel, objectLabel } from '@/types/document'
 import { modKey } from '@/lib/utils'
 import { DUPLICATE_OFFSET_MM } from '@/lib/units'
 
@@ -292,13 +293,24 @@ export const useClipboardStore = create<ClipboardState>((set) => ({
   setPending: (pending) => set({ pending }),
 }))
 
+/**
+ * 面板引用的素材在当前项目里找得到吗。静态素材看 assetStore；运行时图（`runtime:` fileId）不在
+ * assetStore 里，身份在 runtimeAssetStore 的清单（后端注册表）。清单还没取回 = 未知，不能判缺失
+ * （未知 ≠ 假）；只有清单取回且没有这张图才算真缺失。
+ */
+function panelSourceKnown(p: PanelObject): boolean {
+  if (useAssetStore.getState().byId[p.fileId]) return true
+  if (!isRuntimePanel(p)) return false
+  const list = useRuntimeAssetStore.getState().assets
+  return list === null || list.some((a) => a.id === p.fileId)
+}
+
 /** 项目包导入后：把当前文档里缺失素材的面板交给重链接对话框处理 */
 export function requestRelinkMissing(): number {
   const { doc } = useDocumentStore.getState()
-  const assets = useAssetStore.getState().byId
   const missingMap = new Map<string, MissingAsset>()
   for (const o of doc.objects) {
-    if (o.type !== 'panel' || assets[o.fileId]) continue
+    if (o.type !== 'panel' || panelSourceKnown(o)) continue
     const cur = missingMap.get(o.fileId)
     if (cur) cur.count += 1
     else {
@@ -422,12 +434,11 @@ export async function pasteObjects(): Promise<boolean> {
 function consumePayload(payload: ClipPayload): boolean {
   // 上次的排版还在恢复：这次粘贴排队到文档就绪再落（一次）；需要用户先处理恢复问题时拒掉并说一句。都算消费了这次粘贴
   if (deferUserEntry(() => void consumePayload(payload)) !== 'run') return true
-  const assets = useAssetStore.getState().byId
   const missingMap = new Map<string, MissingAsset>()
   for (const o of payload.objects) {
     if (o.type !== 'panel') continue
     const p = o as PanelObject
-    if (assets[p.fileId]) continue
+    if (panelSourceKnown(p)) continue
     const cur = missingMap.get(p.fileId)
     if (cur) cur.count += 1
     else {
