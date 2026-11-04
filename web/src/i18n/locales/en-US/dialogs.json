@@ -1,6 +1,6 @@
 {
   "closeGuard": {
-    "body": "This layout has unsaved changes. Save before closing?",
+    "body": "This layout has unsaved changes. If you don’t save, the local draft is kept and can be restored next time.",
     "discard": "Don’t save",
     "save": "Save and close",
     "saveFailed": "Saving failed, so the window stays open. Resolve the problem, or choose “Don’t save” to close anyway.",
