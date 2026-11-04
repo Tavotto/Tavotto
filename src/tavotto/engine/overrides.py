@@ -2423,7 +2423,7 @@ def _get_axes_lim(axis: str):
 
 
 def _positive_log_range(ax, axis: str, lo: float, hi: float) -> tuple[float, float]:
-    """对数轴上不存在 ≤0 的端点：把它换成该轴**自动缩放**给出的那一端。
+    """对数轴上不存在 ≤0 的端点：把它换成按数据与 scale 算出的那一端（不经当前刻度定位器）。
 
     不处理的话 `set_[xy]lim(0, 40)` 在 log 轴上被 matplotlib "忽略"，而忽略成
     什么取决于轴此前停在哪：热会话停在上一次的范围，全新 worker 重放则从脚本
@@ -2436,10 +2436,23 @@ def _positive_log_range(ax, axis: str, lo: float, hi: float) -> tuple[float, flo
     a, b = min(lo, hi), max(lo, hi)
     if a > 0 and b > 0:
         return lo, hi
-    ax.autoscale(enable=True, axis=axis)
-    ax.autoscale_view()
-    cur = ax.get_xlim() if axis == "x" else ax.get_ylim()
-    auto_lo, auto_hi = min(cur), max(cur)
+    # 只依赖数据与 scale：不能走 `autoscale_view()`——它会问当前装着的主刻度
+    # 定位器 `nonsingular()`，而热态可能已被「固定刻度」换成 FixedLocator，冷重放
+    # 时（刻度档晚于范围档）还是 LogLocator，退化数据（全是 10）扩出的范围不同。
+    import numpy as np  # noqa: PLC0415
+    from matplotlib.ticker import LogLocator  # noqa: PLC0415
+
+    lim = ax.dataLim
+    d0, d1 = lim.intervalx if axis == "x" else lim.intervaly
+    minpos = lim.minposx if axis == "x" else lim.minposy
+    lo_d = float(minpos) if np.isfinite(minpos) and minpos > 0 else 1.0
+    hi_d = float(max(d0, d1)) if np.isfinite(d0) and np.isfinite(d1) else 0.0
+    if hi_d <= 0:
+        hi_d = lo_d * 10.0
+    fresh = LogLocator()  # 全新的，不碰轴上装着的那个
+    fresh.set_axis(ax.xaxis if axis == "x" else ax.yaxis)
+    auto_lo, auto_hi = fresh.nonsingular(lo_d, max(hi_d, lo_d))
+    auto_lo, auto_hi = min(auto_lo, auto_hi), max(auto_lo, auto_hi)
     if a <= 0:
         a = auto_lo
     if b <= 0:

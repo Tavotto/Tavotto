@@ -871,3 +871,40 @@ def test_log_axis_nonpositive_limit_hot_equals_replay(library, axis, bad):
     assert _lims(hot_man, axis) == pytest.approx(_lims(replay_man, axis))
     lo, hi = _lims(replay_man, axis)
     assert lo > 0 and hi > 0
+
+
+DEGENERATE = """\
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def main():
+    fig, ax = plt.subplots(figsize=(4.0, 3.0))
+    ax.plot(np.full(5, 10.0), np.linspace(1.0, 5.0, 5), "o")
+    fig.savefig("AxesFig.pdf")
+"""
+
+
+def test_log_axis_nonpositive_limit_independent_of_installed_tick_locator(tmp_path):
+    """X 数据全是 10（退化范围），先固定主刻度（装上 FixedLocator），再给
+    xlim=[0,40] + log：规范化若问当前定位器，热态与冷重放（刻度档晚于范围档，
+    此时还是 LogLocator）扩出的范围不同。必须只依赖数据与 scale。"""
+    (tmp_path / SCRIPT_NAME).write_text(DEGENERATE, encoding="utf-8")
+    ticks = [
+        {"gid": "axes_0.xticks", "prop": "major_mode", "value": "fixed"},
+        {"gid": "axes_0.xticks", "prop": "major_values", "value": [10.0]},
+    ]
+    final = [
+        {"gid": "axes_0", "prop": "xlim", "value": [0.0, 40.0]},
+        {"gid": "axes_0", "prop": "xscale", "value": "log"},
+        *ticks,
+    ]
+    hot = _worker(tmp_path)
+    try:
+        hot.override(STEM, ticks)
+        hot_man = hot.override(STEM, final)["manifest"]
+    finally:
+        pool.discard(hot)
+    replay_man = _render(tmp_path, final)
+    assert _lims(hot_man, "x") == pytest.approx(_lims(replay_man, "x"))
+    assert _lims(replay_man, "x")[0] > 0
