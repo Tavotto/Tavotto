@@ -712,6 +712,8 @@ def check_scope(path: str) -> str:
             recovery=failure.next_step,
             path=real,
         )
+    if any(_within(real, r) for r in roots):
+        return real
     failure = WORKSPACE_FAILURES[CODE_PATH_OUT_OF_SCOPE]
     raise BridgeError(
         f"{failure.summary}不在范围内的是 {real}；当前允许的根: {os.pathsep.join(roots)}。",
