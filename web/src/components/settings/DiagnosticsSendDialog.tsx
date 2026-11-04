@@ -571,7 +571,8 @@ export function DiagnosticsSendDialog({
                 <span className="flex min-w-0 flex-col">
                   <span>{ds(`extra.${key}`)}</span>
                   {/* 隐私提示只在勾选后出现在该项下面：勾选那一刻正是需要知情的时候 */}
-                  {options[key] && (
+                  {/* 脚本源码不出提示（用户 2026-11-04 裁决）；其余两项勾上才出 */}
+                  {options[key] && key !== 'source' && (
                     <span className="type-caption" data-diag-send-extra-hint={key}>
                       {ds(`extraHint.${key}`)}
                     </span>

@@ -1530,7 +1530,6 @@
           "corrupt_sessions": "Contents of corrupted session copies"
         },
         "extraHint": {
-          "source": "Scripts and dependency files are attached as is; secrets may survive redaction, so do not tick if they hold any.",
           "crash_reports": "A Windows crash dump is a memory snapshot and may hold file contents and paths; it cannot be redacted.",
           "corrupt_sessions": "Only names and sizes by default; tick to attach contents."
         },

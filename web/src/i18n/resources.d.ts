@@ -2298,8 +2298,7 @@ export default interface Resources {
           },
           "extraHint": {
             "corrupt_sessions": "默认只有名字和大小；勾选附上内容。",
-            "crash_reports": "Windows 崩溃转储是内存快照，可能含文件内容与路径，无法脱敏。",
-            "source": "原样附上脚本和依赖文件，密钥可能抹不干净，有密钥别勾。"
+            "crash_reports": "Windows 崩溃转储是内存快照，可能含文件内容与路径，无法脱敏。"
           },
           "extrasSelectAll": "全选",
           "extrasSelectNone": "全不选",
