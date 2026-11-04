@@ -71,23 +71,29 @@ export function readProjectFile(documentId: string): ProjectFileBinding | null {
 }
 
 /**
- * 判「能不能沿用旧身份」专用：**持久副本优先**。别的窗口可能在本窗口的会话缓存之后又改过
- * 同一份（例如经最近文档打开、编辑了没存项目文件就关了——绑定被置 dirty），本窗口缓存里
- * 还是干净的旧绑定；拿缓存判会把已经 dirty 的槽位放行、被项目文件内容盖掉（Codex #1734 P1）。
- * 本会话明确解绑过（缓存里是 null）= 解绑；存储读不了才退回缓存。
+ * 判「能不能沿用旧身份」专用：会话缓存与持久副本**两份都看，任何一份 dirty / 对不上就不沿用**。
+ * 别的窗口可能后来把持久副本置 dirty（本窗口缓存还是干净旧绑定）；本窗口也可能把缓存置 dirty 而
+ * 持久副本写失败（配额满，持久副本停在干净旧值）——两种都得放弃沿用（Codex #1734 P1）。
+ * 本会话明确解绑过（缓存里是 null）= 解绑。返回 null = 不可沿用。
  */
-export function readLatestProjectFile(documentId: string): ProjectFileBinding | null {
+export function bindingForReuse(documentId: string, projectId: string, file: string): ProjectFileBinding | null {
   if (inSession.has(documentId) && inSession.get(documentId) === null) return null
+  const seen: ProjectFileBinding[] = []
+  const cached = inSession.get(documentId)
+  if (cached) seen.push(cached)
   try {
     const raw = localStorage.getItem(PREFIX + documentId)
     if (raw) {
       const v: unknown = JSON.parse(raw)
-      return isBinding(v) ? v : null
+      if (isBinding(v)) seen.push(v)
+      else return null
     }
   } catch {
-    /* 退回会话缓存 */
+    /* 持久副本读不了：只看会话缓存 */
   }
-  return inSession.get(documentId) ?? null
+  if (seen.length === 0) return null
+  if (seen.some((b) => b.dirty || b.projectId !== projectId || b.file !== file)) return null
+  return seen.reduce((x, y) => ((y.at ?? 0) > (x.at ?? 0) ? y : x))
 }
 
 export function writeProjectFile(documentId: string, binding: ProjectFileBinding): ProjectFileBinding {
@@ -137,8 +143,8 @@ export function findDocumentsForProjectFile(projectId: string, file: string): st
   for (const id of inSession.keys()) ids.add(id)
   const hits: { id: string; at: number }[] = []
   for (const id of ids) {
-    const b = readLatestProjectFile(id)
-    if (!b || b.dirty || b.projectId !== projectId || b.file !== file) continue
+    const b = bindingForReuse(id, projectId, file)
+    if (!b) continue
     hits.push({ id, at: b.at ?? 0 })
   }
   // 最近绑定 / 写成的在前（它最可能带着用户的历史）；时间相同按 id 排，结果稳定

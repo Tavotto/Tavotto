@@ -68,7 +68,7 @@ import type {
   TextObject,
 } from '@/types/document'
 import { emptyProject, objectLabel, type ProjectDocument } from '@/types/document'
-import { findDocumentsForProjectFile, readLatestProjectFile, type ProjectFileBinding } from '@/lib/projectFile'
+import { findDocumentsForProjectFile, bindingForReuse, type ProjectFileBinding } from '@/lib/projectFile'
 import { isDocHeldElsewhere } from '@/lib/docPresence'
 import { useAssetStore } from './assetStore'
 import { useEnvStore } from './envStore'
@@ -680,11 +680,11 @@ export async function openLayoutDocument(
   }
   if (reuse) {
     // 复核：探测期间别的窗口可能又改过这份（绑定被置 dirty），那就不盖它的槽位、给新身份
-    if (readLatestProjectFile(reuse)?.dirty !== false) reuse = null
+    if (bindingForReuse(reuse, projectFile!.projectId, projectFile!.file) === null) reuse = null
     else {
       await adoptSlotBaseline(reuse)
       if (!stillCurrent(ctx)) return skipped()
-      if (readLatestProjectFile(reuse)?.dirty !== false) reuse = null
+      if (bindingForReuse(reuse, projectFile!.projectId, projectFile!.file) === null) reuse = null
     }
   }
   let aborted = false

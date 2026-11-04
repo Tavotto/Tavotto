@@ -65,4 +65,15 @@ describe('findDocumentsForProjectFile 读最新的持久绑定（Codex #1734 P1�
     writeProjectFile('d1', B)
     expect(findDocumentsForProjectFile(B.projectId, B.file)).toEqual(['d1'])
   })
+
+  it('第一次写成功、之后置 dirty 时持久副本写失败：以 dirty 的会话绑定为准，不沿用', () => {
+    writeProjectFile('d1', B)
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('full', 'QuotaExceededError')
+    })
+    writeProjectFile('d1', { ...B, dirty: true })
+    expect(readProjectFile('d1')?.dirty).toBe(true)
+    expect(JSON.parse(localStorage.getItem('tavotto.projectFile.d1')!).dirty).toBe(false) // 持久副本停在旧值
+    expect(findDocumentsForProjectFile(B.projectId, B.file)).toEqual([])
+  })
 })
