@@ -63,6 +63,10 @@ os.environ.setdefault("TAVOTTO_USER_ENV_DISCOVERY", "0")
 # 遥测自己的用例把它摘掉并替换掉传输层（tests/test_telemetry.py）。
 os.environ["TAVOTTO_NO_TELEMETRY"] = "1"
 
+# 远程期刊目录（ADR 0155 §10）同样硬关：测试进程绝不连 tavotto.cn / tavotto.com、也不签发设备令牌。
+# `TAVOTTO_NO_TELEMETRY` 不代管它（与 updater 同一先例），所以单独钉；期刊远程用例（tests/test_journal_remote.py）自己摘掉并注入假服务器。
+os.environ["TAVOTTO_NO_JOURNAL_SYNC"] = "1"
+
 # 「发送问题反馈」（ADR 0118）发行版默认开启入口、内置生产端点 `https://tavotto.cn`（G-DIAG 开放，2026-10-13）。
 # 测试进程同样**硬关**：没设任何开关的 pytest 进程里 `diagsend.enabled()` 为 False，不可能误连生产。
 # 诊断发送自己的用例（tests/test_diag_send*.py）在 fixture 里摘掉它，再用下面的会话级探针兜底。

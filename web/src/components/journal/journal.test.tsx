@@ -10,7 +10,8 @@ import { literal, setLocale } from '@/i18n'
 import { journalSources, loadCatalog } from '@/lib/journals'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
-import { useJournalCatalogStore } from '@/store/journalCatalogStore'
+import { BUNDLED_ASSET_BASE, useJournalCatalogStore } from '@/store/journalCatalogStore'
+import { useUiStore } from '@/store/uiStore'
 import { emptyProject } from '@/types/document'
 import { JournalPicker } from './JournalPicker'
 import { JournalRequirements } from './JournalRequirements'
@@ -288,5 +289,108 @@ describe('预检结果行的出处', () => {
     selectJournal('fx-delta')
     await mount(<IssueJournalSource issue={issue('page-width')} />)
     expect(q('[data-journal-source]')).toBeNull()
+  })
+})
+
+describe('远程目录里还没下载的刊：选中时的胶囊提示', () => {
+  const remote = () => {
+    useJournalCatalogStore.getState().setCatalog(vectors.catalog, '/api/journal-catalog/assets/')
+    useJournalCatalogStore.getState().setLoaded([])
+  }
+  const reply = (body: unknown) => {
+    globalThis.fetch = (async () => new Response(JSON.stringify(body), { status: 200 })) as typeof fetch
+  }
+  const statusKey = () => (useUiStore.getState().status as { key?: string } | null)?.key
+  afterEach(() => {
+    globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
+    useJournalCatalogStore.setState({ catalog: loadCatalog(), assetBase: BUNDLED_ASSET_BASE, loaded: null })
+  })
+
+  it('额度用完：不绑定，一条「稍后再试」胶囊', async () => {
+    remote()
+    reply({ state: 'quota', code: 'quota_day', retry_after_s: 60, bundle: null })
+    await mount(<JournalPicker />)
+    await click(q('[data-journal-picker]'))
+    await click(q('[data-journal-option="fx-beta"]'))
+    expect(useDocumentStore.getState().doc.profile?.journalRef).toBeUndefined()
+    expect(statusKey()).toBe('journal.quotaLater')
+  })
+
+  it('没网又没缓存：不绑定，一条「需要联网下载」胶囊', async () => {
+    remote()
+    reply({ state: 'offline', code: 'network', bundle: null })
+    await mount(<JournalPicker />)
+    await click(q('[data-journal-picker]'))
+    await click(q('[data-journal-option="fx-beta"]'))
+    expect(useDocumentStore.getState().doc.profile?.journalRef).toBeUndefined()
+    expect(statusKey()).toBe('journal.needsNetwork')
+  })
+
+  /** 可手动放行的下载：返回 release(body)，在它被调用之前 fetch 一直挂着 */
+  const deferred = () => {
+    const releases: ((body: unknown) => void)[] = []
+    globalThis.fetch = (() =>
+      new Promise<Response>((resolve) => {
+        releases.push((body) => resolve(new Response(JSON.stringify(body), { status: 200 })))
+      })) as typeof fetch
+    return releases
+  }
+  const bundleOf = (id: string) => {
+    const j = (vectors.catalog.journals as Record<string, { publisher: string }>)[id]
+    return {
+      journal_id: id,
+      journal: j,
+      publisher_id: j.publisher,
+      publisher: (vectors.catalog.publishers as Record<string, unknown>)[j.publisher],
+    }
+  }
+  const skeletonCatalog = () => {
+    const full = structuredClone(vectors.catalog) as unknown as {
+      publishers: Record<string, { label: string }>
+      journals: Record<string, { label: string; publisher: string }>
+    }
+    return {
+      ...full,
+      publishers: Object.fromEntries(Object.entries(full.publishers).map(([k, v]) => [k, { label: v.label }])),
+      journals: Object.fromEntries(Object.entries(full.journals).map(([k, v]) => [k, { label: v.label, publisher: v.publisher }])),
+    }
+  }
+
+  it('下载等待期间改选别的刊：先发起的那次回来后被丢弃，不覆盖新选择', async () => {
+    useJournalCatalogStore.getState().setCatalog(skeletonCatalog(), '/api/journal-catalog/assets/')
+    useJournalCatalogStore.getState().setLoaded(['fx-alpha'])
+    const releases = deferred()
+    await mount(<JournalPicker />)
+    await click(q('[data-journal-picker]'))
+    await click(q('[data-journal-option="fx-beta"]')) // 要下载，挂起
+    expect(releases).toHaveLength(1)
+    await click(q('[data-journal-option="fx-alpha"]')) // 已在本地：立刻绑定
+    expect(useDocumentStore.getState().doc.profile?.journalRef?.id).toBe('fx-alpha')
+    await act(async () => releases[0]({ state: 'ready', bundle: bundleOf('fx-beta') }))
+    expect(useDocumentStore.getState().doc.profile?.journalRef?.id).toBe('fx-alpha')
+  })
+
+  it('下载等待期间点「不按期刊」：回来后不再把期刊绑回去', async () => {
+    useJournalCatalogStore.getState().setCatalog(skeletonCatalog(), '/api/journal-catalog/assets/')
+    useJournalCatalogStore.getState().setLoaded([])
+    const releases = deferred()
+    await mount(<JournalPicker />)
+    await click(q('[data-journal-picker]'))
+    await click(q('[data-journal-option="fx-beta"]'))
+    await click(q('[data-journal-none]'))
+    await act(async () => releases[0]({ state: 'ready', bundle: bundleOf('fx-beta') }))
+    expect(useDocumentStore.getState().doc.profile?.journalRef).toBeUndefined()
+  })
+
+  it('下载等待期间换了文档：回来后不改新文档的绑定', async () => {
+    useJournalCatalogStore.getState().setCatalog(skeletonCatalog(), '/api/journal-catalog/assets/')
+    useJournalCatalogStore.getState().setLoaded([])
+    const releases = deferred()
+    await mount(<JournalPicker />)
+    await click(q('[data-journal-picker]'))
+    await click(q('[data-journal-option="fx-beta"]'))
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_journal_ui_other')
+    await act(async () => releases[0]({ state: 'ready', bundle: bundleOf('fx-beta') }))
+    expect(useDocumentStore.getState().doc.profile?.journalRef).toBeUndefined()
   })
 })

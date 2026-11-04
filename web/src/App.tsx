@@ -65,6 +65,7 @@ import { useEnvStore } from '@/store/envStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { checkUpdateOnStartup } from '@/store/updateStore'
+import { syncJournalCatalog } from '@/lib/journalCatalogSync'
 import { restoreSession, startAutosave, useDocumentStore } from '@/store/documentStore'
 import { startLayoutAutoReflow } from '@/store/actions'
 import { startPageSizeFit } from '@/store/pageFit'
@@ -93,6 +94,8 @@ export function App() {
     // 静默取一次版本状态（有新版本才弹 UpdateNoticeDialog、点顶栏圆点）。
     // 桌面与浏览器是两条互斥的升级通道，由 checkUpdateOnStartup 决定查哪一条
     checkUpdateOnStartup()
+    // 远程期刊索引：静默同步一次（入口关着时什么都不发；失败退回缓存 / 种子，不弹错）
+    void syncJournalCatalog()
     // 渲染环境状态：缺 matplotlib 时属性栏与设置里都要能给出引导
     void useEnvStore.getState().refresh()
     // 匿名用量统计的同意态。**只是读一下**——没同意之前后端一个事件都不发，

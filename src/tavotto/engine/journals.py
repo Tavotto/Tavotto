@@ -695,6 +695,10 @@ JOURNAL_CATALOG_AGENTS = True
 AGENT_ERROR_CODES = (
     "journal_catalog_disabled",  # 入口开关关着
     "journal_id_conflict",  # journal_id 与手写 profile_id / journal 同时给
+    # 远程目录（ADR 0155 §10）：这本刊的标准要从服务端下载，下不来时**明确报错、不静默退回**
+    "journal_quota_exceeded",  # 服务端额度用完（令牌 / IP 限额）；带 retry_after_s，别换令牌重试
+    "journal_offline",  # 这本刊本地没有、又联不上网（或同步开关关着）
+    "journal_verification_failed",  # 验签 / 哈希 / 目录校验没过，整份弃用；不要采用任何来自它的数值
 )
 
 

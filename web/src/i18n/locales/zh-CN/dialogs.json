@@ -2444,6 +2444,8 @@
     "unset": "本刊不适用",
     "noJournal": "不按期刊",
     "cleared": "已不按期刊检查",
+    "quotaLater": "期刊额度暂时用完了，稍后再试",
+    "needsNetwork": "这本期刊需要联网下载",
     "yes": "是",
     "no": "否",
     "noLimit": "不限",

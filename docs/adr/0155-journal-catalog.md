@@ -101,10 +101,10 @@
 * **代码、schema、校验、两侧同源检查仍在仓库**；服务端数据客户端照样按**同一套 schema 与校验**（本 ADR §3 / §3b）过一遍，**不通过就整份弃用**，退回缓存 / 种子，不做部分采信。
 * **项目快照照旧（ADR 0029）**：绑定里记期刊 id + `catalog_rev`（并按 §4 存折叠出的覆盖与精简出处），服务端目录更新**不改**已定稿项目的结论；「有新版可同步」仍由用户确认。
 * **签名**：服务端目录带签名（建议 Ed25519），**公钥内置在应用里**，验签通过才使用；验签失败、签名缺失或 `catalog_rev` 倒退都当作不可用，退回缓存 / 种子。私钥不进仓库、不进客户端。
-* **隐私**：客户端按**出版社**或**全量**拉取、在本地挑选，**不按单刊请求**——服务端看不出用户在作哪本期刊的图。隐私说明（`docs/privacy.md`）随远程拉取那个 PR 同步写明：请求里只有目录范围与版本号，不带项目、脚本、路径或所选期刊；遵守遥测同意与 `TAVOTTO_NO_TELEMETRY` 的既有边界。
+* **隐私**（**已被 §10 取代**：2026-11-04 用户改为按需下载、服务端留读取记录）：~~客户端按**出版社**或**全量**拉取、在本地挑选，**不按单刊请求**——服务端看不出用户在作哪本期刊的图。~~隐私说明（`docs/privacy.md`）随远程拉取那个 PR 同步写明：请求里只有目录范围与版本号，不带项目、脚本、路径或所选期刊；遵守遥测同意与 `TAVOTTO_NO_TELEMETRY` 的既有边界。
 * **版权**：`quote` 只存一两句短摘录，不存整页原文；目录里不放抓取的网页正文或截图。
 * **分 PR**：PR 1 数据结构与加载（本 PR）→ PR 2 选择器与出处卡 → PR 3 种子数据（几十本头部期刊 + 出版社通用标准，按出版社分 PR，逐条人工核对）→ PR 4 出处巡检；
-  **远程目录（拉取、Ed25519 验签、本地缓存、离线回退到缓存 / 种子）另开 PR**，排在选择器 PR 2 之后或与之并行；服务端复用中国站 / workerd 基础设施，目录的生成与签名发布在服务端侧的工作流里，不在本仓库。完整目录的数据不进仓库。
+  **远程目录（拉取、Ed25519 验签、本地缓存、离线回退到缓存 / 种子；协议见 §10）另开 PR**，排在选择器 PR 2 之后或与之并行；服务端复用中国站 / workerd 基础设施，目录的生成与签名发布在服务端侧的工作流里，不在本仓库。完整目录的数据不进仓库。
 
 ### 5. 不做的事
 
@@ -145,6 +145,96 @@
 * **`journal_ref`**：`{id, catalog_rev, retrieved}`（口径同桌面 `journalRef`：`retrieved` 取该期刊全部出处里最晚的取回日期；snake_case）。进 `profile` 的印章（`profiles.stamp`）与会话里的 profile，
   所以 open / preflight / export 的结果顶层各有一份 `journal_ref`，proof report 顶层与 `profile` 里也有；之后不带参数的调用沿用会话里的期刊与 `journal_ref`。
 * 技能文本（SKILL.md / references）此时不写；开关打开那个 PR 再加。开关关着期间不写发行说明（同 §8）。
+
+### 10. 远程目录协议（用户 2026-11-04 拍板：按需下载 + 设备令牌 + 限额；取代 §4b 的「不按单刊请求」）
+
+> **隐私口径变更**：§4b 原写「不按单刊请求、服务端看不出用户在作哪本期刊」。用户 2026-11-04 决定改为**按需下载**——选中某本刊时才向服务端取它的标准，
+> 服务端**会记录「哪个设备令牌在什么时候首次读了哪本刊」，保留 1 年，到期删除，用途仅是统计热门刊与防刷**。§4b 其余（验签、`catalog_rev` 单调、整份校验失败弃用、项目快照不受服务端更新影响）不变。
+> 实现：`engine/journalremote.py`（客户端；Ed25519 验签用 pyca `cryptography`，见「签名与完整性」）、`services/journal_catalog/`（服务端，不进 wheel）、
+> 发布与签名工具在私有数据仓库 `tools/catalog/publish_catalog.py`。
+
+**两层数据。**
+
+| 层 | 内容 | 获取 | 计数 |
+|---|---|---|---|
+| 索引 | 出版社名；每本刊的 id / 名称 / ISSN / 别名 + 刊包的 `sha256` 与字节数；`catalog_rev` | 启动时整份下载，**签名** | 不计数；搜索与浏览离线可用 |
+| 刊包 | 该刊完整对象 + 所属出版社完整对象（含 `sources` / `rules`） | 选中该刊时才下载 | 服务端按设备令牌对该刊的**首次**读取计 1 |
+| 快照 | 高亮短图 `snapshots/<sha256>.webp`（内容寻址） | 出处卡要看时才拉 | 不计数（需有效令牌） |
+
+**签名与完整性。** 索引是信封 `{alg:"ed25519", key_id, payload:<base64>, sig:<base64>}`，签名覆盖 `payload` 解码后的原始字节（不做规范化）。
+每本刊的标准**不单独签名**，由签名索引给出的 `sha256` + 字节数担保：哈希或大小对不上，刊包整个作废。选这条的理由：服务端对象存储 / 缓存不可信也无妨；
+发布时只签一次；换版本时只有变了的刊哈希变。公钥内置在 `journalremote.TRUSTED_KEYS`（`key_id → 公钥`，可同时放多把，轮换时新旧并存一个版本）。
+验签失败、签名缺失、`key_id` 未知、索引畸形、`catalog_rev` 低于「历史最高与内置种子」，一律整次作废，缓存原样；拼出的完整目录（种子 + 索引骨架 + 已下载刊包）过 `journals.validate_catalog`，
+不过整份弃用（前端 `setCatalog` 再过一道 `loadCatalog`）。种子里有的刊以种子为准，不下载、不计数。
+
+**验签用成熟库，不手写加密（用户 2026-11-05 拍板）。** 验签调 pyca `cryptography` 的 `Ed25519PublicKey.from_public_bytes(pk).verify(sig, msg)`（先判公钥 32 / 签名 64 字节；任何异常，含库缺失，一律当验签失败，目录保持种子）。早先一版是 `engine/ed25519.py` 里手写的纯标准库验签，已删除：为省一个原生依赖而自己实现签名算法，不如用被广泛审计的库。代价是 Flask 父进程的依赖闭包多了 `cryptography`（及其 `cffi`），安装包增大（见 PR 说明里的体积估算）；缓解是**延后 import**——只在拉索引验签的函数里 import，Flask 启动不加载（`tests/test_journal_remote.py` 看护 `import tavotto.app` 后 `cryptography` 不在 `sys.modules`），冻结产物由 `packaging/tavotto.spec` 点名收进 hiddenimports。
+
+**限流可调（用户 2026-11-05 拍板）。** 理由：学校 / 公司 / 宿舍整片人共用一个出口 IP，原先「每 IP 每天 5 个新令牌、100 本」会让第 6 个同学起拿不到令牌，而这个 IP 维度本来只是防「一个出口大规模刷」，不是防个人（个人由设备维度的 10 本 / 小时、20 本 / 天管）。所以：
+1. **默认放宽 IP 维度**：新令牌 5 → 200 / 天；首次读取 100 → 2000 / 天（约 200 台设备 × 日均约 10 本，设备自己的上限是 20 本 / 天，日均远低于上限）。设备维度不变。
+2. **规则运行时可调，不用重新部署**：规则存 sqlite 表（`rules` 全局默认值与紧急开关、`ip_cidr_rules` 网段例外、`rule_audit` 审计，只用 SQLite / D1 共有语法），服务每约 10 秒读一次（短 TTL 缓存）。环境变量 `TAVOTTO_JC_*` 保留，作为规则表没写时的缺省。
+3. **网段例外**：管理员写 CIDR（IPv4 段、IPv6 前缀）→ 放宽到指定值，或完全豁免 IP 维度（设备维度照常）；多条命中取最长前缀。判断在 HMAC **之前**、用请求里的明文 IP 在内存里做，明文 IP 不落库、不进日志、不进审计；比 `/8`（IPv6 `/32`）更宽的网段命令行拒收（要整体放开用紧急开关）。
+4. **紧急开关**：一键关掉所有 IP 维度限额，设备维度照常。
+5. **管理命令** `python -m services.journal_catalog.admin rules list|set|exempt-cidr|clear`、`kill-switch on|off`、`top --n N`；每次改动写审计表（操作者 `--by` 或 `$USER`、时间、改了什么；只有规则键、旧值 → 新值、管理员写的 CIDR）。
+6. **可观测**：按 `ip_key` 记当天不同设备数（设备只存 HMAC 派生的 16 位标签，不能回连 `devices` / `reads`）与被拒次数（按 code），`top` 只显示 `ip_key` 前 8 位；与 `ip_events` 同样只留 48 小时。
+
+**设备令牌与共享位置（app 与 Agent 共用）。** 令牌是服务端签发的匿名随机串（`POST device`），与遥测的 install_id 无关。
+令牌、索引、已下载刊包、快照都放在用户数据目录 `config.data_dir()/journal-catalog/`
+（macOS `~/Library/Application Support/Tavotto`，Windows `%LOCALAPPDATA%\Tavotto`，Linux `$XDG_DATA_HOME/tavotto`，`TAVOTTO_DATA_DIR` 可改）：
+`device.json`（0600，`{"token": ...}`）、`index.signed.json`、`bundles/<sha256>.json`、`snapshots/<sha256>.webp`、`state.json`、`lock`。
+**app 与 Agent 宿主同机共用这一份**：谁先需要谁领，后来的一方直接读盘复用；缓存命中不发请求，因此不计数。写入全部是原子替换；领令牌与改 `state.json` 在目录锁（`lock`，`O_EXCL`，30 秒视为遗弃）里「先重读再签发」，两个进程同时需要时只有一个去签发。
+文件损坏或丢失 → 重新领一枚（**占用当天该 IP 的一个新令牌名额**（默认每 IP 每天 200 个），且该机器的当日额度从头算起）；服务端回 `device_unknown` 时客户端换新令牌重试一次（若盘上已是对方刚换的新令牌则直接用）。
+
+**限额（服务端）。** 只数「令牌 × 刊」的首次读取；重复读、因 `catalog_rev` 更新重拉都不计。三道，**全部是滚动窗口**（不用日历日，所以没有 UTC / 服务器时区问题；回复里的 `retry_after_s` 就是最早一条过期的秒数）：
+令牌 10 本 / 小时、20 本 / 天；同一 IP 合计 2000 本 / 天；同一 IP 24 小时内最多签发 200 个新令牌（IP 维度默认值 2026-11-05 放宽，理由与可调规则见下面「限流可调」）。**IP 级限额是 app 与 Agent 合计，不按客户端类型分桶**（请求头 `X-Tavotto-Client` 只用于统计，改头绕不过）。
+IP 不存明文，存 HMAC（IPv6 取 /64），只留 48 小时；读取记录（令牌、刊 id、时间、客户端类型）保留 1 年后删除。
+
+**超限的表现。** 客户端回 `quota`；界面不弹错，用一句话胶囊提示（文案待用户过目），这本刊暂时按「不按期刊」处理。断网又没缓存的刊在选择器里可见，选中时提示需要联网（同为胶囊）。
+**拉取时机**：启动时同步一次索引，之后每 24 小时至多一次，失败 1 小时后再试；刊包只在选中时下载。**开关**：只认 `TAVOTTO_NO_JOURNAL_SYNC=1`，设了一个字节都不发（有缓存仍可用）；`TAVOTTO_NO_TELEMETRY` 只管遥测，与 `updater` 同一先例，不代管（用户 2026-11-04 定）；
+不要求遥测同意（请求不带 install_id）。入口常量 `JOURNAL_CATALOG_UI` 关着时前端不发任何请求。**公钥**：生产代码里只有 `prod-1`（私钥在维护者本机 `~/.config/tavotto-journal-catalog.key`，不进仓库），测试钥只在测试里注入（`test_production_code_does_not_trust_the_test_key` 看护）。**两个入口、一个后端、计数只有一份**：`https://tavotto.cn/v1/journal-catalog/`（中国站，后端本体，sqlite 计数在这里）与 `https://tavotto.com/v1/journal-catalog/`（海外，tavotto.com 的 Vercel 函数薄反代到中国站）。反代把真实客户端 IP 放进 `X-Tavotto-Client-IP` 并附共享密钥头 `X-Tavotto-Proxy-Secret`；**后端只在密钥对得上时才采信这个 IP**，否则按连接 IP 算（所以伪造头绕不过 IP 限额；密钥走环境变量，不进仓库）。边缘只缓存签名索引（`s-maxage=300`）；令牌签发、刊包、快照每次回源（首次读取的计数与令牌校验在源站，刊包被边缘缓存就绕过了计数）。客户端先后顺序与更新检查、联系作者**同一个**「大陆环境」判据（`contactsend.region_is_cn`：壳的 `TAVOTTO_NETWORK_REGION=cn` 或界面语言 zh-CN）：大陆先 .cn 后 .com，其余先 .com 后 .cn；传输失败换另一个入口，额度用完（429）不换（两个入口是同一份计数）。读取记录因此不区分入口，同一份、保留 1 年。限额窗口用滚动 24 小时 / 60 分钟。
+
+**线协议 v1**（基址 `https://<host>/v1/journal-catalog/`；服务端静态内容由发布工具生成）：
+
+| 接口 | 说明 |
+|---|---|
+| `GET index.signed.json` | 签名索引。无需令牌 |
+| `POST device` | 签发令牌，回 `{"token": ...}` |
+| `GET journals/<id>?rev=<catalog_rev>` | 刊包字节；头 `X-Tavotto-Device`；`rev` 必须是索引里的版本 |
+| `GET snapshots/<sha256>.webp` | 快照；头 `X-Tavotto-Device`；哈希必须等于文件名 |
+
+请求头：`X-Tavotto-Device: <令牌>`，`X-Tavotto-Client: app | agent-<宿主名>`（`^(app|agent-[a-z0-9][a-z0-9-]{0,31})$`），`User-Agent: Tavotto/<版本>`。**请求里没有项目、路径、脚本，也没有所选期刊之外的任何内容。**
+错误：400 `bad_request`；401 `device_unknown`；404 `stale_rev`（索引过期，重取索引再试）/ `no_such_journal`；429 `quota_hour` / `quota_day` / `ip_day` / `ip_tokens`，体里带 `retry_after_s`，并有 `Retry-After` 头。
+
+#### 10.1 Agent 接入说明
+
+Agent 宿主（Codex / Claude Code 插件、MCP 等）与 app 走**同一套接口、同一份共享目录、同一个令牌**，没有第二条路：
+
+1. **读索引与缓存**：先读共享目录里的 `index.signed.json`（用内置公钥验签；没有就 `GET index.signed.json` 取）。已有 `bundles/<索引里该刊的 sha256>.json`（校验哈希）就直接用，不发请求、不计数。
+2. **令牌**：读 `device.json`；没有就在目录锁里先重读、仍没有再 `POST device`，用原子替换写回（权限 0600）。app 与 Agent 谁先到谁领，另一方复用；两方都没有才签发。服务端回 `device_unknown` 时重领一次。**不要为绕过限额反复换令牌**——IP 级限额会拦住，并占用当天的新令牌名额（默认每 IP 每天 200 个）。
+3. **下载一本刊**：`GET journals/<id>?rev=<索引的 catalog_rev>`，头带 `X-Tavotto-Device` 与 `X-Tavotto-Client: agent-<宿主名>`（用 `TAVOTTO_JOURNAL_CLIENT=agent-<宿主名>` 环境变量时 `journalremote` 会自己带）。校验 `sha256` / 字节数等于索引条目，再写入 `bundles/<sha256>.json`（原子替换）。
+4. **优先复用实现**：宿主环境里装了 `tavotto` 包时，直接调 `tavotto.engine.journalremote.sync()` / `ensure_journal(id)` / `snapshot_path(file)`（永不抛，结果见各自文档字符串），不要自己再写一遍；没有就按上面三步实现。
+5. **计数**：只数该令牌对该刊的首次读取；重复读、`catalog_rev` 更新重拉、种子里的刊都不计。每令牌 10 本 / 小时、20 本 / 天，同 IP 合计 2000 本 / 天、新令牌 200 个 / 天（app 与 Agent 合计；数字是服务端默认，可在不重新部署的情况下调，见 §10 的「限流可调」）。
+6. **超限**：收到 429 就停——读 `retry_after_s`（秒），期间不要重试同一类请求，也不要换令牌；对用户一句话说明额度用完、稍后再试即可。离线且没有缓存同理，说明需要联网。
+7. **禁止**：不要把项目内容、路径、脚本、文件名带进任何请求；`TAVOTTO_NO_JOURNAL_SYNC=1` 时一个字节都不发。
+8. **不要信任未验签的东西**：索引必须验签，刊包必须对哈希，快照文件名必须等于内容的 sha256。
+
+**MCP 桥怎么接（实现，引用 §9 的 Agent 入口）**：`tavotto_list_journals` 读「种子 + 缓存索引」（`journalremote.agent_catalog()`：先静默同步索引、不计数，离线用缓存，没有缓存用内置种子；
+远程目录里的刊多一个 `downloaded`，标出标准是否已在本机）。`tavotto_open_figure` / `tavotto_normalize_figure` / `tavotto_preflight` / `tavotto_export` 的 `journal_id` 走 `bridge.journal_selection`：
+先看与手写 `profile_id` / `journal` 是否冲突（冲突直接 `journal_id_conflict`，**不下载、不占额度**），再 `journalremote.agent_resolve(id)`（本地没有才下载并计 1 次），最后交给 §9 的 `select_for_agent`（带上拼好的目录）。
+客户端类型自报 `agent-<MCP clientInfo.name 的 slug>`（没有则 `agent-mcp`），用户 / 宿主自己设了 `TAVOTTO_JOURNAL_CLIENT` 就尊重。
+
+**Agent 错误码**（并进 `journals.AGENT_ERROR_CODES`，与 `journal_catalog_disabled` / `journal_id_conflict` 同一个元组；不在库校验的闭集 `ERROR_CODES` 里；失败一律明确报给 Agent，**不静默退回别的数据**）：
+
+| code | 什么时候 | 话术要点（给 Agent 的 `error` 文本） | 额外字段 |
+|---|---|---|---|
+| `journal_quota_exceeded` | 服务端 429（令牌 / IP 限额） | 这本期刊今天的下载额度用完了，约 N 分钟后再试；不要换设备令牌重试，也不要凭记忆编这本期刊的规范 | `retry_after_s` |
+| `journal_offline` | 这本刊本地没有、联不上网，或 `TAVOTTO_NO_JOURNAL_SYNC=1` | 这本期刊的标准还没下载到本机，需要联网；联网后再试，或改用内置种子里已有的期刊 | — |
+| `journal_verification_failed` | 验签 / 哈希 / 目录校验没过 | 数据没有通过验签 / 校验，已整份弃用；不要采用任何来自它的数值 | — |
+
+已有的 `journal_unknown`（索引里没有这个 id）、`journal_catalog_disabled`、`journal_id_conflict` 口径不变。
+
+**部署**（不在本仓库部署；详见 `services/journal_catalog/DEPLOYMENT.md`）：索引、刊包、快照由发布工具生成到服务端 DATA 目录，随中国站现有服务器上的 WSGI 服务（sqlite 计数）提供；
+选 sqlite 单机而不是 KV / D1，因为用户主要在大陆、计数是强一致的单行事务、规模小；`schema.sql` 只用 SQLite / D1 共有语法，将来要搬 D1 不用改表。
+（`workerd/` 在本仓库是渲染 worker 的 Rust supervisor，与服务端无关。）
 
 ## 后果
 
