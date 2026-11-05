@@ -291,7 +291,7 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"{x.id}\t{x.layer}\t{len(x.seen)}×\t{x.rule}")
         else:
             for layer in LAYERS:
-                size = len((args.dir / f"{layer}.md").read_bytes())
+                size = len((args.dir / f"{layer}.md").read_text(encoding="utf-8").encode("utf-8"))
                 print(f"{layer}\t{size}\t余 {CAP_BYTES - size}")
             print(f"下一个编号\tL-{max(x.number for x in lessons) + 1:03d}")
         return 0
