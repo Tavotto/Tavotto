@@ -43,8 +43,8 @@ order: 80
   （`skill_write_failed` / `skill_source_missing`），并带 `mcp_connected=true`。Codex 不走这里（技能随插件）；Claude Code
   已装 Tavotto 插件（`register` 一步 skipped）时不再复制；Claude 桌面版没有技能目录（`builtin`）。没有技能的宿主靠 MCP
   工具 **`tavotto_guide`**（可选 `section` = `references/` 里真实存在的文件名，白名单、路径穿越回 `guide_section_unknown`，
-  读不到回 `guide_unavailable`）读全文；`initialize` 的 instructions 让它开工前先调。工具名同步在 `usage.TOOLS`、遥测
-  `mcp_tool_call.tool` 闭集、`server.HANDLERS`、启动器 `NORMAL_TOOLS`。已知未处理：Cursor / VS Code 也读 `~/.claude/skills`，
+  读不到回 `guide_unavailable`）读全文；`initialize` 的 instructions 让它开工前先调。工具名同步在 `server.HANDLERS`、启动器 `NORMAL_TOOLS`；**不进** `usage.TOOLS` 与遥测闭集（ADR 0170：进了要升 CONSENT_VERSION，等维护者），走 `other` 桶。
+  已知未处理：Cursor / VS Code 也读 `~/.claude/skills`，
   与 Claude Code 同时接入可能看到同名技能两份（待验）。看护 `tests/test_host_skills.py`、`tests/test_hosts_connect.py`。
 - 授权只来自 `--project-root`（写进 `TAVOTTO_MCP_ROOTS`）；根 / HOME / 包目录拒绝。启动器探针与
   `launcher_starts()` 同一把尺（跑 `--health` 要体检 JSON）；引擎只在当前 shell 环境里找得到时才钉
