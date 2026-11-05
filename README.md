@@ -4,7 +4,7 @@
 发布链验证的完整插件（含内嵌画布），由 `scripts/plugin_publish.py` 从固定的
 源码 commit 构建并投影到这里。源码在 `main`。
 
-当前：插件 0.20.0，源码 `637482d4e35e`，内容摘要 `2fd7e1030a05…`（详见 `plugin-release.json`）。
+当前：插件 0.21.0，源码 `6c1fa7d2e17c`，内容摘要 `bc3ba3c9f635…`（详见 `plugin-release.json`）。
 
 安装：
 
