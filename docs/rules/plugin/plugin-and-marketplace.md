@@ -39,7 +39,8 @@ order: 30
   `codex_plugin`（有 `.codex-plugin/plugin.json`）/ 判不出不给命令。桌面包把整个
   `skills/tavotto-figure` 收进 `<_MEIPASS>/skills/tavotto-figure`（`packaging/tavotto.spec`），找不到
   `update_check.py` 就静默不提示。默认地址在 GitHub Release，release-mirror **不镜像** codex-plugin
-  （tavotto-infra `docs/release-mirror/README.md`），大陆用户检查大概率超时而静默无提示。
+  （见 tavotto-infra 仓库的 release-mirror 说明），大陆用户检查大概率超时而静默无提示。用户关了检查
+  （`TAVOTTO_NO_UPDATE_CHECK`、`TAVOTTO_DISABLE_UPDATE_CHECK`、设置里的 `auto_check`）就不起后台线程，只读已有缓存。
   清单——**不能挪进 desktop-tauri.yml 的 updater-manifest**，那个 job 没配
   minisign 私钥就整个跳过，插件的更新通道会跟着悄悄停而且全绿。
 - **技能的第一条硬约定：脚本与产物同目录、且必须先落成文件**（禁 `python -c` 出图）

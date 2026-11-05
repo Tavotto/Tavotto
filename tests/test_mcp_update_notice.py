@@ -39,6 +39,7 @@ def cfg(tmp_path, monkeypatch):
     monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp_path / "cfg"))
     monkeypatch.setenv("TAVOTTO_UPDATE_URL", URL)
     monkeypatch.delenv("TAVOTTO_DISABLE_UPDATE_CHECK", raising=False)
+    monkeypatch.delenv("TAVOTTO_NO_UPDATE_CHECK", raising=False)
     monkeypatch.setattr(updatenotice, "_latest", None)
     monkeypatch.setattr(updatenotice, "_started_at", None)
     monkeypatch.setattr(updatenotice, "_thread", None)
@@ -139,6 +140,29 @@ def test_disable_switch(cfg, monkeypatch):
     cfg()
     monkeypatch.setenv("TAVOTTO_DISABLE_UPDATE_CHECK", "1")
     assert "update" not in _health()
+
+
+@pytest.mark.parametrize("switch", ["env", "auto_check"])
+def test_user_switches_stop_the_background_request(cfg, monkeypatch, switch):
+    """更新检查的规则是「关了一个包都不发」：过期缓存也不许起后台线程，缓存里已有的提醒照常。"""
+    cfg(age=10 * 24 * 3600)
+    if switch == "env":
+        monkeypatch.setenv("TAVOTTO_NO_UPDATE_CHECK", "1")
+    else:
+        from tavotto.engine import updater
+
+        monkeypatch.setattr(updater, "settings", lambda: {"auto_check": False})
+    assert updatenotice.network_allowed() is False
+    assert _health()["update"]["status"] == "available"
+    assert updatenotice._thread is None
+
+
+def test_the_background_request_starts_when_nothing_is_switched_off(cfg, monkeypatch):
+    """上一条的对照：开关都开着时这条路真的会起线程，否则上一条恒真。"""
+    cfg(age=10 * 24 * 3600)
+    monkeypatch.setattr(updatenotice, "_refresh", lambda mod, mine: None)
+    _health()
+    assert updatenotice._thread is not None
 
 
 # ------------------------------ export ----------------------------------
