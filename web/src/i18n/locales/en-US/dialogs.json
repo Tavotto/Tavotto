@@ -1978,6 +1978,7 @@
         "ok": "Done.",
         "failed": "Not connected."
       },
+      "skillModified": "You edited the usage notes, so Tavotto left them alone.",
       "stepState": {
         "done": "done",
         "skipped": "no change needed",
@@ -1990,6 +1991,7 @@
         "trust": "Trust Tavotto",
         "register": "Register",
         "unregister": "Unregister",
+        "skill": "Usage notes",
         "health": "Start check",
         "server": "MCP server",
         "host": "Editor"
@@ -2003,6 +2005,8 @@
         "host_cli_failed": "The {{host}} command line did not finish the registration. Open Details for its output.",
         "server_health_failed": "The config is written, but the Tavotto server did not start. Open Details for the reason.",
         "codex_install_failed": "Codex is not connected. Open Details to see which step stopped.",
+        "skill_source_missing": "This version of Tavotto has no usage notes bundled. Update the desktop app.",
+        "skill_write_failed": "Connected, but Tavotto could not write the usage notes into {{host}}. Open Details to see which folder.",
         "unknown_host": "Unknown editor.",
         "cli_not_found": "The Tavotto command line (tavotto-cli) is missing. Reinstall the desktop app.",
         "spawn_failed": "Could not start the Tavotto command line. Try again.",

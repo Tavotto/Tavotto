@@ -1958,6 +1958,7 @@
         "ok": "完成。",
         "failed": "没有接好。"
       },
+      "skillModified": "你改过那份使用说明，所以没有动它。",
       "stepState": {
         "done": "完成",
         "skipped": "无需改动",
@@ -1970,6 +1971,7 @@
         "trust": "信任 Tavotto",
         "register": "登记",
         "unregister": "移除登记",
+        "skill": "使用说明",
         "health": "启动检查",
         "server": "MCP 服务",
         "host": "编辑器"
@@ -1983,6 +1985,8 @@
         "host_cli_failed": "{{host}} 的命令行没能完成登记。展开详情看原文。",
         "server_health_failed": "配置已写好，但 Tavotto 的服务没能启动。展开详情看原因。",
         "codex_install_failed": "Codex 没接好。展开详情看卡在哪一步。",
+        "skill_source_missing": "这一版 Tavotto 里没带使用说明，请升级桌面版。",
+        "skill_write_failed": "接好了，但写不进 {{host}} 的使用说明目录。展开详情看是哪个目录。",
         "unknown_host": "不认识这个编辑器。",
         "cli_not_found": "找不到本机的 Tavotto 命令行（tavotto-cli）。安装包可能不完整，重装桌面版即可。",
         "spawn_failed": "无法启动 Tavotto 命令行。再试一次。",

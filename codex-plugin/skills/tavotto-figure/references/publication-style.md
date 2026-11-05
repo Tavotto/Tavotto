@@ -60,7 +60,7 @@
 ## 开工三问细则（技能正文只留摘要）
 
 先读已记录的偏好（脚本路径相对本技能目录；解释器用能跑起来的那个——Windows 上 `python3`
-可能是商店别名，用 `tavotto_health` 回报的 `server.python`）：
+可能是商店别名，用 `tavotto_health` 回报的 `server.python`；有 `skill_script_command` 时换成 `<命令> prefs …`）：
 
 ```
 python3 scripts/prefs.py --json

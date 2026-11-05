@@ -51,7 +51,7 @@ description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖�
 
 ## 开工三问（用提问工具，不用自由文本追问）
 
-先读已记录的偏好（脚本路径相对本技能目录；解释器用 `tavotto_health` 回报的 `server.python`）：
+先读已记录的偏好（脚本路径相对本技能目录；解释器用 `tavotto_health` 回报的 `server.python`；它给了 `skill_script_command` 时，所有 `python3 scripts/<名字>.py` 都换成 `<命令> <名字>`，如 `<命令> prefs --json`）：
 
 ```
 python3 scripts/prefs.py --json

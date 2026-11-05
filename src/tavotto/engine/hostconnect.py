@@ -20,6 +20,16 @@ JSON；按钮背后不另写一套安装器，README / 命令行 / 按钮 / Wind
 
 旧版按钮写过 `TAVOTTO_MCP_ROOTS=<选的文件夹>`（记在配置目录的 `hosts.json`）：`list` 时一次性迁移成上面的形状。
 
+## 技能（`hostskills.py`，2026-11-06）
+
+MCP 写成之后，`connect` 再把桌面版带的技能 `tavotto-figure` 复制进该宿主的用户级技能目录（Claude Code
+`~/.claude/skills`、Cursor `~/.cursor/skills`、VS Code `~/.copilot/skills`、ZCode `~/.zcode/skills`、Antigravity
+`~/.gemini/config/skills`、Trae `~/.trae-cn|~/.trae/skills`（只写已存在的）、WorkBuddy `~/.workbuddy/skills`），作为
+一步 `skill` 出现在 `steps` 里；`disconnect` 只删校验记录相符的那份，用户改过的保留并如实说（步骤上 `skill` 字段 =
+`modified`）。技能写失败**不回滚 MCP**：整次结果 `ok=false`、`error_code` 是 `skill_*`，同时带 `mcp_connected=true`
+说明 MCP 已经接上。Claude 桌面版没有技能目录（`builtin`，AI 用 `tavotto_guide` 读全文）；Codex 的技能随插件；Claude
+Code 已装 Tavotto 插件时不再复制。`hosts list` 每行多一个 `skill`：current / stale / modified / missing / builtin。
+
 ## 三条纪律
 
 * **写之前先备份，只动 tavotto 那一条。** 文件读不懂（比如带注释的 JSONC）就不写、如实报
@@ -46,7 +56,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import config
+from . import config, hostskills
 from .runtime import CREATE_NO_WINDOW
 
 #: 九个宿主（顺序 = 界面上的顺序）
@@ -81,6 +91,11 @@ ERR_WRITE = "config_write_failed"
 ERR_CLI = "host_cli_failed"
 ERR_HEALTH = "server_health_failed"
 ERR_CODEX = "codex_install_failed"
+#: 技能那一步的稳定码（与 `hostskills.ERR_*` 同值）；MCP 已登记而技能没写成时，整次结果如实算失败
+ERR_SKILL_SOURCE = hostskills.ERR_SOURCE
+ERR_SKILL_WRITE = hostskills.ERR_WRITE
+#: 已通过 Tavotto 的 Claude Code 插件接入时 register 一步的说明：插件自带技能，不再复制一份
+PLUGIN_DETAIL = "已通过 Tavotto 插件接入"
 
 
 # ----------------------------------------------------------------------------- 起服务端的命令
@@ -476,7 +491,7 @@ def _claude_code_connect(launch: dict, env: dict) -> list[dict]:
     rc, out = _run([*claude, "mcp", "list"])
     if rc == 0 and f"plugin:{SERVER_NAME}:{SERVER_NAME}" in out:
         # 已经装了 Tavotto 的 Claude Code 插件：再登记一条同名 user 服务会出现两个 Tavotto（配置生成器同一提醒）
-        steps.append(_step("register", ok=True, skipped=True, detail="已通过 Tavotto 插件接入"))
+        steps.append(_step("register", ok=True, skipped=True, detail=PLUGIN_DETAIL))
         return steps
     # 重跑幂等：先删掉旧的那一条（没有就当成功），再按现在的命令与文件夹登记
     _run([*claude, "mcp", "remove", "--scope", "user", SERVER_NAME])
@@ -661,13 +676,41 @@ def connect(host: str, project_root: str | None = None) -> dict:
     steps += _write_host(host, launch, env)
     if any(s.get("error_code") == ERR_NOT_INSTALLED for s in steps) and host != "claude-code":
         return _result(host, "connect", steps, state="not_installed")
-    if all(s["ok"] for s in steps):
+    mcp_ok = all(s["ok"] for s in steps)
+    if mcp_ok:
+        # 技能：MCP 写成了才写；技能失败不回滚 MCP，整次结果如实算失败（`mcp_connected` 说明 MCP 已经接上）
+        skill = _skill_connect_step(host, steps)
+        if skill:
+            steps.append(skill)
         steps.append(health(launch, env))
     changed = any(s["ok"] and not s["skipped"] for s in steps if s["step"] != "health")
     out = _result(host, "connect", steps, **({"project_root": root} if root else {}))
     if out["ok"]:
         out["state"] = "needs_new_session" if changed else "connected"
+    elif mcp_ok and any(s["step"] == "skill" and not s["ok"] for s in steps):
+        out["mcp_connected"] = True
     return out
+
+
+def _skill_step(res: dict) -> dict:
+    step = _step(
+        "skill",
+        ok=res["ok"],
+        skipped=res["skipped"],
+        detail=res.get("detail", ""),
+        code=res.get("error_code", ""),
+    )
+    step["skill"] = res["state"]
+    return step
+
+
+def _skill_connect_step(host: str, steps: list[dict]) -> dict | None:
+    """接入时的技能一步。Codex 不走这里；Claude Code 已装 Tavotto 插件时插件自带技能，不复制。"""
+    if not hostskills.supports(host) and host not in hostskills.BUILTIN_HOSTS:
+        return None
+    if any(s["step"] == "register" and s.get("detail") == PLUGIN_DETAIL for s in steps):
+        return None
+    return _skill_step(hostskills.install_skill(host))
 
 
 def _write_host(host: str, launch: dict, env: dict) -> list[dict]:
@@ -728,6 +771,10 @@ def disconnect(host: str) -> dict:
             for t in _FILE_HOSTS[host].targets()
             if t.path.is_file()
         ] or [_step("config", ok=True, skipped=True, detail="本来就没接入")]
+    if host != "codex" and hostskills.supports(host):
+        res = hostskills.remove_skill(host)
+        if res["state"] != "none" or not res["ok"]:
+            steps.append(_skill_step(res))
     out = _result(host, "disconnect", steps)
     if out["ok"]:
         out["state"] = "disconnected"
@@ -746,6 +793,8 @@ def list_hosts() -> dict:
                 "label": LABELS[h],
                 "installed": inst,
                 "connected": inst and connected(h, launch),
+                # 'builtin'：不需要单独复制（Codex 的插件自带；Claude 桌面版用 tavotto_guide）
+                "skill": "builtin" if h == "codex" else hostskills.skill_state(h),
             }
         )
     return {"ok": True, "action": "list", "server": launch is not None, "hosts": hosts}
