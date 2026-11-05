@@ -40,7 +40,7 @@ ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推�
   **每个入口都拒主目录本身及其上级**（ADR 0109：MiniMax Code 的插件路线 `roots/list` 回 home、WorkBuddy / MiniMax
   的插件进程 cwd 可能是 home），与生成器同一判据；被拒又没有别的根时报 `workspace_root_too_broad`。
   **本机兜底 `TAVOTTO_MCP_SCOPE=local`**（ADR 0009 §1b，2026-11-05）只在宿主没给可用目录时生效：范围 = 本机任意位置，
-  来源 `local_scope`；这一档下判「在不在范围内」**只经 `bridge._in_scope`**（打开目标 / argv / 会话恢复都过），只拦
+  来源 `local_scope`；判「这条路径能不能碰」**只经 `bridge._judge_path`**（打开目标 / argv / 会话恢复都过）；这一档按 `_lookup_chain` 逐段走系统实际走的路，每段每跳都判，只拦
   `readscope` 凭据黑名单（`path_denied`），引擎没有黑名单就全拦；不装写入根绊线；相对路径要求改传绝对路径。
   root 改变后旧 session 必须回 `workspace_root_changed`。server→client 请求只能在
   活跃 `tools/call` 内发，reader pump 必须保序且有界等待。越界一律拒，**绝不

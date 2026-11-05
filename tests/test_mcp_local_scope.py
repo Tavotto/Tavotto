@@ -321,3 +321,39 @@ def test_dotdot_after_a_directory_link_cannot_leave_explicit_roots(home, tmp_pat
     roots_now = bridge.allowed_roots()
     assert bridge._argv_path_escapes("ln/../data.csv", roots_now, [str(project)])
     assert bridge._argv_path_escapes(str(link) + "/../data.csv", roots_now, [str(project)])
+
+
+@_POSIX_DOTDOT
+def test_a_credential_named_link_reached_through_dotdot_after_a_link_is_refused(home):
+    """Codex #1757 r4475737144：`project/server.pem` 是**目录**、`project/keys -> other/deep`、
+    `other/server.pem -> other/plain.txt`。`project/keys/../server.pem` 实际经过 `other/server.pem` 这一跳；
+    字面折叠后却是那个目录（名字规则不管目录）、解析后又只叫 plain.txt——两点判法两头都放行。逐段解析判的是这一跳。"""
+    project = home / "papers" / "project"
+    (project / "server.pem").mkdir(parents=True)
+    other = home / "papers" / "other"
+    (other / "deep").mkdir(parents=True)
+    _file(other / "plain.txt")
+    try:
+        (other / "server.pem").symlink_to(other / "plain.txt")
+        (project / "keys").symlink_to(other / "deep", target_is_directory=True)
+    except OSError:
+        pytest.skip("这台机器不能建符号链接")
+    target = str(project / "keys") + "/../server.pem"
+    with pytest.raises(bridge.BridgeError) as exc:
+        bridge.check_scope(target)
+    assert exc.value.code == roots.CODE_PATH_DENIED
+    roots_now = bridge.allowed_roots()
+    assert bridge._argv_path_escapes(target, roots_now, [str(project)])
+    assert bridge._argv_path_escapes("keys/../server.pem", roots_now, [str(project)])
+    # 叫 server.pem 的那个目录本身照样能进（目录不按名拦），plain.txt 直接读也行
+    assert bridge.check_scope(str(project / "server.pem")) == _real(project / "server.pem")
+    assert bridge.check_scope(str(other / "plain.txt")) == _real(other / "plain.txt")
+
+
+def test_a_link_loop_is_refused_not_followed_forever(home):
+    loop = home / "papers" / "loop"
+    try:
+        loop.symlink_to(loop)
+    except OSError:
+        pytest.skip("这台机器不能建符号链接")
+    assert bridge._argv_path_escapes(str(loop / "x"), bridge.allowed_roots(), None)
