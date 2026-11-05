@@ -200,6 +200,11 @@ def matplotlib_font_dirs(python: str | os.PathLike | None = None) -> list[Path]:
     return list(dict.fromkeys(out))
 
 
+def approved_font_dir() -> Path:
+    """批准字体所在目录：app 层登记定位线索用（HTTP 层不 import `fonts`，只认这一个路径）。"""
+    return fonts.fonts_dir()
+
+
 class FontLocator:
     """sha256 → 本机字体文件。
 

@@ -3645,7 +3645,7 @@ def api_mathtext():
 def _prepare_source_fonts() -> None:
     """让「画布文字用原图字体」（ADR 0164）找得到原图那张脸：把项目解释器 / 内置 runtime 的 matplotlib
     字体目录登记为定位线索。**只算路径、不起进程、不改任何东西**；线索只影响「去哪找」，认脸仍只按 sha256。"""
-    from .rendercore import fonts as rc_fonts, userfonts
+    from .rendercore import userfonts
 
     pythons: list[str] = []
     try:
@@ -3663,11 +3663,8 @@ def _prepare_source_fonts() -> None:
     for py in pythons:
         dirs += userfonts.matplotlib_font_dirs(py)
     dirs += userfonts.matplotlib_font_dirs(None)
-    try:
-        # 英文留在内置字体、中文选本机字体时，`source_font` 的正文脸点名的是批准字体（ADR 0169）
-        dirs.append(rc_fonts.fonts_dir())
-    except rc_fonts.FontsUnavailable:
-        pass
+    # 英文留在内置字体、中文选本机字体时，`source_font` 的正文脸点名的是批准字体（ADR 0169）
+    dirs.append(userfonts.approved_font_dir())
     userfonts.default_locator().add_hint_dirs(dirs)
 
 
