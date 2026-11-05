@@ -53,13 +53,16 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
 
     ax_cfg = model["axes"][0]
     ax_x, ax_y, ax_w, ax_h = (float(v) for v in ax_cfg["rect"])
-    left, bottom = ax_x, ax_y + ax_h
-    # figure 1 单位 = 1 场景用户单位（72dpi 下 1 display px = 1 用户单位）
+    # figure 空间 = **viewBox 局部**坐标 [0,vb_w]×[0,vb_h]：轴矩形先平移进局部
+    # （场景用户坐标 − viewBox 原点）；组合端再以 translate(origin) 映射回场景
+    # 用户空间（N1）。绘制尺寸按 vb 尺寸 → 1 单位 = 1 用户单位。
+    left = ax_x - vb_x
+    bottom = ax_y + ax_h - vb_y
     fig = matplotlib.figure.Figure(figsize=(vb_w / 72.0, vb_h / 72.0), dpi=72)
     ax = fig.add_axes(
         [
-            (left - vb_x) / vb_w,
-            1.0 - (bottom - vb_y) / vb_h,  # matplotlib 是 y-up 的图分数
+            left / vb_w,
+            1.0 - bottom / vb_h,  # matplotlib 是 y-up 的图分数
             ax_w / vb_w,
             ax_h / vb_h,
         ]
@@ -174,8 +177,8 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
     fig.canvas.draw()  # realize transforms & locators（exp2 口径）
     # 轴分数（matplotlib 原生、y-up）：display(72dpi) 减轴原点、除轴尺寸。
     # figure 1 display px = 1 场景用户单位；display y-up 的轴底 = vb_h - (rect 底偏移)。
-    ax_disp_left = left - vb_x
-    ax_disp_bottom = vb_h - (bottom - vb_y)
+    ax_disp_left = left
+    ax_disp_bottom = vb_h - bottom
     ax_w_px, ax_h_px = ax_w, ax_h
     for sr in model["series"]:
         if sr["kind"] == "image":

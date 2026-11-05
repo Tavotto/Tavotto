@@ -139,6 +139,26 @@ def node_matrix(root: ET.Element, node_id: str) -> tuple:
     return m
 
 
+def invert(m: tuple) -> tuple:
+    """仿射矩阵的逆（行列式非零；奇异矩阵报错——调用方按不合法场景处理）。"""
+    a, b, c, d, e, f = m
+    det = a * d - b * c
+    if abs(det) < 1e-12:
+        raise ValueError("singular matrix cannot be inverted")
+    return (
+        d / det,
+        -b / det,
+        -c / det,
+        a / det,
+        (c * f - d * e) / det,
+        (b * e - a * f) / det,
+    )
+
+
+def matrix_attr(m: tuple) -> str:
+    return f"matrix({m[0]},{m[1]},{m[2]},{m[3]},{m[4]},{m[5]})"
+
+
 _PRESERVE_RE = re.compile(r"^(none|xMin|xMid|xMax)(YMin|YMid|YMax)?\s+(meet|slice)$")
 
 

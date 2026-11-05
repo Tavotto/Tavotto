@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -242,3 +243,100 @@ def test_idless_node_binds_and_composes():
     assert paths, "composed output lost the series entirely"
     # 未绑定装饰（old_xaxis 的文本）保持原样
     assert "0" in texts_of(root) and "10" in texts_of(root)
+
+
+# ---------------------------------------------------------------------------
+# N1/N2/N4：非零 viewBox、父空间变换、柱误差成员（2026-11-05 复核反例）
+# ---------------------------------------------------------------------------
+
+
+def test_nonzero_viewbox_endpoints_in_scene_user_space():
+    """N1：viewBox [50,20,100,100] → 端点 (50,120)/(150,20)。"""
+    scene = (
+        b'<svg xmlns="http://www.w3.org/2000/svg" width="100pt" height="100pt" '
+        b'viewBox="50 20 100 100"><path id="curve" d="M50 120L150 20" '
+        b'fill="none" stroke="blue"/></svg>'
+    )
+    out, frame = bind(
+        scene,
+        dataset="x,y\n0,0\n1,1\n",
+        xlim=(0, 1),
+        ylim=(0, 1),
+        rect=[50.0, 20.0, 100.0, 100.0],
+    )
+    frag = svgchart.scaffold_fragment(out["model"], frame)
+    result = compose_scene(
+        scene, out["binding"], frag["fragment"], out["model"], origin=(50.0, 20.0)
+    )
+    root = parse(result)
+    # 主语 = 系列包装组里的数据路径（组合后文档里的 paths[0] 可能是轴家具）
+    wrapper = next((e for e in root.iter() if e.get("data-tavotto", "") == "series:s1"), None)
+    assert wrapper is not None, "series wrapper missing"
+    series_d = wrapper.find(f".//{SVG_NS}path").get("d")
+    nums = [float(v) for v in re.findall(r"[-+]?(?:\d*\.)?\d+(?:e[-+]?\d+)?", series_d)]
+    # wrapper transform 也参与世界坐标
+    from tavotto.svgcoord import apply as c_apply, parse_transform as c_parse
+
+    wt = c_parse(wrapper.get("transform", "translate(0,0)"))
+    world = [c_apply(wt, nums[i], nums[i + 1]) for i in (0, 2)]
+    flat = [round(v, 6) for pt in world for v in pt]
+    assert flat == pytest.approx([50, 120, 150, 20], abs=1e-6), (
+        f"nonzero-viewbox endpoints expected [50,120,150,20], got {flat}"
+    )
+
+
+def test_nested_parent_transform_not_applied_twice():
+    """N2：目标在 translate(20 10) 组内 → 世界端点 (20,70)/(80,10)，父变换不重复作用。"""
+    scene = (
+        b'<svg xmlns="http://www.w3.org/2000/svg" width="100pt" height="100pt" '
+        b'viewBox="0 0 100 100"><g transform="translate(20 10)">'
+        b'<path id="curve" d="M0 100L100 0" fill="none" stroke="blue"/></g></svg>'
+    )
+    out, frame = bind(
+        scene, dataset="x,y\n0,0\n1,1\n", rect=[20.0, 10.0, 60.0, 60.0], xlim=(0, 1), ylim=(0, 1)
+    )
+    frag = svgchart.scaffold_fragment(out["model"], frame)
+    result = compose_scene(scene, out["binding"], frag["fragment"], out["model"], origin=(0.0, 0.0))
+    root = parse(result)
+    # 目标 wrapper 在 translate(20 10) 组内：其世界坐标由父变换 + wrapper 逆变换合成
+    wrapper = next(
+        (e for e in root.iter() if e.get("data-tavotto", "").startswith("series:")), None
+    )
+    assert wrapper is not None
+    # 解析 wrapper transform 并手动合成世界端点
+
+    from tavotto.svgcoord import apply as c_apply, parse_transform as c_parse
+
+    wt = c_parse(wrapper.get("transform", ""))
+    path_d = wrapper.find(f".//{SVG_NS}path").get("d")
+    nums = [float(v) for v in re.findall(r"[-+]?(?:\d*\.)?\d+(?:e[-+]?\d+)?", path_d)]
+    inner = [c_apply(wt, nums[i], nums[i + 1]) for i in (0, 2)]
+    world = [c_apply((1.0, 0.0, 0.0, 1.0, 20.0, 10.0), pt[0], pt[1]) for pt in inner]
+    got = [
+        round(world[0][0], 6),
+        round(world[0][1], 6),
+        round(world[1][0], 6),
+        round(world[1][1], 6),
+    ]
+    assert got == pytest.approx([20, 70, 80, 10], abs=1e-6), (
+        f"world endpoints expected [20,70,80,10], got {got}"
+    )
+
+
+def test_bar_error_members_survive_composition():
+    """N4：柱 + 误差 → 组合后误差集合/端帽成员完整（角色 gid 全在最终 SVG）。"""
+    scene = SCENE
+    out, frame = bind(
+        scene,
+        kind="bar",
+        dataset="x,y,err\n0,0.3,0.1\n1,0.7,0.2\n",
+    )
+    out["model"]["series"][0]["yerr"] = "err"
+    frag = svgchart.scaffold_fragment(out["model"], frame)
+    result = compose_scene(scene, out["binding"], frag["fragment"], out["model"])
+    root = parse(result)
+    role_members = [
+        e.get("id") for e in root.iter() if (e.get("id") or "").startswith("tv-series-s1")
+    ]
+    # 2 柱 + 数据/误差集合成员 ≥4（误差线主体 + 端帽）
+    assert len(role_members) >= 4, f"error members lost: {role_members}"

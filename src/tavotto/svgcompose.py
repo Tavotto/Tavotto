@@ -56,6 +56,14 @@ def _is_descendant(node: ET.Element, ancestor: ET.Element) -> bool:
     return any(_ is node for _ in ancestor.iter())
 
 
+def _first_furniture_anchor(root: ET.Element, insert_parent: list) -> ET.Element:
+    """轴家具变换的锚点 = 插入点父层里第一个 data-tavotto wrapper（同空间）。"""
+    return next(
+        (el for el in root.iter() if el.get("data-tavotto", "").startswith("series:")),
+        insert_parent if isinstance(insert_parent, ET.Element) else root,
+    )
+
+
 def _parent_of(root: ET.Element, node: ET.Element) -> ET.Element:
     return next(p for p in root.iter() if any(c is node for c in p))
 
@@ -139,6 +147,7 @@ def compose_scene(
     - 被外部引用的 defs 先上提到根 defs；片段根级 defs 随迁并加后缀隔离。
     """
     from tavotto.rendercore.svgcheck import parse_svg, strip_matplotlib_doctype
+    from tavotto.svgcoord import parse_transform
     from tavotto.svgscene import build_node_index
 
     if isinstance(scene_bytes, str):
@@ -202,6 +211,40 @@ def compose_scene(
         par = _parent_of(edited, target)
         return target, par, list(par).index(target)
 
+    def parent_space_transform(target: ET.Element) -> str | None:
+        """片段全局坐标 → 被替换节点**父空间**的变换（N2）。
+
+        片段成员坐标 = 场景用户空间（origin 平移后）。插入点在 target 的父节点，
+        该处的祖先变换 A 会再作用一次；wrapper 需带 T = A⁻¹ ∘ Translate(origin)，
+        使 A · T · C = origin + C（与未受父变换时一致）。
+        """
+        from tavotto.svgcoord import compose as sc_compose, invert as sc_invert
+
+        chain: list[ET.Element] = []
+        node: ET.Element | None = target
+        while node is not None and node is not edited:
+            chain.append(node)
+            node = _parent_of(edited, node)
+        if chain and chain[-1] is not edited:
+            chain.append(edited)
+        m = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+        for el in reversed(chain[:-1]):  # 根 → 父（不含 target 自身）
+            tr = el.attrib.get("transform")
+            if tr:
+                m = sc_compose(m, parse_transform(tr))
+        # 行向量序：世界 = C · T · A（父变换在文档结构里自动再作用一次）。
+        # 要 world = C · O（O = translate(origin)）⇒ T = O · A⁻¹。
+        o = (1.0, 0.0, 0.0, 1.0, origin[0], origin[1])
+        try:
+            t = sc_compose(o, sc_invert(m))
+        except ValueError:
+            return None
+        if t == (1.0, 0.0, 0.0, 1.0, 0.0, 0.0):
+            return None
+        from tavotto.svgcoord import matrix_attr
+
+        return matrix_attr(t)
+
     suffix = "__c1"
     series_bindings = [e for e in binding["entries"] if e["object"].startswith("series:")]
     axes_nodes = [e["node"] for e in binding["entries"] if e["object"].startswith("axes:")]
@@ -245,9 +288,10 @@ def compose_scene(
             )
         hoist_external_defs(target)
         wrapper = ET.Element(f"{{{SVG_NS}}}g", {"data-tavotto": f"series:{sid}"})
-        # 片段坐标相对 viewBox 原点；场景用户坐标 = 原点 + 片段坐标（N1）
-        if origin != (0.0, 0.0):
-            wrapper.set("transform", f"translate({origin[0]}, {origin[1]})")
+        # 片段坐标相对 viewBox 原点且插在父空间：T = A⁻¹ ∘ Translate(origin)（N1/N2）
+        wrapper_t = parent_space_transform(target)
+        if wrapper_t:
+            wrapper.set("transform", wrapper_t)
         for member in members:
             piece = copy.deepcopy(member)
             _suffix_ids(piece, suffix)
@@ -274,10 +318,9 @@ def compose_scene(
             hoist_external_defs(target)
             frag_sub = copy.deepcopy(cbar)
             _suffix_ids(frag_sub, suffix)
-            if origin != (0.0, 0.0):
-                wrapper = ET.Element(
-                    f"{{{SVG_NS}}}g", {"transform": f"translate({origin[0]}, {origin[1]})"}
-                )
+            cbar_t = parent_space_transform(target)
+            if cbar_t:
+                wrapper = ET.Element(f"{{{SVG_NS}}}g", {"transform": cbar_t})
                 wrapper.append(frag_sub)
                 frag_sub = wrapper
             par[idx] = frag_sub
@@ -286,11 +329,9 @@ def compose_scene(
         par.remove(target)
     if axes_nodes and insert_parent is not None:
         furniture_group = None
-        if origin != (0.0, 0.0):
-            # 轴家具同样在 0 基片段空间：包一层平移，保持与源用户空间对齐
-            furniture_group = ET.Element(
-                f"{{{SVG_NS}}}g", {"transform": f"translate({origin[0]}, {origin[1]})"}
-            )
+        furniture_t = parent_space_transform(_first_furniture_anchor(edited, insert_parent))
+        if furniture_t:
+            furniture_group = ET.Element(f"{{{SVG_NS}}}g", {"transform": furniture_t})
         for j, furniture in enumerate(axis_furniture):
             piece = copy.deepcopy(furniture)
             _suffix_ids(piece, suffix)

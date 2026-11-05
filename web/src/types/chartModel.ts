@@ -77,6 +77,7 @@ export interface ChartSeries {
   y: string
   yerr?: string
   grid?: string
+  cbar_node?: string
   style?: Partial<Record<ChartSeriesStyleKey, number | string>>
 }
 
@@ -314,7 +315,7 @@ export function validateChartModel(model: unknown): ChartVerdict {
   for (const raw of series) {
     if (typeof raw !== 'object' || raw === null) return invalid()
     const sr = raw as Record<string, unknown>
-    if (!keysAllowed(sr, ['id', 'kind', 'axes', 'node', 'x', 'y', 'yerr', 'grid', 'style'])) return invalid()
+    if (!keysAllowed(sr, ['id', 'kind', 'axes', 'node', 'x', 'y', 'yerr', 'grid', 'cbar_node', 'style'])) return invalid()
     if (typeof sr.id !== 'string' || !ID_RE.test(sr.id)) return invalid()
     if (ids.has(sr.id) || seriesIds.has(sr.id)) return reject('chart_duplicate_id')
     seriesIds.add(sr.id)
