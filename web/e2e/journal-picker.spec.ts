@@ -162,3 +162,31 @@ test(
     expect(await open.getAttribute('target')).toBe('_blank')
   },
 )
+
+test(
+  '期刊下拉在设置对话框里能用滚轮滚（弹层挂在对话框外，不能被对话框的滚动锁吃掉）',
+  { tag: '@feature:settings.journal-picker' },
+  async ({ app, page }) => {
+    const a = await app()
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto(a.baseURL)
+    await page.locator('[data-card="Fig1_kinetics.pdf"]').dblclick({ timeout: 30_000 })
+    await waitForDocumentReady(page)
+
+    await page.locator('[data-rail="settings"]').click()
+    const shell = page.locator('[data-settings-shell]')
+    await expect(shell).toBeVisible()
+    await shell.locator('[data-section="spec"]').click()
+    await page.locator('[data-journal-picker]').click()
+
+    const list = page.locator('[data-journal-scroller]')
+    await expect(page.locator('[data-journal-group]')).not.toHaveCount(0)
+    const fits = await list.evaluate((el) => el.scrollHeight <= el.clientHeight)
+    expect(fits, '列表要真的放不下，否则滚不滚都量不出来').toBe(false)
+
+    const box = (await list.boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.wheel(0, 120)
+    await expect.poll(() => list.evaluate((el) => el.scrollTop), { message: '滚轮在期刊下拉上不起作用' }).toBeGreaterThan(0)
+  },
+)
