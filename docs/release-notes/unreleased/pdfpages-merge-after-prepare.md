@@ -1,3 +1,0 @@
-## Multi-page PDF merge option now appears after the default "Prepare and run"
-
-When a script wrote several figures into one multi-page PDF with `PdfPages` and you ran it through the default "Prepare and run" flow, the export window offered no "merge into one multi-page PDF" choice under "Export each figure separately" and produced one single-page PDF per figure. Only the older trial-run entry point recorded which figures came from the same `PdfPages` file. "Prepare and run" now records the same page ledger, so the merge option appears after either entry point. Re-running a script replaces its ledger, and switching project clears it.

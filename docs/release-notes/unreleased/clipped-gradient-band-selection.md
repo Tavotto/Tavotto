@@ -1,3 +1,0 @@
-## Gradient-filled peaks drawn with a clip path can be clicked and selected one by one
-
-Some scripts draw a gradient fill (common in XPS / spectroscopy peak fitting) as many thin colour stripes spanning the whole plot and then clip them to the peak's outline with `set_clip_path`. Tavotto treated each such peak as the full stripe rectangle: its selection box was a band across the entire subplot, clicking one peak often selected another peak drawn above it, and on figures with many peaks the later subplots' peaks lost their outlines altogether and could only be picked by a large rectangle. Each peak now highlights and responds to clicks only where it is actually drawn. The figure itself and its exported output are unchanged.
