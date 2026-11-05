@@ -27,7 +27,7 @@ ADR 0164 已经有本机字体通道（文档只记身份、导出按字节认�
 | # | 问题 | 裁决 | 落点 |
 | --- | --- | --- | --- |
 | 1 | 清单怎么来 | 后台线程走 `system_font_dirs()` 与定位线索目录，每张脸按 `admit` 同一组判据（`fonts.font_kind`、`embedding_refusal`、大小上限）筛；CFF 另核 CID。缓存在 `data_dir()/font-catalog.json`，文件 (size, mtime_ns) 没变不重读。扫描顺带把 sha256 写进定位索引，选中后不必再扫。作者机 426 族首次 4.7 秒，之后走缓存 | `rendercore/fontcatalog.py` |
-| 2 | 请求要不要等扫描 | 不等。`GET /api/source-fonts/catalog` 立刻回当前清单和 `state`，`scanning` 时前端 2 秒后再问；60 秒内不重复走目录。第一次用到文字属性才问，启动不扫 | `app.py`、`web/src/lib/fontCatalog.ts` |
+| 2 | 请求要不要等扫描 | 不等。`GET /api/source-fonts/catalog` 立刻回当前清单和 `state`，`scanning` 时前端 2 秒后再问；60 秒内不重复走目录。第一次用到文字属性才问，启动不扫；字体控件每次挂载时若距上次问完已满 60 秒就再问一次（装了新字体不必重启应用），同一时刻只有一个请求在飞，失败不重试，不做定时轮询 | `app.py`、`web/src/lib/fontCatalog.ts` |
 | 3 | 一行是什么 | 一族 = name 表 1 号名字（RIBBI：最多常规 / 粗 / 斜 / 粗斜四张）；「Arial Narrow」「Helvetica Neue Light」各成一族，这正是 Word 的列法。中文名取 name 表简体优先，走现有 `option_labels`，同名消歧走现有 `fontFamilyOptionLabel` | `fontcatalog._family_rows` |
 | 4 | 嵌不进去的字体 | 不列（变量字体、彩色字体、非 CID 的 CFF、禁止嵌入）。选了也嵌不进去，列出来只会多一条警告 | `fontcatalog.faces_in` |
 | 5 | 中文单独选 | 字体行用现有的「英文 + 中文」两格，中文格只列带中文字形的族，写 `sourceFont.cjk`。英文字体自带中文时中文格置灰，与图内文字同一规则。这台机器没有中文字体时只有一格 | `typographyAdapter.ts` |
@@ -35,6 +35,7 @@ ADR 0164 已经有本机字体通道（文档只记身份、导出按字节认�
 | 7 | B / I（修订 0164 裁决 11） | 脸在清单里：换成同族那张，这份归属来自清单而不是文件名；这一族没有那张脸时按钮置灰，悬停说「这个字体没有粗体」。脸不在清单里（别的电脑复制来的原图字体）：沿用 0164，身份作废 | `lib/fontCatalog.restyleLocalFace`、`styleMissing` |
 | 8 | 缺席回退族 | 选字体时按 OS/2 panose / sFamilyClass / `post.isFixedPitch` 推出通用族写进 `fontFamily`，别的电脑缺字体时回退到最接近的批准族；说不准就保持原值 | `fontcatalog._generic_of` |
 | 9 | 浏览器版 / 旧后端 | 端点 404 → 空清单，下拉仍是内置三项 | `fontCatalog.load` |
+| 10 | 单项恢复英文 | 有中文脸时只换英文：中文脸保住，正文脸换回默认族（`serif`）的批准字体，`fontFamily` 删掉回到继承；「两项都恢复」仍整条清掉。正文脸是批准字体且 `fontFamily` 没设时英文格不算「改过」。中文脸本机缺失或清单里没有时中文格照留，选项带当前名字并标「字体缺失」 | `fontCatalog.resetLocalFamily`、`typographyAdapter.ts` |
 
 ## 不做 / 边界
 

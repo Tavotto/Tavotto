@@ -30,6 +30,7 @@ import { sourceFontState, useSourceFonts } from '@/lib/sourceFontCache'
 import {
   catalogLabels,
   isBuiltinFace,
+  resetLocalFamily,
   restyleLocalFace,
   setBuiltinFamily,
   setLocalCjkFamily,
@@ -482,7 +483,9 @@ export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
     fieldOf: (prop) => {
       if (!supported.has(prop)) return undefined
       if (prop === 'fontFallback') {
-        const options = catalog.families.filter((f) => f.cjk).map((f) => f.name)
+        const own = objs.flatMap((o) => (isSourceFont(o.sourceFont) && o.sourceFont.cjk ? [o.sourceFont.cjk.family] : []))
+        // 已经选过中文脸、但这台机器清单里没有：格子留着，当前名字在选项里，用户看得见也恢复得了
+        const options = [...new Set([...own, ...catalog.families.filter((f) => f.cjk).map((f) => f.name)])]
         if (!options.length) return undefined
         return {
           prop: 'sourceFont.cjk',
@@ -529,7 +532,7 @@ export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
       const set = objs.filter((o) =>
         prop === 'fontFallback'
           ? !!o.sourceFont?.cjk
-          : readCanvasText(o, prop) !== undefined || (prop === 'fontFamily' && !!o.sourceFont),
+          : readCanvasText(o, prop) !== undefined || (prop === 'fontFamily' && hasOwnPrimary(o, catalog)),
       )
       if (!set.length) return 'none'
       return set.length === count ? 'all' : 'some'
@@ -541,6 +544,7 @@ export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
         if (o.type !== 'text') return
         // 「恢复」= 删掉这个字段回到继承，规则（含原图字体的失效）在 `resetCanvasText`，与写入同一处
         if (prop === 'fontFallback') setLocalCjkFamily(o, catalog, null)
+        else if (prop === 'fontFamily' && resetLocalFamily(o, catalog)) return
         else resetCanvasText(o, prop)
       })
     },
@@ -552,6 +556,18 @@ export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
           ? 'not_in_manifest'
           : 'kind_unsupported',
     unavailableOptions: (prop) => {
+      if (prop === 'fontFallback') {
+        // 中文脸在本机用不了：名字保留 + 「字体缺失」（只看 cjk 那张脸）
+        return [
+          ...new Set(
+            objs.flatMap((o) =>
+              isSourceFont(o.sourceFont) && o.sourceFont.cjk && isBroken(sourceFontState(o.sourceFont.cjk))
+                ? [o.sourceFont.cjk.family]
+                : [],
+            ),
+          ),
+        ]
+      }
       if (prop !== 'fontFamily') return EMPTY
       // 本机用不了的原图字体：名字保留 + 现成的「字体缺失」warning（ADR 0164）
       const bad = sourceFacesOf(objs).filter((f) => isBroken(sourceFontState(f)))

@@ -1,6 +1,13 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const fetchMock = vi.hoisted(() => vi.fn())
+vi.mock('./api', () => ({ fetchSourceFontCatalog: fetchMock }))
+
 import {
   isBuiltinFace,
+  refreshFontCatalogIfStale,
+  resetFontCatalogForTests,
+  resetLocalFamily,
   restyleLocalFace,
   setBuiltinFamily,
   setLocalCjkFamily,
@@ -136,5 +143,86 @@ describe('粗体 / 斜体', () => {
     const o = text({ sourceFont: { family: 'DejaVu Sans', sha256: sha('f'), face: 0 } })
     expect(styleMissing(o, catalog, true, false)).toBe(false)
     expect(restyleLocalFace(o, catalog, true, false)).toBe(false)
+  })
+})
+
+describe('单项恢复英文', () => {
+  it('中文脸保住，正文脸换回默认族的批准字体，fontFamily 删掉', () => {
+    const o = text({ fontFamily: 'sans-serif' })
+    setLocalFamily(o, catalog, 'Times New Roman')
+    setLocalCjkFamily(o, catalog, 'SimSun')
+    expect(resetLocalFamily(o, catalog)).toBe(true)
+    expect(o.sourceFont).toMatchObject({ family: 'Liberation Serif', sha256: sha('1'), cjk: { family: 'SimSun' } })
+    expect(o.fontFamily).toBeUndefined()
+  })
+
+  it('已是粗体时取默认族里的粗体那张', () => {
+    const o = text({ bold: true })
+    setLocalFamily(o, catalog, 'Times New Roman')
+    setLocalCjkFamily(o, catalog, 'SimSun')
+    resetLocalFamily(o, catalog)
+    expect(o.sourceFont).toMatchObject({ sha256: sha('2'), bold: true })
+  })
+
+  it('没有中文脸：返回 false，调用方整条清掉', () => {
+    const o = text()
+    setLocalFamily(o, catalog, 'Times New Roman')
+    expect(resetLocalFamily(o, catalog)).toBe(false)
+  })
+})
+
+describe('清单刷新', () => {
+  const ok = (state: 'ready' | 'scanning' = 'ready') =>
+    ({ ok: true, state, families: [], builtin: {} }) as never
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-11-05T00:00:00Z'))
+    resetFontCatalogForTests()
+    fetchMock.mockReset()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    resetFontCatalogForTests()
+  })
+
+  it('没问过就问；60 秒内再挂载不问，满 60 秒再问', async () => {
+    fetchMock.mockResolvedValue(ok())
+    refreshFontCatalogIfStale()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(59_000)
+    refreshFontCatalogIfStale()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(1_000)
+    refreshFontCatalogIfStale()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('同一时刻只有一个请求在飞', async () => {
+    let done!: (v: never) => void
+    fetchMock.mockReturnValue(new Promise((r) => (done = r)))
+    refreshFontCatalogIfStale()
+    vi.advanceTimersByTime(120_000)
+    refreshFontCatalogIfStale()
+    refreshFontCatalogIfStale()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    done(ok())
+    await vi.advanceTimersByTimeAsync(0)
+  })
+
+  it('失败不重试轰炸，下次挂载满 60 秒再试', async () => {
+    fetchMock.mockRejectedValue(new Error('404'))
+    refreshFontCatalogIfStale()
+    await vi.advanceTimersByTimeAsync(0)
+    refreshFontCatalogIfStale()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(61_000)
+    refreshFontCatalogIfStale()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })

@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDocumentStore } from '@/store/documentStore'
 import { resetGestureCoordinator, finishActiveGesture } from '@/store/gestureCoordinator'
 import { emptyProject, type TextObject } from '@/types/document'
+import { resetFontCatalogForTests } from '@/lib/fontCatalog'
 import { useCanvasTypography, type TypographyAdapter } from './typographyAdapter'
 
 // 原图字体的本机状态由后端说了算（ADR 0164）；这里只控制它回什么
@@ -324,5 +325,69 @@ describe('原图字体 sourceFont（ADR 0164）', () => {
     expect((s().doc.objects[0] as TextObject).sourceFont).toEqual({ ...sf, bold: true })
     act(() => adapter.writeOnce('weight', 'normal'))
     expect((s().doc.objects[0] as TextObject).sourceFont).toBeUndefined()
+  })
+})
+
+describe('本机字体：英文 + 中文两格（ADR 0169）', () => {
+  const sha = (c: string) => c.repeat(64)
+  const f = (c: string) => ({ sha256: sha(c), face: 0, bold: false, italic: false })
+  const catalog = {
+    families: [{ name: 'Times New Roman', zh: null, cjk: false, generic: 'serif', faces: [f('a')] }],
+    builtin: { serif: { name: 'Liberation Serif', faces: [f('1')] } },
+  }
+  const libSerif = { family: 'Liberation Serif', sha256: sha('1'), face: 0 }
+  const simsun = { family: 'SimSun', sha256: sha('e'), face: 0 }
+
+  beforeEach(() => {
+    resetFontCatalogForTests(catalog)
+  })
+  afterEach(() => {
+    resetFontCatalogForTests()
+    sourceFontState.mockReturnValue('unknown')
+  })
+
+  it('单项恢复英文：中文脸保住，正文脸换回默认族的批准字体，fontFamily 回到继承', async () => {
+    await mount([
+      textObj({
+        fontFamily: 'serif',
+        sourceFont: { family: 'Times New Roman', sha256: sha('a'), face: 0, cjk: simsun },
+      }),
+    ])
+    act(() => adapter.reset('fontFamily'))
+    const o = s().doc.objects[0] as TextObject
+    expect(o.sourceFont).toEqual({ ...libSerif, cjk: simsun })
+    expect(o.fontFamily).toBeUndefined()
+  })
+
+  it('「两项都恢复」仍清全部', async () => {
+    await mount([textObj({ sourceFont: { ...libSerif, cjk: simsun }, fontFamily: 'serif' })])
+    act(() => adapter.resetFonts())
+    const o = s().doc.objects[0] as TextObject
+    expect(o.sourceFont).toBeUndefined()
+    expect(o.fontFamily).toBeUndefined()
+  })
+
+  it('正文脸是批准字体且 fontFamily 没设：英文那格不算「改过」，中文格算', async () => {
+    await mount([textObj({ sourceFont: { ...libSerif, cjk: simsun } })])
+    expect(adapter.overrideStateOf('fontFamily')).toBe('none')
+    expect(adapter.overrideStateOf('fontFallback')).toBe('all')
+  })
+
+  it('文档里有中文脸、清单没有中文字体：中文格仍在，选项带当前名字', async () => {
+    await mount([textObj({ sourceFont: { ...libSerif, cjk: simsun } })])
+    expect(adapter.fieldOf('fontFallback')?.options).toEqual(['SimSun'])
+  })
+
+  it('没有任何对象带中文脸且清单没中文字体：只有一格', async () => {
+    await mount([textObj()])
+    expect(adapter.fieldOf('fontFallback')).toBeUndefined()
+  })
+
+  it('中文脸本机用不了：「字体缺失」标在中文格，不标英文格', async () => {
+    await mount([textObj({ sourceFont: { ...libSerif, cjk: simsun } })])
+    sourceFontState.mockImplementation(((sf: { family: string }) =>
+      sf.family === 'SimSun' ? 'not_found' : 'ok') as never)
+    expect(adapter.unavailableOptions('fontFallback')).toEqual(['SimSun'])
+    expect(adapter.unavailableOptions('fontFamily')).toEqual([])
   })
 })

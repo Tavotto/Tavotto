@@ -10,10 +10,10 @@
  * 中文格单独选、英文留在内置字体时，`sourceFont` 的正文脸点名批准字体本身：批准字体也有 sha256，
  * 不用改文档形状（`isBuiltinFace` 让界面继续显示「衬线体」）。
  */
-import { useSyncExternalStore } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 import { fetchSourceFontCatalog } from './api'
 import { faceKey, isSourceFont, sameFace } from './sourceFont'
-import { effectiveCanvasFamily } from './typography'
+import { CANVAS_TEXT_DEFAULT_FAMILY, effectiveCanvasFamily } from './typography'
 import type { SourceFace, SourceFont, TextObject } from '@/types/document'
 
 export interface CatalogFace {
@@ -38,13 +38,19 @@ export interface FontCatalog {
 }
 
 const POLL_MS = 2000
+/** 控件挂载时距上次问完超过这么久就再问一次（后端自己也 60 秒节流，装了新字体不必重启应用） */
+export const STALE_MS = 60_000
 const EMPTY_CATALOG: FontCatalog = { families: [], builtin: {} }
 
 let catalog: FontCatalog = EMPTY_CATALOG
-let started = false
+/** 上一次请求结束的时刻（成功或失败都算）；0 = 还没问过 */
+let lastDoneAt = 0
+let inFlight = false
 const listeners = new Set<() => void>()
 
 async function load(): Promise<void> {
+  if (inFlight) return
+  inFlight = true
   try {
     const res = await fetchSourceFontCatalog()
     if (!res.ok) return
@@ -53,7 +59,17 @@ async function load(): Promise<void> {
     if (res.state === 'scanning') setTimeout(load, POLL_MS)
   } catch {
     /* 没有本机字体服务（浏览器 playground / 旧后端）：下拉就是三个内置选项 */
+  } finally {
+    inFlight = false
+    lastDoneAt = Date.now()
   }
+}
+
+/** 没问过、或距上次问完满 `STALE_MS` 才再问；同一时刻只有一个请求在飞。 */
+export function refreshFontCatalogIfStale(now: number = Date.now()): void {
+  if (inFlight) return
+  if (lastDoneAt !== 0 && now - lastDoneAt < STALE_MS) return
+  void load()
 }
 
 const subscribe = (l: () => void) => {
@@ -63,20 +79,20 @@ const subscribe = (l: () => void) => {
   }
 }
 
-/** 字体清单。第一次用到时才去问（打开文字属性之前不扫字体目录）；问之前是空清单。 */
+/** 字体清单。控件挂载时才去问（打开文字属性之前不扫字体目录），隔 `STALE_MS` 以上再挂载会重新问；问之前是空清单。 */
 export function useFontCatalog(): FontCatalog {
   const value = useSyncExternalStore(subscribe, () => catalog)
-  if (!started) {
-    started = true
-    void load()
-  }
+  useEffect(() => {
+    refreshFontCatalogIfStale()
+  }, [])
   return value
 }
 
 /** 测试用 */
 export function resetFontCatalogForTests(next: FontCatalog = EMPTY_CATALOG): void {
   catalog = next
-  started = next !== EMPTY_CATALOG
+  lastDoneAt = next !== EMPTY_CATALOG ? Date.now() : 0
+  inFlight = false
 }
 
 const faceOf = (family: string, f: CatalogFace): SourceFace => ({ family, sha256: f.sha256, face: f.face })
@@ -133,6 +149,20 @@ export function setBuiltinFamily(o: TextObject, c: FontCatalog, generic: string)
   const f = closestFace(fam.faces, o.bold === true, o.italic === true)
   o.sourceFont = primaryOf(f, fam.name, cjk)
   o.fontFamily = generic as TextObject['fontFamily']
+  return true
+}
+
+/**
+ * 只把英文那格恢复成默认：中文脸（`sourceFont.cjk`）保住，正文脸换回默认族的批准字体，`fontFamily` 删掉回到继承。
+ * 没有中文脸（或清单里没有默认族）返回 false，调用方走 `resetCanvasText` 整条清掉。
+ */
+export function resetLocalFamily(o: TextObject, c: FontCatalog): boolean {
+  const cjk = isSourceFont(o.sourceFont) ? o.sourceFont.cjk : undefined
+  const fam = c.builtin[CANVAS_TEXT_DEFAULT_FAMILY]
+  if (!cjk || !fam) return false
+  const f = closestFace(fam.faces, o.bold === true, o.italic === true)
+  o.sourceFont = primaryOf(f, fam.name, cjk)
+  delete o.fontFamily
   return true
 }
 
