@@ -22,6 +22,11 @@ order: 320
   （`pool.resolve_worker_python` / `projectenv.state` / `workdir` / `depresolve`），不替产品
   选环境、不装包、不改 cwd。终局字段先于终局 `status` 写（与 `exportjob` 同一条纪律）。
 - **失败时报告带 `remedy`（智能修复路由，ADR 0148 提议）**：`prepsession.report` 在失败 / 没出图 / 走不通的结局上调用 `fixrouter.choose`，把唯一修法放进新字段 `remedy`（闭集 `switch_native / install_packages / change_python / convert_to_matplotlib / ai_fix / connect_ai / feedback`，一次运行最多 3 种，第 4 次 `feedback`）。路由只标注、不执行：safe→native 仍由 `execpolicy.decide_fallback` 做（ADR 0127 不改）。「AI 连没连」由 app 注入 `SESSIONS.ai_connected`（`ai_bridge.capabilities()` 的 `usable`），引擎不探测。诊断包 `detail-runs.json` 的 `fix_journey` 读 `SESSIONS.fix_journeys`。看护 `tests/test_fixrouter*.py`。
+- **新失败码进路由先问 AI 手上有没有能解决它的工具（错题本 L-138 升级，2026-11-05）。** 路由没点名的码按「AI 连没连」
+  落到 `ai_fix`。写路由时核修复工具集里有没有能改这件事的工具、AI 看不看得到关键事实；没有就补确定性的按钮或工具，
+  或给 `feedback`。为什么：八个 PR 都是用户反馈里 AI 绕几轮没结果：读不了的依赖夹换两代环境也没用（#1507），
+  外来 ABI 的文件夹去要别的 Python（#1564），改不了登记的入口（#1565），看不到内置环境（#1572），解释器被系统拒写
+  仍给 AI 入口（#1595），设不了 argv（#1605），看不到刚才的 AI 修改（#1608），图名冲突根本不在脚本里（#1642）。
 - **执行只有一条路**：`pool.build_owned()`（`build()` + 池锁里给出的 `created`）。准备接口不另写
   `get + ensure_built`——自动 fallback 只有一份实现，漏掉一个入口就是「素材库里能打开、准备
   接口打不开」。已 build 且解释器决策没变的会话直接用它记下的 build 响应装配回执，不发请求。
