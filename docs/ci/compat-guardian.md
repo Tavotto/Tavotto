@@ -465,6 +465,9 @@ Tavotto 零张，issue #749，`fix_pr` 为空；`RealRepro` 钉「差异仍在�
 最小化过程中暴露并修掉了 explore 比较里的一个误报：无标题的图（原生 `[""]` vs Tavotto `[]`）曾被当作同路径内容差异；
 最小化签名因此新增「原生确有多图写同一路径」这一条，缩减不能漂移到别的原因上。
 
+产品按 `MAX_PYPLOT_FALLBACK` 少收的图不算差异（2026-11-05 维护者批准，簇 cl-ae815f7d15）：`compare` 只在产品报的 `dropped_figures` 与缺口张数正好相等、脚本写出的每个路径都在、
+没有图 show 过时放过 `fewer_figures` / `title_missing`，并在判定的 `note` 里写明张数；张数对不上、路径丢了或最后写入者不对都照常报。
+
 另一个同类误报在 `same_stem_two_figs`：同 stem 不同格式的两张图（`s.pdf` 第一张、`s.png` 第二张），Tavotto 是 `s`（pdf）与 `s-2`（png）（#1250 / #1309 按格式绑定归属），
 `compare` 现在按「写这个路径的格式」找拥有它的 `s` / `s-N` 再比标题（`_path_owner_matches`）；产品没记到格式时退回按 stem 比，G2 的检出不变。
 
