@@ -23,6 +23,10 @@ sys.path[:0] = [str(REPO / "scripts"), str(REPO / "scripts" / "ci")]
 import compat_research_sources as sources  # noqa: E402
 import fetch_fonts  # noqa: E402
 
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 #: 只认钉在完整提交上的地址：内容不随分支变，才谈得上和钉住的 sha256 对应。
 _RAW = re.compile(
     r"https://raw\.githubusercontent\.com/([^/]+)/([^/]+)/([0-9a-f]{40})/(.+)", re.ASCII
