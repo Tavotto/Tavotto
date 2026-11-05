@@ -160,6 +160,7 @@ HOSTS: "dict[str, dict]" = {
         "skill_dirs": [
             "<项目>/.cursor/skills/tavotto-figure/",
             "<项目>/.agents/skills/tavotto-figure/",
+            "~/.cursor/skills/tavotto-figure/（用户级，官方；桌面版「接入」写这里）",
         ],
     },
     "zcode": {
@@ -181,8 +182,8 @@ HOSTS: "dict[str, dict]" = {
             "ZCode Settings 里 tavotto 为已连接状态并能看到工具",
             "在对话里让它调用 tavotto_health",
         ],
-        "skill": "instruction_fallback",
-        "skill_dirs": [],
+        "skill": "native",
+        "skill_dirs": ["~/.zcode/skills/tavotto-figure/（用户级，官方；设置里可逐技能开关）"],
     },
     "dsh": {
         "label": "DeepSeek Harness（@deepseek-ai/dsh-mcp-client，stdio）",
@@ -330,8 +331,8 @@ HOSTS: "dict[str, dict]" = {
         "skill": "native",
         "skill_dirs": [
             "<项目>/.trae/skills/tavotto-figure/",
-            "~/.trae/skills/tavotto-figure/（国际版全局）",
-            "~/.trae-cn/skills/tavotto-figure/（国内版全局）",
+            "~/.trae/skills/tavotto-figure/（国际版全局，仅第三方说法，待验）",
+            "~/.trae-cn/skills/tavotto-figure/（国内版全局，官方）",
         ],
     },
     "vscode": {
@@ -355,6 +356,7 @@ HOSTS: "dict[str, dict]" = {
         "skill_dirs": [
             "<项目>/.github/skills/tavotto-figure/",
             "<项目>/.agents/skills/tavotto-figure/",
+            "~/.copilot/skills/tavotto-figure/（用户级，官方）",
         ],
     },
 }

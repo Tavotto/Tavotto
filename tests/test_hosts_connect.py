@@ -250,7 +250,14 @@ def test_list_reports_each_host(home):
     out = H.list_hosts()
     by = {h["id"]: h for h in out["hosts"]}
     assert list(by) == list(H.HOST_IDS)
-    assert by["cursor"] == {"id": "cursor", "label": "Cursor", "installed": True, "connected": True}
+    assert by["cursor"] == {
+        "id": "cursor",
+        "label": "Cursor",
+        "installed": True,
+        "connected": True,
+        "skill": "current",
+    }
+    assert by["codex"]["skill"] == "builtin" and by["claude-desktop"]["skill"] == "builtin"
     assert by["zcode"]["installed"] is False
     assert "project_root" not in out
 
@@ -347,6 +354,7 @@ def test_antigravity_writes_both_config_files_and_disconnect_drops_both(home, pr
         "label": "Antigravity",
         "installed": True,
         "connected": True,
+        "skill": "current",
     }
     assert H.disconnect("antigravity")["ok"]
     for f in _agy_files(home):
@@ -406,3 +414,82 @@ def test_antigravity_paths_follow_userprofile_on_windows(tmp_path, monkeypatch):
         prof / ".gemini" / "config" / "mcp_config.json",
         prof / ".gemini" / "antigravity" / "mcp_config.json",
     ]
+
+
+# ----------------------------------------------------------------------------- 技能（hostskills）
+def _steps(res):
+    return {s["step"]: s for s in res["steps"]}
+
+
+def test_connect_writes_the_skill_as_its_own_step_and_disconnect_removes_it(home):
+    (home / ".cursor").mkdir()
+    res = H.connect("cursor")
+    assert res["ok"] and res["state"] == "needs_new_session", res
+    st = _steps(res)["skill"]
+    assert st["ok"] and not st["skipped"] and st["skill"] == "written"
+    assert (home / ".cursor" / "skills" / "tavotto-figure" / "SKILL.md").is_file()
+    again = H.connect("cursor")
+    assert _steps(again)["skill"]["skipped"] and again["state"] == "connected"
+    off = H.disconnect("cursor")
+    assert off["ok"] and _steps(off)["skill"]["skill"] == "removed"
+    assert not (home / ".cursor" / "skills" / "tavotto-figure").exists()
+
+
+def test_a_skill_the_user_edited_is_kept_and_reported_not_failed(home):
+    (home / ".cursor").mkdir()
+    H.connect("cursor")
+    mine = home / ".cursor" / "skills" / "tavotto-figure" / "SKILL.md"
+    mine.write_text(mine.read_text(encoding="utf-8") + "\n我加的一行\n", encoding="utf-8")
+    res = H.connect("cursor")
+    assert res["ok"] and _steps(res)["skill"]["skill"] == "modified"
+    assert "我加的一行" in mine.read_text(encoding="utf-8")
+    assert H.list_hosts()["hosts"][2]["skill"] == "modified"
+    off = H.disconnect("cursor")
+    assert off["ok"] and _steps(off)["skill"]["skill"] == "modified"
+    assert mine.is_file()
+
+
+def test_skill_failure_is_reported_honestly_but_mcp_stays_connected(home, monkeypatch):
+    (home / ".cursor").mkdir()
+    monkeypatch.setattr(
+        H.hostskills,
+        "install_skill",
+        lambda host: {
+            "ok": False,
+            "state": "failed",
+            "skipped": False,
+            "detail": "x",
+            "error_code": "skill_write_failed",
+        },
+    )
+    res = H.connect("cursor")
+    assert (
+        not res["ok"] and res["error_code"] == "skill_write_failed" and res["mcp_connected"] is True
+    )
+    assert (home / ".cursor" / "mcp.json").is_file()
+    assert "health" in _steps(res)  # MCP 仍然体检
+
+
+def test_claude_desktop_has_no_skill_dir_and_reports_builtin(home):
+    (home / "AppData" / "Roaming" / "Claude").mkdir(parents=True)
+    (home / "Library" / "Application Support" / "Claude").mkdir(parents=True)
+    (home / ".config" / "Claude").mkdir(parents=True)
+    res = H.connect("claude-desktop")
+    st = _steps(res)["skill"]
+    assert res["ok"] and st["skipped"] and st["skill"] == "builtin"
+
+
+def test_claude_code_with_the_plugin_installed_gets_no_second_copy(home, monkeypatch):
+    monkeypatch.setattr(H, "_claude_argv", lambda: ["claude"])
+    monkeypatch.setattr(H, "_run", lambda argv, timeout=120: (0, "plugin:tavotto:tavotto: x - ok"))
+    res = H.connect("claude-code")
+    assert res["ok"] and "skill" not in _steps(res)
+    assert not (home / ".claude" / "skills").exists()
+
+
+def test_claude_code_without_the_plugin_gets_the_skill(home, monkeypatch):
+    monkeypatch.setattr(H, "_claude_argv", lambda: ["claude"])
+    monkeypatch.setattr(H, "_run", lambda argv, timeout=120: (0, ""))
+    res = H.connect("claude-code")
+    assert res["ok"] and _steps(res)["skill"]["skill"] == "written"
+    assert (home / ".claude" / "skills" / "tavotto-figure" / "SKILL.md").is_file()
