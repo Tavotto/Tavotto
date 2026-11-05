@@ -357,3 +357,73 @@ def test_a_link_loop_is_refused_not_followed_forever(home):
     except OSError:
         pytest.skip("这台机器不能建符号链接")
     assert bridge._argv_path_escapes(str(loop / "x"), bridge.allowed_roots(), None)
+
+
+@pytest.mark.parametrize(
+    "path,expected",
+    [
+        ("/proc/1234/fd/3", True),
+        ("/proc/self/fd/3", True),
+        ("/proc/thread-self/root/etc/passwd", True),
+        ("/proc/1234/environ", True),
+        ("/dev/fd/3", True),
+        ("/proc/cpuinfo", False),
+        ("/dev/null", False),
+        ("/project/proc/1234/fd", False),
+    ],
+)
+@pytest.mark.skipif(os.name == "nt", reason="POSIX 路径形状")
+def test_process_views_are_recognised(path, expected):
+    assert bridge._is_process_view(path) is expected
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc/self/fd"), reason="需要 procfs")
+def test_an_open_deleted_credential_is_not_reachable_through_proc(home):
+    """Codex #1757 r4476078785：打开 `server.pem`、删掉目录项，`/proc/<pid>/fd/<fd>` 仍读得到内容。"""
+    secret = _file(home / "papers" / "server.pem")
+    with open(secret, encoding="utf-8") as fh:
+        secret.unlink()
+        path = f"/proc/{os.getpid()}/fd/{fh.fileno()}"
+        assert bridge._argv_path_escapes(path, bridge.allowed_roots(), None)
+        assert bridge._argv_path_escapes(
+            f"/proc/self/fd/{fh.fileno()}", bridge.allowed_roots(), None
+        )
+        with pytest.raises(bridge.BridgeError) as exc:
+            bridge.check_scope(path)
+        assert exc.value.code == roots.CODE_PATH_DENIED
+
+
+@pytest.mark.parametrize(
+    "target,expected",
+    [
+        ("\\\\?\\C:\\Users\\x", "C:\\Users\\x"),
+        ("\\??\\C:\\Users\\x", "C:\\Users\\x"),
+        ("\\\\?\\UNC\\srv\\share\\x", "\\\\srv\\share\\x"),
+        ("\\??\\UNC\\srv\\share\\x", "\\\\srv\\share\\x"),
+        ("C:\\plain", "C:\\plain"),
+        ("..\\rel", "..\\rel"),
+    ],
+)
+def test_nt_link_targets_lose_their_device_prefix(target, expected):
+    assert bridge._strip_nt_link_prefix(target) == expected
+
+
+@pytest.mark.skipif(os.name != "nt", reason="目录联接只在 Windows 上有")
+def test_a_junction_into_ssh_is_followed_and_refused(home, tmp_path):
+    """目录联接不要管理员权限，普通用户就能建：`os.path.islink` 看不出它，靠 reparse tag 认。"""
+    import subprocess
+
+    _file(home / ".ssh" / "notes.txt")
+    plain = _file(tmp_path / "elsewhere" / "data" / "plain.txt")
+    bad, good = home / "papers" / "keys", home / "papers" / "data"
+    for link, target in ((bad, home / ".ssh"), (good, plain.parent)):
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True
+        )
+    assert ".ssh" in bridge._lookup_chain(str(bad / "notes.txt"))[-1]  # 真的跟进了联接
+    with pytest.raises(bridge.BridgeError) as exc:
+        bridge.check_scope(str(bad / "notes.txt"))
+    assert exc.value.code == roots.CODE_PATH_DENIED
+    assert bridge._argv_path_escapes(str(bad / "notes.txt"), bridge.allowed_roots(), None)
+    # 指到普通目录的联接照常放行
+    assert bridge.check_scope(str(good / "plain.txt")) == _real(plain)

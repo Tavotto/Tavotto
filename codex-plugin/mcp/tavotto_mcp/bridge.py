@@ -684,6 +684,22 @@ def _is_link(st: os.stat_result) -> bool:
     return os.name == "nt" and getattr(st, "st_reparse_tag", 0) == _IO_REPARSE_TAG_MOUNT_POINT
 
 
+def _is_process_view(path: str) -> bool:
+    """`/proc/<pid>/…`（含 `self` / `thread-self`）与 `/dev/fd/…` 是进程视图，不是文件系统路径：`/proc/<pid>/fd/3` 的 readlink
+    只是展示文本（`… (deleted)`），内核直接访问仍存活的文件对象，逐段走不出真相（Codex #1757 r4476078785）。一律拒；
+    `/proc/cpuinfo` 这类系统信息不是进程视图，照常。"""
+    if os.name == "nt":
+        return False
+    if path.startswith("/dev/fd/"):
+        return True
+    head = path.split("/")[1:3]
+    return (
+        len(head) == 2
+        and head[0] == "proc"
+        and (head[1].isdigit() or head[1] in ("self", "thread-self"))
+    )
+
+
 def _strip_nt_link_prefix(target: str) -> str:
     for prefix, repl in (
         ("\\\\?\\UNC\\", "\\\\"),
@@ -732,6 +748,8 @@ def _lookup_chain(path: str) -> list[str]:
             cur = os.path.dirname(cur)
             continue
         nxt = os.path.join(cur, part)
+        if _is_process_view(nxt):
+            raise OSError(f"进程视图路径不能按文件判定：{nxt}")
         if missing:
             chain.append(nxt)
             cur = nxt
