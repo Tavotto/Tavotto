@@ -31,91 +31,109 @@ def _mod():
 L = _mod()
 TODAY = dt.date(2026, 11, 2)
 
-GOOD = """# 错题本
+GOOD = """# 错题本 · ci
 
-## ci
+> 文件头的引用行不算条目。
 
 ### L-001 测试与提交之间判退出码，不接 grep
 - 类: 别这样
-- 状态: active
 - Seen: 2026-10-31, 2026-11-01, 2026-11-02
 - 为什么: 管道后的 grep 匹配到汇总行就返回 0，
   红了照样提交。
 - 证据: #1575
 
-### L-002 只在 Windows 生效的改动入队前整文件跑 Lab
-- 类: 别这样
-- 状态: promoted → docs/rules/ci/windows-lab.md
-- Seen: 2026-11-01, 2026-11-02
-- 为什么: PR 阶段不跑 Windows 后端分片。
-- 证据: #1587, #1604
+### L-002 只在 Windows 生效的改动入队前整文件跑 Lab → docs/rules/ci/windows-lab.md
 """
 
 
+@pytest.fixture
+def root(tmp_path):
+    """假仓库：升级目标存在且点名了 L-002。"""
+    target = tmp_path / "docs" / "rules" / "ci" / "windows-lab.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("（错题本 L-002 升级）\n", encoding="utf-8")
+    return tmp_path
+
+
+def _problems(text, root):
+    return L.problems(text, "ci", root=root, today=TODAY)
+
+
 def test_the_real_book_passes():
-    text = L.LESSONS.read_text(encoding="utf-8")
-    assert L.problems(text) == []
+    assert L.check_all() == []
 
 
 def test_the_real_book_is_routed_from_root_agents():
     """没人指向的错题本等于不存在：加载路径是根 AGENTS.md 的任务路由。"""
     agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    assert "docs/rules/repo/lessons.md" in agents
+    assert "docs/rules/repo/lessons/" in agents
 
 
-def test_good_sample_parses_with_continuation_and_due():
-    lessons = L.parse(GOOD)
+def test_every_book_is_a_rules_layer():
+    """文件名就是路由：`docs/rules/<层>/` 多一层而这里没跟上，那一层的人读不到错题本。"""
+    on_disk = {p.name for p in (ROOT / "docs" / "rules").iterdir() if p.is_dir()}
+    assert set(L.LAYERS) == on_disk
+    assert all((L.LESSONS / f"{x}.md").is_file() for x in L.LAYERS)
+
+
+def test_good_sample_parses_with_continuation_and_due(root):
+    lessons = L.parse(GOOD, "ci")
     assert [x.id for x in lessons] == ["L-001", "L-002"]
     assert lessons[0].why.endswith("红了照样提交。")
     assert lessons[0].due is True
     assert lessons[1].status == "promoted"
+    assert lessons[1].rule == "只在 Windows 生效的改动入队前整文件跑 Lab"
     assert lessons[1].promoted_to == "docs/rules/ci/windows-lab.md"
     assert lessons[1].due is False
-    assert L.problems(GOOD, today=TODAY) == []
+    assert _problems(GOOD, root) == []
 
 
-def test_format_spec_inside_the_book_is_not_parsed_as_an_entry():
-    """文件里「条目格式」那段示例在代码块里，不算条目。"""
-    text = L.LESSONS.read_text(encoding="utf-8")
-    assert "### L-007" in text
-    assert all(x.id != "L-007" for x in L.parse(text))
+def test_format_spec_in_readme_is_not_a_book():
+    """README 里「条目格式」的示例不算条目；README 也不算一层。"""
+    assert "### L-007" in (L.LESSONS / "README.md").read_text(encoding="utf-8")
+    assert all(x.id != "L-007" for x in L.load())
 
 
 @pytest.mark.parametrize(
     ("old", "new", "needle"),
     [
-        ("- 类: 别这样\n- 状态: active", "- 类: 别犯\n- 状态: active", "类须是"),
-        ("- 状态: active", "- 状态: done", "状态须是"),
+        ("- 类: 别这样", "- 类: 别犯", "类须是"),
+        ("- 类: 别这样", "- 类: 别这样\n- 状态: active", "认不出的行"),
         ("2026-10-31, 2026-11-01", "2026-11-01, 2026-10-31", "升序"),
         ("2026-10-31, 2026-11-01", "2026-10-31, 2026-10-31", "升序"),
         ("2026-10-31, 2026-11-01", "2026-10-31, 11-01", "YYYY-MM-DD"),
         ("- 证据: #1575\n", "", "缺字段"),
         ("- 证据: #1575", "- 证据:", "不能空"),
-        ("## ci\n", "## misc\n", "不在任何层"),
         ("  红了照样提交。", "红了照样提交。", "认不出的行"),
+        ("windows-lab.md\n", "windows-lab.md\n- 证据: #1\n", "只留标题一行"),
     ],
 )
-def test_each_parse_rule_goes_red(old, new, needle):
+def test_each_parse_rule_goes_red(root, old, new, needle):
     bad = GOOD.replace(old, new, 1)
     assert bad != GOOD
-    errs = L.problems(bad, today=TODAY)
+    errs = _problems(bad, root)
     assert errs and needle in errs[0], errs
 
 
 @pytest.mark.parametrize(
     ("old", "new", "needle"),
     [
-        ("### L-002", "### L-001", "编号重复"),
         ("### L-001", "### L-003", "没按升序"),
         ("docs/rules/ci/windows-lab.md", "docs/rules/ci/no-such-file.md", "不存在"),
-        ("2026-11-01, 2026-11-02\n- 为什么: PR", "2026-11-01, 2026-11-09\n- 为什么: PR", "未来"),
+        ("2026-11-02\n", "2026-11-09\n", "未来"),
     ],
 )
-def test_each_book_rule_goes_red(old, new, needle):
+def test_each_book_rule_goes_red(root, old, new, needle):
     bad = GOOD.replace(old, new, 1)
     assert bad != GOOD
-    errs = L.problems(bad, today=TODAY)
+    errs = _problems(bad, root)
     assert any(needle in e for e in errs), errs
+
+
+def test_promoted_target_must_name_the_lesson(root):
+    """指针留下、规则却没写进细则：这条教训就丢了。"""
+    (root / "docs" / "rules" / "ci" / "windows-lab.md").write_text("别的规则\n", encoding="utf-8")
+    assert any("找不到 L-002" in e for e in _problems(GOOD, root))
 
 
 @pytest.mark.parametrize(
@@ -129,28 +147,58 @@ def test_each_book_rule_goes_red(old, new, needle):
         "api_key = xxx",
     ],
 )
-def test_private_facts_go_red(leak):
+def test_private_facts_go_red(root, leak):
     bad = GOOD.replace("红了照样提交。", f"红了照样提交。{leak}", 1)
-    assert any("私有信息" in e for e in L.problems(bad, today=TODAY))
+    assert any("私有信息" in e for e in _problems(bad, root))
 
 
-def test_version_numbers_are_not_mistaken_for_addresses():
+def test_version_numbers_are_not_mistaken_for_addresses(root):
     ok = GOOD.replace("证据: #1575", "证据: #1575（v0.19.2 → v0.20.0；matplotlib 3.10.1）", 1)
-    assert L.problems(ok, today=TODAY) == []
+    assert _problems(ok, root) == []
 
 
-def test_size_cap_goes_red():
-    big = GOOD + "\n## 附\n\n" + "填充一行。\n" * (L.CAP_BYTES // 10)
-    assert any("体积" in e for e in L.problems(big, today=TODAY))
+def test_size_cap_is_per_layer_and_goes_red(root):
+    big = GOOD + "\n" + "填充一行。\n" * (L.CAP_BYTES // 10)
+    assert any("体积" in e for e in _problems(big, root))
 
 
-def test_cli_check_exit_code(tmp_path):
-    good = tmp_path / "good.md"
-    good.write_text(GOOD, encoding="utf-8")
-    bad = tmp_path / "bad.md"
-    bad.write_text(GOOD.replace("- 状态: active", "- 状态: done", 1), encoding="utf-8")
-    assert L.main(["--check", "--file", str(bad)]) == 1
-    assert L.main(["--due", "--file", str(good)]) == 0
+def _write_books(directory, ci):
+    directory.mkdir(exist_ok=True)
+    for x in L.LAYERS:
+        (directory / f"{x}.md").write_text("# 空\n", encoding="utf-8")
+    (directory / "ci.md").write_text(ci, encoding="utf-8")
+
+
+def test_numbers_are_unique_across_files(root, tmp_path):
+    books = tmp_path / "lessons"
+    _write_books(books, GOOD)
+    assert L.check_all(books, root=root, today=TODAY) == []
+    (books / "repo.md").write_text(GOOD.split("### L-002")[0], encoding="utf-8")
+    assert any("编号重复" in e for e in L.check_all(books, root=root, today=TODAY))
+
+
+def test_stray_or_missing_book_goes_red(root, tmp_path):
+    books = tmp_path / "lessons"
+    _write_books(books, GOOD)
+    (books / "misc.md").write_text("# 没人读\n", encoding="utf-8")
+    assert any("misc.md" in e for e in L.check_all(books, root=root, today=TODAY))
+    (books / "misc.md").unlink()
+    (books / "desktop.md").unlink()
+    assert any("desktop.md" in e for e in L.check_all(books, root=root, today=TODAY))
+
+
+def test_cli_exit_codes_and_stats(tmp_path, capsys):
+    good = tmp_path / "good"
+    _write_books(good, GOOD.split("### L-002")[0])
+    bad = tmp_path / "bad"
+    _write_books(bad, GOOD.replace("- 类: 别这样", "- 类: 别犯", 1))
+    assert L.main(["--check", "--dir", str(bad)]) == 1
+    assert L.main(["--due", "--dir", str(bad)]) == 1
+    capsys.readouterr()
+    assert L.main(["--due", "--dir", str(good)]) == 0
+    assert "L-001" in capsys.readouterr().out
+    assert L.main(["--stats", "--dir", str(good)]) == 0
+    assert "L-002" in capsys.readouterr().out  # 下一个编号
 
 
 @pytest.mark.parametrize(
@@ -189,12 +237,8 @@ def test_future_check_defaults_to_beijing_today(monkeypatch):
         date=RunnerDate, datetime=RunnerDateTime, timezone=dt.timezone, timedelta=dt.timedelta
     )
     monkeypatch.setattr(L, "dt", fake)
-    today_bj = GOOD.replace(
-        "2026-11-01, 2026-11-02\n- 为什么: PR", "2026-11-01, 2026-11-03\n- 为什么: PR", 1
-    )
+    today_bj = GOOD.replace("2026-11-01, 2026-11-02\n", "2026-11-01, 2026-11-03\n", 1)
     assert today_bj != GOOD
-    assert not any("未来" in e for e in L.problems(today_bj))
-    tomorrow = GOOD.replace(
-        "2026-11-01, 2026-11-02\n- 为什么: PR", "2026-11-01, 2026-11-04\n- 为什么: PR", 1
-    )
-    assert any("未来" in e for e in L.problems(tomorrow))
+    assert not any("未来" in e for e in L.problems(today_bj, "ci"))
+    tomorrow = GOOD.replace("2026-11-01, 2026-11-02\n", "2026-11-01, 2026-11-04\n", 1)
+    assert any("未来" in e for e in L.problems(tomorrow, "ci"))
