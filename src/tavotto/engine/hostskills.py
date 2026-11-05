@@ -213,8 +213,18 @@ def _write_one(src: Path, sha: str, dest: Path) -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def install_skill(host: str) -> dict:
-    """写技能。返回 {ok, state: written|updated|skipped|modified|builtin|none|failed, skipped, detail, error_code?}。"""
+def installed_version(host: str) -> str | None:
+    """这家宿主上 Tavotto 写的技能副本记录的版本（只读校验记录，不联网）；没有记录就是 None。"""
+    for d in _skill_dirs(host):
+        rec = _read_record(d / SKILL_NAME)
+        if rec is not None and isinstance(rec.get("version"), str) and rec["version"]:
+            return rec["version"]
+    return None
+
+
+def install_skill(host: str, *, force: bool = False) -> dict:
+    """写技能。`force=True`（用户在界面点了「覆盖」，`hosts connect --force-skill`）才覆盖 `modified` 的真目录；
+    符号链接和不是目录的同名文件任何时候都不动。返回 {ok, state: written|updated|skipped|modified|builtin|none|failed, skipped, detail, error_code?}。"""
     if host in BUILTIN_HOSTS:
         return _res(
             True, "builtin", "这个编辑器没有技能目录，AI 用 tavotto_guide 读说明", skipped=True
@@ -236,7 +246,7 @@ def install_skill(host: str) -> dict:
         dest = d / SKILL_NAME
         try:
             cls = _classify(dest, sha)
-            if cls == "modified":
+            if cls == "modified" and not (force and dest.is_dir() and not dest.is_symlink()):
                 results.append(("modified", str(dest)))
             elif cls == "current":
                 results.append(("skipped", str(dest)))

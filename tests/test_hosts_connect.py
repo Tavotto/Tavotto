@@ -256,6 +256,7 @@ def test_list_reports_each_host(home):
         "installed": True,
         "connected": True,
         "skill": "current",
+        "version": H.hostskills._version(),  # 技能校验记录里的版本（本机读）
     }
     assert by["codex"]["skill"] == "builtin" and by["claude-desktop"]["skill"] == "builtin"
     assert by["zcode"]["installed"] is False
@@ -355,6 +356,7 @@ def test_antigravity_writes_both_config_files_and_disconnect_drops_both(home, pr
         "installed": True,
         "connected": True,
         "skill": "current",
+        "version": H.hostskills._version(),  # 技能校验记录里的版本（本机读）
     }
     assert H.disconnect("antigravity")["ok"]
     for f in _agy_files(home):
@@ -454,7 +456,7 @@ def test_skill_failure_is_reported_honestly_but_mcp_stays_connected(home, monkey
     monkeypatch.setattr(
         H.hostskills,
         "install_skill",
-        lambda host: {
+        lambda host, **_kw: {
             "ok": False,
             "state": "failed",
             "skipped": False,

@@ -12,6 +12,7 @@ vi.mock('@/lib/desktop', () => ({
   downloadDesktopUpdate: vi.fn(),
   installDesktopUpdate: vi.fn(),
   relaunchDesktop: vi.fn(),
+  runHostIntegration: vi.fn().mockResolvedValue('{}'),
 }))
 
 import {
@@ -19,7 +20,9 @@ import {
   downloadDesktopUpdate,
   installDesktopUpdate,
   relaunchDesktop,
+  runHostIntegration,
 } from '@/lib/desktop'
+import { resetHostSyncForTest } from '@/lib/hostSync'
 import { pendingUpdateNotice } from '@/lib/updateNotice'
 import { autoDownloadOn, checkUpdateOnStartup, useUpdateStore } from './updateStore'
 
@@ -60,6 +63,9 @@ beforeEach(() => {
   vi.mocked(downloadDesktopUpdate).mockReset()
   vi.mocked(installDesktopUpdate).mockReset()
   vi.mocked(relaunchDesktop).mockReset()
+  vi.mocked(runHostIntegration).mockReset()
+  vi.mocked(runHostIntegration).mockResolvedValue('{}')
+  resetHostSyncForTest()
 })
 
 describe('启动', () => {
@@ -249,5 +255,44 @@ describe('偏好开关', () => {
     const s = useUpdateStore.getState()
     expect(autoDownloadOn(s.status)).toBe(true)
     expect(s.autoDownloadFailure).not.toBeNull()
+  })
+})
+
+describe('启动同步已接入编辑器（ADR 0170）', () => {
+  it('后台自动下载开着：发 sync_plugins', async () => {
+    stubBackend(true)
+    vi.mocked(checkDesktopUpdate).mockResolvedValue(null)
+    checkUpdateOnStartup()
+    await settle()
+    expect(runHostIntegration).toHaveBeenCalledOnce()
+    expect(runHostIntegration).toHaveBeenCalledWith('sync_plugins')
+  })
+
+  it('关着：只发 sync，绝不带插件更新', async () => {
+    stubBackend(false)
+    vi.mocked(checkDesktopUpdate).mockResolvedValue(null)
+    checkUpdateOnStartup()
+    await settle()
+    expect(runHostIntegration).toHaveBeenCalledOnce()
+    expect(runHostIntegration).toHaveBeenCalledWith('sync')
+  })
+
+  it('取不到偏好：按 sync', async () => {
+    stubBackend(null)
+    vi.mocked(checkDesktopUpdate).mockResolvedValue(null)
+    checkUpdateOnStartup()
+    await settle()
+    expect(runHostIntegration).toHaveBeenCalledWith('sync')
+  })
+
+  it('同步失败不影响更新流程', async () => {
+    stubBackend(true)
+    vi.mocked(runHostIntegration).mockRejectedValue(new Error('x'))
+    vi.mocked(checkDesktopUpdate).mockResolvedValue(INFO)
+    vi.mocked(downloadDesktopUpdate).mockResolvedValue({ version: '9.9.9', source: 'github' })
+    checkUpdateOnStartup()
+    await settle()
+    expect(useUpdateStore.getState().desktopReady).not.toBeNull()
+    expect(useUpdateStore.getState().desktopError).toBeNull()
   })
 })
