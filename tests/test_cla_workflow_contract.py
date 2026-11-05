@@ -444,8 +444,8 @@ class TestClaWorkflowSecurity:
         m = re.search(r"(?m)^\s+permissions:\n((?:\s+\w[\w-]*:\s*\w+\n)+)", code)
         assert m, "CLA cla_job 必须显式声明 permissions"
         perms = dict(re.findall(r"(\w[\w-]*):\s*(\w+)", m.group(1)))
-        assert perms == {"contents": "read", "pull-requests": "read"}, (
-            f"CLA cla_job 的权限必须恰好是两个只读项，实际：{perms}"
+        assert perms == {"contents": "read", "pull-requests": "read", "checks": "read"}, (
+            f"CLA cla_job 的权限必须恰好是三个只读项，实际：{perms}"
         )
         assert "write-all" not in code
         for scope in ("contents: write", "pull-requests: write", "issues: write"):

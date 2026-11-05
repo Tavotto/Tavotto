@@ -360,12 +360,17 @@ When the time comes:
      **`github-actions` (app id 15368) is refused outright** — it is the one App
      every pull request can drive, so pinning to it would reopen the hole. The
      gate raises a configuration error rather than accepting it.
-   - `.github/workflows/ci.yml`, `cla-check` job: add `checks: read` to
-     `permissions`, add a step fetching
-     `gh api repos/$REPO/commits/<pr head sha>/check-runs`, and pass it as
-     `--provider-checks-json`;
-   - `tests/test_legal_contribution_policy.py`: update the permissions assertion
-     to the new expected set (it pins the exact permission map on purpose);
+   - `.github/workflows/ci.yml`, `cla-check` job: already wired for the
+     `tavotto-cla-v1` service. It holds `checks: read`, reads the policy from
+     the default branch, and only takes the service path once
+     `provider.configured=true` and `protocol=tavotto-cla-v1`. Every exemption
+     then needs a `github_id`. All-exempt PRs and merge groups pass locally by
+     immutable id; anything else re-reads the service check for up to about 25
+     minutes, so an unsigned contributor sees red only after that wait. A
+     deadline or an API read error always ends red, never green. Put a PR with an
+     external contributor at the tail of the merge queue: every group behind it
+     also needs a proof, proofs share the one confirmation slot, and a group that
+     waits past 25 minutes is ejected and must be requeued;
    - run `python3 scripts/ci/cla_gate.py --refresh-hashes` if the agreement text
      changed at the same time.
 
