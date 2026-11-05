@@ -85,7 +85,16 @@ the other one is contacted only when the first cannot answer, or when a download
 it fails (after you pressed *Download and install*, or during the background download; then the installer is fetched again
 from the other source), or when that download is slow (then the other source is
 checked and its installer downloaded for a few seconds to compare speed; the faster
-one finishes the download and the other is dropped). Either source sees what any HTTPS request reveals (IP address,
+one finishes the download and the other is dropped). In mainland China the check
+still asks the mirror first, but the installer is downloaded from GitHub first (the
+check result and the download are then asked of different sources, and GitHub is
+asked for the same version again): the background download stays with GitHub even
+when slow and moves to the mirror only after about 3 failed attempts in a row or
+when the new version is more than about 3 days old and still not downloaded (the
+app remembers the attempt count and the time it first saw that version in a small
+local file, `update-source.json`, in its settings folder; it contains no path or
+identifier); a download you start yourself gives GitHub about 8 seconds and moves
+to the mirror if GitHub sends nothing by then or would need more than about 2 minutes. Either source sees what any HTTPS request reveals (IP address,
 time, the updater's user agent) and nothing else: no identifier, no telemetry, no
 project content. Which source the installer came from does not affect trust — the
 installer's signature is always verified with the public key built into the app, and

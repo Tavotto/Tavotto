@@ -224,6 +224,11 @@ fn limits() -> Limits {
             min_rate: 1,
             probe: Duration::from_millis(300),
         },
+        trial: TrialRule {
+            wait: Duration::from_millis(400),
+            eta: Duration::from_secs(5),
+            min_rate: 1,
+        },
     }
 }
 
@@ -311,6 +316,7 @@ impl Rig {
             &self.endpoints(),
             limits,
             pending,
+            &Plan::from_pending(pending),
             &emit,
             &self.cool,
         )
@@ -771,6 +777,7 @@ async fn the_plain_check_refuses_the_installed_version_but_the_reinstall_check_t
         &ep,
         &limits(),
         &pending,
+        &Plan::from_pending(&pending),
         &|_| {},
         &Cooldown::default(),
     )
@@ -1184,8 +1191,8 @@ async fn a_background_download_fills_the_slot_and_install_uses_it_without_asking
     let d = run_download(&make, &ep, &state, &limits(), &|_| {})
         .await
         .unwrap();
-    assert_eq!((d.version.as_str(), d.source), ("9.9.9", Source::Mirror));
-    assert_eq!(rig.mirror.hits(PKG_PATH), 1);
+    assert_eq!((d.version.as_str(), d.source), ("9.9.9", Source::Github));
+    assert_eq!(rig.github.hits(PKG_PATH), 1);
     {
         let ready = state.ready.lock().unwrap();
         let f = ready.as_ref().expect("下好的包进槽");
@@ -1199,7 +1206,7 @@ async fn a_background_download_fills_the_slot_and_install_uses_it_without_asking
     run_download(&make, &ep, &state, &limits(), &|_| {})
         .await
         .unwrap();
-    assert_eq!(rig.mirror.hits(PKG_PATH), 1, "槽里已有同版本的包，不重下");
+    assert_eq!(rig.github.hits(PKG_PATH), 1, "槽里已有同版本的包，不重下");
 
     // 装：取槽里的包交给「装」，包地址一次都不再被请求，槽被取空
     let pending = state.pending.try_lock().unwrap().clone().unwrap();
@@ -1210,13 +1217,13 @@ async fn a_background_download_fills_the_slot_and_install_uses_it_without_asking
     let src = install_pending(&make, &ep, &state, &limits(), &pending, &emit, install)
         .await
         .unwrap();
-    assert_eq!(src, Source::Mirror);
+    assert_eq!(src, Source::Github);
     assert_eq!(
         seen.lock().unwrap().as_slice(),
-        [(Source::Mirror, PKG.to_vec())]
+        [(Source::Github, PKG.to_vec())]
     );
-    assert_eq!(rig.mirror.hits(PKG_PATH), 1, "装的时候没有再下载");
-    assert_eq!(rig.github.hits(PKG_PATH), 0);
+    assert_eq!(rig.github.hits(PKG_PATH), 1, "装的时候没有再下载");
+    assert_eq!(rig.mirror.hits(PKG_PATH), 0);
     assert!(events.lock().unwrap().is_empty(), "槽里的包没有下载事件");
     assert!(state.ready.lock().unwrap().is_none(), "装过的包被取走");
 }
@@ -1234,7 +1241,11 @@ async fn install_downloads_normally_when_the_slot_is_empty() {
         .await
         .unwrap();
     assert_eq!(seen.lock().unwrap().len(), 1);
-    assert_eq!(rig.mirror.hits(PKG_PATH), 1, "槽空时照旧现下现装");
+    assert_eq!(
+        rig.github.hits(PKG_PATH),
+        1,
+        "槽空时照旧现下现装（大陆环境手动也先试 GitHub）"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1421,4 +1432,593 @@ async fn exit_takes_whatever_is_ready_once() {
         .unwrap();
     assert_eq!(take_ready_any(&state).unwrap().update.version, "9.9.9");
     assert!(take_ready_any(&state).is_none(), "取走后槽空：不会装两次");
+}
+
+/* ---- 检查与下载的来源拆开（ADR 0121 修订 2026-11-05）：大陆环境下载先走 GitHub ---- */
+
+/// 发布时间固定在清单里的 `2026-10-12T00:00:00Z`（`manifest()`）
+fn published() -> i64 {
+    time::OffsetDateTime::parse(
+        "2026-10-12T00:00:00Z",
+        &time::format_description::well_known::Rfc3339,
+    )
+    .unwrap()
+    .unix_timestamp()
+}
+
+const DAY: i64 = 24 * 3600;
+
+fn trial_limits(eta: Duration) -> Limits {
+    Limits {
+        trial: TrialRule {
+            eta,
+            ..limits().trial
+        },
+        ..limits()
+    }
+}
+
+/// 大陆环境：查（镜像优先）→ 拿到候选。
+async fn mainland(rig: &Rig, state: &UpdateState, limits: &Limits) -> Pending {
+    run_check(&rig.make(), &rig.endpoints(), state, &CN, limits)
+        .await
+        .unwrap()
+        .unwrap();
+    let p = state.pending.try_lock().unwrap().clone().unwrap();
+    assert_eq!(p.source, Source::Mirror, "检查没变：大陆仍是镜像先答");
+    assert!(p.mainland);
+    p
+}
+
+fn seeded(tries: u32, failures: u32, first_seen: i64) -> crate::update_source_memory::Memory {
+    crate::update_source_memory::Memory {
+        version: "9.9.9".into(),
+        first_seen,
+        tries,
+        failures,
+    }
+}
+
+async fn manual_install(
+    rig: &Rig,
+    state: &UpdateState,
+    p: &Pending,
+    limits: &Limits,
+) -> (Result<Source, Failure>, Vec<DownloadEvent>, Installed) {
+    let (seen, install) = recorder();
+    let log: Arc<Mutex<Vec<DownloadEvent>>> = Default::default();
+    let l2 = log.clone();
+    let emit = move |e: DownloadEvent| l2.lock().unwrap().push(e);
+    let r = install_pending(
+        &rig.make(),
+        &rig.endpoints(),
+        state,
+        limits,
+        p,
+        &emit,
+        install,
+    )
+    .await;
+    let events = log.lock().unwrap().clone();
+    (r, events, seen)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mainland_background_downloads_from_github_though_the_check_came_from_the_mirror() {
+    let rig = Rig::both_healthy().await;
+    let state = UpdateState::default();
+    mainland(&rig, &state, &limits()).await;
+    let d = run_download(&rig.make(), &rig.endpoints(), &state, &limits(), &|_| {})
+        .await
+        .unwrap();
+    assert_eq!((d.version.as_str(), d.source), ("9.9.9", Source::Github));
+    assert_eq!(rig.github.hits(PKG_PATH), 1);
+    assert_eq!(rig.mirror.hits(PKG_PATH), 0, "镜像只回答了检查，包没从它下");
+    assert_eq!(
+        rig.github.hits("/latest.json"),
+        1,
+        "下载来源与检查不同：GitHub 重新 check 一次"
+    );
+    assert_eq!(rig.mirror.hits("/latest.json"), 1, "检查没有多问镜像");
+    assert!(
+        state.memory.snapshot().is_none(),
+        "GitHub 下成功 = 记录清空"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mainland_background_never_probes_the_mirror_when_github_is_merely_slow() {
+    let pkg = big_pkg();
+    let (p1, p2) = (pkg.clone(), pkg.clone());
+    let rig = Rig::new(
+        Keys::new(),
+        move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p1), Route::Ok(p1.clone())),
+        move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p2), slow_drip(&p2)),
+    )
+    .await;
+    let state = UpdateState::default();
+    let l = slow_limits();
+    mainland(&rig, &state, &l).await;
+    let d = run_download(&rig.make(), &rig.endpoints(), &state, &l, &|_| {})
+        .await
+        .unwrap();
+    assert_eq!(d.source, Source::Github, "慢不换来源");
+    assert_eq!(rig.mirror.hits(PKG_PATH), 0);
+    assert_eq!(rig.mirror.hits("/releases/9.9.9/pkg"), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mainland_background_falls_back_in_the_same_run_and_counts_each_github_failure() {
+    let rig = Rig::new(
+        Keys::new(),
+        |b, k| healthy(b, "9.9.9", &k.sign_b64(PKG), PKG),
+        |b, k| {
+            let mut r = healthy(b, "9.9.9", &k.sign_b64(PKG), PKG);
+            r[1].1 = Route::Status(500);
+            r
+        },
+    )
+    .await;
+    let state = UpdateState::default();
+    state.memory.set_now(published());
+    for run in 1..=3u32 {
+        mainland(&rig, &state, &limits()).await;
+        let d = run_download(&rig.make(), &rig.endpoints(), &state, &limits(), &|_| {})
+            .await
+            .unwrap();
+        assert_eq!(
+            d.source,
+            Source::Mirror,
+            "第 {run} 次：GitHub 失败，同一轮里落到镜像"
+        );
+        assert_eq!(
+            rig.github.hits(PKG_PATH),
+            run as usize,
+            "第 {run} 次仍先试 GitHub（失败不到 3 次不改道）"
+        );
+        assert_eq!(state.memory.snapshot().unwrap().failures, run);
+        take_ready_any(&state); // 模拟重启：内存里的包没了，记忆还在
+    }
+    // 第 4 次：连续失败满 3 次 → 直接镜像，不再碰 GitHub 的包
+    mainland(&rig, &state, &limits()).await;
+    let d = run_download(&rig.make(), &rig.endpoints(), &state, &limits(), &|_| {})
+        .await
+        .unwrap();
+    assert_eq!(d.source, Source::Mirror);
+    assert_eq!(
+        rig.github.hits(PKG_PATH),
+        3,
+        "改走镜像后不再请求 GitHub 的包"
+    );
+    assert_eq!(
+        state.memory.snapshot().unwrap().failures,
+        3,
+        "镜像下成功不清记录：重启后仍走镜像"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_github_success_resets_the_failure_streak() {
+    let rig = Rig::both_healthy().await;
+    let state = UpdateState::default();
+    state.memory.set_now(published());
+    state.memory.put(Some(seeded(2, 2, published())));
+    mainland(&rig, &state, &limits()).await;
+    let d = run_download(&rig.make(), &rig.endpoints(), &state, &limits(), &|_| {})
+        .await
+        .unwrap();
+    assert_eq!(d.source, Source::Github, "2 次失败还不改道");
+    assert!(state.memory.snapshot().is_none(), "成功后从头算");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mainland_background_goes_to_the_mirror_once_the_release_is_three_days_old_and_was_tried() {
+    for (age, want, hits) in [
+        (3 * DAY - 1, Source::Github, 1),
+        (3 * DAY, Source::Mirror, 0),
+    ] {
+        let rig = Rig::both_healthy().await;
+        let state = UpdateState::default();
+        state.memory.set_now(published() + age);
+        state.memory.put(Some(seeded(1, 0, published())));
+        mainland(&rig, &state, &limits()).await;
+        let d = run_download(&rig.make(), &rig.endpoints(), &state, &limits(), &|_| {})
+            .await
+            .unwrap();
+        assert_eq!(d.source, want, "发布后 {age} 秒");
+        assert_eq!(rig.github.hits(PKG_PATH), hits);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_interrupted_background_run_still_counts_as_a_try_for_the_overdue_rule() {
+    // 第一次后台下载（没有记录）：进入时就记下「试过一次」，哪怕之后被退出打断
+    let rig = Rig::new(
+        Keys::new(),
+        |b, k| healthy(b, "9.9.9", &k.sign_b64(PKG), PKG),
+        |b, k| {
+            let mut r = healthy(b, "9.9.9", &k.sign_b64(PKG), PKG);
+            r[1].1 = Route::Hang;
+            r
+        },
+    )
+    .await;
+    let state = UpdateState::default();
+    state.memory.set_now(published() + 10 * DAY);
+    mainland(&rig, &state, &limits()).await;
+    let (make, ep, l) = (rig.make(), rig.endpoints(), limits());
+    let fut = run_download(&make, &ep, &state, &l, &|_| {});
+    // 超过 stall 之前就放弃等待（= 被打断）
+    let _ = tokio::time::timeout(Duration::from_millis(250), fut).await;
+    let m = state.memory.snapshot().expect("进入时已记下");
+    assert_eq!((m.tries, m.failures), (1, 0));
+    // 下一次启动：发布 10 天了、且试过 → 直接镜像
+    take_ready_any(&state);
+    mainland(&rig, &state, &limits()).await;
+    let d = run_download(&rig.make(), &rig.endpoints(), &state, &limits(), &|_| {})
+        .await
+        .unwrap();
+    assert_eq!(d.source, Source::Mirror);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn without_a_publish_date_the_overdue_rule_counts_from_the_first_time_this_machine_saw_it() {
+    let no_date = |b: &str, k: &Keys| {
+        let sig = k.sign_b64(PKG);
+        vec![
+            (
+                "/latest.json",
+                Route::Ok(
+                    json!({
+                        "version": "9.9.9",
+                        "platforms": { TARGET: { "url": format!("{b}/releases/9.9.9/pkg"), "signature": sig } },
+                    })
+                    .to_string()
+                    .into_bytes(),
+                ),
+            ),
+            ("/releases/9.9.9/pkg", Route::Ok(PKG.to_vec())),
+        ]
+    };
+    for (first_seen_ago, want) in [(2 * DAY, Source::Github), (4 * DAY, Source::Mirror)] {
+        let rig = Rig::new(Keys::new(), no_date, no_date).await;
+        let state = UpdateState::default();
+        let now = published() + 100 * DAY;
+        state.memory.set_now(now);
+        state.memory.put(Some(seeded(1, 0, now - first_seen_ago)));
+        mainland(&rig, &state, &limits()).await;
+        let d = run_download(&rig.make(), &rig.endpoints(), &state, &limits(), &|_| {})
+            .await
+            .unwrap();
+        assert_eq!(d.source, want, "{first_seen_ago} 秒前首次见到");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_version_starts_the_streak_over() {
+    let rig = Rig::both_healthy().await;
+    let state = UpdateState::default();
+    state.memory.set_now(published());
+    let mut old = seeded(5, 5, published() - 30 * DAY);
+    old.version = "9.9.8".into();
+    state.memory.put(Some(old));
+    mainland(&rig, &state, &limits()).await;
+    let d = run_download(&rig.make(), &rig.endpoints(), &state, &limits(), &|_| {})
+        .await
+        .unwrap();
+    assert_eq!(d.source, Source::Github, "上一个版本的失败不带到这个版本");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn background_with_a_different_github_version_uses_the_mirror_without_counting_a_failure() {
+    const PKG2: &[u8] = b"the-newer-installer";
+    let rig = Rig::new(
+        Keys::new(),
+        |b, k| healthy(b, "9.9.9", &k.sign_b64(PKG), PKG),
+        |b, k| healthy(b, "9.9.10", &k.sign_b64(PKG2), PKG2),
+    )
+    .await;
+    let state = UpdateState::default();
+    state.memory.set_now(published());
+    mainland(&rig, &state, &limits()).await;
+    let d = run_download(&rig.make(), &rig.endpoints(), &state, &limits(), &|_| {})
+        .await
+        .unwrap();
+    assert_eq!((d.version.as_str(), d.source), ("9.9.9", Source::Mirror));
+    assert_eq!(
+        rig.github.hits("/releases/9.9.10/pkg"),
+        0,
+        "不悄悄下 GitHub 的更新版本"
+    );
+    assert_eq!(rig.github.hits("/releases/9.9.9/pkg"), 0);
+    let m = state.memory.snapshot().unwrap();
+    assert_eq!((m.tries, m.failures), (1, 0), "镜像滞后不是 GitHub 坏了");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn manual_mainland_stays_on_github_when_it_will_finish_soon_enough() {
+    let pkg = big_pkg();
+    let (p1, p2) = (pkg.clone(), pkg.clone());
+    let rig = Rig::new(
+        Keys::new(),
+        move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p1), Route::Ok(p1.clone())),
+        move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p2), slow_drip(&p2)),
+    )
+    .await;
+    let state = UpdateState::default();
+    let l = trial_limits(Duration::from_secs(5)); // GitHub 约 3 s 下完 < 5 s
+    let p = mainland(&rig, &state, &l).await;
+    let (r, events, seen) = manual_install(&rig, &state, &p, &l).await;
+    assert_eq!(r.unwrap(), Source::Github);
+    assert_eq!(seen.lock().unwrap()[0].1, pkg);
+    assert_eq!(
+        rig.mirror.hits("/releases/9.9.9/pkg"),
+        0,
+        "够快就不碰镜像的包"
+    );
+    assert_eq!(starts(&events), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn manual_mainland_leaves_a_slow_github_for_the_mirror() {
+    let pkg = big_pkg();
+    let (p1, p2) = (pkg.clone(), pkg.clone());
+    let rig = Rig::new(
+        Keys::new(),
+        move |b, k| {
+            // 镜像也不是瞬间下完（1.5 s）：这样「一出字节就换」与「等够试探窗口再换」在结果上分得开
+            let slow_mirror = Route::Drip {
+                body: p1.clone(),
+                chunks: 100,
+                gap: Duration::from_millis(15),
+            };
+            source_with(b, "9.9.9", &k.sign_b64(&p1), slow_mirror)
+        },
+        move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p2), slow_drip(&p2)),
+    )
+    .await;
+    let state = UpdateState::default();
+    // 预计要 2 s+ > 1 s。试探窗口放长到 5 s：若还要等它量满才换，GitHub 早在 3 s 下完了——
+    // 这条同时看护「试用判慢后镜像一出字节就换，不再比速」
+    let l = Limits {
+        slow: SlowRule {
+            probe: Duration::from_secs(5),
+            ..limits().slow
+        },
+        ..trial_limits(Duration::from_secs(1))
+    };
+    let p = mainland(&rig, &state, &l).await;
+    let (r, events, seen) = manual_install(&rig, &state, &p, &l).await;
+    assert_eq!(r.unwrap(), Source::Mirror);
+    assert_eq!(seen.lock().unwrap()[0].1, pkg, "镜像的包同样验过签");
+    assert_eq!(rig.github.hits("/releases/9.9.9/pkg"), 1, "先试了 GitHub");
+    assert_eq!(starts(&events), 2, "换来源：进度归零（第二次 Started）");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn manual_mainland_leaves_github_when_it_sends_no_byte_within_the_trial() {
+    let rig = Rig::new(
+        Keys::new(),
+        |b, k| healthy(b, "9.9.9", &k.sign_b64(PKG), PKG),
+        |b, k| {
+            let mut r = healthy(b, "9.9.9", &k.sign_b64(PKG), PKG);
+            r[1].1 = Route::Hang;
+            r
+        },
+    )
+    .await;
+    let state = UpdateState::default();
+    // 停滞看门狗放到 10 s：换来源只能是试用期（400 ms）的功劳
+    let l = Limits {
+        stall: Duration::from_secs(10),
+        ..limits()
+    };
+    let p = mainland(&rig, &state, &l).await;
+    let t = Instant::now();
+    let (r, _, _) = manual_install(&rig, &state, &p, &l).await;
+    assert_eq!(r.unwrap(), Source::Mirror);
+    assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn manual_mainland_keeps_a_slow_github_when_the_mirror_cannot_deliver() {
+    let pkg = big_pkg();
+    let (p1, p2) = (pkg.clone(), pkg.clone());
+    let rig = Rig::new(
+        Keys::new(),
+        move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p1), Route::Status(500)),
+        move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p2), slow_drip(&p2)),
+    )
+    .await;
+    let state = UpdateState::default();
+    let l = trial_limits(Duration::from_secs(1));
+    let p = mainland(&rig, &state, &l).await;
+    let (r, _, seen) = manual_install(&rig, &state, &p, &l).await;
+    assert_eq!(
+        r.unwrap(),
+        Source::Github,
+        "镜像也给不出包时，慢的 GitHub 继续下完"
+    );
+    assert_eq!(seen.lock().unwrap()[0].1, pkg);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn manual_mainland_never_swaps_versions_when_github_reports_another_one() {
+    const PKG2: &[u8] = b"the-newer-installer";
+    let rig = Rig::new(
+        Keys::new(),
+        |b, k| healthy(b, "9.9.9", &k.sign_b64(PKG), PKG),
+        |b, k| healthy(b, "9.9.10", &k.sign_b64(PKG2), PKG2),
+    )
+    .await;
+    let state = UpdateState::default();
+    let p = mainland(&rig, &state, &limits()).await;
+    let (r, _, seen) = manual_install(&rig, &state, &p, &limits()).await;
+    assert_eq!(r.unwrap(), Source::Mirror);
+    assert_eq!(seen.lock().unwrap()[0].1, PKG, "装的就是用户看到的 9.9.9");
+    assert_eq!(rig.github.hits("/releases/9.9.10/pkg"), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn manual_mainland_does_not_touch_the_background_memory() {
+    let rig = Rig::new(
+        Keys::new(),
+        |b, k| healthy(b, "9.9.9", &k.sign_b64(PKG), PKG),
+        |b, k| {
+            let mut r = healthy(b, "9.9.9", &k.sign_b64(PKG), PKG);
+            r[1].1 = Route::Status(500);
+            r
+        },
+    )
+    .await;
+    let state = UpdateState::default();
+    let p = mainland(&rig, &state, &limits()).await;
+    let (r, _, _) = manual_install(&rig, &state, &p, &limits()).await;
+    assert_eq!(r.unwrap(), Source::Mirror);
+    assert!(
+        state.memory.snapshot().is_none(),
+        "手动下载不计入后台的失败次数"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn outside_the_mainland_nothing_changes_check_source_downloads_and_the_memory_stays_empty() {
+    let rig = Rig::both_healthy().await;
+    let state = UpdateState::default();
+    run_check(&rig.make(), &rig.endpoints(), &state, &WORLD, &limits())
+        .await
+        .unwrap();
+    let p = state.pending.try_lock().unwrap().clone().unwrap();
+    assert!(!p.mainland);
+    let d = run_download(&rig.make(), &rig.endpoints(), &state, &limits(), &|_| {})
+        .await
+        .unwrap();
+    assert_eq!(d.source, Source::Github);
+    assert_eq!(rig.mirror.hits("/latest.json"), 0, "海外：镜像一次都没被问");
+    assert_eq!(rig.mirror.hits(PKG_PATH), 0);
+    assert_eq!(
+        rig.github.hits("/latest.json"),
+        1,
+        "check 来源就是下载来源：不重新 check"
+    );
+    assert!(state.memory.snapshot().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn outside_the_mainland_a_slow_download_is_still_probed_and_a_failing_one_still_falls_back() {
+    let pkg = big_pkg();
+    let (p1, p2) = (pkg.clone(), pkg.clone());
+    let rig = Rig::new(
+        Keys::new(),
+        move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p1), Route::Ok(p1.clone())),
+        move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p2), slow_drip(&p2)),
+    )
+    .await;
+    let state = UpdateState::default();
+    let l = slow_limits();
+    run_check(&rig.make(), &rig.endpoints(), &state, &WORLD, &l)
+        .await
+        .unwrap();
+    let d = run_download(&rig.make(), &rig.endpoints(), &state, &l, &|_| {})
+        .await
+        .unwrap();
+    assert_eq!(d.source, Source::Mirror, "海外慢下载照旧试探、更快才换");
+    assert!(state.memory.snapshot().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pinned_single_source_is_not_mainland_and_never_trials_or_probes() {
+    let pkg = big_pkg();
+    let (p1, p2) = (pkg.clone(), pkg.clone());
+    let rig = Rig::new(
+        Keys::new(),
+        move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p1), Route::Ok(p1.clone())),
+        move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p2), slow_drip(&p2)),
+    )
+    .await;
+    let state = UpdateState::default();
+    let l = trial_limits(Duration::from_secs(1));
+    run_check(&rig.make(), &rig.endpoints(), &state, &[Source::Github], &l)
+        .await
+        .unwrap();
+    let p = state.pending.try_lock().unwrap().clone().unwrap();
+    assert!(!p.mainland);
+    let (r, _, _) = manual_install(&rig, &state, &p, &l).await;
+    assert_eq!(r.unwrap(), Source::Github);
+    assert_eq!(rig.mirror.hits("/latest.json"), 0);
+    assert_eq!(rig.mirror.hits("/releases/9.9.9/pkg"), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cooled_down_mirror_does_not_make_the_machine_look_overseas() {
+    // 镜像刚出过问题 → 检查顺序里它被挪到后面；但下载仍按「大陆」先 GitHub（冷却只改 order）
+    let rig = Rig::both_healthy().await;
+    let state = UpdateState::default();
+    state.cooldown.trip();
+    run_check(&rig.make(), &rig.endpoints(), &state, &CN, &limits())
+        .await
+        .unwrap();
+    let p = state.pending.try_lock().unwrap().clone().unwrap();
+    assert_eq!(p.source, Source::Github, "冷却中：GitHub 先答");
+    assert!(p.mainland, "但本机仍是大陆环境");
+    let d = run_download(&rig.make(), &rig.endpoints(), &state, &limits(), &|_| {})
+        .await
+        .unwrap();
+    assert_eq!(d.source, Source::Github);
+    assert_eq!(rig.mirror.hits(PKG_PATH), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_mirror_that_just_answered_the_check_is_usable_even_while_cooling_down() {
+    // 镜像冷却中；GitHub 的检查答不上来（404），于是镜像答了检查。手动下载时 GitHub 再 check 仍答不上来，
+    // 这时手里这份刚从镜像拿到的、验过的候选不能被冷却拦掉（冷却只拦「回头去试」）
+    let rig = Rig::new(
+        Keys::new(),
+        |b, k| healthy(b, "9.9.9", &k.sign_b64(PKG), PKG),
+        |_, _| vec![],
+    )
+    .await;
+    let state = UpdateState::default();
+    state.cooldown.trip();
+    run_check(&rig.make(), &rig.endpoints(), &state, &CN, &limits())
+        .await
+        .unwrap();
+    let p = state.pending.try_lock().unwrap().clone().unwrap();
+    assert_eq!((p.source, p.mainland), (Source::Mirror, true));
+    let (r, _, seen) = manual_install(&rig, &state, &p, &limits()).await;
+    assert_eq!(r.unwrap(), Source::Mirror);
+    assert_eq!(seen.lock().unwrap()[0].1, PKG);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn manual_mainland_moves_to_the_mirror_on_its_first_byte_without_comparing_speeds() {
+    // 方案是「预计超过 2 分钟就换镜像」，不是「镜像更快才换」：镜像这里更慢（4 s 对 GitHub 的 3 s）也照换。
+    // （试探窗口放到 10 s：若还要等它量满，GitHub 早下完了）
+    let pkg = big_pkg();
+    let (p1, p2) = (pkg.clone(), pkg.clone());
+    let rig = Rig::new(
+        Keys::new(),
+        move |b, k| {
+            let slower = Route::Drip {
+                body: p1.clone(),
+                chunks: 200,
+                gap: Duration::from_millis(20),
+            };
+            source_with(b, "9.9.9", &k.sign_b64(&p1), slower)
+        },
+        move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p2), slow_drip(&p2)),
+    )
+    .await;
+    let state = UpdateState::default();
+    let l = Limits {
+        slow: SlowRule {
+            probe: Duration::from_secs(10),
+            ..limits().slow
+        },
+        ..trial_limits(Duration::from_secs(1))
+    };
+    let p = mainland(&rig, &state, &l).await;
+    let (r, events, _) = manual_install(&rig, &state, &p, &l).await;
+    assert_eq!(r.unwrap(), Source::Mirror);
+    assert_eq!(starts(&events), 2);
 }
