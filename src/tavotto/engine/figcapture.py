@@ -1069,7 +1069,7 @@ class CapturedFigureDescriptor:
     #: 认领这个 stem 的 savefig 调用（`savefig_call()` 的形态，按调用顺序，最多
     #: `MAX_SAVEFIG_CALLS` 次，另加超出后新出现的格式各一次）。三档，「不知道」是独立一档：
     #: `None` = 没观察到（`paper_style.save` 捷径整个被替换、看不见参数；旧 payload
-    #: 没有这个键也是这一档）；`()` = 确实没有 savefig（pyplot 捕获）；非空 = 记下的调用。
+    #: 没有这个键也是这一档）；`()` = 确实没有 savefig（pyplot 捕获）；非空 = 记下的调用（只存进缓冲区的 pyplot 捕获也算）。
     savefig_calls: tuple | None = None
     #: 产出这张图的运行配置引用（T03；本机不透明 id，不是 argv）。空 = 没给参数——此时 payload 里**没有**
     #: 这个键，旧描述符与对拍用例一个字节不变。

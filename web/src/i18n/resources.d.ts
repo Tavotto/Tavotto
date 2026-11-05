@@ -1416,7 +1416,7 @@ export default interface Resources {
       "landingTitle": "挑一张图，亲手改一次。",
       "loadAnother": "换一个脚本",
       "mobileNote": "精确编辑更适合桌面浏览器。这里可以查看画布；元素树与属性页需要更宽的屏幕。",
-      "noFigureBody": "没有调用 savefig()，pyplot 里也没有留下 figure。下面的脚本输出可能说明了原因。",
+      "noFigureBody": "pyplot 里没有留下 figure。下面的脚本输出可能说明了原因。",
       "noFigureTitle": "脚本跑完了，但没有产生 Matplotlib figure。",
       "overrides_other": "{{count}} 条修改",
       "panelGone": "图不见了。重新加载脚本。",
@@ -6441,7 +6441,7 @@ export default interface Resources {
         "installs": "将安装",
         "nativeFallback": "安全模式拦下了脚本的文件操作，已自动换成按真实文件运行。",
         "nativeFallbackNoWriteback": "安全模式拦下了脚本的文件操作，已自动换成按真实文件运行。这样出的图，改动不会写回脚本。",
-        "noFigureWhy": "没有调用 savefig，也没留下 Figure。",
+        "noFigureWhy": "没有留下 Figure。",
         "notUsedTitle": "没用到的环境",
         "parseKind": "参数问题",
         "parseKinds": {
