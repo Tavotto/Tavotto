@@ -278,7 +278,11 @@ def _handler_keys() -> set[tuple[str, str]]:
     # overrides.py 只在 worker 进程里按平铺模块 import（engine/ 目录进 sys.path）
     env = {**os.environ, "PYTHONPATH": str(Path(exportjob.__file__).parent)}
     out = subprocess.run(
-        [WORKER_PY, "-c", code], capture_output=True, text=True, check=True, env=env
+        [WORKER_PY, "-c", code],
+        capture_output=True,
+        encoding="utf-8",
+        check=True,
+        env=env,
     )
     return {tuple(k) for k in json.loads(out.stdout.strip().splitlines()[-1])}
 
@@ -653,7 +657,12 @@ def _run_exported(path: Path, tmp_path: Path, trailer: str) -> str:
     (run_dir / "edited.py").write_text(path.read_text(encoding="utf-8") + trailer, encoding="utf-8")
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
     out = subprocess.run(
-        [WORKER_PY, "edited.py"], cwd=run_dir, check=True, env=env, capture_output=True, text=True
+        [WORKER_PY, "edited.py"],
+        cwd=run_dir,
+        check=True,
+        env=env,
+        capture_output=True,
+        encoding="utf-8",
     )
     return out.stdout
 

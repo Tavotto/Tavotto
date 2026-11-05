@@ -130,6 +130,7 @@ _STRIPPABLE_EXTS = ("pdf", "png", "svg", "tif", "tiff", "jpg", "jpeg", "eps")
 #: 而看不见的门禁等于没有门禁）。新增一个 code 不加进这里，两种语言的文案
 #: 就不会被要求补齐，英文界面上会冷不丁蹦出一句中文。
 ERROR_CODES = (
+    "script_export_not_for_canvas",
     "bad_request",
     "bad_scope",
     "bad_overwrite",

@@ -3349,15 +3349,16 @@ def _produce_edited_script(job, tmp_dir: Path):
     Produced = engine_exportjob.Produced
     key = engine_exportjob.SCRIPT_KEY
 
-    def fail(code: str, **params) -> "engine_exportjob.Produced":
-        return Produced(format=key, error_code=code, error_params=params)
+    def fail(code: str) -> "engine_exportjob.Produced":
+        return Produced(format=key, error_code=code)
 
     src = job.request.original
     patches = list(src.overrides or [])
     try:
         worker, stem = _edited_script_worker(src.figure_id)
     except engine_pool.WorkerError as exc:
-        return fail("script_export_run_failed", error=str(exc)[:200])
+        LOG.warning("修改后的脚本：起不了 worker: %s", exc)
+        return fail("script_export_run_failed")
     if worker is None:
         return fail("script_export_no_script")
     if engine_enginesession.is_native(worker):
@@ -3394,13 +3395,15 @@ def _produce_edited_script(job, tmp_dir: Path):
             diffs = _verify_edited_script(worker, stem, target, adjusted, hot, tmp_dir)
             if diffs:
                 LOG.warning("修改后的脚本没过验证: %s %s", stem, diffs[:REPLAY_DIFF_LIMIT])
-                return fail("script_export_diverged", count=len(diffs))
+                return fail("script_export_diverged")
     except engine_scriptadjust.ScriptAdjustError as exc:
         return fail(exc.code)
     except engine_pool.WorkerError as exc:
-        return fail("script_export_run_failed", error=str(exc)[:200])
+        LOG.warning("修改后的脚本：重跑失败: %s", exc)
+        return fail("script_export_run_failed")
     except OSError as exc:
-        return fail("script_export_unreadable", error=str(exc)[:200])
+        LOG.warning("修改后的脚本：读写失败: %s", exc)
+        return fail("script_export_unreadable")
     return Produced(
         format=key,
         tmp_path=target,

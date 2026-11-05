@@ -76,6 +76,15 @@ ERROR_CODES = (
     "tmp_dir_failed",
     "export_failed",
     "format_failed",
+    # 修改后的 .py 的逐项失败（ADR 0171；由 app.py 填进 `Produced.error_code`）
+    "script_export_diverged",
+    "script_export_native",
+    "script_export_no_savefig",
+    "script_export_no_script",
+    "script_export_not_python",
+    "script_export_run_failed",
+    "script_export_script_changed",
+    "script_export_unreadable",
     # 逐项失败里「这条路给不出 EPS」的两档（ADR 0046；由 app.py 的 produce 填进
     # `Produced.error_code`，与 `format_failed` 同一条漏斗 `_legacy_export_response`）
     "eps_not_for_canvas",
