@@ -1,5 +1,3 @@
 ## Text annotations can use the fonts on your computer
 
 The font menu for text annotations used to offer only serif, sans-serif and monospace. It now also lists every font on this computer that can be embedded, and English and Chinese can use different fonts, for example Times New Roman with SimSun. The exported figure embeds the same fonts you see on the canvas. If you open the project on a computer without one of these fonts, the name is kept, a warning appears, and the text falls back to the closest built-in font.
-
-The font menu has a search box that finds fonts by English or Chinese name, for figure text and annotations alike. Bold and italic inside a line now use the real faces of the chosen font, on the canvas and in the export. Chinese text now exports in true bold: the built-in Noto fonts gained bold faces, which adds about 20 MB to the app. If you pick a font of your own, its real bold and italic faces are used when it has them, such as Microsoft YaHei Bold. Fonts without them, such as SimSun, get a simulated bold or italic, the same way Word does it, on the canvas and in the export.
