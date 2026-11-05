@@ -100,3 +100,6 @@ web/dist-playground/
 
 # U08 对拍的中间产物（结论在 parity.json 里；XML / log 只在本机排查用）
 docs/implementation/tavotto-foundation/evidence/u08/parity-junit.xml
+
+# wrangler 本地命令写的缓存（根目录跑也会生成，services/ 下的 .gitignore 管不到这里）
+/.wrangler/
