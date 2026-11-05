@@ -176,9 +176,12 @@ describe('没选本机中文字体时的中文粗体', () => {
   it('选了本机中文字体但它不可用：粗体栈用批准粗体（与导出 cjk_for 回退一致）', async () => {
     const face = approvedCjkBoldFor('serif', '中文')!
     answer({ [face.sha256]: 'ok', [latin.sha256]: 'ok', [cjk.sha256]: 'not_found' })
-    previewStackOf(source, APPROVED, OWN, BOLD, face)
-    await settle()
-    await settle()
+    // 第一拍问本机字体，知道它不可用后第二拍才问批准粗体（真实界面由状态通知触发重渲染）
+    for (let i = 0; i < 2; i++) {
+      previewStackOf(source, APPROVED, OWN, BOLD, face)
+      await settle()
+      await settle()
+    }
     expect(previewStackOf(source, APPROVED, OWN, BOLD, face)).toContain(cssFamilyOf(face))
   })
 
