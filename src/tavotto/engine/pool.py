@@ -1213,7 +1213,7 @@ def _explain_empty_capture(err: "WorkerError", script_name: str, known, log_tail
     tail = log_tail.strip()
     if tail:
         out = WorkerError(
-            f"{script_name} 跑完了，但没有产生任何图：既没有 savefig，也没有留下 "
+            f"{script_name} 跑完了，但没有产生任何图：没有留下 "
             "pyplot Figure。展开下面的输出看它自己说了什么——多半是数据文件没找到，"
             "或分析在画图之前就结束了。",
             tail,
@@ -1222,8 +1222,7 @@ def _explain_empty_capture(err: "WorkerError", script_name: str, known, log_tail
     else:
         # 一个字都没打印：没有可展开的东西，也不造一句占位塞进 traceback 区
         out = WorkerError(
-            f"{script_name} 跑完了，但没有产生任何图，也没有任何输出：既没有 savefig，"
-            "也没有留下 pyplot Figure。",
+            f"{script_name} 跑完了，但没有产生任何图，也没有任何输出：没有留下 pyplot Figure。",
             "",
             code=NO_FIGURES_SILENT_CODE,
         )
