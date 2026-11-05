@@ -512,7 +512,8 @@ Tavotto 零张，issue #749，`fix_pr` 为空；`RealRepro` 钉「差异仍在�
 
 **维护者提醒**：只有同时满足「没有家族记录（`tests/compat_guardian/families/`）」「被复跑复现」「不是 invalid_fixture / 环境问题」的 triage 簇
 才发注解（并出现在 step summary 的 “New reproducible families” 里）。已知家族（G1、G2）的差异在 summary 里列出，不再提醒。
-注解的下一步是人工：开 issue、写家族记录、派 `minimize`。
+注解之后由维护者本机的自动修流水线接手：本机只读取 GitHub artifact 与证据机的 `triage.json`，按 `cluster_id` 去重排队，每天最多开 2 个会话去复现、修复、开 PR，门槛满足后自动入队。
+CI 这一侧不变：workflow 仍然没有任何写权限，不开 issue、不开 PR。自动修不许改夹具、期望、基线、比对口径和已有家族记录；比对口径问题只报告，由维护者决定。
 
 **趋势与汇总**（`summarize` 同时吃 run 报告与 explore 报告，`--previous` 指向上一份 summary）。每份汇总带：语料版本（各 suite 的
 `corpus_sha256` 与声明文件摘要）、样本量与分母（失败从不出分母）、平台与依赖环境、不可比项、主要未覆盖场景，以及第 12 节指标：
