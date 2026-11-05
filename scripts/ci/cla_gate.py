@@ -620,9 +620,20 @@ def _service_verdict(checks: list, policy: dict, context: dict | None):
         return set(), "provider_latest_check_not_success"
     try:
         # Cloudflare 服务把凭证写在 `output.summary`（services/cla-cloudflare 的 github.ts，
-        # src/ci/consumer.ts 读的也是它）；`text` 只留给早期 Python 服务的 check。
+        # src/ci/consumer.ts 读的也是它）；早期 Python 服务写在 `text`，它的 `summary` 是
+        # 给人看的说明。所以按内容认：只取以协议行开头的那个字段，都没有就算无效。
         output = run["output"]
-        prefix, raw = (output.get("summary") or output["text"]).split("\n", 1)
+        text = next(
+            (
+                v
+                for v in (output.get("summary"), output.get("text"))
+                if isinstance(v, str) and v.startswith("tavotto-cla-v1\n")
+            ),
+            None,
+        )
+        if text is None:
+            raise ValueError("proof")
+        prefix, raw = text.split("\n", 1)
         proof = json.loads(raw)
         trusted = {k: policy[k] for k in ("agreements", "exemptions")}
         digest = hashlib.sha256(

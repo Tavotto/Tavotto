@@ -117,6 +117,13 @@ def test_legacy_text_field_still_reads(gate, policy):
     assert gate._service_verdict([run], policy, _context()) == ({"*"}, None)
 
 
+def test_legacy_human_summary_does_not_hide_the_proof_in_text(gate, policy):
+    """早期 Python 服务：`summary` 是说明文字，凭证在 `text`。"""
+    run = _run(_text(_proof(policy)), field="text")
+    run["output"]["summary"] = "Fresh CLA proof for this head."
+    assert gate._service_verdict([run], policy, _context()) == ({"*"}, None)
+
+
 def test_revocation_summary_never_passes_even_marked_success(gate, policy):
     revocation = 'tavotto-cla-revocation-v1\n{"attempt":"x","head_sha":"' + HEAD + '"}'
     signed, why = gate._service_verdict([_run(revocation)], policy, _context())
