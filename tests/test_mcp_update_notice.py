@@ -5,6 +5,8 @@ MCP 这一侧新增的接线：`tavotto_health` 带字段、`tavotto_export` 每
 桌面包（frozen）布局下能定位模块。
 """
 
+import ast
+import inspect
 import json
 import os
 import subprocess
@@ -523,7 +525,28 @@ def test_a_custom_update_url_never_falls_back_to_the_public_mirror(monkeypatch):
     assert mod.fetch_with_mirror("https://intranet.example/plugin.json") is None
 
 
-def test_only_the_background_thread_uses_the_mirror_path():
-    """交接路径同步跑在出图路上，1.5 秒上限不能被回退翻倍。"""
-    handoff = (PLUGIN / "skills" / "tavotto-figure" / "scripts" / "handoff.py").read_text("utf-8")
-    assert "fetch_with_mirror" not in handoff
+def test_the_background_refresh_uses_the_mirror_fetcher(monkeypatch):
+    """主语是后台线程实际调用的 fetcher：去掉接线时这条必须红。"""
+    mod = updatenotice._load()
+    seen = {}
+    monkeypatch.setattr(mod, "check", lambda **kw: seen.update(kw) or {"status": "current"})
+    updatenotice._refresh(mod, "1.0.0")
+    assert seen["fetcher"] is mod.fetch_with_mirror
+
+
+def test_the_synchronous_handoff_keeps_the_single_budget_fetch():
+    """`handoff.emit()` 同步跑在出图路上：`check()` 默认只问一个来源，交接那次调用不换 fetcher，1.5 秒不翻倍。"""
+    mod = updatenotice._load()
+    assert inspect.signature(mod.check).parameters["fetcher"].default is mod.fetch
+    source = (PLUGIN / "skills" / "tavotto-figure" / "scripts" / "handoff.py").read_text("utf-8")
+    calls = [
+        n
+        for n in ast.walk(ast.parse(source))
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "check"
+        and isinstance(n.func.value, ast.Name)
+        and n.func.value.id == "update_check"
+    ]
+    assert len(calls) == 1
+    assert "fetcher" not in {k.arg for k in calls[0].keywords}
