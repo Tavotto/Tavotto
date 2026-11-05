@@ -314,6 +314,8 @@ a = Analysis(
     hiddenimports=[
         # Flask 的这几个依赖是运行时按名字取的，静态分析看不见
         "jinja2", "markupsafe", "itsdangerous", "click", "werkzeug",
+        # `tavotto-cli skill-script`（engine/hostskills.run_script_cli）在进程内 runpy 跑技能脚本，脚本只用这几个标准库
+        "runpy", "platform", "urllib.request", "urllib.error",
         # render child 在冻结产物里由同一个 exe 以 `--render-child` 自起（packaging/entry.py 分派），
         # child_main 里才 import pypdfium2——入口没有静态 import 它，点名收进 PYZ
         "tavotto.rendercore.renderchild", "tavotto.rendercore.renderhost", "pypdfium2",

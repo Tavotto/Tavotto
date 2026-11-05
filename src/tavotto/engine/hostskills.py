@@ -85,24 +85,32 @@ def _version() -> str:
         return "0"
 
 
-def _files(root: Path) -> list[Path]:
+def _entries(root: Path) -> list[tuple[str, Path]]:
+    """(相对路径, 路径)：普通文件，以及**符号链接本身**（文件、目录都算，不跟随）。"""
     out = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = sorted(d for d in dirnames if d != "__pycache__")
+        for d in list(dirnames):
+            p = Path(dirpath) / d
+            if p.is_symlink():
+                out.append((p.relative_to(root).as_posix(), p))
+                dirnames.remove(d)  # 不进链接目标
         for fn in filenames:
             p = Path(dirpath) / fn
-            if fn == RECORD and p.parent == root or fn.endswith(".pyc"):
+            if (fn == RECORD and p.parent == root) or fn.endswith(".pyc"):
                 continue
-            out.append(p)
+            out.append((p.relative_to(root).as_posix(), p))
     return out
 
 
 def tree_sha256(root: Path) -> str:
-    """整个目录的内容指纹：相对路径（`/` 分隔，按字节排序）+ 文件字节；不含记录本身。"""
+    """整个目录的内容指纹：相对路径（`/` 分隔，按字节排序）+ 文件字节；符号链接算「路径 + 链接目标」；不含记录本身。"""
     h = hashlib.sha256()
-    rels = sorted((p.relative_to(root).as_posix() for p in _files(root)), key=lambda s: s.encode())
-    for rel in rels:
-        data = (root / rel).read_bytes()
+    for rel, p in sorted(_entries(root), key=lambda e: e[0].encode()):
+        if p.is_symlink():
+            data = b"L" + os.readlink(p).encode("utf-8", "surrogateescape")
+        else:
+            data = b"F" + p.read_bytes()
         h.update(rel.encode("utf-8") + b"\0" + str(len(data)).encode() + b"\0" + data)
     return h.hexdigest()
 
@@ -288,3 +296,54 @@ def remove_skill(host: str) -> dict:
     if not removed:
         return _res(True, "none", "本来就没有", skipped=True)
     return _res(True, "removed", "；".join(removed))
+
+
+# ----------------------------------------------------------------------------- 技能脚本
+SCRIPT_NAMES = ("prefs", "handoff", "update_check")
+ERR_SCRIPT_UNKNOWN = "skill_script_unknown"
+
+
+def run_script_cli(argv: list[str]) -> int:
+    """`tavotto skill-script <name> [args…]`：在本进程里跑技能的脚本（桌面版没有解释器可调）。
+    只认 `SCRIPT_NAMES` 闭集，不接受路径；脚本目录先进 sys.path（脚本之间互相 import）；透传 argv 与退出码。"""
+    import runpy  # noqa: PLC0415
+
+    name = argv[0] if argv else ""
+    if name not in SCRIPT_NAMES:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error_code": ERR_SCRIPT_UNKNOWN,
+                    "error": "只认 " + " / ".join(SCRIPT_NAMES),
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 2
+    src = skill_source()
+    script = src / "scripts" / f"{name}.py" if src else None
+    if script is None or not script.is_file():
+        print(
+            json.dumps(
+                {"ok": False, "error_code": ERR_SOURCE, "error": "这份 Tavotto 里没有技能脚本"},
+                ensure_ascii=False,
+            )
+        )
+        return 2
+    old_argv, old_path = sys.argv, list(sys.path)
+    sys.argv = [str(script), *argv[1:]]
+    sys.path.insert(0, str(script.parent))
+    try:
+        runpy.run_path(str(script), run_name="__main__")
+        return 0
+    except SystemExit as exc:
+        code = exc.code
+        if code is None:
+            return 0
+        if isinstance(code, int):
+            return code
+        print(code, file=sys.stderr)
+        return 1
+    finally:
+        sys.argv, sys.path[:] = old_argv, old_path
