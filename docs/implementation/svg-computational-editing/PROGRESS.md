@@ -40,7 +40,7 @@
 | R04 | done | a8a088cf + 18907d65 | F1–F7 修复：openSeq/formRev 代际、previewOk 资格、busy 释放、完整变体身份、缓存代际；29 用例绿 |
 | R05 | partial | 722ad27c | chart 字段落盘/读回/冷重算/来源冲突回归绿；真新进程冷恢复与资源包待做 |
 | R06 | partial | 3f31f4e1 + 18907d65 + f76b0610 | PanelView chart 渲染 + ChartBindDialog + 右键菜单 + i18n 全绿；图内编辑/命中细节待做 |
-| R07 | partial | e09b724b | chart 面板原图 SVG 导出（basis=convert）已接通；PDF/PNG/TIFF 待 SVG→IR 翻译器 |
+| R07 | partial | e09b724b + 484b29fb | SVG 导出（basis=convert）+ SVG→IR 翻译器 → PDF/PNG/TIFF 全格式交付 |
 | R08–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
@@ -79,6 +79,17 @@
   2. PDF/PNG/TIFF 导出——需要 SVG→IR 翻译器（ADR 0166 §2 的独立适配层）。
   3. 真 E2E（浏览器驱动 UI 全流程）。
   4. R08–R13：A 路径采用接线、自包含往返、写回、预检、入口打包。
+
+### 2026-11-06 R07 SVG→IR 翻译器完成（PDF/PNG/TIFF 全格式交付）
+
+- **rendercore/svgir.py**（671 行）：组合后 SVG → rendercore IR Page。
+  path/text/image/clip/transform/opacity 全支持；text 经 HarfBuzz 整形 +
+  族名映射（DejaVu Sans→sans-serif 等）；y-down→y-up 一次根翻转；
+  不支持特性（渐变/mask/filter/弧）逐元素 SVGIRError 如实报。
+- **PDF**：ir.Page → 现有 pdfwriter.write_pdf；**PNG**：original_png；
+  **TIFF**：original_tiff。export 路径 chart 面板五格式全可交付（basis=convert）。
+- 端到端 probe：composed SVG 12733 bytes → IR → PDF 5544 bytes ✓。
+- 导出回归更新：PDF 格式也从 unsupported 改为交付组合版。
 
 ### 2026-11-06 R07 冻结导出（SVG 格式）完成
 
