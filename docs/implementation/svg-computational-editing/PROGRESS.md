@@ -35,10 +35,12 @@
 | SG10 | partial / not_integrated | 00de628a+c95bdb03+b4d229ab+c3d15aaf+b2688a39 | HTTP/client/store 已有；状态机反例未修，UI、渲染、命中、撤销接线与 E2E 未完成 |
 | SG11–SG17 | pending | — | — |
 | R00 | done | 5a4f5c2c | 反例入库：B1–B5 xfail(strict) + F1–F3 it.fails；fetch 成功 origin/main=2bc94f7f 未变 |
-| R01/R02 | done | 451d8490 | B1–B5 修复：用户坐标渲染 + tv-* 角色 gid + 逻辑 id 统一 + axes_nodes/cbar_node 所有权；回归转正常全绿 |
-| R03 | done | fa68fe38 | 不可变来源快照（source_changed 409）+ render_revision/model/binding digest 完整渲染身份 |
-| R04 | done | a8a088cf | F1–F3 修复：openSeq/formRev 代际、previewOk 资格、多系列/独立 scale 合同；9 用例绿 |
-| R05–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
+| R01/R02 | done | 451d8490 + 4c2ca1f2 | B1–B5 + N1/N2/N4 修复：用户坐标渲染 + tv-* 角色 gid + 逻辑 id 统一 + 轴/色条所有权 + 父空间逆变换；回归全绿 |
+| R03 | done | fa68fe38 + ac060053 | 不可变来源快照 + render_revision（含绑定 digest）/model/binding digest 完整渲染身份 |
+| R04 | done | a8a088cf + 18907d65 | F1–F7 修复：openSeq/formRev 代际、previewOk 资格、busy 释放、完整变体身份、缓存代际；29 用例绿 |
+| R05 | partial | 722ad27c | chart 字段落盘/读回/冷重算/来源冲突回归绿；真新进程冷恢复与资源包待做 |
+| R06 | partial | 3f31f4e1 + 18907d65 | PanelView chart 接线已提交；ChartBindDialog/菜单/命中/撤销待做 |
+| R07–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
@@ -56,6 +58,25 @@
 - 替换旧接续建议：不能仅增加 `ChartBindDialog` 就宣告 SG10 完成；不能把 `renderKeyOf + data_digest` 作为完整渲染身份；不能把“旧程序忽略 chart 字段”当成兼容证明。
 - 下一阶段先完成 R00–R04 的最终产物正确性和版本防串，再以 R05–R07 打通 B 路径实际保存/重开/导出；后续补齐 A/C、场景交互、全部适用图表族、写回、预检、入口和资格。详细依赖见 `NEXT_PHASE.md`。
 - 本轮仅修改评估与计划文档，未修复上述产品缺陷，未推送/合并/发布。历史 checkpoint 中的“通过”“已可用”只代表当时判断，不覆盖本次实际结果。
+
+### 2026-11-05 N1–N5/F4–F8 修复（第二次复核反例）
+
+- 复核（Tavotto-svg-review-20261105, 3f31f4e1）发现 8 项新边界。逐项修复：
+  - **N1**：脚手架轴矩形先平移进 viewBox 局部空间（left=ax_x−vb_x），组合端 wrapper 带
+    translate(origin) 映射回场景用户空间；非零 viewBox 端点独立公式核对（[50,120]/[150,20]）。
+  - **N2**：compose 计算 target 祖先变换 A（root→父，含 transform 属性），wrapper 带
+    T=O·A⁻¹（svgcoord 新增 invert/matrix_attr）；父 translate(20 10) 不重复作用，世界端点 (20,70)/(80,10)。
+  - **N4**：_iter_artists 顺序修正——BarContainer/ErrorbarContainer 是 tuple 子类，tuple 内容
+    只有柱矩形，误差成员挂 .errorbar 属性；误差线/端帽/数据线全部带角色 gid 进最终 SVG。
+  - **N3**：panel_identity 纳入 binding digest（同模型绑不同区域 = 不同版本；declarative 缺绑定报错）。
+  - **N5/F8**：chartbind 自动把 series.cbar_node 写进有效绑定；TS ChartSeries 补 cbar_node；
+    golden 热图向量带 cbar_node 双侧同判。
+  - **F4/F5**：前端 revisionOf 用完整变体身份 digestOf({model, binding})（含场景摘要）。
+  - **F6**：chartRenderStore 加 generation 代际，clear/drop 递增，在途响应按代际丢弃。
+  - **F7**：bind store 五条过期退出路径补 busy=false 释放。
+- 新增回归：N1/N2/N4 + F4–F6 共 6 项常驻测试；全后端 12 文件、前端 29 用例、build 全绿。
+- PanelView 草稿正式接入（渲染侧 chart 消费），render_revision 缓存双键（本地+后端身份）。
+- 证据：/tmp/n124*.log、/tmp/fe2.log、/tmp/b7.log（本机临时）。
 
 ### 2026-11-05 M0 完成（R00–R04）
 
