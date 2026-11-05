@@ -98,6 +98,20 @@ describe('SearchSelect', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
+  it('输入法组字中：回车与方向键不抢（回车是确认候选词）', async () => {
+    const onChange = vi.fn()
+    const input = await openIt(await mount(onChange))
+    const composing = (key: string) =>
+      act(async () => void input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, isComposing: true })))
+    await composing('ArrowDown')
+    await composing('Enter')
+    expect(onChange).not.toHaveBeenCalled()
+    expect(document.querySelector('[role=searchbox]')).not.toBeNull()
+    // 组字中的 ↓ 没动高亮：组字结束后回车选的仍是当前值（Arial → 不算修改）
+    await press(input, 'Enter')
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it('选项少时没有搜索框', async () => {
     await openIt(await mount(() => {}, OPTIONS.slice(0, 3)))
     expect(document.querySelector('[role=searchbox]')).toBeNull()

@@ -173,6 +173,15 @@ describe('没选本机中文字体时的中文粗体', () => {
     expect(await load(BOLD)).toBe(APPROVED)
   })
 
+  it('选了本机中文字体但它不可用：粗体栈用批准粗体（与导出 cjk_for 回退一致）', async () => {
+    const face = approvedCjkBoldFor('serif', '中文')!
+    answer({ [face.sha256]: 'ok', [latin.sha256]: 'ok', [cjk.sha256]: 'not_found' })
+    previewStackOf(source, APPROVED, OWN, BOLD, face)
+    await settle()
+    await settle()
+    expect(previewStackOf(source, APPROVED, OWN, BOLD, face)).toContain(cssFamilyOf(face))
+  })
+
   it('选了本机中文字体时不用批准粗体', async () => {
     const face = approvedCjkBoldFor('serif', '中文')!
     answer({ [face.sha256]: 'ok', [latin.sha256]: 'ok', [cjk.sha256]: 'ok' })

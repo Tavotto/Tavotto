@@ -85,11 +85,10 @@ export function previewStackOf(
   const p =
     source && pickName(source, { bold: source.bold === true, italic: source.italic === true }, want)
   if (p) names.push(p)
-  const c = source?.cjk
-    ? pickName(source.cjk, NO_STYLE, want)
-    : want.bold && boldCjk
-      ? usable(boldCjk, { bold: true, unicodeRange: CJK_RANGE })
-      : undefined
+  // 本机中文字体取不到（不可用 / 没加载好）时，与导出 cjk_for 一样回退批准粗体，而不是直接放弃
+  const c =
+    (source?.cjk && pickName(source.cjk, NO_STYLE, want)) ||
+    (want.bold && boldCjk ? usable(boldCjk, { bold: true, unicodeRange: CJK_RANGE }) : undefined)
   if (c && !names.includes(c)) names.push(c)
   return names.length ? `${names.map((n) => `"${n}"`).join(', ')}, ${approvedStack}` : approvedStack
 }

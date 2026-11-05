@@ -128,6 +128,8 @@ function SearchList<T extends string>({
   }, [active, shown])
 
   const onKeyDown = (e: KeyboardEvent) => {
+    // 输入法组字中：回车是确认候选词、方向键是在候选里选，不能被弹层抢走（229 兼容 Safari 等老事件）
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault()
       if (shown.length) setActive((a) => (a + (e.key === 'ArrowDown' ? 1 : -1) + shown.length) % shown.length)
