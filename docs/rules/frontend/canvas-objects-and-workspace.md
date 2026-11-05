@@ -257,11 +257,13 @@ order: 210
 - **多图排版里面板的边 = 裁剪、角 = 连图内标注一起缩放（ADR 0161，2026-11-02；2026-11-04 修订去掉开关）**：`mode === 'layout'` 下，未旋转 / 未翻转、未锁定面板的四条**边柄**
   走 `canvas/panelEdgeCrop.startPanelHandleDrag`（`OverlaySvg` 的唯一入口；不放进 `startResizeDrag` 是因为它要 `trackPointer`，`interactions` 反向 import 就成环）→ 写 `panel.crop`
   （与裁剪工具同一字段：相对原图幅的 0–1 分数、y 向下；同一条历史标签 `adjustCrop`；整图锚在画布上不动，缩放比不变）。停靠点是纯函数 `lib/panelEdgeCrop.planEdgeDepth`：
-  往外到未裁剪（0）为止 → 图边 → **内容边缘**（manifest `gid=="figure"` 的可选 `ink_bbox`，只经 `exactPanelManifest` 读；缺席 = 没有紧凑停靠点也没有闸）→ 越过内容边缘必须按住 ⌥
+  往外到未裁剪（0）为止（**没裁剪过的图从图边继续往外 = 改图幅，见本条末尾**）→ 图边 → **内容边缘**（manifest `gid=="figure"` 的可选 `ink_bbox`，只经 `exactPanelManifest` 读；缺席 = 没有紧凑停靠点也没有闸）→ 越过内容边缘必须按住 ⌥
   （起手就已在内容里的边不设闸）；吸附半径 `snapTolMm`（屏幕 6 px）。旋转 / 翻转面板的边柄、单图编辑的边柄维持原样（边方向要走内容坐标系的反变换，
   与"左 / 右"措辞和 ink 停靠点是两套坐标；这类面板精确裁剪走裁剪工具 `startCropDrag`）。角柄等比缩放时，**整个落在面板可见框里、未锁定未隐藏的标注**（成组须整组都在；判据唯一出处 `lib/annotationScale.annotationsInside`）按同一固定点、同一比例缩放
   位置（框中心）/ 尺寸 / `lib/annotationScale.ANNOTATION_SCALED_FIELDS` 里的页面 pt / mm 量（不按对象类型 switch；每帧从起手快照现算），同一事务一条历史；
   没有开关；同一批标注在拖动 / 方向键移动面板时一起平移（`draggableSelection` → `withFollowers`，历史标签按选中个数）；非等比那一帧（⌥ 反转锁定）标注留在原处。拖动含义由手势每帧写进 `interaction.dragStatus`（`DragStatus {tone, main, detail?, box}`，描述符；构造在 `lib/dragStatus`，`end()` 清；单图编辑复用同一个形状），
   `ContextBar` 里的 `DragStatusBar`（`data-drag-status` / `data-drag-tone`）只读不判，贴在 `box` 下方（放不下贴上方），不受「拖动即藏」影响；没有 dragStatus 时其余手势照旧拖动即藏。字号下限读 `resolveDocumentSpec(...).min_effective_font_size_pt`，
   规范库没载入 / 读不到 = 不判。选中面板不拖时胶囊多「贴合内容」（`actions.fitPanelsToContent`，缺 ink_bbox 置灰）「取消裁剪」。
+  **图边往外 = 改图幅（ADR 0161 修订 2026-11-06）**：`figureFrameFacts` 有值（未裁剪、精确 manifest、`size_mm` 可编辑）时越过吸附半径走纯函数 `planEdgeGrow`：只改被拖那一维，两轴各按自己的缩放比换算（被拉伸过的老面板），缩放比不变所以文字 pt 不变。
+  拖动中写 `interaction.figureEdgeBox`，虚线框由 `PageEdgeResize.LayoutFramePreview` 画（只挂在排版；预览与松手后的 `figureFramePending` 占位共用，缺了它 `PanelView` 收起旧图时画布上什么都不剩）；松手先丢裁剪事务再 `setFigureFrame` + `holdPlaceholder`，一条历史。裁剪过 / 不可编辑时停在图边，`cropDragStatus.growBlocked` 说原因。回到未裁剪用 `delete o.crop`：`= undefined` 会给什么都没变的拖动留一条空历史。
   看护：`lib/panelEdgeCrop.test.ts`、`canvas/panelEdgeCrop.test.tsx`、`canvas/layoutCornerFollow.test.tsx`、`canvas/context-bar/dragStatusBar.test.tsx`。

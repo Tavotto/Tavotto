@@ -13,6 +13,11 @@ import { mergePrefixBinding } from './merge-prefix.ts';
 import type { MergePrefixAssessment, MergePrefixReader, MergePrefixTarget } from './merge-prefix.ts';
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
+// Control-flow signals from the first merge-prefix snapshot (see publishGroup): every contributor of the prefix is
+// exempt, or at least one is not. They are thrown only when a caller asks for an exempt probe; no other path sees them.
+export class GroupExempt extends Rejected {constructor(){super('group_all_exempt');}}
+export class GroupMixed extends Rejected {constructor(){super('group_has_non_exempt');}}
+export type ExemptProbe='exit'|'probe';
 // Wording shown beside each attestation. Version 1: the original Chinese-only page;
 // version 2: the bilingual redesign (docs/implementation/cla-consent-ui/). Evidence
 // records which wording the signer saw; every version ever written stays readable.
@@ -261,18 +266,25 @@ export class LiveService {
       conclusion:good?'success':'failure',proof,text:'tavotto-cla-v1\n'+canonical(proof),
       ...(ceiling.expires<Number.MAX_SAFE_INTEGER?{authorityExpires:ceiling.expires}:{})};
   }
-  async assessMergePrefix(input:MergePrefixTarget,reservedSQL=0,expectedRevision?:number):Promise<MergePrefixAssessment> {
+  async assessMergePrefix(input:MergePrefixTarget,reservedSQL=0,expectedRevision?:number,probe?:ExemptProbe):Promise<MergePrefixAssessment> {
     if(this.c.mergePrefixAssessmentEnabled!==true)throw new Rejected('merge_prefix_disabled');
     const target=structuredClone(input);
-    if(this.c.mergePrefixReadSessionEnabled===true)return this.github.withMergePrefixReads(target,reader=>this.assessMergePrefixFacts(target,reader,reservedSQL,expectedRevision));
-    return this.assessMergePrefixFacts(target,{snapshot:()=>this.github.mergePrefixSnapshot(target),resolveLogin:login=>this.github.resolveLogin(login)},reservedSQL,expectedRevision);
+    if(this.c.mergePrefixReadSessionEnabled===true)return this.github.withMergePrefixReads(target,reader=>this.assessMergePrefixFacts(target,reader,reservedSQL,expectedRevision,probe));
+    return this.assessMergePrefixFacts(target,{snapshot:()=>this.github.mergePrefixSnapshot(target),resolveLogin:login=>this.github.resolveLogin(login)},reservedSQL,expectedRevision,probe);
   }
-  private async assessMergePrefixFacts(target:MergePrefixTarget,reader:MergePrefixReader,reservedSQL:number,expectedRevision?:number):Promise<MergePrefixAssessment> {
+  private async assessMergePrefixFacts(target:MergePrefixTarget,reader:MergePrefixReader,reservedSQL:number,expectedRevision?:number,probe?:ExemptProbe):Promise<MergePrefixAssessment> {
     const budget=this.store.budget;
     if(!budget || this.github.budget!==budget)throw new Rejected('invocation_budget_required');
     const revision=expectedRevision ?? await this.store.revision();
     if(!Number.isSafeInteger(revision) || revision<0)throw new Rejected('state_changed');
     const first=await mergePrefixBinding(this.c,reader,target,await reader.snapshot());
+    // The binding already re-resolved every exempt identity it used, so this reads the fully verified contributor ids.
+    // No qualification SQL, second snapshot or confirmation slot is needed to know a group is entirely exempt.
+    if(probe){
+      const ids=new Set(Object.values(this.c.exemptionIds));
+      if(first.binding.contributors.length>0 && first.binding.contributors.every(person=>ids.has(person.id)))throw new GroupExempt();
+      if(probe==='probe')throw new GroupMixed();
+    }
     const now=await this.store.databaseNow(),exempt=new Set(Object.values(this.c.exemptionIds));
     const people=first.binding.contributors.filter(person=>!exempt.has(person.id));
     if(people.length>successCapacity(this.c))throw new Rejected('contributor_capacity_exceeded');
@@ -288,9 +300,9 @@ export class LiveService {
     if(final.revision!==revision || final.now<now || final.now>=expires)throw new Rejected('state_changed');
     return {...first,protocol:'cla-merge-prefix-assessment-v1',eligible,revision,observed_at:final.now,valid_until:expires,publication:'not_attempted'};
   }
-  async evaluateTarget(target:import('../core/types.ts').Target,reservedSQL=0,expectedRevision?:number):Promise<CheckProposal> {
+  async evaluateTarget(target:import('../core/types.ts').Target,reservedSQL=0,expectedRevision?:number,probe?:ExemptProbe):Promise<CheckProposal> {
     if(target.kind==='pr')return this.evaluate(target.number,reservedSQL);
-    const a=await this.assessMergePrefix({headSha:target.headSha,baseSha:target.baseSha,baseRef:'refs/heads/main'},reservedSQL,expectedRevision);
+    const a=await this.assessMergePrefix({headSha:target.headSha,baseSha:target.baseSha,baseRef:'refs/heads/main'},reservedSQL,expectedRevision,probe);
     const proof={...a.binding,protocol:'tavotto-cla-v1' as const,revision:a.revision,issued_at:a.observed_at,expires_at:a.valid_until,
       group:{base_ref:'refs/heads/main' as const,strategy:a.strategy,prefix_sha256:a.prefix_sha256,queue_sha256:a.queue_sha256,trusted_source_sha:a.trusted_source_sha}};
     return {name:this.c.checkName,appId:this.c.appId,appSlug:this.c.appSlug,headSha:target.headSha,conclusion:a.eligible?'success':'failure',proof,
