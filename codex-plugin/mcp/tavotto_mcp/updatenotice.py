@@ -187,9 +187,12 @@ def _current(mine: str) -> dict | None:
             except Exception:  # noqa: BLE001
                 _thread = None
         fresh = _latest
-    # 缓存读得到就以缓存为准（后台线程会把结果写进去）；读不到才用线程在内存里留的那份
+    # 缓存可能是别的进程刷新的（比内存新），也可能写不进去（比内存旧）：两份里取版本更新的那份
     res = mod.check(version=ver, allow_network=False)
-    if res.get("status") == "unknown" and fresh is not None:
+    if fresh is not None and (
+        res.get("status") == "unknown"
+        or mod.is_newer(fresh.get("latest_version"), res.get("latest_version")) is True
+    ):
         res = fresh
     return _notice(res, ver)
 

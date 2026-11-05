@@ -167,6 +167,38 @@ def test_the_background_request_starts_when_nothing_is_switched_off(cfg, monkeyp
     assert updatenotice._thread is not None
 
 
+def test_a_fresher_memory_result_beats_a_cache_that_could_not_be_rewritten(cfg, monkeypatch):
+    """缓存读得到但写不进去：后台拿到的新版本不能被磁盘上的旧清单盖掉。"""
+    cfg(_manifest("1.0.0"))
+    mod = updatenotice._load()
+    monkeypatch.setattr(
+        updatenotice,
+        "_latest",
+        {
+            **mod.check(version="1.0.0", allow_network=False),
+            "status": "available",
+            "latest_version": "2.0.0",
+        },
+    )
+    assert _health()["update"]["latest_version"] == "2.0.0"
+
+
+def test_a_newer_cache_beats_an_older_memory_result(cfg, monkeypatch):
+    """别的进程刷新了缓存：内存里那份旧结果不能盖掉它。"""
+    cfg(_manifest("3.0.0"))
+    mod = updatenotice._load()
+    monkeypatch.setattr(
+        updatenotice,
+        "_latest",
+        {
+            **mod.check(version="1.0.0", allow_network=False),
+            "status": "available",
+            "latest_version": "2.0.0",
+        },
+    )
+    assert _health()["update"]["latest_version"] == "3.0.0"
+
+
 # ------------------------------ export ----------------------------------
 def test_export_carries_update_only_once_per_process(cfg, fake_export):
     cfg()
@@ -426,13 +458,3 @@ def test_unwritable_cache_does_not_spawn_a_thread_per_call(cfg, monkeypatch):
         _health()
         spy.settle()
     assert spy.n == 1
-
-
-def test_cache_wins_over_in_memory_result(cfg, monkeypatch):
-    cfg(_manifest("1.0.0"))  # 缓存说已是最新
-    monkeypatch.setattr(
-        updatenotice,
-        "_latest",
-        {"status": "available", "latest_version": "50.0.0", "upgrade_command": "x"},
-    )
-    assert "update" not in _health()
