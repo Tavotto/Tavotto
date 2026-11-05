@@ -60,6 +60,26 @@
 - 下一阶段先完成 R00–R04 的最终产物正确性和版本防串，再以 R05–R07 打通 B 路径实际保存/重开/导出；后续补齐 A/C、场景交互、全部适用图表族、写回、预检、入口和资格。详细依赖见 `NEXT_PHASE.md`。
 - 本轮仅修改评估与计划文档，未修复上述产品缺陷，未推送/合并/发布。历史 checkpoint 中的“通过”“已可用”只代表当时判断，不覆盖本次实际结果。
 
+### 2026-11-06 当前进度快照（时间：UTC 03:0x）
+
+- **分支**：`zixu.wang/svg-computational-r00`，42 个提交领先 origin/main（2bc94f7f 未变）。
+- **后端 sweep**：15 文件（含 worker_roundtrip/export_pipeline/invariants/legacy SVG）正在后台运行。
+- **前端**：build / i18n:check / vitest 全绿（viewportStore 8 项在 full-suite 顺序下为顺序依赖伪红，
+  isolation 28/28 绿——与本 diff 无关）。
+- **已实现（用户可见）**：
+  - 绑定流程：右键 SVG 面板 →「绑定数据为计算图表」→ 向导（轴区/每轴独立校准+scale/系列/CSV）
+    → 对照预览 → 确认（documentStore 一次事务）。
+  - 计算闭环：改范围/系列数据 → 片段嫁接重算（轴/系列/色条/图例按角色完整更新）。
+  - 渲染：PanelView 按 chart 渲染身份消费组合 SVG；缓存按完整变体身份（model+binding digest）。
+  - 导出：chart 面板原图 SVG = 组合版（basis=convert）；PDF/PNG/TIFF 在 SVG→IR 翻译器前如实报
+    `svg_asset_export_unsupported`。
+  - 持久化：chart 字段经真实保存路径往返、冷重算、来源冲突如实报告。
+- **未完成（按优先级）**：
+  1. 图内编辑（选中 SVG 内元素/命中/属性修改）——需要 renderStore manifest 集成。
+  2. PDF/PNG/TIFF 导出——需要 SVG→IR 翻译器（ADR 0166 §2 的独立适配层）。
+  3. 真 E2E（浏览器驱动 UI 全流程）。
+  4. R08–R13：A 路径采用接线、自包含往返、写回、预检、入口打包。
+
 ### 2026-11-06 R07 冻结导出（SVG 格式）完成
 
 - **OriginalSource.chart** 字段（exportreq.py）透传 normalize；旧请求逐字节不变。
