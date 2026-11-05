@@ -494,6 +494,28 @@ def check_frozen_mcp(cli: Path, project: Path, workdir: Path) -> None:
         raise SystemExit(
             f"::error::tavotto-cli mcp 读不到技能: {json.dumps(guide, ensure_ascii=False)[:300]}"
         )
+    # 技能脚本：桌面版没有解释器，AI 经 `tavotto-cli skill-script <name>` 跑（SKILL.md 开工三问的 prefs）
+    sk = subprocess.run(
+        [str(cli), "skill-script", "prefs", "--json"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        cwd=str(project),
+        timeout=120,
+        stdin=subprocess.DEVNULL,
+    )
+    try:
+        sk_json = json.loads(sk.stdout)
+    except ValueError:
+        sk_json = None
+    if sk.returncode != 0 or not isinstance(sk_json, dict):
+        raise SystemExit(
+            f"::error::tavotto-cli skill-script prefs 不可用（退出码 {sk.returncode}）: "
+            f"{(sk.stdout + sk.stderr)[:300]}"
+        )
+    print("· tavotto-cli skill-script prefs --json 通过")
     print(f"· tavotto-cli mcp 通过：{len(tools)} 个工具，tavotto_health 正常，画布和技能随包")
 
 

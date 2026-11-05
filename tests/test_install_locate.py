@@ -614,6 +614,7 @@ def test_open_and_doctor_are_dispatched_before_argparse():
         "agent-run",
         "mcp",
         "hosts",
+        "skill-script",
     }
     assert engine_cli.dispatch([]) is None
     assert engine_cli.dispatch(["--figures", "/tmp"]) is None
