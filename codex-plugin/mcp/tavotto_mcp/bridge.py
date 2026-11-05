@@ -65,15 +65,18 @@ from . import sessionjournal
 from .roots import (
     CODE_AMBIGUOUS_ROOT,
     CODE_NO_WORKSPACE_ROOT,
+    CODE_PATH_DENIED,
     CODE_PATH_OUT_OF_SCOPE,
     CODE_ROOT_TOO_BROAD,
     CODE_ROOTS_ERROR,
     CODE_ROOTS_NO_RESPONSE,
     ROOTS_ENV,
+    SOURCE_LOCAL_SCOPE,
     WORKSPACE_ENVS,
     WORKSPACE_FAILURES,
     RootAuthority,
     canonical_path,
+    home_dirs,
 )
 
 # 这些负载只在完整渲染响应与按需快照里返回；摘要与诊断账本共用这一份字段表。
@@ -151,6 +154,7 @@ OPTIONAL_ENGINE_MODULES = (
     "envadvice",
     "envlease",
     "execspec",
+    "fixtools.readscope",
     "journalremote",
     "journals",
     "runconfig",
@@ -424,6 +428,8 @@ def _nt_rooted_escape(value: str, roots: list[str], resolve=lambda p: p) -> str 
     if not vdrive:
         return value  # `\x` / `/x` / `\` / `/`：有根无盘符，落点取决于 worker 的盘
     real = resolve(ntpath.normpath(value))
+    if local_scope_active():
+        return real if _judge_path(value, roots)[1] else None
     for root in roots:
         try:
             common = ntpath.commonpath([real, root])
@@ -511,13 +517,14 @@ def _argv_path_escapes(
     if value.startswith("~") or os.path.isabs(value) or _WIN_ABS_RE.match(value):
         if _WIN_ABS_RE.match(value) and not os.path.isabs(value):
             return value  # 非本平台的绝对路径形状：无法证明它在根里
-        real = canonical_path(os.path.expanduser(value))
-        return None if any(_within(real, r) for r in roots) else real
+        # 不 `abspath`：`keys/../x` 里 keys 若是链接，`..` 落在链接目标的上一层（Codex #1757 r4473502316）
+        real, refused = _judge_path(os.path.expanduser(value), roots)
+        return real if refused else None
     if cwds is None:
         return value if ".." in re.split(r"[\\/]+", value) else None
     for cwd in cwds:
-        real = canonical_path(os.path.join(cwd, value))
-        if not any(_within(real, r) for r in roots):
+        real, refused = _judge_path(os.path.join(cwd, value), roots)
+        if refused:
             return real
     return None
 
@@ -640,6 +647,170 @@ def root_diagnostics() -> dict:
     return _ROOT_AUTHORITY.diagnostics()
 
 
+def local_scope_active() -> bool:
+    """这条连接此刻的根是不是「本机兜底」那一档（`roots.SOURCE_LOCAL_SCOPE`，ADR 0009 §1b）。"""
+    return _ROOT_AUTHORITY.snapshot().source == SOURCE_LOCAL_SCOPE
+
+
+def _scope_denied(path: str) -> bool:
+    """本机兜底这一档**只拦凭据类文件**：改图助手同一份黑名单（`engine/fixtools/readscope.py`，ADR 0149 §三：`.env*`、
+    私钥形状、SSH / 云服务等凭据目录、浏览器登录数据、Tavotto 自己的密钥文件）。判的是 `path` 这**一个**对象：名字规则按
+    它实际指到的类型（文件才按名拦），固定凭据目录按前缀拦。位置不拦——用户的数据可能在任何盘、任何目录（维护者
+    2026-11-05）。引擎里没有那份黑名单（旧引擎）就一律拦：失败封闭。沿途每一跳由 `_lookup_chain` 给出、`_judge_path` 逐个送来。"""
+    mod = _optional_engine("fixtools.readscope")
+    scope_cls = getattr(mod, "ReadScope", None)
+    if scope_cls is None:
+        return True
+    homes = home_dirs()
+    home = next(
+        (h for h in homes if _within(path, h)), homes[0] if homes else os.path.expanduser("~")
+    )
+    return scope_cls(home=home, project_root=home).check(path).reason == getattr(
+        mod, "REASON_DENIED", "denied"
+    )
+
+
+#: 一次解析里最多跟几跳链接（与 Linux 的 MAXSYMLINKS 同量级）；超过按成环拒
+_MAX_LINK_HOPS = 40
+#: Windows 目录联接（junction）的 reparse tag；符号链接走 `S_ISLNK`
+_IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003
+
+
+def _is_link(st: os.stat_result) -> bool:
+    import stat as _stat
+
+    if _stat.S_ISLNK(st.st_mode):
+        return True
+    return os.name == "nt" and getattr(st, "st_reparse_tag", 0) == _IO_REPARSE_TAG_MOUNT_POINT
+
+
+def _is_process_view(path: str) -> bool:
+    """`/proc/<pid>/…`（含 `self` / `thread-self`）与 `/dev/fd/…` 是进程视图，不是文件系统路径：`/proc/<pid>/fd/3` 的 readlink
+    只是展示文本（`… (deleted)`），内核直接访问仍存活的文件对象，逐段走不出真相（Codex #1757 r4476078785）。一律拒；
+    `/proc/cpuinfo` 这类系统信息不是进程视图，照常。"""
+    if os.name == "nt":
+        return False
+    if path.startswith("/dev/fd/"):
+        return True
+    head = path.split("/")[1:3]
+    return (
+        len(head) == 2
+        and head[0] == "proc"
+        and (head[1].isdigit() or head[1] in ("self", "thread-self"))
+    )
+
+
+def _strip_nt_link_prefix(target: str) -> str:
+    for prefix, repl in (
+        ("\\\\?\\UNC\\", "\\\\"),
+        ("\\??\\UNC\\", "\\\\"),
+        ("\\\\?\\", ""),
+        ("\\??\\", ""),
+    ):
+        if target.startswith(prefix):
+            return repl + target[len(prefix) :]
+    return target
+
+
+def _lookup_chain(path: str) -> list[str]:
+    """按**操作系统打开文件时的顺序**把绝对路径 `path` 走一遍，返回沿途查过的每一个对象（ADR 0009 §1b，用户 2026-11-05 裁决
+    「逐段解析」）：每一段先 `lstat`，是链接就记下**链接自己**这一跳、再接着走它的目标（跳数有上限）；不是链接就记下这个真实对象。
+
+    - POSIX：`..` 在**已解析的真实位置**上回退（`keys -> a/b` 时 `keys/..` 是 `a`，不是 `keys` 的字面上一层）。
+    - Windows：Win32 打开前先按字面折叠 `..`，所以先 `ntpath.normpath`，再逐段跟符号链接与目录联接；链接目标同样先折叠。
+    - 某一段不存在（脚本要写的输出文件）：之后的段按字面接上、照样记下来判名字；不存在之后又出现 `..` → 内核会直接
+      ENOENT，没有正当用法，抛错（调用方按拒处理）。
+    - 读不到（权限、竞态、成环）一律抛 `OSError`：调用方失败封闭。"""
+    if os.name == "nt":
+        path = ntpath.normpath(path)
+        drive, rest = ntpath.splitdrive(path)
+        if not drive or rest[:1] not in ("\\", "/"):
+            raise ValueError(f"不是完整限定的绝对路径：{path}")
+        anchor = drive + "\\"
+        parts = [x for x in re.split(r"[\\/]+", rest) if x]
+    else:
+        if not os.path.isabs(path):
+            raise ValueError(f"不是绝对路径：{path}")
+        anchor = "/"
+        parts = [x for x in path.split("/") if x]
+    todo = list(reversed(parts))
+    cur = anchor
+    chain: list[str] = []
+    hops = 0
+    missing = False
+    while todo:
+        part = todo.pop()
+        if part == ".":
+            continue
+        if part == "..":
+            if missing:
+                raise OSError(f"不存在的目录后面又跟了 ..：{path}")
+            cur = os.path.dirname(cur)
+            continue
+        nxt = os.path.join(cur, part)
+        if _is_process_view(nxt):
+            raise OSError(f"进程视图路径不能按文件判定：{nxt}")
+        if missing:
+            chain.append(nxt)
+            cur = nxt
+            continue
+        try:
+            st = os.lstat(nxt)
+        except FileNotFoundError:
+            missing = True
+            chain.append(nxt)
+            cur = nxt
+            continue
+        if not _is_link(st):
+            chain.append(nxt)
+            cur = nxt
+            continue
+        hops += 1
+        if hops > _MAX_LINK_HOPS:
+            raise OSError(f"链接跳数超过 {_MAX_LINK_HOPS}（成环？）：{path}")
+        chain.append(nxt)
+        target = os.readlink(nxt)
+        if os.name == "nt":
+            target = _strip_nt_link_prefix(target)
+            rest_parts = list(reversed(todo))
+            full = ntpath.normpath(ntpath.join(cur, target, *rest_parts))
+            drive, rest = ntpath.splitdrive(full)
+            if not drive:
+                raise OSError(f"链接目标没有盘符：{nxt} -> {target}")
+            anchor = drive + "\\"
+            cur = anchor
+            todo = list(reversed([x for x in re.split(r"[\\/]+", rest) if x]))
+            continue
+        if os.path.isabs(target):
+            cur = anchor
+        todo.extend(reversed([x for x in target.split("/") if x]))
+    return chain
+
+
+def _judge_path(raw: str, roots) -> tuple[str, str | None]:
+    """**判「这条路径能不能碰」只经这里**（打开目标、命令行参数的绝对 / 相对两支、Windows 带盘符分支、会话恢复）。
+
+    `raw` 是**未折叠 `..`** 的绝对路径（`expanduser` / `join(cwd, v)` 之后，不 `abspath`）。返回 `(真实路径, 拒绝码 | None)`。
+
+    - 本机兜底一档：`_lookup_chain` 给出的沿途每一个对象（每一段、每一跳链接自己）和最终真实路径，任一是凭据类 →
+      `path_denied`；解析过程中任何一步拿不准（权限、竞态、成环、不存在后又 `..`）→ `path_denied`，失败封闭。
+      判的是系统真正走过的那条路，而不是「字面折叠后」与「解析后」两个点——后者可能指向另一个对象（Codex #1757
+      r4475737144：`keys/../server.pem` 折叠后是一个叫 server.pem 的**目录**，名字规则不管目录）。
+    - 其余档：最终真实路径在不在允许的根内（`canonical_path` = 内核同语义的 realpath）。"""
+    real = canonical_path(raw)
+    if local_scope_active():
+        try:
+            chain = _lookup_chain(raw)
+        except (OSError, ValueError):
+            return real, CODE_PATH_DENIED
+        if any(_scope_denied(p) for p in dict.fromkeys([*chain, real])):
+            return real, CODE_PATH_DENIED
+        return real, None
+    if any(_within(real, r) for r in roots):
+        return real, None
+    return real, CODE_PATH_OUT_OF_SCOPE
+
+
 def observe_mcp_client(protocol_version: str | None, capabilities, client_info) -> None:
     _remember_mcp_client_name(client_info)
     _ROOT_AUTHORITY.observe_client(protocol_version, capabilities, client_info)
@@ -737,7 +908,9 @@ def check_scope(path: str) -> str:
     # doing this first would turn the same deleted-cwd case back into ENOENT.
     target = os.path.expanduser(str(path))
     if not os.path.isabs(target):
-        if len(roots) != 1:
+        if (
+            len(roots) != 1 or local_scope_active()
+        ):  # 本机兜底的根是 `/` / 盘符根：相对路径没有可靠的基准
             failure = WORKSPACE_FAILURES[CODE_AMBIGUOUS_ROOT]
             raise BridgeError(
                 failure.summary,
@@ -748,9 +921,18 @@ def check_scope(path: str) -> str:
                 path=target,
             )
         target = os.path.join(roots[0], target)
-    real = canonical_path(target)
-    if any(_within(real, r) for r in roots):
+    real, refused = _judge_path(target, roots)
+    if refused is None:
         return real
+    if refused == CODE_PATH_DENIED:
+        failure = WORKSPACE_FAILURES[CODE_PATH_DENIED]
+        raise BridgeError(
+            f"{failure.summary}被拦的是 {real}。",
+            code=failure.code,
+            disposition=failure.disposition,
+            recovery=failure.next_step,
+            path=real,
+        )
     failure = WORKSPACE_FAILURES[CODE_PATH_OUT_OF_SCOPE]
     raise BridgeError(
         f"{failure.summary}不在范围内的是 {real}；当前允许的根: {os.pathsep.join(roots)}。",
@@ -849,21 +1031,26 @@ def _spawn_worker(session: "Session", *, one_shot: bool):
     _recheck_run(run, session.project, session.script)
     # 无配置时调用形状与旧版一致（旧引擎的池函数不认识 `run=`）
     context = {"run": run} if run is not None else {}
-    roots = _tripwire_roots()
+    roots = _tripwire_roots(session.project)
     if roots is not None:
         context["write_roots"] = roots
     fn = engine_pool.one_shot if one_shot else engine_pool.get
     return fn(session.script, session.project, session.entry, **context)
 
 
-def _tripwire_roots() -> tuple[str, ...] | None:
+def _tripwire_roots(project: str) -> tuple[str, ...] | None:
     """MCP 来源的 safe 运行带给 worker 的写入根绊线授权根；None = 不装（引擎没宣告能力 / 已回滚）。
 
     根就是 `allowed_roots()`（`RootAuthority` 快照：用户绑定 / 宿主 roots / 显式环境变量里**可信**的那些，
     已拒 HOME 这类过宽的根）——与 `check_scope` 判「项目在不在范围内」的是同一份，所以脚本能写的地方不会
     比 Agent 能指向的地方更大。根是 spawn 时烤进 worker 的：根集合变了，池键也变（另一条会话）。
-    GUI / native / CLI 不经这里，不装。"""
+    GUI / native / CLI 不经这里，不装。
+
+    本机兜底那一档（ADR 0009 §1b）不装：范围本来就是本机任意位置，与 GUI 里自己运行脚本同一条线（维护者 2026-11-05）。
+    `project` 留作参数：别的档将来要按项目收窄时不用改调用处。"""
     if WRITE_ROOT_TRIPWIRE_FEATURE not in engine_features():
+        return None
+    if local_scope_active():
         return None
     return tuple(allowed_roots())
 
@@ -1344,7 +1531,7 @@ def _restore_session(session_id: str) -> Session | None:
         not roots
         or project is None
         or not os.path.isdir(project)
-        or not any(_within(project, root) for root in roots)
+        or _judge_path(project, roots)[1] is not None
     ):
         raise BridgeError(
             f"会话 {session_id} 的项目不在当前工作区根内，不能在这里恢复，请重新打开。",
@@ -1427,7 +1614,7 @@ def get_session(session_id: str) -> Session:
         not roots
         or current_project is None
         or not os.path.isdir(current_project)
-        or not any(_within(current_project, root) for root in roots)
+        or _judge_path(current_project, roots)[1] is not None
     ):
         _SESSIONS.pop(session_id, None)
         s.apply_receipt = None

@@ -24,8 +24,10 @@ order: 80
   （Cursor `~/.cursor/mcp.json`、VS Code 用户目录的 `mcp.json`（`servers`）、TRAE / TRAE CN 用户目录的 `mcp.json`、
   ZCode `~/.zcode` 下 `cli/` 与 `workspace/default/.zcode/` 两处的 `mcp.servers`、WorkBuddy `~/.workbuddy/mcp.json`、
   Claude 桌面版 `claude_desktop_config.json`；Claude Code 用它自己的 `claude mcp add --scope user`；Codex 委托
-  `codexinstall`），条目是这一份 Tavotto 的 `tavotto-cli mcp`（`mcp_launch()`），授权同样只有 `TAVOTTO_MCP_ROOTS`
-  ——用户第一次接入时选的那个文件夹（`hosts.json`，所有宿主共用；根 / HOME / HOME 的上级拒绝）。三条纪律：写之前
+  `codexinstall`），条目是这一份 Tavotto 的 `tavotto-cli mcp`（`mcp_launch()`）。**点一下就接、不选文件夹**（2026-11-04，ADR 0009
+  §1b）：会自己报项目的宿主（`HOSTS_WITH_OWN_WORKSPACE` = Claude Code / VS Code / WorkBuddy）`env` 为空；其余只写
+  `TAVOTTO_MCP_SCOPE=local`（服务端兜底 = 本机任意位置，只拦凭据类文件）；命令行 `--project-root` 仍写
+  `TAVOTTO_MCP_ROOTS`（根 / HOME / HOME 的上级拒绝）。旧按钮写的文件夹在 `hosts list` 时一次性迁移。三条纪律：写之前
   备份、只动 tavotto 一条、读不懂（JSONC 等）就不写并报 `config_unreadable`；断开只删 tavotto；WorkBuddy 额外在
   `mcp-approvals.json` 只信任 tavotto 这一条（用户点「接入」即同意，方案决策）。看护 `tests/test_hosts_connect.py`。
 - 授权只来自 `--project-root`（写进 `TAVOTTO_MCP_ROOTS`）；根 / HOME / 包目录拒绝。启动器探针与

@@ -3062,7 +3062,7 @@ def _button_writes(ctx: dict, entry: dict | None = None) -> dict:
     entry = entry or {
         "command": str(ctx["cli"]),
         "args": ["mcp"],
-        "env": {A.CONNECT_ROOTS_ENV: str(ctx["proj"])},
+        "env": dict(A.CONNECT_EXPECTED_ENV[ctx["host_id"]]),
     }
     for f, path in ctx["targets"]:
         d = json.loads(f.read_text(encoding="utf-8"))
@@ -3143,8 +3143,9 @@ def test_connect_judge_accepts_exactly_what_the_button_should_write(tmp_path, ho
     [
         (lambda e, c: e.update(args=["mcp", "--x"]), "args"),
         (lambda e, c: e.update(command=str(c["proj"] / "python.exe")), "command"),
-        (lambda e, c: e["env"].update(EXTRA="1"), "env keys"),
-        (lambda e, c: e["env"].update({A.CONNECT_ROOTS_ENV: str(c["real_home"])}), "chosen folder"),
+        (lambda e, c: e["env"].update(EXTRA="1"), "env"),
+        # 旧按钮的形状：写死一个文件夹，会把宿主锁在那一个项目里
+        (lambda e, c: e.update(env={A.CONNECT_ROOTS_ENV: str(c["proj"])}), "env"),
     ],
 )
 def test_connect_judge_rejects_a_wrong_entry(tmp_path, mutate, problem):
@@ -3153,7 +3154,7 @@ def test_connect_judge_rejects_a_wrong_entry(tmp_path, mutate, problem):
     entry = {
         "command": str(ctx["cli"]),
         "args": ["mcp"],
-        "env": {A.CONNECT_ROOTS_ENV: str(ctx["proj"])},
+        "env": dict(A.CONNECT_EXPECTED_ENV["zcode"]),
     }
     mutate(entry, ctx)
     _button_writes(ctx, entry)
@@ -4094,3 +4095,11 @@ def test_managed_cli_task_without_verifier_is_not_run(tmp_path):
     run_dir = tmp_path / "run"
     (run_dir / "evidence").mkdir(parents=True)
     assert A.run_managed_cli_task(A.Lab(tmp_path), run_dir, {}, "all")["result"] == "not_run"
+
+
+def test_connect_expected_env_matches_what_the_product_writes():
+    """执行器自己的期望（不 import 产品）与产品 `hostconnect.env_for` 对拍：漂了，Lab 会把对的配置判成写错。"""
+    from tavotto.engine import hostconnect
+
+    for host_id, env in A.CONNECT_EXPECTED_ENV.items():
+        assert hostconnect.env_for(host_id) == env, host_id

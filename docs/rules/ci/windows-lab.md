@@ -225,15 +225,14 @@ L4 真宿主执行工具调用 → L5 科研绘图任务到编辑、保存、重
     ZCode 那一行、`workbuddy-native` → WorkBuddy 那一行）：同一格 desktop-live，只是 tavotto 那一条 MCP 配置**不由执行器写**，
     而由装好的 Tavotto 写。装法同 `desktop-window`（`cache\packages\` 里带 `.sha256` 的包，非管理员静默装，只认这次装出来的
     那一份）；`connect_driver.py` 在交互会话里起 `Tavotto.exe --open <只放示例 PDF 的项目>`（WebView2 调试端口同 desktop-window
-    的 HKLM 策略），真实鼠标事件点左栏「设置」→「改图助手」→ 那一行的「接入」，第一次接入弹的系统选文件夹框用 `fill_folder_dialog`
-    填宿主的项目目录。Tavotto 用 tavotto-lab **真实的用户目录**起（改了 `USERPROFILE`，WebView2 就不开策略给的调试端口——Lab 实测），
+    的 HKLM 策略），真实鼠标事件点左栏「设置」→「改图助手」→ 那一行的「接入」（点一下就接，不弹选文件夹框，ADR 0009 §1b）。Tavotto 用 tavotto-lab **真实的用户目录**起（改了 `USERPROFILE`，WebView2 就不开策略给的调试端口——Lab 实测），
     它自己的数据 / 配置目录进 run 目录。
     - **真实用户目录里的那几个文件跑完还原**：接入前存下原样（含 WorkBuddy 的 `mcp-approvals.json`），跑完写回原样但**去掉
       tavotto 那一条**，删掉本次 Tavotto 生成的 `*.tavotto-backup-*` 与为此建的空目录；报告 `connect_restore` 列出还原了什么。
     - **按钮这一侧的判据是执行器自己的**（`connect_targets` / `judge_connect_written`，不 import 产品的 hostconnect）：接入前在
       每个目标文件里去掉残留的 tavotto、放一条旁人条目 `lab-keep-me`（ZCode 那份 `enabled=false`）；点完之后每个文件**只多出 tavotto
-      一条**，命令 = 安装目录里的 `tavotto-cli.exe`、参数 = `["mcp"]`、env 只有 `TAVOTTO_MCP_ROOTS` = 选的文件夹，几个文件里的那一条
-      相同；WorkBuddy 另要有按执行器自己的指纹算法算出的信任记录。文件不符 → `connect=failed`，不跑宿主；文件对了但那一行没显示
+      一条**，命令 = 安装目录里的 `tavotto-cli.exe`、参数 = `["mcp"]`、env = 执行器自己的 `CONNECT_EXPECTED_ENV`（WorkBuddy 为空、
+      ZCode 为 `TAVOTTO_MCP_SCOPE=local`），几个文件里的那一条相同；WorkBuddy 另要有按执行器自己的指纹算法算出的信任记录。文件不符 → `connect=failed`，不跑宿主；文件对了但那一行没显示
       「已接入」→ `connect=failed`，宿主照跑。报告带装好的 `tavotto-cli hosts list --json` 怎么看这一行（`connect.cli_list`）。
     - **宿主这一侧**：宿主仍跑在 desktop-live 那个隔离的家里（ZCode 的 `zdata`、WorkBuddy 的常驻家，落盘 key 与登录态的范围不变），
       执行器把按钮写的那一条放进宿主的家里**同样的相对位置**，并在跑宿主的那段时间给真实目录与宿主的家两处都包上录制器（只换

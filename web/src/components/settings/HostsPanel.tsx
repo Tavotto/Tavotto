@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CircleCheck, CircleMinus, CircleX, Ellipsis, FolderOpen, Unplug } from '@/components/ui/icons'
+import { CircleCheck, CircleMinus, CircleX, Ellipsis, Unplug } from '@/components/ui/icons'
 import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import {
   HostShellError,
@@ -13,7 +13,7 @@ import {
   type HostResult,
   type HostStep,
 } from '@/lib/hostConnect'
-import { isDesktop, pickDirectory, runHostIntegration } from '@/lib/desktop'
+import { isDesktop, runHostIntegration } from '@/lib/desktop'
 import { BrandLogo } from './BrandLogo'
 import { Button, IconButton } from '../ui/Button'
 import { FieldGroup, FormSection } from '../ui/FormSection'
@@ -23,16 +23,14 @@ import { DiagnosticDisclosure, GroupNotice, SettingRow } from './SettingRow'
 /**
  * 设置 →「接入 AI 编辑器」（用户 2026-10-27，与「连接 AI」并列的独立一组）。
  *
- * 每个宿主一行：没装的只写「未检测到」，不画按钮；装了的一个「接入」；接好的「✓ 已接入」+ ⋯（更改文件夹 · 断开）。
- * 第一次接入先选项目文件夹（所有宿主共用，主目录 / 磁盘根由引擎拒绝）。
+ * 每个宿主一行：没装的只写「未检测到」，不画按钮；装了的一个「接入」；接好的「✓ 已接入」+ ⋯（断开）。
+ * **点一下就接好，不选文件夹**（用户 2026-11-04，ADR 0009 §1b）：范围由 MCP 服务端定——宿主报的项目目录优先，
+ * 不报的宿主是本机任意位置，只拦凭据类文件（.env、私钥、凭据目录、浏览器登录数据）。
  *
  * **按钮背后是那条命令，不是第二套安装器**：`tavotto-cli hosts … --json`（`engine/hostconnect.py`），这里只渲染
  * 它那一行 JSON。失败显示翻译过的一句原因，逐步结论折叠在下面（与 Codex 那一行同一形状）。浏览器模式没有壳，
  * 整组不显示——**不画一个按不动的按钮**。
  */
-/** 失败原因是文件夹本身时，下一次点按钮先弹选择框 */
-const FOLDER_ERRORS = ['project_root_rejected', 'project_root_missing']
-
 export function HostsPanel() {
   const { t } = useTranslation('dialogs')
   const tx = useCallback(
@@ -64,18 +62,12 @@ export function HostsPanel() {
 
   const label = (id: string) => list?.hosts.find((h) => h.id === id)?.label ?? id
 
-  const run = async (action: 'connect' | 'disconnect', host: string, askFolder = false) => {
-    let root: string | undefined
-    if (action === 'connect' && (askFolder || !list?.project_root)) {
-      const picked = await pickDirectory(tx('pickFolderTitle', { host: label(host) }))
-      if (!picked) return
-      root = picked
-    }
+  const run = async (action: 'connect' | 'disconnect', host: string) => {
     setBusy(host)
     setResult(null)
     setShellCode(null)
     try {
-      const r = parseHostResult(await runHostIntegration(action, host, root))
+      const r = parseHostResult(await runHostIntegration(action, host))
       setResult(r)
       setAnnounce(r.ok ? tx('announce.ok') : tx('announce.failed'))
     } catch (e) {
@@ -110,12 +102,6 @@ export function HostsPanel() {
                 ? hostErrorText(result.error_code, h.label)
                 : null
           const steps = result?.host === h.id ? result.steps : []
-          // 记住的文件夹失效（被移走 / 删掉 / 含分隔符被拒）：重试先让用户换一个文件夹，否则会一直提交那个坏的
-          // （Codex #1456 P2）
-          const folderProblem =
-            result?.host === h.id &&
-            !result.ok &&
-            FOLDER_ERRORS.includes(result.error_code ?? '')
           return (
             <div key={h.id} className="flex min-h-12 flex-col gap-2 [&>[data-setting-row]]:min-h-0" data-host-row={h.id}>
               <SettingRow
@@ -142,13 +128,6 @@ export function HostsPanel() {
                       }
                     >
                       <MenuItem
-                        icon={FolderOpen}
-                        disabled={busy !== null}
-                        onSelect={() => void run('connect', h.id, true)}
-                      >
-                        {tx('changeFolder')}
-                      </MenuItem>
-                      <MenuItem
                         icon={Unplug}
                         disabled={busy !== null}
                         onSelect={() => void run('disconnect', h.id)}
@@ -164,15 +143,9 @@ export function HostsPanel() {
                     loading={busy === h.id}
                     disabled={busy !== null}
                     data-host-connect={h.id}
-                    onClick={() => void run('connect', h.id, folderProblem)}
+                    onClick={() => void run('connect', h.id)}
                   >
-                    {busy === h.id
-                      ? tx('running')
-                      : folderProblem
-                        ? tx('chooseFolder')
-                        : failure
-                          ? tx('retry')
-                          : tx('connect')}
+                    {busy === h.id ? tx('running') : failure ? tx('retry') : tx('connect')}
                   </Button>
                 )}
               </SettingRow>
