@@ -553,16 +553,24 @@ def test_quota_from_the_first_entry_does_not_try_the_second(env, monkeypatch):
     assert out["state"] == "quota" and set(hosts) == {"https://tavotto.cn"}
 
 
-# ---------------------------------------------------------------- Ed25519 验签（pyca cryptography，用户 2026-11-05 拍板）
+# ---------------------------------------------------------------- Ed25519 验签（PyNaCl，用户 2026-11-05 拍板）
+
+
+class _Signer:
+    """把 nacl 的 SigningKey 包成 `.sign(msg) -> 64 字节签名`。"""
+
+    def __init__(self, key):
+        self._key = key
+
+    def sign(self, msg: bytes) -> bytes:
+        return self._key.sign(msg).signature
 
 
 def _real_keypair():
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from nacl.signing import SigningKey
 
-    priv = Ed25519PrivateKey.generate()
-    pub = priv.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-    return priv, pub
+    key = SigningKey.generate()
+    return _Signer(key), bytes(key.verify_key)
 
 
 def _flip(raw: bytes, bit: int = 0) -> bytes:
@@ -572,7 +580,7 @@ def _flip(raw: bytes, bit: int = 0) -> bytes:
     return bytes(out)
 
 
-def test_ed25519_verify_accepts_a_real_cryptography_signature():
+def test_ed25519_verify_accepts_a_real_nacl_signature():
     priv, pub = _real_keypair()
     msg = b"tavotto journal index payload"
     assert jr._ed25519_verify(pub, msg, priv.sign(msg)) is True
@@ -620,17 +628,79 @@ def test_ed25519_verify_rejects_non_bytes_without_raising(bad):
     assert jr._ed25519_verify(b"", b"", b"") is False
 
 
-def test_ed25519_verify_fails_closed_when_cryptography_cannot_be_imported(monkeypatch):
+def test_ed25519_verify_fails_closed_when_nacl_cannot_be_imported(monkeypatch):
     import sys
 
     priv, pub = _real_keypair()
     msg = b"m"
-    monkeypatch.setitem(sys.modules, "cryptography", None)
-    monkeypatch.setitem(sys.modules, "cryptography.hazmat.primitives.asymmetric.ed25519", None)
-    assert jr._ed25519_verify(pub, msg, priv.sign(msg)) is False
+    sig = priv.sign(msg)
+    assert jr._ed25519_verify(pub, msg, sig) is True
+    monkeypatch.setitem(sys.modules, "nacl", None)
+    monkeypatch.setitem(sys.modules, "nacl.signing", None)
+    assert jr._ed25519_verify(pub, msg, sig) is False
 
 
-def test_importing_the_flask_app_does_not_load_cryptography():
+_L = 2**252 + 27742317777372353535851937790883648493  # Ed25519 群的阶
+
+
+def test_ed25519_verify_rejects_malleable_signature_with_s_plus_l():
+    """S >= L 的可塑性签名（把合法 S 加上 L、按 32 字节小端写回）必须被拒。"""
+    priv, pub = _real_keypair()
+    msg = b"tavotto journal index payload"
+    sig = priv.sign(msg)
+    assert jr._ed25519_verify(pub, msg, sig) is True
+    s_int = int.from_bytes(sig[32:], "little")
+    assert s_int < _L
+    forged = sig[:32] + (s_int + _L).to_bytes(32, "little")
+    assert len(forged) == 64
+    assert jr._ed25519_verify(pub, msg, forged) is False
+
+
+@pytest.mark.parametrize(
+    "small_order_pub",
+    [
+        bytes(32),  # 全零
+        bytes([1]) + bytes(31),  # 0100…00：单位元（阶 1）
+        bytes([0xEC]) + bytes([0xFF] * 30) + bytes([0x7F]),  # y = -1（阶 2）
+        bytes(31) + bytes([0x80]),  # 0 的符号位变体
+    ],
+)
+def test_ed25519_verify_rejects_small_order_public_keys(small_order_pub):
+    """低阶公钥点：对任何消息都能伪造出「合法」签名（R=单位元、S=0），必须被拒。"""
+    msg = b"anything"
+    forged = bytes([1]) + bytes(31) + bytes(32)  # R = 单位元, S = 0
+    assert jr._ed25519_verify(small_order_pub, msg, forged) is False
+    assert jr._ed25519_verify(small_order_pub, msg, bytes(64)) is False
+
+
+def _unhex(h: str) -> bytes:
+    return bytes.fromhex(h)
+
+
+# RFC 8032 §7.1 TEST 1 / TEST 2
+_RFC8032 = [
+    (
+        "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+        "",
+        "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155"
+        "5fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
+    ),
+    (
+        "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+        "72",
+        "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da"
+        "085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00",
+    ),
+]
+
+
+@pytest.mark.parametrize(("pub", "msg", "sig"), _RFC8032)
+def test_ed25519_verify_passes_rfc8032_official_vectors(pub, msg, sig):
+    assert jr._ed25519_verify(_unhex(pub), _unhex(msg), _unhex(sig)) is True
+    assert jr._ed25519_verify(_unhex(pub), _unhex(msg) + b"x", _unhex(sig)) is False
+
+
+def test_importing_the_flask_app_does_not_load_nacl():
     """原生轮子只在拉索引验签时才加载（延后 import，与 truststore 同一写法）：Flask 父进程启动不为它付代价。
     子进程里做，免得别的测试已经把它带进本进程的 sys.modules。"""
     import subprocess
@@ -638,7 +708,7 @@ def test_importing_the_flask_app_does_not_load_cryptography():
 
     code = (
         "import sys; import tavotto.app, tavotto.engine.journalremote; "
-        "loaded = sorted(m for m in sys.modules if m.split('.')[0] == 'cryptography'); "
+        "loaded = sorted(m for m in sys.modules if m.split('.')[0] == 'nacl'); "
         "print(loaded); sys.exit(1 if loaded else 0)"
     )
     env = {**__import__("os").environ, "PYTHONPATH": str(ROOT / "src")}
@@ -654,7 +724,7 @@ def test_importing_the_flask_app_does_not_load_cryptography():
     assert r.returncode == 0, r.stdout + r.stderr
 
 
-def test_cryptography_is_imported_only_inside_the_verify_function():
+def test_nacl_is_imported_only_inside_the_verify_function():
     import ast
 
     offenders = []
@@ -667,15 +737,15 @@ def test_cryptography_is_imported_only_inside_the_verify_function():
                     mods = [a.name for a in n.names]
                 elif isinstance(n, ast.ImportFrom) and not n.level:
                     mods = [n.module or ""]
-                if any(m.split(".")[0] == "cryptography" for m in mods):
+                if any(m.split(".")[0] == "nacl" for m in mods):
                     offenders.append((path.relative_to(ROOT).as_posix(), fn.name))
-    # 模块级 import 另查：整棵树里 cryptography 的 import 必须全在函数体内
+    # 模块级 import 另查：整棵树里 nacl 的 import 必须全在函数体内
     for path in sorted((ROOT / "src" / "tavotto").rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for n in tree.body:
             if isinstance(n, ast.Import | ast.ImportFrom):
                 mods = [a.name for a in n.names] if isinstance(n, ast.Import) else [n.module or ""]
-                assert not any(m.split(".")[0] == "cryptography" for m in mods), path
+                assert not any(m.split(".")[0] == "nacl" for m in mods), path
     assert set(offenders) == {("src/tavotto/engine/journalremote.py", "_ed25519_verify")}, offenders
 
 

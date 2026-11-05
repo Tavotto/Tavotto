@@ -150,7 +150,7 @@
 
 > **隐私口径变更**：§4b 原写「不按单刊请求、服务端看不出用户在作哪本期刊」。用户 2026-11-04 决定改为**按需下载**——选中某本刊时才向服务端取它的标准，
 > 服务端**会记录「哪个设备令牌在什么时候首次读了哪本刊」，保留 1 年，到期删除，用途仅是统计热门刊与防刷**。§4b 其余（验签、`catalog_rev` 单调、整份校验失败弃用、项目快照不受服务端更新影响）不变。
-> 实现：`engine/journalremote.py`（客户端；Ed25519 验签用 pyca `cryptography`，见「签名与完整性」）、`services/journal_catalog/`（服务端，不进 wheel）、
+> 实现：`engine/journalremote.py`（客户端；Ed25519 验签用 PyNaCl，见「签名与完整性」）、`services/journal_catalog/`（服务端，不进 wheel）、
 > 发布与签名工具在私有数据仓库 `tools/catalog/publish_catalog.py`。
 
 **两层数据。**
@@ -167,7 +167,9 @@
 验签失败、签名缺失、`key_id` 未知、索引畸形、`catalog_rev` 低于「历史最高与内置种子」，一律整次作废，缓存原样；拼出的完整目录（种子 + 索引骨架 + 已下载刊包）过 `journals.validate_catalog`，
 不过整份弃用（前端 `setCatalog` 再过一道 `loadCatalog`）。种子里有的刊以种子为准，不下载、不计数。
 
-**验签用成熟库，不手写加密（用户 2026-11-05 拍板）。** 验签调 pyca `cryptography` 的 `Ed25519PublicKey.from_public_bytes(pk).verify(sig, msg)`（先判公钥 32 / 签名 64 字节；任何异常，含库缺失，一律当验签失败，目录保持种子）。早先一版是 `engine/ed25519.py` 里手写的纯标准库验签，已删除：为省一个原生依赖而自己实现签名算法，不如用被广泛审计的库。代价是 Flask 父进程的依赖闭包多了 `cryptography`（及其 `cffi`），安装包增大（见 PR 说明里的体积估算）；缓解是**延后 import**——只在拉索引验签的函数里 import，Flask 启动不加载（`tests/test_journal_remote.py` 看护 `import tavotto.app` 后 `cryptography` 不在 `sys.modules`），冻结产物由 `packaging/tavotto.spec` 点名收进 hiddenimports。
+**验签用成熟库，不手写加密（用户 2026-11-05 拍板）。** 验签调 PyNaCl（libsodium）的 `VerifyKey(pk).verify(msg, sig)`（先判公钥 32 / 签名 64 字节；任何异常，含库缺失，一律当验签失败，目录保持种子）。早先一版是 `engine/ed25519.py` 里手写的纯标准库验签，已删除：为省一个原生依赖而自己实现签名算法，不如用被广泛审计的库。代价是 Flask 父进程的依赖闭包多了 `pynacl`（及其 `cffi`）；缓解是**延后 import**——只在拉索引验签的函数里 import，Flask 启动不加载（`tests/test_journal_remote.py` 看护 `import tavotto.app` 后 `nacl` 不在 `sys.modules`），冻结产物由 `packaging/tavotto.spec` 点名收进 hiddenimports（`nacl` 全部子模块 + `nacl._sodium` 扩展）。
+
+**取舍：先用 pyca `cryptography`，后换 PyNaCl（用户 2026-11-05）。** `cryptography` 49 起 PyPI 不再发 macOS x86_64 / universal2 与 win32 轮子，而 macos-x86_64 是桌面版与 runtime-lock 的正式目标，Intel Mac 会退到 Rust 源码构建；钉在 48.x 则 dependabot 的告警（都在 X.509 / PKCS#7，我们用不到）一直挂着。PyNaCl 1.6.2（libsodium）有 cp38-abi3 的 macOS universal2、win32 / win_amd64 / win_arm64、manylinux / musllinux 轮子，macOS 包约 0.4 MB（cryptography 约 7.8 MB）。libsodium 的验签拒 S >= L 的可塑性签名与小阶公钥点，`tests/test_journal_remote.py` 钉死这两条与 RFC 8032 官方向量。
 
 **限流可调（用户 2026-11-05 拍板）。** 理由：学校 / 公司 / 宿舍整片人共用一个出口 IP，原先「每 IP 每天 5 个新令牌、100 本」会让第 6 个同学起拿不到令牌，而这个 IP 维度本来只是防「一个出口大规模刷」，不是防个人（个人由设备维度的 10 本 / 小时、20 本 / 天管）。所以：
 1. **默认放宽 IP 维度**：新令牌 5 → 200 / 天；首次读取 100 → 2000 / 天（约 200 台设备 × 日均约 10 本，设备自己的上限是 20 本 / 天，日均远低于上限）。设备维度不变。

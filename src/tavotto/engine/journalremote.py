@@ -19,7 +19,8 @@
 与遥测的 install_id 无关、互不派生。请求里没有项目 / 路径 / 脚本 / 所选期刊以外的任何东西，UA 只有 `Tavotto/<版本>`。
 只认专用开关 `TAVOTTO_NO_JOURNAL_SYNC=1`（`TAVOTTO_NO_TELEMETRY` 只管遥测，与 `updater` 同一先例）。
 
-验签用 pyca `cryptography`（用户 2026-11-05 拍板：用成熟库，不手写加密），**只在 `_ed25519_verify` 里延后 import**
+验签用 PyNaCl（libsodium；用户 2026-11-05 拍板：用成熟库，不手写加密；不用 cryptography 是 Intel Mac 轮子与告警），
+**只在 `_ed25519_verify` 里延后 import**
 （与 `tlstrust` 的 truststore 同一写法；Flask 父进程启动不加载它，`tests/test_journal_remote.py` 看护）。
 import 不了、长度不对、任何异常一律当验签失败（fail closed，目录保持种子）。
 
@@ -159,7 +160,7 @@ def _b64decode(text: object) -> bytes:
 
 
 def _ed25519_verify(public_key: object, message: object, signature: object) -> bool:
-    """Ed25519 验签；任何异常（含 `cryptography` 缺失）都是 False，永不抛。公钥 32 字节、签名 64 字节。"""
+    """Ed25519 验签；任何异常（含 `nacl` 缺失）都是 False，永不抛。公钥 32 字节、签名 64 字节。"""
     if not (
         isinstance(public_key, bytes | bytearray | memoryview)
         and isinstance(message, bytes | bytearray | memoryview)
@@ -171,10 +172,11 @@ def _ed25519_verify(public_key: object, message: object, signature: object) -> b
         return False
     try:
         # 延后：Flask 父进程启动不为原生轮子付代价；只在拉索引验签时才加载
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        from nacl.signing import VerifyKey
 
-        Ed25519PublicKey.from_public_bytes(pk).verify(sig, msg)
-    except Exception:  # noqa: BLE001 - InvalidSignature / ValueError / ImportError 等一律验签失败
+        # libsodium 的 crypto_sign_verify_detached：拒 S >= L 的可塑性签名与小阶 / 非规范公钥点
+        VerifyKey(pk).verify(msg, sig)
+    except Exception:  # noqa: BLE001 - BadSignatureError / ValueError / TypeError / CryptoError / ImportError 等一律验签失败
         return False
     return True
 
