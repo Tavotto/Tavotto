@@ -361,7 +361,7 @@ describe('本机字体：英文 + 中文两格（ADR 0169）', () => {
 
   it('「两项都恢复」仍清全部', async () => {
     await mount([textObj({ sourceFont: { ...libSerif, cjk: simsun }, fontFamily: 'serif' })])
-    act(() => adapter.resetFonts())
+    act(() => adapter.resetFonts!())
     const o = s().doc.objects[0] as TextObject
     expect(o.sourceFont).toBeUndefined()
     expect(o.fontFamily).toBeUndefined()
