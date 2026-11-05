@@ -12,7 +12,7 @@ vi.mock('./api', async (orig) => ({ ...(await orig<typeof import('./api')>()), .
 
 import { cssFamilyOf } from './sourceFont'
 import { resetSourceFontCache } from './sourceFontCache'
-import { previewStackOf } from './sourceFontPreview'
+import { approvedCjkBoldFor, previewStackOf } from './sourceFontPreview'
 import type { SourceFont } from '@/types/document'
 
 const latin = { family: 'DejaVu Sans', sha256: 'a1'.repeat(32), face: 0 }
@@ -132,5 +132,48 @@ describe('行内粗斜与中文加粗（ADR 0169 修订）', () => {
   it('中文粗体在本机用不了：退回常规中文', async () => {
     answer({ [REG]: 'ok', [BOLD]: 'ok', [ZH]: 'ok', [ZH_BOLD]: 'not_found' })
     expect(await load(BOLD_RUN)).toBe(`"${family(BOLD)}", "${family(ZH)}", ${APPROVED}`)
+  })
+})
+
+describe('没选本机中文字体时的中文粗体', () => {
+  const OWN = { bold: false, italic: false }
+  const BOLD = { bold: true, italic: false }
+  const load = async (run: typeof OWN, boldCjk = approvedCjkBoldFor('serif', '中文')) => {
+    previewStackOf(undefined, APPROVED, OWN, run, boldCjk)
+    await settle()
+    await settle()
+    return previewStackOf(undefined, APPROVED, OWN, run, boldCjk)
+  }
+
+  it('随族选 Noto：衬线用 Serif，其余用 Sans', () => {
+    expect(approvedCjkBoldFor('serif', '中文')?.family).toBe('Noto Serif SC')
+    expect(approvedCjkBoldFor('sans-serif', '中文')?.family).toBe('Noto Sans SC')
+    expect(approvedCjkBoldFor('monospace', '中文')?.family).toBe('Noto Sans SC')
+  })
+
+  it('没有中文：不取字节', () => {
+    expect(approvedCjkBoldFor('serif', 'Bold 123')).toBeUndefined()
+  })
+
+  it('粗体片段栈里有 Noto 粗体，常规片段不问它', async () => {
+    const face = approvedCjkBoldFor('serif', '中文')!
+    answer({ [face.sha256]: 'ok' })
+    expect(await load(OWN)).toBe(APPROVED)
+    expect(api.fetchSourceFontStatus).not.toHaveBeenCalled()
+    expect(await load(BOLD)).toBe(`"${cssFamilyOf(face)}", ${APPROVED}`)
+  })
+
+  it('本机服务给不了：退回系统字体栈', async () => {
+    answer({})
+    expect(await load(BOLD)).toBe(APPROVED)
+  })
+
+  it('选了本机中文字体时不用批准粗体', async () => {
+    const face = approvedCjkBoldFor('serif', '中文')!
+    answer({ [face.sha256]: 'ok', [latin.sha256]: 'ok', [cjk.sha256]: 'ok' })
+    previewStackOf(source, APPROVED, OWN, BOLD, face)
+    await settle()
+    await settle()
+    expect(previewStackOf(source, APPROVED, OWN, BOLD, face)).not.toContain(cssFamilyOf(face))
   })
 })

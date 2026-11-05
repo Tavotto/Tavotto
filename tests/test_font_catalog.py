@@ -312,6 +312,16 @@ def test_chinese_without_bold_stays_regular_and_silent(tmp_path, monkeypatch):
     assert sf["cjk"]["sha256"] in _used(compiled)
 
 
+def test_the_preview_bold_chinese_faces_are_the_approved_ones():
+    """画布预览写死的两个 sha256 ↔ 批准集合：换字体版本时不同步，预览就静默退回系统字体。"""
+    ts = (Path(__file__).parent.parent / "web/src/lib/sourceFontPreview.ts").read_text(
+        encoding="utf-8"
+    )
+    faces = fonts.load_allowlist().faces
+    for face_id in ("NotoSansSC-Bold", "NotoSerifSC-Bold"):
+        assert faces[face_id].sha256 in ts
+
+
 def test_the_row_fields_match_the_frontend_types():
     """响应字段 ↔ `web/src/lib/fontCatalog.ts`：改一边另一边读到 undefined，类型检查看不见后端。"""
     ts = (Path(__file__).parent.parent / "web/src/lib/fontCatalog.ts").read_text(encoding="utf-8")

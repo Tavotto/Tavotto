@@ -25,7 +25,7 @@ import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, worldToMm } from '@/store/viewportStore'
 import { isSourceFont } from '@/lib/sourceFont'
 import { useSourceFonts } from '@/lib/sourceFontCache'
-import { previewStackOf } from '@/lib/sourceFontPreview'
+import { approvedCjkBoldFor, previewStackOf } from '@/lib/sourceFontPreview'
 import { canvasFontStack, effectiveCanvasFamily, WRITING_MODE_VERTICAL } from '@/lib/typography'
 import type { TextObject } from '@/types/document'
 
@@ -150,7 +150,8 @@ export function TextView({
   const stack = canvasFontStack(effectiveCanvasFamily(obj))
   const source = isSourceFont(obj.sourceFont) ? obj.sourceFont : undefined
   const own = { bold: obj.bold === true, italic: obj.italic === true }
-  const previewStack = previewStackOf(source, stack, own)
+  const boldCjk = approvedCjkBoldFor(effectiveCanvasFamily(obj), obj.text)
+  const previewStack = previewStackOf(source, stack, own, undefined, boldCjk)
 
   return (
     <div
@@ -175,8 +176,7 @@ export function TextView({
         lineHeight: obj.lineHeight ?? 1.25,
         fontWeight: obj.bold ? 700 : 400,
         fontStyle: obj.italic ? 'italic' : 'normal',
-        // 选的中文字体没有粗体时导出留常规（ADR 0169）：预览也不让浏览器合成。没选中文字体时导出有批准粗体，
-        // 浏览器的系统字体栈可能没有，照常合成才接近导出；编辑时片段还没分好脸，留着合成才看得出加粗
+        // 选的中文字体没有粗体时导出留常规（ADR 0169）：预览也不让浏览器合成。编辑时片段还没分好脸，留着合成才看得出加粗
         fontSynthesis: source?.cjk && !editing ? 'none' : undefined,
         textDecoration: obj.underline ? 'underline' : undefined,
         color: obj.color,
@@ -235,7 +235,7 @@ export function TextView({
           interpretation={obj.interpretation}
           format={obj.textFormat}
           family={effectiveCanvasFamily(obj)}
-          runStack={source ? (run) => previewStackOf(source, stack, own, run) : undefined}
+          runStack={source || boldCjk ? (run) => previewStackOf(source, stack, own, run, boldCjk) : undefined}
           vertical={vertical ? { columnPx, stack: previewStack } : undefined}
         />
       )}
