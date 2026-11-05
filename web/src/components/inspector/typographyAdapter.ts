@@ -29,6 +29,7 @@ import { isSourceFont, sameFace, sourceFacesOf, type SourceFontState } from '@/l
 import { sourceFontState, useSourceFonts } from '@/lib/sourceFontCache'
 import {
   catalogLabels,
+  stableNames,
   isBuiltinFace,
   resetLocalFamily,
   restyleLocalFace,
@@ -475,7 +476,7 @@ export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
       if (prop === 'fontFallback') {
         const own = objs.flatMap((o) => (isSourceFont(o.sourceFont) && o.sourceFont.cjk ? [o.sourceFont.cjk.family] : []))
         // 已经选过中文脸、但这台机器清单里没有：格子留着，当前名字在选项里，用户看得见也恢复得了
-        const options = [...new Set([...own, ...catalog.families.filter((f) => f.cjk).map((f) => f.name)])]
+        const options = stableNames(catalog, 'cjk', [...new Set([...own, ...catalog.families.filter((f) => f.cjk).map((f) => f.name)])])
         if (!options.length) return undefined
         return {
           prop: 'sourceFont.cjk',
@@ -499,7 +500,7 @@ export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
         const own = objs[0] && hasOwnPrimary(objs[0], catalog) ? objs[0].sourceFont!.family : undefined
         return {
           ...base,
-          options: [...new Set([...names, ...(base.options ?? []), ...local])],
+          options: stableNames(catalog, 'family', [...new Set([...names, ...(base.options ?? []), ...local])]),
           option_labels: catalogLabels(catalog),
           value: own ?? first ?? inheritedCanvasValue(prop) ?? null,
         }

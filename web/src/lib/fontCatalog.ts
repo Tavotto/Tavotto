@@ -212,6 +212,29 @@ export function restyleLocalFace(o: TextObject, c: FontCatalog, bold: boolean, i
   return true
 }
 
-/** 下拉里的显示名表（`option_labels` 同一形状）。 */
-export const catalogLabels = (c: FontCatalog): Record<string, string> =>
-  Object.fromEntries(c.families.flatMap((f) => (f.zh ? [[f.name, f.zh]] : [])))
+const LABELS = new WeakMap<FontCatalog, Record<string, string>>()
+/**
+ * 下拉里的显示名表（`option_labels` 同一形状）。同一份清单永远是同一个对象：下拉模型的行与撞名表都按它的引用缓存，
+ * 每次渲染重造一份，几百个族的行就每次重造（#1762 后符号插入慢了一倍）。
+ */
+export function catalogLabels(c: FontCatalog): Record<string, string> {
+  let hit = LABELS.get(c)
+  if (!hit) LABELS.set(c, (hit = Object.fromEntries(c.families.flatMap((f) => (f.zh ? [[f.name, f.zh]] : [])))))
+  return hit
+}
+
+const LISTS = new WeakMap<FontCatalog, Map<string, { key: string; list: string[] }>>()
+/**
+ * 名字列表的稳定引用：内容没变就还是上一次那个数组。适配器每次 `fieldOf` 都要现拼选项，
+ * 数组换了引用，下游按引用缓存的下拉行就全部失效。`tag` 区分同一份清单上的不同列表。
+ */
+export function stableNames(c: FontCatalog, tag: string, names: readonly string[]): string[] {
+  let byTag = LISTS.get(c)
+  if (!byTag) LISTS.set(c, (byTag = new Map()))
+  const key = names.join('\u0000')
+  const hit = byTag.get(tag)
+  if (hit && hit.key === key) return hit.list
+  const list = [...names]
+  byTag.set(tag, { key, list })
+  return list
+}

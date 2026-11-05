@@ -1,3 +1,0 @@
-## Typing into a text property box of an adopted PNG no longer keeps only the last character
-
-On a PNG adopted for editing (the "edit based on the redrawn version" path), typing a title or axis label one character at a time into the properties panel could leave only the last character: while the next version of the figure was still being drawn, the panel swapped the text box for a "building" hint, and the box that came back selected its whole content, so the next keystroke replaced the previous one. The panel now keeps showing the fields of the previous version of the same adopted figure until the new one arrives, so the box stays put. Geometry edits still wait for the exact redraw, and a figure re-adopted from different pixels never borrows another figure's fields.
