@@ -16,6 +16,14 @@ const objects = ['slot_policy','slot_policy_insert','slot_policy_update','slot_p
   'signatures_update','signatures_delete','blocks_update','blocks_delete','releases_update','releases_delete','audit_update','audit_delete',
   'publication_attempts','publication_unresolved','reconciliation_progress','refresh_requests','agreement_documents','documents_update','documents_delete','authority_update','authority_delete',
   'delegated_grants','delegated_controls','delegated_receipts','delegated_grants_update','delegated_grants_delete','delegated_controls_update','delegated_controls_delete','delegated_receipts_update','delegated_receipts_delete','delegated_control_order'];
+export const RETENTION_SECONDS=86400,RETENTION_BATCH=20;
+// A target nothing references: no delivery, outbox, journal, published check, refresh request or progress cursor.
+const unreferencedTargetSQL=(key:string)=>['deliveries','outbox','publication_attempts','published_checks','refresh_requests','reconciliation_progress']
+  .map(table=>`NOT EXISTS(SELECT 1 FROM ${table} x WHERE x.target_key=${key})`).join(' AND ');
+// Admission caps measure live work, not lifetime history: a target is live while a publication is unresolved or it
+// is queued for its first evaluation. Targets whose every attempt is resolved are audit history and do not count.
+export const LIVE_TARGETS_SQL=`SELECT 1 FROM targets t WHERE EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=t.target_key AND p.phase!='resolved')
+  OR (EXISTS(SELECT 1 FROM outbox o WHERE o.target_key=t.target_key) AND NOT EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=t.target_key)) LIMIT 100`;
 // A hold counts against packet `created` of the same subject unless the holder released it AND the packet is
 // strictly newer than the release. Old packets and the held packet itself therefore stay ineligible forever.
 export const blockedSQL=(subject:string,created:string)=>`EXISTS(SELECT 1 FROM eligibility_blocks b JOIN packets old ON old.id=b.packet
@@ -442,6 +450,45 @@ export class LiveStore extends Store {
       this.stmt(`INSERT INTO outbox(target_key,wanted_revision,due)
         SELECT target_key,(SELECT revision FROM state WHERE id=1),0 FROM publication_attempts WHERE id=?
         ON CONFLICT(target_key) DO UPDATE SET wanted_revision=excluded.wanted_revision,due=0,attempts=0`,id),
+    ]);
+  }
+  // Bounded retention of finished operational rows (README "Bounded retention"). Each admission transaction
+  // sheds at most RETENTION_BATCH rows per statement, so a caller pays a fixed, small cost. Only these may go:
+  // terminal head requests older than a day and their delivery rows; merge-group delivery rows older than a day
+  // whose target has no outbox work and no unresolved publication; and `merge:` targets that nothing references.
+  // Signatures, packets, intents, agreements, audit, eligibility_*, publication_attempts, published_checks,
+  // slot_policy and refresh_requests are never touched.
+  pruneHeadHistory():D1Statement[] {
+    const old=`r.status IN ('done','dispatched','manual') AND r.created<${DB_NOW}-${RETENTION_SECONDS}`;
+    return [
+      this.stmt(`DELETE FROM head_deliveries WHERE id IN (SELECT d.id FROM head_deliveries d JOIN head_requests r ON r.request_key=d.request_key
+        WHERE ${old} ORDER BY d.created,d.id LIMIT ${RETENTION_BATCH})`),
+      this.stmt(`DELETE FROM head_requests WHERE request_key IN (SELECT r.request_key FROM head_requests r WHERE ${old}
+        AND NOT EXISTS(SELECT 1 FROM head_deliveries d WHERE d.request_key=r.request_key) ORDER BY r.created,r.request_key LIMIT ${RETENTION_BATCH})`),
+    ];
+  }
+  pruneGroupHistory():D1Statement[] {
+    return [
+      this.stmt(`DELETE FROM deliveries WHERE id IN (SELECT d.id FROM deliveries d WHERE d.created<${DB_NOW}-${RETENTION_SECONDS}
+        AND NOT EXISTS(SELECT 1 FROM outbox o WHERE o.target_key=d.target_key)
+        AND NOT EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=d.target_key AND p.phase!='resolved')
+        ORDER BY d.created,d.id LIMIT ${RETENTION_BATCH})`),
+      this.stmt(`DELETE FROM targets WHERE target_key IN (SELECT t.target_key FROM targets t WHERE t.target_key LIKE 'merge:%'
+        AND ${unreferencedTargetSQL('t.target_key')} ORDER BY t.target_key LIMIT ${RETENTION_BATCH})`),
+    ];
+  }
+  // An all-exempt merge group publishes nothing, so its target has no further work. The lease/generation guard
+  // means a newer delivery (which bumps the generation) can never be swallowed; a target that already has any
+  // journal row is refused instead of deleted. Deliveries go first because they reference the target.
+  async settleExemptGroup(job:Job):Promise<void> {
+    await this.batch([
+      ...this.guard(`EXISTS(SELECT 1 FROM outbox WHERE target_key=? AND lease=? AND lease_until>${DB_NOW} AND generation=?)
+        AND NOT EXISTS(SELECT 1 FROM publication_attempts WHERE target_key=?) AND NOT EXISTS(SELECT 1 FROM published_checks WHERE target_key=?)
+        AND NOT EXISTS(SELECT 1 FROM refresh_requests WHERE target_key=?)`,job.target_key,job.lease,job.generation,job.target_key,job.target_key,job.target_key),
+      this.stmt('DELETE FROM outbox WHERE target_key=? AND lease=? AND generation=?',job.target_key,job.lease,job.generation),
+      this.stmt('DELETE FROM reconciliation_progress WHERE target_key=?',job.target_key),
+      this.stmt('DELETE FROM deliveries WHERE target_key=?',job.target_key),
+      this.stmt(`DELETE FROM targets WHERE target_key=? AND target_key LIKE 'merge:%' AND ${unreferencedTargetSQL('targets.target_key')}`,job.target_key),
     ]);
   }
   override async addOAuth(hash:string,browser:string,cipher:string,_expires:number):Promise<void> {

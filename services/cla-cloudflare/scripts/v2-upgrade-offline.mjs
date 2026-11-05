@@ -14,7 +14,7 @@ const pins={
  'migrations/v2-main-77e2cab7/base.sql':'b7c158869acbd1eb43dcbfee72f85ebf1149716082a66f9140989c56a4927e69',
  'migrations/v2-main-77e2cab7/native-schema.sql':'5e2a63a7560aee08253f942c8ee34a2cf0c99e692ef14417014d6081e348392a',
  'src/base.sql':'b7c158869acbd1eb43dcbfee72f85ebf1149716082a66f9140989c56a4927e69',
- 'src/native/schema.sql':'a777064ea9cd0fc666b3ad3ac2277ef68641f301594e229bb8096021d1246aa9',
+ 'src/native/schema.sql':'f8f4c320141c4dfec51b09c1d0d84ec52a26f800cc77e3a15f153fd733061299',
 };
 const hash=value=>createHash('sha256').update(typeof value==='string'?value:canonical(value)).digest('hex');
 const deny=reason=>{throw Error(reason);};
