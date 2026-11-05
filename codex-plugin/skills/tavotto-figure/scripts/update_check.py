@@ -336,6 +336,26 @@ def _due(cache: dict, url: str, now: float) -> bool:
     return True
 
 
+def refresh_due(*, environ: dict | None = None, now: float | None = None) -> bool:
+    """现在该不该去问一次网络？（被关掉 → 否；缓存新鲜 / 刚失败过 → 否。）
+
+    只读，不请求、不写缓存。调用方（MCP 服务端的后台线程）据此决定要不要起线程，
+    判据与 `check()` 里的 `_due` 是同一个——不写第二份。永不抛。
+    """
+    try:
+        env = os.environ if environ is None else environ
+        if (env.get(DISABLE_ENV) or "").strip() in ("1", "true", "yes", "on"):
+            return False
+        url = (env.get(URL_ENV) or "").strip() or DEFAULT_URL
+        try:
+            cache = read_cache(cache_path(env))
+        except (OSError, ValueError, ImportError):
+            cache = {}
+        return _due(cache, url, time.time() if now is None else now)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def hint(update: dict) -> str | None:
     """给人看的那几句。**调用方必须写到 stderr 或 JSON 里，不许进 stdout。**"""
     if not update or update.get("status") != "available":

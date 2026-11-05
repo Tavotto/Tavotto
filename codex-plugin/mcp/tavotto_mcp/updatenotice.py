@@ -144,27 +144,54 @@ def _refresh(mod, mine: str) -> None:
         _latest = res
 
 
+def _compared_version(mod, mine: str) -> str:
+    """实际拿去跟清单比的版本。
+
+    插件启动（`codex_plugin`）时比的是**已安装插件**的版本：插件可以配独立安装的引擎，
+    `mine`（引擎版本）不代表插件。旧插件 + 新引擎要提醒，新插件 + 旧引擎不能误报。
+    读不到插件版本回退 `mine`；桌面版（frozen）本来就没有 plugin.json。
+    """
+    if how() == "codex_plugin":
+        try:
+            v = mod.current_version()
+        except Exception:  # noqa: BLE001
+            v = None
+        if v:
+            return v
+    return mine
+
+
 def _current(mine: str) -> dict | None:
     global _thread, _started_at
     mod = _load()
     if mod is None or not mine or mine == "0":
         return None
+    ver = _compared_version(mod, mine)
     now = time.monotonic()
     with _lock:
-        stale = _started_at is None or now - _started_at >= mod.INTERVAL
-        if stale and not (_thread and _thread.is_alive()) and network_allowed():
+        # 是否刷新交给 update_check 的 `_due`（成功 24 小时、失败 1 小时）。进程内另留一个
+        # 不短于 RETRY_INTERVAL 的最小间隔：缓存写不了时 `_due` 永远为真，不能每次调用起线程。
+        spaced = _started_at is None or now - _started_at >= mod.RETRY_INTERVAL
+        if (
+            spaced
+            and not (_thread and _thread.is_alive())
+            and network_allowed()
+            and mod.refresh_due()
+        ):
             _started_at = now
             try:
                 _thread = threading.Thread(
-                    target=_refresh, args=(mod, mine), name="tavotto-update-check", daemon=True
+                    target=_refresh, args=(mod, ver), name="tavotto-update-check", daemon=True
                 )
                 _thread.start()
             except Exception:  # noqa: BLE001
                 _thread = None
-        res = _latest
-    if res is None:
-        res = mod.check(version=mine, allow_network=False)
-    return _notice(res, mine)
+        fresh = _latest
+    # 缓存读得到就以缓存为准（后台线程会把结果写进去）；读不到才用线程在内存里留的那份
+    res = mod.check(version=ver, allow_network=False)
+    if res.get("status") == "unknown" and fresh is not None:
+        res = fresh
+    return _notice(res, ver)
 
 
 def notice(mine: str) -> dict | None:

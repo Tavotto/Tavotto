@@ -45,6 +45,8 @@ def cfg(tmp_path, monkeypatch):
     monkeypatch.setattr(updatenotice, "_thread", None)
     monkeypatch.setattr(updatenotice, "_export_delivered", False)
     monkeypatch.setattr(server, "_version", lambda: "1.0.0")
+    # 默认按桌面版口径（比引擎版本）；插件口径的用例自己改 how / current_version
+    monkeypatch.setattr(updatenotice, "how", lambda: "desktop")
 
     def seed(manifest=None, age=0.0, url=URL):
         folder = tmp_path / "cfg"
@@ -324,3 +326,113 @@ def test_spec_bundles_the_skill_directory():
     spec = (ROOT / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
     assert 'SKILL_SRC = ROOT / "codex-plugin" / "skills" / "tavotto-figure"' in spec
     assert 'Path("skills") / "tavotto-figure"' in spec
+
+
+# ------------------- 插件版本 ≠ 引擎版本（codex_plugin） -------------------
+def _plugin_case(monkeypatch, plugin_version):
+    monkeypatch.setattr(updatenotice, "how", lambda: "codex_plugin")
+    mod = updatenotice._load()
+    monkeypatch.setattr(mod, "current_version", lambda path=None: plugin_version)
+
+
+def test_old_plugin_with_new_engine_still_reminds(cfg, monkeypatch):
+    cfg(_manifest("2.0.0"))
+    monkeypatch.setattr(server, "_version", lambda: "2.0.0")  # 引擎已是新的
+    _plugin_case(monkeypatch, "1.0.0")  # 插件是旧的
+    up = _health()["update"]
+    assert up["current_version"] == "1.0.0" and "当前 1.0.0" in up["message"]
+
+
+def test_new_plugin_with_old_engine_does_not_false_alarm(cfg, monkeypatch):
+    cfg(_manifest("2.0.0"))
+    monkeypatch.setattr(server, "_version", lambda: "1.0.0")  # 引擎旧
+    _plugin_case(monkeypatch, "2.0.0")  # 插件已是最新
+    assert "update" not in _health()
+
+
+def test_unreadable_plugin_version_falls_back_to_engine(cfg, monkeypatch):
+    cfg(_manifest("2.0.0"))
+    _plugin_case(monkeypatch, None)
+    assert _health()["update"]["current_version"] == "1.0.0"
+
+
+def test_desktop_compares_engine_version_not_plugin_json(cfg, monkeypatch):
+    cfg(_manifest("2.0.0"))
+    mod = updatenotice._load()
+    monkeypatch.setattr(mod, "current_version", lambda path=None: "2.0.0")
+    assert _health()["update"]["current_version"] == "1.0.0"  # how=desktop（fixture）
+
+
+# --------------------------- 刷新时机交给 _due -----------------------------
+class _Spy:
+    """记录后台线程被起了几次（不真联网）。"""
+
+    def __init__(self, monkeypatch):
+        self.n = 0
+        monkeypatch.setattr(updatenotice, "_refresh", self._run)
+
+    def _run(self, mod, ver):
+        self.n += 1
+
+    def settle(self):
+        t = updatenotice._thread
+        if t is not None:
+            t.join(2)
+
+
+def test_fresh_cache_starts_no_thread(cfg, monkeypatch):
+    cfg()
+    spy = _Spy(monkeypatch)
+    _health()
+    spy.settle()
+    assert spy.n == 0 and updatenotice._thread is None
+
+
+def test_failed_first_attempt_is_retried_after_an_hour(cfg, monkeypatch):
+    """缓存里只有一次失败的尝试（没有 checked_at / manifest）：1 小时内不再起线程，过了就再试。"""
+    spy = _Spy(monkeypatch)
+    folder = Path(os.environ["TAVOTTO_CONFIG_DIR"])
+    folder.mkdir(parents=True, exist_ok=True)
+    cache = folder / "codex-plugin-update.json"
+
+    def write(attempted_ago):
+        cache.write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "url": URL,
+                    "checked_at": None,
+                    "attempted_at": time.time() - attempted_ago,
+                    "manifest": None,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    write(60)  # 刚失败
+    _health()
+    spy.settle()
+    assert spy.n == 0
+    write(3700)  # 一小时多以前
+    _health()
+    spy.settle()
+    assert spy.n == 1
+
+
+def test_unwritable_cache_does_not_spawn_a_thread_per_call(cfg, monkeypatch):
+    """缓存写不了 → `_due` 永远为真；进程内的最小间隔要拦住「每次调用起一个线程」。"""
+    spy = _Spy(monkeypatch)  # 既不联网也不写缓存，等价于写不了；缓存目录里始终没有文件
+    for _ in range(5):
+        _health()
+        spy.settle()
+    assert spy.n == 1
+
+
+def test_cache_wins_over_in_memory_result(cfg, monkeypatch):
+    cfg(_manifest("1.0.0"))  # 缓存说已是最新
+    monkeypatch.setattr(
+        updatenotice,
+        "_latest",
+        {"status": "available", "latest_version": "50.0.0", "upgrade_command": "x"},
+    )
+    assert "update" not in _health()
