@@ -231,3 +231,83 @@ def test_export_chart_original_pdf_reports_unsupported(project):
     assert pdf_outputs, f"no pdf output: {body}"
     assert pdf_outputs[0].get("error_code") is None, f"pdf error: {pdf_outputs[0]}"
     assert pdf_outputs[0].get("url", "").startswith("/exports/")
+
+
+# ---------------------------------------------------------------------------
+# M1 核心场景：两条曲线绑定 → 编辑 → 保存 → 冷重算 → 导出
+# ---------------------------------------------------------------------------
+
+TWO_CURVE_SCENE = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" width="100pt" height="100pt" '
+    b'viewBox="0 0 100 100">'
+    b'<g id="old_axis"><text x="0" y="100">0</text></g>'
+    b'<path id="curve_a" d="M0 100L100 0" fill="none" stroke="blue"/>'
+    b'<path id="curve_b" d="M0 50L100 50" fill="none" stroke="red"/>'
+    b"</svg>"
+)
+
+TWO_CURVE_DATA = "x,a,b\n0,0.0,0.5\n1,1.0,0.4\n"
+
+
+def test_two_series_bind_and_compute(project):
+    """M1 核心：两条曲线各自绑定不同数据列 → compute 产物两组数据点。"""
+    client, root = project
+    (root / "two_curves.svg").write_bytes(TWO_CURVE_SCENE)
+    from tavotto.svgscene import scene_inventory
+
+    scene_inv = scene_inventory(TWO_CURVE_SCENE)
+    bind_req = {
+        "file": "two_curves.svg",
+        "axes_id": "ax1",
+        "rect": [0.0, 0.0, 100.0, 100.0],
+        "x": {"p1_user": 0.0, "p1_value": 0.0, "p2_user": 1.0, "p2_value": 1.0, "scale": "linear"},
+        "y": {"p1_user": 0.0, "p1_value": 0.0, "p2_user": 1.0, "p2_value": 1.0, "scale": "linear"},
+        "series": [
+            {"node": "curve_a", "x_col": "x", "y_col": "a", "kind": "line"},
+            {"node": "curve_b", "x_col": "x", "y_col": "b", "kind": "line"},
+        ],
+        "scene_digest": scene_inv["scene_digest"],
+        "nodes": scene_inv["nodes"],
+        "completeness": "self-contained",
+        "dataset_text": TWO_CURVE_DATA,
+        "axes_nodes": ["old_axis"],
+    }
+    bound = client.post("/api/svg/chart/bind", json=bind_req)
+    assert bound.status_code == 200, bound.json
+    chart = bound.json
+    assert len(chart["model"]["series"]) == 2
+    assert len(chart["binding"]["entries"]) == 3  # 2 series + 1 axes
+
+    compute = client.post(
+        "/api/svg/chart/compute",
+        json={"file": "two_curves.svg", "model": chart["model"], "binding": chart["binding"]},
+    )
+    assert compute.status_code == 200, compute.json
+    body = compute.json
+    # 两组独立数据点
+    pts_a = body["facts"]["series_points"]["s1"]
+    pts_b = body["facts"]["series_points"]["s2"]
+    assert pts_a[0]["y"] == pytest.approx(0.0, abs=1e-9)  # a(0)=0 → frac 1 (y-down = top)
+    assert pts_b[0]["y"] == pytest.approx(0.5, abs=1e-9)  # b(0)=0.5 → frac 0.5
+    # 导出 SVG = 组合版
+    export_req = {
+        "scope": "original",
+        "formats": ["svg"],
+        "original": {
+            "figure_id": "two_curves.svg",
+            "source_kind": "vector",
+            "chart": {"model": chart["model"], "binding": chart["binding"]},
+        },
+        "overwrite": "replace",
+    }
+    export = client.post("/api/export", json=export_req)
+    assert export.status_code == 200
+    export_dir = root / "tavottofile" / "export"
+    svgs = list(export_dir.glob("*.svg"))
+    assert svgs, "no exported SVG"
+    svg_bytes = svgs[-1].read_bytes()
+    # 两条曲线的 tv-series 标记都在
+    assert b"tv-series-s1" in svg_bytes
+    assert b"tv-series-s2" in svg_bytes
+    # 旧轴标注退役
+    assert b"old_axis" not in svg_bytes
