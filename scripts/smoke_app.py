@@ -445,6 +445,12 @@ def check_frozen_mcp(cli: Path, project: Path, workdir: Path) -> None:
             "method": "tools/call",
             "params": {"name": "tavotto_health", "arguments": {}},
         },
+        {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {"name": "tavotto_guide", "arguments": {}},
+        },
     ]
     env = {k: v for k, v in os.environ.items() if not k.startswith(("TAVOTTO_", "MM_"))}
     env.update(
@@ -482,7 +488,13 @@ def check_frozen_mcp(cli: Path, project: Path, workdir: Path) -> None:
     if not canvas.get("available"):
         # 画布随包（tavotto.spec 收进 widget/）：缺了宿主里就没有内嵌画布，工具照常——正因为不报错才要在这里拦
         raise SystemExit(f"::error::tavotto-cli mcp 的画布不可用: {canvas.get('reason') or canvas}")
-    print(f"· tavotto-cli mcp 通过：{len(tools)} 个工具，tavotto_health 正常，画布随包")
+    guide = (out.get(4) or {}).get("result") or {}
+    if guide.get("isError") or "Tavotto Figure" not in json.dumps(guide, ensure_ascii=False):
+        # 技能随包（tavotto.spec 收进 skills/）：缺了「接入」写不出技能，tavotto_guide 也读不到
+        raise SystemExit(
+            f"::error::tavotto-cli mcp 读不到技能: {json.dumps(guide, ensure_ascii=False)[:300]}"
+        )
+    print(f"· tavotto-cli mcp 通过：{len(tools)} 个工具，tavotto_health 正常，画布和技能随包")
 
 
 def health_canvas(result: dict) -> dict:
