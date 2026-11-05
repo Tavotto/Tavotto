@@ -13,3 +13,9 @@
 - Seen: 2026-09-24, 2026-09-26
 - 为什么: Homebrew Python 3.13 的 framework minos=26.0，PyInstaller 原样打进 sidecar，14 上起不来。用 python-build-standalone 建 venv，打完跑 scripts/codesign_macos.py 的 scan --expect-min-os。
 - 证据: #539
+
+### L-132 冻结包里 sys.executable 不是 Python，起探测子进程走统一入口
+- 类: 别这样
+- Seen: 2026-11-03
+- 为什么: 两处沙盒探测写死 sys.executable -c pass，源码模式全绿，桌面版本体不认 -c，每台 macOS 桌面版探测必败，受保护档永远不可用，用户反馈才发现。用例要放一个不认 -c 的假程序钉冻结态。
+- 证据: #1675

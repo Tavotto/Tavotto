@@ -46,11 +46,7 @@
 - 为什么: 取数调用返回 EOF 且 stdout 为空，与「非 SUCCESS 项为空」同形，差一步就在没拿到重腿状态时按下合并；日志含转义序列时 gh run view 也静默返回空。
 - 证据: #299
 
-### L-099 读 CI 结论按 workflow 最新一轮列全 job，裸名状态不算结论
-- 类: 别这样
-- Seen: 2026-09-01, 2026-09-07
-- 为什么: 裸名 SKIPPED 或 CANCELLED 常来自矩阵父占位或被挤掉的旧 run，两个方向都会骗人；每一项 SKIPPED 要各写出可验证的理由，别把清单念出来当评估。
-- 证据: #303, #314, #315, #317, #299, #296, #302
+### L-099 读 CI 结论按 workflow 最新一轮列全 job，裸名状态不算结论 → docs/rules/ci/gate-discipline.md
 
 ### L-100 偶发红或无关红先读一层根因，别加等待、标 flaky 或直接重跑 → docs/rules/ci/gate-discipline.md
 
@@ -133,3 +129,15 @@
 - Seen: 2026-09-13
 - 为什么: Windows 腿 32 到 42 分钟顶着 45 分钟上限，被取消后聚合门禁红、被踢出队列，易误读为 flaky；套件变长要回头量时长再定上限。快速失败会取消其余腿（ci-lanes.md）：summary 有 `root_failures` 时 cancelled 是收尾，无 failure 才按本条核。
 - 证据: #340, #345, #346
+
+### L-134 碰上游私有 API 写成新旧都认，CI 装的是当天最新版
+- 类: 别这样
+- Seen: 2026-11-03
+- 为什么: pip 26.3 把 pip._internal.configuration.kinds 换成 Kind，测试注入的 sitecustomize 启动即挂，15 个后端分片同时红、合并组连踢；本地 pip 25.3 全绿。顺序也有讲究：旧版的 Kind 是空别名。
+- 证据: #1639, #1658
+
+### L-135 改 scripts/ci 后，设上 GITHUB_STEP_SUMMARY 与 GITHUB_OUTPUT 再跑一遍
+- 类: 别这样
+- Seen: 2026-11-04
+- 为什么: 只有 CI 才有的变量打开了写摘要分支，错误路径缺新键 KeyError，本机整文件全绿，CI 三个平台后端分片全红。新加输出键要覆盖错误路径。
+- 证据: #1746
