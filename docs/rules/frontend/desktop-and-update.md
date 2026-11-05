@@ -27,7 +27,8 @@ order: 270
 - **桌面更新经壳的自有命令，不直接用 `@tauri-apps/plugin-updater`**（ADR 0121）：`checkDesktopUpdate` →
   `desktop_update_check`（带 `uiLang`），`installDesktopUpdate` → `desktop_update_install`（`Channel` 收
   Started/Progress/Finished，换来源重下时 `Started` 再来一次、进度归零），返回实际来源。来源顺序、回退、
-  超时全在 Rust 侧（`app_update.rs`），前端不重算。错误是 `DesktopUpdateError`（稳定 `code` + 逐来源
+  超时全在 Rust 侧（`app_update.rs`），前端不重算（2026-11-05 起检查与下载的来源可以不同：大陆环境镜像答检查、GitHub 先下载，
+ADR 0121 §九；前端拿到的 `source` 仍是实际下载来源，只进「技术详情」）。错误是 `DesktopUpdateError`（稳定 `code` + 逐来源
   `attempts`），**壳回的字符串不当句子显示**。来源（镜像 / GitHub）与失败记录**只进「技术详情」折叠区**
   （`updateStore.desktopSource` / `desktopAttempts`），不新增横幅、不进主文案。看护 `lib/desktop.test.ts`、
   `store/updateStore.test.ts`、`components/settings/updateStates.test.tsx`。
