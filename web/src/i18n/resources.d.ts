@@ -5716,6 +5716,27 @@ export default interface Resources {
       "select": "选择",
       "subLabels": "序号"
     },
+    "chartBind": {
+      "apply": "绑定计算图表",
+      "axis": {
+        "x": "X 轴校准（两个参考值）",
+        "y": "Y 轴校准（两个参考值）"
+      },
+      "cancel": "取消",
+      "confirm": "确认绑定",
+      "data": "数据（CSV）",
+      "dataPlaceholder": "x,y\n0,1.0\n1,2.0",
+      "fileLabel": "来源文件",
+      "menu": "绑定数据为计算图表",
+      "nodesLabel": "节点数",
+      "preview": "生成对照预览",
+      "rect": "绘图区（x y 宽 高）",
+      "scaleLinear": "线性",
+      "scaleLog": "对数",
+      "series": "系列（节点 / x 列 / y 列）",
+      "seriesNode": "场景节点 id",
+      "title": "绑定数据为计算图表"
+    },
     "confirm": {
       "docLossBody": "浏览器存储不可用或已满，切换后无法从「本机最近的排版」取回。仍要继续吗？",
       "docLossConfirm": "仍要切换",

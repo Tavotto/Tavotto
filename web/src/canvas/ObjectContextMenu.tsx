@@ -1,5 +1,7 @@
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
+
+import { useChartBindStore } from '@/store/chartBindStore'
 import {
   ArrowDownToLine,
   ArrowLeftRight,
@@ -133,7 +135,7 @@ export function ObjectContextMenu({
   at: { x: number; y: number }
   close: () => void
 }) {
-  useTranslation('workspace')
+  const { t } = useTranslation('workspace')
   useTranslation('inspector')
   const objects = useDocumentStore((s) => s.doc.objects)
   const ids = useSelectionStore((s) => s.ids)
@@ -203,6 +205,17 @@ export function ObjectContextMenu({
 
       {kind === 'panel' && <EditablePanelItems panel={obj as PanelObject} run={run} runAsync={runAsync} />}
       {kind === 'panel-layout-only' && <LayoutOnlyPanelItems panel={obj as PanelObject} run={run} />}
+      {(obj as PanelObject).fileKind === 'svg' && (
+        <MenuItem
+          icon={Pencil}
+          data-quick-item="bind-chart"
+          onSelect={run(() =>
+            useChartBindStore.getState().openFor(obj as PanelObject),
+          )}
+        >
+          {t('workspace:chartBind.menu')}
+        </MenuItem>
+      )}
       {kind === 'text' && (
         <MenuItem
           icon={Pencil}
