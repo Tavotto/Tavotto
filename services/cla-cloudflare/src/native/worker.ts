@@ -7,7 +7,7 @@ import { GitHub } from './github.ts';
 import { LiveStore } from './store.ts';
 import { LiveService } from './service.ts';
 import { uiHTML, uiCSS, uiScript } from './ui.ts';
-import { reconcileOne } from './background.ts';
+import { reconcileOne, rejectionCode } from './background.ts';
 import { verification } from './verification.ts';
 import { InvocationBudget } from './budget.ts';
 import { validId, validSha } from '../core/policy.ts';
@@ -132,12 +132,17 @@ export async function service(env:Env,budget?:InvocationBudget):Promise<LiveServ
   return new LiveService(c,new LiveStore(env.DB,budget,c),new GitHub(c,secrets,undefined,undefined,budget),key);
 }
 export default {async scheduled(controller:{cron?:string},env:Env):Promise<void> {
+  // One fixed-vocabulary line per run (Workers Logs). Codes only: no payloads, logins or credentials.
   if(controller.cron===AUTOMATIC_CRON) {
-    if(env.CLA_AUTOMATIC_VERIFICATION_ENABLED==='true')await verifyHeadOne(await service(env,new InvocationBudget()));
+    if(env.CLA_AUTOMATIC_VERIFICATION_ENABLED==='true'){
+      try{console.log(JSON.stringify({run:'verify_head',disposition:await verifyHeadOne(await service(env,new InvocationBudget()))}));}
+      catch(error){console.log(JSON.stringify({run:'verify_head',disposition:'thrown',reason:rejectionCode(error)}));throw error;}
+    }
     return;
   }
   if(env.CLA_BACKGROUND_ENABLED!=='true')return;
-  await reconcileOne(await service(env,new InvocationBudget()));
+  try{const r=await reconcileOne(await service(env,new InvocationBudget()));console.log(JSON.stringify({run:'reconcile',...r}));}
+  catch(error){console.log(JSON.stringify({run:'reconcile',disposition:'thrown',reason:rejectionCode(error)}));throw error;}
 },async fetch(req:Request,env:Env):Promise<Response> {
   try {
     const url=new URL(req.url),enabled=[env.CLA_GITHUB_ENABLED,env.CLA_OAUTH_ENABLED,env.CLA_SIGNING_ENABLED,env.CLA_CHECK_PUBLISHING_ENABLED,env.CLA_UI_ENABLED,env.CLA_CI_VERIFICATION_ENABLED].some(v=>v==='true');
