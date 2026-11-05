@@ -39,8 +39,9 @@
 | R03 | done | fa68fe38 + ac060053 | 不可变来源快照 + render_revision（含绑定 digest）/model/binding digest 完整渲染身份 |
 | R04 | done | a8a088cf + 18907d65 | F1–F7 修复：openSeq/formRev 代际、previewOk 资格、busy 释放、完整变体身份、缓存代际；29 用例绿 |
 | R05 | partial | 722ad27c | chart 字段落盘/读回/冷重算/来源冲突回归绿；真新进程冷恢复与资源包待做 |
-| R06 | partial | 3f31f4e1 + 18907d65 + f76b0610 | PanelView chart 渲染接线 + ChartBindDialog + 右键菜单入口 + i18n 全绿；命中/图内编辑/撤销细节待做 |
-| R07–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
+| R06 | partial | 3f31f4e1 + 18907d65 + f76b0610 | PanelView chart 渲染 + ChartBindDialog + 右键菜单 + i18n 全绿；图内编辑/命中细节待做 |
+| R07 | partial | e09b724b | chart 面板原图 SVG 导出（basis=convert）已接通；PDF/PNG/TIFF 待 SVG→IR 翻译器 |
+| R08–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
@@ -58,6 +59,16 @@
 - 替换旧接续建议：不能仅增加 `ChartBindDialog` 就宣告 SG10 完成；不能把 `renderKeyOf + data_digest` 作为完整渲染身份；不能把“旧程序忽略 chart 字段”当成兼容证明。
 - 下一阶段先完成 R00–R04 的最终产物正确性和版本防串，再以 R05–R07 打通 B 路径实际保存/重开/导出；后续补齐 A/C、场景交互、全部适用图表族、写回、预检、入口和资格。详细依赖见 `NEXT_PHASE.md`。
 - 本轮仅修改评估与计划文档，未修复上述产品缺陷，未推送/合并/发布。历史 checkpoint 中的“通过”“已可用”只代表当时判断，不覆盖本次实际结果。
+
+### 2026-11-06 R07 冻结导出（SVG 格式）完成
+
+- **OriginalSource.chart** 字段（exportreq.py）透传 normalize；旧请求逐字节不变。
+- **_export_produce_chart_original**（app.py）：chart 面板的原图导出走不可变来源快照
+  → 脚手架 → 来源复核 → 组合（与 compute 端点同一合同）；SVG 格式 basis=convert，
+  其余格式报 svg_asset_export_unsupported（SVG→IR 翻译器落地前如实不可用）。
+- 导出产物落盘验证（tv-series 角色标记在组合版 SVG 中）；PDF 500 为已知限制（ Produced
+  with error_code 无可行 publish 路径——R07 后续补 SVG→IR）。
+- 下一步：M1 全链 E2E（绑定→编辑→保存→冷重开→导出）＋ R08–R13。
 
 ### 2026-11-05 R06 绑定 UI 完成（时间：UTC 02:0x）
 
