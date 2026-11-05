@@ -166,6 +166,8 @@ describe('HostsPanel', () => {
     expect(row('claude-desktop')?.textContent).toContain(tx('connectedBuiltin'))
     expect(stateOf('vscode')).toBe('skill-modified')
     expect(row('vscode')?.textContent).toContain(tx('skillKept'))
+    // 改过 / 有新版不算一切正常：不给绿色对勾
+    expect(row('vscode')?.querySelector('[data-host-connected] svg')).toBeNull()
     expect(row('vscode')?.querySelector('[data-host-overwrite="vscode"]')).not.toBeNull()
   })
 

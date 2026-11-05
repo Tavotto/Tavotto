@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { cn } from '@/lib/utils'
 import { CircleCheck, CircleMinus, CircleX, Ellipsis, Unplug } from '@/components/ui/icons'
 import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import {
@@ -149,6 +150,9 @@ export function HostsPanel() {
               ? 'skill'
               : 'connected'
 
+  /** 有新版、技能改过：仍是已接入，但不算一切正常，不给绿色对勾 */
+  const needsAttention = (h: HostRow): boolean => ['plugin-outdated', 'skill-modified'].includes(hostState(h))
+
   const connectedText = (h: HostRow): string => {
     switch (hostState(h)) {
       case 'plugin-outdated':
@@ -194,11 +198,14 @@ export function HostsPanel() {
                 ) : h.connected ? (
                   <>
                     <span
-                      className="flex items-center gap-1 text-sm text-ok"
+                      className={cn(
+                        'flex items-center gap-1 text-sm',
+                        needsAttention(h) ? 'text-ink-2' : 'text-ok',
+                      )}
                       data-host-connected
                       data-host-state={hostState(h)}
                       data-host-version={h.version}>
-                      <CircleCheck size={ICON_SIZE.sm} aria-hidden />
+                      {!needsAttention(h) && <CircleCheck size={ICON_SIZE.sm} aria-hidden />}
                       {connectedText(h)}
                     </span>
                     {h.update && (

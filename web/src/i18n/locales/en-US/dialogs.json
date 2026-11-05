@@ -2021,7 +2021,7 @@
       "updating": "Updating…",
       "skillKept": "Skill edited, not updated",
       "overwrite": "Overwrite",
-      "overwriteTitle": "Overwrite your edited usage notes in {{host}}?",
+      "overwriteTitle": "Overwrite your edited skill in {{host}}?",
       "overwriteBody": "Your changes will be replaced with the version that ships with Tavotto.",
       "cancel": "Cancel"
     }

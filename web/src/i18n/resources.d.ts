@@ -2507,7 +2507,7 @@ export default interface Resources {
         "notDetected": "未检测到",
         "overwrite": "覆盖",
         "overwriteBody": "你改的内容会换成 Tavotto 自带的版本。",
-        "overwriteTitle": "覆盖 {{host}} 里改过的使用说明？",
+        "overwriteTitle": "覆盖 {{host}} 里改过的技能？",
         "pluginOutdated": "插件 {{version}} · 有新版",
         "retry": "重试",
         "running": "接入中…",

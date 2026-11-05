@@ -2002,7 +2002,7 @@
       "updating": "更新中…",
       "skillKept": "技能改过，未更新",
       "overwrite": "覆盖",
-      "overwriteTitle": "覆盖 {{host}} 里改过的使用说明？",
+      "overwriteTitle": "覆盖 {{host}} 里改过的技能？",
       "overwriteBody": "你改的内容会换成 Tavotto 自带的版本。",
       "cancel": "取消"
     }
