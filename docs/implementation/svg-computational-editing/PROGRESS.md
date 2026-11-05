@@ -39,7 +39,7 @@
 | R03 | done | fa68fe38 + ac060053 | 不可变来源快照 + render_revision（含绑定 digest）/model/binding digest 完整渲染身份 |
 | R04 | done | a8a088cf + 18907d65 | F1–F7 修复：openSeq/formRev 代际、previewOk 资格、busy 释放、完整变体身份、缓存代际；29 用例绿 |
 | R05 | partial | 722ad27c | chart 字段落盘/读回/冷重算/来源冲突回归绿；真新进程冷恢复与资源包待做 |
-| R06 | partial | 3f31f4e1 + 18907d65 | PanelView chart 接线已提交；ChartBindDialog/菜单/命中/撤销待做 |
+| R06 | partial | 3f31f4e1 + 18907d65 + f76b0610 | PanelView chart 渲染接线 + ChartBindDialog + 右键菜单入口 + i18n 全绿；命中/图内编辑/撤销细节待做 |
 | R07–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
@@ -58,6 +58,18 @@
 - 替换旧接续建议：不能仅增加 `ChartBindDialog` 就宣告 SG10 完成；不能把 `renderKeyOf + data_digest` 作为完整渲染身份；不能把“旧程序忽略 chart 字段”当成兼容证明。
 - 下一阶段先完成 R00–R04 的最终产物正确性和版本防串，再以 R05–R07 打通 B 路径实际保存/重开/导出；后续补齐 A/C、场景交互、全部适用图表族、写回、预检、入口和资格。详细依赖见 `NEXT_PHASE.md`。
 - 本轮仅修改评估与计划文档，未修复上述产品缺陷，未推送/合并/发布。历史 checkpoint 中的“通过”“已可用”只代表当时判断，不覆盖本次实际结果。
+
+### 2026-11-05 R06 绑定 UI 完成（时间：UTC 02:0x）
+
+- **ChartBindDialog**（f76b0610）：轴区/每轴独立校准+scale/系列/CSV 输入/对照预览/确认。
+  确认走 updateObject 一次 documentStore 事务（chart 字段写入面板，可撤销）。UI 判据全部
+  走 chartBindStore（openSeq/formRev/previewOk），ready = 当前代际 + 成功预览。
+- **入口**：ObjectContextMenu 对 fileKind==='svg' 的面板加「绑定数据为计算图表」；
+  App 挂载 ChartBindDialog。
+- **i18n**：workspace.chartBind 中英资源 + resources.d.ts 经 `i18next-cli types` 再生；
+  i18n:check / lint 全绿（hardcoded 字符串清除）。
+- 前端 gates：build / vitest 2267 / i18n:check 全绿。
+- 下一步：R06 命中几何 + 撤销重做验证；R07 冻结导出（M1 全链）。
 
 ### 2026-11-05 N1–N5/F4–F8 修复（第二次复核反例）
 
