@@ -137,7 +137,7 @@ def network_allowed() -> bool:
 def _refresh(mod, mine: str) -> None:
     global _latest
     try:
-        res = mod.check(version=mine)
+        res = mod.check(version=mine, fetcher=mod.fetch_with_mirror)
     except Exception:  # noqa: BLE001
         return
     with _lock:

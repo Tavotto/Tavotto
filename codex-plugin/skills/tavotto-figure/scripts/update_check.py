@@ -63,6 +63,9 @@ SCHEMA = 1
 #: 默认清单地址。与 Tauri updater 的 `latest.json` 同一条惯例
 #: （`releases/latest/download/<名字>`），发布时作为 Release 资产上传。
 DEFAULT_URL = "https://github.com/Tavotto/Tavotto/releases/latest/download/codex-plugin.json"
+#: 国内镜像的版本索引（GitHub 在大陆常连不上）。域名与桌面版 `src-tauri/src/app_update.rs` 的 `MIRROR_MANIFEST_URL` 同一个
+MIRROR_INDEX_URL = "https://dl.tavotto.cn/index.json"
+_UTC_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 URL_ENV = "TAVOTTO_UPDATE_URL"
 DISABLE_ENV = "TAVOTTO_DISABLE_UPDATE_CHECK"
 CACHE_NAME = "codex-plugin-update.json"
@@ -201,8 +204,8 @@ def write_cache(path: str, data: dict) -> None:
 _CHUNK = 8 * 1024
 
 
-def fetch(url: str, timeout: float = TIMEOUT) -> dict | None:
-    """拉清单。**任何失败都回 None**，不抛、不打日志、不拖时间。
+def _get_json(url: str, timeout: float) -> object:
+    """拉一个小 JSON。**任何失败都回 None**，不抛、不打日志、不拖时间。
 
     `timeout` 是**总墙钟**，不只是 socket 超时。这两件事差得很远：
     `urlopen(timeout=)` 管的是「单次 IO 等多久」，每成功读到一点数据就重新
@@ -229,11 +232,51 @@ def fetch(url: str, timeout: float = TIMEOUT) -> dict | None:
         data = json.loads(raw.decode("utf-8", "replace"))
     except (urllib.error.URLError, OSError, ValueError):
         return None
+    return data
+
+
+def fetch(url: str, timeout: float = TIMEOUT) -> dict | None:
+    """拉清单并核形状；任何失败都回 None。"""
+    data = _get_json(url, timeout)
     if not isinstance(data, dict) or data.get("schema") != SCHEMA:
         return None
     if not isinstance(data.get("latest_version"), str):
         return None
     return data
+
+
+def manifest_from_mirror(index: object, now: float | None = None) -> dict | None:
+    """国内镜像的 `index.json` → 这里的清单形状。读法照镜像的消费契约（tavotto-infra 的 consumer-contract §2）：
+    形状不对、`mirror_enabled` 关着、`valid_until` 过期、`latest` 为空都算没查到。发版时插件与 Tavotto 同号，所以
+    `latest` 就是最新插件版本。**只用来提醒**：这里不下载任何东西，也没有更新说明地址。
+    """
+    if not isinstance(index, dict):
+        return None
+    if index.get("kind") != "tavotto-mirror-index" or index.get("schema_version") != 1:
+        return None
+    latest = index.get("latest")
+    if index.get("mirror_enabled") is not True or not isinstance(latest, str) or not latest:
+        return None
+    until = str(index.get("valid_until"))
+    try:
+        time.strptime(until, _UTC_FORMAT)
+    except ValueError:
+        return None
+    # 这个格式等宽，字符串序就是时间序
+    if time.strftime(_UTC_FORMAT, time.gmtime(time.time() if now is None else now)) > until:
+        return None
+    return {"schema": SCHEMA, "latest_version": latest, "channel": index.get("channel")}
+
+
+def fetch_with_mirror(url: str, timeout: float = TIMEOUT) -> dict | None:
+    """先问 `url`，默认地址问不到再问国内镜像。**每个来源各吃一份预算，只给后台线程用**：
+    `handoff.emit()` 同步跑在出图路上，1.5 秒上限不能翻倍，所以它继续用 `fetch`。
+    用户自己配的 `TAVOTTO_UPDATE_URL` 不回退，否则自建分发的版本判断会被公网镜像盖掉。
+    """
+    found = fetch(url, timeout)
+    if found is not None or url != DEFAULT_URL:
+        return found
+    return manifest_from_mirror(_get_json(MIRROR_INDEX_URL, timeout))
 
 
 # ------------------------------- 主判断 ----------------------------------

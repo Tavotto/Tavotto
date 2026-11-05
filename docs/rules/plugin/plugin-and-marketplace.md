@@ -38,8 +38,9 @@ order: 30
   `_version()`（桌面版 `tavotto-cli mcp` 里没有 plugin.json）；`how` = `desktop`（frozen）/
   `codex_plugin`（有 `.codex-plugin/plugin.json`）/ 判不出不给命令。桌面包把整个
   `skills/tavotto-figure` 收进 `<_MEIPASS>/skills/tavotto-figure`（`packaging/tavotto.spec`），找不到
-  `update_check.py` 就静默不提示。默认地址在 GitHub Release，release-mirror **不镜像** codex-plugin
-  （见 tavotto-infra 仓库的 release-mirror 说明），大陆用户检查大概率超时而静默无提示。用户关了检查
+  `update_check.py` 就静默不提示。默认地址在 GitHub Release；后台线程问不到时读国内镜像的 `index.json`
+  （`fetch_with_mirror`，读法照 tavotto-infra 的 consumer-contract §2），靠「发版时插件与 Tavotto 同号」拿版本，只提醒不下载。
+  交接路径同步跑在出图路上，继续用 `fetch`，1.5 秒不翻倍；用户配了 `TAVOTTO_UPDATE_URL` 不回退。用户关了检查
   （`TAVOTTO_NO_UPDATE_CHECK`、`TAVOTTO_DISABLE_UPDATE_CHECK`、设置里的 `auto_check`）就不起后台线程，只读已有缓存。
   清单——**不能挪进 desktop-tauri.yml 的 updater-manifest**，那个 job 没配
   minisign 私钥就整个跳过，插件的更新通道会跟着悄悄停而且全绿。
