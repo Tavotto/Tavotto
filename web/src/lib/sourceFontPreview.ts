@@ -85,10 +85,14 @@ export function previewStackOf(
   const p =
     source && pickName(source, { bold: source.bold === true, italic: source.italic === true }, want)
   if (p) names.push(p)
-  // 本机中文字体取不到（不可用 / 没加载好）时，与导出 cjk_for 一样回退批准粗体，而不是直接放弃
+  const local = source?.cjk && pickName(source.cjk, NO_STYLE, want)
+  // 本机中文字体确实用不了时，与导出 `cjk_for` 一样回退批准粗体；只是还在加载就等它，不白取十几 MB
+  const pending = source?.cjk && ['ok', 'unknown'].includes(sourceFontState(source.cjk))
   const c =
-    (source?.cjk && pickName(source.cjk, NO_STYLE, want)) ||
-    (want.bold && boldCjk ? usable(boldCjk, { bold: true, unicodeRange: CJK_RANGE }) : undefined)
+    local ||
+    (want.bold && boldCjk && !pending
+      ? usable(boldCjk, { bold: true, unicodeRange: CJK_RANGE })
+      : undefined)
   if (c && !names.includes(c)) names.push(c)
   return names.length ? `${names.map((n) => `"${n}"`).join(', ')}, ${approvedStack}` : approvedStack
 }

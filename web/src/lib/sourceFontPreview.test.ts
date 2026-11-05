@@ -182,6 +182,22 @@ describe('没选本机中文字体时的中文粗体', () => {
     expect(previewStackOf(source, APPROVED, OWN, BOLD, face)).toContain(cssFamilyOf(face))
   })
 
+  it('本机中文字体还在加载：不取批准粗体的字节', async () => {
+    const face = approvedCjkBoldFor('serif', '中文')!
+    let release = (_: ArrayBuffer) => {}
+    api.fetchSourceFontBytes.mockImplementation(
+      (sha: string) => (sha === cjk.sha256 ? new Promise((r) => (release = r)) : Promise.resolve(new ArrayBuffer(8))),
+    )
+    answer({ [face.sha256]: 'ok', [latin.sha256]: 'ok', [cjk.sha256]: 'ok' })
+    previewStackOf(source, APPROVED, OWN, BOLD, face)
+    await settle()
+    await settle()
+    previewStackOf(source, APPROVED, OWN, BOLD, face)
+    await settle()
+    expect(api.fetchSourceFontBytes).not.toHaveBeenCalledWith(face.sha256, 0)
+    release(new ArrayBuffer(8))
+  })
+
   it('选了本机中文字体时不用批准粗体', async () => {
     const face = approvedCjkBoldFor('serif', '中文')!
     answer({ [face.sha256]: 'ok', [latin.sha256]: 'ok', [cjk.sha256]: 'ok' })
