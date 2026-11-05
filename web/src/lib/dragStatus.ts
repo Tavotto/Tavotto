@@ -56,13 +56,22 @@ export function cropDragStatus(i: {
   state: EdgeCropState
   /** 这条边此刻裁掉的宽度 / 高度（mm） */
   mm: number
+  /** 顶在图边还想往外、但改不了图幅时说原因（ADR 0161 修订 2026-11-06） */
+  growBlocked?: 'cropped' | 'unavailable' | null
   box: Box
 }): DragStatus {
   const side = cb(SIDE_KEY[i.side])
   const mm = round1(i.mm).toFixed(1)
   switch (i.state) {
     case 'full':
-      return { tone: 'normal', main: cb('layoutCropFull', { side }), box: i.box }
+      return {
+        tone: 'normal',
+        main: cb('layoutCropFull', { side }),
+        detail: i.growBlocked
+          ? cb(i.growBlocked === 'cropped' ? 'layoutGrowCropped' : 'layoutGrowUnavailable')
+          : null,
+        box: i.box,
+      }
     case 'trim':
       return { tone: 'normal', main: cb('layoutCropTrim', { side, mm }), box: i.box }
     case 'tight':
@@ -71,6 +80,26 @@ export function cropDragStatus(i: {
       return { tone: 'warn', main: cb('layoutCropBlocked', { alt: ALT }), box: i.box }
     case 'content':
       return { tone: 'danger', main: cb('layoutCropContent', { side, mm }), box: i.box }
+  }
+}
+
+/** 多图排版里把图边往外拖 = 改图幅（ADR 0161 修订 2026-11-06）：只有被拖的那一维变 */
+export function edgeGrowDragStatus(i: {
+  side: CropSide
+  from: readonly [number, number]
+  to: readonly [number, number]
+  box: Box
+}): DragStatus {
+  const horizontal = i.side === 'l' || i.side === 'r'
+  const axis = horizontal ? 0 : 1
+  return {
+    tone: 'normal',
+    main: cb(horizontal ? 'layoutGrowWidth' : 'layoutGrowHeight', {
+      from: String(round1(i.from[axis])),
+      to: String(round1(i.to[axis])),
+    }),
+    detail: cb('frameCornerDetail'),
+    box: i.box,
   }
 }
 

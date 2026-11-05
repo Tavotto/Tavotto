@@ -6,6 +6,8 @@
  * 吸附半径 6px ≈ 1.6mm ≈ 1.6% 图宽。ink_bbox 左缘在 0.10。
  */
 import { formatMessage, literal } from '@/i18n'
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { Manifest } from '@/lib/api'
@@ -17,11 +19,14 @@ import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import { emptyProject, type PanelObject } from '@/types/document'
+import { LayoutFramePreview } from './PageEdgeResize'
 import { startPanelHandleDrag } from './panelEdgeCrop'
 
 const INK: [number, number, number, number] = [0.1, 0.2, 0.9, 0.8]
 
-const manifestOf = (ink?: [number, number, number, number]): Manifest => ({
+const SIZE_FIELD = { prop: 'size_mm', label: '图幅', type: 'size', value: [100, 75], min: 20, max: 300 }
+
+const manifestOf = (ink?: [number, number, number, number], editableSize = false): Manifest => ({
   stem: 'Fig',
   size_mm: [100, 75],
   elements: [
@@ -30,7 +35,7 @@ const manifestOf = (ink?: [number, number, number, number]): Manifest => ({
       role: 'figure',
       label: '整图',
       bbox: [0, 0, 1, 1],
-      editable: [],
+      editable: editableSize ? [SIZE_FIELD as never] : [],
       draggable: false,
       ...(ink ? { ink_bbox: ink } : {}),
     },
@@ -56,10 +61,10 @@ const panel = (extra: Partial<PanelObject> = {}): PanelObject =>
 
 const get = () => useDocumentStore.getState().doc.objects.find((o) => o.id === 'pa') as PanelObject
 
-function mount(p: PanelObject, ink?: [number, number, number, number]) {
+function mount(p: PanelObject, ink?: [number, number, number, number], editableSize = false) {
   useRenderStore.getState().patch(renderKeyOf(p), {
     fileId: p.fileId,
-    manifest: manifestOf(ink),
+    manifest: manifestOf(ink, editableSize),
     svg: '<svg xmlns="http://www.w3.org/2000/svg"/>',
     rev: 1,
     status: 'ready',
@@ -68,7 +73,7 @@ function mount(p: PanelObject, ink?: [number, number, number, number]) {
   useRenderStore.setState((s) => ({ latest: { ...s.latest, [p.fileId]: renderKeyOf(p) } }))
 }
 
-async function setup(extra: Partial<PanelObject> = {}, ink: typeof INK | null = INK) {
+async function setup(extra: Partial<PanelObject> = {}, ink: typeof INK | null = INK, editableSize = false) {
   localStorage.clear()
   useViewportStore.setState({ zoom: 1, panX: 0, panY: 0, originX: 0, originY: 0, viewW: 900, viewH: 700 })
   useUiStore.setState({ tool: 'select', snapEnabled: true })
@@ -79,7 +84,7 @@ async function setup(extra: Partial<PanelObject> = {}, ink: typeof INK | null = 
   useDocumentStore.getState().commit(literal('加面板'), (d) => {
     d.objects.push(panel(extra))
   })
-  mount(get(), ink ?? undefined)
+  mount(get(), ink ?? undefined, editableSize)
   useDocumentStore.setState({ past: [], future: [] })
 }
 
@@ -106,6 +111,7 @@ function drag(dir: 'w' | 'e' | 'n' | 's', to: [number, number], mods: { altKey?:
 
 afterEach(() => {
   useInteractionStore.getState().end()
+  useInteractionStore.getState().setFigureFramePending(null)
 })
 
 describe('排版里面板的边柄 = 裁剪', () => {
@@ -241,5 +247,123 @@ describe('不进这条新路径的情形', () => {
     fire('pointerup', [20, 15])
     expect(get().crop).toBeUndefined()
     expect(get().w).toBeGreaterThan(100)
+  })
+})
+
+describe('排版：没裁剪过的图从图边往外拖 = 改图幅（ADR 0161 修订 2026-11-06）', () => {
+  const sizeOverride = () => get().overrides.find((o) => o.gid === 'figure' && o.prop === 'size_mm')?.value
+  const growing = (dir: 'w' | 'e' | 'n' | 's', to: [number, number]) => {
+    startPanelHandleDrag(down(), 'pa', dir)
+    fire('pointermove', [to[0] / 2, to[1] / 2])
+    fire('pointermove', to)
+  }
+
+  beforeEach(async () => {
+    await setup({}, INK, true)
+  })
+
+  it('往右：松手写 size_mm 一条历史，面板不动不裁、文字比例不变，读数说图幅', () => {
+    const readout = drag('e', [20, 0])
+    expect(readout).toMatchObject({ text: '改图幅 · 宽 100 → 120 mm', tone: 'normal', box: { x: 10, w: 120 } })
+    expect(sizeOverride()).toEqual([120, 75])
+    expect(get().crop).toBeUndefined()
+    expect(get()).toMatchObject({ x: 10, y: 20, w: 100, h: 75 }) // w 由渲染回来后的同步器按缩放比校正
+    expect(useDocumentStore.getState().past).toHaveLength(1)
+    expect(useInteractionStore.getState().figureFramePending).toMatchObject({
+      id: 'pa',
+      box: { x: 10, y: 20, w: 120, h: 75 },
+      sizeMm: [120, 75],
+    })
+  })
+
+  it('往下只改高；往左 / 上时对边不动', async () => {
+    drag('s', [0, 15])
+    expect(sizeOverride()).toEqual([100, 90])
+    await setup({}, INK, true)
+    drag('w', [-20, 0])
+    expect(sizeOverride()).toEqual([120, 75])
+    expect(get()).toMatchObject({ x: -10, y: 20 })
+    await setup({}, INK, true)
+    drag('n', [0, -15])
+    expect(sizeOverride()).toEqual([100, 90])
+    expect(get()).toMatchObject({ x: 10, y: 5 })
+  })
+
+  it('拖动中只放预览框、不写文档；虚线框松手后变占位', () => {
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    act(() => root.render(<LayoutFramePreview />))
+    expect(container.children).toHaveLength(0)
+    act(() => growing('e', [20, 0]))
+    expect(useInteractionStore.getState().figureEdgeBox).toMatchObject({ x: 10, w: 120 })
+    expect(sizeOverride()).toBeUndefined()
+    expect(container.querySelector('[data-figure-preview]')).not.toBeNull()
+    act(() => {
+      fire('pointerup', [20, 0])
+    })
+    expect(container.querySelector('[data-figure-preview]')).toBeNull()
+    expect(container.querySelector('[data-figure-pending]')).not.toBeNull()
+    act(() => root.unmount())
+  })
+
+  it('拖回吸附半径内 = 不改；pointercancel 不改、不进历史', () => {
+    growing('e', [20, 0])
+    fire('pointermove', [1, 0])
+    expect(useInteractionStore.getState().figureEdgeBox).toBeNull()
+    fire('pointerup', [1, 0])
+    expect(sizeOverride()).toBeUndefined()
+    expect(useDocumentStore.getState().past).toHaveLength(0)
+
+    growing('e', [20, 0])
+    fire('pointercancel', [20, 0])
+    expect(sizeOverride()).toBeUndefined()
+    expect(useDocumentStore.getState().past).toHaveLength(0)
+    expect(useInteractionStore.getState().figureFramePending).toBeNull()
+  })
+
+  it('同一下拖动先往里再往外：裁剪一并丢掉，只留图幅一条历史', () => {
+    startPanelHandleDrag(down(), 'pa', 'e')
+    fire('pointermove', [-5, 0])
+    expect(get().crop).toBeDefined()
+    fire('pointermove', [20, 0])
+    fire('pointerup', [20, 0])
+    expect(get().crop).toBeUndefined()
+    expect(sizeOverride()).toEqual([120, 75])
+    expect(useDocumentStore.getState().past).toHaveLength(1)
+  })
+
+  it('往里拖仍是裁剪，不碰图幅', () => {
+    drag('e', [-5, 0])
+    expect(get().crop?.w).toBeCloseTo(0.95, 12)
+    expect(sizeOverride()).toBeUndefined()
+  })
+
+  it('裁剪过：退回图边为止，胶囊说先取消裁剪，图幅不动', async () => {
+    useDocumentStore.getState().commit(literal('先裁一下'), (d) => {
+      const o = d.objects[0] as PanelObject
+      o.crop = { x: 0.05, y: 0, w: 0.95, h: 1 }
+      o.x = 15
+      o.w = 95
+    })
+    startPanelHandleDrag(down(), 'pa', 'w')
+    fire('pointermove', [-20, 0])
+    fire('pointermove', [-40, 0])
+    const status = useInteractionStore.getState().dragStatus!
+    expect(formatMessage(status.main)).toBe('到图边 · 左未裁剪')
+    expect(status.detail && formatMessage(status.detail)).toBe('取消裁剪后才能改图幅')
+    fire('pointerup', [-40, 0])
+    expect(sizeOverride()).toBeUndefined()
+  })
+
+  it('图幅不可编辑（没有 size_mm）：停在图边并说明', async () => {
+    await setup()
+    startPanelHandleDrag(down(), 'pa', 'e')
+    fire('pointermove', [10, 0])
+    fire('pointermove', [20, 0])
+    const status = useInteractionStore.getState().dragStatus!
+    expect(formatMessage(status.main)).toBe('到图边 · 右未裁剪')
+    expect(status.detail && formatMessage(status.detail)).toBe('这张图现在改不了图幅')
+    fire('pointerup', [20, 0])
+    expect(sizeOverride()).toBeUndefined()
   })
 })

@@ -158,6 +158,34 @@ export function FigureEdgeHandles({ panelId }: { panelId: string | null }) {
   )
 }
 
+/**
+ * 多图排版里把图边往外拖改图幅（ADR 0161 修订 2026-11-06）的虚线框：拖动中是预览，松手后是新图回来前的占位
+ * （`PanelView` 这期间把旧图收起）。手柄仍是选区缩放手柄，这里只画框、不吃指针；单图走 `FigureEdgeHandles`。
+ */
+export function LayoutFramePreview() {
+  const zoom = useViewportStore((s) => s.zoom)
+  const panX = useViewportStore((s) => s.panX)
+  const panY = useViewportStore((s) => s.panY)
+  const preview = useInteractionStore((s) => s.figureEdgeBox)
+  const pending = useInteractionStore((s) => s.figureFramePending?.box ?? null)
+  const box = preview ?? pending
+  if (!box) return null
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden">
+      <div
+        {...(preview ? { 'data-figure-preview': '' } : { 'data-figure-pending': '' })}
+        className="pointer-events-none absolute border border-dashed border-dim"
+        style={{
+          left: panX + mmToWorld(box.x) * zoom,
+          top: panY + mmToWorld(box.y) * zoom,
+          width: mmToWorld(box.w) * zoom,
+          height: mmToWorld(box.h) * zoom,
+        }}
+      />
+    </div>
+  )
+}
+
 /** 角柄：看得见的方块与命中区的屏幕边长（px），与选区缩放手柄（`OverlaySvg` 的 HANDLE / HANDLE_HIT）同尺寸 */
 const CORNER_PX = 7
 const CORNER_HIT_PX = 16
