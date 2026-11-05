@@ -1,7 +1,2761 @@
 {
-  "schema": 1,
-  "catalog_rev": 1,
-  "comment": "内置期刊标准库（ADR 0155）：每本期刊 = 对 journal-base-v1 的一份覆盖 + 每条规则的原文出处。仓库里只放一小份种子（ADR 0155 §4b：完整目录由服务端提供，不进仓库），PR 1 只落结构，publishers / journals 刻意留空；真实数据必须逐条带 src + quote，经人工核对后才进来，严禁凭记忆写数值。",
-  "publishers": {},
-  "journals": {}
+ "schema": 1,
+ "catalog_rev": 1,
+ "comment": "内置期刊标准库的**种子**（ADR 0155 §4b）：几十本头部期刊 + 各出版社通用标准，每条规则都带原文出处与短摘录，经 Codex 逐条对照原文复核、维护者抽看拍板后才进来；完整目录由服务端提供，不进仓库。严禁凭记忆写数值。",
+ "publishers": {
+  "springer-nature": {
+   "label": "Springer Nature"
+  },
+  "amer-assoc-advancement-science": {
+   "label": "AAAS"
+  },
+  "aaas": {
+   "label": "AAAS"
+  },
+  "pnas": {
+   "label": "PNAS"
+  },
+  "acs": {
+   "label": "ACS"
+  },
+  "rsc": {
+   "label": "Royal Society of Chemistry"
+  },
+  "aps": {
+   "label": "APS",
+   "sources": {
+    "s1": {
+     "url": "https://journals.aps.org/authors/style-basics",
+     "kind": "html",
+     "retrieved": "2026-10-31"
+    }
+   },
+   "rules": {
+    "info.min_line_width_pt": {
+     "value": 0.5,
+     "qualifier": "min",
+     "mark": "0.5 point",
+     "src": "s1",
+     "quote": "Make a curve’s linewidth at least 0.18 mm (0.5 point).",
+     "anchor": "#:~:text=Make%20a%20curve%E2%80%99s,mm%20%280.5%20point%29."
+    },
+    "info.formats_raw": {
+     "value": {
+      "preferred": [
+       "PS",
+       "EPS",
+       "JPG",
+       "PNG"
+      ],
+      "accepted": []
+     },
+     "qualifier": "recommended",
+     "src": "s1",
+     "quote": "Preferred formats are .ps, .eps .jpg, and .png",
+     "anchor": "#:~:text=Preferred%20formats%20are,.jpg%2C%20and%20.png"
+    },
+    "page_columns": {
+     "value": [
+      {
+       "id": "single-manuscript-column",
+       "label": {
+        "zh": "single manuscript column",
+        "en": "single manuscript column"
+       },
+       "width_mm": 85,
+       "qualifier": "recommended"
+      }
+     ],
+     "mark": "8.5 cm",
+     "derivation": "8.5 cm → 85 mm",
+     "src": "s1",
+     "quote": "Size to the width of a single manuscript column (8.5 cm or 3 3/8 in) or 1.5 or 2 columns for more detailed figures.",
+     "anchor": "#:~:text=Size%20to%20the,more%20detailed%20figures.",
+     "note": "原文同时允许 1.5 栏或双栏（未给宽度），单栏 8.5 cm 只是建议，不作唯一合规宽度"
+    }
+   }
+  },
+  "elsevier": {
+   "label": "Elsevier",
+   "sources": {
+    "s1": {
+     "url": "https://www.elsevier.com/about/policies-and-standards/author/artwork-and-media-instructions/artwork-sizing",
+     "kind": "html",
+     "retrieved": "2026-11-03"
+    },
+    "s2": {
+     "url": "https://www.elsevier.com/about/policies-and-standards/author/artwork-and-media-instructions/artwork-overview",
+     "kind": "html",
+     "retrieved": "2026-11-03"
+    }
+   },
+   "rules": {
+    "min_effective_font_size_pt": {
+     "value": 7,
+     "qualifier": "typical",
+     "mark": "7 pt",
+     "src": "s1",
+     "quote": "As a general rule, the lettering on the artwork should have a finished, printed size of 7 pt for normal text and no smaller than 6 pt for subscript and superscript characters.",
+     "anchor": "#:~:text=As%20a%20general%20rule%2C%20the%20lettering"
+    },
+    "min_script_font_size_pt": {
+     "value": 6,
+     "qualifier": "recommended",
+     "mark": "6 pt",
+     "src": "s1",
+     "quote": "As a general rule, the lettering on the artwork should have a finished, printed size of 7 pt for normal text and no smaller than 6 pt for subscript and superscript characters.",
+     "anchor": "#:~:text=As%20a%20general%20rule%2C%20the%20lettering"
+    },
+    "info.formats_raw": {
+     "value": {
+      "preferred": [
+       "EPS",
+       "PDF",
+       "TIFF",
+       "JPEG"
+      ],
+      "accepted": [
+       "Microsoft Office (Word, Excel, PowerPoint)"
+      ]
+     },
+     "qualifier": "recommended",
+     "src": "s2",
+     "quote": "Elsevier recommends that only EPS, PDF, TIFF or JPEG formats are used for electronic artwork. Microsoft Office files (Word, Excel and PowerPoint) are also accepted.",
+     "anchor": "#:~:text=Elsevier%20recommends%20that%20only%20EPS%2C%20PDF%2C"
+    },
+    "font_family.latin_accepted": {
+     "value": [
+      "Arial",
+      "Helvetica",
+      "Courier",
+      "Times",
+      "Times New Roman"
+     ],
+     "qualifier": "recommended",
+     "src": "s2",
+     "quote": "To ensure that the published version (in print and online) matches your electronic source file as closely as possible, make sure that you only use the following recommended fonts (\"Type 1\" or \"TrueType\") in the creation of your artwork, where possible:\n\nArial (or Helvetica)\n\nCourier\n\nSymbol\n\nTimes (or Times New Roman)\n\nIf your artwork contains other, non-standard fonts, Elsevier may substitute these fonts with an Elsevier standard font (to match the style of the journal), and that may lead to problems such as missing symbols or overlapping type."
+    },
+    "info.dpi_by_kind": {
+     "value": {
+      "halftone": 300,
+      "combination art": 500,
+      "line art": 1000
+     },
+     "src": "s1",
+     "quote": "300 DPI for halftone images; 500 DPI for combination art; 1000 DPI for line art.",
+     "anchor": "#:~:text=300%20DPI%20for%20halftone%20images%3B%20500"
+    },
+    "info.min_width_mm": {
+     "value": 30,
+     "qualifier": "min",
+     "mark": "30 mm",
+     "src": "s1",
+     "quote": "Minimal size 30 mm",
+     "anchor": "#:~:text=Minimal%20size%2030%20mm"
+    },
+    "page_columns": {
+     "value": [
+      {
+       "id": "single-column",
+       "label": {
+        "zh": "单栏",
+        "en": "Single column"
+       },
+       "width_mm": 90,
+       "qualifier": "exact"
+      },
+      {
+       "id": "1-5-column",
+       "label": {
+        "zh": "1.5 栏",
+        "en": "1.5 column"
+       },
+       "width_mm": 140,
+       "qualifier": "exact"
+      },
+      {
+       "id": "double-column",
+       "label": {
+        "zh": "双栏",
+        "en": "Double column"
+       },
+       "width_mm": 190,
+       "qualifier": "exact"
+      }
+     ],
+     "mark": "90 mm",
+     "src": "s1",
+     "quote": "Single column 90 mm 255 pt 1063 1772 3543 1.5 column 140 mm 397 pt 1654 2756 5512 Double column (full width) 190 mm"
+    }
+   }
+  },
+  "wiley": {
+   "label": "Wiley",
+   "sources": {
+    "s1": {
+     "url": "https://authorservices.wiley.com/author-resources/Journal-Authors/Prepare/manuscript-preparation-guidelines.html/figure-preparation.html",
+     "kind": "html",
+     "retrieved": "2026-11-03"
+    }
+   },
+   "rules": {
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "range",
+     "stage": "submission",
+     "mark": "300dpi",
+     "src": "s1",
+     "quote": "Figures are created at a size between 80mm and 180mm in width and between 300dpi and 600dpi."
+    },
+    "info.width_double_mm": {
+     "value": 180,
+     "qualifier": "range",
+     "mark": "180mm",
+     "src": "s1",
+     "quote": "Figures are created at a size between 80mm and 180mm in width and between 300dpi and 600dpi.",
+     "anchor": "#:~:text=Figures%20are%20created%20at%20a%20size",
+     "stage": "submission"
+    }
+   }
+  },
+  "mdpi": {
+   "label": "MDPI",
+   "sources": {
+    "s1": {
+     "url": "https://www.mdpi.com/authors/layout",
+     "kind": "html",
+     "retrieved": "2026-11-03"
+    }
+   },
+   "rules": {
+    "info.formats_raw": {
+     "value": {
+      "preferred": [],
+      "accepted": [
+       "TIFF",
+       "JPEG",
+       "PNG"
+      ]
+     },
+     "src": "s1",
+     "quote": "Any common figure formats may be used, including (but not limited to) tif, jpg, and png.",
+     "anchor": "#:~:text=Any%20common%20figure%20formats%20may%20be"
+    },
+    "min_raster_dpi": {
+     "value": 600,
+     "qualifier": "recommended",
+     "mark": "600 dpi",
+     "src": "s1",
+     "quote": "Figures must be clear and readable, and we recommend a minimum resolution of 600 dpi.",
+     "anchor": "#:~:text=Figures%20must%20be%20clear%20and%20readable%2C"
+    }
+   }
+  },
+  "frontiers": {
+   "label": "Frontiers",
+   "sources": {
+    "s1": {
+     "url": "https://www.frontiersin.org/guidelines/author-guidelines",
+     "kind": "html",
+     "retrieved": "2026-11-03"
+    }
+   },
+   "rules": {
+    "info.formats_raw": {
+     "value": {
+      "preferred": [],
+      "accepted": [
+       "TIFF",
+       "JPEG",
+       "EPS"
+      ]
+     },
+     "stage": "production",
+     "src": "s1",
+     "quote": "The following formats are accepted: TIF/TIFF (.tif/.tiff), JPEG (.jpg), and EPS (.eps) (upon acceptance).",
+     "anchor": "#:~:text=The%20following%20formats%20are%20accepted%3A%20TIF%2FTIFF"
+    },
+    "info.color_mode": {
+     "value": "RGB",
+     "src": "s1",
+     "quote": "Images must be submitted in the color mode RGB.",
+     "anchor": "#:~:text=Images%20must%20be%20submitted%20in%20the"
+    },
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "min",
+     "mark": "300 dpi",
+     "src": "s1",
+     "quote": "All images must have a resolution of 300 dpi at final size.",
+     "anchor": "#:~:text=All%20images%20must%20have%20a%20resolution"
+    },
+    "page_columns": {
+     "value": [
+      {
+       "id": "one-column",
+       "label": {
+        "zh": "单栏",
+        "en": "one column"
+       },
+       "width_mm": 85,
+       "qualifier": "exact"
+      },
+      {
+       "id": "two-columns",
+       "label": {
+        "zh": "双栏",
+        "en": "two columns"
+       },
+       "width_mm": 180,
+       "qualifier": "exact"
+      }
+     ],
+     "mark": "85 mm",
+     "src": "s1",
+     "quote": "Figures should be prepared with the PDF layout in mind. Individual figures should not be longer than one page and with a width that corresponds to one column (85 mm) or two columns (180 mm).",
+     "anchor": "#:~:text=Figures%20should%20be%20prepared%20with%20the"
+    }
+   }
+  },
+  "taylor-francis": {
+   "label": "Taylor & Francis",
+   "sources": {
+    "s1": {
+     "url": "https://authorservices.taylorandfrancis.com/publishing-your-research/making-your-submission/submit-electronic-artwork/",
+     "kind": "html",
+     "retrieved": "2026-10-31"
+    }
+   },
+   "rules": {
+    "info.min_line_width_pt": {
+     "value": 0.3,
+     "qualifier": "min",
+     "mark": "0.3pt",
+     "src": "s1",
+     "quote": "Any lines are a minimum of 0.3pt.",
+     "snapshot": {
+      "file": "snapshots/23634647018584dda074021078dccfa995d0dc53897de3ace2e73cf0b9fe4331.webp",
+      "width": 711,
+      "height": 363
+     }
+    },
+    "font_family.latin_accepted": {
+     "value": [
+      "Times",
+      "Helvetica",
+      "Arial"
+     ],
+     "qualifier": "recommended",
+     "src": "s1",
+     "quote": "Use standard fonts such as Times, Helvetica, Arial, and Symbol. All fonts should be embedded in the image files.",
+     "snapshot": {
+      "file": "snapshots/4542ffdbe75c2dcab7455abd56c84357e7b483854f659176963ec3147459d46c.webp",
+      "width": 809,
+      "height": 399
+     }
+    },
+    "info.formats_raw": {
+     "value": {
+      "preferred": [
+       "JPEG",
+       "TIFF",
+       "DOC/DOCX"
+      ],
+      "accepted": []
+     },
+     "qualifier": "recommended",
+     "stage": "submission",
+     "src": "s1",
+     "quote": "For compatibility with our peer review systems, please submit electronic artwork files in one of our preferred formats:\n\n- JPEG\n- TIFF\n- Microsoft Word (DOC or DOCX only)"
+    },
+    "info.color_mode": {
+     "value": "online color free; print black-and-white; print color for half-tones, scans, photographs and transparencies normally requires editor agreement",
+     "qualifier": "typical",
+     "src": "s1",
+     "quote": "Half-tones, scans, photographs and transparencies won’t normally be reproduced in color unless agreed by the journal editor. All images and figures will be reproduced in black and white in the printed journal, but in color in the online journal free of charge."
+    },
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "recommended",
+     "mark": "300dpi",
+     "src": "s1",
+     "quote": "We recommend that you save color photographic images as files with a minimum 300dpi."
+    }
+   }
+  },
+  "sage": {
+   "label": "SAGE",
+   "sources": {
+    "s1": {
+     "url": "https://www.sagepub.com/journals/information-for-editors/journals-production",
+     "kind": "html",
+     "retrieved": "2026-10-31"
+    }
+   },
+   "rules": {
+    "info.formats_raw": {
+     "value": {
+      "preferred": [
+       "EPS (vector, line art)"
+      ],
+      "accepted": []
+     },
+     "stage": "production",
+     "src": "s1",
+     "quote": "Line art should be submitted as vector-based (.eps) files",
+     "snapshot": {
+      "file": "snapshots/b404702367b139c1598054e5c97a9107931331a04962c69c0e3498869e446278.webp",
+      "width": 900,
+      "height": 399
+     },
+     "qualifier": "recommended"
+    },
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "min",
+     "stage": "production",
+     "mark": "300 dpi",
+     "src": "s1",
+     "quote": "Figures must be high resolution (at least 300 dpi).",
+     "snapshot": {
+      "file": "snapshots/f0181a3bd2bc18c5964a794e360ee349f3887a2525c8bf49e80415fa1ca70e10.webp",
+      "width": 900,
+      "height": 363
+     }
+    }
+   }
+  },
+  "oup": {
+   "label": "Oxford University Press",
+   "sources": {
+    "s1": {
+     "url": "https://static.primary.prod.gcms.the-infra.com/static/site/journals/document/images-author-guidance.pdf",
+     "kind": "pdf",
+     "retrieved": "2026-10-31",
+     "page": 1
+    }
+   },
+   "rules": {
+    "min_effective_font_size_pt": {
+     "value": 7,
+     "qualifier": "recommended",
+     "mark": "7pt",
+     "src": "s1",
+     "quote": "Ensure text is no less than 7pt"
+    },
+    "font_family.latin_accepted": {
+     "value": [
+      "Arial",
+      "Times New Roman",
+      "Courier",
+      "Symbol"
+     ],
+     "qualifier": "recommended",
+     "src": "s1",
+     "quote": "Use Arial, Times New Roman, Courier or Symbol fonts for accurate reproduction"
+    },
+    "info.formats_raw": {
+     "value": {
+      "preferred": [],
+      "accepted": [
+       "JPG",
+       "PNG"
+      ]
+     },
+     "src": "s1",
+     "quote": ".jpg/.png are acceptable for raster images but may be lower resolution than .tif"
+    },
+    "info.color_mode": {
+     "value": [
+      "RGB",
+      "CMYK"
+     ],
+     "src": "s1",
+     "quote": "Either RGB or CMYK colour-space is acceptable"
+    },
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "recommended",
+     "mark": "300dpi",
+     "src": "s1",
+     "quote": "at least 300dpi for colour half-tones"
+    }
+   }
+  },
+  "cup": {
+   "label": "Cambridge University Press",
+   "sources": {
+    "s1": {
+     "url": "https://www.cambridge.org/core/services/authors/journals/journals-artwork-guide",
+     "kind": "html",
+     "retrieved": "2026-10-31"
+    }
+   },
+   "rules": {
+    "info.min_line_width_pt": {
+     "value": 0.3,
+     "qualifier": "min",
+     "mark": "0.3 pt",
+     "src": "s1",
+     "quote": "Do not use line weights that will be less than 0.3 pt at final size, as they may not appear when printed.",
+     "snapshot": {
+      "file": "snapshots/cdbb76a035804c0f686ff288247d049c6d864909d70c39b0f8bde0b7c6c14c51.webp",
+      "width": 1052,
+      "height": 402
+     }
+    },
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "min",
+     "mark": "300 dpi",
+     "src": "s1",
+     "quote": "colour and black and white halftone images must be saved at 300 dpi (dots per inch) at approximately the final size.",
+     "snapshot": {
+      "file": "snapshots/25ead74db739edd7fa4f47063d80b430928c5b32dc8476a19f74ff3def09a17d.webp",
+      "width": 1050,
+      "height": 402
+     }
+    }
+   }
+  },
+  "soc-neuroscience": {
+   "label": "Society for Neuroscience"
+  },
+  "company-biologists-ltd": {
+   "label": "The Company of Biologists"
+  },
+  "rockefeller-univ-press": {
+   "label": "Rockefeller University Press"
+  },
+  "degruyter": {
+   "label": "De Gruyter"
+  },
+  "science-china-press": {
+   "label": "中国科学杂志社"
+  },
+  "iop-cpb": {
+   "label": "中国物理学会 / IOP"
+  },
+  "sioc": {
+   "label": "中国化学会"
+  },
+  "opticsjournal": {
+   "label": "中国激光杂志社"
+  }
+ },
+ "journals": {
+  "nature": {
+   "label": "Nature",
+   "publisher": "springer-nature",
+   "issn": "0028-0836",
+   "aliases": [
+    "Nature (London)"
+   ],
+   "sources": {
+    "s1": {
+     "url": "https://www.nature.com/nature/for-authors/final-submission",
+     "kind": "html",
+     "retrieved": "2026-10-31"
+    }
+   },
+   "rules": {
+    "min_effective_font_size_pt": {
+     "value": 5,
+     "qualifier": "recommended",
+     "stage": "production",
+     "mark": "5 pt",
+     "src": "s1",
+     "quote": "Maximum text size for all other text should be 7 pt; minimum text size should be 5 pt.",
+     "snapshot": {
+      "file": "snapshots/d242b4c364f3719d60609c8d0ccb39cedac973e4ea098f222c5a4bd800b70da2.webp",
+      "width": 804,
+      "height": 408
+     }
+    },
+    "info.font_names_raw": {
+     "value": "sans-serif, preferably Helvetica or Arial",
+     "qualifier": "recommended",
+     "stage": "production",
+     "src": "s1",
+     "quote": "Lettering should be in a sans-serif typeface, preferably Helvetica or Arial, the same font throughout all figures in the paper.",
+     "snapshot": {
+      "file": "snapshots/f564d86266677df24cdfe4c6384302413ba4f9bc617d742585e7a6b282c131a8.webp",
+      "width": 801,
+      "height": 456
+     }
+    },
+    "info.color_mode": {
+     "value": "RGB recommended, CMYK accepted",
+     "qualifier": "recommended",
+     "stage": "production",
+     "src": "s1",
+     "quote": "Colour artwork can be provided in RGB (recommended) or CMYK format.",
+     "snapshot": {
+      "file": "snapshots/2f82f297381b8bc7907d8730fbd7cab1b597010d4ce23861ec90492541b0cdf2.webp",
+      "width": 797,
+      "height": 408
+     }
+    },
+    "info.formats_raw": {
+     "value": {
+      "accepted": [
+       "JPEG (high-resolution, 300–600 dpi)",
+       "CorelDraw (up to version 8)",
+       "Microsoft Word",
+       "Excel",
+       "PowerPoint"
+      ],
+      "preferred": []
+     },
+     "stage": "production",
+     "src": "s1",
+     "quote": "If these formats are not possible, we can also accept the following formats: JPEG (high-resolution, 300–600 dpi), CorelDraw (up to version 8), Microsoft Word, Excel or PowerPoint.",
+     "snapshot": {
+      "file": "snapshots/82dee935934585f1b6e7ee8878da62a81bce71ad3a53d37eea65e1fc1a6a0217.webp",
+      "width": 785,
+      "height": 504
+     }
+    },
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "min",
+     "stage": "production",
+     "mark": "300 dpi",
+     "src": "s1",
+     "quote": "All photographic images must be supplied at a minimum of 300 dpi at the maximum size they can be used.",
+     "snapshot": {
+      "file": "snapshots/779160a29e6d39f5cfccb3b79392530e0ffeb54cb1c4ad09faac6117416e92de.webp",
+      "width": 800,
+      "height": 408
+     }
+    },
+    "info.one_half_mm": {
+     "value": [
+      120,
+      136
+     ],
+     "qualifier": "range",
+     "stage": "production",
+     "src": "s1",
+     "quote": "Figures can also be a column-and-a-half where necessary (120–136 mm).",
+     "snapshot": {
+      "file": "snapshots/3460b79e6e6de4977c5a835727a36cb185f07bb220ee3946bfa10218fb68ba7d.webp",
+      "width": 779,
+      "height": 408
+     }
+    },
+    "page_columns": {
+     "value": [
+      {
+       "id": "single-column",
+       "label": {
+        "en": "single column",
+        "zh": "单栏"
+       },
+       "qualifier": "exact",
+       "width_mm": 89
+      },
+      {
+       "id": "double-column",
+       "label": {
+        "en": "double column",
+        "zh": "双栏"
+       },
+       "qualifier": "exact",
+       "width_mm": 183
+      }
+     ],
+     "stage": "production",
+     "mark": "89 mm",
+     "src": "s1",
+     "quote": "For guidance, *Nature*'s standard figure sizes are 89 mm wide (single column) and 183 mm wide (double column)."
+    }
+   }
+  },
+  "nature-communications": {
+   "label": "Nature Communications",
+   "publisher": "springer-nature",
+   "issn": "2041-1723",
+   "aliases": [
+    "Nat Commun"
+   ],
+   "sources": {
+    "s1": {
+     "url": "https://www.nature.com/ncomms/submit/how-to-submit",
+     "kind": "html",
+     "retrieved": "2026-10-31"
+    }
+   },
+   "rules": {
+    "info.min_line_width_pt": {
+     "value": 1,
+     "qualifier": "min",
+     "src": "s1",
+     "quote": "The thinnest lines in the final figure should be no smaller than one point wide.",
+     "snapshot": {
+      "file": "snapshots/0be8c354fa58ce07c743a9de1ae1df38cf75bc444cd8a91512ef9b7d4579c3ab.webp",
+      "width": 794,
+      "height": 408
+     }
+    },
+    "info.font_names_raw": {
+     "value": "sans-serif (e.g. Helvetica)",
+     "qualifier": "recommended",
+     "src": "s1",
+     "quote": "Figure lettering should be in a clear, sans-serif typeface (for example, Helvetica); if possible, the same typeface in approximately the same font size should be used for all figures in a paper."
+    },
+    "info.formats_raw": {
+     "value": {
+      "preferred": [
+       "EPS",
+       "AI",
+       "PDF"
+      ],
+      "accepted": [
+       "Word",
+       "PowerPoint"
+      ]
+     },
+     "qualifier": "recommended",
+     "stage": "production",
+     "src": "s1",
+     "quote": "All line art, graphs, charts and schematics should be supplied in vector format, such as Encapsulated PostScript (.EPS), Adobe Illustrator (.AI), or Portable Document Format (.PDF), and should be saved or exported as such directly from the application in which they were made. We prefer to work with Adobe Illustrator but can accept Word and PowerPoint files.",
+     "snapshot": {
+      "file": "snapshots/6f0baf427db6f6a865534966225b612b0c1d9335fbef0923dbd3b4ec548c700a.webp",
+      "width": 806,
+      "height": 689
+     }
+    },
+    "info.color_mode": {
+     "value": "RGB（彩色摄影图像）",
+     "stage": "production",
+     "src": "s1",
+     "quote": "Please supply colour photographic images in RGB colour mode.",
+     "snapshot": {
+      "file": "snapshots/04b2711a6432c876ca8533a48b32d6b630a7695b118e2cd2f7b0c9cfa7255b82.webp",
+      "width": 806,
+      "height": 408
+     }
+    },
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "min",
+     "stage": "production",
+     "mark": "300 DPI",
+     "src": "s1",
+     "quote": "All photographic and bitmapped images should be supplied in TIFF format at a minimum of 300 DPI and as close to the page size as possible."
+    },
+    "page_columns": {
+     "value": [
+      {
+       "id": "single-column",
+       "label": {
+        "en": "single column",
+        "zh": "单栏"
+       },
+       "qualifier": "exact",
+       "width_mm": 88
+      },
+      {
+       "id": "double-column",
+       "label": {
+        "en": "double column",
+        "zh": "双栏"
+       },
+       "qualifier": "exact",
+       "width_mm": 180
+      }
+     ],
+     "stage": "production",
+     "mark": "88 mm",
+     "src": "s1",
+     "quote": "A single column width measures 88 mm and a double column width measures 180 mm.",
+     "snapshot": {
+      "file": "snapshots/ff1fc83d6a9e3db91be45eb1a6fe168c7883f61806bc0d045c8e6e2d26b2e6c0.webp",
+      "width": 803,
+      "height": 408
+     }
+    }
+   }
+  },
+  "nature-materials": {
+   "label": "Nature Materials",
+   "publisher": "springer-nature",
+   "issn": "1476-1122",
+   "sources": {
+    "s1": {
+     "url": "https://www.nature.com/nmat/submission-guidelines/aip-and-formatting",
+     "kind": "html",
+     "retrieved": "2026-10-31"
+    }
+   },
+   "rules": {
+    "info.font_names_raw": {
+     "value": "san serif font for standard text labelling and Symbol font for Greek characters",
+     "stage": "production",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "min_effective_font_size_pt": {
+     "value": 5,
+     "qualifier": "range",
+     "stage": "production",
+     "mark": "5–7 pt",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "max_font_size_pt": {
+     "value": 7,
+     "qualifier": "range",
+     "stage": "production",
+     "mark": "5–7 pt",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "recommended",
+     "stage": "production",
+     "mark": "300 dpi",
+     "src": "s1",
+     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+     "snapshot": {
+      "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "info.width_double_mm": {
+     "value": 180,
+     "qualifier": "max",
+     "stage": "production",
+     "mark": "180 mm",
+     "src": "s1",
+     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+     "snapshot": {
+      "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
+      "width": 809,
+      "height": 408
+     }
+    }
+   }
+  },
+  "nature-nanotechnology": {
+   "label": "Nature Nanotechnology",
+   "publisher": "springer-nature",
+   "issn": "1748-3387",
+   "sources": {
+    "s1": {
+     "url": "https://www.nature.com/nnano/submission-guidelines/aip-and-formatting",
+     "kind": "html",
+     "retrieved": "2026-10-31"
+    }
+   },
+   "rules": {
+    "info.font_names_raw": {
+     "value": "sans-serif (Symbol for Greek)",
+     "stage": "production",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "min_effective_font_size_pt": {
+     "value": 5,
+     "qualifier": "range",
+     "stage": "production",
+     "mark": "5–7 pt",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "max_font_size_pt": {
+     "value": 7,
+     "qualifier": "range",
+     "stage": "production",
+     "mark": "5–7 pt",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "min",
+     "stage": "production",
+     "mark": "300 dpi",
+     "src": "s1",
+     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+     "snapshot": {
+      "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "info.width_double_mm": {
+     "value": 180,
+     "qualifier": "max",
+     "stage": "production",
+     "mark": "180 mm",
+     "src": "s1",
+     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+     "snapshot": {
+      "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
+      "width": 809,
+      "height": 408
+     }
+    }
+   }
+  },
+  "nature-energy": {
+   "label": "Nature Energy",
+   "publisher": "springer-nature",
+   "issn": "2058-7546",
+   "sources": {
+    "s1": {
+     "url": "https://www.nature.com/nenergy/submission-guidelines/aip-and-formatting",
+     "kind": "html",
+     "retrieved": "2026-10-31"
+    }
+   },
+   "rules": {
+    "info.font_names_raw": {
+     "value": "san serif (Symbol for Greek)",
+     "stage": "production",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "min_effective_font_size_pt": {
+     "value": 5,
+     "qualifier": "range",
+     "stage": "production",
+     "mark": "5–7 pt",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "max_font_size_pt": {
+     "value": 7,
+     "qualifier": "range",
+     "stage": "production",
+     "mark": "5–7 pt",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "info.width_double_mm": {
+     "value": 180,
+     "qualifier": "max",
+     "stage": "production",
+     "mark": "180 mm",
+     "src": "s1",
+     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+     "snapshot": {
+      "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
+      "width": 809,
+      "height": 408
+     }
+    }
+   }
+  },
+  "nature-chemistry": {
+   "label": "Nature Chemistry",
+   "publisher": "springer-nature",
+   "issn": "1755-4330",
+   "sources": {
+    "s1": {
+     "url": "https://www.nature.com/nchem/submission-guidelines/aip-and-formatting",
+     "kind": "html",
+     "retrieved": "2026-10-31"
+    }
+   },
+   "rules": {
+    "info.font_names_raw": {
+     "value": "san serif font for standard text labelling and Symbol font for Greek characters",
+     "stage": "production",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/ebfff18fd875f9500e431a1986738c0efa1c4351d85906b49dd7775521f056e0.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "min_effective_font_size_pt": {
+     "value": 5,
+     "qualifier": "range",
+     "stage": "production",
+     "mark": "5–7 pt",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/ebfff18fd875f9500e431a1986738c0efa1c4351d85906b49dd7775521f056e0.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "max_font_size_pt": {
+     "value": 7,
+     "qualifier": "range",
+     "stage": "production",
+     "mark": "5–7 pt",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/ebfff18fd875f9500e431a1986738c0efa1c4351d85906b49dd7775521f056e0.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "min",
+     "stage": "production",
+     "mark": "300 dpi",
+     "src": "s1",
+     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+     "snapshot": {
+      "file": "snapshots/a921b62be6a29c1909f8d0991c90f6723b378d4504b1aee49312b22c86cd27ae.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "info.width_double_mm": {
+     "value": 180,
+     "qualifier": "max",
+     "stage": "production",
+     "mark": "180 mm",
+     "src": "s1",
+     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+     "snapshot": {
+      "file": "snapshots/a921b62be6a29c1909f8d0991c90f6723b378d4504b1aee49312b22c86cd27ae.webp",
+      "width": 809,
+      "height": 408
+     }
+    }
+   }
+  },
+  "nature-physics": {
+   "label": "Nature Physics",
+   "publisher": "springer-nature",
+   "issn": "1745-2473",
+   "sources": {
+    "s1": {
+     "url": "https://www.nature.com/nphys/submission-guidelines/aip-and-formatting",
+     "kind": "html",
+     "retrieved": "2026-10-31"
+    }
+   },
+   "rules": {
+    "info.font_names_raw": {
+     "value": "sans-serif (Symbol for Greek)",
+     "stage": "production",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "min_effective_font_size_pt": {
+     "value": 5,
+     "qualifier": "range",
+     "stage": "production",
+     "mark": "5–7 pt",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "max_font_size_pt": {
+     "value": 7,
+     "qualifier": "range",
+     "stage": "production",
+     "mark": "5–7 pt",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "min",
+     "stage": "production",
+     "mark": "300 dpi",
+     "src": "s1",
+     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+     "snapshot": {
+      "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "info.width_double_mm": {
+     "value": 180,
+     "qualifier": "max",
+     "stage": "production",
+     "mark": "180 mm",
+     "src": "s1",
+     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+     "snapshot": {
+      "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
+      "width": 809,
+      "height": 408
+     }
+    }
+   }
+  },
+  "nature-photonics": {
+   "label": "Nature Photonics",
+   "publisher": "springer-nature",
+   "issn": "1749-4885",
+   "sources": {
+    "s1": {
+     "url": "https://www.nature.com/nphoton/submission-guidelines/aip-and-formatting",
+     "kind": "html",
+     "retrieved": "2026-10-31"
+    }
+   },
+   "rules": {
+    "info.font_names_raw": {
+     "value": "san serif (Symbol for Greek)",
+     "stage": "production",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "min_effective_font_size_pt": {
+     "value": 5,
+     "qualifier": "range",
+     "stage": "production",
+     "mark": "5–7 pt",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "max_font_size_pt": {
+     "value": 7,
+     "qualifier": "range",
+     "stage": "production",
+     "mark": "5–7 pt",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "min",
+     "stage": "production",
+     "mark": "300 dpi",
+     "src": "s1",
+     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+     "snapshot": {
+      "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "info.width_double_mm": {
+     "value": 180,
+     "qualifier": "max",
+     "stage": "production",
+     "mark": "180 mm",
+     "src": "s1",
+     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+     "snapshot": {
+      "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
+      "width": 809,
+      "height": 408
+     }
+    }
+   }
+  },
+  "nature-methods": {
+   "label": "Nature Methods",
+   "publisher": "springer-nature",
+   "issn": "1548-7091",
+   "sources": {
+    "s1": {
+     "url": "https://www.nature.com/nmeth/submission-guidelines/aip-and-formatting",
+     "kind": "html",
+     "retrieved": "2026-10-31"
+    }
+   },
+   "rules": {
+    "info.font_names_raw": {
+     "value": "san serif font for standard text labelling and Symbol font for Greek characters",
+     "stage": "production",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "min_effective_font_size_pt": {
+     "value": 5,
+     "qualifier": "range",
+     "stage": "production",
+     "mark": "5–7 pt",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "max_font_size_pt": {
+     "value": 7,
+     "qualifier": "range",
+     "stage": "production",
+     "mark": "5–7 pt",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "min",
+     "stage": "production",
+     "mark": "300 dpi",
+     "src": "s1",
+     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+     "snapshot": {
+      "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "info.width_double_mm": {
+     "value": 180,
+     "qualifier": "max",
+     "stage": "production",
+     "mark": "180 mm",
+     "src": "s1",
+     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+     "snapshot": {
+      "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
+      "width": 809,
+      "height": 408
+     }
+    }
+   }
+  },
+  "nature-medicine": {
+   "label": "Nature Medicine",
+   "publisher": "springer-nature",
+   "issn": "1078-8956",
+   "sources": {
+    "s1": {
+     "url": "https://www.nature.com/nm/submission-guidelines/aip-and-formatting",
+     "kind": "html",
+     "retrieved": "2026-10-31"
+    }
+   },
+   "rules": {
+    "info.font_names_raw": {
+     "value": "sans-serif (Symbol for Greek)",
+     "stage": "production",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "min_effective_font_size_pt": {
+     "value": 5,
+     "qualifier": "range",
+     "stage": "production",
+     "mark": "5–7 pt",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "max_font_size_pt": {
+     "value": 7,
+     "qualifier": "range",
+     "stage": "production",
+     "mark": "5–7 pt",
+     "src": "s1",
+     "quote": "Use a 5–7 pt san serif font for standard text labelling and Symbol font for Greek characters.",
+     "snapshot": {
+      "file": "snapshots/f773f8a2c71f5f1e1f1888c31e5eb003c86d05ea393beb4ab856a64674a464b3.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "min",
+     "stage": "production",
+     "mark": "300 dpi",
+     "src": "s1",
+     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+     "snapshot": {
+      "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
+      "width": 809,
+      "height": 408
+     }
+    },
+    "info.width_double_mm": {
+     "value": 180,
+     "qualifier": "max",
+     "stage": "production",
+     "mark": "180 mm",
+     "src": "s1",
+     "quote": "Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.",
+     "snapshot": {
+      "file": "snapshots/64e3a12f72f87263a954fb17e9b46a6687ccf09d1996f663644f07b8ef199887.webp",
+      "width": 809,
+      "height": 408
+     }
+    }
+   }
+  },
+  "science": {
+   "label": "Science",
+   "publisher": "aaas",
+   "issn": "0036-8075",
+   "sources": {
+    "s1": {
+     "url": "https://www.science.org/content/page/instructions-preparing-initial-manuscript",
+     "kind": "html",
+     "retrieved": "2026-10-31"
+    }
+   },
+   "rules": {
+    "min_effective_font_size_pt": {
+     "value": 5,
+     "qualifier": "min",
+     "stage": "submission",
+     "mark": "5 points",
+     "src": "s1",
+     "quote": "Symbols and lettering should be large enough to be legible after reduction [a reduced size of about 7 points (2.5 mm) high, and not smaller than 5 points]."
+    },
+    "info.min_line_width_pt": {
+     "value": 0.5,
+     "qualifier": "min",
+     "stage": "submission",
+     "mark": "0.5 point",
+     "src": "s1",
+     "quote": "Line widths should be legible upon reduction (minimum of 0.5 point at the final reduced size)."
+    },
+    "info.font_names_raw": {
+     "value": "Helvetica（无衬线）",
+     "qualifier": "recommended",
+     "stage": "submission",
+     "src": "s1",
+     "quote": "Use a sans-serif font whenever possible (Helvetica is preferred)."
+    },
+    "info.formats_raw": {
+     "value": {
+      "accepted": [],
+      "preferred": [
+       "vector-based files (e.g. files produced by Adobe Illustrator)"
+      ]
+     },
+     "qualifier": "recommended",
+     "stage": "submission",
+     "src": "s1",
+     "quote": "It is best to create your figures as vector-based files, such as those produced by Adobe Illustrator."
+    },
+    "page_columns": {
+     "value": [
+      {
+       "id": "1-column",
+       "label": {
+        "zh": "1 栏",
+        "en": "1 column"
+       },
+       "width_mm": 57,
+       "qualifier": "typical"
+      },
+      {
+       "id": "2-columns",
+       "label": {
+        "zh": "2 栏",
+        "en": "2 columns"
+       },
+       "width_mm": 121,
+       "qualifier": "typical"
+      },
+      {
+       "id": "3-columns",
+       "label": {
+        "zh": "3 栏",
+        "en": "3 columns"
+       },
+       "width_mm": 184,
+       "qualifier": "typical"
+      }
+     ],
+     "stage": "submission",
+     "mark": "5.7 cm",
+     "derivation": "5.7 cm → 57 mm",
+     "src": "s1",
+     "quote": "The width of figures, when printed, will usually be 5.7 cm (2.24 inches or 1 column), 12.1 cm (4.76 inches or 2 columns), or 18.4 cm (7.24 inches or 3 columns)."
+    }
+   }
+  },
+  "science-advances": {
+   "label": "Science Advances",
+   "publisher": "amer-assoc-advancement-science",
+   "issn": "2375-2548",
+   "aliases": [
+    "Sci Adv"
+   ],
+   "sources": {
+    "s1": {
+     "url": "https://www.science.org/content/page/science-advances-information-authors",
+     "kind": "html",
+     "retrieved": "2026-11-04"
+    }
+   },
+   "rules": {
+    "font_family.latin_accepted": {
+     "value": [
+      "Times New Roman"
+     ],
+     "qualifier": "recommended",
+     "src": "s1",
+     "quote": "For best results, use universal fonts (such as Times New Roman) only, as special fonts may affect the rendering of your figure or table files.",
+     "anchor": "#:~:text=For%20best%20results%2C%20use%20universal%20fonts",
+     "stage": "submission"
+    }
+   }
+  },
+  "pnas": {
+   "label": "Proceedings of the National Academy of Sciences",
+   "publisher": "pnas",
+   "issn": "0027-8424",
+   "aliases": [
+    "PNAS"
+   ],
+   "sources": {
+    "s1": {
+     "url": "https://www.pnas.org/author-center/submitting-your-manuscript",
+     "kind": "html",
+     "retrieved": "2026-10-31"
+    }
+   },
+   "rules": {
+    "min_effective_font_size_pt": {
+     "value": 6,
+     "qualifier": "min",
+     "mark": "6 points",
+     "src": "s1",
+     "quote": "Ensure that all numbers, letters, and symbols are no smaller than 6 points (2 mm) and no larger than 12 points (6 mm) after reduction.",
+     "stage": "production"
+    },
+    "max_font_size_pt": {
+     "value": 12,
+     "qualifier": "max",
+     "mark": "12 points",
+     "src": "s1",
+     "quote": "Ensure that all numbers, letters, and symbols are no smaller than 6 points (2 mm) and no larger than 12 points (6 mm) after reduction.",
+     "stage": "production"
+    },
+    "info.formats_raw": {
+     "value": {
+      "preferred": [],
+      "accepted": [
+       "TIFF",
+       "EPS",
+       "PDF",
+       "PPT"
+      ]
+     },
+     "src": "s1",
+     "quote": "Submit images in these file formats: TIFF, EPS, PDF, or PPT.",
+     "stage": "production"
+    },
+    "info.color_mode": {
+     "value": "RGB",
+     "qualifier": "recommended",
+     "src": "s1",
+     "quote": "Color mode should be RGB.",
+     "stage": "production"
+    },
+    "min_raster_dpi": {
+     "value": 300,
+     "mark": "300 ppi",
+     "src": "s1",
+     "quote": "300 ppi for grayscale or color images with no type or lettering, 600–900 ppi for grayscale or color images with type, and 1000–1200 ppi for line art, e.g., bar graphs.",
+     "stage": "production"
+    }
+   }
+  },
+  "journal-of-the-american-chemical-society": {
+   "label": "Journal of the American Chemical Society",
+   "publisher": "acs",
+   "issn": "0002-7863",
+   "aliases": [
+    "JACS"
+   ],
+   "sources": {
+    "s1": {
+     "url": "https://researcher-resources.acs.org/publish/author_guidelines?coden=jacsat",
+     "kind": "html",
+     "retrieved": "2026-10-31"
+    }
+   },
+   "rules": {
+    "info.max_height_mm": {
+     "value": 232.8,
+     "qualifier": "max",
+     "src": "s1",
+     "quote": "The maximum depth for all graphics is 660 points (9.167 in.) including the caption\n(allow 12 pts. For each line of caption text)."
+    },
+    "font_family.latin_accepted": {
+     "value": [
+      "Helvetica",
+      "Arial"
+     ],
+     "qualifier": "recommended",
+     "src": "s1",
+     "quote": "Helvetica or Arial fonts work well for lettering.",
+     "anchor": "#:~:text=Helvetica%20or%20Arial,well%20for%20lettering.",
+     "snapshot": {
+      "file": "snapshots/567d4be9915ad2bf125125f7957d953d6074f3a3431fb8d2d58dcf7560b95960.webp",
+      "width": 1046,
+      "height": 404
+     }
+    },
+    "info.min_line_width_pt": {
+     "value": 0.5,
+     "qualifier": "recommended",
+     "mark": "0.5 point",
+     "src": "s1",
+     "quote": "Lines should be no thinner than 0.5 point.",
+     "anchor": "#:~:text=Lines%20should%20be,than%200.5%20point.",
+     "snapshot": {
+      "file": "snapshots/9d21d62920bea32d2b9775906c7c0d6feeed144ba54fb33d4714d21a29a5ae64.webp",
+      "width": 1046,
+      "height": 362
+     }
+    },
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "recommended",
+     "mark": "300 dpi",
+     "src": "s1",
+     "quote": "Digital graphics pasted into manuscripts should have the following minimum resolutions:\n\n- Black and white line art, 1200 dpi\n- Grayscale art, 600 dpi\n- Color art, 300 dpi"
+    },
+    "page_columns": {
+     "value": [
+      {
+       "id": "single-column",
+       "label": {
+        "zh": "单栏",
+        "en": "single-column"
+       },
+       "width_mm": 84.7,
+       "qualifier": "max"
+      },
+      {
+       "id": "double-column",
+       "label": {
+        "zh": "双栏",
+        "en": "double-column"
+       },
+       "width_mm": 177.8,
+       "qualifier": "max"
+      }
+     ],
+     "src": "s1",
+     "quote": "Single-column graphics can be sized up to 240 points wide (3.33 in.) and double-column graphics must be sized between 300 and 504 points (4.167 in. and 7 in.).",
+     "anchor": "#:~:text=Single-column%20graphics%20can,and%207%20in.%29.",
+     "snapshot": {
+      "file": "snapshots/1b3a58f4d7570ba6b74ee00f0cf09fa5be9ee88e5174feab2a9f22590e724417.webp",
+      "width": 1047,
+      "height": 447
+     }
+    }
+   }
+  },
+  "environmental-science-technology": {
+   "label": "Environmental Science & Technology",
+   "publisher": "acs",
+   "issn": "0013-936X",
+   "aliases": [
+    "ES&T",
+    "Environ. Sci. Technol."
+   ],
+   "sources": {
+    "s1": {
+     "url": "https://researcher-resources.acs.org/publish/author_guidelines?coden=esthag",
+     "kind": "html",
+     "retrieved": "2026-10-31"
+    }
+   },
+   "rules": {
+    "info.max_height_mm": {
+     "value": 232.8,
+     "qualifier": "max",
+     "src": "s1",
+     "quote": "The maximum depth for all graphics is 660 points (9.167 in.) including the caption",
+     "anchor": "#:~:text=The%20maximum%20depth,including%20the%20caption",
+     "snapshot": {
+      "file": "snapshots/153a50d22a65651ea2f2b139cc6f483f98d8e89d22387a34647a1cd8f139b728.webp",
+      "width": 1047,
+      "height": 404
+     }
+    },
+    "font_family.latin_accepted": {
+     "value": [
+      "Helvetica",
+      "Arial"
+     ],
+     "qualifier": "recommended",
+     "src": "s1",
+     "quote": "Helvetica or Arial fonts work well for lettering.",
+     "anchor": "#:~:text=Helvetica%20or%20Arial,well%20for%20lettering.",
+     "snapshot": {
+      "file": "snapshots/abdfb74a8240f589bbea74c18198d9ce12cffd3f0d322af570138599230f7d62.webp",
+      "width": 1046,
+      "height": 404
+     }
+    },
+    "info.min_line_width_pt": {
+     "value": 0.5,
+     "qualifier": "min",
+     "mark": "0.5 point",
+     "src": "s1",
+     "quote": "Lines should be no thinner than 0.5 point.",
+     "anchor": "#:~:text=Lines%20should%20be,than%200.5%20point.",
+     "snapshot": {
+      "file": "snapshots/4204a61b2c86cc6fc36a5f18f8c96d05766ab71954cd04da65ee836c18d2845a.webp",
+      "width": 1046,
+      "height": 362
+     }
+    }
+   }
+  },
+  "energy-environmental-science": {
+   "label": "Energy & Environmental Science",
+   "publisher": "rsc",
+   "issn": "1754-5692",
+   "aliases": [
+    "EES"
+   ],
+   "sources": {
+    "s1": {
+     "url": "https://www.rsc.org/publishing/publish-with-us/publish-a-journal-article/energy-and-environmental-science",
+     "kind": "html",
+     "retrieved": "2026-10-31"
+    }
+   },
+   "rules": {
+    "info.formats_raw": {
+     "value": {
+      "preferred": [
+       "TIFF"
+      ],
+      "accepted": [
+       "TIFF",
+       "EPS",
+       "PDF"
+      ]
+     },
+     "qualifier": "recommended",
+     "src": "s1",
+     "quote": "Figures, Schemes and Charts should be supplied as TIFF files, with a resolution of 600 dpi or greater. You can supply EPS or PDF files instead, but we will need to convert these to TIFF files in the final article.",
+     "anchor": "#:~:text=Figures%2C%20Schemes%20and,the%20final%20article.",
+     "snapshot": {
+      "file": "snapshots/5ede4aa15be878254662551560bfc9f05d17c5a4139eb7697650b3b55391c8d4.webp",
+      "width": 527,
+      "height": 326
+     }
+    },
+    "info.max_height_mm": {
+     "value": 233,
+     "qualifier": "max",
+     "mark": "23.3 cm",
+     "derivation": "23.3 cm → 233 mm",
+     "src": "s1",
+     "quote": "Images should fit within either single column (8.3 cm) or double column (17.1 cm) width, and must be no longer than 23.3 cm."
+    },
+    "page_columns": {
+     "value": [
+      {
+       "id": "single-column",
+       "label": {
+        "en": "single column",
+        "zh": "单栏"
+       },
+       "qualifier": "exact",
+       "width_mm": 83
+      },
+      {
+       "id": "double-column",
+       "label": {
+        "en": "double column",
+        "zh": "双栏"
+       },
+       "qualifier": "exact",
+       "width_mm": 171
+      }
+     ],
+     "mark": "8.3 cm",
+     "derivation": "8.3 cm → 83 mm",
+     "src": "s1",
+     "quote": "Images should fit within either single column (8.3 cm) or double column (17.1 cm) width, and must be no longer than 23.3 cm.",
+     "anchor": "#:~:text=Images%20should%20fit,than%2023.3%20cm.",
+     "snapshot": {
+      "file": "snapshots/5bacf0df03b2034ba8337a9656beff52c0be16736794a204c35ee2801ebe359c.webp",
+      "width": 527,
+      "height": 298
+     }
+    }
+   }
+  },
+  "physical-review-letters": {
+   "label": "Physical Review Letters",
+   "publisher": "aps",
+   "issn": "0031-9007",
+   "aliases": [
+    "PRL"
+   ]
+  },
+  "physical-review-x": {
+   "label": "Physical Review X",
+   "publisher": "aps",
+   "issn": "2160-3308",
+   "aliases": [
+    "PRX"
+   ]
+  },
+  "chemical-engineering-journal": {
+   "label": "Chemical Engineering Journal",
+   "publisher": "elsevier",
+   "issn": "1385-8947"
+  },
+  "applied-surface-science": {
+   "label": "Applied Surface Science",
+   "publisher": "elsevier",
+   "issn": "0169-4332"
+  },
+  "acta-materialia": {
+   "label": "Acta Materialia",
+   "publisher": "elsevier",
+   "issn": "1359-6454"
+  },
+  "water-research": {
+   "label": "Water Research",
+   "publisher": "elsevier",
+   "issn": "0043-1354"
+  },
+  "journal-of-hazardous-materials": {
+   "label": "Journal of Hazardous Materials",
+   "publisher": "elsevier",
+   "issn": "0304-3894"
+  },
+  "applied-energy": {
+   "label": "Applied Energy",
+   "publisher": "elsevier",
+   "issn": "0306-2619"
+  },
+  "journal-of-power-sources": {
+   "label": "Journal of Power Sources",
+   "publisher": "elsevier",
+   "issn": "0378-7753"
+  },
+  "nano-energy": {
+   "label": "Nano Energy",
+   "publisher": "elsevier",
+   "issn": "2211-2855"
+  },
+  "journal-of-cleaner-production": {
+   "label": "Journal of Cleaner Production",
+   "publisher": "elsevier",
+   "issn": "0959-6526"
+  },
+  "science-of-the-total-environment": {
+   "label": "Science of the Total Environment",
+   "publisher": "elsevier",
+   "issn": "0048-9697"
+  },
+  "journal-of-colloid-and-interface-science": {
+   "label": "Journal of Colloid and Interface Science",
+   "publisher": "elsevier",
+   "issn": "0021-9797"
+  },
+  "corrosion-science": {
+   "label": "Corrosion Science",
+   "publisher": "elsevier",
+   "issn": "0010-938X"
+  },
+  "science-bulletin-20959273": {
+   "label": "Science Bulletin",
+   "publisher": "elsevier",
+   "issn": "2095-9273",
+   "sources": {
+    "s1": {
+     "url": "https://www.sciencedirect.com/journal/science-bulletin/publish/guide-for-authors",
+     "kind": "html",
+     "retrieved": "2026-11-03"
+    }
+   },
+   "rules": {
+    "font_family.latin_accepted": {
+     "value": [
+      "Arial",
+      "Courier",
+      "Times"
+     ],
+     "src": "s1",
+     "quote": "Only use the following fonts in your illustrations: Arial, Courier, Times, Symbol.",
+     "anchor": "#:~:text=Only%20use%20the%20following%20fonts%20in"
+    },
+    "info.formats_raw": {
+     "value": {
+      "preferred": [],
+      "accepted": [
+       "EPS"
+      ]
+     },
+     "src": "s1",
+     "quote": "EPS: Vector drawings.",
+     "anchor": "#:~:text=EPS%3A%20Vector%20drawings."
+    },
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "min",
+     "mark": "300 dpi",
+     "src": "s1",
+     "quote": "TIFF: Color or grayscale photographs (halftones): always use a minimum of 300 dpi.",
+     "anchor": "#:~:text=TIFF%3A%20Color%20or%20grayscale%20photographs%20%28halftones%29%3A"
+    }
+   }
+  },
+  "jmst": {
+   "label": "Journal of Materials Science & Technology",
+   "publisher": "elsevier",
+   "issn": "1005-0302",
+   "aliases": [
+    "JMST"
+   ],
+   "sources": {
+    "s1": {
+     "url": "https://www.jmst.org/EN/column/column150.shtml",
+     "kind": "html",
+     "retrieved": "2026-10-31"
+    }
+   },
+   "rules": {
+    "info.formats_raw": {
+     "value": {
+      "preferred": [
+       "TIFF"
+      ],
+      "accepted": []
+     },
+     "qualifier": "recommended",
+     "src": "s1",
+     "quote": "Figures should be original graphs (\\*.tif) with high contrast",
+     "snapshot": {
+      "file": "snapshots/5a6fe8ddad70bb99ca83498444dcefd95c5c57cd91c59074cad5200dcde60129.webp",
+      "width": 1080,
+      "height": 354
+     }
+    },
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "min",
+     "mark": "300 dpi",
+     "src": "s1",
+     "quote": "Line drawings and graphs must have exported resolution of at least 1200 dpi. Photographs and micrographs must have resolution of at least 300 dpi (600 dpi if there is text or line art in the figure).",
+     "snapshot": {
+      "file": "snapshots/643fe935502c4840efea00553e05568468b092d055d0377e6831ef02744fe414.webp",
+      "width": 1079,
+      "height": 429
+     }
+    },
+    "info.dpi_by_kind": {
+     "value": {
+      "line drawings and graphs": 1200,
+      "photographs and micrographs": 300,
+      "photographs and micrographs with text/line art": 600
+     },
+     "qualifier": "min",
+     "src": "s1",
+     "quote": "Line drawings and graphs must have exported resolution of at least 1200 dpi. Photographs and micrographs must have resolution of at least 300 dpi (600 dpi if there is text or line art in the figure).",
+     "snapshot": {
+      "file": "snapshots/643fe935502c4840efea00553e05568468b092d055d0377e6831ef02744fe414.webp",
+      "width": 1079,
+      "height": 429
+     }
+    },
+    "info.width_double_mm": {
+     "value": 150,
+     "qualifier": "max",
+     "mark": "15 cm",
+     "derivation": "15 cm → 150 mm",
+     "src": "s1",
+     "quote": "a maximum width is 15 cm for full page.",
+     "snapshot": {
+      "file": "snapshots/6fd74886cc9584fe9966807774d0df2dbfaa5956660a1e01aceb568344e0d414.webp",
+      "width": 1079,
+      "height": 354
+     }
+    },
+    "page_columns": {
+     "value": [
+      {
+       "id": "one-column",
+       "label": {
+        "en": "one column",
+        "zh": "单栏"
+       },
+       "qualifier": "exact",
+       "width_mm": 65
+      },
+      {
+       "id": "full-columns",
+       "label": {
+        "en": "full columns",
+        "zh": "通栏"
+       },
+       "qualifier": "exact",
+       "width_mm": 135
+      }
+     ],
+     "mark": "6.5 cm",
+     "derivation": "6.5 cm → 65 mm",
+     "src": "s1",
+     "quote": "Width of an image should be sized to 6.5 cm for one column, 13.5 cm for full columns; and a maximum width is 15 cm for full page."
+    }
+   }
+  },
+  "small": {
+   "label": "Small",
+   "publisher": "wiley",
+   "issn": "1613-6810"
+  },
+  "advanced-energy-materials": {
+   "label": "Advanced Energy Materials",
+   "publisher": "wiley",
+   "issn": "1614-6832"
+  },
+  "advanced-science": {
+   "label": "Advanced Science",
+   "publisher": "wiley",
+   "issn": "2198-3844"
+  },
+  "chinese-journal-of-chemistry": {
+   "label": "Chinese Journal of Chemistry",
+   "publisher": "wiley",
+   "issn": "1001-604X",
+   "sources": {
+    "s1": {
+     "url": "https://onlinelibrary.wiley.com/page/journal/16147065/homepage/2434_author.html",
+     "kind": "html",
+     "retrieved": "2026-11-04"
+    }
+   },
+   "rules": {
+    "info.formats_raw": {
+     "value": {
+      "accepted": [
+       "TIFF"
+      ],
+      "preferred": []
+     },
+     "src": "s1",
+     "quote": "Illustrations should be stored as the format of TIFF.",
+     "anchor": "#:~:text=Illustrations%20should%20be%20stored%20as%20the"
+    },
+    "font_family.latin_accepted": {
+     "value": [
+      "Arial"
+     ],
+     "src": "s1",
+     "quote": "Curve graphics should be drawn by Origin and their parameters are as follows: font, Arial; letter size, 8.0 pt; curve line width, 0.5 pt; symbol, 3.0 pt; width of graphics, 5.5 cm.",
+     "anchor": "#:~:text=Curve%20graphics%20should%20be%20drawn%20by"
+    },
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "min",
+     "mark": "300 dpi",
+     "src": "s1",
+     "quote": "Illustrations include figures and schemes, and they should be designed for reduction to a one-column (8.55 cm wide) or two-column format (17.6 cm wide) with a resolution of 300 dpi or higher.",
+     "anchor": "#:~:text=Illustrations%20include%20figures%20and%20schemes%2C%20and"
+    },
+    "page_columns": {
+     "value": [
+      {
+       "id": "one-column",
+       "label": {
+        "zh": "单栏",
+        "en": "one-column"
+       },
+       "width_mm": 85.5,
+       "qualifier": "exact"
+      },
+      {
+       "id": "two-column",
+       "label": {
+        "zh": "双栏",
+        "en": "two-column"
+       },
+       "width_mm": 176,
+       "qualifier": "exact"
+      }
+     ],
+     "mark": "8.55 cm",
+     "derivation": "8.55 cm → 85.5 mm",
+     "src": "s1",
+     "quote": "Illustrations include figures and schemes, and they should be designed for reduction to a one-column (8.55 cm wide) or two-column format (17.6 cm wide) with a resolution of 300 dpi or higher.",
+     "anchor": "#:~:text=Illustrations%20include%20figures%20and%20schemes%2C%20and"
+    }
+   }
+  },
+  "international-journal-of-molecular-sciences": {
+   "label": "International Journal of Molecular Sciences",
+   "publisher": "mdpi",
+   "issn": "1661-6596",
+   "aliases": [
+    "IJMS"
+   ]
+  },
+  "sensors": {
+   "label": "Sensors",
+   "publisher": "mdpi",
+   "issn": "1424-8220"
+  },
+  "materials": {
+   "label": "Materials",
+   "publisher": "mdpi",
+   "issn": "1996-1944"
+  },
+  "frontiers-in-immunology": {
+   "label": "Frontiers in Immunology",
+   "publisher": "frontiers",
+   "issn": "1664-3224"
+  },
+  "frontiers-in-plant-science": {
+   "label": "Frontiers in Plant Science",
+   "publisher": "frontiers",
+   "issn": "1664-462X"
+  },
+  "cell-cycle": {
+   "label": "Cell Cycle",
+   "publisher": "taylor-francis",
+   "issn": "1538-4101"
+  },
+  "cell-transplantation": {
+   "label": "Cell Transplantation",
+   "publisher": "sage",
+   "issn": "0963-6897",
+   "sources": {
+    "s1": {
+     "url": "https://journals.sagepub.com/author-instructions/CLL",
+     "kind": "html",
+     "retrieved": "2026-11-04"
+    }
+   },
+   "rules": {
+    "info.formats_raw": {
+     "value": {
+      "preferred": [],
+      "accepted": [
+       "TIFF",
+       "JPEG",
+       "EPS"
+      ]
+     },
+     "src": "s1",
+     "quote": "Figures should be placed in individual files (we accept TIFF, JPEG, and eps), separate from the main document file.",
+     "anchor": "#:~:text=Figures%20should%20be%20placed%20in%20individual"
+    }
+   }
+  },
+  "bioinformatics": {
+   "label": "Bioinformatics",
+   "publisher": "oup",
+   "issn": "1367-4803",
+   "sources": {
+    "s1": {
+     "url": "https://academic.oup.com/bioinformatics/pages/General_Instructions",
+     "kind": "html",
+     "retrieved": "2026-11-02"
+    }
+   },
+   "rules": {
+    "min_raster_dpi": {
+     "value": 350,
+     "mark": "350",
+     "src": "s1",
+     "quote": "Prepare your figures at publication quality resolution, using applications capable of generating high-resolution .tif files (1200 d.p.i. for line drawings and 350 d.p.i. for colour and half-tone artwork).",
+     "anchor": "#:~:text=Prepare%20your%20figures%20at%20publication%20quality"
+    },
+    "info.dpi_by_kind": {
+     "value": {
+      "line drawings": 1200,
+      "colour and half-tone": 350
+     },
+     "src": "s1",
+     "quote": "Prepare your figures at publication quality resolution, using applications capable of generating high-resolution .tif files (1200 d.p.i. for line drawings and 350 d.p.i. for colour and half-tone artwork).",
+     "anchor": "#:~:text=Prepare%20your%20figures%20at%20publication%20quality"
+    },
+    "page_columns": {
+     "value": [
+      {
+       "id": "single-column",
+       "label": {
+        "zh": "单栏",
+        "en": "Single column"
+       },
+       "width_mm": 86,
+       "qualifier": "exact"
+      },
+      {
+       "id": "double-column",
+       "label": {
+        "zh": "双栏",
+        "en": "Double column"
+       },
+       "width_mm": 178,
+       "qualifier": "exact"
+      }
+     ],
+     "mark": "86 mm",
+     "src": "s1",
+     "quote": "All figures should be formatted to fit into, or be reduced to, a single (86 mm) or double (178 mm) column width.",
+     "anchor": "#:~:text=All%20figures%20should%20be%20formatted%20to"
+    }
+   }
+  },
+  "plant-cell": {
+   "label": "The Plant Cell",
+   "publisher": "oup",
+   "issn": "1040-4651",
+   "sources": {
+    "s1": {
+     "url": "https://academic.oup.com/plcell/pages/General_Instructions",
+     "kind": "html",
+     "retrieved": "2026-11-03"
+    }
+   },
+   "rules": {
+    "info.formats_raw": {
+     "value": {
+      "preferred": [],
+      "accepted": [
+       "TIFF",
+       "JPEG",
+       "EPS"
+      ]
+     },
+     "src": "s1",
+     "quote": "Please submit your figure files in tif, jpeg, or eps.",
+     "anchor": "#:~:text=Please%20submit%20your%20figure%20files%20in"
+    },
+    "info.font_names_raw": {
+     "value": "sans serif (e.g. Arial)",
+     "src": "s1",
+     "quote": "Use the same type and size of sans serif font in all of your figures (e.g. Arial at point size 8 is recommended, and no smaller than 6)."
+    },
+    "min_effective_font_size_pt": {
+     "value": 6,
+     "qualifier": "min",
+     "src": "s1",
+     "quote": "Use the same type and size of sans serif font in all of your figures (e.g. Arial at point size 8 is recommended, and no smaller than 6).",
+     "mark": "6"
+    },
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "min",
+     "mark": "300 PPI",
+     "src": "s1",
+     "quote": "Resolution: save at a minimum 300 PPI as EPS, TIFF or JPEG; vectorized image files are preferred where possible.",
+     "anchor": "#:~:text=Resolution%3A%20save%20at%20a%20minimum%20300"
+    }
+   }
+  },
+  "national-science-review-20955138": {
+   "label": "National Science Review",
+   "publisher": "oup",
+   "issn": "2095-5138",
+   "aliases": [
+    "NSR"
+   ],
+   "sources": {
+    "s1": {
+     "url": "https://academic.oup.com/nsr/pages/Manuscript_Instructions",
+     "kind": "html",
+     "retrieved": "2026-11-04"
+    }
+   },
+   "rules": {
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "min",
+     "mark": "300 dpi",
+     "src": "s1",
+     "quote": "Figures should be supplied at a minimum resolution of 300 dpi.",
+     "anchor": "#:~:text=Figures%20should%20be%20supplied%20at%20a",
+     "stage": "production"
+    }
+   }
+  },
+  "journal-of-fluid-mechanics--preparing-your-materials": {
+   "label": "Journal of Fluid Mechanics",
+   "publisher": "cup",
+   "issn": "0022-1120",
+   "aliases": [
+    "JFM"
+   ],
+   "sources": {
+    "s1": {
+     "url": "https://www.cambridge.org/core/journals/journal-of-fluid-mechanics/information/author-instructions/preparing-your-materials",
+     "kind": "html",
+     "retrieved": "2026-11-03"
+    }
+   },
+   "rules": {
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "min",
+     "mark": "300 dpi",
+     "src": "s1",
+     "quote": "Bitmap/raster formats at a minimum of 300 dpi (EPS, PNG, TIFF) are also acceptable for mixed halftones, photographs, imaging system output, etc.",
+     "anchor": "#:~:text=Bitmap%2Fraster%20formats%20at%20a%20minimum%20of"
+    }
+   }
+  },
+  "journal-of-neuroscience": {
+   "label": "The Journal of Neuroscience",
+   "publisher": "soc-neuroscience",
+   "issn": "0270-6474",
+   "sources": {
+    "s1": {
+     "url": "https://www.jneurosci.org/content/information-authors",
+     "kind": "html",
+     "retrieved": "2026-11-04"
+    }
+   },
+   "rules": {
+    "info.color_mode": {
+     "value": "RGB",
+     "src": "s1",
+     "quote": "Color figures should be in RGB format and supplied at a minimum of 300 dpi.",
+     "anchor": "#:~:text=Color%20figures%20should%20be%20in%20RGB",
+     "qualifier": "recommended"
+    },
+    "min_raster_dpi": {
+     "value": 300,
+     "qualifier": "recommended",
+     "mark": "300 dpi",
+     "src": "s1",
+     "quote": "Color figures should be in RGB format and supplied at a minimum of 300 dpi.",
+     "anchor": "#:~:text=Color%20figures%20should%20be%20in%20RGB"
+    }
+   }
+  },
+  "journal-of-cell-science": {
+   "label": "Journal of Cell Science",
+   "publisher": "company-biologists-ltd",
+   "issn": "0021-9533",
+   "sources": {
+    "s1": {
+     "url": "https://journals.biologists.com/jcs/pages/manuscript-prep",
+     "kind": "html",
+     "retrieved": "2026-11-04"
+    }
+   },
+   "rules": {
+    "info.max_height_mm": {
+     "value": 210,
+     "qualifier": "max",
+     "mark": "210 mm",
+     "src": "s1",
+     "quote": "The maximum figure size, including lettering and labels, is 180 mm x 210 mm.",
+     "anchor": "#:~:text=The%20maximum%20figure%20size%2C%20including%20lettering"
+    },
+    "info.color_mode": {
+     "value": "RGB",
+     "src": "s1",
+     "quote": "Colour: supply images in RGB (not CMYK) mode, as this maximises colour quality and is how the figures will be displayed online; do NOT use Spot, Pantone or Hex colours and do NOT assign a colour profile.",
+     "anchor": "#:~:text=Colour%3A%20supply%20images%20in%20RGB%20%28not"
+    },
+    "font_family.latin_accepted": {
+     "value": [
+      "Arial",
+      "Courier"
+     ],
+     "src": "s1",
+     "quote": "Text labelling: use 12 pt bold uppercase letters (A, B, C, etc.) to distinguish figure panels; other labelling should be 8 pt Arial font (sentence case) (headings should be bold); for gene sequences, use Courier font to ensure that each letter is the same width; use Symbol font for Greek characters.",
+     "anchor": "#:~:text=Text%20labelling%3A%20use%2012%20pt%20bold"
+    },
+    "min_effective_font_size_pt": {
+     "value": 8,
+     "mark": "8 pt",
+     "src": "s1",
+     "quote": "Text labelling: use 12 pt bold uppercase letters (A, B, C, etc.) to distinguish figure panels; other labelling should be 8 pt Arial font (sentence case) (headings should be bold); for gene sequences, use Courier font to ensure that each letter is the same width; use Symbol font for Greek characters.",
+     "anchor": "#:~:text=Text%20labelling%3A%20use%2012%20pt%20bold"
+    },
+    "info.formats_raw": {
+     "value": {
+      "preferred": [],
+      "accepted": [
+       "EPS",
+       "PDF",
+       "TIFF",
+       "JPEG"
+      ]
+     },
+     "src": "s1",
+     "quote": "Accepted file formats are: EPS/PDF/TIFF/JPEG.",
+     "anchor": "#:~:text=Accepted%20file%20formats%20are%3A%20EPS%2FPDF%2FTIFF%2FJPEG."
+    }
+   }
+  },
+  "journal-of-experimental-medicine": {
+   "label": "Journal of Experimental Medicine",
+   "publisher": "rockefeller-univ-press",
+   "issn": "0022-1007",
+   "aliases": [
+    "JEM"
+   ],
+   "sources": {
+    "s1": {
+     "url": "https://rupress.org/jem/pages/submission-guidelines",
+     "kind": "html",
+     "retrieved": "2026-11-04"
+    }
+   },
+   "rules": {
+    "page_columns": {
+     "value": [
+      {
+       "id": "single-column",
+       "label": {
+        "en": "single-column",
+        "zh": "单栏"
+       },
+       "qualifier": "exact",
+       "width_mm": 85
+      }
+     ],
+     "mark": "85 mm",
+     "src": "s1",
+     "quote": "Figures should be prepared at publication size; whenever possible, figures will be reduced to a single-column width (85 mm).",
+     "anchor": "#:~:text=Figures%20should%20be%20prepared%20at%20publication"
+    }
+   }
+  },
+  "nanophotonics": {
+   "label": "Nanophotonics",
+   "publisher": "degruyter",
+   "issn": "2192-8606",
+   "sources": {
+    "s1": {
+     "url": "https://www.degruyterbrill.com/journal/key/nanoph/html",
+     "kind": "html",
+     "retrieved": "2026-11-03"
+    }
+   },
+   "rules": {
+    "info.font_names_raw": {
+     "value": "sans serif typeface such as Helvetica",
+     "qualifier": "recommended",
+     "src": "s1",
+     "quote": "The lettering of all figures within the article should be uniform in style (preferably a sans serif typeface\nsuch as Helvetica) and of sufficient size (approximately 8pt)."
+    },
+    "min_raster_dpi": {
+     "value": 600,
+     "qualifier": "min",
+     "mark": "600DPI",
+     "src": "s1",
+     "quote": "Figures (greyscale and colour) should have a minimum resolution of 600DPI and be of good contrast.",
+     "anchor": "#:~:text=Figures%20%28greyscale%20and%20colour%29%20should%20have"
+    }
+   }
+  },
+  "kexue-tongbao": {
+   "label": "科学通报",
+   "publisher": "science-china-press",
+   "aliases": [
+    "Chinese Science Bulletin"
+   ],
+   "sources": {
+    "s1": {
+     "url": "https://files.sciengine.com/gridfs/1913124937476866048/2025-%E7%A7%91%E5%AD%A6%E9%80%9A%E6%8A%A5-%E6%8A%95%E7%A8%BF%E6%8C%87%E5%8D%97.pdf",
+     "kind": "pdf",
+     "retrieved": "2026-10-31",
+     "page": 4
+    }
+   },
+   "rules": {
+    "info.formats_raw": {
+     "value": {
+      "preferred": [],
+      "accepted": [
+       "tiff",
+       "png",
+       "jpg"
+      ]
+     },
+     "stage": "submission",
+     "src": "s1",
+     "quote": "请提供.tiff、.png、.jpg 等格式文件",
+     "snapshot": {
+      "file": "snapshots/ced9f2793f74404a13405ac218ec7e08719dfe9a9bbae01100655a7a51954249.webp",
+      "width": 497,
+      "height": 135
+     }
+    },
+    "info.font_names_raw": {
+     "value": {
+      "中文": "幼圆",
+      "英文": "Arial"
+     },
+     "src": "s1",
+     "quote": "汉字为幼圆, 英文字为 Arial, 字体颜色为黑色",
+     "snapshot": {
+      "file": "snapshots/54b3191994589d18177abfe0f9c8fe13b9e978824e22b7ddaa2ea14d7fd65e3b.webp",
+      "width": 498,
+      "height": 136
+     }
+    },
+    "min_effective_font_size_pt": {
+     "value": 7,
+     "mark": "字高统一为7 pt",
+     "derivation": "字高按字号计",
+     "src": "s1",
+     "quote": "汉字为幼圆, 英文字为 Arial, 字体颜色为黑色, 字高统一为7 pt.",
+     "snapshot": {
+      "file": "snapshots/d3d3bd26fea248169003acaf09589716dd3bc67eb4ee54b46c0cf69e49d332d5.webp",
+      "width": 498,
+      "height": 166
+     }
+    },
+    "max_font_size_pt": {
+     "value": 7,
+     "mark": "字高统一为7 pt",
+     "derivation": "字高按字号计",
+     "src": "s1",
+     "quote": "汉字为幼圆, 英文字为 Arial, 字体颜色为黑色, 字高统一为7 pt.",
+     "snapshot": {
+      "file": "snapshots/d3d3bd26fea248169003acaf09589716dd3bc67eb4ee54b46c0cf69e49d332d5.webp",
+      "width": 498,
+      "height": 166
+     }
+    },
+    "min_raster_dpi": {
+     "value": 500,
+     "qualifier": "range",
+     "mark": "500~600 dpi",
+     "src": "s1",
+     "quote": "请提供.tiff、.png、.jpg 等格式文件(分辨率500~600 dpi)",
+     "snapshot": {
+      "file": "snapshots/779efe4d4b7a8db72e80f4a44fe5dc76a7a4b174eacffe4d8cf826fac422a47c.webp",
+      "width": 498,
+      "height": 165
+     }
+    },
+    "info.width_range_double_mm": {
+     "value": [
+      100,
+      170
+     ],
+     "qualifier": "range",
+     "src": "s1",
+     "quote": "一般串文图的宽度为3~7 cm; 通栏版的宽度为10~17 cm.",
+     "snapshot": {
+      "file": "snapshots/40e32e7de316b4704662a349e0b1bd59e8bd81a792a7d89671cb6ed3be893a48.webp",
+      "width": 498,
+      "height": 163
+     }
+    }
+   }
+  },
+  "zhongguo-kexue-shuxue": {
+   "label": "中国科学：数学",
+   "publisher": "science-china-press",
+   "sources": {
+    "s1": {
+     "url": "https://www.sciengine.com/cfs/files/files/upfile/2011256646193381376",
+     "kind": "pdf",
+     "retrieved": "2026-10-31",
+     "page": 3
+    }
+   },
+   "rules": {
+    "info.formats_raw": {
+     "value": {
+      "preferred": [],
+      "accepted": [
+       "eps（可编辑原始矢量图）"
+      ]
+     },
+     "stage": "submission",
+     "src": "s1",
+     "quote": "应提供可编辑的原始矢量图 (扩展名为 eps), 图像精度大于 600 DPI, 线条宽度大于 0.5 pt, 图中中文文字的字体为宋体, 英文字符为 Euclid, 大小均为 8 pt.",
+     "snapshot": {
+      "file": "snapshots/8b12e6b422cdb7b973ae920c1ac906f6fed2835692240f2a4691e54c38a1a20a.webp",
+      "width": 935,
+      "height": 202
+     }
+    },
+    "info.min_line_width_pt": {
+     "value": 0.5,
+     "qualifier": "min",
+     "stage": "submission",
+     "mark": "0.5 pt",
+     "src": "s1",
+     "quote": "应提供可编辑的原始矢量图 (扩展名为 eps), 图像精度大于 600 DPI, 线条宽度大于 0.5 pt, 图中中文文字的字体为宋体, 英文字符为 Euclid, 大小均为 8 pt.",
+     "snapshot": {
+      "file": "snapshots/8b12e6b422cdb7b973ae920c1ac906f6fed2835692240f2a4691e54c38a1a20a.webp",
+      "width": 935,
+      "height": 202
+     }
+    },
+    "min_effective_font_size_pt": {
+     "value": 8,
+     "stage": "submission",
+     "mark": "8 pt",
+     "src": "s1",
+     "quote": "应提供可编辑的原始矢量图 (扩展名为 eps), 图像精度大于 600 DPI, 线条宽度大于 0.5 pt, 图中中文文字的字体为宋体, 英文字符为 Euclid, 大小均为 8 pt.",
+     "snapshot": {
+      "file": "snapshots/8b12e6b422cdb7b973ae920c1ac906f6fed2835692240f2a4691e54c38a1a20a.webp",
+      "width": 935,
+      "height": 202
+     }
+    },
+    "max_font_size_pt": {
+     "value": 8,
+     "stage": "submission",
+     "mark": "8 pt",
+     "src": "s1",
+     "quote": "应提供可编辑的原始矢量图 (扩展名为 eps), 图像精度大于 600 DPI, 线条宽度大于 0.5 pt, 图中中文文字的字体为宋体, 英文字符为 Euclid, 大小均为 8 pt.",
+     "snapshot": {
+      "file": "snapshots/8b12e6b422cdb7b973ae920c1ac906f6fed2835692240f2a4691e54c38a1a20a.webp",
+      "width": 935,
+      "height": 202
+     }
+    },
+    "info.font_names_raw": {
+     "value": {
+      "cjk": "宋体",
+      "latin": "Euclid"
+     },
+     "stage": "submission",
+     "src": "s1",
+     "quote": "应提供可编辑的原始矢量图 (扩展名为 eps), 图像精度大于 600 DPI, 线条宽度大于 0.5 pt, 图中中文文字的字体为宋体, 英文字符为 Euclid, 大小均为 8 pt.",
+     "snapshot": {
+      "file": "snapshots/8b12e6b422cdb7b973ae920c1ac906f6fed2835692240f2a4691e54c38a1a20a.webp",
+      "width": 935,
+      "height": 202
+     }
+    }
+   }
+  },
+  "huaxue-xuebao": {
+   "label": "化学学报",
+   "publisher": "sioc",
+   "aliases": [
+    "Acta Chimica Sinica"
+   ],
+   "sources": {
+    "s1": {
+     "url": "https://sioc-journal.cn/Jwk_hxxb/CN/column/column58.shtml",
+     "kind": "html",
+     "retrieved": "2026-10-31"
+    }
+   },
+   "rules": {
+    "info.max_height_mm": {
+     "value": 240,
+     "qualifier": "max",
+     "mark": "24 cm",
+     "derivation": "24 cm → 240 mm",
+     "src": "s1",
+     "quote": "最大高度不能超过24 cm",
+     "snapshot": {
+      "file": "snapshots/b278853290fd750c554791091fd6bcc0701eb82d02f0eb0cab576bf8a24ff21a.webp",
+      "width": 1038,
+      "height": 351
+     }
+    },
+    "info.color_mode": {
+     "value": "彩色或灰度（照片图象）",
+     "src": "s1",
+     "quote": "论文的照片图象应为彩色或灰度图",
+     "snapshot": {
+      "file": "snapshots/043ed2c77326da02e6788e0e435d6b803002e070ee109095e9cf52d9cf028afa.webp",
+      "width": 1038,
+      "height": 351
+     }
+    }
+   }
+  },
+  "zhongguo-jiguang": {
+   "label": "中国激光",
+   "publisher": "opticsjournal",
+   "aliases": [
+    "Chinese Journal of Lasers"
+   ],
+   "sources": {
+    "s1": {
+     "url": "https://f.opticsjournal.net/Post/files/2026/6/img_134255569229989878.docx",
+     "kind": "html",
+     "retrieved": "2026-10-31"
+    }
+   },
+   "rules": {
+    "info.font_names_raw": {
+     "value": {
+      "图中文字语言": "全部英文",
+      "图中英文": "Time New Roman"
+     },
+     "src": "s1",
+     "quote": "图中文字不能有中文，必须全部为英文，图中英文采用Time New Roman 6号字体",
+     "snapshot": {
+      "file": "snapshots/b1ad9d762676db87778967e3b5c3e7bce8e41de46d44e15c02c372126e8d25de.webp",
+      "width": 652,
+      "height": 146
+     }
+    },
+    "min_effective_font_size_pt": {
+     "value": 7.5,
+     "mark": "6号字体",
+     "derivation": "6号字 = 7.5 pt",
+     "src": "s1",
+     "quote": "图中英文采用Time New Roman 6号字体",
+     "snapshot": {
+      "file": "snapshots/b1ad9d762676db87778967e3b5c3e7bce8e41de46d44e15c02c372126e8d25de.webp",
+      "width": 652,
+      "height": 146
+     }
+    },
+    "min_raster_dpi": {
+     "value": 600,
+     "qualifier": "min",
+     "mark": "600 dpi",
+     "src": "s1",
+     "quote": "照片图：分辨率达到600 dpi",
+     "snapshot": {
+      "file": "snapshots/4f5e31ca5de25bac08af6efa70a95adf72647920d58a8117f6e8f8e28dd70916.webp",
+      "width": 397,
+      "height": 153
+     }
+    },
+    "info.width_range_double_mm": {
+     "value": [
+      110,
+      140
+     ],
+     "qualifier": "range",
+     "src": "s1",
+     "quote": "图片宽度通栏为11⁓14 cm，双栏为6⁓7.5 cm",
+     "snapshot": {
+      "file": "snapshots/58c699cce8ee37a75227029d72495b83c618deb3e7288224e594396d5aafe329.webp",
+      "width": 694,
+      "height": 150
+     }
+    }
+   }
+  },
+  "chinese-physics-b": {
+   "label": "Chinese Physics B",
+   "publisher": "iop-cpb",
+   "aliases": [
+    "中国物理 B",
+    "Chin. Phys. B"
+   ],
+   "sources": {
+    "s1": {
+     "url": "https://cpb.iphy.ac.cn/fileCPB//common/img/202285144920542.pdf",
+     "kind": "pdf",
+     "retrieved": "2026-10-31",
+     "page": 1
+    }
+   },
+   "rules": {
+    "info.min_line_width_pt": {
+     "value": 0.5,
+     "qualifier": "min",
+     "mark": "0.5 point",
+     "src": "s1",
+     "quote": "A minimum of 0.5 point width for lines.",
+     "snapshot": {
+      "file": "snapshots/60d9b6fd3de62b6aa98484058a9ec03d4cee791d05a7cbd51e975aae942a6c58.webp",
+      "width": 444,
+      "height": 157
+     }
+    }
+   }
+  }
+ }
 }

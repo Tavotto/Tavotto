@@ -67,19 +67,41 @@ class Face(Protocol):
 
 
 @dataclass(frozen=True)
+class SynthFace:
+    """一张脸 + 要模拟的粗 / 斜（ADR 0169 修订）。字形、度量全是原来那张脸的，只有落笔时写入器多描一道边或错切。"""
+
+    face: Face
+    synth_bold: bool = False
+    synth_italic: bool = False
+
+    def __getattr__(self, name: str):
+        return getattr(self.face, name)
+
+
+def synthesized(face: Face, bold: bool, italic: bool) -> Face:
+    """要模拟时包一层，不用模拟就是原脸。"""
+    return SynthFace(face, bold, italic) if bold or italic else face
+
+
+@dataclass(frozen=True)
 class FaceSet:
     primary: Face
     cjk: Face | None
     #: (片段斜体, 片段粗体) → 该片段的正文脸（已与对象自身的粗 / 斜合并）。行内样式
     #: （LaTeX 写法的 `\\textit{}` / `\\textbf{}`，ADR 0152）用它换脸；缺席（测试假脸）时退回正文脸。
     variant: Callable[[bool, bool], Face] | None = None
+    #: 同上，换 CJK 脸（ADR 0169 修订）；缺席（测试假脸）时 CJK 脸不变。
+    cjk_variant: Callable[[bool, bool], Face | None] | None = None
 
     def styled(self, italic: bool, bold: bool) -> FaceSet:
-        """行内样式片段该用的那一套脸（CJK 脸不变：中日韩没有斜体 / 粗体变体可换）。"""
-        if not (italic or bold) or self.variant is None:
+        """行内样式片段该用的那一套脸。"""
+        if not (italic or bold):
             return self
-        face = self.variant(italic, bold)
-        return self if face is self.primary else FaceSet(face, self.cjk, self.variant)
+        face = self.variant(italic, bold) if self.variant is not None else self.primary
+        cjk = self.cjk_variant(italic, bold) if self.cjk_variant is not None else self.cjk
+        if face == self.primary and cjk == self.cjk:
+            return self
+        return FaceSet(face, cjk, self.variant, self.cjk_variant)
 
     def face_of(self, layer: str) -> Face:
         """哪一层交给哪张脸落笔。`missing` 仍交给正文脸：它画出的是 .notdef（方框），
@@ -100,7 +122,7 @@ class FaceProvider(Protocol):
 
     def face_for(self, family: str, bold: bool, italic: bool) -> Face: ...
 
-    def cjk_face(self, family: str) -> Face | None: ...
+    def cjk_face(self, family: str, bold: bool = False) -> Face | None: ...
 
 
 def faces_for(
@@ -109,21 +131,36 @@ def faces_for(
     bold: bool,
     italic: bool,
     *,
-    user_primary: Face | None = None,
-    user_cjk: Face | None = None,
+    user_face: Callable[[bool, bool], Face | None] | None = None,
+    user_cjk: Callable[[bool, bool], Face | None] | None = None,
 ) -> FaceSet:
-    """族 / 粗 / 斜 → 一套脸。`user_primary` / `user_cjk`（ADR 0164）是已经核过的用户本机脸：
-    给了就**替换**正文脸 / CJK 脸；`family` 仍决定**回退族**——行内样式要的粗 / 斜变体不是原图那张脸
-    （用户字体是单个文件，没有可换的兄弟；不按名字猜同族文件），就用 `family` 的批准脸画，不造假粗体。"""
+    """族 / 粗 / 斜 → 一套脸。`user_face(粗, 斜)` / `user_cjk(粗, 斜)`（ADR 0164、0169）按要的粗斜给用户本机脸，
+    回 None = 这一层用不了用户脸，走批准脸；要模拟的粗斜已经包在返回的脸上。
+
+    `family` 决定回退到哪一族。批准的拉丁脸四种样式齐全；批准的 CJK 脸有常规和粗体，斜体模拟。"""
     fam = latin_family(family)
-    approved = provider.face_for(fam, bool(bold), bool(italic))
-    primary = user_primary if user_primary is not None else approved
+    base = (bool(bold), bool(italic))
 
-    def variant(run_italic: bool, run_bold: bool) -> Face:
-        b, i = bool(bold) or run_bold, bool(italic) or run_italic
-        return primary if (b, i) == (bool(bold), bool(italic)) else provider.face_for(fam, b, i)
+    def merged(run_italic: bool, run_bold: bool) -> tuple[bool, bool]:
+        return base[0] or run_bold, base[1] or run_italic
 
-    return FaceSet(primary, user_cjk if user_cjk is not None else provider.cjk_face(fam), variant)
+    def primary_for(want_bold: bool, want_italic: bool) -> Face:
+        user = user_face(want_bold, want_italic) if user_face is not None else None
+        return user if user is not None else provider.face_for(fam, want_bold, want_italic)
+
+    def cjk_for(want_bold: bool, want_italic: bool) -> Face | None:
+        user = user_cjk(want_bold, want_italic) if user_cjk is not None else None
+        if user is not None:
+            return user
+        face = provider.cjk_face(fam, want_bold)
+        return synthesized(face, False, want_italic) if face is not None else None
+
+    return FaceSet(
+        primary_for(*base),
+        cjk_for(*base),
+        lambda i, b: primary_for(*merged(i, b)),
+        lambda i, b: cjk_for(*merged(i, b)),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -546,7 +583,7 @@ def _run_lines(text: str, text_format: str | None) -> list[list[richtext.TextRun
 
 
 def _same_run(a: ShapedPiece, b: ShapedPiece) -> bool:
-    return a.face is b.face and a.size == b.size and a.rise == b.rise and a.layer == b.layer
+    return a.face == b.face and a.size == b.size and a.rise == b.rise and a.layer == b.layer
 
 
 def _math_text_piece(face: Face, src: str, width_pt: float, size: float) -> ShapedPiece | None:

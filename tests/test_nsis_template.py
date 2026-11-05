@@ -272,6 +272,22 @@ def test_finish_page_runs_via_run_as_user():
     assert not re.search(r"^\s*Exec(Wait|Shell)?\s", body, re.M)
 
 
+def test_update_installed_on_quit_does_not_relaunch_the_app():
+    """应用内更新「退出时安装」（ADR 0121 §八）：插件在 passive 下总带 /R，壳退出前设 NO_RELAUNCH_ENV，
+    `.onInstSuccess` 见到它就不再 RunAsUser——否则用户刚退出，装完应用又自己弹出来。
+    主语：模板里 /R 分支下的重启调用必须被同名环境变量挡住；变量名与壳里的常量逐字相同（同源）。"""
+    rust = (ROOT / "src-tauri" / "src" / "app_update.rs").read_text(encoding="utf-8")
+    m = re.search(r'pub const NO_RELAUNCH_ENV: &str = "([A-Z_]+)";', rust)
+    assert m, "app_update.rs 里要有 NO_RELAUNCH_ENV"
+    name = m.group(1)
+    body = CODE.split("Function .onInstSuccess\n")[1].split("FunctionEnd")[0]
+    read = body.index(f"ReadEnvStr $R1 {name}")
+    guard = body.index('${If} $R1 != "1"', read)
+    run = body.index("nsis_tauri_utils::RunAsUser", guard)
+    assert body.index("${EndIf}", guard) > run, "RunAsUser 必须在环境变量的判断里面"
+    assert "install_ready_on_exit" in rust and "set_var(NO_RELAUNCH_ENV" in rust
+
+
 def test_user_facing_text_is_localized_for_every_language():
     """每个配置里的语言都必须给全所有品牌文案。
 

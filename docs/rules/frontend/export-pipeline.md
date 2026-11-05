@@ -86,6 +86,7 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
   `provenance`（源产物公开身份、回执公开事实 `ArtifactReceiptFacts`、节点表）、`ExportJob.trace`（有界阶段轨迹，
   `failed_phase` 是坏在哪一步）。界面**不画、不解读**它们（解读产物核验的仍只有 `inspectionState()`）；要显示时
   先定一份解读的唯一出处，别在组件里各自读字段。它们都是可选键：老服务端没有 = `undefined`，不是错误。
+- **`ArtifactManifestSummary.text_outlined`**（QA-WIN-08）：只在 `format==='svg'` 且为 `true` 时，`ResultBlock` 摘要行并入一句「文字已转成路径，不能再当文字编辑」（与警告等并列，`exportResultClean` 因此判为不干净、不只剩胶囊）；缺席 / false 什么都不画。后端同源在 `docs/rules/backend/export-pipeline.md`。
 
 - **结果就是一句摘要**（2026-10-23）：成功 =「已导出 N 个文件」+ 一个「在文件夹中显示」（动作在摘要行上，脚部不再重复）；有失败 =
   「N 个成功，M 个失败」。逐个文件、每件的核验（已核验 / 未核验）、警告、失败原因、诊断都在默认折叠的「详情」里。**例外：核验未通过

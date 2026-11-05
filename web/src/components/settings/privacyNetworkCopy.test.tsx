@@ -55,12 +55,10 @@ it.each(['en-US', 'zh-CN'] as const)('discloses package and assistant networking
       expect(text).toContain('浏览器模式可用“每天自动检查”')
       expect(text).toContain('桌面版在启动时检查，目前没有应用内关闭开关')
     }
-    // 自动检查那一行两条通道都在（2026-10-07 设计审计 §9.1 桌面 / 浏览器同形）；桌面版那颗开关开着、停用——
-    // 与上面那句「桌面版在启动时检查，目前没有应用内关闭开关」说的是同一件事
-    const auto = host.querySelector<HTMLButtonElement>('#setting-update-auto')!
-    expect(auto).toBeTruthy()
-    expect(auto.disabled).toBe(desktop)
-    if (desktop) expect(auto.getAttribute('aria-checked')).toBe('true')
+    // 自动检查开关只在浏览器通道有（桌面版启动必查、关不掉，2026-11-04 起那颗停用的开关去掉了——
+    // 这件事由上面那句「桌面版在启动时检查，目前没有应用内关闭开关」如实交代）
+    const auto = host.querySelector<HTMLButtonElement>('#setting-update-auto')
+    expect(!!auto).toBe(!desktop)
   }
   expect(fetch).not.toHaveBeenCalled()
 })

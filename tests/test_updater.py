@@ -193,3 +193,32 @@ def test_worker_py_ships_with_the_package():
     from tavotto.engine import pool
 
     assert pool.WORKER_PY.is_file()
+
+
+# ---------------- 桌面「后台自动下载」偏好（ADR 0121 修订 2026-11-04） ------------
+def test_auto_download_defaults_on_and_round_trips():
+    assert updater.settings()["auto_download"] is True
+    updater.set_settings({"auto_download": False})
+    assert updater.settings()["auto_download"] is False
+    updater.set_settings({"auto_download": True})
+    assert updater.settings()["auto_download"] is True
+
+
+def test_desktop_mode_serves_the_preference_and_accepts_only_it(monkeypatch):
+    """桌面里 Python updater 整个停用，唯一还落在这里的是 auto_download（存在用户配置，跟用户走，
+    不放按 origin 隔离的 localStorage——桌面端口会变）；auto_check 不收。"""
+    from tavotto import app as appmod
+
+    monkeypatch.setitem(appmod.app.config, "TAVOTTO_DESKTOP_MODE", True)
+    client = appmod.app.test_client()
+    body = client.get("/api/update/check").get_json()
+    assert body["desktop"] is True and body["update_available"] is False
+    assert body["auto_download"] is True
+
+    resp = client.patch("/api/update/settings", json={"auto_download": False, "auto_check": False})
+    assert resp.status_code == 200
+    assert resp.get_json()["auto_download"] is False
+    # 重新读（模拟端口变了、前端重开）：关掉的选择还在
+    assert client.get("/api/update/check").get_json()["auto_download"] is False
+    # auto_check 在桌面里被忽略（仍是默认值 True），不因为这个口子被改掉
+    assert updater.settings()["auto_check"] is True

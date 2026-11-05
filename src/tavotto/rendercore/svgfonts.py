@@ -24,7 +24,9 @@ APPROVED_FAMILIES: dict[str, str] = {
     "Liberation Sans": "sans-serif",
     "Liberation Mono": "monospace",
     "Noto Sans SC": "cjk",
+    "Noto Sans SC Bold": "cjk",
     "Noto Serif SC": "cjk-serif",
+    "Noto Serif SC Bold": "cjk-serif",
 }
 
 

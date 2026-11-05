@@ -618,7 +618,7 @@ def _tools() -> list[dict]:
     return tools
 
 
-#: 只在期刊库总开关打开时才出现在 tools/list 的工具（处理器在 JOURNAL_HANDLERS，关着时调用回 `journal_catalog_disabled`）
+#: 只在期刊库总开关打开时才出现在 tools/list 的工具（处理器在 HANDLERS，关着时调用回 `journal_catalog_disabled`）
 JOURNAL_CATALOG_TOOLS = ("tavotto_list_journals",)
 #: 带手写 `journal` 覆盖、因而也认 `journal_id` 的工具
 JOURNAL_ID_TOOLS = (
@@ -1526,11 +1526,10 @@ HANDLERS = {
     "tavotto_refresh_project": _call_refresh,
     "tavotto_session_state": _call_session_state,
     "tavotto_close_session": _call_close,
+    # 受期刊库总开关管：关着时不在 tools/list，直接调用回 `journal_catalog_disabled`（ADR 0155 §9）。
+    # 开关打开（ADR 0155 §11）后与遥测的工具名闭集（`usage.TOOLS`）一一对应
+    "tavotto_list_journals": _call_list_journals,
 }
-
-#: 受期刊库总开关管的工具处理器：**不放进 HANDLERS**——HANDLERS 与遥测的工具名闭集（`usage.TOOLS`）一一对应，
-#: 开关关着期间不改遥测枚举（ADR 0155 §9）；打开那个 PR 再把它并进去并同步遥测枚举。关着时直接调用回 `journal_catalog_disabled`。
-JOURNAL_HANDLERS = {"tavotto_list_journals": _call_list_journals}
 
 #: 结果里挂 UI 的工具（与 `_tools()` 的 `_meta` 一致）
 UI_TOOLS = ("tavotto_open_figure", "tavotto_apply_overrides")
@@ -1659,7 +1658,7 @@ def _fit_error_budget(result: dict, budget: int = ERROR_RESULT_BUDGET_BYTES) -> 
 
 
 def call_tool(name: str, args: dict) -> dict:
-    handler = HANDLERS.get(name) or JOURNAL_HANDLERS.get(name)
+    handler = HANDLERS.get(name)
     if handler is None:
         raise RpcError(METHOD_NOT_FOUND, f"没有这个工具: {name}")
     if not isinstance(args, dict):

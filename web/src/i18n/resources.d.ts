@@ -570,7 +570,7 @@ export default interface Resources {
   },
   "dialogs": {
     "closeGuard": {
-      "body": "这份排版还有未保存的修改。关闭前要保存吗？",
+      "body": "关闭前要保存吗？不保存的话，本机草稿也会留着，下次打开可以恢复。",
       "discard": "不保存",
       "save": "保存并关闭",
       "saveFailed": "保存失败，窗口保持打开。请先解决保存问题，或选择「不保存」直接关闭。",
@@ -877,6 +877,7 @@ export default interface Resources {
       "strictTitle": "按所选规范重新打开写好的文件核对；不合格或无法核验的文件不会保存。EPS 不核验。",
       "strictToggle": "严格核验产物",
       "svgHint": "矢量 · 文字默认保留为文字",
+      "svgTextOutlined": "SVG 里的文字已转成路径，不能再当文字编辑。",
       "targetNoFigure": "当前没有图",
       "tiffHint": "位图 · 无损压缩",
       "title": "导出",
@@ -946,7 +947,11 @@ export default interface Resources {
         "widths_mm_single": "单栏",
         "widths_mm_tolerance_mm": "栏宽容差"
       },
+      "formatsAccepted": "可接受 {{list}}",
+      "formatsPreferred": "推荐 {{list}}",
+      "hasRequirement": "有要求",
       "listAria": "期刊列表",
+      "needsNetwork": "这本期刊需要联网下载",
       "no": "否",
       "noJournal": "不按期刊",
       "noLimit": "不限",
@@ -955,6 +960,7 @@ export default interface Resources {
       "pick": "选择期刊",
       "picked": "已按「{{name}}」检查",
       "pickedWidth": "已按「{{name}}」检查，页宽改为 {{w}} mm",
+      "quotaLater": "期刊额度暂时用完了，稍后再试",
       "requirements": "期刊要求",
       "search": "搜索名称、缩写或 ISSN",
       "searchAria": "搜索期刊",
@@ -1410,7 +1416,7 @@ export default interface Resources {
       "landingTitle": "挑一张图，亲手改一次。",
       "loadAnother": "换一个脚本",
       "mobileNote": "精确编辑更适合桌面浏览器。这里可以查看画布；元素树与属性页需要更宽的屏幕。",
-      "noFigureBody": "没有调用 savefig()，pyplot 里也没有留下 figure。下面的脚本输出可能说明了原因。",
+      "noFigureBody": "pyplot 里没有留下 figure。下面的脚本输出可能说明了原因。",
       "noFigureTitle": "脚本跑完了，但没有产生 Matplotlib figure。",
       "overrides_other": "{{count}} 条修改",
       "panelGone": "图不见了。重新加载脚本。",
@@ -1497,6 +1503,7 @@ export default interface Resources {
       "title": "科研预设"
     },
     "profiles": {
+      "adviceHint": "建议 {{pt}} pt",
       "binding": {
         "builtinDefault": "默认规范",
         "current": "当前项目使用",
@@ -1517,6 +1524,7 @@ export default interface Resources {
       "clearRow": "清除整行（{{row}}）：这一行的每一格都回到未设置",
       "conflict": "「{{name}}」已在别处被修改。请重新打开后再编辑。",
       "copyOf": "{{name}} 副本",
+      "defaultHint": "默认 {{value}} {{unit}}",
       "delete": "删除",
       "deleteBody": "已使用它的项目不受影响，各自保留独立副本。",
       "deleteTitle": "删除「{{name}}」？",
@@ -1556,6 +1564,7 @@ export default interface Resources {
         }
       },
       "field": {
+        "columns": "栏宽",
         "defaultFont": "正文字号",
         "doubleWidth": "双栏宽",
         "exportDpi": "推荐导出分辨率",
@@ -1607,6 +1616,7 @@ export default interface Resources {
       "snapshotHint": "项目保存选中时的规则快照。全局规范之后的修改不影响本项目，除非打开「跟随更新」。",
       "snapshotTitle": "本项目实际检查的规则",
       "unset": "未设置",
+      "unspecified": "未规定",
       "useForCanvas": "用于当前画布",
       "useForCanvasSaveFirst": "先保存这份样式的改动，再用于画布",
       "useForProject": "本项目用这套规范",
@@ -2463,8 +2473,6 @@ export default interface Resources {
           "failed": "没有接好。",
           "ok": "完成。"
         },
-        "changeFolder": "更改文件夹",
-        "chooseFolder": "选择文件夹",
         "connect": "接入",
         "connected": "已接入",
         "disconnect": "断开",
@@ -2484,7 +2492,6 @@ export default interface Resources {
           "mcp_server_not_bundled": "这一版 Tavotto 不带 MCP 服务，请升级桌面版。",
           "not_desktop": "此操作仅在桌面版可用。",
           "other": "没有接好。展开详情看命令的原话。",
-          "project_root_missing": "先选一个项目文件夹。",
           "project_root_rejected": "不能选整个主目录或磁盘根目录，请选一个具体的项目文件夹。",
           "server_health_failed": "配置已写好，但 Tavotto 的服务没能启动。展开详情看原因。",
           "spawn_failed": "无法启动 Tavotto 命令行。再试一次。",
@@ -2492,7 +2499,6 @@ export default interface Resources {
         },
         "more": "{{host}} 的更多操作",
         "notDetected": "未检测到",
-        "pickFolderTitle": "让 {{host}} 用 Tavotto 处理哪个文件夹里的图？",
         "retry": "重试",
         "running": "接入中…",
         "step": {
@@ -2753,11 +2759,10 @@ export default interface Resources {
         "attemptLine": "{{source}} · {{stage}} · {{kind}}",
         "attemptsTitle": "各来源的失败记录",
         "autoCheck": "每天自动检查",
-        "autoCheckDesktop": "启动时自动检查",
-        "autoCheckDesktopReason": "桌面版每次启动都会检查，暂时不能关闭",
         "autoCheckRetry": "重新保存",
         "autoCheckSaveFailed": "未能确认设置已保存。开关仍显示上次确认的值，请重试。",
         "autoCheckSaving": "正在保存…",
+        "autoDownload": "后台下载新版本",
         "available": "有新版本",
         "channelNote": "只查 GitHub Releases 的最新正式版。关掉自动检查就不会联网。",
         "check": "检查更新",
@@ -2792,6 +2797,7 @@ export default interface Resources {
         "releaseNotes": "查看发行说明",
         "restartAfter": "后生效。当前进程仍运行旧版本代码。",
         "restartBefore": "升级完成。",
+        "restartNow": "现在重启",
         "restartStrong": "请重启 Tavotto",
         "signatureNote": "更新包由官方签名，安装前会校验；校验不过不会安装。你的项目、排版与设置都不在应用的安装目录里，升级不受影响。",
         "sourceName": {
@@ -2898,10 +2904,16 @@ export default interface Resources {
       "title": "本次问题的诊断"
     },
     "telemetry": {
-      "allow": "分享匿名用量",
+      "allow": "愿意匿名分享",
+      "allowReconsent": "继续匿名分享",
       "decline": "暂不",
-      "intro": "可发送匿名用量统计，了解哪些功能有人用。默认关闭，与账号无关。",
-      "later": "随时可在设置里改。",
+      "details": "具体会发送什么",
+      "detailsReconsent": "这次新增了什么",
+      "fact": "只发匿名的使用记录，不会发你的图、脚本、数据和文件名。",
+      "later": "随时可以在设置里改",
+      "leadA": "想知道哪些功能用得多、哪里不好用，好决定下一步先改什么。",
+      "leadB": "我们会看大家主要用哪些功能、哪里报错多，用来安排后面的修改。",
+      "leadC": "不分享也完全不影响使用。分享的话，我们能更快发现哪里出了问题。",
       "neverData": "科研数据与图内文字",
       "neverFigures": "你的图与项目文件",
       "neverPaths": "文件名与路径",
@@ -2909,10 +2921,10 @@ export default interface Resources {
       "neverScripts": "脚本与源码",
       "neverTitle": "绝不发送",
       "policy": "隐私政策",
-      "reconsentDelta": "比你上次同意时多了三项：导出怎样结束（含失败 / 取消）；AI Agent 调用了哪个 Tavotto 工具、成功与否（不含参数与内容）；以及你主动发送问题反馈时附带的一条不含内容的错误摘要。",
-      "sendsErrorSummary": "你主动发送问题反馈时，随附一条不含内容的错误摘要",
+      "reconsentDelta": "比上次多了一项：AI 编辑器查期刊列表的次数（只记查过，不含搜了什么、查的是哪本）。",
+      "sendsErrorSummary": "你主动反馈问题时附带的错误摘要（不含内容）",
       "sendsFeatures": "你使用了哪些功能",
-      "sendsOutcome": "预检与导出的结果（成功、失败或取消）",
+      "sendsOutcome": "预检和导出的结果",
       "sendsPlatform": "操作系统与处理器架构",
       "sendsTitle": "会发送",
       "sendsVersion": "Tavotto 的版本号",
@@ -3266,8 +3278,8 @@ export default interface Resources {
       "native_session_not_at_barrier": "脚本正在运行，等待下一个 Matplotlib figure。停下来后才能编辑。",
       "native_session_offline": "该图来自已结束的 Tavotto Run 会话。重新运行原命令即可继续对象级编辑。",
       "native_session_unknown": "没有此 Tavotto Run 会话。",
-      "no_figures_captured": "脚本已运行完毕，但没有产生图：没有调用 savefig，也没有留下 pyplot Figure。展开输出查看原因，常见的是数据文件缺失或分析提前结束。",
-      "no_figures_captured_silent": "脚本跑完了，却没有产生图，也没有输出：没有 savefig，也没有留下 pyplot Figure。",
+      "no_figures_captured": "脚本已运行完毕，但没有产生图：没有留下 pyplot Figure。展开输出查看原因，常见的是数据文件缺失或分析提前结束。",
+      "no_figures_captured_silent": "脚本跑完了，却没有产生图，也没有输出：没有留下 pyplot Figure。",
       "no_format": "至少要选一种输出格式。",
       "no_output": "这次导出没有产出任何文件。",
       "no_project": "尚未打开项目",
@@ -3991,6 +4003,7 @@ export default interface Resources {
       },
       "fixNativeUnsupported": "用 {{product}} Run 打开的图暂不支持自动修复",
       "fixOption": {
+        "column": "改成{{name}}宽 {{mm}} mm",
         "double": "改成双栏宽 {{mm}} mm",
         "single": "改成单栏宽 {{mm}} mm"
       },
@@ -5298,6 +5311,8 @@ export default interface Resources {
       "fontFromGeneric": "来自脚本里的「{{generic}}」字体设置",
       "fontMissingHint": "这台电脑没装这个字体，图上用的是别的字体。",
       "fontMissingTag": "（未安装）",
+      "fontNoMatch": "没有匹配的字体",
+      "fontSearch": "搜索字体",
       "size": "字号"
     },
     "tick": {
@@ -5807,9 +5822,11 @@ export default interface Resources {
       "layoutFitContentNone": "这张图还没有内容边缘信息（需要更新的渲染服务），暂时不能贴合内容",
       "layoutFitContentTip": "把四边一次裁到内容边缘，去掉四周留白",
       "layoutFollowNone": "标注不动",
-      "layoutFollowToggle": "连同标注",
-      "layoutFollowToggleTip": "缩放图时，叠在它上面的标注（文字、箭头、形状）按同一个比例一起缩放",
       "layoutFollow_other": "标注 {{count}} 个一起缩放",
+      "layoutGrowCropped": "取消裁剪后才能改图幅",
+      "layoutGrowHeight": "改图幅 · 高 {{from}} → {{to}} mm",
+      "layoutGrowUnavailable": "这张图现在改不了图幅",
+      "layoutGrowWidth": "改图幅 · 宽 {{from}} → {{to}} mm",
       "layoutResetCrop": "取消裁剪",
       "layoutResetCropTip": "恢复完整图幅，不再裁剪",
       "layoutScale": "缩放 {{from}}% → {{to}}%",
@@ -6430,7 +6447,7 @@ export default interface Resources {
         "installs": "将安装",
         "nativeFallback": "安全模式拦下了脚本的文件操作，已自动换成按真实文件运行。",
         "nativeFallbackNoWriteback": "安全模式拦下了脚本的文件操作，已自动换成按真实文件运行。这样出的图，改动不会写回脚本。",
-        "noFigureWhy": "没有调用 savefig，也没留下 Figure。",
+        "noFigureWhy": "没有留下 Figure。",
         "notUsedTitle": "没用到的环境",
         "parseKind": "参数问题",
         "parseKinds": {
@@ -7116,6 +7133,12 @@ export default interface Resources {
       "exportPackage": "导出项目包",
       "exportTip": "导出 PNG / PDF",
       "fitCanvas": "适应画布",
+      "foreignOpen": {
+        "body": "这份排版属于项目「{{name}}」，在这里打开，里面用到的脚本图会找不到。",
+        "bodyUnnamed": "这份排版属于另一个项目，在这里打开，里面用到的脚本图会找不到。",
+        "confirm": "仍然打开",
+        "title": "打开别的项目的排版"
+      },
       "fromOtherProject": "· 其他项目",
       "fromProject": "· 项目 {{name}}",
       "importPackage": "导入项目包…",
@@ -7183,6 +7206,11 @@ export default interface Resources {
     "update": {
       "banner": "工具已更新，刷新后使用新版本",
       "chip": "界面需要刷新"
+    },
+    "updateReady": {
+      "body": "新版 {{version}} 已下载好，退出时会自动装上。",
+      "chip": "新版已就绪",
+      "restart": "现在重启"
     }
   }
 }

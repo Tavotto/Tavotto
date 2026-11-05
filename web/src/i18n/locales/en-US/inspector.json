@@ -1114,6 +1114,8 @@
     "color": "Colour",
     "font": "Font",
     "fontFromGeneric": "From the script’s “{{generic}}” font setting",
+    "fontNoMatch": "No matching fonts",
+    "fontSearch": "Search fonts",
     "fontMissingHint": "That font isn’t installed, so the figure uses another one.",
     "fontMissingTag": " (not installed)",
     "size": "Size"

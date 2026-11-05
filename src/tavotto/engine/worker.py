@@ -708,6 +708,7 @@ def _patched_savefig(self, fname, *args, **kwargs):
         SESSION.savefig_observations.complete(observation, "intercepted")
         SESSION.note_artifact(observation, stem, self, kwargs.get("bbox_extra_artists"))
     if stem and SESSION is not None:
+        SESSION.buffer_saves.claim(self)  # 有 stem 了：让出缓冲区账里的名额
         SESSION.add_figure(stem, self, figcapture.SOURCE_SAVEFIG)
         SESSION.note_savefig(
             stem,
@@ -722,6 +723,15 @@ def _patched_savefig(self, fname, *args, **kwargs):
         if SESSION is not None:
             SESSION.passthrough_figures.add(id(self))
         result = _REAL_SAVEFIG(self, fname, *args, **kwargs)
+        # 真写成功之后才记账（失败的保存没有这一页，也不该留住一张从没成功存过的图）
+        if SESSION is not None and not stem and not figcapture.is_pdf_pages(fname):
+            # 写进文件对象、没有 stem 可认领的一次（PdfPages 有自己的账；`paper_style.save` 里的有 stem，上面已记）：
+            # 记图和这次的参数，脚本关掉它也补得回来
+            SESSION.buffer_saves.note(
+                self,
+                figcapture.savefig_call(fname, kwargs),
+                kwargs.get("bbox_extra_artists"),
+            )
         # 写进 PdfPages 的一页：真写成功之后才记（失败的保存没有这一页）
         if figcapture.is_pdf_pages(fname):
             _PDF_PAGES.note(fname, self)
@@ -1730,6 +1740,9 @@ class Worker(wireproto.V1Handler):
         figcapture.install_colorbar_capture(mfigure)
         _install_show_capture()
         _reset_pdf_pages()
+        # 复用的 worker 重跑：上一轮的缓冲区账不带进这一轮
+        # 与 show 账共用一本「没留强引用」的账：一张图两边都超出只数一次
+        self.session.buffer_saves = figcapture.BufferSaves(book=_SHOWN.book)
 
         # 脚本看到的 argv 必须是它自己的，不是 worker 的。不换的话
         # `sys.argv[1:]` 拿到的是 --script/--out-dir/--entry 这串内部参数，
@@ -1934,9 +1947,16 @@ class Worker(wireproto.V1Handler):
         )
         self.pdf_pages = _PDF_PAGES.summary(self.session.savefig_observations)
         _plt = sys.modules.get("matplotlib.pyplot")
-        if _plt is not None:
+        # 只用 `Figure()` 的脚本从不 import pyplot，但存进缓冲区的图照样要补
+        if _plt is not None or self.session.buffer_saves:
             fallback, dropped = figcapture.collect_pyplot_figures(
-                self.session.capture, self.script.stem, _plt, shown=_SHOWN
+                self.session.capture,
+                self.script.stem,
+                _plt,
+                shown=_SHOWN,
+                buffers=self.session.buffer_saves,
+                savefig_calls=self.session.savefig_calls,
+                savefig_extras=self.session.savefig_extras,
             )
             for stem in fallback:
                 self.session.capture_source[stem] = figcapture.SOURCE_PYPLOT

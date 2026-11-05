@@ -207,6 +207,7 @@ const SUPPORT: Record<TypographyKind, ReadonlySet<TypographyProp>> = {
   ]),
   canvasText: new Set<TypographyProp>([
     'fontFamily',
+    'fontFallback',
     'sizePt',
     'weight',
     'style',
@@ -271,6 +272,7 @@ const PATHS: Record<TypographyKind, Partial<Record<TypographyProp, string>>> = {
   },
   canvasText: {
     fontFamily: 'fontFamily',
+    fontFallback: 'sourceFont.cjk',
     sizePt: 'sizePt',
     weight: 'bold',
     style: 'italic',
@@ -527,6 +529,9 @@ function dropSourceFontIfFaceChanged(o: TextObject, before: { bold: boolean; ita
 export function resetCanvasText(o: TextObject, prop: TypographyProp): void {
   const before = faceStyleOf(o)
   switch (prop) {
+    case 'fontFallback':
+      if (o.sourceFont) delete o.sourceFont.cjk
+      break
     case 'fontFamily':
       delete o.fontFamily
       delete o.sourceFont

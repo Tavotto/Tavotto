@@ -339,6 +339,52 @@ class Judgment(unittest.TestCase):
         self.assertEqual(kinds, ["same_path_content_mismatch"])
         self.assertIn("Tavotto kept ['t0']", wrong["differences"][0]["summary"])
 
+    CAPPED = native_result(
+        figure_count=3,
+        semantics={f"figure{i}": {"titles": [f"t{i}"]} for i in range(3)},
+        savefig_last_writer={"o.png": {"figure": 2, "titles": ["t2"]}},
+    )
+
+    def test_figures_beyond_the_reported_cap_are_not_a_difference(self):
+        tav = {**self.stems(o=["t2"]), "dropped_figures": 2}
+        got = ex.compare("axis_changing", self.CAPPED, tav, None)
+        self.assertEqual(got["outcome"], "no_difference", got)
+        self.assertIn("2 figure(s) beyond the capture limit", got["note"])
+
+    def test_without_the_reported_count_it_is_still_a_difference(self):
+        got = ex.compare("axis_changing", self.CAPPED, self.stems(o=["t2"]), None)
+        self.assertEqual(
+            [d["kind"] for d in got["differences"]],
+            ["fewer_figures", "title_missing", "title_missing"],
+        )
+
+    def test_a_count_that_does_not_add_up_is_still_a_difference(self):
+        tav = {**self.stems(o=["t2"]), "dropped_figures": 1}
+        kinds = [
+            d["kind"] for d in ex.compare("axis_changing", self.CAPPED, tav, None)["differences"]
+        ]
+        self.assertIn("fewer_figures", kinds)
+
+    def test_a_cap_never_hides_a_lost_output_path(self):
+        tav = {**self.stems(other=["t2"]), "dropped_figures": 2}
+        kinds = [
+            d["kind"] for d in ex.compare("axis_changing", self.CAPPED, tav, None)["differences"]
+        ]
+        self.assertIn("fewer_figures", kinds)
+
+    def test_a_cap_never_hides_a_figure_the_user_saw(self):
+        native = {**self.CAPPED, "figures_shown": 3}
+        tav = {**self.stems(o=["t2"]), "dropped_figures": 2}
+        kinds = [d["kind"] for d in ex.compare("axis_changing", native, tav, None)["differences"]]
+        self.assertIn("fewer_figures", kinds)
+
+    def test_a_cap_never_hides_the_wrong_last_writer(self):
+        tav = {**self.stems(o=["t0"]), "dropped_figures": 2}
+        kinds = [
+            d["kind"] for d in ex.compare("axis_changing", self.CAPPED, tav, None)["differences"]
+        ]
+        self.assertEqual(kinds, ["same_path_content_mismatch"])
+
     def test_same_stem_other_format_is_owned_by_the_figure_that_saved_that_format(self):
         """原生 `o.pdf` 第一张、`o.png` 第二张（同 stem 不同格式）：Tavotto 是 `o`（pdf）与 `o-2`（png），
         `o.png` 的归属是 `o-2`，不是 `o`——按 stem 键去比会把它误判成 same_path_content_mismatch。"""
@@ -629,6 +675,25 @@ class RealDiscovery(unittest.TestCase):
             "differences": [],
         }
         self.assertFalse(ex.known_gap_findings([row])["G2"]["found"])
+
+    def test_the_observation_carries_the_products_dropped_count(self):
+        """主语是真 worker：脚本留下的图超过兜底上限时，观察里要带上产品自己报的张数。"""
+        from tavotto.engine import figcapture
+
+        extra = figcapture.MAX_PYPLOT_FALLBACK + 3
+        project = Path(self.tmp.name) / "capped"
+        project.mkdir()
+        (project / "many.py").write_text(
+            "import matplotlib.pyplot as plt\n"
+            f"for i in range({extra}):\n"
+            "    fig = plt.figure()\n"
+            "    fig.gca().plot([0, 1])\n",
+            encoding="utf-8",
+        )
+        obs = ex.tavotto_observe(project, "many.py")
+        self.assertIsNone(obs["error"], obs)
+        self.assertEqual(obs["dropped_figures"], 3, obs)
+        self.assertEqual(len(obs["stems"]), figcapture.MAX_PYPLOT_FALLBACK)
 
     def test_shape_preserving_transforms_on_a_passing_parent_make_no_fake_difference(self):
         for chain in (("import_alias",), ("argparse_out",), ("inline_to_file",)):

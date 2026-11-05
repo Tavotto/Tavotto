@@ -1,9 +1,12 @@
 # CLA staging rehearsal
 
 STAGING ONLY. These inputs deploy the native service to
-`https://cla-staging.tavotto.com` against the private sandbox
-`erwanjun/cla-e2e-sandbox-20261026` and App `erwanjun-cla-e2e-20261026`
-(id 5480322, installation 175465132). The agreements it serves are staging
+`https://cla-staging.tavotto.com` against the public organization sandbox
+`tavotto-cla-sandbox/cla-mq-sandbox` (repository 1445721664, merge queue on
+`main`) and App `erwanjun-cla-e2e-20261026` (id 5480322, installation 178570638;
+permissions checks:write, contents/pull_requests/merge_queues:read; events
+Pull request and Merge group). S1–S5 ran against the personal sandbox
+`erwanjun/cla-e2e-sandbox-20261026`, which is no longer configured. The agreements it serves are staging
 test texts: a staging signature has no legal effect. Nothing here touches the
 Tavotto repository's `cla-policy.json`, `provider.configured`, CI or required
 checks.
@@ -51,18 +54,19 @@ All commands run from `services/cla-cloudflare/` after `npm ci --ignore-scripts`
 1. Schema and seed. **Not atomic**: unlike the production bootstrap (one
    `db.batch`, see the service README), staging applies a file with
    `d1 execute`. That is acceptable only because this database is new and
-   disposable. If the readiness query below is not `1 / 88193520 / 2 / 39`,
+   disposable. If the readiness query below is not `1 / 88193520 / 2 / 41`,
    delete and recreate the database instead of repairing it.
 
        node scripts/staging-d1.mjs deployment/staging/config.json > /tmp/cla-staging.sql
        $W d1 execute tavotto-cla-staging --remote $C --file /tmp/cla-staging.sql
        $W d1 execute tavotto-cla-staging --remote $C --command "SELECT (SELECT count(*) FROM cla_native_v2_authority) a,(SELECT holder FROM cla_native_v2_authority) h,(SELECT count(*) FROM cla_native_v2_agreements) g,(SELECT count(*) FROM sqlite_master WHERE type='trigger') t"
 
-   Rehearsed on local D1 (`--local`) on 2026-11-03: `1 / 88193520 / 2 / 39`.
+   Rehearsed on local D1 (`--local`) on 2026-11-03 (before holder releases, 39 triggers); the current schema gives `1 / 88193520 / 2 / 41` (in-memory SQLite, 2026-11-04).
 
    **Rebuild** (wipes every staging signature, cannot be undone): needed
    after changing `holderName` or the agreement text, or to clear a test
-   account's withdrawal (withdrawals are immutable by design). Same
+   account's withdrawal (withdrawals are immutable by design; the rights
+   holder can also release one in the signing page, which leaves the record). Same
    database ID; config and secrets stay. Then rerun the readiness query
    above and expect the same result.
 
@@ -71,6 +75,10 @@ All commands run from `services/cla-cloudflare/` after `npm ci --ignore-scripts`
 
    Used on 2026-11-04 to clear a held test account: 104 statements, readiness
    `1 / 88193520 / 2 / 39`, no withdrawals left.
+
+   The `eligibility_releases` table (holder release of a withdrawal) adds one
+   table and two triggers: a database built before it needs one `--rebuild`,
+   and every later readiness query reads `1 / 88193520 / 2 / 41`.
 
 2. First deploy, every flag off:
 
@@ -166,8 +174,21 @@ plus `--var CLA_CI_VERIFICATION_ENABLED:true`. The exit code is the verdict.
 
 ## Later steps
 
-S6 (merge queue, which needs an
-organization-owned sandbox) is planned in the rehearsal plan and gets its
-own PR. Production cut-over is a separate approval: production resources,
+S6 (merge queue). Deploy with the S5 flags plus
+`--var CLA_MERGE_PREFIX_ASSESSMENT_ENABLED:true --var CLA_MERGE_PREFIX_READ_SESSION_ENABLED:true`.
+The read session is required on the free plan, not optional: without it every
+installation token costs two requests and the two prefix snapshots are read in
+full, so a one-PR group needs 36 external requests against the 35 work cap and
+every attempt ends `group_resource_capacity_exhausted` (staging, 2026-11-05).
+With it a one-PR group publishes in about 30. Each scheduled run logs one JSON
+line with its disposition and, on failure, the fixed rejection code (Workers
+Logs, enabled in `wrangler.staging.json`). On a `merge_group`
+`checks_requested` webhook the service records the group, assesses every PR in
+the queue prefix (each member's author must be eligible) and publishes the check
+on the group head. Repointing to a new sandbox repository changes
+`repositoryId`, so rebuild the database (`--rebuild`) first. In the sandbox:
+a ruleset on `main` with the merge queue and the required check
+`Tavotto CLA (staging)` restricted to the App; the workflow also runs on
+`merge_group` (`--event "${{ github.event_name }}"`). Production cut-over is a separate approval: production resources,
 moving the paper signature in `offline_signatures` into the service in the
 same PR that sets `provider.configured=true`, then `ci.yml` wiring (risk:high).

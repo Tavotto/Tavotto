@@ -7,8 +7,11 @@ interface PopoverProps {
   children: ReactNode
   align?: 'start' | 'center' | 'end'
   side?: 'top' | 'bottom' | 'left' | 'right'
-  /** 像素宽，或 'trigger' = 与触发器同宽（Radix 落在 Content 上的 --radix-popover-trigger-width；样张选择器用它，弹层宽跟着触发器走） */
-  width?: number | 'trigger'
+  /**
+   * 像素宽，或 'trigger' = 与触发器同宽（Radix 落在 Content 上的 --radix-popover-trigger-width；样张选择器用它，弹层宽跟着触发器走），
+   * 或 `{ min }` = 至少这么宽、触发器更宽时跟触发器
+   */
+  width?: number | 'trigger' | { min: number }
   open?: boolean
   onOpenChange?: (v: boolean) => void
   /**
@@ -21,6 +24,18 @@ interface PopoverProps {
   ariaLabel?: string
   /** 内容自己出血到边（无内边距、裁圆角、一条发丝边）：出处卡这类整卡浮层用 */
   flush?: boolean
+}
+
+const stopAtPopover = (e: Event) => e.stopPropagation()
+
+/**
+ * 浮层经 Portal 挂在 body 下，在模态对话框的 DOM 之外；对话框的滚动锁（react-remove-scroll）在 document 上
+ * `preventDefault` 一切目标不在对话框内的 wheel / touchmove，浮层里的列表就滚不动（滚动条拖得动，滚轮不行）。
+ * 让这两种事件停在浮层上、到不了 document；被动监听，不干预浏览器原生滚动。React 的 `onWheel` 挂在根上，拦不住原生监听。
+ */
+const keepScrollInPopover = (el: HTMLElement | null) => {
+  el?.addEventListener('wheel', stopAtPopover, { passive: true })
+  el?.addEventListener('touchmove', stopAtPopover, { passive: true })
 }
 
 export function Popover({
@@ -40,10 +55,18 @@ export function Popover({
       <RP.Trigger asChild>{trigger}</RP.Trigger>
       <RP.Portal>
         <RP.Content
+          ref={keepScrollInPopover}
           align={align}
           side={side}
           sideOffset={6}
-          style={{ width: width === 'trigger' ? 'var(--radix-popover-trigger-width)' : width }}
+          style={{
+            width:
+              width === 'trigger'
+                ? 'var(--radix-popover-trigger-width)'
+                : typeof width === 'object'
+                  ? `max(var(--radix-popover-trigger-width), ${width.min}px)`
+                  : width,
+          }}
           aria-label={ariaLabel}
           onOpenAutoFocus={keepFocus ? (e) => e.preventDefault() : undefined}
           onKeyDown={(e) => e.stopPropagation()}

@@ -7,7 +7,9 @@
 //! 不变的东西（信任不随来源变）：
 //! * 验签始终用 `tauri.conf.json` 里的内置公钥——来源只决定「从哪下」，不决定「信谁」。镜像清单的
 //!   `signature` 与上游逐字相同，镜像被篡改或过期都只会让验签失败、回退到下一个来源；
-//! * 只在用户按下按钮之后下载（`desktop_update_install`）；启动时只做 check。
+//! * 下载只有两个入口：用户按下按钮（`desktop_update_install`），或「后台自动下载」开着时前端在启动查到新版后
+//!   调的 `desktop_update_download`（ADR 0121 修订 2026-11-04；偏好在用户配置里，默认开、可关）。下好的包
+//!   只放进 [`UpdateState::ready`]，**绝不在运行中替换**；装上去只发生在用户点「现在重启」或退出应用时。
 //!
 //! 「无更新」不回退：第一个**答上来**的来源说没有，就是没有（ADR 0121 §3）。只有答不上来
 //! （超时 / 非 2xx / 清单坏 / 缺本平台）才换下一个来源。
@@ -46,6 +48,8 @@ pub struct Limits {
     pub stall: Duration,
     /// 下载慢时试探另一个来源的判据（`SLOW_RULE`）
     pub slow: SlowRule,
+    /// 大陆环境手动下载「先试 GitHub」的判据（`TRIAL_RULE`）
+    pub trial: TrialRule,
 }
 
 impl Default for Limits {
@@ -55,6 +59,7 @@ impl Default for Limits {
             connect: CONNECT_TIMEOUT,
             stall: STALL_TIMEOUT,
             slow: SLOW_RULE,
+            trial: TRIAL_RULE,
         }
     }
 }
@@ -256,6 +261,10 @@ pub struct Pending {
     pub update: Update,
     pub source: Source,
     pub order: Vec<Source>,
+    /// 本机是不是大陆环境（`source_order` 原始顺序里镜像在前、且两个来源都可用）。**不随冷却变**：
+    /// 冷却只改 `order`，而「下载先走 GitHub」只看这个（ADR 0121 修订 2026-11-05）。
+    /// `check` 本身只能看到已排过冷却的顺序，所以由 `run_check` 在拿到原始顺序后填。
+    pub mainland: bool,
 }
 
 /* -------------------------------------------------------------------------- */
@@ -453,6 +462,7 @@ where
                     update,
                     source,
                     order: order.to_vec(),
+                    mainland: false,
                 }))
             }
             Ok(None) => return Ok(None),
@@ -551,6 +561,143 @@ pub fn should_switch(
             eta_b < eta_a * 0.8
         }
         None => b_rate > a_rate * 1.5,
+    }
+}
+
+/// 大陆环境**手动**下载「先试 GitHub」的判据（ADR 0121 修订 2026-11-05 §五·补二）：GitHub 出第一个字节后
+/// 量 `wait`，按这段的平均速度估剩余时间，超过 `eta` 就转镜像；`wait` 内一个字节都没有也转镜像。
+#[derive(Debug, Clone, Copy)]
+pub struct TrialRule {
+    pub wait: Duration,
+    /// 总长已知：估计剩余时间超过它就转镜像
+    pub eta: Duration,
+    /// 总长未知：低于这个速度（字节/秒）就转镜像
+    pub min_rate: u64,
+}
+
+pub const TRIAL_RULE: TrialRule = TrialRule {
+    wait: Duration::from_secs(8),
+    eta: Duration::from_secs(2 * 60),
+    min_rate: 256 * 1024,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    /// 还没到判的时候
+    Wait,
+    /// GitHub 够快，留下
+    Stay,
+    /// 转镜像
+    Leave,
+}
+
+/// 试用期判定。`elapsed_ms` = 下载开始至今，`first_ms` = 第一个字节到达的时刻（没有 = `None`），
+/// `rate` = 第一个字节之后的平均速度（字节/秒）。
+pub fn trial_verdict(
+    rule: &TrialRule,
+    elapsed_ms: u64,
+    first_ms: Option<u64>,
+    total: Option<u64>,
+    done: u64,
+    rate: f64,
+) -> Verdict {
+    let wait = rule.wait.as_millis() as u64;
+    let Some(first) = first_ms else {
+        return if elapsed_ms >= wait {
+            Verdict::Leave
+        } else {
+            Verdict::Wait
+        };
+    };
+    if elapsed_ms.saturating_sub(first) < wait {
+        return Verdict::Wait;
+    }
+    let slow = match total {
+        Some(t) => rate <= 0.0 || t.saturating_sub(done) as f64 / rate > rule.eta.as_secs_f64(),
+        None => rate < rule.min_rate as f64,
+    };
+    if slow {
+        Verdict::Leave
+    } else {
+        Verdict::Stay
+    }
+}
+
+/// 下载时对「另一个来源」的态度。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pace {
+    /// 下得慢就试探另一个来源、实测更快才换（`SLOW_RULE`，原有行为）
+    Probe,
+    /// 先试用：`trial_verdict` 说 Leave 就去连另一个来源，它一出字节就换（另一个来源失败则原来源继续）
+    Trial,
+    /// 不试探：慢不换来源，只有失败 / 停滞才换
+    Steady,
+}
+
+/// 一次下载的来源顺序与步调。
+#[derive(Debug, Clone)]
+pub struct Plan {
+    pub seq: Vec<Source>,
+    pub pace: Pace,
+}
+
+impl Plan {
+    /// 原有计划：先用 check 时的来源，其余按 check 的顺序；慢了就试探。（生产里经 `plan_for`，这里给测试）
+    #[cfg(test)]
+    pub fn from_pending(p: &Pending) -> Self {
+        Self::legacy(p.source, &p.order)
+    }
+
+    fn legacy(checked_from: Source, order: &[Source]) -> Self {
+        let mut seq = vec![checked_from];
+        seq.extend(order.iter().copied().filter(|s| *s != checked_from));
+        Self {
+            seq,
+            pace: Pace::Probe,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Purpose {
+    /// 用户按下「下载并安装」（含救援页）
+    Manual,
+    /// 「后台下载」偏好开着时启动后自动下
+    Background,
+}
+
+/// 下载计划的**唯一**判据。检查（`source_order`）不变；下载在大陆环境改为 GitHub 优先：
+/// * 非大陆：原有计划（check 来源优先，慢则试探）；
+/// * 大陆·后台：`mirror_first` 为假 → [GitHub, 镜像]、不试探；为真（失败累计 / 超期，见 `update_source_memory`）→ [镜像, GitHub]；
+/// * 大陆·手动：[GitHub, 镜像]，先试用（`Pace::Trial`）。
+pub fn plan_download(p: &Pending, purpose: Purpose, mirror_first: bool) -> Plan {
+    plan_for(p.mainland, p.source, &p.order, purpose, mirror_first)
+}
+
+/// [`plan_download`] 的纯函数形态（不需要真的 `Update` 句柄，便于单测）。
+pub fn plan_for(
+    mainland: bool,
+    checked_from: Source,
+    order: &[Source],
+    purpose: Purpose,
+    mirror_first: bool,
+) -> Plan {
+    if !mainland {
+        return Plan::legacy(checked_from, order);
+    }
+    match purpose {
+        Purpose::Manual => Plan {
+            seq: vec![Source::Github, Source::Mirror],
+            pace: Pace::Trial,
+        },
+        Purpose::Background => Plan {
+            seq: if mirror_first {
+                vec![Source::Mirror, Source::Github]
+            } else {
+                vec![Source::Github, Source::Mirror]
+            },
+            pace: Pace::Steady,
+        },
     }
 }
 
@@ -710,9 +857,14 @@ struct Watched {
 }
 
 /// 下载 `update`（来自 `source`）并**验签**（插件的 `download` 在返回前用内置公钥验签）。
-/// 停滞超过 `limits.stall` 放弃；**慢**（`is_slow`）且有 `challenger` 时，一边继续下，一边重新 check
-/// 试探来源并同时下载它，量够 `probe` 后比速：`should_switch` 才换过去（丢掉原来那一路），
-/// 否则丢掉试探那一路、原来源继续，这次更新不再试探。原来源在试探期间失败 / 停滞，直接换到试探那一路。
+/// 停滞超过 `limits.stall` 放弃；`pace` 决定「慢」怎么办（有 `challenger` 时）：
+/// * `Probe`：**慢**（`is_slow`）时一边继续下，一边重新 check 试探来源并同时下载它，量够 `probe` 后比速：
+///   `should_switch` 才换过去（丢掉原来那一路），否则丢掉试探那一路、原来源继续，这次更新不再试探；
+/// * `Trial`：第一个字节后 `trial.wait` 内（或一个字节都没有时 `wait` 到了）`trial_verdict` 说 Leave，
+///   就去连试探来源，它**一出字节就换**；它连不上 / 失败则原来源继续；
+/// * `Steady`：不试探。
+///
+/// 原来源在试探期间失败 / 停滞，直接换到试探那一路。
 #[allow(clippy::too_many_arguments)] // 来源编排的四件上下文 + 这一路的来源 / 包 / 试探对象 / 进度出口
 async fn download_watched<F>(
     make: &F,
@@ -721,6 +873,7 @@ async fn download_watched<F>(
     source: Source,
     update: Update,
     challenger: Option<Source>,
+    pace: Pace,
     emit: Emit<'_>,
     cool: &Cooldown,
 ) -> Watched
@@ -732,8 +885,8 @@ where
     let rule = limits.slow;
     let relay = Relay::new(emit);
     let version = update.version.clone();
-    let tick =
-        (limits.stall.min(rule.probe) / 4).clamp(Duration::from_millis(10), Duration::from_secs(1));
+    let tick = (limits.stall.min(rule.probe).min(limits.trial.wait) / 4)
+        .clamp(Duration::from_millis(10), Duration::from_secs(1));
     let keep_ms = (rule.window.max(rule.probe) * 3).as_millis() as u64;
     let trip = |s: Source| {
         if s == Source::Mirror {
@@ -857,13 +1010,14 @@ where
                         }
                         continue;
                     };
-                    if now.saturating_sub(b_first) < rule.probe.as_millis() as u64 {
+                    if pace != Pace::Trial && now.saturating_sub(b_first) < rule.probe.as_millis() as u64 {
                         continue;
                     }
                     let a_rate = rate_since(&samples[0], b_first, (now, a.bytes));
                     let b_rate = rate_since(&samples[1], b_first, (now, b.bytes));
                     let total = a.total.or(b.total);
-                    if should_switch(total, a.bytes, a_rate, b.bytes, b_rate) {
+                    // 试用期里 GitHub 已被判慢 / 无字节：试探来源一出字节就换，不再比速
+                    if pace == Pace::Trial || should_switch(total, a.bytes, a_rate, b.bytes, b_rate) {
                         eprintln!(
                             "[updater] {source:?} {a_rate:.0} B/s 太慢，换到 {:?}（{b_rate:.0} B/s）",
                             b_source
@@ -880,16 +1034,38 @@ where
                     }
                     continue;
                 }
-                let (Some(next), false, Some(a_first)) = (challenger, probed, a.first_ms) else {
+                let (Some(next), false) = (challenger, probed) else {
                     continue;
                 };
-                if now.saturating_sub(a_first) < rule.grace.as_millis() as u64 {
-                    continue;
-                }
-                let since = now.saturating_sub(rule.window.as_millis() as u64);
-                let rate = rate_since(&samples[0], since, (now, a.bytes));
-                if is_slow(&rule, a.total, a.bytes, rate) {
-                    eprintln!("[updater] {source:?} 下载慢（{rate:.0} B/s），试探 {next:?}");
+                let leave = match pace {
+                    Pace::Steady => continue,
+                    Pace::Trial => {
+                        let rate = a
+                            .first_ms
+                            .map_or(0.0, |f| rate_since(&samples[0], f, (now, a.bytes)));
+                        match trial_verdict(&limits.trial, now, a.first_ms, a.total, a.bytes, rate)
+                        {
+                            Verdict::Wait => continue,
+                            Verdict::Stay => {
+                                // 只在试用期结束时判一次：够快就一直留下
+                                probed = true;
+                                continue;
+                            }
+                            Verdict::Leave => true,
+                        }
+                    }
+                    Pace::Probe => {
+                        let Some(a_first) = a.first_ms else { continue };
+                        if now.saturating_sub(a_first) < rule.grace.as_millis() as u64 {
+                            continue;
+                        }
+                        let since = now.saturating_sub(rule.window.as_millis() as u64);
+                        let rate = rate_since(&samples[0], since, (now, a.bytes));
+                        is_slow(&rule, a.total, a.bytes, rate)
+                    }
+                };
+                if leave {
+                    eprintln!("[updater] {source:?} 下载慢或没出字节（{pace:?}），试探 {next:?}");
                     probed = true;
                     probe_from = now;
                     b_source = Some(next);
@@ -927,6 +1103,8 @@ pub struct Fetched {
     pub source: Source,
     pub update: Update,
     pub bytes: Vec<u8>,
+    /// 成功之前失败 / 被放弃的来源（后台下载据此记 GitHub 好不好用）
+    pub attempts: Vec<Attempt>,
 }
 
 /// 安装已下载（且已验签）的包。失败不换来源——那不是来源的错。
@@ -945,15 +1123,17 @@ pub fn apply(f: Fetched) -> Result<Source, Failure> {
     })
 }
 
-/// 下载 `pending`。先用 check 时拿到的来源；它下载失败（网络 / 非 2xx / 验签 / 停滞）
-/// 就换下一个来源**重新 check + 重新下载**，且回退来源必须报出**同一个版本**——用户看到的版本号与
-/// 真正装上去的必须是同一版。下载**慢**时先试探下一个来源、实测更快才换（`download_watched`）。
-/// 返回的包已用内置公钥验过签。
+/// 按 `plan` 下载 `pending`。`plan.seq` 的第一个来源先下；它失败（网络 / 非 2xx / 验签 / 停滞）
+/// 就换下一个来源**重新 check + 重新下载**，且任何一个与 check 不同来源的来源都必须报出**同一个版本**——
+/// 用户看到的版本号与真正装上去的必须是同一版（别的版本 / 没有该版本 = `version_mismatch`，直接跳过它，
+/// 绝不悄悄换版本）。检查和下载的来源因此可以不同：check 来自镜像、下载先走 GitHub 时，GitHub 要重新 check。
+/// 下载**慢**时怎么办看 `plan.pace`（`download_watched`）。返回的包已用内置公钥验过签。
 pub async fn fetch<F>(
     make: &F,
     endpoints: &Endpoints,
     limits: &Limits,
     pending: &Pending,
+    plan: &Plan,
     emit: Emit<'_>,
     cool: &Cooldown,
 ) -> Result<Fetched, Failure>
@@ -961,24 +1141,18 @@ where
     F: Fn() -> UpdaterBuilder,
 {
     let mut attempts = Vec::new();
-    let mut seq = vec![pending.source];
-    seq.extend(
-        pending
-            .order
-            .iter()
-            .copied()
-            .filter(|s| *s != pending.source),
-    );
+    let seq = &plan.seq;
     let mut spent: Vec<Source> = Vec::new();
     // 契约 §6.3：镜像已经出过问题，这一次更新不回头再试它；这次已经用掉的来源也不再试
+    // （check 刚从镜像拿到的这个包不算「回头」：它此刻是答上来的，冷却只拦别的路径带来的镜像）
     let skip = |i: usize, s: Source, spent: &[Source]| {
-        spent.contains(&s) || (i > 0 && s == Source::Mirror && cool.active())
+        spent.contains(&s) || (i > 0 && s == Source::Mirror && s != pending.source && cool.active())
     };
     for (i, &source) in seq.iter().enumerate() {
         if skip(i, source, &spent) {
             continue;
         }
-        let mut update = if i == 0 {
+        let mut update = if source == pending.source {
             pending.update.clone()
         } else {
             match check_one(make, endpoints, source, limits).await {
@@ -1009,9 +1183,10 @@ where
             .enumerate()
             .skip(i + 1)
             .find(|(j, s)| !skip(*j, **s, &spent))
-            .map(|(_, s)| *s);
+            .map(|(_, s)| *s)
+            .filter(|_| plan.pace != Pace::Steady);
         let w = download_watched(
-            make, endpoints, limits, source, update, challenger, emit, cool,
+            make, endpoints, limits, source, update, challenger, plan.pace, emit, cool,
         )
         .await;
         attempts.extend(w.attempts);
@@ -1021,6 +1196,7 @@ where
                 source,
                 update,
                 bytes,
+                attempts,
             });
         }
     }
@@ -1043,11 +1219,55 @@ pub struct CheckedUpdate {
     pub source: Source,
 }
 
-/// 上一次 check 留下的句柄。同一时刻只允许一个 check / install 在跑（`try_lock`，撞上回 `busy`）。
+/// 上一次 check 留下的句柄。同一时刻只允许一个 check / install / download 在跑（`try_lock`，撞上回 `busy`）。
+///
+/// `ready` = 后台已下好、验过签、**还没装**的包（字节在内存里，Windows 约 157 MB，ADR 0121 修订 2026-11-04）。
+/// 用 std 的锁：退出路径（`RunEvent::Exit`，同步）要取它。装上之前一直留着，装上（或装失败）即被取走。
 #[derive(Default)]
 pub struct UpdateState {
     pub pending: tokio::sync::Mutex<Option<Pending>>,
+    pub ready: std::sync::Mutex<Option<Fetched>>,
     pub cooldown: Cooldown,
+    /// 大陆环境后台下载先 GitHub / 改镜像的跨重启记忆（`update_source_memory`）
+    pub memory: crate::update_source_memory::SourceMemory,
+}
+
+/// `desktop_update_download` 的返回：下好的是哪一版、从哪个来源。
+#[derive(Debug, Clone, Serialize)]
+pub struct Downloaded {
+    pub version: String,
+    pub source: Source,
+}
+
+/// 取出已下好的包，**只在版本与 `version` 相同时**（用户看到的版本 == 装上的版本）；不同版本原样留着。
+pub fn take_ready(state: &UpdateState, version: &str) -> Option<Fetched> {
+    let mut g = state.ready.lock().unwrap_or_else(|e| e.into_inner());
+    if g.as_ref().is_some_and(|f| f.update.version == version) {
+        g.take()
+    } else {
+        None
+    }
+}
+
+/// 退出时用：取出已下好的包（不论版本——它是比当前新的、验过签的一版）。
+pub fn take_ready_any(state: &UpdateState) -> Option<Fetched> {
+    state.ready.lock().unwrap_or_else(|e| e.into_inner()).take()
+}
+
+/// 退出应用时安装后台下好的包。调用方必须已经收掉 sidecar 并写过 `clean`（`RunEvent::Exit` 里的既有顺序），
+/// 因为 Windows 上插件的 install 会起安装器并自行退出进程。没有已下好的包 = 什么都不做。失败只记日志——
+/// 应用本来就在退出，下次启动会重新查。
+/// 退出时装包后**不**把应用重新拉起来：Windows 上插件在 passive 模式下总给安装器带 `/R`（装完重启），
+/// 而安装器参数在 check 时就定死在 `Update` 里改不了；安装器由 `ShellExecuteW` 起、继承本进程环境，
+/// 我们自己的 `windows/installer.nsi` 见到这个变量就跳过重启。「现在重启」不设它。
+pub const NO_RELAUNCH_ENV: &str = "TAVOTTO_UPDATE_NO_RELAUNCH";
+
+pub fn install_ready_on_exit(state: &UpdateState) {
+    if let Some(f) = take_ready_any(state) {
+        // 进程正在退出、sidecar 已收掉，这里没有别的线程会读环境
+        std::env::set_var(NO_RELAUNCH_ENV, "1");
+        let _ = apply(f);
+    }
 }
 
 /// GitHub 的清单地址取自 `tauri.conf.json` 的 `plugins.updater.endpoints[0]`——它仍是那里
@@ -1086,9 +1306,33 @@ where
         .try_lock()
         .map_err(|_| Failure::code("busy"))?;
     // 先清掉旧句柄：这次查不到 / 查失败，就不该还留着上一次的
-    *slot = None;
+    let prev = slot.take();
+    // 大陆环境 = 原始顺序里镜像在前且两个来源都可用；冷却改顺序，不改「我在大陆」这件事
+    let mainland = order.len() > 1 && order.first() == Some(&Source::Mirror);
     let order = state.cooldown.apply(order);
-    let found = check(make, endpoints, &order, limits, &state.cooldown).await?;
+    let found = match check(make, endpoints, &order, limits, &state.cooldown).await {
+        Ok(found) => found,
+        Err(e) => {
+            // 例外：后台已下好、验过签的包还在（退出时照样会装）——查失败（离线等）不该让「现在重启」变成空按钮。
+            // 候选恢复成那个包对应的上一次句柄，界面与壳一致（Codex #1730）
+            let ready_ver = state
+                .ready
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+                .map(|f| f.update.version.clone());
+            if let Some(p) = prev {
+                if ready_ver.as_deref() == Some(p.update.version.as_str()) {
+                    *slot = Some(p);
+                }
+            }
+            return Err(e);
+        }
+    };
+    let found = found.map(|mut p| {
+        p.mainland = mainland;
+        p
+    });
     let out = found.as_ref().map(|p| CheckedUpdate {
         version: p.update.version.clone(),
         notes: p.update.body.clone(),
@@ -1098,8 +1342,108 @@ where
         }),
         source: p.source,
     });
+    // 已下好的包只对应「现在查到的这一版」：查到的是别的版本 / 没有新版，旧包作废（别白占内存，也别在退出时装旧的）
+    {
+        let keep = found.as_ref().map(|p| p.update.version.as_str());
+        let mut ready = state.ready.lock().unwrap_or_else(|e| e.into_inner());
+        if ready.as_ref().map(|f| f.update.version.as_str()) != keep {
+            *ready = None;
+        }
+    }
     *slot = found;
     Ok(out)
+}
+
+/// 后台下载 `pending` 并放进 `state.ready`（不安装）。与 [`run_install`] 同一把锁：下载期间别的 check / install
+/// 回 `busy`。已经有同一版本的包就直接回，不再请求包地址。失败不动任何状态（用户仍可手动下载）。
+pub async fn run_download<F>(
+    make: &F,
+    endpoints: &Endpoints,
+    state: &UpdateState,
+    limits: &Limits,
+    emit: Emit<'_>,
+) -> Result<Downloaded, Failure>
+where
+    F: Fn() -> UpdaterBuilder,
+{
+    let slot = state
+        .pending
+        .try_lock()
+        .map_err(|_| Failure::code("busy"))?;
+    let pending = slot
+        .clone()
+        .ok_or_else(|| Failure::code("no_pending_update"))?;
+    {
+        let ready = state.ready.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(f) = ready
+            .as_ref()
+            .filter(|f| f.update.version == pending.update.version)
+        {
+            return Ok(Downloaded {
+                version: f.update.version.clone(),
+                source: f.source,
+            });
+        }
+    }
+    // 大陆环境：先走 GitHub，连续失败 / 超期才改镜像（跨重启记忆）；其余环境不变
+    let (plan, mem) = background_plan(state, &pending);
+    let result = fetch(
+        make,
+        endpoints,
+        limits,
+        &pending,
+        &plan,
+        emit,
+        &state.cooldown,
+    )
+    .await;
+    if let Some(mem) = mem {
+        let (won, attempts) = match &result {
+            Ok(f) => (Some(f.source), f.attempts.as_slice()),
+            Err(e) => (None, e.attempts.as_slice()),
+        };
+        let failed = attempts
+            .iter()
+            .any(|a| a.source == Source::Github && a.kind != Kind::VersionMismatch);
+        let next = crate::update_source_memory::record(
+            mem,
+            crate::update_source_memory::outcome_of(won, failed),
+        );
+        state.memory.put(next);
+    }
+    let f = result?;
+    let out = Downloaded {
+        version: f.update.version.clone(),
+        source: f.source,
+    };
+    *state.ready.lock().unwrap_or_else(|e| e.into_inner()) = Some(f);
+    Ok(out)
+}
+
+/// 后台下载的计划与（大陆环境才有的）记忆。进入时就把「这次试过一次」记下来——哪怕随后被退出打断，
+/// 下次启动也看得见（超期判据靠它）。非大陆 / 单来源：原有计划，不碰记忆。
+fn background_plan(
+    state: &UpdateState,
+    pending: &Pending,
+) -> (Plan, Option<crate::update_source_memory::Memory>) {
+    use crate::update_source_memory as usm;
+    if !pending.mainland {
+        return (plan_download(pending, Purpose::Background, false), None);
+    }
+    let now = state.memory.now();
+    let mem = usm::observe(state.memory.snapshot(), &pending.update.version, now);
+    let published = pending.update.date.map(|d| d.unix_timestamp());
+    let why = usm::prefer_mirror(&mem, published, now);
+    // 镜像在冷却（本进程里出过问题）：不绕过去，仍先 GitHub
+    let mirror_first = why.is_some() && !state.cooldown.active();
+    if let (Some(why), true) = (why, mirror_first) {
+        eprintln!("[updater] 后台下载改走镜像（{why:?}）");
+    }
+    let plan = plan_download(pending, Purpose::Background, mirror_first);
+    let mut started = mem.clone();
+    started.tries = started.tries.saturating_add(1);
+    state.memory.put(Some(started.clone()));
+    (plan, Some(started))
 }
 
 pub async fn run_install<F>(
@@ -1141,8 +1485,41 @@ where
             return Err(Failure::code("candidate_changed"));
         }
     }
+    install_pending(make, endpoints, state, limits, &pending, emit, apply).await
+}
+
+/// 装 `pending`：后台已下好**同一版本**的包就直接用它（不再请求包地址），否则现下现装。
+/// `install` 是真正动磁盘的那一步（生产里是 [`apply`]），拆出来是为了让测试不碰磁盘上的应用。
+pub(crate) async fn install_pending<F, A>(
+    make: &F,
+    endpoints: &Endpoints,
+    state: &UpdateState,
+    limits: &Limits,
+    pending: &Pending,
+    emit: Emit<'_>,
+    install: A,
+) -> Result<Source, Failure>
+where
+    F: Fn() -> UpdaterBuilder,
+    A: FnOnce(Fetched) -> Result<Source, Failure>,
+{
+    if let Some(f) = take_ready(state, &pending.update.version) {
+        return install(f);
+    }
     // 句柄保留到成功：失败后用户可以直接再按一次
-    apply(fetch(make, endpoints, limits, &pending, emit, &state.cooldown).await?)
+    let plan = plan_download(pending, Purpose::Manual, false);
+    install(
+        fetch(
+            make,
+            endpoints,
+            limits,
+            pending,
+            &plan,
+            emit,
+            &state.cooldown,
+        )
+        .await?,
+    )
 }
 
 /// 救援页「重新安装」专用的 `UpdaterBuilder` 工厂：在 `make` 之上换一个版本判据——**同版本也算可装**
@@ -1320,6 +1697,81 @@ mod tests {
         // 总长未知：要快一半以上
         assert!(!should_switch(None, 0, 100.0, 0, 140.0));
         assert!(should_switch(None, 0, 100.0, 0, 160.0));
+    }
+
+    #[test]
+    fn the_trial_judges_once_the_window_is_over_by_bytes_or_by_their_absence() {
+        let r = TrialRule {
+            wait: Duration::from_secs(8),
+            eta: Duration::from_secs(120),
+            min_rate: 256 * 1024,
+        };
+        let total = Some(190_000_000u64);
+        // 还没出字节：wait 内等，到了就转
+        assert_eq!(trial_verdict(&r, 7_999, None, total, 0, 0.0), Verdict::Wait);
+        assert_eq!(
+            trial_verdict(&r, 8_000, None, total, 0, 0.0),
+            Verdict::Leave
+        );
+        // 出了字节：从第一个字节起满 wait 才判（第 1 s 出字节，第 8.9 s 还在等）
+        assert_eq!(
+            trial_verdict(&r, 8_999, Some(1_000), total, 1, 1.0),
+            Verdict::Wait
+        );
+        // 190 MB 剩 ~180 MB：1.5 MB/s = 120 s 整 → 留；1 MB/s = 180 s → 转
+        let done = 10_000_000;
+        assert_eq!(
+            trial_verdict(&r, 9_000, Some(1_000), total, done, 1_500_000.0),
+            Verdict::Stay
+        );
+        assert_eq!(
+            trial_verdict(&r, 9_000, Some(1_000), total, done, 1_000_000.0),
+            Verdict::Leave
+        );
+        assert_eq!(
+            trial_verdict(&r, 9_000, Some(1_000), total, done, 0.0),
+            Verdict::Leave
+        );
+        // 快下完了不转
+        assert_eq!(
+            trial_verdict(&r, 9_000, Some(1_000), total, 189_999_000, 10_000.0),
+            Verdict::Stay
+        );
+        // 总长未知：低于 256 KB/s 转
+        assert_eq!(
+            trial_verdict(&r, 9_000, Some(1_000), None, done, 100_000.0),
+            Verdict::Leave
+        );
+        assert_eq!(
+            trial_verdict(&r, 9_000, Some(1_000), None, done, 1_000_000.0),
+            Verdict::Stay
+        );
+    }
+
+    #[test]
+    fn download_plans_split_from_the_check_only_on_the_mainland() {
+        use Pace::*;
+        use Purpose::*;
+        let cn = [Source::Mirror, Source::Github];
+        let world = [Source::Github, Source::Mirror];
+        // 非大陆：check 来源优先、慢则试探，后台手动都一样
+        for purpose in [Manual, Background] {
+            let p = plan_for(false, Source::Github, &world, purpose, false);
+            assert_eq!((p.seq.as_slice(), p.pace), (&world[..], Probe));
+            // 非大陆即使 mirror_first 也不理它
+            let p = plan_for(false, Source::Github, &world, purpose, true);
+            assert_eq!(p.seq.as_slice(), &world[..]);
+        }
+        // 大陆·后台：GitHub 优先、不试探；mirror_first 才倒过来
+        let p = plan_for(true, Source::Mirror, &cn, Background, false);
+        assert_eq!((p.seq.as_slice(), p.pace), (&world[..], Steady));
+        let p = plan_for(true, Source::Mirror, &cn, Background, true);
+        assert_eq!((p.seq.as_slice(), p.pace), (&cn[..], Steady));
+        // 大陆·手动：GitHub 先试用，不看 check 来源
+        for from in [Source::Mirror, Source::Github] {
+            let p = plan_for(true, from, &cn, Manual, false);
+            assert_eq!((p.seq.as_slice(), p.pace), (&world[..], Trial));
+        }
     }
 
     #[test]

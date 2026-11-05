@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { t as translate } from '@/i18n'
+import { msg, t as translate } from '@/i18n'
 import { ChevronDown } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Button } from '../ui/Button'
@@ -11,12 +11,21 @@ import { listRowClass } from '../ui/listRow'
 import { cn } from '@/lib/utils'
 import { listJournals } from '@/lib/journals'
 import { groupByPublisher, searchJournals } from '@/lib/journalPick'
+import { ensureJournalReady } from '@/lib/journalCatalogSync'
 import { clearJournal, selectJournal } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useJournalCatalogStore } from '@/store/journalCatalogStore'
+import { useUiStore } from '@/store/uiStore'
 
 const jt = (key: string, values?: Record<string, unknown>) =>
   translate(`journal.${key}`, { ns: 'dialogs', ...(values ?? {}) })
+
+/**
+ * 选择序号（模块级，选择器卸载后也还在）：每次点选 / 点「不按期刊」加一。下载要等网络，等的时候选择器仍可交互、
+ * 设置也能关掉、项目也能换——回来时序号变了（被新选择取代）或文档变了，这次结果丢弃，不去改别人的绑定与页宽
+ * （web/AGENTS.md「会在项目之间存活的 store 都有项目代际」：请求序号挡旧响应、发请求那一刻的归属挡串项目）。
+ */
+let pickSeq = 0
 
 /**
  * 期刊选择器：可搜索（名称 / 缩写 / ISSN），按出版社分组。选中 = `selectJournal`（一次提交：绑定 + 页宽跟栏，
@@ -32,7 +41,27 @@ export function JournalPicker() {
   const groups = useMemo(() => groupByPublisher(searchJournals(all, query)), [all, query])
   const first = groups[0]?.journals[0]
 
-  const choose = (id: string) => {
+  const choose = async (id: string) => {
+    // 远程目录里还没下载的刊：先向服务端取这一本的标准（种子 / 已下载的不发请求）。
+    // 额度用完 → 这本刊暂时按「不按期刊」；没网又没缓存 → 保持现状。两种都只用一条胶囊提示。
+    const seq = ++pickSeq
+    const docId = useDocumentStore.getState().documentId
+    const ready = await ensureJournalReady(id)
+    // 等下载时被新选择取代，或文档已经换了：丢弃（下载下来的刊包已并入目录，那是目录的事，与绑定无关）
+    if (seq !== pickSeq || useDocumentStore.getState().documentId !== docId) return
+    if (ready.state !== 'ready') {
+      if (ready.state === 'quota') clearJournal()
+      useUiStore
+        .getState()
+        .setStatus(
+          ready.state === 'quota'
+            ? msg('journal.quotaLater', undefined, 'dialogs')
+            : msg('journal.needsNetwork', undefined, 'dialogs'),
+          'info',
+        )
+      setOpen(false)
+      return
+    }
     selectJournal(id)
     setOpen(false)
     setQuery('')
@@ -92,6 +121,7 @@ export function JournalPicker() {
                 aria-selected={!ref}
                 data-journal-none
                 onClick={() => {
+                  pickSeq++
                   clearJournal()
                   setOpen(false)
                 }}
@@ -101,7 +131,7 @@ export function JournalPicker() {
               </button>
             )}
             {/* 「不按期刊」钉在最上面，列表在它下面自己滚：选中项再靠后也不会把它顶出视野 */}
-            <div className="flex max-h-64 flex-col overflow-y-auto">
+            <div data-journal-scroller className="flex max-h-64 flex-col overflow-y-auto">
               {all.length > 0 && groups.length === 0 && <EmptyLine data-journal-empty>{jt('noMatch')}</EmptyLine>}
               {groups.map((g) => (
                 <div key={g.publisher} role="group" aria-label={g.label} data-journal-group={g.publisher}>

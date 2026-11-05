@@ -701,6 +701,8 @@ NON_UI_CODES = {
     "bad_handoff_query",
     # `POST /api/handoff/display-ack`（重复交接的显示确认）的参数错误：调用方是前端自己的静默 fire-and-forget，不展示（ADR 0131）
     "bad_handoff_ack",
+    # `GET /api/journal-catalog/assets/<file>`：出处卡的 `<img src>`，失败时前端只显示无图占位、不读 code（ADR 0155 §10）
+    "snapshot_unavailable",
     # 一键安装的**进度**状态码，不是错误响应：它们的文案在
     # dialogs:settings.agents.install.error.*（由 pnpm i18n:check
     # 守双语齐全），不该也不能进 errors.backend 那张表。

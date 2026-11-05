@@ -689,12 +689,16 @@ def journal_profile(journal_id: str, catalog: dict | None = None) -> dict:
 #: 关着时新工具不进 tools/list、`journal_id` 一律回 `journal_catalog_disabled`；数据就绪那个 PR
 #: 把两边一起改成 true。严格同源对，`tests/test_journal_agents.py` 从 TS 源文件读字面值对拍。
 #: 生产里没有任何用户入口能改它（不读环境变量）；测试 monkeypatch 这个常量。
-JOURNAL_CATALOG_AGENTS = False
+JOURNAL_CATALOG_AGENTS = True
 
 #: Agent 入口自己的失败码（不属于库校验的闭集 `ERROR_CODES`，TS 侧没有对应物）
 AGENT_ERROR_CODES = (
     "journal_catalog_disabled",  # 入口开关关着
     "journal_id_conflict",  # journal_id 与手写 profile_id / journal 同时给
+    # 远程目录（ADR 0155 §10）：这本刊的标准要从服务端下载，下不来时**明确报错、不静默退回**
+    "journal_quota_exceeded",  # 服务端额度用完（令牌 / IP 限额）；带 retry_after_s，别换令牌重试
+    "journal_offline",  # 这本刊本地没有、又联不上网（或同步开关关着）
+    "journal_verification_failed",  # 验签 / 哈希 / 目录校验没过，整份弃用；不要采用任何来自它的数值
 )
 
 

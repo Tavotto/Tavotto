@@ -584,7 +584,11 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
             <div
               ref={railRef}
               data-notification-rail
-              className="pointer-events-none fixed inset-x-0 bottom-6 z-toast flex flex-col items-center gap-1.5 px-4"
+              className={cn(
+                'pointer-events-none fixed inset-x-0 z-toast flex flex-col items-center gap-1.5 px-4',
+                // 画布底部的浮动工具栏在模态后面也在：胶囊停在它上方，不压住它
+                toolbarUp ? 'bottom-16' : 'bottom-6',
+              )}
             >
               {toasts}
             </div>,

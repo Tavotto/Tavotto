@@ -22,8 +22,11 @@ const states = new Map<string, SourceFontState>()
 const loaded = new Set<string>()
 const loading = new Set<string>()
 const asked = new Set<string>()
-/** 这张脸自己的粗斜：注册 FontFace 时按它声明，浏览器就不会在它上面再合成一次粗体 / 斜体 */
-const styles = new Map<string, { bold: boolean; italic: boolean }>()
+/**
+ * 这张脸自己的粗斜：注册 FontFace 时按它声明，浏览器就不会在它上面再合成一次粗体 / 斜体。
+ * `unicodeRange` 限定这张脸只画哪些字（批准的中文粗体不许接管英文）。
+ */
+const styles = new Map<string, { bold: boolean; italic: boolean; unicodeRange?: string }>()
 let queued: SourceFace[] = []
 let scheduled = false
 let version = 0
@@ -45,6 +48,7 @@ async function loadPreview(f: SourceFace) {
     const face = new FontFace(cssFamilyOf(f), buf, {
       weight: st?.bold ? '700' : '400',
       style: st?.italic ? 'italic' : 'normal',
+      ...(st?.unicodeRange ? { unicodeRange: st.unicodeRange } : {}),
     })
     await face.load()
     document.fonts.add(face)
@@ -87,14 +91,20 @@ async function flush() {
 /** 取一张脸的本机状态；还没问过就排进下一次请求，先回 `unknown`。 */
 export function sourceFontState(
   f: SourceFace,
-  style?: Pick<SourceFont, 'bold' | 'italic'>,
+  style?: Pick<SourceFont, 'bold' | 'italic'> & { unicodeRange?: string },
 ): SourceFontState {
   const key = faceKey(f)
   const hit = states.get(key)
   if (hit) return hit
   if (!asked.has(key)) {
     asked.add(key)
-    if (style) styles.set(key, { bold: style.bold === true, italic: style.italic === true })
+    if (style) {
+      styles.set(key, {
+        bold: style.bold === true,
+        italic: style.italic === true,
+        ...(style.unicodeRange ? { unicodeRange: style.unicodeRange } : {}),
+      })
+    }
     queued.push(f)
     if (!scheduled) {
       scheduled = true

@@ -50,6 +50,7 @@ fn main() {
             "connect_remote",
             "desktop_update_check",
             "desktop_update_install",
+            "desktop_update_download",
             "show_app_menu",
             "take_previous_exit",
             "current_engine_exit",

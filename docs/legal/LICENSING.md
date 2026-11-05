@@ -135,7 +135,7 @@ part of Tavotto's application, wheel or desktop closure.** PDF reading, writing 
 rasterising go through the render core (`src/tavotto/rendercore/`): pikepdf
 (MPL-2.0, over qpdf Apache-2.0), fontTools (MIT), uharfbuzz (Apache-2.0, over
 HarfBuzz), pypdfium2 (Apache-2.0 / BSD-3-Clause, over PDFium BSD-3-Clause) and
-Pillow, plus the approved OFL 1.1 fonts (Liberation 2.1.5, Noto Sans SC, Noto Serif SC). The
+Pillow, plus the approved OFL 1.1 fonts (Liberation 2.1.5, Noto Sans SC, Noto Serif SC, Regular and Bold). The
 `pdfbackend/` contract layer that made the swap possible stays: no module above
 `rendercore/` imports a PDF or font library, and `scripts/ci/retirement_scan.py`
 keeps `pymupdf` / `fitz` out of the source set, the declared dependency closure

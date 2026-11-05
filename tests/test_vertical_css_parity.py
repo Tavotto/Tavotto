@@ -50,7 +50,7 @@ def _skip_reason() -> str | None:
 def _browser_columns(tmp_path: Path):
     reg = fonts.FontRegistry.discover()
     serif = reg.record_for("serif", False, False).path
-    cjk = reg.cjk_record().path
+    cjk = reg.cjk_record("serif").path
     payload = {
         "fonts": {"serif": serif.as_uri(), "cjk": cjk.as_uri()},
         "cases": [{"text": t, "size_pt": s, "line_height": lh, "h_mm": h} for t, s, lh, h in CASES],

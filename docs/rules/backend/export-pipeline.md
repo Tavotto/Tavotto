@@ -133,6 +133,7 @@ order: 210
     每个封口的临时文件（接线层 `engine/artifactinspect.py`，两个入口共用；检查器 `rendercore/inspector.py`），拒绝的那一项 `artifact_rejected` 不发布（partial 语义不变），合格的
     带 `Output.manifest`（`inspector.summary()` 投影，旧字段一个不动）。请求可带 `inspection: {mode: standard|strict,
     profile_id}`（缺省 standard，老客户端等价）；strict 的阈值只从 `profilestore.resolve_spec` 来。细则在 `rendercore.md`。
+    SVG 的 summary 另带 `text_outlined`（QA-WIN-08）：生产者在计划里报 `text_outlined: true`（没有 `<text>` 且有 matplotlib 的 `<g id="text_N">` 轮廓文字组，`artifactcheck.check_svg`）才为真，回执据此说「文字已转成路径」；没报就是 false。
 
 ## 多页 PDF：把同一份 PdfPages 的几张图合成一个文件（#1370 PR3）
 

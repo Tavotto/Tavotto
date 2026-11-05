@@ -119,9 +119,23 @@ describe('出处卡：一句话与高亮', () => {
   it('typical / recommended / range 显示原话，不显示成一个像判据的数', () => {
     const zeta = src('fx-zeta', 'min_effective_font_size_pt')
     expect(zeta.qualifier).toBe('typical')
-    expect(valueText('min_effective_font_size_pt', zeta)).toBe(zeta.mark || zeta.quote)
+    expect(valueText('min_effective_font_size_pt', zeta)).toBe(zeta.mark || '有要求')
+    // 只有原句、没有可标的数：值这一栏统一「有要求」，原话留给出处卡
+    expect(valueText('info.color_mode', { ...zeta, value: 'RGB recommended', mark: '' })).toBe('有要求')
     const wide = src('fx-cols', 'page_columns')
     expect(valueText('page_columns', wide)).toContain('90 mm')
+  })
+
+  it('展示项里的对象值不露 JSON：文件格式说成「推荐 … ；可接受 …」，按图类的 dpi 逐项列', () => {
+    const base = { qualifier: 'exact', stage: 'any', affects: 'info' } as unknown as JournalFieldSource
+    const fmt = { ...base, value: { preferred: ['EPS', 'PDF'], accepted: ['TIFF'] } } as JournalFieldSource
+    expect(valueText('info.formats_raw', fmt)).toBe('推荐 EPS / PDF；可接受 TIFF')
+    const only = { ...base, value: { preferred: [], accepted: ['AI', 'EPS'] } } as JournalFieldSource
+    expect(valueText('info.formats_raw', only)).toBe('可接受 AI / EPS')
+    const dpi = { ...base, value: { halftone: 300, 'line art': 1000 } } as JournalFieldSource
+    expect(valueText('info.dpi_by_kind', dpi)).toBe('halftone 300 dpi / line art 1000 dpi')
+    const fonts = { ...base, value: { 中文: '幼圆', 英文: 'Arial' } } as JournalFieldSource
+    expect(valueText('info.font_names_raw', fonts)).toBe('中文 幼圆 / 英文 Arial')
   })
 
   it('min / max 带方向记号；栏位列出全部「名字 + 宽度」', () => {
@@ -166,6 +180,17 @@ describe('「该期刊未规定」', () => {
     const rows = requirementRows(journalSources('fx-beta', CAT))
     expect(rows.find((r) => r.path === 'widths_mm.double')!.source).not.toBeNull()
     expect(rows.at(-1)!.path.startsWith('info.')).toBe(true)
+  })
+})
+
+describe('随包种子：Elsevier 系继承到栏位表，切过去页宽跟到最近的一栏', () => {
+  it('chemical-engineering-journal：90 / 140 / 190，页宽 150 → 140', () => {
+    const shipped = loadCatalog()
+    expect(pickJournal('chemical-engineering-journal', shipped, { pageW: 150 }).pageW).toBe(140)
+    expect(
+      derivePageColumns(journalProfile('chemical-engineering-journal', shipped)).map((c) => c.width_mm),
+    ).toEqual([90, 140, 190])
+    expect(pickJournal('water-research', shipped, { pageW: 100 }).pageW).toBe(90)
   })
 })
 

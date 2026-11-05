@@ -141,6 +141,10 @@
     "layoutCropFull": "到图边 · {{side}}未裁剪",
     "layoutCropTight": "紧凑 · {{side}}贴合内容",
     "layoutCropTrim": "裁掉留白 · {{side}} {{mm}} mm",
+    "layoutGrowCropped": "取消裁剪后才能改图幅",
+    "layoutGrowHeight": "改图幅 · 高 {{from}} → {{to}} mm",
+    "layoutGrowUnavailable": "这张图现在改不了图幅",
+    "layoutGrowWidth": "改图幅 · 宽 {{from}} → {{to}} mm",
     "frameGrow": "扩充画布 · {{side}} +{{mm}} mm",
     "frameAtEdge": "到图边 · {{side}}没有留白",
     "frameTrim": "收紧留白 · {{side}} −{{mm}} mm",
@@ -157,8 +161,6 @@
     "layoutFitContentNone": "这张图还没有内容边缘信息（需要更新的渲染服务），暂时不能贴合内容",
     "layoutFollow_other": "标注 {{count}} 个一起缩放",
     "layoutFollowNone": "标注不动",
-    "layoutFollowToggle": "连同标注",
-    "layoutFollowToggleTip": "缩放图时，叠在它上面的标注（文字、箭头、形状）按同一个比例一起缩放",
     "layoutResetCrop": "取消裁剪",
     "layoutResetCropTip": "恢复完整图幅，不再裁剪",
     "layoutScale": "缩放 {{from}}% → {{to}}%",
@@ -879,6 +881,12 @@
     "exportPackage": "导出项目包",
     "exportTip": "导出 PNG / PDF",
     "fitCanvas": "适应画布",
+    "foreignOpen": {
+      "body": "这份排版属于项目「{{name}}」，在这里打开，里面用到的脚本图会找不到。",
+      "bodyUnnamed": "这份排版属于另一个项目，在这里打开，里面用到的脚本图会找不到。",
+      "confirm": "仍然打开",
+      "title": "打开别的项目的排版"
+    },
     "fromOtherProject": "· 其他项目",
     "fromProject": "· 项目 {{name}}",
     "importPackage": "导入项目包…",
@@ -943,6 +951,11 @@
   "update": {
     "banner": "工具已更新，刷新后使用新版本",
     "chip": "界面需要刷新"
+  },
+  "updateReady": {
+    "chip": "新版已就绪",
+    "body": "新版 {{version}} 已下载好，退出时会自动装上。",
+    "restart": "现在重启"
   },
   "hints": {
     "panel_editable": "双击进入图内编辑。",
@@ -1135,7 +1148,7 @@
       "argsHidden_other": "{{count}} 个（含口令，不显示）",
       "installs": "将安装",
       "installTo": "装到",
-      "noFigureWhy": "没有调用 savefig，也没留下 Figure。",
+      "noFigureWhy": "没有留下 Figure。",
       "prompt": "脚本的提问",
       "parseKind": "参数问题",
       "parseKinds": {

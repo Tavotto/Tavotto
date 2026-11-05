@@ -173,17 +173,25 @@ describe('图内文字 → 标注：摆放', () => {
     expect(mono.y + mono.h / 2 - (dj.y + dj.h / 2)).toBeCloseTo((K.sans - K.mono) * dj.sizePt * MM_PER_PT, 6)
   })
 
-  it('原图字体、粗体、斜体：sourceFont 取 face_src，bold / italic 走仓库判据', () => {
+  it('原图字体、粗体、斜体：sourceFont 取 face_src，粗斜以那张脸为准；没有身份时走仓库判据', () => {
     const sha = 'a'.repeat(64)
     const a = figureTextToAnnotation(
       panelOf(),
       elOf(block({ weight: 'bold', style: 'oblique' }), {
-        face_src: { family: 'DejaVu Sans', sha256: sha, face: 0, bold: true, italic: false },
+        face_src: { family: 'DejaVu Sans', sha256: sha, face: 0, bold: true, italic: true },
       } as Partial<ManifestElement>),
     )!
-    expect(a.sourceFont).toEqual({ family: 'DejaVu Sans', sha256: sha, face: 0, bold: true })
+    expect(a.sourceFont).toEqual({ family: 'DejaVu Sans', sha256: sha, face: 0, bold: true, italic: true })
     expect(a.bold).toBe(true)
     expect(a.italic).toBe(true)
+    // 字体没有粗体：图里画的是常规脸，复制过来不再模拟
+    const plain = figureTextToAnnotation(
+      panelOf(),
+      elOf(block({ weight: 'bold' }), {
+        face_src: { family: 'SimHei', sha256: sha, face: 0, bold: false, italic: false },
+      } as Partial<ManifestElement>),
+    )!
+    expect(plain.bold).toBe(false)
     expect(figureTextToAnnotation(panelOf(), elOf(block({ weight: 600 })))!.bold).toBe(true)
     expect(figureTextToAnnotation(panelOf(), elOf(block({ weight: 'medium' })))!.bold).toBe(false)
     // 没有 face_src：不编身份

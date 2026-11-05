@@ -546,7 +546,14 @@ class TestPullRequestEventTypes:
         assert m, "ci-integration-gate 里读不出「聚合判定」的 run: | 块"
         return "\n".join(ln[10:] for ln in m.group(1).splitlines()) + "\n"
 
-    def _gate_verdict(self, github: dict, heavy_results: dict[str, str], tmp_path: Path) -> dict:
+    def _gate_verdict(
+        self,
+        github: dict,
+        heavy_results: dict[str, str],
+        tmp_path: Path,
+        *,
+        e2e_specs_changed: str = "",
+    ) -> dict:
         """把 ci-integration-gate 那一步**原样**跑一遍：env 由 ci.yml 里真实的表达式渲染，
         `run:` 是那一步的 Bash 原文，判定器是 `scripts/ci/aggregate_gate.py` 的副本（放在
         `$RUNNER_TEMP/trusted-gate/`，与那一步「取默认分支上的可信判定器」落的位置相同）。
@@ -577,11 +584,15 @@ class TestPullRequestEventTypes:
                 {
                     **{j: {"result": r} for j, r in heavy_results.items()},
                     # 普通 run 上分类 job 成功、docs_only=false（与 ci.yml 的 needs 形状一致）
-                    "docs-scope": {"result": "success", "outputs": {"docs_only": "false"}},
+                    "docs-scope": {
+                        "result": "success",
+                        "outputs": {"docs_only": "false", "e2e_specs_changed": e2e_specs_changed},
+                    },
                 }
             ),
             "DOCS_ONLY": "false",
             "DOCS_SCOPE_RESULT": "success",
+            "E2E_SPECS_CHANGED": e2e_specs_changed,
             "GATE_EVENT": G.render("${{ github.event_name }}", github),
             "GATE_FULL_CI": G.render(_gate_full_ci_expression(), github),
         }
@@ -656,6 +667,84 @@ class TestPullRequestEventTypes:
             assert G.truthy(G.evaluate(cond, push, NEEDS_PLAIN)) is False, (
                 f"{gate} 在 push main 上不该跑"
             )
+
+    #: PR 上改到 e2e 用例时必须在 PR 上跑的两条腿；其余三条重型仍只在 merge_group / full-ci 上跑。
+    E2E_LEGS = ("windows-exe-smoke", "posix-e2e")
+
+    @staticmethod
+    def _needs_e2e(flag: str) -> dict:
+        return {
+            "docs-scope": {
+                "result": "success",
+                "outputs": {"docs_only": "false", "e2e_specs_changed": flag},
+            }
+        }
+
+    def _runs(self, job_id: str, github: dict, flag: str) -> bool:
+        return G.truthy(G.evaluate(_folded_if(job_id), github, self._needs_e2e(flag)))
+
+    def test_e2e_spec_changes_run_the_two_e2e_legs_on_a_plain_pull_request(self):
+        """改到 web/e2e/** 的 PR（不管 risk 档、没有 full-ci）：两条 e2e 腿跑，其余三条重型照旧跳过。
+        反向：没改 e2e（输出为 false / 空）→ 五条都跳；merge_group 五条都跑，不看输出。"""
+        for github in (
+            self._pr("opened", ()),
+            self._pr("synchronize", ("risk:low",)),
+            self._pr("ready_for_review", ()),
+        ):
+            for job in self.HEAVY:
+                want = job in self.E2E_LEGS
+                assert self._runs(job, github, "true") is want, (job, "改了 e2e 用例", github)
+                assert self._runs(job, github, "false") is False, (job, "没改 e2e")
+                assert self._runs(job, github, "") is False, (job, "分类输出缺失 = 不加跑")
+        for job in self.HEAVY:
+            for flag in ("true", "false", ""):
+                assert self._runs(job, self._merge_group(), flag) is True, job
+        # push main 永远不跑重型（输出在 push 上本就不存在，这里即使伪造 true 也不跑）
+        for job in self.HEAVY:
+            assert self._runs(job, self._push_main(), "true") is False, job
+
+    def test_docs_only_still_skips_everything_even_with_the_e2e_flag(self):
+        needs = {
+            "docs-scope": {
+                "result": "success",
+                "outputs": {"docs_only": "true", "e2e_specs_changed": "true"},
+            }
+        }
+        for job in self.HEAVY:
+            assert not G.truthy(G.evaluate(_folded_if(job), self._pr("opened", ()), needs))
+
+    def test_gate_requires_the_e2e_legs_when_specs_changed(self, tmp_path):
+        """ci.yml 的 `if:` 与 Gate 对拍：Gate 那一步原样执行（真 bash + 真判定器）。
+        e2e 腿 success + 其余 skipped → success；e2e 腿红 / skipped → 失败（不是 deferred）；
+        没改 e2e → 照旧 deferred；full-ci 走 --require-heavy，不受 e2e 输出影响。"""
+        gh = self._pr("synchronize", ("risk:low",))
+        required = sorted(_required_of(_job(CI, "ci-integration-gate")))
+
+        def res(legs: str, rest: str = "skipped", **over: str) -> dict[str, str]:
+            r = {j: (legs if j in self.E2E_LEGS else rest) for j in required}
+            r.update(over)
+            return r
+
+        ok = self._gate_verdict(gh, res("success"), tmp_path, e2e_specs_changed="true")
+        assert ok["status"] == "success" and ok["reason"] == "e2e_legs_only", ok
+        for bad in ("failure", "cancelled", "skipped"):
+            got = self._gate_verdict(
+                gh, res("success", **{"posix-e2e": bad}), tmp_path, e2e_specs_changed="true"
+            )
+            assert got["status"] == "failure", (bad, got)
+        # 没改 e2e：两条腿也 skipped → deferred；若 e2e 腿跑了而输出是 false → 半跑半跳判红
+        plain = self._gate_verdict(gh, res("skipped"), tmp_path, e2e_specs_changed="false")
+        assert plain["status"] == "deferred", plain
+        half = self._gate_verdict(gh, res("success"), tmp_path, e2e_specs_changed="false")
+        assert half["status"] == "failure", half
+        # full-ci：整套必须真跑；只有 e2e 腿 success 不够
+        full = self._pr("synchronize", ("full-ci",))
+        got = self._gate_verdict(full, res("success"), tmp_path, e2e_specs_changed="true")
+        assert got["status"] == "failure", got
+        all_ok = self._gate_verdict(
+            full, res("success", "success"), tmp_path, e2e_specs_changed="true"
+        )
+        assert all_ok["status"] == "success", all_ok
 
     def test_removing_the_full_ci_label_is_judged_as_full_ci_not_as_a_plain_pr(self, tmp_path):
         """§4 ① 的核心：`unlabeled(full-ci)` 那个 run 同一 head SHA 上不许产出 deferred（绿）的

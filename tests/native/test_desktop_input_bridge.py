@@ -70,7 +70,7 @@ import getpass, json, os, sys
 # 昂贵的科学计算：外部计数文件观测它跑了几次（不是 AST 判）
 with open("compute.log", "a") as f:
     f.write("computed\\n")
-state = {"obj": object(), "pid": os.getpid()}
+state = {"obj": object(), "pid": os.getpid(), "ppid": os.getppid()}
 obj_id = id(state["obj"])
 
 def where():
@@ -87,6 +87,7 @@ tok = getpass.getpass("Token: ")
 seen["getpass_len"] = len(tok)
 seen["getpass_where"] = where()
 seen["start_pid"] = state["pid"]
+seen["start_ppid"] = state["ppid"]
 with open("seen.json", "w") as f:
     json.dump(seen, f)
 fig, ax = plt.subplots()
@@ -104,7 +105,6 @@ def test_four_input_forms_continue_in_the_same_process(tmp_path, caplog):
 
     p1 = wait_pending(session, "input")
     assert p1["prompt"] == "Your name? " and p1["masked"] is False
-    assert session.process_pid == session.owned.pid
     session.answer_input(p1["request_id"], text="Ada")
 
     p2 = wait_pending(session, "readline")
@@ -124,10 +124,11 @@ def test_four_input_forms_continue_in_the_same_process(tmp_path, caplog):
     assert seen["readline"] == "second line\n"
     assert seen["read"] == "body one\nbody two"
     assert seen["getpass_len"] == len(SECRET)
-    pid = session.owned.pid
+    pid = seen["start_pid"]
+    # 同一个进程：四次回答前后脚本 pid 不变；握手自报的就是它，纳管的是它或其 launcher 父进程
+    dk.assert_owned_process_identity(session, pid, seen["start_ppid"])
     for key in ("input_where", "readline_where", "read_where", "getpass_where"):
         assert seen[key] == {"pid": pid, "same_obj": True}, f"{key} 不是原地续跑"
-    assert seen["start_pid"] == pid
     assert (work / "compute.log").read_text().splitlines() == ["computed"], "科学计算不止一次"
     assert session.pending_input is None
 

@@ -115,7 +115,7 @@ def test_packaged_fonts_are_exactly_the_allowlist():
     from tavotto.rendercore import fonts
 
     allow = fonts.load_allowlist()
-    assert len(allow.faces) == 14 and {f.license for f in allow.faces.values()} == {"OFL-1.1"}
+    assert len(allow.faces) == 16 and {f.license for f in allow.faces.values()} == {"OFL-1.1"}
     root = fonts.fonts_dir()
     if not root.is_dir():
         return

@@ -1,6 +1,6 @@
 # ADR 0121：应用内更新的来源顺序与回退——国内 COS 镜像优先（大陆环境），GitHub Release 兜底
 
-日期：2026-10-12 · 状态：**Proposed（实现与测试已在分支内；镜像侧由 `Tavotto/infra` 提供，真实 COS 未验）**
+日期：2026-10-12（2026-11-04、2026-11-05 修订）· 状态：**Proposed（实现与测试已在分支内；镜像侧由 `Tavotto/infra` 提供，真实 COS 未验）**
 相关：[0002 桌面壳](0002-tauri-desktop-shell.md)「应用内更新」一节、[0076 macOS Intel 构建](0076-macos-intel-desktop-build.md)；
 规则全文 `docs/rules/frontend/desktop-and-update.md`、`src-tauri/AGENTS.md`「更新通道」；隐私声明 `docs/privacy.md`「Update checks」
 
@@ -63,10 +63,10 @@ infra 契约 §6.2 对此的表述是「镜像 version ≤ 本机 = 已最新，
 
 ### 四、下载与回退语义（`app_update::fetch`）
 
-用户按下「下载并安装」后，在**同一次**动作里按顺序尝试，不在后台自动下载：
+用户按下「下载并安装」后，在**同一次**动作里按顺序尝试（2026-11-04 起另有后台下载，见 §八）：
 
-1. 先用 check 时的来源下载。失败类别：网络 / 非 2xx / **验签不过** / **停滞** → 换下一个来源，**重新 check + 重新下载**；
-2. 回退来源必须报出**同一个版本号**——用户看到并确认的版本与真正装上去的必须是同一版。回退来源报「更新的版本」或「无更新」都记
+1. 先用 check 时的来源下载（**2026-11-05 修订**：大陆环境下载先走 GitHub，不再是 check 的来源，见 §九；其余环境不变）。失败类别：网络 / 非 2xx / **验签不过** / **停滞** → 换下一个来源，**重新 check + 重新下载**；
+2. 回退来源（凡是与 check 不同的来源，含 §九 的 GitHub）必须报出**同一个版本号**——用户看到并确认的版本与真正装上去的必须是同一版。回退来源报「更新的版本」或「无更新」都记
    `version_mismatch` 并放弃该来源，不下载（不悄悄装别的版本）；
 3. 安装本身失败（`install_failed`）不换来源——那不是来源的错；
 4. 全部失败 → `all_sources_failed`，附逐来源的 `{source, stage, kind}`（闭集枚举，**不带原始错误文本**，原文只写 stderr/app.log）。
@@ -90,7 +90,7 @@ infra 契约 §6.2 对此的表述是「镜像 version ≤ 本机 = 已最新，
 * 下载：连接超时 10 s；**停滞超时 30 s**（这么久没收到任何字节放弃该来源，含「连上了但服务端不发 body」）；**不设下载总时长**，慢网下大包本来就久；
 * 实现：check 用 reqwest 的 `timeout`，下载用 `select!` 竞速一个停滞看门狗（`tokio::time`，每 ≤1 s 比对最近一次收到字节的时刻）。
 
-### 五·补、下载慢时试探另一个来源（2026-11-04 修订）
+### 五·补、下载慢时试探另一个来源（2026-11-04 修订；**2026-11-05：只适用于非大陆环境**，大陆环境见 §九）
 
 用户反馈应用内更新慢：包 157–204 MB，而停滞看门狗只管「一个字节都不来」——来源在发、但只有几十 KB/s 时，
 永远不会换到另一个来源。修订（`app_update::download_watched`，判据 `SLOW_RULE` / `is_slow` / `should_switch`）：
@@ -118,11 +118,86 @@ infra 契约 §6.2 对此的表述是「镜像 version ≤ 本机 = 已最新，
 `TAVOTTO_E2E_RUN_UPDATE=1` 的 headless 触发口走**同一份** `app_update::run_check` / `run_install`；新增 `TAVOTTO_E2E_UPDATE_SOURCE=mirror|github`
 把来源**钉死成单个且不回退**（否则坏掉的镜像会被 GitHub 悄悄兜住，CI 假绿），让 CI 能分别验两条来源；不设 = 与用户相同的自动顺序。退出码 40/41/42 不变。
 
+### 八、后台静默下载 + 退出时安装（2026-11-04 修订）
+
+此前「只在用户按下按钮之后下载」。现在桌面版有一个偏好 **「后台下载新版本」（默认开，设置 → 更新里可关）**，开着时：
+
+* 启动查到新版 → **不弹** `UpdateNoticeDialog`，前端立刻调新命令 `desktop_update_download`：走同一个 `fetch`（失败换来源、
+  镜像冷却、内置公钥验签**一个字都没动**；2026-11-05 起大陆环境的来源顺序与「不试探」见 §九，其余环境来源顺序与 §五·补的慢速试探不变），下好的包（含 `Update` 句柄）放进 `UpdateState.ready` 槽，**不安装**。
+* 下好 → 顶栏出「新版已就绪」胶囊（形态同 `BuildMismatchChip`，点开一句话 + 「现在重启」）。
+* **安装只发生在两个时刻**：用户点「现在重启」（`desktop_update_install` 发现槽里有**同一版本**的包就直接装它，**不再请求包地址**；
+  版本不同则照旧现下现装）；或退出应用（`RunEvent::Exit` 里，在既有的 `shutdown_sidecar()` + `mark_clean()` **之后**调
+  `install_ready_on_exit`）。Windows 上插件的 install 会起 NSIS（passive）并自行结束进程，`updater_builder()` 挂的
+  `on_before_exit → mark_clean` 照旧生效。
+* **后台下载失败 → 静默**（不弹窗、不出错误胶囊）；「⋯」菜单圆点与设置页的手动「下载并安装」仍在。关掉偏好 = 回到此前的行为
+  （启动弹询问框、点了才下）。
+* 「用户看到的版本 == 装上的版本」：槽按版本取（`take_ready`），`run_check` 查到别的版本 / 没有新版时作废旧包；退出时装的是槽里那一版。
+
+**为什么 macOS 也不下好就立刻替换 .app**：sidecar 按需 `import` 模块、渲染 worker 之后还会从包里起进程，运行中换掉包会让同一会话混用
+新旧版本的代码。所以两个平台都放到退出时装（这也同时满足「运行中的会话不变」的可复现纪律）。
+
+**代价（接受）**：下好的包字节常驻内存直到安装（Windows 约 157 MB，macOS 更小）；后台下载期间 `pending` 锁一直被持有，
+设置页的「检查更新」不会撞 `busy` 报错——前端据 `desktopPhase` 直接显示后台下载的进度。退出时安装失败只记日志，
+下次启动会重新查；退出时装包前端记不到，所以遥测 `update_completed` 对这条路径**没有**记录（白名单不扩，不另造事件）。
+
+**偏好存哪**：后端用户配置 `config.json` 的 `updates.auto_download`（`engine/updater.py`），经桌面也放行的 `/api/update/settings`
+读写，值由桌面下的停用响应 `/api/update/check` 带回。**不放 localStorage**：桌面 Flask 端口可能变（`port_memory`），localStorage 按
+origin 隔离，端口一变「已关闭」会悄悄复位成开。
+
+### 九、检查与下载的来源拆开：大陆环境下载先走 GitHub（2026-11-05 修订，用户拍板）
+
+**动机**：镜像的带宽与流量成本由维护者承担，而后台静默下载是每个大陆用户每个新版本都会发生的大流量；检查清单很小、且必须避免 GitHub
+每次超时，所以只把**下载**挪回 GitHub，检查不动。
+
+**检查**：不变。`source_order` 一个字不改，大陆仍是镜像先答，「第一个答上来的来源说了算」「无更新即终局」照旧（§二、§三）。
+
+**「大陆环境」**＝`run_check` 拿到的**原始**来源顺序里镜像在前、且有两个来源（`Pending::mainland`）。冷却（§四·补）只改 `Pending::order`，
+不改这件事——镜像冷却中的大陆用户仍然是大陆用户。e2e 钉死单来源（§七）不算大陆，不试探、不改道，与此前一致。非大陆环境：下载计划
+完全是 §四–§五·补 的原样（`Plan::from_pending`），也不读写下面的记忆文件。
+
+**下载计划**（`app_update::plan_download` / `plan_for` 是唯一判据；`fetch` 按 `Plan { seq, pace }` 执行）：
+
+| 场景 | 来源顺序 | 步调 |
+| --- | --- | --- |
+| 非大陆（含冷却、含单来源） | check 的来源，然后按 check 顺序 | `Probe`：慢则试探，更快才换（§五·补） |
+| 大陆·后台 | `[GitHub, 镜像]`；失败累计 / 超期时 `[镜像, GitHub]` | `Steady`：**慢不换来源**，只有失败 / 停滞才换（停滞仍是 §五 的 30 s） |
+| 大陆·手动（含救援页） | `[GitHub, 镜像]` | `Trial`：见下 |
+
+**检查与下载来源不同怎么办**：`fetch` 对任何不是 check 来源的来源都**重新 check**（`check_one`），报出的版本必须与用户看到的相同——
+GitHub 比镜像新（镜像滞后）、或还没有这个版本，都记 `version_mismatch` 并**跳过它**，直接用 check 来源（镜像）下载，绝不悄悄换版本。
+这一步不算「GitHub 坏了」（不进失败计数）。重新 check 用 §五 的 10 s `CHECK_TIMEOUT`：GitHub 被丢包时手动下载要多等这一段才能转镜像（已知代价）。
+镜像在冷却中时不再回头试它，但 check 刚从镜像拿到的那个包不算「回头」（`skip` 里 `s != pending.source`）。
+
+**大陆·手动 `Trial`**（`TRIAL_RULE`，纯函数 `trial_verdict`）：GitHub 开始下载后——① 8 s 内一个字节都没有 → 转镜像；② 出第一个字节后量 8 s，
+按这段平均速度估剩余时间，**超过 2 分钟**（总长未知：低于 256 KB/s）→ 转镜像；否则一直留在 GitHub，只判这一次。「转」＝去重新 check 镜像（同版本）并下载，
+**它一出字节就换**（丢掉 GitHub 那一路，前端收到新的 `Started`，进度归零）；镜像 check 不过 / 下载失败 / 不出字节，GitHub 那一路继续下完
+（避免「GitHub 慢但能下完、镜像坏了」反而失败）。GitHub 自己失败 / 停滞照旧落到镜像。
+
+**大陆·后台的改道记忆**（`src-tauri/src/update_source_memory.rs`，纯函数 `observe` / `prefer_mirror` / `outcome_of` / `record`）：
+后台只在启动时下一次，所以「连续失败」与「超期」要跨重启。落一个小文件 `app_config_dir()/update-source.json`（与 `desktop-port`、`session-state.json` 同处；
+**只有** `{version, first_seen, tries, failures}`，无路径无标识符）。读不到 = 没有记录，写不进 = 这次不记，一律静默，最坏只是多试几次 GitHub。
+
+* 阈值：**同一版本上后台走 GitHub 连续失败 3 次**（`FAILURES_BEFORE_MIRROR`），或 **新版发布超过 3 天**（`OVERDUE_AFTER`）且这台机器上后台**至少试过一次**
+  → 之后后台改走镜像（`[镜像, GitHub]`）。「试过」在每次后台下载**开始时**就记（`tries+1`，先落盘），所以被退出打断、从不报错的慢下载也能累计到超期。
+  「至少试过一次」是为了隔了很久才打开应用的人：新版早过了 3 天，但这台机器没试过，不该一上来绕过 GitHub。
+* 「失败」＝这一轮里 GitHub 那一环出过问题（check 失败 / 下载失败 / 停滞 / 验签不过），不论最后是不是镜像兜住了；**GitHub 报了别的版本不算**（那是镜像滞后）。
+  一次 GitHub 下成功 → 整条记录删除（连续计数清零）。镜像下成功**不**清记录：下好的包只在内存里，重启后要继续走镜像，不能重头再试三次 GitHub。
+  换版本 → 新记录，从头计。镜像冷却中不改道（仍先 GitHub），冷却见 §四·补。
+* **发布时间**取清单已有的 `pub_date`（插件解析成 `Update::date`）；**取不到时回退为「本机第一次见到这个版本」的时刻**（`first_seen`）。
+  回退只会让超期判得更晚（不会比真实发布更早），是保守方向：最坏是多试几天 GitHub，不会把流量提前压给镜像。
+* 手动下载**不读也不写**这份记忆（用户在场，自己看得见慢，`Trial` 已兜住）。
+
+**不变的**：「回退来源必须同一版本」「换来源进度归零」「内置公钥验签」「镜像 `not_on_mirror` / 冷却」「钉死单来源不试探」；`tauri.conf.json` 的 endpoints
+仍只有 GitHub 一条；遥测白名单不动。**生效范围**：只对包含本改动的客户端之后的升级生效（已安装的旧客户端按旧行为升级到它）。
+
+**接受的代价**：大陆用户会在后台对 GitHub 发请求（`docs/privacy.md`「Update checks」已写明）；GitHub 在大陆不稳时，一个版本最多要多等 3 次启动才改道镜像
+（或 3 天）；手动下载在 GitHub 被丢包时要多等一个 check 超时。**未验证（NOT_RUN）**：真实大陆网络下 GitHub 的实际表现与阈值是否合适、Windows 真机。
+
 ## 与既有承诺的冲突（已同步更新的面向用户文档）
 
 | 位置 | 原承诺 | 现状 |
 | --- | --- | --- |
-| `docs/privacy.md`「Update checks」 | 只写 GitHub Releases | 加：桌面版按顺序联系 `dl.tavotto.cn`（维护者运营，位于中国大陆）与 GitHub；镜像只收到标准 HTTPS 请求元数据（IP、UA、时间），无任何标识符 / 遥测 / 项目内容；顺序规则；下载仍只在用户确认之后；验签不依赖来源 |
+| `docs/privacy.md`「Update checks」 | 只写 GitHub Releases | （2026-11-05 再改：大陆环境下载先 GitHub、改道记忆文件，见 §九；2026-11-04 再改：默认后台下载、可关、退出时安装，见 §八）加：桌面版按顺序联系 `dl.tavotto.cn`（维护者运营，位于中国大陆）与 GitHub；镜像只收到标准 HTTPS 请求元数据（IP、UA、时间），无任何标识符 / 遥测 / 项目内容；顺序规则；下载仍只在用户确认之后；验签不依赖来源 |
 | `README.md` / `README.zh-CN.md`「Everything runs on your machine」 | 「每天一次去 GitHub Releases」 | 加桌面版镜像一句 |
 | `docs/rules/frontend/desktop-and-update.md`、`src-tauri/AGENTS.md`、`docs/adr/0002` 末节 | 前端经插件检查 / 下载 | 改为经壳自有命令；不再放 `updater:default` |
 | 网站（`Tavotto/Tavotto_website`）隐私页 / 下载页 | 同 README | **仓库外**，需另行同步（本分支不动） |
@@ -131,6 +206,11 @@ infra 契约 §6.2 对此的表述是「镜像 version ≤ 本机 = 已最新，
 
 * 发版流程多一步：镜像的 `latest.json` + 安装包同步（infra 负责）。**镜像没同步时客户端自然落到 GitHub 或判「无更新」**——前者无害，后者是 §三 接受的滞后。
 * 镜像清单 `signature` 必须与上游**逐字相同**；若 infra 重新签名，会因公钥不符而全部回退到 GitHub（不会装错，但镜像等于白建）。
-* 未验证（NOT_RUN）：真实 COS（`dl.tavotto.cn`）上的清单 / 包；真机（含 Windows NSIS passive、macOS 公证后的 .app.tar.gz）上的完整更新；
+* 未验证（NOT_RUN）：§八 的真机退出时安装（macOS 就地替换 / Windows NSIS passive）；真实 COS（`dl.tavotto.cn`）上的清单 / 包；真机（含 Windows NSIS passive、macOS 公证后的 .app.tar.gz）上的完整更新；
   中国大陆真实网络下的体验。实现的状态机用「本地假 HTTP 服务 + 测试密钥签名的包」端到端验过（`src-tauri/src/app_update_flow_tests.rs`），安装步骤在测试里不执行。
 * 备案 / 主体：`dl.tavotto.cn` 的域名与云资源归属由维护者另行处理，客户端只认这个常量。
+
+* **Windows 退出时装完不重新拉起应用**：插件在 passive 模式下总给 NSIS 带 `/R`（装完重启），参数在 check 时就定死在 `Update`
+  里（私有字段，改不了）。所以退出时安装前，壳设环境变量 `TAVOTTO_UPDATE_NO_RELAUNCH=1`（`app_update::NO_RELAUNCH_ENV`），
+  `ShellExecuteW` 起的安装器继承它，`windows/installer.nsi` 的 `.onInstSuccess` 见到它就跳过 `RunAsUser`；「现在重启」不设，照旧重启。
+  看护：`tests/test_nsis_template.py::test_update_installed_on_quit_does_not_relaunch_the_app`（变量名与壳常量同源）。

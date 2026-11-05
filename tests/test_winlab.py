@@ -3062,7 +3062,7 @@ def _button_writes(ctx: dict, entry: dict | None = None) -> dict:
     entry = entry or {
         "command": str(ctx["cli"]),
         "args": ["mcp"],
-        "env": {A.CONNECT_ROOTS_ENV: str(ctx["proj"])},
+        "env": dict(A.CONNECT_EXPECTED_ENV[ctx["host_id"]]),
     }
     for f, path in ctx["targets"]:
         d = json.loads(f.read_text(encoding="utf-8"))
@@ -3143,8 +3143,9 @@ def test_connect_judge_accepts_exactly_what_the_button_should_write(tmp_path, ho
     [
         (lambda e, c: e.update(args=["mcp", "--x"]), "args"),
         (lambda e, c: e.update(command=str(c["proj"] / "python.exe")), "command"),
-        (lambda e, c: e["env"].update(EXTRA="1"), "env keys"),
-        (lambda e, c: e["env"].update({A.CONNECT_ROOTS_ENV: str(c["real_home"])}), "chosen folder"),
+        (lambda e, c: e["env"].update(EXTRA="1"), "env"),
+        # 旧按钮的形状：写死一个文件夹，会把宿主锁在那一个项目里
+        (lambda e, c: e.update(env={A.CONNECT_ROOTS_ENV: str(c["proj"])}), "env"),
     ],
 )
 def test_connect_judge_rejects_a_wrong_entry(tmp_path, mutate, problem):
@@ -3153,7 +3154,7 @@ def test_connect_judge_rejects_a_wrong_entry(tmp_path, mutate, problem):
     entry = {
         "command": str(ctx["cli"]),
         "args": ["mcp"],
-        "env": {A.CONNECT_ROOTS_ENV: str(ctx["proj"])},
+        "env": dict(A.CONNECT_EXPECTED_ENV["zcode"]),
     }
     mutate(entry, ctx)
     _button_writes(ctx, entry)
@@ -4035,3 +4036,70 @@ def test_convert_driver_serves_the_app_on_a_real_loopback_port_and_calls_it_over
         assert api.call("GET", "/missing")[0] == 404
     finally:
         server.shutdown()
+
+
+# --------------------------------------------------------------------------- managed-cli（#1739）
+def test_managed_cli_modes_are_a_closed_set_and_direct_only():
+    t = A.TASKS["managed-cli"]
+    assert t.modes == ("all", "npmjs", "mirror") and t.networks == ("direct",)
+    assert A.validate_test_args(t, [], None, "direct", None, None, "npmjs") is None
+    assert "does not accept --mode" in A.validate_test_args(
+        t, [], None, "direct", None, None, "github"
+    )
+    assert "network" in A.validate_test_args(t, [], None, "trojan", None, None, "all")
+
+
+def _managed_cli_run(tmp_path, monkeypatch, stdout: str, exit_code: int):
+    lab = A.Lab(tmp_path)
+    (lab.repo / "scripts").mkdir(parents=True)
+    (lab.repo / "scripts" / "verify_managed_cli.py").write_text("# stub\n", encoding="utf-8")
+    run_dir = tmp_path / "run"
+    (run_dir / "evidence").mkdir(parents=True)
+    seen = {}
+
+    def fake(argv, cwd, env, prefix, timeout, stdin_data=None):
+        seen["argv"] = argv
+        Path(f"{prefix}.stdout.log").write_text(stdout, encoding="utf-8")
+        return {"exit_code": exit_code, "timed_out": False, "duration_s": 1.0}
+
+    monkeypatch.setattr(A, "_run_logged", fake)
+    return A.run_managed_cli_task(lab, run_dir, {}, "npmjs"), seen
+
+
+def test_managed_cli_task_passes_only_on_verifier_ok(tmp_path, monkeypatch):
+    ok = {
+        "cli": "codex",
+        "version": "0.166.0",
+        "ok": True,
+        "results": [{"source": "npmjs", "ok": True, "seconds": 12.0}],
+    }
+    body, seen = _managed_cli_run(tmp_path, monkeypatch, "log line\n" + json.dumps(ok) + "\n", 0)
+    assert body["result"] == "passed" and "npmjs: ok" in body["summary"]
+    assert seen["argv"][-2:] == ["--source", "npmjs"]  # 只透传登记过的来源键
+
+
+def test_managed_cli_task_fails_on_mismatch_or_garbage(tmp_path, monkeypatch):
+    bad = {
+        "cli": "codex",
+        "version": "0.166.0",
+        "ok": False,
+        "results": [{"source": "npmjs", "ok": False, "error": "managed_cli_hash_mismatch"}],
+    }
+    body, _ = _managed_cli_run(tmp_path, monkeypatch, json.dumps(bad), 1)
+    assert body["result"] == "failed" and "managed_cli_hash_mismatch" in body["summary"]
+    body, _ = _managed_cli_run(tmp_path / "b", monkeypatch, "Traceback ...", 1)
+    assert body["result"] == "error"
+
+
+def test_managed_cli_task_without_verifier_is_not_run(tmp_path):
+    run_dir = tmp_path / "run"
+    (run_dir / "evidence").mkdir(parents=True)
+    assert A.run_managed_cli_task(A.Lab(tmp_path), run_dir, {}, "all")["result"] == "not_run"
+
+
+def test_connect_expected_env_matches_what_the_product_writes():
+    """执行器自己的期望（不 import 产品）与产品 `hostconnect.env_for` 对拍：漂了，Lab 会把对的配置判成写错。"""
+    from tavotto.engine import hostconnect
+
+    for host_id, env in A.CONNECT_EXPECTED_ENV.items():
+        assert hostconnect.env_for(host_id) == env, host_id

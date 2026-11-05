@@ -1,3 +1,0 @@
-## Gradient-filled peaks keep their gradient when you change their colour
-
-Some scripts draw a peak's gradient fill as many thin colour stripes clipped to the peak's outline (common in XPS / spectroscopy peak fitting). Selecting such a peak used to offer a single fill colour, and changing it flattened the whole gradient into one solid colour. The properties panel now shows a "Gradient" row with the top and bottom colours (left and right for a horizontal gradient) and a preview bar; picking a new colour for either end recolours the peak while keeping the gradient's original light-to-dark profile, and Reset brings back the script's colours. The script itself is not changed. Legend swatches that the script draws by hand are not recoloured along with the peak yet.

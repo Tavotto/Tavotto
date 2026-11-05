@@ -104,6 +104,7 @@ def tavotto_observe(project: Path, script: str, deep: dict | None = None) -> dic
                 obs["stems"][stem] = {"titles": _titles(manifest)}
             obs["savefig_calls"] = _savefig_calls(worker)
             obs["pdf_pages"] = _pdf_pages(worker)
+            obs["dropped_figures"] = int(built.get("dropped_figures") or 0)
             if deep:
                 _observe_deep(obs, worker, manifests, deep, project, script, entry)
         finally:
@@ -280,6 +281,24 @@ def _path_owner_matches(path: str, stems: dict, calls: dict | None, native_title
     return any(stems[name]["titles"] == native_titles for name in owners if name in stems)
 
 
+def capped_figures(nat: dict, tavotto: dict) -> int:
+    """产品按兜底上限如实少收的张数；不是这种情况就返回 0。
+
+    上限内外的张数要正好对上，脚本写出的每个路径都还在，也没有图 show 给用户看过，才算：
+    这时少掉的只是被覆盖或从未交给用户的中间图。对不上时照常报差异，真丢图不会被盖掉。
+    """
+    dropped = int(tavotto.get("dropped_figures") or 0)
+    stems = tavotto.get("stems") or {}
+    if (
+        dropped > 0
+        and len(stems) + dropped == nat["figure_count"]
+        and not nat["figures_shown"]
+        and all(Path(path).stem in stems for path in nat["last_writer"])
+    ):
+        return dropped
+    return 0
+
+
 def compare(
     candidate_class: str,
     native: dict,
@@ -315,6 +334,7 @@ def compare(
             }
     diffs = []
     n, stems = nat["figure_count"], tavotto.get("stems") or {}
+    capped = capped_figures(nat, tavotto)
     if tavotto.get("error") and not stems:
         if n:
             code = tavotto["error"]["code"]
@@ -327,7 +347,7 @@ def compare(
                 )
             )
     else:
-        if 0 < len(stems) < n:
+        if 0 < len(stems) < n and not capped:
             diffs.append(
                 _diff(
                     "fewer_figures",
@@ -381,7 +401,7 @@ def compare(
                 )
         seen = [v["titles"] for v in stems.values()]
         for title in nat["titles"]:
-            if title and stems and not any(title in titles for titles in seen):
+            if title and stems and not capped and not any(title in titles for titles in seen):
                 diffs.append(
                     _diff(
                         "title_missing",
@@ -400,7 +420,10 @@ def compare(
             "differences": [],
             "note": f"Tavotto error after partial observation: {tavotto['error'].get('code')}",
         }
-    return {"outcome": "difference_found" if diffs else "no_difference", "differences": diffs}
+    verdict = {"outcome": "difference_found" if diffs else "no_difference", "differences": diffs}
+    if capped:
+        verdict["note"] = f"{capped} figure(s) beyond the capture limit, reported by the product"
+    return verdict
 
 
 def _diff(kind: str, summary: str, category: str, evidence: dict) -> dict:
@@ -1178,6 +1201,7 @@ def evidence_summary(record: dict) -> dict | None:
             "route": (tavotto or {}).get("route"),
             "error": (tavotto or {}).get("error"),
             "stems": {k: v["titles"] for k, v in ((tavotto or {}).get("stems") or {}).items()},
+            "dropped_figures": int((tavotto or {}).get("dropped_figures") or 0),
         },
     }
 

@@ -596,6 +596,7 @@ jobs:
       pull-requests: read
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
+      e2e_specs_changed: ${{ steps.classify.outputs.e2e_specs_changed }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -1608,7 +1609,7 @@ jobs:
           python -m pip install --upgrade pip build
           python -m build
       # 退役扫描（U10，ADR 0072）：wheel 的 METADATA 运行时 Requires-Dist 零 pymupdf、里面没有原生库、
-      # 批准字体 14 张 + 覆盖表都在——主语是**这个 wheel**（产物），不是 checkout。
+      # 批准字体 16 张 + 覆盖表都在——主语是**这个 wheel**（产物），不是 checkout。
       - name: 退役扫描（wheel）
         shell: bash
         run: python scripts/ci/retirement_scan.py --skip source,deps,block --wheel dist/*.whl
@@ -1747,10 +1748,17 @@ jobs:
     # 显式按事件分支，不写 `!= 'pull_request'` 这种过宽条件：那种否定式会把
     # push / schedule / 未来新增的任何事件全兜进重型路径，而 PR 字段只在
     # pull_request 事件里存在——merge_group payload 里没有 draft / labels。
+    # **改到 e2e 用例的 PR 在 PR 上也跑这条腿**（不管 risk 档、有没有 full-ci）：`docs-scope` 的输出
+    # `e2e_specs_changed`（web/e2e/** 与 playwright 配置，见 scripts/ci/docs_scope.py）为 true 时，
+    # windows-exe-smoke 与 posix-e2e 两条 e2e 腿一起在 PR 上跑——#1736 只改了一步 e2e 的
+    # click→Tab，PR 上这两条腿都 skipped，进合并组才第一次跑、Windows webkit 红了被踢
+    # （merge group run 41817554523）。merge_group / full-ci 的条件不变；Gate 见
+    # ci-integration-gate 的 `--e2e-legs`，规则 docs/rules/ci/ci-lanes.md。
     if: >-
       (github.event_name == 'merge_group'
       || (github.event_name == 'pull_request'
-          && contains(github.event.pull_request.labels.*.name, 'full-ci')))
+          && (contains(github.event.pull_request.labels.*.name, 'full-ci')
+              || needs.docs-scope.outputs.e2e_specs_changed == 'true')))
       && needs.docs-scope.outputs.docs_only != 'true'
     # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
     needs: [docs-scope, frontend]
@@ -1913,7 +1921,7 @@ jobs:
           print("内置 runtime 与 runtime/ 逐字节一致")
           PY
 
-      # 退役扫描（U10，ADR 0072）：冻结产物里的原生库名单零 mupdf、PDFium / qpdf 在、字体 14 张——主语是 dist/。
+      # 退役扫描（U10，ADR 0072）：冻结产物里的原生库名单零 mupdf、PDFium / qpdf 在、字体 16 张——主语是 dist/。
       - name: 退役扫描（冻结产物）
         shell: bash
         run: python scripts/ci/retirement_scan.py --skip source,deps,block --dist dist/Tavotto
@@ -2360,7 +2368,7 @@ jobs:
           print("内置 runtime 与 runtime/ 逐字节一致")
           PY
 
-      # 退役扫描（U10，ADR 0072）：冻结产物里的原生库名单零 mupdf、PDFium / qpdf 在、字体 14 张——主语是 dist/。
+      # 退役扫描（U10，ADR 0072）：冻结产物里的原生库名单零 mupdf、PDFium / qpdf 在、字体 16 张——主语是 dist/。
       - name: 退役扫描（冻结产物）
         shell: bash
         run: python scripts/ci/retirement_scan.py --skip source,deps,block --dist dist/Tavotto
@@ -2485,10 +2493,17 @@ jobs:
     # 合并资格档：与另外两条重腿同档，只在 merge_group 的组合提交（或带
     # `full-ci` 标签的 PR）上跑，PR 快线不受影响。显式按事件分支，不写
     # `!= 'pull_request'` 那种过宽的否定条件。
+    # **改到 e2e 用例的 PR 在 PR 上也跑这条腿**（不管 risk 档、有没有 full-ci）：`docs-scope` 的输出
+    # `e2e_specs_changed`（web/e2e/** 与 playwright 配置，见 scripts/ci/docs_scope.py）为 true 时，
+    # windows-exe-smoke 与 posix-e2e 两条 e2e 腿一起在 PR 上跑——#1736 只改了一步 e2e 的
+    # click→Tab，PR 上这两条腿都 skipped，进合并组才第一次跑、Windows webkit 红了被踢
+    # （merge group run 41817554523）。merge_group / full-ci 的条件不变；Gate 见
+    # ci-integration-gate 的 `--e2e-legs`，规则 docs/rules/ci/ci-lanes.md。
     if: >-
       (github.event_name == 'merge_group'
       || (github.event_name == 'pull_request'
-          && contains(github.event.pull_request.labels.*.name, 'full-ci')))
+          && (contains(github.event.pull_request.labels.*.name, 'full-ci')
+              || needs.docs-scope.outputs.e2e_specs_changed == 'true')))
       && needs.docs-scope.outputs.docs_only != 'true'
     # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
     needs: [docs-scope, frontend]
@@ -2752,6 +2767,11 @@ jobs:
           GATE_FULL_CI: ${{ github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'full-ci') || (github.event.action == 'unlabeled' && github.event.label.name == 'full-ci')) }}
           DOCS_ONLY: ${{ needs.docs-scope.outputs.docs_only }}
           DOCS_SCOPE_RESULT: ${{ needs.docs-scope.result }}
+          E2E_SPECS_CHANGED: ${{ needs.docs-scope.outputs.e2e_specs_changed }}
+        # **改到 e2e 用例的普通 PR**（`E2E_SPECS_CHANGED == true`，仅 --allow-deferred 那一档）：windows-exe-smoke /
+        # posix-e2e 在 PR 上本该跑（它们的 `if:` 读同一个输出），所以多传 `--e2e-classifier docs-scope
+        # --e2e-legs …`：判定器核对分类 job success + 输出后，要求这两条腿**真实 success**、其余重型全 skipped
+        # （仍推迟到 merge_group）。证据不成立时参数根本不传（与引入前逐字相同）。
         # **docs-only 快车道**（`docs-scope` 在这个 Gate 的 needs 里，但不在 required 闭集里）：
         #   * docs_only=true：多传 `--classifier docs-scope --docs-only-skippable <五个重型>`，
         #     判定器核对分类 job 的 success + 输出后才放行 skipped（merge_group 上同样生效）；
@@ -2771,6 +2791,9 @@ jobs:
           if [ "$DOCS_ONLY" = "true" ]; then
             EXTRA=(--classifier docs-scope
                    --docs-only-skippable backend-platforms,package,windows-exe-smoke,macos-app-smoke,posix-e2e)
+          elif [ "$GATE_EVENT" = "pull_request" ] && [ "$GATE_FULL_CI" != "true" ] \
+               && [ "$DOCS_SCOPE_RESULT" = "success" ] && [ "$E2E_SPECS_CHANGED" = "true" ]; then
+            EXTRA=(--e2e-classifier docs-scope --e2e-legs "windows-exe-smoke,posix-e2e")
           elif [ "$DOCS_SCOPE_RESULT" = "success" ]; then
             NEEDS_JSON=$(printf '%s' "$NEEDS_JSON" | jq -c 'del(.["docs-scope"])')
           fi

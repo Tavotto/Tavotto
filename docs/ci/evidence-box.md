@@ -56,6 +56,9 @@ scp -r tavotto-evidence-box:/srv/tavotto-evidence/runs/<run> ~/TavottoEvidence/
 - `raw.githubusercontent.com` 取字体会卡住不动：`/srv/tavotto-evidence/cache/fonts/` 是批准字体的持久缓存，
   每次准备先放进去、装完存回来；fetch_fonts 对每个文件重核 sha256，缓存被改过也进不了镜像。
   新机器上第一次可以从维护者本机 `scp` 一份已过 `fetch_fonts.py --check` 的字体进去。
+- 2026-11-05 实测 raw.githubusercontent.com 连续全部被重置，`github.com/.../raw/` 也跳到那里；新批准的字体因此进不了缓存，准备失败。
+  准备容器现在先跑 `scripts/evidencebox/mirror_fill.py`，从 jsDelivr 补缓存里缺的文件。只换来源，每个文件仍按仓库钉的 sha256 核过才落盘；
+  补不到不算失败，之后的 fetch 走原来源并决定成败。
 - S0 的上游源码同样走 raw.githubusercontent：`cache/research-sources/` 是持久缓存，准备时先放进去、
   实测这台机器约五分之一请求能通（秒级被重置），所以 `fetch` 最多 40 轮、间隔 5 s，**每一轮**都把已取到的存回，下一轮 / 下一晚只补缺的；`fetch` 逐个重核 cohort 里钉的 sha256，对不上就报错。
 

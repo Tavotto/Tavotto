@@ -212,6 +212,19 @@ export interface SourceFace {
   sha256: string
   /** 字体集（.ttc）里的第几张脸；单脸文件为 0 */
   face: number
+  /**
+   * 同族的其它粗斜（ADR 0169 修订），最多三张。行内 `\\textbf{}` / `\\textit{}` 与中文加粗按它换脸。
+   * 归属来自字体清单；缺席 = 这张脸是单个文件（复制自图内文字），行内粗斜用 `fontFamily` 的批准脸。
+   */
+  siblings?: SiblingFace[]
+}
+
+/** 同族里另一张脸：只有身份和它自己的粗斜，名字跟随所在的 `SourceFace`。 */
+export interface SiblingFace {
+  sha256: string
+  face: number
+  bold?: boolean
+  italic?: boolean
 }
 
 /**
@@ -243,7 +256,7 @@ export interface TextObject extends ObjectBase {
    * matplotlib 的 Flask 进程里，画得出来的就是批准字体集合里的 Liberation 三族。
    */
   fontFamily?: 'serif' | 'sans-serif' | 'monospace'
-  /** 原图字体的身份（ADR 0164）；见 `SourceFont`。可选，缺席 = 用 `fontFamily` 对应的批准族。 */
+  /** 字体的身份：原图字体（ADR 0164）或用户选的本机字体（ADR 0169）；见 `SourceFont`。可选，缺席 = 用 `fontFamily` 对应的批准族。 */
   sourceFont?: SourceFont
   /**
    * 排向（ADR 0163「横排 / 竖排」）。**可选：老文档没有它 = 横排**，磁盘格式不升版，导出载荷也不多字段；

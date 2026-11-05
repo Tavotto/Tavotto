@@ -115,7 +115,7 @@ class FakeProvider:
             )
         return self._cache[key]
 
-    def cjk_face(self, family: str) -> FakeFace | None:
+    def cjk_face(self, family: str, bold: bool = False) -> FakeFace | None:
         """CJK 脸随族（ADR 0060 2026-11-04 修订）：serif 与其余族是两张不同的脸（不同身份）。"""
         if not self._cjk:
             return None

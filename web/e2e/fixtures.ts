@@ -103,6 +103,8 @@ export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
         // 同意态是 unset，首启询问框会盖在画布上，之后每一次点击都点在
         // 遮罩上；② 就算它不挡路，CI 也绝不该产生真实的产品事件。
         TAVOTTO_NO_TELEMETRY: '1',
+        // 远程期刊目录（ADR 0155 §10）：e2e 不连生产；要测它的用例用 page.route 假后端，不走真实远端
+        TAVOTTO_NO_JOURNAL_SYNC: '1',
         // 「发送问题反馈」发行版默认开启、内置端点是生产（ADR 0118）。e2e 绝不连生产：默认硬关；
         // 要测它的用例（diagnostics-send.spec.ts）显式传 '0' + 回环端点。
         TAVOTTO_NO_DIAG_UPLOAD: '1',

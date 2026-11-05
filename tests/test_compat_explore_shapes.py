@@ -680,15 +680,14 @@ class RealExecution(unittest.TestCase):
                     [{"path": artifact["path"], "pages": native_pages}],
                 )
 
-    def test_bytesio_close_is_the_known_gap_749(self):
-        """savefig 到 BytesIO 再 close：原生有一张图，Tavotto 一张都没捕获（script_no_figure）。登记已知、已看到（家族 G6-bytesio-close-zero-figures）。"""
+    def test_bytesio_close_is_captured_like_native_749(self):
+        """savefig 到 BytesIO 再 close：原生有一张图，#749 起 Tavotto 也补回来（曾是 G6-bytesio-close-zero-figures 的
+        script_no_figure），逐项无差异。"""
         for case in self.PARENTS:
             with self.subTest(parent=case):
                 record = self.check_axis_changing("bytesio_close", case)
-                self.assertEqual(record["judgment"]["outcome"], "difference_found", record)
-                self.assertEqual(self.kinds(record), BYTESIO_KINDS, record["judgment"])
-                zero = record["judgment"]["differences"][0]
-                self.assertEqual(zero["evidence"]["tavotto_error"], "script_no_figure")
+                self.assertEqual(record["judgment"]["outcome"], "no_difference", record["judgment"])
+                self.assertEqual(len(record["tavotto"]["stems"]), record["native"]["figure_count"])
 
     def test_same_stem_two_figs_matches_native_file_by_file(self):
         """同一 stem 两张图、后写的被 close。#1250 起第二张另起 `<stem>-2`，#1309 起每个落盘文件按「谁写的」
@@ -718,9 +717,6 @@ class RealExecution(unittest.TestCase):
                 self.assertEqual(record["judgment"]["outcome"], "no_difference", record["judgment"])
                 self.assertEqual(record["stages"]["fidelity"]["status"], "passed", record["stages"])
 
-
-#: 已知缺口的差异种类（Tavotto 产品侧，不是模板 bug；这里只登记「已知、已看到」，不替产品掩盖）
-BYTESIO_KINDS = {"zero_figures"}
 
 for _name in ENTRY_FORMS:
     setattr(

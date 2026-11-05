@@ -172,7 +172,8 @@ export function PackagesSettings() {
 
       {/* ---------------- 用户安装（这一页存在的理由） ---------------- */}
       <FormSection title={pk('userTitle')} data-settings-anchor="packages.install">
-        <FieldGroup>
+        {/* 安装一行与它的反馈直接放在标题下，不再套一层灰卡（2026-11-04 用户：输入框本身已是灰底，外框多余） */}
+        <div data-packages-install className="flex flex-col gap-2">
           {/* 安装一行（2026-10-07 设计审计 §9.1）：输入框铺满，「在 PyPI 查找」次级在中间，「安装」主按钮贴右
               ——回车仍是安装，主动作在表单的收尾处 */}
           <form
@@ -220,7 +221,7 @@ export function PackagesSettings() {
               包一多，点了「安装」页面上什么都没发生，进度在屏幕外 */}
           <JobPanel progress={progress} errorCode={errorCode} errorText={errorText} />
           <LookupPanel locked={locked} onInstall={start} />
-        </FieldGroup>
+        </div>
 
         {/* 用户包是一组条目行（2026-10 设计审计第二轮）：一包一行，名称 + 版本胶囊 + 只在不正常时出现的状态胶囊，
             来源在第二行，动作贴右。此前是一张四列表，列头与每格的「已安装」把一屏占满，真正要看的变化反而不显眼 */}

@@ -25,7 +25,7 @@ import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, worldToMm } from '@/store/viewportStore'
 import { isSourceFont } from '@/lib/sourceFont'
 import { useSourceFonts } from '@/lib/sourceFontCache'
-import { previewStackOf } from '@/lib/sourceFontPreview'
+import { approvedCjkBoldFor, previewStackOf } from '@/lib/sourceFontPreview'
 import { canvasFontStack, effectiveCanvasFamily, WRITING_MODE_VERTICAL } from '@/lib/typography'
 import type { TextObject } from '@/types/document'
 
@@ -149,7 +149,9 @@ export function TextView({
   useSourceFonts()
   const stack = canvasFontStack(effectiveCanvasFamily(obj))
   const source = isSourceFont(obj.sourceFont) ? obj.sourceFont : undefined
-  const previewStack = previewStackOf(source, stack)
+  const own = { bold: obj.bold === true, italic: obj.italic === true }
+  const boldCjk = approvedCjkBoldFor(effectiveCanvasFamily(obj), obj.text)
+  const previewStack = previewStackOf(source, stack, own, undefined, boldCjk)
 
   return (
     <div
@@ -231,6 +233,7 @@ export function TextView({
           interpretation={obj.interpretation}
           format={obj.textFormat}
           family={effectiveCanvasFamily(obj)}
+          runStack={source || boldCjk ? (run) => previewStackOf(source, stack, own, run, boldCjk) : undefined}
           vertical={vertical ? { columnPx, stack: previewStack } : undefined}
         />
       )}
@@ -255,6 +258,7 @@ function RenderedText({
   interpretation,
   format,
   family,
+  runStack,
   vertical,
 }: {
   text: string
@@ -262,6 +266,8 @@ function RenderedText({
   interpretation?: TextInterpretation
   format?: TextFormat
   family: string
+  /** 带行内粗斜的片段用哪个字体栈（本机字体按片段换脸，ADR 0169 修订）；缺席 = 继承外层 */
+  runStack?: (run: { bold: boolean; italic: boolean }) => string
   /** 竖排：公式整块侧躺（`MathFormula` 的竖排形态） */
   vertical?: { columnPx: number; stack: string }
 }) {
@@ -283,6 +289,7 @@ function RenderedText({
         const style: CSSProperties = {}
         if (r.italic) style.fontStyle = 'italic'
         if (r.bold) style.fontWeight = 700
+        if (runStack && (r.bold || r.italic)) style.fontFamily = runStack({ bold: !!r.bold, italic: !!r.italic })
         if (r.script !== '') {
           style.fontSize = sizePx * SCRIPT_SIZE
           // 正 = 抬高；vertical-align 的正值就是往上，故下标取负

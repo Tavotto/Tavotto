@@ -4,6 +4,7 @@ import { ArtifactValidationError, FIGSIZE_SOURCE_POLICY, verifiedSource, type Ar
 import { apiUrl, apiUrlFor, currentProjectId, withProject, withProjectFor } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
 import type { ExportRoute } from '@/lib/exportRoute'
+import type { FontCatalog } from '@/lib/fontCatalog'
 import type { Remedy } from '@/lib/fixRemedy'
 import type {
   FigureDocument,
@@ -2043,6 +2044,8 @@ export interface ArtifactManifestSummary {
   fonts_used?: string[]
   plan_identity?: string | null
   backend?: string | null
+  /** SVG 里的文字确实被画成了轮廓（不能再当文字编辑）；只有后端明确报了才是 true，老服务端没有 */
+  text_outlined?: boolean
   /** 四身份（U09，ADR 0070）：semantic / render / artifact / run 并列，谁也不含谁；旧后端没有 RenderPlan 时前两个是 null */
   identity?: ArtifactIdentity | null
   /** 来源：源产物公开身份、回执公开事实、节点表（U09）；老服务端没有 */
@@ -2259,6 +2262,10 @@ export const fetchSourceFontStatus = (fonts: { sha256: string; face: number }[])
       body: JSON.stringify({ fonts }),
     },
   )
+
+/** 这台机器上画布文字能用的字体（ADR 0169）；`state: 'scanning'` 时清单还不全，过一会儿再问。 */
+export const fetchSourceFontCatalog = () =>
+  jsonFetch<{ ok: boolean; state: 'ready' | 'scanning' } & FontCatalog>('/api/source-fonts/catalog')
 
 /** 本机上这张脸的字节（单脸 sfnt）；只给预览加载用，不供禁止嵌入的脸。失败抛错（调用方退回批准族）。 */
 export const fetchSourceFontBytes = async (sha256: string, face: number): Promise<ArrayBuffer> => {
@@ -4943,6 +4950,8 @@ export interface UpdateStatus {
   can_self_update?: boolean
   upgrade_command?: string
   auto_check: boolean
+  /** 桌面版：查到新版后台静默下载（默认开）。偏好存在用户配置里（`updates.auto_download`），不在 localStorage */
+  auto_download?: boolean
   /** true = 这次没联网，回的是上次的结果 */
   cached?: boolean
   checked_at_ms?: number
@@ -4965,8 +4974,8 @@ export interface UpdateApplyResult {
 export const checkUpdate = (force = false) =>
   jsonFetch<UpdateStatus>(`/api/update/check${force ? '?force=1' : ''}`)
 
-export const patchUpdateSettings = (patch: { auto_check: boolean }) =>
-  jsonFetch<{ auto_check: boolean }>('/api/update/settings', {
+export const patchUpdateSettings = (patch: { auto_check?: boolean; auto_download?: boolean }) =>
+  jsonFetch<{ auto_check: boolean; auto_download: boolean }>('/api/update/settings', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),

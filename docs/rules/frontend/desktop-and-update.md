@@ -27,10 +27,18 @@ order: 270
 - **桌面更新经壳的自有命令，不直接用 `@tauri-apps/plugin-updater`**（ADR 0121）：`checkDesktopUpdate` →
   `desktop_update_check`（带 `uiLang`），`installDesktopUpdate` → `desktop_update_install`（`Channel` 收
   Started/Progress/Finished，换来源重下时 `Started` 再来一次、进度归零），返回实际来源。来源顺序、回退、
-  超时全在 Rust 侧（`app_update.rs`），前端不重算。错误是 `DesktopUpdateError`（稳定 `code` + 逐来源
+  超时全在 Rust 侧（`app_update.rs`），前端不重算（2026-11-05 起检查与下载的来源可以不同：大陆环境镜像答检查、GitHub 先下载，
+ADR 0121 §九；前端拿到的 `source` 仍是实际下载来源，只进「技术详情」）。错误是 `DesktopUpdateError`（稳定 `code` + 逐来源
   `attempts`），**壳回的字符串不当句子显示**。来源（镜像 / GitHub）与失败记录**只进「技术详情」折叠区**
   （`updateStore.desktopSource` / `desktopAttempts`），不新增横幅、不进主文案。看护 `lib/desktop.test.ts`、
   `store/updateStore.test.ts`、`components/settings/updateStates.test.tsx`。
+- **后台自动下载 + 「新版已就绪」胶囊**（2026-11-04，ADR 0121 §八）：偏好 `status.auto_download`（后端用户配置，默认开；
+  `autoDownloadOn()` 只认后端明确回报的 true，取不到按关）。开着时 `checkUpdateOnStartup()` 先取偏好、再 `checkDesktop()`、
+  再 `downloadDesktopInBackground()`；`pendingUpdateNotice` 的 `desktopAutoDownload` 让询问框让位；下好 → `desktopReady`，
+  顶栏 `DesktopUpdateChip`（形态同 `BuildMismatchChip`）→「现在重启」= `restartNow()`（`installDesktop` 用壳里已下好的包，再 relaunch）。
+  后台失败静默（不写 `desktopError`）。**进度节流**在 `desktop.ts` 的 `makeProgressHandler`（前台安装与后台下载共用）：Started /
+  Finished 立即发，Progress 只在比例变化 ≥0.5% 或距上次 ≥100 ms 时发。看护 `store/updateBackground.test.ts`、
+  `components/desktopUpdateChip.test.tsx`、`components/settings/updateAutoDownload.test.tsx`、`lib/desktop.test.ts`。
 - **查到新版怎么说出口**（2026-09-12）：启动时弹一次 `components/UpdateNoticeDialog.tsx`
   （与 `TelemetryConsentDialog` 同一层挂载，项目选择页与工作区都有）；「该不该弹、弹什么」
   只在 `lib/updateNotice.ts` 判——桌面只看 `desktopUpdate`（桌面模式 `status` 可能一直

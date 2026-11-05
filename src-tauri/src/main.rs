@@ -28,7 +28,9 @@ mod rescue;
 mod screen_ppi;
 mod shell_report;
 mod sidecar;
+mod update_source_memory;
 mod window_chrome;
+mod window_fit;
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -972,14 +974,16 @@ fn open_remote_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     let slot = state.remote.clone();
     let nav_handle = app.clone();
     let new_window_handle = app.clone();
+    let (remote_size, remote_min) =
+        window_fit::fit_to_primary(app, (1280.0, 860.0), (1024.0, 680.0));
     let win = tauri::WebviewWindowBuilder::new(
         app,
         REMOTE_WINDOW,
         tauri::WebviewUrl::App(connect_page_url(locale).into()),
     )
     .title(i18n::text(locale).remote_window_title)
-    .inner_size(1280.0, 860.0)
-    .min_inner_size(1024.0, 680.0)
+    .inner_size(remote_size.0, remote_size.1)
+    .min_inner_size(remote_min.0, remote_min.1)
     .incognito(true)
     .initialization_script(REMOTE_WINDOW_MARKER)
     // 与主窗口同理：把 HTML5 拖放还给页面（素材拖进画布）
@@ -1408,6 +1412,8 @@ fn restore_main_window_state(win: &tauri::WebviewWindow) {
     if let Err(e) = win.restore_state(window_state_flags()) {
         eprintln!("restore main window state: {e}");
     }
+    // 插件把保存过的物理尺寸原样设回、不看工作区：换了屏幕 / 缩放后可能比屏幕还大（window_fit.rs）
+    window_fit::clamp_restored_window(win, (1024.0, 680.0));
 }
 
 /// Windows：主窗口的菜单栏藏起来（窗框形态见 `window_chrome`）。菜单仍挂在窗口上——加速键
@@ -1938,6 +1944,30 @@ async fn update_install(
     .await
 }
 
+/// 应用内更新·后台下载的实现：只下载 + 验签，放进 `UpdateState::ready`，不安装。
+async fn update_download(
+    app: &tauri::AppHandle,
+    state: &app_update::UpdateState,
+    emit: app_update::Emit<'_>,
+) -> Result<app_update::Downloaded, app_update::Failure> {
+    let endpoints = app_update::endpoints(app)?;
+    // 大陆环境后台先 GitHub / 改镜像的跨重启记忆，放 app_config_dir（读写失败静默）
+    state.memory.bind(
+        app.path()
+            .app_config_dir()
+            .ok()
+            .map(|d| update_source_memory::path(&d)),
+    );
+    app_update::run_download(
+        &|| updater_builder(app),
+        &endpoints,
+        state,
+        &app_update::Limits::default(),
+        emit,
+    )
+    .await
+}
+
 /// 救援页「重新安装」的实现：查 + 装一气呵成，允许同版本（`app_update::run_reinstall`）。
 /// 只有 `rescue::rescue_reinstall` 调它（先过 `gate_reinstall`）。
 async fn update_reinstall(
@@ -1983,6 +2013,24 @@ async fn desktop_update_install(
 ) -> Result<app_update::Source, app_update::Failure> {
     only_main_window(&window).map_err(|_| app_update::Failure::code("main_window_only"))?;
     update_install(&app, &state, None, &|ev| {
+        let _ = on_event.send(ev);
+    })
+    .await
+}
+
+/// 应用内更新·后台下载上一次查到的那一版（「后台自动下载」开着时，前端在启动查到新版后调）。
+/// 只下载 + 用内置公钥验签，包放进内存里的 `ready` 槽，**不安装**——装上去只发生在
+/// `desktop_update_install`（用户点「现在重启」，用槽里的包，不再下载）或退出应用时（`RunEvent::Exit`）。
+/// 与 check / install 同一把锁：下载期间它们回 `busy`。只许主窗口调。
+#[tauri::command]
+async fn desktop_update_download(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, app_update::UpdateState>,
+    on_event: tauri::ipc::Channel<app_update::DownloadEvent>,
+) -> Result<app_update::Downloaded, app_update::Failure> {
+    only_main_window(&window).map_err(|_| app_update::Failure::code("main_window_only"))?;
+    update_download(&app, &state, &|ev| {
         let _ = on_event.send(ev);
     })
     .await
@@ -2067,6 +2115,7 @@ fn main() {
             connect_remote,
             desktop_update_check,
             desktop_update_install,
+            desktop_update_download,
             show_app_menu,
             take_previous_exit,
             current_engine_exit,
@@ -2156,6 +2205,9 @@ fn main() {
                 marker.mark_running();
                 let _ = state.marker.set(marker);
             }
+            // 小屏 / 高缩放下窗口不得大于工作区（window_fit.rs）
+            let (main_size, main_min) =
+                window_fit::fit_to_primary(&handle, (1280.0, 860.0), (1024.0, 680.0));
             let win = tauri::WebviewWindowBuilder::new(
                 app,
                 MAIN_WINDOW,
@@ -2163,9 +2215,10 @@ fn main() {
                 tauri::WebviewUrl::App(format!("splash.html?lang={}", boot_locale.tag()).into()),
             )
             .title("Tavotto")
-            .inner_size(1280.0, 860.0)
-            // 三栏工作台的断点下限：再窄左右栏会互相挤压（见 CLAUDE.md 视觉纪律）
-            .min_inner_size(1024.0, 680.0)
+            .inner_size(main_size.0, main_size.1)
+            // 三栏工作台的断点下限：再窄左右栏会互相挤压（见 CLAUDE.md 视觉纪律）；
+            // 屏幕装不下时由 window_fit 收到工作区以内
+            .min_inner_size(main_min.0, main_min.1)
             // 窗框与页面顶栏融成一片（window_chrome.rs）：macOS 标题栏叠在页面上、红绿灯进顶栏，
             // Windows 去掉系统窗框、窗口按钮由页面画；并注入窗框标记，页面据它让出红绿灯 /
             // 摆出「菜单」与窗口按钮
@@ -2244,6 +2297,11 @@ fn main() {
                 if let Some(m) = state.marker.get() {
                     m.mark_clean();
                 }
+            }
+            // 最后：后台已下好的更新包在退出时装上（下次打开就是新版）。必须排在 sidecar 收掉与 clean 之后——
+            // Windows 上插件 install 会起安装器并自行退出进程（`updater_builder` 的 on_before_exit 也会写 clean）
+            if let Some(updates) = app_handle.try_state::<app_update::UpdateState>() {
+                app_update::install_ready_on_exit(&updates);
             }
         }
     });
@@ -2345,12 +2403,14 @@ mod tests {
         for cmd in [
             "async fn desktop_update_check(",
             "async fn desktop_update_install(",
+            "async fn desktop_update_download(",
         ] {
             let body = body_of(main, cmd);
             assert!(body.contains("only_main_window(&window)"), "{cmd}");
         }
         assert!(body_of(main, "async fn desktop_update_check(").contains("update_check(&app"));
         assert!(body_of(main, "async fn desktop_update_install(").contains("update_install(&app"));
+        assert!(body_of(main, "async fn desktop_update_download(").contains("update_download(&app"));
         let rescue = &production_sources()[3].1;
         assert_eq!(production_sources()[3].0, "rescue.rs");
         assert!(rescue.contains("crate::update_check(&app"));
@@ -2421,6 +2481,16 @@ mod tests {
         let shutdown = tail.find("shutdown_sidecar()").expect("先收 sidecar");
         let clean = tail.find("mark_clean()").expect("再写 clean");
         assert!(shutdown < clean, "clean 必须在 sidecar 收掉之后写");
+        // 退出时装后台下好的更新包：必须在 sidecar 收掉、clean 写过之后（Windows 的安装器会让进程自行退出）
+        let install = tail
+            .find("install_ready_on_exit(")
+            .expect("退出时要装已下好的更新包");
+        assert!(clean < install, "退出时装更新包必须排在 mark_clean 之后");
+        assert_eq!(
+            main.matches("install_ready_on_exit(").count(),
+            1,
+            "退出时装包只有 RunEvent::Exit 这一处"
+        );
     }
 
     #[test]

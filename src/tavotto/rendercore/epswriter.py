@@ -211,9 +211,16 @@ class OverlayWriter:
                     name = self._glyph(run.font, glyph.gid)
                     tx = pen_x + glyph.x_offset * size
                     ty = node.y + run.rise + glyph.y_offset * size
+                    skew = size * ir.SYNTH_ITALIC_SKEW if run.synth_italic else 0
+                    paint = "fill"
+                    if run.synth_bold:  # 模拟粗体（ADR 0169 修订）：描边在字形坐标里，宽度除以缩放
+                        width = ir.synth_bold_width(run.size) / size
+                        paint = (
+                            f"gsave fill grestore {_num(width)} setlinewidth 1 setlinejoin stroke"
+                        )
                     self._body.append(
-                        f"gsave [{_num(size)} 0 0 {_num(size)} {_num(tx)} {_num(ty)}] concat "
-                        f"{name} {_rgb(node.paint.rgb)} fill grestore"
+                        f"gsave [{_num(size)} 0 {_num(skew)} {_num(size)} {_num(tx)} {_num(ty)}] concat "
+                        f"{name} {_rgb(node.paint.rgb)} {paint} grestore"
                     )
                     self.facts.outlined_glyphs += 1
                 pen_x += glyph.x_advance * size

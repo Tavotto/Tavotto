@@ -8,9 +8,17 @@ JSON；按钮背后不另写一套安装器，README / 命令行 / 按钮 / Wind
 ## 写进宿主的是什么
 
 一条 stdio MCP 服务：`command` 是**这一份 Tavotto** 能起服务端的命令（桌面版 = 同目录的 `tavotto-cli mcp`，
-见 `mcpserve`；源码树 = `python -m tavotto mcp`），`env` 只有 `TAVOTTO_MCP_ROOTS`——用户在第一次接入时选的
-那个项目文件夹（所有宿主共用，存在 Tavotto 配置目录的 `hosts.json`）。主目录、文件系统根一律不收，
-与 `RootAuthority` / 配置生成器的授权边界相同。
+见 `mcpserve`；源码树 = `python -m tavotto mcp`）。**点一下就接好，不选文件夹**（用户 2026-11-04，ADR 0009
+修订）：授权范围交给 MCP 服务端的 `RootAuthority`，这里只按宿主写一个提示——
+
+* 会自己报项目目录的宿主（`HOSTS_WITH_OWN_WORKSPACE`：Claude Code 的 `roots/list`、VS Code / WorkBuddy 的工作区
+  cwd）：`env` 为空，用宿主报的目录；写死一个文件夹反而把它们锁在那一个项目里。
+* 其余宿主：`env` 只有 `TAVOTTO_MCP_SCOPE=local`——宿主没报目录时，服务端的最后一档是「本机任意位置，只拦凭据类
+  文件」（与改图助手同一份黑名单，ADR 0149 §三；维护者 2026-11-05：用户的数据可能在任何目录，不替用户加锁）；
+  宿主报了目录仍以宿主为准。
+* 命令行 `--project-root` 仍可显式指定一个文件夹（写 `TAVOTTO_MCP_ROOTS`，主目录 / 磁盘根不收）。
+
+旧版按钮写过 `TAVOTTO_MCP_ROOTS=<选的文件夹>`（记在配置目录的 `hosts.json`）：`list` 时一次性迁移成上面的形状。
 
 ## 三条纪律
 
@@ -55,12 +63,18 @@ HOST_IDS = (
 )
 SERVER_NAME = "tavotto"
 ROOTS_ENV = "TAVOTTO_MCP_ROOTS"
+#: 与 MCP 服务端 `tavotto_mcp/roots.py` 的 `SCOPE_ENV` / `SCOPE_LOCAL` 同源（`tests/test_hosts_connect.py` 对拍）
+SCOPE_ENV = "TAVOTTO_MCP_SCOPE"
+SCOPE_LOCAL = "local"
+#: 会自己把项目目录报给 MCP 服务端的宿主（`docs/implementation/multi-host-mcp/hosts.md` 逐家核过）：
+#: Claude Code 回 `roots/list`（启动目录 + `/add-dir`）；VS Code 的 stdio 服务 cwd 默认是工作区；WorkBuddy 的服务
+#: cwd 是会话工作目录（Windows Lab 实测根来源 `cwd`）。Codex 走插件，不经这里。
+HOSTS_WITH_OWN_WORKSPACE = frozenset({"claude-code", "vscode", "workbuddy"})
 HOSTS_FILE = "hosts.json"
 
 ERR_UNKNOWN_HOST = "unknown_host"
 ERR_NOT_INSTALLED = "host_not_installed"
 ERR_NO_SERVER = "mcp_server_not_bundled"
-ERR_NO_ROOT = "project_root_missing"
 ERR_BAD_ROOT = "project_root_rejected"
 ERR_UNREADABLE = "config_unreadable"
 ERR_WRITE = "config_write_failed"
@@ -103,7 +117,7 @@ def _save_state(state: dict) -> None:
 
 
 def check_project_root(path: str) -> tuple[str | None, str | None]:
-    """用户选的项目文件夹 → (规范化的绝对路径, None) 或 (None, 拒绝原因)。
+    """命令行 `--project-root` 显式给的文件夹 → (规范化的绝对路径, None) 或 (None, 拒绝原因)。
     主目录、主目录的上级、文件系统根一律不收：授权给宿主的范围必须是一个具体的项目（与 RootAuthority 同一边界）。"""
     if not path:
         return None, "没有选文件夹"
@@ -534,9 +548,9 @@ def _claude_code_connected() -> bool:
     return rc == 0 and any(line.strip().startswith(prefixes) for line in out.splitlines())
 
 
-def connected(host: str, launch: dict | None, env: dict) -> bool:
-    """文件类宿主：每个目标文件里 tavotto 那一条与「现在会写的」逐字相同。Codex / Claude Code 问各自的 CLI
-    （Codex #1455 P2：之前这两家永远报「未接入」）。"""
+def connected(host: str, launch: dict | None) -> bool:
+    """文件类宿主：每个目标文件里 tavotto 那一条与「现在会写的」相同（`env` 也可以是命令行显式文件夹）。
+    Codex / Claude Code 问各自的 CLI（Codex #1455 P2：之前这两家永远报「未接入」）。"""
     if host == "codex":
         return _codex_connected()
     if host == "claude-code":
@@ -544,11 +558,30 @@ def connected(host: str, launch: dict | None, env: dict) -> bool:
     if host not in _FILE_HOSTS or launch is None:
         return False
     targets = _FILE_HOSTS[host].targets()
-    return bool(targets) and all(_target_entry_now(t) == t.entry(launch, env) for t in targets)
+    env = env_for(host)
+    return bool(targets) and all(
+        _same_launch(_target_entry_now(t), t.entry(launch, env)) for t in targets
+    )
 
 
-def _env_for(root: str) -> dict:
-    return {ROOTS_ENV: root}
+def env_for(host: str, root: str | None = None) -> dict:
+    """写进宿主那一条的 `env`：显式文件夹 → `TAVOTTO_MCP_ROOTS`；会自己报目录的宿主 → 空；其余 → 本机兜底。"""
+    if root:
+        return {ROOTS_ENV: root}
+    if host in HOSTS_WITH_OWN_WORKSPACE:
+        return {}
+    return {SCOPE_ENV: SCOPE_LOCAL}
+
+
+def _same_launch(got: dict | None, want: dict) -> bool:
+    """除 `env` 外逐字相同，且 `env` 是现在会写的那份或命令行显式文件夹（只有 `TAVOTTO_MCP_ROOTS`）。"""
+    if not isinstance(got, dict):
+        return False
+    env = got.get("env")
+    if env != want.get("env") and not (isinstance(env, dict) and set(env) == {ROOTS_ENV}):
+        return False
+    strip = lambda e: {k: v for k, v in e.items() if k != "env"}  # noqa: E731
+    return strip(got) == strip(want)
 
 
 def health(launch: dict, env: dict) -> dict:
@@ -613,45 +646,73 @@ def connect(host: str, project_root: str | None = None) -> dict:
                 )
             ],
         )
-    state = load_state()
-    root = project_root or state.get("project_root")
-    if not root:
-        return _result(host, "connect", [_step("project_root", ok=False, code=ERR_NO_ROOT)])
-    root, why = check_project_root(root)
-    if root is None:
-        return _result(
-            host, "connect", [_step("project_root", ok=False, code=ERR_BAD_ROOT, detail=why or "")]
-        )
-    if state.get("project_root") != root:
-        _save_state({**state, "project_root": root})
-    env = _env_for(root)
-    steps: list[dict] = [_step("project_root", ok=True, skipped=True, detail=root)]
-    if host == "claude-code":
-        steps += _claude_code_connect(launch, env)
-    else:
-        fh = _FILE_HOSTS[host]
-        if not fh.detect():
+    steps: list[dict] = []
+    root = None
+    if project_root:
+        root, why = check_project_root(project_root)
+        if root is None:
             return _result(
                 host,
                 "connect",
-                [*steps, _step("detect", ok=False, code=ERR_NOT_INSTALLED)],
-                state="not_installed",
+                [_step("project_root", ok=False, code=ERR_BAD_ROOT, detail=why or "")],
             )
-        for t in fh.targets():
-            steps.append(
-                merge_json_file(t.path, _target_mutate(t, t.entry(launch, env)), what="config")
-            )
-        if fh.after_connect and all(s["ok"] for s in steps):
-            extra = fh.after_connect(launch, env)
-            if extra:
-                steps.append(extra)
+        steps.append(_step("project_root", ok=True, skipped=True, detail=root))
+    env = env_for(host, root)
+    steps += _write_host(host, launch, env)
+    if any(s.get("error_code") == ERR_NOT_INSTALLED for s in steps) and host != "claude-code":
+        return _result(host, "connect", steps, state="not_installed")
     if all(s["ok"] for s in steps):
         steps.append(health(launch, env))
     changed = any(s["ok"] and not s["skipped"] for s in steps if s["step"] != "health")
-    out = _result(host, "connect", steps, project_root=root)
+    out = _result(host, "connect", steps, **({"project_root": root} if root else {}))
     if out["ok"]:
         out["state"] = "needs_new_session" if changed else "connected"
     return out
+
+
+def _write_host(host: str, launch: dict, env: dict) -> list[dict]:
+    """把 tavotto 那一条按 `env` 写进宿主（Claude Code 走它的 CLI，其余写 JSON 文件）。"""
+    if host == "claude-code":
+        return _claude_code_connect(launch, env)
+    fh = _FILE_HOSTS[host]
+    if not fh.detect():
+        return [_step("detect", ok=False, code=ERR_NOT_INSTALLED)]
+    steps = [
+        merge_json_file(t.path, _target_mutate(t, t.entry(launch, env)), what="config")
+        for t in fh.targets()
+    ]
+    if fh.after_connect and all(s["ok"] for s in steps):
+        extra = fh.after_connect(launch, env)
+        if extra:
+            steps.append(extra)
+    return steps
+
+
+def migrate_legacy_root(launch: dict | None) -> list[dict]:
+    """旧版按钮写的 `TAVOTTO_MCP_ROOTS=<hosts.json 里那个文件夹>` → 现在的形状，只做一次（用户 2026-11-04）。
+
+    只认**按钮自己写过的那一条**（`env` 恰好是 `{TAVOTTO_MCP_ROOTS: 记下的文件夹}`、命令相同）；用户手改过的、
+    命令行显式写的别的文件夹都不碰。Claude Code 的配置归它的 CLI，`mcp list` 看得到 user 级 tavotto 就按新形状重登记。
+    写文件照旧先备份；做完从 `hosts.json` 去掉 `project_root`，之后不再迁移。"""
+    state = load_state()
+    legacy = state.get("project_root")
+    if not legacy or launch is None:
+        return []
+    old_env = {ROOTS_ENV: legacy}
+    steps: list[dict] = []
+    for host, fh in _FILE_HOSTS.items():
+        if not fh.detect():
+            continue
+        if any(_target_entry_now(t) == t.entry(launch, old_env) for t in fh.targets()):
+            steps += _write_host(host, launch, env_for(host))
+    claude = _claude_argv()
+    if claude:
+        rc, out = _run([*claude, "mcp", "list"], timeout=60)
+        if rc == 0 and any(line.strip().startswith(f"{SERVER_NAME}:") for line in out.splitlines()):
+            steps += _claude_code_connect(launch, env_for("claude-code"))
+    rest = {k: v for k, v in state.items() if k != "project_root"}
+    _save_state({**rest, "migrated_project_root": legacy})
+    return steps
 
 
 def disconnect(host: str) -> dict:
@@ -675,8 +736,7 @@ def disconnect(host: str) -> dict:
 
 def list_hosts() -> dict:
     launch = mcp_launch()
-    root = load_state().get("project_root")
-    env = _env_for(root) if root else {}
+    migrate_legacy_root(launch)
     hosts = []
     for h in HOST_IDS:
         inst = installed(h)
@@ -685,17 +745,10 @@ def list_hosts() -> dict:
                 "id": h,
                 "label": LABELS[h],
                 "installed": inst,
-                # Codex 不经文件夹（插件自带授权逻辑），其余要先有文件夹才谈得上「接入」
-                "connected": inst and (h == "codex" or bool(root)) and connected(h, launch, env),
+                "connected": inst and connected(h, launch),
             }
         )
-    return {
-        "ok": True,
-        "action": "list",
-        "server": launch is not None,
-        "project_root": root,
-        "hosts": hosts,
-    }
+    return {"ok": True, "action": "list", "server": launch is not None, "hosts": hosts}
 
 
 # ----------------------------------------------------------------------------- CLI
@@ -719,7 +772,8 @@ def cli(argv: list[str]) -> int:
     ap.add_argument("action", choices=("list", "connect", "disconnect"))
     ap.add_argument("host", nargs="?", choices=HOST_IDS)
     ap.add_argument(
-        "--project-root", help="授权给宿主的项目文件夹（第一次接入必填，之后所有宿主共用）"
+        "--project-root",
+        help="只授权这一个项目文件夹（可选；不给时宿主报的项目目录优先，其余宿主是本机任意位置、凭据类文件除外）",
     )
     ap.add_argument("--json", action="store_true", help="输出一行机器可读结果")
     args = ap.parse_args(argv)
