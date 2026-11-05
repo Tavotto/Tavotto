@@ -9,6 +9,7 @@ import { useDecodedSvg } from '@/lib/useDecodedSvg'
 import { useHtmlMarkup } from '@/lib/useHtmlMarkup'
 import { useRetryingSrc } from '@/lib/imgRetry'
 import { engineTransport } from '@/lib/engineTransport'
+import { useChartRenderStore, revisionOf } from '@/store/chartRenderStore'
 import {
   alignEntries,
   blockedGroupsIn,
@@ -182,6 +183,24 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 有图内修改、或脚本已领先磁盘文件时，显示都必须走引擎产物。
   // 只带基线的面板除外——磁盘文件已经是那个样子，继续用 /api/render 更省。
   // runtime 面板（ADR 0013）没有磁盘文件：本会话跑过（rev>0）就走引擎产物。
+  // 计算图表（ADR 0166）：面板带 chart 状态时，组合 SVG 由 chartRenderStore
+  // 按渲染身份缓存并替换磁盘原件显示。HTTP 传输可用时才计算（内嵌画布无服务）。
+  const chartState = obj.chart ?? null
+  const chartRevision = chartState ? revisionOf(chartState) : null
+  useEffect(() => {
+    if (!chartState || !chartRevision || !obj.fileId) return
+    if (engineTransport()) return
+    useChartRenderStore.getState().ensure(obj.fileId, chartState)
+    // obj 每次 commit 都是新引用；按身份与文件触发
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chartRevision, obj.fileId])
+  const chartEntry = useChartRenderStore((s) =>
+    chartRevision ? s.byRevision[chartRevision] : undefined,
+  )
+  const chartSrc =
+    chartEntry?.status === 'ready' && chartEntry.svg
+      ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(chartEntry.svg)}`
+      : null
   const kind = panelKind(obj)
   const runtime = kind === 'runtime'
   const tracked = useRenderStore((s) => !!s.tracked[obj.fileId])
@@ -243,7 +262,9 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 这条 HTTP 路，照旧。取到之前 / 没命中这个状态时见 `approxPreview`。
   const runtimePreview = useRuntimePreview(obj.fileId, obj.overrides, runtime && !transport && !!runtimeState?.cached, previewNonce)
   const fileSrc =
-    kind === 'unknown' || (runtime && !runtimeState?.cached)
+    chartSrc
+      ? chartSrc
+      : kind === 'unknown' || (runtime && !runtimeState?.cached)
       ? null
       : transport
         ? transport.panelSrc(obj.fileId, kind, bucket, mtime)

@@ -229,7 +229,10 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
       })
     } catch (err) {
       const cur = get()
-      if (cur.openSeq !== openSeq || cur.file !== file) return // F1
+      if (cur.openSeq !== openSeq || cur.file !== file) {
+        if (get().busy) set({ busy: false }) // F7
+        return // F1
+      }
       set({ busy: false, error: { code: (err as { code?: string }).code, message: String(err) } })
     }
   },
@@ -257,13 +260,19 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
         completeness: 'self-contained',
       })
       const cur = get()
-      if (cur.openSeq !== openSeq || cur.file !== file) return // F1
+      if (cur.openSeq !== openSeq || cur.file !== file) {
+        if (get().busy) set({ busy: false }) // 过期请求退出时释放自己的 busy（F7）
+        return // F1
+      }
       // 绑定产物携带生成时的表单代际；表单再动就失去资格（F2）
       set({ result: { ...result, formRev }, busy: false, step: 'confirm' })
       await get().runPreview()
     } catch (err) {
       const cur = get()
-      if (cur.openSeq !== openSeq || cur.file !== file) return // F1
+      if (cur.openSeq !== openSeq || cur.file !== file) {
+        if (get().busy) set({ busy: false }) // F7
+        return // F1
+      }
       set({
         busy: false,
         error: { code: (err as { code?: string }).code, message: String(err) },
@@ -282,11 +291,17 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
     try {
       const preview = await chartCompute(file, result)
       const cur = get()
-      if (cur.openSeq !== openSeq || cur.file !== file || cur.formRev !== formRev) return // F1/F2
+      if (cur.openSeq !== openSeq || cur.file !== file || cur.formRev !== formRev) {
+        if (get().busy) set({ busy: false }) // F7：过期 compute 退出时释放 busy
+        return // F1/F2
+      }
       set({ previewSvg: preview.svg, previewOk: true, busy: false })
     } catch (err) {
       const cur = get()
-      if (cur.openSeq !== openSeq || cur.file !== file || cur.formRev !== formRev) return // F1/F2
+      if (cur.openSeq !== openSeq || cur.file !== file || cur.formRev !== formRev) {
+        if (get().busy) set({ busy: false }) // F7
+        return // F1/F2
+      }
       // 预览失败：旧预览清除、提交资格消失（F3）
       set({
         busy: false,

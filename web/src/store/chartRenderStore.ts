@@ -4,6 +4,7 @@
 import { create } from 'zustand'
 
 import { chartCompute } from '@/lib/chartApi'
+import { digestOf } from '@/types/chartModel'
 import type { PanelChartState } from '@/types/document'
 
 export interface ChartRenderEntry {
@@ -16,7 +17,8 @@ export interface ChartRenderEntry {
 
 interface ChartRenderState {
   byRevision: Record<string, ChartRenderEntry>
-  /** file → 该面板当前绑定的 chart 状态（模型/绑定），用于 ensure 的入参 */
+  /** 缓存代际：clear/drop 递增；在途响应按代际丢弃（F6） */
+  generation: number
   ensure: (file: string, chart: PanelChartState) => void
   clear: () => void
   drop: (revision: string) => void
@@ -24,12 +26,14 @@ interface ChartRenderState {
 
 export const useChartRenderStore = create<ChartRenderState>()((set, get) => ({
   byRevision: {},
+  generation: 0,
 
   ensure: (file, chart) => {
     const revision = revisionOf(chart)
     if (!revision) return
     const existing = get().byRevision[revision]
     if (existing && existing.status !== 'error') return
+    const generation = get().generation
     set((s) => ({
       byRevision: {
         ...s.byRevision,
@@ -38,6 +42,7 @@ export const useChartRenderStore = create<ChartRenderState>()((set, get) => ({
     }))
     chartCompute(file, chart)
       .then((res) => {
+        if (get().generation !== generation) return // F6：clear/drop 后旧响应作废
         set((s) => ({
           byRevision: {
             ...s.byRevision,
@@ -48,6 +53,7 @@ export const useChartRenderStore = create<ChartRenderState>()((set, get) => ({
         }))
       })
       .catch((err: { code?: string, message?: string }) => {
+        if (get().generation !== generation) return // F6
         set((s) => ({
           byRevision: {
             ...s.byRevision,
@@ -62,14 +68,18 @@ export const useChartRenderStore = create<ChartRenderState>()((set, get) => ({
       })
   },
 
-  clear: () => set({ byRevision: {} }),
+  clear: () =>
+    set((s) => ({ byRevision: {}, generation: s.generation + 1 })),
 
   drop: (revision) =>
-    set((s) => {
-      const next = { ...s.byRevision }
-      delete next[revision]
-      return { byRevision: next }
-    }),
+    set((s) => ({
+      byRevision: (() => {
+        const next = { ...s.byRevision }
+        delete next[revision]
+        return next
+      })(),
+      generation: s.generation + 1,
+    })),
 }))
 
 /**
@@ -78,7 +88,9 @@ export const useChartRenderStore = create<ChartRenderState>()((set, get) => ({
  * 这里只从 chart 状态提取——真正的判据在后端。
  */
 export function revisionOf(chart: PanelChartState): string | null {
+  // 完整变体身份（F4/F5）：场景摘要 + **模型与绑定的全部内容**——
+  // 同来源/数据下改轴范围、样式或绑定节点都必须是不同版本。
   const model = chart.model as { scene_digest?: string } | undefined
   if (!model?.scene_digest) return null
-  return `${model.scene_digest}:${chart.model.data_digest}:${chart.binding.model_rev}`
+  return `chart:${model.scene_digest}:${digestOf({ model: chart.model, binding: chart.binding })}`
 }
