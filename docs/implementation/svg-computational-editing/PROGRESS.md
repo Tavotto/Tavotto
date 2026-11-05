@@ -41,7 +41,8 @@
 | R05 | partial | 722ad27c | chart 字段落盘/读回/冷重算/来源冲突回归绿；真新进程冷恢复与资源包待做 |
 | R06 | partial | 3f31f4e1 + 18907d65 + f76b0610 | PanelView chart 渲染 + ChartBindDialog + 右键菜单 + i18n 全绿；图内编辑/命中细节待做 |
 | R07 | partial | e09b724b + 484b29fb | SVG 导出（basis=convert）+ SVG→IR 翻译器 → PDF/PNG/TIFF 全格式交付 |
-| R08–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
+| R08 | partial | f7d39126 | C 路径自包含元数据嵌入/重算回归绿；A 路径 svgadopt 生产接线待做 |
+| R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
@@ -79,6 +80,12 @@
   2. PDF/PNG/TIFF 导出——需要 SVG→IR 翻译器（ADR 0166 §2 的独立适配层）。
   3. 真 E2E（浏览器驱动 UI 全流程）。
   4. R08–R13：A 路径采用接线、自包含往返、写回、预检、入口打包。
+
+### 2026-11-06 R08 C 路径自包含元数据嵌入完成
+
+- 导出 SVG 格式时在根元素嵌入 `data-tavotto-chart` 属性（base64 JSON model+binding）。
+- 从元数据解码 → 重算 compute → 与原始 compute 一致（回归验证）。
+- A 路径（svgadopt 生产接线）待做——svgadopt 模块已就绪但还没有接入 import 流程。
 
 ### 2026-11-06 R07 SVG→IR 翻译器完成（PDF/PNG/TIFF 全格式交付）
 
