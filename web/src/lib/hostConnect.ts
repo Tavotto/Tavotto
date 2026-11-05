@@ -29,6 +29,10 @@ export interface HostRow {
   installed: boolean
   connected: boolean
   skill: HostSkillState
+  /** Codex：已装插件的版本；其余：技能记录里的版本；读不到就没有 */
+  version?: string
+  /** 只在 Codex 插件落后于这份 Tavotto 时出现 */
+  update?: { latest: string; how: 'codex_plugin' }
 }
 
 /** `tavotto hosts list --json` */
@@ -81,6 +85,13 @@ function parseSkillState(v: unknown): HostSkillState {
   return SKILL_STATES.find((x) => x === v) ?? 'missing'
 }
 
+function parseUpdate(v: unknown): { update?: HostRow['update'] } {
+  const u = v as { latest?: unknown; how?: unknown } | null
+  return u && typeof u.latest === 'string' && u.how === 'codex_plugin'
+    ? { update: { latest: u.latest, how: 'codex_plugin' } }
+    : {}
+}
+
 export function parseHostList(raw: string): HostList {
   const d = parseLine(raw)
   if (d.action !== 'list' || !Array.isArray(d.hosts)) throw new HostShellError('bad_output')
@@ -92,6 +103,8 @@ export function parseHostList(raw: string): HostList {
       installed: h.installed === true,
       connected: h.connected === true,
       skill: parseSkillState(h.skill),
+      ...(typeof h.version === 'string' && h.version ? { version: h.version } : {}),
+      ...parseUpdate(h.update),
     }))
     .filter((h) => h.id)
   return {

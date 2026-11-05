@@ -1993,7 +1993,18 @@
         "bad_action": "不允许此操作。",
         "not_desktop": "此操作仅在桌面版可用。",
         "other": "没有接好。展开详情看命令的原话。"
-      }
+      },
+      "connectedSkill": "已接入 · 技能 {{version}}",
+      "connectedBuiltin": "已接入 · 用内置说明",
+      "connectedPlugin": "已接入 · 插件 {{version}}",
+      "pluginOutdated": "插件 {{version}} · 有新版",
+      "update": "更新",
+      "updating": "更新中…",
+      "skillKept": "技能改过，未更新",
+      "overwrite": "覆盖",
+      "overwriteTitle": "覆盖 {{host}} 里改过的使用说明？",
+      "overwriteBody": "你改的内容会换成 Tavotto 自带的版本。",
+      "cancel": "取消"
     }
   },
   "style": {

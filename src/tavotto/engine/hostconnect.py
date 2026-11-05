@@ -96,6 +96,18 @@ ERR_SKILL_SOURCE = hostskills.ERR_SOURCE
 ERR_SKILL_WRITE = hostskills.ERR_WRITE
 #: 已通过 Tavotto 的 Claude Code 插件接入时 register 一步的说明：插件自带技能，不再复制一份
 PLUGIN_DETAIL = "已通过 Tavotto 插件接入"
+#: `claude mcp list` 里 Tavotto 插件带来的那条 server 的名字（接入与同步判「已装插件」同一个判据）
+CLAUDE_PLUGIN_SERVER = f"plugin:{SERVER_NAME}:{SERVER_NAME}"
+#: 关闭更新的环境变量；与 `codex-plugin/.../update_check.py` 的 `DISABLE_ENV` 及真值集合同源（`tests/test_hosts_sync.py` 对拍）
+DISABLE_UPDATE_ENV = "TAVOTTO_DISABLE_UPDATE_CHECK"
+DISABLE_UPDATE_TRUTHY = ("1", "true", "yes", "on")
+#: 后端更新检查的开关（`updater.py` 里任何非空值都算开）；同样让插件更新停手
+NO_UPDATE_ENV = "TAVOTTO_NO_UPDATE_CHECK"
+#: 同步的稳定码
+ERR_PLUGIN_UPGRADE = "codex_upgrade_failed"
+#: Codex 插件更新失败后多久不再试（写在配置目录的 hosts.json，不写包目录）
+PLUGIN_RETRY_SECONDS = 24 * 3600
+BACKOFF_KEY = "plugin_update_failed"
 
 
 # ----------------------------------------------------------------------------- 起服务端的命令
@@ -489,7 +501,7 @@ def _claude_code_connect(launch: dict, env: dict) -> list[dict]:
         return [_step("detect", ok=False, code=ERR_NOT_INSTALLED, detail="没找到 claude 命令")]
     steps = [_step("detect", ok=True, detail=" ".join(claude))]
     rc, out = _run([*claude, "mcp", "list"])
-    if rc == 0 and f"plugin:{SERVER_NAME}:{SERVER_NAME}" in out:
+    if rc == 0 and CLAUDE_PLUGIN_SERVER in out:
         # 已经装了 Tavotto 的 Claude Code 插件：再登记一条同名 user 服务会出现两个 Tavotto（配置生成器同一提醒）
         steps.append(_step("register", ok=True, skipped=True, detail=PLUGIN_DETAIL))
         return steps
@@ -639,7 +651,7 @@ def health(launch: dict, env: dict) -> dict:
     return _step("health", ok=True, detail=f"{len(names)} 个工具")
 
 
-def connect(host: str, project_root: str | None = None) -> dict:
+def connect(host: str, project_root: str | None = None, *, force_skill: bool = False) -> dict:
     if host not in HOST_IDS:
         return _result(host, "connect", [_step("host", ok=False, code=ERR_UNKNOWN_HOST)])
     if host == "codex":
@@ -679,7 +691,7 @@ def connect(host: str, project_root: str | None = None) -> dict:
     mcp_ok = all(s["ok"] for s in steps)
     if mcp_ok:
         # 技能：MCP 写成了才写；技能失败不回滚 MCP，整次结果如实算失败（`mcp_connected` 说明 MCP 已经接上）
-        skill = _skill_connect_step(host, steps)
+        skill = _skill_connect_step(host, steps, force=force_skill)
         if skill:
             steps.append(skill)
         steps.append(health(launch, env))
@@ -704,13 +716,13 @@ def _skill_step(res: dict) -> dict:
     return step
 
 
-def _skill_connect_step(host: str, steps: list[dict]) -> dict | None:
+def _skill_connect_step(host: str, steps: list[dict], *, force: bool = False) -> dict | None:
     """接入时的技能一步。Codex 不走这里；Claude Code 已装 Tavotto 插件时插件自带技能，不复制。"""
     if not hostskills.supports(host) and host not in hostskills.BUILTIN_HOSTS:
         return None
     if any(s["step"] == "register" and s.get("detail") == PLUGIN_DETAIL for s in steps):
         return None
-    return _skill_step(hostskills.install_skill(host))
+    return _skill_step(hostskills.install_skill(host, force=force))
 
 
 def _write_host(host: str, launch: dict, env: dict) -> list[dict]:
@@ -781,23 +793,166 @@ def disconnect(host: str) -> dict:
     return out
 
 
+def _codex_plugin_version() -> str | None:
+    """Codex 里已装插件的版本（缓存目录名，本机读，不起 codex 进程）；多份并存或读不出就是 None。"""
+    from . import codexinstall, pluginmanifest  # noqa: PLC0415
+
+    try:
+        d = codexinstall.installed_plugin_dir()
+    except Exception:  # noqa: BLE001
+        return None
+    return d.name if d is not None and pluginmanifest.semver(d.name) else None
+
+
+def _plugin_lags(have: str | None) -> bool:
+    """已装 Codex 插件版本低于这份 Tavotto；任一侧不是 x.y.z 就不判（比较复用 `pluginmanifest.semver`）。"""
+    from . import pluginmanifest  # noqa: PLC0415
+
+    h, w = pluginmanifest.semver(have), pluginmanifest.semver(hostskills._version())
+    return h is not None and w is not None and h < w
+
+
 def list_hosts() -> dict:
     launch = mcp_launch()
     migrate_legacy_root(launch)
     hosts = []
     for h in HOST_IDS:
         inst = installed(h)
-        hosts.append(
-            {
-                "id": h,
-                "label": LABELS[h],
-                "installed": inst,
-                "connected": inst and connected(h, launch),
-                # 'builtin'：不需要单独复制（Codex 的插件自带；Claude 桌面版用 tavotto_guide）
-                "skill": "builtin" if h == "codex" else hostskills.skill_state(h),
-            }
-        )
+        conn = bool(inst and connected(h, launch))
+        row = {
+            "id": h,
+            "label": LABELS[h],
+            "installed": inst,
+            "connected": conn,
+            # 'builtin'：不需要单独复制（Codex 的插件自带；Claude 桌面版用 tavotto_guide）
+            "skill": "builtin" if h == "codex" else hostskills.skill_state(h),
+        }
+        # 版本都是本机读（缓存目录名 / 技能校验记录），`list` 不联网、不多起进程
+        if h == "codex":
+            ver = _codex_plugin_version() if conn else None
+            if ver:
+                row["version"] = ver
+                if _plugin_lags(ver):
+                    row["update"] = {"latest": hostskills._version(), "how": "codex_plugin"}
+        elif conn:
+            ver = hostskills.installed_version(h)
+            if ver:
+                row["version"] = ver
+        hosts.append(row)
     return {"ok": True, "action": "list", "server": launch is not None, "hosts": hosts}
+
+
+# ----------------------------------------------------------------------------- 启动同步（ADR 0170 裁决 6）
+def _now() -> float:
+    return time.time()
+
+
+def _update_disabled() -> bool:
+    return bool(os.environ.get(NO_UPDATE_ENV)) or (
+        (os.environ.get(DISABLE_UPDATE_ENV) or "").strip() in DISABLE_UPDATE_TRUTHY
+    )
+
+
+def _backoff_active() -> bool:
+    rec = (load_state().get(BACKOFF_KEY) or {}).get("codex")
+    at = rec.get("at") if isinstance(rec, dict) else None
+    return isinstance(at, (int, float)) and 0 <= _now() - at < PLUGIN_RETRY_SECONDS
+
+
+def _set_backoff(code: str | None) -> None:
+    """失败记一笔（`code`），成功清掉（None）。写不了就算了：退避只是少打扰，不是状态机。"""
+    try:
+        state = load_state()
+        book = dict(state.get(BACKOFF_KEY) or {})
+        if code:
+            book["codex"] = {"at": _now(), "error_code": code}
+        else:
+            book.pop("codex", None)
+        state = {k: v for k, v in state.items() if k != BACKOFF_KEY}
+        if book:
+            state[BACKOFF_KEY] = book
+        _save_state(state)
+    except OSError:
+        pass
+
+
+def _claude_code_has_plugin() -> bool:
+    claude = _claude_argv()
+    if not claude:
+        return False
+    rc, out = _run([*claude, "mcp", "list"], timeout=60)
+    return rc == 0 and CLAUDE_PLUGIN_SERVER in out
+
+
+def _sync_codex_plugin(upgrade_plugins: bool) -> dict:
+    """Codex 插件：只有明确要求、没被关、落后了、没在退避期、没人在更新时才下载。失败只记不抛。"""
+    from . import codexinstall  # noqa: PLC0415
+
+    if not upgrade_plugins:
+        return {"plugin": "not_requested"}
+    if _update_disabled():
+        return {"plugin": "disabled"}
+    have = _codex_plugin_version()
+    if not _plugin_lags(have):
+        return {"plugin": "current", **({"version": have} if have else {})}
+    if _backoff_active():
+        return {"plugin": "backoff"}
+    try:
+        with codexinstall._marketplace_lock(codexinstall.archive_marketplace_dir().parent):
+            pass  # 只探一下有没有别的 upgrade 在跑；真正的锁由流水线自己拿
+    except codexinstall._MarketplaceBusy:
+        return {"plugin": "busy"}
+    except OSError:
+        pass
+    try:
+        ok, steps, _summary = codexinstall._run_pipeline(apply=True, upgrade=True)
+    except Exception as exc:  # noqa: BLE001 — 启动同步绝不抛
+        ok, steps = (
+            False,
+            [_step("codex", ok=False, code=ERR_PLUGIN_UPGRADE, detail=str(exc)[-200:])],
+        )
+    if ok:
+        _set_backoff(None)
+        return {"plugin": "upgraded", "from": have, "to": _codex_plugin_version()}
+    code = next((s.get("error_code") for s in steps if not s["ok"] and s.get("error_code")), None)
+    code = code or ERR_PLUGIN_UPGRADE
+    _set_backoff(code)
+    return {"plugin": "failed", "error_code": code}
+
+
+def sync(*, upgrade_plugins: bool = False) -> dict:
+    """桌面版启动时调：只处理**已接入**的宿主。技能 missing / stale 补上（本机复制，不联网）；`modified` 不动、如实报；
+    Codex 插件只有 `upgrade_plugins` 且没被关时才联网更新。每个宿主一条，失败带稳定 `error_code`，整体不抛。"""
+    launch = mcp_launch()
+    rows = []
+    for h in HOST_IDS:
+        row: dict = {"id": h}
+        try:
+            if not (installed(h) and connected(h, launch)):
+                row.update(ok=True, state="not_connected")
+            elif h == "codex":
+                row.update(
+                    ok=True, state="synced", skill="builtin", **_sync_codex_plugin(upgrade_plugins)
+                )
+                if row["plugin"] == "failed":
+                    row.update(ok=False, state="failed")
+            elif h in hostskills.BUILTIN_HOSTS:
+                row.update(ok=True, state="synced", skill="builtin")
+            elif not hostskills.supports(h):
+                row.update(ok=True, state="synced", skill="none")
+            elif h == "claude-code" and _claude_code_has_plugin():
+                row.update(ok=True, state="synced", skill="plugin")
+            else:
+                res = hostskills.install_skill(h)
+                row.update(
+                    ok=res["ok"], state="synced" if res["ok"] else "failed", skill=res["state"]
+                )
+                if res.get("error_code"):
+                    row["error_code"] = res["error_code"]
+        except Exception as exc:  # noqa: BLE001 — 一家出错不影响别家，也不抛给启动流程
+            row.update(ok=False, state="failed", error_code="sync_failed", detail=str(exc)[-200:])
+        rows.append(row)
+    return {"ok": all(r["ok"] for r in rows), "action": "sync", "hosts": rows}
 
 
 # ----------------------------------------------------------------------------- CLI
@@ -809,6 +964,9 @@ def _emit(result: dict, as_json: bool) -> int:
             mark = "跳过" if s.get("skipped") else ("通过" if s["ok"] else "失败")
             print(f"[{mark}] {s['step']}: {s.get('detail', '')}")
         for h in result.get("hosts", []):
+            if result.get("action") == "sync":
+                print(f"{h['id']}: {h['state']}")
+                continue
             mark = "已接入" if h["connected"] else ("可接入" if h["installed"] else "未检测到")
             print(f"{h['label']}: {mark}")
     return 0 if result.get("ok") else 1
@@ -818,18 +976,30 @@ def cli(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
         prog="tavotto hosts", description="把 Tavotto 接入本机的 AI 编辑器（写配置前先备份）"
     )
-    ap.add_argument("action", choices=("list", "connect", "disconnect"))
+    ap.add_argument("action", choices=("list", "connect", "disconnect", "sync"))
     ap.add_argument("host", nargs="?", choices=HOST_IDS)
     ap.add_argument(
         "--project-root",
         help="只授权这一个项目文件夹（可选；不给时宿主报的项目目录优先，其余宿主是本机任意位置、凭据类文件除外）",
     )
+    ap.add_argument(
+        "--force-skill",
+        action="store_true",
+        help="connect：技能目录被改过也覆盖（界面「覆盖」按钮用；默认不动用户改过的）",
+    )
+    ap.add_argument(
+        "--upgrade-plugins",
+        action="store_true",
+        help="sync：Codex 插件落后时联网更新（桌面版在用户开着后台自动下载时才带）",
+    )
     ap.add_argument("--json", action="store_true", help="输出一行机器可读结果")
     args = ap.parse_args(argv)
+    if args.action == "sync":
+        return _emit(sync(upgrade_plugins=args.upgrade_plugins), args.json)
     if args.action == "list":
         return _emit(list_hosts(), args.json)
     if not args.host:
         ap.error("connect / disconnect 要指定宿主")
     if args.action == "connect":
-        return _emit(connect(args.host, args.project_root), args.json)
+        return _emit(connect(args.host, args.project_root, force_skill=args.force_skill), args.json)
     return _emit(disconnect(args.host), args.json)

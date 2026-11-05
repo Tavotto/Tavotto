@@ -14,10 +14,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/lib/desktop', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/desktop')>()),
   runHostIntegration: vi.fn(),
+  runCodexIntegration: vi.fn(),
   pickDirectory: vi.fn(),
 }))
 
-import { pickDirectory, runHostIntegration } from '@/lib/desktop'
+import { pickDirectory, runCodexIntegration, runHostIntegration } from '@/lib/desktop'
 import { t } from '@/i18n'
 import { HostsPanel } from './HostsPanel'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -30,6 +31,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 const runMock = vi.mocked(runHostIntegration)
 const pickMock = vi.mocked(pickDirectory)
+const codexMock = vi.mocked(runCodexIntegration)
 const tx = (key: string, values?: Record<string, unknown>) =>
   t(`settings.hosts.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
@@ -72,6 +74,7 @@ describe('HostsPanel', () => {
     ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
     runMock.mockReset()
     pickMock.mockReset()
+    codexMock.mockReset()
   })
   afterEach(async () => {
     await act(async () => root?.unmount())
@@ -137,5 +140,55 @@ describe('HostsPanel', () => {
     await mount()
     expect(document.querySelector('[data-hosts-section]')).toBeNull()
     expect(runMock).not.toHaveBeenCalled()
+  })
+
+  const stateList = (hosts: Record<string, unknown>[]) =>
+    JSON.stringify({ ok: true, action: 'list', server: true, hosts })
+  const stateOf = (id: string) => row(id)?.querySelector('[data-host-connected]')?.getAttribute('data-host-state')
+
+  it('shows skill version, built-in notes, outdated plugin and kept skill', async () => {
+    runMock.mockResolvedValue(
+      stateList([
+        { id: 'codex', label: 'Codex', installed: true, connected: true, skill: 'builtin', version: '0.21.0', update: { latest: '0.22.0', how: 'codex_plugin' } },
+        { id: 'cursor', label: 'Cursor', installed: true, connected: true, skill: 'current', version: '0.22.0' },
+        { id: 'claude-desktop', label: 'Claude', installed: true, connected: true, skill: 'builtin' },
+        { id: 'vscode', label: 'VS Code', installed: true, connected: true, skill: 'modified', version: '0.21.0' },
+      ]),
+    )
+    await mount()
+    expect(stateOf('codex')).toBe('plugin-outdated')
+    expect(row('codex')?.textContent).toContain(tx('pluginOutdated', { version: '0.21.0' }))
+    expect(row('codex')?.querySelector('[data-host-update="codex"]')).not.toBeNull()
+    expect(stateOf('cursor')).toBe('skill')
+    expect(row('cursor')?.textContent).toContain(tx('connectedSkill', { version: '0.22.0' }))
+    expect(row('cursor')?.querySelector('[data-host-update],[data-host-overwrite]')).toBeNull()
+    expect(stateOf('claude-desktop')).toBe('builtin')
+    expect(row('claude-desktop')?.textContent).toContain(tx('connectedBuiltin'))
+    expect(stateOf('vscode')).toBe('skill-modified')
+    expect(row('vscode')?.textContent).toContain(tx('skillKept'))
+    expect(row('vscode')?.querySelector('[data-host-overwrite="vscode"]')).not.toBeNull()
+  })
+
+  it('update button runs the codex upgrade channel and refreshes', async () => {
+    runMock.mockResolvedValue(
+      stateList([{ id: 'codex', label: 'Codex', installed: true, connected: true, skill: 'builtin', version: '0.21.0', update: { latest: '0.22.0', how: 'codex_plugin' } }]),
+    )
+    codexMock.mockResolvedValue(JSON.stringify({ ok: true, action: 'upgrade', steps: [] }))
+    await mount()
+    await act(async () => (row('codex')!.querySelector('[data-host-update="codex"]') as HTMLButtonElement).click())
+    expect(codexMock).toHaveBeenCalledWith('upgrade')
+    expect(runMock.mock.calls.filter((c) => c[0] === 'list').length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('overwrite asks once, and only the confirm sends connect_force_skill', async () => {
+    runMock.mockResolvedValue(
+      stateList([{ id: 'vscode', label: 'VS Code', installed: true, connected: true, skill: 'modified', version: '0.21.0' }]),
+    )
+    await mount()
+    await act(async () => (row('vscode')!.querySelector('[data-host-overwrite="vscode"]') as HTMLButtonElement).click())
+    expect(runMock).not.toHaveBeenCalledWith('connect_force_skill', 'vscode')
+    runMock.mockResolvedValueOnce(JSON.stringify({ ok: true, host: 'vscode', action: 'connect', state: 'connected', steps: [] }))
+    await act(async () => (document.querySelector('[data-host-overwrite-confirm]') as HTMLButtonElement).click())
+    expect(runMock).toHaveBeenCalledWith('connect_force_skill', 'vscode')
   })
 })

@@ -59,4 +59,18 @@ def test_the_behaviour_tests_exist_and_are_not_commented_out():
         "only_known_hosts_pass",
         "the_folder_is_one_argv_element_and_only_for_connect",
         "unknown_actions_are_refused",
+        "sync_is_a_closed_pair_and_takes_no_host_or_folder",
     } <= set(tests)
+
+
+def test_only_sync_plugins_can_carry_the_upgrade_flag():
+    body = _fn_body("host_cli_args")
+    assert body.count("--upgrade-plugins") == 1
+    assert 'if action == "sync_plugins"' in body
+
+
+def test_codex_integration_accepts_upgrade_as_a_closed_value():
+    body = _fn_body("codex_integration")
+    for a in ("install", "doctor", "upgrade"):
+        assert f'action != "{a}"' in body
+    assert "uninstall" not in body

@@ -390,15 +390,15 @@ fn checked_project_dir(path: &str) -> Result<PathBuf, String> {
 /// 这里：安装器只有 `engine/codexinstall.py` 那一份，按钮与终端命令永远走同一条
 /// 实现（看护 `tests/test_desktop_codex_button.py`）。
 ///
-/// `action` 是**闭集**（`install` / `doctor`）——webview 递不进任意 argv，也递不进
-/// `uninstall`：卸载不该是一个按得动的按钮。
+/// `action` 是**闭集**（`install` / `doctor` / `upgrade`）——webview 递不进任意 argv，也递不进
+/// `uninstall`：卸载不该是一个按得动的按钮。`upgrade` 是面板里「更新」按钮（插件落后时），走引擎同一条升级通道。
 ///
 /// **失败也是一行 JSON**（引擎的 `--json` 纪律），所以这里不看退出码，只找 stdout
 /// 里最后那行 JSON。真的一行都没有（CLI 没找到 / spawn 不起来 / 输出被截断）才回
 /// `Err`，回的是**稳定 code**，由前端翻成人话——英文 code 不进界面。
 #[tauri::command]
 async fn codex_integration(app: tauri::AppHandle, action: String) -> Result<String, String> {
-    if action != "install" && action != "doctor" {
+    if action != "install" && action != "doctor" && action != "upgrade" {
         return Err("bad_action".into());
     }
     run_cli_json(app, vec!["codex".into(), action, "--json".into()]).await
@@ -451,19 +451,42 @@ fn host_cli_args(
             }
             args.push(action.into());
         }
-        "connect" | "disconnect" => {
+        "connect" | "disconnect" | "connect_force_skill" => {
             let h = host.ok_or_else(|| "bad_args".to_string())?;
             if !HOST_IDS.contains(&h) {
                 return Err("bad_host".into());
             }
-            args.push(action.into());
+            // 「覆盖」按钮：用户确认过才带 `--force-skill`，覆盖被改过的技能副本；它不收文件夹
+            let sub = if action == "disconnect" {
+                "disconnect"
+            } else {
+                "connect"
+            };
+            args.push(sub.into());
             args.push(h.into());
+            if action == "connect_force_skill" {
+                if project_root.is_some() {
+                    return Err("bad_args".into());
+                }
+                args.push("--force-skill".into());
+            }
             if let Some(root) = project_root {
                 if action != "connect" || root.is_empty() {
                     return Err("bad_args".into());
                 }
                 args.push("--project-root".into());
                 args.push(root.into());
+            }
+        }
+        // 启动同步（ADR 0170）：`sync` 只补技能，`sync_plugins` 另外允许更新 Codex 插件（桌面版后台自动下载开着时才发）。
+        // 两者都不收宿主和文件夹：同步只处理已接入的宿主。
+        "sync" | "sync_plugins" => {
+            if host.is_some() || project_root.is_some() {
+                return Err("bad_args".into());
+            }
+            args.push("sync".into());
+            if action == "sync_plugins" {
+                args.push("--upgrade-plugins".into());
             }
         }
         _ => return Err("bad_action".into()),
@@ -534,6 +557,51 @@ mod host_cli_tests {
             host_cli_args("connect", Some("zcode"), Some("")),
             Err("bad_args".into())
         );
+    }
+
+    #[test]
+    fn sync_is_a_closed_pair_and_takes_no_host_or_folder() {
+        assert_eq!(
+            host_cli_args("sync", None, None),
+            ok(&["hosts", "sync", "--json"])
+        );
+        assert_eq!(
+            host_cli_args("sync_plugins", None, None),
+            ok(&["hosts", "sync", "--upgrade-plugins", "--json"])
+        );
+        for a in ["sync", "sync_plugins"] {
+            assert_eq!(
+                host_cli_args(a, Some("codex"), None),
+                Err("bad_args".into())
+            );
+            assert_eq!(host_cli_args(a, None, Some("/p")), Err("bad_args".into()));
+        }
+        // 开关只能从 sync_plugins 来：没有任何别的 action 能带出 --upgrade-plugins
+        assert_eq!(
+            host_cli_args("sync --upgrade-plugins", None, None),
+            Err("bad_action".into())
+        );
+    }
+
+    #[test]
+    fn force_skill_is_its_own_action_and_takes_a_known_host_only() {
+        assert_eq!(
+            host_cli_args("connect_force_skill", Some("cursor"), None),
+            ok(&["hosts", "connect", "cursor", "--force-skill", "--json"])
+        );
+        assert_eq!(
+            host_cli_args("connect_force_skill", Some("sh"), None),
+            Err("bad_host".into())
+        );
+        assert_eq!(
+            host_cli_args("connect_force_skill", Some("cursor"), Some("/p")),
+            Err("bad_args".into())
+        );
+        // 普通 connect / disconnect 永远不带 --force-skill
+        for a in ["connect", "disconnect"] {
+            let got = host_cli_args(a, Some("cursor"), None).unwrap();
+            assert!(!got.iter().any(|x| x == "--force-skill"), "{a}");
+        }
     }
 
     #[test]

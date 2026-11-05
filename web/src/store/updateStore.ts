@@ -19,6 +19,7 @@ import {
   type UpdateAttempt,
   type UpdateSource,
 } from '@/lib/desktop'
+import { startHostSync } from '@/lib/hostSync'
 import { readDismissedUpdate, writeDismissedUpdate } from '@/lib/updateNotice'
 
 /**
@@ -382,6 +383,8 @@ export function checkUpdateOnStartup(): void {
   void (async () => {
     // 先取偏好（桌面下 /api/update/check 不联网，只回停用响应 + auto_download）；取不到按关（旧行为）
     await s.check(false)
+    // 状态到位了：顺手同步已接入编辑器的技能（ADR 0170）；后台自动下载开着才连 Codex 插件一起更新。不等它
+    startHostSync(autoDownloadOn(useUpdateStore.getState().status))
     await s.checkDesktop()
     const now = useUpdateStore.getState()
     if (autoDownloadOn(now.status) && now.desktopUpdate) await now.downloadDesktopInBackground()

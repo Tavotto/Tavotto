@@ -2473,8 +2473,12 @@ export default interface Resources {
           "failed": "没有接好。",
           "ok": "完成。"
         },
+        "cancel": "取消",
         "connect": "接入",
         "connected": "已接入",
+        "connectedBuiltin": "已接入 · 用内置说明",
+        "connectedPlugin": "已接入 · 插件 {{version}}",
+        "connectedSkill": "已接入 · 技能 {{version}}",
         "disconnect": "断开",
         "disconnected": "已断开",
         "doneNewSession": "接好了。请在 {{host}} 里新开一个会话。",
@@ -2501,8 +2505,13 @@ export default interface Resources {
         },
         "more": "{{host}} 的更多操作",
         "notDetected": "未检测到",
+        "overwrite": "覆盖",
+        "overwriteBody": "你改的内容会换成 Tavotto 自带的版本。",
+        "overwriteTitle": "覆盖 {{host}} 里改过的使用说明？",
+        "pluginOutdated": "插件 {{version}} · 有新版",
         "retry": "重试",
         "running": "接入中…",
+        "skillKept": "技能改过，未更新",
         "skillModified": "你改过那份使用说明，所以没有动它。",
         "step": {
           "config": "写配置",
@@ -2522,7 +2531,9 @@ export default interface Resources {
           "skipped": "无需改动"
         },
         "stepsTitle": "详情",
-        "title": "接入 AI 编辑器"
+        "title": "接入 AI 编辑器",
+        "update": "更新",
+        "updating": "更新中…"
       },
       "navGroup": {
         "general": "应用",

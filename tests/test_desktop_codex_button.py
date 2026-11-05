@@ -108,7 +108,9 @@ def test_the_action_is_a_closed_set():
     """
     main_rs = _read("src", "main.rs")
     body = main_rs.split("async fn codex_integration")[1].split("\n}\n")[0]
-    assert 'action != "install" && action != "doctor"' in body, "action 不是闭集"
+    assert 'action != "install" && action != "doctor" && action != "upgrade"' in body, (
+        "action 不是闭集"
+    )
     assert '"uninstall"' not in body
 
 

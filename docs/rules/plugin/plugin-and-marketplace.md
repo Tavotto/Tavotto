@@ -29,7 +29,7 @@ order: 30
   每 24 小时一次（失败 1 小时后可重试）、1.5 秒超时、缓存落
   `config_dir()/codex-plugin-update.json`（**绝不往插件目录写**——那儿归 Codex
   管、可能只读、升级时整个被换掉）。四条底线：不阻塞出图、**不污染 stdout**
-  （调用方读的是最后一行 JSON）、不自动下载执行、**插件版本 ≠ Tavotto 版本**
+  （调用方读的是最后一行 JSON）、插件和 MCP 进程绝不自动下载或执行（桌面版在用户开着后台自动下载时可以更新已接入的插件，ADR 0170 裁决 6；关闭：后台自动下载开关或 `TAVOTTO_DISABLE_UPDATE_CHECK=1`）、**插件版本 ≠ Tavotto 版本**
   （当前版本只从 plugin.json 读，`min_tavotto_version` 比的是 `tavotto open`
   回报的那个版本）。清单由 `scripts/make_plugin_manifest.py` 在 **release.yml**
   生成——**不能挪进 desktop-tauri.yml 的 updater-manifest**，那个 job 没配

@@ -85,6 +85,18 @@ project content. Which source the installer came from does not affect trust — 
 installer's signature is always verified with the public key built into the app, and
 an installer that fails verification is not installed.
 
+## Connected editors
+
+When the desktop app starts, it brings the Tavotto skill (the usage notes) in every
+AI editor you have already connected up to date. This only copies files that ship
+inside the app into that editor's user folder; nothing is downloaded, and a copy you
+edited is left alone. While **Download updates in the background** is on, the same
+startup step also updates the Tavotto plugin in Codex if it is older than the app,
+which downloads the plugin from the same public release source as the app itself. If
+it fails, Tavotto does not try again for 24 hours. Turn the setting off, or set
+`TAVOTTO_DISABLE_UPDATE_CHECK=1` or `TAVOTTO_NO_UPDATE_CHECK=1`, and the plugin is never updated automatically. The
+plugin and the MCP server themselves never download or run anything on their own.
+
 ## Journal standards catalog
 
 Tavotto can offer figure requirements for journals, with a source quote for every
