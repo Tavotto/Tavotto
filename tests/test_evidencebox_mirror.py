@@ -108,6 +108,6 @@ def test_transport_failure_is_counted_not_raised(tmp_path, monkeypatch):
 def test_every_pinned_raw_font_in_the_allowlist_has_a_mirror():
     allowlist = M.fetch_fonts.load_allowlist()
     urls = [f["source"].get("url", "") for f in allowlist["faces"].values()]
-    raw = [u for u in urls if "raw.githubusercontent.com" in u]
+    raw = [u for u in urls if u.startswith("https://raw.githubusercontent.com/")]
     assert raw, "allowlist 里没有 raw 来源了，这条用例要跟着改"
     assert all(M.mirror_url(u) for u in raw)
