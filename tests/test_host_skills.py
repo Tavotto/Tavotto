@@ -104,10 +104,9 @@ def test_a_stale_untouched_copy_is_replaced(home, monkeypatch, tmp_path):
     older = tmp_path / "older"
     shutil.copytree(SRC, older)
     (older / "SKILL.md").write_text("旧版\n", encoding="utf-8")
-    monkeypatch.setattr(K, "skill_source", lambda: older)
-    K.install_skill("cursor")
-    monkeypatch.undo()
-    monkeypatch.setenv("HOME", str(home))
+    with monkeypatch.context() as m:
+        m.setattr(K, "skill_source", lambda: older)
+        K.install_skill("cursor")
     assert K.skill_state("cursor") == "stale"
     res = K.install_skill("cursor")
     assert res["state"] == "updated"
@@ -224,10 +223,9 @@ def test_failed_swap_keeps_the_previous_copy(home, monkeypatch, tmp_path):
     older = tmp_path / "older"
     shutil.copytree(SRC, older)
     (older / "SKILL.md").write_text("旧版\n", encoding="utf-8")
-    monkeypatch.setattr(K, "skill_source", lambda: older)
-    K.install_skill("cursor")
-    monkeypatch.undo()
-    monkeypatch.setenv("HOME", str(home))
+    with monkeypatch.context() as m:
+        m.setattr(K, "skill_source", lambda: older)
+        K.install_skill("cursor")
     real = K.os.replace
     calls = []
 
