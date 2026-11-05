@@ -101,6 +101,13 @@ def _patched_savefig(self, fname, *args, **kwargs):
     if not figcapture.savefig_targets_path(fname):
         if _ACTIVE is not None:
             _ACTIVE.passthrough_figures.add(id(self))
+            if not figcapture.is_pdf_pages(fname):
+                # 写进文件对象的一次（PdfPages 有自己的账）：记图和这次的参数，脚本关掉它也补得回来
+                _ACTIVE.buffer_saves.note(
+                    self,
+                    figcapture.savefig_call(fname, kwargs),
+                    kwargs.get("bbox_extra_artists"),
+                )
             if figcapture.is_pdf_pages(fname):
                 # 写进 PdfPages 的一页：记成那份 PDF 路径的一次 occurrence（与 worker 同一处语义：写之前建、补 intercepted）
                 observation = _ACTIVE.savefig_observations.record(self, fname, "", None)
@@ -123,6 +130,8 @@ def _patched_savefig(self, fname, *args, **kwargs):
         )
         _ACTIVE.savefig_observations.complete(observation, "intercepted")
     if stem:
+        if _ACTIVE is not None:
+            _ACTIVE.buffer_saves.claim(self)  # 有 stem 了：让出缓冲区账里的名额
         _session_capture().setdefault(stem, self)
         # 来源记账与 worker.CAPTURE_SOURCE 同语义：savefig 认领的 stem
         # **可能**有原始产物（在桌面上；这里的虚拟 FS 里永远没有）。
@@ -227,6 +236,8 @@ class BrowserSession:
         #: stem → 认领它的 savefig 调用（与 worker 同一条记账：`figcapture.record_savefig_call`）
         self.savefig_calls: dict[str, list | None] = {}
         self.passthrough_figures: set[int] = set()
+        #: 只写进过文件对象、没有 stem 的图和它们缓冲区那几次的参数（与 worker 同一个类；保留上限 = 捕获上限）
+        self.buffer_saves = figcapture.BufferSaves(MAX_FIGURES)
         #: 写进 `PdfPages` 的 Figure 账（与 worker 的 `_PDF_PAGES` 同一个类；一个会话只跑一个文件，不必重建）
         self.pdf_pages = figcapture.PdfPagesLedger()
         self.savefig_observations = figcapture.SavefigObservations(
@@ -331,7 +342,13 @@ class BrowserSession:
         # 总数仍受下面的 MAX_FIGURES 截断，如实进 truncated_figures）
         figcapture.adopt_pdf_pages(self.capture, self.capture_source, self.pdf_pages, base)
         fallback, dropped = figcapture.collect_pyplot_figures(
-            self.capture, base, plt, limit=MAX_FIGURES
+            self.capture,
+            base,
+            plt,
+            limit=MAX_FIGURES,
+            buffers=self.buffer_saves,
+            savefig_calls=self.savefig_calls,
+            savefig_extras=self.savefig_extras,
         )
         for stem in fallback:
             self.capture_source[stem] = figcapture.SOURCE_PYPLOT
@@ -348,9 +365,9 @@ class BrowserSession:
         # 图幅（ADR 0098）：与桌面同一段逻辑（`pathgeom.establish_frame`）；虚拟 FS 里没有
         # 原件，定义图幅的是第一次调用。算不出就按 figsize，与以前一样。
         for stem, fig in self.capture.items():
-            if self.capture_source.get(stem) == figcapture.SOURCE_PYPLOT:
-                continue
             calls = self.savefig_calls.get(stem)
+            if not figcapture.defines_frame(self.capture_source.get(stem), calls):
+                continue
             call = figcapture.frame_call(calls, None)
             extra = figcapture.frame_extra_artists(calls, self.savefig_extras.get(stem), call)
             with _real_output():

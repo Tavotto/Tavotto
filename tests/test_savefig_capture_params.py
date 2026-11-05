@@ -206,9 +206,13 @@ def _descriptor(**kw):
 
 
 class TestDescriptorField:
-    def test_a_pyplot_capture_cannot_claim_savefig_calls(self):
-        with pytest.raises(ValueError, match="savefig_calls"):
-            _descriptor(capture_source=figcapture.SOURCE_PYPLOT, savefig_calls=[{"format": "pdf"}])
+    def test_a_pyplot_capture_may_carry_its_buffer_saves_but_is_never_writable(self):
+        """只存进过缓冲区的图（#749）：来源仍是 pyplot（没有磁盘原件），savefig_calls 是缓冲区那几次。"""
+        d = _descriptor(capture_source=figcapture.SOURCE_PYPLOT, savefig_calls=[{"format": "png"}])
+        assert d.savefig_calls == ({"format": "png"},)
+        assert d.can_writeback_artifact is False
+        with pytest.raises(ValueError, match="original_artifact"):
+            _descriptor(capture_source=figcapture.SOURCE_PYPLOT, original_artifact="/x/Fig1.png")
 
     def test_payload_roundtrip_keeps_all_three_states(self):
         for value in (None, [], [{"format": "pdf", "bbox_inches": "tight"}]):

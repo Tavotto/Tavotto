@@ -44,6 +44,7 @@ def records() -> list[dict]:
 FIXED = {
     "G1-show-close-zero-figures": 1138,
     "G2-same-path-multi-figure": 1141,
+    "G6-bytesio-close-zero-figures": 749,
     # G4 / G5：行为按 ADR 0047 / 0084 有意保留，fix_pr 是诊断修复（#1297 / #1299），不是行为修复
     "G4-cwd-relative-reader-zero-figures": 1297,
     "G5-sandbox-empty-glob-empty-figure": 1299,
@@ -190,8 +191,8 @@ class RealRepro(unittest.TestCase):
     turned into a regression case here (G1 fixed by #1138, G2 by #1141).
     G4 / G5 keep their behavior on purpose (ADR 0047 / 0084; only the diagnosis was fixed), so they
     pin "the difference is still there".
-    G6 is an unfixed gap (no fix_pr): the same "difference is still there" pin, and the test goes red
-    when the gap is closed.
+    G6 was an unfixed gap pinned as "difference is still there"; #749 closed it and the pin is now a
+    regression case (like G1 / G2).
     """
 
     def run_family(self, family_id):
@@ -216,15 +217,13 @@ class RealRepro(unittest.TestCase):
         self.assertEqual(native["same_path_distinct_figures"], ["shape_oo.pdf"])
         self.assertEqual(verdict["outcome"], "no_difference", verdict)
 
-    def test_g6_minimal_repro_still_captures_zero_figures_known_gap(self):
-        """G6 是未修的已知缺口（#749）：savefig 到 io.BytesIO 再 close，原生有一张图，Tavotto 一张都没捕获
-        （script_no_figure）。缺口修好时这条会红，届时改成回归用例并填 fix_pr。"""
+    def test_g6_minimal_repro_is_fixed(self):
+        """G6 已由 #749 修复：savefig 到 io.BytesIO 再 close 的那张图被补回来，原生 / Tavotto 无差异。"""
         verdict, native, tavotto = self.run_family("G6-bytesio-close-zero-figures")
         self.assertEqual((native["exit_status"], native["figure_count"]), (0, 1), native)
-        self.assertEqual(tavotto["stems"], {})
-        self.assertEqual((tavotto.get("error") or {}).get("code"), "script_no_figure", tavotto)
-        self.assertEqual({d["kind"] for d in verdict["differences"]}, {"zero_figures"}, verdict)
-        self.assertEqual(verdict["outcome"], "difference_found", verdict)
+        self.assertIsNone(tavotto.get("error"), tavotto)
+        self.assertEqual(len(tavotto["stems"]), 1)
+        self.assertEqual(verdict["outcome"], "no_difference", verdict)
 
     # pyarrow 只在 Guardian job 里装（产品依赖不含它）；别的 job 跑不出原生那张图
     @unittest.skipUnless(importlib.util.find_spec("pyarrow"), "pyarrow not installed")
