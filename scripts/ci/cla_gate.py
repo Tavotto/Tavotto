@@ -619,7 +619,10 @@ def _service_verdict(checks: list, policy: dict, context: dict | None):
     if run.get("status") != "completed" or run.get("conclusion") != "success":
         return set(), "provider_latest_check_not_success"
     try:
-        prefix, raw = run["output"]["text"].split("\n", 1)
+        # Cloudflare 服务把凭证写在 `output.summary`（services/cla-cloudflare 的 github.ts，
+        # src/ci/consumer.ts 读的也是它）；`text` 只留给早期 Python 服务的 check。
+        output = run["output"]
+        prefix, raw = (output.get("summary") or output["text"]).split("\n", 1)
         proof = json.loads(raw)
         trusted = {k: policy[k] for k in ("agreements", "exemptions")}
         digest = hashlib.sha256(
