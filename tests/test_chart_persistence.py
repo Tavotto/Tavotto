@@ -223,15 +223,11 @@ def test_export_chart_original_pdf_reports_unsupported(project):
         "overwrite": "replace",
     }
     result = client.post("/api/export", json=export_req)
-    # partial 合同：SVG 格式的 chart 导出在 PDF 格式下逐项报 unsupported 或整体报错；
-    # 500 是不合法的（内部错误 ≠ 正确的 unsupported 报告），但当前 500 的根因是
-    # SVG→IR 翻译器缺失导致 chart_errors 的 Produced 无可行 publish 路径——
-    # 这是一个已知限制而非静默错图，在 R07 翻译器落地前记录为预期行为。
-    assert result.status_code != 500 or True  # TODO(R07): SVG→IR 落地后改回严格断言
-    if result.status_code == 200:
-        body = result.json
-        outputs = body.get("outputs") or body.get("files") or []
-        pdf_outputs = [o for o in outputs if o.get("format") == "pdf"]
-        assert pdf_outputs, f"no pdf output: {body}"
-        err = pdf_outputs[0].get("error_code")
-        assert err in ("svg_asset_export_unsupported", None)  # error or success
+    # SVG→IR 翻译器落地后 PDF 格式也交付组合版
+    assert result.status_code == 200, result.json
+    body = result.json
+    outputs = body.get("outputs") or body.get("files") or []
+    pdf_outputs = [o for o in outputs if o.get("format") == "pdf"]
+    assert pdf_outputs, f"no pdf output: {body}"
+    assert pdf_outputs[0].get("error_code") is None, f"pdf error: {pdf_outputs[0]}"
+    assert pdf_outputs[0].get("url", "").startswith("/exports/")

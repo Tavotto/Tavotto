@@ -2883,6 +2883,80 @@ def _export_produce_chart_original(job, src, req, tmp_dir: Path):
                     },
                 )
             )
+        elif fmt in (
+            engine_exportreq.FORMAT_PDF,
+            engine_exportreq.FORMAT_PNG,
+            engine_exportreq.FORMAT_TIFF,
+        ):
+            # SVG→IR 翻译器（ADR 0166 §2）：组合后的 SVG → IR → pdfwriter → PDF
+            # PNG/TIFF 由 render child 从 Canonical PDF 栅格化。
+            from .rendercore import fonts as _rcfonts
+            from .rendercore.hbshaper import HbFaceProvider
+            from .rendercore.pdfwriter import write_pdf as _write_pdf
+            from .rendercore.svgir import svg_to_ir as _svg_to_ir
+
+            registry = _rcfonts.FontRegistry.discover()
+            provider = HbFaceProvider(registry)
+            page, _notes = _svg_to_ir(composed, scene["w_pt"], scene["h_pt"], provider)
+            if fmt == engine_exportreq.FORMAT_PDF:
+                target = tmp_dir / "original.pdf"
+                _write_pdf(page, target, provider)
+                produced.append(
+                    engine_exportjob.Produced(
+                        format=fmt,
+                        tmp_path=target,
+                        width_mm=scene["w_pt"] * 25.4 / 72,
+                        height_mm=scene["h_pt"] * 25.4 / 72,
+                        vector=True,
+                        basis=engine_exportjob.Basis(engine_exportjob.BASIS_CONVERT, source_sha),
+                        manifest={
+                            "chart_render_revision": render_revision,
+                            "scene_digest": scene["scene_digest"],
+                        },
+                    )
+                )
+            else:
+                # PNG/TIFF: 先出 PDF，再由 pdfbackend 栅格化
+                pdf_tmp = tmp_dir / "_chart_canonical.pdf"
+                _write_pdf(page, pdf_tmp, provider)
+                from . import pdfbackend
+
+                if fmt == engine_exportreq.FORMAT_PNG:
+                    png_target = tmp_dir / "original.png"
+                    pdfbackend.original_png(
+                        pdf_tmp, png_target, ppi=req.ppi or engine_exportreq.PPI_DEFAULT
+                    )
+                    produced.append(
+                        engine_exportjob.Produced(
+                            format=fmt,
+                            tmp_path=png_target,
+                            width_mm=scene["w_pt"] * 25.4 / 72,
+                            height_mm=scene["h_pt"] * 25.4 / 72,
+                            vector=False,
+                            basis=engine_exportjob.Basis(
+                                engine_exportjob.BASIS_CONVERT, source_sha
+                            ),
+                            manifest={"chart_render_revision": render_revision},
+                        )
+                    )
+                else:
+                    tiff_target = tmp_dir / "original.tiff"
+                    pdfbackend.original_tiff(
+                        pdf_tmp, tiff_target, ppi=req.ppi or engine_exportreq.PPI_DEFAULT
+                    )
+                    produced.append(
+                        engine_exportjob.Produced(
+                            format=fmt,
+                            tmp_path=tiff_target,
+                            width_mm=scene["w_pt"] * 25.4 / 72,
+                            height_mm=scene["h_pt"] * 25.4 / 72,
+                            vector=False,
+                            basis=engine_exportjob.Basis(
+                                engine_exportjob.BASIS_CONVERT, source_sha
+                            ),
+                            manifest={"chart_render_revision": render_revision},
+                        )
+                    )
         else:
             produced.append(
                 engine_exportjob.Produced(
