@@ -301,7 +301,11 @@ class FontLocator:
             for d in dirs:
                 self._hints.setdefault(str(d), None)
 
-    def _walk(self, root: Path):
+    def hint_dirs(self) -> list[str]:
+        with self._lock:
+            return list(self._hints)
+
+    def walk(self, root: Path):
         count = 0
         base_depth = len(root.parts)
         try:
@@ -348,7 +352,7 @@ class FontLocator:
         for root in roots:
             if not root.is_dir():
                 continue
-            for path in self._walk(root):
+            for path in self.walk(root):
                 key = str(path)
                 if key in seen:
                     continue

@@ -4,6 +4,7 @@ import { ArtifactValidationError, FIGSIZE_SOURCE_POLICY, verifiedSource, type Ar
 import { apiUrl, apiUrlFor, currentProjectId, withProject, withProjectFor } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
 import type { ExportRoute } from '@/lib/exportRoute'
+import type { FontCatalog } from '@/lib/fontCatalog'
 import type { Remedy } from '@/lib/fixRemedy'
 import type {
   FigureDocument,
@@ -2261,6 +2262,10 @@ export const fetchSourceFontStatus = (fonts: { sha256: string; face: number }[])
       body: JSON.stringify({ fonts }),
     },
   )
+
+/** 这台机器上画布文字能用的字体（ADR 0169）；`state: 'scanning'` 时清单还不全，过一会儿再问。 */
+export const fetchSourceFontCatalog = () =>
+  jsonFetch<{ ok: boolean; state: 'ready' | 'scanning' } & FontCatalog>('/api/source-fonts/catalog')
 
 /** 本机上这张脸的字节（单脸 sfnt）；只给预览加载用，不供禁止嵌入的脸。失败抛错（调用方退回批准族）。 */
 export const fetchSourceFontBytes = async (sha256: string, face: number): Promise<ArrayBuffer> => {

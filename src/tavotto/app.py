@@ -3645,7 +3645,7 @@ def api_mathtext():
 def _prepare_source_fonts() -> None:
     """让「画布文字用原图字体」（ADR 0164）找得到原图那张脸：把项目解释器 / 内置 runtime 的 matplotlib
     字体目录登记为定位线索。**只算路径、不起进程、不改任何东西**；线索只影响「去哪找」，认脸仍只按 sha256。"""
-    from .rendercore import userfonts
+    from .rendercore import fonts as rc_fonts, userfonts
 
     pythons: list[str] = []
     try:
@@ -3663,6 +3663,11 @@ def _prepare_source_fonts() -> None:
     for py in pythons:
         dirs += userfonts.matplotlib_font_dirs(py)
     dirs += userfonts.matplotlib_font_dirs(None)
+    try:
+        # 英文留在内置字体、中文选本机字体时，`source_font` 的正文脸点名的是批准字体（ADR 0169）
+        dirs.append(rc_fonts.fonts_dir())
+    except rc_fonts.FontsUnavailable:
+        pass
     userfonts.default_locator().add_hint_dirs(dirs)
 
 
@@ -3700,6 +3705,18 @@ def api_source_fonts_status():
             state = exc.reason
         results.append({"sha256": ref.primary.sha256, "face": ref.primary.face, "state": state})
     return jsonify({"ok": True, "results": results})
+
+
+@app.get("/api/source-fonts/catalog")
+def api_source_fonts_catalog():
+    """这台机器上画布文字能用的字体（ADR 0169）：`{"ok", "state", "families", "builtin"}`。
+
+    `state` 是 `scanning` 时清单还不全（首次走字体目录在后台，请求不等它），前端过一会儿再问。
+    响应里只有名字与身份，没有路径。"""
+    from .rendercore import fontcatalog
+
+    _prepare_source_fonts()
+    return jsonify({"ok": True, **fontcatalog.default_catalog().snapshot()})
 
 
 @app.get("/api/source-fonts/<sha256>/<int:face>")
