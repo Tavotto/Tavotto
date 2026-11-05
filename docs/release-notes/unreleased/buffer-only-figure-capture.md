@@ -1,3 +1,0 @@
-## Figures a script only saves into an in-memory buffer are no longer missing
-
-If a script saved a figure only into a `BytesIO` (for example to convert it to TIFF with Pillow) and then closed it, Tavotto did not show that figure at all. With several figures, one could quietly go missing while the others appeared. Such figures now appear, sized to match what the script produced when it saved with `bbox_inches="tight"`, and the desktop app and the browser version list the same figures. If a script has more of them than fit, the extra ones are counted in the "not shown" notice instead of disappearing silently.
