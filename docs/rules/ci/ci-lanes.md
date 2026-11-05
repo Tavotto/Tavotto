@@ -116,8 +116,8 @@ Gate 侧修法（#1666，已关）
 在跑的跑完，后来的至多一个 pending，更新的 pending 顶掉旧 pending；被顶掉的 run 从没起过 job，不产生
 check run，SHA 上不留红。不同 SHA 不同组，新 push 立刻起跑。代价与补偿：
 旧 SHA 的 run 不再被 concurrency 取消，由 `cancel-superseded`（只 pull_request、同仓库 PR、
-`continue-on-error`、不进任何 Gate 的 needs）取消同 PR 里 `head_sha` 不同的未完成 run；它失败只是旧 run
-多跑一会儿。
+`continue-on-error`、不进任何 Gate 的 needs）取消同 PR 里 `head_sha` 不同且 run id 小于自己的未完成 run（连推两次时旧 run 的这个 job 可能晚起跑，
+不限「更早」会反过来取消新提交）；它失败只是旧 run 多跑一会儿。
 探针实证（草稿 PR #1753，已关）：开 PR 带两个标签再补打 `full-ci`，同一 SHA 3ccb1fe 上共 4 个 CI run：
 2 个被顶掉的 pending（41845526864、41845527390）cancelled、0 个 job、没有 check run；run 41845526908 全绿
 （integration gate 14:24:21、fast gate 14:56:41 success，CodeQL gate success）；SHA 上没有任何失败的 gate。

@@ -160,7 +160,8 @@ env:
 jobs:
   # 取消同一个 PR 上**旧 SHA** 的 CI run（CodeQL 自己的组仍按 PR 取消）（concurrency 不再替我们做这件事，见顶部注释）。
   # 不在任何 Gate 的 needs 里：它失败 / 被跳过（fork PR 的只读 token）只是旧 run 多跑一会儿，
-  # 绝不影响本 SHA 的结论。只取消 head_sha 不同的 run，同 SHA 的 run 永远不碰。
+  # 绝不影响本 SHA 的结论。只取消 head_sha 不同且比自己更早创建的 run：同 SHA 的 run 永远不碰；
+  # 连推两次时旧 run 的这个 job 可能晚于新 run 才起跑，不限「更早」它会反过来取消新提交的验证（#1787 Codex P1）。
   cancel-superseded:
     name: Cancel superseded runs
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
@@ -177,12 +178,13 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           set -uo pipefail
           for wf in ci.yml; do
             for st in queued in_progress pending waiting; do
               gh api --paginate "repos/$REPO/actions/workflows/$wf/runs?event=pull_request&status=$st&per_page=100" \
-                --jq ".workflow_runs[] | select(.head_sha != \"$HEAD_SHA\" and any(.pull_requests[]?; .number == $PR_NUMBER)) | .id" \
+                --jq ".workflow_runs[] | select(.head_sha != \"$HEAD_SHA\" and .id < $RUN_ID and any(.pull_requests[]?; .number == $PR_NUMBER)) | .id" \
               | while read -r id; do
                   echo "cancel $wf run $id (旧 SHA)"
                   gh api -X POST "repos/$REPO/actions/runs/$id/cancel" >/dev/null || true

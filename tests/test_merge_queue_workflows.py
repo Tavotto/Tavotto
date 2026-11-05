@@ -811,11 +811,13 @@ class TestPullRequestEventTypes:
 
     def test_superseded_runs_are_cancelled_by_a_job_not_by_concurrency(self):
         """cancel-in-progress 关掉之后，旧 SHA 的 run 靠 `cancel-superseded` job 取消：
-        只对 pull_request、同仓库 PR；只取消 head_sha 不同的；不进任何 Gate 的 needs。"""
+        只对 pull_request、同仓库 PR；只取消 head_sha 不同且比自己早的；不进任何 Gate 的 needs。"""
         job = _job(CI, "cancel-superseded")
         code = _code(job)
         assert "github.event_name == 'pull_request'" in code
         assert "head_sha != " in code, "必须只取消 head_sha 不同的 run"
+        assert ".id < $RUN_ID" in code, "必须只取消比自己早的 run，否则晚起跑的旧 run 会取消新提交"
+        assert "RUN_ID: ${{ github.run_id }}" in code
         assert "continue-on-error: true" in code
         for gate in ("ci-fast-gate", "ci-integration-gate"):
             assert "cancel-superseded" not in _code(_job(CI, gate)), f"{gate} 不该依赖取消 job"
