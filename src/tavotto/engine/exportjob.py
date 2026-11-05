@@ -137,9 +137,13 @@ class Output:
     #: ArtifactManifest 的投影（`rendercore.inspector.summary`）：verdict + 每项四值判据 + 说明。
     #: 失败项也带（拒绝的理由就在里面）；没检查过是 None。
     manifest: dict | None = None
+    #: 修改后的脚本（ADR 0171）写进去了什么、哪些没写进去；别的产物没有这个键。
+    script_report: dict | None = None
 
     def to_payload(self) -> dict:
+        extra = {"script_report": self.script_report} if self.script_report is not None else {}
         return {
+            **extra,
             "format": self.format,
             "name": self.name,
             "url": self.url,
@@ -219,6 +223,8 @@ class Produced:
     #: 多页 PDF（#1370）：每一页各自的单页产物（带尺寸与临时文件）。检查器只读首页，所以 `inspect` 钩子逐页检查它们；
     #: 不发布，只是检查的输入。单页导出恒为 `None`。
     parts: list["Produced"] | None = None
+    #: 见 `Output.script_report`。
+    script_report: dict | None = None
 
 
 class Cancelled(Exception):
@@ -481,6 +487,13 @@ def _drop_tmp(job: ExportJob) -> None:
 #: 盖掉上一次的报告，`rename` 会给图编号却仍然覆盖报告（PR #214 评审）。
 REPORT_KEY = "report"
 REPORT_SUFFIX = "_style-check.json"
+#: 修改后的脚本（ADR 0171）在 `outputs[]` 里的 `format`。不进 `exportreq.FORMATS`：它不是图片格式，
+#: 不走分辨率 / 产物检查 / 文件名同源对。后缀固定带 `_edited`，导出目录即使就是脚本所在目录，
+#: 同名覆盖也碰不到原脚本（`Fig1.py` 导出成 `Fig1_edited.py`）。
+SCRIPT_KEY = "script"
+SCRIPT_SUFFIX = "_edited.py"
+#: 附属产物：名字不是 `<基名>.<格式>` 的那几样。
+_SIDE_SUFFIX = {REPORT_KEY: REPORT_SUFFIX, SCRIPT_KEY: SCRIPT_SUFFIX}
 LEGACY_REPORT_SUFFIX = "_proof.json"
 
 #: 已经被某个在跑的作业**预定**的最终路径 → 作业 id。
@@ -517,7 +530,11 @@ def _plan_names(job: ExportJob) -> dict[str, str]:
     预留，把并发窗口关掉。
     """
     req = job.request
-    keys = list(req.formats) + ([REPORT_KEY] if req.include_report else [])
+    keys = (
+        list(req.formats)
+        + ([SCRIPT_KEY] if req.include_script else [])
+        + ([REPORT_KEY] if req.include_report else [])
+    )
     if req.legacy_naming:
         # 旧契约：`<stem>_<MMDD_HHMMSS>.<ext>`。时间戳让它天生撞不了车，
         # 所以老标签页与 CI 脚本从来不需要覆盖策略，行为一个字节不变。
@@ -548,18 +565,16 @@ def _plan_names(job: ExportJob) -> dict[str, str]:
         return (job.export_dir / name).exists()
 
     def plain(key: str) -> str:
-        return (
-            f"{req.filename}{REPORT_SUFFIX}"
-            if key == REPORT_KEY
-            else exportreq.output_name(req.filename, key)
-        )
+        if key in _SIDE_SUFFIX:
+            return f"{req.filename}{_SIDE_SUFFIX[key]}"
+        return exportreq.output_name(req.filename, key)
 
     names: dict[str, str] = {}
     for key in keys:
         if req.overwrite == exportreq.OVERWRITE_RENAME:
             name = (
-                _dedupe_report(req.filename, taken)
-                if key == REPORT_KEY
+                _dedupe_side(req.filename, _SIDE_SUFFIX[key], taken)
+                if key in _SIDE_SUFFIX
                 else exportreq.dedupe_name(req.filename, key, taken)
             )
         else:
@@ -569,15 +584,15 @@ def _plan_names(job: ExportJob) -> dict[str, str]:
     return names
 
 
-def _dedupe_report(base: str, taken) -> str:
-    """报告的去重名。编号规则与 `exportreq.dedupe_name()` 逐字相同
+def _dedupe_side(base: str, suffix: str, taken) -> str:
+    """附属产物（报告、修改后的脚本）的去重名。编号规则与 `exportreq.dedupe_name()` 逐字相同
     （`Fig 1 (2)_style-check.json`），只是后缀不是一个格式扩展名。"""
-    first = f"{base}{REPORT_SUFFIX}"
+    first = f"{base}{suffix}"
     if not taken(first):
         return first
     n = 2
     while n <= 9999:
-        candidate = f"{base} ({n}){REPORT_SUFFIX}"
+        candidate = f"{base} ({n}){suffix}"
         if not taken(candidate):
             return candidate
         n += 1
@@ -663,7 +678,7 @@ def run(
     req = job.request
     job.status = STATUS_RUNNING
     job.started_at = time.time()
-    job.total = len(req.formats) + (1 if req.include_report else 0)
+    job.total = len(req.formats) + (1 if req.include_report else 0) + int(req.include_script)
     job.step = 0
     job.phase = "preparing"
     job.trace.mark("prepare", formats=len(req.formats))
@@ -786,6 +801,7 @@ def run(
                     status=STATUS_DONE,
                     replaced=replaced,
                     manifest=p.manifest,
+                    script_report=p.script_report,
                 )
             )
             job.step += 1
@@ -1057,7 +1073,9 @@ def diagnostic_projection(job: ExportJob) -> dict:
     for o in [*job.outputs, *([job.report] if job.report is not None else [])]:
         outputs.append(
             {
-                "format": taskdiag.closed(o.format, (*exportreq.ENGINE_FORMATS, REPORT_KEY)),
+                "format": taskdiag.closed(
+                    o.format, (*exportreq.ENGINE_FORMATS, SCRIPT_KEY, REPORT_KEY)
+                ),
                 "status": taskdiag.closed(o.status, STATUSES),
                 "error_code": taskdiag.code(o.error_code),
                 "vector": taskdiag.flag(o.vector),

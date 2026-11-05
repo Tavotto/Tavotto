@@ -1997,6 +1997,8 @@ export interface ExportRequest {
   overwrite: 'ask' | 'replace' | 'rename'
   validation?: { policy: 'block_on_error' | 'acknowledged'; acknowledged?: string[] }
   include_style_check_report?: boolean
+  /** 同时导出修改后的 .py（ADR 0171）；不要时不带这个键 */
+  include_edited_script?: boolean
   document_id?: string | null
   /** 导出开始那一刻的文档快照指纹；回执原样带回来，用来说"期间又被编辑过" */
   document_revision?: string | null
@@ -2133,6 +2135,15 @@ export interface ExportOutput {
    * 界面按「未核验」画，不按通过画；`verified` 之外的任何值都不许画成绿。
    */
   manifest?: ArtifactManifestSummary | null
+  /** 修改后的 .py（`format: 'script'`）写进去了什么；别的产物没有这个键（ADR 0171） */
+  script_report?: ExportScriptReport
+}
+
+export interface ExportScriptReport {
+  /** 写进脚本的调整条数 */
+  written: number
+  /** 没写进去的调整：新脚本跑出来不含它们 */
+  skipped: { gid: string; prop: string; label: string }[]
 }
 
 export type ExportJobStatus =

@@ -37,6 +37,8 @@ export interface BatchShared {
   transparent: boolean
   strict: boolean
   withReport: boolean
+  /** 每张图各带一份修改后的 .py（ADR 0171）；没有脚本的图由后端逐项说原因 */
+  withScript: boolean
   /** 对话框里挑的规范 id（画布没绑规范时用它） */
   profileId: string
   catalog: SpecCatalogEntry[]
@@ -149,6 +151,7 @@ export function buildBatchInput(
     ppi: ppiNum || PPI_DEFAULT,
     background: shared.transparent && transparentApplies ? 'transparent' : 'white',
     includeReport: reportOn,
+    includeScript: shared.withScript,
     strictInspection: shared.strict,
     profileId: checkProfileId,
     acknowledged: [...new Set(errors.map((i) => i.ruleCode))],

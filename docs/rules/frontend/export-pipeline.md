@@ -19,6 +19,7 @@ runExport(input)       起作业 → SSE + 轮询跟进度 → 落终局
 cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动过）
 ```
 
+- **修改后的 .py（ADR 0171）**：格式行第六项 `PY`，不单开一行。可不可用只读 `offers.script`（`scriptAvailability`，缺 route 才看素材表），不可用时禁用、原因在 `title`；不记进导出默认值（每次多跑一遍脚本）。有修改没写进脚本时桌面版胶囊说条数（`resultScriptSkipped`），不开结果块；浏览器版的结果块在摘要行说、详情由 `ScriptSkipped` 列名字。
 - **载荷的构造只有 `lib/exportRequest.buildExportRequest()` 一处**。组件不许
   自己拼那个对象，也不许在第二个 API 上把同一批参数再抄一遍——那正是
   「预检按一套规矩、导出按另一套」的来源。
@@ -66,11 +67,11 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
   列表的缩略图**不发渲染请求**：有图内修改的面板挂 `renderStore` 里已画好的
   SVG，其余走素材库同一条 `panelSrc`。「没选」（`no_figure`，让用户点一张）与
   「没得选」（`no_figures`，项目里一张图都没有）是两句话。
+- **导出回执的详情只放用户要用的**（2026-11-06 用户）：文件名、尺寸、保存位置；核验只说失败，「已核验」「未核验」「已覆盖」不上界面。
 - **产物核验的解读只有 `lib/artifactInspection.inspectionState()` 一处**（2026-09-21，统一实施包 U08，
   ADR 0068）：回执 `outputs[].manifest` 是服务端重新打开封口文件量出的逐项四值
-  （`verified / failed / unknown / not_applicable`）。每件产出一行：**全部可判项 `verified` 才画绿勾
-  「已核验」**；有 `unknown` 按名字列「未核验：…」——中性色、没有勾；有 `failed` 红着列「核验未通过：…」
-  （standard 政策下文件已经交付了，用户投出去之前得知道）；`not_applicable` 不画；**没有 `manifest`
+  （`verified / failed / unknown / not_applicable`）。回执里只有 `failed` 上界面，红着列「核验未通过：…」
+  （standard 政策下文件已经交付了，用户投出去之前得知道）；其余都不画，绝不画绿勾；**没有 `manifest`
   （老服务端 / 检查器没跑）= 未核验**，不是通过。Codex 内嵌画布的「已导出」提示按同一份解读
   （`inspectionRollup`）按文件名点名失败 / 未核验的文件。
 - **严格核验是请求里的可选段**：「检查」组里的「严格核验产物」→ `buildExportRequest({ strictInspection, profileId })`

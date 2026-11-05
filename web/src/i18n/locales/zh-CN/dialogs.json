@@ -165,6 +165,7 @@
     "contentEach": "每张图单独导出",
     "exportedCount_other": "已导出 {{count}} 个文件",
     "resultInspectionFailed_other": "{{count}} 个文件核验未通过，见详情",
+    "resultScriptSkipped_other": "{{count}} 处修改未写入 .py",
     "resultWarnings_other": "有 {{count}} 条提示，见详情",
     "partialSummary": "{{ok}} 个成功，{{failed}} 个失败",
     "previewFit": "适合大小",
@@ -172,6 +173,12 @@
     "previewWhole": "整版",
     "previewFlagged": "有要改的项",
     "batchProgress": "第 {{k}}/{{n}} 张 · {{name}} · {{phase}}",
+    "scriptHint": "修改后的脚本，原脚本不动",
+    "scriptSkipped": "未写入：{{items}}",
+    "scriptUnavailable": {
+      "canvas_scope": "需要单张图",
+      "no_script": "这张图没有脚本"
+    },
     "mergePdf": "合成一个多页 PDF：{{name}}（{{count}} 页）",
     "batchNames": "每张图用各自的名字",
     "exportAgain": "再次导出",
@@ -251,7 +258,6 @@
     "profileOtherCanvas": "这张图在画布「{{canvas}}」上，按那张画布的规范检查。要换规范，先切到那张画布。",
     "profileSync": "同步到新版",
     "profileUpdateAvailable": "这套规范有了新版本。",
-    "replaced": "已覆盖",
     "reportTitle": "随导出生成一份 JSON 报告，供投稿留档。",
     "reportToggle": "生成样式检查报告",
     "retry": "重试",
@@ -282,9 +288,6 @@
     "strictToggle": "严格核验产物",
     "strictTitle": "按所选规范重新打开写好的文件核对；不合格或无法核验的文件不会保存。EPS 不核验。",
     "inspection": {
-      "verified": "已核验",
-      "unknown": "未核验",
-      "unknownItems": "未核验：{{items}}",
       "failedItems": "核验未通过：{{items}}",
       "check": {
         "integrity": "完整性",

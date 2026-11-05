@@ -110,6 +110,7 @@ from overrides import (
     color_mapping_is_live,
     colorbar_mapping_is_live,
     entry_face_index,
+    fallback_tail,
     font_display_names,
     font_face_index,
     font_file_key,
@@ -6219,6 +6220,8 @@ def _measure_manifest(
         # 其中有中文名的：{族名: 中文名}，只给下拉显示用（值仍是族名）。
         # 加字段协议：老前端原样忽略，照旧显示族名。
         "font_family_names": dict(installed_font_display_names()),
+        # 本机的字体回退尾巴：修改后的 .py 要拼出与引擎同一条族链（ADR 0171）。加字段协议，同上
+        "font_fallback_tail": list(fallback_tail()),
     }
     frame = pathgeom.frame_report(fig)
     if frame is not None:

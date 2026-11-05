@@ -155,6 +155,7 @@ from .engine import (
     runconfig as engine_runconfig,
     runtime as engine_runtime,
     runtimeasset as engine_runtimeasset,
+    scriptadjust as engine_scriptadjust,
     scriptanswers as engine_scriptanswers,
     scriptargs as engine_scriptargs,
     scriptbackup as engine_scriptbackup,
@@ -173,6 +174,7 @@ from .engine import (
     updater as engine_updater,
     versionstore as engine_versionstore,
     workdir as engine_workdir,
+    writetripwire as engine_writetripwire,
 )
 
 PKG_ROOT = Path(__file__).resolve().parent  # 只读：包自带资源（前端构建产物）
@@ -3258,11 +3260,151 @@ def _export_produce(job, tmp_dir: Path, *, artifact_sources=None) -> list:
     if job.request.merge_pdf is not None:
         return _export_produce_merged_pdf(job, tmp_dir, artifact_sources=artifact_sources)
     if job.request.scope == engine_exportreq.SCOPE_ORIGINAL:
-        return _export_produce_original(
-            job, tmp_dir, **({"artifact_sources": artifact_sources} if artifact_sources else {})
+        produced = (
+            _export_produce_original(
+                job, tmp_dir, **({"artifact_sources": artifact_sources} if artifact_sources else {})
+            )
+            if job.request.formats
+            else []
         )
+        if job.request.include_script:
+            job.check_cancelled()
+            produced.append(_produce_edited_script(job, tmp_dir))
+        return produced
     return _export_produce_rendercore(
         job, tmp_dir, **({"artifact_sources": artifact_sources} if artifact_sources else {})
+    )
+
+
+def _edited_script_worker(figure_id: str) -> tuple:
+    """这张图的 `(worker, stem)`；没有脚本回 `(None, stem)`。"""
+    if engine_runtimeasset.is_runtime_id(figure_id):
+        return _engine_worker(figure_id)
+    stem, info = _disk_panel(safe_resolve(figure_id))
+    if info is None:
+        return None, stem
+    return _safe_worker(info["script"], info["entry"], stem), stem
+
+
+def _shown_index(worker, stem: str) -> int | None:
+    """这张图没经过 savefig 时，它是第几张这样的图（0 起）；经过 savefig 的回 None。
+
+    序号与 `figcapture.collect_pyplot_figures` 给 stem 的顺序一致：块在 `plt.show` 时按同一个序号认图。
+    """
+    pyplot = [
+        d.get("stem")
+        for d in getattr(worker, "last_build_descriptors", None) or []
+        if d.get("capture_source") == engine_figcapture.SOURCE_PYPLOT
+    ]
+    return pyplot.index(stem) if stem in pyplot else None
+
+
+def _verify_edited_script(worker, stem: str, target: Path, adjusted, hot: dict, tmp_dir: Path):
+    """修改后的脚本 + 没写进去的调整，从零重放一遍，必须等于用户看到的图（ADR 0171）。
+
+    与写回同一把尺：`_compare_manifests`（几何）+ `_replay_pixel_diff`（像素）。脚本字节留在导出的临时目录，
+    经影子脚本（ADR 0143 修订）运行，`__file__` 与 cwd 都是原脚本的；隔离模式顺带让重放碰不到原脚本本身。
+    回分歧清单（空 = 过了）。
+    """
+    script_path = Path(worker.figures_dir) / worker.script_name
+    roots = engine_writetripwire.isolate_entries(tmp_dir / "isolate", [str(script_path)])
+    key = engine_execspec.write_roots_key(roots)
+    with engine_shadowscript.shadow(worker.figures_dir, worker.script_name, target, key):
+        fresh = engine_pool.one_shot(
+            worker.script_name,
+            worker.figures_dir,
+            worker.entry,
+            script_inputs=getattr(worker, "last_build_script_inputs", None) or [],
+            pinned=engine_pool.pin_of_worker(worker),
+            **({"run": worker.run} if getattr(worker, "run", None) is not None else {}),
+            write_roots=roots,
+        )
+        try:
+            resp = fresh.override(stem, adjusted.residual)
+            warnings = [
+                {"gid": "", "field": "warning", "hot": "", "fresh": str(w)}
+                for w in resp.get("warnings") or []
+            ]
+            man_fresh = json.loads(
+                Path(engine_figcapture.usable_preview_path(fresh.out_dir, stem, ".json")).read_text(
+                    encoding="utf-8"
+                )
+            )
+            diffs = _compare_manifests(hot, man_fresh)[0]
+            if not diffs:
+                pixel_diff, _state = _replay_pixel_diff(worker, fresh, stem)
+                if pixel_diff is not None:
+                    diffs.append(pixel_diff)
+            return warnings + diffs
+        finally:
+            engine_pool.discard(fresh)
+
+
+def _produce_edited_script(job, tmp_dir: Path):
+    """导出里的「修改后的 .py」（ADR 0171）：**只产一份新文件，原脚本一个字节不动**。
+
+    这份产物自己的失败只算它自己的（`Produced.error_code`），图片格式照常交付。
+    验证过不了就不交付：一份画出来与界面不一样的脚本比没有更糟。
+    """
+    Produced = engine_exportjob.Produced
+    key = engine_exportjob.SCRIPT_KEY
+
+    def fail(code: str, **params) -> "engine_exportjob.Produced":
+        return Produced(format=key, error_code=code, error_params=params)
+
+    src = job.request.original
+    patches = list(src.overrides or [])
+    try:
+        worker, stem = _edited_script_worker(src.figure_id)
+    except engine_pool.WorkerError as exc:
+        return fail("script_export_run_failed", error=str(exc)[:200])
+    if worker is None:
+        return fail("script_export_no_script")
+    if engine_enginesession.is_native(worker):
+        return fail("script_export_native")
+    script_path = Path(worker.figures_dir) / worker.script_name
+    if script_path.suffix.lower() != ".py":
+        return fail("script_export_not_python")
+    try:
+        data = script_path.read_bytes()
+        job.check_cancelled()
+        # 热态必须正是这组 patches，manifest 才是用户看到的那张图
+        worker.override(stem, patches)
+        if getattr(worker, "script_sha1", "") != hashlib.sha1(data).hexdigest():
+            return fail("script_export_script_changed")
+        shown_index = _shown_index(worker, stem)
+        if shown_index is not None and not re.search(rb"\bshow\s*\(", data):
+            # 既不保存也不显示：脚本在终端里什么都不产出，修改没有生效的时机
+            return fail("script_export_no_savefig")
+        hot = _hot_manifest(worker, stem, patches)
+        if hot is None:
+            return fail("script_export_run_failed")
+        adjusted = engine_scriptadjust.build(
+            data,
+            stem,
+            patches,
+            hot,
+            version=engine_updater.current_version(),
+            shown_index=shown_index,
+        )
+        target = tmp_dir / "edited-script.py"
+        target.write_bytes(adjusted.data)
+        job.check_cancelled()
+        if adjusted.written:
+            diffs = _verify_edited_script(worker, stem, target, adjusted, hot, tmp_dir)
+            if diffs:
+                LOG.warning("修改后的脚本没过验证: %s %s", stem, diffs[:REPLAY_DIFF_LIMIT])
+                return fail("script_export_diverged", count=len(diffs))
+    except engine_scriptadjust.ScriptAdjustError as exc:
+        return fail(exc.code)
+    except engine_pool.WorkerError as exc:
+        return fail("script_export_run_failed", error=str(exc)[:200])
+    except OSError as exc:
+        return fail("script_export_unreadable", error=str(exc)[:200])
+    return Produced(
+        format=key,
+        tmp_path=target,
+        script_report={"written": adjusted.written, "skipped": adjusted.skipped},
     )
 
 

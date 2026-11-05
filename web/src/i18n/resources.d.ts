@@ -798,10 +798,7 @@ export default interface Resources {
           "size": "尺寸",
           "text_layer": "文字层"
         },
-        "failedItems": "核验未通过：{{items}}",
-        "unknown": "未核验",
-        "unknownItems": "未核验：{{items}}",
-        "verified": "已核验"
+        "failedItems": "核验未通过：{{items}}"
       },
       "jobLost": "找不到这次导出的作业。文件可能已写出，请检查导出目录或重新导出。",
       "locationChange": "更改…",
@@ -849,10 +846,10 @@ export default interface Resources {
       "profileOtherCanvas": "这张图在画布「{{canvas}}」上，按那张画布的规范检查。要换规范，先切到那张画布。",
       "profileSync": "同步到新版",
       "profileUpdateAvailable": "这套规范有了新版本。",
-      "replaced": "已覆盖",
       "reportTitle": "随导出生成一份 JSON 报告，供投稿留档。",
       "reportToggle": "生成样式检查报告",
       "resultInspectionFailed_other": "{{count}} 个文件核验未通过，见详情",
+      "resultScriptSkipped_other": "{{count}} 处修改未写入 .py",
       "resultWarnings_other": "有 {{count}} 条提示，见详情",
       "retry": "重试",
       "retryStatus": "重试获取状态",
@@ -868,6 +865,12 @@ export default interface Resources {
         "no_figures": "项目里还没有可以按原图尺寸导出的图，暂时只能按画布导出。",
         "source_stale": "这张图的源文件现在找不到了，暂时只能按画布导出。",
         "unknown_figure": "找不到这张图的信息，暂时只能按画布导出。"
+      },
+      "scriptHint": "修改后的脚本，原脚本不动",
+      "scriptSkipped": "未写入：{{items}}",
+      "scriptUnavailable": {
+        "canvas_scope": "需要单张图",
+        "no_script": "这张图没有脚本"
       },
       "showInFolder": "在文件夹中显示",
       "sizeDiskDiffers": "磁盘上的原文件为 {{dw}} × {{dh}} mm（脚本保存时已裁边），将按图幅 {{w}} × {{h}} mm 导出。",
@@ -3383,6 +3386,15 @@ export default interface Resources {
       "script_entry_missing": "这个脚本被改写过，登记的入口函数已经不在了。",
       "script_error": "脚本执行失败：{{error}}",
       "script_exited": "脚本调用 sys.exit() 提前结束了（{{error}}）。Tavotto 要的是脚本跑完后留在内存里的图：去掉那句 exit，或只在出错时 exit。",
+      "script_export_diverged": "重跑结果和当前的图不一致，没有导出 .py。",
+      "script_export_native": "Tavotto Run 打开的图不能导出 .py。",
+      "script_export_no_savefig": "脚本没有 savefig 或 plt.show，修改无处生效。",
+      "script_export_no_script": "这张图没有脚本。",
+      "script_export_not_for_canvas": "需要单张图。",
+      "script_export_not_python": "脚本不是 Python。",
+      "script_export_run_failed": "重跑脚本出错，没有导出 .py。",
+      "script_export_script_changed": "脚本刚改过，等图更新后再导出。",
+      "script_export_unreadable": "脚本读不了（编码或语法）。",
       "script_hardlinked": "脚本有另一个硬链接名字（{{script}}），替换会把两者断开，Tavotto 不改它。",
       "script_input_invalid": "这个答案不能保存（太长或不是文字）。",
       "script_input_not_found": "没有找到这条记住的答案，可能已被删除。",

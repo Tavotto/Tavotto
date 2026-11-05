@@ -900,7 +900,7 @@ describe('SVG 导出（X03）', () => {
 
   it('SVG follows the existing formats and sends no PPI', async () => {
     await setup(9)
-    expect([...document.body.querySelectorAll('[data-export-formats] [data-export-format]')].map((el) => el.getAttribute('data-export-format'))).toEqual(['pdf', 'png', 'eps', 'tiff', 'svg'])
+    expect([...document.body.querySelectorAll('[data-export-formats] [data-export-format]:not([data-export-format="py"])')].map((el) => el.getAttribute('data-export-format'))).toEqual(['pdf', 'png', 'eps', 'tiff', 'svg'])
     expect(formatBox('SVG').checked).toBe(false)
     await click(formatBox('SVG'))
     await click(formatBox('PDF'))
@@ -1450,6 +1450,39 @@ describe('来源读后端 route（#1209）', () => {
     expect(epsDisabled(), 'route.offers.eps 可用').toBeNull()
   })
 
+  describe('修改后的 .py（ADR 0171）', () => {
+    const row = () => document.body.querySelector('[data-export-format="py"]')
+    const box = () => row()?.querySelector('input') as HTMLInputElement | null
+
+    it('可不可用读 route.offers.script，不看前端素材表', async () => {
+      routeOf = (req) => ({
+        scope: req.scope,
+        formats: req.formats,
+        panels: { 'r1.png': panelRoute({ offers: { script: { how: 'redraw' } } }) },
+      })
+      await setupRaster([])
+      expect(row()?.getAttribute('aria-disabled'), '还没拿到 route：退路看素材表').toBe('true')
+      await settle()
+      expect(row()?.getAttribute('aria-disabled'), 'route 说有').toBeNull()
+    })
+
+    it('没有脚本：禁用并说原因，选项不藏', async () => {
+      routeOf = (req) => ({
+        scope: req.scope,
+        formats: req.formats,
+        panels: {
+          'r1.png': panelRoute({
+            offers: { script: { how: 'unavailable', reason: 'script_export_no_script' } },
+          }),
+        },
+      })
+      await setupRaster([])
+      await settle()
+      expect(box()?.disabled).toBe(true)
+      expect(row()?.getAttribute('title')).toBe(i18n.t('dialogs:export.scriptUnavailable.no_script'))
+    })
+  })
+
   it('画布范围：route 说某个带编辑的图画不出来，点导出之前就说', async () => {
     routeOf = (req) => ({
       scope: req.scope,
@@ -1553,37 +1586,31 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     jobWarnings = ['预览与画布略有出入']
   })
 
-  it('回执里没有 manifest（老服务端 / 检查器没跑）：画「未核验」，没有绿勾', async () => {
+  it('回执里没有 manifest（老服务端 / 检查器没跑）：详情里什么都不画，更没有绿勾', async () => {
     await setup(9)
     await click(button('开始导出')!)
     await openResultDetail()
-    expect(badge()?.dataset.inspection).toBe('unknown')
-    expect(badge()?.textContent).toBe('未核验')
-    expect(document.body.querySelector('[data-inspection="verified"]')).toBeNull()
+    expect(badge()).toBeNull()
   })
 
-  it('全部可判项 verified 才画绿；not_applicable 不算', async () => {
+  it('全部核验过：不画，用户不需要理解这一层', async () => {
     jobOutputs = [
       output(manifest({ integrity: 'verified', size: 'verified', text_layer: 'not_applicable' })),
     ]
     await setup(9)
     await click(button('开始导出')!)
     await openResultDetail()
-    expect(badge()?.dataset.inspection).toBe('verified')
-    expect(badge()?.textContent).toContain('已核验')
-    expect(badge()?.className).toContain('text-ok')
+    expect(badge()).toBeNull()
   })
 
-  it('有一项 unknown 就不画绿，按名字列出未核验的项', async () => {
+  it('有一项 unknown：不画，也不画绿', async () => {
     jobOutputs = [
       output(manifest({ integrity: 'verified', size: 'verified', clipping: 'unknown' })),
     ]
     await setup(9)
     await click(button('开始导出')!)
     await openResultDetail()
-    expect(badge()?.dataset.inspection).toBe('unknown')
-    expect(badge()?.textContent).toBe('未核验：裁切')
-    expect(badge()?.className).not.toContain('text-ok')
+    expect(badge()).toBeNull()
   })
 
   it('可选项 failed：文件已交付，但红着说出是哪一项', async () => {
@@ -3824,6 +3851,34 @@ describe('预览信息完善（PR3）：结果块', () => {
       expect(JSON.stringify(useUiStore.getState().status)).toContain('export.exported')
     } finally {
       reveal.can = null
+    }
+  })
+
+  it('修改后的 .py 有修改没写进去（桌面壳）：还是胶囊，不开结果块，胶囊说条数', async () => {
+    reveal.can = true
+    jobOutputs = [
+      {
+        format: 'script',
+        name: 'Fig1_edited.py',
+        url: '/exports/Fig1_edited.py',
+        bytes: 1,
+        dimensions: { px: null, mm: null },
+        vector: false,
+        status: 'done',
+        replaced: false,
+        error: null,
+        manifest: null,
+        script_report: { written: 1, skipped: [{ gid: 'axes_0', prop: 'aspect', label: '子图 1' }] },
+      },
+    ]
+    try {
+      await setup(9)
+      await click(q('[data-export-start]')!)
+      expect(q('[data-export-result]')).toBeNull()
+      expect(JSON.stringify(useUiStore.getState().status)).toContain('resultScriptSkipped')
+    } finally {
+      reveal.can = null
+      jobOutputs = null
     }
   })
 

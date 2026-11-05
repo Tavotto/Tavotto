@@ -167,6 +167,8 @@
     "exportedCount_other": "Exported {{count}} files",
     "resultInspectionFailed_one": "{{count}} file failed its check; see details",
     "resultInspectionFailed_other": "{{count}} files failed their checks; see details",
+    "resultScriptSkipped_one": "{{count}} edit not in the .py",
+    "resultScriptSkipped_other": "{{count}} edits not in the .py",
     "resultWarnings_one": "{{count}} note; see details",
     "resultWarnings_other": "{{count}} notes; see details",
     "partialSummary": "{{ok}} succeeded, {{failed}} failed",
@@ -175,6 +177,12 @@
     "previewWhole": "Whole page",
     "previewFlagged": "Has items to fix",
     "batchProgress": "Figure {{k}} of {{n}} · {{name}} · {{phase}}",
+    "scriptHint": "Edited copy of the script. The original isn’t touched.",
+    "scriptSkipped": "Not written: {{items}}",
+    "scriptUnavailable": {
+      "canvas_scope": "Single figures only",
+      "no_script": "No script for this figure"
+    },
     "mergePdf": "Combine into one multi-page PDF: {{name}} ({{count}} pages)",
     "batchNames": "Each figure keeps its own name",
     "exportAgain": "Export again",
@@ -259,7 +267,6 @@
     "profileOtherCanvas": "This figure is on the canvas “{{canvas}}” and is checked against that canvas’s profile. Switch to that canvas to change it.",
     "profileSync": "Sync to the new version",
     "profileUpdateAvailable": "A newer version of this spec is available.",
-    "replaced": "replaced",
     "reportTitle": "Also writes a JSON report for your submission records.",
     "reportToggle": "Generate a style check report",
     "retry": "Try again",
@@ -290,9 +297,6 @@
     "strictToggle": "Strict file check",
     "strictTitle": "Reopens each finished file and checks it against the selected profile. A file that fails or can’t be checked is not saved. EPS is not checked.",
     "inspection": {
-      "verified": "Checked",
-      "unknown": "Not checked",
-      "unknownItems": "Not checked: {{items}}",
       "failedItems": "Check failed: {{items}}",
       "check": {
         "integrity": "integrity",
