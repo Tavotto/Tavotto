@@ -9,11 +9,12 @@
  * 这份清单要跟着 `engine/manifest.py` 的字段表走：加了新属性却忘了补翻译，
  * 这条用例会红。
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { setLocale } from '@/i18n'
+import { i18n, setLocale } from '@/i18n'
 import enInspector from '@/i18n/locales/en-US/inspector.json'
 import zhInspector from '@/i18n/locales/zh-CN/inspector.json'
+import { GENERIC_FONT_FAMILIES } from '@/store/actions'
 import { engineLabel, groupLabel, groupRank, optionLabel, propLabel, roleName } from './registry'
 
 /** 引擎会发出来的 prop → 它属于哪个角色（只列需要显示名的那些） */
@@ -274,5 +275,27 @@ describe('engineLabel 的出口把 mathtext 换成可读文本（2026-09-14 审�
     setLocale('zh-CN')
     expect(engineLabel('标题 “price $5”')).toContain('$5')
     expect(engineLabel('标题 “$\\foo{x}$”')).toContain('\\foo{x}')
+  })
+})
+
+describe('字体选项的显示名', () => {
+  it('通用族表与两份语言文件的 enum.fontfamily 一致', () => {
+    const generic = [...GENERIC_FONT_FAMILIES].sort()
+    expect(Object.keys(zhInspector.enum.fontfamily).sort()).toEqual(generic)
+    expect(Object.keys(enInspector.enum.fontfamily).sort()).toEqual(generic)
+  })
+
+  it('通用族照常翻译，本机字体原样显示', async () => {
+    await setLocale('zh-CN')
+    expect(optionLabel('fontfamily', 'serif')).toBe('衬线')
+    expect(optionLabel('fontfamily', 'Times New Roman')).toBe('Times New Roman')
+    expect(optionLabel('fontfamily', 'Source Han: Sans')).toBe('Source Han: Sans')
+  })
+
+  it('几百个本机字体不查翻译：选中文字时重新挂载字体行，每项都走这里', () => {
+    const translator = vi.spyOn(i18n.services.resourceStore as unknown as { getResource: () => unknown }, 'getResource')
+    for (let i = 0; i < 500; i++) optionLabel('fontfamily', `Local Font ${i}`)
+    expect(translator).not.toHaveBeenCalled()
+    translator.mockRestore()
   })
 })

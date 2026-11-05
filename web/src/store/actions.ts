@@ -1050,20 +1050,26 @@ export const selectionBounds = () => boundsOf(selectedObjects().map(visualBounds
 export const propLabel = (prop: string): string =>
   t(`prop.${prop}`, { ns: 'inspector', defaultValue: prop })
 
+/** `enum.fontfamily` 登记的通用族；看护用例核对它与两份语言文件一致。 */
+export const GENERIC_FONT_FAMILIES: ReadonlySet<string> = new Set(['monospace', 'sans-serif', 'serif'])
+
 /**
  * enum 选项的显示名，按属性分档——"center" 在水平/垂直对齐里含义不同，
  * "normal" 在字重/字形里也不同，所以不能只按值查表。
  * 查不到的原样显示：具体字体名（Times New Roman 等）不该被翻译，
  * 脚本自定义的枚举值也不该被吞掉。
  */
-export const optionLabel = (prop: string, value: string): string =>
+export const optionLabel = (prop: string, value: string): string => {
+  // 字体下拉有几百个本机字体，选中文字时每项都走到这里；翻译表只登记通用族，其余本来就原样显示
+  if (prop === 'fontfamily' && !GENERIC_FONT_FAMILIES.has(value)) return value
   // `nsSeparator: false`：**枚举值是开集，里面真的有 i18next 的分隔符**。
   // 默认 nsSeparator 是 `:`，于是 `enum.linestyle.:`（点线）被切成
   // 命名空间 `enum.linestyle.` + 空 key，查不到就原样回退成 `:`——界面上
   // 那一格的名字就是一个冒号（审计 T15 点名的「个别辅助标签显示 :」）。
   // keySeparator 的 `.` 不用关：i18next 的 deepFind 会把剩下的段拼回去，
   // `marker` 的 `.`（小点）与 `..` 实测都查得到。
-  t(`enum.${prop}.${value}`, { ns: 'inspector', nsSeparator: false, defaultValue: value })
+  return t(`enum.${prop}.${value}`, { ns: 'inspector', nsSeparator: false, defaultValue: value })
+}
 
 /**
  * 写入一条图内元素 override 并触发重渲染。
