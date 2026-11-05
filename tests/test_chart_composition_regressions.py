@@ -201,7 +201,6 @@ def test_heatmap_colorbar_follows_the_new_norm():
         rect=[24.28, 24.32, 231.14, 165.1],
         x=evidence(0, 2),
         y=evidence(0, 2),
-        axes_nodes=["axes_2"],
         series_update={"cbar_node": "axes_2"},
     )
     frag = svgchart.scaffold_fragment(out["model"], frame)

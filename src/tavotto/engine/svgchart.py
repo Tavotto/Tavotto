@@ -205,21 +205,35 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
     return {"fragment": text.encode("utf-8"), "facts": facts}
 
 
-def _iter_artists(container):
-    """bar/errorbar 容器或单个 artist → 全部成员（角色标记要覆盖完整产物）。
+def _iter_artists(item):
+    """bar/errorbar 容器或单个 artist → 全部**可绘制**成员。
 
-    顺序关键：先判容器（BarContainer/ErrorbarContainer 是 tuple 子类），再把
-    其余一切当叶子——Line2D 这类 artist 自己也有 get_children（marker 子对象），
-    先查它会把 gid 设到不会单独成元素的子对象上。
+    完整产物（N4）：BarContainer 的 tuple 内容只有柱矩形——误差成员挂在
+    ``.errorbar`` 属性（ErrorbarContainer），其 get_children 才是
+    数据线/端帽/误差线集合。规则：`.errorbar` 属性先收；`get_children()` 非空
+    就递归子成员（Line2D/LineCollection/Rectangle 返回空 → 叶子，gid 落在
+    会真实出现的元素上）；裸 list/tuple 递归。
     """
-    if container is None:
+    if item is None:
         return []
-    if isinstance(container, (list, tuple)):
+    if isinstance(item, (list, tuple)):
+        # BarContainer/ErrorbarContainer 都是 tuple 子类；tuple 内容之外，
+        # BarContainer 的误差成员挂在 .errorbar 属性（N4）。
         out = []
-        for item in container:
-            out.extend(_iter_artists(item))
+        for sub in item:
+            out.extend(_iter_artists(sub))
+        errorbar = getattr(item, "errorbar", None)
+        if errorbar is not None:
+            out.extend(_iter_artists(errorbar))
         return out
-    return [container]
+    out = []
+    children = item.get_children() if hasattr(item, "get_children") else []
+    if children:
+        for child in children:
+            out.extend(_iter_artists(child))
+        return out
+    out.append(item)
+    return out
 
 
 def _safe_style(style: dict) -> dict:

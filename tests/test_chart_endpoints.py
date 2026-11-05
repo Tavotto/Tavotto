@@ -155,7 +155,9 @@ def test_compute_returns_full_render_identity(project):
 
     from tavotto.engine import chartmodel
 
-    want = chartmodel.panel_identity(chartmodel.SOURCE_DECLARATIVE, body["scene_digest"], model)
+    want = chartmodel.panel_identity(
+        chartmodel.SOURCE_DECLARATIVE, body["scene_digest"], model, binding
+    )
     assert body["render_revision"] == want
     assert body["model_digest"] == chartmodel.digest_of(model)
     assert body["binding_digest"] == chartmodel.digest_of(binding)

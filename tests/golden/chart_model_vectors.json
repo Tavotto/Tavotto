@@ -733,7 +733,8 @@
        "vmin": 0.0,
        "vmax": 1.0
       },
-      "grid": "g1"
+      "grid": "g1",
+      "cbar_node": "axes_2"
      }
     ],
     "dataset": {

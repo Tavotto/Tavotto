@@ -119,7 +119,11 @@ def _refs_outside(root: ET.Element, target: ET.Element) -> set[str]:
 
 
 def compose_scene(
-    scene_bytes: bytes, binding: dict, fragment_bytes: bytes, model: dict | None = None
+    scene_bytes: bytes,
+    binding: dict,
+    fragment_bytes: bytes,
+    model: dict | None = None,
+    origin: tuple[float, float] = (0.0, 0.0),
 ) -> bytes:
     """按绑定把片段接进场景；返回编辑后的场景字节（原字节不动）。
 
@@ -241,6 +245,9 @@ def compose_scene(
             )
         hoist_external_defs(target)
         wrapper = ET.Element(f"{{{SVG_NS}}}g", {"data-tavotto": f"series:{sid}"})
+        # 片段坐标相对 viewBox 原点；场景用户坐标 = 原点 + 片段坐标（N1）
+        if origin != (0.0, 0.0):
+            wrapper.set("transform", f"translate({origin[0]}, {origin[1]})")
         for member in members:
             piece = copy.deepcopy(member)
             _suffix_ids(piece, suffix)
@@ -267,15 +274,32 @@ def compose_scene(
             hoist_external_defs(target)
             frag_sub = copy.deepcopy(cbar)
             _suffix_ids(frag_sub, suffix)
+            if origin != (0.0, 0.0):
+                wrapper = ET.Element(
+                    f"{{{SVG_NS}}}g", {"transform": f"translate({origin[0]}, {origin[1]})"}
+                )
+                wrapper.append(frag_sub)
+                frag_sub = wrapper
             par[idx] = frag_sub
             continue
         hoist_external_defs(target)
         par.remove(target)
     if axes_nodes and insert_parent is not None:
+        furniture_group = None
+        if origin != (0.0, 0.0):
+            # 轴家具同样在 0 基片段空间：包一层平移，保持与源用户空间对齐
+            furniture_group = ET.Element(
+                f"{{{SVG_NS}}}g", {"transform": f"translate({origin[0]}, {origin[1]})"}
+            )
         for j, furniture in enumerate(axis_furniture):
             piece = copy.deepcopy(furniture)
             _suffix_ids(piece, suffix)
-            insert_parent.insert(insert_index + j, piece)
+            if furniture_group is not None:
+                furniture_group.append(piece)
+            else:
+                insert_parent.insert(insert_index + j, piece)
+        if furniture_group is not None:
+            insert_parent.insert(insert_index, furniture_group)
 
     # 片段根级 defs 随迁（clipPath 等，含系列/轴家具的引用目标）
     for sc_defs in frag_root.findall("s:defs", NS):

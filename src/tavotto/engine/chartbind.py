@@ -265,6 +265,16 @@ def build_model_and_binding(request: dict, *, engine_identity: dict) -> dict:
     # 绑定条目 = 系列数据节点 + 用户确认的轴区域节点（旧刻度/标注/色条区域）。
     # 轴区域由模型 rect 定义边界；axes_nodes 是**替换范围**（确认预览里列出）。
     entries = [{"object": f"series:{sr['id']}", "node": sr["node"]} for sr in series]
+    # N5 所有权贯穿：image 系列声明的 cbar_node 直接进入有效绑定——
+    # 组合端据它把旧色条区域替换为片段新色条，不需要调用方再手工传 axes_nodes。
+    for sr in series:
+        cbar_node = sr.get("cbar_node")
+        if cbar_node:
+            if cbar_node not in node_ids:
+                raise BindError(
+                    "bind_node_not_graphic", f"cbar_node {cbar_node!r} is not in the scene"
+                )
+            entries.append({"object": "axes:ax1", "node": cbar_node})
     for node_id in request.get("axes_nodes") or []:
         if node_id not in node_ids:
             raise BindError("bind_node_not_graphic", f"axes node {node_id!r} is not in the scene")

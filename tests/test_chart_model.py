@@ -204,12 +204,29 @@ def test_engine_identity_must_match_on_replay():
     assert cm.engine_digest(e1) == cm.engine_digest(cm.engine_identity("3.11.2", "2.1.0", "0.19.2"))
 
 
-def test_panel_identity_distinguishes_kinds_and_models():
+def test_panel_identity_distinguishes_kinds_models_and_bindings():
     scene = "d" * 64
     model = minimal_model()
+    binding = minimal_binding(model)
     fig_id = cm.panel_identity(cm.SOURCE_FIGURE, scene, None)
-    dec_id = cm.panel_identity(cm.SOURCE_DECLARATIVE, scene, model)
-    other = cm.panel_identity(cm.SOURCE_DECLARATIVE, scene, minimal_model(rev=2))
-    assert fig_id != dec_id != other
+    dec_id = cm.panel_identity(cm.SOURCE_DECLARATIVE, scene, model, binding)
+    other_model = cm.panel_identity(
+        cm.SOURCE_DECLARATIVE,
+        scene,
+        minimal_model(rev=2),
+        {**binding, "model_rev": 2},
+    )
+    assert fig_id != dec_id != other_model
+    # 同一模型绑到不同节点（N3）：绑定不同 = 不同版本
+    other_binding = cm.panel_identity(
+        cm.SOURCE_DECLARATIVE,
+        scene,
+        model,
+        {**binding, "entries": [{"object": "series:s1", "node": "line2d_99"}]},
+    )
+    assert other_binding != dec_id
+    # declarative 缺绑定 = 合同错误
+    with pytest.raises(cm.ChartModelError):
+        cm.panel_identity(cm.SOURCE_DECLARATIVE, scene, model, None)
     with pytest.raises(cm.ChartModelError):
         cm.panel_identity("mystery", scene, None)

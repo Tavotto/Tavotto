@@ -149,6 +149,7 @@ def build_vectors() -> list[dict]:
     def heatmap(m):
         m["series"][0]["kind"] = "image"
         m["series"][0]["grid"] = "g1"
+        m["series"][0]["cbar_node"] = "axes_2"
         m["series"][0]["style"] = {"cmap": "viridis", "vmin": 0.0, "vmax": 1.0}
         m["series"][0].pop("x")
         m["series"][0].pop("y")

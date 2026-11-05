@@ -1483,12 +1483,18 @@ def api_svg_chart_compute():
         ), 409
     scene_bytes = scene_bytes
     try:
-        composed = svgcompose.compose_scene(scene_bytes, binding, scaffold["fragment"], model)
+        composed = svgcompose.compose_scene(
+            scene_bytes,
+            binding,
+            scaffold["fragment"],
+            model,
+            origin=(scene["view_box"][0], scene["view_box"][1]),
+        )
     except svgcompose.ComposeError as exc:
         return jsonify({"code": exc.code, "error": exc.detail}), 422
     # 完整渲染身份（R03）：来源 + 模型 + 绑定 + 引擎事实——预览/保存/导出消费同一身份
     render_revision = chartmodel.panel_identity(
-        chartmodel.SOURCE_DECLARATIVE, scene["scene_digest"], model
+        chartmodel.SOURCE_DECLARATIVE, scene["scene_digest"], model, binding
     )
     return jsonify(
         {

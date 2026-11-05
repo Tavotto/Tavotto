@@ -500,12 +500,28 @@ def engine_digest(identity: dict) -> str:
     return digest_of(identity)
 
 
-def panel_identity(source_kind: str, scene_sha: str, model: dict | None) -> str:
-    """一个计算面板的版本身份（透明字符串，消费方只比较不解析）。"""
+def panel_identity(
+    source_kind: str, scene_sha: str, model: dict | None, binding: dict | None = None
+) -> str:
+    """一个计算面板的版本身份（透明字符串，消费方只比较不解析）。
+
+    完整身份（N3）：来源 + 模型 + **绑定**——同一模型绑到不同区域（绑定不同）
+    产生不同画面，必须是不同版本。``binding`` 缺省时只兼容 figure 来源；
+    declarative 来源必须带绑定。
+    """
     if source_kind not in SOURCE_KINDS:
         raise ChartModelError("chart_model_invalid", f"unknown source kind {source_kind!r}")
     if source_kind == SOURCE_FIGURE:
         return digest_of({"kind": SOURCE_FIGURE, "scene": scene_sha})
     if model is None:
         raise ChartModelError("chart_model_invalid", "declarative identity needs the model")
-    return digest_of({"kind": SOURCE_DECLARATIVE, "scene": scene_sha, "model": digest_of(model)})
+    if binding is None:
+        raise ChartModelError("chart_model_invalid", "declarative identity needs the binding")
+    return digest_of(
+        {
+            "kind": SOURCE_DECLARATIVE,
+            "scene": scene_sha,
+            "model": digest_of(model),
+            "binding": digest_of(binding),
+        }
+    )
