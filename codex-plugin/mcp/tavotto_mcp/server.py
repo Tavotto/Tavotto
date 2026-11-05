@@ -23,7 +23,7 @@ import time
 import traceback
 from collections import deque
 
-from . import bridge, guide, usage, widget
+from . import bridge, guide, updatenotice, usage, widget
 from .rpc import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
@@ -1248,6 +1248,12 @@ def _call_export(args: dict) -> dict:
         )
     if out["warnings"]:
         lines.append("worker 警告: " + "; ".join(out["warnings"][:5]))
+    # 新版本提醒：每个 MCP 进程最多一次，只在成功出图时带（失败的导出不该背这个）
+    if ok:
+        update = updatenotice.notice_once(_version())
+        if update is not None:
+            out["update"] = update
+            lines.append(update["message"])
     return {"content": _text(*lines), "structuredContent": out}
 
 
@@ -1521,6 +1527,9 @@ def _call_health(args: dict) -> dict:
             out["worker"] = {"python": python, "source": source}
         except Exception as exc:  # noqa: BLE001 — 探测失败也要如实说
             out["worker"] = {"error": str(exc)}
+    update = updatenotice.notice(_version())
+    if update is not None:
+        out["update"] = update
     out["timings"] = {"health_ms": int((_time.monotonic() - t0) * 1000)}
     lines = [
         f"引擎就绪（tavotto {out['engine']['version']}）",
@@ -1530,6 +1539,8 @@ def _call_health(args: dict) -> dict:
         "允许的项目根: " + (os.pathsep.join(out["roots"]) or "（未配置）"),
         "根来源: " + root_info["source"],
     ]
+    if update is not None:
+        lines.append(update["message"])
     return {"content": _text(*lines), "structuredContent": out}
 
 

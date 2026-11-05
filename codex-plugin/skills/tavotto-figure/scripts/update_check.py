@@ -245,6 +245,7 @@ def check(
     now: float | None = None,
     fetcher=fetch,
     version: str | None = None,
+    allow_network: bool = True,
 ) -> dict:
     """回一份 `update` 字段。**永远返回 dict，永远不抛。**
 
@@ -253,6 +254,10 @@ def check(
       current    已经是最新
       available  有新版本
       unknown    问不到 / 版本号解不出 —— 什么都别说，也别报错
+
+    `allow_network=False`：只读缓存，**不请求、不写缓存**（不会动 attempted_at，
+    所以不会吃掉后台线程那次真请求的重试窗口）。MCP 服务端的调用线程用它——
+    调用线程永远不碰网络，到期的刷新交给后台线程（`tavotto_mcp/updatenotice.py`）。
     """
     env = os.environ if environ is None else environ
     now = time.time() if now is None else now
@@ -270,7 +275,7 @@ def check(
         path, cache = "", {}  # 没缓存也能工作，只是每次都问
     manifest = cache.get("manifest") if cache.get("url") == url else None
 
-    due = force or _due(cache, url, now)
+    due = allow_network and (force or _due(cache, url, now))
     if due:
         fresh = fetcher(url, TIMEOUT)
         entry = {
