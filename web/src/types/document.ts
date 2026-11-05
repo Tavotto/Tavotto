@@ -243,7 +243,7 @@ export interface TextObject extends ObjectBase {
    * matplotlib 的 Flask 进程里，画得出来的就是批准字体集合里的 Liberation 三族。
    */
   fontFamily?: 'serif' | 'sans-serif' | 'monospace'
-  /** 原图字体的身份（ADR 0164）；见 `SourceFont`。可选，缺席 = 用 `fontFamily` 对应的批准族。 */
+  /** 字体的身份：原图字体（ADR 0164）或用户选的本机字体（ADR 0169）；见 `SourceFont`。可选，缺席 = 用 `fontFamily` 对应的批准族。 */
   sourceFont?: SourceFont
   /**
    * 排向（ADR 0163「横排 / 竖排」）。**可选：老文档没有它 = 横排**，磁盘格式不升版，导出载荷也不多字段；

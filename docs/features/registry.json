@@ -1329,6 +1329,22 @@
       ]
     },
     {
+      "id": "canvas.text-local-fonts",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "文字标注的字体下拉除内置三类外列出这台电脑能嵌入的字体，英文、中文可分开选，导出嵌入同一张字体",
+        "en-US": "The text annotation font menu lists the fonts this computer can embed alongside the three built-in families; English and Chinese can use different fonts, and export embeds the same faces"
+      },
+      "entry": "选中文字标注，属性页「字体」一行",
+      "e2e": [
+        {
+          "spec": "canvas-local-fonts.spec.ts",
+          "title": "标注选本机字体：下拉里有 DejaVu Serif，选中后导出带身份，加粗换成同族粗体文件"
+        }
+      ]
+    },
+    {
       "id": "canvas.copy-figure-text-as-annotation",
       "status": "active",
       "platform": "both",

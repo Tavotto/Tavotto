@@ -5277,6 +5277,8 @@ export default interface Resources {
       "cjkFallbackShadowed": "请改选不含中文字符的英文字体。",
       "cjkPrefix": "中",
       "color": "文字颜色",
+      "fontHasNoBold": "这个字体没有粗体",
+      "fontHasNoItalic": "这个字体没有斜体",
       "italic": "斜体",
       "italicStyle": "字形 · {{value}}",
       "latinFont": "英文字体",

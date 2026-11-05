@@ -115,8 +115,9 @@ export function TypographyControls({
           <StyleToggle
             state={boldState}
             label={tb('bold')}
+            disabled={adapter.styleUnavailable?.('weight')}
             hint={
-              boldState === 'mixed'
+              adapter.styleUnavailable?.('weight') ? tb('fontHasNoBold') : boldState === 'mixed'
                 ? tb('boldWeight', { value: translate('element.mixedValues', { ns: 'inspector' }) })
                 : tb('boldWeight', { value: tb(boldState === 'on' ? 'weightBold' : 'weightNormal') })
             }
@@ -131,8 +132,9 @@ export function TypographyControls({
           <StyleToggle
             state={italicState}
             label={tb('italic')}
+            disabled={adapter.styleUnavailable?.('style')}
             hint={
-              italicState === 'mixed'
+              adapter.styleUnavailable?.('style') ? tb('fontHasNoItalic') : italicState === 'mixed'
                 ? tb('italicStyle', { value: translate('element.mixedValues', { ns: 'inspector' }) })
                 : tb('italicStyle', { value: tb(italicState === 'on' ? 'styleItalic' : 'styleNormal') })
             }

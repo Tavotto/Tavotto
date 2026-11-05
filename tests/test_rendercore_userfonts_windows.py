@@ -8,7 +8,8 @@ Lab 只能跑仓库里登记的测试（`winlab.py test pytest --tests tests/tes
 2. `matplotlib_font_dirs()` 对 Windows 布局（`Scripts\\python.exe` + `Lib\\site-packages`）的推导；
 3. 系统字体（Times / 微软雅黑，含 TTC 的非 0 面）嵌入导出后，同进程里能 `os.replace` / `os.unlink` 字体副本
    （没有遗留的文件句柄 / 映射）；
-4. 大 CJK 字体入场的耗时与内存占用（打印实测数，写进断言消息），以及超过字节上限后的淘汰。
+4. 大 CJK 字体入场的耗时与内存占用（打印实测数，写进断言消息），以及超过字节上限后的淘汰；
+5. 本机字体清单（ADR 0169）：系统的宋体 / 微软雅黑 / Times New Roman 进清单、中文名正确、列出来的脸 `admit` 接受，首次扫描耗时。
 
 整文件只在 Windows 跑；macOS / Linux 上 skip 是预期，不是降级。
 """
@@ -226,3 +227,79 @@ def test_user_face_cache_is_evicted_above_the_byte_cap(provider, locator, tmp_pa
     provider.user_face(refs[0])
     assert _cache_bytes(provider) <= cap
     assert refs[0].identity in provider._user_records
+
+
+def _system_catalog():
+    from tavotto.rendercore import fontcatalog
+
+    loc = userfonts.FontLocator(None)
+    cat = fontcatalog.FontCatalog(None, loc)
+    started = time.perf_counter()
+    cat.scan()
+    took = time.perf_counter() - started
+    return cat, loc, took, {f["name"]: f for f in cat.snapshot()["families"]}
+
+
+def test_the_catalog_lists_the_system_fonts_chinese_papers_ask_for():
+    """同门的场景：英文 Times New Roman，中文宋体 / 微软雅黑。名字、中文名、四张脸都要对。"""
+    _cat, _loc, took, rows = _system_catalog()
+    print(f"catalog: {len(rows)} 族，首次扫描 {took:.1f} s")
+    times = rows["Times New Roman"]
+    assert {(f["bold"], f["italic"]) for f in times["faces"]} == {
+        (False, False),
+        (True, False),
+        (False, True),
+        (True, True),
+    }
+    assert times["generic"] == "serif" and times["cjk"] is False
+    missing = {"SimSun", "Microsoft YaHei"} - set(rows)
+    if missing:
+        pytest.skip(
+            f"这台 Windows 没装中文字体 {missing}（Server 版可选功能）；名单：{sorted(rows)[:40]}"
+        )
+    assert rows["SimSun"]["zh"] == "宋体" and rows["SimSun"]["cjk"] is True
+    assert rows["Microsoft YaHei"]["zh"] == "微软雅黑" and rows["Microsoft YaHei"]["cjk"] is True
+    assert took < 60, f"首次扫描 {took:.1f} s"
+
+
+def test_every_face_the_catalog_lists_is_one_admit_accepts():
+    """清单说能用的，导出那一刻的 `admit` 也要接受（判据同一组函数，这里在真系统字体上对一遍）。"""
+    _cat, loc, _took, rows = _system_catalog()
+    refused = []
+    for row in rows.values():
+        for f in row["faces"]:
+            try:
+                userfonts.admit(FaceRef(row["name"], f["sha256"], f["face"]), locator=loc)
+            except userfonts.UserFontUnavailable as exc:
+                refused.append((row["name"], f["face"], exc.reason))
+    assert not refused
+
+
+def test_a_ttc_face_from_the_catalog_embeds_with_times_new_roman(provider, tmp_path, monkeypatch):
+    """Times New Roman + 宋体（`.ttc` 的非 0 面也走同一路）真实导出，两张脸都进 PDF。"""
+    _cat, loc, _took, rows = _system_catalog()
+    if "SimSun" not in rows:
+        pytest.skip("这台 Windows 没装宋体")
+    monkeypatch.setattr(userfonts, "_LOCATOR", loc)
+    times = next(f for f in rows["Times New Roman"]["faces"] if not f["bold"] and not f["italic"])
+    simsun = rows["SimSun"]["faces"][0]
+    problems, found, _text_layer = _embedded(
+        provider,
+        [
+            _text(
+                {
+                    "family": "Times New Roman",
+                    "sha256": times["sha256"],
+                    "face": times["face"],
+                    "cjk": {"family": "SimSun", "sha256": simsun["sha256"], "face": simsun["face"]},
+                },
+                text="Temperature 温度",
+            )
+        ],
+        tmp_path,
+    )
+    # `cjk_face` 只是记录「这些字走了中文脸」，这里要的正是它；不许出现的是字体不可用和缺字
+    assert not {p["code"] for p in problems} & {"source_font_unavailable", "glyph_missing"}
+    assert any(p["code"] == "cjk_face" for p in problems)
+    names = " ".join(n for n, _ in found)
+    assert "TimesNewRoman" in names and "SimSun" in names
