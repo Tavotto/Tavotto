@@ -284,3 +284,8 @@ safe 回执的私有 instance 含实际 execution ID，透明重开不靠未变�
   （不 build / 不出图 / 不写盘 / 不发事件），节流与去重全在 `engine/prewarm.py`（每 (项目, 面板) 一次、同时一路、池里已活
   `MAX_ALIVE-1` 条不预热、前台取会话时让路）；native 档不预热。同一解释器上同时的 `import matplotlib` 体检只跑一个
   （`pool._has_matplotlib_once`，只共享成功结论）。看护 `tests/test_engine_prewarm.py`。
+- **worker 给脚本的运行面要和 `python script.py` 对拍（错题本 L-137 升级，2026-11-05）。** 替换或包一层脚本看得见的
+  东西时（`sys.stdout`、入口导入、标准句柄），以裸跑为准列差集：替身比对真对象的公开属性，脚本名夹具带点号，
+  输出用例含 `os.write(1)` 和不 capture 的子进程。为什么：三份用户反馈各撞一处，夹具都比真实脚本规整。
+  `StdoutTail` 没有 `reconfigure` / `buffer`，第一行就调它的脚本一张图也出不来（#1541）；`import_module(stem)` 把
+  `4-51.名称` 的点号当包分隔符（#1590）；`redirect_stdout` 只换 Python 层，子进程打一行字就进协议管道（#1643）。
