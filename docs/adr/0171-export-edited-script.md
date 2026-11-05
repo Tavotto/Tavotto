@@ -42,7 +42,7 @@ ADR 0094 设计过「写回原脚本」，但它改的是用户文件，所以�
 
 `ExportRequest.include_script`（线上键 `include_edited_script`）。产物是 `outputs[]` 里 `format: "script"` 的一项，不进 `FORMATS`：它不是图片格式，不走分辨率、产物检查与文件名同源对。覆盖策略、预留、原子发布、逐项失败全部沿用 `exportjob`。可以只要脚本（`formats` 为空）。
 
-后缀固定 `_edited`：导出目录即使就是脚本目录，同名覆盖也碰不到原脚本。
+后缀固定 `_edited`，但这保证不了名字不同（脚本可能本来就叫这个）：`_produce_edited_script` 按「是不是同一个文件」判，是就 `script_export_same_file`，绝不覆盖。
 
 只对单张图：`scope=canvas` 与多页 PDF 是版面，不是哪个脚本画的，`offers.script` 报不可用，选项禁用并说原因。「每张图单独导出」时每张各一份。
 

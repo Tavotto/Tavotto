@@ -83,6 +83,7 @@ ERROR_CODES = (
     "script_export_no_script",
     "script_export_not_python",
     "script_export_run_failed",
+    "script_export_same_file",
     "script_export_script_changed",
     "script_export_unreadable",
     # 逐项失败里「这条路给不出 EPS」的两档（ADR 0046；由 app.py 的 produce 填进
@@ -273,6 +274,8 @@ class ExportJob:
     _commit_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     #: 冲突时告诉界面是哪几个名字撞了（`overwrite=ask`）
     conflicts: list[str] = field(default_factory=list)
+    #: 这次修改后的 .py 落到哪个文件名（ADR 0171）：`produce` 用它确认不会盖掉原脚本。
+    script_name: str | None = None
     validation_summary: dict = field(default_factory=dict)
     report: Output | None = None
     #: 阶段轨迹（U09，ADR 0071）：prepare → source / compile / compose / raster（生产者按自己的步子记）→
@@ -497,8 +500,8 @@ def _drop_tmp(job: ExportJob) -> None:
 REPORT_KEY = "report"
 REPORT_SUFFIX = "_style-check.json"
 #: 修改后的脚本（ADR 0171）在 `outputs[]` 里的 `format`。不进 `exportreq.FORMATS`：它不是图片格式，
-#: 不走分辨率 / 产物检查 / 文件名同源对。后缀固定带 `_edited`，导出目录即使就是脚本所在目录，
-#: 同名覆盖也碰不到原脚本（`Fig1.py` 导出成 `Fig1_edited.py`）。
+#: 不走分辨率 / 产物检查 / 文件名同源对。后缀只是让名字通常不同，真正挡住覆盖原脚本的是
+#: `app._produce_edited_script` 的同一文件判据。
 SCRIPT_KEY = "script"
 SCRIPT_SUFFIX = "_edited.py"
 #: 附属产物：名字不是 `<基名>.<格式>` 的那几样。
@@ -707,6 +710,7 @@ def run(
         )
     except exportreq.ExportRequestError as exc:
         return _fail(job, exc.code, exc.params, publish, recoverable=True)
+    job.script_name = names.get(SCRIPT_KEY)
     if conflicts:
         job.conflicts = conflicts
         job.finished_at = time.time()

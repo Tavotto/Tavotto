@@ -179,6 +179,7 @@
     "script_export_not_for_canvas": "Single figures only.",
     "script_export_not_python": "The script isn’t Python.",
     "script_export_run_failed": "Re-running the script failed, so no .py was exported.",
+    "script_export_same_file": "This name matches the original script. Choose another name.",
     "script_export_script_changed": "The script just changed. Export again once the figure updates.",
     "script_export_unreadable": "The script can’t be read (encoding or syntax).",
     "no_format": "Pick at least one output format.",

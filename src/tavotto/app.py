@@ -3332,9 +3332,12 @@ def _verify_edited_script(worker, stem: str, target: Path, adjusted, hot: dict, 
             )
             diffs = _compare_manifests(hot, man_fresh)[0]
             if not diffs:
-                pixel_diff, _state = _replay_pixel_diff(worker, fresh, stem)
+                pixel_diff, state = _replay_pixel_diff(worker, fresh, stem)
                 if pixel_diff is not None:
                     diffs.append(pixel_diff)
+                elif state != "ok":
+                    # 热会话中途重开：像素没有比过。写回能如实报「没比」，这里没有第二次机会，不交付
+                    diffs.append({"gid": "", "field": "pixels", "hot": state, "fresh": ""})
             return warnings + diffs
         finally:
             engine_pool.discard(fresh)
@@ -3366,6 +3369,11 @@ def _produce_edited_script(job, tmp_dir: Path):
     script_path = Path(worker.figures_dir) / worker.script_name
     if script_path.suffix.lower() != ".py":
         return fail("script_export_not_python")
+    # `_edited` 后缀保证不了名字不同：脚本可能本来就叫这个（换回导出版继续改的人），导出目录也可能就是脚本目录。
+    # 判据是同一个文件，不是路径字符串（硬链接、不分大小写的卷、符号链接）
+    dest = job.export_dir / (job.script_name or "")
+    if job.script_name and dest.exists() and os.path.samefile(dest, script_path):
+        return fail("script_export_same_file")
     try:
         data = script_path.read_bytes()
         job.check_cancelled()

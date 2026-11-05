@@ -720,11 +720,11 @@ def _watch_show(block, shown):
                 if not any(fig is f for f in order):
                     order.append(fig)
                 i = next(k for k, f in enumerate(order) if f is fig)
-                for key in sorted(shown_of):
-                    stem = shown_of[key].get(i)
-                    if stem is not None and getattr(fig, "_tavotto_adjusted", None) != stem:
-                        fig._tavotto_adjusted = stem
-                        _run(fig, stem, registry[key][stem])
+                hits = [k for k in sorted(shown_of) if i in shown_of[k]]
+                if hits and getattr(fig, "_tavotto_adjusted", None) is None:
+                    fig._tavotto_adjusted = shown_of[hits[0]][i]
+                    for key in hits:
+                        _run(fig, shown_of[key][i], registry[key][shown_of[key][i]])
             if current is not None:
                 plt.figure(current)
             return real(*args, **kwargs)

@@ -3393,6 +3393,7 @@ export default interface Resources {
       "script_export_not_for_canvas": "需要单张图。",
       "script_export_not_python": "脚本不是 Python。",
       "script_export_run_failed": "重跑脚本出错，没有导出 .py。",
+      "script_export_same_file": "导出的文件名和原脚本相同，换一个文件名。",
       "script_export_script_changed": "脚本刚改过，等图更新后再导出。",
       "script_export_unreadable": "脚本读不了（编码或语法）。",
       "script_hardlinked": "脚本有另一个硬链接名字（{{script}}），替换会把两者断开，Tavotto 不改它。",

@@ -704,6 +704,30 @@ def test_show_only_figure_is_edited_at_plt_show(tmp_path, which):
     assert colors[1 - which] != "#d6278f", "另一张图不该被改"
 
 
+@real_worker
+def test_second_export_of_a_show_only_script_applies_both_blocks(tmp_path):
+    """Codex #1790 P2：两段块登记同一个 stem，`plt.show` 时第二段不能被第一段的防重入挡掉。"""
+    src = SHOW_ONLY.replace("range(2)", "range(1)").encode()
+    man = {
+        "elements": [
+            {"gid": "axes_0.title", "role": "title", "label": "标题", "editable": []},
+        ]
+    }
+    color = {"gid": "axes_0.title", "prop": "color", "value": "#123456"}
+    size = {"gid": "axes_0.title", "prop": "fontsize", "value": 21}
+    first = scriptadjust.build(src, "only", [color], man, version="9.9", shown_index=0).data
+    second = scriptadjust.build(first, "only", [size], man, version="9.9", shown_index=0).data
+    path = tmp_path / "edited.py"
+    path.write_bytes(second)
+    out = _run_exported(
+        path,
+        tmp_path,
+        "\nt = plt.gcf().axes[0].title\n"
+        "print(matplotlib.colors.to_hex(t.get_color()), t.get_fontsize())\n",
+    )
+    assert out.split() == ["#123456", "21.0"]
+
+
 def test_show_hook_is_only_in_blocks_that_need_it():
     assert "_watch_show" not in _build(b"import os\n").data.decode()
     assert "matplotlib.pyplot" not in _build(b"import os\n").data.decode()
@@ -723,6 +747,37 @@ def test_figure_neither_saved_nor_shown_says_why(project):
         "script_export_no_savefig",
         "script_export_run_failed",
     )
+
+
+@real_worker
+def test_export_never_overwrites_the_source_script(project, monkeypatch):
+    """Codex #1790 P1：脚本本身就叫 `Fig1_edited.py`、导出目录就是脚本目录时，覆盖不许落到它头上。"""
+    from tavotto import app as m
+
+    client, figs = project
+    source = figs / "fig1.py"
+    monkeypatch.setattr(m, "project_export_dir", lambda ctx=None: figs)
+    alias = figs / "Fig1_edited.py"
+    before = source.read_bytes()
+    os.link(source, alias)  # 硬链接：同一个文件换了名字，字符串比路径比不出来
+    try:
+        body = _export(client, EDITS[:1], formats=[])
+    finally:
+        keep = alias.read_bytes()
+        alias.unlink()
+    assert _script_output(body)["error"]["code"] == "script_export_same_file"
+    assert keep == before and source.read_bytes() == before
+
+
+@real_worker
+def test_lost_pixel_baseline_is_not_a_pass(project, monkeypatch):
+    """Codex #1790 P1：热会话中途重开时像素没有比过，「没比」不算过。"""
+    from tavotto import app as m
+
+    client, _figs = project
+    monkeypatch.setattr(m, "_replay_pixel_diff", lambda *a: (None, "hot_rebuilt"))
+    body = _export(client, EDITS[:1], formats=[])
+    assert _script_output(body)["error"]["code"] == "script_export_diverged"
 
 
 @real_worker

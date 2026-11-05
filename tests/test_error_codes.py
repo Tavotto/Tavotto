@@ -480,6 +480,7 @@ USER_VISIBLE_CODES = {
     "script_export_not_python": set(),
     "script_export_run_failed": set(),
     "script_export_script_changed": set(),
+    "script_export_same_file": set(),
     "script_export_unreadable": set(),
     "eps_needs_script": {"figure"},
     "eps_source_unverified": {"figure"},
