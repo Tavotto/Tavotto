@@ -16,13 +16,19 @@ export interface HostStep {
   skipped: boolean
   detail?: string
   error_code?: string
+  /** 只有 `skill` 这一步带：written / updated / skipped / modified / removed / builtin / none / failed */
+  skill?: string
 }
+
+/** 技能副本的状态（`hostskills.skill_state`）：current 是最新、stale 是旧版、modified 是用户改过、builtin 不需要复制 */
+export type HostSkillState = 'current' | 'stale' | 'modified' | 'missing' | 'builtin'
 
 export interface HostRow {
   id: string
   label: string
   installed: boolean
   connected: boolean
+  skill: HostSkillState
 }
 
 /** `tavotto hosts list --json` */
@@ -69,6 +75,12 @@ function parseLine(raw: string): Record<string, unknown> {
   return data as Record<string, unknown>
 }
 
+const SKILL_STATES: readonly HostSkillState[] = ['current', 'stale', 'modified', 'missing', 'builtin']
+
+function parseSkillState(v: unknown): HostSkillState {
+  return SKILL_STATES.find((x) => x === v) ?? 'missing'
+}
+
 export function parseHostList(raw: string): HostList {
   const d = parseLine(raw)
   if (d.action !== 'list' || !Array.isArray(d.hosts)) throw new HostShellError('bad_output')
@@ -79,6 +91,7 @@ export function parseHostList(raw: string): HostList {
       label: String(h.label ?? h.id ?? ''),
       installed: h.installed === true,
       connected: h.connected === true,
+      skill: parseSkillState(h.skill),
     }))
     .filter((h) => h.id)
   return {
@@ -101,6 +114,11 @@ export function parseHostResult(raw: string): HostResult {
 export function hostStepLabel(step: string): string {
   const own = lookup(`step.${step}`)
   return own ?? codexStepLabel(step)
+}
+
+/** 技能那一步值得多说一句的情形（用户改过的副本没有覆盖 / 没有删）；其余不说 */
+export function hostStepNote(s: HostStep): string | null {
+  return s.step === 'skill' && s.skill === 'modified' ? hc('skillModified') : null
 }
 
 export function hostStepStateText(s: HostStep): string {

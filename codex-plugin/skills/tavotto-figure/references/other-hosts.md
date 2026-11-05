@@ -131,6 +131,9 @@ health 结果里 `recovery` 给的原文**，那里是这台机器上的真实�
 - **没有本机终端或文件写入能力的宿主**（Claude Desktop 聊天）：不能运行 `scripts/*.py`，也
   不能把新脚本保存到本机。这种情况下直接问偏好；已有的本地图照常用 MCP 工具打开和修改；
   新的出图脚本交给用户保存并运行。
+- **桌面版「接入」已经替你复制了技能**（Claude Code、Cursor、VS Code、ZCode、Antigravity、Trae、WorkBuddy 的用户级
+  技能目录，Tavotto 升级后重新点一次「接入」就会刷新；你自己改过的那份不会被覆盖）。没有技能目录的宿主（Claude 桌面版）
+  调 `tavotto_guide` 读这份说明；它的 `section` 可以取 `references/` 里的某一节。
 - **复制出去的技能**里，`scripts/update_check.py` 找不到包的版本信息，更新检查会显示
   「未知」，这不是故障。升级的方法：解压新版完整包，重新生成配置，**并刷新技能**——复制过
   `tavotto-figure/` 的，把新包里的整个目录覆盖复制过去；粘贴过等价说明的，重新运行

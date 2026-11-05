@@ -296,6 +296,16 @@ if not MCP_WIDGET.is_file() or current_fingerprint(MCP_WIDGET) != source_fingerp
         f"画布产物缺失或与源码不一致：{MCP_WIDGET}（先跑 python scripts/build_mcp_widget.py）")
 datas.append((str(MCP_WIDGET), "widget"))
 
+# 技能（`codex-plugin/skills/tavotto-figure`）：`tavotto hosts connect` 把它复制进各 AI 编辑器的技能目录
+# （engine/hostskills.py，冻结后从 _MEIPASS/skills/tavotto-figure 读），MCP 工具 tavotto_guide 也读它。整棵收进
+# `skills/tavotto-figure`；缺了就拒绝打包（与字体、画布同一种拦法）——漏了的表现是接入后宿主没有技能、guide 报
+# guide_unavailable。
+SKILL_SRC = ROOT / "codex-plugin" / "skills" / "tavotto-figure"
+if not (SKILL_SRC / "SKILL.md").is_file():
+    raise SystemExit(f"技能目录缺失：{SKILL_SRC / 'SKILL.md'}")
+for _skill_file in sorted(p for p in SKILL_SRC.rglob("*") if p.is_file() and "__pycache__" not in p.parts):
+    datas.append((str(_skill_file), str(Path("skills") / "tavotto-figure" / _skill_file.parent.relative_to(SKILL_SRC))))
+
 a = Analysis(
     [str(ROOT / "packaging" / "entry.py")],
     pathex=[str(ROOT / "src"), str(ROOT / "codex-plugin" / "mcp")],
@@ -304,6 +314,8 @@ a = Analysis(
     hiddenimports=[
         # Flask 的这几个依赖是运行时按名字取的，静态分析看不见
         "jinja2", "markupsafe", "itsdangerous", "click", "werkzeug",
+        # `tavotto-cli skill-script`（engine/hostskills.run_script_cli）在进程内 runpy 跑技能脚本，脚本只用这几个标准库
+        "runpy", "platform", "urllib.request", "urllib.error",
         # render child 在冻结产物里由同一个 exe 以 `--render-child` 自起（packaging/entry.py 分派），
         # child_main 里才 import pypdfium2——入口没有静态 import 它，点名收进 PYZ
         "tavotto.rendercore.renderchild", "tavotto.rendercore.renderhost", "pypdfium2",
