@@ -1,15 +1,19 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { msg, type UiMessage } from '@/i18n'
-import { cropDragStatus } from '@/lib/dragStatus'
+import { cropDragStatus, edgeGrowDragStatus } from '@/lib/dragStatus'
+import { figureFrameFacts } from '@/lib/figureEdgeFrame'
 import {
   depthOf,
   inkDepths,
   planEdgeDepth,
+  planEdgeGrow,
   withEdgeDepth,
   type CropSide,
   type EdgeCropState,
+  type EdgeGrowPlan,
 } from '@/lib/panelEdgeCrop'
 import type { ResizeDir } from '@/lib/geometry'
+import { setFigureFrame } from '@/store/actions'
 import { setTxnAnchor, useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { exactPanelManifest, useRenderStore } from '@/store/renderStore'
@@ -17,6 +21,7 @@ import { useUiStore } from '@/store/uiStore'
 import { getTransform, pxToMm, snapTolMm } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import type { CropRect, PanelObject } from '@/types/document'
+import { holdPlaceholder } from './figureEdgeDrag'
 import { startResizeDrag, trackPointer } from './interactions'
 
 const hist = (key: string): UiMessage => msg(`history.${key}`, undefined, 'workspace')
@@ -67,6 +72,11 @@ const isFullCrop = (c: CropRect) => c.x <= 1e-9 && c.y <= 1e-9 && c.w >= 1 - 1e-
  * 整图锚在画布上不动（与 `startCropDrag` 同一个锚点约定，`setTxnAnchor`），所以内容纹丝不动，
  * 只是这一边的取景窗在收 / 放；图的缩放比（mm / 原图幅）不变。停靠点与 ⌥ 放行见 `lib/panelEdgeCrop`。
  * 拖动中的含义（裁掉多少、停在哪）放进 `interaction.dragStatus`，胶囊只读它。
+ *
+ * **没裁剪过的图从图边继续往外 = 改这张图的图幅**（ADR 0161 修订 2026-11-06）：与单图拖角同一条
+ * `figure.size_mm` override，缩放比不变，所以文字 pt 不变。拖动中只放虚线预览框（`interaction.figureEdgeBox`），
+ * 松手丢掉裁剪事务、`setFigureFrame` 一次（一条历史 + 一次渲染），新图回来前留虚线框。
+ * 权威同单图：只认精确 manifest（`figureFrameFacts`）；裁剪过 / 只读 / 权威缺席时停在图边，胶囊说原因。
  */
 export function startPanelEdgeCrop(e: ReactPointerEvent, panel: PanelObject, side: CropSide) {
   e.stopPropagation()
@@ -83,15 +93,19 @@ export function startPanelEdgeCrop(e: ReactPointerEvent, panel: PanelObject, sid
   const depth0 = depthOf(crop0, side)
   const oppDepth = depthOf(crop0, OPPOSITE[side])
   // 内容边缘只认几何权威（精确 manifest）；缺席 = 没有「紧凑」停靠点，边照样能裁
-  const ink = inkDepths(
-    exactPanelManifest(useRenderStore.getState(), panel)?.elements.find((el) => el.gid === 'figure')
-      ?.ink_bbox,
-  )
+  const manifest = exactPanelManifest(useRenderStore.getState(), panel)
+  const ink = inkDepths(manifest?.elements.find((el) => el.gid === 'figure')?.ink_bbox)
   const inkDepth = ink ? ink[side] : null
+  const frame = figureFrameFacts(panel, manifest)
+  const box0: PanelBox = { x: panel.x, y: panel.y, w: panel.w, h: panel.h }
+  const growBlocked = frame ? null : panel.crop ? 'cropped' : 'unavailable'
+  let lastGrow: EdgeGrowPlan | null = null
 
   const ix = () => useInteractionStore.getState()
-  const status = (state: EdgeCropState, depth: number, box: PanelBox) =>
-    ix().setDragStatus(cropDragStatus({ side, state, mm: depth * fullDim, box }))
+  const status = (state: EdgeCropState, depth: number, box: PanelBox, outward = false) =>
+    ix().setDragStatus(
+      cropDragStatus({ side, state, mm: depth * fullDim, box, growBlocked: outward ? growBlocked : null }),
+    )
 
   ix().begin('crop')
   status(
@@ -105,7 +119,7 @@ export function startPanelEdgeCrop(e: ReactPointerEvent, panel: PanelObject, sid
             ? 'content'
             : 'trim',
     depth0,
-    { x: panel.x, y: panel.y, w: panel.w, h: panel.h },
+    box0,
   )
   store.beginTxn(hist('adjustCrop'))
   setTxnAnchor(objectId, { x: imgX + fullW / 2, y: imgY + fullH / 2 })
@@ -117,9 +131,10 @@ export function startPanelEdgeCrop(e: ReactPointerEvent, panel: PanelObject, sid
       // l / t 往里 = 坐标增大；r / b 往里 = 坐标减小
       const inward = side === 'l' || side === 't' ? dMm : -dMm
       const tolMm = useUiStore.getState().snapEnabled ? snapTolMm(t) : 0
+      const want = depth0 + inward / fullDim
       const plan = planEdgeDepth({
         depth0,
-        want: depth0 + inward / fullDim,
+        want,
         oppDepth,
         inkDepth,
         tol: tolMm / fullDim,
@@ -129,11 +144,25 @@ export function startPanelEdgeCrop(e: ReactPointerEvent, panel: PanelObject, sid
       const full = isFullCrop(next)
       const c = full ? { x: 0, y: 0, w: 1, h: 1 } : next
       const box = { x: imgX + fullW * c.x, y: imgY + fullH * c.y, w: fullW * c.w, h: fullH * c.h }
-      status(plan.state, plan.depth, box)
+      // 裁剪事务照常写（此时已回到未裁剪），之后只是在它上面叠预览：松手一并丢掉
+      const outMm = -want * fullDim
+      lastGrow = frame
+        ? planEdgeGrow({ side, box0, sizeMm: frame.sizeMm, maxMm: frame.limits.max, outMm, tolMm })
+        : null
+      ix().setFigureEdgeBox(lastGrow?.box ?? null)
+      if (lastGrow && frame) {
+        ix().setDragStatus(
+          edgeGrowDragStatus({ side, from: frame.sizeMm, to: lastGrow.sizeMm, box: lastGrow.box }),
+        )
+      } else {
+        status(plan.state, plan.depth, box, outMm > tolMm)
+      }
       store.txnUpdate((d) => {
         const o = d.objects.find((x) => x.id === objectId)
         if (!o || o.type !== 'panel') return
-        o.crop = full ? undefined : { ...c }
+        // 未裁剪用 delete：`crop = undefined` 在没有这个键时也算一次改动，什么都没变却多一条历史
+        if (full) delete o.crop
+        else o.crop = { ...c }
         o.x = box.x
         o.y = box.y
         o.w = box.w
@@ -142,8 +171,14 @@ export function startPanelEdgeCrop(e: ReactPointerEvent, panel: PanelObject, sid
     },
     onEnd: (moved, _ev, end) => {
       ix().end()
+      const grow = moved && !end.cancelled ? lastGrow : null
       // pointercancel = 这次交互被系统作废，一律丢弃：不留裁剪、不进历史
-      store.endTxn({ discard: !moved || end.cancelled })
+      store.endTxn({ discard: !moved || end.cancelled || grow != null })
+      if (grow) {
+        const before = useRenderStore.getState().byKey
+        setFigureFrame(objectId, grow.sizeMm, grow.pos)
+        holdPlaceholder(objectId, grow.box, grow.sizeMm, before)
+      }
     },
   })
 }

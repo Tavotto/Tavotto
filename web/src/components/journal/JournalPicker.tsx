@@ -131,7 +131,7 @@ export function JournalPicker() {
               </button>
             )}
             {/* 「不按期刊」钉在最上面，列表在它下面自己滚：选中项再靠后也不会把它顶出视野 */}
-            <div className="flex max-h-64 flex-col overflow-y-auto">
+            <div data-journal-scroller className="flex max-h-64 flex-col overflow-y-auto">
               {all.length > 0 && groups.length === 0 && <EmptyLine data-journal-empty>{jt('noMatch')}</EmptyLine>}
               {groups.map((g) => (
                 <div key={g.publisher} role="group" aria-label={g.label} data-journal-group={g.publisher}>

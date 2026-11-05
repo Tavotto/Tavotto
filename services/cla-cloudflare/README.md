@@ -106,6 +106,40 @@ with full prefix, two snapshots and independent confirmation retained. More
 pages/coauthors can still exceed the unchanged budget; the whole-group SQL
 limits above remain unchanged. This is offline evidence, not live acceptance.
 
+### Exempt traffic and bounded retention
+
+The main repository is mostly rights-holder and bot traffic, which is policy-exempt and needs no service proof: the
+trusted CI gate passes all-exempt changes locally by immutable GitHub id. The service therefore does not spend its
+capped tables or its one-at-a-time queues on it.
+
+- **Exempt-author PR webhooks are skipped.** After the usual signature/repository/head validation, a `pull_request`
+  whose `pull_request.user.id` is one of `exemptionIds` (ids only, never logins) returns the normal `202
+  {accepted:true,publication:'not_attempted'}` without any SQL, GitHub call or row (`head_requests`,
+  `head_deliveries` and `targets` stay untouched). A PR by an exempt author that carries a non-exempt co-author never
+  receives a service proof, so the CI gate fails closed for it; this is rare and accepted.
+- **All-exempt merge groups finish without the slot and without a check run.** Merge-group webhooks do not list their
+  members, so they are admitted. In the background path, `publishGroup` reads the first prefix snapshot (the same
+  verified binding, including the exemption identity re-resolution) and, when every contributor id is exempt,
+  settles the job as `group_exempt_no_publication`: under the job's lease and generation it deletes the outbox row and
+  the target's idle rows (deliveries, progress cursor, the target). No check run is created and the confirmation slot
+  is never needed; a busy slot is probed with that one snapshot (about 16 external calls) and only a group with a
+  non-exempt contributor keeps waiting. A group with any non-exempt contributor takes the existing path unchanged:
+  the check happens inside the first snapshot of the normal two-snapshot read session, so it adds no external call.
+  Offline: an all-exempt two-PR group uses 11 SQL / 19 external calls; a mixed one publishes with 20 SQL / 32
+  external, the baseline plus its exempt identity lookups.
+- **Bounded retention keeps the admission caps about live work.** Each admission transaction first prunes at most 20
+  rows per statement in its own committed batch (so a refused admission still makes room), then applies the caps:
+  head requests whose status is `done`, `dispatched` or `manual` and that are older than one day, with their
+  `head_deliveries` (the immutability trigger now allows exactly this delete and nothing else); merge-group
+  `deliveries` older than one day whose target has no outbox work and no unresolved publication; and `merge:` targets
+  referenced by nothing. `pending`/`running` heads, anything younger than a day, and every `publication_attempts`,
+  `published_checks`, `slot_policy`, `refresh_requests`, signature, packet, intent, agreement, audit and
+  `eligibility_*` row are never deleted. The target cap of 100 counts live targets only: a target with an unresolved
+  publication, or one queued for its first evaluation. Resolved publication history is audit and stays, uncounted.
+  `head_requests` < 100 and `head_deliveries` < 1000 remain total-row caps, now over a pruned table. Every revision
+  re-queues all targets (`revision_outbox`), so unbounded resolved history would lengthen that drain; this is the
+  accepted cost of never deleting the audit journal.
+
 ### Public endpoints: abuse limits and pinned agreement asset
 
 The two-person same-head refresh limit above applies with delegation disabled.

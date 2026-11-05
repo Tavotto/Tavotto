@@ -28,6 +28,7 @@ mod rescue;
 mod screen_ppi;
 mod shell_report;
 mod sidecar;
+mod update_source_memory;
 mod window_chrome;
 mod window_fit;
 
@@ -1950,6 +1951,13 @@ async fn update_download(
     emit: app_update::Emit<'_>,
 ) -> Result<app_update::Downloaded, app_update::Failure> {
     let endpoints = app_update::endpoints(app)?;
+    // 大陆环境后台先 GitHub / 改镜像的跨重启记忆，放 app_config_dir（读写失败静默）
+    state.memory.bind(
+        app.path()
+            .app_config_dir()
+            .ok()
+            .map(|d| update_source_memory::path(&d)),
+    );
     app_update::run_download(
         &|| updater_builder(app),
         &endpoints,

@@ -99,8 +99,8 @@
   {
     "name": "group refresh evaluation",
     "file": "src/native/group.ts",
-    "before": "s.evaluateTarget(target,0,revision)",
-    "after": "s.evaluateTarget({kind:'pr',number:9},0,revision)",
+    "before": "s.evaluateTarget(target,0,revision,refresh?undefined:'exit')",
+    "after": "s.evaluateTarget({kind:'pr',number:9},0,revision,refresh?undefined:'exit')",
     "pattern": "group expiry withdraws with exact failure GET",
     "testFile": "tests/group-publication-lifecycle.test.mjs"
   },
