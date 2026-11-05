@@ -199,6 +199,22 @@ def test_a_newer_cache_beats_an_older_memory_result(cfg, monkeypatch):
     assert _health()["update"]["latest_version"] == "3.0.0"
 
 
+def test_the_engine_handoff_on_sys_path_does_not_hide_the_cache(cfg, monkeypatch):
+    """主语是 MCP 进程：`tavotto/engine/` 排在 sys.path 前面时，同名的引擎 handoff.py 不能让缓存读不到。"""
+    monkeypatch.syspath_prepend(str(ROOT / "src" / "tavotto" / "engine"))
+    monkeypatch.delitem(sys.modules, "handoff", raising=False)
+    monkeypatch.setattr(updatenotice, "_module", None)
+    cfg()
+    assert _health()["update"]["status"] == "available"
+
+
+def test_loading_the_checker_leaves_sys_path_alone(monkeypatch):
+    monkeypatch.setattr(updatenotice, "_module", None)
+    before = list(sys.path)
+    assert updatenotice._load() is not None
+    assert sys.path == before
+
+
 # ------------------------------ export ----------------------------------
 def test_export_carries_update_only_once_per_process(cfg, fake_export):
     cfg()

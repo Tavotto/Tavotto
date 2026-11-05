@@ -34,6 +34,7 @@ import time
 
 _SCRIPTS_REL = ("skills", "tavotto-figure", "scripts")
 _MODULE_NAME = "tavotto_mcp_update_check"
+_HANDOFF_NAME = "tavotto_mcp_skill_handoff"
 
 _lock = threading.Lock()
 _module = None  # 已加载的 update_check；False = 找过了没有
@@ -66,6 +67,15 @@ def how() -> str | None:
     return None
 
 
+def _exec(path: str, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _load():
     global _module
     if _module is not None:
@@ -76,15 +86,10 @@ def _load():
             path = os.path.join(d, "update_check.py")
             if not os.path.isfile(path):
                 continue
-            # update_check 里 `from handoff import config_dir`：目录放进 sys.path 末尾
-            # （末尾 = 不抢任何已有的同名模块）
-            if d not in sys.path:
-                sys.path.append(d)
-            spec = importlib.util.spec_from_file_location(_MODULE_NAME, path)
-            if spec is None or spec.loader is None:
-                continue
-            m = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(m)
+            # 两个模块都按文件路径加载，不碰 sys.path：仓库里有两个 handoff.py，`from handoff import`
+            # 在 `tavotto/engine/` 排在前面时拿到的是引擎那个，缓存读不到，提醒就静默没了
+            m = _exec(path, _MODULE_NAME)
+            m._config_dir = _exec(os.path.join(d, "handoff.py"), _HANDOFF_NAME).config_dir
             mod = m
             break
     except Exception:  # noqa: BLE001 — 找不到/加载失败 = 静默不提示

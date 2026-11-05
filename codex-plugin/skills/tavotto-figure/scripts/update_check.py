@@ -160,7 +160,14 @@ def is_newer(candidate: object, baseline: object) -> bool | None:
 
 
 # -------------------------------- 缓存 -----------------------------------
+#: 配置目录规则。MCP 服务端按文件路径加载同目录的 `handoff.py` 后填进来（`tavotto_mcp/updatenotice.py`）：
+#: 那个进程的 `sys.path` 上可能先有引擎的 `tavotto/engine/`，`from handoff import` 会拿到同名的另一个模块。
+_config_dir = None
+
+
 def cache_path(environ: dict | None = None) -> str:
+    if _config_dir is not None:
+        return os.path.join(_config_dir(environ=environ), CACHE_NAME)
     from handoff import config_dir  # 目录规则只有一份
 
     return os.path.join(config_dir(environ=environ), CACHE_NAME)
