@@ -2863,6 +2863,22 @@ def _export_produce_chart_original(job, src, req, tmp_dir: Path):
     render_revision = chartmodel.panel_identity(
         chartmodel.SOURCE_DECLARATIVE, scene["scene_digest"], model, binding
     )
+    # C 路径自包含（R08）：SVG 格式导出时嵌入 model+binding 元数据
+    if req.formats and engine_exportreq.FORMAT_SVG in req.formats:
+        import base64 as _b64
+        import xml.etree.ElementTree as _ET
+
+        _ns = "http://www.w3.org/2000/svg"
+        _ET.register_namespace("", _ns)
+        _root = _ET.fromstring(composed)
+        meta_json = json.dumps(
+            {"model": model, "binding": binding}, sort_keys=True, separators=(",", ":")
+        )
+        _root.set(
+            "data-tavotto-chart",
+            _b64.b64encode(meta_json.encode("utf-8")).decode("ascii"),
+        )
+        composed = _ET.tostring(_root, encoding="unicode").encode("utf-8")
     produced = []
     for fmt in req.formats:
         job.check_cancelled()

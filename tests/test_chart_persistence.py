@@ -311,3 +311,52 @@ def test_two_series_bind_and_compute(project):
     assert b"tv-series-s2" in svg_bytes
     # 旧轴标注退役
     assert b"old_axis" not in svg_bytes
+
+
+# ---------------------------------------------------------------------------
+# R08：C 路径自包含往返——导出时嵌入模型元数据，冷端读取后重算
+# ---------------------------------------------------------------------------
+
+def test_export_embeds_metadata_for_self_contained_roundtrip(project):
+    """导出 SVG 嵌入 chart 元数据（base64 JSON metadata 块）→ 从元数据重算一致。"""
+    import base64
+
+    client, root = project
+    chart = _bind_chart(client)
+    doc = _project_doc(client, chart)
+    assert client.post(f"/api/layouts/{DOC_NAME}?target=project", json=doc).status_code == 200
+    export_req = {
+        "scope": "original",
+        "formats": ["svg"],
+        "original": {
+            "figure_id": "chart.svg",
+            "source_kind": "vector",
+            "chart": {"model": chart["model"], "binding": chart["binding"]},
+        },
+        "overwrite": "replace",
+    }
+    result = client.post("/api/export", json=export_req)
+    assert result.status_code == 200
+    export_dir = root / "tavottofile" / "export"
+    svgs = list(export_dir.glob("*.svg"))
+    assert svgs, "no exported SVG"
+    svg_bytes = svgs[-1].read_bytes()
+    # 元数据块存在（base64 JSON model+binding）
+    meta_marker = b"data-tavotto-chart="
+    assert meta_marker in svg_bytes, "no chart metadata block in exported SVG"
+    # 解码元数据 → 重新验证
+    import re as _re
+
+    match = _re.search(rb'data-tavotto-chart="([^"]+)"', svg_bytes)
+    assert match, "metadata attribute not found"
+    meta_json = base64.b64decode(match.group(1))
+    meta = json.loads(meta_json)
+    assert meta["model"]["series"][0]["kind"] == "line"
+    assert "binding" in meta
+    # 从元数据重算 → 与原始 compute 一致
+    recompute = client.post(
+        "/api/svg/chart/compute",
+        json={"file": "chart.svg", "model": meta["model"], "binding": meta["binding"]},
+    )
+    assert recompute.status_code == 200, recompute.json
+    assert "<svg" in recompute.json["svg"]
