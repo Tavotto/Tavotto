@@ -48,7 +48,7 @@ ADR 0164 已经有本机字体通道（文档只记身份、导出按字节认�
 * `tests/test_font_catalog.py`：列出来的脸 `admit` 接受、禁止嵌入的不列、批准字体不重复、未变文件不重读、响应没有路径、内置英文 + 本机中文真实导出。
 * `web/src/lib/fontCatalog.test.ts`：写入规则（选族、中文格、回到自动、B / I、清单不认识的脸）。
 * `web/e2e/canvas-local-fonts.spec.ts`：真实界面选字体、选中文、加粗、导出请求带身份。
-* **需要上 Windows Lab**：`simsun.ttc` / `msyh.ttc` / `times.ttf` 进清单、中文名是否正确、`fsType` 判定、`%WINDIR%\Fonts` 扫描耗时。
+* `tests/test_rendercore_userfonts_windows.py`（真 Windows）：Times New Roman 四张脸、宋体、微软雅黑进清单且中文名正确，清单里每张脸 `admit` 都接受，Times + 宋体真实导出两张脸都嵌入。Windows Lab run `20261105T032645Z-a8181e`：53 passed，0 skipped。未覆盖 WebView2 真窗口与 Windows 10 / 11 客户端差异。
 
 ## 反证
 
