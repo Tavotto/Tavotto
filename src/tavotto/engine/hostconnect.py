@@ -651,7 +651,7 @@ def health(launch: dict, env: dict) -> dict:
     return _step("health", ok=True, detail=f"{len(names)} 个工具")
 
 
-def connect(host: str, project_root: str | None = None, *, force_skill: bool = False) -> dict:
+def connect(host: str, project_root: str | None = None) -> dict:
     if host not in HOST_IDS:
         return _result(host, "connect", [_step("host", ok=False, code=ERR_UNKNOWN_HOST)])
     if host == "codex":
@@ -691,7 +691,7 @@ def connect(host: str, project_root: str | None = None, *, force_skill: bool = F
     mcp_ok = all(s["ok"] for s in steps)
     if mcp_ok:
         # 技能：MCP 写成了才写；技能失败不回滚 MCP，整次结果如实算失败（`mcp_connected` 说明 MCP 已经接上）
-        skill = _skill_connect_step(host, steps, force=force_skill)
+        skill = _skill_connect_step(host, steps)
         if skill:
             steps.append(skill)
         steps.append(health(launch, env))
@@ -716,13 +716,26 @@ def _skill_step(res: dict) -> dict:
     return step
 
 
-def _skill_connect_step(host: str, steps: list[dict], *, force: bool = False) -> dict | None:
+def _skill_connect_step(host: str, steps: list[dict]) -> dict | None:
     """接入时的技能一步。Codex 不走这里；Claude Code 已装 Tavotto 插件时插件自带技能，不复制。"""
     if not hostskills.supports(host) and host not in hostskills.BUILTIN_HOSTS:
         return None
     if any(s["step"] == "register" and s.get("detail") == PLUGIN_DETAIL for s in steps):
         return None
-    return _skill_step(hostskills.install_skill(host, force=force))
+    return _skill_step(hostskills.install_skill(host))
+
+
+def overwrite_skill(host: str, project_root: str | None = None) -> dict:
+    """界面「覆盖」：只把改过的技能换回自带版本。**绝不重写 MCP 配置**：走 `connect` 会用默认 env 重写那一条，
+    把用户 `--project-root` 限定的文件夹冲成 `TAVOTTO_MCP_SCOPE=local`，等于悄悄放宽授权。"""
+    if host not in HOST_IDS or not hostskills.supports(host):
+        return _result(host, "connect", [_step("host", ok=False, code=ERR_UNKNOWN_HOST)])
+    if project_root:
+        return _result(host, "connect", [_step("project_root", ok=False, code=ERR_BAD_ROOT)])
+    out = _result(host, "connect", [_skill_step(hostskills.install_skill(host, force=True))])
+    if out["ok"]:
+        out["state"] = "needs_new_session"
+    return out
 
 
 def _write_host(host: str, launch: dict, env: dict) -> list[dict]:
@@ -1001,5 +1014,7 @@ def cli(argv: list[str]) -> int:
     if not args.host:
         ap.error("connect / disconnect 要指定宿主")
     if args.action == "connect":
-        return _emit(connect(args.host, args.project_root, force_skill=args.force_skill), args.json)
+        if args.force_skill:
+            return _emit(overwrite_skill(args.host, args.project_root), args.json)
+        return _emit(connect(args.host, args.project_root), args.json)
     return _emit(disconnect(args.host), args.json)

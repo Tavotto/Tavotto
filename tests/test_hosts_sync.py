@@ -101,7 +101,7 @@ def test_only_force_skill_overwrites_a_modified_skill(home, source):
     mine.write_text(mine.read_text(encoding="utf-8") + "\n我加的\n", encoding="utf-8")
     assert _steps(H.connect("cursor"))["skill"]["skill"] == "modified"
     assert "我加的" in mine.read_text(encoding="utf-8")
-    forced = H.connect("cursor", force_skill=True)
+    forced = H.overwrite_skill("cursor")
     assert forced["ok"] and _steps(forced)["skill"]["skill"] == "updated"
     assert "我加的" not in mine.read_text(encoding="utf-8")
     assert K.skill_state("cursor") == "current"
@@ -272,3 +272,25 @@ def test_disable_env_and_truthy_set_match_the_plugin_update_check():
     for v in H.DISABLE_UPDATE_TRUTHY:  # 同一组真值：插件那边也认成「关」
         got = mod.check(environ={mod.DISABLE_ENV: v}, version="0.1.0", now=0)
         assert got["status"] == "disabled", v
+
+
+def test_overwriting_a_skill_leaves_the_mcp_entry_and_its_project_root_alone(home, source):
+    """「覆盖」只动技能：用户 `--project-root` 限定的文件夹不能被冲成本机任意位置（授权不许悄悄放宽）。"""
+    project = home / "proj"
+    project.mkdir()
+    (home / ".cursor").mkdir()
+    assert H.connect("cursor", str(project))["ok"]
+    config = home / ".cursor" / "mcp.json"
+    before = config.read_bytes()
+    assert H.ROOTS_ENV in before.decode("utf-8")
+    _skill(home).write_text("改过\n", encoding="utf-8")
+    assert K.skill_state("cursor") == "modified"
+    assert H.overwrite_skill("cursor")["ok"]
+    assert K.skill_state("cursor") == "current"
+    assert config.read_bytes() == before
+
+
+def test_overwrite_skill_refuses_a_project_root_and_hosts_without_a_skill_folder(home, source):
+    assert not H.overwrite_skill("cursor", "/some/where")["ok"]
+    assert not H.overwrite_skill("claude-desktop")["ok"]
+    assert not H.overwrite_skill("codex")["ok"]
