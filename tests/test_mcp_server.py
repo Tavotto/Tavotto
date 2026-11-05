@@ -201,6 +201,7 @@ def test_tools_list_shape():
         "tavotto_refresh_project",
         "tavotto_session_state",
         "tavotto_close_session",
+        "tavotto_guide",
         "tavotto_list_journals",  # 期刊库开关已打开（ADR 0155 §11）
     ]
     for t in tools:

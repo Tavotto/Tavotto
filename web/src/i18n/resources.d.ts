@@ -2494,6 +2494,8 @@ export default interface Resources {
           "other": "没有接好。展开详情看命令的原话。",
           "project_root_rejected": "不能选整个主目录或磁盘根目录，请选一个具体的项目文件夹。",
           "server_health_failed": "配置已写好，但 Tavotto 的服务没能启动。展开详情看原因。",
+          "skill_source_missing": "这一版 Tavotto 里没带使用说明，请升级桌面版。",
+          "skill_write_failed": "接好了，但写不进 {{host}} 的使用说明目录。展开详情看是哪个目录。",
           "spawn_failed": "无法启动 Tavotto 命令行。再试一次。",
           "unknown_host": "不认识这个编辑器。"
         },
@@ -2501,6 +2503,7 @@ export default interface Resources {
         "notDetected": "未检测到",
         "retry": "重试",
         "running": "接入中…",
+        "skillModified": "你改过那份使用说明，所以没有动它。",
         "step": {
           "config": "写配置",
           "detect": "检测",
@@ -2509,6 +2512,7 @@ export default interface Resources {
           "project_root": "项目文件夹",
           "register": "登记",
           "server": "MCP 服务",
+          "skill": "使用说明",
           "trust": "信任 Tavotto",
           "unregister": "移除登记"
         },

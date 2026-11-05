@@ -194,6 +194,7 @@ EVENTS: dict[str, dict[str, dict]] = {
             "tavotto_refresh_project",
             "tavotto_session_state",
             "tavotto_close_session",
+            "tavotto_guide",
             "tavotto_list_journals",
             "other",
         ),
