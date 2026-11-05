@@ -6,12 +6,6 @@
 
 ### L-002 结论取自命令本身的退出码，不经管道、grep -c 或分号串联 → docs/rules/repo/local-verification.md
 
-### L-003 拿本地绿反驳 CI 红之前，先证明本地测的是你的代码
-- 类: 别这样
-- Seen: 2026-08-26
-- 为什么: worktree 没设 PYTHONPATH，本地 e2e 加载的是主工作区代码，那个绿与改动无关；据此反驳了真红的 CI，还编了一套时序解释。
-- 证据: #131, #137
-
 ### L-004 rebase 或合并零冲突不等于对：扫顶层重名，读双方 hunk 查语义交互 → docs/rules/repo/local-verification.md
 
 ### L-005 做变异反证：先提交、python -B、只认退出码、跑后核 git status → docs/rules/ci/gate-discipline.md
@@ -136,9 +130,9 @@
 
 ### L-031 改变状态的命令执行后，用另一个查询核对状态
 - 类: 照这样
-- Seen: 2026-08-28
-- 为什么: 合并队列仓库里 gh pr merge --squash --auto 只打一行「!」提示就返回，autoMergeRequest 为 null、根本没入队；核对还要挑对字段（该看 mergeQueueEntry）。命令的输出回答「我注意到」而不是「我做了」。
-- 证据: #177
+- Seen: 2026-08-28, 2026-11-03
+- 为什么: 合并队列仓库里 gh pr merge --squash --auto 只打一行「!」提示就返回，autoMergeRequest 为 null、根本没入队；核对还要挑对字段（该看 mergeQueueEntry）。命令的输出回答「我注意到」而不是「我做了」。11-03 无终端时 wrangler secret put 把空串存成密钥并报 Success，名字在、值是空的，OAuth 回调一直被拒；首次用到密钥的路径要能看到长度级诊断。
+- 证据: #177, CLA staging 演练（无编号）
 
 ### L-032 批量改 N 项的验收，对拍标识符集合与内容，不只数 count
 - 类: 照这样
@@ -219,3 +213,27 @@
 - Seen: 2026-09-07
 - 为什么: Windows 检出本已是 CRLF，再替换成 \r\r\n；判据只枚举 POSIX 顶级目录，在 Windows 上恒假。跨平台断言用相等，别用含/不含。
 - 证据: #289
+
+### L-124 分配 UNRELEASED 锚点或豁免表行位前先本地模拟合并，别看 @@ 行号
+- 类: 别这样
+- Seen: 2026-11-01, 2026-11-03
+- 为什么: 凭 git diff -U0 的行号推断插入点错了一位（表格上方有空行），两个 PR 被指到同一位置，对方白推一轮。拟定行位后在一次性 worktree 里把 main、在飞 PR、挪完的 PR 依次 merge，零冲突再发。
+- 证据: #1671, #1693
+
+### L-125 共用仓库的 worktree 里不用 git stash，改临时提交或单独 worktree
+- 类: 别这样
+- Seen: 2026-11-03
+- 为什么: stash 列表所有 worktree 共享，一个子代理 pop 到了别的会话在别的分支存的内容，引发冲突，靠悬空提交才核实没丢。
+- 证据: #1659
+
+### L-126 新 worktree 先补齐 gitignore 的内置字体，大片同类红先单跑看 stderr
+- 类: 别这样
+- Seen: 2026-11-03
+- 为什么: git worktree add 不带被忽略的 src/tavotto/resources/fonts，约 170 条导出、公式、字体用例假红（backend_unavailable、child_failed），看着像改坏了。先跑 scripts/fetch_fonts.py 或从主工作区拷。
+- 证据: （会话记录，无编号）
+
+### L-127 跑过会写缓存的工具后，提交前逐行核 git status 的新增文件
+- 类: 别这样
+- Seen: 2026-11-03
+- 为什么: wrangler 本地命令在包目录写 .wrangler/cache/cf.json，内含本机出口的地理与网络信息，git add -A 把它带进了公开仓库 PR 的首次推送，只能改写分支移除。
+- 证据: #1679
