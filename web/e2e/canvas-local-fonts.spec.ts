@@ -38,7 +38,15 @@ test(
       await expect(dejavu).toBeVisible({ timeout: 1000 })
     }).toPass({ timeout: 60_000 })
     await shot('menu')
-    await dejavu.click()
+    // 搜索框：打一段名字就筛出来，回车选中
+    const search = page.getByRole('searchbox', { name: '搜索字体' })
+    await expect(search).toBeFocused()
+    await search.fill('dejavu ser')
+    await expect(page.getByRole('option')).toContainText(['DejaVu Serif'])
+    await shot('search')
+    await search.press('ArrowDown')
+    await search.press('ArrowUp')
+    await search.press('Enter')
     await expect(latin).toContainText('DejaVu Serif')
 
     // 中文格：有中文字体的机器才验

@@ -57,7 +57,7 @@ from .ir import (
     unsupported_for,
     validate,
 )
-from .sourcefont import SourceFont, UserFontUnavailable, parse_source_font
+from .sourcefont import UserFontUnavailable, parse_source_font
 from .sources import FrozenSource, SourceError, SourceResolver
 from .typography import FaceProvider, FaceSet, faces_for
 
@@ -417,26 +417,45 @@ def _shape_node(o: dict, page_h: float) -> Node:
 
 
 def _user_faces(o: dict, provider: FaceProvider, problems: list[dict]):
-    """对象带 `source_font`（ADR 0164）时，把它点名的本机脸请出来：(正文脸, CJK 脸)，各自可为 None。
+    """对象带 `source_font`（ADR 0164）时，把它点名的本机脸请出来：(正文脸, 取 CJK 脸, 取同族兄弟)。
+    后两个是 `(粗, 斜) → 脸或 None`（ADR 0169 修订），用到才入场：不读这个对象用不上的字体文件。
 
-    **任何一环不过都不是错误**：保留文档里的名字、这一张脸回退成 `font_family` 的批准脸（CJK 回批准的
-    Noto），并往 `problems` 记一条 `source_font_unavailable`（reason 是 `sourcefont.REASONS` 的闭集）。
-    绝不改写文档、绝不换一张「名字像」的脸。provider 不认识用户脸（测试替身 / 没有本机字体能力的
-    宿主）时等同 `not_found`。"""
+    **任何一环不过都不是错误**：保留文档里的名字、这一张脸回退（正文回 `font_family` 的批准脸，
+    CJK 兄弟回常规 CJK，常规 CJK 回批准的 Noto），并往 `problems` 记一条 `source_font_unavailable`
+    （reason 是 `sourcefont.REASONS` 的闭集，同一张脸只记一条）。绝不改写文档、绝不换一张「名字像」的脸。
+    provider 不认识用户脸（测试替身 / 没有本机字体能力的宿主）时等同 `not_found`。"""
     raw = o.get("source_font")
     sf, bad = parse_source_font(raw)
     oid = str(o.get("id", ""))
     if bad is not None:
         problems.append(_source_font_problem(oid, "", bad))
-        return None, None
+        return None, None, None
     if sf is None:
-        return None, None
-    return _admit(provider, sf, sf.primary, oid, problems), (
-        _admit(provider, sf, sf.cjk, oid, problems) if sf.cjk is not None else None
-    )
+        return None, None, None
+    admitted: dict[tuple[str, int], object] = {}
+
+    def admit(ref):
+        if ref.identity not in admitted:
+            admitted[ref.identity] = _admit(provider, ref, oid, problems)
+        return admitted[ref.identity]
+
+    def sibling(bold: bool, italic: bool):
+        ref = sf.primary.sibling(bold, italic)
+        return admit(ref) if ref is not None else None
+
+    def cjk(bold: bool, italic: bool):
+        assert sf.cjk is not None
+        # 中日韩几乎没有斜体：要粗斜时先试粗斜，再退粗，都没有就是常规
+        for ref in (sf.cjk.sibling(bold, italic), sf.cjk.sibling(bold, False)):
+            face = admit(ref) if ref is not None else None
+            if face is not None:
+                return face
+        return admit(sf.cjk)
+
+    return admit(sf.primary), (cjk if sf.cjk is not None else None), sibling
 
 
-def _admit(provider, sf: SourceFont, ref, oid: str, problems: list[dict]):
+def _admit(provider, ref, oid: str, problems: list[dict]):
     loader = getattr(provider, "user_face", None)
     try:
         if loader is None:
@@ -490,7 +509,7 @@ def compile_page(
             node = _panel_node(o, page_h, sources, resources, frozen)
         elif kind == "text":
             try:
-                user_primary, user_cjk = _user_faces(o, faces, problems)
+                user_primary, user_cjk, user_sibling = _user_faces(o, faces, problems)
                 fs = faces_for(
                     faces,
                     o.get("font_family"),
@@ -498,6 +517,7 @@ def compile_page(
                     o.get("italic", False),
                     user_primary=user_primary,
                     user_cjk=user_cjk,
+                    user_sibling=user_sibling,
                 )
             except Exception as exc:  # noqa: BLE001 —— FontsUnavailable 之类要带 code 出去
                 raise PlanError(

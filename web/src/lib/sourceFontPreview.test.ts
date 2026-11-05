@@ -94,3 +94,43 @@ describe('previewStackOf', () => {
     expect(await stackAfterLoad({ ...latin, cjk: latin })).toBe(`"${cssFamilyOf(latin)}", ${APPROVED}`)
   })
 })
+
+describe('行内粗斜与中文加粗（ADR 0169 修订）', () => {
+  const REG = 'a1'.repeat(32)
+  const BOLD = 'c3'.repeat(32)
+  const ZH = 'b2'.repeat(32)
+  const ZH_BOLD = 'd4'.repeat(32)
+  const family = (sha: string) => cssFamilyOf({ sha256: sha, face: 0 })
+  const fam: SourceFont = {
+    family: 'Lab',
+    sha256: REG,
+    face: 0,
+    siblings: [{ sha256: BOLD, face: 0, bold: true }],
+    cjk: { family: 'Zh', sha256: ZH, face: 0, siblings: [{ sha256: ZH_BOLD, face: 0, bold: true }] },
+  }
+  const OWN = { bold: false, italic: false }
+  const BOLD_RUN = { bold: true, italic: false }
+  const load = async (run: typeof OWN) => {
+    previewStackOf(fam, APPROVED, OWN, run)
+    await settle()
+    await settle()
+    return previewStackOf(fam, APPROVED, OWN, run)
+  }
+
+  it('粗体片段用同族粗体脸和中文粗体脸，常规片段不取它们的字节', async () => {
+    answer({ [REG]: 'ok', [BOLD]: 'ok', [ZH]: 'ok', [ZH_BOLD]: 'ok' })
+    expect(await load(OWN)).toBe(`"${family(REG)}", "${family(ZH)}", ${APPROVED}`)
+    expect(api.fetchSourceFontBytes).toHaveBeenCalledTimes(2)
+    expect(await load(BOLD_RUN)).toBe(`"${family(BOLD)}", "${family(ZH_BOLD)}", ${APPROVED}`)
+  })
+
+  it('同族没有这张脸：正文层回批准字体，中文留常规（与导出同一个回退）', async () => {
+    answer({ [REG]: 'ok', [ZH]: 'ok', [ZH_BOLD]: 'ok', [BOLD]: 'ok' })
+    expect(await load({ bold: false, italic: true })).toBe(`"${family(ZH)}", ${APPROVED}`)
+  })
+
+  it('中文粗体在本机用不了：退回常规中文', async () => {
+    answer({ [REG]: 'ok', [BOLD]: 'ok', [ZH]: 'ok', [ZH_BOLD]: 'not_found' })
+    expect(await load(BOLD_RUN)).toBe(`"${family(BOLD)}", "${family(ZH)}", ${APPROVED}`)
+  })
+})

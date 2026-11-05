@@ -1,6 +1,7 @@
 # ADR 0169：文字标注可以选这台电脑上的字体
 
 日期：2026-11-05 · 状态：**Accepted**（维护者 2026-11-05：「新建标注只能选三类字体的问题 做一下」；1.0 豁免见 `docs/1.0-release-readiness.md` §1.8）
+修订 2026-11-05（维护者：「继续完成 行内 \textbf{} 用本机粗体、中文粗体、字体下拉的搜索框」）：见文末「修订：同族脸与搜索框」。
 修订：[0164 画布文字用原图字体](0164-canvas-text-source-font.md)（裁决 10、11 的粗斜规则与字段来源）、[0060 字体政策](0060-font-policy-and-allowlist.md)（批准集合仍是默认与回退）
 相关：[0045 CJK 回退链](0045-cjk-font-fallback-chain.md)（图内文字的「英文 + 中文」两格）、`docs/rules/repo/third-path-review.md`。
 
@@ -39,10 +40,8 @@ ADR 0164 已经有本机字体通道（文档只记身份、导出按字节认�
 
 ## 不做 / 边界
 
-* 行内 `\textbf{}` / `\textit{}` 仍用批准族的粗斜（0164 裁决 10）：`typography.faces_for` 只拿到一张用户脸。Times New Roman 与 Liberation Serif 等宽，差别小；要补得让导出认识同族四张，另算。
-* 中文粗体：选了本机中文字体时 `cjk` 是常规脸，加粗只换英文脸。批准集合也没有粗体中文，这不是新退化。
-* 下拉沿用 `Select`（键入跳转、无搜索框），与图内文字一致；几百项要搜索框的话两边一起改。
 * 缩略图仍用批准族栈（0164 同一条）。
+* 没选本机中文字体时的中文粗体：批准集合没有粗体中文，加粗只换英文脸（见修订）。
 
 ## 验证
 
@@ -60,3 +59,20 @@ ADR 0164 已经有本机字体通道（文档只记身份、导出按字节认�
 | `scan` 不复用未变文件 | `test_an_unchanged_file_is_not_read_again` |
 | `setLocalCjkFamily(null)` 对内置正文脸只删 `cjk` | `回到自动：内置英文 + 自动 = 整条 sourceFont 清掉` |
 | `restyleLocalFace` 没有那张脸时仍改 `o.bold` | `这一族没有那张脸：不动，按钮置灰` |
+
+## 修订：同族脸与搜索框（2026-11-05）
+
+原来三条「不做」：行内粗斜用批准脸、中文不加粗、下拉没有搜索框。
+
+| # | 问题 | 裁决 | 落点 |
+| --- | --- | --- | --- |
+| 11 | 同族脸从哪来（修订 0164 裁决 10） | 正文脸和 `cjk` 各加可选 `siblings: [{sha256, face, bold?, italic?}]`（最多 3 张），选字体时从清单写入。身份进文档，导出不依赖清单是否扫完，换电脑结果也可判。没有 `siblings` 的文档（复制来的原图字体）走 0164 原路径；文档不升版，老版本读到会忽略 | `sourcefont.py`、`lib/sourceFont.ts`、`lib/fontCatalog.ts` |
+| 12 | 行内 `\textbf{}` / `\textit{}` | 合并后的粗斜等于对象自己的 → 正文脸；同族有正好这张 → 用它；否则批准脸，不造假粗 | `typography.faces_for`、`plan._user_faces` |
+| 13 | 中文粗体 | `cjk` 留常规脸，要画粗时按 (粗, 斜) → (粗, 常规) → 常规脸取。对象加粗和行内 `\textbf{}` 同一条路。这一族没有粗体时（宋体、黑体）中文留常规：不造假粗，也不算问题 | `plan._user_faces`、`FaceSet.cjk_variant` |
+| 14 | 用不上的脸 | 用到才入场：不读这个对象没用到的兄弟，缺了也不报。用到的缺失时记 `source_font_unavailable`，正文回批准脸，中文回常规 | `plan._user_faces` |
+| 15 | 预览 | 字体栈按片段算，判据和回退顺序同导出，只取要画的那张脸的字节。有 `sourceFont` 时 `font-synthesis: none`：导出不造假，预览也不合成；编辑态保留合成，否则看不出加粗 | `lib/sourceFontPreview.ts`、`canvas/TextView.tsx` |
+| 16 | 搜索框 | 新控件 `SearchSelect`：图内文字和标注的字体行共用，收起样子同 `Select`；搜中英文名，不分大小写、不看空格，↑↓ 回车。不往 Radix Select 里塞输入框：条目悬停抢焦点，字打不下去。收起时不渲染选项，本机字体几百项时属性页更快 | `components/ui/SearchSelect.tsx` |
+
+设置里的样式档案字体下拉仍是 `Select`：它在模态对话框里，选项也不走这张字体行。
+
+验证：`tests/test_font_catalog.py`（行内粗体同族脸、无同族回批准粗体、同族缺失报问题、未用到不读、中文对象粗体与行内粗体、无粗体留常规）；`web/src/lib/sourceFontPreview.test.ts`；`web/src/components/ui/searchSelect.test.tsx`；`tests/golden/source_font_vectors.json` 加 `siblings` 向量。

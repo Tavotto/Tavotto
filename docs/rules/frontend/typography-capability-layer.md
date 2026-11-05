@@ -84,6 +84,7 @@ lib/typography.ts          规范属性名 · 取值语义 · 能力表 · prope
 - 画布字体族闭集与后端同源
 - invalid 输入不开事务不 clamp
 - 字形归属读生成的覆盖表不读浏览器字体栈
+- **本机字体带同族脸**（ADR 0169 修订）：`sourceFont` 与 `cjk` 的 `siblings` 由 `lib/fontCatalog` 写入，预览栈按片段经 `previewStackOf` 取，判据与顺序同导出。字体行用 `ui/SearchSelect`，不用 `Select`。
 - **画布文字可带原图字体的身份 `sourceFont`**（ADR 0164）：闭集三族不变，`fontFamily` 继续当回退族；`sourceFont`（名字 + 文件 sha256 + 面序号 + 粗斜，
   可选，缺席 = 现状逐字不变）的形状只在 `lib/sourceFont.ts`（↔ 后端 `sourcefont.parse_source_font`，共用向量），取值入口只有
   `sourceFontFromElement(el)`（图内文字 manifest 的 `face_src` / `cjk_src`，「复制为标注」用它：整段换算在 `lib/figureTextCopy.ts`，字号只走 `pagePtLens`，ADR 0163）。写入层 `writeCanvasText`：改字体族 / 粗细 / 斜体

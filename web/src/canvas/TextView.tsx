@@ -149,7 +149,8 @@ export function TextView({
   useSourceFonts()
   const stack = canvasFontStack(effectiveCanvasFamily(obj))
   const source = isSourceFont(obj.sourceFont) ? obj.sourceFont : undefined
-  const previewStack = previewStackOf(source, stack)
+  const own = { bold: obj.bold === true, italic: obj.italic === true }
+  const previewStack = previewStackOf(source, stack, own)
 
   return (
     <div
@@ -174,6 +175,8 @@ export function TextView({
         lineHeight: obj.lineHeight ?? 1.25,
         fontWeight: obj.bold ? 700 : 400,
         fontStyle: obj.italic ? 'italic' : 'normal',
+        // 本机字体没有的粗斜，导出不造假（ADR 0169）：预览也不让浏览器合成。编辑时片段还没分好脸，留着合成才看得出加粗
+        fontSynthesis: source && !editing ? 'none' : undefined,
         textDecoration: obj.underline ? 'underline' : undefined,
         color: obj.color,
         textAlign: obj.align,
@@ -231,6 +234,7 @@ export function TextView({
           interpretation={obj.interpretation}
           format={obj.textFormat}
           family={effectiveCanvasFamily(obj)}
+          runStack={source ? (run) => previewStackOf(source, stack, own, run) : undefined}
           vertical={vertical ? { columnPx, stack: previewStack } : undefined}
         />
       )}
@@ -255,6 +259,7 @@ function RenderedText({
   interpretation,
   format,
   family,
+  runStack,
   vertical,
 }: {
   text: string
@@ -262,6 +267,8 @@ function RenderedText({
   interpretation?: TextInterpretation
   format?: TextFormat
   family: string
+  /** 带行内粗斜的片段用哪个字体栈（本机字体按片段换脸，ADR 0169 修订）；缺席 = 继承外层 */
+  runStack?: (run: { bold: boolean; italic: boolean }) => string
   /** 竖排：公式整块侧躺（`MathFormula` 的竖排形态） */
   vertical?: { columnPx: number; stack: string }
 }) {
@@ -283,6 +290,7 @@ function RenderedText({
         const style: CSSProperties = {}
         if (r.italic) style.fontStyle = 'italic'
         if (r.bold) style.fontWeight = 700
+        if (runStack && (r.bold || r.italic)) style.fontFamily = runStack({ bold: !!r.bold, italic: !!r.italic })
         if (r.script !== '') {
           style.fontSize = sizePx * SCRIPT_SIZE
           // 正 = 抬高；vertical-align 的正值就是往上，故下标取负

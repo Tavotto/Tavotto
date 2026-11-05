@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -33,8 +34,9 @@ def _drop(tmp_path: Path, name: str, data: bytes) -> Path:
     return p
 
 
-def _renamed(family: str, *, fs_type: int = 0) -> bytes:
-    """DejaVu（随 matplotlib，OFL，不进 git）改个名字，每个用例都是一张新脸。"""
+def _renamed(family: str, *, fs_type: int = 0, covers: str = "") -> bytes:
+    """DejaVu（随 matplotlib，OFL，不进 git）改个名字，每个用例都是一张新脸。`covers` 里的字映射到
+    字形 A：DejaVu 没有汉字，要让一张脸落在中文层就得给它几个码位。"""
     import io
 
     from fontTools.ttLib import TTFont
@@ -43,6 +45,9 @@ def _renamed(family: str, *, fs_type: int = 0) -> bytes:
     tt["name"].setName(family, 1, 3, 1, 0x409)
     tt["name"].setName(family, 1, 1, 0, 0)
     tt["OS/2"].fsType = fs_type
+    for table in tt["cmap"].tables:
+        if table.isUnicode():
+            table.cmap.update({ord(ch): "A" for ch in covers})
     buf = io.BytesIO()
     tt.save(buf)
     return buf.getvalue()
@@ -158,6 +163,153 @@ def test_a_chinese_font_with_built_in_english_exports_both_faces(tmp_path, monke
     out = tmp_path / "o.pdf"
     pdfwriter.write_pdf(compiled.page, out, provider)
     assert any("LiberationSerif" in n for n in _faces_of(out))
+
+
+def _text_obj(text: str, source_font: dict, **over) -> dict:
+    return {
+        "type": "text",
+        "id": "t1",
+        "text": text,
+        "x_mm": 10.0,
+        "y_mm": 10.0,
+        "w_mm": 120.0,
+        "h_mm": 10.0,
+        "size_pt": 12.0,
+        "font_family": "serif",
+        "source_font": source_font,
+        "text_format": "latex",
+        **over,
+    }
+
+
+def _compile(tmp_path: Path, monkeypatch, obj: dict):
+    from tavotto.rendercore import plan, sources
+    from tavotto.rendercore.hbshaper import HbFaceProvider
+
+    reg = fonts.FontRegistry.discover()
+    if reg.missing:
+        pytest.skip(f"批准字体不全（not_run）：缺 {reg.missing}")
+    loc = userfonts.FontLocator(tmp_path / "loc.json", system_dirs=lambda: [tmp_path / "fonts"])
+    monkeypatch.setattr(userfonts, "_LOCATOR", loc)
+    provider = HbFaceProvider(reg)
+    compiled = plan.compile_page(
+        150.0, 40.0, [obj], sources=sources.StaticSourceResolver(Path(".")), faces=provider
+    )
+    return compiled, provider
+
+
+def _exported_faces(tmp_path: Path, compiled, provider) -> list[str]:
+    from tavotto.rendercore import pdfwriter
+
+    out = tmp_path / "o.pdf"
+    pdfwriter.write_pdf(compiled.page, out, provider)
+    return _faces_of(out)
+
+
+def _sibling(p: Path, *, bold=False, italic=False) -> dict:
+    return {"sha256": fonts.sha256_of(p), "face": 0, "bold": bold, "italic": italic}
+
+
+def test_inline_bold_uses_the_family_bold_face(tmp_path, monkeypatch):
+    """`\\textbf{}` 用同族粗体脸，不退到批准字体（ADR 0169 修订）。"""
+    regular = _drop(tmp_path, "lab.ttf", _renamed("Lab Serif"))
+    bold = _drop(tmp_path, "lab-b.ttf", _renamed("Lab Serif Bold File"))
+    sf = {
+        "family": "Lab Serif",
+        "sha256": fonts.sha256_of(regular),
+        "face": 0,
+        "siblings": [_sibling(bold, bold=True)],
+    }
+    compiled, provider = _compile(tmp_path, monkeypatch, _text_obj("Ab \\textbf{Cd}", sf))
+    assert not compiled.problems
+    assert {sf["sha256"], fonts.sha256_of(bold)} == _used(compiled)
+    assert len(_exported_faces(tmp_path, compiled, provider)) == 2
+
+
+def test_inline_bold_without_a_sibling_falls_back_to_the_approved_bold(tmp_path, monkeypatch):
+    """同族没有这张脸：照旧用批准粗体，不造假粗体，也不报问题（ADR 0164 裁决 10）。"""
+    regular = _drop(tmp_path, "lab.ttf", _renamed("Lab Serif"))
+    sf = {"family": "Lab Serif", "sha256": fonts.sha256_of(regular), "face": 0}
+    compiled, provider = _compile(tmp_path, monkeypatch, _text_obj("Ab \\textbf{Cd}", sf))
+    assert not compiled.problems
+    assert any("LiberationSerif-Bold" in n for n in _exported_faces(tmp_path, compiled, provider))
+
+
+def test_a_sibling_gone_from_this_machine_warns_and_falls_back(tmp_path, monkeypatch):
+    regular = _drop(tmp_path, "lab.ttf", _renamed("Lab Serif"))
+    gone = _renamed("Lab Serif Bold File")
+    sf = {
+        "family": "Lab Serif",
+        "sha256": fonts.sha256_of(regular),
+        "face": 0,
+        "siblings": [{"sha256": hashlib.sha256(gone).hexdigest(), "face": 0, "bold": True}],
+    }
+    compiled, provider = _compile(tmp_path, monkeypatch, _text_obj("Ab \\textbf{Cd}", sf))
+    problems = [p for p in compiled.problems if p["code"] == "source_font_unavailable"]
+    assert [p["reason"] for p in problems] == ["not_found"]
+    assert any("LiberationSerif-Bold" in n for n in _exported_faces(tmp_path, compiled, provider))
+
+
+def test_an_unused_sibling_file_is_not_read(tmp_path, monkeypatch):
+    """用不上的兄弟不入场：缺了也不报，一张中文字体十几 MB，不白读。"""
+    regular = _drop(tmp_path, "lab.ttf", _renamed("Lab Serif"))
+    gone = hashlib.sha256(b"gone").hexdigest()
+    sf = {
+        "family": "Lab Serif",
+        "sha256": fonts.sha256_of(regular),
+        "face": 0,
+        "siblings": [{"sha256": gone, "face": 0, "bold": True}],
+    }
+    compiled, _ = _compile(tmp_path, monkeypatch, _text_obj("Ab", sf))
+    assert not compiled.problems
+
+
+HANZI = "中文粗体"
+
+
+def _cjk_font_setup(tmp_path: Path) -> dict:
+    regular = _drop(tmp_path, "zh.ttf", _renamed("Lab CJK", covers=HANZI))
+    bold = _drop(tmp_path, "zh-b.ttf", _renamed("Lab CJK Bold File", covers=HANZI))
+    latin = _drop(tmp_path, "lab.ttf", _renamed("Lab Serif"))
+    return {
+        "family": "Lab Serif",
+        "sha256": fonts.sha256_of(latin),
+        "face": 0,
+        "cjk": {
+            "family": "Lab CJK",
+            "sha256": fonts.sha256_of(regular),
+            "face": 0,
+            "siblings": [_sibling(bold, bold=True)],
+        },
+    }
+
+
+def _used(compiled) -> set[str]:
+    return {r.sha256 for r in compiled.page.resources.values() if hasattr(r, "sha256")}
+
+
+def test_a_bold_object_uses_the_bold_chinese_face(tmp_path, monkeypatch):
+    sf = _cjk_font_setup(tmp_path)
+    bold_sha = sf["cjk"]["siblings"][0]["sha256"]
+    compiled, _ = _compile(tmp_path, monkeypatch, _text_obj("中文", sf, bold=True))
+    assert bold_sha in _used(compiled)
+    assert sf["cjk"]["sha256"] not in _used(compiled)
+
+
+def test_inline_bold_switches_the_chinese_face_too(tmp_path, monkeypatch):
+    sf = _cjk_font_setup(tmp_path)
+    bold_sha = sf["cjk"]["siblings"][0]["sha256"]
+    compiled, _ = _compile(tmp_path, monkeypatch, _text_obj("中文\\textbf{粗体}", sf))
+    assert {bold_sha, sf["cjk"]["sha256"]} <= _used(compiled)
+
+
+def test_chinese_without_bold_stays_regular_and_silent(tmp_path, monkeypatch):
+    """宋体这类没有粗体的：留常规、不造假粗、不算问题。"""
+    sf = _cjk_font_setup(tmp_path)
+    del sf["cjk"]["siblings"]
+    compiled, _ = _compile(tmp_path, monkeypatch, _text_obj("中文", sf, bold=True))
+    assert not [p for p in compiled.problems if p["code"] == "source_font_unavailable"]
+    assert sf["cjk"]["sha256"] in _used(compiled)
 
 
 def test_the_row_fields_match_the_frontend_types():

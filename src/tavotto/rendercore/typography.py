@@ -73,13 +73,18 @@ class FaceSet:
     #: (片段斜体, 片段粗体) → 该片段的正文脸（已与对象自身的粗 / 斜合并）。行内样式
     #: （LaTeX 写法的 `\\textit{}` / `\\textbf{}`，ADR 0152）用它换脸；缺席（测试假脸）时退回正文脸。
     variant: Callable[[bool, bool], Face] | None = None
+    #: 同上，换 CJK 脸。只有选了本机中文字体才有（ADR 0169 修订）：批准集合没有粗体中文，缺席时 CJK 脸不变。
+    cjk_variant: Callable[[bool, bool], Face | None] | None = None
 
     def styled(self, italic: bool, bold: bool) -> FaceSet:
-        """行内样式片段该用的那一套脸（CJK 脸不变：中日韩没有斜体 / 粗体变体可换）。"""
-        if not (italic or bold) or self.variant is None:
+        """行内样式片段该用的那一套脸。"""
+        if not (italic or bold):
             return self
-        face = self.variant(italic, bold)
-        return self if face is self.primary else FaceSet(face, self.cjk, self.variant)
+        face = self.variant(italic, bold) if self.variant is not None else self.primary
+        cjk = self.cjk_variant(italic, bold) if self.cjk_variant is not None else self.cjk
+        if face is self.primary and cjk is self.cjk:
+            return self
+        return FaceSet(face, cjk, self.variant, self.cjk_variant)
 
     def face_of(self, layer: str) -> Face:
         """哪一层交给哪张脸落笔。`missing` 仍交给正文脸：它画出的是 .notdef（方框），
@@ -110,20 +115,34 @@ def faces_for(
     italic: bool,
     *,
     user_primary: Face | None = None,
-    user_cjk: Face | None = None,
+    user_cjk: Callable[[bool, bool], Face | None] | None = None,
+    user_sibling: Callable[[bool, bool], Face | None] | None = None,
 ) -> FaceSet:
-    """族 / 粗 / 斜 → 一套脸。`user_primary` / `user_cjk`（ADR 0164）是已经核过的用户本机脸：
-    给了就**替换**正文脸 / CJK 脸；`family` 仍决定**回退族**——行内样式要的粗 / 斜变体不是原图那张脸
-    （用户字体是单个文件，没有可换的兄弟；不按名字猜同族文件），就用 `family` 的批准脸画，不造假粗体。"""
+    """族 / 粗 / 斜 → 一套脸。`user_primary`（ADR 0164）是已经核过的用户本机脸，给了就**替换**正文脸。
+    `user_cjk(粗, 斜)` / `user_sibling(粗, 斜)`（ADR 0169 修订）按要的粗斜给用户脸，缺席或回 None = 没有这张。
+
+    `family` 仍决定**回退族**：行内样式要的粗 / 斜不是这张脸、同族也没有这张（复制来的单个文件没有兄弟；
+    不按名字猜同族文件），就用 `family` 的批准脸画，不造假粗体。CJK 脸没有对应粗斜时留常规。"""
     fam = latin_family(family)
-    approved = provider.face_for(fam, bool(bold), bool(italic))
-    primary = user_primary if user_primary is not None else approved
+    base = (bool(bold), bool(italic))
+    primary = user_primary if user_primary is not None else provider.face_for(fam, *base)
+
+    def merged(run_italic: bool, run_bold: bool) -> tuple[bool, bool]:
+        return base[0] or run_bold, base[1] or run_italic
 
     def variant(run_italic: bool, run_bold: bool) -> Face:
-        b, i = bool(bold) or run_bold, bool(italic) or run_italic
-        return primary if (b, i) == (bool(bold), bool(italic)) else provider.face_for(fam, b, i)
+        style = merged(run_italic, run_bold)
+        if style == base:
+            return primary
+        hit = (
+            user_sibling(*style) if user_sibling is not None and user_primary is not None else None
+        )
+        return hit if hit is not None else provider.face_for(fam, *style)
 
-    return FaceSet(primary, user_cjk if user_cjk is not None else provider.cjk_face(fam), variant)
+    cjk = user_cjk(*base) if user_cjk is not None else None
+    if cjk is None:
+        return FaceSet(primary, provider.cjk_face(fam), variant)
+    return FaceSet(primary, cjk, variant, lambda i, b: user_cjk(*merged(i, b)))
 
 
 # ---------------------------------------------------------------------------

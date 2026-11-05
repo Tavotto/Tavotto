@@ -41,6 +41,8 @@ export function fontFamilySelectModel({
   const named = labelOf ?? ((o: string) => fontFamilyOptionLabel(o, labels, options))
   const row = (o: string): SelectOption => ({
     value: o,
+    // 中英文名都搜得到，不管界面是哪种语言
+    searchText: [o, labels?.[o], named(o)].filter(Boolean).join(' '),
     label: (
       <span style={{ fontFamily: fontStackOf(o) }}>
         {named(o)}

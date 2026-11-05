@@ -39,11 +39,55 @@ const catalog: FontCatalog = {
 
 const text = (over: Partial<TextObject> = {}) => ({ id: 't', type: 'text', bold: false, ...over }) as TextObject
 
+describe('同族的其它脸', () => {
+  it('记下另外三张粗斜，不含自己', () => {
+    const o = text()
+    setLocalFamily(o, catalog, 'Times New Roman')
+    expect(o.sourceFont?.siblings).toEqual([
+      { sha256: sha('b'), face: 0, bold: true },
+      { sha256: sha('c'), face: 0, italic: true },
+      { sha256: sha('d'), face: 0, bold: true, italic: true },
+    ])
+  })
+
+  it('按 B 换脸后，常规脸进了 siblings，粗体脸出来', () => {
+    const o = text()
+    setLocalFamily(o, catalog, 'Times New Roman')
+    restyleLocalFace(o, catalog, true, false)
+    expect(o.sourceFont?.sha256).toBe(sha('b'))
+    expect(o.sourceFont?.siblings?.map((s) => s.sha256)).toEqual([sha('a'), sha('c'), sha('d')])
+  })
+
+  it('中文脸也带同族粗体，脸本身留常规', () => {
+    const c: FontCatalog = {
+      ...catalog,
+      families: [
+        ...catalog.families,
+        { name: 'Microsoft YaHei', zh: '微软雅黑', cjk: true, generic: null, faces: [face('f'), face('g', true)] },
+      ],
+    }
+    const o = text({ bold: true })
+    setLocalCjkFamily(o, c, 'Microsoft YaHei')
+    expect(o.sourceFont?.cjk).toEqual({
+      family: 'Microsoft YaHei',
+      sha256: sha('f'),
+      face: 0,
+      siblings: [{ sha256: sha('g'), face: 0, bold: true }],
+    })
+  })
+
+  it('只有一张脸的字体不写 siblings 字段', () => {
+    const o = text()
+    setLocalFamily(o, catalog, 'SimSun')
+    expect(o.sourceFont).not.toHaveProperty('siblings')
+  })
+})
+
 describe('选本机字体', () => {
   it('英文选本机字体：写身份和回退族，不带文件路径', () => {
     const o = text()
     setLocalFamily(o, catalog, 'Times New Roman')
-    expect(o.sourceFont).toEqual({ family: 'Times New Roman', sha256: sha('a'), face: 0 })
+    expect(o.sourceFont).toMatchObject({ family: 'Times New Roman', sha256: sha('a'), face: 0 })
     expect(o.fontFamily).toBe('serif')
   })
 

@@ -5,7 +5,8 @@
  * 写这一族里的一张脸，文档、导出、预览、缺字体的处理全走 ADR 0164 那一条路。
  *
  * 粗斜：`sourceFont` 永远点名**一张**脸，按 B / I 就换成同族里那张（族的归属来自清单，不按名字猜文件）。
- * 这一族没有那张脸时按钮置灰（`styleMissing`），不造假粗体。
+ * 这一族没有那张脸时按钮置灰（`styleMissing`），不造假粗体。同族其它脸记在 `siblings`，
+ * 导出与预览的行内粗斜、中文加粗按它换脸，不用再问清单（ADR 0169 修订）。
  *
  * 中文格单独选、英文留在内置字体时，`sourceFont` 的正文脸点名批准字体本身：批准字体也有 sha256，
  * 不用改文档形状（`isBuiltinFace` 让界面继续显示「衬线体」）。
@@ -14,7 +15,7 @@ import { useEffect, useSyncExternalStore } from 'react'
 import { fetchSourceFontCatalog } from './api'
 import { faceKey, isSourceFont, sameFace } from './sourceFont'
 import { CANVAS_TEXT_DEFAULT_FAMILY, effectiveCanvasFamily } from './typography'
-import type { SourceFace, SourceFont, TextObject } from '@/types/document'
+import type { SiblingFace, SourceFace, SourceFont, TextObject } from '@/types/document'
 
 export interface CatalogFace {
   sha256: string
@@ -95,7 +96,20 @@ export function resetFontCatalogForTests(next: FontCatalog = EMPTY_CATALOG): voi
   inFlight = false
 }
 
-const faceOf = (family: string, f: CatalogFace): SourceFace => ({ family, sha256: f.sha256, face: f.face })
+const siblingsOf = (f: CatalogFace, faces: readonly CatalogFace[]): SiblingFace[] =>
+  faces
+    .filter((o) => faceKey(o) !== faceKey(f))
+    .map((o) => ({
+      sha256: o.sha256,
+      face: o.face,
+      ...(o.bold ? { bold: true } : {}),
+      ...(o.italic ? { italic: true } : {}),
+    }))
+
+const faceOf = (family: string, f: CatalogFace, faces: readonly CatalogFace[]): SourceFace => {
+  const siblings = siblingsOf(f, faces)
+  return { family, sha256: f.sha256, face: f.face, ...(siblings.length ? { siblings } : {}) }
+}
 
 const exactFace = (faces: readonly CatalogFace[], bold: boolean, italic: boolean) =>
   faces.find((f) => f.bold === bold && f.italic === italic)
@@ -107,8 +121,13 @@ const closestFace = (faces: readonly CatalogFace[], bold: boolean, italic: boole
   exactFace(faces, false, false) ??
   faces[0]
 
-const primaryOf = (f: CatalogFace, family: string, cjk: SourceFace | undefined): SourceFont => ({
-  ...faceOf(family, f),
+const primaryOf = (
+  f: CatalogFace,
+  family: string,
+  faces: readonly CatalogFace[],
+  cjk: SourceFace | undefined,
+): SourceFont => ({
+  ...faceOf(family, f, faces),
   ...(f.bold ? { bold: true } : {}),
   ...(f.italic ? { italic: true } : {}),
   ...(cjk ? { cjk } : {}),
@@ -135,7 +154,7 @@ export function setLocalFamily(o: TextObject, c: FontCatalog, name: string): voi
   if (!fam || (isSourceFont(o.sourceFont) && o.sourceFont.family === name)) return
   const f = closestFace(fam.faces, o.bold === true, o.italic === true)
   const cjk = !fam.cjk && isSourceFont(o.sourceFont) ? o.sourceFont.cjk : undefined
-  o.sourceFont = primaryOf(f, fam.name, cjk)
+  o.sourceFont = primaryOf(f, fam.name, fam.faces, cjk)
   setStyle(o, f)
   // 别的机器上没有这个字体时回退到哪一族
   if (fam.generic) o.fontFamily = fam.generic as TextObject['fontFamily']
@@ -147,7 +166,7 @@ export function setBuiltinFamily(o: TextObject, c: FontCatalog, generic: string)
   const fam = c.builtin[generic]
   if (!cjk || !fam) return false
   const f = closestFace(fam.faces, o.bold === true, o.italic === true)
-  o.sourceFont = primaryOf(f, fam.name, cjk)
+  o.sourceFont = primaryOf(f, fam.name, fam.faces, cjk)
   o.fontFamily = generic as TextObject['fontFamily']
   return true
 }
@@ -161,7 +180,7 @@ export function resetLocalFamily(o: TextObject, c: FontCatalog): boolean {
   const fam = c.builtin[CANVAS_TEXT_DEFAULT_FAMILY]
   if (!cjk || !fam) return false
   const f = closestFace(fam.faces, o.bold === true, o.italic === true)
-  o.sourceFont = primaryOf(f, fam.name, cjk)
+  o.sourceFont = primaryOf(f, fam.name, fam.faces, cjk)
   delete o.fontFamily
   return true
 }
@@ -177,14 +196,14 @@ export function setLocalCjkFamily(o: TextObject, c: FontCatalog, name: string | 
   }
   const fam = c.families.find((f) => f.name === name)
   if (!fam) return
-  const cjk = faceOf(fam.name, closestFace(fam.faces, false, false))
+  const cjk = faceOf(fam.name, closestFace(fam.faces, false, false), fam.faces)
   if (sf) {
     sf.cjk = cjk
     return
   }
   const builtin = c.builtin[effectiveCanvasFamily(o)]
   if (!builtin) return
-  o.sourceFont = primaryOf(closestFace(builtin.faces, o.bold === true, o.italic === true), builtin.name, cjk)
+  o.sourceFont = primaryOf(closestFace(builtin.faces, o.bold === true, o.italic === true), builtin.name, builtin.faces, cjk)
 }
 
 /** 目标粗斜在这个对象的字体族里没有对应的脸（按钮该置灰）。清单不认识这张脸时不算：走 ADR 0164 的失效规则。 */
@@ -201,7 +220,7 @@ export function restyleLocalFace(o: TextObject, c: FontCatalog, bold: boolean, i
   if (!fam) return false
   const f = exactFace(fam.faces, bold, italic)
   if (!f) return true // 这一族没有这张脸：不动（按钮本来就是灰的）
-  o.sourceFont = primaryOf(f, o.sourceFont.family, o.sourceFont.cjk)
+  o.sourceFont = primaryOf(f, o.sourceFont.family, fam.faces, o.sourceFont.cjk)
   setStyle(o, f)
   return true
 }

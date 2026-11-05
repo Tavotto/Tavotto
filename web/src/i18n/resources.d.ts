@@ -5313,6 +5313,8 @@ export default interface Resources {
       "fontFromGeneric": "来自脚本里的「{{generic}}」字体设置",
       "fontMissingHint": "这台电脑没装这个字体，图上用的是别的字体。",
       "fontMissingTag": "（未安装）",
+      "fontNoMatch": "没有匹配的字体",
+      "fontSearch": "搜索字体",
       "size": "字号"
     },
     "tick": {
