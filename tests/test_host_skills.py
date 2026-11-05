@@ -341,10 +341,10 @@ def test_symlink_target_change_changes_the_checksum(tmp_path):
 def test_skill_script_runs_the_named_script_in_process(home, tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp_path / "c"))
     monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "d"))
-    argv0 = list(sys.argv)
+    argv0, path0 = list(sys.argv), list(sys.path)
     assert K.run_script_cli(["prefs", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["schema"] == 1
-    assert sys.argv == argv0 and str(SRC / "scripts") not in sys.path
+    assert sys.argv == argv0 and sys.path == path0  # 跑完原样还原
 
 
 def test_skill_script_only_accepts_the_closed_names(capsys):
