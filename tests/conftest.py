@@ -347,6 +347,17 @@ def _isolated_user_config(tmp_path_factory, monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _no_mcp_update_notice(request, monkeypatch):
+    """MCP 服务端的「有新版本」检查到期会在后台线程联网：除它自己的用例外一律关掉，
+    免得任何一条 health/export 用例真去请求 GitHub。（不用环境变量：交接路径的
+    update_check 用例要继承干净的环境。）"""
+    mod = sys.modules.get("tavotto_mcp.updatenotice")
+    if mod is not None and request.module.__name__ != "test_mcp_update_notice":
+        monkeypatch.setattr(mod, "notice", lambda mine: None)
+        monkeypatch.setattr(mod, "notice_once", lambda mine: None)
+
+
 @pytest.fixture
 def telemetry_sent(_isolated_user_config, monkeypatch):
     """打开匿名遥测并**拦下传输层**：返回收集到的 payload 列表。

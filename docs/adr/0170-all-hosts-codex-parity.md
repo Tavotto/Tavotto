@@ -31,7 +31,7 @@
 | 5 | 遥测 | `tavotto_guide` 不进 `usage.TOOLS` 与遥测闭集，走现有 `other`，合同和 `CONSENT_VERSION` 不动（维护者裁决）。`test_mcp_usage` 显式写出这一个例外 | `usage.py` |
 | 6 | 更新 | 技能：桌面版启动时同步，只做本机复制。Codex 插件：桌面版启动时走现有 `tavotto codex upgrade`（下载、校验、换目录），失败只提示。第三条底线收窄为「**插件和 MCP 进程**绝不自动下载或执行」，桌面版经用户可关的更新开关可以 | 第三个 PR |
 | 7 | 关闭方式 | 不加新设置项：跟随桌面版现有的后台自动下载开关，另有 `TAVOTTO_DISABLE_UPDATE_CHECK=1`（维护者裁决） | 第三个 PR |
-| 8 | AI 看到什么 | MCP 结果带 `update`，话术按安装方式给。缓存在调用线程读，到期后台刷新 | 第一个 PR |
+| 8 | AI 看到什么 | MCP 结果带 `update`，话术按安装方式给。缓存在调用线程读，到期后台刷新。`TAVOTTO_NO_UPDATE_CHECK`、`TAVOTTO_DISABLE_UPDATE_CHECK`、设置里的 `auto_check` 任一关闭就不联网（`docs/rules/backend/update-check.md`「关了一个包都不发」） | `tavotto_mcp/updatenotice.py` |
 | 9 | 技能失败 | MCP 已写成时不回滚，整次 `ok=false`，带 `mcp_connected=true` | `hostconnect.connect` |
 
 ## 不做 / 边界
@@ -39,6 +39,7 @@
 * 内嵌画布不写新功能。官方写明支持 MCP Apps 的只有 Cursor、VS Code、Claude 桌面版，其余查不到或不支持，同一组工具走完后在桌面版看图。
 * Cursor、VS Code 也读 `~/.claude/skills`，同时接入 Claude Code 时可能出现同名技能，待真机确认。
 * Trae 国际版、WorkBuddy 的技能目录只有本机观察或第三方说法，待真机确认。
+* 更新清单在 GitHub Release，release-mirror 不镜像它，大陆用户的 MCP 提醒大概率静默缺席；要补需要把 `codex-plugin.json` 加进镜像范围。
 * pip 安装没有 MCP 服务端，也没有技能来源，行为不变。
 
 ## 验证
@@ -52,4 +53,5 @@
 | 变异 | 红在 |
 | --- | --- |
 | 去掉 `install_skill` 的「改过不覆盖」分支 | `tests/test_host_skills.py` 中改过、加文件、同名目录、符号链接 4 条，`tests/test_hosts_connect.py` 1 条 |
+| 去掉 `_current` 的 `network_allowed()` 判断 | `tests/test_mcp_update_notice.py::test_user_switches_stop_the_background_request` 两条 |
 | 去掉 guide 的 `section` 白名单 | `tests/test_host_skills.py` 中路径穿越各写法与 server 接线共 8 条 |

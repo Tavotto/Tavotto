@@ -70,7 +70,8 @@ python3 scripts/handoff.py <脚本路径>
   渲染环境，别自己反复重试。
 * `"update"` —— 插件自己有新版本时才出现（每 24 小时最多查一次）。按
   `references/first-run-and-recovery.md` 的「插件有新版本」一节处理：收尾提醒
-  一次，不阻塞、不自动升级。
+  一次，不阻塞、不自动升级。（MCP 工具结果里的 `update` 是同一份检查、
+  同一条规矩，见同一节。）
 
 完整的错误码清单与排障步骤在
 <https://github.com/Tavotto/Tavotto/blob/main/docs/handoff-protocol.md>

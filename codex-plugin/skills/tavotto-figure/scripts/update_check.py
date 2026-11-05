@@ -160,7 +160,14 @@ def is_newer(candidate: object, baseline: object) -> bool | None:
 
 
 # -------------------------------- 缓存 -----------------------------------
+#: 配置目录规则。MCP 服务端按文件路径加载同目录的 `handoff.py` 后填进来（`tavotto_mcp/updatenotice.py`）：
+#: 那个进程的 `sys.path` 上可能先有引擎的 `tavotto/engine/`，`from handoff import` 会拿到同名的另一个模块。
+_config_dir = None
+
+
 def cache_path(environ: dict | None = None) -> str:
+    if _config_dir is not None:
+        return os.path.join(_config_dir(environ=environ), CACHE_NAME)
     from handoff import config_dir  # 目录规则只有一份
 
     return os.path.join(config_dir(environ=environ), CACHE_NAME)
@@ -245,6 +252,8 @@ def check(
     now: float | None = None,
     fetcher=fetch,
     version: str | None = None,
+    allow_network: bool = True,
+    due_only: bool = False,
 ) -> dict:
     """回一份 `update` 字段。**永远返回 dict，永远不抛。**
 
@@ -253,6 +262,10 @@ def check(
       current    已经是最新
       available  有新版本
       unknown    问不到 / 版本号解不出 —— 什么都别说，也别报错
+
+    `allow_network=False`：只读缓存，**不请求、不写缓存**（不会动 attempted_at，
+    所以不会吃掉后台线程那次真请求的重试窗口）。MCP 服务端的调用线程用它——
+    调用线程永远不碰网络，到期的刷新交给后台线程（`tavotto_mcp/updatenotice.py`）。
     """
     env = os.environ if environ is None else environ
     now = time.time() if now is None else now
@@ -270,7 +283,9 @@ def check(
         path, cache = "", {}  # 没缓存也能工作，只是每次都问
     manifest = cache.get("manifest") if cache.get("url") == url else None
 
-    due = force or _due(cache, url, now)
+    if due_only:  # 只回答「该不该问」，不请求、不写缓存（见 `refresh_due`）
+        return {**base, "status": "due" if _due(cache, url, now) else "not_due"}
+    due = allow_network and (force or _due(cache, url, now))
     if due:
         fresh = fetcher(url, TIMEOUT)
         entry = {
@@ -329,6 +344,18 @@ def _due(cache: dict, url: str, now: float) -> bool:
     if isinstance(attempted, (int, float)) and now - attempted < RETRY_INTERVAL:
         return False  # 刚失败过，别每次画图都白等
     return True
+
+
+def refresh_due(*, environ: dict | None = None, now: float | None = None) -> bool:
+    """现在该不该去问一次网络？（被关掉 → 否；缓存新鲜 / 刚失败过 → 否。）
+
+    只读，不请求、不写缓存。判据就是 `check()` 里的 `_due`（经 `due_only` 走同一条路，
+    环境变量也只在 `check()` 里读一处）。永不抛。
+    """
+    try:
+        return check(environ=environ, now=now, due_only=True).get("status") == "due"
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def hint(update: dict) -> str | None:
