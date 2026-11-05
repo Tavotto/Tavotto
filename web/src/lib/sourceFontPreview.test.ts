@@ -134,6 +134,31 @@ describe('行内粗斜与中文加粗（ADR 0169 修订）', () => {
     expect(await load(OWN)).toBe(`"${family(ZH)}", ${APPROVED}`)
   })
 
+  it('粗体请求只问、只取粗体那张，不碰常规脸', async () => {
+    answer({ [REG]: 'ok', [BOLD]: 'ok' })
+    const src: SourceFont = { family: 'Lab', sha256: REG, face: 0, siblings: [{ sha256: BOLD, face: 0, bold: true }] }
+    for (let i = 0; i < 3; i++) {
+      previewStackOf(src, APPROVED, OWN, BOLD_RUN)
+      await settle()
+      await settle()
+    }
+    expect(previewStackOf(src, APPROVED, OWN, BOLD_RUN)).toBe(`"${family(BOLD)}", ${APPROVED}`)
+    const asked = api.fetchSourceFontStatus.mock.calls.flatMap((c) => c[0] as { sha256: string }[])
+    expect(asked.map((i) => i.sha256)).not.toContain(REG)
+    expect(api.fetchSourceFontBytes).toHaveBeenCalledTimes(1)
+  })
+
+  it('粗体 sibling 确实用不了才退到常规脸（状态一拍一拍问到）', async () => {
+    answer({ [REG]: 'ok', [BOLD]: 'not_found' })
+    const src: SourceFont = { family: 'Lab', sha256: REG, face: 0, siblings: [{ sha256: BOLD, face: 0, bold: true }] }
+    for (let i = 0; i < 4; i++) {
+      previewStackOf(src, APPROVED, OWN, BOLD_RUN)
+      await settle()
+      await settle()
+    }
+    expect(previewStackOf(src, APPROVED, OWN, BOLD_RUN)).toBe(`"${family(REG)}", ${APPROVED}`)
+  })
+
   it('中文粗体在本机用不了：退回常规中文', async () => {
     answer({ [REG]: 'ok', [BOLD]: 'ok', [ZH]: 'ok', [ZH_BOLD]: 'not_found' })
     expect(await load(BOLD_RUN)).toBe(`"${family(BOLD)}", "${family(ZH)}", ${APPROVED}`)

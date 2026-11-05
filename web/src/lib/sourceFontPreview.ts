@@ -59,8 +59,10 @@ function pickName(base: SourceFace, own: FontStyle, want: FontStyle): string | u
   const rank = (c: FontStyle) => (c.bold === want.bold ? 0 : 2) + (c.italic === want.italic ? 0 : 1)
   const candidates = [{ face: base, ...own }, ...siblings].sort((a, b) => rank(a) - rank(b))
   for (const c of candidates) {
-    const name = usable(c.face, { bold: c.bold, italic: c.italic })
-    if (name) return name
+    // 逐张按顺序判：还没问到 / 字节没到 = 等它，不碰后面的候选（否则会把用不上的同族脸全下载）
+    const state = sourceFontState(c.face, { bold: c.bold, italic: c.italic })
+    if (state === 'unknown') return undefined
+    if (state === 'ok') return previewFamilyOf(c.face) // 字节没到时 undefined，同样原地等
   }
   return undefined
 }
