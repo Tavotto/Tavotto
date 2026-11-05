@@ -34,6 +34,7 @@ Guardian 全候选池 / S0 科研语料的长跑，以及 Ubuntu 24.04 新手按
 
 - **准备**（联网、root、一次性容器 → `docker commit`）只跑 main 上与 workflow 同一组的安装步骤；改 workflow 的安装步骤时，
   `box.py` 的 `GUARDIAN_PREPARE` / `research_prepare` 跟着改。
+- 准备阶段可以从 jsDelivr 补缓存缺的文件（`mirror_fill.py`），但只认钉在完整提交上的地址，并按仓库钉的 sha256 核过才落盘。
 - **执行**（`exec_argv`）必须同时带：`--network none`、`--user 10001:10001`、`--cap-drop ALL`、
   `--security-opt no-new-privileges`、`--read-only`、tmpfs `/tmp`、`--pids-limit`、`--memory`、`--cpus`、`--rm`；
   只挂本次证据目录。**不许**挂 `docker.sock`、`--privileged`、`--network host`、挂宿主其它目录。
