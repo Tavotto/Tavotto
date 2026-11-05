@@ -1,5 +1,4 @@
 import { previewFamilyOf, sourceFontState } from './sourceFontCache'
-import { siblingFace } from './sourceFont'
 import type { SiblingFace, SourceFace, SourceFont } from '@/types/document'
 
 export interface FontStyle {
@@ -49,20 +48,21 @@ const asFace = (owner: SourceFace, s: SiblingFace): SourceFace => ({
   face: s.face,
 })
 
-/** 正文层：对象自己的样式就是那张脸，别的粗斜找同族，没有就不进栈（按批准脸画，与导出一致）。 */
-function primaryName(source: SourceFont, want: FontStyle, own: FontStyle): string | undefined {
-  if (want.bold === own.bold && want.italic === own.italic) return usable(source, source)
-  const s = siblingFace(source, want.bold, want.italic)
-  return s ? usable(asFace(source, s), s) : undefined
-}
-
-/** 中文层：先要粗斜，再退粗，都没有是常规——与 `plan._user_faces` 的 `cjk` 同一个顺序。 */
-function cjkName(cjk: SourceFace, want: FontStyle): string | undefined {
-  for (const s of [siblingFace(cjk, want.bold, want.italic), siblingFace(cjk, want.bold, false)]) {
-    const name = s && usable(asFace(cjk, s), s)
+/**
+ * 挑要画的脸，与 `plan._user_faces` 的 `pick` 同一个顺序：先要粗细对、再要斜体对，不用更粗 / 更斜的兄弟顶常规。
+ * 同族没有的粗斜交给浏览器合成，导出同样模拟（ADR 0169 修订）。
+ */
+function pickName(base: SourceFace, own: FontStyle, want: FontStyle): string | undefined {
+  const siblings = (base.siblings ?? [])
+    .filter((s) => (want.bold || !s.bold) && (want.italic || !s.italic))
+    .map((s) => ({ face: asFace(base, s), bold: s.bold === true, italic: s.italic === true }))
+  const rank = (c: FontStyle) => (c.bold === want.bold ? 0 : 2) + (c.italic === want.italic ? 0 : 1)
+  const candidates = [{ face: base, ...own }, ...siblings].sort((a, b) => rank(a) - rank(b))
+  for (const c of candidates) {
+    const name = usable(c.face, { bold: c.bold, italic: c.italic })
     if (name) return name
   }
-  return usable(cjk, {})
+  return undefined
 }
 
 /**
@@ -82,10 +82,11 @@ export function previewStackOf(
 ): string {
   const want = { bold: own.bold || run.bold, italic: own.italic || run.italic }
   const names: string[] = []
-  const p = source && primaryName(source, want, own)
+  const p =
+    source && pickName(source, { bold: source.bold === true, italic: source.italic === true }, want)
   if (p) names.push(p)
   const c = source?.cjk
-    ? cjkName(source.cjk, want)
+    ? pickName(source.cjk, NO_STYLE, want)
     : want.bold && boldCjk
       ? usable(boldCjk, { bold: true, unicodeRange: CJK_RANGE })
       : undefined

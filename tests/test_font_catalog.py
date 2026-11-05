@@ -226,16 +226,30 @@ def test_inline_bold_uses_the_family_bold_face(tmp_path, monkeypatch):
     assert len(_exported_faces(tmp_path, compiled, provider)) == 2
 
 
-def test_inline_bold_without_a_sibling_falls_back_to_the_approved_bold(tmp_path, monkeypatch):
-    """同族没有这张脸：照旧用批准粗体，不造假粗体，也不报问题（ADR 0164 裁决 10）。"""
+def _runs(compiled) -> list:
+    out = []
+
+    def walk(node):
+        for child in getattr(node, "children", ()):
+            walk(child)
+        out.extend(getattr(node, "runs", ()))
+
+    walk(compiled.page)
+    return [r for r in out if not r.invisible]
+
+
+def test_inline_bold_without_a_sibling_is_simulated_on_the_same_face(tmp_path, monkeypatch):
+    """同族没有这张脸：模拟，字体不换（ADR 0169 修订，修订 0164 裁决 10）。"""
     regular = _drop(tmp_path, "lab.ttf", _renamed("Lab Serif"))
     sf = {"family": "Lab Serif", "sha256": fonts.sha256_of(regular), "face": 0}
     compiled, provider = _compile(tmp_path, monkeypatch, _text_obj("Ab \\textbf{Cd}", sf))
     assert not compiled.problems
-    assert any("LiberationSerif-Bold" in n for n in _exported_faces(tmp_path, compiled, provider))
+    assert _used(compiled) == {sf["sha256"]}
+    assert [r.synth_bold for r in _runs(compiled)] == [False, True]
+    assert len(_exported_faces(tmp_path, compiled, provider)) == 1
 
 
-def test_a_sibling_gone_from_this_machine_warns_and_falls_back(tmp_path, monkeypatch):
+def test_a_sibling_gone_from_this_machine_warns_and_simulates(tmp_path, monkeypatch):
     regular = _drop(tmp_path, "lab.ttf", _renamed("Lab Serif"))
     gone = _renamed("Lab Serif Bold File")
     sf = {
@@ -244,10 +258,11 @@ def test_a_sibling_gone_from_this_machine_warns_and_falls_back(tmp_path, monkeyp
         "face": 0,
         "siblings": [{"sha256": hashlib.sha256(gone).hexdigest(), "face": 0, "bold": True}],
     }
-    compiled, provider = _compile(tmp_path, monkeypatch, _text_obj("Ab \\textbf{Cd}", sf))
+    compiled, _ = _compile(tmp_path, monkeypatch, _text_obj("Ab \\textbf{Cd}", sf))
     problems = [p for p in compiled.problems if p["code"] == "source_font_unavailable"]
     assert [p["reason"] for p in problems] == ["not_found"]
-    assert any("LiberationSerif-Bold" in n for n in _exported_faces(tmp_path, compiled, provider))
+    assert _used(compiled) == {sf["sha256"]}
+    assert _runs(compiled)[-1].synth_bold
 
 
 def test_an_unused_sibling_file_is_not_read(tmp_path, monkeypatch):
@@ -303,13 +318,72 @@ def test_inline_bold_switches_the_chinese_face_too(tmp_path, monkeypatch):
     assert {bold_sha, sf["cjk"]["sha256"]} <= _used(compiled)
 
 
-def test_chinese_without_bold_stays_regular_and_silent(tmp_path, monkeypatch):
-    """宋体这类没有粗体的：留常规、不造假粗、不算问题。"""
+def test_chinese_without_bold_is_simulated_like_word(tmp_path, monkeypatch):
+    """宋体这类只有常规体的：对象加粗、加斜都模拟，不算问题。"""
     sf = _cjk_font_setup(tmp_path)
     del sf["cjk"]["siblings"]
-    compiled, _ = _compile(tmp_path, monkeypatch, _text_obj("中文", sf, bold=True))
+    obj = _text_obj("中文", sf, bold=True, italic=True)
+    compiled, _ = _compile(tmp_path, monkeypatch, obj)
     assert not [p for p in compiled.problems if p["code"] == "source_font_unavailable"]
     assert sf["cjk"]["sha256"] in _used(compiled)
+    run = _runs(compiled)[0]
+    assert run.synth_bold and run.synth_italic
+
+
+def test_built_in_chinese_italic_is_simulated_and_bold_is_real(tmp_path, monkeypatch):
+    from tavotto.rendercore import plan, sources
+    from tavotto.rendercore.hbshaper import HbFaceProvider
+
+    reg = fonts.FontRegistry.discover()
+    if reg.missing:
+        pytest.skip(f"批准字体不全（not_run）：缺 {reg.missing}")
+    obj = _text_obj("中文", {}, bold=True, italic=True)
+    del obj["source_font"]
+    compiled = plan.compile_page(
+        150.0,
+        40.0,
+        [obj],
+        sources=sources.StaticSourceResolver(Path(".")),
+        faces=HbFaceProvider(reg),
+    )
+    run = _runs(compiled)[0]
+    assert "NotoSerifSC-Bold" in run.font
+    assert run.synth_italic and not run.synth_bold
+
+
+@pytest.mark.parametrize("italic", [False, True])
+def test_simulation_reaches_every_writer(tmp_path, monkeypatch, italic):
+    """PDF：描边 + 错切，文本层还是原字；SVG 可编辑文字与轮廓、EPS 都带上。"""
+    import pikepdf
+
+    from tavotto.rendercore import ir, pdfwriter, svgwriter
+
+    sf = {
+        "family": "Lab",
+        "sha256": fonts.sha256_of(_drop(tmp_path, "l.ttf", _renamed("Lab"))),
+        "face": 0,
+    }
+    obj = _text_obj("Ab", sf, bold=True, italic=italic)
+    compiled, provider = _compile(tmp_path, monkeypatch, obj)
+    pdf = tmp_path / "o.pdf"
+    pdfwriter.write_pdf(compiled.page, pdf, provider)
+    with pikepdf.open(pdf) as doc:
+        stream = doc.pages[0].Contents.read_bytes().decode("latin-1")
+    assert "2 Tr" in stream and " RG " in stream
+    assert f"{ir.synth_bold_width(12.0):.4f}".rstrip("0") in stream
+    assert ("1 0 0.25 1 " in stream) is italic
+    for policy, needle in (("text", 'font-weight="700"'), ("outlines", "stroke-width")):
+        out = tmp_path / f"o-{policy}.svg"
+        svgwriter.write_svg(compiled.page, out, provider, text_policy=policy)
+        assert needle in out.read_text(encoding="utf-8")
+
+
+def test_stroke_width_follows_the_browser_table():
+    from tavotto.rendercore import ir
+
+    assert ir.synth_bold_width(9.0) == pytest.approx(9.0 / 24)
+    assert ir.synth_bold_width(36.0) == pytest.approx(36.0 / 32)
+    assert 20.0 / 32 < ir.synth_bold_width(20.0) < 20.0 / 24
 
 
 def test_the_preview_bold_chinese_faces_are_the_approved_ones():

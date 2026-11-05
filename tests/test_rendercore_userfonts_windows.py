@@ -341,3 +341,26 @@ def test_inline_bold_uses_times_bold_and_yahei_bold(provider, tmp_path, monkeypa
     names = " ".join(n for n, _ in found)
     assert "TimesNewRomanPS-BoldMT" in names, names
     assert "MicrosoftYaHei-Bold" in names or "MSYaHei-Bold" in names, names
+
+
+def test_simsun_without_a_bold_face_is_simulated_in_the_pdf(provider, tmp_path, monkeypatch):
+    """宋体只有常规体：对象加粗后 PDF 里仍是宋体这一张脸，加描边模拟（ADR 0169 修订）。"""
+    _cat, loc, _took, rows = _system_catalog()
+    if "SimSun" not in rows:
+        pytest.skip("这台 Windows 没装宋体")
+    monkeypatch.setattr(userfonts, "_LOCATOR", loc)
+    times = next(f for f in rows["Times New Roman"]["faces"] if not f["bold"] and not f["italic"])
+    simsun = rows["SimSun"]["faces"][0]
+    obj = _text(
+        {
+            "family": "Times New Roman",
+            "sha256": times["sha256"],
+            "face": times["face"],
+            "cjk": {"family": "SimSun", "sha256": simsun["sha256"], "face": simsun["face"]},
+        },
+        text="温度",
+    )
+    obj["bold"] = True
+    problems, found, _text_layer = _embedded(provider, [obj], tmp_path)
+    assert not {p["code"] for p in problems} & {"source_font_unavailable", "glyph_missing"}
+    assert "SimSun" in " ".join(n for n, _ in found)

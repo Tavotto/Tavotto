@@ -5,8 +5,8 @@
  * 写这一族里的一张脸，文档、导出、预览、缺字体的处理全走 ADR 0164 那一条路。
  *
  * 粗斜：`sourceFont` 永远点名**一张**脸，按 B / I 就换成同族里那张（族的归属来自清单，不按名字猜文件）。
- * 这一族没有那张脸时按钮置灰（`styleMissing`），不造假粗体。同族其它脸记在 `siblings`，
- * 导出与预览的行内粗斜、中文加粗按它换脸，不用再问清单（ADR 0169 修订）。
+ * 这一族没有那张脸时留在最接近的脸上、对象照样记粗斜，画布与导出都模拟（与 Word 同一做法）。
+ * 同族其它脸记在 `siblings`，导出与预览的行内粗斜、中文加粗按它换脸，不用再问清单（ADR 0169 修订）。
  *
  * 中文格单独选、英文留在内置字体时，`sourceFont` 的正文脸点名批准字体本身：批准字体也有 sha256，
  * 不用改文档形状（`isBuiltinFace` 让界面继续显示「衬线体」）。
@@ -133,12 +133,6 @@ const primaryOf = (
   ...(cjk ? { cjk } : {}),
 })
 
-const setStyle = (o: TextObject, f: CatalogFace) => {
-  o.bold = f.bold
-  if (f.italic) o.italic = true
-  else delete o.italic
-}
-
 const familyFacesOf = (c: FontCatalog, sf: SourceFace): { name: string; faces: CatalogFace[] } | undefined =>
   [...c.families, ...Object.values(c.builtin)].find((fam) =>
     fam.faces.some((f) => sameFace({ ...f, family: '' }, sf)),
@@ -155,7 +149,6 @@ export function setLocalFamily(o: TextObject, c: FontCatalog, name: string): voi
   const f = closestFace(fam.faces, o.bold === true, o.italic === true)
   const cjk = !fam.cjk && isSourceFont(o.sourceFont) ? o.sourceFont.cjk : undefined
   o.sourceFont = primaryOf(f, fam.name, fam.faces, cjk)
-  setStyle(o, f)
   // 别的机器上没有这个字体时回退到哪一族
   if (fam.generic) o.fontFamily = fam.generic as TextObject['fontFamily']
 }
@@ -206,22 +199,16 @@ export function setLocalCjkFamily(o: TextObject, c: FontCatalog, name: string | 
   o.sourceFont = primaryOf(closestFace(builtin.faces, o.bold === true, o.italic === true), builtin.name, builtin.faces, cjk)
 }
 
-/** 目标粗斜在这个对象的字体族里没有对应的脸（按钮该置灰）。清单不认识这张脸时不算：走 ADR 0164 的失效规则。 */
-export function styleMissing(o: TextObject, c: FontCatalog, bold: boolean, italic: boolean): boolean {
-  if (!isSourceFont(o.sourceFont)) return false
-  const fam = familyFacesOf(c, o.sourceFont)
-  return !!fam && !exactFace(fam.faces, bold, italic)
-}
-
-/** 按 B / I：换成同族里那张脸。返回 false = 清单不认识这张脸，调用方走原来的写入。 */
+/** 按 B / I：换成同族里最接近的脸，对象记下要的粗斜（没有的由画布和导出模拟）。返回 false = 清单不认识这张脸，调用方走原来的写入。 */
 export function restyleLocalFace(o: TextObject, c: FontCatalog, bold: boolean, italic: boolean): boolean {
   if (!isSourceFont(o.sourceFont)) return false
   const fam = familyFacesOf(c, o.sourceFont)
   if (!fam) return false
-  const f = exactFace(fam.faces, bold, italic)
-  if (!f) return true // 这一族没有这张脸：不动（按钮本来就是灰的）
+  const f = closestFace(fam.faces, bold, italic)
   o.sourceFont = primaryOf(f, o.sourceFont.family, fam.faces, o.sourceFont.cjk)
-  setStyle(o, f)
+  o.bold = bold
+  if (italic) o.italic = true
+  else delete o.italic
   return true
 }
 

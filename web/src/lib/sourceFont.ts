@@ -94,11 +94,6 @@ export function sourceFontFromElement(
   return out
 }
 
-/** 同族里正好是这个粗斜的那张脸（`SourceFace` 形状，名字跟随 `f`）；没有就 undefined。 */
-export function siblingFace(f: SourceFace, bold: boolean, italic: boolean): SiblingFace | undefined {
-  return f.siblings?.find((s) => (s.bold === true) === bold && (s.italic === true) === italic)
-}
-
 /** 同一张脸（只看身份，不看名字）。 */
 export const sameFace = (a: SourceFace, b: SourceFace): boolean =>
   a.sha256 === b.sha256 && a.face === b.face

@@ -124,9 +124,14 @@ describe('行内粗斜与中文加粗（ADR 0169 修订）', () => {
     expect(await load(BOLD_RUN)).toBe(`"${family(BOLD)}", "${family(ZH_BOLD)}", ${APPROVED}`)
   })
 
-  it('同族没有这张脸：正文层回批准字体，中文留常规（与导出同一个回退）', async () => {
+  it('同族没有这张脸：留在常规脸上，由浏览器合成（导出同样模拟）', async () => {
     answer({ [REG]: 'ok', [ZH]: 'ok', [ZH_BOLD]: 'ok', [BOLD]: 'ok' })
-    expect(await load({ bold: false, italic: true })).toBe(`"${family(ZH)}", ${APPROVED}`)
+    expect(await load({ bold: false, italic: true })).toBe(`"${family(REG)}", "${family(ZH)}", ${APPROVED}`)
+  })
+
+  it('不用粗体顶常规：常规脸用不了时正文回批准字体', async () => {
+    answer({ [REG]: 'not_found', [BOLD]: 'ok', [ZH]: 'ok' })
+    expect(await load(OWN)).toBe(`"${family(ZH)}", ${APPROVED}`)
   })
 
   it('中文粗体在本机用不了：退回常规中文', async () => {

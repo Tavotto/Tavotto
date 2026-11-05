@@ -67,6 +67,23 @@ class Face(Protocol):
 
 
 @dataclass(frozen=True)
+class SynthFace:
+    """一张脸 + 要模拟的粗 / 斜（ADR 0169 修订）。字形、度量全是原来那张脸的，只有落笔时写入器多描一道边或错切。"""
+
+    face: Face
+    synth_bold: bool = False
+    synth_italic: bool = False
+
+    def __getattr__(self, name: str):
+        return getattr(self.face, name)
+
+
+def synthesized(face: Face, bold: bool, italic: bool) -> Face:
+    """要模拟时包一层，不用模拟就是原脸。"""
+    return SynthFace(face, bold, italic) if bold or italic else face
+
+
+@dataclass(frozen=True)
 class FaceSet:
     primary: Face
     cjk: Face | None
@@ -82,7 +99,7 @@ class FaceSet:
             return self
         face = self.variant(italic, bold) if self.variant is not None else self.primary
         cjk = self.cjk_variant(italic, bold) if self.cjk_variant is not None else self.cjk
-        if face is self.primary and cjk is self.cjk:
+        if face == self.primary and cjk == self.cjk:
             return self
         return FaceSet(face, cjk, self.variant, self.cjk_variant)
 
@@ -114,37 +131,36 @@ def faces_for(
     bold: bool,
     italic: bool,
     *,
-    user_primary: Face | None = None,
+    user_face: Callable[[bool, bool], Face | None] | None = None,
     user_cjk: Callable[[bool, bool], Face | None] | None = None,
-    user_sibling: Callable[[bool, bool], Face | None] | None = None,
 ) -> FaceSet:
-    """族 / 粗 / 斜 → 一套脸。`user_primary`（ADR 0164）是已经核过的用户本机脸，给了就**替换**正文脸。
-    `user_cjk(粗, 斜)` / `user_sibling(粗, 斜)`（ADR 0169 修订）按要的粗斜给用户脸，缺席或回 None = 没有这张。
+    """族 / 粗 / 斜 → 一套脸。`user_face(粗, 斜)` / `user_cjk(粗, 斜)`（ADR 0164、0169）按要的粗斜给用户本机脸，
+    回 None = 这一层用不了用户脸，走批准脸；要模拟的粗斜已经包在返回的脸上。
 
-    `family` 仍决定**回退族**：行内样式要的粗 / 斜不是这张脸、同族也没有这张（复制来的单个文件没有兄弟；
-    不按名字猜同族文件），就用 `family` 的批准脸画，不造假粗体。用户选的 CJK 字体没有粗体时留它的常规脸；
-    没选时用批准的 CJK 脸，粗体随对象。"""
+    `family` 决定回退到哪一族。批准的拉丁脸四种样式齐全；批准的 CJK 脸有常规和粗体，斜体模拟。"""
     fam = latin_family(family)
     base = (bool(bold), bool(italic))
-    primary = user_primary if user_primary is not None else provider.face_for(fam, *base)
 
     def merged(run_italic: bool, run_bold: bool) -> tuple[bool, bool]:
         return base[0] or run_bold, base[1] or run_italic
 
-    def variant(run_italic: bool, run_bold: bool) -> Face:
-        style = merged(run_italic, run_bold)
-        if style == base:
-            return primary
-        hit = (
-            user_sibling(*style) if user_sibling is not None and user_primary is not None else None
-        )
-        return hit if hit is not None else provider.face_for(fam, *style)
+    def primary_for(want_bold: bool, want_italic: bool) -> Face:
+        user = user_face(want_bold, want_italic) if user_face is not None else None
+        return user if user is not None else provider.face_for(fam, want_bold, want_italic)
 
-    def cjk_for(style_bold: bool, style_italic: bool) -> Face | None:
-        user = user_cjk(style_bold, style_italic) if user_cjk is not None else None
-        return user if user is not None else provider.cjk_face(fam, style_bold)
+    def cjk_for(want_bold: bool, want_italic: bool) -> Face | None:
+        user = user_cjk(want_bold, want_italic) if user_cjk is not None else None
+        if user is not None:
+            return user
+        face = provider.cjk_face(fam, want_bold)
+        return synthesized(face, False, want_italic) if face is not None else None
 
-    return FaceSet(primary, cjk_for(*base), variant, lambda i, b: cjk_for(*merged(i, b)))
+    return FaceSet(
+        primary_for(*base),
+        cjk_for(*base),
+        lambda i, b: primary_for(*merged(i, b)),
+        lambda i, b: cjk_for(*merged(i, b)),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -567,7 +583,7 @@ def _run_lines(text: str, text_format: str | None) -> list[list[richtext.TextRun
 
 
 def _same_run(a: ShapedPiece, b: ShapedPiece) -> bool:
-    return a.face is b.face and a.size == b.size and a.rise == b.rise and a.layer == b.layer
+    return a.face == b.face and a.size == b.size and a.rise == b.rise and a.layer == b.layer
 
 
 def _math_text_piece(face: Face, src: str, width_pt: float, size: float) -> ShapedPiece | None:

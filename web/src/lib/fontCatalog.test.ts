@@ -12,7 +12,6 @@ import {
   setBuiltinFamily,
   setLocalCjkFamily,
   setLocalFamily,
-  styleMissing,
   type FontCatalog,
 } from './fontCatalog'
 import type { TextObject } from '@/types/document'
@@ -97,11 +96,12 @@ describe('选本机字体', () => {
     expect(o.sourceFont).toMatchObject({ sha256: sha('b'), bold: true })
   })
 
-  it('这一族没有粗体：选常规脸，对象的粗体跟着关掉，按钮不会说谎', () => {
+  it('这一族没有粗体：选常规脸，对象的粗体留着，由画布和导出模拟', () => {
     const o = text({ bold: true })
     setLocalFamily(o, catalog, 'SimSun')
     expect(o.sourceFont?.sha256).toBe(sha('e'))
-    expect(o.bold).toBe(false)
+    expect(o.sourceFont).not.toHaveProperty('bold')
+    expect(o.bold).toBe(true)
   })
 
   it('换成自带中文字形的字体：之前单独选的中文脸清掉', () => {
@@ -174,18 +174,21 @@ describe('粗体 / 斜体', () => {
     expect(o.bold).toBe(true)
   })
 
-  it('这一族没有那张脸：不动，按钮置灰', () => {
+  it('这一族没有那张脸：脸不换，对象记下粗斜，由画布和导出模拟', () => {
     const o = text()
     setLocalFamily(o, catalog, 'SimSun')
-    expect(styleMissing(o, catalog, true, false)).toBe(true)
-    expect(restyleLocalFace(o, catalog, true, false)).toBe(true)
-    expect(o.bold).toBe(false)
+    expect(restyleLocalFace(o, catalog, true, true)).toBe(true)
+    expect(o.bold).toBe(true)
+    expect(o.italic).toBe(true)
     expect(o.sourceFont?.sha256).toBe(sha('e'))
+    expect(o.sourceFont).not.toHaveProperty('bold')
+    expect(restyleLocalFace(o, catalog, false, false)).toBe(true)
+    expect(o.bold).toBe(false)
+    expect(o).not.toHaveProperty('italic')
   })
 
   it('清单不认识的脸（复制来的原图字体）走 ADR 0164 的失效规则', () => {
     const o = text({ sourceFont: { family: 'DejaVu Sans', sha256: sha('f'), face: 0 } })
-    expect(styleMissing(o, catalog, true, false)).toBe(false)
     expect(restyleLocalFace(o, catalog, true, false)).toBe(false)
   })
 })

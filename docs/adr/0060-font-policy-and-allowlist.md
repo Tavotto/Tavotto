@@ -171,4 +171,4 @@ Noto Sans SC（`cjk`；等宽配黑体是常规做法）。认不出的族走默
 
 批准集合 14 → 16 张：`NotoSansSC-Bold`、`NotoSerifSC-Bold`，与常规脸同一个 noto-cjk 固定提交，OFL 1.1，族名不变（`cjk` / `cjk-serif`）。码位与对应常规脸逐一相同，`canvas_coverage.json` 不变。安装包原始 +20.6 MB。
 
-粗体中文从此不是「只换英文脸」：`cjk_face(family, bold)` 按对象与行内片段取。批准集合仍没有斜体中文，斜体只换英文脸。用户本机字体不受影响，见 ADR 0169 修订。
+粗体中文从此不是「只换英文脸」：`cjk_face(family, bold)` 按对象与行内片段取。批准集合仍没有斜体中文，中文斜体由写入器错切模拟（ADR 0169 修订裁决 18）。用户本机字体不受影响，见 ADR 0169 修订。

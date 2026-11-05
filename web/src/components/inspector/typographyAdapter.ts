@@ -35,7 +35,6 @@ import {
   setBuiltinFamily,
   setLocalCjkFamily,
   setLocalFamily,
-  styleMissing,
   useFontCatalog,
   type FontCatalog,
 } from '@/lib/fontCatalog'
@@ -63,8 +62,6 @@ export interface TypographyAdapter {
   count: number
   /** A selected primary is not proven safe for the requested Chinese font. */
   fontFallbackShadowed?: boolean
-  /** 这个字体没有粗体 / 斜体（画布文字的本机字体，ADR 0169）：对应按钮置灰 */
-  styleUnavailable?: (prop: 'weight' | 'style') => boolean
   /** 字体与中文字体两项一起恢复到脚本（一条历史）；单项恢复走 `reset` */
   resetFonts?: () => void
   /** 目标涉及的对象类别（排序去重后）；property path 按它取 */
@@ -467,13 +464,6 @@ export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
     count,
     kinds: ['canvasText'],
     fontFallbackShadowed: objs.length > 0 && objs.every((o) => primaryHasCjk(o, catalog)),
-    styleUnavailable: (prop) => {
-      const missing = (o: TextObject) =>
-        prop === 'weight'
-          ? styleMissing(o, catalog, o.bold !== true, o.italic === true)
-          : styleMissing(o, catalog, o.bold === true, o.italic !== true)
-      return objs.length > 0 && objs.every(missing)
-    },
     resetFonts: () => {
       gesture.end()
       updateObjects(ids, hist('resetTextProp'), (o) => {
