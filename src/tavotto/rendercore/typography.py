@@ -73,7 +73,7 @@ class FaceSet:
     #: (片段斜体, 片段粗体) → 该片段的正文脸（已与对象自身的粗 / 斜合并）。行内样式
     #: （LaTeX 写法的 `\\textit{}` / `\\textbf{}`，ADR 0152）用它换脸；缺席（测试假脸）时退回正文脸。
     variant: Callable[[bool, bool], Face] | None = None
-    #: 同上，换 CJK 脸。只有选了本机中文字体才有（ADR 0169 修订）：批准集合没有粗体中文，缺席时 CJK 脸不变。
+    #: 同上，换 CJK 脸（ADR 0169 修订）；缺席（测试假脸）时 CJK 脸不变。
     cjk_variant: Callable[[bool, bool], Face | None] | None = None
 
     def styled(self, italic: bool, bold: bool) -> FaceSet:
@@ -105,7 +105,7 @@ class FaceProvider(Protocol):
 
     def face_for(self, family: str, bold: bool, italic: bool) -> Face: ...
 
-    def cjk_face(self, family: str) -> Face | None: ...
+    def cjk_face(self, family: str, bold: bool = False) -> Face | None: ...
 
 
 def faces_for(
@@ -122,7 +122,8 @@ def faces_for(
     `user_cjk(粗, 斜)` / `user_sibling(粗, 斜)`（ADR 0169 修订）按要的粗斜给用户脸，缺席或回 None = 没有这张。
 
     `family` 仍决定**回退族**：行内样式要的粗 / 斜不是这张脸、同族也没有这张（复制来的单个文件没有兄弟；
-    不按名字猜同族文件），就用 `family` 的批准脸画，不造假粗体。CJK 脸没有对应粗斜时留常规。"""
+    不按名字猜同族文件），就用 `family` 的批准脸画，不造假粗体。用户选的 CJK 字体没有粗体时留它的常规脸；
+    没选时用批准的 CJK 脸，粗体随对象。"""
     fam = latin_family(family)
     base = (bool(bold), bool(italic))
     primary = user_primary if user_primary is not None else provider.face_for(fam, *base)
@@ -139,10 +140,11 @@ def faces_for(
         )
         return hit if hit is not None else provider.face_for(fam, *style)
 
-    cjk = user_cjk(*base) if user_cjk is not None else None
-    if cjk is None:
-        return FaceSet(primary, provider.cjk_face(fam), variant)
-    return FaceSet(primary, cjk, variant, lambda i, b: user_cjk(*merged(i, b)))
+    def cjk_for(style_bold: bool, style_italic: bool) -> Face | None:
+        user = user_cjk(style_bold, style_italic) if user_cjk is not None else None
+        return user if user is not None else provider.cjk_face(fam, style_bold)
+
+    return FaceSet(primary, cjk_for(*base), variant, lambda i, b: cjk_for(*merged(i, b)))
 
 
 # ---------------------------------------------------------------------------

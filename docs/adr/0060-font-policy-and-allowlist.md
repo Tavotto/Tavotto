@@ -164,3 +164,11 @@ Noto Sans SC（`cjk`；等宽配黑体是常规做法）。认不出的族走默
 > 看护：`tests/test_glyph_plan.py::test_celsius_sign_in_serif_text_…`（导出页面上这几个字形用哪张脸 + 文本层）、
 > `test_rendercore_typography.py` 三条、`tests/golden/rich_text_vectors.json` 的 `interpret` 向量（pytest + vitest 各跑一遍）、表逐字对照
 > `test_the_letterlike_expansion_tables_are_identical_on_both_sides`。
+
+## 修订 2026-11-05：加两张粗体 CJK 脸
+
+维护者 2026-11-05：「加入 Noto Sans SC Bold 和 Noto Serif SC Bold」。
+
+批准集合 14 → 16 张：`NotoSansSC-Bold`、`NotoSerifSC-Bold`，与常规脸同一个 noto-cjk 固定提交，OFL 1.1，族名不变（`cjk` / `cjk-serif`）。码位与对应常规脸逐一相同，`canvas_coverage.json` 不变。安装包原始 +20.6 MB。
+
+粗体中文从此不是「只换英文脸」：`cjk_face(family, bold)` 按对象与行内片段取。批准集合仍没有斜体中文，斜体只换英文脸。用户本机字体不受影响，见 ADR 0169 修订。

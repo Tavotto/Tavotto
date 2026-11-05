@@ -41,7 +41,6 @@ ADR 0164 已经有本机字体通道（文档只记身份、导出按字节认�
 ## 不做 / 边界
 
 * 缩略图仍用批准族栈（0164 同一条）。
-* 没选本机中文字体时的中文粗体：批准集合没有粗体中文，加粗只换英文脸（见修订）。
 
 ## 验证
 
@@ -72,6 +71,8 @@ ADR 0164 已经有本机字体通道（文档只记身份、导出按字节认�
 | 14 | 用不上的脸 | 用到才入场：不读这个对象没用到的兄弟，缺了也不报。用到的缺失时记 `source_font_unavailable`，正文回批准脸，中文回常规 | `plan._user_faces` |
 | 15 | 预览 | 字体栈按片段算，判据和回退顺序同导出，只取要画的那张脸的字节。有 `sourceFont` 时 `font-synthesis: none`：导出不造假，预览也不合成；编辑态保留合成，否则看不出加粗 | `lib/sourceFontPreview.ts`、`canvas/TextView.tsx` |
 | 16 | 搜索框 | 新控件 `SearchSelect`：图内文字和标注的字体行共用，收起样子同 `Select`；搜中英文名，不分大小写、不看空格，↑↓ 回车。不往 Radix Select 里塞输入框：条目悬停抢焦点，字打不下去。收起时不渲染选项，本机字体几百项时属性页更快 | `components/ui/SearchSelect.tsx` |
+
+| 17 | 没选本机中文字体时的粗体 | 批准集合加 Noto Sans SC Bold、Noto Serif SC Bold（维护者 2026-11-05：「加入 Noto Sans SC Bold 和 Noto Serif SC Bold」），`cjk_face(family, bold)` 随对象与片段取。见 ADR 0060 修订。`font-synthesis: none` 只在选了本机中文字体时开：没选时导出有批准粗体，浏览器的系统字体栈可能没有 | `fonts.cjk_record`、`typography.faces_for`、`TextView.tsx` |
 
 设置里的样式档案字体下拉仍是 `Select`：它在模态对话框里，选项也不走这张字体行。
 

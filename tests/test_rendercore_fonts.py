@@ -34,7 +34,7 @@ ALLOWLIST = fonts.load_allowlist()
 
 def test_allowlist_is_the_fourteen_ofl_faces_with_sha256_identity():
     faces = ALLOWLIST.faces
-    assert len(faces) == 14
+    assert len(faces) == 16
     families = {(f.family, f.bold, f.italic) for f in faces.values()}
     for fam in ("serif", "sans-serif", "monospace"):
         for b in (False, True):
@@ -43,7 +43,7 @@ def test_allowlist_is_the_fourteen_ofl_faces_with_sha256_identity():
     assert ("cjk", False, False) in families and ("cjk-serif", False, False) in families
     assert {f.license for f in faces.values()} == {"OFL-1.1"}
     assert {f.format for f in faces.values()} == {"truetype", "cff-cid"}
-    assert len({f.sha256 for f in faces.values()}) == 14
+    assert len({f.sha256 for f in faces.values()}) == 16
     for f in faces.values():
         assert f.source["url"].startswith("https://") and f.source["sha256"]
         assert f.notice and f.license_file in ALLOWLIST.license_files
@@ -331,7 +331,7 @@ def test_fetch_fonts_check_passes_on_the_populated_dir(registry):
         env={**os.environ, "PYTHONUTF8": "1"},
     )
     assert proc.returncode == 0, proc.stderr
-    assert "14 张脸" in proc.stdout
+    assert "16 张脸" in proc.stdout
 
 
 def test_fetch_fonts_check_fails_when_a_face_is_tampered_or_missing(registry, tmp_path):

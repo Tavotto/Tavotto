@@ -26,18 +26,20 @@
    "LiberationSerif-BoldItalic": "f17db8af71e24d2066b587546021d4f0b296be389512b658dec3c09affeb11a7",
    "LiberationSerif-Italic": "0e3dea9f8d613e006ccfa62201f33e265d19167bd0907725c3e145368b04fc2e",
    "LiberationSerif-Regular": "058ea80864aef09a23f45cbec2bb5400bc3dfbdea01c3f10538a21fcb497fb74",
+   "NotoSansSC-Bold": "c6cb5a93abaa9edc8ee7463b7ebb7f42d618d40e6ed2f7a5371c97b0b64767c0",
    "NotoSansSC-Regular": "faa6c9df652116dde789d351359f3d7e5d2285a2b2a1f04a2d7244df706d5ea9",
+   "NotoSerifSC-Bold": "c44a5be9342f435b01ac7c20e8b144692334a3454be49d8fb3d26a641f9908ee",
    "NotoSerifSC-Regular": "c9f8dd8c035e22ea31607e5efbb2dabdf94836a92f5868267dd2b1a85eb0cd3b"
   },
-  "allowlist_sha256": "979a646e5072374862a4d8b828d3e82c665931479009d2105ebec704704386a3"
+  "allowlist_sha256": "55f616132935d4a3f30607ef7809ea6cfbfa7253376afa8acc695a03cea2c9e1"
  },
  "outputs": {
   "u06.pdf": {
-   "sha256": "868c419c73326031d6eb36957ea6890215e427cc3684770ec97f58a9b47ed093",
-   "bytes": 14137
+   "sha256": "7ae4c0bb1f0e885f611810cc8725e2948eb6b2cf39f10723d7d96884354d82e8",
+   "bytes": 14107
   },
   "u06_pdfium.png": {
-   "sha256": "acf4cd6b6e85690efe4b0dc826269d0abc5ceb570c8075f2c50e084a7683eb2b"
+   "sha256": "41159b14f365adaf68819dff9d3328473ed70250c50c7dd31146e5ce1fc0bc3e"
   },
   "canvas_coverage.rendercore.json": {
    "sha256": "e4f65df2a558fce664d5e9ada02b35a5abd3ce0d1d1712f8dc212f624f7b4d9a"
@@ -150,7 +152,7 @@
    "font:LiberationMono-Italic",
    "font:LiberationSans-Bold",
    "font:LiberationSerif-Regular",
-   "font:NotoSansSC-Regular"
+   "font:NotoSansSC-Bold"
   ]
  },
  "writer_facts": {
@@ -197,14 +199,14 @@
    },
    {
     "resource": "F2",
-    "face_id": "NotoSansSC-Regular",
-    "sha256": "faa6c9df652116dde789d351359f3d7e5d2285a2b2a1f04a2d7244df706d5ea9",
+    "face_id": "NotoSansSC-Bold",
+    "sha256": "c6cb5a93abaa9edc8ee7463b7ebb7f42d618d40e6ed2f7a5371c97b0b64767c0",
     "kind": "cff-cid",
-    "base_font": "UTVBAB+NotoSansSC-Regular",
+    "base_font": "UTVBAB+NotoSansSC-Bold",
     "glyphs_in_source": 31036,
     "glyphs_in_subset": 11,
     "used_glyphs": 10,
-    "font_program_bytes": 1891,
+    "font_program_bytes": 1885,
     "tounicode_entries": 10
    }
   ],
@@ -216,8 +218,8 @@
   "notdef_codes": 0,
   "imported_pages": [],
   "images": [],
-  "sha256": "868c419c73326031d6eb36957ea6890215e427cc3684770ec97f58a9b47ed093",
-  "bytes": 14137,
+  "sha256": "7ae4c0bb1f0e885f611810cc8725e2948eb6b2cf39f10723d7d96884354d82e8",
+  "bytes": 14107,
   "versions": {
    "uharfbuzz": "0.56.2",
    "fonttools": "4.66.0",
@@ -249,11 +251,11 @@
     "type0": true,
     "identity_h": true,
     "tag": "UTVBAB",
-    "base": "NotoSansSC-Regular",
+    "base": "NotoSansSC-Bold",
     "kind": "cff-cid",
     "fontfile3_subtype_ok": true,
     "w_entries": 10,
-    "program_bytes": 1891,
+    "program_bytes": 1885,
     "tounicode_entries": 10
    },
    "F3": {
@@ -305,7 +307,7 @@
   }
  },
  "reader_pdfminer": {
-  "text": "Tavotto U06: efficient flow, E = mc2, H2O\n\n10⁵ m-2 — Δλ = 532 nm, μ ≈ 1.5\n\n图一：温度 T (K) 随时间变化 °C\n\ncafé x̃y é\n\nrotated\n\n\f"
+  "skipped": "pdfminer.six 未装"
  },
  "reader_poppler": {
   "text": "Tavotto U06: efficient flow, E = mc2, H2O\n10⁵ m⁻² — Δλ = 532 nm, μ ≈ 1.5\n图一：温度 T (K) 随时间变化 ℃\ncafé x̃y é\n\nrota\n\nted\n\n\f",
@@ -623,26 +625,6 @@
     ],
     "why": "hidden 文字的框内没有墨"
    }
-  },
-  {
-   "check": "pdfminer.text.ascii",
-   "ok": true
-  },
-  {
-   "check": "pdfminer.text.sci",
-   "ok": true
-  },
-  {
-   "check": "pdfminer.text.cjk",
-   "ok": true
-  },
-  {
-   "check": "pdfminer.text.combining",
-   "ok": true
-  },
-  {
-   "check": "pdfminer.text.rot",
-   "ok": true
   },
   {
    "check": "poppler.no_syntax_error",

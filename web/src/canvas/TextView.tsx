@@ -175,8 +175,9 @@ export function TextView({
         lineHeight: obj.lineHeight ?? 1.25,
         fontWeight: obj.bold ? 700 : 400,
         fontStyle: obj.italic ? 'italic' : 'normal',
-        // 本机字体没有的粗斜，导出不造假（ADR 0169）：预览也不让浏览器合成。编辑时片段还没分好脸，留着合成才看得出加粗
-        fontSynthesis: source && !editing ? 'none' : undefined,
+        // 选的中文字体没有粗体时导出留常规（ADR 0169）：预览也不让浏览器合成。没选中文字体时导出有批准粗体，
+        // 浏览器的系统字体栈可能没有，照常合成才接近导出；编辑时片段还没分好脸，留着合成才看得出加粗
+        fontSynthesis: source?.cjk && !editing ? 'none' : undefined,
         textDecoration: obj.underline ? 'underline' : undefined,
         color: obj.color,
         textAlign: obj.align,
