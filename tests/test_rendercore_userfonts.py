@@ -301,14 +301,14 @@ def test_cjk_chars_still_use_the_approved_cjk_face_unless_the_source_names_one(
     assert text.strip() == "Ab 温度"
 
 
-def test_an_inline_bold_run_does_not_fake_a_bold_of_the_users_face(provider, locator, tmp_path):
-    """用户字体是单个文件；行内 \\textbf 要的变体不是原图那张脸，用 font_family 的批准粗体，不按名字猜兄弟文件。"""
+def test_an_inline_bold_run_simulates_bold_on_the_users_face(provider, locator, tmp_path):
+    """用户字体是单个文件；行内 \\textbf 没有兄弟脸时模拟（ADR 0169 修订），不按名字猜兄弟文件，也不换成批准字体。"""
     dejavu = _mpl_font("DejaVu Sans")
     locator.add_hint_dirs([dejavu.parent])
     obj = _text(_ref(dejavu, "DejaVu Sans"), text="plain \\textbf{bold}", text_format="latex")
     problems, found, _ = _embedded(provider, [obj], tmp_path)
     bases = sorted(b.split("+")[-1] for b, _ in found)
-    assert bases == ["DejaVuSans", "LiberationSerif-Bold"], bases
+    assert bases == ["DejaVuSans"], bases
 
 
 # ------------------------------------------------------------------ 解析与定位器

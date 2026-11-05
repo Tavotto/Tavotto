@@ -38,24 +38,47 @@ class UserFontUnavailable(Exception):
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 
+#: 一张脸最多带几张同族兄弟（RIBBI 一族四张，自己占一张）
+MAX_SIBLINGS = 3
+
+
+@dataclass(frozen=True)
+class SiblingFace:
+    """同族里另一张脸（ADR 0169 修订）：身份 + 它自己的粗斜。归属来自字体清单，不是按文件名猜的。"""
+
+    sha256: str
+    face: int = 0
+    bold: bool = False
+    italic: bool = False
+
+
 @dataclass(frozen=True)
 class FaceRef:
-    """一张脸的身份。`family` 只用于显示 / 提示，**不参与认脸**。"""
+    """一张脸的身份。`family` 只用于显示 / 提示，**不参与认脸**。`siblings` 是同族的其它粗斜，
+    缺席 = 这张脸是单个文件（复制自图内文字的老身份）。"""
 
     family: str
     sha256: str
     face: int = 0
+    siblings: tuple[SiblingFace, ...] = ()
 
     @property
     def identity(self) -> tuple[str, int]:
         return (self.sha256, self.face)
+
+    def sibling(self, bold: bool, italic: bool) -> FaceRef | None:
+        """同族里正好是这个粗斜的那张脸；没有就 None。"""
+        for s in self.siblings:
+            if (s.bold, s.italic) == (bold, italic):
+                return FaceRef(self.family, s.sha256, s.face)
+        return None
 
 
 @dataclass(frozen=True)
 class SourceFont:
     """`TextObject.sourceFont`（导出载荷里是 `source_font`）。`bold` / `italic` 是这张脸**自己的**
     粗斜（来自原图那张脸），不是对象的粗斜开关。`cjk` 是原图里中日韩字符实际由哪张脸画的（可缺席：
-    缺席就是批准的 CJK 脸（随族：衬线 Noto Serif SC、其余 Noto Sans SC）画汉字）。"""
+    缺席就是批准的 CJK 脸（随族：衬线 Noto Serif SC、其余 Noto Sans SC，粗体随对象）画汉字）。"""
 
     primary: FaceRef
     bold: bool = False
@@ -67,19 +90,48 @@ class SourceFont:
         return self.primary.family
 
 
+def _identity_ok(sha: object, face: object) -> bool:
+    if not isinstance(sha, str) or not HEX64.match(sha):
+        return False
+    return not isinstance(face, bool) and isinstance(face, int) and 0 <= face < 1024
+
+
+def _siblings(raw: object) -> tuple[SiblingFace, ...] | None:
+    """`siblings` → 元组；形状不对 → None。"""
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or len(raw) > MAX_SIBLINGS:
+        return None
+    out: list[SiblingFace] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            return None
+        sha, face = item.get("sha256"), item.get("face", 0)
+        bold, italic = item.get("bold", False), item.get("italic", False)
+        if (
+            not _identity_ok(sha, face)
+            or not isinstance(bold, bool)
+            or not isinstance(italic, bool)
+        ):
+            return None
+        out.append(SiblingFace(sha, face, bold is True, italic is True))
+    return tuple(out)
+
+
 def _face_ref(raw: object) -> FaceRef | None:
     if not isinstance(raw, dict):
         return None
     sha = raw.get("sha256")
     face = raw.get("face", 0)
     family = raw.get("family")
-    if not isinstance(sha, str) or not HEX64.match(sha):
-        return None
-    if isinstance(face, bool) or not isinstance(face, int) or not 0 <= face < 1024:
+    if not _identity_ok(sha, face):
         return None
     if not isinstance(family, str) or not family.strip() or len(family) > 200:
         return None
-    return FaceRef(family=family.strip(), sha256=sha, face=face)
+    siblings = _siblings(raw.get("siblings"))
+    if siblings is None:
+        return None
+    return FaceRef(family=family.strip(), sha256=sha, face=face, siblings=siblings)
 
 
 def parse_source_font(raw: object) -> tuple[SourceFont | None, str | None]:

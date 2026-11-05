@@ -303,3 +303,64 @@ def test_a_ttc_face_from_the_catalog_embeds_with_times_new_roman(provider, tmp_p
     assert any(p["code"] == "cjk_face" for p in problems)
     names = " ".join(n for n, _ in found)
     assert "TimesNewRoman" in names and "SimSun" in names
+
+
+def test_inline_bold_uses_times_bold_and_yahei_bold(provider, tmp_path, monkeypatch):
+    """行内 `\\textbf{}`：Times New Roman 粗体与微软雅黑粗体（`msyhbd.ttc`）都进 PDF（ADR 0169 修订）。"""
+    _cat, loc, _took, rows = _system_catalog()
+    if "Microsoft YaHei" not in rows:
+        pytest.skip("这台 Windows 没装微软雅黑")
+    monkeypatch.setattr(userfonts, "_LOCATOR", loc)
+
+    def by_style(row, bold):
+        return next(f for f in row["faces"] if f["bold"] is bold and not f["italic"])
+
+    def sibling(f):
+        return {"sha256": f["sha256"], "face": f["face"], "bold": True}
+
+    times, yahei = rows["Times New Roman"], rows["Microsoft YaHei"]
+    regular, zh = by_style(times, False), by_style(yahei, False)
+    obj = _text(
+        {
+            "family": "Times New Roman",
+            "sha256": regular["sha256"],
+            "face": regular["face"],
+            "siblings": [sibling(by_style(times, True))],
+            "cjk": {
+                "family": "Microsoft YaHei",
+                "sha256": zh["sha256"],
+                "face": zh["face"],
+                "siblings": [sibling(by_style(yahei, True))],
+            },
+        },
+        text="Plain \\textbf{Bold} 常规\\textbf{粗体}",
+    )
+    obj["text_format"] = "latex"
+    problems, found, _text_layer = _embedded(provider, [obj], tmp_path)
+    assert not {p["code"] for p in problems} & {"source_font_unavailable", "glyph_missing"}
+    names = " ".join(n for n, _ in found)
+    assert "TimesNewRomanPS-BoldMT" in names, names
+    assert "MicrosoftYaHei-Bold" in names or "MSYaHei-Bold" in names, names
+
+
+def test_simsun_without_a_bold_face_is_simulated_in_the_pdf(provider, tmp_path, monkeypatch):
+    """宋体只有常规体：对象加粗后 PDF 里仍是宋体这一张脸，加描边模拟（ADR 0169 修订）。"""
+    _cat, loc, _took, rows = _system_catalog()
+    if "SimSun" not in rows:
+        pytest.skip("这台 Windows 没装宋体")
+    monkeypatch.setattr(userfonts, "_LOCATOR", loc)
+    times = next(f for f in rows["Times New Roman"]["faces"] if not f["bold"] and not f["italic"])
+    simsun = rows["SimSun"]["faces"][0]
+    obj = _text(
+        {
+            "family": "Times New Roman",
+            "sha256": times["sha256"],
+            "face": times["face"],
+            "cjk": {"family": "SimSun", "sha256": simsun["sha256"], "face": simsun["face"]},
+        },
+        text="温度",
+    )
+    obj["bold"] = True
+    problems, found, _text_layer = _embedded(provider, [obj], tmp_path)
+    assert not {p["code"] for p in problems} & {"source_font_unavailable", "glyph_missing"}
+    assert "SimSun" in " ".join(n for n, _ in found)

@@ -343,8 +343,8 @@ class HbFaceProvider:
     def face_for(self, family: str, bold: bool, italic: bool) -> HbFace:
         return self._load(self.registry.record_for(family, bold, italic))
 
-    def cjk_face(self, family: str) -> HbFace | None:
-        rec = self.registry.cjk_record(family)
+    def cjk_face(self, family: str, bold: bool = False) -> HbFace | None:
+        rec = self.registry.cjk_record(family, bold)
         return self._load(rec) if rec is not None else None
 
     def user_face(self, ref) -> "HbFace":

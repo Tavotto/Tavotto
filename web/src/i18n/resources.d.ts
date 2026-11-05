@@ -5277,8 +5277,6 @@ export default interface Resources {
       "cjkFallbackShadowed": "请改选不含中文字符的英文字体。",
       "cjkPrefix": "中",
       "color": "文字颜色",
-      "fontHasNoBold": "这个字体没有粗体",
-      "fontHasNoItalic": "这个字体没有斜体",
       "italic": "斜体",
       "italicStyle": "字形 · {{value}}",
       "latinFont": "英文字体",
@@ -5313,6 +5311,8 @@ export default interface Resources {
       "fontFromGeneric": "来自脚本里的「{{generic}}」字体设置",
       "fontMissingHint": "这台电脑没装这个字体，图上用的是别的字体。",
       "fontMissingTag": "（未安装）",
+      "fontNoMatch": "没有匹配的字体",
+      "fontSearch": "搜索字体",
       "size": "字号"
     },
     "tick": {

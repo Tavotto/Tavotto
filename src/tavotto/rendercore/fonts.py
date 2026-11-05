@@ -13,8 +13,9 @@
 3. **集合外明示限制。** 找不到某族 / 某样式 → `FontsUnavailable`（结构化 code），
    **不**去摸系统字体、**不**用另一张脸冒充；没有 CJK 脸时 `cjk_face()` 回 None，
    分层把汉字判成 `missing` 进问题系统（RC-037）。
-4. **CJK 脸随族**（2026-11-04 修订）：批准集合有两张 CJK 脸——Noto Serif SC（`cjk-serif`，配 serif）与
-   Noto Sans SC（`cjk`，配 sans-serif / monospace）。`cjk_face(family)` 按画布文字族取，不再「换族不换 CJK」。
+4. **CJK 脸随族**（2026-11-04 修订）：批准集合有 Noto Serif SC（`cjk-serif`，配 serif）与
+   Noto Sans SC（`cjk`，配 sans-serif / monospace）的常规、粗体各一张（粗体 2026-11-05 加）。
+   `cjk_face(family, bold)` 按画布文字族取，不再「换族不换 CJK」。
 
 ## 用户本机字体（ADR 0164）
 
@@ -469,12 +470,12 @@ class FontRegistry:
             f"（目录 {self.root}；缺 {self.missing}）",
         )
 
-    def cjk_record(self, family: str) -> FaceRecord | None:
-        """该画布文字族配的 CJK 脸（ADR 0060 2026-11-04 修订：CJK 脸随族）。批准集合里没有就回 None——
+    def cjk_record(self, family: str, bold: bool = False) -> FaceRecord | None:
+        """该画布文字族配的 CJK 脸（ADR 0060 2026-11-04 修订：CJK 脸随族，粗体随对象）。批准集合里没有就回 None——
         **不**拿另一族的 CJK 脸顶（衬线标注的中文落到黑体，就是被修掉的那个画布 ≠ 导出）。"""
         want = cjk_family_of(family)
         for rec in self.faces.values():
-            if rec.approved.family == want:
+            if rec.approved.family == want and rec.approved.bold == bool(bold):
                 return rec
         return None
 

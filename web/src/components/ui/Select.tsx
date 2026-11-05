@@ -13,6 +13,8 @@ export interface SelectOption<T extends string = string> {
   icon?: ReactNode
   /** 分组标题；相邻且同名的选项归一组，组标题不可选。全部不带 group = 平铺 */
   group?: string
+  /** 搜索时比对的文字（`SearchSelect` 用）；`label` 不是纯文字时必须给 */
+  searchText?: string
 }
 
 interface SelectProps<T extends string> {
@@ -30,6 +32,29 @@ interface SelectProps<T extends string> {
   /** 触发器里值前面的灰色小标记（与数字框的单位后缀同一套：ink-3、同字号）；装饰性，读屏跳过 */
   prefix?: ReactNode
 }
+
+/** 收起时的触发器外观：`Select` 与 `SearchSelect` 同一副 */
+export const SELECT_TRIGGER = cn(
+  // `group`：箭头方向要跟着 Trigger 的 data-state 走，而 data-state 挂在
+  // Trigger 自己身上，子元素上的 data-[state=open]: 是读不到的。
+  'group flex h-7 w-full items-center justify-between gap-1 px-2 outline-none',
+  // 框与输入框同一副（fieldBox，S8 甲）；打开时与聚焦同色
+  FIELD_BOX,
+  FIELD_OPEN,
+  // **弹层关着的时候键盘用户也得看得见焦点在哪。** `outline-none` 只是
+  // 关掉浏览器默认那圈，不补一个替代品就是把焦点指示整个删掉——本仓库
+  // 别的可聚焦控件（Button / Toggle / Segmented / Field）一律配这条。
+  // 原生 `<select>` 自带默认焦点环，迁到这里时缺了它就是一条 a11y 回归。
+  'focus-visible:focus-ring',
+  // 不用 pointer-events-none：禁用时 title 里的原因还要能悬停读到（宪法第五节）
+  'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-field',
+)
+
+/** 收起时的箭头：见 `Select` 里的说明 */
+export const SELECT_CHEVRON = 'shrink-0 text-ink-3 transition-transform duration-fast group-data-[state=open]:rotate-180'
+
+/** 下拉列表的一行（不含高亮 / 选中态的写法，两种下拉各自给） */
+export const SELECT_ROW = 'relative flex h-7 cursor-default select-none items-center gap-2 rounded-md pl-6 pr-2 text-sm text-ink outline-none'
 
 /** 相邻且同名 `group` 的选项并成一组（保持原顺序）；没有 group 的各自并成无标题的一组。 */
 function groupOptions<T extends string>(options: SelectOption<T>[]) {
@@ -60,22 +85,7 @@ export function Select<T extends string>({
         data-select-trigger
         aria-label={ariaLabel}
         title={title}
-        className={cn(
-          // `group`：箭头方向要跟着 Trigger 的 data-state 走，而 data-state 挂在
-          // Trigger 自己身上，子元素上的 data-[state=open]: 是读不到的。
-          'group flex h-7 w-full items-center justify-between gap-1 px-2 outline-none',
-          // 框与输入框同一副（fieldBox，S8 甲）；打开时与聚焦同色
-          FIELD_BOX,
-          FIELD_OPEN,
-          // **弹层关着的时候键盘用户也得看得见焦点在哪。** `outline-none` 只是
-          // 关掉浏览器默认那圈，不补一个替代品就是把焦点指示整个删掉——本仓库
-          // 别的可聚焦控件（Button / Toggle / Segmented / Field）一律配这条。
-          // 原生 `<select>` 自带默认焦点环，迁到这里时缺了它就是一条 a11y 回归。
-          'focus-visible:focus-ring',
-          // 不用 pointer-events-none：禁用时 title 里的原因还要能悬停读到（宪法第五节）
-          'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-field',
-          className,
-        )}
+        className={cn(SELECT_TRIGGER, className)}
       >
         {/* 值可能是用户起的名字（接口标签后端允许 60 字）：**必须能被截断**，
             否则一个长名字会把它撑出所在的那一行。`min-w-0` 是让 flex 子项真的
@@ -96,10 +106,7 @@ export function Select<T extends string>({
             index.css 全局兜底压到 0.01ms，方向照常正确，只是不播过程。 */}
         <ChevronDown
           size={ICON_SIZE.xs}
-          className={cn(
-            'shrink-0 text-ink-3 transition-transform duration-fast',
-            'group-data-[state=open]:rotate-180',
-          )}
+          className={SELECT_CHEVRON}
         />
       </RS.Trigger>
       <RS.Portal>
@@ -121,8 +128,7 @@ export function Select<T extends string>({
                   data-select-option={opt.value}
                   value={opt.value}
                   className={cn(
-                    'relative flex h-7 cursor-default select-none items-center gap-2 rounded-md',
-                    'pl-6 pr-2 text-sm text-ink outline-none',
+                    SELECT_ROW,
                     'data-[highlighted]:bg-surface-hover data-[state=checked]:font-medium data-[state=checked]:text-ink',
                   )}
                 >

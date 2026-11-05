@@ -190,7 +190,7 @@ def freeze_checks(result: dict, returncode: int, png_is_file: bool) -> list[tupl
             any("pdfium" in lib for lib in result.get("native_libraries", [])),
         ),
         (
-            # 张数取白名单本身（2026-11-04 加 Noto Serif SC 后 14 张），不写死
+            # 张数取白名单本身（2026-11-04 2026-11-05 加 Noto 粗体后 16 张），不写死
             "fonts_bundled_all",
             result.get("fonts_found") == _allowlist_faces() and not result.get("fonts_missing"),
         ),

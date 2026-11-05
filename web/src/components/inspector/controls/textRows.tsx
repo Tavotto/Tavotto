@@ -12,7 +12,7 @@ import { Row, type RowLabelWidth } from '../../ui/Field'
 import { Menu, MenuItem } from '../../ui/Menu'
 import { ColorField, NumberField } from '../../ui/Input'
 import { Segmented } from '../../ui/Segmented'
-import { Select } from '../../ui/Select'
+import { SearchSelect } from '../../ui/SearchSelect'
 import { Tip } from '../../ui/Tooltip'
 import { fontFamilySelectModel } from './fontFamilySelect'
 import { INSPECTOR_CONTROL_X } from '../layout'
@@ -339,7 +339,9 @@ function FontFamilyRowView({
     extra: (o) => missing.has(o) && <FontMissingTag />,
   })
   const englishSelect = (
-    <Select
+    <SearchSelect
+      searchLabel={tc('fontSearch')}
+      emptyLabel={tc('fontNoMatch')}
       // 一行两格时收紧左右内边距与箭头间距（只动这一行的两格），12px 的「Times New Roman」要放得下
       className={cn('min-w-0 flex-1', fallback && 'gap-0.5 px-1')}
       ariaLabel={fallback ? tb('latinFont') : label}
@@ -370,7 +372,9 @@ function FontFamilyRowView({
   const cjkCell = fallback && (
     <span className="contents" data-prop={fallback.anchor ?? undefined}>
       <div data-font-fallback-cell className="w-[66px] shrink-0">
-        <Select
+        <SearchSelect
+          searchLabel={tc('fontSearch')}
+          emptyLabel={tc('fontNoMatch')}
           className="min-w-0 gap-0.5 px-1"
           ariaLabel={tb('cjkFallback')}
           prefix={tb('cjkPrefix')}
@@ -383,7 +387,11 @@ function FontFamilyRowView({
           onChange={(v) => fallback.onChange(v === '__auto__' ? null : v)}
           options={[
             { value: '__auto__', label: tb('cjkFallbackAuto') },
-            ...cjkOptions.map((o) => ({ value: o, label: fallback.optionLabelOf(o) })),
+            ...cjkOptions.map((o) => ({
+              value: o,
+              label: fallback.optionLabelOf(o),
+              searchText: [o, fallback.optionLabels?.[o], fallback.optionLabelOf(o)].filter(Boolean).join(' '),
+            })),
           ]}
         />
       </div>

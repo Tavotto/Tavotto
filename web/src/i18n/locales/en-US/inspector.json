@@ -1074,8 +1074,6 @@
     "cjkFallbackAuto": "Automatic",
     "cjkFallbackShadowed": "Choose an English font without Chinese characters.",
     "latinFont": "English font",
-    "fontHasNoBold": "This font has no bold",
-    "fontHasNoItalic": "This font has no italic",
     "cjkPrefix": "CJK",
     "alignCenter": "Center",
     "alignLeft": "Align left",
@@ -1116,6 +1114,8 @@
     "color": "Colour",
     "font": "Font",
     "fontFromGeneric": "From the script’s “{{generic}}” font setting",
+    "fontNoMatch": "No matching fonts",
+    "fontSearch": "Search fonts",
     "fontMissingHint": "That font isn’t installed, so the figure uses another one.",
     "fontMissingTag": " (not installed)",
     "size": "Size"

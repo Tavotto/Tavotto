@@ -19,8 +19,8 @@ import { TooltipProvider } from '../../ui/Tooltip'
 
 const calls: { onChange: (v: string) => void; labels: string[] }[] = []
 
-vi.mock('../../ui/Select', () => ({
-  Select: (p: { onChange: (v: string) => void; options: { label: unknown }[] }) => {
+vi.mock('../../ui/SearchSelect', () => ({
+  SearchSelect: (p: { onChange: (v: string) => void; options: { label: unknown }[] }) => {
     calls.push({
       onChange: p.onChange,
       labels: p.options.map((o) =>

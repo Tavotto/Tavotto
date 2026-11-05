@@ -84,8 +84,6 @@ export function TextQuickControls({
             <StyleToggle
               state={boldState}
               label={translate('textBar.bold', { ns: 'inspector' })}
-              disabled={a.styleUnavailable?.('weight')}
-              hint={a.styleUnavailable?.('weight') ? translate('textBar.fontHasNoBold', { ns: 'inspector' }) : undefined}
               onClick={() => a.writeOnce('weight', nextToggle(a.valueOf('weight'), 'bold', 'normal'))}
             >
               <Bold size={ICON_SIZE.sm} />
@@ -95,8 +93,6 @@ export function TextQuickControls({
             <StyleToggle
               state={italicState}
               label={translate('textBar.italic', { ns: 'inspector' })}
-              disabled={a.styleUnavailable?.('style')}
-              hint={a.styleUnavailable?.('style') ? translate('textBar.fontHasNoItalic', { ns: 'inspector' }) : undefined}
               onClick={() => a.writeOnce('style', nextToggle(a.valueOf('style'), 'italic', 'normal'))}
             >
               <Italic size={ICON_SIZE.sm} />

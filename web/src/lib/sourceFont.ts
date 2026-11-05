@@ -11,7 +11,7 @@
  *   `tests/golden/source_font_vectors.json`）
  */
 import type { ManifestElement, ManifestFaceSource } from './api'
-import type { SourceFace, SourceFont, TextObject } from '@/types/document'
+import type { SiblingFace, SourceFace, SourceFont, TextObject } from '@/types/document'
 
 /** 一张用户脸此刻不能用的原因（闭集）；`ok` 之外的 `state` 都是它们之一，另加前端自己的 `unsupported`/`unknown`。 */
 export const SOURCE_FONT_REASONS = [
@@ -32,19 +32,37 @@ export type SourceFontState = 'ok' | SourceFontReason | 'unsupported' | 'unknown
 
 const HEX64 = /^[0-9a-f]{64}$/
 
+/** 一张脸最多带几张同族兄弟（与 `sourcefont.MAX_SIBLINGS` 同值：RIBBI 一族四张，自己占一张） */
+const MAX_SIBLINGS = 3
+
+const isIdentity = (o: Record<string, unknown>): boolean =>
+  typeof o.sha256 === 'string' &&
+  HEX64.test(o.sha256) &&
+  typeof o.face === 'number' &&
+  Number.isInteger(o.face) &&
+  o.face >= 0 &&
+  o.face < 1024
+
+const isSibling = (v: unknown): v is SiblingFace => {
+  if (!v || typeof v !== 'object') return false
+  const o = v as Record<string, unknown>
+  return (
+    isIdentity(o) &&
+    (o.bold === undefined || typeof o.bold === 'boolean') &&
+    (o.italic === undefined || typeof o.italic === 'boolean')
+  )
+}
+
 const isFace = (v: unknown): v is SourceFace => {
   if (!v || typeof v !== 'object') return false
   const o = v as Record<string, unknown>
   return (
-    typeof o.sha256 === 'string' &&
-    HEX64.test(o.sha256) &&
-    typeof o.face === 'number' &&
-    Number.isInteger(o.face) &&
-    o.face >= 0 &&
-    o.face < 1024 &&
+    isIdentity(o) &&
     typeof o.family === 'string' &&
     o.family.trim() !== '' &&
-    o.family.length <= 200
+    o.family.length <= 200 &&
+    (o.siblings === undefined ||
+      (Array.isArray(o.siblings) && o.siblings.length <= MAX_SIBLINGS && o.siblings.every(isSibling)))
   )
 }
 

@@ -217,7 +217,7 @@ def test_fonts_are_embedded_subsets_of_both_program_kinds_with_tounicode(written
         "LiberationSerif",
         "LiberationSans-Bold",
         "LiberationMono-Italic",
-        "NotoSansSC-Regular",
+        "NotoSansSC-Bold",
     } <= bases
     for name, f in fnt.items():
         assert f["type0"] and f["identity_h"], name

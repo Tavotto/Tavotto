@@ -162,8 +162,9 @@ export function figureTextToAnnotation(panel: PanelObject, el: ManifestElement):
     sizePt,
     fontFamily: family,
     ...(sourceFont ? { sourceFont } : {}),
-    bold: weightIsBold(tb.weight),
-    ...(styleIsItalic(tb.style) ? { italic: true } : {}),
+    // 有原图字体身份时粗斜以那张脸为准：字体没有粗体、图里画的是常规脸，复制过来不能再模拟一遍
+    bold: sourceFont ? sourceFont.bold === true : weightIsBold(tb.weight),
+    ...((sourceFont ? sourceFont.italic === true : styleIsItalic(tb.style)) ? { italic: true } : {}),
     color: tb.color,
     align,
     ...(lines > 1 && lineHeight !== DEFAULT_LINE_HEIGHT ? { lineHeight } : {}),

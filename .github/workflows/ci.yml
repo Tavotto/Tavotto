@@ -1566,7 +1566,7 @@ jobs:
           python -m pip install --upgrade pip build
           python -m build
       # 退役扫描（U10，ADR 0072）：wheel 的 METADATA 运行时 Requires-Dist 零 pymupdf、里面没有原生库、
-      # 批准字体 14 张 + 覆盖表都在——主语是**这个 wheel**（产物），不是 checkout。
+      # 批准字体 16 张 + 覆盖表都在——主语是**这个 wheel**（产物），不是 checkout。
       - name: 退役扫描（wheel）
         shell: bash
         run: python scripts/ci/retirement_scan.py --skip source,deps,block --wheel dist/*.whl
@@ -1878,7 +1878,7 @@ jobs:
           print("内置 runtime 与 runtime/ 逐字节一致")
           PY
 
-      # 退役扫描（U10，ADR 0072）：冻结产物里的原生库名单零 mupdf、PDFium / qpdf 在、字体 14 张——主语是 dist/。
+      # 退役扫描（U10，ADR 0072）：冻结产物里的原生库名单零 mupdf、PDFium / qpdf 在、字体 16 张——主语是 dist/。
       - name: 退役扫描（冻结产物）
         shell: bash
         run: python scripts/ci/retirement_scan.py --skip source,deps,block --dist dist/Tavotto
@@ -2325,7 +2325,7 @@ jobs:
           print("内置 runtime 与 runtime/ 逐字节一致")
           PY
 
-      # 退役扫描（U10，ADR 0072）：冻结产物里的原生库名单零 mupdf、PDFium / qpdf 在、字体 14 张——主语是 dist/。
+      # 退役扫描（U10，ADR 0072）：冻结产物里的原生库名单零 mupdf、PDFium / qpdf 在、字体 16 张——主语是 dist/。
       - name: 退役扫描（冻结产物）
         shell: bash
         run: python scripts/ci/retirement_scan.py --skip source,deps,block --dist dist/Tavotto

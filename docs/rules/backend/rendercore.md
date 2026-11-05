@@ -58,7 +58,7 @@ order: 330
   （`docs/rules/repo/same-origin-pairs.md`），由共享向量 `tests/golden/shape_geometry_vectors.json` 接住
   （退役前从旧 facade 记下；`tests/test_rendercore_geometry.py` 与 `web/src/lib/shapeGeometry.golden.test.ts`
   各跑一遍），两边都改的时候一起改、重录那份向量。
-- **字体只认 allowlist 里的字节**（ADR 0060）：`rendercore/fonts_allowlist.json` 是唯一真值（14 张 OFL 脸：
+- **字体只认 allowlist 里的字节**（ADR 0060）：`rendercore/fonts_allowlist.json` 是唯一真值（16 张 OFL 脸：
   Liberation 2.1.5 × 12 + Noto Sans SC / Noto Serif SC 子集各一张；**CJK 脸随族**：serif → Noto Serif SC，sans-serif / monospace → Noto Sans SC，`fonts.cjk_family_of` / `FaceProvider.cjk_face(family)`，ADR 0060 2026-11-04 修订；覆盖表 `cjk` 层取两张脸的交集），身份 = sha256 + face 序号，不是族名；注册表扫目录逐个算 hash，
   不在表里的进 `rejected`、绝不当字体用；找不到脸抛 `FontsUnavailable(code)`，**不摸系统字体、不用别的脸冒充**。
   字体文件不进 git：`scripts/fetch_fonts.py` 按 sha256 取到 `src/tavotto/resources/fonts/`（`.gitignore` 挡、wheel
@@ -66,7 +66,7 @@ order: 330
   加一张脸 = 改 allowlist + ADR 0060 §1 的限制表，`tests/test_rendercore_fonts.py` / `test_font_provenance.py`
   第四档看住。集合外的限制（没有 fallback 层、Hangul 不在、`⁻` 靠合成）写在 ADR 0060 §1，是能力边界不是缺陷。
 - **用户本机字体是批准集合旁边的一条受限通道**（ADR 0164，修订 0060）：对象带可选 `source_font`（名字 + 文件 sha256 + 面序号 + 粗斜；
-  `sourcefont.py` 纯模型解析）时，`plan._user_faces` 经 `HbFaceProvider.user_face` → `userfonts.admit` 请本机那张脸来排版、子集嵌入。
+  `sourcefont.py` 纯模型解析；可带同族 `siblings`，用到才入场；同族没有的粗斜由写入器模拟，`GlyphRun.synth_bold` / `synth_italic`，ADR 0169 修订）时，`plan._user_faces` 经 `HbFaceProvider.user_face` → `userfonts.admit` 请本机那张脸来排版、子集嵌入。
   **只按 sha256 认**（`FontLocator`：索引在 `data_dir()/font-locator.json`，线索目录 = 解释器路径推出的 matplotlib 字体目录 + 系统字体目录），
   每次使用前重算 sha256；OS/2 `fsType` 位 1 / 8 / 9 → `embedding_restricted`（不嵌入），变量 / 彩色 / 位图 / 非 CID 的 CFF / cmap 读不出 →
   `unsupported_format`，> 192 MiB → `too_large`。任何一环不过：这一个对象回退成 `font_family` 的批准脸、`problems` 记

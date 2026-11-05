@@ -154,6 +154,135 @@
       "name": "array",
       "value": [],
       "valid": false
+    },
+    {
+      "name": "with-siblings",
+      "value": {
+        "family": "A",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 0,
+        "siblings": [
+          {
+            "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+            "face": 1,
+            "bold": true
+          },
+          {
+            "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+            "face": 2,
+            "italic": true
+          },
+          {
+            "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+            "face": 3,
+            "bold": true,
+            "italic": true
+          }
+        ],
+        "cjk": {
+          "family": "B",
+          "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+          "face": 1,
+          "siblings": [
+            {
+              "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+              "face": 0,
+              "bold": true
+            }
+          ]
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "siblings-not-a-list",
+      "value": {
+        "family": "A",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 0,
+        "siblings": {
+          "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "sibling-bad-sha",
+      "value": {
+        "family": "A",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 0,
+        "siblings": [
+          {
+            "sha256": "nope",
+            "face": 0
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "sibling-bad-bold",
+      "value": {
+        "family": "A",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 0,
+        "siblings": [
+          {
+            "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+            "face": 0,
+            "bold": "yes"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "too-many-siblings",
+      "value": {
+        "family": "A",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 0,
+        "siblings": [
+          {
+            "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+            "face": 0
+          },
+          {
+            "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+            "face": 1
+          },
+          {
+            "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+            "face": 2
+          },
+          {
+            "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+            "face": 3
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "cjk-sibling-bad-face",
+      "value": {
+        "family": "A",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 0,
+        "cjk": {
+          "family": "B",
+          "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+          "face": 0,
+          "siblings": [
+            {
+              "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+              "face": -1
+            }
+          ]
+        }
+      },
+      "valid": false
     }
   ]
 }
