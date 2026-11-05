@@ -3617,6 +3617,35 @@ def claimed_ids(capture) -> set[int]:
     return {id(f) for f in (capture or {}).values()}
 
 
+class DropBook:
+    """没能留强引用的图的账（按**身份**去重）：`ShownFigures` 与 `BufferSaves` 共用一本。
+
+    同一张图可以两本账都超出上限（每张既存缓冲区又 `plt.show()`、再 close）；各数各的会把它丢两次。
+    `add` 按身份只收一次；图被回收后身份没了，但已收的计数还在——所以「丢了几张」= 收过几张
+    减去**现在仍活着、且已另有着落**的（跑完仍开着 / 被 savefig 认领 / 在缓冲区账里补回来的，
+    这些归 `collect_pyplot_figures` 的上限或 `capture` 去数）。
+    """
+
+    def __init__(self):
+        self._members: weakref.WeakSet = weakref.WeakSet()
+        self.count = 0
+
+    def add(self, fig) -> None:
+        if fig not in self._members:
+            self._members.add(fig)
+            self.count += 1
+
+    def discard(self, fig) -> None:
+        """这张图有了着落（被 savefig 认领）：不再算「没留住」。"""
+        if fig in self._members:
+            self._members.discard(fig)
+            self.count -= 1
+
+    def unaccounted(self, accounted_ids) -> int:
+        alive_accounted = sum(1 for f in list(self._members) if id(f) in accounted_ids)
+        return max(0, self.count - alive_accounted)
+
+
 class ShownFigures:
     """`plt.show()` 那一刻还开着的 pyplot Figure 的账（有界）。
 
@@ -3630,16 +3659,12 @@ class ShownFigures:
     判据 `claimed_ids`），之后才认领的会在下一次 show 时腾出名额。不改 Gcf 的活动图（不碰 `plt.figure(num)`），脚本之后的 `plt.gcf()` 不变。
     """
 
-    def __init__(self, limit: int = MAX_PYPLOT_FALLBACK):
-        import weakref
-
+    def __init__(self, limit: int = MAX_PYPLOT_FALLBACK, book: "DropBook | None" = None):
         self.limit = max(0, int(limit))
         self.kept: list = []
-        #: 超出上限、没留引用的张数（含此刻仍开着的）；跑完时仍开着的那些由 `collect_pyplot_figures` 自己数，
-        #: 用 `overflow_closed` 从这里扣掉，免得同一张图丢两次。
-        self.overflow = 0
+        #: 没留强引用的图（超出上限）记在这本账里；与 `BufferSaves` 共用同一本，一张图两边都超出也只数一次
+        self.book = book if book is not None else DropBook()
         self._seen = weakref.WeakSet()
-        self._overflowed = weakref.WeakSet()
 
     def note(self, plt, capture: dict | None = None) -> None:
         """记下此刻 Gcf 里所有开着的 Figure（show 调用时）。`capture` 是 savefig 已认领的图（见 `claimed_ids`）。"""
@@ -3656,16 +3681,7 @@ class ShownFigures:
             if len(self.kept) < self.limit:
                 self.kept.append(fig)
             else:
-                self.overflow += 1
-                self._overflowed.add(fig)
-
-    def overflow_closed(self, plt, capture: dict | None = None) -> int:
-        """超出上限、且跑完时已经关掉、也没被 savefig 认领的张数
-        （仍开着的归 `collect_pyplot_figures` 数，认领了的已经在 `capture` 里）。"""
-        claimed = claimed_ids(capture)
-        open_ids = {id(m.canvas.figure) for m in plt._pylab_helpers.Gcf.get_all_fig_managers()}
-        accounted = sum(1 for f in list(self._overflowed) if id(f) in open_ids or id(f) in claimed)
-        return max(0, self.overflow - accounted)
+                self.book.add(fig)
 
 
 class BufferSaves:
@@ -3686,8 +3702,10 @@ class BufferSaves:
     * 参数账不拖住内存：`bbox_extra_artists` 只存弱引用（artist 反过来引用图，存强引用图就永远回收不掉）。
     """
 
-    def __init__(self, limit: int = MAX_PYPLOT_FALLBACK):
+    def __init__(self, limit: int = MAX_PYPLOT_FALLBACK, book: "DropBook | None" = None):
         self.limit = max(0, int(limit))
+        #: 没钉住强引用的图记在这本账里（与 `ShownFigures` 共用时一张图只数一次）
+        self.book = book if book is not None else DropBook()
         #: 记下、未被认领、仍活着的图 → 全局存盘序号（唯一的顺序；弱引用，不拖住内存）
         self._order: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
         #: 序号 → 图：**永远**钉住最早的至多 `limit` 张（强引用，脚本关掉它们也补得回来）
@@ -3720,12 +3738,15 @@ class BufferSaves:
         self._noted += 1
         if len(self._pinned) < self.limit:
             self._pinned[self._seq] = fig
+        else:
+            self.book.add(fig)
 
     def claim(self, fig) -> None:
         """这张图被路径 savefig 认领了（有了 stem）：移出名单；它若钉着名额，把名额交给**最早的**
         下一张仍活着、还没钉住的图——钉住的永远是全局顺序里最早的那几张。"""
         self._claimed.add(fig)
         self._calls.pop(fig, None)
+        self.book.discard(fig)
         seq = self._order.pop(fig, None)
         if seq is None:
             return
@@ -3747,8 +3768,8 @@ class BufferSaves:
         return [f for f, _ in sorted(self._order.items(), key=lambda kv: kv[1])]
 
     def lost(self) -> int:
-        """记下、没被认领、已被回收的张数（在 `figures()` 之后问才准）。"""
-        return max(0, self._noted - len(self._order))
+        """没钉住、已被回收的张数（在 `figures()` 之后问才准）；仍活着的在 `figures()` 里，不算。"""
+        return self.book.unaccounted({id(f) for f in self._order})
 
     def calls_of(self, fig) -> tuple[list[dict] | None, list] | None:
         """这张图的缓冲区调用表与逐项对齐的 `bbox_extra_artists` 对象；没存过缓冲区 = None，
@@ -3814,12 +3835,12 @@ def collect_pyplot_figures(
         seen.add(id(fig))
         pending.append(fig)
     dropped = max(0, len(pending) - max(0, int(limit)))
-    if dropped:
-        pending = pending[: max(0, int(limit))]
-    if shown is not None and plt is not None:
-        dropped += shown.overflow_closed(plt, capture)
-    if buffers is not None:
-        dropped += buffers.lost()
+    # 没留强引用的图（show 账、缓冲区账共用一本 `DropBook`）：现在仍有着落的（待补的、已认领的）不算，
+    # 其余按身份只数一次
+    books = {id(b.book): b.book for b in (shown, buffers) if b is not None}
+    accounted = claimed_ids(capture) | {id(f) for f in pending}
+    dropped += sum(b.unaccounted(accounted) for b in books.values())
+    pending = pending[: max(0, int(limit))]
     stems = fallback_stems(capture.keys(), script_stem, len(pending))
     for stem, fig in zip(stems, pending):
         capture[stem] = fig

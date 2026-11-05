@@ -175,6 +175,41 @@ plt.close(fig)
 
 #: 参与逐字段对照的形状不含 claimed / reverse：它们 9 张图，浏览器另有 `MAX_FIGURES = 8` 的总数上限，与桌面（只限兜底那部分）
 #: 的差别是既有的、与缓冲区无关的口径，不在这一单里。
+#: 失败的缓冲区保存（往已关闭的 BytesIO 存 tight）被脚本 try/except 吞掉，之后用别的参数存新缓冲区成功
+FAILED_THEN_OK = """\
+import io
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(2, 1))
+ax.set_xlabel("a rather long x label that spills past the axes")
+dead = io.BytesIO()
+dead.close()
+try:
+    fig.savefig(dead, format="png", bbox_inches="tight")
+except ValueError:
+    pass
+fig.savefig(io.BytesIO(), format="png", dpi=50)
+plt.close(fig)
+ghost = plt.figure(figsize=(2, 1))  # 只在失败的保存里出现过的图，从没成功存过
+try:
+    ghost.savefig(dead, format="png")
+except ValueError:
+    pass
+plt.close(ghost)
+"""
+
+#: 9 张：每张存缓冲区、show、close（show 账与缓冲区账都超出上限）
+SHOW_AND_BUFFER = """\
+import io
+import matplotlib.pyplot as plt
+
+for i in range(9):
+    fig, ax = plt.subplots(figsize=(1, 1))
+    fig.savefig(io.BytesIO(), format="png", dpi=20)
+    plt.show()
+    plt.close(fig)
+"""
+
 SHAPES = {
     "buffer_only": BUFFER_ONLY_THEN_CLOSE,
     "alive": BUFFER_ONLY_ALIVE,
@@ -281,6 +316,49 @@ class TestMultiFigureShape:
             "reverse",
         ]
         assert not resp.get("dropped_figures")
+
+
+@needs_worker
+class TestFailedBufferSaveIsNotRecorded:
+    def test_desktop_uses_the_successful_saves_arguments_and_forgets_the_ghost(self, tmp_path):
+        figs = tmp_path / "figs"
+        write(figs, "failed.py", FAILED_THEN_OK)
+        resp = desktop_build(figs, "failed.py")
+        (d,) = resp["descriptors"]  # 只有成功存过的那一张
+        assert [c["bbox_inches"] for c in d["savefig_calls"]] == [None]
+        assert d["size_mm"] == FIGSIZE_MM
+        assert not resp.get("dropped_figures")
+
+    def test_browser_agrees(self, tmp_path):
+        resp = browser_load(FAILED_THEN_OK, "failed.py", tmp_path / "ws")
+        assert resp.get("ok"), resp
+        (d,) = resp["descriptors"]
+        assert [c["bbox_inches"] for c in d["savefig_calls"]] == [None]
+        assert d["size_mm"] == FIGSIZE_MM
+
+
+@needs_worker
+class TestLossIsCountedOnce:
+    def test_a_figure_over_both_ledgers_is_dropped_once(self, tmp_path):
+        """9 张都超出 show 账与缓冲区账：捕获 8 张，真未捕获的只有 1 张，不是 2。"""
+        figs = tmp_path / "figs"
+        write(figs, "both.py", SHOW_AND_BUFFER)
+        resp = desktop_build(figs, "both.py")
+        assert len(resp["descriptors"]) == figcapture.MAX_PYPLOT_FALLBACK
+        assert resp.get("dropped_figures") == 1
+
+
+def test_one_figure_in_both_ledgers_is_counted_once():
+    book = figcapture.DropBook()
+    shown = figcapture.ShownFigures(limit=0, book=book)
+    saves = figcapture.BufferSaves(limit=0, book=book)
+    fig = _Fig()
+    saves.note(fig, _call())
+    book.add(fig)  # show 账同一张图也超出
+    assert book.count == 1
+    del fig
+    assert saves.figures() == [] and saves.lost() == 1
+    assert shown.book is saves.book
 
 
 @needs_worker

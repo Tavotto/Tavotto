@@ -722,15 +722,16 @@ def _patched_savefig(self, fname, *args, **kwargs):
     if not to_path:
         if SESSION is not None:
             SESSION.passthrough_figures.add(id(self))
-            if not stem and not figcapture.is_pdf_pages(fname):
-                # 写进文件对象、没有 stem 可认领的一次（PdfPages 有自己的账；`paper_style.save` 里的有 stem，上面已记）：
-                # 记图和这次的参数，脚本关掉它也补得回来
-                SESSION.buffer_saves.note(
-                    self,
-                    figcapture.savefig_call(fname, kwargs),
-                    kwargs.get("bbox_extra_artists"),
-                )
         result = _REAL_SAVEFIG(self, fname, *args, **kwargs)
+        # 真写成功之后才记账（失败的保存没有这一页，也不该留住一张从没成功存过的图）
+        if SESSION is not None and not stem and not figcapture.is_pdf_pages(fname):
+            # 写进文件对象、没有 stem 可认领的一次（PdfPages 有自己的账；`paper_style.save` 里的有 stem，上面已记）：
+            # 记图和这次的参数，脚本关掉它也补得回来
+            SESSION.buffer_saves.note(
+                self,
+                figcapture.savefig_call(fname, kwargs),
+                kwargs.get("bbox_extra_artists"),
+            )
         # 写进 PdfPages 的一页：真写成功之后才记（失败的保存没有这一页）
         if figcapture.is_pdf_pages(fname):
             _PDF_PAGES.note(fname, self)
@@ -1740,7 +1741,8 @@ class Worker(wireproto.V1Handler):
         _install_show_capture()
         _reset_pdf_pages()
         # 复用的 worker 重跑：上一轮的缓冲区账不带进这一轮
-        self.session.buffer_saves = figcapture.BufferSaves()
+        # 与 show 账共用一本「没留强引用」的账：一张图两边都超出只数一次
+        self.session.buffer_saves = figcapture.BufferSaves(book=_SHOWN.book)
 
         # 脚本看到的 argv 必须是它自己的，不是 worker 的。不换的话
         # `sys.argv[1:]` 拿到的是 --script/--out-dir/--entry 这串内部参数，
