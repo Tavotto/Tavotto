@@ -298,6 +298,8 @@ def test_a_ttc_face_from_the_catalog_embeds_with_times_new_roman(provider, tmp_p
         ],
         tmp_path,
     )
-    assert not problems
+    # `cjk_face` 只是记录「这些字走了中文脸」，这里要的正是它；不许出现的是字体不可用和缺字
+    assert not {p["code"] for p in problems} & {"source_font_unavailable", "glyph_missing"}
+    assert any(p["code"] == "cjk_face" for p in problems)
     names = " ".join(n for n, _ in found)
     assert "TimesNewRoman" in names and "SimSun" in names
