@@ -29,10 +29,15 @@
 
 判定规则（详见 `decide()`）：
 
-* `--event merge_group`：判 `not_applicable` 并**成功**。资格在 PR 阶段就已经
-  验过，队列候选上没有 PR 上下文可查。**这一格必须是成功而不是 skipped**——
+* `--event merge_group`：provider 未走 tavotto-cla-v1 时判 `not_applicable` 并
+  **成功**（资格在 PR 阶段验过）。服务模式下要么候选的全部提交（`--commits-json`，
+  compare base...head）里出现的每一个人都按不可变 id 命中豁免、本地直接成功，要么
+  要求服务在候选提交上给出新鲜凭证。**这一格必须是成功而不是 skipped**——
   `aggregate_gate.py --mode fast` 把 skipped 一律当失败，这个 job 在
   merge_group 上被跳过会把整个 `CI fast gate` 卡死（tests/ 里有专门的用例钉它）。
+* 服务模式（provider.protocol = tavotto-cla-v1）下 login 命中豁免**不算**身份证明；
+  只有可信来源给出的账号 id 全部等于豁免条目的 `github_id` 才本地放行
+  （`_id_exempt`），否则一律要服务凭证。服务模式下每条豁免都必须写 `github_id`。
 * `--event pull_request`：PR 里出现的每一个人类贡献者，要么在 policy 的豁免表
   里被**点名**，要么由 provider 判定为已签，要么在 `offline_signatures` 里有
   一条**版本对得上、账号 id 对得上**的双签记录。除此之外没有任何人能被判成
@@ -219,6 +224,7 @@ def validate_policy(policy: dict) -> None:
     if not isinstance(policy["exemptions"], list):
         raise ConfigError("cla-policy.exemptions 必须是数组")
     seen: set[str] = set()
+    seen_ids: set[int] = set()
     for i, ex in enumerate(policy["exemptions"]):
         if not isinstance(ex, dict):
             raise ConfigError(f"cla-policy.exemptions[{i}] 不是对象")
@@ -238,7 +244,22 @@ def validate_policy(policy: dict) -> None:
                 f"cla-policy.exemptions[{i}].kind=`{ex['kind']}` 认不出"
                 "（只允许 rights_holder / bot）"
             )
+        if "github_id" in ex:
+            gid = ex["github_id"]
+            if type(gid) is not int or gid <= 0:
+                raise ConfigError(f"cla-policy.exemptions[{i}].github_id 必须是正整数")
+            if gid in seen_ids:
+                raise ConfigError(f"cla-policy.exemptions 里账号 id {gid} 重复")
+            seen_ids.add(gid)
     _validate_provider(policy)
+    if _service_mode(policy):
+        # 服务模式下本地放行只认不可变账号 id（见 _id_exempt），每条豁免都要写明。
+        missing = [ex["login"] for ex in policy["exemptions"] if "github_id" not in ex]
+        if missing:
+            raise ConfigError(
+                "provider 走 tavotto-cla-v1 时每条豁免都必须写 `github_id`（不可变账号 id）："
+                + "、".join(missing)
+            )
     _validate_offline_signatures(policy, seen)
 
 
@@ -382,6 +403,10 @@ def collect_contributors(
             ids = entry.setdefault("ids", [])
             if account_id not in ids:
                 ids.append(account_id)
+        else:
+            # 这一次出现没有可信 id（trailer、noreply 邮箱、或缺 PR 作者 id）。
+            # 服务模式的本地豁免据此拒绝放行（_id_exempt）。
+            entry["unidentified_sources"] = True
 
     add(pr_author, "pr_author", account_id=_account_id(pr_author_id))
     if pr_author and _account_id(pr_author_id) is None:
@@ -453,6 +478,32 @@ def _exemption_for(login: str, policy: dict) -> dict | None:
         if ex["login"].lower() == login.lower():
             return ex
     return None
+
+
+def _service_mode(policy: dict) -> bool:
+    prov = policy.get("provider") or {}
+    return bool(prov.get("configured")) and prov.get("protocol") == "tavotto-cla-v1"
+
+
+def _id_exempt(contributor: dict, policy: dict) -> bool:
+    """按**不可变账号 id** 认豁免，供服务模式在本地直接放行。
+
+    login 能改名、能被别人重新注册，所以服务模式下 login 命中豁免不算数
+    （见 decide 里 service_mode 那段）。这里要求三样同时成立：login 命中一条写了
+    `github_id` 的豁免；这个 login 名下由**可信来源**给出的 id 至少一个（PR 事件
+    的 PR 作者 id、GitHub API 解析的提交作者 id）；且这些 id 全都等于那条豁免的
+    `github_id`。`Co-authored-by` 与 noreply 邮箱只给 login 不给可信 id，因此
+    只经它们出现的人**不会**被本地放行，交给服务按 id 判。
+    """
+    ex = _exemption_for(contributor["login"], policy)
+    # 缺 PR 作者 id 的情形由 unidentified_sources 兜住（collect_contributors 里 add 未带 id）。
+    if ex is None or "github_id" not in ex:
+        return False
+    ids = contributor.get("ids") or []
+    if not ids or any(i != ex["github_id"] for i in ids):
+        return False
+    # 每一次出现都必须带可信 id：只经 trailer / 邮箱出现过一次也不放行。
+    return not contributor.get("unidentified_sources")
 
 
 def _offline_signature_for(login: str, policy: dict) -> dict | None:
@@ -633,6 +684,42 @@ def _unqualified_detail(reason: str | None, policy: dict) -> str:
     return "没有签署记录"
 
 
+def _exempt_by_id_verdict(
+    event: str, policy: dict, contributors: list[dict], unresolved: list[dict]
+) -> dict | None:
+    """服务模式下的本地快速放行：出现的每一个人都按不可变 id 命中豁免。
+
+    主仓库几乎所有 PR 与合并组都只有著作权人和机器人，它们不需要、也不该去
+    排服务的队（服务端对豁免作者的 PR 不登记）。只要有一个人不是按 id 豁免的、
+    或有任何一处认不出账号、或一个人都没收集到，就返回 None，回到原来要求服务
+    凭证的判定——这里只会让本来就该过的放得更早，不会放过别的。
+    """
+    if unresolved or not contributors:
+        return None
+    if not all(_id_exempt(c, policy) for c in contributors):
+        return None
+    rows = []
+    for c in contributors:
+        ex = _exemption_for(c["login"], policy)
+        rows.append(
+            {
+                "login": c["login"],
+                "verdict": "exempt",
+                "detail": f"{ex['kind']}: {ex['reason']}（账号 id {ex['github_id']}）",
+                "sources": c["sources"],
+            }
+        )
+    return {
+        "event": event,
+        "status": "success",
+        "reason": "merge_candidate_exempt_by_id"
+        if event == "merge_group"
+        else "all_contributors_exempt_by_id",
+        "contributors": rows,
+        "problems": [],
+    }
+
+
 def decide(
     event: str,
     policy: dict,
@@ -644,11 +731,12 @@ def decide(
     """核心判定。只做纯计算，不碰环境——单测才测得动每一格。"""
     unresolved = unresolved or []
 
-    if (
-        event == "merge_group"
-        and policy["provider"].get("configured")
-        and policy["provider"].get("protocol") == "tavotto-cla-v1"
-    ):
+    if event in KNOWN_EVENTS and _service_mode(policy):
+        exempt = _exempt_by_id_verdict(event, policy, contributors, unresolved)
+        if exempt is not None:
+            return exempt
+
+    if event == "merge_group" and _service_mode(policy):
         signed, why = signed_logins(provider_checks, policy, context)
         valid = "*" in signed and context and context.get("kind") == "merge_group"
         return {
@@ -678,10 +766,7 @@ def decide(
     detail_for_missing = _unqualified_detail(why, policy)
 
     problems: list[str] = []
-    service_mode = (
-        policy["provider"].get("configured")
-        and policy["provider"].get("protocol") == "tavotto-cla-v1"
-    )
+    service_mode = _service_mode(policy)
     if service_mode and "*" not in signed:
         # A login exemption is not an identity proof. The independent service must
         # verify pinned immutable IDs even when every visible login is exempt.
@@ -938,7 +1023,12 @@ def main(argv: list[str] | None = None) -> int:
             "now": int(time.time()),
         }
         if args.event == "merge_group":
-            verdict = decide(args.event, policy, checks, [], context=context)
+            contributors, unresolved = [], []
+            if args.commits_json:
+                # 合并组候选的全部提交（compare base...head）。没有 PR 作者这一项。
+                commits = load_commits(Path(args.commits_json), args.expected_commits)
+                contributors, unresolved = collect_contributors(None, commits)
+            verdict = decide(args.event, policy, checks, contributors, unresolved, context)
         else:
             commits = []
             if args.commits_json:
