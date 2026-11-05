@@ -44,6 +44,11 @@ order: 80
   已装 Tavotto 插件（`register` 一步 skipped）时不再复制；Claude 桌面版没有技能目录（`builtin`）。没有技能的宿主靠 MCP
   工具 **`tavotto_guide`**（可选 `section` = `references/` 里真实存在的文件名，白名单、路径穿越回 `guide_section_unknown`，
   读不到回 `guide_unavailable`）读全文；`initialize` 的 instructions 让它开工前先调。工具名同步在 `server.HANDLERS`、启动器 `NORMAL_TOOLS`；**不进** `usage.TOOLS` 与遥测闭集（ADR 0170：进了要升 CONSENT_VERSION，等维护者），走 `other` 桶。
+  **技能脚本在桌面版里怎么跑**：冻结版的 `sys.executable` 是 `tavotto-cli`，不是解释器，所以 `tavotto_health` 的
+  `server.python` 在冻结时为 null，并给 `skill_script_command: [<tavotto-cli>, "skill-script"]`；`tavotto skill-script
+  <prefs|handoff|update_check> [args…]`（`hostskills.run_script_cli`，闭集名字、不收路径）用 runpy 在进程内跑技能脚本、
+  透传 argv 与退出码。`handoff.py` 冻结时没有默认解释器：要跑用户脚本必须显式 `--python`，否则回 `python_required`。
+  技能目录里的符号链接（文件、目录都算，不跟随）计入 sha256，加了链接即 `modified`。
   已知未处理：Cursor / VS Code 也读 `~/.claude/skills`，
   与 Claude Code 同时接入可能看到同名技能两份（待验）。看护 `tests/test_host_skills.py`、`tests/test_hosts_connect.py`。
 - 授权只来自 `--project-root`（写进 `TAVOTTO_MCP_ROOTS`）；根 / HOME / 包目录拒绝。启动器探针与

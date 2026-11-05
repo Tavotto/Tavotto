@@ -1546,12 +1546,17 @@ def _package_identity() -> dict:
         version = v if isinstance(v, str) and v.strip() else None
     except (OSError, ValueError):
         pass
-    return {
+    ident = {
         "package_dir": plugin_dir,
         "plugin_version": version,
         "release_build": os.path.isfile(os.path.join(plugin_dir, "plugin-build.json")),
         "python": sys.executable,
     }
+    if getattr(sys, "frozen", False):
+        # 桌面版：sys.executable 是 tavotto-cli，不是解释器，别冒充；技能脚本经它的 skill-script 子命令跑
+        ident["python"] = None
+        ident["skill_script_command"] = [sys.executable, "skill-script"]
+    return ident
 
 
 HANDLERS = {
