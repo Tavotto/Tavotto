@@ -246,6 +246,7 @@ def check(
     fetcher=fetch,
     version: str | None = None,
     allow_network: bool = True,
+    due_only: bool = False,
 ) -> dict:
     """回一份 `update` 字段。**永远返回 dict，永远不抛。**
 
@@ -275,6 +276,8 @@ def check(
         path, cache = "", {}  # 没缓存也能工作，只是每次都问
     manifest = cache.get("manifest") if cache.get("url") == url else None
 
+    if due_only:  # 只回答「该不该问」，不请求、不写缓存（见 `refresh_due`）
+        return {**base, "status": "due" if _due(cache, url, now) else "not_due"}
     due = allow_network and (force or _due(cache, url, now))
     if due:
         fresh = fetcher(url, TIMEOUT)
@@ -339,19 +342,11 @@ def _due(cache: dict, url: str, now: float) -> bool:
 def refresh_due(*, environ: dict | None = None, now: float | None = None) -> bool:
     """现在该不该去问一次网络？（被关掉 → 否；缓存新鲜 / 刚失败过 → 否。）
 
-    只读，不请求、不写缓存。调用方（MCP 服务端的后台线程）据此决定要不要起线程，
-    判据与 `check()` 里的 `_due` 是同一个——不写第二份。永不抛。
+    只读，不请求、不写缓存。判据就是 `check()` 里的 `_due`（经 `due_only` 走同一条路，
+    环境变量也只在 `check()` 里读一处）。永不抛。
     """
     try:
-        env = os.environ if environ is None else environ
-        if (env.get(DISABLE_ENV) or "").strip() in ("1", "true", "yes", "on"):
-            return False
-        url = (env.get(URL_ENV) or "").strip() or DEFAULT_URL
-        try:
-            cache = read_cache(cache_path(env))
-        except (OSError, ValueError, ImportError):
-            cache = {}
-        return _due(cache, url, time.time() if now is None else now)
+        return check(environ=environ, now=now, due_only=True).get("status") == "due"
     except Exception:  # noqa: BLE001
         return False
 
