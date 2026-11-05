@@ -257,6 +257,9 @@ def build_image(sha: str, profile: str, script: str, *, base: str = BASE_IMAGE) 
             "mkdir -p src/tavotto/resources/fonts build/fonts-cache",
             "cp -a /boxcache/fonts/fonts/. src/tavotto/resources/fonts/ 2>/dev/null || true",
             "cp -a /boxcache/fonts/archives/. build/fonts-cache/ 2>/dev/null || true",
+            # 新批准的字体缓存里没有时从镜像补；urlopen 的超时管不住慢速传输，所以限总时长。
+            # 补不到不算失败，由 fetch_fonts 判
+            "timeout 900 python scripts/evidencebox/mirror_fill.py fonts || true",
             script,
             "mkdir -p /boxcache/fonts/fonts /boxcache/fonts/archives",
             "cp -a src/tavotto/resources/fonts/. /boxcache/fonts/fonts/ 2>/dev/null || true",
@@ -304,6 +307,7 @@ def research_prepare(case: str, tex: bool, source_package: bool) -> str:
         # 重置是秒级失败，40 轮、间隔 5 s 也就几分钟。最后仍不全就让准备失败。
         "mkdir -p /work/research-sources /boxcache/research-sources",
         "cp -a /boxcache/research-sources/. /work/research-sources/ 2>/dev/null || true",
+        f"timeout 900 python scripts/evidencebox/mirror_fill.py research --case {case} || true",
         "fetched=0; for i in $(seq 1 40); do"
         f" if python scripts/ci/compat_guardian_research.py fetch --case {case}; then fetched=1; fi;"
         " cp -a /work/research-sources/. /boxcache/research-sources/;"

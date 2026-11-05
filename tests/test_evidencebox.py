@@ -244,6 +244,7 @@ def _run_research_fetch(tmp_path, fetch_failures: int):
     stub = bin_ / "python"
     stub.write_text(
         f"""#!/bin/sh
+case "$1" in *mirror_fill.py) exit 7;; esac
 n=$(cat {tmp_path}/n 2>/dev/null || echo 0); n=$((n+1)); echo $n > {tmp_path}/n
 [ -f "$TAVOTTO_RESEARCH_CACHE/old.py" ] || exit 9
 echo part > "$TAVOTTO_RESEARCH_CACHE/part$n.py"
@@ -396,3 +397,44 @@ def test_novice_required_steps_fail_the_run():
     assert re.findall(r"^\s*need ([a-z0-9-]+) ", text, re.M), "no required steps found"
     tail = text[text.rindex("FAILED[@]") :]
     assert "exit 1" in tail and tail.index("exit 1") < tail.index("echo DONE")
+
+
+def _prepare_commands(monkeypatch, tmp_path) -> str:
+    """build_image 真正交给准备容器的那段脚本。"""
+    seen: dict[str, str] = {}
+
+    def fake_sh(argv, **_kw):
+        if argv[:2] == ["docker", "run"]:
+            seen["script"] = argv[-1]
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(B, "sh", fake_sh)
+    monkeypatch.setattr(B, "image_exists", lambda _tag: False)
+    monkeypatch.setattr(B, "checkout", lambda _sha: tmp_path)
+    monkeypatch.setattr(B, "FONT_CACHE", tmp_path / "fonts")
+    monkeypatch.setattr(B, "RESEARCH_CACHE", tmp_path / "research")
+    B.build_image("a" * 40, "guardian", "SCRIPT_BODY")
+    return seen["script"]
+
+
+def test_font_mirror_runs_after_the_cache_and_before_the_real_fetch(monkeypatch, tmp_path):
+    script = _prepare_commands(monkeypatch, tmp_path)
+    cached = script.index("/boxcache/fonts/archives/. build/fonts-cache/")
+    mirror = script.index("timeout 900 python scripts/evidencebox/mirror_fill.py fonts || true")
+    assert cached < mirror < script.index("SCRIPT_BODY")
+
+
+def test_research_mirror_runs_after_the_cache_and_before_the_fetch_loop():
+    script = B.research_prepare("research_x", tex=False, source_package=False)
+    cached = script.index("cp -a /boxcache/research-sources/. /work/research-sources/")
+    mirror = script.index(
+        "timeout 900 python scripts/evidencebox/mirror_fill.py research --case research_x || true"
+    )
+    assert cached < mirror < script.index("fetched=0")
+
+
+def test_a_failing_research_mirror_does_not_stop_the_fetch_loop(tmp_path):
+    # _run_research_fetch 的桩让 mirror_fill 退出 7；set -e 下取回循环仍要跑到底
+    proc, _saved = _run_research_fetch(tmp_path, fetch_failures=0)
+    assert proc.returncode == 0, proc.stderr
+    assert "FETCHED" in proc.stdout
