@@ -2800,6 +2800,98 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
     )
 
 
+def _export_produce_chart_original(job, src, req, tmp_dir: Path):
+    """chart 面板的原图导出：SVG 格式 = 组合后的编辑版；其余格式当前不可用。
+
+    与 /api/svg/chart/compute 同一合同：不可变来源快照 → 脚手架 → 组合；
+    来源中途被改 → fail_all(chart_source_changed)；SVG 格式 basis = convert。
+    """
+    from . import svgcompose, svgscene
+    from .engine import chartmodel
+
+    chart = src.chart or {}
+    model = chart.get("model")
+    binding = chart.get("binding")
+
+    def chart_errors(code: str, detail: str):
+        return [
+            engine_exportjob.Produced(format=fmt, error_code=code, error_params={"detail": detail})
+            for fmt in req.formats
+        ]
+
+    if not isinstance(model, dict) or not isinstance(binding, dict):
+        return [
+            engine_exportjob.Produced(format=fmt, error_code="chart_model_invalid", error_params={})
+            for fmt in req.formats
+        ]
+    path = safe_resolve(src.figure_id)
+    scene_bytes = path.read_bytes()
+    try:
+        scene = svgscene.scene_inventory(scene_bytes)
+        chartmodel.validate_model(model)
+        chartmodel.validate_binding(binding, model)
+        chartmodel.verify_scene(binding, scene["scene_digest"], {n["id"] for n in scene["nodes"]})
+    except svgscene.SceneError as exc:
+        return chart_errors(exc.code, exc.detail)
+    except chartmodel.ChartModelError as exc:
+        return chart_errors(exc.code, exc.detail)
+    frame = {
+        "view_box": scene["view_box"],
+        "w_pt": scene["w_pt"],
+        "h_pt": scene["h_pt"],
+        "preserve": None,
+    }
+    try:
+        scaffold = _chart_scaffold_via_worker(model, frame)
+    except engine_pool.WorkerError as exc:
+        return chart_errors(exc.code, str(exc))
+    import hashlib
+
+    if hashlib.sha256(path.read_bytes()).hexdigest() != scene["scene_digest"]:
+        return chart_errors("chart_source_changed", "source changed during export")
+    try:
+        composed = svgcompose.compose_scene(
+            scene_bytes,
+            binding,
+            scaffold["fragment"],
+            model,
+            origin=(scene["view_box"][0], scene["view_box"][1]),
+        )
+    except svgcompose.ComposeError as exc:
+        return chart_errors(exc.code, exc.detail)
+    source_sha = engine_figcapture.hash_file(path)[0]
+    render_revision = chartmodel.panel_identity(
+        chartmodel.SOURCE_DECLARATIVE, scene["scene_digest"], model, binding
+    )
+    produced = []
+    for fmt in req.formats:
+        job.check_cancelled()
+        if fmt == engine_exportreq.FORMAT_SVG:
+            target = tmp_dir / "original.svg"
+            target.write_bytes(composed)
+            produced.append(
+                engine_exportjob.Produced(
+                    format=fmt,
+                    tmp_path=target,
+                    width_mm=scene["w_pt"] * 25.4 / 72,
+                    height_mm=scene["h_pt"] * 25.4 / 72,
+                    vector=engine_artifactinspect.svg_vector(target),
+                    basis=engine_exportjob.Basis(engine_exportjob.BASIS_CONVERT, source_sha),
+                    manifest={
+                        "chart_render_revision": render_revision,
+                        "scene_digest": scene["scene_digest"],
+                    },
+                )
+            )
+        else:
+            produced.append(
+                engine_exportjob.Produced(
+                    format=fmt, error_code="svg_asset_export_unsupported", error_params={}
+                )
+            )
+    return engine_exportjob.enforce_one_basis(produced, source_sha)
+
+
 def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> list:
     """`scope=original`：这张图**按它自己的尺寸**出。
 
@@ -2814,6 +2906,14 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     src = req.original
     if src.objects or src.pad_mm:
         return _export_produce_original_annotated(job, tmp_dir, artifact_sources=artifact_sources)
+    # SVG 计算图表（ADR 0166）：panel.chart 存在 → SVG 格式交付组合后的编辑版
+    # （服务端从不可变来源快照重算，与 compute 端点同一合同）；其余格式按 svg_asset
+    # 现有规则交付或拒绝（SVG→IR 翻译器落地前 PDF/PNG/TIFF 不可用，如实报）。
+    if src.chart is not None:
+        produced = _export_produce_chart_original(job, src, req, tmp_dir)
+        if produced is not None:
+            return produced
+
     if (
         Path(src.figure_id).suffix.lower() in SVG_EXT
         and not src.overrides
