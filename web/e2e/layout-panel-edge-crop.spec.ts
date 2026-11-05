@@ -82,26 +82,30 @@ test('排版里拖面板的右边往里：停在内容边缘（胶囊提示按 �
   expect(Math.abs(b2.height - b0.height)).toBeLessThan(1.5)
 })
 
-test('排版里拖面板的右边往外：改图幅重新出图，高度与左边不动；撤销一步回到原样', async ({ app, page }) => {
-  const a = await app()
-  const first = await toLayout(page, a.baseURL)
-  const b0 = (await first.boundingBox())!
-  await dragHandle(page, 'e', 80, 0, async () => {
-    await expect(page.locator('[data-drag-status]')).toContainText('改图幅')
-    await expect(page.locator('[data-drag-status]')).toContainText('文字 pt 不变')
-    await expect(page.locator('[data-figure-preview]')).toHaveCount(1)
-    if (process.env.TAVOTTO_E2E_SHOT) await page.screenshot({ path: `${process.env.TAVOTTO_E2E_SHOT}/during.png` })
-    // 拖动中不动文档：面板还是原来的宽
-    expect(Math.abs((await first.boundingBox())!.width - b0.width)).toBeLessThan(1.5)
-  })
-  await expect(page.locator('[data-drag-status]')).toHaveCount(0)
-  await expect.poll(async () => (await first.boundingBox())!.width, { timeout: 60_000 }).toBeGreaterThan(b0.width + 60)
-  await expect(page.locator('[data-figure-pending]')).toHaveCount(0, { timeout: 60_000 })
-  const b1 = (await first.boundingBox())!
-  expect(Math.abs(b1.width - b0.width - 80)).toBeLessThan(8)
-  expect(Math.abs(b1.height - b0.height)).toBeLessThan(1.5)
-  expect(Math.abs(b1.x - b0.x)).toBeLessThan(1.5)
-  if (process.env.TAVOTTO_E2E_SHOT) await page.screenshot({ path: `${process.env.TAVOTTO_E2E_SHOT}/after.png` })
-  await page.keyboard.press('ControlOrMeta+z')
-  await expect.poll(async () => Math.abs(((await first.boundingBox())?.width ?? 0) - b0.width), { timeout: 60_000 }).toBeLessThan(1.5)
-})
+test(
+  '排版里拖面板的右边往外：改图幅重新出图，高度与左边不动；撤销一步回到原样',
+  { tag: '@feature:canvas.layout-panel-corner-edge' },
+  async ({ app, page }) => {
+    const a = await app()
+    const first = await toLayout(page, a.baseURL)
+    const b0 = (await first.boundingBox())!
+    await dragHandle(page, 'e', 80, 0, async () => {
+      await expect(page.locator('[data-drag-status]')).toContainText('改图幅')
+      await expect(page.locator('[data-drag-status]')).toContainText('文字 pt 不变')
+      await expect(page.locator('[data-figure-preview]')).toHaveCount(1)
+      if (process.env.TAVOTTO_E2E_SHOT) await page.screenshot({ path: `${process.env.TAVOTTO_E2E_SHOT}/during.png` })
+      // 拖动中不动文档：面板还是原来的宽
+      expect(Math.abs((await first.boundingBox())!.width - b0.width)).toBeLessThan(1.5)
+    })
+    await expect(page.locator('[data-drag-status]')).toHaveCount(0)
+    await expect.poll(async () => (await first.boundingBox())!.width, { timeout: 60_000 }).toBeGreaterThan(b0.width + 60)
+    await expect(page.locator('[data-figure-pending]')).toHaveCount(0, { timeout: 60_000 })
+    const b1 = (await first.boundingBox())!
+    expect(Math.abs(b1.width - b0.width - 80)).toBeLessThan(8)
+    expect(Math.abs(b1.height - b0.height)).toBeLessThan(1.5)
+    expect(Math.abs(b1.x - b0.x)).toBeLessThan(1.5)
+    if (process.env.TAVOTTO_E2E_SHOT) await page.screenshot({ path: `${process.env.TAVOTTO_E2E_SHOT}/after.png` })
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect.poll(async () => Math.abs(((await first.boundingBox())?.width ?? 0) - b0.width), { timeout: 60_000 }).toBeLessThan(1.5)
+  },
+)
