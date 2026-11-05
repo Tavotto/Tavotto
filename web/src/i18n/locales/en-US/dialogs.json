@@ -641,7 +641,7 @@
     "landingTitle": "Pick a figure. Change it yourself.",
     "loadAnother": "Load another script",
     "mobileNote": "Precise editing works best in a desktop browser. The canvas is viewable here; the element tree and inspector need more width.",
-    "noFigureBody": "Nothing called savefig() and no pyplot figure was left open. The script output below may explain why.",
+    "noFigureBody": "No pyplot figure was left open. The script output below may explain why.",
     "noFigureTitle": "The script finished without creating a Matplotlib figure.",
     "overrides_one": "{{count}} override",
     "overrides_other": "{{count}} overrides",

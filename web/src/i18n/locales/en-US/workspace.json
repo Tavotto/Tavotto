@@ -1215,7 +1215,7 @@
       },
       "errorFull": "Full error output",
       "errorTruncated": "Too long; only the last part is kept.",
-      "noFigureWhy": "It never called savefig and left no Figure open.",
+      "noFigureWhy": "It left no Figure open.",
       "failedFigures": "Figures that failed: {{names}} ({{codes}}). The others can be edited as usual.",
       "unlinked": "{{names}}, made earlier with other arguments, is no longer linked. Run again with those arguments to restore it.",
       "history": {

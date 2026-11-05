@@ -32,6 +32,16 @@ order: 50
     兜底**：show 时已被 savefig 认领的图（`figcapture.claimed_ids`，与 `collect_pyplot_figures` 去重同一判据）不占名额，
     之后才认领的在下一次 show 腾出名额；溢出且已关闭的图一旦丢了强引用就补不回（只计数），故「show 之后才 savefig 一张
     已溢出的已关闭图」不在保证内。native bridge 在 show 屏障本来就收，浏览器 playground 不传 `shown`。
+  * **只存进文件对象（BytesIO 等）、随后被关掉的图也要捕获（#749，safe worker 与浏览器同源）**：缓冲区那次
+    `savefig` 没有 stem 可认领、透传真写（脚本接着要读它）；图和这次的参数（`savefig_call`，`bbox_inches="tight"`
+    等）记进 `figcapture.BufferSaves`（`SafeSession.buffer_saves` / `BrowserSession.buffer_saves`，每次 build 重建），
+    脚本结束时 `collect_pyplot_figures(..., buffers=, savefig_calls=, savefig_extras=)` 把还开着的按 `get_fignums()`、
+    已关掉的按存盘先后补进来（`plt` 可为 None：只用 `Figure()` 的脚本）。**参数随兜底 stem 走**，图活着、被关掉一样：
+    来源仍是 `pyplot`（缓冲区不是磁盘原件，不可写回），但 `savefig_calls[stem]` 是那几次缓冲区调用，
+    `figcapture.defines_frame` 让它定义图幅（ADR 0098），预览 / 导出与脚本生成的那份一致。有界：强引用 ≤ 上限，
+    其余弱引用（`bbox_extra_artists` 也只存弱引用，免得 artist 拖住图），真丢的并进 `dropped_figures` /
+    `truncated_figures`；被路径认领的让出名额给最早的等待者，先认领后存缓冲区的不回名单；收集前 `gc.collect()` 且期间
+    stdout 改道 stderr。`PdfPages` 与 `paper_style.save` 里的缓冲区保存不进这本账（前者有自己的账，后者有 stem）。
   * **写进 `PdfPages` 的图也要捕获（#1370 PR1，三条入口同源）**：`pdf.savefig(fig)` 最终是
     `fig.savefig(<PdfPages>, format="pdf")`，第一个参数不是路径，stem 取不出来；逐页 `plt.close(fig)` /
     结尾 `plt.close("all")` 的脚本跑完一张不剩（以前 `script_no_figure`）。保存**成功之后**记进有界账本
