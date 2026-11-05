@@ -27,6 +27,7 @@ GitHub Actions 独立的 `Performance Agent` workflow 支持手动触发和每�
 - 样本少于 10、覆盖不完整、浏览器/平台/分辨率/DPR 等变化，一律 `incomparable`，不能通过门禁。
 - 两次报告的 `iterations` 也必须一致：每轮插入会增加画布对象，10 轮和 60 轮代表不同负载，不能只把它们当作样本数量不同。
 - 性能回归阈值默认 `P95 > 基线 25%` **且** 绝对增加至少 15ms。需要人工在相同固定 runner 和真实稳定数据上确认阈值。
+- `render_counters`（Chromium 专有）：测量循环里的布局与样式重算次数，经 CDP 在循环前后各读一次，不进计时窗口。只记录和提示，不进 `status`，也不进回归比较；缺失或不合法时是 `null`。
 - nightly 首次尚无同机基线，只记录并上传报告，不输出“性能没退化”的假结论。后续可从同规格历史报告作为 `--baseline` 交给 Agent 比较。
 - 报告只有硬件分类、受控场景名与耗时数字。没有脚本路径、用户文档文本、对象 ID 或文件名。
 - 有些现象无法在后台浏览器里模拟，特别是 macOS 拖动原生窗口、GPU 合成与显示器拖影。原生档必须运行真实签名 App + macOS runner，配合 `scripts/perf_macos_window.py` 与 Instruments。
