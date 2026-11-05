@@ -175,13 +175,20 @@ plus `--var CLA_CI_VERIFICATION_ENABLED:true`. The exit code is the verdict.
 ## Later steps
 
 S6 (merge queue). Deploy with the S5 flags plus
-`--var CLA_MERGE_PREFIX_ASSESSMENT_ENABLED:true`: on a `merge_group`
+`--var CLA_MERGE_PREFIX_ASSESSMENT_ENABLED:true --var CLA_MERGE_PREFIX_READ_SESSION_ENABLED:true`.
+The read session is required on the free plan, not optional: without it every
+installation token costs two requests and the two prefix snapshots are read in
+full, so a one-PR group needs 36 external requests against the 35 work cap and
+every attempt ends `group_resource_capacity_exhausted` (staging, 2026-11-05).
+With it a one-PR group publishes in about 30. Each scheduled run logs one JSON
+line with its disposition and, on failure, the fixed rejection code (Workers
+Logs, enabled in `wrangler.staging.json`). On a `merge_group`
 `checks_requested` webhook the service records the group, assesses every PR in
 the queue prefix (each member's author must be eligible) and publishes the check
 on the group head. Repointing to a new sandbox repository changes
 `repositoryId`, so rebuild the database (`--rebuild`) first. In the sandbox:
 a ruleset on `main` with the merge queue and the required check
 `Tavotto CLA (staging)` restricted to the App; the workflow also runs on
-`merge_group` (`--event merge_group`). Production cut-over is a separate approval: production resources,
+`merge_group` (`--event "${{ github.event_name }}"`). Production cut-over is a separate approval: production resources,
 moving the paper signature in `offline_signatures` into the service in the
 same PR that sets `provider.configured=true`, then `ci.yml` wiring (risk:high).

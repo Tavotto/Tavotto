@@ -101,7 +101,7 @@ async function refreshOne(s:LiveService,job:Job,request:RefreshRequest):Promise<
 
 // A fixed durable pass horizon prevents a stream of newer rows from starving older heads.
 // Cursor and each head's three-failure budget settle in one guarded D1 batch.
-export async function reconcileOne(s:LiveService):Promise<{disposition:string;budget?:{sql:number;external:number}}> {
+export async function reconcileOne(s:LiveService):Promise<{disposition:string;reason?:string;budget?:{sql:number;external:number}}> {
   if(!s.c.backgroundEnabled)return {disposition:'background_disabled'};
   const budget=s.store.budget;
   if(!budget || s.github.budget!==budget)throw new Rejected('invocation_budget_required');
@@ -141,6 +141,10 @@ export async function reconcileOne(s:LiveService):Promise<{disposition:string;bu
     // Infrastructure/lease errors cannot advance progress. A restarted worker reads first.
     try{await s.store.fail(job,await s.store.databaseNow());}
     catch(cleanup){if(cleanup instanceof BudgetDeferred){try{await s.store.deferTarget(job);}catch{}return result('budget_deferred');}throw cleanup;}
-    return result('target_retry_pending_or_exhausted');
+    // Operators see only the fixed rejection code, never a message, payload or credential.
+    return {...result('target_retry_pending_or_exhausted'),reason:rejectionCode(error)};
   }
+}
+export function rejectionCode(error:unknown):string {
+  return error instanceof Rejected && /^[a-z_]{1,64}$/.test(error.code)?error.code:'unexpected';
 }

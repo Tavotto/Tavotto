@@ -7,7 +7,7 @@ import { GitHub } from './github.ts';
 import { LiveStore } from './store.ts';
 import { LiveService } from './service.ts';
 import { uiHTML, uiCSS, uiScript } from './ui.ts';
-import { reconcileOne } from './background.ts';
+import { reconcileOne, rejectionCode } from './background.ts';
 import { verification } from './verification.ts';
 import { InvocationBudget } from './budget.ts';
 import { validId, validSha } from '../core/policy.ts';
@@ -131,13 +131,24 @@ export async function service(env:Env,budget?:InvocationBudget):Promise<LiveServ
   const key=await importAes(unbase64(secrets.evidenceKey));
   return new LiveService(c,new LiveStore(env.DB,budget,c),new GitHub(c,secrets,undefined,undefined,budget),key);
 }
+// One fixed-vocabulary line per scheduled run (Workers Logs). Only the run name, disposition,
+// budget counters and, on failure, a fixed rejection code are written: never messages,
+// payloads, logins or credentials. A thrown run is logged and then rethrown unchanged.
+export async function loggedRun(run:'verify_head'|'reconcile',work:()=>Promise<string|{disposition:string;reason?:string;budget?:{sql:number;external:number}}>,
+  log:(line:string)=>void=line=>console.log(line)):Promise<void> {
+  let result;
+  try{result=await work();}
+  catch(error){log(JSON.stringify({run,disposition:'thrown',reason:rejectionCode(error)}));throw error;}
+  const {disposition,reason,budget}=typeof result==='string'?{disposition:result,reason:undefined,budget:undefined}:result;
+  log(JSON.stringify({run,disposition,...(budget?{budget:{sql:budget.sql,external:budget.external}}:{}),...(reason===undefined?{}:{reason:/^[a-z_]{1,64}$/.test(reason)?reason:'unexpected'})}));
+}
 export default {async scheduled(controller:{cron?:string},env:Env):Promise<void> {
   if(controller.cron===AUTOMATIC_CRON) {
-    if(env.CLA_AUTOMATIC_VERIFICATION_ENABLED==='true')await verifyHeadOne(await service(env,new InvocationBudget()));
+    if(env.CLA_AUTOMATIC_VERIFICATION_ENABLED==='true')await loggedRun('verify_head',async()=>verifyHeadOne(await service(env,new InvocationBudget())));
     return;
   }
   if(env.CLA_BACKGROUND_ENABLED!=='true')return;
-  await reconcileOne(await service(env,new InvocationBudget()));
+  await loggedRun('reconcile',async()=>reconcileOne(await service(env,new InvocationBudget())));
 },async fetch(req:Request,env:Env):Promise<Response> {
   try {
     const url=new URL(req.url),enabled=[env.CLA_GITHUB_ENABLED,env.CLA_OAUTH_ENABLED,env.CLA_SIGNING_ENABLED,env.CLA_CHECK_PUBLISHING_ENABLED,env.CLA_UI_ENABLED,env.CLA_CI_VERIFICATION_ENABLED].some(v=>v==='true');
