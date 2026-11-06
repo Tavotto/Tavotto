@@ -2,7 +2,7 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-07 06:05后复核）：最新功能8a13ed95已提交输入声明界面，复用原准备卡和脚本只读菜单；真实浏览器保存清单零执行、明确Run恰一次、正式v2包/inspect及改清单不补签旧图均通过，取消/切项目/两条真实迟到响应保稿已验。最新受影响后端561、前端621各自通过/0skip/exit0。下一实施3d精确引用迁移，再安全安装/新根冷开；图例、裁切/复杂几何和最终回归仍缺，M1/M2/M3未通过，既有Windows权限红灯保留。**
+> **当前结论（2026-11-07 06:50后复核）：3c输入声明已提交8a13ed95；3d精确引用迁移/历史源消费已有未提交实现。迁移核心226、真实safe/native2、最终app历史源23各自通过/0skip；新增扩大组300收集=294通过/2失败/4skip、exit1，先处理冷打包422和import逻辑环，再功能提交及N3d/e/f。安装API/UI、图例、复杂几何和最终资格仍缺，M1/M2/M3未通过，既有Windows权限红灯保留。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 > 前轮05:10后的91项捕获包资格保留其历史源码窗口；3c现已有实现与新资格，不能再按旧checkpoint重做。不同测试组不相加成最终总数；当前分支实际HEAD/diff优先。
 
@@ -12,7 +12,7 @@
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
-- 最新3c冻结索引`n3c3c-stage-final.json`记录20功能文件、实际检查及范围；真实界面证据位于`n3c-input-ui/qualification.json`和其`output/playwright/`。原3b-1/2/3/4各stage-final索引及既有UI记录保留历史资格。本轮声明界面实际验收，旧裁切/图例缺陷未修；未创建调度器，任何历史PID均须重新核身份后使用。
+- 当前3d复核索引`status-review-20261107-3d.json`记录未提交实现、实际JUnit与两项基线失败归因。前3c索引`n3c3c-stage-final.json`及真实界面`n3c-input-ui/qualification.json`保留其源码窗口；3b-1/2/3/4各stage-final及既有UI记录保留历史资格。本轮未新增浏览器验收，图例/裁切缺陷仍在；未创建调度器，历史PID均须重新核身份后使用。
 - 最新 NEXT_PHASE 和提示词直接在当前实施分支维护；不再依赖历史 review 文档分支才能取得新计划。
 
 ## 批次状态（2026-11-07 复核后；按完整退出条件）
@@ -35,13 +35,25 @@
 | R01/R02 | core_partial / multi_target_verified | 3236307c、8e6c399a | 跨父/split/errorbar/colorbar共同目标与预览通过；任意clip、欠定成员paint slots和图例仍缺 |
 | R03 | runner_and_source_consumers_integrated | 029dfac2、242cabc0、c2fd47d5、5b2b1403、2452d8fc | 受控runner与精确INPUT附件接真实API/UI/导出；不宣称全产品总进程cap或最终资格 |
 | R04 | affected_checks_passed | a8a088cf、18907d65、cbd8d95e | 请求序号/表单/项目切换、late response 和单项 drop 均有受影响测试；Dialog 已可发起真实绑定；完整编辑器生命周期在 R06 追验 |
-| R05 | input_declaration_ui_verified / relocation_and_installation_pending | 5abb9a7d、95684f89、264ce59c、a7008840、d7b6eef9、d7a73ce1、ffe2fb32、c40805bf、e468d516、336783bf、71e637c8、206a1c34、9a9843d2、8ed50616、75b09b57、be84ba33、13720bc4、1795f244、d1389db6、5e000c6f、b5f9f557、11c67ab1、3c64195b、d8416d4e、97e75d41、a5305ddb、f79771c3、06806c2c、8a13ed95 | 既有保存/恢复、捕获/冷存、v2包及严格检视保持；3c真实输入声明与明确新执行/旧图不补签/迟到保稿已验。精确引用迁移、安装API/UI和新目录冷开仍缺 |
+| R05 | input_declaration_ui_verified / relocation_and_installation_pending | 5abb9a7d、95684f89、264ce59c、a7008840、d7b6eef9、d7a73ce1、ffe2fb32、c40805bf、e468d516、336783bf、71e637c8、206a1c34、9a9843d2、8ed50616、75b09b57、be84ba33、13720bc4、1795f244、d1389db6、5e000c6f、b5f9f557、11c67ab1、3c64195b、d8416d4e、97e75d41、a5305ddb、f79771c3、06806c2c、8a13ed95 | 既有保存/恢复、捕获/冷存、v2包及严格检视保持；3c真实输入声明与明确新执行/旧图不补签/迟到保稿已验。精确引用迁移已有未提交实现/专项正证，扩大组两条前置问题待收尾；安装API/UI和新目录用户整链仍缺 |
 | R06 | product_editing_and_cold_restore_verified / partial | 242cabc0、53393810、8e6c399a、264ce59c | 冷开后Inspector编辑、undo/redo和exact显示已验；图例、完整操作及复杂几何仍缺 |
 | R07 | partial / original_five_formats_ui_verified | 5bc82a81、c2fd47d5、2a40fec9、c9fa29a4、8fa84f5d、a06cc3d3 | 原图五格式真实UI及独立产物已验，EPS接线已提交；分享与完整双系列M1未完成 |
 | R08 | full_edit_restore_verified / partial | cae96f89、029dfac2、53393810 | 生产v2导出与真UI完整编辑恢复通过；A采用、分享选择和正式项目迁移待补 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-07 06:50后 当前实现效果复核与下一阶段安排
+
+- 用户要求看执行情况/效果并梳理下一安排。沿同一树/分支，复核HEAD5884ede2，最新已提交功能8a13ed95；3d的生产代码、新测试及受影响规则仍未功能提交，全部保留。原Tavotto/main仍clean69bcafae，未新建分支/工作树、fetch、push、合并或发布。
+- 3d已有具体实现：原store显式archive-only；完整oldRef→newRef、单一新remap指纹、全部正文位置/原序patch及捕获字节；按ref惰性输入view且不授执行权。合法N→1、额外stage文件/空目录及历史EPS错误码三处边界已修，原首红及独立复核保留。
+- 实际效果：同名静态A/B历史分别导出原PDF/SVG，画布两版并存，删当前原件仍可读；safe/native真实单次执行→正式包→中文新根→删旧源/cache→新父进程冷读有证据。当前普通文件仍独立核SHA，不声称历史磁盘原件恢复。生产安装API/UI及完整搬迁继续编辑未验收。
+- 证据范围：n3c3d-root-final.xml226/0skip；n3c3d-real/final-integrated.xml2/0skip（均早于最后app EPS delta）；最终app的document-sources-accepted.xml23/0skip。新增status-review-affected.xml300=294pass/2fail/4skip，exit1，源码零漂移；**不是全绿/全产品资格**。两失败为旧冷staging新父包422 execution_resource_mismatch、chartpackage↔packageinspection逻辑环，须固定HEAD基线复现并处理，不能删门禁/放宽图验证。
+- 新核心反证：原5项目标绿，去掉迁移退出verify的2项、去掉view退出核对的3项均实际红；原reader替换反证实际红。Python3.10.20实际stdlib空合法v4迁移probe通过；不是完整最低版本科学栈资格。EPS11条窄探针保containment/类型/回执/existing-only/原artifact边界，零worker启动。
+- 两条扩大失败已固定HEAD5884ede2实际归因：import环两边相同且来自06806c2c；旧冷包fixture原非法remap ID，修后还有伪PDF不可读，外部同时改为合法ID/可读PDF-SVG后原全部断言通过。仓库门禁/旧测试未改，当前扩大组仍exit1，不称全绿。报告n3c3d-loader-review/{import-cycle-baseline/REVIEW.md,cold-staging-baseline-attribution.md}。
+- 本轮无新前端源/build/浏览器资格；前3c的561后端/621前端/7段UI按原源码窗口保留。Ruff全仓check/format（1480文件）通过，预算脚本exit0但原审计OVER仍如实保留。文档规则/引用41通过、0skip、exit0；原始记录与基线复现见status-review-20261107-3d.json。四份稳定状态/计划单独提交，3d代码及规则保留未提交，待两条收尾项修复后按功能提交。
+- 更新NEXT_PHASE为当前状态与有完成条件的顺序：先收口3d→N3d安全安装→N3e原writer采用→N3f中文新根完整冷开→N4图例/N5几何→N6/M1→N7/M2→N8/M3；完整SG00–17/A/B/C不减。NEXT_PHASE_PROMPT可直接无人值守接续。未创建常驻调度器，goal保持active。
+
 
 ### 2026-11-07 06:05后 声明界面收口、实际效果复核及下一阶段安排
 
