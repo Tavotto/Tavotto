@@ -2,16 +2,16 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-06 20:02 checkpoint）：N2前端264ce59c与准确保存错误ec2cb144已提交；真实UI正式保存、删源、零缓存新进程恢复、继续编辑已验。EPS勾选撤回已修，新候选429项前端/正式build及15项HTTP通过；本轮真实UI五格式全部done，独立核对模型/完整编辑、PDF文字/尺寸、PNG/TIFF像素及EPS Ghostscript成图通过，但公共接线/route/UI尚未提交。命名文件关联叶子37项通过，前端仍为中间稿，app HTTP路由未接、待集成测试未运行。ZIP安装、图例/复杂几何及最终回归仍缺，M1/M2/M3均未通过。**
+> **当前结论（2026-11-06 21:03 checkpoint）：功能HEAD=d7b6eef9。EPS完整接线a06cc3d3、命名文件关联a7008840、包容器ffe2fb32、计算来源包c40805bf、显式冲突恢复后端d7b6eef9均已分功能提交。真实UI已验证改标题仍绑定原文件、空缓存/新后端恢复和CtrlS写回原文件。N2.1完整前端20文件已冻结：428项、正式build/i18n/lint及28组反证通过，尚未提交；覆盖/重载按钮真API浏览器联验待补。预检两项误报修复已冻结：78项前端、33项Python、真实HTTP输入及128份旧spec逐字一致，统一正式build/playground已通过，尚待提交。包完整安装、图例、复杂几何与最终回归未完成，M1/M2/M3均未通过。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 
 ## 环境（2026-11-06 当前快照）
 
-- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；本次checkpoint功能HEAD=`ec2cb144`。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入这些成果；不能在原目录启动旧版本后据此判断新功能效果。
+- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；本次checkpoint功能HEAD=`d7b6eef9`。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入这些成果；不能在原目录启动旧版本后据此判断新功能效果。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
-- 较早状态探针见`status-cbd8d95e/`；最新复核为`status-planning-2002.json`及本页20:02记录列出的真实UI/产物。未启动通宵调度器，历史“后台sweep正在跑”不当作现行运行状态；服务状态见最新checkpoint。
+- 较早状态探针见`status-cbd8d95e/`；最新复核为本页21:03记录及`n21-complete-frontend-validation.json`、`n21-ui-binding-qualification.json`、`n4-preflight-freeze.json`。未启动通宵调度器，历史“后台sweep正在跑”不当作现行运行状态；服务状态见最新checkpoint。
 - 最新 NEXT_PHASE 和提示词直接在当前实施分支维护；不再依赖历史 review 文档分支才能取得新计划。
 
 ## 批次状态（2026-11-06 复核后；按完整退出条件）
@@ -28,19 +28,40 @@
 | SG07 | core_partial / native_edit_verified | 4c2ca1f2、242cabc0、8e6c399a | 真实图内范围/线宽及多成员预览已验证；完整模型族与M1未完成 |
 | SG08 | partial | 4c2ca1f2 | bar 附属误差基础修复已有；完整族与 UI/导出追验待补 |
 | SG09 | partial | ac060053 | 色条基础所有权/镜像已修；复杂族和导出图像资源未验收 |
-| SG10 | partial / product_cold_edit_verified | cbd8d95e、242cabc0、53393810、8e6c399a、264ce59c | 真UI正式保存、零缓存冷恢复、继续编辑和五格式原图导出已验；EPS接线尚未提交，图例/复杂clip/成员层序仍缺 |
-| SG11–SG17 | partial / pending | 979a4962、48d3d27a、cae96f89、5bc82a81、bbbffed1、5abb9a7d、95684f89 | 保存/来源冷恢复已验；命名文件关联、包迁移、写回、入口/平台和最终回归待补 |
+| SG10 | partial / product_cold_edit_verified | cbd8d95e、242cabc0、53393810、8e6c399a、264ce59c、a06cc3d3 | 真UI保存、零缓存新进程恢复、继续编辑及五格式原图导出已验；图例/复杂clip/成员层序仍缺 |
+| SG11–SG17 | partial / pending | 979a4962、48d3d27a、cae96f89、5bc82a81、bbbffed1、5abb9a7d、95684f89、a7008840、ffe2fb32、c40805bf、d7b6eef9 | 正文/附件及命名关联冷恢复已验；包叶子已提交，完整安装/写回/入口/平台和最终回归待补 |
 | R00 | baseline_and_regressions | 5a4f5c2c | 基础反例保留；本轮用户流程和导出反例待随修复入库 |
 | R01/R02 | core_partial / multi_target_verified | 3236307c、8e6c399a | 跨父/split/errorbar/colorbar共同目标与预览通过；任意clip、欠定成员paint slots和图例仍缺 |
 | R03 | runner_and_source_consumers_integrated | 029dfac2、242cabc0、c2fd47d5、5b2b1403、2452d8fc | 受控runner与精确INPUT附件接真实API/UI/导出；不宣称全产品总进程cap或最终资格 |
 | R04 | affected_checks_passed | a8a088cf、18907d65、cbd8d95e | 请求序号/表单/项目切换、late response 和单项 drop 均有受影响测试；Dialog 已可发起真实绑定；完整编辑器生命周期在 R06 追验 |
-| R05 | ui_cold_body_verified / binding_and_package_pending | cae96f89、82b142d2、bbbffed1、ae064662、83f4ffbf、2452d8fc、5abb9a7d、95684f89、264ce59c、ec2cb144 | 真UI正文/附件冷恢复和准确422已验；命名文件关联叶子已验但HTTP/前端未集成，包安装未完成 |
+| R05 | ordinary_binding_ui_verified / recovery_and_package_partial | cae96f89、82b142d2、bbbffed1、2452d8fc、5abb9a7d、95684f89、264ce59c、ec2cb144、a7008840、ffe2fb32、c40805bf、d7b6eef9 | 普通关联冷恢复/改标题/写回A已验；前端428项已冻结未提交，真实覆盖/重载与完整包安装待补 |
 | R06 | product_editing_and_cold_restore_verified / partial | 242cabc0、53393810、8e6c399a、264ce59c | 冷开后Inspector编辑、undo/redo和exact显示已验；图例、完整操作及复杂几何仍缺 |
-| R07 | partial / original_five_formats_ui_verified | 5bc82a81、c2fd47d5、2a40fec9、c9fa29a4、8fa84f5d；EPS接线未提交 | 真UI原图五格式done，独立模型/文字/尺寸/像素/GS检查通过；仅单曲线原图范围，分享和完整M1未完成 |
+| R07 | partial / original_five_formats_ui_verified | 5bc82a81、c2fd47d5、2a40fec9、c9fa29a4、8fa84f5d、a06cc3d3 | 原图五格式真实UI及独立产物已验，EPS接线已提交；分享与完整双系列M1未完成 |
 | R08 | full_edit_restore_verified / partial | cae96f89、029dfac2、53393810 | 生产v2导出与真UI完整编辑恢复通过；A采用、分享选择和正式项目迁移待补 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-06 21:03 最新统一构建与外改冲突复核
+
+- 根接收已冻结20+2文件后，逐个对照源SHA，实际执行正式`pnpm build`、`python scripts/build_browser_playground.py`及`--check`，三条命令各exit0，前后22文件摘要无漂移。playground指纹`551ca2013f6b078c`；完整报告`unified-current-build-validation.json`和各原始日志。复制到独立`n21-recovery-ui-dist-2056`留作后续真恢复按钮联验，不用旧397项普通bundle冒充新恢复实现。
+- 真浏览器额外验证named外改：先备份隔离A实际原字节，外部修改A；真实F2改当前标题为N21_external_conflict_C，AS仍关联A且dirty；CtrlS的实际POST返回409 external_change。独立读盘证明外部A摘要不变、另一B摘要不变，后端绑定仍保原named revision。`n21-ui-external-named-qualification.json`、`n21-ui-external-named-read-final.json`及截图`output/playwright/n21-ui-external-named-409.png`。这条仍用普通冻结bundle，最新恢复按钮验证尚未执行。
+- 首次动作脚本已完成409/dirty断言，最后`header`观察因页面有两处header而严格匹配失败；后续只读观察曾将fetch Response.status误当方法，已保留两次失败日志。改用真实`data-topbar`与status属性，只读复核exit0；没有重复覆盖/重导数据来替换失败证据，也没有将脚本失败算产品故障。
+- 当前HEAD仍d7b6eef9、索引空；22个功能文件冻结未提交，三份文档本轮更新。下一动作调整为：使用新冻结bundle做明确覆盖/重载真API联验；预检已具备统一构建资格，可独立提交。源不变则不重复刚通过的昂贵检查。N3–N8队列和M1/M2/M3未通过状态保持。
+
+### 2026-11-06 20:56 执行效果复核与下一阶段收口
+
+- 应用户要求核对当前执行情况。实际实施树仍是`E:/0 - Project/Tavotto-svg-r00`、唯一分支`zixu.wang/svg-computational-r00`、HEAD=`d7b6eef9`；原`E:/0 - Project/Tavotto`仍为clean main@69bcafae，未包含这些成果。索引为空；未新建/切换分支，未推送/合并/发布。本次不是最终完成，goal仍active。
+- 相比20:02新增五个功能提交：`a06cc3d3`计算原图EPS公共接线；`a7008840`后端命名关联；`ffe2fb32`预算约束ZIP/原子发布；`c40805bf`计算来源包检查、准备和发布；`d7b6eef9`明确覆盖/重载的编辑轴恢复。旧的“app已stage EPS”“HTTP未接”“关联只有37项”的接续指令已过时，不能照旧报告回滚或重做。
+- 独立解析实际XML：EPS新HTTP15通过；恢复HTTP74通过；容器121通过；计算包末次专项54通过，均0fail/0error/0skip。这些是不同范围/时刻，不相加为全分支测试数。关联普通旧HTTP另有204通过/19既有skip；模块恢复200通过及3组真实反证有原始记录。报告分别`eps-staged-qualification.json`、`project-file-backend-staged.json`、`project-file-recovery-staged.json`、`package-container-staged-current.json`、`chart-package-staged.json`。
+- 普通保存/打开实际UI：working ID `d_d88wfjsq`先打开命名文件A=`N2_正式保存_20261106`；真实F2把标题改成B，另有同名B文件，AS回执仍绑定A且dirty。关闭旧浏览器/重启父后端后，全新浏览器启动前localStorage=[]，仍从后端恢复A绑定/dirty、标题B和精确来源。真实CtrlS只写A，落盘正文等于实际请求；另一B摘要未变，原chart.svg仍缺席。证据`n21-ui-binding-qualification.json`，原始`n21-ui-{open,retitle,cold-lossless,cold-save}*.json`及截图`output/playwright/n21-ui-cold-ctrlS-A.png`。此证据用397项阶段的冻结普通保存bundle，不能冒充最新恢复按钮已验。
+- N2.1完整前端20文件正式冻结交回，根逐个SHA核对0漂移：21文件428项通过/0skip，pnpm build、i18n:check、lint exit0；28组实际内存反证全命中产品落点并AssertionError/exit1，wrapper0。`n21-complete-frontend-validation.json`，正式入口`index-BBA0tQCV.js`。包括新分支证明固定、迟到对话框/响应、reload等待期间编辑、恢复副本Storage失败；同一writer/store，只有404回旧wire。尚未commit；同版本真API覆盖/重载、多窗口及最终playground仍由根收口。
+- N4窄预检修复两文件冻结交回：有效chartSource的缺素材豁免仅来自同完整输入的exactPanelRender；修改应用判断复用renderRequestIdentity。新19项先红后绿，合组78项前端、33项Python、49黄金向量只读校对通过；真实后端完整response输入两个范围，missing/unapplied误报消失。旧commit c40805bf的64场景×2范围完整spec JSON逐字一致；两AST故障反证实际失败。报告`n4-preflight-freeze.json`与`n4-preflight-and-legend-review.md`。该两文件未提交，正式build/playground尚待根统一检查；不把修预检等同修图例。
+- 图例真实缺陷仍在：同一真实渲染的曲线已红，保留旧legend_handle仍蓝且manifest无legend。控制实验明确创建native Legend并交原legendmodel可正确跟随；根因是当前Binding只表达轴/系列，缺显式图例条目与区域所有权。后续先冻结可持久化关系合同，复用现legendmodel/placement；不按颜色或同名文字猜关系，不另写SVG重染。
+- 项目包已有严格容器和计算附件叶子，含删原目录后的新worker精确INPUT重放；app仍直接ZipFile写最终路径，package/open仍只读检查。混合普通素材/脚本/快照的安装、显式API/UI及单次正文提交未接，不能把叶子通过当作项目搬迁完成。
+- 最近顺序：前端保存关联/恢复与预检分别联验提交→旧ZIP原子输出及v4完整安装→图例/readiness/逐对象迁移→复杂几何→分享与完整M1→M2能力对等→M3冻结全量资格。完整SG00–17不缩减。截图仍可见坐标刻度边缘裁切，归几何/预览与实际产物对照追验，未定性为已修。
+- 20:55实际自有进程：后端71856（20:43:13，source-ref-browser/server.py，23984/session33431）；Vite10168（18:51:24，native-edit-browser/vite.mjs，23983/session80916）；普通冻结预览8452（20:33:46，n21-preview.mjs，23986/session38666）；旧EPS冻结预览76372（19:48:20，eps-preview.mjs，23985/session82628）；浏览器tavotto-binding-cold daemon50704（20:43:24）。旧66888已停止。源/构建正在迭代，后续先核归属与实际bundle；这些服务不是整夜调度器。
+- 两个代理现均冻结释放；根仍独占共享契约/规则/三文档、app/集成/UI/提交。新工作从当前22个未提交文件继续，保留用户改动，分N2.1的20文件与预检2文件两批，不git add .。本次有两次只读取证命令因路径错误/GBK打印符号失败，后续已用正确绝对路径与UTF-8读取；未把取证失败混作产品失败，也未补写未跑检查为通过。
 
 ### 2026-11-06 20:02 当前效果复核与下一阶段安排
 
