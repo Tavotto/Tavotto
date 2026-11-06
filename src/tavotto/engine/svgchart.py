@@ -16,14 +16,37 @@ from __future__ import annotations
 import io
 import re
 
-from tavotto.engine import chartmodel
-from tavotto.svgcoord import viewbox_to_pt
+from tavotto.engine import chartmodel, chartprofile
+from tavotto.engine.chartprofile import LEGACY_PROFILE
+from tavotto.svgcoord import apply, viewbox_to_pt
 
 #: 片段里允许出现的刻度标签字体大小上界（防御性；matplotlib 默认 10pt）。
 _MAX_LABEL_PT = 72.0
 
 
-def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dict:
+def scaffold_fragment(
+    model: dict,
+    frame: dict,
+    *,
+    salt: str = "tavotto",
+    render_profile: str = LEGACY_PROFILE,
+    patches=(),
+) -> dict:
+    """保持旧渲染协议；native 的 Figure、属性与 manifest 都在场景物理 pt 中。"""
+    profile = chartprofile.validate_profile(render_profile)
+    edits = chartprofile.validate_overrides(patches, render_profile=profile)
+    if profile == LEGACY_PROFILE:
+        return _scaffold_fragment(model, frame, salt=salt)
+    import matplotlib
+
+    # Text 在构造时采 rcParams；不能等 savefig 时才关闭 TeX。
+    with matplotlib.rc_context({"text.usetex": False, "savefig.bbox": None}):
+        return _scaffold_fragment(model, frame, salt=salt, native=True, patches=edits)
+
+
+def _scaffold_fragment(
+    model: dict, frame: dict, *, salt: str, native: bool = False, patches=()
+) -> dict:
     """模型 + 场景框 → ``{"fragment": bytes, "facts": {...}}``。
 
     ``frame``：``{"view_box": [x,y,w,h], "w_pt": float, "h_pt": float,
@@ -44,7 +67,7 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
     w_pt, h_pt = float(frame["w_pt"]), float(frame["h_pt"])
     u2pt = viewbox_to_pt(view_box, w_pt, h_pt, frame.get("preserve"))
     scale_x, scale_y = u2pt[0], u2pt[3]
-    render_scale = (scale_x * scale_y) ** 0.5
+    render_scale = 1.0 if native else (scale_x * scale_y) ** 0.5
 
     import matplotlib
 
@@ -58,19 +81,30 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
     # 用户空间（N1）。绘制尺寸按 vb 尺寸 → 1 单位 = 1 用户单位。
     left = ax_x - vb_x
     bottom = ax_y + ax_h - vb_y
-    fig = matplotlib.figure.Figure(figsize=(vb_w / 72.0, vb_h / 72.0), dpi=72)
+    figure_w, figure_h = vb_w, vb_h
+    width, height = ax_w, ax_h
+    if native:
+        left, top = apply(u2pt, ax_x, ax_y)
+        right, bottom = apply(u2pt, ax_x + ax_w, ax_y + ax_h)
+        width, height = right - left, bottom - top
+        figure_w, figure_h = w_pt, h_pt
+    fig = matplotlib.figure.Figure(figsize=(figure_w / 72.0, figure_h / 72.0), dpi=72)
     ax = fig.add_axes(
         [
-            left / vb_w,
-            1.0 - bottom / vb_h,  # matplotlib 是 y-up 的图分数
-            ax_w / vb_w,
-            ax_h / vb_h,
+            left / figure_w,
+            1.0 - bottom / figure_h,  # matplotlib 是 y-up 的图分数
+            width / figure_w,
+            height / figure_h,
         ]
     )
     ax.set_gid(f"tv-axes-{ax_cfg['id']}")
     # 背景属于保留的原场景，不是刻度/网格等要嫁接的轴家具。
     # 显式角色让组合端无需按 patch 序号或白色填充猜测。
     ax.patch.set_gid(f"tv-axesbg-{ax_cfg['id']}")
+    if native:
+        # Start transparent; an explicit native facecolor edit then paints the
+        # same real patch without replacing an unowned source background.
+        ax.patch.set_facecolor("none")
     ax.set_xlim(*ax_cfg["xlim"])
     ax.set_ylim(*ax_cfg["ylim"])
     if ax_cfg["xscale"] != "linear":
@@ -86,7 +120,7 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
     if ax_cfg.get("ylabel"):
         ax.set_ylabel(str(ax_cfg["ylabel"]))
 
-    points = {}
+    points, ownership = {}, {f"axes:{ax_cfg['id']}": ax}
     categorical = ax_cfg.get("kind") == "categorical"
     cats = ax_cfg.get("categories") or []
     for sr in model["series"]:
@@ -104,6 +138,9 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
             mappable.set_gid(role)
             cbar = fig.colorbar(mappable, ax=ax)
             cbar.ax.set_gid(f"tv-colorbar-{sr['id']}")
+            ownership[f"series:{sr['id']}"] = mappable
+            ownership[f"axes:colorbar_{sr['id']}"] = cbar.ax
+            ownership[f"colorbar:{sr['id']}"] = cbar
             # 色条刻度字号同样按用户单位换算
             cbar.ax.tick_params(labelsize=10.0 / render_scale)
             continue
@@ -148,6 +185,8 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
             )
         else:
             plot_style = _safe_style(style)
+            if native and "linewidth" in style:
+                plot_style["linewidth"] = float(style["linewidth"])
             if kind == "scatter":
                 plot_style.setdefault("marker", "o")
                 plot_style["linestyle"] = "none"
@@ -156,12 +195,18 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
             ax.plot(
                 xs,
                 ys,
-                linewidth=float(plot_style.pop("linewidth", 2.0) or 2.0) / render_scale,
+                linewidth=(
+                    float(plot_style.pop("linewidth", 2.0))
+                    if native
+                    else float(plot_style.pop("linewidth", 2.0) or 2.0)
+                )
+                / render_scale,
                 label=label or None,
                 **plot_style,
             )
             artists = [ax.lines[-1]]
         # 语义角色标记：完整产物（线/柱/marker/误差成员）都带角色 id（matplotlib gid → SVG id）
+        ownership[f"series:{sr['id']}"] = artists
         for j, artist in enumerate(_iter_artists(artists)):
             artist.set_gid(f"{role}-{j + 1}" if j else role)
     if categorical:
@@ -177,12 +222,27 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
         ax.set_xlabel(str(ax_cfg["xlabel"]), fontsize=10.0 / render_scale)
     if ax_cfg.get("ylabel"):
         ax.set_ylabel(str(ax_cfg["ylabel"]), fontsize=10.0 / render_scale)
-    fig.canvas.draw()  # realize transforms & locators（exp2 口径）
+    paired = None
+    if native:
+        from tavotto.engine.chartmanifest import render_scaffold
+
+        paired = render_scaffold(
+            fig,
+            ownership,
+            frame,
+            list(patches),
+            salt=salt,
+            coordinate_space="scene-viewport-pt",
+        )
+    else:
+        fig.canvas.draw()  # realize transforms & locators（exp2 口径）
     # 轴分数（matplotlib 原生、y-up）：display(72dpi) 减轴原点、除轴尺寸。
     # figure 1 display px = 1 场景用户单位；display y-up 的轴底 = vb_h - (rect 底偏移)。
     ax_disp_left = left
     ax_disp_bottom = vb_h - bottom
     ax_w_px, ax_h_px = ax_w, ax_h
+    if native:
+        ax_disp_left, ax_disp_bottom, ax_w_px, ax_h_px = ax.bbox.bounds
     for sr in model["series"]:
         if sr["kind"] == "image":
             continue  # 网格系列的命中事实由图像矩形承担，不做逐点
@@ -196,13 +256,19 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
             for p in disp
         ]
 
+    if paired is not None:
+        paired["facts"] = {
+            "series_points": points,
+            "ticks": _tick_facts(ax),
+            "axes_rect_user": [ax_x, ax_y, ax_w, ax_h],
+        }
+        return paired
     with matplotlib.rc_context({"svg.fonttype": "none", "svg.hashsalt": salt}):
         buf = io.BytesIO()
         fig.savefig(buf, format="svg")
     text = buf.getvalue().decode("utf-8")
     text = re.sub(r"<dc:date>[^<]*</dc:date>\s*", "", text)
     text = re.sub(r"<dc:creator>.*?</dc:creator>\s*", "", text, flags=re.S)
-
     facts = {
         "series_points": points,
         "ticks": _tick_facts(ax),
@@ -309,12 +375,16 @@ def main() -> None:
             out = {"ok": True, "engine": engine}
         else:
             result = scaffold_fragment(
-                req.get("model", {}), req.get("frame", {}), salt=str(req.get("salt", "tavotto"))
+                req.get("model", {}),
+                req.get("frame", {}),
+                salt=str(req.get("salt", "tavotto")),
+                render_profile=req.get("render_profile", LEGACY_PROFILE),
+                patches=req.get("patches", ()),
             )
             out = {
                 "ok": True,
                 "fragment_b64": base64.b64encode(result["fragment"]).decode("ascii"),
-                "facts": result["facts"],
+                **{key: value for key, value in result.items() if key != "fragment"},
                 "engine": engine,
             }
     except Exception as exc:  # noqa: BLE001 — 协议层兜底，错误以稳定 JSON 表达

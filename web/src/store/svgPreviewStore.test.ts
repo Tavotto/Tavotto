@@ -27,6 +27,12 @@ import {
   previewScale,
   setHistoryMode,
   settleFailedAuthority,
+  queuedTranslation,
+  updateQueuedTranslation,
+  flushQueuedTranslation,
+  prepareQueuedTranslationCommit,
+  captureQueuedTranslationCommit,
+  cancelQueuedTranslation,
 } from './svgPreviewStore'
 
 const PANEL = 'p1'
@@ -53,6 +59,108 @@ afterEach(() => {
 
 const begin = (key = KEY) =>
   beginPreview({ panelId: PANEL, renderKey: key, rev: 3, sizeMm: SIZE })
+
+function mountNativeSvg(par = 'none') {
+  document.body.innerHTML = `<div data-element-svg="${PANEL}">
+    <svg viewBox="50 20 100 100" width="200pt" height="100pt" preserveAspectRatio="${par}">
+      <g id="source"><path style="fill: none; stroke: red; stroke-width: 3"/></g>
+      <g data-tavotto-native-viewport-pt="200 100" transform="matrix(0.5 0 0 0.5 50 20)">
+        <g id="native" transform="translate(2 3)"><path style="fill: none; stroke: blue; stroke-width: 3"/></g>
+      </g>
+    </svg>
+  </div>`
+}
+
+describe('组合native图的pt坐标预览与原源坐标分开', () => {
+  it.each(['none', 'xMidYMid meet', 'xMaxYMin slice'])(
+    '原root缩放/非零原点/PAR=%s时，位移、缩放锚点与线宽均使用native pt', (par) => {
+      mountNativeSvg(par)
+      const before = findPanelSvg(PANEL)!.outerHTML
+      beginPreview({ panelId: PANEL, renderKey: KEY, sizeMm: [200 * 25.4 / 72, 100 * 25.4 / 72] })
+      previewTransform('native', 0.1, 0.2)
+      previewTransform('source', 0.1, 0.2)
+      expect(previewStyle('native', 'line', 'linewidth', 4)).toBe(true)
+      expect(previewStyle('source', 'line', 'linewidth', 4)).toBe(true)
+      flushPreviewFrame()
+      expect(tf('native')).toBe('translate(20,20) translate(2 3)')
+      expect(tf('source')).toBe('translate(10,20)')
+      expect((gid('native')!.querySelector('path') as SVGElement).style.strokeWidth).toBe('4')
+      expect(Number((gid('source')!.querySelector('path') as SVGElement).style.strokeWidth)).toBeCloseTo(2, 12)
+
+      previewScale('native', 2, 0.75, 0.25)
+      flushPreviewFrame()
+      expect(tf('native')).toBe('matrix(2,0,0,2,-150,-25) translate(2 3)')
+      cancelPreview()
+      expect(findPanelSvg(PANEL)!.outerHTML).toBe(before)
+    },
+  )
+
+  it('同版DOM重插后按新target重放，commit留到权威换版，取消逐字还原', () => {
+    mountNativeSvg()
+    begin()
+    previewTransform('native', 0.1, 0)
+    previewStyle('native', 'line', 'linewidth', 4)
+    flushPreviewFrame()
+    commitPreview([{ gid: 'native', prop: 'linewidth', value: 4 }], 'next')
+    mountNativeSvg()
+    reattachPreview(PANEL, KEY)
+    expect(tf('native')).toBe('translate(20,0) translate(2 3)')
+    expect((gid('native')!.querySelector('path') as SVGElement).style.strokeWidth).toBe('4')
+    reattachPreview(PANEL, KEY)
+    expect(tf('native')).toBe('translate(20,0) translate(2 3)')
+    cancelPreview()
+    expect(tf('native')).toBe('translate(2 3)')
+    expect((gid('native')!.querySelector('path') as SVGElement).style.strokeWidth).toBe('3')
+
+    begin()
+    previewTransform('native', 0.2, 0)
+    flushPreviewFrame()
+    commitPreview([{ gid: 'native', prop: 'position', value: [0.2, 0] }], 'next')
+    mountNativeSvg()
+    reattachPreview(PANEL, 'next')
+    expect(previewSession()).toBeNull()
+    expect(tf('native')).toBe('translate(2 3)')
+  })
+
+  it('图例缩放即使没有前置平移，也按物理viewport计算不动点', () => {
+    mountNativeSvg('xMidYMid meet')
+    begin()
+    previewScale('native', 1.5, 0.75, 0.25)
+    flushPreviewFrame()
+    expect(tf('native')).toBe('matrix(1.5,0,0,1.5,-75,-12.5) translate(2 3)')
+    cancelPreview()
+    expect(tf('native')).toBe('translate(2 3)')
+  })
+
+  it('排队后续位移也使用目标pt依据，提交准备与取消仍还原原始transform', () => {
+    mountNativeSvg()
+    const q = queuedTranslation(PANEL, 'native')
+    updateQueuedTranslation(q, [0.1, 0.2])
+    flushQueuedTranslation(q)
+    expect(tf('native')).toBe('translate(20,20) translate(2 3)')
+    prepareQueuedTranslationCommit(q)
+    expect(tf('native')).toBe('translate(2 3)')
+    captureQueuedTranslationCommit(q)
+    updateQueuedTranslation(q, [0.2, 0])
+    flushQueuedTranslation(q)
+    expect(tf('native')).toBe('translate(40,0) translate(2 3)')
+    cancelQueuedTranslation(q)
+    expect(tf('native')).toBe('translate(2 3)')
+  })
+
+  it('坏native marker不写入猜测的位移/线宽，也不声称样式预览成功', () => {
+    mountNativeSvg()
+    gid('native')!.parentElement!.setAttribute('data-tavotto-native-viewport-pt', '200 NaN')
+    const before = findPanelSvg(PANEL)!.outerHTML
+    begin()
+    previewTransform('native', 0.1, 0.2)
+    expect(previewStyle('native', 'line', 'linewidth', 4)).toBe(false)
+    flushPreviewFrame()
+    expect(findPanelSvg(PANEL)!.outerHTML).toBe(before)
+    cancelPreview()
+    expect(findPanelSvg(PANEL)!.outerHTML).toBe(before)
+  })
+})
 
 /* --------------------------- transform 不覆盖 ----------------------------- */
 

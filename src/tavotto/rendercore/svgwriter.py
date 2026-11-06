@@ -23,7 +23,6 @@ import base64
 import copy
 import hashlib
 import math
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping
@@ -128,11 +127,6 @@ def _text_safe(cp: int) -> bool:
     return not (0xE000 <= cp <= 0xF8FF or 0xF0000 <= cp <= 0x10FFFF or 0xFDD0 <= cp <= 0xFDEF)
 
 
-_URL_REF = re.compile(r"url\(\s*(['\"]?)#([^\s)'\"]+)\1\s*\)", re.I)
-_CSS_RULE = re.compile(r"([^{}]+)\{([^{}]*)\}")
-_CSS_ID = re.compile(r"#([A-Za-z_][A-Za-z0-9_-]*)")
-
-
 def _isolate(root: ET.Element, prefix: str, scope: str) -> None:
     """Rewrite only validated local references; CSS selectors are scoped per instance.
 
@@ -140,28 +134,9 @@ def _isolate(root: ET.Element, prefix: str, scope: str) -> None:
     does not attempt to parse arbitrary CSS. In particular colors in declarations
     are never mistaken for ID selectors.
     """
-    ids = {node.get("id"): prefix + node.get("id") for node in root.iter() if node.get("id")}
+    from tavotto.svgisolation import isolate_svg
 
-    def urls(value: str) -> str:
-        return _URL_REF.sub(lambda m: f"url(#{ids[m.group(2)]})", value)
-
-    for node in root.iter():
-        for key, value in list(node.attrib.items()):
-            if key == "id":
-                node.set(key, ids[value])
-            elif key in ("href", f"{{{XLINK}}}href") and value.startswith("#"):
-                node.set(key, "#" + ids[value[1:]])
-            else:
-                node.set(key, urls(value))
-        if node.tag == f"{{{SVG}}}style" and node.text:
-            rules = []
-            for match in _CSS_RULE.finditer(node.text):
-                selectors = _CSS_ID.sub(
-                    lambda m: "#" + ids.get(m.group(1), prefix + m.group(1)), match.group(1)
-                )
-                scoped = ",".join(f"#{scope} {s.strip()}" for s in selectors.split(","))
-                rules.append(scoped + "{" + urls(match.group(2)) + "}")
-            node.text = "\n".join(rules)
+    isolate_svg(root, prefix=prefix, scope=scope)
 
 
 class SvgWriter:

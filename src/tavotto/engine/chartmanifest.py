@@ -242,6 +242,34 @@ def _filtered_manifest(manifest, gid_roles):
     return out
 
 
+def _gid_svg_members(state, gid_roles, svg_ids, runtime):
+    """按真实 artist 身份列 DOM 成员，供组合后的预览/绘制事实消费。"""
+    result = {}
+    for el in state.elements:
+        artist, gid = el["artist"], el["gid"]
+        if gid not in gid_roles:
+            continue
+        if isinstance(artist, runtime.overrides.SeriesGroup):
+            artists = artist.members()
+        elif isinstance(artist, runtime.tickmodel.TickSet):
+            artists = artist.labels
+        elif isinstance(artist, runtime.tickmodel.TickLabel):
+            artists = [artist.live()]
+        elif isinstance(artist, runtime.overrides.ColorbarProxy):
+            artists = [getattr(artist.cb, key, None) for key in ("solids", "outline", "dividers")]
+            artists.extend(artist.cb.lines)
+        else:
+            artists = [artist]
+        members = []
+        for member in artists:
+            getter = getattr(member, "get_gid", None)
+            value = getter() if getter is not None else None
+            if value in svg_ids and value not in members:
+                members.append(value)
+        result[gid] = members
+    return result
+
+
 def _primary_gid(state, gids, root, container_type):
     """以显式所有者为主对象，不能把 BarContainer 附带误差棒当成柱系列。"""
     if isinstance(root, (list, tuple)) and not isinstance(root, container_type):
@@ -271,6 +299,7 @@ def render_scaffold(
     *,
     stem: str = "chart",
     salt: str = "tavotto",
+    coordinate_space: str = "viewbox-user",
 ) -> dict:
     """全新 scaffold Figure + 完整 patch 列表 → 配对 SVG/native manifest。
 
@@ -291,6 +320,8 @@ def render_scaffold(
     from tavotto.rendercore.svgcheck import parse_svg, strip_matplotlib_doctype
 
     vb, scene_size, scene_map = _frame(frame)
+    if coordinate_space not in ("viewbox-user", "scene-viewport-pt"):
+        raise ChartManifestError("chart_manifest_frame_invalid", "coordinate_space")
     runtime = bridgeboot.load_engine_modules(
         str(Path(__file__).resolve().parent), bridgeboot.ENGINE_SIBLINGS
     )
@@ -335,6 +366,16 @@ def render_scaffold(
     fragment_vb = [float(v) for v in svg.attrib["viewBox"].split()]
     fx, fy, fw, fh = fragment_vb
     sx, sy = vb[2] / fw, vb[3] / fh
+    fragment_map = [sx, 0.0, 0.0, sy, vb[0] - fx * sx, vb[1] - fy * sy]
+    if coordinate_space == "scene-viewport-pt":
+        from tavotto.svgcoord import invert
+
+        if any(
+            not math.isclose(a, b, abs_tol=1e-7)
+            for a, b in zip(fragment_vb, [0.0, 0.0, *scene_size])
+        ):
+            raise ChartManifestError("chart_manifest_frame_invalid", "physical_figure_size")
+        fragment_map = list(invert(scene_map))
     roles = {}
     for role in ownership:
         gids = [el["gid"] for el in state.elements if gid_roles.get(el["gid"]) == role]
@@ -347,22 +388,29 @@ def render_scaffold(
             "input_gids": inputs[role],
         }
     failed = {(p["gid"], p["prop"]) for p in canonical} - state.applied.keys()
-    return {
+    result = {
         "fragment": fragment,
         "manifest": _filtered_manifest(manifest, gid_roles),
         "roles": roles,
         "gid_roles": gid_roles,
         "unowned_gids": [el["gid"] for el in state.elements if el["gid"] not in gid_roles],
         "coordinates": {
-            "kind": "scaffold-figure-fraction",
+            "kind": (
+                "scene-viewport-figure-fraction"
+                if coordinate_space == "scene-viewport-pt"
+                else "scaffold-figure-fraction"
+            ),
             "composed": False,
             "view_box": vb,
             "fragment_view_box": fragment_vb,
             "scaffold_size_pt": [fw, fh],
             "scene_size_pt": scene_size,
             "scene_user_to_pt": scene_map,
-            "fragment_to_scene_user": [sx, 0.0, 0.0, sy, vb[0] - fx * sx, vb[1] - fy * sy],
+            "fragment_to_scene_user": fragment_map,
         },
         "warnings": warnings,
         "unrestored": len(failed | state.unrestored),
     }
+    if coordinate_space == "scene-viewport-pt":
+        result["svg_members"] = _gid_svg_members(state, gid_roles, svg_ids, runtime)
+    return result

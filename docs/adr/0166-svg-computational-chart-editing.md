@@ -39,6 +39,8 @@
   **零脚本执行**（实验四：`python -I` 全新进程冷重算与热计算逐字节相同）。仅有来源引用（无数据）的图
   如实提示缺来源，不自动执行陌生代码。
 - **项目来源附件**：保存引用固定为schema/sourceId/输入字节SHA256/大小/原场景digest；由权威项目收纳根派生`chart_sources/<sha256>.svg`，不接受客户端路径。冻结整份精确输入，包括自包含包外层；计算仍消费整份输入并实际重放核对，不能借解包后的源跳过验证。附件先原子新建且禁止覆盖，读回校验后正文沿用既有单一原子提交点，不另建历史或事务数据库。schema 4目前仅有显式验证入口，默认2/3读写合同不变；新格式发现、旧客户端隔离及保存消费尚待整合验收。
+- **原生编辑场景**：`native-manifest/1` 在物理 viewport pt 中创建、应用完整 overrides 并 draw，再经原 viewBox/PAR 与父变换的逆映射接回场景。原生 gid 保留供既有编辑器消费；只隔离原场景派生 DOM 的 id/CSS，原输入字节及绑定摘要不改。最终 manifest 反映真实组合后的 paint order、祖先 opacity 与可表达的矩形 clip；跨父、多成员插绘、非矩形 clip 和 colorbar proxy 等尚缺共同目标解析的场景保留 placement receipt，但 `composed=False`，不能冒充精确编辑资格。
+- **即时预览坐标**：生成的每个原生 wrapper 携带 `data-tavotto-native-viewport-pt="width height"`，值来自同一次场景物理尺寸；先从原场景派生 DOM 移除同名属性。前端唯一 reader 按目标读取最近 wrapper，平移、缩放锚点、排队预览和 pt 线宽共同消费该基底。普通 SVG 保留旧 root 换算；非法标记拒绝临时预览。此属性仅说明 DOM 局部单位，不能代替配对 manifest 或授予编辑权限。
 
 ### 2. 导出：SVG→IR 翻译器（新增 `rendercore/` 模块），五格式合同不变
 

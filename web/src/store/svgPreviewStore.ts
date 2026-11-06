@@ -31,9 +31,9 @@ import {
   applyStyleEdit,
   canStyleEditApply,
   restoreStyleEdits,
-  unitsPerPt,
   type StyleEdit,
 } from '@/lib/svgStyle'
+import { svgPreviewCoordinates } from '@/lib/svgPreviewCoordinates'
 import {
   newTiming,
   traceAuthority,
@@ -487,7 +487,9 @@ export function flushQueuedTranslation(q: QueuedTranslation): void {
     q.node = node
     q.base = node.getAttribute('transform')
   }
-  const [w, h] = viewBox(svg)
+  const basis = svgPreviewCoordinates(svg, node)
+  if (!basis) return
+  const { width: w, height: h } = basis
   const [dx, dy] = q.delta
   q.lastApplied = dx || dy ? `translate(${dx * w},${dy * h})${q.base ? ` ${q.base}` : ''}` : q.base
   restoreTransform(node, q.lastApplied)
@@ -575,7 +577,9 @@ function writeTransform(op: Extract<PendingOp, { kind: 'transform' }>): void {
     p.baseNodes.set(op.gid, node)
   }
   const base = p.baseTransforms.get(op.gid) ?? null
-  const vb = viewBox(svg)
+  const basis = svgPreviewCoordinates(svg, node, p.sizeMm)
+  if (!basis) return
+  const vb = [basis.width, basis.height]
   const tx = op.dfx * vb[0]
   const ty = op.dfy * vb[1]
   // **永远从 base 现算**：`translate(…) <原始>` 让平移落在父坐标系里，
@@ -601,18 +605,14 @@ function writeStyle(op: Extract<PendingOp, { kind: 'style' }>): void {
   const node = findGidNode(svg, op.gid)
   p.styles.set(`${op.gid}|${op.prop}`, { gid: op.gid, prop: op.prop, value: op.value, role: op.role })
   if (!node) return
-  const edits = applyStyleEdit(node, kind, op.value, { unitsPerPt: unitsPerPt(svg, p.sizeMm) })
+  const basis = svgPreviewCoordinates(svg, node, p.sizeMm)
+  if (!basis) return
+  const edits = applyStyleEdit(node, kind, op.value, basis)
   // 每个元素的 base（整条 style 原文）只记最早那一次：同一条属性被拖着改
   // 十次，账本里仍然只有 matplotlib 给的那份原文
   for (const e of edits) {
     if (!p.edits.some((x) => x.el === e.el)) p.edits.push(e)
   }
-}
-
-function viewBox(svg: SVGSVGElement | null): [number, number] {
-  const vb = (svg?.getAttribute('viewBox') ?? '').split(/[\s,]+/).map(Number)
-  if (vb.length < 4 || !Number.isFinite(vb[2]) || !Number.isFinite(vb[3])) return [100, 100]
-  return [vb[2], vb[3]]
 }
 
 /* -------------------------------------------------------------------------- */
@@ -696,7 +696,8 @@ export function previewStyle(gid: string, role: string, prop: string, value: unk
   const node = findGidNode(svg, gid)
   if (!node) return false
   const sizeMm = panels.get(session.panelId)?.sizeMm
-  if (!canStyleEditApply(node, kind, value, { unitsPerPt: unitsPerPt(svg, sizeMm) })) return false
+  const basis = svgPreviewCoordinates(svg, node, sizeMm)
+  if (!basis || !canStyleEditApply(node, kind, value, basis)) return false
   schedule(`s:${gid}|${prop}`, { kind: 'style', panelId: session.panelId, gid, role, prop, value })
   return true
 }
