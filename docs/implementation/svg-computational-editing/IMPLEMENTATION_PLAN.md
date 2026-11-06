@@ -126,22 +126,25 @@ flowchart TD
 
 ### 4.1 开始实施前
 
-1. 重新读取最新根/子目录规则和 `docs/rules/repo/lessons.md` 对应节；记录原工作区状态、当前分支、git 用户名/邮箱。
-2. `git fetch origin` 成功后取得最新 `origin/main` SHA，记录 fetch 时间；失败时不能把缓存的远端引用称为最新。
-3. 为实施新建 `zixu.wang/svg-computational-editing`（重名则使用未占用后缀），从当次最新主干创建独立 worktree。计划分支只含文档；若计划尚未合入，把本文件以独立文档提交带入实施分支。
-4. 用户未提交修改留在原工作区，不自动 stash、不 reset、不覆盖。设置绝对 `PYTHONPATH=<实施 worktree>/src` 并探测实际 import 位置，确认测试运行的是该树。
-5. 同一依赖链的批次默认在实施分支顺序 commit；独立代理仅做无写冲突任务，写代码时使用自己的 worktree/分支，由主执行者整合。
+> 2026-11-06按用户后续要求更新：**只使用已有实施树和当前分支，不新建/切换分支或worktree**。此条取代最初计划中的新建实施分支及代理独立worktree要求。当前执行状态与顺序见PROGRESS/NEXT_PHASE。
 
-推荐命令骨架（在已有仓库执行，路径使用实际选定的新目录；每条检查退出码后才运行下一条）：
+1. 重新读取最新根/子目录规则和 `docs/rules/repo/lessons.md` 对应节；记录原工作区状态、当前分支、git 用户名/邮箱。
+2. 核对当前HEAD、远端引用及已取得的远端证据；集成前按需要 `git fetch origin`，记录时间和SHA。失败或本轮未fetch时不能把缓存引用称为最新，不因只读远端失败丢弃本地已验证成果。
+3. 沿用 `E:/0 - Project/Tavotto-svg-r00` 的 `zixu.wang/svg-computational-r00`。原目录 `E:/0 - Project/Tavotto` 保持原有main内容，不自动合并、拷回或改分支。已提交成果与未完成差异均须保留；后续实际HEAD可能前进，不能回退到文档快照。
+4. 用户未提交修改留在原工作区，不自动 stash、不 reset、不覆盖。设置绝对 `PYTHONPATH=<实施 worktree>/src` 并探测实际 import 位置，确认测试运行的是该树。
+5. 同一分支按功能顺序commit。已授权的独立代理共用实施树，一个文件同时一个写入者；根代理统一契约、app集成及提交。不为并行任务另建分支/worktree。
+
+只读启动核对（在现有实施树执行，每条检查退出码；不含新建/切换命令）：
 
 ```powershell
 git status --short
 git config user.name
 git config user.email
-git fetch origin
+git branch --show-current
+git rev-parse HEAD
+git diff --stat
+git diff --cached --stat
 git rev-parse origin/main
-# 下列分支和目录必须尚未存在；若存在，检查后复用或换新名称，不能覆盖。
-git worktree add -b zixu.wang/svg-computational-editing ../Tavotto-svg-computational-editing origin/main
 ```
 
 ### 4.2 按功能 commit
@@ -149,10 +152,10 @@ git worktree add -b zixu.wang/svg-computational-editing ../Tavotto-svg-computati
 - 每批表中的 commit 是功能边界，复杂批次可拆为多个完整功能提交；不能把 SG02–SG16 压成一个“支持 SVG”提交。
 - 同一契约的后端、前端镜像、行为测试、必要迁移与文档必须同提交，不能为了分层让中间状态破坏协议。
 - 仅暂存本批具体路径，检查 staged diff；不使用无审查的 `git add .`，不加 `Co-Authored-By` 尾注。
-- 只提交达到本批验收的功能；未完代码可保留在独立 worktree，并在 checkpoint 标明 dirty/未验证。不得写 `passed` 掩盖失败。
+- 只提交达到本批验收的功能；未完代码留在当前实施树，在checkpoint标明dirty/未验证，通过定向暂存隔离；不另建worktree，不写passed掩盖失败。
 - 修复在对应功能后单独 `fix(...)`；连续修复暴露同一结构问题时执行第三路径审查，不堆例外。
-- 新核心不变式反证先在独立可丢弃 worktree 保存精确快照，按现行规则变异、`python -B` 运行并还原；不得还原主树时抹掉未提交实现。功能提交前必须拿到反证失败证据。
-- 每轮批次开始 fetch 并查看主干变化；无需每个 commit 都 rebase。存在相关接口变化或进入集成验收前，同步最新主干，核对提交数、双方改动和最终 diff，重跑受影响检查。
+- 新核心不变式先保存精确快照，优先使用进程内变异或仓库外独立实验反证；确需临时修改生产文件时，冻结其他写入者与watcher，验证后逐字还原并核SHA，不覆盖其他改动。功能提交前取得真实失败证据，不为反证新建分支/worktree。
+- 集成验收前核对主干变化及相关接口，不为每个commit自动rebase或合并。确需同步时先保留当前差异，评估双方改动，按现有授权处理，重跑受影响检查；不能静默换基线后沿用旧SHA资格。
 - 完整验证期间冻结工作树，不同时编辑、重建产物、rebase 或执行变异。同步基线后原测试证据不能自动转移到新 SHA。
 - 每批开始记录上一个已验收 commit 作为回退点；功能问题优先修复，需撤销已提交功能时在自己的干净分支用可审查的 revert，先保留未提交工作；禁止 `reset --hard` 或清理原用户目录。数据迁移/写回必须有独立恢复验证，代码回退不等于用户数据可回退。
 - 本轮只进行本地提交。以后获得推送授权时用显式 `git push origin HEAD:<分支>`；不自动强推主干、不改变远端默认分支、不自动合并或发布。

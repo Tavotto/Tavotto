@@ -2,12 +2,12 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-06 15:32复核）：共享图内编辑242cabc0、完整状态生产导出c2fd47d5、v2恢复53393810、多DOM目标8e6c399a及PNG/TIFF验证2a40fec9已分别提交。真实UI已验证轴范围/线宽、撤销重做、实际导出与7条编辑重新导入；当前受影响前端34文件983项及正式build/i18n/playground检查通过。正式项目保存/冷重开、图例联动、欠定成员层序/复杂clip、worker生命周期和完整旧功能资格未闭环，M1未通过。**
+> **当前结论（2026-11-06 16:53后复核）：真实图内修改、撤销重做、生产导出和v2完整编辑重新导入已有证据；计算任务生命周期5b2b1403、重复画布保存保护ae064662、v4目录/session叶子83f4ffbf新增独立提交。精确INPUT附件的后端消费者已暂存，前端31文件已冻结，18文件700项及正式build/i18n通过，尚未提交联验。v4 app仅部分草稿，未注册显式路由，9项HTTP保存测试只有收集记录；当前app格式检查exit1。正式保存/新进程冷开、图例、复杂几何与最终旧功能资格未闭环，M1未通过。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 
 ## 环境（2026-11-06 当前快照）
 
-- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；本次功能HEAD=`2a40fec9`，已收敛共享消费者/导出/恢复/多目标。worker生命周期的desktopproc.py、chartprocess.py仍是独立开发草稿，不是冻结候选。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入这些成果。
+- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；复核功能HEAD=`83f4ffbf`。worker生命周期已在5b2b1403接入app并验证；精确来源消费者待提交，v4 app后续草稿未完成。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入这些成果；不能在原目录启动旧版本后据此判断新功能效果。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述三个新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
@@ -32,15 +32,35 @@
 | SG11–SG17 | partial / pending | 979a4962、48d3d27a、cae96f89、5bc82a81、bbbffed1 | 来源附件核心与共享导出已有；正式项目保存/迁移、写回、入口/平台和最终回归待补 |
 | R00 | baseline_and_regressions | 5a4f5c2c | 基础反例保留；本轮用户流程和导出反例待随修复入库 |
 | R01/R02 | core_partial / multi_target_verified | 3236307c、8e6c399a | 跨父/split/errorbar/colorbar共同目标与预览通过；任意clip、欠定成员paint slots和图例仍缺 |
-| R03 | partial / frozen_native_export_verified | 029dfac2、242cabc0、c2fd47d5 | 共享API与生产导出冻结完整状态；worker lease/admission/组取消及输出上限正实施，尚未接入app |
+| R03 | runner_integrated / source_consumers_uncommitted | 029dfac2、242cabc0、c2fd47d5、5b2b1403 | 受控runner已接真实API；精确INPUT附件消费者已验证但未提交，最终联验待补；不宣称全产品总进程cap |
 | R04 | affected_checks_passed | a8a088cf、18907d65、cbd8d95e | 请求序号/表单/项目切换、late response 和单项 drop 均有受影响测试；Dialog 已可发起真实绑定；完整编辑器生命周期在 R06 追验 |
-| R05 | partial / source_core_verified | cae96f89、82b142d2、bbbffed1 | 自包含删源/新父进程与附件核心通过；保存/自动保存/版本、包安装和旧版隔离未接线 |
-| R06 | product_editing_verified / partial | 242cabc0、53393810、8e6c399a | 真UI点选、线宽/范围、撤销重做与v2恢复通过；34前端文件983项受影响回归，图例/正式冷保存仍缺 |
+| R05 | namespace_leaf_committed / persistence_incomplete | cae96f89、82b142d2、bbbffed1、ae064662、83f4ffbf | 目录/session隔离叶子与重复ID序列化保护已提交；正式v4端点、前端保存回执、版本/包及冷启动发现未闭环 |
+| R06 | product_editing_verified / persistence_pending | 242cabc0、53393810、8e6c399a | 真UI点选、线宽/范围、撤销重做与v2恢复通过；历史983与后续700分属不同范围/时刻，图例/正式冷保存仍缺 |
 | R07 | partial / production_formats_verified | 5bc82a81、c2fd47d5、2a40fec9 | 生产SVG/PDF9项及PNG/TIFF2项分次通过；EPS、分享范围与M1全链未完成 |
 | R08 | full_edit_restore_verified / partial | cae96f89、029dfac2、53393810 | 生产v2导出与真UI完整编辑恢复通过；A采用、分享选择和正式项目迁移待补 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-06 16:53后 执行状态、实际效果与下一阶段复核
+
+- 复核HEAD=83f4ffbf626e0eab1b7bd04df07e8f9fe8be04cc；唯一实施分支/树不变，原main目录仍干净。本轮是状态与任务安排复核，未更改生产代码，未提交未完成功能、合并或发布。三份接续文档及总计划Git条款同步当前状态，不把15:32快照当作最新。
+- 31个精确来源前端文件逐个SHA256与source-ref-consumers-validation.json一致（0漂移）；实际原始日志为18文件700项通过，0失败/skip，47.95秒，正式build/i18n/oxlint/diff均exit0，14条既有lint warning保留。9组反证含一次过窄筛选的更正记录；不把初次skip当反证成功。未重跑无变化的昂贵测试，当前新消费者尚无真实浏览器/API联验和playground重建。
+- JUnit复核：附件专项11项51.064秒和无chart闸2项1.210秒分别通过；旧多页21项11.804秒通过。此前53项API集成146.613秒早于最后多页cache修复；运行边界46项127.550秒属于另一源码时刻，不能与700或历史983累加为当前全量资格。desktop既有PID回执失败原版本对照仍为1失败，未修、未冒充通过。
+- app有两层改动：暂存区blob=29ec3510397348b884f41f235c390bb37bd69c88是精确来源消费者；工作区另有114行v4未完成接线。当前工作区AST无v4路由注册，autosave/versions还调用旧validator。test_chart_documents_v4.py仅9项收集成功，没有执行保存验收。本次只读Ruff check exit0、format --check exit1（三处待格式化），因此不声称当前dirty树已绿，不在format失败后追加产品pytest。
+- 再看既有真实UI截图：7条编辑、线宽7、X最大20和双曲线确实可见；旧图例样式未联动、顶部“2张仅版面”仍存在。截图来自既有导出→新会话导入流程，不是正式项目保存冷重开。历史截图实际位于证据根output/playwright/native-v2-ui-restored-exact.png，非实施仓库下的同名相对目录。
+- clip只读候选已有14案例/37参考像素和31覆盖层点及7捷径反证，距离/框选/宽描边合同未落地。EPS外部原型14组结构/8预期拒绝exit0，可包含完整装饰与中文，未改生产源码；缺独立PS读取器，所有EPS像素资格not_run，不能称EPS导出已支持。详细报告native-clip-geometry-design.md、native-eps-design.md。
+- 当前CIM/端口复核：后端PID43356（本机15:51:24启动，23984）仍运行，加载早于新附件/v4代码；Vite23983无监听、旧71528不存在。native-edit浏览器daemon4468在，旧v2 daemon62844已不在。没有启动新调度器；这些调试进程不等于整夜执行。后续只按实时PID/创建时间/命令管理，不照抄历史数字。
+- 下一顺序：N0分离并提交已验证附件消费者→N1后端v4保存/autosave/session/versions与真实冷父进程→N2前端格式/保存回执/冷发现→N3包安装搬迁→N4图例/迁移/readiness→N5成员层序和clip→N6分享/EPS/M1→N7剩余能力/M2→N8冻结候选/M3。完整退出条件见NEXT_PHASE；仍以轴模型、明确数据绑定和现有编辑能力为主线，不要求普通SVG反推Python。
+- 复核证据status-review-20261106-1700.json内容记录实际16:53时间、31文件哈希、报告退出码、JUnit计数、app哈希与路由AST判据；文件名不是17:00运行时间声明。本轮docs引用/规则索引41项通过、0失败/skip、exit0（status-review-1653-docs.xml）；agents_budget --check及文档diff --check exit0，预算输出既有OVER提示不等于全部在建议范围。该资格只针对文档，不替代当前未完成app验收。
+
+### 2026-11-06 精确INPUT附件进入全部计算与导出入口
+
+- inspect/bind/compute/render/PNG与原图/标注/留白/画布/多页共用精确INPUT读取；显式chart_source只从权威项目附件读取并核对，不依赖原fileId存在，不借同名原文件补缺。snapshot保存input_svg和包内source_svg两份不同事实；原生v2必须实际核对外层存储状态后重算。显式附件字节进入render_revision及缓存身份；无ref的旧请求/实参数量/身份保留。
+- 后端exportreq统一委托documents.validate_chart_source，深拷贝且按sourceId/sceneDigest绑定原图/各panel/各页，null/无chart/非panel/畸形引用拒绝；render/PNG也在进入legacy前拒绝无chart却携ref。parser/plan221项通过，10类无ref旧payload/完整plan/identity对旧模块逐字节一致，4组内存反证实际exit1。
+- 根代理真实API/legacy/恢复/生产导出53项同次通过，0失败/skip、exit0、146.613秒；之后新增组合scope3项通过并暴露真实多页cache缺陷：不同INPUT的同名同模型页面会复用第一页，跳过损坏第二附件。改为消费单页ExportRequest完整render_plan_ref，兼顾profile/标注/留白/图幅，不再手列另一套身份字段。
+- 缓存修后source专项11项同次通过/0skip；后加无chart入legacy闸2项通过，旧multipage21项通过，native合页补验通过。真实新覆盖原源删除/漂移、inspect/重绑/compute/SVG/PNG、完整生产v2附件、标注/留白/画布、同逻辑源两份INPUT与坏第二页拒绝。把读取器改成忽略ref的外部内存反证，使tampered测试在legacy worker入口真实失败，生产文件未改。
+- 首次新探针忘发inline_svg导致2项KeyError，修请求后通过；多页修后首个复测误期望全失败作业HTTP200，现沿既有同步全失败HTTP500合同检查错误码及无产物，没有为测试改变旧协议。历史红报告保留，当前查chart-document-render-final11.xml、chart-source-unbound-final.xml、chart-source-legacy-multipage.xml、chart-source-no-fallback-negative.xml。前端source消费者最后资格仍在收敛，v4正文保存/冷开尚未接线。
 
 ### 2026-11-06 v4目录与会话命名空间叶子
 
