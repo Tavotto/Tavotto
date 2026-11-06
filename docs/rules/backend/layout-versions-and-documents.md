@@ -79,6 +79,7 @@ order: 200
 - **项目包**：`POST /api/package` 打 zip（layout+素材+脚本+sha1 清单）；
   `POST /api/package/open` 检视（缺失/sha1 漂移），素材永不自动写入图库。
 - **有界项目包容器**：`documentpackage`是ZIP路径/别名/成员/目录/展开/压缩预算和CRC的唯一权威，六项`PackageBudget`由调用者明确提供；不任意extract。`staged_package`立即流入临时helper资源，任何add异常锁定整包失败，关闭并验证后经atomicio原子发布；不能因调用者捕获add异常而发布半包。新文件发布用`publish_file_if_absent`，同名并发不覆盖；允许替换须显式overwrite。严格v4 reader核现品牌/版本/format信封，普通旧包不自动套用新低容量上限。看护`tests/test_document_package.py`。
+- **输出预算与旧包文件名**：`packagebudget.output_budget`从调用者完整资源plan的实际成员名/字节量推导DEFLATE/ZIP64上界，不新增旧合法项目的容量政策；reader块大小只取`documentpackage.ARCHIVE_CHUNK_BYTES`。写入提供已知file_size，让stdlib决定ZIP64，默认小包字节不变。只有旧只读包输出显式`legacy_names=True`保当前平台合法文件名的精确区别；默认writer及所有公开reader仍按portable/NFC-casefold校验，不从上传manifest自动选择兼容模式。两模式均拒绝跳径、特殊文件、完全重复和文件目录冲突；caller仍负责canonical源授权。看护`tests/test_package_budget.py`及上述容器测试。
 - **计算来源包叶子**：`chartpackage`沿上述容器与`documentassets`唯一字节权威验证schema4完整INPUT；内容寻址chart行从正文引用派生，额外资源使用闭式chart_source/figure_snapshot/file/script变体，不接受caller覆盖派生chart行。检视只写data_dir自有暂存，Prepared正文/清单每次给副本，退出后拒用；verify回调必传，前后重核附件/资源，失败不发布目标。`install_chart_sources`只发布不可变chart附件并明确返回未安装的remaining_resources，不能宣称普通文件/脚本已安装；普通资源及正文事务由调用者完成，已发布的不可变附件不回删。writer临时封口后严格inspect再原子发布最终名。看护`tests/test_chart_package.py`。
 - **文档显式引用全质量 Figure 配对（X03，2026-10-15）**：面板 `figureSnapshot` 是版本 1 的闭集
   `{version, sourceId, patchHash, receiptId, snapshotId}`，可选 `executionOwner={script, run_config}`；

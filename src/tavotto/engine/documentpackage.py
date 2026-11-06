@@ -26,7 +26,7 @@ from . import atomicio, brand, documentformat, documents
 LAYOUT_MEMBER = "layout.json"
 MANIFEST_MEMBER = "package_manifest.json"
 PACKAGE_VERSION = 1
-_CHUNK_BYTES = 64 * 1024
+ARCHIVE_CHUNK_BYTES = 64 * 1024
 _METADATA = frozenset({LAYOUT_MEMBER, MANIFEST_MEMBER})
 _is_reserved = getattr(ntpath, "isreserved", lambda name: PureWindowsPath(name).is_reserved())
 _MANIFEST_REQUIRED = frozenset({"kind", "version", "document_format"})
@@ -80,17 +80,31 @@ def _positive(value: object) -> int:
     return value
 
 
-def _member_key(name: object, *, directory: bool = False) -> str:
-    if not isinstance(name, str) or not name or "\\" in name:
+def _member_key(name: object, *, directory: bool = False, legacy_names: bool = False) -> str:
+    if (
+        not isinstance(name, str)
+        or not name
+        or "\x00" in name
+        or (not legacy_names and "\\" in name)
+    ):
         raise PackageError("unsafe_member", "Invalid ZIP member path")
+    if legacy_names:
+        # Same actual member spelling as the stdlib writer; never normalize IDs
+        # or grant an extraction path. The caller supplies its approved plan.
+        name = zipfile.ZipInfo(name).filename
     path = name[:-1] if directory and name.endswith("/") else name
     parts = path.split("/")
     if any(
         not part
         or part in {".", ".."}
-        or part.endswith((".", " "))
-        or any(ord(c) < 32 or ord(c) == 127 or c in '<>:"|?*' for c in part)
-        or _is_reserved(part)
+        or (
+            not legacy_names
+            and (
+                part.endswith((".", " "))
+                or any(ord(c) < 32 or ord(c) == 127 or c in '<>:"|?*' for c in part)
+                or _is_reserved(part)
+            )
+        )
         for part in parts
     ):
         raise PackageError("unsafe_member", "Unsafe or nonportable ZIP member path")
@@ -100,7 +114,7 @@ def _member_key(name: object, *, directory: bool = False) -> str:
         and (parts[0] not in {"assets", "scripts"} or len(parts) < 2)
     ):
         raise PackageError("unknown_member", "Unknown package member namespace")
-    return unicodedata.normalize("NFC", path).casefold()
+    return path if legacy_names else unicodedata.normalize("NFC", path).casefold()
 
 
 class _BoundedArchive:
@@ -134,7 +148,9 @@ class _BoundedArchive:
 
 
 class _Archive:
-    def __init__(self, source: BinaryIO, budget: PackageBudget) -> None:
+    def __init__(
+        self, source: BinaryIO, budget: PackageBudget, *, legacy_names: bool = False
+    ) -> None:
         try:
             initial = source.tell()
             size = source.seek(0, os.SEEK_END)
@@ -143,7 +159,7 @@ class _Archive:
             raise PackageError("invalid_archive_stream", "Package input must be seekable") from exc
         if not isinstance(size, int) or not 0 < size <= budget.max_archive_bytes:
             raise PackageError("archive_budget", "Package archive byte budget exceeded")
-        self.budget, self.expanded = budget, 0
+        self.budget, self.expanded, self.legacy_names = budget, 0, legacy_names
         self.archive = zipfile.ZipFile(_BoundedArchive(source, size, budget.max_directory_bytes))
         try:
             entries = self.archive.infolist()
@@ -156,7 +172,7 @@ class _Archive:
                 directory = entry.is_dir()
                 if entry.filename != entry.orig_filename:
                     raise PackageError("unsafe_member", "ZIP member name was truncated")
-                key = _member_key(entry.filename, directory=directory)
+                key = _member_key(entry.filename, directory=directory, legacy_names=legacy_names)
                 if key in keys:
                     raise PackageError("duplicate_member", "Duplicate or aliased ZIP member")
                 keys.add(key)
@@ -196,7 +212,7 @@ class _Archive:
         self.archive.close()
 
     def read(self, name: str, limit: int, *, collect: bool = True) -> bytes:
-        _member_key(name)
+        _member_key(name, legacy_names=self.legacy_names)
         _positive(limit)
         entry = self.members.get(name)
         if entry is None:
@@ -206,7 +222,7 @@ class _Archive:
         count, chunks = 0, []
         try:
             with self.archive.open(entry) as stream:
-                while data := stream.read(min(_CHUNK_BYTES, limit - count + 1)):
+                while data := stream.read(min(ARCHIVE_CHUNK_BYTES, limit - count + 1)):
                     count += len(data)
                     self.expanded += len(data)
                     if count > limit or self.expanded > self.budget.max_total_bytes:
@@ -359,8 +375,13 @@ def _copy_member(archive, name, source, limit, remaining):
         if not isinstance(source, bytes):
             if not os.path.samestat(before, os.fstat(stream.fileno())):
                 raise PackageError("unsafe_source", "Package source is not a regular file")
-        with archive.open(name, "w") as output:
-            while data := stream.read(min(_CHUNK_BYTES, min(limit, remaining) - total + 1)):
+        info = zipfile.ZipInfo(name)
+        info.file_size = len(source) if isinstance(source, bytes) else before.st_size
+        info.compress_type = archive.compression
+        # Python 3.10 的 ZipInfo 仅有此字段；与 ZipFile.open(str) 的原值相同。
+        info._compresslevel = archive.compresslevel
+        with archive.open(info, "w") as output:
+            while data := stream.read(min(ARCHIVE_CHUNK_BYTES, min(limit, remaining) - total + 1)):
                 total += len(data)
                 if total > limit or total > remaining:
                     raise PackageError("expanded_budget", "Package output byte budget exceeded")
@@ -398,13 +419,13 @@ class _BoundedOutput:
 
 
 class _OutputNames:
-    def __init__(self, maximum: int) -> None:
-        self.maximum = maximum
+    def __init__(self, maximum: int, *, legacy_names: bool = False) -> None:
+        self.maximum, self.legacy_names = maximum, legacy_names
         self.files: set[str] = set()
         self.directories: set[str] = set()
 
     def add(self, name: str) -> None:
-        key = _member_key(name)
+        key = _member_key(name, legacy_names=self.legacy_names)
         if key in self.files:
             raise PackageError("duplicate_member", "Duplicate or aliased package member")
         parents = {key.rsplit("/", i)[0] for i in range(1, key.count("/") + 1)}
@@ -419,9 +440,11 @@ class _OutputNames:
 class _StagedPackage:
     """只提供旧 helper 需要的两种添加操作；任何失败均阻止整个 ZIP 发布。"""
 
-    def __init__(self, archive: zipfile.ZipFile, budget: PackageBudget) -> None:
+    def __init__(
+        self, archive: zipfile.ZipFile, budget: PackageBudget, *, legacy_names: bool = False
+    ) -> None:
         self.archive, self.budget = archive, budget
-        self.names = _OutputNames(budget.max_members)
+        self.names = _OutputNames(budget.max_members, legacy_names=legacy_names)
         self.total = 0
         self.closed = False
         self.failure: BaseException | None = None
@@ -473,9 +496,16 @@ class _StagedPackage:
             raise
 
 
-def _publish_package(temporary: Path, destination: Path, budget: PackageBudget, overwrite: bool):
+def _publish_package(
+    temporary: Path,
+    destination: Path,
+    budget: PackageBudget,
+    overwrite: bool,
+    *,
+    legacy_names: bool = False,
+):
     with temporary.open("rb") as stream:
-        checked = _Archive(stream, budget)
+        checked = _Archive(stream, budget, legacy_names=legacy_names)
         try:
             for name in checked.members:
                 checked.read(name, budget.max_total_bytes, collect=False)
@@ -489,15 +519,16 @@ def _publish_package(temporary: Path, destination: Path, budget: PackageBudget, 
 
 @contextmanager
 def staged_package(
-    destination: Path, *, budget: PackageBudget, overwrite: bool = True
+    destination: Path, *, budget: PackageBudget, overwrite: bool = True, legacy_names: bool = False
 ) -> Iterator[_StagedPackage]:
     """增量写暂存 ZIP；封口/逐项 CRC 后经 atomicio 一次发布。
 
     write/writestr 在调用时完成有界读取，不保留 caller 临时资源的路径。
     添加失败即使被 helper 捕获仍拒发布；不安装成员，不提供任意 ZIP 操作。
     destination 与输入文件的授权/containment 仍由 caller 负责。
+    legacy_names 仅供旧只读包的显式 writer 使用；公开 v4 reader 始终 portable。
     """
-    if type(overwrite) is not bool:
+    if type(overwrite) is not bool or type(legacy_names) is not bool:
         raise PackageError("invalid_output", "Invalid package output request")
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -513,13 +544,13 @@ def staged_package(
                 _BoundedOutput(stream, budget.max_archive_bytes), "w", zipfile.ZIP_DEFLATED
             ) as archive,
         ):
-            writer = _StagedPackage(archive, budget)
+            writer = _StagedPackage(archive, budget, legacy_names=legacy_names)
             try:
                 yield writer
                 writer._ready()
             finally:
                 writer.closed = True
-        _publish_package(temporary, destination, budget, overwrite)
+        _publish_package(temporary, destination, budget, overwrite, legacy_names=legacy_names)
     finally:
         temporary.unlink(missing_ok=True)
 

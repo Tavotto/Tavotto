@@ -410,7 +410,8 @@ def test_failed_zip_write_keeps_old_final_and_removes_only_owned_temporary_paths
     real_open = zipfile.ZipFile.open
 
     def fail(archive, name, mode="r", *args, **kwargs):
-        if mode == "w" and isinstance(name, str) and name.startswith("assets/"):
+        member_name = name.filename if isinstance(name, zipfile.ZipInfo) else name
+        if mode == "w" and isinstance(member_name, str) and member_name.startswith("assets/"):
             raise failure  # metadata 已写，资源写入中断；不替换整个 writer。
         return real_open(archive, name, mode, *args, **kwargs)
 

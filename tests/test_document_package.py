@@ -362,7 +362,8 @@ def test_new_writer_manifest_enospc_keeps_the_preexisting_valid_archive(
     intercepted = []
 
     def fail_manifest(archive, name, mode="r", *args, **kwargs):
-        if name == "package_manifest.json" and mode == "w":
+        member_name = name.filename if isinstance(name, zipfile.ZipInfo) else name
+        if member_name == "package_manifest.json" and mode == "w":
             intercepted.append(True)
             raise OSError(errno.ENOSPC, "full disk while writing manifest")
         return original(archive, name, mode, *args, **kwargs)
@@ -574,7 +575,8 @@ def test_staged_helper_swallowed_enospc_never_publishes_partial_zip(tmp_path, bu
     original = zipfile.ZipFile.open
 
     def fail(archive, name, mode="r", *args, **kwargs):
-        if name == "assets/unwritten.svg" and mode == "w":
+        member_name = name.filename if isinstance(name, zipfile.ZipInfo) else name
+        if member_name == "assets/unwritten.svg" and mode == "w":
             raise OSError(errno.ENOSPC, "source helper output full")
         return original(archive, name, mode, *args, **kwargs)
 
@@ -648,6 +650,177 @@ def test_staged_closed_context_rejects_additions_without_mutating_published_zip(
         archive.writestr("assets/late", b"late")
     assert caught.value.reason == "closed_output"
     assert target.read_bytes() == before and list(tmp_path.iterdir()) == [target]
+
+
+@pytest.mark.parametrize("source_kind", ["bytes", "path", "metadata"])
+def test_staged_known_size_reserves_zip64_like_the_original_stdlib_writer(
+    tmp_path, budget, monkeypatch, source_kind
+):
+    # 实际经过标准库 ZIP64 分支；阈值缩小，不能把它说成实写了 >2GiB。
+    monkeypatch.setattr(zipfile, "ZIP64_LIMIT", 256)
+    members = _members()
+    payload = bytes(range(256)) * 8
+    name = "layout.json" if source_kind == "metadata" else "assets/large.pdf"
+    members[name] = payload
+    if source_kind == "path":
+        path = tmp_path / "input.pdf"
+        path.write_bytes(payload)
+        members[name] = path
+    target = tmp_path / "known-size.tavotto"
+    packages.write_package(target, members, budget=budget)
+    with zipfile.ZipFile(target) as archive:
+        assert archive.testzip() is None
+        assert archive.read(name) == payload
+        assert archive.getinfo(name).file_size == len(payload)
+        assert archive.getinfo(name).compress_type == zipfile.ZIP_DEFLATED
+        assert archive.getinfo(name).extract_version >= zipfile.ZIP64_VERSION
+
+
+def test_explicit_legacy_names_can_keep_two_real_distinct_unicode_source_files(tmp_path, budget):
+    first, second = tmp_path / "é.pdf", tmp_path / "e\u0301.pdf"
+    first.write_bytes(b"NFC file")
+    second.write_bytes(b"NFD file")
+    if first.samefile(second):
+        pytest.skip("当前文件系统将 NFC/NFD 名称视为同一文件；纯 ZIP 用例另行覆盖精确名字")
+    target = tmp_path / "legacy.tavotto"
+    with packages.staged_package(target, budget=budget, legacy_names=True) as archive:
+        for name, data in _members().items():
+            archive.writestr(name, data)
+        archive.write(first.resolve(), "assets/" + first.name)
+        archive.write(second.resolve(), "assets/" + second.name)
+    with zipfile.ZipFile(target) as archive:
+        assert archive.read("assets/" + first.name) == b"NFC file"
+        assert archive.read("assets/" + second.name) == b"NFD file"
+        assert archive.testzip() is None
+    with pytest.raises(packages.PackageError) as error:
+        with packages.open_package(target.read_bytes(), budget=budget):
+            pytest.fail("v4 reader accepted legacy aliases")
+    assert error.value.reason == "duplicate_member"
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        ("assets/é.pdf", "assets/e\u0301.pdf"),
+        ("scripts/A.py", "scripts/a.py"),
+        ("assets/AUX.svg", "assets/trailing. "),
+        ("assets/colon:name.svg", "assets/new\nline.svg"),
+    ],
+)
+def test_legacy_spelling_is_explicit_and_never_accepted_by_default_or_public_v4_reader(
+    tmp_path, budget, names
+):
+    members = {**_members(), **dict.fromkeys(names, b"opaque")}
+    target = tmp_path / "legacy.tavotto"
+    with packages.staged_package(target, budget=budget, legacy_names=True) as archive:
+        for name, data in members.items():
+            archive.writestr(name, data)
+    with zipfile.ZipFile(target) as archive:
+        assert set(archive.namelist()) == set(members)
+        assert archive.testzip() is None
+    with pytest.raises(packages.PackageError):
+        packages.write_package(tmp_path / "strict.zip", members, budget=budget)
+    with pytest.raises(packages.PackageError):
+        with packages.open_package(target.read_bytes(), budget=budget):
+            pytest.fail("strict reader acquired legacy writer permissions")
+    with pytest.raises(TypeError):
+        with packages.open_package(target.read_bytes(), budget=budget, legacy_names=True):
+            pytest.fail("reader exposed a legacy switch")
+    with pytest.raises(TypeError):
+        packages.write_package(tmp_path / "other.zip", members, budget=budget, legacy_names=True)
+
+
+@pytest.mark.parametrize("legacy_names", [False, True])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "",
+        "assets/\x00hidden",
+        "/assets/a",
+        "assets/../a",
+        "assets/./a",
+        "assets//a",
+        "../a",
+        "other/a",
+    ],
+)
+def test_all_writer_modes_still_reject_unsafe_or_unknown_paths(
+    tmp_path, budget, legacy_names, name
+):
+    target = tmp_path / "keep.tavotto"
+    target.write_bytes(b"old complete package")
+    with pytest.raises(packages.PackageError):
+        with packages.staged_package(target, budget=budget, legacy_names=legacy_names) as archive:
+            for key, data in _members().items():
+                archive.writestr(key, data)
+            archive.writestr(name, b"untrusted")
+    assert target.read_bytes() == b"old complete package"
+    assert list(tmp_path.iterdir()) == [target]
+
+
+@pytest.mark.parametrize("legacy_names", [False, True])
+@pytest.mark.parametrize("names", [("assets/a", "assets/a"), ("assets/a", "assets/a/b")])
+def test_exact_duplicate_and_file_directory_collisions_remain_sticky_failures(
+    tmp_path, budget, legacy_names, names
+):
+    target = tmp_path / "keep.tavotto"
+    target.write_bytes(b"old complete package")
+    with pytest.raises(packages.PackageError):
+        with packages.staged_package(target, budget=budget, legacy_names=legacy_names) as archive:
+            for key, data in _members().items():
+                archive.writestr(key, data)
+            archive.writestr(names[0], b"first")
+            try:
+                archive.writestr(names[1], b"second")
+            except packages.PackageError:
+                pass
+    assert target.read_bytes() == b"old complete package"
+    assert list(tmp_path.iterdir()) == [target]
+
+
+@pytest.mark.parametrize("legacy_names", [False, True])
+def test_sealing_rejects_special_members_even_in_legacy_name_mode(
+    tmp_path, budget, legacy_names, monkeypatch
+):
+    target = tmp_path / "keep.tavotto"
+    target.write_bytes(b"old complete package")
+    original = zipfile.ZipFile.close
+
+    def corrupt_metadata(archive):
+        if archive.mode == "w" and archive.fp is not None:
+            for info in archive.filelist:
+                if info.filename == "assets/a":
+                    info.external_attr = (stat.S_IFLNK | 0o777) << 16
+        return original(archive)
+
+    monkeypatch.setattr(zipfile.ZipFile, "close", corrupt_metadata)
+    with pytest.raises(packages.PackageError) as error:
+        with packages.staged_package(target, budget=budget, legacy_names=legacy_names) as archive:
+            for name, data in _members().items():
+                archive.writestr(name, data)
+            archive.writestr("assets/a", b"link target")
+    assert error.value.reason == "special_member"
+    assert target.read_bytes() == b"old complete package"
+
+
+def test_legacy_switch_does_not_change_regular_output_bytes_or_default_timestamps(tmp_path, budget):
+    outputs = [tmp_path / "strict.zip", tmp_path / "legacy.zip"]
+    for target, legacy in zip(outputs, (False, True), strict=True):
+        with packages.staged_package(target, budget=budget, legacy_names=legacy) as archive:
+            for name, data in {**_members(), "assets/中文.pdf": b"exact bytes"}.items():
+                archive.writestr(name, data)
+    assert outputs[0].read_bytes() == outputs[1].read_bytes()
+    with zipfile.ZipFile(outputs[0]) as archive:
+        assert all(info.date_time == (1980, 1, 1, 0, 0, 0) for info in archive.infolist())
+
+
+@pytest.mark.parametrize("value", [1, None, "true"])
+def test_legacy_switch_requires_an_actual_bool_before_creating_output(tmp_path, budget, value):
+    with pytest.raises(packages.PackageError) as error:
+        with packages.staged_package(tmp_path / "bad.zip", budget=budget, legacy_names=value):
+            pytest.fail("invalid mode accepted")
+    assert error.value.reason == "invalid_output"
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_publish_file_if_absent_orders_fsync_and_atomic_publication(tmp_path, monkeypatch):
