@@ -106,12 +106,15 @@ Windows 不能打开 Tauri 的拖放处理器（同 §「问题」：wry 往窗�
 页面 HTML5 拖放整片失效），走 WebView2 官方给的那条路：
 
 - 页面（`web/src/lib/desktop.ts` 的 `ensureDropForwarder`，订阅 `tavotto:file-drop` 时装一次）在 window 的**捕获阶段**
-  听 `drop`，把 `dataTransfer.files` 经 `chrome.webview.postMessageWithAdditionalObjects({tavotto: 'file-drop'}, files)` 交给壳。
+  听 `drop`，把 `dataTransfer.files` 经 `chrome.webview.postMessageWithAdditionalObjects(JSON.stringify({tavotto: 'file-drop'}), files)` 交给壳。
   浏览器只在 dragover 被接受时才派发 `drop`，与 macOS 旁听 `performDragOperation:` 同一个语义；页面自己的 drop 处理不变。
 - 壳（`src-tauri/src/native_drop_win.rs`）在主窗口 CoreWebView2 上加一个 `WebMessageReceived` 处理器，只认
   `{"tavotto":"file-drop"}`，经 `ICoreWebView2WebMessageReceivedEventArgs2::AdditionalObjects` → `ICoreWebView2File::Path()`
   拿真实路径，交 `drop_paths::classify`、发 `tavotto:file-drop`——之后与 macOS 完全同一条（仲裁、运行那个脚本、画布放下）。
-- 消息是**对象**：wry 的 IPC 处理器只认字符串消息（`TryGetWebMessageAsString`），对象消息不会被当成 Tauri invoke 解析。
+- 消息使用 JSON **字符串**（2026-11-06 修正）：wry 先注册的 IPC 处理器用 `TryGetWebMessageAsString`，
+  对象消息让它返回 `E_INVALIDARG`，后面的原生旁听无法收到。旁听同样用 `TryGetWebMessageAsString` 取原字符串，
+  再解析标记；不能用 `WebMessageAsJson` 把字符串再次编码。Tauri 会在控制台记录这条非 invoke 消息的解析错误，
+  但处理器正常返回；不为消掉日志伪造 invoke 或改变认证边界。`files` 仍是原 FileList，官方接口接受 ArrayLike。
 - `native_file_drop` 在 Windows 上回「处理器装上了没有」。需要 WebView2 运行时 ≥ 1.0.1518；更旧的运行时页面那边调用失败、
   壳收不到，前端等满 grace 照旧降级到选择器。
 - 安全边界不变：只有用户拖进来的 File 带磁盘路径（页面 `new File()` 出来的不是 `ICoreWebView2File`，跳过）；打开项目仍走
