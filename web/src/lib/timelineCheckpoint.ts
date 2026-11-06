@@ -32,9 +32,11 @@ import type { FigureDocument } from '@/types/document'
  * 看着好好的，恢复时才发现它不知道自己来自哪张画布（R-03）。
  */
 export function activeCanvasIdentity() {
-  const { doc, activeCanvasId, documentId } = useDocumentStore.getState()
+  const { doc, activeCanvasId, documentId, documentFormat, projectMeta } = useDocumentStore.getState()
   return {
     documentId,
+    format: documentFormat,
+    versionIdentity: { project: { id: projectMeta.id, name: projectMeta.name }, canvasId: activeCanvasId, createdAt: projectMeta.createdAt, updatedAt: Date.now() },
     pj: currentProjectId(),
     doc,
     canvasId: activeCanvasId,
@@ -148,6 +150,7 @@ export async function takeCheckpoint(
       canvasName: id.canvasName,
     },
     id.pj,
+    ...(id.format === 'v4' ? [{ format: id.format, identity: id.versionIdentity }] : []),
   )
   if (res.skipped || !res.version) return res
   recordDiagnosticEvent({
@@ -161,7 +164,7 @@ export async function takeCheckpoint(
   const vid = res.version.id
   // 缩略图不挡调用方：恢复 / 回主页不该等一张小图
   void thumbP
-    .then((thumb) => (thumb ? putVersionThumb(id.documentId, vid, thumb, id.pj) : null))
+    .then((thumb) => (thumb ? putVersionThumb(id.documentId, vid, thumb, id.pj, ...(id.format === 'v4' ? [id.format] : [])) : null))
     .then((r) => {
       if (r) useTimelineStore.getState().bump()
     })

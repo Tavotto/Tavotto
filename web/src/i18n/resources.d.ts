@@ -948,6 +948,7 @@ export default interface Resources {
       "yes": "是"
     },
     "layout": {
+      "computationalFormat": "计算图表",
       "conflict": "磁盘上已存在名为「{{name}}」的排版，由其他窗口或外部工具写入。",
       "conflictDisk": "磁盘上那份：{{canvases}} 张画布 / {{objects}} 个对象",
       "empty": "项目里还没有排版",

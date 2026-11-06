@@ -367,7 +367,8 @@
     "saved": "已另存为新排版：{{name}}",
     "saving": "正在保存…",
     "savesIntoLabel": "保存到",
-    "rename": "改名"
+    "rename": "改名",
+    "computationalFormat": "计算图表"
   },
   "mcp": {
     "exportBoth": "导出 PDF+PNG",

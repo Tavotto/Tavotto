@@ -375,7 +375,8 @@
     "saved": "Saved as a new layout: {{name}}",
     "saving": "Saving…",
     "savesIntoLabel": "Save into",
-    "rename": "Rename"
+    "rename": "Rename",
+    "computationalFormat": "Computational chart"
   },
   "mcp": {
     "exportBoth": "Export PDF+PNG",

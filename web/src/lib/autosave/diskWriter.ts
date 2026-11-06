@@ -20,6 +20,7 @@
  */
 import { ApiError, REVISION_ABSENT, type DiskDocumentSummary } from '@/lib/api'
 import type { FigureSnapshotSaveContext } from '@/lib/figureSnapshot'
+import type { ChartSourceReceipt, ChartSourceSaveContext } from '@/lib/chartSourceReceipts'
 import type { FigureSnapshot, ProjectDocument } from '@/types/document'
 
 /**
@@ -92,7 +93,11 @@ export interface WrittenInfo {
   metadata: WrittenMetadata
   figureSnapshots?: Record<string, FigureSnapshot>
   snapshotContext?: FigureSnapshotSaveContext
+  chartSources?: ChartSourceReceipt[]
+  chartContext?: ChartSourceSaveContext
 }
+
+export type DiskSaveContext = FigureSnapshotSaveContext & { chartContext?: ChartSourceSaveContext }
 
 /** 协调器要用到的那几条磁盘 API（形状与 `@/lib/api` 同名函数一致，便于直接递真的进来）。 */
 export interface DiskApi {
@@ -102,7 +107,7 @@ export interface DiskApi {
     baseline: number | undefined,
     revision: string | undefined,
     pj: string | null,
-  ) => Promise<{ saved_at?: number; revision?: string | null; metadata?: WrittenMetadata; figure_snapshots?: Record<string, FigureSnapshot> }>
+  ) => Promise<{ saved_at?: number; revision?: string | null; metadata?: WrittenMetadata; figure_snapshots?: Record<string, FigureSnapshot>; document_format?: 'v4'; chart_sources?: ChartSourceReceipt[] }>
   fetch: (id: string, pj: string | null) => Promise<{ revision: string | null } | null>
   fetchSummary: (id: string, pj: string | null) => Promise<DiskDocumentSummary | null>
 }
@@ -158,7 +163,7 @@ export function conflictIssue(id: string, err: unknown): SaveIssue {
 
 export interface DiskWriter {
   /** 把这一份排进队列（或立刻开始写） */
-  schedule: (id: string, pd: ProjectDocument, pj: string | null, snapshotContext?: FigureSnapshotSaveContext) => void
+  schedule: (id: string, pd: ProjectDocument, pj: string | null, snapshotContext?: DiskSaveContext) => void
   /** 队列排空（含在途那一次）后 resolve。已经空了就立刻 resolve。 */
   whenIdle: () => Promise<void>
   /** 下一次真正开始的写盘算作手动保存（遥测的 trigger） */
@@ -181,7 +186,7 @@ export interface DiskWriter {
 export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
   let diskBusy = false
   /** 按 documentId 排队：同一个 id 天然合并成最新一份，不同 id 依次串行 PUT。 */
-  const diskQueue = new Map<string, { pd: ProjectDocument; pj: string | null; snapshotContext?: FigureSnapshotSaveContext }>()
+  const diskQueue = new Map<string, { pd: ProjectDocument; pj: string | null; snapshotContext?: DiskSaveContext }>()
 
   /**
    * 乐观并发基线：本标签页最后一次**成功落盘**时那份文档的 updatedAt。
@@ -274,7 +279,7 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
     }
   }
 
-  function schedule(id: string, pd: ProjectDocument, pj: string | null, snapshotContext?: FigureSnapshotSaveContext): void {
+  function schedule(id: string, pd: ProjectDocument, pj: string | null, snapshotContext?: DiskSaveContext): void {
     if (diskBusy) {
       diskQueue.set(id, { pd, pj, snapshotContext })
       return
@@ -298,6 +303,8 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
           pj,
           metadata: res.metadata,
           ...(res.figure_snapshots !== undefined ? { figureSnapshots: res.figure_snapshots, snapshotContext } : {}),
+          ...(res.document_format === 'v4' && res.chart_sources !== undefined
+            ? { chartSources: res.chart_sources, chartContext: snapshotContext?.chartContext } : {}),
         })
         ports.outcome(trigger, 'ok')
       })

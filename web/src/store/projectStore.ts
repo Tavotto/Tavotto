@@ -51,6 +51,7 @@ import {
   beginRestore,
   flushAutosave,
   isDocumentPlaceholder,
+  getRestoreGate,
   onDocumentClaimed,
   onDocumentPersisted,
   pinDocumentOwner,
@@ -623,13 +624,13 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     // 不是另起一条只认这个 id 的路
     if (useDocumentStore.getState().restoreIssue) {
       await retryRestore()
-      const ok = useDocumentStore.getState().documentId === ref.id && !useDocumentStore.getState().restoreIssue
+      const ok = useDocumentStore.getState().documentId === ref.id && useDocumentStore.getState().documentFormat === (ref.format ?? 'legacy') && !useDocumentStore.getState().restoreIssue
       return ok
     }
     // 没有协调状态（旧用例 / 外部直接设了 ref）：走「最近文档」同一条路（读槽位 → 换文档 → 适配视口 → 说一句话）；
     // 它失败时自己会报「本机副本已不存在」那句
-    await openRecentDocument(ref.id)
-    const ok = useDocumentStore.getState().documentId === ref.id
+    await openRecentDocument(ref.id, ...(ref.format === 'v4' ? [ref.format] : []))
+    const ok = useDocumentStore.getState().documentId === ref.id && useDocumentStore.getState().documentFormat === (ref.format ?? 'legacy')
     if (ok) set({ lastDocumentIssue: null })
     return ok
   },
@@ -709,6 +710,7 @@ useDocumentStore.subscribe((s, prev) => {
   if (isDocumentPlaceholder()) return
   if (
     s.documentId === prev.documentId &&
+    s.documentFormat === prev.documentFormat &&
     s.doc === prev.doc &&
     s.canvases === prev.canvases &&
     s.projectMeta.name === prev.projectMeta.name
@@ -727,28 +729,29 @@ onDocumentClaimed(() => {
 })
 
 function rememberOpenDocument(s: ReturnType<typeof useDocumentStore.getState>): void {
+  if (getRestoreGate().state !== 'ready') return
   const pj = currentProjectId()
   if (!pj || !documentHasContent(s)) return
   const name = s.projectMeta.name
   // 与**存着的**那份比，不与内存里的缓存比：缓存会在站点数据被清掉之后
   // 继续说「已经记过了」，而一次 getItem 比一帧拖动便宜得多
-  const cur = readProjectDocument(pj)
+  const cur = s.documentFormat === 'v4' ? readProjectDocument(pj, 'v4') : readProjectDocument(pj)
   if (cur && cur.id === s.documentId && cur.name === name) return
   // 确知属于别的项目的排版不记到这个项目名下（#715 验收 P1，判据唯一出处 `lib/docOwnership`）。
   // 排在「同值不写」之后：拖动的每一帧走不到这里。从「最近文档」里显式打开别的项目的排版，只有
   // 用户改过 / ⌘S / 改名之后归属才转到这里（`documentStore.claimDocumentOnEdit`，当场改记本机索引）
-  if (isForeignDocument(s.documentId, pj)) return
-  rememberProjectDocument(pj, { id: s.documentId, name })
+  if (isForeignDocument(s.documentId, pj, ...(s.documentFormat === 'v4' ? [s.documentFormat] : []))) return
+  rememberProjectDocument(pj, { id: s.documentId, name, ...(s.documentFormat === 'v4' ? { format: s.documentFormat } : {}) })
 }
 
 // `lastDocumentIssue` 是恢复协调状态（`restoreIssue`）的薄适配：有 ref 时同步，横幅 / 旧用例仍读它
 useDocumentStore.subscribe((s, prev) => {
   if (s.restoreIssue === prev.restoreIssue) return
   const ref = s.restoreIssue?.ref ?? null
-  if (useProjectStore.getState().lastDocumentIssue?.id !== ref?.id) {
+  if (useProjectStore.getState().lastDocumentIssue?.id !== ref?.id || useProjectStore.getState().lastDocumentIssue?.format !== ref?.format) {
     useProjectStore.setState({ lastDocumentIssue: ref })
   }
 })
 
 // 某份文档的正文真的写盘成功了（不看是不是当前文档、pj 是排队那一刻的）：补记「上次开着的」可以重试了
-onDocumentPersisted((docId, pj) => notifyDocumentPersisted(docId, pj))
+onDocumentPersisted((docId, pj, _pd, format) => notifyDocumentPersisted(docId, pj, ...(format === 'v4' ? [format] : [])))

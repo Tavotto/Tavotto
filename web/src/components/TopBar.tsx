@@ -669,6 +669,7 @@ export function DocumentMenu() {
   const { t } = useTranslation('workspace')
   const name = useDocumentStore((s) => s.projectMeta.name)
   const documentId = useDocumentStore((s) => s.documentId)
+  const format = useDocumentStore((s) => s.documentFormat)
   const recentDocs = useDocumentStore((s) => s.recentDocs)
   const projectFile = useActiveProjectFile()
   const [editing, setEditing] = useState(false)
@@ -680,8 +681,8 @@ export function DocumentMenu() {
   useEffect(() => setDraft(name), [name])
 
   const recent = useMemo(
-    () => recentDocs.filter((r) => r.id !== documentId),
-    [recentDocs, documentId],
+    () => recentDocs.filter((r) => r.id !== documentId || (r.format ?? 'legacy') !== format),
+    [recentDocs, documentId, format],
   )
 
   if (editing) {
@@ -774,8 +775,8 @@ export function DocumentMenu() {
       ) : (
         recent.map((r) => (
           <MenuItem
-            key={r.id}
-            onSelect={() => openRecentDocument(r.id)}
+            key={JSON.stringify([r.format ?? 'legacy', r.id])}
+            onSelect={() => openRecentDocument(r.id, ...(r.format === 'v4' ? [r.format] : []))}
             shortcut={formatTime(r.savedAt)}
           >
             {/* 文档名是用户内容，作为插值原样透出 */}

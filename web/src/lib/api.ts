@@ -1,3 +1,5 @@
+import { chartVersionCanvas, chartVersionProject, documentApiPath, documentResponseFormat, type DocumentFormat, type VersionCanvasIdentity } from './documentFormat'
+import type { ChartSourceReceipt } from './chartSourceReceipts'
 import { classifyArtifactFailure } from '@/lib/artifactReason'
 import type { RenderPurpose } from '@/lib/renderPurpose'
 import { ArtifactValidationError, FIGSIZE_SOURCE_POLICY, verifiedSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
@@ -391,7 +393,7 @@ const errorBody = (res: Response): Promise<Record<string, unknown>> =>
  * `pj` 显式给出时用它，不用全局当前项目：见 `session.apiUrlFor` 的说明——
  * 排队稍后才发出的写入，属于**排队那一刻**的项目。`undefined` = 用全局的。
  */
-async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null): Promise<T> {
+async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null, documentFormat?: DocumentFormat): Promise<T> {
   const res =
     pj === undefined
       ? await fetch(apiUrl(url), withProject(init))
@@ -409,6 +411,7 @@ async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null)
     noteEngine500(res.status, body, init?.method, url)
     throw new ApiError(detail, res.status, body, res.headers?.get('X-Tavotto-Diagnostic-Ref') || null)
   }
+  if (documentFormat === 'v4' && (!init?.method || init.method === 'GET')) requireDocumentResponseFormat(res, documentFormat)
   return res.json() as Promise<T>
 }
 
@@ -893,19 +896,38 @@ export const panelSrc = (
   return null
 }
 
+function documentJsonFetch(format?: DocumentFormat) {
+  return <T>(path: string, init?: RequestInit, pj?: string | null): Promise<T> =>
+    format === 'v4' ? jsonFetch<T>(documentApiPath(path, format), init, pj, format) : jsonFetch<T>(path, init, pj)
+}
+
+function requireDocumentResponseFormat(res: Response, format?: DocumentFormat): void {
+  if (!documentResponseFormat(res.headers.get('X-Tavotto-Document-Format'), format)) {
+    throw new ApiError('Unexpected document format.', 400, { code: 'invalid_document' })
+  }
+}
+
+function requireDocumentSchema(raw: unknown, format?: DocumentFormat): unknown {
+  if (format === 'v4' && (!raw || typeof raw !== 'object' || (raw as { schema?: unknown }).schema !== 4)) {
+    throw new ApiError('Unexpected document schema.', 400, { code: 'invalid_document' })
+  }
+  return raw
+}
+
 /* ----------------------------- 布局存取 ----------------------------------- */
 
-export const fetchLayoutNames = () =>
-  jsonFetch<{ layouts: string[] }>('/api/layouts').then((r) => r.layouts)
+export const fetchLayoutNames = (format?: DocumentFormat) =>
+  documentJsonFetch(format)<{ layouts: string[] }>('/api/layouts').then((r) => r.layouts)
 
 /**
  * 同一份清单 + 每份的修改时间（epoch 秒；后端加字段，老后端没有 = 空表、界面不写日期）。
  * 只给「打开」列表的元信息用；顺序仍是 `layouts` 的（新的在前）。
  */
-export const fetchLayoutList = () =>
-  jsonFetch<{ layouts: string[]; modified?: Record<string, number> }>('/api/layouts').then((r) => ({
+export const fetchLayoutList = (format?: DocumentFormat) =>
+  documentJsonFetch(format)<{ layouts: string[]; modified?: Record<string, number>; document_dir?: unknown }>('/api/layouts').then((r) => ({
     names: r.layouts,
     modified: r.modified ?? {},
+    ...(typeof r.document_dir === 'string' ? { documentDir: r.document_dir } : {}),
   }))
 
 /** 读到的一份画布文件：`revision` 来自响应头，是后续覆盖它的基线 */
@@ -919,8 +941,10 @@ export interface FetchedLayout {
   file: string | null
 }
 
-export async function fetchLayout(name: string): Promise<FetchedLayout> {
-  const res = await fetch(apiUrl(`/api/layouts/${encodeURIComponent(name)}`), withProject())
+export async function fetchLayout(name: string, format?: DocumentFormat, pj?: string | null): Promise<FetchedLayout> {
+  const path = documentApiPath(`/api/layouts/${encodeURIComponent(name)}`, format)
+  const res = pj === undefined ? await fetch(apiUrl(path), withProject())
+    : await fetch(apiUrlFor(path, pj), withProjectFor(undefined, pj))
   if (!res.ok) {
     let body: Record<string, unknown> = {}
     try {
@@ -931,15 +955,18 @@ export async function fetchLayout(name: string): Promise<FetchedLayout> {
     noteProjectGone(res.status, body)
     throw new ApiError(typeof body?.error === 'string' ? body.error : `HTTP ${res.status}`, res.status, body)
   }
+  requireDocumentResponseFormat(res, format)
   const file = res.headers.get('X-Tavotto-Layout-File')
   return {
-    doc: await res.json(),
+    doc: requireDocumentSchema(await res.json(), format),
     revision: res.headers.get('X-Tavotto-Revision'),
     file: file ? decodeURIComponent(file) : null,
   }
 }
 
 export interface SavedLayout {
+  document_format?: 'v4'
+  chart_sources?: ChartSourceReceipt[]
   /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
   figure_snapshots?: Record<string, FigureSnapshot>
   ok: boolean
@@ -965,19 +992,21 @@ export const saveLayout = (
   name: string,
   doc: FigureDocument | ProjectDocument,
   baseRevision?: string,
-  opts?: { target?: 'project' },
+  opts?: { target?: 'project'; format?: DocumentFormat; pj?: string | null },
 ) => {
+  const format = opts?.format
   const params = new URLSearchParams()
   if (baseRevision !== undefined) params.set('base_revision', baseRevision)
   if (opts?.target) params.set('target', opts.target)
   const qs = params.toString()
-  return jsonFetch<SavedLayout>(
+  return documentJsonFetch(format)<SavedLayout>(
     `/api/layouts/${encodeURIComponent(name)}` + (qs ? `?${qs}` : ''),
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(doc),
     },
+    opts?.pj,
   )
 }
 
@@ -1011,6 +1040,8 @@ export const REVISION_ABSENT = 'absent'
  * `owner_unknown` = 这次请求的项目身份已失效，归属没记。旧后端不发 = `undefined`（不知道，不当 `ok`）。
  */
 export interface PutAutosaveResult {
+  document_format?: 'v4'
+  chart_sources?: ChartSourceReceipt[]
   /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
   figure_snapshots?: Record<string, FigureSnapshot>
   ok: boolean
@@ -1036,12 +1067,13 @@ export const putAutosave = (
   base?: number,
   baseRevision?: string,
   pj?: string | null,
+  format?: DocumentFormat,
 ) => {
   const q = new URLSearchParams()
   if (base !== undefined) q.set('base', String(base))
   if (baseRevision !== undefined) q.set('base_revision', baseRevision)
   const qs = q.toString()
-  return jsonFetch<PutAutosaveResult>(
+  return documentJsonFetch(format)<PutAutosaveResult>(
     `/api/autosave/${encodeURIComponent(docId)}${qs ? `?${qs}` : ''}`,
     {
       method: 'PUT',
@@ -1062,8 +1094,9 @@ export interface FetchedAutosave {
 export async function fetchAutosave(
   docId: string,
   pj?: string | null,
+  format?: DocumentFormat,
 ): Promise<FetchedAutosave | null> {
-  const path = `/api/autosave/${encodeURIComponent(docId)}`
+  const path = documentApiPath(`/api/autosave/${encodeURIComponent(docId)}`, format)
   const res =
     pj === undefined
       ? await fetch(apiUrl(path), withProject())
@@ -1073,7 +1106,8 @@ export async function fetchAutosave(
     noteProjectGone(res.status, await errorBody(res))
     throw new Error(`HTTP ${res.status}`)
   }
-  return { doc: await res.json(), revision: res.headers.get('X-Tavotto-Revision') }
+  requireDocumentResponseFormat(res, format)
+  return { doc: requireDocumentSchema(await res.json(), format), revision: res.headers.get('X-Tavotto-Revision') }
 }
 
 /**
@@ -1093,8 +1127,8 @@ export type AutosaveProbe =
  * 纯读：问后端这个槽位里有什么，**不抛、不记 revision、不碰任何本机状态**。恢复流程遍历候选时
  * 用它（`fetchAutosave` 把 5xx 与「没有」都折成抛 / null，且 400 的原因丢了）。`pj` 见 putAutosave。
  */
-export async function probeAutosave(docId: string, pj?: string | null): Promise<AutosaveProbe> {
-  const path = `/api/autosave/${encodeURIComponent(docId)}`
+export async function probeAutosave(docId: string, pj?: string | null, format?: DocumentFormat): Promise<AutosaveProbe> {
+  const path = documentApiPath(`/api/autosave/${encodeURIComponent(docId)}`, format)
   let res: Response
   try {
     res =
@@ -1113,6 +1147,7 @@ export async function probeAutosave(docId: string, pj?: string | null): Promise<
     }
     return { kind: 'unavailable', status: res.status }
   }
+  if (!documentResponseFormat(res.headers.get('X-Tavotto-Document-Format'), format)) return { kind: 'invalid', code: 'invalid_document' }
   try {
     return { kind: 'found', doc: await res.json(), revision: res.headers.get('X-Tavotto-Revision') }
   } catch {
@@ -1123,15 +1158,15 @@ export async function probeAutosave(docId: string, pj?: string | null): Promise<
 }
 
 /** 磁盘那一份的摘要；没有这份文件返回 null */
-export const fetchAutosaveSummary =(docId: string, pj?: string | null) =>
-  jsonFetch<DiskDocumentSummary>(
+export const fetchAutosaveSummary =(docId: string, pj?: string | null, format?: DocumentFormat) =>
+  documentJsonFetch(format)<DiskDocumentSummary>(
     `/api/autosave/${encodeURIComponent(docId)}/summary`,
     undefined,
     pj,
   ).catch(() => null)
 
-export const deleteAutosave = (docId: string) =>
-  jsonFetch<{ ok: boolean }>(`/api/autosave/${encodeURIComponent(docId)}`, {
+export const deleteAutosave = (docId: string, format?: DocumentFormat) =>
+  documentJsonFetch(format)<{ ok: boolean }>(`/api/autosave/${encodeURIComponent(docId)}`, {
     method: 'DELETE',
   })
 
@@ -1167,9 +1202,33 @@ export type SessionIndexStatus = 'ok' | 'missing' | 'degraded' | 'recovered'
  * - `unsupported`：404 = 没有这组端点（旧后端 / playground / 嵌入画布），沿用受约束的兼容分支；
  * - `unavailable`：网络 / 超时 / 5xx / 401 / 403——**不是** 404，不许当旧端点放行。
  */
+export type OpenIntent =
+  | { version: 1; status: 'ok'; sequence: number; snapshot: string; latest: { document_format: DocumentFormat; doc_id: string; pointer: 'last' | 'pending' } | null }
+  | { version: 1; status: 'stale' | 'untracked'; snapshot: string }
+  | { version: 1; status: 'unavailable' }
+
+function parseOpenIntent(raw: unknown): OpenIntent | undefined {
+  if (raw === undefined) return undefined
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { version: 1, status: 'unavailable' }
+  const r = raw as Record<string, unknown>
+  const keys = (...names: string[]) => Object.keys(r).length === names.length && names.every((k) => Object.hasOwn(r, k))
+  if (r.version !== 1) return { version: 1, status: 'unavailable' }
+  if (r.status === 'unavailable' && keys('version', 'status')) return { version: 1, status: 'unavailable' }
+  if (typeof r.snapshot !== 'string' || !r.snapshot) return { version: 1, status: 'unavailable' }
+  if ((r.status === 'stale' || r.status === 'untracked') && keys('version', 'status', 'snapshot')) return { version: 1, status: r.status, snapshot: r.snapshot }
+  if (r.status !== 'ok' || !keys('version', 'status', 'sequence', 'snapshot', 'latest') || !Number.isSafeInteger(r.sequence) || (r.sequence as number) < 0) return { version: 1, status: 'unavailable' }
+  if (r.latest !== null) {
+    if (!r.latest || typeof r.latest !== 'object' || Array.isArray(r.latest)) return { version: 1, status: 'unavailable' }
+    const v = r.latest as Record<string, unknown>
+    if (Object.keys(v).length !== 3 || !['legacy', 'v4'].includes(String(v.document_format)) || typeof v.doc_id !== 'string' || !v.doc_id || !['last', 'pending'].includes(String(v.pointer))) return { version: 1, status: 'unavailable' }
+  }
+  return raw as OpenIntent
+}
+
 export type SessionFetch =
   | {
       kind: 'ok'
+      open_intent?: OpenIntent
       last: SessionPointer | null
       prev: SessionPointer | null
       pending: SessionPointer | null
@@ -1192,12 +1251,13 @@ function parseSessionRef(v: unknown): SessionPointer | null {
 
 const INDEX_STATUSES: readonly SessionIndexStatus[] = ['ok', 'missing', 'degraded', 'recovered']
 
-export async function fetchLayoutSessionResult(pj?: string | null): Promise<SessionFetch> {
+export async function fetchLayoutSessionResult(pj?: string | null, format?: DocumentFormat, opts?: { includeOpenIntent: true }): Promise<SessionFetch> {
   try {
-    const body = await jsonFetch<Record<string, unknown>>('/api/layout-session', undefined, pj)
+    const body = await documentJsonFetch(format)<Record<string, unknown>>(`/api/layout-session${opts?.includeOpenIntent ? '?include_open_intent=1' : ''}`, undefined, pj)
     const index = INDEX_STATUSES.find((s) => s === body?.index) ?? 'ok'
     return {
       kind: 'ok',
+      ...(opts?.includeOpenIntent && body?.open_intent !== undefined ? { open_intent: parseOpenIntent(body.open_intent) } : {}),
       last: parseSessionRef(body?.last),
       prev: parseSessionRef(body?.prev),
       pending: parseSessionRef(body?.pending),
@@ -1217,8 +1277,9 @@ export async function fetchLayoutSessionResult(pj?: string | null): Promise<Sess
  */
 export async function fetchLayoutSession(
   pj?: string | null,
+  format?: DocumentFormat,
 ): Promise<{ last: LayoutSessionLast | null } | undefined> {
-  const r = await fetchLayoutSessionResult(pj)
+  const r = await (format === 'v4' ? fetchLayoutSessionResult(pj, format) : fetchLayoutSessionResult(pj))
   return r.kind === 'ok' ? { last: r.last } : undefined
 }
 
@@ -1229,12 +1290,12 @@ export async function fetchLayoutSession(
 export interface PutLayoutSessionLastResult {
   ok: boolean
   last: LayoutSessionLast | null
-  state?: 'durable' | 'pending'
+  state?: 'durable' | 'pending' | 'superseded' | 'unconfirmed'
   pending?: LayoutSessionLast | null
 }
 
-export const putLayoutSessionLast = (ref: { doc_id: string; name: string }, pj?: string | null) =>
-  jsonFetch<PutLayoutSessionLastResult>(
+export const putLayoutSessionLast = (ref: { doc_id: string; name: string; repair?: true }, pj?: string | null, format?: DocumentFormat) =>
+  documentJsonFetch(format)<PutLayoutSessionLastResult>(
     '/api/layout-session/last',
     { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ref) },
     pj,
@@ -1265,9 +1326,10 @@ export interface OwnerEvidence {
 export async function fetchLayoutOwnerEvidence(
   docId: string,
   pj?: string | null,
+  format?: DocumentFormat,
 ): Promise<OwnerEvidence | 'unsupported' | 'unavailable'> {
   try {
-    const body = await jsonFetch<{ owner?: unknown; evidence?: unknown; verified?: unknown; revision?: unknown }>(
+    const body = await documentJsonFetch(format)<{ owner?: unknown; evidence?: unknown; verified?: unknown; revision?: unknown }>(
       `/api/layout-session/owner?doc_id=${encodeURIComponent(docId)}`,
       undefined,
       pj,
@@ -1297,8 +1359,9 @@ export async function fetchLayoutOwnerEvidence(
 export async function fetchLayoutOwner(
   docId: string,
   pj?: string | null,
+  format?: DocumentFormat,
 ): Promise<'this' | 'other' | 'unknown' | null | undefined> {
-  const r = await fetchLayoutOwnerEvidence(docId, pj)
+  const r = await (format === 'v4' ? fetchLayoutOwnerEvidence(docId, pj, format) : fetchLayoutOwnerEvidence(docId, pj))
   if (r === 'unsupported') return undefined
   if (r === 'unavailable') return null
   return r.owner
@@ -1310,6 +1373,7 @@ export async function fetchLayoutOwner(
  * 拿不到就没有——前端不编缩略图。
  */
 export interface RecoveryCandidateItem {
+  format?: DocumentFormat
   doc_id: string
   name: string
   updatedAt: number | null
@@ -1384,17 +1448,18 @@ export async function fetchRecoveryCandidates(
   pj: string | null,
   cursor?: string,
   limit = 50,
+  format?: DocumentFormat,
 ): Promise<RecoveryCandidatePage | 'unsupported' | 'unavailable'> {
   const q = new URLSearchParams({ scope, limit: String(limit) })
   if (cursor) q.set('cursor', cursor)
   try {
-    const body = await jsonFetch<Record<string, unknown>>(
+    const body = await documentJsonFetch(format)<Record<string, unknown>>(
       `/api/layout-session/candidates?${q.toString()}`,
       undefined,
       pj,
     )
     const items = Array.isArray(body?.items)
-      ? body.items.map(parseCandidate).filter((x): x is RecoveryCandidateItem => x !== null)
+      ? body.items.map(value => { const item = parseCandidate(value); return item && format === 'v4' ? { ...item, format } : item }).filter((x): x is RecoveryCandidateItem => x !== null)
       : []
     return {
       items,
@@ -1658,7 +1723,8 @@ export async function fetchExecTraceDiagnostic(
 export const fetchVersions = (
   docId: string,
   sketch?: { objects: number; textChars: number },
-) => fetchTimeline(docId, sketch).then((r) => r.versions)
+  format?: DocumentFormat,
+) => (format === 'v4' ? fetchTimeline(docId, sketch, format) : fetchTimeline(docId, sketch)).then((r) => r.versions)
 
 /**
  * 时间线此刻的体积（ADR 0101）。`namedOver` = 命名节点自己就超出了字节上限：
@@ -1675,9 +1741,10 @@ export interface TimelineBudget {
 export const fetchTimeline = (
   docId: string,
   sketch?: { objects: number; textChars: number },
+  format?: DocumentFormat,
 ) => {
   const q = sketch ? `?sketch=${sketch.objects}&sketchText=${sketch.textChars}` : ''
-  return jsonFetch<{
+  return documentJsonFetch(format)<{
     versions: LayoutVersionMeta[]
     budget?: TimelineBudget
     /**
@@ -1691,9 +1758,9 @@ export const fetchTimeline = (
 }
 
 /** 节点缩略图的地址（`<img src>`）。没有缩略图的节点别调它。 */
-export const versionThumbUrl = (docId: string, v: Pick<LayoutVersionMeta, 'id' | 'thumb'>) =>
+export const versionThumbUrl = (docId: string, v: Pick<LayoutVersionMeta, 'id' | 'thumb'>, format?: DocumentFormat) =>
   apiUrl(
-    `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(v.id)}/thumb?f=${v.thumb ?? ''}`,
+    documentApiPath(`/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(v.id)}/thumb?f=${v.thumb ?? ''}`, format),
   )
 
 /** 给节点挂缩略图。`pj` = 拍节点那一刻的项目（关项目 / 回主页时它随后就变了） */
@@ -1702,18 +1769,24 @@ export const putVersionThumb = (
   vid: string,
   thumb: { blob: Blob; type: string; box?: { x: number; y: number; w: number; h: number } },
   pj?: string | null,
+  format?: DocumentFormat,
 ) =>
-  jsonFetch<{ ok: true; thumb: 'webp' | 'png' }>(
+  documentJsonFetch(format)<{ ok: true; thumb: 'webp' | 'png' }>(
     `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}/thumb` +
       (thumb.box ? `?box=${[thumb.box.x, thumb.box.y, thumb.box.w, thumb.box.h].join(',')}` : ''),
     { method: 'PUT', headers: { 'Content-Type': thumb.type }, body: thumb.blob },
     pj,
   )
 
-export const fetchVersionDoc = (docId: string, vid: string) =>
-  jsonFetch<{ doc: FigureDocument } & LayoutVersionMeta>(
+export const fetchVersionDoc = (docId: string, vid: string, format?: DocumentFormat) =>
+  documentJsonFetch(format)<{ doc: FigureDocument | ProjectDocument } & LayoutVersionMeta>(
     `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}`,
-  )
+  ).then(result => {
+    if (format !== 'v4') return result as { doc: FigureDocument } & LayoutVersionMeta
+    const doc = chartVersionCanvas(result.doc)
+    if (!doc) throw new ApiError('Invalid canvas version.', 400, { code: 'invalid_document' })
+    return { ...result, doc }
+  })
 
 export const createVersion = (
   docId: string,
@@ -1729,24 +1802,28 @@ export const createVersion = (
     canvasName?: string
   },
   pj?: string | null,
-) =>
-  jsonFetch<{ version?: LayoutVersionMeta; skipped?: boolean }>(
+  opts?: { format: 'v4'; identity: VersionCanvasIdentity },
+) => {
+  const format = opts?.format
+  return documentJsonFetch(format)<{ version?: LayoutVersionMeta; skipped?: boolean }>(
     `/api/versions/${encodeURIComponent(docId)}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(opts ? { ...payload, doc: chartVersionProject(payload.doc, opts.identity) } : payload),
     },
     pj,
   )
+}
 
 export const updateVersion = (
   docId: string,
   vid: string,
   /** `name` 非空 = 命名 / 改名；`named: false` = 删掉名字，变回普通节点 */
   patch: { name?: string; named?: false; description?: string; auto?: boolean },
+  format?: DocumentFormat,
 ) =>
-  jsonFetch<{ version: LayoutVersionMeta }>(
+  documentJsonFetch(format)<{ version: LayoutVersionMeta }>(
     `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}`,
     {
       method: 'PATCH',
@@ -1755,14 +1832,14 @@ export const updateVersion = (
     },
   )
 
-export const duplicateVersion = (docId: string, vid: string) =>
-  jsonFetch<{ version: LayoutVersionMeta }>(
+export const duplicateVersion = (docId: string, vid: string, format?: DocumentFormat) =>
+  documentJsonFetch(format)<{ version: LayoutVersionMeta }>(
     `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}/duplicate`,
     { method: 'POST' },
   )
 
-export const deleteVersion = (docId: string, vid: string) =>
-  jsonFetch<{ ok: boolean }>(
+export const deleteVersion = (docId: string, vid: string, format?: DocumentFormat) =>
+  documentJsonFetch(format)<{ ok: boolean }>(
     `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}`,
     { method: 'DELETE' },
   )

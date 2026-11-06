@@ -1,3 +1,4 @@
+import { documentAddressKey, type DocumentFormat } from '@/lib/documentFormat'
 /**
  * 文档恢复协调（CONTRACT 2.4）：冷启动、Picker 打开项目、重试、交接前的等待，都走这一条
  * `resolveProjectDocument`。
@@ -67,7 +68,7 @@ import {
 } from '@/store/documentStore'
 import { fetchLayoutOwnerEvidence, fetchRecoveryCandidates, type RecoveryCandidateItem, type SessionIndexStatus } from '@/lib/api'
 import { correctRecordedProject, isForeignDocument } from '@/lib/docOwnership'
-import { confirmRestored, planRestore, type CandidatePlan, type RestoreCandidate } from '@/lib/projectDocs'
+import { confirmRestored, planRestore, rememberProjectDocument, selectDocumentNamespace, type NamespaceSelection, type CandidatePlan, type RestoreCandidate, type ProjectDocumentRef } from '@/lib/projectDocs'
 import { fitStageNow } from '@/store/zoomToSelection'
 
 export { whenDocumentReady }
@@ -96,7 +97,7 @@ export interface RestoreIssue {
   pj: string | null
   gen: number
   kind: RestoreIssueKind
-  ref: { id: string; name: string } | null
+  ref: ProjectDocumentRef | null
   alternatives: AltCandidate[]
 }
 
@@ -113,6 +114,7 @@ export interface RestoreClues {
   pj: string | null
   /** 本机全局 `tavotto.currentDoc`（确知属于本项目才会被计划采用） */
   globalCurrent: string | null
+  globalChartCurrent?: string | null
   /** 捕获那一刻内存里的文档身份 */
   memDocId: string
   /** 本次启动的「开空白」决定（一次性标记，消费结果是共享决定） */
@@ -124,6 +126,7 @@ export function captureClues(pj: string | null): RestoreClues {
   return {
     pj,
     globalCurrent: readCurrentDocId(),
+    globalChartCurrent: readCurrentDocId('v4'),
     memDocId: useDocumentStore.getState().documentId,
     skip: consumeSkipRestoreOnce(),
   }
@@ -157,19 +160,23 @@ function pause(ms: number, token: RestoreToken): Promise<void> {
   })
 }
 
-async function planWithRetry(token: RestoreToken, clues: RestoreClues): Promise<CandidatePlan | null> {
+async function planWithRetry(token: RestoreToken, clues: RestoreClues): Promise<NamespaceSelection | null> {
   for (let attempt = 0; ; attempt++) {
-    const plan = await planRestore(token.pj, { globalCurrent: clues.globalCurrent })
+    const [legacy, v4] = await Promise.all([
+      planRestore(token.pj, { globalCurrent: clues.globalCurrent }, 'legacy', { includeOpenIntent: true }),
+      planRestore(token.pj, { globalCurrent: clues.globalChartCurrent ?? null }, 'v4', { includeOpenIntent: true }),
+    ])
     if (!isRestoreTokenCurrent(token)) return null
-    if (plan.session.kind !== 'unavailable' || attempt >= retryDelays.length) return plan
+    const selection = selectDocumentNamespace({ legacy, v4 })
+    if ((selection.kind !== 'unavailable' && selection.kind !== 'changed') || attempt >= retryDelays.length) return selection
     await pause(retryDelays[attempt], token)
     if (!isRestoreTokenCurrent(token)) return null
   }
 }
 
-async function probeWithRetry(token: RestoreToken, id: string): Promise<ProbeResult | null> {
+async function probeWithRetry(token: RestoreToken, id: string, format: DocumentFormat = 'legacy'): Promise<ProbeResult | null> {
   for (let attempt = 0; ; attempt++) {
-    const probe = await probeDocument(id, token.pj)
+    const probe = await probeDocument(id, token.pj, ...(format === 'v4' ? [format] : []))
     if (!isRestoreTokenCurrent(token)) return null
     if (probe.kind !== 'unavailable' || attempt >= retryDelays.length) return probe
     await pause(retryDelays[attempt], token)
@@ -204,12 +211,18 @@ function installProbe(
     void confirmRestored(token.pj, { id: probe.id, name: name || probe.doc.project.name }, plan).catch(() => {})
   } else if (cand?.correctsIndex && token.pj) {
     // 备选选择没有保留原计划；已验证的 C1 结论仍须在安装 / 首次保存之前落到本机索引。
-    correctRecordedProject(probe.id, token.pj)
+    correctRecordedProject(probe.id, token.pj, ...(probe.format === 'v4' ? [probe.format] : []))
   }
   const notice = acceptProbe(probe, token.pj, token)
-  installRestoredDocument(token, probe.doc, probe.id, notice)
-  settleRestore(token, { state: 'ready', reason })
-  return { kind: 'restored', id: probe.id }
+  if (!installRestoredDocument(token, probe.doc, probe.id, notice)) return { kind: 'superseded' }
+  const installed = useDocumentStore.getState()
+  if (!settleRestore(token, { state: 'ready', reason })) return { kind: 'superseded' }
+  const state = useDocumentStore.getState(), gate = getRestoreGate()
+  if (gate.state !== 'ready' || gate.gen !== token.gen || gate.pj !== token.pj || currentProjectId() !== token.pj
+    || state.documentId !== installed.documentId || state.documentFormat !== installed.documentFormat || state.loadSeq !== installed.loadSeq) return { kind: 'superseded' }
+  const upgraded = state.documentFormat === 'v4' && state.documentId !== probe.id
+  if ((reason === 'explicit' || upgraded) && token.pj) rememberProjectDocument(token.pj, { id: state.documentId, name: state.projectMeta.name, ...(state.documentFormat === 'v4' ? { format: state.documentFormat } : {}) })
+  return { kind: 'restored', id: state.documentId }
 }
 
 /**
@@ -231,17 +244,17 @@ async function guardRevision(
   const actual = probe.disk.revision
   if (expected && actual === expected && !expectedAbsent) return null
   // 读到的修订号是空的（代理吃了 X-Tavotto-Revision）：绑定不上，无从证明这份还是指针说的那份——不装，给重试
-  if (!actual) return needsUser(token, 'unavailable', { id: cand.id, name: cand.name })
-  const ev = await fetchLayoutOwnerEvidence(cand.id, token.pj)
+  if (!actual) return needsUser(token, 'unavailable', { id: cand.id, name: cand.name, ...(cand.format === 'v4' ? { format: cand.format } : {}) })
+  const ev = await fetchLayoutOwnerEvidence(cand.id, token.pj, ...(cand.format === 'v4' ? [cand.format] : []))
   if (!isRestoreTokenCurrent(token)) return { kind: 'superseded' }
   if (ev !== 'unsupported' && ev !== 'unavailable') {
     // 复核的结论是针对**它算的那个修订号**的：必须正好是我们马上要装的这份（读到的磁盘修订号），
     // 否则复核之后正文又被换过——不装，给重试（再探测一次）。后端没回 revision（旧）同样不装
     const verdictRev = (ev as { revision?: string | null }).revision
     if (ev.owner === 'this' && ev.verified && verdictRev === actual) return null
-    if (ev.owner === 'other') return needsUser(token, 'missing', { id: cand.id, name: cand.name })
+    if (ev.owner === 'other') return needsUser(token, 'missing', { id: cand.id, name: cand.name, ...(cand.format === 'v4' ? { format: cand.format } : {}) })
   }
-  return needsUser(token, 'unavailable', { id: cand.id, name: cand.name })
+  return needsUser(token, 'unavailable', { id: cand.id, name: cand.name, ...(cand.format === 'v4' ? { format: cand.format } : {}) })
 }
 
 /** 读到了就装——除非指针的修订号对不上（`guardRevision`） */
@@ -293,8 +306,8 @@ async function verifiedAlternatives(
 ): Promise<RestoreCandidate[] | null> {
   const out: RestoreCandidate[] = []
   for (const c of candidates.slice(0, 5)) {
-    if (c.id === excludeId || out.some((o) => o.id === c.id)) continue
-    const probe = await probeDocument(c.id, token.pj)
+    if (documentAddressKey(c.id, c.format) === excludeId || out.some((o) => documentAddressKey(o.id, o.format) === documentAddressKey(c.id, c.format))) continue
+    const probe = await probeDocument(c.id, token.pj, ...(c.format === 'v4' ? [c.format] : []))
     if (!isRestoreTokenCurrent(token)) return null
     if (probe.kind !== 'found') continue
     // 提供给用户之前读到的正文修订号记在候选上（候选自己没有时）：用户坐在面板上的这段时间里同一个 docId 可能被别的项目
@@ -329,15 +342,22 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
       ? { kind: 'empty' }
       : { kind: 'superseded' }
   }
-  const plan = await planWithRetry(token, clues)
-  if (!plan) return { kind: 'superseded' }
+  const selection = await planWithRetry(token, clues)
+  if (!selection) return { kind: 'superseded' }
 
-  let failure: { kind: RestoreIssueKind; ref: { id: string; name: string }; probe: ProbeResult } | null = null
+  if (selection.kind !== 'selected') {
+    const alts = await verifiedAlternatives(token, selection.candidates, null)
+    if (!alts) return { kind: 'superseded' }
+    return needsUser(token, selection.kind === 'choose' ? 'choose' : selection.kind === 'unavailable' ? 'session_unavailable' : 'index_degraded', null, alts)
+  }
+  const plan = selection.plan
+  const peers = selection.peers
+  let failure: { kind: RestoreIssueKind; ref: ProjectDocumentRef; probe: ProbeResult } | null = null
   // 后端 last 读不到（重试之后仍然）：不知道后端记着什么——它可能有比本机线索更新的 last。本机线索不自动当成恢复，
   // 只作为**已验证的备选**交给用户（`session_unavailable`，出口：重试 / 打开某份 / 继续新建）。
   // 本机线索自动兜底只留给后端根本没有这组端点（`unsupported`，计划里 preferred 就是它）。
   if (plan.session.kind === 'unavailable') {
-    const alts = await verifiedAlternatives(token, plan.fallbacks, null)
+    const alts = await verifiedAlternatives(token, [...plan.fallbacks, ...peers], null)
     if (!alts) return { kind: 'superseded' }
     return needsUser(token, 'session_unavailable', null, alts)
   }
@@ -353,7 +373,7 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
   const blockedByLast = (): Promise<RestoreOutcome> => withheldLastIssue(token, withheldLast!, [...(pref ? [pref] : []), ...rest])
   if (pref && withheldLast && !pref.pendingIntent && !pref.sources.includes('backend_last')) return blockedByLast()
   if (pref) {
-    const probe = await probeWithRetry(token, pref.id)
+    const probe = await probeWithRetry(token, pref.id, ...(pref.format === 'v4' ? [pref.format] : []))
     if (!probe) return { kind: 'superseded' }
     if (probe.kind === 'found') return installChecked(token, probe, plan, pref, 'restored')
     if (pref.pendingIntent && probe.kind === 'missing') {
@@ -366,34 +386,34 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
       const durable =
         rest.find((c) => c.sources.includes('backend_last')) ?? rest.find((c) => c.sources.includes('backend_prev'))
       if (durable) {
-        const p = await probeWithRetry(token, durable.id)
+        const p = await probeWithRetry(token, durable.id, ...(durable.format === 'v4' ? [durable.format] : []))
         if (!p) return { kind: 'superseded' }
         if (p.kind === 'found') return installChecked(token, p, plan, durable, 'restored')
-        const alts = await verifiedAlternatives(token, rest, durable.id)
+        const alts = await verifiedAlternatives(token, [...rest, ...peers], documentAddressKey(durable.id, durable.format))
         if (!alts) return { kind: 'superseded' }
         return needsUser(
           token,
           issueKindOf(p),
-          { id: durable.id, name: durable.name },
+          { id: durable.id, name: durable.name, ...(durable.format === 'v4' ? { format: durable.format } : {}) },
           alts,
           p.kind === 'too_new' ? { docId: durable.id, schema: p.schema ?? 0 } : undefined,
         )
       }
       // 没有 durable 记录（只有本机线索）：按线索依次试，第一个能读的装
       for (const fb of rest) {
-        const p = await probeWithRetry(token, fb.id)
+        const p = await probeWithRetry(token, fb.id, ...(fb.format === 'v4' ? [fb.format] : []))
         if (!p) return { kind: 'superseded' }
         if (p.kind === 'found') return installChecked(token, p, plan, fb, 'restored')
-        failure ??= { kind: issueKindOf(p), ref: { id: fb.id, name: fb.name }, probe: p }
+        failure ??= { kind: issueKindOf(p), ref: { id: fb.id, name: fb.name, ...(fb.format === 'v4' ? { format: fb.format } : {}) }, probe: p }
         if (p.kind === 'unavailable') break
       }
     } else {
-      const alts = await verifiedAlternatives(token, rest, pref.id)
+      const alts = await verifiedAlternatives(token, [...rest, ...peers], documentAddressKey(pref.id, pref.format))
       if (!alts) return { kind: 'superseded' }
       return needsUser(
         token,
         issueKindOf(probe),
-        { id: pref.id, name: pref.name },
+        { id: pref.id, name: pref.name, ...(pref.format === 'v4' ? { format: pref.format } : {}) },
         [...localCopyAlt(pref, probe), ...alts],
         probe.kind === 'too_new' ? { docId: pref.id, schema: probe.schema ?? 0 } : undefined,
       )
@@ -413,7 +433,7 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
   // 有线索但没认领（归属问不到）：不自动认领，也不说成空项目——给重试出口；确知别人的 / 归属不明的不阻塞
   const unreachable = plan.withheld.find((w) => w.reason === 'owner_unavailable')
   if (unreachable) {
-    return needsUser(token, 'unavailable', { id: unreachable.candidate.id, name: unreachable.candidate.name })
+    return needsUser(token, 'unavailable', { id: unreachable.candidate.id, name: unreachable.candidate.name, ...(unreachable.candidate.format === 'v4' ? { format: unreachable.candidate.format } : {}) })
   }
   // 没有这组端点（playground / 嵌入画布 / 旧后端）：没有可发现的东西
   if (plan.session.kind === 'unsupported') return finishEmpty(token)
@@ -427,23 +447,24 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
   if (scan === 'unavailable') return needsUser(token, 'session_unavailable', null)
   // 发现不能翻案：计划已经因归属拒绝 / 问不到的线索（withheld）不会从发现里再被捡回来；本机索引确知属于别的项目的，
   // 只有后端 `owners` 证据才算数（仅 assets / versions 的同名证据不是归属转移，A17）
-  const withheldIds = new Set(plan.withheld.map((w) => w.candidate.id))
+  const withheldIds = new Set(plan.withheld.map((w) => documentAddressKey(w.candidate.id, w.candidate.format)))
   const items = scan.items.filter(
     (i) =>
       i.status === 'ok' &&
       i.owner === 'this' &&
-      !withheldIds.has(i.doc_id) &&
-      (!isForeignDocument(i.doc_id, pj) || i.evidence === 'owners'),
+      !withheldIds.has(documentAddressKey(i.doc_id, i.format)) &&
+      (!isForeignDocument(i.doc_id, pj, ...(i.format === 'v4' ? [i.format] : [])) || i.evidence === 'owners'),
   )
   // 发现的行带着扫描那一刻的正文修订号：之后读正文时对不上（共用 docId 的别的项目在两次读之间存过）就要复核归属
   const asCandidate = (i: RecoveryCandidateItem): RestoreCandidate => ({
     id: i.doc_id,
+    ...(i.format === 'v4' ? { format: i.format } : {}),
     name: i.name,
     sources: ['discovered'],
     ownership: 'this',
     ...(i.evidence ? { ownershipEvidence: i.evidence } : {}),
     ...(i.revision ? { expectedRevision: i.revision } : {}),
-    ...(isForeignDocument(i.doc_id, pj) && i.evidence === 'owners' ? { correctsIndex: true } : {}),
+    ...(isForeignDocument(i.doc_id, pj, ...(i.format === 'v4' ? [i.format] : [])) && i.evidence === 'owners' ? { correctsIndex: true } : {}),
   })
   const asCandidates = items.slice(0, 5).map(asCandidate)
   if (!scan.complete) {
@@ -461,7 +482,7 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
   }
   if (items.length === 1) {
     const item = items[0]
-    const probe = await probeWithRetry(token, item.doc_id)
+    const probe = await probeWithRetry(token, item.doc_id, ...(item.format === 'v4' ? [item.format] : []))
     if (!probe) return { kind: 'superseded' }
     if (probe.kind === 'found') {
       const out = await installChecked(token, probe, null, asCandidate(item), 'restored')
@@ -477,7 +498,7 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
     return needsUser(
       token,
       issueKindOf(probe),
-      { id: item.doc_id, name: item.name },
+      { id: item.doc_id, name: item.name, ...(item.format === 'v4' ? { format: item.format } : {}) },
       [],
       probe.kind === 'too_new' ? { docId: item.doc_id, schema: probe.schema ?? 0 } : undefined,
     )
@@ -497,8 +518,9 @@ const DISCOVER_MAX_ROWS = 500
  * 翻完本项目的找回候选（只读）。首页 `unavailable` 按有界重试（同 session 读取），仍失败 → `'unavailable'`；
  * `unsupported` → `'unsupported'`。`complete=false`：到上界游标还在，或中途某页读不到。令牌过期回 null。
  */
-async function discoverAll(
+async function discoverNamespace(
   token: RestoreToken,
+  format: DocumentFormat,
 ): Promise<
   | { items: RecoveryCandidateItem[]; complete: boolean; index: SessionIndexStatus }
   | 'unsupported'
@@ -512,13 +534,14 @@ async function discoverAll(
   let scanned = 0
   // 任何一页回包说「被截断」（后端自己的扫描上限到了）→ 数不清，粘性：之后的页再干净也不翻案
   let truncated = false
+  const fetchPage = () => format === 'v4' ? fetchRecoveryCandidates('project', token.pj, cursor, 50, format) : fetchRecoveryCandidates('project', token.pj, cursor)
   for (let page = 0; page < DISCOVER_MAX_PAGES && scanned < DISCOVER_MAX_ROWS; page++) {
-    let res = await fetchRecoveryCandidates('project', token.pj, cursor)
+    let res = await fetchPage()
     for (let attempt = 0; res === 'unavailable' && attempt < retryDelays.length; attempt++) {
       if (!isRestoreTokenCurrent(token)) return null
       await pause(retryDelays[attempt], token)
       if (!isRestoreTokenCurrent(token)) return null
-      res = await fetchRecoveryCandidates('project', token.pj, cursor)
+      res = await fetchPage()
     }
     if (!isRestoreTokenCurrent(token)) return null
     if (res === 'unsupported') return page === 0 ? 'unsupported' : { items, complete: false, index }
@@ -537,17 +560,25 @@ async function discoverAll(
   return { items, complete: false, index }
 }
 
+async function discoverAll(token: RestoreToken): Promise<Awaited<ReturnType<typeof discoverNamespace>>> {
+  const both = await Promise.all([discoverNamespace(token, 'legacy'), discoverNamespace(token, 'v4')])
+  if (both.some((r) => r === null)) return null
+  const good = both.filter((r): r is { items: RecoveryCandidateItem[]; complete: boolean; index: SessionIndexStatus } => typeof r === 'object' && r !== null)
+  if (!good.length) return both.includes('unavailable') ? 'unavailable' : 'unsupported'
+  return { items: good.flatMap((r) => r.items), complete: !both.includes('unavailable') && good.every((r) => r.complete), index: good.some((r) => r.index === 'degraded') ? 'degraded' : 'ok' }
+}
+
 /** 被扣下的 durable last 挡住了回退：给出口，不替用户越过它。其余已验证的候选（含 prev）只作为可选项 */
 async function withheldLastIssue(
   token: RestoreToken,
   w: { candidate: RestoreCandidate; reason: 'foreign' | 'owner_unknown' | 'owner_unavailable' },
   others: RestoreCandidate[],
 ): Promise<RestoreOutcome> {
-  const alts = await verifiedAlternatives(token, others, w.candidate.id)
+  const alts = await verifiedAlternatives(token, others, documentAddressKey(w.candidate.id, w.candidate.format))
   if (!alts) return { kind: 'superseded' }
   // 问不到归属 = 暂时的，可重试；确知别人的 / 归属不明 = 这个项目打不开它（按「找不到」说，出口是别的或继续新建）
   const kind: RestoreIssueKind = w.reason === 'owner_unavailable' ? 'unavailable' : 'missing'
-  return needsUser(token, kind, { id: w.candidate.id, name: w.candidate.name }, alts)
+  return needsUser(token, kind, { id: w.candidate.id, name: w.candidate.name, ...(w.candidate.format === 'v4' ? { format: w.candidate.format } : {}) }, alts)
 }
 
 function finishEmpty(token: RestoreToken): RestoreOutcome {
@@ -686,15 +717,15 @@ function fitIfRestored(out: RestoreOutcome): RestoreOutcome {
 }
 
 /** 打开另一份已验证的候选（显式意图：取代未决的恢复） */
-export async function openAlternative(id: string): Promise<RestoreOutcome> {
+export async function openAlternative(id: string, format: DocumentFormat = 'legacy'): Promise<RestoreOutcome> {
   const g = getRestoreGate()
   const issue = useDocumentStore.getState().restoreIssue
   if (g.state !== 'needs_user' || !issue || issue.pj !== currentProjectId()) return { kind: 'superseded' }
-  const picked = issue.alternatives.find((a) => a.id === id)
+  const picked = issue.alternatives.find((a) => a.id === id && (a.format ?? 'legacy') === format)
   if (!picked) return { kind: 'superseded' }
   const token = beginRestore(issue.pj)
   armRestoreToken(token)
-  const probe = await probeWithRetry(token, id)
+  const probe = await probeWithRetry(token, id, ...(format === 'v4' ? [format] : []))
   if (!probe) return { kind: 'superseded' }
   if (probe.kind === 'found') return fitIfRestored(await installChecked(token, probe, null, picked, 'explicit'))
   // 用户明确选了「打开本机副本」：磁盘此刻仍读不了，就用副本（它可能比磁盘旧——所以只在这里、由用户的动作触发）
@@ -705,8 +736,8 @@ export async function openAlternative(id: string): Promise<RestoreOutcome> {
   return needsUser(
     token,
     issueKindOf(probe),
-    { id, name: picked.name },
-    [...localCopyAlt(picked, probe), ...issue.alternatives.filter((a) => a.id !== id)],
+    { id, name: picked.name, ...(format === 'v4' ? { format } : {}) },
+    [...localCopyAlt(picked, probe), ...issue.alternatives.filter((a) => documentAddressKey(a.id, a.format) !== documentAddressKey(id, format))],
     probe.kind === 'too_new' ? { docId: id, schema: probe.schema ?? 0 } : undefined,
   )
 }

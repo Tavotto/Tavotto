@@ -559,9 +559,11 @@ export interface CanvasData {
  * 严格同源：`src/tavotto/engine/documents.py` 的 `SCHEMA_CURRENT`。
  */
 export const SCHEMA_CURRENT = 3
+/** 显式计算项目格式；engine/documents.SCHEMA_CHART_PROJECT 的镜像，旧缺省仍为3。 */
+export const SCHEMA_CHART_PROJECT = 4
 
 export interface ProjectDocument {
-  schema: typeof SCHEMA_CURRENT
+  schema: typeof SCHEMA_CURRENT | typeof SCHEMA_CHART_PROJECT
   project: { id: string; name: string }
   /** 数组序 = 画布显示顺序 */
   canvases: CanvasData[]
@@ -620,7 +622,7 @@ function withFigureFrames(pd: ProjectDocument): ProjectDocument {
 export function migrateToProject(raw: unknown): ProjectDocument | null {
   const d = raw as Record<string, unknown> | null
   if (!d || typeof d !== 'object') return null
-  if (d.schema === 3 && Array.isArray(d.canvases) && d.canvases.length > 0) {
+  if ((d.schema === SCHEMA_CURRENT || d.schema === SCHEMA_CHART_PROJECT) && Array.isArray(d.canvases) && d.canvases.length > 0) {
     const pd = withFigureFrames(d as unknown as ProjectDocument)
     const active = pd.canvases.some((c) => c.id === pd.activeCanvasId)
     return active ? pd : { ...pd, activeCanvasId: pd.canvases[0].id }

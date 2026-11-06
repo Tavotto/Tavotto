@@ -1,3 +1,4 @@
+import { documentAddressKey, documentNamespaceKey, type DocumentFormat } from './documentFormat'
 /**
  * 「这份排版绑定了项目里的哪个文件」——⌘S 写回的目标（ADR 0096）。
  *
@@ -55,10 +56,10 @@ function isBinding(v: unknown): v is ProjectFileBinding {
  */
 const inSession = new Map<string, ProjectFileBinding | null>()
 
-export function readProjectFile(documentId: string): ProjectFileBinding | null {
-  if (inSession.has(documentId)) return inSession.get(documentId) ?? null
+export function readProjectFile(documentId: string, format?: DocumentFormat): ProjectFileBinding | null {
+  if (inSession.has(documentAddressKey(documentId, format))) return inSession.get(documentAddressKey(documentId, format)) ?? null
   try {
-    const raw = localStorage.getItem(PREFIX + documentId)
+    const raw = localStorage.getItem(documentNamespaceKey(PREFIX + documentId, format))
     if (!raw) return null
     const v: unknown = JSON.parse(raw)
     return isBinding(v) ? v : null
@@ -67,20 +68,20 @@ export function readProjectFile(documentId: string): ProjectFileBinding | null {
   }
 }
 
-export function writeProjectFile(documentId: string, binding: ProjectFileBinding): void {
-  inSession.set(documentId, binding)
+export function writeProjectFile(documentId: string, binding: ProjectFileBinding, format?: DocumentFormat): void {
+  inSession.set(documentAddressKey(documentId, format), binding)
   try {
-    localStorage.setItem(PREFIX + documentId, JSON.stringify(binding))
+    localStorage.setItem(documentNamespaceKey(PREFIX + documentId, format), JSON.stringify(binding))
   } catch {
     /* 存不下只影响刷新之后 ⌘S 还认不认得这个文件（认不得就按第一次保存问一次名字） */
   }
 }
 
-export function forgetProjectFile(documentId: string): void {
+export function forgetProjectFile(documentId: string, format?: DocumentFormat): void {
   // 记成「已解绑」而不是删掉：删掉的话 removeItem 也失败时会读回那份旧的持久副本
-  inSession.set(documentId, null)
+  inSession.set(documentAddressKey(documentId, format), null)
   try {
-    localStorage.removeItem(PREFIX + documentId)
+    localStorage.removeItem(documentNamespaceKey(PREFIX + documentId, format))
   } catch {
     /* 同上 */
   }

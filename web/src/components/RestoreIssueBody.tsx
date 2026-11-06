@@ -1,3 +1,4 @@
+import { documentAddressKey } from '@/lib/documentFormat'
 import { useTranslation } from 'react-i18next'
 import { Ellipsis } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -18,7 +19,7 @@ import { Menu, MenuItem } from './ui/Menu'
  * 「继续新建」不删任何旧稿：旧候选与旧正文一个字节不动，之后晚到的旧响应也盖不过新文档。
  */
 export function RestoreIssueBody({ issue, close }: { issue: RestoreIssue; close: () => void }) {
-  const { t } = useTranslation('workspace')
+  const { t } = useTranslation(['workspace', 'dialogs'])
   const name = issue.ref?.name || t('docBanner.lastDocUnnamed')
   const done = (fn: () => unknown) => () => {
     close()
@@ -44,13 +45,13 @@ export function RestoreIssueBody({ issue, close }: { issue: RestoreIssue; close:
     }
   })()
   const alts = issue.alternatives
-  const altLabel = (a: { name: string; localCopy?: true }) =>
+  const altLabel = (a: { name: string; localCopy?: true; format?: 'v4' }) =>
     a.localCopy
       ? t('restore.openLocal', { name: a.name || t('docBanner.lastDocUnnamed') })
       : t('restore.openAlt', { name: a.name || t('docBanner.lastDocUnnamed') })
-  const openAlt = (id: string, a: { name: string; localCopy?: true }) => (
-    <MenuItem key={`${id}${a.localCopy ? ':local' : ''}`} data-restore-action="open-alt" onSelect={done(() => openAlternative(id))}>
-      {altLabel(a)}
+  const openAlt = (id: string, a: { name: string; localCopy?: true; format?: 'v4' }) => (
+    <MenuItem key={`${documentAddressKey(id, a.format)}${a.localCopy ? ':local' : ''}`} data-restore-action="open-alt" onSelect={done(() => openAlternative(id, ...(a.format === 'v4' ? [a.format] : [])))}>
+      {altLabel(a)}{a.format === 'v4' && <span className="ml-2 type-meta">{t('dialogs:layout.computationalFormat')}</span>}
     </MenuItem>
   )
   const newItem = (
@@ -111,9 +112,9 @@ export function RestoreIssueBody({ issue, close }: { issue: RestoreIssue; close:
         variant="primary"
         size="sm"
         data-restore-action="open-alt"
-        onClick={done(() => openAlternative(first.id))}
+        onClick={done(() => openAlternative(first.id, ...(first.format === 'v4' ? [first.format] : [])))}
       >
-        {altLabel(first)}
+        {altLabel(first)}{first.format === 'v4' && <span className="ml-2 type-meta">{t('dialogs:layout.computationalFormat')}</span>}
       </Button>
     )
     folded = [...others.map((a) => openAlt(a.id, a)), newItem]

@@ -38,6 +38,7 @@
  * 另存为成功后原先还有一次 `fetchLayoutNames()` 刷新名单（0.1.0 起）——对话框紧接着就关了，
  * 下次打开会重取，这次刷新没人看得见，连同它的 await 点一起删掉。
  */
+import type { DocumentFormat } from '@/lib/documentFormat'
 import { msg } from '@/i18n'
 import { currentProjectId } from '@/lib/session'
 import { captureMoment, type MomentSnapshot } from '@/lib/timelineCheckpoint'
@@ -45,6 +46,7 @@ import { activeProjectFile, useDocumentStore } from './documentStore'
 import { useUiStore } from './uiStore'
 
 export interface SaveContext {
+  readonly format: DocumentFormat
   readonly documentId: string
   readonly loadSeq: number
   readonly pj: string | null
@@ -67,6 +69,7 @@ export interface SaveContext {
 export function captureSaveContext(): SaveContext {
   const s = useDocumentStore.getState()
   return {
+    format: s.documentFormat,
     documentId: s.documentId,
     loadSeq: s.loadSeq,
     pj: currentProjectId(),
@@ -79,6 +82,8 @@ export function captureSaveContext(): SaveContext {
 export function stillCurrent(ctx: SaveContext): boolean {
   const s = useDocumentStore.getState()
   return (
+    s.documentId === ctx.documentId &&
+    s.documentFormat === ctx.format &&
     s.loadSeq === ctx.loadSeq &&
     currentProjectId() === ctx.pj &&
     (activeProjectFile()?.file ?? null) === ctx.file

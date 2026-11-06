@@ -1,3 +1,4 @@
+import type { DocumentFormat } from '@/lib/documentFormat'
 import { adoptionGuardOf, adoptionOf, clearAdoption, isAdoptedPanel, SCRIPT_BACKED_SOURCE_POLICY, sourceBackedGuard, verdictFromResponse, verifiedSource, type AdoptionGuard, type SourceBackedFigure, type SourceBackedVerdict, artifactBackgroundOriginal, artifactRequestFields, isUnadoptedPngSource, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
 import { currentProjectId } from '@/lib/session'
 import '@/store/figureSnapshotInvalidation'
@@ -658,7 +659,7 @@ export async function openLayoutDocument(
   projectFile?: ProjectFileBinding,
 ): Promise<boolean> {
   if (!(await useDocumentStore.getState().switchDocument(doc, newId('d'), confirmLoss))) return false
-  if (projectFile) setProjectFile(projectFile)
+  if (projectFile && ((doc.schema === 4) === (useDocumentStore.getState().documentFormat === 'v4'))) setProjectFile(projectFile)
   afterSwitch()
   const s = useDocumentStore.getState()
   status(note('documentLoaded', { name: s.projectMeta.name, count: s.canvases.length }), 'done')
@@ -672,26 +673,26 @@ export async function openLayoutDocument(
 export async function openDocumentAs(
   pd: ProjectDocument,
   id: string,
-  opts: { stillCurrent?: () => boolean; beforeInstall?: () => Promise<boolean> } = {},
+  opts: { stillCurrent?: () => boolean; beforeInstall?: () => Promise<boolean>; format?: DocumentFormat } = {},
 ): Promise<boolean> {
   // 丢失确认与安装前归属复核都可能等待：调用方入口取的上下文要在等待之后再核，
   // 不再是同一个项目 / 排版就不装（Codex #936：A 的排版装进 B 并按 B 的名义自动保存）。
   const guardedConfirm = async () => (await confirmLoss()) && (opts.stillCurrent?.() ?? true)
-  if (!(await useDocumentStore.getState().switchDocument(pd, id, guardedConfirm, { beforeInstall: opts.beforeInstall }))) return false
+  if (!(await useDocumentStore.getState().switchDocument(pd, id, guardedConfirm, { beforeInstall: opts.beforeInstall, ...(opts.format === 'v4' ? { format: opts.format } : {}) }))) return false
   afterSwitch()
   status(note('documentReopened', { name: pd.project.name, count: pd.canvases.length }), 'done')
   return true
 }
 
 /** 切回本机自动保存过的文档；沿用它原来的身份，槽位因此不会分叉 */
-export async function openRecentDocument(id: string): Promise<void> {
-  const { doc: pd, notice } = await readAutosaveDoc(id)
+export async function openRecentDocument(id: string, format: DocumentFormat = 'legacy'): Promise<void> {
+  const { doc: pd, notice } = await (format === 'v4' ? readAutosaveDoc(id, format) : readAutosaveDoc(id))
   if (!pd) {
     // schema 太新是「读不了」而不是「不见了」：文件好好的，说清楚是哪一种
     status(note(notice?.kind === 'schema_too_new' ? 'recentTooNew' : 'recentMissing'), 'error')
     return
   }
-  if (!(await useDocumentStore.getState().switchDocument(pd, id, confirmLoss))) return
+  if (!(await useDocumentStore.getState().switchDocument(pd, id, confirmLoss, ...(format === 'v4' ? [{ format }] : [])))) return
   afterSwitch()
   // 未决的恢复副本跟着这份文档走：switchDocument 刚把待裁决事项清空了
   if (notice) useDocumentStore.setState({ docNotice: notice })
