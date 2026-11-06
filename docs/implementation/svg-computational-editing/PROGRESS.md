@@ -2,17 +2,17 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-07 正式捕获资源包收口）：最新功能HEAD=06806c2c。execution显式v2已接正式v4导出/严格检视，原graph/bytes沿同一Figure资源树；真实safe/native与外部file/prefix删源、删捕获缓存后冷打包保原内容/空目录，历史多版本按完整ref保留。v1默认与旧收集器正文保持。输入声明UI、精确引用搬迁/安全安装/新根冷执行、图例/裁切/复杂几何及最终资格仍缺，M1/M2/M3未通过；既有Windows权限红灯保留，不报告全分支全绿。**
+> **当前结论（2026-11-07 06:05后复核）：最新功能8a13ed95已提交输入声明界面，复用原准备卡和脚本只读菜单；真实浏览器保存清单零执行、明确Run恰一次、正式v2包/inspect及改清单不补签旧图均通过，取消/切项目/两条真实迟到响应保稿已验。最新受影响后端561、前端621各自通过/0skip/exit0。下一实施3d精确引用迁移，再安全安装/新根冷开；图例、裁切/复杂几何和最终回归仍缺，M1/M2/M3未通过，既有Windows权限红灯保留。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
-> **05:10 后执行效果复核：基线 `62905a6e`，功能源码未变；本次将最新五份捕获/导出/reader/预算/真实执行测试放在同一命令运行，91 通过、0 失败、0 跳过、exit 0。包括此前分别验证的全部 8 个真实执行包场景。这是本范围的当前源码资格，仍不是完整分支回归或新目录安装资格。3c 的后端、控件和浏览器方案已只读核对，尚未实现。**
+> 前轮05:10后的91项捕获包资格保留其历史源码窗口；3c现已有实现与新资格，不能再按旧checkpoint重做。不同测试组不相加成最终总数；当前分支实际HEAD/diff优先。
 
 ## 环境（2026-11-07 当前快照）
 
-- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；最新功能HEAD=`06806c2c`，前项`f79771c3/a5305ddb/97e75d41`及`d8416d4e/3c64195b/11c67ab1/b5f9f557/5e000c6f`。会话封存、正式冷存、应用保存/冷暂存分别功能commit，稳定文档另提交；各源码子任务已释放。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入成果，不能在原目录启动旧版本判断新功能。
+- 当前实施树`E:/0 - Project/Tavotto-svg-r00`，分支`zixu.wang/svg-computational-r00`；最新功能`8a13ed95`，前项`06806c2c/f79771c3/a5305ddb/97e75d41`及更早有效提交保留。声明界面20文件作为完整功能提交，稳定状态/计划另提交；各源码任务已释放。沿用同一分支/工作树。原目录`E:/0 - Project/Tavotto`仍是clean `main@69bcafae`，未合入成果，不能从原目录运行旧版本判断本功能。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
-- 最新冻结索引`n3c3b4-stage-final.json`记录13份功能文件、分源码窗口资格和首红；前项`n3c3b3-stage-final.json`保留7份功能文件SHA、25/9/8专项及95应用回归、41文档检查；上一项`n3c3b2-stage-final.json`保留9文件SHA；此前`n3c3b-stage-final.json`保留15文件SHA、原始JUnit、审查及阶段差异；此前native/preparation/capture索引保留。既有UI资格见`n3c-real-ui-correct-kind-qualification.json`、`n3c-frame-ui-qualification.json`；本轮没有新增声明UI/浏览器验收，旧裁切/图例缺陷未修。未启动通宵调度器，历史后台状态须重新核实。
+- 最新3c冻结索引`n3c3c-stage-final.json`记录20功能文件、实际检查及范围；真实界面证据位于`n3c-input-ui/qualification.json`和其`output/playwright/`。原3b-1/2/3/4各stage-final索引及既有UI记录保留历史资格。本轮声明界面实际验收，旧裁切/图例缺陷未修；未创建调度器，任何历史PID均须重新核身份后使用。
 - 最新 NEXT_PHASE 和提示词直接在当前实施分支维护；不再依赖历史 review 文档分支才能取得新计划。
 
 ## 批次状态（2026-11-07 复核后；按完整退出条件）
@@ -35,13 +35,26 @@
 | R01/R02 | core_partial / multi_target_verified | 3236307c、8e6c399a | 跨父/split/errorbar/colorbar共同目标与预览通过；任意clip、欠定成员paint slots和图例仍缺 |
 | R03 | runner_and_source_consumers_integrated | 029dfac2、242cabc0、c2fd47d5、5b2b1403、2452d8fc | 受控runner与精确INPUT附件接真实API/UI/导出；不宣称全产品总进程cap或最终资格 |
 | R04 | affected_checks_passed | a8a088cf、18907d65、cbd8d95e | 请求序号/表单/项目切换、late response 和单项 drop 均有受影响测试；Dialog 已可发起真实绑定；完整编辑器生命周期在 R06 追验 |
-| R05 | binding_and_recovery_ui_verified / package_inspection_verified / execution_capture_archive_verified / durable_input_archive_verified / application_input_staging_verified / captured_execution_package_verified / installation_pending | 5abb9a7d、95684f89、264ce59c、a7008840、d7b6eef9、d7a73ce1、ffe2fb32、c40805bf、e468d516、336783bf、71e637c8、206a1c34、9a9843d2、8ed50616、75b09b57、be84ba33、13720bc4、1795f244、d1389db6、5e000c6f、b5f9f557、11c67ab1、3c64195b、d8416d4e、97e75d41、a5305ddb、f79771c3、06806c2c | 保存/恢复、v4导出/检视、三执行入口捕获/准备核验、会话封存/正式冷存及应用热保存/冷暂存已验；正式v2捕获声明资源包已验；声明UI、引用迁移、安装API/UI仍缺 |
+| R05 | input_declaration_ui_verified / relocation_and_installation_pending | 5abb9a7d、95684f89、264ce59c、a7008840、d7b6eef9、d7a73ce1、ffe2fb32、c40805bf、e468d516、336783bf、71e637c8、206a1c34、9a9843d2、8ed50616、75b09b57、be84ba33、13720bc4、1795f244、d1389db6、5e000c6f、b5f9f557、11c67ab1、3c64195b、d8416d4e、97e75d41、a5305ddb、f79771c3、06806c2c、8a13ed95 | 既有保存/恢复、捕获/冷存、v2包及严格检视保持；3c真实输入声明与明确新执行/旧图不补签/迟到保稿已验。精确引用迁移、安装API/UI和新目录冷开仍缺 |
 | R06 | product_editing_and_cold_restore_verified / partial | 242cabc0、53393810、8e6c399a、264ce59c | 冷开后Inspector编辑、undo/redo和exact显示已验；图例、完整操作及复杂几何仍缺 |
 | R07 | partial / original_five_formats_ui_verified | 5bc82a81、c2fd47d5、2a40fec9、c9fa29a4、8fa84f5d、a06cc3d3 | 原图五格式真实UI及独立产物已验，EPS接线已提交；分享与完整双系列M1未完成 |
 | R08 | full_edit_restore_verified / partial | cae96f89、029dfac2、53393810 | 生产v2导出与真UI完整编辑恢复通过；A采用、分享选择和正式项目迁移待补 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-07 06:05后 声明界面收口、实际效果复核及下一阶段安排
+
+- 用户要求核对执行情况和效果、梳理下一阶段。基线417f7ce6，沿同一实施树/分支；功能20文件独立commit `8a13ed95 feat(inputs): declare portable inputs through the preparation flow`。原Tavotto/main保持clean，未fetch、新建分支、推送、合并或发布。整体目标仍active，M1/M2/M3不标完成。
+- 实际入口：原准备卡详情的“捕获输入”，或脚本菜单同名只读入口。选择项目文件与已批准外部file/prefix，本地草稿不改正文；保存沿原CAS及批准表代次核对后只recheck，用户明确运行才执行。scope只取冻结后端计划，默认报告/无声明执行保持；未知或敏感配置准确表达，不从公开receipt还原参数。
+- 三类实际缺陷已修：冻结context与当前声明行错配、同from改目标后原recheck保留旧ready attempt却误报新目标已封存、参数重查report=null导致子组件卸载丢草稿。复用原行token/代次与卡体checkpoint，未新增store/writer/执行链。真实同from回归先红后绿，移除代次判断的内存AST反证退出1；行/草稿/前端代次也各有首红与目标反证。记录见n3c3c-remap-context-report.md、n3c3c-input-ui-lifecycle-validation.md、n3c3c-input-ui-remap-validation.md及third-path-review。
+- 最新同源码受影响检查：后端12文件561/0skip、前端11文件621/0skip，均exit0；原始JUnit为n3c3c-review-backend-final.xml、n3c3c-review-frontend-final.xml。全仓Ruff/format（1474文件）、真实tsc -b/Vite/Tailwind、i18n类型/资源/lint、playground/widget build及check均通过；指纹分别fbb2c9c80078e8d7/6f2d233615d17eb0。前端旧act/lint警告保留。文档41项与agents_budget/diff另检；不是全产品回归。
+- U09规定组本轮130通过/3环境条件skip；配置真实环境后原FO32/FO30四项全部通过/0skip（n3c3c-ui-u09-utf8-final.xml），实际3.10与受管runtime均有独立回执。最早cp936输出/空格wheelhouse夹具失败保留，仅修测试环境。该组早于最终只读投影/行token delta，按实际源码窗口记录，不声称完整最终U09一跑全绿。
+- 真实新服务/浏览器：正常bootstrap cookie认证，10生产源与11实际HTTP bundle哈希吻合。待确认目录→ready计数0；选择CSV和外部file/prefix→保存后仍0；明确原Run后恰1，独立科学日志核值2/3、外部5、prefix7。正式v2导出并上传真实inspect，独立ZIP核graph、scope、6个去重blob原bytes及空目录。只读重开增加清单项但不Run，再导出保完整旧ref、graph和各资源摘要；计数仍A1/B0。
+- 取消零设置写；A→B→A两条真实A报告已先取得200再延迟，实际fulfill均成功，B及新A草稿不被旧响应覆盖；该阶段POST/DELETE为空，已保存声明与正式文档保留。浏览器脚本的VM import/URL、引导显示记忆、跨未打开项目GET等夹具首红保留，未改产品期望。服务已正常stop/wait/reap，exit0且source_unchanged=true；浏览器回收见qualification。根代理另看05/07实际截图并独立比较04/06包内容，未把“显示截图”当完整迁移资格。
+- 下一实施直接3d：原svgstore.save的archive-only模式加单一活跃Prepared迁移消费者；真实当前remap全表一份，按完整oldRef→newRef保历史版本，分别核archive与运行视图。现activate=False仍写entry/marker、历史静态同名异bytes及当前loader指纹约束已实际盘点，不能照旧helper调用假称通过。详细A–E任务和反例见NEXT_PHASE，随后N3d独占安装→N3e原writer→N3f中文新根删源冷开，再N4/N5及完整M1/M2/M3。
+- 稳定计划/接续提示词同步当前状态，完整IMPLEMENTATION_PLAN仅修当前分支及状态说明，不缩减SG00–SG17范围；历史checkpoint保持。无人值守依第5节持续选择就绪工作、功能commit及安全checkpoint；未创建常驻调度器。
+- 最终四份稳定文档检查：n3c3c-review-docs-checkpoint.xml为41通过/0skip/exit0，UTF-8与代码围栏核对通过；agents_budget及最终diff检查exit0。仅文档差异独立提交，产品源码与已验浏览器冻结清单仍一致。
 
 ### 2026-11-07 05:10 后执行情况复核与下一阶段安排
 
