@@ -30,6 +30,7 @@ import re
 import secrets
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from . import atomicio, config, execspec
@@ -150,6 +151,7 @@ def validate_argv(raw) -> tuple[str, ...]:
 # 登记
 # ---------------------------------------------------------------------------
 _LOCK = threading.RLock()
+_STORE_LOCKS = threading.local()
 #: 敏感配置的 argv：只在进程内存里。键 (项目, 配置 id)。
 _SECRETS: dict[tuple[str, str], tuple[str, ...]] = {}
 
@@ -173,6 +175,43 @@ def store_path(project_root: str | Path) -> Path:
     return _digest_path(project_identity(project_root))
 
 
+@contextmanager
+def _store_guard(project_root: str | Path):
+    """本版本全部读改写共用：进程内可重入锁 + 每份登记的跨进程锁。
+
+    不把 atomicio 的原子替换冒充 CAS；不遵守此锁的旧进程/外部编辑不在保护内。
+    """
+    from . import layoutsession
+
+    with _LOCK:
+        path = store_path(project_root)
+        lock_path = path.parent.resolve() / (path.name + ".lock")
+        held = getattr(_STORE_LOCKS, "held", None)
+        if held is None:
+            held = _STORE_LOCKS.held = set()
+        if lock_path in held:
+            yield
+            return
+        try:
+            fd = layoutsession.acquire_file_lock(
+                lock_path, time.monotonic() + layoutsession.LOCK_TIMEOUT_S
+            )
+        except OSError as exc:
+            raise RunConfigUnreadable(
+                "运行参数记录暂时无法安全更新，请稍后重试", reason="store_lock_unavailable"
+            ) from exc
+        if fd is None:
+            raise RunConfigUnreadable(
+                "运行参数记录暂时无法安全更新，请稍后重试", reason="store_lock_unavailable"
+            )
+        held.add(lock_path)
+        try:
+            yield
+        finally:
+            held.remove(lock_path)
+            layoutsession.release_file_lock(fd)
+
+
 def _locate(project_root: str | Path) -> tuple[Path, str] | None:
     """找到登记文件并读出原文（只按 `project_identity` 一个身份定位；#812 分支上未发布的旧
     normcase 文件名格式不做迁移）。**不存在 = None**；
@@ -189,7 +228,7 @@ def _locate(project_root: str | Path) -> tuple[Path, str] | None:
         ) from exc
 
 
-def _read(project_root: str | Path) -> dict:
+def _read(project_root: str | Path, *, preserve: bool = False) -> dict:
     """读登记（整份）。**不存在 = 空**；**读不出 / 格式坏 = `RunConfigUnreadable`**（显式失败，
     绝不当空：否则磁盘面板默认参数悄悄丢掉、下次按空 argv 重跑）；**更新版本写的文件拒绝**
     （`RunConfigUnsupported`）。
@@ -199,11 +238,13 @@ def _read(project_root: str | Path) -> dict:
     恢复由用户显式进行：修复或删除该登记文件后重试。"""
     found = _locate(project_root)
     if found is None:
+        if preserve:
+            return {"configs": {}}
         return {"configs": {}, "defaults": {}, "launches": {}, "captures": {}}
-    return _parse(found[1])
+    return _parse(found[1], preserve=preserve)
 
 
-def _parse(raw: str) -> dict:
+def _parse(raw: str, *, preserve: bool = False) -> dict:
     bad = RunConfigUnreadable(
         "这个项目的运行参数记录已损坏（格式不对）；为避免用错参数出图，已停止运行",
         reason="malformed_store",
@@ -242,6 +283,11 @@ def _parse(raw: str) -> dict:
         if isinstance(captures, dict)
         else {}
     )
+    if preserve:
+        # 导入只改 configs，不借旧读取的 best-effort 规范化清理执行证据。
+        if launches != data.get("launches", {}) or captures != data.get("captures", {}):
+            raise bad
+        return {**data, "configs": configs}
     return {"configs": configs, "defaults": defaults, "launches": launches, "captures": captures}
 
 
@@ -346,13 +392,16 @@ def _schema_ok(configs, defaults) -> bool:
     return True
 
 
-def _write(project_root: str | Path, data: dict) -> None:
+def _write(project_root: str | Path, data: dict, *, preserve: bool = False) -> None:
     path = store_path(project_root)
+    lock_path = path.parent.resolve() / (path.name + ".lock")
+    if lock_path not in getattr(_STORE_LOCKS, "held", ()):
+        raise RuntimeError("运行配置读改写必须持有共同 store guard")
     path.parent.mkdir(parents=True, exist_ok=True)
     out = {"version": FORMAT_VERSION, **data}
-    if not out.get("launches"):
+    if not preserve and not out.get("launches"):
         out.pop("launches", None)  # 没有成功记录时文件字节与 P09 之前一致
-    if not out.get("captures"):
+    if not preserve and not out.get("captures"):
         out.pop("captures", None)
     atomicio.write_json(path, out)
 
@@ -397,7 +446,7 @@ def put(
     if not tokens:
         return None
     root = _norm_project(project_root)
-    with _LOCK:
+    with _store_guard(project_root):
         data = _read(project_root)
         configs = data["configs"]
         for cid, rec in configs.items():
@@ -434,6 +483,87 @@ def put(
                 _SECRETS.pop((root, old), None)
         _write(project_root, data)
         return _record_to_config(project_root, cid, configs[cid])
+
+
+def import_portable(project_root: str | Path, records) -> tuple[RunConfig, ...]:
+    """恢复闭式 {id,script,argv} 非敏感登记；不读脚本、不设置默认或成功事实。
+
+    先验证完整批，再在全部 writer 的共同锁里核冲突/容量，一次原子写。已有同 ID
+    的非敏感精确记录只复用；不按 argv 改 ID、不覆盖敏感占位、不淘汰任何记录。
+    """
+    from . import documentpackage
+
+    invalid = RunConfigUnsupported("无法导入这份运行配置", reason="portable_record_invalid")
+    if not isinstance(records, (list, tuple)):
+        raise invalid
+    incoming = {}
+    for row in records:
+        if (
+            not isinstance(row, dict)
+            or set(row) != {"id", "script", "argv"}
+            or not isinstance(row["id"], str)
+            or not ID_RE.fullmatch(row["id"])
+            or not isinstance(row["script"], str)
+        ):
+            raise invalid
+        try:
+            documentpackage.project_member_key("scripts/" + row["script"])
+        except documentpackage.PackageError as exc:
+            raise RunConfigUnsupported(
+                "运行配置的脚本身份不可携带", reason="portable_script_invalid"
+            ) from exc
+        tokens = validate_argv(row["argv"])
+        if not tokens:
+            raise InvalidArgv("空参数不对应运行配置引用", reason="portable_empty_argv")
+        value = row["script"], tokens
+        if row["id"] in incoming and incoming[row["id"]] != value:
+            raise RunConfigUnsupported(
+                "同一运行配置引用的内容不一致", reason="portable_id_conflict"
+            )
+        incoming[row["id"]] = value
+    try:
+        # 同最终写入的 UTF-8/有限数入口；转义 JSON 也可能携带不可保存的孤立 surrogate。
+        atomicio.dumps_json(incoming)
+    except (UnicodeError, OSError) as exc:
+        raise RunConfigUnsupported(
+            "运行配置无法无损保存", reason="portable_record_invalid"
+        ) from exc
+    with _store_guard(project_root):
+        data = _read(project_root, preserve=True)
+        configs = data["configs"]
+        additions = {}
+        for cid, (script, tokens) in incoming.items():
+            if cid in configs:
+                existing = configs[cid]
+                if existing["sensitive"]:
+                    raise RunConfigSecretMissing(
+                        "不能用导入参数替换敏感配置", reason="portable_secret_conflict"
+                    )
+                if existing["script"] != script or tuple(existing["argv"]) != tokens:
+                    raise RunConfigUnsupported(
+                        "项目已有不同内容的运行配置引用", reason="portable_id_conflict"
+                    )
+            else:
+                additions[cid] = {
+                    "script": script,
+                    "argv": list(tokens),
+                    "sensitive": False,
+                    "source": "portable",
+                    "created_at": time.time(),
+                }
+        if additions:
+            if len(configs) + len(additions) > MAX_CONFIGS:
+                raise RunConfigUnsupported(
+                    "运行配置登记已满，未导入任何新配置", reason="portable_capacity"
+                )
+            configs.update(additions)
+            try:
+                _write(project_root, data, preserve=True)
+            except (OSError, UnicodeError) as exc:
+                raise RunConfigUnreadable(
+                    "运行配置导入写入失败，请检查登记后重试", reason="portable_write_failed"
+                ) from exc
+        return tuple(_record_to_config(project_root, cid, configs[cid]) for cid in incoming)
 
 
 def get(project_root: str | Path, config_id: str, *, script: str | None = None) -> RunConfig:
@@ -514,7 +644,7 @@ def record_discovered(project_root: str | Path, discoveries: dict[str, set[str]]
     if not any(discoveries.values()):
         return
     try:
-        with _LOCK:
+        with _store_guard(project_root):
             data = _read(project_root)
             changed = False
             for script, stems in discoveries.items():
@@ -561,7 +691,7 @@ def record_captures(
     if not observed:
         return
     try:
-        with _LOCK:
+        with _store_guard(project_root):
             data = _read(project_root)
             histories = data["captures"]
             old = histories.get(script, {"runs": {}, "legacy_stems": []})
@@ -621,23 +751,23 @@ def set_default(project_root: str | Path, script: str, config_id: str | None) ->
     只服务**磁盘面板**（用户脚本自己写出来的 `fig.pdf` 的素材）：它们没有 Tavotto 的执行产物可绑，重跑时
     只能按脚本找配置。`runtime:` 素材**从不**读它——那些产物的资产 id 里自带冻结的配置引用。
     热会话 / 写回重放用的是会话自己冻结的 `worker.run`，与这里之后的变化无关。"""
-    with _LOCK:
-        try:
+    try:
+        with _store_guard(project_root):
             data = _read(project_root)
-        except RunConfigError:
             if config_id is None:
-                # 无参数运行不依赖登记：坏登记不阻断它，也不去动文件（磁盘面板之后读默认时照常显式报错）
-                return
-            raise
+                if script not in data["defaults"]:
+                    return
+                data["defaults"].pop(script)
+            else:
+                if data["defaults"].get(script) == config_id:
+                    return
+                data["defaults"][script] = config_id
+            _write(project_root, data)
+    except RunConfigError:
         if config_id is None:
-            if script not in data["defaults"]:
-                return
-            data["defaults"].pop(script)
-        else:
-            if data["defaults"].get(script) == config_id:
-                return
-            data["defaults"][script] = config_id
-        _write(project_root, data)
+            # 无参数运行不依赖登记：坏登记/不可取得的锁不阻断它，也不去动文件。
+            return
+        raise
 
 
 def default_selection(project_root: str | Path, script: str):
@@ -658,7 +788,7 @@ def set_launch_record(project_root: str | Path, script: str, record: dict | None
     与 `set_default` 同一份登记、同一把锁、同一套坏登记失败关闭的纪律——不另建成功数据库。记录里只有
     结构化引用与摘要（解释器身份、启动方式引用、cwd 模式、运行配置**引用**、源码 / helper 摘要），
     **没有 argv 值、没有环境变量、没有答案原文**。调用方只在一次执行真的成功之后调。"""
-    with _LOCK:
+    with _store_guard(project_root):
         data = _read(project_root)
         launches = data["launches"]
         if record is None:
@@ -677,7 +807,7 @@ def amend_launch_records(project_root: str | Path, amend) -> bool:
 
     给「成功之后才补齐依据」的那一类（#1047：native 在 `show()` 屏障上成功收口，脚本跑完才有输入观察）：读改写在
     锁内完成，期间另一次成功写进来的记录不会被旧值盖掉。坏登记照常抛 `RunConfigError`、文件不改。"""
-    with _LOCK:
+    with _store_guard(project_root):
         data = _read(project_root)
         launches = data["launches"]
         changed = False
@@ -709,29 +839,29 @@ def commit_success(
 
     坏登记的纪律同 `set_default`：无参数运行（`default_config_id is None`）不被坏登记阻断、也不动文件；带配置的运行
     失败关闭（抛 `RunConfigError`，文件不改）。"""
-    with _LOCK:
-        try:
+    try:
+        with _store_guard(project_root):
             data = _read(project_root)
-        except RunConfigError:
-            if default_config_id is None:
-                return
-            raise
-        changed = False
-        if update_default:
-            defaults = data["defaults"]
-            if default_config_id is None:
-                changed |= defaults.pop(script, None) is not None
-            elif defaults.get(script) != default_config_id:
-                defaults[script] = default_config_id
+            changed = False
+            if update_default:
+                defaults = data["defaults"]
+                if default_config_id is None:
+                    changed |= defaults.pop(script, None) is not None
+                elif defaults.get(script) != default_config_id:
+                    defaults[script] = default_config_id
+                    changed = True
+            launches = data["launches"]
+            if record is None:
+                changed |= launches.pop(script, None) is not None
+            elif launches.get(script) != record:
+                launches[script] = record
                 changed = True
-        launches = data["launches"]
-        if record is None:
-            changed |= launches.pop(script, None) is not None
-        elif launches.get(script) != record:
-            launches[script] = record
-            changed = True
-        if changed:
-            _write(project_root, data)
+            if changed:
+                _write(project_root, data)
+    except RunConfigError:
+        if default_config_id is None:
+            return
+        raise
 
 
 def launch_record(project_root: str | Path, script: str) -> dict | None:

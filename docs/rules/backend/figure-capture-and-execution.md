@@ -369,6 +369,8 @@ order: 50
 
 用户手动给的**精确 argv** 贯通 探测 → 热编辑 → 冷重放 → 导出 → 重开；自动 argparse 表单是 T07，不在这里。
 
+- **可携配置恢复**：`runconfig.import_portable`只导入闭式`{id,script,argv}`非敏感记录，保原引用与token，不读/执行脚本，不设置默认、捕获或成功事实；全批冲突/容量/坏存储先拒绝，同ID同内容幂等。导入保合法原顶层字段，不顺带清理旧证据。所有新版登记读改写共用`_store_guard`，复用layoutsession跨进程锁；旧二进制/外部编辑不受该锁约束。无参数成功遇锁不可用仍零登记写继续，有配置失败关闭。看护`tests/test_runconfig_portable.py`及原参数/成功登记用例。
+
 - **载荷**：`safe_spec(argv=, run_config=)` 是唯一构造入口（缺省空 = 旧行为逐字节不变）；调用方一律 `**execspec.run_kwargs(run)`，`RunSelection` 只由
   `runconfig.selection*` 产生（T12，`test_execspec.py::TestSingleAssembly` AST 看护）。`worker_argv` 只在 argv 非空时
   多 `--run-config <rc_…>`；**参数值不进 OS 命令行、环境变量或临时文件**，由 `pool._run_payload` 经已有私有 JSON 请求管道
