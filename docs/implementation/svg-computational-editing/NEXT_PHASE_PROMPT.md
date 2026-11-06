@@ -3,23 +3,22 @@
 以下内容可直接复制到实施会话。它授权按既定目标继续本地实现、测试和功能提交，不授权远程推送、合并或发布。详细任务安排见 [NEXT_PHASE.md](NEXT_PHASE.md)，最终范围仍以 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) 为准。
 
 ```text
-请按整夜无人值守方式继续实现 Tavotto 的 SVG 计算图表编辑，以最终用户可用为目标，在现有授权范围内持续自主修改、验证、修复和提交。一次启动后自动衔接 R00–R13；M0/M1/M2 是自动验收点，不是停下来等我回复的节点。常规可逆步骤自行推进，不要停在方案、单个模块或一轮测试通过。先读下面的实际状态，不能照旧 checkpoint 直接补 Dialog 后宣布完成。
+请按整夜无人值守方式继续实现 Tavotto 的 SVG 计算图表编辑，以最终用户可用为目标，在现有授权范围内持续自主修改、验证、修复和提交。一次启动后自动衔接 R00–R13；M0/M1/M2 是自动验收点，不是停下来等我回复的节点。常规可逆步骤自行推进，不要停在方案、单个模块或一轮测试通过。先读 2026-11-06 的复核状态，保留已有修复；不能照历史“M0 完成”直接补 Dialog 后宣布完成。
+
+我最新指定：直接在当前实施分支和工作树继续，不新建或切换分支，也不新建工作树；此要求覆盖旧计划中的新建要求。保留已有提交和未提交改动，仍按不同功能分别 commit。
 
 一、工作位置与必须保留的成果
 
 原工作区：E:\0 - Project\Tavotto
-已有实施 worktree：E:\0 - Project\Tavotto-svg-computational-editing
-已有实施分支：zixu.wang/svg-computational-editing
-本轮复核代码：7cbb0e6ed6746441fbf0d867b941a0fe79f7fa6f
-复核/接续文档 worktree：E:\0 - Project\Tavotto-svg-next-phase
-复核/接续文档分支：zixu.wang/svg-computational-next-phase
-独立复现证据：E:\0 - Project\svg-review-20261104
+当前实施 worktree：E:\0 - Project\Tavotto-svg-r00
+当前实施分支：zixu.wang/svg-computational-r00
+本次复核代码：7801e017dc925410de10dfa40582ad356890622d
+当前计划目录：E:\0 - Project\Tavotto-svg-r00\docs\implementation\svg-computational-editing
+本轮证据：E:\0 - Project\svg-review-20261106
 
-先检查各树实际 HEAD、status、worktree 占用和 Git 身份；现有分支可能已经前进。不得覆盖用户/其他会话的改动，不得 reset --hard 或丢弃已有 24 个实现提交。
+直接在这个分支和工作树继续，不新建/切换分支或工作树。先核对实际 HEAD/status/Git 身份，当前树可能已前进。上轮 PanelView 草稿已提交，保留全部 14 个新增提交；新未提交改动先核对归属，不 reset、不覆盖其他会话、不退回旧树重做。2026-11-06 fetch 成功，origin/main=2bc94f7f；启动时再次核验，失败记录并继续本地可做工作。
 
-尝试 fetch 核对最新远端。上轮 fetch 因连接和 SSH 认证失败，缓存 origin/main=2bc94f7f 不能冒充今天最新。成功后评估并整合主干；失败记录错误并继续不依赖远端的本地工作，不修改用户凭据或关闭认证。
-
-从最新有效实施状态创建独立 worktree 和新的 zixu.wang/ 前缀分支，带入本轮文档。若实施分支没变，文档分支已包含完整实现历史，可作为起点；若已前进，保留其新增提交，带入文档后重新核对当前缺陷。不要从 main 另起一套而漏掉现有实现。不要在并发使用的实施树切分支或改文件。
+最新文档已同步到当前实施分支，直接读本目录，不再要求切去或从历史 review 分支搬文档。原计划的新建要求被我最新指示覆盖，按功能分别 commit 保持不变。
 
 二、先读的文档
 
@@ -29,32 +28,23 @@
 4. 同目录 PROGRESS.md、IMPLEMENTATION_PLAN.md、SG00-CAPABILITY-MAP.md。
 5. docs/adr/0166-svg-computational-chart-editing.md 与对应实验；把其未验证假设当作待验证，不当作可降低用户目标的授权。
 
-NEXT_PHASE.md 的 R00–R13 决定下一阶段顺序；原 SG00–SG17 决定最终能力范围。历史 checkpoint 中“核心已可用”“SG10 剩 1/3”等结论已被本次复核纠正。没有充分新证据不能恢复 passed。
+NEXT_PHASE.md 第 4 节的 2026-11-06 执行队列优先于历史顺序；R00–R13 保留功能边界，SG00–SG17 保留最终范围。既有基础反例修复继续沿用；“有入口/可出文件/有 metadata”不等于用户闭环完成。
 
-三、当前真实情况
+三、当前实际情况与优先级
 
-已有模型/绑定、场景和坐标工具、数据输入、脚手架、组合器、HTTP API 及未接线前端 store。尚无完整 UI、现有画布渲染/命中接入、项目冷恢复和冻结导出闭环。
+上一轮新增 14 个提交，已有 Dialog/菜单、PanelView、chart 导出分支、SVG→IR 与 metadata。专项 135 后端+29 前端及构建通过，但真实使用仍被以下问题阻塞：
 
-复核时新增后端 112 项、前端 23 项、前端 build 通过，但以下最终产物缺陷已独立复现：
-- 改 x 范围为 [2,8]，facts 为 2/4/6/8，最终 SVG 仍显示旧 0/10。
-- 100px、100viewBox 的路径最终缩为 75 单位，片段 pt 与源用户坐标混用。
-- bar/scatter 组合失败；errorbar 成功返回但丢失误差线和端帽。
-- 热图改 cmap/vmin/vmax，最终保留旧 colorbar。
-- 无 XML id 的普通 path 可以绑定，却在 compose 时找不到节点。
+1. ChartBindDialog 没有调用 confirmBinding。填完有效数据后 result/preview 仍空，确认禁用；仅显示第一系列，缺完整轴/类型/误差/网格/色条控件。先修真实绑定交互，从右键入口到成功预览/确认都必须能实际操作。
+2. 真实 buildExportRequest/toExportObjects 不传 chart；改 chart 不变导出指纹。后端测试手工传 JSON 才进入新分支。接通原图/标注/画布和冻结版本，不让编辑后仍导出旧图。
+3. SVG→IR 独立反例：相对路径终点 (30,10) 变 (20,0)；嵌套 translate 合计应15却变40；100px 页面应75pt却保留100；use 的路径被丢弃。先做第三路径审查和正确性实验，再选转换方案，不能靠交付 URL 宣告保真。
+4. 导出 SVG 的 metadata 仍引用原场景；用导出文件本身 compute 报 chart_source_mismatch。当前“自包含”测试仍拿原始 chart.svg 重算。必须在原 SVG/原 Python 不在、新父进程只读保存/导出产物时通过。
+5. R05 尚无真实资源包/新进程/旧版防损资格；PanelView 没有同版 manifest/精确命中/图内编辑，transport 和项目生命周期还需接通。
 
-前端 3 条反例也复现：A 迟到的 inspect 覆盖 B；改表单仍保留旧 result/preview；compute 失败仍满足当前 ready 判据。当前 store 尚无生产 UI 消费者，先修再接线。
+证据在本轮目录：Dialog 截图和 observation 日志、frontend-export-observation.log、output_probe.py/output-observations.json。将正确预期整理进正式回归，修复后应绿，不用 mock 或手工补字段替代真实路径。
 
-backend-repro/reproduce.py 的 exit 0 表示成功观察到五类缺陷，不表示产品正确。frontend-repro/result.json 和 root-result.json 的 3 条失败落在目标断言。正式回归应断言正确结果，旧实现红、修复后绿，不能将“缺陷存在”测试当资格。
+四、执行
 
-四、执行顺序
-
-先完成 M0（R00–R04）：
-1. 核对最新状态，保留/整理反例，修正能力台账，验证组合架构假设。
-2. 统一节点身份、片段 pt 到源用户坐标再到目标父节点的变换，覆盖无 id、嵌套 transform、非零 viewBox、preserveAspectRatio、use/defs/clip。
-3. 用明确的轴/系列/图例/色条所有权生成和替换完整对象，禁止按 line2d_ 前缀或遍历序号猜系列。修复最终刻度、误差成员、散点/柱、热图色条和布局。
-4. 从同一不可变来源/资源快照完成验证、子进程计算、合成及 manifest；验证源文件计算中改变的时序；保持既有执行隔离和预算。
-5. 统一完整渲染身份，包含影响输出的来源、模型、绑定、数据、视觉覆盖、字体和引擎/配置。不能只拼 renderKeyOf + data_digest。
-6. 修复向导异步代际和提交资格；支持 x/y 独立 scale、多系列/列映射。改表单、切项目、关闭、失败均使旧结果失去当前提交资格。
+按最新队列持续推进：真实绑定交互 → 请求/冻结导出接线 → 转换保真 → 保存/自包含合同 → manifest/图内编辑/生命周期 → 完整 M1 E2E → R08–R13。
 
 再完成 M1（R05–R07）：
 普通 SVG 两条曲线及未绑定注释 → 用户选择轴/系列/数据 → 独立校准 → 对照确认 → 改范围/样式/图例 → 精确命中 → 撤销重做 → 保存 → 清派生缓存、新进程重开 → 按既有 scope×format 合同逐项验证原图和混合画布导出。五格式使用独立读取器核验，画布 EPS 保持现有 eps_not_for_canvas；SVG 再导入只作外观对照，自包含语义恢复在 R08 验收，不新增 EPS 等格式导入。
@@ -78,7 +68,7 @@ M1 的两曲线 fixture 是集成顺序，不是最终范围缩减。继续 M2�
 - 先说清断言主语：最终图、当前面板当前版本、真实保存文件、冷启动结果或导出产物。不能用中间 facts、包含 path/image、字节可重复替代科学和视觉正确性。
 - 最终 SVG 的点位/刻度/色条/误差用独立预期核对；人造错轴、漏系列成员、旧色条、旧响应和删 verify 应使对应检查在目标处失败。
 - Python 改动先 Ruff，再针对性 pytest；前端跑相关 Vitest 和 pnpm build，按改动补 i18n、生成物和真实 E2E。完整候选执行项目规定全量；新改动或未解问题才追加无关昂贵检查。
-- Windows 下使用实际解释器和绝对 PYTHONPATH 探针，测试不可硬编码只有 Windows 才有的 venv 布局。Node 的相关测试按仓库记录设置 NODE_OPTIONS。日志保留命令真实退出码，skip 不算通过。
+- Windows 下使用实际解释器和绝对 PYTHONPATH 探针，清理测试中硬编码的 Windows venv 布局。Node 的相关测试按仓库记录设置 NODE_OPTIONS。如果复用依赖时 pnpm 试图清理共享目录，不设 CI=true 强行执行；可调用已安装 CLI 按 package.json 等价步骤验证，逐步核验退出码并记录与原命令的区别。skip 不算通过。
 - Chromium 英文/WebKit 的关键 spec 要先用 --list 核对实际收集。浏览器不冒充真桌面，Windows 通过不冒充 macOS 通过。
 - 基线红、环境红、新增红分别用证据定性；不得删测试、放宽容差、静默降级/栅格化、关闭功能或降低写回验证来凑绿。
 - 不全局拒绝无脚本来源的原图 EPS，验证可兑现路径；保留既有画布 EPS 范围限制。遇格式或 SVG 表达限制先按第三路径审查验证结构方案，记录真实不可兼得的边界。保持 RenderCore/pdfbackend 和零 PyMuPDF，不建立第二套权威管线。
@@ -104,5 +94,5 @@ M1 的两曲线 fixture 是集成顺序，不是最终范围缩减。继续 M2�
 
 当前授权不包含 push、远程 Issue/PR、合并或发布。最终交付本地分支与按功能 commit 列表、真实使用步骤、测试证据和样例产物；明确区分已实现、本机已验证、待平台验收、待发布。
 
-现在开始核对当前树和复现证据，按 NEXT_PHASE.md 的 R00 顺序实际执行，持续推进到最终验收条件满足或确有无法自主解除的外部阻塞。
+现在核对当前 r00 树和 2026-11-06 证据，按当前目录 NEXT_PHASE 第 4 节开始实际修改、验证和按功能提交；完成 M1 后继续 R08–R13。不要停在修改计划或单个模块通过，直到最终验收满足或所有剩余有意义工作确实被外部条件阻塞。
 ```
