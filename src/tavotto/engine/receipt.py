@@ -54,8 +54,13 @@ import hashlib
 import json
 import os
 import re
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import execspec, executionfact, figcapture
+
+if TYPE_CHECKING:
+    from .inputdeclaration import InputArchive
 
 #: 回执形态的版本。加可选字段不升；改语义 / 删字段才升。
 RECEIPT_VERSION = 1
@@ -231,6 +236,11 @@ class ExecutionReceipt:
     #: Optional evidence captured around this actual execution; never current binding.
     #: Only the path-free revision is public. No field is emitted for old executions.
     captured_inputs: dict | None = None
+    #: Verified bytes in the control plane's own cache. Never serialized or
+    #: included in either identity; the public revision already names the graph.
+    captured_input_archive: InputArchive | None = dataclasses.field(
+        default=None, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         if self.profile not in execspec.PROFILES:
@@ -260,6 +270,25 @@ class ExecutionReceipt:
             if checked is None:
                 raise ValueError("Invalid captured input declaration")
             object.__setattr__(self, "captured_inputs", execspec.FrozenDict(checked))
+        if self.captured_input_archive is not None:
+            from . import inputdeclaration
+
+            archive = self.captured_input_archive
+            if (
+                not isinstance(archive, inputdeclaration.InputArchive)
+                or self.captured_inputs is None
+            ):
+                raise ValueError("Invalid captured input archive")
+            try:
+                graph = inputdeclaration.validate_graph(
+                    json.loads(archive.graph_bytes),
+                    expected_revision=self.captured_inputs["revision"],
+                )
+                canonical = inputdeclaration.canonical_graph_bytes(graph)
+            except (ValueError, TypeError, UnicodeError) as exc:
+                raise ValueError("Invalid captured input archive") from exc
+            if canonical != archive.graph_bytes:
+                raise ValueError("Invalid captured input archive")
 
     # ---------------- 完备性 ----------------
     @property
@@ -525,7 +554,7 @@ def from_worker(
         if isinstance(build_resp, dict) and "execution_id" in build_resp
         else getattr(worker, "execution_id", None)
     )
-    captured_inputs = None
+    captured_inputs, captured_input_archive = None, None
     latest_id = getattr(worker, "execution_id", None) or getattr(
         worker, "last_build_execution_id", None
     )
@@ -533,13 +562,14 @@ def from_worker(
         # Native continues can reach a newer barrier after this response was
         # returned. Only an explicitly stamped response belongs to this fact.
         if isinstance(build_resp, dict) and build_resp.get("execution_id") == latest_id:
-            captured_inputs = _native_captured_inputs(
+            captured_inputs, captured_input_archive = _native_captured_inputs(
                 worker,
                 spec,
                 script=spec.target,
                 runtime=runtime,
                 rejected=rejected,
                 pid_check=pid_check,
+                expected_execution_id=latest_id,
             )
     elif (
         runtime is not None
@@ -547,6 +577,7 @@ def from_worker(
         and pid_check in (PID_CHECK_OK, PID_CHECK_LAUNCHER)
         and executionfact.valid_id(execution_id)
         and execution_id == latest_id
+        and not getattr(worker, "execution_observation_unknown", False)
     ):
         from . import inputdeclaration
 
@@ -560,6 +591,15 @@ def from_worker(
         }
         if fact is not None and fact["declaration"]["scope"] == expected_scope:
             captured_inputs = inputdeclaration.public_fact(fact)
+            descriptor = getattr(worker, "last_captured_input_archive", None)
+            captured_input_archive = _verified_input_archive(worker, fact, descriptor)
+            if descriptor is not None and (
+                execution_id != getattr(worker, "execution_id", None)
+                or getattr(worker, "execution_observation_unknown", False)
+                or fact != getattr(worker, "last_captured_inputs", None)
+                or descriptor != getattr(worker, "last_captured_input_archive", None)
+            ):
+                captured_inputs, captured_input_archive = None, None
     return ExecutionReceipt(
         profile=spec.profile,
         control_plane=control_plane,
@@ -579,6 +619,7 @@ def from_worker(
         session_env=_session_env(worker),
         instance=execution_id if executionfact.valid_id(execution_id) else "",
         captured_inputs=captured_inputs,
+        captured_input_archive=captured_input_archive,
     )
 
 
@@ -613,23 +654,54 @@ def worker_pid(worker) -> int | None:
 NATIVE_ARGV_PLACEHOLDER = "<argv>"
 
 
-def _native_captured_inputs(session, spec, *, script, runtime, rejected, pid_check):
+def _verified_input_archive(worker, fact, descriptor):
+    """Read only an opaque key below the control plane's known output cache."""
+    out_dir = getattr(worker, "out_dir", None)
+    if descriptor is None or out_dir is None:
+        return None
+    from . import inputdeclaration, projectcopy
+
+    if not isinstance(out_dir, (str, Path)) or not os.path.isabs(out_dir):
+        return None
+    return inputdeclaration.verify_archive(
+        descriptor,
+        fact,
+        archive_root=Path(out_dir) / inputdeclaration.ARCHIVE_DIRNAME,
+        limits={"max_files": projectcopy.MAX_FILES, "max_bytes": projectcopy.MAX_BYTES},
+    )
+
+
+def _native_captured_inputs(
+    session,
+    spec,
+    *,
+    script,
+    runtime,
+    rejected,
+    pid_check,
+    expected_execution_id=None,
+    expected_epoch=None,
+):
     """One projection for both existing native receipt entry points."""
     reader = getattr(session, "captured_inputs_for_receipt", None)
+    execution_id = getattr(session, "execution_id", None)
+    epoch = getattr(session, "snapshot_epoch", None)
     if not (
         callable(reader)
         and runtime is not None
         and rejected is None
         and pid_check in (PID_CHECK_OK, PID_CHECK_LAUNCHER)
         and spec.target_kind == execspec.TARGET_SCRIPT
-        and executionfact.valid_id(getattr(session, "execution_id", None))
+        and executionfact.valid_id(execution_id)
+        and (expected_execution_id is None or expected_execution_id == execution_id)
+        and (expected_epoch is None or expected_epoch == epoch)
     ):
-        return None
+        return None, None
     from . import inputdeclaration
 
-    fact = inputdeclaration.validate_fact(reader(script=script), execution_id=session.execution_id)
+    fact = inputdeclaration.validate_fact(reader(script=script), execution_id=execution_id)
     if fact is None:
-        return None
+        return None, None
     scope = fact["declaration"]["scope"]
     mode = scope["cwd_mode"]
     if (
@@ -640,8 +712,20 @@ def _native_captured_inputs(session, spec, *, script, runtime, rejected, pid_che
         and os.path.normcase(os.path.abspath(spec.cwd))
         == os.path.normcase(os.path.abspath(execspec.desktop_cwd(spec.project_root, script, mode)))
     ):
-        return inputdeclaration.public_fact(fact)
-    return None
+        archive_reader = getattr(session, "captured_input_archive_for_receipt", None)
+        descriptor = archive_reader(script=script) if callable(archive_reader) else None
+        archive = _verified_input_archive(session, fact, descriptor)
+        # Verification may stream large files. A release, EOF or newer barrier
+        # during that IO must not lend this evidence to a different Figure.
+        if (
+            execution_id != getattr(session, "execution_id", None)
+            or epoch != getattr(session, "snapshot_epoch", None)
+            or reader(script=script) != fact
+            or (callable(archive_reader) and archive_reader(script=script) != descriptor)
+        ):
+            return None, None
+        return inputdeclaration.public_fact(fact), archive
+    return None, None
 
 
 def from_native_session(session, script: str, *, grant: dict | None = None) -> ExecutionReceipt:
@@ -681,8 +765,15 @@ def from_native_session(session, script: str, *, grant: dict | None = None) -> E
     descriptors = tuple(
         d for d in (getattr(session, "descriptors", None) or []) if isinstance(d, dict)
     )
-    captured_inputs = _native_captured_inputs(
-        session, spec, script=script, runtime=runtime, rejected=rejected, pid_check=pid_check
+    snapshot_epoch = getattr(session, "snapshot_epoch", 0)
+    captured_inputs, captured_input_archive = _native_captured_inputs(
+        session,
+        spec,
+        script=script,
+        runtime=runtime,
+        rejected=rejected,
+        pid_check=pid_check,
+        expected_epoch=snapshot_epoch,
     )
     return ExecutionReceipt(
         profile=execspec.PROFILE_NATIVE,
@@ -698,12 +789,9 @@ def from_native_session(session, script: str, *, grant: dict | None = None) -> E
         descriptors=descriptors,
         runtime_rejected=rejected,
         pid_check=pid_check,
-        instance=(
-            str(getattr(session, "session_id", "") or "")
-            + ":"
-            + str(getattr(session, "snapshot_epoch", 0))
-        ),
+        instance=(str(getattr(session, "session_id", "") or "") + ":" + str(snapshot_epoch)),
         captured_inputs=captured_inputs,
+        captured_input_archive=captured_input_archive,
     )
 
 

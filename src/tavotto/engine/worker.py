@@ -1331,6 +1331,7 @@ class Worker(wireproto.V1Handler):
         self._input_capture = None
         self._captured_inputs = None
         self._captured_build = None
+        self._captured_input_archive = None
         #: 本进程 build 时实际读到并执行的脚本字节的 sha256（读失败 None）；build 前 None。
         self._source_sha256: str | None = None
         #: pyplot 兜底因上限丢掉的张数（0 = 一张没丢）。build 响应带出去。
@@ -1498,6 +1499,8 @@ class Worker(wireproto.V1Handler):
             if self._captured_inputs is not None
             else {}
         )
+        if captured and self._captured_input_archive is not None:
+            captured["captured_input_archive"] = copy.deepcopy(self._captured_input_archive)
         return {**result, "execution_id": self.execution_id, **captured}
 
     def select_artifact(self, context):
@@ -1559,6 +1562,7 @@ class Worker(wireproto.V1Handler):
             return self._stems_summary()
         self._captured_inputs = None
         self._captured_build = None
+        self._captured_input_archive = None
         self._input_capture = None
         # 快照账绑「这一次脚本执行」：同 worker 重试（instrument / 发布阶段临时失败）也从一份新账开始
         self.session.begin_save_moments()
@@ -2022,8 +2026,12 @@ class Worker(wireproto.V1Handler):
         )
         if self._input_capture is not None:
             with self._input_observer.paused():
-                captured = self._input_capture.finish(self._source_sha256)
+                captured = self._input_capture.finish(
+                    self._source_sha256,
+                    archive_root=self.out_dir / inputdeclaration.ARCHIVE_DIRNAME,
+                )
             if captured is not None:
+                self._captured_input_archive = self._input_capture.archive_descriptor()
                 build = self.build_result({})
                 self._captured_inputs = captured
                 self._captured_build = {

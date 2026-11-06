@@ -430,7 +430,7 @@ class NativeSession:
         self.execution_started_ns = 0
         # Private evidence belongs to one existing barrier epoch. Availability
         # follows that state machine, not a second release/EOF flag.
-        self._barrier_captured_inputs: tuple[int, str, dict] | None = None
+        self._barrier_captured_inputs: tuple[int, str, dict, dict | None] | None = None
         # Application-owned, public invalidation projection; no launch spec/argv.
         self.figure_snapshot_invalidation: dict | None = None
         self.rev = 0
@@ -647,7 +647,7 @@ class NativeSession:
         """收到 Bridge Runner 转发过来的握手帧——用户的 Python 起来了。"""
         self._set_state(WAITING_FOR_FIGURE, process_pid=_as_int(hello.get("pid")))
 
-    def _captured_barrier_fact(self, frame: dict) -> tuple[int, str, dict] | None:
+    def _captured_barrier_fact(self, frame: dict) -> tuple[int, str, dict, dict | None] | None:
         """Validate a newly entered barrier, with ``_lock`` held; never read paths."""
         if (
             self.target_kind != execspec.TARGET_SCRIPT
@@ -682,22 +682,38 @@ class NativeSession:
             os.path.abspath(cwd)
         ):
             return None
-        return self.snapshot_epoch, self.execution_id, fact
+        archive = inputdeclaration.validate_archive_descriptor(
+            frame.get("captured_input_archive"), fact=fact
+        )
+        return self.snapshot_epoch, self.execution_id, fact, archive
+
+    def _captured_slot_for_receipt(
+        self, *, script: str
+    ) -> tuple[int, str, dict, dict | None] | None:
+        """Read one barrier slot with ``_lock`` held, without IO or a new lifecycle."""
+        slot = self._barrier_captured_inputs
+        if (
+            self.state != BARRIER
+            or self._barrier_snapshot_epoch != self.snapshot_epoch
+            or slot is None
+            or slot[0] != self.snapshot_epoch
+            or slot[1] != self.execution_id
+            or script != self.execution_script
+        ):
+            return None
+        return slot
 
     def captured_inputs_for_receipt(self, *, script: str) -> dict | None:
         """Read frozen current-barrier evidence, never a current declaration or authorization."""
         with self._lock:
-            slot = self._barrier_captured_inputs
-            if (
-                self.state != BARRIER
-                or self._barrier_snapshot_epoch != self.snapshot_epoch
-                or slot is None
-                or slot[0] != self.snapshot_epoch
-                or slot[1] != self.execution_id
-                or script != self.execution_script
-            ):
-                return None
-            return copy.deepcopy(slot[2])
+            slot = self._captured_slot_for_receipt(script=script)
+            return copy.deepcopy(slot[2]) if slot is not None else None
+
+    def captured_input_archive_for_receipt(self, *, script: str) -> dict | None:
+        """Read the same frozen barrier's descriptor; the receipt owner verifies its bytes."""
+        with self._lock:
+            slot = self._captured_slot_for_receipt(script=script)
+            return copy.deepcopy(slot[3]) if slot is not None and len(slot) > 3 else None
 
     # ------------------------------------------------------------------
     # 脚本的提问（P07，ADR 0126）：桌面拥有的进程里 input / stdin / getpass

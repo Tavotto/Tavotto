@@ -2816,6 +2816,7 @@ def _record_execution(worker, execution_id: str) -> None:
 def _clear_captured_inputs(worker) -> None:
     worker.last_captured_inputs = None
     worker.last_captured_build = None
+    worker.last_captured_input_archive = None
 
 
 def _input_declaration_payload(worker, command, payload: dict) -> dict:
@@ -2876,6 +2877,13 @@ def _accept_captured_inputs(worker, response: dict) -> None:
     fact = inputdeclaration.validate_fact(
         response.get("captured_inputs"), execution_id=execution_id
     )
+    archive = (
+        inputdeclaration.validate_archive_descriptor(
+            response.get("captured_input_archive"), fact=fact
+        )
+        if fact is not None
+        else None
+    )
     capsule = response.get("captured_build")
     required = {"execution_id", "runtime", "descriptors", "source_sha256"}
     optional = {"pdf_pages", "probe_misses", "artifact_probe", "script_inputs"}
@@ -2907,6 +2915,7 @@ def _accept_captured_inputs(worker, response: dict) -> None:
         capsule = copy.deepcopy(capsule)
         worker.last_captured_inputs = fact
         worker.last_captured_build = capsule
+        worker.last_captured_input_archive = archive
         _store_build_metadata(worker, capsule, detached=True)
         worker.built = True
         worker.build_failed = False
@@ -3260,6 +3269,7 @@ class EngineWorker:
     last_build_source_sha256: str | None = None
     last_captured_inputs: dict | None = None
     last_captured_build: dict | None = None
+    last_captured_input_archive: dict | None = None
     last_input_declaration_issue: str | None = None
     #: 最近一次 build 每一问的去向计数（`inputbroker.InputFacts`）与它绑定的执行转录（只有 id 与计数）。
     last_input_facts: dict | None = None
@@ -4037,6 +4047,7 @@ class WorkerdWorker:
     last_build_source_sha256: str | None = None
     last_captured_inputs: dict | None = None
     last_captured_build: dict | None = None
+    last_captured_input_archive: dict | None = None
     last_input_declaration_issue: str | None = None
     last_input_facts: dict | None = None
     #: 最近一次 build 响应里沙盒落空的探路调用（#1254）：build 成功但图可能是空的时，渲染 / 试运行据此挂 `workdir_hint`

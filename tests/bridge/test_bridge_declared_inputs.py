@@ -202,9 +202,15 @@ def candidate(root, *, script="plot.py", cwd_mode="project_root", rc=None):
 
 
 def capture(frame, *, script="plot.py"):
-    assert set(frame) == LEGACY_BARRIER_KEYS | CAPTURE_KEYS
+    keys = LEGACY_BARRIER_KEYS | CAPTURE_KEYS
+    assert set(frame) in (keys, keys | {"captured_input_archive"})
     fact = frame["captured_inputs"]
     assert inputdeclaration.validate_fact(fact, execution_id=frame["execution_id"]) == fact
+    if "captured_input_archive" in frame:
+        assert (
+            inputdeclaration.validate_archive_descriptor(frame["captured_input_archive"], fact=fact)
+            == frame["captured_input_archive"]
+        )
     assert executionfact.valid_id(frame["execution_id"])
     assert frame["script"] == fact["declaration"]["scope"]["script"] == script
     return fact

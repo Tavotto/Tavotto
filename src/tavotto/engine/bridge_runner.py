@@ -937,6 +937,7 @@ class BridgeRun:
         self._input_capture = None
         self._capture_source_sha256: str | None = None
         self._captured_inputs: dict | None = None
+        self._captured_input_archive: dict | None = None
 
     def begin_input_capture(self) -> None:
         """Freeze the one approved lineage before the script's actual source read."""
@@ -969,17 +970,32 @@ class BridgeRun:
 
     def _freeze_input_capture(self) -> None:
         self._captured_inputs = None
+        self._captured_input_archive = None
         if self._input_capture is None:
             return
-        fact = self._input_capture.finish(self._capture_source_sha256)
+        try:
+            # Raw runner callers historically let the first preview create this
+            # owned output directory. Capture now precedes that preview.
+            os.makedirs(self.args.out_dir, exist_ok=True)
+        except OSError:
+            self._input_capture = None
+            return  # Optional evidence cannot prevent ordinary Figure editing.
+        fact = self._input_capture.finish(
+            self._capture_source_sha256,
+            archive_root=os.path.join(self.args.out_dir, _PKG.inputdeclaration.ARCHIVE_DIRNAME),
+        )
         fact = _PKG.inputdeclaration.validate_fact(fact, execution_id=self.execution_id)
         if fact is None or fact["declaration"]["scope"]["script"] != self.execution_script:
             self._input_capture = None
             return
         self._captured_inputs = fact
+        self._captured_input_archive = _PKG.inputdeclaration.validate_archive_descriptor(
+            self._input_capture.archive_descriptor(), fact=fact
+        )
 
     def _resume_input_capture(self) -> None:
         self._captured_inputs = None
+        self._captured_input_archive = None
         if self._input_capture is not None and not self._input_capture.resume(
             self.execution_id, self._capture_source_sha256
         ):
@@ -1407,6 +1423,11 @@ class BridgeRun:
                     "captured_inputs": self._captured_inputs,
                 }
                 if self._captured_inputs is not None
+                else {}
+            ),
+            **(
+                {"captured_input_archive": self._captured_input_archive}
+                if self._captured_inputs is not None and self._captured_input_archive is not None
                 else {}
             ),
         )

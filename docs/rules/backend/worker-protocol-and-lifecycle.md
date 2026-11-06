@@ -31,6 +31,7 @@ order: 60
   legacy 信封一个字节不加。基线报告与「值得做的优化」清单在
   `docs/perf-baseline.md`，重测走 `python scripts/bench_render.py`。
 - **声明输入的同版执行账**：可选私有`input_declaration`随每个可执行请求进入同一子Worker；无声明不加字段。实际捕获的`captured_inputs`与冻结`captured_build`同execution_id返回，父共享接收器只接受winning实例，并保留该次runtime/descriptors/source SHA，不用cached build时现量的runtime覆盖它。普通safe和legacy合同保持。workerd可在同一session内更换child；仅带捕获事实的回复由Rust在本次dispatch的proc锁内取得可信`supervisor_child_pid`并覆盖子自报同名字段，普通回复不新增该字段。Python只在有效同版fact/capsule及当前执行锁内用该元信息更新WorkerdWorker的child PID；EngineWorker不消费它。receipt仍按真实PID/launcher ppid核对，迟到回复或runtime自报不提升权限。看护`tests/test_declared_input_worker.py`与Rust session定向用例。
+  原finish读取流封存输入时，响应另有可选私有sibling `captured_input_archive`，不改闭式captured_build；pool在同一winning执行锁内验证descriptor与fact的revision并同步接受/清空。该步骤不在pool锁中读大文件；回执在已知out_dir/captured-inputs中完整核字节，IO后复核当前执行资格。cached只返回原封存，当前批准清单或同名源文件不能替换历史内容；缺/坏descriptor仅使附件缺失，不继承上次附件。看护`tests/test_declared_input_worker_archive.py`。
   **先测量后优化**：那份文档里被数据否掉的两条（挪 SVG 顺序省 draw = 图例 bbox
   错 0.18–0.32 分数，写回自检必报 divergence；`draw_without_rendering` 只省 8%）
   别再重试。**「只为布局」的 draw 不重采样图片**（2026-09-24）：manifest 开头的 `fig.canvas.draw()` 与几何组
