@@ -15589,6 +15589,16 @@ def api_layout_save(name):
     `atomicio` 挡（那种文档写出去谁都读不回来）。
     """
     body = _validate_storage_document(request.get_json(force=True), require_sources=False)
+    working_doc_id = request.args.get("working_doc_id")
+    binding_intent = request.args.get("binding_intent")
+    has_binding = working_doc_id is not None or binding_intent is not None
+    if has_binding:
+        if not engine_layoutsession.valid_doc_id(working_doc_id):
+            return _bad_project_file_request()
+        try:
+            binding_intent = _project_file_query_sequence(binding_intent)
+        except ValueError:
+            return _bad_project_file_request()
     # `target=project`：⌘S 写回**项目里**那份排版文件（ADR 0096）。它不许退回数据
     # 目录——没打开项目时 `project_layout_dir()` 会静默落到 `layouts/`，用户以为存进
     # 了项目，换台电脑才发现项目文件夹里什么都没有。于是这一档先要项目（409 no_project）。
@@ -15604,6 +15614,8 @@ def api_layout_save(name):
             ), 400
     else:
         path = layout_path(name, _named_layout_dir(ctx))
+    if has_binding and ctx is None:
+        return _bad_project_file_request()
     # 外部修改检测走**自动保存那一份**判据（`_revision_conflict` / `REVISION_ABSENT` /
     # `_external_change`，都定义在下面的自动保存那一段）。另写一份判据是这条
     # issue 的反面：同一个问题在产品里有两个答案，而「另存为」那个答案是
@@ -15614,6 +15626,20 @@ def api_layout_save(name):
     # 然后一前一后落盘。锁按落盘路径取，与自动保存共用同一条锁带——同一个
     # 文件被两条路同时写时，它们必须互斥。
     with _document_lock(path):
+        pending = None
+        if has_binding:
+            try:
+                pending = engine_layoutsession.pending_project_file(
+                    engine_layoutsession.project_key(ctx.path),
+                    working_doc_id,
+                    binding_intent,
+                    name=path.stem,
+                    file=path.relative_to(ctx.path).as_posix(),
+                )
+            except ValueError:
+                return _bad_project_file_request()
+            except OSError:
+                return _session_unavailable()
         if base_revision:
             try:
                 current = engine_atomicio.existing_revision(path)
@@ -15632,6 +15658,22 @@ def api_layout_save(name):
         # **在锁里读**：放到锁外读的话，交回去的可能是另一个窗口刚写下的那份
         # 内容的 hash，于是下一次写会带着一个「不是我写的」基线过来。
         revision = engine_atomicio.content_revision(path)
+        project_file = None
+        if has_binding:
+            project_file = pending
+            if pending["state"] == "pending" and revision is None:
+                project_file = {"state": "unavailable"}
+            elif pending["state"] == "pending":
+                try:
+                    project_file = engine_layoutsession.commit_project_file(
+                        engine_layoutsession.project_key(ctx.path),
+                        working_doc_id,
+                        pending["ticket"],
+                        revision=revision,
+                    )
+                except OSError:
+                    # 正文已经落盘；不能把关联失败报成正文失败并诱导覆盖重试。
+                    project_file = {"state": "unavailable"}
     out = {
         "ok": True,
         "revision": revision,
@@ -15641,6 +15683,8 @@ def api_layout_save(name):
     }
     if snapshot_warnings:
         out["svg_snapshot_warnings"] = snapshot_warnings
+    if has_binding:
+        out["project_file"] = project_file
     if ctx is not None:
         # 「已保存到项目：tavottofile/<名>.json」——相对项目根、正斜杠。名字经过
         # `layout_path` 的净化，用户输入的和落盘的可能不是同一个字符串，界面要说后者。
@@ -15920,6 +15964,15 @@ def _revision_conflict(base_revision: str, current: str | None) -> bool:
 @app.put("/api/autosave/<doc_id>")
 def api_autosave_put(doc_id):
     body = _validate_storage_document(request.get_json(force=True), require_sources=False)
+    has_project_file_edit = "project_file_edit" in request.args
+    project_file_edit = None
+    if has_project_file_edit:
+        if not engine_layoutsession.valid_doc_id(doc_id):
+            return _bad_project_file_request()
+        try:
+            project_file_edit = json.loads(request.args["project_file_edit"])
+        except (ValueError, RecursionError):
+            return _bad_project_file_request()
     p = _autosave_path(doc_id)
     # 外部修改检测（R-08）：`base_revision` 是调用方最后一次**读到或写成功**的
     # 那一份的内容 hash。磁盘上现在的 hash 与它不同 = 这中间有人动过这个文件，
@@ -15948,11 +16001,18 @@ def api_autosave_put(doc_id):
                 return _tutorial_error(
                     engine_tutorial.TutorialError("tutorial_reset_incomplete", "旧教程排版没清掉")
                 )
-        if base_revision:
+        current = None
+        if base_revision or has_project_file_edit:
             try:
                 current = engine_atomicio.existing_revision(p)
             except OSError:
                 return _revision_unreadable()
+        if has_project_file_edit:
+            try:
+                engine_layoutsession.validate_project_file_edit(project_file_edit, current)
+            except ValueError:
+                return _bad_project_file_request()
+        if base_revision:
             if _revision_conflict(base_revision, current):
                 return _external_change(current, p)
         else:
@@ -15965,6 +16025,29 @@ def api_autosave_put(doc_id):
                         "theirs": theirs,
                     }
                 ), 409
+        project_file_owner = None
+        if has_project_file_edit:
+            try:
+                project_file_owner = _layout_session_owner()
+                if isinstance(project_file_owner, str):
+                    prepared = engine_layoutsession.prepare_project_file_edit(
+                        doc_id,
+                        project_file_owner,
+                        project_file_edit,
+                        actual_base_revision=current,
+                    )
+                    if prepared["state"] != "accepted":
+                        return jsonify(
+                            {
+                                "error": "这份排版的编辑基线需要重新核对，本次没有写入",
+                                "code": "stale_write",
+                                "project_file": prepared,
+                            }
+                        ), 409
+            except ValueError:
+                return _bad_project_file_request()
+            except OSError:
+                return _session_unavailable()
         _autosave_directory(create=True)
         snapshot_warnings = _freeze_document_sources(body)
         engine_atomicio.write_json(p, body)
@@ -15979,7 +16062,21 @@ def api_autosave_put(doc_id):
         # 元数据失败**不让这次保存失败**（内容已经落盘了，revision 如实回），但要让客户端知道：
         # `metadata: "failed"`。注意这不是跨文件崩溃事务——进程死在两个文件之间时靠
         # `owner_revisions` 与槽位 revision 对不上来识别（该归属按「待核对」处理）。
-        metadata = _commit_autosave_metadata(p.stem, revision)
+        project_file = {}
+        metadata = _commit_autosave_metadata(
+            p.stem,
+            revision,
+            **(
+                {
+                    "project_file_edit": project_file_edit,
+                    "actual_base_revision": current,
+                    "project_file": project_file,
+                    "owner": project_file_owner,
+                }
+                if has_project_file_edit
+                else {}
+            ),
+        )
     # 清理放在锁**外**：`_document_lock` 不可重入，而清理要去锁别的路径。
     _prune_autosave_slots(p)
     return jsonify(
@@ -15989,6 +16086,7 @@ def api_autosave_put(doc_id):
             "saved_at": int(time.time() * 1000),
             "revision": revision,
             "metadata": metadata,
+            **({"project_file": project_file} if has_project_file_edit else {}),
             **_document_save_extras(body),
             **({"svg_snapshot_warnings": snapshot_warnings} if snapshot_warnings else {}),
         }
@@ -15996,6 +16094,7 @@ def api_autosave_put(doc_id):
 
 
 _OWNER_UNKNOWN = object()
+_PROJECT_FILE_UNSET = object()
 
 
 def _layout_session_owner():
@@ -16011,22 +16110,49 @@ def _layout_session_owner():
     return engine_layoutsession.project_key(ctx.path) if ctx is not None else None
 
 
-def _commit_autosave_metadata(doc_id: str, revision: str | None) -> str:
+def _commit_autosave_metadata(
+    doc_id: str,
+    revision: str | None,
+    *,
+    project_file_edit: object = _PROJECT_FILE_UNSET,
+    actual_base_revision: object = _PROJECT_FILE_UNSET,
+    project_file: dict | None = None,
+    owner: object = _PROJECT_FILE_UNSET,
+) -> str:
     """正文刚写成功、**仍持着槽位的文档锁**时提交恢复元数据：归属、归属对应的 revision、pending 的晋升。
 
     回 `"ok"` / `"failed"`（会话状态写不进去 / 读不到可信状态；正文已落盘，下一次保存会补记）/
     `"owner_unknown"`（pj 已失效，归属不知道，按保数据合同照写正文、什么都不记）。
     """
-    owner = _layout_session_owner()
+    if owner is _PROJECT_FILE_UNSET:
+        owner = _layout_session_owner()
+    if project_file is not None:
+        project_file.update(state="unavailable")
     if owner is _OWNER_UNKNOWN:
         return "owner_unknown"
     if revision is None:
         return "failed"
     try:
-        engine_layoutsession.commit_slot(doc_id, owner, revision)
+        result = engine_layoutsession.commit_slot(
+            doc_id,
+            owner,
+            revision,
+            **(
+                {
+                    "project_file_edit": project_file_edit,
+                    "actual_base_revision": actual_base_revision,
+                }
+                if project_file_edit is not _PROJECT_FILE_UNSET
+                else {}
+            ),
+        )
     except OSError as exc:
         LOG.warning("自动保存槽位的恢复元数据记不下（%s）", exc)
         return "failed"
+    if project_file is not None:
+        project_file.update(result.get("project_file", {}))
+        if project_file["state"] not in {"accepted", "skipped"}:
+            return "failed"
     return "ok"
 
 
@@ -16220,6 +16346,142 @@ def _session_unavailable():
             "code": "session_unavailable",
         }
     ), 503
+
+
+def _bad_project_file_request():
+    return jsonify({"error": "项目文件关联参数不合法", "code": "bad_request"}), 400
+
+
+def _project_file_query_sequence(value: object) -> int:
+    """查询/路径中的整数只负责解码；范围由会话叶子的同一判据核验。"""
+    if not isinstance(value, str) or re.fullmatch(r"[1-9][0-9]*", value) is None:
+        raise ValueError("invalid binding intent")
+    return int(value)
+
+
+def _project_file_actual_slot_revision(doc_id: str) -> str | None:
+    # 只读sink取目录枚举的实际路径，不用客户端值拼文件系统路径。
+    slot = _file_named(_autosave_directory(), doc_id)
+    return engine_atomicio.existing_revision(slot) if slot is not None else None
+
+
+@app.get("/api/layout-session/project-file/<doc_id>")
+def api_layout_project_file_get(doc_id):
+    if not engine_layoutsession.valid_doc_id(doc_id):
+        return _bad_project_file_request()
+    ctx = current_ctx()
+    key = engine_layoutsession.project_key(ctx.path)
+    try:
+        with _document_lock(_autosave_path(doc_id)):
+            view = engine_layoutsession.read_project_file(
+                key, doc_id, actual_autosave_revision=_project_file_actual_slot_revision(doc_id)
+            )
+    except OSError:
+        view = {"version": 1, "status": "unavailable"}
+    response = jsonify(view)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.post("/api/layout-session/project-file/<doc_id>/reserve")
+def api_layout_project_file_reserve(doc_id):
+    body = request.get_json(silent=True)
+    if (
+        not engine_layoutsession.valid_doc_id(doc_id)
+        or not isinstance(body, dict)
+        or set(body) != {"name", "autosave_revision", "axis", "expected_binding_sequence"}
+        or not isinstance(body["name"], str)
+        or not body["name"]
+    ):
+        return _bad_project_file_request()
+    ctx = current_ctx()
+    target = _project_layout_target(body["name"], ctx)
+    if target is None:
+        return _bad_project_file_request()
+    try:
+        with _document_lock(_autosave_path(doc_id)):
+            result = engine_layoutsession.reserve_project_file(
+                engine_layoutsession.project_key(ctx.path),
+                doc_id,
+                name=target.stem,
+                file=target.relative_to(ctx.path).as_posix(),
+                autosave_revision=body["autosave_revision"],
+                axis=body["axis"],
+                expected_binding_sequence=body["expected_binding_sequence"],
+                actual_autosave_revision=_project_file_actual_slot_revision(doc_id),
+            )
+    except ValueError:
+        return _bad_project_file_request()
+    except OSError:
+        return _session_unavailable()
+    return jsonify(result)
+
+
+@app.post("/api/layout-session/project-file/<doc_id>/confirm")
+def api_layout_project_file_confirm(doc_id):
+    body = request.get_json(silent=True)
+    if (
+        not engine_layoutsession.valid_doc_id(doc_id)
+        or not isinstance(body, dict)
+        or set(body) != {"name", "intent_sequence", "revision"}
+        or not isinstance(body["name"], str)
+        or not body["name"]
+        or not isinstance(body["revision"], str)
+    ):
+        return _bad_project_file_request()
+    ctx = current_ctx()
+    key = engine_layoutsession.project_key(ctx.path)
+    target = _project_layout_target(body["name"], ctx)
+    if target is None:
+        return _bad_project_file_request()
+    try:
+        engine_layoutsession.validate_project_file_edit(
+            {"axis": None, "base_axis": None, "base_revision": body["revision"]}, None
+        )
+        # 不同时取AS和named两个非重入条带锁。票据由reserve持AS锁捕获，
+        # 此处只锁实际named正文；commit在会话锁内再次核完整票据/CAS。
+        with _document_lock(target):
+            pending = engine_layoutsession.pending_project_file(
+                key,
+                doc_id,
+                body["intent_sequence"],
+                name=target.stem,
+                file=target.relative_to(ctx.path).as_posix(),
+            )
+            if pending["state"] != "pending":
+                return jsonify(pending)
+            try:
+                current = engine_atomicio.existing_revision(target)
+            except OSError:
+                return _revision_unreadable()
+            if current != body["revision"]:
+                return _external_change(current, target)
+            result = engine_layoutsession.commit_project_file(
+                key, doc_id, pending["ticket"], revision=current
+            )
+    except ValueError:
+        return _bad_project_file_request()
+    except OSError:
+        return _session_unavailable()
+    return jsonify(result)
+
+
+@app.delete("/api/layout-session/project-file/<doc_id>/intent/<sequence>")
+def api_layout_project_file_cancel(doc_id, sequence):
+    if not engine_layoutsession.valid_doc_id(doc_id):
+        return _bad_project_file_request()
+    ctx = current_ctx()
+    try:
+        result = engine_layoutsession.cancel_project_file_intent(
+            engine_layoutsession.project_key(ctx.path),
+            doc_id,
+            _project_file_query_sequence(sequence),
+        )
+    except ValueError:
+        return _bad_project_file_request()
+    except OSError:
+        return _session_unavailable()
+    return jsonify(result)
 
 
 @app.get("/api/layout-session")
