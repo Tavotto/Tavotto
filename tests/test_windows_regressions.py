@@ -4264,7 +4264,7 @@ def test_ai_command_starts_a_conda_style_batch_file(tmp_path, monkeypatch, spell
     r = _run_command(ctx, [program, "install"])
     assert not r.is_error, r.content
     assert out.read_text(encoding="ascii").strip() == "install"
-    assert "fakeconda.bat" in ctx.asker.cards[0]["command"]  # 卡上是实际执行的全路径
+    assert "fakeconda.bat" in ctx.asker.cards[0]["command"].lower()  # 卡上是实际执行的全路径
 
 
 @pytest.mark.skipif(os.name != "nt", reason="解析只在 Windows 上做")

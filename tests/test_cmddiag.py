@@ -231,3 +231,54 @@ def test_readme_mentions_missing_commands():
 
     src = inspect.getsource(diagnostics)
     assert src.count("project.missing_commands") >= 2
+
+
+# --- native 的桥（TVD-V7R4）：判据看**真桥进程**发回的 script_error，父进程看进程内记录
+@pytest.mark.parametrize(
+    ("name", "argv", "expected"),
+    [
+        (PUBLIC, (), PUBLIC),
+        (PUBLIC, ("x",), PUBLIC),
+        ("tavotto-private-tool", (), "tavotto-private-tool"),
+        ("tavotto-private-tool", ("x",), ""),  # 带参数运行：不在公开白名单的名字置空，口径同 worker
+    ],
+)
+def test_native_bridge_reports_the_missing_command(tmp_path, monkeypatch, name, argv, expected):
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    monkeypatch.setenv("PATH", str(tmp_path))  # 开发机可能真装了这个命令
+    from support import bridgekit
+    from tavotto.engine import bridge
+
+    script = tmp_path / "fig.py"
+    script.write_text(  # 现场：图已画好，之后的外部命令才失败
+        "import subprocess\nimport matplotlib\nmatplotlib.use('Agg')\n"
+        "import matplotlib.pyplot as plt\nplt.figure()\n"
+        f"subprocess.run([{name!r}, 'x'])\n",
+        encoding="utf-8",
+    )
+    spec = bridge.spec_for(
+        str(script),
+        interpreter=bridgekit.USER_PYTHON,
+        cwd=str(tmp_path),
+        project_root=str(tmp_path),
+        argv=argv,
+    )
+    sess = bridge.BridgeSession(spec, out_dir=tmp_path / "out")
+    sess.start()
+    try:
+        error = sess.wait_event("barrier")["script_error"]
+    finally:
+        sess.close()
+    assert error["missing_command"]["command"] == expected
+    assert error["missing_command"]["on_path"] is False
+
+
+def test_native_script_error_lands_in_the_same_record(tmp_path):
+    from tavotto import app
+
+    fact = {"command": PUBLIC, "on_path": False, "path_segments": 3, "path_has": {}, "found_in": []}
+    fact |= {"keg_present": False, "keg_unlinked": False}
+    app._note_native_missing_command(str(tmp_path), {"message": "x", "missing_command": fact})
+    assert deprepair.recent_missing_commands(str(tmp_path))[-1]["command"] == PUBLIC
+    app._note_native_missing_command(str(tmp_path), {"message": "没有这份事实"})
+    assert len(deprepair.recent_missing_commands(str(tmp_path))) == 1

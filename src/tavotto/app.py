@@ -43,6 +43,7 @@ import zlib
 from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from types import SimpleNamespace
 
 from flask import (
     Flask,
@@ -1005,6 +1006,14 @@ def _note_missing_command(exc) -> None:
         return
     try:
         engine_deprepair.note_missing_command_of(root, exc)
+    except (OSError, ValueError, TypeError) as err:
+        LOG.warning("找不到外部命令的现场记录失败: %s", err)
+
+
+def _note_native_missing_command(project: str, script_error: dict) -> None:
+    """native 的桥把同一份事实放在 `script_error` 里（TVD-V7R4）：与 safe 同一条进程内记录，记录失败不许盖掉原始错误。"""
+    try:
+        engine_deprepair.note_missing_command_of(project, SimpleNamespace(extra=script_error))
     except (OSError, ValueError, TypeError) as err:
         LOG.warning("找不到外部命令的现场记录失败: %s", err)
 
@@ -11579,6 +11588,7 @@ def _native_preparation_runner(pl, before_retry=None):
             native_project = str(require_project())
         except NoProjectError:
             native_project = ""
+        _note_native_missing_command(native_project, error)
         foreign = engine_pool.foreign_abi_error(
             str(error.get("message") or "脚本运行出错"),
             str(error.get("traceback") or ""),

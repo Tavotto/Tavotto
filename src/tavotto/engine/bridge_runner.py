@@ -99,7 +99,7 @@ _PATH_BASELINE = list(sys.path)
 #: manifest / overrides**——它们在模块层 import matplotlib 与 numpy，而
 #: `import matplotlib` 会当场读 cwd 下的 matplotlibrc、钉死 rcParams，
 #: 用户脚本自己那句 `matplotlib.use(...)` 的语义就不一样了。
-_PHASE1 = ("figcapture", "patchspec", "executionfact")
+_PHASE1 = ("figcapture", "patchspec", "executionfact", "cmddiag")
 #: 第二阶段（屏障那一刻才装）：要 matplotlib/numpy 的那几个，而那时用户早就
 #: import 过了；外加只被它们平铺 import 到的纯标准库模块。
 #:
@@ -1475,6 +1475,15 @@ def _unreadable_folder_extra(exc: BaseException, args) -> dict:
     return {"unreadable_folder": fact, "unreadable_folder_private": private} if fact else {}
 
 
+def _missing_command_extra(exc: BaseException, args) -> dict:
+    """脚本拉起外部命令却找不到可执行文件：`{"missing_command": {...}}`（与 safe worker 同一份 `cmddiag.collect`，TVD-V7R4）。
+    带参数运行时命令名可能由 argv 变形而来，口径同 worker 的敏感运行；任何意外都当没有，绝不盖掉原来的脚本错误。"""
+    try:
+        return _PKG.cmddiag.collect(exc, sensitive=bool(args.user_argv))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _foreign_abi_extra(exc: BaseException, args) -> dict:
     """脚本失败是不是「它加进 `sys.path` 的私有目录里的编译扩展是为别的 Python 小版本编的」（ADR 0154）。
     判据在 `bridgeboot.foreign_abi_facts`（与 safe worker 同一份）；任何意外都当没有，绝不盖掉原来的脚本错误。"""
@@ -1574,6 +1583,7 @@ def main(argv: list | None = None) -> int:
             # 跳过之后仍失败、而失败是脚本加进 sys.path 的项目外目录读不了（ADR 0153）：只带目录名
             **_unreadable_folder_extra(exc, args),
             **_foreign_abi_extra(exc, args),
+            **_missing_command_extra(exc, args),
         }
         traceback.print_exc()
     finally:
