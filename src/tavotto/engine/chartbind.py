@@ -21,7 +21,6 @@ CALIBRATION_KEYS = ("p1_user", "p1_value", "p2_user", "p2_value", "scale")
 BINDING_REQUEST_KEYS = (
     "axes_id",
     "rect",
-    "x",
     "y",
     "series",
     "scene_digest",
@@ -92,7 +91,10 @@ def build_model_and_binding(request: dict, *, engine_identity: dict) -> dict:
     """
     if not isinstance(request, dict):
         raise BindError("bind_evidence_invalid", "request must be an object")
-    missing = sorted(set(BINDING_REQUEST_KEYS) - set(request))
+    required = set(BINDING_REQUEST_KEYS)
+    if request.get("x_kind") != "categorical":
+        required.add("x")
+    missing = sorted(required - set(request))
     if missing:
         raise BindError("bind_evidence_invalid", f"missing keys {missing}")
     scene_digest = request.get("scene_digest")

@@ -42,6 +42,14 @@
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
+### 2026-11-06 实施：CSV/TSV 与类别请求合同
+
+- chartdata.parse_table 全表只选一次分隔符，候选首记录与实际数据均由标准库 csv.reader 解析；引号、双写引号和跨行字段保留。未引用表头沿用旧 trim，引用表头保留精确列名，类别文本保留原字符，错误行列使用原物理位置。数值溢出不再混入有效列；错误码闭集和 parse_grid 不变。
+- chartbind 将 x 从共同必填移到数值轴条件必填；类别请求省略 x，仍拒绝同时携带数值证据。与前端互斥类型对齐，不放宽模型校验或数据预算。
+- 原三文件最终定向回归71 passed/0 failed/errors/skipped，pytest exit0；Ruff、format和diff检查通过。外部报告为 chart-data-csv-literal-quote.log/xml。反证覆盖退回旧split、无条件x必填、全部strip/完全不trim和字面引号header的旧toggle逻辑，对应目标断言均真实变红。
+- 首轮候选的手写quote翻转会误读未引用表头中的字面引号，独立复现后改为标准库首记录候选，正确得到 a"b 与 c 两列。不是把该边界移到以后，也没有新增第二个CSV解析器。历史checkpoint路径中既有NUL已准确修为当前r00路径，内容含义保留。
+- 当前代码仅此输入合同准备提交；共享导出、转换和C恢复UI仍为独立功能差异。下一步完成本轮真实恢复/编辑浏览器验证和其余集成功能提交，目标继续active。
+
 ### 2026-11-06 执行状态复核与下一阶段队列更新（12:11 起）
 
 - 复核起点 r00@cae96f89 + 未提交实现，旧 main@69bcafae clean。四项新功能提交与当前未提交文件已逐项核对；没有切分支/新建树、fetch、push 或合并。PROGRESS、NEXT_PHASE、提示词已刷新为当前接续，原历史保留。
@@ -234,7 +242,7 @@
   `web/src/store/chartBindStore.test.ts` 追加 F1–F3（it.fails）。实测：后端 7 xfail、
   前端 6 passed + 3 expected fail（exit 0）。
 - fetch 成功（本轮 exit 0），origin/main 仍为 2bc94f7f；本地实现历史未在远端。
-- 接续 worktree `E:  - Project\Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`，
+- 接续 worktree `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`，
   基于 next-phase 080fde07；解释器探针 `tavotto.__file__` 钉在本树 src。
 - R01/R02 的合同决定（写进回归预期）：脚手架产物带语义角色标记
   `data-tavotto="series:<id>"/"axes:<id>"/"colorbar:<id>"`；脚手架在场景用户坐标系渲染

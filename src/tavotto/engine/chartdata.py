@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import math
 import re
 
@@ -25,61 +27,114 @@ _NUM_RE = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$")
 _DATE_HINT = re.compile(r"^\d{4}[-/]\d{1,2}([-/]\d{1,2})?$|^\d{1,2}/\d{1,2}/\d{2,4}$")
 
 
+def _table_delimiter(text: str) -> str:
+    """优先按表头选一次；歧义候选交给标准库，不逐行重新选择。"""
+    widths = {}
+    for delimiter in _DELIMITERS:
+        try:
+            reader = csv.reader(io.StringIO(text, newline=""), delimiter=delimiter, strict=True)
+            widths[delimiter] = len(next(reader, []))
+        except csv.Error:
+            continue
+    highest = max(widths.values(), default=0)
+    candidates = [delimiter for delimiter, width in widths.items() if width == highest]
+    if highest > 1 and len(candidates) == 1:
+        return candidates[0]
+    if highest > 1 or len(widths) < len(_DELIMITERS):
+        # 表头本身可含其他合法分隔符；平票时由 CSV 方言探测核对整表。
+        # 仅有一列时，异常候选仍可能是分隔符：不能把畸形CSV降成合法的一列TSV。
+        options = "".join(candidates if highest > 1 else _DELIMITERS)
+        for sample in (text, io.StringIO(text, newline="").readline()):
+            try:
+                return csv.Sniffer().sniff(sample, delimiters=options).delimiter
+            except csv.Error:
+                continue
+    return candidates[0] if candidates else _DELIMITERS[0]
+
+
+def _header_names(values: list[str], record: str) -> list[str]:
+    """未引用表头沿用旧的去外围空白；引用表头保留精确列名。
+
+    值已经由 csv.reader 解析，按它们的编码长度定位外层引号；这里不再拆分
+    或反转义记录。默认 CSV 的字段内引号每个双写一次，故编码长度可直接求得。
+    """
+    offset = 0
+    names = []
+    for value in values:
+        if record[offset : offset + 1] == '"':
+            names.append(value)
+            offset += len(value) + value.count('"') + 2
+        else:
+            names.append(value.strip())
+            offset += len(value)
+        offset += 1  # 下一个字段前恰有一个已由 csv.reader 验证过的分隔符。
+    return names
+
+
 def parse_table(text: str) -> dict:
     """解析表格文本 → ``{"columns": {...}, "issues": [...]}``。
 
-    列名取第一行；分隔符按出现次数最多的候选定（tab / 分号 / 逗号）。
+    列名取第一个 CSV 记录；分隔符只按表头引号外的候选定一次。
+    引号、双写引号和跨行单元格由标准库解析；格地址使用记录的物理起始行。
     返回的 columns 只含**全数值**的列；含问题的列缺席并记 issues。
     """
-    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    while lines and not lines[-1].strip():
-        lines.pop()
-    if not lines or not any(ln.strip() for ln in lines):
+    if not text.strip():
         return {
             "columns": {},
             "issues": [{"code": "data_missing", "row": 1, "col": 1, "detail": "empty table"}],
         }
 
-    def split_row(line: str) -> list[str]:
-        best = None
-        for delim in _DELIMITERS:
-            count = line.count(delim)
-            if best is None or count > best[1]:
-                best = (delim, count)
-        delim = best[0] if best and best[1] > 0 else "\t"
-        return [cell.strip() for cell in line.split(delim)]
-
-    header = split_row(lines[0])
-    width = len(header)
-    rows: list[list[str]] = []
+    stream = io.StringIO(text, newline="")
+    reader = csv.reader(stream, delimiter=_table_delimiter(text), strict=True)
+    header: list[str] | None = None
+    rows: list[tuple[int, list[str]]] = []
     issues: list[dict] = []
-    for i, line in enumerate(lines[1:], start=2):
-        if not line.strip():
-            continue
-        cells = split_row(line)
-        if len(cells) != width:
+    while True:
+        start_row, start_offset = reader.line_num + 1, stream.tell()
+        try:
+            cells = next(reader)
+        except StopIteration:
+            break
+        except csv.Error as exc:
             issues.append(
                 {
                     "code": "data_row_length",
-                    "row": i,
+                    "row": start_row,
+                    "col": 1,
+                    "detail": f"invalid delimited record: {exc}",
+                }
+            )
+            break  # 引号破损时无法证明后续物理行是新记录，不猜测恢复点。
+        record = text[start_offset : stream.tell()]
+        if header is None:
+            header = _header_names(cells or [""], record)
+            continue
+        if not record.strip():
+            continue
+        if len(cells) != len(header):
+            issues.append(
+                {
+                    "code": "data_row_length",
+                    "row": start_row,
                     "col": len(cells) + 1,
-                    "detail": f"expected {width} cells, got {len(cells)}",
+                    "detail": f"expected {len(header)} cells, got {len(cells)}",
                 }
             )
             continue
-        rows.append(cells)
+        rows.append((start_row, cells))
 
     columns: dict[str, list[float]] = {}
     text_columns: dict[str, list[str]] = {}
-    for c, name in enumerate(header):
+    for c, name in enumerate(header or []):
         col_name = name or f"col{c + 1}"
         values: list[float] = []
         texts: list[str] = []
         text_ok = True
         column_issues: list[dict] = []
-        for r, cells in enumerate(rows, start=2):
-            raw = cells[c] if c < len(cells) else ""
-            if raw == "":
+        for r, cells in rows:
+            raw = cells[c]
+            numeric = raw.strip()
+            if numeric == "":
                 column_issues.append(
                     {
                         "code": "data_missing",
@@ -91,12 +146,25 @@ def parse_table(text: str) -> dict:
                 )
                 text_ok = False
                 continue
-            if _NUM_RE.fullmatch(raw):
-                values.append(float(raw))
+            if _NUM_RE.fullmatch(numeric):
+                value = float(numeric)
+                if not math.isfinite(value):
+                    column_issues.append(
+                        {
+                            "code": "data_non_finite",
+                            "row": r,
+                            "col": c + 1,
+                            "column": col_name,
+                            "detail": f"column {col_name!r}",
+                        }
+                    )
+                    text_ok = False
+                    continue
+                values.append(value)
                 texts.append(raw)
                 continue
             texts.append(raw)  # 非数值格：数值列的 issue；文本列候选同步积累
-            if _DATE_HINT.fullmatch(raw):
+            if _DATE_HINT.fullmatch(numeric):
                 column_issues.append(
                     {
                         "code": "data_not_numeric",
@@ -107,8 +175,8 @@ def parse_table(text: str) -> dict:
                     }
                 )
                 continue
-            cleaned = raw.replace(",", "")
-            if "," in raw and _NUM_RE.fullmatch(cleaned):
+            cleaned = numeric.replace(",", "")
+            if "," in numeric and _NUM_RE.fullmatch(cleaned):
                 column_issues.append(
                     {
                         "code": "data_thousands_separator",
@@ -135,18 +203,6 @@ def parse_table(text: str) -> dict:
             # 无缺失、全非空的文本列保留（类别/标签的**显式指认**来源，绝不自动当数值）
             if text_ok and texts and all(t for t in texts):
                 text_columns[col_name] = texts
-    # NaN/Infinity 已被 _NUM_RE 挡下（字面量不匹配）；显式再核一遍防御浮点噪声
-    for name, values in columns.items():
-        for j, v in enumerate(values):
-            if not math.isfinite(v):
-                issues.append(
-                    {
-                        "code": "data_non_finite",
-                        "row": j + 2,
-                        "col": 1,
-                        "detail": f"column {name!r}",
-                    }
-                )
     return {"columns": columns, "text_columns": text_columns, "issues": issues}
 
 
