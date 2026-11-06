@@ -2,12 +2,12 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-06 21:41 checkpoint）：功能HEAD=206a1c34。本轮新增六个功能提交：预检0b611411、完整保存前端d7a73ce1、包预算/名称兼容e468d516、旧包原子HTTP 336783bf、真实工作副本回执71e637c8、计算包预算工厂206a1c34。真浏览器明确覆盖/重载（含读取期间新编辑）与下一普通保存、双独立窗口200/409保稿已验；404兼容P1已真实复现修好，最新保存/回执前端448项及build/i18n/lint通过。包底层204、计算包末次82、新HTTP18/旧相关8均有实际证据，不能相加为全分支总数。v4完整包导出/安装API/UI、资源身份迁移、图例/复杂几何和最终回归仍缺，M1/M2/M3未通过。**
+> **当前结论（2026-11-06 22:00 执行复核）：实际HEAD=faa07287，最新功能提交206a1c34。核心绑定/编辑、删原SVG后的冷恢复、单计算原图五格式导出、命名保存与明确冲突恢复已有真实用户证据。新增v4包导出前端6文件已冻结但未提交：7文件78测试及build/i18n/lint通过；这是模拟接口/菜单组件资格，真实`/api/documents/v4/package`后端尚不存在，不能称完整打包可用。完整迁移安装、图例跟随、复杂几何及全量旧功能/平台资格仍缺，M1/M2/M3未通过，不给虚假完成百分比。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 
 ## 环境（2026-11-06 当前快照）
 
-- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；本次checkpoint功能HEAD=`206a1c34`。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入这些成果；不能在原目录启动旧版本后据此判断新功能效果。
+- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；22:00复核实际HEAD=`faa07287`，最新功能HEAD=`206a1c34`。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入这些成果；不能在原目录启动旧版本后据此判断新功能效果。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
@@ -41,6 +41,17 @@
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-06 22:00 当前执行情况与下一阶段复核
+
+- 应用户状态询问复核实际工作树、提交、源文件、原始验证索引及截图；本轮未新建/切换分支，未fetch、推送、合并或发布。实际实施HEAD=faa07287、索引为空；原main干净。其他历史worktree仍存在，本轮只维护既有r00实施树，不删除历史数据。
+- 本次新增且尚未提交的6文件：`web/src/lib/{api.ts,documentFormat.ts,documentFormat.test.ts,packageApi.test.ts}`、`web/src/components/{TopBar.tsx,topBarPackageExport.test.tsx}`。旧三参数打包wire保持；显式v4固定pj/格式、复制全部画布和原序编辑、拒绝错误格式回执，操作序与项目/格式/documentId/loadSeq防迟到串写。代理已冻结释放，根保留集成所有权；尚缺真实后端，不把候选当功能提交。
+- `n3-package-export-frontend-validation.json`：最终7文件78通过/0失败/0skip；正式`pnpm build`、`pnpm i18n:check`、`pnpm lint`均exit0。10条内存反证均唯一命中且AssertionError/exit1，wrapper0，源未改变；3次测试fixture失败原日志保留。未跑真实ZIP/HTTP/浏览器导出、安装或此候选的playground，旧448项也未因状态询问重复跑。
+- 当前`src/tavotto/app.py`与336783bf资格SHA一致，`chartpackage.py`与206a1c34一致，`documentStore.ts`与71e637c8一致。旧保存报告中的api/store/规则hash差异分别来自当前导出候选、已提交回执抽取及随后规则同步，不把旧报告冒充当前整树资格。已检查原始18新/8旧HTTP和82计算包XML，无失败/跳过；不同范围与源码时刻不累计。
+- 源码路由复核：现有`api_package`只接`/api/package`，`api_package_open`只读；v4适配前缀仅layouts/autosave/layout-session/versions，不含package。故真实v4导出缺口成立，前端78项不能证明服务已实现。前一次所记后端资格服务也载入较早app，本次未重启或对旧服务补写新资格。
+- 重新查看冷保存与reload截图：确有真实编辑界面，但fixture的轴刻度在面板边缘被截断，仍需与原SVG及实际导出几何对照，不能因保存成功就宣称视觉完全正确。图例曲线红/旧句柄蓝的已证实缺陷仍未修复。全量既有Python能力与支持平台回归未完成，目前不能确认“全部现有功能完全不受影响”。
+- 下一阶段收敛为N3a–N3f：真实v4导出及现候选联合接通→严格检视/目标投影→registry/数据依赖/运行配置/快照可携闭包→独占新项目安装→原writer真实回执UI→删源移目录新进程完整验收。具体依赖、改动落点、功能commit与退出条件见NEXT_PHASE最新表；完成后继续N4图例、N5几何、N6/M1、N7/M2及N8/M3，原SG00–SG17范围不变。
+- 执行goal仍active；本次是状态/安排复核，没有创建通宵调度器。当前6文件构建窗口已释放，无新服务或测试进程需接管。长期服务的实时状态未在本次逐一复核，不能把旧PID表当当前运行证明。
 
 ### 2026-11-06 21:41 保存恢复收口与项目包原子输出
 
