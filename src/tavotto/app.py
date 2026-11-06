@@ -2312,7 +2312,11 @@ def _execution_source(
     )
     if companion is not None:
         try:
-            _save_svg_snapshot(frozen, execution_owner=_svg_worker_owner(worker, script))
+            _save_svg_snapshot(
+                frozen,
+                execution_owner=_svg_worker_owner(worker, script),
+                **_svg_input_archive_kwargs(getattr(rcpt, "captured_input_archive", None)),
+            )
         except (ValueError, OSError):
             LOG.info("Cannot persist export-grade SVG snapshot", exc_info=True)
     return frozen
@@ -2330,7 +2334,19 @@ def _svg_storage_root(project_root) -> Path:
     return target
 
 
-def _save_svg_snapshot(frozen, *, static_sha256=None, project_root=None, execution_owner=None):
+def _svg_input_archive_kwargs(archive):
+    """Forward a private checked attachment without changing default call shapes."""
+    return {} if archive is None else {"captured_input_archive": archive}
+
+
+def _save_svg_snapshot(
+    frozen,
+    *,
+    static_sha256=None,
+    project_root=None,
+    execution_owner=None,
+    captured_input_archive=None,
+):
     """Persist a full-quality, verified pair separately from preview caches."""
     from .engine import svgstore
     from .rendercore.sources import read_frozen
@@ -2351,6 +2367,7 @@ def _save_svg_snapshot(frozen, *, static_sha256=None, project_root=None, executi
         execution_owner=execution_owner,
         remap_fingerprint=engine_inputremap.fingerprint(root),
         storage_root=_svg_storage_root(root),
+        **_svg_input_archive_kwargs(captured_input_archive),
     )
 
 
@@ -2624,6 +2641,7 @@ def _capture_svg_snapshot_best_effort(worker, desc) -> None:
     if root is None:
         return
     rcpt = _execution_receipt(worker, str(desc.get("script", "")))
+    captured_input_archive = getattr(rcpt, "captured_input_archive", None)
     original = desc.get("original_artifact")
     identity = _svg_worker_owner(worker, str(desc.get("script", "")))
     ctx = _request_ctx()
@@ -2658,7 +2676,18 @@ def _capture_svg_snapshot_best_effort(worker, desc) -> None:
         remap_fingerprint=engine_inputremap.fingerprint(root),
         storage_root=_svg_storage_root(root),
     )
-    if saved is not None and saved["receipt"].get("receipt_id") == rcpt.receipt_id:
+    if (
+        saved is not None
+        and saved["receipt"].get("receipt_id") == rcpt.receipt_id
+        and (
+            captured_input_archive is None
+            or (
+                saved.get("captured_input_archive") is not None
+                and saved["captured_input_archive"].graph_bytes
+                == captured_input_archive.graph_bytes
+            )
+        )
+    ):
         return
     for sid in (source_id, original):
         if sid:
@@ -2711,7 +2740,12 @@ def _capture_svg_snapshot_best_effort(worker, desc) -> None:
                     ),
                 )
 
-            _save_svg_snapshot(freeze(source_id), project_root=root, execution_owner=identity)
+            _save_svg_snapshot(
+                freeze(source_id),
+                project_root=root,
+                execution_owner=identity,
+                **_svg_input_archive_kwargs(captured_input_archive),
+            )
             original = desc.get("original_artifact")
             if original and str(original).lower().endswith(".pdf"):
                 path = safe_resolve(original)
@@ -2722,6 +2756,7 @@ def _capture_svg_snapshot_best_effort(worker, desc) -> None:
                     static_sha256=context["bytes_sha256"],
                     project_root=root,
                     execution_owner=identity,
+                    **_svg_input_archive_kwargs(captured_input_archive),
                 )
             # #1185 的等价证人必须是**独立** savefig 出的 SVG（脚本自己存下的 `<stem>.svg` 也是这样来的）：
             # PDF/SVG 配对现在出自单次绘制（ADR 0150），文字坐标按 PDF 的度量排，与独立保存有亚点级差，
@@ -2743,14 +2778,23 @@ def _capture_svg_snapshot_best_effort(worker, desc) -> None:
                     == rcpt.receipt_id
                 ):
                     _normalize_worker_svg(witness)
-                    _bind_svg_asset(freeze, root, stem, witness, identity)
+                    _bind_svg_asset(
+                        freeze,
+                        root,
+                        stem,
+                        witness,
+                        identity,
+                        **_svg_input_archive_kwargs(captured_input_archive),
+                    )
         except Exception:
             # An unsupported SVG or a non-matching static artifact does not
             # invalidate a successful explicit script run. Export reports the gap.
             LOG.info("Export-grade SVG snapshot unavailable for captured Figure", exc_info=True)
 
 
-def _bind_svg_asset(freeze, root, stem, candidate_svg: Path, identity) -> None:
+def _bind_svg_asset(
+    freeze, root, stem, candidate_svg: Path, identity, *, captured_input_archive=None
+) -> None:
     """SVG 素材 `<stem>.svg` 与活 Figure 的字节绑定（#1185，PDF 路径 `static_sha256` 的同一机制）。
 
     只在**内容**证明「活 Figure 此刻的序列化就是这份文件」时才写：候选 SVG（刚由这张活 Figure 导出）与磁盘
@@ -2774,6 +2818,7 @@ def _bind_svg_asset(freeze, root, stem, candidate_svg: Path, identity) -> None:
         static_sha256=hashlib.sha256(raw).hexdigest(),
         project_root=root,
         execution_owner=identity,
+        **_svg_input_archive_kwargs(captured_input_archive),
     )
 
 
@@ -4775,6 +4820,7 @@ def _package_svg_assets(
                 remap_fingerprint=engine_inputremap.fingerprint(root),
                 storage_root=staging,
                 activate=True,
+                **_svg_input_archive_kwargs(record.get("captured_input_archive")),
             )
             if strict_references:
                 obj["figureSnapshot"] = saved["snapshot_ref"]

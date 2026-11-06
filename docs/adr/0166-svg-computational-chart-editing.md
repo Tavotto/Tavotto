@@ -48,7 +48,8 @@
   原refs/markers v1及无附件记录不变，旧archive不原地补证。输入typed树与原render树共锁，先沿同一声明/受检流权威
   发布完整原字节，再提交metadata；历史引用参与GC，已独立提交archive的输入不得因随后entry失败回滚。
   输入累计政策单独显式有界，不借原512MiB或4,096目录限制剪裁合法声明；完整合同见
-  `docs/rules/backend/layout-versions-and-documents.md`。此API不等于app保存/暂存消费者、execution v2资源包或新根安装已完成。
+  `docs/rules/backend/layout-versions-and-documents.md`。app在实际回执在手时经私有keyword交同一保存函数，
+  冷暂存沿已核历史record完整转发附件；FrozenSource公开receipt和缺省调用不扩。此接线不等于execution v2资源包或新根安装已完成。
 - **显式格式隔离**：documentformat集中legacy/v4闭集与目录派生，不改变project_layout_dir资产根；v4命名在documents/v4，autosave在_autosave/v4，版本仍用现信封但位于documents/v4/versions，每层自有目录拒绝symlink/junction。layoutsession的using_namespace在同文件/同锁内选择document_namespaces.v4，复用现有owner/revision/恢复规则，旧程序清理/重写保留该未知顶层字段。未知所选namespace版本拒写；主文件消失且唯一备份含未来namespace时也不覆盖。
 - **v4保存与恢复入口**：显式/api/documents/v4下的layouts/autosave/layout-session/versions复用原view、认证、锁、冲突与atomicio；全部目录/候选/owner/清理/版本草图按所选格式，v4不借旧versions。锁内实际重放并冻结整份INPUT、验证附件后单次原子写正文；坏附件严格拒绝，不沿普通Figure的best-effort降级。chart面板只在v4跳过Figure捕获，旧2/3未知chart扩展字段仍按原FigureSnapshot核验。回执chart_sources为canvas_index/object_index/canvas_id/panel_id/chart_source五字段位置数组，不按可重复panelId建Map。GET保留原字节与真实revision/file，另带格式header；旧2/3缺省响应不新增字段。仅校验通过的不可变附件可作为删源后的资产归属旁证，不冒充已记录的owner提交。
 - **前端持久化边界**：运行态仍一个schema2活动画布与一个documentStore；legacy/v4决定持久化schema3/4、API/本机缓存/revision/保存队列地址。首次计算字段使旧稿fork到新v4 working ID，保留对象身份及undo；手势取消不升级，undo不降格式。保存上下文持实际发送的深拷贝，位置回执只在同pj/workingId/loadSeq/format且同位置完整输入未变时派生合入，重复位置整份拒绝；不加历史或循环保存。旧缺省键/URL/实参数量保持。版本仍拍活动画布，v4仅单canvas封装；缺thumb按需正文+附件回建。真实UI正式保存、空localStorage新浏览器/新后端自动恢复、继续编辑与三格式产物已验；绑定元信息后端迁移及包搬迁不计作本批完成。细则与看护见`docs/rules/frontend/project-document-and-autosave.md`。

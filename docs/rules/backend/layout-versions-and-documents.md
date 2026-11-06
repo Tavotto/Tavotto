@@ -142,8 +142,14 @@ order: 200
   不需第二锁、PID租约或时间阈值。只读检视不忽略、不删除半成品；未知名字和链接继续拒绝。
   `load_input_archive`按完整历史ref只读，其他load/inspect在有附件时核全闭包；full inspect也核孤儿成员，
   输入总量单列`inputs.total_bytes`，不喂入PDF/SVG解析器。无TTL、无原源回读、不授执行权，返Path仍非租约。
-  此存储API不代表app热保存/冷暂存、execution v2包、声明UI或安装已接通。看护：
+  app的执行源、明确运行后自动捕获与静态PDF/SVG绑定，在实际ExecutionReceipt仍在手时以私有keyword
+  将附件交给同一`_save_svg_snapshot`；FrozenSource继续只携公开receipt，不把Path/graph塞进渲染wire。
+  同receipt的旧v1缓存不能阻挡本次实际附件生成独立v2引用，旧archive不覆；已有同graph附件或没有新附件才沿原早退。
+  `_package_svg_assets`从正式load/load_snapshot取得已核附件并完整转交staging save，复制时再核实际流，
+  不回读当前原文件、不重跑脚本。无附件不新增下游keyword或响应字段，原best-effort保存/严格显式引用边界保持。
+  这不代表execution v2完整包、声明UI、引用搬迁或安装已完成。看护：
   `tests/test_inputdeclaration_resources.py`、`tests/test_svgstore_inputs.py`、`tests/test_svgstore_input_archive.py`。
+  应用接线看护：`tests/test_svg_input_capture_handoff.py`、`tests/test_svg_input_cold_staging.py`、`tests/test_svg_input_save_e2e.py`。
 - **项目文件统一收纳在项目内的 `tavottofile/`（2026-08-17 定版）**：命名画布
   布局直接放 `tavottofile/`，导出默认 `tavottofile/export/`（settings.export_dir
   可覆盖；建不出来退回数据目录，测试读响应里的 export_dir 而不是猜路径），

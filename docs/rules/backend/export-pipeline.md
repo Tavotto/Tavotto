@@ -109,6 +109,8 @@ order: 210
     可选捕获输入存于同库typed `inputs`区，full inspect核完整graph/输入blob和引用，`inputs.total_bytes`单列；
     普通`blobs`仍仅PDF/SVG，不因新增任意输入而走图像安全探针。复制InputArchive必须重新核实际输出流，
     不能把先前核验的Path当租约；版本、配额、冷存与原子发布合同见`layout-versions-and-documents.md`。
+    热态执行源与自动捕获只从实际回执私有附件转交存储，冷包暂存只从已核历史record转交；不借新的本机声明
+    给旧图补证。FrozenSource仍只含公开receipt，无附件缺省调用保持，打包不为获取输入而重新执行脚本。
   * **一次作业里，同一张图的所有格式出自同一个基准（#1185 / #1209，A3）**：做不到的格式逐项失败并给出
     真实原因，**不得悄悄换来源、不得为某个格式重新执行脚本换来源**。SVG 素材（`scope=original`、无编辑）的
     基准是**文件字节**（sha256 取磁盘原始字节）：svg = 这份字节；eps 只有「活 Figure 被证明出自这份字节」（`_svg_asset_binding`，
