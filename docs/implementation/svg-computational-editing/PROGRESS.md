@@ -42,6 +42,13 @@
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
+### 2026-11-06 实施：不可变项目来源附件与显式schema合同
+
+- documentassets冻结整份精确INPUT SVG，闭集chartSource引用将源ID、输入hash/size与原场景digest分别校验；固定摘要路径、有界读取、目录跳转/文件替换/损坏拒绝。保存消费必须读取input_svg继续包的真实重放，source_svg只作原场景事实。
+- atomicio新增write_bytes_if_absent，复用原有临时文件/fsync与清理；Windows用不覆盖rename，POSIX用link或系统exclusive rename，不存在exists→replace降级。已有内容损坏拒绝，不能默默修复覆盖。schema4仅显式validate_chart_document入口；SCHEMA_CURRENT仍3，旧2/3入口逐字保持原合同。
+- 根代理在当前树跑来源附件、atomicio与原文档回归：144 passed、4个既有Windows skip，pytest exit0，报告chart-document-assets-root.xml。代理此前80项新/受影响用例全部通过；5项核心守卫反证均在指定目标失败。Ruff/format通过，ADR同步。
+- 本机C/E为NTFS，跨进程争用与junction拒绝实测；mac/Linux原生分支只有ABI单元验证，exFAT/网络盘未实测。尚未接线命名保存/自动保存/版本捕获、包安装、前端镜像和schema4独立发现目录，不能据此宣布移盘或旧客户端防损已完成。
+
 ### 2026-11-06 实施：复用原生 manifest 的脚手架适配器
 
 - 新增chartmanifest.render_scaffold：明确的语义角色→实际Artist/Container所有权，复用FigState、instrument、完整overrides和最终SVG draw时capture_preview_manifest；分开返回原生gid、真实SVG成员id、语义角色及坐标映射。不从浏览器DOM反推几何，不建立第二份属性应用规则。

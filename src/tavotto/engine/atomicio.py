@@ -36,6 +36,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 import threading
 import time
 from pathlib import Path
@@ -266,6 +267,75 @@ def write_bytes(path: Path, data: bytes, *, mode: int | None = None) -> None:
         raise AtomicWriteError("replace_failed", f"替换失败：{exc}", path) from exc
 
     _fsync_dir(path.parent)
+
+
+def _rename_exclusive(src: Path, dest: Path) -> None:
+    """POSIX 卷不支持硬链接时，使用系统自己的 exclusive rename，绝不退成 replace。"""
+    import ctypes
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform == "darwin":
+        rename = getattr(libc, "renamex_np", None)
+        arguments = (os.fsencode(src), os.fsencode(dest), 0x00000004)  # RENAME_EXCL
+        types = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint)
+    elif sys.platform.startswith("linux"):
+        rename = getattr(libc, "renameat2", None)
+        arguments = (-100, os.fsencode(src), -100, os.fsencode(dest), 1)  # AT_FDCWD/NOREPLACE
+        types = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
+    else:
+        rename = None
+    if rename is None:
+        raise OSError(errno.ENOTSUP, "exclusive file publication is unavailable", dest)
+    rename.argtypes = types
+    rename.restype = ctypes.c_int
+    if rename(*arguments) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), dest)
+
+
+def _publish_if_absent(src: Path, dest: Path) -> None:
+    if sys.platform == "win32":
+        # Windows rename refuses an existing destination, including on volumes
+        # without hard links. POSIX rename has different, destructive semantics.
+        os.rename(src, dest)
+        return
+    try:
+        os.link(src, dest)
+    except OSError as exc:
+        if exc.errno not in {errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EPERM}:
+            raise
+        _rename_exclusive(src, dest)
+
+
+def write_bytes_if_absent(path: Path, data: bytes, *, mode: int | None = None) -> None:
+    """完整字节落盘后原子新建目标；已存在则原样抛 ``FileExistsError``。
+
+    复用同目录临时文件及 ``write_bytes`` 的内容落盘；发布使用 no-clobber
+    rename/link。无此文件系统能力时失败，绝不 exists→replace 或暴露半文件。
+    已存在也同步目录：同名并发写者可能才发布，还没有完成自己的目录 fsync。
+    调用方必须校验已存在文件，不能把 FileExistsError 当成内容相同。
+    """
+    path = Path(path)
+    tmp = _next_tmp(path)
+    try:
+        write_bytes(tmp, data, mode=mode)
+        collision = None
+        try:
+            _publish_if_absent(tmp, path)
+        except FileExistsError as exc:
+            collision = exc
+        except OSError as exc:
+            raise AtomicWriteError("replace_failed", f"原子新建失败：{exc}", path) from exc
+        try:
+            fsync_dir(path.parent)
+        except AtomicWriteError:
+            raise
+        except OSError as exc:
+            raise AtomicWriteError("dir_fsync_failed", f"目录项落盘失败：{exc}", path) from exc
+        if collision is not None:
+            raise collision
+    finally:
+        _discard(tmp)
 
 
 def publish_file(tmp: Path, dest: Path) -> None:
