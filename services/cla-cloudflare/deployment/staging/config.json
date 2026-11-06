@@ -30,7 +30,8 @@
       {
         "login": "erwanjun",
         "kind": "rights_holder",
-        "reason": "Sandbox owner (GitHub account id 88193520, pinned in .github/cla-e2e-fixture.json). An exempt verdict is not a signed verdict."
+        "reason": "Sandbox owner (GitHub account id 88193520, pinned in .github/cla-e2e-fixture.json). An exempt verdict is not a signed verdict.",
+        "github_id": 88193520
       }
     ],
     "provider": {
