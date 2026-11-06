@@ -1,6 +1,6 @@
 # SVG 计算图表编辑：下一阶段无人值守提示词
 
-可直接复制以下提示词。状态截至2026-11-06 22:00（Asia/Shanghai），实际树优先。详细任务：[NEXT_PHASE.md](NEXT_PHASE.md)；进度：[PROGRESS.md](PROGRESS.md)；最终范围：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。
+可直接复制以下提示词。状态截至2026-11-06 22:50（Asia/Shanghai），实际树优先。详细任务：[NEXT_PHASE.md](NEXT_PHASE.md)；进度：[PROGRESS.md](PROGRESS.md)；最终范围：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。
 
 ```text
 继续完成Tavotto的SVG计算图表编辑，保留现有功能和逻辑，最大化复用现模型/事务/writer/RenderCore与既有编辑器。持续自主实现、验证、修复，按功能分别commit；一个文件同时一个写入者，根统一共享契约、集成和提交。常规可逆步骤自行推进，不逐批等我确认；已授权多子代理，但只给真正独立且有收益的任务。
@@ -12,7 +12,7 @@
 原目录 E:/0 - Project/Tavotto 仍为clean main@69bcafae，未包含功能；不要自动覆盖/合并原目录。
 稳定文档 docs/implementation/svg-computational-editing/{PROGRESS,NEXT_PHASE,NEXT_PHASE_PROMPT}.md
 证据根 E:/0 - Project/svg-review-20261106
-当前实际HEAD faa07287，最新功能HEAD 206a1c34；后续状态文档提交或实现可能已前进，先核实际HEAD/index/diff、身份、Python import路径、代理和自有进程，禁止reset到文档hash。
+最新功能HEAD 8ed50616，前项9a9843d2，功能工作树干净；后续状态文档提交或实现可能已前进，先核实际HEAD/index/diff、身份、Python import路径、代理和自有进程，禁止reset到文档hash。
 
 先读AGENTS及最近层规则/ADR。沿用当前树/分支，不新建/切换分支或worktree，不reset/stash覆盖草稿，不git add .混批，不push/PR/合并/发布。当前索引为空；旧EPS索引保护指令已过时，a06cc3d3已提交。复用现有venv/node_modules，测试数据/config隔离、遥测关闭，运行可写数据走data_dir。
 
@@ -30,18 +30,20 @@
 2. 真浏览器明确覆盖和重载已验：外改AS→409→真实确认/按钮→固定实际revision+完整view证明→新actor写入200；reload真实GET暂停期间F2新增编辑进入原恢复槽；下一普通编辑无proof仍200。双独立浏览器零缓存peer保继承base_axis，新actor在另一窗口先写后409且双方稿保留。n21-recovery-{overwrite,reload}-qualification.json、n21-two-window-qualification.json。普通改标题/冷开/外改named409证据保留。
 3. 404旧后端reload P1原探针确实丢等待期编辑，已修并独立复跑；最终431项、build/i18n/lint0，两反证。其后共用回执叶子最新448项、build/i18n/lint0、10反证，playground7f69cc026d69e1f4。n21-p1-frontend-validation.json、n3-working-document-receipt-validation.json。现代真UI基于先前冻结恢复bundle，之后仅404保护/回执reader的资格由最终测试证明，不冒称全部浏览器场景新跑。旧landing曾被复跑配置覆盖，索引已说明，保留原失败log和源SHA不伪造复原。
 4. 旧包基础204、HTTP18新/8旧、计算包末次82各范围通过且0skip，不累计。实际ENOSPC/add/close/publish、同名并发、最终名不提前可见、Windows真实junction与改指、NFC双文件已验；小ZIP完整字节与budget static/factory对拍、真实反证均有日志。ZIP64是缩小阈值真实分支，不冒充>2GiB物理压测。n3-packagebudget-freeze.md、n3-atomic-http-validation.md、n3-chart-budget-factory-freeze.md。
+5. 9a9843d2已提交目标投影plan_project_resources，assets/scripts同项目根、唯一portable键、同名同SHA/长度复用，其余跨namespace/case/NFC/祖先目录/文件目录冲突零写拒绝；277专项及3反证、36规则通过。它不是检视API/安装成功，调用方须在活跃Prepared内重新核来源再安全发布。n3b-project-targets-freeze.md与n3b-targets-staged.json。
+6. 8ed50616已提交真实v4导出/同菜单及完整/缺件状态，17文件全部提交，不再有6文件未接后端候选。最终同一命令438pass/0skip/exit0（18新HTTP+26旧兼容+358错误合同+36规则），85前端专项、最终types/i18n/build/playground均0，指纹c95b69046c966033。完整/缺件真UI和最终新后端/bundle均验，正文/原序编辑/完整INPUT等于实际请求，原chart.svg仍缺席。n3a-export-staged-final.json与n3a-ui-final-frozen.json。首错误短语等待超时为观察脚本失败、真实重复snapshot漏回填已修、旧7码未登记/旧门禁借邻近dict已修；保留全部原失败证据。3最终HTTP反证、4门禁反证有效；不把438叫全分支回归。
 
-四、当前第一动作：N3 v4完整包产品链
+四、当前第一动作：N3c执行/数据可携闭包，再接检视与安全安装
 
-当前6文件前端候选已冻结未提交：web/src/lib/api.ts、documentFormat.ts、documentFormat.test.ts、packageApi.test.ts及web/src/components/TopBar.tsx、topBarPackageExport.test.tsx。资格n3-package-export-frontend-validation.json：7文件78项/0skip、build/i18n/lint0，10有效内存反证。它只证明mock API/菜单组件，尚无真实ZIP/HTTP/browser；不要重写此候选，不要在后端不存在时称功能已完。
+N3a真实POST /api/documents/v4/package现在已经接通并提交8ed50616。它携带全画布完整INPUT、普通file/登记script/runtime描述符/已核Figure配对；不执行未知脚本。原SVG缺席但chartSource有效正常打包，已知普通缺件准确missing与UI提示。旧三参、旧2/3输出及只读open保持。不要按旧候选文档重写/回退导出；完整registry/数据/配置迁移尚未完成。
 
-按NEXT_PHASE第4节N3a–N3f表逐个实现/验收/commit：N3a真实导出与当前入口接通；N3b严格检视/目标计划；N3c可携执行与资源闭包；N3d独占新项目安全安装；N3e原writer回执UI；N3f删源移目录新进程整链。b/c可给独立子代理，app/共享契约/集成主代理唯一写入；合同稳定后再接消费者。不要停在继续添加无消费者叶子。
+按NEXT_PHASE第4节N3b–N3f表实现/验收/commit：N3b已有目标计划，需真实检视/语义；N3c可携执行与资源闭包是第一项；N3d独占新项目安全安装；N3e原writer回执UI；N3f删源移目录新进程整链。独立配置导入/资源适配/测试可给子代理；app/共享manifest/契约由主代理唯一写入。合同稳定再接消费者，不停在无消费者叶子或盘点报告。
 
-1. 根接v4完整资源清单/导出API与TopBar同入口。
-   当前前端已显式送/api/documents/v4/package并固定pj，但后端没有这个真实端点。实现POST路由、正确format/认证namespace；旧2/3输出已原子化，不重新实现。复用现完整来源冻结与chartpackage.write_chart_package(budget_factory=packagebudget.output_budget)。唯一layout/manifest/派生chart行在chartpackage，不在app复制私有规则。所有画布的完整INPUT、普通素材、脚本、runtime、FigureSnapshots均要盘点；旧默认API参数/响应保持。v4成功回执为旧name/url/assets/missing加document_format='v4'、chart_sources数量；缺失/错误格式不降旧链。以实际HTTP/严格reader/删源新worker重放及独立模型/原序edits/INPUT核对证明完整导出，再联合候选提交；不能仅凭78项mock绿灯提交为完整功能。计算来源缺失拒绝；普通素材不完整备份沿现能力显式missing并准确提示，不冒称可完整搬迁。
+1. 根冻结并实现可携execution/data合同及现导出消费者。
+   n3c-portable-resource-config-review.md/.json已有真实EngineWorker/参数/cwd/CSV/helper/内外remap探针exit0与精确公共API，先读它避免再泛审。静态expected只固定CSV，真实成功basis有动态CSV/helper，但外部已选remap实际读入仍不在观察basis；matched=true/完整receipt不等于依赖集合完整。缺已有声明集合时准确记录coverage不足，不把未知I/O塞假missing或宣称完整。新增版本化闭式execution字段/资源引用沿documentpackage唯一manifest校验与现file/script rows，不复制第二个收集/解析器。Registry/launchctx/runconfig/workdir/inputremap/databinding沿现权威；runconfig需要保外来rc_id的数据导入/CAS公共API，不能只put新id却保旧快照身份。敏感参数占位、本机环境/cwd授权/成功执行信任不照搬；精确remap/prefix/外部输入需要明确资源声明和准确待补状态，不能永久缩成无脚本小包。以真实CSV动态依赖/参数/快照夹具接新导出，再用新父进程实际验证保全部科学身份。
 
 2. 冻结并兑现显式检视/安装合同。
-   旧package/open保持只读2/3，不把v4塞旧relink（它会误报有效chartSource缺原文件并清edits）。新v4检视核CRC/路径/摘要/六预算/全部资源及语义闭包，不执行未知脚本、不任意extract。file与script不同ZIP namespace可安装同根同ID且内容不同，plan须识别；opaque figure_snapshot字节hash不足以证明svgstore引用/归档语义，须复用原权威验证。
+   旧package/open保持只读2/3，不把v4塞旧relink（它会误报有效chartSource缺原文件并清edits）。新v4检视核CRC/路径/摘要/六预算/全部资源及语义闭包，不执行未知脚本、不任意extract。已有9a9843d2的plan可识别跨namespace目标冲突，直接复用；opaque figure_snapshot字节hash不足以证明svgstore引用/归档语义，须沿原权威核验并与N3c的remap/运行配置衔接。
    优先评估作为新项目完整安装，保全部相对sourceId/script/runtime/快照identity，复用现projects/open和projectStore.adoptOpenedProject(status,{prepareDocument})/switchTransaction在ready前装正文。现projects/open create=true会复用既有目录，不能当exclusive reserve；copy_project允许skipped>0成功，不能当完整资源安装器。若支持现目录冲突必须真迁移全引用，不能仅改panel.fileId或覆盖用户资产。
    n3-package-install-identity-probe.json已真测：整树复制保ref/INPUT，但新根runconfig_missing、workdir设置丢失；snapshot仍绑定remap_fingerprint；仅脚本+runtime manifest而无registry会resolve=None。把可携运行声明/配置/重定向与现权威关系落实，才能宣称完整搬迁。环境不随机器复制，未知脚本不自动执行；保持既有准确缺依赖/重建状态。
 
@@ -78,5 +80,7 @@ PROGRESS唯一进度台账，NEXT_PHASE/PROMPT维护当前队列；功能提交/
 
 这些服务不是整夜调度器，未创建定时任务；提示词不能唤醒休眠机器或自动恢复已结束的执行会话。在活跃goal内持续选下一就绪工作；中断从真实checkpoint接续，不重新生成整套计划。仅全部验收完成、用户明确停止、运行条件强制中断或所有有意义工作确需外部变化时结束；状态询问简短答复后继续原目标。M1/M2/M3当前均未通过，goal保持active。
 
-现在核实际HEAD/index/diff、6文件候选SHA及报告；当前保存/预检/旧包原子输出已提交，直接完成N3a真实后端导出与现候选联验，再按N3b–f完成完整包安装主线，随后N4–N8。22:00复核时代理已释放构建窗口，没有新测试/服务句柄；旧PID状态未逐一重核。不要从旧冻结SHA回滚当前树，不停在反复写计划。
+22:50当前自有最终后端75464/23988（创建22:45:34.778615+08:00，n3a-browser/server.py，session65556），浏览器tavotto-package-v4 daemon66204（22:13:21.576551+08:00）；加载最终app/bundle，当前为N3a_不完整备份两画布，原chart.svg缺席。旧59244/renderchild23440已结束，旧78208终态已读。新CLI产物在外部n3a-browser/playwright-cli-cwd-artifacts，旧console已原字节还原；后续CLI cwd用外部证据根避免新产物落仓库。所有本批测试/构建句柄已结束，代理均释放。更早21:41 PID表仅历史线索，实时核归属后再接管。
+
+现在核实际HEAD/index/diff、8ed50616/9a9843d2报告；当前N3a导出已提交且工作树干净，直接完成N3c运行/数据上下文和N3b严格检视，再N3d–f完整安装主线，随后N4–N8。不要从旧冻结SHA回滚当前树，不重做导出，不停在反复写计划。
 ```
