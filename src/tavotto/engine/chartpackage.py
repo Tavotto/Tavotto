@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import os
 import re
 import stat
@@ -130,24 +131,31 @@ def _check_bytes(row: dict, data: bytes) -> None:
         raise PackageError("resource_mismatch", "Resource bytes and digest disagree")
 
 
-def _read_staged(path: Path, row: dict) -> bytes:
-    """仅读本上下文的已知数字暂存路径；回调后仍核 regular-file/identity/预算。"""
+def _read_staged(path: Path, row: dict) -> None:
+    """分块复核本上下文已知暂存路径；不因普通大资源分配整项 bytes。"""
     before = path.lstat()
     if not stat.S_ISREG(before.st_mode):
         raise PackageError("resource_mismatch", "Staged resource is not a regular file")
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
+    digest, count = hashlib.sha256(), 0
     with os.fdopen(fd, "rb") as stream:
         if not os.path.samestat(before, os.fstat(stream.fileno())):
             raise PackageError("resource_mismatch", "Staged resource changed")
-        data = stream.read(row["bytes"] + 1)
+        while data := stream.read(
+            min(documentpackage.ARCHIVE_CHUNK_BYTES, row["bytes"] - count + 1)
+        ):
+            count += len(data)
+            if count > row["bytes"]:
+                raise PackageError("resource_mismatch", "Staged resource exceeds its declared size")
+            digest.update(data)
     after = path.lstat()
     if not os.path.samestat(before, after) or (
         before.st_size,
         before.st_mtime_ns,
     ) != (after.st_size, after.st_mtime_ns):
         raise PackageError("resource_mismatch", "Staged resource changed")
-    _check_bytes(row, data)
-    return data
+    if count != row["bytes"] or digest.hexdigest() != row["sha256"]:
+        raise PackageError("resource_mismatch", "Resource bytes and digest disagree")
 
 
 class PreparedChartPackage:
@@ -218,10 +226,16 @@ def inspect_chart_package(
                 records = _records(manifest, refs)
                 rows = {row["path"]: row for row in records}
                 needed = {name: max(1, row["bytes"]) for name, row in rows.items()}
-                for index, (name, data) in enumerate(package.read_required(needed, exact=True)):
+                positions = {name: index for index, name in enumerate(needed)}
+
+                @contextmanager
+                def target(name):
                     row = rows[name]
-                    _check_bytes(row, data)
                     if row["kind"] == "chart_source":
+                        with io.BytesIO() as stream:
+                            yield stream
+                            data = stream.getvalue()
+                        _check_bytes(row, data)
                         for ref in refs[name]:
                             actual = documentassets.freeze_source(
                                 storage_root,
@@ -235,9 +249,20 @@ def inspect_chart_package(
                                 )
                         path = documentassets.source_path(storage_root, refs[name][0])
                     else:
-                        path = stage / "resources" / str(index)
-                        atomicio.write_bytes_if_absent(path, data)
+                        path = stage / "resources" / str(positions[name])
+                        path.parent.mkdir(exist_ok=True)
+                        fd, temporary_name = tempfile.mkstemp(dir=path.parent)
+                        temporary_path = Path(temporary_name)
+                        try:
+                            with os.fdopen(fd, "wb") as stream:
+                                yield stream
+                            _read_staged(temporary_path, row)
+                            atomicio.publish_file_if_absent(temporary_path, path)
+                        finally:
+                            temporary_path.unlink(missing_ok=True)
                     staged_resources.append((row, path))
+
+                package.copy_required(needed, targets=target, exact=True)
             prepared = PreparedChartPackage(
                 document, manifest, storage_root, tuple(staged_resources)
             )

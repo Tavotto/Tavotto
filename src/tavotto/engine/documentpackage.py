@@ -15,11 +15,11 @@ import stat
 import tempfile
 import unicodedata
 import zipfile
-from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import closing, contextmanager
 from dataclasses import dataclass, fields
 from pathlib import Path, PureWindowsPath
-from typing import BinaryIO
+from typing import BinaryIO, ContextManager
 
 from . import atomicio, brand, documentformat, documents
 
@@ -225,7 +225,7 @@ class _Archive:
     def close(self) -> None:
         self.archive.close()
 
-    def read(self, name: str, limit: int, *, collect: bool = True) -> bytes:
+    def _chunks(self, name: str, limit: int) -> Iterator[bytes]:
         _member_key(name, legacy_names=self.legacy_names)
         _positive(limit)
         entry = self.members.get(name)
@@ -233,7 +233,7 @@ class _Archive:
             raise PackageError("missing_member", f"Missing package member: {name}")
         if entry.file_size > limit:
             raise PackageError("member_byte_budget", f"Package member byte budget exceeded: {name}")
-        count, chunks = 0, []
+        count = 0
         try:
             with self.archive.open(entry) as stream:
                 while data := stream.read(min(ARCHIVE_CHUNK_BYTES, limit - count + 1)):
@@ -243,15 +243,30 @@ class _Archive:
                         raise PackageError(
                             "expanded_budget", "Actual ZIP expansion exceeds its budget"
                         )
-                    if collect:
-                        chunks.append(data)
+                    yield data
         except (OSError, RuntimeError, ValueError, EOFError, zipfile.BadZipFile) as exc:
             if isinstance(exc, PackageError):
                 raise
             raise PackageError("invalid_member", f"Invalid package member: {name}") from exc
         if count != entry.file_size:
             raise PackageError("invalid_member", "ZIP member size mismatch")
-        return b"".join(chunks)
+
+    def read(self, name: str, limit: int, *, collect: bool = True) -> bytes:
+        with closing(self._chunks(name, limit)) as chunks:
+            if collect:
+                return b"".join(chunks)
+            for _chunk in chunks:
+                pass
+        return b""
+
+    def copy(self, name: str, limit: int, target: BinaryIO) -> None:
+        with closing(self._chunks(name, limit)) as chunks:
+            for data in chunks:
+                written = target.write(data)
+                if type(written) is not int or written != len(data):
+                    raise PackageError(
+                        "invalid_output", "Package resource sink performed a short write"
+                    )
 
 
 def _json(raw: bytes):
@@ -340,10 +355,9 @@ class DocumentPackage:
             raise PackageError(exc.code, exc.message) from exc
         self.member_names = tuple(archive.members)
 
-    def read_required(
+    def _required_members(
         self, needed: Mapping[str, int], *, exact: bool = True
-    ) -> Iterator[tuple[str, bytes]]:
-        """只读取 caller 指定资源；先核所有名字/预算，再逐成员返回，不提取文件。"""
+    ) -> tuple[tuple[str, int], ...]:
         if not isinstance(needed, Mapping):
             raise PackageError("invalid_required_members", "Required members must be a mapping")
         members = tuple(needed.items())
@@ -354,8 +368,30 @@ class DocumentPackage:
                 raise PackageError("missing_member", "Invalid required resource member")
         if exact and set(self._archive.members) != _METADATA | needed.keys():
             raise PackageError("unexpected_member", "Package contains unrequested resource members")
+        return members
+
+    def read_required(
+        self, needed: Mapping[str, int], *, exact: bool = True
+    ) -> Iterator[tuple[str, bytes]]:
+        """只读取 caller 指定资源；先核所有名字/预算，再逐成员返回，不提取文件。"""
+        members = self._required_members(needed, exact=exact)
         for name, limit in members:
             yield name, self._archive.read(name, limit)
+
+    def copy_required(
+        self,
+        needed: Mapping[str, int],
+        *,
+        targets: Callable[[str], ContextManager[BinaryIO]],
+        exact: bool = True,
+    ) -> None:
+        """同一成员/CRC/实际预算权威；向 caller 自有上下文按块复制，不整项收进内存。"""
+        members = self._required_members(needed, exact=exact)
+        if not callable(targets):
+            raise PackageError("invalid_required_members", "Resource targets must be callable")
+        for name, limit in members:
+            with targets(name) as target:
+                self._archive.copy(name, limit, target)
 
 
 @contextmanager
