@@ -536,6 +536,11 @@ def plan_facts(rp: plan.RenderPlan) -> dict:
             "bytes_sha256": fs.artifact.bytes_sha256,
             "receipt_identity": fs.artifact.receipt_identity,
             "patch_hash": fs.artifact.patch_hash,
+            **(
+                {"render_revision": fs.artifact.render_revision}
+                if fs.artifact.render_revision is not None
+                else {}
+            ),
             **({"svg_sha256": fs.svg.artifact.bytes_sha256} if fs.svg else {}),
         }
         for fs in rp.sources.values()

@@ -42,6 +42,13 @@
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
+### 2026-11-06 实施：声明式来源身份与严格产物配对
+
+- 新增 SourceArtifact 的 declarative origin 与必填 render_revision，禁止借用 Figure 的 receipt/generation/patch 身份；static/execution 的旧序列化键、顺序与语义摘要保持原样，新增可选字段缺席时不发。
+- FrozenSource 对声明式 PDF/SVG 采用独立严格配对分支，必须同来源同版本，拒绝混 origin、不同版本或嵌套 companion；不放宽原 Figure 配对判据。IR origin、前端 provenance 类型、render_plan_ref 和公开 source facts 条件字段同步。
+- 代理新增 provenance 36 项；与 sources/IR/execution_receipt/plan 合计 199 项通过，Ruff、格式与 diff 检查通过。内存变异固定 semantic_identity 后双版本隔离用例变红，放行任意 companion 后 7 个负例变红；只在独立进程修改函数，磁盘未被反证覆盖。
+- 主 app 的消费者接线及真实 HTTP 导出验证另一个功能提交完成；此条仅表示来源合同已实现，不冒充完整画布/保存资格。
+
 ### 2026-11-06 实施：真实导出请求、冻结状态与计划身份
 
 - buildExportRequest 的原图/多页来源与 toExportObjects 的画布面板实际携带 chart，使用 structuredClone 冻结模型/绑定；没有 chart 时不新增键，面板与导出 figure_id 不匹配时不发送该面板的 chart。chart-only 编辑会改变前端导出指纹，已构造的快照不随之后编辑改变。

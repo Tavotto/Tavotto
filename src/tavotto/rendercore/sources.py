@@ -114,11 +114,18 @@ class FrozenSource:
             and a.source_id == b.source_id
             and self.svg_source_sha256 == a.bytes_sha256
         )
+        paired_declarative = (
+            a.origin == figcapture.ORIGIN_DECLARATIVE
+            and b.origin == figcapture.ORIGIN_DECLARATIVE
+            and a.source_id == b.source_id
+            and a.render_revision == b.render_revision
+            and self.svg.svg_text is None
+        )
         if (
             a.kind != "pdf"
             or b.kind != "svg"
             or self.svg.svg is not None
-            or not (paired or admitted_static)
+            or not (paired or admitted_static or paired_declarative)
         ):
             raise SourceError(
                 "source_needs_execution",

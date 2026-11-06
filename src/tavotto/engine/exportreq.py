@@ -469,6 +469,11 @@ def render_plan_ref(req: ExportRequest, resources: list[dict]) -> dict:
             "kind": r["kind"],
             "receipt_identity": r.get("receipt_identity"),
             "patch_hash": r.get("patch_hash"),
+            **(
+                {"render_revision": r["render_revision"]}
+                if r["origin"] == figcapture.ORIGIN_DECLARATIVE
+                else {}
+            ),
         }
         semantic_refs.append(semantic)
         refs.append(

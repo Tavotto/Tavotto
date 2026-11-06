@@ -225,7 +225,7 @@ class FileResource:
     source_id: str
     kind: str  # FILE_KINDS
     sha256: str
-    origin: str  # execution | static
+    origin: str  # execution | static | declarative
     semantic_identity: str
     svg_sha256: str | None = (
         None  # verified same-Figure companion, never an arbitrary PDF conversion
@@ -710,7 +710,7 @@ def _resource(key: str, res: object) -> None:
             raise IRError("resource_kind_mismatch", f"文件种类不在闭集里: {res.kind!r}", path)
         if not _is_sha256(res.sha256):
             raise IRError("unknown_resource", f"文件资源的 sha256 不合形状: {res.sha256!r}", path)
-        if res.origin not in ("execution", "static"):
+        if res.origin not in ("execution", "static", "declarative"):
             raise IRError("unknown_resource", f"origin 不在闭集里: {res.origin!r}", path)
     else:
         raise IRError("resource_kind_mismatch", f"不是资源: {res!r}", path)

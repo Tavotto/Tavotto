@@ -2053,11 +2053,12 @@ export interface ArtifactIdentity {
 export interface ArtifactProvenance {
   sources: {
     source_id: string
-    origin: 'execution' | 'static'
+    origin: 'execution' | 'static' | 'declarative'
     kind: string
     bytes_sha256: string
     receipt_identity: string | null
     patch_hash: string | null
+    render_revision?: string
   }[]
   execution_receipts: string[]
   receipts: ArtifactReceiptFacts[]

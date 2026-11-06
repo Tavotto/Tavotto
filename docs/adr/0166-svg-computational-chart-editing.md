@@ -52,6 +52,7 @@
 
 ### 3. 身份与安全（扩展现有合同，不新增旁路）
 
+- 2026-11-06 接线细化：计算产物使用 `SourceArtifact.origin=declarative`，由 `render_revision` 标识模型/绑定/来源/环境版本，不伪造 Figure 执行回执。声明式 Canonical PDF 与 SVG companion 必须同来源同版本；static/execution 既有配对与缺省序列化保持原样。RenderPlan 继续消费同一个来源解析器，不另建计算图表导出管线。
 - 计算面板的版本身份 = **场景字节摘要 + 模型摘要 + 数据摘要 + 绑定摘要 + 计算环境身份**（worker matplotlib/引擎版本）；
   任一变化都不得复用旧几何/旧快照（SG02 冻结 schema）。
 - 导入与元数据：`svgcheck` 边界原样（实验六拒绝 DTD/脚本/外链）；模型元数据**闭式字段集**校验，
