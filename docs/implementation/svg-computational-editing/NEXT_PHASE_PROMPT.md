@@ -44,6 +44,12 @@
 
 最近交付目标是“包带到中文新目录，原目录不存在、缓存清空、新父进程/浏览器下，仍可恢复并继续计算编辑”。N3b、N3c-3a与3b-1会话封存已完成；首项是3b-2 svgstore正式冷存，再3b-3 app热/冷staging、3b-4完整包/UI/ref及N3d安全安装→N3e原writer UI→N3f整链。共享合同/app由主代理统一接线，冻结后并行独立任务，文件所有权互斥，不重复相同昂贵套件。
 
+本次执行复核基线为0f063765（文档）/97e75d41（功能），工作树干净；15份功能文件、7份报告和9份JUnit摘要均已与原SHA核对。这是证据复核，不是新一轮产品/浏览器通过。最新安排见NEXT_PHASE第2.1节，详细验收仍以第4节为准，不改写历史冻结索引。
+
+直接从可验收功能3b-2开始：把receipt已有的私有InputArchive接进svgstore的同锁冷存与严格读取；同一功能内确定新增累计预算，复用已完成预算probe，不再重复会话封存或以新研究文档替代实现。随后分别提交3b-3真实保存/冷暂存、3b-4显式execution v2的导出与严格检视；前三片之后紧接声明UI、精确ref迁移和安全安装，不把“资源已入缓存”当搬迁完成。计算SVG既有精确INPUT冷恢复继续保留，与待接的Python执行图完整捕获附件区分。
+
+第一段真实验收必须先保存一次实际执行图，再改/删本任务自己的原输入，清派生缓存并启动新父进程，仅从正式项目资源读取并打包原内容；独立核摘要和执行计数。覆盖合法大graph、超过4096成员、零字节/去重/空目录、错scope/跨run、篡改、断写和容量不足，失败后旧版本仍可读。不能把单声明2GiB误作累计store或整包容量；不能以放宽旧门禁让新测试绿。图例和裁切可由独立写入者提前定位，实际修复及完整M1仍必须完成。
+
 先读n3c3b-stage-final.json、n3c3b-archive-core-validation.md、n3c3b-safe-validation.md、n3c3b-native-freeze.md、n3c3b-receipt-integration-review.md，再读n3c3b-durable-budget-design.md/probe.json。旧cold/drift probe证明正式snapshot只留摘要；会话原字节已由97e75d41封存，当前svgstore/app仍未接，不重复旧缺口实现。新probe实证4097触旧census、50000逻辑成员graph达5700047B、同长cache篡改流式copy拒绝。后续冷存/包不能从当前源文件重造历史；store接口是待冻结建议，检视/成员/声明/资源继续复用。
 
 根因已经实测：旧binding在导出时重算且不进receipt identity，不能证明旧Figure原输入；partial observer漏外部读取；remap fingerprint含绝对to，换根使旧ref精确失配。现实际fact与原字节已进私有receipt附件，但app/svgstore仍仅转公开revision，正式冷存/冷包会丢完整附件。判据主语仍是“实际某execution_id/native epoch的明确声明及当时字节”。不能当前补签或降低loader门。按下列边界接真实消费者：
