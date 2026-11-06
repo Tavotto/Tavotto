@@ -46,13 +46,23 @@ def _panel(chart, edits, x=0):
 
 
 def _export(
-    client, *, original=None, canvas=None, pages=None, formats=("svg", "pdf"), name="native"
+    client,
+    *,
+    original=None,
+    canvas=None,
+    pages=None,
+    formats=("svg", "pdf"),
+    name="native",
+    ppi=None,
+    background=None,
 ):
     payload = {
         "scope": "canvas" if canvas is not None else "original",
         "formats": list(formats),
         "filename": name,
         "overwrite": "replace",
+        **({"ppi": ppi} if ppi is not None else {}),
+        **({"background": background} if background is not None else {}),
         **({"original": original} if original is not None else {}),
         **({"canvas": canvas} if canvas is not None else {}),
         **({"merge_pdf": {"pages": pages}} if pages is not None else {}),
@@ -258,3 +268,107 @@ def test_invalid_native_edits_cannot_be_dropped_before_production_export(project
     assert response.status_code == 400, response.get_json()
     assert response.get_json()["code"] == "chart_model_invalid"
     assert not list((root / "tavottofile" / "export").glob("invalid*"))
+
+
+@pytest.mark.parametrize("scope,background", [("original", "white"), ("canvas", "transparent")])
+def test_native_production_png_tiff_share_pixels_physical_density_and_background(
+    project, scope, background
+):
+    from PIL import Image
+
+    from tests.support import tiffcheck
+
+    client, root = project
+    chart = _bind(client)
+    edits = [_color("#ff0000"), {"gid": "axes_0", "prop": "xlim", "value": [0, 2]}]
+    density = 144
+    dimensions_pt = (100, 100) if scope == "original" else (120, 125)
+    if scope == "original":
+        source = {"original": _original(chart, edits)}
+        formats = ("png", "tiff")
+    else:
+        source = {
+            "canvas": {
+                "page_w_mm": dimensions_pt[0] * PT_MM,
+                "page_h_mm": dimensions_pt[1] * PT_MM,
+                "objects": [
+                    _panel(chart, edits),
+                    {
+                        "type": "text",
+                        "text": "中文绘图",
+                        "x_mm": 5 * PT_MM,
+                        "y_mm": 104 * PT_MM,
+                        "w_mm": 105 * PT_MM,
+                        "h_mm": 18 * PT_MM,
+                        "size_pt": 10,
+                        "color": "#000000",
+                        "font_family": "sans-serif",
+                    },
+                ],
+            }
+        }
+        formats = ("png", "tiff", "pdf")
+    outputs = _export(
+        client,
+        **source,
+        formats=formats,
+        name=f"native-{scope}-raster",
+        ppi=density,
+        background=background,
+    )
+    decoded = {}
+    for fmt in ("png", "tiff"):
+        with Image.open(outputs[fmt]) as image:
+            image.load()
+            assert image.size == tuple(round(pt * density / 72) for pt in dimensions_pt)
+            assert image.info["dpi"] == pytest.approx((density, density), abs=0.02)
+            assert [
+                pixels * 25.4 / dpi
+                for pixels, dpi in zip(image.size, image.info["dpi"], strict=True)
+            ] == pytest.approx([pt * PT_MM for pt in dimensions_pt], abs=0.005)
+            if background == "transparent":
+                assert image.mode == "RGBA"
+            decoded[fmt] = image.copy()
+    tags, samples = tiffcheck.decode_samples(outputs["tiff"])
+    assert tags["x_resolution"] == tags["y_resolution"] == density
+    assert tags["resolution_unit"] == 2 and tags["compression"] == 8
+    assert tags["samples_per_pixel"] == len(decoded["tiff"].getbands())
+    assert samples == decoded["tiff"].tobytes(), "独立TIFF读取器与Pillow必须解出相同样本"
+    assert decoded["png"].mode == decoded["tiff"].mode
+    assert decoded["png"].tobytes() == decoded["tiff"].tobytes()
+    image = decoded["png"].convert("RGBA")
+
+    def pixel(x_pt, y_pt):
+        return image.getpixel((round(x_pt * density / 72), round(y_pt * density / 72)))
+
+    def opaque_dark_pixels(region):
+        count = 0
+        for y in range(region.height):
+            for x in range(region.width):
+                r, g, b, a = region.getpixel((x, y))
+                count += a > 100 and max(r, g, b) < 100
+        return count
+
+    # 独立真值：数据线 y=70pt，xlim扩展后端点从90移到50pt；源白底仍保留。
+    assert pixel(30, 70) == (255, 0, 0, 255)
+    assert pixel(70, 70) == (255, 255, 255, 255)
+    assert pixel(98, 2) == (255, 255, 255, 255)
+    english = image.crop((6, 2, 115, 16))
+    assert opaque_dark_pixels(english) > 10
+    if scope == "canvas":
+        assert pixel(110, 50)[3] == 0, "源图外的画布留白必须保持透明"
+        assert tags["extra_samples"] == 2, "TIFF透明度为非预乘alpha"
+        # 实际PDF文本层与栅格墨迹一起核对；不凭两个空白位图相等声称中文已保留。
+        count, size, text, _reference = _pdf_page(pdfium, outputs["pdf"])
+        assert count == 1 and size == pytest.approx(dimensions_pt, abs=0.02)
+        assert "中文绘图" in text and "Source keep" in text
+        chinese = image.crop((10, 208, 220, 246))
+        assert opaque_dark_pixels(chinese) > 40
+        import pikepdf
+
+        with pikepdf.open(outputs["pdf"]) as pdf:
+            names = [
+                str(font.get("/BaseFont", "")) for font in pdf.pages[0].Resources.Font.values()
+            ]
+            assert any("NotoSansSC" in name for name in names), names
+    assert (root / "chart.svg").read_bytes() == SOURCE

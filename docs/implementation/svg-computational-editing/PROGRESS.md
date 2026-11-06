@@ -42,6 +42,12 @@
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
+### 2026-11-06 生产PNG/TIFF产物验证
+
+- 在c2fd47d5的9项生产SVG/PDF导出专项之外，只新增2项真实PNG/TIFF验证，生产代码未改：原图白底144PPI为200×200，透明混合画布240×250；独立读取PNG pHYs、TIFF inch X/YResolution及物理毫米，解码整幅RGBA样本逐字节一致，TIFF straight alpha=2。
+- 检查红线像素、扩展xlim后的空白点、原图白底与画布外alpha=0；混合画布中文文字还经实际PDF文本层、NotoSansSC字体和区域墨迹交叉核验，源文件字节不变。2 passed、0skip、9 deselected、exit0、6.004秒，证据chart-native-export-raster-final.xml/.log；首次探针选点击中刻度文字后改取真实空白角落，失败日志保留，不算产品修复。
+- 当前导出测试文件共11项；9项原生产测试和2项新增栅格测试分次执行，不声称11项同次最终全跑，也不据此计入EPS、所有复杂SVG或全产品资格。文件SHA256为35de55dd5cd8b29d723e6daca708fdb235100ba980b69378fe2f62b0545048cb。
+
 ### 2026-11-06 多DOM对象共同目标与临时预览
 
 - 以最终native manifest的svg_targets为唯一实际成员归属，SVG根只带同源镜像；前端唯一reader校验真实节点、绘制顺序、去重、祖先重叠与native pt基底。跨父系列、split axes、errorbar多成员和colorbar proxy使用实际目标；未绑定装饰保留原位。变换/缩放/样式、排队、局部重挂及取消复用同一映射，语义编辑列表仍按gid，原输入字节及绑定摘要不变。
