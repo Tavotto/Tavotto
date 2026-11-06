@@ -59,8 +59,9 @@ daily** toggle controls automatic checks; a manual check can still be requested.
 backend's startup background check, not every update request.
 
 The MCP server that AI editors start also checks for a newer plugin at most once every
-24 hours, in the background, by reading a public version file from GitHub Releases. The
-request contains no project data. `TAVOTTO_NO_UPDATE_CHECK=1`,
+24 hours, in the background, by reading a public version file from GitHub Releases, and
+reads the public version index on `dl.tavotto.cn` when GitHub cannot be reached. The
+requests contain no project data. `TAVOTTO_NO_UPDATE_CHECK=1`,
 `TAVOTTO_DISABLE_UPDATE_CHECK=1` or turning off **Check daily** stops it.
 
 The desktop application uses a separate updater, checks at startup, and currently

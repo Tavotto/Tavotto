@@ -39,7 +39,7 @@
 * 内嵌画布不写新功能。官方写明支持 MCP Apps 的只有 Cursor、VS Code、Claude 桌面版，其余查不到或不支持，同一组工具走完后在桌面版看图。
 * Cursor、VS Code 也读 `~/.claude/skills`，同时接入 Claude Code 时可能出现同名技能，待真机确认。
 * Trae 国际版、WorkBuddy 的技能目录只有本机观察或第三方说法，待真机确认。
-* 更新清单在 GitHub Release，release-mirror 不镜像它，大陆用户的 MCP 提醒大概率静默缺席；要补需要把 `codex-plugin.json` 加进镜像范围。
+* 更新清单在 GitHub Release，大陆常连不上。不往镜像加文件（要补上传、校验与回填）：后台线程问不到 GitHub 时读镜像已有的 `index.json`，版本号够提醒用，不下载任何东西（维护者同意补镜像，2026-11-06 选了这个不动生产的做法）。
 * pip 安装没有 MCP 服务端，也没有技能来源，行为不变。
 
 ## 验证

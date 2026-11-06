@@ -5,6 +5,8 @@ MCP 这一侧新增的接线：`tavotto_health` 带字段、`tavotto_export` 每
 桌面包（frozen）布局下能定位模块。
 """
 
+import ast
+import inspect
 import json
 import os
 import subprocess
@@ -474,3 +476,93 @@ def test_unwritable_cache_does_not_spawn_a_thread_per_call(cfg, monkeypatch):
         _health()
         spy.settle()
     assert spy.n == 1
+
+
+# ------------------------------ 国内镜像 --------------------------------
+def _index(**over):
+    base = {
+        "schema_version": 1,
+        "kind": "tavotto-mirror-index",
+        "generation": 38,
+        "generated_at": "2026-11-05T15:47:38Z",
+        "valid_until": "2026-11-12T15:47:38Z",
+        "mirror_enabled": True,
+        "channel": "stable",
+        "latest": "0.21.0",
+        "versions": [],
+    }
+    return {**base, **over}
+
+
+NOW = 1_794_000_000.0  # 2026-11-06 前后，早于 valid_until
+
+
+def test_mirror_index_becomes_a_manifest():
+    m = updatenotice._load().manifest_from_mirror(_index(), now=NOW)
+    assert m["schema"] == 1 and m["latest_version"] == "0.21.0"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        _index(mirror_enabled=False),
+        _index(latest=None),
+        _index(latest=""),
+        _index(kind="other"),
+        _index(schema_version=2),
+        _index(valid_until="2026-11-01T00:00:00Z"),
+        _index(valid_until="not-a-date"),
+        ["not", "a", "dict"],
+        None,
+    ],
+)
+def test_mirror_index_follows_the_consumer_contract(bad):
+    assert updatenotice._load().manifest_from_mirror(bad, now=NOW) is None
+
+
+def test_mirror_is_only_asked_after_github_fails(monkeypatch):
+    mod = updatenotice._load()
+    asked = []
+    monkeypatch.setattr(mod, "manifest_from_mirror", lambda index: {"latest_version": "9.9.9"})
+    monkeypatch.setattr(mod, "_get_json", lambda url, t: asked.append(url))
+    monkeypatch.setattr(mod, "fetch", lambda url, t: None)
+    assert mod.fetch_with_mirror(mod.DEFAULT_URL)["latest_version"] == "9.9.9"
+    assert asked == [mod.MIRROR_INDEX_URL]
+    asked.clear()
+    monkeypatch.setattr(mod, "fetch", lambda url, t: {"latest_version": "1.0.0"})
+    assert mod.fetch_with_mirror(mod.DEFAULT_URL)["latest_version"] == "1.0.0"
+    assert asked == []
+
+
+def test_a_custom_update_url_never_falls_back_to_the_public_mirror(monkeypatch):
+    mod = updatenotice._load()
+    monkeypatch.setattr(mod, "fetch", lambda url, t: None)
+    monkeypatch.setattr(mod, "_get_json", lambda url, t: pytest.fail("不该问镜像"))
+    assert mod.fetch_with_mirror("https://intranet.example/plugin.json") is None
+
+
+def test_the_background_refresh_uses_the_mirror_fetcher(monkeypatch):
+    """主语是后台线程实际调用的 fetcher：去掉接线时这条必须红。"""
+    mod = updatenotice._load()
+    seen = {}
+    monkeypatch.setattr(mod, "check", lambda **kw: seen.update(kw) or {"status": "current"})
+    updatenotice._refresh(mod, "1.0.0")
+    assert seen["fetcher"] is mod.fetch_with_mirror
+
+
+def test_the_synchronous_handoff_keeps_the_single_budget_fetch():
+    """`handoff.emit()` 同步跑在出图路上：`check()` 默认只问一个来源，交接那次调用不换 fetcher，1.5 秒不翻倍。"""
+    mod = updatenotice._load()
+    assert inspect.signature(mod.check).parameters["fetcher"].default is mod.fetch
+    source = (PLUGIN / "skills" / "tavotto-figure" / "scripts" / "handoff.py").read_text("utf-8")
+    calls = [
+        n
+        for n in ast.walk(ast.parse(source))
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "check"
+        and isinstance(n.func.value, ast.Name)
+        and n.func.value.id == "update_check"
+    ]
+    assert len(calls) == 1
+    assert "fetcher" not in {k.arg for k in calls[0].keywords}
