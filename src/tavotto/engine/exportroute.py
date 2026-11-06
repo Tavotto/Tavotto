@@ -98,10 +98,9 @@ def panel_route(
     rerender = (not canvas) and original_rerender(formats)
     executes = wants_execution(runtime=runtime, overrides=overrides, rerender=rerender)
     can_draw = runtime or has_script
-    edits = wants_execution(runtime=runtime, overrides=overrides)
     if has_chart:
         source = SOURCE_DECLARATIVE
-    elif edits and executes_from_snapshot(has_reference=has_snapshot):
+    elif executes_from_snapshot(has_reference=has_snapshot):
         source = SOURCE_SNAPSHOT
     elif not executes:
         source = SOURCE_DISK
@@ -111,9 +110,7 @@ def panel_route(
         source = SOURCE_UNAVAILABLE
     else:
         source = SOURCE_DISK  # 原图范围：没有脚本，退回磁盘文件
-    static_svg_asset = (
-        svg_asset and not has_chart and not overrides and (canvas or not has_snapshot)
-    )
+    static_svg_asset = svg_asset and not has_chart and not overrides and not has_snapshot
     unedited_svg_asset = static_svg_asset and not canvas
     out: dict[str, dict] = {}
     for fmt in formats:

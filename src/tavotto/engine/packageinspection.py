@@ -294,9 +294,11 @@ def inspect_project_package(prepared: PreparedChartPackage) -> dict:
                 static_hash = identity["static_sha256"]
                 if static_hash is not None and source_id in resources:
                     if resources[source_id]["sha256"] != static_hash:
-                        _invalid(
-                            "figure_snapshot_mismatch", "Figure static source digest disagrees"
-                        )
+                        # An explicit full reference pins the immutable pair,
+                        # while the same logical file may now have newer bytes.
+                        # Both byte sets were independently checked above. This
+                        # does not recover the historical disk original itself.
+                        warn("historical_static_source_unavailable", reference["snapshotId"])
                 if identity["remap_fingerprint"]:
                     warn("snapshot_remap_requires_relink", source_id)
                 owner = record["execution_owner"]

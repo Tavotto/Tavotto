@@ -501,7 +501,7 @@ def current_registry() -> engine_registry.Registry:
     return current_ctx().registry
 
 
-def safe_resolve(rel_id: str) -> Path:
+def safe_resolve(rel_id: str, *, require_file: bool = True) -> Path:
     """把面板 id（相对路径）解析回 figures 目录内的真实文件，禁止越权访问。
 
     TIFF 还要过支持范围（`tiffprobe.check`，issue #534）：缩略图、原文件、画布合成、原图导出、
@@ -513,11 +513,11 @@ def safe_resolve(rel_id: str) -> Path:
     p = (root / rel_id).resolve()
     if not p.is_relative_to(root.resolve()):
         abort(403)
-    if not p.is_file():
+    if require_file and not p.is_file():
         abort(404)
     if p.suffix.lower() not in PDF_EXT | IMG_EXT | SVG_EXT:
         abort(403)
-    if p.suffix.lower() in TIFF_EXT:
+    if p.suffix.lower() in TIFF_EXT and (require_file or p.is_file()):
         tiffprobe.check(p)
     return p
 
@@ -1944,6 +1944,7 @@ def _serialize_figure(
     artifact_source=None,
     existing_only: bool = False,
     expect_receipt_id: str | None = None,
+    source_path_required: bool = True,
 ) -> Path | None:
     """让引擎按 `fmt` **直接序列化**一张图（matplotlib `savefig`，worker 侧）。
 
@@ -1967,6 +1968,7 @@ def _serialize_figure(
         **_artifact_kwargs(artifact_source),
         **({"existing_only": True} if existing_only else {}),
         **({"expect_receipt_id": expect_receipt_id} if expect_receipt_id else {}),
+        **({"source_path_required": False} if not source_path_required else {}),
     )
     return rendered[0] if rendered is not None else None
 
@@ -1998,12 +2000,16 @@ def _serialize_figure_with_worker(
     existing_only: bool = False,
     expect_receipt_id: str | None = None,
     svg_text: bool = False,
+    source_path_required: bool = True,
 ) -> tuple[Path, object, str] | None:
     """`_serialize_figure` 的本体：多回 `(路径, worker-like, 脚本)`——候选后端的执行侧源解析器要拿
     worker 装配回执（`engine/receipt`），旧调用方只取路径。"""
     if include_svg or existing_only:
         worker, stem = _engine_worker(
-            rel_id, existing_only=True, **_artifact_kwargs(artifact_source)
+            rel_id,
+            existing_only=True,
+            **_artifact_kwargs(artifact_source),
+            **({"source_path_required": False} if not source_path_required else {}),
         )
         if worker is None:
             return None
@@ -2569,12 +2575,13 @@ def _load_svg_snapshot(rel_id, overrides, out_dir, *, static_source=None, refere
         storage_root=_svg_storage_root(root),
     )
     if reference is not None:
-        record = svgstore.load_snapshot(
+        record = svgstore.load_document_snapshot(
             root,
             reference,
             source_id=rel_id,
             patch_hash=engine_patchspec.patch_hash(overrides),
-            **kwargs,
+            remap_fingerprint=kwargs["remap_fingerprint"],
+            storage_root=kwargs["storage_root"],
         )
     else:
         record = svgstore.load(root, rel_id, engine_patchspec.patch_hash(overrides), **kwargs)
@@ -2602,7 +2609,7 @@ def _load_svg_snapshot(rel_id, overrides, out_dir, *, static_source=None, refere
         )
 
     companion = rc_sources.FrozenSource(artifact(record["svg_artifact"]), svg, record["receipt"])
-    if static_source is not None:
+    if static_source is not None and reference is None:
         return rc_sources.FrozenSource(
             static_source.artifact,
             static_source.path,
@@ -2936,6 +2943,21 @@ def _freeze_document_svg_sources_best_effort(document: dict) -> list[str]:
             reference = obj.pop("figureSnapshot", None)
             execution = bool(patches) or engine_runtimeasset.is_runtime_id(source_id)
             try:
+                patch_hash = engine_patchspec.patch_hash(patches)
+                if reference is not None:
+                    saved = svgstore.load_document_snapshot(
+                        root,
+                        reference,
+                        source_id=source_id,
+                        patch_hash=patch_hash,
+                        remap_fingerprint=engine_inputremap.fingerprint(root),
+                        storage_root=_svg_storage_root(root),
+                    )
+                    if saved is not None and _svg_snapshot_matches_current(
+                        root, source_id, saved, explicit=True, static=not execution
+                    ):
+                        obj["figureSnapshot"] = saved["snapshot_ref"]
+                        continue
                 static_hash = None
                 if not execution:
                     path = safe_resolve(source_id)
@@ -2947,16 +2969,7 @@ def _freeze_document_svg_sources_best_effort(document: dict) -> list[str]:
                     remap_fingerprint=engine_inputremap.fingerprint(root),
                     storage_root=_svg_storage_root(root),
                 )
-                patch_hash = engine_patchspec.patch_hash(patches)
                 saved = None
-                if reference is not None:
-                    saved = svgstore.load_snapshot(
-                        root, reference, source_id=source_id, patch_hash=patch_hash, **kwargs
-                    )
-                    if not _svg_snapshot_matches_current(
-                        root, source_id, saved, explicit=True, static=not execution
-                    ):
-                        saved = None
                 if saved is None:
                     saved = svgstore.load(root, source_id, patch_hash, **kwargs)
                     if not _svg_snapshot_matches_current(
@@ -3096,6 +3109,7 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
     rerender_ids = frozenset(
         {src.figure_id}
         if engine_exportroute.original_rerender(req.formats)
+        and src.figure_snapshot is None
         and Path(src.figure_id).suffix.lower() not in SVG_EXT
         and _has_runnable_script(src.figure_id)
         else ()
@@ -3207,7 +3221,11 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
     fmt = engine_exportreq.FORMAT_EPS
     dpi = req.ppi or engine_exportreq.PPI_DEFAULT
     source_ctx = (artifact_sources or {}).get(src.figure_id)
-    if Path(src.figure_id).suffix.lower() in SVG_EXT and not src.overrides:
+    if (
+        Path(src.figure_id).suffix.lower() in SVG_EXT
+        and not src.overrides
+        and src.figure_snapshot is None
+    ):
         inner = _produce_svg_asset_eps(job, src, dpi, tmp_dir, artifact_source=source_ctx)
     else:
         inner = _produce_original_eps(
@@ -3673,7 +3691,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     execution_source = engine_exportroute.wants_execution(
         runtime=engine_runtimeasset.is_runtime_id(src.figure_id), overrides=src.overrides
     )
-    if wants_snapshot and execution_source:
+    if src.figure_snapshot is not None or (wants_snapshot and execution_source):
         frozen = _execution_source(
             {
                 "id": src.figure_id,
@@ -3921,6 +3939,9 @@ def _produce_original_eps(
     交付。尺寸事实从 EPS 自己的 `%%BoundingBox` 读（`engine/epsfile`），不拿
     请求里的 mm 数冒充测量值。
     """
+    if src.figure_snapshot is not None:
+        existing_only = True
+        expect_receipt_id = src.figure_snapshot["receiptId"]
     path = _serialize_figure(
         src.figure_id,
         src.overrides,
@@ -3931,6 +3952,11 @@ def _produce_original_eps(
         **_artifact_kwargs(artifact_source),
         **({"existing_only": True} if existing_only else {}),
         **({"expect_receipt_id": expect_receipt_id} if expect_receipt_id else {}),
+        **(
+            {"source_path_required": False}
+            if src.figure_snapshot is not None and artifact_source is None
+            else {}
+        ),
     )
     if path is None or not path.is_file():
         # `existing_only` 下 `None` 有两种成因：没有脚本，或脚本在但没有活 Figure（冷 worker）。
@@ -4118,6 +4144,8 @@ def _export_produce_rendercore(
                         {"figure": str(obj.get("id", ""))},
                     )
                 return fs
+            if obj.get("figure_snapshot") is not None:
+                return self.execute(obj)
             return super().resolve(obj)
 
     resolver = _Resolver(
@@ -4768,7 +4796,11 @@ def _package_svg_assets(
             source_id, patches = obj["fileId"], obj.get("overrides") or []
             reference = obj.get("figureSnapshot")
             static_hash = None
-            if not patches and not engine_runtimeasset.is_runtime_id(source_id):
+            if (
+                reference is None
+                and not patches
+                and not engine_runtimeasset.is_runtime_id(source_id)
+            ):
                 try:
                     static_hash = engine_figcapture.hash_file(safe_resolve(source_id))[0]
                 except Exception:
@@ -4778,7 +4810,15 @@ def _package_svg_assets(
                         ) from None
                     continue
             patch_hash = engine_patchspec.patch_hash(patches)
-            key = (source_id, patch_hash, static_hash, (reference or {}).get("snapshotId"))
+            # Cache only the complete explicit selection. A second row with the
+            # same snapshotId but a different receipt/owner must still fail its
+            # own validation instead of inheriting the first row's good ref.
+            reference_key = (
+                json.dumps(reference, sort_keys=True, separators=(",", ":"))
+                if reference is not None
+                else None
+            )
+            key = (source_id, patch_hash, static_hash, reference_key)
             if key in seen:
                 if strict_references and key in references:
                     obj["figureSnapshot"] = dict(references[key])
@@ -4790,9 +4830,17 @@ def _package_svg_assets(
                 storage_root=_svg_storage_root(root),
             )
             if reference is not None:
-                record = svgstore.load_snapshot(
-                    root, reference, source_id=source_id, patch_hash=patch_hash, **kwargs
+                record = svgstore.load_document_snapshot(
+                    root,
+                    reference,
+                    source_id=source_id,
+                    patch_hash=patch_hash,
+                    remap_fingerprint=kwargs["remap_fingerprint"],
+                    storage_root=kwargs["storage_root"],
+                    include_identity=True,
                 )
+                if record is not None:
+                    static_hash = record["snapshot_identity"]["static_sha256"]
             else:
                 record = svgstore.load(root, source_id, patch_hash, **kwargs)
             if not _svg_snapshot_matches_current(
@@ -9303,7 +9351,12 @@ class NativeWorkerRefused(Exception):
 
 
 def _engine_worker(
-    rel_id: str, *, safe_only: bool = False, artifact_source=None, existing_only: bool = False
+    rel_id: str,
+    *,
+    safe_only: bool = False,
+    artifact_source=None,
+    existing_only: bool = False,
+    source_path_required: bool = True,
 ):
     """面板 id → (worker-like, stem)；非脚本面板 404。
 
@@ -9326,15 +9379,24 @@ def _engine_worker(
         rel_id,
         **_artifact_kwargs(artifact_source),
         **({"existing_only": True} if existing_only else {}),
+        **({"source_path_required": False} if not source_path_required else {}),
     )
     if safe_only and engine_enginesession.is_native(worker):
         raise NativeWorkerRefused(rel_id)
     return worker, stem
 
 
-def _resolve_engine_worker(rel_id: str, *, artifact_source=None, existing_only: bool = False):
+def _resolve_engine_worker(
+    rel_id: str,
+    *,
+    artifact_source=None,
+    existing_only: bool = False,
+    source_path_required: bool = True,
+):
     """`_engine_worker` 的本体（「谁来渲染」按档案解析，不设闸）。"""
     _assert_artifact_current(artifact_source)
+    if not source_path_required and (not existing_only or artifact_source is not None):
+        raise ValueError("Only an existing historical Figure may omit its disk original")
     root = str(require_project())
     if artifact_source is not None and engine_runtimeasset.is_runtime_id(rel_id):
         _refuse_artifact_policy(artifact_source["render_policy"])
@@ -9356,13 +9418,15 @@ def _resolve_engine_worker(rel_id: str, *, artifact_source=None, existing_only: 
             ),
             info["stem"],
         )
-    path = safe_resolve(rel_id)
+    path = safe_resolve(rel_id, **({"require_file": False} if not source_path_required else {}))
     disk_stem, info = _disk_panel(path)
     if info is None:
         if artifact_source is not None:
             raise engine_artifactcontext.ArtifactContextError(
                 "destination_unresolved", "Source script unavailable."
             )
+        if not source_path_required:
+            return None, disk_stem
         abort(404)
     # 磁盘面板永远是 safe：它有自己的原始产物，那是 safe worker 产出的世界。
     disk_run = _disk_panel_run(info["script"])

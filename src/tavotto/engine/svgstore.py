@@ -617,7 +617,8 @@ def _durable_admission(
     encoded: bytes | None = None,
     captured_input_archive: InputArchive | None = None,
     input_budget: InputStoreBudget | None = None,
-) -> bytes:
+    archive_only: bool = False,
+) -> bytes | None:
     """Preflight the final state; capacity refusal changes no established bytes.
 
     Valid records are never sacrificed for space. Only obsolete generations
@@ -627,32 +628,35 @@ def _durable_admission(
     established_payloads = [record for _, record in (*records.values(), *snapshots.values())]
     group = _key(_source_identity(identity))
     wanted = _receipt_key(receipt)
-    previous = markers.get(group)
-    if previous is not None and not advance and previous[1]["receipt"] != wanted:
-        raise ValueError("Figure snapshot belongs to an inactive execution")
-    marker = {
-        "version": VERSION,
-        "identity": _source_identity(identity),
-        "receipt": wanted,
-        "updated_at": time.time(),
-    }
-    marker_bytes = _json({"payload": marker, "sha256": _digest(_json(marker))})
-    markers[group] = (_current_path(root, identity), marker)
+    marker_bytes = None
+    if not archive_only:
+        previous = markers.get(group)
+        if previous is not None and not advance and previous[1]["receipt"] != wanted:
+            raise ValueError("Figure snapshot belongs to an inactive execution")
+        marker = {
+            "version": VERSION,
+            "identity": _source_identity(identity),
+            "receipt": wanted,
+            "updated_at": time.time(),
+        }
+        marker_bytes = _json({"payload": marker, "sha256": _digest(_json(marker))})
+        markers[group] = (_current_path(root, identity), marker)
     kept = {}
     for key, (path, record) in records.items():
         owner = markers.get(_key(_source_identity(record["identity"])))
         if owner is None:
             raise ValueError("durable Figure snapshot has no source marker")
-        if owner[1]["receipt"] == _receipt_key(record["receipt"]):
+        if archive_only or owner[1]["receipt"] == _receipt_key(record["receipt"]):
             kept[key] = (path, record)
     if payload is not None:
-        kept[_key(identity)] = (root / "entries" / (_key(identity) + ".json"), payload)
+        if not archive_only:
+            kept[_key(identity)] = (root / "entries" / (_key(identity) + ".json"), payload)
         snapshot = _snapshot_id(payload)
         snapshots.setdefault(snapshot, (root / "snapshots" / (snapshot + ".json"), payload))
     if len(markers) > MAX_SOURCES or len(kept) + len(snapshots) > MAX_SNAPSHOTS:
         raise ValueError("durable Figure snapshot budget exceeded")
     total = sum(
-        len(marker_bytes) if key == group else path.lstat().st_size
+        len(marker_bytes) if key == group and not archive_only else path.lstat().st_size
         for key, (path, _) in markers.items()
     )
     blobs = {}
@@ -703,7 +707,9 @@ def _durable_admission(
     return marker_bytes
 
 
-def _durable_cleanup(root: Path, *, input_budget: InputStoreBudget | None = None) -> None:
+def _durable_cleanup(
+    root: Path, *, input_budget: InputStoreBudget | None = None, archive_only: bool = False
+) -> None:
     markers, records, snapshots = _durable_state(root)
     referenced = {
         _blob_path(root, record[name]).name
@@ -717,7 +723,7 @@ def _durable_cleanup(root: Path, *, input_budget: InputStoreBudget | None = None
             # An unreadable or absent authority is not permission to erase an
             # established portable export. Fail closed and retain its bytes.
             raise ValueError("durable Figure snapshot has no source marker")
-        if owner[1]["receipt"] != _receipt_key(record["receipt"]):
+        if not archive_only and owner[1]["receipt"] != _receipt_key(record["receipt"]):
             path.unlink()
         else:
             input_payloads.append(record)
@@ -728,6 +734,8 @@ def _durable_cleanup(root: Path, *, input_budget: InputStoreBudget | None = None
         if _BLOB.fullmatch(path.name) and path.name not in referenced:
             path.unlink(missing_ok=True)
     for directory in (root / "entries", root / "blobs", root / "sources", root / "snapshots"):
+        if archive_only and directory.name in {"entries", "sources"}:
+            continue
         for path in _entries(directory):
             if _TEMP.fullmatch(path.name):
                 path.unlink(missing_ok=True)
@@ -902,6 +910,7 @@ def save(
     storage_root: Path | None = None,
     captured_input_archive: InputArchive | None = None,
     input_budget: InputStoreBudget | None = None,
+    archive_only: bool = False,
 ) -> dict:
     """Persist an already validated same-Figure pair; invalid input raises ValueError.
 
@@ -920,7 +929,14 @@ def save(
     omission preserves v1 records, references and the original render budget.
     ``input_budget`` controls the separate cumulative input quota; None uses
     ``input_store_budget`` only when a capture attachment is actually consumed.
+    ``archive_only`` explicitly publishes durable historical versions without
+    writing current entries or source markers. It cannot activate a run and
+    keeps every established current record in the final-state capacity budget.
     """
+    if type(archive_only) is not bool:
+        raise ValueError("invalid Figure archive-only mode")
+    if archive_only and (storage_root is None or activate):
+        raise ValueError("archive-only Figure publication requires durable nonactivating storage")
     if captured_input_archive is not None and storage_root is None:
         raise ValueError("captured inputs require a durable Figure storage root")
     identity = _identity(
@@ -993,12 +1009,14 @@ def save(
                 encoded=encoded,
                 captured_input_archive=captured_input_archive,
                 input_budget=input_budget,
+                **({"archive_only": True} if archive_only else {}),
             )
             if storage_root is not None
             else None
         )
         with _published_inputs(root, captured_input_archive, input_budget=input_budget):
-            _set_current(root, identity, payload["receipt"], advance=activate, encoded=marker)
+            if not archive_only:
+                _set_current(root, identity, payload["receipt"], advance=activate, encoded=marker)
             group = _key(_source_identity(identity))
             if storage_root is None:
                 _prune(
@@ -1018,12 +1036,17 @@ def save(
                 # The archive is independently committed only after both immutable
                 # blobs. A later current-entry failure cannot destroy this version.
                 atomicio.write_bytes(snapshot_path, encoded, mode=0o600)
-            target = root / "entries" / (key + ".json")
-            if target.is_symlink():
-                raise ValueError("unsafe Figure snapshot metadata")
-            atomicio.write_bytes(target, encoded, mode=0o600)
+            if not archive_only:
+                target = root / "entries" / (key + ".json")
+                if target.is_symlink():
+                    raise ValueError("unsafe Figure snapshot metadata")
+                atomicio.write_bytes(target, encoded, mode=0o600)
             if storage_root is not None:
-                _durable_cleanup(root, input_budget=input_budget)
+                _durable_cleanup(
+                    root,
+                    input_budget=input_budget,
+                    **({"archive_only": True} if archive_only else {}),
+                )
             else:
                 _prune(root, protected=key, protected_source=group)
             return _result(
@@ -1188,6 +1211,51 @@ def inspect_portable_snapshot(
     if "captured_input_archive" in result:
         inspected["captured_input_archive"] = result["captured_input_archive"]
     return inspected
+
+
+def load_document_snapshot(
+    project_root,
+    reference,
+    *,
+    source_id: str,
+    patch_hash: str,
+    remap_fingerprint: str = "",
+    storage_root: Path | None = None,
+    input_budget: InputStoreBudget | None = None,
+    include_identity: bool = False,
+) -> dict | None:
+    """Read the exact document version, not a claim about the current static file.
+
+    The complete reference selects its immutable static binding. Source, patch
+    and the caller's actual remap identity must still match; all pair/input
+    bytes are checked by the original historical inspector. Current execution
+    authorization remains the application's responsibility.
+    """
+    if storage_root is None or type(include_identity) is not bool:
+        return None
+    try:
+        record = inspect_portable_snapshot(
+            reference, storage_root=storage_root, input_budget=input_budget
+        )
+        identity = _identity(
+            project_root,
+            source_id,
+            patch_hash,
+            record["identity"]["static_sha256"],
+            remap_fingerprint,
+            portable=True,
+        )
+        if record["identity"] != identity:
+            return None
+        root = _root(create=False, storage_root=storage_root, archived=True)
+        result = _result(root, record, record["pdf"], record["svg"], reference=record["reference"])
+        if "captured_input_archive" in record:
+            result["captured_input_archive"] = record["captured_input_archive"]
+        if include_identity:
+            result["snapshot_identity"] = dict(record["identity"])
+        return result
+    except (OSError, ValueError, TypeError, RecursionError):
+        return None
 
 
 def load_input_archive(

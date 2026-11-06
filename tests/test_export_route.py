@@ -205,9 +205,10 @@ def test_edited_panel_with_a_snapshot_reference_loads_the_snapshot(scope, script
     assert r["source"] == er.SOURCE_SNAPSHOT and r["embeds_disk_bitmap"] is False
     for fmt in ("pdf", "svg"):
         assert r["formats"][fmt] == {"how": "convert", "conditions": [er.COND_FIGURE_SNAPSHOT]}
-    # 静态 PDF 带引用：磁盘来源，但同样要核引用
+    # 明确引用选择同一历史配对；同名磁盘原件可以已有更新。
     r = route(scope, ["pdf"], er.KIND_PDF, snapshot=True)
-    assert r["source"] == er.SOURCE_DISK
+    assert r["source"] == er.SOURCE_SNAPSHOT
+    assert r["formats"]["pdf"]["how"] == "convert"
     assert er.COND_FIGURE_SNAPSHOT in r["formats"]["pdf"]["conditions"]
 
 

@@ -121,16 +121,29 @@ def rules_for(root: str | os.PathLike) -> list[dict]:
     return figcapture.clean_remap_rules(rules or [])
 
 
-def fingerprint(root: str | os.PathLike) -> str:
-    """这个项目改指表的指纹（空表 = `""`）：runtime 素材的 cache 记下物化时的这一份，
-    表一变（增 / 换 / 删）就对不上 → `possibly_stale`（经旧规则读到的是旧位置的数据）。"""
-    rules = rules_for(root)
+def fingerprint_rules(rules) -> str:
+    """已规范规则表的纯指纹；不读配置、资源或批准任何目标路径。
+
+    调用方须交与原 clean_remap_rules 等值的完整表，不静默舍弃坏项、
+    重复项或额外字段。目标尚未落盘也可计算；空表沿原合同返回空串。
+    """
+    if not isinstance(rules, (list, tuple)):
+        raise ValueError("A canonical remap rule table is required")
+    rules = list(rules)
+    if figcapture.clean_remap_rules(rules) != rules:
+        raise ValueError("A canonical remap rule table is required")
     if not rules:
         return ""
     canon = json.dumps(
         sorted([r["kind"], r["from"], r["to"]] for r in rules), ensure_ascii=False
     ).encode("utf-8")
     return hashlib.sha256(canon).hexdigest()
+
+
+def fingerprint(root: str | os.PathLike) -> str:
+    """这个项目改指表的指纹（空表 = `""`）：runtime 素材的 cache 记下物化时的这一份，
+    表一变（增 / 换 / 删）就对不上 → `possibly_stale`（经旧规则读到的是旧位置的数据）。"""
+    return fingerprint_rules(rules_for(root))
 
 
 # ---------------------------------------------------------------- 代次与项目互斥锁（ADR 0106 §五）

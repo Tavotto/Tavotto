@@ -7,7 +7,7 @@
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 200
-改到: `/api/versions`、`/api/styles`、`/api/package`、`tavottofile/`、`atomicio.py`、`documents.loads_document`、自动保存槽位、`engine/layoutsession.py`、`/api/layout-session`
+改到: `/api/versions`、`/api/styles`、`/api/package`、`tavottofile/`、`atomicio.py`、`documents.loads_document`、自动保存槽位、`engine/layoutsession.py`、`engine/packagerelocation.py`、`/api/layout-session`
 主题: 布局版本、项目文件收纳与文档落盘 → `layout-versions-and-documents.md`
 必守要点: `atomicio` / `project_layout_dir()` 唯一权威（ADR 0120）
 -->
@@ -105,7 +105,7 @@ order: 200
   `tests/test_package_execution_capture_reader.py`。这不授新根安装、冷重执行或写回资格。
 - **计算来源包叶子**：`chartpackage`沿上述容器与`documentassets`唯一字节权威验证schema4完整INPUT；内容寻址chart行从正文引用派生，额外资源使用闭式chart_source/figure_snapshot/file/script变体，不接受caller覆盖派生chart行。检视只写data_dir自有暂存，Prepared正文/清单每次给副本，退出后拒用；verify回调必传，前后重核附件/资源，失败不发布目标。`install_chart_sources`只发布不可变chart附件并明确返回未安装的remaining_resources，不能宣称普通文件/脚本已安装；普通资源及正文事务由调用者完成，已发布的不可变附件不回删。writer临时封口后严格inspect再原子发布最终名。看护`tests/test_chart_package.py`。
   输出调用者可显式传`budget`或`budget_factory`，恰一；后者只收本模块最终唯一layout/manifest UTF-8字节、完整INPUT及各资源真实尺寸的只读census，一次返回六预算。类型/回调错误在创建输出前拒绝；factory后仍沿原装载、严格inspect与发布链核实际摘要，不能靠清单声明尺寸或静态预算绕过验证。静态预算旧调用/字节保持；不复制manifest结构给app。
-- **项目包资源目标投影**：`chartpackage.plan_project_resources`在活跃Prepared上下文内先复核全部资源与manifest，再将assets/scripts映到同一项目相对根。原拼写且同SHA/长度可复用；跨namespace异字节、case/NFC文件或祖先目录别名、文件/目录冲突均在零目标写入时拒绝。比较键只由`documentpackage.project_member_key`调用原严格成员规则派生，不复制portable策略或允许legacy开关。返回计划不等于安装成功，调用方发布前仍须核生命周期/来源并安全发布。看护`tests/test_chart_package_targets.py`。
+- **项目包资源目标投影**：`PreparedChartPackage.plan_project_resources`在活跃上下文内先复核全部资源与manifest，再将assets/scripts映到同一项目相对根；原模块级函数保类型拒绝后委托。上层检视首尾消费同一对象方法，类型引用不产生反向运行时依赖；writer/reader仍用同一语义检视。原拼写且同SHA/长度可复用；跨namespace异字节、case/NFC文件或祖先目录别名、文件/目录冲突均在零目标写入时拒绝。比较键只由`documentpackage.project_member_key`调用原严格成员规则派生，不复制portable策略或允许legacy开关。返回计划不等于安装成功，调用方发布前仍须核生命周期/来源并安全发布。看护`tests/test_chart_package_targets.py`及`tests/test_import_architecture.py`。
   成员路径判据、元数据成员名与`PackageError`的实现唯一位于纯标准库`packagemembers`，`documentpackage`保原API同对象导出；执行清单及可携运行配置直接依赖该叶子，避免容器→执行清单→配置→容器的环。strict/legacy路径判据、异常字段与ZIP输出保持原合同，搬移不扩大任何名字或提取权限。看护`tests/test_package_member_authority.py`及原import架构门禁。
 - **v4只读产品检视**：`POST /api/documents/v4/package/inspect`只收一个multipart `package`文件，沿同一认证/格式域；实际请求流、表单内存和包的六项预算均有界，临时文件只在data_dir并随请求回收。`packagebudget.input_budget`集中输入政策，不从不可信清单反推预算，也不改变旧open/输出预算。普通资源沿`DocumentPackage.copy_required`的同一CRC/解压计数器流式暂存和摘要核对，不整份读大型数据。`packageinspection`复用活跃Prepared/目标计划，返回完整正文/原清单、全部资源目标、重新计算的缺件和明确缺口。已声明missing及runtime脚本仅作候选，与实际plan核缺席；已携文件清除旧缺件，完整INPUT的chart-only原件不算缺件。非portable/opaque声明保原清单并报未核缺口，不作本机路径或运行授权。Figure树按svgstore全量核档案/marker/条目/blob，再用共享SVG安全解析器与pdfbackend核全部图像内容；正文显式ref须与source/patch完全相符。历史owner不等于当前登记/授权，合法旧v4/无execution/依赖不完整备份仍可检视；原coverage是发送者声明，完整输入声明未验证时另给缺口。检视不安装、不写项目/正文/本机配置、不运行用户脚本，也不授予冷重放或写回资格。看护`tests/test_package_streaming.py`、`tests/test_chart_package_inspect_http.py`。
 - **文档显式引用全质量 Figure 配对（X03，2026-10-15）**：面板 `figureSnapshot` 是版本 1 的闭集
@@ -139,7 +139,11 @@ order: 200
   磁盘写入沿用锁、受限路径与 `atomicio`，只读项目副本也可核验不可变引用，不因读档创建写锁文件。
   自动捕获 / 保存 / 导出不暗中运行脚本。旧项目无明确引用时，执行源需当前进程已观察的回执，
   否则由用户明确再运行并接纳，不能借 current marker 或 preview metadata 猜旧配对仍是当前版本。
-  无 override 静态源的精确 hash 配对授权另见 `export-pipeline.md`；项目包打开仍只检视、不自动安装资产。
+  无明确引用的静态源仍按当前原件精确 hash 授权，见 `export-pipeline.md`；明确文档引用由
+  `load_document_snapshot`核原archive完整ref、source/patch、历史静态hash及实际当前remap指纹，
+  不要求一份当前原件同时等于所有历史版本。原`load_snapshot`的逐维精确查询不变。
+  原图、画布、保存和打包必须消费同一历史PDF/SVG配对；当前普通file资源仍独立核SHA，
+  不因历史渲染对存在而声称历史磁盘原件已恢复。项目包打开仍只检视、不自动安装资产。
   看护：`tests/test_svgstore.py`、`tests/test_export_svg.py`、`tests/test_export_request.py`、
   `web/src/store/figureSnapshot.test.ts`、`web/src/store/figureSnapshotInvalidation.test.ts`、
   `web/src/store/projectSave.test.ts`、`web/src/lib/autosave/diskWriter.test.ts`。
@@ -165,11 +169,22 @@ order: 200
   app的执行源、明确运行后自动捕获与静态PDF/SVG绑定，在实际ExecutionReceipt仍在手时以私有keyword
   将附件交给同一`_save_svg_snapshot`；FrozenSource继续只携公开receipt，不把Path/graph塞进渲染wire。
   同receipt的旧v1缓存不能阻挡本次实际附件生成独立v2引用，旧archive不覆；已有同graph附件或没有新附件才沿原早退。
-  `_package_svg_assets`从正式load/load_snapshot取得已核附件并完整转交staging save，复制时再核实际流，
+  `_package_svg_assets`从正式load或文档显式引用reader取得已核附件并完整转交staging save，复制时再核实际流，
   不回读当前原文件、不重跑脚本。无附件不新增下游keyword或响应字段，原best-effort保存/严格显式引用边界保持。
   应用接线与资源包核验不等于声明UI、引用搬迁或安装已完成。看护：
   `tests/test_inputdeclaration_resources.py`、`tests/test_svgstore_inputs.py`、`tests/test_svgstore_input_archive.py`。
   应用接线看护：`tests/test_svg_input_capture_handoff.py`、`tests/test_svg_input_cold_staging.py`、`tests/test_svg_input_save_e2e.py`。
+- **迁移只归档，不授当前执行权**：`svgstore.save(archive_only=True)`只用于显式项目store，
+  与activate互斥；沿原锁、预算及发布链写不可变档案，不写entry/marker，缺省行为不变。
+  `packagerelocation.prepare_relocation`消费活跃Prepared与原核验权威，仅在data_dir自有暂存准备
+  完整oldRef→newRef和全部正文位置；保原序patch、receipt、配对字节及捕获图。新根整份规则
+  只经`inputremap.fingerprint_rules`生成一个指纹，调用者安装时须与实际设置核对。多个旧ref
+  可收敛为一个新ref，映射不丢行，captures集合从新store重算。历史输入按选中ref惰性物化，
+  同时至多一份，经原freezer在进入/正常退出核同一事实；script影子与项目数据角色分开。
+  publication_files是核闭合成员后的受检流计划，排除锁及临时view；再次复制仍核实际字节。
+  不写最终目录、正文、registry、默认运行配置或机器授权，不把历史view当当前运行输入。
+  看护：`tests/test_svgstore_archive_only.py`、`tests/test_package_relocation.py`、
+  `tests/test_package_relocation_e2e.py`、`tests/test_svg_document_snapshot_sources.py`。
 - **项目文件统一收纳在项目内的 `tavottofile/`（2026-08-17 定版）**：命名画布
   布局直接放 `tavottofile/`，导出默认 `tavottofile/export/`（settings.export_dir
   可覆盖；建不出来退回数据目录，测试读响应里的 export_dir 而不是猜路径），

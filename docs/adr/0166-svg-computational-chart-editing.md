@@ -18,6 +18,13 @@
 
 ## 决定
 
+包迁移的历史身份沿原svgstore的显式archive-only发布与文档引用reader处理。当前普通文件与历史
+PDF/SVG配对分别核验；同名多历史版本不共享当前静态hash，不删除旧版本或声称历史原件已恢复。
+packagerelocation只在活跃Prepared内准备全量oldRef→newRef、原序正文及原字节，整份新remap规则
+只有一个原权威指纹。N→1合法收敛保每条旧映射，captures从新store派生；不创建current marker。
+每次至多物化一个经原freezer核验的历史输入view，角色分离且不授执行权。闭合发布清单仍经
+原受检流复制，不含锁/view；独占安装、正文采用与新根界面冷开是后续独立验收。
+
 ### 1. 三路径一个架构：场景保留 + 片段嫁接（C2 精化）
 
 - **路径 A 不新建计算**：matplotlib 产出的 SVG 带执行回执/配对身份（svgstore 既有机制）时，

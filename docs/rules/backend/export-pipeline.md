@@ -95,8 +95,12 @@ order: 210
     执行中、零图、异常、部分捕获与开始后取消都不能借旧配对。safe 回执实例含真实 execution ID，workerd 透明重开也分代；
     隔离写回 verify/one_shot 不替代当前执行。native 只用可信 target-start / 成功 release 的事实，不把 hello 当执行。
     引用无效或对应资产缺失同样报错，不静默换来源；只读快照查询同步核在途执行事实。
-    无 override 的静态 PDF 可由独立接纳且绑定到**当前精确字节 hash** 的配对授权，不依赖未知的运行回执；
+    无明确引用、无 override 的静态 PDF 可由独立接纳且绑定到**当前精确字节 hash** 的配对授权，不依赖未知的运行回执；
     同名邻居文件、预览、任意旧导出不算，已知新回执仍须匹配。
+    明确引用选择历史配对时，当前同名原件变化或删除不能让PDF换成当前文件而SVG仍取旧图。
+    EPS仍只由已有Figure序列化并核同一receipt，不为历史引用启动/重跑脚本；普通磁盘原件缺席
+    仅在existing_only且无artifact context的内部查找可省文件存在检查，containment/类型及原执行门保留。
+    没脚本/没有活Figure仍分别返回原eps_needs_script/eps_needs_live_figure。
     opaque PDF 的 SVG 逐格式失败并指出来源，其他成功格式照常交付，不整页转位图或少画面板。
     面板缺同 Figure 的 SVG 表示时，该项失败带**面向用户的码**（`rendercore/job._svg_panel_gap`）：脚本现画的图 `svg_figure_unavailable`
     （`figure` 图名；`reason` = worker 给的配对阻断原因，如自定义刻度函数；`detail` = 内部原文，只进诊断），静态 PDF / 位图 `svg_source_unsupported`；
