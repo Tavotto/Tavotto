@@ -123,6 +123,27 @@ order: 200
   看护：`tests/test_svgstore.py`、`tests/test_export_svg.py`、`tests/test_export_request.py`、
   `web/src/store/figureSnapshot.test.ts`、`web/src/store/figureSnapshotInvalidation.test.ts`、
   `web/src/store/projectSave.test.ts`、`web/src/lib/autosave/diskWriter.test.ts`。
+- **Figure捕获输入的正式冷存**：`svgstore.save`的私有`captured_input_archive`仅用于项目`storage_root`，
+  不塞入公开receipt。有附件才写metadata v2及`input_archive={version:1,revision,graph_size_bytes}`，
+  并将完整descriptor绑定snapshot ID；引用和marker仍v1，无附件旧公式/字节保持，不给旧archive补签。
+  `svgstore_inputs`只管理同一store内`inputs/graphs/<revisionhex>.json`与
+  `inputs/blobs/<sha[:2]>/<sha[2:]>`，复用原guard和atomicio无覆盖发布；不是第二个store或锁。
+  图的canonical bytes、逻辑成员预算、资源闭包及受检读取只消费`inputdeclaration`；复制时同流核SHA/size及
+  regular/no-follow/起止身份，零字节合法，不先verify再无核copy。receipt revision与显式script/run_config须一致，
+  opaque sourceId不推归属。图内原请求字符串不产生本机读权。
+  `svgstore.input_store_budget()`是默认累计输入政策入口：单声明沿projectcopy的50,000成员/2GiB，
+  累计去重blob另限50,000份/2GiB，单graph与累计graph均64MiB，graph数沿MAX_SNAPSHOTS；
+  这是新增输入维度，不改原render 512MiB、metadata 1MiB及旧目录4,096项，也不扩大整包上限。
+  准入先核既有typed树全部成员及最终去重预算，输入全部发布后才进入原metadata/current流程。
+  输入阶段失败清本attempt成员，旧marker不动；后续immutable archive已提交而entry失败时，必须保其输入，
+  不把原多文件store夸成整库ACID。GC从所有archive及仍current entries追引用，不凭marker单独删历史输入。
+  输入暂存名消费atomicio原`<目标名>.<pid>.<序号>.tmp`权威。持原guard的mutation在准入前只回收typed目录内
+  合法目标对应、regular/no-reparse且身份未变的中断tmp，再按实际已提交记录清理完整无引用孤儿；
+  不需第二锁、PID租约或时间阈值。只读检视不忽略、不删除半成品；未知名字和链接继续拒绝。
+  `load_input_archive`按完整历史ref只读，其他load/inspect在有附件时核全闭包；full inspect也核孤儿成员，
+  输入总量单列`inputs.total_bytes`，不喂入PDF/SVG解析器。无TTL、无原源回读、不授执行权，返Path仍非租约。
+  此存储API不代表app热保存/冷暂存、execution v2包、声明UI或安装已接通。看护：
+  `tests/test_inputdeclaration_resources.py`、`tests/test_svgstore_inputs.py`、`tests/test_svgstore_input_archive.py`。
 - **项目文件统一收纳在项目内的 `tavottofile/`（2026-08-17 定版）**：命名画布
   布局直接放 `tavottofile/`，导出默认 `tavottofile/export/`（settings.export_dir
   可覆盖；建不出来退回数据目录，测试读响应里的 export_dir 而不是猜路径），

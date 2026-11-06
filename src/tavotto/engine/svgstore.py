@@ -8,6 +8,8 @@ All processes use one advisory lock for publication, reads and eviction. Blobs
 are content addressed, and metadata is the final atomic commit. ``load`` freezes
 both byte strings before releasing the lock: returned paths are conveniences,
 not leases against later eviction. Only public execution receipts belong here.
+Captured input bytes, when supplied separately, are durable project attachments;
+they never become receipt JSON or current execution authority.
 
 The default store is a local, expiring cache. With an application-validated
 ``storage_root``, these are durable project assets: identities use project=".",
@@ -32,9 +34,12 @@ import threading
 import time
 from pathlib import Path, PurePosixPath
 
-from . import atomicio, config, figcapture
+from . import atomicio, config, figcapture, svgstore_inputs
+from .inputdeclaration import InputArchive, validate_public_fact
 
 VERSION = 1
+CAPTURE_METADATA_VERSION = 2
+InputStoreBudget = svgstore_inputs.InputStoreBudget
 STORE_DIRNAME = "figure_snapshots"
 MAX_SVG_BYTES = 64 * 1024 * 1024
 MAX_PDF_BYTES = 128 * 1024 * 1024
@@ -53,6 +58,15 @@ _TEMP = re.compile(r"[0-9a-f]{64}\.(?:pdf|svg|json)\.\d+\.\d+\.tmp\Z")
 _PRIVATE_RECEIPT_FIELDS = frozenset(
     {"private_invalidation_key", "interpreter", "project_root", "launcher", "instance"}
 )
+
+
+def input_store_budget() -> InputStoreBudget:
+    """The single cumulative input policy, separate from the render quota."""
+    return svgstore_inputs.default_budget(max_graphs=MAX_SNAPSHOTS)
+
+
+def _input_policy(budget: InputStoreBudget | None) -> InputStoreBudget:
+    return input_store_budget() if budget is None else budget
 
 
 def _json(value) -> bytes:
@@ -297,12 +311,25 @@ def _validate_record(record, *, expected: dict | None = None) -> dict:
     if not isinstance(payload, dict) or record["sha256"] != _digest(_json(payload)):
         raise ValueError("Figure snapshot metadata checksum mismatch")
     fields = {"version", "identity", "created_at", "pdf_artifact", "svg_artifact", "receipt"}
-    if (
-        set(payload) not in (fields, fields | {"execution_owner"})
-        or type(payload["version"]) is not int
-        or payload["version"] != VERSION
-    ):
+    version = payload.get("version")
+    if type(version) is not int:
         raise ValueError("unknown Figure snapshot metadata version")
+    if version == CAPTURE_METADATA_VERSION:
+        fields = fields | {"input_archive"}
+    elif version != VERSION:
+        raise ValueError("unknown Figure snapshot metadata version")
+    if set(payload) not in (fields, fields | {"execution_owner"}):
+        raise ValueError("unknown Figure snapshot metadata version")
+    if version == CAPTURE_METADATA_VERSION:
+        descriptor = svgstore_inputs.validate_descriptor(payload["input_archive"])
+        receipt = payload.get("receipt")
+        fact = (
+            validate_public_fact(receipt.get("captured_inputs"))
+            if isinstance(receipt, dict)
+            else None
+        )
+        if fact is None or fact["revision"] != descriptor["revision"]:
+            raise ValueError("Figure input archive does not match its receipt")
     if "execution_owner" in payload:
         _execution_owner(payload["execution_owner"])
     identity = payload["identity"]
@@ -372,6 +399,8 @@ def _snapshot_id(payload: dict) -> str:
     # owner is bound to this exact receipt and pair, never attached retroactively.
     if "execution_owner" in payload:
         identity["execution_owner"] = _execution_owner(payload["execution_owner"])
+    if "input_archive" in payload:
+        identity["input_archive"] = svgstore_inputs.validate_descriptor(payload["input_archive"])
     return _digest(_json(identity))
 
 
@@ -434,9 +463,15 @@ def _blob_path(root: Path, artifact: dict) -> Path:
 
 
 def _result(
-    root: Path, payload: dict, pdf: bytes, svg: bytes, *, reference: dict | None = None
+    root: Path,
+    payload: dict,
+    pdf: bytes,
+    svg: bytes,
+    *,
+    reference: dict | None = None,
+    input_budget: InputStoreBudget | None = None,
 ) -> dict:
-    return {
+    result = {
         "pdf_path": _blob_path(root, payload["pdf_artifact"]),
         "svg_path": _blob_path(root, payload["svg_artifact"]),
         "pdf_artifact": payload["pdf_artifact"],
@@ -447,6 +482,19 @@ def _result(
         "svg": svg,
         "snapshot_ref": reference,
     }
+    if "input_archive" in payload:
+        result["captured_input_archive"] = _read_inputs(root, payload, input_budget)
+    return result
+
+
+def _read_inputs(root: Path, payload: dict, budget: InputStoreBudget | None) -> InputArchive:
+    return svgstore_inputs.read(
+        root,
+        payload["input_archive"],
+        receipt=payload["receipt"],
+        execution_owner=payload.get("execution_owner"),
+        budget=_input_policy(budget),
+    )
 
 
 def _entries(directory: Path) -> list[Path]:
@@ -567,6 +615,8 @@ def _durable_admission(
     advance: bool,
     payload: dict | None = None,
     encoded: bytes | None = None,
+    captured_input_archive: InputArchive | None = None,
+    input_budget: InputStoreBudget | None = None,
 ) -> bytes:
     """Preflight the final state; capacity refusal changes no established bytes.
 
@@ -574,6 +624,7 @@ def _durable_admission(
     and blobs no longer referenced by the final state may be reclaimed.
     """
     markers, records, snapshots = _durable_state(root)
+    established_payloads = [record for _, record in (*records.values(), *snapshots.values())]
     group = _key(_source_identity(identity))
     wanted = _receipt_key(receipt)
     previous = markers.get(group)
@@ -630,16 +681,36 @@ def _durable_admission(
     total += sum(blobs.values())
     if total > MAX_TOTAL_BYTES:
         raise ValueError("durable Figure snapshot budget exceeded")
+    final_payloads = [record for _, record in (*kept.values(), *snapshots.values())]
+    try:
+        (root / svgstore_inputs.DIRNAME).lstat()
+        has_input_tree = True
+    except FileNotFoundError:
+        has_input_tree = False
+    if has_input_tree or any("input_archive" in record for record in final_payloads):
+        budget = _input_policy(input_budget)
+        # The original guard excludes a live publisher. Reap only this writer's
+        # closed temporary namespace, then reclaim verified unreferenced crash
+        # orphans before applying the final-state capacity policy.
+        svgstore_inputs.recover(root, budget=budget)
+        svgstore_inputs.cleanup(root, established_payloads, budget=budget)
+        svgstore_inputs.admit(
+            root,
+            final_payloads,
+            incoming=captured_input_archive,
+            budget=budget,
+        )
     return marker_bytes
 
 
-def _durable_cleanup(root: Path) -> None:
+def _durable_cleanup(root: Path, *, input_budget: InputStoreBudget | None = None) -> None:
     markers, records, snapshots = _durable_state(root)
     referenced = {
         _blob_path(root, record[name]).name
         for _, record in snapshots.values()
         for name in ("pdf_artifact", "svg_artifact")
     }
+    input_payloads = [record for _, record in snapshots.values()]
     for path, record in records.values():
         owner = markers.get(_key(_source_identity(record["identity"])))
         if owner is None:
@@ -649,6 +720,7 @@ def _durable_cleanup(root: Path) -> None:
         if owner[1]["receipt"] != _receipt_key(record["receipt"]):
             path.unlink()
         else:
+            input_payloads.append(record)
             referenced.update(
                 _blob_path(root, record[name]).name for name in ("pdf_artifact", "svg_artifact")
             )
@@ -659,6 +731,34 @@ def _durable_cleanup(root: Path) -> None:
         for path in _entries(directory):
             if _TEMP.fullmatch(path.name):
                 path.unlink(missing_ok=True)
+    if any("input_archive" in record for record in input_payloads):
+        svgstore_inputs.cleanup(root, input_payloads, budget=_input_policy(input_budget))
+
+
+@contextlib.contextmanager
+def _published_inputs(root, archive, *, input_budget):
+    """Publish inputs first, retaining anything an immutable record commits.
+
+    The original store commits archives independently of current entries. A
+    later entry failure must never roll back inputs already named by an archive.
+    All calls, including cleanup, hold the original store guard.
+    """
+    if archive is None:
+        yield
+        return
+    budget = _input_policy(input_budget)
+    created = svgstore_inputs.publish(root, archive, budget=budget)
+    try:
+        yield
+    except BaseException as failure:
+        if created:
+            try:
+                _, records, snapshots = _durable_state(root)
+                payloads = [record for _, record in (*records.values(), *snapshots.values())]
+                svgstore_inputs.cleanup(root, payloads, budget=budget, created=created)
+            except (OSError, ValueError, TypeError, RecursionError) as cleanup_failure:
+                raise failure from cleanup_failure
+        raise
 
 
 def _prune(
@@ -753,6 +853,7 @@ def activate(
     *,
     remap_fingerprint: str = "",
     storage_root: Path | None = None,
+    input_budget: InputStoreBudget | None = None,
 ) -> None:
     """Admit an explicit new run before attempting its snapshot capture.
 
@@ -774,13 +875,13 @@ def activate(
     root = _root(create=True, storage_root=storage_root)
     with _guard(root):
         marker = (
-            _durable_admission(root, identity, receipt, advance=True)
+            _durable_admission(root, identity, receipt, advance=True, input_budget=input_budget)
             if storage_root is not None
             else None
         )
         _set_current(root, identity, receipt, advance=True, encoded=marker)
         if storage_root is not None:
-            _durable_cleanup(root)
+            _durable_cleanup(root, input_budget=input_budget)
         else:
             _prune(root, protected_source=_key(_source_identity(identity)))
 
@@ -799,6 +900,8 @@ def save(
     remap_fingerprint: str = "",
     activate: bool = False,
     storage_root: Path | None = None,
+    captured_input_archive: InputArchive | None = None,
+    input_budget: InputStoreBudget | None = None,
 ) -> dict:
     """Persist an already validated same-Figure pair; invalid input raises ValueError.
 
@@ -810,7 +913,16 @@ def save(
     records when their final state would exceed the storage budget.
     ``execution_owner`` is optional, explicit script/run-configuration provenance
     bound to this receipt; it cannot include a launch spec or raw arguments.
+    ``captured_input_archive`` is an optional private, capture-verified input
+    closure, accepted only for durable project stores. Its canonical graph and
+    the actual copied resource streams are checked before metadata publication.
+    This emits metadata v2 and binds the input descriptor into the snapshot ID;
+    omission preserves v1 records, references and the original render budget.
+    ``input_budget`` controls the separate cumulative input quota; None uses
+    ``input_store_budget`` only when a capture attachment is actually consumed.
     """
+    if captured_input_archive is not None and storage_root is None:
+        raise ValueError("captured inputs require a durable Figure storage root")
     identity = _identity(
         project_root,
         source_id,
@@ -841,6 +953,14 @@ def save(
     }
     if execution_owner is not None:
         payload["execution_owner"] = _execution_owner(execution_owner)
+    if captured_input_archive is not None:
+        payload["input_archive"] = svgstore_inputs.descriptor(
+            captured_input_archive,
+            receipt=receipt,
+            execution_owner=payload.get("execution_owner"),
+            budget=_input_policy(input_budget),
+        )
+        payload["version"] = CAPTURE_METADATA_VERSION
     encoded = _json({"payload": payload, "sha256": _digest(_json(payload))})
     if len(encoded) > MAX_METADATA_BYTES:
         raise ValueError("oversized Figure snapshot metadata")
@@ -871,45 +991,49 @@ def save(
                 advance=activate,
                 payload=payload,
                 encoded=encoded,
+                captured_input_archive=captured_input_archive,
+                input_budget=input_budget,
             )
             if storage_root is not None
             else None
         )
-        _set_current(root, identity, payload["receipt"], advance=activate, encoded=marker)
-        group = _key(_source_identity(identity))
-        if storage_root is None:
-            _prune(
-                root,
-                protected=key,
-                protected_source=group,
-                reserve=len(pdf) + len(svg) + len(encoded),
-            )
-        for name, data in (("pdf_artifact", pdf), ("svg_artifact", svg)):
-            path = _blob_path(root, payload[name])
-            if path.exists() or path.is_symlink():
-                if _read_file(path, len(data)) != data:
-                    raise ValueError("corrupt immutable Figure snapshot blob")
+        with _published_inputs(root, captured_input_archive, input_budget=input_budget):
+            _set_current(root, identity, payload["receipt"], advance=activate, encoded=marker)
+            group = _key(_source_identity(identity))
+            if storage_root is None:
+                _prune(
+                    root,
+                    protected=key,
+                    protected_source=group,
+                    reserve=len(pdf) + len(svg) + len(encoded),
+                )
+            for name, data in (("pdf_artifact", pdf), ("svg_artifact", svg)):
+                path = _blob_path(root, payload[name])
+                if path.exists() or path.is_symlink():
+                    if _read_file(path, len(data)) != data:
+                        raise ValueError("corrupt immutable Figure snapshot blob")
+                else:
+                    atomicio.write_bytes(path, data, mode=0o600)
+            if snapshot_path is not None and not snapshot_path.exists():
+                # The archive is independently committed only after both immutable
+                # blobs. A later current-entry failure cannot destroy this version.
+                atomicio.write_bytes(snapshot_path, encoded, mode=0o600)
+            target = root / "entries" / (key + ".json")
+            if target.is_symlink():
+                raise ValueError("unsafe Figure snapshot metadata")
+            atomicio.write_bytes(target, encoded, mode=0o600)
+            if storage_root is not None:
+                _durable_cleanup(root, input_budget=input_budget)
             else:
-                atomicio.write_bytes(path, data, mode=0o600)
-        if snapshot_path is not None and not snapshot_path.exists():
-            # The archive is independently committed only after both immutable
-            # blobs. A later current-entry failure cannot destroy this version.
-            atomicio.write_bytes(snapshot_path, encoded, mode=0o600)
-        target = root / "entries" / (key + ".json")
-        if target.is_symlink():
-            raise ValueError("unsafe Figure snapshot metadata")
-        atomicio.write_bytes(target, encoded, mode=0o600)
-        if storage_root is not None:
-            _durable_cleanup(root)
-        else:
-            _prune(root, protected=key, protected_source=group)
-        return _result(
-            root,
-            payload,
-            pdf,
-            svg,
-            reference=_snapshot_reference(payload) if storage_root is not None else None,
-        )
+                _prune(root, protected=key, protected_source=group)
+            return _result(
+                root,
+                payload,
+                pdf,
+                svg,
+                reference=_snapshot_reference(payload) if storage_root is not None else None,
+                input_budget=input_budget,
+            )
 
 
 def load(
@@ -920,6 +1044,7 @@ def load(
     static_sha256: str | None = None,
     remap_fingerprint: str = "",
     storage_root: Path | None = None,
+    input_budget: InputStoreBudget | None = None,
 ) -> dict | None:
     """Read only the exact admitted snapshot, freezing bytes before eviction can run.
 
@@ -963,6 +1088,7 @@ def load(
                 payload,
                 *data,
                 reference=_existing_reference(root, payload) if storage_root is not None else None,
+                input_budget=input_budget,
             )
     except (OSError, ValueError, TypeError, RecursionError):
         return None
@@ -977,6 +1103,7 @@ def load_snapshot(
     static_sha256: str | None = None,
     remap_fingerprint: str = "",
     storage_root: Path | None = None,
+    input_budget: InputStoreBudget | None = None,
 ) -> dict | None:
     """Read an explicit immutable project version, independent of current runs.
 
@@ -1008,12 +1135,16 @@ def load_snapshot(
             if len(blob) != artifact["size_bytes"] or _digest(blob) != artifact["bytes_sha256"]:
                 return None
             data.append(blob)
-        return _result(root, payload, *data, reference=expected_reference)
+        return _result(
+            root, payload, *data, reference=expected_reference, input_budget=input_budget
+        )
     except (OSError, ValueError, TypeError, RecursionError):
         return None
 
 
-def inspect_portable_snapshot(reference, *, storage_root: Path) -> dict:
+def inspect_portable_snapshot(
+    reference, *, storage_root: Path, input_budget: InputStoreBudget | None = None
+) -> dict:
     """Freeze checked archive facts, without granting current execution authority.
 
     The complete reference (including an archived owner) must match a portable
@@ -1043,8 +1174,8 @@ def inspect_portable_snapshot(reference, *, storage_root: Path) -> dict:
         if len(blob) != artifact["size_bytes"] or _digest(blob) != artifact["bytes_sha256"]:
             raise ValueError("Figure snapshot blob does not match its source artifact")
         data.append(blob)
-    result = _result(root, payload, *data, reference=expected_reference)
-    return {
+    result = _result(root, payload, *data, reference=expected_reference, input_budget=input_budget)
+    inspected = {
         "reference": result["snapshot_ref"],
         "identity": payload["identity"],
         "receipt": result["receipt"],
@@ -1054,9 +1185,38 @@ def inspect_portable_snapshot(reference, *, storage_root: Path) -> dict:
         "svg": result["svg"],
         "execution_owner": result["execution_owner"],
     }
+    if "captured_input_archive" in result:
+        inspected["captured_input_archive"] = result["captured_input_archive"]
+    return inspected
 
 
-def _portable_inventory(root: Path) -> dict:
+def load_input_archive(
+    reference, *, storage_root: Path, input_budget: InputStoreBudget | None = None
+) -> InputArchive | None:
+    """Read historical inputs only; never consult sources or grant execution.
+
+    The entire issued reference must match its immutable portable metadata.
+    Returned resource paths are checked at read time, not leases for a later
+    copy: each consumer must rehash its actual stream at the next boundary.
+    """
+    if storage_root is None:
+        return None
+    try:
+        reference = validate_reference(reference)
+        root = _root(create=False, storage_root=storage_root, archived=True)
+        payload = _read_snapshot(root / "snapshots" / (reference["snapshotId"] + ".json"))
+        if (
+            payload["identity"]["project"] != "."
+            or reference != _snapshot_reference(payload)
+            or "input_archive" not in payload
+        ):
+            return None
+        return _read_inputs(root, payload, input_budget)
+    except (OSError, ValueError, TypeError, RecursionError):
+        return None
+
+
+def _portable_inventory(root: Path, *, input_budget: InputStoreBudget | None = None) -> dict:
     """Census the closed portable tree before any metadata/blob is consumed."""
 
     def checked_stat(path):
@@ -1077,6 +1237,11 @@ def _portable_inventory(root: Path) -> dict:
                 raise ValueError("unsafe or oversized Figure snapshot lock")
             members[".lock"] = (directory, info)
             continue
+        if directory.name == svgstore_inputs.DIRNAME:
+            if not stat.S_ISDIR(info.st_mode):
+                raise ValueError("unsafe portable Figure input directory")
+            members.update(svgstore_inputs.inventory(root, budget=_input_policy(input_budget)))
+            continue
         if directory.name not in {"entries", "snapshots", "sources", "blobs"}:
             raise ValueError("unknown portable Figure snapshot member")
         if not stat.S_ISDIR(info.st_mode):
@@ -1095,7 +1260,9 @@ def _portable_inventory(root: Path) -> dict:
     return members
 
 
-def inspect_portable_store(*, storage_root: Path) -> dict:
+def inspect_portable_store(
+    *, storage_root: Path, input_budget: InputStoreBudget | None = None
+) -> dict:
     """Check every portable store member, returning metadata and a byte census.
 
     This is archive integrity, never current execution authority. Historical
@@ -1110,19 +1277,29 @@ def inspect_portable_store(*, storage_root: Path) -> dict:
     and complete ``reference``, plus the same identity/receipt/artifact/owner
     projections as single-snapshot inspection. ``blobs`` records kind/size/SHA.
     ``total_bytes`` counts all metadata
-    and blobs against the existing store quota. Optional advisory lock bytes
+    and render blobs against the existing render-store quota. If typed input
+    members are present, ``inputs`` separately describes every input graph and
+    content-addressed blob and their total bytes. Those bytes use the explicit
+    input policy, not the old render or directory limits. Optional advisory lock bytes
     are separately bounded by MAX_METADATA_BYTES, as the store quota excludes
     its lock. No lock is taken/created, and no expiry or machine remap is used.
     """
     if storage_root is None:
         raise ValueError("portable Figure store inspection requires a storage root")
     root = _root(create=False, storage_root=storage_root, archived=True)
-    members = _portable_inventory(root)
-    names = {directory: [] for directory in ("entries", "snapshots", "sources", "blobs")}
+    members = _portable_inventory(root, input_budget=input_budget)
+    names = {
+        directory: []
+        for directory in ("entries", "snapshots", "sources", "blobs", svgstore_inputs.DIRNAME)
+    }
     for name in members:
         if name != ".lock":
             names[name.split("/", 1)[0]].append(name)
-    total = sum(info.st_size for name, (_, info) in members.items() if name != ".lock")
+    total = sum(
+        info.st_size
+        for name, (_, info) in members.items()
+        if name != ".lock" and not name.startswith(svgstore_inputs.DIRNAME + "/")
+    )
     if (
         len(names["entries"]) + len(names["snapshots"]) > MAX_SNAPSHOTS
         or len(names["sources"]) > MAX_SOURCES
@@ -1163,6 +1340,23 @@ def inspect_portable_store(*, storage_root: Path) -> dict:
             expected_blobs[filename] = artifact["size_bytes"]
     if any("blobs/" + name not in members for name in expected_blobs):
         raise ValueError("missing durable Figure snapshot blob")
+    inputs = None
+    if names[svgstore_inputs.DIRNAME] or any(
+        "input_archive" in record for record in (*records.values(), *archives.values())
+    ):
+        inspected_inputs = svgstore_inputs.inspect(
+            root,
+            [*records.values(), *archives.values()],
+            budget=_input_policy(input_budget),
+        )
+        inputs = {
+            "graphs": {
+                revision: {**row["descriptor"], "graph": row["graph"]}
+                for revision, row in inspected_inputs["graphs"].items()
+            },
+            "blobs": inspected_inputs["blobs"],
+            "total_bytes": inspected_inputs["graph_bytes"] + inspected_inputs["blob_bytes"],
+        }
     blobs = {}
     for name in sorted(names["blobs"]):
         path, info = members[name]
@@ -1178,7 +1372,7 @@ def inspect_portable_store(*, storage_root: Path) -> dict:
         del blob
     if ".lock" in members and members[".lock"][1].st_size:
         _read_file(members[".lock"][0], MAX_METADATA_BYTES)
-    final = _portable_inventory(root)
+    final = _portable_inventory(root, input_budget=input_budget)
     if set(final) != set(members) or any(
         not os.path.samestat(before, final[name][1])
         or before.st_size != final[name][1].st_size
@@ -1187,7 +1381,7 @@ def inspect_portable_store(*, storage_root: Path) -> dict:
         for name, (_, before) in members.items()
     ):
         raise ValueError("portable Figure snapshot store changed during inspection")
-    return {
+    result = {
         "members": tuple(sorted(members)),
         "entries": records,
         "sources": markers,
@@ -1206,6 +1400,9 @@ def inspect_portable_store(*, storage_root: Path) -> dict:
         "blobs": blobs,
         "total_bytes": total,
     }
+    if inputs is not None:
+        result["inputs"] = inputs
+    return result
 
 
 def source_records_for_owner(

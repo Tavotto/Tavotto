@@ -453,7 +453,11 @@ def begin(
 
 
 def _content(row):
-    if not isinstance(row, dict) or not _FILE_DIGEST.fullmatch(str(row.get("sha256", ""))):
+    if (
+        not isinstance(row, dict)
+        or not isinstance(row.get("sha256"), str)
+        or not _FILE_DIGEST.fullmatch(row["sha256"])
+    ):
         raise ValueError("Invalid captured content digest")
     if type(row.get("size_bytes")) is not int or row["size_bytes"] < 0:
         raise ValueError("Invalid captured content size")
@@ -610,6 +614,53 @@ def _graph_resources(graph, limits):
     return resources
 
 
+def graph_resources(graph, *, limits):
+    """Return the exact digest closure, using the capture's logical budget."""
+    checked = validate_graph(graph)
+    if checked is None:
+        raise ValueError("Invalid captured input graph")
+    return _graph_resources(checked, limits)
+
+
+def _input_resource(resource):
+    if (
+        not isinstance(resource, InputResource)
+        or not isinstance(resource.sha256, str)
+        or not _FILE_DIGEST.fullmatch(resource.sha256)
+        or type(resource.size_bytes) is not int
+        or resource.size_bytes < 0
+        or not isinstance(resource.path, Path)
+    ):
+        raise ValueError("Invalid captured input resource")
+    return resource
+
+
+def validate_input_archive(archive, *, limits):
+    """Validate a complete detached attachment, without opening its resource paths."""
+    if (
+        not isinstance(archive, InputArchive)
+        or not isinstance(archive.graph_bytes, bytes)
+        or not isinstance(archive.resources, tuple)
+    ):
+        raise ValueError("Invalid captured input archive")
+    try:
+        graph = validate_graph(json.loads(archive.graph_bytes))
+        if graph is None or canonical_graph_bytes(graph) != archive.graph_bytes:
+            raise ValueError("Invalid captured input archive graph")
+        expected = _graph_resources(graph, limits)
+    except (TypeError, UnicodeError, RecursionError) as exc:
+        raise ValueError("Invalid captured input archive graph") from exc
+    actual = {}
+    for item in archive.resources:
+        resource = _input_resource(item)
+        if resource.sha256 in actual:
+            raise ValueError("Duplicate captured input resource")
+        actual[resource.sha256] = resource.size_bytes
+    if actual != expected:
+        raise ValueError("Captured input resources do not match their graph")
+    return graph
+
+
 def _archive_members(directory, limit):
     members = set()
     with os.scandir(directory) as entries:
@@ -621,7 +672,16 @@ def _archive_members(directory, limit):
     return members
 
 
-def _read_archive_file(path, size, digest, *, collect=False):
+def _write_chunk(sink, chunk):
+    remaining = memoryview(chunk)
+    while remaining:
+        count = sink.write(remaining)
+        if type(count) is not int or not 0 < count <= len(remaining):
+            raise OSError("Captured input destination made no valid write progress")
+        remaining = remaining[count:]
+
+
+def _read_archive_file(path, size, digest, *, collect=False, sink=None):
     before = _regular(path)
     if before.st_size != size:
         raise ValueError("Captured input archive size mismatch")
@@ -638,6 +698,8 @@ def _read_archive_file(path, size, digest, *, collect=False):
             hashed.update(chunk)
             if collect:
                 result.append(chunk)
+            if sink is not None:
+                _write_chunk(sink, chunk)
         if _stamp(_FSTAT(fd)) != _stamp(opened):
             raise ValueError("Captured input archive changed while reading")
     finally:
@@ -647,6 +709,25 @@ def _read_archive_file(path, size, digest, *, collect=False):
     if count != size or hashed.hexdigest() != digest:
         raise ValueError("Captured input archive digest mismatch")
     return b"".join(result) if collect else None
+
+
+def copy_resource(resource, sink):
+    """Stream verified bytes to an unpublished binary sink owned by the caller.
+
+    Any read, write or final verification failure raises. The sink may already
+    contain partial or invalid bytes then; only the caller can discard that
+    temporary output. This function never flushes, closes or publishes it.
+    """
+    resource = _input_resource(resource)
+    if not callable(getattr(sink, "write", None)):
+        raise ValueError("Invalid captured input destination")
+    _read_archive_file(resource.path, resource.size_bytes, resource.sha256, sink=sink)
+
+
+def verify_resource(resource):
+    """Recheck this resource now; its path is never a lease on future bytes."""
+    resource = _input_resource(resource)
+    _read_archive_file(resource.path, resource.size_bytes, resource.sha256)
 
 
 def verify_archive(raw, fact, *, archive_root, limits):
