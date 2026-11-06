@@ -147,6 +147,7 @@ order: 200
   **发请求那一刻**的 pj 名下（`rememberLayoutRevision(name, rev, pj)`），切走之后不开冲突岔口。
 - **保存关联与明确冲突恢复**：`projectFileSession`每个活跃编辑器用独立内存actor；只有真实用户编辑推进轴，派生回执不推进。初次打开先在hydrate屏障捕获无编辑基线/票据，等候期间的用户编辑仍保dirty；named正文成功但元信息未确认只补confirm，不重写旧正文。绑定代次和`loadSeq`参与上下文，A→B→A或同ID重装挡旧回包；冷恢复不读取新的named revision洗白外改。后端wire唯一合同见[文档落盘规则](../backend/layout-versions-and-documents.md)。
   只有用户明确覆盖/重载才创建新branch，并把观察到的实际AS修订与完整会话视图固定到同一个`DiskSaveContext`，排入原writer；普通队列或重试不能刷新这份证明。读取、确认和落账守项目/格式/workingId/loadSeq/绑定及操作意图。重载安装前把**最新内存稿**写入原本机副本并提升原恢复槽；任一步失败停止安装、保留内存与磁盘，此不变量也适用于404兼容路径。看护`lib/projectFileSession.test.ts`、`lib/projectFileApi.test.ts`、`lib/autosave/diskWriter.projectFileRecovery.test.ts`、`store/projectFilePersistence.test.ts`和`components/documentBanner.test.tsx`。
+- **实际工作副本回执**：`waitForWorkingDocumentSave`只等待原writer并回读实际AS修订/正文，核项目/格式/workingId/loadSeq与已成功capture；它和named保存共用同一回执读取器，不预留named票据。非空安装稿不补写第二次PUT；只有明确`persistEmpty:true`才为本安装尚无成功记录的空稿排一次原writer写入，普通空稿保存语义不变。`openDocumentAs`成功或空稿`wrote:true`均不能代替真实落盘回执；失败/旧记录/外改/元信息未确认不能报告安装完成。看护`store/workingDocumentReceipt.test.ts`；该叶子不表示项目包安装入口已接通。
 - **显式运行完成与恢复门（SVG 快照）**：`figureSnapshotInvalidation` 只接收入口已按项目代际接受的成功执行事实；
   尚未接纳的旧回包仍由原入口拒绝。恢复中 / 待用户处理、以及尚未真正初始化的 `initial-ready` 窗口内，
   只保留匹配来源所需的最小字段，按稳定项目 id + source / runtime asset id 覆盖去重，不保留报告或参数。

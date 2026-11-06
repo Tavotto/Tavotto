@@ -2447,6 +2447,80 @@ function projectFileOperationCurrent(scope: { documentId: string; format: Docume
 
 const projectFileUnavailable = () => new ApiError(t('save.projectBindingUnavailable', { ns: 'workspace' }), 503, { code: 'session_unavailable' })
 
+export interface WorkingDocumentSaveScope {
+  pj: string
+  format: DocumentFormat
+  documentId: string
+  loadSeq: number
+}
+
+export interface WorkingDocumentSaveReceipt {
+  address: ProjectFileAddress
+  document: ProjectDocument
+  revision: string
+  loadSeq: number
+  capture: ProjectFileCapture
+  moment?: MomentSnapshot
+}
+
+/** 读取同一次实际writer成功与磁盘正文；不预留named票据、不重新构建发送正文。 */
+async function readWorkingDocumentSaveReceipt(scope: WorkingDocumentSaveScope): Promise<WorkingDocumentSaveReceipt> {
+  if (!projectFileOperationCurrent(scope)) throw projectFileUnavailable()
+  const address = projectFileAddress(scope.documentId, scope.format, scope.pj)
+  const written = projectFileWrites.get(projectFileKey(address))
+  if (!written || written.loadSeq !== scope.loadSeq || !written.revision) throw projectFileUnavailable()
+  const fetched = scope.format === 'v4' ? await fetchAutosave(scope.documentId, scope.pj, scope.format)
+    : await fetchAutosave(scope.documentId, scope.pj)
+  if (!projectFileOperationCurrent(scope) || !fetched || fetched.revision !== written.revision) throw projectFileUnavailable()
+  const document = migrateToProject(fetched.doc)
+  if (!document || (document.schema === 4) !== (scope.format === 'v4')) throw projectFileUnavailable()
+  // moment持有原时刻只读图源（可能含PNG Promise），沿既有保存合同保留，不做structuredClone。
+  return { address, document, revision: written.revision, loadSeq: scope.loadSeq, capture: structuredClone(written.capture), moment: written.moment }
+}
+
+/** 等待现有安装写入；只有明确persistEmpty才为普通保存会跳过的空排版创建真实槽位。 */
+export async function waitForWorkingDocumentSave(
+  scope: WorkingDocumentSaveScope,
+  opts: { persistEmpty?: boolean } = {},
+): Promise<WorkingDocumentSaveReceipt> {
+  scope = { ...scope }
+  const persistEmpty = opts.persistEmpty === true
+  const address = projectFileAddress(scope.documentId, scope.format, scope.pj)
+  const requireSupported = () => {
+    if (!scope.pj || !projectFileOperationCurrent(scope) || projectFileEditor.support(address) !== 'supported') {
+      throw projectFileReadErrors.get(projectFileKey(address)) ?? projectFileUnavailable()
+    }
+  }
+  requireSupported()
+  const disk = diskFor(scope.format)
+  await disk.whenIdle()
+  requireSupported()
+  if (useDocumentStore.getState().saveState === 'save_error' || useDocumentStore.getState().saveState === 'conflict') throw projectFileUnavailable()
+  if (persistEmpty && !hasContent(useDocumentStore.getState().buildProject())) {
+    // 两个消费者可同时等待；复用已经在同writer执行的第一次显式空稿写入。
+    while (disk.busy || disk.queued) {
+      await disk.whenIdle()
+      requireSupported()
+    }
+    const written = projectFileWrites.get(projectFileKey(address))
+    const document = useDocumentStore.getState().buildProject()
+    if (!hasContent(document) && (written?.loadSeq !== scope.loadSeq || hasContent(written.document))) {
+      const snapshots: DiskSaveContext = {
+        ...captureFigureSnapshotSave(document, scope.pj), projectFileContext: projectFileEditor.capture(address), moment: captureMoment(),
+      }
+      disk.schedule(scope.documentId, document, scope.pj, snapshots)
+      await disk.whenIdle()
+    }
+  }
+  requireSupported()
+  if (useDocumentStore.getState().saveState === 'save_error' || useDocumentStore.getState().saveState === 'conflict') throw projectFileUnavailable()
+  const receipt = await readWorkingDocumentSaveReceipt(scope)
+  requireSupported()
+  const view = projectFileEditor.view(address)
+  if (!view?.edit.known || view.edit.autosave_revision !== receipt.revision) throw projectFileUnavailable()
+  return receipt
+}
+
 /** null 仅表示明确 404 的旧后端；未知关联不能静默走旧保存路径。 */
 export async function prepareProjectFileSave(name: string, scope: {
   documentId: string; format: DocumentFormat; loadSeq: number; pj: string | null
@@ -2470,14 +2544,8 @@ export async function prepareProjectFileSave(name: string, scope: {
     diskFor(scope.format).schedule(scope.documentId, document, scope.pj, snapshots)
     await diskFor(scope.format).whenIdle()
   }
-  if (!projectFileOperationCurrent(scope)) throw projectFileUnavailable()
-  const written = projectFileWrites.get(projectFileKey(address))
-  if (!written || written.loadSeq !== scope.loadSeq || !written.revision) throw projectFileUnavailable()
-  const fetched = scope.format === 'v4' ? await fetchAutosave(scope.documentId, scope.pj, scope.format)
-    : await fetchAutosave(scope.documentId, scope.pj)
-  if (!projectFileOperationCurrent(scope) || !fetched || fetched.revision !== written.revision) throw projectFileUnavailable()
-  const document = migrateToProject(fetched.doc)
-  if (!document || (document.schema === 4) !== (scope.format === 'v4')) throw projectFileUnavailable()
+  const written = await readWorkingDocumentSaveReceipt({ ...scope, pj: scope.pj })
+  const { document } = written
   const view = projectFileEditor.view(address)
   const reserved = await reserveProjectFile(scope.documentId, scope.pj, {
     name, autosave_revision: written.revision, axis: written.capture.axis,
