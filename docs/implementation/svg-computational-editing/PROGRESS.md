@@ -4,6 +4,7 @@
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
 > **当前结论（2026-11-07 正式捕获资源包收口）：最新功能HEAD=06806c2c。execution显式v2已接正式v4导出/严格检视，原graph/bytes沿同一Figure资源树；真实safe/native与外部file/prefix删源、删捕获缓存后冷打包保原内容/空目录，历史多版本按完整ref保留。v1默认与旧收集器正文保持。输入声明UI、精确引用搬迁/安全安装/新根冷执行、图例/裁切/复杂几何及最终资格仍缺，M1/M2/M3未通过；既有Windows权限红灯保留，不报告全分支全绿。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
+> **05:10 后执行效果复核：基线 `62905a6e`，功能源码未变；本次将最新五份捕获/导出/reader/预算/真实执行测试放在同一命令运行，91 通过、0 失败、0 跳过、exit 0。包括此前分别验证的全部 8 个真实执行包场景。这是本范围的当前源码资格，仍不是完整分支回归或新目录安装资格。3c 的后端、控件和浏览器方案已只读核对，尚未实现。**
 
 ## 环境（2026-11-07 当前快照）
 
@@ -41,6 +42,15 @@
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-07 05:10 后执行情况复核与下一阶段安排
+
+- 用户要求检查效果并梳理后续。本次从 clean `zixu.wang/svg-computational-r00@62905a6e` 复核；原目录仍为 clean `main@69bcafae`，成果尚未合入原目录。没有新增分支、修改产品源码或远程操作；现有其他历史 worktree/分支保留。本目标仍 active，本次复核不代表整体完成。
+- `n3c3b4-stage-final.json` 中 13 份功能文件、8 份报告、3 份修改前稳定文档的 SHA 和 9 份 JUnit 统计全部相符。随后在当前源码同一命令运行 `test_package_execution_captures.py`、`test_package_execution_captures_export.py`、`test_package_execution_capture_reader.py`、`test_package_portable_budget.py`、`test_svg_input_package_e2e.py`：91 通过/0skip/exit0，53.99 秒。包含真实 safe/native、同来源历史版本、删源/缓存后的新父进程冷打包、外部 file/prefix 及篡改拒绝；没有改写上轮分源码窗口的历史结果。原始报告 `status-review-20261107-captured-package.xml`，复核索引 `status-review-20261107-current.json`。
+- 重看既有 `output/playwright/n3c-ui-legacy-frame.png`，曲线可见，文字与刻度仍裁切；这是已有截图复核，没有新增浏览器验收，也未推断裁切根因。图例不联动、复杂 clip/成员层序、现有 Windows 权限红灯和 M1/M2/M3 缺口仍保留。
+- 3c 只读接线审查已完成：原冻结计划缺少给界面的精确 scope；已有声明 store CAS、计划选择 revision、准备配置 revision 是三个不同判据；外部 remap 在显示与保存之间还需复用其 generation 防止保存到另一个目标。文件选择采用原 picker 加服务端包含性核对，不扩大为扫描器；保存后 recheck 的运行意图恢复须实测，不能凭方法名断言零运行。三份稳定文档已明确这些实施与验收条件，方案不计作已实现。
+- 最近完整交付目标仍是“输入选择→明确执行→打包→中文新目录恢复→继续计算编辑”。按 3c 声明界面、3d 精确引用迁移、N3d/e 安装及原 writer、N3f 真冷开依次提交；随后图例、几何与裁切、完整 M1、M2、M3。每批必须有用户入口及真实退出条件；无人值守规则继续沿用第 5 节，不以重复计划/重复绿测代替实现。
+- 本次文档检查 41 通过/0skip/exit0，`agents_budget.py --check` 与 diff 检查 exit0；原有规则体积 advisory 保留。仅三份稳定文档发生修改，未启动新服务、浏览器或调度器，没有新增产品/全平台资格。
 
 ### 2026-11-07 正式v2捕获资源包与真实外部prefix收口
 

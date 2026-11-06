@@ -2,6 +2,8 @@
 
 可直接复制以下提示词。2026-11-07（Asia/Shanghai）06806c2c正式v2捕获资源包提交后接续，实际工作树优先。详细任务：[NEXT_PHASE.md](NEXT_PHASE.md)；进度唯一台账：[PROGRESS.md](PROGRESS.md)；最终范围：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。
 
+05:10 后复核：当前基线 62905a6e，功能文件与冻结索引相符，新增同命令当前源码 91 项/0skip/exit0（含全部 8 个真实执行包场景），见证据根 `status-review-20261107-current.json`。仅新增验证和计划，3c 仍未实现；先执行下面的声明界面工作，不从打包核心重新开始。
+
 ```text
 继续完成 Tavotto 的 SVG 计算图表编辑，保留现有 Python 绘图、静态素材和其他已有功能。最大化复用现模型、编辑器、事务、writer、RenderCore/pdfbackend 和 legendmodel；持续自主实现、验证、修复，在同一分支按功能分别 commit。常规可逆步骤自行推进，不逐批等待确认。已授权多子代理，只分配独立且有收益的任务；共享合同、app、Schema、规则、文档、集成和提交由主代理唯一写入，同一文件同时只有一个写入者。
 
@@ -54,6 +56,7 @@
 2. 3b-4已提交06806c2c，不重做。最新索引n3c3b4-stage-final.json含13文件SHA/原始JUnit/精确源码窗口。execution v2只增加非空captures:[{snapshot_ref,revision}]，原graph/bytes继续figure_snapshot树；fullref沿svgstore原authority重算，owner/receipt/scope/图/每blob及输入并集闭合。历史capture按具体panel ref与current contexts分开，reader还按实际doc重算未捕获脚本使用，不能让漏contexts掩盖当前缺件。旧VERSION1/闭集/collector原body AST及输出cap保持。v2预算只与原input_policy交集；声明文件齐备不证明所有Python IO，overall incomplete准确，原rc_ID的现有argv只作建议，不从公开receipt推原文。
    最终core53、collector56(新22+旧34)、预算7各自通过/0skip；科学safe/native7在第二源通过，新增真实外部file/prefix1与reader mixed缺件1在最终源通过，不说新SHA一跑8。较早legacy295/root243只按原窗口记，后delta由末专项覆盖；41文档/全仓Ruff格式1471/预算门均0，真实3.10 stdlib capture/store/v2/fresh child probe0。owner/reader两首红已修；AST原错view落点、预算wrapper/3.10 probe观测错误保留。没有新浏览器/build/安装/全分支资格，旧Win权限红灯仍保留。
 3. N3c-3c当前首项：按NEXT_PHASE.md当前首项3c表A–D实现，复用PreparationCard/projectPreparationStore、原runconfig/文件及已批准inputremap选择器和i18n。先查真实Plan/PreparationReport/声明API的scope，必要时补同一准备报告的受检投影，不在前端按argv猜rc_ID/cwd。web/src/lib/api.ts加严格请求响应，声明以原revision CAS保存，修改选择只recheck；只有明确用户执行意图才认领原run动作。不要把选择清单当新捕获，旧图继续原证据，真实新执行后显示本次封存/其余通道未知。取消/关闭/A→B→A/参数和目录变化/迟到/409/503保原稿及选择；配置/身份不明确准确呈现，不禁原执行。针对Vitest/API、i18n/lint/正式build、按影响playground并冻结bundle真浏览器声明→新执行→正式v2包/inspect，全部通过后功能commit feat(inputs): declare portable inputs through the preparation flow；然后继续3d。
+   只读方案已核对，实施合同详见NEXT_PHASE.md该表后5条：opt-in报告只取冻结plan；区分store CAS、selection revision和config revision；保存外部选择核原remap generation；项目文件由原picker/精确相对路径加后端contained_path归一，取消不调用立即生效的addInputRemap。原act(recheck)未直接清armed/wantsRun/armMaybe，须用实际生命周期测试证明保存零自动运行，失败才作最小修复。真浏览器从未确认workdir到ready，counter0→保存仍0→明确Run恰1→v2包/检视；不预执行或植入Figure。不能将旧result或旧receipt当新选择已封存。
 4. N3c-3d引用搬迁：经核capture声明+旧完整ref+新资源/实际remap规则，复用public svgstore.save在自有stage生成oldRef→newRef。保source/rc_ID/精确argv/patch/receipt/配对字节；ID随内容身份正确变更，历史多版本按完整ref映射，archive-only不装当前marker。新根精确loader和篡改反例过后接N3d；旧无capture证据不自动升级。
 
 Registry/runconfig/launchctx/workdir/inputremap/databinding仍是各自唯一权威。图内mappings.from可含旧绝对请求，仅为私有来源事实，不授本机读权；声明闭包不等于任意Python所有外部通道均已观察。外部读取沿明确批准，不从argv猜权限，不复制敏感参数、机器环境/cwd授权或成功信任；相对视图实测open/exists/glob/native库，绝对原生路径做结构适配实验，不能把open hook正例称全部支持或禁用原native功能。
