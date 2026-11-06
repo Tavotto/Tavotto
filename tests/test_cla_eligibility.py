@@ -173,6 +173,30 @@ def test_a_contributor_the_gate_saw_must_be_in_the_answer(gate, policy):
     assert signed == set() and why == "provider_eligibility_invalid"
 
 
+def test_swapped_ids_between_two_contributors_never_pass(gate, policy):
+    """Codex 评审 #1794：只比两个集合时，两个人的 id 互换也能过。"""
+    people = [
+        {"login": "someone", "sources": ["pr_author"], "ids": [EXTERNAL]},
+        {"login": "other", "sources": ["commit_author"], "ids": [7]},
+    ]
+    swapped = [{"id": 7, "login": "someone"}, {"id": EXTERNAL, "login": "other"}]
+    answer = _answer(gate, policy, contributors=swapped)
+    assert _verdict(gate, policy, answer, contributors=people) == (
+        set(),
+        "provider_eligibility_invalid",
+    )
+    right = [{"id": EXTERNAL, "login": "someone"}, {"id": 7, "login": "other"}]
+    answer = _answer(gate, policy, contributors=right)
+    assert _verdict(gate, policy, answer, contributors=people) == ({"*"}, None)
+
+
+def test_a_login_listed_twice_never_passes(gate, policy):
+    twice = [{"id": EXTERNAL, "login": "someone"}, {"id": 7, "login": "SomeOne"}]
+    for people in (twice, twice[::-1]):  # 后写的那条 id 正确时，也不能靠覆盖过关
+        answer = _answer(gate, policy, contributors=people)
+        assert _verdict(gate, policy, answer) == (set(), "provider_eligibility_invalid")
+
+
 def test_login_case_does_not_matter(gate, policy):
     answer = _answer(gate, policy, contributors=[{"id": EXTERNAL, "login": "SomeOne"}])
     assert _verdict(gate, policy, answer) == ({"*"}, None)

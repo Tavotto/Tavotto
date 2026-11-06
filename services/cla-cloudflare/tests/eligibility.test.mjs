@@ -52,6 +52,13 @@ test('a revision committed during evaluation is refused',async()=>{
   await assert.rejects(eligibility(service,{kind:'pr',number:9},f.gh.head,NONCE),e=>e.code==='state_changed');
  }finally{f.close();}
 });
+test('an authorization that expires during evaluation is refused, not answered',async()=>{
+ const f=await fixture({delegated:false});try{
+  const {service}=f.invocation(),original=service.evaluateTarget.bind(service);
+  service.evaluateTarget=async(...a)=>{const check=await original(...a);f.advanceDatabase(check.proof.expires_at-f.now());return check;};
+  await assert.rejects(eligibility(service,{kind:'pr',number:9},f.gh.head,NONCE),e=>e.code==='authorization_expired');
+ }finally{f.close();}
+});
 for(const [name,target,head,nonce] of [
  ['short nonce',{kind:'pr',number:9},null,'short'],['nonce with a slash',{kind:'pr',number:9},null,'a/'.repeat(20)],
  ['bad head',{kind:'pr',number:9},'zz',NONCE],['bad pr',{kind:'pr',number:0},null,NONCE],

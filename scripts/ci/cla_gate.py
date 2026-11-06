@@ -679,7 +679,7 @@ def _eligibility_verdict(policy: dict, context: dict) -> tuple[set[str], str | N
         people = answer["contributors"]
         if not isinstance(people, list) or not people:
             raise ValueError("contributors")
-        ids, logins = set(), set()
+        ids_by_login: dict[str, int] = {}
         for person in people:
             if not isinstance(person, dict) or set(person) != {"id", "login"}:
                 raise ValueError("contributor")
@@ -687,10 +687,16 @@ def _eligibility_verdict(policy: dict, context: dict) -> tuple[set[str], str | N
                 raise ValueError("contributor")
             if not isinstance(person["login"], str) or not person["login"]:
                 raise ValueError("contributor")
-            ids.add(person["id"])
-            logins.add(person["login"].lower())
+            login = person["login"].lower()
+            if login in ids_by_login:
+                raise ValueError("contributor")
+            ids_by_login[login] = person["id"]
+        # 逐人比对：只比两个集合的话，两个人的 id 互换也能过。
         for seen in context.get("contributors") or []:
-            if seen["login"].lower() not in logins or not ids.issuperset(seen.get("ids") or []):
+            login = seen["login"].lower()
+            if login not in ids_by_login or any(
+                i != ids_by_login[login] for i in seen.get("ids") or []
+            ):
                 raise ValueError("author")
     except (KeyError, TypeError, ValueError, AttributeError):
         return set(), "provider_eligibility_invalid"

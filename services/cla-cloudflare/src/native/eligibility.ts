@@ -19,6 +19,8 @@ export async function eligibility(s:LiveService,target:Target,head:string,nonce:
   const observed=await s.store.databaseNow();
   // A hold, revocation or new signature committed during evaluation must not hide behind the older revision.
   if(await s.store.revision()!==proof.revision)throw new Rejected('state_changed');
+  // Authorization expiry advances no revision. Answer only while the evaluated authorization still holds.
+  if(observed>=proof.expires_at)throw new Rejected('authorization_expired');
   return {protocol:'cla-eligibility-v1',repository_id:s.c.repositoryId,kind:target.kind,...(target.kind==='pr'?{pr:target.number}:{members:proof.members}),
     head_sha:head,base_sha:proof.base_sha,policy_sha256:proof.policy_sha256,contributors:proof.contributors.map(({id,login})=>({id,login})),
     revision:proof.revision,observed_at:observed,nonce,eligible:check.conclusion==='success'};
