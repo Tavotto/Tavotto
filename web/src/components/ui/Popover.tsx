@@ -55,6 +55,7 @@ export function Popover({
       <RP.Trigger asChild>{trigger}</RP.Trigger>
       <RP.Portal>
         <RP.Content
+          data-popover
           ref={keepScrollInPopover}
           align={align}
           side={side}
@@ -69,6 +70,16 @@ export function Popover({
           }}
           aria-label={ariaLabel}
           onOpenAutoFocus={keepFocus ? (e) => e.preventDefault() : undefined}
+          onCloseAutoFocus={(e) => {
+            // FocusScope 卸载后才延迟归还；此时用户可能已打开另一个浮层。
+            // 与 Dialog 相同：焦点已交给层外有效元素就不抢回，否则保留 Radix 的正常归还。
+            const content = e.currentTarget
+            if (!(content instanceof HTMLElement)) return
+            const now = content.ownerDocument.activeElement
+            if (now instanceof HTMLElement && now !== content.ownerDocument.body && now.isConnected && !content.contains(now)) {
+              e.preventDefault()
+            }
+          }}
           onKeyDown={(e) => e.stopPropagation()}
           className={cn(
             'z-popover rounded-lg bg-surface shadow-pop',

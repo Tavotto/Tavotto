@@ -145,6 +145,7 @@ function SearchList<T extends string>({
     <div onKeyDown={onKeyDown} className="flex flex-col gap-1">
       {(options.length >= SEARCH_MIN_ITEMS || query) && (
         <SearchInput
+          data-select-search
           value={query}
           onValueChange={(q) => {
             setQuery(q)
