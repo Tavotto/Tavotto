@@ -42,6 +42,14 @@
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
+### 2026-11-06 v4目录与会话命名空间叶子
+
+- documentformat新增闭式legacy/v4格式、验证委托与named/autosave/versions目录派生；旧project_layout_dir和FigureSnapshots资产根不变，默认legacy路径不新增I/O。v4各层真实symlink/junction拒绝，包括仍指向项目内部的链接。
+- layoutsession.using_namespace复用同一状态文件、锁、atomicio及全部既有规则，v4状态在document_namespaces.v4；默认旧状态/响应保持。未知所选namespace版本/损坏容器拒写；primary缺席但唯一backup含未来namespace时，legacy/v4均不能把备份覆盖掉。
+- 新68项通过/0skip、exit0、2.252秒；旧session与backend恢复108通过/10既有Windows skip、exit0、21.545秒。真实e1bf1fb旧模块八步main+bak字节/响应/readonly与新默认完全一致；旧cleanup/set_last/commit/forget_project保留新v4指针、owner和revision。移除namespace隔离、未知版本闸和目录redirect闸的三项内存反证均确认落点且exit1。Ruff/check、format/check和diff/check通过。
+- 首轮Windows symlink夹具因WinError1314出现20项setup失败，已用本机有权限的真实NTFS junction逐层验证，不skip凑绿；不把junction通过称为Windows symlink/POSIX资格。报告document-format-session-*、document-format-mutant-*在证据根。
+- 本批只是格式/会话叶子；app命名、autosave、版本/缩略图、候选发现及包入口尚未接入，不能标保存完成。chart_source及前端消费者下一批继续。
+
 ### 2026-11-06 保存时仅替换当前安装画布
 
 - R05真实输入审计发现既有保存序列化按activeCanvasId替换全部同id画布，两个原画布A/B会静默存成A/A；缺失/空id同样触发。现改为沿既有安装first-find权威，只替换匹配的第一个实际数组位置，不改ID/顺序或非active内容，不以新增ID准入限制拒绝已有文档。

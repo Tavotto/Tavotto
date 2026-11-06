@@ -68,11 +68,12 @@ import re
 import threading
 import time
 from collections.abc import Callable, Iterable
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, ContextManager, NamedTuple
 
-from . import atomicio, config, documents
+from . import atomicio, config, documentformat, documents
 
 try:  # POSIX
     import fcntl
@@ -94,6 +95,8 @@ LOCK_FILENAME = "layout-sessions.lock"
 LOCK_TIMEOUT_S = 5.0
 EXPORT_DEFAULTS_FILENAME = "export-defaults.json"
 FORMAT_VERSION = 1
+DOCUMENT_NAMESPACES_KEY = "document_namespaces"
+_NAMESPACE: ContextVar[str | None] = ContextVar("layout_session_namespace", default=None)
 
 #: 读取结果四档（`_read()` 的第二项、`GET /api/layout-session` 的 `index`）
 STATUS_OK = "ok"
@@ -126,6 +129,18 @@ class SessionStateUnavailable(OSError):
 
     是 `OSError`：调用方对「元数据写不进去」本来就按 `except OSError` 处理，正文照旧保存。
     """
+
+
+@contextmanager
+def using_namespace(namespace: str | None):
+    """同一文件/锁内选择文档格式视图；退出、异常和其他线程均不泄漏。"""
+    if namespace is not None and namespace != documentformat.CHART4:
+        raise ValueError("unknown document session namespace")
+    token = _NAMESPACE.set(namespace)
+    try:
+        yield
+    finally:
+        _NAMESPACE.reset(token)
 
 
 # ------------------------------- 锁 -----------------------------------------
@@ -439,6 +454,10 @@ def _load(*, preserve: bool = True) -> _Loaded:
         # 主文件不在：通常是首次。但 bak 若来自更新的 Tavotto / 读不动，它可能是唯一一份完整状态——
         # 不能当首次空去覆盖它（只读）。一份好的 v1 bak 不在这里翻案：主文件被删就是想重来
         bak_state, bak_readonly = _load_backup(preserve)
+        if bak_readonly is None and bak_state is not None:
+            # 顶层仍是v1，但备份可能是唯一携带未知namespace版本的副本。
+            # legacy更新也不能把这份未来状态当成普通v1备份整份覆盖。
+            _data, bak_readonly = _namespace_data(bak_state)
         if bak_readonly is None:
             return _Loaded(_empty(), STATUS_MISSING)
         return _from_backup(bak_state, bak_readonly, preserved=True)
@@ -507,15 +526,12 @@ def _from_backup(bak_state: dict | None, bak_readonly: str | None, *, preserved:
 
 def _read() -> tuple[dict, str]:
     """读整份状态，回 `(state, status)`，status 见模块文档的四档。"""
-    loaded = _load()
+    loaded = _select_namespace(_load())
     return loaded.state, loaded.status
 
 
-def _write(state: dict) -> None:
-    reason = state.get("_readonly")
-    if reason:
-        raise SessionStateUnavailable(f"会话状态此刻不能安全写回（{reason}）")
-    payload = {
+def _payload(state: dict) -> dict:
+    return {
         **dict(sorted(state.get("_extra", {}).items())),
         "version": FORMAT_VERSION,
         "projects": dict(sorted(state["projects"].items())),
@@ -523,6 +539,53 @@ def _write(state: dict) -> None:
         "owners": dict(sorted(state["owners"].items())),
         "owner_revisions": dict(sorted(state["owner_revisions"].items())),
     }
+
+
+def _namespace_data(state: dict):
+    namespaces = state.get("_extra", {}).get(DOCUMENT_NAMESPACES_KEY, _DROP)
+    if namespaces is _DROP:
+        return _DROP, None
+    if not isinstance(namespaces, dict):
+        return _DROP, "invalid_namespace_container"
+    data = namespaces.get(documentformat.CHART4, _DROP)
+    if data is _DROP:
+        return _DROP, None
+    if not isinstance(data, dict):
+        return _DROP, "invalid_namespace"
+    if type(data.get("version")) is not int or data["version"] != FORMAT_VERSION:
+        return data, "unknown_namespace_version"
+    return data, None
+
+
+def _select_namespace(loaded: _Loaded) -> _Loaded:
+    namespace = _NAMESPACE.get()
+    if namespace is None:
+        return loaded
+    outer = loaded.state
+    data, reason = _namespace_data(outer)
+    state = _parse_state(data) if isinstance(data, dict) else _empty()
+    state["_outer_state"], state["_namespace"] = outer, namespace
+    reason = outer.get("_readonly") or reason
+    if reason:
+        state["_readonly"] = reason
+    return _Loaded(state, STATUS_DEGRADED if reason else loaded.status)
+
+
+def _write(state: dict) -> None:
+    reason = state.get("_readonly")
+    if reason:
+        raise SessionStateUnavailable(f"会话状态此刻不能安全写回（{reason}）")
+    namespace = _NAMESPACE.get()
+    if state.get("_namespace") != namespace:
+        raise SessionStateUnavailable("会话命名空间在读取后已改变")
+    if namespace is None:
+        payload = _payload(state)
+    else:
+        outer = state["_outer_state"]
+        namespaces = dict(outer["_extra"].get(DOCUMENT_NAMESPACES_KEY, {}))
+        namespaces[namespace] = _payload(state)
+        outer["_extra"][DOCUMENT_NAMESPACES_KEY] = namespaces
+        payload = _payload(outer)
     atomicio.write_json(state_path(), payload, indent=1)
     # 同 payload 再留一份：主文件日后坏了，这是上一份好状态。bak 写不出来不影响这次提交
     try:
@@ -557,12 +620,12 @@ def read_status() -> str:
     """当前读取结果四档之一。不写任何东西（不留损坏副本、不建锁文件）。
 
     只读路径**不拿锁**：主文件只会被 `atomicio` 整份原子替换，读到的永远是完整的一份（旧或新）。"""
-    return _load(preserve=False).status
+    return _select_namespace(_load(preserve=False)).status
 
 
 def read_readonly() -> tuple[dict, str]:
     """`(state, status)`，**不写任何东西、不拿锁**——候选发现这类只读端点用。"""
-    loaded = _load(preserve=False)
+    loaded = _select_namespace(_load(preserve=False))
     return _public(loaded.state), loaded.status
 
 
