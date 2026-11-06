@@ -51,7 +51,9 @@ def test_frozen_journal_selftest_reads_a_signed_catalog(tmp_path, monkeypatch, c
     from journal_catalog_signing import TEST_SEED, b64, build_site, public_key
     from tavotto.engine import journalremote
 
-    catalog = json.loads((ROOT / "tests/golden/journal_vectors.json").read_text())["catalog"]
+    catalog = json.loads((ROOT / "tests/golden/journal_vectors.json").read_text(encoding="utf-8"))[
+        "catalog"
+    ]
     monkeypatch.setattr(journalremote, "TRUSTED_KEYS", {"test-1": b64(public_key(TEST_SEED))})
     index = tmp_path / "index.signed.json"
     index.write_bytes(build_site(catalog, rev=5)["index.signed.json"])
