@@ -2,16 +2,16 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-06 23:05 checkpoint）：已提交功能HEAD仍为8ed50616，当前HEAD=83ccb6b0。v4真实项目包导出、完整/缺件菜单与ZIP对照已验证；438项最终联合检查、85项前端专项及正式构建的范围保持，不等于全分支回归。N3c运行配置导入、执行清单校验与实际资源收集器正在并行实现，尚未集成或取得本批资格。完整搬迁、图例/复杂几何、旧功能及平台最终验收未完成，M1/M2/M3均未通过。**
+> **当前结论（2026-11-07 00:07起复核）：功能HEAD=13720bc4。75b09b57配置恢复、be84ba33真实执行信息导出、13720bc4图幅迁移快照修复均已提交；1c9da4ca修正既有测试提前观测，未改生产保存时序。既有100项、718联合/8新HTTP及真UI/ZIP资格按各自范围保留，本次核原始证据/摘要，未重新运行产品套件；新跑41项文档门禁通过。完整输入声明、外部/prefix资源、严格检视/安装、图例/几何及最终资格未完成。仅剩两份未提交快照检视叶子，M1/M2/M3均未通过。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 
-## 环境（2026-11-06 当前快照）
+## 环境（2026-11-07 当前快照）
 
-- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；最新功能HEAD=`8ed50616`、状态文档HEAD=`83ccb6b0`。23:05已有N3c未提交改动，不能再按“工作树干净”接续。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入这些成果；不能在原目录启动旧版本后据此判断新功能效果。
+- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；最新功能HEAD=`13720bc4`，前项`1c9da4ca/be84ba33/75b09b57`。00:01仅剩svgstore快照检视及其新测试未提交，frame候选已收口。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入这些成果；不能在原目录启动旧版本后据此判断新功能效果。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
-- 较早状态探针见`status-cbd8d95e/`；最新复核为本页23:05记录，已有资格见`n3a-export-staged-final.json`、`n3b-targets-staged.json`，保存/旧包资格见21:41记录所指原报告。未启动通宵调度器，历史“后台sweep正在跑”不当作现行运行状态；服务状态见最新checkpoint。
+- 较早状态探针见`status-cbd8d95e/`；最新复核`status-20261107-current.json`核源码/归档摘要、原始JUnit、计数与文档；既有资格见`n3c-execution-export-staged.json`、`n3c-real-ui-correct-kind-qualification.json`、`n3c-frame-ui-qualification.json`。未启动通宵调度器，历史“后台sweep正在跑”不当作现行运行状态；服务状态见最新checkpoint。
 - 最新 NEXT_PHASE 和提示词直接在当前实施分支维护；不再依赖历史 review 文档分支才能取得新计划。
 
 ## 批次状态（2026-11-06 复核后；按完整退出条件）
@@ -34,13 +34,42 @@
 | R01/R02 | core_partial / multi_target_verified | 3236307c、8e6c399a | 跨父/split/errorbar/colorbar共同目标与预览通过；任意clip、欠定成员paint slots和图例仍缺 |
 | R03 | runner_and_source_consumers_integrated | 029dfac2、242cabc0、c2fd47d5、5b2b1403、2452d8fc | 受控runner与精确INPUT附件接真实API/UI/导出；不宣称全产品总进程cap或最终资格 |
 | R04 | affected_checks_passed | a8a088cf、18907d65、cbd8d95e | 请求序号/表单/项目切换、late response 和单项 drop 均有受影响测试；Dialog 已可发起真实绑定；完整编辑器生命周期在 R06 追验 |
-| R05 | binding_and_recovery_ui_verified / package_partial | 5abb9a7d、95684f89、264ce59c、a7008840、d7b6eef9、d7a73ce1、ffe2fb32、c40805bf、e468d516、336783bf、71e637c8、206a1c34、9a9843d2、8ed50616 | 保存关联/明确恢复/双窗口真UI已验；v4混合资源备份导出与目标计划已提交并验证，完整运行资源闭包/检视/安装仍缺 |
+| R05 | binding_and_recovery_ui_verified / package_partial | 5abb9a7d、95684f89、264ce59c、a7008840、d7b6eef9、d7a73ce1、ffe2fb32、c40805bf、e468d516、336783bf、71e637c8、206a1c34、9a9843d2、8ed50616、75b09b57、be84ba33、13720bc4 | 保存关联/恢复/双窗口、v4备份/目标计划、保配置ID与已知执行输入导出已验；完整声明/外部输入、检视/安装仍缺 |
 | R06 | product_editing_and_cold_restore_verified / partial | 242cabc0、53393810、8e6c399a、264ce59c | 冷开后Inspector编辑、undo/redo和exact显示已验；图例、完整操作及复杂几何仍缺 |
 | R07 | partial / original_five_formats_ui_verified | 5bc82a81、c2fd47d5、2a40fec9、c9fa29a4、8fa84f5d、a06cc3d3 | 原图五格式真实UI及独立产物已验，EPS接线已提交；分享与完整双系列M1未完成 |
 | R08 | full_edit_restore_verified / partial | cae96f89、029dfac2、53393810 | 生产v2导出与真UI完整编辑恢复通过；A采用、分享选择和正式项目迁移待补 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-07 00:07起 执行效果复核与下一阶段安排
+
+- 用户本轮要求复核执行情况/效果并安排下一阶段；未新增功能或改生产代码。核实实施分支仍为`zixu.wang/svg-computational-r00@13720bc4`；原目录仍clean main@69bcafae，成果未合入。当前未提交代码仅svgstore及新检视测试，原SHA与冻结报告一致；此前三个子代理均completed，无在途写入任务。未fetch、建分支、合并、发布或新建调度任务。
+- 对照原始JUnit：718联合/8新HTTP/145配置/56前端/100图幅各自0fail/0skip；N3b叶子274收集=243通过/31权限skip。核7个执行源码SHA与冻结资格一致，两个真UI包归档SHA与记录一致，追加式计数文件仍1且SHA不变；本轮没有重跑产品测试或浏览器操作。实际查看最终旧图幅截图：曲线和runtime可见，提示准确说明依赖不完整，坐标数字/文字边缘裁切仍可见，不能称整体最终可用。
+- 新跑现有`test_agents_rules_index.py`与`test_docs_references.py`共41通过/0fail/0skip/exit0，见`status-20261107-docs-command.json`与`status-20261107-docs.log/.xml`。三份稳定文档同步：当前状态、最近N3b/c-3→N3d/e/f依赖与功能提交边界、N4–N8后续、可直接复制的无人值守提示词；清除旧23:05在途所有权/“配置和事实收集未实现”指令，历史进度保留。
+- 导入身份另有实际核对：共享venv裸`python -c import tavotto`默认指向另一旧树；当前pytest.ini的`pythonpath=src`在collection前正确选择本实施树。独立collection探针确认tavotto/packageexecution/runconfig/chartpackage均来自当前src，95项仅收集、未运行，见`status-20261107-pytest-import.json`。当前浏览器server显式设置sys.path/PYTHONPATH，原冷子进程测试也显式绑定当前src。后续手工Python/服务必须指定当前src，不能仅凭venv路径宣称源码身份；不把裸解释器发现误报为既有pytest资格失败。
+- 当前自有服务身份重新核对：64860/23989、75464/23988及浏览器39048/75500/66204的创建时间和命令与前记录一致；均未重启/重seed。新N3c服务与旧N3a服务继续区分，服务不是通宵调度器。详细复核与当前差异见`status-20261107-current.json`。
+- 下一条实现工作：以活跃Prepared/现svgstore权威接N3b真实只读检视与全资源语义；N3c-3独立输入/资源可并行，主代理唯一写共享合同；随后独占新项目安装、原writer一次正文/回读、删自建测试源/清缓存/新进程整链。图例、裁剪/成员几何、完整M1/M2/M3继续待验；不重做75b09b57/be84ba33/13720bc4，不把叶子或一夜结束当完成。
+
+### 2026-11-07 00:01 旧图幅兼容已收口，接续实际检视与完整输入声明
+
+- `1c9da4ca`单独修正旧测试的观测：switchDocument只保证安装/排队，不能await一轮微任务就要求clean。只读真实回执证据显示原writer恰写一次、磁盘与内存快照均保留，saved是正常1600ms反馈态；因此改等公开onDocumentPersisted，严格核一次PUT及实际盘体，成功态接受saved/clean。生产store/writer/时序一行未改，首红和旧/新对照保留；报告`n3c-save-promise-review.md`。
+- `13720bc4`提交2文件FRAME兼容修复与对应规则：迁移真正追加override时撤旧ref，其余三类不动。最终7文件100项/0fail/0skip/exit0；随后lint/build/playground/check均0，最终指纹`9c11afde28799951`。先前99/1为有效历史失败，不能回写成当时通过；最终资格见`n3c-frame-lifecycle-final.xml`与`n3c-compat-frontend-build.json`。
+- 真实新鲜浏览器加载经public AS保存且严格回读的旧输入：runtime无marker、空patch、原空patch有效ref。新bundle立即请求中带FRAME/marker且无过期ref；同一菜单导出200，ZIP只补正确FRAME快照引用，原所有编辑/几何/模型和rc/argv保持，两个运行图共用正确新ref，计数文件SHA仍1。`n3c-frame-ui-qualification.json`、`n3c-ui-legacy-frame.json`及`n3c-browser/legacy-frame-regression/`保独立证据，不能以此替代完整M1。
+- 当前根接管仅两份未提交代码：`svgstore.py`与`tests/test_svgstore_portable_inspect.py`，SHA和243通过/31权限跳过见23:51记录。它仍未接生产v4检视消费者；不提交成“已安装”。子代理均已释放，没有遗留构建/测试句柄。下一条实际工作是沿该API接严格包检视/全资源语义，再补N3c完整声明与外部/prefix输入，之后N3d–f；不要重做已提交的配置/事实收集/FRAME。
+- 新增fresh浏览器`tavotto-frame-legacy` daemon75500，创建2026-11-07T00:01:17.572366+08:00，当前打开working `d_n3c_legacy_frame_fix`，该槽已成为fixture durable last；原working `d_n3c_browser`与named完整保留。仍复用PID64860/23989服务，未重启或重跑脚本。00:01代码分支未改远端/原main，goal active。
+
+### 2026-11-06 23:51 已知执行资源已接真实导出，继续兼容与完整迁移
+
+- 本goal turn为progress：同一实施分支分功能提交`75b09b57`（运行配置恢复/共同存储锁）与`be84ba33`（18文件，闭式执行清单、已知输入收集、真实导出和UI），根精确stage，不混入下批候选；未新建分支、fetch、合并或发布。原main未改。功能详细资格索引`n3c-execution-export-staged.json`；不同范围/时刻用例不相加成全量。
+- 配置API保原rc_ID和精确argv，幂等/冲突/敏感占位/坏存储/容量明确处理，导入不设置默认/成功事实；所有新版writer复用同一跨进程guard，旧双进程丢写实际反例已关闭，原无参数成功遇锁不可用仍零登记写继续。最终145项/0skip、4实际反证、旧完整JSON字节对拍通过，见`n3c-runconfig-portable-freeze.md`。原`atomicio`替换后目录fsync失败并不保证回滚，本批文案不伪称所有I/O失败零改；不把咨询锁称跨版本CAS。
+- `execution`v1现在被正式manifest与资源reader共同校验，真实导出携登记子集、配置、静态/已观察CSV/helper及可携精确file remap；同脚本的已知无参数与未知参数来源分别保留。没有完整输入声明时coverage必须incomplete，已知缺件单列missing，界面准确区分两者；file计数含数据。新95 validator/34 collector叶子专项通过，真实8HTTP证明坏字段/错basis摘要被正式reader拒绝，删配置/敏感/旧basis/缺helper/混合上下文/旧包路径已验；见对应n3c-execution-*报告。
+- 根最终单一联合命令718通过/0skip/exit0，原v4/旧包/容器/目标计划/错误合同/规则均在其实际范围；56前端专项、正式i18n/lint/build/playground/check均0，指纹`7aad37b5d51aebfa`。全仓Ruff与format1438文件通过，agents_budget --check退出0。更早295项初联验XML零失败但观察句柄关闭前未留exit，已由带原始log/exit文件的最终718命令取代，不补写原退出码。
+- 新自建中文项目真实菜单200，完整正文等于实际请求，5个file资源/原rc_ID和argv/全部已知输入字节及14项目目标核对通过；FRAME正式保存后runtime预览200且图像完整，脚本计数始终1。`n3c-real-ui-correct-kind-qualification.json`、`n3c-ui-frame-save-continue.json`保真证据。首夹具错误为runtime误写pdf、漏frame marker，后经public接口修kind、fresh浏览器真实F2→AS PUT→CtrlS冻结正确配对；首404/422、错误POST观察超时（实际AS为PUT）、静态CSV文件名假设错误均保留。并发夹具JSONL有交错记录，最终计数证明改用保全的计数文件SHA，不把坏行当没有事件。
+- 同时发现并修出一个兼容候选：读档确实追加FRAME时旧figureSnapshot须撤销，其余仅marker/已有FRAME/已marker路径保留，原对象不变。两文件由self冻结，旧行为新回归3红、修后49专项绿、3故障反证有效；较广7文件100项仍99通过/1失败，旧新独立case都在`figureSnapshotRestoration.test.ts:166`得到saving而非clean。export_adapter_review正在只读定位真实保存完成时刻与该断言主语，不能将它写为全绿或擅改产品同步时序。候选尚未build/commit，见`n3c-frame-migration-validation.json`。
+- N3b公有`svgstore.inspect_portable_snapshot`及新测试也已冻结未提交，只证明档案内部身份/owner/配对blob，不签当前remap或执行权。新旧联合243通过/31 Windows symlink权限跳过，4反证有效，旧38定义原文保持；API/边界见`n3b-svgstore-portable-freeze.md`。正式v4检视端点/全store语义/安全安装尚未接，不能把此叶子报作完成。
+- 当前未提交所有权：根接管`src/tavotto/engine/svgstore.py`、`tests/test_svgstore_portable_inspect.py`、`web/src/lib/figureFrameMigration.ts`、`web/src/lib/figureFrame.test.ts`；索引为空。下一动作先收口保存断言/FRAME候选，实际接N3b消费者及N3c剩余完整声明/外部资源，再N3d–f真实安装/冷迁移、N4–N8。现有项目包不是完整可复现运行项目，目标范围保持，goal active。
+- 本轮新增自有服务：PID64860，2026-11-06T23:26:50.033107+08:00，`n3c-browser/server.py`、端口23989、exec93934，元数据见该目录process.json；新fresh浏览器`tavotto-execution-v4` daemon39048（23:40:27.365023+08:00）。旧自有75464/23988与daemon66204在本轮已核精确身份，未终止；更早PID仅历史线索。新CLI产物全在外部证据根，未污染源码目录；服务不是调度器。
 
 ### 2026-11-06 23:05 执行情况复核与下一阶段收敛
 
