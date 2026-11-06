@@ -31,8 +31,9 @@ test(`成功空图 → 选择脚本目录 → 曲线恢复数据 → 保存并�
   writeFileSync(path.join(dir, 'data', 'run_1.txt'), '3 1 4\n')
   writeFileSync(path.join(dir, 'tavotto_registry.json'), JSON.stringify({ version: 1, scripts: {} }))
   if (legacy) await page.addInitScript(() => localStorage.setItem('tavotto.preparationPanel', 'off'))
+  let a: Awaited<ReturnType<typeof app>> | undefined
   try {
-    const a = await app({ figures: dir })
+    a = await app({ figures: dir })
     await page.goto(a.baseURL)
     const empty = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/engine/render' && r.ok(), { timeout: 120_000 })
     await page.locator('[data-script-run="plot.py"]').click({ timeout: 30_000 })
@@ -78,7 +79,9 @@ test(`成功空图 → 选择脚本目录 → 曲线恢复数据 → 保存并�
     await expect.poll(() => image.innerHTML(), { timeout: 120_000 }).toContain('points: 3')
     expect(readFileSync(path.join(dir, 'plot.py'), 'utf-8')).toBe(original)
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    // 先释放 worker 的 cwd；Windows 不允许删除仍被进程用作当前目录的项目。
+    await a?.stop()
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
   }
 })
 }
