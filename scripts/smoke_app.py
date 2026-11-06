@@ -875,6 +875,26 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         print(f"· ssl 自检通过: {(probe.stdout or '').strip()}")
+        try:
+            journal_probe = subprocess.run(
+                [args.exe, "--journal-selftest"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=120,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            print(f"::error::期刊验签自检没能运行: {exc}", file=sys.stderr)
+            return 1
+        if journal_probe.returncode != 0:
+            print(
+                f"::error::冻结产物期刊验签自检失败（退出码 {journal_probe.returncode}）: "
+                f"{(journal_probe.stderr or journal_probe.stdout or '').strip()[-600:]}",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"· {(journal_probe.stdout or '').strip()}")
 
     figures = Path(args.figures).resolve()
     if not figures.is_dir():
