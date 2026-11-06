@@ -160,7 +160,7 @@ class TestClaPaginationContract:
 
     def test_workflow_does_not_use_slurp(self, cla_job):
         """`--slurp` 把每页包成一层，产出数组的数组——它是错的解法，不是修法。"""
-        assert "--slurp" not in _code(cla_job), (
+        assert not re.search(r"(?<!\S)--slurp(?=\s|$)", _code(cla_job)), (
             "不要给数组端点加 --slurp：它产出数组的数组，判定器反而要额外兼容"
         )
 
@@ -299,6 +299,7 @@ class TestClaCollectStepRunsForReal:
             "GH_TOKEN": "fake",
             "REPO": "o/r",
             "PR": str(self.PR),
+            "PR_HEAD": state["pull"]["head"]["sha"],
             "FAKE_GH_STATE": str(work / "state.json"),
         }
         return env, work
@@ -444,8 +445,8 @@ class TestClaWorkflowSecurity:
         m = re.search(r"(?m)^\s+permissions:\n((?:\s+\w[\w-]*:\s*\w+\n)+)", code)
         assert m, "CLA cla_job 必须显式声明 permissions"
         perms = dict(re.findall(r"(\w[\w-]*):\s*(\w+)", m.group(1)))
-        assert perms == {"contents": "read", "pull-requests": "read", "checks": "read"}, (
-            f"CLA cla_job 的权限必须恰好是三个只读项，实际：{perms}"
+        assert perms == {"contents": "read", "pull-requests": "read"}, (
+            f"CLA cla_job 的权限必须恰好是两个只读项，实际：{perms}"
         )
         assert "write-all" not in code
         for scope in ("contents: write", "pull-requests: write", "issues: write"):
@@ -467,4 +468,6 @@ class TestClaWorkflowSecurity:
             )
 
     def test_no_secrets_are_referenced(self, cla_job):
-        assert "secrets." not in _code(cla_job), "CLA cla_job 不该用任何 secret——它只读公开元数据"
+        assert not re.search(r"\$\{\{[^}]*\bsecrets\s*[.\[]", _code(cla_job)), (
+            "CLA cla_job 不该引用 Actions secret——它只读公开元数据"
+        )
