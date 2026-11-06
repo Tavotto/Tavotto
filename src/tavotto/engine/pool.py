@@ -13,6 +13,7 @@ import ast
 import collections
 import contextlib
 import contextvars
+import copy
 import functools
 import hashlib
 import json
@@ -2803,12 +2804,112 @@ def _record_execution(worker, execution_id: str) -> None:
         worker.execution_id = execution_id
         worker.execution_started_ns = started
         worker.execution_observation_unknown = worker.execution_unknown_started_ns > started
+        _clear_captured_inputs(worker)
     callback = _execution_observer
     if callback is not None:
         try:
             callback(worker, execution_id)
         except Exception:  # noqa: BLE001 — bookkeeping cannot block user code
             LOG.warning("Execution observer failed", exc_info=True)
+
+
+def _clear_captured_inputs(worker) -> None:
+    worker.last_captured_inputs = None
+    worker.last_captured_build = None
+
+
+def _input_declaration_payload(worker, command, payload: dict) -> dict:
+    if command not in _EXECUTING_COMMANDS:
+        return payload
+    from . import declaredinputs
+
+    try:
+        extension = declaredinputs.payload_for(worker)
+    except declaredinputs.DeclaredInputsError:
+        worker.last_input_declaration_issue = "unavailable"
+        return payload
+    worker.last_input_declaration_issue = None
+    return {**payload, **copy.deepcopy(extension)}
+
+
+def _store_build_metadata(worker, response: dict, *, detached: bool = False) -> None:
+    if detached:
+        response = copy.deepcopy(response)
+    worker.last_build_descriptors = list(response.get("descriptors") or [])
+    worker.last_build_pdf_pages = list(response.get("pdf_pages") or [])
+    worker.last_build_runtime = _runtime_of(response)
+    misses = response.get("probe_misses")
+    worker.last_build_probe_misses = misses if isinstance(misses, list) else None
+    worker.last_build_execution_id = response.get("execution_id")
+    worker.last_build_artifact_probe = response.get("artifact_probe")
+    worker.last_build_script_inputs = _script_inputs_of(response)
+    sha = response.get("source_sha256")
+    worker.last_build_source_sha256 = sha if isinstance(sha, str) else None
+
+
+def _remember_build_response(worker, response: dict) -> None:
+    if "captured_inputs" not in response:
+        _store_build_metadata(worker, response)
+        return
+    with worker._execution_lock:
+        if response.get("execution_id") != worker.execution_id:
+            return
+        capsule = worker.last_captured_build
+        if capsule is not None and capsule["execution_id"] == worker.execution_id:
+            _store_build_metadata(worker, capsule, detached=True)
+        else:
+            _store_build_metadata(worker, response)
+
+
+def _accept_captured_inputs(worker, response: dict) -> None:
+    """Accept a capture and its frozen build capsule only for the winning execution."""
+    execution_id = response.get("execution_id")
+    if not executionfact.valid_id(execution_id):
+        return
+    if "captured_inputs" not in response:
+        with worker._execution_lock:
+            if execution_id == worker.execution_id:
+                _clear_captured_inputs(worker)
+        return
+    from . import inputdeclaration
+
+    fact = inputdeclaration.validate_fact(
+        response.get("captured_inputs"), execution_id=execution_id
+    )
+    capsule = response.get("captured_build")
+    required = {"execution_id", "runtime", "descriptors", "source_sha256"}
+    optional = {"pdf_pages", "probe_misses", "artifact_probe", "script_inputs"}
+    valid = (
+        fact is not None
+        and isinstance(capsule, dict)
+        and required <= capsule.keys() <= required | optional
+        and capsule["execution_id"] == execution_id
+        and isinstance(capsule["runtime"], dict)
+        and isinstance(capsule["descriptors"], list)
+        and isinstance(capsule["source_sha256"], str)
+        and re.fullmatch(r"[0-9a-f]{64}", capsule["source_sha256"]) is not None
+        and capsule["source_sha256"] == fact["declaration"]["script"]["sha256"]
+        and all(
+            key not in capsule or isinstance(capsule[key], list)
+            for key in ("pdf_pages", "probe_misses", "script_inputs")
+        )
+        and ("artifact_probe" not in capsule or isinstance(capsule["artifact_probe"], dict))
+    )
+    with worker._execution_lock:
+        if execution_id != worker.execution_id:
+            return
+        if not valid:
+            _clear_captured_inputs(worker)
+            return
+        pid = response.get("supervisor_child_pid")
+        if isinstance(worker, WorkerdWorker) and type(pid) is int and pid > 0:
+            worker.child_pid = pid
+        capsule = copy.deepcopy(capsule)
+        worker.last_captured_inputs = fact
+        worker.last_captured_build = capsule
+        _store_build_metadata(worker, capsule, detached=True)
+        worker.built = True
+        worker.build_failed = False
 
 
 def refresh_execution(worker) -> str | None:
@@ -3157,6 +3258,9 @@ class EngineWorker:
     #: 最近一次成功 build **实际读到并执行**的脚本字节的 sha256（worker 自报，build 响应的 `source_sha256`）；
     #: 没 build / build 失败 / 老 worker 没带 = None。TAF 改图验证比的是它，不是 spawn 时采样的 `script_sha1`。
     last_build_source_sha256: str | None = None
+    last_captured_inputs: dict | None = None
+    last_captured_build: dict | None = None
+    last_input_declaration_issue: str | None = None
     #: 最近一次 build 每一问的去向计数（`inputbroker.InputFacts`）与它绑定的执行转录（只有 id 与计数）。
     last_input_facts: dict | None = None
     #: 最近一次 build 响应里沙盒落空的探路调用（#1254）：build 成功但图可能是空的时，渲染 / 试运行据此挂 `workdir_hint`
@@ -3437,6 +3541,7 @@ class EngineWorker:
         obj = {**obj, **_run_payload(getattr(self, "run", None))}
         if getattr(self, "artifact_source", None) is not None:
             obj = {**obj, "artifact_source": self.artifact_source}
+        obj = _input_declaration_payload(self, obj.get("cmd"), obj)
         # None → 取模块常量的**当前**值（默认参数会在 def 时定死，测试改不动）
         timeout = REQUEST_TIMEOUT if timeout is None else timeout
         _note_dispatch(self)
@@ -3544,6 +3649,7 @@ class EngineWorker:
             )
         if not resp.get("ok"):
             raise self._error_of(resp)
+        _accept_captured_inputs(self, resp)
         return _merge_timings(
             resp, (t_lock - t_req) * 1000.0, (time.perf_counter() - t_req) * 1000.0
         )
@@ -3557,9 +3663,11 @@ class EngineWorker:
                 resp = self.request({"cmd": "build"}, BUILD_HARD_TIMEOUT)
         except inputbroker.TranscriptUnavailable as exc:
             self.build_failed = True
+            _clear_captured_inputs(self)
             self.last_build_source_sha256 = None
             raise WorkerError(str(exc), code=exc.code) from exc
         except BaseException:
+            _clear_captured_inputs(self)
             self.build_failed = True
             self.last_build_source_sha256 = None
             raise
@@ -3569,22 +3677,14 @@ class EngineWorker:
             getattr(self, "out_dir", None) is not None
         ):  # 只造了一半的 worker（测试替身）没有产物目录
             figcapture.clear_preview_poison(self.out_dir)
-        self.last_build_descriptors = list(resp.get("descriptors") or [])
-        self.last_build_pdf_pages = list(resp.get("pdf_pages") or [])
-        self.last_build_runtime = _runtime_of(resp)
-        misses = resp.get("probe_misses")
-        self.last_build_probe_misses = misses if isinstance(misses, list) else None
-        self.last_build_execution_id = resp.get("execution_id")
-        self.last_build_artifact_probe = resp.get("artifact_probe")
-        self.last_build_script_inputs = _script_inputs_of(resp)
-        sha = resp.get("source_sha256")
-        self.last_build_source_sha256 = sha if isinstance(sha, str) else None
+        _remember_build_response(self, resp)
         try:
             inputbroker.finished(self, self.last_build_script_inputs)  # 执行转录（T08）
         except BaseException:
             # 转录没绑上：这份热结果不能被后续渲染 / 导出复用——回到「没 build」，下次走 ensure_built
             self.built = False
             self.build_failed = True
+            _clear_captured_inputs(self)
             self.last_build_descriptors = []
             self.last_build_pdf_pages = []
             self.last_build_source_sha256 = None
@@ -3935,6 +4035,9 @@ class WorkerdWorker:
     #: 最近一次成功 build **实际读到并执行**的脚本字节的 sha256（worker 自报，build 响应的 `source_sha256`）；
     #: 没 build / build 失败 / 老 worker 没带 = None。TAF 改图验证比的是它，不是 spawn 时采样的 `script_sha1`。
     last_build_source_sha256: str | None = None
+    last_captured_inputs: dict | None = None
+    last_captured_build: dict | None = None
+    last_input_declaration_issue: str | None = None
     last_input_facts: dict | None = None
     #: 最近一次 build 响应里沙盒落空的探路调用（#1254）：build 成功但图可能是空的时，渲染 / 试运行据此挂 `workdir_hint`
     last_build_probe_misses: list | None = None
@@ -4191,6 +4294,7 @@ class WorkerdWorker:
         payload = {**(payload or {}), **_run_payload(getattr(self, "run", None))}
         if getattr(self, "artifact_source", None) is not None:
             payload = {**(payload or {}), "artifact_source": self.artifact_source}
+        payload = _input_declaration_payload(self, op, payload)
         _note_dispatch(self)
         self._touch()
         t_req = time.perf_counter()
@@ -4245,6 +4349,7 @@ class WorkerdWorker:
                     continue
                 raise self._to_worker_error(exc, is_build=op == "build") from exc
             watch.acknowledge(resp)
+            _accept_captured_inputs(self, resp)
             if resp.get("hash_mismatch"):
                 # 本次结果照常可用（worker 执行了），但两侧的规范化实现已经分叉
                 LOG.warning(
@@ -4318,9 +4423,11 @@ class WorkerdWorker:
                     resp = self._call("build", BUILD_HARD_TIMEOUT, idle_timeout=BUILD_IDLE_TIMEOUT)
         except inputbroker.TranscriptUnavailable as exc:
             self.build_failed = True
+            _clear_captured_inputs(self)
             self.last_build_source_sha256 = None
             raise WorkerError(str(exc), code=exc.code) from exc
         except BaseException:
+            _clear_captured_inputs(self)
             self.build_failed = True  # 与 EngineWorker 同一个判据
             self.last_build_source_sha256 = None
             raise
@@ -4330,22 +4437,14 @@ class WorkerdWorker:
             getattr(self, "out_dir", None) is not None
         ):  # 只造了一半的 worker（测试替身）没有产物目录
             figcapture.clear_preview_poison(self.out_dir)
-        self.last_build_descriptors = list(resp.get("descriptors") or [])
-        self.last_build_pdf_pages = list(resp.get("pdf_pages") or [])
-        self.last_build_runtime = _runtime_of(resp)
-        misses = resp.get("probe_misses")
-        self.last_build_probe_misses = misses if isinstance(misses, list) else None
-        self.last_build_execution_id = resp.get("execution_id")
-        self.last_build_artifact_probe = resp.get("artifact_probe")
-        self.last_build_script_inputs = _script_inputs_of(resp)
-        sha = resp.get("source_sha256")
-        self.last_build_source_sha256 = sha if isinstance(sha, str) else None
+        _remember_build_response(self, resp)
         try:
             inputbroker.finished(self, self.last_build_script_inputs)  # 执行转录（T08）
         except BaseException:
             # 转录没绑上：这份热结果不能被后续渲染 / 导出复用——回到「没 build」，下次走 ensure_built
             self.built = False
             self.build_failed = True
+            _clear_captured_inputs(self)
             self.last_build_descriptors = []
             self.last_build_pdf_pages = []
             self.last_build_source_sha256 = None

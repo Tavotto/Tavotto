@@ -551,14 +551,15 @@ fn request(
     let revision = inner.revision.load(Ordering::SeqCst);
     let request_id = new_request_id();
     let (line, patch_hash) = envelope(cmd, generation, revision, &request_id, stem, payload);
-    {
+    let child_pid = {
         let guard = inner.proc.lock().unwrap();
         let proc = guard.as_ref().ok_or_else(|| {
             ProtoError::new(CODE_SESSION_DEAD, true, "渲染进程已退出，会话需要重建")
         })?;
         // 写只是往写线程的 channel 里塞一条——**永不阻塞**。
         proc.send_line(line);
-    }
+        proc.pid
+    };
     let response = await_response(inner, events_rx, generation, &request_id, timeout, idle)?;
 
     let mut result = serde_json::Map::new();
@@ -577,7 +578,17 @@ fn request(
     if let Some(hash) = patch_hash {
         result.insert("canonical_patch_hash".into(), json!(hash));
     }
+    attach_capture_pid(&mut result, child_pid);
     Ok(Value::Object(result))
+}
+
+fn attach_capture_pid(result: &mut serde_json::Map<String, Value>, child_pid: u32) {
+    // This name is reserved for the supervisor. A worker body cannot authorize
+    // its own PID, including by sending this field without a capture.
+    result.remove("supervisor_child_pid");
+    if result.contains_key("captured_inputs") {
+        result.insert("supervisor_child_pid".into(), json!(child_pid));
+    }
 }
 
 /// 看门狗多久看一眼日志。与 Python 池的 `_PROGRESS_POLL` 同一个数。
@@ -1204,5 +1215,31 @@ mod tests {
         // missing_dependency 的识别仍在 Python 侧（按 traceback 正则），
         // 这里只负责一个字节都不改地把 traceback 交出去
         assert_eq!(err.to_json()["traceback"], "tb");
+    }
+
+    #[test]
+    fn capture_pid_is_the_dispatched_child_not_the_worker_claim() {
+        let mut result = json!({
+            "captured_inputs": {"version": 1},
+            "runtime": {"pid": 999},
+            "supervisor_child_pid": 777,
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+        attach_capture_pid(&mut result, 42);
+        assert_eq!(result["supervisor_child_pid"], json!(42));
+        assert_eq!(result["runtime"]["pid"], json!(999));
+    }
+
+    #[test]
+    fn ordinary_replies_keep_the_old_shape_and_cannot_forge_control_metadata() {
+        let original = json!({"manifest": {}, "execution_id": "original"});
+        let mut result = original.as_object().unwrap().clone();
+        attach_capture_pid(&mut result, 42);
+        assert_eq!(Value::Object(result.clone()), original);
+        result.insert("supervisor_child_pid".into(), json!(777));
+        attach_capture_pid(&mut result, 42);
+        assert_eq!(Value::Object(result), original);
     }
 }

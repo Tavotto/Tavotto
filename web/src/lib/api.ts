@@ -2245,6 +2245,8 @@ export interface ArtifactProvenance {
 export interface ArtifactReceiptFacts {
   receipt_identity: string
   receipt_id: string
+  /** Explicit file evidence captured during this execution; not whole-input coverage. */
+  captured_inputs?: { version: 1; revision: string }
   completeness: 'complete' | 'partial'
   runtime_rejected: string | null
   pid_check: string | null

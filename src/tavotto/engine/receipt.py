@@ -228,6 +228,9 @@ class ExecutionReceipt:
     #: 执行实例的私有键：native 会话 id + 屏障代次；safe 实际执行 id（旧 worker 留空）。
     #: 两次启动或用户代码续跑后的不同 Figure 不能得到同一个 `receipt_id`。
     instance: str = ""
+    #: Optional evidence captured around this actual execution; never current binding.
+    #: Only the path-free revision is public. No field is emitted for old executions.
+    captured_inputs: dict | None = None
 
     def __post_init__(self) -> None:
         if self.profile not in execspec.PROFILES:
@@ -250,6 +253,13 @@ class ExecutionReceipt:
             raise ValueError("被拒的自报不能同时留在 runtime 里")
         if self.binding is not None and not isinstance(self.binding, dict):
             raise ValueError("binding 必须是 None 或对象")
+        if self.captured_inputs is not None:
+            from . import inputdeclaration
+
+            checked = inputdeclaration.validate_public_fact(self.captured_inputs)
+            if checked is None:
+                raise ValueError("Invalid captured input declaration")
+            object.__setattr__(self, "captured_inputs", execspec.FrozenDict(checked))
 
     # ---------------- 完备性 ----------------
     @property
@@ -337,6 +347,8 @@ class ExecutionReceipt:
             # 数据身份：换一份数据就是另一次执行（同名干扰 / 预检后被改都在这一维上分开）
             "inputs": sorted(self.observed_files().items()),
         }
+        if self.captured_inputs is not None:
+            payload["captured_inputs"] = dict(self.captured_inputs)
         return _sha(payload)
 
     def private_invalidation_key(self) -> str:
@@ -370,7 +382,7 @@ class ExecutionReceipt:
         身份 / 完备性 / generation / source revision / 解释器版本 / 关键包版本 / 数据绑定核对 / 观察的完备性。"""
         rt = self.runtime or {}
         check = self.binding_check()
-        return {
+        out = {
             "receipt_identity": self.public_identity(),
             "receipt_id": self.receipt_id,
             "completeness": self.completeness,
@@ -395,6 +407,9 @@ class ExecutionReceipt:
                 "unobserved": len(check["unobserved"]),
             },
         }
+        if self.captured_inputs is not None:
+            out["captured_inputs"] = dict(self.captured_inputs)
+        return out
 
     # ---------------- 序列化 ----------------
     def to_payload(self, *, include_private: bool = False) -> dict:
@@ -440,6 +455,8 @@ class ExecutionReceipt:
             "binding_check": self.binding_check(),
             "descriptors": [dict(d) for d in self.descriptors],
         }
+        if self.captured_inputs is not None:
+            out["captured_inputs"] = dict(self.captured_inputs)
         if include_private:
             out["private_invalidation_key"] = self.private_invalidation_key()
             out["interpreter"] = self.interpreter
@@ -508,6 +525,29 @@ def from_worker(
         if isinstance(build_resp, dict) and "execution_id" in build_resp
         else getattr(worker, "execution_id", None)
     )
+    captured_inputs = None
+    latest_id = getattr(worker, "execution_id", None) or getattr(
+        worker, "last_build_execution_id", None
+    )
+    if (
+        runtime is not None
+        and rejected is None
+        and pid_check in (PID_CHECK_OK, PID_CHECK_LAUNCHER)
+        and executionfact.valid_id(execution_id)
+        and execution_id == latest_id
+    ):
+        from . import inputdeclaration
+
+        fact = inputdeclaration.validate_fact(
+            getattr(worker, "last_captured_inputs", None), execution_id=execution_id
+        )
+        expected_scope = {
+            "script": spec.target,
+            "cwd_mode": spec.cwd_mode,
+            "run_config": spec.run_config or None,
+        }
+        if fact is not None and fact["declaration"]["scope"] == expected_scope:
+            captured_inputs = inputdeclaration.public_fact(fact)
     return ExecutionReceipt(
         profile=spec.profile,
         control_plane=control_plane,
@@ -526,6 +566,7 @@ def from_worker(
         launcher=_launcher_public(worker),
         session_env=_session_env(worker),
         instance=execution_id if executionfact.valid_id(execution_id) else "",
+        captured_inputs=captured_inputs,
     )
 
 

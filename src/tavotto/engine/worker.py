@@ -40,6 +40,7 @@ import argparse
 import ast
 import base64
 import contextlib
+import copy
 import errno
 import faulthandler
 import hashlib
@@ -292,6 +293,7 @@ import matplotlib.figure as mfigure  # noqa: E402
 #: （safe 档不像 native 那样要分两阶段避开 matplotlib：这里 matplotlib 本来就先 import）。
 _ENGINE_MODULES = (
     "executionfact",
+    "inputdeclaration",
     "figcapture",
     "patchspec",
     "pathgeom",
@@ -332,6 +334,7 @@ scriptinput = _PKG.scriptinput
 # Windows 平台判断与 CREATE_NO_WINDOW 的唯一出处（只依赖标准库，装进私有包不拖闭包）
 runtime = _PKG.runtime
 executionfact = _PKG.executionfact
+inputdeclaration = _PKG.inputdeclaration
 # 写入根绊线（#898，ADR 0141）：只有命令行给了 `--write-roots`（MCP 来源）才装；纯标准库，不拖闭包
 writetripwire = _PKG.writetripwire
 
@@ -1324,6 +1327,10 @@ class Worker(wireproto.V1Handler):
         self.built = False
         self.execution_id: str | None = None
         self._execution_watch: str | None = None
+        self._requested_input_declaration = None
+        self._input_capture = None
+        self._captured_inputs = None
+        self._captured_build = None
         #: 本进程 build 时实际读到并执行的脚本字节的 sha256（读失败 None）；build 前 None。
         self._source_sha256: str | None = None
         #: pyplot 兜底因上限丢掉的张数（0 = 一张没丢）。build 响应带出去。
@@ -1466,6 +1473,10 @@ class Worker(wireproto.V1Handler):
         }
 
     def handle_v1(self, req: dict) -> dict:
+        payload = req.get("payload")
+        self._requested_input_declaration = (
+            copy.deepcopy(payload.get("input_declaration")) if isinstance(payload, dict) else None
+        )
         try:
             result = super().handle_v1(req)
         except ProtocolError as exc:
@@ -1479,7 +1490,15 @@ class Worker(wireproto.V1Handler):
                 traceback_text=traceback.format_exc(),
                 extra={"execution_id": self.execution_id},
             ) from exc
-        return {**result, "execution_id": self.execution_id}
+        captured = (
+            {
+                "captured_inputs": copy.deepcopy(self._captured_inputs),
+                "captured_build": copy.deepcopy(self._captured_build),
+            }
+            if self._captured_inputs is not None
+            else {}
+        )
+        return {**result, "execution_id": self.execution_id, **captured}
 
     def select_artifact(self, context):
         try:
@@ -1499,6 +1518,8 @@ class Worker(wireproto.V1Handler):
     # ---------------- build ----------------
     def _execution_entered(self) -> None:
         self.execution_id = executionfact.new_id()
+        if self._input_capture is not None:
+            self._input_capture.entered(self.execution_id)
         executionfact.write(self.out_dir, self._execution_watch, self.execution_id)
 
     def _install_write_tripwire(self) -> None:
@@ -1536,6 +1557,9 @@ class Worker(wireproto.V1Handler):
         t_build = time.perf_counter()
         if self.built:
             return self._stems_summary()
+        self._captured_inputs = None
+        self._captured_build = None
+        self._input_capture = None
         # 快照账绑「这一次脚本执行」：同 worker 重试（instrument / 发布阶段临时失败）也从一份新账开始
         self.session.begin_save_moments()
         self.configure_run({})
@@ -1544,6 +1568,31 @@ class Worker(wireproto.V1Handler):
         # cwd：默认沙盒（写入边界）；项目级开关打开时是脚本自己所在的目录——
         # 脚本用相对路径找数据（exists / glob / C++ 读取器）的唯一成立形态。
         os.chdir(self.workdir or self.sandbox)
+        candidate = self._requested_input_declaration
+        if candidate is not None:
+            scope = candidate.get("scope") if isinstance(candidate, dict) else None
+            mode = scope.get("cwd_mode") if isinstance(scope, dict) else None
+            try:
+                script_id = self.script.relative_to(self.figures_dir).as_posix()
+            except ValueError:
+                script_id = self.script.as_posix()
+            paused = (
+                self._input_observer.paused()
+                if self._input_observer is not None
+                else contextlib.nullcontext()
+            )
+            with paused:
+                self._input_capture = inputdeclaration.begin(
+                    candidate,
+                    script=script_id,
+                    script_path=str(self.script_source),
+                    cwd_mode=mode,
+                    run_config=self.run_config or None,
+                    remap_rules=self.input_remap,
+                    actual_cwd=str(self.workdir or self.sandbox),
+                    project_root=str(self.figures_dir),
+                    sandbox=str(self.sandbox),
+                )
         # 与 `python 脚本.py` 同一个顺序：脚本自己所在目录在 `sys.path[0]`（面板脚本放 panels/ 子目录时，
         # 只加图库根会让 import_module(stem) 直接 ModuleNotFoundError）；项目根（图库根）**追加到末尾**，排在
         # site-packages 之后——脚本 import 项目根下的 paper_style / 数据模块照样找得到，但项目根里恰好有同名
@@ -1971,6 +2020,28 @@ class Worker(wireproto.V1Handler):
                 str(self.figures_dir), sys.modules, exclude_dir=str(Path(__file__).resolve().parent)
             )
         )
+        if self._input_capture is not None:
+            with self._input_observer.paused():
+                captured = self._input_capture.finish(self._source_sha256)
+            if captured is not None:
+                build = self.build_result({})
+                self._captured_inputs = captured
+                self._captured_build = {
+                    "execution_id": self.execution_id,
+                    **{
+                        key: copy.deepcopy(build[key])
+                        for key in (
+                            "runtime",
+                            "descriptors",
+                            "source_sha256",
+                            "pdf_pages",
+                            "probe_misses",
+                            "artifact_probe",
+                            "script_inputs",
+                        )
+                        if key in build
+                    },
+                }
         self.built = True
         if timings is not None:
             timings["script_exec_ms"] = script_ms
@@ -2029,6 +2100,7 @@ class Worker(wireproto.V1Handler):
     # ---------------- legacy 信封（无 protocol_version） ----------------
     def handle(self, req: dict) -> dict:
         """老的扁平协议。**响应形状一字不改**——手工调试与旧调用方靠它。"""
+        self._requested_input_declaration = None
         cmd = req.get("cmd")
         if cmd == "ping":
             return {"ok": True}

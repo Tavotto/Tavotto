@@ -11,7 +11,7 @@
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 320
-改到: `engine/preparation.py`、`prepsession.py`、`dialogscan.py`、`receipt.py`、`trace.py`、`/api/engine/preparation*`（完整清单见细则）
+改到: `engine/preparation.py`、`prepsession.py`、`dialogscan.py`、`receipt.py`、`declaredinputs.py`、`inputdeclaration.py`、`trace.py`、`/api/engine/preparation*`（完整清单见细则）
 主题: 准备计划、执行回执与源图产物、准备会话 → `preparation-and-receipts.md`
 必守要点: 计划与观测分开；过期不执行
 -->
@@ -95,6 +95,10 @@ order: 320
   `sys.modules` 里落在项目根内的模块。**解释器自己的目录不算**（QA 2026-09-24 PATH-B2）：项目根里的 `.venv`（ADR 0057 首开第 4 条）
   的 prefix / site-packages 严格落在项目根内时，底下的库文件既不记成数据输入、也不占预算、也不算本地模块
   （`figcapture.interpreter_dirs_within`，主语是跑脚本的那个进程的 `sys.prefix` 等）；前缀等于或包含项目根时不排除。build 那一刻定格，之后进程里再读什么都不是它的输入。
+- **显式输入与捕获时事实（SVG计算图表）**：`declaredinputs`只保存本机批准的精确script/cwd/原rc_ID作用域；无参数与未知参数不合并，不选择当前default，敏感配置不生成可携候选。声明位于data_dir，跨进程文件锁和`atomicio.revision_of/write_json`执行整份内容CAS；GET/POST/DELETE `/api/engine/input-declarations`沿原项目域/会话认证，选择本身不执行脚本、不改项目正文。项目内file沿原portable成员判据与contained_path，外部file/prefix只取现已批准且仍与实际spec一致的remap目标；包中路径文字不授本机读取权。
+  `inputdeclaration`是父/子共用的闭式候选与捕获事实权威。safe两控制面随每个可执行请求携同一私有候选，透明重试不换新候选；实际子Worker在新build入口拍起始资源，真实execution_id进入后、完整instrument成功前复核原脚本SHA、文件内容/身份及prefix全部成员/空目录。成员/字节预算沿原项目政策，链接/特殊文件/缺件/起止变化不产生正证；自己的读取不进入用户的partial观察器。cached build只返回原事实，失败或新执行不能沿用旧fact；声明失效不阻止原热Figure继续编辑。
+  回执只消费与当前winning执行、同版build capsule、明确PID和scope一致的事实；可选`captured_inputs={version,revision}`进入receipt identity/public投影，不带路径、argv或输入名。缺省没有该字段，原JSON/identity逐字保持；当前`binding`仍是当前数据提示，不作捕获时证明。路径stat与fd stat各自核同一API的完整起止戳，跨API只比较真正同维度的dev/ino/size/mtime，不能把Windows两种ctime含义判作数据变化。
+  此事实只证明明确选择的文件边界快照与该次执行关联，不把partial观察改为全通道依赖证明。native epoch/续跑谱系、准备计划的声明失效、可携完整声明/资源封口及声明UI仍须各自实现和验收，execution v1包继续准确incomplete；不能以新字段自动补签旧快照。看护`tests/test_inputdeclaration_capture.py`、`test_declared_input_settings.py`、`test_declared_input_worker.py`、`test_declared_input_receipt.py`、`test_declared_input_http.py`。
 - **执行保真度（V2 PR3a，`runtime.fidelity` → `ExecutionReceipt.fidelity`）**：safe worker 的 `BlockedFileOps.summary()`——`level` 三档
   `deviated`（确定偏差，build 以 `safe_file_operation_blocked` 失败）/ `suspect`（弱信号，成功但标注）/ `none_observed`（没看到，盲区在 `unobserved`），
   外加拦下的操作类别与次数、弱信号 (kind, via) 计数。worker 自报是不可信输入：回执只收闭集枚举与有界整数，其余丢弃（`to_payload` 的 `runtime`
