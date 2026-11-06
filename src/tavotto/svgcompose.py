@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import math
 import re
 import xml.etree.ElementTree as ET
@@ -23,6 +24,7 @@ import xml.etree.ElementTree as ET
 SVG_NS = "http://www.w3.org/2000/svg"
 NS = {"s": SVG_NS}
 _NATIVE_VIEWPORT_PT_ATTR = "data-tavotto-native-viewport-pt"
+_NATIVE_TARGETS_ATTR = "data-tavotto-svg-targets"
 
 # 序列化的前缀注册（缺省时 ElementTree 会写成 ns0:/ns1:，浏览器能吃但难看且
 # 与原场景字节形态漂移）。matplotlib 场景还会带 dc/rdf/creativecommons/xlink。
@@ -418,7 +420,9 @@ def _native_context(root, parent, resolver, size):
     return opacity, clip, sorted(set(limits))
 
 
-def _native_manifest_context(manifest, clip, opacity, ranks, roles, *, hidden_axes=False):
+def _native_manifest_context(
+    manifest, clip, opacity, ranks, roles, *, hidden_axes=False, paint_members=None
+):
     """原生分数已是最终物理分数，只补实际保留的祖先绘制上下文。"""
     out = copy.deepcopy(manifest)
     for element in out["elements"]:
@@ -454,6 +458,12 @@ def _native_manifest_context(manifest, clip, opacity, ranks, roles, *, hidden_ax
         element["clip_bbox"] = _intersection(element.get("clip_bbox", [0.0, 0.0, 1.0, 1.0]), clip)
         ids = [gid] if gid in ranks else roles.get(gid, [])
         ordered = [ranks[value] for value in ids if value in ranks]
+        if ordered and paint_members is not None:
+            mine = set().union(*(paint_members.get(value, set()) for value in ids))
+            # Like pathgeom.paint_order_of: a pseudo artist spanning another
+            # object's paint slot cannot truthfully have one occlusion rank.
+            if mine and len(mine) != max(mine) - min(mine) + 1:
+                ordered = []
         if ordered:
             target = geom if geom is not None else element
             target["paint_order"] = max(ordered)
@@ -462,6 +472,81 @@ def _native_manifest_context(manifest, clip, opacity, ranks, roles, *, hidden_ax
             if geom is not None:
                 geom.pop("paint_order", None)
     return out
+
+
+def _native_dom_facts(scene, fragment, scaffold):
+    """Actual final DOM targets and paint facts; never a second geometry ruler.
+
+    Native axes may now own pieces in several source paint slots. The original
+    native tree tells which pieces belong to that axes, and the final tree tells
+    which of those pieces remain ancestors of others. Their antichain is the
+    exact set a temporary axes transform may touch without moving decorations
+    or applying the transform twice.
+    """
+    final_ids = {node.get("id"): node for node in scene.iter() if node.get("id")}
+    parents = {child: parent for parent in scene.iter() for child in parent}
+    order = {node: i for i, node in enumerate(scene.iter())}
+    original = {node.get("id"): node for node in fragment.iter() if node.get("id")}
+    axes_ids = {
+        info["primary_gid"] for role, info in scaffold["roles"].items() if role.startswith("axes:")
+    }
+
+    def antichain(values):
+        selected = {final_ids[value] for value in values if value in final_ids}
+        result = []
+        for node in sorted(selected, key=order.get):
+            ancestor = parents.get(node)
+            while ancestor is not None and ancestor not in selected:
+                ancestor = parents.get(ancestor)
+            if ancestor is None:
+                result.append(node.get("id"))
+        return result
+
+    targets = {}
+    members = scaffold.get("svg_members", {})
+    for element in scaffold["manifest"]["elements"]:
+        gid = element["gid"]
+        candidates = members.get(gid, [])
+        if element["role"] == "colorbar" and element.get("geom_gid") in final_ids:
+            # Existing native geometry host: its setters act on cb.ax, even
+            # when hidden and Matplotlib omitted all individual solids.
+            candidates = [element["geom_gid"]]
+        if gid in axes_ids and gid in original:
+            candidates = [node.get("id") for node in original[gid].iter() if node.get("id")]
+        elif gid in final_ids:
+            candidates = [gid]
+        actual = antichain(candidates)
+        targets[gid] = {"transform": actual, "style": list(actual)}
+
+    ranks, painted, counter = {}, {}, [0]
+
+    def rank(node):
+        if node.tag in {f"{{{SVG_NS}}}defs", f"{{{SVG_NS}}}metadata", f"{{{SVG_NS}}}style"}:
+            return set()
+        mine = set()
+        if node.tag.split("}")[-1] in {
+            "path",
+            "rect",
+            "circle",
+            "ellipse",
+            "line",
+            "polygon",
+            "polyline",
+            "text",
+            "use",
+            "image",
+        }:
+            mine.add(counter[0])
+            counter[0] += 1
+        for child in node:
+            mine.update(rank(child))
+        if node.get("id") in original and mine:
+            ranks[node.get("id")] = max(mine)
+            painted[node.get("id")] = mine
+        return mine
+
+    rank(scene)
+    return targets, ranks, painted
 
 
 def _group_native_members(fragment, roles):
@@ -491,6 +576,45 @@ def _group_native_members(fragment, roles):
     return limits
 
 
+def _native_series_sequence(fragment, roles, extra_roles=()):
+    """Separately placed roles in native draw order, retaining interleave.
+
+    Main axes furniture is a hierarchical owner rather than a separate data
+    slot. Auxiliary axes, such as a bound colorbar, do have their own slot.
+    """
+    owners = {
+        value: role
+        for role, info in roles.items()
+        if role.startswith("series:") or role in extra_roles
+        for value in [info["primary_gid"], *info["svg_ids"]]
+    }
+    sequence = []
+
+    def visit(node, owner=None):
+        if node.tag in {f"{{{SVG_NS}}}defs", f"{{{SVG_NS}}}metadata", f"{{{SVG_NS}}}style"}:
+            return
+        owner = owners.get(node.get("id"), owner)
+        if owner and node.tag.split("}")[-1] in {
+            "path",
+            "rect",
+            "circle",
+            "ellipse",
+            "line",
+            "polygon",
+            "polyline",
+            "text",
+            "use",
+            "image",
+        }:
+            if not sequence or sequence[-1] != owner:
+                sequence.append(owner)
+        for child in node:
+            visit(child, owner)
+
+    visit(fragment)
+    return sequence
+
+
 def _hidden_native_containers(fragment, roles, manifest, main_role):
     """明确隐藏的 artist 不输出 SVG 是合法事实，不是丢失一个可画系列。"""
     elements = {el["gid"]: el for el in manifest["elements"]}
@@ -503,9 +627,11 @@ def _hidden_native_containers(fragment, roles, manifest, main_role):
 
     main_gid = roles[main_role]["primary_gid"]
     hidden_axes = hidden(main_gid)
+    for role, info in roles.items():
+        gid = info["primary_gid"]
+        if role.startswith("axes:") and hidden(gid) and _find_by_id(fragment, gid) is None:
+            ET.SubElement(fragment, f"{{{SVG_NS}}}g", {"id": gid, "display": "none"})
     axes = _find_by_id(fragment, main_gid)
-    if axes is None and hidden_axes:
-        axes = ET.SubElement(fragment, f"{{{SVG_NS}}}g", {"id": main_gid, "display": "none"})
     if axes is not None:
         for role, info in roles.items():
             gid = info["primary_gid"]
@@ -523,8 +649,8 @@ def compose_native_scene(source_svg: bytes, binding: dict, scaffold: dict, model
 
     原 scene index 在隔离之前持有 Element 引用，原 source/绑定身份始终不变。
     原生 DOM gids 留给现有预览消费者；只有原场景派生副本的 ids/CSS 改名。
-    非矩形 clip、跨父或夹杂未拥有节点等场景仍交出重算 SVG 和 placement 事实，
-    但 composition.composed=False，不能把未闭合的命中合同冒充原生编辑资格。
+    跨父与插绘通过实际多目标映射保留原位置；非矩形 clip 等当前 manifest
+    无法表达的上下文仍给 composition.composed=False，不伪造命中资格。
     """
     from tavotto.engine import chartmodel
     from tavotto.rendercore import svgir
@@ -561,10 +687,28 @@ def compose_native_scene(source_svg: bytes, binding: dict, scaffold: dict, model
     if main_role not in roles or not all(r.get("primary_gid") for r in roles.values()):
         raise ComposeError("compose_fragment_invalid", "native ownership roles")
     hidden_axes = _hidden_native_containers(fragment, roles, scaffold["manifest"], main_role)
-    group_limits = _group_native_members(fragment, roles)
+    # A real contiguous container remains a useful fast path. Its absence is
+    # not a limitation: pseudo artists are represented by the final target map.
+    _group_native_members(fragment, roles)
     fragment_ids = {e.get("id") for e in fragment.iter() if e.get("id")}
     parents = {child: parent for parent in scene.iter() for child in parent}
-    targets = [(entry, source_index[entry["node"]]) for entry in binding["entries"]]
+    colorbar_roles = {
+        series["cbar_node"]: f"axes:colorbar_{series['id']}"
+        for series in model["series"]
+        if series.get("cbar_node")
+    }
+    # Binding axes may consist of several old furniture regions, including a
+    # model's explicit cbar_node. Resolve that existing model fact before any
+    # DOM mutation, rather than mistaking the colorbar slot for main furniture.
+    targets = [
+        (
+            {**entry, "object": colorbar_roles.get(entry["node"], entry["object"])},
+            source_index[entry["node"]],
+        )
+        for entry in binding["entries"]
+    ]
+    scene_order = {node: i for i, node in enumerate(scene.iter())}
+    targets.sort(key=lambda item: scene_order[item[1]])
     if any(a is not b and _is_descendant(a, b) for _, a in targets for _, b in targets):
         raise ComposeError("compose_fragment_invalid", "overlapping bound regions")
     if any(node not in parents for _, node in targets):
@@ -582,7 +726,7 @@ def compose_native_scene(source_svg: bytes, binding: dict, scaffold: dict, model
     resolver = svgir._Translator(scene, *size, None, None)
     contexts = {}
     placements = []
-    limitations = list(group_limits)
+    limitations = []
     for entry, target in targets:
         parent = parents[target]
         if parent not in contexts:
@@ -615,10 +759,6 @@ def compose_native_scene(source_svg: bytes, binding: dict, scaffold: dict, model
         contiguous = all(
             child in bound for child in list(common_parent)[min(positions) : max(positions) + 1]
         )
-    else:
-        limitations.append("native_dom_multiple_parents")
-    if not contiguous:
-        limitations.append("native_dom_interleaved")
     new_axes = not any(entry["object"] == main_role for entry, _ in targets)
     bound_series = {
         entry["object"] for entry, _ in targets if entry["object"].startswith("series:")
@@ -634,10 +774,6 @@ def compose_native_scene(source_svg: bytes, binding: dict, scaffold: dict, model
                 limitations.append("native_colorbar_region_unbound")
             else:
                 auxiliary_roles.append(auxiliary_role)
-                # The current native ColorbarProxy has no single DOM subtree;
-                # geometry is already native, but preview targeting needs the
-                # explicit member resolver before claiming full editability.
-                limitations.append("native_dom_colorbar_proxy")
 
     digest = hashlib.sha256(source_svg).hexdigest()[:12]
     class_names = {
@@ -659,6 +795,7 @@ def compose_native_scene(source_svg: bytes, binding: dict, scaffold: dict, model
     # imported lookalikes from this derived DOM without altering source bytes.
     for node in scene.iter():
         node.attrib.pop(_NATIVE_VIEWPORT_PT_ATTR, None)
+        node.attrib.pop(_NATIVE_TARGETS_ATTR, None)
     source_id_map = isolate_svg(scene, prefix=prefix, owned_class=source_class)
     isolate_svg(fragment, prefix="", owned_class=native_class)
     root_defs = scene.find("s:defs", NS)
@@ -694,7 +831,24 @@ def compose_native_scene(source_svg: bytes, binding: dict, scaffold: dict, model
             wrapper.append(copy.deepcopy(node))
         return wrapper
 
-    shared = common_parent is not None and contiguous
+    native_sequence = _native_series_sequence(fragment, roles, auxiliary_roles)
+    native_interleaved = len(native_sequence) != len(set(native_sequence))
+    source_sequence = [
+        entry["object"] for entry, _ in targets if entry["object"] in set(native_sequence)
+    ]
+    shared = (
+        common_parent is not None
+        and contiguous
+        and (native_interleaved or source_sequence == native_sequence)
+    )
+    if native_interleaved and not shared:
+        limitations.append("native_member_slots_underdetermined")
+    if not shared and scaffold.get("paint_order_overrides"):
+        # The native setter was applied, but source slots may constrain a
+        # different final order. Never claim the edit worked by ignoring that
+        # real conflict between two explicit placement authorities.
+        if native_interleaved or source_sequence != native_sequence:
+            limitations.append("native_zorder_source_slots_conflict")
     if shared:
         first_index = min(list(common_parent).index(node) for node in bound)
         axes = copy.deepcopy(native_axes)
@@ -709,85 +863,77 @@ def compose_native_scene(source_svg: bytes, binding: dict, scaffold: dict, model
             common_parent.remove(node)
         common_parent.insert(first_index, payload(roots, transform))
     else:
-        axes_inserted = False
+        inserted_roles = set()
+
+        def role_nodes(role):
+            values = set(roles.get(role, {}).get("svg_ids", []))
+            if role in roles:
+                values.add(roles[role]["primary_gid"])
+            # Read the actual SVG draw sequence, not the SeriesGroup's member
+            # registration order (errorbar data lines have a later zorder).
+            found = [node for node in fragment.iter() if node.get("id") in values]
+            return [
+                node
+                for node in found
+                if not any(p is not node and _is_descendant(node, p) for p in found)
+            ]
+
+        def axis_furniture(role):
+            root = _find_by_id(fragment, roles[role]["primary_gid"])
+            if root is None:
+                return None
+            root = copy.deepcopy(root)
+            # Remove other owned roles from this axes copy without losing the
+            # axis's own labels/spines. Data retain their original source slots.
+            other = {
+                value
+                for r, info in roles.items()
+                if r != role
+                for value in [info["primary_gid"], *info["svg_ids"]]
+            }
+            for parent in list(root.iter()):
+                for child in list(parent):
+                    if child.get("id") in other:
+                        parent.remove(child)
+            return root
+
         for (entry, target), placement in zip(targets, placements):
             role = entry["object"]
             nodes = []
             if role.startswith("series:"):
-                if new_axes and not axes_inserted:
-                    furniture = copy.deepcopy(native_axes)
-                    series_ids = {
-                        value
-                        for r, info in roles.items()
-                        if r.startswith("series:")
-                        for value in info["svg_ids"]
-                    }
-                    for child in list(furniture):
-                        if any(e.get("id") in series_ids for e in child.iter()):
-                            furniture.remove(child)
+                if new_axes and main_role not in inserted_roles:
+                    furniture = axis_furniture(main_role)
                     nodes.append(furniture)
-                    axes_inserted = True
-                for value in roles.get(role, {}).get("svg_ids", []):
-                    node = _find_by_id(fragment, value)
-                    if node is not None and not any(_is_descendant(node, p) for p in nodes):
-                        nodes.append(node)
-            elif role == main_role and not axes_inserted:
-                axes = copy.deepcopy(native_axes)
-                owned_series_ids = {
-                    value
-                    for r, info in roles.items()
-                    if r.startswith("series:")
-                    for value in info["svg_ids"]
-                }
-                for child in list(axes):
-                    if any(e.get("id") in owned_series_ids for e in child.iter()):
-                        axes.remove(child)
-                nodes.append(axes)
-                axes_inserted = True
+                    inserted_roles.add(main_role)
+                nodes.extend(role_nodes(role))
+            elif role in roles and role not in inserted_roles:
+                # Colorbar solids and outline belong to the proxy role, but
+                # remain in the actual colorbar axes subtree at its source slot.
+                axes = (
+                    _find_by_id(fragment, roles[role]["primary_gid"])
+                    if role in auxiliary_roles
+                    else axis_furniture(role)
+                )
+                if axes is not None:
+                    nodes.append(axes)
+                inserted_roles.add(role)
             parent = parents[target]
             index = list(parent).index(target)
             parent.remove(target)
             if nodes:
                 parent.insert(index, payload(nodes, placement["fragment_to_parent"]))
 
-    # The final DOM, rather than the original scaffold's zorder registry, is the
-    # authority for cross-placement paint order. Defs never paint on their own.
-    ranks, counter = {}, [0]
-
-    def rank(node):
-        if node.tag in {f"{{{SVG_NS}}}defs", f"{{{SVG_NS}}}metadata", f"{{{SVG_NS}}}style"}:
-            return None
-        last = None
-        if node.tag.split("}")[-1] in {
-            "path",
-            "rect",
-            "circle",
-            "ellipse",
-            "line",
-            "polygon",
-            "polyline",
-            "text",
-            "use",
-            "image",
-        }:
-            last = counter[0]
-            counter[0] += 1
-        for child in node:
-            child_rank = rank(child)
-            if child_rank is not None:
-                last = child_rank
-        if node.get("id") in fragment_ids and last is not None:
-            ranks[node.get("id")] = last
-        return last
-
-    rank(scene)
+    # The final DOM is the sole authority for actual preview target membership
+    # and cross-placement paint facts. No browser geometry is remeasured.
+    svg_targets, ranks, painted = _native_dom_facts(scene, fragment, scaffold)
     if new_axes:
+        anchor = next(p for p in placements if p["role"].startswith("series:"))
         placements.append(
             {
-                **placements[0],
+                **anchor,
                 "role": main_role,
                 "source_node": None,
-                "anchor_source_node": placements[0]["source_node"],
+                "anchor_source_node": anchor["source_node"],
                 "native_gids": roles[main_role]["gids"],
                 "svg_members": {
                     gid: scaffold.get("svg_members", {}).get(gid, [])
@@ -796,12 +942,42 @@ def compose_native_scene(source_svg: bytes, binding: dict, scaffold: dict, model
             }
         )
     manifest = copy.deepcopy(scaffold["manifest"])
-    if shared:
-        alpha, clip, _ = contexts[common_parent]
-        member_ids = scaffold.get("svg_members", {})
-        manifest = _native_manifest_context(
-            manifest, clip, alpha, ranks, member_ids, hidden_axes=hidden_axes
+    placement_by_role = {}
+    for placement in placements:
+        placement_by_role.setdefault(placement["role"], placement)
+    for role, info in roles.items():
+        placement = placement_by_role.get(role)
+        axis_role = role
+        if role.startswith("colorbar:"):
+            axis_role = f"axes:colorbar_{role.split(':', 1)[1]}"
+            placement = placement_by_role.get(axis_role)
+        if placement is None:
+            continue
+        gids = set(info["gids"])
+        selected = {
+            "elements": [element for element in manifest["elements"] if element["gid"] in gids]
+        }
+        adjusted = _native_manifest_context(
+            selected,
+            placement["clip"],
+            placement["opacity"],
+            ranks,
+            scaffold.get("svg_members", {}),
+            hidden_axes=(hidden_axes and (role == main_role or role.startswith("series:")))
+            or (
+                axis_role.startswith("axes:")
+                and _find_by_id(fragment, roles[axis_role]["primary_gid"]).get("display") == "none"
+            ),
+            paint_members=painted,
         )
+        replacements = {element["gid"]: element for element in adjusted["elements"]}
+        manifest["elements"] = [
+            replacements.get(element["gid"], element) for element in manifest["elements"]
+        ]
+    manifest["svg_targets"] = svg_targets
+    # An inert mirror serves mounted-SVG-only temporary preview consumers. The
+    # manifest remains the only mapping authority and all geometry stays native.
+    scene.set(_NATIVE_TARGETS_ATTR, json.dumps(svg_targets, sort_keys=True, separators=(",", ":")))
     warnings, unrestored = list(scaffold.get("warnings", [])), scaffold.get("unrestored", 0)
     if warnings or unrestored:
         limitations.append("native_patch_unrestored")
@@ -822,6 +998,11 @@ def compose_native_scene(source_svg: bytes, binding: dict, scaffold: dict, model
             "limitations": limitations,
             "paint_order_scope": "owned-native-elements",
             "native_dom_shared": shared,
+            "placement_mode": "shared-native" if shared and native_interleaved else "source-slots",
+            "native_series_draw_order": [
+                role for role in native_sequence if role.startswith("series:")
+            ],
+            "native_role_draw_order": native_sequence,
             "svg_elements": sum(1 for _ in scene.iter()),
         },
     }

@@ -256,8 +256,10 @@ def _gid_svg_members(state, gid_roles, svg_ids, runtime):
         elif isinstance(artist, runtime.tickmodel.TickLabel):
             artists = [artist.live()]
         elif isinstance(artist, runtime.overrides.ColorbarProxy):
-            artists = [getattr(artist.cb, key, None) for key in ("solids", "outline", "dividers")]
-            artists.extend(artist.cb.lines)
+            # The proxy's visible/placement setters own the complete colorbar
+            # axes, including labels and an optionally rasterized solids image.
+            # Its individual solids need not have an SVG gid after rasterizing.
+            artists = [artist.cb.ax]
         else:
             artists = [artist]
         members = []
@@ -413,4 +415,7 @@ def render_scaffold(
     }
     if coordinate_space == "scene-viewport-pt":
         result["svg_members"] = _gid_svg_members(state, gid_roles, svg_ids, runtime)
+        result["paint_order_overrides"] = [
+            gid for gid, prop in state.applied if prop == "zorder" and gid in gid_roles
+        ]
     return result

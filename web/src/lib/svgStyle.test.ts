@@ -29,6 +29,13 @@ beforeEach(() => {
 const node = (gid: string) => document.querySelector(`[id="${gid}"]`)!
 const ctx = { unitsPerPt: 1 }
 
+it('native target归属不扩大proxy适配器语义，普通单gid调用保留原行为', () => {
+  expect(adapterFor('errorbar', 'linewidth')).toBe('strokeWidth')
+  expect(adapterFor('errorbar', 'linewidth', { mapped: true, semanticGidPresent: true })).toBeNull()
+  expect(adapterFor('bar_series', 'facecolor', { mapped: true, semanticGidPresent: false })).toBeNull()
+  expect(adapterFor('bar_series', 'facecolor', { mapped: true, semanticGidPresent: true })).toBe('fill')
+})
+
 /**
  * CSSOM 会把颜色规范化（`#1f77b4` 读回来是 `rgb(31, 119, 180)`，浏览器与
  * jsdom 一致）。断言两边都过一遍同一台机器，写起来才还是人看得懂的十六进制。

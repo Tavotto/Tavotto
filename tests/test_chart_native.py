@@ -309,23 +309,22 @@ def test_native_nonrect_clip_keeps_svg_without_fake_editable_qualification(clip,
 
 
 @pytest.mark.parametrize(
-    "body,reason",
+    "body",
     [
-        (
-            '<g><path id="oldaxis"/><path id="curve1"/></g><g><path id="curve2"/></g>',
-            "native_dom_multiple_parents",
-        ),
-        (
-            '<g><path id="oldaxis"/><path id="curve1"/><rect id="unowned" width="20" height="20"/><path id="curve2"/></g>',
-            "native_dom_interleaved",
-        ),
+        '<g><path id="oldaxis"/><path id="curve1"/></g><g><path id="curve2"/></g>',
+        '<g><path id="oldaxis"/><path id="curve1"/><rect id="unowned" width="20" height="20"/><path id="curve2"/></g>',
     ],
 )
-def test_native_split_placements_remain_explicit_and_do_not_move_unowned_nodes(body, reason):
+def test_native_split_placements_remain_explicit_and_do_not_move_unowned_nodes(body):
     source, model, binding, frame = setup_chart(body)
     result = compose_native_scene(source, binding, native(model, frame), model)
-    assert result["composition"]["composed"] is False
-    assert reason in result["composition"]["limitations"]
+    assert result["composition"]["composed"] is True
+    assert not result["composition"]["limitations"]
+    assert result["manifest"]["svg_targets"]["axes_0"]["transform"] == [
+        "axes_0",
+        "axes_0.lines_0",
+        "axes_0.lines_1",
+    ]
     assert len(result["composition"]["placements"]) == 3
     if 'id="unowned"' in body:
         actual_id = result["composition"]["source_id_map"]["unowned"]
@@ -442,8 +441,12 @@ def test_native_series_container_does_not_swallow_an_interleaved_other_artist(ki
         # Native errorbar's data line has zorder 2.1 while its errors and the
         # second independent line have zorder 2.0: a single DOM group cannot
         # own only this series without changing actual paint order.
-        assert result["composition"]["composed"] is False
-        assert "native_dom_series_members_interleaved" in result["composition"]["limitations"]
+        assert result["composition"]["composed"] is True
+        gid = scaffold["roles"]["series:s1"]["primary_gid"]
+        targets = result["manifest"]["svg_targets"][gid]["transform"]
+        assert len(targets) == 4
+        assert set(targets) == set(scaffold["roles"]["series:s1"]["svg_ids"])
+        assert "paint_order" not in element(result, gid)["geometry"]
         return
     assert result["composition"]["composed"] is True
     primary = scaffold["roles"]["series:s1"]["primary_gid"]

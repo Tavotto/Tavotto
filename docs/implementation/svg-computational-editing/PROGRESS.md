@@ -42,6 +42,13 @@
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
+### 2026-11-06 多DOM对象共同目标与临时预览
+
+- 以最终native manifest的svg_targets为唯一实际成员归属，SVG根只带同源镜像；前端唯一reader校验真实节点、绘制顺序、去重、祖先重叠与native pt基底。跨父系列、split axes、errorbar多成员和colorbar proxy使用实际目标；未绑定装饰保留原位。变换/缩放/样式、排队、局部重挂及取消复用同一映射，语义编辑列表仍按gid，原输入字节及绑定摘要不变。
+- 暂缓拖动只按每个实际目标的BCR收意图，避免并集框吞入装饰；最终提交继续等待exact。多目标style不扩既有setter能力；无映射的legacy仍原路径，非法显式映射拒绝临时预览。修复实时Map删除/重插循环，以快照迭代；变异验证后源码逐字恢复。
+- 后端冻结核心47个唯一用例通过（27 core+20 targets，分两次运行，0skip），包含真实Chromium位置/像素、色条隐藏恢复、反序层序和错误成员映射反证。旧五族scaffold/compose及三个writer样例对ea0a7027逐字节一致。较早103项相关组早于最后层序修复，不称最终树整体验收。前端9文件192项、9组反证通过；根代理最终34文件983项与正式build/i18n/playground共同覆盖当前前端。
+- 未关闭：errorbar compound slot夹未绑定装饰的成员偏序仍欠定；显式zorder与原source slots冲突仍需成员级placement；任意/union/evenodd祖先clip还需Geometry契约。真实circle clip反例证明仅放开资格会误命中圆外，不能把composed强改true。证据native-targets-review.md、native-targets-final.xml、native-multi-target-preview-validation.json。
+
 ### 2026-11-06 v2完整编辑恢复进入真实界面
 
 - 生产导出已在c2fd47d5提交。inspect按包内profile与完整编辑实际重放，v2额外返回restored_render；旧v1和普通SVG形状不变。向导保留当前面板完整编辑，预览不写文档，确认经现有一次事务应用chart与原序overrides；取消、迟到预览、切项目/文档加载和预览期间面板变化均不能覆盖新输入。

@@ -126,7 +126,14 @@ export function canPreviewStyle(role: string, prop: string): boolean {
   return !!STYLE_ADAPTERS[role]?.[prop]
 }
 
-export function adapterFor(role: string, prop: string): AdapterKind | null {
+export function adapterFor(
+  role: string,
+  prop: string,
+  targets?: { mapped: boolean; semanticGidPresent: boolean },
+): AdapterKind | null {
+  // DOM 归属不会扩展适配器语义：误差棒 caps 的 linewidth 与主线不同，
+  // 原先没有真实 gid 的 proxy 也不能因为现在有 members 就冒充可本地预览。
+  if (targets?.mapped && (role === 'errorbar' || !targets.semanticGidPresent)) return null
   return STYLE_ADAPTERS[role]?.[prop] ?? null
 }
 

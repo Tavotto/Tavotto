@@ -95,6 +95,7 @@ import { drawnMinFontPt, panelScale, scaledFontPt } from '@/lib/preflight'
 import { resolveDocumentSpec } from '@/lib/specBinding'
 import { FONT_FLOOR_TOL_PT } from '@/lib/profile'
 import { clamp } from '@/lib/units'
+import { svgPreviewTargets } from '@/lib/svgPreviewTargets'
 import { setTxnAnchor, useDocumentStore } from '@/store/documentStore'
 import { hasActiveGesture, hasActivePointerGesture, registerPointerCancel, subscribeGestureCoordinator } from '@/store/gestureCoordinator'
 import { useInteractionStore, type SnapFeedback } from '@/store/interactionStore'
@@ -116,7 +117,7 @@ import {
 import { setOverride, setOverrides } from '@/store/actions'
 import { resizePatch } from '@/store/patchResizeAction'
 import {
-  cancelQueuedTranslation, captureQueuedTranslationCommit, findGidNode, findPanelSvg,
+  cancelQueuedTranslation, captureQueuedTranslationCommit, findPanelSvg,
   flushPreviewFrame, flushQueuedTranslation, markPreviewMove, prepareQueuedTranslationCommit,
   previewLine, previewScale, previewSession, previewTransform, queuedTranslation,
   rebaseQueuedTranslation, updateQueuedTranslation, type QueuedTranslation,
@@ -1979,10 +1980,15 @@ export function startDeferredInFigureDrag(
   let d = deferredMove
   const move = prior?.move
   const gid = d?.panelId === panel.id ? d.gid : move?.gid
-  const node = gid ? findGidNode(findPanelSvg(panel.id), gid) : null
-  const rect = node?.getBoundingClientRect()
-  if (!gid || !rect || e.clientX < rect.left || e.clientX > rect.right ||
-      e.clientY < rect.top || e.clientY > rect.bottom || ui.selectedGids.length !== 1 || ui.selectedGids[0] !== gid) return false
+  const targets = gid ? svgPreviewTargets(findPanelSvg(panel.id), gid, 'transform') : null
+  // 这里只识别已选元素的可见目标以暂存意图；正式几何仍等 displayedExactManifest。
+  // 分散目标之间的空白不属于该元素，不能用它们的 union bbox 接管未绑定装饰。
+  const hit = targets?.nodes.some((node) => {
+    const rect = node.getBoundingClientRect()
+    return e.clientX >= rect.left && e.clientX <= rect.right &&
+      e.clientY >= rect.top && e.clientY <= rect.bottom
+  })
+  if (!gid || !hit || ui.selectedGids.length !== 1 || ui.selectedGids[0] !== gid) return false
   if (!d) {
     if (!move || !prior?.pendingCommit?.some((p) => p.gid === gid && p.prop === move.dragProp) ||
         prior.awaitKey !== renderKeyOf(panel)) return false
