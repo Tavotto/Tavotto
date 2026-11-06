@@ -15429,7 +15429,10 @@ def api_layouts():
             "layouts": names,
             "modified": {n: seen[n] for n in names},
             **(
-                {"document_format": engine_documentformat.CHART4}
+                {
+                    "document_format": engine_documentformat.CHART4,
+                    "document_dir": str(_named_layout_dir()),
+                }
                 if _document_format() == engine_documentformat.CHART4
                 else {}
             ),
@@ -16140,15 +16143,25 @@ def _session_unavailable():
 def api_layout_session_get():
     """`{last, prev, pending, index}`：`last` 只指向可恢复的槽位（durable）、`prev` 是上一份 durable、
     `pending` 是还没有有效正文的最新打开意图；`index` 是会话状态的读取结果
-    （`ok` / `missing` / `degraded` / `recovered`）。三个指针回之前都按 owner 冲突过滤。"""
+    （`ok` / `missing` / `degraded` / `recovered`）。三个指针回之前都按 owner 冲突过滤。
+    显式 `include_open_intent=1` 才加跨格式共同快照，默认响应保持旧四键。"""
     ctx = _request_ctx()
     key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
+    include_open_intent = request.args.get("include_open_intent") == "1"
     try:
         view = engine_layoutsession.view_for(
-            key, _slot_revision, lambda doc_id: _document_lock(_autosave_path(doc_id))
+            key,
+            _slot_revision,
+            lambda doc_id: _document_lock(_autosave_path(doc_id)),
+            **({"include_open_intent": True} if include_open_intent else {}),
         )
     except OSError:  # 连会话锁都拿不到：当「读不到可信状态」说，不假装首次空
         view = {"last": None, "prev": None, "pending": None, "index": "degraded"}
+        if include_open_intent:
+            view["open_intent"] = {
+                "version": engine_layoutsession.OPEN_INTENTS_VERSION,
+                "status": "unavailable",
+            }
     resp = jsonify(view)
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -16158,12 +16171,17 @@ def api_layout_session_get():
 def api_layout_session_put_last():
     """记「这个项目想打开这份排版」。槽位已有可恢复的正文 → durable `last`；还没有 → 只记 `pending`，
     durable `last` 不动（旧前端「先 PUT last、再首次自动保存」的顺序由此不留悬空 last，首次保存成功时
-    `commit_slot` 把 pending 晋升）。回 `{ok, last, state: "durable"|"pending", pending?}`。"""
+    `commit_slot` 把 pending 晋升）。回 `{ok, last, state: "durable"|"pending", pending?}`。
+    显式 `repair:true` 是后台补推：不分新打开意图；已被取代/无可信顺序分别回
+    `superseded` / `unconfirmed`，正文保存不因此成为失败。"""
     body = request.get_json(silent=True)
     doc_id = body.get("doc_id") if isinstance(body, dict) else None
     name = body.get("name", "") if isinstance(body, dict) else None
+    repair = body.get("repair", False) if isinstance(body, dict) else False
     if not engine_layoutsession.valid_doc_id(doc_id) or not isinstance(name, str):
         return jsonify({"error": "doc_id / name 不合法", "code": "bad_request"}), 400
+    if type(repair) is not bool:
+        return jsonify({"error": "repair 必须是布尔值", "code": "bad_request"}), 400
     ctx = _request_ctx()
     key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
     slot = _autosave_path(doc_id)
@@ -16188,6 +16206,7 @@ def api_layout_session_put_last():
                 slot_check=(lambda: _slot_signature(found) == sig)
                 if slot_ok and found is not None
                 else None,
+                **({"repair": True} if repair else {}),
             )
     except engine_layoutsession.ForeignLayoutError:
         # 这份排版的槽位记在别的项目名下（#715 验收 P1）：不记成这个项目「上次开着的」。

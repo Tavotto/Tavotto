@@ -96,6 +96,11 @@ LOCK_TIMEOUT_S = 5.0
 EXPORT_DEFAULTS_FILENAME = "export-defaults.json"
 FORMAT_VERSION = 1
 DOCUMENT_NAMESPACES_KEY = "document_namespaces"
+OPEN_INTENTS_KEY = "document_open_intents"
+OPEN_INTENTS_VERSION = 1
+_MAX_INTENT_SEQUENCE = 2**53 - 1
+_INTENT_ROW_KEYS = frozenset({"sequence", "latest", "witness"})
+_INTENT_LATEST_KEYS = frozenset({"document_format", "doc_id", "pointer"})
 _NAMESPACE: ContextVar[str | None] = ContextVar("layout_session_namespace", default=None)
 
 #: 读取结果四档（`_read()` 的第二项、`GET /api/layout-session` 的 `index`）
@@ -458,6 +463,8 @@ def _load(*, preserve: bool = True) -> _Loaded:
             # 顶层仍是v1，但备份可能是唯一携带未知namespace版本的副本。
             # legacy更新也不能把这份未来状态当成普通v1备份整份覆盖。
             _data, bak_readonly = _namespace_data(bak_state)
+            if bak_readonly is None:
+                _data, bak_readonly = _intent_data(bak_state)
         if bak_readonly is None:
             return _Loaded(_empty(), STATUS_MISSING)
         return _from_backup(bak_state, bak_readonly, preserved=True)
@@ -472,6 +479,10 @@ def _load(*, preserve: bool = True) -> _Loaded:
         if _is_future(data):
             LOG.warning("会话状态来自更新的 Tavotto（version %s），只读不写", data.get("version"))
             state["_readonly"] = "future_version"
+            return _Loaded(state, STATUS_DEGRADED)
+        _intents, reason = _intent_data(state)
+        if reason:
+            state["_readonly"] = reason
             return _Loaded(state, STATUS_DEGRADED)
         return _Loaded(state, STATUS_OK)
     # 字节坏：先留原字节，再看 bak
@@ -505,7 +516,9 @@ def _load_backup(preserve: bool, fresh: set[str] | None = None) -> tuple[dict | 
     if _is_future(data):
         LOG.warning("会话状态备份来自更新的 Tavotto（version %s），只读不写", data.get("version"))
         return _parse_state(data), "future_version"
-    return _parse_state(data), None
+    state = _parse_state(data)
+    _intents, reason = _intent_data(state)
+    return state, reason
 
 
 def _from_backup(bak_state: dict | None, bak_readonly: str | None, *, preserved: bool) -> _Loaded:
@@ -527,6 +540,7 @@ def _from_backup(bak_state: dict | None, bak_readonly: str | None, *, preserved:
 def _read() -> tuple[dict, str]:
     """读整份状态，回 `(state, status)`，status 见模块文档的四档。"""
     loaded = _select_namespace(_load())
+    _remember_intent_witnesses(loaded.state)
     return loaded.state, loaded.status
 
 
@@ -571,6 +585,199 @@ def _select_namespace(loaded: _Loaded) -> _Loaded:
     return _Loaded(state, STATUS_DEGRADED if reason else loaded.status)
 
 
+def _intent_data(outer: dict) -> tuple[Any, str | None]:
+    """新块严格闭集；旧程序保留未知块，新程序不能把未来语义整写掉。"""
+    data = outer.get("_extra", {}).get(OPEN_INTENTS_KEY, _DROP)
+    if data is _DROP:
+        return data, None
+    if not isinstance(data, dict) or set(data) != {"version", "projects", "no_project"}:
+        return data, "invalid_open_intents"
+    if type(data["version"]) is not int or data["version"] != OPEN_INTENTS_VERSION:
+        return data, "unknown_open_intents_version"
+    projects = data["projects"]
+    if not isinstance(projects, dict) or any(not isinstance(k, str) or not k for k in projects):
+        return data, "invalid_open_intents"
+    rows = list(projects.values())
+    if data["no_project"] is not None:
+        rows.append(data["no_project"])
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != _INTENT_ROW_KEYS:
+            return data, "invalid_open_intent"
+        seq = row["sequence"]
+        witness = row["witness"]
+        if type(seq) is not int or not 1 <= seq <= _MAX_INTENT_SEQUENCE:
+            return data, "invalid_open_intent"
+        if not isinstance(witness, str) or re.fullmatch(r"[0-9a-f]{64}", witness) is None:
+            return data, "invalid_open_intent"
+        latest = row["latest"]
+        if latest is not None and (
+            not isinstance(latest, dict)
+            or set(latest) != _INTENT_LATEST_KEYS
+            or latest["document_format"] not in (documentformat.LEGACY, documentformat.CHART4)
+            or not valid_doc_id(latest["doc_id"])
+            or latest["pointer"] not in ("last", "pending")
+        ):
+            return data, "invalid_open_intent"
+    return data, None
+
+
+def _intent_outer(state: dict) -> dict:
+    return state.get("_outer_state", state)
+
+
+def _intent_groups(state: dict, key: str | None) -> dict | None:
+    outer = _intent_outer(state)
+    data, reason = _namespace_data(outer)
+    if reason:
+        return None
+    chart = (
+        state
+        if state.get("_namespace") == documentformat.CHART4
+        else (_parse_state(data) if isinstance(data, dict) else _empty())
+    )
+    return {
+        documentformat.LEGACY: _group_view(outer, key),
+        documentformat.CHART4: _group_view(chart, key),
+    }
+
+
+def _intent_digest(value: dict) -> str:
+    return hashlib.sha256(atomicio.dumps_json(value)).hexdigest()
+
+
+def _intent_witness(groups: dict) -> str:
+    return _intent_digest(
+        {
+            fmt: {pointer: group.get(pointer) for pointer in ("last", "pending")}
+            for fmt, group in groups.items()
+        }
+    )
+
+
+def _intent_row(data: Any, key: str | None) -> dict | None:
+    if data is _DROP:
+        return None
+    return data["no_project"] if key is None else data["projects"].get(key)
+
+
+def _intent_target_matches(groups: dict, latest: dict | None) -> bool:
+    if latest is None:
+        return True
+    target = groups[latest["document_format"]].get(latest["pointer"])
+    return target is not None and target["doc_id"] == latest["doc_id"]
+
+
+def _intent_view(state: dict, key: str | None) -> dict:
+    outer = _intent_outer(state)
+    base = {"version": OPEN_INTENTS_VERSION}
+    data, reason = _intent_data(outer)
+    groups = _intent_groups(state, key)
+    if state.get("_readonly") or outer.get("_readonly") or reason or groups is None:
+        return {**base, "status": "unavailable"}
+    witness = _intent_witness(groups)
+    row = _intent_row(data, key)
+    # Rebuild the small closed record in fixed key order, independently of input JSON order.
+    canonical = None
+    if row:
+        latest = row["latest"]
+        canonical = {
+            "sequence": row["sequence"],
+            "latest": {k: latest[k] for k in ("document_format", "doc_id", "pointer")}
+            if latest is not None
+            else None,
+            "witness": row["witness"],
+        }
+    snapshot = _intent_digest({"current_witness": witness, "record": canonical})
+    if row is None:
+        return {**base, "status": "untracked", "snapshot": snapshot}
+    if row["witness"] != witness or not _intent_target_matches(groups, row["latest"]):
+        return {**base, "status": "stale", "snapshot": snapshot}
+    return {
+        **base,
+        "status": "ok",
+        "sequence": row["sequence"],
+        "snapshot": snapshot,
+        "latest": canonical["latest"],
+    }
+
+
+def _remember_intent_witnesses(state: dict) -> None:
+    data, reason = _intent_data(_intent_outer(state))
+    if data is _DROP or reason:
+        return
+    baseline = {}
+    for key in [*data["projects"], None]:
+        row = _intent_row(data, key)
+        if row is None:
+            continue
+        groups = _intent_groups(state, key)
+        baseline[key] = (
+            not state.get("_readonly")
+            and groups is not None
+            and row["witness"] == _intent_witness(groups)
+            and _intent_target_matches(groups, row["latest"])
+        )
+    state["_intent_baseline"] = baseline
+
+
+def _record_open_intent(state: dict, key: str | None, doc_id: str, pointer: str) -> bool:
+    outer = _intent_outer(state)
+    data, reason = _intent_data(outer)
+    groups = _intent_groups(state, key)
+    if reason or groups is None:
+        raise SessionStateUnavailable(reason or "未知文档命名空间，不能建立打开意图")
+    row = _intent_row(data, key)
+    fmt = state.get("_namespace") or documentformat.LEGACY
+    chart_group = groups[documentformat.CHART4]
+    if (
+        fmt == documentformat.LEGACY
+        and row is None
+        and not any(chart_group.get(p) for p in ("last", "pending"))
+    ):
+        return False
+    seq = (row["sequence"] if row else 0) + 1
+    if seq > _MAX_INTENT_SEQUENCE:
+        raise SessionStateUnavailable("打开意图序号已耗尽，拒绝覆盖")
+    if data is _DROP:
+        data = {"version": OPEN_INTENTS_VERSION, "projects": {}, "no_project": None}
+        outer["_extra"][OPEN_INTENTS_KEY] = data
+    row = {
+        "sequence": seq,
+        "latest": {"document_format": fmt, "doc_id": doc_id, "pointer": pointer},
+        "witness": _intent_witness(groups),
+    }
+    if key is None:
+        data["no_project"] = row
+    else:
+        data["projects"][key] = row
+    state.setdefault("_intent_baseline", {})[key] = True
+    return True
+
+
+def _sync_intent_witnesses(state: dict) -> None:
+    """只确认本次读取时可信的意图；旧程序留下的 stale 不能被普通保存洗白。"""
+    data, reason = _intent_data(_intent_outer(state))
+    if reason:
+        raise SessionStateUnavailable(reason)
+    if data is _DROP:
+        return
+    for key, trusted in state.get("_intent_baseline", {}).items():
+        if not trusted:
+            continue
+        groups = _intent_groups(state, key)
+        if groups is None:
+            raise SessionStateUnavailable("未知文档命名空间，不能确认打开意图")
+        row = _intent_row(data, key)
+        latest = row["latest"]
+        if latest is not None and not _intent_target_matches(groups, latest):
+            last = groups[latest["document_format"]].get("last")
+            if latest["pointer"] == "pending" and last and last["doc_id"] == latest["doc_id"]:
+                row["latest"] = {**latest, "pointer": "last"}
+            else:
+                row["latest"] = None
+        row["witness"] = _intent_witness(groups)
+
+
 def _write(state: dict) -> None:
     reason = state.get("_readonly")
     if reason:
@@ -578,6 +785,7 @@ def _write(state: dict) -> None:
     namespace = _NAMESPACE.get()
     if state.get("_namespace") != namespace:
         raise SessionStateUnavailable("会话命名空间在读取后已改变")
+    _sync_intent_witnesses(state)
     if namespace is None:
         payload = _payload(state)
     else:
@@ -689,6 +897,8 @@ def view_for(
     key: str | None,
     rev_of: Callable[[str], str | None] | None = None,
     lock_of: Callable[[str], ContextManager[Any]] | None = None,
+    *,
+    include_open_intent: bool = False,
 ) -> dict:
     """这个项目（`None` = 没开项目）的 `{last, prev, pending, index}`。
 
@@ -698,7 +908,15 @@ def view_for(
     端点给 `lock_of` 时逐指针取槽位文档锁，在锁里重读会话状态与 revision；指针换了槽位就重试。
     整组指针在收集前后也要相同，否则从头重读；不能把不同代的 last / prev 拼成完整会话。
     给了 `rev_of` 时每个指针多一个 `revision`：校验用的那份快照的 revision，见上。
+    `include_open_intent=True` 才附跨格式意图；默认响应逐字段保持旧合同。
     """
+
+    def degraded():
+        result = {**dict.fromkeys(POINTERS), "index": STATUS_DEGRADED}
+        if include_open_intent:
+            result["open_intent"] = {"version": OPEN_INTENTS_VERSION, "status": "unavailable"}
+        return result
+
     seen_degraded = False
     for _group_attempt in range(3):
         with _LOCK:
@@ -706,8 +924,9 @@ def view_for(
         seen_degraded |= status == STATUS_DEGRADED
         if seen_degraded:
             # 未来格式可能有可解析的旧字段，但这些指针的语义/归属未必仍可信。
-            return {**dict.fromkeys(POINTERS), "index": STATUS_DEGRADED}
+            return degraded()
         baseline = _group_view(state, key)
+        baseline_intent = _intent_view(state, key) if include_open_intent else None
         out: dict[str, Any] = {}
         changed_group = False
         unstable = False
@@ -724,6 +943,8 @@ def view_for(
                         seen_degraded |= status == STATUS_DEGRADED
                         fresh_group = _group_view(state, key)
                         changed_group |= fresh_group != baseline
+                        if include_open_intent:
+                            changed_group |= _intent_view(state, key) != baseline_intent
                         fresh = fresh_group.get(name)
                         if fresh is None:
                             out[name] = None
@@ -753,13 +974,21 @@ def view_for(
         with _LOCK:
             final_state, final_status = _read()
         seen_degraded |= final_status == STATUS_DEGRADED
-        if not unstable and not changed_group and _group_view(final_state, key) == baseline:
+        stable_intent = not include_open_intent or _intent_view(final_state, key) == baseline_intent
+        if (
+            not unstable
+            and not changed_group
+            and stable_intent
+            and _group_view(final_state, key) == baseline
+        ):
             if seen_degraded:
-                return {**dict.fromkeys(POINTERS), "index": STATUS_DEGRADED}
+                return degraded()
             out["index"] = final_status
+            if include_open_intent:
+                out["open_intent"] = baseline_intent
             return out
     # 状态一直在移动，返回可重试的退化结果，绝不把混代指针当成完整快照。
-    return {**dict.fromkeys(POINTERS), "index": STATUS_DEGRADED}
+    return degraded()
 
 
 def last_for(key: str | None, rev_of: Callable[[str], str | None] | None = None) -> dict | None:
@@ -796,6 +1025,7 @@ def set_last(
     slot_ok: bool = True,
     current_revision: str | None = None,
     slot_check: Callable[[], bool] | None = None,
+    repair: bool = False,
 ) -> dict:
     """记「这个项目现在想打开这份排版」。
 
@@ -814,9 +1044,13 @@ def set_last(
     它和槽位删除（`delete_slot` / `remove_slot_unless_protected` 在会话锁里 unlink）被同一把跨进程锁串行：
     另一个进程在「验证」与「发布」之间删掉槽位，这里要么看到它已没了（记 pending），要么它在我们之后才删
     （此时 last 已发布、删除方在锁里重判保护，删不掉）。回调里不许解析正文、不许取文档锁。
+    `repair=True` 只确认共享账本已有的同一意图，不分新序号；新目标已取代它时回 superseded，
+    缺证据回 unconfirmed，二者均不改盘。只有本项目纯 legacy、无共享条目时保留旧补推行为。
     `ValueError`：doc_id 形状不对 / name 不是字符串。`ForeignLayoutError`：槽位确知属于别的项目
     （`owner_conflict`），一个字节都不写。`SessionStateUnavailable` / `atomicio.AtomicWriteError`：写不进去。
     """
+    if type(repair) is not bool:
+        raise ValueError("repair 必须是布尔值")
     if not valid_doc_id(doc_id):
         raise ValueError("doc_id 形状不对")
     if not isinstance(name, str):
@@ -832,6 +1066,35 @@ def set_last(
         pend = group.get("pending")
         if slot_ok and slot_check is not None and not slot_check():
             slot_ok = False
+        if repair:
+            if state.get("_readonly"):
+                raise SessionStateUnavailable(state["_readonly"])
+            intent = _intent_view(state, key)
+            groups = _intent_groups(state, key)
+            data, _reason = _intent_data(_intent_outer(state))
+            legacy_only = (
+                _NAMESPACE.get() is None
+                and _intent_row(data, key) is None
+                and groups is not None
+                and not any(groups[documentformat.CHART4].get(p) for p in ("last", "pending"))
+            )
+            if not legacy_only:
+                if intent["status"] == "unavailable":
+                    raise SessionStateUnavailable("打开意图不可用，拒绝补推")
+                response = {"last": dict(cur) if cur else None}
+                if intent["status"] != "ok":
+                    return {**response, "state": "unconfirmed"}
+                latest = intent["latest"]
+                fmt = _NAMESPACE.get() or documentformat.LEGACY
+                if latest is None or (latest["document_format"], latest["doc_id"]) != (fmt, doc_id):
+                    return {**response, "state": "superseded"}
+                if latest["pointer"] == "last":
+                    return {**response, "state": "durable" if slot_ok else "unconfirmed"}
+                if not slot_ok:
+                    return {**response, "pending": dict(pend), "state": "pending"}
+                _promote(group, {**pend, "at": _next_at(group)})
+                _write(state)
+                return {"last": dict(group["last"]), "state": "durable"}
         if slot_ok:
             # durable 打开**总是**前进 `at` 并写盘，哪怕 (doc_id, name) 没变：再次明确打开同一份排版
             # 是比别的 profile 里还悬着的 pending 更晚的意图，令牌不前进的话那个 pending 会被当成更新的而翻案。
@@ -844,10 +1107,14 @@ def set_last(
             # pending 只是「最新的、还没 durable 的意图」：更晚的 durable 打开取代它，不管它指着谁
             # （否则 A→B(pending)→A(durable) 之后 B 的首次保存会把过期的 pending 晋升、顶掉 A）
             group.pop("pending", None)
+            _record_open_intent(state, key, doc_id, "last")
             _write(state)
             return {"last": dict(group["last"]), "state": "durable"}
-        if not (pend and pend["doc_id"] == doc_id and pend["name"] == name):
+        changed_pending = not (pend and pend["doc_id"] == doc_id and pend["name"] == name)
+        if changed_pending:
             group["pending"] = {"doc_id": doc_id, "name": name, "at": _now_ms()}
+        recorded = _record_open_intent(state, key, doc_id, "pending")
+        if changed_pending or recorded:
             _write(state)
         return {
             "last": dict(cur) if cur else None,
@@ -1016,6 +1283,9 @@ def delete_slot(doc_id: str, remove: Callable[[], bool]) -> bool:
     只记日志（文件已删是事实）。锁拿不到抛 `SessionStateUnavailable`，此时文件没动。"""
     with _LOCK:
         state, _status = _read()
+        _intents, reason = _intent_data(_intent_outer(state))
+        if reason:
+            raise SessionStateUnavailable(reason)
         gone = remove()
         if gone:
             _removed, changed = _forget_locked(state, {doc_id})

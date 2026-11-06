@@ -2,7 +2,7 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-06 18:17）：精确INPUT附件消费者2452d8fc和v4后端保存/恢复5abb9a7d已分功能提交。真实UI删源编辑/撤销重做及PDF/PNG/SVG导出已验；v4后端20项通过，旧组312通过/20既有平台skip。前端格式/回执/版本UI仍是未提交中间稿，跨格式共享打开顺序刚进入生产实现；正式UI保存冷开、包/EPS入口、图例/复杂几何和最终旧功能资格仍缺，M1未通过。**
+> **当前结论（2026-11-06 18:38后）：精确INPUT附件2452d8fc和v4后端保存/恢复5abb9a7d已提交。共享打开顺序后端已接真实HTTP：新模块55项、HTTP15项通过，相关旧组有10项既有平台skip。前端已修跨格式发送队列乱序，正在收敛升级/恢复边界和最终门禁，未冻结。EPS公共契约/owned action与ZIP原子writer已验，app入口仍待接。正式UI保存冷开、图例/复杂几何和最终旧功能资格未通过，M1未通过。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 
 ## 环境（2026-11-06 当前快照）
@@ -41,6 +41,15 @@
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-06 18:38后 共享打开顺序后端闭环与前端乱序修复
+
+- layoutsession在原文件/锁/原子写中实现版本化共享意图、实际双namespace指针witness、显式open_intent、repair与混代读取重试。新增55项和旧namespace/session/recovery组合203项：193通过/10既有Windows条件skip、exit0、22.409秒；真实旧模块八步main/bak/响应字节对拍通过。四个生产AST反证均exit1：重复pending不分序、普通保存洗白stale、漏跨ns稳定检查、repair变新open。源码两文件SHA已逐个对照冻结报告一致。
+- 根app仅显式query=1转发include_open_intent，故障才加unavailable元数据；默认旧四键/实际实参数量保持。repair严格布尔且仅True转发，旧错误文案保持。v4布局清单另回后端派生document_dir，legacy清单不变；读目录不创建它。真实HTTP新增15项通过/0skip；此前14项与旧session/recovery同次132项：122通过/10既有skip、exit0、21.653秒。首轮2个新fixture失败因误读ProjectStatus.path，已改用实际figures_dir，没有为此改产品响应。
+- 两个HTTP真实函数进程内反证已确认落点：丢query适配使共同快照缺席，丢repair转发使迟到A重占意图，均AssertionError/pytest exit1，源码字节不变。证据session-open-intent-http-negatives.json。未知新账本read unavailable/写503且main/bak零改动亦由实际HTTP覆盖。旧顶层future允许用户显式删正文的合同仍保留，新账本future/非法不触发删除回调；审查曾发现过宽guard，修窄后旧组通过，原失败日志保留。
+- 根独立审查又发现前端两namespace独立remoteTail会让旧显式打开A晚到抢B。反例先红后把打开/repair恢复为module级单队列，相关52项通过；保存队列/缓存/revision仍按格式隔离。自动安装须避免订阅重复分序，旧3含chart自动升级fork还需在成功settle后记新v4 ID一次；前端仍变动，阶段810项不作为最终资格。
+- EPS公共薄契约和固定pack_eps action已冻结，102项含真实owned child、独立Ghostscript像素和旧probe/scaffold/lifecycle通过；32MiB裸payload加action封套超限时沿原runner cap拒绝，未扩大上限。ZIP staged_package与旧write_package共用收尾，121项通过，添加失败即使helper吞掉也阻止发布；二者均尚无完整app入口资格。
+- 接续：先独立提交已验共享后端，再接EPS和旧ZIP原子输出；前端最终冻结后重启真实服务做正式保存冷开。当前未提交不同功能仍按所有权隔离，不能git add .混批。goal保持active，所有SG/M1–M3退出条件不缩减。
 
 ### 2026-11-06 18:17 执行效果复核与下一阶段安排
 

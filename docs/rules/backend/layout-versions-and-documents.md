@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「布局层（R18）」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_versions.py`、`test_layout_timeline.py`、`test_document_persistence.py`、`test_package.py`、`test_ai_revert_atomic.py`、`test_project_layout_save.py`、`test_layout_session.py`、`test_layout_recovery_backend.py`、`test_layout_recovery_acceptance.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_versions.py`、`test_layout_timeline.py`、`test_document_persistence.py`、`test_package.py`、`test_ai_revert_atomic.py`、`test_project_layout_save.py`、`test_layout_session.py`、`test_layout_recovery_backend.py`、`test_layout_recovery_acceptance.py`；SVG格式隔离与共同打开顺序：`tests/test_chart_documents_v4.py`、`tests/test_layout_session_open_intent.py`、`tests/test_layout_open_intent_http.py`。
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
@@ -312,6 +312,8 @@ order: 200
     固定目标 id 走正常 `switchDocument` + 自动保存，源槽位与源归属不动。
   - 看护 `tests/test_layout_session.py`（模块与旧端点）与 `tests/test_layout_recovery_backend.py`（读取四档、last/pending 晋升、owner 同序、
     清理保护、候选发现、跨进程）。
+- **显式计算图表格式（ADR 0166）**：v4端点复用上述view/锁/认证/原子写，目录和namespace由documentformat唯一派生，不给旧端点发现schema4，也不借旧版本目录。v4布局清单的document_dir是后端派生的实际命名保存目录，前端不拼路径；legacy清单形状不变。
+  同一会话文件的document_open_intents在每项目保存共享sequence/latest/witness，只有明确打开分新序，普通保存不能让旧意图变新。witness只覆盖该项目两个namespace实际last/pending；旧程序混写导致不一致时stale，普通写不洗白。view_for默认旧四键，只有显式include_open_intent=True（HTTP query=1）增加open_intent；ok含共同snapshot及latest，untracked/stale无猜测latest，unavailable无猜测snapshot。客户端两GET快照一致才自动采用共同latest，不能比较两组at/mtime。自动repair只确认当前同地址意图或晋升，不能创建新序；被取代回superseded、缺证据回unconfirmed且零写，future/非法账本仍拒写。明确请求跨格式共用发送顺序；保存队列/revision仍按格式隔离。完整开关、线格式和旧客户端边界见ADR 0166，专项看护见本页头部。
 - 前端文档模型的对应字段（lockedGids / layoutGroups 等）见 `web/AGENTS.md`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
