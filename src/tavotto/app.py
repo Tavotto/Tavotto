@@ -4922,7 +4922,7 @@ def api_package():
 
 def _api_chart_package():
     """显式v4导出：完整计算INPUT与已核项目资源，不执行用户脚本。"""
-    from .engine import chartpackage, packagebudget
+    from .engine import chartpackage, packagebudget, packageexecution_export
 
     root = require_project()
     body = request.get_json(force=True)
@@ -4941,6 +4941,7 @@ def _api_chart_package():
     }
     panel_ids = sorted({obj["fileId"] for obj in objects if obj.get("type") == "panel"})
     resources, missing, scripts, runtime_assets = [], set(), set(), []
+    resolved_sources = {}
     asset_count = 0
 
     def resource(kind: str, source_id: str):
@@ -4974,8 +4975,21 @@ def _api_chart_package():
             else:
                 descriptor.update(script=info["script"], stem=info["stem"])
                 scripts.add(info["script"])
+                resolved_sources[source_id] = {
+                    "script": info["script"],
+                    "run_config": info.get("run_config"),
+                    "run_config_known": True,
+                }
             runtime_assets.append(descriptor)
             continue
+        _stem, info = _disk_panel_rel(source_id)
+        if info is not None:
+            scripts.add(info["script"])
+            resolved_sources[source_id] = {
+                "script": info["script"],
+                "run_config": None,
+                "run_config_known": False,
+            }
         item = resource("file", source_id)
         if item is None:
             # 内容寻址INPUT本身就是计算面板的完整来源，原SVG可以已删除。
@@ -4984,17 +4998,9 @@ def _api_chart_package():
             continue
         resources.append(item)
         asset_count += 1
-        _stem, info = _disk_panel_rel(source_id)
-        if info is not None:
-            scripts.add(info["script"])
-    for script in sorted(scripts):
-        item = resource("script", script)
-        if item is None:
-            missing.add(script)
-        else:
-            resources.append(item)
 
     engine_config.data_dir().mkdir(parents=True, exist_ok=True)
+    execution_coverage = None
     with tempfile.TemporaryDirectory(
         prefix="chart-package-export-", dir=engine_config.data_dir()
     ) as temporary:
@@ -5034,6 +5040,40 @@ def _api_chart_package():
         out_dir = project_export_dir()
         name = f"{stem}_{time.strftime('%m%d_%H%M%S')}_{secrets.token_hex(4)}{engine_brand.PACKAGE_EXT}"
         try:
+            if scripts:
+                source_uses = []
+                for obj in objects:
+                    if obj.get("type") != "panel" or obj["fileId"] not in resolved_sources:
+                        continue
+                    use = dict(resolved_sources[obj["fileId"]])
+                    # Only the archive just verified by _package_svg_assets can
+                    # identify a disk Figure's historical arguments. Current
+                    # defaults are not evidence of how that Figure was produced.
+                    owner = (obj.get("figureSnapshot") or {}).get("executionOwner")
+                    if owner is not None and owner["script"] == use["script"]:
+                        use.update(run_config=owner["run_config"], run_config_known=True)
+                    source_uses.append(use)
+                collected = packageexecution_export.collect_execution(
+                    root, current_registry(), source_uses, resource=resource
+                )
+                by_resource = {
+                    (item.record["kind"], item.record.get("id", item.record["path"])): item
+                    for item in resources
+                }
+                for item in collected.resources:
+                    key = item.record["kind"], item.record["id"]
+                    previous = by_resource.get(key)
+                    if previous is not None and previous.record != item.record:
+                        raise chartpackage.PackageError(
+                            "execution_resource_mismatch", "Project resource changed during export"
+                        )
+                    by_resource[key] = item
+                resources = list(by_resource.values())
+                asset_count = sum(item.record["kind"] == "file" for item in resources)
+                missing.update(collected.missing)
+                metadata["missing_at_pack_time"] = sorted(missing)
+                metadata["execution"] = collected.execution
+                execution_coverage = collected.execution["coverage"]
             result = chartpackage.write_chart_package(
                 out_dir / name,
                 doc,
@@ -5053,6 +5093,9 @@ def _api_chart_package():
             "missing": sorted(missing),
             "document_format": engine_documentformat.CHART4,
             "chart_sources": result["chart_sources"],
+            **(
+                {"execution_coverage": execution_coverage} if execution_coverage is not None else {}
+            ),
         }
     )
 

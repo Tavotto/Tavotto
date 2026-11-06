@@ -814,6 +814,8 @@
     "packageOpenFailed": "无法打开项目包。{{error}}",
     "packageOpened": "已打开项目包（{{createdAt}}），素材全部就位",
     "packagedIncomplete_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材。恢复前请补齐。",
+    "packagedExecutionIncomplete": "已生成项目包 {{name}}。运行依赖尚未确认完整，迁移前请检查数据与运行配置。",
+    "packagedIncompleteWithExecution_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材，运行依赖也尚未确认完整。迁移前请补齐素材并检查数据与运行配置。",
     "packaged_other": "已生成项目包 {{name}}（{{count}} 个素材）",
     "pasteNothing": "没有可粘贴的对象。缺失素材的对象已跳过。",
     "pastedWithSkips_other": "已粘贴 {{count}} 个对象，跳过 {{skipped}} 张缺失素材的图。{{undo}} 可撤销。",

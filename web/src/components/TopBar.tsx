@@ -164,9 +164,12 @@ async function exportPackage() {
       ? await createPackage(stem, document, {}, { format: 'v4', pj })
       : await createPackage(stem, document, {})
     if (!current()) return
+    const executionIncomplete = doc.documentFormat === 'v4' && res.execution_coverage?.state === 'incomplete'
     const message = doc.documentFormat === 'v4' && res.missing.length > 0
-      ? msg('status.packagedIncomplete', { name: res.name, count: res.missing.length }, 'workspace')
-      : msg('status.packaged', { name: res.name, count: res.assets }, 'workspace')
+      ? msg(executionIncomplete ? 'status.packagedIncompleteWithExecution' : 'status.packagedIncomplete', { name: res.name, count: res.missing.length }, 'workspace')
+      : executionIncomplete
+        ? msg('status.packagedExecutionIncomplete', { name: res.name }, 'workspace')
+        : msg('status.packaged', { name: res.name, count: res.assets }, 'workspace')
     ui.setStatus(message, 'done')
   } catch (e) {
     if (!current()) return

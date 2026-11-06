@@ -105,7 +105,10 @@ def read_package(env, response):
     _client, _root, output, _pid = env
     body = response.get_json()
     assert response.status_code == 200, body
-    assert set(body) == {"name", "url", "assets", "missing", "document_format", "chart_sources"}
+    expected = {"name", "url", "assets", "missing", "document_format", "chart_sources"}
+    if "execution_coverage" in body:
+        expected.add("execution_coverage")
+    assert set(body) == expected
     assert body["document_format"] == "v4"
     assert body["name"].startswith("http_v4_") and body["name"].endswith(brand.PACKAGE_EXT)
     assert body["url"] == "/exports/" + body["name"]
@@ -121,6 +124,9 @@ def read_package(env, response):
         assert manifest["kind"] == brand.PACKAGE_KIND
         assert manifest["document_format"] == "v4"
         assert manifest["version"] == 1
+        assert ("execution_coverage" in body) == ("execution" in manifest)
+        if "execution" in manifest:
+            assert body["execution_coverage"] == manifest["execution"]["coverage"]
         rows = {item.record["path"]: item.record for item in ready.resources}
         assert set(rows) == set(members) - {"layout.json", "package_manifest.json"}
         for name, row in rows.items():

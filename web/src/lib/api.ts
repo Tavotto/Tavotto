@@ -2432,6 +2432,10 @@ export interface PackageResult {
   missing: string[]
   document_format?: 'v4'
   chart_sources?: number
+  execution_coverage?: {
+    state: 'incomplete' | 'complete'
+    issues: { script: string; reason: string }[]
+  }
 }
 
 export const createPackage = async (

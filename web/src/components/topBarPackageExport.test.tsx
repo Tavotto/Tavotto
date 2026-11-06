@@ -159,6 +159,25 @@ describe('顶部项目包入口的完整快照与迟到回执', () => {
     expect(useUiStore.getState().status).toEqual({ key: 'status.packaged', ns: 'workspace', values: { name: 'Legacy.tavotto', count: 2 } })
   })
 
+  it.each([{ missing: [] }, { missing: ['data.csv'] }, { missing: ['data.csv', 'image.png'] }])('运行依赖未确认与已知缺素材分别准确提示：$missing', async ({ missing }) => {
+    await clickExport()
+    await act(async () => replies[0](Response.json({
+      name: 'Execution.tavotto', url: '/exports/Execution.tavotto', assets: 2, missing,
+      document_format: 'v4', chart_sources: 1,
+      execution_coverage: { state: 'incomplete', issues: [{ script: 'plot.py', reason: 'dependency_set_undeclared' }] },
+    })))
+    const status = useUiStore.getState().status
+    expect(status?.key).toBe(missing.length ? 'status.packagedIncompleteWithExecution' : 'status.packagedExecutionIncomplete')
+    expect(status?.values).toEqual({ name: 'Execution.tavotto', ...(missing.length ? { count: missing.length } : {}) })
+    expect(formatMessage(status)).toContain('运行依赖')
+    if (missing.length) expect(formatMessage(status)).toContain(`缺少 ${missing.length} 项素材`)
+    else expect(formatMessage(status)).not.toContain('缺少')
+    await act(async () => { await i18n.changeLanguage('en-US') })
+    const text = formatMessage(status)
+    expect(text).toContain(missing.length ? 'unconfirmed runtime dependencies' : 'Runtime dependencies have not been fully confirmed')
+    if (missing.length) expect(text).toContain(`${missing.length} missing ${missing.length === 1 ? 'asset and' : 'assets and'}`)
+  })
+
   it.each(['project', 'format', 'document', 'load'] as const)('不完整包迟到回执也不覆盖已切换的%s状态', async dimension => {
     await clickExport()
     await act(async () => {

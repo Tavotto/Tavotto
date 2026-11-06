@@ -7019,6 +7019,8 @@ export default interface Resources {
       "packageFailed": "无法打包。{{error}}",
       "packageOpenFailed": "无法打开项目包。{{error}}",
       "packageOpened": "已打开项目包（{{createdAt}}），素材全部就位",
+      "packagedExecutionIncomplete": "已生成项目包 {{name}}。运行依赖尚未确认完整，迁移前请检查数据与运行配置。",
+      "packagedIncompleteWithExecution_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材，运行依赖也尚未确认完整。迁移前请补齐素材并检查数据与运行配置。",
       "packagedIncomplete_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材。恢复前请补齐。",
       "packaged_other": "已生成项目包 {{name}}（{{count}} 个素材）",
       "panelRebuilt": "已按源脚本重新构建",

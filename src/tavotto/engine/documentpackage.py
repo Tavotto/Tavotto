@@ -43,6 +43,7 @@ _MANIFEST_OPTIONAL = frozenset(
         "figure_snapshots",
         "svg_snapshot_warnings",
         "svg_snapshot_warning",
+        "execution",
     }
 )
 
@@ -316,6 +317,12 @@ def _manifest(raw: object) -> dict:
         type(raw["figure_snapshots"]) is not int or raw["figure_snapshots"] < 0
     ):
         raise PackageError("invalid_manifest", "Invalid Figure snapshot count")
+    if "execution" in raw:
+        # Lazy import keeps this envelope the sole authority while the execution
+        # validator reuses the same package path/error contract.
+        from . import packageexecution
+
+        raw = {**raw, "execution": packageexecution.validate_execution(raw["execution"])}
     return raw
 
 

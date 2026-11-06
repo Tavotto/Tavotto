@@ -118,6 +118,10 @@ def _records(manifest: dict, refs: dict[str, list[dict]]) -> tuple[dict, ...]:
     expected = {path: _chart_record(path, group[0]) for path, group in refs.items()}
     if chart_rows != expected:
         raise PackageError("chart_source_mismatch", "Resource index and chart references disagree")
+    if "execution" in manifest:
+        from . import packageexecution
+
+        packageexecution.validate_resources(manifest["execution"], records)
     return records
 
 
