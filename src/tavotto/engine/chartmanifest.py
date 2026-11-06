@@ -1,0 +1,368 @@
+"""计算图表的 worker 适配器：同一次 SVG draw 配对原生 manifest。
+
+调用方提供全新 Figure、语义角色到实际 artist/container 的所有权映射，以及
+完整 overrides（不是增量）。原生 instrument/overrides/manifest 仍是编辑能力与
+几何的唯一权威；这里仅连接它们，不解析 SVG 来反推命中几何。
+
+返回的 manifest 只覆盖明确拥有的 scaffold 元素，坐标仍是 Figure 分数。
+``coordinates.composed`` 始终为 False：原场景的祖先变换、clip、opacity 与
+未拥有元素没有在此合成，不能把这个结果当最终场景的编辑资格。
+
+本模块可由父进程安全 import；科学栈仅在 worker 调用函数时加载。
+"""
+
+from __future__ import annotations
+
+import copy
+import io
+import math
+from pathlib import Path
+
+
+class ChartManifestError(ValueError):
+    """稳定错误码供 worker/API 边界转换，details 不含用户图内文字。"""
+
+    def __init__(self, code: str, details: str = ""):
+        self.code = code
+        self.details = details
+        super().__init__(f"{code}: {details}" if details else code)
+
+
+def _frame(frame: dict) -> tuple[list[float], list[float], list[float]]:
+    from tavotto.svgcoord import viewbox_to_pt
+
+    try:
+        vb = list(frame["view_box"])
+        size = [frame["w_pt"], frame["h_pt"]]
+        if len(vb) != 4 or any(
+            isinstance(x, bool) or not isinstance(x, (int, float)) or not math.isfinite(x)
+            for x in vb + size
+        ):
+            raise ValueError
+        if min(vb[2], vb[3], *size) <= 0:
+            raise ValueError
+        preserve = frame.get("preserve")
+        if preserve is not None and not isinstance(preserve, str):
+            raise ValueError
+        matrix = viewbox_to_pt(vb, *size, preserve)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ChartManifestError("chart_manifest_frame_invalid") from exc
+    return vb, size, list(matrix)
+
+
+def _claims(fig, ownership, container_type, artist_type):
+    """只展开容器/显式成员，绝不通过 Axes.get_children 接管邻居。"""
+    if not isinstance(ownership, dict) or not ownership:
+        raise ChartManifestError("chart_manifest_ownership_invalid")
+    claims: dict[int, str] = {}
+    inputs: dict[str, list[str]] = {}
+    kinds = {"figure", "axes", "series", "colorbar", "legend", "text"}
+
+    def add(obj, role):
+        if obj is None:
+            return
+        if isinstance(obj, (list, tuple)) and not isinstance(obj, container_type):
+            for member in obj:
+                add(member, role)
+            return
+        if not isinstance(obj, (container_type, artist_type)):
+            # Colorbar 本身不是 Artist；它的代理由原生 instrument 登记。
+            if type(obj).__module__ != "matplotlib.colorbar" or not hasattr(obj, "ax"):
+                raise ChartManifestError("chart_manifest_ownership_invalid", "not_an_artist")
+            owner_fig = obj.ax.figure
+        elif isinstance(obj, container_type):
+            owner_fig = None
+        else:
+            owner_fig = obj if obj is fig else obj.figure
+        if owner_fig is not None and owner_fig is not fig:
+            raise ChartManifestError("chart_manifest_ownership_invalid", "different_figure")
+        previous = claims.get(id(obj))
+        if previous is not None:
+            if previous != role:
+                raise ChartManifestError("chart_manifest_ownership_invalid", "overlapping_roles")
+            return
+        claims[id(obj)] = role
+        getter = getattr(obj, "get_gid", None)
+        old = getter() if getter is not None else None
+        if isinstance(old, str) and old and old not in inputs[role]:
+            inputs[role].append(old)
+        if isinstance(obj, container_type):
+            for member in obj:
+                add(member, role)
+            # BarContainer 的误差棒不在 tuple 成员里，但属于同一绘图调用。
+            add(getattr(obj, "errorbar", None), role)
+
+    for role, obj in ownership.items():
+        if not isinstance(role, str) or ":" not in role:
+            raise ChartManifestError("chart_manifest_ownership_invalid", "invalid_role")
+        kind, name = role.split(":", 1)
+        if kind not in kinds or not name or ":" in name:
+            raise ChartManifestError("chart_manifest_ownership_invalid", "invalid_role")
+        inputs[role] = []
+        add(obj, role)
+    return claims, inputs
+
+
+def _owners(state, claims, runtime):
+    """原生 gid → 语义角色；轴只隐式拥有刻度与轴标签，不拥有图例/数据。"""
+    axes = {
+        id(el["artist"]): claims[id(el["artist"])]
+        for el in state.elements
+        if el["role"] in ("axes", "axes3d") and id(el["artist"]) in claims
+    }
+    furniture = {
+        id(axis.label): axes[id(el["artist"])]
+        for el in state.elements
+        if id(el["artist"]) in axes
+        for name in ("x", "y", "z")
+        if (axis := getattr(el["artist"], f"{name}axis", None)) is not None
+    }
+    legends = {
+        el["gid"]: claims[id(el["artist"])]
+        for el in state.elements
+        if el["role"] == "legend" and id(el["artist"]) in claims
+    }
+    out = {}
+    for el in state.elements:
+        artist, gid = el["artist"], el["gid"]
+        role = claims.get(id(artist))
+        if role is None:
+            role = furniture.get(id(artist))
+        if role is None and isinstance(artist, runtime.overrides.SeriesGroup):
+            role = claims.get(id(artist.container))
+            if role is None:
+                members = artist.members()
+                owners = {claims.get(id(a)) for a in members}
+                if members and len(owners) == 1 and None not in owners:
+                    role = owners.pop()
+        if role is None and isinstance(artist, runtime.overrides.ColorbarProxy):
+            role = claims.get(id(artist.cb))
+        if role is None and el["role"] in ("ticks", "ticklabel", "axis_label"):
+            role = axes.get(id(getattr(artist, "ax", getattr(artist, "axes", None))))
+        if role is None:
+            role = next((r for prefix, r in legends.items() if gid.startswith(prefix + ".")), None)
+        if role is not None:
+            out[gid] = role
+    return out
+
+
+def _svg_members(state, gid_roles, runtime):
+    """为原生伪元素给出真实 SVG 成员 id，不伪造可编辑 gid 的 DOM 组。"""
+    registered = {id(el["artist"]): el["gid"] for el in state.elements}
+    members = {role: [] for role in gid_roles.values()}
+
+    def assign(artist, gid, role):
+        artist.set_gid(gid)
+        if gid not in members[role]:
+            members[role].append(gid)
+
+    for el in state.elements:
+        gid, artist = el["gid"], el["artist"]
+        role = gid_roles.get(gid)
+        if role is None:
+            continue
+        if isinstance(artist, runtime.overrides.SeriesGroup):
+            for index, member in enumerate(artist.members()):
+                assign(member, registered.get(id(member), f"{gid}.members_{index}"), role)
+        elif isinstance(artist, runtime.overrides.ColorbarProxy):
+            for name in ("solids", "outline", "dividers"):
+                member = getattr(artist.cb, name, None)
+                if member is not None:
+                    assign(member, f"{gid}.{name}", role)
+            for index, member in enumerate(artist.cb.lines):
+                assign(member, f"{gid}.lines_{index}", role)
+        elif isinstance(artist, runtime.tickmodel.TickLabel):
+            live = artist.live()
+            if live is not None:
+                assign(live, gid, role)
+        elif el["role"] in ("axes", "axes3d"):
+            # Axes 的 DOM 组仍包含别的数据。分件 id 让组合方可选择轴家具，
+            # roles.svg_ids 不表示某节点的所有后代也归该角色所有。
+            assign(artist, gid, role)
+            assign(artist.patch, f"{gid}.background", role)
+            for name in ("x", "y", "z"):
+                axis = getattr(artist, f"{name}axis", None)
+                if axis is not None:
+                    assign(axis, f"{gid}.{name}axis", role)
+            for name, spine in artist.spines.items():
+                assign(spine, f"{gid}.spine_{name}", role)
+        elif hasattr(artist, "get_gid"):
+            actual = artist.get_gid()
+            if actual and actual not in members[role]:
+                members[role].append(actual)
+    return members
+
+
+def _filtered_manifest(manifest, gid_roles):
+    """去掉未拥有条目及指向它们的编辑关系，保留原生几何原值。"""
+    out = copy.deepcopy(manifest)
+    out["elements"] = [el for el in out["elements"] if el["gid"] in gid_roles]
+    live = {el["gid"] for el in out["elements"]}
+    groups = [
+        group
+        for group in out.get("groups", [])
+        if set(group["members"]) <= live
+        and group["colorbar_gid"] in live
+        and (not group.get("mappable_gid") or group["mappable_gid"] in live)
+    ]
+    live.update(group["gid"] for group in groups)
+    singular = (
+        "geom_gid",
+        "host_gid",
+        "parent_gid",
+        "mappable_gid",
+        "colorbar_gid",
+        "inset_of",
+        "arrow_of",
+        "drag_host",
+    )
+    plural = ("follow_gids", "scale_gids", "cmap_group_gids", "alias_covers", "owner_gids")
+    for el in out["elements"]:
+        for key in singular:
+            if el.get(key) and el[key] not in live:
+                el.pop(key)
+                if key == "geom_gid":
+                    el["resizable"] = False
+                elif key == "drag_host":
+                    el["draggable"] = False
+        for key in plural:
+            if key in el:
+                el[key] = [gid for gid in el[key] if gid in live]
+        info = el.get("legend_entry")
+        if info and info.get("source_gid") not in live:
+            info.pop("source_gid", None)
+            info.pop("binding_default", None)
+        if not el.get("alias_covers"):
+            el.pop("alias_pure", None)
+    # 组节点的成立条件涉及所有宿主；只保留完整拥有的原生组，不重建部分组。
+    if groups:
+        out["groups"] = groups
+    else:
+        out.pop("groups", None)
+    return out
+
+
+def _primary_gid(state, gids, root, container_type):
+    """以显式所有者为主对象，不能把 BarContainer 附带误差棒当成柱系列。"""
+    if isinstance(root, (list, tuple)) and not isinstance(root, container_type):
+        for member in root:
+            primary = _primary_gid(state, gids, member, container_type)
+            if primary is not None:
+                return primary
+        return None
+    for el in state.elements:
+        if el["gid"] not in gids:
+            continue
+        artist = el["artist"]
+        if (
+            root is artist
+            or root is getattr(artist, "container", None)
+            or root is getattr(artist, "cb", None)
+        ):
+            return el["gid"]
+    return None
+
+
+def render_scaffold(
+    fig,
+    ownership: dict,
+    frame: dict,
+    patches: list[dict],
+    *,
+    stem: str = "chart",
+    salt: str = "tavotto",
+) -> dict:
+    """全新 scaffold Figure + 完整 patch 列表 → 配对 SVG/native manifest。
+
+    ownership 的值为实际 Artist、Container 或显式成员列表；每个对象只归一个
+    ``axes:id`` / ``series:id`` / ``colorbar:id`` / ``legend:id`` / ``text:id`` /
+    ``figure:id``。轴家具隐式跟轴，其他对象必须明确声明。角色、原始输入 gid、
+    原生 editable gid、实际 SVG id 分开返回；SVG id 不授予后代所有权。
+
+    无法在当前 scaffold 找到的完整 patch（包括原场景未拥有对象）稳定拒绝，
+    不能为了预览静默丢弃。setter/identity 失败由 warnings 与 unrestored 显式
+    返回，调用方须在接受编辑前处理。函数会修改传入 Figure，只用于新建图。
+    """
+    from matplotlib import rc_context
+    from matplotlib.artist import Artist
+    from matplotlib.container import Container
+
+    from tavotto.engine import bridgeboot
+    from tavotto.rendercore.svgcheck import parse_svg, strip_matplotlib_doctype
+
+    vb, scene_size, scene_map = _frame(frame)
+    runtime = bridgeboot.load_engine_modules(
+        str(Path(__file__).resolve().parent), bridgeboot.ENGINE_SIBLINGS
+    )
+    canonical, dropped = runtime.patchspec.canonicalize_with_diagnostics(patches)
+    if dropped:
+        raise ChartManifestError("chart_manifest_patches_invalid", dropped[0]["reason"])
+    claims, inputs = _claims(fig, ownership, Container, Artist)
+    state = runtime.overrides.FigState(fig)
+    runtime.manifest.instrument(state)
+    gid_roles = _owners(state, claims, runtime)
+    for patch in canonical:
+        gid = patch["gid"]
+        if gid not in gid_roles:
+            # 原生 index 也有容器已消费成员、色条语义身份等别名；按实际对象
+            # 资格核对，不能把合法全量 patch 当作缺失目标丢掉。
+            artist = state.resolve(gid)
+            if artist is not None and (
+                id(artist) in claims
+                or any(el["artist"] is artist and el["gid"] in gid_roles for el in state.elements)
+            ):
+                continue
+            # 原生动态刻度标签：范围/定位器 patch 后才出现，沿用其唯一 gid 语法。
+            match = runtime.tickmodel.TICKLABEL_GID.match(gid)
+            axis_gid = f"axes_{match[1]}" if match else None
+            if axis_gid not in gid_roles or state.resolve(gid) is None:
+                raise ChartManifestError("chart_manifest_target_unowned", gid)
+    # canonical 只用于输入校验/资格核对。应用顺序仍是原请求完整列表。
+    warnings = runtime.overrides.apply(state, copy.deepcopy(patches))
+    runtime.manifest.prepare_preview(state)
+    gid_roles = _owners(state, claims, runtime)
+    members = _svg_members(state, gid_roles, runtime)
+    stream = io.BytesIO()
+    with rc_context({"svg.fonttype": "none", "svg.hashsalt": salt, "savefig.bbox": None}):
+        with runtime.manifest.capture_preview_manifest(state, stem) as measured:
+            fig.savefig(stream, format="svg", metadata={"Date": None, "Creator": None})
+            manifest = measured()
+    # SVG 的最终 draw 可以增加刻度；原生 measured 同步的是最终登记表。
+    gid_roles = _owners(state, claims, runtime)
+    fragment = strip_matplotlib_doctype(stream.getvalue())
+    svg = parse_svg(fragment)
+    svg_ids = {el.attrib["id"] for el in svg.iter() if "id" in el.attrib}
+    fragment_vb = [float(v) for v in svg.attrib["viewBox"].split()]
+    fx, fy, fw, fh = fragment_vb
+    sx, sy = vb[2] / fw, vb[3] / fh
+    roles = {}
+    for role in ownership:
+        gids = [el["gid"] for el in state.elements if gid_roles.get(el["gid"]) == role]
+        if not gids:
+            raise ChartManifestError("chart_manifest_ownership_invalid", "unregistered_owner")
+        roles[role] = {
+            "primary_gid": _primary_gid(state, gids, ownership[role], Container) or gids[0],
+            "gids": gids,
+            "svg_ids": [gid for gid in members.get(role, []) if gid in svg_ids],
+            "input_gids": inputs[role],
+        }
+    failed = {(p["gid"], p["prop"]) for p in canonical} - state.applied.keys()
+    return {
+        "fragment": fragment,
+        "manifest": _filtered_manifest(manifest, gid_roles),
+        "roles": roles,
+        "gid_roles": gid_roles,
+        "unowned_gids": [el["gid"] for el in state.elements if el["gid"] not in gid_roles],
+        "coordinates": {
+            "kind": "scaffold-figure-fraction",
+            "composed": False,
+            "view_box": vb,
+            "fragment_view_box": fragment_vb,
+            "scaffold_size_pt": [fw, fh],
+            "scene_size_pt": scene_size,
+            "scene_user_to_pt": scene_map,
+            "fragment_to_scene_user": [sx, 0.0, 0.0, sy, vb[0] - fx * sx, vb[1] - fy * sy],
+        },
+        "warnings": warnings,
+        "unrestored": len(failed | state.unrestored),
+    }

@@ -42,6 +42,13 @@
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
+### 2026-11-06 实施：复用原生 manifest 的脚手架适配器
+
+- 新增chartmanifest.render_scaffold：明确的语义角色→实际Artist/Container所有权，复用FigState、instrument、完整overrides和最终SVG draw时capture_preview_manifest；分开返回原生gid、真实SVG成员id、语义角色及坐标映射。不从浏览器DOM反推几何，不建立第二份属性应用规则。
+- 轴仅拥有其家具，系列/容器/色条/图例均按显式所有者登记；未知patch目标稳定拒绝，setter/identity失败保留warnings/unrestored供消费者阻断。没有“只有第一条线”的近似所有权。
+- 根代理在当前树重新执行tests/test_chart_manifest.py：25 passed/0 skipped，pytest exit0；报告chart-manifest-root.xml。文件SHA与代理冻结版本一致；其最终draw反证在提前Agg几何的目标断言失败。Ruff/format通过。
+- 这是worker adapter核心，不是已集成的最终场景manifest：coordinates.composed=False，原场景祖先clip/opacity、最终paint order与坐标还须在组合器接线。前端renderStore接线正在独立实施；原生ID与既有自包含v1的重放兼容须版本化解决，不可直接换序列化后冒称旧包可恢复。
+
 ### 2026-11-06 实施：连续文字 chunk 与独立几何验证
 
 - SVG→IR 的连续 tspan 改为整段 chunk 定位与锚定，复用既有 shaping/字体权威；处理绝对位置边界、相对 dx/dy、空 tspan、XML 空白、跨 paint kerning 及逐字旋转。未新增 IR 或写出器，未扩大为任意 SVG 文本支持。
