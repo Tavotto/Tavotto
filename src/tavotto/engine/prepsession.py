@@ -1132,6 +1132,9 @@ def _fingerprint_parts(plan: preparation.PreparationPlan) -> dict:
             "impact_digest"
         ),
     }
+    selection = plan.input_declaration_state
+    if selection is not None and selection.get("revision") is not None:
+        payload["input_declaration"] = selection["revision"]
     return payload
 
 
