@@ -265,7 +265,16 @@ class SvgWriter:
                 parent, "g", transform=_matrix(node.transform), opacity=_num(node.opacity)
             )
             if node.clip is not None:
-                self._clip(group, node.clip.segments, node.clip.fill_rule)
+                if isinstance(node.clip, ir.ClipUnion):
+                    name = self._name("clip")
+                    clip = _element(self.defs, "clipPath", id=name, clipPathUnits="userSpaceOnUse")
+                    for path in node.clip.paths:
+                        _element(
+                            clip, "path", d=_path(path.segments), **{"clip-rule": path.fill_rule}
+                        )
+                    group.set("clip-path", f"url(#{name})")
+                else:
+                    self._clip(group, node.clip.segments, node.clip.fill_rule)
             for child in node.children:
                 self._emit(child, group)
         elif isinstance(node, ir.ShapedText):
@@ -546,7 +555,11 @@ class SvgWriter:
             try:
                 root = None
                 text_data = self.imported_text_svgs.get(node.resource)
-                if text_data is not None and self.text_policy == TEXT_POLICY_TEXT:
+                if (
+                    text_data is not None
+                    and self.text_policy == TEXT_POLICY_TEXT
+                    and res.kind != "svg"
+                ):
                     try:
                         root = parse_svg(text_data)
                     except (SVGError, ValueError):
@@ -563,6 +576,15 @@ class SvgWriter:
                     )
                 self.facts.imported_text_elements += texts
                 values = [float(v) for v in root.get("viewBox", "").replace(",", " ").split()]
+                if res.kind == "svg" and res.origin == "declarative":
+                    # Native SVG may establish its user coordinate system from
+                    # CSS-pixel intrinsic lengths without an explicit viewBox.
+                    from ..svgscene import _physical_size
+
+                    w_pt, h_pt, view_box = _physical_size(root)
+                    if view_box is None:
+                        root.set("viewBox", f"0 0 {_num(w_pt * 96 / 72)} {_num(h_pt * 96 / 72)}")
+                        values = [0, 0, w_pt * 96 / 72, h_pt * 96 / 72]
                 if (
                     len(values) != 4
                     or not all(math.isfinite(v) for v in values)
@@ -581,8 +603,28 @@ class SvgWriter:
                     },
                 ) from exc
         root = copy.deepcopy(self._sources[node.resource])
-        _, _, width, height = (float(v) for v in root.get("viewBox").replace(",", " ").split())
-        group, pl = self._placed(parent, node, (0, 0, width, height))
+        native_svg = res.kind == "svg" and res.origin == "declarative"
+        if native_svg:
+            from ..svgscene import _physical_size
+
+            width, height, _ = _physical_size(root)
+        else:
+            _, _, width, height = (float(v) for v in root.get("viewBox").replace(",", " ").split())
+        if native_svg and node.crop in (None, (0, 0, 1, 1)):
+            # The nested SVG viewport already clips its physical source frame.
+            # A second coincident Path clip multiplies edge coverage (visible
+            # at fractional CSS pixels), although no crop was requested.
+            pl = placement.place(
+                (0, 0, width, height),
+                node.rect,
+                rotate_cw_deg=node.rotate_cw_deg,
+                flip_h=node.flip_h,
+                flip_v=node.flip_v,
+            )
+            group = _element(parent, "g", transform=_matrix(pl.matrix), opacity=_num(node.opacity))
+            root.set("overflow", "hidden")
+        else:
+            group, pl = self._placed(parent, node, (0, 0, width, height))
         scope = self._name("source")
         wrapper = _element(group, "g", id=scope, transform=f"matrix(1 0 0 -1 0 {_num(height)})")
         _isolate(root, scope + "-", scope)
@@ -590,7 +632,8 @@ class SvgWriter:
         root.set("y", "0")
         root.set("width", _num(width))
         root.set("height", _num(height))
-        root.set("preserveAspectRatio", "none")
+        if not native_svg:
+            root.set("preserveAspectRatio", "none")
         wrapper.append(root)
         self.facts.transparency_groups += int(node.opacity < 1)
         self.facts.imported_pages.append(

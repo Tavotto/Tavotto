@@ -42,6 +42,14 @@
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
+### 2026-11-06 实施：SVG→IR 保真与真实裁剪并集
+
+- svgir/svgcoord 修复相对/重复/平滑/弧路径、局部CTM重复应用、px/pt/非零viewBox/PAR、use/符号视口、CSS继承、文字/图像和组透明；嵌入图像通过显式files接收器进入既有PDF写出资源。unsupported元素仍逐格式明确失败，不静默略去。
+- clip-rule、不同路径填充区的真实并集、符号百分比与继承字号em都有独立反例。ClipUnion在PDF用矢量白路径luminosity mask/隔离Form，SVG保留各成员规则；旧单Path分支逐字节兼容。反向矩形简单拼接会挖空重叠区，实际PDFium像素反证已留存，ADR0166同步该结构决定。
+- 精确原生declarative SVG例外贯穿IR/写出器；不放宽static FILE_KINDS，不伪造PDF；无crop/全框的同一viewport不再重复裁剪。真实Chrome手写同物理容器参考与nativeSVG、ClipUnion写出全图最大通道差均0，顶层与放置viewport的边缘AA差仅作诊断，不放宽门禁。
+- 最终核心175 passed/0skip，Chrome156 revision1248补验43 passed/0skip，均exit0；两组有2项重叠。旧writer/compose的191 passed+84 skipped中，84的准确分类为41 Chromium（现已补过）、41 Inkscape、1 pdfminer、1 pdftotext；其余43项环境缺口保留，不能把旧skip都记为已通过。报告svgir-final.xml/log、svgir-chromium.xml/log，图像在svgir-chromium-evidence。Ruff/format/diff检查exit0。
+- 仍未验证复杂连续tspan的整段chunk anchor、Inkscape/其他独立文字读取及跨平台完整产品；本提交只收敛转换保真和写出合同，不代表M1或全部SVG能力完成。转换器7文件冻结，根代理按功能单独提交；共享app/sources/plan和恢复UI另批。
+
 ### 2026-11-06 实施：CSV/TSV 与类别请求合同
 
 - chartdata.parse_table 全表只选一次分隔符，候选首记录与实际数据均由标准库 csv.reader 解析；引号、双写引号和跨行字段保留。未引用表头沿用旧 trim，引用表头保留精确列名，类别文本保留原字符，错误行列使用原物理位置。数值溢出不再混入有效列；错误码闭集和 parse_grid 不变。

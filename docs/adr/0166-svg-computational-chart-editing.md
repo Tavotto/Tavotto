@@ -45,14 +45,16 @@
   → 既有 `pdfwriter`（Canonical PDF）→ 既有栅格管线；**零 PyMuPDF 不变**，父进程不 import matplotlib 不变。
 - SVG 格式导出：**直接交付编辑后场景字节**（同静态素材的 copy 基准语义），不经翻译器。
 - EPS：维持「只有 worker 写得出」——计算面板无原脚本时按既有码报 `eps_needs_script` 一族，不伪矢量。
-- 翻译器能力逐项声明（native / unsupported 点名元素）：native=路径命令（A 弧除外）、基础形状、任意路径 clip、
+- 翻译器能力逐项声明（native / unsupported 点名元素）：native=路径命令（含弧转换）、基础形状、路径 clip、
   opacity、dash、文字（批准脸+HarfBuzz，旋转经 Group 变换，字体不可解析时**按披露回退或逐项失败**，不静默换脸）；
   unsupported=渐变/mask/filter/pattern → 该格式逐项失败带元素清单（同 `eps_annotations_unsupported` 的诚实模式）。
 - 文字层：PDF 文字层保留真实 Unicode（pdfwriter 既有 ToUnicode/ActualText 机制）；实验三核对文本层含标题/图例/新刻度。
+- 2026-11-06 保真接线：局部 CTM 只应用一次，根视口按物理 pt 与 preserveAspectRatio 映射；use/符号视口、继承字号、实际 CSS 层叠及嵌入图像走同一 IR。多成员 clipPath 是各自填充规则的并集，用 ClipUnion 表达；PDF 以矢量 luminosity mask 与隔离 Form 保留曲线及嵌套透明，SVG 保留各成员 clip-rule。不能拼成一个绕向路径，否则反向重叠会相消；单 Path 原分支保持原样。复杂连续 tspan 的整段 text-anchor 仍待专项修复/验证，不把已过的明确定位文字用例扩称任意文本布局等价。
 
 ### 3. 身份与安全（扩展现有合同，不新增旁路）
 
 - 2026-11-06 接线细化：计算产物使用 `SourceArtifact.origin=declarative`，由 `render_revision` 标识模型/绑定/来源/环境版本，不伪造 Figure 执行回执。声明式 Canonical PDF 与 SVG companion 必须同来源同版本；static/execution 既有配对与缺省序列化保持原样。RenderPlan 继续消费同一个来源解析器，不另建计算图表导出管线。
+- 不能建立 Canonical PDF 时，原生声明式 SVG 可作为其自身的 SVG 表达进入同一计划；例外精确限定 kind=svg 且 origin=declarative，不扩普通 static FILE_KINDS，不允许嵌套 companion。SVG 写出核对字节摘要并保留物理尺寸/视口，PDF 逐项明确失败，不能造空 PDF。完整 SVG viewport 不再额外施加一次同边界 Path 裁剪；普通 PDF/SVG companion 路径不变。
 - 计算面板的版本身份 = **场景字节摘要 + 模型摘要 + 数据摘要 + 绑定摘要 + 计算环境身份**（worker matplotlib/引擎版本）；
   任一变化都不得复用旧几何/旧快照（SG02 冻结 schema）。
 - 导入与元数据：`svgcheck` 边界原样（实验六拒绝 DTD/脚本/外链）；模型元数据**闭式字段集**校验，

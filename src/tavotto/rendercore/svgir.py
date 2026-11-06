@@ -1,36 +1,26 @@
-"""SVG → IR 翻译器（ADR 0166 §2；NEXT_PHASE R07）。
+"""Safe static SVG → existing RenderCore IR (no second rendering pipeline).
 
-组合后的计算 SVG（经 svgcheck 校验的字节）→ `rendercore.ir.Page` → 现有
-`pdfwriter.write_pdf` → PDF / PNG / TIFF。**只处理 svgcheck 放行的静态子集**；
-不可表达的特性（渐变 / mask / filter / 弧命令）以 `SVGIRError` 逐元素如实报，
-**不静默栅格化**。
-
-坐标合同：SVG y-down → IR y-up 一次根翻转（与 svgwriter 的输出方向互补）；
-viewBox 原点映射由调用方（app 层的 chart 导出）预先处理——本模块接收的
-坐标已经是**场景用户空间**。
-
-文本：`<text>` 的 font-family 与已批准字体按族名匹配（不匹配 → 映射到
-Liberation Sans 并在 notes 里如实记录）；HarfBuzz 整形由现有 `HbFace.shape`
-承担；字号从 font-size 属性或 style 里取（缺省 10pt）。
-
-不支持：渐变填充（`url(#grad)` 引用非 clipPath defs）、mask、filter、
-弧命令（A/Aa）——全部逐元素 `SVGIRError`。
+Coordinates stay local until one root viewBox/physical-point mapping. Each DOM
+transform and opacity appears exactly once. Text/images get one local reflection
+because their IR payloads are y-up. Unsupported layout or paint features fail
+explicitly instead of quietly disappearing from exported figures.
 """
 
 from __future__ import annotations
 
 import base64
-import binascii
+import colorsys
+import hashlib
+import math
 import re
-import xml.etree.ElementTree as ET
+import struct
 
-from tavotto.rendercore import ir
+from tavotto import svgcoord
+from tavotto.rendercore import ir, typography
+from tavotto.rendercore.fonts import FontsUnavailable
 from tavotto.rendercore.svgcheck import parse_svg, strip_matplotlib_doctype
 
-SVG_NS = "http://www.w3.org/2000/svg"
 XLINK_HREF = "{http://www.w3.org/1999/xlink}href"
-
-#: 不支持的 SVG 特性 → 稳定错误码（前端文案落地时同步）。
 ERROR_CODES = (
     "svgir_gradient",
     "svgir_mask",
@@ -43,328 +33,375 @@ ERROR_CODES = (
 
 
 class SVGIRError(ValueError):
-    """翻译失败。`code` ∈ ERROR_CODES，`element` 是触发元素的 tag + id。"""
-
     def __init__(self, code: str, detail: str = "", element: str = "") -> None:
         if code not in ERROR_CODES:
             raise AssertionError(f"undisclosed svgir error: {code}")
         super().__init__(f"{code}: {detail}" if detail else code)
-        self.code = code
-        self.detail = detail
-        self.element = element
+        self.code, self.detail, self.element = code, detail, element
 
 
 _NUM = r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"
 _NUM_RE = re.compile(_NUM)
-_TRANSFORM_RE = re.compile(r"(matrix|translate|scale|rotate|skewX|skewY)\(\s*([^)]*)\)")
-_GRADIENT_RE = re.compile(r"url\(#([^)]+)\)")
-_DATA_URI_RE = re.compile(r"^data:image/(png|jpeg);base64,(.*)$", re.S)
+_TOKEN_RE = re.compile(rf"[A-Za-z]|{_NUM}")
+_REF_RE = re.compile(r"url\(\s*['\"]?#([^)'\"\s]+)['\"]?\s*\)")
+_DATA_URI_RE = re.compile(r"^data:image/(png|jpeg);base64,([A-Za-z0-9+/=\s]+)$")
 
 
-def _parse_transform(text: str) -> ir.Matrix:
-    m = ir.IDENTITY
-    for name, raw in _TRANSFORM_RE.findall(text or ""):
-        vals = [float(v) for v in _NUM_RE.findall(raw)]
-        if name == "matrix" and len(vals) == 6:
-            local = tuple(vals)
-        elif name == "translate" and len(vals) in (1, 2):
-            tx = vals[0]
-            ty = vals[1] if len(vals) > 1 else 0.0
-            local = (1.0, 0.0, 0.0, 1.0, tx, ty)
-        elif name == "scale" and len(vals) in (1, 2):
-            sx = vals[0]
-            sy = vals[1] if len(vals) > 1 else sx
-            local = (sx, 0.0, 0.0, sy, 0.0, 0.0)
-        elif name == "rotate" and len(vals) in (1, 3):
-            import math
-
-            ang = math.radians(vals[0])
-            cos, sin = math.cos(ang), math.sin(ang)
-            rot = (cos, sin, -sin, cos, 0.0, 0.0)
-            if len(vals) == 3:
-                cx, cy = vals[1], vals[2]
-                local = ir.compose(
-                    ir.compose((1.0, 0.0, 0.0, 1.0, -cx, -cy), rot),
-                    (1.0, 0.0, 0.0, 1.0, cx, cy),
-                )
-            else:
-                local = rot
-        elif name == "skewX" and len(vals) == 1:
-            import math
-
-            local = (1.0, 0.0, math.tan(math.radians(vals[0])), 1.0, 0.0, 0.0)
-        elif name == "skewY" and len(vals) == 1:
-            import math
-
-            local = (1.0, math.tan(math.radians(vals[0])), 0.0, 1.0, 0.0, 0.0)
-        else:
-            raise SVGIRError("svgir_unsupported_element", f"transform {name}")
-        m = ir.compose(m, local)
-    return m
+def _tag(el):
+    return el.tag.split("}")[-1]
 
 
-def _parse_path_d(d: str) -> list[tuple]:
-    """SVG path d → IR segments (M/L/C/Z)。弧命令 → SVGIRError。"""
-    tokens = re.findall(r"([MLHVCSQTAZmlhvcsqtaz])([^MLHVCSQTAZmlhvcsqtaz]*)", d)
-    segs: list[tuple] = []
-    cur = (0.0, 0.0)
-    start: tuple[float, float] | None = None
-    for op, arg in tokens:
-        nums = [float(v) for v in _NUM_RE.findall(arg)]
-        op = op.upper()
-        i = 0
-        while i < len(nums) or (op == "Z" and i == 0):
-            if op == "M":
-                cur = (nums[i], nums[i + 1])
-                start = cur
-                segs.append(("M", cur[0], cur[1]))
-                i += 2
-                op = "L"  # 隐式 lineto
-            elif op == "L":
-                cur = (nums[i], nums[i + 1])
-                segs.append(("L", cur[0], cur[1]))
-                i += 2
-            elif op == "H":
-                cur = (nums[i], cur[1])
-                segs.append(("L", cur[0], cur[1]))
-                i += 1
-            elif op == "V":
-                cur = (cur[0], nums[i])
-                segs.append(("L", cur[0], cur[1]))
-                i += 1
-            elif op == "C":
-                segs.append(
-                    ("C", nums[i], nums[i + 1], nums[i + 2], nums[i + 3], nums[i + 4], nums[i + 5])
-                )
-                cur = (nums[i + 4], nums[i + 5])
-                i += 6
-            elif op == "S":
-                if len(nums) - i < 4:
-                    break
-                x2, y2, x, y = nums[i : i + 4]
-                segs.append(("C", cur[0], cur[1], x2, y2, x, y))
-                cur = (x, y)
-                i += 4
-            elif op == "Q":
-                if len(nums) - i < 4:
-                    break
-                x1, y1, x, y = nums[i : i + 4]
-                cx1 = cur[0] + 2 / 3 * (x1 - cur[0])
-                cy1 = cur[1] + 2 / 3 * (y1 - cur[1])
-                cx2 = x + 2 / 3 * (x1 - x)
-                cy2 = y + 2 / 3 * (y1 - y)
-                segs.append(("C", cx1, cy1, cx2, cy2, x, y))
-                cur = (x, y)
-                i += 4
-            elif op == "T":
-                if len(nums) - i < 2:
-                    break
-                x, y = nums[i], nums[i + 1]
-                segs.append(("C", cur[0], cur[1], x, y, x, y))
-                cur = (x, y)
-                i += 2
-            elif op == "A":
-                raise SVGIRError("svgir_arc", "arc command not supported")
-            elif op == "Z":
-                segs.append(("Z",))
-                cur = start or (0.0, 0.0)
-                break
-            else:
-                break
-    return segs
+def _number(value):
+    try:
+        result = float(value)
+    except (ValueError, TypeError) as exc:
+        raise SVGIRError("svgir_invalid", "invalid number") from exc
+    if not math.isfinite(result):
+        raise SVGIRError("svgir_invalid", "non-finite number")
+    return result
 
 
-def _parse_color(s: str) -> tuple[ir.RGB, float] | None:
-    """CSS 颜色 → (rgb, alpha)；none → None。"""
-    s = (s or "").strip().lower()
-    if s in ("", "none", "transparent"):
-        return None
-    m = re.match(r"#([0-9a-f]{6})$", s)
-    if m:
-        v = m.group(1)
-        return (int(v[0:2], 16) / 255, int(v[2:4], 16) / 255, int(v[4:6], 16) / 255), 1.0
-    m = re.match(r"#([0-9a-f]{3})$", s)
-    if m:
-        v = m.group(1)
-        return tuple(int(c * 2, 16) / 255 for c in v), 1.0  # type: ignore[return-value]
-    m = re.match(r"rgba?\(([^)]*)\)", s)
-    if m:
-        parts = [p.strip() for p in m.group(1).split(",")]
-        vals = []
-        for p in parts[:3]:
-            vals.append(float(p[:-1]) / 100 if p.endswith("%") else float(p) / 255)
-        alpha = 1.0
-        if len(parts) > 3:
-            alpha = float(parts[3])
-        return (vals[0], vals[1], vals[2]), alpha
-    named = {
-        "white": (1, 1, 1),
-        "black": (0, 0, 0),
-        "red": (1, 0, 0),
-        "green": (0, 0.5, 0),
-        "blue": (0, 0, 1),
-        "orange": (1, 0.647, 0),
-        "yellow": (1, 1, 0),
-        "gray": (0.5, 0.5, 0.5),
-        "grey": (0.5, 0.5, 0.5),
-        "purple": (0.5, 0, 0.5),
-        "cyan": (0, 1, 1),
-        "magenta": (1, 0, 1),
+def _numbers(value):
+    if _NUM_RE.sub("", value).strip(" ,\t\n\r"):
+        raise SVGIRError("svgir_invalid", "invalid number list")
+    return [_number(v) for v in _NUM_RE.findall(value)]
+
+
+def _length(value, *, percent=1, em=16):
+    """Local SVG user units; absolute units use CSS px (96/in)."""
+    m = re.fullmatch(rf"\s*({_NUM})(px|pt|pc|in|cm|mm|q|em|ex|%)?\s*", str(value))
+    if not m:
+        raise SVGIRError("svgir_unsupported_element", "unsupported length")
+    factors = {
+        None: 1,
+        "px": 1,
+        "pt": 96 / 72,
+        "pc": 16,
+        "in": 96,
+        "cm": 96 / 2.54,
+        "mm": 96 / 25.4,
+        "q": 96 / 101.6,
+        "em": em,
+        "ex": em / 2,
+        "%": percent / 100,
     }
-    if s in named:
-        return named[s], 1.0
-    return None
+    return _number(m[1]) * factors[m[2]]
 
 
-def _style_dict(el: ET.Element) -> dict[str, str]:
-    """元素 style 属性 + presentation 属性 → 统一 dict。"""
-    out: dict[str, str] = {}
-    for decl in el.attrib.get("style", "").split(";"):
-        if ":" in decl:
-            k, v = decl.split(":", 1)
-            out[k.strip()] = v.strip()
-    for k in (
+def _parse_transform(value):
+    try:
+        return svgcoord.parse_transform(value)
+    except ValueError as exc:
+        raise SVGIRError("svgir_invalid", "invalid transform") from exc
+
+
+def _arc(cur, rx, ry, rotation, large, sweep, end):
+    """Endpoint arc → <=90° cubic pieces (SVG 1.1 implementation notes)."""
+    if large not in (0, 1) or sweep not in (0, 1):
+        raise SVGIRError("svgir_invalid", "arc flags must be 0 or 1")
+    if cur == end:
+        return []
+    rx, ry = abs(rx), abs(ry)
+    if rx == 0 or ry == 0:
+        return [("L", *end)]
+    phi = math.radians(rotation % 360)
+    cp, sp = math.cos(phi), math.sin(phi)
+    dx, dy = (cur[0] - end[0]) / 2, (cur[1] - end[1]) / 2
+    xp, yp = cp * dx + sp * dy, -sp * dx + cp * dy
+    size = (xp / rx) ** 2 + (yp / ry) ** 2
+    if size > 1:
+        rx, ry = rx * math.sqrt(size), ry * math.sqrt(size)
+    den = (rx * yp) ** 2 + (ry * xp) ** 2
+    coef = math.sqrt(max(0, ((rx * ry) ** 2 - den) / den)) if den else 0
+    if large == sweep:
+        coef = -coef
+    cxp, cyp = coef * rx * yp / ry, -coef * ry * xp / rx
+    cx = cp * cxp - sp * cyp + (cur[0] + end[0]) / 2
+    cy = sp * cxp + cp * cyp + (cur[1] + end[1]) / 2
+    start = math.atan2((yp - cyp) / ry, (xp - cxp) / rx)
+    finish = math.atan2((-yp - cyp) / ry, (-xp - cxp) / rx)
+    delta = (finish - start) % (2 * math.pi)
+    if not sweep and delta > 0:
+        delta -= 2 * math.pi
+    count = max(1, math.ceil(abs(delta) / (math.pi / 2)))
+
+    def point(t):
+        return cx + cp * rx * math.cos(t) - sp * ry * math.sin(t), cy + sp * rx * math.cos(
+            t
+        ) + cp * ry * math.sin(t)
+
+    def tangent(t):
+        return -cp * rx * math.sin(t) - sp * ry * math.cos(t), -sp * rx * math.sin(
+            t
+        ) + cp * ry * math.cos(t)
+
+    result = []
+    for i in range(count):
+        a, b = start + delta * i / count, start + delta * (i + 1) / count
+        k = 4 / 3 * math.tan((b - a) / 4)
+        p, q, u, v = point(a), point(b), tangent(a), tangent(b)
+        result.append(("C", p[0] + k * u[0], p[1] + k * u[1], q[0] - k * v[0], q[1] - k * v[1], *q))
+    result[-1] = (*result[-1][:-2], *end)
+    return result
+
+
+def _parse_path_d(data):
+    """Normalize relative/absolute M/L/H/V/C/S/Q/T/A/Z to absolute M/L/C/Z."""
+    if _TOKEN_RE.sub("", data).strip(" ,\t\n\r"):
+        raise SVGIRError("svgir_invalid", "invalid path syntax")
+    tokens, result = _TOKEN_RE.findall(data), []
+    cur = start = (0.0, 0.0)
+    cubic = quadratic = None
+    op, previous, i = "", "", 0
+    arity = {"M": 2, "L": 2, "H": 1, "V": 1, "C": 6, "S": 4, "Q": 4, "T": 2, "A": 7}
+    while i < len(tokens):
+        explicit = tokens[i].isalpha()
+        if explicit:
+            op, i = tokens[i], i + 1
+        upper = op.upper()
+        if upper == "Z":
+            if not explicit or not result:
+                raise SVGIRError("svgir_invalid", "invalid closepath")
+            result.append(("Z",))
+            cur, cubic, quadratic, previous, op = start, None, None, "Z", ""
+            continue
+        n = arity.get(upper)
+        if n is None or i + n > len(tokens) or any(t.isalpha() for t in tokens[i : i + n]):
+            raise SVGIRError("svgir_invalid", "incomplete path command")
+        if not result and upper != "M":
+            raise SVGIRError("svgir_invalid", "path must start with moveto")
+        vals, i, rel = [_number(v) for v in tokens[i : i + n]], i + n, op.islower()
+
+        def xy(a, b):
+            return (a + cur[0], b + cur[1]) if rel else (a, b)
+
+        next_cubic = next_quad = None
+        if upper in ("M", "L", "T"):
+            end = xy(*vals)
+            if upper == "T":
+                control = (
+                    (2 * cur[0] - quadratic[0], 2 * cur[1] - quadratic[1])
+                    if previous in ("Q", "T") and quadratic
+                    else cur
+                )
+                q1 = (
+                    cur[0] + 2 / 3 * (control[0] - cur[0]),
+                    cur[1] + 2 / 3 * (control[1] - cur[1]),
+                )
+                q2 = (
+                    end[0] + 2 / 3 * (control[0] - end[0]),
+                    end[1] + 2 / 3 * (control[1] - end[1]),
+                )
+                result.append(("C", *q1, *q2, *end))
+                next_quad = control
+            else:
+                result.append((upper, *end))
+            if upper == "M":
+                start, op = end, "l" if rel else "L"
+        elif upper in ("H", "V"):
+            end = (
+                ((cur[0] + vals[0] if rel else vals[0]), cur[1])
+                if upper == "H"
+                else (cur[0], (cur[1] + vals[0] if rel else vals[0]))
+            )
+            result.append(("L", *end))
+        elif upper in ("C", "S"):
+            if upper == "C":
+                c1, c2, end = xy(*vals[:2]), xy(*vals[2:4]), xy(*vals[4:])
+            else:
+                c1 = (
+                    (2 * cur[0] - cubic[0], 2 * cur[1] - cubic[1])
+                    if previous in ("C", "S") and cubic
+                    else cur
+                )
+                c2, end = xy(*vals[:2]), xy(*vals[2:])
+            result.append(("C", *c1, *c2, *end))
+            next_cubic = c2
+        elif upper == "Q":
+            control, end = xy(*vals[:2]), xy(*vals[2:])
+            c1 = (cur[0] + 2 / 3 * (control[0] - cur[0]), cur[1] + 2 / 3 * (control[1] - cur[1]))
+            c2 = (end[0] + 2 / 3 * (control[0] - end[0]), end[1] + 2 / 3 * (control[1] - end[1]))
+            result.append(("C", *c1, *c2, *end))
+            next_quad = control
+        else:
+            end = xy(*vals[-2:])
+            result.extend(_arc(cur, *vals[:5], end))
+        cur, cubic, quadratic, previous = end, next_cubic, next_quad, upper
+    return result
+
+
+_NAMED = {
+    "white": (1, 1, 1),
+    "black": (0, 0, 0),
+    "red": (1, 0, 0),
+    "green": (0, 128 / 255, 0),
+    "blue": (0, 0, 1),
+    "orange": (1, 165 / 255, 0),
+    "yellow": (1, 1, 0),
+    "gray": (128 / 255,) * 3,
+    "grey": (128 / 255,) * 3,
+    "silver": (192 / 255,) * 3,
+    "purple": (128 / 255, 0, 128 / 255),
+    "cyan": (0, 1, 1),
+    "aqua": (0, 1, 1),
+    "magenta": (1, 0, 1),
+    "fuchsia": (1, 0, 1),
+    "lime": (0, 1, 0),
+    "navy": (0, 0, 128 / 255),
+    "teal": (0, 128 / 255, 128 / 255),
+    "maroon": (128 / 255, 0, 0),
+    "olive": (128 / 255, 128 / 255, 0),
+    "rebeccapurple": (102 / 255, 51 / 255, 153 / 255),
+}
+
+
+def _parse_color(value, current="black"):
+    value = value.strip().lower()
+    if value in ("none", "transparent"):
+        return None
+    if value == "currentcolor":
+        return _parse_color(current if current.lower() != "currentcolor" else "black")
+    if _REF_RE.fullmatch(value):
+        raise SVGIRError("svgir_gradient", "paint server is unsupported")
+    if value in _NAMED:
+        return _NAMED[value], 1
+    if re.fullmatch(r"#[\da-f]{3,4}|#[\da-f]{6}(?:[\da-f]{2})?", value):
+        h = value[1:]
+        if len(h) < 5:
+            h = "".join(c * 2 for c in h)
+        channels = [int(h[i : i + 2], 16) / 255 for i in range(0, len(h), 2)]
+        return tuple(channels[:3]), channels[3] if len(channels) == 4 else 1
+    match = re.fullmatch(r"(rgb|rgba|hsl|hsla)\((.*)\)", value)
+    if match:
+        p = re.split(r"\s*[,/]\s*|\s+", match[2].strip())
+        if len(p) not in (3, 4):
+            raise SVGIRError("svgir_invalid", "invalid color function")
+        alpha = (
+            _number(p[3][:-1]) / 100
+            if len(p) == 4 and p[3].endswith("%")
+            else _number(p[3])
+            if len(p) == 4
+            else 1
+        )
+        if match[1].startswith("rgb"):
+            rgb = tuple(
+                min(1, max(0, _number(c[:-1]) / 100 if c.endswith("%") else _number(c) / 255))
+                for c in p[:3]
+            )
+        else:
+            hue = _number(p[0].removesuffix("deg")) % 360 / 360
+            sat, light = (_number(c.removesuffix("%")) / 100 for c in p[1:3])
+            rgb = colorsys.hls_to_rgb(hue, min(1, max(0, light)), min(1, max(0, sat)))
+        return rgb, min(1, max(0, alpha))
+    raise SVGIRError("svgir_unsupported_element", "unsupported color")
+
+
+_INHERITED = frozenset(
+    (
         "fill",
-        "stroke",
-        "stroke-width",
         "fill-opacity",
+        "fill-rule",
+        "stroke",
         "stroke-opacity",
-        "opacity",
+        "stroke-width",
+        "stroke-dasharray",
+        "stroke-dashoffset",
+        "stroke-linecap",
+        "stroke-linejoin",
+        "stroke-miterlimit",
         "font-family",
         "font-size",
         "font-weight",
         "font-style",
         "text-anchor",
-        "stroke-dasharray",
-        "stroke-dashoffset",
-        "stroke-linecap",
-        "stroke-linejoin",
-    ):
-        if k in el.attrib:
-            out.setdefault(k, el.attrib[k])
-    return out
-
-
-def _paint(st: dict, key: str, parent_opacity: float) -> ir.Paint | None:
-    col = _parse_color(st.get(key, ""))
-    if col is None:
-        return None
-    rgb, alpha = col
-    op_key = f"{key}-opacity"
-    if op_key in st:
-        try:
-            alpha *= float(st[op_key])
-        except ValueError:
-            pass
-    return ir.Paint(rgb, alpha * parent_opacity)
-
-
-def _stroke_of(st: dict, parent_opacity: float) -> ir.Stroke | None:
-    sp = _paint(st, "stroke", parent_opacity)
-    if sp is None:
-        return None
-    width = 1.0
-    if "stroke-width" in st:
-        try:
-            width = float(re.match(_NUM_RE, st["stroke-width"]).group(0))  # type: ignore[union-attr]
-        except (ValueError, AttributeError):
-            pass
-    dash: tuple[float, ...] = ()
-    if "stroke-dasharray" in st and st["stroke-dasharray"] != "none":
-        dash = tuple(float(v) for v in re.findall(_NUM_RE, st["stroke-dasharray"]))
-    cap = {"butt": "butt", "round": "round", "square": "square"}.get(
-        st.get("stroke-linecap", "butt"), "butt"
+        "color",
+        "visibility",
+        "clip-rule",
+        "dominant-baseline",
+        "alignment-baseline",
     )
-    join = {"miter": "miter", "round": "round", "bevel": "bevel"}.get(
-        st.get("stroke-linejoin", "miter"), "miter"
+)
+_PRESENTATION = _INHERITED | {
+    "opacity",
+    "clip-path",
+    "display",
+    "mask",
+    "filter",
+    "font",
+    "marker-start",
+    "marker-mid",
+    "marker-end",
+    "vector-effect",
+    "paint-order",
+    "letter-spacing",
+    "word-spacing",
+    "baseline-shift",
+    "text-decoration",
+}
+_DEFAULT = {
+    "fill": "black",
+    "stroke": "none",
+    "color": "black",
+    "font-family": "sans-serif",
+    "font-size": "16",
+    "font-weight": "normal",
+    "font-style": "normal",
+}
+
+
+def _declarations(value):
+    return [
+        (k.strip().lower(), v.strip())
+        for d in value.split(";")
+        if ":" in d
+        for k, v in [d.split(":", 1)]
+    ]
+
+
+def _font_declarations(value):
+    keys = ("font-size", "font-family", "font-style", "font-weight")
+    if value in ("inherit", "initial"):
+        return dict.fromkeys(keys, value)
+    m = re.fullmatch(rf"(.*?)({_NUM}(?:px|pt|em|%))(?:\s*/\s*[^ ]+)?\s+(.+)", value)
+    if not m:
+        raise SVGIRError("svgir_unsupported_element", "unsupported font shorthand")
+    tokens = m[1].split()
+    weight = next(
+        (token for token in tokens if token in ("bold", "bolder", "lighter") or token.isdigit()),
+        "normal",
     )
-    return ir.Stroke(sp, width, cap=cap, join=join, dash=dash)
+    return {
+        "font-size": m[2],
+        "font-family": m[3],
+        "font-style": "italic"
+        if "italic" in tokens
+        else "oblique"
+        if "oblique" in tokens
+        else "normal",
+        "font-weight": weight,
+    }
 
 
-def _shape_to_path(tag: str, attrib: dict) -> list[tuple]:
-    """rect/circle/ellipse/line/polygon/polyline → IR segments。"""
+def _simple_selector(el, value):
+    tag = re.match(r"^[\w*-]+", value)
+    if tag and tag[0] != "*" and tag[0] != _tag(el):
+        return False
+    for kind, name in re.findall(r"([.#])([\w-]+)", value):
+        if kind == "#" and el.get("id") != name:
+            return False
+        if kind == "." and name not in el.get("class", "").split():
+            return False
+    return True
 
-    def f(key: str, default: float = 0.0) -> float:
-        try:
-            return float(attrib.get(key, default))
-        except (ValueError, TypeError):
-            return default
 
-    if tag == "rect":
-        x, y = f("x"), f("y")
-        w, h = f("width"), f("height")
-        return [("M", x, y), ("L", x + w, y), ("L", x + w, y + h), ("L", x, y + h), ("Z",)]
-    if tag == "circle":
-        cx, cy, r = f("cx"), f("cy"), f("r")
-        k = 0.5522847498 * r
-        return [
-            ("M", cx - r, cy),
-            ("C", cx - r, cy - k, cx - k, cy - r, cx, cy - r),
-            ("C", cx + k, cy - r, cx + r, cy - k, cx + r, cy),
-            ("C", cx + r, cy + k, cx + k, cy + r, cx, cy + r),
-            ("C", cx - k, cy + r, cx - r, cy + k, cx - r, cy),
-            ("Z",),
-        ]
-    if tag == "ellipse":
-        cx, cy, rx, ry = f("cx"), f("cy"), f("rx"), f("ry")
-        kx, ky = 0.5522847498 * rx, 0.5522847498 * ry
-        return [
-            ("M", cx - rx, cy),
-            ("C", cx - rx, cy - ky, cx - kx, cy - ry, cx, cy - ry),
-            ("C", cx + kx, cy - ry, cx + rx, cy - ky, cx + rx, cy),
-            ("C", cx + rx, cy + ky, cx + kx, cy + ry, cx, cy + ry),
-            ("C", cx - kx, cy + ry, cx - rx, cy + ky, cx - rx, cy),
-            ("Z",),
-        ]
-    if tag == "line":
-        return [("M", f("x1"), f("y1")), ("L", f("x2"), f("y2"))]
-    if tag in ("polygon", "polyline"):
-        nums = [float(v) for v in re.findall(_NUM_RE, attrib.get("points", ""))]
-        pts = list(zip(nums[::2], nums[1::2]))
-        if not pts:
-            return []
-        segs = [("M", *pts[0])]
-        segs.extend(("L", *p) for p in pts[1:])
-        if tag == "polygon":
-            segs.append(("Z",))
-        return segs
-    raise SVGIRError("svgir_unsupported_element", f"shape {tag}")
+def _transformed_segments(segments, matrix):
+    return tuple(
+        (s[0], *(v for i in range(1, len(s), 2) for v in ir.apply(matrix, s[i], s[i + 1])))
+        for s in segments
+    )
 
 
 class _Translator:
-    """SVG DOM → IR nodes。一次遍历，累积 resources。"""
-
-    def __init__(self, root: ET.Element, w_pt: float, h_pt: float, fonts) -> None:
-        self.root = root
-        self.w_pt = w_pt
-        self.h_pt = h_pt
-        self.fonts = fonts
-        self.resources: dict[str, ir.Resource] = {}
-        self.clip_defs: dict[str, ir.Path] = {}
-        self.use_defs: dict[str, ET.Element] = {}
-        self._font_cache: dict[str, str] = {}
-        self._faces: dict[str, object] = {}  # key → HbFace
-        self._notes: list[str] = []
-        # 收集 defs
-        for defs in root.findall(".//{SVG_NS}defs".replace("SVG_NS", SVG_NS)):
-            for child in defs:
-                cid = child.get("id", "")
-                tag = child.tag.split("}")[-1]
-                if tag == "clipPath":
-                    for shape in child:
-                        stag = shape.tag.split("}")[-1]
-                        if stag in ("rect", "path", "circle", "ellipse"):
-                            segs = (
-                                _parse_path_d(shape.get("d", ""))
-                                if stag == "path"
-                                else _shape_to_path(stag, shape.attrib)
-                            )
-                            self.clip_defs[cid] = ir.Path(tuple(segs))
-                elif tag in ("path", "rect", "circle", "g"):
-                    if cid:
-                        self.use_defs[cid] = child
-
-    #: matplotlib 族名 → IR 通用族名（批准集合的四族 + 常见别名映射）
     _FAMILY_MAP = {
         "dejavu sans": "sans-serif",
         "dejavu sans mono": "monospace",
@@ -379,211 +416,583 @@ class _Translator:
         "noto sans sc": "cjk",
     }
 
-    def _font_resource(self, family: str) -> str:
-        """family 名 → resources key。族名先过别名映射，不匹配 → sans-serif 兜底。"""
-        if family in self._font_cache:
-            return self._font_cache[family]
-        first = family.split(",")[0].strip().strip("'\"")
-        mapped = self._FAMILY_MAP.get(first.lower(), first.lower())
-        for candidate in (mapped, "sans-serif"):
+    def __init__(self, root, w_pt, h_pt, fonts, files):
+        self.root, self.w_pt, self.h_pt, self.fonts, self.files = root, w_pt, h_pt, fonts, files
+        self.resources, self.faces, self.font_cache, self.notes = {}, {}, {}, []
+        self.ids = {e.get("id"): e for e in root.iter() if e.get("id")}
+        self.parents = {c: p for p in root.iter() for c in p}
+        self.rules = []
+        for element in root.iter():
+            if _tag(element) == "style":
+                for selectors, declarations in re.findall(
+                    r"([^{}]+)\{([^{}]*)\}", element.text or ""
+                ):
+                    for selector in selectors.split(","):
+                        spec = (
+                            selector.count("#"),
+                            selector.count("."),
+                            len(re.findall(r"(?:^|[\s>])[A-Za-z][\w-]*", selector)),
+                        )
+                        self.rules.append(
+                            (spec, len(self.rules), selector.strip(), _declarations(declarations))
+                        )
+        self.rules.sort(key=lambda rule: rule[:2])
+        vb = _numbers(root.get("viewBox", ""))
+        if vb:
+            if len(vb) != 4 or min(vb[2:]) <= 0:
+                raise SVGIRError("svgir_invalid", "invalid viewBox")
+            self.viewport = vb[2], vb[3]
+        else:
+            self.viewport = (
+                _length(root.get("width", str(w_pt * 96 / 72))),
+                _length(root.get("height", str(h_pt * 96 / 72))),
+            )
+            vb = [0, 0, *self.viewport]
+        try:
+            self.root_map = svgcoord.viewbox_to_pt(vb, w_pt, h_pt, root.get("preserveAspectRatio"))
+        except ValueError as exc:
+            raise SVGIRError("svgir_invalid", "invalid viewport mapping") from exc
+
+    def _matches(self, el, selector):
+        parts = re.findall(r"[^\s>]+|>", selector)
+        simple = r"(?:[A-Za-z_][\w-]*|\*)?(?:[.#][\w-]+)*"
+        if not parts or parts[0] == ">" or parts[-1] == ">":
+            return False
+        if any(p != ">" and not re.fullmatch(simple, p) for p in parts):
+            return False
+        if any(a == b == ">" for a, b in zip(parts, parts[1:])):
+            return False
+
+        def match(node, index):
+            if node is None or not _simple_selector(node, parts[index]):
+                return False
+            if index == 0:
+                return True
+            parent = self.parents.get(node)
+            if parts[index - 1] == ">":
+                return match(parent, index - 2)
+            while parent is not None:
+                if match(parent, index - 1):
+                    return True
+                parent = self.parents.get(parent)
+            return False
+
+        return bool(parts) and match(el, len(parts) - 1)
+
+    def _style(self, el, parent):
+        result = {k: v for k, v in parent.items() if k in _INHERITED}
+        own, priorities = {}, {}
+
+        def apply(declarations, specificity, order):
+            for key, value in declarations:
+                important = re.search(r"\s*!important\s*$", value, re.I)
+                if important:
+                    value = value[: important.start()].strip()
+                priority = (bool(important), *specificity, order)
+                expanded = _font_declarations(value) if key == "font" else {key: value}
+                for name, val in expanded.items():
+                    if priority >= priorities.get(name, (False, -1, -1, -1, -1, -1)):
+                        priorities[name], own[name] = priority, val
+
+        apply(((k, v) for k, v in el.attrib.items() if k in _PRESENTATION), (0, 0, 0, 0), -1)
+        for spec, order, selector, declarations in self.rules:
+            if self._matches(el, selector):
+                apply(declarations, (0, *spec), order)
+        apply(_declarations(el.get("style", "")), (1, 0, 0, 0), 0)
+        for k, v in own.items():
+            if v == "inherit":
+                if k in parent:
+                    result[k] = parent[k]
+            elif v == "initial":
+                if k in _DEFAULT:
+                    result[k] = _DEFAULT[k]
+                else:
+                    result.pop(k, None)
+            else:
+                result[k] = v
+        parent_size = _number(parent.get("font-size", "16"))
+        if "font-size" in own and own["font-size"] not in ("inherit", "initial"):
+            result["font-size"] = str(
+                _length(own["font-size"], percent=parent_size, em=parent_size)
+            )
+        return result
+
+    def _len(self, value, axis=0, st=None):
+        size = _number((st or {}).get("font-size", "16"))
+        ref = self.viewport[axis] if axis in (0, 1) else math.hypot(*self.viewport) / math.sqrt(2)
+        return _length(value, percent=ref, em=size)
+
+    def _shape(self, el, st=None):
+        tag = _tag(el)
+
+        def f(key, default=0, axis=0):
+            return self._len(el.get(key, str(default)), axis, st)
+
+        if tag == "path":
+            return _parse_path_d(el.get("d", ""))
+        if tag == "line":
+            return [("M", f("x1"), f("y1", axis=1)), ("L", f("x2"), f("y2", axis=1))]
+        if tag in ("polygon", "polyline"):
+            p = _numbers(el.get("points", ""))
+            if len(p) % 2:
+                raise SVGIRError("svgir_invalid", "odd polygon coordinates")
+            return [("M" if i == 0 else "L", p[i], p[i + 1]) for i in range(0, len(p), 2)] + (
+                [("Z",)] if p and tag == "polygon" else []
+            )
+        if tag == "rect":
+            x, y, w, h = f("x"), f("y", axis=1), f("width"), f("height", axis=1)
+            if min(w, h) < 0:
+                raise SVGIRError("svgir_invalid", "negative rectangle")
+            if min(w, h) == 0:
+                return []
+            rx = f("rx", f("ry", axis=1))
+            ry = f("ry", rx, axis=1)
+            rx, ry = min(rx, w / 2), min(ry, h / 2)
+            if rx <= 0 or ry <= 0:
+                return [("M", x, y), ("L", x + w, y), ("L", x + w, y + h), ("L", x, y + h), ("Z",)]
+            return _parse_path_d(
+                f"M{x + rx} {y} H{x + w - rx} A{rx} {ry} 0 0 1 {x + w} {y + ry} V{y + h - ry} A{rx} {ry} 0 0 1 {x + w - rx} {y + h} H{x + rx} A{rx} {ry} 0 0 1 {x} {y + h - ry} V{y + ry} A{rx} {ry} 0 0 1 {x + rx} {y} Z"
+            )
+        if tag in ("circle", "ellipse"):
+            cx, cy = f("cx"), f("cy", axis=1)
+            rx, ry = (f("r", axis=2),) * 2 if tag == "circle" else (f("rx"), f("ry", axis=1))
+            if min(rx, ry) < 0:
+                raise SVGIRError("svgir_invalid", "negative radius")
+            if min(rx, ry) == 0:
+                return []
+            return [
+                ("M", cx + rx, cy),
+                *_arc((cx + rx, cy), rx, ry, 0, 1, 1, (cx - rx, cy)),
+                *_arc((cx - rx, cy), rx, ry, 0, 1, 1, (cx + rx, cy)),
+                ("Z",),
+            ]
+        raise SVGIRError("svgir_unsupported_element", f"unsupported geometry {tag}")
+
+    def _paint(self, st, key):
+        color = _parse_color(st.get(key, "none"), st.get("color", "black"))
+        if color is None:
+            return None
+        rgb, alpha = color
+        return ir.Paint(
+            rgb, alpha * min(1, max(0, _length(st.get(f"{key}-opacity", "1"), percent=1)))
+        )
+
+    def _stroke(self, st):
+        paint = self._paint(st, "stroke")
+        if paint is None:
+            return None
+        width = self._len(st.get("stroke-width", "1"), 2, st)
+        if width < 0:
+            raise SVGIRError("svgir_invalid", "negative stroke width")
+        if width == 0:
+            return None  # PDF's zero width means a visible device hairline.
+        dash = tuple(
+            self._len(v, 2, st)
+            for v in re.split(r"[\s,]+", st.get("stroke-dasharray", "none").strip())
+            if v and v != "none"
+        )
+        if any(v < 0 for v in dash):
+            raise SVGIRError("svgir_invalid", "negative dash")
+        if dash and not any(dash):
+            dash = ()
+        return ir.Stroke(
+            paint,
+            width,
+            cap=st.get("stroke-linecap", "butt"),
+            join=st.get("stroke-linejoin", "miter"),
+            dash=dash,
+            dash_phase=self._len(st.get("stroke-dashoffset", "0"), 2, st),
+            miter_limit=_number(st.get("stroke-miterlimit", "4")),
+        )
+
+    def _font(self, st):
+        if self.fonts is None:
+            raise SVGIRError("svgir_font_missing", "approved font provider required")
+        family, weight = st.get("font-family", "sans-serif"), st.get("font-weight", "normal")
+        bold = weight in ("bold", "bolder") or (weight.isdigit() and int(weight) >= 600)
+        italic = st.get("font-style", "normal") in ("italic", "oblique")
+        cache = family, bold, italic
+        if cache in self.font_cache:
+            key = self.font_cache[cache]
+            return key, self.faces[key]
+        candidates = [p.strip().strip("'\"").lower() for p in family.split(",")]
+        mapped = [self._FAMILY_MAP.get(p, p) for p in candidates]
+        for candidate in dict.fromkeys([*mapped, "sans-serif"]):
             try:
-                face = self.fonts.face_for(candidate, False, False)
+                face = self.fonts.face_for(candidate, bold, italic)
                 break
-            except Exception:
+            except (KeyError, ValueError, FontsUnavailable):
                 continue
         else:
-            raise SVGIRError("svgir_font_missing", f"no approved font for {family!r}")
-        if candidate != first.lower():
-            self._notes.append(f"font '{first}' mapped to {candidate}")
-        key = f"f{len(self.resources)}"
-        self.resources[key] = face.resource
-        self._font_cache[family] = key
-        self._faces[key] = face
-        return key
+            raise SVGIRError("svgir_font_missing", "no approved font")
+        if candidate not in candidates:
+            self.notes.append(f"font '{candidates[0]}' mapped to {candidate}")
+        key = f"font:{face.resource.face_id}"
+        self.resources[key], self.faces[key], self.font_cache[cache] = face.resource, face, key
+        return key, face
 
-    def _clip_path(self, clip_ref: str) -> ir.Path | None:
-        m = _GRADIENT_RE.match(clip_ref)
-        if m:
-            return self.clip_defs.get(m.group(1))
-        return None
+    def _text(self, el, st):
+        nodes, cursor = [], [0.0, 0.0]
 
-    def translate(self) -> ir.Page:
-        kids = self._walk(self.root, ir.IDENTITY, 1.0)
-        # 根翻转：SVG y-down → IR y-up
-        flip = (1.0, 0.0, 0.0, -1.0, 0.0, self.h_pt)
+        def visit(ch, style, inherited_angle=0.0, preserve=False):
+            if style.get("display") == "none":
+                return
+            start_index = len(nodes)
+            space = ch.get("{http://www.w3.org/XML/1998/namespace}space")
+            preserve = preserve if space is None else space == "preserve"
+            for axis, key in enumerate(("x", "y")):
+                if key in ch.attrib:
+                    positions = re.split(r"[\s,]+", ch.get(key, "0").strip())
+                    if len(positions) != 1:
+                        raise SVGIRError(
+                            "svgir_unsupported_element", "per-character text positioning"
+                        )
+                    cursor[axis] = self._len(positions[0], axis, style)
+                cursor[axis] += self._len(ch.get("d" + key, "0"), axis, style)
+            rotation = _numbers(ch.get("rotate", str(inherited_angle)))
+            if len(rotation) != 1:
+                raise SVGIRError("svgir_unsupported_element", "per-character text rotation")
+
+            def emit(content):
+                if not content or (not preserve and not content.strip()):
+                    return
+                if not preserve:
+                    content = re.sub(r"\s+", " ", content)
+                _key, face = self._font(style)
+                size = _number(style.get("font-size", "16"))
+                if size <= 0:
+                    return
+                # Reuse the product's single glyph-layer policy, including CJK
+                # and explicit missing-glyph diagnostics. SVG text remains
+                # literal text; it must not pass through rich-text parsing.
+                faces = typography.FaceSet(face, self.fonts.cjk_face())
+                pieces = typography.shape_segment(content, faces, size)
+                if not pieces:
+                    return
+                runs = []
+                for piece in pieces:
+                    font_key = f"font:{piece.face.resource.face_id}"
+                    self.resources[font_key] = piece.face.resource
+                    self.faces[font_key] = piece.face
+                    runs.append(ir.GlyphRun(font_key, size, piece.glyphs))
+                missing = typography.missing_glyphs(content, faces)
+                if missing:
+                    self.notes.append("glyph_missing: " + "".join(missing))
+                advance = sum(piece.width for piece in pieces)
+                paint = self._paint(style, "fill")
+                if style.get("visibility") in ("hidden", "collapse"):
+                    paint = None
+                if self._paint(style, "stroke") is not None:
+                    raise SVGIRError("svgir_unsupported_element", "stroked text requires outlines")
+                if paint is not None:
+                    offset = {"start": 0, "middle": -advance / 2, "end": -advance}.get(
+                        style.get("text-anchor", "start"), 0
+                    )
+                    y = cursor[1]
+                    baseline = style.get(
+                        "dominant-baseline", style.get("alignment-baseline", "auto")
+                    )
+                    if baseline in ("middle", "central"):
+                        y += (
+                            (getattr(face, "ascender", 0.8) + getattr(face, "descender", -0.2))
+                            / 2
+                            * size
+                        )
+                    elif baseline in ("hanging", "text-before-edge", "before-edge"):
+                        y += getattr(face, "ascender", 0.8) * size
+                    elif baseline in ("text-after-edge", "after-edge"):
+                        y += getattr(face, "descender", -0.2) * size
+                    elif baseline not in ("auto", "alphabetic", "baseline"):
+                        raise SVGIRError("svgir_unsupported_element", "unsupported text baseline")
+                    text = ir.ShapedText(
+                        offset,
+                        0,
+                        tuple(runs),
+                        paint,
+                        object_id=el.get("id", ""),
+                    )
+                    matrix = ir.compose(ir.scale(1, -1), ir.rotate_ccw(rotation[0]))
+                    matrix = ir.compose(matrix, ir.translate(cursor[0], y))
+                    nodes.append(ir.Group((text,), transform=matrix))
+                cursor[0] += advance
+
+            emit(ch.text)
+            for child in ch:
+                if _tag(child) != "tspan":
+                    raise SVGIRError("svgir_unsupported_element", "textPath is unsupported")
+                child_style = self._style(child, style)
+                self._check_style(child_style)
+                visit(child, child_style, rotation[0], preserve)
+                emit(child.tail)
+
+            if ch is not el and len(nodes) > start_index:
+                alpha = min(1, max(0, _length(style.get("opacity", "1"), percent=1)))
+                matrix = _parse_transform(ch.get("transform", ""))
+                clip_ref = style.get("clip-path", "none")
+                clip = self._clip(clip_ref) if clip_ref != "none" else None
+                if alpha != 1 or matrix != ir.IDENTITY or clip:
+                    nodes[start_index:] = [
+                        ir.Group(
+                            tuple(nodes[start_index:]), transform=matrix, opacity=alpha, clip=clip
+                        )
+                    ]
+
+        visit(el, st)
+        return nodes
+
+    def _image(self, el, st):
+        match = _DATA_URI_RE.fullmatch(el.get("href") or el.get(XLINK_HREF, ""))
+        if not match or self.files is None:
+            raise SVGIRError("svgir_invalid", "embedded image requires a files receiver")
+        raw = base64.b64decode(re.sub(r"\s", "", match[2]), validate=True)
+        key = f"img{len(self.resources)}"
+        self.files[key] = raw
+        sha = hashlib.sha256(raw).hexdigest()
+        self.resources[key] = ir.FileResource(key, match[1], sha, "static", sha)
+        x, y = self._len(el.get("x", "0"), st=st), self._len(el.get("y", "0"), 1, st)
+        w, h = self._len(el.get("width", "0"), st=st), self._len(el.get("height", "0"), 1, st)
+        if w <= 0 or h <= 0:
+            return []
+        if match[1] == "png":
+            iw, ih = struct.unpack(">II", raw[16:24])
+        else:
+            pos, iw, ih = 2, 0, 0
+            while pos + 4 <= len(raw):
+                marker = raw[pos + 1]
+                if marker == 255:
+                    pos += 1
+                    continue
+                length = int.from_bytes(raw[pos + 2 : pos + 4], "big")
+                if marker in (192, 193, 194):
+                    ih, iw = struct.unpack(">HH", raw[pos + 5 : pos + 9])
+                    break
+                pos += 2 + length
+        try:
+            matrix = svgcoord.viewbox_to_pt([0, 0, iw, ih], w, h, el.get("preserveAspectRatio"))
+        except ValueError as exc:
+            raise SVGIRError("svgir_invalid", "invalid image viewport") from exc
+        image = ir.Image(
+            key,
+            (matrix[4] + x, matrix[5] + y, iw * matrix[0], ih * matrix[3]),
+            flip_v=True,
+            object_id=el.get("id", ""),
+        )
+        clip = ir.Path((("M", x, y), ("L", x + w, y), ("L", x + w, y + h), ("L", x, y + h), ("Z",)))
+        return [ir.Group((image,), clip=clip)]
+
+    def _check_style(self, st):
+        for name, code in (("mask", "svgir_mask"), ("filter", "svgir_filter")):
+            if st.get(name, "none") != "none":
+                raise SVGIRError(code, f"unsupported {name}")
+        for key in ("marker-start", "marker-mid", "marker-end"):
+            if st.get(key, "none") != "none":
+                raise SVGIRError("svgir_unsupported_element", f"unsupported {key}")
+        for key, allowed in (
+            ("vector-effect", ("none",)),
+            ("paint-order", ("normal", "fill stroke markers")),
+            ("letter-spacing", ("normal", "0", "0px")),
+            ("word-spacing", ("normal", "0", "0px")),
+            ("baseline-shift", ("baseline", "0", "0px")),
+            ("text-decoration", ("none",)),
+        ):
+            if key in st and st[key] not in allowed:
+                raise SVGIRError("svgir_unsupported_element", f"unsupported {key}")
+
+    def _clip(self, value):
+        match = _REF_RE.fullmatch(value)
+        definition = self.ids.get(match[1]) if match else None
+        if definition is None or _tag(definition) != "clipPath":
+            raise SVGIRError("svgir_invalid", "invalid clip reference")
+        if definition.get("clipPathUnits", "userSpaceOnUse") != "userSpaceOnUse":
+            raise SVGIRError("svgir_unsupported_element", "objectBoundingBox clip")
+        paths = []
+
+        chain, parent = [], self.parents.get(definition)
+        while parent is not None:
+            chain.append(parent)
+            parent = self.parents.get(parent)
+        inherited = _DEFAULT
+        for ancestor in reversed(chain):
+            inherited = self._style(ancestor, inherited)
+
+        def gather(el, parent, parent_style):
+            local = ir.compose(_parse_transform(el.get("transform", "")), parent)
+            style = self._style(el, parent_style)
+            if style.get("display") == "none":
+                return
+            if _tag(el) in ("clipPath", "g"):
+                for child in el:
+                    gather(child, local, style)
+            elif _tag(el) == "use":
+                ref = el.get("href") or el.get(XLINK_HREF, "")
+                target = self.ids.get(ref[1:])
+                if target is None:
+                    raise SVGIRError("svgir_invalid", "invalid clip use")
+                offset = ir.translate(
+                    self._len(el.get("x", "0"), st=style), self._len(el.get("y", "0"), 1, style)
+                )
+                gather(target, ir.compose(offset, local), style)
+            else:
+                if style.get("visibility") in ("hidden", "collapse"):
+                    return
+                segments = _transformed_segments(self._shape(el, style), local)
+                if segments:
+                    paths.append(ir.Path(segments, fill_rule=style.get("clip-rule", "nonzero")))
+
+        gather(definition, ir.IDENTITY, inherited)
+        if not paths:
+            return ir.Path((("M", 0, 0), ("Z",)))
+        if len(paths) == 1:
+            return paths[0]
+        # Filled clip children are a geometric union, not a compound path.
+        return ir.ClipUnion(tuple(paths))
+
+    def _node(self, el, parent, *, instance=False):
+        tag = _tag(el)
+        if tag in (
+            "defs",
+            "metadata",
+            "style",
+            "title",
+            "desc",
+            "clipPath",
+            "mask",
+            "linearGradient",
+            "radialGradient",
+            "pattern",
+            "marker",
+            "stop",
+        ):
+            return []
+        if tag == "symbol" and not instance:
+            return []
+        st = self._style(el, parent)
+        if st.get("display") == "none":
+            return []
+        self._check_style(st)
+        local = _parse_transform(el.get("transform", ""))
+        if ir.determinant(local) == 0:
+            return []
+        if tag in ("g", "svg", "symbol"):
+            if tag == "svg" and el is not self.root:
+                raise SVGIRError("svgir_unsupported_element", "nested SVG viewport")
+            children = [n for child in el for n in self._node(child, st)]
+        elif tag == "use":
+            href = el.get("href") or el.get(XLINK_HREF, "")
+            target = self.ids.get(href[1:]) if href.startswith("#") else None
+            if target is None:
+                raise SVGIRError("svgir_invalid", "unresolved use")
+            offset = ir.translate(
+                self._len(el.get("x", "0"), st=st), self._len(el.get("y", "0"), 1, st)
+            )
+            if _tag(target) == "symbol":
+                w, h = (
+                    self._len(el.get("width", str(self.viewport[0])), st=st),
+                    self._len(el.get("height", str(self.viewport[1])), 1, st),
+                )
+                if min(w, h) <= 0:
+                    return []
+                vb = _numbers(target.get("viewBox", ""))
+                if vb:
+                    if len(vb) != 4 or min(vb[2:]) <= 0:
+                        raise SVGIRError("svgir_invalid", "symbol viewBox")
+                    symbol_map = svgcoord.viewbox_to_pt(vb, w, h, target.get("preserveAspectRatio"))
+                    viewport = vb[2], vb[3]
+                else:
+                    symbol_map, viewport = ir.IDENTITY, (w, h)
+                saved_viewport = self.viewport
+                try:
+                    self.viewport = viewport
+                    content = self._node(target, st, instance=True)
+                finally:
+                    self.viewport = saved_viewport
+                mapped = ir.Group(tuple(content), transform=symbol_map)
+                viewport_clip = ir.Path(
+                    (("M", 0, 0), ("L", w, 0), ("L", w, h), ("L", 0, h), ("Z",))
+                )
+                clip = None if target.get("overflow") == "visible" else viewport_clip
+                children = [ir.Group((mapped,), transform=offset, clip=clip)]
+            else:
+                local = ir.compose(offset, local)
+                children = self._node(target, st, instance=True)
+        elif tag == "text":
+            children = self._text(el, st)
+        elif st.get("visibility") in ("hidden", "collapse"):
+            children = []
+        elif tag in ("path", "rect", "circle", "ellipse", "line", "polygon", "polyline"):
+            segments, fill, stroke = self._shape(el, st), self._paint(st, "fill"), self._stroke(st)
+            children = (
+                [
+                    ir.Path(
+                        tuple(segments),
+                        fill,
+                        stroke,
+                        st.get("fill-rule", "nonzero"),
+                        el.get("id", ""),
+                    )
+                ]
+                if segments and (fill or stroke)
+                else []
+            )
+        elif tag == "image":
+            children = self._image(el, st)
+        else:
+            raise SVGIRError("svgir_unsupported_element", f"unsupported element {tag}")
+        if not children:
+            return []
+        opacity = min(1, max(0, _length(st.get("opacity", "1"), percent=1)))
+        clip_ref = st.get("clip-path", "none")
+        clip = self._clip(clip_ref) if clip_ref != "none" else None
+        if (
+            local != ir.IDENTITY
+            or clip
+            or opacity != 1
+            or (el.get("id") and tag in ("g", "use", "svg", "symbol"))
+        ):
+            return [
+                ir.Group(
+                    tuple(children),
+                    transform=local,
+                    clip=clip,
+                    opacity=opacity,
+                    object_id=el.get("id", ""),
+                )
+            ]
+        return children
+
+    def translate(self):
+        children = self._node(self.root, _DEFAULT)
+        matrix = ir.compose(self.root_map, (1, 0, 0, -1, 0, self.h_pt))
         page = ir.Page(
-            self.w_pt, self.h_pt, (ir.Group(tuple(kids), transform=flip),), self.resources
+            self.w_pt,
+            self.h_pt,
+            (ir.Group(tuple(children), transform=matrix),),
+            self.resources,
+            background=None,
         )
         ir.validate(page)
         return page
 
-    def _walk(self, el: ET.Element, ctm: ir.Matrix, parent_alpha: float) -> list[ir.Node]:
-        nodes: list[ir.Node] = []
-        for ch in el:
-            tag = ch.tag.split("}")[-1]
-            if tag in ("defs", "metadata", "style", "title", "desc"):
-                continue
-            t = _parse_transform(ch.get("transform", "")) if ch.get("transform") else ir.IDENTITY
-            nctm = ir.compose(ctm, t)
-            st = _style_dict(ch)
-            try:
-                group_alpha = parent_alpha * float(st.get("opacity", "1.0"))
-            except ValueError:
-                group_alpha = parent_alpha
-            clip_ref = st.get("clip-path") or ch.get("clip-path", "")
-            clip = (
-                self._clip_path(clip_ref) if "clip-path" in st or "clip-path" in ch.attrib else None
-            )
-            if tag == "g":
-                children = self._walk(ch, nctm, group_alpha)
-                clip_path = clip
-                if clip_path is not None:
-                    nodes.append(
-                        ir.Group(
-                            tuple(children), transform=nctm, clip=clip_path, opacity=group_alpha
-                        )
-                    )
-                elif group_alpha < 1.0:
-                    nodes.append(ir.Group(tuple(children), transform=nctm, opacity=group_alpha))
-                else:
-                    nodes.append(ir.Group(tuple(children), transform=nctm))
-            elif tag == "path":
-                d = ch.get("d", "")
-                if "url(#" in st.get("fill", "") and "clipPath" not in st.get("fill", ""):
-                    raise SVGIRError("svgir_gradient", "gradient fill", f"path {ch.get('id', '')}")
-                segs = _parse_path_d(d)
-                fill = _paint(st, "fill", parent_alpha)
-                stroke = _stroke_of(st, parent_alpha)
-                node = ir.Path(tuple(segs), fill=fill, stroke=stroke, object_id=ch.get("id", ""))
-                if clip is not None:
-                    nodes.append(ir.Group((node,), transform=nctm, clip=clip))
-                elif nctm != ir.IDENTITY:
-                    nodes.append(ir.Group((node,), transform=nctm))
-                else:
-                    nodes.append(node)
-            elif tag in ("rect", "circle", "ellipse", "line", "polygon", "polyline"):
-                segs = _shape_to_path(tag, ch.attrib)
-                fill = _paint(st, "fill", parent_alpha)
-                stroke = _stroke_of(st, parent_alpha)
-                node = ir.Path(tuple(segs), fill=fill, stroke=stroke, object_id=ch.get("id", ""))
-                if clip is not None:
-                    nodes.append(ir.Group((node,), transform=nctm, clip=clip))
-                elif nctm != ir.IDENTITY:
-                    nodes.append(ir.Group((node,), transform=nctm))
-                else:
-                    nodes.append(node)
-            elif tag == "text":
-                node = self._text_to_ir(ch, st, nctm, parent_alpha)
-                if node is not None:
-                    nodes.append(node)
-            elif tag == "image":
-                node = self._image_to_ir(ch, nctm, parent_alpha)
-                if node is not None:
-                    nodes.append(node)
-            elif tag == "use":
-                href = ch.get("href") or ch.get(XLINK_HREF, "")
-                ref = href[1:] if href.startswith("#") else href
-                def_el = self.use_defs.get(ref)
-                if def_el is not None:
-                    nodes.extend(self._walk(def_el, nctm, parent_alpha))
-                else:
-                    self._notes.append(f"use->{ref} not in defs (skipped)")
-            else:
-                self._notes.append(f"unsupported element <{tag}> (skipped)")
-        return nodes
 
-    def _text_to_ir(
-        self, ch: ET.Element, st: dict, ctm: ir.Matrix, parent_alpha: float
-    ) -> ir.ShapedText | None:
-        content = "".join(ch.itertext())
-        if not content.strip():
-            return None
-        fam = st.get("font-family", "sans-serif")
-        size = 10.0
-        fs = st.get("font-size", "")
-        if fs:
-            try:
-                size = float(re.match(_NUM_RE, fs).group(0))  # type: ignore[union-attr]
-            except (ValueError, AttributeError):
-                pass
-        key = self._font_resource(fam)
-        face = self._faces.get(key)
-        if face is None:
-            raise SVGIRError("svgir_font_missing", f"font resource {key}")
-        shaped = face.shape(content)
-        anchor = st.get("text-anchor", "start")
-        upem = face.resource.units_per_em
-        total_advance = sum(g.x_advance for g in shaped) / upem * size
-        dx = {"start": 0.0, "middle": -total_advance / 2, "end": -total_advance}.get(anchor, 0.0)
-        x = float(ch.get("x", 0))
-        y = float(ch.get("y", 0))
-        a, b, c, d, e, f = ctm
-        px = (x + dx) * a + y * c + e
-        py = (x + dx) * b + y * d + f
-        col = _parse_color(st.get("fill", "#000000"))
-        rgb = col[0] if col else (0.0, 0.0, 0.0)
-        alpha = parent_alpha
-        if "fill-opacity" in st:
-            try:
-                alpha *= float(st["fill-opacity"])
-            except ValueError:
-                pass
-        return ir.ShapedText(
-            px,
-            py,
-            (ir.GlyphRun(key, size, shaped),),
-            ir.Paint(rgb, alpha),
-            object_id=ch.get("id", ""),
-        )
+def svg_to_ir(
+    data: bytes, w_pt: float, h_pt: float, fonts, *, files: dict[str, bytes] | None = None
+) -> tuple[ir.Page, list[str]]:
+    """Page/notes; pass resource-keyed ``files`` to ``pdfwriter.write_pdf``.
 
-    def _image_to_ir(self, ch: ET.Element, ctm: ir.Matrix, parent_alpha: float) -> ir.Image | None:
-        href = ch.get("href") or ch.get(XLINK_HREF, "")
-        m = _DATA_URI_RE.match(href)
-        if not m:
-            self._notes.append("image with non-data URI skipped")
-            return None
-        fmt, b64 = m.group(1), m.group(2)
-        try:
-            raw = base64.b64decode(b64)
-        except (binascii.Error, ValueError):
-            return None
-        key = f"img{len(self.resources)}"
-        kind = "png" if fmt == "png" else "jpeg"
-        import hashlib as _hl
-
-        self.resources[key] = ir.FileResource(
-            source_id=key,
-            kind=kind,
-            sha256=_hl.sha256(raw).hexdigest(),
-            origin="static",
-            semantic_identity=key,
-        )
-        # 图片数据由写入器从 provider 获取；这里把 bytes 暂存到 resources 的 sha256 占位
-        # 实际写入时 pdfwriter 走 files 回调
-        x = float(ch.get("x", 0))
-        y = float(ch.get("y", 0))
-        w = float(ch.get("width", 0))
-        h = float(ch.get("height", 0))
-        # y-down → y-up：rect y = h_pt - (y + h)
-        rect = (x, self.h_pt - (y + h), w, h)
-        alpha = parent_alpha
-        st = _style_dict(ch)
-        if "opacity" in st:
-            try:
-                alpha *= float(st["opacity"])
-            except ValueError:
-                pass
-        return ir.Image(resource=key, rect=rect, opacity=alpha, object_id=ch.get("id", ""))
-
-
-def svg_to_ir(data: bytes, w_pt: float, h_pt: float, fonts) -> tuple[ir.Page, list[str]]:
-    """组合后的 SVG 字节 → IR Page + notes。不支持特性抛 SVGIRError。
-
-    ``fonts``：`HbFaceProvider` 实例（父进程 rendercore 依赖链内）。
+    Image-free callers keep their previous binary API. Embedded images require
+    the optional receiver; bytes and SHA identities are handed off together.
     """
     root = parse_svg(strip_matplotlib_doctype(data))
-    if root.tag.split("}")[-1] != "svg":
-        raise SVGIRError("svgir_invalid", "root element is not <svg>")
-    tr = _Translator(root, w_pt, h_pt, fonts)
-    page = tr.translate()
-    return page, tr._notes
+    if _tag(root) != "svg":
+        raise SVGIRError("svgir_invalid", "root element is not svg")
+    try:
+        pending_files = {} if files is not None else None
+        tr = _Translator(root, w_pt, h_pt, fonts, pending_files)
+        page = tr.translate()
+        if files is not None:
+            if any(key in files and files[key] != value for key, value in pending_files.items()):
+                raise SVGIRError("svgir_invalid", "image resource key collision")
+            files.update(pending_files)
+        return page, tr.notes
+    except (ir.IRError, OverflowError, ZeroDivisionError) as exc:
+        raise SVGIRError("svgir_invalid", "invalid SVG geometry") from exc

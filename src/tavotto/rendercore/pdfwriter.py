@@ -343,6 +343,17 @@ class PdfWriter:
         return form
 
     def _imported_page(self, node: ir.ImportedPage, rec: _Recorder, ctm: ir.Matrix) -> None:
+        resource = self.page.resources[node.resource]
+        if (
+            isinstance(resource, ir.FileResource)
+            and resource.kind == "svg"
+            and resource.origin == "declarative"
+        ):
+            raise UnsupportedCapability(
+                "imported_page",
+                "Native SVG source has no canonical PDF representation",
+                node.object_id,
+            )
         res, data = self._source_bytes(node)
         form = self._foreign_form(node, res, data)
         bbox = tuple(float(v) for v in form.BBox)
@@ -550,6 +561,9 @@ class PdfWriter:
 
     def _group(self, node: ir.Group, rec: _Recorder, ctm: ir.Matrix, depth: int) -> None:
         self.facts.groups += 1
+        if isinstance(node.clip, ir.ClipUnion):
+            self._union_clip_group(node, rec, ctm, depth)
+            return
         inner = ["q"]
         if node.transform != ir.IDENTITY:
             inner.append(" ".join(_num(v) for v in node.transform) + " cm")
@@ -578,6 +592,58 @@ class PdfWriter:
         for child in node.children:
             self._emit(child, rec, local, depth + 1)
         rec.ops.append("Q")
+
+    def _union_clip_group(self, node: ir.Group, rec: _Recorder, ctm: ir.Matrix, depth: int) -> None:
+        """True vector union, retaining each member's winding rule and curves.
+
+        Opaque white paths paint an isolated luminosity mask: white over white
+        remains white. Content is rendered once into its own isolated Form,
+        then masked once with the group's alpha. Nested unions consequently
+        intersect at Form compositing instead of replacing an ancestor SMask.
+        The ordinary single-Path W/W* branch is unchanged.
+        """
+        import pikepdf
+
+        assert isinstance(node.clip, ir.ClipUnion)
+        local = ir.compose(node.transform, ctm)
+        bbox = _page_bbox_in(ctm, self.page)
+        transform = " ".join(_num(v) for v in node.transform) + " cm"
+        content = _Recorder(ops=["q", transform])
+        for child in node.children:
+            self._emit(child, content, local, depth + 1)
+        content.ops.append("Q")
+        self._forms_pending.append((content, bbox))
+        name = self._name("ClipContent")
+        rec.xobjects[name] = content
+
+        mask_ops = ["q", transform, "1 g"]
+        for path in node.clip.paths:
+            mask_ops.append(
+                _path_segments(path.segments) + (" f*" if path.fill_rule == "evenodd" else " f")
+            )
+        mask_ops.append("Q")
+        mask = pikepdf.Stream(self.pdf, ("\n".join(mask_ops) + "\n").encode("ascii"))
+        mask["/Type"] = pikepdf.Name.XObject
+        mask["/Subtype"] = pikepdf.Name.Form
+        mask["/BBox"] = pikepdf.Array([float(v) for v in bbox])
+        mask["/Resources"] = pikepdf.Dictionary()
+        mask["/Group"] = pikepdf.Dictionary(
+            S=pikepdf.Name.Transparency, CS=pikepdf.Name.DeviceGray, I=True, K=False
+        )
+        state = self.pdf.make_indirect(
+            pikepdf.Dictionary(
+                Type=pikepdf.Name.ExtGState,
+                ca=float(node.opacity),
+                CA=float(node.opacity),
+                SMask=pikepdf.Dictionary(
+                    S=pikepdf.Name.Luminosity, G=self.pdf.make_indirect(mask), BC=pikepdf.Array([0])
+                ),
+            )
+        )
+        gs_name = self._name("ClipMask")
+        rec.extgstates[gs_name] = state
+        rec.ops.append(f"q /{gs_name} gs /{name} Do Q")
+        self.facts.transparency_groups += 2
 
     def _path_ops(self, node: ir.Path, rec: _Recorder) -> str:
         parts = ["q"]

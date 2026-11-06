@@ -3,7 +3,7 @@
 `svgscene.scene_inventory` 给出「有什么节点」；本模块给出「节点在哪里」：
 
 - **变换矩阵累积**：从根到目标元素的 `transform` 属性链 + `<use>` 的 x/y 位移，
-  行向量约定（与 `rendercore/ir.Matrix` 同形：``p' = p · M``），先外层后内层。
+  行向量约定（与 `rendercore/ir.Matrix` 同形：``p' = p · M``），点先经内层再经外层。
 - **用户单位 → 物理 pt**：viewBox + width/height + preserveAspectRatio 全语义
   （none 非均匀 / meet·slice + 九宫对齐）。这是 SVG 面板接入既有
   面板裁剪/翻转/旋转 → 页面 mm → 屏幕链条的**第一段**；后段复用 RenderCore
@@ -26,7 +26,7 @@ XLINK_HREF = "{http://www.w3.org/1999/xlink}href"
 IDENTITY = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
 
 _NUM = r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"
-_TRANSFORM_RE = re.compile(r"(matrix|translate|scale|rotate|skewX|skewY)\(\s*([^)]*)\)")
+_TRANSFORM_RE = re.compile(r"(matrix|translate|scale|rotate|skewX|skewY)\s*\(\s*([^)]*)\)")
 
 
 def compose(m1: tuple, m2: tuple) -> tuple:
@@ -50,14 +50,17 @@ def apply(m: tuple, x: float, y: float) -> tuple[float, float]:
 def parse_transform(text: str) -> tuple:
     """SVG transform 属性 → 行向量矩阵。未知函数按不变参报错（宁可拒绝不猜）。"""
     m = IDENTITY
-    matches = list(_TRANSFORM_RE.findall(text or ""))
-    residue = (text or "").strip()
-    for name, raw in matches:
-        residue = residue.replace(f"{name}({raw})", "", 1)
-    if residue.strip():
+    matches = list(_TRANSFORM_RE.finditer(text or ""))
+    residue = _TRANSFORM_RE.sub("", text or "")
+    if residue.strip(" ,\t\r\n"):
         raise ValueError(f"unsupported transform syntax: {residue.strip()[:40]!r}")
-    for name, raw in matches:
+    for match in matches:
+        name, raw = match.groups()
+        if re.sub(_NUM, "", raw).strip(" ,\t\r\n"):
+            raise ValueError(f"unsupported transform arguments: {name}")
         vals = [float(v) for v in re.findall(_NUM, raw)]
+        if not all(math.isfinite(v) for v in vals):
+            raise ValueError("transform arguments must be finite")
         if name == "matrix" and len(vals) == 6:
             a, b, c, d, e, f = vals
             local = (a, b, c, d, e, f)
@@ -87,7 +90,9 @@ def parse_transform(text: str) -> tuple:
             local = (1.0, math.tan(math.radians(vals[0])), 0.0, 1.0, 0.0, 0.0)
         else:
             raise ValueError(f"unsupported transform {name} with {len(vals)} args")
-        m = compose(m, local)
+        # SVG's list is equivalent to nested groups in written order. Under
+        # our row-vector convention the rightmost function acts first.
+        m = compose(local, m)
     return m
 
 
@@ -128,14 +133,14 @@ def node_matrix(root: ET.Element, node_id: str) -> tuple:
         )
     m = IDENTITY
     for el in reversed(chain):  # 根 → 目标
+        if el.attrib.get("transform"):
+            m = compose(parse_transform(el.attrib["transform"]), m)
         if el.tag.split("}")[-1] == "use":
             dx, dy = _use_anchor_offset(el)
             if dx or dy:
                 # SVG 1.1：use 的 x/y 等价于 transform 列表**末尾**的 translate
                 # —— 列表末尾 = 最深 = 最先作用于内容 = 行向量下最前。
                 m = compose((1.0, 0.0, 0.0, 1.0, dx, dy), m)
-        if el.attrib.get("transform"):
-            m = compose(parse_transform(el.attrib["transform"]), m)
     return m
 
 
@@ -159,23 +164,28 @@ def matrix_attr(m: tuple) -> str:
     return f"matrix({m[0]},{m[1]},{m[2]},{m[3]},{m[4]},{m[5]})"
 
 
-_PRESERVE_RE = re.compile(r"^(none|xMin|xMid|xMax)(YMin|YMid|YMax)?\s+(meet|slice)$")
+_PRESERVE_RE = re.compile(r"^(xMin|xMid|xMax)(YMin|YMid|YMax)(?:\s+(meet|slice))?$")
 
 
 def viewbox_to_pt(view_box: list[float], w_pt: float, h_pt: float, preserve: str | None) -> tuple:
     """viewBox 用户单位 → 物理 pt 的映射矩阵（SVG y-down 保持不变，只做比例与对齐）。"""
-    _, _, vb_w, vb_h = view_box
-    if vb_w <= 0 or vb_h <= 0:
+    vb_x, vb_y, vb_w, vb_h = view_box
+    if not all(math.isfinite(v) for v in (*view_box, w_pt, h_pt)):
+        raise ValueError("viewBox and viewport must be finite")
+    if min(vb_w, vb_h, w_pt, h_pt) <= 0:
         raise ValueError("viewBox must have positive width and height")
     spec = (preserve or "xMidYMid meet").strip()
-    if spec == "none":
-        return (w_pt / vb_w, 0.0, 0.0, h_pt / vb_h, 0.0, 0.0)
+    if spec.startswith("defer "):
+        spec = spec[6:].strip()
+    if re.fullmatch(r"none(?:\s+(?:meet|slice))?", spec):
+        sx, sy = w_pt / vb_w, h_pt / vb_h
+        return (sx, 0.0, 0.0, sy, -vb_x * sx, -vb_y * sy)
     m = _PRESERVE_RE.match(spec)
     if m is None:
         raise ValueError(f"unsupported preserveAspectRatio {spec!r}")
-    align_x, align_y, mode = m.group(1), m.group(2) or "YMid", m.group(3)
+    align_x, align_y, mode = m.group(1), m.group(2), m.group(3) or "meet"
     scale = min(w_pt / vb_w, h_pt / vb_h) if mode == "meet" else max(w_pt / vb_w, h_pt / vb_h)
     free_x, free_y = w_pt - vb_w * scale, h_pt - vb_h * scale
     tx = {"xMin": 0.0, "xMid": free_x / 2.0, "xMax": free_x}[align_x]
     ty = {"YMin": 0.0, "YMid": free_y / 2.0, "YMax": free_y}[align_y]
-    return (scale, 0.0, 0.0, scale, tx, ty)
+    return (scale, 0.0, 0.0, scale, tx - vb_x * scale, ty - vb_y * scale)
