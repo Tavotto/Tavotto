@@ -2,12 +2,12 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-07 00:07起复核）：功能HEAD=13720bc4。75b09b57配置恢复、be84ba33真实执行信息导出、13720bc4图幅迁移快照修复均已提交；1c9da4ca修正既有测试提前观测，未改生产保存时序。既有100项、718联合/8新HTTP及真UI/ZIP资格按各自范围保留，本次核原始证据/摘要，未重新运行产品套件；新跑41项文档门禁通过。完整输入声明、外部/prefix资源、严格检视/安装、图例/几何及最终资格未完成。仅剩两份未提交快照检视叶子，M1/M2/M3均未通过。**
+> **当前结论（2026-11-07 N3b收口）：最新功能HEAD=5e000c6f；1795f244流式资源、d1389db6完整Figure档案、5e000c6f真实v4只读检视API已分功能提交。最终当前consumer的68项HTTP全部通过、0 skip；真实认证网络401/200/409/422及复杂包完整正文/14资源/1快照已核。审查发现的缺件漏报已修复并定向复核收口。完整输入声明、外部/prefix资源、安全安装及安装UI仍未实现，图例/几何和最终资格仍缺，M1/M2/M3均未通过。此前保存/导出资格保留，专项通过不证明全部旧功能已验收。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 
 ## 环境（2026-11-07 当前快照）
 
-- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；最新功能HEAD=`13720bc4`，前项`1c9da4ca/be84ba33/75b09b57`。00:01仅剩svgstore快照检视及其新测试未提交，frame候选已收口。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入这些成果；不能在原目录启动旧版本后据此判断新功能效果。
+- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；最新功能HEAD=`5e000c6f`，前项`d1389db6/1795f244/13720bc4`。N3b生产代码、回归与相应规则已全部分功能提交；本次仅同步三份稳定文档。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入这些成果；不能在原目录启动旧版本后据此判断新功能效果。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
@@ -34,13 +34,35 @@
 | R01/R02 | core_partial / multi_target_verified | 3236307c、8e6c399a | 跨父/split/errorbar/colorbar共同目标与预览通过；任意clip、欠定成员paint slots和图例仍缺 |
 | R03 | runner_and_source_consumers_integrated | 029dfac2、242cabc0、c2fd47d5、5b2b1403、2452d8fc | 受控runner与精确INPUT附件接真实API/UI/导出；不宣称全产品总进程cap或最终资格 |
 | R04 | affected_checks_passed | a8a088cf、18907d65、cbd8d95e | 请求序号/表单/项目切换、late response 和单项 drop 均有受影响测试；Dialog 已可发起真实绑定；完整编辑器生命周期在 R06 追验 |
-| R05 | binding_and_recovery_ui_verified / package_partial | 5abb9a7d、95684f89、264ce59c、a7008840、d7b6eef9、d7a73ce1、ffe2fb32、c40805bf、e468d516、336783bf、71e637c8、206a1c34、9a9843d2、8ed50616、75b09b57、be84ba33、13720bc4 | 保存关联/恢复/双窗口、v4备份/目标计划、保配置ID与已知执行输入导出已验；完整声明/外部输入、检视/安装仍缺 |
+| R05 | binding_and_recovery_ui_verified / package_inspection_verified / installation_pending | 5abb9a7d、95684f89、264ce59c、a7008840、d7b6eef9、d7a73ce1、ffe2fb32、c40805bf、e468d516、336783bf、71e637c8、206a1c34、9a9843d2、8ed50616、75b09b57、be84ba33、13720bc4、1795f244、d1389db6、5e000c6f | 保存关联/恢复/双窗口、v4备份/目标计划、保配置ID与已知执行输入、真实严格检视均已验；完整声明/外部输入及安装API/UI仍缺 |
 | R06 | product_editing_and_cold_restore_verified / partial | 242cabc0、53393810、8e6c399a、264ce59c | 冷开后Inspector编辑、undo/redo和exact显示已验；图例、完整操作及复杂几何仍缺 |
 | R07 | partial / original_five_formats_ui_verified | 5bc82a81、c2fd47d5、2a40fec9、c9fa29a4、8fa84f5d、a06cc3d3 | 原图五格式真实UI及独立产物已验，EPS接线已提交；分享与完整双系列M1未完成 |
 | R08 | full_edit_restore_verified / partial | cae96f89、029dfac2、53393810 | 生产v2导出与真UI完整编辑恢复通过；A采用、分享选择和正式项目迁移待补 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-07 N3b正式收口与下一阶段复核
+
+- 新功能提交为`1795f244`（有界流式暂存与校验）、`d1389db6`（完整portable Figure档案检视）、`5e000c6f`（实际v4检视API/资源语义/HTTP回归/规则）。沿用同一实施树和分支，未推送/合并/发布。API提交只含6个对应文件，稳定进度文档未混批；各子代理已释放文件，没有在途代码写入任务。
+- 当前API源码SHA：app=`7f3c2ba6…7655d88`，packageinspection=`430ba6f1…635902`，packagebudget=`e2acbb4e…91468f`，新HTTP测试=`16f4d476…ff922f3`。最终68项HTTP通过、0失败/0 skip/exit0，26.50秒；全仓Ruff/格式检查1442文件通过。原始命令、七源SHA、首红及反证见`n3b-inspect-http-missing-candidates-validation.{md,json}`和`n3b-inspect-http-68-final.{log,xml}`。
+- 只读审查的唯一P2：明确缺失helper及runtime_assets中明确脚本漏报。已统一为声明候选与实际目标资源核对，已携文件清旧缺件；完整INPUT仅替代chart-only原件，不吞普通/显式script职责。不安全/opaque旧声明保留且警示，不读取外部路径、不授予执行。新增15项回归包含真实首红与去掉候选收集后再次漏报的有效反证；独立审查核读同SHA源码及68项原始日志后收口，未冒称自行重跑。
+- 独立真实网络验证在最终consumer上取得401/200/409/422：认证、完整包、未知项目、坏ZIP均符合预期；整份doc/manifest与真实UI导出的包相同，14资源/1快照、精确rc_ID/argv保持，源脚本计数仍1、未执行。见`n3b-network-inspection-result.json`及command/log；此资格不包括项目安装或全量搬迁。
+- 验证集合不相加：流式326通过/0 skip；完整store316通过/31 Win1314权限跳过；较早consumer `6a6fbb…`的511联合通过仅适用该时刻，不能写成最终`430ba6…`又跑511。最终变更由68项及定向复核覆盖。此前53项/首轮夹具错误/请求流边界失败/缺件首红均保留。无前端代码改动，不无理由重跑旧build；其最近资格指纹仍`9c11afde28799951`。
+- 效果复核：既有截图`output/playwright/n3c-ui-legacy-frame.png`可见计算曲线/运行图及准确不完整依赖提示，但坐标数字、标题边缘仍有裁切；这只是历史UI状态，不冒充新API后的浏览器重验。图例不跟随样式仍是已知缺陷。完整双系列M1、所有科学族/交互与最终旧功能/平台资格继续pending。
+- 下一动作已改为N3c-3：先冻结捕获时输入声明事实，接真实safe/workerd/native执行与原receipt，再接可携声明/外部/prefix资源和实际UI；之后N3d独占安装→N3e原writer采用→N3f删自建原目录/清缓存/新进程的整链。`n3c-input-portability-design.md`与三个真实probe只支持设计/机制，不是已实现产品；输入当前binding在导出时重算且不进receipt identity，绝不能给旧Figure事后补证。无声明默认wire/identity保持，成功receipt/partial observer不证明任意Python输入完整。
+- 本轮复核未新建调度器，goal继续active。长驻UI服务的PID和旧源码时刻仅作线索，复用前核创建时间/命令/实际import；本轮独立socket服务已结束，不把旧23989后端称为已加载5e000c6f。
+- 台账收口验证：41项文档/规则检查通过、0 skip/exit0，UTF-8/围栏/相对链接与源码身份已核；agents_budget退出0，原有体积建议超额保留。冻结索引`n3b-inspection-staged-final.json`记录API实际6文件提交、七源SHA及新旧验证边界；仅三份稳定文档另行提交。
+
+### 2026-11-07 N3b实施安全checkpoint：流式与完整归档已提交，API收口中
+
+- 上一goal turn为progress（复核改变了稳定台账并定位共享venv裸import边界）；本turn继续实际实现，无新增分支/worktree/fetch/发布。实施分支新增`1795f244`流式暂存/验证（2生产+新测试）、`d1389db6`完整portable Figure检视（svgstore、2新测试、导出规则）；root定向stage，其他候选未混入。原main未改。
+- 流式候选：普通file/script/figure_snapshot各20MiB实际ZIP与stage读取tripwire，默认bytes reader/旧writer保持；326项/0skip/exit0、4实际内存变异、旧strict/legacy_names完整ZIP字节相同，详见`n3b-package-streaming-validation.md`。完整store：所有metadata/blob（含未引用）、marker-only/archive-only及真实junction覆盖；316通过/31 Win1314跳过/exit0、6变异、5组原/新生产树字节相同，见`n3b-svgstore-full-freeze.md`。不把31跳过写为通过。
+- 新API候选`POST /api/documents/v4/package/inspect`已接同一认证/格式域，有限实际上传/字段内存/容器预算，隔离data_dir请求暂存，完整INPUT/资源/Figure语义与SVG安全/PDF可读单页检查，零用户脚本/项目/正文/配置写入。初47项有4个fixture错误和一个真实坏pj漏守卫；修正公共_request_ctx并保留原红。49绿后实际总body等号边界2红，+1哨兵修后53项/0skip/exit0，四有效反证保留；`n3b-inspect-http-validation.md`。最终联合511/0skip/exit0（`n3b-final-integrated-command.json/.xml/.log`，7源无漂移），全Ruff/format1442文件及agents_budget --check通过；不是全分支回归。
+- 独立新父进程/真实认证本机socket读先前真UI包b6a024…：401/200/409/422均预期，整份doc/manifest、14资源/1snapshot、原rc/argv不变，计数文件SHA仍1；准确incomplete与remap须重连，见`n3b-network-inspection-result.json`。首socket夹具误把port当SessionState构造关键字，发请求前TypeError；修正真实port属性后通过，首错另存未隐藏。该父进程/服务/child均正常关闭，不重启旧浏览器夹具服务。
+- 独立只读consumer审查又证实两个同根报告缺陷：正式删helper包的声明missing被inspect漏掉；旧v4仅runtime_assets声明script而scripts/execution省略时也漏其缺件。外部实际两探针红已保留；self正只改新增HTTP测试补维护回归，root将统一验证声明候选并用实际plan重新计算，不给descriptor运行权，也不把完整chartSource缺原SVG当缺件。该修复尚未落源码，53/511不得冒称包含它的最终资格。
+- 当前未提交：root接管`app.py`、`engine/packagebudget.py`、新`engine/packageinspection.py`、布局规则/ADR与稳定文档；self仅新`tests/test_chart_package_inspect_http.py`（已53绿、现补缺件回归）。index空，前所有叶子已提交。export_adapter_review只读检查消费者；svg_ir_fidelity只做仓库外N3c-3设计/搬迁实验；无root测试句柄在途，71588/78728均exit0。
+- 下一动作：取得声明缺件新增红→统一修候选计算→当前HTTP文件末验/必要反证→复核共享契约并提交API，不重跑无关旧套件；随后N3c-3。外部已证明remap绝对路径指纹搬迁失配，以及public save在有捕获时完整输入证据下可生成新ref、保sourceId/rc/argv/patch/字节；仅捕获后声明不能签旧图，receipt binding在导出时重算的时刻问题仍须结构解决。完整N3d–N8继续待实现/验收，goal active。
 
 ### 2026-11-07 00:07起 执行效果复核与下一阶段安排
 
