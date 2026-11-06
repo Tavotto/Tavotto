@@ -78,6 +78,7 @@ order: 200
   override / 标注属性一次 commit 应用，绝不写回源文件。
 - **项目包**：`POST /api/package` 打 zip（layout+素材+脚本+sha1 清单）；
   `POST /api/package/open` 检视（缺失/sha1 漂移），素材永不自动写入图库。
+- **有界项目包容器**：`documentpackage`是ZIP路径/别名/成员/目录/展开/压缩预算和CRC的唯一权威，六项`PackageBudget`由调用者明确提供；不任意extract。`staged_package`立即流入临时helper资源，任何add异常锁定整包失败，关闭并验证后经atomicio原子发布；不能因调用者捕获add异常而发布半包。新文件发布用`publish_file_if_absent`，同名并发不覆盖；允许替换须显式overwrite。严格v4 reader核现品牌/版本/format信封，普通旧包不自动套用新低容量上限。看护`tests/test_document_package.py`。
 - **文档显式引用全质量 Figure 配对（X03，2026-10-15）**：面板 `figureSnapshot` 是版本 1 的闭集
   `{version, sourceId, patchHash, receiptId, snapshotId}`，可选 `executionOwner={script, run_config}`；
   owner 只从已验归档派生、纳入内容 ID，不信客户端自报。导出 wire 字段为 `figure_snapshot`。

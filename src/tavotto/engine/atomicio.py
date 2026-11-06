@@ -385,6 +385,43 @@ def publish_file(tmp: Path, dest: Path) -> None:
     _fsync_dir(dest.parent)
 
 
+def publish_file_if_absent(tmp: Path, dest: Path) -> None:
+    """封口临时文件原子新建目标；碰撞原样抛 FileExistsError，不替换已有字节。
+
+    与 write_bytes_if_absent 共用 no-clobber 发布权威，避免把大文件读回内存。
+    临时文件必须与目标同目录且不是目标自身；所有正常失败均清理本次临时文件。
+    """
+    tmp, dest = Path(tmp), Path(dest)
+    if tmp.resolve() == dest.resolve() or tmp.parent.resolve() != dest.parent.resolve():
+        raise ValueError("临时文件必须与目标不同名并在同一个目录")
+    try:
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise AtomicWriteError("mkdir_failed", f"无法创建目录：{exc}", dest) from exc
+        try:
+            fsync_file(tmp)
+        except OSError as exc:
+            raise AtomicWriteError("write_failed", f"临时文件落盘失败：{exc}", dest) from exc
+        collision = None
+        try:
+            _publish_if_absent(tmp, dest)
+        except FileExistsError as exc:
+            collision = exc
+        except OSError as exc:
+            raise AtomicWriteError("replace_failed", f"原子新建失败：{exc}", dest) from exc
+        try:
+            fsync_dir(dest.parent)
+        except AtomicWriteError:
+            raise
+        except OSError as exc:
+            raise AtomicWriteError("dir_fsync_failed", f"目录项落盘失败：{exc}", dest) from exc
+        if collision is not None:
+            raise collision
+    finally:
+        _discard(tmp)
+
+
 def write_json(path: Path, obj: Any, *, indent: int | None = None) -> str:
     """原子写 JSON，成功后返回**本次写入字节**的修订号。
 
