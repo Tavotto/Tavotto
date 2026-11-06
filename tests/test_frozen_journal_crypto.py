@@ -39,6 +39,8 @@ runpy.run_path(sys.argv[1])['_journal_selftest']()
         [sys.executable, "-c", script, str(ROOT / "packaging" / "entry.py")],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=30,
     )
     assert result.returncode != 0
