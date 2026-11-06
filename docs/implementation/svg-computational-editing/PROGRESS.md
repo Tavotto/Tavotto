@@ -42,6 +42,13 @@
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
+### 2026-11-06 实施：字体族名保持字面语义
+
+- 修正overrides中唯一的族名→mathtext模式转换：用Matplotlib FontProperties字面family与官方模式生成器，italic/bold分别构造，拒绝把名称里的file=解释成读取路径。文字、刻度和首选/回退选择继续复用同一setter；不改原有文件锁定字体/来源授权合同。
+- 新旧10个真实标题/对数刻度、五族名SVG输出逐字节相同（font-family-parity.json）。新权限负例以数学字体get_font真实调用追踪，回退到raw模式后目标canary确实被读取，新增目标断言失败exit1（font-family-negative.log）；当前正常实现不读取该文件，热冷重放/undo相同。
+- 最终字体相关9项与字体来源/中文名/科学文字19项均exit0、0skip，报告font-family-literal-second.xml、font-family-compat.xml；Ruff和格式通过。首次新测试把攻击串中转义反斜线也当作库必须逐字保留，已改为普通族名往返与实际文件选择权限两类正确主语；另字体名单初轮一项失败，独立旧/新相同新建MPL缓存均exit0，后续完整相关9项通过，未伪造原失败为绿。
+- playground已按本轮overrides和冻结前端重建，指纹7d4cbb526cbd3f82；原生后端/前端整链及最终完整旧功能资格仍待后续批次，不混入本字体功能提交。
+
 ### 2026-11-06 13:12 执行效果复核与接续安排
 
 - 工作树/分支仍为r00/zixu.wang/svg-computational-r00，完成批次HEAD=bbbffed1；原目录main@69bcafae实测clean，未合并，未fetch，不用缓存远端引用宣称最新。三项完成核心已独立commit；下一轮核对实际HEAD/diff，不恢复旧快照。

@@ -28,6 +28,12 @@ order: 70
   ——白名单式的 `font-family-substituted` 只认名字，量不到这一维；保留式规范化的
   `font_unavailable` 退出靠的就是它。`_apply_mathtext_custom_set` 是文字与刻度共用的
   那一段 rcParams 写入。
+- `fontfamily` 是字面族名，不是 Fontconfig 文件选择表达式。文字与刻度共用的
+  `_mathtext_font_name` 经 `FontProperties(family=[...]).get_fontconfig_pattern()`
+  生成模式，斜体/粗体各自设置属性后生成，不拼接未经转义的族名或重复属性。
+  依据 [Matplotlib FontProperties 契约](https://matplotlib.org/stable/api/font_manager_api.html#matplotlib.font_manager.FontProperties)。
+  看护 `tests/test_font_family_literal.py`：真实数学文字的文件请求不得读未注册 canary，
+  普通族名的斜体/粗体、热冷重放及撤销保持一致。
 - **保留式规范化的引擎侧三模块（ADR 0051，纯标准库，Flask / MCP 两个进程都 import）**：
   `engine/normalize.py`（约定 / 计划 / 授权 / 实效比对 / 边距与图例候选 / 预算）、
   `engine/interference.py`（`text-overlap` / `text-over-axes` / `legend-over-data`，
