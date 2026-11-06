@@ -1,3 +1,4 @@
+import { chartSourceFields } from './chartSource'
 import { figureSnapshotFor } from './figureSnapshot'
 import { artifactRequestFields } from './artifactValidation'
 import type { ExportObject } from './api'
@@ -29,6 +30,7 @@ function toExportObject(o: CanvasObject): ExportObject {
         ...artifactRequestFields(o),
         id: o.fileId,
         ...(o.chart ? { chart: structuredClone(o.chart) } : {}),
+        ...chartSourceFields(o.chartSource),
         ...(figureSnapshotFor(o) ? { figure_snapshot: figureSnapshotFor(o) } : {}),
         overrides: o.overrides.length ? o.overrides : undefined,
         crop: o.crop,

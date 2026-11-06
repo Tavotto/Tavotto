@@ -1,3 +1,4 @@
+import { chartPreviewArgs } from '@/lib/chartSource'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Bookmark, ChevronDown, Copy, Eye, Minus, Pencil, Plus, RotateCcw, Trash2 } from '@/components/ui/icons'
@@ -1815,7 +1816,7 @@ function SnapshotPanel({
   /** 取图档位（RENDER_BUCKETS 之一），见 `snapshotBucket` */
   bucket: number
 }) {
-  const wantsVariant = renderOverrides && (!!panel.chart || panel.overrides.length > 0 || isAdoptedPanel(panel))
+  const wantsVariant = renderOverrides && (!!panel.chart || panel.chartSource !== undefined || panel.overrides.length > 0 || isAdoptedPanel(panel))
   const variant = useVariantPng(
     panel.fileId,
     panel.overrides,
@@ -1823,7 +1824,7 @@ function SnapshotPanel({
     wantsVariant,
     mtime ?? 0,
     adoptionGuardOf(panel),
-    ...(panel.chart ? [panel.chart] as const : [] as const),
+    ...chartPreviewArgs(panel),
   )
   useEffect(() => {
     if (renderOverrides) onApproximate?.(variant.approximate)
@@ -1839,7 +1840,7 @@ function SnapshotPanel({
 
   // panelSrc 可能给不出地址（替代传输里没有 HTTP 服务）：一个都拿不到就不画
   // <img>，绝不留一个空 src 让缩略图挂一个碎图标
-  const src = variant.url || (panel.chart ? null : panelSrc(panel.fileId, panel.fileKind, bucket, mtime))
+  const src = variant.url || (panel.chart || panel.chartSource !== undefined ? null : panelSrc(panel.fileId, panel.fileKind, bucket, mtime))
   if (!src) return null
   return (
     <RetryImg

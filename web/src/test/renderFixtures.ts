@@ -9,7 +9,7 @@
  * 用例要的是「已经画好了」，就用这个；要的是「还没画好」，直接
  * `patch(key, { status: 'rendering', wantPatches })`，别给 manifest。
  */
-import { renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { renderKeyOf, renderRequestIdentity, useRenderStore } from '@/store/renderStore'
 import type { Manifest } from '@/lib/api'
 import type { PanelObject } from '@/types/document'
 
@@ -19,7 +19,7 @@ export function seedExactRender(
   extra: { svg?: string; rev?: number } = {},
 ): void {
   const key = renderKeyOf(panel)
-  const variant = JSON.stringify(panel.overrides)
+  const variant = renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource)
   useRenderStore.getState().patch(key, {
     fileId: panel.fileId,
     rev: extra.rev ?? 1,

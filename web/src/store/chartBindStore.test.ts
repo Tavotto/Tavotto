@@ -37,6 +37,24 @@ const CHART = {
   binding: { model_rev: 1, scene_digest: 'd'.repeat(64), entries: [] },
 }
 
+it('打开有附件的panel时inspect/compute保留同版完整引用，不改为原file计算', async () => {
+  const p = panel()
+  p.chart = structuredClone(CHART) as unknown as PanelChartState
+  p.chartSource = { schema: 1, sourceId: p.fileId, bytesSha256: 'a'.repeat(64), sizeBytes: 100,
+    sceneDigest: p.chart.model.scene_digest }
+  const original = structuredClone(p.chartSource)
+  vi.mocked(chartInspect).mockResolvedValue(SCENE)
+  vi.mocked(chartCompute).mockResolvedValue({ svg: '<svg/>', facts: {} } as never)
+  useChartBindStore.getState().openFor(p)
+  await vi.waitFor(() => expect(useChartBindStore.getState().busy).toBe(false))
+  expect(chartInspect).toHaveBeenCalledWith(p.fileId, original)
+  p.chartSource.bytesSha256 = 'b'.repeat(64)
+  await useChartBindStore.getState().confirmBinding()
+  expect(chartCompute).toHaveBeenCalledWith(p.fileId, expect.anything(), {
+    render_profile: 'native-manifest/1', overrides: [], chart_source: original,
+  })
+})
+
 function panel(id = 'p1'): PanelObject {
   return {
     id,

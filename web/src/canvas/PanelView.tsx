@@ -1,3 +1,4 @@
+import { chartRequestIdentity, chartSourceFields } from '@/lib/chartSource'
 import { adoptionGuardOf, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, isSourceBackedZeroEdit, isAdoptedPanel } from '@/lib/artifactValidation'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
@@ -209,7 +210,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 拿上一变体的位图冒充当前变体——那正是「预览 ≠ 当前 overrides 且不吵」。
   const enginePng =
     pngBlob.url && !(isAdoptedPanel(obj) && pngBlob.failed) && !artifactValidationIssue(obj) &&
-    (pngIsCurrent || (pngBlob.chartRequest === (obj.chart ? JSON.stringify(obj.chart) : null) && !isAdoptedPanel(obj) && !pngBlob.failed)) ? pngBlob.url : null
+    (pngIsCurrent || (pngBlob.chartRequest === (chartRequestIdentity(obj.chart, obj.chartSource) ?? null) && !isAdoptedPanel(obj) && !pngBlob.failed)) ? pngBlob.url : null
   // 性能探针（ADR 0075）：位图这一格（raster / evicted / 非编辑态的引擎位图）没有
   // 「SVG 换进 DOM」那一刻，松手 → 图落定要一直量到**这一版自己的位图**加载完
   // （onLoad：取图、解码都已结束）。暂挂的上一变体 / 上一 rev 的那张不算——那是
@@ -245,7 +246,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 这条 HTTP 路，照旧。取到之前 / 没命中这个状态时见 `approxPreview`。
   const runtimePreview = useRuntimePreview(obj.fileId, obj.overrides, runtime && !transport && !!runtimeState?.cached, previewNonce)
   const fileSrc =
-    obj.chart || kind === 'unknown' || (runtime && !runtimeState?.cached)
+    obj.chart || obj.chartSource !== undefined || kind === 'unknown' || (runtime && !runtimeState?.cached)
       ? null
       : transport
         ? transport.panelSrc(obj.fileId, kind, bucket, mtime)
@@ -457,22 +458,26 @@ function useEnginePngBlob(
     if (!enabled) return
     const ctrl = new AbortController()
     const project = captureProjectEpoch()
-    const chartRequest = obj.chart ? JSON.stringify(obj.chart) : null
+    const chartRequest = chartRequestIdentity(obj.chart, obj.chartSource) ?? null
     let landed = false
     const transport = engineTransport()
     const issue = artifactValidationIssue(obj)
-    const pending = obj.chart && transport && (!transport.supportsChartRender || !transport.previewPngSnapshot)
+    const pending = obj.chartSource !== undefined && !obj.chart
+      ? Promise.reject(new EngineError('A chart source requires a chart.', '', 'chart_model_invalid'))
+      : obj.chart && transport && (!transport.supportsChartRender || !transport.previewPngSnapshot || (obj.chartSource !== undefined && !transport.supportsChartSourceRender))
       ? Promise.reject(new EngineError('This host does not support paired chart pixels.', '', 'chart_render_unsupported'))
       : issue || (isAdoptedPanel(obj) && transport)
       ? Promise.reject(new ArtifactValidationError(issue ?? 'unsupported_render_state'))
       : transport
       ? transport.previewPngSnapshot
         ? obj.chart
-          ? transport.previewPngSnapshot(fileId, overrides, bucket, ctrl.signal, obj.chart)
+          ? obj.chartSource !== undefined
+            ? transport.previewPngSnapshot(fileId, structuredClone(overrides), bucket, ctrl.signal, structuredClone(obj.chart), structuredClone(obj.chartSource))
+            : transport.previewPngSnapshot(fileId, overrides, bucket, ctrl.signal, obj.chart)
           : transport.previewPngSnapshot(fileId, overrides, bucket, ctrl.signal)
         : transport.previewPngUrl(fileId, overrides, bucket, ctrl.signal)
             .then((url) => ({ url, manifest: null }))
-      : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, { ...artifactRequestFields(obj), ...(obj.chart ? { chart: obj.chart } : {}) })
+      : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, { ...artifactRequestFields(obj), ...(obj.chart ? { chart: structuredClone(obj.chart) } : {}), ...chartSourceFields(obj.chartSource) })
     void pending
       .then((next) => {
         if (obj.chart && (!next.manifest || !('chartRevision' in next) || typeof next.chartRevision !== 'string' || !next.chartRevision)) {

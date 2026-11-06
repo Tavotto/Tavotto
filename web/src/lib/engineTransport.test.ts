@@ -24,6 +24,22 @@ beforeEach(() => useRenderStore.getState().clear())
 afterEach(() => setEngineTransport(null))
 
 describe('显式chart传输能力', () => {
+  it('旧chart宿主仍须明确支持INPUT附件，否则不得忽略ref发native请求', async () => {
+    const p = panel(), host = transport(true)
+    p.chartSource = { schema: 1, sourceId: p.fileId, bytesSha256: 'a'.repeat(64), sizeBytes: 100,
+      sceneDigest: p.chart!.model.scene_digest }
+    setEngineTransport(host)
+    await useRenderStore.getState().render(p.fileId, p.overrides,
+      undefined, undefined, undefined, undefined, 'foreground', p.chart, p.chartSource)
+    expect(host.render).not.toHaveBeenCalled()
+    expect(useRenderStore.getState().get(renderKeyOf(p)).code).toBe('chart_render_unsupported')
+    host.supportsChartSourceRender = true
+    await useRenderStore.getState().render(p.fileId, p.overrides,
+      undefined, undefined, undefined, undefined, 'foreground', p.chart, p.chartSource)
+    expect(host.render).toHaveBeenCalledWith(p.fileId, p.overrides,
+      expect.objectContaining({ chart_source: p.chartSource }))
+    expect(exactPanelManifest(useRenderStore.getState(), p)).toBe(manifest)
+  })
   it('旧宿主不能忽略chart后把native Figure响应冒充成功', async () => {
     const p = panel(), host = transport()
     setEngineTransport(host)

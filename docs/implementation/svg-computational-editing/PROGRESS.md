@@ -42,6 +42,15 @@
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
+### 2026-11-06 精确附件消费者完成真实UI联验
+
+- N0前后端消费者达到本批提交边界。冻结31文件SHA仍与source-ref-consumers-validation.json一致，沿用其700项/正式build/i18n/9反证资格；playground已重建并--check exit0，指纹77d32934d571f6a6（早于N2未接入新叶子）。Python先Ruff check/format exit0，随后当前附件专项13项同次通过、0skip、exit0、50.922秒（chart-source-ref-final13.xml）。app工作区v4草稿的三处格式已修，仍不混入本批索引app。
+- 新隔离项目source-ref-browser：正式绑定后冻结不可变INPUT，删除原chart.svg，经真实“打开排版”载入带ref消费者夹具→进入既有图内编辑→Inspector改线宽→undo/redo回exact。读取store仅作断言，无直接改store；引用始终相同。面板比例1.98425时用户6pt对应既有两位精度native3.02，文档/实际SVG/撤销重做一致。
+- 真实ExportDialog请求含chart_source、完整chart/native profile/原序edits；原图PDF/PNG/SVG和报告均落地。独立检查SVG v2模型/绑定与原序编辑完全相同，PDF 100×100pt且文本层保留Source keep，PNG833×833与预期红线点(416,583)=(255,0,0)。资格记录source-ref-browser/export-qualification.json。坏ref从UI触发422 chart_source_mismatch，最后display=empty、无旧native目标，不冒充exact；截图source-ref-deleted-edit.png/source-ref-bad-refused.png位于证据根output/playwright。
+- 夹具是消费者测试输入，不是v4正式保存或冷恢复资格。首次外部脚本误写atomicio函数名、after_request注册时序均已修；坏ref探针先误期望missing（既有权威实际为mismatch），纠正后同身份重复加载命中失败缓存，等待新response超时，转为读取实际错误响应与空显示断言；保留失败记录，不冒充产品修复。
+- 实际新缺口：预检仍将有效ref图报missing-asset/unapplied-override，UI导出按现acknowledged策略记录后成功；这属于N4/R12能力事实接线，不能称所有现有功能已对等。EPS生产叶子独立36项含Ghostscript像素已通过但未接app/owned worker；N2新格式/回执叶子66项已通过但未接现store。二者不混本批。
+- 旧后端43356已核PID/命令后Ctrl-C结束；新后端33104/session79201/23984加载当前app，Vite11676/session67246/23983；source-ref浏览器78620。前端既有文件在本批提交前保持冻结，N0提交后释放给N2唯一写入者；根代理继续唯一app/ADR/进度写入。后续N1保存端点/新父进程与N2前端持久化并行，目标仍active。
+
 ### 2026-11-06 16:53后 执行状态、实际效果与下一阶段复核
 
 - 复核HEAD=83f4ffbf626e0eab1b7bd04df07e8f9fe8be04cc；唯一实施分支/树不变，原main目录仍干净。本轮是状态与任务安排复核，未更改生产代码，未提交未完成功能、合并或发布。三份接续文档及总计划Git条款同步当前状态，不把15:32快照当作最新。

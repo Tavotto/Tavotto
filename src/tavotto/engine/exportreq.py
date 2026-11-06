@@ -32,7 +32,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import chartmodel, chartprofile, figcapture
+from . import chartmodel, chartprofile, documents, figcapture
 
 # ------------------------------- 枚举 ---------------------------------------
 
@@ -311,6 +311,8 @@ class OriginalSource:
     #: 非零时页面 = `w_mm + l + r` × `h_mm + t + b`、面板落在 `(l, t)`，走带标注的合成路径（没有标注也走）；
     #: `objects` 的坐标已由前端换算到页面坐标（以页面左上为原点）。非零时 `w_mm` / `h_mm` 必填。
     pad_mm: tuple[float, float, float, float] | tuple[()] = ()
+    #: 精确 INPUT SVG 的不可变文档资源引用；存在时必须与图表和来源 ID 同源。
+    chart_source: dict | None = None
 
     @property
     def page_mm(self) -> tuple[float, float] | None:
@@ -426,6 +428,11 @@ class ExportRequest:
                 if self.original and self.original.figure_snapshot is not None
                 else {}
             ),
+            **(
+                {"chart_source": self.original.chart_source}
+                if self.original and self.original.chart_source is not None
+                else {}
+            ),
         }
 
 
@@ -512,6 +519,11 @@ def render_plan_ref(req: ExportRequest, resources: list[dict]) -> dict:
                 else {}
             ),
             **(
+                {"chart_source": req.original.chart_source}
+                if req.original.chart_source is not None
+                else {}
+            ),
+            **(
                 {"expected_source": req.original.expected_source}
                 if req.original.expected_source is not None
                 else {}
@@ -538,6 +550,7 @@ def render_plan_ref(req: ExportRequest, resources: list[dict]) -> dict:
                     if p.chart_render_profile is not None
                     else {}
                 ),
+                **({"chart_source": p.chart_source} if p.chart_source is not None else {}),
             }
             for p in req.merge_pdf.pages
         ]
@@ -753,16 +766,38 @@ def _chart_render_state(source: dict) -> tuple[dict | None, str | None, list[dic
     return chart, profile, edits
 
 
+def _chart_source(source: dict, chart: dict | None, source_id: object) -> dict | None:
+    if "chart_source" not in source:
+        return None
+    if chart is None:
+        raise ExportRequestError("chart_model_invalid", "chart source requires chart", {})
+    try:
+        return deepcopy(
+            documents.validate_chart_source(
+                source["chart_source"],
+                source_id=source_id if isinstance(source_id, str) else "",
+                scene_digest=chart["model"]["scene_digest"],
+            )
+        )
+    except documents.DocumentError as exc:
+        raise ExportRequestError(exc.code, exc.message, {}) from exc
+
+
 def _chart_canvas_object(source: dict) -> dict:
-    if "chart" not in source and "chart_render_profile" not in source:
+    if not any(key in source for key in ("chart", "chart_render_profile", "chart_source")):
         return source
-    if "chart_render_profile" in source and source.get("type") != "panel":
-        raise ExportRequestError("chart_model_invalid", "chart profile requires panel", {})
+    if source.get("type") != "panel":
+        if "chart_render_profile" in source:
+            raise ExportRequestError("chart_model_invalid", "chart profile requires panel", {})
+        if "chart_source" in source:
+            raise ExportRequestError("chart_model_invalid", "chart source requires panel", {})
     chart, _profile, edits = _chart_render_state(source)
+    chart_source = _chart_source(source, chart, source.get("id"))
     return {
         **source,
         "chart": chart,
         **({"overrides": edits} if chart is not None and "overrides" in source else {}),
+        **({"chart_source": chart_source} if chart_source is not None else {}),
     }
 
 
@@ -801,6 +836,7 @@ def _original_source(source: Any) -> OriginalSource:
         ignored=tuple(str(x) for x in (source.get("ignored") or [])),
         chart=chart,
         chart_render_profile=profile,
+        chart_source=_chart_source(source, chart, figure_id),
     )
 
 

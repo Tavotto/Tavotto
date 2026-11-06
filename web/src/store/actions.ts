@@ -1423,14 +1423,14 @@ async function settledRender(key: string): Promise<void> {
  */
 export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
   const panel = findObject(panelId)
-  if (panel?.type !== 'panel' || !panel.script) return 'skipped'
+  if (panel?.type !== 'panel' || (!panel.script && !panel.chart)) return 'skipped'
   try { refuseArtifactOperation(panel) } catch (e) { status(engineErrorMsg(e), 'error'); return 'failed' }
   // 字号还在安静计时里时点「重新构建」：先把那次编辑收进历史，重画的才是定稿的 overrides
   finishActiveGesture()
   const fileId = panel.fileId
   const owner = captureProjectEpoch(() => useDocumentStore.getState().documentId)
   let invalidated = false
-  if (!engineTransport()) {
+  if (!panel.chart && !engineTransport()) {
     try {
       invalidated = (await engineInvalidate(fileId)).invalidated
     } catch (err) {
@@ -1451,7 +1451,9 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
   // 登记 wantPatches、清掉挂着的防抖计时器；真正的发送在下一行，要等它的结果
   requestRender(fresh, 'none')
   const key = renderKeyOf(fresh)
-  await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh))
+  if (fresh.chartSource !== undefined) await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh), 'foreground', fresh.chart, fresh.chartSource)
+  else if (fresh.chart) await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh), 'foreground', fresh.chart)
+  else await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh))
   await settledRender(key)
   const succeeded = useRenderStore.getState().get(key).status === 'ready'
   // renderStore consumes trusted execution evidence even for failed/zero-output runs.

@@ -44,6 +44,48 @@ const chartResponse = (revision: string) => ({ rev: 1, chart_revision: revision,
   manifest: manifest(revision), svg: `<svg id="${revision}"/>` })
 
 describe('chart 与普通渲染共用配对状态机', () => {
+  const sourcePanel = () => {
+    const p = chartPanel()
+    p.chartSource = { schema: 1, sourceId: p.fileId, bytesSha256: 'a'.repeat(64), sizeBytes: 100,
+      sceneDigest: p.chart!.model.scene_digest }
+    return p
+  }
+  const renderSource = (p: PanelObject) => useRenderStore.getState().render(p.fileId, p.overrides,
+    undefined, undefined, undefined, undefined, 'foreground', p.chart, p.chartSource)
+
+  it('同模型不同INPUT附件有独立键与显示/结构/几何身份，绝不借同文件来源', async () => {
+    const p = sourcePanel(), other = structuredClone(p)
+    other.chartSource!.bytesSha256 = 'b'.repeat(64)
+    expect(renderKeyOf(p)).not.toBe(renderKeyOf(other))
+    expect(renderKeyOf(p)).not.toBe(renderKeyOf({ ...p, chartSource: undefined }))
+    engineRender.mockResolvedValue(chartResponse('bound-source'))
+    await renderSource(p)
+    expect(engineRender.mock.calls[0][2].chart_source).toEqual(p.chartSource)
+    const state = useRenderStore.getState()
+    expect(exactPanelManifest(state, p)).not.toBeNull()
+    for (const candidate of [other, { ...p, chartSource: undefined }]) {
+      expect(panelRender(state, candidate)).toBeUndefined()
+      expect(structuralPanelManifest(state, candidate)).toBeNull()
+      expect(exactPanelManifest(state, candidate)).toBeNull()
+    }
+  })
+
+  it('发送时冻结ref，晚到旧附件响应不能给新引用授予exact资格', async () => {
+    const p = sourcePanel(), original = structuredClone(p)
+    let finish!: (v: unknown) => void
+    engineRender.mockImplementationOnce(() => new Promise((r) => { finish = r }))
+    const pending = renderSource(p)
+    p.chartSource!.bytesSha256 = 'b'.repeat(64)
+    expect(engineRender.mock.calls[0][2].chart_source).toEqual(original.chartSource)
+    finish(chartResponse('old-source'))
+    await pending
+    expect(exactPanelManifest(useRenderStore.getState(), p)).toBeNull()
+    expect(exactPanelManifest(useRenderStore.getState(), original)).not.toBeNull()
+    engineRender.mockResolvedValue(chartResponse('new-source'))
+    await renderSource(p)
+    expect(exactPanelManifest(useRenderStore.getState(), p)).not.toBeNull()
+  })
+
   it('普通键保持原样；模型数据/范围/样式/绑定任一变化都有独立完整身份', () => {
     expect(renderKey('plot.pdf', [])).toBe('plot.pdf []')
     const a = chartPanel()

@@ -84,7 +84,7 @@ export function requestRender(
   const policy = policyOf(immediate)
   const store = useRenderStore.getState()
   const key = renderKeyOf(panel)
-  const want = renderRequestIdentity(panel.overrides, panel.chart)
+  const want = renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource)
   cancelScheduledRender(panel.id)
   const issue = artifactValidationIssue(panel)
   if (issue) {
@@ -101,16 +101,19 @@ export function requestRender(
 
   // 防抖那一路是「还在调」，可以先给一张低清；immediate 是定稿，永远默认 dpi
   const dpi = policy !== 'defer' || !hasImageElement(panel) ? undefined : INTERACTIVE_PREVIEW_DPI
-  const snapshot = panel.chart ? JSON.parse(want) as { patches: unknown[]; chart: PanelChartState } : null
+  const snapshot = panel.chart || panel.chartSource !== undefined ? JSON.parse(want) as { patches: unknown[]; chart?: PanelChartState; chart_source?: PanelObject['chartSource'] } : null
   const patches = snapshot?.patches ?? panel.overrides
   const chart = snapshot?.chart
+  const chartSource = snapshot?.chart_source
   const fileId = panel.fileId
   // 项目代际在**排渲染这一刻**取：防抖窗口里切了项目的话，到点那一次整个作废
   const epoch = renderEpoch()
   const fire = () => {
     timers.delete(panel.id)
     // 前台请求的调用形状一字不变（只有邻居补渲染多一个实参）
-    void (chart
+    void (chartSource !== undefined
+      ? store.render(fileId, patches, dpi, policy, epoch, adoptionGuardOf(panel), purpose, chart, chartSource)
+      : chart
       ? store.render(fileId, patches, dpi, policy, epoch, adoptionGuardOf(panel), purpose, chart)
       : purpose === 'foreground'
       ? store.render(fileId, patches, dpi, policy, epoch, adoptionGuardOf(panel))
@@ -136,7 +139,7 @@ export function flushRender(panelId: string) {
   if (panel?.type !== 'panel') return
   const store = useRenderStore.getState()
   cancelScheduledRender(panelId)
-  const want = renderRequestIdentity(panel.overrides, panel.chart)
+  const want = renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource)
   const state = store.get(renderKeyOf(panel))
   // 判据是「这一版还没画出来」，不是「有没有挂起的计时器」。
   // 旧实现只看计时器：render:'none' 的手势（scrub / 取色）压根不设计时器，

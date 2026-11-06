@@ -1,3 +1,4 @@
+import { chartPreviewArgs } from '@/lib/chartSource'
 /**
  * 一张画布的缩略图 —— 页面比例里按对象落位画**真实内容**。
  *
@@ -350,13 +351,13 @@ function EditedThumbImage({
   height: number
 }) {
   const variant = useVariantPng(panel.fileId, panel.overrides, bucket, true, rev, adoptionGuardOf(panel),
-    ...(panel.chart ? [panel.chart] as const : [] as const))
+    ...chartPreviewArgs(panel))
   // runtime 面板的退路是 cache 预览，而后端 GET 版给的是「最近一次渲染」、不是这组 overrides 的图
   // （撤销回一个前端已画过的变体时它停在撤销前，QA-WIN-21）：按此刻的 overrides 取，**不是这个状态的图就不挂**
   // ——缩略图没有「近似预览」的位置，空着比挂一张撤销前的旧图诚实
   const byState = panel.fileKind === 'runtime' && !engineTransport()
   const runtimePreview = useRuntimePreview(panel.fileId, panel.overrides, byState, rev)
-  const fallback = panel.chart ? null : byState ? (runtimePreview.exact === true ? runtimePreview.url : null) : fallbackHref
+  const fallback = panel.chart || panel.chartSource !== undefined ? null : byState ? (runtimePreview.exact === true ? runtimePreview.url : null) : fallbackHref
   return <ThumbImage fileId={panel.fileId} href={variant.url ?? fallback} {...box} />
 }
 

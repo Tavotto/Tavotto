@@ -70,6 +70,39 @@ describe('计算图表导出快照', () => {
     return { ...panel, fileId: 'chart.svg', fileKind: 'svg', chart }
   }
 
+  it.each(['original', 'canvas', 'merge', 'annotations'] as const)('%s 深拷贝INPUT引用，来源改变必然改变导出身份', (kind) => {
+    const p = chartPanel()
+    p.chartSource = { schema: 1, sourceId: p.fileId, bytesSha256: 'a'.repeat(64), sizeBytes: 100,
+      sceneDigest: p.chart!.model.scene_digest }
+    const doc = { ...useDocumentStore.getState().doc, objects: [p] }
+    const input = inputOf({ scope: kind === 'canvas' ? 'canvas' : 'original', figureId: p.fileId, panel: p, doc,
+      ...(kind === 'merge' ? { mergePages: [{ figureId: p.fileId, panel: p, spec: null }] } : {}),
+      ...(kind === 'annotations' ? { annotations: [{ id: 'ann', type: 'text', text: 'annotation', sizePt: 9,
+        bold: false, color: '#000', align: 'left', x: 0, y: 0, w: 10, h: 5 }] } : {}),
+    })
+    const built = buildExportRequest(input)
+    const source = kind === 'canvas' ? built.request.canvas?.objects[0]
+      : kind === 'merge' ? built.request.merge_pdf?.pages[0] : built.request.original
+    expect(source).toHaveProperty('chart_source', p.chartSource)
+    expect((source as { chart_source: unknown }).chart_source).not.toBe(p.chartSource)
+    const original = JSON.stringify(built.request)
+    p.chartSource.bytesSha256 = 'b'.repeat(64)
+    expect(JSON.stringify(built.request)).toBe(original)
+    expect(buildExportRequest(input).revision).not.toBe(built.revision)
+  })
+
+  it('删原SVG但有附件的chart可以进入真实后端预检；无ref旧行为仍拒绝', () => {
+    const p = chartPanel()
+    useAssetStore.setState({ byId: {} })
+    expect(originalAvailability(p.fileId, { panel: p }).ok).toBe(false)
+    p.chartSource = { schema: 1, sourceId: p.fileId, bytesSha256: 'a'.repeat(64), sizeBytes: 100,
+      sceneDigest: p.chart!.model.scene_digest }
+    expect(originalAvailability(p.fileId, { panel: p }).ok).toBe(true)
+    p.chartSource = null as unknown as NonNullable<PanelObject['chartSource']>
+    expect(buildExportRequest(inputOf({ scope: 'original', figureId: p.fileId, panel: p })).request.original)
+      .toHaveProperty('chart_source', null)
+  })
+
   it.each(['original', 'canvas'] as const)('%s 保留模型/绑定，且后续编辑不改变已构造快照', (scope) => {
     const p = chartPanel()
     const doc = { ...useDocumentStore.getState().doc, objects: [p] }

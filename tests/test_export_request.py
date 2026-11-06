@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from tavotto.engine import chartprofile, exportreq, patchspec
+from tavotto.engine import chartprofile, documents, exportreq, patchspec
 
 ROOT = Path(__file__).resolve().parent.parent
 GOLDEN = ROOT / "tests" / "golden" / "filename_vectors.json"
@@ -182,6 +182,218 @@ def test_native_profile_on_nonpanel_canvas_object_is_not_admitted():
     with pytest.raises(exportreq.ExportRequestError) as caught:
         exportreq.normalize(spec)
     assert caught.value.code == "chart_model_invalid"
+
+
+def _referenced_chart_spec(scope):
+    spec, target = _native_chart_spec(scope if scope in ("canvas", "merge") else "original")
+    target["chart_source"] = {
+        "schema": 1,
+        "sourceId": "chart.svg",
+        "bytesSha256": "b" * 64,
+        "sizeBytes": 123,
+        "sceneDigest": target["chart"]["model"]["scene_digest"],
+    }
+    if scope in ("annotated", "pad"):
+        target.update(w_mm=100, h_mm=80)
+        if scope == "annotated":
+            target["objects"] = [{"type": "text", "text": "Caption", "x": 1, "y": 2}]
+        else:
+            target["pad_mm"] = [2, 3, 4, 5]
+    if scope == "merge":
+        second = deepcopy(target)
+        second["chart_source"]["bytesSha256"] = "c" * 64
+        spec["merge_pdf"]["pages"].append(second)
+    return spec, target
+
+
+@pytest.mark.parametrize("scope", ["original", "annotated", "pad", "canvas", "merge"])
+@pytest.mark.parametrize("native", [False, True])
+def test_chart_source_is_validated_frozen_and_identified_in_each_export_scope(scope, native):
+    spec, target = _referenced_chart_spec(scope)
+    if not native:
+        target.pop("chart_render_profile")
+    else:
+        target["overrides"] = [
+            {"gid": "axes_0", "prop": "xlim", "value": [0, 3]},
+            {
+                "gid": "axes_0.lines_0",
+                "prop": "color",
+                "value": "red",
+                "identity": "l1:0123456789abcdef",
+            },
+            {"gid": "axes_0", "prop": "xlim", "value": [0, 5]},
+        ]
+    before = deepcopy(target)
+    parsed = exportreq.normalize(spec)
+    frozen = (
+        parsed.canvas.objects[0]["chart_source"]
+        if scope == "canvas"
+        else parsed.original.chart_source
+    )
+    assert frozen == before["chart_source"] and frozen is not target["chart_source"]
+    identity = exportreq.render_plan_ref(parsed, [])["plan_identity"]
+    for key, changed in (("bytesSha256", "d" * 64), ("sizeBytes", 124)):
+        target["chart_source"][key] = changed
+        assert exportreq.render_plan_ref(exportreq.normalize(spec), [])["plan_identity"] != identity
+        target["chart_source"][key] = before["chart_source"][key]
+    target["chart_source"]["bytesSha256"] = "d" * 64
+    assert frozen == before["chart_source"]
+    assert exportreq.render_plan_ref(parsed, [])["plan_identity"] == identity
+    if native:
+        target["overrides"][0]["value"][1] = 99
+        edits = (
+            parsed.canvas.objects[0]["overrides"]
+            if scope == "canvas"
+            else parsed.original.overrides
+        )
+        assert edits == before["overrides"]
+    if scope == "canvas":
+        assert "chart_source" not in parsed.to_payload()  # 既有摘要不展开 objects。
+    else:
+        assert parsed.to_payload()["chart_source"] == before["chart_source"]
+    if scope == "merge":
+        assert parsed.merge_pdf.pages[1].chart_source["bytesSha256"] == "c" * 64
+        assert set(parsed.to_payload()["merge_pdf"]) == {"page_count", "figure_ids"}
+
+
+def test_chart_source_identity_includes_nonfirst_merge_pages():
+    spec, _target = _referenced_chart_spec("merge")
+    before = exportreq.render_plan_ref(exportreq.normalize(spec), [])["plan_identity"]
+    spec["merge_pdf"]["pages"][1]["chart_source"]["bytesSha256"] = "d" * 64
+    assert exportreq.render_plan_ref(exportreq.normalize(spec), [])["plan_identity"] != before
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas", "merge"])
+@pytest.mark.parametrize(
+    "bad",
+    [None, True, [], {}, "reference", {"path": "chart_sources/anything.svg"}],
+)
+def test_chart_source_explicit_null_or_nonreference_is_not_silently_ignored(scope, bad):
+    spec, target = _referenced_chart_spec(scope)
+    target["chart_source"] = bad
+    with pytest.raises(exportreq.ExportRequestError) as caught:
+        exportreq.normalize(spec)
+    assert caught.value.code == "chart_model_invalid"
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas", "merge"])
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("schema", True),
+        ("schema", 2),
+        ("sourceId", ""),
+        ("sourceId", " \t"),
+        ("sourceId", "bad\x00source"),
+        ("bytesSha256", "B" * 64),
+        ("bytesSha256", "b" * 63),
+        ("sizeBytes", True),
+        ("sizeBytes", 0),
+        ("sizeBytes", 1.5),
+        ("sizeBytes", float("inf")),
+        ("sizeBytes", 10**12),
+        ("sceneDigest", "g" * 64),
+        ("path", "../../outside.svg"),
+    ],
+)
+def test_chart_source_closed_fields_and_bounds_come_from_documents(scope, key, value):
+    spec, target = _referenced_chart_spec(scope)
+    target["chart_source"][key] = value
+    with pytest.raises(exportreq.ExportRequestError) as caught:
+        exportreq.normalize(spec)
+    assert caught.value.code == "chart_model_invalid"
+
+
+@pytest.mark.parametrize("key", ["schema", "sourceId", "bytesSha256", "sizeBytes", "sceneDigest"])
+def test_chart_source_cannot_omit_any_required_field(key):
+    spec, target = _referenced_chart_spec("original")
+    del target["chart_source"][key]
+    with pytest.raises(exportreq.ExportRequestError) as caught:
+        exportreq.normalize(spec)
+    assert caught.value.code == "chart_model_invalid"
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas", "merge"])
+@pytest.mark.parametrize("key,value", [("sourceId", "other.svg"), ("sceneDigest", "d" * 64)])
+def test_chart_source_must_match_the_panel_source_and_chart_scene(scope, key, value):
+    spec, target = _referenced_chart_spec(scope)
+    target["chart_source"][key] = value
+    with pytest.raises(exportreq.ExportRequestError) as caught:
+        exportreq.normalize(spec)
+    assert caught.value.code == "chart_source_mismatch"
+
+
+@pytest.mark.parametrize("source_id", [None, "", 4, False])
+def test_referenced_canvas_chart_requires_an_existing_string_source_id(source_id):
+    spec, target = _referenced_chart_spec("canvas")
+    target["id"] = source_id
+    with pytest.raises(exportreq.ExportRequestError) as caught:
+        exportreq.normalize(spec)
+    assert caught.value.code == "chart_source_mismatch"
+    target.pop("id")
+    with pytest.raises(exportreq.ExportRequestError) as caught:
+        exportreq.normalize(spec)
+    assert caught.value.code == "chart_source_mismatch"
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas", "merge"])
+@pytest.mark.parametrize("chart_is_null", [False, True])
+def test_chart_source_requires_chart_even_without_a_render_profile(scope, chart_is_null):
+    spec, target = _referenced_chart_spec(scope)
+    target.pop("chart_render_profile")
+    target.pop("chart")
+    if chart_is_null:
+        target["chart"] = None
+    with pytest.raises(exportreq.ExportRequestError) as caught:
+        exportreq.normalize(spec)
+    assert caught.value.code == "chart_model_invalid"
+
+
+def test_chart_source_cannot_be_attached_to_nonpanel_canvas_objects():
+    spec, target = _referenced_chart_spec("canvas")
+    target.pop("chart_render_profile")
+    target["type"] = "text"
+    with pytest.raises(exportreq.ExportRequestError) as caught:
+        exportreq.normalize(spec)
+    assert caught.value.code == "chart_model_invalid"
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas", "merge"])
+def test_chart_source_validation_delegates_identity_and_errors_to_documents(scope, monkeypatch):
+    spec, target = _referenced_chart_spec(scope)
+    calls = []
+
+    def reject(raw, *, source_id=None, scene_digest=None):
+        calls.append((raw, source_id, scene_digest))
+        raise documents.DocumentError("chart_source_mismatch", "authoritative validator rejection")
+
+    monkeypatch.setattr(documents, "validate_chart_source", reject)
+    with pytest.raises(exportreq.ExportRequestError) as caught:
+        exportreq.normalize(spec)
+    assert caught.value.code == "chart_source_mismatch"
+    assert caught.value.message == "authoritative validator rejection"
+    assert calls == [
+        (target["chart_source"], "chart.svg", target["chart"]["model"]["scene_digest"])
+    ]
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas", "merge"])
+@pytest.mark.parametrize("with_chart", [False, True])
+def test_absent_chart_source_does_not_add_optional_fields_to_legacy_payloads(scope, with_chart):
+    spec, target = _native_chart_spec(scope)
+    target.pop("chart_render_profile")
+    if not with_chart:
+        target.pop("chart")
+    parsed = exportreq.normalize(spec)
+    summary = parsed.to_payload()
+    plan = exportreq.render_plan_ref(parsed, [])
+    assert "chart_source" not in json.dumps(summary)
+    assert "chart_source" not in json.dumps(plan)
+    if scope == "canvas":
+        assert "chart_source" not in parsed.canvas.objects[0]
+    else:
+        assert parsed.original.chart_source is None
+    assert plan["request"] == summary
 
 
 # ----------------------------- golden 向量 ----------------------------------

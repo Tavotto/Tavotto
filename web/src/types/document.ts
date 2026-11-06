@@ -145,6 +145,15 @@ export interface PanelChartState {
   binding: import('./chartModel').ChartBinding
 }
 
+/** 不可变 INPUT SVG 附件；字段与 engine/documents.CHART_SOURCE_KEYS 严格同源。 */
+export interface ChartSourceRef {
+  schema: 1
+  sourceId: string
+  bytesSha256: string
+  sizeBytes: number
+  sceneDigest: string
+}
+
 export interface FigureSnapshot {
   version: 1
   sourceId: string
@@ -187,6 +196,7 @@ export interface PanelObject extends ObjectBase {
    * 旧前端读到它会忽略——面板退化为静态 SVG 预览，不丢数据。
    */
   chart?: PanelChartState
+  chartSource?: ChartSourceRef
   /**
    * 锁定的图内元素 gid：画布命中测试跳过它们，避免误选误拖。
    * 只影响交互，不影响渲染与导出；元素树里仍可选中（用于解锁）。

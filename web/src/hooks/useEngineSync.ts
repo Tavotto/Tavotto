@@ -234,7 +234,7 @@ export function syncEngine(objects: readonly CanvasObject[], editingId: string |
     styleBound,
     neighbours,
   )) {
-    const want = renderRequestIdentity(panel.overrides, panel.chart)
+    const want = renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource)
     const state = store.byKey[renderKeyOf(panel)]
     // `svgEvicted` 打断这条跳过：这一版确实画出来过（lastPatches 对得上、
     // manifest 与几何权威都在），但它的 SVG payload 被内存预算清掉了。撤销

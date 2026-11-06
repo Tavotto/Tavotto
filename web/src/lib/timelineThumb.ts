@@ -1,8 +1,10 @@
-import { panelSrc } from '@/lib/api'
+import { chartSourceFields } from './chartSource'
+import { engineTransport } from './engineTransport'
+import { EngineError, enginePreviewPngSnapshot, panelSrc } from '@/lib/api'
 import { contentBox, type ThumbBox } from '@/lib/versionThumbBox'
 import { applyPanelTransform, panelContentTransform } from '@/lib/panelTransform'
 import { useAssetStore } from '@/store/assetStore'
-import { panelRender, useRenderStore } from '@/store/renderStore'
+import { exactPanelRender, panelRender, useRenderStore } from '@/store/renderStore'
 import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
 
 /**
@@ -100,10 +102,42 @@ function loadImage(src: string): Promise<HTMLImageElement | null> {
  * SVG 解码失败或画成空白（Windows 的 WebKit 上量到过：同一份排版前一个节点有面板、下一个
  * 节点只剩文字，CI run 36510136403）时这一格就空着——而素材图明明就在。
  */
-type PanelSource = { svg?: string; url?: string } | null
+type PanelSource = { svg?: string; url?: string; png?: Promise<string | null> } | null
 
 function panelSource(o: PanelObject): PanelSource {
-  const render = panelRender(useRenderStore.getState(), o)
+  const render = o.chartSource !== undefined
+    ? exactPanelRender(useRenderStore.getState(), o) : panelRender(useRenderStore.getState(), o)
+  if (o.chartSource !== undefined) {
+    // 发起时冻结整份请求和项目；不能等别的图片解码完后再拿新项目里的同名文件。
+    const input = structuredClone({ id: o.fileId, chart: o.chart, patches: o.overrides, source: o.chartSource })
+    const transport = engineTransport()
+    const pending = !input.chart
+      ? Promise.reject(new EngineError('A chart source requires a chart.', '', 'chart_model_invalid'))
+      : transport
+      ? !transport.supportsChartRender || !transport.supportsChartSourceRender || !transport.previewPngSnapshot
+        ? Promise.reject(new EngineError('This host does not support chart sources.', '', 'chart_render_unsupported'))
+        : transport.previewPngSnapshot(input.id, input.patches, TIMELINE_THUMB_PX, undefined, input.chart, input.source)
+      : enginePreviewPngSnapshot(input.id, input.patches, TIMELINE_THUMB_PX, undefined,
+        { chart: input.chart, ...chartSourceFields(input.source) })
+    const png = pending.then(async frame => {
+      if (!frame.manifest || !frame.chartRevision) {
+        if (frame.url.startsWith('blob:')) URL.revokeObjectURL(frame.url)
+        return null
+      }
+      if (!frame.url.startsWith('blob:')) return frame.url
+      // 保留可重复消费的冻结图源，释放宿主 blob，即使 SVG 先成功也不会泄漏。
+      try {
+        const blob = await (await fetch(frame.url)).blob()
+        return await new Promise<string | null>((resolve) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
+          reader.onerror = () => resolve(null)
+          reader.readAsDataURL(blob)
+        })
+      } finally { URL.revokeObjectURL(frame.url) }
+    }).catch(() => null)
+    return { svg: render?.svg ?? undefined, png }
+  }
   const mtime = useAssetStore.getState().byId[o.fileId]?.mtime
   const url = panelSrc(o.fileId, o.fileKind, 400, mtime) || undefined
   if (!render?.svg && !url) return null
@@ -135,8 +169,9 @@ async function loadFrom(
     URL.revokeObjectURL(url)
     return null
   }
-  if (!source.url) return null
-  const img = await loadImage(retry ? `${source.url}${source.url.includes('?') ? '&' : '?'}thumbRetry=1` : source.url)
+  const url = source.png ? await source.png : source.url
+  if (!url) return null
+  const img = await loadImage(retry && !source.png ? `${url}${url.includes('?') ? '&' : '?'}thumbRetry=1` : url)
   return img ? { img } : null
 }
 

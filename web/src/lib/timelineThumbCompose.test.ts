@@ -17,8 +17,17 @@
  * 里是同一个分支（`loadFrom('svg', …)` 返回 `null`），控制流上不需要分开模拟。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { composeTimelineThumb, type BakedAnnotations, type ThumbSources } from './timelineThumb'
+import { captureThumbSources, composeTimelineThumb, type BakedAnnotations, type ThumbSources } from './timelineThumb'
+import { panelSrc } from './api'
+import { useRenderStore } from '@/store/renderStore'
 import { emptyDocument, type CanvasObject, type PanelObject, type TextObject } from '@/types/document'
+
+const snapshotPng = vi.fn()
+vi.mock('@/lib/api', async (original) => ({
+  ...(await original<typeof import('@/lib/api')>()),
+  enginePreviewPngSnapshot: (...args: unknown[]) => snapshotPng(...args),
+  panelSrc: vi.fn(() => 'test://unverified-original/file'),
+}))
 
 const VALID_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>'
 /** 标签不闭合：`DOMParser` 解析出 `parsererror`，`sizedSvgMarkup` 返回 `null`（见 timelineThumb.test.ts） */
@@ -146,6 +155,9 @@ let origRevokeObjectURL: typeof URL.revokeObjectURL
 let origBlob: typeof Blob
 
 beforeEach(() => {
+  snapshotPng.mockReset()
+  vi.mocked(panelSrc).mockClear()
+  useRenderStore.getState().clear()
   fillTextCalls = []
   events = []
   blobText = new Map()
@@ -170,6 +182,41 @@ beforeEach(() => {
     return u
   })
   URL.revokeObjectURL = vi.fn()
+})
+
+describe('冻结时间线图源保留INPUT附件', () => {
+  const sourcePanel = () => panel('bound', 0, {
+    fileId: 'deleted.svg', fileKind: 'svg',
+    chart: { model: { scene_digest: 'd'.repeat(64) }, binding: { scene_digest: 'd'.repeat(64) } } as PanelObject['chart'],
+    chartSource: { schema: 1, sourceId: 'deleted.svg', bytesSha256: 'a'.repeat(64), sizeBytes: 100, sceneDigest: 'd'.repeat(64) },
+    overrides: [{ gid: 's', prop: 'color', value: '#f00' }],
+  })
+
+  it('原SVG不在时捕获同版PNG请求并绘制，后续改源/模型不篡改冻结输入', async () => {
+    const p = sourcePanel(), original = structuredClone(p)
+    snapshotPng.mockResolvedValue({ url: 'test://verified-source/verified-proof', manifest: {}, chartRevision: 'paired' })
+    const doc = { ...emptyDocument(), objects: [p] }
+    const sources = captureThumbSources(doc)
+    expect(snapshotPng).toHaveBeenCalledWith(p.fileId, p.overrides, 360, undefined,
+      { chart: p.chart, chart_source: p.chartSource })
+    p.chartSource!.bytesSha256 = 'b'.repeat(64)
+    p.overrides[0].value = '#00f'
+    expect(snapshotPng.mock.calls[0][4].chart_source).toEqual(original.chartSource)
+    expect(snapshotPng.mock.calls[0][1]).toEqual(original.overrides)
+    expect(panelSrc).not.toHaveBeenCalled()
+    await compose(doc.objects, sources)
+    expect(events).toContain('draw:verified-proof')
+  })
+
+  it('附件PNG失败不以同名普通文件冒充时间线内容', async () => {
+    snapshotPng.mockRejectedValue(new Error('chart_source_missing'))
+    const p = sourcePanel(), doc = { ...emptyDocument(), objects: [p] }
+    const sources = captureThumbSources(doc)
+    await compose(doc.objects, sources)
+    expect(snapshotPng).toHaveBeenCalledOnce()
+    expect(panelSrc).not.toHaveBeenCalled()
+    expect(events.some((event) => event.startsWith('draw:'))).toBe(false)
+  })
 })
 
 afterEach(() => {

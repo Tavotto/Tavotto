@@ -3,13 +3,14 @@
 import type { ApiError } from './api'
 import { apiUrl, withProject } from '@/lib/session'
 import type { ChartBinding, ChartModel } from '../types/chartModel'
-import type { PanelChartState, PanelOverride } from '../types/document'
+import type { ChartSourceRef, PanelChartState, PanelOverride } from '../types/document'
 
 export interface ChartComputeOptions {
   render_profile: 'native-manifest/1'
   overrides: PanelOverride[]
   /** 重新绑定时由后端核对编辑的科学所有权；前端不按 gid 猜迁移。 */
   previous_chart?: PanelChartState | null
+  chart_source?: ChartSourceRef
 }
 
 export interface SceneInventory {
@@ -35,6 +36,7 @@ export interface ChartAxisEvidence {
 
 interface ChartBindBaseRequest {
   file: string
+  chart_source?: ChartSourceRef
   axes_id: string
   rect: [number, number, number, number]
   axes_nodes?: string[]
@@ -98,9 +100,10 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
 }
 
 /** 只读场景盘点（同一份字节重新校验 + 稳定节点清单）。 */
-export async function chartInspect(file: string): Promise<SceneInventory> {
+export async function chartInspect(file: string, source?: ChartSourceRef): Promise<SceneInventory> {
+  const ref = source === undefined ? '' : `&chart_source=${encodeURIComponent(JSON.stringify(source))}`
   const res = await fetch(
-    apiUrl(`/api/svg/chart/inspect?id=${encodeURIComponent(file)}`),
+    apiUrl(`/api/svg/chart/inspect?id=${encodeURIComponent(file)}${ref}`),
     withProject(),
   )
   if (!res.ok) throw await readError(res)
@@ -124,6 +127,7 @@ export function chartCompute(
     binding: chart.binding as unknown as ChartBinding,
     ...(opts ? { render_profile: opts.render_profile, overrides: opts.overrides,
       ...(opts.previous_chart !== undefined ? { previous_chart: opts.previous_chart } : {}),
+      ...(opts.chart_source !== undefined ? { chart_source: structuredClone(opts.chart_source) } : {}),
     } : {}),
   })
 }

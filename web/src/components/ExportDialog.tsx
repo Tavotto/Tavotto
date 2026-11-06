@@ -1,3 +1,4 @@
+import { chartPreviewArgs } from '@/lib/chartSource'
 /**
  * 导出面板（ADR 0031）。
  *
@@ -2091,7 +2092,7 @@ function useFigureThumbSource(
     !!panel && !svg && showsEdits(panel),
     figure.stamp ?? 0,
     panel ? adoptionGuardOf(panel) : undefined,
-    ...(panel?.chart ? [panel.chart] as const : [] as const),
+    ...chartPreviewArgs(panel),
   );
   // runtime 图的退路是 cache 预览：后端 GET 版给的是「最近一次渲染」，撤销回一个前端已画过的变体时它停在
   // 撤销前（QA-WIN-21）。按此刻的 overrides 取，不是这个状态的图就不挂（预览只是示意，空着比旧图诚实）
@@ -2108,8 +2109,8 @@ function useFigureThumbSource(
       ? runtimePreview.exact === true
         ? runtimePreview.url
         : null
-      : panel?.chart ? null : figureThumbSrc(figure, bucket));
-  const plain = !panel?.chart && !variant.url && !runtimeByState;
+      : panel?.chart || panel?.chartSource !== undefined ? null : figureThumbSrc(figure, bucket));
+  const plain = !panel?.chart && panel?.chartSource === undefined && !variant.url && !runtimeByState;
   const sizeMm = render?.manifest?.size_mm ?? figure.sizeMm;
   const ratio =
     sizeMm && sizeMm[0] > 0 && sizeMm[1] > 0 ? sizeMm[0] / sizeMm[1] : 4 / 3;
@@ -2123,7 +2124,7 @@ const NO_OVERRIDES: PanelObject["overrides"] = [];
  * 单图预览（`useFigureThumbSource`）与整版预览（`CanvasThumb` 的 `editedPanel`）共用这一份。
  */
 function showsEdits(panel: PanelObject): boolean {
-  return !!panel.chart || panel.overrides.length > 0 && !isJustBakedBaseline(panel);
+  return !!panel.chart || panel.chartSource !== undefined || panel.overrides.length > 0 && !isJustBakedBaseline(panel);
 }
 
 /** 整版预览里的一个对象若是带图内修改的面板，返回它（喂给 `CanvasThumb` 的 `editedPanel`） */

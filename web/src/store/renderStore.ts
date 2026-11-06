@@ -1,3 +1,4 @@
+import { chartRequestIdentity, chartSourceFields } from '@/lib/chartSource'
 import { artifactKeySuffix, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, verifiedSource, policyOfGuard, retryArtifactEntry, subjectOf, type AdoptionGuard, isAdoptedPanel, adoptionGuardOf } from '@/lib/artifactValidation'
 import { useMemo } from 'react'
 import { perfRenderApplied, perfRenderBegin, perfRenderResponse } from '@/perf/core'
@@ -30,7 +31,7 @@ import { resolvePreview, VECTOR_PREVIEW, type PreviewMetadata } from '@/lib/prev
 import { useAssetStore } from '@/store/assetStore'
 import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
-import type { PanelChartState, PanelObject } from '@/types/document'
+import type { ChartSourceRef, PanelChartState, PanelObject } from '@/types/document'
 import { fileHash, recordDiagnosticEvent, variantHash } from '@/diagnostics'
 import { notifyReconstructionReview } from '@/store/sourceBackedReview'
 import { classifyArtifactFailure } from '@/lib/artifactReason'
@@ -205,17 +206,18 @@ const EMPTY: PanelRender = {
  * 分隔符用空格是安全的：变体串是 JSON 数组或显式 chart 请求对象，以 `[` / `{` 开头，
  * 拼出来的键不可能与另一个「文件名里带空格」的组合撞上。
  */
-export function renderRequestIdentity(patches: unknown[], chart?: PanelChartState): string {
+export function renderRequestIdentity(patches: unknown[], chart?: PanelChartState, chartSource?: ChartSourceRef): string {
+  if (chartSource !== undefined) return JSON.stringify({ patches, chart, chart_source: chartSource })
   return chart ? JSON.stringify({ patches, chart }) : JSON.stringify(patches)
 }
 
-export function renderKey(fileId: string, patches: unknown[], guard?: unknown, chart?: PanelChartState): string {
-  return `${fileId} ${renderRequestIdentity(patches, chart)}${artifactKeySuffix(guard)}`
+export function renderKey(fileId: string, patches: unknown[], guard?: unknown, chart?: PanelChartState, chartSource?: ChartSourceRef): string {
+  return `${fileId} ${renderRequestIdentity(patches, chart, chartSource)}${artifactKeySuffix(guard)}`
 }
 
 /** 面板 → 它自己那份渲染态的键（唯一出处，消费方一律用它取状态） */
 export function renderKeyOf(panel: PanelObject): string {
-  return renderKey(panel.fileId, panel.overrides, adoptionGuardOf(panel), panel.chart)
+  return renderKey(panel.fileId, panel.overrides, adoptionGuardOf(panel), panel.chart, panel.chartSource)
 }
 
 /**
@@ -341,6 +343,7 @@ interface RenderState {
     /** 缺省 foreground；`neighbour` 见 `lib/renderPurpose`（调度只住 `renderScheduler`，别处不要传）。 */
     purpose?: RenderPurpose,
     chart?: PanelChartState,
+    chartSource?: ChartSourceRef,
   ) => Promise<void>
   /** 脚本变更：转入引擎跟踪并清掉该文件**全部变体**的 lastPatches */
   markStale: (fileIds: string[]) => void
@@ -679,17 +682,18 @@ export const useRenderStore = create<RenderState>((set, get) => ({
       } } }
     }),
 
-  render: async (fileId, patches, previewDpi, policy, epoch, artifactValidation, purpose = 'foreground', chart) => {
+  render: async (fileId, patches, previewDpi, policy, epoch, artifactValidation, purpose = 'foreground', chart, chartSource) => {
     // 排渲染时的项目已经不是当前项目：连请求都不发（发出去 pj 是新项目的，
     // 渲染的却是旧项目的 fileId 与 patches）
     if (epoch !== undefined && epoch !== projectEpoch) return
     // 完整 JSON 请求身份在入队时冻结；调用方后续换模型不能改写在途请求。
-    if (chart) {
-      const snapshot = JSON.parse(renderRequestIdentity(patches, chart)) as { patches: unknown[]; chart: PanelChartState }
+    if (chart || chartSource !== undefined) {
+      const snapshot = JSON.parse(renderRequestIdentity(patches, chart, chartSource)) as { patches: unknown[]; chart?: PanelChartState; chart_source?: ChartSourceRef }
       patches = snapshot.patches
       chart = snapshot.chart
+      chartSource = snapshot.chart_source
     }
-    const key = renderKey(fileId, patches, artifactValidation, chart)
+    const key = renderKey(fileId, patches, artifactValidation, chart, chartSource)
     // 序号在**请求进来的那一刻**取，不是发出的那一刻：忙时排队的那次要带着
     // 自己的序号走完全程，否则一个早就该被覆盖的旧变体会因为「重试发得晚」
     // 而显得最新，把 latest 拽回去（撤销之后画面弹回对齐后的样子）。
@@ -724,7 +728,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
         patch(key, {
           fileId,
           artifactValidation: artifactValidation ?? undefined,
-          ...(chart ? { chartRequest: JSON.stringify(chart) } : {}),
+          ...(chart ? { chartRequest: chartRequestIdentity(chart, chartSource) } : {}),
           status: 'rendering',
           error: null,
           traceback: '',
@@ -752,10 +756,10 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           // 否则还是原来那条 HTTP。两侧最终落到同一个 worker.override，
           // 这里以下的逻辑一行都不分叉
           const source = artifactValidation === undefined ? {} : artifactRequestFields(subjectOf(fileId, current as PanelObject['overrides'], artifactValidation))
-          const opts = { signal: ctrl.signal, previewDpi: dpi, ...(currentPurpose === 'neighbour' ? { purpose: currentPurpose } : {}), ...source, ...(chart ? { chart } : {}) }
+          const opts = { signal: ctrl.signal, previewDpi: dpi, ...(currentPurpose === 'neighbour' ? { purpose: currentPurpose } : {}), ...source, ...(chart ? { chart } : {}), ...chartSourceFields(chartSource) }
           const transport = engineTransport()
           if (artifactValidation && transport) throw new ArtifactValidationError('unsupported_render_state')
-          if (chart && transport && !transport.supportsChartRender) {
+          if (transport && ((chart && !transport.supportsChartRender) || (chartSource !== undefined && !transport.supportsChartSourceRender))) {
             throw new EngineError('This host does not support computational chart rendering.', '', 'chart_render_unsupported')
           }
           // 性能探针（ADR 0075）：松手 → 图落定那段时间的第一个时刻
@@ -786,7 +790,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           const next: Partial<PanelRender> = {
             fileId,
             artifactValidation: artifactValidation ?? undefined,
-            ...(chart ? { chartRequest: JSON.stringify(chart), chartRevision: res.chart_revision } : {}),
+            ...(chart ? { chartRequest: chartRequestIdentity(chart, chartSource), chartRevision: res.chart_revision } : {}),
             rev: res.rev,
             manifest: res.manifest,
             status: 'ready',
@@ -801,7 +805,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             warnings: res.warnings ?? [],
             timings: res.timings ?? {},
             stale: false,
-            lastPatches: renderRequestIdentity(current, chart),
+            lastPatches: renderRequestIdentity(current, chart, chartSource),
             deferredPatches: null,
             previewDpi: dpi ?? null,
           }
@@ -914,7 +918,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
               error: null,
               code: '',
               wantPatches: null,
-              deferredPatches: renderRequestIdentity(current, chart),
+              deferredPatches: renderRequestIdentity(current, chart, chartSource),
             })
             return
           }
@@ -1234,7 +1238,7 @@ export function panelRender(
 }
 
 function compatibleChartRender(render: PanelRender | undefined, panel: PanelObject): boolean {
-  return render?.chartRequest === (panel.chart ? JSON.stringify(panel.chart) : undefined)
+  return render?.chartRequest === chartRequestIdentity(panel.chart, panel.chartSource)
 }
 
 function mergeRender(
@@ -1282,7 +1286,7 @@ export function exactPanelRender(
 
 function exactOf(own: PanelRender | undefined, panel: PanelObject): PanelRender | null {
   if (artifactValidationIssue(panel) || !own?.manifest || own.stale) return null
-  if (own.lastPatches !== renderRequestIdentity(panel.overrides, panel.chart)) return null
+  if (own.lastPatches !== renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource)) return null
   if (panel.chart && (!own.chartRevision || !compatibleChartRender(own, panel))) return null
   return own
 }

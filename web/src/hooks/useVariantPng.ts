@@ -1,6 +1,7 @@
+import { chartSourceFields } from '@/lib/chartSource'
 import { rejectArtifactRenders, renderKey, renderRequestIdentity } from '@/store/renderStore'
 import { artifactRequestFields, artifactKeySuffix, artifactValidationIssue, ArtifactValidationError, subjectOf, hasRealEdits, type AdoptionGuard } from '@/lib/artifactValidation'
-import type { PanelChartState, PanelOverride } from '@/types/document'
+import type { ChartSourceRef, PanelChartState, PanelOverride } from '@/types/document'
 /**
  * 「按 overrides 出一张缩略图」的可复用 hook（issue #131）。
  *
@@ -39,8 +40,8 @@ let cacheEpoch = 0
  * 之后切到项目 B，会直接命中 A 的 blob 并把**别人的图**当成这一版的预览显示
  * 出来，而且一次请求都不发。素材本身被改过（mtime 变了）同理。
  */
-const keyOf = (fileId: string, overrides: unknown[], bucket: number, rev: number, chart?: PanelChartState) =>
-  `${currentProjectId() ?? '-'} ${rev} ${bucket} ${fileId} ${renderRequestIdentity(overrides, chart)}`
+const keyOf = (fileId: string, overrides: unknown[], bucket: number, rev: number, chart?: PanelChartState, chartSource?: ChartSourceRef) =>
+  `${currentProjectId() ?? '-'} ${rev} ${bucket} ${fileId} ${renderRequestIdentity(overrides, chart, chartSource)}`
 
 function remember(key: string, url: string) {
   cache.set(key, url)
@@ -93,8 +94,9 @@ export function useVariantPng(
   rev = 0,
   artifactValidation?: AdoptionGuard | null,
   chart?: PanelChartState,
+  chartSource?: ChartSourceRef,
 ): VariantPng {
-  const key = keyOf(fileId, overrides, bucket, rev, chart) + artifactKeySuffix(artifactValidation)
+  const key = keyOf(fileId, overrides, bucket, rev, chart, chartSource) + artifactKeySuffix(artifactValidation)
   const [state, setState] = useState<VariantPng & {key?: string}>(() => ({
     key,
     url: artifactValidation !== undefined ? null : cache.get(key) ?? null,
@@ -105,6 +107,10 @@ export function useVariantPng(
   useEffect(() => {
     if (!enabled) {
       setState({ key, url: null, loading: false, approximate: false })
+      return
+    }
+    if (chartSource !== undefined && !chart) {
+      setState({ key, url: null, loading: false, approximate: true })
       return
     }
     const subject = subjectOf(fileId, overrides as PanelOverride[], artifactValidation)
@@ -129,16 +135,18 @@ export function useVariantPng(
     const transport = engineTransport()
     const pending = chart
       ? transport
-        ? !transport.supportsChartRender || !transport.previewPngSnapshot
+        ? !transport.supportsChartRender || !transport.previewPngSnapshot || (chartSource !== undefined && !transport.supportsChartSourceRender)
           ? Promise.reject(new EngineError('This host does not support paired chart pixels.', '', 'chart_render_unsupported'))
-          : transport.previewPngSnapshot(fileId, overrides, bucket, ctrl.signal, chart).then(frame => {
+          : (chartSource !== undefined
+            ? transport.previewPngSnapshot(fileId, overrides, bucket, ctrl.signal, structuredClone(chart), structuredClone(chartSource))
+            : transport.previewPngSnapshot(fileId, overrides, bucket, ctrl.signal, chart)).then(frame => {
             if (typeof frame.chartRevision !== 'string' || !frame.chartRevision || !frame.manifest) {
               if (frame.url.startsWith('blob:')) URL.revokeObjectURL(frame.url)
               throw new EngineError('The chart response has no paired pixels and geometry.', '', 'chart_render_pair_missing')
             }
             return frame.url
           })
-        : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, { ...artifactRequestFields(subject), chart }).then(frame => frame.url)
+        : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, { ...artifactRequestFields(subject), chart: structuredClone(chart), ...chartSourceFields(chartSource) }).then(frame => frame.url)
       : artifactValidation
       ? transport ? Promise.reject(new ArtifactValidationError('unsupported_render_state'))
         : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, artifactRequestFields(subject)).then(s=>s.url)
@@ -169,6 +177,6 @@ export function useVariantPng(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, enabled])
 
-  return (artifactValidation !== undefined || chart) && state.key !== key
+  return (artifactValidation !== undefined || chart || chartSource !== undefined) && state.key !== key
     ? {url:null,loading:enabled,approximate:true} : state
 }

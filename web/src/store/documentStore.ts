@@ -26,6 +26,7 @@ import {
   type ProjectFileBinding,
 } from '@/lib/projectFile'
 import { currentProjectId } from '@/lib/session'
+import { clearChangedChartSources } from '@/lib/chartSource'
 import { sameRules } from '@/lib/specBinding'
 import { msg, t, type UiMessage } from '@/i18n'
 import { newId } from '@/lib/id'
@@ -2154,6 +2155,7 @@ const snapshotReceiptInvalidated = (ref: FigureSnapshot) => {
 
 /** Editing source/patches invalidates the association; page geometry and exact copies preserve it. */
 function clearChangedFigureSnapshots(next: FigureDocument, before: FigureDocument): void {
+  clearChangedChartSources(next, before)
   if (!next.objects.some((o) => o.type === 'panel' && o.figureSnapshot)) return
   const previous = new Map(before.objects.filter((o) => o.type === 'panel').map((o) => [o.id, o]))
   for (const panel of next.objects) {

@@ -5,7 +5,7 @@ import { apiUrl, apiUrlFor, currentProjectId, withProject, withProjectFor } from
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
 import type { ExportRoute } from '@/lib/exportRoute'
 import type { Remedy } from '@/lib/fixRemedy'
-import type { FigureDocument, FigureSnapshot, PanelChartState, ProjectDocument } from '@/types/document'
+import type { ChartSourceRef, FigureDocument, FigureSnapshot, PanelChartState, ProjectDocument } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
 import type { IdentityRename } from '@/lib/overrideIdentity'
 import type { PreviewMetadata } from '@/lib/previewBudget'
@@ -1881,6 +1881,7 @@ export type ExportObject =
       type: 'panel'
       figure_snapshot?: FigureSnapshot
       chart?: PanelChartState
+  chart_source?: ChartSourceRef
       chart_render_profile?: 'legacy-scaffold/1' | 'native-manifest/1'
       id: string
       overrides?: { gid: string; prop: string; value: unknown; identity?: string }[]
@@ -1956,6 +1957,7 @@ export type ExportOriginalSource = ArtifactRequestFields & {
   figure_id: string
   figure_snapshot?: FigureSnapshot
   chart?: PanelChartState
+  chart_source?: ChartSourceRef
   chart_render_profile?: 'legacy-scaffold/1' | 'native-manifest/1'
   overrides?: { gid: string; prop: string; value: unknown; identity?: string }[]
   w_mm?: number | null
@@ -2927,6 +2929,7 @@ export const ENVIRONMENT_CODES = [
 export interface EngineRenderOptions extends ArtifactRequestFields {
   /** 显式计算图表状态；与完整 patches 一起走同一次配对渲染。 */
   chart?: PanelChartState
+  chart_source?: ChartSourceRef
   signal?: AbortSignal
   /**
    * 这一次预览 SVG 里**嵌入位图**的 dpi（不给 = worker 的默认）。
@@ -2994,7 +2997,8 @@ export async function engineRender(
       id,
       patches,
       inline_svg: true,
-      ...(opts.chart ? { chart: opts.chart } : {}),
+      ...(opts.chart ? { chart: structuredClone(opts.chart) } : {}),
+      ...(opts.chart_source !== undefined ? { chart_source: structuredClone(opts.chart_source) } : {}),
       source_policy: opts.source_policy,
       expected_source: opts.expected_source,
       ...(opts.confirmed_reconstruction_sha256 ? { confirmed_reconstruction_sha256: opts.confirmed_reconstruction_sha256 } : {}),
@@ -3167,6 +3171,7 @@ export async function enginePreviewPng(
 
 export interface EnginePngOptions extends ArtifactRequestFields {
   chart?: PanelChartState
+  chart_source?: ChartSourceRef
 }
 
 export async function enginePreviewPngSnapshot(

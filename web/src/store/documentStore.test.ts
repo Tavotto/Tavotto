@@ -1,7 +1,7 @@
 import { formatMessage, literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { emptyProject } from '@/types/document'
-import type { ProjectDocument, TextObject } from '@/types/document'
+import type { PanelObject, ProjectDocument, TextObject } from '@/types/document'
 import { setTelemetryEnabled } from '@/lib/telemetry'
 import {
   discardLocalCopy,
@@ -105,6 +105,27 @@ describe('多画布数据层', () => {
     expect(pd.schema).toBe(3)
     expect(pd.canvases[0].objects).toHaveLength(1)
     expect(pd.activeCanvasId).toBe(s().activeCanvasId)
+  })
+
+  it('来源file/scene变化清ref并与同一笔撤销重做往返，无关编辑和坏ref不降legacy', () => {
+    const s = () => useDocumentStore.getState()
+    const source = { schema: 1, sourceId: 'saved.svg', bytesSha256: 'a'.repeat(64), sizeBytes: 100, sceneDigest: 'd'.repeat(64) }
+    const p = { id: 'chart', type: 'panel', fileId: 'saved.svg', fileKind: 'svg',
+      x: 0, y: 0, w: 80, h: 60, nativeW: 80, nativeH: 60, overrides: [], chartSource: source,
+      chart: { model: { scene_digest: source.sceneDigest }, binding: { scene_digest: source.sceneDigest } } } as unknown as PanelObject
+    s().commit(literal('装来源'), (d) => { d.objects.push(p) })
+    s().commit(literal('改样式'), (d) => { (d.objects[0] as PanelObject).overrides.push({ gid: 's', prop: 'color', value: '#f00' }) })
+    expect(s().doc.objects[0]).toHaveProperty('chartSource', source)
+    s().commit(literal('换文件'), (d) => { (d.objects[0] as PanelObject).fileId = 'other.svg' })
+    expect(s().doc.objects[0]).not.toHaveProperty('chartSource')
+    s().undo()
+    expect(s().doc.objects[0]).toHaveProperty('chartSource', source)
+    s().redo()
+    expect(s().doc.objects[0]).not.toHaveProperty('chartSource')
+    s().undo()
+    s().commit(literal('坏引用原样恢复'), (d) => { (d.objects[0] as PanelObject).chartSource = null as unknown as PanelObject['chartSource'] }, { overrides: 'restored' })
+    s().commit(literal('挪页面'), (d) => { d.objects[0].x += 2 })
+    expect(s().doc.objects[0]).toHaveProperty('chartSource', null)
   })
 
   it.each([

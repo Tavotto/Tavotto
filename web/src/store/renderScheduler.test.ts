@@ -63,6 +63,22 @@ describe('chart调度仍使用唯一renderStore', () => {
     expect(send.mock.calls[0][1]).toEqual(original.overrides)
     expect(send.mock.calls[0][7]).toEqual(original.chart)
   })
+
+  it('来源附件参与none占位并在防抖时深拷贝，第九参只在ref存在时发送', () => {
+    const p: PanelObject = chartPanel()
+    p.chartSource = { schema: 1, sourceId: p.fileId, bytesSha256: 'a'.repeat(64), sizeBytes: 100,
+      sceneDigest: p.chart!.model.scene_digest }
+    const original = structuredClone(p)
+    requestRender(p, 'none')
+    expect(useRenderStore.getState().get(renderKeyOf(p)).wantPatches)
+      .toBe(renderRequestIdentity(p.overrides, p.chart, p.chartSource))
+    requestRender(p, 'defer')
+    p.chartSource.bytesSha256 = 'b'.repeat(64)
+    vi.advanceTimersByTime(300)
+    expect(send.mock.calls[0]).toHaveLength(9)
+    expect(send.mock.calls[0][8]).toEqual(original.chartSource)
+    expect(send.mock.calls[0][8]).not.toBe(p.chartSource)
+  })
 })
 
 const hookSource = Object.values(

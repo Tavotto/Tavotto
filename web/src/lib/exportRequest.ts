@@ -1,3 +1,4 @@
+import { chartSourceFields } from './chartSource'
 import { figureSnapshotFor } from './figureSnapshot'
 import { artifactRequestFields, artifactValidationIssue, isAdoptedPanel, originalArtifactOverrides } from './artifactValidation'
 /**
@@ -145,6 +146,8 @@ export function runtimeRegistration(figureId: string): boolean | null {
 
 /** Guarded hidden PNGs still require the exact-source export preflight before publication. */
 function canValidateOriginalSource(figureId: string, panel?: PanelObject | null): boolean {
+  // 引用只是允许进入后端预检；附件的存在、字节与场景资格仍由后端证明。
+  if (panel?.fileId === figureId && panel.chart && panel.chartSource !== undefined) return true
   if (figureId.startsWith('runtime:')) {
     // 素材清单（`/api/runtime/assets`）会把「磁盘上已有同名原件」的 runtime 图让给 FileAsset，清单也可能还没取到；
     // 但后端解析 runtime id 只看注册表（`runtimeasset.resolve`）。面板渲染时 `ensure()` 问来的 `registered` 就是同一判据，
@@ -309,6 +312,7 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
       return {
         figure_id: figureId,
         ...(chart ? { chart: structuredClone(chart), chart_render_profile: 'native-manifest/1' as const } : {}),
+        ...(panel?.fileId === figureId ? chartSourceFields(panel.chartSource) : {}),
         ...(panel && panel.fileId === figureId &&
             JSON.stringify(patches) === JSON.stringify(panel.overrides) && figureSnapshotFor(panel)
           ? { figure_snapshot: figureSnapshotFor(panel) } : {}),

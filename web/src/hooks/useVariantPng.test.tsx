@@ -1,3 +1,4 @@
+import { chartPreviewArgs } from '@/lib/chartSource'
 /**
  * 版本缩略图缓存的**身份与回收**（#137 评审 P1）。
  *
@@ -12,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { clearVariantPngCache, useVariantPng, variantNeedsRender } from './useVariantPng'
 import { setCurrentProjectId } from '@/lib/session'
 import { setEngineTransport } from '@/lib/engineTransport'
-import type { PanelChartState } from '@/types/document'
+import type { ChartSourceRef, PanelChartState } from '@/types/document'
 import chartVectors from '../../../tests/golden/chart_model_vectors.json'
 
 declare global {
@@ -46,14 +47,17 @@ function Probe({
   bucket = 200,
   rev = 0,
   chart,
+  chartSource,
 }: {
   fileId: string
   overrides: unknown[]
   bucket?: number
   rev?: number
   chart?: PanelChartState
+  chartSource?: ChartSourceRef
 }) {
-  last = useVariantPng(fileId, overrides, bucket, true, rev, undefined, ...(chart ? [chart] as const : [] as const))
+  last = useVariantPng(fileId, overrides, bucket, true, rev, undefined,
+    ...chartPreviewArgs({ chart, chartSource }))
   return null
 }
 
@@ -108,6 +112,46 @@ describe('chart版本缩略图复用同一PNG helper', () => {
   const show = async (chart: PanelChartState) => {
     await act(async () => { root.render(<Probe fileId="chart.svg" overrides={[]} chart={chart} />) })
   }
+
+  it.each([{ name: 'empty', overrides: [] }, { name: 'edits', overrides: OV }])('附件缺失科学模型不能作为普通文件请求或缓存 $name', async ({ overrides }) => {
+    const source: ChartSourceRef = { schema: 1, sourceId: 'chart.svg', bytesSha256: 'a'.repeat(64),
+      sizeBytes: 100, sceneDigest: chartState().model.scene_digest }
+    await act(async () => { root.render(<Probe fileId="chart.svg" overrides={overrides} chartSource={source} />) })
+    expect(last).toMatchObject({ url: null, loading: false, approximate: true })
+    expect(previewPng).not.toHaveBeenCalled()
+    expect(snapshotPng).not.toHaveBeenCalled()
+  })
+
+  it('同chart不同附件必须重新取图且完整ref进入PNG，不命中旧来源缓存', async () => {
+    const chart = chartState()
+    const source: ChartSourceRef = { schema: 1, sourceId: 'chart.svg', bytesSha256: 'a'.repeat(64),
+      sizeBytes: 100, sceneDigest: chart.model.scene_digest }
+    await act(async () => { root.render(<Probe fileId="chart.svg" overrides={[]} chart={chart} chartSource={source} />) })
+    expect(snapshotPng.mock.calls[0][4]).toEqual({ chart, chart_source: source })
+    expect(snapshotPng.mock.calls[0][4].chart_source).not.toBe(source)
+    const other = { ...source, bytesSha256: 'b'.repeat(64) }
+    await act(async () => { root.render(<Probe fileId="chart.svg" overrides={[]} chart={chart} chartSource={other} />) })
+    expect(snapshotPng).toHaveBeenCalledTimes(2)
+    expect(snapshotPng.mock.calls[1][4].chart_source).toEqual(other)
+  })
+
+  it('旧chart宿主无来源能力不能接PNG，有能力时收到第六参完整ref', async () => {
+    const chart = chartState()
+    const source: ChartSourceRef = { schema: 1, sourceId: 'chart.svg', bytesSha256: 'a'.repeat(64),
+      sizeBytes: 100, sceneDigest: chart.model.scene_digest }
+    const previewPngSnapshot = vi.fn(async () => ({ url: 'data:image/png;base64,eA==',
+      manifest: { stem: 'chart', size_mm: [80, 60] as [number, number], elements: [] }, chartRevision: 'host' }))
+    const host = { supportsChartRender: true as const, render: vi.fn(), previewPngSnapshot,
+      previewPngUrl: vi.fn(), panelSrc: () => null }
+    setEngineTransport(host)
+    await act(async () => { root.render(<Probe fileId="chart.svg" overrides={[]} chart={chart} chartSource={source} />) })
+    expect(previewPngSnapshot).not.toHaveBeenCalled()
+    expect(last.approximate).toBe(true)
+    setEngineTransport({ ...host, supportsChartSourceRender: true })
+    const other = { ...source, bytesSha256: 'b'.repeat(64) }
+    await act(async () => { root.render(<Probe fileId="chart.svg" overrides={[]} chart={chart} chartSource={other} />) })
+    expect(previewPngSnapshot).toHaveBeenCalledWith('chart.svg', [], 200, expect.any(AbortSignal), chart, other)
+  })
 
   it('无patch的chart仍出图，cache包含全部模型/绑定且重复同身份只取一次', async () => {
     const a = chartState()

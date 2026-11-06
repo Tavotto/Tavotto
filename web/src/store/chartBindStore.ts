@@ -1,9 +1,10 @@
 // 绑定草稿与文档分离；只有当前请求的成功预览才允许一次文档事务确认。
 import { create } from 'zustand'
+import { chartSourceFields } from '@/lib/chartSource'
 import { chartBind, chartCompute, chartInspect } from '@/lib/chartApi'
 import type { ChartComputeOptions, SceneInventory } from '@/lib/chartApi'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
-import type { PanelChartState, PanelObject } from '@/types/document'
+import type { ChartSourceRef, PanelChartState, PanelObject } from '@/types/document'
 import { useDocumentStore } from '@/store/documentStore'
 
 export type ChartBindStep = 'scene' | 'data' | 'confirm' | 'error'
@@ -77,6 +78,7 @@ interface ChartBindState {
   open: boolean
   panelId: string | null
   file: string | null
+  chartSource: ChartSourceRef | undefined
   projectId: string | null
   openSeq: number
   requestSeq: number
@@ -110,7 +112,8 @@ interface ChartBindActions {
   runPreview: () => Promise<void>
 }
 const invalidPreview = { result: null, resultRender: null, previewSvg: null, previewOk: false, busy: false, error: null }
-const panelInputKey = (panel: PanelObject) => JSON.stringify([panel.fileId, panel.chart, panel.overrides])
+const panelInputKey = (panel: PanelObject) => JSON.stringify(panel.chartSource === undefined
+  ? [panel.fileId, panel.chart, panel.overrides] : [panel.fileId, panel.chart, panel.overrides, panel.chartSource])
 const ownsDocument = (s: ChartBindState) => {
   const doc = useDocumentStore.getState()
   return !s.documentContext || (s.documentContext.documentId === doc.documentId && s.documentContext.loadSeq === doc.loadSeq)
@@ -132,7 +135,7 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
     set({ ...invalidPreview, error: { code: (err as { code?: string }).code, message: String(err) } })
   }
   return {
-    open: false, panelId: null, file: null, projectId: currentProjectId(),
+    open: false, panelId: null, file: null, chartSource: undefined, projectId: currentProjectId(),
     openSeq: 0, requestSeq: 0, step: 'scene', scene: null, draftSource: 'new', draftChart: null,
     draftRender: null, documentContext: null, panelInputKey: null,
     form: structuredClone(DEFAULT_FORM), formRev: 0, ...invalidPreview,
@@ -140,7 +143,8 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
       if (panel.fileKind !== 'svg' || !panel.fileId) return
       const doc = useDocumentStore.getState()
       set(s => ({
-        open: true, panelId: panel.id, file: panel.fileId, projectId: currentProjectId(),
+        open: true, panelId: panel.id, file: panel.fileId,
+        chartSource: panel.chartSource === undefined ? undefined : structuredClone(panel.chartSource), projectId: currentProjectId(),
         openSeq: s.openSeq + 1, requestSeq: s.requestSeq + 1, step: 'scene', scene: null,
         form: formFor(panel.chart), draftSource: panel.chart ? 'panel' : 'new',
         draftChart: panel.chart ? structuredClone(panel.chart) : null,
@@ -153,7 +157,7 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
       void get().loadScene()
     },
     close: () => set(s => ({
-      open: false, panelId: null, file: null, scene: null, draftSource: 'new', draftChart: null,
+      open: false, panelId: null, file: null, chartSource: undefined, scene: null, draftSource: 'new', draftChart: null,
       draftRender: null, documentContext: null, panelInputKey: null,
       projectId: currentProjectId(), openSeq: s.openSeq + 1, requestSeq: s.requestSeq + 1,
       ...invalidPreview,
@@ -174,7 +178,7 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
       if (!get().file) return
       const s = startRequest()
       try {
-        const scene = await chartInspect(s.file!)
+        const scene = await (s.chartSource !== undefined ? chartInspect(s.file!, structuredClone(s.chartSource)) : chartInspect(s.file!))
         if (!ownsRequest(s)) return
         const graphic = scene.nodes.find(n =>
           ['path', 'rect', 'circle', 'ellipse', 'line', 'polygon', 'polyline', 'image', 'use', 'g'].includes(n.tag)
@@ -205,7 +209,7 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
         }
         const f = s.form
         const result = await chartBind({
-          file: s.file!, axes_id: 'ax1', rect: f.rect, axes_nodes: f.axesNodes,
+          file: s.file!, ...chartSourceFields(s.chartSource), axes_id: 'ax1', rect: f.rect, axes_nodes: f.axesNodes,
           y: { ...f.y },
           ...(f.xKind === 'categorical'
             ? { x_kind: 'categorical' as const, categories_col: f.categoriesCol }
@@ -232,9 +236,10 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
       const s = startRequest()
       set({ previewSvg: null, previewOk: false })
       try {
-        const preview = s.resultRender
-          ? await chartCompute(file, result, structuredClone(s.resultRender))
-          : await chartCompute(file, result)
+        const opts = s.resultRender ? structuredClone(s.resultRender)
+          : s.chartSource !== undefined ? { render_profile: 'native-manifest/1' as const, overrides: [] } : null
+        if (opts && s.chartSource !== undefined) Object.assign(opts, chartSourceFields(s.chartSource))
+        const preview = opts ? await chartCompute(file, result, opts) : await chartCompute(file, result)
         if (!ownsRequest(s)) return
         set({ previewSvg: preview.svg, previewOk: true, busy: false })
       } catch (err) { fail(s, err) }
