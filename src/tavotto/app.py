@@ -3591,7 +3591,14 @@ def _export_produce_merged_pdf(job, tmp_dir: Path, *, artifact_sources=None) -> 
     for i, src in enumerate(pages):
         job.check_cancelled()
         key = json.dumps(
-            [src.figure_id, src.overrides, src.figure_snapshot], sort_keys=True, default=str
+            [
+                src.figure_id,
+                src.overrides,
+                src.figure_snapshot,
+                *([src.chart] if src.chart is not None else []),
+            ],
+            sort_keys=True,
+            default=str,
         )
         path = done.get(key)
         if path is None:

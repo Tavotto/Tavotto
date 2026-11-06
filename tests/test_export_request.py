@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,56 @@ from tavotto.engine import exportreq
 
 ROOT = Path(__file__).resolve().parent.parent
 GOLDEN = ROOT / "tests" / "golden" / "filename_vectors.json"
+
+
+def _chart_export_spec(scope="original"):
+    vectors = json.loads((GOLDEN.parent / "chart_model_vectors.json").read_text(encoding="utf-8"))
+    valid = next(v for v in vectors["vectors"] if v["expect"] == "ok")
+    chart = {"model": valid["model"], "binding": valid["binding"]}
+    source = {"figure_id": "chart.svg", "chart": chart}
+    if scope == "canvas":
+        source = {
+            "page_w_mm": 180,
+            "page_h_mm": 120,
+            "objects": [{"type": "panel", "id": "chart.svg", "chart": chart}],
+        }
+    return {"scope": scope, "formats": ["svg"], scope: source}, chart
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas"])
+def test_chart_export_normalization_freezes_and_identifies_model(scope):
+    spec, chart = _chart_export_spec(scope)
+    request = exportreq.normalize(spec)
+    frozen = request.original.chart if scope == "original" else request.canvas.objects[0]["chart"]
+    assert frozen == chart and frozen is not chart
+    before = deepcopy(frozen)
+    identity = exportreq.render_plan_ref(request, [])["plan_identity"]
+    chart["model"]["axes"][0]["xlim"][1] += 1
+    assert frozen == before
+    changed = exportreq.normalize(spec)
+    assert exportreq.render_plan_ref(changed, [])["plan_identity"] != identity
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas"])
+@pytest.mark.parametrize("bad_chart", [True, [], {}, {"model": {}}, {"model": {}, "binding": {}}])
+def test_invalid_chart_does_not_silently_export_the_original(scope, bad_chart):
+    spec, _ = _chart_export_spec(scope)
+    target = spec[scope] if scope == "original" else spec[scope]["objects"][0]
+    target["chart"] = bad_chart
+    with pytest.raises(exportreq.ExportRequestError) as caught:
+        exportreq.normalize(spec)
+    assert caught.value.code.startswith("chart_")
+
+
+def test_merge_pdf_identity_includes_every_chart_page():
+    spec, chart = _chart_export_spec()
+    spec["formats"] = ["pdf"]
+    page = spec.pop("original")
+    spec["merge_pdf"] = {"pages": [page, deepcopy(page)]}
+    before = exportreq.render_plan_ref(exportreq.normalize(spec), [])["plan_identity"]
+    spec["merge_pdf"]["pages"][1]["chart"]["model"]["axes"][0]["ylim"][1] += 1
+    after = exportreq.render_plan_ref(exportreq.normalize(spec), [])["plan_identity"]
+    assert before != after
 
 
 # ----------------------------- golden 向量 ----------------------------------

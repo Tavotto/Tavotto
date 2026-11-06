@@ -28,6 +28,7 @@ function toExportObject(o: CanvasObject): ExportObject {
         type: 'panel',
         ...artifactRequestFields(o),
         id: o.fileId,
+        ...(o.chart ? { chart: structuredClone(o.chart) } : {}),
         ...(figureSnapshotFor(o) ? { figure_snapshot: figureSnapshotFor(o) } : {}),
         overrides: o.overrides.length ? o.overrides : undefined,
         crop: o.crop,

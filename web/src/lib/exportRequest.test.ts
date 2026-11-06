@@ -24,6 +24,8 @@ import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { renderKey, useRenderStore } from '@/store/renderStore'
 import { emptyProject, type FigureDocument, type PanelObject } from '@/types/document'
 import { literal } from '@/i18n'
+import chartVectors from '../../../tests/golden/chart_model_vectors.json'
+import type { PanelChartState } from '@/types/document'
 
 const panel: PanelObject = {
   id: 'p1',
@@ -59,6 +61,48 @@ beforeEach(async () => {
     d.objects = [{ ...panel }]
   })
   useAssetStore.setState({ byId: { 'Fig1.pdf': { id: 'Fig1.pdf', mtime: 1 } } } as never)
+})
+
+describe('计算图表导出快照', () => {
+  function chartPanel(): PanelObject {
+    const v = chartVectors.vectors.find(v => v.expect === 'ok')!
+    const chart = structuredClone({ model: v.model, binding: v.binding }) as unknown as PanelChartState
+    return { ...panel, fileId: 'chart.svg', fileKind: 'svg', chart }
+  }
+
+  it.each(['original', 'canvas'] as const)('%s 保留模型/绑定，且后续编辑不改变已构造快照', (scope) => {
+    const p = chartPanel()
+    const doc = { ...useDocumentStore.getState().doc, objects: [p] }
+    const input = inputOf({ scope, figureId: p.fileId, panel: p, doc })
+    const built = buildExportRequest(input)
+    const item = built.request.canvas?.objects[0]
+    const state = scope === 'original' ? built.request.original?.chart : item?.type === 'panel' ? item.chart : undefined
+    expect(state).toEqual(p.chart)
+    expect(state).not.toBe(p.chart)
+    const before = JSON.stringify(built.request)
+    p.chart!.model.axes[0].xlim[1] += 10
+    expect(buildExportRequest(input).revision).not.toBe(built.revision)
+    expect(JSON.stringify(built.request)).toBe(before)
+  })
+
+  it('多页同文件的不同计算版本分别携带，且进入导出指纹', () => {
+    const a = chartPanel()
+    const b = chartPanel()
+    b.chart!.model.axes[0].ylim[1] += 1
+    const pages = [a, b].map(p => ({ figureId: p.fileId, panel: p, spec: null }))
+    const input = inputOf({ scope: 'original', formats: ['pdf'], mergePages: pages })
+    const built = buildExportRequest(input)
+    expect(built.request.merge_pdf!.pages.map(p => p.chart)).toEqual([a.chart, b.chart])
+    expect(buildExportRequest({ ...input, mergePages: [...pages].reverse() }).revision).not.toBe(built.revision)
+  })
+
+  it('缺省和不匹配面板不添加 chart 字段', () => {
+    const ordinary = buildExportRequest(inputOf()).request.canvas!.objects[0]
+    expect(ordinary).not.toHaveProperty('chart')
+    const p = chartPanel()
+    const other = buildExportRequest(inputOf({ scope: 'original', panel: p, figureId: 'other.svg' }))
+    expect(other.request.original).not.toHaveProperty('chart')
+  })
 })
 
 describe('scope', () => {

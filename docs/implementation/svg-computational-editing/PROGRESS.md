@@ -2,7 +2,7 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-06，组合层级修复）：首次绑定交互和撤销重做已接通；双轴绑定白底遮挡已修复，Chromium 确认两曲线可见，受影响后端 111 项通过。真实导出漏 chart、转换器四类错误、自包含重导入及图内编辑仍待完成，M1 未完成。**
+> **当前结论（2026-11-06，导出请求接线）：首次绑定和组合白底遮挡已修复。真实导出构造器现已携带冻结的 chart，前端指纹及后端原图/多页计划身份包含模型/绑定；相关前端 88 项、后端 51 项通过。标注/画布来源适配、转换保真、自包含冷恢复和图内编辑继续实现，M1 未完成。用户最新授权多子代理并行，文件所有权隔离，仍沿用当前分支。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 
 ## 环境（2026-11-06 当前快照）
@@ -36,11 +36,19 @@
 | R04 | affected_checks_passed | a8a088cf、18907d65、cbd8d95e | 请求序号/表单/项目切换、late response 和单项 drop 均有受影响测试；Dialog 已可发起真实绑定；完整编辑器生命周期在 R06 追验 |
 | R05 | tests_only / partial | 722ad27c | JSON 往返测试已有，真实新进程/资源包/迁移恢复待实现 |
 | R06 | interaction_verified / visual_failed | cbd8d95e | 多系列/轴区/类型/误差/网格控件与首次预览接通；确认/撤销可操作；最终曲线可见性失败，精确命中/编辑闭环待补 |
-| R07 | partial / correctness_failed | e09b724b、484b29fb | 真实请求漏 chart；SVG→IR 四类错图已复现；EPS 未实现 |
+| R07 | partial / request_verified | e09b724b、484b29fb + 本轮请求修复 | original/canvas/多页请求及版本已携带 chart；标注/画布实际来源消费与 SVG→IR 保真、EPS 待完成 |
 | R08 | metadata_only | f7d39126 | 导出嵌入元数据，但用导出文件重算 source_mismatch；A/C 生产导入未完成 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-06 实施：真实导出请求、冻结状态与计划身份
+
+- buildExportRequest 的原图/多页来源与 toExportObjects 的画布面板实际携带 chart，使用 structuredClone 冻结模型/绑定；没有 chart 时不新增键，面板与导出 figure_id 不匹配时不发送该面板的 chart。chart-only 编辑会改变前端导出指纹，已构造的快照不随之后编辑改变。
+- 后端 exportreq 统一校验并冻结 chart；非法结构/模型/绑定在碰文件前拒绝，不再静默落回原图。原图与多页 render_plan_ref 及合并 PDF 去重键包含 chart，不同数据/绑定版本不再误当同一页。
+- 相关前端 3 文件 88 passed，后端 export request + chart persistence 51 passed（0 failed/0 skipped），正式构建 exit 0；playground 重建及 --check 通过，指纹 4c8a8d5c8a4805d1。证据在 svg-review-20261106/export-request。请求接线不等于原图标注/混合画布已经可导出，生产来源适配下一批完成。
+- 用户更新目标要求多子代理并行：根代理拥有 app.py/exportreq/前端导出；svg_ir_fidelity 拥有 svgir/svgcoord/转换测试；svg_self_contained 拥有 chartbundle/包测试；export_adapter_review 拥有 figcapture/sources/IR 的 declarative 来源合同及对应测试。均在当前分支，按文件隔离，不新建工作树；各功能由根代理汇总验证后分别提交。
+- 下一项：统一 compute/export 的计算快照，接入严格声明式来源和 canonical PDF+SVG companion，补发布前来源复核；并行完成转换器和安全自包含模块后整合。目标仍 active。
 
 ### 2026-11-06 实施：组合层级与轴背景角色
 

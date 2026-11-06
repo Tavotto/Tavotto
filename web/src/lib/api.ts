@@ -5,7 +5,7 @@ import { apiUrl, apiUrlFor, currentProjectId, withProject, withProjectFor } from
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
 import type { ExportRoute } from '@/lib/exportRoute'
 import type { Remedy } from '@/lib/fixRemedy'
-import type { FigureDocument, FigureSnapshot, ProjectDocument } from '@/types/document'
+import type { FigureDocument, FigureSnapshot, PanelChartState, ProjectDocument } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
 import type { IdentityRename } from '@/lib/overrideIdentity'
 import type { PreviewMetadata } from '@/lib/previewBudget'
@@ -1880,6 +1880,7 @@ export type ExportObject =
   | (ExportBox & ArtifactRequestFields & {
       type: 'panel'
       figure_snapshot?: FigureSnapshot
+      chart?: PanelChartState
       id: string
       overrides?: { gid: string; prop: string; value: unknown }[]
       /** 0–1 归一化、top-origin，与 PanelObject.crop 同构，原样直传 */
@@ -1953,6 +1954,7 @@ export type ExportObject =
 export type ExportOriginalSource = ArtifactRequestFields & {
   figure_id: string
   figure_snapshot?: FigureSnapshot
+  chart?: PanelChartState
   overrides?: { gid: string; prop: string; value: unknown }[]
   w_mm?: number | null
   h_mm?: number | null

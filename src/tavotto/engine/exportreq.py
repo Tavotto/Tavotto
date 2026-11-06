@@ -28,10 +28,11 @@ from __future__ import annotations
 
 import math
 import re
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import figcapture
+from . import chartmodel, figcapture
 
 # ------------------------------- 枚举 ---------------------------------------
 
@@ -497,6 +498,7 @@ def render_plan_ref(req: ExportRequest, resources: list[dict]) -> dict:
                 else {}
             ),
             **({"pad_mm": list(req.original.pad_mm)} if req.original.pad_mm else {}),
+            **({"chart": req.original.chart} if req.original.chart is not None else {}),
             **(
                 {"expected_source": req.original.expected_source}
                 if req.original.expected_source is not None
@@ -515,7 +517,12 @@ def render_plan_ref(req: ExportRequest, resources: list[dict]) -> dict:
         }
     if req.merge_pdf is not None:
         semantic["merge_pdf"] = [
-            {"figure_id": p.figure_id, "overrides": p.overrides} for p in req.merge_pdf.pages
+            {
+                "figure_id": p.figure_id,
+                "overrides": p.overrides,
+                **({"chart": p.chart} if p.chart is not None else {}),
+            }
+            for p in req.merge_pdf.pages
         ]
     canon = json.dumps(
         {
@@ -694,6 +701,20 @@ def _objects_below(source: dict, count: int) -> int:
     return raw
 
 
+def _chart_state(raw: Any) -> dict | None:
+    """只冻结已验证的模型/绑定；无字段的旧请求保持原合同。"""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or set(raw) != {"model", "binding"}:
+        raise ExportRequestError("chart_model_invalid", "chart 必须包含 model 和 binding", {})
+    try:
+        chartmodel.validate_model(raw["model"])
+        chartmodel.validate_binding(raw["binding"], raw["model"])
+    except chartmodel.ChartModelError as exc:
+        raise ExportRequestError(exc.code, exc.detail, {}) from exc
+    return deepcopy(raw)
+
+
 def _original_source(source: Any) -> OriginalSource:
     """`original` 段（以及多页 PDF 里每一页的来源）→ `OriginalSource`。**一份解析，两处用**。"""
     if not isinstance(source, dict):
@@ -721,7 +742,7 @@ def _original_source(source: Any) -> OriginalSource:
         px_h=int(source["px_h"]) if source.get("px_h") else None,
         source_kind=str(source.get("source_kind") or "unknown"),
         ignored=tuple(str(x) for x in (source.get("ignored") or [])),
-        chart=source.get("chart") if isinstance(source.get("chart"), dict) else None,
+        chart=_chart_state(source.get("chart")),
     )
 
 
@@ -833,7 +854,11 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
         canvas = CanvasSource(
             page_w_mm=_float(source.get("page_w_mm"), "page_w_mm"),
             page_h_mm=_float(source.get("page_h_mm"), "page_h_mm"),
-            objects=[o for o in objects if isinstance(o, dict)],
+            objects=[
+                {**o, "chart": _chart_state(o["chart"])} if "chart" in o else o
+                for o in objects
+                if isinstance(o, dict)
+            ],
         )
     else:
         merge_pdf = _merge_pdf(spec, formats)

@@ -303,6 +303,7 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
       const patches = panel ? originalArtifactOverrides(panel) : []
       return {
         figure_id: figureId,
+        ...(panel?.fileId === figureId && panel.chart ? { chart: structuredClone(panel.chart) } : {}),
         ...(panel && panel.fileId === figureId &&
             JSON.stringify(patches) === JSON.stringify(panel.overrides) && figureSnapshotFor(panel)
           ? { figure_snapshot: figureSnapshotFor(panel) } : {}),
