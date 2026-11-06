@@ -296,7 +296,10 @@ function applyBootstrap(
  *   - scriptRunStore：「运行并发现图」已捕获的结果与在飞的那次作废。
  * 回 false = 等 store 加载期间换了项目（B 的面板与素材一个都不动）。
  */
-async function restaleProjectRenders(epoch: number, retryMissingInput = false): Promise<boolean> {
+async function restaleProjectRenders(
+  epoch: number,
+  { retryMissingInput = false, retryEntry = retryMissingInput }: { retryMissingInput?: boolean; retryEntry?: boolean } = {},
+): Promise<boolean> {
   const [{ useRenderStore, renderEpoch }, { useRuntimeAssetStore }] = await Promise.all([
     import('@/store/renderStore'),
     import('@/store/runtimeAssetStore'),
@@ -320,8 +323,8 @@ async function restaleProjectRenders(epoch: number, retryMissingInput = false): 
   const runtime = useRuntimeAssetStore.getState()
   runtime.invalidate(Object.keys(runtime.byId))
   if (runtime.assets !== null) void runtime.loadAssets()
-  // PNG 准入尚未加入 renderStore，也要在真实改指完成后重新校验源；只放行本次作废。
-  if (retryMissingInput) retryArtifactEntry({ from: previousRenderEpoch, to: nextRenderEpoch })
+  // PNG 准入尚未加入 renderStore；回答数据位置 / 运行目录之后重新校验源，只放行本次作废。
+  if (retryEntry) retryArtifactEntry({ from: previousRenderEpoch, to: nextRenderEpoch })
   return true
 }
 
@@ -502,7 +505,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     const epoch = projectEpoch
     // 删掉：只作废，回到「找不到就报错」；其余（新增 / 换了一处 / 补拉到的不知道是哪种）：因「找不到数据」
     // 失败的脚本也重跑——没有规则救它就再失败一次，不会多错
-    void restaleProjectRenders(epoch, reason !== 'removed')
+    void restaleProjectRenders(epoch, { retryMissingInput: reason !== 'removed' })
     // 设置里的「数据位置」列表：别的窗口改的也要看得见（回来的代次 ≤ 已见，不会再作废一次）
     void get().refresh()
   },
@@ -729,7 +732,9 @@ export const useEnvStore = create<EnvState>((set, get) => ({
       else await get().refresh()
       if (epoch !== projectEpoch) return null
       set({ workdirConfirmation: null })
-      // 后端已经关掉了这个项目的会话；把因「没出图」/「要先选目录」失败的面板重新排上
+      // cwd 改变会影响所有图：成功但缺数据的图也要重建，旧在途响应与捕获结果不能继续当权威。
+      // 只记下「继续当前目录」的决定时不作废成功图，仍由下面的门禁恢复接着跑。
+      if (mode !== current && !(await restaleProjectRenders(epoch, { retryEntry: true }))) return null
       const { useRenderStore } = await import('@/store/renderStore')
       if (epoch !== projectEpoch) return null
       useRenderStore.getState().retryEnvironmentFailures()
