@@ -1562,15 +1562,16 @@ function createDocumentDisk(format: DocumentFormat) {
     if (isCurrentDoc(id, format)) setSaveState('saving')
   },
   onWritten: (id, savedAt, info) => afterWriteOk(id, savedAt, info, format),
-  onFailed: (id, conflict) => {
+  onFailed: (id, issue) => {
+    const conflict = issue?.kind === 'stale' || issue?.kind === 'external'
     if (isCurrentDoc(id, format)) {
-      setSaveState(conflict ? 'conflict' : 'save_error', conflict ?? { kind: 'io', docId: id })
+      setSaveState(conflict ? 'conflict' : 'save_error', issue ?? { kind: 'io', docId: id })
     }
     // 事件保留：老的监听方（App.tsx 的状态条）与用例都还在用它。
     // 它是**通知**，不是状态——状态在 store 里。
     window.dispatchEvent(
       new CustomEvent('tavotto:autosave-error', {
-        detail: { id, reason: conflict ? conflict.kind : 'io' },
+        detail: { id, reason: conflict ? issue.kind : 'io', ...(issue?.kind === 'backend' ? { issue } : {}) },
       }),
     )
   },

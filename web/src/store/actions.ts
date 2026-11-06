@@ -1,4 +1,5 @@
 import type { DocumentFormat } from '@/lib/documentFormat'
+import { saveIssueMessage } from '@/lib/autosave/diskWriter'
 import { adoptionGuardOf, adoptionOf, clearAdoption, isAdoptedPanel, SCRIPT_BACKED_SOURCE_POLICY, sourceBackedGuard, verdictFromResponse, verifiedSource, type AdoptionGuard, type SourceBackedFigure, type SourceBackedVerdict, artifactBackgroundOriginal, artifactRequestFields, isUnadoptedPngSource, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
 import { currentProjectId } from '@/lib/session'
 import '@/store/figureSnapshotInvalidation'
@@ -609,7 +610,8 @@ export async function runManualSave(): Promise<void> {
   } else if (state === 'conflict') {
     ui.setStatus(msg('save.conflict', undefined, 'workspace'), 'error')
   } else if (state === 'save_error') {
-    ui.setStatus(msg('save.failed', undefined, 'workspace'), 'error')
+    const issue = stillCurrent(ctx) ? useDocumentStore.getState().saveIssue : null
+    ui.setStatus(saveIssueMessage(issue, msg('save.failed', undefined, 'workspace')), 'error')
   }
   // dirty / saving：保存期间用户又改了，或又排了一次写。那不是失败，
   // 顶栏的状态会继续往下走，这里不再多说一句话。

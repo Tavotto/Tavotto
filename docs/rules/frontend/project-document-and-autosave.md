@@ -116,6 +116,7 @@ order: 200
   `lib/autosave/diskWriter.ts`（`createDiskWriter(ports)`，不认识 store、不碰 window /
   localStorage / 遥测），`documentStore` 只装配端口；用例 `lib/autosave/diskWriter.test.ts`
   用假端口 + 手动 gate 直接量时序。
+- **保存失败的原因**：`SaveIssue`的`stale/external`仍触发原冲突裁决；有结构化code的其他后端拒绝为`backend`，只在内存保留status/code/params/fallback，经`saveIssueMessage`消费既有`backendCodeMsg`描述符，状态与App通知/无项目保存共用同一翻译器。422来源校验失败不能被归为磁盘空间不足；真正无结构I/O或网络错误才用原通用提示。错误不进可携正文、本机恢复副本或遥测，不保存整个响应体；未知code保既有fallback。失败不推进基线、不清本机副本、不覆盖原文件。看护`lib/autosave/diskWriter.errors.test.ts`、`store/saveFailures.test.ts`、`App.pickerNotices.test.tsx`。
 - **⌘S 保存到项目（ADR 0096，2026-09-26）**：排版可以**绑定**项目里的一个文件
   （`lib/projectFile.ts`，按 documentId 存 `tavotto.projectFile.<id>`，不进文档）——从「项目里的
   排版」打开的、存进项目的（「存进项目」与开着项目时的另存为）都绑定。`runManualSave` 三条路：

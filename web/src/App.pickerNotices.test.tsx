@@ -17,6 +17,8 @@ import { App } from '@/App'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useExitNoticeStore } from '@/store/exitNoticeStore'
 import { useProjectStore } from '@/store/projectStore'
+import { useUiStore } from '@/store/uiStore'
+import { formatMessage, i18n } from '@/i18n'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -73,4 +75,38 @@ describe('项目选择页的通知轨（#1040 B1）', () => {
     await act(async () => useExitNoticeStore.getState().setEngineExit('nonzero'))
     expect(rail.querySelectorAll('[role="alert"]')).toHaveLength(0)
   })
+})
+
+describe('保存错误通知', () => {
+  beforeEach(() => {
+    vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+    useProjectStore.setState({ phase: 'open' })
+  })
+  it('结构化后端错误经 App 通知显示具体原因，切语言仍保留参数', async () => {
+    await act(async () => {
+      root.render(<TooltipProvider><App /></TooltipProvider>)
+    })
+    await act(async () => window.dispatchEvent(new CustomEvent('tavotto:autosave-error', {
+      detail: { id: 'working', reason: 'io', issue: {
+        kind: 'backend', docId: 'working',
+        backend: { status: 422, code: 'non_finite_number', params: { reason: 'NaN @ x' }, fallback: 'fallback' },
+      } },
+    })))
+    const message = useUiStore.getState().status
+    expect(formatMessage(message)).toContain('NaN @ x')
+    expect(formatMessage(message)).not.toContain('检查磁盘空间')
+    await act(async () => { await i18n.changeLanguage('en-US') })
+    expect(formatMessage(message)).toContain('NaN @ x')
+    expect(formatMessage(message)).not.toContain('无法保存的数值')
+  })
+
+  it.each([['io', '检查磁盘空间'], ['stale', '另一窗口保存了更新的版本'], ['external', '检查磁盘空间']])(
+    '旧 %s 通知保持原分支', async (reason, expected) => {
+      await act(async () => { root.render(<TooltipProvider><App /></TooltipProvider>) })
+      await act(async () => window.dispatchEvent(new CustomEvent('tavotto:autosave-error', {
+        detail: { id: 'working', reason },
+      })))
+      expect(formatMessage(useUiStore.getState().status)).toContain(expected)
+    },
+  )
 })

@@ -80,6 +80,7 @@ import { dragRegionProps, onDesktopMenu, onDesktopOpen } from '@/lib/desktop'
 import { DURATION, usePresence } from '@/lib/motion'
 import { applyOpenRequest, claimUrlOpenRequest } from '@/lib/openRequest'
 import { msg } from '@/i18n'
+import { saveIssueMessage, type SaveIssue } from '@/lib/autosave/diskWriter'
 import { hydrateExportDefaults } from '@/lib/exportDefaults'
 import { initExitNotices } from '@/lib/exitNotices'
 import { cancelStartupProbe } from '@/lib/startupProbe'
@@ -227,14 +228,14 @@ function Workspace() {
     const stopActivityTelemetry = startActivityTelemetry()
     const onAutosaveError = (ev: Event) => {
       // stale = 另一个窗口已经存过更新的版本，后端挡下了这次覆盖（见 documentStore）
-      const stale = (ev as CustomEvent<{ reason?: string }>).detail?.reason === 'stale'
+      const detail = (ev as CustomEvent<{ reason?: string; issue?: SaveIssue }>).detail
+      const stale = detail?.reason === 'stale'
       useUiStore
         .getState()
         .setStatus(
-          msg(
-            stale ? 'autosave.staleOtherWindow' : 'autosave.diskFailed',
-            undefined,
-            'workspace',
+          saveIssueMessage(
+            detail?.issue,
+            msg(stale ? 'autosave.staleOtherWindow' : 'autosave.diskFailed', undefined, 'workspace'),
           ),
           'error',
         )

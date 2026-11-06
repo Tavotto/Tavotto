@@ -18,7 +18,8 @@
  *   * **收到 409 基线一个都不推进**：推进等于承认对方那版是我的起点，下一次写就会
  *     把它盖掉。
  */
-import { ApiError, REVISION_ABSENT, type DiskDocumentSummary } from '@/lib/api'
+import { ApiError, REVISION_ABSENT, backendCodeMsg, type DiskDocumentSummary } from '@/lib/api'
+import type { UiMessage } from '@/i18n'
 import type { FigureSnapshotSaveContext } from '@/lib/figureSnapshot'
 import type { ChartSourceReceipt, ChartSourceSaveContext } from '@/lib/chartSourceReceipts'
 import type { FigureSnapshot, ProjectDocument } from '@/types/document'
@@ -50,11 +51,37 @@ export interface SaveIssue {
    * - `io`：写盘本身失败（磁盘满、权限、后端不可达）
    * - `stale`：另一个标签页存了更新的版本（后端 `stale_write`）
    * - `external`：磁盘上那份不是我上次读到/写出的那份（后端 `external_change`）
+   * - `backend`：后端明确拒绝了保存，保留具体 code/params，不能假称磁盘空间不足
    */
-  kind: 'io' | 'stale' | 'external'
+  kind: 'io' | 'stale' | 'external' | 'backend'
   docId: string
   /** 磁盘上那份的摘要（`external` / `stale`）；拿不到时为 null */
   disk?: DiskDocumentSummary | null
+  /** 只留本机通知要用的错误描述；不持久化、不发进遥测，不携整个响应体。 */
+  backend?: { status: number; code: string; params: Record<string, unknown>; fallback: string }
+}
+
+/** 保存状态与通知共用后端的唯一翻译器；无结构 I/O 沿用调用方的通用提示。 */
+export function saveIssueMessage(issue: SaveIssue | null | undefined, fallback: UiMessage): UiMessage {
+  const error = issue?.kind === 'backend' ? issue.backend : undefined
+  return error ? backendCodeMsg(error.code, error.params, error.fallback) : fallback
+}
+
+function backendIssue(id: string, error: unknown): SaveIssue | null {
+  if (!(error instanceof ApiError) || typeof error.body.code !== 'string' || !error.body.code) return null
+  const params = error.body.params
+  return {
+    kind: 'backend',
+    docId: id,
+    backend: {
+      status: error.status,
+      code: error.body.code,
+      params: params && typeof params === 'object' && !Array.isArray(params)
+        ? structuredClone(params) as Record<string, unknown>
+        : {},
+      fallback: error.message,
+    },
+  }
 }
 
 /**
@@ -129,7 +156,7 @@ export interface DiskWriterPorts {
    * 正文 revision 照常推进（不能因元数据失败当正文失败重试）。
    */
   onWritten: (id: string, savedAt: number, info: WrittenInfo) => void
-  /** 写盘失败或被 409 挡下；`issue` 为 null = io 失败 */
+  /** 写盘失败或被 409 挡下；`issue` 为 null = 无结构 I/O 失败 */
   onFailed: (id: string, issue: SaveIssue | null) => void
   /** 冲突未决：队列里排着的那份不能继续往磁盘上撞（读的是**此刻**的保存状态） */
   writeBlocked: () => boolean
@@ -319,7 +346,7 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
               ? conflictIssue(id, err)
               : null
         ports.outcome(trigger, conflict ? 'conflict' : 'failed')
-        ports.onFailed(id, conflict)
+        ports.onFailed(id, conflict ?? backendIssue(id, err))
       })
       .finally(() => {
         diskBusy = false
