@@ -506,6 +506,8 @@ jobs:
           fi
           # 独立读 GitHub mergeQueue；不用 authority 的成员表决定该检查哪些 PR。
           # gh graphql --paginate 只自动推进名为 endCursor 的变量。
+          # GraphQL variables must remain literal until gh sends the query.
+          # shellcheck disable=SC2016
           query='query($owner:String!,$name:String!,$branch:String!,$endCursor:String) {
             repository(owner:$owner,name:$name) { databaseId mergeQueue(branch:$branch) {
               entries(first:100,after:$endCursor) { totalCount pageInfo { hasNextPage endCursor }
