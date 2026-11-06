@@ -15,7 +15,7 @@
 
 不新建/切换分支或工作树，保留全部提交及未提交成果，不reset/stash覆盖草稿。该要求覆盖旧文档的新建指令。先读当前AGENTS、最近子目录规则、对应ADR、同源对/判据/第三路径/验证要求，再核对实际HEAD、diff、Git身份、解释器import源、已有代理和进程。
 
-2026-11-06 18:01后状态：附件消费者2452d8fc已提交且真UI删源编辑/导出通过；后端v4显式保存/恢复20项和旧312项通过（另20既有平台skip），独立复核的legacy快照规范化回归已修。N2前端已在26+1文件接线，仍是中间稿。package/EPS新叶子已分别107/36项验证但尚未接app。先核实际HEAD/PROGRESS，不从旧app索引blob或31文件hash恢复当前代码，不重做N0/后端基础。
+2026-11-06 18:17状态：附件消费者2452d8fc、后端v4保存/恢复5abb9a7d已分功能提交；真UI删源编辑/导出已验，v4后端20项和旧312项通过（另20既有平台skip）。N2前端格式/回执/恢复/版本仍是中间稿，阶段build不代表最终资格。共享打开顺序合同已冻结并进入生产实现；package/EPS叶子107/36项已验但尚未接app。先核实际HEAD/PROGRESS，不从旧app索引blob或31文件hash恢复当前代码，不重做N0/N1后端基础。
 
 二、保留已完成成果，不从旧缺陷重做
 
@@ -29,6 +29,7 @@
 - ae064662：buildProject只替换实际安装的首个活动画布位置，保护重复/缺失/空ID文档的非活动内容。
 - 83f4ffbf：documentformat目录/格式叶子与layoutsession v4 namespace。只是叶子，不是正式v4保存已实现。
 - 2452d8fc：精确INPUT附件进入全部渲染/PNG/缩略图/timeline/重建/导出消费者，实际UI删源后编辑和生产产物已验。
+- 5abb9a7d：v4正式命名/autosave/session/versions/thumbs隔离及精确INPUT冻结；20项含真实生产v2和新父进程恢复通过，旧格式规范化回归已修。
 
 此前层序/CSV/转换/连续文字/来源配对/附件核心全部保留，见PROGRESS。尤其029dfac2的profile/v2闭式版本、3236307c的native物理坐标、bbbffed1的精确INPUT附件和ea0a7027的字体/TeX边界不重做。
 
@@ -44,6 +45,8 @@
    复用已提交documentformat和using_namespace；旧2/3缺省不变。显式/api/documents/v4/*、tavottofile/documents/v4、_autosave/v4、v4的versions/thumbs；复用FORMAT1信封、原锁/atomicio/既有view与认证，不移动FigureSnapshots根，不新建历史数据库。
    named/autosave/summary/清理/owner/last/candidates/versions/thumb/rebuild及别名已接通，20项已验；v4不借旧目录。chart只在v4跳过Figure捕获，旧2/3未知chart字段仍核验并清除无归档FigureSnapshot。未实现包安装前不挂空壳package别名。
    各namespace的at没有共享总序：回拨和迟到pending晋升都可让max-at选错旧稿。复用同layout-sessions文件/锁/atomicio，以版本化共享打开意图+实际指针witness解决；seq只分配明确打开，迟到保存仅更新witness，旧程序不更新ledger时须检测stale，不用mtime/at猜。先冻结具体API/wire再接前端发现；不得以永远needs_user替代正常自动恢复。同步全失败导出仍沿既有HTTP500。
+   已冻结wire：仅显式GET include_open_intent=1增加open_intent，旧默认dict不变；ok含version1/status/sequence/snapshot/latest，latest为{document_format,doc_id,pointer}或null；stale/untracked含实际双ns指针snapshot而不猜latest；unavailable不猜snapshot。两GET快照相同才采用共享latest，变化有界重读，正常可信状态自动恢复。set_last明确打开同锁同写分seq，重复pending重开也分；commit_slot不分seq且不洗白stale。清指针同步见证、清latest置null。
+   自动补推notifyDocumentPersisted/confirmRestored使用PUT body repair:true；可信latest同地址只原seq晋升或幂等确认durable；异址/null回superseded，stale/untracked/v4无账本回unconfirmed零写，前端保待确认不假ack；future仍拒写。纯legacy-only原行为保持。明确用户alternative按(format,id)分新intent；自动发现/恢复安装不分序，迟到正文不能抢回另一格式的新文档。
 
 3. N2–N3/R05接前端保存、冷恢复和包安装搬迁。
    chart_source存在时render/PNG/export只从校验附件读，缺失/篡改不回退漂移原文件。保存锁内验证→严格冻结整份INPUT（含v2外层）→实际重放→读回→单次原子正文提交；不清引用后假成功。保持普通FigureSnapshots既有策略。
@@ -77,7 +80,7 @@
 - 压缩后继续同一目标；中断后先核真实HEAD/差异/进程与未结束检查，不从计划重做。提示词不是常驻调度器，不会唤醒休眠机器或恢复已结束会话；调试服务不是整夜任务。本轮未另建自动化。
 - 仅全部验收完成、用户明确停止、运行条件强制中断，或所有有意义工作真正依赖无法取得的外部条件时结束。最终交付写能力/入口、功能commits、实际测试与产物、平台/待发布及未完成项，不以专项全绿称最终可用。
 
-18:01后自有服务快照：旧43356已停止，新后端33104/session79201/23984加载N0源码、尚无N1新路由；Vite11676/session67246已核命令后Ctrl-C停止，避免N2中间稿HMR。source-ref浏览器78620供证据。先核实时PID/创建时间/命令，不照旧数字杀；source-ref-browser/server.py复用自身隔离fixture，历史native项目/portable不重seed。截图在证据根output/playwright。未启动新整夜调度器。
+18:17自有服务复核：旧43356已停止，后端33104（17:17:32启动）/session79201/23984仍加载N0源码、尚无N1新路由；Vite11676不存在、23983无监听，避免N2中间稿HMR。浏览器4468/78620在。先核实时PID/创建时间/命令，不照旧数字杀；source-ref-browser/server.py复用自身隔离fixture，历史native项目/portable不重seed。截图在证据根output/playwright。未启动新整夜调度器。
 
 现在先核实际树/PROGRESS/代理，保留2452d8fc及已验N1后端，收敛共享打开意图序和N2前端真实保存冷开，继续N3包/N4图例迁移/N5复杂几何/N6分享EPS与M1/N7 M2/N8 M3。不要从旧索引/hash重做N0，不停在重新生成计划，不把本批绿灯当整个目标完成。
 ```

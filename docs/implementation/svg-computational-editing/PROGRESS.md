@@ -2,12 +2,12 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-06 18:01后）：精确INPUT附件消费者2452d8fc已提交，真实UI删源编辑/撤销重做与PDF/PNG/SVG导出已验。v4后端显式命名/autosave/session/versions已接通，20项真实HTTP及新父进程专项通过；旧组312通过/20既有平台skip，独立复核发现的legacy快照规范化回归已修。前端格式/回执/冷发现仍在实施，包/EPS生产叶子已验但未接app，图例/复杂几何及最终旧功能资格仍缺，M1未通过。**
+> **当前结论（2026-11-06 18:17）：精确INPUT附件消费者2452d8fc和v4后端保存/恢复5abb9a7d已分功能提交。真实UI删源编辑/撤销重做及PDF/PNG/SVG导出已验；v4后端20项通过，旧组312通过/20既有平台skip。前端格式/回执/版本UI仍是未提交中间稿，跨格式共享打开顺序刚进入生产实现；正式UI保存冷开、包/EPS入口、图例/复杂几何和最终旧功能资格仍缺，M1未通过。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 
 ## 环境（2026-11-06 当前快照）
 
-- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；附件消费者HEAD=`2452d8fc`，之后v4后端批次在本树提交/验证。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入这些成果；不能在原目录启动旧版本后据此判断新功能效果。
+- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；本次复核功能HEAD=`5abb9a7d`。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入这些成果；不能在原目录启动旧版本后据此判断新功能效果。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述三个新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
@@ -34,13 +34,24 @@
 | R01/R02 | core_partial / multi_target_verified | 3236307c、8e6c399a | 跨父/split/errorbar/colorbar共同目标与预览通过；任意clip、欠定成员paint slots和图例仍缺 |
 | R03 | runner_and_source_consumers_integrated | 029dfac2、242cabc0、c2fd47d5、5b2b1403、2452d8fc | 受控runner与精确INPUT附件接真实API/UI/导出；不宣称全产品总进程cap或最终资格 |
 | R04 | affected_checks_passed | a8a088cf、18907d65、cbd8d95e | 请求序号/表单/项目切换、late response 和单项 drop 均有受影响测试；Dialog 已可发起真实绑定；完整编辑器生命周期在 R06 追验 |
-| R05 | backend_cold_restore_verified / frontend_pending | cae96f89、82b142d2、bbbffed1、ae064662、83f4ffbf、2452d8fc | v4后端命名/自动保存/版本和新父进程删源编辑导出已验；前端回执、跨格式冷发现与包安装未闭环 |
+| R05 | backend_cold_restore_verified / frontend_pending | cae96f89、82b142d2、bbbffed1、ae064662、83f4ffbf、2452d8fc、5abb9a7d | v4后端命名/自动保存/版本和新父进程删源编辑导出已验；前端回执、跨格式冷发现与包安装未闭环 |
 | R06 | product_editing_verified / persistence_pending | 242cabc0、53393810、8e6c399a | 真UI点选、线宽/范围、撤销重做与v2恢复通过；历史983与后续700分属不同范围/时刻，图例/正式冷保存仍缺 |
 | R07 | partial / production_formats_verified | 5bc82a81、c2fd47d5、2a40fec9 | 生产SVG/PDF9项及PNG/TIFF2项分次通过；EPS、分享范围与M1全链未完成 |
 | R08 | full_edit_restore_verified / partial | cae96f89、029dfac2、53393810 | 生产v2导出与真UI完整编辑恢复通过；A采用、分享选择和正式项目迁移待补 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-06 18:17 执行效果复核与下一阶段安排
+
+- 已逐项核对N1源码SHA与三组反证记录一致、索引只含六个N1文件，定向diff检查exit0后提交5abb9a7d。未混入前端、ZIP/atomicio或EPS草稿。原main目录仍干净；本轮不新建/切换分支或工作树，不推送/合并/发布。20项及旧312项通过/20skip是既有真实报告的复核，本轮没有重复跑后冒称新全量。
+- 再读实际UI截图和产物资格：删原源后现有Inspector可改曲线、undo/redo，PDF文字和100×100pt尺寸保留、PNG833×833及预期红线像素一致、SVG模型/绑定/原序编辑一致。旧双系列截图同时确认图例样式未联动和“仅版面”统计缺口。证据不是当前未提交N2前端的正式保存冷开资格。
+- N2阶段报告：已有新API/namespace/version专项及旧保存/恢复组通过，阶段build通过；最终源码仍在变动，不能累计或替代最终全量。缺thumb版本已补真实组件边界测试，但尚非真后端浏览器链。同ID跨格式的恢复备选入口也须按(format,id)区分，已纳入最小接线范围。
+- 当前三条工作线：export_adapter_review独占layoutsession.py与新共享意图测试；svg_self_contained独占前端格式/回执/发现/版本消费者；根代理独占app.py、ADR/进度、跨层HTTP接线和提交。包107项/EPS36项叶子继续冻结，待根接入，不把叶子资格称作HTTP安装或EPS入口完成。
+- 共享打开顺序合同已冻结：只有显式include_open_intent=1的GET增加open_intent；两格式的snapshot相同才采用latest。普通保存不分新sequence。自动补推显式repair:true，只能确认/晋升可信的当前同地址意图，不能让迟到A抢占B；superseded/unconfirmed保留待确认，未知未来账本仍拒写。旧格式默认请求/响应保持。完整wire及退出条件见NEXT_PHASE，尚未验证生产实现。
+- 即时顺序：N1.1共享序与repair→N2真UI正式保存、删源、清缓存/重启冷开→N3包安装搬迁→N4图例/数据/readiness→N5成员/clip→N6分享/EPS/M1→N7能力矩阵/M2→N8冻结候选/M3。完成就绪批次后自动继续，沿用当前分支分功能commit。
+- CIM确认后端33104（17:17:32启动、source-ref-browser/server.py、23984监听）仍加载N0；Vite11676不存在、23983无监听。浏览器daemon4468/78620在。端口查询对不存在23983返回非零，实际23984监听已读出，不是产品失败。没有常驻通宵调度器，goal仍active；调试服务不代表无人值守执行器。
+- 本次当前状态/下一阶段三文档更新后，文档引用与规则索引41项通过/0skip、exit0（status-review-1817-docs.xml）；agents_budget --check和定向diff --check exit0。预算仍有既有OVER提示，不把文档检查作为功能资格。
 
 ### 2026-11-06 18:01后 v4后端正式保存与新父进程恢复
 
