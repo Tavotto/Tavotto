@@ -78,6 +78,9 @@ const CARDS: Record<string, Partial<AiFixEntry>> = {
   commandOutside: {
     card: { id: 'c1', kind: 'approve', tool: 'run_command', summary: 'x', command: 'make install', danger: true, reason: 'It writes to /opt/tools.', cwd: 'project', scripts: 3 },
   },
+  commandNoSandbox: {
+    card: { id: 'c1', kind: 'approve', tool: 'run_command', summary: 'x', command: 'conda install poppler', danger: true, cwd: 'scratch', scripts: 3 },
+  },
   choice: { card: { id: 'c1', kind: 'choice', summary: 'data.csv 在哪个文件夹？', options: [{ id: 'a', label: '桌面' }, { id: 'b', label: '文档' }], allow_other: true } },
   pick: { card: { id: 'c1', kind: 'pick', summary: '请选一下数据文件。', pick: 'file' } },
   send: { card: { id: 'c1', kind: 'send', summary: 'AI 写的说明', wants_source: true } },
@@ -231,6 +234,17 @@ describe.each(['zh-CN', 'en-US'] as const)('run_command 的卡（%s）', (lang) 
     expect(block?.getAttribute('data-danger')).toBeNull()
     expect(card.querySelector('[data-ai-fix-confirm]')?.getAttribute('data-variant')).toBe('primary')
     expect(card.querySelector('[data-title]')?.textContent).not.toContain('prep.aiFix')
+  })
+
+  it('没沙盒且 AI 没给理由：折叠详情里换成兜底句，有理由时不出现', async () => {
+    await setLocale(lang)
+    const card = await render(entry(CARDS.commandNoSandbox))
+    expect(card.querySelector('[data-ai-fix-reason]')).toBeNull()
+    expect(card.querySelector('[data-ai-fix-no-sandbox]')?.textContent).toContain(lang === 'zh-CN' ? '沙盒' : 'sandbox')
+    expect(card.querySelector('[data-ai-fix-confirm]')?.getAttribute('data-ai-fix-danger')).toBe('true')
+    expect(visibleSentenceCount(card, lang)).toBeLessThanOrEqual(1)
+    const withReason = await render(entry(CARDS.commandOutside))
+    expect(withReason.querySelector('[data-ai-fix-no-sandbox]')).toBeNull()
   })
 
   it('第②档：完整命令、「允许运行」/「取消」；理由与备份说明在折叠详情里；点了才回 yes / no', async () => {

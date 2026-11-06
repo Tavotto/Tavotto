@@ -254,6 +254,10 @@ function buildAiFixFlow(
               <p data-ai-fix-reason className="m-0 break-words font-medium text-ink">
                 {ft('reasonLabel', { reason: card.reason })}
               </p>
+            ) : isCommand && card.danger ? (
+              <p data-ai-fix-no-sandbox className="m-0 break-words font-medium text-ink">
+                {ft('outsideNoSandbox')}
+              </p>
             ) : null}
             {isCommand && card.danger ? (
               <p data-ai-fix-outside-note className="m-0 break-words">

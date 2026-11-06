@@ -6223,6 +6223,7 @@ export default interface Resources {
         "gotIt": "知道了",
         "notFixed": "这次没能修好",
         "other": "我自己填…",
+        "outsideNoSandbox": "这台电脑没有沙盒保护，所以单独问你一下。",
         "outsideBackup": "运行前会备份项目里的脚本，出问题可以恢复。",
         "outsideTitle": "这条命令需要修改项目以外的文件",
         "pathAria": "路径",

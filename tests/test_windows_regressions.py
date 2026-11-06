@@ -4199,3 +4199,68 @@ def test_convert_candidate_workspace_survives_paths_over_260_chars(tmp_path, mon
     finally:
         ai_convert.remove_dir(cand.dir)
         assert not os.path.exists(longpath.extended(cand.dir))
+
+
+# --- AI 修复 run_command：Windows 没有沙盒，默认调用直接走第②档的卡（TVD-V7R4，ADR 0149 §七 修订 2026-11-06）
+# 判据的主语：真 Windows 上**命令留下的标记文件**，不看工具返回值；卡片由替身 asker 点「是」。
+def _windows_fix_ctx(tmp_path, monkeypatch):
+    from tests.test_fixtools_change import change_ctx
+
+    home = tmp_path / "home"
+    proj = home / "proj"
+    proj.mkdir(parents=True)
+    cfg, data = tmp_path / "cfg", tmp_path / "data"
+    cfg.mkdir()
+    data.mkdir()
+    for name, value in (
+        ("USERPROFILE", home),
+        ("HOME", home),
+        ("TAVOTTO_CONFIG_DIR", cfg),
+        ("TAVOTTO_DATA_DIR", data),
+    ):
+        monkeypatch.setenv(name, str(value))
+    (cfg / "config.json").write_bytes(b'{"ai": {"providers": []}}')
+    box = type("Box", (), {"home": home, "proj": proj, "cfg": cfg, "data": data, "tmp": tmp_path})
+    return change_ctx(box)
+
+
+def _run_command(ctx, argv):
+    from tests.test_fixtools import call
+
+    return call(ctx, "run_command", {"argv": argv, "timeout_s": 60})
+
+
+@pytest.mark.skipif(os.name != "nt", reason="真 Windows 才有 Job Object 与 .bat 语义")
+def test_ai_command_runs_after_the_card_and_its_background_child_cannot_outlive_it(
+    tmp_path, monkeypatch
+):
+    ctx = _windows_fix_ctx(tmp_path, monkeypatch)
+    ran, late = tmp_path / "ran.txt", tmp_path / "late.txt"
+    child = f"import time; time.sleep(6); open({str(late)!r}, 'w').write('x')"
+    code = (
+        "import subprocess, sys\n"
+        f"subprocess.Popen([sys.executable, '-c', {child!r}])\n"
+        f"open({str(ran)!r}, 'w').write('x')\n"
+    )
+    r = _run_command(ctx, [sys.executable, "-c", code])
+    assert not r.is_error, r.content
+    assert ran.exists() and ctx.asker.cards[0]["danger"] is True
+    assert "processes_left" not in r.content
+    time.sleep(8)
+    assert not late.exists()  # 后台孙进程被 Job Object 收掉，绕不过核对与放锁
+
+
+@pytest.mark.skipif(os.name != "nt", reason="真 Windows 才有 .bat 语义")
+@pytest.mark.parametrize("spelling", ["full_path", "bare_name_on_path"])
+def test_ai_command_starts_a_conda_style_batch_file(tmp_path, monkeypatch, spelling):
+    """Anaconda 的 condabin 里只有 conda.bat，模型写 `conda install …` 时要真能起来。"""
+    ctx = _windows_fix_ctx(tmp_path, monkeypatch)
+    tools = tmp_path / "condabin"
+    tools.mkdir()
+    out = tmp_path / "bat-ran.txt"
+    (tools / "fakeconda.bat").write_text(f'@echo off\r\necho %1> "{out}"\r\n', encoding="ascii")
+    monkeypatch.setenv("PATH", str(tools) + os.pathsep + os.environ["PATH"])
+    program = str(tools / "fakeconda.bat") if spelling == "full_path" else "fakeconda"
+    r = _run_command(ctx, [program, "install"])
+    assert not r.is_error, r.content
+    assert out.read_text(encoding="ascii").strip() == "install"
