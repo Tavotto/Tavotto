@@ -35,8 +35,9 @@ order: 200
   （`migrateToProject`）、布局版本恢复（`restoreLayoutVersion`）与剪贴板粘贴（`materializePaste`，
   负载可能出自升级前的标签页）都经
   `lib/figureFrameMigration.migrateFigureFrames` 迁移：此刻样子来自引擎的（runtime、带图内修改的
-  PDF）补一条 `figure.frame = "figsize"`、其余只打记号；新建面板的入口生来带记号。标记放在
-  面板上不放在项目上：面板会经检查点、粘贴、项目包在项目之间流动。切换到脚本的图幅只经
+  PDF）补一条 `figure.frame = "figsize"`、其余只打记号；新建面板的入口生来带记号。
+  真正补入override时撤销原`figureSnapshot`，由原保存链冻结新状态；仅补记号、已有FRAME或已有记号时保留引用，不重签旧hash、不改原输入对象。看护`lib/figureFrame.test.ts`的schema2/3/4实际打包请求回归。
+  标记放在面板上不放在项目上：面板会经检查点、粘贴、项目包在项目之间流动。切换到脚本的图幅只经
   `adoptScriptFrame`（内容在页面上不动的换算在 `lib/figureFrame.frameSwitchPatch`）。裁过的面板
   旧可见范围与脚本图幅不相交（含只剩一条边）时 `frameSwitchPatch` 返回 null、不采用，属性里的
   按钮禁用并说明原因——判据是换算出的 crop 过不过 `cropInBounds`（与 `rendercore/ir._crop` 同源对），

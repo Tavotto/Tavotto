@@ -35,6 +35,8 @@ export function migrateFigureFrames(objects: CanvasObject[]): CanvasObject[] {
     const next: PanelObject = { ...o, figureFrame: FIGURE_FRAME_VERSION }
     if (renderedByEngine(o) && !hasLegacyFrame(o)) {
       next.overrides = [...o.overrides, { ...LEGACY_FRAME_OVERRIDE }]
+      // The archived pair belongs to the original patches; saving will capture this migrated state.
+      delete next.figureSnapshot
     }
     return next
   })
