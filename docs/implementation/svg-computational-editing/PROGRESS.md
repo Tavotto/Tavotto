@@ -2,16 +2,16 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-06 22:50 checkpoint）：功能HEAD=8ed50616。v4真实项目包导出已接通并提交，完整包/缺件备份均有实际菜单、HTTP、ZIP与完整INPUT对照；438项最终联合检查、85项前端专项、正式build/i18n/playground及真实反证通过。安装目标投影另提交9a9843d2，277项通过；它仍不是安装API。可携registry/数据/运行配置闭包、严格检视/安全安装、图例/复杂几何及最终旧功能/平台资格未完成，M1/M2/M3未通过。**
+> **当前结论（2026-11-06 23:05 checkpoint）：已提交功能HEAD仍为8ed50616，当前HEAD=83ccb6b0。v4真实项目包导出、完整/缺件菜单与ZIP对照已验证；438项最终联合检查、85项前端专项及正式构建的范围保持，不等于全分支回归。N3c运行配置导入、执行清单校验与实际资源收集器正在并行实现，尚未集成或取得本批资格。完整搬迁、图例/复杂几何、旧功能及平台最终验收未完成，M1/M2/M3均未通过。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 
 ## 环境（2026-11-06 当前快照）
 
-- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；22:50最新功能HEAD=`8ed50616`。两项功能已分别提交、功能工作树干净。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入这些成果；不能在原目录启动旧版本后据此判断新功能效果。
+- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；最新功能HEAD=`8ed50616`、状态文档HEAD=`83ccb6b0`。23:05已有N3c未提交改动，不能再按“工作树干净”接续。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入这些成果；不能在原目录启动旧版本后据此判断新功能效果。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
-- 较早状态探针见`status-cbd8d95e/`；最新复核为本页22:50记录及`n3a-export-staged-final.json`、`n3b-targets-staged.json`，保存/旧包资格见21:41记录所指原报告。未启动通宵调度器，历史“后台sweep正在跑”不当作现行运行状态；服务状态见最新checkpoint。
+- 较早状态探针见`status-cbd8d95e/`；最新复核为本页23:05记录，已有资格见`n3a-export-staged-final.json`、`n3b-targets-staged.json`，保存/旧包资格见21:41记录所指原报告。未启动通宵调度器，历史“后台sweep正在跑”不当作现行运行状态；服务状态见最新checkpoint。
 - 最新 NEXT_PHASE 和提示词直接在当前实施分支维护；不再依赖历史 review 文档分支才能取得新计划。
 
 ## 批次状态（2026-11-06 复核后；按完整退出条件）
@@ -41,6 +41,15 @@
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-06 23:05 执行情况复核与下一阶段收敛
+
+- 用户要求核对执行情况、效果并梳理后续安排；原实现goal保持active。实际工作区/分支与提交已核对：实施分支HEAD=83ccb6b0，原main clean；本轮未新建分支、fetch、合并或发布。8ed50616与9a9843d2仍分别是实际v4导出和安装目标计划的功能提交，完整检视/安装尚不存在。
+- 重新读取最终导出证据与实际截图：v4端点真实返回200，原chart.svg缺席时仍携完整INPUT；缺失普通素材被准确列为missing并由菜单提示。截图中轴刻度边缘裁切仍可见，图例旧句柄不跟随曲线样式的既有反例仍未关闭，不能把备份成功解释成视觉/科学语义全部合格。下一阶段保留原SVG/最终产物对照作为裁切问题的判据。
+- N3c已从只读盘点进入实现。`svg_ir_fidelity`独占runconfig.py与新增portable测试，补原rc_ID导入及全部现有读改写入口的共享跨进程锁；`export_adapter_review`独占新packageexecution.py与测试，落实闭式execution清单/资源关系；`svg_self_contained`独占新packageexecution_export.py与测试，将现有Registry/静态绑定/动态依据/参数/cwd/remap事实接到资源回调。根保留app、manifest、契约、UI、规则、三份稳定文档与提交所有权。代理不会自行commit。
+- 实际旧writer双进程探针发现：两个put均exit0，但期望3条最终只有2条，第二写入丢失；证据`n3c-runconfig-before.py/.json`。因此新增import不能独占一把其他writer不遵守的锁；共享guard仅约束新版参与者，不声称覆盖旧二进制或外部编辑。修复及针对性/并发回归待完成，此记录不是通过结论。
+- 后续按N3c-1配置存储、N3c-2真实导出消费者、N3b严格检视、N3d/e安全安装及原writer UI、N3f移目录冷开验收分功能提交。首先交付一条可复现的实际搬迁流程，再做N4图例、N5几何、N6/M1和N7–N8；完整范围未缩减。具体输入/退出条件在NEXT_PHASE第4节，提示词同步当前未提交状态。
+- 本轮状态复核没有重跑昂贵的既有专项/全量套件，也没有替尚在实现的N3c补写绿灯。服务表沿22:50历史线索，未逐一重核实时存活；没有创建整夜调度器。恢复先查实际diff、代理归属及进程身份，不能覆盖这些在途改动。
 
 ### 2026-11-06 22:50 v4实际导出与安装目标计划已提交
 

@@ -1,6 +1,6 @@
 # SVG 计算图表编辑：下一阶段无人值守提示词
 
-可直接复制以下提示词。状态截至2026-11-06 22:50（Asia/Shanghai），实际树优先。详细任务：[NEXT_PHASE.md](NEXT_PHASE.md)；进度：[PROGRESS.md](PROGRESS.md)；最终范围：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。
+可直接复制以下提示词。状态截至2026-11-06 23:05（Asia/Shanghai），实际树优先。详细任务：[NEXT_PHASE.md](NEXT_PHASE.md)；进度：[PROGRESS.md](PROGRESS.md)；最终范围：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。
 
 ```text
 继续完成Tavotto的SVG计算图表编辑，保留现有功能和逻辑，最大化复用现模型/事务/writer/RenderCore与既有编辑器。持续自主实现、验证、修复，按功能分别commit；一个文件同时一个写入者，根统一共享契约、集成和提交。常规可逆步骤自行推进，不逐批等我确认；已授权多子代理，但只给真正独立且有收益的任务。
@@ -12,7 +12,7 @@
 原目录 E:/0 - Project/Tavotto 仍为clean main@69bcafae，未包含功能；不要自动覆盖/合并原目录。
 稳定文档 docs/implementation/svg-computational-editing/{PROGRESS,NEXT_PHASE,NEXT_PHASE_PROMPT}.md
 证据根 E:/0 - Project/svg-review-20261106
-最新功能HEAD 8ed50616，前项9a9843d2，功能工作树干净；后续状态文档提交或实现可能已前进，先核实际HEAD/index/diff、身份、Python import路径、代理和自有进程，禁止reset到文档hash。
+最新功能HEAD 8ed50616，前项9a9843d2，23:05当前HEAD=83ccb6b0。N3c已经存在未提交实现，不能按旧“功能工作树干净”指令覆盖。后续状态文档或实现可能已前进，先核实际HEAD/index/diff、身份、Python import路径、代理和自有进程，禁止reset到文档hash。
 
 先读AGENTS及最近层规则/ADR。沿用当前树/分支，不新建/切换分支或worktree，不reset/stash覆盖草稿，不git add .混批，不push/PR/合并/发布。当前索引为空；旧EPS索引保护指令已过时，a06cc3d3已提交。复用现有venv/node_modules，测试数据/config隔离、遥测关闭，运行可写数据走data_dir。
 
@@ -34,6 +34,10 @@
 6. 8ed50616已提交真实v4导出/同菜单及完整/缺件状态，17文件全部提交，不再有6文件未接后端候选。最终同一命令438pass/0skip/exit0（18新HTTP+26旧兼容+358错误合同+36规则），85前端专项、最终types/i18n/build/playground均0，指纹c95b69046c966033。完整/缺件真UI和最终新后端/bundle均验，正文/原序编辑/完整INPUT等于实际请求，原chart.svg仍缺席。n3a-export-staged-final.json与n3a-ui-final-frozen.json。首错误短语等待超时为观察脚本失败、真实重复snapshot漏回填已修、旧7码未登记/旧门禁借邻近dict已修；保留全部原失败证据。3最终HTTP反证、4门禁反证有效；不把438叫全分支回归。
 
 四、当前第一动作：N3c执行/数据可携闭包，再接检视与安全安装
+
+23:05在途所有权：svg_ir_fidelity仅runconfig.py与新test_runconfig_portable.py；export_adapter_review仅新packageexecution.py/test_package_execution.py；svg_self_contained仅新packageexecution_export.py/test_package_execution_export.py。根统一app/manifest/共享合同/UI/规则/三文档/commit。恢复先查这些代理及文件真实状态，不另外派同文件写入者。配置双独立进程旧探针n3c-runconfig-before.json已证实两次put成功却丢一条，修复共享guard后须原场景复验；它不是N3c通过证据。
+
+最近交付顺序与独立commit：N3c-1保ID配置导入及全部新版writer共同锁→N3c-2闭式清单/资源收集器接真实导出和准确UI→N3b严格检视/快照语义→N3d后端安全安装→N3e原writer回执UI→N3f删源移目录冷开完整验收。按NEXT_PHASE新增最近交付表的退出条件推进；不持续只交付无消费者叶子。合法原store字段不因导入被清理，坏证据拒绝；共同锁不约束旧二进制或外部编辑，不能宣称有跨版本CAS。
 
 N3a真实POST /api/documents/v4/package现在已经接通并提交8ed50616。它携带全画布完整INPUT、普通file/登记script/runtime描述符/已核Figure配对；不执行未知脚本。原SVG缺席但chartSource有效正常打包，已知普通缺件准确missing与UI提示。旧三参、旧2/3输出及只读open保持。不要按旧候选文档重写/回退导出；完整registry/数据/配置迁移尚未完成。
 
@@ -82,5 +86,5 @@ PROGRESS唯一进度台账，NEXT_PHASE/PROMPT维护当前队列；功能提交/
 
 22:50当前自有最终后端75464/23988（创建22:45:34.778615+08:00，n3a-browser/server.py，session65556），浏览器tavotto-package-v4 daemon66204（22:13:21.576551+08:00）；加载最终app/bundle，当前为N3a_不完整备份两画布，原chart.svg缺席。旧59244/renderchild23440已结束，旧78208终态已读。新CLI产物在外部n3a-browser/playwright-cli-cwd-artifacts，旧console已原字节还原；后续CLI cwd用外部证据根避免新产物落仓库。所有本批测试/构建句柄已结束，代理均释放。更早21:41 PID表仅历史线索，实时核归属后再接管。
 
-现在核实际HEAD/index/diff、8ed50616/9a9843d2报告；当前N3a导出已提交且工作树干净，直接完成N3c运行/数据上下文和N3b严格检视，再N3d–f完整安装主线，随后N4–N8。不要从旧冻结SHA回滚当前树，不重做导出，不停在反复写计划。
+现在核实际HEAD/index/diff、8ed50616/9a9843d2报告及N3c在途所有权；当前N3a已提交，N3c工作树有改动。继续完成配置导入、清单/收集器与真实导出消费者，再接N3b检视和N3d–f完整安装主线，随后N4–N8。实际截图仍可见刻度边缘裁切，原SVG/最终产物对照与旧SVG图例不联动都保留验收。不要从旧冻结SHA回滚当前树，不重做导出，不停在反复写计划。
 ```
