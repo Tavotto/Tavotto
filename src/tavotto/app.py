@@ -15965,12 +15965,18 @@ def _revision_conflict(base_revision: str, current: str | None) -> bool:
 def api_autosave_put(doc_id):
     body = _validate_storage_document(request.get_json(force=True), require_sources=False)
     has_project_file_edit = "project_file_edit" in request.args
+    has_project_file_recovery = "project_file_recovery" in request.args
     project_file_edit = None
+    project_file_recovery = None
+    if has_project_file_recovery and not has_project_file_edit:
+        return _bad_project_file_request()
     if has_project_file_edit:
         if not engine_layoutsession.valid_doc_id(doc_id):
             return _bad_project_file_request()
         try:
             project_file_edit = json.loads(request.args["project_file_edit"])
+            if has_project_file_recovery:
+                project_file_recovery = json.loads(request.args["project_file_recovery"])
         except (ValueError, RecursionError):
             return _bad_project_file_request()
     p = _autosave_path(doc_id)
@@ -16009,7 +16015,11 @@ def api_autosave_put(doc_id):
                 return _revision_unreadable()
         if has_project_file_edit:
             try:
-                engine_layoutsession.validate_project_file_edit(project_file_edit, current)
+                engine_layoutsession.validate_project_file_edit(
+                    project_file_edit,
+                    current,
+                    **({"recovery": project_file_recovery} if has_project_file_recovery else {}),
+                )
             except ValueError:
                 return _bad_project_file_request()
         if base_revision:
@@ -16029,12 +16039,17 @@ def api_autosave_put(doc_id):
         if has_project_file_edit:
             try:
                 project_file_owner = _layout_session_owner()
+                if has_project_file_recovery and not isinstance(project_file_owner, str):
+                    return _bad_project_file_request()
                 if isinstance(project_file_owner, str):
                     prepared = engine_layoutsession.prepare_project_file_edit(
                         doc_id,
                         project_file_owner,
                         project_file_edit,
                         actual_base_revision=current,
+                        **(
+                            {"recovery": project_file_recovery} if has_project_file_recovery else {}
+                        ),
                     )
                     if prepared["state"] != "accepted":
                         return jsonify(
@@ -16072,6 +16087,11 @@ def api_autosave_put(doc_id):
                     "actual_base_revision": current,
                     "project_file": project_file,
                     "owner": project_file_owner,
+                    **(
+                        {"project_file_recovery": project_file_recovery}
+                        if has_project_file_recovery
+                        else {}
+                    ),
                 }
                 if has_project_file_edit
                 else {}
@@ -16115,6 +16135,7 @@ def _commit_autosave_metadata(
     revision: str | None,
     *,
     project_file_edit: object = _PROJECT_FILE_UNSET,
+    project_file_recovery: object = _PROJECT_FILE_UNSET,
     actual_base_revision: object = _PROJECT_FILE_UNSET,
     project_file: dict | None = None,
     owner: object = _PROJECT_FILE_UNSET,
@@ -16141,6 +16162,11 @@ def _commit_autosave_metadata(
                 {
                     "project_file_edit": project_file_edit,
                     "actual_base_revision": actual_base_revision,
+                    **(
+                        {"project_file_recovery": project_file_recovery}
+                        if project_file_recovery is not _PROJECT_FILE_UNSET
+                        else {}
+                    ),
                 }
                 if project_file_edit is not _PROJECT_FILE_UNSET
                 else {}

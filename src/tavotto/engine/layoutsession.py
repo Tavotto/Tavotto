@@ -1003,6 +1003,20 @@ def _project_file_view(state: dict, key: str, doc_id: str) -> dict:
     return result
 
 
+def _actual_project_file_view(
+    state: dict, key: str, doc_id: str, actual_autosave_revision: object = _DROP
+) -> dict:
+    result = _project_file_view(state, key, doc_id)
+    if (
+        actual_autosave_revision is not _DROP
+        and actual_autosave_revision != result["edit"]["autosave_revision"]
+    ):
+        result["edit"]["known"] = False
+        if result["binding"] is not None:
+            result["binding"]["dirty"] = True
+    return result
+
+
 def read_project_file(key: str, doc_id: str, *, actual_autosave_revision: object = _DROP) -> dict:
     """只读当前项目/格式/工作副本的关联；不观察命名文件、不更新基线。"""
     _project_file_address(key, doc_id)
@@ -1012,18 +1026,21 @@ def read_project_file(key: str, doc_id: str, *, actual_autosave_revision: object
         state, status = _read()
         if status == STATUS_DEGRADED:
             return {"version": 1, "status": "unavailable"}
-        result = _project_file_view(state, key, doc_id)
-        if (
-            actual_autosave_revision is not _DROP
-            and actual_autosave_revision != result["edit"]["autosave_revision"]
-        ):
-            result["edit"]["known"] = False
-            if result["binding"] is not None:
-                result["binding"]["dirty"] = True
-        return result
+        return _actual_project_file_view(state, key, doc_id, actual_autosave_revision)
 
 
-def validate_project_file_edit(edit: object, actual_base_revision: object) -> None:
+def _project_file_json(value: object) -> str:
+    try:
+        return json.dumps(
+            value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+        )
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise ValueError("无效的项目文件恢复证据") from exc
+
+
+def validate_project_file_edit(
+    edit: object, actual_base_revision: object, *, recovery: object = _DROP
+) -> None:
     """用户编辑输入的唯一纯形状校验；无项目的保正文入口也消费本函数。"""
     if (
         not isinstance(edit, dict)
@@ -1034,14 +1051,47 @@ def validate_project_file_edit(edit: object, actual_base_revision: object) -> No
         or not _revision_value(actual_base_revision)
     ):
         raise ValueError("无效的项目文件用户编辑轴")
+    if recovery is not _DROP:
+        if (
+            not isinstance(recovery, dict)
+            or set(recovery) != {"revision", "expected"}
+            or not _revision_value(recovery["revision"])
+            or not isinstance(recovery["expected"], dict)
+        ):
+            raise ValueError("无效的项目文件恢复证据")
+        _project_file_json(recovery["expected"])
 
 
 def _prepare_project_file_edit(
-    state: dict, doc_id: str, key: str, edit: dict, actual_base_revision: str | None
+    state: dict,
+    doc_id: str,
+    key: str,
+    edit: dict,
+    actual_base_revision: str | None,
+    *,
+    recovery: object = _DROP,
 ) -> str:
     row = _project_file_row(state, key, doc_id)
     if edit["base_revision"] != actual_base_revision:
         return "superseded"
+    if recovery is not _DROP:
+        actual = _actual_project_file_view(state, key, doc_id, actual_base_revision)
+        if recovery["revision"] != actual_base_revision or _project_file_json(
+            recovery["expected"]
+        ) != _project_file_json(actual):
+            return "unconfirmed"
+        incoming = edit["axis"]
+        if (
+            incoming is None
+            or (row is not None and incoming == row["axis"])
+            or (
+                row is not None
+                and row["target"] is not None
+                and incoming == row["target"]["synced_axis"]
+            )
+        ):
+            return "superseded"
+        return "accepted"
     if row is None:
         return "accepted" if edit["base_axis"] is None else "unconfirmed"
     if not row["axis_known"] or row["working_revision"] != actual_base_revision:
@@ -1061,14 +1111,23 @@ def _prepare_project_file_edit(
 
 
 def prepare_project_file_edit(
-    doc_id: str, key: str, edit: object, *, actual_base_revision: str | None
+    doc_id: str,
+    key: str,
+    edit: object,
+    *,
+    actual_base_revision: str | None,
+    recovery: object = _DROP,
 ) -> dict:
     """调用方持槽位文档锁，写前用实际正文 revision 核轴；commit_slot 复用同一判据。"""
     _project_file_address(key, doc_id)
-    validate_project_file_edit(edit, actual_base_revision)
+    validate_project_file_edit(edit, actual_base_revision, recovery=recovery)
     with _LOCK:
         state, _status = _read()
-        return {"state": _prepare_project_file_edit(state, doc_id, key, edit, actual_base_revision)}
+        return {
+            "state": _prepare_project_file_edit(
+                state, doc_id, key, edit, actual_base_revision, recovery=recovery
+            )
+        }
 
 
 def reserve_project_file(
@@ -1515,6 +1574,7 @@ def commit_slot(
     *,
     project_file_edit: object = _DROP,
     actual_base_revision: object = _DROP,
+    project_file_recovery: object = _DROP,
 ) -> dict:
     """正文刚落盘成功的**同一个提交**：记归属、记归属对应的正文 revision、晋升匹配的 pending。
 
@@ -1528,11 +1588,17 @@ def commit_slot(
     `SessionStateUnavailable` / `AtomicWriteError`（都是 `OSError`）：元数据没提交，正文不受影响。
     """
     has_edit = project_file_edit is not _DROP
+    if project_file_recovery is not _DROP and not has_edit:
+        raise ValueError("项目文件恢复必须携带用户编辑轴")
     if has_edit:
-        validate_project_file_edit(project_file_edit, actual_base_revision)
+        validate_project_file_edit(
+            project_file_edit, actual_base_revision, recovery=project_file_recovery
+        )
         if not isinstance(revision, str) or not _revision_value(revision):
             raise ValueError("无效的自动保存 revision")
         if key is not None and key is not UNKNOWN:
+            _project_file_address(key, doc_id)
+        if project_file_recovery is not _DROP:
             _project_file_address(key, doc_id)
     if key is UNKNOWN or not valid_doc_id(doc_id) or not isinstance(revision, str) or not revision:
         return {"owner": "skipped", "promoted": False}
@@ -1543,7 +1609,12 @@ def commit_slot(
         if isinstance(key, str):
             if has_edit:
                 project_file_state = _prepare_project_file_edit(
-                    state, doc_id, key, project_file_edit, actual_base_revision
+                    state,
+                    doc_id,
+                    key,
+                    project_file_edit,
+                    actual_base_revision,
+                    recovery=project_file_recovery,
                 )
                 if project_file_state != "accepted":
                     return {

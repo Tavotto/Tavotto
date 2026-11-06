@@ -13,6 +13,8 @@ import pytest
 
 from tavotto.engine import atomicio, layoutsession as sessions
 
+_NO_RECOVERY = object()
+
 
 @pytest.fixture(autouse=True)
 def data_dir(tmp_path, monkeypatch):
@@ -51,11 +53,17 @@ def _edit(axis, base_axis, base_revision):
     return {"axis": axis, "base_axis": base_axis, "base_revision": base_revision}
 
 
-def _produce(path, body, edit, fmt="legacy", project="/p", doc="d"):
+def _produce(path, body, edit, fmt="legacy", project="/p", doc="d", *, recovery=_NO_RECOVERY):
     # Real bytes and existing atomic writer. app owns the surrounding document lock.
     actual = atomicio.existing_revision(path)
     prepared = _call(
-        fmt, "prepare_project_file_edit", doc, project, edit, actual_base_revision=actual
+        fmt,
+        "prepare_project_file_edit",
+        doc,
+        project,
+        edit,
+        actual_base_revision=actual,
+        **({"recovery": recovery} if recovery is not _NO_RECOVERY else {}),
     )
     if prepared["state"] != "accepted":
         return prepared
@@ -69,6 +77,7 @@ def _produce(path, body, edit, fmt="legacy", project="/p", doc="d"):
         revision,
         project_file_edit=edit,
         actual_base_revision=actual,
+        **({"project_file_recovery": recovery} if recovery is not _NO_RECOVERY else {}),
     )
     return {**result, "state": result["project_file"]["state"]}
 
@@ -816,3 +825,291 @@ def test_reserve_actual_mismatch_cannot_bypass_future_metadata_guard():
             actual_autosave_revision=_revision("mismatch"),
         )
     assert _bytes() == before
+
+
+def _recovery(path, *, fmt="legacy", project="/p", doc="d"):
+    actual = atomicio.existing_revision(path)
+    return {
+        "revision": actual,
+        "expected": _call(fmt, "read_project_file", project, doc, actual_autosave_revision=actual),
+    }
+
+
+@pytest.mark.parametrize("fmt", ["legacy", "v4"])
+@pytest.mark.parametrize("mode", ["external", "old_client", "other_editor", "missing_body"])
+def test_explicit_recovery_commits_fresh_branch_only_after_body_and_keeps_named_baseline(
+    tmp_path, fmt, mode
+):
+    path = tmp_path / "working.json"
+    _produce(path, "A1", _edit(_axis(), None, None), fmt=fmt)
+    original = _bind(fmt=fmt)
+    target = copy.deepcopy(
+        _state()[sessions.PROJECT_FILES_KEY]["projects"]["/p"][fmt]["d"]["target"]
+    )
+    if mode == "external":
+        path.write_bytes(b"external document")
+    elif mode == "old_client":
+        atomicio.write_bytes(path, b"old client document")
+        _call(fmt, "commit_slot", "d", "/p", atomicio.existing_revision(path))
+    elif mode == "other_editor":
+        _produce(
+            path, "B1", _edit(_axis("editor_B"), _axis(), atomicio.existing_revision(path)), fmt=fmt
+        )
+    else:
+        path.unlink()
+    proof = _recovery(path, fmt=fmt)
+    preserved = path.read_bytes() if path.exists() else None
+    before = _bytes()
+    incoming = _axis("explicit_branch")
+    edit = _edit(incoming, None, proof["revision"])
+    assert _call(
+        fmt,
+        "prepare_project_file_edit",
+        "d",
+        "/p",
+        edit,
+        actual_base_revision=proof["revision"],
+        recovery=proof,
+    ) == {"state": "accepted"}
+    assert _bytes() == before
+    assert (path.read_bytes() if path.exists() else None) == preserved
+    immutable_proof = copy.deepcopy(proof)
+    outcome = _produce(path, "user explicitly selected body", edit, fmt=fmt, recovery=proof)
+    assert outcome["state"] == "accepted"
+    assert proof == immutable_proof
+    current = _read(fmt)
+    assert current["edit"] == {
+        "autosave_revision": atomicio.existing_revision(path),
+        "axis": incoming,
+        "known": True,
+    }
+    assert current["binding"] == {**original, "dirty": True}
+    row = _state()[sessions.PROJECT_FILES_KEY]["projects"]["/p"][fmt]["d"]
+    assert row["target"] == target
+    assert current["intent_sequence"] == proof["expected"]["intent_sequence"]
+    assert (
+        _produce(
+            path,
+            "continued user edit",
+            _edit(_axis("explicit_branch", 2), incoming, atomicio.existing_revision(path)),
+            fmt=fmt,
+        )["state"]
+        == "accepted"
+    )
+
+
+def test_recovery_captured_actual_revision_cannot_be_refreshed_by_queued_body(tmp_path):
+    path = tmp_path / "working.json"
+    _produce(path, "A1", _edit(_axis(), None, None))
+    _bind()
+    proof = _recovery(path)
+    path.write_bytes(b"external B after decision")
+    actual = atomicio.existing_revision(path)
+    before = path.read_bytes(), _bytes()
+    # Even rebasing only the transport revision cannot refresh the frozen user decision.
+    response = _produce(
+        path, "stale selected A", _edit(_axis("recovery"), None, actual), recovery=proof
+    )
+    assert response["state"] == "unconfirmed"
+    assert (path.read_bytes(), _bytes()) == before
+
+
+@pytest.mark.parametrize("change", ["reserve", "named_ABA", "axis", "owner"])
+def test_recovery_full_observed_view_CAS_rejects_metadata_change_before_body(tmp_path, change):
+    path = tmp_path / "working.json"
+    _produce(path, "A1", _edit(_axis(), None, None))
+    original = _bind()
+    proof = _recovery(path)
+    if change == "reserve":
+        _reserve("B", expected=original["sequence"])
+    elif change == "named_ABA":
+        b = _bind("B", expected=original["sequence"])
+        _bind("A", expected=b["sequence"])
+    elif change == "axis":
+        edit = _edit(_axis("peer"), _axis(), atomicio.existing_revision(path))
+        _produce(path, "A1", edit)  # Same body/revision, different actual user axis.
+    else:
+        sessions.record_owner("d", "/another", atomicio.existing_revision(path))
+    before = path.read_bytes(), _bytes()
+    outcome = _produce(
+        path,
+        "old selected body",
+        _edit(_axis("recovery"), None, atomicio.existing_revision(path)),
+        recovery=proof,
+    )
+    assert outcome["state"] == "unconfirmed"
+    assert (path.read_bytes(), _bytes()) == before
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("version", True),
+        ("version", 1.0),
+        ("intent_sequence", True),
+        ("edit.known", 1),
+        ("binding.dirty", 0),
+        ("extra", "future"),
+    ],
+)
+def test_recovery_expected_view_uses_strict_JSON_types_and_closed_actual_view(
+    tmp_path, field, value
+):
+    path = tmp_path / "working.json"
+    _produce(path, "A1", _edit(_axis(), None, None))
+    _bind()
+    proof = _recovery(path)
+    parent = proof["expected"]
+    keys = field.split(".")
+    for key in keys[:-1]:
+        parent = parent[key]
+    parent[keys[-1]] = value
+    before = path.read_bytes(), _bytes()
+    response = _produce(
+        path,
+        "must stay unwritten",
+        _edit(_axis("recovery"), None, proof["revision"]),
+        recovery=proof,
+    )
+    assert response["state"] == "unconfirmed"
+    assert (path.read_bytes(), _bytes()) == before
+
+
+@pytest.mark.parametrize("incoming", [None, _axis(), _axis("peer")])
+def test_recovery_requires_new_branch_distinct_from_current_and_named_synced_axis(
+    tmp_path, incoming
+):
+    path = tmp_path / "working.json"
+    _produce(path, "A1", _edit(_axis(), None, None))
+    _bind()
+    _produce(path, "B1", _edit(_axis("peer"), _axis(), atomicio.existing_revision(path)))
+    proof = _recovery(path)
+    before = path.read_bytes(), _bytes()
+    response = _produce(
+        path, "must stay unwritten", _edit(incoming, None, proof["revision"]), recovery=proof
+    )
+    assert response["state"] == "superseded"
+    assert (path.read_bytes(), _bytes()) == before
+
+
+@pytest.mark.parametrize(
+    "proof",
+    [
+        None,
+        {},
+        {"revision": None},
+        {"revision": None, "expected": {}, "extra": 1},
+        {"revision": "bad", "expected": {}},
+        {"revision": True, "expected": {}},
+        {"revision": None, "expected": None},
+        {"revision": None, "expected": []},
+        {"revision": None, "expected": {"number": float("nan")}},
+    ],
+)
+def test_recovery_invalid_closed_or_nonfinite_evidence_fails_before_io(proof):
+    with pytest.raises(ValueError):
+        sessions.validate_project_file_edit(
+            _edit(_axis("recovery"), None, None), None, recovery=proof
+        )
+    assert not sessions.state_path().exists()
+    assert not sessions.backup_path().exists()
+
+
+@pytest.mark.parametrize("key", [None, sessions.UNKNOWN])
+def test_recovery_commit_requires_edit_and_explicit_project_before_io(key):
+    proof = {"revision": None, "expected": {}}
+    with pytest.raises(ValueError):
+        sessions.commit_slot("d", "/p", _revision("saved"), project_file_recovery=proof)
+    with pytest.raises(ValueError):
+        sessions.commit_slot(
+            "d",
+            key,
+            _revision("saved"),
+            project_file_edit=_edit(_axis("recovery"), None, None),
+            actual_base_revision=None,
+            project_file_recovery=proof,
+        )
+    assert not sessions.state_path().exists()
+
+
+def test_recovery_future_metadata_refused_even_with_otherwise_matching_proof(tmp_path):
+    path = tmp_path / "working.json"
+    _produce(path, "A1", _edit(_axis(), None, None))
+    _bind()
+    proof = _recovery(path)
+    future = _state()
+    future[sessions.PROJECT_FILES_KEY]["version"] = 2
+    atomicio.write_json(sessions.state_path(), future)
+    before = path.read_bytes(), _bytes()
+    with pytest.raises(sessions.SessionStateUnavailable):
+        _produce(path, "blocked", _edit(_axis("recovery"), None, proof["revision"]), recovery=proof)
+    assert (path.read_bytes(), _bytes()) == before
+
+
+def test_recovery_commit_rechecks_same_full_view_and_does_not_wash_late_named_target(tmp_path):
+    path = tmp_path / "working.json"
+    _produce(path, "A1", _edit(_axis(), None, None))
+    a = _bind()
+    proof = _recovery(path)
+    edit = _edit(_axis("recovery"), None, proof["revision"])
+    assert (
+        sessions.prepare_project_file_edit(
+            "d", "/p", edit, actual_base_revision=proof["revision"], recovery=proof
+        )["state"]
+        == "accepted"
+    )
+    # named save uses a different document lock; its real metadata receipt can arrive in between.
+    b = _bind("B", expected=a["sequence"])
+    before = _bytes()
+    atomicio.write_bytes(path, b"body really saved before metadata receipt")
+    result = sessions.commit_slot(
+        "d",
+        "/p",
+        atomicio.existing_revision(path),
+        project_file_edit=edit,
+        actual_base_revision=proof["revision"],
+        project_file_recovery=proof,
+    )
+    assert result == {
+        "owner": "skipped",
+        "promoted": False,
+        "project_file": {"state": "unconfirmed"},
+    }
+    assert _bytes() == before
+    assert _read()["binding"] == b
+    assert path.read_bytes() == b"body really saved before metadata receipt"
+    observed = sessions.read_project_file(
+        "/p", "d", actual_autosave_revision=atomicio.existing_revision(path)
+    )
+    assert observed["edit"]["known"] is False and observed["binding"]["dirty"] is True
+
+
+@pytest.mark.parametrize("later_other_address", [False, True])
+def test_recovery_retains_normal_same_doc_pending_promotion_without_new_or_reordered_intent(
+    tmp_path, later_other_address
+):
+    path = tmp_path / "working.json"
+    _produce(path, "A1", _edit(_axis(), None, None))
+    _bind()
+    _call("v4", "set_last", "/p", "v4", "V4")
+    sessions.set_last("/p", "d", "D", slot_ok=False)
+    if later_other_address:
+        sessions.set_last("/p", "other", "Other", slot_ok=False)
+    before = sessions.view_for("/p", include_open_intent=True)["open_intent"]
+    proof = _recovery(path)
+    assert (
+        _produce(
+            path,
+            "explicit chosen",
+            _edit(_axis("recovery"), None, proof["revision"]),
+            recovery=proof,
+        )["state"]
+        == "accepted"
+    )
+    after = sessions.view_for("/p", include_open_intent=True)["open_intent"]
+    assert after["sequence"] == before["sequence"]
+    assert after["latest"] == {
+        "document_format": "legacy",
+        "doc_id": "other" if later_other_address else "d",
+        "pointer": "pending" if later_other_address else "last",
+    }
