@@ -2,16 +2,16 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-06 实施接续）：首次绑定已修复，真实浏览器完成两系列预览、确认和键盘撤销重做；受影响前端 194 项通过。真实导出请求、SVG→IR 保真、自包含恢复及 manifest/图内编辑继续推进，M1 尚未完成。**
+> **当前结论（2026-11-06，复核 cbd8d95e）：首次绑定交互和撤销重做已接通；当前提交的前端 194 项及正式构建复跑通过。但真实两轴绑定的最终 SVG 被后绘制的白底遮住全部曲线，属于 P1 错图；真实导出漏 chart、转换器四类错误及自包含重导入失败也仍存在。M1 未完成，下一项先修最终画面的组合层级。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 
 ## 环境（2026-11-06 当前快照）
 
-- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`，复核 HEAD=`7801e017dc925410de10dfa40582ad356890622d`，开始时 clean；按用户指示复用当前分支，不新建或切换分支/工作树。
-- 相对 3f31f4e1 新增 14 commits；上次 PanelView 未提交草稿已在 18907d65 提交，不再作为未提交项。
-- 本次 fetch exit 0，origin/main 仍为 2bc94f7fd9b13276f92d100fcd1b0e7075f49a93；旧 main 和其他树保持原状态。
+- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`，本轮复核代码 HEAD=`cbd8d95e663960b4a5c6325133698358a2c09dd3`，开始时 clean；按用户指示复用当前分支，不新建或切换分支/工作树。`E:/0 - Project/Tavotto` 仍是旧 main，不是本次实现所在目录。
+- 相对 3f31f4e1 新增 16 commits；最新功能提交 cbd8d95e 修复绑定交互和请求生命周期，保留全部已有实现。
+- 本轮只读取本地 origin/main=2bc94f7fd9b13276f92d100fcd1b0e7075f49a93；本日较早 fetch 已成功，本轮没有再次联网，不把缓存引用作为再次核验远端的证据。旧 main 和其他树保持原状态。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
-- 本轮真实浏览器任务会话和两个本机回环测试服务已清理；未启动通宵实现或定时任务。历史“后台 sweep 正在跑”本轮未取得完成日志，不当作现行运行状态。
+- 本轮状态复核使用的独立探针和浏览器证据见 `status-cbd8d95e/`；未启动通宵调度器。历史“后台 sweep 正在跑”没有本轮完成日志，不当作现行运行状态；服务清理状态见最新 checkpoint。
 - 最新 NEXT_PHASE 和提示词直接在当前实施分支维护；不再依赖历史 review 文档分支才能取得新计划。
 
 ## 批次状态（2026-11-06 复核后；按完整退出条件）
@@ -19,28 +19,38 @@
 | 批次 | 状态 | commits | 证据 |
 | --- | --- | --- | --- |
 | SG00 | baseline_recorded | a046b799（计划）、9a271f9f | 能力清单和历史基线已有；远端新鲜度及最终候选回归需补证 |
-| SG01 | reopened | 见历史 SG01 提交 | 最终组合反例否定部分保真假设；并发/导出实验及 ADR 0166 边界需复核 |
+| SG01 | reopened | 见历史 SG01 提交 | 两轴绑定被白底遮住，最终画面反例继续否定部分保真假设；并发/导出实验及 ADR 0166 边界需复核 |
 | SG02 | partial | ac060053 | 基础模型/绑定身份已补修；持久化来源/资源、实际环境与元数据恢复合同未闭合 |
 | SG03 | core_partial | f1406038+fmt | 场景盘点与 inspect 已有；资源生命周期及所有入口未接通 |
 | SG04 | core_partial | d0c0d898 | 采用判定 helper 已有；生产来源采用、语义元数据往返未接通 |
 | SG05 | core_partial | 451d8490、4c2ca1f2 | px/非零 viewBox/父空间基础回归已有；精确命中/文字/分组交互未完成 |
-| SG06 | core_partial | 133d2bf7 | 数据与绑定构造已有；真浏览器向导、多系列及独立轴表单未完成 |
+| SG06 | interaction_verified / visual_failed | 133d2bf7、cbd8d95e | 两系列/独立轴表单、预览/确认/撤销已接通；两轴绑定最终曲线被遮住，完整对照和模型可见内容验收未通过 |
 | SG07 | core_partial | 4c2ca1f2 | 基础计算回归通过；真实绑定/图内编辑/M1 未完成 |
 | SG08 | partial | 4c2ca1f2 | bar 附属误差基础修复已有；完整族与 UI/导出追验待补 |
 | SG09 | partial | ac060053 | 色条基础所有权/镜像已修；复杂族和导出图像资源未验收 |
-| SG10 | partial | f76b0610、18907d65 + 本轮绑定修复 | 真实两系列绑定/预览/确认/撤销已通过；manifest/命中和图内编辑继续推进 |
+| SG10 | partial | f76b0610、18907d65、cbd8d95e | 真实两系列交互/确认/撤销通过；最终画面不正确，manifest/命中和图内编辑待补 |
 | SG11–SG17 | partial / pending | e09b724b、484b29fb、f7d39126 | 导出和元数据仅部分接线，真实冷恢复、写回、入口/平台与完整回归待补 |
 | R00 | baseline_and_regressions | 5a4f5c2c | 基础反例保留；本轮用户流程和导出反例待随修复入库 |
-| R01/R02 | core_partial | 451d8490、4c2ca1f2 | 既有基础回归通过；最终资格仍需真实 UI/导出和资源语义追验 |
+| R01/R02 | reopened / visual_failed | 451d8490、4c2ca1f2 | 原基础回归通过；本轮复现真实双轴所有权触发白底覆盖系列，优先修复绘制层级 |
 | R03 | partial | fa68fe38、ac060053 | 来源快照与绑定身份已有；实际环境/资源与冻结产物合同待补 |
-| R04 | core_partial | a8a088cf、18907d65 | store 基础修复通过；真实 Dialog 未发起绑定，项目生命周期未闭合 |
+| R04 | affected_checks_passed | a8a088cf、18907d65、cbd8d95e | 请求序号/表单/项目切换、late response 和单项 drop 均有受影响测试；Dialog 已可发起真实绑定；完整编辑器生命周期在 R06 追验 |
 | R05 | tests_only / partial | 722ad27c | JSON 往返测试已有，真实新进程/资源包/迁移恢复待实现 |
-| R06 | partial / binding_verified | 本轮功能提交 | 多系列/轴区/类型/误差/网格控件与首次预览接通；精确命中/编辑闭环继续推进 |
+| R06 | interaction_verified / visual_failed | cbd8d95e | 多系列/轴区/类型/误差/网格控件与首次预览接通；确认/撤销可操作；最终曲线可见性失败，精确命中/编辑闭环待补 |
 | R07 | partial / correctness_failed | e09b724b、484b29fb | 真实请求漏 chart；SVG→IR 四类错图已复现；EPS 未实现 |
 | R08 | metadata_only | f7d39126 | 导出嵌入元数据，但用导出文件重算 source_mismatch；A/C 生产导入未完成 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-06 当前执行效果复核：cbd8d95e
+
+- 本轮是状态核对、最终产物反证和下一阶段安排；没有修改产品源码。开始时 r00 当前分支 clean，代码快照 cbd8d95e；main@69bcafae 和其他工作树未改。
+- 当前提交复跑：8 个前端文件 194 passed，Vitest exit 0；tsc -b、vite build、tailwind-scan-check 各 exit 0。日志在 `E:/0 - Project/svg-review-20261106/status-cbd8d95e/frontend.log` 与 `build.log`。此前 135 项后端结果对应 7801e017，本轮未重跑全套后端或全量旧功能，不将其冒充当前完整资格。
+- 检查真实预览截图后，使用与 UI 一致的两个系列及两个 axes_nodes，通过真实 bind/compute 重现：两接口均 200、series_count=2，但最终轴子节点绘制顺序是 series:s1 → series:s2 → 白底 patch_2__c1。Chromium 渲染确认两曲线全部被遮住。证据为本轮子目录的 binding_visibility_probe.py、binding-visibility.json、binding-with-axes.svg，以及证据根 `output/playwright/chart-binding-curves-hidden-cbd8d95e.png`。该探针 exit 0 只表示成功记录到缺陷，不表示产品通过。
+- 源码定位：svgcompose 在删除轴节点前保存插入序号；删除改变了子节点位置，之后将包含未标角色的白底在内的 axis_furniture 按旧序号插入系列之后。下一批要建立背景/网格/系列/轴标记的明确层级，使用稳定锚点，并覆盖节点删除、层序与多系列组合，不能只修这张 fixture 的索引。
+- 当前代码仍没有在真实 original/canvas 导出载荷里传 chart；本轮重跑 output_probe.py，转换器四类反例及用导出 SVG 重算的 422 chart_source_mismatch 均仍复现。详细结果在本轮子目录 output-observations.json。当前 SVG 导出能生成文件不等于保真或可继续计算。
+- 当前排队：组合层级 → 真实导出与版本冻结 → SVG→IR 保真 → 完整资源/冷恢复及自包含 → manifest/现有属性编辑 → M1 产品 E2E → 剩余族/A/C/写回/入口及最终资格。NEXT_PHASE 和提示词同步，不从旧版“首次 Dialog 无动作”重新做起。
+- 文档引用/规则索引 41 passed、0 failed/0 skipped，pytest exit 0，报告为本轮子目录 docs.xml；git diff --check exit 0。本轮专用 Chromium 会话 tavotto-svg-status 已关闭，临时静态服务端口 15975 已无监听；此前 15973/15974 亦未监听，没有重复启动或终止其他应用服务。未启动整夜执行/定时任务，原功能不受影响仍待最终完整回归证明。
 
 ### 2026-11-06 实施：真实绑定交互与请求生命周期
 
