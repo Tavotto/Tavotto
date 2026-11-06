@@ -2,16 +2,16 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-07 正式输入冷存收口）：最新功能HEAD=a5305ddb。97e75d41会话封存已沿同一声明/受检流权威接入项目svgstore；可选metadata v2绑定原graph/原字节，旧refs/marker/v1字节保持。真实删源/清捕获缓存/新父进程、历史GC、容量/故障/强退恢复及3.10存储入口已验。app热保存/冷暂存仍未转发附件，execution v2完整包、声明UI、安全安装/迁移、图例/裁切/复杂几何及最终资格仍缺，M1/M2/M3未通过。旧扩大集成的2个基线Win1314失败未解决，不报告全分支全绿。**
+> **当前结论（2026-11-07 应用保存与冷暂存收口）：最新功能HEAD=f79771c3。97e75d41会话封存、a5305ddb正式冷存现已接入真实应用保存/绑定及冷打包暂存。实际safe/native捕获保存，删测试原输入及捕获缓存后新父进程仍能入包原graph/原字节、执行计数保持1；旧v1整份暂存ZIP对拍保持。当前execution仍v1，完整资源包/声明UI/安全安装迁移、图例/裁切/复杂几何与最终资格未完成，M1/M2/M3未通过。两个既有基线Win1314失败保留，不报告全分支全绿。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 
 ## 环境（2026-11-07 当前快照）
 
-- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；最新功能HEAD=`a5305ddb`，前项`97e75d41`及`d8416d4e/3c64195b/11c67ab1/b5f9f557/5e000c6f`。会话封存与正式冷存分别功能commit，稳定文档另提交；各源码子任务已释放。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入成果，不能在原目录启动旧版本判断新功能。
+- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；最新功能HEAD=`f79771c3`，前项`a5305ddb/97e75d41`及`d8416d4e/3c64195b/11c67ab1/b5f9f557/5e000c6f`。会话封存、正式冷存、应用保存/冷暂存分别功能commit，稳定文档另提交；各源码子任务已释放。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入成果，不能在原目录启动旧版本判断新功能。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
-- 最新冻结索引`n3c3b2-stage-final.json`记录9文件SHA；此前`n3c3b-stage-final.json`保留15文件SHA、原始JUnit、审查及阶段差异；此前native/preparation/capture索引保留。既有UI资格见`n3c-real-ui-correct-kind-qualification.json`、`n3c-frame-ui-qualification.json`；本轮没有新增声明UI/浏览器验收，旧裁切/图例缺陷未修。未启动通宵调度器，历史后台状态须重新核实。
+- 最新冻结索引`n3c3b3-stage-final.json`记录7份功能文件SHA、25/9/8专项及95应用回归、41文档检查；上一项`n3c3b2-stage-final.json`保留9文件SHA；此前`n3c3b-stage-final.json`保留15文件SHA、原始JUnit、审查及阶段差异；此前native/preparation/capture索引保留。既有UI资格见`n3c-real-ui-correct-kind-qualification.json`、`n3c-frame-ui-qualification.json`；本轮没有新增声明UI/浏览器验收，旧裁切/图例缺陷未修。未启动通宵调度器，历史后台状态须重新核实。
 - 最新 NEXT_PHASE 和提示词直接在当前实施分支维护；不再依赖历史 review 文档分支才能取得新计划。
 
 ## 批次状态（2026-11-07 复核后；按完整退出条件）
@@ -34,13 +34,20 @@
 | R01/R02 | core_partial / multi_target_verified | 3236307c、8e6c399a | 跨父/split/errorbar/colorbar共同目标与预览通过；任意clip、欠定成员paint slots和图例仍缺 |
 | R03 | runner_and_source_consumers_integrated | 029dfac2、242cabc0、c2fd47d5、5b2b1403、2452d8fc | 受控runner与精确INPUT附件接真实API/UI/导出；不宣称全产品总进程cap或最终资格 |
 | R04 | affected_checks_passed | a8a088cf、18907d65、cbd8d95e | 请求序号/表单/项目切换、late response 和单项 drop 均有受影响测试；Dialog 已可发起真实绑定；完整编辑器生命周期在 R06 追验 |
-| R05 | binding_and_recovery_ui_verified / package_inspection_verified / execution_capture_archive_verified / durable_input_archive_verified / installation_pending | 5abb9a7d、95684f89、264ce59c、a7008840、d7b6eef9、d7a73ce1、ffe2fb32、c40805bf、e468d516、336783bf、71e637c8、206a1c34、9a9843d2、8ed50616、75b09b57、be84ba33、13720bc4、1795f244、d1389db6、5e000c6f、b5f9f557、11c67ab1、3c64195b、d8416d4e、97e75d41 | 保存/恢复、v4导出/检视、三执行入口捕获/准备核验、会话封存及a5305ddb正式冷存API已验；app保存/暂存、完整资源入包、安装API/UI仍缺 |
+| R05 | binding_and_recovery_ui_verified / package_inspection_verified / execution_capture_archive_verified / durable_input_archive_verified / application_input_staging_verified / installation_pending | 5abb9a7d、95684f89、264ce59c、a7008840、d7b6eef9、d7a73ce1、ffe2fb32、c40805bf、e468d516、336783bf、71e637c8、206a1c34、9a9843d2、8ed50616、75b09b57、be84ba33、13720bc4、1795f244、d1389db6、5e000c6f、b5f9f557、11c67ab1、3c64195b、d8416d4e、97e75d41、a5305ddb、f79771c3 | 保存/恢复、v4导出/检视、三执行入口捕获/准备核验、会话封存/正式冷存及应用热保存/冷暂存已验；版本化完整资源包、声明UI、引用迁移、安装API/UI仍缺 |
 | R06 | product_editing_and_cold_restore_verified / partial | 242cabc0、53393810、8e6c399a、264ce59c | 冷开后Inspector编辑、undo/redo和exact显示已验；图例、完整操作及复杂几何仍缺 |
 | R07 | partial / original_five_formats_ui_verified | 5bc82a81、c2fd47d5、2a40fec9、c9fa29a4、8fa84f5d、a06cc3d3 | 原图五格式真实UI及独立产物已验，EPS接线已提交；分享与完整双系列M1未完成 |
 | R08 | full_edit_restore_verified / partial | cae96f89、029dfac2、53393810 | 生产v2导出与真UI完整编辑恢复通过；A采用、分享选择和正式项目迁移待补 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-07 应用保存与冷暂存收口、执行效果复核
+
+- `f79771c3`提交7文件：app实际receipt私有附件→同一保存函数，覆盖执行源/自动捕获/已核PDF与独立SVG绑定；正式load/load_snapshot→冷staging完整转发。FrozenSource/public receipt、无附件下游调用不扩；同receipt旧v1不会挡住真实附件生成独立v2 ref，旧归档不补签。原分支/实施树不变，原main仍clean 69bcafae，无新分支/远程操作。
+- 新handoff25、冷staging9、实际safe/native应用E2E8各自通过/0skip/exit0；根最终同一命令95项应用回归通过/0skip/exit0（export SVG、执行生命周期、chart/旧包HTTP）。真实测试只执行一次用户脚本，删自有原输入与捕获cache后由新父进程实际HTTP生成ZIP，原graph/所有blob保留；这不是v2执行manifest、安装或冷重执行资格。旧16e91d5b函数生成的完整v1暂存ZIP在固定时钟/平台permission后SHA相同。
+- 全仓Ruff/format1466文件、diff均exit0，规则/文档41项通过/0skip。handoff两条、cold一条、真实E2E两条内存AST反证均在目标断言实际exit1，磁盘源码零漂移。首轮handoff9个新夹具失败及E2E8个计数/registry生命周期前置错误完整保留，只修新增夹具，未放宽生产资格。最终SHA、JUnit和报告见`n3c3b3-stage-final.json`；各组不累计成全项目总数，既有Win权限红灯未解决。
+- 本轮再次查看00:01真实浏览器旧图幅截图：曲线可见，数字与上缘文字仍裁切；没有新建声明UI或浏览器/build资格，图例不联动未修。用户最近交付目标仍是新目录实际恢复编辑；下一首项3b-4要把原附件接到显式execution v2、正式v4导出/检视，随后声明UI→精确引用迁移→独占安装/原writer采用/删源冷开整链。详细批次、退出条件和接续提示词已同步稳定文档，M1/M2/M3未通过，goal active。
 
 ### 2026-11-07 正式输入冷存与强退恢复提交
 
