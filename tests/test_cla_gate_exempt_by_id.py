@@ -37,6 +37,7 @@ def _service_policy(*, ids: bool = True) -> dict:
     p = json.loads((ROOT / ".github" / "cla-policy.json").read_text(encoding="utf-8"))
     p = copy.deepcopy(p)
     p["offline_signatures"] = []
+    p["authority_origin"] = "https://cla.example.com"
     p["provider"] = {
         "configured": True,
         "protocol": "tavotto-cla-v1",

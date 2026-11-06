@@ -35,6 +35,8 @@
   要求服务在候选提交上给出新鲜凭证。**这一格必须是成功而不是 skipped**——
   `aggregate_gate.py --mode fast` 把 skipped 一律当失败，这个 job 在
   merge_group 上被跳过会把整个 `CI fast gate` 卡死（tests/ 里有专门的用例钉它）。
+* 服务模式下有外部贡献者时，判定来自服务的实时回答（ADR 0172，`--eligibility-json`）：
+  问不到、超时、回答对不上这次判定，一律不算过。这个脚本自己不联网。
 * 服务模式（provider.protocol = tavotto-cla-v1）下 login 命中豁免**不算**身份证明；
   只有可信来源给出的账号 id 全部等于豁免条目的 `github_id` 才本地放行
   （`_id_exempt`），否则一律要服务凭证。服务模式下每条豁免都必须写 `github_id`。
@@ -116,6 +118,12 @@ OFFLINE_SIGNATURE_KEYS = (
 )
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+#: 服务的固定地址（ADR 0172）。只认 https 根地址：不带路径、端口、账号、查询串。
+AUTHORITY_ORIGIN_RE = re.compile(r"^https://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
+SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+#: 服务时钟与 runner 时钟允许的偏差（秒）。
+ELIGIBILITY_SKEW_SECONDS = 5
 
 #: 草案后缀。带它的版本不可签署，因此也不允许把 provider 标成已配置。
 DRAFT_SUFFIX = "-draft"
@@ -252,7 +260,14 @@ def validate_policy(policy: dict) -> None:
                 raise ConfigError(f"cla-policy.exemptions 里账号 id {gid} 重复")
             seen_ids.add(gid)
     _validate_provider(policy)
+    origin = policy.get("authority_origin")
+    if origin is not None and not (isinstance(origin, str) and AUTHORITY_ORIGIN_RE.match(origin)):
+        raise ConfigError("cla-policy.authority_origin 必须是 https 根地址（不带路径、端口、账号）")
     if _service_mode(policy):
+        if origin is None:
+            raise ConfigError(
+                "provider 走 tavotto-cla-v1 时必须写 `authority_origin`（服务的固定地址）"
+            )
         # 服务模式下本地放行只认不可变账号 id（见 _id_exempt），每条豁免都要写明。
         missing = [ex["login"] for ex in policy["exemptions"] if "github_id" not in ex]
         if missing:
@@ -566,6 +581,8 @@ def signed_logins(
     prov = policy["provider"]
     if not prov["configured"]:
         return set(), "provider_not_configured"
+    if context and context.get("eligibility") is not None and _service_mode(policy):
+        return _eligibility_verdict(policy, context)
     if provider_checks is None:
         return set(), "provider_checks_unavailable"
     want, want_slug, want_id = prov["check_name"], prov["app_slug"], prov["app_id"]
@@ -591,6 +608,95 @@ def signed_logins(
     if impostor:
         return set(), "provider_check_wrong_app"
     return set(), "provider_check_missing"
+
+
+def _policy_digest(policy: dict) -> str:
+    trusted = {k: policy[k] for k in ("agreements", "exemptions")}
+    raw = json.dumps(trusted, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _eligibility_verdict(policy: dict, context: dict) -> tuple[set[str], str | None]:
+    """校验服务的实时判定回答（ADR 0172）。
+
+    回答来自网络、由 cla_eligibility_fetch.py 落盘，这里按不可信输入逐字段核对：
+    字段集合恰好相符，仓库、PR 或合并组、head、策略摘要与本次判定一致，nonce 是这次
+    校验生成的（存下来的旧回答不能重放），时间落在这次校验之内，贡献者覆盖这里看到的
+    每一个人。任何一处不符都不算过；`eligible` 只有是 `True` 才算过。
+    """
+    answer, group = context["eligibility"], context.get("kind") == "merge_group"
+    if isinstance(answer, dict) and set(answer) == {"error"}:
+        code = answer["error"]
+        code = code if isinstance(code, str) and re.fullmatch(r"[a-z_]{1,64}", code) else "unknown"
+        return set(), f"provider_eligibility_unavailable:{code}"
+    binding = ("base_sha",) if group else ("pr",)
+    if any(
+        context.get(k) is None
+        for k in binding + ("head_sha", "repository_id", "not_before", "now", "nonce")
+    ):
+        return set(), "provider_verification_context_missing"
+    fields = {
+        "protocol",
+        "repository_id",
+        "kind",
+        "head_sha",
+        "base_sha",
+        "policy_sha256",
+        "contributors",
+        "revision",
+        "observed_at",
+        "nonce",
+        "eligible",
+        "members" if group else "pr",
+    }
+    try:
+        if not isinstance(answer, dict) or set(answer) != fields:
+            raise ValueError("fields")
+        if answer["protocol"] != "cla-eligibility-v1":
+            raise ValueError("protocol")
+        if answer["kind"] != ("merge_group" if group else "pr"):
+            raise ValueError("kind")
+        for key in binding + ("head_sha", "repository_id", "nonce"):
+            if answer[key] != context[key] or type(answer[key]) is not type(context[key]):
+                raise ValueError("binding")
+        if not isinstance(answer["base_sha"], str) or not SHA_RE.match(answer["base_sha"]):
+            raise ValueError("base")
+        if group and not (isinstance(answer["members"], list) and answer["members"]):
+            raise ValueError("members")
+        if answer["policy_sha256"] != _policy_digest(policy):
+            raise ValueError("policy")
+        if type(answer["eligible"]) is not bool:
+            raise ValueError("eligible")
+        if type(answer["revision"]) is not int or answer["revision"] < 0:
+            raise ValueError("revision")
+        observed = answer["observed_at"]
+        if (
+            type(observed) is not int
+            or observed < context["not_before"] - ELIGIBILITY_SKEW_SECONDS
+            or observed > context["now"] + ELIGIBILITY_SKEW_SECONDS
+        ):
+            raise ValueError("freshness")
+        people = answer["contributors"]
+        if not isinstance(people, list) or not people:
+            raise ValueError("contributors")
+        ids, logins = set(), set()
+        for person in people:
+            if not isinstance(person, dict) or set(person) != {"id", "login"}:
+                raise ValueError("contributor")
+            if type(person["id"]) is not int or person["id"] <= 0:
+                raise ValueError("contributor")
+            if not isinstance(person["login"], str) or not person["login"]:
+                raise ValueError("contributor")
+            ids.add(person["id"])
+            logins.add(person["login"].lower())
+        for seen in context.get("contributors") or []:
+            if seen["login"].lower() not in logins or not ids.issuperset(seen.get("ids") or []):
+                raise ValueError("author")
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return set(), "provider_eligibility_invalid"
+    if answer["eligible"] is not True:
+        return set(), "provider_not_eligible"
+    return {"*"}, None
 
 
 def _service_verdict(checks: list, policy: dict, context: dict | None):
@@ -635,10 +741,7 @@ def _service_verdict(checks: list, policy: dict, context: dict | None):
             raise ValueError("proof")
         prefix, raw = text.split("\n", 1)
         proof = json.loads(raw)
-        trusted = {k: policy[k] for k in ("agreements", "exemptions")}
-        digest = hashlib.sha256(
-            json.dumps(trusted, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
-        ).hexdigest()
+        digest = _policy_digest(policy)
         if prefix != "tavotto-cla-v1" or proof["protocol"] != prefix:
             raise ValueError("protocol")
         if proof["policy_sha256"] != digest or run["head_sha"] != context["head_sha"]:
@@ -693,6 +796,18 @@ def _unqualified_detail(reason: str | None, policy: dict) -> str:
             f"签名服务商**（期望 App `{prov.get('app_slug')}` id={prov.get('app_id')}）"
             "——判定只认那个 App 的结论，同名的别家 check 一律不算"
         )
+    if reason == "provider_not_eligible":
+        return (
+            f"CLA 服务判定：这个 PR 里还有人没签。到 {policy.get('authority_origin')} 签署，"
+            "著作权人联署后重跑这个检查，或推一个新提交"
+        )
+    if reason == "provider_eligibility_invalid":
+        return "CLA 服务的回答对不上这次判定（PR、head、作者或时间不符）——判定器不猜，直接红"
+    if reason and reason.startswith("provider_eligibility_unavailable:"):
+        return (
+            f"问不到 CLA 服务的判定（{reason.split(':', 1)[1]}）——服务恢复后重跑这个检查；"
+            "问不到就不算过"
+        )
     if reason == "provider_checks_unavailable":
         return "取不到 provider 的 check 列表（权限或 API 失败）——判定器不猜，直接红"
     return "没有签署记录"
@@ -744,6 +859,8 @@ def decide(
 ) -> dict:
     """核心判定。只做纯计算，不碰环境——单测才测得动每一格。"""
     unresolved = unresolved or []
+    if context is not None:
+        context = {**context, "contributors": contributors}
 
     if event in KNOWN_EVENTS and _service_mode(policy):
         exempt = _exempt_by_id_verdict(event, policy, contributors, unresolved)
@@ -993,6 +1110,11 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         help="Trusted workflow/candidate start time; service proof must be issued after it",
     )
+    ap.add_argument(
+        "--eligibility-json",
+        help="cla_eligibility_fetch.py 落盘的服务实时判定（ADR 0172）",
+    )
+    ap.add_argument("--eligibility-nonce", help="这次校验生成的 nonce，回答必须原样带回")
     ap.add_argument("--repo-root", default=".", help="核对协议正文哈希时的仓库根")
     ap.add_argument(
         "--refresh-hashes",
@@ -1035,6 +1157,10 @@ def main(argv: list[str] | None = None) -> int:
             "repository_id": args.verification_repository_id,
             "not_before": args.verification_not_before,
             "now": int(time.time()),
+            "nonce": args.eligibility_nonce,
+            "eligibility": load_json(Path(args.eligibility_json), "服务实时判定")
+            if args.eligibility_json
+            else None,
         }
         if args.event == "merge_group":
             contributors, unresolved = [], []

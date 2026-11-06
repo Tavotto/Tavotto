@@ -1,4 +1,9 @@
-# Trusted CI wiring proposal — inactive
+# Trusted CI wiring proposal — superseded
+
+**Superseded by [ADR 0172](../../../docs/adr/0172-cla-live-eligibility.md).** The trusted gate now asks
+the service directly through `/eligibility/*`. A sandbox probe (2026-11-06) showed the published-check
+path below cannot serve an open external PR: refresh exhausts and no proof is issued again. The text
+below is kept as the record of that design.
 
 No workflow or required check is changed by this candidate. The checked-in
 ci.disabled.json is explicitly disabled and contains invalid placeholder IDs.

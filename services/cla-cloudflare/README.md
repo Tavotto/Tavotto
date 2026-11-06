@@ -106,6 +106,16 @@ with full prefix, two snapshots and independent confirmation retained. More
 pages/coauthors can still exceed the unchanged budget; the whole-group SQL
 limits above remain unchanged. This is offline evidence, not live acceptance.
 
+## Live eligibility for CI (ADR 0172)
+
+`GET /eligibility/pr?pr&head&nonce` and `GET /eligibility/group?base&head&nonce` answer whether a target
+is eligible right now. They are public, take no credential, write nothing, publish nothing, and share
+`CLA_VERIFICATION_LIMITER`; `CLA_CI_VERIFICATION_ENABLED` turns them on. Every call re-reads GitHub and D1
+and re-verifies evidence through `evaluateTarget`. The answer binds repository, target, head, base, policy
+digest, contributors and the caller's nonce, and carries one `eligible` boolean: it never says who has not
+signed. `scripts/ci/cla_eligibility_fetch.py` fetches it and `scripts/ci/cla_gate.py` validates it; an
+unreachable service or a mismatched answer never passes.
+
 ### Exempt traffic and bounded retention
 
 The main repository is mostly rights-holder and bot traffic, which is policy-exempt and needs no service proof: the

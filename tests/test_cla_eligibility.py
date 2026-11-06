@@ -1,0 +1,431 @@
+"""服务实时判定（ADR 0172）在 CI 这一侧的看护：回答逐字段核对，问不到一律不算过。
+
+`cla_gate.py` 只做离线判定，`cla_eligibility_fetch.py` 只负责把问题问对。这里钉住的
+三件事坏了都不会让别的测试红：不可达时必须红；回答必须绑定这次的 PR、head、作者和
+nonce，错配与重放都不算过；客户端不带凭据、不跟随跳转、地址只取默认分支的 policy。
+"""
+
+from __future__ import annotations
+
+import copy
+import importlib.util
+import io
+import json
+import urllib.error
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+HOLDER, EXTERNAL, REPO, PR, NOW = 88193520, 261183172, 1234, 42, 1_793_900_000
+HEAD, BASE = "a" * 40, "b" * 40
+NONCE = "n" * 48
+ORIGIN = "https://cla.example.com"
+
+
+def _load(name: str):
+    spec = importlib.util.spec_from_file_location(
+        f"cla_eligibility_{name}", ROOT / "scripts" / "ci" / f"{name}.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.fixture(scope="module")
+def gate():
+    return _load("cla_gate")
+
+
+@pytest.fixture(scope="module")
+def fetcher():
+    return _load("cla_eligibility_fetch")
+
+
+@pytest.fixture
+def policy():
+    p = json.loads((ROOT / ".github" / "cla-policy.json").read_text(encoding="utf-8"))
+    p["offline_signatures"] = []
+    p["authority_origin"] = ORIGIN
+    p["provider"] = {
+        "configured": True,
+        "protocol": "tavotto-cla-v1",
+        "name": "Tavotto CLA",
+        "check_name": "Tavotto CLA",
+        "app_slug": "tavotto-cla",
+        "app_id": 7654321,
+    }
+    ids = {"erwanjun": HOLDER, "dependabot[bot]": 49699333, "github-actions[bot]": 41898282}
+    for ex in p["exemptions"]:
+        ex["github_id"] = ids[ex["login"]]
+    return p
+
+
+def _answer(gate, policy, *, group=False, **over) -> dict:
+    answer = {
+        "protocol": "cla-eligibility-v1",
+        "repository_id": REPO,
+        "kind": "merge_group" if group else "pr",
+        "head_sha": HEAD,
+        "base_sha": BASE,
+        "policy_sha256": gate._policy_digest(policy),
+        "contributors": [{"id": EXTERNAL, "login": "someone"}],
+        "revision": 3,
+        "observed_at": NOW,
+        "nonce": NONCE,
+        "eligible": True,
+    }
+    answer.update({"members": [{"pr": PR, "headSha": "c" * 40}]} if group else {"pr": PR})
+    answer.update(over)
+    return answer
+
+
+def _context(answer, *, group=False, **over) -> dict:
+    context = {
+        "kind": "merge_group" if group else "pull_request",
+        "pr": None if group else PR,
+        "head_sha": HEAD,
+        "base_sha": BASE if group else None,
+        "repository_id": REPO,
+        "not_before": NOW - 10,
+        "now": NOW + 1,
+        "nonce": NONCE,
+        "eligibility": answer,
+        "contributors": [
+            {"login": "someone", "sources": ["pr_author"], "ids": [EXTERNAL], "details": []}
+        ],
+    }
+    context.update(over)
+    return context
+
+
+def _verdict(gate, policy, answer, **over):
+    return gate.signed_logins(None, policy, _context(answer, **over))
+
+
+@pytest.mark.parametrize("group", [False, True])
+def test_a_matching_eligible_answer_passes(gate, policy, group):
+    answer = _answer(gate, policy, group=group)
+    assert _verdict(gate, policy, answer, group=group) == ({"*"}, None)
+
+
+def test_not_eligible_is_not_signed(gate, policy):
+    signed, why = _verdict(gate, policy, _answer(gate, policy, eligible=False))
+    assert signed == set() and why == "provider_not_eligible"
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"pr": PR + 1},  # 别的 PR
+        {"pr": str(PR)},  # 类型不同
+        {"head_sha": "d" * 40},  # 别的提交
+        {"repository_id": 1},  # 别的仓库
+        {"kind": "merge_group"},  # 拿合并组的回答冒充 PR
+        {"nonce": "m" * 48},  # 重放：别的校验要来的回答
+        {"policy_sha256": "0" * 64},  # 别的策略
+        {"protocol": "tavotto-cla-v1"},
+        {"observed_at": NOW - 16},  # 早于这次校验
+        {"observed_at": NOW + 7},  # 来自未来
+        {"observed_at": float(NOW)},
+        {"revision": -1},
+        {"revision": True},
+        {"eligible": "true"},  # 只有布尔 True 才算过
+        {"eligible": 1},
+        {"base_sha": "short"},
+        {"contributors": []},
+        {"contributors": [{"id": 5, "login": "another"}]},  # 回答说的不是这个作者
+        {"contributors": [{"id": EXTERNAL + 1, "login": "someone"}]},  # 同名不同人
+        {"contributors": [{"id": 0, "login": "someone"}]},
+        {"contributors": [{"id": EXTERNAL, "login": "someone", "signed": True}]},
+    ],
+)
+def test_mismatch_or_replay_never_passes(gate, policy, over):
+    signed, why = _verdict(gate, policy, _answer(gate, policy, **over))
+    assert signed == set() and why == "provider_eligibility_invalid"
+
+
+def test_extra_or_missing_fields_never_pass(gate, policy):
+    answer = _answer(gate, policy, extra=1)
+    assert _verdict(gate, policy, answer) == (set(), "provider_eligibility_invalid")
+    answer = _answer(gate, policy)
+    del answer["revision"]
+    assert _verdict(gate, policy, answer) == (set(), "provider_eligibility_invalid")
+
+
+def test_group_answer_must_bind_its_base_and_members(gate, policy):
+    answer = _answer(gate, policy, group=True, base_sha="d" * 40)
+    assert _verdict(gate, policy, answer, group=True)[0] == set()
+    answer = _answer(gate, policy, group=True, members=[])
+    assert _verdict(gate, policy, answer, group=True)[0] == set()
+
+
+def test_a_pr_answer_cannot_pass_a_merge_group(gate, policy):
+    assert _verdict(gate, policy, _answer(gate, policy), group=True)[0] == set()
+
+
+def test_a_contributor_the_gate_saw_must_be_in_the_answer(gate, policy):
+    people = [
+        {"login": "someone", "sources": ["pr_author"], "ids": [EXTERNAL]},
+        {"login": "co-author", "sources": ["co_author"], "ids": []},
+    ]
+    signed, why = _verdict(gate, policy, _answer(gate, policy), contributors=people)
+    assert signed == set() and why == "provider_eligibility_invalid"
+
+
+def test_login_case_does_not_matter(gate, policy):
+    answer = _answer(gate, policy, contributors=[{"id": EXTERNAL, "login": "SomeOne"}])
+    assert _verdict(gate, policy, answer) == ({"*"}, None)
+
+
+@pytest.mark.parametrize("code", ["authority_unreachable", "verification_busy", "http_503"])
+def test_an_unreachable_service_never_passes(gate, policy, code):
+    signed, why = _verdict(gate, policy, {"error": code})
+    assert signed == set() and why.startswith("provider_eligibility_unavailable:")
+
+
+def test_a_hostile_error_code_is_not_echoed(gate, policy):
+    _, why = _verdict(gate, policy, {"error": "<script>"})
+    assert why == "provider_eligibility_unavailable:unknown"
+
+
+def test_missing_context_never_passes(gate, policy):
+    answer = _answer(gate, policy)
+    assert _verdict(gate, policy, answer, nonce=None) == (
+        set(),
+        "provider_verification_context_missing",
+    )
+
+
+def test_a_receipt_is_ignored_outside_service_mode(gate):
+    p = json.loads((ROOT / ".github" / "cla-policy.json").read_text(encoding="utf-8"))
+    assert gate.signed_logins(None, p, {"eligibility": {"eligible": True}}) == (
+        set(),
+        "provider_not_configured",
+    )
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://cla.example.com",
+        "https://cla.example.com/",
+        "https://u@cla.example.com",
+        "https://cla.example.com:8443",
+        "https://CLA.example.com",
+        "",
+    ],
+)
+def test_authority_origin_must_be_a_bare_https_origin(gate, policy, origin):
+    policy["authority_origin"] = origin
+    with pytest.raises(gate.ConfigError, match="authority_origin"):
+        gate.validate_policy(policy)
+
+
+def test_service_mode_requires_the_authority_origin(gate, policy):
+    del policy["authority_origin"]
+    with pytest.raises(gate.ConfigError, match="authority_origin"):
+        gate.validate_policy(policy)
+
+
+def _commit(login: str, uid: int) -> dict:
+    return {
+        "sha": HEAD,
+        "author": {"login": login, "id": uid},
+        "commit": {"message": "c", "author": {"name": "n", "email": "x@example.com"}},
+    }
+
+
+def _cli(gate, tmp_path, policy, doc, *, event="pull_request", now=NOW):
+    pol = tmp_path / "policy.json"
+    pol.write_text(json.dumps(policy), encoding="utf-8")
+    commits = tmp_path / "commits.json"
+    commits.write_text(json.dumps([_commit("someone", EXTERNAL)]), encoding="utf-8")
+    answer = tmp_path / "answer.json"
+    answer.write_text(json.dumps(doc), encoding="utf-8")
+    argv = ["--event", event, "--policy", str(pol), "--repo-root", str(ROOT),
+            "--commits-json", str(commits), "--expected-commits", "1",
+            "--eligibility-json", str(answer), "--eligibility-nonce", NONCE,
+            "--verification-head", HEAD, "--verification-repository-id", str(REPO),
+            "--verification-not-before", str(now - 10)]  # fmt: skip
+    if event == "pull_request":
+        argv += ["--verification-pr", str(PR), "--pr-author", "someone",
+                 "--pr-author-id", str(EXTERNAL)]  # fmt: skip
+    else:
+        argv += ["--verification-base", BASE]
+    return gate.main(argv)
+
+
+@pytest.mark.parametrize(
+    "event,group", [("pull_request", False), ("merge_group", True)], ids=["pr", "group"]
+)
+def test_cli_end_to_end(gate, policy, tmp_path, monkeypatch, event, group):
+    monkeypatch.setattr(gate.time, "time", lambda: NOW)
+    answer = _answer(gate, policy, group=group)
+    assert _cli(gate, tmp_path, policy, answer, event=event) == 0
+    assert _cli(gate, tmp_path, policy, {**answer, "eligible": False}, event=event) == 1
+    assert _cli(gate, tmp_path, policy, {**answer, "nonce": "m" * 48}, event=event) == 1
+    assert _cli(gate, tmp_path, policy, {"error": "authority_unreachable"}, event=event) == 1
+
+
+def test_cli_not_eligible_tells_people_where_to_sign(gate, policy, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(gate.time, "time", lambda: NOW)
+    _cli(gate, tmp_path, policy, _answer(gate, policy, eligible=False))
+    assert ORIGIN in capsys.readouterr().out
+
+
+class _Response(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+
+class _Opener:
+    """按顺序回放：bytes = 200，int + bytes = HTTP 错误，Exception = 抛出。"""
+
+    def __init__(self, *script):
+        self.script, self.requests = list(script), []
+
+    def open(self, request, timeout=None):
+        self.requests.append((request, timeout))
+        step = self.script.pop(0)
+        if isinstance(step, Exception):
+            raise step
+        if isinstance(step, tuple):
+            status, body = step
+            raise urllib.error.HTTPError(request.full_url, status, "x", {}, io.BytesIO(body))
+        return _Response(step)
+
+
+def _fetch(fetcher, *script, budget=120):
+    opener, slept, clock = _Opener(*script), [], [0.0]
+
+    def sleep(seconds):
+        slept.append(seconds)
+        clock[0] += seconds
+
+    url = fetcher.build_url(ORIGIN, "pull_request", HEAD, NONCE, pr=PR)
+    result = fetcher.fetch(url, opener, budget_seconds=budget, sleep=sleep, clock=lambda: clock[0])
+    return result, opener, slept
+
+
+def test_urls_carry_only_locators(fetcher):
+    assert fetcher.build_url(ORIGIN, "pull_request", HEAD, NONCE, pr=PR) == (
+        f"{ORIGIN}/eligibility/pr?pr={PR}&head={HEAD}&nonce={NONCE}"
+    )
+    assert fetcher.build_url(ORIGIN, "merge_group", HEAD, NONCE, base=BASE) == (
+        f"{ORIGIN}/eligibility/group?base={BASE}&head={HEAD}&nonce={NONCE}"
+    )
+
+
+@pytest.mark.parametrize(
+    "origin,event,head,nonce,pr,base",
+    [
+        ("http://cla.example.com", "pull_request", HEAD, NONCE, PR, None),
+        ("https://evil.example.com/x", "pull_request", HEAD, NONCE, PR, None),
+        (ORIGIN, "pull_request", "zz", NONCE, PR, None),
+        (ORIGIN, "pull_request", HEAD, "short", PR, None),
+        (ORIGIN, "pull_request", HEAD, NONCE, None, None),
+        (ORIGIN, "merge_group", HEAD, NONCE, None, "zz"),
+        (ORIGIN, "push", HEAD, NONCE, PR, None),
+    ],
+)
+def test_bad_locators_never_build_a_url(fetcher, origin, event, head, nonce, pr, base):
+    with pytest.raises(ValueError):
+        fetcher.build_url(origin, event, head, nonce, pr, base)
+
+
+def test_no_credentials_are_sent_and_redirects_are_refused(fetcher):
+    result, opener, _ = _fetch(fetcher, b'{"eligible": true}')
+    request, timeout = opener.requests[0]
+    assert result == {"eligible": True} and timeout == fetcher.REQUEST_TIMEOUT
+    assert {k.lower() for k in request.headers} == {"accept", "user-agent"}
+    assert _fetch(fetcher, (302, b""))[0] == {"error": "redirect_refused"}
+    assert issubclass(fetcher._NoRedirect, fetcher.urllib.request.HTTPRedirectHandler)
+    assert fetcher._NoRedirect().redirect_request() is None
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        urllib.error.URLError("down"),
+        TimeoutError(),
+        OSError("reset"),
+        (503, b"{}"),
+        (429, b'{"error":"verification_busy"}'),
+        (403, b'{"error":"github_unavailable"}'),
+        b"<html>not json</html>",
+    ],
+    ids=["dns", "timeout", "reset", "503", "429", "retryable-403", "not-json"],
+)
+def test_transient_failures_retry_then_recover(fetcher, failure):
+    result, opener, slept = _fetch(fetcher, failure, b'{"eligible": false}')
+    assert result == {"eligible": False}
+    assert len(opener.requests) == 2 and slept == [fetcher.RETRY_DELAY]
+
+
+def test_unreachable_ends_in_an_error_code_inside_the_budget(fetcher):
+    failure = urllib.error.URLError("down")
+    result, opener, slept = _fetch(fetcher, *[failure] * 50)
+    assert result == {"error": "authority_unreachable"}
+    assert sum(slept) < 120 and len(opener.requests) == len(slept) + 1
+
+
+def test_budget_zero_tries_once(fetcher):
+    result, opener, slept = _fetch(fetcher, urllib.error.URLError("down"), budget=0)
+    assert result == {"error": "authority_unreachable"} and slept == []
+
+
+def test_a_final_rejection_is_not_retried(fetcher):
+    result, opener, _ = _fetch(fetcher, (403, b'{"error":"pr_mismatch"}'))
+    assert result == {"error": "pr_mismatch"} and len(opener.requests) == 1
+
+
+def test_oversized_or_non_object_answers_become_errors(fetcher):
+    big = b'{"a":"' + b"x" * fetcher.MAX_BYTES + b'"}'
+    assert _fetch(fetcher, big)[0] == {"error": "response_too_large"}
+    assert _fetch(fetcher, b"[1]")[0] == {"error": "response_not_object"}
+
+
+def test_main_writes_the_error_so_the_gate_can_turn_red(fetcher, policy, tmp_path, monkeypatch):
+    pol = tmp_path / "policy.json"
+    pol.write_text(json.dumps(policy), encoding="utf-8")
+    out = tmp_path / "answer.json"
+
+    class Down:
+        def open(self, *_, **__):
+            raise urllib.error.URLError("down")
+
+    monkeypatch.setattr(fetcher.urllib.request, "build_opener", lambda *_: Down())
+    code = fetcher.main(
+        [
+            "--policy",
+            str(pol),
+            "--event",
+            "pull_request",
+            "--head",
+            HEAD,
+            "--nonce",
+            NONCE,
+            "--pr",
+            str(PR),
+            "--out",
+            str(out),
+            "--budget-seconds",
+            "0",
+        ]  # fmt: skip
+    )
+    assert code == 0 and json.loads(out.read_text()) == {"error": "authority_unreachable"}
+
+
+def test_main_refuses_a_policy_without_an_origin(fetcher, policy, tmp_path):
+    bad = copy.deepcopy(policy)
+    del bad["authority_origin"]
+    pol = tmp_path / "policy.json"
+    pol.write_text(json.dumps(bad), encoding="utf-8")
+    out = tmp_path / "answer.json"
+    argv = ["--policy", str(pol), "--event", "pull_request", "--head", HEAD, "--nonce", NONCE,
+            "--pr", str(PR), "--out", str(out)]  # fmt: skip
+    assert fetcher.main(argv) == 2 and not out.exists()

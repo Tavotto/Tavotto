@@ -8,6 +8,7 @@ import { LiveStore } from './store.ts';
 import { LiveService } from './service.ts';
 import { uiHTML, uiCSS, uiScript } from './ui.ts';
 import { reconcileOne, rejectionCode } from './background.ts';
+import { eligibility, ELIGIBILITY_NONCE } from './eligibility.ts';
 import { verification } from './verification.ts';
 import { InvocationBudget } from './budget.ts';
 import { validId, validSha } from '../core/policy.ts';
@@ -176,6 +177,17 @@ export default {async scheduled(controller:{cron?:string},env:Env):Promise<void>
       ...(await signedPdfAvailable(env)?{signedPdf:true}:{})});
     if (req.method==='GET' && url.pathname==='/health' && !url.search)
       return json({runtime:'workers-d1',signingEnabled:c.signingEnabled,checkPublishingEnabled:c.checkPublishingEnabled});
+    if(req.method==='GET' && (url.pathname==='/eligibility/pr' || url.pathname==='/eligibility/group')) {
+      // ADR 0172: public and read-only. It takes no credential, so it must never write or reveal who has not signed.
+      if(env.CLA_CI_VERIFICATION_ENABLED!=='true')throw new Rejected('ci_verification_disabled');
+      const group=url.pathname==='/eligibility/group',head=url.searchParams.get('head') ?? '',nonce=url.searchParams.get('nonce') ?? '',pr=url.searchParams.get('pr') ?? '',base=url.searchParams.get('base') ?? '';
+      if([...url.searchParams.keys()].sort().join(',')!==(group?'base,head,nonce':'head,nonce,pr') || !validSha(head) || !ELIGIBILITY_NONCE.test(nonce) ||
+        (group?!validSha(base):!/^[1-9][0-9]*$/.test(pr) || !validId(Number(pr))))throw new Rejected('eligibility_invalid');
+      if(!env.CLA_VERIFICATION_LIMITER)return json({error:'verification_abuse_control_required'},503);
+      let admitted=false;try{admitted=(await env.CLA_VERIFICATION_LIMITER.limit({key:group?'eligibility-group':'eligibility-pr'})).success===true;}catch{return json({error:'verification_abuse_control_unavailable'},503);}
+      if(!admitted)return json({error:'verification_busy'},429,{'retry-after':'60'});
+      return json(await eligibility(await service(env,new InvocationBudget()),group?{kind:'merge_group',headSha:head,baseSha:base}:{kind:'pr',number:Number(pr)},head,nonce));
+    }
     if(req.method==='GET' && url.pathname==='/verification/group') {
       if(env.CLA_CI_VERIFICATION_ENABLED!=='true')throw new Rejected('ci_verification_disabled');
       if([...url.searchParams.keys()].sort().join(',')!=='attempt,base,head,run' || !/^[1-9][0-9]*$/.test(url.searchParams.get('run') ?? ''))throw new Rejected('verification_invalid');
