@@ -204,7 +204,7 @@ class Rig:
             "revision": 1,
             "eligible": True,
         }
-        answer["members" if group else "pr"] = [{"pr": PR, "headSha": "c" * 40}] if group else PR
+        answer["members" if group else "pr"] = [{"pr": PR, "head_sha": "c" * 40}] if group else PR
         doc = {
             "trusted_sha": TRUSTED_SHA,
             "base": BASE,
@@ -599,12 +599,16 @@ def test_group_bad_independent_github_snapshot_never_reaches_authority(tmp_path,
     assert rig.requests() == []
 
 
-def test_group_two_pages_two_pr_authors_and_exact_service_members(tmp_path):
+@pytest.mark.parametrize("descending_pr_order", [False, True])
+def test_group_two_pages_two_pr_authors_and_exact_service_members(tmp_path, descending_pr_order):
     rig = Rig(tmp_path, "merge_group", commits=HOLDER_COMMIT)
     state = json.loads(rig.state.read_text(encoding="utf-8"))
+    first_pr, second_pr = (PR + 1, PR) if descending_pr_order else (PR, PR + 1)
+    for key in ("before", "after"):
+        state["group_prs"][0][key]["number"] = first_pr
     second = copy.deepcopy(state["group_prs"][0])
     for key in ("before", "after"):
-        second[key]["number"] = PR + 1
+        second[key]["number"] = second_pr
         second[key]["head"]["sha"] = "f" * 40
         second[key]["user"] = {"login": "someone", "id": EXTERNAL}
     second["commits"][0]["sha"] = "f" * 40
@@ -615,19 +619,23 @@ def test_group_two_pages_two_pr_authors_and_exact_service_members(tmp_path):
     connection["pageInfo"] = {"hasNextPage": True, "endCursor": "cursor-one"}
     page2 = copy.deepcopy(page1)
     connection["nodes"][0]["headCommit"]["oid"] = "e" * 40
+    connection["nodes"][0]["pullRequest"]["number"] = first_pr
     entry2 = page2["data"]["repository"]["mergeQueue"]["entries"]
     entry2["pageInfo"] = {"hasNextPage": False, "endCursor": "cursor-two"}
     entry2["nodes"][0].update(
         {
             "id": "entry-two",
             "position": 2,
-            "pullRequest": {"number": PR + 1, "headRefOid": "f" * 40, "baseRefName": "main"},
+            "pullRequest": {"number": second_pr, "headRefOid": "f" * 40, "baseRefName": "main"},
         }
     )
     state["queue_before"] = [page1, page2]
     state["queue_after"] = copy.deepcopy(state["queue_before"])
     state["answer_override"] = {
-        "members": [{"pr": PR, "headSha": "c" * 40}, {"pr": PR + 1, "headSha": "f" * 40}],
+        "members": sorted(
+            [{"pr": first_pr, "head_sha": "c" * 40}, {"pr": second_pr, "head_sha": "f" * 40}],
+            key=lambda m: m["pr"],
+        ),
         "contributors": [{"login": "erwanjun", "id": HOLDER}, {"login": "someone", "id": EXTERNAL}],
     }
     rig.state.write_text(json.dumps(state), encoding="utf-8")

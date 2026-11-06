@@ -370,8 +370,10 @@ When the time comes:
      merge groups independently read the complete GitHub mergeQueue prefix and
      each PR's author id, head and full commit list. The trusted gate consumes
      this input through `--group-snapshot-json`, rejects incomplete or changing
-     snapshots, and checks the service's ordered `{pr,headSha}` members against
-     it. Contributors come from those original PRs; the candidate compare still
+     snapshots, and converts its queue-ordered `{pr,headSha}` members to the
+     service protocol's strictly PR-sorted `{pr,head_sha}` before exact comparison.
+     Service aliases or noncanonical order are rejected. Contributors come from
+     those original PRs; the candidate compare still
      checks counts, unique SHAs and the candidate head, but GitHub-generated
      merge/squash metadata does not introduce another contributor. The same
      account in an original PR is still checked. Unknown original PR identities
