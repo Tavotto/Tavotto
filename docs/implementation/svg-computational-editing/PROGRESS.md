@@ -2,13 +2,13 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-06 本轮集成）：层序、真实导出请求、声明式来源、自包含包、CSV/类别合同、SVG→IR保真和共享导出已有独立功能提交；本批C恢复API/UI完成并经真浏览器确认/撤销/重做、带引号CSV及含分隔符类别验证。汇总受影响后端288通过/1环境跳过，恢复前端138通过与正式构建通过。图内manifest/属性编辑和图例联动、完整项目资源/旧客户端隔离、剩余族/写回/入口/全量原功能与平台资格未完成，M1未通过。所有代理仅在当前一个分支修改并按功能commit。**
+> **当前结论（2026-11-06 13:12复核）：曲线显示、共享导出和真实C恢复已验证；连续文字布局f04d8f63、原生manifest脚手架适配器54161afd、不可变项目附件核心bbbffed1已分别提交。恢复界面仍显示“仅版面”，图内编辑/精确命中/图例联动及正式项目保存迁移尚未闭环。前端原生render接线在工作树实施，未取得真实后端整链资格；完整旧功能与平台资格未完成，M1未通过。当前只在既有实施分支按功能commit。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 
 ## 环境（2026-11-06 当前快照）
 
-- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；复核起点 HEAD=`cae96f89`，存在未提交实现，不是冻结候选。沿用当前分支/工作树。`E:/0 - Project/Tavotto` 实测 clean 的 `main@69bcafae`，未修改。
-- 相对上次复核 `cbd8d95e` 已有四个功能提交 e836a8de、979a4962、48d3d27a、cae96f89；另有文档提交，历史成果全部保留。
+- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；最新完成核心批次HEAD=`bbbffed1`，前端仍有未提交接线，不是冻结候选。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的`main@69bcafae`未合入这些成果。
+- 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述三个新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
 - 本轮状态复核使用的独立探针和浏览器证据见 `status-cbd8d95e/`；未启动通宵调度器。历史“后台 sweep 正在跑”没有本轮完成日志，不当作现行运行状态；服务清理状态见最新 checkpoint。
@@ -19,28 +19,38 @@
 | 批次 | 状态 | commits | 证据 |
 | --- | --- | --- | --- |
 | SG00 | baseline_recorded | a046b799（计划）、9a271f9f | 能力清单和历史基线已有；远端新鲜度及最终候选回归需补证 |
-| SG01 | partial / revalidated_core | ADR 0166、e836a8de | 白底反例已修；转换/ClipUnion 结构实验已有，ADR 同步和最终全范围复核待补 |
+| SG01 | partial / revalidated_core | ADR 0166、e836a8de、3ed06553、f04d8f63 | 层序、ClipUnion及连续文字实验/ADR已同步；最终全范围复核待补 |
 | SG02 | partial | ac060053 | 基础模型/绑定身份已补修；持久化来源/资源、实际环境与元数据恢复合同未闭合 |
 | SG03 | core_partial | f1406038+fmt | 场景盘点与 inspect 已有；资源生命周期及所有入口未接通 |
 | SG04 | core_partial | d0c0d898 | 采用判定 helper 已有；生产来源采用、语义元数据往返未接通 |
-| SG05 | core_partial | 451d8490、4c2ca1f2 | px/非零 viewBox/父空间基础回归已有；精确命中/文字/分组交互未完成 |
-| SG06 | interaction_verified / core_visible | 133d2bf7、cbd8d95e、e836a8de | 两系列绑定/预览/确认/撤销及最终曲线可见已验证；类别与CSV合同正在修，完整图例/模型验收待补 |
+| SG05 | core_partial | 451d8490、4c2ca1f2、f04d8f63 | 坐标与连续文字转换已有独立回归；精确命中/文字/分组交互未完成 |
+| SG06 | interaction_verified / core_visible | 133d2bf7、cbd8d95e、e836a8de、f6c4a13d、82b142d2 | 两系列/C恢复/确认撤销及类别与quoted CSV真实流程通过；完整图例/模型验收待补 |
 | SG07 | core_partial | 4c2ca1f2 | 基础计算回归通过；真实绑定/图内编辑/M1 未完成 |
 | SG08 | partial | 4c2ca1f2 | bar 附属误差基础修复已有；完整族与 UI/导出追验待补 |
 | SG09 | partial | ac060053 | 色条基础所有权/镜像已修；复杂族和导出图像资源未验收 |
-| SG10 | partial | f76b0610、18907d65、cbd8d95e、e836a8de | 两系列交互/确认/撤销与可见成图通过；C恢复UI正在接入，同版manifest/命中/图内编辑待补 |
-| SG11–SG17 | partial / pending | 979a4962、48d3d27a、cae96f89 + 当前集成 | 自包含新进程恢复与真实导出核心已有证据；完整项目保存/迁移、写回、入口/平台与最终回归待补 |
+| SG10 | partial | cbd8d95e、82b142d2、54161afd | 恢复UI完成；原生manifest脚手架adapter已有，最终组合/命中/编辑消费待补 |
+| SG11–SG17 | partial / pending | 979a4962、48d3d27a、cae96f89、5bc82a81、bbbffed1 | 来源附件核心与共享导出已有；正式项目保存/迁移、写回、入口/平台和最终回归待补 |
 | R00 | baseline_and_regressions | 5a4f5c2c | 基础反例保留；本轮用户流程和导出反例待随修复入库 |
 | R01/R02 | core_partial / paint_order_verified | 451d8490、4c2ca1f2 + 本轮组合层级修复 | 双轴白底遮挡已修；12 组层序/节点/绑定排列回归和 Chromium 成图通过；完整系列/图例/装饰语义仍在 R02/R10 追验 |
-| R03 | partial / source_contract_verified | fa68fe38、ac060053、48d3d27a | 声明式render_revision和严格配对已提交；共享不可变计算/导出与发布前来源检查已实现未提交，资源/manifest待补 |
+| R03 | partial / source_contract_verified | 48d3d27a、5bc82a81、54161afd | 共享不可变计算/导出与交付前改源检查已提交；原生编辑完整状态身份及最终manifest待接线 |
 | R04 | affected_checks_passed | a8a088cf、18907d65、cbd8d95e | 请求序号/表单/项目切换、late response 和单项 drop 均有受影响测试；Dialog 已可发起真实绑定；完整编辑器生命周期在 R06 追验 |
-| R05 | partial / svg_cold_verified | 722ad27c、cae96f89 + 未提交API | 自包含SVG删源/搬迁/新父进程计算通过；完整项目资源、原子保存、迁移/旧版防损待实现 |
-| R06 | interaction_verified / editing_pending | cbd8d95e、e836a8de + 本轮恢复 | 向导/C恢复/确认撤销与最终曲线可见已验证；精确命中、现有属性/transport与图例联动待补 |
+| R05 | partial / source_core_verified | cae96f89、82b142d2、bbbffed1 | 自包含删源/新父进程与附件核心通过；保存/自动保存/版本、包安装和旧版隔离未接线 |
+| R06 | interaction_verified / editing_pending | cbd8d95e、82b142d2、54161afd | 恢复和原生manifest adapter通过；现有渲染/精确命中/Inspector及图例未完成 |
 | R07 | partial / integration_checks_passed | 979a4962、48d3d27a、3ed06553、5bc82a81 | 请求/来源/转换/共享导出已提交，真实导出12项与汇总受影响回归通过；EPS/最终产品E2E未完成 |
-| R08 | bundle_and_restore_verified / partial | f7d39126、cae96f89 + 本轮恢复 | 包核心/真API删源恢复/真浏览器恢复编辑通过；A采用、分享选择和项目资源/旧客户端合同待补 |
+| R08 | bundle_and_restore_verified / partial | f7d39126、cae96f89、82b142d2 | v1包恢复通过；原生renderer版本兼容、A采用、分享选择和完整项目迁移待补 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-06 13:12 执行效果复核与接续安排
+
+- 工作树/分支仍为r00/zixu.wang/svg-computational-r00，完成批次HEAD=bbbffed1；原目录main@69bcafae实测clean，未合并，未fetch，不用缓存远端引用宣称最新。三项完成核心已独立commit；下一轮核对实际HEAD/diff，不恢复旧快照。
+- 根代理直接读JUnit与冻结文件hash，复跑manifest25项、附件/原文档144通过+4既有Windows skip，各自exit0；9个完成文件Ruff与format均exit0。连续文字157项报告、共享导出288通过/1skip为各自完成树证据，不相加或冒充当前全量。根代理本轮测试均退出，未新起浏览器/服务。
+- 重新查看真实恢复截图，两曲线可见，但“仅版面”提示和蓝线/旧图例标记不一致仍明确可见；最终产品缺口不是再修绑定入口，而是现有编辑/能力体系接线。NEXT_PHASE与接续提示词已按此重排，M1仍未通过。
+- 当前所有权：svg_ir_fidelity接原生物理viewport Figure/最终组合/manifest；svg_self_contained接renderStore、scheduler、PanelView、API/transport、PNG和三种缩略图消费者；export_adapter_review接profile/v2包与原序override验证。根代理负责app共享render/PNG、导出/恢复消费、共同字体名语义及后续正式保存集成。代理不commit，根代理统一检查提交，不碰对方未完成文件。
+- 独立结构实验已证：native物理pt Figure+既有viewBox逆映射在4种PAR容器Chrome全图最大通道差0，pos_frac/pt样式无需另一套输入翻译；仅canonical patch hash会漏同档原序差异；旧客户端会把仅升schema4的文档降为空3并覆写。新增未信任override还暴露字体族名被当fontconfig file模式读取路径，须修字面族名的共同转换权威并验证，不能由包摘要授予该能力。对应证据manifest-compose-probe、chart-profile-readonly-probe.json、chart-profile-fontpath-probe.json及旧客户端probe保留。
+- 下一动作按NEXT_PHASE第4节1–3行并行：完成版本化原生生产者与真实render/PNG消费者后，真UI点选改轴/系列、联动图例，再接正式保存/迁移/分享，完成M1。新前端候选的mock回归和构建只作为本地消费者证据，不声称后端整链已经成立。
+- 三份文档更新后，test_docs_references与test_agents_rules_index共41项通过，pytest exit0（docs-status-1312.xml）；agents_budget --check exit0，已有体积建议超额仍打印，未修改规则文件。文档diff检查通过；本次状态/队列更新独立提交，后端原生renderer与前端草稿不混入。
 
 ### 2026-11-06 实施：不可变项目来源附件与显式schema合同
 
