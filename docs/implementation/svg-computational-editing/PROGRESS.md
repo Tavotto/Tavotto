@@ -2,16 +2,16 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-07 native与准备接线收口）：最新功能HEAD=d8416d4e；3c64195b补真实native读取/编译、屏障与续跑lineage，d8416d4e补准备/启动/重试声明过期与实际成功记录；11c67ab1 safe/workerd及N3b资格保留。新增实际native、终端已知无参、Python3.10和U09规定94项均有验证；无声明native两回执入口与旧git对象的JSON/identity逐字相同。完整声明图和输入字节尚未持久冷存/入包，声明UI、安全安装和迁移仍缺。图例/裁切/几何与最终资格未完成，M1/M2/M3均未通过。扩大集成保留2个基线Win1314失败和7项平台skip，不报告全分支全绿。**
+> **当前结论（2026-11-07 输入字节封存收口）：最新功能HEAD=97e75d41。safe/workerd/native已在实际捕获读取流封存原源码/输入，父回执私有持有核验后的不可变附件；删原CSV后仍取得原字节，未变续跑复用同一封存，无声明旧IO/JSON/身份保持。此前捕获/准备、保存/导出/检视资格保留。本片只是会话缓存，完整图/字节尚未接svgstore冷存与版本化资源包；声明UI、安全安装、迁移、图例/裁切/复杂几何及最终资格仍缺，M1/M2/M3未通过。旧扩大集成的2个基线Win1314失败未被本片解决，不报告全分支全绿。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 
 ## 环境（2026-11-07 当前快照）
 
-- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；最新功能HEAD=`d8416d4e`，前项`3c64195b/11c67ab1/b5f9f557/5e000c6f`。native捕获与准备过期核验分别commit，稳定文档另提交；各实现文件已释放，后续资源设计只写外部证据。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入成果，不能在原目录启动旧版本判断新功能。
+- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；最新功能HEAD=`97e75d41`，前项`d8416d4e/3c64195b/11c67ab1/b5f9f557/5e000c6f`。实际输入字节封存独立commit，稳定文档另提交；各源码子任务已释放。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入成果，不能在原目录启动旧版本判断新功能。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
-- 最新冻结索引`n3c-native-staged-final.json`与`n3c-preparation-staged-final.json`记录源码SHA/原始检查和局限；前批`n3c-capture-staged-final.json`保留。既有UI资格见`n3c-real-ui-correct-kind-qualification.json`、`n3c-frame-ui-qualification.json`；本轮没有新增声明UI/浏览器验收，旧裁切/图例缺陷未修。未启动通宵调度器，历史后台状态须重新核实。
+- 最新冻结索引`n3c3b-stage-final.json`记录15文件SHA、原始JUnit、审查及阶段差异；此前native/preparation/capture索引保留。既有UI资格见`n3c-real-ui-correct-kind-qualification.json`、`n3c-frame-ui-qualification.json`；本轮没有新增声明UI/浏览器验收，旧裁切/图例缺陷未修。未启动通宵调度器，历史后台状态须重新核实。
 - 最新 NEXT_PHASE 和提示词直接在当前实施分支维护；不再依赖历史 review 文档分支才能取得新计划。
 
 ## 批次状态（2026-11-07 复核后；按完整退出条件）
@@ -34,13 +34,24 @@
 | R01/R02 | core_partial / multi_target_verified | 3236307c、8e6c399a | 跨父/split/errorbar/colorbar共同目标与预览通过；任意clip、欠定成员paint slots和图例仍缺 |
 | R03 | runner_and_source_consumers_integrated | 029dfac2、242cabc0、c2fd47d5、5b2b1403、2452d8fc | 受控runner与精确INPUT附件接真实API/UI/导出；不宣称全产品总进程cap或最终资格 |
 | R04 | affected_checks_passed | a8a088cf、18907d65、cbd8d95e | 请求序号/表单/项目切换、late response 和单项 drop 均有受影响测试；Dialog 已可发起真实绑定；完整编辑器生命周期在 R06 追验 |
-| R05 | binding_and_recovery_ui_verified / package_inspection_verified / execution_capture_verified / installation_pending | 5abb9a7d、95684f89、264ce59c、a7008840、d7b6eef9、d7a73ce1、ffe2fb32、c40805bf、e468d516、336783bf、71e637c8、206a1c34、9a9843d2、8ed50616、75b09b57、be84ba33、13720bc4、1795f244、d1389db6、5e000c6f、b5f9f557、11c67ab1、3c64195b、d8416d4e | 保存/恢复、v4导出/检视、safe/workerd/native捕获与准备过期核验已验；当时字节冷存、完整资源入包、安装API/UI仍缺 |
+| R05 | binding_and_recovery_ui_verified / package_inspection_verified / execution_capture_archive_verified / installation_pending | 5abb9a7d、95684f89、264ce59c、a7008840、d7b6eef9、d7a73ce1、ffe2fb32、c40805bf、e468d516、336783bf、71e637c8、206a1c34、9a9843d2、8ed50616、75b09b57、be84ba33、13720bc4、1795f244、d1389db6、5e000c6f、b5f9f557、11c67ab1、3c64195b、d8416d4e、97e75d41 | 保存/恢复、v4导出/检视、三执行入口捕获/准备核验及原字节会话封存已验；svgstore冷存、完整资源入包、安装API/UI仍缺 |
 | R06 | product_editing_and_cold_restore_verified / partial | 242cabc0、53393810、8e6c399a、264ce59c | 冷开后Inspector编辑、undo/redo和exact显示已验；图例、完整操作及复杂几何仍缺 |
 | R07 | partial / original_five_formats_ui_verified | 5bc82a81、c2fd47d5、2a40fec9、c9fa29a4、8fa84f5d、a06cc3d3 | 原图五格式真实UI及独立产物已验，EPS接线已提交；分享与完整双系列M1未完成 |
 | R08 | full_edit_restore_verified / partial | cae96f89、029dfac2、53393810 | 生产v2导出与真UI完整编辑恢复通过；A采用、分享选择和正式项目迁移待补 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-07 03:26 实际输入字节封存提交，接续正式冷存
+
+- 上轮进度复核与计划提交e986b5f5有实际状态变更，本轮继续实现。`97e75d41`提交15文件：原输入读取流封存、safe/native两生产链、pool/session同版接纳、父回执私有附件、四专项及对应规则/ADR；仍在唯一原分支。未改原main，未fetch/push/PR/合并/发布，goal active。
+- `inputdeclaration`在原finish同流封存源码/files/prefix成员，原graph保空目录；原baseline/预算/内容全核通过才发布opaque `{version,key,revision}`。父仅在已知out_dir/captured-inputs读取nonce/摘要名，不跟随回复路径。InputArchive为frozen graph bytes与资源tuple；receipt不序列化附件、不变public/private JSON与身份。未变native谱系复用同一nonce，避免每次show重写大输入；新epoch仍须显式传同版descriptor。缓存缺失只能核原baseline后重建，旧图不从新清单补签。
+- safe/workerd同winning执行接纳/清空descriptor，native同epoch slot保存fact与descriptor，重复屏障不补证。新增IO后资格复核；实际审查还补了safe `execution_observation_unknown`不授当前捕获证明，历史metadata保留。真实删源/改源后的旧Figure仍可编辑并读取原封存，失败不变正常Figure语义。cold svgstore/正式包尚未消费私有附件，不能因此标完整搬迁。
+- 分范围资格：核心31新+24旧=55/0skip；native最终84/0skip（21新/41旧会话/22旧bridge）；Engine新24/0skip、真实workerd受影响6/0skip（18 deselected）；root联合268/0skip，含新receipt21、旧receipt43、U09 receipt/runtime/trace/export90、准备API39/声明准备23、import16/规则36。另FO32/FO30原4/0skip，实际科学环境与RenderCore成品保持；Python3.10真实safe/native两例/0skip，含实际3.10版本/PID和原字节。不同组不合计全分支总数。
+- 旧worker roundtrip/protocol/捕获136收集=129通过/7缺可发现workerd跳过，exit0、270.335s；随后无覆盖地复制已核二进制到自有ignored构建目录，原7项全部真实通过/0skip。Rust源与11c67ab1无差异；复制前后SHA一致，测试结束确认无live后只删自有副本，外部原产物保留。两命令分别保留，不虚报单次136全绿。之前Win1314两个基线红灯仍未解决。
+- 首红如实保留：native首84为76通过/8失败，根因raw runner原先稍后才创建output目录；仅有capture时提前执行原目录准备、失败仍走可选证据None后末次84通过。root268早于这一唯一bridge小修，其余源码SHA相同，差异由末次native84及实际3.10两例覆盖，不报重跑268。safe首23/1是新fixture写法被原守卫拦住，先独立核实际字节再改fixture为既有可写入口，生产/断言未放宽，末次24通过。
+- 核心8、safe3、native2、receipt3项进程内反证均在实际断言落点失败/pytest exit1，磁盘源零改；独立只读集成复核另10项状态/IO探针通过，未发现具体新缺陷。旧e986核心默认fact JSON与60个源IO调用序列逐项相同；新增私有附件开/关的receipt JSON/identity相同。全仓Ruff/format1459文件、稳定文档/ADR引用41项、agents_budget与diff各exit0，UTF8/本地链接/围栏检查通过；未虚报新前端build/UI或全产品回归。精确索引`n3c3b-stage-final.json`及core/native/safe/review报告保留。
+- 下一动作是3b-2：同svgstore锁下新增typed输入资源区、外置canonical graph与条件snapshot身份，旧render配额/4096目录规则和refs/marker/v1字节保持。实际probe证50000逻辑成员图可达5700047字节，不能inline旧1MiB envelope；新输入census不能套旧4096上限。同长底层cache篡改须在保存流拒绝。2GiB选择与Figure512MiB、整包总预算是不同主语，后续封口准确计数，不擅扩政策。接3b-3热/冷staging→3b-4版本化真实包→UI/ref/N3d–f→N4–N8，完整目标不缩减。
 
 ### 2026-11-07 执行情况复核与下一阶段四片安排
 
