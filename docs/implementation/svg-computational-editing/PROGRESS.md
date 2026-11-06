@@ -2,17 +2,17 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-07 06:50后复核）：3c输入声明已提交8a13ed95；3d精确引用迁移/历史源消费已有未提交实现。迁移核心226、真实safe/native2、最终app历史源23各自通过/0skip；新增扩大组300收集=294通过/2失败/4skip、exit1，先处理冷打包422和import逻辑环，再功能提交及N3d/e/f。安装API/UI、图例、复杂几何和最终资格仍缺，M1/M2/M3未通过，既有Windows权限红灯保留。**
+> **当前结论（2026-11-07 07:30后复核）：3d精确引用迁移已提交fa691a3b；两项旧失败分别由81fd701f、cc3175e8修复，末次核心415通过/0skip、扩大组296通过/4skip均exit0。N3d安全安装核心和真实API已有未提交实现，核心17、HTTP35、目录发布19通过/3skip，各自exit0；尚缺当前安装源码的受影响旧组联合验证、规则同步和功能提交。N3e界面采用、N3f完整搬迁冷开、图例、复杂几何及最终资格仍未完成，M1/M2/M3未通过。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 > 前轮05:10后的91项捕获包资格保留其历史源码窗口；3c现已有实现与新资格，不能再按旧checkpoint重做。不同测试组不相加成最终总数；当前分支实际HEAD/diff优先。
 
 ## 环境（2026-11-07 当前快照）
 
-- 当前实施树`E:/0 - Project/Tavotto-svg-r00`，分支`zixu.wang/svg-computational-r00`；最新功能`8a13ed95`，前项`06806c2c/f79771c3/a5305ddb/97e75d41`及更早有效提交保留。声明界面20文件作为完整功能提交，稳定状态/计划另提交；各源码任务已释放。沿用同一分支/工作树。原目录`E:/0 - Project/Tavotto`仍是clean `main@69bcafae`，未合入成果，不能从原目录运行旧版本判断本功能。
+- 当前实施树`E:/0 - Project/Tavotto-svg-r00`，分支`zixu.wang/svg-computational-r00`；最新功能HEAD`fa691a3b`，其前`cc3175e8/81fd701f/6a4d76c6`、声明界面`8a13ed95`及更早提交保留。N3d当前4个生产文件和3个测试文件未提交，各写入者已冻结释放；本次仅同步状态与安排文档。沿用同一分支/工作树。原目录`E:/0 - Project/Tavotto`仍是clean `main@69bcafae`，未合入成果，不能从原目录运行旧版本判断本功能。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
-- 当前3d复核索引`status-review-20261107-3d.json`记录未提交实现、实际JUnit与两项基线失败归因。前3c索引`n3c3c-stage-final.json`及真实界面`n3c-input-ui/qualification.json`保留其源码窗口；3b-1/2/3/4各stage-final及既有UI记录保留历史资格。本轮未新增浏览器验收，图例/裁切缺陷仍在；未创建调度器，历史PID均须重新核身份后使用。
+- 当前复核索引`status-review-20261107-installation.json`记录HEAD/diff、各源码窗口JUnit及当前源哈希；3d末验见`n3c3d-closeout/affected-final.*`和`n3c3d-loader-review/closeout-core.*`。旧`status-review-20261107-3d.json`与两项首红保留为历史，不再作为未修复指令。前3c索引`n3c3c-stage-final.json`及真实界面`n3c-input-ui/qualification.json`保留其源码窗口。本次仅复看既有截图，未新增浏览器验收；图例/裁切缺陷仍在，未创建调度器，历史PID须重新核身份后使用。
 - 最新 NEXT_PHASE 和提示词直接在当前实施分支维护；不再依赖历史 review 文档分支才能取得新计划。
 
 ## 批次状态（2026-11-07 复核后；按完整退出条件）
@@ -35,13 +35,24 @@
 | R01/R02 | core_partial / multi_target_verified | 3236307c、8e6c399a | 跨父/split/errorbar/colorbar共同目标与预览通过；任意clip、欠定成员paint slots和图例仍缺 |
 | R03 | runner_and_source_consumers_integrated | 029dfac2、242cabc0、c2fd47d5、5b2b1403、2452d8fc | 受控runner与精确INPUT附件接真实API/UI/导出；不宣称全产品总进程cap或最终资格 |
 | R04 | affected_checks_passed | a8a088cf、18907d65、cbd8d95e | 请求序号/表单/项目切换、late response 和单项 drop 均有受影响测试；Dialog 已可发起真实绑定；完整编辑器生命周期在 R06 追验 |
-| R05 | input_declaration_ui_verified / relocation_and_installation_pending | 5abb9a7d、95684f89、264ce59c、a7008840、d7b6eef9、d7a73ce1、ffe2fb32、c40805bf、e468d516、336783bf、71e637c8、206a1c34、9a9843d2、8ed50616、75b09b57、be84ba33、13720bc4、1795f244、d1389db6、5e000c6f、b5f9f557、11c67ab1、3c64195b、d8416d4e、97e75d41、a5305ddb、f79771c3、06806c2c、8a13ed95 | 既有保存/恢复、捕获/冷存、v2包及严格检视保持；3c真实输入声明与明确新执行/旧图不补签/迟到保稿已验。精确引用迁移已有未提交实现/专项正证，扩大组两条前置问题待收尾；安装API/UI和新目录用户整链仍缺 |
+| R05 | relocation_committed / installation_backend_partial | 既有R05提交保留；最近8a13ed95、81fd701f、cc3175e8、fa691a3b | 3c输入声明已验；3d引用迁移与历史源消费已提交，核心415和扩大296通过/4skip。N3d安装API未提交，核心17/HTTP35已有专项正证及两项修复末验；受影响旧组联合验证、界面采用和新目录用户整链待完成 |
 | R06 | product_editing_and_cold_restore_verified / partial | 242cabc0、53393810、8e6c399a、264ce59c | 冷开后Inspector编辑、undo/redo和exact显示已验；图例、完整操作及复杂几何仍缺 |
 | R07 | partial / original_five_formats_ui_verified | 5bc82a81、c2fd47d5、2a40fec9、c9fa29a4、8fa84f5d、a06cc3d3 | 原图五格式真实UI及独立产物已验，EPS接线已提交；分享与完整双系列M1未完成 |
 | R08 | full_edit_restore_verified / partial | cae96f89、029dfac2、53393810 | 生产v2导出与真UI完整编辑恢复通过；A采用、分享选择和正式项目迁移待补 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-07 07:30后 安装执行情况复核与下一阶段安排
+
+- 当前用户要求查看执行情况、效果及下一安排。实际HEAD为fa691a3b；同分支81fd701f消除Prepared规划器逆向运行时依赖，cc3175e8仅修正式冷包专属合法配对夹具，fa691a3b提交16文件迁移/历史源功能。原Tavotto/main仍clean69bcafae。本次复核不新增产品实现、不新建分支/worktree、不fetch或远程操作；保留7个安装源/测试差异。
+- 3d最终证据：closeout-core.xml为415通过/0skip/exit0；affected-final.xml为300收集=296通过/4skip/exit0，18个实际源/测试/规则文件前后零漂移；closeout-rules.xml为41通过/0skip/exit0。旧294/2/4首红与固定HEAD归因保留。4skip为Ghostscript缺失、2个卷大小写条件及Windows symlink权限。实际Python3.10.20 stdlib迁移probe通过，不外推完整科学栈或当前N3d。
+- N3d未提交生产实现：原atomicio排他目录发布、受检资源复制/闭合集合回读、配置建议沿原权威导入及实际remap指纹比较；POST /api/documents/v4/package/install复用原有界上传/认证，计算图使用原renderer验证携带INPUT。上传项目/.venv不作验证解释器根；不运行包内脚本，不打开项目，不保存正文，document_saved=false。
+- 分别冻结的专项：安装核心17通过/0skip；真实HTTP35通过/0skip（含有/无调用者项目的实际chartprocess）；目录发布19通过/3权限skip，原文件发布受影响17通过/10筛除；均实际exit0，不相加为完整资格。目录发布实际3.10/junction probe、移除parent-fsync/复制集合检查/renderer调用的内存反证均留原证据。报告为n3d-directory-validation.md、n3d-install/qualification.md、n3d-http/validation.md。
+- 独立窄审发现并修复两项真实问题：不存在的旧目标路径仍可能有本机默认argv/cwd grant，现保原字节并返回needs_review及原权威投影；发布后上传暂存清理失败，现503仍保精确path、installation_unconfirmed、upload_cleanup=pending。两个原反例末验exit0，首红保留，见n3d-install-review/FINAL_REVIEW.md。配置待确认、发布待确认和正文未写须分别表达。
+- 实际效果按已有证据：绑定/编辑/保存/部分冷恢复和五格式原图已有历史真UI；3d同名静态历史和搬迁准备已有实证。本次复看output/playwright/n3c-ui-legacy-frame.png，曲线可见但刻度/文字边缘裁切仍在；没有新浏览器验收。图例联动、复杂clip及新目录完整用户整链仍缺，不能声称全部现有功能未受影响。
+- 下一首项收口N3d：针对上传公共入口、chartSource内部store参数、目录发布和迁移copy补受影响旧组，核safe/native新API安装/删源冷读，补规则和导入架构检查后功能commit。随后N3e原writer采用→N3f中文根混合项目全链→N4图例/N5几何→M1/M2/M3。完整范围不减；已完成3d和两旧失败不重做。
+- 本次更新现有NEXT_PHASE、NEXT_PHASE_PROMPT及总计划状态；历史checkpoint保持。代理已释放仓库文件，无live测试句柄；本次无新服务/浏览器。无人值守依实际checkpoint继续，未创建常驻调度器；goal保持active。
 
 ### 2026-11-07 06:50后 当前实现效果复核与下一阶段安排
 
