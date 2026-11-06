@@ -38,6 +38,12 @@
   "extra_edges": [
     {
       "from": "tavotto/engine/bridge_runner.py",
+      "to": "tavotto/engine/cmddiag.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(_HERE, _PHASE1)"
+    },
+    {
+      "from": "tavotto/engine/bridge_runner.py",
       "to": "tavotto/engine/executionfact.py",
       "scope": "module",
       "via": "bridgeboot.load_engine_modules(_HERE, _PHASE1)"
