@@ -24,8 +24,9 @@ export interface ChartAxisEvidence {
 
 export interface ChartBindRequest {
   file: string
-  axes_id?: string
+  axes_id: string
   rect: [number, number, number, number]
+  axes_nodes?: string[]
   x?: ChartAxisEvidence
   y?: ChartAxisEvidence
   x_kind?: 'categorical'
@@ -35,6 +36,7 @@ export interface ChartBindRequest {
     x_col?: string
     y_col?: string
     yerr_col?: string
+    cbar_node?: string
     kind?: string
     style?: Record<string, string | number>
   }[]
@@ -73,12 +75,11 @@ async function readError(res: Response): Promise<ApiError & { code?: string }> {
 }
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
-  const res = await fetch(apiUrl(url), {
-    ...withProject(),
+  const res = await fetch(apiUrl(url), withProject({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-  })
+  }))
   if (!res.ok) throw await readError(res)
   return res.json() as Promise<T>
 }

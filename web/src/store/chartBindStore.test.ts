@@ -6,6 +6,7 @@ import type { SceneInventory } from '@/lib/chartApi'
 import type { PanelChartState, PanelObject } from '@/types/document'
 import { chartBindConfirmReady, useChartBindStore } from './chartBindStore'
 import { DEFAULT_FORM, DEFAULT_SERIES } from './chartBindStore'
+import { setCurrentProjectId } from '@/lib/session'
 
 vi.mock('@/lib/chartApi', () => ({
   chartInspect: vi.fn(),
@@ -53,6 +54,7 @@ function panel(id = 'p1'): PanelObject {
 }
 
 beforeEach(() => {
+  setCurrentProjectId(null)
   vi.mocked(chartInspect).mockReset()
   vi.mocked(chartBind).mockReset()
   vi.mocked(chartCompute).mockReset()
@@ -71,6 +73,35 @@ beforeEach(() => {
     error: null,
     busy: false,
   })
+})
+
+it('late compute cannot clear a newer request or restore obsolete preview', async () => {
+  const first = deferred<Awaited<ReturnType<typeof chartCompute>>>()
+  const second = deferred<Awaited<ReturnType<typeof chartCompute>>>()
+  vi.mocked(chartCompute).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+  useChartBindStore.setState({ file: 'chart.svg', result: { ...CHART, formRev: 0 }, formRev: 0 })
+  const old = useChartBindStore.getState().runPreview()
+  const current = useChartBindStore.getState().runPreview()
+  first.resolve({ svg: '<svg id="old"/>', facts: {}, scene_digest: '', render_revision: '', model_digest: '', binding_digest: '', engine: CHART.model.engine })
+  await old
+  expect(useChartBindStore.getState().busy).toBe(true)
+  expect(useChartBindStore.getState().previewSvg).toBeNull()
+  second.resolve({ svg: '<svg id="new"/>', facts: {}, scene_digest: '', render_revision: '', model_digest: '', binding_digest: '', engine: CHART.model.engine })
+  await current
+  expect(useChartBindStore.getState().previewSvg).toContain('new')
+})
+
+it('changing projects closes the wizard and discards an in-flight bind', async () => {
+  const job = deferred<PanelChartState>()
+  vi.mocked(chartBind).mockReturnValue(job.promise)
+  useChartBindStore.setState({ open: true, file: 'chart.svg', projectId: null })
+  const running = useChartBindStore.getState().confirmBinding()
+  setCurrentProjectId('other-project')
+  job.resolve(CHART)
+  await running
+  expect(useChartBindStore.getState().open).toBe(false)
+  expect(useChartBindStore.getState().result).toBeNull()
+  expect(chartCompute).not.toHaveBeenCalled()
 })
 
 describe('chartBindStore', () => {

@@ -2,7 +2,7 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-06 复核，代码 `7801e017`）：基础修复、Dialog、导出与元数据代码已有；135 后端+29 前端专项及构建通过。但首次绑定 UI 受阻、真实导出请求漏 chart、SVG→IR 错图、自包含 SVG 重算失败；M1 未完成。**
+> **当前结论（2026-11-06 实施接续）：首次绑定已修复，真实浏览器完成两系列预览、确认和键盘撤销重做；受影响前端 194 项通过。真实导出请求、SVG→IR 保真、自包含恢复及 manifest/图内编辑继续推进，M1 尚未完成。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 
 ## 环境（2026-11-06 当前快照）
@@ -28,19 +28,28 @@
 | SG07 | core_partial | 4c2ca1f2 | 基础计算回归通过；真实绑定/图内编辑/M1 未完成 |
 | SG08 | partial | 4c2ca1f2 | bar 附属误差基础修复已有；完整族与 UI/导出追验待补 |
 | SG09 | partial | ac060053 | 色条基础所有权/镜像已修；复杂族和导出图像资源未验收 |
-| SG10 | partial / workflow_failed | f76b0610、18907d65 | Dialog 已挂载但未调用 confirmBinding；无完整 manifest/命中和编辑流程 |
+| SG10 | partial | f76b0610、18907d65 + 本轮绑定修复 | 真实两系列绑定/预览/确认/撤销已通过；manifest/命中和图内编辑继续推进 |
 | SG11–SG17 | partial / pending | e09b724b、484b29fb、f7d39126 | 导出和元数据仅部分接线，真实冷恢复、写回、入口/平台与完整回归待补 |
 | R00 | baseline_and_regressions | 5a4f5c2c | 基础反例保留；本轮用户流程和导出反例待随修复入库 |
 | R01/R02 | core_partial | 451d8490、4c2ca1f2 | 既有基础回归通过；最终资格仍需真实 UI/导出和资源语义追验 |
 | R03 | partial | fa68fe38、ac060053 | 来源快照与绑定身份已有；实际环境/资源与冻结产物合同待补 |
 | R04 | core_partial | a8a088cf、18907d65 | store 基础修复通过；真实 Dialog 未发起绑定，项目生命周期未闭合 |
 | R05 | tests_only / partial | 722ad27c | JSON 往返测试已有，真实新进程/资源包/迁移恢复待实现 |
-| R06 | partial / workflow_failed | f76b0610、18907d65 | 首次绑定无法预览/确认；只显示第一系列，无精确命中/编辑闭环 |
+| R06 | partial / binding_verified | 本轮功能提交 | 多系列/轴区/类型/误差/网格控件与首次预览接通；精确命中/编辑闭环继续推进 |
 | R07 | partial / correctness_failed | e09b724b、484b29fb | 真实请求漏 chart；SVG→IR 四类错图已复现；EPS 未实现 |
 | R08 | metadata_only | f7d39126 | 导出嵌入元数据，但用导出文件重算 source_mismatch；A/C 生产导入未完成 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-06 实施：真实绑定交互与请求生命周期
+
+- 在当前分支修复 ChartBindDialog 首次预览死路：唯一主按钮从“生成对照预览”进入 bind→compute，成功后变为确认；确认复核当前资格并经现有 updateObject 一次事务写入。
+- 补齐多系列增删、每轴参考位置/数值与尺度、轴区域节点、类别列、系列类型、误差列、色条与网格入口；重新绑定预填原模型的数据/样式/轴；预览以两张隔离 img 对照原图和计算图，不注入 SVG DOM。
+- 真实浏览器发现旧请求缺必填 axes_id，现已补齐并收紧 TS 请求类型；withProject 保留 Content-Type 和项目请求头。请求序号绑定 busy/结果，旧任务不清新任务；项目切换自动清理绑定/渲染态；drop 单个渲染不再让其他在途任务永久 computing。
+- 验证：8 个受影响前端文件共 194 项通过；正式三步构建、i18n 三步与定向 oxlint 通过；playground 重建并 --check 通过。
+- 真 Chromium：从素材加图→面板右键→绑定对话框，实际输入两系列与两轴区域→真实 bind/compute 成功→对照预览→确认；文档 series=2、axes entries=2；Ctrl+Z 后 chart 消失，Ctrl+Shift+Z 后恢复 series=2。证据在 svg-review-20261106 的 ui-*.log 和 output/playwright/chart-binding-preview.png。
+- 下一步：真实导出请求及冻结来源接线，随后转换保真、自包含/持久化与 manifest 编辑。当前目标仍 active，未宣告最终可用。
 
 ### 2026-11-06 第三次效果复核与当前分支计划同步
 

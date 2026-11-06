@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { chartCompute } from '@/lib/chartApi'
 import { revisionOf, useChartRenderStore } from './chartRenderStore'
+import { setCurrentProjectId } from '@/lib/session'
 
 vi.mock('@/lib/chartApi', () => ({ chartCompute: vi.fn() }))
 
@@ -23,8 +24,29 @@ function chartState(range: [number, number]) {
 }
 
 beforeEach(() => {
+  setCurrentProjectId(null)
   vi.mocked(chartCompute).mockReset()
   useChartRenderStore.setState({ byRevision: {}, generation: 0 })
+})
+
+it('dropping one pending variant does not strand a different pending variant', async () => {
+  let resolveA!: (value: never) => void, resolveB!: (value: never) => void
+  vi.mocked(chartCompute).mockReturnValueOnce(new Promise(r => { resolveA = r })).mockReturnValueOnce(new Promise(r => { resolveB = r }))
+  const a = chartState([0, 1]), b = chartState([2, 3])
+  const store = useChartRenderStore.getState()
+  store.ensure('f.svg', a); store.ensure('f.svg', b)
+  store.drop(revisionOf(a)!)
+  resolveA({ svg: '<svg id="dropped"/>', render_revision: 'A' } as never)
+  resolveB({ svg: '<svg id="kept"/>', render_revision: 'B' } as never)
+  await Promise.resolve(); await Promise.resolve()
+  expect(useChartRenderStore.getState().byRevision[revisionOf(a)!]).toBeUndefined()
+  expect(useChartRenderStore.getState().byRevision[revisionOf(b)!].status).toBe('ready')
+})
+
+it('actual project changes clear the chart cache', async () => {
+  useChartRenderStore.setState({ byRevision: { fixture: { status: 'ready', svg: '<svg/>' } } })
+  setCurrentProjectId('B')
+  expect(useChartRenderStore.getState().byRevision).toEqual({})
 })
 
 describe('chart render identity and lifecycle (F4-F6)', () => {

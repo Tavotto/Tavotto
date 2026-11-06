@@ -5,6 +5,7 @@ import { create } from 'zustand'
 
 import { chartCompute } from '@/lib/chartApi'
 import { digestOf } from '@/types/chartModel'
+import { onCurrentProjectChange } from '@/lib/session'
 import type { PanelChartState } from '@/types/document'
 
 export interface ChartRenderEntry {
@@ -13,6 +14,7 @@ export interface ChartRenderEntry {
   /** 稳定错误码（chart_source_mismatch / chart_engine_mismatch / chart_source_changed …） */
   code?: string
   message?: string
+  requestId?: number
 }
 
 interface ChartRenderState {
@@ -24,6 +26,7 @@ interface ChartRenderState {
   drop: (revision: string) => void
 }
 
+let nextRequestId = 0
 export const useChartRenderStore = create<ChartRenderState>()((set, get) => ({
   byRevision: {},
   generation: 0,
@@ -34,15 +37,16 @@ export const useChartRenderStore = create<ChartRenderState>()((set, get) => ({
     const existing = get().byRevision[revision]
     if (existing && existing.status !== 'error') return
     const generation = get().generation
+    const requestId = ++nextRequestId
     set((s) => ({
       byRevision: {
         ...s.byRevision,
-        [revision]: { status: 'computing', svg: null },
+        [revision]: { status: 'computing', svg: null, requestId },
       },
     }))
     chartCompute(file, chart)
       .then((res) => {
-        if (get().generation !== generation) return // F6：clear/drop 后旧响应作废
+        if (get().generation !== generation || get().byRevision[revision]?.requestId !== requestId) return
         set((s) => ({
           byRevision: {
             ...s.byRevision,
@@ -53,7 +57,7 @@ export const useChartRenderStore = create<ChartRenderState>()((set, get) => ({
         }))
       })
       .catch((err: { code?: string, message?: string }) => {
-        if (get().generation !== generation) return // F6
+        if (get().generation !== generation || get().byRevision[revision]?.requestId !== requestId) return
         set((s) => ({
           byRevision: {
             ...s.byRevision,
@@ -78,9 +82,10 @@ export const useChartRenderStore = create<ChartRenderState>()((set, get) => ({
         delete next[revision]
         return next
       })(),
-      generation: s.generation + 1,
     })),
 }))
+
+onCurrentProjectChange(() => useChartRenderStore.getState().clear())
 
 /**
  * 完整渲染身份：直接消费后端 compute 返回的 render_revision；同一来源/模型/绑定
