@@ -10,6 +10,7 @@ from __future__ import annotations
 import struct
 import zipfile
 from collections.abc import Mapping
+from dataclasses import fields
 
 from .documentpackage import (
     ARCHIVE_CHUNK_BYTES,
@@ -77,4 +78,27 @@ def output_budget(members: Mapping[str, int]) -> PackageBudget:
         max_total_bytes=max(1, total),
         max_layout_bytes=max(1, members[LAYOUT_MEMBER]),
         max_manifest_bytes=max(1, members[MANIFEST_MEMBER]),
+    )
+
+
+def portable_output_budget(members: Mapping[str, int]) -> PackageBudget:
+    """Explicit captured-input packages must also fit the existing input policy.
+
+    Default/legacy output capacity is unchanged. Exact output bounds still come
+    from output_budget; the portable variant intersects the independent input
+    limits so the artifact can be inspected on another machine.
+    """
+    output, incoming = output_budget(members), input_budget()
+    if (
+        sum(members.values()) > incoming.max_total_bytes
+        or len(members) > incoming.max_members
+        or members[LAYOUT_MEMBER] > incoming.max_layout_bytes
+        or members[MANIFEST_MEMBER] > incoming.max_manifest_bytes
+    ):
+        raise PackageError("output_budget", "Portable package exceeds the shared input policy")
+    return PackageBudget(
+        **{
+            field.name: min(getattr(output, field.name), getattr(incoming, field.name))
+            for field in fields(PackageBudget)
+        }
     )

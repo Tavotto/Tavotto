@@ -267,6 +267,17 @@ def inspect_chart_package(
                 document, manifest, storage_root, tuple(staged_resources)
             )
             prepared._verify()
+            execution = manifest.get("execution")
+            if execution is not None:
+                from . import packageexecution
+
+                if execution["version"] == packageexecution.CAPTURE_VERSION:
+                    # Explicit v2 binds a complete historical input graph. The
+                    # writer and every reader use the same semantic consumer,
+                    # before publication or returning a prepared context.
+                    from . import packageinspection
+
+                    packageinspection.inspect_project_package(prepared)
             yield prepared
         finally:
             if prepared is not None:

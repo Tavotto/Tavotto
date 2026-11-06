@@ -83,6 +83,26 @@ order: 200
 - **旧项目包HTTP原子输出**：`api_package`先保留经过containment校验的canonical资源路径与原逻辑ID，由caller持有data_dir自有快照暂存至整个输出结束，沿ZipFile原规范化组完整plan后推导预算；最终ZIP仅验证封口后发布，不覆盖同名旧包。文件名增加随机后缀，保原成功响应键与layout/manifest语义。快照准备失败沿旧整组warning；真实ZIP add/close/publish故障必须失败，不能吞成成功半包。检视仍只读，不把这条当v4混合安装完成；看护`tests/test_package_atomic_http.py`。
 - **v4项目包导出**：`POST /api/documents/v4/package`显式进入同一v4格式/会话域与认证，冻结全部画布的完整计算INPUT，沿chartpackage唯一manifest与预算工厂写包；不执行用户脚本。普通素材/登记脚本只读containment返回的canonical路径；已有Figure配对沿svgstore核验，显式坏引用拒绝，去重资源仍逐个回填每个面板引用。原SVG缺席但计算附件有效不算缺件，普通素材/脚本/未具配对的执行图则显式missing，允许备份但不声称完整搬迁。成功保旧name/url/assets/missing并加document_format='v4'与去重INPUT数chart_sources；assets为普通file资源数。旧默认导出与只读open不变。registry/数据/运行配置闭包及生产安装另行验收，不把包导出称作已安装。看护`tests/test_chart_package_http.py`。
 - **包内执行事实**：可选`execution`的闭式v1由`packageexecution`唯一校验，documentpackage清单和chartpackage资源核验都消费它；登记/argv/cwd/改指沿原权威。导出收集器携带已知数据/helper与非敏感原配置ID，不搬机器授权，不执行脚本；静态绑定或成功输入观察均不证明任意Python依赖完整，无完整声明时准确`coverage=incomplete`，响应`execution_coverage`供界面展示。已知缺资源仍只进missing；file资源计数含数据。无脚本包省略该字段，旧包不变。看护`tests/test_package_execution.py`、`tests/test_package_execution_export.py`、`tests/test_package_execution_http.py`；完整声明/外部输入及安装仍须后续验收。
+- **显式捕获资源包**：有正式捕获附件时，`execution`选择闭式v2：原字段加非空`captures`，
+  每行只有完整`snapshot_ref`与`revision`，按snapshotId唯一；同图不同patch/历史输入保独立ref。
+  `VERSION=1`仍是缺省，旧v1闭集/字节/输出容量不变。graph与原字节继续原`figure_snapshot`资源树，
+  不将大graph复制进manifest，不新增资源store。`packageexecution`沿svgstore原引用权威核完整ref，
+  经metadata.input_archive→原canonical graph→每SHA/size blob核关联；v2全部带附件档案的输入并集须精确闭包，
+  原render孤儿仍按旧合同。writer封口及Prepared reader与正式HTTP检视共用同一语义消费者，验证先于发布。
+  按实际面板ref分离历史捕获和当前contexts；同script未捕获面板仍需当前资源，不借历史blob消除缺件。
+  reader从正文重新核未捕获面板的实际脚本使用，发送者遗漏contexts也不能消除该脚本缺件。
+  原rc_ID的现有非敏感argv可作可携建议，缺失/敏感/不可读分别报缺口；公开receipt不证明参数原文，
+  不从default/新声明/当前文件补历史。声明文件集齐备不证明未知IO通道，v2总体coverage仍incomplete。
+  新检视`captured_inputs`逐ref报告已核scope与文件/prefix数，通道及配置缺口按snapshotId区分。
+  图中旧绝对请求只作来源事实，检视不resolve/open。`remap:<sha256>`保opaque域，prefix允许根空目录；
+  可恢复逻辑成员沿`packagemembers.project_member_key`核路径、别名、父目录和文件/目录冲突，
+  跨capture不混合同名不同字节；已有shadow `script_source`角色与数据file角色保持分域。
+  native公开spec的cwd_mode恒sandbox，不能据此拒其实际project/project_root捕获scope。
+  显式v2输出用`packagebudget.portable_output_budget`把精确输出边界与原输入政策求交集；
+  整包资源加metadata超额拒绝、原输出不变，不把单声明额度当整包额度，也不给旧输出新增低cap。
+  看护`tests/test_package_execution_captures.py`、`tests/test_package_execution_captures_export.py`、
+  `tests/test_package_portable_budget.py`、`tests/test_svg_input_package_e2e.py`、
+  `tests/test_package_execution_capture_reader.py`。这不授新根安装、冷重执行或写回资格。
 - **计算来源包叶子**：`chartpackage`沿上述容器与`documentassets`唯一字节权威验证schema4完整INPUT；内容寻址chart行从正文引用派生，额外资源使用闭式chart_source/figure_snapshot/file/script变体，不接受caller覆盖派生chart行。检视只写data_dir自有暂存，Prepared正文/清单每次给副本，退出后拒用；verify回调必传，前后重核附件/资源，失败不发布目标。`install_chart_sources`只发布不可变chart附件并明确返回未安装的remaining_resources，不能宣称普通文件/脚本已安装；普通资源及正文事务由调用者完成，已发布的不可变附件不回删。writer临时封口后严格inspect再原子发布最终名。看护`tests/test_chart_package.py`。
   输出调用者可显式传`budget`或`budget_factory`，恰一；后者只收本模块最终唯一layout/manifest UTF-8字节、完整INPUT及各资源真实尺寸的只读census，一次返回六预算。类型/回调错误在创建输出前拒绝；factory后仍沿原装载、严格inspect与发布链核实际摘要，不能靠清单声明尺寸或静态预算绕过验证。静态预算旧调用/字节保持；不复制manifest结构给app。
 - **项目包资源目标投影**：`chartpackage.plan_project_resources`在活跃Prepared上下文内先复核全部资源与manifest，再将assets/scripts映到同一项目相对根。原拼写且同SHA/长度可复用；跨namespace异字节、case/NFC文件或祖先目录别名、文件/目录冲突均在零目标写入时拒绝。比较键只由`documentpackage.project_member_key`调用原严格成员规则派生，不复制portable策略或允许legacy开关。返回计划不等于安装成功，调用方发布前仍须核生命周期/来源并安全发布。看护`tests/test_chart_package_targets.py`。
@@ -147,7 +167,7 @@ order: 200
   同receipt的旧v1缓存不能阻挡本次实际附件生成独立v2引用，旧archive不覆；已有同graph附件或没有新附件才沿原早退。
   `_package_svg_assets`从正式load/load_snapshot取得已核附件并完整转交staging save，复制时再核实际流，
   不回读当前原文件、不重跑脚本。无附件不新增下游keyword或响应字段，原best-effort保存/严格显式引用边界保持。
-  这不代表execution v2完整包、声明UI、引用搬迁或安装已完成。看护：
+  应用接线与资源包核验不等于声明UI、引用搬迁或安装已完成。看护：
   `tests/test_inputdeclaration_resources.py`、`tests/test_svgstore_inputs.py`、`tests/test_svgstore_input_archive.py`。
   应用接线看护：`tests/test_svg_input_capture_handoff.py`、`tests/test_svg_input_cold_staging.py`、`tests/test_svg_input_save_e2e.py`。
 - **项目文件统一收纳在项目内的 `tavottofile/`（2026-08-17 定版）**：命名画布

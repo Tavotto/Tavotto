@@ -4971,7 +4971,14 @@ def api_package():
 
 def _api_chart_package():
     """显式v4导出：完整计算INPUT与已核项目资源，不执行用户脚本。"""
-    from .engine import chartpackage, packagebudget, packageexecution_export
+    from .engine import (
+        chartpackage,
+        packagebudget,
+        packageexecution,
+        packageexecution_export,
+        svgstore,
+        svgstore_inputs,
+    )
 
     root = require_project()
     body = request.get_json(force=True)
@@ -5057,6 +5064,15 @@ def _api_chart_package():
         snapshot_count = _package_svg_assets(
             doc, root, snapshots, temporary_root=Path(temporary), strict_references=True
         )
+        capture_facts = None
+        captured_ids = set()
+        staging = Path(temporary) / svgstore.STORE_DIRNAME
+        if (staging / svgstore_inputs.DIRNAME).exists():
+            checked = svgstore.inspect_portable_store(storage_root=staging)
+            captures = packageexecution.captures_from_facts(checked)
+            if captures:
+                capture_facts = checked
+                captured_ids = {row["snapshot_ref"]["snapshotId"] for row in captures}
         for name, source in snapshots.members.items():
             sha256, size = engine_figcapture.hash_file(source)
             resources.append(
@@ -5089,10 +5105,15 @@ def _api_chart_package():
         out_dir = project_export_dir()
         name = f"{stem}_{time.strftime('%m%d_%H%M%S')}_{secrets.token_hex(4)}{engine_brand.PACKAGE_EXT}"
         try:
-            if scripts:
+            if scripts or capture_facts is not None:
                 source_uses = []
                 for obj in objects:
                     if obj.get("type") != "panel" or obj["fileId"] not in resolved_sources:
+                        continue
+                    # Historical captures already carry their own script/input
+                    # bytes. Keep an uncaptured panel with the same script on
+                    # the original current-resource path.
+                    if (obj.get("figureSnapshot") or {}).get("snapshotId") in captured_ids:
                         continue
                     use = dict(resolved_sources[obj["fileId"]])
                     # Only the archive just verified by _package_svg_assets can
@@ -5103,7 +5124,11 @@ def _api_chart_package():
                         use.update(run_config=owner["run_config"], run_config_known=True)
                     source_uses.append(use)
                 collected = packageexecution_export.collect_execution(
-                    root, current_registry(), source_uses, resource=resource
+                    root,
+                    current_registry(),
+                    source_uses,
+                    resource=resource,
+                    **({"capture_facts": capture_facts} if capture_facts is not None else {}),
                 )
                 by_resource = {
                     (item.record["kind"], item.record.get("id", item.record["path"])): item
@@ -5127,7 +5152,11 @@ def _api_chart_package():
                 out_dir / name,
                 doc,
                 project_layout_dir(current_ctx()),
-                budget_factory=packagebudget.output_budget,
+                budget_factory=(
+                    packagebudget.portable_output_budget
+                    if capture_facts is not None
+                    else packagebudget.output_budget
+                ),
                 overwrite=False,
                 resources=resources,
                 metadata=metadata,

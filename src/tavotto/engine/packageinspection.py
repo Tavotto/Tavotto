@@ -19,6 +19,7 @@ from . import (
     documentformat,
     documentpackage,
     figcapture,
+    packageexecution,
     patchspec,
     projectenv,
     registry,
@@ -135,9 +136,54 @@ def inspect_project_package(prepared: chartpackage.PreparedChartPackage) -> dict
         return True
 
     execution = manifest.get("execution")
+    facts, captured_inputs = None, []
+    if execution is not None and execution["version"] == packageexecution.CAPTURE_VERSION:
+        data_root = config.data_dir()
+        data_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="package-inspection-", dir=data_root) as directory:
+            facts = _figure_facts(plan, temporary_root=Path(directory))
+        captured_inputs = packageexecution.validate_capture_facts(execution, facts)
+        for capture in captured_inputs:
+            # A fileId can have multiple historical captures. Keep each gap
+            # associated with its exact archive, rather than merging by name.
+            warn("captured_input_channels_unverified", capture["snapshot_ref"]["snapshotId"])
+    captured_scripts = {row["scope"]["script"] for row in captured_inputs}
+    current_scripts = {row["script"] for row in execution["contexts"]} if execution else set()
+
+    def script_available(script):
+        return script in resources or (script in captured_scripts and script not in current_scripts)
+
     registered = registry.Registry()
     if execution is not None:
         registered.load_data(execution["registry"], source="<project-package>")
+    if captured_inputs:
+        captured_refs = {row["snapshot_ref"]["snapshotId"] for row in captured_inputs}
+        for canvas in document["canvases"]:
+            for obj in canvas.get("objects", []):
+                if (
+                    not isinstance(obj, dict)
+                    or obj.get("type") != "panel"
+                    or obj.get("chart") is not None
+                ):
+                    continue
+                reference = obj.get("figureSnapshot") or {}
+                if not isinstance(reference, dict):
+                    continue  # The reference validator below retains the error contract.
+                if reference.get("snapshotId") in captured_refs:
+                    continue
+                source_id = obj.get("fileId")
+                if not isinstance(source_id, str):
+                    continue  # The ordinary document validation reports it below.
+                resolved = (
+                    runtimeasset.resolve(source_id, registered)
+                    if runtimeasset.is_runtime_id(source_id)
+                    else registered.for_artifact(source_id)
+                )
+                if resolved is not None:
+                    current_scripts.add(resolved["script"])
+                owner = reference.get("executionOwner")
+                if isinstance(owner, dict) and isinstance(owner.get("script"), str):
+                    current_scripts.add(owner["script"])
     declared_scripts = set(manifest.get("scripts", []))
     for descriptor in manifest.get("runtime_assets", []):
         if "script" in descriptor:
@@ -149,7 +195,7 @@ def inspect_project_package(prepared: chartpackage.PreparedChartPackage) -> dict
         declared_scripts.update(execution["registry"]["scripts"])
     scripts = {script for script in declared_scripts if file_candidate(script)}
     for script in scripts:
-        if script not in resources:
+        if not script_available(script):
             missing.add(script)
         if execution is None:
             warn("execution_unrecorded", script)
@@ -169,15 +215,24 @@ def inspect_project_package(prepared: chartpackage.PreparedChartPackage) -> dict
         if (
             file_candidate(resource_id)
             and resource_id not in resources
+            and not (resource_id in captured_scripts and resource_id not in current_scripts)
             and (resource_id not in chart_sources or resource_id in ordinary_sources)
         ):
             missing.add(resource_id)
     runs = {run["id"]: run for run in execution["runs"]} if execution is not None else {}
+    captured_ids = {row["snapshot_ref"]["snapshotId"] for row in captured_inputs}
+    for capture in captured_inputs:
+        scope = capture["scope"]
+        if scope["run_config"] is not None:
+            run = runs.get(scope["run_config"])
+            if run is None or run["script"] != scope["script"]:
+                warn("historical_run_config_missing", capture["snapshot_ref"]["snapshotId"])
 
     data_root = config.data_dir()
     data_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="package-inspection-", dir=data_root) as directory:
-        facts = _figure_facts(plan, temporary_root=Path(directory))
+        if facts is None:
+            facts = _figure_facts(plan, temporary_root=Path(directory))
         snapshots = facts["snapshots"]
         for canvas in document["canvases"]:
             for obj in canvas.get("objects", []):
@@ -205,7 +260,7 @@ def inspect_project_package(prepared: chartpackage.PreparedChartPackage) -> dict
                     warn("runtime_unresolved", source_id)
                 if resolved is not None:
                     script = resolved["script"]
-                    if script not in resources:
+                    if not script_available(script):
                         missing.add(script)
                     run_id = resolved.get("run_config")
                     if run_id and run_id not in runs:
@@ -249,11 +304,16 @@ def inspect_project_package(prepared: chartpackage.PreparedChartPackage) -> dict
                 if owner is not None and owner["run_config"] is not None:
                     run = runs.get(owner["run_config"])
                     if run is None or run["script"] != owner["script"]:
-                        warn("historical_run_config_missing", source_id)
+                        warn(
+                            "historical_run_config_missing",
+                            reference["snapshotId"]
+                            if reference["snapshotId"] in captured_ids
+                            else source_id,
+                        )
     # Recheck the original numeric stages after semantic inspection. No leased
     # temporary path or previously verified mutable bytes escape this request.
     chartpackage.plan_project_resources(prepared)
-    return {
+    result = {
         "document_format": documentformat.CHART4,
         "doc": document,
         "manifest": manifest,
@@ -263,3 +323,6 @@ def inspect_project_package(prepared: chartpackage.PreparedChartPackage) -> dict
         "figure_snapshots": len(snapshots),
         "execution_coverage": execution["coverage"] if execution is not None else None,
     }
+    if captured_inputs:
+        result["captured_inputs"] = captured_inputs
+    return result

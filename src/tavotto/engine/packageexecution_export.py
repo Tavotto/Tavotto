@@ -49,6 +49,76 @@ def collect_execution(
     source_uses: Iterable[Mapping],
     *,
     resource: Callable[[str, str], chartpackage.ResourceFile | None],
+    capture_facts=None,
+) -> CollectedExecution:
+    """Keep v1 current-source collection separate from checked historical captures.
+
+    ``capture_facts`` is the actual staging svgstore inspection, never client
+    metadata. Captured resources stay in that existing Figure store; this
+    collector does not re-read their original paths or mint current execution.
+    """
+    if capture_facts is None:
+        return _collect_execution_v1(project_root, registry, source_uses, resource=resource)
+    captures = packageexecution.captures_from_facts(capture_facts)
+    if not captures:
+        return _collect_execution_v1(project_root, registry, source_uses, resource=resource)
+    current = _collect_execution_v1(project_root, registry, source_uses, resource=resource)
+    execution = current.execution
+    execution["version"] = packageexecution.CAPTURE_VERSION
+    execution["captures"] = captures
+    _capture_run_suggestions(project_root, registry, execution)
+    execution = packageexecution.validate_execution(execution)
+    packageexecution.validate_capture_facts(execution, capture_facts)
+    return CollectedExecution(execution, current.resources, current.missing)
+
+
+def _capture_run_suggestions(project_root, registry, execution):
+    """Carry available original argv as advice, without reconstructing history."""
+    entries = registry.entries()
+    scripts = execution["registry"]["scripts"]
+    run_ids = {row["id"] for row in execution["runs"]}
+    issues = {(row["script"], row["reason"]) for row in execution["coverage"]["issues"]}
+    addresses = set()
+
+    def issue(script, reason):
+        if (script, reason) not in issues:
+            issues.add((script, reason))
+            execution["coverage"]["issues"].append({"script": script, "reason": reason})
+
+    for capture in execution["captures"]:
+        owner = capture["snapshot_ref"].get("executionOwner")
+        if owner is None:
+            continue
+        script, reference = owner["script"], owner["run_config"]
+        address = (script, reference)
+        if address in addresses or script not in entries:
+            continue
+        addresses.add(address)
+        scripts.setdefault(script, copy.deepcopy(entries[script]))
+        if reference is None or reference in run_ids:
+            continue
+        try:
+            cfg = runconfig.get(project_root, reference, script=script)
+        except runconfig.RunConfigSecretMissing:
+            issue(script, "sensitive_run_config")
+        except runconfig.RunConfigMissing:
+            issue(script, "run_config_missing")
+        except (runconfig.RunConfigError, OSError):
+            issue(script, "run_config_unavailable")
+        else:
+            if cfg.sensitive:
+                issue(script, "sensitive_run_config")
+            else:
+                run_ids.add(cfg.id)
+                execution["runs"].append({"id": cfg.id, "script": script, "argv": list(cfg.argv)})
+
+
+def _collect_execution_v1(
+    project_root: str | Path,
+    registry,
+    source_uses: Iterable[Mapping],
+    *,
+    resource: Callable[[str, str], chartpackage.ResourceFile | None],
 ) -> CollectedExecution:
     """收集 resolver 已确认的 script/配置；文件批准与封口复用调用方 resource。
 
