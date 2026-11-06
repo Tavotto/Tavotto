@@ -62,6 +62,36 @@ def _limits():
     return {"max_files": policy.capture_max_files, "max_bytes": policy.capture_max_bytes}
 
 
+def _closed_members(root, expected, directories=()):
+    root_info = root.lstat()
+    if not stat.S_ISDIR(root_info.st_mode) or getattr(root_info, "st_file_attributes", 0) & getattr(
+        stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0
+    ):
+        _invalid("Relocation stage root is not its owned directory")
+    expected, directories = set(expected), set(directories)
+    for relative in (*expected, *tuple(directories)):
+        directories.update(
+            parent.as_posix() for parent in Path(relative).parents if parent.as_posix() != "."
+        )
+    stack = [root]
+    while stack:
+        parent = stack.pop()
+        with os.scandir(parent) as entries:
+            for entry in entries:
+                path = Path(entry.path)
+                relative = path.relative_to(root).as_posix()
+                info = entry.stat(follow_symlinks=False)
+                if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & getattr(
+                    stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0
+                ):
+                    _invalid("Relocation stage contains a link or reparse point")
+                if stat.S_ISDIR(info.st_mode) and relative in directories:
+                    stack.append(path)
+                elif not (stat.S_ISREG(info.st_mode) and relative in expected):
+                    _invalid("Relocation stage contains an unplanned member")
+    return sorted(expected)
+
+
 def _materialize_view(archive, root):
     graph = inputdeclaration.validate_input_archive(archive, limits=_limits())
     # Reuse the existing portable role/tree authority, including aliases,
@@ -208,11 +238,6 @@ class PreparedRelocation:
         return self._members(facts)
 
     def _members(self, facts):
-        root_info = self._stage.lstat()
-        if not stat.S_ISDIR(root_info.st_mode) or getattr(
-            root_info, "st_file_attributes", 0
-        ) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0):
-            _invalid("Relocation stage root is not its owned directory")
         expected = {
             resource.path.relative_to(self._stage).as_posix() for resource in self._resources
         }
@@ -221,27 +246,33 @@ class PreparedRelocation:
             prefix = self.storage_root.relative_to(self._stage).as_posix()
             expected.update(prefix + "/" + name for name in facts["members"])
             directories.update(prefix + "/" + name for name in ("entries", "sources"))
-        for relative in (*expected, *tuple(directories)):
-            directories.update(
-                parent.as_posix() for parent in Path(relative).parents if parent.as_posix() != "."
+        return _closed_members(self._stage, expected, directories)
+
+    def verify_publication_copy(self, root, *, additional=()):
+        """Check the actual publication tree against the same closed file plan.
+
+        Additional rows describe caller-generated metadata, never replacements
+        for packaged bytes. The caller still owns publication and durability.
+        """
+        root = Path(root)
+        rows = list(self.publication_files)
+        names = {relative for relative, _resource in rows}
+        for relative, resource in additional:
+            if relative in names:
+                _invalid("Generated metadata would replace a packaged resource")
+            names.add(relative)
+            rows.append((relative, resource))
+        for relative, resource in rows:
+            inputdeclaration.verify_resource(
+                inputdeclaration.InputResource(
+                    resource.sha256, resource.size_bytes, _path(root, relative)
+                )
             )
-        stack = [self._stage]
-        while stack:
-            parent = stack.pop()
-            with os.scandir(parent) as entries:
-                for entry in entries:
-                    path = Path(entry.path)
-                    relative = path.relative_to(self._stage).as_posix()
-                    info = entry.stat(follow_symlinks=False)
-                    if stat.S_ISLNK(info.st_mode) or getattr(
-                        info, "st_file_attributes", 0
-                    ) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0):
-                        _invalid("Relocation stage contains a link or reparse point")
-                    if stat.S_ISDIR(info.st_mode) and relative in directories:
-                        stack.append(path)
-                    elif not (stat.S_ISREG(info.st_mode) and relative in expected):
-                        _invalid("Relocation stage contains an unplanned member")
-        return sorted(expected)
+        directories = set()
+        if self._references:
+            prefix = self.storage_root.relative_to(self._stage).as_posix()
+            directories.update(prefix + "/" + name for name in ("entries", "sources"))
+        return _closed_members(root, names, directories)
 
     @property
     def publication_files(self):

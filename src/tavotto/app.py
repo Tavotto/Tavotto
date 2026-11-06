@@ -1460,6 +1460,7 @@ def _read_chart_input(
     *,
     chart_source: object = _CHART_SOURCE_UNSET,
     scene_digest: str | None = None,
+    source_storage: Path | None = None,
 ) -> tuple[Path, bytes]:
     """明确附件引用不借原文件补缺；所有消费者读取同一份精确INPUT。"""
     if chart_source is _CHART_SOURCE_UNSET:
@@ -1471,7 +1472,7 @@ def _read_chart_input(
 
     try:
         saved = documentassets.load_source(
-            project_layout_dir(current_ctx()),
+            source_storage if source_storage is not None else project_layout_dir(current_ctx()),
             chart_source,
             source_id=file_id,
             scene_digest=scene_digest,
@@ -1545,6 +1546,7 @@ def _render_chart_snapshot(
     render_profile: str | None = None,
     overrides: object = (),
     chart_source: object = _CHART_SOURCE_UNSET,
+    source_storage: Path | None = None,
 ) -> _ChartSnapshot:
     """预览/导出唯一计算入口：源字节、模型、绑定、环境与组合属于同一版本。"""
     from . import chartbundle, svgcompose, svgscene
@@ -1572,6 +1574,7 @@ def _render_chart_snapshot(
         scene_digest=chart["model"].get("scene_digest")
         if isinstance(chart["model"], dict)
         else None,
+        **({"source_storage": source_storage} if source_storage is not None else {}),
     )
     source_sha = hashlib.sha256(original).hexdigest()
     try:
@@ -5228,7 +5231,18 @@ def _api_chart_package():
 
 def _api_chart_package_inspect():
     """有界上传并严格检视 v4 包；不触碰目标项目或执行包内脚本。"""
-    from .engine import chartpackage, packagebudget, packageinspection
+    from .engine import packageinspection
+
+    return _consume_chart_package_upload(
+        lambda prepared, _options, _work: jsonify(
+            packageinspection.inspect_project_package(prepared)
+        )
+    )
+
+
+def _consume_chart_package_upload(consume, *, with_options=False):
+    """检视/安装共用原上传边界；活跃 Prepared 只在本次消费内有效。"""
+    from .engine import chartpackage, packagebudget
 
     # Inspection needs no open project, but an explicitly closed/unknown one
     # still follows the common no-project contract (query and header alike).
@@ -5244,6 +5258,18 @@ def _api_chart_package_inspect():
     request_limit = budget.max_archive_bytes + packagebudget.INPUT_MULTIPART_BYTES
     if request.content_length is not None and request.content_length > request_limit:
         return failure("archive_budget", "项目包上传超过容量上限", 413)
+    completed = None
+
+    def unconfirmed_publication():
+        if not with_options or completed is None:
+            return None
+        payload = completed.get_json(silent=True)
+        if not isinstance(payload, dict) or not payload.get("path") or not payload.get("state"):
+            return None
+        return jsonify(
+            {**payload, "state": "installation_unconfirmed", "upload_cleanup": "pending"}
+        ), 503
+
     try:
         engine_config.data_dir().mkdir(parents=True, exist_ok=True)
         with (
@@ -5264,7 +5290,7 @@ def _api_chart_package_inspect():
                     stream_factory=target,
                     max_form_memory_size=packagebudget.INPUT_MULTIPART_BYTES,
                     max_content_length=request_limit,
-                    max_form_parts=1,
+                    max_form_parts=2 if with_options else 1,
                     silent=False,
                 ).parse(stream, request.mimetype, request.content_length, request.mimetype_params)
             except HTTPException:
@@ -5275,10 +5301,20 @@ def _api_chart_package_inspect():
                 return failure("invalid_upload", "项目包上传格式不合法", 400)
             if stream.tell() > request_limit:
                 return failure("archive_budget", "项目包上传超过容量上限", 413)
-            if form or (
-                files and (set(files) != {"package"} or len(files.getlist("package")) != 1)
+            if (
+                (form and not with_options)
+                or (with_options and (set(form) - {"options"} or len(form.getlist("options")) > 1))
+                or (files and (set(files) != {"package"} or len(files.getlist("package")) != 1))
             ):
                 return failure("invalid_upload", "只允许上传一个 package 文件", 400)
+            options = {}
+            if with_options:
+                try:
+                    options = json.loads(form.get("options", "{}"))
+                except (TypeError, ValueError):
+                    return failure("invalid_upload", "安装选项须为 JSON 对象", 400)
+                if not isinstance(options, dict):
+                    return failure("invalid_upload", "安装选项须为 JSON 对象", 400)
             file = files.get("package")
             if file is None:
                 return jsonify(
@@ -5288,12 +5324,94 @@ def _api_chart_package_inspect():
                     }
                 ), 400
             with chartpackage.inspect_chart_package(file.stream, budget=budget) as prepared:
-                return jsonify(packageinspection.inspect_project_package(prepared))
+                completed = app.make_response(consume(prepared, options, Path(directory)))
+                return completed
     except chartpackage.PackageError as exc:
         status = 413 if exc.reason.endswith("budget") else 422
         return failure(exc.reason, exc.detail, status)
-    except OSError:
+    except FileExistsError:
+        if response := unconfirmed_publication():
+            return response
+        if with_options:
+            return failure("installation_target_exists", "目标已存在，请选择新的项目目录", 409)
         return failure("inspection_unavailable", "暂时无法检视项目包", 503)
+    except OSError:
+        if response := unconfirmed_publication():
+            return response
+        if with_options:
+            return failure("installation_unavailable", "暂时无法安装项目包", 503)
+        return failure("inspection_unavailable", "暂时无法检视项目包", 503)
+
+
+def _api_chart_package_install():
+    """独占安装资源及本机建议；正文仍须由原界面 writer 明确采用。"""
+    from .engine import chartpackage, chartprofile, packageinstall
+
+    def consume(prepared, options, work):
+        if (
+            set(options) - {"destination", "remap_rules"}
+            or not isinstance(options.get("destination"), str)
+            or not options["destination"]
+            or not Path(options["destination"]).is_absolute()
+        ):
+            raise chartpackage.PackageError("installation_invalid", "需要明确的新项目绝对路径")
+        destination = Path(options["destination"])
+        canonical = destination.parent.resolve(strict=True) / destination.name
+        execution = prepared.manifest.get("execution") or {}
+        rules = options.get(
+            "remap_rules",
+            [
+                {
+                    "kind": row["kind"],
+                    "from": row["from"],
+                    "to": str(canonical / row["to_resource"]),
+                }
+                for row in execution.get("remaps", [])
+            ],
+        )
+        try:
+            engine_inputremap.fingerprint_rules(rules)
+        except (TypeError, ValueError) as exc:
+            raise chartpackage.PackageError("installation_invalid", "输入改指规则不合法") from exc
+        # Rendering may use the caller's already selected environment, never an
+        # interpreter or .venv arriving inside the uploaded project. With no open
+        # project, the original environment resolver gets an empty owned root.
+        engine_ctx = _request_ctx()
+        if engine_ctx is None:
+            engine_root = work / "verification-engine"
+            engine_root.mkdir()
+            engine_ctx = ProjectCtx(
+                engine_root, _project_id(engine_root), engine_registry.Registry()
+            )
+
+        def verify(document, stage):
+            with bound_project(engine_ctx):
+                for obj in _doc_objects(document):
+                    if obj.get("type") != "panel" or obj.get("chart") is None:
+                        continue
+                    if "chartSource" not in obj:
+                        raise chartpackage.PackageError("chart_source_missing", "计算来源附件缺失")
+                    _render_chart_snapshot(
+                        obj["fileId"],
+                        obj["chart"],
+                        render_profile=chartprofile.NATIVE_PROFILE,
+                        overrides=obj.get("overrides", []),
+                        chart_source=obj["chartSource"],
+                        source_storage=stage / engine_config.PROJECT_STORE_DIRNAME,
+                    )
+
+        result = packageinstall.install_project_package(
+            prepared, destination=destination, remap_rules=rules, verify=verify
+        )
+        ready = result["state"] == "resources_installed" and result["configuration"] == "ready"
+        return jsonify(result), 201 if ready else 503
+
+    try:
+        return _consume_chart_package_upload(consume, with_options=True)
+    except engine_exportreq.ExportRequestError as exc:
+        return jsonify({"error": exc.message, "code": exc.code, "params": {}}), 422
+    except engine_pool.WorkerError as exc:
+        return jsonify({"error": str(exc), "code": exc.code, "params": {}}), 503
 
 
 @app.post("/api/package/open")
@@ -18982,6 +19100,12 @@ def _register_chart_document_routes() -> None:
         "/api/documents/v4/package/inspect",
         endpoint="documents_v4_package_inspect",
         view_func=adapt(_api_chart_package_inspect),
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/api/documents/v4/package/install",
+        endpoint="documents_v4_package_install",
+        view_func=adapt(_api_chart_package_install),
         methods=["POST"],
     )
 

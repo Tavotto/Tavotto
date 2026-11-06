@@ -7,7 +7,7 @@
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 200
-改到: `/api/versions`、`/api/styles`、`/api/package`、`tavottofile/`、`atomicio.py`、`documents.loads_document`、自动保存槽位、`engine/layoutsession.py`、`engine/packagerelocation.py`、`/api/layout-session`
+改到: `/api/versions`、`/api/styles`、`/api/package`、`tavottofile/`、`atomicio.py`、`documents.loads_document`、自动保存槽位、`engine/layoutsession.py`、`engine/packagerelocation.py`、`engine/packageinstall.py`、`/api/layout-session`
 主题: 布局版本、项目文件收纳与文档落盘 → `layout-versions-and-documents.md`
 必守要点: `atomicio` / `project_layout_dir()` 唯一权威（ADR 0120）
 -->
@@ -108,6 +108,27 @@ order: 200
 - **项目包资源目标投影**：`PreparedChartPackage.plan_project_resources`在活跃上下文内先复核全部资源与manifest，再将assets/scripts映到同一项目相对根；原模块级函数保类型拒绝后委托。上层检视首尾消费同一对象方法，类型引用不产生反向运行时依赖；writer/reader仍用同一语义检视。原拼写且同SHA/长度可复用；跨namespace异字节、case/NFC文件或祖先目录别名、文件/目录冲突均在零目标写入时拒绝。比较键只由`documentpackage.project_member_key`调用原严格成员规则派生，不复制portable策略或允许legacy开关。返回计划不等于安装成功，调用方发布前仍须核生命周期/来源并安全发布。看护`tests/test_chart_package_targets.py`及`tests/test_import_architecture.py`。
   成员路径判据、元数据成员名与`PackageError`的实现唯一位于纯标准库`packagemembers`，`documentpackage`保原API同对象导出；执行清单及可携运行配置直接依赖该叶子，避免容器→执行清单→配置→容器的环。strict/legacy路径判据、异常字段与ZIP输出保持原合同，搬移不扩大任何名字或提取权限。看护`tests/test_package_member_authority.py`及原import架构门禁。
 - **v4只读产品检视**：`POST /api/documents/v4/package/inspect`只收一个multipart `package`文件，沿同一认证/格式域；实际请求流、表单内存和包的六项预算均有界，临时文件只在data_dir并随请求回收。`packagebudget.input_budget`集中输入政策，不从不可信清单反推预算，也不改变旧open/输出预算。普通资源沿`DocumentPackage.copy_required`的同一CRC/解压计数器流式暂存和摘要核对，不整份读大型数据。`packageinspection`复用活跃Prepared/目标计划，返回完整正文/原清单、全部资源目标、重新计算的缺件和明确缺口。已声明missing及runtime脚本仅作候选，与实际plan核缺席；已携文件清除旧缺件，完整INPUT的chart-only原件不算缺件。非portable/opaque声明保原清单并报未核缺口，不作本机路径或运行授权。Figure树按svgstore全量核档案/marker/条目/blob，再用共享SVG安全解析器与pdfbackend核全部图像内容；正文显式ref须与source/patch完全相符。历史owner不等于当前登记/授权，合法旧v4/无execution/依赖不完整备份仍可检视；原coverage是发送者声明，完整输入声明未验证时另给缺口。检视不安装、不写项目/正文/本机配置、不运行用户脚本，也不授予冷重放或写回资格。看护`tests/test_package_streaming.py`、`tests/test_chart_package_inspect_http.py`。
+- **v4资源安全安装**：`POST /api/documents/v4/package/install`沿检视的同一有界上传、格式域和认证，
+  额外只接受一个闭式JSON `options`（绝对新目录`destination`与可选本机批准`remap_rules`）。
+  `packageinstall`消费活跃Prepared和原迁移结果；原受检流复制到同父私有stage，保普通资源原字节，
+  registry沿原权威生成，普通资源同名时只允许语义一致且保原bytes。声明式图表沿原renderer核完整
+  INPUT与原序overrides；上传stage只提供资源，解释器根只取可信caller或自有空engine根，不能选择
+  上传项目的.venv，不执行包内用户脚本。检视仍只接受原单文件合同。
+  发布前`verify_publication_copy`沿原资源摘要权威与同一闭合成员清点核实际副本，允许明确生成的
+  registry元信息但不覆盖包内成员；callback不得改正文。每文件/子目录同步后再核目录身份和副本，
+  经原atomicio排他发布；目标存在（含并发/链接）零覆盖，只清未发布且身份未变的本attempt stage。
+  发布后才沿原runconfig导入非敏感建议、原inputremap写本机批准规则并核唯一实际指纹；
+  不搬默认配置、cwd授权、执行成功记录、current marker或发送者机器信任。
+  既有本机元信息在发布/import和项目锁之前从原default_selection/get.public/workdir.state只读投影，
+  保原配置并返回`needs_review`，不额外公开argv，也不把旧默认视为新包执行事实。
+  已知缺件拒绝完整安装，unknown coverage仍如实incomplete。资源发布、配置导入和后续正文writer
+  是独立阶段：`resources_installed`不表示正文落盘，始终`document_saved=false`；
+  配置区分`pending/needs_review/ready`。发布后的durability、Prepared出口或上传清理失败不得回删目录
+  或丢回执，返回实际`path`及`publication_unconfirmed/installation_unconfirmed`（清理另标
+  `upload_cleanup=pending`），HTTP503不能被消费者解读成目标未创建。只有资源及配置均确认才201。
+  不调用open_project、touch_recent或自动保存；界面采用与完整迁移资格另验。
+  看护`tests/test_package_install.py`、`tests/test_chart_package_install_http.py`、
+  `tests/test_atomicio_directory.py`、`tests/test_package_install_e2e.py`。
 - **文档显式引用全质量 Figure 配对（X03，2026-10-15）**：面板 `figureSnapshot` 是版本 1 的闭集
   `{version, sourceId, patchHash, receiptId, snapshotId}`，可选 `executionOwner={script, run_config}`；
   owner 只从已验归档派生、纳入内容 ID，不信客户端自报。导出 wire 字段为 `figure_snapshot`。
@@ -206,6 +227,11 @@ order: 200
   收纳目录里 Tavotto 自己的文件（现只有 `_styles.json`）由
   `RESERVED_DOCUMENT_FILENAMES` **枚举**——不要改成「`_` 开头」的前缀规则，
   画布名净化会把 `（图一）` 变成 `_图一_`，前缀规则会把用户的文档藏起来。
+- **排他目录发布**：`atomicio.publish_directory_if_absent`仅接同父不同名的真实自有目录，
+  拒symlink/reparse；调用方先受检复制并同步各文件/子目录，叶子再同步stage、复核源身份，
+  委托原排他rename，最后同步parent。默认文件发布调用/IO不变；POSIX目录不尝试硬链接，
+  不回退覆盖式rename。碰撞保原FileExistsError，真实故障沿AtomicWriteError；parent同步失败
+  可能已发布，调用方须依目录身份保留目标/回执，不能递归伪回滚。该叶子不复制或清理目录。
 - **读侧也有一道非有限数闸：`documents.loads_document()`**（2026-09-03，
   issue #222）。写侧挡住的只是**我们自己写出去的**那份；外部工具往
   `tavottofile/*.json` 写一个 `NaN` 之后，Python 的 `json.loads` 照读不误，而
