@@ -2,12 +2,12 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-06 14:05复核）：曲线显示、共享导出和真实C恢复已有验证。新增profile/v2完整编辑包029dfac2、字体族名字面值修复ea0a7027、Windows编码修复fb1ae4f7及原生最终场景/预览坐标3236307c已分别提交。真实native API已取得16项主流程与2项隐藏/恢复补测，前端共享消费者仍未提交；真实Chrome已验证4种映射的DOM预览单位，但完整图内操作/图例、完整编辑状态导出恢复、正式项目保存迁移和全量旧功能资格未闭环，M1未通过。**
+> **当前结论（2026-11-06 15:32复核）：共享图内编辑242cabc0、完整状态生产导出c2fd47d5、v2恢复53393810、多DOM目标8e6c399a及PNG/TIFF验证2a40fec9已分别提交。真实UI已验证轴范围/线宽、撤销重做、实际导出与7条编辑重新导入；当前受影响前端34文件983项及正式build/i18n/playground检查通过。正式项目保存/冷重开、图例联动、欠定成员层序/复杂clip、worker生命周期和完整旧功能资格未闭环，M1未通过。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 
 ## 环境（2026-11-06 当前快照）
 
-- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；本次功能HEAD=`3236307c`，共享API/前端消费者仍有34个未提交文件，不是冻结候选。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入这些成果。
+- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；本次功能HEAD=`2a40fec9`，已收敛共享消费者/导出/恢复/多目标。worker生命周期的desktopproc.py、chartprocess.py仍是独立开发草稿，不是冻结候选。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入这些成果。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述三个新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
@@ -25,22 +25,32 @@
 | SG04 | core_partial | d0c0d898 | 采用判定 helper 已有；生产来源采用、语义元数据往返未接通 |
 | SG05 | core_partial | 451d8490、4c2ca1f2、f04d8f63 | 坐标与连续文字转换已有独立回归；精确命中/文字/分组交互未完成 |
 | SG06 | interaction_verified / core_visible | 133d2bf7、cbd8d95e、e836a8de、f6c4a13d、82b142d2 | 两系列/C恢复/确认撤销及类别与quoted CSV真实流程通过；完整图例/模型验收待补 |
-| SG07 | core_partial | 4c2ca1f2 | 基础计算回归通过；真实绑定/图内编辑/M1 未完成 |
+| SG07 | core_partial / native_edit_verified | 4c2ca1f2、242cabc0、8e6c399a | 真实图内范围/线宽及多成员预览已验证；完整模型族与M1未完成 |
 | SG08 | partial | 4c2ca1f2 | bar 附属误差基础修复已有；完整族与 UI/导出追验待补 |
 | SG09 | partial | ac060053 | 色条基础所有权/镜像已修；复杂族和导出图像资源未验收 |
-| SG10 | partial / native_core_verified | cbd8d95e、82b142d2、54161afd、3236307c | 恢复UI及合格区域最终manifest/DOM预览已验证；共享消费者、复杂成员目标和真实图内操作待闭合 |
+| SG10 | partial / product_edit_verified | cbd8d95e、242cabc0、53393810、8e6c399a | 真UI图内操作/v2恢复及多DOM共同目标已验证；图例/复杂clip/成员层序与正式冷保存仍缺 |
 | SG11–SG17 | partial / pending | 979a4962、48d3d27a、cae96f89、5bc82a81、bbbffed1 | 来源附件核心与共享导出已有；正式项目保存/迁移、写回、入口/平台和最终回归待补 |
 | R00 | baseline_and_regressions | 5a4f5c2c | 基础反例保留；本轮用户流程和导出反例待随修复入库 |
-| R01/R02 | core_partial / native_geometry_verified | 451d8490、4c2ca1f2、3236307c | 合格区域的物理坐标/最终manifest/CSS隔离及即时预览已验证；跨父/插绘成员/非矩形clip/colorbar统一目标仍缺，图例待补 |
-| R03 | partial / native_profile_verified | 48d3d27a、5bc82a81、029dfac2、3236307c | profile与完整原序overrides身份已提交，实际API同版SVG/PNG验证通过；worker资源/生命周期审查、正式导出全状态接线待补 |
+| R01/R02 | core_partial / multi_target_verified | 3236307c、8e6c399a | 跨父/split/errorbar/colorbar共同目标与预览通过；任意clip、欠定成员paint slots和图例仍缺 |
+| R03 | partial / frozen_native_export_verified | 029dfac2、242cabc0、c2fd47d5 | 共享API与生产导出冻结完整状态；worker lease/admission/组取消及输出上限正实施，尚未接入app |
 | R04 | affected_checks_passed | a8a088cf、18907d65、cbd8d95e | 请求序号/表单/项目切换、late response 和单项 drop 均有受影响测试；Dialog 已可发起真实绑定；完整编辑器生命周期在 R06 追验 |
 | R05 | partial / source_core_verified | cae96f89、82b142d2、bbbffed1 | 自包含删源/新父进程与附件核心通过；保存/自动保存/版本、包安装和旧版隔离未接线 |
-| R06 | consumer_checks_passed / product_editing_pending | cbd8d95e、82b142d2、3236307c；共享消费者未提交 | 共享消费者有639项前端专项、终态失败143项补验；坐标151项/Chrome4种映射通过；真UI编辑/图例/冷保存仍缺 |
-| R07 | partial / integration_checks_passed | 979a4962、48d3d27a、3ed06553、5bc82a81 | 请求/来源/转换/共享导出已提交，真实导出12项与汇总受影响回归通过；EPS/最终产品E2E未完成 |
-| R08 | bundle_and_restore_verified / partial | f7d39126、cae96f89、82b142d2、029dfac2 | v1兼容与v2 profile/完整编辑包核心通过；生产导出/v2编辑恢复UI、A采用、分享选择和项目迁移待补 |
+| R06 | product_editing_verified / partial | 242cabc0、53393810、8e6c399a | 真UI点选、线宽/范围、撤销重做与v2恢复通过；34前端文件983项受影响回归，图例/正式冷保存仍缺 |
+| R07 | partial / production_formats_verified | 5bc82a81、c2fd47d5、2a40fec9 | 生产SVG/PDF9项及PNG/TIFF2项分次通过；EPS、分享范围与M1全链未完成 |
+| R08 | full_edit_restore_verified / partial | cae96f89、029dfac2、53393810 | 生产v2导出与真UI完整编辑恢复通过；A采用、分享选择和正式项目迁移待补 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-06 15:32 执行效果复核与下一阶段重排
+
+- 本轮沿当前唯一实施分支，没有新建/切换分支或工作树；原main目录仍干净。分别提交242cabc0共享编辑、c2fd47d5完整状态导出、53393810恢复与重绑归属、8e6c399a多DOM目标、2a40fec9栅格验证，没有push/合并/发布。保留全部历史记录及尚未完成的SG/R范围。
+- 实际效果截图output/playwright/native-v2-ui-restored-exact.png：新文档7项修改、线宽7、X最大20，进入既有图内编辑器；真实UI确认/撤销/重做均同一完整列表。仍可见旧图例线宽未联动与项目“2张仅版面”统计未识别计算来源，不能以截图宣称全部现有功能已对等。
+- 当前34个相关前端文件983项通过，0失败/skip；正式build、i18n及playground --check exit0，指纹931a34814cf2316a。生产API21项、恢复/重绑focused4项、profile/归属46项、多目标47个唯一用例、生产导出9+2分次运行分别保留；对应不同源码范围且互有重叠，不累计最终总数。没有完成最终全产品/所有平台资格。
+- 下一顺序：现有chartprocess草稿的环境lease/任务admission/同deadline输入输出/受限预算/退出码/组回收→v4隔离落点与session命名空间→精确INPUT附件保存及冷恢复→图例/重绑迁移与复杂clip/member slots→分享范围/EPS与M1→剩余M2/最终M3。下一阶段细项与可无人值守续接条件同步NEXT_PHASE和NEXT_PHASE_PROMPT。
+- 存储只读审计已完成但未接线：v4不能只改schema或全局project_layout_dir，须独立命名/autosave/versions/package/session入口；真实旧layoutsession清理实验表明全局owner会被删，嵌套document_namespaces.v4可由旧写入保留。仅helper不算保存交付。
+- 当前自有后端PID45648/23984、Vite71528/23983；浏览器tavotto-native-edit/PID4468和tavotto-v2-restore/PID62844供证据复核。后端脚本已改为复用已有portable/project。根代理没有启动整夜调度器；活跃goal/代理仍在运行，调试服务不是无人值守任务。续接先核PID/命令和HEAD，不按模式杀进程或重seed覆盖产物。
+- 本轮文档门禁：tests/test_docs_references.py与test_agents_rules_index.py合计41项通过，exit0（phase-review-1532-docs.xml）；agents_budget --check实际exit0，输出包含既有预算提示，不声称全部文件在建议体积内。三份稳定文档保留R00–R13/SG完整范围及无人值守合同。
 
 ### 2026-11-06 生产PNG/TIFF产物验证
 

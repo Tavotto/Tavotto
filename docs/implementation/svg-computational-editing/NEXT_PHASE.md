@@ -1,86 +1,67 @@
 # SVG 计算图表编辑：执行效果复核与下一阶段任务
 
-> 复核日期：2026-11-06，Asia/Shanghai，14:05。最新功能提交为 `3236307c`；共享API/前端消费者仍在工作树，尚非冻结候选。
-> 当前结论：原生profile/v2包、合格区域的最终SVG/manifest和预览坐标已实现验证；真实native API也有主流程与隐藏恢复证据。完整图内操作、生产导出/v2恢复全状态、正式保存迁移和全量旧功能资格仍未闭环，M1 未通过。
+> 复核日期：2026-11-06，Asia/Shanghai，15:32。最新功能提交为 `2a40fec9`；共享编辑、完整导出、v2恢复及多DOM目标已提交，worker生命周期草稿仍未冻结。M1未通过。
+> 当前结论：真实图内轴范围/线宽、撤销重做、生产导出及v2完整编辑恢复已有验证。下一步先收敛worker运行边界，再完成正式保存/冷恢复与图例、复杂场景；全量旧功能资格仍未完成，M1 未通过。
 > 当前进度唯一台账：[PROGRESS.md](PROGRESS.md)；最终范围：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。SG00–SG17 不缩减，专项测试通过不代替全产品验收。
 > 接续提示词：[NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。沿用当前实施分支/工作树，不新建或切换；不同完整功能分别 commit。无人值守规则见第 5.1–5.6 节。
 
 ## 1. 当前执行情况与实际效果
 
-实现位于 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`。原目录 `E:/0 - Project/Tavotto` 为 clean 的 `main@69bcafae`，不会自动包含实施树的功能。本次未 fetch，不以本地缓存引用宣称远端最新。
+实施仍在 `E:/0 - Project/Tavotto-svg-r00`，唯一分支 `zixu.wang/svg-computational-r00`。原目录 `E:/0 - Project/Tavotto` 是干净的 `main@69bcafae`，尚未包含这些修改。本轮没有新建/切换分支，没有合并、推送或发布；未fetch，不把缓存引用当远端最新。
 
-原有绑定入口、项目/请求生命周期、确认事务与撤销重做成果保留。层序`e836a8de`、真实导出请求`979a4962`、声明式来源`48d3d27a`、安全自包含核心`cae96f89`均已提交。
+目前已从“核心模块能算”推进到真实用户界面的图内修改与完整编辑往返。以下按实际能力判断，不给没有依据的完成百分比。
 
-后续输入合同`f6c4a13d`、转换保真`3ed06553`、共享导出`5bc82a81`、C恢复API/UI`82b142d2`均保留。本轮已提交连续文字`f04d8f63`、manifest adapter`54161afd`、附件核心`bbbffed1`、字体字面值`ea0a7027`、profile/v2包`029dfac2`、Windows编码`fb1ae4f7`和最终原生场景/预览坐标`3236307c`。未提交部分是app共享API、前端renderStore/scheduler/PNG/编辑入口及其测试。不能重做已提交生产者，也不能把专项通过当成完整图内编辑或最终无回归。
-
-| 对象 | 当前证据 | 仍未具备的资格 |
+| 能力 | 当前实际效果 / 提交 | 剩余缺口 |
 | --- | --- | --- |
-| 双系列最终成图 | 层序修复 12 组正式回归；相关后端 111 通过；Chromium 独立渲染两曲线可见 | 截图中默认新系列样式与保留的旧图例不一致，完整图例联动仍缺 |
-| 真实导出请求 | 前端 88、后端 51 项通过；正式三步构建通过；chart-only 修改改变身份且快照不随之后编辑变化 | 后续未提交 UI 修改须重建；这些数字不是最终全量回归 |
-| 来源版本合同 | provenance 新增 36 项，与来源/IR/回执/计划合计 199 通过 | 最终集成仍须重新核对共享消费者和旧来源路径 |
-| 自包含核心 | 包/模型/场景 62 通过；真正新 Python 父进程删源/搬迁后重算 SVG 和 facts 一致 | 项目包、版本迁移、旧客户端防损及分享数据选择尚未完成 |
-| 当前共享 compute/export | 汇总受影响后端288通过/1个GS环境skip；真API/worker/RenderCore导出12项通过 | 5bc82a81已提交；完整旧功能与产品全链仍未验收 |
-| 当前 SVG→IR/写出器 | 核心175项通过、Chrome43项通过（2重叠）；旧单路径PDF/SVG字节相同 | 3ed06553已提交；旧skip中的41 Chrome已补过，41 Inkscape及另2文本读取项仍缺；连续tspan另批修复 |
-| C 恢复入口 | inspect/bind 真导出恢复/删源重绑/篡改拒绝，连 provenance 41 项通过；恢复前端138项及最新三步构建/i18n/playground通过 | 真浏览器确认/撤销/重做与全引号CSV、特殊字符类别已通过；完整图内编辑与项目包迁移仍待补 |
-| 连续文字 | f04d8f63；157项受影响回归，22项Chrome参考，其中9项再经PDFium基线对拍，均实际通过 | 不涵盖bidi、竖排、textPath或全部baseline模式 |
-| 原生manifest核心 | 54161afd；根代理当前树25项通过，最终SVG draw与原生几何配对 | 明确composed=False，尚非最终场景命中权威 |
-| 项目来源核心 | bbbffed1；根代理当前树144通过/4既有Windows skip；精确字节/摘要、并发不覆盖、junction拒绝已测 | 默认schema仍3；命名/自动保存/版本、迁移和包安装尚未接线 |
-| 原生profile/v2完整包 | 029dfac2；profile/包88项与资源读取53项通过，实际旧v1字节golden保留 | 生产导出尚未传完整overrides/profile，v2恢复UI尚未消费完整编辑状态 |
-| 原生最终场景与预览 | 3236307c；生产者190通过/41缺Inkscapeskip，随后native27项通过；前端坐标151项、正式build及真实Chrome4种映射通过 | 跨父/插绘多成员、复杂clip、colorbar目标未统一；探针不是完整UI指针/Inspector操作 |
-| 共享native API/前端消费者 | 真worker/RenderCore16项主流程及2项隐藏恢复补测通过；前端639项与终态失败143项专项通过 | 未提交；16项早于最新隐藏/marker补修，完整产品E2E及script+chart rebuild路径待补 |
-| 全产品资格 | 当前 Python 主路径未被计划替换，静态 SVG 合同仍保留 | 既有功能完整候选回归、平台安装物/性能/写回资格均待执行 |
+| 导入并显式绑定 | 普通SVG选择轴/系列/数据，对照确认；quoted CSV/TSV、类别轴特殊字符及项目/请求代次已有验证 | 多轴/多grid表单和更多科学输入仍须对齐 |
+| 现有图内编辑器 | 242cabc0共享SVG/PNG+manifest+revision；真实点选曲线，Inspector线宽2→6、X上限10→20，undo/redo均exact | 全部操作、host、Python重建与产品readiness口径仍需验收 |
+| 完整编辑生产导出 | c2fd47d5冻结native profile+完整原序overrides，进入原图/标注/留白/画布/多页，实际SVG写v2 | 分享数据选择、EPS和复杂表达仍待完成 |
+| 导出后继续编辑 | 53393810真实ExportDialog产物重新导入，7条编辑原序恢复；确认一次事务，undo/redo 1→2→1→2，再进图内编辑达到exact，线宽7/X刻度20 | 该真UI用了新浏览器会话，后端未重启；不能代替正式项目冷重开全链 |
+| 重绑时保护旧编辑 | 后端按科学对象归属校验；数据/范围/列名变化保留，重排系列不会把同一位置gid的旧样式套给另一曲线 | 逐对象结构迁移、删除对象/不匹配编辑的显式处理未实现 |
+| 多成员对象 | 8e6c399a统一最终manifest与DOM镜像目标，跨父/split axes/errorbar/colorbar共同目标、临时预览和取消可用；未绑定装饰保留 | compound成员槽位欠定、zorder冲突和任意祖先clip尚不授予完整资格 |
+| SVG/PDF与栅格交付 | 真实生产SVG/PDF9项及PNG/TIFF新增2项分次通过；独立核对文字、像素、物理尺寸、PPI/alpha与源不变 | 不代表EPS、所有复杂SVG或全产品资格 |
+| 项目资源 | bbbffed1精确INPUT SVG不可变附件+schema4显式验证核心已提交 | 命名/自动保存、版本、会话发现、包安装和旧版隔离尚未接线 |
+| 图例与状态文案 | 两条计算曲线可见并可编辑，原图例/注释保留 | 当前截图旧图例线宽未跟随；项目仍显示“2张仅版面”，须统一来源与能力事实 |
+| worker生命周期 | 已有真实反例与候选实验；chartprocess/desktopproc正在独立实施 | app尚用旧启动方式；lease/admission/输出上限/退出码与进程组回收须实际接线验证 |
+| 整体可交付性 | 保留Python原路径与既有渲染/事务，按功能提交 | M1、M2、M3及完整旧功能/支持平台资格未通过 |
 
-各组测试存在重叠且对应不同树版本，不累加成“总通过数”，不计算虚假的完成百分比。84 项 skip 不算通过；下载浏览器成功也不算测试通过。
+### 1.1 最新验证与证据
 
-### 1.1 效果与可核对证据
+证据根 `E:/0 - Project/svg-review-20261106`；日志留在仓库外。每组只证明其范围，各组重叠且对应不同源码时刻，不能累计最终总数。skip不是通过。
 
-证据根为 `E:/0 - Project/svg-review-20261106`。下列均已有实际产物或报告；历史失败证据保留，不再作为当前缺陷结论：
-
-| 路径（相对证据根） | 说明 |
+| 证据 | 已执行结果与边界 |
 | --- | --- |
-| `output/playwright/chart-paint-order-fixed.png` | 独立渲染对比：两条计算曲线已经可见；同时可见保留图例与新样式未联动 |
-| `paint-order/chart-suite.xml` | 层序/组合等 111 项验证及独立反证落点 |
-| `export-request/frontend.log`、`backend.xml`、`build.log` | 已提交请求接线的 88/51 项与三步构建 |
-| `export-request/shared-snapshot-final.xml` | 当前共享快照/compute/持久化/包 65 项，0 失败/跳过 |
-| `chart-export-pipeline-12-final.xml` | 实际原图、标注、画布、多页、失败隔离与来源变化 12 项，0 失败/跳过 |
-| `chart-bundle-reuse-review.json` | 删除原文件后从 portable.svg 继续计算和导出，独立几何及原 portable 字节未变 |
-| `svgir-followup.xml`、`svgir-writers.xml` | 172 专项与 191 passed/84 skipped；后续补验不能回填到旧报告 |
-| `svgir-single-path-compat.json` | 原单路径 clip 的 PDF/SVG 在修复前后逐字节相同 |
-| `svgir-clip-union-review.md`、`svgir-clip-union-counterexample.json` | 多子路径裁剪并集的结构审查与独立像素反证：直接拼路径会挖空重叠区 |
-| `chart-restore-entry-final.xml` | 当前恢复入口加 provenance 41 项，0 失败/跳过 |
-| `output/playwright/chart-self-contained-restored-panel.png` | 删原后实际恢复图，两曲线可见；“仅版面”与旧图例标记也显示剩余编辑/语义缺口 |
-| `svgir-text-final.xml`、`svgir-text-chunks-review.md` | 连续文字157项与独立几何/文本证据 |
-| `chart-manifest-root.xml`、`chart-document-assets-root.xml` | 本次当前树25项与144通过/4skip；分别是adapter/附件核心，并非产品全链 |
+| `native-integrated-frontend-result.json`、`native-integrated-frontend.log` | 当前34文件983项通过，0失败/skip；含共享消费者、恢复和多目标前端，非全产品 |
+| 正式build/i18n工具退出记录；playground指纹931a34814cf2316a | tsc-b→Vite→Tailwind与i18n实际exit0；playground重建后--check实际通过 |
+| `chart-native-api-integrated21.xml`、`chart-v2-restore-api-final.xml` | 真worker/RenderCore当前21项通过；补明确restored_render断言后focused恢复/重绑4项通过，重叠不累加 |
+| `chart-rebind-ownership.xml`、`chart-rebind-ownership-mutant.log` | profile/归属46项通过；移除guard让真实重排反例失败，源码不变 |
+| `native-targets-core-final.xml`、`native-targets-final.xml`、`native-targets-review.md` | 冻结生产47个唯一核心用例分次通过，含真实Chrome；旧五族/三writer样例逐字节相同；非矩形clip真实圆外误命中反例保留 |
+| `native-multi-target-preview-validation.json`、`v2-full-edit-restore-ui-validation.json` | 前端192/106专项及9/5组反证均实际执行，已恢复生产字节；包含于统一983范围，不相加 |
+| `chart-native-export-first.xml`、`chart-native-export-raster-final.xml` | 原生产SVG/PDF9项与新增PNG/TIFF2项分次通过，0skip；当前11项文件未同次全跑，不据此宣称整体验收 |
+| `native-ui-undo-redo.js`、`output/playwright/native-ui-line-edit-redo.png` | 实际点选/线宽修改/undo/redo，文档和最终可见线宽一致 |
+| `native-v2-ui-artifact.json`、`native-v2-ui-confirm.js`、`output/playwright/native-v2-ui-restored-exact.png` | 实际生产v2、原普通SVG缺席、新会话新文档预览/确认/撤销/重做；完整7条恢复、最终exact；不是正式保存/冷父进程UI链 |
+| `chart-worker-lifecycle-probe.json`、`chart-worker-owned-candidate.json` | 实测环境占用缺失、输出14MiB全捕获、成功JSON掩盖非零退出、后代继承管道拖延timeout；现有OwnedProcess/JobObject候选实测可控，产品接线待完成 |
+| `chart-v4-session-namespace-probe.json` | 真实旧layoutsession清理会删全局v4 owner；嵌套命名空间可保留。只证明合同候选，不是保存已完成 |
 
-共享导出专项发现并修复了两项额外问题：渐变等暂不能转换为 PDF 时，仍应保留可交付的原图/画布 SVG；位图超预算不能让同作业有效 SVG/PDF 丢失。前者通过精确声明式 SVG 来源接入现有 RenderPlan，未伪造空 PDF、未放宽普通 static FILE_KINDS；后者按格式捕获既有渲染错误。原图 EPS 当前仍报既有 `eps_needs_script`，只是现状，不能算计划中的可兑现路径已完成。
+历史层序、转换器、来源配对、连续文字、v1冷重算和附件验证详见PROGRESS日期记录。最新截图明确显示图例/readiness的剩余缺口；不把“画面能显示”当成所有功能可用。
 
 ## 2. 当前最影响可用性的缺口
 
-### 2.1 已完成核心提交，下一步转向生产消费者
+### 2.1 先让计算任务遵守现有运行边界
 
-共享快照/导出、转换器、恢复入口、连续文字、原生profile/最终场景和附件核心已有独立提交。当前应先关闭共享API/前端消费者的真实产品验证与提交，再让完整编辑状态进入生产导出和恢复。正式保存可以并行设计资源/格式合同，实际接线必须守住单一app.py与documentStore写入者；不能用一次全量add混入未验证草稿。
+独立chart子进程目前未完整进入envlease和受控进程生命周期，capture_output会无界累计，identity可接纳非零退出的成功JSON。直接子进程timeout会reap，不能错误宣传“必泄漏”；Windows后代继承管道导致实际返回超时，已经独立复现。下一批复用desktopproc ownership、环境lease、既有预算与超时，不另建解释器选择、环境表或科学执行入口。chart类admission只限制chart任务，不宣称全产品总进程cap。
 
-转换器及连续文字专项已同步ADR，但不涵盖任意SVG。渐变、mask/filter等仍有明确转换限制；不得静默丢元素或栅格化矢量。当前无需从这些已修基础项重做，追加验证应由新改动或具体未解问题触发。
+### 2.2 正式项目保存是当前最大用户闭环缺口
 
-### 2.2 自包含恢复要从核心走到真实界面
+自包含SVG已能往返，但项目命名文件、autosave、版本和包仍没有完整消费chart_source。schema4不能直接塞进旧落点：真实旧程序会降成空schema3再覆盖。v4显式路由/目录与session命名空间须一起完成；不可全局改project_layout_dir破坏旧FigureSnapshots。精确INPUT SVG附件先冻结并读回，再单次原子提交正文；已有引用只从验证过的附件计算，不回退漂移同名原文件。
 
-inspect 对真实包先重放其模型并核对可见内容，再返回包内原始场景的节点与可选 `restored_chart`；bind 也使用原场景，普通 SVG 无此字段且不执行 worker。已编辑面板优先于导入包状态；恢复草稿经预览和用户确认后才落一次 documentStore 事务，取消零写入。未编辑的恢复草稿应直接预览原模型，避免经有损表单重建丢轴标签、未展示数据或多网格。
+### 2.3 图例、结构迁移与复杂几何仍有功能缺口
 
-本轮新发现两处真正的往返阻塞：表格解析按行 split、不解 CSV 引号，旧预填会让数值成为带引号文本；类别轴前端发送数值 x 被拒，而公共必填表又强制要求 x。分别按标准 CSV/TSV 和条件请求合同修复，保留包含分隔符、引号和换行的类别值，不能靠丢值或放宽模型凑绿。这些输入合同已提交f6c4a13d，71项与真实浏览器类别/CSV预览通过；后续完整多轴/多grid表单仍待补。
+实际样式编辑不会自动改变保留的旧图例，不能用metadata解释代替联动。新增科学归属guard避免旧编辑套错曲线，但完整结构迁移尚待逐对象映射。最终多DOM目标已统一，不再重做单gid假设；下一步解决成员paint slots偏序和任意/union/evenodd祖先clip几何。当前圆形clip的真实反例说明矩形bbox无法授权圆外命中，不能只把composed改true。
 
-### 2.3 图内精确编辑和图例仍未完成
+### 2.4 最终范围与旧功能资格保持不变
 
-工作树里的PanelView/renderStore/transport已携同版chart，真API也返回配对SVG/PNG、manifest和版本，但尚无最终同版的完整UI操作证据。新发现的native pt与root viewBox预览单位分叉已在3236307c修复并经真实Chrome探针核验；接下来必须实测点选轴/系列、改范围/样式及撤销重做。历史恢复截图仍有“仅版面”描述与旧图例标记不一致，现有新接线尚未重新取得对应产品截图；不能据旧截图宣称最新代码一定仍表现相同，也不能把它当已修。
-
-一个科学对象可能分散在多个真实DOM成员和绘制槽位，当前composed=False的跨父/插绘/非矩形clip/colorbar案例是明确缺口。应让transform/style/命中共同消费实际placement/member映射，保留未绑定装饰与绘制顺序；不能为了造axes容器搬动全图。完整编辑状态导出尚未接线，UI“能改”也不代表导出或重开后能保留。
-
-保持轴模型与显式数据绑定这个方向。普通 SVG 不要求恢复原始 Python；可信 Figure 的自定义行为仍走已有 Python 来源与授权流程。图元拖动、分组/取消组合应保留或显式解除计算关系，不让视觉操作默默破坏模型。
-
-### 2.4 完整项目、分享与最终资格尚缺
-
-新进程从自包含 SVG 重算已经成立，但不等于项目可移植资源和版本恢复已完成。需补项目资源收纳、原子保存、schema/旧版防损、缺资源/移盘恢复及外观导出和携带完整数据的分享选择。当前导出尚无该选择，不应直接作为对外分享产品交付。
-
-A 来源采用、剩余系列族/多轴/投影、原图 EPS、事务写回、预检/出版规范、CLI/MCP/桌面/发行入口与支持平台资格保留待办。完整旧功能回归未完成，所以目前只能说明专项修复有效，不能承诺“现有所有功能不受影响”。
+轴模型和明确数据绑定是计算图表核心；普通SVG不要求恢复原始Python。A可信来源、剩余系列/多轴/投影、原图EPS、分享外观/完整数据选择、事务写回、预检/出版、CLI/MCP/playground/桌面和平台安装物仍按原SG00–SG17完成。未完成完整候选回归前，不能承诺“现有所有功能不受影响”。
 
 ## 3. 下一阶段里程碑与完成口径
 
@@ -104,37 +85,46 @@ A 来源采用、剩余系列族/多轴/投影、原图 EPS、事务写回、预
 
 ## 4. 分批任务清单
 
-### 2026-11-06 14:05 最新执行队列（3236307c + 未提交共享消费者）
+### 2026-11-06 15:32 最新执行队列
 
-不再从白底遮挡、缺 chart 请求或空 metadata 核心重做。每行的“完成”只指本行退出条件，后续行自动衔接。
+已完成共享消费者、生产导出、v2恢复和多DOM基础，不从旧“只有metadata/不能点选/导出不携chart”重做。每行退出后自动选择下一就绪项，M1不是停点。
 
-| 顺序 / 对应批次 | 工作与主要落点 | 必须取得的退出证据 | commit 边界 |
+| 顺序 / 批次 | 工作 | 退出证据 | 独立commit边界 |
 | --- | --- | --- | --- |
-| 0 / 已完成，保留 | 已有层序/恢复/转换/附件等核心；029dfac2版本合同、3236307c合格区域最终生产者与预览坐标 | 第1节和最新checkpoint有实际证据；复杂成员资格不在已完成范围 | 不重做，不reset |
-| 1 / R06，立即接续 | 冻结app共享API与前端消费者；真正界面点选/Inspector/撤销；审查script+chart rebuild及raster/host能力路径 | 同版SVG/PNG+manifest+revision，失败撤销exact资格；实际点选命中、双面板/乱序/项目切换不串，旧无chart合同不变 | 共享API与完整客户端消费者按功能提交 |
-| 2 / R03、R07、R08，防丢编辑 | 原图/标注/画布/多页请求和冻结来源携native profile与完整原序overrides；inspect/bind/确认恢复消费v2完整状态 | 改轴范围/线宽/文字→生产导出→删原文件→新进程UI恢复，最终SVG/manifest/版本与编辑相同；旧v1实际重放通过 | 原生完整状态导出；v2恢复UI分别提交 |
-| 3 / R01、R02、R06，目标结构 | 以现有composition.placements/svg_members统一gid实际目标；跨父/插绘成员、复杂clip与colorbar不改变未绑定装饰/paint slot | errorbar、跨父和插绘装饰真实反例；所有style/transform/命中消费同一映射；不能仅把composed强改true | 统一目标解析及各类能力按功能提交 |
-| 4 / R02、R06 编辑与图例 | 复用Inspector/能力/完整overrides/事务；范围、数据、线点样式、图例和标题联动 | 真UI改轴/系列，图例与最终图一致；单选/多选/平移缩放、撤销重做；原图/画布/恢复同状态 | 轴/系列图例/文字按功能提交 |
-| 5 / R05 正式项目 | 接现有命名/自动保存和版本捕获；附件先冻结后原子正文；schema4独立落点与明确发现/加载轮次；包恢复安装 | 中断/冲突/缺资源旧正文不变；旧程序读写真实试验不损4；移盘+新父进程+清缓存恢复和历史版本可用 | 保存、兼容隔离、包恢复分别提交 |
-| 6 / R07、R08 交付与M1 | 外观/完整数据分享范围；原图EPS兑现实验；双系列真UI完成编辑→保存→冷重开→各scope导出 | 外观无隐藏数据；SVG/PDF文字矢量和PNG/TIFF尺寸独立读取；原图EPS按实际表达合同，画布仍既有拒绝 | 分享、格式适配及M1产品E2E分开；通过自动续接 |
-| 7 / R08–R12 能力对等 | A采用、文字/分组/use、剩余族/统计/多轴/色阶/投影、事务写回、预检/样式及各入口 | SG00逐格科学输入/实际操作/保存导出；冷重放+几何+像素门，失败原件零改动；授权/隐私/发行依赖不变 | 每项独立功能commit |
-| 8 / R13 最终资格 | 冻结候选，完整旧功能/等价性/CompatBench/E2E/性能与支持平台真产物 | 无新增未解释失败/错图/丢编辑；本机、平台、待发布状态分别记录 | 缺陷各自fix，最后证据与交付文档；不push/合并/发布 |
+| 0 / 保留 | 242cabc0、c2fd47d5、53393810、8e6c399a、2a40fec9及此前核心 | 第1节和PROGRESS已有实际证据 | 不reset、不重做 |
+| 1 / R03，当前 | chart任务生命周期草稿收敛，再接app的identity/scaffold两个入口 | 环境mutating排斥、容量、同deadline输入输出、退出码、超预算、超时后代组回收；实际worker和旧入口回归 | ownership工厂/runner；app接线分别审阅，按可独立功能提交 |
+| 2 / R05 | v4落点与session隔离，复用旧保存/版本/锁/atomicio | 真旧客户端清理/读写不发现或覆盖4；旧2/3请求/文件/版本行为保持；命名/autosave/session/versions/thumbs全覆盖 | 格式与会话隔离；端点消费者 |
+| 3 / R05 | 精确INPUT附件进入保存/计算/导出，前端文件绑定和保存回执、版本及包恢复 | 真UI保存→原源删除/漂移→清缓存新父进程重开→继续编辑/导出；中断、并发冲突、附件篡改零正文损坏 | 附件消费者；前端持久化；包安装/搬迁 |
+| 4 / R02、R06 | 图例/标题/数据联动、逐对象重绑迁移、readiness；复杂成员与clip按结构合同扩展 | 真UI样式与图例一致；数据更新保留编辑；重排/删除不套错；circle/holes/union/alpha/zorder实际像素和命中一致 | 图例；重绑迁移；成员placement；clip几何分别提交 |
+| 5 / R07、R08 / M1 | 外观与完整数据分享选择；原图EPS适配实验；全scope独立格式读取 | 外观无隐藏数据；完整模式再导入；真UI绑定→编辑→保存→冷开→导出；原图格式兑现实验，画布EPS原合同 | 分享；格式适配；M1验收/发现的修复 |
+| 6 / R08–R12 / M2 | A采用、文字/分组/use、剩余族/统计/色阶/多轴/投影、写回、预检及各入口 | SG00逐格适用能力；prepare→verify冷重放+几何+像素→commit；失败原件零改动 | 每个可验收功能分别提交 |
+| 7 / R13 / M3 | 冻结候选，完整旧功能/等价性/CompatBench/E2E/性能和支持平台真产物 | 无未解释新增失败/错图/丢编辑；平台未验单列，不以mock补资格 | 缺陷各自fix；最终证据和交付文档 |
 
-第1行已有实现，先取同版产品证据并收敛提交，不再以“重新设计profile/生产者”开场。第2、3行可按后端导出、前端恢复、场景目标的文件所有权并行；第5行可提前做存储合同，但不能把helper当保存完成。共享app.py/documentStore始终单写入者。第6行通过后继续7、8；没有macOS不阻止本机就绪项，下表保留原SG完整范围。
+#### 第一批：运行边界与现有草稿收敛
 
-#### 第一轮执行细项与交付物
+1. 现有代理仅拥有`engine/desktopproc.py`、新`engine/chartprocess.py`及对应测试；根代理唯一写`app.py`。不要重复启动另一位代理改同一runner。先收集冻结签名和测试退出码，再接两个入口。
+2. runner固定调用`python -B -m tavotto.engine.svgchart`，解释器经pool现有权威；不开放任意argv/脚本。启动前取得envlease，只有进程组确认退出后释放。unknown保留lease/admission，由已有owner清理；不能finally盲目释放。
+3. 请求写入、输出读取、退出与取消共用一个deadline。请求/响应/fragment预算由SVGBudget和现有JSON预算派生，stderr保有界tail；拒绝非零退出再解析成功JSON。避免在pump回调内取消造成死锁。
+4. chart active/unknown任务容量消费动态`pool.max_alive()`，本批不改resident/native/one_shot设计，不称全局总进程cap。若发现真正总预算冲突，另做有证据的结构审查，不趁机重写稳定pool。
+5. 实际引擎请求、mutating互斥、capacity恢复、无读stdin hook、超量stdout/stderr、exit37成功JSON、Windows继承管道后代和未知取消逐项验证。修改app后重启自己的后端，确认不是旧模块取得的通过。
 
-1. **先接收现有草稿，避免丢成果。** 读取git status和最新PROGRESS；当前app.py、test_chart_native_api.py及32个前端消费者文件待集成。代理均已释放文件，根代理统一提交。重启自有后端前先让外部server.py复用portable/project；独立Chrome探针已通过，但旧服务尚未载入最新marker。第一轮不启动另一套全量回归掩盖缺失UI证据。
-2. **共享消费者验收。** 从普通SVG/真实portable进入绑定，选两系列、确认后实际进入图内编辑，检查mounted exact manifest与最终图属于同次响应；用现有Inspector改范围/样式、undo/redo，观察文档overrides、最终路径/文字和截图。补同源双面板、源变化后失败、queued/deferred、raster、host缺能力和Python源重建场景；必要补测，不重复无关昂贵组合。
-3. **完整编辑状态贯穿导出恢复。** PanelChartState继续只放model/binding，profile/原序overrides单独冻结；无chart请求不加新字段或改变旧调用实参数量。恢复接口可用独立restored_render字段承载profile/overrides，命名和闭式合同由根代理先冻结；不能只恢复模型而静默丢样式/文字。用实际生产端点导出v2，不以测试手工embed代替。
-4. **项目持久化的准备和实现。** schema4是显式持久化格式，同一个documentStore/CanvasData/PanelObject；默认schema3不升。先冻结chart_source引用和保存回执，复用bbbffed1精确INPUT SVG附件。引用存在时计算只从已校验附件读取，不回退同名原文件。候选documents/v4独立路由/目录须覆盖命名、autosave、版本/缩略图、包和session发现；旧客户端不得发现/覆盖新文档。升级生成新文档身份并保留旧文件，迟到回执以pj/docId/load轮次/source身份防串，不额外产生undo或autosave循环。
-5. **每批可独立审阅。** 功能、测试、同源契约与受影响文档一起提交；PROGRESS记实际SHA/命令退出码/证据与限制。尚未通过M1时不把SG/R整批打勾。详细的无人值守恢复/失败处理沿用第5节，不依靠对话结束后虚构的后台运行。
+#### 第二批：v4保存合同、旧版防损和冷恢复
 
-#### 当前三个必须闭合的结构问题
+1. 先冻结唯一格式/目录选择模块，候选`engine/documentformat.py`，父层纯stdlib。旧格式默认2/3；v4显式`/api/documents/v4/*`。命名`tavottofile/documents/v4/`，autosave独立`_autosave/v4/`，版本复用FORMAT1信封但进v4目录；不移动FigureSnapshots根，不增加历史数据库。
+2. 枚举布局保存/列举/读取、autosave/summary、timeline与thumb/rebuild、layout-session候选/owner/last、project summary、package的所有消费者。修复`_doc_objects`/草图只认3而漏4的问题。新格式路径每层拒绝junction/symlink，不靠只校验最终文件。
+3. session继续同一文件、同一锁与atomicio；候选`document_namespaces.v4`配命名空间view，旧写入保留未知顶层字段，未知未来namespace版本拒写。不能只给project_key加前缀而让旧prune删掉owner。
+4. 保存锁内验证→严格冻结整份精确INPUT SVG→实际重放→读回核对→一次正文提交。普通FigureSnapshots沿现有策略；chart附件失败严格拒绝本次正文，不能清引用再成功。附件包括v2外层，不能只存解包inner源。有引用的render/PNG/export从验证附件取源，缺失/篡改不回退原fileId。
+5. 前端仍一个documentStore和对象模型。格式升级产生新working documentId，保留原命名文件/历史；project/canvas/panel身份保持。保存回执以完整画布/面板及source身份合入同加载轮次，不能产生undo/循环autosave；undo编辑不把文件格式降回3。具体wire形状由根代理统一冻结，同源镜像一次提交。
+6. 包恢复沿现有zip容器，显式安装经过摘要/路径/预算验证的附件后，单次写正文；不对任意成员extract，不把旧`package/open`只读检查当安装完成。项目复制复用已有整体复制，真实验证移盘、中文路径、断写、缺附件、旧客户端和历史恢复。
 
-1. **完整编辑状态尚未走完生产导出和恢复。** profile/v2核心已在029dfac2完成，现有API专项也实际校验旧v1和v2；当前缺的是生产消费者。导出冻结完整原序overrides，UI恢复消费相同状态，不能只传model/binding或canonical patch_hash。现有override语义不趁机重写。
-2. **复杂对象仍缺统一DOM目标与命中表示。** 3236307c已解决合格区域的物理坐标、CSS所有权和临时预览单位，不从这些已修项重做。跨父、插绘多成员、非矩形clip和colorbar仍有实际反例；transform/style/命中须统一解析placement/member，原输入字节/绑定身份与未绑定装饰不变，不能伪造矩形精确命中。
-3. **旧程序真的会覆盖新格式。** 已用旧normalizeLayout和真实HTTP证明：仅升schema4会被降成空schema3再保存。候选是4落入`documents/v4/`、新客户端显式发现/读取，升级生成新文档身份并保留原文件；旧程序默认入口不可发现/改写新落点。复用已有锁、atomicio、versionstore与projectcopy，不新增第二套历史/提交数据库。附件核心已经有，消费仍须实测。
+#### 第三批及后续：产品能力与M1/M2/M3
+
+- **图例/readiness**：保留未绑定装饰的同时，以显式legend-entry关联联动系列；不按颜色猜、不同处复制规则。项目与面板状态共用计算来源能力事实，不能硬编码“可编辑”。
+- **重绑迁移**：后端逐对象映射科学身份与native编辑目标，保留同归属编辑；不匹配项显式、可撤销处理。现guard是防错边界，不能替代最终迁移。
+- **复杂成员**：从真实partial-order反例扩成员binding/paint placement，保留source slot、group opacity/clip与native成员顺序。不得把装饰搬进axes或只改composed标记。
+- **clip几何**：优先复用SVGIR Path/ClipUnion，统一祖先AND、子形状union、fill-rule和物理坐标；前端命中/高亮共同消费，真实圆外/孔洞反例必须拒绝命中。
+- **分享和格式**：纯外观无隐藏数据；完整模式显式带模型/数据/完整编辑。EPS只走实际矢量可兑现路径，画布保持eps_not_for_canvas；不伪PDF、不静默栅格化或丢内容。
+- **验收**：先完成M1真实正式保存冷开纵向闭环，自动继续M2能力矩阵和M3完整旧功能/平台资格。不能因一夜结束或专项全绿缩小最终范围。
 
 | 批次 | 目标 | 依赖 | 对应原批次 | 推荐 commit 边界 |
 | --- | --- | --- | --- | --- |
@@ -385,4 +375,4 @@ Windows 使用 PowerShell 原生命令和任务专用变量；运行数据/配�
 
 ## 6. 本轮文档交付边界
 
-本轮在既有实施分支复核真实提交、截图、JUnit与代理执行记录，并完成原生场景/预览坐标3236307c及真实Chrome补验，更新三份稳定文档。完整UI/导出恢复/保存资格仍待完成。产品检查、反证、文档检查和最终资格分别记录；未启动新的整夜调度器，未推送/合并/发布。实际未提交文件、进程和验证状态以PROGRESS最新checkpoint为准，不以旧日期快照覆盖继续前进的树。
+本轮复核真实源码、生产产物、JUnit和当前浏览器，收敛共享编辑、完整导出、v2恢复、多DOM目标与栅格验证的独立功能提交；更新三份稳定文档。正式保存/冷开、图例、复杂clip和最终旧功能资格仍待完成。当前worker runner仍为草稿，不能称已完成。未启动新整夜调度器，未推送/合并/发布。实际HEAD、未提交文件、代理/进程和退出状态以PROGRESS最新checkpoint及实际树为准。
