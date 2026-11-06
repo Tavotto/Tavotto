@@ -1,5 +1,5 @@
 import type { PanelInfo } from './api'
-import { panelRender, type PanelRender } from '@/store/renderStore'
+import { exactPanelRender, panelRender, renderRequestIdentity, type PanelRender } from '@/store/renderStore'
 import { formatMessage, msg, type UiMessage } from '@/i18n'
 import { PROOF_KIND } from './brand'
 import {
@@ -1223,6 +1223,9 @@ function panelSpec(
   route?: ExportRoute | null,
 ): PreflightPanelSpec {
   const r = panelRender(render, o)
+  // 附件不是磁盘素材表的一员。只有后端已经成功画过当前完整 chart/ref 请求，
+  // 才是该来源可用的正证；字段存在、旧 latest 或另一变体都不能授予资格。
+  const verifiedChartSource = o.chart && o.chartSource !== undefined && exactPanelRender(render, o)
   return {
     id: o.id,
     name: o.name ?? o.fileId,
@@ -1236,14 +1239,14 @@ function panelSpec(
     px_w: o.pxW ?? null,
     // runtime 素材不在磁盘素材表里，这不是「缺失」——它的可用性由
     // stale/rerun 那套状态表达
-    missing: o.fileKind === 'runtime' ? false : !assets[o.fileId],
+    missing: o.fileKind === 'runtime' ? false : !assets[o.fileId] && !verifiedChartSource,
     stale: !!r?.stale,
     render_error: o.overrides.length > 0 && r?.status === 'error'
       ? (formatMessage(r.error) || 'error')
       : null,
     // 有 override 但引擎那边还没画出这一版：成图会与画布不一致
     unapplied_overrides:
-      o.overrides.length > 0 && r?.lastPatches !== JSON.stringify(o.overrides)
+      o.overrides.length > 0 && r?.lastPatches !== renderRequestIdentity(o.overrides, o.chart, o.chartSource)
         ? o.overrides.length
         : 0,
     hidden: !!o.hidden,

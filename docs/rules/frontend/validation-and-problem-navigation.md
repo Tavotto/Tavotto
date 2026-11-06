@@ -22,6 +22,8 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   → components/left/ProblemPanel.tsx  左侧「问题」抽屉（常驻入口 + 角标）
 ```
 
+计算来源面板的输入适配复用 `renderRequestIdentity` 判断修改是否应用；素材表没有逻辑文件时，只有完整 chart/ref 输入的 `exactPanelRender` 才能证明附件可用。字段存在、旧 latest、失败或别的变体不能豁免缺素材。无 chart/ref 保持原输入；看护 `lib/preflight.chartSource.test.ts`。
+
 * **导出对话框不再跑第二遍求值器**：它消费 `getValidationSummary(scope, extra)`
   与 `rawIssuesFor(canvasId)`（样式检查报告要的聚合投影，**同一次求值的另一份
   投影**）。摘要的组装只有 `lib/validation.summaryFor()` 一份——**按导出目标
