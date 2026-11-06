@@ -46,6 +46,13 @@ enum Route {
         chunks: usize,
         gap: Duration,
     },
+    /// 首字节被真实进度回调确认后再发主体；尾字节由测试在试探计时分支跑过后放行。
+    TrialStay {
+        body: Vec<u8>,
+        first_seen: Arc<tokio::sync::Notify>,
+        finish: Arc<tokio::sync::Notify>,
+        middle_after: Duration,
+    },
     /// 立刻关连接
     Reset,
     /// 302 到别处
@@ -139,6 +146,27 @@ async fn serve(build: impl FnOnce(&str) -> Vec<(&'static str, Route)>) -> Fake {
                             let _ = sock.flush().await;
                             tokio::time::sleep(gap).await;
                         }
+                    }
+                    Route::TrialStay {
+                        body,
+                        first_seen,
+                        finish,
+                        middle_after,
+                    } => {
+                        let h = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        );
+                        let _ = sock.write_all(h.as_bytes()).await;
+                        let _ = sock.write_all(&body[..1]).await;
+                        let _ = sock.flush().await;
+                        // 不能让 TCP 合并首块与主体：生产量速会扣掉整个 first_chunk。
+                        first_seen.notified().await;
+                        tokio::time::sleep(middle_after).await;
+                        let _ = sock.write_all(&body[1..body.len() - 1]).await;
+                        let _ = sock.flush().await;
+                        finish.notified().await;
+                        let _ = sock.write_all(&body[body.len() - 1..]).await;
                     }
                     Route::Reset => drop(sock),
                     Route::Redirect(to) => {
@@ -1737,26 +1765,110 @@ async fn background_with_a_different_github_version_uses_the_mirror_without_coun
 
 #[tokio::test(flavor = "multi_thread")]
 async fn manual_mainland_stays_on_github_when_it_will_finish_soon_enough() {
+    use std::future::{poll_fn, Future};
+
     let pkg = big_pkg();
+    let l = trial_limits(Duration::from_secs(5));
+    let first_seen = Arc::new(tokio::sync::Notify::new());
+    let finish = Arc::new(tokio::sync::Notify::new());
+    let route = Route::TrialStay {
+        body: pkg.clone(),
+        first_seen: first_seen.clone(),
+        finish: finish.clone(),
+        middle_after: l.trial.wait / 2,
+    };
     let (p1, p2) = (pkg.clone(), pkg.clone());
     let rig = Rig::new(
         Keys::new(),
         move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p1), Route::Ok(p1.clone())),
-        move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p2), slow_drip(&p2)),
+        move |b, k| source_with(b, "9.9.9", &k.sign_b64(&p2), route),
     )
     .await;
     let state = UpdateState::default();
-    let l = trial_limits(Duration::from_secs(5)); // GitHub 约 3 s 下完 < 5 s
     let p = mainland(&rig, &state, &l).await;
-    let (r, events, seen) = manual_install(&rig, &state, &p, &l).await;
+    let (seen, install) = recorder();
+    let events = Mutex::new(Vec::new());
+    let progress = Mutex::new(Vec::new());
+    let emit = |e: DownloadEvent| {
+        if let DownloadEvent::Progress { chunk_length } = &e {
+            progress
+                .lock()
+                .unwrap()
+                .push((Instant::now(), *chunk_length));
+            first_seen.notify_one();
+        }
+        events.lock().unwrap().push(e);
+    };
+    let (make, ep) = (rig.make(), rig.endpoints());
+    let mut downloading = Box::pin(install_pending(&make, &ep, &state, &l, &p, &emit, install));
+    // 与生产看门狗同一个 tick；不改 wait / eta / stall，只控制服务器何时发尾字节。
+    let tick = (l.stall.min(l.slow.probe).min(l.trial.wait) / 4)
+        .clamp(Duration::from_millis(10), Duration::from_secs(1));
+    let mut last_pending = None::<Instant>;
+    let mut trial_polled = None::<Instant>;
+    let mut released = None;
+    let r = poll_fn(|cx| {
+        let before = Instant::now();
+        let result = downloading.as_mut().poll(cx);
+        if result.is_pending() {
+            let samples = progress.lock().unwrap();
+            let done: usize = samples.iter().map(|(_, n)| n).sum();
+            if let (Some(&(first, _)), Some(&(last, _)), Some(previous)) =
+                (samples.first(), samples.last(), last_pending)
+            {
+                // 上次 Pending 已收齐主体，期间没有网络输入；隔了完整 tick 再 poll，
+                // select 的计时分支必定就绪。窗口已过且仍缺尾字节，不能靠提前下完假绿。
+                if done == pkg.len() - 1
+                    && last <= previous
+                    && before.duration_since(previous) >= tick
+                    && before.duration_since(first) >= l.trial.wait + tick
+                {
+                    if trial_polled.is_none() {
+                        trial_polled = Some(before);
+                    } else if released.is_none()
+                        && rig.mirror.hits("/latest.json") == 1
+                        && rig.mirror.hits(PKG_PATH) == 0
+                    {
+                        // 再让生产路径跑一个 tick：若错误地 Leave，健康镜像有机会接手，
+                        // 不让尾字节与刚启动的镜像请求竞速，掩盖来源决策回归。
+                        released = Some(before);
+                        finish.notify_one();
+                    }
+                }
+            }
+            last_pending = Some(Instant::now());
+        }
+        result
+    })
+    .await;
     assert_eq!(r.unwrap(), Source::Github);
     assert_eq!(seen.lock().unwrap()[0].1, pkg);
-    assert_eq!(
-        rig.mirror.hits("/releases/9.9.9/pkg"),
-        0,
-        "够快就不碰镜像的包"
+    assert_eq!(rig.mirror.hits(PKG_PATH), 0, "够快就不碰镜像的包");
+    assert_eq!(starts(&events.lock().unwrap()), 1);
+
+    let samples = progress.lock().unwrap();
+    let (first, first_chunk) = samples[0];
+    let (tail, tail_chunk) = *samples.last().unwrap();
+    let released = released.expect("试探计时分支跑过后才允许完成下载");
+    let judged = trial_polled.unwrap();
+    let elapsed = judged.duration_since(first);
+    let done: usize = samples[..samples.len() - 1].iter().map(|(_, n)| n).sum();
+    let rate = (done - first_chunk) as f64 / elapsed.as_secs_f64();
+    let eta = (pkg.len() - done) as f64 / rate;
+    assert_eq!((first_chunk, tail_chunk, done), (1, 1, pkg.len() - 1));
+    assert!(elapsed >= l.trial.wait);
+    assert!(tail >= released && released > judged);
+    assert!(rate > 0.0 && eta < l.trial.eta.as_secs_f64());
+    assert!(events.lock().unwrap().iter().any(|e| matches!(
+        e,
+        DownloadEvent::Started { content_length: Some(n) } if *n == pkg.len() as u64
+    )));
+    eprintln!(
+        "trial fixture: window={elapsed:?} >= {:?}, done={done}/{}, first_chunk={first_chunk}, rate={rate:.1} B/s, ETA={eta:.6} s, tail_after={:?}",
+        l.trial.wait,
+        pkg.len(),
+        tail.duration_since(first),
     );
-    assert_eq!(starts(&events), 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]
