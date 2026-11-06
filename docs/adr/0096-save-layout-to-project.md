@@ -30,6 +30,8 @@
 
 显式save/open预留完整服务器票据，正文实际成功或confirm核过实际named revision后CAS绑定；A→B→A按代次挡旧回执。显式打开先捕获安装时的同步基线，等待期间用户编辑必须保dirty；derived来源回执不推进用户轴。正文成功、关联元信息失败是两个事实，不让后者变成正文I/O失败或覆盖重试。后端wire/锁与看护唯一说明见[文档落盘规则](../rules/backend/layout-versions-and-documents.md)；实施/真实UI资格仅由PROGRESS记录。
 
+前端在同一documentStore/writer消费该视图，只有明确404才走旧缓存合同。外部AS修改后的未知祖先不能静默洗白：用户明确覆盖/重载才捕获不可自动刷新的完整证明，并建立独立编辑分支；named修订基线保持。重载前保护最新本机稿、失败停止安装，以及异步保存上下文的前端合同见[项目与自动保存规则](../rules/frontend/project-document-and-autosave.md)。该保护同样覆盖旧后端兼容路径。
+
 ### 一、排版可以「绑定」项目里的一个文件
 
 绑定 = `{projectId, name, file, revision, dirty}`，按 `documentId` 存本机

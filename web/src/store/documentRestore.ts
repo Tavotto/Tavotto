@@ -49,6 +49,7 @@ import {
   consumeSkipRestoreOnce,
   getRestoreGate,
   installRestoredDocument,
+  hydrateProjectFile,
   isRestoreTokenCurrent,
   noteBlockedWrite,
   onBlockedWrite,
@@ -217,6 +218,7 @@ function installProbe(
   if (!installRestoredDocument(token, probe.doc, probe.id, notice)) return { kind: 'superseded' }
   const installed = useDocumentStore.getState()
   if (!settleRestore(token, { state: 'ready', reason })) return { kind: 'superseded' }
+  void hydrateProjectFile(probe.from === 'disk' && probe.disk.kind === 'found' ? probe.disk.revision : undefined, true)
   const state = useDocumentStore.getState(), gate = getRestoreGate()
   if (gate.state !== 'ready' || gate.gen !== token.gen || gate.pj !== token.pj || currentProjectId() !== token.pj
     || state.documentId !== installed.documentId || state.documentFormat !== installed.documentFormat || state.loadSeq !== installed.loadSeq) return { kind: 'superseded' }

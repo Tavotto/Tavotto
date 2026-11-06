@@ -117,8 +117,8 @@ order: 200
   localStorage / 遥测），`documentStore` 只装配端口；用例 `lib/autosave/diskWriter.test.ts`
   用假端口 + 手动 gate 直接量时序。
 - **保存失败的原因**：`SaveIssue`的`stale/external`仍触发原冲突裁决；有结构化code的其他后端拒绝为`backend`，只在内存保留status/code/params/fallback，经`saveIssueMessage`消费既有`backendCodeMsg`描述符，状态与App通知/无项目保存共用同一翻译器。422来源校验失败不能被归为磁盘空间不足；真正无结构I/O或网络错误才用原通用提示。错误不进可携正文、本机恢复副本或遥测，不保存整个响应体；未知code保既有fallback。失败不推进基线、不清本机副本、不覆盖原文件。看护`lib/autosave/diskWriter.errors.test.ts`、`store/saveFailures.test.ts`、`App.pickerNotices.test.tsx`。
-- **⌘S 保存到项目（ADR 0096，2026-09-26）**：排版可以**绑定**项目里的一个文件
-  （`lib/projectFile.ts`，按 documentId 存 `tavotto.projectFile.<id>`，不进文档）——从「项目里的
+- **⌘S 保存到项目（ADR 0096，2026-11-06 修订）**：排版可以**绑定**项目里的一个文件
+  （后端会话按项目/格式/workingId持久化，`lib/projectFile.ts`消费内存镜像，不进文档）——从「项目里的
   排版」打开的、存进项目的（「存进项目」与开着项目时的另存为）都绑定。`runManualSave` 三条路：
   绑定了当前项目的文件 → 先 `saveNow()` 再 `store/projectSave.writeBoundProjectFile()`
   （`target=project`，基线是**绑定里的修订号**：这份工作副本基于项目文件的哪一版，刷新后照样成立，
@@ -142,9 +142,11 @@ order: 200
   不拿此刻开着的文档去比；代次与上面的 `dirty` 同源（只在 `markProjectFileDirty()` 里前进，
   派生同步 / 载入 / 换文档不算），不另写判据；对话框 await 之后的界面变更一律
   `ifStillCurrent(ctx, …)`，切走了改在状态条上说；「仍然覆盖」写冲突那份文件、不改文档标题；
-  绑定以本会话内存为准（`lib/projectFile.ts` 的会话层），localStorage 只是刷新后还认得的尽力而为副本——
+  当前保存链消费已核后端视图的内存镜像；仅明确404旧后端沿旧会话/localStorage兼容链，503/未知不降级。
   保存链不许只读持久副本；await 之后的落账（修订号缓存、绑定、冲突岔口）一律记在
   **发请求那一刻**的 pj 名下（`rememberLayoutRevision(name, rev, pj)`），切走之后不开冲突岔口。
+- **保存关联与明确冲突恢复**：`projectFileSession`每个活跃编辑器用独立内存actor；只有真实用户编辑推进轴，派生回执不推进。初次打开先在hydrate屏障捕获无编辑基线/票据，等候期间的用户编辑仍保dirty；named正文成功但元信息未确认只补confirm，不重写旧正文。绑定代次和`loadSeq`参与上下文，A→B→A或同ID重装挡旧回包；冷恢复不读取新的named revision洗白外改。后端wire唯一合同见[文档落盘规则](../backend/layout-versions-and-documents.md)。
+  只有用户明确覆盖/重载才创建新branch，并把观察到的实际AS修订与完整会话视图固定到同一个`DiskSaveContext`，排入原writer；普通队列或重试不能刷新这份证明。读取、确认和落账守项目/格式/workingId/loadSeq/绑定及操作意图。重载安装前把**最新内存稿**写入原本机副本并提升原恢复槽；任一步失败停止安装、保留内存与磁盘，此不变量也适用于404兼容路径。看护`lib/projectFileSession.test.ts`、`lib/projectFileApi.test.ts`、`lib/autosave/diskWriter.projectFileRecovery.test.ts`、`store/projectFilePersistence.test.ts`和`components/documentBanner.test.tsx`。
 - **显式运行完成与恢复门（SVG 快照）**：`figureSnapshotInvalidation` 只接收入口已按项目代际接受的成功执行事实；
   尚未接纳的旧回包仍由原入口拒绝。恢复中 / 待用户处理、以及尚未真正初始化的 `initial-ready` 窗口内，
   只保留匹配来源所需的最小字段，按稳定项目 id + source / runtime asset id 覆盖去重，不保留报告或参数。

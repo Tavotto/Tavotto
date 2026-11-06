@@ -23,6 +23,8 @@ import { documentAddressKey, documentNamespaceKey, type DocumentFormat } from '.
 const PREFIX = 'tavotto.projectFile.'
 
 export interface ProjectFileBinding {
+  /** 后端关联的单调代次；旧本机记录没有，不能据文件名相等绕过 ABA。 */
+  sequence?: number
   /** 绑定时开着的项目（`currentProjectId()`，项目路径的稳定 hash） */
   projectId: string
   /** 文件名去掉 `.json`（后端净化之后落盘的那个） */
@@ -43,6 +45,7 @@ function isBinding(v: unknown): v is ProjectFileBinding {
     typeof b.name === 'string' &&
     !!b.name &&
     typeof b.file === 'string' &&
+    (b.sequence === undefined || Number.isSafeInteger(b.sequence) && (b.sequence as number) > 0) &&
     (b.revision === null || typeof b.revision === 'string') &&
     typeof b.dirty === 'boolean'
   )

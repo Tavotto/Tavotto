@@ -1,5 +1,6 @@
 import { chartVersionCanvas, chartVersionProject, documentApiPath, documentResponseFormat, type DocumentFormat, type VersionCanvasIdentity } from './documentFormat'
 import type { ChartSourceReceipt } from './chartSourceReceipts'
+import type { ProjectFileAxis, ProjectFileEdit, ProjectFileRead, ProjectFileRecovery, ProjectFileReservation, ProjectFileResult, ProjectFileView } from './projectFileSession'
 import { classifyArtifactFailure } from '@/lib/artifactReason'
 import type { RenderPurpose } from '@/lib/renderPurpose'
 import { ArtifactValidationError, FIGSIZE_SOURCE_POLICY, verifiedSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
@@ -965,6 +966,7 @@ export async function fetchLayout(name: string, format?: DocumentFormat, pj?: st
 }
 
 export interface SavedLayout {
+  project_file?: ProjectFileResult
   document_format?: 'v4'
   chart_sources?: ChartSourceReceipt[]
   /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
@@ -992,12 +994,14 @@ export const saveLayout = (
   name: string,
   doc: FigureDocument | ProjectDocument,
   baseRevision?: string,
-  opts?: { target?: 'project'; format?: DocumentFormat; pj?: string | null },
+  opts?: { target?: 'project'; format?: DocumentFormat; pj?: string | null; workingDocId?: string; bindingIntent?: number },
 ) => {
   const format = opts?.format
   const params = new URLSearchParams()
   if (baseRevision !== undefined) params.set('base_revision', baseRevision)
   if (opts?.target) params.set('target', opts.target)
+  if (opts?.workingDocId !== undefined) params.set('working_doc_id', opts.workingDocId)
+  if (opts?.bindingIntent !== undefined) params.set('binding_intent', String(opts.bindingIntent))
   const qs = params.toString()
   return documentJsonFetch(format)<SavedLayout>(
     `/api/layouts/${encodeURIComponent(name)}` + (qs ? `?${qs}` : ''),
@@ -1007,7 +1011,7 @@ export const saveLayout = (
       body: JSON.stringify(doc),
     },
     opts?.pj,
-  )
+  ).then(normalizeProjectFileResult)
 }
 
 /* --------------------------- 文档自动保存（磁盘） ---------------------------- */
@@ -1040,6 +1044,7 @@ export const REVISION_ABSENT = 'absent'
  * `owner_unknown` = 这次请求的项目身份已失效，归属没记。旧后端不发 = `undefined`（不知道，不当 `ok`）。
  */
 export interface PutAutosaveResult {
+  project_file?: ProjectFileResult
   document_format?: 'v4'
   chart_sources?: ChartSourceReceipt[]
   /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
@@ -1068,10 +1073,13 @@ export const putAutosave = (
   baseRevision?: string,
   pj?: string | null,
   format?: DocumentFormat,
+  opts?: { projectFileEdit: ProjectFileEdit; projectFileRecovery?: ProjectFileRecovery },
 ) => {
   const q = new URLSearchParams()
   if (base !== undefined) q.set('base', String(base))
   if (baseRevision !== undefined) q.set('base_revision', baseRevision)
+  if (opts) q.set('project_file_edit', JSON.stringify(opts.projectFileEdit))
+  if (opts?.projectFileRecovery) q.set('project_file_recovery', JSON.stringify(opts.projectFileRecovery))
   const qs = q.toString()
   return documentJsonFetch(format)<PutAutosaveResult>(
     `/api/autosave/${encodeURIComponent(docId)}${qs ? `?${qs}` : ''}`,
@@ -1081,8 +1089,94 @@ export const putAutosave = (
       body: JSON.stringify(doc),
     },
     pj,
-  )
+  ).then(value => {
+    normalizeProjectFileResult(value)
+    if (value.project_file?.state === 'accepted' && value.project_file.edit.autosave_revision !== value.revision) {
+      value.project_file = { state: 'unavailable' }
+    }
+    return value
+  })
 }
+
+function normalizeProjectFileResult<T extends { project_file?: ProjectFileResult }>(value: T): T {
+  if (value.project_file !== undefined) value.project_file = validProjectFileResult(value.project_file)
+  return value
+}
+
+function validProjectFileResult(value: unknown): ProjectFileResult {
+  if (!value || typeof value !== 'object') return { state: 'unavailable' }
+  const result = value as ProjectFileResult
+  if ((result.state === 'bound' || result.state === 'accepted') && validProjectFileView(result)) return result
+  if (result.state === 'superseded' || result.state === 'unconfirmed' || result.state === 'unavailable' || result.state === 'skipped') return result
+  return { state: 'unavailable' }
+}
+
+/** 元信息等待有界；宿主忽略 abort 时也释放保存链，正文 API 的行为不变。 */
+async function projectFileRequest<T>(request: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => { controller.abort(); reject(new Error('project_file_timeout')) }, 5000)
+  })
+  try {
+    return await Promise.race([request(controller.signal), timeout])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** 后端工作副本元信息；与可携的 schema 3/4 正文分离。只有明确 404 才兼容旧本机绑定。 */
+export async function fetchProjectFile(documentId: string, pj: string, format?: DocumentFormat): Promise<ProjectFileRead> {
+  try {
+    const value = await projectFileRequest(signal => documentJsonFetch(format)<ProjectFileRead>(
+      `/api/layout-session/project-file/${encodeURIComponent(documentId)}`, { signal }, pj,
+    ))
+    return validProjectFileView(value) ? value : { version: 1, status: 'unavailable' }
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return { status: 'unsupported' }
+    throw error
+  }
+}
+
+function validProjectFileView(value: unknown): value is ProjectFileView {
+  if (!value || typeof value !== 'object') return false
+  const view = value as ProjectFileView
+  const axis = (v: unknown): boolean => v === null || !!v && typeof v === 'object'
+    && typeof (v as Exclude<ProjectFileAxis, null>).editor_id === 'string'
+    && Number.isSafeInteger((v as Exclude<ProjectFileAxis, null>).sequence)
+    && (v as Exclude<ProjectFileAxis, null>).sequence > 0
+  return view.version === 1 && view.status === 'ok' && Number.isSafeInteger(view.intent_sequence)
+    && view.intent_sequence >= 0 && !!view.edit && typeof view.edit.known === 'boolean'
+    && (view.edit.autosave_revision === null || typeof view.edit.autosave_revision === 'string') && axis(view.edit.axis)
+    && (view.binding === null || !!view.binding && Number.isSafeInteger(view.binding.sequence) && view.binding.sequence > 0
+      && typeof view.binding.name === 'string' && typeof view.binding.file === 'string'
+      && (view.binding.revision === null || typeof view.binding.revision === 'string') && typeof view.binding.dirty === 'boolean')
+}
+
+export async function reserveProjectFile(documentId: string, pj: string, body: {
+  name: string; autosave_revision: string | null; axis: ProjectFileAxis; expected_binding_sequence: number | null
+}, format?: DocumentFormat): Promise<ProjectFileReservation> {
+  try {
+    return await projectFileRequest(signal => documentJsonFetch(format)<ProjectFileReservation>(`/api/layout-session/project-file/${encodeURIComponent(documentId)}/reserve`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal,
+    }, pj))
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return { state: 'unsupported' }
+    throw error
+  }
+}
+
+export const confirmProjectFile = (documentId: string, pj: string, body: {
+  name: string; intent_sequence: number; revision: string
+}, format?: DocumentFormat) => projectFileRequest(signal => documentJsonFetch(format)<ProjectFileResult>(
+  `/api/layout-session/project-file/${encodeURIComponent(documentId)}/confirm`,
+  { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal }, pj,
+)).then(validProjectFileResult)
+
+export const cancelProjectFile = (documentId: string, pj: string, sequence: number, format?: DocumentFormat) =>
+  projectFileRequest(signal => documentJsonFetch(format)<{ state: 'cancelled' | 'superseded' }>(
+    `/api/layout-session/project-file/${encodeURIComponent(documentId)}/intent/${sequence}`, { method: 'DELETE', signal }, pj,
+  ))
 
 /** 读到的一份自动保存：`revision` 来自响应头，是后续写入的基线 */
 export interface FetchedAutosave {

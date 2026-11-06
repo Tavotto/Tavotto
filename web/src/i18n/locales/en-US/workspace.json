@@ -644,6 +644,8 @@
     "failed": "Save failed. Your changes are safe — check disk space and try again.",
     "projectConflict": "{{file}} in the project was changed elsewhere, so nothing was written. Decide in the dialog.",
     "projectFailed": "Couldn’t save {{file}} in the project: {{reason}}",
+    "projectBindingUnavailable": "The project file link is not confirmed. No named file was written this time. Your changes remain on this computer; retry or reopen the layout.",
+    "projectBindingSuperseded": "Wrote {{file}}, but the destination for the next save is not confirmed. Any later destination is preserved. Reopen this layout before saving again.",
     "projectSkipped": "{{file}} in the project wasn’t written: you switched layouts or projects after pressing Save. Go back to that layout and save again.",
     "skippedSwitched": "You switched layouts or projects after pressing Save, so nothing was written to the project. Go back to that layout and save again."
   },

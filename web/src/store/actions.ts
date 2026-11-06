@@ -78,6 +78,8 @@ import {
   readAutosaveDoc,
   saveNowWithResult,
   setProjectFile,
+  associateOpenedProjectFile,
+  projectFileSnapshot,
   useDocumentStore,
   type CommitOptions,
   type HistoryEntry,
@@ -660,8 +662,20 @@ export async function openLayoutDocument(
   doc: FigureDocument | ProjectDocument,
   projectFile?: ProjectFileBinding,
 ): Promise<boolean> {
-  if (!(await useDocumentStore.getState().switchDocument(doc, newId('d'), confirmLoss))) return false
-  if (projectFile && ((doc.schema === 4) === (useDocumentStore.getState().documentFormat === 'v4'))) setProjectFile(projectFile)
+  const openingId = newId('d')
+  const edited = projectFileSnapshot(openingId, doc.schema === 4 ? 'v4' : 'legacy')
+  if (!(await useDocumentStore.getState().switchDocument(doc, openingId, confirmLoss,
+    ...(projectFile ? [{ projectFileOpen: projectFile }] : [])))) return false
+  if (projectFile && ((doc.schema === 4) === (useDocumentStore.getState().documentFormat === 'v4'))) {
+    setProjectFile({ ...projectFile, dirty: projectFile.dirty || edited() })
+    const scope = captureSaveContext()
+    try {
+      await associateOpenedProjectFile(projectFile, scope)
+    } catch {
+      if (stillCurrent(scope)) useDocumentStore.setState({ restoreMetaIssue: { docId: scope.documentId, pj: scope.pj } })
+    }
+    if (!stillCurrent({ ...scope, bindingSequence: undefined })) return true
+  }
   afterSwitch()
   const s = useDocumentStore.getState()
   status(note('documentLoaded', { name: s.projectMeta.name, count: s.canvases.length }), 'done')

@@ -22,7 +22,7 @@ import {
 import { normalizeLayout } from '@/lib/migrate'
 import { cn } from '@/lib/utils'
 import { openLayoutDocument } from '@/store/actions'
-import { captureChartSourceSave, mergeSavedChartSources, captureFigureSnapshotSave, mergeSavedFigureSnapshots, projectFileSnapshot, setProjectFile, useDocumentStore } from '@/store/documentStore'
+import { captureChartSourceSave, mergeSavedChartSources, captureFigureSnapshotSave, mergeSavedFigureSnapshots, projectFileSnapshot, setProjectFile, useDocumentStore, prepareProjectFileSave, finishProjectFileSave, cancelPreparedProjectFile, retryProjectFileConfirmation } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
 import { captureSaveContext, ifStillCurrent, stillCurrent } from '@/store/saveContext'
 import { useUiStore } from '@/store/uiStore'
@@ -178,14 +178,34 @@ export function LayoutDialog() {
     setConflict(null)
     // 点下另存为那一刻的上下文：await 之后的一切落账（修订号、绑定、冲突岔口）都记在它名下
     // （`saveContext.ts`）。改名只动文档名，不换排版、不换载入代次，先取后取一样
-    const ctx = captureSaveContext()
+    let ctx = captureSaveContext()
     const pj = ctx.pj
+    let prepared: Awaited<ReturnType<typeof prepareProjectFileSave>> = null
     try {
+      if (pj) {
+        const retry = await retryProjectFileConfirmation(canonicalLayoutName(stem, ...(ctx.format === 'v4' ? [ctx.format] : [])), ctx)
+        if (retry.state === 'confirmed') {
+          const next = captureSaveContext()
+          if (next.documentId !== ctx.documentId || next.format !== ctx.format || next.loadSeq !== ctx.loadSeq
+            || next.pj !== ctx.pj || next.file !== retry.file || next.bindingSequence !== retry.sequence) return
+          ctx = next
+          if (!retry.dirty) {
+            setOpen(false)
+            useUiStore.getState().setStatus(msg('save.doneProject', { file: retry.file }, 'workspace'), 'done')
+            return
+          }
+        } else if (retry.state !== 'none') {
+          setError(t('save.projectBindingUnavailable', { ns: 'workspace' }))
+          return
+        }
+      }
       // 保存整份文档（schema 3，含全部画布）；文件名即文档名
       if (!overwrite) useDocumentStore.getState().renameProject(stem)
       const edited = projectFileSnapshot()
       const baseRevision = overwrite?.revision ?? knownLayoutRevision(stem, pj, ...(ctx.format === 'v4' ? [ctx.format] : [])) ?? REVISION_ABSENT
-      const pd = useDocumentStore.getState().buildProject()
+      if (pj) prepared = await prepareProjectFileSave(stem, ctx)
+      if (!stillCurrent(ctx)) return
+      const pd = prepared?.document ?? useDocumentStore.getState().buildProject()
       const sources = ctx.format === 'v4' ? captureChartSourceSave(pd, pj) : null
       const sent = sources?.document ?? pd
       const snapshots = captureFigureSnapshotSave(sent, pj)
@@ -193,7 +213,9 @@ export function LayoutDialog() {
         stem,
         sent,
         baseRevision,
-        ctx.format === 'v4' ? { format: ctx.format, pj, ...(toProject ? { target: 'project' as const } : {}) } : toProject ? { target: 'project' } : undefined,
+        prepared ? { ...(ctx.format === 'v4' ? { format: ctx.format, pj } : {}),
+          ...(toProject ? { target: 'project' as const } : {}), workingDocId: ctx.documentId, bindingIntent: prepared.ticket.sequence }
+          : ctx.format === 'v4' ? { format: ctx.format, pj, ...(toProject ? { target: 'project' as const } : {}) } : toProject ? { target: 'project' } : undefined,
       )
       mergeSavedFigureSnapshots(snapshots, res.figure_snapshots)
       if (sources) mergeSavedChartSources(sources, res.chart_sources)
@@ -201,7 +223,7 @@ export function LayoutDialog() {
       // （关对话框、记账、状态条）之前，与它们的成败无关（Codex #679）；点属于点下另存为的
       // 那一份（`ctx.moment`：入口取的快照，与上面序列化的是同一刻）。存进项目的是项目文件，
       // 另存为画布文件的是画布文件
-      emitLayoutSaved(toProject ? 'project_file' : 'layout_file', { moment: ctx.moment })
+      emitLayoutSaved(toProject ? 'project_file' : 'layout_file', { moment: prepared?.moment ?? ctx.moment })
       // await 之后（清单见 saveContext.ts）：对话框是此刻界面上的东西，切走了就不替别人关——
       // 先判，下面记账会改绑定，改完之后 ctx 本来就不再「当前」
       ifStillCurrent(ctx, () => setOpen(false))
@@ -210,7 +232,8 @@ export function LayoutDialog() {
       rememberLayoutName(stem, res.name, ...(ctx.format === 'v4' ? [ctx.format] : []))
       rememberLayoutRevision(res.name ?? stem, res.revision, pj, ...(ctx.format === 'v4' ? [ctx.format] : []))
       // 存进了项目（后端交回了项目里的相对路径）→ 绑定，之后 ⌘S 写回这个文件
-      if (pj && res.file) {
+      const associated = prepared ? finishProjectFileSave(prepared, res.project_file, res.revision) : true
+      if (!prepared && pj && res.file) {
         setProjectFile(
           {
             projectId: pj,
@@ -227,10 +250,10 @@ export function LayoutDialog() {
       useUiStore
         .getState()
         .setStatus(
-          res.file
+          !associated && res.file ? msg('save.projectBindingSuperseded', { file: res.file }, 'workspace') : res.file
             ? msg('save.doneProject', { file: res.file }, 'workspace')
             : msg('layout.saved', { name: stem }, 'dialogs'),
-          'done',
+          associated ? 'done' : 'error',
         )
     } catch (e) {
       const revision =
@@ -261,6 +284,7 @@ export function LayoutDialog() {
           )
       }
     } finally {
+      if (prepared) await cancelPreparedProjectFile(prepared)
       inFlight.current = false
       setBusy(false)
     }

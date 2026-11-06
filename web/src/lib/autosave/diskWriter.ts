@@ -20,6 +20,8 @@
  */
 import { ApiError, REVISION_ABSENT, backendCodeMsg, type DiskDocumentSummary } from '@/lib/api'
 import type { UiMessage } from '@/i18n'
+import type { ProjectFileCapture, ProjectFileEdit, ProjectFileRecovery, ProjectFileResult } from '@/lib/projectFileSession'
+import type { MomentSnapshot } from '@/lib/timelineCheckpoint'
 import type { FigureSnapshotSaveContext } from '@/lib/figureSnapshot'
 import type { ChartSourceReceipt, ChartSourceSaveContext } from '@/lib/chartSourceReceipts'
 import type { FigureSnapshot, ProjectDocument } from '@/types/document'
@@ -122,9 +124,19 @@ export interface WrittenInfo {
   snapshotContext?: FigureSnapshotSaveContext
   chartSources?: ChartSourceReceipt[]
   chartContext?: ChartSourceSaveContext
+  projectFile?: ProjectFileResult
+  projectFileContext?: ProjectFileCapture
+  moment?: MomentSnapshot
+  writtenDocument?: ProjectDocument
+  revision?: string | null
 }
 
-export type DiskSaveContext = FigureSnapshotSaveContext & { chartContext?: ChartSourceSaveContext }
+export type DiskSaveContext = FigureSnapshotSaveContext & {
+  chartContext?: ChartSourceSaveContext
+  projectFileContext?: ProjectFileCapture
+  projectFileRecovery?: ProjectFileRecovery
+  moment?: MomentSnapshot
+}
 
 /** 协调器要用到的那几条磁盘 API（形状与 `@/lib/api` 同名函数一致，便于直接递真的进来）。 */
 export interface DiskApi {
@@ -134,7 +146,8 @@ export interface DiskApi {
     baseline: number | undefined,
     revision: string | undefined,
     pj: string | null,
-  ) => Promise<{ saved_at?: number; revision?: string | null; metadata?: WrittenMetadata; figure_snapshots?: Record<string, FigureSnapshot>; document_format?: 'v4'; chart_sources?: ChartSourceReceipt[] }>
+    opts?: { projectFileEdit: ProjectFileEdit; projectFileRecovery?: ProjectFileRecovery },
+  ) => Promise<{ saved_at?: number; revision?: string | null; metadata?: WrittenMetadata; figure_snapshots?: Record<string, FigureSnapshot>; document_format?: 'v4'; chart_sources?: ChartSourceReceipt[]; project_file?: ProjectFileResult }>
   fetch: (id: string, pj: string | null) => Promise<{ revision: string | null } | null>
   fetchSummary: (id: string, pj: string | null) => Promise<DiskDocumentSummary | null>
 }
@@ -157,7 +170,7 @@ export interface DiskWriterPorts {
    */
   onWritten: (id: string, savedAt: number, info: WrittenInfo) => void
   /** 写盘失败或被 409 挡下；`issue` 为 null = 无结构 I/O 失败 */
-  onFailed: (id: string, issue: SaveIssue | null) => void
+  onFailed: (id: string, issue: SaveIssue | null, recoveryContext?: DiskSaveContext) => void
   /** 冲突未决：队列里排着的那份不能继续往磁盘上撞（读的是**此刻**的保存状态） */
   writeBlocked: () => boolean
   /** 写盘成功后仅清掉与落盘快照相同的本机兜底副本（期间可能已换成更新的一版） */
@@ -201,6 +214,7 @@ export interface DiskWriter {
   rememberRevision: (id: string, fetched: { revision: string | null } | null) => void
   /** 本会话确认过这份文档的磁盘状况吗（写前要不要先探一次） */
   knowsRevision: (id: string) => boolean
+  revisionOf: (id: string) => string | null | undefined
   setRevision: (id: string, revision: string | null) => void
   forgetRevision: (id: string) => void
   setBaseline: (id: string, updatedAt: number) => void
@@ -320,7 +334,16 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
         if (issue) throw new PendingConflict(issue)
         // `null`（确认过但拿不到 hash）与「缺席」在这里都变成 undefined = 不带，
         // 但两者在 `ensureDiskKnown` 那里是两回事：前者不再探，后者要探。
-        return ports.api.put(id, pd, diskBaseline.get(id), diskRevision.get(id) ?? undefined, pj)
+        const capture = snapshotContext?.projectFileContext
+        const recovery = snapshotContext?.projectFileRecovery
+        const revision = recovery ? recovery.revision ?? REVISION_ABSENT : diskRevision.get(id) ?? undefined
+        const args = [id, pd, diskBaseline.get(id), revision, pj] as const
+        if (!capture) return ports.api.put(...args)
+        const previous = diskRevision.get(id)
+        return ports.api.put(...args, { projectFileEdit: {
+          axis: capture.axis, base_axis: capture.base_axis,
+          base_revision: recovery ? recovery.revision : previous === REVISION_ABSENT || previous === undefined ? null : previous,
+        }, ...(recovery ? { projectFileRecovery: recovery } : {}) })
       })
       .then((res) => {
         diskBaseline.set(id, pd.updatedAt)
@@ -332,6 +355,14 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
           ...(res.figure_snapshots !== undefined ? { figureSnapshots: res.figure_snapshots, snapshotContext } : {}),
           ...(res.document_format === 'v4' && res.chart_sources !== undefined
             ? { chartSources: res.chart_sources, chartContext: snapshotContext?.chartContext } : {}),
+          ...(snapshotContext?.projectFileContext ? {
+            snapshotContext,
+            projectFile: res.project_file,
+            projectFileContext: snapshotContext.projectFileContext,
+            writtenDocument: pd,
+            revision: res.revision,
+            moment: snapshotContext.moment,
+          } : {}),
         })
         ports.outcome(trigger, 'ok')
       })
@@ -346,7 +377,9 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
               ? conflictIssue(id, err)
               : null
         ports.outcome(trigger, conflict ? 'conflict' : 'failed')
-        ports.onFailed(id, conflict ?? backendIssue(id, err))
+        const issue = conflict ?? backendIssue(id, err)
+        if (snapshotContext?.projectFileRecovery) ports.onFailed(id, issue, snapshotContext)
+        else ports.onFailed(id, issue)
       })
       .finally(() => {
         diskBusy = false
@@ -375,6 +408,7 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
     },
     rememberRevision,
     knowsRevision: (id) => diskRevision.has(id),
+    revisionOf: (id) => diskRevision.get(id),
     setRevision: (id, revision) => {
       diskRevision.set(id, revision)
     },

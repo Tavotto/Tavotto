@@ -52,6 +52,7 @@ export interface SaveContext {
   readonly pj: string | null
   /** 入口那一刻绑定的项目文件（相对项目根）；没绑定 = `null` */
   readonly file: string | null
+  readonly bindingSequence?: number
   /**
    * 同一刻的**排版时间线快照**（`captureMoment()`：时间线上下文 + 这份文档 + 面板图源）。
    * 写成之后发「排版写成了」时带它：「保存」点只打给被存的那一份、拍的是写出去的那份内容
@@ -74,6 +75,7 @@ export function captureSaveContext(): SaveContext {
     loadSeq: s.loadSeq,
     pj: currentProjectId(),
     file: activeProjectFile()?.file ?? null,
+    ...(activeProjectFile()?.sequence !== undefined ? { bindingSequence: activeProjectFile()!.sequence } : {}),
     moment: captureMoment(),
   }
 }
@@ -87,6 +89,7 @@ export function stillCurrent(ctx: SaveContext): boolean {
     s.loadSeq === ctx.loadSeq &&
     currentProjectId() === ctx.pj &&
     (activeProjectFile()?.file ?? null) === ctx.file
+    && (ctx.bindingSequence === undefined || activeProjectFile()?.sequence === ctx.bindingSequence)
   )
 }
 
