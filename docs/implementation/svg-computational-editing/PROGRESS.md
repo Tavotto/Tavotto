@@ -2,12 +2,12 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-06 16:53后复核）：真实图内修改、撤销重做、生产导出和v2完整编辑重新导入已有证据；计算任务生命周期5b2b1403、重复画布保存保护ae064662、v4目录/session叶子83f4ffbf新增独立提交。精确INPUT附件的后端消费者已暂存，前端31文件已冻结，18文件700项及正式build/i18n通过，尚未提交联验。v4 app仅部分草稿，未注册显式路由，9项HTTP保存测试只有收集记录；当前app格式检查exit1。正式保存/新进程冷开、图例、复杂几何与最终旧功能资格未闭环，M1未通过。**
+> **当前结论（2026-11-06 18:01后）：精确INPUT附件消费者2452d8fc已提交，真实UI删源编辑/撤销重做与PDF/PNG/SVG导出已验。v4后端显式命名/autosave/session/versions已接通，20项真实HTTP及新父进程专项通过；旧组312通过/20既有平台skip，独立复核发现的legacy快照规范化回归已修。前端格式/回执/冷发现仍在实施，包/EPS生产叶子已验但未接app，图例/复杂几何及最终旧功能资格仍缺，M1未通过。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 
 ## 环境（2026-11-06 当前快照）
 
-- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；复核功能HEAD=`83f4ffbf`。worker生命周期已在5b2b1403接入app并验证；精确来源消费者待提交，v4 app后续草稿未完成。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入这些成果；不能在原目录启动旧版本后据此判断新功能效果。
+- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；附件消费者HEAD=`2452d8fc`，之后v4后端批次在本树提交/验证。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入这些成果；不能在原目录启动旧版本后据此判断新功能效果。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述三个新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
@@ -32,15 +32,25 @@
 | SG11–SG17 | partial / pending | 979a4962、48d3d27a、cae96f89、5bc82a81、bbbffed1 | 来源附件核心与共享导出已有；正式项目保存/迁移、写回、入口/平台和最终回归待补 |
 | R00 | baseline_and_regressions | 5a4f5c2c | 基础反例保留；本轮用户流程和导出反例待随修复入库 |
 | R01/R02 | core_partial / multi_target_verified | 3236307c、8e6c399a | 跨父/split/errorbar/colorbar共同目标与预览通过；任意clip、欠定成员paint slots和图例仍缺 |
-| R03 | runner_integrated / source_consumers_uncommitted | 029dfac2、242cabc0、c2fd47d5、5b2b1403 | 受控runner已接真实API；精确INPUT附件消费者已验证但未提交，最终联验待补；不宣称全产品总进程cap |
+| R03 | runner_and_source_consumers_integrated | 029dfac2、242cabc0、c2fd47d5、5b2b1403、2452d8fc | 受控runner与精确INPUT附件接真实API/UI/导出；不宣称全产品总进程cap或最终资格 |
 | R04 | affected_checks_passed | a8a088cf、18907d65、cbd8d95e | 请求序号/表单/项目切换、late response 和单项 drop 均有受影响测试；Dialog 已可发起真实绑定；完整编辑器生命周期在 R06 追验 |
-| R05 | namespace_leaf_committed / persistence_incomplete | cae96f89、82b142d2、bbbffed1、ae064662、83f4ffbf | 目录/session隔离叶子与重复ID序列化保护已提交；正式v4端点、前端保存回执、版本/包及冷启动发现未闭环 |
+| R05 | backend_cold_restore_verified / frontend_pending | cae96f89、82b142d2、bbbffed1、ae064662、83f4ffbf、2452d8fc | v4后端命名/自动保存/版本和新父进程删源编辑导出已验；前端回执、跨格式冷发现与包安装未闭环 |
 | R06 | product_editing_verified / persistence_pending | 242cabc0、53393810、8e6c399a | 真UI点选、线宽/范围、撤销重做与v2恢复通过；历史983与后续700分属不同范围/时刻，图例/正式冷保存仍缺 |
 | R07 | partial / production_formats_verified | 5bc82a81、c2fd47d5、2a40fec9 | 生产SVG/PDF9项及PNG/TIFF2项分次通过；EPS、分享范围与M1全链未完成 |
 | R08 | full_edit_restore_verified / partial | cae96f89、029dfac2、53393810 | 生产v2导出与真UI完整编辑恢复通过；A采用、分享选择和正式项目迁移待补 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-06 18:01后 v4后端正式保存与新父进程恢复
+
+- 显式/api/documents/v4/{layouts,autosave,layout-session,versions}适配现view和namespace；不改认证/锁/冲突/原子写权威，默认旧2/3响应/路径保持。命名、自动保存、last/owner/candidates/summary、版本/草图/thumb/rebuild/清理都选同一格式，v4不借旧历史。正文捕获实际native完整状态及精确INPUT附件，在原锁内验证后单次提交；五字段位置回执不假定ID唯一。
+- 真实生产v2外层INPUT正式保存→删原源/外层原件→新-I父进程只获项目路径及文档名→正式读取/编辑/同版PNG预览/生产SVG与PNG导出；逐字验证完整外层、模型/绑定/原序重复编辑、xlim2几何端点及独立像素。并测replace故障保旧正文/revision/引用、坏/缺附件严格失败不借原件、legacy/v4同docId隔离及7类新端点401认证守卫。最后整组20项通过/0skip、exit0（chart-documents-v4-final20.xml），先Ruff check/format通过。
+- 较早18项60.178秒及首轮10项39.829秒保留；新增明确legacy session全响应不变断言后focused1项通过。旧命名/文档/恢复/版本组共332项：312通过/20既有平台skip、0失败、exit0、74.960秒（chart-documents-v4-legacy-integrated.xml）；不是全产品/全平台资格。
+- 三个进程内反证：去namespace使旧last丢失；把v2只存inner使精确INPUT断言失败；legacy目录发现v4使旧客户端隔离断言失败，均真实AssertionError/pytest exit1，生产字节不改。外部harness首轮误认为JUnit必有type属性，改读实际message后正常收全；不把harness错误当产品修复。
+- 独立复核捕获旧2/3合法未知chart扩展字段绕过FigureSnapshot规范化，已把skip限定v4并加schema2/3正式保存回归。定向复核4次真实保存与2452d8fc旧freeze AST正文完全一致，旧未核快照均删除，exit0。另实际验证legacy/v4不同thumb/删除/槽位裁剪互不影响。证据n1-independent-review-fixed、n1-storage-isolation-review。
+- 尚缺：无thumb且原件删除时版本行磁盘fallback仍404，而同版正文+ref PNG200，前端D层将按需回建；不把完整模型/edits塞列表。跨namespace at没有共享总序，时钟回拨候选仍需最小共同打开意图结构，不能只选最大at静默恢复旧稿。N2前端仍中间稿，不声称UI正式保存冷开完成。
+- 当前Vite已按11676真实命令核验后Ctrl-C停止；后端33104仍加载N0源码，需重启才有本批新路由。N2唯一前端写入者继续四层接线，根代理唯一app/ADR/进度写入。package原子ZIP叶子107项、EPS叶子36项另批冻结，未混本批、未冒充HTTP安装/EPS入口已完成。目标保持active，后续接共享发现序、前端联验及N3/N6胶水。
 
 ### 2026-11-06 精确附件消费者完成真实UI联验
 
