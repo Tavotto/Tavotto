@@ -79,6 +79,7 @@ order: 200
 - **项目包**：`POST /api/package` 打 zip（layout+素材+脚本+sha1 清单）；
   `POST /api/package/open` 检视（缺失/sha1 漂移），素材永不自动写入图库。
 - **有界项目包容器**：`documentpackage`是ZIP路径/别名/成员/目录/展开/压缩预算和CRC的唯一权威，六项`PackageBudget`由调用者明确提供；不任意extract。`staged_package`立即流入临时helper资源，任何add异常锁定整包失败，关闭并验证后经atomicio原子发布；不能因调用者捕获add异常而发布半包。新文件发布用`publish_file_if_absent`，同名并发不覆盖；允许替换须显式overwrite。严格v4 reader核现品牌/版本/format信封，普通旧包不自动套用新低容量上限。看护`tests/test_document_package.py`。
+- **计算来源包叶子**：`chartpackage`沿上述容器与`documentassets`唯一字节权威验证schema4完整INPUT；内容寻址chart行从正文引用派生，额外资源使用闭式chart_source/figure_snapshot/file/script变体，不接受caller覆盖派生chart行。检视只写data_dir自有暂存，Prepared正文/清单每次给副本，退出后拒用；verify回调必传，前后重核附件/资源，失败不发布目标。`install_chart_sources`只发布不可变chart附件并明确返回未安装的remaining_resources，不能宣称普通文件/脚本已安装；普通资源及正文事务由调用者完成，已发布的不可变附件不回删。writer临时封口后严格inspect再原子发布最终名。看护`tests/test_chart_package.py`。
 - **文档显式引用全质量 Figure 配对（X03，2026-10-15）**：面板 `figureSnapshot` 是版本 1 的闭集
   `{version, sourceId, patchHash, receiptId, snapshotId}`，可选 `executionOwner={script, run_config}`；
   owner 只从已验归档派生、纳入内容 ID，不信客户端自报。导出 wire 字段为 `figure_snapshot`。
