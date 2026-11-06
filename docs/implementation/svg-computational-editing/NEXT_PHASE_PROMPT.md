@@ -1,6 +1,6 @@
 # SVG 计算图表编辑：下一阶段无人值守提示词
 
-可直接复制以下提示词。2026-11-07（Asia/Shanghai）f79771c3应用保存与冷暂存提交后接续，实际工作树优先。详细任务：[NEXT_PHASE.md](NEXT_PHASE.md)；进度唯一台账：[PROGRESS.md](PROGRESS.md)；最终范围：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。
+可直接复制以下提示词。2026-11-07（Asia/Shanghai）06806c2c正式v2捕获资源包提交后接续，实际工作树优先。详细任务：[NEXT_PHASE.md](NEXT_PHASE.md)；进度唯一台账：[PROGRESS.md](PROGRESS.md)；最终范围：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。
 
 ```text
 继续完成 Tavotto 的 SVG 计算图表编辑，保留现有 Python 绘图、静态素材和其他已有功能。最大化复用现模型、编辑器、事务、writer、RenderCore/pdfbackend 和 legendmodel；持续自主实现、验证、修复，在同一分支按功能分别 commit。常规可逆步骤自行推进，不逐批等待确认。已授权多子代理，只分配独立且有收益的任务；共享合同、app、Schema、规则、文档、集成和提交由主代理唯一写入，同一文件同时只有一个写入者。
@@ -13,7 +13,7 @@
 稳定文档：docs/implementation/svg-computational-editing/{PROGRESS,NEXT_PHASE,NEXT_PHASE_PROMPT}.md
 证据根：E:/0 - Project/svg-review-20261106
 
-复核时最新功能HEAD=f79771c3：真实应用保存/绑定和冷staging已接私有输入附件；前项a5305ddb正式冷存、97e75d41会话封存及safe/native捕获准备保留。三个新增测试文件已冻结释放，无在途写入/测试；原默认FrozenSource/receipt/无附件调用不扩。随后可能有文档或实现提交，以实际HEAD/index/diff为准，禁止reset到此hash；不按旧候选清单覆盖新稿，不重做应用暂存/冷存/会话封存/native/准备。
+复核时最新功能HEAD=06806c2c：正式v4执行资源v2已导出/严格检视，真实safe/native及外部file/prefix删源/cache冷包保原字节、空目录和完整refs；前项f79771c3/a5305ddb/97e75d41保留。五份新测试与六生产源已冻结释放，无在途句柄；版本化包不重做。实际HEAD/index/diff优先，禁止reset到此hash或用旧候选清单覆盖新稿。
 
 先核分支、提交身份、Python 实际 import 路径、自有进程，再读 AGENTS 和涉及层的规则/ADR。沿用当前树/分支，不新建或切换分支/worktree，不 reset/stash 覆盖已有改动，不 git add . 混批，不 push/PR/合并/发布。复用 venv/node_modules；测试 config/data 隔离、遥测关闭，运行可写数据沿 config.data_dir()。
 
@@ -35,30 +35,25 @@
 - d8416d4e：Plan私有选择token区分legacy未观察/真实absence，执行前、retry、执行后核同一scope，replan不吸收声明变化。launchctx仅存实际receipt摘要，当前资源比较复用唯一freezer；旧记录不自动升级。末次23/0skip含真实safe缓存计数1及native PreparationService→receipt→成功记录→资源变更拒旧，6项实际反证；前阶段161/1旧symlink skip不冒最终同组重跑。
 - U09规定94个不同用例全通过/0skip：90项receipt/runtime/trace/export，加FO32已有环境/错误选择/受管环境及FO30共4。实际3.10.20与锁内3.13.15均到RenderCore PDF/PNG/TIFF，两出口独立回执保留。首轮cp936输出和pip空格wheelhouse夹具失败保留，仅修隔离测试环境，没改源码/测试/产品锁/全局依赖；见n3c-u09-validation.{md,json}。额外existing单例只保回执，不新增覆盖数。
 - 扩大集成263收集=254通过/7平台skip/2 Win1314失败、exit1。两失败在旧d946225f同一测试函数也实复现，属未进入产品的符号链接权限失败；不删、不伪skip、不说全量全绿。较早root142不是末次源码资格。n3c-native-staged-final.json、n3c-preparation-staged-final.json与各原始JUnit记录时刻/范围；本轮未改前端，不虚报新build/UI。M1/M2/M3均未通过。
-- 97e75d41：原Capture.finish同流封存源码/files/prefix bytes，原图保空目录；InputArchive(graph_bytes:bytes,resources:tuple[InputResource(sha256,size_bytes,path)])为父核验后的私有对象。wire只有{version,key,revision}，仅从父已知out_dir/captured-inputs读取，不能接任意回复path；同lineage复用nonce，新barrier仍显式同版传递。receipt两入口IO后复核eid/epoch/fact/descriptor，safe unknown拒当前证据；附件不进入任一JSON/public_facts/identity，默认无声明源IO保持。该提交仅会话cache；svgstore随后由a5305ddb、app保存/冷暂存随后由f79771c3接通；完整版本化包仍未接。
+- 97e75d41：原Capture.finish同流封存源码/files/prefix bytes，原图保空目录；InputArchive(graph_bytes:bytes,resources:tuple[InputResource(sha256,size_bytes,path)])为父核验后的私有对象。wire只有{version,key,revision}，仅从父已知out_dir/captured-inputs读取，不能接任意回复path；同lineage复用nonce，新barrier仍显式同版传递。receipt两入口IO后复核eid/epoch/fact/descriptor，safe unknown拒当前证据；附件不进入任一JSON/public_facts/identity，默认无声明源IO保持。该提交仅会话cache；svgstore随后由a5305ddb、app保存/冷暂存随后由f79771c3接通；完整声明资源包随后由06806c2c接通，安装/冷执行仍未接。
 - 该片精确资格见n3c3b-stage-final.json及core/native/safe/review报告：核心55、native末次84、root268、Engine24、真实workerd6、3.10实际safe/native两例各自通过/0skip；root含U09 receipt/runtime/trace/export90与准备API39，FO32/FO30原4另实跑通过。旧worker136先129通过/7缺可发现binary skip；同已核binary临时无覆盖复制后原7全部实际通过，已删自有副本。原first红灯保留；root268早于唯一bridge mkdir小修，末次native84/3.10两例覆盖delta，不冒重跑。核心8/safe3/native2/receipt3内存反证实际断言exit1；独立10状态/IO探针无具体新缺陷；e986默认fact字节+60源IO序列对拍同。不同组不累计，旧Win1314仍未解决，不外推全产品/平台。
 
 读 n3c-execution-export-staged.json、n3c-real-ui-correct-kind-qualification.json、n3c-frame-ui-qualification.json、n3c-compat-frontend-build.json。原失败、夹具错误、超时和权限 skip 保留，不改写历史。
 
-三、当前第一批：正式v4版本化执行资源包及严格检视
+三、当前第一批：输入声明界面与原准备流程
 
-最近交付目标仍是“包带到中文新目录，原目录不存在、缓存清空、新父进程/浏览器下，仍可恢复并继续计算编辑”。3b-1会话封存和3b-2正式冷存已分别提交97e75d41/a5305ddb；3b-3 app热保存/冷staging已由f79771c3完成；当前首项3b-4显式execution v2正式包→3c声明UI→3d精确ref迁移→N3d/e/f。计算SVG既有精确INPUT冷恢复保留，待接的是Python执行图完整捕获附件，不混同两个主语。
+最近交付目标仍是“包带到中文新目录，原目录不存在、缓存清空、新父进程/浏览器下，仍可恢复并继续计算编辑”。3b-1会话封存和3b-2正式冷存已分别提交97e75d41/a5305ddb；3b-3 app热保存/冷staging已由f79771c3完成；3b-4已由06806c2c完成；当前首项3c声明UI→3d精确ref迁移→N3d/e/f。计算SVG既有精确INPUT冷恢复保留，待接的是Python执行图完整捕获附件，不混同两个主语。
 
-先核实际HEAD/diff及n3c3b3-stage-final.json七文件SHA；新25/9/8专项、根95应用回归和41文档检查各自exit0/0skip，真实safe/native及删源/cache新父HTTP ZIP保原内容，counter1。五条实际AST反证变红，旧v1完整暂存ZIP对拍；仅应用暂存资格，不代表execution v2或安装。前项n3c3b2-stage-final.json九文件SHA保留，读n3c3b2-core-validation、store-leaf-freeze、integration-recovery-validation、independent-review-recovery。最后root493=462通过/31 Win权限skip/0fail，核心107/leaf80/集成36各自通过；leaf80已含恢复17、root含文档41，组不相加。实际Python3.10 stdlib save/inspect/删源/cache/新isolated child读原bytes probe0；其环境无pytest首尝试保留且未装依赖，不称最低版本全套。早前markertimestamp夹具误判/竞争清理掩盖/kill阻断/文档引用未落盘红灯都保原始证据，不外推全产品绿。
+先核实际HEAD/diff及n3c3b4-stage-final.json十三文件SHA与各自源码窗口；前项3b-1/2/3索引只作历史资格，不要求其旧app/collector SHA仍与新功能相同。最终core53/collector56/预算7、实际7+外部1及reader1各范围通过；旧legacy295/root243按原窗口记，不累计成全分支总数。原首红/观测错误/平台缺口保留，详见PROGRESS最新checkpoint。
 
 保持已完成的冷存合同：svgstore.save可选captured_input_archive只用于项目storage_root；metadata v2含闭式input_archive={version:1,revision,graph_size_bytes}并条件绑定snapshotId，refs/markers仍v1，无附件旧字节/ref保持。load/load_snapshot/inspect在实际有附件时私有返回captured_input_archive，load_input_archive可按完整历史ref单读；Graph canonical/闭包/受检流唯一取inputdeclaration。input_store_budget默认累计去重blob50k/2GiB、单及累计graph64MiB/graph数沿MAX_SNAPSHOTS，单声明预算仍原projectcopy50k/2GiB；旧render512MiB/4096/metadata1MiB及整包政策不变。Path不是租约，下次复制仍须流式核实际bytes。
 
 同一原_guard下recover只回收消费atomicio原命名的typed中断tmp，再按实际已提交metadata清完整无引用孤儿、核final admission；只读严格不删、不忽略未知/半成品。输入先发布再metadata；已独立提交archive的输入不因later entry失败回滚。不要另造store/锁/GC refcount或扩大预算，也不要为旧图补签。
 
 1. 3b-3已提交f79771c3，不重做：实际receipt私有captured_input_archive→同一_save_svg_snapshot，执行源/自动捕获/已核PDF及独立SVG绑定同版转发；冷_package_svg_assets从实际load/load_snapshot转发完整附件。无附件不增下游kwargs，FrozenSource只带公开receipt。same-receipt旧v1只有实际新附件才生成独立v2引用，旧archive保留；坏附件不补证、不借当前设置或重跑取证。实际25/9/8和95应用回归资格按原范围保留，不重复未受影响套件。
-2. 3b-4当前首项，独立功能commit feat(packages): carry verified declared inputs and prefix resources。按NEXT_PHASE.md“3b-4的连续执行单元”A–F推进：
-   A 主代理冻结packageexecution显式v2/严格版本分派；v1闭集/默认字节保持。定义完整snapshot/ref↔capture graph↔script/file/prefix映射，精确SHA/size/scope/rc_ID/argv交叉核验，历史同名异内容独立映射。
-   B packageexecution_export只消费正式历史附件，用原manifest/ResourceFile/stream writer收集原graph/bytes、全prefix成员与空目录，不从当前设置/文件补证。输入目录全部成员受原包资源/预算权威约束，不平行打包或整体拼进public receipt。
-   C collector、chartpackage正式manifest/reader与packageinspection同批接线。必须实际POST /api/documents/v4/package→POST /api/documents/v4/package/inspect；只增加validator或旧/api/package暂存成功不能退出。完整仅指已声明集合，未知IO通道准确保留，不用coverage掩盖摘要矛盾。
-   D 核原整包2GiB资源+metadata总额，不把每声明2GiB当整包容量、不套旧4096裁输入、不擅扩packagebudget；中文路径/大合法graph/空目录、同名历史不同内容均验。错scope/跨run/坏graph/换bytes/漏增成员/非法路径或链接/超额/中断准确拒绝、无半包、原输出和正文不变；检视旧绝对字符串零本机外读。
-   E 真safe/native执行一次并保存→删自有源/cache→新父进程正式v4导出/inspect→独立ZIP核每字节/引用，counter仍1；多patch/多历史版本、旧v1/无execution/默认无声明/合法不完整备份保持。
-   F 核心判据做目标落点反证，Python先Ruff、针对pytest再受影响HTTP/规则，取得真实退出码后功能提交、更新台账并继续3c。合同冻结后可并行独立测试，不能同时写共享app/schema。
-3. N3c-3c声明UI：复用准备/配置/选择器/i18n，显示输入集与未知通道，用户确认后沿现授权真实新执行。改清单撤旧资格，旧图仅对照；取消/切项目/迟到/失败保稿。真浏览器声明→新执行→正式包/inspect联验；未声明准确incomplete。建议commit feat(inputs): declare portable inputs through the preparation flow。
+2. 3b-4已提交06806c2c，不重做。最新索引n3c3b4-stage-final.json含13文件SHA/原始JUnit/精确源码窗口。execution v2只增加非空captures:[{snapshot_ref,revision}]，原graph/bytes继续figure_snapshot树；fullref沿svgstore原authority重算，owner/receipt/scope/图/每blob及输入并集闭合。历史capture按具体panel ref与current contexts分开，reader还按实际doc重算未捕获脚本使用，不能让漏contexts掩盖当前缺件。旧VERSION1/闭集/collector原body AST及输出cap保持。v2预算只与原input_policy交集；声明文件齐备不证明所有Python IO，overall incomplete准确，原rc_ID的现有argv只作建议，不从公开receipt推原文。
+   最终core53、collector56(新22+旧34)、预算7各自通过/0skip；科学safe/native7在第二源通过，新增真实外部file/prefix1与reader mixed缺件1在最终源通过，不说新SHA一跑8。较早legacy295/root243只按原窗口记，后delta由末专项覆盖；41文档/全仓Ruff格式1471/预算门均0，真实3.10 stdlib capture/store/v2/fresh child probe0。owner/reader两首红已修；AST原错view落点、预算wrapper/3.10 probe观测错误保留。没有新浏览器/build/安装/全分支资格，旧Win权限红灯仍保留。
+3. N3c-3c当前首项：按NEXT_PHASE.md当前首项3c表A–D实现，复用PreparationCard/projectPreparationStore、原runconfig/文件及已批准inputremap选择器和i18n。先查真实Plan/PreparationReport/声明API的scope，必要时补同一准备报告的受检投影，不在前端按argv猜rc_ID/cwd。web/src/lib/api.ts加严格请求响应，声明以原revision CAS保存，修改选择只recheck；只有明确用户执行意图才认领原run动作。不要把选择清单当新捕获，旧图继续原证据，真实新执行后显示本次封存/其余通道未知。取消/关闭/A→B→A/参数和目录变化/迟到/409/503保原稿及选择；配置/身份不明确准确呈现，不禁原执行。针对Vitest/API、i18n/lint/正式build、按影响playground并冻结bundle真浏览器声明→新执行→正式v2包/inspect，全部通过后功能commit feat(inputs): declare portable inputs through the preparation flow；然后继续3d。
 4. N3c-3d引用搬迁：经核capture声明+旧完整ref+新资源/实际remap规则，复用public svgstore.save在自有stage生成oldRef→newRef。保source/rc_ID/精确argv/patch/receipt/配对字节；ID随内容身份正确变更，历史多版本按完整ref映射，archive-only不装当前marker。新根精确loader和篡改反例过后接N3d；旧无capture证据不自动升级。
 
 Registry/runconfig/launchctx/workdir/inputremap/databinding仍是各自唯一权威。图内mappings.from可含旧绝对请求，仅为私有来源事实，不授本机读权；声明闭包不等于任意Python所有外部通道均已观察。外部读取沿明确批准，不从argv猜权限，不复制敏感参数、机器环境/cwd授权或成功信任；相对视图实测open/exists/glob/native库，绝对原生路径做结构适配实验，不能把open hook正例称全部支持或禁用原native功能。
@@ -95,5 +90,5 @@ Python 先 Ruff 再针对性 pytest；前端专项 Vitest 后正式 build，按�
 
 未创建定时任务；无人值守指活跃会话持续迭代，休眠/会话结束后按 checkpoint 接续，不宣称提示词能唤醒机器。M1/M2/M3 均未通过，goal 保持 active；状态询问简短答复后继续原目标。
 
-现在核真实HEAD/diff及f79771c3七文件冻结记录，直接从3b-4显式execution v2及正式v4 export/inspect开工。保留已完成app保存/冷暂存和svgstore冷存/恢复，然后3c声明UI/3d引用迁移/N3d–f。N4图例/N5裁切可并行独立定位，M1前必须修好。不重做会话原字节封存、safe/native捕获、准备核验、N3b检视、配置导入、已知执行导出或FRAME修复，不停在新的盘点报告。
+现在核真实HEAD/diff及06806c2c十三文件冻结记录，直接从3c输入声明UI与原准备/配置/选择器实际接线开工。保留已完成3b-1/2/3/4，再3d引用迁移/N3d–f。静态无patch同名历史图的当前原件hash约束仍在，迁移时须真实解决或准确列缺口，不能冒runtime输入历史资格已覆盖该场景。N4图例/N5裁切可并行独立定位，M1前必须修好。不重做会话原字节封存、safe/native捕获、准备核验、N3b检视、配置导入、已知执行导出或FRAME修复，不停在新的盘点报告。
 ```
