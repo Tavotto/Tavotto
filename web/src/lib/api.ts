@@ -1881,8 +1881,9 @@ export type ExportObject =
       type: 'panel'
       figure_snapshot?: FigureSnapshot
       chart?: PanelChartState
+      chart_render_profile?: 'legacy-scaffold/1' | 'native-manifest/1'
       id: string
-      overrides?: { gid: string; prop: string; value: unknown }[]
+      overrides?: { gid: string; prop: string; value: unknown; identity?: string }[]
       /** 0–1 归一化、top-origin，与 PanelObject.crop 同构，原样直传 */
       crop?: { x: number; y: number; w: number; h: number }
       /** 0/90/180/270；x/y/w/h 已是旋转后的落位，后端只负责把内容转进去 */
@@ -1955,7 +1956,8 @@ export type ExportOriginalSource = ArtifactRequestFields & {
   figure_id: string
   figure_snapshot?: FigureSnapshot
   chart?: PanelChartState
-  overrides?: { gid: string; prop: string; value: unknown }[]
+  chart_render_profile?: 'legacy-scaffold/1' | 'native-manifest/1'
+  overrides?: { gid: string; prop: string; value: unknown; identity?: string }[]
   w_mm?: number | null
   h_mm?: number | null
   px_w?: number | null
@@ -2773,6 +2775,8 @@ export interface Manifest {
 }
 
 export interface EngineRenderResponse {
+  /** 计算图表最终 SVG + manifest + 完整 patches 的后端渲染身份。 */
+  chart_revision?: string
   /** build 成功、但沙盒里 glob 回空而脚本目录里有文件（图可能缺数据，#1254）；出图结果与状态码不变 */
   workdir_hint?: WorkdirConfirmation
   figure_snapshot_invalidation?: FigureSnapshotInvalidation
@@ -2921,6 +2925,8 @@ export const ENVIRONMENT_CODES = [
 ] as const
 
 export interface EngineRenderOptions extends ArtifactRequestFields {
+  /** 显式计算图表状态；与完整 patches 一起走同一次配对渲染。 */
+  chart?: PanelChartState
   signal?: AbortSignal
   /**
    * 这一次预览 SVG 里**嵌入位图**的 dpi（不给 = worker 的默认）。
@@ -2988,6 +2994,7 @@ export async function engineRender(
       id,
       patches,
       inline_svg: true,
+      ...(opts.chart ? { chart: opts.chart } : {}),
       source_policy: opts.source_policy,
       expected_source: opts.expected_source,
       ...(opts.confirmed_reconstruction_sha256 ? { confirmed_reconstruction_sha256: opts.confirmed_reconstruction_sha256 } : {}),
@@ -3148,25 +3155,39 @@ export async function enginePreviewPng(
   patches: unknown[],
   bucket: number,
   signal?: AbortSignal,
+  source: EnginePngOptions = {},
 ): Promise<Blob> {
-  return (await previewPngResponse(id, patches, bucket, signal)).blob()
+  if (source.chart) {
+    const snapshot = await enginePreviewPngSnapshot(id, patches, bucket, signal, source)
+    const png = snapshot.url.slice(snapshot.url.indexOf(',') + 1)
+    return new Blob([Uint8Array.from(atob(png), c => c.charCodeAt(0))], { type: 'image/png' })
+  }
+  return (await previewPngResponse(id, patches, bucket, signal, false, source)).blob()
+}
+
+export interface EnginePngOptions extends ArtifactRequestFields {
+  chart?: PanelChartState
 }
 
 export async function enginePreviewPngSnapshot(
-  id: string, patches: unknown[], bucket: number, signal?: AbortSignal, source: ArtifactRequestFields = {},
-): Promise<{ url: string; manifest: Manifest; sourceBacked?: unknown }> {
+  id: string, patches: unknown[], bucket: number, signal?: AbortSignal, source: EnginePngOptions = {},
+): Promise<{ url: string; manifest: Manifest; sourceBacked?: unknown; chartRevision?: string }> {
   const res = await previewPngResponse(id, patches, bucket, signal, true, source)
-  const frame = await res.json() as { png: string; manifest: Manifest; artifact_source?: unknown; source_backed?: unknown }
+  const frame = await res.json() as { png: string; manifest: Manifest; artifact_source?: unknown; source_backed?: unknown; chart_revision?: string }
+  if (source.chart && (typeof frame.chart_revision !== 'string' || !frame.chart_revision || !frame.manifest || !frame.png)) {
+    throw new EngineError('The chart response has no paired pixels and geometry.', '', 'chart_render_pair_missing')
+  }
   if (source.source_policy) {
     const g = verifiedSource(frame.artifact_source, id, source.source_policy)
     if (!source.expected_source || g.bytesSha256 !== source.expected_source.bytes_sha256 || g.sizeBytes !== source.expected_source.size_bytes) throw new ArtifactValidationError('source_changed')
   }
   // 来源驱动策略：这次响应自己的准入结论（对照确认绑定的是**显示给用户的这一份**，不是更早那次 render 的）
-  return { url: `data:image/png;base64,${frame.png}`, manifest: frame.manifest, sourceBacked: frame.source_backed }
+  return { url: `data:image/png;base64,${frame.png}`, manifest: frame.manifest, sourceBacked: frame.source_backed,
+    ...(source.chart ? { chartRevision: frame.chart_revision } : {}) }
 }
 
 async function previewPngResponse(
-  id: string, patches: unknown[], bucket: number, signal?: AbortSignal, withManifest = false, source: ArtifactRequestFields = {},
+  id: string, patches: unknown[], bucket: number, signal?: AbortSignal, withManifest = false, source: EnginePngOptions = {},
 ): Promise<Response> {
   const res = await fetch(apiUrl('/api/engine/preview_png'), withProject({
     method: 'POST',

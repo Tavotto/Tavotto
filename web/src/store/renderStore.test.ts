@@ -8,12 +8,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EngineRenderOptions, Manifest } from '@/lib/api'
 import {
+  exactPanelRender,
   exactPanelManifest,
   panelDisplayView,
   panelRender,
   renderKey,
   renderFailureOwner,
   renderKeyOf,
+  renderRequestIdentity,
+  structuralPanelManifest,
   settleRenderFailureToast,
   useRenderStore,
 } from './renderStore'
@@ -22,8 +25,226 @@ import { currentProjectId } from '@/lib/session'
 import { useUiStore } from '@/store/uiStore'
 import { EDITOR_SVG_HARD_LIMIT_BYTES } from '@/lib/previewBudget'
 import type { PanelObject } from '@/types/document'
+import type { PanelChartState } from '@/types/document'
+import chartVectors from '../../../tests/golden/chart_model_vectors.json'
 
 const engineRender = vi.fn()
+
+function chartPanel(id = 'chart', upper?: number): PanelObject {
+  const v = chartVectors.vectors.find(v => v.expect === 'ok')!
+  const chart = structuredClone({ model: v.model, binding: v.binding }) as unknown as PanelChartState
+  if (upper != null) chart.model.axes[0].xlim[1] = upper
+  return { ...panel(id, 'chart.svg'), script: null, fileKind: 'svg', chart }
+}
+
+const renderChart = (p: PanelObject) => useRenderStore.getState().render(
+  p.fileId, p.overrides, undefined, undefined, undefined, undefined, 'foreground', p.chart,
+)
+const chartResponse = (revision: string) => ({ rev: 1, chart_revision: revision,
+  manifest: manifest(revision), svg: `<svg id="${revision}"/>` })
+
+describe('chart 与普通渲染共用配对状态机', () => {
+  it('普通键保持原样；模型数据/范围/样式/绑定任一变化都有独立完整身份', () => {
+    expect(renderKey('plot.pdf', [])).toBe('plot.pdf []')
+    const a = chartPanel()
+    expect(renderRequestIdentity(a.overrides)).toBe('[]')
+    const initial = renderKeyOf(a)
+    const variants = [
+      (p: PanelObject) => { p.chart!.model.axes[0].xlim[1] += 10 },
+      (p: PanelObject) => { p.chart!.model.series[0].style = { color: '#ff0000' } },
+      (p: PanelObject) => { p.chart!.model.dataset.columns['extra'] = [2] },
+      (p: PanelObject) => { p.chart!.binding.model_rev += 1 },
+    ]
+    for (const change of variants) {
+      const copy = structuredClone(a)
+      change(copy)
+      expect(renderKeyOf(copy)).not.toBe(initial)
+    }
+    expect(renderKeyOf(a)).not.toBe(renderKey(a.fileId, a.overrides))
+  })
+
+  it('完整 chart 与 patches 进入原 engineRender，返回SVG/manifest/revision同存', async () => {
+    const p = chartPanel()
+    p.overrides = [{ gid: 'axes_0.lines_0', prop: 'color', value: '#f00' }]
+    engineRender.mockResolvedValue(chartResponse('paired'))
+    await renderChart(p)
+    expect(engineRender.mock.calls[0][0]).toBe(p.fileId)
+    expect(engineRender.mock.calls[0][1]).toEqual(p.overrides)
+    expect(engineRender.mock.calls[0][2].chart).toEqual(p.chart)
+    const entry = useRenderStore.getState().get(renderKeyOf(p))
+    expect(entry).toMatchObject({ chartRevision: 'paired', chartRequest: JSON.stringify(p.chart),
+      manifest: manifest('paired'), lastPatches: renderRequestIdentity(p.overrides, p.chart) })
+    expect(exactPanelManifest(useRenderStore.getState(), p)).toBe(entry.manifest)
+  })
+
+  it('同文件另一chart的SVG、结构与几何均不能作为文件级退路，普通面板也不借chart', async () => {
+    const a = chartPanel('a'), b = chartPanel('b', 50)
+    engineRender.mockResolvedValue(chartResponse('A'))
+    await renderChart(a)
+    const state = useRenderStore.getState()
+    for (const target of [b, { ...a, chart: undefined }]) {
+      expect(panelRender(state, target)).toBeUndefined()
+      expect(structuralPanelManifest(state, target)).toBeNull()
+      expect(exactPanelManifest(state, target)).toBeNull()
+      expect(panelDisplayView(state, target).kind).toBe('empty')
+    }
+    const edited = { ...a, overrides: [{ gid: 'axes_0', prop: 'ylim', value: [1, 20] }] }
+    expect(panelDisplayView(state, edited).kind).toBe('fallback')
+    expect(exactPanelManifest(state, edited)).toBeNull()
+  })
+
+  it('迟到A仅填A条目，不能覆盖已落地B的latest或几何', async () => {
+    const a = chartPanel('a'), b = chartPanel('b', 50)
+    let finishA!: (v: unknown) => void, finishB!: (v: unknown) => void
+    engineRender.mockReturnValueOnce(new Promise(r => { finishA = r })).mockReturnValueOnce(new Promise(r => { finishB = r }))
+    const pendingA = renderChart(a), pendingB = renderChart(b)
+    finishB(chartResponse('B')); await pendingB
+    finishA(chartResponse('A')); await pendingA
+    const state = useRenderStore.getState()
+    expect(state.latest[a.fileId]).toBe(renderKeyOf(b))
+    expect(exactPanelManifest(state, b)?.stem).toBe('B')
+    expect(exactPanelManifest(state, a)?.stem).toBe('A')
+  })
+
+  it('chart入队即冻结完整JSON；调用方改动不能重写在途内容及配对身份', async () => {
+    const p = chartPanel(), original = structuredClone(p)
+    let finish!: (v: unknown) => void
+    engineRender.mockReturnValue(new Promise(r => { finish = r }))
+    const pending = renderChart(p)
+    p.chart!.model.axes[0].xlim[1] += 100
+    expect(engineRender.mock.calls[0][2].chart).toEqual(original.chart)
+    finish(chartResponse('original')); await pending
+    expect(useRenderStore.getState().get(renderKeyOf(original)).lastPatches).toBe(renderRequestIdentity(original.overrides, original.chart))
+    expect(exactPanelManifest(useRenderStore.getState(), p)).toBeNull()
+  })
+
+  it('clear换代后chart旧响应一个条目也不落库', async () => {
+    let finish!: (v: unknown) => void
+    engineRender.mockReturnValue(new Promise(r => { finish = r }))
+    const pending = renderChart(chartPanel())
+    useRenderStore.getState().clear()
+    finish(chartResponse('old-project')); await pending
+    expect(useRenderStore.getState().byKey).toEqual({})
+  })
+
+  it('没有后端配对身份的旧render响应不授予chart几何资格', async () => {
+    const p = chartPanel()
+    engineRender.mockResolvedValue({ rev: 1, manifest: manifest('unqualified'), svg: '<svg/>' })
+    await renderChart(p)
+    expect(useRenderStore.getState().get(renderKeyOf(p))).toMatchObject({ status: 'error', code: 'chart_render_pair_missing', manifest: null })
+    expect(exactPanelManifest(useRenderStore.getState(), p)).toBeNull()
+  })
+
+  it.each(['chart_source_changed', 'chart_render_pair_missing', 'another_chart_failure'])(
+    'chart同键成功后终态失败 %s：保留显示与结构，撤销几何资格，成功重试才恢复',
+    async (code) => {
+      const { EngineError } = await import('@/lib/api')
+      const p = chartPanel()
+      engineRender.mockResolvedValueOnce(chartResponse('before-failure'))
+      await renderChart(p)
+      const previous = useRenderStore.getState().get(renderKeyOf(p))
+      expect(exactPanelRender(useRenderStore.getState(), p)).toBe(previous)
+
+      if (code === 'chart_render_pair_missing') {
+        engineRender.mockResolvedValueOnce({ rev: 2, manifest: manifest('unpaired'), svg: '<svg/>' })
+      } else {
+        engineRender.mockRejectedValueOnce(new EngineError('chart failed', '', code, ''))
+      }
+      await renderChart(p)
+
+      const failed = useRenderStore.getState()
+      expect(failed.get(renderKeyOf(p))).toMatchObject({ status: 'error', code })
+      expect(exactPanelRender(failed, p)).toBeNull()
+      expect(exactPanelManifest(failed, p)).toBeNull()
+      expect(panelRender(failed, p)?.svg).toBe(previous.svg)
+      expect(structuralPanelManifest(failed, p)).toBe(previous.manifest)
+      const display = panelDisplayView(failed, p)
+      expect(display.kind).toBe('fallback')
+      expect(display).not.toHaveProperty('manifest')
+      expect(display.svg).toBe(previous.svg)
+
+      let finish!: (value: unknown) => void
+      engineRender.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+      const retry = renderChart(p)
+      expect(useRenderStore.getState().get(renderKeyOf(p)).status).toBe('rendering')
+      expect(exactPanelRender(useRenderStore.getState(), p)).toBeNull()
+      finish(chartResponse('after-retry'))
+      await retry
+      expect(exactPanelManifest(useRenderStore.getState(), p)?.stem).toBe('after-retry')
+      expect(useRenderStore.getState().get(renderKeyOf(p)).stale).toBe(false)
+    },
+  )
+
+  it('chart终态失败保留已请求身份，重复同步不会无限重试', async () => {
+    const { EngineError } = await import('@/lib/api')
+    const { syncEngine } = await import('@/hooks/useEngineSync')
+    const p = chartPanel()
+    vi.useFakeTimers()
+    try {
+      engineRender.mockResolvedValueOnce(chartResponse('previous'))
+      await renderChart(p)
+      engineRender.mockRejectedValueOnce(new EngineError('source changed', '', 'chart_source_changed', ''))
+      await renderChart(p)
+      expect(useRenderStore.getState().get(renderKeyOf(p)).stale).toBe(true)
+      for (let i = 0; i < 5; i++) {
+        syncEngine([p], p.id)
+        await vi.advanceTimersByTimeAsync(1000)
+      }
+      expect(engineRender).toHaveBeenCalledTimes(2)
+      expect(exactPanelRender(useRenderStore.getState(), p)).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('chart请求被同键排队重试取代时保留旧几何，等待排队结果决定终态', async () => {
+    const { EngineError } = await import('@/lib/api')
+    const p = chartPanel()
+    engineRender.mockResolvedValueOnce(chartResponse('previous'))
+    await renderChart(p)
+    const previous = exactPanelManifest(useRenderStore.getState(), p)
+    let rejectFirst!: (error: unknown) => void, finishLatest!: (value: unknown) => void
+    engineRender
+      .mockReturnValueOnce(new Promise((_resolve, reject) => { rejectFirst = reject }))
+      .mockReturnValueOnce(new Promise(resolve => { finishLatest = resolve }))
+    const pending = renderChart(p)
+    expect(exactPanelManifest(useRenderStore.getState(), p)).toBe(previous)
+    await renderChart(p)
+    rejectFirst(new EngineError('superseded failure', '', 'chart_source_changed', ''))
+    await vi.waitFor(() => expect(engineRender).toHaveBeenCalledTimes(3))
+    expect(useRenderStore.getState().get(renderKeyOf(p))).toMatchObject({ status: 'rendering', stale: false })
+    expect(exactPanelManifest(useRenderStore.getState(), p)).toBe(previous)
+    finishLatest(chartResponse('latest'))
+    await pending
+    expect(exactPanelManifest(useRenderStore.getState(), p)?.stem).toBe('latest')
+  })
+
+  it('chart后台暂缓不算终态失败，保留同版显示与几何', async () => {
+    const { EngineError } = await import('@/lib/api')
+    const { RENDER_DEFERRED_CODE } = await import('@/lib/renderPurpose')
+    const p = chartPanel()
+    engineRender.mockResolvedValueOnce(chartResponse('previous'))
+    await renderChart(p)
+    const previous = exactPanelManifest(useRenderStore.getState(), p)
+    engineRender.mockRejectedValueOnce(new EngineError('deferred', '', RENDER_DEFERRED_CODE, ''))
+    await useRenderStore.getState().render(p.fileId, p.overrides, undefined, undefined, undefined, undefined, 'neighbour', p.chart)
+    expect(useRenderStore.getState().get(renderKeyOf(p))).toMatchObject({ status: 'ready', stale: false, code: '' })
+    expect(exactPanelManifest(useRenderStore.getState(), p)).toBe(previous)
+  })
+
+  it('普通Python同键失败仍保留这一版最后成功的几何资格', async () => {
+    const { EngineError } = await import('@/lib/api')
+    const p = panel('python', 'plot.pdf')
+    engineRender.mockResolvedValueOnce({ rev: 1, manifest: manifest('python'), svg: '<svg/>' })
+    await useRenderStore.getState().render(p.fileId, p.overrides)
+    const previous = exactPanelManifest(useRenderStore.getState(), p)
+    engineRender.mockRejectedValueOnce(new EngineError('script failed', '', 'script_error', ''))
+    await useRenderStore.getState().render(p.fileId, p.overrides)
+    expect(useRenderStore.getState().get(renderKeyOf(p))).toMatchObject({ status: 'error', stale: false })
+    expect(exactPanelManifest(useRenderStore.getState(), p)).toBe(previous)
+    expect(panelDisplayView(useRenderStore.getState(), p).kind).toBe('exact')
+  })
+})
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),

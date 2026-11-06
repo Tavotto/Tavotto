@@ -12,8 +12,8 @@ import { engineErrorMsg } from '@/lib/api'
  * 两节点环换成三节点环）。`hooks/useEngineSync` 只剩订阅与生命周期装配。
  */
 import { useDocumentStore } from '@/store/documentStore'
-import { panelRender, renderEpoch, renderKeyOf, useRenderStore } from '@/store/renderStore'
-import type { PanelObject } from '@/types/document'
+import { panelRender, renderEpoch, renderKeyOf, renderRequestIdentity, useRenderStore } from '@/store/renderStore'
+import type { PanelChartState, PanelObject } from '@/types/document'
 import type { RenderPurpose } from '@/lib/renderPurpose'
 
 /** 文字/数值输入合并成一次渲染的窗口；颜色、开关、拖动结束走 immediate */
@@ -84,7 +84,7 @@ export function requestRender(
   const policy = policyOf(immediate)
   const store = useRenderStore.getState()
   const key = renderKeyOf(panel)
-  const want = JSON.stringify(panel.overrides)
+  const want = renderRequestIdentity(panel.overrides, panel.chart)
   cancelScheduledRender(panel.id)
   const issue = artifactValidationIssue(panel)
   if (issue) {
@@ -101,14 +101,18 @@ export function requestRender(
 
   // 防抖那一路是「还在调」，可以先给一张低清；immediate 是定稿，永远默认 dpi
   const dpi = policy !== 'defer' || !hasImageElement(panel) ? undefined : INTERACTIVE_PREVIEW_DPI
-  const patches = panel.overrides
+  const snapshot = panel.chart ? JSON.parse(want) as { patches: unknown[]; chart: PanelChartState } : null
+  const patches = snapshot?.patches ?? panel.overrides
+  const chart = snapshot?.chart
   const fileId = panel.fileId
   // 项目代际在**排渲染这一刻**取：防抖窗口里切了项目的话，到点那一次整个作废
   const epoch = renderEpoch()
   const fire = () => {
     timers.delete(panel.id)
     // 前台请求的调用形状一字不变（只有邻居补渲染多一个实参）
-    void (purpose === 'foreground'
+    void (chart
+      ? store.render(fileId, patches, dpi, policy, epoch, adoptionGuardOf(panel), purpose, chart)
+      : purpose === 'foreground'
       ? store.render(fileId, patches, dpi, policy, epoch, adoptionGuardOf(panel))
       : store.render(fileId, patches, dpi, policy, epoch, adoptionGuardOf(panel), purpose))
   }
@@ -132,7 +136,7 @@ export function flushRender(panelId: string) {
   if (panel?.type !== 'panel') return
   const store = useRenderStore.getState()
   cancelScheduledRender(panelId)
-  const want = JSON.stringify(panel.overrides)
+  const want = renderRequestIdentity(panel.overrides, panel.chart)
   const state = store.get(renderKeyOf(panel))
   // 判据是「这一版还没画出来」，不是「有没有挂起的计时器」。
   // 旧实现只看计时器：render:'none' 的手势（scrub / 取色）压根不设计时器，

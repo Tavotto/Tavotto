@@ -22,6 +22,8 @@ import { startCropDrag, startResizeDrag } from '@/canvas/interactions'
 import { startLayoutAutoReflow } from '@/store/actions'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { useUiStore } from '@/store/uiStore'
+import chartVectors from '../../../tests/golden/chart_model_vectors.json'
+import type { PanelChartState } from '@/types/document'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -51,6 +53,37 @@ function panel(id: string, fileId: string, overrides: number): PanelObject {
 
 /** 记下每一次真正发出的渲染（fileId / patches / preview dpi） */
 let calls: { fileId: string; patches: unknown[]; dpi?: number }[] = []
+
+describe('计算图表同步目标', () => {
+  const chartPanel = (id: string, upper?: number): PanelObject => {
+    const v = chartVectors.vectors.find(v => v.expect === 'ok')!
+    const chart = structuredClone({ model: v.model, binding: v.binding }) as unknown as PanelChartState
+    if (upper != null) chart.model.axes[0].xlim[1] = upper
+    return { ...panel(id, 'chart.svg', 0), script: null, fileKind: 'svg', chart }
+  }
+
+  it('无script/无patch的chart自动首渲染，同文件不同模型均入选', () => {
+    const a = chartPanel('a'), b = chartPanel('b', 50)
+    expect(renderTargets([a, b], null, {}).map(p => p.id)).toEqual(['a', 'b'])
+  })
+
+  it('同chart完整身份共用一次渲染，普通SVG仍不自动进入计算', () => {
+    const a = chartPanel('a'), b = { ...structuredClone(a), id: 'b' }
+    const plain = { ...a, id: 'plain', chart: undefined }
+    expect(renderTargets([a, b, plain], null, {}).map(p => p.id)).toEqual(['a'])
+  })
+
+  it('chart model变化且patches不变也排期，want完整身份占位避免循环', () => {
+    const a = chartPanel('a')
+    syncEngine([a], null)
+    expect(calls).toHaveLength(1)
+    syncEngine([a], null)
+    expect(calls).toHaveLength(1)
+    const changed = chartPanel('a', 50)
+    syncEngine([changed], null)
+    expect(calls).toHaveLength(2)
+  })
+})
 
 beforeEach(() => {
   calls = []

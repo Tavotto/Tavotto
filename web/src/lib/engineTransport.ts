@@ -1,6 +1,8 @@
 import type { EngineRenderOptions, EngineRenderResponse, Manifest } from './api'
+import type { PanelChartState } from '@/types/document'
 
 export interface EnginePngSnapshot {
+  chartRevision?: string
   url: string
   /** null only for older transports that cannot report a paired PNG draw. */
   manifest: Manifest | null
@@ -29,6 +31,8 @@ export interface EnginePngSnapshot {
  * 文件）。所以本模块**不 import 任何东西**，只存一个可选覆盖。
  */
 export interface EngineTransport {
+  /** 宿主已实现 opts.chart 的同版 SVG/manifest 渲染才可声明；缺席时不可丢弃 chart。 */
+  supportsChartRender?: true
   /** 应用全量 patches 并重渲染；SVG 必须与 manifest 在同一次响应里 */
   render(id: string, patches: unknown[], opts?: EngineRenderOptions): Promise<EngineRenderResponse>
   /**
@@ -40,6 +44,7 @@ export interface EngineTransport {
     patches: unknown[],
     bucket: number,
     signal?: AbortSignal,
+    chart?: PanelChartState,
   ): Promise<string>
   /** Pixels and geometry from one PNG draw; used by interactive bitmap panels. */
   previewPngSnapshot?(
@@ -47,6 +52,7 @@ export interface EngineTransport {
     patches: unknown[],
     bucket: number,
     signal?: AbortSignal,
+    chart?: PanelChartState,
   ): Promise<EnginePngSnapshot>
   /**
    * 素材/原图的显示地址。iframe 里没有可寻址的 HTTP 资源时返回 null，

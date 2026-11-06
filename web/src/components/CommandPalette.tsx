@@ -3,6 +3,7 @@ import { flushSync } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { create } from 'zustand'
 import { msg, t as translate } from '@/i18n'
+import { canEditPanel } from '@/lib/panelEditability'
 import {
   AlignHorizontalDistributeCenter,
   AlignVerticalDistributeCenter,
@@ -192,7 +193,7 @@ const COMMANDS: Command[] = [
     run: () => {
       const id = useSelectionStore.getState().primary()
       const o = id ? useDocumentStore.getState().doc.objects.find((x) => x.id === id) : null
-      if (o?.type === 'panel' && o.script) enterElementEdit(o.id)
+      if (o?.type === 'panel' && canEditPanel(o)) enterElementEdit(o.id)
       else ui().setStatus(msg('palette.needPanel', undefined, 'dialogs'), 'error')
     },
   },

@@ -42,6 +42,15 @@
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
+### 2026-11-06 共享native消费者进入真实图内编辑
+
+- 本批共享engine/render与preview_png、renderStore/scheduler/transport、PanelView/编辑入口及各缩略图接线已收敛；按功能部分stage，后续export/v2恢复/ownership/多目标草稿均保留在工作树，没有用整树add混交。API类型额外可选profile/identity字段是后续导出协议的前向形状，无chart运行行为不变。
+- 集成树真实API当前21项通过、0skip、exit0，62.317秒（chart-native-api-integrated21.xml）：含原18项及后续3项重绑所有权新增检查。此运行包含工作树后续导出/恢复代码，不冒充本次API-only索引候选的独立全量验证。既有前端消费者639项、终态失败143项专项和正式构建记录保留；最终候选仍须统一验证。
+- 根代理真实浏览器从portable.svg右键绑定→对照预览→确认→“改图里的内容”进入现有编辑器，挂载native轴与两条line并达到data-display=exact。真实图形点选后用原Inspector将线宽2改6，文档增加一条编辑；CtrlZ回2且该patch移除，CtrlShiftZ回6且完整列表相同，history长度3→2→3，三个状态均exact。证据native-ui-select-line.js、native-ui-undo-redo.js与output/playwright/native-ui-line-edit-redo.png；实际退出0。
+- 实际Inspector将X范围最大从10改20后，最终刻度含20，线末端x分数由.97变.55661（原数据最大10），linewidth6保留。该证据未覆盖图例联动、保存/冷重开或所有交互；原“仅版面”项目统计文案仍需单一readiness/计算来源语义接线，不硬编码伪造来源。
+- 浏览器只读store探针须导入performance中应用真实加载的带t版本模块，不能另import无query模块创造第二store；记录过的CSS点号selector和exactPanelRender调用签名探针错误不是产品失败。此场景开始线宽操作前已有ticks_bottom=false作为基线，不把该patch的出现归因于被测线宽操作。
+- 正式导出后续9项已由独立代理实际通过，另批提交；多目标场景和预览reader仍有独立草稿。M1及全量旧功能/平台资格仍未完成。
+
 ### 2026-11-06 14:05 执行效果复核与下一阶段安排
 
 - 在既有分支完成3236307c：物理pt原生场景、实际最终manifest、原场景派生DOM的id/CSS隔离、明确placement与资格限制；即时预览平移/缩放锚点/排队位移/线宽共享目标坐标reader。源派生副本移除伪造标记，原输入字节不改；legacy默认路径不改。详细合同见ADR0166与native-producer-review.md。

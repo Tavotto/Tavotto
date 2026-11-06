@@ -3122,6 +3122,8 @@ export default interface Resources {
       "bad_scope": "无法识别导出范围：{{value}}。",
       "bad_validation": "检查设置格式有误，请刷新页面后重试。",
       "batch_start_failed": "{{message}}",
+      "chart_render_pair_missing": "计算图表没有返回同一版的图像与几何，暂未应用本次渲染。",
+      "chart_render_unsupported": "当前宿主尚未支持计算图表的配对渲染。请在本机应用中编辑这张图。",
       "conda_launcher_unavailable": "Conda 环境激活失败（取不到激活后的环境变量），这次没有运行任何东西。通常是暂时的：稍后再试；如果一直这样，请检查这个环境的 conda 安装和 activate.d 脚本。",
       "connection_not_deletable": "订阅登录请在对应的命令行里退出。",
       "connection_not_found": "找不到这个连接，可能已被断开。",

@@ -15,7 +15,7 @@ import {
   useDocumentStore,
   type TxnAnchor,
 } from '@/store/documentStore'
-import { panelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { panelRender, renderKeyOf, renderRequestIdentity, useRenderStore } from '@/store/renderStore'
 import { requestRender } from '@/store/renderScheduler'
 import { sampleDisplayState } from '@/diagnostics'
 import { useUiStore } from '@/store/uiStore'
@@ -63,7 +63,7 @@ export function renderTargets(
   const seen = new Set<string>()
   const targets: PanelObject[] = []
   for (const o of objects) {
-    if (o.type !== 'panel' || !o.script) continue
+    if (o.type !== 'panel' || (!o.script && !o.chart)) continue
     // runtime 面板（ADR 0013 lazy rehydrate）：**重开文档绝不自动执行脚本**。
     // 只有「正在编辑」或「本会话已经跑过一次（latest 里有它）」才进同步——
     // 带着 overrides 重开的文档先显示 cache 占位，进入编辑 / 显式重跑那一刻
@@ -79,7 +79,7 @@ export function renderTargets(
     // 来源驱动采用且零编辑（ADR 0139 §五.1）：显示的是磁盘原像素，重开文档 / 脚本变更 / 邻居补渲染都不去跑脚本；
     // 只有正在编辑它（需要几何权威）才渲染。有真实编辑的面板照常渲染（与别的带 override 的面板一致）。
     if (isSourceBackedZeroEdit(o) && o.id !== editingId && !styleBound) continue
-    const wants =
+    const wants = !!o.chart || (
       o.fileKind === 'runtime'
         ? o.id === editingId || latest[o.fileId] != null
         : // 编辑中 / 有图内修改 / 脚本已领先磁盘文件（AI 改过）。
@@ -88,7 +88,7 @@ export function renderTargets(
           o.id === editingId ||
           styleBound ||
           (!unadopted && (neighbours.has(o.id) || !!tracked[o.fileId])) ||
-          (o.overrides.length > 0 && !isJustBakedBaselineOf(o.overrides, assets[o.fileId]))
+          (o.overrides.length > 0 && !isJustBakedBaselineOf(o.overrides, assets[o.fileId])))
     if (!wants) continue
     const key = renderKeyOf(o)
     if (seen.has(key)) continue
@@ -114,7 +114,7 @@ export function crossFigureNeighbours(
   const ids = new Set<string>()
   if (!editingId || mode === 'fast_edit') return ids
   for (const o of objects) {
-    if (o.type !== 'panel' || o.id === editingId || o.hidden || !o.script) continue
+    if (o.type !== 'panel' || o.id === editingId || o.hidden || (!o.script && !o.chart)) continue
     if (o.fileKind === 'runtime' || o.cost === 'heavy') continue
     // 未采用的 PNG 源图没有权威 manifest 可补：补渲染只能发无策略的 patches=[]，让脚本重跑出一张
     // 没对过字节的图，还会和它自己的采用请求抢同一份首渲染。要先走 admitPngEntry（带 source_policy）。
@@ -162,6 +162,7 @@ function hasForegroundReason(
   assets: Record<string, BakedBaselineFacts | undefined>,
 ): boolean {
   return (
+    !!panel.chart ||
     panel.id === editingId ||
     styleBound ||
     !!tracked[panel.fileId] ||
@@ -233,7 +234,7 @@ export function syncEngine(objects: readonly CanvasObject[], editingId: string |
     styleBound,
     neighbours,
   )) {
-    const want = JSON.stringify(panel.overrides)
+    const want = renderRequestIdentity(panel.overrides, panel.chart)
     const state = store.byKey[renderKeyOf(panel)]
     // `svgEvicted` 打断这条跳过：这一版确实画出来过（lastPatches 对得上、
     // manifest 与几何权威都在），但它的 SVG payload 被内存预算清掉了。撤销

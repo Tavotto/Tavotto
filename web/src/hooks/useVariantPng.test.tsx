@@ -11,6 +11,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { clearVariantPngCache, useVariantPng, variantNeedsRender } from './useVariantPng'
 import { setCurrentProjectId } from '@/lib/session'
+import { setEngineTransport } from '@/lib/engineTransport'
+import type { PanelChartState } from '@/types/document'
+import chartVectors from '../../../tests/golden/chart_model_vectors.json'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -19,11 +22,13 @@ declare global {
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 const previewPng = vi.fn()
+const snapshotPng = vi.fn()
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   enginePreviewPng: (id: string, patches: unknown[], bucket: number, signal?: AbortSignal) =>
     previewPng(id, patches, bucket, signal),
+  enginePreviewPngSnapshot: (...args: unknown[]) => snapshotPng(...args),
 }))
 
 const OV = [{ gid: 't1', prop: 'pos_frac', value: [0.1, 0.2] }]
@@ -40,17 +45,21 @@ function Probe({
   overrides,
   bucket = 200,
   rev = 0,
+  chart,
 }: {
   fileId: string
   overrides: unknown[]
   bucket?: number
   rev?: number
+  chart?: PanelChartState
 }) {
-  last = useVariantPng(fileId, overrides, bucket, true, rev)
+  last = useVariantPng(fileId, overrides, bucket, true, rev, undefined, ...(chart ? [chart] as const : [] as const))
   return null
 }
 
 beforeEach(() => {
+  snapshotPng.mockReset()
+  snapshotPng.mockResolvedValue({ url: 'data:image/png;base64,eA==', manifest: { stem: 'chart', size_mm: [80,60], elements: [] }, chartRevision: 'paired' })
   previewPng.mockReset()
   previewPng.mockResolvedValue(new Blob(['png']))
   clearVariantPngCache()
@@ -67,6 +76,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  setEngineTransport(null)
   act(() => root.unmount())
   container.remove()
 })
@@ -89,6 +99,68 @@ async function fetchOnce(
   })
   return last.url
 }
+
+describe('chart版本缩略图复用同一PNG helper', () => {
+  const chartState = (): PanelChartState => {
+    const v = chartVectors.vectors.find(v => v.expect === 'ok')!
+    return structuredClone({ model: v.model, binding: v.binding }) as unknown as PanelChartState
+  }
+  const show = async (chart: PanelChartState) => {
+    await act(async () => { root.render(<Probe fileId="chart.svg" overrides={[]} chart={chart} />) })
+  }
+
+  it('无patch的chart仍出图，cache包含全部模型/绑定且重复同身份只取一次', async () => {
+    const a = chartState()
+    expect(variantNeedsRender([], undefined, a)).toBe(true)
+    await show(a)
+    expect(snapshotPng).toHaveBeenCalledOnce()
+    expect(snapshotPng.mock.calls[0][4]).toEqual({ chart: a })
+    await show(structuredClone(a))
+    expect(snapshotPng).toHaveBeenCalledOnce()
+    const b = structuredClone(a)
+    b.model.axes[0].xlim[1] += 10
+    await show(b)
+    expect(snapshotPng).toHaveBeenCalledTimes(2)
+    expect(snapshotPng.mock.calls[1][4]).toEqual({ chart: b })
+    expect(previewPng).not.toHaveBeenCalled()
+  })
+
+  it('换chart的首帧不冒充上一份缩略图，迟到旧项目响应不进新项目/cache', async () => {
+    let finishOld!: (value: unknown) => void
+    snapshotPng.mockReturnValueOnce(new Promise(resolve => { finishOld = resolve }))
+    const a = chartState()
+    await show(a)
+    setCurrentProjectId('projB')
+    await show(a)
+    const shownB = last.url
+    await act(async () => { finishOld({ url: 'blob:old-A', manifest: {}, chartRevision: 'A' }) })
+    expect(last.url).toBe(shownB)
+    expect(revoked).toContain('blob:old-A')
+    setCurrentProjectId('projA')
+    await show(a)
+    expect(snapshotPng).toHaveBeenCalledTimes(3)
+  })
+
+  it('未实现chart的宿主不退回patch-only PNG伪装版本图', async () => {
+    const oldPng = vi.fn(async () => 'blob:old-native')
+    setEngineTransport({ render: vi.fn(), previewPngUrl: oldPng, panelSrc: () => null })
+    await show(chartState())
+    expect(oldPng).not.toHaveBeenCalled()
+    expect(last).toMatchObject({ url: null, approximate: true })
+  })
+
+  it('A到B再回A即使组件尚未换props，旧PNG也不写状态或缓存', async () => {
+    let finishOld!: (value: unknown) => void
+    snapshotPng.mockReturnValueOnce(new Promise(resolve => { finishOld = resolve }))
+    const a = chartState()
+    await show(a)
+    setCurrentProjectId('projB')
+    setCurrentProjectId('projA')
+    await act(async () => { finishOld({ url: 'blob:retired-generation', manifest: {}, chartRevision: 'old' }) })
+    expect(last.url).toBeNull()
+    expect(revoked).toContain('blob:retired-generation')
+  })
+})
 
 describe('缓存键：项目 + 素材版本 + 变体，少一个都会串图', () => {
   it('同一项目同一变体命中缓存，只发一次请求', async () => {

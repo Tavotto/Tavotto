@@ -1815,7 +1815,7 @@ function SnapshotPanel({
   /** 取图档位（RENDER_BUCKETS 之一），见 `snapshotBucket` */
   bucket: number
 }) {
-  const wantsVariant = renderOverrides && (panel.overrides.length > 0 || isAdoptedPanel(panel))
+  const wantsVariant = renderOverrides && (!!panel.chart || panel.overrides.length > 0 || isAdoptedPanel(panel))
   const variant = useVariantPng(
     panel.fileId,
     panel.overrides,
@@ -1823,13 +1823,14 @@ function SnapshotPanel({
     wantsVariant,
     mtime ?? 0,
     adoptionGuardOf(panel),
+    ...(panel.chart ? [panel.chart] as const : [] as const),
   )
   useEffect(() => {
     if (renderOverrides) onApproximate?.(variant.approximate)
   }, [variant.approximate, renderOverrides, onApproximate])
   // 「还没出好」从第一帧就算：要出图、既没拿到也没失败（hook 的 loading 晚一帧才置上）
   // 零编辑的来源驱动面板 hook 有意不出图（磁盘原像素即是），不算「还在出」
-  const pending = wantsVariant && variantNeedsRender(panel.overrides, adoptionGuardOf(panel)) && !variant.url && !variant.approximate
+  const pending = wantsVariant && variantNeedsRender(panel.overrides, adoptionGuardOf(panel), panel.chart) && !variant.url && !variant.approximate
   useEffect(() => {
     if (!onLoading) return
     onLoading(panel.id, pending)
@@ -1838,7 +1839,7 @@ function SnapshotPanel({
 
   // panelSrc 可能给不出地址（替代传输里没有 HTTP 服务）：一个都拿不到就不画
   // <img>，绝不留一个空 src 让缩略图挂一个碎图标
-  const src = variant.url || panelSrc(panel.fileId, panel.fileKind, bucket, mtime)
+  const src = variant.url || (panel.chart ? null : panelSrc(panel.fileId, panel.fileKind, bucket, mtime))
   if (!src) return null
   return (
     <RetryImg

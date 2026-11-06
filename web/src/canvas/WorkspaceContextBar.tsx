@@ -9,6 +9,7 @@ import { Sep } from './context-bar/shared'
 import { untruncatedLabel } from '@/components/inspector/identityCrumbs'
 import { engineLabel, roleName } from '@/components/inspector/roles/registry'
 import { reasonText, statusLabel } from '@/lib/readinessText'
+import { useCanEditPanel } from '@/lib/panelEditability'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
@@ -57,10 +58,10 @@ export function WorkspaceContextBar() {
   )
   const editingHere = !!panel && elementPanelId === panel.id
   const manifest = usePanelDisplayManifest(editingHere ? panel : null)
+  const editable = useCanEditPanel(panel)
   if (!panel) return null
 
   const name = panel.name ?? panel.fileId
-  const editable = !!panel.script
   const gid = editingHere ? selectedGids.at(-1) : undefined
   const element = gid ? manifest?.elements.find((e) => e.gid === gid) : undefined
   // 图内编辑里没选元素时，当前对象就是「整张图」（右栏头部也这么写）：面包屑

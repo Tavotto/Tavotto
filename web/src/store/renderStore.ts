@@ -30,7 +30,7 @@ import { resolvePreview, VECTOR_PREVIEW, type PreviewMetadata } from '@/lib/prev
 import { useAssetStore } from '@/store/assetStore'
 import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
-import type { PanelObject } from '@/types/document'
+import type { PanelChartState, PanelObject } from '@/types/document'
 import { fileHash, recordDiagnosticEvent, variantHash } from '@/diagnostics'
 import { notifyReconstructionReview } from '@/store/sourceBackedReview'
 import { classifyArtifactFailure } from '@/lib/artifactReason'
@@ -46,6 +46,10 @@ export interface BuildingInfo {
 }
 
 export interface PanelRender {
+  /** 只有显式 chart 请求才出现；用于拒绝同文件另一张计算图表的显示退路。 */
+  chartRequest?: string
+  /** 后端同一次 SVG/manifest draw 的完整计算图表渲染身份。 */
+  chartRevision?: string
   /** 这份渲染态属于哪个素材文件（文件级操作靠它反查，见 markStale / reset） */
   fileId: string
   artifactValidation?: AdoptionGuard
@@ -198,16 +202,20 @@ const EMPTY: PanelRender = {
  * 赢家的图。现在各存各的，worker 里那份 live figure 轮流全量重放即可
  * （patch_apply≈0ms、热画 17–28ms，见 docs/perf-baseline.md）。
  *
- * 分隔符用空格是安全的：变体串是 `JSON.stringify(数组)`，必然以 `[` 开头，
+ * 分隔符用空格是安全的：变体串是 JSON 数组或显式 chart 请求对象，以 `[` / `{` 开头，
  * 拼出来的键不可能与另一个「文件名里带空格」的组合撞上。
  */
-export function renderKey(fileId: string, patches: unknown[], guard?: unknown): string {
-  return `${fileId} ${JSON.stringify(patches)}${artifactKeySuffix(guard)}`
+export function renderRequestIdentity(patches: unknown[], chart?: PanelChartState): string {
+  return chart ? JSON.stringify({ patches, chart }) : JSON.stringify(patches)
+}
+
+export function renderKey(fileId: string, patches: unknown[], guard?: unknown, chart?: PanelChartState): string {
+  return `${fileId} ${renderRequestIdentity(patches, chart)}${artifactKeySuffix(guard)}`
 }
 
 /** 面板 → 它自己那份渲染态的键（唯一出处，消费方一律用它取状态） */
 export function renderKeyOf(panel: PanelObject): string {
-  return renderKey(panel.fileId, panel.overrides, adoptionGuardOf(panel))
+  return renderKey(panel.fileId, panel.overrides, adoptionGuardOf(panel), panel.chart)
 }
 
 /**
@@ -332,6 +340,7 @@ interface RenderState {
     artifactValidation?: AdoptionGuard | null,
     /** 缺省 foreground；`neighbour` 见 `lib/renderPurpose`（调度只住 `renderScheduler`，别处不要传）。 */
     purpose?: RenderPurpose,
+    chart?: PanelChartState,
   ) => Promise<void>
   /** 脚本变更：转入引擎跟踪并清掉该文件**全部变体**的 lastPatches */
   markStale: (fileIds: string[]) => void
@@ -670,11 +679,17 @@ export const useRenderStore = create<RenderState>((set, get) => ({
       } } }
     }),
 
-  render: async (fileId, patches, previewDpi, policy, epoch, artifactValidation, purpose = 'foreground') => {
+  render: async (fileId, patches, previewDpi, policy, epoch, artifactValidation, purpose = 'foreground', chart) => {
     // 排渲染时的项目已经不是当前项目：连请求都不发（发出去 pj 是新项目的，
     // 渲染的却是旧项目的 fileId 与 patches）
     if (epoch !== undefined && epoch !== projectEpoch) return
-    const key = renderKey(fileId, patches, artifactValidation)
+    // 完整 JSON 请求身份在入队时冻结；调用方后续换模型不能改写在途请求。
+    if (chart) {
+      const snapshot = JSON.parse(renderRequestIdentity(patches, chart)) as { patches: unknown[]; chart: PanelChartState }
+      patches = snapshot.patches
+      chart = snapshot.chart
+    }
+    const key = renderKey(fileId, patches, artifactValidation, chart)
     // 序号在**请求进来的那一刻**取，不是发出的那一刻：忙时排队的那次要带着
     // 自己的序号走完全程，否则一个早就该被覆盖的旧变体会因为「重试发得晚」
     // 而显得最新，把 latest 拽回去（撤销之后画面弹回对齐后的样子）。
@@ -709,6 +724,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
         patch(key, {
           fileId,
           artifactValidation: artifactValidation ?? undefined,
+          ...(chart ? { chartRequest: JSON.stringify(chart) } : {}),
           status: 'rendering',
           error: null,
           traceback: '',
@@ -736,14 +752,21 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           // 否则还是原来那条 HTTP。两侧最终落到同一个 worker.override，
           // 这里以下的逻辑一行都不分叉
           const source = artifactValidation === undefined ? {} : artifactRequestFields(subjectOf(fileId, current as PanelObject['overrides'], artifactValidation))
-          const opts = { signal: ctrl.signal, previewDpi: dpi, ...(currentPurpose === 'neighbour' ? { purpose: currentPurpose } : {}), ...source }
+          const opts = { signal: ctrl.signal, previewDpi: dpi, ...(currentPurpose === 'neighbour' ? { purpose: currentPurpose } : {}), ...source, ...(chart ? { chart } : {}) }
           const transport = engineTransport()
           if (artifactValidation && transport) throw new ArtifactValidationError('unsupported_render_state')
+          if (chart && transport && !transport.supportsChartRender) {
+            throw new EngineError('This host does not support computational chart rendering.', '', 'chart_render_unsupported')
+          }
           // 性能探针（ADR 0075）：松手 → 图落定那段时间的第一个时刻
           perfHandle = perfRenderBegin(key, current.length)
           const res = transport
             ? await transport.render(fileId, current, opts)
             : await engineRender(fileId, current, opts)
+          if (chart && (typeof res.chart_revision !== 'string' || !res.chart_revision || !res.manifest ||
+            (res.preview?.mode !== 'raster' && !res.svg))) {
+            throw new EngineError('The chart response has no paired SVG and geometry.', '', 'chart_render_pair_missing')
+          }
           if (artifactValidation) verifiedSource(res.artifact_source, fileId, policyOfGuard(artifactValidation), artifactValidation)
           perfRenderResponse(perfHandle, true, res.timings, res.svg?.length)
           // 在途期间换过项目：这份图属于旧项目，一个字都不落进当前项目（STATE-06）。
@@ -763,6 +786,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           const next: Partial<PanelRender> = {
             fileId,
             artifactValidation: artifactValidation ?? undefined,
+            ...(chart ? { chartRequest: JSON.stringify(chart), chartRevision: res.chart_revision } : {}),
             rev: res.rev,
             manifest: res.manifest,
             status: 'ready',
@@ -777,7 +801,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             warnings: res.warnings ?? [],
             timings: res.timings ?? {},
             stale: false,
-            lastPatches: JSON.stringify(current),
+            lastPatches: renderRequestIdentity(current, chart),
             deferredPatches: null,
             previewDpi: dpi ?? null,
           }
@@ -890,7 +914,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
               error: null,
               code: '',
               wantPatches: null,
-              deferredPatches: JSON.stringify(current),
+              deferredPatches: renderRequestIdentity(current, chart),
             })
             return
           }
@@ -927,6 +951,9 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           patch(key, {
             fileId,
             status: 'error',
+            // 计算图的来源/配对可能已失效；终态失败后旧图只能显示。
+            // 保留 lastPatches，避免同步器把这次失败当作尚未请求而自动重试。
+            ...(chart ? { stale: true } : {}),
             ...(artifactValidation ? { stale: true, manifest: null, svg: null, svgBytes: 0, svgSeq: 0 } : {}),
             code: err instanceof EngineError || err instanceof ArtifactValidationError ? err.code : '',
             module: err instanceof EngineError ? err.module : '',
@@ -1201,8 +1228,13 @@ export function panelRender(
   if (issue) return invalidArtifactRender(issue, own)
   if (isAdoptedPanel(panel)) return own
   if (own?.manifest) return own
-  const prev = state.byKey[state.latest[panel.fileId] ?? '']
+  const latest = state.byKey[state.latest[panel.fileId] ?? '']
+  const prev = compatibleChartRender(latest, panel) ? latest : undefined
   return mergeRender(own, prev)
+}
+
+function compatibleChartRender(render: PanelRender | undefined, panel: PanelObject): boolean {
+  return render?.chartRequest === (panel.chart ? JSON.stringify(panel.chart) : undefined)
 }
 
 function mergeRender(
@@ -1215,6 +1247,9 @@ function mergeRender(
   return {
     ...own,
     manifest: own.manifest ?? prev.manifest,
+    ...(prev.chartRequest && !own.manifest ? {
+      chartRequest: prev.chartRequest, chartRevision: prev.chartRevision, stale: own.stale || prev.stale,
+    } : {}),
     svg,
     rev: own.rev || prev.rev,
     // **表示法跟着 SVG 走**：退回来的是上一版那张图，那么「该怎么显示它」
@@ -1235,8 +1270,8 @@ function mergeRender(
  *
  * **刻意不要求 `status === 'ready'`**：同一个键重发一次（松手补定稿 dpi）
  * 会把状态打回 'rendering'，而键相同 = overrides 相同 = 几何不变，那份 manifest
- * 依旧对得上；渲染失败时同理，条目里留着的是**这一版**最后一次成功的结果。
- * 真正会让几何失效的是「换了变体」和「脚本变了」，上面两条已经盖住。
+ * 依旧对得上；普通 Python 渲染失败时同理，条目里留着的是**这一版**最后一次成功的结果。
+ * 计算图的终态失败另置 stale：来源或配对已无法确认，成功重试后才恢复几何资格。
  */
 export function exactPanelRender(
   state: Pick<RenderState, 'byKey'>,
@@ -1247,7 +1282,8 @@ export function exactPanelRender(
 
 function exactOf(own: PanelRender | undefined, panel: PanelObject): PanelRender | null {
   if (artifactValidationIssue(panel) || !own?.manifest || own.stale) return null
-  if (own.lastPatches !== JSON.stringify(panel.overrides)) return null
+  if (own.lastPatches !== renderRequestIdentity(panel.overrides, panel.chart)) return null
+  if (panel.chart && (!own.chartRevision || !compatibleChartRender(own, panel))) return null
   return own
 }
 
@@ -1279,7 +1315,8 @@ export function structuralPanelManifest(
   const own = state.byKey[renderKeyOf(panel)]?.manifest
   if (own) return own
   const key = state.latest[panel.fileId]
-  return (key && state.byKey[key]?.manifest) || null
+  const prev = key ? state.byKey[key] : undefined
+  return (compatibleChartRender(prev, panel) && prev?.manifest) || null
 }
 
 /**
@@ -1395,7 +1432,7 @@ export function panelDisplayView(
   if (isAdoptedPanel(panel)) return { kind: 'empty', currentKey, sourceKey: null, svg: null, render: own }
   const sourceKey = own?.svg ? currentKey : (state.latest[panel.fileId] ?? '')
   const prev = state.byKey[sourceKey]
-  if (prev?.svg) {
+  if (prev?.svg && compatibleChartRender(prev, panel)) {
     return { kind: 'fallback', currentKey, sourceKey, svg: prev.svg, render: own ?? prev }
   }
   return { kind: 'empty', currentKey, sourceKey: null, svg: null, render: own }
@@ -1421,7 +1458,8 @@ export function activeRenderKey(
 export function usePanelRender(panel: PanelObject | null | undefined): PanelRender | undefined {
   const own = useRenderStore((s) => (panel ? s.byKey[renderKeyOf(panel)] : undefined))
   const prev = useRenderStore((s) =>
-    panel && !isAdoptedPanel(panel) ? s.byKey[s.latest[panel.fileId] ?? ''] : undefined,
+    panel && !isAdoptedPanel(panel) && compatibleChartRender(s.byKey[s.latest[panel.fileId] ?? ''], panel)
+      ? s.byKey[s.latest[panel.fileId] ?? ''] : undefined,
   )
   const issue = panel ? artifactValidationIssue(panel) : null
   return useMemo(() => issue ? invalidArtifactRender(issue, own) : (own?.manifest ? own : mergeRender(own, prev)), [own, prev, issue])

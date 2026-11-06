@@ -12,7 +12,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { PanelView } from './PanelView'
-import { exactPanelManifest, usePanelDisplayManifest, renderKeyOf, useRenderStore, type PanelRender } from '@/store/renderStore'
+import { exactPanelManifest, usePanelDisplayManifest, renderKeyOf, renderRequestIdentity, useRenderStore, type PanelRender } from '@/store/renderStore'
 import { useMountedPngStore } from '@/store/mountedPngStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
@@ -20,8 +20,10 @@ import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useUiStore } from '@/store/uiStore'
 import { useAssetStore } from '@/store/assetStore'
 import { VECTOR_PREVIEW, type PreviewMetadata } from '@/lib/previewBudget'
-import type { Manifest, PanelInfo } from '@/lib/api'
-import type { PanelObject } from '@/types/document'
+import type { EnginePngOptions, Manifest, PanelInfo } from '@/lib/api'
+import type { PanelChartState, PanelObject } from '@/types/document'
+import chartVectors from '../../../tests/golden/chart_model_vectors.json'
+import { diagnosticHash } from '@/diagnostics'
 import {
   perfRenderApplied,
   perfRenderBegin,
@@ -31,15 +33,19 @@ import {
 } from '@/perf/core'
 
 const previewPng = vi.fn()
+const chartPng = vi.fn()
+let chartPngRevision: string | undefined = 'paired-png'
 /** 每条用例可换的取图实现；默认立即成功（与从前逐字节相同） */
 let previewPngImpl: () => Promise<Blob> = () => Promise.resolve(new Blob(['png']))
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
-  enginePreviewPngSnapshot: async (id: string, patches: unknown[], bucket: number) => {
+  enginePreviewPngSnapshot: async (id: string, patches: unknown[], bucket: number, _signal?: AbortSignal, opts?: EnginePngOptions) => {
     previewPng(id, patches, bucket)
+    if (opts?.chart) chartPng(opts.chart)
     const blob = await previewPngImpl()
-    return { url: URL.createObjectURL(blob), manifest: pngManifest }
+    return { url: URL.createObjectURL(blob), manifest: pngManifest,
+      ...(opts?.chart ? { chartRevision: chartPngRevision } : {}) }
   },
 }))
 
@@ -95,6 +101,8 @@ let container: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
+  chartPng.mockClear()
+  chartPngRevision = 'paired-png'
   pngManifest = MANIFEST
   useMountedPngStore.setState({ byPanel: {} })
   useViewportStore.setState({ zoom: 1 })
@@ -117,21 +125,22 @@ afterEach(() => {
   container.remove()
 })
 
-function seed(extra: Partial<PanelRender>) {
-  useRenderStore.getState().patch(renderKeyOf(PANEL), {
-    fileId: PANEL.fileId,
+function seed(extra: Partial<PanelRender>, panel = PANEL) {
+  useRenderStore.getState().patch(renderKeyOf(panel), {
+    fileId: panel.fileId,
     manifest: MANIFEST,
     rev: 3,
     status: 'ready',
-    lastPatches: JSON.stringify(PANEL.overrides),
+    lastPatches: renderRequestIdentity(panel.overrides, panel.chart),
+    ...(panel.chart ? { chartRequest: JSON.stringify(panel.chart), chartRevision: 'paired-svg' } : {}),
     preview: VECTOR_PREVIEW,
     ...extra,
   })
 }
 
-async function mount() {
+async function mount(panel = PANEL) {
   await act(async () => {
-    root.render(<PanelView obj={PANEL} />)
+    root.render(<PanelView obj={panel} />)
   })
 }
 
@@ -147,6 +156,63 @@ async function loadCurrentPng() {
 }
 
 const hitLayer = () => container.querySelector('[data-authority="ready"]')
+
+describe('chart使用普通inlineSVG/mounted/PNG几何链', () => {
+  function chartPanel(): PanelObject {
+    const v = chartVectors.vectors.find(v => v.expect === 'ok')!
+    const chart = structuredClone({ model: v.model, binding: v.binding }) as unknown as PanelChartState
+    return { ...PANEL, fileId: 'chart.svg', script: null, fileKind: 'svg', chart }
+  }
+
+  it('配对chart进入普通inlineSVG与命中层，已撤独立chart img分支', async () => {
+    const p = chartPanel()
+    seed({ svg: '<svg id="native-chart"><g id="axes_0.title"/></svg>' }, p)
+    await mount(p)
+    expect(inlineSvg()?.innerHTML).toContain('id="native-chart"')
+    expect(hitLayer()).not.toBeNull()
+    expect(container.querySelector('img')).toBeNull()
+  })
+
+  it.each(['raster', 'evicted'] as const)('%s chart转发完整模型给PNG，加载同版几何后才启用命中', async mode => {
+    const p = chartPanel()
+    seed({ svg: null, preview: mode === 'raster' ? RASTER : VECTOR_PREVIEW, svgEvicted: mode === 'evicted' }, p)
+    await mount(p)
+    expect(chartPng).toHaveBeenCalledWith(p.chart)
+    expect(previewPng).toHaveBeenCalledWith(p.fileId, p.overrides, expect.any(Number))
+    expect(hitLayer()).toBeNull()
+    await loadCurrentPng()
+    expect(hitLayer()).not.toBeNull()
+    expect(useMountedPngStore.getState().byPanel[p.id].key).toBe(renderKeyOf(p))
+  })
+
+  it('chart PNG缺少配对身份时不会挂图或授予位图几何', async () => {
+    const p = chartPanel()
+    chartPngRevision = undefined
+    seed({ svg: null, preview: RASTER }, p)
+    await mount(p)
+    expect(chartPng).toHaveBeenCalledOnce()
+    expect(container.querySelector('img')).toBeNull()
+    expect(hitLayer()).toBeNull()
+  })
+
+  it('切换同文件chart后迟到旧PNG不覆盖新chart的像素/几何身份', async () => {
+    const a = chartPanel(), b = structuredClone(a)
+    b.chart!.model.axes[0].xlim[1] += 10
+    let finishOld!: (blob: Blob) => void
+    previewPngImpl = () => new Promise(resolve => { finishOld = resolve })
+    seed({ svg: null, preview: RASTER }, a)
+    await mount(a)
+    previewPngImpl = () => Promise.resolve(new Blob(['new-chart']))
+    await act(async () => { seed({ svg: null, preview: RASTER }, b) })
+    await mount(b)
+    await loadCurrentPng()
+    expect(useMountedPngStore.getState().byPanel[b.id].key).toBe(renderKeyOf(b))
+    await act(async () => { finishOld(new Blob(['old-chart'])) })
+    expect(useMountedPngStore.getState().byPanel[b.id].key).toBe(renderKeyOf(b))
+    expect(exactPanelManifest(useRenderStore.getState(), b)).not.toBeNull()
+    expect(container.firstElementChild?.getAttribute('data-display-key')).toBe(diagnosticHash(renderKeyOf(b)))
+  })
+})
 
 describe('PanelView：三档预览表示法', () => {
   it('vector：编辑态内联 SVG（今天的行为，一字不改）', async () => {

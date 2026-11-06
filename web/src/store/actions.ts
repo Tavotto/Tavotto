@@ -3,6 +3,7 @@ import { currentProjectId } from '@/lib/session'
 import '@/store/figureSnapshotInvalidation'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { requestRender, type RenderPolicy } from '@/store/renderScheduler'
+import { canEditPanel } from '@/lib/panelEditability'
 import { isJustBakedBaselineOf } from '@/lib/bakedBaseline'
 import { engineTransport } from '@/lib/engineTransport'
 import { msg, t, type UiMessage } from '@/i18n'
@@ -2076,6 +2077,7 @@ export function enterElementEdit(
   finishActiveGesture()
   const panel = findObject(panelId)
   if (panel?.type !== 'panel') return false
+  if (panel.chart && !canEditPanel(panel)) return false
   const issue = artifactValidationIssue(panel)
   if (issue) {
     status(engineErrorMsg(new ArtifactValidationError(issue)), 'error')
@@ -2102,7 +2104,7 @@ export function enterElementEdit(
 function finishElementEntry(panelId: string, leftTab: 'elements' | 'keep'): boolean {
   const panel = findObject(panelId)
   if (panel?.type !== 'panel') return false
-  const seeded = isAdoptedPanel(panel) ? 0 : seedBakedOverrides(panelId)
+  const seeded = isAdoptedPanel(panel) || panel.chart ? 0 : seedBakedOverrides(panelId)
   const ui = useUiStore.getState()
   ui.setElementPanel(panelId)
   if (isAdoptedPanel(panel)) {

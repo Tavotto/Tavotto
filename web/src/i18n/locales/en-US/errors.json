@@ -27,6 +27,8 @@
     "refreshReconstruction": "Update redraw comparison"
   },
   "backend": {
+    "chart_render_unsupported": "This host does not support paired chart rendering yet. Edit this chart in the local app.",
+    "chart_render_pair_missing": "The chart response did not include paired image and geometry. This render was not applied.",
     "artifact_source_unavailable": "Selected-source mode cannot complete this operation. No edit was applied; keep the original view.",
     "ai_agent_disabled": "{{agent}} is turned off in settings. Turn it back on under Figure assistants.",
     "ai_agent_executable_invalid": "Can’t use that file as this agent’s executable: {{path}}. Your previous setting is unchanged.",
