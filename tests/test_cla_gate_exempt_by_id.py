@@ -37,6 +37,7 @@ def _service_policy(*, ids: bool = True) -> dict:
     p = json.loads((ROOT / ".github" / "cla-policy.json").read_text(encoding="utf-8"))
     p = copy.deepcopy(p)
     p["offline_signatures"] = []
+    p["authority_origin"] = "https://cla.example.com"
     p["provider"] = {
         "configured": True,
         "protocol": "tavotto-cla-v1",
@@ -66,7 +67,10 @@ def _commit(sha: str, login: str | None, uid: int | None, message: str = "x", em
 
 def _decide(gate, policy, event, commits, pr_author=None, pr_author_id=None, checks=None):
     contributors, unresolved = gate.collect_contributors(pr_author, commits, pr_author_id)
-    return gate.decide(event, policy, checks, contributors, unresolved, context=None)
+    context = (
+        {"group_members": [{"pr": 42, "headSha": "c" * 40}]} if event == "merge_group" else None
+    )
+    return gate.decide(event, policy, checks, contributors, unresolved, context=context)
 
 
 # ─────────────────────────────────────────────── 放行
@@ -160,10 +164,10 @@ def test_merge_group_with_external_requires_service_proof(gate):
 
 
 def test_merge_group_without_commits_requires_service_proof(gate):
-    """旧 workflow 不传 --commits-json：行为不变，仍要服务凭证。"""
+    """旧 workflow 没有独立 PR 成员快照：不能再靠服务凭证补足它。"""
     p = _service_policy()
     v = gate.decide("merge_group", p, None, [], [], context=None)
-    assert v["status"] == "failure" and v["reason"] == "fresh_merge_verification_required"
+    assert v["status"] == "failure" and v["reason"] == "group_snapshot_required"
 
 
 def test_merge_group_empty_commit_list_is_not_exempt(gate):
@@ -211,7 +215,7 @@ def test_exemption_github_id_unique(gate):
         gate.validate_policy(p)
 
 
-def test_cli_merge_group_with_commits_json(gate, tmp_path):
+def test_cli_merge_group_with_only_commits_json_refuses(gate, tmp_path):
     p = _service_policy()
     pol = tmp_path / "policy.json"
     pol.write_text(json.dumps(p), encoding="utf-8")
@@ -231,4 +235,4 @@ def test_cli_merge_group_with_commits_json(gate, tmp_path):
             "1",
         ]
     )
-    assert rc == 0
+    assert rc == 2
