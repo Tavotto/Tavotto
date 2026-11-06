@@ -17,7 +17,7 @@ import pytest
 
 from tavotto import chartbundle
 from tavotto.chartbundle import ChartBundleError, embed_chart, extract_chart, verify_replay
-from tavotto.engine import chartmodel
+from tavotto.engine import chartmodel, chartprofile
 from tavotto.rendercore.svgcheck import parse_svg
 
 REPO = Path(__file__).resolve().parents[1]
@@ -154,7 +154,7 @@ def test_digest_is_consistency_only_and_does_not_claim_replayed_appearance():
 @pytest.mark.parametrize(
     ("mutation", "code"),
     [
-        (lambda p: p.update(schema="tavotto.chart-bundle/2"), "chart_model_unsupported"),
+        (lambda p: p.update(schema="tavotto.chart-bundle/3"), "chart_model_unsupported"),
         (lambda p: p.update(schema="other/1"), "chart_model_invalid"),
         (lambda p: p.update(script="run.py"), "chart_model_invalid"),
         (lambda p: p["source"].update(path="C:/private/figure.svg"), "chart_model_invalid"),
@@ -177,6 +177,126 @@ def test_closed_payload_and_identity_checks(mutation, code):
     with pytest.raises(ChartBundleError) as caught:
         extract_chart(_replace_payload(exported, payload))
     assert caught.value.code == code
+
+
+def test_legacy_default_artifact_keeps_the_pre_v2_exact_bytes(monkeypatch):
+    # 该摘要在引入v2之前采自原embed_chart；隔离进程级 namespace registry。
+    monkeypatch.setattr(ET, "_namespace_map", {})
+    exported = embed_chart(RENDERED, SOURCE, chart())
+    assert len(exported) == 2240
+    assert hashlib.sha256(exported).hexdigest() == (
+        "0c3316ab6778340bfd83fb17c5062284f7e3876bcb2182df79df660155941069"
+    )
+    assert (
+        embed_chart(
+            RENDERED, SOURCE, chart(), render_profile=chartprofile.LEGACY_PROFILE, overrides=[]
+        )
+        == exported
+    )
+    restored = extract_chart(exported)
+    assert restored.render_profile == chartprofile.LEGACY_PROFILE
+    assert restored.overrides == []
+    assert set(restored.chart) == {"model", "binding"}
+    assert _payload(exported)["schema"] == chartbundle.BUNDLE_SCHEMA
+    assert set(_payload(exported)) == {"schema", "model", "binding", "source", "rendered"}
+
+
+def native_bundle(edits=()):
+    return embed_chart(
+        RENDERED, SOURCE, chart(), render_profile=chartprofile.NATIVE_PROFILE, overrides=edits
+    )
+
+
+def test_native_v2_roundtrip_retains_explicit_profile_and_complete_original_edits():
+    edits = [
+        {"gid": "axes_0.lines_0", "prop": "color", "value": "red", "identity": "object:one"},
+        {"gid": "axes_0", "prop": "xlim", "value": [0, 20]},
+        {"gid": "axes_0.lines_0", "prop": "color", "value": "blue"},
+    ]
+    before = copy.deepcopy(edits)
+    exported = native_bundle(edits)
+    payload = _payload(exported)
+    assert payload["schema"] == chartbundle.BUNDLE_SCHEMA_V2
+    assert payload["render_profile"] == chartprofile.NATIVE_PROFILE
+    assert payload["overrides"] == before
+    restored = extract_chart(exported)
+    assert restored.source_svg == SOURCE
+    assert restored.overrides == before
+    assert restored.render_profile == chartprofile.NATIVE_PROFILE
+    assert restored.chart == chart()
+    assert edits == before
+    restored.overrides[0]["value"] = "green"
+    assert edits == before
+
+
+@pytest.mark.parametrize("missing", ["render_profile", "overrides"])
+def test_v2_cannot_silently_default_a_missing_render_contract(missing):
+    exported = native_bundle()
+    payload = _payload(exported)
+    del payload[missing]
+    with pytest.raises(ChartBundleError, match="chart_model_invalid"):
+        extract_chart(_replace_payload(exported, payload))
+
+
+@pytest.mark.parametrize(
+    "updates,code",
+    [
+        ({"render_profile": "native-manifest/2"}, "chart_model_unsupported"),
+        ({"render_profile": {"module": "evil"}}, "chart_model_unsupported"),
+        ({"overrides": None}, "chart_model_invalid"),
+        (
+            {"overrides": [{"gid": "a", "prop": "text", "value": "a", "script": "evil.py"}]},
+            "chart_model_invalid",
+        ),
+        (
+            {"overrides": [{"gid": "a", "prop": "text", "value": float("nan")}]},
+            "chart_model_invalid",
+        ),
+        ({"script": "evil.py"}, "chart_model_invalid"),
+    ],
+)
+def test_v2_profile_edits_and_top_level_fields_are_closed(updates, code):
+    exported = native_bundle()
+    payload = _payload(exported)
+    payload.update(updates)
+    with pytest.raises(ChartBundleError) as raised:
+        extract_chart(_replace_payload(exported, payload))
+    assert raised.value.code == code
+
+
+def test_v1_cannot_smuggle_native_fields_or_edits_into_legacy_rendering():
+    edits = [{"gid": "axes_0.lines_0", "prop": "color", "value": "red"}]
+    with pytest.raises(ChartBundleError, match="legacy"):
+        embed_chart(RENDERED, SOURCE, chart(), overrides=edits)
+    exported = embed_chart(RENDERED, SOURCE, chart())
+    payload = _payload(exported)
+    payload.update(render_profile=chartprofile.NATIVE_PROFILE, overrides=edits)
+    with pytest.raises(ChartBundleError, match="chart_model_invalid"):
+        extract_chart(_replace_payload(exported, payload))
+    native = native_bundle(edits)
+    payload = _payload(native)
+    payload["render_profile"] = chartprofile.LEGACY_PROFILE
+    with pytest.raises(ChartBundleError, match="legacy"):
+        extract_chart(_replace_payload(native, payload))
+
+
+def test_native_model_binding_and_edits_share_the_existing_total_budget(monkeypatch):
+    from tavotto.engine import patchspec
+
+    edits = [{"gid": "axes_0.lines_0", "prop": "label", "value": "x" * 100}]
+    exported = native_bundle(edits)
+    limit = len(chartbundle._json_bytes(chart())) + 16
+    assert len(chartbundle._json_bytes(edits)) < limit
+    monkeypatch.setattr(chartbundle, "MAX_CHART_BYTES", limit)
+    monkeypatch.setattr(
+        patchspec,
+        "canonicalize_with_diagnostics",
+        lambda _: pytest.fail("超出总状态预算后进入patch校验"),
+    )
+    with pytest.raises(ChartBundleError, match="svg_resource_limit"):
+        native_bundle(edits)
+    with pytest.raises(ChartBundleError, match="svg_resource_limit"):
+        extract_chart(exported)
 
 
 @pytest.mark.parametrize("raw", [b'{"model":{},"model":{},"binding":{}}', b"NaN", b"[]"])
@@ -411,3 +531,77 @@ def test_replay_cannot_bypass_static_svg_security():
     malicious = RENDERED.replace(b"</svg>", b"<script>doBadThings()</script></svg>")
     with pytest.raises(ChartBundleError, match="svg_unsafe_element"):
         verify_replay(bundle, malicious)
+
+
+def test_v2_native_edits_and_profile_are_verified_by_actual_fresh_replay(tmp_path):
+    """库级原生实际绘制，不把元数据摘要当完整app组合/导出资格。"""
+    script = f"""
+import base64,json,sys
+sys.path.insert(0,{str(REPO / "src")!r})
+import matplotlib as mpl
+mpl.use('Agg')
+from matplotlib.figure import Figure
+from tavotto.chartbundle import extract_chart
+from tavotto.engine import chartprofile,svgchart
+from tavotto.engine.chartmanifest import render_scaffold
+from tavotto.svgscene import scene_inventory
+from tavotto.svgcompose import compose_scene
+req=json.load(sys.stdin)
+bundle=extract_chart(base64.b64decode(req['bundle'])) if 'bundle' in req else None
+source=bundle.source_svg if bundle else base64.b64decode(req['source'])
+state=bundle.chart if bundle else req['chart']
+profile=bundle.render_profile if bundle else chartprofile.NATIVE_PROFILE
+edits=bundle.overrides if bundle else req['overrides']
+scene=scene_inventory(source)
+frame={{'view_box':scene['view_box'],'w_pt':scene['w_pt'],'h_pt':scene['h_pt'],'preserve':None}}
+with mpl.rc_context({{'text.usetex':False}}):
+    if profile==chartprofile.NATIVE_PROFILE:
+        model=state['model']
+        cfg=model['axes'][0]
+        fig=Figure(figsize=(frame['w_pt']/72,frame['h_pt']/72),dpi=72)
+        x,y,w,h=cfg['rect']
+        ax=fig.add_axes([x/100,1-(y+h)/100,w/100,h/100])
+        ax.set(xlim=cfg['xlim'],ylim=cfg['ylim'])
+        sr=model['series'][0]
+        columns=model['dataset']['columns']
+        line,=ax.plot(columns[sr['x']],columns[sr['y']],color=sr['style']['color'])
+        result=render_scaffold(fig,{{'axes:ax1':ax,'series:s1':line}},frame,edits)
+        assert not result['warnings'] and not result['unrestored']
+        visible=result['fragment']
+    else:
+        assert profile==chartprofile.LEGACY_PROFILE and not edits
+        result=svgchart.scaffold_fragment(state['model'],frame)
+        visible=compose_scene(source,state['binding'],result['fragment'],state['model'])
+print(json.dumps({{'svg':base64.b64encode(visible).decode('ascii')}}))
+"""
+    edits = [{"gid": "axes_0.lines_0", "prop": "color", "value": "#e32636"}]
+    hot = _run_child(
+        script,
+        {"source": base64.b64encode(SOURCE).decode("ascii"), "chart": chart(), "overrides": edits},
+        tmp_path,
+    )
+    visible = base64.b64decode(hot["svg"])
+    assert b"#e32636" in visible
+    exported = embed_chart(
+        visible, SOURCE, chart(), render_profile=chartprofile.NATIVE_PROFILE, overrides=edits
+    )
+    bundle = extract_chart(exported)
+    cold = _run_child(script, {"bundle": base64.b64encode(exported).decode("ascii")}, tmp_path)
+    actual = base64.b64decode(cold["svg"])
+    assert actual == visible
+    verify_replay(bundle, actual)
+
+    for change in ("edits", "profile"):
+        payload = _payload(exported)
+        if change == "edits":
+            payload["overrides"][0]["value"] = "#008000"
+        else:
+            payload.update(render_profile=chartprofile.LEGACY_PROFILE, overrides=[])
+        modified_bytes = _replace_payload(exported, payload)
+        modified = extract_chart(modified_bytes)
+        assert modified is not None  # 攻击者可保持所有可见摘要不变；这不是重放证人。
+        replay = _run_child(
+            script, {"bundle": base64.b64encode(modified_bytes).decode("ascii")}, tmp_path
+        )
+        with pytest.raises(ChartBundleError, match="chart_source_mismatch"):
+            verify_replay(modified, base64.b64decode(replay["svg"]))

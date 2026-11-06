@@ -59,6 +59,7 @@
 - 不能建立 Canonical PDF 时，原生声明式 SVG 可作为其自身的 SVG 表达进入同一计划；例外精确限定 kind=svg 且 origin=declarative，不扩普通 static FILE_KINDS，不允许嵌套 companion。SVG 写出核对字节摘要并保留物理尺寸/视口，PDF 逐项明确失败，不能造空 PDF。完整 SVG viewport 不再额外施加一次同边界 Path 裁剪；普通 PDF/SVG companion 路径不变。
 - 计算面板的版本身份 = **场景字节摘要 + 模型摘要 + 数据摘要 + 绑定摘要 + 计算环境身份**（worker matplotlib/引擎版本）；
   任一变化都不得复用旧几何/旧快照（SG02 冻结 schema）。
+- 原生manifest渲染另有`native-manifest/1` profile；既有`legacy-scaffold/1`和自包含v1字节不变。v2包闭式携带profile与完整原序overrides，恢复先实际重放存储状态再处理新请求。原生身份除原序列表外纳入精确JSON摘要，保留同档应用顺序、i64整数和1/1.0在文字setter中的实际区别；不修改旧patch_hash或ChartModel的数值身份。父层仅校验形状/预算，setter与目标所有权仍须worker核准，包摘要不授予执行或字体文件权限。
 - 导入与元数据：`svgcheck` 边界原样（实验六拒绝 DTD/脚本/外链）；模型元数据**闭式字段集**校验，
   不含可执行代码、不含完整机器路径；自动候选只辅助、确认前不进计算重放与写回。
 - 写回：计算面板的写回资格**显式化**（有可重放模型与数据者才可），走既有 prepare→verify→commit 事务（SG13）；

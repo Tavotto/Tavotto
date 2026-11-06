@@ -42,6 +42,13 @@
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
+### 2026-11-06 实施：原生profile与可重放v2包合同
+
+- chartprofile集中定义legacy-scaffold/1与native-manifest/1，验证有界原序完整edits；v1默认embed/extract的原有2240字节黄金产物和身份保持不变。native显式写v2，额外闭式profile/overrides；预算仍是原model/binding/profile/edits合计2MiB，未扩大外层SVG/源预算。
+- 新身份包含base_revision、profile、原序edits及精确JSON bytes摘要。独立实证同canonical patch_hash的顺序可画出不同位置，ChartModel数值编码也会合并2**53与+1及1/1.0，但text setter会显示不同字串；本批仅新身份补精确JSON，不改旧i64、patch_hash或ChartModel合同。
+- 最终profile/包与附件reader141 passed/0 skipped，pytest exit0（chart-profile-bundle-final.xml/log）；父进程隔离import未加载科学/native栈。6个关键守卫反证在目标断言真实失败exit1，包括顺序、v1字节、总预算、字段闭集、精确JSON及实际replay。Ruff/format/diff通过，四个文件已冻结接管。
+- 这是协议/包核心；应用renderer分派、缓存/导出、C恢复完整edits仍由后续消费者批次接线。不能把库级新进程重放当作现有全部产品入口已经完成。
+
 ### 2026-11-06 实施：字体族名保持字面语义
 
 - 修正overrides中唯一的族名→mathtext模式转换：用Matplotlib FontProperties字面family与官方模式生成器，italic/bold分别构造，拒绝把名称里的file=解释成读取路径。文字、刻度和首选/回退选择继续复用同一setter；不改原有文件锁定字体/来源授权合同。

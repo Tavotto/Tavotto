@@ -1,6 +1,6 @@
 """可携带的声明式计算 SVG（ADR 0166 路径 C，纯标准库）。
 
-包内只有原场景字节与闭式模型/绑定，既不读文件也不恢复 Python 来源权限。
+包内只有原场景字节与闭式编辑状态，既不读文件也不恢复 Python 来源权限。
 可见图摘要只检测「保留元数据却修改了图」；重放是否与可见图一致，仍须由
 调用方实际计算并比对，摘要不是计算等价证人。
 
@@ -16,10 +16,10 @@ import copy
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from xml.etree import ElementTree as ET
 
-from tavotto.engine import chartmodel
+from tavotto.engine import chartmodel, chartprofile
 from tavotto.rendercore.svgcheck import (
     SVG_NS,
     SVGBudget,
@@ -30,15 +30,16 @@ from tavotto.rendercore.svgcheck import (
 from tavotto.svgscene import SceneError, build_node_index, scene_inventory
 
 BUNDLE_SCHEMA = "tavotto.chart-bundle/1"
+BUNDLE_SCHEMA_V2 = "tavotto.chart-bundle/2"
 BUNDLE_ATTRIBUTE = "data-tavotto-chart"
 _SVG_BUDGET = SVGBudget()
 # 双层 base64（源字节在 JSON 中、JSON 在 XML 属性中）仍须留在静态 SVG 预算内。
 MAX_SOURCE_BYTES = _SVG_BUDGET.max_bytes // 4
-MAX_CHART_BYTES = _SVG_BUDGET.max_text_chars // 2
+MAX_CHART_BYTES = chartprofile.MAX_STATE_BYTES
 MAX_PAYLOAD_BYTES = ((MAX_SOURCE_BYTES + 2) // 3 * 4) + MAX_CHART_BYTES + 4096
 MAX_ATTRIBUTE_CHARS = (MAX_PAYLOAD_BYTES + 2) // 3 * 4
-MAX_JSON_DEPTH = 64
-MAX_JSON_NODES = _SVG_BUDGET.max_expanded_elements
+MAX_JSON_DEPTH = chartprofile.MAX_JSON_DEPTH
+MAX_JSON_NODES = chartprofile.MAX_JSON_NODES
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _SCHEMA = re.compile(r"tavotto\.chart-bundle/([1-9][0-9]*)\Z")
 
@@ -57,6 +58,8 @@ class ChartBundle:
     model: dict
     binding: dict
     rendered_svg_digest: str
+    render_profile: str = chartprofile.LEGACY_PROFILE
+    overrides: list[dict] = field(default_factory=list)
 
     @property
     def chart(self) -> dict:
@@ -74,19 +77,10 @@ def _keys(value, expected: set[str], where: str) -> None:
 
 
 def _json_budget(value) -> None:
-    count = 0
-    pending = [(value, 0)]
-    while pending:
-        node, depth = pending.pop()
-        count += 1
-        if count > MAX_JSON_NODES or depth > MAX_JSON_DEPTH:
-            raise ChartBundleError("svg_resource_limit", "chart JSON budget exceeded")
-        if isinstance(node, dict):
-            if not all(isinstance(key, str) for key in node):
-                _invalid("chart JSON keys must be strings")
-            pending.extend((child, depth + 1) for child in node.values())
-        elif isinstance(node, (list, tuple)):
-            pending.extend((child, depth + 1) for child in node)
+    try:
+        chartprofile.check_json_budget(value, max_nodes=MAX_JSON_NODES, max_depth=MAX_JSON_DEPTH)
+    except chartprofile.ChartProfileError as exc:
+        raise ChartBundleError(exc.code, exc.detail) from exc
 
 
 def _json_bytes(value) -> bytes:
@@ -182,14 +176,41 @@ def _validate_chart(source_svg: bytes, chart: dict) -> tuple[dict, dict]:
     return model, binding
 
 
-def embed_chart(rendered_svg: bytes, source_svg: bytes, chart: dict) -> bytes:
+def _render_state(
+    chart: dict, render_profile: str, overrides: object, *, version2: bool = False
+) -> tuple[str, list[dict]]:
+    try:
+        profile = chartprofile.validate_profile(render_profile)
+        if version2 or profile == chartprofile.NATIVE_PROFILE:
+            _keys(chart, {"model", "binding"}, "chart")
+            raw = _json_bytes({**chart, "render_profile": profile, "overrides": overrides})
+            if len(raw) > MAX_CHART_BYTES:
+                raise ChartBundleError("svg_resource_limit", "chart render state budget exceeded")
+        edits = chartprofile.validate_overrides(
+            overrides, render_profile=profile, max_bytes=MAX_CHART_BYTES
+        )
+    except chartprofile.ChartProfileError as exc:
+        raise ChartBundleError(exc.code, exc.detail) from exc
+    return profile, edits
+
+
+def embed_chart(
+    rendered_svg: bytes,
+    source_svg: bytes,
+    chart: dict,
+    *,
+    render_profile: str = chartprofile.LEGACY_PROFILE,
+    overrides: object = (),
+) -> bytes:
     """显式将自包含编辑数据嵌入产物；普通外观导出不应调用本函数。
 
     原场景以精确字节保留，故模型/绑定继续引用同一来源摘要。产物再次经过
     静态 SVG 校验；超出完整产物预算时失败，绝不输出无法再次导入的包。
+    缺省 legacy/空 edits 保留 v1 原字节；native 显式写出 v2 profile 和完整 edits。
     """
     if len(source_svg) > MAX_SOURCE_BYTES:
         raise ChartBundleError("svg_resource_limit", "chart source budget exceeded")
+    profile, edits = _render_state(chart, render_profile, overrides)
     model, binding = _validate_chart(source_svg, chart)
     root = _svg(rendered_svg)
     _check_markers(root)
@@ -206,6 +227,8 @@ def embed_chart(rendered_svg: bytes, source_svg: bytes, chart: dict) -> bytes:
         },
         "rendered": {"canonical_sha256": _visible_digest(root)},
     }
+    if profile == chartprofile.NATIVE_PROFILE:
+        payload.update(schema=BUNDLE_SCHEMA_V2, render_profile=profile, overrides=edits)
     raw = _json_bytes(payload)
     if len(raw) > MAX_PAYLOAD_BYTES:
         raise ChartBundleError("svg_resource_limit", "chart bundle budget exceeded")
@@ -232,13 +255,22 @@ def extract_chart(svg: bytes) -> ChartBundle | None:
     payload = _loads(_decode(encoded, MAX_PAYLOAD_BYTES, "chart bundle"))
     if isinstance(payload, dict) and set(payload) == {"model", "binding"}:
         return None
-    _keys(payload, {"schema", "model", "binding", "source", "rendered"}, "chart bundle")
+    keys = {"schema", "model", "binding", "source", "rendered"}
+    if isinstance(payload, dict) and payload.get("schema") == BUNDLE_SCHEMA_V2:
+        keys |= {"render_profile", "overrides"}
+    _keys(payload, keys, "chart bundle")
     schema = payload["schema"]
     match = _SCHEMA.fullmatch(schema) if isinstance(schema, str) else None
     if match is None:
         _invalid("invalid chart bundle schema")
-    if schema != BUNDLE_SCHEMA:
+    if schema not in (BUNDLE_SCHEMA, BUNDLE_SCHEMA_V2):
         raise ChartBundleError("chart_model_unsupported", "unsupported chart bundle schema")
+    profile, edits = _render_state(
+        {"model": payload["model"], "binding": payload["binding"]},
+        payload["render_profile"] if schema == BUNDLE_SCHEMA_V2 else chartprofile.LEGACY_PROFILE,
+        payload["overrides"] if schema == BUNDLE_SCHEMA_V2 else [],
+        version2=schema == BUNDLE_SCHEMA_V2,
+    )
     source = payload["source"]
     _keys(source, {"encoding", "bytes", "sha256", "svg"}, "chart source")
     if source["encoding"] != "base64":
@@ -261,14 +293,14 @@ def extract_chart(svg: bytes) -> ChartBundle | None:
     model, binding = _validate_chart(
         source_svg, {"model": payload["model"], "binding": payload["binding"]}
     )
-    return ChartBundle(source_svg, model, binding, digest)
+    return ChartBundle(source_svg, model, binding, digest, profile, edits)
 
 
 def verify_replay(bundle: ChartBundle, rendered_svg: bytes) -> None:
     """核对调用方**实际重算**的完整 SVG 与包内可见图，失败不得继续恢复。
 
-    应先按包内原始 model/binding 重放并调用本函数，再处理用户本次请求的新
-    编辑。仅核对摘要字段或复用包本身字节，均不能代替这次实际重放。
+    应先按包内原始 model/binding、profile 和完整原序 overrides 重放并调用本函数，
+    再处理用户本次请求的新编辑。摘要字段或复用包本身字节不能代替实际重放。
     """
     root = _svg(rendered_svg)
     _check_markers(root)
