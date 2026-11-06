@@ -37,10 +37,17 @@
 | R05 | tests_only / partial | 722ad27c | JSON 往返测试已有，真实新进程/资源包/迁移恢复待实现 |
 | R06 | interaction_verified / visual_failed | cbd8d95e | 多系列/轴区/类型/误差/网格控件与首次预览接通；确认/撤销可操作；最终曲线可见性失败，精确命中/编辑闭环待补 |
 | R07 | partial / request_verified | e09b724b、484b29fb + 本轮请求修复 | original/canvas/多页请求及版本已携带 chart；标注/画布实际来源消费与 SVG→IR 保真、EPS 待完成 |
-| R08 | metadata_only | f7d39126 | 导出嵌入元数据，但用导出文件重算 source_mismatch；A/C 生产导入未完成 |
+| R08 | bundle_core_verified / entry_pending | f7d39126 + 本轮自包含包核心 | 原始场景、模型与绑定已安全携带，新进程删原文件后重算通过；实际重放对照已具备；A 来源采用、导入 UI/分享选择及完整项目资源合同待补 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-06 实施：安全自包含包与重放验证核心
+
+- 新增纯标准库 chartbundle：embed_chart/rendered SVG + 原始 scene bytes + model/binding；extract_chart 返回冻结 ChartBundle；verify_replay 用相同跨进程规范化摘要对照真正重算产物。schema 闭式版本化，原场景引用继续指向精确源字节；没有路径或可执行字段，不把 hash 当执行信任。
+- 字节/JSON深度与节点/解码/SVG资源/模型预算在对应分配与解析前检查，禁止嵌套包和恶意 SVG。普通安全SVG或旧版仅 model/binding 数据不获得自包含恢复资格；新协议不合法即拒绝，不静默当普通来源。
+- 37 个包测试及相关模型/场景合计 62 项通过。真实 python -I 两个新进程实验删除原SVG后仅用导出字节重算，SVG/facts一致；攻击者同步重签模型、原源和所有摘要仍须通过实际重放，错图会拒绝。两项内存反证移除可见摘要或verify_replay后，对应目标断言确实失败，恢复后通过。
+- 根代理正在把此模块接入共享 compute/export，正式 API 的新父进程搬迁/删源用例也已通过（与现有接口/保存/包回归合计65项）。该消费者与正式导出在后续集成提交记录；本提交不表示项目资源打包、分享选择和导入UI已经完成。
 
 ### 2026-11-06 实施：声明式来源身份与严格产物配对
 
