@@ -2012,7 +2012,18 @@
         "bad_action": "This action is not allowed.",
         "not_desktop": "Available in the desktop app only.",
         "other": "Not connected. Open Details for the command output."
-      }
+      },
+      "connectedSkill": "Connected · skill {{version}}",
+      "connectedBuiltin": "Connected · built-in notes",
+      "connectedPlugin": "Connected · plugin {{version}}",
+      "pluginOutdated": "Plugin {{version}} · update available",
+      "update": "Update",
+      "updating": "Updating…",
+      "skillKept": "Skill edited, not updated",
+      "overwrite": "Overwrite",
+      "overwriteTitle": "Overwrite your edited skill in {{host}}?",
+      "overwriteBody": "Your changes will be replaced with the version that ships with Tavotto.",
+      "cancel": "Cancel"
     }
   },
   "style": {

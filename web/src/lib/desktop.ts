@@ -670,7 +670,7 @@ export async function onWindowMaximizedChange(cb: (maximized: boolean) => void):
  * 按钮本来就只在桌面模式渲染，真走到这里说明有人绕过了那个判断，
  * 悄悄回一个「成功」会把它藏起来。
  */
-export async function runCodexIntegration(action: 'install' | 'doctor'): Promise<string> {
+export async function runCodexIntegration(action: 'install' | 'doctor' | 'upgrade'): Promise<string> {
   if (!isDesktop()) throw new CodexShellError('not_desktop')
   const { invoke } = await import('@tauri-apps/api/core')
   try {
@@ -686,12 +686,12 @@ export async function runCodexIntegration(action: 'install' | 'doctor'): Promise
 
 /**
  * 「接入 AI 编辑器」（用户 2026-10-27）：壳命令 `host_integration` spawn `tavotto-cli hosts … --json`，原样交回那一行
- * JSON。宿主名与 action 在壳里是闭集；`projectRoot` 只给 `connect`（第一次接入时用户选的文件夹）。
+ * JSON。宿主名与 action 在壳里是闭集（`sync` / `sync_plugins` 是启动同步，不收宿主；`connect_force_skill` 是「覆盖」按钮）；`projectRoot` 只给 `connect`（第一次接入时用户选的文件夹）。
  * 壳回的是稳定 code（cli_not_found / spawn_failed / bad_output / bad_args / bad_host / bad_action），其余一律当
  * spawn_failed——**不把它当句子显示给用户**。
  */
 export async function runHostIntegration(
-  action: 'list' | 'connect' | 'disconnect',
+  action: 'list' | 'connect' | 'disconnect' | 'sync' | 'sync_plugins' | 'connect_force_skill',
   host?: string,
   projectRoot?: string,
 ): Promise<string> {
