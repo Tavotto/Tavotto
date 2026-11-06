@@ -105,6 +105,7 @@ order: 210
     保存布局先冻结精确编辑变体再一次原子写正文，失败清除待保存正文的旧引用并返回来源 warning，布局仍可保存。
     持久化与旧项目恢复边界见 `layout-versions-and-documents.md`。
     看护：`tests/test_export_svg.py`、`tests/test_svg_execution_lifecycle.py`、`tests/test_worker_svg_pair.py`、`tests/test_svgstore.py`。
+    项目包检视用`svgstore.inspect_portable_snapshot`/`inspect_portable_store`只读核历史归档；目录名唯一取`STORE_DIRNAME`。完整store逐一核所有条目、marker、历史snapshot和blob，拒未知成员、重解析路径和超预算；历史档案可无marker，marker-only可合法表示旧运行已撤销，二者不签发当前执行资格。未引用blob也须核内容地址；可来自中断发布，不能当作未检查字节隐藏。全量API返回metadata/inventory而不保留大blob副本、不取写锁、不使用TTL或本机remap。看护`tests/test_svgstore_portable_inspect.py`、`tests/test_svgstore_portable_store.py`。
   * **一次作业里，同一张图的所有格式出自同一个基准（#1185 / #1209，A3）**：做不到的格式逐项失败并给出
     真实原因，**不得悄悄换来源、不得为某个格式重新执行脚本换来源**。SVG 素材（`scope=original`、无编辑）的
     基准是**文件字节**（sha256 取磁盘原始字节）：svg = 这份字节；eps 只有「活 Figure 被证明出自这份字节」（`_svg_asset_binding`，

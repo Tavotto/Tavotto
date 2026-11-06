@@ -35,6 +35,7 @@ from pathlib import Path, PurePosixPath
 from . import atomicio, config, figcapture
 
 VERSION = 1
+STORE_DIRNAME = "figure_snapshots"
 MAX_SVG_BYTES = 64 * 1024 * 1024
 MAX_PDF_BYTES = 128 * 1024 * 1024
 MAX_METADATA_BYTES = 1024 * 1024
@@ -143,7 +144,7 @@ def _root(
     # alias (e.g. /var on macOS). No symlinks inside our store are admitted.
     if storage_root is None:
         parent = config.data_dir().expanduser().resolve()
-        root = parent / "figure_snapshots"
+        root = parent / STORE_DIRNAME
     else:
         requested = Path(storage_root).expanduser().absolute()
         if ".." in requested.parts:
@@ -1010,6 +1011,201 @@ def load_snapshot(
         return _result(root, payload, *data, reference=expected_reference)
     except (OSError, ValueError, TypeError, RecursionError):
         return None
+
+
+def inspect_portable_snapshot(reference, *, storage_root: Path) -> dict:
+    """Freeze checked archive facts, without granting current execution authority.
+
+    The complete reference (including an archived owner) must match a portable
+    record and both content-addressed blobs. Its static hash and remap identity
+    are archive facts, not claims about files or configuration on this machine.
+    No current marker, cache age, write lock, source discovery or execution is
+    consulted. Malformed archives raise ValueError; unavailable files raise
+    OSError. Returned dictionaries and bytes are detached from the input/store.
+    """
+    if storage_root is None:
+        raise ValueError("portable Figure snapshot inspection requires a storage root")
+    reference = validate_reference(reference)
+    root = _root(create=False, storage_root=storage_root, archived=True)
+    try:
+        payload = _read_snapshot(root / "snapshots" / (reference["snapshotId"] + ".json"))
+    except (TypeError, RecursionError) as exc:
+        raise ValueError("malformed Figure snapshot metadata") from exc
+    if payload["identity"]["project"] != ".":
+        raise ValueError("Figure snapshot archive is not portable")
+    expected_reference = _snapshot_reference(payload)
+    if reference != expected_reference:
+        raise ValueError("Figure snapshot reference mismatch")
+    data = []
+    for name, limit in (("pdf_artifact", MAX_PDF_BYTES), ("svg_artifact", MAX_SVG_BYTES)):
+        artifact = payload[name]
+        blob = _read_file(_blob_path(root, artifact), limit)
+        if len(blob) != artifact["size_bytes"] or _digest(blob) != artifact["bytes_sha256"]:
+            raise ValueError("Figure snapshot blob does not match its source artifact")
+        data.append(blob)
+    result = _result(root, payload, *data, reference=expected_reference)
+    return {
+        "reference": result["snapshot_ref"],
+        "identity": payload["identity"],
+        "receipt": result["receipt"],
+        "pdf_artifact": result["pdf_artifact"],
+        "svg_artifact": result["svg_artifact"],
+        "pdf": result["pdf"],
+        "svg": result["svg"],
+        "execution_owner": result["execution_owner"],
+    }
+
+
+def _portable_inventory(root: Path) -> dict:
+    """Census the closed portable tree before any metadata/blob is consumed."""
+
+    def checked_stat(path):
+        info = path.lstat()
+        if getattr(info, "st_file_attributes", 0) & getattr(
+            stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0
+        ):
+            raise ValueError("unsafe portable Figure snapshot member")
+        return info
+
+    if not stat.S_ISDIR(checked_stat(root).st_mode):
+        raise ValueError("unsafe portable Figure snapshot directory")
+    members = {}
+    for directory in _entries(root):
+        info = checked_stat(directory)
+        if directory.name == ".lock":
+            if not stat.S_ISREG(info.st_mode) or not 0 <= info.st_size <= MAX_METADATA_BYTES:
+                raise ValueError("unsafe or oversized Figure snapshot lock")
+            members[".lock"] = (directory, info)
+            continue
+        if directory.name not in {"entries", "snapshots", "sources", "blobs"}:
+            raise ValueError("unknown portable Figure snapshot member")
+        if not stat.S_ISDIR(info.st_mode):
+            raise ValueError("unsafe portable Figure snapshot directory")
+        for path in _entries(directory):
+            pattern = _BLOB if directory.name == "blobs" else _METADATA
+            if not pattern.fullmatch(path.name):
+                raise ValueError("unknown portable Figure snapshot member")
+            info = checked_stat(path)
+            limit = MAX_METADATA_BYTES
+            if directory.name == "blobs":
+                limit = MAX_PDF_BYTES if path.suffix == ".pdf" else MAX_SVG_BYTES
+            if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= limit:
+                raise ValueError("unsafe or oversized portable Figure snapshot member")
+            members[directory.name + "/" + path.name] = (path, info)
+    return members
+
+
+def inspect_portable_store(*, storage_root: Path) -> dict:
+    """Check every portable store member, returning metadata and a byte census.
+
+    This is archive integrity, never current execution authority. Historical
+    archives need no marker; a marker without a matching capture is a valid
+    revocation. Entries must match their marker's receipt and immutable archive.
+    Unreferenced blobs are also checked and included, since interrupted saves
+    can leave them until the next successful cleanup. Each unique blob is read
+    once and released; no PDF/SVG bytes or filesystem paths are returned.
+
+    ``members`` lists relative files; ``entries`` and ``sources`` retain their
+    complete payloads; each ``snapshots`` value includes its original ``payload``
+    and complete ``reference``, plus the same identity/receipt/artifact/owner
+    projections as single-snapshot inspection. ``blobs`` records kind/size/SHA.
+    ``total_bytes`` counts all metadata
+    and blobs against the existing store quota. Optional advisory lock bytes
+    are separately bounded by MAX_METADATA_BYTES, as the store quota excludes
+    its lock. No lock is taken/created, and no expiry or machine remap is used.
+    """
+    if storage_root is None:
+        raise ValueError("portable Figure store inspection requires a storage root")
+    root = _root(create=False, storage_root=storage_root, archived=True)
+    members = _portable_inventory(root)
+    names = {directory: [] for directory in ("entries", "snapshots", "sources", "blobs")}
+    for name in members:
+        if name != ".lock":
+            names[name.split("/", 1)[0]].append(name)
+    total = sum(info.st_size for name, (_, info) in members.items() if name != ".lock")
+    if (
+        len(names["entries"]) + len(names["snapshots"]) > MAX_SNAPSHOTS
+        or len(names["sources"]) > MAX_SOURCES
+        or total > MAX_TOTAL_BYTES
+    ):
+        raise ValueError("durable Figure snapshot budget exceeded")
+    records = {}
+    archives = {}
+    markers = {}
+    try:
+        for directory, reader, target in (
+            ("entries", _read_record, records),
+            ("snapshots", _read_snapshot, archives),
+            ("sources", _read_current, markers),
+        ):
+            for name in sorted(names[directory]):
+                path = members[name][0]
+                payload = reader(path)
+                if payload["identity"]["project"] != ".":
+                    raise ValueError("Figure snapshot archive is not portable")
+                target[path.stem] = payload
+    except (TypeError, RecursionError) as exc:
+        raise ValueError("malformed Figure snapshot metadata") from exc
+    for record in records.values():
+        marker = markers.get(_key(_source_identity(record["identity"])))
+        if marker is None or marker["receipt"] != _receipt_key(record["receipt"]):
+            raise ValueError("portable Figure entry has no matching source marker")
+        archived = archives.get(_snapshot_id(record))
+        if archived is None or _json(archived) != _json(record):
+            raise ValueError("portable Figure entry has no matching immutable archive")
+    expected_blobs = {}
+    for record in (*records.values(), *archives.values()):
+        for name in ("pdf_artifact", "svg_artifact"):
+            artifact = record[name]
+            filename = _blob_path(root, artifact).name
+            if filename in expected_blobs and expected_blobs[filename] != artifact["size_bytes"]:
+                raise ValueError("inconsistent durable Figure blob size")
+            expected_blobs[filename] = artifact["size_bytes"]
+    if any("blobs/" + name not in members for name in expected_blobs):
+        raise ValueError("missing durable Figure snapshot blob")
+    blobs = {}
+    for name in sorted(names["blobs"]):
+        path, info = members[name]
+        kind = path.suffix[1:]
+        blob = _read_file(path, MAX_PDF_BYTES if kind == "pdf" else MAX_SVG_BYTES)
+        if (
+            len(blob) != info.st_size
+            or _digest(blob) != path.stem
+            or (path.name in expected_blobs and len(blob) != expected_blobs[path.name])
+        ):
+            raise ValueError("Figure snapshot blob does not match its content address")
+        blobs[path.name] = {"bytes_sha256": path.stem, "size_bytes": len(blob), "kind": kind}
+        del blob
+    if ".lock" in members and members[".lock"][1].st_size:
+        _read_file(members[".lock"][0], MAX_METADATA_BYTES)
+    final = _portable_inventory(root)
+    if set(final) != set(members) or any(
+        not os.path.samestat(before, final[name][1])
+        or before.st_size != final[name][1].st_size
+        or before.st_mtime_ns != final[name][1].st_mtime_ns
+        or before.st_ctime_ns != final[name][1].st_ctime_ns
+        for name, (_, before) in members.items()
+    ):
+        raise ValueError("portable Figure snapshot store changed during inspection")
+    return {
+        "members": tuple(sorted(members)),
+        "entries": records,
+        "sources": markers,
+        "snapshots": {
+            key: {
+                "payload": payload,
+                "reference": _snapshot_reference(payload),
+                "identity": payload["identity"],
+                "receipt": payload["receipt"],
+                "pdf_artifact": payload["pdf_artifact"],
+                "svg_artifact": payload["svg_artifact"],
+                "execution_owner": payload.get("execution_owner"),
+            }
+            for key, payload in sorted(archives.items())
+        },
+        "blobs": blobs,
+        "total_bytes": total,
+    }
 
 
 def source_records_for_owner(
