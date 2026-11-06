@@ -258,6 +258,9 @@ interface ScriptRunStore {
   clear: () => void
 }
 
+// 请求身份独立于可删除的显示行；作废 / reset / clear 后也不复用旧请求的代次。
+let nextRunGeneration = 0
+
 export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
   epoch: 0,
   byScript: {},
@@ -268,7 +271,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
     const epoch = get().epoch
     const owner = captureProjectEpoch(() => get().epoch)
     const projectAtStart = currentProjectId()
-    const gen = (prev?.gen ?? 0) + 1
+    const gen = ++nextRunGeneration
     set((s) => ({
       byScript: {
         ...s.byScript,

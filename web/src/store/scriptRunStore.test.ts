@@ -536,6 +536,71 @@ describe('试运行撞上起会话之前的门', () => {
   })
 })
 
+describe('作废试运行后重跑的请求归属', () => {
+  it.each(['starting_runtime', 'running'] as const)('连续作废 %s 行后，旧响应不能释放最新运行的并发闸', async (phase) => {
+    const first = deferredProbe()
+    const firstRun = useScriptRunStore.getState().run('fig.py')
+    if (phase === 'running') useScriptRunStore.getState().markRunning('fig.py')
+    useScriptRunStore.getState().invalidateCaptured()
+    expect(state()).toBeUndefined()
+
+    const second = deferredProbe()
+    const secondRun = useScriptRunStore.getState().run('fig.py')
+    useScriptRunStore.getState().invalidateCaptured()
+    const third = deferredProbe()
+    const thirdRun = useScriptRunStore.getState().run('fig.py')
+    const replacement = state()
+    first.resolve(failed('script_probe_failed'))
+    second.resolve(ok([desc('obsolete')]))
+    await Promise.all([firstRun, secondRun])
+    expect(state()).toBe(replacement)
+    await useScriptRunStore.getState().run('fig.py')
+    expect(mockProbe).toHaveBeenCalledTimes(3)
+    third.resolve(ok([desc('fresh')]))
+    await thirdRun
+    expect(state().descriptors[0].stem).toBe('fresh')
+  })
+
+  it('结果收起再重跑后，更早已作废的请求仍无权写回', async () => {
+    const old = deferredProbe()
+    const oldRun = useScriptRunStore.getState().run('fig.py')
+    useScriptRunStore.getState().invalidateCaptured()
+    mockProbe.mockResolvedValueOnce(ok([desc('intermediate')]))
+    await useScriptRunStore.getState().run('fig.py')
+    useScriptRunStore.getState().reset('fig.py')
+    expect(state()).toBeUndefined()
+    const fresh = deferredProbe()
+    const freshRun = useScriptRunStore.getState().run('fig.py')
+    const replacement = state()
+    old.resolve(ok([desc('obsolete')]))
+    await oldRun
+    expect(state()).toBe(replacement)
+    fresh.resolve(ok([desc('fresh')]))
+    await freshRun
+    expect(state().descriptors[0].stem).toBe('fresh')
+  })
+
+  it('A → B → A 后，同名脚本的新运行不接收第一次 A 的迟到错误', async () => {
+    setCurrentProjectId('project-a')
+    const old = deferredProbe()
+    const oldRun = useScriptRunStore.getState().run('fig.py')
+    setCurrentProjectId('project-b')
+    useScriptRunStore.getState().clear()
+    setCurrentProjectId('project-a')
+    useScriptRunStore.getState().clear()
+    const fresh = deferredProbe()
+    const freshRun = useScriptRunStore.getState().run('fig.py')
+    const replacement = state()
+    old.resolve(failed('script_probe_failed'))
+    await oldRun
+    expect(state()).toBe(replacement)
+    fresh.resolve(ok([desc('fresh')]))
+    await freshRun
+    expect(state().descriptors[0].stem).toBe('fresh')
+    setCurrentProjectId(null)
+  })
+})
+
 describe('试运行途中改了指认（ADR 0106 §五）', () => {
   it('后端按代次丢弃了结果（input_remap_changed）：不报失败，按新表重跑一次', async () => {
     useScriptRunStore.getState().clear()

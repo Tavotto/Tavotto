@@ -5,14 +5,21 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   engineRender: vi.fn(),
   setProjectWorkdir: vi.fn(),
   fetchEngineEnvironment: vi.fn(),
+  probeScript: vi.fn(),
+  fetchPanels: vi.fn().mockResolvedValue({ figures_dir: '', panels: [] }),
+  fetchRuntimeAssets: vi.fn().mockResolvedValue({ assets: [] }),
 }))
 
-import { engineRender, fetchEngineEnvironment, setProjectWorkdir, type EngineEnvironment, type WorkdirConfirmation } from '@/lib/api'
+import {
+  ApiError, engineRender, fetchEngineEnvironment, probeScript, setProjectWorkdir,
+  type CapturedFigureDescriptor, type EngineEnvironment, type ProbeResult, type WorkdirConfirmation,
+} from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
 import { useEnvStore } from './envStore'
 import { renderKey, useRenderStore } from './renderStore'
 import { useRuntimeAssetStore } from './runtimeAssetStore'
 import { useScriptRunStore } from './scriptRunStore'
+import { useUiStore } from './uiStore'
 
 const environment = (mode: 'sandbox' | 'project'): EngineEnvironment => ({
   ok: true,
@@ -28,7 +35,28 @@ const response = (points: number[], extra = {}) => ({
   svg: `<svg data-points="${points.length}"/>`, warnings: [], ...extra,
 })
 
+const captured = (stem: string): ProbeResult => ({
+  script: 'plot.py', entry: '__main__', stems: [stem], error: null, tried: ['__main__'], registered: true,
+  descriptors: [{
+    asset_id: `runtime:plot.py#${stem}`, script: 'plot.py', entry: '__main__', stem,
+    capture_source: 'pyplot', execution_profile: 'safe', original_artifact: null, size_mm: [80, 60],
+    source_fingerprint: 'sha256:x', can_writeback_artifact: false, can_writeback_source: false,
+  } satisfies CapturedFigureDescriptor],
+})
+
+function deferredProbe() {
+  let resolve!: (result: ProbeResult) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<ProbeResult>((resolveResult, rejectResult) => {
+    resolve = resolveResult
+    reject = rejectResult
+  })
+  vi.mocked(probeScript).mockReturnValueOnce(promise)
+  return { resolve, reject }
+}
+
 beforeEach(() => {
+  vi.mocked(probeScript).mockReset()
   vi.mocked(engineRender).mockReset()
   vi.mocked(setProjectWorkdir).mockReset()
   vi.mocked(fetchEngineEnvironment).mockResolvedValue(environment('sandbox'))
@@ -93,6 +121,49 @@ describe('选择正确运行目录后的图像恢复（#1254）', () => {
     } })
     expect(await useEnvStore.getState().setWorkdirMode('project', { confirmed: true })).toBeNull()
     expect(useScriptRunStore.getState().byScript['plot.py']).toBeUndefined()
+  })
+
+  // 主语：同一项目同一脚本，旧目录的 probe 回来时，新目录的请求已经占住显示行。
+  it.each([
+    ['success', 'busy'], ['error', 'busy'], ['rejected', 'busy'],
+    ['success', 'captured'], ['error', 'captured'], ['rejected', 'captured'],
+  ] as const)('旧目录 %s 回包不覆盖新目录的 %s 结果或副作用', async (outcome, replacementPhase) => {
+    const old = deferredProbe()
+    const oldRun = useScriptRunStore.getState().run('plot.py')
+    expect(probeScript).toHaveBeenCalledTimes(1)
+    expect(await useEnvStore.getState().setWorkdirMode('project', { confirmed: true })).toBeNull()
+    expect(useScriptRunStore.getState().byScript['plot.py']).toBeUndefined()
+
+    const fresh = deferredProbe()
+    const freshRun = useScriptRunStore.getState().run('plot.py')
+    expect(probeScript).toHaveBeenCalledTimes(2)
+    useScriptRunStore.getState().markRunning('plot.py')
+    if (replacementPhase === 'captured') {
+      fresh.resolve(captured('fresh'))
+      await freshRun
+    }
+    const replacement = useScriptRunStore.getState().byScript['plot.py']
+    const status = useUiStore.getState().status
+    const statusOwner = useUiStore.getState().statusOwner
+    if (outcome === 'success') old.resolve({ ...captured('obsolete'), workdir_hint: hint })
+    else if (outcome === 'error') old.resolve({
+      ...captured('obsolete'), descriptors: [], stems: [], registered: false,
+      error: { code: 'script_probe_failed', message: 'obsolete directory' },
+    })
+    else old.reject(new ApiError('obsolete directory', 409, {
+      code: 'workdir_confirmation_required', confirmation: hint,
+    }))
+    await oldRun
+
+    expect(useScriptRunStore.getState().byScript['plot.py']).toBe(replacement)
+    expect(useEnvStore.getState().workdirConfirmation).toBeNull()
+    expect(useUiStore.getState().status).toBe(status)
+    expect(useUiStore.getState().statusOwner).toBe(statusOwner)
+    if (replacementPhase === 'busy') {
+      fresh.resolve(captured('fresh'))
+      await freshRun
+    }
+    expect(useScriptRunStore.getState().byScript['plot.py'].descriptors[0].stem).toBe('fresh')
   })
 
   it('确认继续用同一目录只恢复门禁，不作废成功图', async () => {
