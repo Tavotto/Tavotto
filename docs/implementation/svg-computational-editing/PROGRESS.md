@@ -42,6 +42,15 @@
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
+### 2026-11-06 计算任务生命周期进入真实API
+
+- 新chartprocess.run_request复用固定svgchart入口、pool解释器/launcher/overlay、DesktopProcess ownership和envlease；desktopproc仅提取可附着已启动进程的own_process，既有desktop start/gate时机不变。app两个helper已接入，旧ok=False业务码与native完整字段整理保留，非法probe输出仍映射chart_engine_unavailable。
+- stdin独立线程，与stdout/退出/响应验证共用原90s请求deadline；输出spool位于data_dir/cache/chart-requests，预算从SVGBudget/JSON结构派生，stderr有界tail。先查真实退出码，满容量拒新chart，unknown保lease/admission/spool直到owner确认；只限制chart类任务，不宣称resident/native/one_shot总cap。请求timeout不包含既有解释器解析/激活预算或取消清理时间。
+- 冻结runner34项通过、0skip、exit0、8.918秒，含真实native响应、正反环境租约、动态admission、stdout超限/有界stderr、阻塞stdin、Windows Job后代管道、unknown、stdlib父导入；删退出码/删lease两项内存反证各真实exit1，生产字节不变。chart-process-review.md与freeze.json含完整hash/命令。
+- 根代理接线后真实API/恢复/legacy端点/生产导出共46项同次通过，0失败/skip、exit0、127.550秒（chart-process-http-integrated.xml）。新增HTTP反例持安装租约时bind/compute/render/PNG四入口均503 environment_mutating且active=0；释放后真实渲染恢复，原SVG不变。当前生产导出11项本次同次全过，先前9+2分次记录保留，不倒改历史。
+- 受影响desktop兼容20通过/1失败/1平台skip；唯一失败是既有Windows .venv redirector下bridge回执PID不同于Popen PID。用git HEAD原start AST同项复现失败，保留chart-desktop-baseline.xml，不把该失败写通过或冒充本批新增回归。其他平台组回收本批未真机验，原owner入Job短窗口/DirectScope边界仍在，不称已解决。
+- 本批Python最终Ruff check/format与diff通过；初次新增API测试import需折行，修正仅格式。R05目录/session及前端重复canvas保存修复由其他代理独立进行，不混入此功能stage。正式项目保存/冷开与M1仍未完成，下一步接附件精确输入与v4消费者。
+
 ### 2026-11-06 15:32 执行效果复核与下一阶段重排
 
 - 本轮沿当前唯一实施分支，没有新建/切换分支或工作树；原main目录仍干净。分别提交242cabc0共享编辑、c2fd47d5完整状态导出、53393810恢复与重绑归属、8e6c399a多DOM目标、2a40fec9栅格验证，没有push/合并/发布。保留全部历史记录及尚未完成的SG/R范围。

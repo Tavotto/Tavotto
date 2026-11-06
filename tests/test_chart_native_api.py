@@ -15,7 +15,15 @@ import xml.etree.ElementTree as ET
 import pytest
 
 from tavotto import app as m, chartbundle
-from tavotto.engine import chartprofile, exportjob, patchspec, pool, project_watch
+from tavotto.engine import (
+    chartprocess,
+    chartprofile,
+    envlease,
+    exportjob,
+    patchspec,
+    pool,
+    project_watch,
+)
 
 NS = "{http://www.w3.org/2000/svg}"
 NUMBER = re.compile(r"[-+]?(?:\d*\.)?\d+(?:e[-+]?\d+)?", re.I)
@@ -94,6 +102,29 @@ def _bind(client, y=0.25):
 
 def _color(value):
     return {"gid": "axes_0.lines_0", "prop": "color", "value": value}
+
+
+def test_chart_http_entries_respect_install_lease_and_recover_without_source_changes(project):
+    client, root = project
+    chart = _bind(client)
+    python, _source = pool.resolve_worker_python(root)
+    requests = [
+        ("/api/svg/chart/bind", {"file": "chart.svg"}),
+        ("/api/svg/chart/compute", {"file": "chart.svg", **chart}),
+        ("/api/engine/render", {"id": "chart.svg", "chart": chart, "patches": []}),
+        ("/api/engine/preview_png", {"id": "chart.svg", "chart": chart, "patches": []}),
+    ]
+    with envlease.mutating("chart-http-install", python):
+        for endpoint, body in requests:
+            response = client.post(endpoint, json=body)
+            assert response.status_code == 503, (endpoint, response.get_json())
+            assert response.get_json()["code"] == envlease.ENVIRONMENT_MUTATING
+        assert chartprocess.active_count() == 0
+        assert not envlease.native_sessions_on(python)
+    _assert_line(_render(client, chart), y=0.25)
+    assert chartprocess.active_count() == 0
+    assert envlease.state_of(python) == envlease.STATE_IDLE
+    assert (root / "chart.svg").read_bytes() == SOURCE
 
 
 def test_rebinding_data_keeps_existing_edits_on_the_same_owner(project):

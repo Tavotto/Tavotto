@@ -70,6 +70,7 @@
 - 写回：计算面板的写回资格**显式化**（有可重放模型与数据者才可），走既有 prepare→verify→commit 事务（SG13）；
   覆盖实验数据文件与覆盖 SVG 是不同操作。
 - worker/父进程边界不松：脚手架只在 worker（matplotlib）；父进程只做 stdlib 树操作与 IR 翻译。
+- 计算probe/scaffold共用固定svgchart command runner，解释器/激活沿pool权威，进程沿既有DesktopProcess ownership与envlease；同一请求deadline覆盖stdin、stdout与响应验证。输出spool走data_dir，字节/JSON结构预算消费SVGBudget/chartprofile，stderr仅保有界tail；进程非零退出不能被成功JSON掩盖。未确认组退出保留lease和chart admission，确认后才释放；chart类容量消费动态pool.max_alive，不声称全产品总进程cap。旧desktop启动/gate时序不变，不引入任意argv或用户脚本入口。
 
 ### 4. 明确不做（本轮）
 

@@ -1316,38 +1316,14 @@ def _chart_scaffold_via_worker(
     matplotlib 缺失/坏环境时错误以稳定码上抛，不静默换内置 runtime。
     """
     import base64
-    import subprocess
 
-    import tavotto
+    from .engine import chartprocess
 
     root = require_project()
-    python, _source = engine_pool.resolve_worker_python(root)
     req = {"model": model, "frame": frame, "salt": "tavotto"}
     if render_profile is not None:
         req.update(render_profile=render_profile, patches=patches or [])
-    try:
-        proc = subprocess.run(
-            [python, "-m", "tavotto.engine.svgchart"],
-            input=json.dumps(req).encode("utf-8"),
-            capture_output=True,
-            timeout=_CHART_SPAWN_TIMEOUT_S,
-            cwd=str(Path(tavotto.__file__).resolve().parent.parent),
-            creationflags=engine_runtime.CREATE_NO_WINDOW,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise engine_pool.WorkerError(
-            "chart scaffold timed out", code="svg_scaffold_timeout"
-        ) from exc
-    except OSError as exc:
-        raise engine_pool.WorkerError(
-            f"worker python failed: {exc}", code="chart_engine_unavailable"
-        ) from exc
-    try:
-        payload = json.loads(proc.stdout.decode("utf-8", errors="replace").strip().splitlines()[-1])
-    except (ValueError, IndexError) as exc:
-        raise engine_pool.WorkerError(
-            f"bad scaffold output: {proc.stderr[-200:]}", code="svg_scaffold_invalid"
-        ) from exc
+    payload = chartprocess.run_request(root, req, timeout=_CHART_SPAWN_TIMEOUT_S)
     if not payload.get("ok"):
         raise engine_pool.WorkerError(
             payload.get("error", ""), code=payload.get("code") or "svg_scaffold_invalid"
@@ -1374,31 +1350,16 @@ def _chart_scaffold_via_worker(
 
 def _chart_engine_identity() -> dict:
     """worker 解释器里的计算环境身份（probe 子进程，零渲染）。"""
-    import subprocess
+    from .engine import chartprocess
 
-    import tavotto
-
-    root = require_project()
-    python, _source = engine_pool.resolve_worker_python(root)
     try:
-        proc = subprocess.run(
-            [python, "-m", "tavotto.engine.svgchart"],
-            input=json.dumps({"probe": True}).encode("utf-8"),
-            capture_output=True,
-            timeout=_CHART_SPAWN_TIMEOUT_S,
-            cwd=str(Path(tavotto.__file__).resolve().parent.parent),
-            creationflags=engine_runtime.CREATE_NO_WINDOW,
+        payload = chartprocess.run_request(
+            require_project(), {"probe": True}, timeout=_CHART_SPAWN_TIMEOUT_S
         )
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        raise engine_pool.WorkerError(
-            f"worker python probe failed: {exc}", code="chart_engine_unavailable"
-        ) from exc
-    try:
-        payload = json.loads(proc.stdout.decode("utf-8", errors="replace").strip().splitlines()[-1])
-    except (ValueError, IndexError) as exc:
-        raise engine_pool.WorkerError(
-            f"probe failed: {proc.stderr[-200:]}", code="chart_engine_unavailable"
-        ) from exc
+    except engine_pool.WorkerError as exc:
+        if exc.code == "svg_scaffold_invalid":
+            raise engine_pool.WorkerError(str(exc), code="chart_engine_unavailable") from exc
+        raise
     if not payload.get("ok"):
         raise engine_pool.WorkerError(
             payload.get("error", ""), code=payload.get("code") or "chart_engine_unavailable"
