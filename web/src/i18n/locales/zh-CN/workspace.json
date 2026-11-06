@@ -1483,6 +1483,35 @@
         "refused": "AI 服务拒绝了这次请求",
         "other": "AI 这次没能修好"
       }
+    },
+    "inputs": {
+      "title": "捕获输入",
+      "hint": "选择下一次明确运行时要记录的输入。保存仅重新检查，不运行脚本。",
+      "projectFiles": "项目文件",
+      "chooseFile": "选择文件…",
+      "pathPlaceholder": "项目相对路径或文件路径",
+      "addFile": "添加文件",
+      "noFiles": "尚未选择项目文件",
+      "approvedRemaps": "已批准的外部输入",
+      "noRemaps": "没有已批准的外部输入",
+      "anyRelative": "所有相对请求",
+      "missingRemap": "批准目标已不可用，请移除或重新读取",
+      "removeFile": "移除",
+      "save": "保存选择",
+      "cancel": "取消",
+      "removeDeclaration": "移除声明",
+      "reload": "重新读取",
+      "loading": "正在读取输入声明…",
+      "saved": "选择已保存。下次运行会按此选择记录输入。",
+      "removed": "声明已移除。",
+      "savedRecheckFailed": "选择已保存，但重新检查未完成。请重新检查。",
+      "removedRecheckFailed": "声明已移除，但重新检查未完成。请重新检查。",
+      "reloaded": "已重新读取并合并你的未保存选择，请检查后保存。",
+      "changed": "参数或准备配置已变化，请先重新检查。",
+      "sensitiveRun": "含敏感参数的运行不记录可携输入声明。",
+      "scopeUnknown": "当前运行范围尚未确定。",
+      "notScript": "当前目标不是可声明输入的脚本。",
+      "captured": "实际运行记录的输入摘要：{{revision}}"
     }
   },
   "canvasMenu": {

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ChartLine,
@@ -20,6 +20,7 @@ import {
 import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import { Spinner } from '@/components/ui/Spinner'
 import { WorkdirChooseButton } from '@/components/WorkdirRow'
+import { InputDeclarationControls, type InputDeclarationDraftCheckpoint } from '@/components/InputDeclarationControls'
 import {
   backendCodeMsg,
   backendErrorText,
@@ -1276,6 +1277,9 @@ export function ForeignScriptCard() {
 
 function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepView }) {
   useTranslation(['workspace', 'errors'])
+  // The current report may be absent while checking changed arguments. Keep only
+  // the local input draft across that subtree's unmount, never a stale report.
+  const inputDraft = useRef<InputDeclarationDraftCheckpoint | null>(null)
   const report = entry.report
   // 点过「✦ 使用你的 AI 来修复」：AI 暂时修不了（`ai_unavailable`）就落成反馈卡；只对点的那一次尝试有效，重新运行后换回原卡
   const fix = useAiFixStore((s) => s.entries[entry.key])
@@ -1414,7 +1418,7 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
   if (compactFail && panel === 'details') {
     slot.push(
       <div key="details" data-prep-details className="flex flex-col gap-1.5 border-t border-border pt-2.5 text-sm text-ink-2">
-        <SessionDetails entry={entry} view={view} />
+        <SessionDetails entry={entry} view={view} draftRef={inputDraft} />
       </div>,
     )
   }
@@ -1436,7 +1440,7 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
     />
   )
 
-  const details = ownsInput ? <InputOutput /> : <SessionDetails entry={entry} view={view} />
+  const details = ownsInput ? <InputOutput /> : <SessionDetails entry={entry} view={view} draftRef={inputDraft} />
   // 脚本能跑、只是用位图库画的图：AI 修复会话交接给「生成可编辑版本」（ADR 0149 §七）——同一张卡接上既有的进度 / 对照 / 采用
   const handoff = useAiFixStore((s) => s.handoffs[entry.key])
   // 交接优先于卡片原有的 convert 目标：AI 交接的可能是另一个脚本，用户要看的是刚发起的那条转换
@@ -1892,7 +1896,11 @@ function RunHistory({ history }: { history: PreparationAttempt[] }) {
   )
 }
 
-function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
+function SessionDetails({ entry, view, draftRef }: {
+  entry: PrepEntry
+  view: PrepView
+  draftRef: { current: InputDeclarationDraftCheckpoint | null }
+}) {
   useTranslation(['workspace', 'errors'])
   const report = entry.report
   const store = useProjectPreparationStore.getState()
@@ -2028,6 +2036,28 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
           k={pt('detail.args')}
           v={reusedArgCount(entry) > 0 ? pt('detail.argsReused', { count: reusedArgCount(entry) }) : argc ? pt('detail.argsCount', { count: argc }) : pt('detail.argsNone')}
           attr="args"
+        />
+      )}
+      {report && (
+        <InputDeclarationControls
+          pj={entry.pj ?? report.project_id}
+          sessionId={report.session_id}
+          configRevision={report.config_revision}
+          draftRef={draftRef}
+          disabled={entry.pending !== null || !report.actions.some((a) => a.kind === 'recheck')}
+          draftChanged={draftDiffers(entry.target)}
+          onSaved={async () => {
+            const current = useProjectPreparationStore.getState().entries[entry.key]
+            if (
+              !current || current.pj !== entry.pj || current.report?.session_id !== report.session_id ||
+              current.pending || !current.report.actions.some((a) => a.kind === 'recheck')
+            ) throw new Error('Input declaration recheck is no longer available')
+            await useProjectPreparationStore.getState().act(entry.key, 'recheck')
+            const next = useProjectPreparationStore.getState().entries[entry.key]
+            if (!next || next.pj !== entry.pj || next.connection !== 'ok' || next.rejection) {
+              throw new Error('Input declaration recheck did not complete')
+            }
+          }}
         />
       )}
       {wdReq && <p>{pt('workdir.writes')}</p>}

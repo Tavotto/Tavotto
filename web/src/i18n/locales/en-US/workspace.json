@@ -1549,6 +1549,35 @@
         "refused": "The AI service refused this request",
         "other": "The AI couldn't fix it this time"
       }
+    },
+    "inputs": {
+      "title": "Captured inputs",
+      "hint": "Choose inputs to record on the next explicit run. Saving only rechecks; it does not run the script.",
+      "projectFiles": "Project files",
+      "chooseFile": "Choose file…",
+      "pathPlaceholder": "Project-relative or file path",
+      "addFile": "Add file",
+      "noFiles": "No project files selected",
+      "approvedRemaps": "Approved external inputs",
+      "noRemaps": "No approved external inputs",
+      "anyRelative": "All relative requests",
+      "missingRemap": "The approved target is unavailable; remove it or reload",
+      "removeFile": "Remove",
+      "save": "Save selection",
+      "cancel": "Cancel",
+      "removeDeclaration": "Remove declaration",
+      "reload": "Reload",
+      "loading": "Loading input declaration…",
+      "saved": "Selection saved. The next run will record these inputs.",
+      "removed": "Declaration removed.",
+      "savedRecheckFailed": "Selection saved, but recheck did not finish. Please recheck.",
+      "removedRecheckFailed": "Declaration removed, but recheck did not finish. Please recheck.",
+      "reloaded": "Reloaded and merged your unsaved choices. Review before saving.",
+      "changed": "Arguments or preparation settings changed; recheck first.",
+      "sensitiveRun": "Portable input declarations are unavailable for sensitive arguments.",
+      "scopeUnknown": "The current execution scope is not known.",
+      "notScript": "This target is not a script with declarable inputs.",
+      "captured": "Input summary recorded by execution: {{revision}}"
     }
   },
   "canvasMenu": {

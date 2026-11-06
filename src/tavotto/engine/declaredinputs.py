@@ -35,6 +35,7 @@ MAX_SETTINGS_BYTES = 4 * 1024 * 1024
 MAX_TEXT_CHARS = 4096
 _REVISION = re.compile(r"[0-9a-f]{32}\Z")
 _LOCK = threading.RLock()
+_REMAP_GENERATION_UNSET = object()
 
 
 class DeclaredInputsError(ValueError):
@@ -223,7 +224,7 @@ def _guard(root):
             layoutsession.release_file_lock(fd)
 
 
-def _view(data, revision):
+def _view(data, revision, *, include_selection_revisions=False):
     return {
         "version": VERSION,
         "revision": revision,
@@ -232,14 +233,21 @@ def _view(data, revision):
                 "scope": dict(row["scope"]),
                 "files": list(row["files"]),
                 "remaps": [item["from"] for item in row["remaps"]],
+                **(
+                    {"selection_revision": _row_revision(row)}
+                    if include_selection_revisions
+                    else {}
+                ),
             }
             for row in data["declarations"]
         ],
     }
 
 
-def state(root):
+def state(root, *, include_selection_revisions=False):
     """只读声明元信息；不探测任何脚本、数据、目录或外部 remap 目标。"""
+    if include_selection_revisions:
+        return _view(*_read(root), include_selection_revisions=True)
     return _view(*_read(root))
 
 
@@ -275,10 +283,19 @@ def _file(root, identity):
     return approved
 
 
-def _approved_remaps(root, requested):
-    if not requested:
+def resolve_project_file(root, selected) -> str:
+    """Normalize an explicitly selected existing file through the project boundary."""
+    approved = _file(root, _text(selected))
+    relative = os.path.relpath(approved, os.path.realpath(root)).replace(os.sep, "/")
+    return _portable(relative)[0]
+
+
+def _approved_remaps(root, requested, *, expected_generation=_REMAP_GENERATION_UNSET):
+    if not requested and expected_generation is _REMAP_GENERATION_UNSET:
         return []
-    _, rules = inputremap.snapshot(root)
+    generation, rules = inputremap.snapshot(root)
+    if expected_generation is not _REMAP_GENERATION_UNSET and expected_generation != generation:
+        raise DeclaredInputsConflict("Approved input remaps changed")
     result = []
     for source in requested:
         matching = [rule for rule in rules if rule["from"] == source]
@@ -306,6 +323,7 @@ def declare(
     files: list[str],
     remaps: list[str] = (),
     expected_revision: str | None,
+    expected_remap_generation=_REMAP_GENERATION_UNSET,
 ):
     """明确选择输入；None 修订只允许首次创建，不读内容、不运行、不展开目录。"""
     scope = _scope(script, cwd_mode, run_config)
@@ -313,6 +331,10 @@ def declare(
     remaps = _strings(remaps)
     if len(remaps) > figcapture.MAX_REMAP_RULES:
         raise DeclaredInputsError("Too many approved remaps")
+    if expected_remap_generation is not _REMAP_GENERATION_UNSET and (
+        type(expected_remap_generation) is not int or expected_remap_generation < 0
+    ):
+        raise DeclaredInputsError("Invalid expected input remap generation")
     with _guard(root):
         data, revision = _read(root)
         _cas(revision, expected_revision)
@@ -327,7 +349,12 @@ def declare(
                 )
         for identity in files:
             _file(root, identity)
-        row = {"scope": scope, "files": files, "remaps": _approved_remaps(root, remaps)}
+        approved_remaps = (
+            _approved_remaps(root, remaps)
+            if expected_remap_generation is _REMAP_GENERATION_UNSET
+            else _approved_remaps(root, remaps, expected_generation=expected_remap_generation)
+        )
+        row = {"scope": scope, "files": files, "remaps": approved_remaps}
         remaining = [r for r in data["declarations"] if _scope_key(r["scope"]) != _scope_key(scope)]
         if len(remaining) >= MAX_DECLARATIONS:
             raise DeclaredInputsError("Too many input declarations")

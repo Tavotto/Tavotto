@@ -12112,11 +12112,22 @@ def api_engine_input_declarations():
     ctx = current_ctx()
     try:
         if request.method == "GET":
-            state = declaredinputs.state(ctx.path)
+            state = declaredinputs.state(
+                ctx.path,
+                **(
+                    {"include_selection_revisions": True}
+                    if request.args.get("include_selection_revisions") == "1"
+                    else {}
+                ),
+            )
         else:
             body = request.get_json(silent=True)
             required = {"script", "cwd_mode", "expected_revision"}
-            optional = {"run_config"} | ({"files", "remaps"} if request.method == "POST" else set())
+            optional = {"run_config"} | (
+                {"files", "remaps", "expected_remap_generation"}
+                if request.method == "POST"
+                else set()
+            )
             if (
                 not isinstance(body, dict)
                 or not required <= set(body)
@@ -12138,11 +12149,24 @@ def api_engine_input_declarations():
             }
             if request.method == "POST":
                 state = declaredinputs.declare(
-                    ctx.path, files=body["files"], remaps=body.get("remaps", []), **common
+                    ctx.path,
+                    files=body["files"],
+                    remaps=body.get("remaps", []),
+                    **common,
+                    **(
+                        {"expected_remap_generation": body["expected_remap_generation"]}
+                        if "expected_remap_generation" in body
+                        else {}
+                    ),
                 )
             else:
                 state = declaredinputs.remove(ctx.path, **common)
-        return jsonify({"ok": True, "input_declarations": state})
+        payload = {"ok": True, "input_declarations": state}
+        if request.method == "GET" and "project_file" in request.args:
+            payload["project_file"] = declaredinputs.resolve_project_file(
+                ctx.path, request.args["project_file"]
+            )
+        return jsonify(payload)
     except declaredinputs.DeclaredInputsConflict:
         return jsonify(
             {
@@ -13170,7 +13194,7 @@ def _preparation_execution_result(ctx: "ProjectCtx", sess) -> dict:
         return {}
 
 
-def _session_report(ctx: "ProjectCtx", sess) -> dict:
+def _session_report(ctx: "ProjectCtx", sess, *, include_input_declaration: bool = False) -> dict:
     waiting = _session_runtime_input(ctx, sess)
     # Keep the report and its run-scoped evidence on the same explicit run.
     with sess.lock:
@@ -13180,6 +13204,7 @@ def _session_report(ctx: "ProjectCtx", sess) -> dict:
             runtime_input=waiting,
             # 「允许并运行」的一次性 token 只交给页面 cookie 认证的读者（本机凭据头 / MCP / 无请求上下文一律拿不到）
             expose_confirm=has_request_context() and _page_authenticated(),
+            **({"include_input_declaration": True} if include_input_declaration else {}),
         )
         payload.update(_preparation_execution_result(ctx, sess))
         return payload
@@ -13401,7 +13426,17 @@ def api_engine_preparation_session_state(session_id: str):
         sess = engine_prepsession.SESSIONS.session(session_id, ctx.id)
     except engine_prepsession.SessionError as exc:
         return _session_error(exc)
-    resp = jsonify(_session_report(ctx, sess))
+    resp = jsonify(
+        _session_report(
+            ctx,
+            sess,
+            **(
+                {"include_input_declaration": True}
+                if request.args.get("include_input_declaration") == "1"
+                else {}
+            ),
+        )
+    )
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
