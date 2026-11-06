@@ -117,6 +117,19 @@ def _member_key(name: object, *, directory: bool = False, legacy_names: bool = F
     return path if legacy_names else unicodedata.normalize("NFC", path).casefold()
 
 
+def project_member_key(name: str) -> str:
+    """完整 ZIP 资源名 → 项目相对比较键；不是项目目标路径的校验入口。
+
+    输入必须带 assets/ 或 scripts/。仅复用严格成员路径规则，再剥去包内
+    namespace；保留科学 ID 原拼写由调用者负责，本函数只返回别名比较键。
+    """
+    key = _member_key(name)
+    _, separator, relative = key.partition("/")
+    if not separator:
+        raise PackageError("unknown_member", "Only resource members have project targets")
+    return relative
+
+
 class _BoundedArchive:
     """ZipFile 仍是唯一 ZIP 解析器；先限制它一次读取目录的内存分配。
 

@@ -83,6 +83,7 @@ order: 200
 - **旧项目包HTTP原子输出**：`api_package`先保留经过containment校验的canonical资源路径与原逻辑ID，由caller持有data_dir自有快照暂存至整个输出结束，沿ZipFile原规范化组完整plan后推导预算；最终ZIP仅验证封口后发布，不覆盖同名旧包。文件名增加随机后缀，保原成功响应键与layout/manifest语义。快照准备失败沿旧整组warning；真实ZIP add/close/publish故障必须失败，不能吞成成功半包。检视仍只读，不把这条当v4混合安装完成；看护`tests/test_package_atomic_http.py`。
 - **计算来源包叶子**：`chartpackage`沿上述容器与`documentassets`唯一字节权威验证schema4完整INPUT；内容寻址chart行从正文引用派生，额外资源使用闭式chart_source/figure_snapshot/file/script变体，不接受caller覆盖派生chart行。检视只写data_dir自有暂存，Prepared正文/清单每次给副本，退出后拒用；verify回调必传，前后重核附件/资源，失败不发布目标。`install_chart_sources`只发布不可变chart附件并明确返回未安装的remaining_resources，不能宣称普通文件/脚本已安装；普通资源及正文事务由调用者完成，已发布的不可变附件不回删。writer临时封口后严格inspect再原子发布最终名。看护`tests/test_chart_package.py`。
   输出调用者可显式传`budget`或`budget_factory`，恰一；后者只收本模块最终唯一layout/manifest UTF-8字节、完整INPUT及各资源真实尺寸的只读census，一次返回六预算。类型/回调错误在创建输出前拒绝；factory后仍沿原装载、严格inspect与发布链核实际摘要，不能靠清单声明尺寸或静态预算绕过验证。静态预算旧调用/字节保持；不复制manifest结构给app。
+- **项目包资源目标投影**：`chartpackage.plan_project_resources`在活跃Prepared上下文内先复核全部资源与manifest，再将assets/scripts映到同一项目相对根。原拼写且同SHA/长度可复用；跨namespace异字节、case/NFC文件或祖先目录别名、文件/目录冲突均在零目标写入时拒绝。比较键只由`documentpackage.project_member_key`调用原严格成员规则派生，不复制portable策略或允许legacy开关。返回计划不等于安装成功，调用方发布前仍须核生命周期/来源并安全发布。看护`tests/test_chart_package_targets.py`。
 - **文档显式引用全质量 Figure 配对（X03，2026-10-15）**：面板 `figureSnapshot` 是版本 1 的闭集
   `{version, sourceId, patchHash, receiptId, snapshotId}`，可选 `executionOwner={script, run_config}`；
   owner 只从已验归档派生、纳入内容 ID，不信客户端自报。导出 wire 字段为 `figure_snapshot`。

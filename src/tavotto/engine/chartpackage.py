@@ -349,6 +349,53 @@ def write_chart_package(
         sealed.unlink(missing_ok=True)
 
 
+def plan_project_resources(
+    prepared: PreparedChartPackage,
+) -> tuple[tuple[str, ResourceFile], ...]:
+    """检验完整暂存并投影项目相对目标；仅返回计划，不创建或安装目标。
+
+    两个包 namespace 都映到同一项目根。同拼写且同摘要/长度可复用，其余
+    文件、目录或其 case/NFC 别名冲突均拒绝。计划仅在 Prepared 上下文内消费；
+    安装方仍须重新验证来源并安全发布，不能把本次只读检查当成安装事务。
+    """
+    if not isinstance(prepared, PreparedChartPackage):
+        raise PackageError("invalid_resource", "A prepared chart package is required")
+    prepared._verify()
+    resources = prepared.resources
+    records = _records(prepared.manifest, _chart_refs(prepared.document))
+    if tuple(item.record for item in resources) != records:
+        raise PackageError("resource_mismatch", "Prepared resources and manifest disagree")
+    files: dict[str, tuple[str, ResourceFile]] = {}
+    directories: dict[str, str] = {}
+    plan = []
+    for item in resources:
+        member = item.record["path"]
+        key = documentpackage.project_member_key(member)
+        relative = member.partition("/")[2]
+        if previous := files.get(key):
+            previous_name, previous_item = previous
+            if relative == previous_name and all(
+                item.record[field] == previous_item.record[field] for field in ("sha256", "bytes")
+            ):
+                continue
+            raise PackageError("project_target_conflict", "Project targets collide or alias")
+        key_parts, parts = key.split("/"), relative.split("/")
+        parents = [
+            ("/".join(key_parts[:index]), "/".join(parts[:index])) for index in range(1, len(parts))
+        ]
+        if key in directories or any(parent in files for parent, _ in parents):
+            raise PackageError("project_target_conflict", "Project file/directory collision")
+        if any(
+            parent in directories and directories[parent] != spelling
+            for parent, spelling in parents
+        ):
+            raise PackageError("project_target_conflict", "Project directory spellings alias")
+        files[key] = (relative, item)
+        directories.update(parents)
+        plan.append((relative, item))
+    return tuple(plan)
+
+
 def install_chart_sources(
     prepared: PreparedChartPackage,
     storage_root: Path,
