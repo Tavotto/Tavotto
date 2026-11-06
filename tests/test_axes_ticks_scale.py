@@ -307,6 +307,42 @@ def test_invert_and_spines(library):
     assert _field(man, "axes_0", "spine_linewidth") == pytest.approx(1.6)
 
 
+def _cap(man, gid, prop):
+    return next(f["max"] for f in _el(man, gid)["editable"] if f["prop"] == prop)
+
+
+def test_line_caps_reach_the_style_page_range_at_any_panel_scale(library):
+    """界面的上限 = 这里的 max × 面板缩放比：图缩到 45% 时 max 3 只剩 1.36 pt（用户反馈）。
+
+    主语是属性页 / 样式面板的数字框收到的 `max`。样式设置页的值域（`StyleProfileFields.NUMBER_SPEC`：
+    线宽 10、刻度长 20）能写进去的值，这里也得调得到；真写一个旧上限之外的值确认引擎吃得下。
+    """
+    man = _render(
+        library,
+        [
+            {"gid": "axes_0", "prop": "spine_linewidth", "value": 8},
+            {"gid": "axes_0", "prop": "spine_left_linewidth", "value": 9},
+        ],
+    )
+    for prop in (
+        "spine_linewidth",
+        "spine_top_linewidth",
+        "spine_right_linewidth",
+        "spine_bottom_linewidth",
+        "spine_left_linewidth",
+        "grid_linewidth",
+    ):
+        assert _cap(man, "axes_0", prop) == 10, prop
+    assert _field(man, "axes_0", "spine_linewidth") == pytest.approx(8)
+    assert _field(man, "axes_0", "spine_left_linewidth") == pytest.approx(9)
+
+    tick_gid = next(e["gid"] for e in man["elements"] if e["role"] == "ticks")
+    assert _cap(man, tick_gid, "width") == 10
+    assert _cap(man, tick_gid, "minor_width") == 10
+    assert _cap(man, tick_gid, "length") == 20
+    assert _cap(man, tick_gid, "minor_length") == 20
+
+
 # ---------------------------------------------------------------------------
 # 刻度线四边开关（issue #92）
 # ---------------------------------------------------------------------------
