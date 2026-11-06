@@ -18,9 +18,10 @@
 //! `drop`——浏览器只在页面的 dragover 接受了这次拖动时才派发 `drop`，语义与 macOS 的
 //! `performDragOperation:` 相同（编辑器里只有画布接受系统文件）。页面自己的 drop 处理一个字不变。
 //!
-//! 消息是**对象**而不是字符串：wry 的 IPC 处理器先 `TryGetWebMessageAsString`，对象消息在
-//! 那里就失败返回，不会被当成一次 Tauri invoke 去解析（否则每次拖放都往控制台打一条
-//! 「invalid IPC」错误）。我们这边按 `WebMessageAsJson` 认 `{"tavotto":"file-drop"}`。
+//! 消息必须是 JSON **字符串**：wry 的 IPC 处理器先 `TryGetWebMessageAsString`，对象消息让
+//! 它返回 E_INVALIDARG，后面的旁听无法收到。这里也读字符串，再按 `{"tavotto":"file-drop"}`
+//! 认标记；`WebMessageAsJson` 会对字符串再编码一层，认不出来。Tauri 会把这条非 invoke 消息
+//! 记成控制台解析错误，但处理器正常返回，不影响后续旁听；不伪造 invoke 或绕过其认证。
 //!
 //! 需要 WebView2 运行时 ≥ 1.0.1518（2023 年起的常青版本都满足）；拿不到
 //! `ICoreWebView2WebMessageReceivedEventArgs2` 时本次不发事件，前端等满 grace 后照旧降级到选择器。
@@ -106,7 +107,9 @@ pub fn install(controller: ICoreWebView2Controller, app: tauri::AppHandle) {
                 return Ok(());
             };
             let mut json = PWSTR::null();
-            if args.WebMessageAsJson(&mut json).is_err() || !is_drop_message(&take_pwstr(json)) {
+            if args.TryGetWebMessageAsString(&mut json).is_err()
+                || !is_drop_message(&take_pwstr(json))
+            {
                 return Ok(());
             }
             let paths = dropped_paths(&args);
@@ -129,8 +132,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_the_tagged_object_message_counts() {
+    fn only_the_tagged_json_text_counts() {
         assert!(is_drop_message(r#"{"tavotto":"file-drop"}"#));
+        // WebMessageAsJson 对字符串再次编码后的结果不是约定的消息。
+        let double_encoded = serde_json::to_string(r#"{"tavotto":"file-drop"}"#).unwrap();
+        assert!(!is_drop_message(&double_encoded));
         assert!(!is_drop_message(r#""file-drop""#));
         assert!(!is_drop_message(r#"{"tavotto":"other"}"#));
         assert!(!is_drop_message(r#"{"cmd":"plugin:event|listen"}"#));

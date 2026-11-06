@@ -182,8 +182,8 @@ export type NativeFileDrop =
 
 /**
  * 页面转给 Windows 壳的那条消息（与 `src-tauri/src/native_drop_win.rs` 的 `MESSAGE_KIND` 严格同源，
- * `tests/test_desktop_file_drop.py` 看护）。是对象不是字符串：wry 的 IPC 只收字符串消息，对象消息不会被
- * 当成一次 Tauri invoke 去解析。
+ * `tests/test_desktop_file_drop.py` 看护）。发送时编码成 JSON 字符串：wry 先读字符串，直接发对象会让
+ * 它的 WebMessageReceived 处理器返回错误，后面的原生旁听收不到。
  */
 export const DROP_MESSAGE = { tavotto: 'file-drop' } as const
 
@@ -208,7 +208,7 @@ export function ensureDropForwarder(): void {
     const files = e.dataTransfer?.files
     if (!files || files.length === 0) return
     try {
-      post.call(bridge, DROP_MESSAGE, files)
+      post.call(bridge, JSON.stringify(DROP_MESSAGE), files)
     } catch {
       // 运行时太旧（< 1.0.1518）没有这条路：壳收不到，前端等满 grace 照旧降级到选择器
     }

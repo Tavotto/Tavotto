@@ -49,6 +49,25 @@ from tavotto.engine import (
 )
 
 
+def test_windows_file_drop_reads_the_string_message_without_json_double_encoding():
+    """0.21.0 拖 .py 仍弹选择器：发送端必须能经过 wry 的字符串消息读取。
+
+    前端行为由 desktopDropForwarder.test.ts 验；这里看护 COM 接收边界：
+    WebMessageAsJson 会给字符串再包一层 JSON 引号，导致合法标记被当成非拖放消息。
+    真窗口路径与选择器结果仍由 desktop_windows/test_home_drop.py 验，不把此结构检查当真机证据。
+    """
+    from tests.support.rustsrc import rust_code
+
+    root = Path(__file__).resolve().parents[1]
+    source = root / "src-tauri" / "src" / "native_drop_win.rs"
+    code = rust_code(source.read_text(encoding="utf-8"))
+    readers = re.findall(r"\bargs\s*\.\s*(TryGetWebMessageAsString|WebMessageAsJson)\s*\(", code)
+    assert readers == ["TryGetWebMessageAsString"], (
+        "页面发 JSON 字符串以通过 wry；原生旁听必须读原字符串，不能再次 JSON 编码",
+        readers,
+    )
+
+
 @pytest.fixture
 def client():
     m.app.config["TESTING"] = True
