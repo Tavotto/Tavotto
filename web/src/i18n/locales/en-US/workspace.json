@@ -852,6 +852,8 @@
     "packageFailed": "Couldn’t package. {{error}}",
     "packageOpenFailed": "Couldn’t open the project package. {{error}}",
     "packageOpened": "Project package opened ({{createdAt}}); every asset is present",
+    "packagedIncomplete_one": "Created project package {{name}} with {{count}} missing asset. Add the missing asset before restoring.",
+    "packagedIncomplete_other": "Created project package {{name}} with {{count}} missing assets. Add the missing assets before restoring.",
     "packaged_one": "Created project package {{name}} ({{count}} asset)",
     "packaged_other": "Created project package {{name}} ({{count}} assets)",
     "pasteNothing": "Nothing to paste. Objects with missing assets were skipped.",

@@ -12,13 +12,14 @@ describe('显式文档格式，不改变旧缺省地址和键', () => {
     '/api/autosave/d_same/summary', '/api/layout-session/candidates?scope=project',
     '/api/layout-session/owner?doc_id=d_same', '/api/layout-session/last',
     '/api/versions/d_same/v1/thumb?f=png', '/api/versions/d_same/rebuild',
+    '/api/package',
   ])('%s 的旧路径逐字保留，v4 显式隔离', (path) => {
     expect(documentApiPath(path)).toBe(path)
     expect(documentApiPath(path, 'legacy')).toBe(path)
     expect(documentApiPath(path, 'v4')).toBe(`/api/documents/v4${path.slice(4)}`)
   })
 
-  it.each(['/api/package/open', '/api/package', '/api/engine/render', '/api/layouts-extra'])('不为尚未实现的 %s 创造v4别名', (path) => {
+  it.each(['/api/package/open', '/api/package/install', '/api/package-extra', '/api/engine/render', '/api/layouts-extra'])('不为尚未实现的 %s 创造v4别名', (path) => {
     expect(documentApiPath(path)).toBe(path)
     expect(() => documentApiPath(path, 'v4')).toThrow('unsupported_document_route')
   })

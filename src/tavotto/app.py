@@ -2800,7 +2800,7 @@ def _document_svg_references(document: dict) -> dict:
     }
 
 
-def _freeze_document_sources(document: dict) -> list[str]:
+def _freeze_document_sources(document: dict, *, capture_figures: bool = True) -> list[str]:
     """格式适配只扩展来源捕获，正文仍由持锁调用方单次原子提交。"""
     if _document_format() == engine_documentformat.LEGACY:
         return _freeze_document_svg_sources(document)
@@ -2826,7 +2826,7 @@ def _freeze_document_sources(document: dict) -> list[str]:
             )
             obj.pop("figureSnapshot", None)
             snapshots.append(snapshot)
-        warnings = _freeze_document_svg_sources(document)
+        warnings = _freeze_document_svg_sources(document) if capture_figures else []
         _validate_storage_document(document)
         for snapshot in snapshots:
             _assert_chart_source(snapshot.path, snapshot.source_sha256)
@@ -4695,11 +4695,14 @@ def _doc_objects(doc: dict) -> list[dict]:
 _sha1_of = engine_baked.sha1_of
 
 
-def _package_svg_assets(doc, root, archive, *, temporary_root: Path | None = None) -> int:
+def _package_svg_assets(
+    doc, root, archive, *, temporary_root: Path | None = None, strict_references: bool = False
+) -> int:
     """Bundle only referenced, verified project snapshots; never execute a script."""
     from .engine import svgstore
 
     count, seen = 0, set()
+    references = {}
     if temporary_root is None:
         engine_config.data_dir().mkdir(parents=True, exist_ok=True)
         temporary = tempfile.TemporaryDirectory(
@@ -4712,17 +4715,25 @@ def _package_svg_assets(doc, root, archive, *, temporary_root: Path | None = Non
         for obj in _doc_objects(doc):
             if obj.get("type") != "panel" or not obj.get("fileId"):
                 continue
+            if strict_references and obj.get("chart") is not None:
+                continue
             source_id, patches = obj["fileId"], obj.get("overrides") or []
+            reference = obj.get("figureSnapshot")
             static_hash = None
             if not patches and not engine_runtimeasset.is_runtime_id(source_id):
                 try:
                     static_hash = engine_figcapture.hash_file(safe_resolve(source_id))[0]
                 except Exception:
+                    if strict_references and reference is not None:
+                        raise engine_documents.DocumentError(
+                            "figure_snapshot_unavailable", "项目包所引用的 Figure 原件不可核验", 422
+                        ) from None
                     continue
             patch_hash = engine_patchspec.patch_hash(patches)
-            reference = obj.get("figureSnapshot")
             key = (source_id, patch_hash, static_hash, (reference or {}).get("snapshotId"))
             if key in seen:
+                if strict_references and key in references:
+                    obj["figureSnapshot"] = dict(references[key])
                 continue
             seen.add(key)
             kwargs = dict(
@@ -4743,8 +4754,12 @@ def _package_svg_assets(doc, root, archive, *, temporary_root: Path | None = Non
                 explicit=reference is not None,
                 static=static_hash is not None,
             ):
+                if strict_references and reference is not None:
+                    raise engine_documents.DocumentError(
+                        "figure_snapshot_unavailable", "项目包所引用的 Figure 配对不可核验", 422
+                    )
                 continue
-            svgstore.save(
+            saved = svgstore.save(
                 root,
                 source_id,
                 patch_hash,
@@ -4758,6 +4773,9 @@ def _package_svg_assets(doc, root, archive, *, temporary_root: Path | None = Non
                 storage_root=staging,
                 activate=True,
             )
+            if strict_references:
+                obj["figureSnapshot"] = saved["snapshot_ref"]
+                references[key] = saved["snapshot_ref"]
             count += 1
         if count:
             relative = _svg_storage_root(root).relative_to(root).as_posix()
@@ -4899,6 +4917,143 @@ def api_package():
     LOG.info("项目包: %s（%d 素材, %d 脚本）", name, len(assets), len(scripts))
     return jsonify(
         {"name": name, "url": f"/exports/{name}", "assets": len(assets), "missing": missing_now}
+    )
+
+
+def _api_chart_package():
+    """显式v4导出：完整计算INPUT与已核项目资源，不执行用户脚本。"""
+    from .engine import chartpackage, packagebudget
+
+    root = require_project()
+    body = request.get_json(force=True)
+    if not isinstance(body, dict) or not isinstance(body.get("settings", {}), dict):
+        raise engine_documents.DocumentError("invalid_document", "无效的项目包请求")
+    doc = _validate_storage_document(body.get("doc"), require_sources=False)
+    raw_stem = body.get("stem") or (doc.get("project") or {}).get("name") or "package"
+    if not isinstance(raw_stem, str):
+        raise engine_documents.DocumentError("invalid_document", "无效的项目包名称")
+    stem = re.sub(r"[^\w\-一-鿿]+", "_", raw_stem) or "package"
+    # 包直接核验已有显式配对；不经保存的best-effort链丢弃冷引用或启动执行。
+    _freeze_document_sources(doc, capture_figures=False)
+    objects = _doc_objects(doc)
+    ordinary_ids = {
+        obj["fileId"] for obj in objects if obj.get("type") == "panel" and obj.get("chart") is None
+    }
+    panel_ids = sorted({obj["fileId"] for obj in objects if obj.get("type") == "panel"})
+    resources, missing, scripts, runtime_assets = [], set(), set(), []
+    asset_count = 0
+
+    def resource(kind: str, source_id: str):
+        approved = engine_projectenv.contained_path(root, source_id)
+        if approved is None:
+            raise engine_documents.DocumentError(
+                "package_source_outside_project", "项目包资源越出项目", 403
+            )
+        source = Path(approved)
+        if not source.is_file():
+            return None
+        sha256, size = engine_figcapture.hash_file(source)
+        prefix = "scripts/" if kind == "script" else "assets/"
+        return chartpackage.ResourceFile(
+            {
+                "kind": kind,
+                "id": source_id,
+                "path": prefix + source_id,
+                "sha256": sha256,
+                "bytes": size,
+            },
+            source,
+        )
+
+    for source_id in panel_ids:
+        if engine_runtimeasset.is_runtime_id(source_id):
+            info = _resolve_runtime_asset(source_id)
+            descriptor = {"id": source_id, "kind": "runtime"}
+            if info is None:
+                missing.add(source_id)
+            else:
+                descriptor.update(script=info["script"], stem=info["stem"])
+                scripts.add(info["script"])
+            runtime_assets.append(descriptor)
+            continue
+        item = resource("file", source_id)
+        if item is None:
+            # 内容寻址INPUT本身就是计算面板的完整来源，原SVG可以已删除。
+            if source_id in ordinary_ids:
+                missing.add(source_id)
+            continue
+        resources.append(item)
+        asset_count += 1
+        _stem, info = _disk_panel_rel(source_id)
+        if info is not None:
+            scripts.add(info["script"])
+    for script in sorted(scripts):
+        item = resource("script", script)
+        if item is None:
+            missing.add(script)
+        else:
+            resources.append(item)
+
+    engine_config.data_dir().mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix="chart-package-export-", dir=engine_config.data_dir()
+    ) as temporary:
+        snapshots = _PackageFilePlan()
+        snapshot_count = _package_svg_assets(
+            doc, root, snapshots, temporary_root=Path(temporary), strict_references=True
+        )
+        for name, source in snapshots.members.items():
+            sha256, size = engine_figcapture.hash_file(source)
+            resources.append(
+                chartpackage.ResourceFile(
+                    {"kind": "figure_snapshot", "path": name, "sha256": sha256, "bytes": size},
+                    source,
+                )
+            )
+        warnings = sorted(
+            {
+                obj["fileId"]
+                for obj in objects
+                if obj.get("type") == "panel"
+                and obj.get("chart") is None
+                and (obj.get("overrides") or engine_runtimeasset.is_runtime_id(obj["fileId"]))
+                and not obj.get("figureSnapshot")
+            }
+        )
+        missing.update(warnings)
+        metadata = {
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "export_settings": body.get("settings") or {},
+            "missing_at_pack_time": sorted(missing),
+            "scripts": sorted(scripts),
+            "runtime_assets": runtime_assets,
+            "figure_snapshots": snapshot_count,
+        }
+        if warnings:
+            metadata["svg_snapshot_warnings"] = warnings
+        out_dir = project_export_dir()
+        name = f"{stem}_{time.strftime('%m%d_%H%M%S')}_{secrets.token_hex(4)}{engine_brand.PACKAGE_EXT}"
+        try:
+            result = chartpackage.write_chart_package(
+                out_dir / name,
+                doc,
+                project_layout_dir(current_ctx()),
+                budget_factory=packagebudget.output_budget,
+                overwrite=False,
+                resources=resources,
+                metadata=metadata,
+            )
+        except chartpackage.PackageError as exc:
+            return jsonify({"error": exc.detail, "code": exc.code, "params": exc.params}), 422
+    return jsonify(
+        {
+            "name": name,
+            "url": f"/exports/{name}",
+            "assets": asset_count,
+            "missing": sorted(missing),
+            "document_format": engine_documentformat.CHART4,
+            "chart_sources": result["chart_sources"],
+        }
     )
 
 
@@ -18447,6 +18602,12 @@ def _register_chart_document_routes() -> None:
             view_func=adapt(app.view_functions[rule.endpoint]),
             methods=sorted(rule.methods - {"HEAD", "OPTIONS"}),
         )
+    app.add_url_rule(
+        "/api/documents/v4/package",
+        endpoint="documents_v4_package",
+        view_func=adapt(_api_chart_package),
+        methods=["POST"],
+    )
 
 
 _register_chart_document_routes()

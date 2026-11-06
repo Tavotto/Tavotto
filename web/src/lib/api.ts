@@ -2430,18 +2430,28 @@ export interface PackageResult {
   url: string
   assets: number
   missing: string[]
+  document_format?: 'v4'
+  chart_sources?: number
 }
 
-export const createPackage = (
+export const createPackage = async (
   stem: string,
   doc: FigureDocument | ProjectDocument,
   settings: Record<string, unknown>,
-) =>
-  jsonFetch<PackageResult>('/api/package', {
+  opts?: { format?: DocumentFormat; pj?: string | null },
+) => {
+  const init = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ stem, doc, settings }),
-  })
+  }
+  if (!opts) return jsonFetch<PackageResult>('/api/package', init)
+  const result = await documentJsonFetch(opts.format)<PackageResult>('/api/package', init, opts.pj)
+  if (opts.format === 'v4' && result.document_format !== 'v4') {
+    throw new ApiError('Unexpected document format.', 400, { code: 'invalid_document' })
+  }
+  return result
+}
 
 export interface PackageOpenResult {
   /** 旧包 schema 2 / 新包 schema 3；switchDocument 统一迁移 */

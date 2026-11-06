@@ -13,8 +13,10 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import re
+from functools import cache
 from pathlib import Path
 
 import pytest
@@ -112,31 +114,122 @@ def _registry_codes() -> set[str]:
     return out
 
 
-#: 源码里「声明了一个 code」的两种写法：字面量响应，或带 code 的异常。
-_CODE_PATTERNS = (
-    r'"code":\s*"([a-z0-9_]+)"',
-    r'AgentError\(\s*"([a-z0-9_]+)"',
-    r'ConnectionRefused\(\s*"([a-z0-9_]+)"',
-    r'RefreshError\(\s*"([a-z0-9_]+)"',
-    r'AtomicWriteError\(\s*"([a-z0-9_]+)"',
-    r'ConvertError\(\s*"([a-z0-9_]+)"',
-    # ProfileStoreError 既有 `Cls("code", …)` 也有子类里的
-    # `ProfileStoreError.__init__(self, "code", …)`（**刻意不用 super()**：
-    # 那种写法这条门禁看不见，见 profilestore.RevisionConflict 的注释）
-    r'ProfileStoreError(?:\.__init__)?\(\s*(?:self,\s*)?"([a-z0-9_]+)"',
-    # 导出管线（ADR 0031）：请求层的结构化异常 + 作业层的逐项失败
-    r'ExportRequestError\(\s*"([a-z0-9_]+)"',
-    r'error_code\s*=\s*"([a-z0-9_]+)"',
-    r'_fail\(\s*job,\s*"([a-z0-9_]+)"',
-    r'TutorialError\(\s*"([a-z0-9_]+)"',
+#: 沿既有异常漏斗识别构造调用；码仍从实际字面量取，不手工列新增码。
+_ERROR_CLASSES = frozenset(
+    {
+        "AgentError",
+        "ConnectionRefused",
+        "RefreshError",
+        "AtomicWriteError",
+        "ConvertError",
+        "ProfileStoreError",
+        "ExportRequestError",
+        "TutorialError",
+        "DocumentError",
+    }
 )
 
 
-def _declared_codes(text: str) -> set[str]:
-    out: set[str] = set()
-    for pat in _CODE_PATTERNS:
-        out.update(re.findall(pat, text))
+@cache
+def _source_tree(text: str) -> ast.Module:
+    return ast.parse(text)
+
+
+def _name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def _literal_code(node: ast.AST | None) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value if re.fullmatch(r"[a-z0-9_]+", node.value) else None
+    return None
+
+
+def _dict_fields(node: ast.Dict) -> dict[str, ast.AST]:
+    return {
+        key.value: value
+        for key, value in zip(node.keys, node.values, strict=True)
+        if isinstance(key, ast.Constant) and isinstance(key.value, str)
+    }
+
+
+def _raised_codes(tree: ast.Module) -> set[str]:
+    out = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name, index = _name(node.func), 0
+        if name == "__init__" and isinstance(node.func, ast.Attribute):
+            name, index = _name(node.func.value), 1
+        if name in _ERROR_CLASSES:
+            argument = (
+                node.args[index]
+                if len(node.args) > index
+                else next(
+                    (keyword.value for keyword in node.keywords if keyword.arg == "code"), None
+                )
+            )
+        elif name == "_fail" and len(node.args) > 1:
+            argument = node.args[1]
+        else:
+            continue
+        if code := _literal_code(argument):
+            out.add(code)
     return out
+
+
+@cache
+def _declared_codes(text: str) -> set[str]:
+    tree = _source_tree(text)
+    out = _raised_codes(tree)
+    for node in ast.walk(tree):
+        value = None
+        if isinstance(node, ast.Dict):
+            value = _dict_fields(node).get("code")
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(_name(target) == "error_code" for target in targets):
+                value = node.value
+        if code := _literal_code(value):
+            out.add(code)
+    return out
+
+
+def test_declared_codes_are_actual_ast_nodes_not_comments_or_strings():
+    source = '''
+# jsonify({"code": "comment_code"})
+# raise DocumentError("comment_exception", "not executed")
+example = 'AgentError("string_exception")'
+description = """{"code": "string_code"}"""
+raise engine_documents.DocumentError("actual_code", "fallback")
+'''
+    assert _declared_codes(source) == {"actual_code"}
+
+
+@pytest.mark.parametrize("exception", sorted(_ERROR_CLASSES))
+def test_declared_codes_preserve_each_exception_funnel(exception):
+    assert _declared_codes(f'raise engine.{exception}("actual_code", "fallback")') == {
+        "actual_code"
+    }
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ('ProfileStoreError.__init__(self, "profile_code", "fallback")', "profile_code"),
+        ('DocumentError(code="document_code", message="fallback")', "document_code"),
+        ('job.error_code = "assigned_code"', "assigned_code"),
+        ('error_code: str = "annotated_code"', "annotated_code"),
+        ('_fail(job, "job_code", "fallback")', "job_code"),
+        ("jsonify({'code': 'response_code', 'error': 'fallback'})", "response_code"),
+    ],
+)
+def test_declared_codes_keep_literal_response_and_legacy_assignment_shapes(source, expected):
+    assert _declared_codes(source) == {expected}
 
 
 # code → 后端会塞进 params 的键（2026-08-21 起覆盖 app.py 的**全部**字面量
@@ -145,6 +238,13 @@ def _declared_codes(text: str) -> set[str]:
 USER_VISIBLE_CODES = {
     "svg_asset_unsupported": set(),
     "svg_asset_export_unsupported": set(),
+    "chart_engine_mismatch": set(),
+    "chart_model_invalid": set(),
+    "chart_model_unsupported": set(),
+    "chart_render_unsupported": set(),
+    "chart_source_changed": set(),
+    "svg_resource_limit": set(),
+    "svg_scene_invalid": set(),
     "no_project": set(),
     "missing_path": set(),
     "mkdir_failed": {"reason"},
@@ -168,6 +268,8 @@ USER_VISIBLE_CODES = {
     "package_file_missing": set(),
     "package_invalid": {"reason"},
     "package_schema_unsupported": set(),
+    "package_source_outside_project": set(),
+    "figure_snapshot_unavailable": set(),
     "scan_failed": {"reason"},
     # ADR 0075 性能探针：报告形状不对 / 太大（reason = too_large / malformed / schema），落盘失败
     "perf_report_rejected": {"reason"},
@@ -568,34 +670,8 @@ def test_error_field_is_still_there_as_the_fallback():
     `error` 里的中文原文是回退，不能因为有了 code 就删掉：装着旧前端的用户、
     以及 curl 调试的人只看得到它。
     """
-    src = _all_error_sources()
-    for code in USER_VISIBLE_CODES:
-        needle = f'"code": "{code}"'
-        if needle not in src:
-            # 经 AgentError / RefreshError 抛出的那批：原文由 app.py 的唯一
-            # 漏斗补上，这里直接看那个漏斗（漏斗少了 error 原文，整批一起红）
-            raised = any(
-                re.search(rf'{name}(?:\.__init__)?\(\s*(?:self,\s*)?"{code}"', src)
-                for name in (
-                    "AgentError",
-                    "ConnectionRefused",
-                    "RefreshError",
-                    "AtomicWriteError",
-                    "ProfileStoreError",
-                    "ExportRequestError",
-                    "TutorialError",
-                    "ConvertError",
-                )
-            )
-            # 导出作业的逐项失败经 `_legacy_export_response()` 这个唯一漏斗
-            # 转成 JSON，它自己带 error 原文（下面那条用例盯着）
-            raised = raised or code in _registry_codes()
-            assert raised, f"{code} 既没有响应也没有异常"
-            continue
-        idx = src.index(needle)
-        # code 与 error 在同一个 jsonify 里：往前找最近的 jsonify( 起点
-        start = src.rindex("jsonify({", 0, idx)
-        assert '"error"' in src[start:idx], f"{code} 所在的响应里没有 error 原文"
+    failures = _fallback_failures(_all_error_sources(), USER_VISIBLE_CODES, _registry_codes())
+    assert not failures, "\n".join(failures)
 
 
 def test_the_export_funnel_still_carries_the_original_text():
@@ -629,6 +705,35 @@ def test_the_atomic_write_funnel_still_carries_the_original_text():
     block = atomicio[start : start + 300]
     for key in ('"error"', '"code"'):
         assert key in block, f"AtomicWriteError.as_payload() 少了 {key}"
+
+
+def test_the_document_error_funnel_still_carries_the_original_text():
+    from tavotto.engine.documents import DocumentError
+
+    handler = next(
+        node
+        for node in _source_tree(APP.read_text(encoding="utf-8")).body
+        if isinstance(node, ast.FunctionDef) and node.name == "_document_error"
+    )
+    returned_payloads = (
+        node.value.elts[0]
+        for node in ast.walk(handler)
+        if isinstance(node, ast.Return)
+        and isinstance(node.value, ast.Tuple)
+        and len(node.value.elts) == 2
+    )
+    assert any(
+        isinstance(node, ast.Call)
+        and _name(node.func) == "jsonify"
+        and node.args
+        and isinstance(node.args[0], ast.Call)
+        and isinstance(node.args[0].func, ast.Attribute)
+        and node.args[0].func.attr == "as_payload"
+        and _name(node.args[0].func.value) == "exc"
+        for node in returned_payloads
+    ), "DocumentError 漏斗没有交付异常的完整 payload"
+    payload = DocumentError("document_test", "original fallback").as_payload()
+    assert payload == {"error": "original fallback", "code": "document_test"}
 
 
 def test_the_refresh_error_funnel_still_carries_the_original_text():
@@ -722,6 +827,60 @@ NON_UI_CODES = {
 DATA_ONLY_PARAMS = {"ai_script_busy": {"session"}, "eps_annotations_unsupported": {"operation"}}
 
 
+def _response_dicts(text: str):
+    """直接响应 dict 或同词法作用域唯一前置 dict 赋值；复杂数据流不冒充已判。"""
+    tree = _source_tree(text)
+    nodes = list(ast.walk(tree))
+    parents = {child: node for node in nodes for child in ast.iter_child_nodes(node)}
+
+    def scope(node):
+        while node in parents:
+            node = parents[node]
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+                return node
+        return tree
+
+    assignments = {}
+    for node in nodes:
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    assignments.setdefault((scope(node), target.id), []).append(node)
+    for node in nodes:
+        if not isinstance(node, ast.Call) or _name(node.func) != "jsonify" or not node.args:
+            continue
+        payload = node.args[0]
+        if isinstance(payload, ast.Name):
+            preceding = [
+                assignment
+                for assignment in assignments.get((scope(node), payload.id), ())
+                if assignment.lineno < node.lineno
+            ]
+            if len(preceding) != 1:
+                continue
+            payload = preceding[0].value
+        if isinstance(payload, ast.Dict):
+            yield node.lineno, _dict_fields(payload)
+
+
+def _fallback_failures(text: str, codes, registry_codes) -> list[str]:
+    responses: dict[str, list[tuple[int, dict]]] = {}
+    for line, fields in _response_dicts(text):
+        if code := _literal_code(fields.get("code")):
+            responses.setdefault(code, []).append((line, fields))
+    declared = _declared_codes(text)
+    failures = []
+    for code in codes:
+        if code in responses:
+            for line, fields in responses[code]:
+                if "error" not in fields:
+                    failures.append(f"{code} 第 {line} 行的响应里没有 error 原文")
+        elif code not in declared and code not in registry_codes:
+            failures.append(f"{code} 既没有响应也没有异常")
+    return failures
+
+
 def _error_blocks(text: str):
     """每个 `jsonify({"error": ...})` 调用的文本块（到第一个 `})` 为止——
     本仓库的错误响应都是字面量 dict，这个粗粒度够用且改坏会立刻可见。"""
@@ -729,6 +888,95 @@ def _error_blocks(text: str):
         window = text[m.start() : m.start() + 600]
         end = window.find("})")
         yield text[: m.start()].count("\n") + 1, window[: end if end != -1 else 600]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        '{"code": "sample_code", "error": "fallback"}',
+        '{"error": "fallback", "code": "sample_code"}',
+        '{"params": {"nested": {"value": "})"}}, "code": "sample_code", "error": "fallback"}',
+    ],
+)
+def test_fallback_accepts_either_field_order_in_the_same_actual_response(payload):
+    assert _fallback_failures(f"jsonify(\n{payload}\n)", {"sample_code"}, set()) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'jsonify({"code": "sample_code"}); other = {"code": "sample_code", "error": "elsewhere"}',
+        'jsonify({"code": "sample_code"}); jsonify({"code": "sample_code", "error": "elsewhere"})',
+        'jsonify({"code": "sample_code", "params": {"error": "nested"}})',
+        '# jsonify({"code": "sample_code", "error": "comment"})\njsonify({"code": "sample_code"})',
+    ],
+)
+def test_fallback_cannot_borrow_an_error_from_another_dict_or_comment(source):
+    failures = _fallback_failures(source, {"sample_code"}, {"sample_code"})
+    assert len(failures) == 1 and "sample_code" in failures[0]
+
+
+def test_fallback_keeps_exception_and_registry_paths_without_literal_responses():
+    source = 'raise documents.DocumentError("document_code", "fallback")'
+    assert _fallback_failures(source, {"document_code", "registry_code"}, {"registry_code"}) == []
+    assert _fallback_failures('# DocumentError("missing_code", "comment")', {"missing_code"}, set())
+
+
+def test_response_dict_scanner_uses_actual_dict_fields_in_any_order():
+    source = """
+# jsonify({"error": "comment"})
+description = 'jsonify({"error": "string"})'
+jsonify({"code": "sample_code", "error": "fallback"})
+jsonify({"params": {"error": "nested"}})
+jsonify({"error": "missing stable code"})
+"""
+    blocks = list(_response_dicts(source))
+    assert len(blocks) == 3
+    assert set(blocks[0][1]) == {"code", "error"}
+    assert set(blocks[1][1]) == {"params"}
+    assert set(blocks[2][1]) == {"error"}
+
+
+def test_fallback_resolves_the_same_function_unique_preceding_payload_dict():
+    source = """
+def response():
+    body = {"code": "sample_code", "error": "fallback"}
+    return jsonify(body)
+"""
+    assert _fallback_failures(source, {"sample_code"}, set()) == []
+    assert len(list(_response_dicts(source))) == 1
+
+
+def test_fallback_does_not_borrow_a_payload_assignment_from_another_function():
+    source = """
+def other():
+    body = {"code": "sample_code", "error": "elsewhere"}
+def response():
+    body = {"code": "sample_code"}
+    return jsonify(body)
+"""
+    assert len(_fallback_failures(source, {"sample_code"}, set())) == 1
+
+
+def test_response_scanner_does_not_claim_to_resolve_ambiguous_assignments():
+    source = """
+def response(choice):
+    body = {"code": "sample_code", "error": "first"}
+    if choice:
+        body = {"code": "sample_code"}
+    return jsonify(body)
+"""
+    assert list(_response_dicts(source)) == []
+
+
+def test_nested_capability_and_registered_status_codes_do_not_imply_http_errors():
+    source = """
+capabilities.append({"id": "figure.svg", "code": "capability_code"})
+def registration():
+    return {"registered": False, "code": "registration_code"}
+"""
+    assert _declared_codes(source) == {"capability_code", "registration_code"}
+    assert list(_response_dicts(source)) == []
 
 
 def test_every_error_response_carries_a_stable_code():

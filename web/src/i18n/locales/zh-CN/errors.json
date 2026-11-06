@@ -27,7 +27,13 @@
     "refreshReconstruction": "更新重画对照"
   },
   "backend": {
-    "chart_render_unsupported": "当前宿主尚未支持计算图表的配对渲染。请在本机应用中编辑这张图。",
+    "chart_engine_mismatch": "当前绘图环境与计算图表要求不一致。请使用匹配的绘图环境后重试。",
+    "chart_model_invalid": "计算图表的模型或来源引用无效，无法应用本次操作。",
+    "chart_model_unsupported": "当前不支持这份计算图表的模型或编辑方式。",
+    "chart_render_unsupported": "当前无法完整渲染这张计算图表。",
+    "chart_source_changed": "计算图表的源文件已变化，本次操作未应用。请恢复匹配的源文件或重新导入。",
+    "svg_resource_limit": "SVG 或计算图表超过资源预算，无法完成本次操作。",
+    "svg_scene_invalid": "无法读取这份 SVG 的图形内容。请检查文件是否为有效的独立 SVG。",
     "chart_render_pair_missing": "计算图表没有返回同一版的图像与几何，暂未应用本次渲染。",
     "artifact_source_unavailable": "当前操作无法使用所选源图模式，未应用本次修改。请保留原图显示。",
     "ai_agent_disabled": "{{agent}} 已在设置中关闭。在「改图助手」里打开后再试。",
@@ -181,6 +187,8 @@
     "package_file_missing": "缺少上传文件",
     "package_invalid": "不是有效的项目包：{{reason}}",
     "package_schema_unsupported": "项目包里的排版既不是 schema 2 也不是 schema 3",
+    "package_source_outside_project": "项目包引用了项目目录以外的资源，未生成项目包。请先将资源移入项目。",
+    "figure_snapshot_unavailable": "项目包引用的 Figure 配对或原件无法核验，未生成项目包。请恢复缺失资源或重新生成这张图。",
     "permission_denied": "无权限读取：{{path}}",
     "ppi_out_of_range": "分辨率 {{value}} 超出范围，应在 {{min}} 到 {{max}} 之间。",
     "preparation_not_found": "没有这个准备任务（或它属于别的项目）：{{id}}",

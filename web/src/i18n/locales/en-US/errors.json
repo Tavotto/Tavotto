@@ -27,7 +27,13 @@
     "refreshReconstruction": "Update redraw comparison"
   },
   "backend": {
-    "chart_render_unsupported": "This host does not support paired chart rendering yet. Edit this chart in the local app.",
+    "chart_engine_mismatch": "The drawing environment does not match this chart's requirements. Use a matching environment and try again.",
+    "chart_model_invalid": "The chart model or source reference is invalid. This operation could not be applied.",
+    "chart_model_unsupported": "This chart model or editing mode is not supported.",
+    "chart_render_unsupported": "This chart cannot currently be rendered in full.",
+    "chart_source_changed": "The chart's source file has changed. This operation was not applied. Restore the matching source or import it again.",
+    "svg_resource_limit": "The SVG or chart exceeds the resource budget. This operation could not be completed.",
+    "svg_scene_invalid": "The SVG's drawing content could not be read. Check that the file is a valid self-contained SVG.",
     "chart_render_pair_missing": "The chart response did not include paired image and geometry. This render was not applied.",
     "artifact_source_unavailable": "Selected-source mode cannot complete this operation. No edit was applied; keep the original view.",
     "ai_agent_disabled": "{{agent}} is turned off in settings. Turn it back on under Figure assistants.",
@@ -181,6 +187,8 @@
     "package_file_missing": "No file was uploaded",
     "package_invalid": "Not a valid project package: {{reason}}",
     "package_schema_unsupported": "The layout in this package is neither schema 2 nor schema 3",
+    "package_source_outside_project": "A package resource is outside the project directory. No package was created. Move the resource into the project first.",
+    "figure_snapshot_unavailable": "A referenced Figure snapshot or its original could not be verified. No package was created. Restore the missing resource or regenerate the figure.",
     "permission_denied": "No permission to read: {{path}}",
     "ppi_out_of_range": "Resolution {{value}} is out of range — use a value between {{min}} and {{max}}.",
     "preparation_not_found": "No such preparation task (or it belongs to another project): {{id}}",

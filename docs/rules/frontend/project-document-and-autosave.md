@@ -25,9 +25,10 @@ order: 200
   undo 栈（canvasSessions）与 UI 会话（`store/canvasSession.ts`）。
   标签页 openTabs 按 documentId 存本机。legacy缺省仍保存schema3，v4显式保存schema4；versions按所选格式隔离，包安装另行验收，不能借旧package入口读写v4。
 - **计算项目格式（ADR0166）**：只有一个documentStore和对象模型，运行时`documentFormat: legacy | v4`，格式闭集消费后端`engine/documentformat.py`。首次出现`chart`或`chartSource`字段（包括坏状态）经同一入口升级为新working documentId，保留当前画布/对象身份、编辑及undo，不覆盖旧文件；事务内首次出现先延迟到成功结束，取消不升级。撤销计算编辑不把v4降回legacy。API路径、本机缓存、revision、owner、保存队列和projectFile键均消费`lib/documentFormat.ts`；省略格式参数时旧URL/键/调用形状不变。
+- **计算项目包导出**：沿原TopBar项目菜单入口，完整深拷贝所有画布/附件/原序编辑。createPackage旧三参保持旧wire，显式v4固定pj并走真实v4端点，必须收到document_format='v4'，不降回旧接口。项目/格式/workingId/loadSeq/操作序任一变化后丢弃迟到成功或错误状态；v4 missing非空准确提示包已生成但需补齐资源，旧状态不改。不复用旧relink处理计算附件，也不把导出当作安装。看护`lib/packageApi.test.ts`、`components/topBarPackageExport.test.tsx`。
 - **附件保存回执**：`chart_sources`是五字段位置数组`{canvas_index,object_index,canvas_id,panel_id,chart_source}`。发送上下文捕获实际深拷贝正文、pj/workingId/loadSeq/format，响应只在同上下文按数组位置和原id核对后合入，并比较完整来源/模型/原序overrides/旧ref。重复位置整份拒合入；位置重排或请求后输入改变只跳过受影响项。不按可重复panelId建Map、不新增旧文档ID唯一约束。回执更新沿派生入口，不加undo、不触发循环autosave；正文成功但回执过期不伪造I/O失败。
 - **跨格式冷发现**：两格式的显式GET `include_open_intent=1`须得到同一snapshot，才依共享latest自动恢复；有界重读后仍混代、stale或不可用则沿恢复门needs_user，不能按at/mtime选新旧。所有格式的明确打开/repair共用一条发送队列；自动确认用repair，只确认/晋升现意图而不分新sequence，superseded/unconfirmed不假ack。旧3含计算字段升级fork只在成功安装且令牌仍当前时记新v4意图一次。备选项以(format,id)寻址，不合并同id不同格式。
-- **时间线**：仍只捕获并恢复当时活动画布；v4在持久化边界用单canvas项目封装，不从完整多画布项目猜一个覆盖当前画布。缺thumb按需获取该版本正文和校验附件回建PNG，列表草图不携带完整数据模型。命名文件绑定当前仍使用既有会话/本机副本；清本机缓存后的后端关联迁移是ADR0108待兑现项，不能按标题猜目标或把本批正文冷恢复称作绑定已持久化。
+- **时间线**：仍只捕获并恢复当时活动画布；v4在持久化边界用单canvas项目封装，不从完整多画布项目猜一个覆盖当前画布。缺thumb按需获取该版本正文和校验附件回建PNG，列表草图不携带完整数据模型。命名文件绑定沿ADR0096/0108后端合同持久化，冷开从正式关联恢复，不能按标题猜目标；时间线正文、命名关联及项目包安装分别验收。
   看护：`lib/documentFormat.test.ts`、`lib/documentFormatApi.test.ts`、`lib/documentFormatNamespaces.test.ts`、`lib/chartSourceReceipts.test.ts`、`store/documentFormatPersistence.test.ts`、`store/documentRestore.v4.test.ts`、`store/projectSave.v4.test.ts`、`lib/timelineCheckpoint.v4.test.ts`、`components/LayoutDialog.v4.test.tsx`、`components/VersionDialog.v4.test.tsx`。
 - **图幅记号 `PanelObject.figureFrame`（ADR 0098 §三）**：缺席 = 升级前放上排版的面板。读档
   （`migrateToProject`）、布局版本恢复（`restoreLayoutVersion`）与剪贴板粘贴（`materializePaste`，

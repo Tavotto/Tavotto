@@ -813,6 +813,7 @@
     "packageFailed": "无法打包。{{error}}",
     "packageOpenFailed": "无法打开项目包。{{error}}",
     "packageOpened": "已打开项目包（{{createdAt}}），素材全部就位",
+    "packagedIncomplete_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材。恢复前请补齐。",
     "packaged_other": "已生成项目包 {{name}}（{{count}} 个素材）",
     "pasteNothing": "没有可粘贴的对象。缺失素材的对象已跳过。",
     "pastedWithSkips_other": "已粘贴 {{count}} 个对象，跳过 {{skipped}} 张缺失素材的图。{{undo}} 可撤销。",
