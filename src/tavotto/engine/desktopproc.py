@@ -62,6 +62,7 @@ from pathlib import Path
 from . import (
     bridge,
     config,
+    declaredinputs,
     envlease,
     execspec,
     launcher,
@@ -117,6 +118,8 @@ class OwnedLaunch:
     #: 「这份计划是不是已被取消 / 取代」的判定（`PreparationService.is_cancelled`），在 `reserve` / `begin_start` / Popen 之前
     #: 最后一次核对，与代次、序号是同一处判定（注册表 `_refuse_if_closed`）。None = 不核
     cancelled: object | None = None
+    #: Private exact-scope metadata observed by preparation; never argv or public state.
+    input_declaration_state: dict | None = dataclasses.field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         spec = self.spec
@@ -672,6 +675,18 @@ def start(
         raise RunError(runcodes.DESKTOP_RUN_LAUNCH_INVALID, reason="cwd 不是一个目录")
     if not os.path.isfile(spec.interpreter):
         raise RunError(runcodes.INTERPRETER_NOT_EXECUTABLE, interpreter=spec.interpreter)
+    try:
+        input_payload = declaredinputs.payload_for_native(
+            spec, expected_selection=launch.input_declaration_state
+        )
+    except declaredinputs.DeclaredInputsConflict:
+        raise
+    except declaredinputs.DeclaredInputsError as exc:
+        if launch.input_declaration_state is not None:
+            raise declaredinputs.DeclaredInputsConflict(
+                "Input declaration is no longer available for this launch"
+            ) from exc
+        input_payload = {}
     # 租约键 = 会话 id：每次启动唯一（launch_id + 随机后缀），不同所有者之间互相删不掉对方的租约
     # 完整 128 位随机（不截断）：同一 launch_id 反复复用时也不会生日碰撞回到旧目录 / 旧回执身份
     session_id = f"native-owned-{launch.launch_id}-{uuid.uuid4().hex}"
@@ -774,6 +789,7 @@ def start(
                 pol.connect_timeout,
                 watch=_child_watch(proc),
                 timeout_code=runcodes.DESKTOP_RUN_CONNECT_TIMEOUT,
+                **({"ack_extra": input_payload} if input_payload else {}),
             )
         except BaseException:
             owner.arm()  # 握手没成：没有 reader 也没有登记，收尾已完整，放行回调再取消

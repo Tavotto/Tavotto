@@ -258,6 +258,7 @@ class Capture:
         self._graph, self._stamps = _snapshot(candidate)
         self._execution_id = None
         self._invalid = False
+        self._finished = False
 
     def entered(self, execution_id):
         if self._execution_id is not None or not executionfact.valid_id(execution_id):
@@ -280,12 +281,41 @@ class Capture:
         if graph != self._graph or stamps != self._stamps:
             self._invalid = True
             return None
+        self._finished = True
         return {
             "version": VERSION,
             "execution_id": self._execution_id,
             "revision": _revision(graph),
             "declaration": copy.deepcopy(graph),
         }
+
+    def resume(self, execution_id, source_sha256):
+        """Continue this same run lineage; never establish a newer baseline.
+
+        A barrier can be released only after a successful finish. Changes while
+        it was paused invalidate the whole lineage, even if restored later.
+        """
+        if (
+            self._invalid
+            or not self._finished
+            or execution_id == self._execution_id
+            or not executionfact.valid_id(execution_id)
+            or self.finish(source_sha256) is None
+        ):
+            self._invalid = True
+            return False
+        self._execution_id = execution_id
+        self._finished = False
+        return True
+
+
+def current_public_fact(candidate):
+    """Current approved bytes for comparison, without inventing execution facts."""
+    try:
+        graph, _ = _snapshot(validate_candidate(candidate))
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+    return {"version": VERSION, "revision": _revision(graph)}
 
 
 def begin(

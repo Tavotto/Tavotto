@@ -127,6 +127,10 @@ order: 190
   替换 `pool.build_owned`；不另建状态机。省略 `execution` = safe，逐字节不变。
 - 脚本自己的异常以 `script_error` + 真实 traceback 收场（进程放行跑完、退出码保留），不吞；native 路径不自动修复缺依赖。
 
+## 显式输入声明的native捕获
+
+显式输入的native捕获复用`inputdeclaration`唯一freezer：desktop按实际cwd与原运行配置匹配，terminal只在正面已知无参数且项目/入口/cwd匹配时可取得候选；未知参数不猜配置。父侧在原认证ACK中传私有候选，`nativerelay`只搬运调用方提供的通用握手字段，不解析引擎语义；无声明ACK/argv/事件保持。runner在实际源码读取前begin、绑定真实编译字节与执行id，每次barrier在引擎读取前finish，成功continue只resume原baseline，变化后不能重新授证。`NativeSession`只在首次进入同execution_id/snapshot_epoch的屏障保存私有fact，释放/EOF沿原状态机撤当前资格；getter不查当前磁盘。build与render/continue共用原Figure锁；仅有正证的本地build响应加原执行id，回执拒绝旧响应搭配新屏障。两条原有native回执入口复用同一投影，缺省JSON/identity不变；full graph不进SSE/公开状态。看护`tests/bridge/test_bridge_declared_inputs.py`、`tests/native/test_native_declared_inputs.py`、`tests/test_declared_input_native_launch.py`。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。

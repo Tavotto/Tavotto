@@ -90,6 +90,8 @@
 
 ## 后果
 
+- native输入证明与safe共用stdlib捕获权威，绑定实际读取/编译字节、执行起点、屏障与初始续跑谱系；认证ACK只传私有候选，未知参数不推配置。旧无声明回执/argv/事件保持，屏障释放与迟到build不能把新事实贴旧图。完整资源可携带与全通道依赖仍须单独证明。
+
 - 新模块：worker 侧脚手架命令（engine/，纯 stdlib import 链不破坏）、父侧场景替换器与 SVG→IR 翻译器（rendercore/）。
 - SG02 冻结 ChartModel/Binding/SourceDescriptor schema 与错误码；SG03 扩展安全静态结构接受集；
   SG05 场景身份与坐标链；SG06 绑定流程；SG07 最小闭环（实验三即其原型）。

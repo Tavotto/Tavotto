@@ -1,7 +1,7 @@
 """父进程的显式输入选择；本机批准与 worker 的实际捕获事实分开。
 
-本模块不执行脚本、不读取资源内容、不展开 prefix。只有匹配真实 safe spec 的
-声明才生成私有 candidate；公开执行事实由 worker 在真实 build 边界产生。
+本模块不执行脚本；只有匹配真实执行上下文的声明才生成私有 candidate。
+当前内容比对复用唯一 freezer，不能产生新的执行事实。
 """
 
 from __future__ import annotations
@@ -19,11 +19,11 @@ from pathlib import Path
 from . import (
     atomicio,
     config,
-    documentpackage,
     execspec,
     figcapture,
     inputremap,
     layoutsession,
+    packagemembers,
     projectcopy,
     projectenv,
     runconfig,
@@ -67,8 +67,8 @@ def _text(value, *, empty=False):
 def _portable(value):
     value = _text(value)
     try:
-        key = documentpackage.project_member_key("assets/" + value)
-    except documentpackage.PackageError as exc:
+        key = packagemembers.project_member_key("assets/" + value)
+    except packagemembers.PackageError as exc:
         raise DeclaredInputsError("Input identity must be project relative and portable") from exc
     return value, key
 
@@ -86,6 +86,31 @@ def _scope(script, cwd_mode, run_config):
 
 def _scope_key(scope):
     return scope["script"], scope["cwd_mode"], scope["run_config"]
+
+
+def _row_revision(row):
+    return (
+        "sha256:" + hashlib.sha256(atomicio.dumps_json(row)).hexdigest()
+        if row is not None
+        else None
+    )
+
+
+def scope_selection(root, *, script, cwd_mode, run=None, execution="safe"):
+    """A private, exact-scope metadata observation, including observed absence."""
+    if execution not in (execspec.PROFILE_SAFE, execspec.PROFILE_NATIVE):
+        raise DeclaredInputsError("Unknown input declaration execution profile")
+    if run is not None and (not isinstance(run, execspec.RunSelection) or run.sensitive):
+        return {"scope": None, "revision": None}
+    if execution == execspec.PROFILE_NATIVE and cwd_mode == execspec.CWD_SANDBOX:
+        cwd_mode = execspec.CWD_PROJECT
+    scope = _scope(script, cwd_mode, run.config_id if run is not None else None)
+    data, _ = _read(root)
+    row = next((item for item in data["declarations"] if item["scope"] == scope), None)
+    return {
+        "scope": scope,
+        "revision": _row_revision(row),
+    }
 
 
 def _strings(raw, *, portable=False, deduplicate=True):
@@ -383,14 +408,22 @@ def payload_for(worker):
             return {}
         if selected.sensitive or selected.argv != spec.argv:
             return {}
-    rules = [dict(rule) for rule in spec.input_remap]
+    return {
+        "input_declaration": _candidate(
+            root, scope, row, rules=spec.input_remap, source=spec.script_source
+        )
+    }
+
+
+def _candidate(root, scope, row, *, rules=(), source=None, native=False):
+    rules = [dict(rule) for rule in rules]
     if figcapture.clean_remap_rules(rules) != rules:
         raise DeclaredInputsError("Worker remap rules are malformed")
     files = [{"id": identity, "path": _file(root, identity)} for identity in row["files"]]
     prefixes, mappings = [], []
     for selected in row["remaps"]:
         rule = {key: selected[key] for key in ("kind", "from", "to")}
-        if rules.count(rule) != 1:
+        if not native and rules.count(rule) != 1:
             raise DeclaredInputsError("Worker remap no longer matches the approved declaration")
         approved = projectenv.contained_path(rule["to"], rule["to"])
         if approved is None or approved != selected["path"]:
@@ -400,8 +433,10 @@ def payload_for(worker):
         target = files if rule["kind"] == figcapture.REMAP_FILE else prefixes
         if item not in target:
             target.append(item)
-        mappings.append({"kind": rule["kind"], "from": rule["from"], "id": identity})
-    source = spec.script_source
+        if not native:
+            # Native does not apply safe remapping rules. Its explicitly
+            # approved targets are evidence resources, never claimed aliases.
+            mappings.append({"kind": rule["kind"], "from": rule["from"], "id": identity})
     if source is None:
         source = projectenv.contained_path(root, scope["script"])
     elif os.path.isabs(source):
@@ -423,4 +458,111 @@ def payload_for(worker):
         "rules": rules,
         "limits": {"max_files": projectcopy.MAX_FILES, "max_bytes": projectcopy.MAX_BYTES},
     }
-    return {"input_declaration": inputdeclaration.validate_candidate(copy.deepcopy(candidate))}
+    return inputdeclaration.validate_candidate(copy.deepcopy(candidate))
+
+
+def payload_for_native(spec, *, run=None, cwd_mode=None, expected_selection=None):
+    """Approved candidate for actual native cwd and positively known arguments.
+
+    Terminal nonempty argv has no verified portable run reference. Multiple
+    compatible declarations need an explicit selection instead of guessing.
+    """
+    if (
+        not isinstance(spec, execspec.ExecutionSpec)
+        or spec.profile != execspec.PROFILE_NATIVE
+        or spec.target_kind != execspec.TARGET_SCRIPT
+    ):
+        return {}
+    if spec.run_config:
+        if spec.owner != execspec.OWNER_DESKTOP:
+            return {}
+        try:
+            selected = runconfig.get(spec.project_root, spec.run_config, script=spec.target)
+        except runconfig.RunConfigError:
+            return {}
+        if selected.sensitive or selected.argv != spec.argv:
+            return {}
+        if run is not None and (
+            not isinstance(run, execspec.RunSelection)
+            or run.sensitive
+            or run.config_id != spec.run_config
+            or run.argv != spec.argv
+        ):
+            return {}
+    elif spec.argv or run is not None:
+        return {}
+    if expected_selection is not None:
+        if not isinstance(expected_selection, dict) or set(expected_selection) != {
+            "scope",
+            "revision",
+        }:
+            raise DeclaredInputsError("Invalid input declaration selection")
+        expected_scope = expected_selection["scope"]
+        if expected_scope is None:
+            return {}
+        if not isinstance(expected_scope, dict):
+            raise DeclaredInputsError("Invalid input declaration scope")
+        cwd_mode = expected_scope.get("cwd_mode")
+    if cwd_mode == execspec.CWD_SANDBOX:
+        cwd_mode = execspec.CWD_PROJECT
+    modes = (
+        (cwd_mode,) if cwd_mode is not None else (execspec.CWD_PROJECT, execspec.CWD_PROJECT_ROOT)
+    )
+    scopes = []
+    for mode in modes:
+        if mode not in (execspec.CWD_PROJECT, execspec.CWD_PROJECT_ROOT):
+            continue
+        scope = _scope(spec.target, mode, spec.run_config or None)
+        expected_cwd = execspec.desktop_cwd(spec.project_root, spec.target, mode)
+        if os.path.normcase(os.path.abspath(spec.cwd)) == os.path.normcase(
+            os.path.abspath(expected_cwd)
+        ):
+            scopes.append(scope)
+    data, _ = _read(spec.project_root)
+    if expected_selection is not None:
+        if expected_scope not in scopes:
+            raise DeclaredInputsConflict("Native input declaration scope changed")
+        row = next((r for r in data["declarations"] if r["scope"] == expected_scope), None)
+        revision = _row_revision(row)
+        if revision != expected_selection["revision"]:
+            raise DeclaredInputsConflict("Native input declaration selection changed")
+        rows = [row] if row is not None else []
+    else:
+        rows = [row for row in data["declarations"] if row["scope"] in scopes]
+    if len(rows) != 1:
+        return {}
+    row = rows[0]
+    return {"input_declaration": _candidate(spec.project_root, row["scope"], row, native=True)}
+
+
+def matches_current_public(root, *, script, cwd_mode, run, captured_inputs, execution="safe"):
+    """Compare current approved bytes with a past actual capture's public hash."""
+    from . import inputdeclaration
+
+    checked = inputdeclaration.validate_public_fact(captured_inputs)
+    if checked is None:
+        return False
+    try:
+        selection = scope_selection(
+            root, script=script, cwd_mode=cwd_mode, run=run, execution=execution
+        )
+        if selection["scope"] is None or selection["revision"] is None:
+            return False
+        if run is not None:
+            actual = runconfig.get(root, run.config_id, script=script)
+            if actual.sensitive or actual.argv != run.argv:
+                return False
+        data, _ = _read(root)
+        row = next((r for r in data["declarations"] if r["scope"] == selection["scope"]), None)
+        if row is None or _row_revision(row) != selection["revision"]:
+            return False
+        candidate = _candidate(
+            root,
+            selection["scope"],
+            row,
+            rules=inputremap.rules_for(root) if execution == execspec.PROFILE_SAFE else (),
+            native=execution == execspec.PROFILE_NATIVE,
+        )
+        return inputdeclaration.current_public_fact(candidate) == checked
+    except (DeclaredInputsError, ValueError, OSError, TypeError):
+        return False

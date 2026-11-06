@@ -68,7 +68,17 @@ import threading
 import time
 from pathlib import Path, PurePosixPath
 
-from . import envlease, executionfact, figcapture, nativerelay, patchspec, pool, runcodes
+from . import (
+    envlease,
+    execspec,
+    executionfact,
+    figcapture,
+    inputdeclaration,
+    nativerelay,
+    patchspec,
+    pool,
+    runcodes,
+)
 from .runcodes import RunError
 
 #: 带外事件的键——**与 `bridge_runner.EVENT_KEY` 严格同源**。
@@ -418,6 +428,9 @@ class NativeSession:
         self.execution_id: str | None = None
         self.execution_script: str | None = None
         self.execution_started_ns = 0
+        # Private evidence belongs to one existing barrier epoch. Availability
+        # follows that state machine, not a second release/EOF flag.
+        self._barrier_captured_inputs: tuple[int, str, dict] | None = None
         # Application-owned, public invalidation projection; no launch spec/argv.
         self.figure_snapshot_invalidation: dict | None = None
         self.rev = 0
@@ -532,6 +545,7 @@ class NativeSession:
                 if self.state != BARRIER:
                     self.snapshot_epoch += 1
                     self._barrier_snapshot_epoch = self.snapshot_epoch
+                    self._barrier_captured_inputs = self._captured_barrier_fact(frame)
             stems = frame.get("stems") or []
             facts = frame.get("figure_facts")
             if isinstance(facts, list):
@@ -632,6 +646,58 @@ class NativeSession:
     def note_hello(self, hello: dict) -> None:
         """收到 Bridge Runner 转发过来的握手帧——用户的 Python 起来了。"""
         self._set_state(WAITING_FOR_FIGURE, process_pid=_as_int(hello.get("pid")))
+
+    def _captured_barrier_fact(self, frame: dict) -> tuple[int, str, dict] | None:
+        """Validate a newly entered barrier, with ``_lock`` held; never read paths."""
+        if (
+            self.target_kind != execspec.TARGET_SCRIPT
+            or not executionfact.valid_id(self.execution_id)
+            or frame.get("execution_id") != self.execution_id
+            or not self.execution_script
+            or frame.get("script") != self.execution_script
+        ):
+            return None
+        fact = inputdeclaration.validate_fact(
+            frame.get("captured_inputs"), execution_id=self.execution_id
+        )
+        if fact is None:
+            return None
+        scope = fact["declaration"]["scope"]
+        if scope["script"] != self.execution_script or scope["cwd_mode"] not in (
+            execspec.CWD_PROJECT,
+            execspec.CWD_PROJECT_ROOT,
+        ):
+            return None
+        spec = self.spec
+        if isinstance(spec, execspec.ExecutionSpec) and spec.owner == execspec.OWNER_DESKTOP:
+            root, cwd, run_config = spec.project_root, spec.cwd, spec.run_config or None
+        else:
+            if self.owned is not None or self.arg_count != 0:
+                return None
+            root, cwd, run_config = self.project_root, self.cwd, None
+        if scope["run_config"] != run_config or not all(os.path.isabs(p) for p in (root, cwd)):
+            return None
+        expected_cwd = execspec.desktop_cwd(root, self.execution_script, scope["cwd_mode"])
+        if os.path.normcase(os.path.abspath(expected_cwd)) != os.path.normcase(
+            os.path.abspath(cwd)
+        ):
+            return None
+        return self.snapshot_epoch, self.execution_id, fact
+
+    def captured_inputs_for_receipt(self, *, script: str) -> dict | None:
+        """Read frozen current-barrier evidence, never a current declaration or authorization."""
+        with self._lock:
+            slot = self._barrier_captured_inputs
+            if (
+                self.state != BARRIER
+                or self._barrier_snapshot_epoch != self.snapshot_epoch
+                or slot is None
+                or slot[0] != self.snapshot_epoch
+                or slot[1] != self.execution_id
+                or script != self.execution_script
+            ):
+                return None
+            return copy.deepcopy(slot[2])
 
     # ------------------------------------------------------------------
     # 脚本的提问（P07，ADR 0126）：桌面拥有的进程里 input / stdin / getpass
@@ -849,14 +915,30 @@ class NativeSession:
         return d
 
     def ensure_built(self) -> dict:
-        resp = self._request({"cmd": "build"}, BUILD_TIMEOUT)
-        self.built = True
-        self.last_build = resp
-        self.descriptors = list(resp.get("descriptors") or [])
-        self.figure_facts = list(resp.get("figure_facts") or [])
-        self.stems = list((resp.get("stems") or {}).keys())
-        self.script_error = resp.get("script_error") or self.script_error
-        return resp
+        with self._figure_lock:
+            with self._lock:
+                epoch, execution_id = self.snapshot_epoch, self.execution_id
+                script = self.execution_script
+            resp = self._request({"cmd": "build"}, BUILD_TIMEOUT)
+            fact = self.captured_inputs_for_receipt(script=script or "")
+            with self._lock:
+                if (
+                    fact is not None
+                    and self.state == BARRIER
+                    and self.snapshot_epoch == epoch
+                    and self._barrier_snapshot_epoch == epoch
+                    and self.execution_id == execution_id
+                ):
+                    # Local response identity, never a new wire field. A late
+                    # receipt must not borrow the next barrier's capture fact.
+                    resp = {**resp, "execution_id": execution_id}
+                self.built = True
+                self.last_build = resp
+                self.descriptors = list(resp.get("descriptors") or [])
+                self.figure_facts = list(resp.get("figure_facts") or [])
+                self.stems = list((resp.get("stems") or {}).keys())
+                self.script_error = resp.get("script_error") or self.script_error
+            return resp
 
     def publish_built(self) -> None:
         """build 出来的描述符已经绑上活路由：把带描述符的新快照推给界面（状态不变，序号 +1）。

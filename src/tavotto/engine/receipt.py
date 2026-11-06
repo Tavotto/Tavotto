@@ -529,7 +529,19 @@ def from_worker(
     latest_id = getattr(worker, "execution_id", None) or getattr(
         worker, "last_build_execution_id", None
     )
-    if (
+    if spec.profile == execspec.PROFILE_NATIVE:
+        # Native continues can reach a newer barrier after this response was
+        # returned. Only an explicitly stamped response belongs to this fact.
+        if isinstance(build_resp, dict) and build_resp.get("execution_id") == latest_id:
+            captured_inputs = _native_captured_inputs(
+                worker,
+                spec,
+                script=spec.target,
+                runtime=runtime,
+                rejected=rejected,
+                pid_check=pid_check,
+            )
+    elif (
         runtime is not None
         and rejected is None
         and pid_check in (PID_CHECK_OK, PID_CHECK_LAUNCHER)
@@ -601,6 +613,37 @@ def worker_pid(worker) -> int | None:
 NATIVE_ARGV_PLACEHOLDER = "<argv>"
 
 
+def _native_captured_inputs(session, spec, *, script, runtime, rejected, pid_check):
+    """One projection for both existing native receipt entry points."""
+    reader = getattr(session, "captured_inputs_for_receipt", None)
+    if not (
+        callable(reader)
+        and runtime is not None
+        and rejected is None
+        and pid_check in (PID_CHECK_OK, PID_CHECK_LAUNCHER)
+        and spec.target_kind == execspec.TARGET_SCRIPT
+        and executionfact.valid_id(getattr(session, "execution_id", None))
+    ):
+        return None
+    from . import inputdeclaration
+
+    fact = inputdeclaration.validate_fact(reader(script=script), execution_id=session.execution_id)
+    if fact is None:
+        return None
+    scope = fact["declaration"]["scope"]
+    mode = scope["cwd_mode"]
+    if (
+        scope["script"] == script
+        and scope["run_config"] == (spec.run_config or None)
+        and mode in (execspec.CWD_PROJECT, execspec.CWD_PROJECT_ROOT)
+        and (spec.owner == execspec.OWNER_DESKTOP or not spec.argv)
+        and os.path.normcase(os.path.abspath(spec.cwd))
+        == os.path.normcase(os.path.abspath(execspec.desktop_cwd(spec.project_root, script, mode)))
+    ):
+        return inputdeclaration.public_fact(fact)
+    return None
+
+
 def from_native_session(session, script: str, *, grant: dict | None = None) -> ExecutionReceipt:
     """`nativesession.NativeSession` → 回执（U08，ADR 0067：执行侧源解析器对 native 面板也要回执）。
 
@@ -638,6 +681,9 @@ def from_native_session(session, script: str, *, grant: dict | None = None) -> E
     descriptors = tuple(
         d for d in (getattr(session, "descriptors", None) or []) if isinstance(d, dict)
     )
+    captured_inputs = _native_captured_inputs(
+        session, spec, script=script, runtime=runtime, rejected=rejected, pid_check=pid_check
+    )
     return ExecutionReceipt(
         profile=execspec.PROFILE_NATIVE,
         control_plane=CONTROL_PLANE_NATIVE,
@@ -657,6 +703,7 @@ def from_native_session(session, script: str, *, grant: dict | None = None) -> E
             + ":"
             + str(getattr(session, "snapshot_epoch", 0))
         ),
+        captured_inputs=captured_inputs,
     )
 
 

@@ -12634,6 +12634,8 @@ def _native_preparation_runner(pl, before_retry=None):
     `input()` 由界面经 `/api/native/sessions/<id>/input` 作答，这里不看）→ build 一次 → 绑活图路由。
     不重试、不换环境（`before_retry` 不用）：原环境的缺包 / 激活问题是上层准备的输入，适配器不猜包。
     """
+    from .engine import declaredinputs
+
     spec = getattr(pl, "native_spec", None)
     if spec is None:
         raise engine_pool.WorkerError(
@@ -12655,8 +12657,17 @@ def _native_preparation_runner(pl, before_retry=None):
                 project_epoch=pl.project_epoch,
                 launch_order=pl.launch_order,
                 cancelled=lambda: engine_preparation.SERVICE.launch_blocked(pl.plan_id),
+                **(
+                    {"input_declaration_state": pl.input_declaration_state}
+                    if getattr(pl, "input_declaration_state", None) is not None
+                    else {}
+                ),
             )
         )
+    except declaredinputs.DeclaredInputsConflict as exc:
+        raise engine_pool.WorkerError(
+            "输入声明已变化，请刷新准备计划", code="preparation_plan_stale"
+        ) from exc
     except engine_runcodes.RunError as exc:
         raise engine_pool.WorkerError(str(exc), code=exc.code) from exc
     engine_preparation.SERVICE.note_owner(pl.plan_id, session, True)
