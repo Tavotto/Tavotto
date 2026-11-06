@@ -260,7 +260,12 @@ print(f"[tavotto.spec] truststore 子模块: {', '.join(TRUSTSTORE_MODULES)}")
 # 原生轮子（`nacl._sodium` 扩展），静态分析看不到函数内的 import。这里把 `nacl` 整包子模块（含 `nacl.bindings`、
 # `nacl.signing`、`nacl.exceptions`）与 `nacl._sodium` 扩展点名收进，打包环境里没装它就在这里失败——漏了的表现是冻结产物里
 # 验签一律失败、远程目录永远退回内置种子，而源码模式一切正常。
+# `_sodium` 是 CFFI 扩展，它从原生代码动态导入顶层 `_cffi_backend`，
+# collect_submodules("nacl") 不会收这个包外依赖。缺了它同样让 VerifyKey 导入失败。
+import _cffi_backend  # noqa: E402, F401 — 构建环境缺依赖时立即失败
+
 NACL_MODULES = [
+    "_cffi_backend",
     "nacl",
     "nacl._sodium",
     *collect_submodules("nacl"),

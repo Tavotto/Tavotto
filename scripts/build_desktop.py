@@ -324,6 +324,24 @@ def main() -> None:
         )
     print(f"* tavotto-cli: ssl 自检通过（{(ssl_probe.stdout or '').strip()}）")
 
+    # PyNaCl 的原生 CFFI 依赖只有成品里真验签才能验证，doctor 不触发它。
+    journal_probe = subprocess.run(
+        [str(cli), "--journal-selftest"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+    if journal_probe.returncode != 0:
+        raise SystemExit(
+            f"tavotto-cli --journal-selftest 失败（退出码 {journal_probe.returncode}）：\n"
+            f"  stdout: {(journal_probe.stdout or '').strip()[:400]}\n"
+            f"  stderr: {(journal_probe.stderr or '').strip()[-800:]}\n"
+            "  检查 PyNaCl 的 nacl._sodium 与 _cffi_backend 是否都已进入成品。"
+        )
+    print(f"* tavotto-cli: {(journal_probe.stdout or '').strip()}")
+
     # `tavotto run` 的**打包闭包复核**（ADR 0021）。`runcli` / `runspec` /
     # `runcodes` 这几个模块是靠 PyInstaller 的字节码分析被收进去的——与
     # `handoff` / `codexinstall` 同一条既有路径，spec 里没有它们的名字。
