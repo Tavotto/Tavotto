@@ -39,6 +39,10 @@ GET /eligibility/group?base=<sha>&head=<sha>&nonce=<随机串>
 
 地址写在默认分支 policy 的 `authority_origin`，只认 https 根地址，不跟随跳转，PR 和事件都改不了。回答没有签名，信任来自 HTTPS 与写死的地址，和原方案对服务的信任相同。
 
+**合并组先独立收齐，再判豁免（2026-11-07 补充）。** CI 用自己的只读 GitHub 令牌分页读取 `repository.mergeQueue(branch:"main").entries`，对账 `totalCount`、分页结束、唯一 PR、连续位置，用候选 base/head 唯一定位从队首到该候选的前缀。逐个 PR 从 GitHub 取前后元数据（发起人 login/不可变 id、原始 head、base、状态和提交数），另取每个 PR 的完整 compare 提交列表；收集完再读一次完整队列。由可信默认分支 `cla_gate.py --group-snapshot-json` 离线校验这些原始数据，缺失、截断、重复、前后变化或仓库/base/head 错配一律拒绝。先合并全部 PR 发起人、提交作者与 Co-authored-by，再做 id 豁免预判；不能只因提交作者全豁免而漏掉外部 PR 发起人。任何无法解析的贡献者，即使服务回答 `eligible=true` 仍拒绝。服务回答的有序 `members` 必须与这个独立前缀的每一项 `{pr,headSha}` 精确相同，不能反过来拿服务的成员表决定 CI 检查哪些 PR。
+
+这里的 GitHub 令牌只给 GitHub API，调用 authority 的 fetch 子进程不继承该令牌。队列读权限不可用、候选已离队或队列变化都按失败处理，不能退回解析分支名或信任事件里不完整的成员信息。
+
 ## 后果
 
 - 撤回在下一次判定时生效：PR 重跑和入队时的合并组都会重新查，入队后到合入之间的几秒不覆盖。

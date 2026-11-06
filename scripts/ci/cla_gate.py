@@ -476,6 +476,226 @@ def collect_contributors(
     return out, unresolved
 
 
+def _group_members(raw) -> list[dict]:
+    """队列前缀的有序成员，PR 号和该 PR 的原始 head 都必须精确绑定。"""
+    if not isinstance(raw, list) or not 1 <= len(raw) <= 100:
+        raise ConfigError("group members 缺失或不完整")
+    seen = set()
+    for member in raw:
+        if (
+            not isinstance(member, dict)
+            or set(member) != {"pr", "headSha"}
+            or type(member["pr"]) is not int
+            or member["pr"] <= 0
+            or member["pr"] in seen
+            or not isinstance(member["headSha"], str)
+            or not SHA_RE.fullmatch(member["headSha"])
+        ):
+            raise ConfigError("group members 的 PR / head 无效或重复")
+        seen.add(member["pr"])
+    return raw
+
+
+def _queue_snapshot(pages, repository_id: int) -> list[dict]:
+    """核对 gh graphql --paginate 的原始页，绝不把截断页当完整队列。"""
+    if not isinstance(pages, list) or not 1 <= len(pages) <= 10:
+        raise ConfigError("mergeQueue 页缺失")
+    entries, cursors, total = [], set(), None
+    for index, page in enumerate(pages):
+        try:
+            if page.get("errors") not in (None, []):
+                raise ValueError("GraphQL errors")
+            repo = page["data"]["repository"]
+            if type(repo["databaseId"]) is not int or repo["databaseId"] != repository_id:
+                raise ValueError("repository")
+            connection = repo["mergeQueue"]["entries"]
+            count, nodes, info = (
+                connection["totalCount"],
+                connection["nodes"],
+                connection["pageInfo"],
+            )
+            if (
+                type(count) is not int
+                or not 1 <= count <= 1000
+                or total is not None
+                and count != total
+                or not isinstance(nodes, list)
+                or not 1 <= len(nodes) <= 100
+                or type(info["hasNextPage"]) is not bool
+                or info["hasNextPage"] != (index < len(pages) - 1)
+            ):
+                raise ValueError("pagination")
+            total = count
+            if info["hasNextPage"]:
+                cursor = info["endCursor"]
+                if not isinstance(cursor, str) or not 1 <= len(cursor) <= 1000 or cursor in cursors:
+                    raise ValueError("cursor")
+                cursors.add(cursor)
+            entries.extend(nodes)
+        except (KeyError, TypeError, AttributeError, ValueError) as exc:
+            raise ConfigError("mergeQueue 分页、仓库或响应不完整") from exc
+    if len(entries) != total:
+        raise ConfigError("mergeQueue 枚举条数与 totalCount 不符")
+    ids, prs = set(), set()
+    try:
+        entries.sort(key=lambda e: e["position"])
+        for position, entry in enumerate(entries, 1):
+            pr = entry["pullRequest"]
+            if (
+                not isinstance(entry["id"], str)
+                or not entry["id"]
+                or entry["id"] in ids
+                or type(entry["position"]) is not int
+                or entry["position"] != position
+                or type(pr["number"]) is not int
+                or pr["number"] <= 0
+                or pr["number"] in prs
+                or not isinstance(pr["headRefOid"], str)
+                or not SHA_RE.fullmatch(pr["headRefOid"])
+                or not isinstance(pr["baseRefName"], str)
+                or not pr["baseRefName"]
+            ):
+                raise ValueError("entry")
+            for key in ("baseCommit", "headCommit"):
+                if entry[key] is not None and (
+                    not isinstance(entry[key]["oid"], str)
+                    or not SHA_RE.fullmatch(entry[key]["oid"])
+                ):
+                    raise ValueError("candidate")
+            ids.add(entry["id"])
+            prs.add(pr["number"])
+    except (KeyError, TypeError, AttributeError, ValueError) as exc:
+        raise ConfigError("mergeQueue 位置、成员或候选不完整") from exc
+    return entries
+
+
+def collect_group_contributors(raw, context: dict, commits: list) -> tuple[list, list, list]:
+    """独立 GitHub 快照：完整队列前后不变，逐 PR 核作者 id、head 和全部提交。"""
+    try:
+        repo_id, base, head = (context[k] for k in ("repository_id", "base_sha", "head_sha"))
+        if (
+            type(repo_id) is not int
+            or repo_id <= 0
+            or not isinstance(base, str)
+            or not SHA_RE.fullmatch(base)
+            or not isinstance(head, str)
+            or not SHA_RE.fullmatch(head)
+            or not isinstance(raw, dict)
+            or set(raw)
+            != {"repository_id", "base_sha", "head_sha", "queue_before", "queue_after", "prs"}
+            or type(raw["repository_id"]) is not int
+            or raw["repository_id"] != repo_id
+            or raw["base_sha"] != base
+            or raw["head_sha"] != head
+        ):
+            raise ConfigError("group 快照与本次仓库 / base / head 不符")
+        queue = _queue_snapshot(raw["queue_before"], repo_id)
+        if queue != _queue_snapshot(raw["queue_after"], repo_id):
+            raise ConfigError("mergeQueue 在收集期间改变")
+        matches = [
+            e
+            for e in queue
+            if e["baseCommit"] == {"oid": base} and e["headCommit"] == {"oid": head}
+        ]
+        if len(matches) != 1:
+            raise ConfigError("mergeQueue 无法唯一定位这个 base / head 候选")
+        prefix = queue[: matches[0]["position"]]
+        if len(prefix) > 100 or any(e["pullRequest"]["baseRefName"] != "main" for e in prefix):
+            raise ConfigError("mergeQueue 候选前缀不完整")
+        members = _group_members(
+            [
+                {"pr": e["pullRequest"]["number"], "headSha": e["pullRequest"]["headRefOid"]}
+                for e in prefix
+            ]
+        )
+        if not isinstance(raw["prs"], list) or len(raw["prs"]) != len(members):
+            raise ConfigError("group PR 发起人枚举不完整")
+        # 合并候选的提交也检查；原始 PR 的提交另外枚举，避免 squash/rebase 丢掉作者。
+        candidate_shas = [item["sha"] for item in commits]
+        if (
+            not candidate_shas
+            or head not in candidate_shas
+            or any(not isinstance(s, str) or not SHA_RE.fullmatch(s) for s in candidate_shas)
+            or len(set(candidate_shas)) != len(candidate_shas)
+        ):
+            raise ConfigError("group 候选提交 head 缺失或分页重复")
+        all_commits, authors = list(commits), []
+        for member, snapshot in zip(members, raw["prs"], strict=True):
+            before, after = snapshot["before"], snapshot["after"]
+
+            def metadata(pr):
+                return (
+                    pr["number"],
+                    pr["state"],
+                    pr["head"]["sha"],
+                    pr["base"]["sha"],
+                    pr["base"]["ref"],
+                    pr["base"]["repo"]["id"],
+                    pr["commits"],
+                    pr["user"]["login"],
+                    pr["user"]["id"],
+                )
+
+            if metadata(before) != metadata(after) or any(
+                type(a) is not type(b)
+                for a, b in zip(metadata(before), metadata(after), strict=True)
+            ):
+                raise ConfigError("group PR 在收集期间改变")
+            number, state, pr_head, pr_base, ref, pr_repo, count, login, uid = metadata(before)
+            if (
+                type(number) is not int
+                or number != member["pr"]
+                or state != "open"
+                or pr_head != member["headSha"]
+                or ref != "main"
+                or type(pr_repo) is not int
+                or pr_repo != repo_id
+                or not isinstance(pr_base, str)
+                or not SHA_RE.fullmatch(pr_base)
+                or type(count) is not int
+                or not 1 <= count <= 1000
+                or not isinstance(login, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*(?:\[bot\])?", login)
+                or type(uid) is not int
+                or uid <= 0
+            ):
+                raise ConfigError("group PR 的作者 id / head / 状态无效")
+            items = snapshot["commits"]
+            if (
+                not isinstance(items, list)
+                or len(items) != count
+                or type(snapshot["total_commits"]) is not int
+                or snapshot["total_commits"] != count
+                or snapshot["compare_base"] != pr_base
+            ):
+                raise ConfigError("group PR 的提交枚举不完整")
+            shas = [item["sha"] for item in items]
+            if (
+                any(not isinstance(s, str) or not SHA_RE.fullmatch(s) for s in shas)
+                or len(set(shas)) != count
+                or pr_head not in shas
+            ):
+                raise ConfigError("group PR 的提交 head 缺失或分页重复")
+            all_commits.extend(items)
+            authors.append((login, uid))
+        # 复用同一个贡献者收集器，并把所有 PR 发起人作为可信 API 来源合并进去。
+        contributors, unresolved = collect_contributors(None, all_commits)
+        by_login = {c["login"].lower(): c for c in contributors}
+        for login, uid in authors:
+            rows, _ = collect_contributors(login, [], uid)
+            row = rows[0]
+            old = by_login.get(login.lower())
+            if old is None:
+                by_login[login.lower()] = row
+            else:
+                old["ids"] = sorted(set(old["ids"] + row["ids"]))
+                if "pr_author" not in old["sources"]:
+                    old["sources"].append("pr_author")
+        return sorted(by_login.values(), key=lambda c: c["login"].lower()), unresolved, members
+    except (KeyError, TypeError, AttributeError, ValueError) as exc:
+        raise ConfigError("group GitHub 快照缺失、错误或不完整") from exc
+
+
 def _account_id(raw) -> int | None:
     """可信来源（PR 事件 / API）给的正整数 id。别的形状一律当没看到。"""
     if type(raw) is int and raw > 0:
@@ -661,8 +881,14 @@ def _eligibility_verdict(policy: dict, context: dict) -> tuple[set[str], str | N
                 raise ValueError("binding")
         if not isinstance(answer["base_sha"], str) or not SHA_RE.match(answer["base_sha"]):
             raise ValueError("base")
-        if group and not (isinstance(answer["members"], list) and answer["members"]):
-            raise ValueError("members")
+        if group:
+            try:
+                if _group_members(answer["members"]) != _group_members(
+                    context.get("group_members")
+                ):
+                    raise ValueError("members")
+            except ConfigError as exc:
+                raise ValueError("members") from exc
         if answer["policy_sha256"] != _policy_digest(policy):
             raise ValueError("policy")
         if type(answer["eligible"]) is not bool:
@@ -867,6 +1093,31 @@ def decide(
     unresolved = unresolved or []
     if context is not None:
         context = {**context, "contributors": contributors}
+
+    if event == "merge_group" and _service_mode(policy):
+        # 必须先独立枚举 PR 发起人，再判断全员豁免；缺快照不能靠提交作者全豁免绕过。
+        try:
+            _group_members((context or {}).get("group_members"))
+        except ConfigError:
+            return {
+                "event": event,
+                "status": "failure",
+                "reason": "group_snapshot_required",
+                "contributors": [],
+                "problems": ["group PR 发起人与成员快照缺失或不完整"],
+            }
+        if unresolved:
+            return {
+                "event": event,
+                "status": "failure",
+                "reason": "unresolved_contributors",
+                "contributors": [],
+                "problems": [
+                    f"unresolved: commit `{u['sha']}` 的 {u['kind']} "
+                    f"`{u['name']} <{u['email']}>` 解析不出 GitHub 账号；请用绑定账号的邮箱重新提交"
+                    for u in unresolved
+                ],
+            }
 
     if event in KNOWN_EVENTS and _service_mode(policy):
         exempt = _exempt_by_id_verdict(event, policy, contributors, unresolved)
@@ -1121,6 +1372,9 @@ def main(argv: list[str] | None = None) -> int:
         help="cla_eligibility_fetch.py 落盘的服务实时判定（ADR 0172）",
     )
     ap.add_argument("--eligibility-nonce", help="这次校验生成的 nonce，回答必须原样带回")
+    ap.add_argument(
+        "--group-snapshot-json", help="CI 独立从 GitHub 取到的完整队列前后页、逐 PR 作者与提交快照"
+    )
     ap.add_argument("--repo-root", default=".", help="核对协议正文哈希时的仓库根")
     ap.add_argument(
         "--refresh-hashes",
@@ -1170,10 +1424,18 @@ def main(argv: list[str] | None = None) -> int:
         }
         if args.event == "merge_group":
             contributors, unresolved = [], []
-            if args.commits_json:
-                # 合并组候选的全部提交（compare base...head）。没有 PR 作者这一项。
+            if _service_mode(policy):
+                if (
+                    not args.group_snapshot_json
+                    or not args.commits_json
+                    or args.expected_commits is None
+                ):
+                    raise ConfigError("服务模式合并组必须独立枚举完整队列、PR 发起人与全部提交")
                 commits = load_commits(Path(args.commits_json), args.expected_commits)
-                contributors, unresolved = collect_contributors(None, commits)
+                contributors, unresolved, members = collect_group_contributors(
+                    load_json(Path(args.group_snapshot_json), "group GitHub 快照"), context, commits
+                )
+                context["group_members"] = members
             verdict = decide(args.event, policy, checks, contributors, unresolved, context)
         else:
             commits = []

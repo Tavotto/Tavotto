@@ -94,6 +94,7 @@ def _context(answer, *, group=False, **over) -> dict:
         "contributors": [
             {"login": "someone", "sources": ["pr_author"], "ids": [EXTERNAL], "details": []}
         ],
+        "group_members": [{"pr": PR, "headSha": "c" * 40}] if group else None,
     }
     context.update(over)
     return context
@@ -260,11 +261,84 @@ def _commit(login: str, uid: int) -> dict:
     }
 
 
-def _cli(gate, tmp_path, policy, doc, *, event="pull_request", now=NOW):
+def _group_snapshot(*, author="someone", uid=EXTERNAL, commits=None):
+    pr_head = "c" * 40
+    items = commits if commits is not None else [{**_commit("someone", EXTERNAL), "sha": pr_head}]
+    pr = {
+        "number": PR,
+        "state": "open",
+        "head": {"sha": pr_head},
+        "base": {"sha": BASE, "ref": "main", "repo": {"id": REPO}},
+        "commits": len(items),
+        "user": {"login": author, "id": uid},
+    }
+    queue = [
+        {
+            "data": {
+                "repository": {
+                    "databaseId": REPO,
+                    "mergeQueue": {
+                        "entries": {
+                            "totalCount": 1,
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                            "nodes": [
+                                {
+                                    "id": "entry-one",
+                                    "position": 1,
+                                    "baseCommit": {"oid": BASE},
+                                    "headCommit": {"oid": HEAD},
+                                    "pullRequest": {
+                                        "number": PR,
+                                        "headRefOid": pr_head,
+                                        "baseRefName": "main",
+                                    },
+                                }
+                            ],
+                        }
+                    },
+                }
+            }
+        }
+    ]
+    return {
+        "repository_id": REPO,
+        "base_sha": BASE,
+        "head_sha": HEAD,
+        "queue_before": queue,
+        "queue_after": copy.deepcopy(queue),
+        "prs": [
+            {
+                "before": pr,
+                "after": copy.deepcopy(pr),
+                "commits": items,
+                "compare_base": BASE,
+                "total_commits": len(items),
+            }
+        ],
+    }
+
+
+def _cli(
+    gate,
+    tmp_path,
+    policy,
+    doc,
+    *,
+    event="pull_request",
+    now=NOW,
+    group_snapshot=None,
+    include_group_snapshot=True,
+    commits_override=None,
+):
     pol = tmp_path / "policy.json"
     pol.write_text(json.dumps(policy), encoding="utf-8")
     commits = tmp_path / "commits.json"
-    commits.write_text(json.dumps([_commit("someone", EXTERNAL)]), encoding="utf-8")
+    commits.write_text(
+        json.dumps(
+            commits_override if commits_override is not None else [_commit("someone", EXTERNAL)]
+        ),
+        encoding="utf-8",
+    )
     answer = tmp_path / "answer.json"
     answer.write_text(json.dumps(doc), encoding="utf-8")
     argv = ["--event", event, "--policy", str(pol), "--repo-root", str(ROOT),
@@ -277,6 +351,13 @@ def _cli(gate, tmp_path, policy, doc, *, event="pull_request", now=NOW):
                  "--pr-author-id", str(EXTERNAL)]  # fmt: skip
     else:
         argv += ["--verification-base", BASE]
+        if include_group_snapshot:
+            snapshot = tmp_path / "group-snapshot.json"
+            snapshot.write_text(
+                json.dumps(_group_snapshot() if group_snapshot is None else group_snapshot),
+                encoding="utf-8",
+            )
+            argv += ["--group-snapshot-json", str(snapshot)]
     return gate.main(argv)
 
 
@@ -296,6 +377,170 @@ def test_cli_not_eligible_tells_people_where_to_sign(gate, policy, tmp_path, mon
     monkeypatch.setattr(gate.time, "time", lambda: NOW)
     _cli(gate, tmp_path, policy, _answer(gate, policy, eligible=False))
     assert ORIGIN in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("unresolved_kind", ["commit_author", "co_author"])
+def test_group_unresolved_identity_cannot_be_overridden_by_eligible(gate, policy, unresolved_kind):
+    context = _context(_answer(gate, policy, group=True), group=True)
+    unresolved = [
+        {"kind": unresolved_kind, "sha": HEAD[:8], "name": "unknown", "email": "u@example.com"}
+    ]
+    verdict = gate.decide("merge_group", policy, None, context["contributors"], unresolved, context)
+    assert verdict["status"] == "failure" and verdict["reason"] == "unresolved_contributors"
+    assert verdict["problems"][0].startswith("unresolved:")
+
+
+def test_group_missing_snapshot_never_takes_exemption(gate, policy, tmp_path):
+    holder = [_commit("erwanjun", HOLDER)]
+    assert (
+        _cli(
+            gate,
+            tmp_path,
+            policy,
+            {"eligible": True},
+            event="merge_group",
+            include_group_snapshot=False,
+            commits_override=holder,
+        )
+        == 2
+    )
+    contributors, unresolved = gate.collect_contributors(None, holder)
+    verdict = gate.decide("merge_group", policy, None, contributors, unresolved)
+    assert verdict["status"] == "failure" and verdict["reason"] == "group_snapshot_required"
+
+
+def test_external_group_pr_author_is_checked_before_local_exemption(
+    gate, policy, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(gate.time, "time", lambda: NOW)
+    holder = [_commit("erwanjun", HOLDER)]
+    snapshot = _group_snapshot(commits=[{**holder[0], "sha": "c" * 40}])
+    # 所有提交作者豁免，PR 发起人没有豁免。没有服务回答时不得本地放行。
+    assert (
+        _cli(
+            gate,
+            tmp_path,
+            policy,
+            {"error": "authority_unreachable"},
+            event="merge_group",
+            group_snapshot=snapshot,
+            commits_override=holder,
+        )
+        == 1
+    )
+    answer = _answer(
+        gate,
+        policy,
+        group=True,
+        contributors=[{"id": HOLDER, "login": "erwanjun"}, {"id": EXTERNAL, "login": "someone"}],
+    )
+    assert (
+        _cli(
+            gate,
+            tmp_path,
+            policy,
+            answer,
+            event="merge_group",
+            group_snapshot=snapshot,
+            commits_override=holder,
+        )
+        == 0
+    )
+    answer["contributors"] = [{"id": HOLDER, "login": "erwanjun"}]
+    assert (
+        _cli(
+            gate,
+            tmp_path,
+            policy,
+            answer,
+            event="merge_group",
+            group_snapshot=snapshot,
+            commits_override=holder,
+        )
+        == 1
+    )
+
+
+@pytest.mark.parametrize(
+    "members",
+    [
+        [],
+        [{"pr": PR + 1, "headSha": "c" * 40}],
+        [{"pr": PR, "headSha": "d" * 40}],
+        [{"pr": str(PR), "headSha": "c" * 40}],
+        [{"pr": PR, "headSha": "c" * 40, "extra": 1}],
+        [{"pr": PR, "headSha": "c" * 40}] * 2,
+        [{"pr": PR, "headSha": "c" * 40}, {"pr": 43, "headSha": "d" * 40}],
+    ],
+)
+def test_group_service_members_must_exactly_match_independent_prefix(gate, policy, members):
+    answer = _answer(gate, policy, group=True, members=members)
+    assert _verdict(gate, policy, answer, group=True) == (set(), "provider_eligibility_invalid")
+
+
+@pytest.mark.parametrize(
+    "path,value",
+    [
+        (("repository_id",), REPO + 1),
+        (("base_sha",), "d" * 40),
+        (("head_sha",), "d" * 40),
+        (("queue_before",), []),
+        (("prs",), []),
+        (("queue_before", 0, "data", "repository", "databaseId"), REPO + 1),
+        (("queue_before", 0, "data", "repository", "mergeQueue", "entries", "totalCount"), 2),
+        (
+            (
+                "queue_before",
+                0,
+                "data",
+                "repository",
+                "mergeQueue",
+                "entries",
+                "pageInfo",
+                "hasNextPage",
+            ),
+            True,
+        ),
+        (
+            (
+                "queue_after",
+                0,
+                "data",
+                "repository",
+                "mergeQueue",
+                "entries",
+                "nodes",
+                0,
+                "pullRequest",
+                "headRefOid",
+            ),
+            "d" * 40,
+        ),
+        (("prs", 0, "before", "head", "sha"), "d" * 40),
+        (("prs", 0, "after", "user", "id"), EXTERNAL + 1),
+        (("prs", 0, "before", "user", "id"), None),
+        (("prs", 0, "commits"), []),
+        (("prs", 0, "total_commits"), 2),
+        (("prs", 0, "compare_base"), "d" * 40),
+    ],
+)
+def test_group_incomplete_or_changed_github_input_never_passes(gate, policy, tmp_path, path, value):
+    snapshot = _group_snapshot()
+    target = snapshot
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    assert (
+        _cli(
+            gate,
+            tmp_path,
+            policy,
+            _answer(gate, policy, group=True),
+            event="merge_group",
+            group_snapshot=snapshot,
+        )
+        == 2
+    )
 
 
 class _Response(io.BytesIO):
