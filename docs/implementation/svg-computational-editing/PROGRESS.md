@@ -2,16 +2,16 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-06 21:03 checkpoint）：功能HEAD=d7b6eef9。EPS完整接线a06cc3d3、命名文件关联a7008840、包容器ffe2fb32、计算来源包c40805bf、显式冲突恢复后端d7b6eef9均已分功能提交。真实UI已验证改标题仍绑定原文件、空缓存/新后端恢复和CtrlS写回原文件。N2.1完整前端20文件已冻结：428项、正式build/i18n/lint及28组反证通过，尚未提交；覆盖/重载按钮真API浏览器联验待补。预检两项误报修复已冻结：78项前端、33项Python、真实HTTP输入及128份旧spec逐字一致，统一正式build/playground已通过，尚待提交。包完整安装、图例、复杂几何与最终回归未完成，M1/M2/M3均未通过。**
+> **当前结论（2026-11-06 21:41 checkpoint）：功能HEAD=206a1c34。本轮新增六个功能提交：预检0b611411、完整保存前端d7a73ce1、包预算/名称兼容e468d516、旧包原子HTTP 336783bf、真实工作副本回执71e637c8、计算包预算工厂206a1c34。真浏览器明确覆盖/重载（含读取期间新编辑）与下一普通保存、双独立窗口200/409保稿已验；404兼容P1已真实复现修好，最新保存/回执前端448项及build/i18n/lint通过。包底层204、计算包末次82、新HTTP18/旧相关8均有实际证据，不能相加为全分支总数。v4完整包导出/安装API/UI、资源身份迁移、图例/复杂几何和最终回归仍缺，M1/M2/M3未通过。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 
 ## 环境（2026-11-06 当前快照）
 
-- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；本次checkpoint功能HEAD=`d7b6eef9`。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入这些成果；不能在原目录启动旧版本后据此判断新功能效果。
+- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；本次checkpoint功能HEAD=`206a1c34`。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入这些成果；不能在原目录启动旧版本后据此判断新功能效果。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
-- 较早状态探针见`status-cbd8d95e/`；最新复核为本页21:03记录及`n21-complete-frontend-validation.json`、`n21-ui-binding-qualification.json`、`n4-preflight-freeze.json`。未启动通宵调度器，历史“后台sweep正在跑”不当作现行运行状态；服务状态见最新checkpoint。
+- 较早状态探针见`status-cbd8d95e/`；最新复核为本页21:41记录及`n21-frontend-staged-final.json`、`n3-package-http-staged.json`、`n3-working-receipt-staged.json`、`n3-chart-budget-factory-staged.json`。未启动通宵调度器，历史“后台sweep正在跑”不当作现行运行状态；服务状态见最新checkpoint。
 - 最新 NEXT_PHASE 和提示词直接在当前实施分支维护；不再依赖历史 review 文档分支才能取得新计划。
 
 ## 批次状态（2026-11-06 复核后；按完整退出条件）
@@ -29,18 +29,35 @@
 | SG08 | partial | 4c2ca1f2 | bar 附属误差基础修复已有；完整族与 UI/导出追验待补 |
 | SG09 | partial | ac060053 | 色条基础所有权/镜像已修；复杂族和导出图像资源未验收 |
 | SG10 | partial / product_cold_edit_verified | cbd8d95e、242cabc0、53393810、8e6c399a、264ce59c、a06cc3d3 | 真UI保存、零缓存新进程恢复、继续编辑及五格式原图导出已验；图例/复杂clip/成员层序仍缺 |
-| SG11–SG17 | partial / pending | 979a4962、48d3d27a、cae96f89、5bc82a81、bbbffed1、5abb9a7d、95684f89、a7008840、ffe2fb32、c40805bf、d7b6eef9 | 正文/附件及命名关联冷恢复已验；包叶子已提交，完整安装/写回/入口/平台和最终回归待补 |
+| SG11–SG17 | partial / pending | cae96f89、5bc82a81、5abb9a7d、95684f89、a7008840、d7a73ce1、ffe2fb32、c40805bf、e468d516、336783bf、71e637c8、206a1c34 | 正文/附件/命名关联与恢复已验，旧包原子输出已接；v4完整安装/写回/入口/平台和最终资格待补 |
 | R00 | baseline_and_regressions | 5a4f5c2c | 基础反例保留；本轮用户流程和导出反例待随修复入库 |
 | R01/R02 | core_partial / multi_target_verified | 3236307c、8e6c399a | 跨父/split/errorbar/colorbar共同目标与预览通过；任意clip、欠定成员paint slots和图例仍缺 |
 | R03 | runner_and_source_consumers_integrated | 029dfac2、242cabc0、c2fd47d5、5b2b1403、2452d8fc | 受控runner与精确INPUT附件接真实API/UI/导出；不宣称全产品总进程cap或最终资格 |
 | R04 | affected_checks_passed | a8a088cf、18907d65、cbd8d95e | 请求序号/表单/项目切换、late response 和单项 drop 均有受影响测试；Dialog 已可发起真实绑定；完整编辑器生命周期在 R06 追验 |
-| R05 | ordinary_binding_ui_verified / recovery_and_package_partial | cae96f89、82b142d2、bbbffed1、2452d8fc、5abb9a7d、95684f89、264ce59c、ec2cb144、a7008840、ffe2fb32、c40805bf、d7b6eef9 | 普通关联冷恢复/改标题/写回A已验；前端428项已冻结未提交，真实覆盖/重载与完整包安装待补 |
+| R05 | binding_and_recovery_ui_verified / package_partial | 5abb9a7d、95684f89、264ce59c、a7008840、d7b6eef9、d7a73ce1、ffe2fb32、c40805bf、e468d516、336783bf、71e637c8、206a1c34 | 保存关联/明确恢复/双窗口真UI已验并提交；包基础与旧HTTP原子输出已提交，v4混合导出/安装尚未接 |
 | R06 | product_editing_and_cold_restore_verified / partial | 242cabc0、53393810、8e6c399a、264ce59c | 冷开后Inspector编辑、undo/redo和exact显示已验；图例、完整操作及复杂几何仍缺 |
 | R07 | partial / original_five_formats_ui_verified | 5bc82a81、c2fd47d5、2a40fec9、c9fa29a4、8fa84f5d、a06cc3d3 | 原图五格式真实UI及独立产物已验，EPS接线已提交；分享与完整双系列M1未完成 |
 | R08 | full_edit_restore_verified / partial | cae96f89、029dfac2、53393810 | 生产v2导出与真UI完整编辑恢复通过；A采用、分享选择和正式项目迁移待补 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-06 21:41 保存恢复收口与项目包原子输出
+
+- 上一goal turn为progress：产生统一构建和实际named外改409证据并提交acbaeb82；本轮继续改变权威代码与取得新证据，不把状态复述当推进。沿用唯一实施树/分支，功能HEAD=206a1c34；未新建分支/worktree、推送、合并或发布，原main未合入。
+- 六批独立功能已提交：0b611411（预检输入的精确附件/完整render identity）；d7a73ce1（20前端文件+3规则/ADR，命名关联与明确冲突恢复，含404备份失败P1）；e468d516（最终plan预算、ZIP64及旧名兼容）；336783bf（旧schema2/3包HTTP原子输出）；71e637c8（原writer真实工作副本回执）；206a1c34（计算包唯一manifest/实际census预算回调）。每批精确stage核源码SHA，未混下一功能；提交与原始资格范围见各staged.json。
+- 从新冻结dist n21-recovery-ui-dist-2056/23987启动全新tavotto-recovery-ui，初始localStorage=[]，实际恢复A绑定/dirty与chartSource。外部改AS后真实编辑触发409 external_change；原冲突脚本最初错误预期stale_write而失败已保留，不称产品失败。真“覆盖”确认发同writer的固定实际revision+完整旧view证明，创建新actor，named原修订与字节未变；下一次普通编辑200且不带recovery证明。n21-recovery-overwrite-qualification.json。
+- 真“重新加载”时仅暂停实际GET（不伪造响应），等待期间通过F2新增编辑，再放行真实后端读取。外部正文安装/恢复AS 200，新编辑进入原恢复槽；随后普通编辑仍200。实际proof与外部AS摘要及原view逐项相等，named文件不变。n21-recovery-reload-qualification.json，截图output/playwright/n21-recovery-ui-reload.png。对应首次21文件428阶段现代分支；后续仅404兼容保护与共用回执reader另有最终测试资格，不冒称新bundle所有路径均真浏览器重跑。
+- 第二个独立浏览器tavotto-recovery-peer零本机缓存，继承原base_axis；主窗口先编辑200，peer新actor携旧基线编辑409，peer本机稿保留且主AS正文不变，named A也不变。n21-two-window-qualification.json；不是直接写store或fake API成功。
+- 独立review实际发现404旧后端fallback reload P1：读AS等待期间新编辑未debounce，最新副本Storage写失败仍applyProject会丢编辑。原探针exit1；只修documentStore两处保护，并加3个对照。最终21文件431通过/0skip、build/i18n/lint0，修后独立探针1pass（41是-t过滤未选中），两反证实际AssertionError/exit1。n21-p1-frontend-validation.json与n21-independent-review.md。原失败log/exit和旧源SHA保留；复跑配置曾覆盖单个landing记录，已在索引明确，不伪造复原。d7a73ce1已包含修复。
+- N4窄预检已提交0b611411，原78前端/33Python/49向量、真实HTTP输入和旧128份完整spec对拍证据保留，统一build已过；规则41项通过。图例真实旧蓝/新曲线红问题尚未解决，不把这次提交当图例或广泛readiness完成。
+- 包底层e468d516：204通过/0skip（预算22+容器128+当时图表包54），旧小ZIP8组及level0/1/9完整字节相等、3组真实故障反证；ZIP64以缩小阈值实际跑分支，不声称>2GiB物理吞吐。ARCHIVE_CHUNK_BYTES保持原64KiB唯一值；预算覆盖实际目录/压缩读取。legacy_names只由旧writer显式选择，公开reader与默认v4仍严格portable；NFC两种真实本机文件名可保，越界/重复/特殊仍拒。n3-packagebudget-freeze.md与n3-package-budget-staged.json。
+- 旧包app已接336783bf：caller在data_dir持快照临时路径至输出结束，完整canonical资源plan及ZipFile原名规范化后推预算，最终ZIP经CRC再不可覆盖发布；同秒名加随机后缀，旧layout/manifest与响应键保留。新18HTTP/0skip及原8相关/0skip均实际通过，含真实worker快照、add/close/publish六故障、最终名未提前出现、并发/强制同名保护、Windows真实junction及改指、NFC双文件。两个API AST反证实际杀出覆盖旧包/读项目外；生产字节未改。n3-atomic-http-validation.md、n3-package-http-staged.json。
+- 回执71e637c8：waitForWorkingDocumentSave复用原writer成功记录+实际AS回读，非空不多发PUT，空稿只有显式persistEmpty创建一次；不能把open true或普通空wrote:true当落盘证明。最新22文件448通过/0skip、正式build/i18n/lint0，10内存反证命中。根playground重建/check均0，指纹7f69cc026d69e1f4。n3-working-document-receipt-validation.json、n3-working-receipt-staged.json；包安装消费者仍未接。
+- 计算包206a1c34：budget/budget_factory恰一，内部唯一序列化layout/manifest，factory收只读最终实际字节census；逐份验证INPUT不聚集全部内存，回调后仍沿原装载/strict inspect。末次82通过/0skip（原54+新增28），四组旧/新static/新factory完整ZIP与回执三方相等，两AST故障反证；n3-chart-budget-factory-freeze.md、n3-chart-budget-factory-staged.json。不同组重叠与时刻不同，不累加为全分支测试。
+- 完整v4包尚无生产导出/安装API/UI；TopBar仍把v4送旧接口，不能称N3完成。独立迁移探针：整树搬移保相对chart/runtime/snapshot ID，但runconfig/workdir配置在新根丢失；快照仍绑定remap_fingerprint。严格包可含assets/same.txt与scripts/same.txt不同字节，ZIP名不撞而安装目标相撞；opaque快照行只核字节，需既有svgstore语义验证；缺registry的runtime只带脚本仍resolve=None。copy_project可skipped>0且成功，不能当完整安装器；projects/open create=true可复用既有目录，不是exclusive reserve。n3-package-install-identity-probe.json与n3-package-install-identity-review.md已交回，探针exit0、无生产修改；不冒称安装/渲染资格。
+- 下一项是v4完整资源清单/导出API与同一顶栏入口，再冻结显式检视/安装/目标身份合同：优先研究完整新项目保相对ID，用现projectStore.adoptOpenedProject(status,{prepareDocument})/switchTransaction在ready前装入并走原writer真实回执；不得只改fileId、静默跳普通资源或忽略运行配置/重定向。随后N4图例/迁移、N5几何、N6完整M1、N7/M2、N8/M3保持原范围。M1/M2/M3都未通过，goal active。
+- 根独占app/共享契约/规则/三文档/UI/提交；两个写入代理本轮源均已冻结释放，export_adapter_review只读补安装身份报告。当前服务仍是隔离资格用：后端71856/23984载入d7b6eef9时期app，尚未重启载入本轮旧ZIP改动；真实新ZIP资格来自新pytest进程。新冻结预览24652/23987/session46153，浏览器9260/77356；旧Vite10168/23983会随新稿变化。后续先核PID/创建时间/命令，不照数字杀进程。服务不等于无人值守调度器。
 
 ### 2026-11-06 21:03 最新统一构建与外改冲突复核
 
