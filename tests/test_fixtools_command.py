@@ -323,20 +323,76 @@ def test_ordinary_commands_are_not_hard_blocked_but_still_ask(box):
     assert len(ctx.asker.cards) == 5
 
 
-def test_no_sandbox_means_no_tier1_and_the_answer_points_at_tier2(box, monkeypatch):
+def test_no_sandbox_goes_straight_to_the_tier2_card_and_runs_only_after_a_yes(box, monkeypatch):
+    """TVD-V7R4：没沙盒时不再报错等模型重试。判据看标记文件（命令真跑了没有）和卡片，不看返回值。"""
     monkeypatch.setattr(cmdsandbox, "sandbox_kind", lambda: None)
     marker = box.tmp / "ran.txt"
     ctx = change_ctx(box)
-    r = call(
-        ctx, "run_command", {"argv": _py(f"open({str(marker)!r}, 'w').write('x')")}, AuditLog()
-    )
-    assert r.is_error and r.code == "sandbox_unavailable" and not marker.exists()
-    assert "outside_sandbox" in r.content and ctx.asker.cards == []  # 没沙盒不问、不跑
+    argv = _py(f"open({str(marker)!r}, 'w').write('x')")
+    r = call(ctx, "run_command", {"argv": argv}, AuditLog())
+    assert not r.is_error, r.content
+    assert marker.exists()
+    (card,) = ctx.asker.cards
+    assert card["danger"] is True and card["sandbox"] == "outside" and card["cwd"] == "scratch"
+    assert "ran.txt" in card["command"]
+    assert "reason" not in card  # 兜底句由前端按语言显示，后端不发翻译好的句子
+    line = audit_lines(box)[-1]
+    assert (line["sandbox"], line["command_tier"], line["approved_by"]) == ("outside", 2, "user")
+
+
+def test_no_sandbox_card_keeps_the_models_reason(box, monkeypatch):
+    monkeypatch.setattr(cmdsandbox, "sandbox_kind", lambda: None)
+    ctx = change_ctx(box)
+    r = call(ctx, "run_command", {"argv": _py("pass"), "reason": "  Installs poppler.  "})
+    assert not r.is_error, r.content
+    (card,) = ctx.asker.cards
+    assert card["reason"] == "Installs poppler."
+
+
+def test_no_sandbox_declined_or_no_ask_runs_nothing_and_a_yes_covers_one_command(box, monkeypatch):
+    monkeypatch.setattr(cmdsandbox, "sandbox_kind", lambda: None)
+    marker = box.tmp / "ran.txt"
+    argv = _py(f"open({str(marker)!r}, 'a').write('x')")
+
+    no = change_ctx(box, ask="no")
+    r = call(no, "run_command", {"argv": argv}, AuditLog())
+    assert r.is_error and r.code == "needs_approval" and not marker.exists()
     assert audit_lines(box)[-1]["sandbox"] == "none"
 
+    silent = change_ctx(box, ask=None)
+    r = call(silent, "run_command", {"argv": argv})
+    assert r.is_error and r.code == "needs_approval" and not marker.exists()
 
-def test_windows_has_only_tier2(box, monkeypatch):
-    """Windows（#1358 无沙盒）：真实的探测代码在 win32 上找不到沙盒 → 第①档直接要求第②档；第②档照常走卡片。"""
+    yes = change_ctx(box)
+    assert not call(yes, "run_command", {"argv": argv}).is_error
+    assert not call(yes, "run_command", {"argv": argv}).is_error
+    assert marker.read_text() == "xx" and len(yes.asker.cards) == 2  # 第二条照样问，不记授权
+
+
+def test_no_sandbox_still_goes_through_the_hard_block_and_the_script_backup(box, monkeypatch):
+    monkeypatch.setattr(cmdsandbox, "sandbox_kind", lambda: None)
+    ctx = change_ctx(box)
+    r = call(ctx, "run_command", {"argv": ["sudo", "rm", "x"]})
+    assert r.code == "hard_blocked" and ctx.asker.cards == []
+
+    scripts = _project_with_scripts(box)
+    target = next(iter(scripts.values()))
+    before = target.read_bytes()
+    r = call(ctx, "run_command", {"argv": _py(f"open({str(target)!r}, 'w').write('# gone')")})
+    assert not r.is_error, r.content
+    assert target.read_bytes() == before and "scripts_restored: 1" in r.content
+
+
+def test_a_sandboxed_computer_still_never_asks_for_tier2_on_its_own(box):
+    """有沙盒的机器行为不变：默认调用走第①档的卡，绝不因为这次改动弹第②档。"""
+    ctx = change_ctx(box)
+    assert not call(ctx, "run_command", {"argv": _py("pass")}).is_error
+    (card,) = ctx.asker.cards
+    assert card["sandbox"] == "hardened" and not card.get("danger")
+
+
+def test_windows_only_has_tier2(box, monkeypatch):
+    """Windows（#1358 无沙盒）：真实的探测代码在 win32 上找不到沙盒 → 默认调用直接走第②档的卡。"""
     monkeypatch.undo()  # 去掉替身
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(cmdsandbox, "_PROBE", {})
@@ -345,9 +401,7 @@ def test_windows_has_only_tier2(box, monkeypatch):
     marker = box.tmp / "ran.txt"
     code = f"open({str(marker)!r}, 'w').write('x')"
     r = call(ctx, "run_command", {"argv": _py(code)})
-    assert r.code == "sandbox_unavailable" and not marker.exists() and ctx.asker.cards == []
-    r2 = call(ctx, "run_command", {"argv": _py(code), "outside_sandbox": True, "reason": "x"})
-    assert not r2.is_error and marker.exists()
+    assert not r.is_error and marker.exists()
     (card,) = ctx.asker.cards
     assert card["danger"] is True
 
@@ -437,6 +491,66 @@ def test_a_prefix_inside_or_over_tavottos_own_install_is_never_writable(box, mon
     assert (
         str(Path(command.__file__).resolve().parents[2]) in command._protected_roots()
     )  # 包目录本身也在保护根里
+
+
+@pytest.mark.parametrize("named", [False, True], ids=["base", "named"])
+@pytest.mark.parametrize("layout", ["python.exe", "Scripts/python.exe", "bin/python"])
+def test_session_conda_prefix_is_usable_without_listing_environments(
+    box, monkeypatch, named, layout
+):
+    """生产上下文：未枚举环境、PATH 无 conda；真实前缀同时供程序定位、可写清单与快照使用。"""
+    from types import SimpleNamespace
+
+    from tavotto import app as appmod
+    from tavotto.engine import launcher
+
+    root = box.home / "miniconda3"
+    prefix = root / "envs" / "research" if named else root
+    py = put(prefix.joinpath(*layout.split("/")), b"")
+    (prefix / "conda-meta").mkdir()
+    (root / "conda-meta").mkdir(exist_ok=True)
+    conda = put(root / "Scripts" / "conda.exe", b"")
+    conda.chmod(0o755)
+    monkeypatch.delenv("CONDA_EXE", raising=False)
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setattr(launcher, "_is_windows", lambda: True)
+    monkeypatch.setattr(command, "os", SimpleNamespace(name="nt", path=os.path, sep=os.sep))
+    facts = appmod._fix_session_env(
+        SimpleNamespace(plan=SimpleNamespace(interpreter=str(py), environment={"source": "conda"}))
+    )
+    ctx = change_ctx(box, environments={}, **facts)
+    assert ctx.environments == {}
+    assert command._windows_program(ctx, ["conda", "install"]) == [str(conda), "install"]
+    assert facts["env_prefixes"] == [prefix]
+    assert facts["current_environment"]["label"] == prefix.name
+    assert command.writable_envs(ctx) == [(os.path.realpath(prefix), str(py))]
+    ids = command._snapshot_env_ids(ctx)
+    assert len(ids) == 1 and ctx.environments[ids[0]] == str(py)
+    assert command.writable_envs(ctx) == [(os.path.realpath(prefix), str(py))]
+    assert os.path.realpath(root / "envs") not in command._writable_env_prefixes(ctx)
+
+
+@pytest.mark.parametrize("kind", ["system", "builtin"])
+def test_session_environment_still_passes_writable_protection(box, monkeypatch, kind):
+    from types import SimpleNamespace
+
+    from tavotto import app as appmod
+    from tavotto.engine import runtime
+
+    prefix = box.tmp / "envs" / kind
+    py = put(prefix / "python.exe", b"")
+    if kind == "system":
+        put(prefix / "Lib" / "EXTERNALLY-MANAGED", b"")
+    else:
+        monkeypatch.setattr(runtime, "bundled_python", lambda: str(py))
+    facts = appmod._fix_session_env(
+        SimpleNamespace(plan=SimpleNamespace(interpreter=str(py), environment={"source": kind}))
+    )
+    ctx = change_ctx(box, environments={}, **facts)
+    assert facts["env_prefixes"] == [prefix]
+    assert command.writable_envs(ctx) == []
+    assert command._snapshot_env_ids(ctx) == []
+    assert ctx.environments == {}
 
 
 def test_a_refused_write_in_the_sandbox_suggests_tier2_but_never_runs_it(box, monkeypatch):

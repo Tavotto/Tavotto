@@ -4,6 +4,7 @@
  */
 import { expect, test } from './fixtures'
 import path from 'node:path'
+import type { Locator } from '@playwright/test'
 
 test(
   '标注选本机字体：下拉里有 DejaVu Serif，选中后导出带身份，加粗换成同族粗体文件',
@@ -12,6 +13,10 @@ test(
     test.setTimeout(240_000)
     const a = await app()
     await page.setViewportSize({ width: 1500, height: 950 })
+    const catalogReady = page.waitForResponse(async (r) =>
+      new URL(r.url()).pathname === '/api/source-fonts/catalog' && r.ok() && (await r.json()).state === 'ready',
+      { timeout: 60_000 },
+    )
     await page.goto(a.baseURL)
     await page.locator('[data-card="Fig1_kinetics.pdf"]').dblclick({ timeout: 30_000 })
     await expect(page.locator('[data-canvas-toolbar]')).toHaveCount(1)
@@ -22,43 +27,54 @@ test(
     await expect(addText).toHaveCount(0)
     await page.keyboard.press('Escape')
     await page.locator('[data-canvas-stage] [data-object-id] [data-text-body]').click()
-    // 机器上有中文字体时字体行是两格（英文 + 中文），否则一格（Linux CI）
-    const latin = page.getByRole('combobox', { name: /^(英文字体|字体)$/ })
+    const catalog: { families: { name: string; cjk: boolean }[] } = await (await catalogReady).json()
+    expect(catalog.families.some((f) => f.name === 'DejaVu Serif')).toBe(true)
+    const latin = page.locator('[data-inspector-panel] [data-prop="fontFamily"] [data-select-trigger]')
     await expect(latin).toBeVisible({ timeout: 30_000 })
+    const openMenu = async (trigger: Locator) => {
+      await trigger.click()
+      await expect(trigger).toHaveAttribute('data-state', 'open')
+      const id = await trigger.getAttribute('aria-controls')
+      expect(id).toBeTruthy()
+      return page.locator(`[data-popover][id="${id}"][data-state="open"]`)
+    }
     const shot = async (name: string) => {
       const dir = process.env.TAVOTTO_SHOT_DIR
       if (!dir) return
-      await page.waitForTimeout(350)
-      await page.screenshot({ path: path.join(dir, `${name}.png`) })
+      await page.screenshot({ path: path.join(dir, `${name}.png`), animations: 'disabled' })
     }
-    // 首次启动清单在后台扫，下拉先只有内置三项，扫完才长出来
-    const dejavu = page.getByRole('option', { name: 'DejaVu Serif', exact: true })
-    await expect(async () => {
-      await latin.click()
-      await expect(dejavu).toBeVisible({ timeout: 1000 })
-    }).toPass({ timeout: 60_000 })
+    const menu = await openMenu(latin)
+    await expect(menu.locator('[data-select-option="DejaVu Serif"]')).toBeVisible()
     await shot('menu')
     // 搜索框：打一段名字就筛出来，回车选中
-    const search = page.getByRole('searchbox', { name: '搜索字体' })
+    const search = menu.locator('[data-select-search]')
     await expect(search).toBeFocused()
     await search.fill('dejavu ser')
-    await expect(page.getByRole('option')).toContainText(['DejaVu Serif'])
+    // 目录可能同时包含 DejaVu Serif Display；筛选结果取真实目录中的匹配族。
+    const matching = catalog.families.filter((f) => f.name.toLowerCase().replace(/\s+/g, '').includes('dejavuser'))
+    await expect(menu.locator('[data-select-option]')).toHaveCount(matching.length)
+    await expect(menu.locator('[data-select-option="DejaVu Serif"]')).toBeVisible()
     await shot('search')
     await search.press('ArrowDown')
     await search.press('ArrowUp')
     await search.press('Enter')
     await expect(latin).toContainText('DejaVu Serif')
 
-    // 中文格：有中文字体的机器才验
-    const cjk = page.getByRole('combobox', { name: '中文字体' })
-    const hasCjk = (await cjk.count()) > 0
-    if (hasCjk) {
-      await cjk.click()
-      await page.getByRole('option').nth(1).click()
+    // 以 ready 的真实目录决定中文格是否存在；控件漏渲染不能静默跳过。
+    const cjk = page.locator('[data-inspector-panel] [data-font-fallback-cell] [data-select-trigger]')
+    const cjkFamily = catalog.families.find((f) => f.cjk)
+    if (cjkFamily) {
+      await expect(cjk).toBeVisible()
+      const cjkMenu = await openMenu(cjk)
+      const chosen = cjkMenu.locator(`[data-select-option=${JSON.stringify(cjkFamily.name)}]`)
+      await chosen.click()
+      await expect(cjk).toHaveAttribute('data-state', 'closed')
+    } else {
+      await expect(cjk).toHaveCount(0)
     }
     await shot('picked')
 
-    const bold = page.getByRole('button', { name: '加粗', exact: true }).first()
+    const bold = page.locator('[data-inspector-panel] [data-prop="bold"] button')
     await bold.click()
     await expect(bold).toHaveAttribute('aria-pressed', 'true')
 
@@ -74,6 +90,6 @@ test(
     })
     expect(faces.length).toBeGreaterThan(0)
     expect(faces[0]).toMatchObject({ family: 'DejaVu Serif', bold: true })
-    if (hasCjk) expect(faces[0].cjk?.family).toBeTruthy()
+    if (cjkFamily) expect(faces[0].cjk?.family).toBe(cjkFamily.name)
   },
 )

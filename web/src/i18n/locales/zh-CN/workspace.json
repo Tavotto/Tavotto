@@ -1428,6 +1428,7 @@
       "confirmOutside": "允许运行",
       "commandAria": "将要运行的命令",
       "reasonLabel": "AI 的理由：{{reason}}",
+      "outsideNoSandbox": "由于电脑没有沙盒，需要在您确认后继续",
       "outsideBackup": "运行前会备份项目里的脚本，出问题可以恢复。",
       "skip": "跳过",
       "useIt": "用它",

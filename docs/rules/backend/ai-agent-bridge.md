@@ -625,11 +625,11 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
 
 ### `run_command`：任意命令，两档（`fixtools/command.py` / `fixtools/cmdsandbox.py`，#1374，ADR 0149 §七修订）
 
-`tier=user_env`、`waits_for_user`。看护 `tests/test_fixtools_command.py`。参数：`argv`（列表）或 `command`（字符串，`shlex` 拆，**不经 shell**）二选一；`timeout_s`（默认 60、上限 300）；`outside_sandbox`（布尔，第②档开关，必须配 `reason`）；`reason`（一句给用户看的话，≤300 字）；`cwd`（`scratch` 默认 / `project`，`project` 只给第②档）。
+`tier=user_env`、`waits_for_user`。看护 `tests/test_fixtools_command.py`。参数：`argv`（列表）或 `command`（字符串，`shlex` 拆，**不经 shell**）二选一；`timeout_s`（默认 60、上限 300）；`outside_sandbox`（布尔，第②档开关，必须配 `reason`）；`reason`（一句给用户看的话，≤300 字，没沙盒的机器上可不给）；`cwd`（`scratch` 默认 / `project`，`project` 只给第②档）。
 先过**硬拦表**（`hard_block_reason`，命中**不问用户**直接 `hard_blocked`，审计 `blocked`，两档都适用）：sudo 类、磁盘 / 关机类、起 shell（先剥掉 `env` / `nohup` / `timeout` / `nice` 等包装器再判）、管道进 shell、shell 语法、`dd of=/dev/…`、对根 / 盘符 / 主目录的递归删改权限、
 **宿主代理入口**（`osascript` `launchctl` `open` `systemd-run` `systemctl` `loginctl` `busctl` `gdbus` `dbus-send` `xdg-open` `xdotool` `docker` `podman` `nsenter` `crontab` `at` `schtasks` `reg` `wmic` …）、指向 `ReadScope` 硬拦区的参数。硬拦表是**第一道**，不是安全边界——沙盒才是（`env_contains_project` 之类的结构检查也在问用户之前）。
 
-- **第①档（默认，加固沙盒内）**：`cmdsandbox.sandbox_kind()` 找 sandbox-exec / bwrap 并**探一次**（加固后的沙盒里真能跑 Python 才算可用）；没有 → `sandbox_unavailable`（**不问、不跑**，文字说明只能申请第②档）。可写清单 `command_writable_dirs`：命令自己的临时目录（`data_dir()/cache/fix_commands/<uuid>`，cwd 与 TMPDIR / TEMP / TMP 都是它，用完 `trial._remove_tree` 带重试清理）、
+- **第①档（默认，加固沙盒内）**：`cmdsandbox.sandbox_kind()` 找 sandbox-exec / bwrap 并**探一次**（加固后的沙盒里真能跑 Python 才算可用）；没有 → 这台机器只有第②档，默认调用**直接弹第②档的卡**（见下「Windows / 无沙盒」）。可写清单 `command_writable_dirs`：命令自己的临时目录（`data_dir()/cache/fix_commands/<uuid>`，cwd 与 TMPDIR / TEMP / TMP 都是它，用完 `trial._remove_tree` 带重试清理）、
   目标 Python 环境前缀（`writable_envs`：`ctx.env_prefixes`（取前缀里的解释器）+ 已登记 env id 的解释器前缀，**所有候选统一**按 `convertdeps.describe_env` 判种类，系统自带 / 内置 runtime 一律不放；落在或盖住 Tavotto 安装目录 / 应用包 / 内置 runtime 的前缀、找不到解释器的前缀、浅到只有一两级的路径也不放；**项目内的 `.venv` 只放那个子目录**）、pip / conda 用户缓存（标准位置 `~/.cache/pip`、`~/Library/Caches/pip`、`~/.conda`，不读 pip.conf）。
   **可写前缀若是项目根或其上级 → `env_contains_project`**（问用户之前拒）。**允许联网**。凭据位置（`DENY_HOME_RELATIVE` 里实际存在的）在沙盒里连读都拒（bwrap 目录换空 tmpfs、文件盖 `/dev/null`；macOS `deny file-read*`）。
   环境：`cmdsandbox.clean_env` 去掉密钥类变量（名字带 KEY / TOKEN / SECRET / PASSWORD / AUTH …）与宿主代理入口变量（`DBUS_SESSION_BUS_ADDRESS` `DBUS_SYSTEM_BUS_ADDRESS` `XDG_RUNTIME_DIR` `DISPLAY` `WAYLAND_DISPLAY` `XAUTHORITY` `SSH_AUTH_SOCK` `GPG_AGENT_INFO` `DOCKER_HOST` …），`TMPDIR` 指向临时目录，`TAVOTTO_PROJECT` 给项目路径（项目只读）。
@@ -649,7 +649,8 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
   参数开头的 `~/`（只读工具脱敏后的主目录路径）在政策检查、审批和执行之前统一展开；不启用 shell，也不展开变量、通配符或命令替换。
 - **进程树**：命令的直接进程退出（或超时被叫停）后，`_reap_tree` 结束并**确认**整棵受管进程树退出，才收输出、才核对 / 放锁。POSIX：命令在自己的新会话 / 进程组里，`killpg(SIGKILL)` 到 `ProcessLookupError`（组里一个不剩）才算干净；Windows：Job Object（`KILL_ON_JOB_CLOSE`）终止并等活动进程归零，起不来退回 `taskkill /T`（Windows 路径未在 Windows 上实测）。确认不了时结果带 `processes_left`。这样后台孙进程既绕不过时限，也不会在第②档核对、放锁之后才去改脚本。盲区：自己 `setsid` 逃出进程组的进程 POSIX 上追不到（Linux 沙盒内有 `--unshare-pid`，随 init 退出全被收掉）。
 - **快照与可写清单同源**：快照覆盖 `writable_envs` 里**每一个**命令获准写入的环境（`change_python` 新建、只靠 `env_prefixes` 进来的都算；没登记 id 的现场登记 `cmd_env_<hash>`），不只会话创建时的前缀。
-- **Windows / 无沙盒**：#1358 之前没有沙盒，第①档直接 `sandbox_unavailable`，只有第②档（备份 + 单独点头照旧）。
+- **Windows / 无沙盒**：#1358 之前没有沙盒，只有第②档（备份 + 单独点头照旧）：不带 `outside_sandbox` 的调用也直接弹第②档的卡，不返回错误让模型重试（TVD-V7R4，模型没重试时用户点了批准却什么都没发生）。没给 `reason` 时卡上没有 `reason` 字段，前端显示 `aiFix.outsideNoSandbox`。这不算自动升级：有沙盒的机器上第①档失败仍只提示。
+- **Windows 的程序名**：不经 shell 时 CreateProcess 只补 `.exe`，所以审批之前由 `_windows_program` 解析不带路径的程序名：`conda` → 环境所属安装的 `Scripts\\conda.exe`（`launcher.find_conda_exe`），PATH 上的 `.bat` / `.cmd` → 全路径；卡上显示解析后的路径。盲区：批处理由 cmd.exe 解释，参数里的 `&` 等不经我们转义（同 `.bat` 全路径，用户在卡上看到完整命令，第②档本来就能跑任意程序）。
 - **审计行**：多 `sandbox ∈ {hardened, outside, none}`（`none` = 没执行：被拒 / 没沙盒 / 未获同意）与 `command_tier ∈ {1, 2}`；命令、理由的文字**不进审计**（只记长度），`outside_sandbox` 布尔照记。执行前打快照（设置 + 目标环境 freeze）。
 - **活动与看门狗**：前端把 `activity.tool=run_command` 映射成「正在运行命令…」；命令在跑是在途工具，不算卡住；等卡片也不算。
 - **已知盲区（如实）**：

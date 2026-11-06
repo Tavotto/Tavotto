@@ -6237,6 +6237,7 @@ export default interface Resources {
         "notFixed": "这次没能修好",
         "other": "我自己填…",
         "outsideBackup": "运行前会备份项目里的脚本，出问题可以恢复。",
+        "outsideNoSandbox": "由于电脑没有沙盒，需要在您确认后继续",
         "outsideTitle": "这条命令需要修改项目以外的文件",
         "pathAria": "路径",
         "pathPlaceholder": "粘贴路径",

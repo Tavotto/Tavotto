@@ -4218,3 +4218,118 @@ def test_convert_candidate_workspace_survives_paths_over_260_chars(tmp_path, mon
     finally:
         ai_convert.remove_dir(cand.dir)
         assert not os.path.exists(longpath.extended(cand.dir))
+
+
+# --- AI 修复 run_command：Windows 没有沙盒，默认调用直接走第②档的卡（TVD-V7R4，ADR 0149 §七 修订 2026-11-06）
+# 判据的主语：真 Windows 上**命令留下的标记文件**，不看工具返回值；卡片由替身 asker 点「是」。
+def _windows_fix_ctx(tmp_path, monkeypatch):
+    from tests.test_fixtools_change import change_ctx
+
+    home = tmp_path / "home"
+    proj = home / "proj"
+    proj.mkdir(parents=True)
+    cfg, data = tmp_path / "cfg", tmp_path / "data"
+    cfg.mkdir()
+    data.mkdir()
+    for name, value in (
+        ("USERPROFILE", home),
+        ("HOME", home),
+        ("TAVOTTO_CONFIG_DIR", cfg),
+        ("TAVOTTO_DATA_DIR", data),
+    ):
+        monkeypatch.setenv(name, str(value))
+    (cfg / "config.json").write_bytes(b'{"ai": {"providers": []}}')
+    box = type("Box", (), {"home": home, "proj": proj, "cfg": cfg, "data": data, "tmp": tmp_path})
+    return change_ctx(box)
+
+
+def _run_command(ctx, argv):
+    from tests.test_fixtools import call
+
+    return call(ctx, "run_command", {"argv": argv, "timeout_s": 60})
+
+
+@pytest.mark.skipif(os.name != "nt", reason="真 Windows 才有 Job Object 与 .bat 语义")
+def test_ai_command_runs_after_the_card_and_its_background_child_cannot_outlive_it(
+    tmp_path, monkeypatch
+):
+    ctx = _windows_fix_ctx(tmp_path, monkeypatch)
+    ran, late = tmp_path / "ran.txt", tmp_path / "late.txt"
+    child = f"import time; time.sleep(6); open({str(late)!r}, 'w').write('x')"
+    code = (
+        "import subprocess, sys\n"
+        f"subprocess.Popen([sys.executable, '-c', {child!r}])\n"
+        f"open({str(ran)!r}, 'w').write('x')\n"
+    )
+    r = _run_command(ctx, [sys.executable, "-c", code])
+    assert not r.is_error, r.content
+    assert ran.exists() and ctx.asker.cards[0]["danger"] is True
+    assert "processes_left" not in r.content
+    time.sleep(8)
+    assert not late.exists()  # 后台孙进程被 Job Object 收掉，绕不过核对与放锁
+
+
+@pytest.mark.skipif(os.name != "nt", reason="真 Windows 才有 .bat 语义")
+@pytest.mark.parametrize("spelling", ["full_path", "bare_name_on_path"])
+def test_ai_command_starts_a_conda_style_batch_file(tmp_path, monkeypatch, spelling):
+    """Anaconda 的 condabin 里只有 conda.bat，模型写 `conda install …` 时要真能起来。"""
+    ctx = _windows_fix_ctx(tmp_path, monkeypatch)
+    tools = tmp_path / "cond abin"  # 路径带空格：批处理走 cmd.exe，引号要对
+    tools.mkdir()
+    out = tmp_path / "bat-ran.txt"
+    (tools / "fakeconda.bat").write_text(f'@echo off\r\necho %1> "{out}"\r\n', encoding="ascii")
+    monkeypatch.setenv("PATH", str(tools) + os.pathsep + os.environ["PATH"])
+    program = str(tools / "fakeconda.bat") if spelling == "full_path" else "fakeconda"
+    r = _run_command(ctx, [program, "install"])
+    assert not r.is_error, r.content
+    assert out.read_text(encoding="ascii").strip() == "install"
+    assert "fakeconda.bat" in ctx.asker.cards[0]["command"].lower()  # 卡上是实际执行的全路径
+
+
+@pytest.mark.skipif(os.name != "nt", reason="解析只在 Windows 上做")
+@pytest.mark.parametrize("named", [False, True], ids=["base", "named"])
+def test_ai_command_bare_conda_uses_the_install_that_owns_the_environment(
+    tmp_path, monkeypatch, named
+):
+    """TVD-V7R4：未枚举环境，PATH 没有 conda；从应用真实上下文定位所属安装并真正执行。"""
+    from types import SimpleNamespace
+
+    from tavotto import app as appmod
+    from tavotto.engine.fixtools import command
+
+    ctx = _windows_fix_ctx(tmp_path, monkeypatch)
+    ctx.environments.clear()
+    root = ctx.home / "miniconda3"
+    prefix = root / "envs" / "research" if named else root
+    prefix.mkdir(parents=True)
+    (prefix / "python.exe").touch()  # 环境解释器只用来分类；命令与 freeze 各有执行器
+    (prefix / "conda-meta").mkdir()
+    (root / "conda-meta").mkdir(exist_ok=True)
+    conda = root / "Scripts" / "conda.exe"
+    conda.parent.mkdir()
+    # 用真实 Python 充当 conda 可执行文件；保留其原标准库与 DLL 来源，不装 Conda、不联网。
+    base = Path(sys.base_prefix)
+    shutil.copy2(base / "python.exe", conda)
+    for dll in base.glob("python*.dll"):
+        shutil.copy2(dll, conda.parent / dll.name)
+    monkeypatch.setenv("PYTHONHOME", str(base))
+    monkeypatch.setenv("PATH", str(Path(os.environ["SystemRoot"]) / "System32"))
+    monkeypatch.delenv("CONDA_EXE", raising=False)
+    facts = appmod._fix_session_env(
+        SimpleNamespace(
+            plan=SimpleNamespace(
+                interpreter=str(prefix / "python.exe"), environment={"source": "conda"}
+            )
+        )
+    )
+    ctx.env_prefixes = facts["env_prefixes"]
+    ctx.current_environment = facts["current_environment"]
+    assert ctx.environments == {}
+    out = tmp_path / "conda-ran.txt"
+    code = f"open({str(out)!r}, 'w').write('x')"
+    r = _run_command(ctx, ["conda", "-c", code])
+    assert not r.is_error, r.content
+    assert out.exists()
+    assert ctx.asker.cards[0]["command"] == command.scrub(command._shown([str(conda), "-c", code]))
+    assert command.writable_envs(ctx) == [(os.path.realpath(prefix), str(prefix / "python.exe"))]
+    assert any(py == str(prefix / "python.exe") for py in ctx.environments.values())

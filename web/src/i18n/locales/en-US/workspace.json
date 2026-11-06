@@ -1492,6 +1492,7 @@
       "confirmOutside": "Allow",
       "commandAria": "Command to run",
       "reasonLabel": "The AI’s reason: {{reason}}",
+      "outsideNoSandbox": "This computer has no sandbox, so this needs your confirmation to continue",
       "outsideBackup": "Your project’s scripts are backed up first, so you can restore them if something goes wrong.",
       "skip": "Skip",
       "useIt": "Use it",

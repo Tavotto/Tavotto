@@ -112,6 +112,53 @@ describe('SearchSelect', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
+  it.each(['Enter', 'Escape'])('%s 关闭后仍把焦点还给自己的触发器', async (key) => {
+    const trigger = await mount(() => {})
+    trigger.focus()
+    const input = await openIt(trigger)
+    await press(input, key)
+    await act(async () => new Promise<void>((resolve) => setTimeout(resolve, 0)))
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it.each(['Enter', 'Escape'])('%s 关闭后，新菜单先获得焦点：旧菜单延迟归还不能关掉它', async (key) => {
+    host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+    const onChange = vi.fn()
+    await act(async () => root!.render(
+      <>
+        <div data-probe="old"><SearchSelect value="Arial" onChange={() => {}} options={OPTIONS} searchLabel="旧搜索" emptyLabel="空" /></div>
+        <div data-probe="next"><SearchSelect value="Arial" onChange={onChange} options={OPTIONS} searchLabel="新搜索" emptyLabel="空" /></div>
+      </>,
+    ))
+    const oldTrigger = host.querySelector<HTMLElement>('[data-probe="old"] [data-select-trigger]')!
+    const nextTrigger = host.querySelector<HTMLElement>('[data-probe="next"] [data-select-trigger]')!
+    const oldInput = await openIt(oldTrigger)
+    const oldContent = document.getElementById(oldTrigger.getAttribute('aria-controls')!)!
+    // Presence 已卸载，但 FocusScope 的归还任务还没跑：在这个窗口交给下一个菜单。
+    const held: (() => void)[] = []
+    const timer = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void) => {
+      held.push(fn)
+      return 0
+    }) as unknown as typeof setTimeout)
+    try {
+      await press(oldInput, key)
+    } finally {
+      timer.mockRestore()
+    }
+    expect(oldContent.isConnected).toBe(false)
+    expect(held.length).toBeGreaterThan(0)
+    const nextInput = await openIt(nextTrigger)
+    expect(document.activeElement).toBe(nextInput)
+    await act(async () => held.forEach((fn) => fn()))
+    expect(nextTrigger.dataset.state).toBe('open')
+    expect(document.activeElement).toBe(nextInput)
+    await press(nextInput, 'ArrowDown')
+    await press(nextInput, 'Enter')
+    expect(onChange).toHaveBeenCalledWith('Times New Roman')
+  })
+
   it('选项少时没有搜索框', async () => {
     await openIt(await mount(() => {}, OPTIONS.slice(0, 3)))
     expect(document.querySelector('[role=searchbox]')).toBeNull()

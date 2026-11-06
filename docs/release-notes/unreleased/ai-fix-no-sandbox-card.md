@@ -1,0 +1,3 @@
+## AI fixes can now run the command you approved on Windows
+
+On Windows there is no protective sandbox, so a command the AI needed to run, such as installing a missing program into your Conda environment, stopped with "not supported on this computer" even after you approved the fix. The AI now shows the same separate confirmation card with the full command straight away. Nothing runs unless you agree, and it covers that one command only. A bare `conda` now finds the conda that owns your environment even when it is not on PATH, and diagnostic bundles name the missing program for runs in your own Python too.
