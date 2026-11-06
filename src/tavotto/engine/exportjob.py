@@ -76,6 +76,16 @@ ERROR_CODES = (
     "tmp_dir_failed",
     "export_failed",
     "format_failed",
+    # 修改后的 .py 的逐项失败（ADR 0171；由 app.py 填进 `Produced.error_code`）
+    "script_export_diverged",
+    "script_export_native",
+    "script_export_no_savefig",
+    "script_export_no_script",
+    "script_export_not_python",
+    "script_export_run_failed",
+    "script_export_same_file",
+    "script_export_script_changed",
+    "script_export_unreadable",
     # 逐项失败里「这条路给不出 EPS」的两档（ADR 0046；由 app.py 的 produce 填进
     # `Produced.error_code`，与 `format_failed` 同一条漏斗 `_legacy_export_response`）
     "eps_not_for_canvas",
@@ -137,9 +147,13 @@ class Output:
     #: ArtifactManifest 的投影（`rendercore.inspector.summary`）：verdict + 每项四值判据 + 说明。
     #: 失败项也带（拒绝的理由就在里面）；没检查过是 None。
     manifest: dict | None = None
+    #: 修改后的脚本（ADR 0171）写进去了什么、哪些没写进去；别的产物没有这个键。
+    script_report: dict | None = None
 
     def to_payload(self) -> dict:
+        extra = {"script_report": self.script_report} if self.script_report is not None else {}
         return {
+            **extra,
             "format": self.format,
             "name": self.name,
             "url": self.url,
@@ -219,6 +233,8 @@ class Produced:
     #: 多页 PDF（#1370）：每一页各自的单页产物（带尺寸与临时文件）。检查器只读首页，所以 `inspect` 钩子逐页检查它们；
     #: 不发布，只是检查的输入。单页导出恒为 `None`。
     parts: list["Produced"] | None = None
+    #: 见 `Output.script_report`。
+    script_report: dict | None = None
 
 
 class Cancelled(Exception):
@@ -258,6 +274,8 @@ class ExportJob:
     _commit_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     #: 冲突时告诉界面是哪几个名字撞了（`overwrite=ask`）
     conflicts: list[str] = field(default_factory=list)
+    #: 这次修改后的 .py 落到哪个文件名（ADR 0171）：`produce` 用它确认不会盖掉原脚本。
+    script_name: str | None = None
     validation_summary: dict = field(default_factory=dict)
     report: Output | None = None
     #: 阶段轨迹（U09，ADR 0071）：prepare → source / compile / compose / raster（生产者按自己的步子记）→
@@ -481,6 +499,13 @@ def _drop_tmp(job: ExportJob) -> None:
 #: 盖掉上一次的报告，`rename` 会给图编号却仍然覆盖报告（PR #214 评审）。
 REPORT_KEY = "report"
 REPORT_SUFFIX = "_style-check.json"
+#: 修改后的脚本（ADR 0171）在 `outputs[]` 里的 `format`。不进 `exportreq.FORMATS`：它不是图片格式，
+#: 不走分辨率 / 产物检查 / 文件名同源对。后缀只是让名字通常不同，真正挡住覆盖原脚本的是
+#: `app._produce_edited_script` 的同一文件判据。
+SCRIPT_KEY = "script"
+SCRIPT_SUFFIX = "_edited.py"
+#: 附属产物：名字不是 `<基名>.<格式>` 的那几样。
+_SIDE_SUFFIX = {REPORT_KEY: REPORT_SUFFIX, SCRIPT_KEY: SCRIPT_SUFFIX}
 LEGACY_REPORT_SUFFIX = "_proof.json"
 
 #: 已经被某个在跑的作业**预定**的最终路径 → 作业 id。
@@ -517,7 +542,11 @@ def _plan_names(job: ExportJob) -> dict[str, str]:
     预留，把并发窗口关掉。
     """
     req = job.request
-    keys = list(req.formats) + ([REPORT_KEY] if req.include_report else [])
+    keys = (
+        list(req.formats)
+        + ([SCRIPT_KEY] if req.include_script else [])
+        + ([REPORT_KEY] if req.include_report else [])
+    )
     if req.legacy_naming:
         # 旧契约：`<stem>_<MMDD_HHMMSS>.<ext>`。时间戳让它天生撞不了车，
         # 所以老标签页与 CI 脚本从来不需要覆盖策略，行为一个字节不变。
@@ -548,18 +577,16 @@ def _plan_names(job: ExportJob) -> dict[str, str]:
         return (job.export_dir / name).exists()
 
     def plain(key: str) -> str:
-        return (
-            f"{req.filename}{REPORT_SUFFIX}"
-            if key == REPORT_KEY
-            else exportreq.output_name(req.filename, key)
-        )
+        if key in _SIDE_SUFFIX:
+            return f"{req.filename}{_SIDE_SUFFIX[key]}"
+        return exportreq.output_name(req.filename, key)
 
     names: dict[str, str] = {}
     for key in keys:
         if req.overwrite == exportreq.OVERWRITE_RENAME:
             name = (
-                _dedupe_report(req.filename, taken)
-                if key == REPORT_KEY
+                _dedupe_side(req.filename, _SIDE_SUFFIX[key], taken)
+                if key in _SIDE_SUFFIX
                 else exportreq.dedupe_name(req.filename, key, taken)
             )
         else:
@@ -569,15 +596,15 @@ def _plan_names(job: ExportJob) -> dict[str, str]:
     return names
 
 
-def _dedupe_report(base: str, taken) -> str:
-    """报告的去重名。编号规则与 `exportreq.dedupe_name()` 逐字相同
+def _dedupe_side(base: str, suffix: str, taken) -> str:
+    """附属产物（报告、修改后的脚本）的去重名。编号规则与 `exportreq.dedupe_name()` 逐字相同
     （`Fig 1 (2)_style-check.json`），只是后缀不是一个格式扩展名。"""
-    first = f"{base}{REPORT_SUFFIX}"
+    first = f"{base}{suffix}"
     if not taken(first):
         return first
     n = 2
     while n <= 9999:
-        candidate = f"{base} ({n}){REPORT_SUFFIX}"
+        candidate = f"{base} ({n}){suffix}"
         if not taken(candidate):
             return candidate
         n += 1
@@ -663,7 +690,7 @@ def run(
     req = job.request
     job.status = STATUS_RUNNING
     job.started_at = time.time()
-    job.total = len(req.formats) + (1 if req.include_report else 0)
+    job.total = len(req.formats) + (1 if req.include_report else 0) + int(req.include_script)
     job.step = 0
     job.phase = "preparing"
     job.trace.mark("prepare", formats=len(req.formats))
@@ -683,6 +710,7 @@ def run(
         )
     except exportreq.ExportRequestError as exc:
         return _fail(job, exc.code, exc.params, publish, recoverable=True)
+    job.script_name = names.get(SCRIPT_KEY)
     if conflicts:
         job.conflicts = conflicts
         job.finished_at = time.time()
@@ -786,6 +814,7 @@ def run(
                     status=STATUS_DONE,
                     replaced=replaced,
                     manifest=p.manifest,
+                    script_report=p.script_report,
                 )
             )
             job.step += 1
@@ -1057,7 +1086,9 @@ def diagnostic_projection(job: ExportJob) -> dict:
     for o in [*job.outputs, *([job.report] if job.report is not None else [])]:
         outputs.append(
             {
-                "format": taskdiag.closed(o.format, (*exportreq.ENGINE_FORMATS, REPORT_KEY)),
+                "format": taskdiag.closed(
+                    o.format, (*exportreq.ENGINE_FORMATS, SCRIPT_KEY, REPORT_KEY)
+                ),
                 "status": taskdiag.closed(o.status, STATUSES),
                 "error_code": taskdiag.code(o.error_code),
                 "vector": taskdiag.flag(o.vector),

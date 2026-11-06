@@ -12,6 +12,7 @@ order: 210
 必守要点: 五端点一服务；文件名严格同源
 -->
 
+- **修改后的 .py（ADR 0171）**：`include_edited_script` → `ExportRequest.include_script`，产物是 `outputs[]` 里 `format: "script"` 的一项（`exportjob.SCRIPT_KEY`，不进 `FORMATS`），名字 `<基名>_edited.py`。**原脚本一字节不动，不写项目目录**。`app._produce_edited_script`：`engine/scriptadjust.build` 生成 → `_verify_edited_script` 用写回同一把尺重放（影子脚本 + 隔离模式）→ 不一致或像素没比成都报 `script_export_diverged`、不交付，图片格式照常；目标与原脚本是同一个文件报 `script_export_same_file`。只对单张图；`WRITES` / `NOT_WRITABLE` 必须覆盖 `overrides.HANDLERS` 全部键。看护 `tests/test_script_adjust.py`。
 - **导出（ADR 0031，2026-08-31 定版）**：`POST /api/export`（同步）/
   `/api/export/start`（后台作业，进度经 SSE `export.progress`）/ `/state` /
   `/cancel` / `/validate` —— **五个端点、一个服务**。「要什么」只有

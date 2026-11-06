@@ -44,7 +44,6 @@ import {
 import { useTranslation } from "react-i18next";
 import {
   Check,
-  CircleCheck,
   Download,
   FileExclamationPoint,
   ImageOff,
@@ -64,6 +63,7 @@ import {
   type AssetOriginalSpec,
   type ExportJob,
   type ExportOutput,
+  type ExportScriptReport,
   type PanelInfo,
 } from "@/lib/api";
 import { formatMessage, literal, msg, t as translate, type UiMessage } from "@/i18n";
@@ -100,6 +100,7 @@ import { buildProofPayload } from "@/lib/preflight";
 import {
   defaultScope,
   epsAvailability,
+  scriptAvailability,
   runtimeRegistration,
   pixelPreview,
   PPI_DEFAULT,
@@ -279,6 +280,7 @@ interface ParkedState {
   filename: string;
   filenameTouched: boolean;
   withReport: boolean;
+  withScript: boolean;
   transparent: boolean;
   strict: boolean;
 }
@@ -344,6 +346,8 @@ export function ExportDialog() {
     () => readExportDefaults().withProof,
   );
   const [transparent, setTransparent] = useState(false);
+  // 修改后的 .py（ADR 0171）：每次都要重跑一遍脚本，所以不记进导出默认值
+  const [withScript, setWithScript] = useState(false);
   /** 严格核验产物（ADR 0068 的 `strict` 政策）：必需项失败或无法核验的那一项不发布 */
   const [strict, setStrict] = useState(
     () => readExportDefaults().strictInspection,
@@ -649,6 +653,7 @@ export function ExportDialog() {
       setFilename(restore.filename);
       setFilenameTouched(restore.filenameTouched);
       setWithReport(restore.withReport);
+      setWithScript(restore.withScript);
       setTransparent(restore.transparent);
       setStrict(restore.strict);
       return;
@@ -866,6 +871,15 @@ export function ExportDialog() {
    * 没有它（画布合成没有 PostScript 写入器），没有脚本的图也没有它。**不隐藏选项**：禁用并
    * 说原因；勾过它的用户切到画布时，请求里自动不带它（`buildExportRequest`）。
    */
+  // 「每张图单独导出」没有单一的 figureId：没有脚本的那张由后端逐项说原因
+  const script = useMemo(
+    () =>
+      !single && scope === "original"
+        ? { ok: true, reason: "none" as const }
+        : scriptAvailability(scope, figureId, route),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [single, scope, figureId, assets, runtimeAssets, route],
+  );
   const unreachable = useMemo(
     () => (scope === "canvas" ? [...new Set(unavailablePanels(route, formats))] : []),
     [scope, route, formats],
@@ -884,6 +898,7 @@ export function ExportDialog() {
       ppi: Number(ppi) || PPI_DEFAULT,
       background: transparent && transparentApplies ? "transparent" : "white",
       includeReport: reportOn,
+      includeScript: withScript && script.ok,
       strictInspection: strict,
       profileId: checkProfileId,
       // 后端的 `acknowledged` 策略 = 「这些阻断项导出时仍未处理」：自动带上，不再靠勾选
@@ -954,7 +969,8 @@ export function ExportDialog() {
   );
   const [mergePdfChoice, setMergePdfChoice] = useState(true);
   const mergeOn = mergePlan !== null && mergePdfChoice;
-  const canStartBatch = batchMode && canvasFigures.length > 0 && formats.length > 0 && !busy && !locationUpdating;
+  const canStartBatch =
+    batchMode && canvasFigures.length > 0 && (formats.length > 0 || withScript) && !busy && !locationUpdating;
   /**
    * 「每张图单独导出」的**冻结**：点「导出」之后分两步，且两步之间没有任何交错——
    * ① 先 await 拿齐每张图的 export route（只取后端的回答，不读文档、不生成请求输入；用户这几秒里改了什么，
@@ -972,7 +988,7 @@ export function ExportDialog() {
     // 合成多页 PDF：每张图的单页 PDF 不再单独出（并进那一个文件），其余格式照旧逐张导；只勾了 PDF 时批里只剩那一项
     const merge = mergeOn ? mergePlan : null;
     const otherFormats = merge ? formats.filter((f) => f !== "pdf") : [...formats];
-    const perFigure = otherFormats.length > 0 ? figs : [];
+    const perFigure = otherFormats.length > 0 || withScript ? figs : [];
     const jobIds = [...perFigure.map((f) => f.figureId), ...(merge ? [MERGED_PDF_ID] : [])];
     const jobNames = [...perFigure.map((f) => f.name), ...(merge ? [`${merge.name}.pdf`] : [])];
     if (!beginExportBatch(jobIds, jobNames)) return;
@@ -982,6 +998,7 @@ export function ExportDialog() {
       transparent,
       strict,
       withReport,
+      withScript,
       profileId,
       catalog,
     };
@@ -1180,6 +1197,8 @@ export function ExportDialog() {
       hasUnhandled,
       reportOn,
       withReport,
+      withScript,
+      script.ok,
       scope,
       transparent,
       strict,
@@ -1289,6 +1308,7 @@ export function ExportDialog() {
       filename,
       filenameTouched,
       withReport,
+      withScript,
       transparent,
       strict,
     };
@@ -1414,8 +1434,12 @@ export function ExportDialog() {
               },
             }
           : undefined;
+      // 有修改没写进脚本：胶囊就说这一句（ADR 0171），不为它开结果块
+      const skipped = done.reduce((n, o) => n + (o.script_report?.skipped.length ?? 0), 0);
       ui.setStatus(
-        msg("export.exported", { files: done.map((o) => o.name).join("、") }, "dialogs"),
+        skipped > 0
+          ? msg("export.resultScriptSkipped", { count: skipped }, "dialogs")
+          : msg("export.exported", { files: done.map((o) => o.name).join("、") }, "dialogs"),
         "done",
         { owner: EXPORT_STATUS_OWNER, action: reveal, dismissMs: reveal ? EXPORT_DONE_DISMISS_MS : undefined },
       );
@@ -1825,11 +1849,11 @@ export function ExportDialog() {
 
         <FormSection title={ex("groupFormat")} data-export-group="format">
           <FieldGroup>
-            {/* 格式 —— 五颗复选框均分一行（balanced），顺序与 `FORMATS` 同源 */}
+            {/* 格式 —— 复选框均分一行（balanced），前五颗顺序与 `FORMATS` 同源；PY 是修改后的脚本（ADR 0171） */}
             <section className="flex flex-col gap-1.5">
               <fieldset aria-label={ex("formatLabel")} className="m-0 min-w-0 border-0 p-0">
                 <FormRow label={ex("formatLabel")}>
-                  <div className="grid flex-1 grid-cols-5 items-center gap-2" data-export-formats>
+                  <div className="grid flex-1 grid-cols-6 items-center gap-2" data-export-formats>
                     <FormatCheck
                       checked={formats.includes("pdf")}
                       onChange={() => toggleFormat("pdf")}
@@ -1862,6 +1886,13 @@ export function ExportDialog() {
                       onChange={() => toggleFormat("svg")}
                       format="svg"
                       hint={ex("svgHint")}
+                    />
+                    <FormatCheck
+                      checked={withScript && script.ok}
+                      onChange={() => setWithScript((v) => !v)}
+                      format="py"
+                      hint={script.ok ? ex("scriptHint") : ex(`scriptUnavailable.${script.reason}`)}
+                      disabled={!script.ok}
                     />
                   </div>
                 </FormRow>
@@ -2871,6 +2902,8 @@ export function ResultBlock({
     (o) => outputSaved(o) && inspectionState(o.manifest).tone === "failed",
   ).length;
   const warningCount = job.warnings?.length ?? 0;
+  // 脚本少了几处修改：拿去运行之前得知道，和核验未通过一样上到摘要行
+  const scriptSkippedCount = job.outputs.reduce((n, o) => n + (o.script_report?.skipped.length ?? 0), 0);
   // 一件都没写出来：原因就在摘要行里（用户要的是「为什么」，不该再点开才知道）；有成功的才把失败原因折进详情
   const firstFailure = savedCount === 0 ? job.outputs.find((o) => !outputSaved(o)) : undefined
   // 几件事同时成立时都要说（一句话里合并），不让优先级链吃掉任何一个：核验未通过 / 警告 / SVG 文字转了轮廓 / 导出期间又被编辑过
@@ -2878,6 +2911,7 @@ export function ResultBlock({
     firstFailure ? outputFailureReason(firstFailure) : null,
     inspectionFailedCount > 0 ? ex("resultInspectionFailed", { count: inspectionFailedCount }) : null,
     warningCount > 0 ? ex("resultWarnings", { count: warningCount }) : null,
+    scriptSkippedCount > 0 ? ex("resultScriptSkipped", { count: scriptSkippedCount }) : null,
     job.outputs.some((o) => outputSaved(o) && svgTextOutlined(o)) ? ex("svgTextOutlined") : null,
     edited ? ex("editedDuringExport") : null,
   ].filter((x): x is string => x !== null);
@@ -2991,7 +3025,7 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
         </IconSlot>
         {ex("outputFailed", {
           // 一批里根本没起来的那张没有格式，点名用图名
-          format: out.format ? out.format.toUpperCase() : (out.name ?? ""),
+          format: out.format === "script" ? ".py" : out.format ? out.format.toUpperCase() : (out.name ?? ""),
           reason: outputFailureReason(out),
         })}
       </p>
@@ -3043,64 +3077,49 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
           </a>
         )}
         <span className="shrink-0 text-xs tabular-nums text-ink-3">{dims}</span>
-        {out.replaced && (
-          <span className="shrink-0 text-xs text-ink-3">{ex("replaced")}</span>
-        )}
       </div>
-      <InspectionLine manifest={out.manifest} />
+      {out.script_report ? (
+        <ScriptSkipped report={out.script_report} />
+      ) : (
+        <InspectionLine manifest={out.manifest} />
+      )}
       {revealError && <p className="text-sm text-danger-content">{revealError}</p>}
     </div>
   );
 }
 
+/** 修改后的 .py 里少了哪几处（ADR 0171）。全写进去了什么都不说 */
+function ScriptSkipped({ report }: { report: ExportScriptReport }) {
+  useTranslation("dialogs");
+  if (report.skipped.length === 0) return null;
+  const names = [...new Set(report.skipped.map((s) => s.label || s.gid))];
+  return (
+    <p data-export-script-report className="type-caption">
+      {ex("scriptSkipped", { items: names.slice(0, 6).join("、") })}
+    </p>
+  );
+}
+
 /**
- * 这一件产物核验得怎么样（ADR 0068）。解读只有 `lib/artifactInspection.inspectionState()`
- * 一份：**只有全部可判项都核过才画绿**；有未核验项就按「未核验」说、不画勾；有失败项
- * 红着列出（standard 政策下文件照样交付了，用户投出去之前得知道）；`not_applicable` 不画。
- * 没有 manifest（老服务端 / 检查器没跑）= 未核验。
+ * 这一件产物核验没过（ADR 0068）：standard 政策下文件照样交付了，用户投出去之前得知道。
+ * 解读只有 `lib/artifactInspection.inspectionState()` 一份。核验过、没核验都不画：用户不需要理解这些，
+ * 「未核验不显示绿」照样成立（2026-11-06 用户：用户不需要理解的东西不用放上去）。
  */
-function InspectionLine({
-  manifest,
-}: {
-  manifest: ExportOutput["manifest"];
-}) {
+function InspectionLine({ manifest }: { manifest: ExportOutput["manifest"] }) {
   useTranslation("dialogs");
   const state = inspectionState(manifest);
-  const label = (k: string) =>
-    ex(`inspection.check.${k}`, { defaultValue: k });
-  if (state.tone === "verified") {
-    return (
-      <p
-        data-inspection="verified"
-        className="flex items-center gap-1 text-sm text-ok-content"
-      >
-        <CircleCheck playIn size={ICON_SIZE.xs} className="shrink-0" aria-hidden />
-        {ex("inspection.verified")}
-      </p>
-    );
-  }
-  if (state.tone === "failed") {
-    return (
-      <p
-        data-inspection="failed"
-        className="flex items-start gap-1 text-sm text-danger-content"
-      >
-        <IconSlot>
-          <TriangleAlert size={ICON_SIZE.xs} aria-hidden />
-        </IconSlot>
-        {ex("inspection.failedItems", {
-          items: state.failed.map(label).join("、"),
-        })}
-      </p>
-    );
-  }
+  if (state.tone !== "failed") return null;
   return (
-    <p data-inspection="unknown" className="text-sm text-ink-3">
-      {state.unknown.length
-        ? ex("inspection.unknownItems", {
-            items: state.unknown.map(label).join("、"),
-          })
-        : ex("inspection.unknown")}
+    <p
+      data-inspection="failed"
+      className="flex items-start gap-1 text-sm text-danger-content"
+    >
+      <IconSlot>
+        <TriangleAlert size={ICON_SIZE.xs} aria-hidden />
+      </IconSlot>
+      {ex("inspection.failedItems", {
+        items: state.failed.map((k) => ex(`inspection.check.${k}`, { defaultValue: k })).join("、"),
+      })}
     </p>
   );
 }
@@ -3124,7 +3143,7 @@ function FormatCheck({
 }: {
   checked: boolean;
   onChange: () => void;
-  format: ExportFormat;
+  format: ExportFormat | "py";
   hint: string;
   disabled?: boolean;
   /** 禁用原因那段可见文字的 id */

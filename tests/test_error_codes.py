@@ -472,6 +472,16 @@ USER_VISIBLE_CODES = {
     # --- ADR 0046（EPS / TIFF）：EPS 只有 worker 的 matplotlib 写得出，画布合成
     #     与没有脚本的图各报一条，其余格式照常交付（`partial`）---
     "eps_not_for_canvas": set(),
+    "script_export_diverged": set(),
+    "script_export_native": set(),
+    "script_export_no_savefig": set(),
+    "script_export_no_script": set(),
+    "script_export_not_for_canvas": set(),
+    "script_export_not_python": set(),
+    "script_export_run_failed": set(),
+    "script_export_script_changed": set(),
+    "script_export_same_file": set(),
+    "script_export_unreadable": set(),
     "eps_needs_script": {"figure"},
     "eps_source_unverified": {"figure"},
     "eps_needs_live_figure": {"figure"},

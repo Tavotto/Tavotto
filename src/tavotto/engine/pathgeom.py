@@ -509,6 +509,9 @@ def frame_report(fig) -> dict | None:
             round((w + right - left) * 25.4, 2),
             round((h + top - bottom) * 25.4, 2),
         ],
+        # 同一个框的英寸值（左下为原点，savefig 的 `bbox_inches` 口径）：修改后的 .py 把它写进脚本
+        # （ADR 0171），上面那份 mm 只到 0.01，还原回来差亚像素
+        "savefig_in": [round(v, 6) for v in (left, bottom, w + right, h + top)],
     }
 
 

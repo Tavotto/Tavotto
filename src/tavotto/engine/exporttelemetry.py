@@ -47,6 +47,7 @@ ERROR_CLASSES = (
 _REQUEST_CODES = frozenset(
     {
         "no_format",
+        "script_export_not_for_canvas",
         "eps_needs_script",
         "eps_source_unverified",
         "eps_needs_live_figure",
