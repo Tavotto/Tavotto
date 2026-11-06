@@ -1,7 +1,7 @@
 # SVG 计算图表编辑：执行效果复核与下一阶段任务
 
-> 2026-11-07（Asia/Shanghai）复核，最新功能HEAD=11c67ab1。b5f9f557包成员单一权威与11c67ab1 safe/workerd执行捕获已提交；N3b严格检视及旧保存/导出资格保留。已有实际worker/Rust控制面/3.10及缺省身份兼容验证；native、准备/启动过期核验、完整声明资源入包及UI仍缺，M1/M2/M3均未通过。
-> 下一动作：N3c-3a剩余native捕获与过期核验→3b完整图/外部及prefix资源→3c声明UI→3d精确引用迁移→N3d独占安装→N3e原writer采用→N3f冷搬迁整链。safe捕获、N3a/b、配置/已知资源、FRAME不重做。随后N4图例→N5几何→N6/M1→N7/M2→N8/M3，不缩减SG00–SG17。
+> 2026-11-07（Asia/Shanghai）最新功能HEAD=d8416d4e。3c64195b已接native起点/屏障/续跑及两回执入口，d8416d4e已接准备/启动声明过期与实际成功记录；safe/workerd及N3b资格保留。实际3.10 native五例、U09规定94项通过；完整声明图/当时输入字节冷存、版本化完整资源包及UI仍缺。M1/M2/M3均未通过，扩大集成的2个基线Win1314失败/7平台skip保留。
+> 下一动作：N3c-3b当时资源有界物化→durable graph/inputs→版本化execution正式export/inspect→3c声明UI→3d精确引用迁移→N3d/e/f安装及冷开。捕获/准备、N3a/b、配置/已知资源、FRAME不重做。随后N4图例→N5几何→N6/M1→N7/M2→N8/M3，不缩减SG00–SG17。
 > 进度唯一台账：[PROGRESS.md](PROGRESS.md)；最终范围：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)；接续提示词：[NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。沿用当前实施分支，按功能commit；无人值守合同见第5节。
 
 ## 1. 当前执行情况与实际效果
@@ -19,7 +19,7 @@
 | 明确冲突恢复 | 真覆盖、真reload等待期间新增编辑与下一普通保存、双独立窗口200/409均验；404旧链备份失败P1已修并提交 | 最终旧功能/平台候选全量资格待补 |
 | 预检误报 | 0b611411已提交，真实输入两范围误报消失，旧128份spec对拍及正式构建通过 | 图例与广泛readiness仍未完成 |
 | 项目包 | 真实v4导出、保原配置ID/已知登记及输入已验；新增5e000c6f实际严格检视API，完整资源/快照/声明缺件及认证均有真实HTTP证据 | 完整输入声明、外部/prefix资源、安全安装API/UI、搬迁整链未完成；导出/检视不等于安装 |
-| 执行时输入证据 | 11c67ab1：认证声明管理、safe/workerd起止文件/目录清单、冻结执行胶囊、receipt可选revision；真实worker/Rust/3.10已验 | native、准备/启动过期核验、完整声明图及资源入包、声明UI；当前公开revision不证明完整可复现包 |
+| 执行时输入证据 | 11c67ab1+3c64195b+d8416d4e：认证声明管理、safe/workerd/native实际捕获、谱系/过期/成功记录；真实worker/Rust/3.10/U09已验 | 完整声明图与当时输入字节冷存/入包、声明UI；公开revision不证明完整可复现包，未知参数保持未知 |
 | 图例 | 曲线样式已生效；真实native Legend控制实验可复用现legendmodel跟随 | 当前旧SVG图例仍不跟随，须显式关系/所有权合同 |
 | 几何与总体交付 | 多DOM基础与共享nested viewport已提交 | 成员paint slots、复杂clip命中/框选/高亮，截图刻度边缘裁切需对照；最终旧功能/平台资格 |
 
@@ -59,7 +59,13 @@
 | n3c-capture-staged-final.json | 11c67ab1：冻结23文件SHA；核心24、HTTP21、receipt43、settings30、错误/i18n366各自通过。早期173联合的末修delta由核心24/HTTP21覆盖，不报最终源码重跑173 |
 | n3c3a-worker-capture-validation.md / n3c-capture-python310-final.xml | Python worker137、真实workerd23、Cargo62、Python3.10实际worker23各自通过/0skip或ignore；3.10非完整最低版本套件 |
 | n3c-capture-shipping-final.xml / n3c-capture-review-*.log | 发行147通过/9 POSIX/Linux条件skip；本次Ruff/format/diff、playground和插件画布build/check均exit0，未验实际安装物 |
-| n3c-native-capture-lifecycle-design.md | 已核runner起止/屏障/续跑lineage及真实测试入口；只读设计，尚无native捕获实现资格 |
+| n3c-native-capture-lifecycle-design.md | 历史只读设计；其native链路随后由3c64195b实现，资格以末次native报告为准 |
+| n3c-native-staged-final.json / n3c-native-inputs-marker-freeze.md | 3c64195b已实现；producer22/0skip、受影响184/1 Win权限skip；最终会话41/0skip、3.10真实入口5/0skip。旧root142按原时刻记，不冒最终重跑 |
+| n3c-preparation-validation.md / n3c-preparation-staged-final.json | d8416d4e，末次23/0skip，真实safe缓存counter1及native Service→receipt→成功记录→资源变化；6实际反证 |
+| n3c-native-default-oracle.json / n3c-u09-validation.md | 旧git d946的native两入口5情景JSON/identity逐字同；U09规定94项全过/0skip，FO32两个实际环境出口独立回执/产物齐 |
+| n3c-native-final-integration.xml / n3c-runtime-permission-baseline.json | 扩大263收集=254通过/7skip/2 Win1314失败、exit1；两失败在相同旧git测试函数也实际复现，不能称全绿 |
+| n3c3b-cold-graph-probe/result.json | 真实Worker→同次PDF/SVG→durable save→新进程inspect：只有public revision，完整图/资源字节没有，执行次数1；这是下一实现缺口 |
+| n3c3b-input-bytes-drift-probe.log / n3c3b-durable-capture-wiring-review.md | 改CSV后旧ref仍可读、执行计数仍1，但durable树无原CSV字节；只读报告列出实际丢失点、四片改动及预算边界，不当作新功能通过 |
 
 截图`output/playwright/n21-ui-cold-ctrlS-A.png`可见标题B与“已保存到项目”，实际tooltip/网络/落盘共同证明目标A；不凭标题猜关联。图例根因和控制实验见n4报告。更早资格/失败/跳过与原始产物保持在PROGRESS日期记录中。
 
@@ -93,9 +99,9 @@
 
 ### 2026-11-07 捕获事实收口后的效果判断与最近交付目标
 
-目前计算编辑、保存恢复和原图导出已有用户路径证据，真实v4只读检视与safe/workerd捕获已接通，完整项目搬迁仍未闭环。新增捕获解决“旧Figure事后配上新声明”的一部分根因，尚未提供新的声明界面或完整可携资源包。接下来以“在新目录恢复并继续编辑”作为最近交付目标，每一项底层改动都须接实际消费者；专项通过只授予其实际覆盖范围。截图可见的刻度边缘裁切及已证实的图例不联动继续保留为缺陷，不将其隐去或计入已完成。
+目前计算编辑、保存恢复和原图导出已有用户路径证据，真实v4只读检视与safe/workerd/native捕获、准备过期核验已接通，完整项目搬迁仍未闭环。新增捕获解决“旧Figure事后配上新声明”的事实归属问题，尚未提供新的声明界面或完整可携资源包。接下来以“在新目录恢复并继续编辑”作为最近交付目标，每一项底层改动都须接实际消费者；专项通过只授予其实际覆盖范围。截图可见的刻度边缘裁切及已证实的图例不联动继续保留为缺陷，不将其隐去或计入已完成。
 
-本次直接查看既有旧图幅截图，曲线/运行图已可见、打包提示准确说明运行依赖尚未确认完整；坐标数字和上缘文字仍有可见裁切。截图没有覆盖新检视API，不替代原SVG/预览/独立导出产物的几何根因核对。当前没有依据估算完成百分比或整夜必完时间。
+本次直接查看既有旧图幅截图（00:01生成），曲线/运行图已可见、打包提示准确说明运行依赖尚未确认完整；坐标数字和上缘文字仍有可见裁切。这是已有画面的复核，本轮没有新增浏览器验收；不替代原SVG/预览/独立导出产物的几何根因核对。当前没有依据估算完成百分比或整夜必完时间。
 
 | 顺序 | 当前状态与改动 | 本批退出条件 | 提交边界 |
 | --- | --- | --- | --- |
@@ -103,8 +109,9 @@
 | N3c-2 | 已提交be84ba33：闭式execution与已知资源真实导出/准确UI | 718联合/8新HTTP、56前端/正式构建、真UI与ZIP/计数已验；未宣称完整依赖集 | 已完成事实收集，不当作完整N3c退出 |
 | N3b | 已完成后端严格检视：9a9843d2目标计划、1795f244流式、d1389db6全store、5e000c6f实际API | 最终68HTTP与真实网络通过；完整正文/所有资源/缺件准确，零项目写/零脚本执行。不是安装UI资格 | 已分功能commit，保留验证，不重做 |
 | N3c-3a 已完成部分 | 11c67ab1：声明API/CAS、safe/workerd真实捕获与receipt；b5f9f557共享成员权威 | 真实worker/Rust/3.10、默认字节/身份及实际反证已有证据；无声明旧路径保持，不重做 | 两项已分别commit |
-| N3c-3a 当前首项 | native真实start/barrier/lineage，再接preparation/launch声明过期核验 | unknown不猜rc_ID；旧图不补证；continue/迟到/EOF/项目代次不串事实；现有native编辑行为保留 | native捕获与准备/启动核验分别commit |
-| N3c-3b/c/d | 完整声明图/资源与prefix→声明UI→精确ref迁移 | 实际v2包/检视/新根loader；未知通道准确；真UI声明重跑/取消/切项目保稿 | 可携资源、声明UI、引用迁移分别commit |
+| N3c-3a 已完成接线 | 3c64195b native真实start/barrier/lineage/同锁build marker；d8416d4e准备/启动过期与成功记录 | 正证与缺省兼容分别实测；unknown不猜rc_ID，旧图不补证；不代表任意IO完整追踪 | 两功能已分别commit，不重做 |
+| N3c-3b 当前首项 | 实际捕获边界物化原字节→durable graph/inputs→版本化execution→正式export/inspect | 先改/删原数据再冷包仍取原不可变字节；未保留旧数据的历史快照继续incomplete；hash/预算/读取权不复制 | 物化、冷存、包合同/消费者按可验收功能拆commit |
+| N3c-3c/d | 声明UI→精确ref迁移 | 实际v2包/检视/新根loader；未知通道准确；真UI声明重跑/取消/切项目保稿 | 声明UI、引用迁移分别commit |
 | N3d/e | 待N3c闭合：独占创建新项目、完整资源发布、界面采用及原writer回执 | 既有目标零覆盖；正文只经原writer，非空一次写并回读；取消/切项目/迟到/断写保旧稿；部分成功状态准确 | 后端安全安装、前端接线分别commit |
 | N3f | 待整链：中文新目录、删原源、空缓存、新父进程/浏览器的混合多画布场景 | 实际打开→编辑→undo/redo→保存→冷重开→各适用导出→版本恢复；模型、INPUT、资源、几何及文字独立对照 | 实际缺陷分别fix；资格记录单独提交 |
 
@@ -120,7 +127,7 @@ N3完成后按依赖继续N4显式图例联动、N5复杂几何与裁切对照�
 | 已完成 / N3基础 | e468d516预算/名称，336783bf旧HTTP原子输出；71e637c8回执；206a1c34预算工厂 | 204基础、18新HTTP/8旧、448前端、82末次计算包，分范围不累计 | 保留独立提交，不把基础叫完整安装 |
 | 已完成 / N3a | 8ed50616实际导出/菜单与准确缺件状态 | 438联合、85前端、最终build/playground、真实完整/缺件UI及INPUT核对 | 已提交，不重做 |
 | 已完成后端 / N3b | 目标投影、完整Figure语义和实际v4检视已提交5e000c6f及前项 | 最终68HTTP/真实网络；流式及store各自资格保留，尚无生产安装成功资格 | 后续只因受影响变化补验证 |
-| 下一项 / N3c-3→N3d/e/f | 补native/过期核验，完整声明资源，再安全安装及UI | 保留11c67ab1及前项；公开捕获revision/partial观察不当完整；保科学身份，沿原writer一次正文与回读 | 按下表独立验收/功能提交 |
+| 下一项 / N3c-3b→N3d/e/f | 当时资源物化/冷存、完整资源包，再安全安装及UI | 保留d8416d4e及前项；公开revision/partial观察不当完整；保科学身份，沿原writer一次正文与回读 | 按下表独立验收/功能提交 |
 | 4 / N4 | 图例/标题/数据/readiness与逐对象重绑迁移 | 显式身份驱动，图例真UI/导出跟随；custom保留；重排/删除不套错，未匹配项显式且可撤销 | 图例合同/producer/消费者；重绑迁移；状态适配 |
 | 5 / N5 | 成员paint slots及复杂clip几何 | 装饰层序不变；circle/holes/union/祖先AND/evenodd/objectBBox；距离/框选/高亮/宽描边/运动一致 | placement；共享clip及消费者 |
 | 6 / N6 / M1 | 分享纯外观/完整数据选择及完整用户闭环 | 双系列+图例+未绑定注释→绑定/数据/范围/样式→undo/redo→保存→空缓存新父进程→全适用scope×format独立核对 | 分享选择；M1缺陷分别fix；验收记录 |
@@ -143,7 +150,7 @@ N2.1完整20文件及3份规则/ADR已提交d7a73ce1；明确恢复后端d7b6eef
 | --- | --- | --- | --- |
 | **N3a：真实v4导出，已完成** | 8ed50616接`POST /api/documents/v4/package`与同一菜单；完整INPUT/全画布、普通file/登记script/runtime描述符/已核配对；旧三参及schema2/3保持 | 实际完整/缺件UI、严格ZIP/新父进程重放、坏源/磁盘/同名/认证/重复ref/越界已验；最终438联合及构建通过。完整执行依赖仍由N3c负责 | 已提交8ed50616，保留资格，只有受影响变化才复测 |
 | **N3b：严格检视与目标计划，后端已完成** | 5e000c6f显式v4检视消费原目标计划/流式reader/全store语义；旧open保持只读2/3，历史owner不变当前授权 | 最终68HTTP及真实401/200/409/422，缺件回归和故障反证已验；全store31权限skip准确记录；UI及安装留N3e/d | 已提交9a9843d2/1795f244/d1389db6/5e000c6f |
-| **N3c：可携运行与资源闭包，部分完成** | 75b09b57/be84ba33配置/已知资源保留；11c67ab1已接safe/workerd捕获。余项native/过期核验、完整资源、UI、ref迁移分批 | 真实新根消费动态数据/helper/remap/原rc_ID与快照；明确声明完整项目可恢复，未声明继续incomplete。环境/授权/成功信任不复制，导入不自动执行陌生脚本 | 已完成批次不重做；余项见下一节 |
+| **N3c：可携运行与资源闭包，部分完成** | 75b09b57/be84ba33配置/已知资源保留；11c67ab1/3c64195b/d8416d4e已接safe/workerd/native捕获与准备核验。余项当时字节冷存、完整资源、UI、ref迁移分批 | 真实新根消费动态数据/helper/remap/原rc_ID与快照；明确声明集合可恢复，未声明继续incomplete。环境/授权/成功信任不复制，导入不自动执行陌生脚本 | 已完成批次不重做；余项见下一节 |
 | **N3d：安全安装到独立项目** | 依赖N3b/c。默认独占创建新项目根，保留全部相对科学身份；抽取既有排他目录reserve与原子发布能力。`create:true`和可跳文件的copy_project不能充当严格安装器 | 原目标绝不覆盖；资源逐份读回/摘要/语义/真实重放；同名、并发、源变化、断写失败可恢复；只有完整资源闭包合格才允许正文安装 | `feat(packages): install verified v4 projects without clobbering` |
 | **N3e：现界面安装与落盘回执** | 依赖稳定的N3d合同。复用projectStore的prepareDocument/switchTransaction、openDocumentAs及waitForWorkingDocumentSave；不接旧relink清除edits，不增第二writer | 非空正文一次原writer写入并实际回读；空稿显式persistEmpty；取消、切项目、迟到、超时、资源成功但正文失败的状态准确，旧稿保留；中文/i18n和真实浏览器 | `feat(packages): adopt installed charts through the document writer` |
 | **N3f：搬迁整链验收与收口** | N3a–e均接通后冻结候选；混合普通素材/Python runtime/快照/计算SVG、多个画布，中文新目录或移盘 | 删除原目录、清派生缓存、全新父进程/浏览器后继续编辑、undo/redo、版本恢复及全部适用scope×format；独立比较模型/INPUT/几何/文字/PPI。按影响补playground和旧包兼容 | 实际缺陷分别`fix`；资格记录单独commit，全部退出才标N3完成 |
@@ -158,34 +165,35 @@ N2.1完整20文件及3份规则/ADR已提交d7a73ce1；明确恢复后端d7b6eef
 6. **实际单次正文提交**：资源准备/安装先验证及真实重放，再通过原openDocumentAs/项目prepareDocument安装，等waitForWorkingDocumentSave的真实revision/正文。非空不补第二PUT，空稿明确persistEmpty一次；超时、元信息失败、用户取消/切项目/迟到响应准确分列，不再复制资源或覆盖named。新包不继承发送者本机绑定/绝对路径；持久回执叶子不代表API/UI已接。
 7. **完整退出**：真实HTTP+新父进程在中文新目录/移盘、原目录删除下冷开→编辑/undo/redo→全适用导出→版本恢复；混合普通素材/脚本/runtime/快照实际落齐、摘要/语义核对。坏包/缺件/断写/同名/资源变化保旧资产与正文；取消检视零项目写入。通过后再标N3完成。
 
-#### N3c-3：从已提交safe捕获接续，补齐可携完整声明
+#### N3c-3：从已提交捕获及准备核验接续，补齐当时字节与可携声明
 
 判据主语：**某一次真实execution_id/native epoch产生的Figure，计算当时所用的明确声明及全部文件内容**。不是导出此刻的文件，也不是用户后来补的清单。机制研究见外部证据`n3c-input-portability-design.md`及主worker、prefix/view、binding-time三个probe；它们不是产品完成资格。
 
-已证根因：当前`databinding`在导出时重算，`binding.revision`不进入receipt identity；准备流程可将当前binding配给旧热图。remap fingerprint包含机器绝对目标，换根使旧snapshot ref精确失配。partial observer还会漏外部读取。必须建立捕获时事实和明确的oldRef→newRef事务，不能降低原loader身份门或事后给旧归档补签。
+已证根因：`databinding`在导出时重算，`binding.revision`不进入receipt identity，不能证明旧热图的原输入；11c67ab1/3c64195b/d8416d4e已另立捕获事实并核准备资格，保留原binding含义。remap fingerprint包含机器绝对目标，换根仍使旧snapshot ref精确失配；partial observer会漏外部读取。现在须保存已捕获的完整图/当时字节并建立明确oldRef→newRef事务，不能降低原loader身份门或事后给旧归档补签。
 
 | 子批 | 具体工作及生产消费者 | 独立退出条件 | commit建议 |
 | --- | --- | --- | --- |
-| N3c-3a 捕获事实，部分完成 | 11c67ab1已接认证声明API/私有CAS、safe/workerd真实起止与冻结胶囊、receipt可选public revision。下一项native真实epoch/lineage与preparation/launch过期核验；`binding`语义不改 | 缺省JSON/identity对拍与safe/workerd反例已验；native真实start/barrier/continue/EOF、未知参数、旧图不补证仍须验证。公开revision入快照不代表完整声明图已入包 | safe已提交；余项按下表两批commit |
+| N3c-3a 捕获事实接线已完成 | 11c67ab1 safe/workerd、3c64195b native与d8416d4e准备/成功记录均已提交；`binding`语义不改 | 实际入口/谱系/并发/过期/缺省身份已验；未知参数/-m无正面映射不授证但原功能保持。公开revision入快照不代表完整声明图/当时字节已入包 | 保留三项，不重做 |
 | N3c-3b 可携资源 | execution版本化扩展，不向闭式v1偷偷添字段。资源SHA/字节仍用原manifest/ResourceFile；collector与实际inspect接同一声明。外部file/prefix来自现明确选择，prefix完整列成员、拒越界symlink/junction/别名。考虑原路径存在优先，sandbox相对输入视图支持真实open/exists/glob/native库读取；绝对原生路径先做可兑现适配实验 | 动态CSV/helper、原精确argv/rc_ID、外部及完整prefix真包往返；成员增加/缺失/篡改拒绝；仅检视包中旧绝对字符串零外部读取。声明文件闭包与全通道执行依赖准确分列 | `feat(packages): carry verified declared inputs and prefix resources` |
 | N3c-3c 声明UI | 复用现准备/配置/选择器与i18n，显示明确输入和未知通道，用户确认后按现授权真实新执行；修改清单撤销旧资格，旧图可作对照但不显示新声明已捕获 | 实际浏览器完整声明→新执行→真实导出/inspect；取消/切项目/迟到/失败保原稿；未声明或旧执行仍准确incomplete，不默改用户Python/运行参数 | `feat(inputs): declare portable inputs through the preparation flow` |
 | N3c-3d 精确搬迁计划 | 将经核capture声明/旧ref与新本地资源、实际新remap fingerprint绑定；复用public svgstore.save在自有stage生成oldRef→newRef，保source/rc/argv/patch/receipt/配对字节，snapshotId随内容身份正确改变。多历史版本保archive-only，不把历史marker装成当前成功事实；与N3d事务接线 | 新根新进程精确loader查询成功，篡改输入或prefix成员拒绝；同图多patch/多版本按完整ref映射，不只按sourceId；无捕获证据旧包不自动升级，原权限门完整保持 | `feat(packages): plan verified snapshot references for relocated inputs` |
 
-##### 下一阶段首两批：native捕获与准备/启动过期核验
+##### 当前首项N3c-3b：四片实现直接接到冷包消费者
 
-先读证据根`n3c-native-capture-lifecycle-design.md`。它定位了真实接口和现有测试，未实现该功能。pure stdlib `inputdeclaration`仍是唯一freezer，不另建native SHA/清单/资源预算权威。共享合同由主代理先冻结，然后才拆独立runner/session验证任务；同一文件只有一个写入者。
+先读证据根`n3c3b-durable-capture-wiring-review.md`及两个实际probe。它们证明当前只留摘要、未留原字节，报告中的接口是建议，尚未实现。`inputdeclaration`仍是唯一声明规范化/摘要权威；成员、预算、包流与资源授权沿原权威消费，不建立第二套。
 
-| 批次/顺序 | 修改落点与实现要求 | 必须看到的退出证据 | 功能提交 |
+| 批次/顺序 | 修改落点与实现要求 | 必须看到的退出证据 | 建议功能提交 |
 | --- | --- | --- | --- |
-| 3a-2a：冻结native上下文 | `declaredinputs`/`inputdeclaration`与既有`execspec`、`preparation`、`desktopproc`。明确实际desktop cwd及known RunSelection如何匹配声明；`spec.cwd_mode`的native sandbox占位不能冒充真实cwd。terminal非空参数当前无经核rc_ID，保持unknown；明确无参数也须实际正证。沿原私有IPC传候选，不从argv推权限 | 默认无声明payload/argv/owner完全兼容；中文/脚本子目录/原配置、未知参数、未批准输入及候选失配反例；原生执行权限与声明资源授权分开 | 与3a-2b作为一项可用native功能提交，避免只交未消费helper |
-| 3a-2b：runner/session事实链 | `bridge_runner.run_script`在实际open/read/compile之前begin，或绑定实际编译字节；真实user start关联execution_id，每次barrier在engine reads/rebase前finish。`nativesession`按execution_id+snapshot_epoch接事实，`receipt.from_native_session`只消费已冻结正证。continue延续初始lineage，不能给旧Figure新建证明链 | 真实两次show/continue、同长度数据变更、修改声明、旧无证图中途声明、编译失败、`-m`父包提前屏障、EOF/部分发送/迟到回复、owned零输出结束均覆盖；无声明native编辑/导出行为保持；新增核心判据实际反证 | `feat(native): capture declared inputs across execution barriers` |
-| 3a-3：准备与启动消费 | `preparation`/`launchctx`/app只复用捕获revision及原执行权威。计划绑定原声明代次，实际启动核同一候选；捕获后改声明不能把新候选与旧热Figure拼接。项目切换/关闭代次、source/run/cwd/remap变更撤当前资格，历史不可变receipt不重写 | 真实plan→声明变化→launch拒旧/明确刷新；ensure_built旧Figure不能获新正证；迟到前项目结果不进入新项目；未声明旧合同保持。已有safe/workerd末次证据只对受影响delta补测 | `fix(preparation): reject stale declared input capture plans` |
+| 3b-1：封存实际输入 | 复用`inputdeclaration._Inventory.file`在`Capture.finish`的原分块读取流物化实际源码、files、prefix成员及空目录。worker/bridge仅写父控制面已知的自有cache；pool/session按原winning execution/epoch接私有附件，receipt沿同一正证分支持有。子回复仅允许摘要/尺寸/opaque key，父端不跟随任意响应路径 | 改/删CSV后仍取得原字节；source与数据、目录全集同一baseline；续跑/缓存不换证；中途变动、断写、预算/磁盘失败无完整正证且旧编辑保持；无声明旧IO/JSON/identity不变 | `feat(execution): retain immutable bytes for captured inputs` |
+| 3b-2：冷存与全量读取 | 扩`svgstore.save/load/inspect`的可选capture metadata变体及受管资源API，纳入同一原子发布/配额/引用核验。仅有capture时把其digest加进snapshot身份；旧refs/marker版本、无capture公式/字节保持，旧archive不原地补证。图canonical bytes由原声明权威生成，不另算revision | 无设置/worker/科学栈的新父进程核全图和每份字节；缺件/篡改/错scope/跨run借用均拒；metadata最后发布、失败不改旧archive；旧包/ref全字节对拍 | `feat(snapshots): persist captured input graphs and resources` |
+| 3b-3：热保存与冷暂存贯通 | app的`_execution_source`/`_capture_svg_snapshot_best_effort`/`_bind_svg_asset`→同一`_save_svg_snapshot`携实际receipt附件；`_package_svg_assets`冷暂存完整转发。大输入用受限流，不能拼进普通public receipt或整体读进内存 | 真实capture→保存→改/删原数据→新父进程仅archive再打包，仍含原内容；执行计数保持1；当前同名文件不能冒充历史内容，无旧bytes的历史图准确incomplete | `feat(svg): carry captured inputs through snapshot staging` |
+| 3b-4：版本化完整资源包 | `packageexecution`显式v2、collector与正式export/inspect同批消费；旧v1闭集/默认字节保持。用原manifest/ResourceFile/流式writer封口，建立snapshot/ref↔graph↔script/file/prefix成员的显式映射；所有SHA/尺寸/scope/原rc_ID与argv交叉核对 | 真冷包往返；坏图、换字节、漏/增prefix成员、空目录丢失、错scope/跨run、中文及大成员集反例；旧v1/无execution/合法不完整备份保持。完整仅指已声明集合 | `feat(packages): carry verified declared inputs and prefix resources` |
 
-随后3b必须让完整capture图与原manifest资源共同进入版本化execution并被正式export/inspect消费；目前receipt只携`{version,revision}`，不能据此将coverage置complete。3c接真实声明界面，新执行取得证据后才能显示已捕获。3d与安装器共享完整oldRef→newRef计划。绝对原生路径若出现兑现冲突，按第三路径审查先实验结构方案，不能悄悄只支持open hook或禁用正常native路径。
+动手前由主代理冻结共享附件/wire及预算关系：现选择上限2GiB、50000成员与Figure库512MiB、旧单目录4096项不是同一维度。复用现常量，实测有界大输入并确定统一计数/存放结构；不能静默扩大旧限额，也不能因套错旧目录census使合法声明无声丢失。空间不足保旧稿并给准确结果。`svgstore.VERSION`还用于refs/markers，不整体升版；完整graph的`mappings.from`可含机器绝对请求，只是私有来源事实，检视零本机外读。
 
-用户可见验收优先：上述证据链完成后立即串3b/c/d与N3d/e/f，交付中文新根真实恢复；不得继续扩大未消费的底层helper。N4图例和N5文字/刻度裁切的独立根因实验可在不争用共享文件时并行，最终M1之前必须收口。
+这四片完成后立即接3c声明界面、3d精确ref映射与N3d/e/f中文新根真实恢复，不再扩大未消费helper。声明确认后沿原授权新执行取证；旧图不补签。相对输入视图须实测open/exists/glob/native库；绝对原生路径先实验结构适配，不能把open hook正例当全部支持或禁用原native功能。
 
-主代理先冻结共享合同并唯一写入app/receipt/schema/集成；合同稳定后可委派独立资源枚举、UI、原默认字节对拍或真实控制面验证，文件所有权互斥。每批接实际消费者，不只交未调用helper。完成一批便同步台账继续下一就绪项；需要跨批生产接线时调整边界，使每个提交可审查/可验证，不能先提交一个永久未接叶子。
+主代理统一写共享app/receipt/schema/规则和集成，冻结合同后再分配独立任务，同文件一个写入者。N4图例、N5文字/刻度裁切可并行独立定位，M1前必须收口。每片接真实消费者、分功能提交、更新台账后继续；实际接线跨片时调整提交边界以保持可审查/可验证。
 
 #### N4：预检窄修复与图例结构分别收口
 
@@ -449,4 +457,4 @@ Windows 使用 PowerShell 原生命令和任务专用变量；运行数据/配�
 
 ## 6. 本轮文档交付边界
 
-三份稳定文档同步11c67ab1捕获收口状态，PROGRESS保留全部历史；包成员权威与safe/workerd捕获已分别commit。核真实SHA、原始JUnit、代理释放状态及既有截图；本次实际补跑Ruff/format/diff、playground和插件画布build/check，不把历史产品套件冒称新跑。下一项为native事实链和准备/启动过期核验，再完整声明资源/UI/ref及N3d–f；图例/裁切/复杂几何和最终资格仍缺。M1/M2/M3未通过、goal active；未设置定时调度或远程发布。沿当前分支继续，保留有效改动，不为状态询问建分支。
+三份稳定文档同步d8416d4e收口状态，PROGRESS保留历史；native与准备分别commit，未改前端、不虚报新UI/build。实际记录U09 94/0skip、3.10五例、native/准备末次专项、旧JSON/identity对拍与基线Win1314红灯；不同阶段不累计。下一项为当时输入字节物化/冷存和完整资源合同，再UI/ref/N3d–f；图例/裁切/复杂几何和最终资格仍缺。M1/M2/M3未通过、goal active；无定时调度/远程发布，继续当前分支。
