@@ -2,16 +2,16 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-06 19:08复核）：HEAD=95684f89，共享打开顺序后端已提交。N2前端43文件已冻结但未提交：正式UI保存→删原SVG→无localStorage新浏览器/新后端恢复→继续编辑/撤销重做→PDF/PNG/SVG实际导出及独立检查通过。冷开仍丢失命名文件保存关联，422来源错误仍误报磁盘空间，均为旧链路未闭合项，不能宣称M1完成。EPS真实HTTP10项已通过，界面仍以“无脚本”禁用EPS；ZIP writer121项通过但未接HTTP安装。图例/复杂几何、完整旧功能及平台资格仍待完成。**
+> **当前结论（2026-11-06 20:02 checkpoint）：N2前端264ce59c与准确保存错误ec2cb144已提交；真实UI正式保存、删源、零缓存新进程恢复、继续编辑已验。EPS勾选撤回已修，新候选429项前端/正式build及15项HTTP通过；本轮真实UI五格式全部done，独立核对模型/完整编辑、PDF文字/尺寸、PNG/TIFF像素及EPS Ghostscript成图通过，但公共接线/route/UI尚未提交。命名文件关联叶子37项通过，前端仍为中间稿，app HTTP路由未接、待集成测试未运行。ZIP安装、图例/复杂几何及最终回归仍缺，M1/M2/M3均未通过。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 
 ## 环境（2026-11-06 当前快照）
 
-- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；本次复核功能HEAD=`95684f89`。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入这些成果；不能在原目录启动旧版本后据此判断新功能效果。
-- 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述三个新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
+- 当前实施树 `E:/0 - Project/Tavotto-svg-r00`，分支 `zixu.wang/svg-computational-r00`；本次checkpoint功能HEAD=`ec2cb144`。沿用当前分支/工作树。原目录 `E:/0 - Project/Tavotto` 的 clean `main@69bcafae`未合入这些成果；不能在原目录启动旧版本后据此判断新功能效果。
+- 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
-- 本轮状态复核使用的独立探针和浏览器证据见 `status-cbd8d95e/`；未启动通宵调度器。历史“后台 sweep 正在跑”没有本轮完成日志，不当作现行运行状态；服务清理状态见最新 checkpoint。
+- 较早状态探针见`status-cbd8d95e/`；最新复核为`status-planning-2002.json`及本页20:02记录列出的真实UI/产物。未启动通宵调度器，历史“后台sweep正在跑”不当作现行运行状态；服务状态见最新checkpoint。
 - 最新 NEXT_PHASE 和提示词直接在当前实施分支维护；不再依赖历史 review 文档分支才能取得新计划。
 
 ## 批次状态（2026-11-06 复核后；按完整退出条件）
@@ -28,19 +28,46 @@
 | SG07 | core_partial / native_edit_verified | 4c2ca1f2、242cabc0、8e6c399a | 真实图内范围/线宽及多成员预览已验证；完整模型族与M1未完成 |
 | SG08 | partial | 4c2ca1f2 | bar 附属误差基础修复已有；完整族与 UI/导出追验待补 |
 | SG09 | partial | ac060053 | 色条基础所有权/镜像已修；复杂族和导出图像资源未验收 |
-| SG10 | partial / product_cold_edit_verified | cbd8d95e、242cabc0、53393810、8e6c399a；N2未提交 | 真UI正式保存、零缓存冷恢复、继续编辑和三格式导出通过；图例/复杂clip/成员层序仍缺 |
+| SG10 | partial / product_cold_edit_verified | cbd8d95e、242cabc0、53393810、8e6c399a、264ce59c | 真UI正式保存、零缓存冷恢复、继续编辑和五格式原图导出已验；EPS接线尚未提交，图例/复杂clip/成员层序仍缺 |
 | SG11–SG17 | partial / pending | 979a4962、48d3d27a、cae96f89、5bc82a81、bbbffed1、5abb9a7d、95684f89 | 保存/来源冷恢复已验；命名文件关联、包迁移、写回、入口/平台和最终回归待补 |
 | R00 | baseline_and_regressions | 5a4f5c2c | 基础反例保留；本轮用户流程和导出反例待随修复入库 |
 | R01/R02 | core_partial / multi_target_verified | 3236307c、8e6c399a | 跨父/split/errorbar/colorbar共同目标与预览通过；任意clip、欠定成员paint slots和图例仍缺 |
 | R03 | runner_and_source_consumers_integrated | 029dfac2、242cabc0、c2fd47d5、5b2b1403、2452d8fc | 受控runner与精确INPUT附件接真实API/UI/导出；不宣称全产品总进程cap或最终资格 |
 | R04 | affected_checks_passed | a8a088cf、18907d65、cbd8d95e | 请求序号/表单/项目切换、late response 和单项 drop 均有受影响测试；Dialog 已可发起真实绑定；完整编辑器生命周期在 R06 追验 |
-| R05 | ui_cold_body_verified / binding_and_package_pending | cae96f89、82b142d2、bbbffed1、ae064662、83f4ffbf、2452d8fc、5abb9a7d、95684f89；N2未提交 | 真实UI保存、零本机缓存冷发现、正文/附件恢复与继续编辑导出已验；命名文件关联冷持久化和包安装未完成 |
-| R06 | product_editing_and_cold_restore_verified / partial | 242cabc0、53393810、8e6c399a；N2未提交 | 冷开后Inspector编辑、undo/redo和exact显示已验；图例、完整操作及复杂几何仍缺 |
-| R07 | partial / eps_http_verified_ui_pending | 5bc82a81、c2fd47d5、2a40fec9；EPS未提交 | 冷恢复后真实PDF/PNG/SVG及独立产物检查通过；EPS HTTP10项通过，route/界面、分享和M1全链未完成 |
+| R05 | ui_cold_body_verified / binding_and_package_pending | cae96f89、82b142d2、bbbffed1、ae064662、83f4ffbf、2452d8fc、5abb9a7d、95684f89、264ce59c、ec2cb144 | 真UI正文/附件冷恢复和准确422已验；命名文件关联叶子已验但HTTP/前端未集成，包安装未完成 |
+| R06 | product_editing_and_cold_restore_verified / partial | 242cabc0、53393810、8e6c399a、264ce59c | 冷开后Inspector编辑、undo/redo和exact显示已验；图例、完整操作及复杂几何仍缺 |
+| R07 | partial / original_five_formats_ui_verified | 5bc82a81、c2fd47d5、2a40fec9、c9fa29a4、8fa84f5d；EPS接线未提交 | 真UI原图五格式done，独立模型/文字/尺寸/像素/GS检查通过；仅单曲线原图范围，分享和完整M1未完成 |
 | R08 | full_edit_restore_verified / partial | cae96f89、029dfac2、53393810 | 生产v2导出与真UI完整编辑恢复通过；A采用、分享选择和正式项目迁移待补 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-06 20:02 当前效果复核与下一阶段安排
+
+- 应用户要求核对真实执行状态。唯一实施树/分支仍是`E:/0 - Project/Tavotto-svg-r00` / `zixu.wang/svg-computational-r00`，功能HEAD=`ec2cb144`；原目录`E:/0 - Project/Tavotto`的main仍clean且未合入新功能。未创建/切换分支，未fetch、推送、合并、发布或创建调度器。已有goal为active；本条是进度审计，不是整项完成。
+- 新增已提交功能：264ce59c（N2前端持久化，46文件含规则/ADR）、c9fa29a4（完整矢量场景准备EPS）、8fa84f5d（共享嵌套viewport/clip）、ec2cb144（保存结构化错误）。此前19:40条目和原始报告保留；不把这些提交重新算作未完成。
+- EPS能力刷新撤回勾选已按独立backend offer投影修复：routeKey仍严格包含格式，offer只复用同项目/来源/完整chart/ref事实的EPS how/reason；UI与请求构建消费同一投影。冻结8前端文件，429项通过/0skip，正式build exit0，真实旧反例先红后绿；128种来源事实×7格式的896次实际后端route调用证明offer独立于格式，不在前端复制授权规则。报告`eps-offer-freeze.{json,md}`。
+- 本轮从外部冻结dist（19:45构建，`index-DVd4oAXS.js`）预览实际操作ExportDialog，EPS保持勾选，PDF/PNG/EPS/TIFF/SVG五格式一起提交。作业`27b3fd4aa3fb4750`实际status=done，六个输出（五图+报告）均done；实际请求带chart、精确chart_source和原序两条编辑，原`chart.svg`仍缺席。`eps-ui-export.js`曾等最终GET超时：完成经SSE送到UI后不再轮询，已保留这次失败，另读同一作业最终状态，没有第二次导出来覆盖证据。
+- 独立产物核对`eps-ui-artifact-check.py`真实exit0：SVG v2的模型/绑定/原序edits/374B精确INPUT逐一相等；PDF一页100×100pt且`Source keep`文本保留；PNG/TIFF均833²，TIFF600dpi，红线位置/4.03pt宽度符合预期；EPS由独立Ghostscript实际转833²，线位置/宽度符合预期，EPS头/BB及无整图image包装另核。每个产物字节/摘要与真实作业回执匹配。证据`eps-ui-original-request.json`、`eps-ui-job-final.json`/`eps-ui-job-final-cli.log`、`eps-ui-five-formats-qualification.json`，截图`output/playwright/eps-ui-five-formats.png`。这里只授予单曲线计算原图资格，不能代替混合画布/双系列图例/M1或平台资格。
+- 精确解析已有XML而非日志子串：`chart-eps-http-final15.xml`=15通过/0skip；`eps-existing-integrated.xml`=84通过/2skip；N2.2规则41通过。EPS公共接线/route/UI/app/15项测试尚未提交，下一步同步受影响规则/ADR、核SHA和stage范围后独立commit。保存错误的真实422已在ec2cb144和`n22-ui-source-error-result.json`记录，不再列为待实现。
+- N2.1关联叶子冻结：layoutsession.py SHA256=`66bb90d4d93f1ad567b3194947c70dd099b4dda10653f6feef8246bf8352d464`，最新37项通过/0skip；集成旧组240项中230通过/10既有Windows skip，5个实际错误实现反证均触发预期失败。前端仍为中间稿，初轮5文件86项通过不代表完整新链；正式build/有状态新feature测试/真实冷开及多tab尚待验证。app尚无project-file HTTP路由，新增HTTP文件只完成Ruff/格式检查，未collect、未pytest，不把预计用例数写成通过。
+- N2.1最近集成顺序：补原锁内按当前intent sequence取消的窄叶子；根独占app接GET/reserve/named commit/confirm/cancel及AS写前axis校验；保持旧缺省wire/args，确认实际named revision，元信息失败与已写正文分开；再跑真实HTTP和前端/冷开/外部改A409。外部AS漂移导致unknown时的显式恢复仍需兑现，不能静默洗白同步轴。详细合同见`project-file-binding-api.md`及NEXT_PHASE的N2.1节。
+- 索引特别保护：当前仅app.py已stage，EPS候选blob=`e1a9c89c2bd2d759a04153cdc16ccc33cdfbb3f2`，物理SHA256=`bf98579d445fcb68d755944dd0b701db619219b9c4b04f8b4b6c4c2396ecfd1f`；其余binding/package/front中间稿未stage。接N2.1前必须保留这个EPS边界，不可git add .或重新stage混入未验关联代码。文档checkpoint可单独按路径提交，不改变该索引候选。
+- 所有权：根独占app/共享契约/规则ADR/三份文档/UI/提交；svg_self_contained继续N2.1前端（不碰EPS）；export_adapter_review的关联叶子及新HTTP测试已冻结交回；svg_ir_fidelity的EPS offer已冻结交回，N3包任务暂停，尚未新增安装实现。下一阶段收口EPS与N2.1→旧ZIP原子输出/v4安装搬迁→N4图例/状态/迁移→N5复杂几何→N6分享与完整M1→N7/M2→N8/M3。
+- 实时自有服务复核：后端66888（19:32:55，`source-ref-browser/server.py`，23984/session39115）；Vite10168（18:51:24，`native-edit-browser/vite.mjs`，23983/session80916，现为N2.1中间稿）；冻结预览76372（19:48:20，`eps-preview.mjs`，23985/session82628）；Playwright `tavotto-eps-ui` daemon24696（19:48:46）、`tavotto-v4-cold` daemon71840（18:57:08）。旧后端10460已结束。服务属于隔离联验，不是无人值守调度器；后续凭PID+创建时间+命令再确认，不能照旧数字杀进程。
+- 仍可见的产品问题：冷开顶部“未存进项目”；有效附件仍被预检误报missing-asset/unapplied-override，本次五格式显式ack后成功，不能因此称预检已修；导出预览在本截图中刻度文字边缘被裁，须与原预览/实际产物对照后归入几何/预览追验。图例联动、包安装、复杂clip/member placement、剩余能力矩阵和最终旧功能/支持平台资格仍未完成，不给无依据的完成百分比。
+- 三份稳定文档已同步本轮实际状态/依赖/退出条件，校验9个本地Markdown链接、UTF-8与diff-check通过；8个EPS offer文件SHA仍匹配，app索引/物理候选保持。报告`status-planning-2002.json`只证明此范围，不把文档检查称分支完整回归；提交时只包含这三份文档。
+
+### 2026-11-06 19:40 N2收口、准确错误与EPS真实UI反例
+
+- 已按冻结SHA定向提交N2：264ce59c，仅43前端文件及受影响ADR/规则/生成web速查表，共46文件。同步schema3/4边界、首次计算fork/事务取消、位置回执、跨格式单队列和活动画布版本合同；未混app/EPS/ZIP。首次规则检查因速查单元151B超150B真实失败，缩短头部索引后重新生成，41项通过（n2-contract-docs-final.xml），未调大预算。
+- EPS叶子c9fa29a4（originaleps/epscontainer/独立GS测试/规则）与共享nested SVGIR 8fa84f5d分别提交；后者测试依赖已提交EPS叶子，提交可按顺序独立检出。源码分别对照原冻结SHA；沿用真实281项/两反证及旧IR字节资格，不重复冒称一次新全量。
+- N2.2 ec2cb144仅7前端文件+受影响规则，保留有code的后端错误最小描述，经同一backendCodeMsg，不保存整个响应体或发遥测。8文件191项通过/0skip、正式build/i18n/lint exit0、5进程内反证均AssertionError/exit1；真实浏览器打开坏ref→新v4工作ID d_mp1t6u84→autosave422 chart_source_mismatch→界面显示实际chart source unavailable，SaveIssue=backend且本机恢复副本仍在，不再含检查磁盘空间。证据n22-errors-validation.json、n22-ui-source-error-result.json及output/playwright/n22-ui-source-error.png。未实现所有错误码中文化，不把fallback当新增翻译。
+- 新app传真实has_chart事实，错误Produced保实际fmt；原EPS HTTP10项扩至15项，补原图/画布route、EPS-only/无SVG的完整标注/非均匀留白与worker失败格式，全部通过/0skip（chart-eps-http-final15.xml）。旧EPS/原图标注/留白/公共契约/ledger合组已执行，计数以eps-existing-integrated.xml为准；本次不将重叠组相加。新测试先Ruff，首次format-check失败修正后再跑语义门。
+- EPS route第一稿已通过后端158项、前端247项及Dialog178项、正式build与448组旧响应/kwargs完整对拍；但新后端真实UI EPS复选框虽enabled，勾选后formats变→严格route键失配→fallback无script→checked撤回。eps-ui-first-attempt.json保留真实CLI exit1，不按接口已绿宣称交付。根因和结构候选记录eps-offer-third-path.md；由原代理实现backend offers最小投影按相同scope/pj/完整panel事实独立有效，来源计划仍含formats严格键，UI和请求builder共同消费，不按chart自授权。
+- N2.1后端沿原layoutsession/锁/atomicio实现版本化工作副本关联、reserve/commit/cancel和前写prepare，前端唯一编辑轴接线并行中。axis=(editor_id,sequence)只作身份/分支判断，不跨editor取max；每个活跃实例独立editor_id，冷恢复旧axis只供无编辑/derived，首次真实编辑换本实例轴。原正文写前检查actual AS revision/base_axis，成功再记轴；旧回执不可盖另存B，ABA由binding sequence阻断。叶子37项/旧组合230通过+10既有skip为阶段结果，未冻结、无app接线，不能算冷开绑定已完成。
+- 当前所有权：根唯一app/ADR/三文档/HTTP/UI/提交；export_adapter_review独占layoutsession与新binding专项；svg_self_contained独占N2.1前端保存/恢复/绑定消费者；svg_ir_fidelity优先修EPS offers/组件，N3只读候选暂停、无生产修改。N2.2已释放给N2.1，不能用旧冻结hash覆盖新工作。
+- 后端10460已按确认的自有session18140 Ctrl-C停止（预期exit1），新66888/session39115/23984于19:32后加载新app，隔离原SVG仍缺席；Vite10168/23983、浏览器tavotto-v4-cold仍用原隔离环境。新浏览器目前停在坏ref失败测试稿，后续EPS前须用真实菜单重开合法命名文件，不能直接改store或重seed夹具。playground本次曾构建/check指纹82f672dc17a1e522，后续EPS offer/N2.1再改源码后须重新核，不沿用。goal active，未启动调度器/推送/合并/发布。
 
 ### 2026-11-06 19:08 当前效果复核与下一阶段收敛
 

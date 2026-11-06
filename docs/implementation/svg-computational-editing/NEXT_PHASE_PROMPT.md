@@ -1,90 +1,87 @@
 # SVG 计算图表编辑：下一阶段无人值守提示词
 
-以下内容可直接复制继续实施。详细工作、依赖与退出条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，实际进度唯一台账为 [PROGRESS.md](PROGRESS.md)。最终范围保持 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) 的SG00–SG17，不因M1或一夜结束缩减。
+可直接复制下面的提示词续接实施。详细依赖和退出条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，实际进度唯一台账为 [PROGRESS.md](PROGRESS.md)；最终范围保持 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) 的SG00–SG17。状态截至2026-11-06 20:02（Asia/Shanghai），续接以实际树为准。
 
 ```text
-继续完成 Tavotto 的 SVG 计算图表编辑。按整夜无人值守方式持续实现、验证、修复、按功能提交，直到最终用户可用且既有功能无新增回归。已授权多子代理处理独立模块；根代理统一共享契约、集成和提交，一个文件同时一个写入者。常规可逆步骤自行推进，不逐批等待我确认。
+继续完成 Tavotto 的 SVG 计算图表编辑，在保留现有功能和逻辑的基础上达到最终用户可用。按无人值守方式持续实现、验证、修复并按功能commit；已授权多子代理处理独立模块，一个文件同时一个写入者，根代理统一契约、共享文件、集成及提交。常规可逆步骤自行推进，不逐批等我确认。
 
-一、只续接现有实施树
+一、恢复当前任务，不另起分支
 
-工作树：E:/0 - Project/Tavotto-svg-r00
-分支：zixu.wang/svg-computational-r00
-原目录 E:/0 - Project/Tavotto 是干净main，尚未包含实施功能，不往那里覆盖或自动合并。
+唯一实施树：E:/0 - Project/Tavotto-svg-r00
+唯一分支：zixu.wang/svg-computational-r00
+原目录：E:/0 - Project/Tavotto，clean main@69bcafae，尚未合入新功能；不要在那里覆盖/自动合并后判断效果。
 稳定文档：docs/implementation/svg-computational-editing/{PROGRESS,NEXT_PHASE,NEXT_PHASE_PROMPT}.md
 证据根：E:/0 - Project/svg-review-20261106
 
-不新建/切换分支或工作树，保留全部提交及未提交成果，不reset/stash覆盖草稿。该要求覆盖旧文档的新建指令。先读当前AGENTS、最近子目录规则、对应ADR、同源对/判据/第三路径/验证要求，再核对实际HEAD、diff、Git身份、解释器import源、已有代理和进程。
+先读当前AGENTS和改动层最近规则/ADR，再核HEAD、index、diff、Git身份、Python实际import源、代理和自有进程。沿用当前分支，不新建/切换分支或worktree，不reset/stash覆盖草稿，不git add .混批，不push/PR/合并/发布。当前功能HEAD=ec2cb144，后续文档或功能提交可能继续前进，不能回滚到此hash。
 
-2026-11-06 19:10状态：功能HEAD=95684f89，精确INPUT消费者2452d8fc、v4后端5abb9a7d、共享打开意图95684f89已提交。N2前端43文件已冻结：真实UI命名保存→原SVG缺席→零localStorage新浏览器/新后端自动恢复同v4 ID→继续编辑/undo/redo→PDF/PNG/SVG实际导出，独立检查通过；尚未提交。阶段810项与末改动206项重叠不累加，正式build/i18n/oxlint/23反证有日志。最新playground构建/check通过，指纹0d91b54086f7e829。冷开projectFile=null和来源422误报磁盘空间尚未修。EPS HTTP10项已通过，界面仍“无脚本”禁用；ZIP writer121项通过，未接安装。先核PROGRESS和当前树，不从旧hash恢复代码，不重做已验基础，M1未通过。
+特别保护：app.py当前已stage的是独立EPS候选，index blob=e1a9c89c2bd2d759a04153cdc16ccc33cdfbb3f2，物理SHA256=bf98579d445fcb68d755944dd0b701db619219b9c4b04f8b4b6c4c2396ecfd1f。N2.1尚无app HTTP路由。先核实际索引；保留EPS边界，后续binding改动不能被重新stage混进EPS提交。其他前端/关联/package草稿未冻结部分不能一并提交。
 
-二、保留已完成成果，不从旧缺陷重做
+二、已完成和已验证的东西保留，不重做
 
-最新独立提交：
-- 242cabc0：共享native API/前端render与PNG、manifest/revision，复用现有图内编辑器。
-- c2fd47d5：生产原图/标注/留白/画布/多页冻结native profile与完整原序overrides，实际SVG输出v2；legacy缺省和无chart合同保留。
-- 53393810：inspect恢复完整v2编辑，向导一次事务确认；当前面板编辑优先、迟到状态防串；后端重绑科学归属guard。
-- 8e6c399a：最终manifest唯一svg_targets和同源DOM镜像，跨父/split/errorbar/colorbar多目标预览与取消；不伪造复杂clip/member slots资格。
-- 2a40fec9：新增实际PNG/TIFF生产尺寸/PPI/alpha/文字/像素测试，未改变产品逻辑。
-- 5b2b1403：chartprocess复用pool/环境lease/DesktopProcess ownership；chart类admission、同deadline输入输出、预算、退出码及组回收接入两个app入口。
-- ae064662：buildProject只替换实际安装的首个活动画布位置，保护重复/缺失/空ID文档的非活动内容。
-- 83f4ffbf：documentformat目录/格式叶子与layoutsession v4 namespace。只是叶子，不是正式v4保存已实现。
-- 2452d8fc：精确INPUT附件进入全部渲染/PNG/缩略图/timeline/重建/导出消费者，实际UI删源后编辑和生产产物已验。
-- 5abb9a7d：v4正式命名/autosave/session/versions/thumbs隔离及精确INPUT冻结；20项含真实生产v2和新父进程恢复通过，旧格式规范化回归已修。
-- 95684f89：跨格式共享打开意图、显式GET snapshot/latest和repair，默认legacy不变；新55项/HTTP15项及4+2反证通过。
+- 2452d8fc：精确INPUT附件进入render/PNG/缩略图/timeline/重建/导出；有ref必须校验附件，坏ref不借同名原源。
+- 5abb9a7d：v4命名/autosave/session/versions/thumbs隔离及严格来源冻结；20项真实HTTP/冷父进程、旧312通过/20skip及反证有报告。
+- 95684f89：跨格式共享打开意图与显式GET/repair；明确打开分总序，自动保存不抢新文档，不用mtime/max-at猜。
+- 264ce59c：N2前端43文件+ADR/规则/生成速查表已提交；单一documentStore、schema3/4边界、首次计算fork、位置回执、格式化地址/队列/冷恢复/versions等保持。
+- c9fa29a4：完整矢量场景准备EPS；8fa84f5d：共享nested SVGIR viewport/overflow/clip修复。已独立提交，不重新实现。
+- ec2cb144：保存结构化错误已提交；191项/正式build/真实来源422通过，显示实际后端原因且本机稿保留，不再误报磁盘空间。
+- 更早242cabc0/c2fd47d5/53393810/8e6c399a提供共享native编辑器、原序生产导出、v2编辑恢复和最终多DOM目标；5b2b1403保留受控runner/lease/预算/deadline/owned process。完整记录见PROGRESS。
 
-此前层序/CSV/转换/连续文字/来源配对/附件核心全部保留，见PROGRESS。尤其029dfac2的profile/v2闭式版本、3236307c的native物理坐标、bbbffed1的精确INPUT附件和ea0a7027的字体/TeX边界不重做。
+真实用户效果：正式命名保存N2_正式保存_20261106，删原chart.svg，空localStorage新浏览器+新后端自动恢复同v4工作ID d_kyyf7jn1，线宽3.02→4.03→undo→redo，sourceRef不变且exact。PDF/PNG/SVG独立产物已验；冷开projectFile=null仍是未完问题。
 
-保留此前双曲线、范围/样式、v2七条编辑恢复和多目标预览资格。最新N2真实正式保存/零缓存冷恢复已另行完成，不再用旧消费者夹具拼称：工作ID d_kyyf7jn1，保存N2_正式保存_20261106，冷开native线宽3.02→4.03→undo3.02→redo4.03，始终exact、sourceRef不变。SVG v2模型/绑定/原序edits及374B INPUT相等，PDF100×100pt且Source keep文本保留，PNG833²及红线位置/线宽正确。证据n2-ui-{edit,save,cold,cold-edit}-result.json和n2-ui-cold-export-qualification.json。冷开命名文件绑定丢失仍未修，单曲线场景不代替完整双系列/图例/混合画布M1。
+新EPS候选：公共契约/owned action102项、app HTTP15项通过；旧EPS合组84通过/2skip；offer修复429项前端/正式build通过。真实ExportDialog保留EPS，PDF/PNG/EPS/TIFF/SVG五格式作业27b3fd4aa3fb4750均done。eps-ui-five-formats-qualification.json独立核对完整模型/原序edits/374B INPUT、PDF100pt及文字、PNG/TIFF833²与TIFF600dpi、EPS经Ghostscript实际成图位置/4.03pt线宽；原源仍缺席。首次勾选反例和后来terminal wait超时保留：后者是SSE完成后停止轮询，实际最终job另读成功，未重导出来覆盖。接线/route/UI仍未commit；单曲线原图不代替完整M1。
 
-2452d8fc消费者提交时18文件700项、正式build/i18n/9反证通过，playground重建/check指纹77d32934d571f6a6；后端附件13项通过，真UI及PDF/PNG/SVG产物独立检查通过。N2后续已改相关前端，不将700或更早983资格转给当前dirty树。v4最后20项42.167秒、旧312通过/20skip74.960秒，三组进程内反证与legacy规范化独立定向复核通过。不同范围/时刻不累加。desktop既有PID回执失败仍在，最终全产品/平台/性能资格未完成。
+所有测试范围/源码时刻不同且有重叠，不累计成最终总数。旧43文件SHA不能覆盖N2.1新稿。最新playground曾因并行源变化指纹不一致；冻结后重建/check，不称当前中间稿全绿。Windows旧desktop PID回执失败有原版对照，尚未解决最终资格；M1/M2/M3均未通过。
 
-三、依赖队列，完成一项即自动选择下一就绪项
+三、下一阶段执行队列
 
-1. N0/N1/共享意图后端已提交，不重复实现。当前三个代理已冻结/交接，不按旧表假定它们仍在写。根代理继续唯一app/ADR/进度/提交；先核43个N2文件SHA与n2-frontend-validation.json、正式build及最新playground，按N2实际合同同步受影响规则/ADR和严格同源镜像后独立commit；不混EPS/ZIP。后续重新委派时给独立范围/退出条件，一个文件一个写入者。实际HEAD可能继续前进，以当前树为准。
+1. EPS先收口完整功能提交。
+   根核native-eps-wiring.json、eps-route-freeze.json中的后端与最新eps-offer-freeze.json的8前端SHA；重叠前端以最新offer冻结为准。保留严格含formats的routeKey，EPS offer仅复用同scope/project/完整来源事实的后端how/reason最小投影，UI与request消费同一份，不复制授权规则/不沿用旧完整计划。
+   同步ADR0166中过时eps_needs_script和相关export/RenderCore规则；核根app已stage候选、15项HTTP、正式build和真UI证据，独立commit，排除binding/package中间稿。画布EPS仍eps_not_for_canvas，partial alpha/gradient/mask边界按真实表达处理，不伪PDF或静默整图栅格化。真实五格式仍显式ack了missing-asset/unapplied-override误报，预检尚未修，保留N4/N7任务。
 
-2. N1/R05保留已验保存合同和跨namespace共享打开意图序，不重新实现。
-   复用已提交documentformat和using_namespace；旧2/3缺省不变。显式/api/documents/v4/*、tavottofile/documents/v4、_autosave/v4、v4的versions/thumbs；复用FORMAT1信封、原锁/atomicio/既有view与认证，不移动FigureSnapshots根，不新建历史数据库。
-   named/autosave/summary/清理/owner/last/candidates/versions/thumb/rebuild及别名已接通，20项已验；v4不借旧目录。chart只在v4跳过Figure捕获，旧2/3未知chart字段仍核验并清除无归档FigureSnapshot。未实现包安装前不挂空壳package别名。
-   各namespace的at没有共享总序：已在同layout-sessions文件/锁/atomicio用版本化共享意图+实际指针witness解决，前端已接两GET同snapshot和单一显式发送队列；seq只分配明确打开，迟到保存仅更新witness，旧程序混写检测stale，不用mtime/at猜。不要退回max-at或永远needs_user。同步全失败导出仍沿既有HTTP500。
-   已冻结wire：仅显式GET include_open_intent=1增加open_intent，旧默认dict不变；ok含version1/status/sequence/snapshot/latest，latest为{document_format,doc_id,pointer}或null；stale/untracked含实际双ns指针snapshot而不猜latest；unavailable不猜snapshot。两GET快照相同才采用共享latest，变化有界重读，正常可信状态自动恢复。set_last明确打开同锁同写分seq，重复pending重开也分；commit_slot不分seq且不洗白stale。清指针同步见证、清latest置null。
-   自动补推notifyDocumentPersisted/confirmRestored使用PUT body repair:true；可信latest同地址只原seq晋升或幂等确认durable；异址/null回superseded，stale/untracked/v4无账本回unconfirmed零写，前端保待确认不假ack；future仍拒写。纯legacy-only原行为保持。明确用户alternative按(format,id)分新intent；自动发现/恢复安装不分序，迟到正文不能抢回另一格式的新文档。
+2. N2.1保存关联为当前最高产品优先级。
+   复用现layout-sessions/data_dir、原锁/atomicio，(project,format,workingId)寻址closed record；不建第二store/DB，不把机器路径塞入可携正文，不按标题或portable project.id猜目标。layoutsession.py关联叶子已冻结37项，旧合组230通过/10既有skip，5实际反证；测试/报告在project-file-binding-*，HTTP契约见project-file-binding-api.md。
+   根先补cancel_project_file_intent(key,doc_id,sequence)：原锁内只清匹配当前pending，过期零写superseded，保留target/axis/计数；不让app读私有DB、不信客户端整ticket、不嵌套非重入锁。
+   根独占app接GET /api/layout-session/project-file/<workingId>及/reserve、/confirm、/intent/<sequence>，v4经原别名注册复用认证/namespace。named POST仅显式working_doc_id/binding_intent增加关联；AS仅显式project_file_edit闭式JSON增加轴，旧缺省wire/实参数量保持。reserve验证实际已刷AS revision/axis，目标name/file由后端规范；confirm在named锁内验证实际revision。AS同document锁内写前prepare→原子正文→同证据commit_slot，不得先写body再拒绝。禁止嵌套两个可能命中同stripe的非重入document锁。
+   HTTP口径：业务superseded/unconfirmed为200+state；named实际变更409external_change；AS轴拒绝409stale_write且旧body零改；坏字段/null/非法seq400；future修改503，GET unavailable200；正文成功但元信息失败仍200并单列unavailable，不得诱导覆盖重试。
+   前端svg_self_contained独占关联helper/API/writer/SaveContext/store/restore/open/对应测试+i18n，不碰EPS。每editor实例纯内存editor_id，derived保持继承轴，第一真实编辑新actor+seq；不可跨tab取max。hydrate完重捕获最新body进原DiskWriter，不能替换已排队ancestry。reserve须用已刷真实快照，不能旧票据配新body；binding sequence参与ctx防ABA。只有明确404回旧wire，503/未知保持binding/dirty。
+   前次正文成功/meta失败时先仅confirm；确认后如仍有新编辑，在project/format/workingId/loadSeq/保存意图仍匹配时重捕获新ctx交同队列，不放宽旧ctx sequence判断、不自动重写旧body。superseded停止旧票据，冷开无可靠票据不能猜关联。
+   根app接好后才collect+跑tests/test_layout_project_file_http.py；该文件仅Ruff/格式已过，未跑pytest，不把预计数量算通过。前端初轮5文件86项只是阶段检查，新有状态链/build/i18n/playground/反证及真UI均待补。
+   验收：保存A后改标题B且另有B→清缓存/新父进程仍关联A；仅AS新编辑冷开dirty；外改A后CtrlS409且文件零改；A/B/ABA迟到回执、多tab、双format/不同项目同ID不串；正文/meta各故障准确报告。外部AS漂移unknown还须显式安全恢复，不把永久不能保存或静默洗轴当完成。按可独立检出的功能分别commit并同步规则/ADR。
 
-3. N2前端收尾提交后，优先N2.1/N2.2，再N3包安装搬迁。
-   chart_source存在时render/PNG/export只从校验附件读，缺失/篡改不回退漂移原文件。保存锁内验证→严格冻结整份INPUT（含v2外层）→实际重放→读回→单次原子正文提交；不清引用后假成功。保持普通FigureSnapshots既有策略。
-   一个documentStore/对象模型；明确legacy/v4格式，活动画布沿用原模型，仅持久化边界schema3/4。首次绑定及粘贴/恢复计算图共用升级入口，产生新working documentId，保留旧文件/历史和project/canvas/panel身份；不得清空当前undo后宣称无损。undo编辑不能降格式。
-   format贯穿API地址、本机键、保存队列/revision、project文件绑定、恢复门、版本/thumbs；旧缺省URL/键/实参数量不变。新启动没有本机缓存也必须发现后端v4 namespace的last/candidates，不能只读legacy。失败保持needs_user，不悄悄选择更旧文档。
-   保存回执是五字段数组{canvas_index,object_index,canvas_id,panel_id,chart_source}，响应document_format:'v4'，GET raw schema4及X-Tavotto-Document-Format:v4。context保存实际发送的深拷贝正文、pj/documentId/loadSeq/format；按索引及原id核对，sourceId/sceneDigest一致，再比较当前完整输入{fileId,fileKind,chart,原序overrides,旧chartSource}。重复index pair整份拒合入，重排/插入/换源/改模型/重复(gid,prop)编辑顺序反转只略过受影响项；不能按panelId建Map或新增ID唯一性限制。不加undo/循环autosave，迟到回执不能覆盖新输入。参考r05-frontend-persistence-audit.md，不把审计当已实现。
-   N2.1修命名文件关联冷持久化。旧legacy在清localStorage后也projectFile=null；ADR0108已接受迁后端，ADR0096要求不进可携正文。在现layout-sessions/data_dir按(project,format,working docId)存closed binding/revision/用户编辑同步轴，仍用原锁/atomicio；显式保存/打开须传真实working ID，目标取后端规范name/file，不能按doc.name/portable project.id/mtime猜。自动保存不改目标/分新open intent，升级新ID不继承legacy绑定；dirty继续用现用户编辑轴，派生回执不置dirty。正文成功与元信息失败分开报告，迟到A回执不能盖另存B。验收A保存→改标题B且存在同名B→清缓存/重启仍写A；仅autosave后冷开保A且dirty；外部改A后CtrlS409；不同format/项目同ID不串。单独commit并同步ADR/规则。
-   N2.2修保存错误信息。diskWriter把非冲突ApiError丢掉，documentStore转io，App统一“检查磁盘空间”；直接命名保存已有backendErrorText。经现SaveIssue/事件保留结构化code/params，来源422显示真正原因，网络/真实I/O用原通用提示；403/409及本机稿/原正文安全保持。独立commit，不做SVG专用错误store。
-   N3先把旧api_package直接最终ZIP写入替换为已验staged_package，保持临时asset立即流入和helper吞错误也失败的latch；调用方明确预算，不能无依据给旧合法大项目加低限。随后沿现zip容器显式校验资源路径/摘要/预算、安装附件、实际重放后单次正文提交，不任意extract、不覆盖用户既有资产/脚本，不把package/open只读检查当安装。实际新目录/中文路径/移盘/并发冲突/断写/缺附件/版本恢复都要测；叶子121项不是HTTP安装资格。
+3. N3包原子输出与显式安装搬迁。
+   documentpackage.py/atomicio.py/专项已冻结121项及4反证，尚未接app。先替换旧api_package直接写最终ZIP为staged_package：临时asset在helper退出前立即流入，add失败即锁定整包失败，CRC/结构验证后原子发布；不无依据给旧合法大项目加低cap。内部合法symlink资源需在原containment校验后捕获canonical目标，保持旧manifest相对ID/可用性，防外部目标与竞态。
+   再明确caller预算/manifest契约，复用现容器、来源附件和写回事务做v4安装；不是只读package/open。路径/摘要/资源/版本/预算验证→安装附件→实际重放→单次正文提交，坏包/断写/冲突不覆盖用户脚本资产/旧正文，不任意extract。新目录/中文路径/移盘、删原源、版本恢复、旧包和旧客户端逐项验；独立叶子可恢复svg_ir_fidelity代理，只授一个文件范围，根独占app/安装整合。
 
-4. R02/R06补产品能力，独立文件可并行。
-   图例/标题/数据联动和readiness共用明确科学归属；不能按颜色猜或硬编码可编辑。逐对象重绑迁移保留同归属编辑，重排/删对象不套错；现guard拒绝时保留草稿，不默清。
-   多DOM基础已完成，下一步成员binding/paint placement解决source compound/decor/native的真实偏序冲突；不搬动装饰造容器。参考native-clip-geometry-design.md的成员配对区域及运动归属，SVGIR Path/ClipUnion表达祖先AND/子形状union/fill-rule/物理坐标；距离/框选/宽描边/高亮共同完成，不能只gate查询点inside或强改composed=true。该报告14案例/37像素/31覆盖点是外部原型，未生产落地。
+4. N4图例/标题/数据/readiness及逐对象迁移。
+   显式科学身份驱动系列与图例同步，未绑定装饰保留，不按颜色猜；范围/数据变更保合法编辑，重排/删除对象不套错，不匹配项显式且可撤销。预检/项目状态消费同一计算来源/附件事实，不能有效附件仍报缺失/未应用或硬编码可编辑。实际UI和导出独立核对后分别commit。
 
-5. R07/R08完成分享、格式和M1。
-   原图EPS可与N2.1/N3不同文件并行收尾：叶子36、公共契约/owned action102及真实HTTP10项已验。标注/留白nested SVG导致首次HTTP4失败，已通过共享SVGIR嵌套viewport/百分比/overflow/clip结构修复；新45+旧相关281通过/0skip，writer/assets/retirement105通过/41缺Inkscape跳过，两反证杀死错误实现、五份旧IR字节一致，见nested-viewport-freeze.json。先独立提交共享viewport，再EPS叶子/适配/app、统一exportroute事实与前端类型/界面；界面当前仍无脚本禁用EPS，须实际操作验证及旧Python/EPS回归。检查_chart_eps_failure的格式归属，不能所有捕获异常都标EPS。partial alpha/gradient/mask等边界仍诚实返回错误，不往用户worker新增HB。画布eps_not_for_canvas保持，不伪PDF或静默栅格化。
-   之后用户可选纯外观或完整模型/数据/编辑包，纯外观不暗带隐藏数据；分别验证字段/元数据与实际产物。
-   真实UI双系列+未绑定注释：导入绑定→数据/范围/样式/图例→精确选择和undo/redo→正式保存→清缓存新父进程重开→原图/标注/混合画布/多页各格式；独立读取SVG/PDF文字矢量、PNG/TIFF尺寸/PPI。全部退出条件满足才M1，通过后立即继续。
+5. N5成员placement与复杂clip几何。
+   保留多DOM成果，解决source/compound/native成员paint slots真实偏序，不搬装饰造容器。复用SVGIR Path/ClipUnion，统一祖先AND/子形状union/evenodd/objectBoundingBox/成员运动；命中距离、框选、高亮、宽描边墨迹一起验。圆外/孔洞真实反例不得命中，不能只判断查询点inside/强设composed。外部native-clip-geometry-design.md原型证据不算生产已实现。
 
-6. R08–R12/M2与R13/M3保留完整范围。
-   A可信来源采用、文字/分组/use实例、剩余族/统计/色阶/多轴/投影、事务写回、预检/出版/样式、CLI/MCP/playground/桌面/发行逐格SG00核验。普通SVG不反推原始Python，不按相邻同名.py猜来源。写回prepare→verify全量冷重放+几何+像素→commit，失败409且原件零改动。
-   冻结最终候选，跑完整旧功能、等价性/不变式/CompatBench/E2E/性能与支持平台真安装物资格；缺平台单列未验证，不用mock冒充。M1/M2、时长/轮次/上下文耗尽都不代表最终完成。
+6. N6分享选择与完整M1。
+   纯外观不暗带模型/数据，完整模式显式含模型/数据/全部编辑。真UI双系列+未绑定注释→轴/数据绑定→范围/样式/图例→精确选取/undo/redo→正式保存→清缓存/新父进程→原图/标注/混合画布/多页scope×format，独立读取文字/矢量/尺寸/PPI/像素。EPS画布保持原拒绝合同。全部退出才M1，通过立即继续M2。
 
-四、验证、提交、失败与恢复
+7. N7/M2能力对等，再N8/M3最终资格。
+   保持SG00–SG17完整范围：A可信来源采用、C自包含、文字/分组/use/图元、全部适用系列/统计/色阶/多轴/投影、事务写回、出版/预检/样式、CLI/MCP/playground/桌面/发行入口逐格验。普通SVG不反推原始Python，不猜相邻同名脚本。写回prepare→verify全量冷重放+几何+像素→commit，失败409原件零改。
+   冻结最终候选，跑完整旧功能/等价性/不变式/CompatBench/E2E/性能和支持平台真实安装物；新SVG专项不能代替旧功能回归，缺平台写未验证。处理已有PID失败对资格的影响。每功能分别commit，不因M1、一夜结束、轮次/上下文耗尽缩减目标。
 
-- 先说清断言主语：当前最终图、落盘文件、冷启动结果或真实产物。元数据、path数量、生成了文件不能替代科学/视觉/几何正确。
-- Python先Ruff后针对性pytest；前端相关Vitest→正式tsc-b/Vite/Tailwind，按改动补i18n/playground和真UI。用实际退出码，skip/未执行不写通过。已通过且无受影响改动的昂贵检查不重复；最终候选完成项目规定完整验证。
-- 新核心不变量做目标落点反证，错轴/删成员/迟到响应/跳verify应真失败，生产字节恢复后再验证。不删测试、不放宽容差迎合错图。
-- 最大化复用现有文档/渲染/能力/属性/几何/事务/RenderCore/pdfbackend/锁/资源。零PyMuPDF、父进程stdlib、认证/沙盒/隐私和解释器选择边界不变。
-- 各功能分别commit，含测试/契约镜像/受影响文档，不git add .混草稿，不squash全部，不加Co-Authored-By。根代理审stage范围，按实际验证状态提交；不push/PR/合并/发布。
-- 测试配置/数据和日志隔离；只按确认属于自己的PID+创建时间/命令清理，不能模式杀或重seed覆盖产物。不破坏共享venv/node_modules。
-- PROGRESS唯一进度台账；NEXT_PHASE/PROMPT维护当前安排，保留历史。每功能提交、长验证前后和约30分钟安全边界checkpoint，记录HEAD/diff、命令/cwd/环境/真实退出码/证据、代理所有权、自有PID/端口、缺口和下一具体动作。
-- 产品红继续缩场景修复；同类两轮后查结构/单一权威并换反例。无变化网络瞬断最多再试一次；认证/平台仅阻塞真实依赖项，继续其他就绪任务，不改凭据或虚构通过。
-- 压缩后继续同一目标；中断后先核真实HEAD/差异/进程与未结束检查，不从计划重做。提示词不是常驻调度器，不会唤醒休眠机器或恢复已结束会话；调试服务不是整夜任务。本轮未另建自动化。
-- 仅全部验收完成、用户明确停止、运行条件强制中断，或所有有意义工作真正依赖无法取得的外部条件时结束。最终交付写能力/入口、功能commits、实际测试与产物、平台/待发布及未完成项，不以专项全绿称最终可用。
+四、验证和持续执行纪律
 
-19:06自有服务复核：后端10460（18:56:58启动、source-ref-browser/server.py、23984/session18140），Vite10168（18:51:24启动、native-edit-browser/vite.mjs、23983/session80916），浏览器tavotto-v4-cold daemon71840（18:57:08）；旧25224和save浏览器已关闭。后端载入时尚无后来nested SVGIR修复，EPS界面联验前需重启。先核实时PID/创建时间/命令，不照旧数字杀；隔离fixture只复用不重seed，保留n2_cold_chart实际产物。截图在证据根output/playwright。未启动新整夜调度器。
+- 判据先说主语：谁的哪个进程/时刻/维度；最终图/落盘/冷开/产物分别量，metadata/path数量/文件存在不能代替科学视觉正确。
+- Python先Ruff再针对性pytest；前端受影响Vitest→正式tsc-b/Vite/Tailwind，再按改动i18n/playground/真实UI。核真实退出码，skip/未跑不写通过；已通过且源码未受影响不反复跑，最终冻结候选完成项目要求全量检查。
+- 新核心不变量做真正落点反证，先红后恢复生产字节再绿；不删测试、不放宽容差迎合错图。同类两轮仍出新边界查结构/单一权威，换反例，不无限补丁。
+- 最大化复用原模型、事务、能力/属性/几何、RenderCore/pdfbackend、锁/资源/runner；零PyMuPDF、会话认证、worker沙盒、隐私和运行数据data_dir不变。
+- 根审精确stage范围再按功能commit，保留所有用户改动，不加Co-Authored-By。失败日志/反证/源码身份落仓库外证据根；不安装重复依赖或破坏共享venv/node_modules。
+- PROGRESS是唯一进度台账，NEXT_PHASE/PROMPT维护当前队列；功能提交/长检查前后/约30分钟安全边界checkpoint，记HEAD/diff/index、源码与命令/cwd/env/退出码、代理所有权、真实自有PID+创建时间+命令、缺口和下一动作。不能仅凭旧PID杀进程，也不能重seed覆盖已有证据。
+- 一项退出后选下一就绪项，不等待我确认。用户询问状态时简短回答后继续原目标；不要停在反复更新计划。真实平台/权限阻塞只阻塞依赖项，继续其余就绪工作。
+- 仅全部完成、用户明确停止、运行条件强制中断，或所有有意义工作确实需要外部变化时结束。goal仍active；不把本轮状态审计当整项完成。
 
-现在核实际树/PROGRESS/代理，N2同步受影响规则后定向提交→N2.1保存关联→N2.2准确错误→N3包；独立收尾EPS入口，再N4图例/readiness/迁移、N5复杂几何、N6分享与M1、N7 M2、N8 M3。不要从旧hash重做已验功能，不停在重新生成计划，不把本批绿灯当整个目标完成。
+五、当前服务和恢复入口
+
+20:02核验：后端66888（19:32:55，source-ref-browser/server.py，23984/session39115）；Vite10168（18:51:24，native-edit-browser/vite.mjs，23983/session80916，含N2.1中间稿）；冻结EPS预览76372（19:48:20，eps-preview.mjs，23985/session82628）；Playwright tavotto-eps-ui daemon24696（19:48:46）、tavotto-v4-cold daemon71840（18:57:08）。旧后端10460已结束。先核实时归属，不照数字杀；后端载入EPS候选但无新binding HTTP，接线后需按原隔离fixture重启，不重seed。
+
+冻结dist在证据根eps-ui-dist-1945，独立于正在变化的web源码；截图output/playwright/eps-ui-five-formats.png及n2-v4-cold-edited.png。服务不是无人值守调度器；未创建新定时任务，提示词不会唤醒休眠机器或恢复已结束会话。活跃执行会话持续做可执行工作，中断后从真实checkpoint接续，不重新生成整套计划。
+
+现在核实际树/index/代理：收口EPS功能提交，同时完成N2.1集成→N3包→N4/N5→N6/M1→N7/M2→N8/M3。不要用旧冻结文件覆盖正在写的新稿，不把专项绿灯称最终可用。
 ```

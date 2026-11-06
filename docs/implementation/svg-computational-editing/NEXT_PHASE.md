@@ -1,7 +1,7 @@
 # SVG 计算图表编辑：执行效果复核与下一阶段任务
 
-> 当前状态更新：2026-11-06，Asia/Shanghai，19:08。HEAD=95684f89，共享顺序后端已提交；N2前端43文件冻结，真实UI正式保存、删源、零本机缓存/新后端冷恢复、继续编辑和PDF/PNG/SVG导出通过，尚未提交。冷开命名文件关联丢失、422被误报磁盘空间已定位，均未修。EPS HTTP10项通过但界面仍禁用；ZIP原子writer121项通过但未接安装。M1仍未通过。
-> 下一动作：N2的playground构建/check已通过（0d91b54086f7e829），先同步受影响规则/ADR并定向提交，再N2.1持久保存关联、N2.2准确错误与N3包安装搬迁；EPS统一route/界面可独立收尾。之后图例/readiness、结构迁移、复杂几何、分享及M1/M2/M3。不要重做已通过的共享意图序或把单曲线冷开资格当作完整M1。
+> 当前状态更新：2026-11-06，Asia/Shanghai，20:02。功能HEAD=ec2cb144；N2前端264ce59c、EPS准备叶子c9fa29a4、共享viewport修复8fa84f5d、准确保存错误ec2cb144均已提交。真实UI正式保存、删源、零缓存新进程恢复和继续编辑已验；EPS新候选真实五格式导出与独立产物核对通过，接线/route/UI待提交。命名文件关联后端叶子已验，app路由未接，前端仍为中间稿。ZIP安装、图例/复杂几何和最终资格仍缺，M1/M2/M3均未通过。
+> 下一动作：保留已stage的EPS app候选，收口EPS功能提交；同时完成N2.1保存关联的HTTP/前端/真实冷开验证。随后N3包原子输出和安装搬迁→N4图例/readiness/迁移→N5复杂几何→N6分享和完整M1→N7/M2→N8/M3。N2/N2.2不重新实现，单曲线五格式资格不代替完整M1。
 > 当前进度唯一台账：[PROGRESS.md](PROGRESS.md)；最终范围：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。SG00–SG17 不缩减，专项测试通过不代替全产品验收。
 > 接续提示词：[NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。沿用当前实施分支/工作树，不新建或切换；不同完整功能分别 commit。无人值守规则见第 5.1–5.6 节。
 
@@ -21,10 +21,11 @@
 | 多成员对象 | 8e6c399a统一最终manifest与DOM镜像目标，跨父/split axes/errorbar/colorbar共同目标、临时预览和取消可用；未绑定装饰保留 | compound成员槽位欠定、zorder冲突和任意祖先clip尚不授予完整资格 |
 | SVG/PDF与栅格交付 | 真实生产SVG/PDF9项及PNG/TIFF新增2项分次通过；独立核对文字、像素、物理尺寸、PPI/alpha与源不变 | 不代表EPS、所有复杂SVG或全产品资格 |
 | 精确来源消费 | 2452d8fc已提交；原源删除后真UI修改/undo/redo、PDF/PNG/SVG实际导出通过，playground重建通过 | 后续N2已修改相关前端，700项是2452时证据；预检仍误报有效附件缺失/修改未应用 |
-| 项目资源 | 5abb9a7d、95684f89已提交；N2冻结43文件已完成真实命名保存、零缓存新进程自动恢复、继续编辑导出 | 命名文件关联/dirty轴尚未迁后端；N2待规则同步/提交，包安装未完成 |
+| 项目资源 | 5abb9a7d、95684f89、264ce59c已提交，真实命名保存、零缓存新进程恢复、继续编辑导出通过 | 命名文件关联叶子已验、HTTP/前端未集成；冷开仍显示未存进项目；包安装未完成 |
 | 图例与状态文案 | 两条计算曲线可见并可编辑，原图例/注释保留 | 当前截图旧图例线宽未跟随；项目仍显示“2张仅版面”，须统一来源与能力事实 |
 | worker生命周期 | 5b2b1403已接两个app入口，实际API46项通过；lease、chart类admission、deadline、输出预算、退出码和组取消已有证据 | 不宣称全产品总cap；既有Windows回执PID失败原版本也复现，其他平台组回收未真机验 |
-| EPS / 复杂clip | EPS公共契约/owned action102项通过；nested viewport修复后实际HTTP10项含GS像素通过，未提交 | route/界面仍称无脚本并禁用EPS；alpha等边界须诚实；编辑clip的距离/框选/宽描边未实现 |
+| 保存错误 | ec2cb144已提交；真实坏来源422显示实际错误并保留本机稿，191项及正式build通过 | 不再列为待实现；N2.1元信息失败仍须与正文成功分开报告 |
+| EPS / 复杂clip | 准备叶子/viewport已提交；新候选429项前端、15项HTTP通过，真实UI五格式done，独立GS/模型/文字/尺寸/像素核对通过 | 接线/route/UI未提交；仅单曲线原图资格；alpha等边界及编辑clip距离/框选/宽描边仍待完整验收 |
 | 整体可交付性 | 保留Python原路径与既有渲染/事务，按功能提交 | M1、M2、M3及完整旧功能/支持平台资格未通过 |
 
 ### 1.1 最新验证与证据
@@ -47,24 +48,28 @@
 | `native-v2-ui-artifact.json`、`native-v2-ui-confirm.js`、`output/playwright/native-v2-ui-restored-exact.png` | 实际生产v2、原普通SVG缺席、新会话新文档预览/确认/撤销/重做；完整7条恢复、最终exact；不是正式保存/冷父进程UI链 |
 | `chart-process-review.md`、`chart-process-http-integrated.xml`、`chart-desktop-baseline.xml` | runner34项与app46项分次通过；desktop相关20通过/1既有失败/1平台skip，原模块同项复现；不能写全部旧功能通过 |
 | `chart-documents-v4-final20.xml`、`chart-documents-v4-legacy-integrated.xml`、`chart-document-negatives.json` | v4真实保存/冷父进程20项通过，42.167秒；旧312通过/20既有skip，74.960秒；3组实际反证。已修独立复核的legacy快照规范化回归 |
-| `n2-frontend-validation.json` | 43文件冻结；阶段36文件810项通过，最后改动对应7文件206项复验通过，正式build/i18n/oxlint及23反证有原始记录；重叠不相加，不是完整前端回归 |
+| `n2-frontend-validation.json` | 43文件及规则/ADR已随264ce59c提交；阶段810项和末改动206项重叠不相加；正式build/i18n/oxlint及23反证有记录，非当前中间稿完整前端回归 |
 | `n2-ui-{edit,save,cold,cold-edit}-result.json`、`n2-ui-cold-export-qualification.json` | 真UI正式保存→原SVG缺席→空localStorage新浏览器/新后端→同v4 ID自动恢复→编辑/undo/redo→PDF/PNG/SVG导出，独立模型/文字/尺寸/像素检查通过；冷开projectFile=null仍是缺口 |
 | `session-open-intent-final2.xml`、`session-open-intent-http-final15.xml` | 共享打开意图新55项、HTTP15项通过；旧合组193通过/10既有skip；模块4/HTTP2反证通过，已提交95684f89 |
 | `nested-viewport-freeze.json`、`nested-viewport-final.xml`、`chart-eps-http-second.xml` | 嵌套viewport新45+旧相关共281通过/0skip；EPS真实HTTP10通过/0skip；writer/assets/retirement105通过/41缺Inkscape跳过；两反证及五份旧IR字节通过，未代表界面资格 |
 | `document-package-staged-regression.xml` | ZIP staged writer与旧atomicio共121通过/0skip，4项反证；尚未接app输出或安装，不是包迁移资格 |
-| `native-clip-geometry-design.md`、`native-eps-implementation.md` | clip外部14案例/37参考像素及31覆盖点；EPS生产叶子36项含独立PS像素通过。两者尚未接成完整产品入口 |
+| `native-clip-geometry-design.md`、`native-eps-implementation.md` | clip外部14案例/37参考像素及31覆盖点仍仅为原型；EPS叶子36项已提交，后续HTTP/UI接线与独立产物资格见新报告 |
+| `n22-ui-source-error-result.json`、N2.2专项报告 | 真实422保留后端code/原因和本机副本，191项通过/0skip、正式build/i18n/lint通过，5实际反证；已提交ec2cb144 |
+| `eps-offer-freeze.json`、`chart-eps-http-final15.xml`、`eps-existing-integrated.xml` | 格式计划与EPS offer分离后的429项前端、正式build通过；真实HTTP15通过/0skip，旧EPS合组84通过/2skip；范围与源码时刻不同不相加 |
+| `eps-ui-five-formats-qualification.json`、`eps-ui-job-final.json` | 本轮真实UI五格式全部done，SVG完整模型/精确INPUT相等、PDF100pt与文字、PNG/TIFF833²和600dpi、独立Ghostscript实际EPS成图核对通过；接线未提交，单曲线原图范围 |
+| `project-file-binding-final-leaf2.xml`、`project-file-binding-final.xml` | 后端关联叶子37项通过/0skip；旧合组230通过/10既有skip，5实际反证；新HTTP文件未运行，前端初轮86项仅为中间阶段，不授予端到端资格 |
 
-历史层序、转换器、来源配对、连续文字、v1冷重算和附件验证详见PROGRESS日期记录。最新真实截图output/playwright/n2-v4-cold-edited.png；旧双系列截图native-v2-ui-restored-exact.png仍可复核图例/readiness缺口。19:06实际核实后端10460/23984、Vite10168/23983、浏览器tavotto-v4-cold daemon71840；启动时间/命令见PROGRESS。它们是隔离联验服务，不是常驻整夜调度器；18:17旧PID已不作为续接依据。
+历史资格详见PROGRESS日期记录，不累计跨时刻测试数。最新真实截图`output/playwright/eps-ui-five-formats.png`；五格式文件位于证据根`source-ref-browser/project/tavottofile/export/eps_ui_full_20261106.*`。原422问题已修；冷保存关联、预检误报和图例/readiness缺口仍在。20:02复核后端66888/23984、Vite10168/23983、冻结预览76372/23985，浏览器24696与71840；启动时间/命令/用途见PROGRESS。Vite当前含N2.1中间稿，不用于冒称已冻结EPS资格；最新playground检查曾因并行源变化指纹不一致，待N2.1冻结后重建/check。服务不是调度器。
 
 ## 2. 当前最影响可用性的缺口
 
 ### 2.1 附件消费者已提交，继续持久化集成
 
-运行边界、精确附件、v4后端和共享发现序已接真实API/UI；N2正式保存冷恢复已验，不再按旧暂存blob或31文件hash回滚43文件冻结成果。下一步同步受影响规则并提交N2，再补保存关联与包搬迁；各功能的未提交差异继续定向隔离，不能git add .混批。
+运行边界、精确附件、v4后端、共享发现序、N2及准确错误均已提交。接下来保留这些提交，收口已验EPS接线、集成保存关联与包搬迁。app索引当前是独立EPS候选，后续关联代码只在工作区修改时不得重stage混批；具体blob见PROGRESS。新的N2.1改动使旧N2相关文件SHA改变是正常现象，不能为满足旧冻结报告回滚当前实现。
 
 ### 2.2 冷恢复后的保存目标和项目搬迁尚未闭合
 
-正式保存、跨格式可信发现、正文/附件冷恢复已形成真实UI链。尚缺的是命名文件保存关联：清本机缓存后projectFile=null，CtrlS重新要求存进项目，不能靠相同标题自动选目标。旧legacy也依赖localStorage，这是ADR0108已接受而尚未兑现的迁后端要求。优先在既有本机会话权威持久化工作副本到命名文件的关联、revision和用户编辑同步轴，保持ADR0096不污染可携正文；另补422准确错误。随后完成包的显式验证安装及搬迁，不能把只读package/open算作安装。已有精确INPUT事务和共享意图sequence保持。
+正式保存、跨格式可信发现、正文/附件冷恢复已有真实UI证据。尚缺命名文件关联：清缓存后projectFile=null，CtrlS重新要求存进项目，不能按同名标题猜目标。N2.1已在既有layout-sessions完成关联/revision/用户编辑轴叶子，前端在接线，app HTTP尚未接；ADR0108/0096要求后端权威且不污染可携正文。422准确错误ec2cb144已完成。随后完成包的显式验证安装及搬迁，不能把只读package/open算作安装。
 
 ### 2.3 图例、结构迁移与复杂几何仍有功能缺口
 
@@ -96,7 +101,7 @@
 
 ## 4. 分批任务清单
 
-### 2026-11-06 19:08 最新执行队列
+### 2026-11-06 20:02 最新执行队列
 
 已完成共享消费者、生产导出、v2恢复和多DOM基础，不从旧“只有metadata/不能点选/导出不携chart”重做。每行退出后自动选择下一就绪项，M1不是停点。
 
@@ -106,30 +111,32 @@
 | N0 / 已完成 | 精确INPUT附件前后端消费者2452d8fc | 700项、实际UI/产物、playground及13项后端专项通过 | 已独立提交，不重做 |
 | N1 / 已提交 | v4命名/autosave/session/versions/thumbs基础5abb9a7d | 20项HTTP含真实v2/冷父进程通过，旧312通过/20skip，3组反证及定向独立复核 | 后端保存事务已独立提交；共享打开意图序另批 |
 | N1.1 / 已提交 | 跨namespace共享打开顺序、显式GET/repair：95684f89 | 新55项、HTTP15项及模块4/HTTP2反证；旧合组193通过/10skip | 不重做；前端消费者随N2 |
-| N2 / 冻结待提交 | 前端格式、升级、位置回执、本机键、冷发现、versions消费者 | 43文件/真UI/独立产物/playground已验；同步受影响规则/ADR后定向stage | `feat(documents): persist computational chart working copies`，不混EPS/ZIP |
-| N2.1 / 最高优先 | 命名文件关联、revision及用户编辑同步状态迁现有后端会话 | 保存A后改标题B→清缓存/重启仍写A；仅autosave后dirty恢复；外部变更409；迟到回执不改绑；双format/项目隔离 | `fix(documents): restore project file bindings from session metadata` |
-| N2.2 / 紧随 | 保留422等结构化错误，经现有SaveIssue/通知展示 | 来源错误不提示磁盘空间；真正I/O/权限/409保持合同；正文零改、本机副本保留 | `fix(autosave): preserve backend validation errors` |
+| N2 / 已提交 | 264ce59c：前端格式、升级、位置回执、本机键、冷发现、versions | 真实保存/零缓存新进程恢复/继续编辑/三格式独立产物，受影响规则已同步 | 不重新实现，不拿旧SHA覆盖N2.1 |
+| EPS / 先收口 | c9fa29a4/8fa84f5d已提交；公共契约/owned action/app/统一route/UI及测试待独立提交 | 15项HTTP、429项前端/build、84旧EPS通过/2skip、真UI五格式及独立产物；补规则/ADR和stage审计 | `feat(export): enable computational chart original EPS`；不混binding/package |
+| N2.1 / 当前最高产品优先 | 关联叶子冻结；补取消helper、app HTTP、前端排队/轴/确认和故障恢复 | A改标题B→清缓存重启仍写A；dirty恢复、外改409、ABA/多tab/多格式项目隔离；正文/元信息故障分开 | 叶子/HTTP接线/前端按可独立验收功能提交，见下节 |
+| N2.2 / 已提交 | ec2cb144：结构化保存错误及规则 | 191项、正式build、真实422和本机副本已验 | 不再列为下一项 |
 | N3 / R05 | v4包显式安装、复制/搬迁/版本恢复 | 新目录/中文路径/移盘，无原源仍可重建；坏附件/断写/冲突不损坏旧正文 | 包安装与资源迁移 |
 | N4 / R02、R06 | 图例/标题/数据/readiness联动，逐对象重绑迁移 | 真UI图例跟随；数据改变保编辑；重排/删除不套错，未匹配项显式且可撤销 | 图例；重绑迁移；readiness |
 | N5 / R02、R06 | 成员paint slots及复杂clip几何 | 原装饰层序、circle/holes/union/祖先AND、宽描边距离/框选/高亮/运动一致 | 成员placement；共享clip合同及消费者 |
-| N6 / EPS可并行收尾 | 原图EPS统一route/界面，外观/完整数据分享，M1真UI全链 | HTTP10已验；继续真实ExportDialog/worker/runtime依赖、五格式scope合同；双系列/图例/冷保存完整M1 | 先共享nested viewport，再EPS适配/route/UI，再分享与M1验收，按功能分commit |
+| N6 / R07、R08 | 外观/完整数据分享与M1真UI全链，保留当前EPS结果 | 双系列/图例/未绑定注释→完整保存冷开→原图/标注/混合画布/多页及独立读取器；纯外观不暗带数据 | 分享选择；完整M1验收；不重复已验EPS基础 |
 | N7 / R08–R12 / M2 | A采用、文字/分组/use、剩余族/统计/色阶/多轴/投影、写回、预检及各入口 | SG00逐格适用能力；prepare→verify冷重放+几何+像素→commit；失败原件零改动 | 每个可验收功能分别提交 |
 | N8 / R13 / M3 | 冻结候选，完整旧功能/等价性/CompatBench/E2E/性能及支持平台真产物 | 无未解释新增失败/错图/丢编辑；既有PID失败须处置或明确资格影响；平台未验单列 | 缺陷各自fix；最终证据和交付文档 |
 
 #### 已完成N0/N1：保留资格，不按历史快照重做
 
 1. 2452d8fc和5abb9a7d已提交。旧app索引blob及31文件SHA只记录当时资格；不能拿它们覆盖N2新改动。精确INPUT参与全部计算、预览与导出，无ref旧合同保留，坏ref不借同名原文件；v4正式保存20项和旧312项/20skip范围见第1.1节。
-2. N2已用空localStorage新浏览器和新后端完成真实正式保存冷恢复、继续编辑及三格式导出；保留本次独立产物检查。尚不能关闭命名文件关联、包搬迁或完整双系列M1。当前43文件的playground已重建/check，指纹0d91b54086f7e829；后续源变更再复验，不沿用2452d8fc指纹。
+2. N2已提交264ce59c，保留空缓存新浏览器/新后端的冷恢复与继续编辑证据；最新单曲线原图五格式另已验。playground的0d91b54086f7e829只代表N2当时源码，后续并行变化使最新check不匹配，冻结N2.1后重建，不沿用旧指纹或反复追逐正在写的源。
 3. 按功能定向暂存，核实当前源码与资格对应关系；不混入未完前端、包/EPS草稿。已验且未受影响检查不重复，新增修改或失败只触发必要复验。
 
 #### 当前所有权与最近一次集成顺序
 
 | 工作线 | 本轮写入范围 | 最近退出条件 |
 | --- | --- | --- |
-| 前端持久化 | svg_self_contained的43文件已冻结并交回根；当前审计完成，不继续后台写入 | 根核SHA、playground与定向提交；N2.1/2.2若重新委派须明确独占新范围 |
-| EPS / nested viewport | svg_ir_fidelity四文件已冻结并交回根；根独占app.py | HTTP10和最终旧writer/static报告已取得，41缺Inkscape跳过；共同route由根单一接线 |
-| 包 | export_adapter_review的documentpackage/atomicio/专项已冻结并交回根 | staged writer121项资格保留；根接app原子输出，再明确v4安装边界 |
-| 接入与资格 | 根代理：app.py、跨层契约、ADR/当前文档、定向提交与真实UI证据 | N2→绑定/错误→包；EPS可独立收尾。共享文件不同时多写，completed代理不等于仍在开发 |
+| 前端关联 | svg_self_contained正在写N2.1 helper/API、writer/SaveContext/store/restore/open及对应测试/i18n；不碰EPS组件/route | 86项只是初轮；补有状态测试/正式build/i18n/playground、反证和真实冷开；完成才交回 |
+| EPS | svg_ir_fidelity已冻结交回8前端offer文件，公共8文件/后端route及根app/HTTP另有冻结证据 | 根同步规则/ADR，逐组核SHA和stage独立提交；不要拿旧EPS frontend冻结SHA覆盖新offer修复 |
+| 后端关联 | export_adapter_review的layoutsession/37项叶子和新HTTP文件已交回；后者未运行 | 根补窄取消helper/HTTP实际集成后collect+运行，未接路由不能算通过 |
+| 包 | documentpackage/atomicio/专项冻结121项，N3代理保持暂停，尚未写安装模块 | EPS/关联共享合同明确后可委派独立chartpackage叶子，先冻结资源/预算/安装事务契约 |
+| 集成与资格 | 根独占app、共享契约、ADR/规则/三文档、真实UI和提交 | 先EPS边界，再N2.1→包；同文件只一个写入者，已完成代理不等于后台仍在运行 |
 
 所有完成项均留存真实源码、退出码与独立证据；当前中间稿不因阶段build通过就获得整个分支的最终资格。
 
@@ -146,6 +153,12 @@
 9. 保存回执是五字段位置数组：`{canvas_index, object_index, canvas_id, panel_id, chart_source}`，响应额外`document_format:'v4'`；GET raw schema4、Revision/Layout-File及`X-Tavotto-Document-Format:v4`。context必须持有实际发送的深拷贝正文、pj/documentId/loadSeq/format。按索引和原始id核对，并比较完整输入`{fileId,fileKind,chart,原序overrides,旧chartSource}`与当前同位置；引用sourceId/sceneDigest也须匹配。重复index pair整份拒合入；重排/前插/换源/改模型/编辑顺序变化仅跳过受影响项，下一次正常保存重捕获。不按panelId建Map、不新增旧文档ID唯一性限制；活动画布只替换实际安装的首个数组位置。合入不新增undo或循环autosave，异常回执也不伪造正文I/O失败后覆盖重试。
 10. N3包恢复沿现有zip容器，显式安装经摘要/路径/预算验证的附件后单次写正文；不任意extract，不把旧`package/open`只读检查当安装。项目复制复用已有整体复制，真实验证新目录/移盘/中文路径、断写、缺附件、旧客户端和历史恢复。N2前端审计参考证据根r05-frontend-persistence-audit.md；候选审计不是已实现。
 
+N3按三个可验收功能拆开：
+
+- **旧包原子输出**：以已验`staged_package`替换app直接写最终ZIP，临时helper资产须在退出前流入，add失败即锁定整包失败，关闭/CRC/结构核验后`publish_file_if_absent`发布。注入ENOSPC/中途异常/并发同名，旧完整包和用户文件保持。兼容旧manifest/脚本/资产路径；合法项目内symlink在containment验证时捕获canonical源，保留manifest原相对ID，不能让新lstat规则无声破坏旧有效项目或接受指向项目外的竞态目标。
+- **v4包合同**：冻结caller拥有的六项预算（archive/member/directory/total/layout/manifest），用实际资源清单和既有容量合同定值，不能凭空压低旧合法项目上限。闭式manifest/品牌/版本/format、资源摘要/重复名/路径/目录预算均实际验证；附件必须包含精确INPUT而不只inner SVG。未知future保留拒写，不任意extract。
+- **显式安装与搬迁**：复用现容器/atomicio/来源与写回事务，验证→资源安装→真实重放→单次正文提交；本机绑定/绝对路径不入可携正文。坏包/资源已存在冲突/断写时可回收本次孤立临时物且不覆盖旧资产脚本。真实HTTP+新父进程在中文新目录/移盘、删原源下继续编辑/undo/导出/版本恢复；旧package/open仍有原只读语义。叶子121项不代表这一整链已完成。
+
 #### N2.1：冷恢复后仍写回原命名文件（优先于搬迁验收）
 
 - **权威与范围**：复用后端layout-sessions/data_dir、原锁和atomicio，以(project,document_format,working docId)寻址closed binding record；不建第二套文档store，不把绝对路径/机器会话信息塞进schema3/4。同步ADR0108已接受的迁后端口径与ADR0096。
@@ -154,7 +167,19 @@
 - **提交语义**：正文成功但会话元信息失败需分别报告，不能报“未保存”诱导覆盖重试；回执须捕获旧关联/代次，不能让保存A的晚回执盖掉另存B。保留revision冲突，不在冷恢复时读取新revision洗掉外部修改。
 - **验收**：A保存→改标题B且存在另一B→清本机缓存/新进程→仍关联A；仅autosave新编辑→冷开仍为A且dirty；外部改A→CtrlS409且原件不动；另存B后A迟到不改绑；双format/不同项目同ID隔离；正文/元信息各故障的真实回执及本机副本保留。先定向复现再实现，补必要反证与真浏览器。
 
+当前落点与集成顺序（不是已通过声明）：
+
+1. `layoutsession.py`沿原锁/atomicio存版本化`document_project_files`，叶子37项已验。先补`cancel_project_file_intent(key,doc_id,sequence)`：锁内只清当前匹配pending，保留目标/轴/计数；过期零写superseded，不从app读私有DB、不信客户端整张票据、不嵌套获取非重入锁。
+2. 根接`/api/layout-session/project-file/<workingId>`及`/reserve`、`/confirm`、`/intent/<sequence>`；v4经既有别名注册复用认证和namespace。GET实际AS revision作证；reserve目标name/file由后端规范；confirm在named锁内核对实际revision。named POST仅显式`working_doc_id`/`binding_intent`增加能力，旧body/缺省args不变。AS仅显式`project_file_edit`闭式JSON增加轴证据，写前prepare→正文原子提交→同证据commit_slot，拒绝不得先改正文。
+3. 保持锁序：AS document锁→session锁；named锁→session锁，禁止同时嵌套两个可能落同一stripe的非重入document锁。业务superseded/unconfirmed返回200+state；确认named实际变化409external_change；AS轴拒绝409stale_write且原body零改；坏字段/null/非法seq400；future修改503；正文已成功、元信息失败仍200并单列unavailable。
+4. 前端hydrate完成后重新捕获最新快照入同一DiskWriter；queued ancestry不可自动替换。派生回执不加用户编辑轴，真实用户编辑用每实例纯内存editor_id，不能跨tab取max。保存reserve捕获实际已刷AS快照/revision/axis，不能await后造新body配旧ticket；SaveContext含binding sequence防A→B→A。只有明确404回旧wire，503/未知失败保持关联/dirty。
+5. 元信息失败后的重试先仅confirm前次已写正文；确认后若有新编辑，核对当前project/format/workingId/loadSeq/保存意图再重捕获新SaveContext交同队列。不能放宽旧ctx sequence判据，不能把已落盘body报成失败诱导覆盖。superseded停止旧票据；进程冷开无可靠票据时不能猜目标。
+6. `tests/test_layout_project_file_http.py`已冻结但未运行。根接完再实际collect+pytest，先Ruff；前端有状态mock/正式build/i18n及冻结后playground通过，再真UI冷开A/dirty/外改409/多tab/切项目。外部AS漂移导致axis unknown的显式安全恢复还需实现并验证，不能把永久不能保存或静默洗白当解决。
+7. 提交建议：叶子+必要取消helper和测试→HTTP接线/真实测试→前端关联与回归/规则；若跨层必须一起才能构成可用功能，可合为同一N2.1 commit，不能制造检出即坏的中间提交。app已有EPS索引候选必须先独立收口或保持索引隔离。N2.1全部退出后再标完成。
+
 #### N2.2：保存错误保留实际原因
+
+状态：已完成并提交ec2cb144，191项/正式build/真实422均有证据。下列合同继续保留为回归要求，不再作为待实施队列。
 
 - 已定位旧链：diskWriter仅保留冲突，其他ApiError丢失→documentStore归io→App统一“检查磁盘空间”。直接命名保存已有backendErrorText，应复用它，不建SVG专用通知链。
 - 在现SaveIssue/事件平面保留结构化后端code/params；422来源无效显示实际来源问题，网络/真正磁盘错误使用既有通用提示；403/409不改语义。错误日志不泄露用户脚本/路径/图内文字。
@@ -166,7 +191,7 @@
 - **重绑迁移**：后端逐对象映射科学身份与native编辑目标，保留同归属编辑；不匹配项显式、可撤销处理。现guard是防错边界，不能替代最终迁移。
 - **复杂成员**：从真实partial-order反例扩成员binding/paint placement，保留source slot、group opacity/clip与native成员顺序。不得把装饰搬进axes或只改composed标记。
 - **clip几何**：参考native-clip-geometry-design.md，复用SVGIR Path/ClipUnion，统一祖先AND、子形状union、fill-rule、成员配对和运动归属；命中距离、框选、高亮和宽描边墨迹共同兑现，不能只检查查询点inside。圆外/孔洞反例必须拒绝命中；objectBoundingBox用最终owner的未裁几何，包含透明装饰。
-- **分享和格式**：纯外观无隐藏数据；完整模式显式带模型/数据/完整编辑。EPS的“RenderCore准备完整已排字PS→固定Matplotlib worker封EPS”及app已通过10项实际HTTP；继续统一route事实、前端类型/界面并验真实导出，按共享viewport/EPS功能分commit。alpha/gradient等逐元素按实际表达审查，画布eps_not_for_canvas保留，不伪PDF、静默栅格化或丢装饰。
+- **分享和格式**：纯外观无隐藏数据；完整模式显式带模型/数据/完整编辑。EPS的RenderCore准备→owned worker封装、统一route/offer/UI新候选已过15项HTTP/429项前端和真实五格式原图独立产物；先同步规则/ADR并独立提交。不能把最小offer投影扩成复用旧完整格式计划；alpha/gradient等逐元素按实际表达审查，画布eps_not_for_canvas保持。
 - **验收**：先完成M1真实正式保存冷开纵向闭环，自动继续M2能力矩阵和M3完整旧功能/平台资格。不能因一夜结束或专项全绿缩小最终范围。
 
 | 批次 | 目标 | 依赖 | 对应原批次 | 推荐 commit 边界 |
@@ -418,4 +443,4 @@ Windows 使用 PowerShell 原生命令和任务专用变量；运行数据/配�
 
 ## 6. 本轮文档交付边界
 
-N0/N1与共享意图后端已提交；N2冻结前端已完成真实保存、空缓存新进程恢复、继续编辑、PDF/PNG/SVG导出及playground构建/check，待受影响规则同步和独立提交。冷保存关联与准确错误、包安装/搬迁、EPS界面、图例/复杂几何及最终旧功能资格未完成，M1/M2/M3均未通过。没有新调度器、推送、合并或发布；goal保持active。实际HEAD、差异、代理和进程以PROGRESS最新checkpoint及实际树为准。
+本次同步三份既有稳定文档，保留历史台账；未新建分支或另一套计划。N2/N2.2及EPS准备/viewport已提交，EPS新候选真实原图五格式和独立产物已验，接线待提交。关联前端/HTTP、包安装、图例/复杂几何及最终资格仍未完成，M1/M2/M3未通过。无人值守goal保持active，本轮未设调度器或远程发布；先核实际树/索引/代理，再按本页队列继续实现，不能停在反复生成计划。
