@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import io
 import re
 import xml.etree.ElementTree as ET
@@ -93,6 +94,56 @@ def _bind(client, y=0.25):
 
 def _color(value):
     return {"gid": "axes_0.lines_0", "prop": "color", "value": value}
+
+
+def test_rebinding_data_keeps_existing_edits_on_the_same_owner(project):
+    client, root = project
+    previous, current = _bind(client, y=0.25), _bind(client, y=0.6)
+    response = client.post(
+        "/api/svg/chart/compute",
+        json={
+            "file": "chart.svg",
+            **current,
+            "render_profile": chartprofile.NATIVE_PROFILE,
+            "overrides": [_color("#ff0000")],
+            "previous_chart": previous,
+        },
+    )
+    assert response.status_code == 200, response.get_json()
+    result = response.get_json()
+    line = next(e for e in result["manifest"]["elements"] if e["gid"] == "axes_0.lines_0")
+    assert all(p[1] == pytest.approx(0.42) for p in line["geometry"]["paths"][0]["points"])
+    assert "stroke: #ff0000" in result["svg"]
+    assert (root / "chart.svg").read_bytes() == SOURCE
+
+
+@pytest.mark.parametrize("missing_previous", [False, True])
+def test_rebinding_cannot_apply_old_edits_before_owner_validation(
+    project, monkeypatch, missing_previous
+):
+    client, root = project
+    previous = _bind(client)
+    current = copy.deepcopy(previous)
+    current["model"]["series"][0]["node"] = "keep"
+    current["binding"]["entries"][0]["node"] = "keep"
+
+    def no_spawn(*args, **kwargs):
+        pytest.fail("changed ownership reached the worker before migration was proven")
+
+    monkeypatch.setattr(m, "_chart_scaffold_via_worker", no_spawn)
+    response = client.post(
+        "/api/svg/chart/compute",
+        json={
+            "file": "chart.svg",
+            **current,
+            "render_profile": chartprofile.NATIVE_PROFILE,
+            "overrides": [_color("#ff0000")],
+            "previous_chart": None if missing_previous else previous,
+        },
+    )
+    assert response.status_code == 422, response.get_json()
+    assert response.get_json()["code"] == "chart_binding_stale"
+    assert (root / "chart.svg").read_bytes() == SOURCE
 
 
 def _render(client, chart, patches=(), *, file="chart.svg"):
@@ -352,6 +403,10 @@ def test_native_v2_restores_complete_edits_without_the_original_file(project):
     inspected = client.get(f"/api/svg/chart/inspect?id={path.name}")
     assert inspected.status_code == 200, inspected.get_json()
     assert inspected.get_json()["scene_digest"] == chart["model"]["scene_digest"]
+    assert inspected.get_json()["restored_render"] == {
+        "render_profile": chartprofile.NATIVE_PROFILE,
+        "overrides": patches,
+    }
     restored = _render(client, bundle.chart, bundle.overrides, file=path.name)
     assert restored["chart_revision"] == native["chart_revision"]
     assert restored["svg"] == native["svg"] and restored["manifest"] == native["manifest"]

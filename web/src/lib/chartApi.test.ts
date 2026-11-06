@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 
-import { chartBind, chartInspect, type ChartBindRequest } from './chartApi'
+import { chartBind, chartCompute, chartInspect, type ChartBindRequest } from './chartApi'
+import type { PanelChartState, PanelOverride } from '@/types/document'
 import { setCurrentProjectId } from './session'
 
 afterEach(() => { vi.unstubAllGlobals(); setCurrentProjectId(null) })
@@ -31,4 +32,49 @@ it('returns restored chart data from inspect without transforming or adopting it
     restored_chart: { model: { rev: 2 }, binding: { model_rev: 2 } } }
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 })))
   expect(await chartInspect('computed.svg')).toEqual(payload)
+})
+
+it('leaves the existing compute payload unchanged when no render options are supplied', async () => {
+  const chart = { model: { rev: 2 }, binding: { model_rev: 2 } } as PanelChartState
+  const fetcher = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
+  vi.stubGlobal('fetch', fetcher)
+  await chartCompute('legacy.svg', chart)
+  expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ file: 'legacy.svg', ...chart })
+})
+
+it('sends v2 render profile and complete original ordered edits alongside the chart', async () => {
+  const chart = { model: { rev: 2 }, binding: { model_rev: 2 } } as PanelChartState
+  const overrides: PanelOverride[] = [
+    { gid: 'axes_0.lines_0', prop: 'color', value: '#f00' },
+    { gid: 'axes_0', prop: 'xlim', value: [1, 10] },
+    { gid: 'axes_0.lines_0', prop: 'color', value: '#00f' },
+  ]
+  const fetcher = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
+  vi.stubGlobal('fetch', fetcher)
+  await chartCompute('v2.svg', chart, { render_profile: 'native-manifest/1', overrides })
+  expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({
+    file: 'v2.svg', ...chart, render_profile: 'native-manifest/1', overrides,
+  })
+  expect(overrides.map(o => o.value)).toEqual(['#f00', [1, 10], '#00f'])
+})
+
+it('passes through only actual inspect restored_render fields without inventing v2 for v1', async () => {
+  const payload = { scene_digest: 'original-scene', w_pt: 100, h_pt: 100, view_box: [0, 0, 100, 100],
+    nodes: [], truncated: false, restored_chart: { model: { rev: 2 }, binding: { model_rev: 2 } },
+    restored_render: { render_profile: 'native-manifest/1', overrides: [{ gid: 'axes_0', prop: 'xlim', value: [1, 10] }] } }
+  const fetcher = vi.fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify(payload), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ ...payload, restored_render: undefined }), { status: 200 }))
+  vi.stubGlobal('fetch', fetcher)
+  expect(await chartInspect('v2.svg')).toEqual(payload)
+  expect(await chartInspect('v1.svg')).not.toHaveProperty('restored_render')
+})
+
+it.each([null, { model: { rev: 1 }, binding: { model_rev: 1 } }])('preserves explicit prior-chart ownership evidence including %j', async previous => {
+  const chart = { model: { rev: 2 }, binding: { model_rev: 2 } } as PanelChartState
+  const previous_chart = previous as PanelChartState | null
+  const fetcher = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
+  vi.stubGlobal('fetch', fetcher)
+  await chartCompute('rebound.svg', chart, { render_profile: 'native-manifest/1', overrides: [], previous_chart })
+  expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({ previous_chart })
 })

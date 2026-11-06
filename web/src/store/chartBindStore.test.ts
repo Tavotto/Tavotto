@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { chartBind, chartCompute, chartInspect } from '@/lib/chartApi'
 import type { SceneInventory } from '@/lib/chartApi'
-import type { PanelChartState, PanelObject } from '@/types/document'
+import type { PanelChartState, PanelObject, PanelOverride } from '@/types/document'
 import { chartBindConfirmReady, useChartBindStore } from './chartBindStore'
 import { DEFAULT_FORM, DEFAULT_SERIES } from './chartBindStore'
 import { setCurrentProjectId } from '@/lib/session'
@@ -67,6 +67,10 @@ beforeEach(() => {
     scene: null,
     draftSource: 'new',
     draftChart: null,
+    draftRender: null,
+    resultRender: null,
+    documentContext: null,
+    panelInputKey: null,
     form: DEFAULT_FORM,
     formRev: 0,
     result: null,
@@ -255,6 +259,116 @@ function restorableChart(): PanelChartState {
     ] },
   }
 }
+
+const nativeEdits: PanelOverride[] = [
+  { gid: 'axes_0.lines_0', prop: 'color', value: '#ff0000', identity: 'owned-line' },
+  { gid: 'axes_0', prop: 'xlim', value: [1, 100] },
+  { gid: 'axes_0.lines_0', prop: 'color', value: '#0000ff', identity: 'owned-line' },
+]
+const nativeRender = () => ({ render_profile: 'native-manifest/1' as const, overrides: structuredClone(nativeEdits) })
+const computed = () => ({ svg: '<svg/>', facts: {}, scene_digest: '', render_revision: '', model_digest: '', binding_digest: '', engine: CHART.model.engine })
+
+describe('v2 full edit recovery', () => {
+  it('keeps the exact ordered edits as a draft, then previews and retains the same native result state', async () => {
+    const restored = restorableChart(), render = nativeRender()
+    vi.mocked(chartInspect).mockResolvedValue({ ...SCENE, restored_chart: restored, restored_render: render })
+    vi.mocked(chartCompute).mockResolvedValue(computed())
+    useChartBindStore.getState().openFor(panel())
+    await Promise.resolve()
+    expect(useChartBindStore.getState().draftRender).toEqual(render)
+    expect(chartCompute).not.toHaveBeenCalled()
+    expect(chartBindConfirmReady(useChartBindStore.getState())).toBe(false)
+    await useChartBindStore.getState().confirmBinding()
+    expect(chartBind).not.toHaveBeenCalled()
+    expect(chartCompute).toHaveBeenCalledWith('p1.svg', expect.objectContaining(restored), render)
+    expect(useChartBindStore.getState().resultRender).toEqual(render)
+    expect(chartBindConfirmReady(useChartBindStore.getState())).toBe(true)
+    expect(render.overrides).toEqual(nativeEdits)
+  })
+
+  it.each([
+    { overrides: [{ gid: 'axes_0.lines_0', prop: 'linewidth', value: 7 }] as PanelOverride[] },
+    { overrides: [] as PanelOverride[] },
+  ])('prefers the current panel model and all current ordered edits (%j) over an older embedded package', async ({ overrides }) => {
+    const existing = restorableChart()
+    existing.model.dataset.columns.value = [99, 100]
+    const currentPanel = { ...panel(), chart: existing, overrides: structuredClone(overrides) }
+    vi.mocked(chartInspect).mockResolvedValue({ ...SCENE, restored_chart: restorableChart(), restored_render: nativeRender() })
+    vi.mocked(chartCompute).mockResolvedValue(computed())
+    useChartBindStore.getState().openFor(currentPanel)
+    await Promise.resolve()
+    await useChartBindStore.getState().confirmBinding()
+    expect(chartCompute).toHaveBeenCalledWith('p1.svg', expect.objectContaining(existing), {
+      render_profile: 'native-manifest/1', overrides,
+    })
+    expect(useChartBindStore.getState().resultRender?.overrides).toEqual(overrides)
+  })
+
+  it('freezes panel edits when opening and does not let later caller mutation change the preview', async () => {
+    const p = { ...panel(), chart: restorableChart(), overrides: structuredClone(nativeEdits) }
+    vi.mocked(chartInspect).mockResolvedValue(SCENE)
+    vi.mocked(chartCompute).mockResolvedValue(computed())
+    useChartBindStore.getState().openFor(p)
+    p.overrides[0].value = '#00ff00'
+    await Promise.resolve()
+    await useChartBindStore.getState().confirmBinding()
+    expect(vi.mocked(chartCompute).mock.calls[0]?.[2]?.overrides).toEqual(nativeEdits)
+  })
+
+  it('sends the original chart as backend ownership evidence after form changes, retaining all edits', async () => {
+    const restored = restorableChart()
+    vi.mocked(chartInspect).mockResolvedValue({ ...SCENE, restored_chart: restored, restored_render: nativeRender() })
+    vi.mocked(chartCompute).mockResolvedValue(computed())
+    vi.mocked(chartBind).mockResolvedValue(CHART)
+    useChartBindStore.getState().openFor(panel())
+    await Promise.resolve()
+    useChartBindStore.getState().patchForm({ datasetText: 'time\tvalue\terror\n1\t9\t1\n10\t90\t2' })
+    await useChartBindStore.getState().confirmBinding()
+    expect(chartCompute).toHaveBeenCalledWith('p1.svg', expect.objectContaining(CHART), {
+      ...nativeRender(), previous_chart: restored,
+    })
+    expect(useChartBindStore.getState().resultRender?.overrides).toEqual(nativeEdits)
+  })
+
+  it('keeps edits and draft when the backend refuses ownership migration, without granting confirmation', async () => {
+    vi.mocked(chartInspect).mockResolvedValue({ ...SCENE, restored_chart: restorableChart(), restored_render: nativeRender() })
+    vi.mocked(chartBind).mockResolvedValue(CHART)
+    vi.mocked(chartCompute).mockRejectedValue(Object.assign(new Error('chart_binding_stale'), { code: 'chart_binding_stale' }))
+    useChartBindStore.getState().openFor(panel())
+    await Promise.resolve()
+    useChartBindStore.getState().patchSeries(0, { node: 'another-node' })
+    await useChartBindStore.getState().confirmBinding()
+    expect(useChartBindStore.getState().draftRender?.overrides).toEqual(nativeEdits)
+    expect(useChartBindStore.getState().form.series[0].node).toBe('another-node')
+    expect(useChartBindStore.getState().error?.code).toBe('chart_binding_stale')
+    expect(chartBindConfirmReady(useChartBindStore.getState())).toBe(false)
+  })
+
+  it('explicitly sends null prior science for existing edits on an unmodeled ordinary SVG', async () => {
+    vi.mocked(chartInspect).mockResolvedValue(SCENE)
+    vi.mocked(chartBind).mockResolvedValue(CHART)
+    vi.mocked(chartCompute).mockResolvedValue(computed())
+    useChartBindStore.getState().openFor({ ...panel(), overrides: structuredClone(nativeEdits) })
+    await Promise.resolve()
+    await useChartBindStore.getState().confirmBinding()
+    expect(vi.mocked(chartCompute).mock.calls[0]?.[2]).toEqual({ ...nativeRender(), previous_chart: null })
+  })
+
+  it('late v2 preview after closing cannot revive result or restore edits', async () => {
+    const pending = deferred<ReturnType<typeof computed>>()
+    vi.mocked(chartInspect).mockResolvedValue({ ...SCENE, restored_chart: restorableChart(), restored_render: nativeRender() })
+    vi.mocked(chartCompute).mockReturnValue(pending.promise)
+    useChartBindStore.getState().openFor(panel())
+    await Promise.resolve()
+    const preview = useChartBindStore.getState().confirmBinding()
+    useChartBindStore.getState().close()
+    pending.resolve(computed())
+    await preview
+    expect(useChartBindStore.getState().draftRender).toBeNull()
+    expect(useChartBindStore.getState().resultRender).toBeNull()
+    expect(chartBindConfirmReady(useChartBindStore.getState())).toBe(false)
+  })
+})
 
 describe('self-contained SVG recovery draft', () => {
   it('fills data, calibration, series styles and grid without granting confirmation', async () => {

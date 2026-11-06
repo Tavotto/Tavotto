@@ -8,9 +8,10 @@ import { Select } from '@/components/ui/Select'
 import { Notice } from '@/components/ui/Notice'
 import { msg } from '@/i18n/message'
 import { fileUrl } from '@/lib/api'
-import { chartBindConfirmReady, useChartBindStore } from '@/store/chartBindStore'
+import { chartBindConfirmReady, chartBindPanelUnchanged, useChartBindStore } from '@/store/chartBindStore'
 import type { ChartSeriesForm } from '@/store/chartBindStore'
 import { updateObject } from '@/store/actions'
+import { useDocumentStore } from '@/store/documentStore'
 
 export function ChartBindDialog() {
   const { t } = useTranslation('workspace')
@@ -21,10 +22,16 @@ export function ChartBindDialog() {
   const confirm = () => {
     const current = useChartBindStore.getState()
     if (!chartBindConfirmReady(current) || !current.panelId || !current.result) return
+    const panel = useDocumentStore.getState().doc.objects.find(o => o.id === current.panelId)
+    if (panel?.type !== 'panel' || !chartBindPanelUnchanged(current, panel)) return
     const chart = { model: current.result.model, binding: current.result.binding }
+    const overrides = current.resultRender ? structuredClone(current.resultRender.overrides) : null
     updateObject(current.panelId, msg('chartBind.apply', undefined, 'workspace'), o => {
-      if (o.type === 'panel' && o.fileId === current.file) o.chart = chart
-    })
+      if (o.type === 'panel' && o.fileId === current.file) {
+        o.chart = chart
+        if (overrides) o.overrides = overrides
+      }
+    }, { overrides: 'restored' })
     current.close()
   }
   const kinds: { value: ChartSeriesForm['kind'], label: string }[] = [

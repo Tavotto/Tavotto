@@ -3,7 +3,14 @@
 import type { ApiError } from './api'
 import { apiUrl, withProject } from '@/lib/session'
 import type { ChartBinding, ChartModel } from '../types/chartModel'
-import type { PanelChartState } from '../types/document'
+import type { PanelChartState, PanelOverride } from '../types/document'
+
+export interface ChartComputeOptions {
+  render_profile: 'native-manifest/1'
+  overrides: PanelOverride[]
+  /** 重新绑定时由后端核对编辑的科学所有权；前端不按 gid 猜迁移。 */
+  previous_chart?: PanelChartState | null
+}
 
 export interface SceneInventory {
   scene_digest: string
@@ -14,6 +21,8 @@ export interface SceneInventory {
   truncated: boolean
   /** 后端已验证完整冷重放的自包含 SVG；只预填草稿，确认前不写排版。 */
   restored_chart?: PanelChartState
+  /** 仅 v2 完整编辑包提供，模型仍与渲染编辑状态分开。 */
+  restored_render?: Pick<ChartComputeOptions, 'render_profile' | 'overrides'>
 }
 
 export interface ChartAxisEvidence {
@@ -104,10 +113,17 @@ export function chartBind(request: ChartBindRequest): Promise<PanelChartState> {
 }
 
 /** 按模型重算绑定区域 → 组合后的场景 SVG + 事实。 */
-export function chartCompute(file: string, chart: PanelChartState): Promise<ChartComputeResult> {
+export function chartCompute(
+  file: string,
+  chart: PanelChartState,
+  opts?: ChartComputeOptions,
+): Promise<ChartComputeResult> {
   return postJson('/api/svg/chart/compute', {
     file,
     model: chart.model as unknown as ChartModel,
     binding: chart.binding as unknown as ChartBinding,
+    ...(opts ? { render_profile: opts.render_profile, overrides: opts.overrides,
+      ...(opts.previous_chart !== undefined ? { previous_chart: opts.previous_chart } : {}),
+    } : {}),
   })
 }

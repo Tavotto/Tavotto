@@ -1493,6 +1493,7 @@ def _assert_chart_source(path: Path, expected: str) -> None:
 def _inspect_chart_source(file_id: str, path: Path) -> tuple[dict, dict | None]:
     """绑定与恢复使用原场景身份；自包含包必须先通过实际重放。"""
     from . import chartbundle, svgscene
+    from .engine import chartprofile
 
     source = _read_chart_source(path)
     try:
@@ -1501,12 +1502,29 @@ def _inspect_chart_source(file_id: str, path: Path) -> tuple[dict, dict | None]:
             return svgscene.scene_inventory(source), None
     except (chartbundle.ChartBundleError, svgscene.SceneError) as exc:
         raise engine_exportreq.ExportRequestError(exc.code, exc.detail, {}) from exc
-    snapshot = _render_chart_snapshot(file_id, bundle.chart)
+    if bundle.render_profile == chartprofile.LEGACY_PROFILE:
+        snapshot = _render_chart_snapshot(file_id, bundle.chart)
+    else:
+        snapshot = _render_chart_snapshot(
+            file_id,
+            bundle.chart,
+            render_profile=bundle.render_profile,
+            overrides=bundle.overrides,
+        )
     if snapshot.source_sha256 != hashlib.sha256(source).hexdigest():
         raise engine_exportreq.ExportRequestError(
             "chart_source_changed", "chart source changed during inspection", {}
         )
-    return snapshot.scene, snapshot.chart
+    inventory = snapshot.scene
+    if bundle.render_profile != chartprofile.LEGACY_PROFILE:
+        inventory = {
+            **inventory,
+            "restored_render": {
+                "render_profile": snapshot.render_profile,
+                "overrides": snapshot.overrides,
+            },
+        }
+    return inventory, snapshot.chart
 
 
 def _render_chart_snapshot(
@@ -1664,6 +1682,19 @@ def api_svg_chart_compute():
             {"code": "svg_scene_invalid", "error": "file/model/binding are required"}
         ), 422
     try:
+        if "previous_chart" in body:
+            from .engine import chartprofile
+
+            try:
+                edits = chartprofile.validate_overrides(
+                    body.get("overrides", ()),
+                    render_profile=body.get("render_profile", chartprofile.LEGACY_PROFILE),
+                )
+                chartprofile.validate_rebound_edit_ownership(
+                    body["previous_chart"], {"model": model, "binding": binding}, edits
+                )
+            except chartprofile.ChartProfileError as exc:
+                raise engine_exportreq.ExportRequestError(exc.code, exc.detail, {}) from exc
         snapshot = _render_chart_snapshot(
             file_id,
             {"model": model, "binding": binding},

@@ -7,7 +7,7 @@ import { chartBind, chartCompute, chartInspect } from '@/lib/chartApi'
 import { literal } from '@/i18n'
 import { useChartBindStore } from '@/store/chartBindStore'
 import { useDocumentStore } from '@/store/documentStore'
-import { emptyProject, type PanelChartState, type PanelObject } from '@/types/document'
+import { emptyProject, type PanelChartState, type PanelObject, type PanelOverride } from '@/types/document'
 
 vi.mock('@/lib/chartApi', () => ({ chartBind: vi.fn(), chartCompute: vi.fn(), chartInspect: vi.fn() }))
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -27,6 +27,15 @@ const restoredChart: PanelChartState = {
 }
 const button = (value: string) => document.querySelector<HTMLButtonElement>(`[data-chart-bind-action="${value}"]`)!
 const currentPanel = () => useDocumentStore.getState().doc.objects.find(o => o.id === panel.id) as PanelObject
+const fullEdits: PanelOverride[] = [
+  { gid: 'axes_0.lines_0', prop: 'color', value: '#ff0000', identity: 'line-owner' },
+  { gid: 'axes_0', prop: 'xlim', value: [0, 10] },
+  { gid: 'axes_0.lines_0', prop: 'color', value: '#0000ff', identity: 'line-owner' },
+]
+const recoveredScene = () => ({ scene_digest: restoredChart.model.scene_digest,
+  w_pt: 100, h_pt: 100, view_box: [0, 0, 100, 100], nodes: [{ id: 'curve-a', tag: 'path' }],
+  truncated: false, restored_chart: restoredChart,
+  restored_render: { render_profile: 'native-manifest/1' as const, overrides: structuredClone(fullEdits) } })
 
 beforeEach(async () => {
   vi.resetAllMocks()
@@ -123,4 +132,89 @@ it('categorical charts offer category evidence and omit the numeric x request', 
   const request = vi.mocked(chartBind).mock.calls[0]?.[0]
   expect(request).toMatchObject({ x_kind: 'categorical', categories_col: 'category' })
   expect(request).not.toHaveProperty('x')
+})
+
+it('v2 preview uses every ordered edit and confirmation restores model plus edits in one undoable transaction', async () => {
+  vi.mocked(chartInspect).mockResolvedValue(recoveredScene())
+  const before = structuredClone(currentPanel())
+  const history = useDocumentStore.getState().past.length
+  await act(async () => useChartBindStore.getState().openFor(currentPanel()))
+  expect(currentPanel()).toEqual(before)
+  await act(async () => button('preview').click())
+  expect(chartCompute).toHaveBeenCalledWith('chart.svg', expect.objectContaining(restoredChart), {
+    render_profile: 'native-manifest/1', overrides: fullEdits,
+  })
+  expect(currentPanel()).toEqual(before)
+  expect(useDocumentStore.getState().past.length).toBe(history)
+  await act(async () => button('confirm').click())
+  expect(currentPanel().chart).toEqual(restoredChart)
+  expect(currentPanel().overrides).toEqual(fullEdits)
+  expect(useDocumentStore.getState().past.length).toBe(history + 1)
+  await act(async () => useDocumentStore.getState().undo())
+  expect(currentPanel()).toEqual(before)
+  await act(async () => useDocumentStore.getState().redo())
+  expect(currentPanel().chart).toEqual(restoredChart)
+  expect(currentPanel().overrides).toEqual(fullEdits)
+})
+
+it('existing panel edits override embedded state and survive confirming the unchanged preview', async () => {
+  const currentEdits: PanelOverride[] = [{ gid: 'axes_0.lines_0', prop: 'linewidth', value: 7 }]
+  const currentChart = structuredClone(restoredChart)
+  currentChart.model.dataset.columns.y = [20, 80]
+  await act(async () => useDocumentStore.getState().commit(literal('existing edit'), d => {
+    const p = d.objects[0] as PanelObject
+    p.chart = currentChart
+    p.overrides = currentEdits
+  }))
+  vi.mocked(chartInspect).mockResolvedValue(recoveredScene())
+  await act(async () => useChartBindStore.getState().openFor(currentPanel()))
+  await act(async () => button('preview').click())
+  expect(chartCompute).toHaveBeenCalledWith('chart.svg', expect.objectContaining(currentChart), {
+    render_profile: 'native-manifest/1', overrides: currentEdits,
+  })
+  await act(async () => button('confirm').click())
+  expect(currentPanel().chart).toEqual(currentChart)
+  expect(currentPanel().overrides).toEqual(currentEdits)
+})
+
+it('cancelling while v2 preview is pending leaves the panel and history unchanged after its late response', async () => {
+  let finish!: (value: typeof preview) => void
+  vi.mocked(chartInspect).mockResolvedValue(recoveredScene())
+  vi.mocked(chartCompute).mockReturnValue(new Promise(resolve => { finish = resolve }))
+  const before = structuredClone(currentPanel()), history = useDocumentStore.getState().past.length
+  await act(async () => useChartBindStore.getState().openFor(currentPanel()))
+  await act(async () => { button('preview').click() })
+  await act(async () => useChartBindStore.getState().close())
+  await act(async () => finish(preview))
+  expect(currentPanel()).toEqual(before)
+  expect(useDocumentStore.getState().past.length).toBe(history)
+  expect(useChartBindStore.getState().resultRender).toBeNull()
+})
+
+it('confirmation cannot overwrite edits changed after the preview started', async () => {
+  vi.mocked(chartInspect).mockResolvedValue(recoveredScene())
+  await act(async () => useChartBindStore.getState().openFor(currentPanel()))
+  await act(async () => button('preview').click())
+  await act(async () => useDocumentStore.getState().commit(literal('newer edit'), d => {
+    (d.objects[0] as PanelObject).overrides = [{ gid: 'axes_0', prop: 'ylim', value: [0, 500] }]
+  }))
+  const afterNewEdit = structuredClone(currentPanel()), history = useDocumentStore.getState().past.length
+  await act(async () => button('confirm').click())
+  expect(currentPanel()).toEqual(afterNewEdit)
+  expect(useDocumentStore.getState().past.length).toBe(history)
+})
+
+it('a late v2 preview after reloading the same document identity never grants confirmation or writes edits', async () => {
+  let finish!: (value: typeof preview) => void
+  vi.mocked(chartInspect).mockResolvedValue(recoveredScene())
+  vi.mocked(chartCompute).mockReturnValue(new Promise(resolve => { finish = resolve }))
+  await act(async () => useChartBindStore.getState().openFor(currentPanel()))
+  await act(async () => { button('preview').click() })
+  const next = useDocumentStore.getState().buildProject()
+  await act(async () => { await useDocumentStore.getState().switchDocument(next, 'chart-dialog-test') })
+  const before = structuredClone(currentPanel()), history = useDocumentStore.getState().past.length
+  await act(async () => finish(preview))
+  expect(document.querySelector('[data-chart-bind-action="confirm"]')).toBeNull()
+  expect(currentPanel()).toEqual(before)
+  expect(useDocumentStore.getState().past.length).toBe(history)
 })

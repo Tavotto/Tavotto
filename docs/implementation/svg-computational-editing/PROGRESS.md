@@ -42,6 +42,14 @@
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
+### 2026-11-06 v2完整编辑恢复进入真实界面
+
+- 生产导出已在c2fd47d5提交。inspect按包内profile与完整编辑实际重放，v2额外返回restored_render；旧v1和普通SVG形状不变。向导保留当前面板完整编辑，预览不写文档，确认经现有一次事务应用chart与原序overrides；取消、迟到预览、切项目/文档加载和预览期间面板变化均不能覆盖新输入。
+- 携编辑重新绑定增加后端科学所有权检查：真实builder交换两系列会复用相同s1/native gid，原setter仍无警告接纳，不能据此迁移旧编辑。数据/范围/列名变化保留归属；重排/替换/成员拓扑变化返回chart_binding_stale，旧稿不清。逐对象结构迁移仍待实现，不把此guard称为完整迁移。
+- 当前profile/归属46项通过；native API集成21项通过，新增明确restored_render断言后focused恢复/重绑4项再次通过；各组重叠不相加。归属guard替成no-op的进程内反证使重排用例exit1，源码未改。前端最终6文件106项、5组反证通过；根代理冻结当前34个相关文件统一运行983项，0失败/skip，正式tsc-b/Vite/Tailwind和i18n检查均exit0。playground重建指纹931a34814cf2316a，随后--check通过。它们包含下一批多目标草稿，不冒充本次提交独立全量候选。
+- 真实ExportDialog导出native-v2-ui-20261106.svg，实际包携native profile及7条编辑；产物与导出时文档列表相同。原始普通SVG缺席后，在独立浏览器会话新建空白排版、添加该实际产物、预览、确认、撤销、重做，最终7条编辑原序一致；history 1→2→1→2。进入图内编辑后data-display=exact，实际stroke-width=7px，X刻度到20.0。证据native-v2-ui-artifact.json、native-v2-ui-confirm.js与output/playwright/native-v2-ui-restored-exact.png；CLI实际exit0。初次探针误读doc.id而非documentId，在确认前失败，修正后通过；不是产品失败。
+- 该UI验证使用新浏览器会话和新文档，后端沿用当前自有服务；冷父进程删源已由核心/生产API专项覆盖，不能把两类证据拼称“实际UI冷父进程/正式项目保存”全链。截图仍显示仅版面统计与未联动的旧图例，正式保存、复杂clip和完整旧功能资格未完成，M1未通过。
+
 ### 2026-11-06 生产导出冻结完整原生编辑状态
 
 - 242cabc0已提交共享native消费者。此批原图、原图标注/留白、画布及多页统一消费chart_render_profile+完整原序overrides，作业内cache身份包含精确JSON的顺序/重复/identity；原图native SVG实际写v2完整编辑包，legacy缺省仍v1。前端builder仅chart分支携native profile且深拷贝原序edits；无chart旧来源完全保原行为。

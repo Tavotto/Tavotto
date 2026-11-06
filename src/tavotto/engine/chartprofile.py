@@ -136,3 +136,53 @@ def identity(base_revision: str, render_profile: str, overrides: object = ()) ->
             "overrides_sha256": hashlib.sha256(encoded).hexdigest(),
         }
     )
+
+
+def validate_rebound_edit_ownership(previous: object, current: dict, overrides: list) -> None:
+    """重绑预览只沿用同一科学对象的 edits；不是 setter/gid 能力授权。
+
+    数据、范围与样式改变不改变对象身份。重排/替换系列则可能把相同原生 gid
+    分给另一节点，不能仅凭 worker 的 positional gid 接纳旧编辑。结构迁移需要
+    显式逐对象映射，本闸保留旧稿而不默清 edits。
+    """
+    if not overrides:
+        return
+
+    def ownership(state):
+        if not isinstance(state, dict) or set(state) != {"model", "binding"}:
+            raise ChartProfileError("chart_binding_stale", "previous chart ownership is required")
+        model, binding = state["model"], state["binding"]
+        try:
+            chartmodel.validate_model(model)
+            chartmodel.validate_binding(binding, model)
+        except chartmodel.ChartModelError as exc:
+            raise ChartProfileError(exc.code, exc.detail) from exc
+        series = []
+        for item in model["series"]:
+            # Errorbar presence and bar cardinality affect native member indices.
+            topology = (
+                bool(item.get("yerr")),
+                len(model["dataset"]["columns"][item["y"]]) if item["kind"] == "bar" else None,
+            )
+            series.append(
+                (
+                    item["id"],
+                    item["node"],
+                    item["kind"],
+                    item["axes"],
+                    item.get("cbar_node"),
+                    topology,
+                )
+            )
+        return (
+            model["scene_digest"],
+            [(axis["id"], axis.get("kind", "numeric")) for axis in model["axes"]],
+            series,
+            sorted((entry["object"], entry["node"]) for entry in binding["entries"]),
+        )
+
+    if ownership(previous) != ownership(current):
+        raise ChartProfileError(
+            "chart_binding_stale",
+            "chart object ownership changed; existing edits were not migrated",
+        )
