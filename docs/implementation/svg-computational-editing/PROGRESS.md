@@ -42,6 +42,12 @@
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
+### 2026-11-06 保存时仅替换当前安装画布
+
+- R05真实输入审计发现既有保存序列化按activeCanvasId替换全部同id画布，两个原画布A/B会静默存成A/A；缺失/空id同样触发。现改为沿既有安装first-find权威，只替换匹配的第一个实际数组位置，不改ID/顺序或非active内容，不以新增ID准入限制拒绝已有文档。
+- 真实store安装→活动编辑→buildProject及实际autosave JSON新增3组反例在旧实现均exit1，修复后documentStore完整44项通过/0skip，oxlint通过。固定同一时刻，原HEAD/新serializer在正常active A/B/C/absent四种情况JSON逐字相同；重复从旧A/A变为A/B。证据r05-build-project-equivalence.json。默认2/3语义和新格式入口尚未改变。
+- chart_source后续wire/consumer草稿另批推进，前一两文件当前已验serializer差异单独stage，不混入v4格式接线。
+
 ### 2026-11-06 计算任务生命周期进入真实API
 
 - 新chartprocess.run_request复用固定svgchart入口、pool解释器/launcher/overlay、DesktopProcess ownership和envlease；desktopproc仅提取可附着已启动进程的own_process，既有desktop start/gate时机不变。app两个helper已接入，旧ok=False业务码与native完整字段整理保留，非法probe输出仍映射chart_engine_unavailable。

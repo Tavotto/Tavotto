@@ -900,11 +900,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   buildProject: () => {
     const s = get()
+    // 载入与切换均以首个 find 安装活动画布；旧文档可能有重复或缺失 id。
+    // 只把该位置换成活文档，不能按同名 id 覆盖其他仍需原样保存的画布。
+    const activeIndex = s.canvases.findIndex((c) => c.id === s.activeCanvasId)
     return {
       schema: 3,
       project: { id: s.projectMeta.id, name: s.projectMeta.name },
-      canvases: s.canvases.map((c) =>
-        c.id === s.activeCanvasId ? docToCanvas(s.doc, c.id) : c,
+      canvases: s.canvases.map((c, index) =>
+        index === activeIndex ? docToCanvas(s.doc, c.id) : c,
       ),
       activeCanvasId: s.activeCanvasId,
       createdAt: s.projectMeta.createdAt,
