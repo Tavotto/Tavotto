@@ -82,6 +82,7 @@ order: 200
 - **输出预算与旧包文件名**：`packagebudget.output_budget`从调用者完整资源plan的实际成员名/字节量推导DEFLATE/ZIP64上界，不新增旧合法项目的容量政策；reader块大小只取`documentpackage.ARCHIVE_CHUNK_BYTES`。写入提供已知file_size，让stdlib决定ZIP64，默认小包字节不变。只有旧只读包输出显式`legacy_names=True`保当前平台合法文件名的精确区别；默认writer及所有公开reader仍按portable/NFC-casefold校验，不从上传manifest自动选择兼容模式。两模式均拒绝跳径、特殊文件、完全重复和文件目录冲突；caller仍负责canonical源授权。看护`tests/test_package_budget.py`及上述容器测试。
 - **旧项目包HTTP原子输出**：`api_package`先保留经过containment校验的canonical资源路径与原逻辑ID，由caller持有data_dir自有快照暂存至整个输出结束，沿ZipFile原规范化组完整plan后推导预算；最终ZIP仅验证封口后发布，不覆盖同名旧包。文件名增加随机后缀，保原成功响应键与layout/manifest语义。快照准备失败沿旧整组warning；真实ZIP add/close/publish故障必须失败，不能吞成成功半包。检视仍只读，不把这条当v4混合安装完成；看护`tests/test_package_atomic_http.py`。
 - **计算来源包叶子**：`chartpackage`沿上述容器与`documentassets`唯一字节权威验证schema4完整INPUT；内容寻址chart行从正文引用派生，额外资源使用闭式chart_source/figure_snapshot/file/script变体，不接受caller覆盖派生chart行。检视只写data_dir自有暂存，Prepared正文/清单每次给副本，退出后拒用；verify回调必传，前后重核附件/资源，失败不发布目标。`install_chart_sources`只发布不可变chart附件并明确返回未安装的remaining_resources，不能宣称普通文件/脚本已安装；普通资源及正文事务由调用者完成，已发布的不可变附件不回删。writer临时封口后严格inspect再原子发布最终名。看护`tests/test_chart_package.py`。
+  输出调用者可显式传`budget`或`budget_factory`，恰一；后者只收本模块最终唯一layout/manifest UTF-8字节、完整INPUT及各资源真实尺寸的只读census，一次返回六预算。类型/回调错误在创建输出前拒绝；factory后仍沿原装载、严格inspect与发布链核实际摘要，不能靠清单声明尺寸或静态预算绕过验证。静态预算旧调用/字节保持；不复制manifest结构给app。
 - **文档显式引用全质量 Figure 配对（X03，2026-10-15）**：面板 `figureSnapshot` 是版本 1 的闭集
   `{version, sourceId, patchHash, receiptId, snapshotId}`，可选 `executionOwner={script, run_config}`；
   owner 只从已验归档派生、纳入内容 ID，不信客户端自报。导出 wire 字段为 `figure_snapshot`。

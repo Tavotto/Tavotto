@@ -16,6 +16,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from types import MappingProxyType
 from typing import BinaryIO
 
 from . import atomicio, brand, config, documentassets, documentformat, documentpackage, documents
@@ -248,12 +249,23 @@ def write_chart_package(
     document: dict,
     storage_root: Path,
     *,
-    budget: PackageBudget,
+    budget: PackageBudget | None = None,
+    budget_factory: Callable[[Mapping[str, int]], PackageBudget] | None = None,
     overwrite: bool = False,
     resources: Sequence[ResourceFile] = (),
     metadata: Mapping | None = None,
 ) -> dict:
-    """先封口并严格检视，再原子发布最终名；不重新执行任何来源。"""
+    """先封口并严格检视，再原子发布最终名；不重新执行任何来源。
+
+    budget 与 budget_factory 恰一。factory 在任何输出路径创建前，接收最终
+    ZIP 成员实际字节量的只读映射；返回的六项预算仍完全由调用者决定。
+    """
+    if (
+        (budget is None) == (budget_factory is None)
+        or (budget is not None and not isinstance(budget, PackageBudget))
+        or (budget_factory is not None and not callable(budget_factory))
+    ):
+        raise PackageError("invalid_budget", "Provide either a budget or a callable budget factory")
     if type(overwrite) is not bool:
         raise PackageError("invalid_output", "Invalid package output request")
     document = documents.validate_chart_document(_copy(document))
@@ -282,6 +294,31 @@ def write_chart_package(
         assets=records,
     )
     _records(manifest, refs)
+    layout_bytes = atomicio.dumps_json(document)
+    manifest_bytes = atomicio.dumps_json(manifest)
+    if budget_factory is not None:
+        census = {
+            documentpackage.LAYOUT_MEMBER: len(layout_bytes),
+            documentpackage.MANIFEST_MEMBER: len(manifest_bytes),
+        }
+        for path, group in refs.items():
+            loaded = documentassets.load_source(storage_root, group[0])
+            census[path] = len(loaded.input_svg)
+            del loaded
+            for ref in group[1:]:
+                documentassets.load_source(storage_root, ref)
+        for item in extras:
+            if isinstance(item.source, bytes):
+                size = len(item.source)
+            else:
+                source_stat = item.source.lstat()
+                if not stat.S_ISREG(source_stat.st_mode):
+                    raise PackageError("unsafe_source", "Package source is not a regular file")
+                size = source_stat.st_size
+            census[item.record["path"]] = size
+        budget = budget_factory(MappingProxyType(census))
+        if not isinstance(budget, PackageBudget):
+            raise PackageError("invalid_budget", "Budget factory must return a PackageBudget")
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(
@@ -291,8 +328,8 @@ def write_chart_package(
     sealed = Path(name)
     try:
         with documentpackage.staged_package(sealed, budget=budget) as archive:
-            archive.writestr(documentpackage.LAYOUT_MEMBER, atomicio.dumps_json(document))
-            archive.writestr(documentpackage.MANIFEST_MEMBER, atomicio.dumps_json(manifest))
+            archive.writestr(documentpackage.LAYOUT_MEMBER, layout_bytes)
+            archive.writestr(documentpackage.MANIFEST_MEMBER, manifest_bytes)
             for path, group in refs.items():
                 loaded = documentassets.load_source(storage_root, group[0])
                 for ref in group[1:]:

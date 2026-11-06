@@ -25,6 +25,7 @@ from tavotto.engine import (
     config,
     documentassets as assets,
     documentpackage as container,
+    packagebudget,
 )
 from test_chart_document_assets import SCENE_DIGEST, SOURCE, SOURCE_ID, chart, document
 
@@ -93,6 +94,305 @@ def resource(kind, resource_id, data, *, path=None):
     if kind in {"file", "script"}:
         record["id"] = resource_id
     return packages.ResourceFile(record, data)
+
+
+def test_budget_factory_sees_exact_final_zip_census_once(tmp_path, prepared_input):
+    root, doc, source = prepared_input
+    # 同一 INPUT 的第二个逻辑名称不增加 ZIP 成员，也不能让 census 漏算全文。
+    another = copy.deepcopy(doc["canvases"][0]["objects"][0])
+    another["fileId"] = "别的名称.svg"
+    another["chartSource"] = assets.freeze_source(
+        root, another["fileId"], source, scene_digest=SCENE_DIGEST
+    )
+    doc["canvases"][0]["objects"].append(another)
+    path_data = b"\x00\xffinert PDF bytes" * 20
+    approved_path = tmp_path / "批准的图.pdf"
+    approved_path.write_bytes(path_data)
+    file_row = resource("file", "中文目录/图.pdf", path_data).record
+    extras = [
+        packages.ResourceFile(file_row, approved_path),
+        resource("file", "空.bin", b""),
+        resource("script", "计算.py", "# 不执行\nraise RuntimeError('inert')".encode()),
+        resource("figure_snapshot", "unused", b"snapshot", path="assets/snapshots/blob"),
+    ]
+    output = tmp_path / "未创建" / "精确预算.tavotto"
+    calls, chosen = [], []
+
+    def factory(census):
+        assert not output.parent.exists(), "预算必须先于输出目录/临时文件"
+        calls.append(dict(census))
+        with pytest.raises(TypeError):
+            census[container.LAYOUT_MEMBER] = 1
+        chosen.append(packagebudget.output_budget(census))
+        return chosen[-1]
+
+    result = packages.write_chart_package(
+        output,
+        doc,
+        root,
+        budget_factory=factory,
+        resources=extras,
+        metadata={"scripts": ["计算.py"], "runtime_assets": [{"id": "runtime:opaque"}]},
+    )
+    manifest, members = rows_and_members(output)
+    assert calls == [{name: len(data) for name, data in members.items()}]
+    assert calls[0][container.LAYOUT_MEMBER] == len(atomicio.dumps_json(doc))
+    assert calls[0][container.MANIFEST_MEMBER] == len(atomicio.dumps_json(manifest))
+    source_path = manifest["assets"][0]["path"]
+    assert members[source_path] == source and source != SOURCE
+    assert calls[0][source_path] == len(source) > len(SOURCE)
+    assert result["chart_sources"] == 1 and result["manifest"] == manifest
+    with packages.inspect_chart_package(output.read_bytes(), budget=chosen[0]) as ready:
+        assert ready.document == doc and len(ready.resources) == len(extras) + 1
+
+
+def test_budget_factory_failure_creates_no_output_paths(tmp_path, prepared_input):
+    root, doc, _ = prepared_input
+    output = tmp_path / "未创建" / "out.tavotto"
+    calls = []
+
+    def fails(census):
+        calls.append(dict(census))
+        raise RuntimeError("caller policy refuses this package")
+
+    with pytest.raises(RuntimeError, match="caller policy"):
+        packages.write_chart_package(output, doc, root, budget_factory=fails)
+    assert len(calls) == 1 and not output.parent.exists()
+
+
+@pytest.mark.parametrize("mode", ["neither", "both", "invalid_budget", "not_callable"])
+def test_invalid_budget_factory_request_is_rejected_before_output_paths(
+    tmp_path, budget, prepared_input, mode
+):
+    root, doc, _ = prepared_input
+    output = tmp_path / "未创建" / "out.tavotto"
+    calls = []
+
+    def factory(census):
+        calls.append(census)
+        return budget
+
+    kwargs = {
+        "neither": {},
+        "both": {"budget": budget, "budget_factory": factory},
+        "invalid_budget": {"budget": True},
+        "not_callable": {"budget_factory": budget},
+    }[mode]
+    with pytest.raises(container.PackageError) as error:
+        packages.write_chart_package(output, doc, root, **kwargs)
+    assert error.value.reason == "invalid_budget"
+    assert calls == [] and not output.parent.exists()
+
+
+@pytest.mark.parametrize("result", [None, True, {}, "budget"])
+def test_wrong_budget_factory_result_creates_no_output_paths(tmp_path, prepared_input, result):
+    root, doc, _ = prepared_input
+    output = tmp_path / "未创建" / "out.tavotto"
+    calls = []
+
+    def factory(census):
+        calls.append(dict(census))
+        return result
+
+    with pytest.raises(container.PackageError) as error:
+        packages.write_chart_package(output, doc, root, budget_factory=factory)
+    assert error.value.reason == "invalid_budget"
+    assert len(calls) == 1 and not output.parent.exists()
+
+
+@pytest.mark.parametrize("failure", [OSError(errno.ENOSPC, "caller policy"), KeyboardInterrupt()])
+def test_budget_factory_exception_preserves_existing_output(tmp_path, prepared_input, failure):
+    root, doc, _ = prepared_input
+    output = tmp_path / "existing.tavotto"
+    output.write_bytes(b"old package")
+    before = set(tmp_path.iterdir())
+
+    def fails(_census):
+        raise failure
+
+    with pytest.raises(type(failure)):
+        packages.write_chart_package(output, doc, root, budget_factory=fails, overwrite=True)
+    assert output.read_bytes() == b"old package"
+    assert set(tmp_path.iterdir()) == before
+
+
+@pytest.mark.parametrize("source_kind", ["bytes", "path"])
+def test_budget_factory_counts_actual_extra_bytes_and_strict_inspection_rejects_bad_row(
+    tmp_path, prepared_input, source_kind
+):
+    root, doc, _ = prepared_input
+    expected, actual = b"expected", b"actual bytes have a different length"
+    item = resource("file", "图.pdf", expected)
+    source_path = tmp_path / "approved.pdf"
+    source_path.write_bytes(actual)
+    extra = packages.ResourceFile(item.record, actual if source_kind == "bytes" else source_path)
+    output = tmp_path / "existing.tavotto"
+    output.write_bytes(b"old package")
+    calls = []
+
+    def factory(census):
+        calls.append(dict(census))
+        assert census[extra.record["path"]] == len(actual) != extra.record["bytes"]
+        return packagebudget.output_budget(census)
+
+    with pytest.raises(container.PackageError):
+        packages.write_chart_package(
+            output, doc, root, budget_factory=factory, resources=[extra], overwrite=True
+        )
+    assert len(calls) == 1 and output.read_bytes() == b"old package"
+    assert not list(tmp_path.glob(".*.prepared"))
+    assert not list(config.data_dir().glob("chart-package-*"))
+
+
+@pytest.mark.parametrize("change", ["same_length", "different_length", "deleted"])
+def test_extra_source_changed_by_budget_factory_never_publishes(tmp_path, prepared_input, change):
+    root, doc, _ = prepared_input
+    approved = tmp_path / "approved.pdf"
+    approved.write_bytes(b"original")
+    extra = packages.ResourceFile(resource("file", "图.pdf", b"original").record, approved)
+    output = tmp_path / "existing.tavotto"
+    output.write_bytes(b"old package")
+    calls = []
+
+    def factory(census):
+        calls.append(dict(census))
+        selected = packagebudget.output_budget(census)
+        if change == "deleted":
+            approved.unlink()
+        else:
+            approved.write_bytes(b"tampered" if change == "same_length" else b"different length")
+        return selected
+
+    with pytest.raises((container.PackageError, OSError)):
+        packages.write_chart_package(
+            output, doc, root, budget_factory=factory, resources=[extra], overwrite=True
+        )
+    assert len(calls) == 1 and calls[0][extra.record["path"]] == len(b"original")
+    assert output.read_bytes() == b"old package"
+    assert not list(tmp_path.glob(".*.prepared"))
+    assert not list(config.data_dir().glob("chart-package-*"))
+
+
+def test_chart_input_changed_by_budget_factory_is_reverified_before_publication(
+    tmp_path, prepared_input
+):
+    root, doc, source = prepared_input
+    ref = doc["canvases"][0]["objects"][0]["chartSource"]
+    path = assets.source_path(root, ref)
+    output = tmp_path / "existing.tavotto"
+    output.write_bytes(b"old package")
+    calls = []
+
+    def factory(census):
+        calls.append(dict(census))
+        changed = source.replace(b"blue", b"pink")
+        assert changed != source and len(changed) == len(source)
+        path.write_bytes(changed)
+        return packagebudget.output_budget(census)
+
+    with pytest.raises(assets.DocumentAssetError):
+        packages.write_chart_package(output, doc, root, budget_factory=factory, overwrite=True)
+    assert len(calls) == 1 and output.read_bytes() == b"old package"
+    assert not list(tmp_path.glob(".*.prepared"))
+    assert not list(config.data_dir().glob("chart-package-*"))
+
+
+def test_budget_factory_cannot_change_frozen_document_or_resource_records(tmp_path, prepared_input):
+    root, doc, _ = prepared_input
+    before = copy.deepcopy(doc)
+    extra = resource("file", "图.pdf", b"inert file")
+    record_before = copy.deepcopy(extra.record)
+    output = tmp_path / "out.tavotto"
+    selected = []
+
+    def factory(census):
+        doc["canvases"].clear()
+        extra.record.update(bytes=0, sha256="0" * 64)
+        selected.append(packagebudget.output_budget(census))
+        return selected[-1]
+
+    packages.write_chart_package(output, doc, root, budget_factory=factory, resources=[extra])
+    with packages.inspect_chart_package(output.read_bytes(), budget=selected[0]) as ready:
+        assert ready.document == before
+        assert ready.resources[-1].record == record_before
+
+
+def test_static_and_factory_budgets_produce_identical_complete_zip_bytes(
+    tmp_path, budget, prepared_input
+):
+    root, doc, _ = prepared_input
+    approved = tmp_path / "源文件.bin"
+    approved.write_bytes(bytes(range(256)) * 20)
+    extras = [
+        packages.ResourceFile(resource("file", "中文.bin", approved.read_bytes()).record, approved),
+        resource("script", "静态.py", b"raise RuntimeError('never execute')"),
+    ]
+    static, generated = tmp_path / "static.tavotto", tmp_path / "factory.tavotto"
+    metadata = {"scripts": ["静态.py"], "created_at": "2026-11-06T00:00:00Z"}
+    old_result = packages.write_chart_package(
+        static, doc, root, budget=budget, resources=extras, metadata=metadata
+    )
+    new_result = packages.write_chart_package(
+        generated,
+        doc,
+        root,
+        budget_factory=packagebudget.output_budget,
+        resources=extras,
+        metadata=metadata,
+    )
+    assert generated.read_bytes() == static.read_bytes()
+    assert new_result == old_result
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("max_archive_bytes", 30),
+        ("max_members", 2),
+        ("max_directory_bytes", 60),
+        ("max_total_bytes", 200),
+        ("max_layout_bytes", 20),
+        ("max_manifest_bytes", 20),
+    ],
+)
+def test_all_six_factory_policy_budgets_remain_effective(
+    tmp_path, budget, prepared_input, field, value
+):
+    root, doc, _ = prepared_input
+    output = tmp_path / "result.tavotto"
+    calls = []
+
+    def factory(census):
+        calls.append(dict(census))
+        return replace(budget, **{field: value})
+
+    with pytest.raises(container.PackageError):
+        packages.write_chart_package(output, doc, root, budget_factory=factory)
+    assert len(calls) == 1 and not output.exists()
+    assert not list(tmp_path.glob(".*.prepared"))
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_invalid_chart_input_rejects_before_budget_factory_or_output_paths(
+    tmp_path, prepared_input, missing
+):
+    root, doc, _ = prepared_input
+    ref = doc["canvases"][0]["objects"][0]["chartSource"]
+    path = assets.source_path(root, ref)
+    if missing:
+        path.unlink()
+    else:
+        path.write_bytes(b"corrupt immutable INPUT")
+    output = tmp_path / "未创建" / "out.tavotto"
+    calls = []
+
+    def factory(census):
+        calls.append(census)
+        return packagebudget.output_budget(census)
+
+    with pytest.raises(assets.DocumentAssetError):
+        packages.write_chart_package(output, doc, root, budget_factory=factory)
+    assert calls == [] and not output.parent.exists()
 
 
 def no_replay(_document, _storage_root):
