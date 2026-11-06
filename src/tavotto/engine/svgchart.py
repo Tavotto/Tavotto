@@ -68,6 +68,9 @@ def scaffold_fragment(model: dict, frame: dict, *, salt: str = "tavotto") -> dic
         ]
     )
     ax.set_gid(f"tv-axes-{ax_cfg['id']}")
+    # 背景属于保留的原场景，不是刻度/网格等要嫁接的轴家具。
+    # 显式角色让组合端无需按 patch 序号或白色填充猜测。
+    ax.patch.set_gid(f"tv-axesbg-{ax_cfg['id']}")
     ax.set_xlim(*ax_cfg["xlim"])
     ax.set_ylim(*ax_cfg["ylim"])
     if ax_cfg["xscale"] != "linear":

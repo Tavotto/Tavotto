@@ -2,7 +2,7 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-06，复核 cbd8d95e）：首次绑定交互和撤销重做已接通；当前提交的前端 194 项及正式构建复跑通过。但真实两轴绑定的最终 SVG 被后绘制的白底遮住全部曲线，属于 P1 错图；真实导出漏 chart、转换器四类错误及自包含重导入失败也仍存在。M1 未完成，下一项先修最终画面的组合层级。**
+> **当前结论（2026-11-06，组合层级修复）：首次绑定交互和撤销重做已接通；双轴绑定白底遮挡已修复，Chromium 确认两曲线可见，受影响后端 111 项通过。真实导出漏 chart、转换器四类错误、自包含重导入及图内编辑仍待完成，M1 未完成。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 
 ## 环境（2026-11-06 当前快照）
@@ -31,7 +31,7 @@
 | SG10 | partial | f76b0610、18907d65、cbd8d95e | 真实两系列交互/确认/撤销通过；最终画面不正确，manifest/命中和图内编辑待补 |
 | SG11–SG17 | partial / pending | e09b724b、484b29fb、f7d39126 | 导出和元数据仅部分接线，真实冷恢复、写回、入口/平台与完整回归待补 |
 | R00 | baseline_and_regressions | 5a4f5c2c | 基础反例保留；本轮用户流程和导出反例待随修复入库 |
-| R01/R02 | reopened / visual_failed | 451d8490、4c2ca1f2 | 原基础回归通过；本轮复现真实双轴所有权触发白底覆盖系列，优先修复绘制层级 |
+| R01/R02 | core_partial / paint_order_verified | 451d8490、4c2ca1f2 + 本轮组合层级修复 | 双轴白底遮挡已修；12 组层序/节点/绑定排列回归和 Chromium 成图通过；完整系列/图例/装饰语义仍在 R02/R10 追验 |
 | R03 | partial | fa68fe38、ac060053 | 来源快照与绑定身份已有；实际环境/资源与冻结产物合同待补 |
 | R04 | affected_checks_passed | a8a088cf、18907d65、cbd8d95e | 请求序号/表单/项目切换、late response 和单项 drop 均有受影响测试；Dialog 已可发起真实绑定；完整编辑器生命周期在 R06 追验 |
 | R05 | tests_only / partial | 722ad27c | JSON 往返测试已有，真实新进程/资源包/迁移恢复待实现 |
@@ -41,6 +41,14 @@
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-06 实施：组合层级与轴背景角色
+
+- 沿用 r00 当前分支，从 34ff6b6b 接续。保留原场景背景作为唯一背景，脚手架 ax.patch 显式标识 tv-axesbg；组合器排除该角色。删除绑定轴区域后按最终树中最早绘制的系列对象确定插入位置，轴家具用同空间的 axes:ax1 包装组；不再复用旧下标或按绑定列表顺序决定层级。仅替换色条时不额外嫁接一套主轴家具。
+- 新增 12 组真实 corpus 回归，覆盖 0/1/2 个轴节点、轴节点前后排序、绑定顺序反转；核最终绘制顺序、原背景/图例保留和独立公式数据点。当前 9 个 chart/compute 文件 111 passed、0 failed/0 skipped；针对组合/接口的 41 项先行通过。证据为 svg-review-20261106/paint-order 下 tests.xml、chart-suite.xml。全仓 Ruff check 与 format --check 通过（顺带补既有 persistence 用例的一行空行）。
+- 手工反证：仅内存把稳定插入点改成层末，不改磁盘源码，目标用例在 axis layer covers data 处失败，pytest exit 1；正常实现 exit 0。mutation.log 留存目标落点，不把负向退出码当产品红。
+- 真实 bind/compute 取得最终 SVG，Chromium 独立渲染确认两条曲线可见且符合输入的三个采样点。截图为证据根 output/playwright/chart-paint-order-fixed.png，SVG/绘制顺序在 paint-order 子目录。原图例保留，初次绑定默认样式与原图例关系仍需后续语义接线，不宣称全图保真已完成。
+- 默认单执行者；本轮专用浏览器已关闭，静态服务 session 21919 已 Ctrl+C 退出。下一步接通真实导出请求/冻结身份，并修正转换器后将同一计算产物接入原图、标注和画布；目标保持 active。
 
 ### 2026-11-06 当前执行效果复核：cbd8d95e
 

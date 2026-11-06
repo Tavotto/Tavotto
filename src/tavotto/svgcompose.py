@@ -56,14 +56,6 @@ def _is_descendant(node: ET.Element, ancestor: ET.Element) -> bool:
     return any(_ is node for _ in ancestor.iter())
 
 
-def _first_furniture_anchor(root: ET.Element, insert_parent: list) -> ET.Element:
-    """轴家具变换的锚点 = 插入点父层里第一个 data-tavotto wrapper（同空间）。"""
-    return next(
-        (el for el in root.iter() if el.get("data-tavotto", "").startswith("series:")),
-        insert_parent if isinstance(insert_parent, ET.Element) else root,
-    )
-
-
 def _parent_of(root: ET.Element, node: ET.Element) -> ET.Element:
     return next(p for p in root.iter() if any(c is node for c in p))
 
@@ -249,8 +241,7 @@ def compose_scene(
     series_bindings = [e for e in binding["entries"] if e["object"].startswith("series:")]
     axes_nodes = [e["node"] for e in binding["entries"] if e["object"].startswith("axes:")]
 
-    insert_parent: list | None = None
-    insert_index = 0
+    series_wrappers: set[ET.Element] = set()
     consumed_axes_nodes: set[str] = set()
     for entry in series_bindings:
         series_def = model_series.get(entry["object"]) or {}
@@ -297,13 +288,13 @@ def compose_scene(
             _suffix_ids(piece, suffix)
             wrapper.append(piece)
         par[idx] = wrapper
-        if insert_parent is None:
-            insert_parent, insert_index = par, idx
+        series_wrappers.add(wrapper)
 
     # 轴区域节点：色条区域由片段新色条整体接管，其余退役；片段轴家具插到第一个系列位
     cbar_sid_by_node = {
         sr["cbar_node"]: sr["id"] for sr in (model or {}).get("series", []) if sr.get("cbar_node")
     }
+    retired_axes = False
     for node_id in axes_nodes:
         if node_id in consumed_axes_nodes:
             continue
@@ -327,20 +318,24 @@ def compose_scene(
             continue
         hoist_external_defs(target)
         par.remove(target)
-    if axes_nodes and insert_parent is not None:
-        furniture_group = None
-        furniture_t = parent_space_transform(_first_furniture_anchor(edited, insert_parent))
+        retired_axes = True
+    if retired_axes:
+        # 删除旧轴会改变所有后续序号；以最终树里最早绘制的系列对象为锚点，
+        # 而不是复用删除前的下标或依赖绑定列表的排列。
+        anchor = next((el for el in edited.iter() if el in series_wrappers), None)
+        if anchor is None:
+            raise ComposeError("compose_fragment_invalid", "axis regions contain the series")
+        insert_parent = _parent_of(edited, anchor)
+        insert_index = list(insert_parent).index(anchor)
+        furniture_group = ET.Element(f"{{{SVG_NS}}}g", {"data-tavotto": f"axes:{axes_id}"})
+        furniture_t = parent_space_transform(anchor)
         if furniture_t:
-            furniture_group = ET.Element(f"{{{SVG_NS}}}g", {"transform": furniture_t})
-        for j, furniture in enumerate(axis_furniture):
+            furniture_group.set("transform", furniture_t)
+        for furniture in axis_furniture:
             piece = copy.deepcopy(furniture)
             _suffix_ids(piece, suffix)
-            if furniture_group is not None:
-                furniture_group.append(piece)
-            else:
-                insert_parent.insert(insert_index + j, piece)
-        if furniture_group is not None:
-            insert_parent.insert(insert_index, furniture_group)
+            furniture_group.append(piece)
+        insert_parent.insert(insert_index, furniture_group)
 
     # 片段根级 defs 随迁（clipPath 等，含系列/轴家具的引用目标）
     for sc_defs in frag_root.findall("s:defs", NS):

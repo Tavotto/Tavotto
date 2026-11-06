@@ -317,6 +317,7 @@ def test_two_series_bind_and_compute(project):
 # R08：C 路径自包含往返——导出时嵌入模型元数据，冷端读取后重算
 # ---------------------------------------------------------------------------
 
+
 def test_export_embeds_metadata_for_self_contained_roundtrip(project):
     """导出 SVG 嵌入 chart 元数据（base64 JSON metadata 块）→ 从元数据重算一致。"""
     import base64
