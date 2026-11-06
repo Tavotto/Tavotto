@@ -19,6 +19,26 @@ from .documentpackage import (
     PackageError,
 )
 
+# 输入是未信任的包，不能从包内声明反推其自身上限。完整项目的字节/文件
+# 数沿现项目副本边界；JSON 元数据及 ZIP 目录另有限额，输出预算不受影响。
+INPUT_METADATA_BYTES = 64 * 1024 * 1024
+INPUT_DIRECTORY_BYTES = 64 * 1024 * 1024
+INPUT_MULTIPART_BYTES = 1024 * 1024
+
+
+def input_budget() -> PackageBudget:
+    """显式 v4 检视/安装共用的有限输入政策；不改变旧包入口或输出容量。"""
+    from . import projectcopy
+
+    return PackageBudget(
+        max_archive_bytes=projectcopy.MAX_BYTES,
+        max_members=projectcopy.MAX_FILES + 2,
+        max_directory_bytes=INPUT_DIRECTORY_BYTES,
+        max_total_bytes=projectcopy.MAX_BYTES,
+        max_layout_bytes=INPUT_METADATA_BYTES,
+        max_manifest_bytes=INPUT_METADATA_BYTES,
+    )
+
 
 def output_budget(members: Mapping[str, int]) -> PackageBudget:
     """精确展开量 + 保守压缩/ZIP64 开销；不另设政策上限或调用 native API。

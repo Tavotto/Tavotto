@@ -58,6 +58,7 @@ from flask import (
 from flask.json.provider import DefaultJSONProvider
 from werkzeug.exceptions import HTTPException, NotFound
 from werkzeug.formparser import FormDataParser
+from werkzeug.wsgi import LimitedStream
 
 from . import pdfbackend, richtext, tiffprobe
 from .engine import (
@@ -2319,9 +2320,11 @@ def _execution_source(
 
 def _svg_storage_root(project_root) -> Path:
     """Export-grade project assets follow the existing project store convention."""
+    from .engine import svgstore
+
     root = Path(project_root).resolve()
     store = engine_config.project_store_dir(root)
-    target = store / "figure_snapshots"
+    target = store / svgstore.STORE_DIRNAME
     if store.is_symlink() or target.is_symlink() or not target.resolve().is_relative_to(root):
         raise ValueError("unsafe project Figure snapshot directory")
     return target
@@ -4711,7 +4714,7 @@ def _package_svg_assets(
     else:
         temporary = contextlib.nullcontext(temporary_root)
     with temporary as directory:
-        staging = Path(directory) / "figure_snapshots"
+        staging = Path(directory) / svgstore.STORE_DIRNAME
         for obj in _doc_objects(doc):
             if obj.get("type") != "panel" or not obj.get("fileId"):
                 continue
@@ -5098,6 +5101,76 @@ def _api_chart_package():
             ),
         }
     )
+
+
+def _api_chart_package_inspect():
+    """有界上传并严格检视 v4 包；不触碰目标项目或执行包内脚本。"""
+    from .engine import chartpackage, packagebudget, packageinspection
+
+    # Inspection needs no open project, but an explicitly closed/unknown one
+    # still follows the common no-project contract (query and header alike).
+    _request_ctx()
+
+    def failure(reason, detail, status):
+        error = chartpackage.PackageError(reason, detail)
+        return jsonify({"error": error.detail, "code": error.code, "params": error.params}), status
+
+    if request.mimetype != "multipart/form-data":
+        return failure("invalid_upload", "项目包须使用 multipart 文件上传", 400)
+    budget = packagebudget.input_budget()
+    request_limit = budget.max_archive_bytes + packagebudget.INPUT_MULTIPART_BYTES
+    if request.content_length is not None and request.content_length > request_limit:
+        return failure("archive_budget", "项目包上传超过容量上限", 413)
+    try:
+        engine_config.data_dir().mkdir(parents=True, exist_ok=True)
+        with (
+            tempfile.TemporaryDirectory(
+                prefix="package-upload-", dir=engine_config.data_dir()
+            ) as directory,
+            contextlib.ExitStack() as handles,
+        ):
+            # Limit actual reads too: a confirmed chunked WSGI input can omit
+            # Content-Length. No request.files or unbounded file.read() occurs.
+            stream = LimitedStream(request.stream, request_limit + 1, is_max=True)
+
+            def target(*_args, **_kwargs):
+                return handles.enter_context(tempfile.TemporaryFile(mode="w+b", dir=directory))
+
+            try:
+                _stream, form, files = FormDataParser(
+                    stream_factory=target,
+                    max_form_memory_size=packagebudget.INPUT_MULTIPART_BYTES,
+                    max_content_length=request_limit,
+                    max_form_parts=1,
+                    silent=False,
+                ).parse(stream, request.mimetype, request.content_length, request.mimetype_params)
+            except HTTPException:
+                if stream.tell() > request_limit:
+                    return failure("archive_budget", "项目包上传超过容量上限", 413)
+                return failure("invalid_upload", "项目包上传字段或内容不合法", 400)
+            except ValueError:
+                return failure("invalid_upload", "项目包上传格式不合法", 400)
+            if stream.tell() > request_limit:
+                return failure("archive_budget", "项目包上传超过容量上限", 413)
+            if form or (
+                files and (set(files) != {"package"} or len(files.getlist("package")) != 1)
+            ):
+                return failure("invalid_upload", "只允许上传一个 package 文件", 400)
+            file = files.get("package")
+            if file is None:
+                return jsonify(
+                    {
+                        "error": "缺少上传文件（multipart 字段 package）",
+                        "code": "package_file_missing",
+                    }
+                ), 400
+            with chartpackage.inspect_chart_package(file.stream, budget=budget) as prepared:
+                return jsonify(packageinspection.inspect_project_package(prepared))
+    except chartpackage.PackageError as exc:
+        status = 413 if exc.reason.endswith("budget") else 422
+        return failure(exc.reason, exc.detail, status)
+    except OSError:
+        return failure("inspection_unavailable", "暂时无法检视项目包", 503)
 
 
 @app.post("/api/package/open")
@@ -18649,6 +18722,12 @@ def _register_chart_document_routes() -> None:
         "/api/documents/v4/package",
         endpoint="documents_v4_package",
         view_func=adapt(_api_chart_package),
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/api/documents/v4/package/inspect",
+        endpoint="documents_v4_package_inspect",
+        view_func=adapt(_api_chart_package_inspect),
         methods=["POST"],
     )
 
