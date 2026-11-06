@@ -47,6 +47,7 @@
 - 计算面板导出 PDF/PNG/TIFF：编辑后场景 SVG → **IR**（`rendercore` 纯 stdlib 解析 + 现有 pikepdf/fontTools/uharfbuzz/pypdfium2）
   → 既有 `pdfwriter`（Canonical PDF）→ 既有栅格管线；**零 PyMuPDF 不变**，父进程不 import matplotlib 不变。
 - SVG 格式导出：**直接交付编辑后场景字节**（同静态素材的 copy 基准语义），不经翻译器。
+- 原生编辑的生产导出使用可选`chart_render_profile`与既有完整原序`overrides`，共同进入原图/标注/留白/画布/多页的冻结计算身份和作业内缓存；不是只冻结model/binding或排序后的patch hash。原图SVG以显式native profile写v2包，缺省legacy/空编辑仍按原v1合同；无chart请求的payload与计划身份不新增字段。
 - EPS：维持「只有 worker 写得出」——计算面板无原脚本时按既有码报 `eps_needs_script` 一族，不伪矢量。
 - 翻译器能力逐项声明（native / unsupported 点名元素）：native=路径命令（含弧转换）、基础形状、路径 clip、
   opacity、dash、文字（批准脸+HarfBuzz，旋转经 Group 变换，字体不可解析时**按披露回退或逐项失败**，不静默换脸）；

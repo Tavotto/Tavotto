@@ -79,6 +79,8 @@ describe('计算图表导出快照', () => {
     const state = scope === 'original' ? built.request.original?.chart : item?.type === 'panel' ? item.chart : undefined
     expect(state).toEqual(p.chart)
     expect(state).not.toBe(p.chart)
+    const source = scope === 'original' ? built.request.original : item
+    expect(source).toHaveProperty('chart_render_profile', 'native-manifest/1')
     const before = JSON.stringify(built.request)
     p.chart!.model.axes[0].xlim[1] += 10
     expect(buildExportRequest(input).revision).not.toBe(built.revision)
@@ -93,15 +95,42 @@ describe('计算图表导出快照', () => {
     const input = inputOf({ scope: 'original', formats: ['pdf'], mergePages: pages })
     const built = buildExportRequest(input)
     expect(built.request.merge_pdf!.pages.map(p => p.chart)).toEqual([a.chart, b.chart])
+    expect(built.request.merge_pdf!.pages.map(p => p.chart_render_profile)).toEqual(['native-manifest/1', 'native-manifest/1'])
     expect(buildExportRequest({ ...input, mergePages: [...pages].reverse() }).revision).not.toBe(built.revision)
   })
 
   it('缺省和不匹配面板不添加 chart 字段', () => {
     const ordinary = buildExportRequest(inputOf()).request.canvas!.objects[0]
     expect(ordinary).not.toHaveProperty('chart')
+    expect(ordinary).not.toHaveProperty('chart_render_profile')
     const p = chartPanel()
     const other = buildExportRequest(inputOf({ scope: 'original', panel: p, figureId: 'other.svg' }))
     expect(other.request.original).not.toHaveProperty('chart')
+    expect(other.request.original).not.toHaveProperty('chart_render_profile')
+  })
+
+  it.each(['original', 'canvas', 'merge'] as const)('%s 冻结原序完整edits及identity，指纹不合并不同顺序', (scope) => {
+    const p = chartPanel()
+    p.overrides = [
+      { gid: 'axes_0.lines_0', prop: 'color', value: 'red', identity: 'l1:0123456789abcdef' },
+      { gid: 'axes_0.lines_0', prop: 'linewidth', value: 5 },
+      { gid: 'axes_0.lines_0', prop: 'color', value: 'blue' },
+    ]
+    const before = structuredClone(p.overrides)
+    const doc = { ...useDocumentStore.getState().doc, objects: [p] }
+    const input = inputOf({ scope: scope === 'canvas' ? 'canvas' : 'original', formats: ['pdf'], figureId: p.fileId, panel: p, doc,
+      ...(scope === 'merge' ? { mergePages: [{ figureId: p.fileId, panel: p, spec: null }] } : {}) })
+    const built = buildExportRequest(input)
+    const source = scope === 'canvas' ? built.request.canvas!.objects[0] : scope === 'merge' ? built.request.merge_pdf!.pages[0] : built.request.original!
+    expect(source).toHaveProperty('overrides', before)
+    expect(source).toHaveProperty('chart_render_profile', 'native-manifest/1')
+    p.overrides[0].value = 'green'
+    expect(source).toHaveProperty('overrides', before)
+    expect(buildExportRequest(input).revision).not.toBe(built.revision)
+    p.overrides = before.slice(0, 2)
+    const first = buildExportRequest(input).revision
+    p.overrides = [...p.overrides].reverse()
+    expect(buildExportRequest(input).revision).not.toBe(first)
   })
 })
 

@@ -296,14 +296,19 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
       page_w_mm: input.doc.page.w,
       page_h_mm: input.doc.page.h,
       // 顺序即 z 序（底 → 顶），隐藏对象不发 —— 与画布预览同一条投影
-      objects: toExportObjects(input.doc.objects) as ExportObject[],
+      objects: toExportObjects(input.doc.objects).map((object): ExportObject =>
+        object.type === 'panel' && object.chart
+          ? { ...object, chart_render_profile: 'native-manifest/1', overrides: structuredClone(object.overrides) }
+          : object,
+      ),
     }
   } else {
     const sourceOf = (figureId: string, panel: PanelObject | null, spec: OriginalOutputSpec | null): ExportOriginalSource => {
-      const patches = panel ? originalArtifactOverrides(panel) : []
+      const chart = panel?.fileId === figureId && panel.chart ? panel.chart : null
+      const patches = chart && panel ? structuredClone(panel.overrides) : panel ? originalArtifactOverrides(panel) : []
       return {
         figure_id: figureId,
-        ...(panel?.fileId === figureId && panel.chart ? { chart: structuredClone(panel.chart) } : {}),
+        ...(chart ? { chart: structuredClone(chart), chart_render_profile: 'native-manifest/1' as const } : {}),
         ...(panel && panel.fileId === figureId &&
             JSON.stringify(patches) === JSON.stringify(panel.overrides) && figureSnapshotFor(panel)
           ? { figure_snapshot: figureSnapshotFor(panel) } : {}),

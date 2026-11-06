@@ -32,7 +32,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import chartmodel, figcapture
+from . import chartmodel, chartprofile, figcapture
 
 # ------------------------------- 枚举 ---------------------------------------
 
@@ -303,6 +303,8 @@ class OriginalSource:
     #: 存在时 original 导出的 SVG 格式交付**组合后的**编辑版（服务端从不可变来源
     #: 快照重算），其余格式按 svg_asset 现有规则交付或拒绝。
     chart: dict | None = None
+    #: 缺省维持历史 v1 零编辑重放；原生协议携带完整原序 overrides。
+    chart_render_profile: str | None = None
     #: `objects` 里前几个画在图的**下面**（图层树里放到图之下的标注）；其余在图上。`objects` 本身按 z 序（底 → 顶）。
     objects_below: int = 0
     #: 单图留白（ADR 0161 §3）：`(l, t, r, b)` mm，可为负（负值由页面裁掉）。缺席或全 0 = `()`，请求与输出与从前逐字节相同。
@@ -505,6 +507,11 @@ def render_plan_ref(req: ExportRequest, resources: list[dict]) -> dict:
             **({"pad_mm": list(req.original.pad_mm)} if req.original.pad_mm else {}),
             **({"chart": req.original.chart} if req.original.chart is not None else {}),
             **(
+                {"chart_render_profile": req.original.chart_render_profile}
+                if req.original.chart_render_profile is not None
+                else {}
+            ),
+            **(
                 {"expected_source": req.original.expected_source}
                 if req.original.expected_source is not None
                 else {}
@@ -526,6 +533,11 @@ def render_plan_ref(req: ExportRequest, resources: list[dict]) -> dict:
                 "figure_id": p.figure_id,
                 "overrides": p.overrides,
                 **({"chart": p.chart} if p.chart is not None else {}),
+                **(
+                    {"chart_render_profile": p.chart_render_profile}
+                    if p.chart_render_profile is not None
+                    else {}
+                ),
             }
             for p in req.merge_pdf.pages
         ]
@@ -720,6 +732,40 @@ def _chart_state(raw: Any) -> dict | None:
     return deepcopy(raw)
 
 
+def _chart_render_state(source: dict) -> tuple[dict | None, str | None, list[dict]]:
+    """图表使用同一 profile/完整 edits 判据；普通来源保留既有过滤合同。"""
+    chart = _chart_state(source.get("chart"))
+    if chart is None:
+        if "chart_render_profile" in source:
+            raise ExportRequestError("chart_model_invalid", "chart profile requires chart", {})
+        return None, None, []
+    try:
+        profile = (
+            chartprofile.validate_profile(source["chart_render_profile"])
+            if "chart_render_profile" in source
+            else None
+        )
+        edits = chartprofile.validate_overrides(
+            source.get("overrides", []), render_profile=profile or chartprofile.LEGACY_PROFILE
+        )
+    except chartprofile.ChartProfileError as exc:
+        raise ExportRequestError(exc.code, exc.detail, {}) from exc
+    return chart, profile, edits
+
+
+def _chart_canvas_object(source: dict) -> dict:
+    if "chart" not in source and "chart_render_profile" not in source:
+        return source
+    if "chart_render_profile" in source and source.get("type") != "panel":
+        raise ExportRequestError("chart_model_invalid", "chart profile requires panel", {})
+    chart, _profile, edits = _chart_render_state(source)
+    return {
+        **source,
+        "chart": chart,
+        **({"overrides": edits} if chart is not None and "overrides" in source else {}),
+    }
+
+
 def _original_source(source: Any) -> OriginalSource:
     """`original` 段（以及多页 PDF 里每一页的来源）→ `OriginalSource`。**一份解析，两处用**。"""
     if not isinstance(source, dict):
@@ -727,9 +773,15 @@ def _original_source(source: Any) -> OriginalSource:
     figure_id = str(source.get("figure_id") or "")
     if not figure_id:
         raise ExportRequestError("missing_figure", "按原图导出没有说是哪一张图", {})
-    overrides = source.get("overrides") or []
-    if not isinstance(overrides, list):
-        raise ExportRequestError("bad_overrides", "overrides 必须是一个列表", {})
+    chart, profile, edits = _chart_render_state(source)
+    if chart is not None:
+        overrides = edits
+        frozen_overrides = edits
+    else:
+        overrides = source.get("overrides") or []
+        if not isinstance(overrides, list):
+            raise ExportRequestError("bad_overrides", "overrides 必须是一个列表", {})
+        frozen_overrides = [o for o in overrides if isinstance(o, dict)]
     objects = _original_objects(source)
     return OriginalSource(
         objects=objects,
@@ -740,14 +792,15 @@ def _original_source(source: Any) -> OriginalSource:
         expected_source=_source_basis(source, overrides),
         figure_snapshot=_figure_snapshot(source),
         confirmed_reconstruction_sha256=source.get("confirmed_reconstruction_sha256"),
-        overrides=[o for o in overrides if isinstance(o, dict)],
+        overrides=frozen_overrides,
         w_mm=float(source["w_mm"]) if source.get("w_mm") else None,
         h_mm=float(source["h_mm"]) if source.get("h_mm") else None,
         px_w=int(source["px_w"]) if source.get("px_w") else None,
         px_h=int(source["px_h"]) if source.get("px_h") else None,
         source_kind=str(source.get("source_kind") or "unknown"),
         ignored=tuple(str(x) for x in (source.get("ignored") or [])),
-        chart=_chart_state(source.get("chart")),
+        chart=chart,
+        chart_render_profile=profile,
     )
 
 
@@ -859,11 +912,7 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
         canvas = CanvasSource(
             page_w_mm=_float(source.get("page_w_mm"), "page_w_mm"),
             page_h_mm=_float(source.get("page_h_mm"), "page_h_mm"),
-            objects=[
-                {**o, "chart": _chart_state(o["chart"])} if "chart" in o else o
-                for o in objects
-                if isinstance(o, dict)
-            ],
+            objects=[_chart_canvas_object(o) for o in objects if isinstance(o, dict)],
         )
     else:
         merge_pdf = _merge_pdf(spec, formats)

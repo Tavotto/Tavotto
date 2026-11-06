@@ -2886,6 +2886,11 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
     pad_l, pad_t, _pad_r, _pad_b = src.pad_mm or (0.0, 0.0, 0.0, 0.0)
     panel = {
         **({"chart": src.chart} if src.chart is not None else {}),
+        **(
+            {"chart_render_profile": src.chart_render_profile}
+            if src.chart_render_profile is not None
+            else {}
+        ),
         "type": "panel",
         "id": src.figure_id,
         "x_mm": pad_l,
@@ -3085,18 +3090,31 @@ def _export_job_owner(job):
     return job
 
 
-def _export_chart_snapshot(job, file_id: str, chart: dict) -> _ChartSnapshot:
-    from .engine import chartmodel
+def _export_chart_snapshot(
+    job, file_id: str, chart: dict, *, render_profile: str | None = None, overrides: object = ()
+) -> _ChartSnapshot:
+    from .engine import chartmodel, chartprofile
 
     owner = _export_job_owner(job)
     cache = getattr(owner, "_chart_snapshots", None)
     if cache is None:
         owner._chart_snapshots = cache = {}
         owner._chart_source_dependencies = {}
-    key = (file_id, chartmodel.digest_of(chart))
+    try:
+        profile = chartprofile.validate_profile(
+            chartprofile.LEGACY_PROFILE if render_profile is None else render_profile
+        )
+        edits = chartprofile.validate_overrides(overrides, render_profile=profile)
+        key = (file_id, chartprofile.identity(chartmodel.digest_of(chart), profile, edits))
+    except chartprofile.ChartProfileError as exc:
+        raise engine_exportreq.ExportRequestError(exc.code, exc.detail, {}) from exc
     if key not in cache:
         job.check_cancelled()
-        snapshot = _render_chart_snapshot(file_id, chart)
+        snapshot = (
+            _render_chart_snapshot(file_id, chart)
+            if profile == chartprofile.LEGACY_PROFILE
+            else _render_chart_snapshot(file_id, chart, render_profile=profile, overrides=edits)
+        )
         previous = owner._chart_source_dependencies.get(file_id)
         if previous is not None and previous[1] != snapshot.source_sha256:
             raise engine_exportreq.ExportRequestError(
@@ -3164,12 +3182,19 @@ def _chart_canonical(snapshot: _ChartSnapshot, tmp_dir: Path):
 def _export_produce_chart_original(job, src, req, tmp_dir: Path):
     """原图所有格式消费同一计算快照；不可表达的格式逐项失败。"""
     from . import chartbundle
+    from .engine import chartprofile
     from .rendercore.pdfwriter import WriterError
     from .rendercore.renderhost import RenderChildError
     from .rendercore.svgir import SVGIRError
 
     try:
-        snapshot = _export_chart_snapshot(job, src.figure_id, src.chart)
+        snapshot = _export_chart_snapshot(
+            job,
+            src.figure_id,
+            src.chart,
+            render_profile=src.chart_render_profile,
+            overrides=src.overrides,
+        )
     except (engine_exportreq.ExportRequestError, engine_pool.WorkerError) as exc:
         return [
             engine_exportjob.Produced(
@@ -3190,6 +3215,14 @@ def _export_produce_chart_original(job, src, req, tmp_dir: Path):
                 target = tmp_dir / "original.svg"
                 target.write_bytes(
                     chartbundle.embed_chart(snapshot.svg, snapshot.source_svg, snapshot.chart)
+                    if snapshot.render_profile == chartprofile.LEGACY_PROFILE
+                    else chartbundle.embed_chart(
+                        snapshot.svg,
+                        snapshot.source_svg,
+                        snapshot.chart,
+                        render_profile=snapshot.render_profile,
+                        overrides=snapshot.overrides,
+                    )
                 )
             elif fmt in (
                 engine_exportreq.FORMAT_PDF,
@@ -3780,7 +3813,13 @@ def _export_produce_rendercore(
             if obj.get("chart") is not None:
                 from .rendercore.svgir import SVGIRError
 
-                snapshot = _export_chart_snapshot(job, str(obj["id"]), obj["chart"])
+                snapshot = _export_chart_snapshot(
+                    job,
+                    str(obj["id"]),
+                    obj["chart"],
+                    render_profile=obj.get("chart_render_profile"),
+                    overrides=obj.get("overrides", ()),
+                )
                 try:
                     return _export_chart_canonical(job, snapshot, tmp_dir)
                 except SVGIRError as exc:

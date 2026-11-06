@@ -42,6 +42,13 @@
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
+### 2026-11-06 生产导出冻结完整原生编辑状态
+
+- 242cabc0已提交共享native消费者。此批原图、原图标注/留白、画布及多页统一消费chart_render_profile+完整原序overrides，作业内cache身份包含精确JSON的顺序/重复/identity；原图native SVG实际写v2完整编辑包，legacy缺省仍v1。前端builder仅chart分支携native profile且深拷贝原序edits；无chart旧来源完全保原行为。
+- 后端请求合同88项通过、0skip，前端构造39项通过，正式三步build exit0。六种旧请求的公开to_payload与render_plan_ref，对immutable d708ed66逐字节相同。恢复or[]/dict静默过滤的进程内变异触发27个负例失败；把身份换canonical排序/去重则original/canvas/merge三项全部失败，生产字节还原。
+- 真实生产端点9项通过、0skip、exit0，30.496秒（chart-native-export-first.xml/.log）。包含真实原图SVGv2→删原文件→inspect/重算、SVG/PDF独立像素/文字/尺寸、原图标注/留白/画布同状态、同作业同model不同edits A/B/A不串、merge页序、raw order与v1缺省兼容、非法edits无产物。起止8份源码SHA相同。测试没有手工embed冒充生产输出。
+- 该9项只证明其覆盖的SVG/PDF，不计PNG/TIFF/EPS资格；新增PNG/TIFF生产实测另在推进，后续测试草稿不混入本批已验证9项。后续v2恢复UI/科学对象重绑guard和多目标preview仍独立草稿，最终playground需统一重建，M1未完成。
+
 ### 2026-11-06 共享native消费者进入真实图内编辑
 
 - 本批共享engine/render与preview_png、renderStore/scheduler/transport、PanelView/编辑入口及各缩略图接线已收敛；按功能部分stage，后续export/v2恢复/ownership/多目标草稿均保留在工作树，没有用整树add混交。API类型额外可选profile/identity字段是后续导出协议的前向形状，无chart运行行为不变。

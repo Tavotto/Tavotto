@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from tavotto.engine import exportreq
+from tavotto.engine import chartprofile, exportreq, patchspec
 
 ROOT = Path(__file__).resolve().parent.parent
 GOLDEN = ROOT / "tests" / "golden" / "filename_vectors.json"
@@ -68,6 +68,120 @@ def test_merge_pdf_identity_includes_every_chart_page():
     spec["merge_pdf"]["pages"][1]["chart"]["model"]["axes"][0]["ylim"][1] += 1
     after = exportreq.render_plan_ref(exportreq.normalize(spec), [])["plan_identity"]
     assert before != after
+
+
+def _native_chart_spec(scope):
+    spec, _chart = _chart_export_spec("canvas" if scope == "canvas" else "original")
+    if scope == "merge":
+        spec["formats"] = ["pdf"]
+        target = spec.pop("original")
+        spec["merge_pdf"] = {"pages": [target]}
+    else:
+        target = spec[scope] if scope == "original" else spec[scope]["objects"][0]
+    target["chart_render_profile"] = chartprofile.NATIVE_PROFILE
+    return spec, target
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas", "merge"])
+def test_native_chart_freezes_complete_order_identity_and_profile_in_plan(scope):
+    spec, target = _native_chart_spec(scope)
+    edits = [
+        {
+            "gid": "axes_0.lines_0",
+            "prop": "color",
+            "value": "red",
+            "identity": "l1:0123456789abcdef",
+        },
+        {"gid": "axes_0.lines_0", "prop": "linewidth", "value": 3},
+        {"gid": "axes_0.lines_0", "prop": "color", "value": "blue"},
+    ]
+    target["overrides"] = deepcopy(edits)
+    parsed = exportreq.normalize(spec)
+    if scope == "canvas":
+        frozen = parsed.canvas.objects[0]["overrides"]
+        assert parsed.canvas.objects[0]["chart_render_profile"] == chartprofile.NATIVE_PROFILE
+    else:
+        frozen = parsed.original.overrides
+        assert parsed.original.chart_render_profile == chartprofile.NATIVE_PROFILE
+    assert frozen == edits
+    first = exportreq.render_plan_ref(parsed, [])["plan_identity"]
+    target["overrides"][0]["value"] = "green"
+    assert frozen == edits
+    assert exportreq.render_plan_ref(exportreq.normalize(spec), [])["plan_identity"] != first
+    target["overrides"] = list(reversed(edits[:2]))
+    reversed_identity = exportreq.render_plan_ref(exportreq.normalize(spec), [])["plan_identity"]
+    target["overrides"] = edits[:2]
+    assert patchspec.patch_hash(edits[:2]) == patchspec.patch_hash(list(reversed(edits[:2])))
+    assert (
+        exportreq.render_plan_ref(exportreq.normalize(spec), [])["plan_identity"]
+        != reversed_identity
+    )
+    target["overrides"] = []
+    native = exportreq.render_plan_ref(exportreq.normalize(spec), [])["plan_identity"]
+    target["chart_render_profile"] = chartprofile.LEGACY_PROFILE
+    assert exportreq.render_plan_ref(exportreq.normalize(spec), [])["plan_identity"] != native
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas", "merge"])
+@pytest.mark.parametrize(
+    "edits",
+    [
+        None,
+        False,
+        {},
+        "",
+        [None],
+        [1],
+        [{"gid": "a", "prop": "color"}],
+        [{"gid": "a", "prop": "color", "value": "red", "extra": 1}],
+        [{"gid": "a", "prop": "linewidth", "value": float("nan")}],
+    ],
+)
+def test_native_chart_invalid_edits_are_not_silently_filtered_or_defaulted(scope, edits):
+    spec, target = _native_chart_spec(scope)
+    target["overrides"] = edits
+    with pytest.raises(exportreq.ExportRequestError) as caught:
+        exportreq.normalize(spec)
+    assert caught.value.code == "chart_model_invalid"
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas", "merge"])
+@pytest.mark.parametrize("profile", [None, "native", "native-manifest/2", True])
+def test_export_rejects_unknown_chart_render_profile(scope, profile):
+    spec, target = _native_chart_spec(scope)
+    target["chart_render_profile"] = profile
+    with pytest.raises(exportreq.ExportRequestError) as caught:
+        exportreq.normalize(spec)
+    assert caught.value.code == "chart_model_unsupported"
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas", "merge"])
+def test_chart_profile_requires_chart_and_legacy_cannot_lose_nonempty_edits(scope):
+    spec, target = _native_chart_spec(scope)
+    chart = target.pop("chart")
+    with pytest.raises(exportreq.ExportRequestError) as caught:
+        exportreq.normalize(spec)
+    assert caught.value.code == "chart_model_invalid"
+    target["chart"] = chart
+    target.pop("chart_render_profile")
+    target["overrides"] = [{"gid": "axes_0", "prop": "xlim", "value": [0, 10]}]
+    with pytest.raises(exportreq.ExportRequestError) as caught:
+        exportreq.normalize(spec)
+    assert caught.value.code == "chart_model_invalid"
+    target["overrides"] = []
+    legacy = exportreq.normalize(spec)
+    if scope == "canvas":
+        assert "chart_render_profile" not in legacy.canvas.objects[0]
+    else:
+        assert legacy.original.chart_render_profile is None
+
+
+def test_native_profile_on_nonpanel_canvas_object_is_not_admitted():
+    spec, target = _native_chart_spec("canvas")
+    target["type"] = "text"
+    with pytest.raises(exportreq.ExportRequestError) as caught:
+        exportreq.normalize(spec)
+    assert caught.value.code == "chart_model_invalid"
 
 
 # ----------------------------- golden 向量 ----------------------------------
