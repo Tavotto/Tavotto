@@ -327,6 +327,7 @@ _INHERITED = frozenset(
 )
 _PRESENTATION = _INHERITED | {
     "opacity",
+    "overflow",
     "clip-path",
     "display",
     "mask",
@@ -350,6 +351,7 @@ _DEFAULT = {
     "font-size": "16",
     "font-weight": "normal",
     "font-style": "normal",
+    "overflow": "visible",
 }
 
 
@@ -482,6 +484,8 @@ class _Translator:
         except ValueError as exc:
             raise SVGIRError("svgir_invalid", "invalid viewport mapping") from exc
 
+        self.active_viewports = {root: self.viewport}
+
     def _matches(self, el, selector):
         parts = re.findall(r"[^\s>]+|>", selector)
         simple = r"(?:[A-Za-z_][\w-]*|\*)?(?:[.#][\w-]+)*"
@@ -510,6 +514,14 @@ class _Translator:
 
     def _style(self, el, parent):
         result = {k: v for k, v in parent.items() if k in _INHERITED}
+        # SVG's UA rule clips non-root svg/symbol viewports. Overflow is not
+        # inherited, but explicit inherit must see the parent's computed value.
+        default_overflow = (
+            "hidden"
+            if _tag(el) == "symbol" or (_tag(el) == "svg" and el is not self.root)
+            else "visible"
+        )
+        result["overflow"] = default_overflow
         own, priorities = {}, {}
 
         def apply(declarations, specificity, order):
@@ -529,6 +541,9 @@ class _Translator:
                 apply(declarations, (0, *spec), order)
         apply(_declarations(el.get("style", "")), (1, 0, 0, 0), 0)
         for k, v in own.items():
+            if k == "overflow" and v in ("unset", "revert", "revert-layer"):
+                result[k] = "visible" if v == "unset" else default_overflow
+                continue
             if v == "inherit":
                 if k in parent:
                     result[k] = parent[k]
@@ -545,6 +560,94 @@ class _Translator:
                 _length(own["font-size"], percent=parent_size, em=parent_size)
             )
         return result
+
+    def _viewport_mapping(self, el, width, height, *, allow_zero=False):
+        """One viewBox authority for symbol instances and nested SVGs."""
+        vb = _numbers(el.get("viewBox", ""))
+        if not vb:
+            return ir.IDENTITY, (width, height)
+        if len(vb) != 4 or min(vb[2:]) < 0:
+            raise SVGIRError("svgir_invalid", "invalid viewport viewBox")
+        if min(vb[2:]) == 0:
+            if allow_zero:
+                return None, (vb[2], vb[3])
+            raise SVGIRError("svgir_invalid", "zero viewport viewBox")
+        try:
+            mapping = svgcoord.viewbox_to_pt(vb, width, height, el.get("preserveAspectRatio"))
+        except ValueError as exc:
+            raise SVGIRError("svgir_invalid", "invalid viewport mapping") from exc
+        return mapping, (vb[2], vb[3])
+
+    @staticmethod
+    def _viewport_clip(width, height):
+        return ir.Path(
+            (("M", 0, 0), ("L", width, 0), ("L", width, height), ("L", 0, height), ("Z",))
+        )
+
+    def _viewport_size(self, el, st, viewport_size=None):
+        size = viewport_size or (None, None)
+        lengths = [
+            override if override is not None else el.get(key, "100%")
+            for key, override in zip(("width", "height"), size)
+        ]
+        width, height = (
+            self._len("100%" if value == "auto" else value, axis, st)
+            for axis, value in enumerate(lengths)
+        )
+        if min(width, height) < 0:
+            raise SVGIRError("svgir_invalid", "negative SVG viewport")
+        return width, height
+
+    def _nested_svg(self, el, st, local, viewport_size):
+        # Element x/y/size resolve in the parent user space, before changing the
+        # percentage basis for descendants.
+        width, height = self._viewport_size(el, st, viewport_size)
+        if min(width, height) == 0:
+            return []
+        offset = ir.translate(
+            self._len(el.get("x", "0"), st=st), self._len(el.get("y", "0"), 1, st)
+        )
+        mapping, viewport = self._viewport_mapping(el, width, height, allow_zero=True)
+        if mapping is None:
+            return []
+        saved_viewport = self.viewport
+        active = self.active_viewports.get(el)
+        try:
+            self.viewport = viewport
+            self.active_viewports[el] = viewport
+            children = [node for child in el for node in self._node(child, st)]
+            if not children:
+                return []
+            clip_ref = st.get("clip-path", "none")
+            user_clip = self._clip(clip_ref) if clip_ref != "none" else None
+            mapped = ir.Group(
+                tuple(children),
+                transform=mapping,
+                clip=user_clip,
+                opacity=min(1, max(0, _length(st.get("opacity", "1"), percent=1))),
+            )
+        finally:
+            self.viewport = saved_viewport
+            if active is None:
+                self.active_viewports.pop(el, None)
+            else:
+                self.active_viewports[el] = active
+        # SVG overflow's implicit clip is replaced by an explicit clip-path on
+        # this same element (SVG 1.1 §14.3.3). Ancestor clips still intersect.
+        # Its rectangle belongs outside the content's viewBox transformation.
+        clip = (
+            self._viewport_clip(width, height)
+            if user_clip is None and st["overflow"] in ("hidden", "scroll")
+            else None
+        )
+        return [
+            ir.Group(
+                (mapped,),
+                transform=ir.compose(offset, local),
+                clip=clip,
+                object_id=el.get("id", ""),
+            )
+        ]
 
     def _len(self, value, axis=0, st=None):
         size = _number((st or {}).get("font-size", "16"))
@@ -981,6 +1084,7 @@ class _Translator:
             ("word-spacing", ("normal", "0", "0px")),
             ("baseline-shift", ("baseline", "0", "0px")),
             ("text-decoration", ("none",)),
+            ("overflow", ("visible", "hidden", "scroll", "auto")),
         ):
             if key in st and st[key] not in allowed:
                 raise SVGIRError("svgir_unsupported_element", f"unsupported {key}")
@@ -998,9 +1102,7 @@ class _Translator:
         while parent is not None:
             chain.append(parent)
             parent = self.parents.get(parent)
-        inherited = _DEFAULT
-        for ancestor in reversed(chain):
-            inherited = self._style(ancestor, inherited)
+        inherited, definition_viewport = self._clip_context(reversed(chain))
 
         def gather(el, parent, parent_style):
             local = ir.compose(_parse_transform(el.get("transform", "")), parent)
@@ -1026,7 +1128,12 @@ class _Translator:
                 if segments:
                     paths.append(ir.Path(segments, fill_rule=style.get("clip-rule", "nonzero")))
 
-        gather(definition, ir.IDENTITY, inherited)
+        saved_viewport = self.viewport
+        try:
+            self.viewport = definition_viewport
+            gather(definition, ir.IDENTITY, inherited)
+        finally:
+            self.viewport = saved_viewport
         if not paths:
             return ir.Path((("M", 0, 0), ("Z",)))
         if len(paths) == 1:
@@ -1034,7 +1141,29 @@ class _Translator:
         # Filled clip children are a geometric union, not a compound path.
         return ir.ClipUnion(tuple(paths))
 
-    def _node(self, el, parent, *, instance=False):
+    def _clip_context(self, ancestors):
+        # Referenced clip shapes resolve percentages in their definition's
+        # viewport, then apply numeric geometry in the referencing user space.
+        # Active instances supply overridden sizes; forward references may
+        # point inside an as-yet unvisited nested SVG.
+        saved_viewport = self.viewport
+        inherited = _DEFAULT
+        try:
+            self.viewport = self.active_viewports[self.root]
+            for ancestor in ancestors:
+                inherited = self._style(ancestor, inherited)
+                if ancestor in self.active_viewports:
+                    self.viewport = self.active_viewports[ancestor]
+                elif _tag(ancestor) == "svg":
+                    width, height = self._viewport_size(ancestor, inherited)
+                    if min(width, height) == 0:
+                        raise SVGIRError("svgir_invalid", "zero clip definition viewport")
+                    _, self.viewport = self._viewport_mapping(ancestor, width, height)
+            return inherited, self.viewport
+        finally:
+            self.viewport = saved_viewport
+
+    def _node(self, el, parent, *, instance=False, viewport_size=None):
         tag = _tag(el)
         if tag in (
             "defs",
@@ -1060,9 +1189,9 @@ class _Translator:
         local = _parse_transform(el.get("transform", ""))
         if ir.determinant(local) == 0:
             return []
+        if tag == "svg" and el is not self.root:
+            return self._nested_svg(el, st, local, viewport_size)
         if tag in ("g", "svg", "symbol"):
-            if tag == "svg" and el is not self.root:
-                raise SVGIRError("svgir_unsupported_element", "nested SVG viewport")
             children = [n for child in el for n in self._node(child, st)]
         elif tag == "use":
             href = el.get("href") or el.get(XLINK_HREF, "")
@@ -1079,29 +1208,37 @@ class _Translator:
                 )
                 if min(w, h) <= 0:
                     return []
-                vb = _numbers(target.get("viewBox", ""))
-                if vb:
-                    if len(vb) != 4 or min(vb[2:]) <= 0:
-                        raise SVGIRError("svgir_invalid", "symbol viewBox")
-                    symbol_map = svgcoord.viewbox_to_pt(vb, w, h, target.get("preserveAspectRatio"))
-                    viewport = vb[2], vb[3]
-                else:
-                    symbol_map, viewport = ir.IDENTITY, (w, h)
+                symbol_map, viewport = self._viewport_mapping(target, w, h)
                 saved_viewport = self.viewport
+                active = self.active_viewports.get(target)
                 try:
                     self.viewport = viewport
+                    self.active_viewports[target] = viewport
                     content = self._node(target, st, instance=True)
                 finally:
                     self.viewport = saved_viewport
+                    if active is None:
+                        self.active_viewports.pop(target, None)
+                    else:
+                        self.active_viewports[target] = active
                 mapped = ir.Group(tuple(content), transform=symbol_map)
-                viewport_clip = ir.Path(
-                    (("M", 0, 0), ("L", w, 0), ("L", w, h), ("L", 0, h), ("Z",))
+                target_style = self._style(target, st)
+                clip = (
+                    self._viewport_clip(w, h)
+                    if target_style["overflow"] in ("hidden", "scroll")
+                    else None
                 )
-                clip = None if target.get("overflow") == "visible" else viewport_clip
                 children = [ir.Group((mapped,), transform=offset, clip=clip)]
             else:
                 local = ir.compose(offset, local)
-                children = self._node(target, st, instance=True)
+                children = self._node(
+                    target,
+                    st,
+                    instance=True,
+                    viewport_size=(el.get("width"), el.get("height"))
+                    if _tag(target) == "svg"
+                    else None,
+                )
         elif tag == "text":
             children = self._text(el, st)
         elif st.get("visibility") in ("hidden", "collapse"):

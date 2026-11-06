@@ -45,6 +45,7 @@ order: 330
   下划线的用户合同逐句来自旧 `_draw_text`，改这些先改前端 TextView 那一侧的同一语义。
 - **计算原图的EPS准备叶子（ADR0166）**：`originaleps.prepare_scene_ps`消费完整冻结SVG和物理尺寸，经同一SVGIR与批准字体排字，准备有界PS；`epscontainer.pack_prepared_eps`仅在既有Matplotlib worker封EPS，不重新画场景、不排字、不启动外部进程。内部闭式`scene-ps/1`核SVG/PS摘要、尺寸、字节与展开预算；摘要不是任意PS的安全沙盒，不能开放成用户PS执行接口。父层不import Matplotlib，worker不需HarfBuzz/PDFium等native extras；旧live Figure/Type42及画布EPS合同不变。
   精确零alpha消去、不透明ClipUnion按原序表达；部分object/group alpha、image/imported-page及SVGIR不支持的表达保留结构化拒绝，不能变不透明、丢装饰或整图栅格化。看护`tests/test_native_scene_eps.py`以独立Ghostscript/PDFium比较真实文字/装饰/几何/像素，覆盖剪裁并集、组alpha和payload边界；叶子资格不代替HTTP/界面/发行资格。
+- **嵌套SVG viewport**：`svgir.svg_to_ir`经同一`svgcoord.viewbox_to_pt`解释根、symbol/use与nested svg，局部百分比/物理单位、非零viewBox、PAR、x/y及自身/祖先transform不得重复应用。overflow的静态/CSS与继承只改变同一viewport裁剪；显式clip-path替代同元素隐式overflow clip，祖先clip仍取交集，clip定义的百分比保留其定义viewport上下文。零viewport不绘制，负值/非法几何与既有字节/展开/深度预算仍拒绝，不通过拆wrapper或删除clip降保真。看护`tests/test_svgir_nested_viewports.py`以手算几何、真实Chrome与独立PDFium/GS验证嵌套百分比、实例、clip holes/union、透明度、标注/留白合成；静态安全检查只增加overflow属性，不放开URL/脚本/外部资源。
 - **源产物冻结一次、核两次**：`sources.StaticSourceResolver` 只认「磁盘原件 + 无 override」，
   不跑脚本（RC-019）；带 override / runtime 素材抛 `source_needs_execution`（U08 接 worker + 回执，
   RC-017：绝不拿 materialized cache 冒充）；`read_frozen()` 在读字节那一刻核 sha256，不符就是
