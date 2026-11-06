@@ -409,6 +409,146 @@ def test_group_missing_snapshot_never_takes_exemption(gate, policy, tmp_path):
     assert verdict["status"] == "failure" and verdict["reason"] == "group_snapshot_required"
 
 
+@pytest.mark.parametrize(
+    "author",
+    [
+        {"login": "erwanjun", "id": HOLDER},
+        {"login": "web-flow", "id": 19864447},
+        {"login": "github-actions[bot]", "id": 41898282},
+        None,
+    ],
+)
+def test_group_contributors_come_from_original_prs_not_synthetic_metadata(gate, author):
+    snapshot = _group_snapshot()
+    candidate = {**_commit("erwanjun", HOLDER), "author": author}
+    candidate["committer"] = {"login": "web-flow", "id": 19864447}
+    context = {"repository_id": REPO, "base_sha": BASE, "head_sha": HEAD}
+    people, unresolved, members = gate.collect_group_contributors(snapshot, context, [candidate])
+    assert [(p["login"], p["ids"]) for p in people] == [("someone", [EXTERNAL])]
+    assert unresolved == [] and members == [{"pr": PR, "headSha": "c" * 40}]
+
+
+@pytest.mark.parametrize("shas", [[], ["d" * 40], [HEAD, HEAD]])
+def test_synthetic_candidate_sha_binding_and_completeness_are_still_required(gate, shas):
+    context = {"repository_id": REPO, "base_sha": BASE, "head_sha": HEAD}
+    with pytest.raises(gate.ConfigError, match="候选提交"):
+        gate.collect_group_contributors(
+            _group_snapshot(), context, [{**_commit("erwanjun", HOLDER), "sha": s} for s in shas]
+        )
+
+
+def test_a_bot_in_original_pr_is_still_a_contributor(gate):
+    original = {**_commit("web-flow", 19864447), "sha": "c" * 40}
+    snapshot = _group_snapshot(commits=[original])
+    context = {"repository_id": REPO, "base_sha": BASE, "head_sha": HEAD}
+    people, unresolved, _ = gate.collect_group_contributors(
+        snapshot, context, [_commit("erwanjun", HOLDER)]
+    )
+    assert [(p["login"], p["ids"]) for p in people] == [
+        ("someone", [EXTERNAL]),
+        ("web-flow", [19864447]),
+    ]
+    assert unresolved == []
+
+
+@pytest.mark.parametrize("source", ["candidate", "original_pr"])
+@pytest.mark.parametrize("message", [None, 1, False, [], {}])
+def test_group_rejects_nonstring_commit_messages(gate, policy, tmp_path, source, message):
+    candidate = [_commit("erwanjun", HOLDER)]
+    snapshot = _group_snapshot(
+        author="erwanjun", uid=HOLDER, commits=[{**candidate[0], "sha": "c" * 40}]
+    )
+    candidate = copy.deepcopy(candidate)
+    item = candidate[0] if source == "candidate" else snapshot["prs"][0]["commits"][0]
+    item["commit"]["message"] = message
+    assert (
+        _cli(
+            gate,
+            tmp_path,
+            policy,
+            {},
+            event="merge_group",
+            group_snapshot=snapshot,
+            commits_override=candidate,
+        )
+        == 2
+    )
+
+
+@pytest.mark.parametrize("source", ["candidate", "original_pr"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        ("commit", "message"),
+        ("commit",),
+        ("commit", "author"),
+        ("commit", "author", "email"),
+        ("author",),
+        ("author", "login"),
+        ("author", "id"),
+    ],
+)
+def test_group_rejects_missing_commit_identity_content(gate, policy, tmp_path, source, path):
+    candidate = [_commit("erwanjun", HOLDER)]
+    snapshot = _group_snapshot(
+        author="erwanjun", uid=HOLDER, commits=[{**candidate[0], "sha": "c" * 40}]
+    )
+    candidate = copy.deepcopy(candidate)
+    item = candidate[0] if source == "candidate" else snapshot["prs"][0]["commits"][0]
+    for key in path[:-1]:
+        item = item[key]
+    del item[path[-1]]
+    assert (
+        _cli(
+            gate,
+            tmp_path,
+            policy,
+            {},
+            event="merge_group",
+            group_snapshot=snapshot,
+            commits_override=candidate,
+        )
+        == 2
+    )
+
+
+@pytest.mark.parametrize("source", ["candidate", "original_pr"])
+def test_group_accepts_an_explicit_empty_commit_message(gate, policy, tmp_path, source):
+    candidate = [_commit("erwanjun", HOLDER)]
+    snapshot = _group_snapshot(
+        author="erwanjun", uid=HOLDER, commits=[{**candidate[0], "sha": "c" * 40}]
+    )
+    candidate = copy.deepcopy(candidate)
+    item = candidate[0] if source == "candidate" else snapshot["prs"][0]["commits"][0]
+    item["commit"]["message"] = ""
+    assert (
+        _cli(
+            gate,
+            tmp_path,
+            policy,
+            {},
+            event="merge_group",
+            group_snapshot=snapshot,
+            commits_override=candidate,
+        )
+        == 0
+    )
+
+
+def test_missing_original_pr_message_cannot_hide_its_only_coauthor(gate, policy, tmp_path, capsys):
+    candidate = [_commit("erwanjun", HOLDER)]
+    original = {**_commit("erwanjun", HOLDER), "sha": "c" * 40}
+    original["commit"]["message"] = "c\n\nCo-authored-by: Unknown <u@example.com>"
+    snapshot = _group_snapshot(author="erwanjun", uid=HOLDER, commits=[original])
+    kwargs = dict(event="merge_group", group_snapshot=snapshot, commits_override=candidate)
+    # The unresolved coauthor exists only in the original PR, not in the synthetic candidate.
+    assert _cli(gate, tmp_path, policy, {"eligible": True}, **kwargs) == 1
+    assert json.loads(capsys.readouterr().out)["reason"] == "unresolved_contributors"
+    del original["commit"]["message"]
+    assert _cli(gate, tmp_path, policy, {"eligible": True}, **kwargs) == 2
+    assert json.loads(capsys.readouterr().out)["reason"] == "config_error"
+
+
 def test_external_group_pr_author_is_checked_before_local_exemption(
     gate, policy, tmp_path, monkeypatch
 ):

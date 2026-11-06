@@ -569,6 +569,33 @@ def _queue_snapshot(pages, repository_id: int) -> list[dict]:
     return entries
 
 
+def _validate_group_commit_content(commits: list) -> None:
+    """GitHub 原始提交内容必须齐全，不能把丢失的消息 / 身份字段当空字符串。"""
+    if not isinstance(commits, list):
+        raise ConfigError("group 提交列表不是数组")
+    for item in commits:
+        if not isinstance(item, dict):
+            raise ConfigError("group 提交内容不是对象")
+        meta = item.get("commit")
+        if (
+            not isinstance(meta, dict)
+            or not isinstance(meta.get("message"), str)
+            or not isinstance(meta.get("author"), dict)
+            or not isinstance(meta["author"].get("email"), str)
+            or "author" not in item
+        ):
+            raise ConfigError("group 提交缺少有效 message / author.email / author")
+        author = item["author"]
+        if author is not None and (
+            not isinstance(author, dict)
+            or not isinstance(author.get("login"), str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*(?:\[bot\])?", author["login"])
+            or type(author.get("id")) is not int
+            or not 0 < author["id"] <= 2**53 - 1
+        ):
+            raise ConfigError("group 提交的 GitHub author login / id 无效")
+
+
 def collect_group_contributors(raw, context: dict, commits: list) -> tuple[list, list, list]:
     """独立 GitHub 快照：完整队列前后不变，逐 PR 核作者 id、head 和全部提交。"""
     try:
@@ -610,7 +637,9 @@ def collect_group_contributors(raw, context: dict, commits: list) -> tuple[list,
         )
         if not isinstance(raw["prs"], list) or len(raw["prs"]) != len(members):
             raise ConfigError("group PR 发起人枚举不完整")
-        # 合并候选的提交也检查；原始 PR 的提交另外枚举，避免 squash/rebase 丢掉作者。
+        # 候选 compare 只核完整性与 head 绑定；GitHub 生成的提交可能属于合入者。
+        # 贡献者与服务 binding 一致，只来自完整原始 PR（含发起人、作者、trailer）。
+        _validate_group_commit_content(commits)
         candidate_shas = [item["sha"] for item in commits]
         if (
             not candidate_shas
@@ -619,7 +648,7 @@ def collect_group_contributors(raw, context: dict, commits: list) -> tuple[list,
             or len(set(candidate_shas)) != len(candidate_shas)
         ):
             raise ConfigError("group 候选提交 head 缺失或分页重复")
-        all_commits, authors = list(commits), []
+        all_commits, authors = [], []
         for member, snapshot in zip(members, raw["prs"], strict=True):
             before, after = snapshot["before"], snapshot["after"]
 
@@ -669,6 +698,7 @@ def collect_group_contributors(raw, context: dict, commits: list) -> tuple[list,
                 or snapshot["compare_base"] != pr_base
             ):
                 raise ConfigError("group PR 的提交枚举不完整")
+            _validate_group_commit_content(items)
             shas = [item["sha"] for item in items]
             if (
                 any(not isinstance(s, str) or not SHA_RE.fullmatch(s) for s in shas)
