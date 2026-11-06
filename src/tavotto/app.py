@@ -10406,7 +10406,7 @@ def _fix_session_env(sess) -> dict:
     # The public environment payload deliberately omits absolute paths.
     py = getattr(sess.plan, "interpreter", None)
     if isinstance(py, str) and py:
-        prefix = Path(py).parent.parent
+        prefix = engine_convertdeps._prefix_of(py)
         if prefix.is_dir():
             out["env_prefixes"] = [prefix]
         # 当前在用的环境（含内置 runtime）要让 `list_environments` 列得出来，否则 AI 只能在外部 Python 里选，
@@ -10416,7 +10416,7 @@ def _fix_session_env(sess) -> dict:
         out["current_environment"] = {
             "python": py,
             "source": source if isinstance(source, str) else "",
-            "label": "Tavotto built-in Python" if bundled else Path(py).parent.parent.name,
+            "label": "Tavotto built-in Python" if bundled else prefix.name,
         }
     return out
 

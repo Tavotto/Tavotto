@@ -4268,15 +4268,49 @@ def test_ai_command_starts_a_conda_style_batch_file(tmp_path, monkeypatch, spell
 
 
 @pytest.mark.skipif(os.name != "nt", reason="解析只在 Windows 上做")
-def test_ai_command_bare_conda_uses_the_install_that_owns_the_environment(tmp_path, monkeypatch):
-    """TVD-V7R4 的现场：Anaconda 不在 PATH 上。判据是**子进程真的跑起来**，卡上写着实际的路径。"""
-    from tavotto.engine import launcher
+@pytest.mark.parametrize("named", [False, True], ids=["base", "named"])
+def test_ai_command_bare_conda_uses_the_install_that_owns_the_environment(
+    tmp_path, monkeypatch, named
+):
+    """TVD-V7R4：未枚举环境，PATH 没有 conda；从应用真实上下文定位所属安装并真正执行。"""
+    from types import SimpleNamespace
+
+    from tavotto import app as appmod
     from tavotto.engine.fixtools import command
 
     ctx = _windows_fix_ctx(tmp_path, monkeypatch)
-    monkeypatch.setattr(command, "_writable_env_prefixes", lambda _ctx: ["env-prefix"])
-    monkeypatch.setattr(launcher, "find_conda_exe", lambda prefix: sys.executable)
+    ctx.environments.clear()
+    root = ctx.home / "miniconda3"
+    prefix = root / "envs" / "research" if named else root
+    prefix.mkdir(parents=True)
+    (prefix / "python.exe").touch()  # 环境解释器只用来分类；命令与 freeze 各有执行器
+    (prefix / "conda-meta").mkdir()
+    (root / "conda-meta").mkdir(exist_ok=True)
+    conda = root / "Scripts" / "conda.exe"
+    conda.parent.mkdir()
+    # 用真实 Python 充当 conda 可执行文件；保留其原标准库与 DLL 来源，不装 Conda、不联网。
+    base = Path(sys.base_prefix)
+    shutil.copy2(base / "python.exe", conda)
+    for dll in base.glob("python*.dll"):
+        shutil.copy2(dll, conda.parent / dll.name)
+    monkeypatch.setenv("PYTHONHOME", str(base))
+    monkeypatch.setenv("PATH", str(Path(os.environ["SystemRoot"]) / "System32"))
+    monkeypatch.delenv("CONDA_EXE", raising=False)
+    facts = appmod._fix_session_env(
+        SimpleNamespace(
+            plan=SimpleNamespace(
+                interpreter=str(prefix / "python.exe"), environment={"source": "conda"}
+            )
+        )
+    )
+    ctx.env_prefixes = facts["env_prefixes"]
+    ctx.current_environment = facts["current_environment"]
+    assert ctx.environments == {}
     out = tmp_path / "conda-ran.txt"
-    r = _run_command(ctx, ["conda", "-c", f"open({str(out)!r}, 'w').write('x')"])
+    code = f"open({str(out)!r}, 'w').write('x')"
+    r = _run_command(ctx, ["conda", "-c", code])
     assert not r.is_error, r.content
-    assert out.exists() and Path(sys.executable).name in ctx.asker.cards[0]["command"]
+    assert out.exists()
+    assert ctx.asker.cards[0]["command"] == command.scrub(command._shown([str(conda), "-c", code]))
+    assert command.writable_envs(ctx) == [(os.path.realpath(prefix), str(prefix / "python.exe"))]
+    assert any(py == str(prefix / "python.exe") for py in ctx.environments.values())

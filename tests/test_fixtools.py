@@ -1741,15 +1741,18 @@ def test_list_environments_lists_the_session_environment_including_the_bundled_r
     assert seen == [str(bundled)]
 
 
-def test_the_app_hands_the_plans_interpreter_to_the_fix_context(tmp_path):
+@pytest.mark.parametrize("layout", ["bin/python", "Scripts/python.exe", "python.exe"])
+def test_the_app_hands_the_plans_interpreter_to_the_fix_context(tmp_path, layout):
     from types import SimpleNamespace
 
     from tavotto import app as appmod
 
-    py = tmp_path / "rt" / "bin" / "python"
+    prefix = tmp_path / "rt"
+    py = prefix.joinpath(*layout.split("/"))
     py.parent.mkdir(parents=True)
     plan = SimpleNamespace(interpreter=str(py), environment={"source": "bundled"})
     out = appmod._fix_session_env(SimpleNamespace(plan=plan))
+    assert out["env_prefixes"] == [prefix]
     assert out["current_environment"]["python"] == str(py)
     assert out["current_environment"]["source"] == "bundled"
     FixContext.for_fix_session("s1", tmp_path, **out)  # 字段名必须是 FixContext 认的

@@ -493,6 +493,66 @@ def test_a_prefix_inside_or_over_tavottos_own_install_is_never_writable(box, mon
     )  # 包目录本身也在保护根里
 
 
+@pytest.mark.parametrize("named", [False, True], ids=["base", "named"])
+@pytest.mark.parametrize("layout", ["python.exe", "Scripts/python.exe", "bin/python"])
+def test_session_conda_prefix_is_usable_without_listing_environments(
+    box, monkeypatch, named, layout
+):
+    """生产上下文：未枚举环境、PATH 无 conda；真实前缀同时供程序定位、可写清单与快照使用。"""
+    from types import SimpleNamespace
+
+    from tavotto import app as appmod
+    from tavotto.engine import launcher
+
+    root = box.home / "miniconda3"
+    prefix = root / "envs" / "research" if named else root
+    py = put(prefix.joinpath(*layout.split("/")), b"")
+    (prefix / "conda-meta").mkdir()
+    (root / "conda-meta").mkdir(exist_ok=True)
+    conda = put(root / "Scripts" / "conda.exe", b"")
+    conda.chmod(0o755)
+    monkeypatch.delenv("CONDA_EXE", raising=False)
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setattr(launcher, "_is_windows", lambda: True)
+    monkeypatch.setattr(command, "os", SimpleNamespace(name="nt", path=os.path, sep=os.sep))
+    facts = appmod._fix_session_env(
+        SimpleNamespace(plan=SimpleNamespace(interpreter=str(py), environment={"source": "conda"}))
+    )
+    ctx = change_ctx(box, environments={}, **facts)
+    assert ctx.environments == {}
+    assert command._windows_program(ctx, ["conda", "install"]) == [str(conda), "install"]
+    assert facts["env_prefixes"] == [prefix]
+    assert facts["current_environment"]["label"] == prefix.name
+    assert command.writable_envs(ctx) == [(os.path.realpath(prefix), str(py))]
+    ids = command._snapshot_env_ids(ctx)
+    assert len(ids) == 1 and ctx.environments[ids[0]] == str(py)
+    assert command.writable_envs(ctx) == [(os.path.realpath(prefix), str(py))]
+    assert os.path.realpath(root / "envs") not in command._writable_env_prefixes(ctx)
+
+
+@pytest.mark.parametrize("kind", ["system", "builtin"])
+def test_session_environment_still_passes_writable_protection(box, monkeypatch, kind):
+    from types import SimpleNamespace
+
+    from tavotto import app as appmod
+    from tavotto.engine import runtime
+
+    prefix = box.tmp / "envs" / kind
+    py = put(prefix / "python.exe", b"")
+    if kind == "system":
+        put(prefix / "Lib" / "EXTERNALLY-MANAGED", b"")
+    else:
+        monkeypatch.setattr(runtime, "bundled_python", lambda: str(py))
+    facts = appmod._fix_session_env(
+        SimpleNamespace(plan=SimpleNamespace(interpreter=str(py), environment={"source": kind}))
+    )
+    ctx = change_ctx(box, environments={}, **facts)
+    assert facts["env_prefixes"] == [prefix]
+    assert command.writable_envs(ctx) == []
+    assert command._snapshot_env_ids(ctx) == []
+    assert ctx.environments == {}
+
+
 def test_a_refused_write_in_the_sandbox_suggests_tier2_but_never_runs_it(box, monkeypatch):
     seen = _spawn_counter(monkeypatch)
     ctx = change_ctx(box)
