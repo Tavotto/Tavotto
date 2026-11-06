@@ -42,6 +42,12 @@
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
+### 2026-11-06 实施：向量生成脚本Windows编码合同
+
+- 当前共享native接线树的旧compute/恢复/导出和Windows回归组合191项，188通过、2既有skip、1失败，pytest exit1（native-shared-legacy-regression.xml）。唯一失败准确落在本扩展新增gen_chart_model_vectors.py没有固定stdout/stderr UTF8；不是产品绘图/导出失败，也没有将整组误记通过。
+- 生成脚本补与既有build_frontend入口一致的两流reconfigure；Ruff/格式通过，目标Windows门禁1项复跑通过（chart-vector-encoding.xml），16个模型golden vectors实际校对通过，退出码均0。未变更向量、模型判据或原有Windows门禁；无新产品行为，不重复无关的280秒组合。
+- 脚本兼容修复独立提交；native渲染/前端/可见性仍未提交，等待最终同版验证与真实界面追验。
+
 ### 2026-11-06 实施：原生profile与可重放v2包合同
 
 - chartprofile集中定义legacy-scaffold/1与native-manifest/1，验证有界原序完整edits；v1默认embed/extract的原有2240字节黄金产物和身份保持不变。native显式写v2，额外闭式profile/overrides；预算仍是原model/binding/profile/edits合计2MiB，未扩大外层SVG/源预算。

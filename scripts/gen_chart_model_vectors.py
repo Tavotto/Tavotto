@@ -14,6 +14,11 @@ import json
 import sys
 from pathlib import Path
 
+# 校对结果会被CI/父进程收集；Windows管道也必须与仓库脚本合同一致。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
