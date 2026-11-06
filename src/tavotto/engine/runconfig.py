@@ -491,7 +491,7 @@ def import_portable(project_root: str | Path, records) -> tuple[RunConfig, ...]:
     先验证完整批，再在全部 writer 的共同锁里核冲突/容量，一次原子写。已有同 ID
     的非敏感精确记录只复用；不按 argv 改 ID、不覆盖敏感占位、不淘汰任何记录。
     """
-    from . import documentpackage
+    from . import packagemembers
 
     invalid = RunConfigUnsupported("无法导入这份运行配置", reason="portable_record_invalid")
     if not isinstance(records, (list, tuple)):
@@ -507,8 +507,8 @@ def import_portable(project_root: str | Path, records) -> tuple[RunConfig, ...]:
         ):
             raise invalid
         try:
-            documentpackage.project_member_key("scripts/" + row["script"])
-        except documentpackage.PackageError as exc:
+            packagemembers.project_member_key("scripts/" + row["script"])
+        except packagemembers.PackageError as exc:
             raise RunConfigUnsupported(
                 "运行配置的脚本身份不可携带", reason="portable_script_invalid"
             ) from exc

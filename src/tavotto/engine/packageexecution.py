@@ -11,7 +11,7 @@ import json
 import re
 from pathlib import PureWindowsPath
 
-from . import documentpackage, figcapture, launchctx, registry, runconfig, workdir
+from . import figcapture, launchctx, packagemembers, registry, runconfig, workdir
 
 VERSION = 1
 COVERAGE_REASONS = frozenset(
@@ -35,11 +35,11 @@ _REGISTRY_OPTIONAL = {"artifacts", "stem_aliases"}
 
 
 def _invalid(detail: str = "Invalid portable execution metadata") -> None:
-    raise documentpackage.PackageError("invalid_execution", detail)
+    raise packagemembers.PackageError("invalid_execution", detail)
 
 
 def _mismatch(detail: str = "Execution metadata and packaged resources disagree") -> None:
-    raise documentpackage.PackageError("execution_resource_mismatch", detail)
+    raise packagemembers.PackageError("execution_resource_mismatch", detail)
 
 
 def _fields(value, fields: set[str]) -> dict:
@@ -58,9 +58,9 @@ def _id(value, *, script: bool = False) -> str:
     if not isinstance(value, str):
         _invalid("Execution IDs must be project-relative paths")
     try:
-        documentpackage.project_member_key(("scripts/" if script else "assets/") + value)
-    except documentpackage.PackageError as exc:
-        raise documentpackage.PackageError(
+        packagemembers.project_member_key(("scripts/" if script else "assets/") + value)
+    except packagemembers.PackageError as exc:
+        raise packagemembers.PackageError(
             "invalid_execution", "Unsafe execution resource ID"
         ) from exc
     return value
@@ -79,7 +79,7 @@ def _unique(seen: set, key) -> None:
 
 
 def _path_key(value: str, *, script: bool = False) -> str:
-    return documentpackage.project_member_key(("scripts/" if script else "assets/") + value)
+    return packagemembers.project_member_key(("scripts/" if script else "assets/") + value)
 
 
 def _registry(value) -> dict:
@@ -121,9 +121,7 @@ def _registry(value) -> dict:
     try:
         validator.load_data({"scripts": expected}, source="<package>")
     except (RuntimeError, TypeError, ValueError) as exc:
-        raise documentpackage.PackageError(
-            "invalid_execution", "Invalid portable registry"
-        ) from exc
+        raise packagemembers.PackageError("invalid_execution", "Invalid portable registry") from exc
     cleaned = validator.entries()
     for script, item in expected.items():
         actual = cleaned.get(script)
@@ -175,9 +173,7 @@ def validate_execution(raw) -> dict:
         try:
             tokens = runconfig.validate_argv(argv)
         except runconfig.InvalidArgv as exc:
-            raise documentpackage.PackageError(
-                "invalid_execution", "Invalid portable argv"
-            ) from exc
+            raise packagemembers.PackageError("invalid_execution", "Invalid portable argv") from exc
         row = {"id": reference, "script": script, "argv": list(tokens)}
         by_run[reference] = row
         runs.append(row)
@@ -249,7 +245,7 @@ def validate_execution(raw) -> dict:
         )
         return json.loads(encoded)
     except (ValueError, UnicodeError, RecursionError) as exc:
-        raise documentpackage.PackageError("invalid_execution", "Invalid execution JSON") from exc
+        raise packagemembers.PackageError("invalid_execution", "Invalid execution JSON") from exc
 
 
 def validate_resources(execution, normalized_records) -> None:
@@ -268,8 +264,8 @@ def validate_resources(execution, normalized_records) -> None:
             _id(resource_id, script=row["kind"] == "script")
             _digest(digest)
             key = _path_key(resource_id, script=row["kind"] == "script")
-        except documentpackage.PackageError as exc:
-            raise documentpackage.PackageError(
+        except packagemembers.PackageError as exc:
+            raise packagemembers.PackageError(
                 "execution_resource_mismatch", "Invalid execution resource row"
             ) from exc
         if (row["kind"], resource_id) in rows:
