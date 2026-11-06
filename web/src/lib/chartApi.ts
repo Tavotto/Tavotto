@@ -12,6 +12,8 @@ export interface SceneInventory {
   view_box: number[] | null
   nodes: { id: string, tag: string, text?: string, fill?: string, stroke?: string }[]
   truncated: boolean
+  /** 后端已验证完整冷重放的自包含 SVG；只预填草稿，确认前不写排版。 */
+  restored_chart?: PanelChartState
 }
 
 export interface ChartAxisEvidence {
@@ -22,15 +24,12 @@ export interface ChartAxisEvidence {
   scale: string
 }
 
-export interface ChartBindRequest {
+interface ChartBindBaseRequest {
   file: string
   axes_id: string
   rect: [number, number, number, number]
   axes_nodes?: string[]
-  x?: ChartAxisEvidence
   y?: ChartAxisEvidence
-  x_kind?: 'categorical'
-  categories_col?: string
   series: {
     node: string
     x_col?: string
@@ -44,6 +43,11 @@ export interface ChartBindRequest {
   grid_text?: string
   completeness?: string
 }
+
+export type ChartBindRequest = ChartBindBaseRequest & (
+  | { x: ChartAxisEvidence, x_kind?: never, categories_col?: never }
+  | { x?: never, x_kind: 'categorical', categories_col: string }
+)
 
 export interface ChartComputeResult {
   svg: string

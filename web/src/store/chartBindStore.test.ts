@@ -65,6 +65,8 @@ beforeEach(() => {
     openSeq: 0,
     step: 'scene',
     scene: null,
+    draftSource: 'new',
+    draftChart: null,
     form: DEFAULT_FORM,
     formRev: 0,
     result: null,
@@ -228,6 +230,167 @@ const staleChart = {
   binding: { model_rev: 1 },
   formRev: 0,
 } as PanelChartState & { formRev: number }
+
+function restorableChart(): PanelChartState {
+  return {
+    model: {
+      ...CHART.model,
+      axes: [{ id: 'ax1', rect: [20, 30, 200, 150], xlim: [1, 100], ylim: [2, 200],
+        xscale: 'log', yscale: 'linear', invert_x: true, invert_y: false }],
+      series: [
+        { id: 's1', axes: 'ax1', node: 'curve', kind: 'errorbar', x: 'time', y: 'value', yerr: 'error',
+          style: { color: '#248acf', linewidth: 2, label: 'sample' } },
+        { id: 's2', axes: 'ax1', node: 'heatmap', kind: 'image', x: '-', y: '-', grid: 'grid',
+          cbar_node: 'colorbar', style: { cmap: 'viridis', vmin: 0, vmax: 4 } },
+      ],
+      dataset: { columns: { time: [1, 10], value: [2, 20], error: [0.1, 0.2] },
+        grids: { grid: { values: [[1, 2], [3, 4]] } } },
+    },
+    binding: { ...CHART.binding, entries: [
+      { object: 'series:s1', node: 'curve' },
+      { object: 'series:s2', node: 'heatmap' },
+      { object: 'axes:ax1', node: 'axis-x' },
+      { object: 'axes:ax1', node: 'axis-y' },
+      { object: 'axes:ax1', node: 'colorbar' },
+    ] },
+  }
+}
+
+describe('self-contained SVG recovery draft', () => {
+  it('fills data, calibration, series styles and grid without granting confirmation', async () => {
+    const restored = restorableChart()
+    const before = structuredClone(restored)
+    vi.mocked(chartInspect).mockResolvedValue({ ...SCENE, restored_chart: restored })
+    useChartBindStore.getState().openFor(panel())
+    await Promise.resolve()
+    const s = useChartBindStore.getState()
+    expect(s.draftSource).toBe('svg')
+    expect(s.form.rect).toEqual([20, 30, 200, 150])
+    expect(s.form.x).toEqual({ p1_user: 0, p1_value: 100, p2_user: 1, p2_value: 1, scale: 'log' })
+    expect(s.form.y).toEqual({ p1_user: 0, p1_value: 2, p2_user: 1, p2_value: 200, scale: 'linear' })
+    expect(s.form.datasetText).toBe('time\tvalue\terror\n1\t2\t0.1\n10\t20\t0.2')
+    expect(s.form.series).toEqual([
+      expect.objectContaining({ node: 'curve', kind: 'errorbar', yerrCol: 'error', style: restored.model.series[0].style }),
+      expect.objectContaining({ node: 'heatmap', kind: 'image', cbarNode: 'colorbar', style: restored.model.series[1].style }),
+    ])
+    expect(s.form.axesNodes).toEqual(['axis-x', 'axis-y'])
+    expect(s.form.gridText).toBe('1\t2\n3\t4')
+    expect(s.result).toBeNull()
+    expect(chartBindConfirmReady(s)).toBe(false)
+    expect(chartBind).not.toHaveBeenCalled()
+    expect(chartCompute).not.toHaveBeenCalled()
+    expect(restored).toEqual(before)
+  })
+
+  it('keeps this panel edits instead of replacing them with the embedded older chart', async () => {
+    const existing = restorableChart()
+    existing.model.axes[0].xlim = [10, 1000]
+    existing.model.dataset.columns.value = [50, 100]
+    vi.mocked(chartInspect).mockResolvedValue({ ...SCENE, restored_chart: restorableChart() })
+    useChartBindStore.getState().openFor({ ...panel(), chart: existing })
+    await Promise.resolve()
+    const s = useChartBindStore.getState()
+    expect(s.draftSource).toBe('panel')
+    expect(s.form.x.p1_value).toBe(1000)
+    expect(s.form.datasetText).toContain('1\t50\t0.1')
+  })
+
+  it('previews the unchanged recovered model intact and only rebuilds after form edits', async () => {
+    const restored = restorableChart()
+    restored.model.axes[0].xlabel = 'preserved axis label'
+    restored.model.dataset.grids!.unused = { values: [[8, 9]] }
+    vi.mocked(chartInspect).mockResolvedValue({ ...SCENE, restored_chart: restored })
+    vi.mocked(chartCompute).mockResolvedValue({ svg: '<svg/>', facts: {}, scene_digest: '', render_revision: '', model_digest: '', binding_digest: '', engine: CHART.model.engine })
+    useChartBindStore.getState().openFor(panel())
+    await Promise.resolve()
+    await useChartBindStore.getState().confirmBinding()
+    expect(chartBind).not.toHaveBeenCalled()
+    expect(chartCompute).toHaveBeenCalledWith('p1.svg', expect.objectContaining(restored))
+    expect(chartBindConfirmReady(useChartBindStore.getState())).toBe(true)
+    expect(useChartBindStore.getState().result?.model.dataset.grids?.unused).toEqual({ values: [[8, 9]] })
+    useChartBindStore.getState().patchForm({ gridText: '4\t3\n2\t1' })
+    vi.mocked(chartBind).mockResolvedValue(CHART)
+    await useChartBindStore.getState().confirmBinding()
+    expect(chartBind).toHaveBeenCalledWith(expect.objectContaining({
+      axes_nodes: ['axis-x', 'axis-y'], grid_text: '4\t3\n2\t1',
+      series: [expect.objectContaining({ node: 'curve' }), expect.objectContaining({ cbar_node: 'colorbar' })],
+    }))
+  })
+
+  it('retains delimiters, quotes and line breaks in restored table cells', async () => {
+    const restored = restorableChart()
+    // 这些字符串是合法类别列；ChartDataset 的旧数字列类型尚未表达该后端合同。
+    const categories = ['A\tB', 'C\n"D"']
+    Object.assign(restored.model.dataset.columns, { category: categories })
+    restored.model.axes[0].kind = 'categorical'
+    restored.model.axes[0].categories = categories
+    restored.model.series[0].x = 'category'
+    vi.mocked(chartInspect).mockResolvedValue({ ...SCENE, restored_chart: restored })
+    useChartBindStore.getState().openFor(panel())
+    await Promise.resolve()
+    const s = useChartBindStore.getState()
+    expect(s.form.xKind).toBe('categorical')
+    expect(s.form.categoriesCol).toBe('category')
+    expect(s.form.datasetText).toContain('"A\tB"')
+    expect(s.form.datasetText).toContain('"C\n""D"""')
+    expect(restored.model.dataset.columns).toHaveProperty('category', categories)
+  })
+
+  it('does not overwrite changed recovery drafts when the scene is loaded again', async () => {
+    vi.mocked(chartInspect).mockResolvedValue({ ...SCENE, restored_chart: restorableChart() })
+    useChartBindStore.getState().openFor(panel())
+    await Promise.resolve()
+    useChartBindStore.getState().patchForm({ datasetText: 'time\tvalue\n1\t99' })
+    await useChartBindStore.getState().loadScene()
+    expect(useChartBindStore.getState().form.datasetText).toBe('time\tvalue\n1\t99')
+    expect(useChartBindStore.getState().draftSource).toBe('svg')
+  })
+
+  it('late embedded data from another panel cannot mark the active ordinary SVG as recovered', async () => {
+    const first = deferred<SceneInventory>()
+    vi.mocked(chartInspect).mockReturnValueOnce(first.promise).mockResolvedValueOnce(SCENE)
+    useChartBindStore.getState().openFor(panel('old'))
+    useChartBindStore.getState().openFor(panel('current'))
+    await Promise.resolve()
+    first.resolve({ ...SCENE, restored_chart: restorableChart() })
+    await Promise.resolve()
+    const s = useChartBindStore.getState()
+    expect(s.file).toBe('current.svg')
+    expect(s.draftSource).toBe('new')
+    expect(s.form.datasetText).toBe('')
+  })
+
+  it('project changes invalidate pending restoration without opening or confirming it', async () => {
+    const pending = deferred<SceneInventory>()
+    vi.mocked(chartInspect).mockReturnValueOnce(pending.promise)
+    useChartBindStore.getState().openFor(panel())
+    setCurrentProjectId('different-project')
+    pending.resolve({ ...SCENE, restored_chart: restorableChart() })
+    await Promise.resolve()
+    const s = useChartBindStore.getState()
+    expect(s.open).toBe(false)
+    expect(s.scene).toBeNull()
+    expect(s.draftSource).toBe('new')
+    expect(s.result).toBeNull()
+  })
+
+  it('sends categorical column evidence without conflicting numeric x calibration', async () => {
+    vi.mocked(chartBind).mockImplementation(async request => {
+      // 与后端 categorical 合同相同：类别位置由数据列决定，不能同时给 numeric x。
+      expect(request).not.toHaveProperty('x')
+      expect(request).toMatchObject({ x_kind: 'categorical', categories_col: 'category' })
+      return CHART
+    })
+    vi.mocked(chartCompute).mockResolvedValue({ svg: '<svg/>', facts: {}, scene_digest: '', render_revision: '', model_digest: '', binding_digest: '', engine: CHART.model.engine })
+    useChartBindStore.setState({ file: 'category.svg' })
+    useChartBindStore.getState().patchForm({ xKind: 'categorical', categoriesCol: 'category',
+      datasetText: 'category\tvalue\nA\t1\nB\t2', series: [{ node: 'bars', kind: 'bar', xCol: 'category', yCol: 'value' }] })
+    await useChartBindStore.getState().confirmBinding()
+    expect(chartBind).toHaveBeenCalledOnce()
+    expect(chartCompute).toHaveBeenCalledOnce()
+    expect(chartBindConfirmReady(useChartBindStore.getState())).toBe(true)
+  })
+})
 
 describe('chart bind state safety (F1-F3)', () => {
   it('F1: keeps B inventory when A inspect resolves after opening B', async () => {

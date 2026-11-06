@@ -7,7 +7,7 @@ import { chartBind, chartCompute, chartInspect } from '@/lib/chartApi'
 import { literal } from '@/i18n'
 import { useChartBindStore } from '@/store/chartBindStore'
 import { useDocumentStore } from '@/store/documentStore'
-import { emptyProject, type PanelObject } from '@/types/document'
+import { emptyProject, type PanelChartState, type PanelObject } from '@/types/document'
 
 vi.mock('@/lib/chartApi', () => ({ chartBind: vi.fn(), chartCompute: vi.fn(), chartInspect: vi.fn() }))
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -18,6 +18,13 @@ const chart = {
   binding: { model_rev: 1, scene_digest: 'a'.repeat(64), entries: [] },
 }
 const preview = { svg: '<svg xmlns="http://www.w3.org/2000/svg"/>', facts: {}, scene_digest: chart.model.scene_digest, render_revision: 'revision', model_digest: 'model', binding_digest: 'binding', engine: chart.model.engine }
+const restoredChart: PanelChartState = {
+  model: { ...chart.model, axes: [{ id: 'ax1', rect: [10, 20, 70, 60], xlim: [1, 3], ylim: [2, 8],
+    xscale: 'linear', yscale: 'linear', invert_x: false, invert_y: false }],
+  series: [{ id: 's1', axes: 'ax1', node: 'curve-a', x: 'x', y: 'y', kind: 'line', style: { color: '#248acf' } }],
+  dataset: { columns: { x: [1, 3], y: [2, 8] } } },
+  binding: { ...chart.binding, entries: [{ object: 'series:s1', node: 'curve-a' }] },
+}
 const button = (value: string) => document.querySelector<HTMLButtonElement>(`[data-chart-bind-action="${value}"]`)!
 const currentPanel = () => useDocumentStore.getState().doc.objects.find(o => o.id === panel.id) as PanelObject
 
@@ -65,4 +72,55 @@ it('failed preview and cancelling never change the document or history', async (
   expect(currentPanel().chart).toBeUndefined()
   await act(async () => useChartBindStore.getState().close())
   expect(useDocumentStore.getState().past.length).toBe(history)
+})
+
+it('recovered SVG data remains a visible draft until preview and one explicit undoable confirmation', async () => {
+  const history = useDocumentStore.getState().past.length
+  vi.mocked(chartInspect).mockResolvedValue({ scene_digest: restoredChart.model.scene_digest,
+    w_pt: 100, h_pt: 100, view_box: [0, 0, 100, 100], nodes: [{ id: 'curve-a', tag: 'path' }],
+    truncated: false, restored_chart: restoredChart })
+  vi.mocked(chartBind).mockResolvedValue(restoredChart)
+  await act(async () => useChartBindStore.getState().openFor(panel))
+  const notice = document.querySelector('[data-chart-restored]')
+  expect(notice).not.toBeNull()
+  expect(notice?.textContent).toContain('SVG')
+  expect(document.querySelector<HTMLTextAreaElement>('[data-chart-data]')?.value).toBe('x\ty\n1\t2\n3\t8')
+  expect(currentPanel().chart).toBeUndefined()
+  expect(useDocumentStore.getState().past.length).toBe(history)
+  expect(chartCompute).not.toHaveBeenCalled()
+  expect(document.querySelector('[data-chart-bind-action="confirm"]')).toBeNull()
+
+  await act(async () => button('preview').click())
+  expect(currentPanel().chart).toBeUndefined()
+  expect(useDocumentStore.getState().past.length).toBe(history)
+  await act(async () => button('confirm').click())
+  expect(currentPanel().chart).toEqual(restoredChart)
+  expect(useDocumentStore.getState().past.length).toBe(history + 1)
+  await act(async () => useDocumentStore.getState().undo())
+  expect(currentPanel().chart).toBeUndefined()
+  await act(async () => useDocumentStore.getState().redo())
+  expect(currentPanel().chart).toEqual(restoredChart)
+})
+
+it('cancelling a recovered chart leaves its SVG panel unchanged', async () => {
+  const history = useDocumentStore.getState().past.length
+  vi.mocked(chartInspect).mockResolvedValue({ scene_digest: restoredChart.model.scene_digest,
+    w_pt: 100, h_pt: 100, view_box: [0, 0, 100, 100], nodes: [{ id: 'curve-a', tag: 'path' }],
+    truncated: false, restored_chart: restoredChart })
+  await act(async () => useChartBindStore.getState().openFor(panel))
+  expect(document.querySelector('[data-chart-restored]')).not.toBeNull()
+  await act(async () => useChartBindStore.getState().close())
+  expect(currentPanel()).toEqual(panel)
+  expect(useDocumentStore.getState().past.length).toBe(history)
+})
+
+it('categorical charts offer category evidence and omit the numeric x request', async () => {
+  await act(async () => useChartBindStore.getState().patchForm({ xKind: 'categorical', categoriesCol: 'category',
+    datasetText: 'category\ty\nA\t1\nB\t2', series: [{ kind: 'bar', node: 'curve-a', xCol: 'category', yCol: 'y' }] }))
+  expect(document.querySelector('[data-chart-axis="x"]')).toBeNull()
+  expect(document.querySelector('[data-chart-axis="y"]')).not.toBeNull()
+  await act(async () => button('preview').click())
+  const request = vi.mocked(chartBind).mock.calls[0]?.[0]
+  expect(request).toMatchObject({ x_kind: 'categorical', categories_col: 'category' })
+  expect(request).not.toHaveProperty('x')
 })

@@ -5,6 +5,7 @@ import { Dialog } from '@/components/ui/Dialog'
 import { Button } from '@/components/ui/Button'
 import { TextArea, TextInput } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
+import { Notice } from '@/components/ui/Notice'
 import { msg } from '@/i18n/message'
 import { fileUrl } from '@/lib/api'
 import { chartBindConfirmReady, useChartBindStore } from '@/store/chartBindStore'
@@ -70,7 +71,7 @@ export function ChartBindDialog() {
           </label>
           <p className="text-xs text-ink-3">{t('chartBind.axesNodesHelp')}</p>
           <div className="grid gap-3 sm:grid-cols-2">
-            {(['x', 'y'] as const).map(axis => (
+            {(['x', 'y'] as const).filter(axis => axis !== 'x' || s.form.xKind === 'numeric').map(axis => (
               <fieldset key={axis} data-chart-axis={axis} className="space-y-2">
                 <legend className="type-title">{axis === 'x' ? t('chartBind.axis.x') : t('chartBind.axis.y')}</legend>
                 <Select ariaLabel={t('chartBind.scale')} value={s.form[axis].scale} options={scaleOptions}
@@ -130,6 +131,9 @@ export function ChartBindDialog() {
               value={s.form.gridText} onChange={e => s.patchForm({ gridText: e.target.value })} />
           </label>}
         </fieldset>
+        {s.draftSource === 'svg' && <Notice data-chart-restored title={t('chartBind.restoredTitle')}>
+          {t('chartBind.restoredHelp')}
+        </Notice>}
         {s.error && <p className="text-sm text-danger-content">{s.error.code ? `[${s.error.code}] ` : ''}{s.error.message}</p>}
         {s.previewSvg && <div data-chart-comparison className="grid gap-3 sm:grid-cols-2">
           <figure className="min-w-0"><figcaption className="text-xs text-ink-2">{t('chartBind.original')}</figcaption>

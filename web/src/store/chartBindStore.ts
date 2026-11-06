@@ -43,20 +43,22 @@ export const DEFAULT_FORM: ChartBindForm = {
   xKind: 'numeric', categoriesCol: '', series: [{ ...DEFAULT_SERIES }],
   datasetText: '', gridText: '',
 }
-function formFor(panel: PanelObject): ChartBindForm {
+function formFor(chart?: PanelChartState): ChartBindForm {
   const form = structuredClone(DEFAULT_FORM)
-  const chart = panel.chart
   const ax = chart?.model.axes[0]
   if (!chart || !ax) return form
   const columns = chart.model.dataset.columns
   const names = Object.keys(columns)
-  const quote = (v: string | number) => `"${String(v).replaceAll('"', '""')}"`
+  const quote = (v: string | number) => /[\t\r\n"]/.test(String(v))
+    ? `"${String(v).replaceAll('"', '""')}"` : String(v)
   form.datasetText = [names, ...Array.from(
     { length: Math.max(0, ...Object.values(columns).map(c => c.length)) },
     (_, i) => names.map(name => columns[name][i] ?? ''),
-  )].map(row => row.map(quote).join(',')).join('\n')
+  )].map(row => row.map(quote).join('\t')).join('\n')
   form.rect = [...ax.rect]
-  form.axesNodes = chart.binding.entries.filter(e => e.object.startsWith('axes:')).map(e => e.node)
+  const colorbarNodes = new Set(chart.model.series.map(sr => sr.cbar_node).filter(Boolean))
+  form.axesNodes = chart.binding.entries
+    .filter(e => e.object.startsWith('axes:') && !colorbarNodes.has(e.node)).map(e => e.node)
   form.x = { ...DEFAULT_AXIS, scale: ax.xscale, p1_value: ax.xlim[ax.invert_x ? 1 : 0], p2_value: ax.xlim[ax.invert_x ? 0 : 1] }
   form.y = { ...DEFAULT_AXIS, scale: ax.yscale, p1_value: ax.ylim[ax.invert_y ? 1 : 0], p2_value: ax.ylim[ax.invert_y ? 0 : 1] }
   form.xKind = ax.kind === 'categorical' ? 'categorical' : 'numeric'
@@ -79,6 +81,8 @@ interface ChartBindState {
   requestSeq: number
   step: ChartBindStep
   scene: SceneInventory | null
+  draftSource: 'new' | 'panel' | 'svg'
+  draftChart: PanelChartState | null
   form: ChartBindForm
   formRev: number
   result: (PanelChartState & { formRev: number }) | null
@@ -118,19 +122,21 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
   }
   return {
     open: false, panelId: null, file: null, projectId: currentProjectId(),
-    openSeq: 0, requestSeq: 0, step: 'scene', scene: null,
+    openSeq: 0, requestSeq: 0, step: 'scene', scene: null, draftSource: 'new', draftChart: null,
     form: structuredClone(DEFAULT_FORM), formRev: 0, ...invalidPreview,
     openFor: (panel) => {
       if (panel.fileKind !== 'svg' || !panel.fileId) return
       set(s => ({
         open: true, panelId: panel.id, file: panel.fileId, projectId: currentProjectId(),
         openSeq: s.openSeq + 1, requestSeq: s.requestSeq + 1, step: 'scene', scene: null,
-        form: formFor(panel), formRev: 0, ...invalidPreview,
+        form: formFor(panel.chart), draftSource: panel.chart ? 'panel' : 'new',
+        draftChart: panel.chart ? structuredClone(panel.chart) : null,
+        formRev: 0, ...invalidPreview,
       }))
       void get().loadScene()
     },
     close: () => set(s => ({
-      open: false, panelId: null, file: null, scene: null,
+      open: false, panelId: null, file: null, scene: null, draftSource: 'new', draftChart: null,
       projectId: currentProjectId(), openSeq: s.openSeq + 1, requestSeq: s.requestSeq + 1,
       ...invalidPreview,
     })),
@@ -155,10 +161,13 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
         const graphic = scene.nodes.find(n =>
           ['path', 'rect', 'circle', 'ellipse', 'line', 'polygon', 'polyline', 'image', 'use', 'g'].includes(n.tag)
           && !['figure_1', 'patch_1'].includes(n.id))
-        set({ scene, busy: false, step: 'data', form: {
-          ...s.form,
-          series: s.form.series.map(sr => ({ ...sr, node: sr.node || graphic?.id || '' })),
-          rect: s.form.rect[2] > 0 ? s.form.rect : scene.view_box ? [...scene.view_box] as ChartBindForm['rect'] : s.form.rect,
+        const restored = s.draftSource === 'new' && s.formRev === 0 ? scene.restored_chart : undefined
+        const form = restored ? formFor(restored) : s.form
+        set({ scene, busy: false, step: 'data', draftSource: restored ? 'svg' : s.draftSource,
+          draftChart: restored ? structuredClone(restored) : s.draftChart, form: {
+          ...form,
+          series: form.series.map(sr => ({ ...sr, node: sr.node || graphic?.id || '' })),
+          rect: form.rect[2] > 0 ? form.rect : scene.view_box ? [...scene.view_box] as ChartBindForm['rect'] : form.rect,
         } })
       } catch (err) { fail(s, err) }
     },
@@ -167,11 +176,19 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
       const s = startRequest()
       set({ result: null, previewSvg: null, previewOk: false })
       try {
+        if (s.draftChart && s.formRev === 0) {
+          if (!ownsRequest(s)) return
+          set({ result: { ...structuredClone(s.draftChart), formRev: s.formRev }, busy: false, step: 'confirm' })
+          await get().runPreview()
+          return
+        }
         const f = s.form
         const result = await chartBind({
           file: s.file!, axes_id: 'ax1', rect: f.rect, axes_nodes: f.axesNodes,
-          x: { ...f.x }, y: { ...f.y },
-          ...(f.xKind === 'categorical' ? { x_kind: 'categorical', categories_col: f.categoriesCol } : {}),
+          y: { ...f.y },
+          ...(f.xKind === 'categorical'
+            ? { x_kind: 'categorical' as const, categories_col: f.categoriesCol }
+            : { x: { ...f.x } }),
           series: f.series.map(sr => ({ node: sr.node, kind: sr.kind,
             x_col: sr.kind === 'image' ? undefined : sr.xCol,
             y_col: sr.kind === 'image' ? undefined : sr.yCol,

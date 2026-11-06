@@ -1285,17 +1285,22 @@ def api_svg_chart_inspect():
     """计算图表绑定入口的只读盘点（ADR 0166）：同一份字节重新校验 + 稳定节点清单。
 
     与 `/api/file` 同一条 `safe_resolve` 路径约束、同一个 svgcheck 边界；
-    失败 422 带稳定码，原文件零改动，无任何写入与执行。
+    普通 SVG 零执行；自包含计算包仅重放声明式模型，核对可见内容后提供恢复草稿。
+    原文件零改动，不执行用户脚本。
     """
-    from . import svgscene
-
-    path = safe_resolve(request.args.get("id", ""))
+    file_id = request.args.get("id", "")
+    path = safe_resolve(file_id)
     if path.suffix.lower() not in SVG_EXT:
         return jsonify({"code": "svg_scene_invalid", "error": "not an SVG file"}), 422
     try:
-        inventory = svgscene.read_scene(path)
-    except svgscene.SceneError as exc:
-        return jsonify({"code": exc.code, "error": exc.detail}), 422
+        inventory, restored = _inspect_chart_source(file_id, path)
+    except engine_exportreq.ExportRequestError as exc:
+        status = 409 if exc.code in ("chart_source_changed", "chart_engine_mismatch") else 422
+        return jsonify({"code": exc.code, "error": exc.message}), status
+    except engine_pool.WorkerError as exc:
+        return jsonify({"code": exc.code, "error": str(exc)}), 503
+    if restored is not None:
+        inventory = {**inventory, "restored_chart": restored}
     return jsonify(inventory)
 
 
@@ -1384,10 +1389,9 @@ def _chart_engine_identity() -> dict:
 def api_svg_chart_bind():
     """显式建模确认（ADR 0166，SG06/10）：校准证据 + 系列选择 → 模型 + 绑定。
 
-    只做判据与产物，不落盘、不执行任何代码；确认预览由 /compute 承担。
+    只做判据与产物，不落盘、不执行用户脚本；自包含包先核对声明式冷重放。
     """
 
-    from . import svgscene
     from .engine import chartbind
 
     body = request.get_json(silent=True) or {}
@@ -1398,9 +1402,12 @@ def api_svg_chart_bind():
     if path.suffix.lower() not in SVG_EXT:
         return jsonify({"code": "svg_scene_invalid", "error": "not an SVG file"}), 422
     try:
-        scene = svgscene.read_scene(path)
-    except svgscene.SceneError as exc:
-        return jsonify({"code": exc.code, "error": exc.detail}), 422
+        scene, _restored = _inspect_chart_source(file_id, path)
+    except engine_exportreq.ExportRequestError as exc:
+        status = 409 if exc.code in ("chart_source_changed", "chart_engine_mismatch") else 422
+        return jsonify({"code": exc.code, "error": exc.message}), status
+    except engine_pool.WorkerError as exc:
+        return jsonify({"code": exc.code, "error": str(exc)}), 503
     try:
         engine = _chart_engine_identity()
         result = chartbind.build_model_and_binding(
@@ -1456,6 +1463,25 @@ def _assert_chart_source(path: Path, expected: str) -> None:
         raise engine_exportreq.ExportRequestError(
             "chart_source_changed", "chart source changed", {}
         )
+
+
+def _inspect_chart_source(file_id: str, path: Path) -> tuple[dict, dict | None]:
+    """绑定与恢复使用原场景身份；自包含包必须先通过实际重放。"""
+    from . import chartbundle, svgscene
+
+    source = _read_chart_source(path)
+    try:
+        bundle = chartbundle.extract_chart(source)
+        if bundle is None:
+            return svgscene.scene_inventory(source), None
+    except (chartbundle.ChartBundleError, svgscene.SceneError) as exc:
+        raise engine_exportreq.ExportRequestError(exc.code, exc.detail, {}) from exc
+    snapshot = _render_chart_snapshot(file_id, bundle.chart)
+    if snapshot.source_sha256 != hashlib.sha256(source).hexdigest():
+        raise engine_exportreq.ExportRequestError(
+            "chart_source_changed", "chart source changed during inspection", {}
+        )
+    return snapshot.scene, snapshot.chart
 
 
 def _render_chart_snapshot(file_id: str, chart: dict) -> _ChartSnapshot:
