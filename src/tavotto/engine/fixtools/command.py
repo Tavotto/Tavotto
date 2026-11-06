@@ -18,6 +18,7 @@ import hashlib
 import os
 import re
 import shlex
+import shutil
 import signal
 import stat
 import subprocess
@@ -243,6 +244,26 @@ def _command_argv(args: dict) -> list[str] | ToolResult:
         or any(len(t) > COMMAND_TOKEN_CHARS or "\x00" in t for t in argv)
     ):
         return err("bad_arguments", "The command is empty, too long, or contains a NUL character.")
+    return argv
+
+
+def _windows_program(ctx: FixContext, argv: list[str]) -> list[str]:
+    """Windows：不经 shell 时 CreateProcess 只补 `.exe`，`conda`（`condabin` 里只有 `conda.bat`，桌面版的 PATH 上常常连它都没有）起不来。
+
+    在审批**之前**换成真实路径，卡上显示的就是实际执行的。只动不带路径的程序名：`conda` 先按环境前缀找所属安装的
+    `Scripts\\conda.exe`（口径同 `launcher.find_conda_exe`），其余只把 PATH 上的 `.bat` / `.cmd` 换成全路径，`.exe` 照旧交给 CreateProcess。"""
+    from .. import launcher
+
+    name = argv[0]
+    if os.name != "nt" or "/" in name or "\\" in name:
+        return argv
+    if name.lower() in ("conda", "conda.exe", "conda.bat"):
+        for prefix in _writable_env_prefixes(ctx):
+            if found := launcher.find_conda_exe(prefix):
+                return [found, *argv[1:]]
+    hit = shutil.which(name)
+    if hit and hit.lower().endswith((".bat", ".cmd")):
+        return [os.path.abspath(hit), *argv[1:]]
     return argv
 
 
@@ -755,7 +776,7 @@ def run_command(ctx: FixContext, args: dict) -> ToolResult:
         return argv
     # Read tools display home-relative paths. Resolve the same spelling before
     # policy checks, approval and spawn; shell=False does not expand it for us.
-    argv = [_expand(ctx, token) for token in argv]
+    argv = _windows_program(ctx, [_expand(ctx, token) for token in argv])
     outside = args.get("outside_sandbox")
     if outside is not None and not isinstance(outside, bool):
         return err("bad_arguments", "`outside_sandbox` must be true or false.")
@@ -988,7 +1009,7 @@ COMMAND_TOOLS: tuple[FixTool, ...] = (
         "up the project's scripts and puts back any the command changed, as a best-effort safeguard. Ask for it only "
         "when the command must write outside the environment, and say why. `cwd: project` is only for the second "
         "mode. Give `argv` (a list) or `command` (split into words; no shell: no pipes, redirects, `&&`, "
-        "substitutions). Leading ~/ in a whole argument resolves to the user's home before approval and execution; "
+        "substitutions). On Windows a bare `conda` resolves to the conda that owns this project's environment. Leading ~/ in a whole argument resolves to the user's home before approval and execution; "
         "other shell expansion is not performed. Never runs sudo, shells, disk tools, desktop/launchd/service tools, piping into a shell or "
         "recursive deletes of the root or home folder; secret-looking environment variables are removed; output is "
         "cut and masked; there is a time limit. A command longer than 8000 characters is refused with "

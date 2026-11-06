@@ -650,6 +650,7 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
 - **进程树**：命令的直接进程退出（或超时被叫停）后，`_reap_tree` 结束并**确认**整棵受管进程树退出，才收输出、才核对 / 放锁。POSIX：命令在自己的新会话 / 进程组里，`killpg(SIGKILL)` 到 `ProcessLookupError`（组里一个不剩）才算干净；Windows：Job Object（`KILL_ON_JOB_CLOSE`）终止并等活动进程归零，起不来退回 `taskkill /T`（Windows 路径未在 Windows 上实测）。确认不了时结果带 `processes_left`。这样后台孙进程既绕不过时限，也不会在第②档核对、放锁之后才去改脚本。盲区：自己 `setsid` 逃出进程组的进程 POSIX 上追不到（Linux 沙盒内有 `--unshare-pid`，随 init 退出全被收掉）。
 - **快照与可写清单同源**：快照覆盖 `writable_envs` 里**每一个**命令获准写入的环境（`change_python` 新建、只靠 `env_prefixes` 进来的都算；没登记 id 的现场登记 `cmd_env_<hash>`），不只会话创建时的前缀。
 - **Windows / 无沙盒**：#1358 之前没有沙盒，只有第②档（备份 + 单独点头照旧）：不带 `outside_sandbox` 的调用也直接弹第②档的卡，不返回错误让模型重试（TVD-V7R4，模型没重试时用户点了批准却什么都没发生）。没给 `reason` 时卡上没有 `reason` 字段，前端显示 `aiFix.outsideNoSandbox`。这不算自动升级：有沙盒的机器上第①档失败仍只提示。
+- **Windows 的程序名**：不经 shell 时 CreateProcess 只补 `.exe`，所以审批之前由 `_windows_program` 解析不带路径的程序名：`conda` → 环境所属安装的 `Scripts\\conda.exe`（`launcher.find_conda_exe`），PATH 上的 `.bat` / `.cmd` → 全路径；卡上显示解析后的路径。盲区：批处理由 cmd.exe 解释，参数里的 `&` 等不经我们转义（同 `.bat` 全路径，用户在卡上看到完整命令，第②档本来就能跑任意程序）。
 - **审计行**：多 `sandbox ∈ {hardened, outside, none}`（`none` = 没执行：被拒 / 没沙盒 / 未获同意）与 `command_tier ∈ {1, 2}`；命令、理由的文字**不进审计**（只记长度），`outside_sandbox` 布尔照记。执行前打快照（设置 + 目标环境 freeze）。
 - **活动与看门狗**：前端把 `activity.tool=run_command` 映射成「正在运行命令…」；命令在跑是在途工具，不算卡住；等卡片也不算。
 - **已知盲区（如实）**：

@@ -4255,7 +4255,7 @@ def test_ai_command_runs_after_the_card_and_its_background_child_cannot_outlive_
 def test_ai_command_starts_a_conda_style_batch_file(tmp_path, monkeypatch, spelling):
     """Anaconda 的 condabin 里只有 conda.bat，模型写 `conda install …` 时要真能起来。"""
     ctx = _windows_fix_ctx(tmp_path, monkeypatch)
-    tools = tmp_path / "condabin"
+    tools = tmp_path / "cond abin"  # 路径带空格：批处理走 cmd.exe，引号要对
     tools.mkdir()
     out = tmp_path / "bat-ran.txt"
     (tools / "fakeconda.bat").write_text(f'@echo off\r\necho %1> "{out}"\r\n', encoding="ascii")
@@ -4264,3 +4264,19 @@ def test_ai_command_starts_a_conda_style_batch_file(tmp_path, monkeypatch, spell
     r = _run_command(ctx, [program, "install"])
     assert not r.is_error, r.content
     assert out.read_text(encoding="ascii").strip() == "install"
+    assert "fakeconda.bat" in ctx.asker.cards[0]["command"]  # 卡上是实际执行的全路径
+
+
+@pytest.mark.skipif(os.name != "nt", reason="解析只在 Windows 上做")
+def test_ai_command_bare_conda_uses_the_install_that_owns_the_environment(tmp_path, monkeypatch):
+    """TVD-V7R4 的现场：Anaconda 不在 PATH 上。判据是**子进程真的跑起来**，卡上写着实际的路径。"""
+    from tavotto.engine import launcher
+    from tavotto.engine.fixtools import command
+
+    ctx = _windows_fix_ctx(tmp_path, monkeypatch)
+    monkeypatch.setattr(command, "_writable_env_prefixes", lambda _ctx: ["env-prefix"])
+    monkeypatch.setattr(launcher, "find_conda_exe", lambda prefix: sys.executable)
+    out = tmp_path / "conda-ran.txt"
+    r = _run_command(ctx, ["conda", "-c", f"open({str(out)!r}, 'w').write('x')"])
+    assert not r.is_error, r.content
+    assert out.exists() and Path(sys.executable).name in ctx.asker.cards[0]["command"]
