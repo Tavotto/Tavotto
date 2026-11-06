@@ -18,7 +18,8 @@
     "compare_png": "写回像素门的比较器（逐 RGBA 通道）",
     "identity": "后端身份 / 单位换算 / 闭集常量（进缓存键、严格同源对）",
     "worker_direct": "**不经 facade**：worker 的 matplotlib 直接序列化（SVG / EPS，及要了 EPS 时的 PDF/PNG/TIFF）",
-    "cancel_partial": "**不经 facade**：导出作业的取消 / partial / 终局字段顺序（engine/exportjob.py）"
+    "cancel_partial": "**不经 facade**：导出作业的取消 / partial / 终局字段顺序（engine/exportjob.py）",
+    "original_eps_preparation": "原图 EPS 的完整冻结 SVG 准备：共同 SVGIR/批准字形 → 有界 PS；固定 Matplotlib owned worker 只封容器，不在父进程加载科学栈"
   },
   "test_classes": {
     "user_contract": "用户合同：说的是用户能观察到的行为（尺寸、文件类型、像素网格不变、文本可检索、写回原件零改动…）。换后端后**逐字保留**。",
@@ -1227,6 +1228,48 @@
           "stage": "U10",
           "test": "tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed"
         }
+      ]
+    },
+    {
+      "name": "prepare_original_eps",
+      "kind": "function",
+      "category": "original_eps_preparation",
+      "signature": "prepare_original_eps(svg: bytes, page_pt: (w,h)) -> {payload: dict, facts: dict, notes: list}; OriginalEPSError 保留 code/params",
+      "callers": [
+        {
+          "file": "src/tavotto/pdfbackend/__init__.py",
+          "symbol": "prepare_original_eps",
+          "role": "实现无关的薄委托；只交付可信已排字 PS 请求，不接受任意字体/argv/命令"
+        }
+      ],
+      "tests": [
+        {
+          "file": "tests/test_native_eps_contract.py",
+          "symbol": "test_public_preparer_returns_json_facts_and_binds_exact_full_scene",
+          "contains": "pdfbackend.prepare_original_eps",
+          "class": "user_contract",
+          "note": "完整最终SVG精确字节身份、可序列化闭式请求和真实绘制事实"
+        },
+        {
+          "file": "tests/test_native_eps_contract.py",
+          "symbol": "test_public_errors_preserve_expression_reason_and_params",
+          "contains": "pdfbackend.prepare_original_eps",
+          "class": "user_contract",
+          "note": "部分alpha/gradient真实失败，不伪造不透明EPS；公共异常保留能力原因"
+        },
+        {
+          "file": "tests/test_native_eps_contract.py",
+          "symbol": "test_fixed_owned_eps_action_reads_complete_native_scene_with_existing_worker_only",
+          "contains": "pdfbackend.prepare_original_eps",
+          "class": "user_contract",
+          "note": "同一owned固定命令封完整native图及未绑定装饰，独立Ghostscript实际像素/尺寸，worker不依赖HB/qpdf/PDFium"
+        }
+      ],
+      "status": "public_contract",
+      "migration_criterion": "新增原图声明式来源支路，不替换旧Python/live Figure EPS。完整最终SVG经共同SVGIR/批准字形准备，source/PS摘要及物理尺寸与本次owned响应相符；独立PS读取器核实际完整墨迹和尺寸；部分alpha/未实现Paint/资源明确失败；父进程不import Matplotlib，worker不新增RenderCore native依赖。canvas EPS仍拒绝。",
+      "known_issues": [
+        "本机Matplotlib3.11.2已有真实独立PS验证；其它支持minor尚未验证。",
+        "部分alpha、共同SVGIR尚无的gradient/mask/objectBoundingBox clip及可见Image明确拒绝；原图文字为已排字轮廓。"
       ]
     }
   ],

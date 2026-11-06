@@ -59,7 +59,7 @@ export interface RouteFormat {
 }
 
 export interface PanelRoute {
-  source: 'disk' | 'redraw' | 'snapshot' | 'unavailable'
+  source: 'disk' | 'redraw' | 'snapshot' | 'declarative' | 'unavailable'
   embeds_disk_bitmap: boolean
   formats: Record<string, RouteFormat>
   /** EPS 给不给得出——不论用户勾没勾 */
@@ -71,6 +71,19 @@ export interface ExportRoute {
   scope: ExportRouteScope
   formats: string[]
   panels: Record<string, PanelRoute>
+}
+
+/** 后端可用性事实的最小投影；不携逐格式来源计划或其 conditions。 */
+export interface ExportOffers {
+  scope: ExportRouteScope
+  eps: Record<string, Pick<RouteFormat, 'how' | 'reason'> | undefined>
+}
+
+export function exportOffersOf(route: ExportRoute): ExportOffers {
+  return { scope: route.scope, eps: Object.fromEntries(Object.entries(route.panels).map(([id, panel]) => {
+    const offer = panel.offers?.eps
+    return [id, offer ? { how: offer.how, ...(offer.reason ? { reason: offer.reason } : {}) } : undefined]
+  })) }
 }
 
 const sameSet = (a: readonly string[], b: readonly string[]) =>
@@ -148,9 +161,18 @@ export function epsFromRoute(
   scope: ExportRouteScope,
   id: string,
 ): { ok: boolean; reason: 'none' | 'canvas_scope' | 'no_script' } | null {
-  // offers.eps 与所选格式无关（后端同一结论），只认范围
-  if (!route || route.scope !== scope) return null
-  const offer = route.panels[id]?.offers?.eps
+  return route ? epsFromOffers(exportOffersOf(route), scope, id) : null
+}
+
+export function epsFromOffers(
+  offers: ExportOffers | null | undefined,
+  scope: ExportRouteScope,
+  id: string,
+): { ok: boolean; reason: 'none' | 'canvas_scope' | 'no_script' } | null {
+  if (!offers || offers.scope !== scope) return null
+  // 同文件的多个实例可能有不同模型/绑定与来源；不借第一份 offer 授权另一份实例。
+  if (Object.keys(offers.eps).some((key) => key.startsWith(`${id}#`))) return null
+  const offer = offers.eps[id]
   if (!offer) return null
   if (offer.how !== 'unavailable') return { ok: true, reason: 'none' }
   if (offer.reason === 'eps_not_for_canvas') return { ok: false, reason: 'canvas_scope' }

@@ -49,7 +49,7 @@ order: 210
     （Deflate 无损；父进程没有 Pillow，**别为它引进 Pillow**；条带经 `tavotto/deflate.py` 并行压、产物逐字节同串行，ADR 0077）；位图源的分辨率
     标签只写源文件自己声明过的密度。EPS **只有 worker 的 matplotlib 写得出**
     （父进程没有 PostScript 写入器）：`scope=canvas` 逐项报 `eps_not_for_canvas`，
-    没有脚本的图报 `eps_needs_script`（有脚本但没有活 Figure 另报 `eps_needs_live_figure`），其余格式照常交付；要了 EPS 时 PDF/PNG/TIFF
+    非计算来源没有脚本的图报 `eps_needs_script`（有脚本但没有活 Figure 另报 `eps_needs_live_figure`），其余格式照常交付；旧脚本图要了 EPS 时 PDF/PNG/TIFF
     也让 worker 现画（`_resolve_panel_source(rerender=True)`），四个格式出自同一次
     脚本运行。**不许**用 `Pixmap.save(…, "ps")` 之类把位图裹成 PS 冒充矢量。
     **原图导出带画布标注（QA-WIN-20，2026-10-31）**：`original.objects`（`OriginalSource.objects`，仅 text / arrow / shape，坐标已由前端换算到原图图幅、
@@ -69,6 +69,7 @@ order: 210
     位图源的有效 ppi 仍按**图幅**（源像素网格与图幅一一对应），横纵密度不同时 `raster_target` 取整个页面的像素数；EPS 经 `epsoverlay.compose(offset_pt=…, clip_page=True)` 把原图 EPS 嵌在 `(l, b)`、整页裁到 BoundingBox。
     非零时 `w_mm` / `h_mm` 必填；四元组不合法或页面 ≤ 0 → `bad_pad`（碰磁盘之前拒绝，`web/src/i18n` errors 中英两份）。看护 `tests/test_export_original_pad.py`。
     「谁来渲染」在导出路上的唯一调用点是 `_serialize_figure()`。
+    **声明式计算原图EPS（ADR0166）**：复用完整冻结场景及RenderCore的`prepare_original_eps`契约，再交既有chart runner固定`pack_eps`动作封装；父进程不加载Matplotlib，worker不排字、不加载HB/PDFium，不调用外部转换器。场景准备/封装边界见`rendercore.md`。标注/留白的EPS取同一次完整合成SVG；未选择SVG也只增加内部中间表示，不增用户输出、不丢缩放/层序/clip。成功声明convert/矢量，失败保实际请求format及真实码；旧Python EPS叠加路径不变。看护`tests/test_native_eps_contract.py`、`tests/test_chart_eps_export.py`。
   * **SVG（X03，2026-10-15）**：追加为 `FORMATS = (pdf, png, eps, tiff, svg)`，前后端请求闭集同步；
     `original` 与 `canvas` 都走既有作业，不另开发布通道。SVG 是矢量格式，PPI 规则不变，文字**默认保留为 `<text>`**（ADR 0144，取代 X03 起的「一律转轮廓」；
     `scope=original` 的 matplotlib 图走 worker 独立的 `svg.fonttype=none` 一路：export 的 `svg_fonttype` / `svg_text_path` 两个可选字段，
@@ -125,6 +126,7 @@ order: 210
     `app._original_rerender` 的本体——**不许在这三处之外再写一遍「有 override / runtime / 要 EPS 就现画」**。
     `/api/export/validate` 在响应里带 `route`（`panels[id].source / embeds_disk_bitmap / formats[fmt] = {how: copy|convert|redraw|unavailable, reason?, conditions?}`），
     只回事实、不拦导出；`conditions`（`live_figure` / `svg_asset_binding` / `figure_snapshot`）是 route 给不出、导出时才核的前提。
+    可选`has_chart`事实仅在真实计算模型在场时传True，来源为`declarative`；原图各格式可尝试convert，EPS offer不依赖勾选格式，画布EPS仍不可用。缺省/显式False不改变旧响应或旧panel_route调用实参。这个来源事实不代替生产阶段的模型/附件/表达资格核验。
     route 算不出时响应不带 `route`（附加事实，validate 不因此失败）。原图范围里嵌入磁盘原件的 PDF / PNG / TIFF，
     产物 manifest 的 `provenance.sources` 记那份原件的 SourceArtifact（现画的临时 PDF 没有可独立核对的回执，不编）。
     与前端 `exportRoute.ts` 的 `embedsDiskBitmap` 同源对：`tests/golden/export_route_vectors.json`；看护 `tests/test_export_route.py`、

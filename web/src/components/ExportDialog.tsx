@@ -111,7 +111,7 @@ import {
   type ExportRequestInput,
 } from "@/lib/exportRequest";
 import { copiesSourceVerbatim as copiesVerbatimFromRoute, unavailablePanels, type ExportRoute } from "@/lib/exportRoute";
-import { fetchExportRoute, routeKeyOf, useExportRouteStore } from "@/store/exportRouteStore";
+import { fetchExportRoute, offerKeyOf, routeKeyOf, useExportRouteStore } from "@/store/exportRouteStore";
 import { buildBatchInput, buildMergedPdfInput, type BatchShared } from "@/lib/exportBatchInput";
 import { mergePdfPlan } from "@/lib/pdfPagesMerge";
 import { useScriptRunStore } from "@/store/scriptRunStore";
@@ -534,7 +534,9 @@ export function ExportDialog() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, checkedPanelId, checkedFileId]);
   const routeKey = routeKeyOf({ scope, formats, doc, panel, figureId });
+  const offerKey = offerKeyOf({ scope, doc, panel, figureId });
   const route = useExportRouteStore((s) => (s.key === routeKey ? s.route : null));
+  const offers = useExportRouteStore((s) => (s.offerKey === offerKey ? s.offers : null));
   const refreshRoute = useExportRouteStore((s) => s.refresh);
   const invalidateRoute = useExportRouteStore((s) => s.invalidate);
   // 打开的那一刻先把上一次的答案作废：250 ms 防抖 + 往返期间界面走退路（不比现状乐观），
@@ -863,7 +865,7 @@ export function ExportDialog() {
 
   /**
    * EPS 这次给不给得出（ADR 0046）。判据在 `epsAvailability()` 一处：画布范围
-   * 没有它（画布合成没有 PostScript 写入器），没有脚本的图也没有它。**不隐藏选项**：禁用并
+   * 没有它；原图读后端同来源offer，缺offer才走旧脚本退路。**不隐藏选项**：禁用并
    * 说原因；勾过它的用户切到画布时，请求里自动不带它（`buildExportRequest`）。
    */
   const unreachable = useMemo(
@@ -871,9 +873,9 @@ export function ExportDialog() {
     [scope, route, formats],
   );
   const eps = useMemo(
-    () => epsAvailability(scope, figureId, route, single),
+    () => offers ? epsAvailability(scope, figureId, route, single, offers) : epsAvailability(scope, figureId, route, single),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [scope, figureId, assets, runtimeAssets, route, single],
+    [scope, figureId, assets, runtimeAssets, route, offers, single],
   );
 
   function inputOf(over?: Partial<ExportRequestInput>): ExportRequestInput {
@@ -897,6 +899,7 @@ export function ExportDialog() {
       annotationsBelow: annotationsUnder,
       framePad,
       route,
+      offers,
       exportDir: exportDirNow,
       ...over,
     };
@@ -1838,7 +1841,7 @@ export function ExportDialog() {
                       format="png"
                       hint={ex("pngHint")}
                     />
-                    {/* EPS 只在「原图 + 有脚本」时给得出：不可用就禁用并说原因，不藏 */}
+                    {/* EPS只读后端offer；画布始终不可用，旧无offer按脚本退路。 */}
                     <FormatCheck
                       checked={formats.includes("eps") && eps.ok}
                       onChange={() => toggleFormat("eps")}

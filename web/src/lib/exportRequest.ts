@@ -28,7 +28,7 @@ import { artifactRequestFields, artifactValidationIssue, isAdoptedPanel, origina
 import { t as translate } from '@/i18n'
 import type { ExportObject, ExportOriginalSource, ExportRequest } from './api'
 import { checkFilename, stripOutputExtension, type FilenameReason } from './exportName'
-import { epsFromRoute, type ExportRoute } from './exportRoute'
+import { epsFromOffers, epsFromRoute, type ExportOffers, type ExportRoute } from './exportRoute'
 import { getOriginalOutputSpec, type OriginalOutputSpec } from './originalSpec'
 import { isZeroPad } from './framePad'
 import { useAssetStore } from '@/store/assetStore'
@@ -164,15 +164,16 @@ function canValidateOriginalSource(figureId: string, panel?: PanelObject | null)
 /**
  * EPS 为什么不可用。**闭集**，界面按它说一句人话（ADR 0046）。
  *
- * EPS 只有 worker 侧的 matplotlib 写得出（画布合成没有 PostScript 写入器），
- * 所以它只在「按原图导出一张**有脚本**的图」时存在：
+ * 后端 route.offers.eps 是可用性的权威。计算图表的完整声明式场景可转换为 EPS，
+ * 不需要用户脚本；paint/透明度与来源引用资格仍由实际 producer 逐项核验。
+ * 缺 route 时保持旧脚本/runtime 退路，不从前端 chart 状态猜 EPS 表达能力：
  *
  * * `canvas_scope`：画布合成走 RenderCore（PDF / PNG / TIFF），给不出 EPS；
  * * `no_script`：这张图在注册表里没有脚本（runtime 素材天生有），引擎没法重画；
  * * `figure_not_ready`：单图档（没有范围选择）里这张图此刻按原图导不出（还没运行过 / 源文件不在），
  *   于是静默按画布导，而画布没有 EPS——此时再说「选每张图单独导出」是指向一个不存在的选项，改说「先运行这张图」。
  *
- * 前端只判「有没有脚本」这一条；SVG 素材的 EPS 另需后端的字节绑定证明（`_produce_svg_asset_eps`，#1185），
+ * 旧脚本退路只判「有没有脚本」；未绑定 SVG 素材的 EPS 另需后端的字节绑定证明（`_produce_svg_asset_eps`，#1185），
  * 前端拿不到这个事实，**不预先禁用**——后端逐项失败并给真实原因（`eps_source_unverified` /
  * `eps_needs_live_figure`），界面显示逐项失败。
  *
@@ -189,6 +190,8 @@ export function epsAvailability(
   route?: ExportRoute | null,
   /** 单图档（没有范围选择）：画布范围只可能是「原图口径不可用」的静默退路 */
   single = false,
+  /** 仅同scope/完整来源事实下可复用的后端offer；由exportRouteStore按独立事实key提供。 */
+  offers?: ExportOffers | null,
 ): { ok: boolean; reason: EpsBlockReason } {
   if (scope !== 'original') {
     if (!single) return { ok: false, reason: 'canvas_scope' }
@@ -199,7 +202,7 @@ export function epsAvailability(
     return { ok: false, reason: 'figure_not_ready' }
   }
   if (!figureId) return { ok: false, reason: 'no_script' }
-  const fromRoute = epsFromRoute(route, scope, figureId)
+  const fromRoute = epsFromRoute(route, scope, figureId) ?? epsFromOffers(offers, scope, figureId)
   if (fromRoute) return fromRoute
   if (figureId.startsWith('runtime:')) return { ok: true, reason: 'none' }
   const asset = useAssetStore.getState().byId[figureId]
@@ -236,6 +239,8 @@ export interface ExportRequestInput {
   framePad?: FramePad | null
   /** 后端 validate 发布的 route（`lib/exportRoute`）；缺省走前端退路 */
   route?: ExportRoute | null
+  /** 已确认的同来源offer；不作为格式计划、不进入wire。 */
+  offers?: ExportOffers | null
   /**
    * 此刻生效的导出目录（`project.export_dir`）。**不进载荷**（后端自己读项目设置），只参与 `exportTargetKey`：
    * 撞名确认问的是「这个目录里的这几个文件」，目录换了确认就不再成立（QA-WIN-18）。
@@ -274,7 +279,9 @@ export function filenameProblem(raw: string, formats: readonly string[]): Filena
 export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
   // EPS 在这次范围 / 这张图上给不出时**不发**它：后端会逐项报 `eps_*` 失败，
   // 但界面上那个选项已经禁用并说了原因，再发一次等于让用户为同一件事看两遍
-  const epsOk = epsAvailability(input.scope, input.figureId ?? null, input.route).ok
+  const epsOk = (input.offers
+    ? epsAvailability(input.scope, input.figureId ?? null, input.route, false, input.offers)
+    : epsAvailability(input.scope, input.figureId ?? null, input.route)).ok
   const formats = FORMATS.filter((f) => input.formats.includes(f) && (f !== 'eps' || epsOk))
   const filename = stripOutputExtension(input.filename, formats)
   const raster = hasRaster(formats)
@@ -359,7 +366,9 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
  * 「覆盖」也就不许发。只量会改变输出目标的字段，不量画布内容 / 报告（那些随「覆盖」取最新）。
  */
 export function exportTargetKey(input: ExportRequestInput): string {
-  const epsOk = epsAvailability(input.scope, input.figureId ?? null, input.route).ok
+  const epsOk = (input.offers
+    ? epsAvailability(input.scope, input.figureId ?? null, input.route, false, input.offers)
+    : epsAvailability(input.scope, input.figureId ?? null, input.route)).ok
   const formats = FORMATS.filter((f) => input.formats.includes(f) && (f !== 'eps' || epsOk))
   return JSON.stringify([
     input.documentId,

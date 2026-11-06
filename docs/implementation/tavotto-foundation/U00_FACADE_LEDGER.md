@@ -19,6 +19,7 @@
 | `identity` | 后端身份 / 单位换算 / 闭集常量（进缓存键、严格同源对） |
 | `worker_direct` | **不经 facade**：worker 的 matplotlib 直接序列化（SVG / EPS，及要了 EPS 时的 PDF/PNG/TIFF） |
 | `cancel_partial` | **不经 facade**：导出作业的取消 / partial / 终局字段顺序（engine/exportjob.py） |
+| `original_eps_preparation` | 原图 EPS 的完整冻结 SVG 准备：共同 SVGIR/批准字形 → 有界 PS；固定 Matplotlib owned worker 只封容器，不在父进程加载科学栈 |
 
 ## 测试分类
 
@@ -27,7 +28,7 @@
 | `user_contract` | 用户合同：说的是用户能观察到的行为（尺寸、文件类型、像素网格不变、文本可检索、写回原件零改动…）。换后端后**逐字保留**。 |
 | `implementation_specific` | 实现特定断言：钉的是 PyMuPDF 的内部对象 / base-14 字体名 / get_drawings() 形状 / 私有函数。换后端时在迁移 ADR 里逐条换成新实现的独立证据（03 §6、01 §3）。 |
 
-## `__all__` 的 20 个导出项
+## `__all__` 的 21 个导出项
 
 | 导出项 | 类别 | 状态 | 产品调用方（文件 · 符号） | 现有测试（文件 · 符号（类）） | 已知缺陷 | 迁移判据 |
 |---|---|---|---|---|---|---|
@@ -51,6 +52,7 @@
 | `render_preview_png` | `preview_cache` | contract_kept_no_product_caller_after_u10 | （无产品调用方） | `tests/test_mcp_normalize.py` · `test_zero_edit_roundtrip_keeps_page_size_and_pixels` (user_contract)<br>`tests/test_retirement_scan.py` · `test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed` (user_contract) | — | U07/U08：新栅格运行时（PDFium 候选）按同一宽度出 PNG；缓存层不动；跨 renderer 的抗锯齿差异按 03 §6「需要校准」记录阈值，不全局放大。 |
 | `text_plan` | `text_metrics` | public_contract | `scripts/gen_glyph_plan_vectors.py` · `build` | `tests/test_glyph_plan.py` · `test_golden_vectors_match_python_side` (user_contract)<br>`tests/test_glyph_plan.py` · `test_subscript_two_is_primary_and_the_layers_have_no_fallback` (implementation_specific)<br>`tests/test_glyph_plan.py` · `test_box_drawing_is_rescued_by_the_fourth_step` (implementation_specific)<br>`tests/test_glyph_plan.py` · `test_unrenderable_character_is_missing_not_silently_dropped` (user_contract)<br>`tests/test_font_provenance.py` · `test_every_offered_family_can_actually_be_drawn` (user_contract) | — | U06：四层顺序不可交换（glyphplan.py 不动）；oracle 换成新字体集合；哪些字符落在哪一层按 D07 批准一次迁移并附向量 diff。 |
 | `text_width` | `text_metrics` | exported_without_product_caller | （无产品调用方） | `tests/test_typography_families.py` · `test_measuring_uses_the_same_family_as_writing` (user_contract)<br>`tests/test_retirement_scan.py` · `test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed` (user_contract) | — | U06：Typography 层给出同一签名；「量宽用的族 == 落笔用的族」这条用户合同保留。 |
+| `prepare_original_eps` | `original_eps_preparation` | public_contract | `src/tavotto/pdfbackend/__init__.py` · `prepare_original_eps` | `tests/test_native_eps_contract.py` · `test_public_preparer_returns_json_facts_and_binds_exact_full_scene` (user_contract)<br>`tests/test_native_eps_contract.py` · `test_public_errors_preserve_expression_reason_and_params` (user_contract)<br>`tests/test_native_eps_contract.py` · `test_fixed_owned_eps_action_reads_complete_native_scene_with_existing_worker_only` (user_contract) | 本机Matplotlib3.11.2已有真实独立PS验证；其它支持minor尚未验证。<br>部分alpha、共同SVGIR尚无的gradient/mask/objectBoundingBox clip及可见Image明确拒绝；原图文字为已排字轮廓。 | 新增原图声明式来源支路，不替换旧Python/live Figure EPS。完整最终SVG经共同SVGIR/批准字形准备，source/PS摘要及物理尺寸与本次owned响应相符；独立PS读取器核实际完整墨迹和尺寸；部分alpha/未实现Paint/资源明确失败；父进程不import Matplotlib，worker不新增RenderCore native依赖。canvas EPS仍拒绝。 |
 
 ### 各项备注
 
@@ -74,6 +76,7 @@
 - **`render_preview_png`**：签名 `render_preview_png(path, width_px, out) -> None`；U07 迁移证据 `tests/test_rendercore_preview.py::test_a_real_pdf_preview_is_rendered_by_the_child_at_the_bucket_width`；U07 迁移证据 `tests/test_rendercore_preview.py::test_touching_the_file_keeps_the_key_but_changing_its_bytes_changes_it`；U07 迁移证据 `tests/test_rendercore_preview.py::test_the_key_carries_width_background_renderer_build_and_fonts_policy`；U07 迁移证据 `tests/test_rendercore_preview.py::test_a_render_failure_raises_and_leaves_no_blank_or_stale_file`；U07 迁移证据 `tests/test_rendercore_preview.py::test_publish_yields_to_a_reader_holding_the_target_on_windows`；U08 迁移证据 `tests/test_rendercore_facade.py::test_render_preview_png_renders_the_first_page_at_the_bucket_width`；U08 迁移证据 `tests/test_rendercore_app.py::test_api_render_under_the_candidate_serves_a_png_of_the_bucket_width_from_the_cache`；U08 迁移证据 `tests/test_rendercore_app.py::test_api_render_under_the_candidate_reports_backpressure_as_503_and_other_failures_as_500`；U10 迁移证据 `tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed`
 - **`text_plan`**：签名 `text_plan(s, family="serif", bold=False, italic=False) -> list[(segment, layer)]`；严格同源对：src/tavotto/glyphplan.py ↔ web/src/lib/glyphPlan.ts（算法同源、oracle 不同源）；U06 迁移证据 `tests/test_rendercore_typography.py::test_layers_are_primary_cjk_missing_and_never_fallback`；U06 迁移证据 `tests/test_rendercore_typography.py::test_degree_sign_below_the_cjk_break_point_still_reaches_the_cjk_face_last`；U08 迁移证据 `tests/test_rendercore_facade.py::test_text_metrics_agree_with_the_retired_backend_within_the_approved_migration`；U08 迁移证据 `tests/test_rendercore_glyph_vectors.py::test_vectors_differ_from_the_retired_backend_only_in_the_approved_ways`；U10 迁移证据 `tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed`
 - **`text_width`**：签名 `text_width(s, size_pt, bold=False, italic=False, family="serif") -> pt`；产品代码里没有 pdfbackend.text_width 的调用点：换行 / 量宽在实现模块内部经 _mixed_width 走（_draw_text）。前端画布文字的量宽在浏览器里自己排（TextView）。契约层保留它是为了让 MCP / 预检将来能问同一把尺。；U06 迁移证据 `tests/test_rendercore_typography.py::test_width_is_the_sum_of_shaped_advances_of_the_same_plan`；U06 迁移证据 `tests/test_rendercore_writer.py::test_pen_position_between_runs_equals_the_shaped_advance`；U08 迁移证据 `tests/test_rendercore_facade.py::test_text_metrics_agree_with_the_retired_backend_within_the_approved_migration`；U10 迁移证据 `tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed`
+- **`prepare_original_eps`**：签名 `prepare_original_eps(svg: bytes, page_pt: (w,h)) -> {payload: dict, facts: dict, notes: list}; OriginalEPSError 保留 code/params`
 
 ## Canvas 面（RC-002）
 

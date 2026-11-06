@@ -30,6 +30,8 @@ KIND_RASTER, KIND_PDF, KIND_SVG, KIND_RUNTIME = "raster", "pdf", "svg", "runtime
 SOURCE_DISK, SOURCE_REDRAW, SOURCE_UNAVAILABLE = "disk", "redraw", "unavailable"
 #: 面板带保存时的 Figure 快照引用且本来要现画：不跑脚本，加载持久化的快照；引用过期则拒绝导出。
 SOURCE_SNAPSHOT = "snapshot"
+#: 计算图表的完整场景：声明式模型/绑定，不执行用户脚本；具体格式能力由真实 producer 核验。
+SOURCE_DECLARATIVE = "declarative"
 
 #: 一种格式的做法。
 HOW_COPY, HOW_CONVERT, HOW_REDRAW, HOW_UNAVAILABLE = "copy", "convert", "redraw", "unavailable"
@@ -84,6 +86,7 @@ def panel_route(
     overrides: Sequence[Any] | None,
     has_script: bool,
     has_snapshot: bool = False,
+    has_chart: bool = False,
 ) -> dict:
     """一个面板的 route：`{source, embeds_disk_bitmap, formats: {fmt: {how, reason?, conditions?}}}`。
 
@@ -96,7 +99,9 @@ def panel_route(
     executes = wants_execution(runtime=runtime, overrides=overrides, rerender=rerender)
     can_draw = runtime or has_script
     edits = wants_execution(runtime=runtime, overrides=overrides)
-    if edits and executes_from_snapshot(has_reference=has_snapshot):
+    if has_chart:
+        source = SOURCE_DECLARATIVE
+    elif edits and executes_from_snapshot(has_reference=has_snapshot):
         source = SOURCE_SNAPSHOT
     elif not executes:
         source = SOURCE_DISK
@@ -106,7 +111,9 @@ def panel_route(
         source = SOURCE_UNAVAILABLE
     else:
         source = SOURCE_DISK  # 原图范围：没有脚本，退回磁盘文件
-    static_svg_asset = svg_asset and not overrides and (canvas or not has_snapshot)
+    static_svg_asset = (
+        svg_asset and not has_chart and not overrides and (canvas or not has_snapshot)
+    )
     unedited_svg_asset = static_svg_asset and not canvas
     out: dict[str, dict] = {}
     for fmt in formats:
@@ -131,7 +138,7 @@ def panel_route(
             if COND_FIGURE_SNAPSHOT not in entry["conditions"]:
                 entry["conditions"].insert(0, COND_FIGURE_SNAPSHOT)
     # EPS 能不能给——**不论用户这次勾没勾**：对话框要在勾之前就说清楚这个选项可不可用（禁用并说原因）。
-    # EPS 一项不依赖来源（只看范围 / 有无脚本 / 是否 SVG 素材），所以与 formats 无关
+    # EPS offer 与是否勾选无关；声明式场景可尝试转换，其余沿旧脚本/快照事实。
     offers = {
         "eps": out["eps"]
         if "eps" in out
@@ -171,6 +178,13 @@ def _format_route(
     has_snapshot: bool,
     wants_svg: bool,
 ) -> dict:
+    if source == SOURCE_DECLARATIVE:
+        if fmt == "eps" and canvas:
+            return _unavailable(REASON_EPS_NOT_FOR_CANVAS)
+        # An offer is permission to attempt conversion of the same complete
+        # scene, not proof that PS can express its paints or that a source ref
+        # is valid. Those facts remain owned by the actual producer/resolver.
+        return {"how": HOW_CONVERT}
     if fmt == "eps":
         if canvas:
             return _unavailable(REASON_EPS_NOT_FOR_CANVAS)
@@ -215,7 +229,7 @@ def build_route(
 ) -> dict:
     """整次导出的 route：`{scope, formats, panels: {panel_id: panel_route}}`。
 
-    `panels` 每项 `{id, file_kind, overrides, has_script, has_snapshot?}`。同 id 的多个实例（画布上同一张图
+    `panels` 每项 `{id, file_kind, overrides, has_script, has_snapshot?, has_chart?}`。同 id 的多个实例（画布上同一张图
     摆了几次）只在它们 route 相同时合并；不同就各自带 `#n` 后缀留下来，不替它们裁决。
     """
     result: dict[str, dict] = {}
@@ -227,6 +241,7 @@ def build_route(
             overrides=panel.get("overrides"),
             has_script=bool(panel.get("has_script")),
             has_snapshot=bool(panel.get("has_snapshot")),
+            **({"has_chart": True} if panel.get("has_chart") else {}),
         )
         key = str(panel["id"])
         n = 1

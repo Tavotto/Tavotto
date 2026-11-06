@@ -61,6 +61,8 @@ import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { emptyProject, type CanvasObject, type PanelObject } from '@/types/document'
 import { seedExactRender } from '@/test/renderFixtures'
+import chartVectors from '../../../tests/golden/chart_model_vectors.json'
+import type { PanelChartState } from '@/types/document'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -1439,6 +1441,32 @@ describe('来源读后端 route（#1209）', () => {
     expect(epsDisabled(), '还没拿到 route：旧判据').toBe('true')
     await settle()
     expect(epsDisabled(), 'route.offers.eps 可用').toBeNull()
+  })
+
+  it('计算SVG勾选EPS后格式route尚未返回仍保持勾选，实际请求保留EPS', async () => {
+    routeOf = (req) => ({ scope: req.scope, formats: req.formats,
+      panels: { 'chart.svg': panelRoute({ source: 'declarative', embeds_disk_bitmap: false,
+        offers: { eps: { how: 'convert' } } }) } })
+    await setupRaster([])
+    const vector = chartVectors.vectors.find((v) => v.expect === 'ok')!
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('绑定计算图表'), (doc) => {
+        const p = doc.objects[0] as PanelObject
+        p.fileId = 'chart.svg'; p.fileKind = 'svg'; p.nativeW = 100; p.nativeH = 100
+        p.chart = structuredClone({ model: vector.model, binding: vector.binding }) as unknown as PanelChartState
+      })
+      useAssetStore.setState({ byId: { 'chart.svg': { id: 'chart.svg', kind: 'svg', mtime: 1 } } } as never)
+    })
+    await settle()
+    expect(formatBox('EPS').disabled, '后端已确认同一计算场景可转换').toBe(false)
+    routeDelayMs = 800
+    await click(formatBox('EPS'))
+    expect(formatBox('EPS').checked, '仅改变formats不能撤销已确认的同来源offer').toBe(true)
+    expect(formatBox('EPS').disabled).toBe(false)
+    await click(button('开始导出')!)
+    await act(async () => { await new Promise((r) => setTimeout(r, 1000)) })
+    expect(exportBodies.at(-1)?.formats).toContain('eps')
+    expect(exportBodies.at(-1)?.original).toHaveProperty('chart')
   })
 
   it('画布范围：route 说某个带编辑的图画不出来，点导出之前就说', async () => {

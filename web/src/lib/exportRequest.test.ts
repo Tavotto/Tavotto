@@ -7,6 +7,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   buildExportRequest,
+  exportTargetKey,
   defaultScope,
   epsAvailability,
   filenameProblem,
@@ -26,6 +27,7 @@ import { emptyProject, type FigureDocument, type PanelObject } from '@/types/doc
 import { literal } from '@/i18n'
 import chartVectors from '../../../tests/golden/chart_model_vectors.json'
 import type { PanelChartState } from '@/types/document'
+import { exportOffersOf } from './exportRoute'
 
 const panel: PanelObject = {
   id: 'p1',
@@ -69,6 +71,33 @@ describe('计算图表导出快照', () => {
     const chart = structuredClone({ model: v.model, binding: v.binding }) as unknown as PanelChartState
     return { ...panel, fileId: 'chart.svg', fileKind: 'svg', chart }
   }
+
+  it('后端 EPS convert offer 保留真实计算场景请求、文件名和覆盖目标身份', () => {
+    const p = chartPanel()
+    const route = { scope: 'original' as const, formats: ['eps', 'svg'], panels: {
+      [p.fileId]: { source: 'declarative' as const, embeds_disk_bitmap: false,
+        formats: { eps: { how: 'convert' as const }, svg: { how: 'convert' as const } },
+        offers: { eps: { how: 'convert' as const } } },
+    } }
+    const input = inputOf({ scope: 'original', figureId: p.fileId, panel: p, formats: ['eps', 'svg'] })
+    expect(buildExportRequest(input).request.formats).toEqual(['svg'])
+    const built = buildExportRequest({ ...input, route })
+    expect(built.request.formats).toEqual(['eps', 'svg'])
+    expect(built.names).toEqual(['Fig 1.eps', 'Fig 1.svg'])
+    expect(built.request.original?.chart).toEqual(p.chart)
+    expect(built.request.original?.chart_render_profile).toBe('native-manifest/1')
+    expect(built.request.ppi).toBeNull()
+    expect(exportTargetKey({ ...input, route })).not.toBe(exportTargetKey(input))
+    expect(buildExportRequest({ ...input, scope: 'canvas', route }).request.formats).toEqual(['svg'])
+    const offers = exportOffersOf(route)
+    const duringRefresh = buildExportRequest({ ...input, route: null, offers })
+    expect(duringRefresh).toEqual(built)
+    expect(exportTargetKey({ ...input, offers })).toBe(exportTargetKey({ ...input, route }))
+    expect(duringRefresh.request).not.toHaveProperty('offers')
+    expect(buildExportRequest({ ...input, offers: undefined })).toEqual(buildExportRequest(input))
+    expect(buildExportRequest({ ...input, scope: 'canvas', offers }).request.formats).toEqual(['svg'])
+    expect(epsAvailability('original', 'another.svg', null, false, offers).ok).toBe(false)
+  })
 
   it.each(['original', 'canvas', 'merge', 'annotations'] as const)('%s 深拷贝INPUT引用，来源改变必然改变导出身份', (kind) => {
     const p = chartPanel()

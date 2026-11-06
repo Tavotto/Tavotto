@@ -3105,7 +3105,46 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
             raster_formats, stacked(list(src.objects), panel), w_mm, h_mm, ppi, "ann_ras", target
         )
     if wants_eps:
-        produced.append(_produce_annotated_eps(job, req, tmp_dir, artifact_sources))
+        if src.chart is not None:
+            # 完整合成页面承担缩放、标注z序和留白；同一份SVG再交EPS契约，
+            # 不把未缩放的原图EPS嵌到另一尺寸的页面上。
+            scene = next(
+                (item for item in produced if item.format == engine_exportreq.FORMAT_SVG), None
+            )
+            if scene is None:
+                scene = run(
+                    (engine_exportreq.FORMAT_SVG,),
+                    stacked(list(src.objects), panel),
+                    w_mm,
+                    h_mm,
+                    None,
+                    "ann_eps_scene",
+                )[0]
+            if scene.tmp_path is None:
+                produced.append(dataclasses.replace(scene, format=engine_exportreq.FORMAT_EPS))
+            else:
+                try:
+                    target = _export_scene_eps(
+                        job,
+                        Path(scene.tmp_path).read_bytes(),
+                        (w_mm * 72.0 / 25.4, h_mm * 72.0 / 25.4),
+                        tmp_dir / "out_annotated.eps",
+                    )
+                    produced.append(
+                        engine_exportjob.Produced(
+                            format=engine_exportreq.FORMAT_EPS,
+                            tmp_path=target,
+                            width_mm=w_mm,
+                            height_mm=h_mm,
+                            vector=True,
+                            basis=scene.basis,
+                            manifest=scene.manifest,
+                        )
+                    )
+                except (pdfbackend.OriginalEPSError, engine_pool.WorkerError) as exc:
+                    produced.append(_chart_conversion_failure(exc, engine_exportreq.FORMAT_EPS))
+        else:
+            produced.append(_produce_annotated_eps(job, req, tmp_dir, artifact_sources))
     return produced
 
 
@@ -3320,6 +3359,41 @@ def _chart_canonical(snapshot: _ChartSnapshot, tmp_dir: Path):
     return canonical, notes
 
 
+def _export_scene_eps(job, svg: bytes, page_pt: tuple[float, float], target: Path) -> Path:
+    """完整冻结SVG经公共契约准备PS，由原owned worker固定动作封EPS。"""
+    import base64
+
+    from .engine import chartprocess
+
+    job.check_cancelled()
+    prepared = pdfbackend.prepare_original_eps(svg, page_pt)
+    for note in prepared["notes"]:
+        if note not in job.warnings:
+            job.warnings.append(note)
+    response = chartprocess.run_request(
+        require_project(),
+        {"action": "pack_eps", "prepared": prepared["payload"]},
+        timeout=_CHART_SPAWN_TIMEOUT_S,
+    )
+    if not response["ok"]:
+        raise pdfbackend.OriginalEPSError(
+            response.get("code") or "native_eps_backend",
+            response.get("error") or "EPS container failed",
+            response.get("params"),
+        )
+    job.check_cancelled()
+    target.write_bytes(base64.b64decode(response["eps_b64"], validate=True))
+    return target
+
+
+def _chart_conversion_failure(exc, fmt):
+    return engine_exportjob.Produced(
+        format=fmt,
+        error_code=exc.code,
+        error_params={"detail": str(exc), **getattr(exc, "params", {})},
+    )
+
+
 def _export_produce_chart_original(job, src, req, tmp_dir: Path):
     """原图所有格式消费同一计算快照；不可表达的格式逐项失败。"""
     from . import chartbundle
@@ -3387,13 +3461,18 @@ def _export_produce_chart_original(job, src, req, tmp_dir: Path):
                         ppi=req.ppi or engine_exportreq.PPI_DEFAULT,
                         transparent=req.background == "transparent",
                     )
+            elif fmt == engine_exportreq.FORMAT_EPS:
+                target = _export_scene_eps(
+                    job,
+                    snapshot.svg,
+                    (snapshot.scene["w_pt"], snapshot.scene["h_pt"]),
+                    tmp_dir / "original.eps",
+                )
             else:
                 produced.append(
                     engine_exportjob.Produced(
                         format=fmt,
-                        error_code="eps_needs_script"
-                        if fmt == engine_exportreq.FORMAT_EPS
-                        else "svg_asset_export_unsupported",
+                        error_code="svg_asset_export_unsupported",
                         error_params={},
                     )
                 )
@@ -3406,11 +3485,13 @@ def _export_produce_chart_original(job, src, req, tmp_dir: Path):
                     height_mm=snapshot.scene["h_pt"] * 25.4 / 72,
                     vector=engine_artifactinspect.svg_vector(target)
                     if fmt == engine_exportreq.FORMAT_SVG
-                    else fmt == engine_exportreq.FORMAT_PDF,
+                    else fmt in (engine_exportreq.FORMAT_PDF, engine_exportreq.FORMAT_EPS),
                     basis=basis,
                     manifest=manifest,
                 )
             )
+        except (pdfbackend.OriginalEPSError, engine_pool.WorkerError) as exc:
+            produced.append(_chart_conversion_failure(exc, fmt))
         except (SVGIRError, chartbundle.ChartBundleError) as exc:
             produced.append(
                 engine_exportjob.Produced(
@@ -4571,6 +4652,7 @@ def _export_route(req) -> dict:
                 "id": req.original.figure_id,
                 "overrides": req.original.overrides,
                 "has_snapshot": req.original.figure_snapshot is not None,
+                **({"has_chart": True} if req.original.chart is not None else {}),
             }
         ]
     else:
@@ -4579,6 +4661,7 @@ def _export_route(req) -> dict:
                 "id": str(o.get("id", "")),
                 "overrides": o.get("overrides"),
                 "has_snapshot": o.get("figure_snapshot") is not None,
+                **({"has_chart": True} if o.get("chart") is not None else {}),
             }
             for o in (req.canvas.objects if req.canvas is not None else [])
             if o.get("type") == "panel" and not o.get("hidden")

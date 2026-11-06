@@ -371,7 +371,23 @@ def main() -> None:
             "tavotto": __version__,
         }
         req = json.loads(raw.decode("utf-8"))
-        if req.get("probe"):
+        if req.get("action") is not None:
+            from tavotto.rendercore.epscontainer import SceneEPSError, pack_prepared_eps
+
+            if set(req) != {"action", "prepared"} or req["action"] != "pack_eps":
+                raise SceneEPSError("native_eps_invalid_payload", "Unknown fixed chart action")
+            prepared = req["prepared"]
+            eps = pack_prepared_eps(prepared)
+            out = {
+                "ok": True,
+                "engine": engine,
+                "eps_b64": base64.b64encode(eps).decode("ascii"),
+                **{
+                    key: prepared[key]
+                    for key in ("source_svg_sha256", "ps_sha256", "width_pt", "height_pt")
+                },
+            }
+        elif req.get("probe"):
             out = {"ok": True, "engine": engine}
         else:
             result = scaffold_fragment(

@@ -251,3 +251,76 @@ def test_offers_say_whether_eps_is_available_without_it_being_requested():
     # 勾了 eps 时 offers 与 formats 里那一项是同一个答案
     r = route("original", ["eps", "svg"], er.KIND_PDF)
     assert r["offers"]["eps"] == r["formats"]["eps"]
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas"])
+@pytest.mark.parametrize("script", [False, True])
+@pytest.mark.parametrize(
+    "formats", [["pdf"], ["eps"], ["eps", "svg"], ["pdf", "png", "eps", "tiff", "svg"]]
+)
+def test_declarative_scene_uses_conversion_without_script_or_live_figure(scope, script, formats):
+    result = er.panel_route(
+        scope=scope,
+        formats=formats,
+        file_kind=er.KIND_SVG,
+        overrides=[{"gid": "axes_0.lines_0", "prop": "color", "value": "red"}],
+        has_script=script,
+        has_snapshot=True,
+        has_chart=True,
+    )
+    assert result["source"] == er.SOURCE_DECLARATIVE
+    assert result["embeds_disk_bitmap"] is False
+    eps = (
+        {"how": "unavailable", "reason": "eps_not_for_canvas"}
+        if scope == "canvas"
+        else {"how": "convert"}
+    )
+    assert result["offers"]["eps"] == eps
+    assert result["formats"] == {
+        fmt: eps if fmt == "eps" else {"how": "convert"} for fmt in formats
+    }
+    # No figure snapshot, source-ref verification or paint support is invented.
+    assert all("conditions" not in entry for entry in result["formats"].values())
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas"])
+def test_chart_fact_does_not_change_legacy_false_default_or_input(scope):
+    inputs = dict(
+        scope=scope,
+        formats=["eps", "svg", "pdf"],
+        file_kind=er.KIND_SVG,
+        overrides=[],
+        has_script=False,
+        has_snapshot=False,
+    )
+    assert er.panel_route(**inputs) == er.panel_route(**inputs, has_chart=False)
+    assert inputs["overrides"] == []
+
+
+def test_build_route_keeps_legacy_call_shape_and_only_passes_true_chart_fact(monkeypatch):
+    called = []
+    real = er.panel_route
+
+    def capture(**kw):
+        called.append(kw)
+        return real(**kw)
+
+    monkeypatch.setattr(er, "panel_route", capture)
+    base = {"id": "scene.svg", "file_kind": "svg", "overrides": [], "has_script": False}
+    result = er.build_route(
+        scope="original",
+        formats=["pdf"],
+        panels=[base, {**base, "has_chart": False}, {**base, "has_chart": True}],
+    )
+    expected = dict(
+        scope="original",
+        formats=["pdf"],
+        file_kind="svg",
+        overrides=[],
+        has_script=False,
+        has_snapshot=False,
+    )
+    assert called == [expected, expected, {**expected, "has_chart": True}]
+    assert set(result["panels"]) == {"scene.svg", "scene.svg#2"}
+    assert result["panels"]["scene.svg"]["offers"]["eps"]["reason"] == "eps_needs_script"
+    assert result["panels"]["scene.svg#2"]["offers"]["eps"] == {"how": "convert"}

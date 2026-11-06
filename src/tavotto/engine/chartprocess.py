@@ -21,6 +21,7 @@ import time
 import uuid
 from pathlib import Path
 
+from tavotto.rendercore.epscontainer import MAX_BYTES as MAX_EPS_BYTES
 from tavotto.rendercore.svgcheck import SVGBudget
 
 from . import chartprofile, config, desktopproc, envlease, launcher, pool, runtime
@@ -30,8 +31,9 @@ MAX_REQUEST_BYTES = _SVG.max_bytes
 MAX_METADATA_BYTES = _SVG.max_bytes
 MAX_FRAGMENT_BYTES = _SVG.max_bytes
 _B64_FRAGMENT_BYTES = ((MAX_FRAGMENT_BYTES + 2) // 3) * 4
+_B64_EPS_BYTES = ((MAX_EPS_BYTES + 2) // 3) * 4
 MAX_STDOUT_BYTES = (
-    _B64_FRAGMENT_BYTES
+    max(_B64_FRAGMENT_BYTES, _B64_EPS_BYTES)
     + MAX_METADATA_BYTES
     + len(json.dumps({"fragment_b64": ""}, separators=(",", ":")).encode("utf-8"))
 )
@@ -149,7 +151,7 @@ class _Run:
         self.dispose_if_abandoned()
 
 
-def _response(raw: bytes, probe: bool) -> dict:
+def _response(raw: bytes, probe: bool, *, prepared: dict | None = None) -> dict:
     def nonfinite(_value):
         raise ValueError("nonfinite JSON")
 
@@ -159,7 +161,7 @@ def _response(raw: bytes, probe: bool) -> dict:
             raise ValueError("response envelope")
         chartprofile.check_json_budget(result)
         metadata = dict(result)
-        encoded = metadata.pop("fragment_b64", None)
+        encoded = metadata.pop("eps_b64" if prepared is not None else "fragment_b64", None)
         _json_bytes(metadata, MAX_METADATA_BYTES)
         if result["ok"]:
             engine = result.get("engine")
@@ -168,7 +170,35 @@ def _response(raw: bytes, probe: bool) -> dict:
                 for key in ("matplotlib", "numpy", "tavotto")
             ):
                 raise ValueError("engine identity")
-            if not probe:
+            if prepared is not None:
+                fields = {
+                    "ok",
+                    "engine",
+                    "eps_b64",
+                    "source_svg_sha256",
+                    "ps_sha256",
+                    "width_pt",
+                    "height_pt",
+                }
+                if set(result) != fields:
+                    raise ValueError("EPS response fields")
+                if not isinstance(encoded, str) or len(encoded) > _B64_EPS_BYTES:
+                    raise ValueError("EPS envelope")
+                eps = base64.b64decode(encoded, validate=True)
+                if len(eps) > MAX_EPS_BYTES:
+                    raise _error("svg_resource_limit", "EPS byte budget exceeded")
+                if (
+                    not eps.startswith(b"%!PS-Adobe-3.0 EPSF-3.0\n")
+                    or b"\n%%EndComments\n" not in eps
+                    or b"\n%%EndProlog\n" not in eps
+                ):
+                    raise ValueError("EPS container signature")
+                for key in ("source_svg_sha256", "ps_sha256", "width_pt", "height_pt"):
+                    if result[key] != prepared.get(key):
+                        raise ValueError("EPS request identity")
+                if any(type(result[key]) not in (int, float) for key in ("width_pt", "height_pt")):
+                    raise ValueError("EPS physical size")
+            elif not probe:
                 if not isinstance(encoded, str) or len(encoded) > _B64_FRAGMENT_BYTES:
                     raise ValueError("fragment envelope")
                 fragment = base64.b64decode(encoded, validate=True)
@@ -202,6 +232,21 @@ def run_request(figures_dir: str | Path, payload: dict, *, timeout: float) -> di
     ):
         raise _error("svg_scaffold_invalid", "Invalid chart timeout")
     request = _json_bytes(payload, MAX_REQUEST_BYTES)
+    # Match the reply to the exact serialized request, not the mutable caller's
+    # dict after waiting on a child. Discard the large PS after taking identity.
+    frozen = json.loads(request)
+    prepared = None
+    if frozen.get("action") == "pack_eps":
+        value = frozen.get("prepared")
+        prepared = (
+            {
+                key: value.get(key)
+                for key in ("source_svg_sha256", "ps_sha256", "width_pt", "height_pt")
+            }
+            if isinstance(value, dict)
+            else {}
+        )
+    del frozen
     run = _Run(_admit())
     owner = proc = None
     writer = None
@@ -273,7 +318,10 @@ def run_request(figures_dir: str | Path, payload: dict, *, timeout: float) -> di
         if owner.exit_code != 0:
             raise _error("chart_engine_unavailable", "Chart process exited unsuccessfully")
         run.spool.seek(0)
-        result = _response(run.spool.read(), payload.get("probe") is True)
+        if prepared is not None:
+            result = _response(run.spool.read(), False, prepared=prepared)
+        else:
+            result = _response(run.spool.read(), payload.get("probe") is True)
         if time.monotonic() > deadline:
             code = (
                 "chart_engine_unavailable"
