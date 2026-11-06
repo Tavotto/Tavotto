@@ -1,14 +1,15 @@
 """Application cold staging preserves actual captured input bytes.
 
-The admitted opaque pair is the existing storage fixture, not new scientific
-execution. These checks qualify staging/ZIP transport, not portable execution
-or project installation.
+Most checks use the admitted opaque storage pair; the formal v4 reader uses a
+readable vector pair. These checks qualify staging/ZIP transport, not scientific
+execution or project installation.
 """
 
 from __future__ import annotations
 
 import copy
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -63,8 +64,8 @@ def env(input_world, monkeypatch):
     renderhost.shutdown_shared()
 
 
-def _publish(env, archive=None, *, source=SOURCE, patch=PATCH, static=False):
-    args = _args(source=source, patch=patch)
+def _publish(env, archive=None, *, source=SOURCE, patch=PATCH, static=False, pair=None):
+    args = _args(source=source, patch=patch, **(pair or {}))
     if archive is not None:
         args["receipt"]["captured_inputs"] = {
             "version": 1,
@@ -75,6 +76,33 @@ def _publish(env, archive=None, *, source=SOURCE, patch=PATCH, static=False):
         (env[0] / source).write_bytes(PDF)
         args["static_sha256"] = hashlib.sha256(PDF).hexdigest()
     return svgstore.save(env[0], source, patch, **args, execution_owner=OWNER, storage_root=env[1])
+
+
+def _formal_package_fixture(env):
+    import pikepdf
+
+    # Core storage accepts arbitrary opaque IDs. A formal portable package
+    # must use the parent's approved remap identity without changing that
+    # lower-level shared fixture or the legacy ZIP byte oracle.
+    candidate = copy.deepcopy(env[3])
+    prefix = candidate["prefixes"][0]
+    identity = declaredinputs._remap_identity(env[0], prefix["path"], candidate["rules"][0])
+    prefix["id"] = candidate["mappings"][0]["id"] = identity
+    _, archive = _capture((*env[:3], candidate, env[4]))
+
+    stream = io.BytesIO()
+    with pikepdf.new() as document:
+        page = document.add_blank_page(page_size=(120, 80))
+        page.Contents = document.make_stream(b"1 0 0 rg 0 0 120 80 re f\n")
+        document.save(stream)
+    pair = {
+        "pdf": stream.getvalue(),
+        "svg": (
+            b'<svg xmlns="http://www.w3.org/2000/svg" width="120pt" height="80pt" '
+            b'viewBox="0 0 120 80"><rect width="120" height="80" fill="red"/></svg>'
+        ),
+    }
+    return archive, _publish(env, archive, pair=pair)
 
 
 def _panel(reference, *, source=SOURCE, number=1, edits=()):
@@ -237,8 +265,7 @@ def test_same_graph_multiple_panels_and_variants_keep_every_reference_and_dedupl
 def test_fresh_application_parent_packages_original_input_after_source_and_capture_cache_deleted(
     env, tmp_path
 ):
-    _, archive = _capture(env)
-    saved = _publish(env, archive)
+    archive, saved = _formal_package_fixture(env)
     expected = {key: value.hex() for key, value in _contents(archive).items()}
     document = _document([_panel(saved["snapshot_ref"])])
     exchange = tmp_path / "document.json"
