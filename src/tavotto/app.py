@@ -4695,13 +4695,20 @@ def _doc_objects(doc: dict) -> list[dict]:
 _sha1_of = engine_baked.sha1_of
 
 
-def _package_svg_assets(doc, root, archive) -> int:
+def _package_svg_assets(doc, root, archive, *, temporary_root: Path | None = None) -> int:
     """Bundle only referenced, verified project snapshots; never execute a script."""
     from .engine import svgstore
 
     count, seen = 0, set()
-    with tempfile.TemporaryDirectory(prefix="tavotto-svg-package-") as temporary:
-        staging = Path(temporary) / "figure_snapshots"
+    if temporary_root is None:
+        engine_config.data_dir().mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(
+            prefix="tavotto-svg-package-", dir=engine_config.data_dir()
+        )
+    else:
+        temporary = contextlib.nullcontext(temporary_root)
+    with temporary as directory:
+        staging = Path(directory) / "figure_snapshots"
         for obj in _doc_objects(doc):
             if obj.get("type") != "panel" or not obj.get("fileId"):
                 continue
@@ -4760,6 +4767,22 @@ def _package_svg_assets(doc, root, archive) -> int:
     return count
 
 
+class _PackageFilePlan:
+    """Keep approved sources alive; let ZipFile normalize its original archive names."""
+
+    def __init__(self) -> None:
+        self.members: dict[str, bytes | Path] = {}
+
+    def write(self, filename: Path, arcname: str) -> None:
+        import zipfile
+
+        source = Path(filename)
+        name = zipfile.ZipInfo.from_file(source, arcname).filename
+        if name in self.members and self.members[name] != source:
+            raise ValueError("Conflicting package members")
+        self.members[name] = source
+
+
 @app.post("/api/package")
 def api_package():
     """把布局打成可复现项目包（zip）：布局 + 引用素材 + 源脚本 + 清单。
@@ -4781,6 +4804,7 @@ def api_package():
         {o.get("fileId") for o in _doc_objects(doc) if o.get("type") == "panel" and o.get("fileId")}
     )
     assets, missing_now, scripts, runtime_assets = [], [], {}, []
+    asset_paths = {}
     for rel_id in panel_ids:
         # runtime 素材（ADR 0013）：包里带**描述符 + 源脚本**，不带 cache
         # 副本——cache 是本机派生物不是原件，接收方跑一次脚本即可重建。
@@ -4802,6 +4826,7 @@ def api_package():
                 entry["script"] = info["script"]
                 scripts[info["script"]] = root / info["script"]
             assets.append(entry)
+            asset_paths[rel_id] = p
         else:
             missing_now.append(rel_id)
 
@@ -4825,27 +4850,52 @@ def api_package():
     # Tavotto 时旧扩展降级的做法被否掉了（见 engine/brand.py 的干净断裂说明）。
     # 读取端（api_package_open）不校验 kind、也不看扩展名，只认 zip 里的结构，
     # 所以更早的包实际上仍打得开——那是**不校验的副作用，不是我们许下的承诺**。
-    name = f"{stem}_{time.strftime('%m%d_%H%M%S')}{engine_brand.PACKAGE_EXT}"
+    name = f"{stem}_{time.strftime('%m%d_%H%M%S')}_{secrets.token_hex(4)}{engine_brand.PACKAGE_EXT}"
     out = out_dir / name
-    import zipfile  # noqa: PLC0415 — 仅此端点用
+    from .engine import documentpackage, packagebudget
 
     snapshot_warnings = _freeze_document_svg_sources(doc)
     if snapshot_warnings:
         manifest["svg_snapshot_warnings"] = snapshot_warnings
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+    engine_config.data_dir().mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="package-", dir=engine_config.data_dir()) as temporary:
+        plan = _PackageFilePlan()
+        snapshot_plan = _PackageFilePlan()
         try:
-            manifest["figure_snapshots"] = _package_svg_assets(doc, root, z)
+            manifest["figure_snapshots"] = _package_svg_assets(
+                doc, root, snapshot_plan, temporary_root=Path(temporary)
+            )
         except Exception:
             LOG.info("Project package could not include SVG snapshots", exc_info=True)
             manifest["figure_snapshots"] = 0
             manifest["svg_snapshot_warning"] = True
-        z.writestr("layout.json", json.dumps(doc, ensure_ascii=False, indent=1))
-        z.writestr("package_manifest.json", json.dumps(manifest, ensure_ascii=False, indent=1))
+        else:
+            plan.members.update(snapshot_plan.members)
+        plan.members[documentpackage.LAYOUT_MEMBER] = json.dumps(
+            doc, ensure_ascii=False, indent=1
+        ).encode("utf-8")
+        plan.members[documentpackage.MANIFEST_MEMBER] = json.dumps(
+            manifest, ensure_ascii=False, indent=1
+        ).encode("utf-8")
         for entry in assets:
-            z.write(root / entry["id"], f"assets/{entry['id']}")
+            plan.write(asset_paths[entry["id"]], f"assets/{entry['id']}")
         for rel, path in scripts.items():
-            if path.is_file():
-                z.write(path, f"scripts/{rel}")
+            canonical = path.resolve()
+            if canonical.is_relative_to(root.resolve()) and canonical.is_file():
+                plan.write(canonical, f"scripts/{rel}")
+        sizes = {
+            member: len(source) if isinstance(source, bytes) else source.stat().st_size
+            for member, source in plan.members.items()
+        }
+        budget = packagebudget.output_budget(sizes)
+        with documentpackage.staged_package(
+            out, budget=budget, overwrite=False, legacy_names=True
+        ) as archive:
+            for member, source in plan.members.items():
+                if isinstance(source, bytes):
+                    archive.writestr(member, source)
+                else:
+                    archive.write(source, member)
     LOG.info("项目包: %s（%d 素材, %d 脚本）", name, len(assets), len(scripts))
     return jsonify(
         {"name": name, "url": f"/exports/{name}", "assets": len(assets), "missing": missing_now}
