@@ -1418,6 +1418,125 @@ def api_svg_chart_bind():
     return jsonify(result)
 
 
+@dataclasses.dataclass(frozen=True)
+class _ChartSnapshot:
+    file_id: str
+    path: Path
+    source_sha256: str
+    source_svg: bytes
+    chart: dict
+    scene: dict
+    svg: bytes
+    facts: dict
+    engine: dict
+    render_revision: str
+
+
+def _read_chart_source(path: Path) -> bytes:
+    from .rendercore.svgcheck import SVGBudget
+
+    limit = SVGBudget().max_bytes
+    with path.open("rb") as stream:
+        data = stream.read(limit + 1)
+    if len(data) > limit:
+        raise engine_exportreq.ExportRequestError(
+            "svg_resource_limit", "SVG byte budget exceeded", {}
+        )
+    return data
+
+
+def _assert_chart_source(path: Path, expected: str) -> None:
+    try:
+        current = hashlib.sha256(_read_chart_source(path)).hexdigest()
+    except (OSError, engine_exportreq.ExportRequestError) as exc:
+        raise engine_exportreq.ExportRequestError(
+            "chart_source_changed", "chart source became unavailable", {}
+        ) from exc
+    if current != expected:
+        raise engine_exportreq.ExportRequestError(
+            "chart_source_changed", "chart source changed", {}
+        )
+
+
+def _render_chart_snapshot(file_id: str, chart: dict) -> _ChartSnapshot:
+    """预览/导出唯一计算入口：源字节、模型、绑定、环境与组合属于同一版本。"""
+    from . import chartbundle, svgcompose, svgscene
+    from .engine import chartmodel
+    from .rendercore.svgcheck import parse_svg, strip_matplotlib_doctype
+
+    path = safe_resolve(file_id)
+    if path.suffix.lower() not in SVG_EXT:
+        raise engine_exportreq.ExportRequestError("svg_scene_invalid", "not an SVG file", {})
+    original = _read_chart_source(path)
+    source_sha = hashlib.sha256(original).hexdigest()
+    try:
+        bundle = chartbundle.extract_chart(original)
+        source = bundle.source_svg if bundle is not None else original
+        scene = svgscene.scene_inventory(source)
+        root = parse_svg(strip_matplotlib_doctype(source))
+        view_box = scene["view_box"] or [0.0, 0.0, scene["w_pt"] * 96 / 72, scene["h_pt"] * 96 / 72]
+        frame = {
+            "view_box": view_box,
+            "w_pt": scene["w_pt"],
+            "h_pt": scene["h_pt"],
+            "preserve": root.get("preserveAspectRatio"),
+        }
+
+        def replay(state: dict):
+            model, binding = state["model"], state["binding"]
+            chartmodel.validate_model(model)
+            chartmodel.validate_binding(binding, model)
+            chartmodel.verify_scene(
+                binding, scene["scene_digest"], {n["id"] for n in scene["nodes"]}
+            )
+            result = _chart_scaffold_via_worker(model, frame)
+            actual = result.get("engine") or {}
+            for key in ("matplotlib", "numpy"):
+                if model["engine"].get(key) and actual.get(key) != model["engine"][key]:
+                    raise engine_exportreq.ExportRequestError(
+                        "chart_engine_mismatch", f"engine {key} does not match the model", {}
+                    )
+            _assert_chart_source(path, source_sha)
+            svg = svgcompose.compose_scene(
+                source, binding, result["fragment"], model, origin=(view_box[0], view_box[1])
+            )
+            return svg, result
+
+        # 包里的 hash 只证明一致性。实际重放包内模型，才能让可见图获得计算恢复资格。
+        if bundle is not None:
+            verified_svg, verified_result = replay(bundle.chart)
+            chartbundle.verify_replay(bundle, verified_svg)
+            if chart == bundle.chart:
+                composed, scaffold = verified_svg, verified_result
+            else:
+                composed, scaffold = replay(chart)
+        else:
+            composed, scaffold = replay(chart)
+    except (
+        chartbundle.ChartBundleError,
+        svgscene.SceneError,
+        chartmodel.ChartModelError,
+        svgcompose.ComposeError,
+    ) as exc:
+        raise engine_exportreq.ExportRequestError(exc.code, exc.detail, {}) from exc
+    _assert_chart_source(path, source_sha)
+    revision = chartmodel.panel_identity(
+        chartmodel.SOURCE_DECLARATIVE, scene["scene_digest"], chart["model"], chart["binding"]
+    )
+    return _ChartSnapshot(
+        file_id,
+        path,
+        source_sha,
+        source,
+        chart,
+        scene,
+        composed,
+        scaffold["facts"],
+        scaffold.get("engine") or {},
+        revision,
+    )
+
+
 @app.post("/api/svg/chart/compute")
 def api_svg_chart_compute():
     """按模型重算绑定区域（ADR 0166，SG07/10）：场景核对 → 脚手架 → 组合。
@@ -1425,13 +1544,11 @@ def api_svg_chart_compute():
     场景字节变了（`chart_source_mismatch`/`chart_node_missing`）一律拒绝；
     引擎身份与模型合同不符报 `chart_engine_mismatch`；原文件零改动。
     """
-    from . import svgcompose, svgscene
     from .engine import chartmodel
 
     body = request.get_json(silent=True) or {}
     file_id = body.get("file", "")
-    model = body.get("model")
-    binding = body.get("binding")
+    model, binding = body.get("model"), body.get("binding")
     if (
         not isinstance(file_id, str)
         or not file_id
@@ -1441,70 +1558,22 @@ def api_svg_chart_compute():
         return jsonify(
             {"code": "svg_scene_invalid", "error": "file/model/binding are required"}
         ), 422
-    path = safe_resolve(file_id)
-    if path.suffix.lower() not in SVG_EXT:
-        return jsonify({"code": "svg_scene_invalid", "error": "not an SVG file"}), 422
-    # 不可变来源快照（R03）：整个校验/脚手架/组合只用**这一次**读入的字节；
-    # 子进程返回后复核来源 digest，计算期间被改动 → 409 `chart_source_changed`，
-    # 不混合新旧字节。
-    scene_bytes = path.read_bytes()
     try:
-        scene = svgscene.scene_inventory(scene_bytes)
-        chartmodel.validate_model(model)
-        chartmodel.validate_binding(binding, model)
-        chartmodel.verify_scene(binding, scene["scene_digest"], {n["id"] for n in scene["nodes"]})
-    except svgscene.SceneError as exc:
-        return jsonify({"code": exc.code, "error": exc.detail}), 422
-    except chartmodel.ChartModelError as exc:
-        return jsonify({"code": exc.code, "error": exc.detail}), 422
-    frame = {
-        "view_box": scene["view_box"],
-        "w_pt": scene["w_pt"],
-        "h_pt": scene["h_pt"],
-        "preserve": None,
-    }
-    try:
-        scaffold = _chart_scaffold_via_worker(model, frame)
+        snapshot = _render_chart_snapshot(file_id, {"model": model, "binding": binding})
+    except engine_exportreq.ExportRequestError as exc:
+        status = 409 if exc.code in ("chart_source_changed", "chart_engine_mismatch") else 422
+        return jsonify({"code": exc.code, "error": exc.message}), status
     except engine_pool.WorkerError as exc:
         return jsonify({"code": exc.code, "error": str(exc)}), 503
-    engine_facts = scaffold.get("engine") or {}
-    declared = model.get("engine") or {}
-    for key in ("matplotlib", "numpy"):
-        if declared.get(key) and engine_facts.get(key) and declared[key] != engine_facts[key]:
-            return jsonify(
-                {
-                    "code": "chart_engine_mismatch",
-                    "error": f"engine {key} {engine_facts[key]} != model {declared[key]}",
-                }
-            ), 409
-    if hashlib.sha256(path.read_bytes()).hexdigest() != scene["scene_digest"]:
-        return jsonify(
-            {"code": "chart_source_changed", "error": "source changed during compute"}
-        ), 409
-    scene_bytes = scene_bytes
-    try:
-        composed = svgcompose.compose_scene(
-            scene_bytes,
-            binding,
-            scaffold["fragment"],
-            model,
-            origin=(scene["view_box"][0], scene["view_box"][1]),
-        )
-    except svgcompose.ComposeError as exc:
-        return jsonify({"code": exc.code, "error": exc.detail}), 422
-    # 完整渲染身份（R03）：来源 + 模型 + 绑定 + 引擎事实——预览/保存/导出消费同一身份
-    render_revision = chartmodel.panel_identity(
-        chartmodel.SOURCE_DECLARATIVE, scene["scene_digest"], model, binding
-    )
     return jsonify(
         {
-            "svg": composed.decode("utf-8"),
-            "facts": scaffold["facts"],
-            "scene_digest": scene["scene_digest"],
-            "render_revision": render_revision,
+            "svg": snapshot.svg.decode("utf-8"),
+            "facts": snapshot.facts,
+            "scene_digest": snapshot.scene["scene_digest"],
+            "render_revision": snapshot.render_revision,
             "model_digest": chartmodel.digest_of(model),
             "binding_digest": chartmodel.digest_of(binding),
-            "engine": engine_facts,
+            "engine": snapshot.engine,
         }
     )
 
@@ -2607,6 +2676,7 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
     # 单图留白（ADR 0161 §3）：页面 = 图幅 + 留白，面板落在 (l, t)；无留白时 pad = 0，与从前逐字节相同
     pad_l, pad_t, _pad_r, _pad_b = src.pad_mm or (0.0, 0.0, 0.0, 0.0)
     panel = {
+        **({"chart": src.chart} if src.chart is not None else {}),
         "type": "panel",
         "id": src.figure_id,
         "x_mm": pad_l,
@@ -2800,186 +2870,172 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
     )
 
 
-def _export_produce_chart_original(job, src, req, tmp_dir: Path):
-    """chart 面板的原图导出：SVG 格式 = 组合后的编辑版；其余格式当前不可用。
+def _export_job_owner(job):
+    while isinstance(job, _PageJob):
+        job = job._job
+    return job
 
-    与 /api/svg/chart/compute 同一合同：不可变来源快照 → 脚手架 → 组合；
-    来源中途被改 → fail_all(chart_source_changed)；SVG 格式 basis = convert。
-    """
-    from . import svgcompose, svgscene
+
+def _export_chart_snapshot(job, file_id: str, chart: dict) -> _ChartSnapshot:
     from .engine import chartmodel
 
-    chart = src.chart or {}
-    model = chart.get("model")
-    binding = chart.get("binding")
+    owner = _export_job_owner(job)
+    cache = getattr(owner, "_chart_snapshots", None)
+    if cache is None:
+        owner._chart_snapshots = cache = {}
+        owner._chart_source_dependencies = {}
+    key = (file_id, chartmodel.digest_of(chart))
+    if key not in cache:
+        job.check_cancelled()
+        snapshot = _render_chart_snapshot(file_id, chart)
+        previous = owner._chart_source_dependencies.get(file_id)
+        if previous is not None and previous[1] != snapshot.source_sha256:
+            raise engine_exportreq.ExportRequestError(
+                "chart_source_changed", "source changed between chart variants", {}
+            )
+        owner._chart_source_dependencies[file_id] = (snapshot.path, snapshot.source_sha256)
+        cache[key] = snapshot
+    return cache[key]
 
-    def chart_errors(code: str, detail: str):
-        return [
-            engine_exportjob.Produced(format=fmt, error_code=code, error_params={"detail": detail})
-            for fmt in req.formats
-        ]
 
-    if not isinstance(model, dict) or not isinstance(binding, dict):
-        return [
-            engine_exportjob.Produced(format=fmt, error_code="chart_model_invalid", error_params={})
-            for fmt in req.formats
-        ]
-    path = safe_resolve(src.figure_id)
-    scene_bytes = path.read_bytes()
+def _export_chart_canonical(job, snapshot: _ChartSnapshot, tmp_dir: Path):
+    """同一快照只转换一次；直接SVG不依赖此转换成功。"""
+    from .rendercore import facade as rc_facade, sources as rc_sources
+    from .rendercore.pdfwriter import write_pdf
+    from .rendercore.svgir import svg_to_ir
+
+    owner = _export_job_owner(job)
+    cache = getattr(owner, "_chart_canonical", None)
+    if cache is None:
+        owner._chart_canonical = cache = {}
+    key = (snapshot.file_id, snapshot.render_revision)
+    cached = cache.get(key)
+    if isinstance(cached, Exception):
+        raise cached
+    if cached is not None:
+        return cached
     try:
-        scene = svgscene.scene_inventory(scene_bytes)
-        chartmodel.validate_model(model)
-        chartmodel.validate_binding(binding, model)
-        chartmodel.verify_scene(binding, scene["scene_digest"], {n["id"] for n in scene["nodes"]})
-    except svgscene.SceneError as exc:
-        return chart_errors(exc.code, exc.detail)
-    except chartmodel.ChartModelError as exc:
-        return chart_errors(exc.code, exc.detail)
-    frame = {
-        "view_box": scene["view_box"],
-        "w_pt": scene["w_pt"],
-        "h_pt": scene["h_pt"],
-        "preserve": None,
+        provider = rc_facade.provider()
+        files = {}
+        page, notes = svg_to_ir(
+            snapshot.svg, snapshot.scene["w_pt"], snapshot.scene["h_pt"], provider, files=files
+        )
+        for note in notes:
+            if note not in job.warnings:
+                job.warnings.append(note)
+        stem = "chart-" + snapshot.render_revision
+        pdf_path, svg_path = tmp_dir / (stem + ".pdf"), tmp_dir / (stem + ".svg")
+        write_pdf(page, pdf_path, provider, files=files)
+        svg_path.write_bytes(snapshot.svg)
+
+        def frozen(path):
+            artifact = engine_figcapture.source_artifact_from_file(
+                path,
+                source_id=snapshot.file_id,
+                origin=engine_figcapture.ORIGIN_DECLARATIVE,
+                render_revision=snapshot.render_revision,
+            )
+            return rc_sources.FrozenSource(artifact=artifact, path=path)
+
+        canonical = dataclasses.replace(frozen(pdf_path), svg=frozen(svg_path))
+        canonical.svg_representation()  # 版本配对合同在进入RenderPlan之前就必须成立。
+        cache[key] = canonical
+        return canonical
+    except Exception as exc:
+        cache[key] = exc
+        raise
+
+
+def _export_produce_chart_original(job, src, req, tmp_dir: Path):
+    """原图所有格式消费同一计算快照；不可表达的格式逐项失败。"""
+    from . import chartbundle
+    from .rendercore.pdfwriter import WriterError
+    from .rendercore.renderhost import RenderChildError
+    from .rendercore.svgir import SVGIRError
+
+    try:
+        snapshot = _export_chart_snapshot(job, src.figure_id, src.chart)
+    except (engine_exportreq.ExportRequestError, engine_pool.WorkerError) as exc:
+        return [
+            engine_exportjob.Produced(
+                format=fmt, error_code=exc.code, error_params={"detail": str(exc)}
+            )
+            for fmt in req.formats
+        ]
+    manifest = {
+        "chart_render_revision": snapshot.render_revision,
+        "scene_digest": snapshot.scene["scene_digest"],
     }
-    try:
-        scaffold = _chart_scaffold_via_worker(model, frame)
-    except engine_pool.WorkerError as exc:
-        return chart_errors(exc.code, str(exc))
-    import hashlib
-
-    if hashlib.sha256(path.read_bytes()).hexdigest() != scene["scene_digest"]:
-        return chart_errors("chart_source_changed", "source changed during export")
-    try:
-        composed = svgcompose.compose_scene(
-            scene_bytes,
-            binding,
-            scaffold["fragment"],
-            model,
-            origin=(scene["view_box"][0], scene["view_box"][1]),
-        )
-    except svgcompose.ComposeError as exc:
-        return chart_errors(exc.code, exc.detail)
-    source_sha = engine_figcapture.hash_file(path)[0]
-    render_revision = chartmodel.panel_identity(
-        chartmodel.SOURCE_DECLARATIVE, scene["scene_digest"], model, binding
-    )
-    # C 路径自包含（R08）：SVG 格式导出时嵌入 model+binding 元数据
-    if req.formats and engine_exportreq.FORMAT_SVG in req.formats:
-        import base64 as _b64
-        import xml.etree.ElementTree as _ET
-
-        _ns = "http://www.w3.org/2000/svg"
-        _ET.register_namespace("", _ns)
-        _root = _ET.fromstring(composed)
-        meta_json = json.dumps(
-            {"model": model, "binding": binding}, sort_keys=True, separators=(",", ":")
-        )
-        _root.set(
-            "data-tavotto-chart",
-            _b64.b64encode(meta_json.encode("utf-8")).decode("ascii"),
-        )
-        composed = _ET.tostring(_root, encoding="unicode").encode("utf-8")
+    basis = engine_exportjob.Basis(engine_exportjob.BASIS_CONVERT, snapshot.source_sha256)
     produced = []
     for fmt in req.formats:
         job.check_cancelled()
-        if fmt == engine_exportreq.FORMAT_SVG:
-            target = tmp_dir / "original.svg"
-            target.write_bytes(composed)
+        try:
+            if fmt == engine_exportreq.FORMAT_SVG:
+                target = tmp_dir / "original.svg"
+                target.write_bytes(
+                    chartbundle.embed_chart(snapshot.svg, snapshot.source_svg, snapshot.chart)
+                )
+            elif fmt in (
+                engine_exportreq.FORMAT_PDF,
+                engine_exportreq.FORMAT_PNG,
+                engine_exportreq.FORMAT_TIFF,
+            ):
+                canonical = _export_chart_canonical(job, snapshot, tmp_dir)
+                if fmt == engine_exportreq.FORMAT_PDF:
+                    target = canonical.path
+                else:
+                    target = tmp_dir / ("original." + fmt)
+                    writer = (
+                        pdfbackend.original_png
+                        if fmt == engine_exportreq.FORMAT_PNG
+                        else pdfbackend.original_tiff
+                    )
+                    writer(
+                        canonical.path,
+                        target,
+                        ppi=req.ppi or engine_exportreq.PPI_DEFAULT,
+                        transparent=req.background == "transparent",
+                    )
+            else:
+                produced.append(
+                    engine_exportjob.Produced(
+                        format=fmt,
+                        error_code="eps_needs_script"
+                        if fmt == engine_exportreq.FORMAT_EPS
+                        else "svg_asset_export_unsupported",
+                        error_params={},
+                    )
+                )
+                continue
             produced.append(
                 engine_exportjob.Produced(
                     format=fmt,
                     tmp_path=target,
-                    width_mm=scene["w_pt"] * 25.4 / 72,
-                    height_mm=scene["h_pt"] * 25.4 / 72,
-                    vector=engine_artifactinspect.svg_vector(target),
-                    basis=engine_exportjob.Basis(engine_exportjob.BASIS_CONVERT, source_sha),
-                    manifest={
-                        "chart_render_revision": render_revision,
-                        "scene_digest": scene["scene_digest"],
-                    },
+                    width_mm=snapshot.scene["w_pt"] * 25.4 / 72,
+                    height_mm=snapshot.scene["h_pt"] * 25.4 / 72,
+                    vector=engine_artifactinspect.svg_vector(target)
+                    if fmt == engine_exportreq.FORMAT_SVG
+                    else fmt == engine_exportreq.FORMAT_PDF,
+                    basis=basis,
+                    manifest=manifest,
                 )
             )
-        elif fmt in (
-            engine_exportreq.FORMAT_PDF,
-            engine_exportreq.FORMAT_PNG,
-            engine_exportreq.FORMAT_TIFF,
-        ):
-            # SVG→IR 翻译器（ADR 0166 §2）：组合后的 SVG → IR → pdfwriter → PDF
-            # PNG/TIFF 由 render child 从 Canonical PDF 栅格化。
-            from .rendercore import fonts as _rcfonts
-            from .rendercore.hbshaper import HbFaceProvider
-            from .rendercore.pdfwriter import write_pdf as _write_pdf
-            from .rendercore.svgir import svg_to_ir as _svg_to_ir
-
-            registry = _rcfonts.FontRegistry.discover()
-            provider = HbFaceProvider(registry)
-            page, _notes = _svg_to_ir(composed, scene["w_pt"], scene["h_pt"], provider)
-            if fmt == engine_exportreq.FORMAT_PDF:
-                target = tmp_dir / "original.pdf"
-                _write_pdf(page, target, provider)
-                produced.append(
-                    engine_exportjob.Produced(
-                        format=fmt,
-                        tmp_path=target,
-                        width_mm=scene["w_pt"] * 25.4 / 72,
-                        height_mm=scene["h_pt"] * 25.4 / 72,
-                        vector=True,
-                        basis=engine_exportjob.Basis(engine_exportjob.BASIS_CONVERT, source_sha),
-                        manifest={
-                            "chart_render_revision": render_revision,
-                            "scene_digest": scene["scene_digest"],
-                        },
-                    )
-                )
-            else:
-                # PNG/TIFF: 先出 PDF，再由 pdfbackend 栅格化
-                pdf_tmp = tmp_dir / "_chart_canonical.pdf"
-                _write_pdf(page, pdf_tmp, provider)
-                from . import pdfbackend
-
-                if fmt == engine_exportreq.FORMAT_PNG:
-                    png_target = tmp_dir / "original.png"
-                    pdfbackend.original_png(
-                        pdf_tmp, png_target, ppi=req.ppi or engine_exportreq.PPI_DEFAULT
-                    )
-                    produced.append(
-                        engine_exportjob.Produced(
-                            format=fmt,
-                            tmp_path=png_target,
-                            width_mm=scene["w_pt"] * 25.4 / 72,
-                            height_mm=scene["h_pt"] * 25.4 / 72,
-                            vector=False,
-                            basis=engine_exportjob.Basis(
-                                engine_exportjob.BASIS_CONVERT, source_sha
-                            ),
-                            manifest={"chart_render_revision": render_revision},
-                        )
-                    )
-                else:
-                    tiff_target = tmp_dir / "original.tiff"
-                    pdfbackend.original_tiff(
-                        pdf_tmp, tiff_target, ppi=req.ppi or engine_exportreq.PPI_DEFAULT
-                    )
-                    produced.append(
-                        engine_exportjob.Produced(
-                            format=fmt,
-                            tmp_path=tiff_target,
-                            width_mm=scene["w_pt"] * 25.4 / 72,
-                            height_mm=scene["h_pt"] * 25.4 / 72,
-                            vector=False,
-                            basis=engine_exportjob.Basis(
-                                engine_exportjob.BASIS_CONVERT, source_sha
-                            ),
-                            manifest={"chart_render_revision": render_revision},
-                        )
-                    )
-        else:
+        except (SVGIRError, chartbundle.ChartBundleError) as exc:
             produced.append(
                 engine_exportjob.Produced(
-                    format=fmt, error_code="svg_asset_export_unsupported", error_params={}
+                    format=fmt, error_code=exc.code, error_params={"detail": str(exc)}
                 )
             )
-    return engine_exportjob.enforce_one_basis(produced, source_sha)
+        except (RenderChildError, WriterError) as exc:
+            produced.append(
+                engine_exportjob.Produced(
+                    format=fmt,
+                    error_code="format_failed",
+                    error_params={"detail": str(exc), "reason": exc.code},
+                )
+            )
+    return engine_exportjob.enforce_one_basis(produced, snapshot.source_sha256)
 
 
 def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> list:
@@ -3506,6 +3562,27 @@ def _export_produce_rendercore(
         与 `_resolve_panel_source(rerender=True)` 同一判定）。"""
 
         def resolve(self, obj: dict):
+            if obj.get("chart") is not None:
+                from .rendercore.svgir import SVGIRError
+
+                snapshot = _export_chart_snapshot(job, str(obj["id"]), obj["chart"])
+                try:
+                    return _export_chart_canonical(job, snapshot, tmp_dir)
+                except SVGIRError as exc:
+                    # SVG 原生仍可完整交付。PDF 消费者会针对这份真实 SVG 资源
+                    # 明确拒绝；不制造空白PDF冒充 canonical，也不影响SVG格式。
+                    note = f"{obj['id']}: {exc.code}"
+                    if note not in job.warnings:
+                        job.warnings.append(note)
+                    svg_path = tmp_dir / ("chart-native-" + snapshot.render_revision + ".svg")
+                    svg_path.write_bytes(snapshot.svg)
+                    artifact = engine_figcapture.source_artifact_from_file(
+                        svg_path,
+                        source_id=snapshot.file_id,
+                        origin=engine_figcapture.ORIGIN_DECLARATIVE,
+                        render_revision=snapshot.render_revision,
+                    )
+                    return rc_sources.FrozenSource(artifact=artifact, path=svg_path)
             if str(obj.get("id", "")) in rerender_ids:
                 fs = self.execute(obj)
                 if fs.artifact.origin != engine_figcapture.ORIGIN_EXECUTION:
@@ -3840,7 +3917,7 @@ def _export_artifact_sources(req):
     return contexts
 
 
-def _export_commit_guard(root, artifact_sources=None):
+def _export_commit_guard(root, artifact_sources=None, *, job=None):
     """Carry project/remap and selected byte identities through final publication."""
     start = engine_inputremap.generation(root) if root else None
     sources = [(_artifact_path(key), value) for key, value in (artifact_sources or {}).items()]
@@ -3850,9 +3927,11 @@ def _export_commit_guard(root, artifact_sources=None):
         with engine_inputremap.landing(root, start) if root else contextlib.nullcontext():
             for path, context in sources:
                 engine_artifactcontext.assert_current(path, context)
+            for path, expected in getattr(job, "_chart_source_dependencies", {}).values():
+                _assert_chart_source(path, expected)
             yield
 
-    return guard if root or sources else None
+    return guard if root or sources or job is not None else None
 
 
 def _prepare_export_job(spec: dict):
@@ -3906,7 +3985,9 @@ def api_export():
         report=_style_check_report(spec),
         inspect=_export_inspect,
         classify_error=_classify_export_error,
-        commit_guard=_export_commit_guard(getattr(_request_ctx(), "path", None), artifact_sources),
+        commit_guard=_export_commit_guard(
+            getattr(_request_ctx(), "path", None), artifact_sources, job=job
+        ),
     )
     LOG.info(
         "导出[%s]: %s（scope=%s, %s, %.0fms，%d 条警告）",
@@ -3969,7 +4050,7 @@ def api_export_start():
         report=report,
         inspect=inspect,
         classify_error=_classify_export_error,
-        commit_guard=_export_commit_guard(ctx.path, artifact_sources),
+        commit_guard=_export_commit_guard(ctx.path, artifact_sources, job=job),
     )
     return jsonify(job.to_payload())
 

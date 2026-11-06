@@ -99,6 +99,14 @@ class FrozenSource:
         return self.svg_text
 
     def svg_representation(self) -> FrozenSource | None:
+        if self.artifact.origin == figcapture.ORIGIN_DECLARATIVE and self.artifact.kind == "svg":
+            if self.svg is not None or self.svg_text is not None:
+                raise SourceError(
+                    "source_needs_execution",
+                    "native chart SVG cannot have a companion",
+                    {"figure": self.artifact.source_id},
+                )
+            return self
         if self.svg is None:
             return None
         a, b = self.artifact, self.svg.artifact

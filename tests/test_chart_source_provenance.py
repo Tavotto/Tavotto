@@ -218,13 +218,27 @@ def test_ir_accepts_all_supported_origins_without_adding_static_svg_placement(or
     resource = ir.FileResource("chart.svg", "pdf", "a" * 64, origin, "sha256:" + "b" * 64)
     page = ir.Page(100, 100, (), {"source": resource})
     assert ir.validate(page) is page
+    svg_page = dataclasses.replace(
+        page, resources={"source": dataclasses.replace(resource, kind="svg")}
+    )
+    if origin == "declarative":
+        assert ir.validate(svg_page) is svg_page
+        return
     with pytest.raises(ir.IRError) as exc:
-        ir.validate(
-            dataclasses.replace(
-                page, resources={"source": dataclasses.replace(resource, kind="svg")}
-            )
-        )
+        ir.validate(svg_page)
     assert exc.value.code == "resource_kind_mismatch"
+
+
+def test_native_declarative_svg_is_its_own_representation_without_forging_a_pdf():
+    svg = frozen("svg")
+    assert svg.svg_representation() is svg
+    for invalid in (
+        dataclasses.replace(svg, svg=frozen("svg")),
+        dataclasses.replace(svg, svg_text=frozen("svg")),
+    ):
+        with pytest.raises(sources.SourceError):
+            invalid.svg_representation()
+    assert frozen("svg", origin="static").svg_representation() is None
 
 
 def test_ir_still_rejects_unknown_origins_and_bad_byte_identity():

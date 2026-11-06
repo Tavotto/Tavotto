@@ -1,15 +1,15 @@
-"""R05：持久化与冷恢复——chart 字段在真实保存/读取路径的往返与旧版防损。
+"""R05：真实文档字段往返、来源冲突及自包含SVG的新进程恢复。
 
-主语是**真实落盘文件**：POST /api/layouts → 磁盘 JSON → GET 读回 → chart 字段
-逐字保留；`documents.loads_document` 不剥字段；旧版防损 = 旧前端**缺** chart 字段
-保存后字段被清（该方向是前端状态序列化的自然结果），而**带** chart 的文档经旧
-判据 validate_document 原样放行。冷恢复 = 保存后用保存下来的模型/绑定对新进程
-的 compute 端点重算，结果与保存前一致。
+JSON 保留字段不等于旧客户端防损；同进程 reset 也不等于冷恢复。完整项目资源/
+迁移资格另行验收，末尾自包含用例实际删除原源并使用全新父进程请求 compute。
 """
 
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -77,7 +77,7 @@ def project(tmp_path, monkeypatch):
     root.mkdir()
     (root / "chart.svg").write_bytes((CORPUS / "line_two_series.svg").read_bytes())
     m.open_project(str(root))
-    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", str(REPO / ".venv" / "Scripts" / "python.exe"))
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", pool.find_worker_python())
     monkeypatch.setattr(
         pool, "get", lambda *a, **k: pytest.fail("cold recovery built a script session")
     )
@@ -130,12 +130,12 @@ def test_validate_document_admits_chart_document():
 
 
 def test_cold_recovery_recompute_matches_saved_model(project):
-    """冷恢复：保存→(模拟重开)→用保存下来的模型/绑定对新 compute 重算一致。"""
+    """同进程项目重开：用保存的模型/绑定重新 compute，不冒充新父进程。"""
     client, root = project
     chart = _bind_chart(client)
     doc = _project_doc(client, chart)
     assert client.post(f"/api/layouts/{DOC_NAME}?target=project", json=doc).status_code == 200
-    # 模拟冷态：reset_projects + 重新打开（fixture 的注册表清空 = 新进程语义）
+    # 清注册表只覆盖同进程项目重开；真正新父进程在末尾自包含用例验证。
     m.reset_projects()
     m.open_project(str(root))
     try:
@@ -208,8 +208,8 @@ def test_export_chart_original_svg_delivers_composed_version(project):
     assert b"tv-series" in svg_bytes, "exported SVG is not the composed version"
 
 
-def test_export_chart_original_pdf_reports_unsupported(project):
-    """SVG→IR 翻译器落地前，chart 面板的 PDF 逐项报 svg_asset_export_unsupported。"""
+def test_export_chart_original_pdf_delivers_composed_version(project):
+    """组合场景经真实 SVG→IR 与既有 PDF writer 交付。"""
     client, _root = project
     chart = _bind_chart(client)
     export_req = {
@@ -319,11 +319,13 @@ def test_two_series_bind_and_compute(project):
 
 
 def test_export_embeds_metadata_for_self_contained_roundtrip(project):
-    """导出 SVG 嵌入 chart 元数据（base64 JSON metadata 块）→ 从元数据重算一致。"""
+    """真实导出物搬迁、删原源、新父进程重开后继续计算，与热态相同。"""
     import base64
 
     client, root = project
     chart = _bind_chart(client)
+    hot = client.post("/api/svg/chart/compute", json={"file": "chart.svg", **chart})
+    assert hot.status_code == 200, hot.json
     doc = _project_doc(client, chart)
     assert client.post(f"/api/layouts/{DOC_NAME}?target=project", json=doc).status_code == 200
     export_req = {
@@ -354,10 +356,45 @@ def test_export_embeds_metadata_for_self_contained_roundtrip(project):
     meta = json.loads(meta_json)
     assert meta["model"]["series"][0]["kind"] == "line"
     assert "binding" in meta
-    # 从元数据重算 → 与原始 compute 一致
-    recompute = client.post(
-        "/api/svg/chart/compute",
-        json={"file": "chart.svg", "model": meta["model"], "binding": meta["binding"]},
+    portable = root.parent / "moved-project"
+    portable.mkdir()
+    (portable / "portable.svg").write_bytes(svg_bytes)
+    (root / "chart.svg").unlink()
+    child = r"""
+import json, os, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from tavotto import app as m, chartbundle
+from tavotto.engine import project_watch
+root = Path(sys.argv[2])
+bundle = chartbundle.extract_chart((root / "portable.svg").read_bytes())
+assert bundle is not None
+m.open_project(str(root))
+try:
+    response = m.app.test_client().post("/api/svg/chart/compute", json={"file":"portable.svg", **bundle.chart})
+    print(json.dumps({"status":response.status_code,"body":response.json,"module":m.__file__}))
+finally:
+    m.reset_projects()
+    project_watch.stop()
+"""
+    env = {
+        **os.environ,
+        "TAVOTTO_DATA_DIR": str(portable / "isolated-data"),
+        "TAVOTTO_CONFIG_DIR": str(portable / "isolated-config"),
+        "PYTHONUTF8": "1",
+    }
+    env.pop("TAVOTTO_EXE", None)
+    proc = subprocess.run(
+        [sys.executable, "-I", "-c", child, str(REPO / "src"), str(portable)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        timeout=60,
     )
-    assert recompute.status_code == 200, recompute.json
-    assert "<svg" in recompute.json["svg"]
+    assert proc.returncode == 0, proc.stderr
+    cold = json.loads(proc.stdout.splitlines()[-1])
+    assert Path(cold["module"]).resolve() == (REPO / "src/tavotto/app.py").resolve()
+    assert cold["status"] == 200, cold
+    assert cold["body"]["svg"] == hot.json["svg"]
+    assert cold["body"]["facts"] == hot.json["facts"]

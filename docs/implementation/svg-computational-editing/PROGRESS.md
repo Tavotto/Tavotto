@@ -42,6 +42,14 @@
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
+### 2026-11-06 实施：同一冻结快照贯穿计算与正式导出
+
+- app共享_ChartSnapshot将有界源字节、原场景、模型/绑定、worker环境、组合SVG与render_revision绑定；自包含包先按存储模型真正重放核对，再计算本次新编辑。worker返回及交付前复核源摘要，期间改源不得发布。preview/export不再各算一套。
+- 原图、标注、画布和多页通过现有job/source resolver/RenderPlan消费同一冻结版本；同源不同模型独立缓存并防中途来源切换。按需一次转换canonical PDF+SVG严格配对；无canonical时保留真实declarative SVG供SVG格式，PDF明确失败。SVG不依赖转换成功，位图超预算等逐格式失败，不抹掉同作业有效SVG/PDF。
+- 当前集成工作树15文件回归288 passed、1 skipped、0fail/errors，pytest exit0，85.69秒；报告shared-export-integrated.log/xml。包含既有导出请求、来源、计划、标注、pad、多页、版本冻结、静态SVG等受影响路径，仍不是全旧功能资格。唯一skip为测试EPS像素对比的/usr/local/bin/gs环境条件；产品不调用该外部工具，未伪造本机EPS独立栅格验收。
+- 12项真API/worker/RenderCore导出继续通过，包含同文件两模型、A/B/A多页、发布前改源、环境不匹配、渐变失败隔离及真实大图栅格预算；新父进程删原/搬迁的正式SVG恢复也在汇总内。Ruff与format检查通过。
+- 按功能暂存只接共享快照/导出的app差异与sources/plan/相关测试；C inspect/bind、恢复UI及其测试仍保持工作树原样，下一功能独立提交。两组消费者均已在当前集成树验证，不用全量add混入其他代理文件。原图EPS、分享选择和完整manifest编辑保留待办。
+
 ### 2026-11-06 实施：SVG→IR 保真与真实裁剪并集
 
 - svgir/svgcoord 修复相对/重复/平滑/弧路径、局部CTM重复应用、px/pt/非零viewBox/PAR、use/符号视口、CSS继承、文字/图像和组透明；嵌入图像通过显式files接收器进入既有PDF写出资源。unsupported元素仍逐格式明确失败，不静默略去。
