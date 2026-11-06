@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import math
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -751,3 +752,262 @@ def test_chromium_native_svg_and_clip_union_keep_original_pixels(tmp_path, provi
                 assert (nested.get("width"), nested.get("height")) == ("200", "100")
     finally:
         browser_page.close()
+
+
+TEXT_CHUNKS = [
+    ("continuous", 'AB<tspan fill="red">CD</tspan>EF', "", "ABCDEF"),
+    ("mixed_fonts", 'A<tspan font-size="12" font-weight="bold" fill="red">BC</tspan>D', "", "ABCD"),
+    ("relative", 'AB<tspan dx="8" dy="-4">CD</tspan>EF', "", "ABCDEF"),
+    ("absolute_x", 'AB<tspan x="180">CD</tspan>EF', "", "ABCDEF"),
+    ("absolute_y", 'AB<tspan y="80">CD</tspan>EF', "", "ABCDEF"),
+    ("child_anchor", 'AB<tspan text-anchor="end">CD</tspan>EF', "", "ABCDEF"),
+    ("first_anchor_end", '<tspan text-anchor="end">AB<tspan>CD</tspan>EF</tspan>', "", "ABCDEF"),
+    (
+        "first_anchor_start",
+        '<tspan text-anchor="start">AB<tspan dx="-40">CD</tspan>EF</tspan>',
+        "",
+        "ABCDEF",
+    ),
+    ("negative_dx", 'AB<tspan dx="-40">CD</tspan>EF', "", "ABCDEF"),
+    ("whitespace", " A <tspan>  B </tspan> C ", "", "A B C"),
+    ("preserved_space", " A <tspan>  B </tspan> C ", 'xml:space="preserve"', " A   B  C "),
+    ("newline", "\n  A\n  <tspan> B </tspan>\n C\n ", "", "A B C"),
+    ("nonbreaking_space", "A\u00a0<tspan>B</tspan>", "", "A\u00a0B"),
+    ("kerning", 'A<tspan fill="red">V</tspan>', "", "AV"),
+    ("relative_kerning", 'A<tspan dx="8" dy="-4" fill="red">V</tspan>', "", "AV"),
+    ("rotated_glyphs", "AB<tspan>CD</tspan>", 'rotate="90"', "ABCD"),
+    ("rotated_span", 'AB<tspan rotate="90">CD</tspan>EF', "", "ABCDEF"),
+    (
+        "rotated_element",
+        'AB<tspan dx="8" dy="-4">CD</tspan>EF',
+        'transform="rotate(-30 100 50)"',
+        "ABCDEF",
+    ),
+    ("nested_dx", '<tspan dx="5">AB</tspan>C', 'dx="10"', "ABC"),
+    ("empty_absolute", 'A<tspan x="180"></tspan>B', "", "AB"),
+    ("positioned_space", 'A<tspan x="180"> </tspan>B', "", "A B"),
+    ("preserve_boundary", 'A<tspan xml:space="preserve">  </tspan> B', "", "A   B"),
+]
+
+
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        ("AB<tspan>CD</tspan>EF", [(82, 50), (88, 50), (94, 50), (100, 50), (106, 50), (112, 50)]),
+        (
+            'AB<tspan dx="8" dy="-4">CD</tspan>EF',
+            [(78, 50), (84, 50), (98, 46), (104, 46), (110, 46), (116, 46)],
+        ),
+        (
+            'AB<tspan x="180">CD</tspan>EF',
+            [(94, 50), (100, 50), (168, 50), (174, 50), (180, 50), (186, 50)],
+        ),
+        (
+            'AB<tspan y="80">CD</tspan>EF',
+            [(94, 50), (100, 50), (100, 80), (106, 80), (112, 80), (118, 80)],
+        ),
+        (
+            'AB<tspan dx="-40">CD</tspan>EF',
+            [(108, 50), (114, 50), (80, 50), (86, 50), (92, 50), (98, 50)],
+        ),
+        ('A<tspan font-size="20">BC</tspan>D', [(82, 50), (88, 50), (100, 50), (112, 50)]),
+    ],
+)
+def test_text_chunk_geometry_uses_hand_calculated_font_advances(body, expected):
+    from support.fakeface import FakeProvider
+
+    source = svg(f'<text x="100" y="50" font-size="10" text-anchor="middle">{body}</text>')
+    page, _ = svg_to_ir(source, 100, 100, FakeProvider())
+    actual = _text_glyph_positions(page)
+    assert [(char["x"], char["y"]) for char in actual] == pytest.approx(expected)
+
+
+def test_dom_boundary_does_not_hide_independent_ligature_characters_or_relative_positions():
+    from support.fakeface import LIGATURE_GID, FakeProvider
+
+    source = svg(
+        '<text x="50" y="50" font-size="10" text-anchor="middle">f<tspan fill="red" dx="3">i</tspan></text>'
+    )
+    page, _ = svg_to_ir(source, 100, 100, FakeProvider())
+    assert [(item["text"], item["x"]) for item in _text_glyph_positions(page)] == [
+        ("f", 42.5),
+        ("i", 51.5),
+    ]
+    glyphs = [glyph for node, _ in final_nodes(page) for run in node.runs for glyph in run.glyphs]
+    assert all(glyph.gid != LIGATURE_GID for glyph in glyphs)
+    same_node, _ = svg_to_ir(
+        svg('<text x="50" y="50" font-size="10" text-anchor="middle">fi</text>'),
+        100,
+        100,
+        FakeProvider(),
+    )
+    glyphs = [
+        glyph for node, _ in final_nodes(same_node) for run in node.runs for glyph in run.glyphs
+    ]
+    assert len(glyphs) == 1 and glyphs[0].gid == LIGATURE_GID
+
+
+def test_text_chunk_keeps_scoped_opacity_and_unrotated_run_batching():
+    from support.fakeface import FakeProvider
+
+    source = svg(
+        '<text x="50" y="50" font-size="10" text-anchor="middle">A<tspan opacity=".5">B<tspan opacity=".5">C</tspan>D</tspan>E</text>'
+    )
+    page, _ = svg_to_ir(source, 100, 100, FakeProvider())
+    assert [
+        node.opacity
+        for node, _ in ir.walk(page)
+        if isinstance(node, ir.Group) and node.opacity != 1
+    ] == [0.5, 0.5]
+    assert "".join(item["text"] for item in _text_glyph_positions(page)) == "ABCDE"
+    run, _ = svg_to_ir(
+        svg('<text font-size="10">' + "A" * 5000 + "</text>"), 100, 100, FakeProvider()
+    )
+    texts = [node for node, _ in final_nodes(run) if isinstance(node, ir.ShapedText)]
+    assert len(texts) == 1 and len(texts[0].runs[0].glyphs) == 5000
+
+
+def test_referenced_text_uses_instance_parent_xml_space_inheritance():
+    from support.fakeface import FakeProvider
+
+    source = svg(
+        '<defs><text id="t"> A <tspan> B </tspan> C </text></defs><g xml:space="preserve"><use href="#t"/></g>'
+    )
+    page, _ = svg_to_ir(source, 100, 100, FakeProvider())
+    assert "".join(item["text"] for item in _text_glyph_positions(page)) == " A  B  C "
+
+
+@pytest.mark.parametrize(
+    "body,attributes,expected",
+    [
+        ('AB<tspan fill="red" font-weight="bold">CD</tspan>EF', "", "ABCDEF"),
+        (" A <tspan>  B </tspan> C ", "", "A B C"),
+        ('AB<tspan dx="8" dy="-4" fill="red">CD</tspan>EF', "", "ABCDEF"),
+        ("AB<tspan>CD</tspan>", 'rotate="90"', "ABCD"),
+    ],
+)
+def test_anchored_text_pdf_has_source_characters_once(
+    body, attributes, expected, tmp_path, provider
+):
+    from support.pdftext import text as read_text
+    from tavotto.rendercore.pdfwriter import write_pdf
+
+    source = svg(
+        f'<text x="100" y="50" font-size="20" text-anchor="middle" {attributes}>{body}</text>',
+        'width="300" height="120" viewBox="0 0 300 120"',
+    )
+    page, _ = svg_to_ir(source, 225, 90, provider)
+    output = tmp_path / "anchored.pdf"
+    write_pdf(page, output, provider)
+    # PDFium's reader is independent of the IR converter and PDF writer.
+    # Only reader-generated layout spaces/newlines are filtered by this helper;
+    # actual source spaces must survive unchanged.
+    assert read_text(output) == expected
+
+
+def _text_glyph_positions(page, user_per_pt=1):
+    result = []
+    for node, matrix in final_nodes(page):
+        if not isinstance(node, ir.ShapedText):
+            continue
+        cursor = node.x
+        for run in node.runs:
+            factor = run.size / page.resources[run.font].units_per_em
+            for glyph in run.glyphs:
+                if glyph.text:
+                    p = ir.apply(matrix, cursor, node.y)
+                    q = ir.apply(matrix, cursor + 1, node.y)
+                    result.append(
+                        {
+                            "text": glyph.text,
+                            "x": p[0] * user_per_pt,
+                            "y": (page.height_pt - p[1]) * user_per_pt,
+                            "angle": math.degrees(math.atan2(-(q[1] - p[1]), q[0] - p[0])),
+                        }
+                    )
+                cursor += glyph.x_advance * factor
+    return result
+
+
+def _font_faces_for_browser(provider):
+    return [
+        {
+            "family": "Liberation Sans",
+            "data": base64.b64encode(
+                provider.face_for("sans-serif", bold, italic).path.read_bytes()
+            ).decode(),
+            "weight": "700" if bold else "400",
+            "style": "italic" if italic else "normal",
+        }
+        for bold, italic in [(False, False), (True, False), (False, True), (True, True)]
+    ]
+
+
+@pytest.mark.parametrize(
+    "name,body,attributes,expected", TEXT_CHUNKS, ids=[case[0] for case in TEXT_CHUNKS]
+)
+def test_text_chunks_match_independent_chromium_characters_and_baselines(
+    name, body, attributes, expected, provider, chromium, tmp_path
+):
+    source = svg(
+        f'<text x="100" y="50" font-family="Liberation Sans" font-size="20" text-anchor="middle" {attributes}>{body}</text>',
+        'width="300" height="120" viewBox="0 0 300 120"',
+    )
+    browser_page = chromium.new_page()
+    try:
+        browser_page.set_content("<html><body></body></html>")
+        browser_page.evaluate(
+            """async faces => {for (const spec of faces) {
+          const face = new FontFace(spec.family, 'url(data:font/ttf;base64,'+spec.data+')', {weight:spec.weight,style:spec.style});
+          await face.load(); document.fonts.add(face);
+        }}""",
+            _font_faces_for_browser(provider),
+        )
+        browser_page.locator("body").evaluate(
+            "(body,source) => body.innerHTML=source", source.decode()
+        )
+        observed = browser_page.locator("text").evaluate("""el => {
+          const local = el.getCTM(), root = el.ownerSVGElement.getCTM().inverse();
+          return Array.from({length:el.getNumberOfChars()}, (_,i) => {
+            const p=el.getStartPositionOfChar(i).matrixTransform(local).matrixTransform(root);
+            const q=el.getEndPositionOfChar(i).matrixTransform(local).matrixTransform(root);
+            return {x:p.x,y:p.y,angle:Math.atan2(q.y-p.y,q.x-p.x)*180/Math.PI};
+          });
+        }""")
+    finally:
+        browser_page.close()
+    # 96 CSS px/in → 72 physical pt/in, independent of the converter's mapping.
+    page, _ = svg_to_ir(source, 225, 90, provider)
+    actual = _text_glyph_positions(page, user_per_pt=4 / 3)
+    assert "".join(item["text"] for item in actual) == expected
+    assert len(actual) == len(observed) == len(expected)
+    for actual_char, browser_char in zip(actual, observed):
+        assert (actual_char["x"], actual_char["y"]) == pytest.approx(
+            (browser_char["x"], browser_char["y"]), abs=0.06
+        ), name
+        assert actual_char["angle"] == pytest.approx(browser_char["angle"], abs=1e-4)
+    if name in {
+        "continuous",
+        "mixed_fonts",
+        "relative",
+        "absolute_x",
+        "absolute_y",
+        "negative_dx",
+        "rotated_glyphs",
+        "rotated_span",
+        "rotated_element",
+    }:
+        from support.pdftext import chars as read_characters
+        from tavotto.rendercore.pdfwriter import write_pdf
+
+        output = tmp_path / "chrome-baselines.pdf"
+        write_pdf(page, output, provider)
+        characters = read_characters(output)
+        # These sources have unique ASCII letters. Match by character because
+        # the independent PDF reader sorts lines by baseline rather than DOM.
+        assert sorted(char.c for char in characters) == sorted(expected)
+        written = {char.c: char for char in characters}
+        for char, browser_char in zip(expected, observed):
+            assert (written[char].x * 4 / 3, written[char].y * 4 / 3) == pytest.approx(
+                (browser_char["x"], browser_char["y"]), abs=0.06
+            ), name

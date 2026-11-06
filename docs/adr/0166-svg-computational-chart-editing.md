@@ -49,7 +49,8 @@
   opacity、dash、文字（批准脸+HarfBuzz，旋转经 Group 变换，字体不可解析时**按披露回退或逐项失败**，不静默换脸）；
   unsupported=渐变/mask/filter/pattern → 该格式逐项失败带元素清单（同 `eps_annotations_unsupported` 的诚实模式）。
 - 文字层：PDF 文字层保留真实 Unicode（pdfwriter 既有 ToUnicode/ActualText 机制）；实验三核对文本层含标题/图例/新刻度。
-- 2026-11-06 保真接线：局部 CTM 只应用一次，根视口按物理 pt 与 preserveAspectRatio 映射；use/符号视口、继承字号、实际 CSS 层叠及嵌入图像走同一 IR。多成员 clipPath 是各自填充规则的并集，用 ClipUnion 表达；PDF 以矢量 luminosity mask 与隔离 Form 保留曲线及嵌套透明，SVG 保留各成员 clip-rule。不能拼成一个绕向路径，否则反向重叠会相消；单 Path 原分支保持原样。复杂连续 tspan 的整段 text-anchor 仍待专项修复/验证，不把已过的明确定位文字用例扩称任意文本布局等价。
+- 2026-11-06 保真接线：局部 CTM 只应用一次，根视口按物理 pt 与 preserveAspectRatio 映射；use/符号视口、继承字号、实际 CSS 层叠及嵌入图像走同一 IR。多成员 clipPath 是各自填充规则的并集，用 ClipUnion 表达；PDF 以矢量 luminosity mask 与隔离 Form 保留曲线及嵌套透明，SVG 保留各成员 clip-rule。不能拼成一个绕向路径，否则反向重叠会相消；单 Path 原分支保持原样。
+- 连续文字按 SVG text chunk 统一布局：绝对 x/y 开新 chunk，相对 dx/dy、样式或 tspan 边界不拆锚定；空白归一后用既有 typography/HarfBuzz shaping，整段应用 text-anchor，逐字旋转不改变水平基线前进。22 项相同批准字体的 Chromium 参考（其中 9 项再经 PDFium 基线对拍）及精确文本层回归已通过；不据此宣称双向文字、竖排、textPath 或全部 baseline 模式等价。
 
 ### 3. 身份与安全（扩展现有合同，不新增旁路）
 

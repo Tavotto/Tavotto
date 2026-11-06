@@ -42,6 +42,13 @@
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
+### 2026-11-06 实施：连续文字 chunk 与独立几何验证
+
+- SVG→IR 的连续 tspan 改为整段 chunk 定位与锚定，复用既有 shaping/字体权威；处理绝对位置边界、相对 dx/dy、空 tspan、XML 空白、跨 paint kerning 及逐字旋转。未新增 IR 或写出器，未扩大为任意 SVG 文本支持。
+- 两个文件最终定向回归157 passed/0 skipped，exit0；其中新增35项，22项Chromium独立参考，9项同时用真实PDFium核对字符基线。各子集存在重叠，不累加。报告 svgir-text-final.xml/log 与 svgir-text-chunks-review.md；旧3ed06553转换器运行新增手算回归在目标坐标断言失败，exit1。
+- 根代理复核文件SHA与代理完成版本一致，重新执行9个完成批次文件的Ruff和format均exit0。连续tspan旧最大基线误差27.79用户单位降至0.021，独立门槛0.06未放宽。ADR0166同步；双向/竖排/textPath及全部baseline资格仍待对应能力验收。
+- 本批只提交svgir、其测试和受影响文档；manifest配对adapter、项目来源资源核心及前端renderStore接线另按功能收敛。M1仍未通过，目标保持active。
+
 ### 2026-11-06 实施：自包含恢复API与真实确认事务
 
 - inspect 对普通SVG保持零worker执行且无新增字段；自包含包经真实声明式重放核对后返回原source的scene与可选restored_chart，bind也用该原场景。外部改图并重签hash仍须重放一致，否则chart_source_mismatch；inspect期间换源返回冲突。

@@ -14,6 +14,8 @@ import hashlib
 import math
 import re
 import struct
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 
 from tavotto import svgcoord
 from tavotto.rendercore import ir, typography
@@ -21,6 +23,7 @@ from tavotto.rendercore.fonts import FontsUnavailable
 from tavotto.rendercore.svgcheck import parse_svg, strip_matplotlib_doctype
 
 XLINK_HREF = "{http://www.w3.org/1999/xlink}href"
+XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 ERROR_CODES = (
     "svgir_gradient",
     "svgir_mask",
@@ -319,6 +322,7 @@ _INHERITED = frozenset(
         "clip-rule",
         "dominant-baseline",
         "alignment-baseline",
+        XML_SPACE,
     )
 )
 _PRESENTATION = _INHERITED | {
@@ -399,6 +403,31 @@ def _transformed_segments(segments, matrix):
         (s[0], *(v for i in range(1, len(s), 2) for v in ir.apply(matrix, s[i], s[i + 1])))
         for s in segments
     )
+
+
+@dataclass(slots=True)
+class _TextCharacter:
+    char: str
+    style: dict
+    owners: tuple[ET.Element, ...]
+    angle: float
+    preserve: bool
+
+
+@dataclass(slots=True)
+class _TextGlyph:
+    glyph: ir.Glyph
+    font: str
+    face: typography.Face
+    size: float
+    character: _TextCharacter
+    index: int
+    x: float = 0
+    y: float = 0
+
+    @property
+    def advance(self):
+        return self.glyph.x_advance * self.size / self.face.resource.units_per_em
 
 
 class _Translator:
@@ -632,113 +661,271 @@ class _Translator:
         return key, face
 
     def _text(self, el, st):
-        nodes, cursor = [], [0.0, 0.0]
+        """Resolve SVG positioning around the existing font shaping authority.
 
-        def visit(ch, style, inherited_angle=0.0, preserve=False):
+        DOM/style fragments are not text chunks. Only an absolute x/y starts a
+        new anchored chunk; relative dx/dy, fill, font and tspan boundaries do
+        not. Whitespace and per-element first-addressable-character positions
+        are resolved before shaping/placement, then one anchor shift applies to
+        every glyph in that chunk. Glyph rotation does not rotate the baseline.
+        """
+        raw, styles = [], {}
+        # Use computed inheritance, including the instantiated <use> parent,
+        # rather than walking a referenced text definition's original parents.
+        preserve = st.get(XML_SPACE) == "preserve"
+
+        def collect(ch, style, owners=(), angle=0.0, keep=preserve):
             if style.get("display") == "none":
                 return
-            start_index = len(nodes)
-            space = ch.get("{http://www.w3.org/XML/1998/namespace}space")
-            preserve = preserve if space is None else space == "preserve"
-            for axis, key in enumerate(("x", "y")):
-                if key in ch.attrib:
-                    positions = re.split(r"[\s,]+", ch.get(key, "0").strip())
-                    if len(positions) != 1:
-                        raise SVGIRError(
-                            "svgir_unsupported_element", "per-character text positioning"
-                        )
-                    cursor[axis] = self._len(positions[0], axis, style)
-                cursor[axis] += self._len(ch.get("d" + key, "0"), axis, style)
-            rotation = _numbers(ch.get("rotate", str(inherited_angle)))
+            styles[ch] = style
+            owners = (*owners, ch)
+            space = ch.get(XML_SPACE)
+            if space is not None:
+                keep = space == "preserve"
+            rotation = _numbers(ch.get("rotate", str(angle)))
             if len(rotation) != 1:
                 raise SVGIRError("svgir_unsupported_element", "per-character text rotation")
+            angle = rotation[0]
 
-            def emit(content):
-                if not content or (not preserve and not content.strip()):
-                    return
-                if not preserve:
-                    content = re.sub(r"\s+", " ", content)
-                _key, face = self._font(style)
-                size = _number(style.get("font-size", "16"))
-                if size <= 0:
-                    return
-                # Reuse the product's single glyph-layer policy, including CJK
-                # and explicit missing-glyph diagnostics. SVG text remains
-                # literal text; it must not pass through rich-text parsing.
-                faces = typography.FaceSet(face, self.fonts.cjk_face())
-                pieces = typography.shape_segment(content, faces, size)
-                if not pieces:
-                    return
-                runs = []
-                for piece in pieces:
-                    font_key = f"font:{piece.face.resource.face_id}"
-                    self.resources[font_key] = piece.face.resource
-                    self.faces[font_key] = piece.face
-                    runs.append(ir.GlyphRun(font_key, size, piece.glyphs))
-                missing = typography.missing_glyphs(content, faces)
-                if missing:
-                    self.notes.append("glyph_missing: " + "".join(missing))
-                advance = sum(piece.width for piece in pieces)
-                paint = self._paint(style, "fill")
-                if style.get("visibility") in ("hidden", "collapse"):
-                    paint = None
-                if self._paint(style, "stroke") is not None:
-                    raise SVGIRError("svgir_unsupported_element", "stroked text requires outlines")
-                if paint is not None:
-                    offset = {"start": 0, "middle": -advance / 2, "end": -advance}.get(
-                        style.get("text-anchor", "start"), 0
-                    )
-                    y = cursor[1]
-                    baseline = style.get(
-                        "dominant-baseline", style.get("alignment-baseline", "auto")
-                    )
-                    if baseline in ("middle", "central"):
-                        y += (
-                            (getattr(face, "ascender", 0.8) + getattr(face, "descender", -0.2))
-                            / 2
-                            * size
-                        )
-                    elif baseline in ("hanging", "text-before-edge", "before-edge"):
-                        y += getattr(face, "ascender", 0.8) * size
-                    elif baseline in ("text-after-edge", "after-edge"):
-                        y += getattr(face, "descender", -0.2) * size
-                    elif baseline not in ("auto", "alphabetic", "baseline"):
-                        raise SVGIRError("svgir_unsupported_element", "unsupported text baseline")
-                    text = ir.ShapedText(
-                        offset,
-                        0,
-                        tuple(runs),
-                        paint,
-                        object_id=el.get("id", ""),
-                    )
-                    matrix = ir.compose(ir.scale(1, -1), ir.rotate_ccw(rotation[0]))
-                    matrix = ir.compose(matrix, ir.translate(cursor[0], y))
-                    nodes.append(ir.Group((text,), transform=matrix))
-                cursor[0] += advance
+            def append(text):
+                raw.extend(_TextCharacter(c, style, owners, angle, keep) for c in text or "")
 
-            emit(ch.text)
+            append(ch.text)
             for child in ch:
                 if _tag(child) != "tspan":
                     raise SVGIRError("svgir_unsupported_element", "textPath is unsupported")
                 child_style = self._style(child, style)
                 self._check_style(child_style)
-                visit(child, child_style, rotation[0], preserve)
-                emit(child.tail)
+                collect(child, child_style, owners, angle, keep)
+                append(child.tail)
 
-            if ch is not el and len(nodes) > start_index:
-                alpha = min(1, max(0, _length(style.get("opacity", "1"), percent=1)))
-                matrix = _parse_transform(ch.get("transform", ""))
+        collect(el, st)
+        chars = []
+        for char in raw:
+            if char.char in "\t\r\n":
+                char.char = " "
+            if (
+                char.char == " "
+                and not char.preserve
+                and (not chars or (chars[-1].char == " " and not chars[-1].preserve))
+            ):
+                continue
+            chars.append(char)
+        while chars and chars[-1].char == " " and not chars[-1].preserve:
+            chars.pop()
+        if not chars:
+            return []
+
+        # An empty/collapsed element does not move a following sibling's text.
+        # Nested attributes assigned to the same addressable character override
+        # ancestor attributes; they are not added twice (notably dx/dy).
+        first, events = {}, {}
+        for i, char in enumerate(chars):
+            for owner in char.owners:
+                if owner in first:
+                    continue
+                first[owner] = i
+                for axis, key in enumerate(("x", "y", "dx", "dy")):
+                    if key not in owner.attrib:
+                        continue
+                    value = re.split(r"[\s,]+", owner.get(key, "0").strip())
+                    if len(value) != 1:
+                        raise SVGIRError(
+                            "svgir_unsupported_element", "per-character text positioning"
+                        )
+                    events.setdefault(i, {})[key] = self._len(value[0], axis % 2, styles[owner])
+        boundaries = [
+            0,
+            *(i for i, event in events.items() if i and ("x" in event or "y" in event)),
+            len(chars),
+        ]
+        boundaries = sorted(set(boundaries))
+        glyphs, cursor = [], [0.0, 0.0]
+        cjk = self.fonts.cjk_face() if self.fonts is not None else None
+
+        for begin, end in zip(boundaries, boundaries[1:]):
+            chunk = []
+            index = begin
+            while index < end:
+                _, face = self._font(chars[index].style)
+                size = _number(chars[index].style.get("font-size", "16"))
+                stop = index + 1
+                while stop < end:
+                    _, next_face = self._font(chars[stop].style)
+                    if (
+                        next_face.resource != face.resource
+                        or _number(chars[stop].style.get("font-size", "16")) != size
+                    ):
+                        break
+                    stop += 1
+                text = "".join(char.char for char in chars[index:stop])
+                pieces = typography.shape_segment(text, typography.FaceSet(face, cjk), size)
+                missing = typography.missing_glyphs(text, typography.FaceSet(face, cjk))
+                if missing:
+                    self.notes.append("glyph_missing: " + "".join(missing))
+                # Kerning survives a paint-only DOM boundary (A<tspan>V), but
+                # a single glyph cannot straddle independently painted/scoped
+                # text nodes. Ask the same shaper again only at those cluster
+                # boundaries; never synthesize glyph IDs or font advances.
+                cuts, logical = set(), index
+                for piece in pieces:
+                    for glyph in piece.glyphs:
+                        if glyph.text:
+                            for boundary in range(logical + 1, logical + len(glyph.text)):
+                                if (
+                                    chars[boundary].owners != chars[logical].owners
+                                    or boundary in events
+                                ):
+                                    cuts.add(boundary)
+                            logical += len(glyph.text)
+                ranges = [index, *sorted(cuts), stop]
+                for part, part_end in zip(ranges, ranges[1:]):
+                    shaped = (
+                        pieces
+                        if not cuts
+                        else typography.shape_segment(
+                            "".join(char.char for char in chars[part:part_end]),
+                            typography.FaceSet(face, cjk),
+                            size,
+                        )
+                    )
+                    logical = part
+                    for piece in shaped:
+                        font = f"font:{piece.face.resource.face_id}"
+                        self.resources[font], self.faces[font] = piece.face.resource, piece.face
+                        cluster = logical
+                        for glyph in piece.glyphs:
+                            if glyph.text:
+                                cluster = logical
+                                logical += len(glyph.text)
+                            char = chars[cluster]
+                            chunk.append(_TextGlyph(glyph, font, piece.face, size, char, cluster))
+                index = stop
+
+            applied = set()
+            for item in chunk:
+                if item.index not in applied:
+                    applied.add(item.index)
+                    event = events.get(item.index, {})
+                    for axis, key in enumerate(("x", "y")):
+                        if key in event:
+                            cursor[axis] = event[key]
+                        cursor[axis] += event.get("d" + key, 0)
+                item.x, item.y = cursor
+                cursor[0] += item.advance
+            if chunk:
+                left = min(min(g.x, g.x + g.advance) for g in chunk)
+                right = max(max(g.x, g.x + g.advance) for g in chunk)
+                anchor = chunk[0].character.style.get("text-anchor", "start")
+                target = {"start": left, "middle": (left + right) / 2, "end": right}.get(anchor)
+                if target is None:
+                    raise SVGIRError("svgir_invalid", "invalid text anchor")
+                shift = chunk[0].x - target
+                for item in chunk:
+                    item.x += shift
+                glyphs.extend(chunk)
+
+        # Keep SVG styling groups and paint order, but join adjacent unrotated
+        # glyphs into the existing ShapedText/GlyphRun representation. Rotated
+        # glyphs are placed individually so their advances stay on the baseline.
+        placements = []
+        pending, pending_key = [], None
+
+        def emit():
+            if not pending:
+                return
+            first_glyph = pending[0]
+            style = first_glyph.character.style
+            paint = self._paint(style, "fill")
+            if style.get("visibility") in ("hidden", "collapse") or first_glyph.size <= 0:
+                paint = None
+            if self._paint(style, "stroke") is not None:
+                raise SVGIRError("svgir_unsupported_element", "stroked text requires outlines")
+            if paint is not None:
+                run_data = []
+                for item in pending:
+                    if run_data and run_data[-1][:2] == (item.font, item.size):
+                        run_data[-1][2].append(item.glyph)
+                    else:
+                        run_data.append((item.font, item.size, [item.glyph]))
+                runs = tuple(
+                    ir.GlyphRun(font, size, tuple(glyphs)) for font, size, glyphs in run_data
+                )
+                text = ir.ShapedText(0, 0, runs, paint, object_id=el.get("id", ""))
+                matrix = ir.compose(ir.scale(1, -1), ir.rotate_ccw(first_glyph.character.angle))
+                matrix = ir.compose(matrix, ir.translate(first_glyph.x, baseline(first_glyph)))
+                placements.append(
+                    (first_glyph.character.owners[1:], ir.Group((text,), transform=matrix))
+                )
+            pending.clear()
+
+        def baseline(item):
+            value = item.character.style.get(
+                "dominant-baseline", item.character.style.get("alignment-baseline", "auto")
+            )
+            y, face, size = item.y, item.face, item.size
+            if value in ("middle", "central"):
+                return y + (face.ascender + face.descender) / 2 * size
+            if value in ("hanging", "text-before-edge", "before-edge"):
+                return y + face.ascender * size
+            if value in ("text-after-edge", "after-edge"):
+                return y + face.descender * size
+            if value not in ("auto", "alphabetic", "baseline"):
+                raise SVGIRError("svgir_unsupported_element", "unsupported text baseline")
+            return y
+
+        for item in glyphs:
+            char = item.character
+            key = (
+                char.owners,
+                self._paint(char.style, "fill"),
+                char.style.get("visibility"),
+                baseline(item),
+            )
+            contiguous = pending and abs(item.x - (pending[-1].x + pending[-1].advance)) < 1e-9
+            if pending and (
+                key != pending_key
+                or char.angle != 0
+                or pending[-1].character.angle != 0
+                or not contiguous
+            ):
+                emit()
+            pending.append(item)
+            pending_key = key
+        emit()
+
+        def groups(items, depth=0):
+            result, i = [], 0
+            while i < len(items):
+                owners, node = items[i]
+                if len(owners) == depth:
+                    result.append(node)
+                    i += 1
+                    continue
+                owner = owners[depth]
+                stop = i + 1
+                while (
+                    stop < len(items)
+                    and len(items[stop][0]) > depth
+                    and items[stop][0][depth] is owner
+                ):
+                    stop += 1
+                children = groups(items[i:stop], depth + 1)
+                style = styles[owner]
+                opacity = min(1, max(0, _length(style.get("opacity", "1"), percent=1)))
+                matrix = _parse_transform(owner.get("transform", ""))
                 clip_ref = style.get("clip-path", "none")
                 clip = self._clip(clip_ref) if clip_ref != "none" else None
-                if alpha != 1 or matrix != ir.IDENTITY or clip:
-                    nodes[start_index:] = [
-                        ir.Group(
-                            tuple(nodes[start_index:]), transform=matrix, opacity=alpha, clip=clip
-                        )
-                    ]
+                if opacity != 1 or matrix != ir.IDENTITY or clip:
+                    result.append(
+                        ir.Group(tuple(children), transform=matrix, opacity=opacity, clip=clip)
+                    )
+                else:
+                    result.extend(children)
+                i = stop
+            return result
 
-        visit(el, st)
-        return nodes
+        return groups(placements)
 
     def _image(self, el, st):
         match = _DATA_URI_RE.fullmatch(el.get("href") or el.get(XLINK_HREF, ""))
