@@ -75,7 +75,7 @@ def _answer(gate, policy, *, group=False, **over) -> dict:
         "nonce": NONCE,
         "eligible": True,
     }
-    answer.update({"members": [{"pr": PR, "headSha": "c" * 40}]} if group else {"pr": PR})
+    answer.update({"members": [{"pr": PR, "head_sha": "c" * 40}]} if group else {"pr": PR})
     answer.update(over)
     return answer
 
@@ -605,17 +605,36 @@ def test_external_group_pr_author_is_checked_before_local_exemption(
     "members",
     [
         [],
-        [{"pr": PR + 1, "headSha": "c" * 40}],
-        [{"pr": PR, "headSha": "d" * 40}],
-        [{"pr": str(PR), "headSha": "c" * 40}],
-        [{"pr": PR, "headSha": "c" * 40, "extra": 1}],
-        [{"pr": PR, "headSha": "c" * 40}] * 2,
-        [{"pr": PR, "headSha": "c" * 40}, {"pr": 43, "headSha": "d" * 40}],
+        [{"pr": PR + 1, "head_sha": "c" * 40}],
+        [{"pr": PR, "head_sha": "d" * 40}],
+        [{"pr": str(PR), "head_sha": "c" * 40}],
+        [{"pr": True, "head_sha": "c" * 40}],
+        [{"pr": PR, "head_sha": "c" * 40, "extra": 1}],
+        [{"pr": PR, "head_sha": "c" * 40}] * 2,
+        [{"pr": PR, "head_sha": "c" * 40}, {"pr": 43, "head_sha": "d" * 40}],
+        [{"pr": PR, "headSha": "c" * 40}],  # GitHub 内部别名不得作为服务协议接受。
+        [{"pr": PR, "head_sha": "c" * 40, "headSha": "c" * 40}],
+        [{"pr": PR}],
+        [{"head_sha": "c" * 40}],
     ],
 )
 def test_group_service_members_must_exactly_match_independent_prefix(gate, policy, members):
     answer = _answer(gate, policy, group=True, members=members)
     assert _verdict(gate, policy, answer, group=True) == (set(), "provider_eligibility_invalid")
+
+
+def test_service_members_follow_pr_order_while_snapshot_keeps_queue_order(gate, policy):
+    members = [{"pr": PR, "head_sha": "c" * 40}, {"pr": PR + 1, "head_sha": "d" * 40}]
+    queue = [{"pr": PR + 1, "headSha": "d" * 40}, {"pr": PR, "headSha": "c" * 40}]
+    original_queue = copy.deepcopy(queue)
+    answer = _answer(gate, policy, group=True, members=members)
+    assert _verdict(gate, policy, answer, group=True, group_members=queue) == ({"*"}, None)
+    assert queue == original_queue  # 协议规范化不能改写独立枚举的队列顺序。
+    answer["members"] = members[::-1]
+    assert _verdict(gate, policy, answer, group=True, group_members=queue) == (
+        set(),
+        "provider_eligibility_invalid",
+    )
 
 
 @pytest.mark.parametrize(

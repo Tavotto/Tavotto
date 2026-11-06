@@ -496,6 +496,25 @@ def _group_members(raw) -> list[dict]:
     return raw
 
 
+def _service_group_members(raw) -> list[dict]:
+    """服务沿用 proof.ts：严格 snake_case，按 PR 号递增，不接受内部模型别名。"""
+    if not isinstance(raw, list) or not 1 <= len(raw) <= 100:
+        raise ConfigError("service group members 缺失或不完整")
+    previous = 0
+    for member in raw:
+        if (
+            not isinstance(member, dict)
+            or set(member) != {"pr", "head_sha"}
+            or type(member["pr"]) is not int
+            or not previous < member["pr"] <= 2**53 - 1
+            or not isinstance(member["head_sha"], str)
+            or not SHA_RE.fullmatch(member["head_sha"])
+        ):
+            raise ConfigError("service group members 字段、顺序或 PR / head 无效")
+        previous = member["pr"]
+    return raw
+
+
 def _queue_snapshot(pages, repository_id: int) -> list[dict]:
     """核对 gh graphql --paginate 的原始页，绝不把截断页当完整队列。"""
     if not isinstance(pages, list) or not 1 <= len(pages) <= 10:
@@ -913,9 +932,14 @@ def _eligibility_verdict(policy: dict, context: dict) -> tuple[set[str], str | N
             raise ValueError("base")
         if group:
             try:
-                if _group_members(answer["members"]) != _group_members(
-                    context.get("group_members")
-                ):
+                expected = sorted(
+                    [
+                        {"pr": m["pr"], "head_sha": m["headSha"]}
+                        for m in _group_members(context.get("group_members"))
+                    ],
+                    key=lambda m: m["pr"],
+                )
+                if _service_group_members(answer["members"]) != expected:
                     raise ValueError("members")
             except ConfigError as exc:
                 raise ValueError("members") from exc
