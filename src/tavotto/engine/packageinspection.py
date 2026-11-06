@@ -10,11 +10,11 @@ from __future__ import annotations
 import shutil
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .. import pdfbackend
 from ..rendercore import svgcheck
 from . import (
-    chartpackage,
     config,
     documentformat,
     documentpackage,
@@ -26,6 +26,9 @@ from . import (
     runtimeasset,
     svgstore,
 )
+
+if TYPE_CHECKING:
+    from .chartpackage import PreparedChartPackage
 
 
 def _invalid(reason: str, detail: str) -> None:
@@ -105,14 +108,14 @@ def _figure_facts(plan, *, temporary_root: Path) -> dict:
     return facts
 
 
-def inspect_project_package(prepared: chartpackage.PreparedChartPackage) -> dict:
+def inspect_project_package(prepared: PreparedChartPackage) -> dict:
     """核整个活跃 Prepared，返回脱离暂存路径的报告，不证明计算重放已通过。
 
     原 manifest 声明原样保留；missing/warnings 从已核资源与文档重新计算。
     所有资源目标都返回，不隐藏当前未被面板引用的脚本、数据或历史档案。
     安装方必须在自己的活跃 Prepared 内再次核验，不能使用本报告当写授权。
     """
-    plan = chartpackage.plan_project_resources(prepared)
+    plan = prepared.plan_project_resources()
     document, manifest = prepared.document, prepared.manifest
     resources = {
         item.record["id"]: item.record
@@ -312,7 +315,7 @@ def inspect_project_package(prepared: chartpackage.PreparedChartPackage) -> dict
                         )
     # Recheck the original numeric stages after semantic inspection. No leased
     # temporary path or previously verified mutable bytes escape this request.
-    chartpackage.plan_project_resources(prepared)
+    prepared.plan_project_resources()
     result = {
         "document_format": documentformat.CHART4,
         "doc": document,
