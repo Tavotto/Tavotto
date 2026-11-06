@@ -13,7 +13,7 @@
 计划目录：docs/implementation/svg-computational-editing
 当前证据根：E:/0 - Project/svg-review-20261106
 
-我最新要求：不新建/切换分支，不新建工作树，保留全部已有提交和未提交成果；该要求覆盖旧规则的新建要求。先读当前AGENTS.md、最近子目录规则、对应ADR、同源契约表和判据/第三路径/本地验证要求，再核对真实HEAD、diff、Git身份、解释器源码位置、已有进程。2026-11-06 13:12复核完成核心批次HEAD=bbbffed1，前端原生render接线仍未提交；它不是冻结候选，实际HEAD可能继续前进。不要reset、丢弃草稿或覆盖代理文件，不自动向旧main合并。
+我最新要求：不新建/切换分支，不新建工作树，保留全部已有提交和未提交成果；该要求覆盖旧规则的新建要求。先读当前AGENTS.md、最近子目录规则、对应ADR、同源契约表和判据/第三路径/本地验证要求，再核对真实HEAD、diff、Git身份、解释器源码位置、已有进程。2026-11-06 14:05最新功能提交3236307c；app.py、test_chart_native_api.py与32个前端消费者文件未提交，不是冻结候选。文档提交可能使HEAD前进，不reset到此快照，不丢草稿或自动向旧main合并。
 
 二、按最新状态接续，不重做已修项
 
@@ -29,23 +29,31 @@
 - f04d8f63：连续tspan整段chunk定位/锚定，157项受影响回归，含22项Chrome参考和9项PDFium基线对拍。
 - 54161afd：原生manifest脚手架adapter，当前树25项通过；明确composed=False，尚非最终命中权威。
 - bbbffed1：不可变INPUT SVG附件与schema4显式校验核心，当前树144通过/4既有Windows skip；默认schema仍3，正式保存尚未接线。
+- ea0a7027：字体族按字面值经FontProperties选择，不能把fontconfig file模式当字体文件权限；正常SVG输出有逐字节对照。
+- 029dfac2：legacy-scaffold/1和v1输出保留；native-manifest/1/v2闭式包携完整原序overrides，身份另含精确JSON摘要；profile/包88项及资源53项通过。
+- fb1ae4f7：向量生成脚本stdout/stderr固定UTF8；旧组合的唯一编码失败目标复跑1项与16vectors通过，不改写整组191项历史结果。
+- 3236307c：最终原生场景/manifest、源派生DOM的id/CSS隔离、placement receipt和native pt预览坐标。生产者190通过/41缺Inkscapeskip，marker后native27项通过；前端坐标151项、正式build及Chrome4种映射通过。跨父/插绘/复杂clip/colorbar仍未取得完整编辑资格。
 
 保留 cbd8d95e 的绑定 UI、请求/项目代际、确认/撤销重做，不从旧文档的“Dialog 无法开始”“请求没 chart”“导出只有 metadata”重新实现。
 
-当前并行线：最终原生场景/坐标及组合、前端renderStore/scheduler/PNG/编辑入口、profile与自包含v2兼容。先核对实际HEAD/diff和负责人；已完成adapter/附件核心不重做，未提交前端必须保留。新差异汇总验证后按功能分别提交，不用git add .混入未验证草稿。
+当前共享消费者已有实现及专项验证，所有子代理已释放文件。先收敛app/API+前端并取真实UI证据，再推进完整编辑状态导出/v2恢复、复杂DOM目标和正式保存。根代理统一app.py与共享契约，独立文件可交子代理并行；不从profile/原生坐标核心重做，不用git add .混入未验证草稿。
 
 当前专项证据：汇总受影响后端288通过/1个GS环境skip；真实API/worker/RenderCore导出12通过；转换核心175通过、Chrome43通过（2重叠）；恢复前端138通过和最新正式构建通过。旧writer的84skip已有41Chrome补过，剩41Inkscape及2独立文本读取缺环境。它们互有重叠且对应不同源码时刻，不累加成最终总数，不将 skip、下载浏览器或“生成了文件”当通过。新增前端恢复修改必须重跑相关测试、正式构建与 i18n；新增 Chromium 分支必须取得真实退出码。
 
-当前实际效果：曲线可见，自包含恢复/真实CSV和类别预览打通；实际恢复截图仍显示“仅版面”，蓝色系列与旧图例标记未联动。图内精确编辑、完整项目保存迁移/旧版防损、分享数据范围、原图EPS、A采用/剩余族/写回/入口/平台资格待完成。M1未通过，不得宣布最终可用或原功能全量无影响。
+新增共享native API实际16项主流程及2项隐藏/恢复补测均通过；16项早于隐藏与marker补修，不冒充最终树18项完整重跑。前端消费者639项、终态失败143项、坐标151项互有重叠；独立Chrome探针证明4种PAR下拖动/缩放锚点/线宽与物理尺寸一致，但没有证明实际指针/Inspector/保存全链。最新playground指纹579b135bc6c24c11已重建并check通过。
+
+当前实际效果：曲线、C恢复/CSV/类别和合格区域原生几何成立；历史恢复截图的“仅版面”与图例不一致仍需用当前共享消费者重验。图内操作、完整编辑状态生产导出/v2恢复、正式项目保存/旧版防损及最终旧功能资格未闭环。M1未通过，不得宣布最终可用或全量无影响。
+
+已有自有调试服务见PROGRESS最新checkpoint：后端PID67684/23984早于最新marker，须先让native-edit-browser/server.py复用已有portable/project，再仅重启该自有进程；Vite71528/23983和CLI4468/session tavotto-native-edit仍在。不要直接重启会重seed的旧脚本覆盖证据，不用模式杀进程。14:05没有代理或测试仍在跑，这些服务不是通宵调度器。
 
 三、自动推进的依赖队列
 
-0. 保留全部已提交核心和真恢复UI证据，按实际负责人接续，不重做白底、CSV、转换或恢复入口。
-1. 版本化重放：legacy-scaffold/1输出和v1包不变，native-manifest/1独立；v2包携完整原序overrides，先实际重放包内profile+edits再处理新请求。新身份包含完整顺序，canonical patch_hash相同不代表同档应用顺序相同。未知profile/非法字段/超预算拒绝；父层形状校验不等于native owned gid/能力授权。
-2. 最终原生生产者：svgchart→chartmanifest→svgcompose输出同版最终SVG+manifest。先实验物理viewport的Figure与viewBox矩阵逆映射，让现有pos_frac/pt属性输入也正确；不是只改输出bbox。保留原生gid，隔离原scene派生副本id/CSS，源字节和绑定digest不变。祖先clip/opacity与最终paint_order必须匹配，不能把非矩形clip假装成矩形命中。native创建到draw固定usetex=False，族名必须按字面值进入字体选择，不把fontconfig file模式带入未信任包权限。
-3. 共享消费者：app现有engine/render与preview_png接同一生产者，返回原子SVG或PNG+manifest+chart_revision；前端renderStore/exactPanelRender/PanelView/transport及CanvasThumb/Export/Version缩略图带同版chart。旧无chart请求/参数数量/来源策略不变；队列冻结、防乱序、同源多模型不串，raster可编辑且不绕过预算。取得真实后端浏览器点选证据后才称接通。
+0. 保留全部已提交核心和草稿，特别是029dfac2、3236307c；不重做版本合同/原生坐标/白底/CSV/转换或恢复入口。
+1. 共享消费者先收口：app现有engine/render与preview_png及前端renderStore/PanelView/transport/缩略图已有接线，验证同版SVG或PNG+manifest+chart_revision、失败撤销exact资格、队列/同源多面板/项目代际/raster。实际UI绑定→点选→Inspector改范围/样式→undo/redo；检查script+chart rebuild与host能力，不变更旧无chart请求/参数数量/来源策略。审查当前chart worker的环境占用、超时回收与输出预算，复用既有权威。取得同版真实UI证据后按功能提交。
+2. 防丢编辑：生产原图/标注/画布/多页导出冻结native profile+完整原序overrides，实际写v2；inspect/bind/确认恢复以独立恢复状态消费全edits。实际改范围/线宽/文字→导出→删原文件→新进程UI恢复，SVG/manifest/版本一致。测试手工embed不算生产导出完成；v1历史产物仍真实重放。保留ea0a7027字体/TeX边界，不把父层形状校验当目标能力授权。
+3. 复杂目标：复用composition.placements/svg_members，统一gid到实际成员/父空间/绘制槽位；transform/style/命中共用。修跨父、插绘多成员、errorbar、非矩形clip/colorbar实际反例，不搬动未绑定装饰、不改变paint order，不仅把composed改成true。已修native pt预览保持同一reader。
 4. 现有Inspector/能力/完整overrides/事务：改轴范围、数据、线点样式、图例和标题，实际曲线与图例联动；单选/多选/平移缩放/撤销重做均正确，导出→C恢复不能丢edits。
-5. 正式项目：附件核心接命名保存、自动保存、版本捕获、包恢复；附件先冻结后单次正文提交。真实旧程序已证明仅升schema会降成空3再覆盖，继续验证documents/v4独立落点、显式发现读取、新文档身份和保留原文件。复用既有锁/atomicio/versionstore/projectcopy，不另建历史数据库；移盘/新父进程/缺资源/写入中断均实测。
+5. 正式项目：附件核心接命名保存、自动保存、版本捕获、包恢复；附件先冻结后单次正文提交。保持单一documentStore/对象模型，schema4作为显式持久化格式，默认schema3不升。先冻结chart_source及保存回执，引用存在时只从校验后的精确INPUT SVG附件计算，不回退同名原文件。真实旧程序已证明仅升schema会降成空3再覆盖，验证documents/v4独立落点必须覆盖版本/缩略图/包/session发现；升级新文档身份、保留原文件，迟到回执以pj/doc/load/source防串。复用锁/atomicio/versionstore/projectcopy；移盘/新进程/缺资源/写入中断均实测。
 6. 分享与M1：区分纯外观和完整数据自包含，不暗带隐藏数据；原图EPS兑现实验、画布仍既有eps_not_for_canvas。双系列真UI绑定→图内修改/图例→保存→清缓存新父进程→原图/标注/混合画布/多页，独立读SVG/PDF矢量文字和PNG/TIFF尺寸。M1通过自动继续。
 7. M2：A可信采用、完整C、文字/分组/use实例、剩余族/统计/色阶/多轴/投影，逐格SG00；事务写回prepare→verify冷重放+几何+像素→commit；预检/样式/诊断、桌面/CLI/MCP/playground及发行依赖同合同。缺实现不能改写成缺数据，不凭SVG编造科学输入。
 8. M3：冻结最终候选，完整旧功能、等价性/不变式/CompatBench、真E2E、性能和支持平台真安装物资格。只有SG00–SG17和A/B/C对应退出条件全部满足才称最终可用。
@@ -69,5 +77,5 @@
 
 当前授权不包含 push、远程 Issue/PR、合并或发布。最终交付按功能 commits、实际使用步骤、样例产物、冻结候选测试证据与剩余平台缺口；区分已实现、本机已验证、平台资格和待发布。
 
-现在核对当前树、代理所有权和最新PROGRESS，先并行完成第1–3项并做真实产品联验，随后自动推进第4–8项。不要从已提交核心重做，不把当前前端mock回归当后端已经接通。
+现在核对当前树和最新PROGRESS，先完成现有共享消费者真实产品联验与提交，再按所有权并行推进第2、3项及第5项存储合同，随后自动推进完整队列。不要从已提交核心重做，不把独立DOM探针或手工bundle测试当完整UI/导出/保存闭环。
 ```
