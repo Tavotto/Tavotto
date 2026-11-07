@@ -93,73 +93,73 @@
           "entrypoint": "bin/codex",
           "file_count": 41,
           "mirror": {
-            "integrity": "sha512-5fWH6qqUInACcRADIewjlnRxDb4QLe0uriwehiZz0+viuAAB8I+WWefqw4xwHvyKaxeiGX4uK56+vrgfvFk3FQ==",
-            "sha256": "181d2eda8addbeca0b689c996df207293947928bdd9c88a097837ae1c7e69ca5",
-            "size": 147077955
+            "integrity": "sha512-7YtMDZX/jbWH9+fCVQg7BVsov8WvBzu4iuedXJEDlUdZxaTrYX2bEQwHIn3p0gxgSMfm30HGK9+bZm1aGSZaHw==",
+            "sha256": "6989512a93d5fc74cb221dd348c972bf3cd83592e471bfd9557bccb45eb6fffc",
+            "size": 148361216
           },
           "npm": "darwin-arm64",
           "npmjs": {
-            "integrity": "sha512-5fWH6qqUInACcRADIewjlnRxDb4QLe0uriwehiZz0+viuAAB8I+WWefqw4xwHvyKaxeiGX4uK56+vrgfvFk3FQ==",
-            "sha256": "181d2eda8addbeca0b689c996df207293947928bdd9c88a097837ae1c7e69ca5",
-            "size": 147077955
+            "integrity": "sha512-7YtMDZX/jbWH9+fCVQg7BVsov8WvBzu4iuedXJEDlUdZxaTrYX2bEQwHIn3p0gxgSMfm30HGK9+bZm1aGSZaHw==",
+            "sha256": "6989512a93d5fc74cb221dd348c972bf3cd83592e471bfd9557bccb45eb6fffc",
+            "size": 148361216
           },
-          "tree_sha256": "e8ec744f0e440db89edfbe6ae3b1232d256eab994f53d4ac6997ce43b9d3e563",
+          "tree_sha256": "d36325dc2344798fddab39ce98cabeb718e9f5c16989ae73448d0eebf662ea08",
           "triple": "aarch64-apple-darwin",
-          "unpacked_size": 363349587
+          "unpacked_size": 366268627
         },
         "darwin-x64": {
           "entrypoint": "bin/codex",
           "file_count": 41,
           "mirror": {
-            "integrity": "sha512-Vj5wXJPizKmrzNtnRNQf9PP6FJkG3iJU/UO3NE4WvkENZGoQfmImdwf4MVRI5NgwjSuC6LT0HbBRHPVVnwGHuw==",
-            "sha256": "588aad29a4779badc894daeb2e43757ed01d213366fd931fd9a5ec47f7e31e14",
-            "size": 156633428
+            "integrity": "sha512-wKoBiI6SBSg8fqiEYEOJs/NM/ZzKaCgy1cseX9LJbuDq3GCCKkeW9BUGe1ZEkyhhZ5Yfj+HzdUfp698abP2tDA==",
+            "sha256": "5b950f992ec8a2340c4c4c853d665639b27f618b64eede87ddf94b9ab7979360",
+            "size": 158115646
           },
           "npm": "darwin-x64",
           "npmjs": {
-            "integrity": "sha512-Vj5wXJPizKmrzNtnRNQf9PP6FJkG3iJU/UO3NE4WvkENZGoQfmImdwf4MVRI5NgwjSuC6LT0HbBRHPVVnwGHuw==",
-            "sha256": "588aad29a4779badc894daeb2e43757ed01d213366fd931fd9a5ec47f7e31e14",
-            "size": 156633428
+            "integrity": "sha512-wKoBiI6SBSg8fqiEYEOJs/NM/ZzKaCgy1cseX9LJbuDq3GCCKkeW9BUGe1ZEkyhhZ5Yfj+HzdUfp698abP2tDA==",
+            "sha256": "5b950f992ec8a2340c4c4c853d665639b27f618b64eede87ddf94b9ab7979360",
+            "size": 158115646
           },
-          "tree_sha256": "a41beba7b156aca3b73f81d3bd5977de6451f48fc49104bc7a36239377d711ea",
+          "tree_sha256": "7c32d0504e8a38de8871a961055f82d8857e5095e1bbf6f6a137746ea7e73177",
           "triple": "x86_64-apple-darwin",
-          "unpacked_size": 388393999
+          "unpacked_size": 390631023
         },
         "linux-x64": {
           "entrypoint": "bin/codex",
           "file_count": 43,
           "mirror": {
-            "integrity": "sha512-CxDm3+D1cpbGJeHrdzINoG+3wn9BVncP4qpZaaNYkxe8iPtRJOYyCJnnPoVjWRIBvI9vPKbRoifsMSA5xDaUpw==",
-            "sha256": "cbc00a26d3d0e2ceefc4be8891f8a81ef1e349b3b175bc0ae308762bc001fd93",
-            "size": 172325449
+            "integrity": "sha512-FNc7danfUng9Sp6w+Fh7kofNHHZpA6VMyNKWsWrS3OwHly69gywTWeiuwrUPXpJSho8Df4xqRsHfHRPzj7zYQg==",
+            "sha256": "2dc9aa871abb513c3539d20d025f701faf1974c46ee906bda3a1e1f5026d4434",
+            "size": 173743288
           },
           "npm": "linux-x64",
           "npmjs": {
-            "integrity": "sha512-CxDm3+D1cpbGJeHrdzINoG+3wn9BVncP4qpZaaNYkxe8iPtRJOYyCJnnPoVjWRIBvI9vPKbRoifsMSA5xDaUpw==",
-            "sha256": "cbc00a26d3d0e2ceefc4be8891f8a81ef1e349b3b175bc0ae308762bc001fd93",
-            "size": 172325449
+            "integrity": "sha512-FNc7danfUng9Sp6w+Fh7kofNHHZpA6VMyNKWsWrS3OwHly69gywTWeiuwrUPXpJSho8Df4xqRsHfHRPzj7zYQg==",
+            "sha256": "2dc9aa871abb513c3539d20d025f701faf1974c46ee906bda3a1e1f5026d4434",
+            "size": 173743288
           },
-          "tree_sha256": "d528e4fa137fd08077d81547f2531442fa08cf0ec084781ede071f5d7a5d5ba6",
+          "tree_sha256": "0d03806f44b3081467d1a559ba93cb390f922ab910927dbc4e46f1cf02613c78",
           "triple": "x86_64-unknown-linux-musl",
-          "unpacked_size": 456148517
+          "unpacked_size": 458589813
         },
         "win32-x64": {
           "entrypoint": "bin/codex.exe",
           "file_count": 45,
           "mirror": {
-            "integrity": "sha512-NS8Ps5oG5r19pCrMCUXwUqOui6odnUIoBlQkrjCJ+h1k6KiwCzC/+mI9d3nSZCqFoVONPBTmqyq8NYq3YaFGyA==",
-            "sha256": "47d74aed875a3c01315f042152329ae09b0bd9d26a3285802d1c85aeadce083e",
-            "size": 180706795
+            "integrity": "sha512-duPCBwflc8qhQdLekbL8fDYF646tW4gj0/l9BDnsVhEzoqm6OwxMAJXDFwSOLUUJPCmjBeM+eHYAx4fP/hwfjg==",
+            "sha256": "075304c882f6618eb73037bdd1164f942516f214108540bdbb9130eff4ab1e08",
+            "size": 181015521
           },
           "npm": "win32-x64",
           "npmjs": {
-            "integrity": "sha512-NS8Ps5oG5r19pCrMCUXwUqOui6odnUIoBlQkrjCJ+h1k6KiwCzC/+mI9d3nSZCqFoVONPBTmqyq8NYq3YaFGyA==",
-            "sha256": "47d74aed875a3c01315f042152329ae09b0bd9d26a3285802d1c85aeadce083e",
-            "size": 180706795
+            "integrity": "sha512-duPCBwflc8qhQdLekbL8fDYF646tW4gj0/l9BDnsVhEzoqm6OwxMAJXDFwSOLUUJPCmjBeM+eHYAx4fP/hwfjg==",
+            "sha256": "075304c882f6618eb73037bdd1164f942516f214108540bdbb9130eff4ab1e08",
+            "size": 181015521
           },
-          "tree_sha256": "a763f765d9cfd6f7a883510d9406d27971cfc2e12ae69506b7be6363d2e7513f",
+          "tree_sha256": "68826b0a75a1d0fc9ce89084c9cd2ff598cf04c26f6cfff537d52096578ae4db",
           "triple": "x86_64-pc-windows-msvc",
-          "unpacked_size": 502650746
+          "unpacked_size": 501479802
         }
       },
       "sources": [
@@ -174,7 +174,7 @@
           "url": "https://registry.npmmirror.com/@openai/codex/-/codex-{version}-{npm}.tgz"
         }
       ],
-      "version": "0.166.0"
+      "version": "0.167.0"
     }
   },
   "schema": 1

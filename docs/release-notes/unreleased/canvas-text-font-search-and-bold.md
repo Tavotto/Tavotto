@@ -1,3 +1,0 @@
-## Font search and true bold and italic in text annotations
-
-The font menu has a search box that finds fonts by English or Chinese name, for figure text and annotations alike. Bold and italic inside a line now use the real faces of the chosen font, on the canvas and in the export. Chinese text now exports in true bold: the built-in Noto fonts gained bold faces, which adds about 20 MB to the app. If you pick a font of your own, its real bold and italic faces are used when it has them, such as Microsoft YaHei Bold. Fonts without them, such as SimSun, get a simulated bold or italic, the same way Word does it, on the canvas and in the export.
