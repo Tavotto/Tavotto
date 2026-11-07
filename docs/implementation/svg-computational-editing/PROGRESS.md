@@ -2,17 +2,17 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-07 07:30后复核）：3d精确引用迁移已提交fa691a3b；两项旧失败分别由81fd701f、cc3175e8修复，末次核心415通过/0skip、扩大组296通过/4skip均exit0。N3d安全安装核心和真实API已有未提交实现，核心17、HTTP35、目录发布19通过/3skip，各自exit0；尚缺当前安装源码的受影响旧组联合验证、规则同步和功能提交。N3e界面采用、N3f完整搬迁冷开、图例、复杂几何及最终资格仍未完成，M1/M2/M3未通过。**
+> **当前结论（2026-11-07本次执行复核）：安全安装后端0d86b357已提交并完成本批资格；N3e API/协调器/界面已有未提交实现及专项正证，但首轮前端联合为262通过/3失败，不能记为全绿。菜单测试等待已独立修复并提交cd3912d6，时间线窄修候选已冻结，120项及另94项原保存定向检查分别通过；统一联合、最终派生构建、时间线/N3e功能提交和真实浏览器采用仍待完成。N3f混合搬迁、图例、复杂几何及M1/M2/M3继续未完成。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 > 前轮05:10后的91项捕获包资格保留其历史源码窗口；3c现已有实现与新资格，不能再按旧checkpoint重做。不同测试组不相加成最终总数；当前分支实际HEAD/diff优先。
 
 ## 环境（2026-11-07 当前快照）
 
-- 当前实施树`E:/0 - Project/Tavotto-svg-r00`，分支`zixu.wang/svg-computational-r00`；最新功能HEAD`fa691a3b`，其前`cc3175e8/81fd701f/6a4d76c6`、声明界面`8a13ed95`及更早提交保留。N3d当前4个生产文件和3个测试文件未提交，各写入者已冻结释放；本次仅同步状态与安排文档。沿用同一分支/工作树。原目录`E:/0 - Project/Tavotto`仍是clean `main@69bcafae`，未合入成果，不能从原目录运行旧版本判断本功能。
+- 当前实施树为E:/0 - Project/Tavotto-svg-r00，沿用zixu.wang/svg-computational-r00；本次复核HEAD为cd3912d6（菜单测试等待），最近已提交安装功能为0d86b357，原历史保留。当前未提交差异包括N3e前端API/协调器/窗口/入口/翻译/专项，以及正在收口的时间线窄修复；按所有权维护，不混批。原E:/0 - Project/Tavotto仍是clean main@69bcafae，未合入成果。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
-- 当前复核索引`status-review-20261107-installation.json`记录HEAD/diff、各源码窗口JUnit及当前源哈希；3d末验见`n3c3d-closeout/affected-final.*`和`n3c3d-loader-review/closeout-core.*`。旧`status-review-20261107-3d.json`与两项首红保留为历史，不再作为未修复指令。前3c索引`n3c3c-stage-final.json`及真实界面`n3c-input-ui/qualification.json`保留其源码窗口。本次仅复看既有截图，未新增浏览器验收；图例/裁切缺陷仍在，未创建调度器，历史PID须重新核身份后使用。
+- 当前安装资格索引n3d-stage-final.json对应0d86b357的11文件及分窗口验证；受影响联合n3d-affected/first.*、真实安装冷读n3d-install-e2e/qualification.md、实际3.10 n3d-python310/REPORT.md。N3e专项见n3e-api/REPORT.md、n3e-adoption/store-delta-validation.md、n3e-dialog/qualification.md；联合首红见n3e-affected/first.*，两项归因见n3e-import-cycle/review.md及n3e-dialog-menu-review/qualification.md。正式构建packaged-second曾exit0，时间线源再变后需重建；真实UI仍未资格。历史证据保原源码窗口，不把局部绿外推。
 - 最新 NEXT_PHASE 和提示词直接在当前实施分支维护；不再依赖历史 review 文档分支才能取得新计划。
 
 ## 批次状态（2026-11-07 复核后；按完整退出条件）
@@ -35,13 +35,39 @@
 | R01/R02 | core_partial / multi_target_verified | 3236307c、8e6c399a | 跨父/split/errorbar/colorbar共同目标与预览通过；任意clip、欠定成员paint slots和图例仍缺 |
 | R03 | runner_and_source_consumers_integrated | 029dfac2、242cabc0、c2fd47d5、5b2b1403、2452d8fc | 受控runner与精确INPUT附件接真实API/UI/导出；不宣称全产品总进程cap或最终资格 |
 | R04 | affected_checks_passed | a8a088cf、18907d65、cbd8d95e | 请求序号/表单/项目切换、late response 和单项 drop 均有受影响测试；Dialog 已可发起真实绑定；完整编辑器生命周期在 R06 追验 |
-| R05 | relocation_committed / installation_backend_partial | 既有R05提交保留；最近8a13ed95、81fd701f、cc3175e8、fa691a3b | 3c输入声明已验；3d引用迁移与历史源消费已提交，核心415和扩大296通过/4skip。N3d安装API未提交，核心17/HTTP35已有专项正证及两项修复末验；受影响旧组联合验证、界面采用和新目录用户整链待完成 |
+| R05 | installation_backend_committed / adoption_in_progress | 既有R05保留；最近fa691a3b、0d86b357、cd3912d6（测试） | N3d受影响356通过/3skip、真实safe/native API冷读2通过；N3e未提交，专项已有，首轮联合262通过/3失败；菜单测试已修，时间线修复/联合复验/真实UI及N3f待完成 |
 | R06 | product_editing_and_cold_restore_verified / partial | 242cabc0、53393810、8e6c399a、264ce59c | 冷开后Inspector编辑、undo/redo和exact显示已验；图例、完整操作及复杂几何仍缺 |
 | R07 | partial / original_five_formats_ui_verified | 5bc82a81、c2fd47d5、2a40fec9、c9fa29a4、8fa84f5d、a06cc3d3 | 原图五格式真实UI及独立产物已验，EPS接线已提交；分享与完整双系列M1未完成 |
 | R08 | full_edit_restore_verified / partial | cae96f89、029dfac2、53393810 | 生产v2导出与真UI完整编辑恢复通过；A采用、分享选择和正式项目迁移待补 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-07 本次执行情况复核与下一阶段重排
+
+- 用户要求核对执行情况、效果并梳理下一阶段。核实际实施分支原HEAD0d86b357，原Tavotto仍clean main@69bcafae；本轮没有新建/切换分支或worktree、fetch、push、合并或发布。只将已证明的菜单测试helper修复独立提交cd3912d6，N3e和时间线生产修复未功能提交，现有差异全部保留。
+- N3d本批资格从实际索引及原记录核回：后端359收集=356通过/3权限skip，304源零漂移；safe/native正式安装API→中文根→删自建旧源/cache→新父冷读2通过，23直接源零漂移；规则41与实际Python3.10.20窄边界通过。安装不打开项目、不写正文；不外推为全产品或全部平台通过。
+- N3e已具API、协调器、Dialog、TopBar/ProjectPicker入口和中英翻译实现。专项API36、协调器25+原writer17、Dialog/入口16分别通过。首轮20文件联合实际265=262通过/3失败/0skip/exit1，1486前端源前后零漂移（n3e-affected/first.*），保留首红，不能继续写成“正在运行”或“全绿”。
+- 两项架构失败已在固定0d86实际同红：documentStore反向依赖timelineCheckpoint将时间线3模块并入原SCC；不归咎新增菜单、不扩baseline。当前由原代理窄修6生产文件及必要专项：纯momentCapture和原renderer同步源端口，保4个同步capture时刻、Snapshot/PNG Promise引用及原writer/回执。直接documentStore、embedded/MCP/playground与App初始化已有外部overlay实证；实现及原运行门尚待资格，实验不等于修复完成。目录/规则集成仍主代理单写。
+- 随后窄修实际落入6生产源/2测试，首轮9文件120通过/0失败/0skip/exit0（n3e-import-cycle/implementation-first.xml，9.06秒）：原架构/求值顺序、5实际入口初始化、时间线/图源、原工作回执17及新协调器25均在该窗口通过。此时反证与原documentStore/projectSave定向检查仍在收口，未提交；不将首轮或外部实验冒充完整20文件复验/真实UI。
+- 随后代理完成并释放候选：原documentStore/projectSave两文件94通过/0skip/exit0（original-save-regression.xml），lint0。去端口安装/延后冻结源两项内存AST反证各hit1并实际exit1，磁盘源零变；缺端口实际writer保稿探针1通过，flush/换文档准确拒绝且内存/LS保稿、零PUT。frozen-sources.json冻结8个改动文件及未改baseline SHA，无live句柄。尚未统一20文件复验、正式build或独立功能提交；恢复从这些末验/集成开始，不再重写这项实现。
+- 菜单失败另有受控时序归因：旧helper在关闭后焦点未归还时立即第二次打开；当前和固定旧TopBar均可触发同一item null。修helper等待真实closed/disconnect/focus，不改菜单生产，不重试用户动作，AST核全部9测试注册/展开18项正文和断言不变。原文件18通过/0skip/exit0，受控当前/旧TopBar均绿，源SHA已核；cd3912d6独立提交。完整联合仍须在时间线修复后重跑。
+- 正式包内前端packaged-second实际exit0，包含i18n/tsc-b/Vite/Tailwind和同步，1486源零漂移；前一次翻译类型未更新的失败保留。当前时间线源码将再改变，所以上述build不是最终UI候选，待修复后重建/检查playground与widget。n3e-ui正式包、非空旧稿和中文目标夹具已准备；尚未启动服务/浏览器，不能声称新安装UI已验。
+- 本次实际复看既有output/playwright/n3c-ui-legacy-frame.png：曲线可见，但标题/刻度边缘裁切仍在。没有本轮新浏览器效果图；原五格式/计算编辑证据保历史窗口。图例联动、复杂clip、完整混合迁移和旧功能最终资格继续未完成。
+- 当前顺序细化为P0.1时间线窄修独立commit→P0.2受影响联合/正式派生build→P0.3正常认证真实浏览器安装/采用/原writer恰一次并回读/旧稿保留→P1 N3f完整混合中文根冷开→N4图例/N5几何→M1/M2/M3。NEXT_PHASE与可复制PROMPT同步；不重做已提交N3d，不先跳去扩新图表族，完整范围与不变量保持。
+- 本轮状态文档与功能代码分开提交。文档规则/引用41通过、0skip、exit0，agents_budget --check与四文件diff检查exit0（status-review-20261107-next-rules.xml、next-budget.log）；预算试行OVER仍保原报告，不把check0解释为各试行预算内。执行状态及各JUnit实际数由status-review-20261107-adoption.json重新核对，原main仍clean，端口24049无listener、真实安装UI未运行。时间线、API/新协调器/窗口测试和菜单helper均已冻结释放，无live测试/服务句柄；恢复仍先核实际状态，避免重复启动。没有常驻调度器，完整目标仍active，不以本次状态复核或一夜结束标完成。
+
+### 2026-11-07 08:05前 安装后端功能提交，接续原界面采用
+
+- 上一goal turn为progress：状态文档623f31ca及实际证据核对改变了接续点。本轮沿同树/分支完成N3d，11文件独立commit 0d86b357 feat(packages): install verified v4 projects without clobbering；不新建分支/worktree、不fetch/远程操作，原main保持。
+- 当前安装实现沿原Prepared/迁移/资源流/registry/runconfig/inputremap/atomicio：受检实际副本和声明式renderer验证后排他发布，准确保发布/配置回执；安装不打开项目、不写正文、不运行包内脚本。规则/ADR和派生AGENTS同批同步。首轮窄审两个问题的修复已保，未为通过添加豁免。
+- 末次15文件联合359收集=356通过/3skip/exit0，318.93秒，304实际Python源/选定测试前后零漂移（n3d-affected/first.*）。3skip都是新目录symlink的Windows权限条件；真实junction补充不改skip口径。包含原inspect、chart恢复/保存/原图导出、迁移、atomicio、结构和全部路由认证门。
+- 新真实安装链safe/native同命令2通过/0skip/exit0，16.98秒，23直接源零漂移（n3d-install-e2e）。每profile原执行和module canary均恰1，正式multipart安装中文新根；仅删除自建旧源/外部输入/cache，新父进程不补规则或argv，沿app loader及真实原图PDF/SVG HTTP恢复，两历史INPUT/graph/字节和PDFium像素核对通过。此组不是声明式chart renderer或UI资格；后者有HTTP35原专项独立窗口。
+- Python3.10.20 -I -S -B实际空strict包安装、真实目录发布和碰撞保字节通过，50个实际Tavotto模块来自当前src、SHA不变，无科学/worker/其他非stdlib导入。末次Ruff全仓check/format1485文件、规则41/0skip、staged diff均exit0；n3d-stage-final.json冻结11文件/各窗口，不累计为全产品资格。
+- N3e已落未提交接线：api.ts显式v4 inspect/install和完整阶段receipt；单Zustand协调器只在明确打开后复用switchTransaction、adopt.prepareDocument、openDocumentAs及原writer回读，迟到发布仅加可恢复history；TopBar与项目选择器入口、安装Dialog和中英翻译复用原目录控件。旧importPackage/openPackage默认路径保留，不用旧relink处理chartSource。
+- 新API36通过；真实原documentStore/projectStore/writer专项末次25新+17旧=42通过/0skip。首红修了HTTP200 null检视的ApiError边界、安装失败后明确改目录重试；默认空旧稿沿原保护已通过，未增加hasContent绕过，不把人为suspend反例当用户可达缺陷。Dialog/入口16通过，原相关38通过；旧native picker错误迟到串入新包的真实红已用统一归属/选择代次闸修。不同窗口不相加。
+- 初次正式tsc-b/Vite/Tailwind build和i18n检查通过，但早于最后协调器/窗口delta，不称最终候选。当前n3e-affected联合在独立进程运行；自有真实UI夹具由独立代理准备，尚未启动服务/浏览器。后续须最终build/派生产物/真实浏览器正式安装→采用→实际AS次数/回读/旧稿保留，并补N3e规则后功能提交；不止于helper或上述专项。
+- 完整目标仍active：N3e→N3f混合项目中文根冷开→图例N4/几何N5→M1/M2/M3。没有任何最终里程碑被提前标完成。长检查按真实live句柄续等，不因观察超时重启。
 
 ### 2026-11-07 07:30后 安装执行情况复核与下一阶段安排
 
