@@ -2,13 +2,13 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-07 10:00 执行复核）：目录0f85d4b2、共同保存4cfccfcf和独立测试时序48bdbda9已提交；最新受影响42文件596通过/0skip，正式与派生构建通过。第二轮真实初次采用恰1次AS PUT，完整正文/资源/旧稿核验通过；真UI线宽修改/undo/redo及跨项目恢复最新工作稿（Inspector 12pt）已确认。但切项目期间一次预览携新图源发旧pj，后端以chart_source_mismatch拒绝，待修；N3e未功能提交、不标整批通过。N3f仅准备，刻度裁切/图例及M1/M2/M3仍未完成。本轮检查状态和效果，未改产品源码，接续优先修预览身份配对→N3e提交→N3f→N5→N4。**
+> **当前结论（2026-11-07 10:45 复核）：代码HEAD8f4985ee，P0预览项目归属已独立提交。最终53文件1048通过/0skip，正式前端与playground/widget及check均exit0、1494源零漂移。N3e界面功能仍未提交，新源码真实UI待验；下一项直接用正式35成员混合包同时验安装采用/跨项目归属，再做N3f删自建旧源cache的新进程整链。n3f-ui已准备但未启动/冻结；真正runtime附加正式包已备，UI/fallback/冷恢复未验。N5只有外部结构实验/在途overlay，刻度裁切仍存在；N4图例与完整M1/M2/M3仍未完成。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 > 前轮05:10后的91项捕获包资格保留其历史源码窗口；3c现已有实现与新资格，不能再按旧checkpoint重做。不同测试组不相加成最终总数；当前分支实际HEAD/diff优先。
 
 ## 环境（2026-11-07 当前快照）
 
-- 当前实施树为E:/0 - Project/Tavotto-svg-r00，沿用zixu.wang/svg-computational-r00；本次checkpoint HEAD为4cfccfcf（共同保存/debounce），同批独立0f85d4b2（目录）、48bdbda9（旧测试捕获等待）。N3e前端API/协调器/窗口/入口/翻译/专项及受影响规则/ADR仍未功能提交。原E:/0 - Project/Tavotto仍保main@69bcafae，未合入成果；恢复以实际HEAD/diff为准，不回退到文档SHA。
+- 当前实施树为E:/0 - Project/Tavotto-svg-r00，沿用zixu.wang/svg-computational-r00；本次复核代码HEAD8f4985ee（预览归属），保共同保存4cfccfcf、目录0f85d4b2、旧测试时序48bdbda9。N3e前端API/协调器/窗口/入口/翻译/专项及受影响规则/ADR仍未功能提交。原E:/0 - Project/Tavotto仍clean main@69bcafae，未合入；恢复以实际HEAD/diff为准，不reset到文档SHA。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
@@ -37,13 +37,40 @@
 | R01/R02 | core_partial / multi_target_verified | 3236307c、8e6c399a | 跨父/split/errorbar/colorbar共同目标与预览通过；任意clip、欠定成员paint slots和图例仍缺 |
 | R03 | runner_and_source_consumers_integrated | 029dfac2、242cabc0、c2fd47d5、5b2b1403、2452d8fc | 受控runner与精确INPUT附件接真实API/UI/导出；不宣称全产品总进程cap或最终资格 |
 | R04 | affected_checks_passed | a8a088cf、18907d65、cbd8d95e | 请求序号/表单/项目切换、late response 和单项 drop 均有受影响测试；Dialog 已可发起真实绑定；完整编辑器生命周期在 R06 追验 |
-| R05 | installation_backend_committed / adoption_ui_verified_with_preview_race_pending | 既有R05保留；0d86b357、c761dc7e、48bdbda9、0f85d4b2、4cfccfcf | 最新596通过/0skip及构建通过；第二轮初次1 PUT、全文/旧稿与真UI跨项目最新稿已核；切换期间图源/pj配对422待修、N3e未提交；首轮失败保留；N3f仅准备 |
+| R05 | installation_backend_committed / preview_owner_code_qualified / adoption_ui_requalification_pending | 既有R05；0d86b357、c761dc7e、48bdbda9、0f85d4b2、4cfccfcf、8f4985ee | 当前53文件1048/0skip与三类构建绿；上轮初次1 PUT、旧稿/跨项目最新稿UI资格保原窗口；新owner源码真实UI待验，N3e未提交，N3f仅准备 |
 | R06 | product_editing_and_cold_restore_verified / partial | 242cabc0、53393810、8e6c399a、264ce59c | 冷开后Inspector编辑、undo/redo和exact显示已验；图例、完整操作及复杂几何仍缺 |
 | R07 | partial / original_five_formats_ui_verified | 5bc82a81、c2fd47d5、2a40fec9、c9fa29a4、8fa84f5d、a06cc3d3 | 原图五格式真实UI及独立产物已验，EPS接线已提交；分享与完整双系列M1未完成 |
 | R08 | full_edit_restore_verified / partial | cae96f89、029dfac2、53393810 | 生产v2导出与真UI完整编辑恢复通过；A采用、分享选择和正式项目迁移待补 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-07 10:45 执行情况复核、P0提交与下一阶段安排
+
+- 用户要求核当前执行情况和效果、安排后续。本轮核当前同树/分支，原main未合入；未新建或切换branch/worktree、未fetch/远程操作。现有实现继续保留，N3e功能未混入P0。当前无主代理自有live UI/service，10:42核24049/24059/24069无监听、n3f-ui/source-ready不存在、正式混合目标不存在；未开始N3f安装/删源/冷开。
+- P0子任务最终释放21文件（14生产+7测试），15文件489pass/0skip/exit0，覆盖needs_user下合法找回候选。root原42文件与新增去重联合：首轮53文件1048pass/0skip/exit0，1494源零漂移。正式首轮构建实际exit1：previewRenderForProject参数漏接受原nullable源；root只补PanelRender|null|undefined类型，原ternary/runtime逻辑不变。最终second.xml仍53文件1048pass/0fail/error/skip、exit0（41.15秒），packaged-owner-second正式build exit0（47.46秒），二者1494源零漂移。首轮TS错误和root-typefix原记录保留，不冒同一次原agent冻结。
+- 随后playground-owner-first、playground-owner-first-check、widget-owner-first、widget-owner-first-check逐个实际exit0、同1494源零漂移。正式log保体积及动态import警告；未称零警告或发行资格。root-final-rules.xml 41pass/0skip/exit0；budget check exit0但原OVER提示保留；diff检查0。新的计划文档修改后再补文档检查。
+- root-final-qualification.json逐SHA比21源（renderStore用root最终类型SHA）、六份actual绿回执的全部after源码、XML完整1048case；cached patch仅stage owner21文件及规则owner段，N3e wrapper/规则段未混。外部staging助手首两次因hunk拆分及Windows补丁CRLF失败，日志保留；未丢弃/重置index，修为行首hunk+原LF字节后完成核对。独立commit 8f4985ee：fix(previews): preserve document ownership across project switches（22文件）。
+- 真实根因收敛：captureDocumentMoment原有identity.pj未传SourceCapture，360px快照实际renderer再读全局pj；现贯穿URL/header/staticfallback。缓存SVG随实际response.projectAtStart保归属；活动预览从原docProject只读捕获owner，历史正文同pj，找回候选从其producer捕获pj/epoch/seq。保原离开快照跨ABA/cacheclear完成、A真实旧SVG、恢复门同正文续期及合法候选；unknown不借同名当前素材。原writer/queue/gate算法与后端422不放松。最初CanvasThumb线索不是该浏览器请求已捕获调用栈；当前修复未做新真实UI，不能称浏览器422已消失。
+- 实看上轮n3e-second-resumed-linewidth.png：红线/标题/PNG与Inspector12pt明确，左/下刻度仍裁切。已核上轮初次单PUT/编辑undo-redo/跨项目最新稿的效果保原冻结窗口，不当当前owner源码或新进程冷恢复。完整M1/M2/M3及“全部旧功能无回归”均未合格，不报虚构完成百分比。
+- svg_ir_fidelity已结束：N3f观测核验器1正17反及原167件不变；真正runtime附加正式包attempt-02为15622字节/12成员，原descriptor→workspace/actions→v4 save/package/inspect保持runtime/source，独立PDFium/SVG和4反证通过。最终轮科学执行1次、跨两尝试总2次、worker正常回收。未UI/安装/fallback/冷恢复。35成员包三个runtime来源对象实际pdf，计划已纠正，附加包不能取代混合包。
+- svg_self_contained继续仅OUT的有界overlay原型：本轮消息报告后端有限11专项通过、实际child __file__/SHA核对、前端FrameGeometry配对adapter在途；不写实际repo、不起listener/browser，未接renderStore/持久化/页面UI。该消息仅在途层次，最终原型冻结/消费者清单待收，不当产品完成。现有结构正反证纠正x10外框负值不等于glyph越页，不能自动改用户布局。
+- NEXT_PHASE、NEXT_PHASE_PROMPT及总计划当前摘要已同步：下一项复用n3f-ui ready与最终回执冻结，正式35包真UI同时验P0/N3e→N3e功能commit→N3f删清单内自建旧源/派生cache但保持久恢复意图，新父新浏览器整链→N5→N4→M1/M2/M3。每批输入、退出、提交、真实模式核验和恢复路径明确；不新增整套文档、不过度重跑已绿测试。无人值守为活跃会话自主接续，未建立常驻调度器。
+- 四份计划/状态文档更新后的最终引用/规则检查status-review-20261107-1045-rules.xml实际41pass/0skip/exit0；这是文档检查，不改变产品或UI资格层次。状态文档定向单独提交，N3e源码/规则段/ADR继续保留待功能收口。
+
+
+
+### 2026-11-07 10:30 P0归属实现与迁移准备（在途，未功能提交）
+
+- 前一goal turn为progress：状态文档250086fb及真实跨项目最新稿/422重放证据改变下一行动。本turn继续实际实现，不把复核文档当目标完成。实际同树/分支，原main不动；已正常停止的exec28474不再续等或重启，当前未起新服务/浏览器。
+- svg_architecture_review独占P0 preview owner生产与必要测试：momentCapture/renderStore/API显式pj、原响应缓存projectId、documentStore只读PreviewOwner与类型/Hook、CanvasThumb/导出/版本/runtime fallback、必要Recovery producer。源写入仍在途，根未运行联合/build或冻结当前候选。N3e旧未提交wrapper/入口/翻译/专项保留；API/规则提交必须分别选owner与N3e hunk。
+- 原真实请求归因进一步收窄：SourceCapture原只收doc，captureDocumentMoment已有identity.pj却没有传入；renderer固定360px的PNG在flush时再次从global取pj。新真实capture→renderer→HTTP测试原4条中3红，明确A/null被B取代；明确离开snapshot跨ABA正例保留。活动CanvasThumb两条原红也保留，不把先前组件源码链当运行时stack。修复必须统一正文/归属传递，不放松后端422。
+- 核心/消费者迭代保原红：先49绿/2红（空chart tuple后接owner错槽，以及丢旧cacheSVG），后333绿/1红（新runtime fixture缺原FRAME规范化），再457绿/2红（mount观测混入prepare flush）。各自精确修主语/真实生产问题，没删原assert。owner-final-second实际14文件459通过/0skip/exit0，lint0、两个原架构门绿；内存AST snapshot/svg/active/refresh反证实际红，源磁盘不改。此窗口之后又发现合法recovery候选在placeholder下会被活动正文门隐藏，最终冻结已暂缓，下一最终XML才供根与原42文件去重联合；不能把459写成全部P0退出。
+- 根实际审查保住三条原能力：current已B但clear前的A真实render SVG仍可冻结，不能退原磁盘图；版本正文读取pj必须与其owner同一个；同正文引用在原begin/settle恢复门确认保留后应重新显示，跨项目不能续期。最后补Recovery候选producer的pj/epoch/seq，不要求候选先成为活动文档、不live render/转归属；unknown候选不猜当前项目附件归属。
+- 根外部n3f-ui已通过原正常认证test_client准备fresh旧文本稿及named/AS/绑定/last：旧pj9ed49f29cb8b、working d_n3f_original_old_draft，port预留24069；fresh data/config/mpl，正式35包只读、原目标不存在。fixture.py复用前轮仅纯外部生命周期工具，不调用旧prepare，不写原167件；Ruff/helper/help/prepare实际0，首轮外部E701 lint红保留。根浏览器/网络观察器副本已备，增加真实/api/panels body及Node body_read_at诊断；尚未bootstrap/serve。联合runner要求实际绿补充XML，freeze脚本要求分开的tests/packaged/playground/widget真实回执，均未冒执行成功。
+- svg_ir_fidelity完成N3f观测核验器：原严格核验器及167件逐SHA不变，18个合成分支1正/17反符合退出码；真实DOM与同pj panels观察形成有限独立期望，其余完整正文仍严格，Node body_read_at不冒前端消费时刻。该35包三对象虽是runtime来源快照，实际fileKind=pdf，不能当runtime-kind UI覆盖；真runtime附加夹具正在原runtime descriptor→workspace/actions→正式v4 save/package/inspect准备，原混合包不改，未安装或UI验证。
+- svg_self_contained仅OUT实验，原repo未改：非零/PAR/旋转/member clip与S↔F反投影有实测；CSS直子选择器反证否定单纯后包裹DOM候选。改用原SVGIR cascade固定presentation后，直子CSS/percent/root clip/opacity受限样本实过，但不外推defs/use全域。几何更正：x10样例render envelope负坐标不能证明真实glyph越画布，不能据此自动移版；x5独立clone才有真实越界反证。后续仍须生产paired adapter/版本合同，当前不称N5修好。
+- 根同步canonical预览归属规则（N3e原10行段保留）；rules-first.xml实际41通过/0skip/exit0，agents_budget --check exit0且既有OVER保留。source owner最终冻结后才做原42+新增受影响联合/正式派生构建→P0定向fix commit→真UI正式混合包安装/采用与跨项目无错配→N3e功能commit→N3f删自建旧源/cache新进程整链。长检查/源变化按新窗口记录，不沿上轮构建冒当前资格。
 
 
 ### 2026-11-07 10:00 执行效果复核与下一阶段安排
