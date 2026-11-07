@@ -2,7 +2,7 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-07 14:05）：产品HEAD35adee6d，归档前后端、Moment归属及N3e安装采用均已提交。真实取消/迟到确认、编辑undo/redo、命名保存、同项目继续及跨项目最新稿已核，原稿/修订/计数保持。P3画布及原图SVG转换在工作区，正式新28项、CSS越界2回归、前端70文件1514项通过；尚未正式构建/广泛后端/新HTTP。原图留白/标注的多格式分次冻结可混交来源，OUT最终新9回归通过、旧合同55通过/1跳过，补丁/报告已交接、root apply-check0，正式app未修。截图仍有N5刻度/标题裁切；历史来源/冷重建/完整冷迁移/N4/M1/M2/M3未完成。接续先P3统一来源与真实导出资格，再P2和其余批次；不重做N3e，不移用旧构建，不把候选绿写成产品已通过。原main未合入，总目标active/未完成。**
+> **当前结论（2026-11-07 15:20）：复核基点HEAD c85c96c7，N3e/归档/P0已提交；P3源码/测试WIP保留。扩大后端已终局3539pass/16fail/128skip、exit1；4条旧SVG判据已修，正式三文件76pass/0skip，另12条夹具候选待应用/正式复验。原图单scene9项、前端1514、新正式/派生构建/check及Chrome29点通过。真实A整版PDF/PNG/TIFF独立尺寸/文字/12颜色点与PNG-TIFF像素一致通过，整版SVG因ordinary.pdf缺配对而partial；逐图另见同名conflict、PNG准备失败、runtime非法名，P3未完整退出/提交。新UI正常终局、1791源/11bundle末核、原稿/counter4保持，无自有live句柄。下一步先收口真实批量导出，再P2来源/冷准备/完整迁移/N5/N4/M1/M2/M3；不称完整回归或最终可用。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 > 前轮05:10后的91项捕获包资格保留其历史源码窗口；3c现已有实现与新资格，不能再按旧checkpoint重做。不同测试组不相加成最终总数；当前分支实际HEAD/diff优先。
 
@@ -19,7 +19,8 @@
 - **校准UI窗口已于12:15正常终局**：浏览器150-review-close exit0，原exec28051/child4464终局exit0；launcher55348/child4464已不存在、24079无监听。1789源/11实际HTTPbundle停前末核零漂移，review-closed-window.json闭合最终PUT364全文/revision。新pj1f4c864a2576/working d_u1yy7f6i及attempt05安装目录/data保留；旧serve要求目标不存在，不能重启冒fresh，修复后须新生命周期明确续已有安装状态。当前无本轮自有live服务/浏览器。
 - **P0继续安装窗口已正常终局**：n3f-ui-owner-resume，42-normal-close exit0；exec11251/child46200终局0，launcher61264/child46200消失、24089无监听。1790源/11HTTPbundle停前末核，源与六份真实绿回执一致；source-and-ui-qualification.json与ui-owner-proof/complete-final-41.json闭合实际A→B→A。原A/B/data/所有目标保留，未清缓存；不能直接重启一次性serve。该窗口已终局，后续N3e也已完成，见下条；不再作为当前接续指令。
 
-- **最新N3e窗口也已终局**：浏览器124-normal-close0，原exec50760/child76164终局0，launcher23968/child76164消失、24099无监听；停前1790源/11HTTPbundle与持久核通过，root-close-proof闭合。原A/B/C/D与data/config保留。新P3生命周期n3f-svg-export-ui仅准备，未freeze/serve/HTTP/browser；不能用旧1790源资格启动已改P3。前端联合frontend-first也已写终局回执actual0，不再续等其PTY。
+- **最新N3e窗口已终局**：浏览器124-normal-close0，原exec50760/child76164终局0，launcher23968/child76164消失、24099无监听；停前1790源/11HTTPbundle与持久核通过。原A/B/C/D与data/config保留，不复用该旧资格。
+- **新P3 UI窗口也已正常终局**：n3f-svg-export-ui冻结1791源/11bundle，正常认证继续实际A，真实整版与逐图批次已完成观察；浏览器36 close0，原exec66615/child50148 exit0，launcher24768/child50148消失、24109无监听，HTTP/source/持久稿末核通过。原91338扩大后端亦终局exit1；不续等或重启旧一次性生命周期。当前没有本任务自有live句柄，三既有子代理均已交付。
 
 ## 批次状态（2026-11-07 复核后；按完整退出条件）
 
@@ -45,9 +46,36 @@
 | R06 | product_editing_and_cold_restore_verified / partial | 242cabc0、53393810、8e6c399a、264ce59c | 冷开后Inspector编辑、undo/redo和exact显示已验；图例、完整操作及复杂几何仍缺 |
 | R07 | partial / original_five_formats_ui_verified | 5bc82a81、c2fd47d5、2a40fec9、c9fa29a4、8fa84f5d、a06cc3d3 | 原图五格式真实UI及独立产物已验，EPS接线已提交；分享与完整双系列M1未完成 |
 | R08 | full_edit_restore_verified / partial | cae96f89、029dfac2、53393810 | 生产v2导出与真UI完整编辑恢复通过；A采用、分享选择和正式项目迁移待补 |
-| R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
+| R09–R13 | pending | — | 见 NEXT_PHASE.md 第 3 节后续批次与完整 IMPLEMENTATION_PLAN |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-07 15:20 执行与效果复核、真实导出首红及下一阶段安排
+
+- 用户本轮要求复核执行情况、效果并梳理下一阶段。本轮读取实际分支/diff/回执、查看当前构建并完成真实UI导出和独立产物检查；产品代码未再修改，平台两文件候选仍未应用。实施树zixu.wang/svg-computational-r00基点c85c96c7、最近产品35adee6d；原Tavotto仍clean main@69bcafae，未新分支/远程写入。四份状态文档修订前快照保存在status-review-20261107-1518/*.before。
+- backend-first原PTY91338终局exit1，1088.61秒；109文件3683项为3539pass/16fail/128skip，289源零漂移。128skip按实际XML归为84平台文件系统、41缺Inkscape、1旧硬编码GS路径、1缺pdfminer.six、1缺Poppler。不是当前完整绿，也不借Chrome/新GS实验把这些skip抹去。
+- 16条中4条过时SVG断言已修：tests/test_svg_assets.py验证实际矢量内容/尺寸，保pool执行拒绝；test_chart_source_provenance.py保执行来源/类型/完整身份拒绝、允许静态/声明式自表示；test_chart_export_pipeline.py用真实半透明装饰保EPS partial而非伪造失败。正式contract-repairs-production-first三文件76pass/0skip、28.84秒、289源零漂移。丢SVG的内存反例实际像素检查exit1；来源拒绝/不透明EPS反例保各OUT原记录，未放宽生产边界。原图统一scene正式9项及全仓Ruff/check-format0保留。
+- 其余12条在16份同HEAD未改依赖闭包重现12fail；p3-platform-fixture-review交付两文件portable-fixtures.patch（SHA256 2d631dbe…935dbf3），仅wheelhouse file URI、fixture系统站点/真实base路径、既有symlink_or_skip。原assert AST全等；分轮候选10pass/1fail/1skip，最后唯一修复单项1pass。候选尚未apply，两个完整文件未正式复验，Win1314真实symlink仍未验。三既有代理均已交付且无live，不重复委派同一实验。
+- frontend-first70文件1514pass/0skip、正式packaged-first34.92秒0及playground/widget构建/check全0，1502源当前保持；不重复跑绿组。Chrome独立两页29手算点与正常关闭保原root-check资格，Office/Inkscape未验。
+- 使用n3f-svg-export-ui新生命周期：1791源/11bundle冻结，原正常CLI+cookie bootstrap，无insecure、不重新安装/采用/reseed；实际A和原data/config继续。01bootstrap/02只读请求观察→真实UI整版导出，原request30包含7对象6panel、完整原序patch/位置和2fullref；job6a452aab0ee94e38真实partial，PDF/PNG/TIFF及报告done，SVG对ordinary.pdf报svg_source_unsupported（缺可信同次SVG），无SVG文件。前述成功不等全部格式通过。
+- review-artifacts-final.json独立PDFium/Pillow读实际三产物：PDF180×130mm、含标题/ordinary SVG及两处Captured value3；PNG/TIFF4252×3071、600dpi；chart/PDF红线及SVG圆/背景的12个手算点通过，PNG/TIFF逐RGBA像素一致。完整请求顺序/几何/ref/patch与真实保存稿对齐。观察器首次在所有断言后写JSON时遇TIFF IFDRational序列化exit1，保review-artifacts-first.json残件与first-exit.json；仅将dpi数值转float、新final文件后实际exit0，未改产物/阈值/产品。
+- 真实逐图UI批次（26开始、31详情）并未全过：chart.svg jobc81359eea7e343b6四格式done；History.pdf job9a4513d9f5e54978四格式+报告done；ordinary.pdf job33479f13689246ed为partial；ordinary.svg job039acdee18a04645因同stem输出conflict无产物；普通PNG被UI报来源找不到、runtime:plot名称因冒号拒绝，尚须核原准备/命名链。UI的17成功4失败含前一次整版结果，不当独立批次总数。源ordinary.png130B/PDF3903B/SVG272B实际仍在；普通PDF40mm请求与约35.278mm/833px原生结果待核合同，未冒称本轮新增回归。
+- 当前fitted截图确认普通SVG和曲线正常显示，但左/下刻度、部分标题裁切仍在，N5未应用。普通SVG源四格式专项绿不替代此次conflict原图UI；完整A SVG也不删PDF构造成功。所有原partial/conflict和工具错误保留，首红不重写。
+- 结束顺序为34完成→35请求归档→36普通close exit0→fixture.stop。serve停前核1791源、11HTTPbundle、真实持久稿/counter；原exec66615与child正常exit0，close-proof及root精确CIM/监听核launcher24768/runtime50148均消失、24109无监听。原A/B/C/D稿、命名文件和科学/module/argv计数4保持，无当前自有服务/浏览器/测试live。
+- NEXT_PHASE重整为6个有依赖/出口/提交边界的批次，NEXT_PHASE_PROMPT可整体复制。下一条：复核/正式应用平台两文件候选→Ruff/完整两文件pytest→修原批量PNG准备/同名冲突/runtime名/尺寸口径→新生命周期真实P3导出与提交；之后才P2a完整来源/热守卫、P2b原Preparation冷恢复、P2c迁移、N5、N4和M1/M2/M3。总目标仍active，未发布/未合入，不用计划或时长替代实现。
+- 本轮状态审计status-review-20261107-1518/audit.json实际exit0：当前1791产品源与各回执一致，四项目持久正文/命名/绑定与UI前完全相同，计数不变，原主目录clean。status-review-docs-first真实41pass/0skip、2.15秒、289后端源零漂移；agents_budget --check实际0、既有OVER保留。首轮diff-check发现两新文档EOF空行，仅格式修复后再查；未把该首红改记通过。状态文档独立提交，不含P3未退出的产品/规范/测试。
+
+### 2026-11-07 14:29 P3正式来源修复、构建与Chrome实测，扩大后端验证运行中
+
+- 前一goal turn为progress：c85c96c7更新权威计划并核候选最终9项/55+1skip、SHA/实际基线及apply-check，确定下一可执行动作。本turn实际apply original-composition-one-scene.patch，未新建分支/worktree。app SHA31a6345180162e93e6cbe3bcc0cbe3bd9ef87e21949f3d3b9e728ed0ed934ecb；新测试Git checkout转CRLF导致首preflight原SHA比较失败，规范化字节与候选完全相等，首红另存，未改科学判据。
+- production-lint.json记录全仓Ruff check/format-check分别actual0（1492文件含OUT helper）；consistency-production-first实际9pass/0fail/error/skip、10.95秒，289后端源零漂移。safe/native/app来源图仅只读OUT梳理，不混进本次P3源修改。
+- backend-first正式109文件联合已含test_original_composition_sources.py、RenderCore/export/compose、chart与SVGIR、旧契约/导入/配对/退休扫描，当前原exec91338 live，约91%、4失败；未终局，不授绿资格、不改源/测试、不启动正式UI。完整命令/环境/源SHA见n3f-svg-production/backend-first-start.json；正常观察超时只再读同句柄，不重启。
+- packaged-first实际34.92秒exit0，正式i18n/tsc-b/Vite/Tailwind/包内同步通过；playground-first/playground-check-first/widget-first/widget-check-first均actual0，1502前端源均零漂移。构建HEAD metadata仍为c85文档提交，实际被验源包含P3 WIP，不是release artifact。前端70文件1514原资格保持，不重复累计。
+- 独立审查n3f-original-source-consistency-independent-review：原函数精确AST反证exit1，真实PDF/SVG红而PNG/TIFF蓝；正式新函数四格式全红/一次canonical、实际无SVG companion的partial保持。7源SHA不变，未再跑9/55大组或产品HTTP。规范4文件候选已应用（SHA9778974e…a5bdd4），另同源对原export-route行补静态SVG共享向量；不把文档变动当新产品资格，规范检查待跑。
+- n3f-static-svg-chromium-inputs生成两页29手算点，原resolver/plan/PDF/SVG writer、独立PDFium基准均通过。root真实Chrome首file协议被CLI阻止，保首失败和首helper，未假称渲染失败；改用127.0.0.1:24119只发布两份生成HTML的只读服务，同一个已打开浏览器继续goto。实际DPR1.14，CLI截图明确scale=css，按原mm×96/25.4取样，不改SVG、不缩放/平移截图；29点RGB容差2全过、DOM IDs唯一、物理bounds与Clip中文保持，真实截图已查看。证据root-check/qualification-first.json，Inkscape明确not-run，不能冒Office/正式HTTP资格。
+- 独立浏览器08-close0；STOP后原server exec64946实际exit0、2次GET；pid82428消失、24119无监听，close-proof.json闭合，无当前浏览器/临时服务。P3正式24109工具仍未freeze/serve。源期间未动，UI实导需等待后端失败修复与新资格。
+- P2只读图p2-integration-map/IMPLEMENTATION_MAP.md/source-map.json已交接。确认当前engineRender无fullref来源，首改会清输出ref，archive只存patch_hash不存原序patches；后续独立持久origin需保fullref+baseline有序P、服务端原patchspec核hash、真实receipt/eid/epoch守卫及原INPUT准备，不能只接guard或用同名当前来源。所有子代理本批均释放，无子任务live。
+- 下一条动作：继续等原91338终局并读完整XML/失败/skip→修实际缺口/必要回归→规范检查→新backend资格→正常认证A画布/ordinary.svg原图真实导出及独立产物→正常终局与P3分功能commit。完整目标保持active，后续P2/N3f/N5/N4/M1/M2/M3不缩减。
 
 ### 2026-11-07 13:53 执行情况复核、两处导出审查结论与后续安排
 
