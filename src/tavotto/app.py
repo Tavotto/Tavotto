@@ -621,6 +621,17 @@ def _unsupported_tiff(exc):
     return jsonify({"error": exc.message, "code": exc.code, "params": exc.params}), 422
 
 
+def _asset_original_spec(path: Path, kind: str) -> dict:
+    """同一份磁盘素材事实：清单与精确 id 查询都消费原 probe / originalspec。"""
+    if kind == "svg":
+        from . import svgasset
+
+        _, probe = svgasset.read(path)
+    else:
+        probe = pdfbackend.probe_asset(path, kind)
+    return engine_originalspec.asset_spec(path, kind, probe)
+
+
 def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
     """扫描 figures 目录：PDF 是首选（矢量）；无同名 PDF 的图片按位图收录。
 
@@ -662,18 +673,12 @@ def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
             "mtime": int(p.stat().st_mtime),
         }
         try:
-            if kind == "svg":
-                from . import svgasset
-
-                _, probe = svgasset.read(p)
-            else:
-                probe = pdfbackend.probe_asset(p, kind)
             # 「这张图有多大」只算一次（`engine/originalspec`，ADR 0028）。
             # `native_*_mm` 是那份 spec 的投影而不是第二次计算——改造前位图那一
             # 档在这里现猜一个 ppi（`600 if png else 300`），猜完既不说也没有
             # 别处能对账；现在密度先按文件自己写的物理密度读，读不到才落到同样
             # 那两个数，且 `original_spec.dpi_source` 会说出来它是假定的。
-            spec = engine_originalspec.asset_spec(p, kind, probe)
+            spec = _asset_original_spec(p, kind)
             entry.update(
                 kind=kind,
                 native_w_mm=spec["logical_w_mm"],
@@ -1190,8 +1195,20 @@ def api_panel_stem():
     （比如被同一张图的 PDF 让位隐藏的 PNG，或清单正在刷新）时，前端不许退回文件名 stem 去猜。
     """
     rel_id = request.args.get("id", "")
-    safe_resolve(rel_id)  # 在项目根之内、是文件；不是就按老规矩 4xx（带稳定 code）
-    resp = jsonify({"id": rel_id, "stem": _disk_panel_rel(rel_id.replace("\\", "/"))[0]})
+    path = safe_resolve(rel_id)  # 原安全入口，精确 id 不受清单里同 stem PDF 的让位影响。
+    payload = {"id": rel_id, "stem": _disk_panel_rel(rel_id.replace("\\", "/"))[0]}
+    if request.args.get("original_spec") == "1":
+        from . import svgasset
+
+        kind = engine_refresh.asset_kind(path.name, pdf_twin=False)
+        if kind is None:
+            abort(403)
+        try:
+            spec = _asset_original_spec(path, kind)
+        except svgasset.UnsupportedSVG as exc:
+            return jsonify({"code": exc.code, "error": str(exc), "params": exc.params}), 422
+        payload.update(kind=kind, original_spec=spec)
+    resp = jsonify(payload)
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -3818,6 +3835,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     raster_source = source_path.suffix.lower() != ".pdf"
     page_pt = _original_page_pt(source_path, src) if raster_source else None
     disk_source = _original_disk_source_manifest(src, source_path)
+    vector_size_mm = None
     produced: list = []
     for fmt in req.formats:
         job.check_cancelled()
@@ -3883,14 +3901,19 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                     )
                 else:
                     facts = pdfbackend.original_png(source_path, tmp, dpi, transparent=transparent)
+                if not raster_source and vector_size_mm is None:
+                    # PDF 原图保其物理页面；请求里的旧 native 不是产物的测量值。
+                    measured = _asset_original_spec(source_path, "pdf")
+                    vector_size_mm = (measured["logical_w_mm"], measured["logical_h_mm"])
+                width_mm, height_mm = vector_size_mm or (src.w_mm, src.h_mm)
                 produced.append(
                     engine_exportjob.Produced(
                         format=fmt,
                         tmp_path=tmp,
                         width_px=facts["px_w"],
                         height_px=facts["px_h"],
-                        width_mm=src.w_mm,
-                        height_mm=src.h_mm,
+                        width_mm=width_mm,
+                        height_mm=height_mm,
                         vector=False,
                         manifest=disk_source,
                     )

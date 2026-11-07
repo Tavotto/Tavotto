@@ -424,6 +424,17 @@ export const fetchPanels = () => jsonFetch<PanelsResponse>('/api/panels')
 export const fetchPanelStem = (id: string) =>
   jsonFetch<{ id: string; stem: string }>(`/api/panel-stem?id=${encodeURIComponent(id)}`)
 
+/** 精确磁盘 id 的只读事实；不授予执行、几何编辑或发布资格。 */
+export interface PanelSourceFacts {
+  id: string
+  stem: string
+  kind: PanelInfo['kind']
+  original_spec: AssetOriginalSpec
+}
+
+export const fetchPanelSourceFacts = (id: string, pj?: string | null) =>
+  jsonFetch<PanelSourceFacts>(`/api/panel-stem?id=${encodeURIComponent(id)}&original_spec=1`, undefined, pj)
+
 /**
  * 项目接入就绪度。**只读诊断**：后端不跑用户脚本、不 probe、不写盘、不发事件。
  *

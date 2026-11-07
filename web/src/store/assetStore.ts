@@ -1,11 +1,14 @@
 import { create } from 'zustand'
 import {
   fetchPanels,
+  fetchPanelSourceFacts,
+  type PanelSourceFacts,
   type PanelInfo,
   type PanelsResponse,
   type UnsupportedAsset,
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
+import { engineTransport } from '@/lib/engineTransport'
 import { t } from '@/i18n'
 
 const USED_KEY = 'tavotto.assetUsed'
@@ -77,8 +80,14 @@ let inflight: {
   trailing: Promise<PanelsResponse | null> | null
 } | null = null
 
+let sourceGeneration = 0
+const sourceRequests = new Map<string, Promise<PanelSourceFacts | null>>()
+
 interface AssetState {
   panels: PanelInfo[]
+  /** 精确查询的只读事实；与素材清单分开，绝不把让位隐藏的文件加回素材库。 */
+  originalSources: Record<string, PanelSourceFacts | null>
+  ensureOriginalSource: (id: string) => Promise<PanelSourceFacts | null>
   byId: Record<string, PanelInfo>
   /** 是素材、但用不了的文件（范围之外的 TIFF）：不进 `panels`，素材库如实列出 */
   unsupported: UnsupportedAsset[]
@@ -112,6 +121,7 @@ interface AssetState {
 
 export const useAssetStore = create<AssetState>((set, get) => ({
   panels: [],
+  originalSources: {},
   byId: {},
   unsupported: [],
   figuresDir: '',
@@ -119,6 +129,35 @@ export const useAssetStore = create<AssetState>((set, get) => ({
   loaded: false,
   error: null,
   recentlyUsed: readUsed(),
+
+  ensureOriginalSource: (id) => {
+    if (get().byId[id] || id.startsWith('runtime:') || engineTransport()) return Promise.resolve(null)
+    if (Object.hasOwn(get().originalSources, id)) return Promise.resolve(get().originalSources[id])
+    const pending = sourceRequests.get(id)
+    if (pending) return pending
+    const born = epoch
+    const generation = sourceGeneration
+    const pj = currentProjectId()
+    const current = () => born === epoch && generation === sourceGeneration && pj === currentProjectId()
+    const promise = fetchPanelSourceFacts(id, pj)
+      .then((data) => {
+        if (!current()) return null
+        if (data.id !== id || !data.original_spec ||
+          !['pdf', 'raster', 'svg'].includes(data.kind) ||
+          !(data.original_spec.logical_w_mm > 0 && data.original_spec.logical_h_mm > 0)) {
+          throw new Error('Invalid exact source facts')
+        }
+        set((state) => ({ originalSources: { ...state.originalSources, [id]: data } }))
+        return data
+      })
+      .catch(() => {
+        if (current()) set((state) => ({ originalSources: { ...state.originalSources, [id]: null } }))
+        return null
+      })
+      .finally(() => { if (sourceRequests.get(id) === promise) sourceRequests.delete(id) })
+    sourceRequests.set(id, promise)
+    return promise
+  },
 
   load: (opts) => {
     if (!opts?.force && inflight && inflight.pj === currentProjectId()) {
@@ -133,6 +172,9 @@ export const useAssetStore = create<AssetState>((set, get) => ({
       return cur.trailing
     }
 
+    sourceGeneration += 1
+    sourceRequests.clear()
+    set({ originalSources: {} })
     const mine = ++seq
     const pj = currentProjectId()
     const born = epoch
@@ -191,11 +233,14 @@ export const useAssetStore = create<AssetState>((set, get) => ({
 
   clear: () => {
     epoch += 1
+    sourceGeneration += 1
+    sourceRequests.clear()
     inflight = null
     loadingRequest = null
     refreshHolds.clear()
     set({
       panels: [],
+      originalSources: {},
       byId: {},
       unsupported: [],
       figuresDir: '',
@@ -225,11 +270,19 @@ export const useAssetStore = create<AssetState>((set, get) => ({
  * 现象是「明明 resolve 了，store 里什么都没有」。
  */
 export function resetAssetLoadBookkeeping(): void {
+  sourceGeneration += 1
+  sourceRequests.clear()
+  useAssetStore.setState({ originalSources: {} })
   seq = 0
   applied = 0
   inflight = null
   loadingRequest = null
   refreshHolds.clear()
+}
+
+/** 默认 HTTP 的只读正证不能成为替代宿主的素材事实。 */
+export function originalSourceFacts(id: string): PanelSourceFacts | null {
+  return engineTransport() ? null : useAssetStore.getState().originalSources[id] ?? null
 }
 
 /**

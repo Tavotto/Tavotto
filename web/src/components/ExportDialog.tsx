@@ -403,6 +403,14 @@ export function ExportDialog() {
    * 隐藏的图也算在画布上（与「隐藏的图也计数」一致）；素材库里还没上画布的图、别的画布上的图都不在其内——
    * 左栏缩略图条、`每张图单独导出` 的批都只认它。
    */
+  useEffect(() => {
+    if (!open) return;
+    const store = useAssetStore.getState();
+    for (const figure of figures) {
+      if (figure.panel?.chart || figure.panel?.figureSnapshot) continue;
+      void store.ensureOriginalSource(figure.figureId);
+    }
+  }, [open, figures]);
   const canvasFigures = useMemo(
     () =>
       figures.filter((f) =>
@@ -1004,6 +1012,11 @@ export function ExportDialog() {
     const routes = new Map<string, { route: ExportRoute | null; key: string | null }>();
     for (const f of figs) {
       if (!alive()) return;
+      // 精确事实也是准备阶段的一部分：不让点击快于只读查询时把隐藏素材误判为缺失。
+      if (!f.panel?.chart && !f.panel?.figureSnapshot) {
+        await useAssetStore.getState().ensureOriginalSource(f.figureId);
+        if (!alive()) return;
+      }
       const probe = buildBatchInput(f, shared, null);
       let route: ExportRoute | null = null;
       if (probe.ok) {

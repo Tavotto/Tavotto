@@ -31,7 +31,7 @@ import { checkFilename, stripOutputExtension, type FilenameReason } from './expo
 import { epsFromOffers, epsFromRoute, type ExportOffers, type ExportRoute } from './exportRoute'
 import { getOriginalOutputSpec, type OriginalOutputSpec } from './originalSpec'
 import { isZeroPad } from './framePad'
-import { useAssetStore } from '@/store/assetStore'
+import { originalSourceFacts, useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { toExportObjects } from './exportPayload'
 import type { CanvasObject, FigureDocument, FramePad, PanelObject } from '@/types/document'
@@ -158,7 +158,8 @@ function canValidateOriginalSource(figureId: string, panel?: PanelObject | null)
   // /panels prefers a same-stem PDF; absence is not proof that this PNG is missing.
   // This permits validation, not a source-existence or fresh-metadata claim.
   if (panel?.fileId === figureId && isAdoptedPanel(panel) && !artifactValidationIssue(panel)) return true
-  return useAssetStore.getState().byId[figureId] != null
+  const assets = useAssetStore.getState()
+  return assets.byId[figureId] != null || originalSourceFacts(figureId) != null
 }
 
 /**
