@@ -1,10 +1,9 @@
-import { chartSourceFields } from './chartSource'
-import { engineTransport } from './engineTransport'
-import { EngineError, enginePreviewPngSnapshot, panelSrc } from '@/lib/api'
 import { contentBox, type ThumbBox } from '@/lib/versionThumbBox'
 import { applyPanelTransform, panelContentTransform } from '@/lib/panelTransform'
-import { useAssetStore } from '@/store/assetStore'
-import { exactPanelRender, panelRender, useRenderStore } from '@/store/renderStore'
+import { captureThumbSources } from '@/store/renderStore'
+import { TIMELINE_THUMB_PX, type PanelSource, type ThumbSources } from './momentCapture'
+export { captureThumbSources } from '@/store/renderStore'
+export { TIMELINE_THUMB_PX, type ThumbSources } from './momentCapture'
 import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
 
 /**
@@ -23,11 +22,6 @@ import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document
  * 的节点在列表里退回草图，拍节点这件事本身绝不因为缩略图失败。
  */
 
-/**
- * 缩略图的长边（px）。只拍页面上有内容的那块（`contentBox`）——单图编辑没有「页面」，
- * 整页拍的话图常常只占一角；竖线条浮卡按 2× 屏约 400 px 显示，所以比列表行要的大。
- */
-export const TIMELINE_THUMB_PX = 360
 /** 为了裁出内容区域先按整页画的那张画布，长边不超过它（内容极小、页面极大时降分辨率） */
 const TIMELINE_THUMB_PAGE_MAX_PX = 4096
 /** 后端单张上限（`VERSION_THUMB_MAX_BYTES` 256 KiB）留点余量：超了就缩一档再编 */
@@ -88,60 +82,6 @@ function loadImage(src: string): Promise<HTMLImageElement | null> {
     }
     img.src = src
   })
-}
-
-/**
- * 一个面板**此刻**从哪儿取图：renderStore 里带 overrides 的 SVG，没有就退回素材图。
- *
- * **同步取、一次取完**（在任何 await 之前）：关项目 / 切项目那一刻打的节点，
- * 合成还没画完 renderStore 就被清空、`apiUrl` 就换成了下一个项目——晚一步取，
- * 画进去的是另一个项目的同名素材，或者什么都没有。
- */
-/**
- * 两路图源**都取**：SVG 在前（带 overrides，用户看到的就是它），素材图兜底。只取一路的话，
- * SVG 解码失败或画成空白（Windows 的 WebKit 上量到过：同一份排版前一个节点有面板、下一个
- * 节点只剩文字，CI run 36510136403）时这一格就空着——而素材图明明就在。
- */
-type PanelSource = { svg?: string; url?: string; png?: Promise<string | null> } | null
-
-function panelSource(o: PanelObject): PanelSource {
-  const render = o.chartSource !== undefined
-    ? exactPanelRender(useRenderStore.getState(), o) : panelRender(useRenderStore.getState(), o)
-  if (o.chartSource !== undefined) {
-    // 发起时冻结整份请求和项目；不能等别的图片解码完后再拿新项目里的同名文件。
-    const input = structuredClone({ id: o.fileId, chart: o.chart, patches: o.overrides, source: o.chartSource })
-    const transport = engineTransport()
-    const pending = !input.chart
-      ? Promise.reject(new EngineError('A chart source requires a chart.', '', 'chart_model_invalid'))
-      : transport
-      ? !transport.supportsChartRender || !transport.supportsChartSourceRender || !transport.previewPngSnapshot
-        ? Promise.reject(new EngineError('This host does not support chart sources.', '', 'chart_render_unsupported'))
-        : transport.previewPngSnapshot(input.id, input.patches, TIMELINE_THUMB_PX, undefined, input.chart, input.source)
-      : enginePreviewPngSnapshot(input.id, input.patches, TIMELINE_THUMB_PX, undefined,
-        { chart: input.chart, ...chartSourceFields(input.source) })
-    const png = pending.then(async frame => {
-      if (!frame.manifest || !frame.chartRevision) {
-        if (frame.url.startsWith('blob:')) URL.revokeObjectURL(frame.url)
-        return null
-      }
-      if (!frame.url.startsWith('blob:')) return frame.url
-      // 保留可重复消费的冻结图源，释放宿主 blob，即使 SVG 先成功也不会泄漏。
-      try {
-        const blob = await (await fetch(frame.url)).blob()
-        return await new Promise<string | null>((resolve) => {
-          const reader = new FileReader()
-          reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
-          reader.onerror = () => resolve(null)
-          reader.readAsDataURL(blob)
-        })
-      } finally { URL.revokeObjectURL(frame.url) }
-    }).catch(() => null)
-    return { svg: render?.svg ?? undefined, png }
-  }
-  const mtime = useAssetStore.getState().byId[o.fileId]?.mtime
-  const url = panelSrc(o.fileId, o.fileKind, 400, mtime) || undefined
-  if (!render?.svg && !url) return null
-  return { svg: render?.svg ?? undefined, url }
 }
 
 /**
@@ -348,24 +288,6 @@ function encode(canvas: HTMLCanvasElement): Promise<TimelineThumb | null> {
       resolve(null)
     }
   })
-}
-
-/** 一份文档此刻的各面板图源（`panelSource` 的结果）；取不出来 = `null`（没有缩略图） */
-export type ThumbSources = ReadonlyMap<string, PanelSource> | null
-
-/**
- * 取各面板**此刻**的图源——只读 renderStore，同步、便宜。关键时刻在操作**发起**那一刻取
- * （`captureMoment`），完成时再合成：那时用户可能已经改了面板，现取的话缩略图画的是
- * 之后的样子，与节点里那份文档对不上（Codex #679）。
- */
-export function captureThumbSources(doc: FigureDocument): ThumbSources {
-  const sources = new Map<string, PanelSource>()
-  try {
-    for (const o of doc.objects) if (o.type === 'panel' && !o.hidden) sources.set(o.id, panelSource(o))
-  } catch {
-    return null
-  }
-  return sources
 }
 
 /**

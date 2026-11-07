@@ -314,6 +314,11 @@ order: 200
   挂上时才发请求。「保存」时刻由保存侧发 `lib/layoutSaved.emitLayoutSaved()`、时间线订阅——
   新增一条写排版文件的路，在它的成功分支 emit 一次，不 import 时间线。恢复只有 `VersionDialog.restoreNode()` 一处：先 await「恢复前」节点，存不下来
   就不恢复，再一次 `restoreLayoutVersion` commit（⌘Z 一步退回；布局组跟着对象恢复）。
+  保存侧在原排队时刻调用纯叶子 `lib/momentCapture.captureDocumentMoment`，不反向import时间线；
+  身份与ctx key由该叶子唯一组装，真实图源由原renderStore同步装配/冻结，timelineThumb只合成。
+  排队正文、MomentSnapshot和PNG Promise保原引用；成功回调不得取新状态补拍。
+  缺真实源端口须明确失败并保稿，不能默认丢Moment；直接文档、App、embedded、MCP、playground入口均须装配。
+  看护：`lib/momentCapture.test.ts`、`store/workingDocumentReceipt.test.ts`、原importArchitecture两门。
   恢复别的图（2026-10-31）：同一张画布上，这一版的图与画布上此刻的图不是同一组（换了 / 多了 / 少了，含单图编辑 ↔ 排版；比 fileId 集合，与后端 `_version_figures` 同一把尺子）→ 先确认、说清会变成几张图；恢复后图变了 → 时间线范围切到「全部图」（`timelineStore.revealAll`）；
   单图编辑时来自另一张画布的图，确认框按「图」说、不说「画布」。
   两个恢复入口（预览页脚、时间线行上弹出的对比小卡片）都经 `restoreUnderLock()`：挂 `timelineStore.restoring`、

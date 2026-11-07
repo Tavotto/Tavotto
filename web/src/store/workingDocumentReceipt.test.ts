@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
-import { emptyProject, type ProjectDocument } from '@/types/document'
+import { emptyProject, type PanelObject, type ProjectDocument } from '@/types/document'
+import { setEngineTransport, type EnginePngSnapshot } from '@/lib/engineTransport'
+import type { Manifest } from '@/lib/api'
+import chartVectors from '../../../tests/golden/chart_model_vectors.json'
 import { setCurrentProjectId } from '@/lib/session'
 import { projectFileEditor } from '@/lib/projectFileSession'
 import { captureThumbSources } from '@/lib/timelineThumb'
@@ -185,11 +188,30 @@ describe('工作副本真实落盘回执', () => {
   })
 
   it('moment沿原只读快照保留PNG Promise，不因深拷贝变成保存失败', async () => {
-    const png = Promise.resolve(null)
-    vi.mocked(captureThumbSources).mockReturnValue(new Map([['owned', { png }]]))
-    const waiting = waitForWorkingDocumentSave(await install())
-    await expect(waiting).resolves.toMatchObject({ revision: expect.any(String) })
-    const receipt = await waiting
-    expect(receipt.moment?.thumb?.get('owned')?.png).toBe(png)
+    let finish!: (frame: EnginePngSnapshot) => void
+    const frame = new Promise<EnginePngSnapshot>(resolve => { finish = resolve })
+    const previewPngSnapshot = vi.fn(() => frame)
+    const restore = setEngineTransport({ supportsChartRender: true, supportsChartSourceRender: true,
+      render: async () => { throw new Error('This source fixture never renders SVG.') },
+      previewPngUrl: async () => '', previewPngSnapshot, panelSrc: () => null })
+    const result = { url: 'data:image/png;base64,fixture', manifest: { elements: [] } as unknown as Manifest, chartRevision: 'paired' }
+    try {
+      const document = emptyProject(); document.schema = 4
+      const vector = chartVectors.vectors.find(value => value.expect === 'ok')!
+      const panel: PanelObject = { id: 'owned', type: 'panel', fileId: 'original.svg', fileKind: 'svg', nativeW: 100, nativeH: 80,
+        x: 0, y: 0, w: 100, h: 80, overrides: [],
+        chart: structuredClone({ model: vector.model, binding: vector.binding }) as unknown as PanelObject['chart'],
+        chartSource: { schema: 1, sourceId: 'original.svg', bytesSha256: 'a'.repeat(64), sizeBytes: 5, sceneDigest: vector.model!.scene_digest! } }
+      document.canvases[0].objects = [panel]
+      expect(await s().switchDocument(document, id, undefined, { format: 'v4' })).toBe(true)
+      const installed = scope(), waiting = waitForWorkingDocumentSave(installed)
+      await expect(waiting).resolves.toMatchObject({ revision: expect.any(String) })
+      const receipt = await waiting, png = receipt.moment?.thumb?.get('owned')?.png
+      expect(png).toBeInstanceOf(Promise)
+      expect((await waitForWorkingDocumentSave(installed)).moment?.thumb?.get('owned')?.png).toBe(png)
+      expect(previewPngSnapshot).toHaveBeenCalledTimes(1)
+      finish(result)
+      await expect(png).resolves.toBe(result.url)
+    } finally { finish(result); restore() }
   })
 })

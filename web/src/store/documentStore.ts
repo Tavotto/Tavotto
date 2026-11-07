@@ -9,7 +9,8 @@ import * as history from '@/lib/history'
 import { rebaseToCurrentNative, sizeBasisOf, type SizeBasis } from '@/lib/panelNativeSize'
 import { ApiError, fetchAutosave, fetchAutosaveSummary, probeAutosave, putAutosave, fetchProjectFile, reserveProjectFile, confirmProjectFile, cancelProjectFile, type AutosaveProbe } from '@/lib/api'
 import { projectFileEditor, bindingFromProjectFile, type ProjectFileAddress, type ProjectFileCapture, type ProjectFileRead, type ProjectFileRecovery, type ProjectFileResult, type ProjectFileTicket } from '@/lib/projectFileSession'
-import { captureMoment, type MomentSnapshot } from '@/lib/timelineCheckpoint'
+import { captureDocumentMoment, type MomentSnapshot } from '@/lib/momentCapture'
+import { useTimelineStore } from '@/store/timelineStore'
 import { DOC_INDEX_KEY, isForeignDocument, recordedProjectOf } from '@/lib/docOwnership'
 import type { RestoreIssue } from '@/store/documentRestore'
 import {
@@ -1786,7 +1787,7 @@ function flushAutosaveNow(): FlushResult {
       return localOk ? 'saved' : 'error'
     }
     snapshots.projectFileContext = projectFileEditor.capture(address)
-    snapshots.moment = captureMoment()
+    snapshots.moment = captureDocumentMoment(useDocumentStore.getState(), currentProjectId(), useTimelineStore.getState().gen)
   }
   diskFor(state.documentFormat).schedule(state.documentId, pd, owner, snapshots)
   if (!localOk) return 'error'
@@ -2133,7 +2134,7 @@ async function recoverProjectFileConflict(choice: 'reload' | 'overwrite'): Promi
     const body = chartContext?.document ?? raw
     const context: DiskSaveContext = {
       ...captureFigureSnapshotSave(body, pj), ...(chartContext ? { chartContext } : {}),
-      projectFileContext: projectFileEditor.capture(address), projectFileRecovery: proof, moment: captureMoment(),
+      projectFileContext: projectFileEditor.capture(address), projectFileRecovery: proof, moment: captureDocumentMoment(useDocumentStore.getState(), currentProjectId(), useTimelineStore.getState().gen),
     }
     disk.rememberRevision(address.documentId, fetched)
     disk.forgetBaseline(address.documentId)
@@ -2506,7 +2507,7 @@ export async function waitForWorkingDocumentSave(
     const document = useDocumentStore.getState().buildProject()
     if (!hasContent(document) && (written?.loadSeq !== scope.loadSeq || hasContent(written.document))) {
       const snapshots: DiskSaveContext = {
-        ...captureFigureSnapshotSave(document, scope.pj), projectFileContext: projectFileEditor.capture(address), moment: captureMoment(),
+        ...captureFigureSnapshotSave(document, scope.pj), projectFileContext: projectFileEditor.capture(address), moment: captureDocumentMoment(useDocumentStore.getState(), currentProjectId(), useTimelineStore.getState().gen),
       }
       disk.schedule(scope.documentId, document, scope.pj, snapshots)
       await disk.whenIdle()
@@ -2539,7 +2540,7 @@ export async function prepareProjectFileSave(name: string, scope: {
   } else {
     const document = useDocumentStore.getState().buildProject()
     const snapshots: DiskSaveContext = {
-      ...captureFigureSnapshotSave(document, scope.pj), projectFileContext: projectFileEditor.capture(address), moment: captureMoment(),
+      ...captureFigureSnapshotSave(document, scope.pj), projectFileContext: projectFileEditor.capture(address), moment: captureDocumentMoment(useDocumentStore.getState(), currentProjectId(), useTimelineStore.getState().gen),
     }
     diskFor(scope.format).schedule(scope.documentId, document, scope.pj, snapshots)
     await diskFor(scope.format).whenIdle()

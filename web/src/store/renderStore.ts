@@ -1,3 +1,4 @@
+import { installMomentSources, TIMELINE_THUMB_PX, type PanelSource, type ThumbSources } from '@/lib/momentCapture'
 import { chartRequestIdentity, chartSourceFields } from '@/lib/chartSource'
 import { artifactKeySuffix, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, verifiedSource, policyOfGuard, retryArtifactEntry, subjectOf, type AdoptionGuard, isAdoptedPanel, adoptionGuardOf } from '@/lib/artifactValidation'
 import { useMemo } from 'react'
@@ -11,6 +12,8 @@ import {
   EngineError,
   engineErrorMsg,
   engineRender,
+  enginePreviewPngSnapshot,
+  panelSrc,
   type DependencyPreparationOffer,
   type DependencyRepairOffer,
   type Manifest,
@@ -31,7 +34,7 @@ import { resolvePreview, VECTOR_PREVIEW, type PreviewMetadata } from '@/lib/prev
 import { useAssetStore } from '@/store/assetStore'
 import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
-import type { ChartSourceRef, PanelChartState, PanelObject } from '@/types/document'
+import type { ChartSourceRef, FigureDocument, PanelChartState, PanelObject } from '@/types/document'
 import { fileHash, recordDiagnosticEvent, variantHash } from '@/diagnostics'
 import { notifyReconstructionReview } from '@/store/sourceBackedReview'
 import { classifyArtifactFailure } from '@/lib/artifactReason'
@@ -1519,3 +1522,57 @@ export function useExactPanelManifest(panel: PanelObject | null | undefined): Ma
     renderKeyOf(panel), render.rev, render.manifest, png,
   )
 }
+
+/** Freeze real renderer sources synchronously; the compositor consumes the same references. */
+function panelSource(o: PanelObject): PanelSource {
+  const render = o.chartSource !== undefined
+    ? exactPanelRender(useRenderStore.getState(), o) : panelRender(useRenderStore.getState(), o)
+  if (o.chartSource !== undefined) {
+    // 发起时冻结整份请求和项目；不能等别的图片解码完后再拿新项目里的同名文件。
+    const input = structuredClone({ id: o.fileId, chart: o.chart, patches: o.overrides, source: o.chartSource })
+    const transport = engineTransport()
+    const pending = !input.chart
+      ? Promise.reject(new EngineError('A chart source requires a chart.', '', 'chart_model_invalid'))
+      : transport
+      ? !transport.supportsChartRender || !transport.supportsChartSourceRender || !transport.previewPngSnapshot
+        ? Promise.reject(new EngineError('This host does not support chart sources.', '', 'chart_render_unsupported'))
+        : transport.previewPngSnapshot(input.id, input.patches, TIMELINE_THUMB_PX, undefined, input.chart, input.source)
+      : enginePreviewPngSnapshot(input.id, input.patches, TIMELINE_THUMB_PX, undefined,
+        { chart: input.chart, ...chartSourceFields(input.source) })
+    const png = pending.then(async frame => {
+      if (!frame.manifest || !frame.chartRevision) {
+        if (frame.url.startsWith('blob:')) URL.revokeObjectURL(frame.url)
+        return null
+      }
+      if (!frame.url.startsWith('blob:')) return frame.url
+      // 保留可重复消费的冻结图源，释放宿主 blob，即使 SVG 先成功也不会泄漏。
+      try {
+        const blob = await (await fetch(frame.url)).blob()
+        return await new Promise<string | null>((resolve) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
+          reader.onerror = () => resolve(null)
+          reader.readAsDataURL(blob)
+        })
+      } finally { URL.revokeObjectURL(frame.url) }
+    }).catch(() => null)
+    return { svg: render?.svg ?? undefined, png }
+  }
+  const mtime = useAssetStore.getState().byId[o.fileId]?.mtime
+  const url = panelSrc(o.fileId, o.fileKind, 400, mtime) || undefined
+  if (!render?.svg && !url) return null
+  return { svg: render?.svg ?? undefined, url }
+}
+
+export function captureThumbSources(doc: FigureDocument): ThumbSources {
+  const sources = new Map<string, PanelSource>()
+  try {
+    for (const o of doc.objects) if (o.type === 'panel' && !o.hidden) sources.set(o.id, panelSource(o))
+  } catch {
+    return null
+  }
+  return sources
+}
+
+// Store only the function here; no document/render state is read during module initialization.
+installMomentSources(captureThumbSources)

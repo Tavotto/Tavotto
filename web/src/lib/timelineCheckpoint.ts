@@ -1,11 +1,10 @@
 import { createVersion, putVersionThumb, type LayoutMoment, type LayoutVersionMeta } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
 import { currentTimelineCtx } from '@/lib/timelineContext'
+import { activeCanvasIdentityOf, captureDocumentMoment, type MomentSnapshot } from '@/lib/momentCapture'
 import {
-  captureThumbSources,
   composeTimelineThumb,
   type BakedAnnotations,
-  type ThumbSources,
 } from '@/lib/timelineThumb'
 import { documentDigest, recordDiagnosticEvent, versionHash } from '@/diagnostics'
 import { useDocumentStore } from '@/store/documentStore'
@@ -32,18 +31,7 @@ import type { FigureDocument } from '@/types/document'
  * 看着好好的，恢复时才发现它不知道自己来自哪张画布（R-03）。
  */
 export function activeCanvasIdentity() {
-  const { doc, activeCanvasId, documentId, documentFormat, projectMeta } = useDocumentStore.getState()
-  return {
-    documentId,
-    format: documentFormat,
-    versionIdentity: { project: { id: projectMeta.id, name: projectMeta.name }, canvasId: activeCanvasId, createdAt: projectMeta.createdAt, updatedAt: Date.now() },
-    pj: currentProjectId(),
-    doc,
-    canvasId: activeCanvasId,
-    // 当前画布的名字取**活文档**的：改名只写 `doc.name`，`canvases` 里那一条要等下一次切画布
-    // 才同步，从列表里读会把改名之前的旧名字记进节点（Codex #679）
-    canvasName: doc.name,
-  }
+  return activeCanvasIdentityOf(useDocumentStore.getState(), currentProjectId())
 }
 
 /**
@@ -55,34 +43,14 @@ export function activeCanvasIdentity() {
  * 快照、完成时拿它打点。documentStore 里的文档是不可变的（每次 commit 换新对象），留住
  * 引用就是留住那一刻。
  */
-export interface MomentSnapshot {
-  /** 发起那一刻的时间线上下文（项目代际 + 排版 id） */
-  readonly ctx: string
-  readonly identity: ReturnType<typeof activeCanvasIdentity>
-  readonly thumb: ThumbSources
-  /**
-   * `thumb` 是从哪份文档取的：缩略图按它合成。图源与取图源的那份文档**成对**，不跟着
-   * `momentWithDoc` 换——只换文档不换图源，缩略图就是新文档配旧图（Codex #679）。
-   * 不给 = `identity.doc`。
-   */
-  readonly thumbDoc?: FigureDocument
-  /**
-   * 写回带标注时，这次写回把哪些标注对象烙进了哪个面板（`objectId → panelId`）。这些标注
-   * 最终画不画由合成器按面板**实际选中的图源**判定（Codex #679 P1 追加，见
-   * `timelineThumb.composeTimelineThumb` 的 `bakedInto` 参数）——不能在这里靠「此刻有没有
-   * SVG」猜，SVG 到合成器手里可能才发现解析 / 解码失败。不给 = 空，普通写回没有这个顾虑。
-   */
-  readonly bakedInto?: BakedAnnotations
-}
+export type { MomentSnapshot } from '@/lib/momentCapture'
 
 /**
  * 在操作发起那一刻取快照。`doc` 给的话用它（这次操作**实际送出**的那一份，例如导出请求
  * 里的文档），画布身份、项目仍取此刻的。
  */
 export function captureMoment(doc?: FigureDocument): MomentSnapshot {
-  const identity = activeCanvasIdentity()
-  if (doc) identity.doc = doc
-  return { ctx: currentTimelineCtx(), identity, thumb: captureThumbSources(identity.doc) }
+  return captureDocumentMoment(useDocumentStore.getState(), currentProjectId(), useTimelineStore.getState().gen, doc)
 }
 
 /**
