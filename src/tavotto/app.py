@@ -2569,7 +2569,6 @@ def _svg_snapshot_matches_current(
 
 def _load_svg_snapshot(rel_id, overrides, out_dir, *, static_source=None, reference=None):
     from .engine import svgstore
-    from .rendercore import sources as rc_sources
 
     root = require_project()
     kwargs = dict(
@@ -2599,6 +2598,13 @@ def _load_svg_snapshot(rel_id, overrides, out_dir, *, static_source=None, refere
         and not engine_runtimeasset.is_runtime_id(rel_id),
     ):
         return None
+    return _svg_snapshot_source(record, out_dir, static_source=static_source, reference=reference)
+
+
+def _svg_snapshot_source(record, out_dir, *, static_source=None, reference=None):
+    """Materialize an already validated pair without granting current eligibility."""
+    from .rendercore import sources as rc_sources
+
     target = Path(out_dir)
     target.mkdir(parents=True, exist_ok=True)
     prefix = "snapshot-" + uuid.uuid4().hex
@@ -10344,6 +10350,101 @@ def api_engine_invalidate():
     return jsonify({"invalidated": True})
 
 
+def _figure_preview_source(body, directory, *, png=False):
+    """Read one explicit archived pair; never resolve a worker or an original file."""
+    from .engine import svgstore
+
+    allowed = {"id", "patches", "figure_snapshot"}
+    if png:
+        allowed |= {"w", "with_manifest"}
+    if (
+        not isinstance(body, dict)
+        or not {"id", "patches", "figure_snapshot"} <= body.keys()
+        or not body.keys() <= allowed
+        or (png and body.get("with_manifest", False) is not False)
+    ):
+        raise engine_documents.DocumentError(
+            "invalid_preview_options", "归档预览不提供可编辑清单或重建来源", 400
+        )
+    rel_id, patches = body["id"], body["patches"]
+    if not isinstance(rel_id, str) or not rel_id or not isinstance(patches, list):
+        raise engine_documents.DocumentError(
+            "invalid_preview_options", "归档预览需要明确来源和有序编辑列表", 400
+        )
+    _canonical, dropped = engine_patchspec.canonicalize_with_diagnostics(patches)
+    if dropped:
+        raise engine_documents.DocumentError(
+            "invalid_preview_options", "归档预览的编辑列表含无效条目", 400
+        )
+    if not engine_runtimeasset.is_runtime_id(rel_id):
+        safe_resolve(rel_id, require_file=False)
+    try:
+        reference = svgstore.validate_reference(body["figure_snapshot"])
+        root = require_project()
+        record = svgstore.load_document_snapshot(
+            root,
+            reference,
+            source_id=rel_id,
+            patch_hash=engine_patchspec.patch_hash(patches),
+            remap_fingerprint=engine_inputremap.fingerprint(root),
+            storage_root=_svg_storage_root(root),
+        )
+        if record is None:
+            raise ValueError("Archived Figure pair is unavailable")
+        source = _svg_snapshot_source(record, directory)
+        facts = pdfbackend.probe_asset(source.path, "pdf", include_pages=True)
+        if facts["pages"] != 1:
+            raise ValueError("Archived Figure must be a single PDF page")
+        return source, reference, [facts["w_pt"] * MM_PER_PT, facts["h_pt"] * MM_PER_PT]
+    except (OSError, ValueError) as exc:
+        raise engine_documents.DocumentError(
+            "figure_snapshot_unavailable", "保存的 Figure 配对不可核验", 422
+        ) from exc
+
+
+@app.post("/api/documents/v4/figure-preview")
+def api_figure_snapshot_preview():
+    """Display exact archived artwork without claiming an editable manifest."""
+    body = request.get_json(force=True)
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="figure-preview-", dir=CACHE_DIR) as temporary:
+        source, reference, size_mm = _figure_preview_source(body, Path(temporary))
+        representation = source.svg_representation()
+        svg = representation.path.read_text(encoding="utf-8")
+    response = jsonify(
+        preview_source="figure_snapshot", figure_snapshot=reference, svg=svg, size_mm=size_mm
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def _figure_snapshot_png_preview(body):
+    try:
+        want_w = int(body.get("w", 800))
+    except (TypeError, ValueError):
+        return jsonify(
+            {
+                "error": f"w 必须是整数: {body.get('w')!r}",
+                "code": "invalid_width",
+                "params": {"value": repr(body.get("w"))},
+            }
+        ), 400
+    width = next((value for value in RENDER_BUCKETS if value >= want_w), RENDER_BUCKETS[-1])
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="figure-preview-", dir=CACHE_DIR) as temporary:
+        directory = Path(temporary)
+        source, reference, _size_mm = _figure_preview_source(body, directory, png=True)
+        path = directory / "preview.png"
+        pdfbackend.render_preview_png(source.path, width, path)
+        png_bytes = path.read_bytes()
+    response = Response(png_bytes, mimetype="image/png")
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Tavotto-Figure-Snapshot"] = json.dumps(
+        reference, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+    )
+    return response
+
+
 @app.post("/api/engine/preview_png")
 def api_engine_preview_png():
     """**按给定 patches** 出高清位图（bucket 宽度），不依赖热会话当前是哪个变体。
@@ -10359,6 +10460,8 @@ def api_engine_preview_png():
     冒号在 Windows 上不是合法文件名字符。
     """
     body = request.get_json(force=True)
+    if "figure_snapshot" in body:
+        return _figure_snapshot_png_preview(body)
     if "chart" in body:
         return _api_chart_render_body(body, png=True)
     if "chart_source" in body:
