@@ -1765,6 +1765,15 @@ async fn background_with_a_different_github_version_uses_the_mirror_without_coun
 
 #[tokio::test(flavor = "multi_thread")]
 async fn manual_mainland_stays_on_github_when_it_will_finish_soon_enough() {
+    trial_stay(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn manual_mainland_stays_on_github_with_frequent_download_polls() {
+    trial_stay(true).await;
+}
+
+async fn trial_stay(frequent_polls: bool) {
     use std::future::{poll_fn, Future};
 
     let pkg = big_pkg();
@@ -1804,27 +1813,42 @@ async fn manual_mainland_stays_on_github_when_it_will_finish_soon_enough() {
     // 与生产看门狗同一个 tick；不改 wait / eta / stall，只控制服务器何时发尾字节。
     let tick = (l.stall.min(l.slow.probe).min(l.trial.wait) / 4)
         .clamp(Duration::from_millis(10), Duration::from_secs(1));
-    let mut last_pending = None::<Instant>;
+    let mut quiet_pending = None::<(usize, Instant)>;
     let mut trial_polled = None::<Instant>;
     let mut released = None;
+    // Future 可以在没有新网络进度时被反复 poll；定时唤醒只用来重现这种调度。
+    let mut repoll = Box::pin(tokio::time::sleep(tick / 4));
+    let mut quiet_repolls = 0;
     let r = poll_fn(|cx| {
+        let repolled = frequent_polls && repoll.as_mut().poll(cx).is_ready();
+        if repolled {
+            repoll
+                .as_mut()
+                .reset(tokio::time::Instant::now() + tick / 4);
+            cx.waker().wake_by_ref();
+        }
         let before = Instant::now();
         let result = downloading.as_mut().poll(cx);
         if result.is_pending() {
             let samples = progress.lock().unwrap();
             let done: usize = samples.iter().map(|(_, n)| n).sum();
-            if let (Some(&(first, _)), Some(&(last, _)), Some(previous)) =
-                (samples.first(), samples.last(), last_pending)
+            if repolled && done == pkg.len() - 1 && released.is_none() {
+                quiet_repolls += 1;
+            }
+            if let (Some(&(first, _)), Some(&(last, _)), Some((previous_done, previous))) =
+                (samples.first(), samples.last(), quiet_pending)
             {
-                // 上次 Pending 已收齐主体，期间没有网络输入；隔了完整 tick 再 poll，
+                // 检查点的 Pending 已收齐主体，期间没有网络输入；隔了完整 tick 再 poll，
                 // select 的计时分支必定就绪。窗口已过且仍缺尾字节，不能靠提前下完假绿。
                 if done == pkg.len() - 1
+                    && done == previous_done
                     && last <= previous
                     && before.duration_since(previous) >= tick
                     && before.duration_since(first) >= l.trial.wait + tick
                 {
                     if trial_polled.is_none() {
                         trial_polled = Some(before);
+                        quiet_pending = Some((done, Instant::now()));
                     } else if released.is_none()
                         && rig.mirror.hits("/latest.json") == 1
                         && rig.mirror.hits(PKG_PATH) == 0
@@ -1836,7 +1860,11 @@ async fn manual_mainland_stays_on_github_when_it_will_finish_soon_enough() {
                     }
                 }
             }
-            last_pending = Some(Instant::now());
+            // 只有新进度才重建检查点；无关 wake / 更频繁的 poll 不能无限扣住尾字节，
+            // 否则夹具自己会把健康下载拖过 stall。
+            if quiet_pending.is_none_or(|(previous_done, _)| done != previous_done) {
+                quiet_pending = Some((done, Instant::now()));
+            }
         }
         result
     })
@@ -1845,6 +1873,10 @@ async fn manual_mainland_stays_on_github_when_it_will_finish_soon_enough() {
     assert_eq!(seen.lock().unwrap()[0].1, pkg);
     assert_eq!(rig.mirror.hits(PKG_PATH), 0, "够快就不碰镜像的包");
     assert_eq!(starts(&events.lock().unwrap()), 1);
+    assert!(
+        !frequent_polls || quiet_repolls >= 2,
+        "主体收齐、尾字节未放行时确实有额外轮询：{quiet_repolls}"
+    );
 
     let samples = progress.lock().unwrap();
     let (first, first_chunk) = samples[0];
@@ -1858,13 +1890,24 @@ async fn manual_mainland_stays_on_github_when_it_will_finish_soon_enough() {
     assert_eq!((first_chunk, tail_chunk, done), (1, 1, pkg.len() - 1));
     assert!(elapsed >= l.trial.wait);
     assert!(tail >= released && released > judged);
+    let (last_body, _) = samples[samples.len() - 2];
+    let body_quiet = judged.duration_since(last_body);
+    let decision_wait = released.duration_since(judged);
+    assert!(
+        body_quiet >= tick,
+        "body_quiet={body_quiet:?}, tick={tick:?}"
+    );
+    assert!(
+        decision_wait >= tick,
+        "decision_wait={decision_wait:?}, tick={tick:?}"
+    );
     assert!(rate > 0.0 && eta < l.trial.eta.as_secs_f64());
     assert!(events.lock().unwrap().iter().any(|e| matches!(
         e,
         DownloadEvent::Started { content_length: Some(n) } if *n == pkg.len() as u64
     )));
     eprintln!(
-        "trial fixture: window={elapsed:?} >= {:?}, done={done}/{}, first_chunk={first_chunk}, rate={rate:.1} B/s, ETA={eta:.6} s, tail_after={:?}",
+        "trial fixture: window={elapsed:?} >= {:?}, done={done}/{}, first_chunk={first_chunk}, rate={rate:.1} B/s, ETA={eta:.6} s, quiet_repolls={quiet_repolls}, body_quiet={body_quiet:?}, decision_wait={decision_wait:?}, tail_after={:?}",
         l.trial.wait,
         pkg.len(),
         tail.duration_since(first),
