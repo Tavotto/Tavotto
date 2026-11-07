@@ -2,13 +2,13 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-07 12:17 复核）：起点HEAD f69fa488，最近产品提交135aba94。校准完整35成员包已实际安装201、资源及初次严格1 PUT全文/revision通过；真实12pt编辑/撤销/重做/命名保存、五归档SVG及14条DOM PNG独立像素核验通过，B画布PDF/PNG实物通过。A普通SVG画布导出仍拒绝；切项目两次各三条预览错pj/422，根因已定位同次writer与Moment地址分叉，外部四行候选由红转绿但未应用。前端66文件1273及正式/派生构建绿，不代完整回归；归档前端/N3e尚未功能提交。自有服务/浏览器均正常终局，1789源及停前HTTP11bundle零漂移。下一项先P0地址修复与已有安装复验，再P1前端功能分别提交→真实历史计算编辑/冷迁移→普通SVG混合导出→N5/N4→M1/M2/M3；完整目标未完成。**
+> **当前结论（2026-11-07 12:45）：起点HEAD c9e2980d；归档前端e2c026fa与Moment归属c9e2980d已分功能提交。四行生产修复+六原链回归，先2红/修后绿、AST撤修再红；138专项、68文件1320联合、正式/派生构建全绿。首build测试误用prepareDocument无参合同已按原接口修正并补真实prepared门断言。原安装/原持久状态的新父新浏览器A→B→A实过，close/AS六条预览全正确A/200，12pt/全模型/五ref/旧稿/计数保原，离开图正常；1790源/停前HTTP11bundle末核、服务/浏览器正常终局。N3e16路径仍待取消/确认迟到真UI及功能提交；完整35包严格1PUT和B实物导出原资格保留，A普通SVG混合导出/历史计算编辑/完整删源冷迁移/N5/N4/M1–3仍未完成。下一项N3e→历史编辑/冷迁移→普通SVG混合导出→N5/N4→完整验收，总目标保持active。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 > 前轮05:10后的91项捕获包资格保留其历史源码窗口；3c现已有实现与新资格，不能再按旧checkpoint重做。不同测试组不相加成最终总数；当前分支实际HEAD/diff优先。
 
 ## 环境（2026-11-07 当前快照）
 
-- 当前实施树E:/0 - Project/Tavotto-svg-r00，沿用zixu.wang/svg-computational-r00；12:17复核起点HEAD f69fa488，最近产品135aba94，保8f4985ee及此前保存/目录/时间线。N3e与归档前端仍未功能提交，Moment新P0候选尚未应用；原E:/0 - Project/Tavotto仍clean main@69bcafae、未合入。以实际HEAD/diff为准，不reset到文档SHA。
+- 当前实施树E:/0 - Project/Tavotto-svg-r00，沿用zixu.wang/svg-computational-r00；12:45起点HEAD c9e2980d，归档前端e2c026fa/P0 c9e2980d已提交，保135aba94/8f4985ee及此前功能；N3e16路径仍WIP。原E:/0 - Project/Tavotto仍clean main@69bcafae、未合入。以实际HEAD/diff为准，不reset到文档SHA。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
@@ -17,6 +17,7 @@
 - **第二轮已终局收尾**：root浏览器n3e-svg-second-20261107经review-09-close正常exit0；原服务持有者按已核身份STOP→认证shutdown→child.wait，exec28474与child终局均exit0。stop-confirmed.json于09:59:09+08:00实际核launcher41248/runtime75260均不存在、24059无监听，1779源/11bundle末核零漂移；冻结解除，没有自有live服务/浏览器待续。新pj=f82c498c8d5c、working=d_p1o8ydtc及中文目标/请求证据均保留；目标已存在，不能直接按旧serve前提重启，不重等已终局句柄。
 - 最新 NEXT_PHASE 和提示词直接在当前实施分支维护；不再依赖历史 review 文档分支才能取得新计划。
 - **校准UI窗口已于12:15正常终局**：浏览器150-review-close exit0，原exec28051/child4464终局exit0；launcher55348/child4464已不存在、24079无监听。1789源/11实际HTTPbundle停前末核零漂移，review-closed-window.json闭合最终PUT364全文/revision。新pj1f4c864a2576/working d_u1yy7f6i及attempt05安装目录/data保留；旧serve要求目标不存在，不能重启冒fresh，修复后须新生命周期明确续已有安装状态。当前无本轮自有live服务/浏览器。
+- **P0继续安装窗口已正常终局**：n3f-ui-owner-resume，42-normal-close exit0；exec11251/child46200终局0，launcher61264/child46200消失、24089无监听。1790源/11HTTPbundle停前末核，源与六份真实绿回执一致；source-and-ui-qualification.json与ui-owner-proof/complete-final-41.json闭合实际A→B→A。原A/B/data/所有目标保留，未清缓存；不能直接重启一次性serve。当前无本轮自有live服务/浏览器；新N3e生命周期准备仅OUT、尚未启动。
 
 ## 批次状态（2026-11-07 复核后；按完整退出条件）
 
@@ -38,13 +39,27 @@
 | R01/R02 | core_partial / multi_target_verified | 3236307c、8e6c399a | 跨父/split/errorbar/colorbar共同目标与预览通过；任意clip、欠定成员paint slots和图例仍缺 |
 | R03 | runner_and_source_consumers_integrated | 029dfac2、242cabc0、c2fd47d5、5b2b1403、2452d8fc | 受控runner与精确INPUT附件接真实API/UI/导出；不宣称全产品总进程cap或最终资格 |
 | R04 | affected_checks_passed | a8a088cf、18907d65、cbd8d95e | 请求序号/表单/项目切换、late response 和单项 drop 均有受影响测试；Dialog 已可发起真实绑定；完整编辑器生命周期在 R06 追验 |
-| R05 | calibrated_adoption_and_archive_display_verified / owner_fix_and_cold_edit_pending | 既有R05；0d86b357、c761dc7e、48bdbda9、0f85d4b2、4cfccfcf、8f4985ee、135aba94 | 校准35包安装201/资源/initial严格1PUT绿；五SVG/14PNG DOM及B实物导出通过；旧稿/计数保持。Moment错pj真实422、候选未应用，前端/N3e未提交，完整冷迁移/历史编辑未验 |
+| R05 | calibrated_adoption_archive_and_owner_verified / cold_edit_pending | 既有R05；0d86b357、c761dc7e、48bdbda9、0f85d4b2、4cfccfcf、8f4985ee、135aba94、e2c026fa、c9e2980d | 校准35包安装/资源/严格1PUT、五SVG/14PNG及B导出原资格保留；P0真UI六预览正确A/200、完整正文/旧稿/计数保持，archive/P0已提交；N3e待收口、完整冷迁移/历史编辑未验 |
 | R06 | product_editing_and_cold_restore_verified / partial | 242cabc0、53393810、8e6c399a、264ce59c | 冷开后Inspector编辑、undo/redo和exact显示已验；图例、完整操作及复杂几何仍缺 |
 | R07 | partial / original_five_formats_ui_verified | 5bc82a81、c2fd47d5、2a40fec9、c9fa29a4、8fa84f5d、a06cc3d3 | 原图五格式真实UI及独立产物已验，EPS接线已提交；分享与完整双系列M1未完成 |
 | R08 | full_edit_restore_verified / partial | cae96f89、029dfac2、53393810 | 生产v2导出与真UI完整编辑恢复通过；A采用、分享选择和正式项目迁移待补 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-07 12:45 P0生产修复、真实已有安装复验与两个功能提交
+
+- 上一goal turn为progress：b4870a5a状态文档与实际重复422/CDP/候选证据改变下一动作。本turn在同树同分支正式落地，不重复计划替代实现；未新建branch/worktree、未fetch/push/PR/合并/发布，原main保原。既有多代理分别负责P0两源、续已有安装生命周期、普通SVG导出实验；root统一联合/build/UI/暂存提交。
+- documentStore四处Moment改本次owner/address.projectId/scope.pj/scope.pj，仅4行；新增documentMomentOwner.test.ts六条原adopt→writer→Moment→renderStore/API行为，覆盖三类PNG/普通素材URL、原完整PUT、迟到ABA、persistEmpty/named空稿、overwrite/reload冲突。生产未改first六条2红4绿，修后6绿；仅内存AST撤flush owner后再2红。初版8文件138绿、lint0，首红及旧release/patch保原。
+- root首轮68文件联合1320pass/0fail/error/skip/exit0，但packaged-owner-first实际exit1，新测试三处prepareDocument回调误接token，违反原() => Promise<boolean>。根先误判token可用后按实际settlePrepared.prepare()纠正；生产接口不改，新测试用无参普通switchDocument并实断ready/prepared/pj。新affected-after-contract仍8文件138绿/lint0；source-release-after-contract仅两源，旧窗口不覆盖。
+- root新owner-after-contract联合仍68文件1320pass/0fail/error/skip、exit0（42.33s）；packaged-after-contract正式i18n/tsc-b/Vite/Tailwind/包内同步exit0（46.92s）。随后playground-owner-first、widget-owner-first及两个check实际全部exit0，全部1501前端源before/after零漂移；与原12归档源SHA及新P0两源逐项一致。source-and-ui-qualification.json记录完整资格，不把联合当全量回归或与1273相加。
+- n3f-ui-owner-resume工具仅新OUT准备，保持原calibrated/data/config和attempt05已安装A，不prepare/install/adopt/reset原包正文。四真实绿回执freeze得到1790源/11bundle；正常公共CLI --figures指A、24089、认证正常、父无科学库，实际__file__/HTTP与包内产物一致。新进程继续原working d_u1yy7f6i及named绑定，计数仍4/4；这保留了缓存，不是完整删源冷迁移。
+- root真实UI从A点最近旧B，再返回A：12-after-leave/17-after-aba/41-final-requests完整210events，close8/9/10与AS13/14/15独立两组均w360、query/header正确A、200；writer17完整正文/revision保A，return GET53与磁盘闭合，console全过程0错误。主画布归档DOM Blob前后相同；新Inspector实际12pt，原模型/ref/原序patch保留，named与旧稿保持。
+- 真实打开12:38离开节点，对比那一刻/当前均7对象实际可见，root实看owner-resumed-12pt及owner-close-node-preview截图；刻度/标题裁切仍在。36实际DOM Blob采12图，独立限定A static-1/runtime-1×两侧4个PNG与原PDFium逐RGB通道全等，容差0，不外推chart像素/7对象或原wire空CDPbody。ui-owner-proof对12 window、38/41 complete实际均exit0；旧135/148同核验器实际首红准确落错AS pj；五个篡改各目标红。README/validation封存。
+- root42-normal-close exit0；STOP→停前实际HTTP/源/正文末核→正常认证shutdown→child.wait，exec11251/child46200终局0，close-proof0；root另核launcher61264/child46200消失、24089无监听。1790源/11bundle末核，原data/目标/日志保留；当前无自有live浏览器/服务，不续终局句柄或直接重启一次性serve。
+- 依赖顺序archive→P0分功能提交：e2c026fa仅归档17文件（714+/32-），api.ts排除整个N3e package wrapper hunk；c9e2980d仅documentStore/newtest/规则3文件（218+/4-），canonical只本次writer地址两行，N3e10行保工作区。每次stage集合/完整diff/退出码核实，未git add .、未加coauthor。当前仅N3e16路径WIP保留；共同候选源码资格对应1320/真实UI，不冒每个中间HEAD单独全量资格。
+- 后续guarded历史render和raw静态SVG混合导出仍仅OUT候选：前者发现旧worker忽略未知field、supervisor自动重生，需闭式命令及Rust镜像，native尚待接；后者真实SVGIR/PDF writer实验及原job四格式候选通过，但非正式HTTP A修复，gradient/mask仍缺，不伪造declarative/执行pair。root未应用这些候选。下一项N3e成功PUT后确认迟到取消→编辑保存→重开最新稿真UI；沿独立fresh目标，不覆盖既有A/B。四份状态/计划同步当前，不以专项/原型宣完整目标完成。
+- 状态文档与canonical引用检查status-after-owner-rules.xml实际41pass/0fail/error/skip/exit0；agents_budget --check实际exit0，既有OVER保留；git diff --check exit0。文档仅四稳定路径另交，不混N3e功能源码/ADR/规则段；当前代码源与1790冻结窗口内容相同，不因文档改动重复正式构建。
 
 ### 2026-11-07 12:17 执行效果复核、实际跨项目首红及下一阶段安排
 

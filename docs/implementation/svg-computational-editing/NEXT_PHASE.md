@@ -1,11 +1,11 @@
 # SVG 计算图表编辑：当前效果与下一阶段安排
 
-> 复核时间：2026-11-07 12:17（Asia/Shanghai）。唯一实施树 E:/0 - Project/Tavotto-svg-r00，沿用 zixu.wang/svg-computational-r00。复核起点 HEAD f69fa488，最近产品提交 135aba94；产品前端仍有未提交改动。原 E:/0 - Project/Tavotto 为 clean main@69bcafae，成果尚未合入。本轮未 fetch、切分支、新建 worktree 或远程发布。
+> 复核时间：2026-11-07 12:45（Asia/Shanghai）。唯一实施树 E:/0 - Project/Tavotto-svg-r00，沿用 zixu.wang/svg-computational-r00。起点 HEAD c9e2980d，归档前端 e2c026fa、保存 Moment 归属 c9e2980d 已分功能提交；N3e 仍有未提交改动。原 E:/0 - Project/Tavotto 为 clean main@69bcafae，成果未合入；未 fetch、切分支、新建 worktree 或远程发布。
 > 本文维护当前安排；[PROGRESS.md](PROGRESS.md)保留日期证据，[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)维护 SG00–17 完整范围，[NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)可直接复制接续。恢复以实际 HEAD/diff 为准，不回退到文档 SHA。
 
 ## 1. 当前判断
 
-**基础计算编辑、完整项目包安装和历史图显示已取得实际效果；“所有现有功能对等、最终可用”尚未验收。** 校准后的完整 35 成员包已经通过严格初次单 PUT 验证，前轮两 PUT 的夹具问题已闭合。新阻断项是离开项目时的预览归属分叉，不能因为单元测试和构建通过而跳过。
+**归档预览和离开项目预览归属已实际修复并提交，完整交付仍未完成。** 1320 项受影响联合、正式/派生构建通过；从原安装/原持久状态的新父进程与新浏览器完成 A→B→A，close 和 AS 两组三类预览均为正确 A/200，离开图正常、最新 12 pt 编辑和旧稿保留。当前先完成 N3e 的取消/迟到确认真实界面收口，再推进历史计算编辑与后续能力。
 
 产品方向保持轴模型、显式数据绑定及可信绘图来源恢复。普通 SVG 的图元可拖动，不等于具有原始数据或可恢复 Python 来源；缺少语义的输入仍要能沿现有显式绑定入口完成计算建模。
 
@@ -17,10 +17,10 @@
 | 历史显示 | 五个完整引用的 HTTP SVG 与可见 DOM Blob 字节一致；版本/导出预览 14 条 PNG Blob 与原 PDF 独立渲染逐 RGB 通道相等，容差 0 | 原 CDP 七条 response.body 空值仍是观察边界，未伪称恢复原 wire 字节 |
 | B 画布导出 | 实际 PDF + PNG + 报告生成；PDF 180×130 mm、三处 value6、红/红/绿；PNG 4252×3071、600 dpi 独立实读通过 | 只覆盖 B 本次 PDF/PNG，不能替代完整 scope×format |
 | A 画布导出 | 含 ordinary.svg 的整版 PDF/PNG 实际被现有能力限制拒绝 | 普通 SVG 画布/跨格式合成须补实现，缺实现不能标“不适用” |
-| 跨项目最新稿 | 恢复后 named 全文保留、AS 只变 writer 时间戳；最终 PUT364 与磁盘全文/revision 闭合；旧稿保留、计数 4/4 | A→B 两次各三条预览错用 B 并返回 422，尚未修入生产 |
-| 已有验证 | 前端 66 文件 1273 pass/0 fail/error/skip；正式和派生构建/check 全 exit0，1500 前端源零漂移 | 受影响联合，非完整回归；重叠历史组不相加 |
+| 跨项目最新稿 | 原 422 已修：真实 A→B→A，close8/9/10 与 AS13/14/15 均正确 A/200，writer17 及最终磁盘全文/revision 闭合，12 pt/旧稿/计数保持 | 原失败保留；本轮保留缓存，不是 N3f 完整删源冷迁移 |
+| 已有验证 | 当前前端 68 文件 1320 pass/0 fail/error/skip，正式/派生构建/check 全 exit0、1501 前端源零漂移 | 受影响联合非全量；首 build 为新增测试误用 prepareDocument 无参合同，修正后新窗口通过 |
 | 外部原型 | 历史来源/guarded dispatch、N5 S/F 候选已有实验；P0 候选原消费者链由红转绿 | 候选/原型尚未生产落地 |
-| 总体 | 后端归档预览已 135aba94；前端归档、N3e 安装采用尚未功能提交 | N3f 完整冷迁移、N5/N4、M1/M2/M3 未退出，未发布 |
+| 总体 | 后端 135aba94、归档前端 e2c026fa、Moment 归属 c9e2980d 已提交；N3e 尚未提交 | N3f 完整冷迁移、N5/N4、M1/M2/M3 未退出，未发布 |
 
 已实际查看的截图：[12 pt 图内编辑](<E:/0 - Project/svg-review-20261106/n3f-ui-calibrated/output/playwright/calibrated-edit-12pt.png>)、[历史 B 红/红/绿](<E:/0 - Project/svg-review-20261106/n3f-ui-calibrated/output/playwright/calibrated-history-canvas.png>)。左/下刻度及部分标题裁切仍可见，不能宣布视觉验收通过。
 
@@ -41,19 +41,22 @@
 | n3f-edit-source-prototype/REVIEW.md | 同 receipt 活 Figure 可用原 manifest/SVG 编辑/撤销而不重跑；peek 后 lazy build/重连仍须结构守卫 |
 | n3f-preview-final/status-review-source-qualification.json | 1273 受影响联合、正式及 playground/widget 构建/check 的实际退出和源码 SHA |
 | n3f-ui-calibrated/review-closed-window.json | 最终 AS 全文/revision 对应 PUT364；恢复稿仅时间戳变；服务/浏览器正常退出，父子 PID 消失、24079 无监听 |
+| n3f-owner-production/AFTER_CONTRACT.md、source-release-after-contract.json | 新 6 条回归、原修复前 2 红、撤掉 owner 反证再 2 红；修复后 8 文件 138 绿；无参 prepareDocument 合同及真实 ready/prepared 门断言 |
+| n3f-owner-final/source-and-ui-qualification.json | 68 文件 1320 绿、六组正式/派生回执、1790 源与 11 bundle、原父子 PID 消失及正常终局 |
+| n3f-ui-owner-resume/ui-owner-proof/ | 实际 close/AS 六条正确归属、完整 ref/patch/model、A→B→A、原稿/磁盘正文和原 422 反证；实际离开图 Blob 限定资格见该目录报告 |
 
-**当前没有待续的本轮自有浏览器/服务。** CLI session n3f-calibrated-20261107 已 close exit0；原服务 exec28051/child4464 均终局 exit0，launcher55348/child4464 不存在。停前实际 HTTP 11 bundle 已重读，1789 源零漂移，见 stop-bundle-verification.json、service-exit.json。源码冻结可解除，不能续等终局句柄。
+**当前没有待续的本轮自有浏览器/服务。** 最新 CLI session n3f-owner-resume-20261107 已 42-normal-close exit0；服务 exec11251/child46200 均终局0，launcher61264/child46200 不存在、24089无监听。停前实际 HTTP11 bundle/1790源末核通过，见 n3f-ui-owner-resume/stop-http-verification.json、service-exit.json、closed-window.json 及 root source-and-ui-qualification.json。旧 calibrated 窗口也已终局；不能续等旧句柄。
 
 attempt-05 新根和原 UI data 已存在，须保留。旧 fixture.py serve 要求目标不存在，**不能直接重运行**。修复复验须创建新生命周期目录和源冻结，明确从已有安装/原持久状态继续；不能重装覆盖、重新采用原包正文或清状态掩盖问题。只有独立 fresh 安装测试才用新目标。
 
 ## 3. 下一阶段批次
 
-最近可交付目标：**项目切换无错源、已安装新稿无损继续，归档预览与 N3e 安装采用分别完成本地功能提交。** 随后闭合真实历史计算编辑、冷迁移和混合导出。无人值守按依赖连续推进，不以一晚时长代替验收。
+最近可交付目标：**N3e 取消/迟到确认/继续编辑真实界面收口，并独立提交完整安装采用功能。** 归档前端与 P0 已提交，不重复实施。随后闭合真实历史计算编辑、冷迁移和混合导出；无人值守按依赖连续推进，不以一晚时长代替验收。
 
 | 顺序 | 交付物 | 退出条件 | 独立提交边界 |
 | --- | --- | --- | --- |
-| P0 | 离开 Moment 与原 writer 同源项目地址 | 原链先红后绿；保存/命名/冲突/空稿/迟到/ABA 回归；真实 A→B→A 无错 pj、离开图正常、正文不丢 | fix(previews): bind save moments to the document owner，修复/回归/受影响规则 |
-| P1a | 归档前端收口 | 保同名 A/B、完整 ref、缓存/迟到隔离、SVG 图片上下文及全部预览消费者；P0 后新源资格与 UI 通过 | fix(previews): display explicit archived Figure references；不混 N3e wrapper |
+| P0 / 已退出 | 离开 Moment 与 writer 同源地址 | 新 6 回归、138 专项、1320 联合、正式/派生构建、真实 A→B→A/离开图均已验 | c9e2980d，3 文件；N3e 规则段未混入 |
+| P1a / 已退出 | HTTP 归档前端收口 | 同名 A/B、完整 ref、图片上下文及原预览消费者资格保留；当前窗口通过 | e2c026fa，17 文件；N3e API wrapper 未混入，替代 transport 仍列 M2 |
 | P1b | N3e 安装/采用/继续编辑收口 | 保严格 1 PUT；当前源验取消/保存确认迟到/重开/切项目返回最新稿/旧稿无损；不重复建立 adopted 工作稿 | feat(packages): adopt installed charts through the document writer，带其 ADR/规则/翻译 |
 | P2a | 历史编辑来源及执行守卫 | fullref、同 receipt 活 Figure、parent/child/重连零隐式 build；来源贯穿首改/撤销/保存/包/重开，旧 A 不借 B | 来源合同、guarded render、真实消费者分功能；镜像合同与消费者同交 |
 | P2b | 原 INPUT 准备服务冷重建 | 精确 source/data/argv/rc、原 safe/native 路由和当前授权；真实 pair 几何/像素合格再进入原编辑，取消回收 | 原管线扩展及回归，不建第二 runner/store/writer |
@@ -65,15 +68,17 @@ attempt-05 新根和原 UI data 已存在，须保留。旧 fixture.py serve 要
 | P7 / M2 | SG00–17、A/B/C 能力对等 | 原功能登记逐格映射；图族/多轴/投影、文字/组/use、写回/出版/预检、全部入口有证据 | 按独立能力提交；缺实现不标不适用 |
 | P8 / M3 | 最终兼容/交付资格 | 冻结后完整 Python/旧项目回归、等价性/CompatBench/E2E/性能、支持平台实际安装物与进程清理 | 最终验证/交付文档，未授权自动 push/合并/发布 |
 
-### 3.1 P0：先修已复现的正确性问题
+### 3.1 P0 已修，立即收口 N3e
 
 原 projectStore.adoptSteps 已在切全局项目之前 pinDocumentOwner；writer 正确用 projectOfDoc。documentStore.flushAutosaveNow 的 captureDocumentMoment 却仍读全局 currentProjectId，把 A 正文配上 B 地址。不能修下游 API 或放松后端 422 遮住它。
 
-先审 n3f-owner-second-review/moment-owner-candidate.patch：四处 Moment 分别消费该次保存已冻结的 owner、address.projectId、scope.pj、scope.pj。外部受控回归只实测离开 autosave 三条预览，后三处正式落地须覆盖原冲突/空稿等专项；apply-check=0 不是产品已修。
+四处 Moment 现已消费本次保存已冻结的 owner、address.projectId、scope.pj、scope.pj。新增真实原链回归覆盖 autosave/迟到 ABA、persistEmpty、named 空稿、overwrite/reload 冲突；原 2 红和 AST 撤修反证保留，正式 138 专项与 1320 联合通过。不重套旧外部候选 patch。
 
 保原项目切换顺序、恢复门、writer/queue、timeline gen 和 Promise 生命周期。回归执行原 adopt/writer/Moment/renderer/API 链，量离开 A 那次保存的正文与捕获地址，而非仅 mock 正确 pj。候选 exit0 不能移作生产修改后的资格。
 
-主代理审查并应用最小修复，再按新 SHA 补受影响联合及正式/派生构建。新生命周期从已有安装继续，真实验 A→B→A、最新稿/旧稿、原离开图及零隐式科学执行；首红和目标保留。通过后 P0/P1 定向分别提交，api.ts/规则混合 hunk 逐项核对。
+主代理已完成新 SHA 构建与正常认证 UI；已提交 archive→P0 两个功能，顺序由新 P0 完整引用回归依赖归档消费者决定，证据明确属于共同候选窗口。api.ts 仅归档 hunk 入 e2c026fa，规则仅同次 writer 地址两行入 c9e2980d；N3e wrapper/10 行规则仍保工作区。
+
+N3e 下一实测使用独立未存在目标，保现有 A/B 与原 data；这是一项新的安装取消场景，不重装覆盖已有目标。正式完整包安装后，真实 AS PUT 成功而后续确认响应暂迟到时取消，再编辑/保存、重开安装记录与继续编辑，验证当前稿/undo 不被原 package 正文替换；需要控制时序时只延迟实际响应，不模拟成功正文。复用原正常 API/UI/单 writer；独立资源及单 PUT、旧稿/计数/最新正文/revision继续严格核。通过再提交剩余 N3e 16 路径及 ADR/规则。
 
 P2c 若仅剩 A 的普通 SVG 导出缺口，保留该失败并直接推进 P3，不循环重跑冷开或宣称 N3f 全过。P3 完成后回验冷态 A 整版产物，再联合关闭完整迁移出口。
 
