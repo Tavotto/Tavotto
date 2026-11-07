@@ -4113,3 +4113,170 @@ describe('合成一个多页 PDF（#1370，PdfPages 导出）', () => {
     expect(exportBodies.every((b) => b.merge_pdf === undefined)).toBe(true)
   })
 })
+
+
+describe('P3 batch ownership', () => {
+  const startBatchButton = () => document.body.querySelector<HTMLButtonElement>('[data-export-start]')!
+  it('previous canvas receipt cannot settle the first new figure or skip its conflict', async () => {
+    await setupTwo({ select: [] })
+    jobStatusSeq = ['partial', 'running', 'conflict', 'done']
+    await click(startBatchButton())
+    const previous = useExportStore.getState().job!
+    expect(previous.status).toBe('partial')
+    await click(originalRadio())
+    await click(document.body.querySelector('[data-export-again]')!)
+    await until(() => exportBodies.length >= 2)
+    expect(exportBodies).toHaveLength(2)
+    expect(useExportStore.getState().batch?.index).toBe(0)
+    expect(useExportStore.getState().batch?.results).toEqual([])
+    await act(async () => {
+      applyExportJob({ job_id: 'j2', status: 'done', outputs: [], warnings: [], conflicts: [], error: null } as never)
+    })
+    await until(() => !!document.body.querySelector('[data-export-conflict]'))
+    expect(exportBodies).toHaveLength(3)
+    expect(useExportStore.getState().batch?.done).toBe(false)
+    expect(useExportStore.getState().batch?.index).toBe(1)
+    expect(document.body.querySelector('[data-export-conflict-rename]')).toBeTruthy()
+    await click(document.body.querySelector('[data-export-conflict-rename]')!)
+    await batchDone()
+    expect(exportBodies.slice(1).map(b => (b.original as { figure_id: string }).figure_id)).toEqual(['Fig1.pdf', 'Fig2.pdf', 'Fig2.pdf'])
+    expect(exportBodies.map(b => b.overwrite)).toEqual(['ask', 'ask', 'ask', 'rename'])
+    expect(useExportStore.getState().batch?.results.map(j => j.job_id)).toEqual(['j2', 'j4'])
+    expect(useExportStore.getState().batch?.results).not.toContain(previous)
+  })
+
+  it('cancelled preparation cannot resume into a replacement batch with the same source ids', async () => {
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    const fetchBefore = globalThis.fetch
+    const pending: (() => void)[] = []
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(input).includes('/api/export/validate')) return fetchBefore(input, init)
+      await new Promise<void>(resolve => pending.push(resolve))
+      return new Response(JSON.stringify({ ok: true, conflicts: [], writable: true }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }) as typeof fetch
+    try {
+      await click(startBatchButton())
+      expect(useExportStore.getState().batch?.phase).toBe('prepare')
+      const first = useExportStore.getState().batch!.ids
+      // Project reset is the existing invalidation port. The next batch has the same ids, a new lifetime.
+      await act(async () => { resetExportState() })
+      await click(startBatchButton())
+      expect(useExportStore.getState().batch!.ids).toEqual(first)
+      expect(useExportStore.getState().batch!.ids).not.toBe(first)
+      const countBeforeRelease = pending.length
+      await act(async () => { pending[0](); await new Promise(resolve => setTimeout(resolve, 30)) })
+      expect(pending.length, 'old preparation must not request the next old route after reset').toBe(countBeforeRelease)
+      expect(useExportStore.getState().batch?.phase).toBe('prepare')
+      expect(exportBodies).toEqual([])
+    } finally {
+      await act(async () => { resetExportState(); for (const release of pending) release() })
+      globalThis.fetch = fetchBefore
+    }
+  })
+})
+
+
+describe('P3 batch collisions and cancellation', () => {
+  it.each(['rename', 'replace'] as const)('same stem pdf/svg stop at the second source and %s only that frozen source', async (policy) => {
+    await setupTwo({ select: [] })
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('same stem distinct sources'), d => {
+        d.objects = d.objects.map((o, index) => o.type === 'panel'
+          ? { ...o, fileId: index === 0 ? 'ordinary.pdf' : 'ordinary.svg', fileKind: index === 0 ? 'pdf' as const : 'svg' as const } : o)
+      })
+      useAssetStore.setState({ byId: {
+        'ordinary.pdf': { id: 'ordinary.pdf', kind: 'pdf', mtime: 1 },
+        'ordinary.svg': { id: 'ordinary.svg', kind: 'svg', mtime: 1 },
+      }, panels: [ { id: 'ordinary.pdf', kind: 'pdf', mtime: 1 }, { id: 'ordinary.svg', kind: 'svg', mtime: 1 } ] } as never)
+    })
+    jobStatusSeq = ['done', 'conflict', 'done']
+    await click(originalRadio())
+    await click(document.body.querySelector('[data-export-start]')!)
+    await until(() => !!document.body.querySelector('[data-export-conflict]'))
+    expect(exportBodies).toHaveLength(2)
+    expect(exportBodies.map(b => b.filename)).toEqual(['ordinary', 'ordinary'])
+    expect(exportBodies.map(b => b.overwrite)).toEqual(['ask', 'ask'])
+    expect(useExportStore.getState().batch?.index).toBe(1)
+    expect(useExportStore.getState().batch?.done).toBe(false)
+    // Closing/reopening is not cancellation and must keep the exact pending source.
+    await click(document.body.querySelector('[data-export-conflict-close]')!)
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    await click(document.body.querySelector(`[data-export-conflict-${policy}]`)!)
+    await batchDone()
+    expect(exportBodies).toHaveLength(3)
+    expect(exportBodies.map(b => (b.original as { figure_id: string }).figure_id)).toEqual(['ordinary.pdf', 'ordinary.svg', 'ordinary.svg'])
+    expect(exportBodies[2]).toEqual({ ...exportBodies[1], overwrite: policy })
+    expect(useExportStore.getState().batch?.results.map(j => j.job_id)).toEqual(['j1', 'j3'])
+  })
+
+  it('cancelled batch keeps completed output; late old receipt cannot settle the restarted batch', async () => {
+    jobStatusSeq = ['done', 'running', 'running', 'done']
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    await click(document.body.querySelector('[data-export-start]')!)
+    await until(() => exportBodies.length === 2)
+    await click(document.body.querySelector('[data-export-cancel]')!)
+    await act(async () => {
+      applyExportJob({ job_id: 'j2', status: 'cancelled', outputs: [], warnings: [], conflicts: [], error: null } as never)
+    })
+    expect(useExportStore.getState().batch?.done).toBe(true)
+    expect(useExportStore.getState().batch?.aggregate?.outputs.filter(o => o.status === 'done')).toHaveLength(1)
+    await click(document.body.querySelector('[data-export-again]')!)
+    await until(() => exportBodies.length === 3)
+    await act(async () => {
+      applyExportJob({ job_id: 'j2', status: 'done', outputs: [], warnings: [], conflicts: [], error: null } as never)
+    })
+    expect(exportBodies).toHaveLength(3)
+    expect(useExportStore.getState().job?.job_id).toBe('j3')
+    expect(useExportStore.getState().batch?.index).toBe(0)
+    expect(useExportStore.getState().batch?.results).toEqual([])
+    await act(async () => {
+      applyExportJob({ job_id: 'j3', status: 'done', outputs: [], warnings: [], conflicts: [], error: null } as never)
+    })
+    await batchDone()
+    expect(useExportStore.getState().batch?.results.map(j => j.job_id)).toEqual(['j3', 'j4'])
+    expect(exportBodies).toHaveLength(4)
+  })
+})
+
+
+describe('P3 generic output choice for nameless archive', () => {
+  it.each(['zh-CN', 'en-US'] as const)('exports an opaque runtime pdf with no registry/name/source using the existing %s placeholder', async locale => {
+    await initI18n(locale)
+    const id = 'runtime:plot.py#History~rc_7b40c6591e6f'
+    const reference = { version: 1 as const, sourceId: id,
+      patchHash: 'sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
+      receiptId: 'sha256:a0ab73926850cd67d11420419ad210e2e6ed2e3f9299f1229757911f02ec0556',
+      snapshotId: '049e777b9422775377a5658aaa68e5834b959620c00a4f195ba0fc5d746dceba',
+      executionOwner: { script: 'plot.py', run_config: 'rc_7b40c6591e6f' } }
+    try {
+      await setupTwo({ select: [] })
+      await act(async () => {
+        useRuntimeAssetStore.setState({ assets: [], byId: {}, previewNonce: {} } as never)
+        const current = useDocumentStore.getState().doc
+        const archived = { ...(current.objects[0] as PanelObject), fileId: id, fileKind: 'pdf' as const, figureSnapshot: reference }
+        delete archived.name
+        delete archived.source
+        const project = emptyProject()
+        project.canvases[0].page = { ...current.page }
+        project.canvases[0].objects = [archived, ...current.objects.slice(1)]
+        // Load the archived document. Editing a fileId through commit correctly drops its previous snapshot.
+        await useDocumentStore.getState().switchDocument(project, 'd_nameless_archive')
+      })
+      await click(originalRadio())
+      await click(document.body.querySelector('[data-export-start]')!)
+      await batchDone()
+      const request = exportBodies.find(b => (b.original as { figure_id?: string } | undefined)?.figure_id === id)
+      expect(request, 'a usable archived source is not a failed start merely because its original name is unknown').toBeTruthy()
+      expect(request!.filename).toBe(locale === 'zh-CN' ? '图 1' : 'Figure 1')
+      expect(request!.overwrite).toBe('ask')
+      expect(request!.original).toMatchObject({ figure_id: id, figure_snapshot: reference })
+      const { defaultExportName } = await import('@/components/ExportDialog')
+      expect(defaultExportName('original', useDocumentStore.getState().doc.objects[0] as PanelObject, useDocumentStore.getState().doc)).toBe(request!.filename)
+      expect(useExportStore.getState().batch?.failedStarts).toEqual([])
+    } finally {
+      await act(async () => { await initI18n('zh-CN') })
+    }
+  })
+})

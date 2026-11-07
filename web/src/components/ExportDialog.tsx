@@ -86,7 +86,6 @@ import {
   type ExportableFigure,
 } from "@/lib/exportFigures";
 import { openProblems } from "@/lib/issueFocus";
-import { stemOf } from "@/lib/openRequest";
 import type { Severity } from "@/lib/profile";
 import type { OriginalOutputSpec } from "@/lib/originalSpec";
 import {
@@ -263,7 +262,7 @@ export function defaultExportName(
   panel: PanelObject | null,
   doc: Pick<FigureDocument, "name">,
 ): string {
-  if (scope === "original" && panel) return panel.name ?? stemOf(panel.fileId);
+  if (scope === "original" && panel) return panel.name ?? figureOfPanel(panel).name;
   return doc.name;
 }
 
@@ -989,16 +988,17 @@ export function ExportDialog() {
       profileId,
       catalog,
     };
-    void freezeBatch(perFigure, shared, merge ? { plan: merge, figs } : null);
+    void freezeBatch(jobIds, perFigure, shared, merge ? { plan: merge, figs } : null);
   };
   const freezeBatch = async (
+    batchIds: string[],
     figs: readonly ExportableFigure[],
     shared: BatchShared,
     merge: { plan: { name: string; figureIds: string[] }; figs: readonly ExportableFigure[] } | null,
   ) => {
     const alive = () => {
       const b = useExportStore.getState().batch;
-      return !!b && !b.done && b.phase === "prepare";
+      return !!b && b.ids === batchIds && !b.done && b.phase === "prepare";
     };
     // ① 只取 route
     const routes = new Map<string, { route: ExportRoute | null; key: string | null }>();
@@ -1229,6 +1229,10 @@ export function ExportDialog() {
   // 收尾：这一张落了终局（撞名除外——停在冲突条上等用户选覆盖 / 另存，再发出的是新作业）
   useEffect(() => {
     if (!batch || batch.done || batch.phase !== "send" || running) return;
+    // 上面的发送 effect 可在本次 commit 内同步启动下一张；这里的闭包仍是发送前的回执。
+    // 只结算当前 store 的同批次 / 同一响应，不拿前一作业推进新的一张。
+    const current = useExportStore.getState();
+    if (current.batch !== batch || current.running || current.job !== storeJob || current.startError !== startError) return;
     if (launched.current.ids !== batch.ids || launched.current.index !== batch.index) return;
     // 起作业本身失败了（先校验被拒 / 网络断）：不会有终局，记一笔失败，继续下一张
     if (!storeJob) {
