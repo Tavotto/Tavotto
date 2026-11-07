@@ -1,3 +1,0 @@
-## Connected editors keep their Tavotto skill up to date
-
-If you connected an AI editor with an earlier version, its AI could be missing the Tavotto usage notes or running an outdated copy after you updated the app. The desktop app now refreshes the notes of every connected editor when it starts, without touching a copy you edited. Settings now shows which version each editor has, marks an edited copy as "Skill edited, not updated" with an Overwrite button, and shows "Update available" next to an outdated Codex plugin. If Download updates in the background is on, the Codex plugin is updated automatically at startup; turn that setting off, or set `TAVOTTO_DISABLE_UPDATE_CHECK=1`, to keep it as it is.
