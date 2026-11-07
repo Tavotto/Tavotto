@@ -3595,6 +3595,30 @@ describe('预览信息完善（PR3）：缩略图说真话', () => {
   const target = () => q('[data-export-target]')!
   const stage = () => q('[data-export-preview-stage]')!
 
+  it('归档原图预览沿完整ref取PNG，不能借同名当前SVG或原文件', async () => {
+    await setup(9)
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    const reference = { version: 1 as const, sourceId: 'Fig1.pdf', patchHash: 'same-patches', receiptId: 'receipt-A', snapshotId: 'history-A' }
+    useDocumentStore.getState().commit(literal('归档图'), d => { (d.objects[0] as PanelObject).figureSnapshot = reference })
+    const archived = useDocumentStore.getState().doc.objects[0] as PanelObject
+    seedExactRender(archived, manifest(9) as never, { svg: '<svg data-marker="unproved-current"></svg>' })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: archived.id })
+    clearVariantPngCache()
+    vi.mocked(enginePreviewPng).mockClear()
+    await act(async () => useUiStore.getState().setExportOpen(true))
+    expect(q('[data-export-preview-stage] [data-export-thumb="svg"]')).toBeNull()
+    const calls = vi.mocked(enginePreviewPng).mock.calls
+    expect(calls.length).toBeGreaterThan(0)
+    expect(calls.every(call => call[0] === archived.fileId && call[4]?.figure_snapshot?.snapshotId === 'history-A')).toBe(true)
+    expect(stage().querySelector<HTMLImageElement>('[data-export-thumb="file"]')?.src).toMatch(/^blob:/)
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    useDocumentStore.getState().commit(literal('另一归档图'), d => { (d.objects[0] as PanelObject).figureSnapshot = { ...reference, snapshotId: 'history-B' } })
+    vi.mocked(enginePreviewPng).mockClear()
+    await act(async () => useUiStore.getState().setExportOpen(true))
+    expect(vi.mocked(enginePreviewPng).mock.calls.some(call => call[4]?.figure_snapshot?.snapshotId === 'history-B')).toBe(true)
+    expect(q('[data-export-preview-stage] [data-export-thumb="svg"]')).toBeNull()
+  })
+
   it('预览角上只有尺寸，不带「示意 · 非最终文件」之类的说明（两种范围都没有）', async () => {
     await setup(9)
     expect(document.body.textContent).not.toContain('仅为示意')

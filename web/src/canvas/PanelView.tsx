@@ -58,6 +58,8 @@ import {
 import { frameSwitchAvailable, frameSwitchPatch } from '@/lib/figureFrame'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useRuntimePreview } from '@/hooks/useRuntimePreview'
+import { useFigureSnapshotPreview } from '@/hooks/useFigureSnapshotPreview'
+import { hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
 import { useDisplayedExactManifest, useMountedSvgStore } from '@/store/mountedSvgStore'
 import { useMountedPngStore } from '@/store/mountedPngStore'
 import { reattachPreview, settleFailedAuthority, settleUnbackedCommit } from '@/store/svgPreviewStore'
@@ -114,6 +116,8 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const bakedCurrent = useAssetStore((s) => s.byId[obj.fileId]?.baked_current)
   void bakedCurrent
   const editing = useUiStore((s) => s.elementPanelId === obj.id)
+  const archiveDisplay = !editing && hasFigureSnapshotPreview(obj)
+  const archivePreview = useFigureSnapshotPreview(obj, archiveDisplay)
   // 自己那份变体的渲染态（同文件的另一个副本有它自己的一份，互不相干）
   const render = usePanelRender(obj)
   const displayView = usePanelDisplayView(obj)
@@ -191,12 +195,12 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 进入图内编辑的那一刻起显示可编辑基础（重画的 SVG + 命中层），拖动预览才看得见；退出编辑且仍是零编辑就回原像素。
   // 超大图（raster / evicted 档）同理：只有编辑态才用引擎位图，编辑外一律原像素。
   const originalPixels = isSourceBackedZeroEdit(obj) && !editing
-  const needsEngine = !originalPixels &&
+  const needsEngine = !archiveDisplay && !originalPixels &&
     (!!obj.chart || (obj.overrides.length > 0 && !isJustBakedBaseline(obj)) || tracked || runtime)
   // raster 档下**编辑态也要位图**——否则画布上什么都没有。复用的是同一条
   // PNG 链路（按 patches 出图、状态中立、AbortController + objectURL 生命周期），
   // 不另写第二套。
-  const useEnginePng = !artifactValidationIssue(obj) && !originalPixels &&
+  const useEnginePng = !archiveDisplay && !artifactValidationIssue(obj) && !originalPixels &&
     (!isAdoptedPanel(obj) || (render?.status !== 'error' && !render?.stale && !!render?.manifest)) &&
     (bitmapOnly ? editing || needsEngine : !editing && needsEngine) && (render?.rev ?? 0) > 0
   const renderRev = render?.rev ?? 0
@@ -244,8 +248,9 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // runtime 面板的 cache 预览**按此刻的 overrides 取**（QA-WIN-21）：后端 GET 版给的是「最近一次渲染」，
   // 撤销回一个前端已画过的变体时它停在撤销前，冷画布就会显示撤销前的图。内嵌画布（transport）没有
   // 这条 HTTP 路，照旧。取到之前 / 没命中这个状态时见 `approxPreview`。
-  const runtimePreview = useRuntimePreview(obj.fileId, obj.overrides, runtime && !transport && !!runtimeState?.cached, previewNonce)
+  const runtimePreview = useRuntimePreview(obj.fileId, obj.overrides, !archiveDisplay && runtime && !transport && !!runtimeState?.cached, previewNonce)
   const fileSrc =
+    archiveDisplay ? archivePreview.url :
     obj.chart || obj.chartSource !== undefined || kind === 'unknown' || (runtime && !runtimeState?.cached)
       ? null
       : transport
@@ -274,7 +279,8 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 没有矢量 payload 的那两档除外：`raster` 刻意没有 SVG，`evicted` 的那份刚被
   // 内存预算清掉——这条兜底都不许把**上一版**的矢量图拿来冒充（前者正是硬闸要
   // 拦的 payload，后者会让画布显示另一个变体的图）。
-  const inlineSvg =
+  // A saved pair is an image source, never a borrowed same-name editable SVG.
+  const inlineSvg = archiveDisplay ? null :
     svgHtml ?? engineSvgStandby ?? (src || bitmapOnly ? null : (render?.svg ?? null))
   const showSvg = inlineSvg != null
   const loadedPngUrl = useRef<string | null>(null)

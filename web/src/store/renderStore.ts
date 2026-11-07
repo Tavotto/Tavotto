@@ -1,5 +1,6 @@
 import { installMomentSources, TIMELINE_THUMB_PX, type PanelSource, type ThumbSources } from '@/lib/momentCapture'
 import { chartRequestIdentity, chartSourceFields } from '@/lib/chartSource'
+import { hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
 import { artifactKeySuffix, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, verifiedSource, policyOfGuard, retryArtifactEntry, subjectOf, type AdoptionGuard, isAdoptedPanel, adoptionGuardOf } from '@/lib/artifactValidation'
 import { useMemo } from 'react'
 import { perfRenderApplied, perfRenderBegin, perfRenderResponse } from '@/perf/core'
@@ -13,6 +14,7 @@ import {
   engineErrorMsg,
   engineRender,
   enginePreviewPngSnapshot,
+  enginePreviewPng,
   panelSrc,
   type DependencyPreparationOffer,
   type DependencyRepairOffer,
@@ -1535,6 +1537,20 @@ export function previewRenderForProject(render: PanelRender | null | undefined, 
 
 /** Freeze real renderer sources synchronously; the compositor consumes the same references. */
 function panelSource(o: PanelObject, pj: string | null): PanelSource {
+  if (hasFigureSnapshotPreview(o)) {
+    // This is an explicit leaving moment, not the current editable renderer.
+    // Freeze ref/project/ordered patches now; an unrelated cached SVG is no proof.
+    const input = structuredClone({ id: o.fileId, patches: o.overrides, reference: o.figureSnapshot })
+    const png = engineTransport() ? Promise.resolve(null)
+      : enginePreviewPng(input.id, input.patches, TIMELINE_THUMB_PX, undefined,
+        { figure_snapshot: input.reference }, pj).then(blob => new Promise<string | null>(resolve => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
+        reader.onerror = () => resolve(null)
+        reader.readAsDataURL(blob)
+      })).catch(() => null)
+    return { png }
+  }
   // current 已换但 clear 之前仍握有旧项目的真实 SVG；认响应归属，不认此刻全局 pj。
   const here = pj === currentProjectId()
   const candidate = o.chartSource !== undefined

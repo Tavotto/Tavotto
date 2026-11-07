@@ -48,6 +48,7 @@ import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { useTimelineStore } from '@/store/timelineStore'
 import { useInFlight } from '@/hooks/useInFlight'
 import { useVariantPng, variantNeedsRender } from '@/hooks/useVariantPng'
+import { figureSnapshotPreviewArgs, hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
 import { MM_PER_PT, pickBucket } from '@/lib/units'
 import {
   documentDigest,
@@ -1840,7 +1841,8 @@ function SnapshotPanel({
   /** 取图档位（RENDER_BUCKETS 之一），见 `snapshotBucket` */
   bucket: number
 }) {
-  const wantsVariant = renderOverrides && (!!panel.chart || panel.chartSource !== undefined || panel.overrides.length > 0 || isAdoptedPanel(panel))
+  const archived = hasFigureSnapshotPreview(panel)
+  const wantsVariant = archived || renderOverrides && (!!panel.chart || panel.chartSource !== undefined || panel.overrides.length > 0 || isAdoptedPanel(panel))
   const variant = useVariantPng(
     panel.fileId,
     panel.overrides,
@@ -1850,13 +1852,14 @@ function SnapshotPanel({
     adoptionGuardOf(panel),
     panel.chart, panel.chartSource,
     owner,
+    ...figureSnapshotPreviewArgs(panel),
   )
   useEffect(() => {
-    if (renderOverrides) onApproximate?.(variant.approximate)
-  }, [variant.approximate, renderOverrides, onApproximate])
+    if (renderOverrides || archived) onApproximate?.(variant.approximate)
+  }, [variant.approximate, renderOverrides, archived, onApproximate])
   // 「还没出好」从第一帧就算：要出图、既没拿到也没失败（hook 的 loading 晚一帧才置上）
   // 零编辑的来源驱动面板 hook 有意不出图（磁盘原像素即是），不算「还在出」
-  const pending = wantsVariant && variantNeedsRender(panel.overrides, adoptionGuardOf(panel), panel.chart) && !variant.url && !variant.approximate
+  const pending = wantsVariant && variantNeedsRender(panel.overrides, adoptionGuardOf(panel), panel.chart, ...figureSnapshotPreviewArgs(panel)) && !variant.url && !variant.approximate
   useEffect(() => {
     if (!onLoading) return
     onLoading(panel.id, pending)
@@ -1865,7 +1868,7 @@ function SnapshotPanel({
 
   // panelSrc 可能给不出地址（替代传输里没有 HTTP 服务）：一个都拿不到就不画
   // <img>，绝不留一个空 src 让缩略图挂一个碎图标
-  const src = !owner.still() ? null : variant.url || (panel.chart || panel.chartSource !== undefined ? null : panelSrc(panel.fileId, panel.fileKind, bucket, mtime, owner.pj))
+  const src = !owner.still() ? null : variant.url || (archived || panel.chart || panel.chartSource !== undefined ? null : panelSrc(panel.fileId, panel.fileKind, bucket, mtime, owner.pj))
   if (!src) return null
   return (
     <RetryImg

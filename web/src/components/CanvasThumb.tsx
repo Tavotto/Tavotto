@@ -25,6 +25,7 @@ import { useDocumentPreviewOwner } from '@/hooks/useDocumentPreviewOwner'
 import type { PreviewOwner } from '@/lib/previewOwner'
 import { renderUrl, runtimePreviewUrl } from '@/lib/api'
 import { adoptionGuardOf } from '@/lib/artifactValidation'
+import { figureSnapshotPreviewArgs, hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
 import { engineTransport } from '@/lib/engineTransport'
 import { useRetryingSrc } from '@/lib/imgRetry'
 import { cn } from '@/lib/utils'
@@ -181,11 +182,12 @@ export function CanvasThumb({
           const key = o.id ?? `i${i}`
           if (o.type === 'panel' && o.fileId) {
             const bucket = pxWidth && w > 0 ? bucketFor((o.w / w) * pxWidth) : 200
-            const href = !active ? null :
+            const archived = hasFigureSnapshotPreview(o as Partial<PanelObject>)
+            const href = !active || archived ? null :
               o.fileKind === 'runtime'
                 ? runtimePreviewUrl(o.fileId, nonce[o.fileId], owner.pj)
                 : renderUrl(o.fileId, bucket, byId[o.fileId]?.mtime, owner.pj)
-            const edited = editedPanel?.(o)
+            const edited = editedPanel?.(o) ?? (archived && Array.isArray((o as Partial<PanelObject>).overrides) ? o as PanelObject : null)
             if (edited) {
               return (
                 <EditedThumbImage
@@ -360,13 +362,14 @@ function EditedThumbImage({
   height: number
 }) {
   const variant = useVariantPng(panel.fileId, panel.overrides, bucket, true, rev, adoptionGuardOf(panel),
-    panel.chart, panel.chartSource, owner)
+    panel.chart, panel.chartSource, owner, ...figureSnapshotPreviewArgs(panel))
   // runtime 面板的退路是 cache 预览，而后端 GET 版给的是「最近一次渲染」、不是这组 overrides 的图
   // （撤销回一个前端已画过的变体时它停在撤销前，QA-WIN-21）：按此刻的 overrides 取，**不是这个状态的图就不挂**
   // ——缩略图没有「近似预览」的位置，空着比挂一张撤销前的旧图诚实
-  const byState = panel.fileKind === 'runtime' && !engineTransport()
+  const archived = hasFigureSnapshotPreview(panel)
+  const byState = !archived && panel.fileKind === 'runtime' && !engineTransport()
   const runtimePreview = useRuntimePreview(panel.fileId, panel.overrides, byState, rev, owner)
-  const fallback = panel.chart || panel.chartSource !== undefined ? null : byState ? (runtimePreview.exact === true ? runtimePreview.url : null) : fallbackHref
+  const fallback = archived || panel.chart || panel.chartSource !== undefined ? null : byState ? (runtimePreview.exact === true ? runtimePreview.url : null) : fallbackHref
   return <ThumbImage fileId={panel.fileId} href={variant.url ?? fallback} {...box} />
 }
 

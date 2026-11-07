@@ -23,6 +23,7 @@ import { currentVisibleRectMm } from '@/store/viewportStore'
 import { useWorkspaceStore, type WorkspaceMode } from '@/store/workspaceStore'
 import { panelRotation } from '@/types/document'
 import { syncPanelNativeSize } from '@/lib/panelNativeSize'
+import { hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
 import { stampOverrideIdentities } from '@/lib/overrideIdentity'
 import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
 import type { RenderPurpose } from '@/lib/renderPurpose'
@@ -64,6 +65,8 @@ export function renderTargets(
   const targets: PanelObject[] = []
   for (const o of objects) {
     if (o.type !== 'panel' || (!o.script && !o.chart)) continue
+    // Saved pixels and explicit entry into editing have separate lifetimes.
+    if (hasFigureSnapshotPreview(o) && o.id !== editingId) continue
     // runtime 面板（ADR 0013 lazy rehydrate）：**重开文档绝不自动执行脚本**。
     // 只有「正在编辑」或「本会话已经跑过一次（latest 里有它）」才进同步——
     // 带着 overrides 重开的文档先显示 cache 占位，进入编辑 / 显式重跑那一刻
@@ -115,6 +118,7 @@ export function crossFigureNeighbours(
   if (!editingId || mode === 'fast_edit') return ids
   for (const o of objects) {
     if (o.type !== 'panel' || o.id === editingId || o.hidden || (!o.script && !o.chart)) continue
+    if (hasFigureSnapshotPreview(o)) continue
     if (o.fileKind === 'runtime' || o.cost === 'heavy') continue
     // 未采用的 PNG 源图没有权威 manifest 可补：补渲染只能发无策略的 patches=[]，让脚本重跑出一张
     // 没对过字节的图，还会和它自己的采用请求抢同一份首渲染。要先走 admitPngEntry（带 source_policy）。
@@ -390,6 +394,8 @@ function nativeSizeFixes(
   const fixes: NativeSizeFix[] = []
   for (const o of objects) {
     if (o.type !== 'panel' || artifactValidationIssue(o) || artifactEntryPending(o.id)) continue
+    // A same-name live manifest is not geometry evidence for this archived pair.
+    if (hasFigureSnapshotPreview(o) && useUiStore.getState().elementPanelId !== o.id) continue
     if (!o.overrides.length && o.fileKind === 'raster' && /\.png$/i.test(o.fileId) && useUiStore.getState().elementPanelId !== o.id && !useRenderStore.getState().tracked[o.fileId]) continue
     const size = byKey[renderKeyOf(o)]?.manifest?.size_mm
     if (!size) continue

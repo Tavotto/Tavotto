@@ -1,5 +1,7 @@
 import { chartVersionCanvas, chartVersionProject, documentApiPath, documentResponseFormat, type DocumentFormat, type VersionCanvasIdentity } from './documentFormat'
 import type { ChartSourceReceipt } from './chartSourceReceipts'
+import { figureSnapshotPreviewIdentity, sameFigureSnapshotReference } from './figureSnapshotPreview'
+import { validFigureSnapshot } from './figureSnapshot'
 import type { ProjectFileAxis, ProjectFileEdit, ProjectFileRead, ProjectFileRecovery, ProjectFileReservation, ProjectFileResult, ProjectFileView } from './projectFileSession'
 import { classifyArtifactFailure } from '@/lib/artifactReason'
 import type { RenderPurpose } from '@/lib/renderPurpose'
@@ -3352,17 +3354,57 @@ export async function enginePreviewPng(
   source: EnginePngOptions = {},
   pj: string | null = currentProjectId(),
 ): Promise<Blob> {
+  const archived = source.figure_snapshot !== undefined
   if (source.chart) {
     const snapshot = await enginePreviewPngSnapshot(id, patches, bucket, signal, source, pj)
     const png = snapshot.url.slice(snapshot.url.indexOf(',') + 1)
     return new Blob([Uint8Array.from(atob(png), c => c.charCodeAt(0))], { type: 'image/png' })
   }
-  return (await previewPngResponse(id, patches, bucket, signal, false, source, pj)).blob()
+  const blob = await (await previewPngResponse(id, patches, bucket, signal, false, source, pj)).blob()
+  if (archived && !blob.size) throw invalidFigureSnapshotPreview()
+  return blob
 }
 
 export interface EnginePngOptions extends ArtifactRequestFields {
   chart?: PanelChartState
   chart_source?: ChartSourceRef
+  /** Immutable archived pixels only; never a live editable manifest. */
+  figure_snapshot?: FigureSnapshot
+}
+
+export interface FigureSnapshotPreview {
+  preview_source: 'figure_snapshot'
+  figure_snapshot: FigureSnapshot
+  svg: string
+  size_mm: [number, number]
+}
+
+const invalidFigureSnapshotPreview = () => new EngineError('The archived Figure preview could not be verified.', '', 'figure_snapshot_preview_invalid')
+
+export async function fetchFigureSnapshotPreview(
+  id: string, patches: unknown[], reference: FigureSnapshot, signal?: AbortSignal,
+  pj: string | null = currentProjectId(),
+): Promise<FigureSnapshotPreview> {
+  if (!validFigureSnapshot(reference, id) || figureSnapshotPreviewIdentity(reference) === null) throw invalidFigureSnapshotPreview()
+  const frozen = structuredClone(reference)
+  const res = await fetch(apiUrlFor('/api/documents/v4/figure-preview', pj), withProjectFor({
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, patches, figure_snapshot: frozen }), signal,
+  }, pj))
+  if (!res.ok) {
+    const body = await errorBody(res)
+    noteProjectGone(res.status, body)
+    throw new EngineError((body.error as string) || t('render.previewPngFailed', { ns: 'errors', status: res.status }),
+      (body.traceback as string) || '', (body.code as string) || '', (body.module as string) || '',
+      body.project_env as ProjectEnvFailure | undefined, body.dependency_repair as DependencyRepairOffer | undefined,
+      { params: body.params as Record<string, unknown> | undefined })
+  }
+  const value = await res.json().catch(() => null) as FigureSnapshotPreview | null
+  if (!value || value.preview_source !== 'figure_snapshot' || typeof value.svg !== 'string' || !value.svg.trim()
+    || !Array.isArray(value.size_mm) || value.size_mm.length !== 2
+    || !value.size_mm.every(size => typeof size === 'number' && Number.isFinite(size) && size > 0)
+    || !sameFigureSnapshotReference(frozen, value.figure_snapshot)) throw invalidFigureSnapshotPreview()
+  return value
 }
 
 export async function enginePreviewPngSnapshot(
@@ -3387,6 +3429,10 @@ async function previewPngResponse(
   id: string, patches: unknown[], bucket: number, signal?: AbortSignal, withManifest = false, source: EnginePngOptions = {},
   pj: string | null = currentProjectId(),
 ): Promise<Response> {
+  const archived = source.figure_snapshot !== undefined
+  const reference = archived ? structuredClone(source.figure_snapshot) : undefined
+  if (archived && (withManifest || source.chart !== undefined || source.chart_source !== undefined
+    || !validFigureSnapshot(reference, id) || figureSnapshotPreviewIdentity(reference) === null)) throw invalidFigureSnapshotPreview()
   const res = await fetch(apiUrlFor('/api/engine/preview_png', pj), withProjectFor({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -3405,6 +3451,13 @@ async function previewPngResponse(
       body.dependency_repair as DependencyRepairOffer | undefined,
       { params: body.params as Record<string, unknown> | undefined, retryable: body.retryable as boolean | undefined, installRoute: body.install_route as string | undefined },
     )
+  }
+  if (archived) {
+    let echoed: unknown
+    try { echoed = JSON.parse(res.headers.get('X-Tavotto-Figure-Snapshot') ?? '') }
+    catch { throw invalidFigureSnapshotPreview() }
+    if (res.headers.get('Content-Type')?.split(';')[0].trim() !== 'image/png'
+      || !sameFigureSnapshotReference(reference, echoed)) throw invalidFigureSnapshotPreview()
   }
   return res
 }

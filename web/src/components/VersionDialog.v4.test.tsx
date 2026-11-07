@@ -41,7 +41,7 @@ describe('schema4版本UI', () => {
     expect(fetchVersionDoc).not.toHaveBeenCalled()
     const before = useDocumentStore.getState()
     await act(async () => { document.querySelector<HTMLButtonElement>('[data-timeline-row]')!.click() })
-    expect(fetchVersionDoc).toHaveBeenCalledWith('format_ui', 'v1', 'v4')
+    expect(fetchVersionDoc).toHaveBeenCalledWith('format_ui', 'v1', 'v4', null)
     const p = captured.objects[0] as PanelObject
     expect(vi.mocked(useVariantPng).mock.calls.some(args => args[0] === p.fileId && args[1] === p.overrides && args[3] === true && args[6] === p.chart && args[7] === p.chartSource)).toBe(true)
     expect(document.querySelector('[data-timeline-card] img')?.getAttribute('src')).toBe('data:image/png;base64,cGFpcmVk')

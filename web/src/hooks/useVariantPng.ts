@@ -1,7 +1,8 @@
 import { chartSourceFields } from '@/lib/chartSource'
 import { rejectArtifactRenders, renderKey, renderRequestIdentity } from '@/store/renderStore'
 import { artifactRequestFields, artifactKeySuffix, artifactValidationIssue, ArtifactValidationError, subjectOf, hasRealEdits, type AdoptionGuard } from '@/lib/artifactValidation'
-import type { ChartSourceRef, PanelChartState, PanelOverride } from '@/types/document'
+import type { ChartSourceRef, FigureSnapshot, PanelChartState, PanelOverride } from '@/types/document'
+import { figureSnapshotPreviewIdentity, hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
 /**
  * 「按 overrides 出一张缩略图」的可复用 hook（issue #131）。
  *
@@ -82,8 +83,8 @@ export interface VariantPng {
  * 磁盘原像素就是对的（ADR 0139 §五.1）。调用方据此判断「还在出图」——这条路径
  * 永远拿不到 url，不能当成没出好。
  */
-export function variantNeedsRender(overrides: unknown[], artifactValidation?: AdoptionGuard | null, chart?: PanelChartState): boolean {
-  return !!chart || overrides.length > 0 && !(artifactValidation && 'policy' in artifactValidation && !hasRealEdits(overrides as PanelOverride[]))
+export function variantNeedsRender(overrides: unknown[], artifactValidation?: AdoptionGuard | null, chart?: PanelChartState, reference?: FigureSnapshot): boolean {
+  return reference !== undefined || !!chart || overrides.length > 0 && !(artifactValidation && 'policy' in artifactValidation && !hasRealEdits(overrides as PanelOverride[]))
 }
 
 export function useVariantPng(
@@ -97,12 +98,17 @@ export function useVariantPng(
   chart?: PanelChartState,
   chartSource?: ChartSourceRef,
   owner?: PreviewOwner,
+  reference?: FigureSnapshot,
 ): VariantPng {
   const active = !owner || owner.still()
+  const archived = hasFigureSnapshotPreview({ figureSnapshot: reference, chart, chartSource })
+  const archiveKey = archived ? figureSnapshotPreviewIdentity(reference) : null
+  const cacheable = archived || artifactValidation === undefined
   const key = keyOf(fileId, overrides, bucket, rev, chart, chartSource, owner) + artifactKeySuffix(artifactValidation)
+    + (archived ? ` archive:${archiveKey ?? 'invalid'}` : '')
   const [state, setState] = useState<VariantPng & {key?: string}>(() => ({
     key,
-    url: artifactValidation !== undefined ? null : cache.get(key) ?? null,
+    url: cacheable ? cache.get(key) ?? null : null,
     loading: false,
     approximate: false,
   }))
@@ -116,16 +122,20 @@ export function useVariantPng(
       setState({ key, url: null, loading: false, approximate: true })
       return
     }
+    if (archived && archiveKey === null) {
+      setState({ key, url: null, loading: false, approximate: true })
+      return
+    }
     const subject = subjectOf(fileId, overrides as PanelOverride[], artifactValidation)
-    const issue = artifactValidationIssue(subject)
+    const issue = archived ? null : artifactValidationIssue(subject)
     if (issue) { setState({ key,url:null,loading:false,approximate:true}); return }
     // 没有 override 的面板与磁盘图一模一样，白跑一次引擎没有意义
     // 来源驱动面板零编辑（只有结构性 FRAME）显示磁盘原像素，同样不出引擎图（ADR 0139 §五.1）
-    if (!variantNeedsRender(overrides, artifactValidation, chart)) {
+    if (!variantNeedsRender(overrides, artifactValidation, chart, ...(archived ? [reference] as const : []))) {
       setState({ key, url: null, loading: false, approximate: false })
       return
     }
-    const hit = artifactValidation !== undefined ? undefined : cache.get(key)
+    const hit = cacheable ? cache.get(key) : undefined
     if (hit) {
       setState({ key, url: hit, loading: false, approximate: false })
       return
@@ -138,7 +148,11 @@ export function useVariantPng(
     const current = () => live && epoch === cacheEpoch && project.still() && (!owner || owner.still())
     setState({ key, url: null, loading: true, approximate: false })
     const transport = engineTransport()
-    const pending = chart
+    const pending = archived
+      ? transport ? Promise.reject(new EngineError('This host does not support archived Figure previews.', '', 'figure_snapshot_preview_unsupported'))
+        : enginePreviewPng(fileId, structuredClone(overrides), bucket, ctrl.signal,
+          { figure_snapshot: structuredClone(reference) }, pj).then(blob => URL.createObjectURL(blob))
+      : chart
       ? transport
         ? !transport.supportsChartRender || !transport.previewPngSnapshot || (chartSource !== undefined && !transport.supportsChartSourceRender)
           ? Promise.reject(new EngineError('This host does not support paired chart pixels.', '', 'chart_render_unsupported'))
@@ -163,11 +177,11 @@ export function useVariantPng(
     void pending
       .then((url) => {
         if (!current()) { if (url.startsWith('blob:')) URL.revokeObjectURL(url); return }
-        if (artifactValidation === undefined) remember(key, url)
+        if (cacheable) remember(key, url)
         if (live) setState({ key, url, loading: false, approximate: false })
       })
       .catch((error) => {
-        if (current() && artifactValidation &&
+        if (!archived && current() && artifactValidation &&
             (error instanceof ArtifactValidationError || (error instanceof EngineError && error.code === 'artifact_source_unavailable'))) {
           rejectArtifactRenders(fileId, artifactValidation, error, renderKey(fileId, overrides, artifactValidation))
         }

@@ -134,6 +134,7 @@ import { useOriginalAvailability } from "@/hooks/useOriginalSpec";
 import { useRuntimePreview } from "@/hooks/useRuntimePreview";
 import { engineTransport } from "@/lib/engineTransport";
 import { useVariantPng } from "@/hooks/useVariantPng";
+import { figureSnapshotPreviewArgs, hasFigureSnapshotPreview } from "@/lib/figureSnapshotPreview";
 import { isJustBakedBaseline } from "@/store/actions";
 import { useAssetStore } from "@/store/assetStore";
 import { previewRenderForProject, useExactPanelManifest, usePanelRender, useRenderStore } from "@/store/renderStore";
@@ -2081,9 +2082,11 @@ function useFigureThumbSource(
 ): FigureThumbSource {
   const owner = useDocumentPreviewOwner(figure);
   const active = owner.still();
-  const render = previewRenderForProject(usePanelRender(figure.panel), owner.pj);
-  const tracked = useRenderStore((s) => !!s.tracked[figure.figureId]);
   const panel = figure.panel;
+  const archived = !!panel && hasFigureSnapshotPreview(panel);
+  const cachedRender = usePanelRender(panel);
+  const render = archived ? undefined : previewRenderForProject(cachedRender, owner.pj);
+  const tracked = useRenderStore((s) => !!s.tracked[figure.figureId]);
   const needsEngine =
     !!panel && (showsEdits(panel) || tracked || figure.kind === "runtime");
   const svg = active && needsEngine ? (render?.svg ?? null) : null;
@@ -2100,10 +2103,11 @@ function useFigureThumbSource(
     panel ? adoptionGuardOf(panel) : undefined,
     panel?.chart, panel?.chartSource,
     owner,
+    ...(panel ? figureSnapshotPreviewArgs(panel) : []),
   );
   // runtime 图的退路是 cache 预览：后端 GET 版给的是「最近一次渲染」，撤销回一个前端已画过的变体时它停在
   // 撤销前（QA-WIN-21）。按此刻的 overrides 取，不是这个状态的图就不挂（预览只是示意，空着比旧图诚实）
-  const runtimeByState = figure.kind === "runtime" && !!panel && !!figure.cached && !engineTransport();
+  const runtimeByState = !archived && figure.kind === "runtime" && !!panel && !!figure.cached && !engineTransport();
   const runtimePreview = useRuntimePreview(
     figure.figureId,
     panel?.overrides ?? NO_OVERRIDES,
@@ -2117,8 +2121,8 @@ function useFigureThumbSource(
       ? runtimePreview.exact === true
         ? runtimePreview.url
         : null
-      : panel?.chart || panel?.chartSource !== undefined ? null : figureThumbSrc(figure, bucket, owner.pj));
-  const plain = active && !panel?.chart && panel?.chartSource === undefined && !variant.url && !runtimeByState;
+      : archived || panel?.chart || panel?.chartSource !== undefined ? null : figureThumbSrc(figure, bucket, owner.pj));
+  const plain = active && !archived && !panel?.chart && panel?.chartSource === undefined && !variant.url && !runtimeByState;
   const sizeMm = render?.manifest?.size_mm ?? figure.sizeMm;
   const ratio =
     sizeMm && sizeMm[0] > 0 && sizeMm[1] > 0 ? sizeMm[0] / sizeMm[1] : 4 / 3;
@@ -2133,7 +2137,7 @@ const NO_OVERRIDES: PanelObject["overrides"] = [];
  * 单图预览（`useFigureThumbSource`）与整版预览（`CanvasThumb` 的 `editedPanel`）共用这一份。
  */
 function showsEdits(panel: PanelObject): boolean {
-  return !!panel.chart || panel.chartSource !== undefined || panel.overrides.length > 0 && !isJustBakedBaseline(panel);
+  return hasFigureSnapshotPreview(panel) || !!panel.chart || panel.chartSource !== undefined || panel.overrides.length > 0 && !isJustBakedBaseline(panel);
 }
 
 /** 整版预览里的一个对象若是带图内修改的面板，返回它（喂给 `CanvasThumb` 的 `editedPanel`） */
