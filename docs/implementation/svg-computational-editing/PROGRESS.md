@@ -2,18 +2,19 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-07 09:10执行复核）：N3d安全安装0d86b357、菜单测试cd3912d6和时间线修复c761dc7e已提交。N3e已有安装、保存后继续编辑、未知响应恢复及原配置入口的未提交实现；最新受影响前端27文件451通过/0skip，正式与派生构建均通过。真实浏览器已完成中文新根安装和明确采用，但同一工作副本初次实际2次AS PUT，严格验收失败；目录选择另有旧响应覆盖新路径问题。两项已定位，正按独立文件修复，不能把候选或测试绿写成最终UI通过。新截图曲线/普通素材可见，刻度裁切仍在；N3f仅准备、图例/复杂几何和M1/M2/M3未完成。**
+> **当前结论（2026-11-07 10:00 执行复核）：目录0f85d4b2、共同保存4cfccfcf和独立测试时序48bdbda9已提交；最新受影响42文件596通过/0skip，正式与派生构建通过。第二轮真实初次采用恰1次AS PUT，完整正文/资源/旧稿核验通过；真UI线宽修改/undo/redo及跨项目恢复最新工作稿（Inspector 12pt）已确认。但切项目期间一次预览携新图源发旧pj，后端以chart_source_mismatch拒绝，待修；N3e未功能提交、不标整批通过。N3f仅准备，刻度裁切/图例及M1/M2/M3仍未完成。本轮检查状态和效果，未改产品源码，接续优先修预览身份配对→N3e提交→N3f→N5→N4。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 > 前轮05:10后的91项捕获包资格保留其历史源码窗口；3c现已有实现与新资格，不能再按旧checkpoint重做。不同测试组不相加成最终总数；当前分支实际HEAD/diff优先。
 
 ## 环境（2026-11-07 当前快照）
 
-- 当前实施树为E:/0 - Project/Tavotto-svg-r00，沿用zixu.wang/svg-computational-r00；本次复核HEAD为c761dc7e758622a4359c85469c5d22f53b4a1f39（时间线同步捕获修复），最近已提交安装功能为0d86b357，原历史保留。当前未提交N3e前端API/协调器/窗口/入口/翻译/专项和受影响规则/ADR均保留；重复保存与目录导航修复由不同既有代理独立持有文件，按所有权维护，不混批。原E:/0 - Project/Tavotto仍是clean main@69bcafae，未合入成果。
+- 当前实施树为E:/0 - Project/Tavotto-svg-r00，沿用zixu.wang/svg-computational-r00；本次checkpoint HEAD为4cfccfcf（共同保存/debounce），同批独立0f85d4b2（目录）、48bdbda9（旧测试捕获等待）。N3e前端API/协调器/窗口/入口/翻译/专项及受影响规则/ADR仍未功能提交。原E:/0 - Project/Tavotto仍保main@69bcafae，未合入成果；恢复以实际HEAD/diff为准，不回退到文档SHA。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
 - 当前安装资格索引n3d-stage-final.json对应0d86b357。N3e最新受影响及构建见n3e-final/；首红n3e-affected/first.*保留。时间线见n3e-import-cycle/implementation-validation.md，保存后恢复见n3e-saved-resume/validation.md，未知响应见n3e-network-recovery/validation.md。初次真实UI见n3e-ui/，2 PUT诊断见n3e-extra-put/diagnosis.md，目录反例/外部候选见n3e-directory-review/；N3f准备见n3f-mixed/qualification.md。各有独立源码窗口，不相加、不沿用旧构建冒称新修复资格。
 - 初次真实UI已归档160条网络事件到n3e-ui/output/playwright/49-status-network.json；root自有Playwright session n3e-svg-20261107已正常close、exit0（50-close-initial）。服务原exec25039经原认证shutdown终局exit0；launcher66892/runtime28916均不存在、24049无监听。停前1777源及11个实际HTTP bundle零漂移，见stop-bundle-verification.json、service-exit.json、stop-confirmed.json。源码冻结已解除，不再按旧live句柄续等或直接重启旧serve。
+- **第二轮已终局收尾**：root浏览器n3e-svg-second-20261107经review-09-close正常exit0；原服务持有者按已核身份STOP→认证shutdown→child.wait，exec28474与child终局均exit0。stop-confirmed.json于09:59:09+08:00实际核launcher41248/runtime75260均不存在、24059无监听，1779源/11bundle末核零漂移；冻结解除，没有自有live服务/浏览器待续。新pj=f82c498c8d5c、working=d_p1o8ydtc及中文目标/请求证据均保留；目标已存在，不能直接按旧serve前提重启，不重等已终局句柄。
 - 最新 NEXT_PHASE 和提示词直接在当前实施分支维护；不再依赖历史 review 文档分支才能取得新计划。
 
 ## 批次状态（2026-11-07 复核后；按完整退出条件）
@@ -36,13 +37,39 @@
 | R01/R02 | core_partial / multi_target_verified | 3236307c、8e6c399a | 跨父/split/errorbar/colorbar共同目标与预览通过；任意clip、欠定成员paint slots和图例仍缺 |
 | R03 | runner_and_source_consumers_integrated | 029dfac2、242cabc0、c2fd47d5、5b2b1403、2452d8fc | 受控runner与精确INPUT附件接真实API/UI/导出；不宣称全产品总进程cap或最终资格 |
 | R04 | affected_checks_passed | a8a088cf、18907d65、cbd8d95e | 请求序号/表单/项目切换、late response 和单项 drop 均有受影响测试；Dialog 已可发起真实绑定；完整编辑器生命周期在 R06 追验 |
-| R05 | installation_backend_committed / adoption_acceptance_failed | 既有R05保留；fa691a3b、0d86b357、cd3912d6、c761dc7e | N3d356通过/3skip、真实API冷读2通过；N3e最新联合451通过/0skip及构建通过，但真实初次采用2 PUT严格失败；目录竞态另待修；N3f仅准备 |
+| R05 | installation_backend_committed / adoption_ui_verified_with_preview_race_pending | 既有R05保留；0d86b357、c761dc7e、48bdbda9、0f85d4b2、4cfccfcf | 最新596通过/0skip及构建通过；第二轮初次1 PUT、全文/旧稿与真UI跨项目最新稿已核；切换期间图源/pj配对422待修、N3e未提交；首轮失败保留；N3f仅准备 |
 | R06 | product_editing_and_cold_restore_verified / partial | 242cabc0、53393810、8e6c399a、264ce59c | 冷开后Inspector编辑、undo/redo和exact显示已验；图例、完整操作及复杂几何仍缺 |
 | R07 | partial / original_five_formats_ui_verified | 5bc82a81、c2fd47d5、2a40fec9、c9fa29a4、8fa84f5d、a06cc3d3 | 原图五格式真实UI及独立产物已验，EPS接线已提交；分享与完整双系列M1未完成 |
 | R08 | full_edit_restore_verified / partial | cae96f89、029dfac2、53393810 | 生产v2导出与真UI完整编辑恢复通过；A采用、分享选择和正式项目迁移待补 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 4 节 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+
+### 2026-11-07 10:00 执行效果复核与下一阶段安排
+
+- 用户要求核当前执行情况/效果并梳理下一阶段。本轮复核同一实施树/分支，代码HEAD4cfccfcf，身份Zixu Wang/2467441721@qq.com；原Tavotto仍clean main@69bcafae。未改产品/测试源码、未新建或切换分支/worktree、未fetch或远程操作。N3e未提交功能文件全部保留；本轮仅维护四份稳定状态/计划文档，代码修复另批处理。
+- 核n3e-after-fixes/first.xml真实596个case均无failure/error/skip；源与source-ready的1779项逐一匹配，当前复核零漂移。既有正式/派生after-fixes构建资格保留其窗口，不相加为全产品通过，也不重复跑绿测代替进度。独立源/bundle末核由原服务持有者完成。
+- 第二轮初次完整正文核验已实际exit0，browser-effects-initial-measured.json verified=true、新稿初次PUT严格1次。原strict及两次有限派生期望首红保留；最终期望只从冻结包、真实DOM高度、原单位权威、PNG IHDR和显式registry补原有合法派生，PUT/浏览器GET/磁盘全文及revision继续严格。旧稿/命名稿、模型/绑定/原序patch及资源保持，canary0。
+- 实际图内线宽修改/undo/redo已保存，request40/81/88/90均200，native值[5,7.7,5,7.7]，除updatedAt及这一个原linewidth值外全文保持；物理Inspector约7.8→12→7.8→12pt。离开前冻结new-draft-before-leave.json，真实切旧项目后经已保存回执继续编辑。API原检查证明最新稿保留，本轮再核浏览器GET138全文等于离开前稿，并用原UI双击chart.svg→树选曲线，review-05-resumed-properties实际显示线宽12。不是仅从AS推断UI，也不是新进程冷恢复资格。
+- 根只读复核结果status-review-qualified-ui.json记录完整UI证据SHA、596case与1779源，实际exit0。新截图output/playwright/n3e-second-resumed-linewidth.png已实看，标题/PNG/红线/12pt明确；左/下刻度仍裁切，不能作为最终视觉合格。一次双击用过期瞬时SVG ref失败已保原日志，重新snapshot后正常进入，不是产品复位或隐式重装。
+- review-08-console-errors仅查询error，实际两项是初次AS基线404与旧项目preview_png 422；没有把第二个误说成404。原服务持有者只读正常认证原样重放request104，仍422/chart_source_mismatch/chart source unavailable：新项目chart.svg/来源/linewidth7.7却向旧pj aec8e7b372dd请求。原日志同body向新pj有7次200对照，后端附件读取处拒绝、未进worker、旧项目21文件前后零变；1779源和实际11HTTP bundle零漂移、canary0。证据review-preview-422/actual-replay-and-freeze.json。此为真实配对竞态。只读源码对照0d86b357/c761dc7e与当前hook/CanvasThumb/session/projectEpoch/projectStore/app/documentassets内容相同，3个preview API函数AST相同，机制早于本轮目录/保存修复且普通切换可达；未运行旧版完整UI时序，不称旧版真UI复现。调用链CanvasThumb→useVariantPng→previewPngResponse以全局pj发旧panel请求；单补captureProjectEpoch仍可能取错owner，应统一panel所属文档owner/pj/代次贯穿key/request/cache/response，保持后端校验。source-attribution.json保留证据；N3e整体不标通过，下一批先修原请求/切换身份与代次，不能放松后端边界或吞错误。
+- 下一阶段调整为N3e预览身份修复及功能提交→N3f正式混合中文根/删自建旧源cache/新进程整链→优先N5可见裁切→N4图例→M1/M2/M3。NEXT_PHASE提供逐批输入/退出/提交条件，NEXT_PHASE_PROMPT可整体复制无人值守接续，完整计划范围不缩。N3f准备和核验器离线绿不当安装/冷恢复资格；同一进程跨项目恢复也不替代冷开。
+- 自有UI/服务已正常收尾：root浏览器review-09-close exit0，最终请求320事件归档review-07-final-requests.json；原持有者STOP→认证shutdown→child.wait，exec28474及child终局exit0，stop-confirmed.json核两个PID消失、24059无监听、1779源及11bundle零漂移，未kill或重启。当前无待续live句柄，冻结解除，保已发布目标和全部失败证据。状态文档与N3e功能差异分开提交。
+- 本轮四份文档引用/规则检查status-review-20261107-1000-rules.xml实际41通过/0skip/exit0，agents_budget --check exit0但既有试行OVER提示保留，diff检查exit0。此为文档检查，不代表新配对修复或最终资格通过。
+
+### 2026-11-07 09:40 两项修复提交、596联合与第二轮真实采用
+
+- 本goal turn继续实际实现，未停在状态计划。目录导航21/0skip通过、旧源10红、撤两处owner闸内存2红后独立提交0f85d4b2。共同保存修复仅documentStore两处：同步捕获前消费已覆盖timer；安装与慢hydration共用原deferred。真实TextView新9项、慢metadata及后续编辑、失败/409/no-pj均通过；去同步消费/错在回执清timer两项反证真红。功能/新测试与单独autosave规则hunk提交4cfccfcf，未混入N3e规则段。
+- 扩大保存组首轮299=298通过/1失败；固定c761原生产同一slowSnapshotSave case同红，旧test在异步saveNow开始后立即读LS，尚未到真实capture。只改为等待确切本次Storage.setItem事件，保持首PUT gate、done=false及15条原expect；4case身份及另3case正文AST不变，固定旧生产+新等待亦绿。独立test提交48bdbda9；20文件末验299通过/0skip/exit0。原红和源hash分别保n3e-save-debounce-implementation。
+- root将原27文件与上述20及目录3文件去重，实际42文件596通过/0skip/exit0（n3e-after-fixes/first.*，18.74秒）；1490前端源零漂移。packaged-after-fixes正式构建24.09秒exit0，i18n/tsc-b/Vite/Tailwind/同步通过；playground/widget构建及check各exit0，均同1490源零漂移。规则41通过/0skip/exit0。构建HEAD metadata早于随后3次commit，实际source bytes相同，明确不是release artifact。
+- 新run n3e-ui-second准备经原bind/render/导出/保存/package/inspect；6成员、包SHAb714eb9098adfaa9d1bb04bffa79527106dbc70e9f120cce1cc4544f5661826b。新data/config/MPL/旧稿/源/中文目标均隔离，源chart.svg已在准备删后以INPUT真实恢复，missing=[]、canary0、worker归零。首run22受保护文件与目标保字节。实际source-ready核6组正式回执、冻结1779源/11bundle，HEAD4cf；正常认证服务28474起于24059、实际HTTP与源一致，401边界/父层无科学导入。路径比较辅助脚本首红保留，未重启服务。
+- root新session n3e-svg-second-20261107正常bootstrap，dismiss原更新提示后在真实旧稿改“N3e 第二轮UI旧稿修改必须保留”；15-old-before-install记录旧PUT成功，独立冻结old-draft-before-install.json后才安装。Windows CLI内联JS/错snapshot flag两次仅自动化配置错误，保05/06日志；改沿CLI真实--filename与位置参数，不改产品。工具stdout编码另修外部wrapper，真实中文/DOM不变。
+- 真目录导航出现旧home请求7在新E请求12开始后才200返回，26/30记录确认仍disabled；最新目录返回后31显示正确fixture父目录与名称，32确认仅填路径，目标仍不存在。安装201后35显示资源已装、正文尚未保存；关闭并菜单重开回执，43独立核inspect1/install1/open0/Run0，不重装、不重新选包。
+- 明确打开后45显示工作副本已保存。46完整原事件数组110项得到真实pj=f82c498c8d5c、working=d_p1o8ydtc、初次PUT id40且严格仅1次200。47只读DOM采样为package-note真实offsetHeight22；不读store、不改DOM。48同项目continue后51事件120项仍仅1次AS PUT、Run0。49新截图n3e-second-installed.png已实看，曲线/PNG/标题存在，刻度裁切仍未修。
+- 完整正文资格暂未通过，不能以count绿代替：原strict-first真实exit1在合法h=10→22/world单位的包原文比较；独立测量oracle首红是错误要求fontStyle空串（原TextView明确normal），外部改精确normal并14负例拒绝后保第二红。root递归差异仅ordinary-panel四项原派生补全pxW64/pxH48/script canary/cost light；PNG IHDR和包显式registry均有独立事实，panelSourceSync已明确这些是磁盘派生，不能改native/用户几何。原/两次新红均保，正将oracle主语改为包+独立DOM/PNG/原Registry权威的明确派生期望，完整PUT→AS/readback/revision、旧稿/命名/模型/原序patch仍严格。真实46/47输入不改，新稿尚无用户编辑；此时继续不得宣称N3e验收完成。
+- 并行工作完成：N3f只读核验器verify_installation.py及CLI已备，离线35成员/5refs/2graphs/8blob正证与3坏输入拒绝、缺实参exit2，原attempt04的167文件零漂移；未安装或冷恢复。N5实测源100pt框，Y文字越左19.265625pt、X越下7pt；SVG/IR未丢字，物理viewport裁切。仅overflow无效、仅扩viewBox保持100pt会将80pt线缩到67.07716494pt；须区分源frame/anchor与派生render frame并考虑页面边界，未改生产。两报告各保原链、独立产物和父层/worker收尾。
+- 当前下一步：先完成既有派生事实的正确独立正文核验，再做真实计算编辑/撤销/保存及跨项目从回执恢复最新稿，收口N3e功能commit；然后N3f真实安装/采用/删自建旧源与cache后的新进程恢复，再N4/N5与M1/M2/M3。当前源冻结不可边验边改；缺陷需要改源须先关闭自有browser并让原服务持有者正常停止。所有UI/服务句柄及最后动作按本节续接，不重做已提交两项fix。
 
 ### 2026-11-07 09:10后 真实安装效果复核、阻断定位与下一阶段安排
 
