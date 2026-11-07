@@ -43,6 +43,8 @@ order: 210
   * 文件名规则是**严格同源对**（`web/src/lib/exportName.ts`），
     `tests/golden/filename_vectors.json` 两侧各跑一遍；**首尾空白的字符集
     写死一份**，不许退回 `str.strip()`/`String.trim()`（两者认的集合不同）。
+  * 素材清单的同 stem PDF 让位规则不判定精确文件是否存在。既有 `/api/panel-stem` 的可选 `original_spec=1` 仍经会话认证与 `safe_resolve`，用与清单相同的 probe / `engine/originalspec` 返回精确磁盘事实；缺参的原响应不变，不执行脚本。
+    静态 PDF 原图保源页面；派生 PNG / TIFF 的产物 mm 来自源 PDF 实际页面事实，不把请求中旧 native 尺寸冒充测量值。位图原像素网格与源密度规则保持。看护 `tests/test_original_source_facts.py`。
   * **EPS 与 TIFF（ADR 0046，2026-09-06）**：格式顺序最初为 `(pdf, png, eps, tiff)`，
     新格式追加在后。TIFF 与 PNG 出自**同一次栅格化**（`Canvas.save_tiff` /
     `pdfbackend.original_tiff`），编码器是纯标准库的 `tavotto/tiffwrite.py`

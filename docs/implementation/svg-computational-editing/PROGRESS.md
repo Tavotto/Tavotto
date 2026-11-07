@@ -2,13 +2,13 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **当前结论（2026-11-07 15:20）：复核基点HEAD c85c96c7，N3e/归档/P0已提交；P3源码/测试WIP保留。扩大后端已终局3539pass/16fail/128skip、exit1；4条旧SVG判据已修，正式三文件76pass/0skip，另12条夹具候选待应用/正式复验。原图单scene9项、前端1514、新正式/派生构建/check及Chrome29点通过。真实A整版PDF/PNG/TIFF独立尺寸/文字/12颜色点与PNG-TIFF像素一致通过，整版SVG因ordinary.pdf缺配对而partial；逐图另见同名conflict、PNG准备失败、runtime非法名，P3未完整退出/提交。新UI正常终局、1791源/11bundle末核、原稿/counter4保持，无自有live句柄。下一步先收口真实批量导出，再P2来源/冷准备/完整迁移/N5/N4/M1/M2/M3；不称完整回归或最终可用。**
+> **本轮收尾（2026-11-07 16:30，Asia/Shanghai）：按用户要求完成当前修复后暂停，不开启下一阶段。产品 HEAD 2c4d5aaa；a4ffd5f3 为 Windows/离线夹具，1def88dc 为 P3 静态 SVG 合成，1b7c5006 为批量归属/命名，2c4d5aaa 为精确来源事实/产物尺寸。前端正式 76 文件1726项全过；后端当前定向56项全过，扩大受影响194pass/1skip，夹具253pass/25skip（各独立窗口，不累计）。正式及派生构建/check均0。真实六图批次普通SVG/计算图/两历史图四格式成功；PNG/PDF各三格式成功、SVG仍明确不支持；27成功含5报告，2失败，不含之前整版。独立实物、来源/fullref/patch保持和停机末核通过。完整M1/M2/M3尚未验收，未合入main或发布。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 > 前轮05:10后的91项捕获包资格保留其历史源码窗口；3c现已有实现与新资格，不能再按旧checkpoint重做。不同测试组不相加成最终总数；当前分支实际HEAD/diff优先。
 
 ## 环境（2026-11-07 当前快照）
 
-- 当前实施树E:/0 - Project/Tavotto-svg-r00，沿用zixu.wang/svg-computational-r00；13:53产品HEAD35adee6d。归档前端e2c026fa/P0 c9e2980d/N3e35adee6d均已提交，保135aba94/8f4985ee及此前功能；当前产品WIP为P3，N3e无剩余实现。原E:/0 - Project/Tavotto仍clean main@69bcafae、未合入。以实际HEAD/diff为准，不reset到文档SHA。
+- 当前实施树E:/0 - Project/Tavotto-svg-r00，沿用zixu.wang/svg-computational-r00；本轮产品HEAD2c4d5aaa（文档提交可继续前进）。归档前端e2c026fa/P0 c9e2980d/N3e35adee6d均已提交，保135aba94/8f4985ee及此前功能；当前产品修复均已提交，N3e无剩余实现；按用户要求暂停。原E:/0 - Project/Tavotto仍clean main@69bcafae、未合入。以实际HEAD/diff为准，不reset到文档SHA。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
@@ -49,6 +49,23 @@
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 3 节后续批次与完整 IMPLEMENTATION_PLAN |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-07 16:30 当前修复收口、分功能提交与暂停
+
+- 用户明确要求“完成本轮修复后总结现有进展和还有待解决和修复的问题，然后暂时停止工作”。本轮只完成已进入集成的 P3 导出与批量修复、必要验证、文档和提交；未启动 P2/N5、新代理任务或常驻调度。
+- 本轮提交：a4ffd5f3（仅平台/离线测试夹具）、1def88dc（静态SVG矢量合成与原图单scene）、1b7c5006（批次continuation/终态归属及合法runtime默认名）、2c4d5aaa（复用既有panel-stem精确事实、assetStore代际缓存及PDF实际产物mm）。均在原实施分支；原Tavotto/main未合入，未推送/发布。
+- 正式前端 batch-source-facts-frontend-first：76文件、1726pass/0skip/0fail，45.28秒，1503源零漂移。当前后端 source-facts-production-final：3文件56pass/0skip，含新增13；此前source-facts-production-first为194pass/1skip（旧硬编码GS条件），不是全量。platform-fixtures-production-first为两完整文件253pass/25skip；原12失败对应11pass/1精确WinError1314skip，未放松生产守卫。不同窗口不累加。
+- 原扩大后端首红109文件3539pass/16fail/128skip、exit1仍保留。4条过时SVG判据对应三文件76pass；其余12夹具已正式复验如上。未重跑整个109集合，不能改写成最终全绿；Inkscape/Office/macOS及安装矩阵未验。Ruff check/format1492文件exit0；受影响oxlint exit0、4条既有Fast Refresh warning。首次root路径lint调用MODULE_NOT_FOUND是命令路径错误，已在web目录纠正；不算产品失败或绿结果。
+- packaged、playground/build/check、widget/build/check五个新回执均actual_exit0、源零漂移。新正常认证UI p3-batch-export-ui冻结1792源/11bundle，继续原A及data/config，无prepare/install/adopt/reseed或清缓存。观察器仅额外采集精确事实GET，source-ready保存其真实SHA。
+- 整版job250a2e1ce97748a4：PDF/PNG/TIFF成功，SVG因ordinary.pdf无可信同次配对而partial。独立PDFium/Pillow再次核180×130mm、4252×3071/600dpi、文字/12固定mm色点、PNG/TIFF RGBA一致，7对象6panel/2完整ref及有序patch/几何与保存稿一致。
+- 六图批次依次chart.svg、ordinary.png、ordinary.pdf、ordinary.svg、History.pdf、完整runtime id；5次ask冲突均经真实“另存一份”续行，未覆盖原输出。最终job依次31dbc100b8d84d4a、452b940f28494fa0、c0cdd11876524a54、9e82f34172cc40c9、42ea2557ba254152、b85cbede21674530；状态done/partial/partial/done/done/done。22实际图文件+5报告成功，PNG/PDF的SVG两格失败；与UI27/2一致，前一整版结果未混入。
+- review-original-artifacts-final.json核所有成功图文件字节数/SHA、六对PNG/TIFF像素、真实来源身份与fullref/patch；普通PNG仍130B/64×48、原始字节相同、dpi=null；PDF原页100pt约35.27778mm、位图833²@600、回执mm35.278正确；普通SVG四格式约42.333×21.167mm、文字及两色点正确，两历史图含Captured value 3。保留观察器首红：误要求PDF容器字节相同，按既有copy_foreign合同改核独立源/产物PDFium像素和来源SHA，未改产品/容差。
+- 本轮未关的问题：检查报告仍把隐藏PNG与归档runtime报missing-asset；原图展示可能继承旧文档native40/48而实物用源页面，native/放置/框全链待N5核；普通PNG/PDF→SVG与复杂SVG矩阵未完成；原图标注/留白有专项但本UI仅普通无标注路径，完整矩阵待补；History渲染来源、P2热/冷恢复与完整迁移、N5刻度/标题裁切、N4图例、全部入口及最终回归/平台资格仍未完成。
+- 浏览器30 close0，原serve exec40459与child61324实际exit0；launcher79648/child61324消失、24129无监听，stop-http/source/persistent末核通过，原A/B/C/D正文、命名稿及counter/module/argv各4保持。root-close-proof.json闭合，冻结解除，无自有live句柄；既有三代理均已交付且无活动任务。
+- 证据根E:/0 - Project/svg-review-20261106：n3f-svg-production的batch-source-facts-* / source-facts-production-final-*；p3-batch-export-ui的26.json、review-actual-jobs.json、review-artifacts-final.json、review-original-artifacts-final.json、service-exit.json及root-close-proof.json。下方15:20及更早记录保留历史，不再按旧失败现状重做已提交修复。
+- 当前任务暂停；后续安排和提示词只供用户明确恢复后使用，不触发自动继续。总目标未完成，不标complete。
+- 收尾补核：pause-docs-production-first为规则索引/文档引用两文件41pass/0skip；agents_budget.py --check退出0，既有OVER提示仍保留；git diff --check退出0。status-review-round-pause-20261107/audit.json核当前1792源/11bundle与8份正式回执相同、产品修复已提交、自有进程闭合。文档/绑定/计数及12份非config文件SHA完全不变；隔离验证环境config/config.json从d44edabf…变为743f9288…，因未捕获旧正文，具体字段差异未知，不能称整份config字节未变。audit-first-red保留这一首红；未覆盖或还原config。后续验证应在启动前留可脱敏比较的配置基线。
+
 
 ### 2026-11-07 15:20 执行与效果复核、真实导出首红及下一阶段安排
 

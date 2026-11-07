@@ -21,6 +21,14 @@ v0.18.0 的五条用户可见说明已迁入 v0.18.0.md。渠道启用在 v0.18.
 
 SVG assets can now be included in PDF, PNG, TIFF and SVG layout exports, and exported at their own size with margins or annotations. Formats exported together use the same source version, so a file changing during export cannot silently produce different pictures. Each format reports SVG features it cannot render while other successful outputs remain available.
 
+## Batch figure exports keep each job and filename separate
+
+Starting a batch after another export no longer lets the previous result skip figures or bypass filename conflicts. Figures with the same output name keep the normal rename, replace and cancel choices. Runtime figures without a saved display name receive a normal default filename while keeping their original source identity.
+
+## Original-image exports can find files hidden by a same-name PDF
+
+A PNG already placed on a layout remains available for original-size export when the asset list prefers its same-name PDF. Exports preserve the image's pixels and declared density. Raster exports of a static PDF report its actual original page size instead of an outdated document size.
+
 ## Install computational-chart project packages in a new folder
 
 The project menu and project list can inspect a computational-chart project package and install its resources into a new folder. Opening the installed project preserves your previous draft and saves a working copy through the normal save flow. If you close the installation window while save confirmation is pending, reopening the installation record continues with your latest draft instead of replacing it with the package's original layout. Installation does not run the included scripts.
