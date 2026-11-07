@@ -318,6 +318,8 @@ order: 200
   保存侧在原排队时刻调用纯叶子 `lib/momentCapture.captureDocumentMoment`，不反向import时间线；
   身份与ctx key由该叶子唯一组装，真实图源由原renderStore同步装配/冻结，timelineThumb只合成。
   排队正文、MomentSnapshot和PNG Promise保原引用；成功回调不得取新状态补拍。
+  保存Moment的pj必须消费本次writer已冻结的owner/address/scope，与该次正文写盘地址同源；
+  冲刷离开稿、冲突恢复和明确空稿写入均不重新读取currentProjectId。看护`store/documentMomentOwner.test.ts`。
   缺真实源端口须明确失败并保稿，不能默认丢Moment；直接文档、App、embedded、MCP、playground入口均须装配。
   图源冻结必须把同一identity.pj传入SourceCapture，再贯穿HTTP URL/header与静态fallback；
   不在等待期间重读current pj。明确离开快照可跨全局项目换代完成，不能按活动预览门一概取消。

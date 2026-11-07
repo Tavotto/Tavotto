@@ -1816,7 +1816,7 @@ function flushAutosaveNow(): FlushResult {
       return localOk ? 'saved' : 'error'
     }
     snapshots.projectFileContext = projectFileEditor.capture(address)
-    snapshots.moment = captureDocumentMoment(useDocumentStore.getState(), currentProjectId(), useTimelineStore.getState().gen)
+    snapshots.moment = captureDocumentMoment(useDocumentStore.getState(), owner, useTimelineStore.getState().gen)
   }
   diskFor(state.documentFormat).schedule(state.documentId, pd, owner, snapshots)
   if (!localOk) return 'error'
@@ -2163,7 +2163,7 @@ async function recoverProjectFileConflict(choice: 'reload' | 'overwrite'): Promi
     const body = chartContext?.document ?? raw
     const context: DiskSaveContext = {
       ...captureFigureSnapshotSave(body, pj), ...(chartContext ? { chartContext } : {}),
-      projectFileContext: projectFileEditor.capture(address), projectFileRecovery: proof, moment: captureDocumentMoment(useDocumentStore.getState(), currentProjectId(), useTimelineStore.getState().gen),
+      projectFileContext: projectFileEditor.capture(address), projectFileRecovery: proof, moment: captureDocumentMoment(useDocumentStore.getState(), address.projectId, useTimelineStore.getState().gen),
     }
     disk.rememberRevision(address.documentId, fetched)
     disk.forgetBaseline(address.documentId)
@@ -2536,7 +2536,7 @@ export async function waitForWorkingDocumentSave(
     const document = useDocumentStore.getState().buildProject()
     if (!hasContent(document) && (written?.loadSeq !== scope.loadSeq || hasContent(written.document))) {
       const snapshots: DiskSaveContext = {
-        ...captureFigureSnapshotSave(document, scope.pj), projectFileContext: projectFileEditor.capture(address), moment: captureDocumentMoment(useDocumentStore.getState(), currentProjectId(), useTimelineStore.getState().gen),
+        ...captureFigureSnapshotSave(document, scope.pj), projectFileContext: projectFileEditor.capture(address), moment: captureDocumentMoment(useDocumentStore.getState(), scope.pj, useTimelineStore.getState().gen),
       }
       disk.schedule(scope.documentId, document, scope.pj, snapshots)
       await disk.whenIdle()
@@ -2569,7 +2569,7 @@ export async function prepareProjectFileSave(name: string, scope: {
   } else {
     const document = useDocumentStore.getState().buildProject()
     const snapshots: DiskSaveContext = {
-      ...captureFigureSnapshotSave(document, scope.pj), projectFileContext: projectFileEditor.capture(address), moment: captureDocumentMoment(useDocumentStore.getState(), currentProjectId(), useTimelineStore.getState().gen),
+      ...captureFigureSnapshotSave(document, scope.pj), projectFileContext: projectFileEditor.capture(address), moment: captureDocumentMoment(useDocumentStore.getState(), scope.pj, useTimelineStore.getState().gen),
     }
     diskFor(scope.format).schedule(scope.documentId, document, scope.pj, snapshots)
     await diskFor(scope.format).whenIdle()
