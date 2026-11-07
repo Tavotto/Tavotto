@@ -360,17 +360,39 @@ When the time comes:
      **`github-actions` (app id 15368) is refused outright** — it is the one App
      every pull request can drive, so pinning to it would reopen the hole. The
      gate raises a configuration error rather than accepting it.
-   - `.github/workflows/ci.yml`, `cla-check` job: add `checks: read` to
-     `permissions`, add a step fetching
-     `gh api repos/$REPO/commits/<pr head sha>/check-runs`, and pass it as
-     `--provider-checks-json`;
-   - `tests/test_legal_contribution_policy.py`: update the permissions assertion
-     to the new expected set (it pins the exact permission map on purpose);
+   - `.github/workflows/ci.yml`, `cla-check` job: wired for the
+     `tavotto-cla-v1` live eligibility service ([ADR 0172](../adr/0172-cla-live-eligibility.md)).
+     Merge #1794 (the fetch script and gate interface) into the default branch
+     before this wiring, then retarget/rebase the wiring PR onto that baseline.
+     This change does not enable the production provider. When activating it,
+     pin `authority_origin` to the service's HTTPS root in the default-branch
+     policy and give every exemption a `github_id`. Before testing exemptions,
+     merge groups independently read the complete GitHub mergeQueue prefix and
+     each PR's author id, head and full commit list. The trusted gate consumes
+     this input through `--group-snapshot-json`, rejects incomplete or changing
+     snapshots, and converts its queue-ordered `{pr,headSha}` members to the
+     service protocol's strictly PR-sorted `{pr,head_sha}` before exact comparison.
+     Service aliases or noncanonical order are rejected. Contributors come from
+     those original PRs; the candidate compare still
+     checks counts, unique SHAs and the candidate head, but GitHub-generated
+     merge/squash metadata does not introduce another contributor. The same
+     account in an original PR is still checked. Unknown original PR identities
+     always fail, including when `eligible=true`.
+     All-exempt PRs and merge groups pass locally by immutable id. Otherwise the
+     trusted fetch script asks the service directly, without credentials or redirects, using a new
+     nonce and start time. It retries temporary failures for about two minutes;
+     both answers and fetch errors go through the gate. Unreachable service,
+     unsigned contributors, and mismatched answers all fail closed. After
+     signing and countersigning, rerun the check or push a new commit. The job
+     needs only `contents: read` and `pull-requests: read`; App check publishing,
+     cron refresh, and proof polling are not part of this path;
    - run `python3 scripts/ci/cla_gate.py --refresh-hashes` if the agreement text
      changed at the same time.
 
-The gate reads only the provider's check-run conclusion, so providers are
-swappable: replacing one is a config change plus a check name, not a redesign.
+In `tavotto-cla-v1` mode the gate validates the service's live answer against
+this run's repository, candidate, contributors, policy digest, nonce and time.
+Other provider protocols still use the check-run interface and need their own
+workflow wiring before activation.
 
 ### 3. Corporate signatures stay manual — deliberately
 
