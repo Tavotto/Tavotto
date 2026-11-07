@@ -1,33 +1,33 @@
 {
   "schema": 1,
   "plugin": "tavotto",
-  "plugin_version": "0.21.0",
+  "plugin_version": "0.21.1",
   "min_tavotto_version": "0.16.0",
-  "source_sha": "6c1fa7d2e17c2c4ae3c41703f521bf1706823add",
-  "build_inputs_fingerprint": "4c41f53ba30ca5d7",
+  "source_sha": "a79def4400d361c233f302390bfdea23d00561b3",
+  "build_inputs_fingerprint": "b39e520b5766e975",
   "lockfile_sha256": "e108c1fb6208cabd84ff2dfdfc0a8df74e344259438630cac90be53a9ae29767",
   "toolchain": {
-    "python": "3.13.17",
+    "python": "3.13.18",
     "node": "22.23.4",
     "pnpm": "11.27.1"
   },
   "files": [
     {
       "path": ".claude-plugin/plugin.json",
-      "sha256": "73f8a459635e127704295ffb4779028a2e624f44d14c175ec29bcbe9df2c6c5d",
+      "sha256": "2863b12f5775b1581286594bd969e79dd17c9690ee9f87a1b146b978c4b79f8b",
       "size": 915,
       "mode": "100644"
     },
     {
       "path": ".codex-plugin/plugin.json",
-      "sha256": "f451ca4cad1b34abe1caf13a26cd03b7a42df709f72518947010a3cd8dc2f44d",
+      "sha256": "1c970949148fd4e047acba5d3063001e779781825f8a5ba2953bc42681380fed",
       "size": 1934,
       "mode": "100644"
     },
     {
       "path": "AGENTS.md",
-      "sha256": "4ff7bd485450c5161619e3725997b79a9fd865af08094f4bc9b92395d501ea83",
-      "size": 6699,
+      "sha256": "0f71f1f4ff838b57a34344363de173d00d2fa790c42524a7b1788aa4425933fe",
+      "size": 6817,
       "mode": "100644"
     },
     {
@@ -68,8 +68,8 @@
     },
     {
       "path": "integrations/configure.py",
-      "sha256": "26abf8941ba148f6c2f61e74d2a4894d1228bea218e311916f1aa03311df8359",
-      "size": 51473,
+      "sha256": "02de12439843b445a0bf2f557dd8e4dfe3cf907f376332d12d20a8079b3f5ff5",
+      "size": 51763,
       "mode": "100644"
     },
     {
@@ -86,8 +86,8 @@
     },
     {
       "path": "mcp/server.py",
-      "sha256": "5097896790bc8531b84d598769fe0c1806d09b2f17c7a4a284f827ebd50fa489",
-      "size": 102079,
+      "sha256": "85fb5d5434f8ff573988fb1db1165535549713b5377f79fe170c8b157110fbeb",
+      "size": 102100,
       "mode": "100644"
     },
     {
@@ -109,6 +109,12 @@
       "mode": "100644"
     },
     {
+      "path": "mcp/tavotto_mcp/guide.py",
+      "sha256": "c4a9bbc29a5f8341e88142c8934992f3cf2fc6b6a081ab75bceeebb3ee9c81cc",
+      "size": 2660,
+      "mode": "100644"
+    },
+    {
       "path": "mcp/tavotto_mcp/roots.py",
       "sha256": "88b5f71f6b2d40455a5ac041760d7d45d78ec7db7757d34011e3364a51f4c9c1",
       "size": 33886,
@@ -122,8 +128,8 @@
     },
     {
       "path": "mcp/tavotto_mcp/server.py",
-      "sha256": "b145b0bc1f3ea40ad882a8e214d037bc737df7c558213a142353d966fb4d6ca9",
-      "size": 106029,
+      "sha256": "2d0b0f47c9af50528a59bf3816128a8298edb64df2d0cd4ab47aef3cc62c90e6",
+      "size": 108404,
       "mode": "100644"
     },
     {
@@ -133,9 +139,15 @@
       "mode": "100644"
     },
     {
+      "path": "mcp/tavotto_mcp/updatenotice.py",
+      "sha256": "3accbf2384681ecef634cd377a7dd3b9104c0e31dcbd140c5e547ac63b7573ff",
+      "size": 8600,
+      "mode": "100644"
+    },
+    {
       "path": "mcp/tavotto_mcp/usage.py",
-      "sha256": "9ac16a7f8686a64870192231cf2b9e2604068e3abf0aff2e592076780e5e844d",
-      "size": 4725,
+      "sha256": "c64913d8d581085875464ded61ad1c5b9d875fab74cf87b65e860c0538d51bd7",
+      "size": 4946,
       "mode": "100644"
     },
     {
@@ -146,20 +158,20 @@
     },
     {
       "path": "mcp/widget/canvas.html",
-      "sha256": "da6b69c9b84237762c53cf396bb5a0bfad039734a4ecda8cb0422096f8122324",
-      "size": 2556305,
+      "sha256": "bb734581c0daa27028f73d64a2bc1f92800223a9e84cfc49010600ff200ed63a",
+      "size": 2567732,
       "mode": "100644"
     },
     {
       "path": "package.json",
-      "sha256": "2edaa9a5ac1d10e88a8e251bc901d35f9e5db376642c1f9aa0a9cb243f7bd52b",
+      "sha256": "93e3d67804ff7f7585a47170217712a763bc4cdf5447d381cf094b148a4acbd0",
       "size": 823,
       "mode": "100644"
     },
     {
       "path": "skills/tavotto-figure/SKILL.md",
-      "sha256": "0633bfe3a34da8c8d62295f81527bf45c1c46f8f26245651eafcd2cb4efe37af",
-      "size": 15266,
+      "sha256": "e1b85004518d2041a332e7ea98079990defbb5157a0357dfbfad1401e359f9a7",
+      "size": 15537,
       "mode": "100644"
     },
     {
@@ -176,8 +188,8 @@
     },
     {
       "path": "skills/tavotto-figure/references/desktop-handoff.md",
-      "sha256": "9c7ead5133498aa9a6c13aff6f4ba31bb7e3867e06444c27160f102f5c71c262",
-      "size": 6985,
+      "sha256": "bac4294e04cf84d339df132bb9639f0ea12b2d483539e64a7c6caa08d8f52312",
+      "size": 7080,
       "mode": "100644"
     },
     {
@@ -188,8 +200,8 @@
     },
     {
       "path": "skills/tavotto-figure/references/first-run-and-recovery.md",
-      "sha256": "1fcfc027d2a83fe57c0ecc213a0bf8ce51840ed60d26933f4cae970c36746842",
-      "size": 11017,
+      "sha256": "36be494a9a84356a6d3de09e9e7072e209792282bf6322629013e8512cfc814e",
+      "size": 11695,
       "mode": "100644"
     },
     {
@@ -200,20 +212,20 @@
     },
     {
       "path": "skills/tavotto-figure/references/other-hosts.md",
-      "sha256": "e13a1dd0142a70cc206132eed1d73825d1f4723dfc5a3446b469b9a7ccfee5e2",
-      "size": 11229,
+      "sha256": "cf0105ac7ea1ced640ca8f759df77854712838825301eb6d6cd9c043d79ac447",
+      "size": 11642,
       "mode": "100644"
     },
     {
       "path": "skills/tavotto-figure/references/publication-style.md",
-      "sha256": "1479f9e1501763ec990566c40ee07510a182937ec7060268cbc91d580f681b9d",
-      "size": 7821,
+      "sha256": "8edd7ddd98eab92772e2c5969dbea9fef1d3ab3644ae02f347c9b626c4633432",
+      "size": 7881,
       "mode": "100644"
     },
     {
       "path": "skills/tavotto-figure/scripts/handoff.py",
-      "sha256": "89e0ca6e1c668f571cfc7a625b24f969681e822e08c0a162b372a63cb1eccdc4",
-      "size": 42627,
+      "sha256": "9ea215c4ebe77da7a4ec1f37d41d31f06b9f0fad142941511ae07bc26c717595",
+      "size": 43051,
       "mode": "100644"
     },
     {
@@ -224,8 +236,8 @@
     },
     {
       "path": "skills/tavotto-figure/scripts/update_check.py",
-      "sha256": "5da74be9e0a2860961c527106db16819d57ccd95129dd5ed4fbaa9feee3b37af",
-      "size": 17312,
+      "sha256": "d01fe43fd98da97ccd04e5434688c9e16bf9da81aa9d12c508d0a2725461ec01",
+      "size": 21207,
       "mode": "100644"
     }
   ],
@@ -243,10 +255,10 @@
       ]
     }
   },
-  "content_digest": "bc3ba3c9f635b4e143683cb53ce3c85f8d365bb2b80ab1f51447520f9f4c3528",
+  "content_digest": "b9d04ac3eb95e4e5e0077bb6148f2c9be69bfb891099c061faf06190a57f1388",
   "audit": {
     "workflow": "release",
-    "run_id": "42035865903",
-    "tag": "v0.21.0"
+    "run_id": "42367753771",
+    "tag": "v0.21.1"
   }
 }

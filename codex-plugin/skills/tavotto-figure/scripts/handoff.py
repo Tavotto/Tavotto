@@ -352,6 +352,8 @@ def tavotto_cmd() -> dict:
     found = find_tavotto()
     if found["cmd"]:
         return found
+    if getattr(sys, "frozen", False):
+        return found  # 冻结的桌面版里 sys.executable 是 tavotto-cli，不是解释器
     probe = subprocess.run([sys.executable, "-c", "import tavotto"], capture_output=True)
     if probe.returncode == 0:
         found = dict(found)
@@ -589,6 +591,8 @@ def run_script(python: str, script: str, *, origin_out: str | None = None) -> tu
     `origin_out`：给了就让脚本进程退出时把来源事实写到这个文件（`_ORIGIN_PROBE_SOURCE`）；
     不给，行为与以前字节级相同。
     """
+    if not python:
+        return False, "python_required：桌面版没有可用的解释器，请用 --python 指定跑脚本的 Python"
     env = script_env()
     probe_dir = None
     if origin_out:
@@ -832,7 +836,11 @@ def main(argv: list[str] | None = None) -> int:
         default="auto",
         help="是否先跑一遍脚本：auto=产物缺失或比脚本旧才跑",
     )
-    ap.add_argument("--python", default=sys.executable, help="跑脚本用的解释器（默认与本脚本相同）")
+    ap.add_argument(
+        "--python",
+        default="" if getattr(sys, "frozen", False) else sys.executable,
+        help="跑脚本用的解释器（默认与本脚本相同；经桌面版 skill-script 运行时没有默认，要跑脚本必须显式给）",
+    )
     ap.add_argument("--no-launch", action="store_true", help="只登记与自检，不唤起 Tavotto 界面")
     args = ap.parse_args(argv)
 

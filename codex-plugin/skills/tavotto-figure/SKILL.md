@@ -31,7 +31,8 @@ description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖�
    的步骤；认不出宿主就给那里的中性步骤——**不要默认让所有人执行 `codex plugin add`**。
    然后要求**新开会话**（或按宿主要求重载 MCP 服务），然后**停止**；
    不要在旧会话里继续假装工具可用。
-6. 发现插件更新：当前任务照常完成，只在收尾提醒一次（Codex：
+6. 发现更新（MCP 的 `tavotto_health` / `tavotto_export` 结果或交接 JSON 带 `update`）：当前任务照常完成，
+   只在收尾提醒一次——MCP 结果按 `update.message` 的话术转述（Codex：
    `codex plugin marketplace upgrade tavotto`），不自动升级、不反复提醒；
    其他宿主的升级命令见 `references/first-run-and-recovery.md` 的「插件有新版本」。
 7. 健康检查或恢复失败：报告结构化错误与下一步，不循环重试，不退回源码构建。
@@ -51,7 +52,7 @@ description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖�
 
 ## 开工三问（用提问工具，不用自由文本追问）
 
-先读已记录的偏好（脚本路径相对本技能目录；解释器用 `tavotto_health` 回报的 `server.python`）：
+先读已记录的偏好（脚本路径相对本技能目录；解释器用 `tavotto_health` 回报的 `server.python`；它给了 `skill_script_command` 时，所有 `python3 scripts/<名字>.py` 都换成 `<命令> <名字>`，如 `<命令> prefs --json`）：
 
 ```
 python3 scripts/prefs.py --json

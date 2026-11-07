@@ -13,6 +13,8 @@ from __future__ import annotations
 
 #: 与 `server.HANDLERS` 同一组工具名；不认识的（含协议层就被拒的未知工具）一律 `other`。
 #: 两侧由 tests/test_mcp_usage.py 对拍。
+#: 例外：`tavotto_guide`（ADR 0170）有意不在这里——加进闭集要升 CONSENT_VERSION、所有用户重新同意，
+#: 决定在等维护者；在此之前它走 `other` 桶（不计入具体工具名）。
 TOOLS = (
     "tavotto_health",
     "tavotto_open_figure",
