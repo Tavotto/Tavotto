@@ -105,15 +105,24 @@ order: 330
   `text_policy=outlines` 保留为 `write_svg(..., text_policy="outlines")` 的内部退路：字形由批准脸的 fontTools 轮廓按已有
   gid / advance / offset / rise 落笔，不重新 shaping、不找系统字体。两种策略都不伪称字体嵌入（`embedded=false`）。零宽 PDF hairline 无等价 SVG
   表达时结构化拒绝。图片经既有解码与预算，PNG / JPEG 内嵌、TIFF 转 PNG，保原像素网格与 straight alpha。
-  ImportedPage 的 SVG 能力是**按来源有条件成立**：`FileResource.svg_sha256` 必须来自已核验的同 Figure 对，
+  PDF 来源的 ImportedPage 要输出 SVG，能力**按来源有条件成立**：`FileResource.svg_sha256` 必须来自已核验的同 Figure 对，
   写入器再次核 canonical 源与 companion 的字节 hash；只有第一张源页，opaque PDF 明确拒绝、不解析成猜测的路径、
   不自动栅格。导入 SVG 的 viewBox 归一到源可见框后复用 `placement.place()`，crop / rotation / flip 顺序不另写一份。
   每个实例前缀化所有 ID 与内部引用，CSS 选择器限定在该实例内，组 opacity 不分摊给 children。
   导入伴随件里的 `<text>` 在 text 策略下原样保留（`imported_text_elements`），outlines 策略下仍以 `svg_source_text_not_outlined` 拒收。
   配对生成、`require_built` 与持久化约束分别在 `export-pipeline.md` / `layout-versions-and-documents.md`。
+- **普通静态 SVG 是冻结的原生页资源**：`ir.is_native_svg(kind, origin)` 只准入 static / declarative 的 SVG，
+  不扩 `FILE_KINDS` 或位图 Image 闭集，不放行无配对的 execution SVG。static SVG 的 `FrozenSource` 表示是自身，
+  禁止再挂 companion；原始字节摘要仍由 `SourceArtifact` / `read_frozen` / writer 两道核验，不伪造 receipt。
+  `svgasset.snapshot` / `inspect_bytes` 统一有界读取、安全检查与物理 pt；惰性 DOCTYPE 只沿既有精确规则移除，校验表示不替代 raw SHA。
+  PDF 经 SVGIR 与同一 PdfWriter 生成 Form，嵌套 child 共用父文档的 `raster.DOCUMENT_MAX_PIXELS` 累计，不能逐 SVG 重置。
+  放置以固有物理 frame 为源框，非零 viewBox / PAR 仍由源解释；crop / flip / rotation 只经原 placement。
+  static SVG 在 PDF 与组装 SVG 中都保留外层物理框 clip，不能用可被源 CSS 覆盖的 overflow 属性代替；源内部 overflow 不改。
+  SVGIR 的 notes 进入原 warnings；gradient / mask / pattern / marker 等尚不能转换的表达按格式失败，不把静态准入当作全 SVG 支持。
+  看护：`tests/test_static_svg_canvas.py`、`tests/test_static_svg_overflow.py`。
 - **SVG 安全与检查共用一处（X03）**：纯标准库 `svgcheck.parse_svg` 是导入和 `inspector` 的有界 XML / CSS 闸，
   拒绝 DTD / entities / 脚本 / 事件 / 外链 / 远程字体、危险 CSS，以及重复、悬空、循环资源引用；内嵌图片也受预算。
-  只在可信 worker 生成边界、hash 冻结前允许移除精确匹配的 Matplotlib 惰性 DOCTYPE；任意导入文件不借这条放行。
+  可信 worker 生成与 `svgasset` 静态读取只复用 `strip_matplotlib_doctype` 移除精确惰性声明，raw 身份不换；自定义 DTD / entity / subset 仍拒绝，其他导入路径不得自行剥离放行。
   `svgwriter` 封口前再验整份组装结果，`inspector` 重新打开成品读物理尺寸、viewBox、轮廓 / 图片等字节事实。
   轮廓策略不把字体嵌入或文字检索判为 verified，text 策略也不判字体嵌入（只核 `font-family` 的首选族）；这也不等于已通过 Office 插入 / 重开 / 转 PDF 兼容性验证。
   看护：`tests/test_rendercore_svgwriter.py`、`tests/test_rendercore_svginspect.py`、`tests/test_worker_svg_pair.py`。

@@ -201,6 +201,11 @@ def produce(
     if not gaps_pdf:
         try:
             pdf_facts = pdfwriter.write_pdf(rp.page, pdf_tmp, provider, files)
+            for imported in pdf_facts.imported_pages:
+                for note in imported.get("native_svg", {}).get("notes", []):
+                    message = f"{imported['object_id']}: {note}"
+                    if message not in job.warnings:
+                        job.warnings.append(message)
         except pdfwriter.WriterError as exc:
             pdf_error = exc
             job.trace.fail("compose", getattr(exc, "code", "") or "writer_error")

@@ -3112,7 +3112,10 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
     wants_eps = engine_exportreq.FORMAT_EPS in req.formats
     formats = tuple(f for f in req.formats if f != engine_exportreq.FORMAT_EPS)
     raster_formats = tuple(f for f in formats if f in engine_exportreq.RASTER_FORMATS)
-    vector_formats = tuple(f for f in formats if f not in raster_formats)
+    internal_svg = (
+        wants_eps and src.chart is not None and engine_exportreq.FORMAT_SVG not in formats
+    )
+    scene_formats = (*formats, engine_exportreq.FORMAT_SVG) if internal_svg else formats
     # 同一张图所有格式出自同一个来源（与无标注的原图导出同一个判定）：要 EPS（且不要 SVG）时，有脚本的磁盘图
     # 也由 worker 现画，PDF / PNG / TIFF 与 EPS 的内层就出自同一次运行；没有脚本的图仍取磁盘文件（EPS 自己报 eps_needs_script）
     rerender_ids = frozenset(
@@ -3129,7 +3132,6 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
         dir_arg["rerender_ids"] = rerender_ids
 
     def run(fmts, objects, w_mm, h_mm, ppi, sub, target=None):
-        # 各自的子目录：两次合成都写 out.pdf，同目录会互相覆盖
         work = tmp_dir / sub
         work.mkdir(parents=True, exist_ok=True)
         canvas = engine_exportreq.CanvasSource(page_w_mm=w_mm, page_h_mm=h_mm, objects=objects)
@@ -3145,13 +3147,9 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
         return _export_produce_rendercore(_PageJob(job, canvas_req), work, **dir_arg, **extra)
 
     w_mm, h_mm = src.page_mm  # 页面尺寸（无留白 = 图幅）
-    if vector_formats:
-        produced += run(
-            vector_formats, stacked(list(src.objects), panel), w_mm, h_mm, req.ppi, "ann_vec"
-        )
+    ppi = req.ppi
+    target = None
     if raster_formats:
-        ppi = req.ppi
-        target = None
         if src.source_kind == "raster" and src.px_w:
             # 密度按**图幅**（面板）算：源的像素网格与图幅一一对应；留白只是在四周多出的页面
             fig_w, fig_h = float(src.w_mm), float(src.h_mm)
@@ -3172,25 +3170,17 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
                         )
                     else:
                         target = (int(src.px_w), int(src.px_h), dpi_x, dpi_y)
+    if scene_formats:
+        # 只编译/冻结一次：PDF/SVG 与栅格消费同一场景及 Canonical PDF。
+        # ppi/target 仍只决定栅格网格，矢量图幅与标注保持逻辑 mm。
         produced += run(
-            raster_formats, stacked(list(src.objects), panel), w_mm, h_mm, ppi, "ann_ras", target
+            scene_formats, stacked(list(src.objects), panel), w_mm, h_mm, ppi, "ann_scene", target
         )
     if wants_eps:
         if src.chart is not None:
             # 完整合成页面承担缩放、标注z序和留白；同一份SVG再交EPS契约，
             # 不把未缩放的原图EPS嵌到另一尺寸的页面上。
-            scene = next(
-                (item for item in produced if item.format == engine_exportreq.FORMAT_SVG), None
-            )
-            if scene is None:
-                scene = run(
-                    (engine_exportreq.FORMAT_SVG,),
-                    stacked(list(src.objects), panel),
-                    w_mm,
-                    h_mm,
-                    None,
-                    "ann_eps_scene",
-                )[0]
+            scene = next(item for item in produced if item.format == engine_exportreq.FORMAT_SVG)
             if scene.tmp_path is None:
                 produced.append(dataclasses.replace(scene, format=engine_exportreq.FORMAT_EPS))
             else:
@@ -3216,7 +3206,10 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
                     produced.append(_chart_conversion_failure(exc, engine_exportreq.FORMAT_EPS))
         else:
             produced.append(_produce_annotated_eps(job, req, tmp_dir, artifact_sources))
-    return produced
+    # EPS 的内部表示不增加用户未选择的 SVG 产物。
+    return [
+        item for item in produced if not internal_svg or item.format != engine_exportreq.FORMAT_SVG
+    ]
 
 
 def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
@@ -3584,6 +3577,111 @@ def _export_produce_chart_original(job, src, req, tmp_dir: Path):
     return engine_exportjob.enforce_one_basis(produced, snapshot.source_sha256)
 
 
+def _export_produce_static_svg_original(job, tmp_dir: Path, *, artifact_sources=None) -> list:
+    """All original formats consume one frozen raw SVG and intrinsic physical frame."""
+    from . import svgasset
+
+    req, src = job.request, job.request.original
+    raw, data, probe = svgasset.snapshot(safe_resolve(src.figure_id))
+    source_sha = hashlib.sha256(raw).hexdigest()
+    artifact = engine_figcapture.SourceArtifact(
+        source_id=src.figure_id,
+        origin=engine_figcapture.ORIGIN_STATIC,
+        kind="svg",
+        bytes_sha256=source_sha,
+        size_bytes=len(raw),
+    )
+    manifest = {"provenance": {"sources": [artifact.to_payload()]}}
+    convert = engine_exportjob.Basis(engine_exportjob.BASIS_CONVERT, source_sha)
+    canonical = tmp_dir / "canonical.pdf"
+    conversion_error = None
+    if any(fmt in req.formats for fmt in ("pdf", "png", "tiff")):
+        frozen = tmp_dir / "source.svg"
+        frozen.write_bytes(raw)
+        try:
+            job.check_cancelled()
+            facts = pdfbackend.original_pdf(frozen, canonical)
+            for note in facts.get("notes", []):
+                if note not in job.warnings:
+                    job.warnings.append(note)
+        except Exception as exc:  # noqa: BLE001 -- conversion is a per-format result
+            conversion_error = {"error": str(exc)[:200], **getattr(exc, "params", {})}
+    produced = []
+    for fmt in req.formats:
+        job.check_cancelled()
+        target = tmp_dir / f"original.{fmt}"
+        if fmt == engine_exportreq.FORMAT_SVG:
+            target.write_bytes(data)
+            produced.append(
+                engine_exportjob.Produced(
+                    format=fmt,
+                    tmp_path=target,
+                    width_mm=probe["w_pt"] * 25.4 / 72,
+                    height_mm=probe["h_pt"] * 25.4 / 72,
+                    vector=engine_artifactinspect.svg_vector(target),
+                    basis=engine_exportjob.Basis(engine_exportjob.BASIS_COPY, source_sha),
+                    manifest=manifest,
+                )
+            )
+        elif fmt == engine_exportreq.FORMAT_EPS:
+            produced.append(
+                _produce_svg_asset_eps(
+                    job,
+                    src,
+                    req.ppi or engine_exportreq.PPI_DEFAULT,
+                    tmp_dir,
+                    artifact_source=(artifact_sources or {}).get(src.figure_id),
+                )
+            )
+        elif conversion_error is not None:
+            produced.append(
+                engine_exportjob.Produced(
+                    format=fmt, error_code="format_failed", error_params=conversion_error
+                )
+            )
+        else:
+            try:
+                if fmt == engine_exportreq.FORMAT_PDF:
+                    target = canonical
+                    px_w = px_h = None
+                else:
+                    transparent = req.background == engine_exportreq.BACKGROUND_TRANSPARENT
+                    method = (
+                        pdfbackend.original_tiff
+                        if fmt == engine_exportreq.FORMAT_TIFF
+                        else pdfbackend.original_png
+                    )
+                    facts = method(
+                        canonical,
+                        target,
+                        req.ppi or engine_exportreq.PPI_DEFAULT,
+                        transparent=transparent,
+                    )
+                    px_w, px_h = facts["px_w"], facts["px_h"]
+                produced.append(
+                    engine_exportjob.Produced(
+                        format=fmt,
+                        tmp_path=target,
+                        width_px=px_w,
+                        height_px=px_h,
+                        width_mm=probe["w_pt"] * 25.4 / 72,
+                        height_mm=probe["h_pt"] * 25.4 / 72,
+                        vector=fmt == engine_exportreq.FORMAT_PDF,
+                        basis=convert,
+                        manifest=manifest,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 -- other formats remain deliverable
+                produced.append(
+                    engine_exportjob.Produced(
+                        format=fmt,
+                        error_code="format_failed",
+                        error_params={"error": str(exc)[:200], **getattr(exc, "params", {})},
+                    )
+                )
+    return engine_exportjob.enforce_one_basis(produced, source_sha)
+
+
 def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> list:
     """`scope=original`：这张图**按它自己的尺寸**出。
 
@@ -3611,46 +3709,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
         and not src.overrides
         and src.figure_snapshot is None
     ):
-        from . import svgasset
-
-        data, probe = svgasset.read(safe_resolve(src.figure_id))
-        # 一张图一个基准（#1185 / #1209）：SVG 素材的基准就是这份文件的字节。svg = 这份字节；
-        # eps 只有「活 Figure 被证明出自这份字节」才给（`_produce_svg_asset_eps`），否则逐项失败，
-        # **绝不**为 eps 重新执行脚本换一个来源。最后由 `enforce_one_basis` 对作业结果再断言一遍。
-        source_sha = engine_figcapture.hash_file(safe_resolve(src.figure_id))[0]
-        produced = []
-        for fmt in req.formats:
-            job.check_cancelled()
-            if fmt == engine_exportreq.FORMAT_SVG:
-                target = tmp_dir / "original.svg"
-                target.write_bytes(data)
-                produced.append(
-                    engine_exportjob.Produced(
-                        format=fmt,
-                        tmp_path=target,
-                        width_mm=probe["w_pt"] * 25.4 / 72,
-                        height_mm=probe["h_pt"] * 25.4 / 72,
-                        vector=engine_artifactinspect.svg_vector(target),
-                        basis=engine_exportjob.Basis(engine_exportjob.BASIS_COPY, source_sha),
-                    )
-                )
-            elif fmt == engine_exportreq.FORMAT_EPS:
-                produced.append(
-                    _produce_svg_asset_eps(
-                        job,
-                        src,
-                        req.ppi or engine_exportreq.PPI_DEFAULT,
-                        tmp_dir,
-                        artifact_source=(artifact_sources or {}).get(src.figure_id),
-                    )
-                )
-            else:
-                produced.append(
-                    engine_exportjob.Produced(
-                        format=fmt, error_code="svg_asset_export_unsupported", error_params={}
-                    )
-                )
-        return engine_exportjob.enforce_one_basis(produced, source_sha)
+        return _export_produce_static_svg_original(job, tmp_dir, artifact_sources=artifact_sources)
     dpi = req.ppi or engine_exportreq.PPI_DEFAULT
     job.check_cancelled()
     if (
@@ -4078,13 +4137,6 @@ def _export_produce_rendercore(
         项目——与旧路 `safe_resolve` 只在碰面板时才要项目同一语义。"""
 
         def resolve(self, obj: dict):
-            if Path(str(obj.get("id", ""))).suffix.lower() in SVG_EXT:
-                safe_resolve(obj["id"])
-                raise engine_exportreq.ExportRequestError(
-                    "svg_asset_export_unsupported",
-                    "Static SVG canvas conversion is not available",
-                    {},
-                )
             fs = rc_sources.StaticSourceResolver(require_project()).resolve(obj)
             # 这条路不经 `safe_resolve`（它自己做包含检查与存在性），TIFF 的支持范围得在这里补上：
             # 漏掉它，范围之外的 TIFF 在候选后端下会被画成一张错图交付（issue #534）。先让解析器把

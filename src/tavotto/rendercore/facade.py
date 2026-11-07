@@ -402,7 +402,7 @@ class _PathResolver:
         if not Path(path).is_file():
             raise SourceError("source_missing", f"{oid}: {path} 不存在", {"figure": oid})
         kind = _kind_of(path)
-        if kind not in ir.FILE_KINDS:
+        if kind not in ir.FILE_KINDS and not ir.is_native_svg(kind, "static"):
             raise SourceError(
                 "source_kind_unsupported", f"{oid}: {kind!r} 不是可放置的源", {"figure": oid}
             )
@@ -652,6 +652,24 @@ def prepare_original_eps(svg: bytes, page_pt: tuple[float, float]) -> dict:
         raise OriginalEPSError(exc.code, str(exc), getattr(exc, "params", {})) from exc
 
 
+def _original_svg_pdf(src: Path):
+    """Temporary canonical PDF for direct original_png/tiff SVG callers."""
+    from contextlib import contextmanager
+
+    from ..engine import config
+
+    @contextmanager
+    def prepared():
+        root = config.data_dir()
+        root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="original-svg-", dir=root) as temporary:
+            target = Path(temporary) / "canonical.pdf"
+            facts = original_pdf(src, target)
+            yield target, facts.get("notes", [])
+
+    return prepared()
+
+
 def original_pdf(src: Path, out: Path, page_pt: tuple[float, float] | None = None) -> dict:
     """矢量源：**整页搬运第一页**（pikepdf copy_foreign，不重画，页面尺寸 / 字体 / 路径一个字节不动）；
     位图源：新建一页 `page_pt` 大小、整页铺一个 Image XObject（不声称矢量）。回同旧后端的事实。"""
@@ -682,6 +700,52 @@ def original_pdf(src: Path, out: Path, page_pt: tuple[float, float] | None = Non
             "px_h": None,
             "vector": True,
             "pages": pages,
+        }
+
+    if src.suffix.lower() == ".svg":
+        import hashlib
+
+        from .. import svgasset
+        from ..engine import figcapture
+
+        data, _, size = svgasset.snapshot(src)
+        artifact = figcapture.SourceArtifact(
+            source_id=src.name,
+            origin=figcapture.ORIGIN_STATIC,
+            kind="svg",
+            bytes_sha256=hashlib.sha256(data).hexdigest(),
+            size_bytes=len(data),
+        )
+        key = f"file:{artifact.bytes_sha256[:16]}:{artifact.semantic_identity()[7:23]}"
+        resource = ir.FileResource(
+            artifact.source_id,
+            artifact.kind,
+            artifact.bytes_sha256,
+            artifact.origin,
+            artifact.semantic_identity(),
+            svg_sha256=artifact.bytes_sha256,
+        )
+        w_pt, h_pt = size["w_pt"], size["h_pt"]
+        page = ir.Page(
+            w_pt,
+            h_pt,
+            (ir.ImportedPage(key, (0, 0, w_pt, h_pt), object_id=src.name),),
+            {key: resource},
+            background=None,
+        )
+        facts = pdfwriter.write_pdf(page, out, provider(), {key: data})
+        return {
+            "w_pt": w_pt,
+            "h_pt": h_pt,
+            "px_w": None,
+            "px_h": None,
+            "vector": True,
+            "pages": 1,
+            "notes": [
+                note
+                for imported in facts.imported_pages
+                for note in imported.get("native_svg", {}).get("notes", [])
+            ],
         }
 
     if page_pt is None or page_pt[0] <= 0 or page_pt[1] <= 0:
@@ -738,6 +802,9 @@ def original_png(src: Path, out: Path, ppi: int | None, transparent: bool = Fals
     """矢量源按 `ppi` 栅格（child）；PNG 源**逐字节复制**；其它位图转码不重采样（像素网格不变）。"""
     src, out = Path(src), Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
+    if src.suffix.lower() == ".svg":
+        with _original_svg_pdf(src) as (canonical, notes):
+            return {**original_png(canonical, out, ppi, transparent), "notes": notes}
     if src.suffix.lower() == ".pdf":
         if not ppi:
             raise ValueError("矢量源栅格化必须给 ppi")
@@ -775,6 +842,9 @@ def original_tiff(
     （源文件自己声明过的），没给就写「没有绝对单位」。"""
     src, out = Path(src), Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
+    if src.suffix.lower() == ".svg":
+        with _original_svg_pdf(src) as (canonical, notes):
+            return {**original_tiff(canonical, out, ppi, transparent), "notes": notes}
     if src.suffix.lower() == ".pdf":
         if not ppi:
             raise ValueError("矢量源栅格化必须给 ppi")

@@ -94,10 +94,8 @@ def test_svg_asset_basis_is_the_file_bytes():
         "how": "redraw",
         "conditions": [er.COND_SVG_ASSET_BINDING, er.COND_LIVE_FIGURE],
     }
-    assert r["formats"]["pdf"]["reason"] == "svg_asset_export_unsupported"
-    assert route("canvas", ["svg"], er.KIND_SVG)["formats"]["svg"]["reason"] == (
-        "svg_asset_export_unsupported"
-    )
+    assert r["formats"]["pdf"] == {"how": "convert"}
+    assert route("canvas", ["svg"], er.KIND_SVG)["formats"]["svg"] == {"how": "convert"}
 
 
 def test_raster_without_execution_has_no_svg():

@@ -54,7 +54,8 @@ order: 210
     脚本运行。**不许**用 `Pixmap.save(…, "ps")` 之类把位图裹成 PS 冒充矢量。
     **原图导出带画布标注（QA-WIN-20，2026-10-31）**：`original.objects`（`OriginalSource.objects`，仅 text / arrow / shape，坐标已由前端换算到原图图幅、
     图幅外由页面裁掉；非空时 `w_mm` / `h_mm` 必填，否则 `bad_objects`）。非空时 `app._export_produce_original_annotated` 构造「页面 = 图幅、面板在 (0,0) + 标注」的
-    画布请求交给 `_export_produce_rendercore`——标注绘制只有 RenderCore 一份。PDF / SVG / PNG / TIFF 直接出自这份合成（SVG 能力与整版一致：同一个源整版给不出 SVG 时这里给同一个稳定码）；
+    画布请求交给 `_export_produce_rendercore`——标注绘制只有 RenderCore 一份。PDF / SVG / PNG / TIFF 一次提交同一场景、RenderPlan 与 FrozenSource，
+    不按矢量 / 栅格分次解析来源；PPI / raster_target 只决定栅格网格，不改逻辑图幅、标注或层序。SVG 能力与整版一致：同源整版给不出时这里给同一个稳定码；
     位图源取有效 ppi = `px_w` × 25.4 / `w_mm`，页面像素数 = 源像素网格（尺寸一致，不保证逐像素）。**EPS**（自写叠加，ADR 0046 补记；**不用 Ghostscript / 任何外部程序**）：
     worker 的 matplotlib 照旧出原图 EPS，`engine/epsoverlay.compose` 把它按 EPSF 嵌入惯例（保存状态 + `/showpage {} def` + `%%BeginDocument`…`%%EndDocument` 原样嵌入 + 恢复）
     放进外层 EPS（BoundingBox = 图幅），再叠 `rendercore/epswriter.overlay_ps` 把 `plan.compile_page` 为同一组标注编出的 IR 写成的 PostScript 运算符（路径 / 填充 / 描边 / 线型 / 裁剪 / 变换；
@@ -63,7 +64,7 @@ order: 210
     **单一来源 / 图层次序 / 横纵密度**（#1551 评审）：要 EPS 且不要 SVG 时（`exportroute.original_rerender`），有脚本的磁盘图在合成路径里也由 worker 现画（`_export_produce_rendercore(rerender_ids=…)`），PDF / PNG / TIFF 与 EPS 内层出自同一次运行，
     与无标注的 `_resolve_panel_source(rerender=True)` 同一判定；`original.objects_below` = `objects` 里前几个画在图下面（z 序保留；EPS 里写在嵌入段之前）；位图源横纵密度不同（逻辑 mm 宽高比 ≠ 像素宽高比）时，
     PNG / TIFF 先按逻辑图幅各向同性合成（ppi 取两轴中较大的密度，文字 / 行距 / 描边不被压扁），再由 `raster.resample_area`（纯标准库面积平均，RGBA 按预乘权重）整张缩到恰好 `px_w × px_h`，pHYs / TIFF 分辨率写源的 x / y 密度（`RasterBuffer.dpi_y`）；等密度位图不重采样；PDF / SVG 仍按逻辑 mm。
-    看护 `tests/test_export_original_annotations.py`。
+    看护 `tests/test_export_original_annotations.py`、`tests/test_original_composition_sources.py`。
     **单图留白 `original.pad_mm`**（ADR 0161 §3）：`[l, t, r, b]` mm，可为负，缺席或全 0 = 解析为 `()`，请求 / 计划身份 / 输出与从前逐字节相同。非零时
     （没有标注也）走 `_export_produce_original_annotated`：页面 = `w_mm + l + r` × `h_mm + t + b`（`OriginalSource.page_mm`），面板落在 `(l, t)`，`objects` 坐标以**页面**左上为原点；
     位图源的有效 ppi 仍按**图幅**（源像素网格与图幅一一对应），横纵密度不同时 `raster_target` 取整个页面的像素数；EPS 经 `epsoverlay.compose(offset_pt=…, clip_page=True)` 把原图 EPS 嵌在 `(l, b)`、整页裁到 BoundingBox。
@@ -117,8 +118,12 @@ order: 210
     给旧图补证。FrozenSource仍只含公开receipt，无附件缺省调用保持，打包不为获取输入而重新执行脚本。
   * **一次作业里，同一张图的所有格式出自同一个基准（#1185 / #1209，A3）**：做不到的格式逐项失败并给出
     真实原因，**不得悄悄换来源、不得为某个格式重新执行脚本换来源**。SVG 素材（`scope=original`、无编辑）的
-    基准是**文件字节**（sha256 取磁盘原始字节）：svg = 这份字节；eps 只有「活 Figure 被证明出自这份字节」（`_svg_asset_binding`，
-    与 PDF 路径同一个 `svgstore.load(…static_sha256=…)` 先例）才给，且只走 `existing_only`（不启动 worker）。
+    基准是**同次有界读取的原始文件字节**（`svgasset.snapshot`）：所有成功格式只认这一个原始 SHA。
+    无留白 / 标注的原图 SVG 交付既有安全校验表示；PDF 按固有物理尺寸生成一份 Canonical PDF，PNG / TIFF 只消费该 PDF，
+    不逐格式重读 XML。带留白 / 标注时沿上面的同一场景合成，不另建转换链。画布静态 SVG 的资源、物理框与共享像素预算见 `rendercore.md`；
+    route 的 convert 仅表示可尝试，具体表达不支持时逐格式失败，其他成功格式仍交付。
+    EPS 只有「活 Figure 被证明出自这份字节」（`_svg_asset_binding`，与 PDF 路径同一个 `svgstore.load(…static_sha256=…)` 先例）才给，
+    且只走 `existing_only`（不启动 worker）；画布 EPS 仍为 `eps_not_for_canvas`。看护 `tests/test_static_svg_original.py`。
     断言写在**作业汇总处**而不是各格式路径里：`Produced.basis`（`copy`/`convert`/`redraw` + 基准 sha256）由生产路径
     如实声明，`exportjob.enforce_one_basis` 对结果核一遍，基准身份与参照不同（含无证明的 `None`）的那一项改成
     `export_basis_mismatch`，其余照常交付；没声明 `basis` 的路径尚不受约束（#1209 A2 把其余路径接进来）。

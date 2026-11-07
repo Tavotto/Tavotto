@@ -168,6 +168,7 @@ class SvgWriter:
         self._glyphs: dict[tuple[str, int], str] = {}
         self._images: dict[str, tuple[str, dict]] = {}
         self._sources: dict[str, ET.Element] = {}
+        self._static_svg_sizes: dict[str, tuple[float, float]] = {}
         self._raster_pixels = 0
         self.root = ET.Element(
             f"{{{SVG}}}svg",
@@ -540,6 +541,11 @@ class SvgWriter:
                     except (SVGError, ValueError):
                         root = None
                 if root is None:
+                    if res.kind == "svg" and res.origin == "static":
+                        from .. import svgasset
+
+                        data, size = svgasset.inspect_bytes(data)
+                        self._static_svg_sizes[node.resource] = (size["w_pt"], size["h_pt"])
                     root = parse_svg(data)
                 for element in root.iter():
                     if not element.tag.startswith("{"):
@@ -551,12 +557,16 @@ class SvgWriter:
                     )
                 self.facts.imported_text_elements += texts
                 values = [float(v) for v in root.get("viewBox", "").replace(",", " ").split()]
-                if res.kind == "svg" and res.origin == "declarative":
+                if ir.is_native_svg(res.kind, res.origin):
                     # Native SVG may establish its user coordinate system from
                     # CSS-pixel intrinsic lengths without an explicit viewBox.
                     from ..svgscene import _physical_size
 
-                    w_pt, h_pt, view_box = _physical_size(root)
+                    if res.origin == "static":
+                        w_pt, h_pt = self._static_svg_sizes[node.resource]
+                        view_box = root.get("viewBox")
+                    else:
+                        w_pt, h_pt, view_box = _physical_size(root)
                     if view_box is None:
                         root.set("viewBox", f"0 0 {_num(w_pt * 96 / 72)} {_num(h_pt * 96 / 72)}")
                         values = [0, 0, w_pt * 96 / 72, h_pt * 96 / 72]
@@ -578,14 +588,17 @@ class SvgWriter:
                     },
                 ) from exc
         root = copy.deepcopy(self._sources[node.resource])
-        native_svg = res.kind == "svg" and res.origin == "declarative"
+        native_svg = ir.is_native_svg(res.kind, res.origin)
         if native_svg:
             from ..svgscene import _physical_size
 
-            width, height, _ = _physical_size(root)
+            if res.origin == "static":
+                width, height = self._static_svg_sizes[node.resource]
+            else:
+                width, height, _ = _physical_size(root)
         else:
             _, _, width, height = (float(v) for v in root.get("viewBox").replace(",", " ").split())
-        if native_svg and node.crop in (None, (0, 0, 1, 1)):
+        if native_svg and res.origin == "declarative" and node.crop in (None, (0, 0, 1, 1)):
             # The nested SVG viewport already clips its physical source frame.
             # A second coincident Path clip multiplies edge coverage (visible
             # at fractional CSS pixels), although no crop was requested.

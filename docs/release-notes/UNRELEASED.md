@@ -17,6 +17,10 @@ v0.18.0 的五条用户可见说明已迁入 v0.18.0.md。渠道启用在 v0.18.
 英文写，与 release notes 一致：**按症状和触发条件写，不要按提交写**。
 -->
 
+## SVG assets can be exported with a layout or at their original size
+
+SVG assets can now be included in PDF, PNG, TIFF and SVG layout exports, and exported at their own size with margins or annotations. Formats exported together use the same source version, so a file changing during export cannot silently produce different pictures. Each format reports SVG features it cannot render while other successful outputs remain available.
+
 ## Install computational-chart project packages in a new folder
 
 The project menu and project list can inspect a computational-chart project package and install its resources into a new folder. Opening the installed project preserves your previous draft and saves a working copy through the normal save flow. If you close the installation window while save confirmation is pending, reopening the installation record continues with your latest draft instead of replacing it with the package's original layout. Installation does not run the included scripts.

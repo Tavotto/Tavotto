@@ -84,12 +84,15 @@ packagerelocation只在活跃Prepared内准备全量oldRef→newRef、原序正�
 
 - 计算面板导出 PDF/PNG/TIFF：编辑后场景 SVG → **IR**（`rendercore` 纯 stdlib 解析 + 现有 pikepdf/fontTools/uharfbuzz/pypdfium2）
   → 既有 `pdfwriter`（Canonical PDF）→ 既有栅格管线；**零 PyMuPDF 不变**，父进程不 import matplotlib 不变。
-- SVG 格式导出：**直接交付编辑后场景字节**（同静态素材的 copy 基准语义），不经翻译器。
+- 无标注 / 留白的原图 SVG 按原合同直接交付冻结场景，不经 SVG→IR 翻译；画布及带标注 / 留白的原图由既有 SVG writer 输出同一合成场景。
+- 2026-11-07 静态导出接线：普通 SVG 也可进入同一 RenderPlan：冻结原始字节与单一 SHA，自身就是 SVG 表示，不冒充 Figure 配对或计算来源。
+  无留白 / 标注的 PDF 原图按固有物理 frame 建 Canonical PDF，再供 PNG / TIFF；留白 / 标注的所有非 EPS 格式只冻结、合成一次。
+  static 原生页的物理框 clip、共享 raster meter 与逐格式表达边界以 `rendercore.md` / `export-pipeline.md` 为唯一细则。
 - 原生编辑的生产导出使用可选`chart_render_profile`与既有完整原序`overrides`，共同进入原图/标注/留白/画布/多页的冻结计算身份和作业内缓存；不是只冻结model/binding或排序后的patch hash。原图SVG以显式native profile写v2包，缺省legacy/空编辑仍按原v1合同；无chart请求的payload与计划身份不新增字段。
 - 计算原图EPS：完整冻结SVG由`pdfbackend.prepare_original_eps`经RenderCore的共享SVGIR/批准字形准备有界PS，再由既有owned chart worker的固定`pack_eps`动作封EPS；不要求原Python脚本，不重新计算另一份场景。物理尺寸、SVG/PS摘要与完整原序编辑共同核验；标注/留白先复用同一完整合成SVG，再走同一契约。不能无损表达的透明/图像/渐变等逐格式明确失败，不静默栅格化或丢装饰。旧Python/live EPS及画布`eps_not_for_canvas`保持。
 - 翻译器能力逐项声明（native / unsupported 点名元素）：native=路径命令（含弧转换）、基础形状、路径 clip、
   opacity、dash、文字（批准脸+HarfBuzz，旋转经 Group 变换，字体不可解析时**按披露回退或逐项失败**，不静默换脸）；
-  unsupported=渐变/mask/filter/pattern → 该格式逐项失败带元素清单（同 `eps_annotations_unsupported` 的诚实模式）。
+  unsupported=渐变/mask/filter/pattern/marker 等尚未表达的特性 → 需要该转换的格式逐项失败；原 SVG 可交付不代表 PDF / EPS 等也支持。
 - 文字层：PDF 文字层保留真实 Unicode（pdfwriter 既有 ToUnicode/ActualText 机制）；实验三核对文本层含标题/图例/新刻度。
 - 2026-11-06 保真接线：局部 CTM 只应用一次，根视口按物理 pt 与 preserveAspectRatio 映射；use/符号视口、继承字号、实际 CSS 层叠及嵌入图像走同一 IR。多成员 clipPath 是各自填充规则的并集，用 ClipUnion 表达；PDF 以矢量 luminosity mask 与隔离 Form 保留曲线及嵌套透明，SVG 保留各成员 clip-rule。不能拼成一个绕向路径，否则反向重叠会相消；单 Path 原分支保持原样。
 - 连续文字按 SVG text chunk 统一布局：绝对 x/y 开新 chunk，相对 dx/dy、样式或 tspan 边界不拆锚定；空白归一后用既有 typography/HarfBuzz shaping，整段应用 text-anchor，逐字旋转不改变水平基线前进。22 项相同批准字体的 Chromium 参考（其中 9 项再经 PDFium 基线对拍）及精确文本层回归已通过；不据此宣称双向文字、竖排、textPath 或全部 baseline 模式等价。
@@ -97,7 +100,7 @@ packagerelocation只在活跃Prepared内准备全量oldRef→newRef、原序正�
 ### 3. 身份与安全（扩展现有合同，不新增旁路）
 
 - 2026-11-06 接线细化：计算产物使用 `SourceArtifact.origin=declarative`，由 `render_revision` 标识模型/绑定/来源/环境版本，不伪造 Figure 执行回执。声明式 Canonical PDF 与 SVG companion 必须同来源同版本；static/execution 既有配对与缺省序列化保持原样。RenderPlan 继续消费同一个来源解析器，不另建计算图表导出管线。
-- 不能建立 Canonical PDF 时，原生声明式 SVG 可作为其自身的 SVG 表达进入同一计划；例外精确限定 kind=svg 且 origin=declarative，不扩普通 static FILE_KINDS，不允许嵌套 companion。SVG 写出核对字节摘要并保留物理尺寸/视口，PDF 逐项明确失败，不能造空 PDF。完整 SVG viewport 不再额外施加一次同边界 Path 裁剪；普通 PDF/SVG companion 路径不变。
+- 不能建立 Canonical PDF 时，原生声明式 SVG 的既有 fallback 保留，PDF 逐项明确失败而不造空页；`ir.is_native_svg` 另准入有原始字节身份的 static SVG 自表示，二者均禁止嵌套 companion，`FILE_KINDS` 不扩。SVG 写出核原 SHA 并保物理尺寸/视口；declarative 完整 viewport 不重复同边界 Path clip，static 则保原 placement 外框 clip，普通 PDF/SVG companion 路径不变。
 - 计算面板的版本身份 = **场景字节摘要 + 模型摘要 + 数据摘要 + 绑定摘要 + 计算环境身份**（worker matplotlib/引擎版本）；
   任一变化都不得复用旧几何/旧快照（SG02 冻结 schema）。
 - 原生manifest渲染另有`native-manifest/1` profile；既有`legacy-scaffold/1`和自包含v1字节不变。v2包闭式携带profile与完整原序overrides，恢复先实际重放存储状态再处理新请求。原生身份除原序列表外纳入精确JSON摘要，保留同档应用顺序、i64整数和1/1.0在文字setter中的实际区别；不修改旧patch_hash或ChartModel的数值身份。父层仅校验形状/预算，setter与目标所有权仍须worker核准，包摘要不授予执行或字体文件权限。
@@ -112,7 +115,7 @@ packagerelocation只在活跃Prepared内准备全量oldRef→newRef、原序正�
 ### 4. 明确不做（本轮）
 
 - 不从普通 SVG 猜测/反推原始数据；OCR/路径反算只出候选。
-- 不把静态 SVG 塞进 `FILE_KINDS` 冒充可放置原件；静态素材通道行为不变（`assets.svg-preview` 回归底线）。
+- 不把普通 SVG 的静态放置 / 转换当成计算绑定或可信 Figure 来源，不因此授数据编辑、脚本执行或写回资格；`FILE_KINDS` 与 execution 配对边界保持，`assets.svg-preview` 仍是回归底线。
 - 不新增原生依赖（resvg/svg2pdf 等不引入）；渐变等表达不了的特性以逐格式失败披露。
 - 不重写执行入口、版本时间线、认证、渲染闭包（1.0 收敛纪律）。
 

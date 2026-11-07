@@ -5,6 +5,7 @@ import pytest
 from support.registrystub import stem_registry
 from tavotto import app as m, svgasset
 from tavotto.engine import originalspec, pool, project_refresh, project_watch
+from test_static_svg_canvas import _read_pdf, provider as provider
 
 SVG = b'<svg xmlns="http://www.w3.org/2000/svg" width="96" height="48" viewBox="0 0 96 48"><path d="M0 0L96 48" stroke="red"/></svg>'
 
@@ -145,10 +146,12 @@ def test_original_svg_export_preserves_validated_source_without_execution(projec
         exportjob.reset_for_tests()
 
 
-def test_canvas_svg_export_fails_explicitly_instead_of_dropping_the_image(project):
+def test_canvas_svg_export_preserves_the_vector_asset_without_execution(project, provider):
     from tavotto.engine import exportjob
 
     client, root = project
+    source = SVG.replace(b"<path", b'<rect width="96" height="48" fill="red"/><path', 1)
+    (root / "F.svg").write_bytes(source)
     exportjob.reset_for_tests()
     try:
         response = client.post(
@@ -158,6 +161,7 @@ def test_canvas_svg_export_fails_explicitly_instead_of_dropping_the_image(projec
                 "filename": "canvas",
                 "formats": ["pdf"],
                 "overwrite": "replace",
+                "background": "white",
                 "canvas": {
                     "page_w_mm": 100,
                     "page_h_mm": 100,
@@ -175,10 +179,17 @@ def test_canvas_svg_export_fails_explicitly_instead_of_dropping_the_image(projec
                 },
             },
         )
-        assert response.status_code >= 400, response.json
-        assert response.json["code"] == "svg_asset_export_unsupported", response.json
-        assert not response.json.get("files")
-        assert not (root / "tavottofile" / "export" / "canvas.pdf").exists()
+        assert response.status_code == 200, response.json
+        assert response.json["status"] == "done", response.json
+        (output,) = response.json["files"]
+        result = _read_pdf(
+            root / "tavottofile" / "export" / output["name"],
+            [(10, 5, (255, 0, 0)), (30, 20, (255, 255, 255))],
+            page_mm=(100, 100),
+        )
+        assert result["form_count"] >= 1
+        assert result["image_sizes"] == []
+        assert (root / "F.svg").read_bytes() == source
     finally:
         exportjob.reset_for_tests()
 

@@ -396,16 +396,33 @@ def test_unsupported_ir_feature_fails_only_conversion_formats_and_still_delivers
 
 
 def test_eps_unavailability_does_not_discard_the_computed_svg_or_pdf(project):
-    client, _root, pdfium = project
+    client, root, pdfium = project
+    # Complete opaque computed scenes now support EPS. A real partial-alpha
+    # decoration remains legal in SVG/PDF but cannot be expressed by PostScript.
+    decoration = (
+        b'<rect id="eps-glass" x="2" y="2" width="6" height="6" fill="red" fill-opacity=".5"/>'
+    )
+    scene = SCENE.replace(b"</svg>", decoration + b"</svg>")
+    (root / "chart.svg").write_bytes(scene)
     chart = _bind(client, 0.25)
     body, outputs = _export(client, _spec(original=_original(chart), formats=("svg", "pdf", "eps")))
     assert body["status"] == "partial", body
-    assert _line_geometries(_path(body, outputs["svg"]).read_bytes()) == [
-        pytest.approx((10, 70, 90, 70), abs=1e-6)
-    ]
-    _assert_pdf(pdfium, _path(body, outputs["pdf"]), y=70)
-    assert outputs["eps"]["status"] == "failed", body
-    assert outputs["eps"]["error"]["code"] == "eps_needs_script", body
+    svg = _path(body, outputs["svg"]).read_bytes()
+    assert _line_geometries(svg) == [pytest.approx((10, 70, 90, 70), abs=1e-6)]
+    glass = next(
+        element for element in ET.fromstring(svg).iter() if element.get("id") == "eps-glass"
+    )
+    assert float(glass.get("fill-opacity")) == 0.5
+    pdf = _path(body, outputs["pdf"])
+    _assert_pdf(pdfium, pdf, y=70)
+    _, _, _, image = _pdf_page(pdfium, pdf)
+    assert image.getpixel((5 * 2, 5 * 2)) == pytest.approx((255, 128, 128), abs=2)
+    eps = outputs["eps"]
+    assert eps["status"] == "failed" and eps["name"] is None, body
+    assert eps["error"]["code"] == "unsupported_capability", body
+    assert eps["error"]["params"]["operation"] == "object_alpha", body
+    assert not (Path(body["export_dir"]) / "computed.eps").exists()
+    assert (root / "chart.svg").read_bytes() == scene
 
 
 def test_canvas_unsupported_ir_feature_preserves_the_native_computed_svg(project):

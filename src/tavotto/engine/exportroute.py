@@ -102,6 +102,10 @@ def panel_route(
         source = SOURCE_DECLARATIVE
     elif executes_from_snapshot(has_reference=has_snapshot):
         source = SOURCE_SNAPSHOT
+    elif svg_asset and not overrides:
+        # Unedited SVG's basis is always its frozen disk bytes. EPS may only
+        # consume an existing byte-bound Figure; it does not rerun this source.
+        source = SOURCE_DISK
     elif not executes:
         source = SOURCE_DISK
     elif can_draw:
@@ -194,9 +198,12 @@ def _format_route(
             }
         # 同一作业还要 svg 时 eps 只取已有的活 Figure（`existing_only`），不启动 worker
         return {"how": HOW_REDRAW, **({"conditions": [COND_LIVE_FIGURE]} if wants_svg else {})}
-    if static_svg_asset and (canvas or fmt != "svg"):
-        # 没有编辑的 SVG 素材：画布合成不接，原图范围只有 svg（逐字复制）与 eps（字节绑定的活 Figure）
-        return _unavailable(REASON_SVG_ASSET_UNSUPPORTED)
+    if static_svg_asset and canvas:
+        # Raw static SVG is its own representation; the producer decides
+        # which paints/layouts it can express, independently per format.
+        return {"how": HOW_CONVERT}
+    if static_svg_asset and fmt != "svg":
+        return {"how": HOW_CONVERT}
     if source == SOURCE_SNAPSHOT:
         # 加载持久化快照，不跑脚本；引用过期（与源或编辑对不上）整次导出被拒
         return {"how": HOW_CONVERT}

@@ -51,6 +51,7 @@ from .ir import (
     Stroke,
     compose,
     hex2rgb,
+    is_native_svg,
     mm2pt,
     rotate_about,
     unsupported_for,
@@ -188,7 +189,7 @@ def _panel_node(
     # 面板旋转限 90° 倍数（旧 facade 用户合同：非 90 倍数时 show_pdf_page / insert_image 不填满目标
     # 矩形，与画布语义对不上）；PDF 与位图同一条规则。
     rot = int(round(float(o.get("rotation") or 0) / 90.0)) * 90 % 360
-    if art.kind == "pdf" or (art.kind == "svg" and art.origin == "declarative"):
+    if art.kind == "pdf" or is_native_svg(art.kind, art.origin):
         return ImportedPage(
             resource=key,
             rect=rect,

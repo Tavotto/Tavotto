@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Callable, Protocol
 
 from ..engine import exportroute, figcapture, runtimeasset
-from .ir import FILE_KINDS
+from .ir import FILE_KINDS, is_native_svg
 
 SOURCE_ERROR_CODES = (
     "source_missing",  # 面板指向的文件不存在
@@ -99,11 +99,11 @@ class FrozenSource:
         return self.svg_text
 
     def svg_representation(self) -> FrozenSource | None:
-        if self.artifact.origin == figcapture.ORIGIN_DECLARATIVE and self.artifact.kind == "svg":
+        if is_native_svg(self.artifact.kind, self.artifact.origin):
             if self.svg is not None or self.svg_text is not None:
                 raise SourceError(
                     "source_needs_execution",
-                    "native chart SVG cannot have a companion",
+                    "native SVG cannot have a companion",
                     {"figure": self.artifact.source_id},
                 )
             return self
@@ -347,7 +347,7 @@ class StaticSourceResolver:
         if not path.is_file():
             raise SourceError("source_missing", f"{rel_id} 不存在", {"figure": rel_id})
         kind = path.suffix.lstrip(".").lower()
-        if kind not in FILE_KINDS:
+        if kind not in FILE_KINDS and not is_native_svg(kind, figcapture.ORIGIN_STATIC):
             raise SourceError(
                 "source_kind_unsupported", f"{rel_id}：{kind!r} 不是可放置的源", {"figure": rel_id}
             )

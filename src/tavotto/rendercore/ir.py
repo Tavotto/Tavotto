@@ -201,6 +201,11 @@ FILE_KINDS = ("pdf", "png", "jpg", "jpeg", "tif", "tiff")
 RASTER_KINDS = ("png", "jpg", "jpeg", "tif", "tiff")
 
 
+def is_native_svg(kind: str, origin: str) -> bool:
+    """A self-contained SVG page; never an unpaired execution representation."""
+    return kind == "svg" and origin in ("static", "declarative")
+
+
 @dataclass(frozen=True)
 class FontResource:
     """一张**已批准**的脸：身份是文件字节（sha256）+ face 序号 + 样式，不是族名
@@ -223,7 +228,7 @@ class FileResource:
     身份，不含路径：字节从哪读、读之前核不核 hash 是 `sources` / 写入器的事。"""
 
     source_id: str
-    kind: str  # FILE_KINDS；另允许 origin=declarative 的原生 svg（不扩静态源闭集）
+    kind: str  # FILE_KINDS, or an is_native_svg() page resource
     sha256: str
     origin: str  # execution | static | declarative
     semantic_identity: str
@@ -684,9 +689,7 @@ def _placement(
         raise IRError("unknown_resource", f"资源 {node.resource!r} 不在 page.resources 里", path)
     if not isinstance(res, FileResource):
         raise IRError("resource_kind_mismatch", f"{node.resource!r} 不是文件资源", path)
-    native_svg = (
-        isinstance(node, ImportedPage) and res.kind == "svg" and res.origin == "declarative"
-    )
+    native_svg = isinstance(node, ImportedPage) and is_native_svg(res.kind, res.origin)
     if res.kind not in want_kinds and not native_svg:
         raise IRError(
             "resource_kind_mismatch",
@@ -720,7 +723,7 @@ def _resource(key: str, res: object) -> None:
         if not _is_sha256(res.sha256):
             raise IRError("unknown_resource", f"字体资源的 sha256 不合形状: {res.sha256!r}", path)
     elif isinstance(res, FileResource):
-        if res.kind not in FILE_KINDS and not (res.kind == "svg" and res.origin == "declarative"):
+        if res.kind not in FILE_KINDS and not (is_native_svg(res.kind, res.origin)):
             raise IRError("resource_kind_mismatch", f"文件种类不在闭集里: {res.kind!r}", path)
         if not _is_sha256(res.sha256):
             raise IRError("unknown_resource", f"文件资源的 sha256 不合形状: {res.sha256!r}", path)

@@ -214,31 +214,71 @@ def test_two_calculation_versions_have_separate_resources_even_with_identical_pd
 
 
 @pytest.mark.parametrize("origin", ["static", "execution", "declarative"])
-def test_ir_accepts_all_supported_origins_without_adding_static_svg_placement(origin):
+def test_ir_accepts_native_svg_pages_without_admitting_unpaired_execution_or_images(origin):
     resource = ir.FileResource("chart.svg", "pdf", "a" * 64, origin, "sha256:" + "b" * 64)
-    page = ir.Page(100, 100, (), {"source": resource})
+    placed = ir.ImportedPage("source", (10, 20, 30, 40))
+    page = ir.Page(100, 100, (placed,), {"source": resource})
     assert ir.validate(page) is page
     svg_page = dataclasses.replace(
         page, resources={"source": dataclasses.replace(resource, kind="svg")}
     )
-    if origin == "declarative":
+    if origin in ("static", "declarative"):
         assert ir.validate(svg_page) is svg_page
-        return
-    with pytest.raises(ir.IRError) as exc:
-        ir.validate(svg_page)
-    assert exc.value.code == "resource_kind_mismatch"
+        # Native SVG is an imported page, not a general bitmap file kind.
+        assert "svg" not in ir.FILE_KINDS
+        with pytest.raises(ir.IRError) as exc:
+            ir.validate(dataclasses.replace(svg_page, children=(ir.Image("source", placed.rect),)))
+        assert exc.value.code == "resource_kind_mismatch"
+    else:
+        with pytest.raises(ir.IRError) as exc:
+            ir.validate(svg_page)
+        assert exc.value.code == "resource_kind_mismatch"
+    for kind in ("eps", "svgz", "SVG"):
+        with pytest.raises(ir.IRError) as exc:
+            ir.validate(
+                dataclasses.replace(
+                    page, resources={"source": dataclasses.replace(resource, kind=kind)}
+                )
+            )
+        assert exc.value.code == "resource_kind_mismatch"
 
 
-def test_native_declarative_svg_is_its_own_representation_without_forging_a_pdf():
-    svg = frozen("svg")
+@pytest.mark.parametrize("origin", ["static", "declarative"])
+def test_native_svg_is_its_own_representation_without_forging_a_pdf_or_receipt(tmp_path, origin):
+    raw = b'<svg xmlns="http://www.w3.org/2000/svg" width="10pt" height="5pt"><rect width="10" height="5" fill="red"/></svg>'
+    path = tmp_path / "source.svg"
+    path.write_bytes(raw)
+    source = figcapture.source_artifact_from_file(
+        path,
+        source_id="figures/chart.svg",
+        origin=origin,
+        **({"render_revision": REVISION} if origin == "declarative" else {}),
+    )
+    svg = sources.FrozenSource(source, path)
     assert svg.svg_representation() is svg
-    for invalid in (
-        dataclasses.replace(svg, svg=frozen("svg")),
-        dataclasses.replace(svg, svg_text=frozen("svg")),
+    assert sources.read_frozen(svg.svg_representation()) == raw
+    assert svg.path is path and svg.artifact is source
+    assert svg.artifact.kind == "svg" and svg.artifact.origin == origin
+    assert svg.artifact.bytes_sha256 == hashlib.sha256(raw).hexdigest()
+    assert svg.artifact.size_bytes == len(raw)
+    assert svg.receipt is svg.svg is svg.svg_text is None
+    for field, value in (
+        ("receipt_id", "run-1"),
+        ("receipt_identity", "public-1"),
+        ("generation", 0),
+        ("patch_hash", "sha1:edits"),
     ):
-        with pytest.raises(sources.SourceError):
+        assert getattr(svg.artifact, field) is None
+        with pytest.raises(ValueError, match="没有.*执行身份"):
+            dataclasses.replace(svg.artifact, **{field: value})
+    for invalid in (
+        dataclasses.replace(svg, svg=frozen("svg", origin=origin)),
+        dataclasses.replace(svg, svg_text=frozen("svg", origin=origin)),
+    ):
+        with pytest.raises(sources.SourceError) as exc:
             invalid.svg_representation()
-    assert frozen("svg", origin="static").svg_representation() is None
+        assert exc.value.code == "source_needs_execution"
+    assert frozen("svg", origin="execution").svg_representation() is None
 
 
 def test_ir_still_rejects_unknown_origins_and_bad_byte_identity():
