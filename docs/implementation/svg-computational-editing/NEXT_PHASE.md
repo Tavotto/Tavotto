@@ -1,11 +1,11 @@
 # SVG 计算图表编辑：当前效果与下一阶段安排
 
-> 复核时间：2026-11-07 12:45（Asia/Shanghai）。唯一实施树 E:/0 - Project/Tavotto-svg-r00，沿用 zixu.wang/svg-computational-r00。起点 HEAD c9e2980d，归档前端 e2c026fa、保存 Moment 归属 c9e2980d 已分功能提交；N3e 仍有未提交改动。原 E:/0 - Project/Tavotto 为 clean main@69bcafae，成果未合入；未 fetch、切分支、新建 worktree 或远程发布。
+> 复核时间：2026-11-07 13:05（Asia/Shanghai）。唯一实施树 E:/0 - Project/Tavotto-svg-r00，沿用 zixu.wang/svg-computational-r00。起点 HEAD fcfc6b2a；归档前端 e2c026fa、保存 Moment 归属 c9e2980d 已分功能提交，N3e 仍有 16 路径未提交改动。原 E:/0 - Project/Tavotto 为 clean main@69bcafae，成果未合入；本次只读复核产品及同步计划，未 fetch、切分支、新建 worktree 或远程发布。
 > 本文维护当前安排；[PROGRESS.md](PROGRESS.md)保留日期证据，[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)维护 SG00–17 完整范围，[NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)可直接复制接续。恢复以实际 HEAD/diff 为准，不回退到文档 SHA。
 
 ## 1. 当前判断
 
-**归档预览和离开项目预览归属已实际修复并提交，完整交付仍未完成。** 1320 项受影响联合、正式/派生构建通过；从原安装/原持久状态的新父进程与新浏览器完成 A→B→A，close 和 AS 两组三类预览均为正确 A/200，离开图正常、最新 12 pt 编辑和旧稿保留。当前先完成 N3e 的取消/迟到确认真实界面收口，再推进历史计算编辑与后续能力。
+**归档预览和离开项目预览归属已实际修复并提交，完整交付仍未完成。** 1320 项受影响联合、正式/派生构建通过；从原安装/原持久状态的新父进程与新浏览器完成 A→B→A，close 和 AS 两组三类预览均为正确 A/200，离开图正常、最新 12 pt 编辑和旧稿保留。先完成 N3e 取消/迟到确认真实界面收口，再落地已就绪的普通 SVG 合成候选，随后接历史计算编辑；完整冷迁移在这些依赖完成后统一验收。
 
 产品方向保持轴模型、显式数据绑定及可信绘图来源恢复。普通 SVG 的图元可拖动，不等于具有原始数据或可恢复 Python 来源；缺少语义的输入仍要能沿现有显式绑定入口完成计算建模。
 
@@ -19,10 +19,11 @@
 | A 画布导出 | 含 ordinary.svg 的整版 PDF/PNG 实际被现有能力限制拒绝 | 普通 SVG 画布/跨格式合成须补实现，缺实现不能标“不适用” |
 | 跨项目最新稿 | 原 422 已修：真实 A→B→A，close8/9/10 与 AS13/14/15 均正确 A/200，writer17 及最终磁盘全文/revision 闭合，12 pt/旧稿/计数保持 | 原失败保留；本轮保留缓存，不是 N3f 完整删源冷迁移 |
 | 已有验证 | 当前前端 68 文件 1320 pass/0 fail/error/skip，正式/派生构建/check 全 exit0、1501 前端源零漂移 | 受影响联合非全量；首 build 为新增测试误用 prepareDocument 无参合同，修正后新窗口通过 |
-| 外部原型 | 历史来源/guarded dispatch、N5 S/F 候选已有实验；P0 候选原消费者链由红转绿 | 候选/原型尚未生产落地 |
+| 外部候选 | 历史分派守卫已冻结，可移植 Python 24 项、Rust 3 项及真实 safe worker 实验通过；普通 SVG 合成 15 文件候选与 12 项自含测试已冻结 | 均未应用；native/app 来源全链、正式 A HTTP 合成仍未验；候选测试不能充作当前产品通过 |
+| 取消确认场景 | 新生命周期和真实响应延迟工具已准备；旧 A/B 状态、35 成员包和新目标不存在均已审计 | 仅工具静态/单元资格，尚未启动服务/浏览器或执行真实取消场景 |
 | 总体 | 后端 135aba94、归档前端 e2c026fa、Moment 归属 c9e2980d 已提交；N3e 尚未提交 | N3f 完整冷迁移、N5/N4、M1/M2/M3 未退出，未发布 |
 
-已实际查看的截图：[12 pt 图内编辑](<E:/0 - Project/svg-review-20261106/n3f-ui-calibrated/output/playwright/calibrated-edit-12pt.png>)、[历史 B 红/红/绿](<E:/0 - Project/svg-review-20261106/n3f-ui-calibrated/output/playwright/calibrated-history-canvas.png>)。左/下刻度及部分标题裁切仍可见，不能宣布视觉验收通过。
+本次重新查看最新截图：[跨项目返回后的 12 pt 图内编辑](<E:/0 - Project/svg-review-20261106/n3f-ui-owner-resume/output/playwright/owner-resumed-12pt.png>)、[真实离开节点的那一刻/当前预览](<E:/0 - Project/svg-review-20261106/n3f-ui-owner-resume/output/playwright/owner-close-node-preview.png>)。左/下刻度及部分标题裁切仍可见，不能宣布视觉验收通过。
 
 ## 2. 已冻结证据和运行状态
 
@@ -44,6 +45,9 @@
 | n3f-owner-production/AFTER_CONTRACT.md、source-release-after-contract.json | 新 6 条回归、原修复前 2 红、撤掉 owner 反证再 2 红；修复后 8 文件 138 绿；无参 prepareDocument 合同及真实 ready/prepared 门断言 |
 | n3f-owner-final/source-and-ui-qualification.json | 68 文件 1320 绿、六组正式/派生回执、1790 源与 11 bundle、原父子 PID 消失及正常终局 |
 | n3f-ui-owner-resume/ui-owner-proof/ | 实际 close/AS 六条正确归属、完整 ref/patch/model、A→B→A、原稿/磁盘正文和原 422 反证；实际离开图 Blob 限定资格见该目录报告 |
+| n3e-ui-cancel-confirm/PREPARATION.md、helpers-release.json | 17 工具已冻结；正常 CLI/认证/真实响应延迟及终局步骤齐备；只做准备，真实 UI 未执行 |
+| n3f-svg-compose-review/self-contained-qualification.md/.json | 15 文件合成候选、12 自含测试全绿/零跳过、共享预算反证准确失败；原 writer 593B PDF golden 不变；未应用、未验正式 A HTTP |
+| n3f-edit-guard-candidate/REVIEW.md、source-release.json | 独立 render_existing 分派、可移植 24 项/Rust 3 项及 safe worker 实验；native/app/来源持久化仍待实施 |
 
 **当前没有待续的本轮自有浏览器/服务。** 最新 CLI session n3f-owner-resume-20261107 已 42-normal-close exit0；服务 exec11251/child46200 均终局0，launcher61264/child46200 不存在、24089无监听。停前实际 HTTP11 bundle/1790源末核通过，见 n3f-ui-owner-resume/stop-http-verification.json、service-exit.json、closed-window.json 及 root source-and-ui-qualification.json。旧 calibrated 窗口也已终局；不能续等旧句柄。
 
@@ -51,17 +55,17 @@ attempt-05 新根和原 UI data 已存在，须保留。旧 fixture.py serve 要
 
 ## 3. 下一阶段批次
 
-最近可交付目标：**N3e 取消/迟到确认/继续编辑真实界面收口，并独立提交完整安装采用功能。** 归档前端与 P0 已提交，不重复实施。随后闭合真实历史计算编辑、冷迁移和混合导出；无人值守按依赖连续推进，不以一晚时长代替验收。
+最近可交付目标：**N3e 取消/迟到确认/继续编辑真实界面收口，并独立提交完整安装采用功能。** 然后优先关闭已经实测失败且候选已就绪的 A 普通 SVG 混合导出，再推进较大的历史来源/执行守卫集成；P2/P3 保留原任务编号，以下表格位置表示实际顺序。该调整减少完整冷迁移被已知导出缺口阻塞后的重复验证，不缩减任何验收项。
 
 | 顺序 | 交付物 | 退出条件 | 独立提交边界 |
 | --- | --- | --- | --- |
 | P0 / 已退出 | 离开 Moment 与 writer 同源地址 | 新 6 回归、138 专项、1320 联合、正式/派生构建、真实 A→B→A/离开图均已验 | c9e2980d，3 文件；N3e 规则段未混入 |
 | P1a / 已退出 | HTTP 归档前端收口 | 同名 A/B、完整 ref、图片上下文及原预览消费者资格保留；当前窗口通过 | e2c026fa，17 文件；N3e API wrapper 未混入，替代 transport 仍列 M2 |
 | P1b | N3e 安装/采用/继续编辑收口 | 保严格 1 PUT；当前源验取消/保存确认迟到/重开/切项目返回最新稿/旧稿无损；不重复建立 adopted 工作稿 | feat(packages): adopt installed charts through the document writer，带其 ADR/规则/翻译 |
+| P3 / 提前落地 | 普通 SVG 画布及原图跨格式导出 | 先审查应用 15 文件候选；正式 A 混合画布 PDF/PNG 从原失败变可用，再补原图适配及适用格式/多页实物；保文字/几何/clip/透明/资源 | 画布合成、原图转换按完整功能分别 commit，沿原冻结来源/job；复杂 SVG 缺口继续列 M2 |
 | P2a | 历史编辑来源及执行守卫 | fullref、同 receipt 活 Figure、parent/child/重连零隐式 build；来源贯穿首改/撤销/保存/包/重开，旧 A 不借 B | 来源合同、guarded render、真实消费者分功能；镜像合同与消费者同交 |
 | P2b | 原 INPUT 准备服务冷重建 | 精确 source/data/argv/rc、原 safe/native 路由和当前授权；真实 pair 几何/像素合格再进入原编辑，取消回收 | 原管线扩展及回归，不建第二 runner/store/writer |
 | P2c | N3f 冷迁移/真 runtime | 核明自建路径后移除旧源/派生 cache，新父/新浏览器；双画布历史、编辑/undo/保存/再开/版本恢复及已支持导出，真 runtime 另验；A 导出待 P3 后联合退出 | 实际缺陷各自 fix，完整迁移资格另交，不提前标 N3f 全过 |
-| P3 | 普通 SVG 画布/跨格式导出 | 实际 A 混合画布 PDF/PNG 由拒绝变可用；保文字/几何/clip/透明/资源，适用格式与多页核真产物 | feat(svg): compose SVG assets through the shared export pipeline，保原冻结来源/job |
 | P4 / N5 | 刻度裁切修复 | S/F 同源合同接全消费者；字形完整、数据锚点/单位/命中/缩放不漂，热冷/导出一致，旧 native1/Python 保持 | 合同/兼容和消费者按完整可用功能提交 |
 | P5 / N4 | 图例绑定 series/custom | 同名同色不串，复合句柄/手工文字/未绑定注释保留；编辑/撤销/保存/冷开/导出一致 | feat(svg): bind legend entries to computational series 等独立功能 |
 | P6 / M1 | 双系列+图例+注释最小完整闭环 | 数据/轴范围/样式→undo/redo→保存→空派生缓存冷开→适用 scope×format 真产物；画布 EPS 仍 eps_not_for_canvas | 缺口各自修复，完整 M1 资格另交 |
@@ -80,9 +84,17 @@ attempt-05 新根和原 UI data 已存在，须保留。旧 fixture.py serve 要
 
 N3e 下一实测使用独立未存在目标，保现有 A/B 与原 data；这是一项新的安装取消场景，不重装覆盖已有目标。正式完整包安装后，真实 AS PUT 成功而后续确认响应暂迟到时取消，再编辑/保存、重开安装记录与继续编辑，验证当前稿/undo 不被原 package 正文替换；需要控制时序时只延迟实际响应，不模拟成功正文。复用原正常 API/UI/单 writer；独立资源及单 PUT、旧稿/计数/最新正文/revision继续严格核。通过再提交剩余 N3e 16 路径及 ADR/规则。
 
-P2c 若仅剩 A 的普通 SVG 导出缺口，保留该失败并直接推进 P3，不循环重跑冷开或宣称 N3f 全过。P3 完成后回验冷态 A 整版产物，再联合关闭完整迁移出口。
+P2c 在 P3 和历史来源就绪后开始完整冷迁移；此前保留的 A 导出失败要在原对象/引用完整的画布上由正式请求复验，不能用单 SVG 实验替代。出现独立缺口时保失败、修对应能力，不循环重跑相同冷开或宣称 N3f 全过。
 
-### 3.2 P2：显示与真实编辑来源分别闭合
+### 3.2 接下来三批的具体执行安排
+
+1. **N3e 真界面并提交**：先读 n3e-ui-cancel-confirm/PREPARATION.md，核 helpers-release SHA、当前源与六份绿回执再 freeze。新目标为 attempt-05/fixture/中文 取消确认 安装，端口 24099；现有 A/B 不重装、不重置。真实安装 201 → 明确采用 → 实际 writer PUT200 → 暂存真实确认 GET200 → UI 取消 → 原响应原样交付 → 编辑/撤销/重做/保存 → 重开安装记录/继续。独立核完整包资源、严格一个初次 PUT、当前全文/revision/undo、A/B 原稿与执行计数；正常退出后提交剩余 16 路径。工具单测不是该出口。
+2. **P3 合成正式落地**：审查 ordinary-svg-canvas.self-contained.candidate.patch（15 文件，SHA256 d5ebda8d67aa84bf5ce5165273c4b751ac3b458d2dec0930109479ebbe2ec7d2）。12 项自含测试已经候选验证，不再等待用户逐批批准；root 核规则/基线后实际应用，先 Ruff、仓库正常 pytest 和旧 RenderCore/export 同源组，再对正式 A 经 validate/start/job 交付真实文件。增加多实例 ID/CSS、裁剪/旋转/透明及原图转换消费；原图跨格式尚未被该候选实现，须单独补齐，不能把画布成功当全 P3 结束。gradient/mask 等仍不能转换的族保明确未完成，不输出空白成品或静默整页栅格化。
+3. **P2 完整历史编辑**：以 guard-with-tests-final.patch 为有界起点，补 native 的原锁/屏障/actual execution、app 认证/fullref/receipt 接纳和持久编辑来源；再接原 Preparation/INPUT 冷重建。safe Python、Workerd、native 分别核同次热编辑不增执行、冷/错来源零隐式执行、取消/迟到、普通 Python 仍能原样重建。只有应用层和持久化链一并就绪后，才进入双画布完整删源冷迁移。
+
+UI/构建由 root 串行控制；独立协议或格式实验可在 OUT 并行，每文件一个写入者。三项既有子任务现均已释放；恢复先核状态，不重复派同一实验。失败先分清产品、夹具与观察器主语；若相同问题修过两轮仍扩散，按第三路径规则审结构，不靠更宽容差或删用例收口。
+
+### 3.3 P2：显示与真实编辑来源分别闭合
 
 归档显示保持原 PDF/SVG 配对及 SVG 图片上下文，不制造 editable manifest。历史来源原型已证明同 receipt 活 Figure 能复用原 renderer 编辑/撤销而不重跑；也已反证 peek 后直接 override：built=False 会 lazy build，workerd unknown_session 可能透明重连。
 
@@ -94,7 +106,7 @@ P2c 若仅剩 A 的普通 SVG 导出缺口，保留该失败并直接推进 P3�
 
 冷迁移仅清绝对路径/归属/清单核明的自建旧源和派生缓存。保新根、包、INPUT、AS/命名稿、runconfigs/config、绑定/打开意图和 layout-sessions(.bak)；data/cache 含 AI history，不能全清。先结束旧父/浏览器再清清单路径，启新父/新浏览器。真 runtime 附加包 n3f-runtime-kind/attempt-02/真正runtime家族.tavotto 为 12 成员，本轮混合包 runtime 来源对象实际 pdf，不能替代其 fileKind/fallback 资格。
 
-### 3.3 P3/P4：混合导出与真实裁切
+### 3.4 P3/P4：混合导出与真实裁切
 
 A 画布普通 SVG 被画布/跨格式门拒绝属于最终目标实现缺口。先用原 ordinary.svg 与复杂 SVG 语料有界实验，接原 SourceResolver/FrozenSource/IR/ExportRequest/job，保静态 SVG 校验权威及字体/资源策略。不得要求用户预转 PDF 作为终点，不得静默栅格化降保真。B 本次 PDF/PNG 通过不能关闭此项。
 
@@ -105,9 +117,9 @@ N5 外部 n5-tick-clipping-review/prototype/IMPLEMENTATION.md、validation.json 
 ## 4. 无人值守执行与恢复
 
 1. 沿当前唯一树/分支；保所有改动/证据，不新建或切分支/worktree，不 reset/stash、无审查 git add .。本地按功能 commit，状态文档另交。
-2. 依赖 P0→P1→P2→P3→P4→P5→M1/M2/M3。已有多代理授权，仅独立有收益任务并行，每文件一个写入者，主代理统一合同/浏览器/集成/提交；先核现有代理，不重复派工。
+2. 实际顺序 P1b N3e→P3 普通 SVG 合成→P2a/b 历史来源/重建→P2c 冷迁移→P4/N5→P5/N4→M1/M2/M3；P0/P1a 已退出。已有多代理授权，仅独立有收益任务并行，每文件一个写入者，主代理统一合同/浏览器/集成/提交；先核现有代理，不重复派工。
 3. 每批核状态/规则→实现真实消费者→必要反证→受影响验证→实际退出码/源 SHA/diff→定向 commit→日期 checkpoint→下一项。未改源不重复跑绿组；失败先分清产品/夹具/观察器主语，不削弱验收。
-4. Python 先 Ruff 再定向 pytest；前端正式及 playground/widget 按要求验证。最终候选再跑完整链，1273 专项不代全量。
+4. Python 先 Ruff 再定向 pytest；前端正式及 playground/widget 按要求验证。最终候选再跑完整链，1320 受影响联合不代全量；当前源码未变不为状态复核重复构建。
 5. UI 期间冻结产品源/build；正常认证、隔离 data/config/证据、关闭遥测。只关闭核明 PID/创建身份的自有进程，停前核实际 HTTP bundle、终局核 listener；不以已有目标冒 fresh。
 6. 长检查前后/提交/约30分钟更新 PROGRESS：HEAD/diff、所有权/句柄、命令/cwd/env、actual exit/fail/skip、SHA/实物、首红/下一项。中断从最新 checkpoint 续，不能复用终局 session/旧 bundle。
 7. 局部失败修复并继续；缺平台条件精确保留未验格，推进独立就绪项。写回仍 prepare→完整重放/几何/像素 verify→commit，失败 409 原件零改；认证/沙盒/隐私/零 PyMuPDF 不放松。
