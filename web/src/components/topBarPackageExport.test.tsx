@@ -64,10 +64,25 @@ async function clickExport() {
   })
   const item = document.querySelector<HTMLElement>('[data-export-package]')
   expect(item).not.toBeNull()
-  await act(async () => {
-    item!.click()
-    await new Promise(resolve => setTimeout(resolve, 0))
+  // Radix在卸载之后才归还焦点；下一次键盘操作从完成关闭的同一触发器出发。
+  let dispose = () => {}
+  let checkClosed = () => {}
+  const restored = new Promise<void>((resolve, reject) => {
+    const onFocus = () => {
+      if (trigger.getAttribute('data-state') !== 'closed' || item!.isConnected || document.activeElement !== trigger) return
+      dispose(); resolve()
+    }
+    const timeout = setTimeout(() => { dispose(); reject(new Error('Menu did not finish closing and restore its trigger focus')) }, 1000)
+    dispose = () => { clearTimeout(timeout); trigger.removeEventListener('focusin', onFocus) }
+    checkClosed = onFocus
+    trigger.addEventListener('focusin', onFocus)
   })
+  try {
+    await act(async () => { item!.click() })
+    // 若焦点本来就在trigger，关闭没有额外focusin；仍核同一closed/disconnect事实。
+    checkClosed()
+    await act(async () => { await restored })
+  } finally { dispose() }
 }
 
 beforeEach(async () => {
