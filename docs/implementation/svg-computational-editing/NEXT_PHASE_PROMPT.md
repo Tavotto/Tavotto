@@ -1,64 +1,65 @@
 # SVG 计算图表编辑：下一阶段无人值守提示词
 
-2026-11-07 13:05 复核：起点 fcfc6b2a，归档前端 e2c026fa、Moment 归属 c9e2980d 已分别提交。1320 受影响联合及正式/派生构建通过，已有安装 A→B→A 的 12 pt/旧稿/预览保持；截图仍有裁切。N3e 真取消场景尚未执行，工具已就绪。普通 SVG 合成 15 文件自含候选、历史守卫候选均已释放但未应用。接续顺序调整为 N3e→普通 SVG 合成/原图转换→历史来源/冷重建→完整冷迁移→N5/N4→M1–3。详见 [NEXT_PHASE.md](NEXT_PHASE.md)、[PROGRESS.md](PROGRESS.md)、[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。
+2026-11-07 14:05复核：产品HEAD35adee6d，N3e真实取消/迟到确认、保存与两种继续已完成并提交。P3画布/原图SVG转换已入工作区，新28专项、overflow回归2项及前端70文件1514项通过。留白/标注多格式来源一致性仍待正式修复，OUT最终9项通过、原相关合同55通过/1跳过，补丁和报告已交接、root apply-check0。下一步为P3修复/正式验证/提交，再做历史来源和冷恢复、N5/N4、M1–3。详见[NEXT_PHASE.md](NEXT_PHASE.md)、[PROGRESS.md](PROGRESS.md)、[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。
 
 以下可整体复制：
 
 ~~~text
-继续完成 Tavotto 的 SVG 计算图表编辑，以最终可用及现有功能不回归为目标。复用原轴/数据模型、编辑器、writer、Preparation/runner、RenderCore/pdfbackend、legendmodel。自主实现、修复、验证，在当前同一分支按功能分别 commit，常规可逆步骤不逐批等确认。
+继续完成Tavotto的SVG计算图表编辑，以最终可用和现有功能不回归为目标。复用原轴/数据模型、编辑器、writer、Preparation/runner、RenderCore/pdfbackend、legendmodel。在当前同一分支自主实现、修复、验证，按功能分别commit；常规可逆步骤不逐批等待确认。
 
-一、恢复实际状态，不重做已完成工作
-唯一实施树 E:/0 - Project/Tavotto-svg-r00，分支 zixu.wang/svg-computational-r00。2026-11-07 13:05起点HEAD fcfc6b2a，归档前端e2c026fa/Moment归属c9e2980d已分功能提交；状态文档可能后续commit，以实际HEAD/diff为准。原E:/0 - Project/Tavotto仍clean main@69bcafae、未合入；证据根 E:/0 - Project/svg-review-20261106。
-先读docs/implementation/svg-computational-editing/PROGRESS最新checkpoint、NEXT_PHASE及改动目录AGENTS/规则/ADR，核Git身份、代理所有权和实际live句柄。保全部未提交代码、已安装目标和首红；不新建/切branch/worktree，不reset/stash/git add .，不push/PR/合并/发布。
-归属8f4985ee、归档后端135aba94及此前功能保留；当前归档前端/P0已提交，不重做。只剩N3e16路径WIP，api.ts归档hunk和规则同次writer两行已分开提交，N3e wrapper/10行规则/ADR仍待收口。
+一、恢复实际状态
+唯一实施树E:/0 - Project/Tavotto-svg-r00，分支zixu.wang/svg-computational-r00。13:53产品HEAD35adee6d；文档commit可能随后前进，以实际HEAD/diff为准。原E:/0 - Project/Tavotto仍clean main@69bcafae、未合入；证据根E:/0 - Project/svg-review-20261106。本次没有fetch，不称远端最新。
+先读PROGRESS最新checkpoint、NEXT_PHASE和改动目录AGENTS/规则/ADR，核Git身份、代理所有权和实际live句柄。保全部未提交代码、已安装目标及首红；不新建/切分支或worktree，不reset/stash/git add .，不push/PR/合并/发布。
+归属8f4985ee、归档后端135aba94、归档前端e2c026fa、Moment归属c9e2980d、N3e35adee6d及此前功能保留，不重做。当前产品WIP是P3完整16文件候选及overflow修复/新测试，N3e已没有待提交实现。来源一致性app修复仍在OUT，先核最终交接再集成。
+产品方向始终为轴模型、显式原始数据绑定、可信Python/绘图来源恢复。普通SVG缺失的科学信息由用户确认绑定补充，不能从图元拖动推断原数据或伪造来源。
 
 二、当前资格与边界
-n3f-owner-final/source-and-ui-qualification.json：当前受影响联合68文件1320pass/0fail/error/skip；正式packaged-after-contract、playground/widget与两个check均exit0，1501前端源零漂移。首build因新增测试误用prepareDocument无参合同失败，原接口不改，测试改普通无参switchDocument并实际断言ready/prepared，新窗口全通过。旧1273窗口保留；非完整回归，不相加。未改源不重复跑绿组。
-n3f-snapshot-preview/freeze.json：后端新37/旧受影响368分别全绿、Ruff0、3反证目标红，已135aba94。归档显示不授予历史计算编辑/重建许可，原当前编辑/导出撤旧门保持。
-正式包n3f-mixed/attempt-05：65661B/35成员/双画布11对象/5完整ref/2个INPUT图8输入附件，SHA381625a558caa6ed62a0841bf8fc1505070567d1bb25bf082e249949ff865f2c。native100pt与页面放置55mm分开。installed-calibrated-live、initial-calibrated-live严格exit0，唯一初次PUT39。不重生成/重装掩问题；旧attempt04/167件/原2PUT首红保留。
-真实图内12pt→undo7.8→redo12，PUT95/109/113全body仅目标linewidth/updatedAt变，命名保存成功。五归档SVG wire→可见DOM Blob字节一致；Timeline/ExportDialog实际DOM PNG五ref/14观察与原PDFium逐RGB通道全等、容差0。ui-readonly-proof/png-dom-proof保七个/三个反证。
-原CDP七条response.body空Buffer没有恢复；实际DOM已用Blob是独立新证据，不把独立POST当原响应字节，png-observer-review保工具边界。
-B画布真实PDF/PNG/报告已出，独立PDFium/PIL：180×130mm、value6三处、红/红/绿，PNG4252×3071/600dpi。A含ordinary.svg的整版PDF/PNG实际拒绝，须补原SVG合成，不能标不适用或要求用户预转PDF作为终点。
-原两次422已修并保首红。最新owner-resume真实A→B→A的close8/9/10及AS13/14/15六条全A query/header/200，writer17/最终回盘严格闭合；12pt及旧稿/named/全模型/五ref/计数4/4保留。真实12:38离开节点对比图正常；限定4个历史DOM PNG与原PDF逐RGB全等。不把保cache的新父恢复冒完整冷迁移。
+n3f-svg-production/frontend-first-exit.json和XML：当前前端70文件1514pass/0fail/error/skip，28.43秒，1502前端源及测试SHA与当前一致；status-review-20261107-1400/audit.json已复核。原owner-final的1320联合及六组正式/派生构建属于N3e源码窗口，不能当P3新build，不能与1514累计。
+正式production-targeted-first.xml新28pass，production-overflow.xml新2pass；广泛后端、P3正式/派生构建、新HTTP待验。源未变不重跑已绿组。Python先Ruff再pytest，正式前端类型检查走项目build，不用tsc --noEmit冒通过。
+正式包attempt-05保65661B/35成员/双画布11对象/5完整ref/2个INPUT图8附件，SHA381625a558caa6ed62a0841bf8fc1505070567d1bb25bf082e249949ff865f2c。native100pt与页面55mm分开。保A/B/C/D安装、原data/config、AS/命名稿，不重新生成/安装/采用包正文掩盖问题。
+原真实A图内12→undo7.8→redo12pt、三次保存仅目标linewidth/时间变；五归档SVG HTTP→可见DOM字节全等，版本/导出14个DOM PNG与原PDFium逐RGB相等。七条原CDP二进制body空Buffer仍是观察器边界，不能伪称原wire已补齐。
+B旧窗口PDF/PNG/报告已独立核180×130mm、value6三处、红/红/绿，PNG4252×3071/600dpi。A含ordinary.svg的旧HTTP导出被拒；新P3已接线但还未正式HTTP复验，不能用单SVG专项代替完整画布。
+最新截图仍有左/下刻度与部分标题裁切，N5待办；它与已修的CSS越界是不同问题。History render500缺来源仍归P2，不能写零console或完整冷迁移已过。
 
-三、旧服务已终局，复验新生命周期
-n3f-ui-owner-resume浏览器session n3f-owner-resume-20261107已42-normal-close0，exec11251/child46200终局0，launcher61264/child46200消失、24089无监听；停前HTTP11bundle/1790源末核通过，见stop-http-verification、service-exit、closed-window及root source-and-ui-qualification。calibrated原窗口也终局。勿续等旧session或直接重跑一次性serve。
-attempt05目标和n3f-ui-calibrated/data已存在；旧fixture.py serve要求目标不存在，禁止直接重跑。建新外部生命周期/身份/端口，明确从已有安装和持久状态继续，核当前源/实际HTTP产物。不重装覆盖、不重新采用原包正文、不清状态绕问题；独立fresh安装才用新目标。
-UI期间冻结源/build，主代理独占真实浏览器；新snapshot后再用ref，观察器只读，不注入store。正常停已核身份的自有进程，停前末核HTTP后解除冻结。
+三、已完成安装与项目切换，不重复实施
+原跨项目422已由Moment消费本次writer owner修复，真实A→B→A六条close/AS均正确A/200，全文/revision/旧稿与计数保持；原失败保留。
+N3e已提交35adee6d（17路径），含两入口/Dialog/协调器/API及ADR/规则/翻译/待发说明。D实际install90/201、唯一初次PUT137/200；其后真实确认GET200暂停→UI取消→原APIResponse原样释放，编辑undo/redo、命名保存、同项目继续保undo、跨项目取最新PUT256而非初次137均通过。见n3f-mixed/n3e-cancel-confirm-proof/FINAL_REPORT.md/qualification-final.json。
+C首次工具误中保存前GET404，未构造取消时序，保失败；C/D两个目标均已存在，不能重装冒fresh。D native5→8→5→8→5→8，13pt因原max8×页面比例正常钳为12.47pt，不是数值bug。AS/named字节与修订、binding clean、A/B旧稿和科学/module/argv计数各4保持。
+最新n3e-ui-cancel-confirm浏览器124-normal-close0；exec50760/child76164终局0，launcher23968/child76164消失、24099无监听，停前1790源/11HTTPbundle核验通过。owner-resume及calibrated旧窗口也已终局；不能续等旧句柄或直接重启一次性serve。
 
-四、归档/P0已完成，保原能力不重做
-四处Moment已使用owner/address.projectId/scope.pj/scope.pj，documentMomentOwner新6回归覆盖原adopt→writer→Moment→renderer/API、迟到ABA、persistEmpty/named空稿和overwrite/reload冲突。生产未修首跑2红、AST撤修再2红；新138专项/1320联合/正式与派生/真实UI均通过，见n3f-owner-production/AFTER_CONTRACT.md与source-release-after-contract。
-提交顺序archive e2c026fa→P0 c9e2980d，因完整ref回归依赖归档消费者，资格属于共同候选源码窗口。保原切项目顺序/queue/恢复门/timeline gen、离开图Promise及后端422；不回全局兜底，不重新套旧patch。
+四、当前第一批P3：统一来源、正式验证、按功能提交
+完整static-svg-canvas-and-original.candidate.patch（16文件，SHA b9346e6767100843009ba3bd5fada024b3a2902283b79262e9d7b75c5f2240f6）已应用，旧15文件不要再套。沿原SourceResolver/FrozenSource/IR/ExportRequest/job接原图与画布，保单一svgasset安全校验、源SHA、字体/资源、文字/透明/几何，不另建writer/runner。
+读n3f-svg-compose-independent-review/REVIEW.md，两条实际P1：CSS overflow:visible越过物理frame已用原外层clip修复，正式两回归绿；有pad/annotations的原图多格式仍分次冻结，可成功混交PDF红/PNG蓝，正式app待修。
+读已交接的n3f-original-source-consistency/qualification.md/.json和original-composition-one-scene.patch，SHA256 34272c622af365f91a142114952594aa4c6b868532bfff6f8d624a752515b6de。root已核app基线642f968712b49b3fd4434b70f3a983ac9cd94618bde16a471cd5ac3128b26961及apply-check0；仅改app._export_produce_original_annotated和新tests/test_original_composition_sources.py，正式未应用。下一步审查两路径后应用。最终新9项pass/0skip；原静态7回归在正式源7红，chart混合EPS共享源反证原实现1红/EPS-only对照1绿。原annotations/pad/chart EPS三文件55pass/1skip，补丁/报告已封口。唯一旧skip硬编码/usr/local/bin/gs，不能写成全部通过，也不改测试掩盖；本机可用GS的实际新产物用例另核。
+核最终基线SHA/diff/apply-check后正式应用，不等待用户逐批批准。所有非EPS原图格式共用同次冻结和scene job；chart EPS需要内部SVG时同次产生并过滤内部输出。保物理尺寸、xy DPI/native pixel grid、pad/标注z序、原EPS bound/live/existing_only和逐格式失败。三种静态来源家族在首份canonical后改写自有源，PDF/PNG/TIFF/SVG仍同版本或明确失败，不能成功混交。
+先Ruff、新9行为及原留白/标注/尺寸/EPS合同；稳定后冻结后端跑RenderCore全组、旧facade/export/compose、SVG安全/配对/退休扫描。OUT/n3f-svg-production/qualify.py可记录命令/exit/XML/源SHA；backend选集原前缀不含test_original_composition_sources.py，先将该新文件显式加入并冻结选集，后端跑时不改源。前端1514对应源未变则不重复。
+后端通过，再做正式scripts/build_frontend.py和playground/widget构建/check，取得当前P3新回执。读n3f-svg-export-ui/PREPARATION.md，以现有A/原data/config、新24109/session n3f-svg-export-20261107正常CLI认证启动；不install/adopt/reseed。先核当前回执再freeze，不能借旧1790源资格。
+真实UI走validate→start→job，导出A完整混合画布及ordinary.svg原图的PDF/PNG/TIFF/适用SVG；覆盖无pad/有pad/标注、多实例CSS/ID、crop/rotation/opacity。独立PDFium/PIL读物理尺寸/文本/点位/颜色/透明，核原对象/fullref/计数和持久稿。新SVG分支用可用Chromium/Inkscape独立验证；未执行精确记未验，不冒Office互操作。
+补原规范/ADR/待发说明；正常关浏览器、认证shutdown/wait、末核源/HTTP bundle及精确父子PID/listener。按完整依赖分别提交画布合成、原图转换功能，相关安全修复和必要测试同交，状态文档另交。gradient/mask/pattern/marker等继续M2，不标不适用、不空白成功、不静默整页栅格化，不把专项当全部SVG已完成。
 
-五、第一批P1b：N3e取消/迟到确认/继续编辑收口
-归档前端已提交，保完整ref+pj/owner+原序patch、同名A/B/迟到隔离、SVG仅img/Blob上下文、不伪造manifest。替代engineTransport仍留M2，不把HTTP资格冒全部入口。
-N3e两入口/Dialog/API/单writer复用已有实现和取消恢复修复；n3e-install-review已有4文件95pass、7新回归、3反证。当前源真实验取消/确认迟到/重开/跨项目最新稿，不重复建立adopted工作稿。独立commit feat(packages): adopt installed charts through the document writer，带ADR/规则/翻译；状态另交。
-本项使用独立未存在的安装目标和新生命周期，保持现有A/B与原data，不覆盖旧目标。完整35包真实安装后，让真实AS PUT成功而后续确认响应暂迟到，取消→编辑/保存→重开记录→继续编辑；核当前稿/undo不被旧package正文替换。若控网络时序，只延迟真实响应，不模拟成功JSON。继续严核资源/单PUT/旧稿/计数/全文revision。读到已存在目标或旧终局身份不能重装/重启绕过问题。
-已有准备可直接接续：读n3e-ui-cancel-confirm/PREPARATION.md及helpers-release.json，17工具均已冻结；目前未freeze/serve/HTTP/browser/安装，工具单元资格不能算产品真UI。原data/config保留，C新目标为attempt-05/fixture/中文 取消确认 安装，24099/session n3e-cancel-confirm-20261107。先核源与owner-final六绿回执、再freeze/正常CLI。arm-hold→明确采用→hold-status见真实GET200 held并独立核PUT200→UI取消→release-hold原样交付同APIResponse→原事务落定→编辑undo/redo/保存→重开记录继续。正常退出及C/A/B磁盘全文核完再提交N3e，期间不改源/build。
+五、第二批P2：历史计算编辑与原INPUT冷恢复
+读n3f-edit-source-prototype/REVIEW.md及n3f-snapshot-authority/third-path-review.md。同receipt活Figure编辑/undo零重跑已有实验；peek后直接override可lazy build，Workerd unknown_session可透明重连，必须结构守卫。
+safe候选n3f-edit-guard-candidate已有Python24/Rust3项及真实safe实验。native候选n3f-edit-native-guard-candidate已有native30+wire7项、四反证、真实一次入口及Python3.10标准库闭包实验。读最终REVIEW/source-release/handoff；native-delta-after-safe.patch与combined-safe-native-with-tests.patch二选一，不得两份都套。候选未应用，组数不累计为产品资格。
+正式接专用render_existing，贯穿parent真实dispatch/worker实例、原native锁/屏障、Workerd重连和child实际execution identity；旧端忽略未知field可隐式build，单加require_built不足。保safe/native/legacy原路径。
+接app正常认证、完整fullref/receipt及持久编辑来源，贯穿首改/撤销/保存/包/重开；输出figureSnapshot清除不丢来源，不退同名当前图。合同扩展同步前后schema/包闭包/ref遍历/迁移和request/renderKey/want/last/latest/recent/mounted/exact，引用不授予执行许可。
+冷态复用load_input_archive、PreparationPlan/PreparationService、safe spec/runconfig/工作目录和原runner，核精确source/data/argv/rc及当前授权；INPUT比对视图不是可执行目录。pair独立几何/像素合格再进入原编辑，取消回收，不建第二runner/store/writer，不静默执行陌生代码。
+验证safe/Workerd/native热编辑不增执行，冷/错来源零隐式执行、取消/迟到、普通Python原样重建。来源合同/执行守卫/真实消费者/冷准备按完整功能commit，不能只接协议就称历史编辑完成。
 
-六、第二批P3：普通SVG合成及原图转换先落地
-先读n3f-svg-compose-review/self-contained-qualification.md/.json和qualification.md。ordinary-svg-canvas.self-contained.candidate.patch共15文件，SHA d5ebda8d67aa84bf5ce5165273c4b751ac3b458d2dec0930109479ebbe2ec7d2；12项自含tests/test_static_svg_canvas.py在候选窗口pass/0skip，共享预算反证目标红、原593B PDF字节不变，apply-check0。均未应用，不能把实验写成正式A导出已通过。
-N3e浏览器/服务正常终局后，root核规则/基线并实际应用，不再等用户逐批确认。沿SourceResolver/FrozenSource/IR/ExportRequest/job，保单一SVG安全校验、源SHA、文字/clip/透明/字体/资源，先Ruff和正常仓库专项，再旧RenderCore/facade/export-route同源组。真实A完整混合画布经原validate/start/job输出PDF/PNG/TIFF/适用SVG，独立核文字/圆/位置和其余原对象/fullref；补多实例CSS/ID、crop/rotation/opacity及正式HTTP资格，不以单SVG实验替代。
-该15文件候选尚未实现原图静态SVG的PDF/PNG/TIFF转换，第二片继续沿同一适配权威和冻结来源补齐；画布/原图按完整功能分别commit。gradient/mask、pattern/marker等仍是M2缺口，保逐格式结构化失败，继续实现，不能标不适用、空白成功、静默整页栅格化或要求用户预转PDF作为终点。随后进入P2，完整冷迁移不再被已知ordinary.svg画布导出阻塞。
+六、第三批P2c：完整冷迁移与真runtime
+P3及历史来源/准备链就绪后再统一冷迁移。仅清已核绝对路径/归属/清单的自建旧源和派生cache；保新根、包、INPUT、AS/命名稿、runconfig/config、绑定/打开意图和layout-sessions(.bak)，不全清含AI history的data/cache。
+结束旧父/浏览器后按清单处理，再新父/新浏览器验证双画布/两个历史、数据范围和样式、undo/redo、保存/再开/版本恢复及适用导出。保首红、修具体缺口，不循环重跑同一失败或提前标N3f全过。
+另验n3f-runtime-kind/attempt-02/真正runtime家族.tavotto的实际fileKind/runtime/fallback/编辑冷开；12成员包不替代35包，混合包runtime来源对象实际pdf不能冒覆盖。
 
-七、第三批P2：真实历史计算编辑和完整冷迁移
-读n3f-edit-source-prototype/REVIEW.md及n3f-snapshot-authority/third-path-review.md。同receipt活Figure→同次manifest/SVG→编辑/undo零重跑实验已过，但peek后override可lazy build、workerd unknown_session可透明重开。
-guard候选已释放，读n3f-edit-guard-candidate/REVIEW.md/source-release.json/guard-with-tests-final.patch：可移植Python24项、Rust3项及真实safe worker实验已有；非生产落地，原型27项与可移植24项不相加。采用独立render_existing命令，旧端忽略未知字段会隐式build，单加可选field不足。补native原figure锁/屏障/actual ID、app正常认证及完整fullref/receipt接纳、前端持久编辑来源后再称功能完整。
-生产守卫覆盖parent实际dispatch/worker实例、workerd重连、child真实execution identity；不能只传当前不生效require_built。保safe/native/legacy原路由/锁/屏障。
-编辑来源与当前输出figureSnapshot分角色，首override清输出仍保来源，不退同名当前图。优先复用合同，扩展同步前后schema/包闭包/ref遍历/迁移和request/renderKey/want/last/latest/recent/mounted/exact；引用不是运行授权。
-冷态沿原load_input_archive/校验、PreparationPlan/PreparationService、safe spec/runconfig/工作目录/runner。INPUT比对视图不是可执行目录，精确source/data/argv/rc和当前授权，pair独立几何/像素合格再进原编辑，取消回收。不建第二runner/store/writer，不静默运行陌生代码。
-仅清绝对路径/归属核明的自建旧源和派生cache；保新根/包/INPUT/AS命名稿/runconfig/config/绑定/打开意图/layout-sessions(.bak)，不全清含AI history的data/cache。结束旧父/浏览器再清清单、启新父/新浏览器，验双画布/两历史、数据范围样式、undo/redo、保存/再开/版本恢复/适用导出。
-另验n3f-runtime-kind/attempt-02/真正runtime家族.tavotto的实际fileKind/runtime/fallback/编辑冷开；12成员包不替代35包，混合包runtime来源对象实际pdf不能冒覆盖。来源合同/执行守卫/消费者/冷重建按功能commit，资格另交。
-P3和历史来源/重建就绪后才统一开始P2c完整冷迁移，实际新父/新浏览器、清清单内自建旧源/派生cache，核双画布/两个历史/最新稿/undo/版本恢复和A/B冷态成品。保失败但不循环重跑相同场景，不提前标N3f全过。
+七、后续N5→N4→M1/M2/M3
+N5读n5-tick-clipping-review/prototype/IMPLEMENTATION.md及validation。OUT13后端/92前端/14文件overlay不是产品。接S/F同源、同次render_frame/native2与旧1兼容，闭合schema/请求/cache/exact/frame采用事务/F→S几何/C确认/原图画布多页导出/ink-page策略。守CSS/percent/clip/use/PAR/旋转，不缩字体/轴/数据或偷改页面；x10负框不证明glyph越页，x5才有实际字形越界反证。
+N4复用legendmodel，显式entry→series/custom；保同名同色、复合句柄、手工文字和未绑定注释，编辑/undo/保存/冷开/导出一致。
+M1双系列+图例+注释完整数据/轴范围/样式→undo/redo→保存→空派生cache冷开→适用scope×format真产物，画布EPS仍eps_not_for_canvas。
+M2按SG00–17/A/B/C逐格补图族/多轴/投影/文字与组/use、写回/预检/出版及CLI/MCP/playground/桌面/发行。替代engineTransport归档读取仍缺，构建绿不等入口已实现；缺实现不标不适用。
+M3最终冻结后完整原Python/旧项目回归、等价性/CompatBench/E2E/性能及支持矩阵平台安装物；缺平台条件明确未验，不把Windows/浏览器结果当跨平台资格。
 
-八、后续P4→P5→M1/M2/M3
-P4=N5，读n5-tick-clipping-review/prototype/IMPLEMENTATION.md/validation。外部13后端/92前端/14文件overlay不是产品。集成S/F、同次render_frame/native2/旧1兼容，闭合schema/请求cache/exact/frame事务/F→S几何/C确认/原图画布多页导出/ink-page策略。守CSS/percent/clip/use/PAR/旋转，不缩字体/轴/数据或偷改页面。x10负框不证明glyph越页，x5才有实证。
-P5=N4，复用legendmodel，显式entry→series/custom；保同名同色/复合句柄/手工文字/未绑定注释，编辑undo保存冷开导出一致。
-M1双系列+图例+注释完整数据/轴范围/样式→undo/redo→保存→空派生cache冷开→适用scope×format真产物，画布EPS仍eps_not_for_canvas。M2按SG00–17/A/B/C逐格补图族/多轴/投影/写回/预检/出版及CLI/MCP/playground/桌面/发行；替代engineTransport归档读取仍缺，构建绿不等入口实现。M3最终冻结后完整原Python/旧项目回归、等价性/CompatBench/E2E/性能及支持平台安装物。缺实现不标不适用，缺平台条件明确未验。
-
-九、无人值守协议
-每批核状态/规则→实现真实消费者→必要反证→受影响验证→实际exit/源SHA/diff→定向功能commit→日期checkpoint→下一项。已有多代理授权，仅独立有收益任务并行，每文件一个写入者；root统一合同/浏览器/集成/提交。不要反复计划或跑绿测代替实现。
-Python先Ruff，前端正式/派生检查，最终候选再完整验证。长检查前后/提交/约30分钟更新PROGRESS的HEAD/diff/所有权/句柄/命令cwd env/actual fail skip/实物SHA/首红/下一项。未知保未知，mock/候选/准备不写产品通过。
-写回仍prepare→完整重放/几何/像素verify→commit，失败409原件零改。保认证/沙盒/隐私/零PyMuPDF；运行数据走config.data_dir，隔离证据、关闭遥测，只结束已核身份自有进程。
-无人值守为活跃会话自主接续，未建常驻调度器。局部失败修复继续、缺外部条件推进独立项，不以一晚时长/专项绿/测试数冒完成；M1/M2/M3全退出前总目标保持未完成。
+八、无人值守执行协议
+每批核状态/规则→实现真实消费者→必要反证→受影响验证→实际exit/源SHA/diff→定向功能commit→日期checkpoint→下一项。保既有多代理授权，只在任务独立且收益明确时并行；每文件一个写入者，root统一合同/浏览器/集成/提交。先核既有代理，不重复派工；来源一致性候选也已交接，所有本轮子任务自有测试/服务句柄已终局。
+长检查前后/提交/约30分钟更新PROGRESS：HEAD/diff、所有权/句柄、命令cwd/env、actual fail/skip、实物SHA、首红、未验项与下一条动作。UI期间冻结源/build，正常认证、遥测关闭、观察器只读，禁止注入store或伪造成功JSON；新snapshot再用ref，只结束已核身份的自有进程。
+局部失败保原日志→复现→修复→定向复验并继续，不删断言、放容差或改golden消红。同类问题修两轮仍扩散时按第三路径规则审结构。缺外部条件只挂起依赖项，继续独立就绪项；不反复计划或跑旧绿组代替实现。
+写回仍prepare→完整重放/几何/像素verify→commit，失败409原件零改。保认证/沙盒/隐私/零PyMuPDF；运行数据走config.data_dir。无人值守为活跃会话自主接续，未创建常驻调度器；M1/M2/M3全退出前不宣布最终可用或目标完成。
 ~~~
