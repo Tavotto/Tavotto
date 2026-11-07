@@ -119,6 +119,7 @@ order: 200
   `lib/autosave/diskWriter.ts`（`createDiskWriter(ports)`，不认识 store、不碰 window /
   localStorage / 遥测），`documentStore` 只装配端口；用例 `lib/autosave/diskWriter.test.ts`
   用假端口 + 手动 gate 直接量时序。
+- **立即冲刷与防抖共用捕获**：`flushAutosave`在同步捕获前消费已被本次正文覆盖的旧timer；不能在异步写盘回执后清timer，否则会吞掉捕获后的真实新编辑。安装等待项目文件元信息时，初次冲刷与期间到期的防抖共用原`deferredProjectFileFlushes`，hydration完成后捕获最新正文一次；无项目保原立即冲刷。失败/409仍保本机稿与原重试/裁决门，不靠残留timer重试。看护`store/documentFlushDebounce.test.tsx`（真实TextView测量、慢元信息、捕获后编辑、失败/冲突及无项目路径）。
 - **保存失败的原因**：`SaveIssue`的`stale/external`仍触发原冲突裁决；有结构化code的其他后端拒绝为`backend`，只在内存保留status/code/params/fallback，经`saveIssueMessage`消费既有`backendCodeMsg`描述符，状态与App通知/无项目保存共用同一翻译器。422来源校验失败不能被归为磁盘空间不足；真正无结构I/O或网络错误才用原通用提示。错误不进可携正文、本机恢复副本或遥测，不保存整个响应体；未知code保既有fallback。失败不推进基线、不清本机副本、不覆盖原文件。看护`lib/autosave/diskWriter.errors.test.ts`、`store/saveFailures.test.ts`、`App.pickerNotices.test.tsx`。
 - **⌘S 保存到项目（ADR 0096，2026-11-06 修订）**：排版可以**绑定**项目里的一个文件
   （后端会话按项目/格式/workingId持久化，`lib/projectFile.ts`消费内存镜像，不进文档）——从「项目里的

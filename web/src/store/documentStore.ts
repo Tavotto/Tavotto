@@ -1202,10 +1202,12 @@ export const useDocumentStore = create<DocumentState>((rawSet, get) => {
       else announceDocOpen(installId)
       installingUnderToken = false
       const installedLoadSeq = get().loadSeq
+      // 初次保存和 hydration 期间到期的防抖共用这一次 deferred，捕获完成时的最新正文。
+      if (owner) deferredProjectFileFlushes.set(projectFileKey(projectFileAddress(installId, format, owner)), installedLoadSeq)
       await hydrateProjectFile(undefined, true)
       if (get().documentId !== installId || get().documentFormat !== format || get().loadSeq !== installedLoadSeq) return false
-      // 新文档立刻落一次快照，这样它马上出现在「最近文档」里
-      flushAutosave()
+      // 没有项目就没有 hydration，保留原立即保存路径。
+      if (!owner) flushAutosave()
     } finally {
       installingUnderToken = false
     }
@@ -1749,6 +1751,8 @@ function flushAutosaveNow(): FlushResult {
   // 挂起中的文档一个字节都不写（见 `suspendAutosaveFor`）：内存里的编辑还在，
   // 换文档时它们随旧文档一起被放弃——这正是「重新开始」要的
   if (autosaveSuspendedFor !== null && autosaveSuspendedFor === documentAddressKey(state.documentId, state.documentFormat)) return 'skipped'
+  // 当前同步捕获覆盖已有防抖；不能等异步写盘结束才清，否则会吞掉后来的编辑。
+  cancelPendingAutosave()
   const raw = state.buildProject()
   const owner = projectOfDoc().id ?? currentProjectId()
   const chartContext = state.documentFormat === 'v4' ? captureChartSourceSave(raw, owner) : undefined
