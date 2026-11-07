@@ -22,9 +22,11 @@ import { useEnvStore } from './envStore'
 import { usePngAdmissionMemory } from './pngAdmissionMemory'
 const render = vi.fn()
 const addRemap = vi.fn()
+const setWorkdir = vi.fn()
 const pendingStyle = vi.fn(()=>false)
 vi.mock('@/lib/api',async original=>({...await original<typeof import('@/lib/api')>(),engineRender:(...args:unknown[])=>render(...args),fetchScriptBackedEnabled:async()=>false, // 实验开关默认关：PR1 行为
-  addInputRemap:(...args:unknown[])=>addRemap(...args)}))
+  addInputRemap:(...args:unknown[])=>addRemap(...args),
+  setProjectWorkdir:(...args:unknown[])=>setWorkdir(...args)}))
 vi.mock('./styleWork',()=>({hasPendingStyleWork:(...args:unknown[])=>pendingStyle(...args as [])}))
 const FRAME={gid:'figure',prop:'frame',value:'figsize'}
 const guard={version:1 as const,requiredFrame:'figsize' as const,sourceId:'plot.png',bytesSha256:'a'.repeat(64),sizeBytes:10}
@@ -73,6 +75,20 @@ const entryGates = [
 const gatedError = (gate = entryGates[0]) => new EngineError('needs an answer','',gate.code,'',undefined,undefined,gate.extra)
 
 describe('selected PNG environment gates', () => {
+ it('selecting a different workdir resumes the waiting PNG source validation across render invalidation', async () => {
+  useEnvStore.setState({ env: { ok: true, project: { open: true, workdir: { mode: 'sandbox' } } } as never })
+  setWorkdir.mockResolvedValueOnce({ ok: true, project: { open: true, workdir: { mode: 'project_root' } } })
+  render.mockRejectedValueOnce(new EngineError('choose directory', '', workdir.code, '', undefined, undefined, { confirmation: workdir }))
+  const before = structuredClone(P())
+  expect(await enterElementEdit('p')).toBe(false)
+  expect(useEnvStore.getState().workdirConfirmation).toBe(workdir)
+  expect(await useEnvStore.getState().setWorkdirMode('project_root', { confirmed: true })).toBeNull()
+  await vi.waitFor(() => expect(useUiStore.getState().elementPanelId).toBe('p'))
+  expect(P().artifactValidation).toEqual(guard)
+  expect(P().overrides).toEqual([FRAME])
+  expect(visual(P())).toEqual(visual(before))
+  expect(exactPanelRender(useRenderStore.getState(), P())).not.toBeNull()
+ })
  it.each(entryGates)('$code opens its existing dialog and resumes source validation after the answer', async gate => {
   render.mockRejectedValueOnce(new EngineError('needs an answer','',gate.code,'',undefined,undefined,gate.extra))
   const before = structuredClone(P())

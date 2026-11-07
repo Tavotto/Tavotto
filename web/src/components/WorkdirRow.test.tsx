@@ -134,7 +134,7 @@ describe('脚本的运行目录', () => {
     expect(setMock).toHaveBeenCalledWith('project')
     expect(checked()).toBe('project')
     expect(text()).toContain(en('workdirHintProject'))
-    expect(useRenderStore.getState().byKey.k.stale, '没重新排上').toBe(true)
+    await vi.waitFor(() => expect(useRenderStore.getState().byKey.k.stale, '没重新排上').toBe(true))
   })
 
   it('切回沙盒不用确认', async () => {
