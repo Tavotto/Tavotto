@@ -319,7 +319,13 @@ order: 200
   身份与ctx key由该叶子唯一组装，真实图源由原renderStore同步装配/冻结，timelineThumb只合成。
   排队正文、MomentSnapshot和PNG Promise保原引用；成功回调不得取新状态补拍。
   缺真实源端口须明确失败并保稿，不能默认丢Moment；直接文档、App、embedded、MCP、playground入口均须装配。
-  看护：`lib/momentCapture.test.ts`、`store/workingDocumentReceipt.test.ts`、原importArchitecture两门。
+  图源冻结必须把同一identity.pj传入SourceCapture，再贯穿HTTP URL/header与静态fallback；
+  不在等待期间重读current pj。明确离开快照可跨全局项目换代完成，不能按活动预览门一概取消。
+  renderer缓存SVG按实际响应捕获的projectId认源；旧A缓存可在current已B、clear前冻结，B同名缓存不能借给A。
+  活动缩略图/导出/版本预览经原docProject只读端口捕获PreviewOwner，正文、请求pj、缓存键和响应采纳同属一份身份；
+  历史正文读取也用该pj。门变但正文不变时，仅同项目代次/documentId/format/loadSeq的原owner可续期，不能重认领旧正文。
+  找回候选另随原列表读取的pj/项目代次/seq存活，不要求先成为活动文档；归属未知的候选只留结构草图，不借当前项目同名素材。
+  看护：`lib/momentCapture.test.ts`、`lib/previewProjectOwner.test.ts`、`components/previewOwner.test.tsx`、`components/LayoutDialog.recover.test.tsx`、`store/workingDocumentReceipt.test.ts`、原importArchitecture两门。
   恢复别的图（2026-10-31）：同一张画布上，这一版的图与画布上此刻的图不是同一组（换了 / 多了 / 少了，含单图编辑 ↔ 排版；比 fileId 集合，与后端 `_version_figures` 同一把尺子）→ 先确认、说清会变成几张图；恢复后图变了 → 时间线范围切到「全部图」（`timelineStore.revealAll`）；
   单图编辑时来自另一张画布的图，确认框按「图」说、不说「画布」。
   两个恢复入口（预览页脚、时间线行上弹出的对比小卡片）都经 `restoreUnderLock()`：挂 `timelineStore.restoring`、

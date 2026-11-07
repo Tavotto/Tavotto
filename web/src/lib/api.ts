@@ -825,17 +825,17 @@ export const saveProjectAs = (parent: string, pj?: string | null) =>
  */
 const stamp = (mtime?: number) => (mtime ? `&m=${mtime}` : '')
 
-export const renderUrl = (id: string, bucket: number, mtime?: number) =>
-  apiUrl(`/api/render?id=${encodeURIComponent(id)}&w=${bucket}${stamp(mtime)}`)
+export const renderUrl = (id: string, bucket: number, mtime?: number, pj: string | null = currentProjectId()) =>
+  apiUrlFor(`/api/render?id=${encodeURIComponent(id)}&w=${bucket}${stamp(mtime)}`, pj)
 
-export const fileUrl = (id: string, mtime?: number) =>
-  apiUrl(`/api/file?id=${encodeURIComponent(id)}${stamp(mtime)}`)
+export const fileUrl = (id: string, mtime?: number, pj: string | null = currentProjectId()) =>
+  apiUrlFor(`/api/file?id=${encodeURIComponent(id)}${stamp(mtime)}`, pj)
 
 /** materialized cache 里的预览 SVG（runtime 面板重开时的首帧占位）。
  * `nonce` 是重跑后的换代计数（runtimeAssetStore.previewNonce）：同一 URL
  * 的 <img> 不会自己重取，重新运行刷新了 cache 之后靠它换 src。 */
-export const runtimePreviewUrl = (id: string, nonce?: number) =>
-  apiUrl(`/api/runtime/preview?id=${encodeURIComponent(id)}${nonce ? `&t=${nonce}` : ''}`)
+export const runtimePreviewUrl = (id: string, nonce?: number, pj: string | null = currentProjectId()) =>
+  apiUrlFor(`/api/runtime/preview?id=${encodeURIComponent(id)}${nonce ? `&t=${nonce}` : ''}`, pj)
 
 /**
  * **这个文档状态**的 runtime 预览（QA-WIN-21）。`runtimePreviewUrl` 给的是后端「最近一次渲染」的
@@ -848,13 +848,14 @@ export async function fetchRuntimePreviewForState(
   id: string,
   patches: unknown[],
   signal?: AbortSignal,
+  pj: string | null = currentProjectId(),
 ): Promise<{ blob: Blob; exact: boolean } | null> {
-  const res = await fetch(apiUrl('/api/runtime/preview'), withProject({
+  const res = await fetch(apiUrlFor('/api/runtime/preview', pj), withProjectFor({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, patches }),
     signal,
-  }))
+  }, pj))
   if (res.status === 404) return null
   if (!res.ok) throw new Error(`runtime preview ${res.status}`)
   return { blob: await res.blob(), exact: res.headers.get('X-Tavotto-Preview-Exact') === '1' }
@@ -888,12 +889,13 @@ export const panelSrc = (
   kind: string,
   bucket: number,
   mtime?: number,
+  pj: string | null = currentProjectId(),
 ): string | null => {
   if (kind === 'raster')
-    return BROWSER_RASTER_EXTS.has(extOf(id)) ? fileUrl(id, mtime) : renderUrl(id, bucket, mtime)
-  if (kind === 'svg') return fileUrl(id, mtime)
-  if (kind === 'pdf') return renderUrl(id, bucket, mtime)
-  if (kind === 'runtime') return runtimePreviewUrl(id, mtime)
+    return BROWSER_RASTER_EXTS.has(extOf(id)) ? fileUrl(id, mtime, pj) : renderUrl(id, bucket, mtime, pj)
+  if (kind === 'svg') return fileUrl(id, mtime, pj)
+  if (kind === 'pdf') return renderUrl(id, bucket, mtime, pj)
+  if (kind === 'runtime') return runtimePreviewUrl(id, mtime, pj)
   return null
 }
 
@@ -1872,9 +1874,10 @@ export const putVersionThumb = (
     pj,
   )
 
-export const fetchVersionDoc = (docId: string, vid: string, format?: DocumentFormat) =>
+export const fetchVersionDoc = (docId: string, vid: string, format?: DocumentFormat, pj?: string | null) =>
   documentJsonFetch(format)<{ doc: FigureDocument | ProjectDocument } & LayoutVersionMeta>(
     `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}`,
+    undefined, pj,
   ).then(result => {
     if (format !== 'v4') return result as { doc: FigureDocument } & LayoutVersionMeta
     const doc = chartVersionCanvas(result.doc)
@@ -3347,13 +3350,14 @@ export async function enginePreviewPng(
   bucket: number,
   signal?: AbortSignal,
   source: EnginePngOptions = {},
+  pj: string | null = currentProjectId(),
 ): Promise<Blob> {
   if (source.chart) {
-    const snapshot = await enginePreviewPngSnapshot(id, patches, bucket, signal, source)
+    const snapshot = await enginePreviewPngSnapshot(id, patches, bucket, signal, source, pj)
     const png = snapshot.url.slice(snapshot.url.indexOf(',') + 1)
     return new Blob([Uint8Array.from(atob(png), c => c.charCodeAt(0))], { type: 'image/png' })
   }
-  return (await previewPngResponse(id, patches, bucket, signal, false, source)).blob()
+  return (await previewPngResponse(id, patches, bucket, signal, false, source, pj)).blob()
 }
 
 export interface EnginePngOptions extends ArtifactRequestFields {
@@ -3363,8 +3367,9 @@ export interface EnginePngOptions extends ArtifactRequestFields {
 
 export async function enginePreviewPngSnapshot(
   id: string, patches: unknown[], bucket: number, signal?: AbortSignal, source: EnginePngOptions = {},
+  pj: string | null = currentProjectId(),
 ): Promise<{ url: string; manifest: Manifest; sourceBacked?: unknown; chartRevision?: string }> {
-  const res = await previewPngResponse(id, patches, bucket, signal, true, source)
+  const res = await previewPngResponse(id, patches, bucket, signal, true, source, pj)
   const frame = await res.json() as { png: string; manifest: Manifest; artifact_source?: unknown; source_backed?: unknown; chart_revision?: string }
   if (source.chart && (typeof frame.chart_revision !== 'string' || !frame.chart_revision || !frame.manifest || !frame.png)) {
     throw new EngineError('The chart response has no paired pixels and geometry.', '', 'chart_render_pair_missing')
@@ -3380,13 +3385,14 @@ export async function enginePreviewPngSnapshot(
 
 async function previewPngResponse(
   id: string, patches: unknown[], bucket: number, signal?: AbortSignal, withManifest = false, source: EnginePngOptions = {},
+  pj: string | null = currentProjectId(),
 ): Promise<Response> {
-  const res = await fetch(apiUrl('/api/engine/preview_png'), withProject({
+  const res = await fetch(apiUrlFor('/api/engine/preview_png', pj), withProjectFor({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, patches, w: bucket, ...source, ...(withManifest ? { with_manifest: true } : {}) }),
     signal,
-  }))
+  }, pj))
   if (!res.ok) {
     const body = await errorBody(res)
     noteProjectGone(res.status, body)

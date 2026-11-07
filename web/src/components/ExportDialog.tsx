@@ -1,4 +1,3 @@
-import { chartPreviewArgs } from '@/lib/chartSource'
 /**
  * 导出面板（ADR 0031）。
  *
@@ -137,7 +136,7 @@ import { engineTransport } from "@/lib/engineTransport";
 import { useVariantPng } from "@/hooks/useVariantPng";
 import { isJustBakedBaseline } from "@/store/actions";
 import { useAssetStore } from "@/store/assetStore";
-import { useExactPanelManifest, usePanelRender, useRenderStore } from "@/store/renderStore";
+import { previewRenderForProject, useExactPanelManifest, usePanelRender, useRenderStore } from "@/store/renderStore";
 import { useRuntimeAssetStore } from "@/store/runtimeAssetStore";
 import { useSelectionStore } from "@/store/selectionStore";
 import {
@@ -157,6 +156,7 @@ import {
 import { useProfileStore } from "@/store/profileStore";
 import { useProjectStore } from "@/store/projectStore";
 import { useDocumentStore } from "@/store/documentStore";
+import { useDocumentPreviewOwner } from "@/hooks/useDocumentPreviewOwner";
 import { dialogCovered, EXPORT_DONE_DISMISS_MS, useUiStore } from "@/store/uiStore";
 import { useWorkspaceStore } from "@/store/workspace";
 import { isRuntimePanel, type CanvasObject, type FigureDocument, type PanelObject, type TextObject } from "@/types/document";
@@ -2057,6 +2057,7 @@ export function ExportDialog() {
 
 /** `useFigureThumbSource` 的结果：清单行与对象头共用，取图只有这一处 */
 interface FigureThumbSource {
+  plainSrc: (bucket: number) => string | null;
   svgMarkup: { __html: string } | undefined;
   src: string | null;
   /** 图幅宽高比（读不到时 4:3） */
@@ -2078,12 +2079,14 @@ function useFigureThumbSource(
   figure: ExportableFigure,
   bucket: number,
 ): FigureThumbSource {
-  const render = usePanelRender(figure.panel);
+  const owner = useDocumentPreviewOwner(figure);
+  const active = owner.still();
+  const render = previewRenderForProject(usePanelRender(figure.panel), owner.pj);
   const tracked = useRenderStore((s) => !!s.tracked[figure.figureId]);
   const panel = figure.panel;
   const needsEngine =
     !!panel && (showsEdits(panel) || tracked || figure.kind === "runtime");
-  const svg = needsEngine ? (render?.svg ?? null) : null;
+  const svg = active && needsEngine ? (render?.svg ?? null) : null;
   // 同一份字符串复用同一个 `{__html}`：缩略格随对话框重渲时不必把整张 SVG 重新解析一遍
   const svgMarkup = useHtmlMarkup(svg);
   // 引擎 SVG 不在手边（位图档没有矢量 payload、或被字节预算清掉了）：按 overrides 现出一张位图，
@@ -2095,7 +2098,8 @@ function useFigureThumbSource(
     !!panel && !svg && showsEdits(panel),
     figure.stamp ?? 0,
     panel ? adoptionGuardOf(panel) : undefined,
-    ...chartPreviewArgs(panel),
+    panel?.chart, panel?.chartSource,
+    owner,
   );
   // runtime 图的退路是 cache 预览：后端 GET 版给的是「最近一次渲染」，撤销回一个前端已画过的变体时它停在
   // 撤销前（QA-WIN-21）。按此刻的 overrides 取，不是这个状态的图就不挂（预览只是示意，空着比旧图诚实）
@@ -2105,19 +2109,21 @@ function useFigureThumbSource(
     panel?.overrides ?? NO_OVERRIDES,
     runtimeByState,
     figure.stamp ?? 0,
+    owner,
   );
-  const src =
+  const src = !active ? null :
     variant.url ??
     (runtimeByState
       ? runtimePreview.exact === true
         ? runtimePreview.url
         : null
-      : panel?.chart || panel?.chartSource !== undefined ? null : figureThumbSrc(figure, bucket));
-  const plain = !panel?.chart && panel?.chartSource === undefined && !variant.url && !runtimeByState;
+      : panel?.chart || panel?.chartSource !== undefined ? null : figureThumbSrc(figure, bucket, owner.pj));
+  const plain = active && !panel?.chart && panel?.chartSource === undefined && !variant.url && !runtimeByState;
   const sizeMm = render?.manifest?.size_mm ?? figure.sizeMm;
   const ratio =
     sizeMm && sizeMm[0] > 0 && sizeMm[1] > 0 ? sizeMm[0] / sizeMm[1] : 4 / 3;
-  return { svgMarkup: svg ? svgMarkup : undefined, src, ratio, plain };
+  return { svgMarkup: svg ? svgMarkup : undefined, src, ratio, plain,
+    plainSrc: px => owner.still() ? figureThumbSrc(figure, px, owner.pj) : null };
 }
 
 const NO_OVERRIDES: PanelObject["overrides"] = [];
@@ -2431,7 +2437,7 @@ function PreviewStageArt({ figure, ratio }: { figure: ExportableFigure; ratio: n
             />
           );
         }
-        const src = px && source.plain ? figureThumbSrc(figure, px) : source.src;
+        const src = px && source.plain ? source.plainSrc(px) : source.src;
         if (src) {
           return (
             <RetryImg

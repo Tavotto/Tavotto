@@ -24,6 +24,7 @@ import { EngineError, enginePreviewPng, enginePreviewPngSnapshot } from '@/lib/a
 import { engineTransport } from '@/lib/engineTransport'
 import { currentProjectId } from '@/lib/session'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
+import type { PreviewOwner } from '@/lib/previewOwner'
 
 /** 缓存上限：一次对话框里用户来回比对的版本数远小于它 */
 const CACHE_MAX = 24
@@ -40,8 +41,8 @@ let cacheEpoch = 0
  * 之后切到项目 B，会直接命中 A 的 blob 并把**别人的图**当成这一版的预览显示
  * 出来，而且一次请求都不发。素材本身被改过（mtime 变了）同理。
  */
-const keyOf = (fileId: string, overrides: unknown[], bucket: number, rev: number, chart?: PanelChartState, chartSource?: ChartSourceRef) =>
-  `${currentProjectId() ?? '-'} ${rev} ${bucket} ${fileId} ${renderRequestIdentity(overrides, chart, chartSource)}`
+const keyOf = (fileId: string, overrides: unknown[], bucket: number, rev: number, chart?: PanelChartState, chartSource?: ChartSourceRef, owner?: PreviewOwner) =>
+  `${owner ? owner.key : currentProjectId() ?? '-'} ${rev} ${bucket} ${fileId} ${renderRequestIdentity(overrides, chart, chartSource)}`
 
 function remember(key: string, url: string) {
   cache.set(key, url)
@@ -95,8 +96,10 @@ export function useVariantPng(
   artifactValidation?: AdoptionGuard | null,
   chart?: PanelChartState,
   chartSource?: ChartSourceRef,
+  owner?: PreviewOwner,
 ): VariantPng {
-  const key = keyOf(fileId, overrides, bucket, rev, chart, chartSource) + artifactKeySuffix(artifactValidation)
+  const active = !owner || owner.still()
+  const key = keyOf(fileId, overrides, bucket, rev, chart, chartSource, owner) + artifactKeySuffix(artifactValidation)
   const [state, setState] = useState<VariantPng & {key?: string}>(() => ({
     key,
     url: artifactValidation !== undefined ? null : cache.get(key) ?? null,
@@ -105,8 +108,8 @@ export function useVariantPng(
   }))
 
   useEffect(() => {
-    if (!enabled) {
-      setState({ key, url: null, loading: false, approximate: false })
+    if (!enabled || !active) {
+      setState({ key, url: null, loading: false, approximate: !active })
       return
     }
     if (chartSource !== undefined && !chart) {
@@ -129,9 +132,11 @@ export function useVariantPng(
     }
     const ctrl = new AbortController()
     const project = captureProjectEpoch()
+    const pj = owner ? owner.pj : project.pj
     let live = true
     const epoch = cacheEpoch
-    setState((s) => ({ key, url: artifactValidation || chart ? null : s.url, loading: true, approximate: false }))
+    const current = () => live && epoch === cacheEpoch && project.still() && (!owner || owner.still())
+    setState({ key, url: null, loading: true, approximate: false })
     const transport = engineTransport()
     const pending = chart
       ? transport
@@ -146,28 +151,28 @@ export function useVariantPng(
             }
             return frame.url
           })
-        : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, { ...artifactRequestFields(subject), chart: structuredClone(chart), ...chartSourceFields(chartSource) }).then(frame => frame.url)
+        : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, { ...artifactRequestFields(subject), chart: structuredClone(chart), ...chartSourceFields(chartSource) }, pj).then(frame => frame.url)
       : artifactValidation
       ? transport ? Promise.reject(new ArtifactValidationError('unsupported_render_state'))
-        : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, artifactRequestFields(subject)).then(s=>s.url)
+        : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, artifactRequestFields(subject), pj).then(s=>s.url)
       : transport
       ? transport.previewPngUrl(fileId, overrides, bucket, ctrl.signal)
-      : enginePreviewPng(fileId, overrides, bucket, ctrl.signal).then((b) =>
+      : enginePreviewPng(fileId, overrides, bucket, ctrl.signal, {}, pj).then((b) =>
           URL.createObjectURL(b),
         )
     void pending
       .then((url) => {
-        if (!live || epoch !== cacheEpoch || !project.still()) { if (url.startsWith('blob:')) URL.revokeObjectURL(url); return }
+        if (!current()) { if (url.startsWith('blob:')) URL.revokeObjectURL(url); return }
         if (artifactValidation === undefined) remember(key, url)
         if (live) setState({ key, url, loading: false, approximate: false })
       })
       .catch((error) => {
-        if (live && epoch === cacheEpoch && project.still() && artifactValidation &&
+        if (current() && artifactValidation &&
             (error instanceof ArtifactValidationError || (error instanceof EngineError && error.code === 'artifact_source_unavailable'))) {
           rejectArtifactRenders(fileId, artifactValidation, error, renderKey(fileId, overrides, artifactValidation))
         }
         // 失败不是「空白」：退回磁盘图，但必须标成近似
-        if (live && epoch === cacheEpoch && project.still()) setState({ key, url: null, loading: false, approximate: true })
+        if (current()) setState({ key, url: null, loading: false, approximate: true })
       })
     return () => {
       live = false
@@ -175,8 +180,8 @@ export function useVariantPng(
     }
     // overrides 的内容变化由 key 表达（数组引用每次都是新的）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, enabled])
+  }, [key, enabled, active])
 
-  return (artifactValidation !== undefined || chart || chartSource !== undefined) && state.key !== key
-    ? {url:null,loading:enabled,approximate:true} : state
+  return !active || state.key !== key
+    ? {url:null,loading:enabled && active,approximate:true} : state
 }

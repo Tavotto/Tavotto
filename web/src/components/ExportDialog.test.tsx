@@ -44,7 +44,8 @@ import { setTelemetryEnabled } from '@/lib/telemetry'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
 import { useProjectStore } from '@/store/projectStore'
-import { useDocumentStore } from '@/store/documentStore'
+import { pinDocumentOwner, useDocumentStore } from '@/store/documentStore'
+import { setCurrentProjectId } from '@/lib/session'
 import { renderKey, useRenderStore } from '@/store/renderStore'
 import { statusDismissTimer, useUiStore } from '@/store/uiStore'
 import { runValidation, useValidationStore } from '@/store/validationStore'
@@ -1814,6 +1815,31 @@ async function stage(opts: {
 }
 
 /* ------------------------- 用户反馈 06：原图导出的对象 ------------------------- */
+
+it('导出派生图的预览随正文 A，current B 的同名缓存 SVG 不能替换它', async () => {
+  setCurrentProjectId('export-A')
+  const edited = { ...panel, overrides: [{ gid: 'line', prop: 'linewidth', value: 19 }] }
+  await stage({ panels: [edited], renders: { [edited.fileId]: manifestWithTicks(1, 9) } })
+  const key = renderKey(edited.fileId, edited.overrides)
+  useRenderStore.getState().patch(key, {
+    projectId: 'export-B', svg: '<svg xmlns="http://www.w3.org/2000/svg" data-wrong-owner="B"/>',
+  })
+  pinDocumentOwner()
+  setCurrentProjectId('export-B')
+  clearVariantPngCache()
+  vi.mocked(enginePreviewPng).mockClear()
+  useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: edited.id })
+  try {
+    await mountDialogs()
+    await openDialog()
+    const calls = vi.mocked(enginePreviewPng).mock.calls
+    expect(calls.length).toBeGreaterThan(0)
+    expect(calls.every(args => args[0] === edited.fileId && args[5] === 'export-A')).toBe(true)
+    expect(document.querySelector('[data-wrong-owner]')).toBeNull()
+  } finally {
+    setCurrentProjectId(null)
+  }
+})
 
 /** 两张图都在画布上（p1 → Fig1.pdf，p2 → Fig2.pdf），素材清单都认识它们 */
 async function setupTwo(opts: { select?: string[]; open?: boolean } = {}) {

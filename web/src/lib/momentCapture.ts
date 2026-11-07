@@ -43,7 +43,7 @@ export interface MomentSnapshot {
   readonly bakedInto?: ReadonlyMap<string, string>
 }
 
-type SourceCapture = (doc: FigureDocument) => ThumbSources
+type SourceCapture = (doc: FigureDocument, pj: string | null) => ThumbSources
 let captureSources: SourceCapture | null = null
 
 /** The real renderer supplies this synchronous port at module initialization. */
@@ -72,6 +72,6 @@ export function captureDocumentMoment(
   return {
     ctx: timelineCtxKey(gen, identity.documentId, identity.format),
     identity,
-    thumb: captureSources(identity.doc),
+    thumb: captureSources(identity.doc, identity.pj),
   }
 }

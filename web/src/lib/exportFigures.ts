@@ -89,12 +89,13 @@ export function figureOfPanel(p: PanelObject): ExportableFigure {
  * 缩略图的图片地址：认得出是哪张图就够（核对修改归画布）。画法未知、runtime 图
  * 还没有缓存预览时给 null——不猜地址。内嵌画布走它自己的传输层。
  */
-export function figureThumbSrc(figure: ExportableFigure, bucket: number): string | null {
+export function figureThumbSrc(figure: ExportableFigure, bucket: number, pj?: string | null): string | null {
   if (figure.kind === 'unknown' || (figure.kind === 'runtime' && !figure.cached)) return null
   const transport = engineTransport()
   return transport
     ? transport.panelSrc(figure.figureId, figure.kind, bucket, figure.stamp)
-    : panelSrc(figure.figureId, figure.kind, bucket, figure.stamp)
+    : pj === undefined ? panelSrc(figure.figureId, figure.kind, bucket, figure.stamp)
+      : panelSrc(figure.figureId, figure.kind, bucket, figure.stamp, pj)
 }
 
 export function listExportableFigures(): ExportableFigure[] {

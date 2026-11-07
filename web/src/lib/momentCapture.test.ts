@@ -48,7 +48,7 @@ describe('同步保存时刻捕获端口', () => {
     project.canvases[0].objects = [panel]
     await useDocumentStore.getState().switchDocument(project, 'frozen', undefined, { format: 'v4' })
     const key = renderKeyOf(panel)
-    const render = { svg: '<svg id="original"/>', manifest: null, fileId: panel.fileId, lastPatches: [], stale: false, status: 'ready' as const }
+    const render = { projectId: 'original-project', svg: '<svg id="original"/>', manifest: null, fileId: panel.fileId, lastPatches: [], stale: false, status: 'ready' as const }
     useRenderStore.setState({ byKey: { [key]: render as never }, latest: { [panel.fileId]: key } })
     const before = useDocumentStore.getState()
     const moment = captureDocumentMoment(before, 'original-project', 4)

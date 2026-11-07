@@ -33,6 +33,8 @@ import {
   type ProjectFileBinding,
 } from '@/lib/projectFile'
 import { currentProjectId } from '@/lib/session'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
+import type { PreviewOwner } from '@/lib/previewOwner'
 import { clearChangedChartSources } from '@/lib/chartSource'
 import { sameRules } from '@/lib/specBinding'
 import { msg, t, type UiMessage } from '@/i18n'
@@ -1272,6 +1274,29 @@ let docProject: { id: string | null; name: string | null } | null = null
  * 「Cannot access 'project' before initialization」整文件失败。
  */
 const projectOfDoc = () => docProject ?? { id: currentProjectId(), name: currentProjectLabel() }
+
+/** 只读捕获：预览正文沿原文档归属取源，不能把转场时的新 current pj 当成正文的项目。 */
+export function captureDocumentPreviewOwner(): PreviewOwner {
+  const state = useDocumentStore.getState()
+  const pj = projectOfDoc().id
+  const project = captureProjectEpoch()
+  const sameDocument = () => {
+    const now = useDocumentStore.getState()
+    return project.still() && projectOfDoc().id === pj && now.documentId === state.documentId
+      && now.documentFormat === state.documentFormat && now.loadSeq === state.loadSeq
+  }
+  const atGate = (restoreGen: number): PreviewOwner => {
+    const owner: PreviewOwner = {
+      pj,
+      key: JSON.stringify([pj, project.generation, state.documentId, state.documentFormat, state.loadSeq, restoreGen]),
+      still: () => sameDocument() && gate.gen === restoreGen && !isDocumentPlaceholder(),
+      refresh: () => sameDocument() && !isDocumentPlaceholder() && gate.gen !== restoreGen
+        ? atGate(gate.gen) : owner,
+    }
+    return owner
+  }
+  return atGate(gate.gen)
+}
 
 /**
  * 从「最近文档」显式打开的**别的项目**的排版：打开时归属**不变**，用户在这个项目里真改了一笔

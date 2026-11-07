@@ -198,7 +198,7 @@ describe('冻结时间线图源保留INPUT附件', () => {
     const doc = { ...emptyDocument(), objects: [p] }
     const sources = captureThumbSources(doc)
     expect(snapshotPng).toHaveBeenCalledWith(p.fileId, p.overrides, 360, undefined,
-      { chart: p.chart, chart_source: p.chartSource })
+      { chart: p.chart, chart_source: p.chartSource }, null)
     p.chartSource!.bytesSha256 = 'b'.repeat(64)
     p.overrides[0].value = '#00f'
     expect(snapshotPng.mock.calls[0][4].chart_source).toEqual(original.chartSource)

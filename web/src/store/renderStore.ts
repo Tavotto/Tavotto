@@ -50,6 +50,8 @@ export interface BuildingInfo {
 }
 
 export interface PanelRender {
+  /** 真正产生这份 SVG/manifest 的请求项目；旧宿主种子缺省时只在当前项目内使用。 */
+  projectId?: string | null
   /** 只有显式 chart 请求才出现；用于拒绝同文件另一张计算图表的显示退路。 */
   chartRequest?: string
   /** 后端同一次 SVG/manifest draw 的完整计算图表渲染身份。 */
@@ -792,6 +794,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           }
           const next: Partial<PanelRender> = {
             fileId,
+            projectId: projectAtStart,
             artifactValidation: artifactValidation ?? undefined,
             ...(chart ? { chartRequest: chartRequestIdentity(chart, chartSource), chartRevision: res.chart_revision } : {}),
             rev: res.rev,
@@ -1258,6 +1261,7 @@ function mergeRender(
       chartRequest: prev.chartRequest, chartRevision: prev.chartRevision, stale: own.stale || prev.stale,
     } : {}),
     svg,
+    projectId: own.svg ? own.projectId : prev.projectId,
     rev: own.rev || prev.rev,
     // **表示法跟着 SVG 走**：退回来的是上一版那张图，那么「该怎么显示它」
     // 也得是上一版的答案。拿自己那份（还没画出来 = 默认 vector）去解读别人
@@ -1523,10 +1527,19 @@ export function useExactPanelManifest(panel: PanelObject | null | undefined): Ma
   )
 }
 
+/** 预览只消费实际响应所属项目的 SVG；嵌入宿主旧种子只在当前项目沿用。 */
+export function previewRenderForProject(render: PanelRender | null | undefined, pj: string | null): PanelRender | undefined {
+  return render && (render.projectId === pj || (render.projectId === undefined && pj === currentProjectId()))
+    ? render : undefined
+}
+
 /** Freeze real renderer sources synchronously; the compositor consumes the same references. */
-function panelSource(o: PanelObject): PanelSource {
-  const render = o.chartSource !== undefined
+function panelSource(o: PanelObject, pj: string | null): PanelSource {
+  // current 已换但 clear 之前仍握有旧项目的真实 SVG；认响应归属，不认此刻全局 pj。
+  const here = pj === currentProjectId()
+  const candidate = o.chartSource !== undefined
     ? exactPanelRender(useRenderStore.getState(), o) : panelRender(useRenderStore.getState(), o)
+  const render = previewRenderForProject(candidate, pj)
   if (o.chartSource !== undefined) {
     // 发起时冻结整份请求和项目；不能等别的图片解码完后再拿新项目里的同名文件。
     const input = structuredClone({ id: o.fileId, chart: o.chart, patches: o.overrides, source: o.chartSource })
@@ -1538,7 +1551,7 @@ function panelSource(o: PanelObject): PanelSource {
         ? Promise.reject(new EngineError('This host does not support chart sources.', '', 'chart_render_unsupported'))
         : transport.previewPngSnapshot(input.id, input.patches, TIMELINE_THUMB_PX, undefined, input.chart, input.source)
       : enginePreviewPngSnapshot(input.id, input.patches, TIMELINE_THUMB_PX, undefined,
-        { chart: input.chart, ...chartSourceFields(input.source) })
+        { chart: input.chart, ...chartSourceFields(input.source) }, pj)
     const png = pending.then(async frame => {
       if (!frame.manifest || !frame.chartRevision) {
         if (frame.url.startsWith('blob:')) URL.revokeObjectURL(frame.url)
@@ -1558,16 +1571,16 @@ function panelSource(o: PanelObject): PanelSource {
     }).catch(() => null)
     return { svg: render?.svg ?? undefined, png }
   }
-  const mtime = useAssetStore.getState().byId[o.fileId]?.mtime
-  const url = panelSrc(o.fileId, o.fileKind, 400, mtime) || undefined
+  const mtime = here ? useAssetStore.getState().byId[o.fileId]?.mtime : undefined
+  const url = panelSrc(o.fileId, o.fileKind, 400, mtime, pj) || undefined
   if (!render?.svg && !url) return null
   return { svg: render?.svg ?? undefined, url }
 }
 
-export function captureThumbSources(doc: FigureDocument): ThumbSources {
+export function captureThumbSources(doc: FigureDocument, pj: string | null = currentProjectId()): ThumbSources {
   const sources = new Map<string, PanelSource>()
   try {
-    for (const o of doc.objects) if (o.type === 'panel' && !o.hidden) sources.set(o.id, panelSource(o))
+    for (const o of doc.objects) if (o.type === 'panel' && !o.hidden) sources.set(o.id, panelSource(o, pj))
   } catch {
     return null
   }

@@ -1,5 +1,4 @@
 import type { DocumentFormat } from '@/lib/documentFormat'
-import { chartPreviewArgs } from '@/lib/chartSource'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Bookmark, ChevronDown, Copy, Eye, Minus, Pencil, Plus, RotateCcw, Trash2 } from '@/components/ui/icons'
@@ -42,7 +41,9 @@ import type { UiMessage } from '@/i18n/message'
 import { formatDate, formatTime } from '@/i18n/format'
 import { closeTimeline, restoreLayoutVersion } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
-import { useDocumentStore } from '@/store/documentStore'
+import { captureDocumentPreviewOwner, useDocumentStore } from '@/store/documentStore'
+import type { PreviewOwner } from '@/lib/previewOwner'
+import { useDocumentPreviewOwner } from '@/hooks/useDocumentPreviewOwner'
 import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { useTimelineStore } from '@/store/timelineStore'
 import { useInFlight } from '@/hooks/useInFlight'
@@ -91,6 +92,16 @@ import { isAdoptedPanel, adoptionGuardOf } from '@/lib/artifactValidation'
  * 不触碰 figures 里的任何文件。
  */
 /** 本抽屉的文案在 dialogs:versions.* 下 */
+// 历史正文属于取回它的项目，不是稍后挂载预览时的 current pj；WeakMap 不延长正文寿命。
+const versionPreviewOwners = new WeakMap<FigureDocument, PreviewOwner>()
+async function fetchOwnedVersionDoc(...args: Parameters<typeof fetchVersionDoc>): ReturnType<typeof fetchVersionDoc> {
+  const owner = captureDocumentPreviewOwner()
+  if (!owner.still()) throw new DOMException('The preview owner is no longer active.', 'AbortError')
+  const result = await fetchVersionDoc(args[0], args[1], args[2], owner.pj)
+  versionPreviewOwners.set(result.doc as FigureDocument, owner)
+  return result
+}
+
 const vd = (key: string, values?: Record<string, unknown>) =>
   translate(`versions.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
@@ -340,7 +351,7 @@ export function TimelinePanel() {
         const cur = useTimelineStore.getState().preview
         return currentTimelineCtx() === ctx && cur?.docId === docId && (cur.format ?? 'legacy') === format && cur.meta.id === meta.id
       }
-      fetchVersionDoc(docId, meta.id, ...(format === 'v4' ? [format] : []))
+      fetchOwnedVersionDoc(docId, meta.id, ...(format === 'v4' ? [format] : []))
         .then((v) => {
           if (current()) useTimelineStore.getState().setPreview({ ...(format === 'v4' ? { format } : {}), docId, meta, doc: v.doc })
         })
@@ -405,7 +416,7 @@ export function TimelinePanel() {
         docId,
         meta,
         async () => {
-          const v = await fetchVersionDoc(docId, meta.id, ...(format === 'v4' ? [format] : []))
+          const v = await fetchOwnedVersionDoc(docId, meta.id, ...(format === 'v4' ? [format] : []))
           return v.doc as FigureDocument
         },
         { confirmed: true },
@@ -1024,7 +1035,7 @@ function CompareCard({
   const hasThumb = !!meta.thumb || !!meta.sketch
   useEffect(() => {
     let live = true
-    fetchVersionDoc(docId, meta.id, ...(format === 'v4' ? [format] : []))
+    fetchOwnedVersionDoc(docId, meta.id, ...(format === 'v4' ? [format] : []))
       .then((v) => live && setDoc(v.doc as FigureDocument))
       .catch((e) => live && setFailed(backendErrorText(e)))
     return () => {
@@ -1711,6 +1722,7 @@ export function LayoutSnapshot({
   /** 还有面板按 overrides 的图没出好（`renderOverrides` 时才有意义） */
   onPending?: (pending: boolean) => void
 }) {
+  const owner = useDocumentPreviewOwner(doc, versionPreviewOwners.get(doc))
   const assets = useAssetStore((s) => s.byId)
   const loadingPanels = useRef(new Set<string>())
   const onLoading = useCallback(
@@ -1761,6 +1773,7 @@ export function LayoutSnapshot({
               <SnapshotPanel
                 key={o.id}
                 panel={o}
+                owner={owner}
                 style={style}
                 mtime={assets[o.fileId]?.mtime}
                 renderOverrides={renderOverrides}
@@ -1808,6 +1821,7 @@ export function LayoutSnapshot({
  */
 function SnapshotPanel({
   panel,
+  owner,
   style,
   mtime,
   renderOverrides,
@@ -1816,6 +1830,7 @@ function SnapshotPanel({
   bucket,
 }: {
   panel: PanelObject
+  owner: PreviewOwner
   style: React.CSSProperties
   mtime?: number
   renderOverrides: boolean
@@ -1833,7 +1848,8 @@ function SnapshotPanel({
     wantsVariant,
     mtime ?? 0,
     adoptionGuardOf(panel),
-    ...chartPreviewArgs(panel),
+    panel.chart, panel.chartSource,
+    owner,
   )
   useEffect(() => {
     if (renderOverrides) onApproximate?.(variant.approximate)
@@ -1849,7 +1865,7 @@ function SnapshotPanel({
 
   // panelSrc 可能给不出地址（替代传输里没有 HTTP 服务）：一个都拿不到就不画
   // <img>，绝不留一个空 src 让缩略图挂一个碎图标
-  const src = variant.url || (panel.chart || panel.chartSource !== undefined ? null : panelSrc(panel.fileId, panel.fileKind, bucket, mtime))
+  const src = !owner.still() ? null : variant.url || (panel.chart || panel.chartSource !== undefined ? null : panelSrc(panel.fileId, panel.fileKind, bucket, mtime, owner.pj))
   if (!src) return null
   return (
     <RetryImg

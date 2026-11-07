@@ -16,6 +16,8 @@ import {
   type RowIssue,
 } from '@/lib/recoveryCandidates'
 import { currentProjectId } from '@/lib/session'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
+import type { PreviewOwner } from '@/lib/previewOwner'
 import { correctRecordedProject, isForeignDocument } from '@/lib/docOwnership'
 import { cn } from '@/lib/utils'
 import { openDocumentAs } from '@/store/actions'
@@ -79,6 +81,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
   const inFlight = useRef(false)
   /** 每组列表是替哪个项目读的：点击时对不上此刻的项目就拒绝（界面还没来得及换也不放行） */
   const listPj = useRef<{ project: string | null; unknown: string | null }>({ project: null, unknown: null })
+  const previewOwners = useRef(new WeakMap<RecoveryCandidateItem, PreviewOwner>())
 
   const load = useCallback(
     async (scope: 'project' | 'unknown', prev?: CandidateList) => {
@@ -86,10 +89,24 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
       const mine = seq.current
       set(prev ? { state: 'loading', list: prev } : { state: 'loading' })
       const pj = currentProjectId()
+      const epoch = captureProjectEpoch()
       listPj.current[scope] = pj
       const current = useDocumentStore.getState()
       const res = await loadAllCandidates(scope, pj, prev, new Set([documentAddressKey(current.documentId, current.documentFormat)]))
-      if (mine !== seq.current) return
+      if (mine !== seq.current || !epoch.still()) return
+      if (res.kind === 'ok') {
+        for (const item of res.list.rows) {
+          const owner: PreviewOwner = {
+            pj,
+            key: JSON.stringify(['recovery', pj, epoch.generation, mine, scope, item.doc_id, item.revision]),
+            // 草图可在 needs_user 下展示；只有候选自己的归属证据能授权取本项目媒体。
+            still: () => scope === 'project' && item.owner === 'this' && item.evidence !== null
+              && epoch.still() && mine === seq.current,
+            refresh: () => owner,
+          }
+          previewOwners.current.set(item, owner)
+        }
+      }
       set(asGroup(res))
     },
     [],
@@ -322,6 +339,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
               <li key={documentAddressKey(it.doc_id, it.format)} className="flex">
                 <Row
                   item={it}
+                  owner={previewOwners.current.get(it)}
                   currentId={currentId}
                   busy={busy}
                   onActivate={() => void openOwn(it)}
@@ -372,6 +390,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
                     <li key={documentAddressKey(it.doc_id, it.format)} className="flex flex-col">
                       <Row
                         item={it}
+                        owner={previewOwners.current.get(it)}
                         currentId={currentId}
                         busy={busy}
                         selected={isSel}
@@ -418,6 +437,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
 
 function Row({
   item,
+  owner,
   currentId,
   busy,
   selected = false,
@@ -425,6 +445,7 @@ function Row({
   action,
 }: {
   item: RecoveryCandidateItem
+  owner: PreviewOwner | undefined
   currentId: string
   busy: boolean
   selected?: boolean
@@ -450,7 +471,7 @@ function Row({
       )}
     >
       {item.sketch ? (
-        <CanvasThumb page={item.sketch.page} objects={item.sketch.objects} />
+        <CanvasThumb page={item.sketch.page} objects={item.sketch.objects} owner={owner} />
       ) : (
         <span aria-hidden className="grid h-10 w-14 shrink-0 place-items-center">
           <FolderOpen size={ICON_SIZE.sm} className="text-ink-3" />
