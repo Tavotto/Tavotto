@@ -25,6 +25,7 @@ import {
 import { requestRelinkMissing } from '@/lib/clipboard'
 import { runUndoRedo } from '@/hooks/useKeyboard'
 import { createPackage, openPackage } from '@/lib/api'
+import { chooseProjectPackage } from '@/lib/projectPackageEntry'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { dragRegionProps, TRAFFIC_LIGHTS_INSET, WINDOW_CONTROLS_INSET, windowChrome } from '@/lib/desktop'
 import { keyOf } from '@/lib/keymap'
@@ -789,6 +790,7 @@ export function DocumentMenu() {
       </MenuItem>
       <MenuItem data-export-package onSelect={() => void exportPackage()}>{t('topbar.exportPackage')}</MenuItem>
       <MenuItem onSelect={importPackage}>{t('topbar.importPackage')}</MenuItem>
+      <MenuItem data-install-project-package onSelect={() => chooseProjectPackage()}>{t('packageInstall.entry', { ns: 'dialogs' })}</MenuItem>
 
       <MenuSeparator />
       <MenuLabel>{t('topbar.recentDocuments')}</MenuLabel>

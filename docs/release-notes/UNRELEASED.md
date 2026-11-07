@@ -17,6 +17,10 @@ v0.18.0 的五条用户可见说明已迁入 v0.18.0.md。渠道启用在 v0.18.
 英文写，与 release notes 一致：**按症状和触发条件写，不要按提交写**。
 -->
 
+## Install computational-chart project packages in a new folder
+
+The project menu and project list can inspect a computational-chart project package and install its resources into a new folder. Opening the installed project preserves your previous draft and saves a working copy through the normal save flow. If you close the installation window while save confirmation is pending, reopening the installation record continues with your latest draft instead of replacing it with the package's original layout. Installation does not run the included scripts.
+
 ## The desktop app's AI repair can run protected commands again
 
 On the desktop app, when the AI repaired a script it could not run commands in its protected mode and always answered that the sandbox was unavailable, and its trial runs silently lost their operating-system sandbox. The app tested the sandbox by asking itself to run a one-line Python command, which the packaged app does not understand. It now tests with the built-in Python (or a plain system program when that is not installed yet). Nothing changes when you run Tavotto from source.

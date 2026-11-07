@@ -1161,6 +1161,38 @@ export default interface Resources {
         "title": "直接在图上改"
       }
     },
+    "packageInstall": {
+      "attemptedAt": "请求安装到",
+      "chooseAnother": "选择其他项目包…",
+      "chooseDestination": "选择位置…",
+      "close": "关闭",
+      "completionUnknown": "这次安装尚未收到确认结果。请保留并检查此目录；关闭窗口后仍可回看路径。重新安装前请先选择项目包。",
+      "configurationReview": "此项目的本机运行设置需要检查，打开项目不会运行脚本。",
+      "contents": "画布 {{canvases}} · 资源 {{resources}} · 图像归档 {{snapshots}}",
+      "continueEditing": "继续编辑",
+      "dependencies": "运行依赖尚未全部确认；安装不会自动运行包内脚本。",
+      "description": "先检视资源，再安装到新项目；打开时保留原来的排版。",
+      "destination": "新项目目录",
+      "documentPending": "排版正文的保存尚未确认。打开项目后将通过原保存流程写入工作副本。",
+      "entry": "安装项目包到新目录…",
+      "inspecting": "正在检视项目包…",
+      "install": "安装到新目录",
+      "installedAt": "资源已安装到",
+      "installing": "正在安装资源。关闭窗口会停止后续打开，安装结果仍会保留。",
+      "missing_other": "包中缺少 {{count}} 个资源，请补齐后重新导出。",
+      "newDirectory": "填写尚不存在的完整目录路径，已有文件不会被覆盖。",
+      "openInstalled": "打开已安装项目",
+      "opening": "正在打开项目并保存工作副本…",
+      "pickParent": "选择新项目的上级目录",
+      "previous": "其他安装记录",
+      "publicationUnconfirmed": "目录已发布，但安装核对尚未全部确认；打开后请检查资源。",
+      "receivedResult": "已收到这次安装的结果，可以查看后继续。",
+      "resultPending": "结果未确认",
+      "reviewConfiguration": "检查本机运行设置",
+      "saved": "工作副本已保存，可以继续编辑。",
+      "title": "安装计算图表项目包",
+      "viewResult": "查看安装结果"
+    },
     "palette": {
       "commands": {
         "add-text": {

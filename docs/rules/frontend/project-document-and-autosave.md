@@ -27,6 +27,18 @@ order: 200
 - **计算项目格式（ADR0166）**：只有一个documentStore和对象模型，运行时`documentFormat: legacy | v4`，格式闭集消费后端`engine/documentformat.py`。首次出现`chart`或`chartSource`字段（包括坏状态）经同一入口升级为新working documentId，保留当前画布/对象身份、编辑及undo，不覆盖旧文件；事务内首次出现先延迟到成功结束，取消不升级。撤销计算编辑不把v4降回legacy。API路径、本机缓存、revision、owner、保存队列和projectFile键均消费`lib/documentFormat.ts`；省略格式参数时旧URL/键/调用形状不变。
 - **计算项目包导出**：沿原TopBar项目菜单入口，完整深拷贝所有画布/附件/原序编辑。createPackage旧三参保持旧wire，显式v4固定pj并走真实v4端点，必须收到document_format='v4'，不降回旧接口。项目/格式/workingId/loadSeq/操作序任一变化后丢弃迟到成功或错误状态；v4 missing非空准确提示包已生成但需补齐资源，旧状态不改。不复用旧relink处理计算附件，也不把导出当作安装。看护`lib/packageApi.test.ts`、`components/topBarPackageExport.test.tsx`。
   v4响应有`execution_coverage=incomplete`时说明运行依赖未确认；与已知缺素材分别或合并提示，不把未知依赖算作缺素材、不因missing为空暗示可完整运行。旧后端/普通无脚本包没有该事实时保持原消息；事实只由后端提供。
+- **计算项目包安装与采用**：TopBar与项目选择器的显式安装入口经`projectPackageInstallStore`协调原v4检视/安装API；
+  安装回执只证明资源与配置阶段，不能当作正文已保存。关闭/项目换代仅退休当前界面归属，保已收到的资源回执。
+  每次实际请求在await前分独立attemptId并记destination；网络/坏响应没有合法回执时保`completion_unknown`，
+  原入口可重看该路径，不假报已发布、不自动重装/打开/Run。合法迟到回执只晋升对应记录，显式查看后再打开。
+  旧稿经原writer保护后，初次采用只走原switchTransaction/adopt.prepareDocument/openDocumentAs；
+  非空稿等原一次AS写入及revision/正文回读，空稿明确persistEmpty一次，不补第二writer/PUT或named票据。
+  正文同步装入即记本次真实adopted scope；保存确认迟到或失败不等于未采用，重开不能重新套安装正文。
+  迟到的已核保存事实只晋升原scope的记录，不让已关闭窗口重新认领当前界面。
+  已保存的安装记录继续编辑时，同项目保当前稿与undo，跨项目沿原restore读目标最新稿，不能重套旧package正文；
+  取消/ABA只使本次精确恢复token失权，不撤销另一个项目的token。配置检查仅在已采用项目当前认领时打开原project设置。
+  看护：`lib/projectPackageApi.test.ts`、`lib/projectPackageEntry.test.ts`、`store/projectPackageInstallStore.test.ts`、
+  `components/ProjectPackageInstallDialog.test.tsx`及原`store/workingDocumentReceipt.test.ts`。
 - **附件保存回执**：`chart_sources`是五字段位置数组`{canvas_index,object_index,canvas_id,panel_id,chart_source}`。发送上下文捕获实际深拷贝正文、pj/workingId/loadSeq/format，响应只在同上下文按数组位置和原id核对后合入，并比较完整来源/模型/原序overrides/旧ref。重复位置整份拒合入；位置重排或请求后输入改变只跳过受影响项。不按可重复panelId建Map、不新增旧文档ID唯一约束。回执更新沿派生入口，不加undo、不触发循环autosave；正文成功但回执过期不伪造I/O失败。
 - **跨格式冷发现**：两格式的显式GET `include_open_intent=1`须得到同一snapshot，才依共享latest自动恢复；有界重读后仍混代、stale或不可用则沿恢复门needs_user，不能按at/mtime选新旧。所有格式的明确打开/repair共用一条发送队列；自动确认用repair，只确认/晋升现意图而不分新sequence，superseded/unconfirmed不假ack。旧3含计算字段升级fork只在成功安装且令牌仍当前时记新v4意图一次。备选项以(format,id)寻址，不合并同id不同格式。
 - **时间线**：仍只捕获并恢复当时活动画布；v4在持久化边界用单canvas项目封装，不从完整多画布项目猜一个覆盖当前画布。缺thumb按需获取该版本正文和校验附件回建PNG，列表草图不携带完整数据模型。命名文件绑定沿ADR0096/0108后端合同持久化，冷开从正式关联恢复，不能按标题猜目标；时间线正文、命名关联及项目包安装分别验收。

@@ -2511,5 +2511,38 @@
       "info_text_height_mm": "Text height",
       "info_panel_label": "Panel label"
     }
+  },
+  "packageInstall": {
+    "entry": "Install project package to a new folder…",
+    "title": "Install computational chart package",
+    "description": "Inspect resources, then install a new project. Your current layout is preserved when opening it.",
+    "inspecting": "Inspecting project package…",
+    "installing": "Installing resources. Closing this window stops automatic opening; the installation result will be retained.",
+    "opening": "Opening the project and saving its working copy…",
+    "saved": "The working copy is saved. You can continue editing.",
+    "publicationUnconfirmed": "The folder was published, but installation checks are not fully confirmed. Review the resources after opening.",
+    "configurationReview": "Review this project's local run settings. Opening it will not run scripts.",
+    "reviewConfiguration": "Review local run settings",
+    "chooseAnother": "Choose another package…",
+    "close": "Close",
+    "continueEditing": "Continue editing",
+    "openInstalled": "Open installed project",
+    "install": "Install to new folder",
+    "contents": "Canvases: {{canvases}} · Resources: {{resources}} · Figure snapshots: {{snapshots}}",
+    "destination": "New project folder",
+    "chooseDestination": "Choose location…",
+    "pickParent": "Choose the parent folder for the new project",
+    "newDirectory": "Enter a full folder path that does not exist. Existing files will not be overwritten.",
+    "missing_one": "The package is missing {{count}} resource. Add it and export the package again.",
+    "missing_other": "The package is missing {{count}} resources. Add them and export the package again.",
+    "dependencies": "Run dependencies are not fully confirmed. Installation will not run scripts from the package.",
+    "installedAt": "Resources installed in",
+    "documentPending": "Saving the layout is not confirmed yet. Opening the project saves a working copy through the existing save process.",
+    "previous": "Other installation attempts",
+    "completionUnknown": "This installation has no confirmed result yet. Keep and inspect this directory; you can return to its path after closing this window. Select the package before installing again.",
+    "attemptedAt": "Requested installation directory",
+    "resultPending": "Result unconfirmed",
+    "receivedResult": "The installation result has arrived. Review it to continue.",
+    "viewResult": "Review installation result"
   }
 }

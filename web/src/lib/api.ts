@@ -2486,6 +2486,105 @@ export function openPackage(file: File): Promise<PackageOpenResult> {
   return jsonFetch<PackageOpenResult>('/api/package/open', { method: 'POST', body: form })
 }
 
+export interface ProjectPackageWarning {
+  reason: string
+  id: string
+}
+
+/** 显式v4检视事实；普通包仍由原openPackage消费。 */
+export interface ProjectPackageInspection {
+  document_format: 'v4'
+  doc: ProjectDocument
+  manifest: Record<string, unknown>
+  resources: { target: string; record: Record<string, unknown> }[]
+  missing: string[]
+  warnings: ProjectPackageWarning[]
+  figure_snapshots: number
+  execution_coverage: PackageResult['execution_coverage'] | null
+  captured_inputs?: Record<string, unknown>[]
+}
+
+/** 资源、配置及正文分别提交；503也可能携带已经发布的真实目录。 */
+export interface ProjectPackageInstallation {
+  state: 'resources_installed' | 'publication_unconfirmed' | 'installation_unconfirmed'
+  path: string
+  document_format: 'v4'
+  doc: ProjectDocument
+  references: unknown[]
+  execution: Record<string, unknown> | null
+  remap_fingerprint: string
+  missing: string[]
+  warnings: ProjectPackageWarning[]
+  execution_coverage: PackageResult['execution_coverage'] | null
+  configuration: 'pending' | 'needs_review' | 'ready'
+  configuration_review: {
+    version: 1
+    existing_local_metadata: boolean
+    workdir: WorkdirState | null
+    defaults: { script: string; selection: Record<string, unknown> | null; unavailable_code: string | null }[]
+    issues: { reason: string; script: string | null }[]
+  }
+  document_saved: false
+  configuration_error?: string
+  upload_cleanup?: 'pending'
+}
+
+export interface ProjectPackageInstallOptions {
+  destination: string
+  remap_rules?: Pick<InputRemapRule, 'kind' | 'from' | 'to'>[]
+}
+
+function isProjectPackageInstallation(value: unknown): value is ProjectPackageInstallation {
+  if (!value || typeof value !== 'object') return false
+  const body = value as Partial<ProjectPackageInstallation>
+  return body.document_format === 'v4' && body.doc?.schema === 4
+    && typeof body.path === 'string' && body.path.length > 0
+    && ['resources_installed', 'publication_unconfirmed', 'installation_unconfirmed'].includes(body.state ?? '')
+    && ['pending', 'needs_review', 'ready'].includes(body.configuration ?? '')
+    && body.document_saved === false && Array.isArray(body.missing) && Array.isArray(body.warnings)
+}
+
+export async function inspectProjectPackage(file: File, pj: string | null): Promise<ProjectPackageInspection> {
+  const form = new FormData()
+  form.append('package', file)
+  const result = await jsonFetch<ProjectPackageInspection>(
+    '/api/documents/v4/package/inspect', { method: 'POST', body: form }, pj, 'v4',
+  )
+  if (!result || typeof result !== 'object' || result.document_format !== 'v4' || result.doc?.schema !== 4) {
+    throw new ApiError('Unexpected document format.', 400, { code: 'invalid_document' })
+  }
+  return result
+}
+
+export async function installProjectPackage(
+  file: File, options: ProjectPackageInstallOptions, pj: string | null,
+): Promise<ProjectPackageInstallation> {
+  const form = new FormData()
+  form.append('package', file)
+  form.append('options', JSON.stringify({
+    destination: options.destination,
+    ...(options.remap_rules === undefined ? {} : {
+      remap_rules: options.remap_rules.map(({ kind, from, to }) => ({ kind, from, to })),
+    }),
+  }))
+  try {
+    const result = await jsonFetch<ProjectPackageInstallation>(
+      '/api/documents/v4/package/install', { method: 'POST', body: form }, pj, 'v4',
+    )
+    if (!isProjectPackageInstallation(result)) {
+      throw new ApiError('Unexpected installation receipt.', 400, { code: 'invalid_document', receipt: result })
+    }
+    return result
+  } catch (error) {
+    // A known published tree is recoverable state, not permission to retry the
+    // same destination. Keep the original phase receipt for the dialog.
+    if (error instanceof ApiError && error.status === 503 && isProjectPackageInstallation(error.body)) {
+      return error.body
+    }
+    throw error
+  }
+}
+
 
 /* --------------------------- 参数化渲染引擎 -------------------------------- */
 

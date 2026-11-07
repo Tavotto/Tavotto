@@ -11,6 +11,7 @@ import { ChartBindDialog } from '@/components/chart/ChartBindDialog'
 import { Inspector } from '@/components/inspector/Inspector'
 import { TimelinePreviewDialog } from '@/components/VersionDialog'
 import { LayoutDialog } from '@/components/LayoutDialog'
+import { ProjectPackageInstallDialog } from '@/components/ProjectPackageInstallDialog'
 import { CommandPalette } from '@/components/CommandPalette'
 import { FigurePickerDialog } from '@/components/FigurePickerDialog'
 import { NativeConfirmDialog } from '@/components/NativeConfirmDialog'
@@ -130,6 +131,7 @@ export function App() {
     return (
       <>
         <ProjectPicker />
+        <ProjectPackageInstallDialog />
         {/* 新手教程也挂在这一层：首启的欢迎页就出现在还没打开项目的主页上 */}
         <NativeTutorial />
         <TelemetryConsentDialog />
@@ -352,6 +354,7 @@ function Workspace() {
         <ChartBindDialog />
         <SettingsDialog />
         <LayoutDialog />
+        <ProjectPackageInstallDialog />
         <StyleDialog />
         <RegistryDialog />
         {/* 渲染环境（脚本区「选择渲染环境」就地打开，不深链设置页） */}

@@ -31,6 +31,9 @@ packagerelocation只在活跃Prepared内准备全量oldRef→newRef、原序正�
 旧路径本机元信息保留并显式needs_review；发布、配置、正文是独立提交点，任何后续失败
 须保已发布路径和准确阶段回执，不递归回删已发布树。安装不打开项目、不写正文；
 后续界面采用仍只经原projectStore/documentStore/writer，不能另建安装正文写入链。
+界面将首次采用与已保存项目的继续编辑分开：前者提交本次受检正文，后者由原restore恢复最新工作稿，
+避免历史安装回执覆盖后续编辑。真正丢响应只保“请求目标、结果未知”，不据此声称发布或授予采用。
+前端完整合同及看护唯一维护于[项目与自动保存规则](../rules/frontend/project-document-and-autosave.md)。
 
 ### 1. 三路径一个架构：场景保留 + 片段嫁接（C2 精化）
 
