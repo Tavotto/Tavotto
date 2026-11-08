@@ -1132,7 +1132,7 @@ class BridgeRun:
 
             def handle_v1(self, req: dict) -> dict:
                 result = super().handle_v1(req)
-                if req.get("cmd") == "render_existing":
+                if req.get("cmd") in {"render_existing", "export_existing", "preview_png_existing"}:
                     # Read the actual run fact, never echo the requested identity.
                     return {**result, "execution_id": run.execution_id}
                 return result

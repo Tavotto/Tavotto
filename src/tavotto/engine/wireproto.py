@@ -55,6 +55,8 @@ V1_COMMANDS = frozenset(
         "build",
         "render",
         "render_existing",
+        "export_existing",
+        "preview_png_existing",
         "render_png",
         "preview_png",
         "export",
@@ -271,22 +273,26 @@ class V1Handler:
         if cmd == "cancel":
             return self.cancel(payload)
 
-        existing = cmd == "render_existing"
+        existing_command = {
+            "render_existing": "render",
+            "export_existing": "export",
+            "preview_png_existing": "preview_png",
+        }.get(cmd)
+        existing = existing_command is not None
         if existing:
             self.require_existing_execution(payload.get("expected_execution_id"))
             self.require_existing_figure(req.get("stem"))
             # Reuse the same renderer, patch validation, timings and response shape.
-            cmd = "render"
+            cmd = existing_command
 
         patches = payload.get("patches", [])
         if cmd in PATCH_COMMANDS and not isinstance(patches, list):
             raise ProtocolError("bad_request", "payload.patches 必须是数组")
-        require_built = existing or (
-            payload.get("require_built", False) if cmd == "export" else False
-        )
+        require_built = payload.get("require_built", False) if cmd == "export" else False
         snapshot_only = payload.get("snapshot_only", False) if cmd == "export" else False
         if not isinstance(require_built, bool) or not isinstance(snapshot_only, bool):
             raise ProtocolError("bad_request", "require_built 与 snapshot_only 必须是布尔值")
+        require_built = existing or require_built
 
         # 阶段计时（毫秒）。**只在 v1 出现**，legacy 信封的形状一字不改。
         timings: dict[str, float] = {}

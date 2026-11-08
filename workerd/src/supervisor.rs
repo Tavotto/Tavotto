@@ -37,6 +37,8 @@ fn worker_cmd(op: &str) -> Option<(&'static str, bool)> {
         "build" => Some(("build", false)),
         "render" => Some(("render", true)),
         "render_existing" => Some(("render_existing", true)),
+        "export_existing" => Some(("export_existing", false)),
+        "preview_png_existing" => Some(("preview_png_existing", false)),
         "render_png" => Some(("render_png", false)),
         "preview_png" => Some(("preview_png", false)),
         "export" => Some(("export", false)),
@@ -364,5 +366,13 @@ mod existing_render_tests {
             Some(("render_existing", true))
         );
         assert_eq!(super::worker_cmd("render"), Some(("render", true)));
+        assert_eq!(
+            super::worker_cmd("export_existing"),
+            Some(("export_existing", false))
+        );
+        assert_eq!(
+            super::worker_cmd("preview_png_existing"),
+            Some(("preview_png_existing", false))
+        );
     }
 }

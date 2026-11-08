@@ -448,7 +448,7 @@ fn execute(
     if matches!(
         &job.kind,
         JobKind::Worker {
-            cmd: "render_existing",
+            cmd: "render_existing" | "export_existing" | "preview_png_existing",
             ..
         }
     ) {
@@ -1262,29 +1262,31 @@ mod tests {
 
     #[test]
     fn existing_render_missing_child_never_attempts_spawn() {
-        let (mut inner, _responses) = test_inner(7);
-        let nonexistent = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/guard-never-created-program.exe"
-        );
-        assert!(!std::path::Path::new(nonexistent).exists());
-        Arc::get_mut(&mut inner).unwrap().spec.argv = vec![nonexistent.into()];
-        let (tx, rx) = channel();
-        let job = Job {
-            client_request_id: "guarded".into(),
-            kind: JobKind::Worker {
-                cmd: "render_existing",
-                merge_key: None,
-            },
-            stem: Some("History".into()),
-            payload: json!({}),
-            timeout: Duration::from_millis(20),
-            idle: None,
-        };
-        let error = execute(&inner, &tx, &rx, job).unwrap_err();
-        assert_eq!(error.code, "svg_source_unavailable");
-        assert_eq!(inner.generation.load(Ordering::SeqCst), 7);
-        assert!(inner.proc.lock().unwrap().is_none());
+        for cmd in ["render_existing", "export_existing", "preview_png_existing"] {
+            let (mut inner, _responses) = test_inner(7);
+            let nonexistent = concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/guard-never-created-program.exe"
+            );
+            assert!(!std::path::Path::new(nonexistent).exists());
+            Arc::get_mut(&mut inner).unwrap().spec.argv = vec![nonexistent.into()];
+            let (tx, rx) = channel();
+            let job = Job {
+                client_request_id: "guarded".into(),
+                kind: JobKind::Worker {
+                    cmd,
+                    merge_key: None,
+                },
+                stem: Some("History".into()),
+                payload: json!({}),
+                timeout: Duration::from_millis(20),
+                idle: None,
+            };
+            let error = execute(&inner, &tx, &rx, job).unwrap_err();
+            assert_eq!(error.code, "svg_source_unavailable");
+            assert_eq!(inner.generation.load(Ordering::SeqCst), 7);
+            assert!(inner.proc.lock().unwrap().is_none());
+        }
     }
 
     #[test]

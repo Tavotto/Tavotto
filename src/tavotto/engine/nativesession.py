@@ -920,17 +920,34 @@ class NativeSession:
                 "The native dispatch instance changed.", code="svg_source_unavailable"
             )
 
+    def _guard_existing_request(self, payload, expected_execution_id, expected_snapshot_epoch):
+        if expected_execution_id is None and expected_snapshot_epoch is None:
+            return None
+        context = self._existing_figure_context(expected_execution_id, expected_snapshot_epoch)
+        payload.update(
+            cmd="render_existing" if payload["cmd"] == "override" else payload["cmd"] + "_existing",
+            expected_execution_id=expected_execution_id,
+        )
+        return context
+
     def _request(self, obj: dict, timeout: float, *, existing: tuple | None = None) -> dict:
         try:
             if existing is not None:
                 self._check_existing_figure_context(existing)
-                return existing[3].request(
+                resp = existing[3].request(
                     obj,
                     generation=existing[1],
                     revision=self.rev,
                     timeout=timeout,
                     dispatch_check=lambda: self._check_existing_figure_context(existing),
                 )
+                self._check_existing_figure_context(existing)
+                if resp.get("execution_id") != existing[-1]:
+                    raise pool.WorkerError(
+                        "The native reply does not prove the requested execution.",
+                        code="svg_source_unavailable",
+                    )
+                return resp
             return self._require_barrier().request(
                 obj, generation=self.generation, revision=self.rev, timeout=timeout
             )
@@ -1053,12 +1070,9 @@ class NativeSession:
         if inline_svg:
             payload["inline_svg"] = True
         with self._figure_lock:
-            existing = None
-            if expected_execution_id is not None or expected_snapshot_epoch is not None:
-                existing = self._existing_figure_context(
-                    expected_execution_id, expected_snapshot_epoch
-                )
-                payload.update(cmd="render_existing", expected_execution_id=expected_execution_id)
+            existing = self._guard_existing_request(
+                payload, expected_execution_id, expected_snapshot_epoch
+            )
             owed = self.inconsistent.get(stem)
             if owed is not None and owed != want:
                 raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT)
@@ -1066,13 +1080,6 @@ class NativeSession:
             resp = self._request(
                 payload, REQUEST_TIMEOUT, **({"existing": existing} if existing is not None else {})
             )
-            if existing is not None:
-                self._check_existing_figure_context(existing)
-                if resp.get("execution_id") != expected_execution_id:
-                    raise pool.WorkerError(
-                        "The native reply does not prove the requested execution.",
-                        code="svg_source_unavailable",
-                    )
             self._session_list[stem] = want
             if self._owes(resp):
                 self.inconsistent[stem] = want
@@ -1107,6 +1114,8 @@ class NativeSession:
         fmt: str = "pdf",
         dpi: int = 600,
         *,
+        expected_execution_id: str | None = None,
+        expected_snapshot_epoch: int | None = None,
         svg_path: str | None = None,
         require_built: bool = False,
         snapshot_only: bool = False,
@@ -1114,22 +1123,25 @@ class NativeSession:
         svg_text_path: str | None = None,
     ) -> dict:
         with self._figure_lock:
+            payload = {
+                "cmd": "export",
+                "stem": stem,
+                "patches": patches,
+                "path": path,
+                "format": fmt,
+                "dpi": dpi,
+                **({"svg_path": svg_path} if svg_path is not None else {}),
+                **({"require_built": True} if require_built else {}),
+                **({"snapshot_only": True} if snapshot_only else {}),
+                **({"svg_fonttype": svg_fonttype} if svg_fonttype is not None else {}),
+                **({"svg_text_path": svg_text_path} if svg_text_path is not None else {}),
+            }
+            existing = self._guard_existing_request(
+                payload, expected_execution_id, expected_snapshot_epoch
+            )
             self._require_consistent(stem)
             resp = self._request(
-                {
-                    "cmd": "export",
-                    "stem": stem,
-                    "patches": patches,
-                    "path": path,
-                    "format": fmt,
-                    "dpi": dpi,
-                    **({"svg_path": svg_path} if svg_path is not None else {}),
-                    **({"require_built": True} if require_built else {}),
-                    **({"snapshot_only": True} if snapshot_only else {}),
-                    **({"svg_fonttype": svg_fonttype} if svg_fonttype is not None else {}),
-                    **({"svg_text_path": svg_text_path} if svg_text_path is not None else {}),
-                },
-                EXPORT_TIMEOUT,
+                payload, EXPORT_TIMEOUT, **({"existing": existing} if existing is not None else {})
             )
             self._note_temporary(stem, resp)
             return resp
@@ -1138,34 +1150,57 @@ class NativeSession:
         self._request({"cmd": "render_png", "stem": stem, "width": int(width_px)}, REQUEST_TIMEOUT)
         return self.out_dir / f"{stem}_w{int(width_px)}.png"
 
-    def preview_png(self, stem: str, patches: list, width_px: int, tag: str) -> Path:
+    def preview_png(
+        self,
+        stem: str,
+        patches: list,
+        width_px: int,
+        tag: str,
+        *,
+        expected_execution_id: str | None = None,
+        expected_snapshot_epoch: int | None = None,
+    ) -> Path:
         with self._figure_lock:
+            payload = {
+                "cmd": "preview_png",
+                "stem": stem,
+                "patches": patches,
+                "width": int(width_px),
+                "tag": tag,
+            }
+            existing = self._guard_existing_request(
+                payload, expected_execution_id, expected_snapshot_epoch
+            )
             self._require_consistent(stem)
             resp = self._request(
-                {
-                    "cmd": "preview_png",
-                    "stem": stem,
-                    "patches": patches,
-                    "width": int(width_px),
-                    "tag": tag,
-                },
-                REQUEST_TIMEOUT,
+                payload, REQUEST_TIMEOUT, **({"existing": existing} if existing is not None else {})
             )
             self._note_temporary(stem, resp)
         return self.out_dir / f"{stem}__{tag}.png"
 
-    def preview_png_snapshot(self, stem: str, patches: list, width_px: int) -> dict:
+    def preview_png_snapshot(
+        self,
+        stem: str,
+        patches: list,
+        width_px: int,
+        *,
+        expected_execution_id: str | None = None,
+        expected_snapshot_epoch: int | None = None,
+    ) -> dict:
         with self._figure_lock:
+            payload = {
+                "cmd": "preview_png",
+                "stem": stem,
+                "patches": patches,
+                "width": int(width_px),
+                "with_manifest": True,
+            }
+            existing = self._guard_existing_request(
+                payload, expected_execution_id, expected_snapshot_epoch
+            )
             self._require_consistent(stem)
             resp = self._request(
-                {
-                    "cmd": "preview_png",
-                    "stem": stem,
-                    "patches": patches,
-                    "width": int(width_px),
-                    "with_manifest": True,
-                },
-                REQUEST_TIMEOUT,
+                payload, REQUEST_TIMEOUT, **({"existing": existing} if existing is not None else {})
             )
             self._note_temporary(stem, resp)
             return resp

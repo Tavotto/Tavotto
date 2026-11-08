@@ -3588,7 +3588,11 @@ class EngineWorker:
         rid = env["request_id"]
         t_req = time.perf_counter()
         with self.lock:
-            existing = obj.get("cmd") == "render_existing"
+            existing = obj.get("cmd") in {
+                "render_existing",
+                "export_existing",
+                "preview_png_existing",
+            }
             if existing:
                 _require_existing_execution(self, obj.get("expected_execution_id"))
                 dispatch_process, dispatch_generation = self.proc, self.generation
@@ -3777,23 +3781,33 @@ class EngineWorker:
         fmt: str = "pdf",
         dpi: int = 600,
         *,
+        expected_execution_id: str | None = None,
         svg_path: str | None = None,
         require_built: bool = False,
         snapshot_only: bool = False,
         svg_fonttype: str | None = None,
         svg_text_path: str | None = None,
     ) -> dict:
-        if (require_built or snapshot_only) and not self.built:
-            raise WorkerError(
-                "An already built Figure session is required for SVG capture.",
-                code="svg_source_unavailable",
-            )
-        build = self.ensure_built().get("timings") if not self.built else None
+        if expected_execution_id is not None:
+            _require_existing_execution(self, expected_execution_id)
+            build = None
+        else:
+            if (require_built or snapshot_only) and not self.built:
+                raise WorkerError(
+                    "An already built Figure session is required for SVG capture.",
+                    code="svg_source_unavailable",
+                )
+            build = self.ensure_built().get("timings") if not self.built else None
         resp = self.request(
             {
-                "cmd": "export",
+                "cmd": "export_existing" if expected_execution_id is not None else "export",
                 "stem": stem,
                 "patches": patches,
+                **(
+                    {"expected_execution_id": expected_execution_id}
+                    if expected_execution_id is not None
+                    else {}
+                ),
                 "path": path,
                 "format": fmt,
                 "dpi": dpi,
@@ -3816,24 +3830,58 @@ class EngineWorker:
         resp = self.request({"cmd": "render_png", "stem": stem, "width": width_px}, REQUEST_TIMEOUT)
         return Path(resp["path"])
 
-    def preview_png(self, stem: str, patches: list, width_px: int, tag: str) -> Path:
-        if not self.built:
+    def preview_png(
+        self,
+        stem: str,
+        patches: list,
+        width_px: int,
+        tag: str,
+        *,
+        expected_execution_id: str | None = None,
+    ) -> Path:
+        if expected_execution_id is not None:
+            _require_existing_execution(self, expected_execution_id)
+        elif not self.built:
             self.ensure_built()
         resp = self.request(
-            {"cmd": "preview_png", "stem": stem, "patches": patches, "width": width_px, "tag": tag},
+            {
+                "cmd": "preview_png_existing"
+                if expected_execution_id is not None
+                else "preview_png",
+                "stem": stem,
+                "patches": patches,
+                **(
+                    {"expected_execution_id": expected_execution_id}
+                    if expected_execution_id is not None
+                    else {}
+                ),
+                "width": width_px,
+                "tag": tag,
+            },
             REQUEST_TIMEOUT,
         )
         return Path(resp["path"])
 
-    def preview_png_snapshot(self, stem: str, patches: list, width_px: int) -> dict:
+    def preview_png_snapshot(
+        self, stem: str, patches: list, width_px: int, *, expected_execution_id: str | None = None
+    ) -> dict:
         """PNG pixels and geometry from the same draw, without a mutable file handoff."""
-        if not self.built:
+        if expected_execution_id is not None:
+            _require_existing_execution(self, expected_execution_id)
+        elif not self.built:
             self.ensure_built()
         return self.request(
             {
-                "cmd": "preview_png",
+                "cmd": "preview_png_existing"
+                if expected_execution_id is not None
+                else "preview_png",
                 "stem": stem,
                 "patches": patches,
+                **(
+                    {"expected_execution_id": expected_execution_id}
+                    if expected_execution_id is not None
+                    else {}
+                ),
                 "width": width_px,
                 "with_manifest": True,
             },
@@ -4359,7 +4407,7 @@ class WorkerdWorker:
         _note_dispatch(self)
         self._touch()
         t_req = time.perf_counter()
-        existing = op == "render_existing"
+        existing = op in {"render_existing", "export_existing", "preview_png_existing"}
         if existing:
             _require_existing_execution(self, payload.get("expected_execution_id"))
             dispatch_session = self._session_id
@@ -4564,24 +4612,34 @@ class WorkerdWorker:
         fmt: str = "pdf",
         dpi: int = 600,
         *,
+        expected_execution_id: str | None = None,
         svg_path: str | None = None,
         require_built: bool = False,
         snapshot_only: bool = False,
         svg_fonttype: str | None = None,
         svg_text_path: str | None = None,
     ) -> dict:
-        if (require_built or snapshot_only) and not self.built:
-            raise WorkerError(
-                "An already built Figure session is required for SVG capture.",
-                code="svg_source_unavailable",
-            )
-        build = self.ensure_built().get("timings") if not self.built else None
+        if expected_execution_id is not None:
+            _require_existing_execution(self, expected_execution_id)
+            build = None
+        else:
+            if (require_built or snapshot_only) and not self.built:
+                raise WorkerError(
+                    "An already built Figure session is required for SVG capture.",
+                    code="svg_source_unavailable",
+                )
+            build = self.ensure_built().get("timings") if not self.built else None
         resp = self._call(
-            "export",
+            "export_existing" if expected_execution_id is not None else "export",
             EXPORT_TIMEOUT,
             stem=stem,
             payload={
                 "patches": patches,
+                **(
+                    {"expected_execution_id": expected_execution_id}
+                    if expected_execution_id is not None
+                    else {}
+                ),
                 "path": path,
                 "format": fmt,
                 "dpi": dpi,
@@ -4603,25 +4661,57 @@ class WorkerdWorker:
         resp = self._call("render_png", REQUEST_TIMEOUT, stem=stem, payload={"width": width_px})
         return Path(resp["path"])
 
-    def preview_png(self, stem: str, patches: list, width_px: int, tag: str) -> Path:
-        if not self.built:
+    def preview_png(
+        self,
+        stem: str,
+        patches: list,
+        width_px: int,
+        tag: str,
+        *,
+        expected_execution_id: str | None = None,
+    ) -> Path:
+        if expected_execution_id is not None:
+            _require_existing_execution(self, expected_execution_id)
+        elif not self.built:
             self.ensure_built()
         resp = self._call(
-            "preview_png",
+            "preview_png_existing" if expected_execution_id is not None else "preview_png",
             REQUEST_TIMEOUT,
             stem=stem,
-            payload={"patches": patches, "width": width_px, "tag": tag},
+            payload={
+                "patches": patches,
+                **(
+                    {"expected_execution_id": expected_execution_id}
+                    if expected_execution_id is not None
+                    else {}
+                ),
+                "width": width_px,
+                "tag": tag,
+            },
         )
         return Path(resp["path"])
 
-    def preview_png_snapshot(self, stem: str, patches: list, width_px: int) -> dict:
-        if not self.built:
+    def preview_png_snapshot(
+        self, stem: str, patches: list, width_px: int, *, expected_execution_id: str | None = None
+    ) -> dict:
+        if expected_execution_id is not None:
+            _require_existing_execution(self, expected_execution_id)
+        elif not self.built:
             self.ensure_built()
         return self._call(
-            "preview_png",
+            "preview_png_existing" if expected_execution_id is not None else "preview_png",
             REQUEST_TIMEOUT,
             stem=stem,
-            payload={"patches": patches, "width": width_px, "with_manifest": True},
+            payload={
+                "patches": patches,
+                **(
+                    {"expected_execution_id": expected_execution_id}
+                    if expected_execution_id is not None
+                    else {}
+                ),
+                "width": width_px,
+                "with_manifest": True,
+            },
         )
 
     def shutdown(self) -> bool:
