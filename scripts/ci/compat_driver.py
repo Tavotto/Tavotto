@@ -28,6 +28,7 @@ import collections
 import contextlib
 import io
 import json
+import math
 import os
 import re
 import runpy
@@ -114,6 +115,29 @@ class _NativeSaveWatcher:
         return None
 
 
+def _tight_layout_parameters(engine):
+    """Return a safe immutable parameter snapshot, or None when not understood."""
+    try:
+        params = engine.get()
+        if type(params) is not dict or set(params) != {"pad", "h_pad", "w_pad", "rect"}:
+            return None
+
+        def number(value):
+            return type(value) in (int, float) and math.isfinite(value)
+
+        values = [params[name] for name in ("pad", "h_pad", "w_pad")]
+        if any(value is not None and not number(value) for value in values):
+            return None
+        rect = params["rect"]
+        if rect is not None:
+            if type(rect) not in (tuple, list) or len(rect) != 4 or not all(map(number, rect)):
+                return None
+            rect = tuple(rect)
+        return (*values, rect)
+    except Exception:  # noqa: BLE001 - unknown layout state cannot justify freezing
+        return None
+
+
 @contextlib.contextmanager
 def _observe_native_crop(figure):
     """Observe Matplotlib's resolved crop during the original save, without another draw.
@@ -169,6 +193,7 @@ def run_native(req: dict) -> int:
     crops: dict = {}
     save_counts: dict[int, int] = {}
     save_watchers: dict[int, tuple[object, _NativeSaveWatcher]] = {}
+    save_layouts: dict[int, tuple[object, tuple]] = {}
     watcher_pristine: dict[int, bool] = {}
     # 写进 `PdfPages` 的图：与产品三条入口同一个类、同一个位置（保存成功之后记，脚本结束先于 pyplot 兜底认领），
     # 否则对照组没有 `all_samples` 这张图、两边 stem 对不上（#1370）
@@ -204,15 +229,17 @@ def run_native(req: dict) -> int:
         # additional tight-layout iteration. A draw must not clear the record of
         # a previous change; if the observer is replaced, do not freeze layout.
         save_counts[id(self)] = save_counts.get(id(self), 0) + 1
-        if (
-            stem
-            and save_counts[id(self)] == 1
-            and type(self.get_layout_engine()) is TightLayoutEngine
-        ):
+        if stem and save_counts[id(self)] == 1:
             try:
-                watcher = _NativeSaveWatcher(self.stale_callback)
-                self.stale_callback = watcher
-                save_watchers[id(self)] = (self, watcher)
+                engine = self.get_layout_engine()
+                if type(engine) is not TightLayoutEngine:
+                    return result
+                params = _tight_layout_parameters(engine)
+                if params is not None:
+                    watcher = _NativeSaveWatcher(self.stale_callback)
+                    self.stale_callback = watcher
+                    save_watchers[id(self)] = (self, watcher)
+                    save_layouts[id(self)] = (engine, params)
             except Exception:  # noqa: BLE001 - observing must not fail a native save
                 pass
         return result
@@ -285,10 +312,14 @@ def run_native(req: dict) -> int:
             if call:
                 # The save-time crop is authoritative even if rcParams changed later.
                 engine = fig.get_layout_engine()
+                saved_layout = save_layouts.get(id(fig))
                 freeze = (
                     type(engine) is TightLayoutEngine
                     and save_counts.get(id(fig)) == 1
                     and watcher_pristine.get(id(fig), False)
+                    and saved_layout is not None
+                    and engine is saved_layout[0]
+                    and _tight_layout_parameters(engine) == saved_layout[1]
                 )
                 if freeze:
                     # Re-sampling the already saved Figure should preserve its

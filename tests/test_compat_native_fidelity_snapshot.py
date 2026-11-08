@@ -106,8 +106,10 @@ def test_native_snapshot_keeps_changes_made_after_save(tmp_path, draw_after_chan
     [
         "fig.savefig('another.png', dpi=128)\n",
         "fig.stale_callback = lambda artist, value: None\n",
+        "fig.set_layout_engine('tight', pad=2.5)\n",
+        "fig.get_layout_engine().set(pad=2.5)\n",
     ],
-    ids=["multiple-saves", "observer-replaced"],
+    ids=["multiple-saves", "observer-replaced", "engine-replaced", "engine-parameters-changed"],
 )
 def test_native_snapshot_does_not_freeze_when_save_history_is_uncertain(tmp_path, after_save):
     _, snapshot = _native_snapshot(tmp_path, after_save)

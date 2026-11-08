@@ -202,10 +202,10 @@ setup receipt 与 Guardian 报告都写 `workflow`（`run_id`、`run_attempt`、
 0.0304）。本地按登记的上游提交和源码哈希运行，原生截图与 worker 的保存裁切框和
 保存后 axes 位置一致；两侧相同曲线在截图时有约 0.1 px 的位置差。原因是原生脚本
 第一次保存时已运行自动布局，取证代码再次保存 PNG 又运行一次；worker 保留首次保存
-时的布局。只对单次保存且保存后未修改、观察器仍在的原生 tight-layout 图，采样 PNG 时
+时的布局。只对单次保存且保存后未修改、观察器和布局引擎及其参数未变的原生 tight-layout 图，采样 PNG 时
 暂时停用额外布局；原截图裁切框和阈值不改。本机同一脚本改前像素差占比 0.030526、
 改后 0；单次保存、保存后编辑、多次保存、观察器替换与故意修改曲线的反例见
-`tests/test_compat_native_fidelity_snapshot.py`。
+`tests/test_compat_native_fidelity_snapshot.py`，另测布局引擎及参数变更。
 
 该本地复现使用 macOS / Matplotlib 3.11.2 和固定的上游 `sho.py`、`plot_setup.py`，
 由最小包壳导入绘图配置；它不是证据机结果。证据机只运行 `origin/main`，修复合入后仍需
