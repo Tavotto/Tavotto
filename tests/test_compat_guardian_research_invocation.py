@@ -51,6 +51,8 @@ class ReferenceInvocationTests(unittest.TestCase):
         matplotlib.use = mock.Mock()
         figure = types.ModuleType("matplotlib.figure")
         figure.Figure = type("Figure", (), {"savefig": lambda *_a, **_k: None})
+        layout_engine = types.ModuleType("matplotlib.layout_engine")
+        layout_engine.TightLayoutEngine = type("TightLayoutEngine", (), {})
         pyplot = types.ModuleType("matplotlib.pyplot")
         pyplot.get_fignums = lambda: []
         capture = types.ModuleType("figcapture")
@@ -64,6 +66,7 @@ class ReferenceInvocationTests(unittest.TestCase):
         modules = {
             "matplotlib": matplotlib,
             "matplotlib.figure": figure,
+            "matplotlib.layout_engine": layout_engine,
             "matplotlib.pyplot": pyplot,
             "figcapture": capture,
             "manifest": types.ModuleType("manifest"),
