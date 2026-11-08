@@ -539,6 +539,8 @@ def test_prompt_and_description_say_link_data_file_has_its_own_card():
 
     assert "do NOT propose_fix" in fixsession.SYSTEM_PROMPT
     assert "do NOT call propose_fix first" in REGISTRY["link_data_file"].description
+    assert "Prefix mode" in REGISTRY["ask_user"].description
+    assert "always asks separately" in REGISTRY["ask_user"].description
 
 
 # --------------------------------------------------------------------------- 选项的 path 与标签兜底

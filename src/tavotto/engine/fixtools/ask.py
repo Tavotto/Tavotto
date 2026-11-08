@@ -399,7 +399,8 @@ ASK_TOOLS: tuple[FixTool, ...] = (
         "Ask the user a multiple-choice question when you cannot find the answer yourself (for example which folder "
         "holds the data file). 2-6 short options are best. Returns the chosen option id. When the options are "
         "candidate files or folders, fill each option's `path` (the user's choice then counts as their confirmation "
-        "for link_data_file). Do not ask for things you can look up with the read tools.",
+        "for link_data_file in file mode). Prefix mode changes a whole directory link and always asks separately. "
+        "Do not ask for things you can look up with the read tools.",
         obj(
             {
                 "question": {"type": "string"},
