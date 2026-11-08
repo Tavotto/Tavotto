@@ -686,8 +686,24 @@ def test_reading_argv_does_not_make_an_unrelated_exit_an_argument_problem(figs):
         ("import sys\nx = sys.argv[2]\n", ["one"], "script_needs_arguments"),
         ("from sys import argv as args\nx = args[1]\n", [], "script_needs_arguments"),
         ("import sys\nx = sys.argv[-2]\n", [], "script_needs_arguments"),
+        # Entering at the start of a direct read is safe, including loop re-entry.
+        ("import sys\nwhile True:\n    x = sys.argv[1]\n", [], "script_needs_arguments"),
         # The exception comes from a different list, even though argv is read on the same line.
         ("import sys\nx = [][0] + len(sys.argv)\n", [], "script_error"),
+        # A branch can jump past an unexecuted argv load into the subscript.
+        (
+            "import sys\ndata = []\nx = (data if data is not None else sys.argv)[1]\n",
+            [],
+            "script_error",
+        ),
+        ("import sys\ndata = []\nx = (data and sys.argv)[1]\n", [], "script_error"),
+        ("import sys\ndata = [1]\nx = (data or sys.argv)[1]\n", [], "script_error"),
+        (
+            "from sys import argv as args\ndata = []\n"
+            "x = (data if data is not None else args)[1]\n",
+            [],
+            "script_error",
+        ),
         # Here argv[1] exists; the *string* subscript is the failing operation.
         ("import sys\nx = sys.argv[1][0]\n", [""], "script_error"),
         # Equal contents are not the same list object; a copy is ordinary user data.

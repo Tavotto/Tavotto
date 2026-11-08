@@ -1155,7 +1155,15 @@ def _direct_argv_index_error(
 
         base = instructions[pos - 2]
         if base.opname == "LOAD_ATTR" and base.argval == "argv" and pos >= 3:
+            # Another branch may jump directly to the attribute, index or
+            # subscription with a different object already on the stack.
+            if any(op.is_jump_target for op in instructions[pos - 2 : pos + 1]):
+                return False
             return binding(instructions[pos - 3]) is sys
+        # For an imported argv alias, the base load must likewise be executed;
+        # a jump to the index or subscription makes the operand ambiguous.
+        if any(op.is_jump_target for op in instructions[pos - 1 : pos + 1]):
+            return False
         return binding(base) is sys.argv
     except Exception:  # noqa: BLE001 — failure to classify must preserve the original error
         return False
