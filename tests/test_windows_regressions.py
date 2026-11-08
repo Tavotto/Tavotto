@@ -4371,6 +4371,77 @@ def test_environment_diagnostics_retries_sharing_conflict_with_newest_cache(tmp_
         envdiag._cache.pop(key, None)
 
 
+def test_environment_diagnostics_does_not_retry_other_replace_errors(tmp_path, monkeypatch):
+    from tavotto.engine import atomicio, envdiag
+
+    monkeypatch.setattr(envdiag.config, "data_dir", lambda: tmp_path / "data")
+    key = envdiag._key(tmp_path / "project")
+    path = envdiag._path(key)
+    path.parent.mkdir(parents=True)
+    path.write_text("[]", encoding="utf-8")
+    envdiag._cache[key] = [{"requested": ["newest"]}]
+    replace = atomicio.os.replace
+    calls = []
+
+    def disk_full(src, dst):
+        if str(dst) == str(path):
+            calls.append(str(dst))
+            raise OSError(errno.ENOSPC, "simulated full disk")
+        return replace(src, dst)
+
+    monkeypatch.setattr(atomicio.os, "replace", disk_full)
+    try:
+        envdiag._save(key, path)
+        assert len(calls) == 1
+        assert path.read_text(encoding="utf-8") == "[]"
+        assert list(path.parent.glob("*.tmp")) == []
+    finally:
+        envdiag._cache.pop(key, None)
+
+
+def test_environment_diagnostics_retries_again_on_access_after_a_long_lock(tmp_path, monkeypatch):
+    from tavotto.engine import atomicio, envdiag
+
+    monkeypatch.setattr(envdiag.config, "data_dir", lambda: tmp_path / "data")
+    monkeypatch.setattr(envdiag, "_SHARING_RETRY_DELAYS_S", (0, 0))
+    project = tmp_path / "project"
+    key = envdiag._key(project)
+    path = envdiag._path(key)
+    path.parent.mkdir(parents=True)
+    path.write_text('[{"requested": ["expired-package"]}]', encoding="utf-8")
+    retained = [{"requested": ["newest"], "finished_at": time.time()}]
+    envdiag._cache[key] = retained
+    replace = atomicio.os.replace
+    blocked = True
+    written = threading.Event()
+
+    def sharing_then_release(src, dst):
+        if str(dst) == str(path):
+            if blocked:
+                exc = PermissionError(13, "simulated Windows sharing violation")
+                exc.winerror = 32
+                raise exc
+            result = replace(src, dst)
+            written.set()
+            return result
+        return replace(src, dst)
+
+    monkeypatch.setattr(atomicio.os, "replace", sharing_then_release)
+    try:
+        envdiag._save(key, path)
+        assert key in envdiag._pending_writes
+        assert "expired-package" in path.read_text(encoding="utf-8")
+        blocked = False
+        assert [row["requested"] for row in envdiag.recent(project)] == [["newest"]]
+        assert written.wait(5), "the next access did not schedule another write"
+        with envdiag._write_lock:
+            assert json.loads(path.read_text(encoding="utf-8")) == retained
+        assert key not in envdiag._pending_writes
+    finally:
+        envdiag._cache.pop(key, None)
+        envdiag._pending_writes.discard(key)
+
+
 @pytest.mark.skipif(os.name != "nt", reason="requires real Windows file sharing")
 def test_environment_diagnostics_recovers_after_windows_reader_closes(tmp_path, monkeypatch):
     """Hold the destination open to exercise the real Windows replace failure."""
