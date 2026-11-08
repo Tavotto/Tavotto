@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import copy
 import dataclasses
 import errno
 import functools
@@ -2984,6 +2985,13 @@ def _freeze_document_svg_sources_best_effort(document: dict) -> list[str]:
                     ):
                         obj["figureSnapshot"] = saved["snapshot_ref"]
                         continue
+                if "figureOrigin" in obj:
+                    # Preserve the historical baseline when no matching
+                    # current output is available. Saving never chooses a
+                    # different current Figure or rebuilds the selected one.
+                    svgstore.validate_origin(obj["figureOrigin"], source_id=source_id)
+                    warnings.add(source_id)
+                    continue
                 static_hash = None
                 if not execution:
                     path = safe_resolve(source_id)
@@ -4945,7 +4953,7 @@ def _package_svg_assets(
     """Bundle only referenced, verified project snapshots; never execute a script."""
     from .engine import svgstore
 
-    count, seen = 0, set()
+    snapshots, seen = set(), set()
     references = {}
     if temporary_root is None:
         engine_config.data_dir().mkdir(parents=True, exist_ok=True)
@@ -4961,93 +4969,112 @@ def _package_svg_assets(
                 continue
             if strict_references and obj.get("chart") is not None:
                 continue
-            source_id, patches = obj["fileId"], obj.get("overrides") or []
-            reference = obj.get("figureSnapshot")
-            static_hash = None
-            if (
-                reference is None
-                and not patches
-                and not engine_runtimeasset.is_runtime_id(source_id)
-            ):
-                try:
-                    static_hash = engine_figcapture.hash_file(safe_resolve(source_id))[0]
-                except Exception:
+            try:
+                selections = svgstore.panel_snapshot_inputs(obj)
+            except (ValueError, TypeError, RecursionError) as exc:
+                if strict_references:
+                    raise engine_documents.DocumentError(
+                        "figure_snapshot_unavailable", "项目包所引用的图表编辑来源不可核验", 422
+                    ) from exc
+                continue
+            # An origin-only panel has no current output. Never borrow a
+            # same-name current execution to manufacture one during packing.
+            if not selections:
+                selections = [("figureSnapshot", None, obj.get("overrides") or [])]
+            for role, reference, patches in selections:
+                destination = obj["figureOrigin"] if role == "figureOrigin" else obj
+                field = "snapshot" if role == "figureOrigin" else "figureSnapshot"
+                source_id = obj["fileId"]
+                static_hash = None
+                if (
+                    reference is None
+                    and not patches
+                    and not engine_runtimeasset.is_runtime_id(source_id)
+                ):
+                    try:
+                        static_hash = engine_figcapture.hash_file(safe_resolve(source_id))[0]
+                    except Exception:
+                        if strict_references and reference is not None:
+                            raise engine_documents.DocumentError(
+                                "figure_snapshot_unavailable",
+                                "项目包所引用的 Figure 原件不可核验",
+                                422,
+                            ) from None
+                        continue
+                patch_hash = engine_patchspec.patch_hash(patches)
+                # Cache only the complete explicit selection. A second row with the
+                # same snapshotId but a different receipt/owner must still fail its
+                # own validation instead of inheriting the first row's good ref.
+                reference_key = (
+                    json.dumps(reference, sort_keys=True, separators=(",", ":"))
+                    if reference is not None
+                    else None
+                )
+                key = (role, source_id, patch_hash, static_hash, reference_key)
+                if key in seen:
+                    if strict_references and key in references:
+                        destination[field] = copy.deepcopy(references[key])
+                    continue
+                seen.add(key)
+                kwargs = dict(
+                    static_sha256=static_hash,
+                    remap_fingerprint=engine_inputremap.fingerprint(root),
+                    storage_root=_svg_storage_root(root),
+                )
+                if reference is not None:
+                    record = svgstore.load_document_snapshot(
+                        root,
+                        reference,
+                        source_id=source_id,
+                        patch_hash=patch_hash,
+                        remap_fingerprint=kwargs["remap_fingerprint"],
+                        storage_root=kwargs["storage_root"],
+                        include_identity=True,
+                    )
+                    if record is not None:
+                        static_hash = record["snapshot_identity"]["static_sha256"]
+                else:
+                    record = svgstore.load(root, source_id, patch_hash, **kwargs)
+                if record is None or (
+                    role != "figureOrigin"
+                    and not _svg_snapshot_matches_current(
+                        root,
+                        source_id,
+                        record,
+                        explicit=reference is not None,
+                        static=static_hash is not None,
+                    )
+                ):
                     if strict_references and reference is not None:
                         raise engine_documents.DocumentError(
-                            "figure_snapshot_unavailable", "项目包所引用的 Figure 原件不可核验", 422
-                        ) from None
+                            "figure_snapshot_unavailable", "项目包所引用的 Figure 配对不可核验", 422
+                        )
                     continue
-            patch_hash = engine_patchspec.patch_hash(patches)
-            # Cache only the complete explicit selection. A second row with the
-            # same snapshotId but a different receipt/owner must still fail its
-            # own validation instead of inheriting the first row's good ref.
-            reference_key = (
-                json.dumps(reference, sort_keys=True, separators=(",", ":"))
-                if reference is not None
-                else None
-            )
-            key = (source_id, patch_hash, static_hash, reference_key)
-            if key in seen:
-                if strict_references and key in references:
-                    obj["figureSnapshot"] = dict(references[key])
-                continue
-            seen.add(key)
-            kwargs = dict(
-                static_sha256=static_hash,
-                remap_fingerprint=engine_inputremap.fingerprint(root),
-                storage_root=_svg_storage_root(root),
-            )
-            if reference is not None:
-                record = svgstore.load_document_snapshot(
+                saved = svgstore.save(
                     root,
-                    reference,
-                    source_id=source_id,
-                    patch_hash=patch_hash,
-                    remap_fingerprint=kwargs["remap_fingerprint"],
-                    storage_root=kwargs["storage_root"],
-                    include_identity=True,
+                    source_id,
+                    patch_hash,
+                    pdf=record["pdf"],
+                    svg=record["svg"],
+                    artifact=record["pdf_artifact"],
+                    receipt=record["receipt"],
+                    execution_owner=record.get("execution_owner"),
+                    static_sha256=static_hash,
+                    remap_fingerprint=engine_inputremap.fingerprint(root),
+                    storage_root=staging,
+                    **({"archive_only": True} if role == "figureOrigin" else {"activate": True}),
+                    **_svg_input_archive_kwargs(record.get("captured_input_archive")),
                 )
-                if record is not None:
-                    static_hash = record["snapshot_identity"]["static_sha256"]
-            else:
-                record = svgstore.load(root, source_id, patch_hash, **kwargs)
-            if not _svg_snapshot_matches_current(
-                root,
-                source_id,
-                record,
-                explicit=reference is not None,
-                static=static_hash is not None,
-            ):
-                if strict_references and reference is not None:
-                    raise engine_documents.DocumentError(
-                        "figure_snapshot_unavailable", "项目包所引用的 Figure 配对不可核验", 422
-                    )
-                continue
-            saved = svgstore.save(
-                root,
-                source_id,
-                patch_hash,
-                pdf=record["pdf"],
-                svg=record["svg"],
-                artifact=record["pdf_artifact"],
-                receipt=record["receipt"],
-                execution_owner=record.get("execution_owner"),
-                static_sha256=static_hash,
-                remap_fingerprint=engine_inputremap.fingerprint(root),
-                storage_root=staging,
-                activate=True,
-                **_svg_input_archive_kwargs(record.get("captured_input_archive")),
-            )
-            if strict_references:
-                obj["figureSnapshot"] = saved["snapshot_ref"]
-                references[key] = saved["snapshot_ref"]
-            count += 1
-        if count:
+                if strict_references:
+                    destination[field] = saved["snapshot_ref"]
+                    references[key] = saved["snapshot_ref"]
+                snapshots.add(saved["snapshot_ref"]["snapshotId"])
+        if snapshots:
             relative = _svg_storage_root(root).relative_to(root).as_posix()
             for file in sorted(staging.rglob("*")):
                 if file.is_file():
                     archive.write(file, f"assets/{relative}/{file.relative_to(staging).as_posix()}")
-    return count
+    return len(snapshots)
 
 
 class _PackageFilePlan:
@@ -5329,13 +5356,18 @@ def _api_chart_package():
                     # Historical captures already carry their own script/input
                     # bytes. Keep an uncaptured panel with the same script on
                     # the original current-resource path.
-                    if (obj.get("figureSnapshot") or {}).get("snapshotId") in captured_ids:
+                    source_reference = (
+                        (obj.get("figureOrigin") or {}).get("snapshot")
+                        or obj.get("figureSnapshot")
+                        or {}
+                    )
+                    if source_reference.get("snapshotId") in captured_ids:
                         continue
                     use = dict(resolved_sources[obj["fileId"]])
                     # Only the archive just verified by _package_svg_assets can
                     # identify a disk Figure's historical arguments. Current
                     # defaults are not evidence of how that Figure was produced.
-                    owner = (obj.get("figureSnapshot") or {}).get("executionOwner")
+                    owner = source_reference.get("executionOwner")
                     if owner is not None and owner["script"] == use["script"]:
                         use.update(run_config=owner["run_config"], run_config_known=True)
                     source_uses.append(use)

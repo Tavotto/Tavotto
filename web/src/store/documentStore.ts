@@ -1,7 +1,7 @@
 import { containsChartState, documentAddressKey, documentFormatForSchema, documentNamespaceKey, type DocumentFormat } from '@/lib/documentFormat'
 import { captureChartSourceSave as captureSourceContext, planSavedChartSources, type ChartSourceReceipt, type ChartSourceSaveContext } from '@/lib/chartSourceReceipts'
 import { create } from 'zustand'
-import { sameFigureInputs, validFigureSnapshot, type FigureSnapshotSaveContext } from '@/lib/figureSnapshot'
+import { sameFigureInputs, sameFigureOrigin, sameFigureSource, validFigureOrigin, validFigureSnapshot, type FigureSnapshotSaveContext } from '@/lib/figureSnapshot'
 import { figureExecutionOwnerKey } from '@/lib/capturedFigureSources'
 import { perfSpan } from '@/perf/core'
 import { enablePatches, produceWithPatches, type Patch } from 'immer'
@@ -2755,11 +2755,16 @@ const snapshotReceiptInvalidated = (ref: FigureSnapshot) => {
 /** Editing source/patches invalidates the association; page geometry and exact copies preserve it. */
 function clearChangedFigureSnapshots(next: FigureDocument, before: FigureDocument): void {
   clearChangedChartSources(next, before)
-  if (!next.objects.some((o) => o.type === 'panel' && o.figureSnapshot)) return
+  if (!next.objects.some(o => o.type === 'panel' && (o.figureSnapshot || o.figureOrigin))) return
   const previous = new Map(before.objects.filter((o) => o.type === 'panel').map((o) => [o.id, o]))
   for (const panel of next.objects) {
-    if (panel.type !== 'panel' || !panel.figureSnapshot) continue
+    if (panel.type !== 'panel') continue
     const old = previous.get(panel.id)
+    if (old && !sameFigureSource(old, panel)) {
+      // Replacement cannot carry the old source's lineage; an explicit new matching origin may.
+      if (!validFigureOrigin(panel.figureOrigin, panel.fileId) || sameFigureOrigin(panel.figureOrigin, old.figureOrigin)) delete panel.figureOrigin
+    }
+    if (!panel.figureSnapshot) continue
     if (!validFigureSnapshot(panel.figureSnapshot, panel.fileId) ||
         (old && !sameFigureInputs(old, panel)) ||
         snapshotReceiptInvalidated(panel.figureSnapshot)) {
@@ -2832,6 +2837,10 @@ export function mergeSavedFigureSnapshots(
           figureRunGeneration(context.pj, panel.fileId) !== context.sourceGenerations.get(panel.fileId)) continue
       const ref = refs[panel.id]
       if (validFigureSnapshot(ref, panel.fileId)) {
+        const origin = previous.figureOrigin
+        if (origin !== undefined && (!validFigureOrigin(origin, panel.fileId) ||
+            ref.receiptId !== origin.snapshot.receiptId ||
+            !sameFigureOrigin(ref.executionOwner, origin.snapshot.executionOwner))) continue
         if (ref.executionOwner) {
           const key = figureOwnerRunKey(context.pj, ref.executionOwner)
           if ((figureOwnerGenerations.get(key) ?? 0) !== (context.ownerGenerations?.get(key) ?? 0)) {

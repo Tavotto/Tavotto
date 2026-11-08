@@ -209,7 +209,7 @@ def validate_chart_document(raw: Any, *, require_sources: bool = True) -> dict:
     捕获附件前可用 ``require_sources=False`` 校验待保存编辑；最终提交必须使用
     缺省值。这里只有格式与来源身份判据，不碰存储、不计算、不选择保存目录。
     """
-    from . import chartmodel
+    from . import chartmodel, svgstore
 
     if (
         not isinstance(raw, dict)
@@ -226,6 +226,13 @@ def validate_chart_document(raw: Any, *, require_sources: bool = True) -> dict:
         for obj in canvas.get("objects", []):
             if not isinstance(obj, dict):
                 continue
+            if "figureOrigin" in obj:
+                try:
+                    if obj.get("type") != "panel" or not isinstance(obj.get("fileId"), str):
+                        raise ValueError("Figure origin requires a panel source")
+                    svgstore.validate_origin(obj["figureOrigin"], source_id=obj["fileId"])
+                except (ValueError, TypeError, RecursionError) as exc:
+                    raise DocumentError("figure_snapshot_invalid", "无效的图表编辑来源") from exc
             if "chart" not in obj and "chartSource" not in obj:
                 continue
             chart = obj.get("chart")

@@ -394,12 +394,14 @@ def prepare_relocation(prepared, *, project_root, remap_rules):
         document = prepared.document
         for canvas in document["canvases"]:
             for obj in canvas.get("objects", []):
-                if (
-                    isinstance(obj, dict)
-                    and obj.get("type") == "panel"
-                    and obj.get("figureSnapshot") is not None
-                ):
-                    obj["figureSnapshot"] = replacement(obj["figureSnapshot"])
+                if not isinstance(obj, dict) or obj.get("type") != "panel":
+                    continue
+                for role, reference, _patches in svgstore.panel_snapshot_inputs(obj):
+                    changed = replacement(reference)
+                    if role == "figureOrigin":
+                        obj[role]["snapshot"] = changed
+                    else:
+                        obj[role] = changed
         execution = prepared.manifest.get("execution")
         if execution is not None and execution["version"] == packageexecution.CAPTURE_VERSION:
             # Distinct old machine contexts can legitimately converge on the

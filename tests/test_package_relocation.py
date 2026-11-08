@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import copy
 import io
+import json
 import shutil
+import zipfile
 from pathlib import Path
 
 import pikepdf
@@ -17,6 +19,7 @@ import pytest
 from tavotto.engine import (
     chartpackage,
     config,
+    documentpackage,
     inputdeclaration,
     inputremap,
     packagebudget,
@@ -135,6 +138,76 @@ def _open(path):
 
 def _rules(target):
     return [{"kind": "file", "from": "legacy/current.csv", "to": str(target / "current.csv")}]
+
+
+def test_relocation_rewrites_origin_only_and_output_roles_with_their_own_baselines(
+    package, tmp_path
+):
+    path, document, refs, expected = package
+    document = copy.deepcopy(document)
+    for canvas in document["canvases"]:
+        for item in canvas["objects"]:
+            item["figureOrigin"] = {
+                "version": 1,
+                "snapshot": item.pop("figureSnapshot"),
+                "patches": copy.deepcopy(item["overrides"]),
+            }
+            item["overrides"] = [{"gid": "line", "prop": "linewidth", "value": 9}]
+    # One panel retains a distinct current output, while both historical
+    # baselines and the inactive canvas must remain part of the closure.
+    last = document["canvases"][1]["objects"][1]
+    last["figureSnapshot"] = copy.deepcopy(refs[1])
+    last["overrides"] = copy.deepcopy(last["figureOrigin"]["patches"])
+    with zipfile.ZipFile(path) as archive:
+        manifest = json.loads(archive.read(documentpackage.MANIFEST_MEMBER))
+        resources = [
+            chartpackage.ResourceFile(row, archive.read(row["path"])) for row in manifest["assets"]
+        ]
+    edited = tmp_path / "edited.tavotto"
+    chartpackage.write_chart_package(
+        edited,
+        document,
+        tmp_path / "source" / config.PROJECT_STORE_DIRNAME,
+        resources=resources,
+        metadata={"execution": manifest["execution"]},
+        budget_factory=packagebudget.portable_output_budget,
+    )
+    target = tmp_path / "迁移 编辑来源"
+    with (
+        _open(edited) as original,
+        packagerelocation.prepare_relocation(
+            original, project_root=target, remap_rules=_rules(target)
+        ) as moved,
+    ):
+        assert original.document == document
+        changed = moved.document
+        mapping = {row["old_ref"]["snapshotId"]: row["new_ref"] for row in moved.references}
+        assert len(mapping) == 2
+        restored = copy.deepcopy(changed)
+        for ci, canvas in enumerate(restored["canvases"]):
+            for oi, item in enumerate(canvas["objects"]):
+                old = document["canvases"][ci]["objects"][oi]
+                for role, reference, patches in svgstore.panel_snapshot_inputs(old):
+                    actual = item[role]["snapshot"] if role == "figureOrigin" else item[role]
+                    assert actual == mapping[reference["snapshotId"]]
+                    assert actual != reference
+                    if role == "figureOrigin":
+                        assert item[role]["patches"] == patches
+                        item[role]["snapshot"] = reference
+                    else:
+                        item[role] = reference
+        assert restored == document
+        for index, ref in enumerate(refs):
+            new = mapping[ref["snapshotId"]]
+            record = svgstore.load_document_snapshot(
+                target,
+                new,
+                source_id=new["sourceId"],
+                patch_hash=new["patchHash"],
+                remap_fingerprint=moved.remap_fingerprint,
+                storage_root=moved.storage_root,
+            )
+            assert record["captured_input_archive"].graph_bytes == expected[index]["graph"]
 
 
 def test_relocation_preserves_full_history_and_original_document_without_current_records(

@@ -169,7 +169,11 @@ def inspect_project_package(prepared: PreparedChartPackage) -> dict:
                     or obj.get("chart") is not None
                 ):
                     continue
-                reference = obj.get("figureSnapshot") or {}
+                reference = (
+                    (obj.get("figureOrigin") or {}).get("snapshot")
+                    or obj.get("figureSnapshot")
+                    or {}
+                )
                 if not isinstance(reference, dict):
                     continue  # The reference validator below retains the error contract.
                 if reference.get("snapshotId") in captured_refs:
@@ -268,53 +272,58 @@ def inspect_project_package(prepared: PreparedChartPackage) -> dict:
                     run_id = resolved.get("run_config")
                     if run_id and run_id not in runs:
                         warn("run_config_missing", source_id)
-                reference = obj.get("figureSnapshot")
-                if reference is None:
-                    if is_runtime or obj.get("overrides"):
-                        warn("figure_snapshot_missing", source_id)
-                    continue
+                if obj.get("figureSnapshot") is None and (is_runtime or obj.get("overrides")):
+                    warn("figure_snapshot_missing", source_id)
                 try:
-                    reference = svgstore.validate_reference(reference)
+                    selections = svgstore.panel_snapshot_inputs(obj)
                 except (ValueError, TypeError, RecursionError) as exc:
                     raise documentpackage.PackageError(
-                        "figure_snapshot_invalid", "Invalid document Figure reference"
+                        "figure_snapshot_invalid", "Invalid document Figure origin"
                     ) from exc
-                record = snapshots.get(reference["snapshotId"])
-                if record is None:
-                    _invalid("figure_snapshot_missing", "Referenced Figure archive is missing")
-                if (
-                    record["reference"] != reference
-                    or reference["sourceId"] != source_id
-                    or reference["patchHash"] != patchspec.patch_hash(obj.get("overrides") or [])
-                ):
-                    _invalid(
-                        "figure_snapshot_mismatch", "Figure reference and document input disagree"
-                    )
-                identity = record["identity"]
-                static_hash = identity["static_sha256"]
-                if static_hash is not None and source_id in resources:
-                    if resources[source_id]["sha256"] != static_hash:
-                        # An explicit full reference pins the immutable pair,
-                        # while the same logical file may now have newer bytes.
-                        # Both byte sets were independently checked above. This
-                        # does not recover the historical disk original itself.
-                        warn("historical_static_source_unavailable", reference["snapshotId"])
-                if identity["remap_fingerprint"]:
-                    warn("snapshot_remap_requires_relink", source_id)
-                owner = record["execution_owner"]
-                if owner is not None and (
-                    resolved is None or owner["script"] != resolved["script"]
-                ):
-                    warn("historical_owner_unavailable", source_id)
-                if owner is not None and owner["run_config"] is not None:
-                    run = runs.get(owner["run_config"])
-                    if run is None or run["script"] != owner["script"]:
-                        warn(
-                            "historical_run_config_missing",
-                            reference["snapshotId"]
-                            if reference["snapshotId"] in captured_ids
-                            else source_id,
+                for _role, reference, patches in selections:
+                    try:
+                        reference = svgstore.validate_reference(reference)
+                    except (ValueError, TypeError, RecursionError) as exc:
+                        raise documentpackage.PackageError(
+                            "figure_snapshot_invalid", "Invalid document Figure reference"
+                        ) from exc
+                    record = snapshots.get(reference["snapshotId"])
+                    if record is None:
+                        _invalid("figure_snapshot_missing", "Referenced Figure archive is missing")
+                    if (
+                        record["reference"] != reference
+                        or reference["sourceId"] != source_id
+                        or reference["patchHash"] != patchspec.patch_hash(patches)
+                    ):
+                        _invalid(
+                            "figure_snapshot_mismatch",
+                            "Figure reference and document input disagree",
                         )
+                    identity = record["identity"]
+                    static_hash = identity["static_sha256"]
+                    if static_hash is not None and source_id in resources:
+                        if resources[source_id]["sha256"] != static_hash:
+                            # An explicit full reference pins the immutable pair,
+                            # while the same logical file may now have newer bytes.
+                            # Both byte sets were independently checked above. This
+                            # does not recover the historical disk original itself.
+                            warn("historical_static_source_unavailable", reference["snapshotId"])
+                    if identity["remap_fingerprint"]:
+                        warn("snapshot_remap_requires_relink", source_id)
+                    owner = record["execution_owner"]
+                    if owner is not None and (
+                        resolved is None or owner["script"] != resolved["script"]
+                    ):
+                        warn("historical_owner_unavailable", source_id)
+                    if owner is not None and owner["run_config"] is not None:
+                        run = runs.get(owner["run_config"])
+                        if run is None or run["script"] != owner["script"]:
+                            warn(
+                                "historical_run_config_missing",
+                                reference["snapshotId"]
+                                if reference["snapshotId"] in captured_ids
+                                else source_id,
+                            )
     # Recheck the original numeric stages after semantic inspection. No leased
     # temporary path or previously verified mutable bytes escape this request.
     prepared.plan_project_resources()

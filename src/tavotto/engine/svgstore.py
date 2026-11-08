@@ -24,6 +24,7 @@ versions. The record budget counts current and archived metadata separately
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import json
 import math
@@ -34,7 +35,7 @@ import threading
 import time
 from pathlib import Path, PurePosixPath
 
-from . import atomicio, config, figcapture, svgstore_inputs
+from . import atomicio, config, figcapture, patchspec, svgstore_inputs
 from .inputdeclaration import InputArchive, validate_public_fact
 
 VERSION = 1
@@ -435,6 +436,49 @@ def validate_reference(reference) -> dict:
     if "executionOwner" in reference:
         detached["executionOwner"] = _execution_owner(reference["executionOwner"])
     return detached
+
+
+def validate_origin(origin, *, source_id: str | None = None) -> dict:
+    """Validate historical editing input without granting current execution.
+
+    The original ordered patches are retained, including last-wins duplicates.
+    Their canonical hash binds them to the full immutable snapshot reference;
+    a hash alone cannot supply a missing baseline list.
+    """
+    if (
+        not isinstance(origin, dict)
+        or set(origin) != {"version", "snapshot", "patches"}
+        or type(origin["version"]) is not int
+        or origin["version"] != 1
+        or not isinstance(origin["patches"], list)
+    ):
+        raise ValueError("invalid Figure origin")
+    reference = validate_reference(origin["snapshot"])
+    patches = origin["patches"]
+    _canonical, dropped = patchspec.canonicalize_with_diagnostics(patches)
+    if (
+        dropped
+        or patchspec.patch_hash(patches) != reference["patchHash"]
+        or (source_id is not None and reference["sourceId"] != source_id)
+    ):
+        raise ValueError("Figure origin and baseline input disagree")
+    return {"version": 1, "snapshot": reference, "patches": copy.deepcopy(patches)}
+
+
+def panel_snapshot_inputs(panel: dict) -> list[tuple[str, dict, list]]:
+    """Enumerate explicit output and origin roles using each role's own patches.
+
+    Callers still verify each complete reference against the archive. The role
+    identifies the document destination when relocation replaces a reference.
+    No current-marker lookup or execution eligibility is implied.
+    """
+    result = []
+    if panel.get("figureSnapshot") is not None:
+        result.append(("figureSnapshot", panel["figureSnapshot"], panel.get("overrides") or []))
+    if "figureOrigin" in panel:
+        origin = validate_origin(panel["figureOrigin"], source_id=panel.get("fileId"))
+        result.append(("figureOrigin", origin["snapshot"], origin["patches"]))
+    return result
 
 
 def _read_snapshot(path: Path, *, expected: dict | None = None) -> dict:

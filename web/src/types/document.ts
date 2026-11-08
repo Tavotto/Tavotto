@@ -164,6 +164,13 @@ export interface FigureSnapshot {
   executionOwner?: FigureExecutionOwner
 }
 
+/** Historical execution input; independent of the current full override list/output snapshot. */
+export interface FigureOrigin {
+  version: 1
+  snapshot: FigureSnapshot
+  patches: PanelOverride[]
+}
+
 export interface PanelObject extends ObjectBase {
   type: 'panel'
   fileId: string
@@ -183,6 +190,7 @@ export interface PanelObject extends ObjectBase {
   source?: RuntimePanelSource
   overrides: PanelOverride[]
   figureSnapshot?: FigureSnapshot
+  figureOrigin?: FigureOrigin
   /** Nonsemantic source/frame guard. Never changes the meaning of overrides. */
   artifactValidation?: ArtifactValidation
   /**
