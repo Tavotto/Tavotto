@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime as _dt
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -243,15 +244,16 @@ def _run_research_dependency_install(tmp_path, failures: int):
     stub.write_text(
         "#!/bin/sh\n"
         'echo "$*" >> "$INSTALL_LOG"\n'
-        'n=$(wc -l < "$INSTALL_LOG"); [ "$n" -gt "$INSTALL_FAILURES" ]\n'
+        'n=$(wc -l < "$INSTALL_LOG"); [ "$n" -gt "$INSTALL_FAILURES" ]\n',
+        encoding="utf-8",
     )
     stub.chmod(0o755)
     sleep = bin_ / "sleep"
-    sleep.write_text("#!/bin/sh\nexit 0\n")
+    sleep.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     sleep.chmod(0o755)
     generated = B.research_prepare("research_x", tex=False, source_package=False).splitlines()
     command = next(line for line in generated if "-r tests/compat/research-environments/" in line)
-    command = command.replace("/work/science-venv/bin/python", str(stub))
+    command = command.replace("/work/science-venv/bin/python", shlex.quote(str(stub)))
     env = {
         **os.environ,
         "PATH": f"{bin_}:/usr/bin:/bin",
@@ -263,13 +265,16 @@ def _run_research_dependency_install(tmp_path, failures: int):
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
-    calls = (tmp_path / "calls").read_text().splitlines()
+    calls = (tmp_path / "calls").read_text(encoding="utf-8").splitlines()
     return proc, calls
 
 
 def test_research_dependency_install_retries_without_changing_requirements(tmp_path):
+    tmp_path = tmp_path / "path with spaces"
+    tmp_path.mkdir()
     proc, calls = _run_research_dependency_install(tmp_path, failures=2)
     assert proc.returncode == 0, proc.stderr
     assert "NEXT" in proc.stdout
