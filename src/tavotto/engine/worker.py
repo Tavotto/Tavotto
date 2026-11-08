@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import ast
 import contextlib
+import dis
 import errno
 import faulthandler
 import hashlib
@@ -1074,6 +1075,92 @@ def _script_frame_line(exc: BaseException, script) -> int | None:
     return lines[-1] if lines else None
 
 
+def _direct_argv_index_error(
+    exc: BaseException, script, supplied: list[str], expected_argv: list[str]
+) -> bool:
+    """Prove the failing subscription is a direct read of this run's argv list.
+
+    Inspect the actual failing instruction, not a matching source line: another
+    list or a second subscript on the same line can raise the same IndexError.
+    Unknown bytecode, changed argv, dynamic indices and helper frames stay
+    ordinary script errors. Nothing evaluates the user's source or arguments.
+    """
+    try:
+        if (
+            type(exc) is not IndexError
+            or type(sys.argv) is not list
+            or sys.argv is not expected_argv
+        ):
+            return False
+        if not all(type(value) is str for value in sys.argv):
+            return False
+        if sys.argv != [str(script), *supplied]:
+            return False
+        tb = exc.__traceback__
+        if tb is None:
+            return False
+        wanted = os.path.normcase(os.path.realpath(str(script)))
+        reached_script = False
+        while tb.tb_next is not None:
+            # A finally block can change argv and restore it after the failing
+            # instruction, even in a helper called by the script. Reject any
+            # unwound frame after entering the script if it has since executed.
+            reached_script |= (
+                os.path.normcase(os.path.realpath(tb.tb_frame.f_code.co_filename)) == wanted
+            )
+            if reached_script and tb.tb_frame.f_lasti != tb.tb_lasti:
+                return False
+            tb = tb.tb_next
+        frame = tb.tb_frame
+        if (
+            os.path.normcase(os.path.realpath(frame.f_code.co_filename)) != wanted
+            or frame.f_lasti != tb.tb_lasti
+        ):
+            return False
+        instructions = list(dis.get_instructions(frame.f_code))
+        pos = next((i for i, op in enumerate(instructions) if op.offset == tb.tb_lasti), -1)
+        if pos < 2:
+            return False
+        op = instructions[pos]
+        if op.opname != "BINARY_SUBSCR" and not (op.opname == "BINARY_OP" and op.argrepr == "[]"):
+            return False
+        index_op = instructions[pos - 1]
+        if (
+            index_op.opname not in ("LOAD_CONST", "LOAD_SMALL_INT")
+            or type(index_op.argval) is not int
+        ):
+            return False
+        index = index_op.argval
+        if -len(sys.argv) <= index < len(sys.argv):
+            return False
+
+        def binding(load):
+            name = load.argval
+            if not isinstance(name, str):
+                return None
+            if load.opname in (
+                "LOAD_NAME",
+                "LOAD_FAST",
+                "LOAD_FAST_CHECK",
+                "LOAD_FAST_BORROW",
+                "LOAD_DEREF",
+            ):
+                if name in frame.f_locals:
+                    return frame.f_locals[name]
+                if load.opname != "LOAD_NAME":
+                    return None
+            if load.opname in ("LOAD_NAME", "LOAD_GLOBAL"):
+                return frame.f_globals.get(name)
+            return None
+
+        base = instructions[pos - 2]
+        if base.opname == "LOAD_ATTR" and base.argval == "argv" and pos >= 3:
+            return binding(instructions[pos - 3]) is sys
+        return binding(base) is sys.argv
+    except Exception:  # noqa: BLE001 — failure to classify must preserve the original error
+        return False
+
+
 def _blocked_operations_error(
     ops: list[dict],
     *,
@@ -1752,7 +1839,8 @@ class Worker(wireproto.V1Handler):
         # 解析参数（评审 #443）。
         # T03：用户给了精确 token 时跟在脚本后面，一个不改（空串 / 空格 / 中文 / `--` 原样）。仍排在
         # paper_style 与 `runpy` 之前——导入期 `parse_args()` 的脚本在第一行用户代码之前就看得到。
-        sys.argv = [str(self.script), *self.script_argv]
+        run_argv = [str(self.script), *self.script_argv]
+        sys.argv = run_argv
 
         # 脚本 import 了却从未用到、又没装的包不挡图（ADR 0061 §二 2026-09-24 修订）：判据与
         # 父进程的联合计划同一份（`figcapture.unused_imports`）——计划没要求装它，这里就得让
@@ -1895,6 +1983,21 @@ class Worker(wireproto.V1Handler):
                 if ledger.explains(exc) or ledger.material():
                     raise _blocked_operations_error(
                         ledger.material(), cause=exc, fidelity=ledger.summary()
+                    ) from exc
+                if _direct_argv_index_error(exc, self.script, self.script_argv, run_argv):
+                    count = len(self.script_argv)
+                    message = (
+                        f"脚本读取命令行参数时发生下标越界；Tavotto 已按原样传入 {count} 个参数。"
+                        "请检查是否还缺少脚本需要的参数。"
+                        if count
+                        else "脚本读取命令行参数时发生下标越界；这次运行没有提供参数。请在运行参数中填写脚本需要的值。"
+                    )
+                    raise ProtocolError(
+                        SCRIPT_NEEDS_ARGUMENTS,
+                        message,
+                        retryable=False,
+                        traceback_text=traceback.format_exc(),
+                        extra={"argv_count": count} if count else {},
                     ) from exc
                 raise
             finally:

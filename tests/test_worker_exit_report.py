@@ -678,6 +678,95 @@ def test_reading_argv_does_not_make_an_unrelated_exit_an_argument_problem(figs):
     assert err.value.code == "script_exited", str(err.value)
 
 
+@needs_worker
+@pytest.mark.parametrize(
+    ("source", "tokens", "expected"),
+    [
+        ("import sys\nx = sys.argv[1]\n", [], "script_needs_arguments"),
+        ("import sys\nx = sys.argv[2]\n", ["one"], "script_needs_arguments"),
+        ("from sys import argv as args\nx = args[1]\n", [], "script_needs_arguments"),
+        ("import sys\nx = sys.argv[-2]\n", [], "script_needs_arguments"),
+        # The exception comes from a different list, even though argv is read on the same line.
+        ("import sys\nx = [][0] + len(sys.argv)\n", [], "script_error"),
+        # Here argv[1] exists; the *string* subscript is the failing operation.
+        ("import sys\nx = sys.argv[1][0]\n", [""], "script_error"),
+        # Equal contents are not the same list object; a copy is ordinary user data.
+        ("import sys\nargs = sys.argv[:]\nx = args[1]\n", [], "script_error"),
+        # A script can replace argv with a same-valued list; more user tokens would not fix it.
+        ("import sys\nsys.argv = [sys.argv[0]]\nx = sys.argv[1]\n", [], "script_error"),
+        # Finally can restore argv *after* the failing access, even without replacing the list.
+        (
+            "import sys\nsaved = sys.argv[:]\ntry:\n    sys.argv[:] = []\n"
+            "    x = sys.argv[1]\nfinally:\n    sys.argv[:] = saved\n",
+            [],
+            "script_error",
+        ),
+        (
+            "import sys\nsaved = sys.argv[:]\ndef inner():\n    return sys.argv[1]\n"
+            "try:\n    sys.argv[:] = []\n    inner()\nfinally:\n    sys.argv[:] = saved\n",
+            [],
+            "script_error",
+        ),
+        ("class Fake:\n    argv = []\nsys = Fake()\nx = sys.argv[1]\n", [], "script_error"),
+    ],
+)
+def test_direct_argv_index_errors_are_classified_only_at_the_failing_operation(
+    figs, source, tokens, expected
+):
+    from tavotto.engine import runconfig
+
+    (figs / "argv_index.py").write_text(source, encoding="utf-8")
+    run = runconfig.selection_for(figs, "argv_index.py", tokens) if tokens else None
+    with pytest.raises(pool.WorkerError) as caught:
+        pool.build("argv_index.py", str(figs), "__main__", run=run)
+    error = caught.value
+    assert error.code == expected
+    if expected == "script_needs_arguments":
+        assert "parse_kind" not in error.extra
+        assert error.extra.get("argv_count", 0) == len(tokens)
+        assert "IndexError" in error.traceback_text
+
+
+@needs_worker
+def test_helper_finally_that_restores_argv_does_not_misclassify_the_index_error(figs):
+    (figs / "argv_helper.py").write_text(
+        "import sys\ndef invoke(callback):\n    saved = sys.argv[:]\n"
+        "    try:\n        sys.argv[:] = []\n        callback()\n"
+        "    finally:\n        sys.argv[:] = saved\n",
+        encoding="utf-8",
+    )
+    (figs / "argv_index.py").write_text(
+        "import sys\nimport argv_helper\ndef callback():\n    return sys.argv[1]\n"
+        "argv_helper.invoke(callback)\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(pool.WorkerError) as caught:
+        pool.build("argv_index.py", str(figs), "__main__")
+    assert caught.value.code == "script_error"
+
+
+@needs_worker
+def test_direct_argv_index_error_can_be_recovered_with_the_existing_run_config(figs):
+    from tavotto.engine import runconfig
+
+    script = (
+        "import sys\n"
+        "input_path, output_dir = sys.argv[1], sys.argv[2]\n"
+        "assert (input_path, output_dir) == ('data file.pkl', 'output folder')\n"
+        "import matplotlib.pyplot as plt\n"
+        "plt.plot([1, 2])\nplt.savefig('Fig1.png')\n"
+    )
+    (figs / "argv_index.py").write_text(script, encoding="utf-8")
+    with pytest.raises(pool.WorkerError) as caught:
+        pool.build("argv_index.py", str(figs), "__main__")
+    assert caught.value.code == "script_needs_arguments"
+    pool.invalidate("argv_index.py", str(figs))
+
+    run = runconfig.selection_for(figs, "argv_index.py", ["data file.pkl", "output folder"])
+    _, result = pool.build("argv_index.py", str(figs), "__main__", run=run)
+    assert "Fig1" in result["stems"]
+
+
 @pytest.mark.parametrize(
     "source, lines, expected",
     [

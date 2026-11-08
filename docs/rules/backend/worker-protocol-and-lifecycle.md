@@ -101,7 +101,9 @@ order: 60
   safe 档不带参数，出路是默认值或 `tavotto run`；argparse 的 usage 打在 stderr，
   `pool._attach_script_output` 把 worker.log 尾巴接到 traceback 前面，两条控制面
   同一处拼），否则 `script_exited`——都不再把 worker 带走。`ensure_built` 放行
-  `ProtocolError`，只把裸 `Exception` 归 `script_error`。probe 原样透传这两个码。
+  `ProtocolError`。裸 `Exception` 通常归 `script_error`；入口脚本直接读取本次运行的 `sys.argv` 时下标越界，
+  且实际失败的字节码、列表身份与回溯能共同确认这个事实，才归 `script_needs_arguments`（详见
+  `figure-capture-and-execution.md`；不能确认时保留原错误）。probe 原样透传错误码。
   **守卫拦下的关键文件操作不洗成完整成功（P01a，`safe_file_operation_blocked`，AC-02）**：safe 的删除 /
   改名 / `write_text` 守卫与 savefig 拦截靠「悄悄跳过」工作，脚本看不到异常——脚本 `os.replace` 缓存后读它，
   拿到旧值 1（直接 Python 是 2）却 `ok`。守卫一字不动，另有一本带外账本 `figcapture.BlockedFileOps`

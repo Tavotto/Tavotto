@@ -2958,11 +2958,11 @@ describe('Import Origin：「确认包名」打开框', () => {
 })
 
 describe('准备出错：后端本地详情接到已有恢复动作（P05a，AC-26）', () => {
-  it('参数被脚本自己的解析器拒绝：说"不认你填的 N 个参数"，参数编辑器直接展开，详情有参数问题类别', async () => {
+  it('传入参数后脚本仍无法继续：参数编辑器直接展开，详情有参数问题类别', async () => {
     await mount()
     await openWith(report(fromBackend('invalid_argv')))
     expect(panel().dataset.prepState).toBe('needs_args')
-    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('脚本不认你填的 2 个参数')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('已传入 2 个参数，脚本仍无法继续')
     expect(primary()?.dataset.prepPrimary).toBe('reopen')
     await toggleDetails()
     expect(details()!.querySelector('[data-prep-row="parse-kind"]')?.textContent).toContain('有参数的值不合法')

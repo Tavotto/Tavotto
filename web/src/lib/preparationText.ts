@@ -584,7 +584,7 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
   const missing = find(report, 'input_location')
   const code = report.outcome.code ?? ''
   if (report.outcome.kind === 'failed' && code === 'script_needs_arguments') {
-    // 用户已经给了参数、脚本自己的解析器仍然拒绝（P05a：`params.argv_count` 来自后端本地错误详情）：别再说"要参数"
+    // 用户已经给了参数、脚本仍因参数停下（`params.argv_count` 来自后端本地错误详情）：别再说"没有传入"
     const given = Number(report.result?.error?.params?.argv_count)
     return given > 0
       ? view('needs_args', 'argsRejected', { count: given }, { kind: 'reopen', label: 'continue' }, { slot: 'args', argsOpen: true })
