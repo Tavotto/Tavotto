@@ -1105,6 +1105,38 @@ class BridgeRun:
             def build_result(self, timings: dict) -> dict:
                 return run.build_result()
 
+            def require_existing_execution(self, expected) -> None:
+                if not _PKG.executionfact.valid_id(expected):
+                    raise wireproto.ProtocolError(
+                        "bad_request", "expected_execution_id must be an execution fact."
+                    )
+                if (
+                    run.execution_id != expected
+                    or run.control is None
+                    or run.released
+                    or run._barrier_released
+                    or run.terminated
+                    or run.session is not self.session
+                ):
+                    raise wireproto.ProtocolError(
+                        "svg_source_unavailable", "The native Figure barrier no longer matches."
+                    )
+
+            def require_existing_figure(self, stem) -> None:
+                # Native captures are established before entering this main-thread
+                # control loop. They do not have a safe-worker build flag.
+                if stem not in self.session.states:
+                    raise wireproto.ProtocolError(
+                        "svg_source_unavailable", "The captured native Figure is unavailable."
+                    )
+
+            def handle_v1(self, req: dict) -> dict:
+                result = super().handle_v1(req)
+                if req.get("cmd") == "render_existing":
+                    # Read the actual run fact, never echo the requested identity.
+                    return {**result, "execution_id": run.execution_id}
+                return result
+
             def handle_extra(self, cmd, req, payload):
                 if cmd == "continue":
                     # **先恢复、恢复干净了才放行**（ADR 0021 §8.1，Codex #549 第九轮）：

@@ -54,6 +54,7 @@ V1_COMMANDS = frozenset(
         "ping",
         "build",
         "render",
+        "render_existing",
         "render_png",
         "preview_png",
         "export",
@@ -204,6 +205,18 @@ class V1Handler:
     def build_result(self, timings: dict) -> dict:
         raise NotImplementedError
 
+    def require_existing_execution(self, expected) -> None:
+        """Only an entry with an actual execution fact may grant this request."""
+        raise ProtocolError(
+            "svg_source_unavailable", "This entry cannot prove the existing execution."
+        )
+
+    def require_existing_figure(self, stem) -> None:
+        if not getattr(self, "built", False) or stem not in self.session.states:
+            raise ProtocolError(
+                "svg_source_unavailable", "The existing Figure is no longer available."
+            )
+
     def select_artifact(self, context) -> None:
         if context is not None:
             raise ProtocolError(
@@ -258,10 +271,19 @@ class V1Handler:
         if cmd == "cancel":
             return self.cancel(payload)
 
+        existing = cmd == "render_existing"
+        if existing:
+            self.require_existing_execution(payload.get("expected_execution_id"))
+            self.require_existing_figure(req.get("stem"))
+            # Reuse the same renderer, patch validation, timings and response shape.
+            cmd = "render"
+
         patches = payload.get("patches", [])
         if cmd in PATCH_COMMANDS and not isinstance(patches, list):
             raise ProtocolError("bad_request", "payload.patches 必须是数组")
-        require_built = payload.get("require_built", False) if cmd == "export" else False
+        require_built = existing or (
+            payload.get("require_built", False) if cmd == "export" else False
+        )
         snapshot_only = payload.get("snapshot_only", False) if cmd == "export" else False
         if not isinstance(require_built, bool) or not isinstance(snapshot_only, bool):
             raise ProtocolError("bad_request", "require_built 与 snapshot_only 必须是布尔值")
@@ -283,7 +305,7 @@ class V1Handler:
                 )
             except figcapture.ArtifactContextError as exc:
                 raise ProtocolError(exc.code, str(exc), extra={"reason": exc.reason}) from exc
-        if cmd == "export" and (require_built or snapshot_only):
+        if require_built or snapshot_only:
             if not getattr(self, "built", True) or req.get("stem") not in self.session.states:
                 raise ProtocolError(
                     "svg_source_unavailable",

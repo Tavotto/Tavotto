@@ -445,7 +445,24 @@ fn execute(
     events_rx: &Receiver<WorkerEvent>,
     job: Job,
 ) -> Result<Value, ProtoError> {
-    ensure_worker(inner, events_tx, events_rx)?;
+    if matches!(
+        &job.kind,
+        JobKind::Worker {
+            cmd: "render_existing",
+            ..
+        }
+    ) {
+        let guard = inner.proc.lock().unwrap();
+        if !guard.as_ref().map(|proc| proc.is_alive()).unwrap_or(false) {
+            return Err(ProtoError::new(
+                "svg_source_unavailable",
+                false,
+                "The existing Figure process is unavailable.",
+            ));
+        }
+    } else {
+        ensure_worker(inner, events_tx, events_rx)?;
+    }
     match job.kind {
         // 握手已经在 ensure_worker 里做过了，这里只是把结果报回去
         JobKind::Open => Ok(json!({
@@ -464,7 +481,7 @@ fn execute(
                 job.timeout,
                 job.idle,
             )?;
-            if cmd == "render" {
+            if matches!(cmd, "render" | "render_existing") {
                 inner.revision.fetch_add(1, Ordering::SeqCst);
             }
             Ok(result)
@@ -1241,5 +1258,60 @@ mod tests {
         result.insert("supervisor_child_pid".into(), json!(777));
         attach_capture_pid(&mut result, 42);
         assert_eq!(Value::Object(result), original);
+    }
+
+    #[test]
+    fn existing_render_missing_child_never_attempts_spawn() {
+        let (mut inner, _responses) = test_inner(7);
+        let nonexistent = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/guard-never-created-program.exe"
+        );
+        assert!(!std::path::Path::new(nonexistent).exists());
+        Arc::get_mut(&mut inner).unwrap().spec.argv = vec![nonexistent.into()];
+        let (tx, rx) = channel();
+        let job = Job {
+            client_request_id: "guarded".into(),
+            kind: JobKind::Worker {
+                cmd: "render_existing",
+                merge_key: None,
+            },
+            stem: Some("History".into()),
+            payload: json!({}),
+            timeout: Duration::from_millis(20),
+            idle: None,
+        };
+        let error = execute(&inner, &tx, &rx, job).unwrap_err();
+        assert_eq!(error.code, "svg_source_unavailable");
+        assert_eq!(inner.generation.load(Ordering::SeqCst), 7);
+        assert!(inner.proc.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn existing_render_does_not_change_ordinary_spawn_policy() {
+        let (mut inner, _responses) = test_inner(7);
+        let nonexistent = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/guard-never-created-program.exe"
+        );
+        assert!(!std::path::Path::new(nonexistent).exists());
+        Arc::get_mut(&mut inner).unwrap().spec.argv = vec![nonexistent.into()];
+        let (tx, rx) = channel();
+        let job = Job {
+            client_request_id: "ordinary".into(),
+            kind: JobKind::Worker {
+                cmd: "render",
+                merge_key: None,
+            },
+            stem: Some("History".into()),
+            payload: json!({}),
+            timeout: Duration::from_millis(20),
+            idle: None,
+        };
+        let error = execute(&inner, &tx, &rx, job).unwrap_err();
+        // An explicitly absent executable prevents a real process; this is the original
+        // mechanism's attempted-spawn outcome, unlike the guarded early return.
+        assert_eq!(error.code, CODE_SPAWN_FAILED);
+        assert_eq!(inner.generation.load(Ordering::SeqCst), 8);
     }
 }

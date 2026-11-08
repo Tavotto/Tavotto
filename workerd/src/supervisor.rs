@@ -36,6 +36,7 @@ fn worker_cmd(op: &str) -> Option<(&'static str, bool)> {
     match op {
         "build" => Some(("build", false)),
         "render" => Some(("render", true)),
+        "render_existing" => Some(("render_existing", true)),
         "render_png" => Some(("render_png", false)),
         "preview_png" => Some(("preview_png", false)),
         "export" => Some(("export", false)),
@@ -351,5 +352,17 @@ impl Supervisor {
             session.close(None, true, Duration::from_millis(0));
         }
         self.by_hash.clear();
+    }
+}
+
+#[cfg(test)]
+mod existing_render_tests {
+    #[test]
+    fn existing_render_remains_distinct_on_the_worker_wire() {
+        assert_eq!(
+            super::worker_cmd("render_existing"),
+            Some(("render_existing", true))
+        );
+        assert_eq!(super::worker_cmd("render"), Some(("render", true)));
     }
 }

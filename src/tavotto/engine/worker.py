@@ -1503,6 +1503,14 @@ class Worker(wireproto.V1Handler):
             captured["captured_input_archive"] = copy.deepcopy(self._captured_input_archive)
         return {**result, "execution_id": self.execution_id, **captured}
 
+    def require_existing_execution(self, expected) -> None:
+        if not executionfact.valid_id(expected):
+            raise ProtocolError("bad_request", "expected_execution_id must be an execution fact.")
+        if expected != self.execution_id:
+            raise ProtocolError(
+                "svg_source_unavailable", "The existing execution no longer matches."
+            )
+
     def select_artifact(self, context):
         try:
             selected = figcapture.selected_artifact_context(context)

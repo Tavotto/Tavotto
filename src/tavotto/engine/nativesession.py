@@ -66,6 +66,7 @@ import os
 import socket
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
 from . import (
@@ -268,7 +269,15 @@ class NativeTransport:
         self._die(None)
 
     # ---------------- 请求 ----------------
-    def request(self, obj: dict, *, generation: int, revision: int, timeout: float) -> dict:
+    def request(
+        self,
+        obj: dict,
+        *,
+        generation: int,
+        revision: int,
+        timeout: float,
+        dispatch_check: Callable[[], None] | None = None,
+    ) -> dict:
         """发一条 v1 请求并等它的响应。
 
         信封由 `pool.build_envelope()` 产出——**与 stdin/stdout 那条控制面是
@@ -290,6 +299,8 @@ class NativeTransport:
                     raise RunError(runcodes.NATIVE_RELAY_FAILED)
                 if self._closed:
                     raise RunError(runcodes.NATIVE_SESSION_DISCONNECTED)
+                if dispatch_check is not None:
+                    dispatch_check()
                 self._waiters[rid] = slot
             try:
                 self.sock.sendall(data)
@@ -868,8 +879,58 @@ class NativeSession:
             raise RunError(runcodes.NATIVE_SESSION_NOT_AT_BARRIER)
         return self.transport
 
-    def _request(self, obj: dict, timeout: float) -> dict:
+    def _existing_figure_context(self, expected_execution_id, expected_snapshot_epoch) -> tuple:
+        if (
+            not executionfact.valid_id(expected_execution_id)
+            or not isinstance(expected_snapshot_epoch, int)
+            or isinstance(expected_snapshot_epoch, bool)
+            or expected_snapshot_epoch < 0
+        ):
+            raise pool.WorkerError(
+                "An execution fact and native epoch are required.", code="bad_request"
+            )
+        with self._lock:
+            transport = self.transport
+            if (
+                self.state != BARRIER
+                or self.snapshot_epoch != expected_snapshot_epoch
+                or self._barrier_snapshot_epoch != expected_snapshot_epoch
+                or self.execution_id != expected_execution_id
+                or not self.built
+                or transport is None
+                or transport.closed
+                or transport.poison is not None
+            ):
+                raise pool.WorkerError(
+                    "The existing native Figure barrier is unavailable.",
+                    code="svg_source_unavailable",
+                )
+            return (
+                self.session_id,
+                self.generation,
+                self.process_pid,
+                transport,
+                expected_snapshot_epoch,
+                expected_execution_id,
+            )
+
+    def _check_existing_figure_context(self, context: tuple) -> None:
+        if self._existing_figure_context(context[-1], context[-2]) != context:
+            raise pool.WorkerError(
+                "The native dispatch instance changed.", code="svg_source_unavailable"
+            )
+
+    def _request(self, obj: dict, timeout: float, *, existing: tuple | None = None) -> dict:
         try:
+            if existing is not None:
+                self._check_existing_figure_context(existing)
+                return existing[3].request(
+                    obj,
+                    generation=existing[1],
+                    revision=self.rev,
+                    timeout=timeout,
+                    dispatch_check=lambda: self._check_existing_figure_context(existing),
+                )
             return self._require_barrier().request(
                 obj, generation=self.generation, revision=self.rev, timeout=timeout
             )
@@ -966,13 +1027,23 @@ class NativeSession:
         self._publish(built="descriptors")
 
     def override(
-        self, stem: str, patches: list, preview_dpi: int | None = None, inline_svg: bool = False
+        self,
+        stem: str,
+        patches: list,
+        preview_dpi: int | None = None,
+        inline_svg: bool = False,
+        *,
+        expected_execution_id: str | None = None,
+        expected_snapshot_epoch: int | None = None,
     ) -> dict:
-        """**签名与 `pool.EngineWorker.override()` 逐参对齐。**
+        """位置参数与 `pool.EngineWorker.override()` 对齐。
 
         `app.py` 的渲染端点发的是 `wk.override(st, patches, preview_dpi,
         inline_svg=...)`——第三个是**位置**参数。原来的 `**kw` 收不下它，
         native 面板每一次渲染都是 TypeError。
+
+        显式历史编辑还须给已验证 receipt 对应的屏障代次；不能在分派时拿
+        当前代次代替历史身份。省略两个守卫参数时保留原调用与 wire。
         """
         want = patchspec.patch_hash(patches)
         payload = {"cmd": "override", "stem": stem, "patches": patches}
@@ -982,11 +1053,26 @@ class NativeSession:
         if inline_svg:
             payload["inline_svg"] = True
         with self._figure_lock:
+            existing = None
+            if expected_execution_id is not None or expected_snapshot_epoch is not None:
+                existing = self._existing_figure_context(
+                    expected_execution_id, expected_snapshot_epoch
+                )
+                payload.update(cmd="render_existing", expected_execution_id=expected_execution_id)
             owed = self.inconsistent.get(stem)
             if owed is not None and owed != want:
                 raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT)
             self.rev += 1
-            resp = self._request(payload, REQUEST_TIMEOUT)
+            resp = self._request(
+                payload, REQUEST_TIMEOUT, **({"existing": existing} if existing is not None else {})
+            )
+            if existing is not None:
+                self._check_existing_figure_context(existing)
+                if resp.get("execution_id") != expected_execution_id:
+                    raise pool.WorkerError(
+                        "The native reply does not prove the requested execution.",
+                        code="svg_source_unavailable",
+                    )
             self._session_list[stem] = want
             if self._owes(resp):
                 self.inconsistent[stem] = want

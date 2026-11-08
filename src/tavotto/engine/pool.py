@@ -3073,6 +3073,32 @@ class _ExecutionWatch:
                 pass  # Disposable IPC; normal cache pruning owns eventual cleanup.
 
 
+def _require_existing_execution(worker, expected) -> None:
+    """Check observed parent state; the child repeats the authoritative check."""
+    if not executionfact.valid_id(expected):
+        raise WorkerError("expected_execution_id must be an execution fact.", code="bad_request")
+    _execution_state(worker)
+    with worker._execution_lock:
+        if (
+            not worker.built
+            or getattr(worker, "_dead", False)
+            or getattr(worker, "_evicted", False)
+            or worker.execution_observation_unknown
+            or worker.execution_id != expected
+        ):
+            raise WorkerError(
+                "The existing Figure execution is unavailable.", code="svg_source_unavailable"
+            )
+
+
+def _check_existing_reply(worker, expected, response) -> None:
+    _require_existing_execution(worker, expected)
+    if response.get("execution_id") != expected:
+        raise WorkerError(
+            "The reply does not prove the requested execution.", code="svg_source_unavailable"
+        )
+
+
 class EngineWorker:
     def __init__(
         self,
@@ -3562,6 +3588,10 @@ class EngineWorker:
         rid = env["request_id"]
         t_req = time.perf_counter()
         with self.lock:
+            existing = obj.get("cmd") == "render_existing"
+            if existing:
+                _require_existing_execution(self, obj.get("expected_execution_id"))
+                dispatch_process, dispatch_generation = self.proc, self.generation
             # 拿到锁的那一刻 = 这条请求真正开始被处理。Python 池没有队列，
             # 「排队」全表现为在这把锁上等——所以它就是 queue_wait 的量法。
             t_lock = time.perf_counter()
@@ -3621,6 +3651,12 @@ class EngineWorker:
                 # 「脚本 sys.exit」「Python 致命错误」「access violation」的唯一凭据，
                 # EOF 那一刻直接 kill 会把它盖成 TerminateProcess 的那一个。
                 exit_info = exit_report(self.proc)
+            if existing and line:
+                _require_existing_execution(self, obj.get("expected_execution_id"))
+                if self.proc is not dispatch_process or self.generation != dispatch_generation:
+                    raise WorkerError(
+                        "The dispatch instance changed.", code="svg_source_unavailable"
+                    )
         if not line:
             # （EOF 的判死已在锁内完成，见上。）
             #
@@ -3659,6 +3695,8 @@ class EngineWorker:
             )
         if not resp.get("ok"):
             raise self._error_of(resp)
+        if existing:
+            _check_existing_reply(self, obj.get("expected_execution_id"), resp)
         _accept_captured_inputs(self, resp)
         return _merge_timings(
             resp, (t_lock - t_req) * 1000.0, (time.perf_counter() - t_req) * 1000.0
@@ -3704,10 +3742,22 @@ class EngineWorker:
         return resp
 
     def override(
-        self, stem: str, patches: list, preview_dpi: int | None = None, inline_svg: bool = False
+        self,
+        stem: str,
+        patches: list,
+        preview_dpi: int | None = None,
+        inline_svg: bool = False,
+        *,
+        expected_execution_id: str | None = None,
     ) -> dict:
-        build = self.ensure_built().get("timings") if not self.built else None
+        if expected_execution_id is not None:
+            _require_existing_execution(self, expected_execution_id)
+            build = None
+        else:
+            build = self.ensure_built().get("timings") if not self.built else None
         payload = {"cmd": "override", "stem": stem, "patches": patches}
+        if expected_execution_id is not None:
+            payload.update(cmd="render_existing", expected_execution_id=expected_execution_id)
         # 不给就**一个字段都不加**：信封形状对既有调用方一字不变
         if preview_dpi:
             payload["preview_dpi"] = int(preview_dpi)
@@ -4309,6 +4359,10 @@ class WorkerdWorker:
         _note_dispatch(self)
         self._touch()
         t_req = time.perf_counter()
+        existing = op == "render_existing"
+        if existing:
+            _require_existing_execution(self, payload.get("expected_execution_id"))
+            dispatch_session = self._session_id
         for attempt in (0, 1):
             t_call = time.perf_counter()
             try:
@@ -4316,7 +4370,7 @@ class WorkerdWorker:
                 watch.sent_ns = time.monotonic_ns()
                 resp = self._client.call(
                     op,
-                    session_id=self._session_id,
+                    session_id=dispatch_session if existing else self._session_id,
                     stem=stem,
                     payload=payload or {},
                     timeout=timeout,
@@ -4331,7 +4385,7 @@ class WorkerdWorker:
                     # an ambiguous user-code execution either.
                     watch.sent = False
                 if exc.code == "unknown_session" and (
-                    payload.get("require_built") or payload.get("snapshot_only")
+                    existing or payload.get("require_built") or payload.get("snapshot_only")
                 ):
                     self._dead = True
                     raise WorkerError(
@@ -4360,6 +4414,15 @@ class WorkerdWorker:
                     continue
                 raise self._to_worker_error(exc, is_build=op == "build") from exc
             watch.acknowledge(resp)
+            if existing:
+                if (
+                    self._session_id != dispatch_session
+                    or resp.get("session_id") != dispatch_session
+                ):
+                    raise WorkerError(
+                        "The dispatch session changed.", code="svg_source_unavailable"
+                    )
+                _check_existing_reply(self, payload.get("expected_execution_id"), resp)
             _accept_captured_inputs(self, resp)
             if resp.get("hash_mismatch"):
                 # 本次结果照常可用（worker 执行了），但两侧的规范化实现已经分叉
@@ -4465,15 +4528,29 @@ class WorkerdWorker:
         return resp
 
     def override(
-        self, stem: str, patches: list, preview_dpi: int | None = None, inline_svg: bool = False
+        self,
+        stem: str,
+        patches: list,
+        preview_dpi: int | None = None,
+        inline_svg: bool = False,
+        *,
+        expected_execution_id: str | None = None,
     ) -> dict:
-        build = self.ensure_built().get("timings") if not self.built else None
+        if expected_execution_id is not None:
+            _require_existing_execution(self, expected_execution_id)
+            build = None
+        else:
+            build = self.ensure_built().get("timings") if not self.built else None
         payload: dict = {"patches": patches}
         if preview_dpi:
             payload["preview_dpi"] = int(preview_dpi)
         if inline_svg:
             payload["inline_svg"] = True
-        resp = self._call("render", REQUEST_TIMEOUT, stem=stem, payload=payload)
+        op = "render"
+        if expected_execution_id is not None:
+            op = "render_existing"
+            payload["expected_execution_id"] = expected_execution_id
+        resp = self._call(op, REQUEST_TIMEOUT, stem=stem, payload=payload)
         self.rev += 1
         self.last_patch_hash = patchspec.patch_hash(patches)
         self.last_patch_hash_by_stem[stem] = self.last_patch_hash
