@@ -1,11 +1,11 @@
 # SVG 计算图表编辑：当前效果与下一阶段安排
 
-> 当前复核：2026-11-07 16:30（Asia/Shanghai）。**按用户要求，本轮修复完成后暂停；本文不授权自动继续。** 实施树 E:/0 - Project/Tavotto-svg-r00，沿用 zixu.wang/svg-computational-r00；产品HEAD2c4d5aaa，后续文档提交以实际HEAD为准。原E:/0 - Project/Tavotto保留main@69bcafae、未合入；本轮未新分支/fetch/远程写入。
+> 当前复核：2026-11-08（Asia/Shanghai）。**按用户要求，本轮修复完成后暂停；本文不授权自动继续。** 实施树E:/0 - Project/Tavotto-svg-r00，沿用zixu.wang/svg-computational-r00；产品HEAD96cbbb33，后续文档提交以实际HEAD为准。原E:/0 - Project/Tavotto保留clean main@69bcafae、未合入；本轮未新分支/fetch/远程写入。
 > [PROGRESS.md](PROGRESS.md)保留日期证据，[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)维护SG00–17完整范围，[NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)仅供明确恢复后复制使用。
 
 ## 1. 当前判断
 
-计算编辑和项目持久化的核心链路已具备，P3静态SVG与本轮批量修复已提交并经真实产物验证；**完整产品尚未验收**。方向仍是轴模型、显式数据绑定和可信绘图来源。普通SVG未包含的科学语义须显式绑定，拖动文字不等于恢复数据或Python来源。
+计算编辑和项目持久化的核心链路已具备，静态SVG合成、批量归属、精确来源与本轮位图SVG/报告修复均已提交；**完整产品尚未验收**。方向仍是轴模型、显式数据绑定和可信绘图来源。普通SVG未包含的科学语义须显式绑定，拖动文字不等于恢复数据或Python来源。
 
 | 范围 | 当前已实现/已验证 | 仍待解决 |
 | --- | --- | --- |
@@ -13,17 +13,26 @@
 | 包与历史显示 | 35成员混合包、双画布11对象、5完整ref、2INPUT图/8附件；取消/迟到确认/最新稿恢复已提交 | A/C/D History render500来源缺口，完整删源冷迁移、真runtime包 |
 | 静态SVG合成 | 1def88dc：矢量合成、overflow物理裁切、原图单scene；专项及Chrome29点 | gradient/mask/pattern/marker等完整矩阵、Office/Inkscape |
 | 批量任务 | 1b7c5006：旧终态不推进新批，旧prepare不污染新批；runtime有合法默认名 | 默认输出名不是恢复原科学来源名，完整命名/host矩阵仍待 |
-| 精确来源/尺寸 | 2c4d5aaa：隐藏PNG可用原endpoint取得正证；原像素/密度保持，PDF位图mm据真实页面 | 检查消费者仍误报missing-asset；旧文档native与源页面/显示框口径仍需统一 |
-| 实际逐图批次 | 六图顺序、5冲突另存续行；计算SVG/普通SVG/两历史图各四格式成功，PNG/PDF各三格式成功 | PNG/PDF各自SVG不支持；27成功含5报告，2失败，不能称全格式通过 |
-| 实际整版 | job250a2e1ce97748a4 PDF/PNG/TIFF；独立180×130mm、600dpi、12点、文字、像素及来源保持 | ordinary.pdf无可信SVG配对使整版SVG partial，未关闭能力缺口 |
-| 本轮检查 | 前端76文件1726pass；后端最终定向56pass；扩大194pass/1skip；夹具253pass/25skip；构建/check均0 | 不累计窗口；未重新跑完整109/全仓回归，不等交付/发布资格 |
+| 精确来源/检查 | 96cbbb33：问题面板与报告复用隐藏PNG/完整归档正证，单张/批量等事实后冻结；保真缺失及旧代次反例 | 旧文档native与源页面/显示框口径仍需统一；替代host归档读取未接通 |
+| 位图与实际逐图批次 | 4985938c：PNG/JPEG/TIFF原图SVG复用Image；真实六图、6冲突另存续行，28成功含5报告，仅1失败；PNG四格式/64×48像素/32×24mm已独立核验 | 普通PDF无配对的SVG仍失败；位图SVG是内嵌像素，不是矢量科学数据 |
+| 实际整版 | 新job7b4f551976024465 PDF/PNG/TIFF+报告成功；6份实际报告与主问题面板均无missing-asset；旧独立几何证据保留其窗口 | ordinary.pdf无可信SVG配对使整版SVG partial；历史runtime-edited的unapplied-override仍正确报告 |
+| 本轮检查 | 前端84文件1969pass/0skip；后端冻结112pass及预检42pass；旧导出171pass/1skip；正式/派生构建与i18n均0 | 不累计窗口；旧组起始未捕获完整SHA；未重跑完整109/全仓/平台资格 |
 | 视觉与入口 | 普通SVG四格式独立尺寸/文字/颜色正确；旧稿/引用保持 | 刻度/标题裁切N5、图例N4、替代host/桌面/发行与平台资格 |
 
-后端原109文件首红仍为3539pass/16fail/128skip、exit1；4条旧SVG判据及12条夹具已分别修复/正式复验，未把原首红覆盖为绿。原128skip的84平台条件/41缺Inkscape/旧GS/pdfminer/Poppler各1仍是该历史窗口事实；本轮夹具25skip也不算通过。
+后端原109文件首红仍为3539pass/16fail/128skip、exit1；4条旧SVG判据及12条夹具已分别修复/正式复验，未把原首红覆盖为绿。原128skip的84平台条件/41缺Inkscape/旧GS/pdfminer/Poppler各1仍是该历史窗口事实；前轮夹具25skip也不算通过。
 
-## 2. 本轮证据与暂停现场
+## 2. 证据与暂停现场
 
-证据根E:/0 - Project/svg-review-20261106。不同源码窗口的测试数不累计。
+本轮证据根 **E:/0 - Project/svg-review-20261108**，完整索引见PROGRESS最新checkpoint：
+
+- root-qualification：round-frontend-first（84文件1969项）、raster-source-final（112项）、preflight-contract-first（42项），实际exit0且源码零漂移；正式/playground/widget各build/check及i18n为0。
+- p3-source-checks与p3-raster-svg：代码、专项、4+3个有效AST反证、首红、已知skip和源码释放清单。
+- round-ui/verified-outputs.json：真实六图28成功/1失败、5逐图+1整版报告无误报，PNG原字节与SVG/TIFF像素相同，SVG浏览器正常显示。actual-jobs.json列出实际job，不混入取消冲突。
+- round-ui/root-close-proof.json：browser17 close0、exec17200/child0；PID10400/39352消失、24139无监听；1794源/11HTTPbundle末核。A/B/C/D图表内容/命名稿与执行计数保留；A自动保存updatedAt及派生revision变化，配置变化为最近打开时间和版本查询缓存。已捕获旧配置正文并记录字段差异，未恢复/覆盖；不能声称全部持久文件字节不变。
+- p3-pdf-svg/REPORT.md：OUT-only结构实验，无可直接应用的生产补丁。W/W*丢失和CID/ToUnicode反例已实证，详见下一批第3项。
+- 四份状态文档引用/规则索引41项通过，预算检查exit0（既有OVER提示保留）；root-qualification/docs-final与agents-budget-final保留实际退出码。
+
+下表保留**2026-11-07历史窗口**，证据根E:/0 - Project/svg-review-20261106；不能与本轮相加。
 
 | 证据路径 | 结论 |
 | --- | --- |
@@ -39,7 +48,7 @@
 
 原A/B/C/D及data/config/AS/命名稿保留，执行计数counter/module/argv各4；无本轮live浏览器/服务/测试，既有代理已结束。本UI仅验证普通原图路径；标注/留白有专项证据，尚未在本轮真实UI铺满矩阵。观察器PDF容器字节误判首红保留，纠正为既有copy_foreign合同下的独立像素与来源SHA检查。
 
-收尾审计见status-review-round-pause-20261107/audit.json：当前源/bundle与8份正式回执一致；正文/绑定/计数及12份非config文件SHA不变。隔离验证环境config.json哈希有变化，未捕获旧正文，具体字段差异未知，未恢复/覆盖配置；保audit-first-red，不称整个配置完全不变。未来UI先保存可脱敏比较的配置基线。文档门禁41pass，预算检查exit0（既有OVER提示保留）。
+该历史窗口的收尾审计见status-review-round-pause-20261107/audit.json：当时源/bundle与8份正式回执一致；正文/绑定/计数及12份非config文件SHA不变。当时隔离验证环境config.json哈希有变化，未捕获旧正文，具体字段差异未知，未恢复/覆盖配置；保audit-first-red，不称整个配置完全不变。本轮已补配置旧正文基线与字段差异，见本节上方2026-11-08记录。历史文档门禁41pass，预算检查exit0（既有OVER提示保留）。
 
 ## 3. 用户恢复后分批安排与退出条件
 
@@ -47,12 +56,12 @@
 
 ### 批次 1：P3剩余一致性与能力合同
 
-1. 复用现有来源正证和完整归档引用，修问题面板/样式报告的missing-asset误报；不把只读正证变执行许可，不把隐藏PNG加回素材清单，不忽略真实缺文件。补刷新/切项目/源删除/负缓存反例与真实UI报告。
+1. **已完成，不重做**：96cbbb33修复问题面板/报告来源误报，4985938c支持普通位图原图SVG；正负/刷新/ABA/迟到反例及实际报告已验证。余项是复杂内容、所有入口及完整scope×format矩阵，不把只读正证当执行资格。
 2. 独立核旧文档native40/48、源PDF35.278/源SVG42.333mm与放置/框的合同。当前只修了Produced测量值，不强改文档native或来源字节；接N5时贯穿显示/请求/实物一致性。
-3. PNG/PDF原图→SVG和含无配对PDF的整版SVG仍未实现。按原矢量契约与第三路径规则做有界结构实验；不伪配同名SVG、不删对象、整页栅格化或只改提示关闭缺口。属于需求的格保留M2未完成。
+3. **普通PDF→SVG及含该PDF的整版SVG仍未实现**。本轮实验已证明直接使用PDFium getter会丢W/W*（受控例10.2273%像素错）与实际CID/GID身份（01可错成00），且轮廓不等于live text。下一步先取得可信原内容display list/字体与裁剪事实，再接原IR/SVGwriter，保原PDF SHA、页框/透明/资源；验证普通PDF像素差和复杂矩阵。不伪配同名SVG、不整页栅格化或仅改提示关闭缺口。该结构支线不能阻止独立的P2就绪任务，缺格保留M2未完成。
 4. 补普通SVG标注/留白、透明/复杂组及scope×format的实际UI/独立实物矩阵；复用已绿专项，不无限重复原普通六图绿流程。
 
-**退出**：正负来源/报告一致，所有要求格式格有实现或明确未完成记录，保原编辑/文件/事务。已提交a4ffd5f3/1def88dc/1b7c5006/2c4d5aaa不要重套候选或重做；新增修复各自commit，不以局部绿宣布P3/总目标完成。
+**退出**：正负来源/报告一致，所有要求格式格有实现或明确未完成记录，保原编辑/文件/事务。已提交a4ffd5f3/1def88dc/1b7c5006/2c4d5aaa/4985938c/96cbbb33不要重套候选或重做；新增修复各自commit，不以局部绿宣布P3/总目标完成。
 
 ### 批次 2：P2a 历史来源和同次热编辑
 
