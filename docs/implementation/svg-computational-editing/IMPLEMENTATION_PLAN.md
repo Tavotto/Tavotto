@@ -5,7 +5,7 @@
 > 当前唯一实施树`E:/0 - Project/Tavotto-svg-r00`，沿用分支`zixu.wang/svg-computational-r00`；原目录`E:/0 - Project/Tavotto`仍保留其main。用户后续明确要求不新建分支，恢复时以实际HEAD/diff为准，不切回初拟计划分支。
 > 用户目标：以计算图表编辑为主扩展SVG输入，保留全部既有能力并交付实际可用产品；无人值守自主实现、修复、验证，在当前同一分支按不同功能分别commit。
 > 实施已持续推进，最终M1/M2/M3仍未通过。无人值守指活跃会话持续迭代；未创建常驻调度器，也未部署、推送或合并，不以工作时长作为完成标准。
-> 本轮P2收尾（2026-11-08，Asia/Shanghai）：按用户要求完成已开始修复后暂停，总目标未完成。产品HEAD c09fc110；42382027新增safe/Workerd/native已存在执行守卫，c09fc110支持显式历史来源的被动保存、打包与迁移。自动来源捕获和历史渲染/PNG/导出消费者尚未启用，不改变旧无origin路径。最终来源后端325pass/25skip，前端8文件160pass/0skip；守卫及导入70pass/0skip、旧worker/bridge456pass/6skip、Rust65pass。Ruff、Oxlint、正式前端/i18n及playground构建/校验均exit0；不同窗口不累计，skip不算通过。本轮未运行完整产品HTTP/UI或全仓/跨平台最终资格，仍未达到完整功能PR验收标准，未合入main或发布。
+> 本轮收尾（2026-11-08 21:22，Asia/Shanghai）：按用户要求完成已展开修复后暂停，总目标未完成。8d42122c补齐既有执行的export/PNG守卫和原resolver同实例复核；50e3817f修复PDF/SVG及SVG再导入的重复图片边缘裁剪。执行链706项为700pass/6skip，RenderCore与导出1143项为1075pass/68skip，均0fail、exit0；Rust65pass，clippy/fmt与全仓Ruff1498文件均0。完整前端来源消费者和普通PDF解析器候选已归档，未启用；已提交被动来源持久化保留。本轮未取得完整产品HTTP/UI、全仓或跨平台最终资格，仍未达到完整功能PR验收标准。未合入main或发布。
 > 用户明确恢复后：优先补齐P2a历史来源接纳/全部消费者→P2b原INPUT冷重建→P2c完整迁移；P3普通PDF与复杂SVG为独立支线，随后N5裁切/N4图例→M1/M2/M3。完整SG00–17/A/B/C范围不变；当前暂停不自动接续。
 
 ## 1. 最终产品目标与完成口径

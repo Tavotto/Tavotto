@@ -2,13 +2,13 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **本轮P2收尾（2026-11-08，Asia/Shanghai）：按用户要求完成已开始修复后暂停，总目标未完成。产品HEAD c09fc110；42382027新增safe/Workerd/native已存在执行守卫，c09fc110支持显式历史来源的被动保存、打包与迁移。自动来源捕获和历史渲染/PNG/导出消费者尚未启用，不改变旧无origin路径。最终来源后端325pass/25skip，前端8文件160pass/0skip；守卫及导入70pass/0skip、旧worker/bridge456pass/6skip、Rust65pass。Ruff、Oxlint、正式前端/i18n及playground构建/校验均exit0；不同窗口不累计，skip不算通过。本轮未运行完整产品HTTP/UI或全仓/跨平台最终资格，仍未达到完整功能PR验收标准，未合入main或发布。**
+> **本轮收尾（2026-11-08 21:22，Asia/Shanghai）：按用户要求完成已展开修复后暂停，总目标未完成。8d42122c补齐既有执行的export/PNG守卫和原resolver同实例复核；50e3817f修复PDF/SVG及SVG再导入的重复图片边缘裁剪。执行链706项为700pass/6skip，RenderCore与导出1143项为1075pass/68skip，均0fail、exit0；Rust65pass，clippy/fmt与全仓Ruff1498文件均0。完整前端来源消费者和普通PDF解析器候选已归档，未启用；已提交被动来源持久化保留。本轮未取得完整产品HTTP/UI、全仓或跨平台最终资格，仍未达到完整功能PR验收标准。未合入main或发布。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 > 前轮05:10后的91项捕获包资格保留其历史源码窗口；3c现已有实现与新资格，不能再按旧checkpoint重做。不同测试组不相加成最终总数；当前分支实际HEAD/diff优先。
 
 ## 环境（2026-11-08 当前快照）
 
-- 当前实施树E:/0 - Project/Tavotto-svg-r00，沿用zixu.wang/svg-computational-r00；产品HEAD c09fc110，后续状态文档提交另计。本轮两项功能已提交并按用户要求暂停；原E:/0 - Project/Tavotto仍clean main@69bcafae、未合入。恢复时核实际HEAD/diff，不reset到文档SHA。
+- 当前实施树E:/0 - Project/Tavotto-svg-r00，沿用zixu.wang/svg-computational-r00；最新产品HEAD 50e3817f，8d42122c为本轮执行守卫提交，后续状态文档提交另计。原E:/0 - Project/Tavotto仍clean main@69bcafae、未合入。本轮两项功能已提交，按用户要求暂停；恢复时核实际HEAD/diff，不reset到文档SHA。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261108`，前轮历史根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
@@ -47,10 +47,22 @@
 | R07 | partial / original_five_formats_ui_verified | 5bc82a81、c2fd47d5、2a40fec9、c9fa29a4、8fa84f5d、a06cc3d3 | 原图五格式真实UI及独立产物已验，EPS接线已提交；分享与完整双系列M1未完成 |
 | R08 | full_edit_restore_verified / partial | cae96f89、029dfac2、53393810 | 生产v2导出与真UI完整编辑恢复通过；A采用、分享选择和正式项目迁移待补 |
 | P3本轮两项修复 | implemented_and_verified / P3仍partial | 4985938c、96cbbb33 | 位图原图SVG与缺失来源误报已关闭；正式回归及真实六图批次见最新checkpoint，PDF转换与完整矩阵仍待 |
-| P2本轮基础修复 | guarded_dispatch_and_passive_origin_verified / integration_pending | 42382027、c09fc110 | 底层守卫、来源保存/打包/迁移及同archive去重已验证；应用接纳、自动捕获及完整历史编辑未接通 |
+| P2基础及消费者底层修复 | low_level_verified / app_integration_pending | 42382027、c09fc110、8d42122c | 来源被动持久化保留；render/export/PNG同次执行守卫与原resolver已验证，700pass/6skip；应用接纳与自动捕获未接通 |
+| P3图片边缘修复 | implemented_and_verified / PDF_conversion_pending | 50e3817f | PDF/SVG写出与SVG重读的重复边界裁剪已修；13实物例含于1075pass/68skip回归，普通PDF解析器未启用 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 3 节后续批次与完整 IMPLEMENTATION_PLAN |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-08 21:22 执行消费者守卫与图片边缘修复收束，按用户要求暂停
+
+- 沿唯一实施树/分支，起点423c7280；分功能提交8d42122c（8文件）及50e3817f（4文件）。本轮未改app执行接纳、未新增分支/工作树、未fetch/推送/远程PR/合并/发布；原main@69bcafae保持干净。
+- **执行消费者底层**：原enginesession.resolve增加existing_only+实际existing_worker复核；safe仍以实际run/artifact/write_roots命中原pool同实例，native仍走原REGISTRY。不新增执行路由表。export_existing/preview_png_existing与已存在render_existing同样核真实eid、同一实例和native epoch，不build/重开/respawn；旧无守卫调用形状保持。真实safe/Workerd/native均产PDF+SVG、PNG Path及PNG+manifest，临时列表后hot manifest摘要恢复、脚本不额外运行；失效/错ID/冷child按守卫拒绝。
+- **执行链验证**：p2-consumer-guards/affected-final.xml实际706项=700pass/0fail/6skip，exit0，11个依赖/改动源SHA不变；其中新42及既有54守卫测试已包含，不相加。6skip为平台/环境条件，详见同目录DELIVERY.md及XML。Rust65pass、clippy/fmt0；Python3.10仅stdlib导入/源码语法资格，不冒称3.10科学渲染已验。三项AST反证目标断言变红。safe/Workerd末探针独立核child拒绝，保此前观察器失败；自建进程已reap，native正常退出/租约释放，Workerd supervisor正常退出。
+- **图片边缘修复**：PDFwriter/SVGwriter对未crop及完整crop图像取消冗余边界clip；SVGIR按实际PAR映射后矩形判断，真实crop、slice和祖先clip保留。13项独立内容流实物对照PDF及SVG往返像素逐字节相等；5项内存反证分别杀重复clip及误删crop/slice。32文件正式回归含全test_rendercore_*及旧导出/来源/退役检查，共1143项=1075pass/0fail/68skip、exit0；13项已包含。68skip=41 Inkscape、2文本读取器、25 Win1314符号链接条件缺失。字体获取0；289份src文件前后SHA不变。
+- **前端收束**：本轮自动捕获/消费者候选仍缺后端接纳、specfix/update_source、来源正证、direct latest/exact等消费者。20路径完整候选保存在p2-consumer-frontend/pause-closeout；18tracked文件恢复至423c7280原字节、2新增测试归档后移出，web工作区/暂存区干净。apply-check0只证可应用，不能算语义通过。混合来源首红1fail/6skip保留；较早5pass窗口有加载期间源码变化，不作有效最终资格。此前被动origin保存功能保留。
+- **PDF解析器延期**：p3-pdf-content-production/pdfcontent-deferred.py及patch完整保留未验首稿，生产无该模块，facade未接。图片修复关闭SMask边缘根因，不代表普通PDF转换完成；文字残差、live text、通用字体/CMap/复杂算子与HTTP仍未完成。普通PDF原图及含它的整版SVG仍是已知缺口。
+- **根代理复核**：root-qualification/p2-consumer-closeout-audit.json独立核XML、11守卫文件/289 src/4图片文件/18前端文件SHA和原main干净；全仓Ruff check/format1498文件各exit0。文档引用/规则索引41pass、exit0，agents_budget命令exit0（原提示保留日志）。两组pytest有重叠且不同范围，不累计成总资格。本轮无产品UI/完整全仓/跨平台重验，不复用旧UI证明新功能全通。
+- 当前无自有live服务/browser/测试句柄；三代理已收尾，不创建常驻调度。按用户最新要求暂停，不自动推进P2a/b/c、P3、N5/N4或M1/M2/M3。最新退出条件和恢复提示词同步到NEXT_PHASE/NEXT_PHASE_PROMPT。
 
 ### 2026-11-08 P2守卫与历史来源基础修复收束，暂停后不自动继续
 
