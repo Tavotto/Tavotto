@@ -144,7 +144,7 @@ worker 在脚本 build 期间用 `sys.addaudithook` 的 `open` 事件（及 `os.
 校验运行的 `write_roots` 由 `ai_convert.validation_roots(cand)` 给（唯一出处：登记键、探测、硬杀同一份）：候选目录 + 成对的 `redirect-project:` / `redirect-dir:` 条目
 （`writetripwire.redirect_entries` / `split_roots`）。worker 见到它就在 `install(redirect=)` 里包装 Python 层写入口，**落在项目内的写**换到 `<候选目录>/redirected/<项目相对路径>`，
 项目外且不在白名单的写仍 `write_outside_roots`。**MCP 来源的 `write_roots` 不含改道条目，绊线语义不变**——不要把改道扩到 MCP（那里绊线就是要失败）。
-读回（打开读取与 `exists|isfile|isdir|getsize`）看改道区，追加 / 读写模式写时复制；限制与盲区（`stat|listdir|glob|Path.exists`、C 层写由校验后的项目指纹兜住）见 `writetripwire` 头注与 ADR 0143 同日修订。
+读回（打开读取、`os.path.exists|isfile|isdir|getsize` 与 `Path.exists|is_file|is_dir`）看同一改道区与白名单；不跟随符号链接的查询仍查链接本身，追加 / 读写模式写时复制；限制与盲区（`stat|listdir|glob|Path.stat`、C 层写由校验后的项目指纹兜住）见 `writetripwire` 头注与 ADR 0143 后续修订。
 候选目录指纹 `ai_figure_edit._tree` 不看根下 `redirected/`。看护 `tests/test_convert_shadow_validation.py`（真 worker）、`tests/test_write_redirect.py`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）

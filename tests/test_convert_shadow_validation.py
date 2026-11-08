@@ -202,6 +202,77 @@ def test_redirected_write_can_be_read_back_and_originals_are_copy_on_write(world
     assert _redirected(cand, "sub/data.csv").read_text() == "x,y\n1,2\n9,9\n"
 
 
+@pytest.mark.parametrize("mode", [workdir.MODE_SANDBOX, workdir.MODE_PROJECT])
+def test_candidate_can_check_and_read_a_new_intermediate_with_pathlib(world, mode):
+    """A converted script may check a generated intermediate before reading it."""
+    root, cand, runner = world
+    workdir.set_mode(root, mode)
+    before = ai_figure_edit.project_fingerprint(root)
+    cand.new_bytes = (
+        "from pathlib import Path\n"
+        "import matplotlib.pyplot as plt\n"
+        "p = Path(__file__).parent / 'generated' / 'made.csv'\n"
+        "p.parent.mkdir(exist_ok=True)\n"
+        "with open(p, 'w', encoding='utf-8') as f: f.write('1,2\\n')\n"
+        "assert p.exists() and p.is_file() and not p.is_dir()\n"
+        "assert p.parent.exists() and p.parent.is_dir() and not p.parent.is_file()\n"
+        "assert p.read_text(encoding='utf-8') == '1,2\\n'\n"
+        "plt.plot([1, 2])\nplt.savefig('o.png')\n"
+    ).encode()
+    cand.target.write_bytes(cand.new_bytes)
+    result = ai_convert.run_validation(cand, runner)
+    assert result["status"] == "ok", result
+    assert _redirected(cand, "sub/generated/made.csv").read_text() == "1,2\n"
+    assert (
+        ai_figure_edit.fingerprint_changes(before, ai_figure_edit.project_fingerprint(root)) == []
+    )
+
+
+def test_pathlib_checks_follow_whiteouts_and_recreated_files(world):
+    root, cand, runner = world
+    workdir.set_mode(root, workdir.MODE_PROJECT)
+    cand.new_bytes = (
+        "import os\nfrom pathlib import Path\nimport matplotlib.pyplot as plt\n"
+        "p = Path(__file__).parent / 'data.csv'\n"
+        "assert p.exists() and p.is_file()\n"
+        "os.remove(p)\n"
+        "assert not p.exists() and not p.is_file() and not p.is_dir()\n"
+        "with open(p, 'w', encoding='utf-8') as f: f.write('new')\n"
+        "assert p.exists() and p.is_file() and p.read_text() == 'new'\n"
+        "plt.plot([1, 2])\nplt.savefig('o.png')\n"
+    ).encode()
+    cand.target.write_bytes(cand.new_bytes)
+    result = ai_convert.run_validation(cand, runner)
+    assert result["status"] == "ok", result
+    assert (root / "sub" / "data.csv").read_text() == "x,y\n1,2\n"
+
+
+def test_pathlib_no_follow_check_preserves_a_project_symlink(world):
+    root, cand, runner = world
+    workdir.set_mode(root, workdir.MODE_PROJECT)
+    alias = root / "sub" / "alias.csv"
+    try:
+        alias.symlink_to("data.csv")
+    except OSError:
+        pytest.skip("symlink creation unavailable")
+    # The link was added by the test after the fixture captured its fingerprint.
+    cand.project_before = ai_figure_edit.project_fingerprint(root)
+    cand.new_bytes = (
+        "import inspect, os\nfrom pathlib import Path\nimport matplotlib.pyplot as plt\n"
+        "p = Path(__file__).parent / 'data.csv'\n"
+        "link = p.parent / 'alias.csv'\n"
+        "os.remove(p)\n"
+        "assert not link.exists() and not link.is_file()\n"
+        "if 'follow_symlinks' in inspect.signature(Path.exists).parameters:\n"
+        "    assert link.exists(follow_symlinks=False)\n"
+        "plt.plot([1, 2])\nplt.savefig('o.png')\n"
+    ).encode()
+    cand.target.write_bytes(cand.new_bytes)
+    result = ai_convert.run_validation(cand, runner)
+    assert result["status"] == "ok", result
+    assert alias.is_symlink() and (root / "sub" / "data.csv").exists()
+
+
 EXCLUSIVE = (
     "import os\nimport matplotlib.pyplot as plt\n"
     "here = os.path.dirname(os.path.abspath(__file__))\n"
