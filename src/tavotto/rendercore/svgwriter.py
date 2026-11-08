@@ -206,10 +206,15 @@ class SvgWriter:
             flip_v=node.flip_v,
         )
         group = _element(parent, "g", transform=_matrix(pl.matrix), opacity=_num(node.opacity))
-        x, y, w, h = pl.clip
-        self._clip(
-            group, (("M", x, y), ("L", x + w, y), ("L", x + w, y + h), ("L", x, y + h), ("Z",))
-        )
+        # The image itself supplies this exact boundary. A coincident clip
+        # would apply antialias coverage twice; retain only a genuine crop.
+        # ImportedPage clipping remains independent of this image-only rule.
+        if not isinstance(node, ir.Image) or node.crop not in (None, (0, 0, 1, 1)):
+            x, y, w, h = pl.clip
+            self._clip(
+                group,
+                (("M", x, y), ("L", x + w, y), ("L", x + w, y + h), ("L", x, y + h), ("Z",)),
+            )
         return group, pl
 
     def _source_bytes(self, node) -> tuple[ir.FileResource, bytes]:

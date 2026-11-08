@@ -1067,6 +1067,13 @@ class _Translator:
             flip_v=True,
             object_id=el.get("id", ""),
         )
+        ix, iy, image_w, image_h = image.rect
+        # The image already owns its painted boundary. Only slice/overflowing
+        # placement needs this viewport clip; repeating a coincident boundary
+        # changes antialias coverage. Explicit/ancestor clips are applied by
+        # _node independently and are not removed here.
+        if x <= ix and y <= iy and ix + image_w <= x + w and iy + image_h <= y + h:
+            return [image]
         clip = ir.Path((("M", x, y), ("L", x + w, y), ("L", x + w, y + h), ("L", x, y + h), ("Z",)))
         return [ir.Group((image,), clip=clip)]
 

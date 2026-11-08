@@ -581,13 +581,14 @@ class PdfWriter:
         parts = ["q"]
         if node.opacity < 1.0:
             parts.append(f"/{self._gs(rec, node.opacity, node.opacity)} gs")
-        cx, cy, cw, ch = pl.clip
-        parts += [
-            " ".join(_num(v) for v in pl.matrix) + " cm",
-            f"{_num(cx)} {_num(cy)} {_num(cw)} {_num(ch)} re W n",
-            f"/{name} Do",
-            "Q",
-        ]
+        parts.append(" ".join(_num(v) for v in pl.matrix) + " cm")
+        # An Image XObject already owns its unit-square boundary. Repeating it
+        # as a clip multiplies edge coverage after shear/rotation (and SMask).
+        # A genuine crop still needs its independently chosen clip.
+        if node.crop not in (None, (0, 0, 1, 1)):
+            cx, cy, cw, ch = pl.clip
+            parts.append(f"{_num(cx)} {_num(cy)} {_num(cw)} {_num(ch)} re W n")
+        parts += [f"/{name} Do", "Q"]
         rec.ops.append(" ".join(parts))
         self.facts.images.append(
             {
