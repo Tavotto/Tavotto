@@ -136,6 +136,7 @@ def run_native(req: dict) -> int:
     matplotlib.use("Agg")
     import matplotlib.figure as mfigure
     import matplotlib.pyplot as plt
+    from matplotlib.layout_engine import TightLayoutEngine
 
     sys.path.insert(0, os.path.dirname(req["script"]))
     sys.path.insert(0, req["project"])
@@ -151,6 +152,8 @@ def run_native(req: dict) -> int:
     calls: dict = {}
     extras: dict = {}
     crops: dict = {}
+    save_counts: dict[int, int] = {}
+    save_watchers: dict[int, object] = {}
     # 写进 `PdfPages` 的图：与产品三条入口同一个类、同一个位置（保存成功之后记，脚本结束先于 pyplot 兜底认领），
     # 否则对照组没有 `all_samples` 这张图、两边 stem 对不上（#1370）
     pdf_pages = figcapture.PdfPagesLedger()
@@ -181,6 +184,14 @@ def run_native(req: dict) -> int:
             crops[id(call)] = observed[0]
         elif figcapture.is_pdf_pages(fname):
             pdf_pages.note(fname, self)
+        # Only a single, unmodified saved Figure can be sampled without an
+        # additional tight-layout iteration. Keep the same transparent stale
+        # observer used by the capture path; if a script replaces the observer,
+        # the native sampling path remains unchanged.
+        save_counts[id(self)] = save_counts.get(id(self), 0) + 1
+        if stem and type(self.get_layout_engine()) is TightLayoutEngine:
+            figcapture.mark_saved(self)
+            save_watchers[id(self)] = getattr(self, "stale_callback", None)
         return result
 
     mfigure.Figure.savefig = recording_savefig
@@ -213,6 +224,13 @@ def run_native(req: dict) -> int:
     # 与产品三条入口同一个函数、同一个顺序——对照组也要有 `panel-2` 这张图，否则像素层只剩甲
     file_stems: dict = {}
     figcapture.adopt_displaced_writers(writers, captured, sources, calls, extras, file_stems)
+    watcher_intact = {
+        id(fig): save_watchers.get(id(fig)) is not None
+        and getattr(fig, "stale_callback", None) is save_watchers[id(fig)]
+        for fig in captured.values()
+        if id(fig) in save_watchers
+    }
+    modified = set(figcapture.note_modified_after_save(captured, sources))
     figcapture.adopt_pdf_pages(
         captured, sources, pdf_pages, os.path.splitext(os.path.basename(req["script"]))[0]
     )
@@ -242,10 +260,25 @@ def run_native(req: dict) -> int:
         try:
             if call:
                 # The save-time crop is authoritative even if rcParams changed later.
-                with matplotlib.rc_context({"savefig.bbox": None}):
-                    real_savefig(
-                        fig, path, format="png", dpi=max(50, width / w_in), bbox_inches=crop
-                    )
+                engine = fig.get_layout_engine()
+                freeze = (
+                    type(engine) is TightLayoutEngine
+                    and save_counts.get(id(fig)) == 1
+                    and watcher_intact.get(id(fig), False)
+                    and stem not in modified
+                )
+                if freeze:
+                    # Re-sampling the already saved Figure should preserve its
+                    # layout, not execute the user's layout engine a second time.
+                    fig.set_layout_engine("none")
+                try:
+                    with matplotlib.rc_context({"savefig.bbox": None}):
+                        real_savefig(
+                            fig, path, format="png", dpi=max(50, width / w_in), bbox_inches=crop
+                        )
+                finally:
+                    if freeze:
+                        fig.set_layout_engine(engine)
             else:
                 # Pyplot-only captures have no original save to replay.
                 real_savefig(fig, path, format="png", dpi=max(50, width / w_in))

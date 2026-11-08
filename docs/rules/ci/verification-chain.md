@@ -34,6 +34,10 @@ order: 120
   * 判据一律复用产品自己的：重放比对走 `app._compare_manifests`（与写回放行/
     阻断同一把尺），像素比对走 `scripts/ci/pixelcompare.py`（与 golden 视觉
     回归**同一份算法**，从 `visual_regression.py` 提取出来的，不许再写第二份）。
+  * 原生截图不得为取证额外改变第一次保存时的布局：单次保存、无后续修改且原生
+    `TightLayoutEngine` 的图，再存截图时临时停用布局引擎；多次保存、保存后修改或
+    修改观察器被替换时仍按原生重绘。实际保存时的裁切框和像素阈值不变。看护
+    `tests/test_compat_native_fidelity_snapshot.py`（含真实 worker 与故意编辑反例）。
   * artist 普查是**诊断**不是门禁：真正的 pass/fail 一律走生产路径的 worker。
   * 跑法：`--smoke`（PR，2~4 分钟）/ `--all` / `--target bundled|minimum|browser`
     / `--case <id>` / `--gate pr|main|nightly|release`。
