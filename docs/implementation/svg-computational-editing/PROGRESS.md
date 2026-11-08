@@ -2,13 +2,13 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **本轮收尾（2026-11-08，Asia/Shanghai）：按用户要求完成当前修复后暂停，总目标未完成。产品HEAD96cbbb33；4985938c新增普通位图原图SVG，96cbbb33统一精确来源检查与导出报告等待。正式前端84文件1969pass/0skip；后端冻结112pass/0skip、预检同源42pass/0skip；旧导出组171pass/1skip（独立窗口，不累计）。正式前端、playground/widget build/check与i18n均exit0。真实六图批次28成功（含5报告）、1失败，仅普通PDF→SVG未实现；另一个整版作业保留相同PDF缺口。浏览器原图SVG及内嵌像素/尺寸核验通过，主问题面板与6份报告无missing-asset误报。历史热/冷编辑、完整迁移、裁切、图例和M1/M2/M3仍未完成，未合入main或发布。**
+> **本轮P2收尾（2026-11-08，Asia/Shanghai）：按用户要求完成已开始修复后暂停，总目标未完成。产品HEAD c09fc110；42382027新增safe/Workerd/native已存在执行守卫，c09fc110支持显式历史来源的被动保存、打包与迁移。自动来源捕获和历史渲染/PNG/导出消费者尚未启用，不改变旧无origin路径。最终来源后端325pass/25skip，前端8文件160pass/0skip；守卫及导入70pass/0skip、旧worker/bridge456pass/6skip、Rust65pass。Ruff、Oxlint、正式前端/i18n及playground构建/校验均exit0；不同窗口不累计，skip不算通过。本轮未运行完整产品HTTP/UI或全仓/跨平台最终资格，仍未达到完整功能PR验收标准，未合入main或发布。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 > 前轮05:10后的91项捕获包资格保留其历史源码窗口；3c现已有实现与新资格，不能再按旧checkpoint重做。不同测试组不相加成最终总数；当前分支实际HEAD/diff优先。
 
 ## 环境（2026-11-08 当前快照）
 
-- 当前实施树E:/0 - Project/Tavotto-svg-r00，沿用zixu.wang/svg-computational-r00；产品HEAD96cbbb33，后续状态文档提交另计；当前修复均已提交，按用户要求暂停。原E:/0 - Project/Tavotto仍clean main@69bcafae、未合入。以实际HEAD/diff为准，不reset到文档SHA。
+- 当前实施树E:/0 - Project/Tavotto-svg-r00，沿用zixu.wang/svg-computational-r00；产品HEAD c09fc110，后续状态文档提交另计。本轮两项功能已提交并按用户要求暂停；原E:/0 - Project/Tavotto仍clean main@69bcafae、未合入。恢复时核实际HEAD/diff，不reset到文档SHA。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
 - 本轮证据根 `E:/0 - Project/svg-review-20261108`，前轮历史根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
@@ -47,9 +47,26 @@
 | R07 | partial / original_five_formats_ui_verified | 5bc82a81、c2fd47d5、2a40fec9、c9fa29a4、8fa84f5d、a06cc3d3 | 原图五格式真实UI及独立产物已验，EPS接线已提交；分享与完整双系列M1未完成 |
 | R08 | full_edit_restore_verified / partial | cae96f89、029dfac2、53393810 | 生产v2导出与真UI完整编辑恢复通过；A采用、分享选择和正式项目迁移待补 |
 | P3本轮两项修复 | implemented_and_verified / P3仍partial | 4985938c、96cbbb33 | 位图原图SVG与缺失来源误报已关闭；正式回归及真实六图批次见最新checkpoint，PDF转换与完整矩阵仍待 |
+| P2本轮基础修复 | guarded_dispatch_and_passive_origin_verified / integration_pending | 42382027、c09fc110 | 底层守卫、来源保存/打包/迁移及同archive去重已验证；应用接纳、自动捕获及完整历史编辑未接通 |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 3 节后续批次与完整 IMPLEMENTATION_PLAN |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-08 P2守卫与历史来源基础修复收束，暂停后不自动继续
+
+- 从4fe4658e继续，沿唯一实施树/分支；42382027与c09fc110分功能提交。未新建分支/worktree、未fetch/push/PR/合并/发布；原Tavotto/main@69bcafae干净。完整目标未完成，依用户最新指令暂停。
+- 42382027：独立render_existing复用原完整patch处理与renderer；safe/Workerd双端核真实execution_id，阻止旧身份、进程/session变化后重开或build。native另核transport/PID/generation/epoch/屏障，回包来自子端真实事实。旧无守卫参数调用及协议保持。真实safe/native编辑与undo保持脚本计数，旧身份拒绝；不代表app已按历史完整ref接纳。
+- c09fc110：figureOrigin保存完整历史ref与原序基准P，当前overrides Q和输出figureSnapshot各自独立。前后端复用原文档writer/undo；后端核P的原patchspec hash，打包校验每个完整ref/各自patch并带INPUT，来源archive-only，迁移含非活动画布。相同archive同时用于来源和输出只计一次；首红4而应2已修。前端只被动保留已有origin、换源清旧来源、拒错误receipt/owner或迟到保存；合法patch extra按原patchspec保留。
+- 收束边界：最初自动捕获会让旧正常编辑进入origin-only而提前改变快照冻结，故与未配套消费者一起外置；旧面板不会自动新增origin。renderKey/队列/API/PNG/导出消费者未启用，15个撤回文件逐字节等于原HEAD，索引CRLF/stat状态已无内容变更刷新。候选不是产品：p2-origin-frontend/deferred-from-passive-consistent.patch基于最终被动版本；full-frontend-wip.patch基于4fe4658e，与已提交部分重叠，禁止整包重复套用。
+- 最终后端7文件350项=325pass/25skip/0fail，actual exit0，7个本轮源/测试SHA前后相同；25skip均WinError1314符号链接权限条件。新增6项首次通过；迁移首红是观察器误用旧ref访问新ref接口，修正读取新ref的实际INPUT后全组通过。计数新增用例首红保留。两条AST内存反证分别移除基准hash核对、遗漏来源归档，实际exit1；没有修改生产源。首个OUT观察器误导入旧树的失败另保留，修正后断言当前src来源。
+- 前端最终8文件160pass/0skip，包含8个来源行为用例；Oxlint0，四源冻结。错误receipt合回、patch extra过严先实际变红后修复；两条内存AST反证分别破坏来源身份比较和换源清理，均exit1。此前159/158及候选140/37是不同历史窗口，不作为最终计数或全链资格。
+- 守卫最终新54+导入16=70pass/0skip，bytecode定向13pass/0skip；旧worker/bridge462项=456pass/6skip/0fail，actual exit0，9源零漂移，真实Workerd子进程用例已跑。旧首轮445pass/2fail/15skip由OUT包装器全局PYTHONDONTWRITEBYTECODE=1污染用户字节码预期，原日志保留；去掉注入后同完整组复验。Rust65pass，clippy/fmt0；首Rust失败是python3 Windows别名，改用既有PYTHON显式解释器后通过。Python3.10.20纯stdlib/字节码探针、两条实际safe/native生命周期及两条AST反证均保留证据，所有自有进程已终局。
+- 全仓Ruff check与format--check（1496文件）0；正式前端构建含i18n、playground build/check均0，1506前端源零漂移。旧正式build后为patch extra一致性修复重建，最终使用p2-passive-consistent-packaged-final；旧绿窗口不替代新源。本轮未重跑完整前端/后端全仓、MCP产品UI、桌面、安装物与跨平台矩阵。
+- PDF支线仅OUT：p3-pdf-content-facts/REPORT.md。原内容驱动W*及ca/CA+isolated透明组两例全像素差0；实际CID→GID纠正01被Unicode投影为00，非Identity映射+TJ取对字形。普通PDF整体差>8像素占1.1867%，SMask嵌图0.1664%；SVG文字仍全轮廓。零生产修改，不能称通用PDF→SVG或可编辑文字完成。
+- 本轮证据根E:/0 - Project/svg-review-20261108：p2-origin-backend/final.xml+final-summary.json+final-source-*.json；p2-origin-frontend/REVIEW.md+source-release-consistent.json；p2-guard-production/的实际exit回执与最终报告；root-qualification/p2-passive-consistent-packaged-final-*、p2-passive-playground-final-*、p2-passive-playground-check-final-*；p3-pdf-content-facts/REPORT.md。没有启动新的产品服务/浏览器或常驻调度；原A/B/C/D及其源、数据和配置未在本轮重新打开或改写。
+- 恢复优先完成P2a单一resolver/app完整ref/receipt接纳与全部来源消费者，再做P2b原Preparation/INPUT冷恢复、P2c真实迁移；P3普通PDF/复杂SVG可作为独立支线。N5裁切、N4图例、M1/M2/M3仍未验收。已实现基础能力与尚未接通的用户流程必须分开报告。
+
+- 收尾审计：p2-origin-backend/pause-final-audit.json实际exit0，分别核9个守卫、7个后端、4个前端源/测试及三份1506源构建回执与当前字节一致；15个延期消费者等于HEAD，原main干净。文档引用/规则索引41项通过，agents_budget --check exit0；本轮所有测试/构建及三个代理均已终局，暂停后不自动继续。
 
 ### 2026-11-08 本轮修复完成并按用户要求暂停
 

@@ -112,6 +112,15 @@ packagerelocation只在活跃Prepared内准备全量oldRef→newRef、原序正�
 - worker/父进程边界不松：脚手架只在 worker（matplotlib）；父进程只做 stdlib 树操作与 IR 翻译。
 - 计算probe/scaffold共用固定svgchart command runner，解释器/激活沿pool权威，进程沿既有DesktopProcess ownership与envlease；同一请求deadline覆盖stdin、stdout与响应验证。输出spool走data_dir，字节/JSON结构预算消费SVGBudget/chartprofile，stderr仅保有界tail；进程非零退出不能被成功JSON掩盖。未确认组退出保留lease和chart admission，确认后才释放；chart类容量消费动态pool.max_alive，不声称全产品总进程cap。旧desktop启动/gate时序不变，不引入任意argv或用户脚本入口。
 
+### 3a. 历史编辑输入与已存在执行守卫（2026-11-08，部分接线）
+
+- 文档可选 `figureOrigin={version:1,snapshot:<完整 FigureSnapshot>,patches:<原序基准列表>}`，schema3/4均可携带。基准P与当前完整overrides Q分开；保留重复条目及原序，后端用原`patchspec`核P与完整引用的patchHash。引用、来源与基准不匹配即拒绝，不能从hash反推缺少的P。
+- `figureSnapshot`仍只代表Q的输出；`figureOrigin`只保存历史输入。保存不借同名current补造来源；打包逐角色核完整ref、各自patch及INPUT闭包，同一archive只计一次。来源只归档不激活current；迁移同时替换两种引用，基准列表不变。输入归档不授执行许可。
+- 本轮前端只被动保留已有origin、换源时清除及拒绝不相符的迟到保存响应。旧无origin面板不自动捕获origin，既有renderKey/wire保持；首次编辑捕获须与下述应用消费者一起接通后启用。
+- 底层新增独立`render_existing`动作，复用原renderer和完整patch处理。私有expected_execution_id由父端实际执行事实产生；safe/Workerd发送前和回复后核同实例，子端核真实执行ID；不得build、重开session或respawn。旧无守卫参数调用保持原协议和行为。
+- native额外核同一transport、PID、generation和snapshot_epoch/屏障；epoch留在父端，子端回真实执行ID。守卫不授权重新运行，不将native降为safe。看护为`test_existing_execution_dispatch.py`、`test_native_existing_execution.py`及Rust同名定向测试。
+- **尚未接通**：`enginesession`单一选择器与应用完整ref/receipt接纳、首编辑自动捕获、render/PNG/export/specfix/writeback及全部缓存/回包消费者、Preparation冷重建。底层守卫和被动持久化的通过不代表历史编辑全链已经安全可用。
+
 ### 4. 明确不做（本轮）
 
 - 不从普通 SVG 猜测/反推原始数据；OCR/路径反算只出候选。
