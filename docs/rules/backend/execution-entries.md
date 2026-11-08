@@ -29,6 +29,11 @@ order: 180
 
 改动纪律：
 
+- **safe worker 的 Matplotlib 默认字体索引自救**（反馈 AADF）：握手后、首次执行用户脚本前，若当前
+  `fontManager` 里没有指向现存文件的默认 TTF 字体族，则用 Matplotlib 自己的 `FontManager()` 重新枚举，
+  仅当新索引确有可用默认字体时合并进原管理器；保留既有字体与对象引用，只移除已失效的默认字体条目。
+  不改用户的磁盘字体缓存；枚举也找不到默认字体时保留原错误。正常索引不枚举。放在 build 看门狗内，避免
+  字体扫描超过 worker 握手时限；native bridge 保持用户进程原样。看护 `tests/test_worker_font_cache_recovery.py`。
 - **`figsession` / `wireproto` 是两条入口共用的。** 改它们等于同时改两条
   入口——先跑 `tests/test_worker_roundtrip.py` 与 `tests/bridge/` 两套。
 - **safe worker 与 native bridge 用同一份 `bridgeboot` 装引擎模块**（issue #447 / FO19，
