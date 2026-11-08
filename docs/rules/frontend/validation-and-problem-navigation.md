@@ -22,7 +22,7 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   → components/left/ProblemPanel.tsx  左侧「问题」抽屉（常驻入口 + 角标）
 ```
 
-计算来源面板的输入适配复用 `renderRequestIdentity` 判断修改是否应用；素材表没有逻辑文件时，只有完整 chart/ref 输入的 `exactPanelRender` 才能证明附件可用。字段存在、旧 latest、失败或别的变体不能豁免缺素材。无 chart/ref 保持原输入；看护 `lib/preflight.chartSource.test.ts`。
+计算来源面板的输入适配复用 `renderRequestIdentity` 判断修改是否应用；完整 chart/ref 输入的 `exactPanelRender` 可证明计算附件可用。普通文件未列入素材表时，复用精确 `originalSources` 正证；显式历史引用须由只读 FigureSnapshot 预览端点核完整 ref 与原序 overrides，不能借同名库存或 runtime 类型免检。字段存在、旧 latest、失败或别的变体均不是正证。这些事实只供原求值器判来源是否可用，不授执行或几何编辑资格；缓存按项目/刷新代次失效。单张和批量报告冻结前等待对应来源事实，丢弃旧主人/旧代次响应，再由同一检查链生成报告。看护 `lib/preflight.chartSource.test.ts`、`store/validationSourceFacts.test.ts`、`components/ExportDialog.test.tsx`。
 
 * **导出对话框不再跑第二遍求值器**：它消费 `getValidationSummary(scope, extra)`
   与 `rawIssuesFor(canvasId)`（样式检查报告要的聚合投影，**同一次求值的另一份

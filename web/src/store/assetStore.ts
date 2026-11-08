@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import {
   fetchPanels,
   fetchPanelSourceFacts,
+  fetchFigureSnapshotPreview,
   type PanelSourceFacts,
   type PanelInfo,
   type PanelsResponse,
@@ -9,6 +10,9 @@ import {
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
 import { engineTransport } from '@/lib/engineTransport'
+import { figureSnapshotSourceKey, type PanelSourceEvidence } from '@/lib/panelSourceEvidence'
+import { hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
+import type { PanelObject } from '@/types/document'
 import { t } from '@/i18n'
 
 const USED_KEY = 'tavotto.assetUsed'
@@ -82,12 +86,24 @@ let inflight: {
 
 let sourceGeneration = 0
 const sourceRequests = new Map<string, Promise<PanelSourceFacts | null>>()
+const archiveRequests = new Map<string, { promise: Promise<boolean>; controller: AbortController }>()
+// 归档读取核完整附件，但只保留可用性；串行检查避免同时常驻多份大 SVG。
+let archiveTail: Promise<unknown> = Promise.resolve()
+function clearSourceRequests(): void {
+  sourceGeneration += 1
+  sourceRequests.clear()
+  for (const request of archiveRequests.values()) request.controller.abort()
+  archiveRequests.clear()
+  archiveTail = Promise.resolve()
+}
 
 interface AssetState {
   panels: PanelInfo[]
   /** 精确查询的只读事实；与素材清单分开，绝不把让位隐藏的文件加回素材库。 */
   originalSources: Record<string, PanelSourceFacts | null>
   ensureOriginalSource: (id: string) => Promise<PanelSourceFacts | null>
+  figureSnapshots: Record<string, boolean>
+  ensureFigureSnapshotSource: (panel: PanelObject) => Promise<boolean>
   byId: Record<string, PanelInfo>
   /** 是素材、但用不了的文件（范围之外的 TIFF）：不进 `panels`，素材库如实列出 */
   unsupported: UnsupportedAsset[]
@@ -122,6 +138,7 @@ interface AssetState {
 export const useAssetStore = create<AssetState>((set, get) => ({
   panels: [],
   originalSources: {},
+  figureSnapshots: {},
   byId: {},
   unsupported: [],
   figuresDir: '',
@@ -159,6 +176,35 @@ export const useAssetStore = create<AssetState>((set, get) => ({
     return promise
   },
 
+  ensureFigureSnapshotSource: (panel) => {
+    const key = figureSnapshotSourceKey(panel)
+    if (!hasFigureSnapshotPreview(panel) || key === null || engineTransport()) return Promise.resolve(false)
+    if (Object.hasOwn(get().figureSnapshots, key)) return Promise.resolve(get().figureSnapshots[key])
+    const pending = archiveRequests.get(key)
+    if (pending) return pending.promise
+    const born = epoch
+    const generation = sourceGeneration
+    const pj = currentProjectId()
+    const controller = new AbortController()
+    const current = () => born === epoch && generation === sourceGeneration && pj === currentProjectId()
+      && !engineTransport() && !controller.signal.aborted
+    const input = structuredClone(panel)
+    const promise = archiveTail.then(async () => {
+      if (!current()) return false
+      // API 校验完整回显 ref、非空 SVG 和物理尺寸；不从字段存在推断归档有效。
+      await fetchFigureSnapshotPreview(input.fileId, input.overrides, input.figureSnapshot!, controller.signal, pj)
+      if (!current()) return false
+      set(state => ({ figureSnapshots: { ...state.figureSnapshots, [key]: true } }))
+      return true
+    }).catch(() => {
+      if (current()) set(state => ({ figureSnapshots: { ...state.figureSnapshots, [key]: false } }))
+      return false
+    }).finally(() => { if (archiveRequests.get(key)?.promise === promise) archiveRequests.delete(key) })
+    archiveRequests.set(key, { promise, controller })
+    archiveTail = promise
+    return promise
+  },
+
   load: (opts) => {
     if (!opts?.force && inflight && inflight.pj === currentProjectId()) {
       const cur = inflight
@@ -172,9 +218,8 @@ export const useAssetStore = create<AssetState>((set, get) => ({
       return cur.trailing
     }
 
-    sourceGeneration += 1
-    sourceRequests.clear()
-    set({ originalSources: {} })
+    clearSourceRequests()
+    set({ originalSources: {}, figureSnapshots: {} })
     const mine = ++seq
     const pj = currentProjectId()
     const born = epoch
@@ -233,14 +278,14 @@ export const useAssetStore = create<AssetState>((set, get) => ({
 
   clear: () => {
     epoch += 1
-    sourceGeneration += 1
-    sourceRequests.clear()
+    clearSourceRequests()
     inflight = null
     loadingRequest = null
     refreshHolds.clear()
     set({
       panels: [],
       originalSources: {},
+      figureSnapshots: {},
       byId: {},
       unsupported: [],
       figuresDir: '',
@@ -270,9 +315,8 @@ export const useAssetStore = create<AssetState>((set, get) => ({
  * 现象是「明明 resolve 了，store 里什么都没有」。
  */
 export function resetAssetLoadBookkeeping(): void {
-  sourceGeneration += 1
-  sourceRequests.clear()
-  useAssetStore.setState({ originalSources: {} })
+  clearSourceRequests()
+  useAssetStore.setState({ originalSources: {}, figureSnapshots: {} })
   seq = 0
   applied = 0
   inflight = null
@@ -283,6 +327,19 @@ export function resetAssetLoadBookkeeping(): void {
 /** 默认 HTTP 的只读正证不能成为替代宿主的素材事实。 */
 export function originalSourceFacts(id: string): PanelSourceFacts | null {
   return engineTransport() ? null : useAssetStore.getState().originalSources[id] ?? null
+}
+
+/** 默认 HTTP 事实不得替另一个宿主回答来源是否存在。 */
+export function panelSourceEvidence(): PanelSourceEvidence | undefined {
+  if (engineTransport()) return undefined
+  const { originalSources, figureSnapshots } = useAssetStore.getState()
+  return { originalSources, figureSnapshots }
+}
+
+/** 报告准备与资产刷新使用同一代事实；一次旧请求完成不代表新一代已检查。 */
+export function captureSourceEvidenceScope(): () => boolean {
+  const born = epoch, generation = sourceGeneration, pj = currentProjectId(), host = engineTransport()
+  return () => born === epoch && generation === sourceGeneration && pj === currentProjectId() && host === engineTransport()
 }
 
 /**

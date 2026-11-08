@@ -42,6 +42,7 @@ import {
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { flushSync } from "react-dom";
 import {
   Check,
   CircleCheck,
@@ -124,7 +125,7 @@ import {
   resolveDocumentSpec,
   type SpecCatalogEntry,
 } from "@/lib/specBinding";
-import { apiUrl } from "@/lib/session";
+import { apiUrl, currentProjectId } from "@/lib/session";
 import { boundedCount, captureTelemetry } from "@/lib/telemetry";
 import { cn } from "@/lib/utils";
 import { canRevealInFileManager, isDesktop, revealExportedFile } from "@/lib/desktop";
@@ -155,7 +156,7 @@ import {
 } from "@/store/exportStore";
 import { useProfileStore } from "@/store/profileStore";
 import { useProjectStore } from "@/store/projectStore";
-import { useDocumentStore } from "@/store/documentStore";
+import { captureDocumentPreviewOwner, useDocumentStore } from "@/store/documentStore";
 import { useDocumentPreviewOwner } from "@/hooks/useDocumentPreviewOwner";
 import { dialogCovered, EXPORT_DONE_DISMISS_MS, useUiStore } from "@/store/uiStore";
 import { useWorkspaceStore } from "@/store/workspace";
@@ -169,6 +170,7 @@ import {
   croppedValidationFor,
   rawIssuesFor,
   runValidation,
+  prepareValidationSources,
   useValidationStore,
 } from "@/store/validationStore";
 import { Button, IconButton } from "./ui/Button";
@@ -1004,10 +1006,21 @@ export function ExportDialog() {
     shared: BatchShared,
     merge: { plan: { name: string; figureIds: string[] }; figs: readonly ExportableFigure[] } | null,
   ) => {
+    const owner = captureDocumentPreviewOwner();
     const alive = () => {
       const b = useExportStore.getState().batch;
-      return !!b && b.ids === batchIds && !b.done && b.phase === "prepare";
+      if (!b || b.ids !== batchIds || b.done || b.phase !== "prepare") return false;
+      if (!owner.still() || owner.pj !== currentProjectId()) {
+        requestBatchCancel();
+        return false;
+      }
+      return true;
     };
+    const prepareCurrentSources = async () => {
+      while (alive()) if (await prepareValidationSources()) return alive();
+      return false;
+    };
+    if (!await prepareCurrentSources()) return;
     // ① 只取 route
     const routes = new Map<string, { route: ExportRoute | null; key: string | null }>();
     for (const f of figs) {
@@ -1027,7 +1040,7 @@ export function ExportDialog() {
       }
       routes.set(f.figureId, { route, key: probe.ok ? routeKeyOf(probe.input) : null });
     }
-    if (!alive()) return;
+    if (!await prepareCurrentSources()) return;
     const failure = (why: Extract<ReturnType<typeof buildBatchInput>, { ok: false }>["reason"]) =>
       why.kind === "unavailable"
         ? ex(`scopeUnavailable.${why.code}`)
@@ -1154,8 +1167,19 @@ export function ExportDialog() {
     });
   };
 
+  const sourceAttempt = useRef(0);
+  const sourceScope = useMemo(() => ({
+    open, documentId, doc, canvases, scope, figureId, panel, filename, formats, ppi,
+    transparent, strict, withReport, checkProfileId, framePad,
+  }), [
+    open, documentId, doc, canvases, scope, figureId, panel, filename, formats, ppi,
+    transparent, strict, withReport, checkProfileId, framePad,
+  ]);
+  const currentSourceScope = useRef(sourceScope);
+  currentSourceScope.current = sourceScope;
+  const latestStart = useRef<(overwrite: OverwritePolicy, sourcesPrepared: boolean) => Promise<void>>(async () => {});
   const start = useCallback(
-    async (overwrite: OverwritePolicy) => {
+    async (overwrite: OverwritePolicy, sourcesPrepared = false) => {
       /*
        * **阻断闸放在这一个咽喉上，不挂在按钮上。**
        *
@@ -1171,6 +1195,21 @@ export function ExportDialog() {
       // 判断没有被这个咽喉接管，而「覆盖 / 另存 / 重试」走的正是这里
       // 闸与主按钮读**同一个** `canStart`
       if (!canStart) return;
+      if (!sourcesPrepared) {
+        const attempt = ++sourceAttempt.current;
+        const sourcesBefore = useAssetStore.getState();
+        if (!await prepareValidationSources()) return;
+        // 同步订阅渲染后再取报告闭包，不能将取证前的 missing 写入最终样式报告。
+        flushSync(() => {
+          const sourcesNow = useAssetStore.getState();
+          if (sourcesNow.originalSources !== sourcesBefore.originalSources
+            || sourcesNow.figureSnapshots !== sourcesBefore.figureSnapshots
+            || useValidationStore.getState().queued) runValidation();
+        });
+        if (attempt !== sourceAttempt.current || sourceScope !== currentSourceScope.current) return;
+        await latestStart.current(overwrite, true);
+        return;
+      }
       // 这一回在对话框里起的作业：它跑完就该给完成态脚部（不论 job_id 是否与上一回重号）
       setSettledJobId(null);
       setRevealError(null);
@@ -1209,8 +1248,10 @@ export function ExportDialog() {
       original,
       originalWidthMm,
       originalHeightMm,
+      sourceScope,
     ],
   );
+  latestStart.current = start;
 
   /** 主按钮 / 再次导出 / 重试的同一个入口：一批或单张 */
   const startExport = () => (batchMode ? startBatch() : void start("ask"));

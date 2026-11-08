@@ -4280,3 +4280,69 @@ describe('P3 generic output choice for nameless archive', () => {
     }
   })
 })
+
+describe('P3 source evidence before report freeze', () => {
+  async function pendingArchive(batch = false) {
+    await act(async () => { useAssetStore.getState().clear() })
+    if (batch) await setupTwo({ select: [] })
+    else await setup(9)
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+      useDocumentStore.getState().commit(literal('归档来源'), d => {
+        const p = d.objects[0] as PanelObject
+        p.figureSnapshot = { version: 1, sourceId: p.fileId, snapshotId: 'a'.repeat(64),
+          patchHash: 'b'.repeat(64), receiptId: 'c'.repeat(64) }
+      })
+      useRenderStore.setState({ byKey: {}, latest: {} })
+      if (!batch) useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    })
+    let release!: () => void
+    const gate = new Promise<void>(r => { release = r })
+    const previous = globalThis.fetch
+    globalThis.fetch = (async (url, init) => {
+      if (!String(url).includes('/figure-preview')) return previous(url, init)
+      const body = JSON.parse(String(init?.body))
+      await gate
+      return new Response(JSON.stringify({ preview_source: 'figure_snapshot', figure_snapshot: body.figure_snapshot,
+        svg: '<svg xmlns="http://www.w3.org/2000/svg"/>', size_mm: [80, 60] }))
+    }) as typeof fetch
+    await act(async () => { useUiStore.getState().setExportOpen(true) })
+    if (batch) await click(originalRadio())
+    return release
+  }
+
+  it.each([false, true])('pending archive is awaited before the %s batch report, without serializing temporary missing', async batch => {
+    const release = await pendingArchive(batch)
+    await click(document.body.querySelector('[data-export-start]')!)
+    expect(exportBodies).toEqual([])
+    await act(async () => { release(); await new Promise(r => setTimeout(r, 0)) })
+    if (batch) await batchDone()
+    else await until(() => exportBodies.length === 1)
+    expect(exportBodies).toHaveLength(batch ? 2 : 1)
+    const report = exportBodies[0].style_check_report as { checks: { id: string }[] }
+    expect(report.checks.some(c => c.id === 'missing-asset')).toBe(false)
+    expect(report.checks.some(c => c.id === 'panel-text-not-verifiable')).toBe(true)
+  })
+
+  it('closing a single pending preparation prevents its late result from starting a job', async () => {
+    const release = await pendingArchive()
+    await click(document.body.querySelector('[data-export-start]')!)
+    await act(async () => { useUiStore.getState().setExportOpen(false) })
+    await act(async () => { release(); await new Promise(r => setTimeout(r, 0)) })
+    expect(exportBodies).toEqual([])
+  })
+
+  it('an edit while single preparation waits cannot export an old fullref or old overrides', async () => {
+    const release = await pendingArchive()
+    await click(document.body.querySelector('[data-export-start]')!)
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('改另一历史'), d => {
+        const p = d.objects[0] as PanelObject
+        p.figureSnapshot = { ...p.figureSnapshot!, snapshotId: 'd'.repeat(64) }
+      })
+      release()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(exportBodies).toEqual([])
+  })
+})

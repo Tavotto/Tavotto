@@ -46,6 +46,7 @@ import {
 import type { CanvasData, CanvasObject, FigureDocument, FramePad } from '@/types/document'
 import { subplotLookup, type SubplotPart } from './subplotParts'
 import { displayText } from './richText'
+import type { PanelSourceEvidence } from './panelSourceEvidence'
 
 /* ------------------------------ Issue 模型 -------------------------------- */
 
@@ -221,6 +222,7 @@ export interface ValidateInput {
   canvases: CanvasInput[]
   assets: Record<string, PanelInfo>
   render: { byKey: Record<string, PanelRender>; latest: Record<string, string> }
+  sources?: PanelSourceEvidence
 }
 
 /** 一次检查的结果。**按画布分片存**，改一张画布只重算那一片。 */
@@ -285,8 +287,9 @@ export function validateCanvas(
   documentId: string,
   assets: Record<string, PanelInfo>,
   render: { byKey: Record<string, PanelRender>; latest: Record<string, string> },
+  sources?: PanelSourceEvidence,
 ): CanvasResult {
-  const result = resultOf(input, documentId, buildSpec(input.doc, assets, render))
+  const result = resultOf(input, documentId, buildSpec(input.doc, assets, render, sources))
   // 单图编辑（画布上恰好一张图，隐藏的也计）没有页面：舞台不画页面纸、导出是图本身（ADR 0028 / 0031 §original），
   // 文档里留着的页面尺寸（默认 150 × 100…）与这张图比没有意义——画布摆放类规则（越界 / 页边距 / 重叠）不判，
   // 否则一张没动过的大图一打开就被「超出页面范围」阻断。第二张图进来就是排版，规则原样回来。
@@ -326,13 +329,14 @@ export function validateOriginal(
   assets: Record<string, PanelInfo>,
   render: { byKey: Record<string, PanelRender>; latest: Record<string, string> },
   target: OriginalTarget,
+  sources?: PanelSourceEvidence,
 ): CanvasResult | null {
   const panel = input.doc.objects.find((o) => o.id === target.objectId)
   if (panel?.type !== 'panel') return null
   return resultOf(
     input,
     documentId,
-    buildOriginalSpec(panel, assets, render, { widthMm: target.widthMm, heightMm: target.heightMm }, target.formats, target.route, target.pad),
+    buildOriginalSpec(panel, assets, render, { widthMm: target.widthMm, heightMm: target.heightMm }, target.formats, target.route, target.pad, sources),
   )
 }
 
@@ -413,7 +417,7 @@ function dedupe(issues: ValidationIssue[]): ValidationIssue[] {
 /** 整个项目跑一遍（每张画布一片）。 */
 export function validateProject(input: ValidateInput): CanvasResult[] {
   return input.canvases.map((c) =>
-    validateCanvas(c, input.documentId, input.assets, input.render),
+    validateCanvas(c, input.documentId, input.assets, input.render, input.sources),
   )
 }
 
