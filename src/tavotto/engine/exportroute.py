@@ -214,8 +214,8 @@ def _format_route(
             return {"how": HOW_COPY}
         if source == SOURCE_REDRAW:
             return {"how": HOW_REDRAW}
-        if file_kind == KIND_RASTER and not canvas:
-            return _unavailable(REASON_SVG_SOURCE_UNSUPPORTED)
+        if file_kind == KIND_RASTER:
+            return {"how": HOW_CONVERT}
         return {"how": HOW_CONVERT, "conditions": [COND_FIGURE_SNAPSHOT]}
     if source == SOURCE_REDRAW:
         return {"how": HOW_REDRAW}

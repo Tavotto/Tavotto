@@ -106,8 +106,9 @@ order: 210
     没脚本/没有活Figure仍分别返回原eps_needs_script/eps_needs_live_figure。
     opaque PDF 的 SVG 逐格式失败并指出来源，其他成功格式照常交付，不整页转位图或少画面板。
     面板缺同 Figure 的 SVG 表示时，该项失败带**面向用户的码**（`rendercore/job._svg_panel_gap`）：脚本现画的图 `svg_figure_unavailable`
-    （`figure` 图名；`reason` = worker 给的配对阻断原因，如自定义刻度函数；`detail` = 内部原文，只进诊断），静态 PDF / 位图 `svg_source_unsupported`；
+    （`figure` 图名；`reason` = worker 给的配对阻断原因，如自定义刻度函数；`detail` = 内部原文，只进诊断），无可信配对的静态 PDF `svg_source_unsupported`；
     不得再让 `imported_page: A static PDF requires …` 这类内部串落到界面。
+    **普通位图原图 SVG**：复用 RenderCore 的 Image 场景，内嵌原像素及 alpha，保持原图物理尺寸；产物如实标记 `vector=False`，不制造 Figure 回执或执行脚本。请求含 SVG 时，各格式共用经原来源预算与 hash 校验冻结的字节；PNG 原图复制仍保原字节，标注/留白仍走既有同场景合成。静态 PDF 不因位图支持而获得 SVG 资格。看护 `tests/test_raster_svg_original.py`、`tests/test_export_route.py`、`tests/test_export_svg.py`。
     首次明确运行后自动尽力捕获全质量对，捕获失败不把成功运行或正常 PDF 导出变成失败；
     保存布局先冻结精确编辑变体再一次原子写正文，失败清除待保存正文的旧引用并返回来源 warning，布局仍可保存。
     持久化与旧项目恢复边界见 `layout-versions-and-documents.md`。

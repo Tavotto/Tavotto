@@ -98,9 +98,10 @@ def test_svg_asset_basis_is_the_file_bytes():
     assert route("canvas", ["svg"], er.KIND_SVG)["formats"]["svg"] == {"how": "convert"}
 
 
-def test_raster_without_execution_has_no_svg():
+def test_raster_without_execution_converts_to_an_svg_image_without_a_figure_snapshot():
     r = route("original", ["svg"], er.KIND_RASTER)
-    assert r["formats"]["svg"]["reason"] == "svg_source_unsupported"
+    assert r["formats"]["svg"] == {"how": "convert"}
+    assert route("canvas", ["svg"], er.KIND_RASTER)["formats"]["svg"] == {"how": "convert"}
     assert route("original", ["svg"], er.KIND_RASTER, overrides=[{"x": 1}])["formats"]["svg"] == {
         "how": "redraw"
     }

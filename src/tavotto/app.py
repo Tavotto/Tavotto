@@ -3081,7 +3081,9 @@ def _original_svg_result(path, artifact, receipt):
     )
 
 
-def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=None) -> list:
+def _export_produce_original_annotated(
+    job, tmp_dir: Path, *, artifact_sources=None, frozen_sources=None
+) -> list:
     """`scope=original` 且带画布标注（QA-WIN-20）：图 + 标注由**整版导出那条 RenderCore 合成路径**画。
 
     构造一份「页面 = 原图图幅、面板在 (0,0)、再叠标注」的画布请求，交给 `_export_produce_rendercore`——标注怎么画
@@ -3145,6 +3147,8 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
     )
     produced: list = []
     dir_arg = {"artifact_sources": artifact_sources} if artifact_sources else {}
+    if frozen_sources:
+        dir_arg["frozen_sources"] = frozen_sources
     if rerender_ids:
         dir_arg["rerender_ids"] = rerender_ids
 
@@ -3699,6 +3703,36 @@ def _export_produce_static_svg_original(job, tmp_dir: Path, *, artifact_sources=
     return engine_exportjob.enforce_one_basis(produced, source_sha)
 
 
+def _freeze_original_raster(source_path: Path, source_id: str, tmp_dir: Path):
+    """Freeze one static raster for original copies and its Image SVG representation."""
+    from .rendercore import job as rc_job, sources as rc_sources
+
+    try:
+        frozen = rc_sources.FrozenSource(
+            rc_sources.static_artifact(source_path, source_id), source_path
+        )
+        # Same sum+max read peak as the scene consumer, before read_frozen allocates.
+        peak = 2 * frozen.artifact.size_bytes
+        if peak > rc_job.SOURCE_BYTES_BUDGET:
+            raise engine_exportreq.ExportRequestError(
+                "export_render_failed",
+                "Frozen raster source exceeds the scene source budget",
+                {
+                    "id": source_id,
+                    "reason": "source_budget_exceeded",
+                    "peak_bytes": peak,
+                    "budget": rc_job.SOURCE_BYTES_BUDGET,
+                },
+            )
+        target = tmp_dir / ("source-raster" + source_path.suffix.lower())
+        target.write_bytes(rc_sources.read_frozen(frozen))
+        return dataclasses.replace(frozen, path=target)
+    except rc_sources.SourceError as exc:
+        raise engine_exportreq.ExportRequestError(
+            "export_render_failed", str(exc), {"id": source_id, "reason": exc.code}
+        ) from exc
+
+
 def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> list:
     """`scope=original`：这张图**按它自己的尺寸**出。
 
@@ -3832,9 +3866,17 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                 "Saved Figure snapshot no longer matches the static source",
                 {"id": src.figure_id},
             )
+    raster_frozen = None
+    if wants_svg and source_path.suffix.lower() in IMG_EXT:
+        raster_frozen = _freeze_original_raster(source_path, src.figure_id, tmp_dir)
+        source_path = raster_frozen.path
     raster_source = source_path.suffix.lower() != ".pdf"
     page_pt = _original_page_pt(source_path, src) if raster_source else None
-    disk_source = _original_disk_source_manifest(src, source_path)
+    disk_source = (
+        {"provenance": {"sources": [raster_frozen.artifact.to_payload()]}}
+        if raster_frozen is not None
+        else _original_disk_source_manifest(src, source_path)
+    )
     vector_size_mm = None
     produced: list = []
     for fmt in req.formats:
@@ -3853,7 +3895,24 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                     )
                 )
             elif fmt == engine_exportreq.FORMAT_SVG:
-                if svg_source is None:
+                if raster_frozen is not None:
+                    # A raster's SVG is the same Image IR used by annotated/padded
+                    # originals. It keeps the native pixel grid and source alpha;
+                    # an original's disabled background option must not flatten it.
+                    svg_req = dataclasses.replace(
+                        req,
+                        formats=(engine_exportreq.FORMAT_SVG,),
+                        background=engine_exportreq.BACKGROUND_TRANSPARENT,
+                        original=dataclasses.replace(
+                            src, w_mm=page_pt[0] * MM_PER_PT, h_mm=page_pt[1] * MM_PER_PT
+                        ),
+                    )
+                    produced += _export_produce_original_annotated(
+                        _PageJob(job, svg_req),
+                        tmp_dir / "original_svg",
+                        frozen_sources={src.figure_id: raster_frozen},
+                    )
+                elif svg_source is None:
                     produced.append(
                         engine_exportjob.Produced(
                             format=fmt,
@@ -3927,6 +3986,17 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                     format=fmt, error_code="format_failed", error_params={"error": str(exc)[:200]}
                 )
             )
+    if raster_frozen is not None:
+        for item in produced:
+            if item.tmp_path is not None and item.format != engine_exportreq.FORMAT_EPS:
+                how = (
+                    engine_exportjob.BASIS_COPY
+                    if item.format == engine_exportreq.FORMAT_PNG
+                    and raster_frozen.artifact.kind == "png"
+                    else engine_exportjob.BASIS_CONVERT
+                )
+                item.basis = engine_exportjob.Basis(how, raster_frozen.artifact.bytes_sha256)
+                item.manifest = {**(item.manifest or {}), **disk_source}
     return _keep_disk_source_only_if_unchanged(produced, src, source_path, disk_source)
 
 
@@ -4139,7 +4209,13 @@ def _produce_svg_asset_eps(job, src, dpi: int, tmp_dir: Path, *, artifact_source
 
 
 def _export_produce_rendercore(
-    job, tmp_dir: Path, *, artifact_sources=None, rerender_ids=frozenset(), raster_target=None
+    job,
+    tmp_dir: Path,
+    *,
+    artifact_sources=None,
+    rerender_ids=frozenset(),
+    raster_target=None,
+    frozen_sources=None,
 ) -> list:
     """`scope=canvas` 的 `produce`：RenderPlan → Canonical PDF → child 栅格（U08 候选、U10 起默认，ADR 0067 / 0072）。
 
@@ -4160,7 +4236,15 @@ def _export_produce_rendercore(
         项目——与旧路 `safe_resolve` 只在碰面板时才要项目同一语义。"""
 
         def resolve(self, obj: dict):
-            fs = rc_sources.StaticSourceResolver(require_project()).resolve(obj)
+            fs = (frozen_sources or {}).get(obj["id"])
+            if fs is None:
+                fs = rc_sources.StaticSourceResolver(require_project()).resolve(obj)
+            elif fs.artifact.source_id != obj["id"]:
+                raise rc_sources.SourceError(
+                    "source_changed",
+                    "Frozen source does not match the placed object",
+                    {"figure": obj["id"]},
+                )
             # 这条路不经 `safe_resolve`（它自己做包含检查与存在性），TIFF 的支持范围得在这里补上：
             # 漏掉它，范围之外的 TIFF 在候选后端下会被画成一张错图交付（issue #534）。先让解析器把
             # 路径核进项目根，再读它的头
