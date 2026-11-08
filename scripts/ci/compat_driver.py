@@ -99,6 +99,21 @@ def _reference_invocation(req: dict, default_cwd: str) -> tuple[str, list[str]]:
 
 
 # ---------------------------------------------------------------- 原生对照
+class _NativeSaveWatcher:
+    """Observe every post-save stale signal, including those followed by a draw."""
+
+    def __init__(self, original):
+        self.original = original
+        self.changed = False
+
+    def __call__(self, artist, value):
+        if value:
+            self.changed = True
+        if self.original is not None:
+            return self.original(artist, value)
+        return None
+
+
 @contextlib.contextmanager
 def _observe_native_crop(figure):
     """Observe Matplotlib's resolved crop during the original save, without another draw.
@@ -153,7 +168,8 @@ def run_native(req: dict) -> int:
     extras: dict = {}
     crops: dict = {}
     save_counts: dict[int, int] = {}
-    save_watchers: dict[int, object] = {}
+    save_watchers: dict[int, tuple[object, _NativeSaveWatcher]] = {}
+    watcher_pristine: dict[int, bool] = {}
     # 写进 `PdfPages` 的图：与产品三条入口同一个类、同一个位置（保存成功之后记，脚本结束先于 pyplot 兜底认领），
     # 否则对照组没有 `all_samples` 这张图、两边 stem 对不上（#1370）
     pdf_pages = figcapture.PdfPagesLedger()
@@ -185,13 +201,20 @@ def run_native(req: dict) -> int:
         elif figcapture.is_pdf_pages(fname):
             pdf_pages.note(fname, self)
         # Only a single, unmodified saved Figure can be sampled without an
-        # additional tight-layout iteration. Keep the same transparent stale
-        # observer used by the capture path; if a script replaces the observer,
-        # the native sampling path remains unchanged.
+        # additional tight-layout iteration. A draw must not clear the record of
+        # a previous change; if the observer is replaced, do not freeze layout.
         save_counts[id(self)] = save_counts.get(id(self), 0) + 1
-        if stem and type(self.get_layout_engine()) is TightLayoutEngine:
-            figcapture.mark_saved(self)
-            save_watchers[id(self)] = getattr(self, "stale_callback", None)
+        if (
+            stem
+            and save_counts[id(self)] == 1
+            and type(self.get_layout_engine()) is TightLayoutEngine
+        ):
+            try:
+                watcher = _NativeSaveWatcher(self.stale_callback)
+                self.stale_callback = watcher
+                save_watchers[id(self)] = (self, watcher)
+            except Exception:  # noqa: BLE001 - observing must not fail a native save
+                pass
         return result
 
     mfigure.Figure.savefig = recording_savefig
@@ -219,18 +242,19 @@ def run_native(req: dict) -> int:
         )
     finally:
         mfigure.Figure.savefig = real_savefig
+        for figure, watcher in save_watchers.values():
+            try:
+                intact = getattr(figure, "stale_callback", None) is watcher
+                watcher_pristine[id(figure)] = intact and not watcher.changed
+                if intact:
+                    figure.stale_callback = watcher.original
+            except Exception:  # noqa: BLE001 - unknown observation cannot justify freezing
+                watcher_pristine[id(figure)] = False
 
     # 写了文件却因 stem 被别的图持有而没认领的图（`panel.png` 甲 / `panel.pdf` 乙）：先于 pyplot 兜底补进来，
     # 与产品三条入口同一个函数、同一个顺序——对照组也要有 `panel-2` 这张图，否则像素层只剩甲
     file_stems: dict = {}
     figcapture.adopt_displaced_writers(writers, captured, sources, calls, extras, file_stems)
-    watcher_intact = {
-        id(fig): save_watchers.get(id(fig)) is not None
-        and getattr(fig, "stale_callback", None) is save_watchers[id(fig)]
-        for fig in captured.values()
-        if id(fig) in save_watchers
-    }
-    modified = set(figcapture.note_modified_after_save(captured, sources))
     figcapture.adopt_pdf_pages(
         captured, sources, pdf_pages, os.path.splitext(os.path.basename(req["script"]))[0]
     )
@@ -264,8 +288,7 @@ def run_native(req: dict) -> int:
                 freeze = (
                     type(engine) is TightLayoutEngine
                     and save_counts.get(id(fig)) == 1
-                    and watcher_intact.get(id(fig), False)
-                    and stem not in modified
+                    and watcher_pristine.get(id(fig), False)
                 )
                 if freeze:
                     # Re-sampling the already saved Figure should preserve its

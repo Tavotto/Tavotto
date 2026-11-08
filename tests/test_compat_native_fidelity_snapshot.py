@@ -76,8 +76,12 @@ def test_native_witness_matches_worker_but_detects_a_real_edit(tmp_path):
         pool.discard(worker)
 
 
-def test_native_snapshot_keeps_changes_made_after_save(tmp_path):
-    script, snapshot = _native_snapshot(tmp_path, "ax.set_title('Changed after save')\n")
+@pytest.mark.parametrize("draw_after_change", [False, True], ids=["changed", "changed-then-drawn"])
+def test_native_snapshot_keeps_changes_made_after_save(tmp_path, draw_after_change):
+    after_save = "ax.set_title('Changed after save')\n"
+    if draw_after_change:
+        after_save += "fig.canvas.draw()\n"
+    script, snapshot = _native_snapshot(tmp_path, after_save)
     subprocess.run(
         [
             WORKER_PY,
