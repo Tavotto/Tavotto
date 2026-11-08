@@ -14156,6 +14156,11 @@ def _convert_runner(
                 "partial": result.get("partial", False),
                 "failed_figures": result.get("failed_figures") or [],
                 "dropped_figures": result.get("dropped_figures", 0),
+                # Only the conversion runner consumes these project-relative
+                # attempts; an older worker or absent ledger stays unknown.
+                "redirected_write_attempts": getattr(
+                    worker, "last_build_redirected_write_attempts", None
+                ),
             }
             if with_manifests and worker is not None:
                 out["source_sha256"] = getattr(worker, "last_build_source_sha256", None)

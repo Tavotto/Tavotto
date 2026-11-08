@@ -3035,6 +3035,7 @@ class EngineWorker:
         #: 最近一次 build 响应里 worker 自报的运行时事实（`figsession.runtime_report`，
         #: ADR 0053）；老 worker 没带就是 None——回执据此标 partial，不补不猜。
         self.last_build_runtime: dict | None = None
+        self.last_build_redirected_write_attempts: list[str] | None = None
         self.last_build_execution_id: str | None = None
         self.last_used = time.time()
         # 这一代从日志的哪个字节开始（append 模式，目录跨代复用）
@@ -3558,10 +3559,12 @@ class EngineWorker:
         except inputbroker.TranscriptUnavailable as exc:
             self.build_failed = True
             self.last_build_source_sha256 = None
+            self.last_build_redirected_write_attempts = None
             raise WorkerError(str(exc), code=exc.code) from exc
         except BaseException:
             self.build_failed = True
             self.last_build_source_sha256 = None
+            self.last_build_redirected_write_attempts = None
             raise
         self.build_failed = False
         self.built = True
@@ -3572,6 +3575,8 @@ class EngineWorker:
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_build_pdf_pages = list(resp.get("pdf_pages") or [])
         self.last_build_runtime = _runtime_of(resp)
+        attempts = resp.get("redirected_write_attempts")
+        self.last_build_redirected_write_attempts = attempts if isinstance(attempts, list) else None
         misses = resp.get("probe_misses")
         self.last_build_probe_misses = misses if isinstance(misses, list) else None
         self.last_build_execution_id = resp.get("execution_id")
@@ -3588,6 +3593,7 @@ class EngineWorker:
             self.last_build_descriptors = []
             self.last_build_pdf_pages = []
             self.last_build_source_sha256 = None
+            self.last_build_redirected_write_attempts = None
             raise
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样
@@ -4001,6 +4007,7 @@ class WorkerdWorker:
         #: 本次 build 里写进 `PdfPages` 的摘要（`figcapture.PdfPagesLedger.summary`；写回守卫用，#1370）
         self.last_build_pdf_pages: list = []
         self.last_build_runtime: dict | None = None
+        self.last_build_redirected_write_attempts: list[str] | None = None
         self.last_build_execution_id: str | None = None
         self.child_pid: int | None = None
         self.last_used = time.time()
@@ -4319,10 +4326,12 @@ class WorkerdWorker:
         except inputbroker.TranscriptUnavailable as exc:
             self.build_failed = True
             self.last_build_source_sha256 = None
+            self.last_build_redirected_write_attempts = None
             raise WorkerError(str(exc), code=exc.code) from exc
         except BaseException:
             self.build_failed = True  # 与 EngineWorker 同一个判据
             self.last_build_source_sha256 = None
+            self.last_build_redirected_write_attempts = None
             raise
         self.build_failed = False
         self.built = True
@@ -4333,6 +4342,8 @@ class WorkerdWorker:
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_build_pdf_pages = list(resp.get("pdf_pages") or [])
         self.last_build_runtime = _runtime_of(resp)
+        attempts = resp.get("redirected_write_attempts")
+        self.last_build_redirected_write_attempts = attempts if isinstance(attempts, list) else None
         misses = resp.get("probe_misses")
         self.last_build_probe_misses = misses if isinstance(misses, list) else None
         self.last_build_execution_id = resp.get("execution_id")
@@ -4349,6 +4360,7 @@ class WorkerdWorker:
             self.last_build_descriptors = []
             self.last_build_pdf_pages = []
             self.last_build_source_sha256 = None
+            self.last_build_redirected_write_attempts = None
             raise
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样

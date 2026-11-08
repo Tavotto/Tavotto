@@ -937,6 +937,7 @@ function ConvertCompare({ entry }: { entry: NonNullable<ReturnType<typeof useCon
   const st = entry.status
   const cmp = st?.comparison
   const orig = cmp?.original?.path
+  const outputEvidence = cmp?.output_evidence
   return (
     <div data-convert-compare className="flex flex-col gap-2">
       <div className="grid grid-cols-2 gap-2">
@@ -967,6 +968,27 @@ function ConvertCompare({ entry }: { entry: NonNullable<ReturnType<typeof useCon
         <p data-convert-unverified className="text-sm text-ink-2">
           {pt('convert.unverified', { product: PRODUCT_NAME })}
         </p>
+      ) : null}
+      {outputEvidence ? (
+        <div data-convert-output-evidence className="flex flex-col gap-1 text-sm text-ink-2">
+          <p>{pt('convert.outputEvidence')}</p>
+          {outputEvidence.source_references.length > 0 ? (
+            <p>{pt('convert.outputSourceReferences', { files: listJoin(outputEvidence.source_references) })}</p>
+          ) : null}
+          {outputEvidence.write_attempts === null ? (
+            <p>{pt('convert.outputAttemptsUnavailable')}</p>
+          ) : outputEvidence.write_attempts.length > 0 ? (
+            <p>{pt('convert.outputWriteAttempts', { files: listJoin(outputEvidence.write_attempts) })}</p>
+          ) : (
+            <p>{pt('convert.outputNoAttempts')}</p>
+          )}
+          {outputEvidence.source_truncated || outputEvidence.attempts_truncated ? (
+            <p>{pt('convert.outputEvidenceTruncated')}</p>
+          ) : null}
+          <p>{pt('convert.outputEvidenceLimits')}</p>
+        </div>
+      ) : st?.source_language && st.source_language !== 'python' ? (
+        <p data-convert-output-evidence className="text-sm text-ink-2">{pt('convert.outputEvidence')}</p>
       ) : null}
       {st?.adopt_adds && st.adopt_adds.length > 0 ? (
         <p data-convert-adopt-adds className="text-sm text-ink-3">
