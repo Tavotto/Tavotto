@@ -3186,6 +3186,7 @@ export default interface Resources {
       "convert_nothing_to_realign": "没有需要再对一次的文件。",
       "convert_outside_project": "新版本的位置不在项目里，已拒绝写入。",
       "convert_project_changed": "项目里的文件在生成之后被改动过，已拒绝继续。请重新生成。",
+      "convert_realigning": "正在让 AI 重新对照，稍等",
       "convert_reference_invalid": "参考文件不可用。请使用当前项目内可读取的普通文件；不接受凭据、链接或超出大小限制的文件。",
       "convert_resume_busy": "正在装包并接着生成，请稍等。",
       "convert_source_changed": "原脚本在生成之后被改过，这份新版本是按旧版本写的。请重新生成。",

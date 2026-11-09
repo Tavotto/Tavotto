@@ -1796,7 +1796,9 @@ def adopt(sid: str, project: str, specified: object = None) -> dict:
     if meta.get("state") != "ready":
         raise ConvertError("convert_not_ready", 409)
     if resuming(sid):
-        raise ConvertError("convert_resume_busy", 409)
+        raise ConvertError(
+            "convert_realigning", 409
+        )  # ready 的候选上有作业 = 「让 AI 再对一次」正在跑
     root = Path(project)
     script_rel = str(meta["script_rel"])
     script_path = root / script_rel
@@ -2042,7 +2044,7 @@ def prepare_realign(sid: str, project: str) -> tuple[Path, dict, threading.Event
         raise ConvertError("convert_nothing_to_realign", 409)
     with _RESUMES_LOCK:
         if sid in _RESUMES:
-            raise ConvertError("convert_resume_busy", 409)
+            raise ConvertError("convert_realigning", 409)
         ev = threading.Event()
         _RESUMES[sid] = ev
     return cdir, meta, ev, note

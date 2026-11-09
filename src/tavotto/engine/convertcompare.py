@@ -389,7 +389,7 @@ def check_outputs(
             if newest_input is None:
                 out[name] = _incomparable("inputs_unknown")
                 continue
-            if old.stat().st_mtime_ns < newest_input:
+            if old.stat().st_mtime_ns <= newest_input:
                 out[name] = _incomparable("stale")
                 continue
             new = candidate_file(area, name, w.get("path") or name)

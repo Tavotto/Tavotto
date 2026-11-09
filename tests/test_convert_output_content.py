@@ -179,6 +179,15 @@ def test_an_old_result_older_than_the_inputs_is_stale(world):
     assert (files[0]["state"], files[0]["reason"]) == ("incomparable", "stale")
 
 
+def test_an_old_result_with_the_same_mtime_as_the_newest_input_is_stale(world):
+    root = world[0]
+    old_result(root, "x,y\n1,2\n")
+    stamp = (root / "sub" / "data.csv").stat().st_mtime_ns
+    os.utime(root / "sub" / "report.csv", ns=(stamp, stamp))
+    files, _ = run(world, READ + GOOD_CSV + PLOT)
+    assert (files[0]["state"], files[0]["reason"]) == ("incomparable", "stale")
+
+
 def test_no_old_result_is_no_previous(world):
     files, _ = run(world, READ + GOOD_CSV + PLOT)
     assert (files[0]["state"], files[0]["reason"]) == ("incomparable", "no_previous")
@@ -318,4 +327,20 @@ def test_a_realign_that_does_not_help_restores_the_adoptable_candidate(project, 
         assert (ai_convert.CONVERT_DIR / sid / "fig_matplotlib.py").read_bytes() == before
         assert client.post(f"/api/ai/convert/{sid}/adopt").status_code == 200
     finally:
+        workdir.forget(figs)
+
+
+def test_adopting_or_realigning_while_a_realign_runs_says_so(project, monkeypatch):
+    import threading
+
+    client, sid, _status, _state, figs = _ready_with_difference(project, monkeypatch, RIGHT)
+    ai_convert._RESUMES[sid] = (
+        threading.Event()
+    )  # what `prepare_realign` registers for the running job
+    try:
+        for url in ("adopt", "realign"):
+            got = client.post(f"/api/ai/convert/{sid}/{url}")
+            assert got.status_code == 409 and got.get_json()["code"] == "convert_realigning"
+    finally:
+        ai_convert._RESUMES.pop(sid, None)
         workdir.forget(figs)
