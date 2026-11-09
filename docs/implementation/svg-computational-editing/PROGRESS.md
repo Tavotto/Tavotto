@@ -2,16 +2,16 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **2026-11-09 本轮收口后按用户最新要求暂停。206d3cdf交付应用层历史来源接纳，be766286交付内部PDF内容适配；前端自动来源候选因native写回回归风险完整归档并恢复基线，未启用。583pass/6skip后端回归及1320pass/68skip RenderCore回归各有独立冻结窗口；不相加、不称全仓通过。完整功能仍未达PR验收标准，不自动接续。**
+> **2026-11-09 本轮修复已收尾，按用户最新指令暂停。新增功能提交为 8129b8d6（内部 PDF 隐藏图层保护）和 71ee8c78（写回期间外部原件变更保护）；完整前端候选仍未启用，总目标未完成。以下计划仅在用户明确恢复后执行，不自动接续。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 > 前轮05:10后的91项捕获包资格保留其历史源码窗口；3c现已有实现与新资格，不能再按旧checkpoint重做。不同测试组不相加成最终总数；当前分支实际HEAD/diff优先。
 
 ## 环境（2026-11-09 当前快照）
 
-- 当前实施树E:/0 - Project/Tavotto-svg-r00，沿用zixu.wang/svg-computational-r00；最新产品HEAD 50e3817f，8d42122c为本轮执行守卫提交，后续状态文档提交另计。原E:/0 - Project/Tavotto仍clean main@69bcafae、未合入。本轮两项功能已提交，按用户要求暂停；恢复时核实际HEAD/diff，不reset到文档SHA。
+- 当前实施树E:/0 - Project/Tavotto-svg-r00，沿用zixu.wang/svg-computational-r00；最新产品HEAD 71ee8c78，后续状态文档提交另计。原E:/0 - Project/Tavotto已重新核对仍clean main@69bcafae、未合入。本轮两项修复独立提交，按用户要求暂停；恢复时核实际HEAD/diff，不reset到文档SHA。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
 - 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
-- 本轮证据根 `E:/0 - Project/svg-review-20261108`，前轮历史根 `E:/0 - Project/svg-review-20261106`；已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
+- 最新证据根 `E:/0 - Project/svg-review-20261109-resumed`；此前 `svg-review-20261109`、`svg-review-20261108` 与 `svg-review-20261106` 保留各自历史资格窗口。已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
 - 当前安装资格索引n3d-stage-final.json对应0d86b357。N3e最新受影响及构建见n3e-final/；首红n3e-affected/first.*保留。时间线见n3e-import-cycle/implementation-validation.md，保存后恢复见n3e-saved-resume/validation.md，未知响应见n3e-network-recovery/validation.md。初次真实UI见n3e-ui/，2 PUT诊断见n3e-extra-put/diagnosis.md，目录反例/外部候选见n3e-directory-review/；N3f准备见n3f-mixed/qualification.md。各有独立源码窗口，不相加、不沿用旧构建冒称新修复资格。
 - 初次真实UI已归档160条网络事件到n3e-ui/output/playwright/49-status-network.json；root自有Playwright session n3e-svg-20261107已正常close、exit0（50-close-initial）。服务原exec25039经原认证shutdown终局exit0；launcher66892/runtime28916均不存在、24049无监听。停前1777源及11个实际HTTP bundle零漂移，见stop-bundle-verification.json、service-exit.json、stop-confirmed.json。源码冻结已解除，不再按旧live句柄续等或直接重启旧serve。
 - **第二轮已终局收尾**：root浏览器n3e-svg-second-20261107经review-09-close正常exit0；原服务持有者按已核身份STOP→认证shutdown→child.wait，exec28474与child终局均exit0。stop-confirmed.json于09:59:09+08:00实际核launcher41248/runtime75260均不存在、24059无监听，1779源/11bundle末核零漂移；冻结解除，没有自有live服务/浏览器待续。新pj=f82c498c8d5c、working=d_p1o8ydtc及中文目标/请求证据均保留；目标已存在，不能直接按旧serve前提重启，不重等已终局句柄。
@@ -49,10 +49,42 @@
 | P3本轮两项修复 | implemented_and_verified / P3仍partial | 4985938c、96cbbb33 | 位图原图SVG与缺失来源误报已关闭；正式回归及真实六图批次见最新checkpoint，PDF转换与完整矩阵仍待 |
 | P2基础及应用接纳 | app_opt_in_verified / frontend_deferred | 42382027、c09fc110、8d42122c、206d3cdf | 原resolver/真实receipt/同实例守卫接render/PNG/export及safe写回等；本轮17文件583pass/6skip，含28新增接口/消费者项；自动捕获与完整产品UI未启用/未验 |
 | P3图片边缘修复 | implemented_and_verified / PDF_conversion_pending | 50e3817f | PDF/SVG写出与SVG重读的重复边界裁剪已修；13实物例含于1075pass/68skip回归，普通PDF解析器未启用 |
-| P3内部PDF内容适配 | internal_adapter_verified / product_entry_pending | be766286 | 52专项含于36文件1320pass/68skip；受控普通PDF两路线零像素差；原有界child/facade/HTTP未接，字体/精度资格仍缺 |
+| P3内部PDF内容适配 | internal_adapter_verified / product_entry_pending | be766286、8129b8d6 | 原52专项含于36文件1320pass/68skip；本轮隐藏图层保护另有77项定向通过；原有界child/facade/HTTP未接，字体/精度资格仍缺，不算普通PDF→SVG产品完成 |
+| 原件并发写回保护 | implemented_and_verified / bounded | 71ee8c78 | 原两入口、PDF/同stem PNG、验证/备份两窗口8项反例；关联67pass/5skip及另15项兼容通过。最终检查到OS替换间仍非外部writer原子CAS |
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 第 3 节后续批次与完整 IMPLEMENTATION_PLAN |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-09 本轮两项修复完成，按用户最新要求暂停
+
+- 用户明确要求完成本轮修复、总结现有进展和待解决问题后暂时停止。本轮不实现新的 figure_execution 协议，不启用前端候选，不启动 P2b/P2c、PDF 产品接线或后续 UI；沿唯一实施树/原分支收尾，无新分支/worktree、无推送/PR/合并/发布。
+- **8129b8d6**：新 PDF 内部适配器原先忽略 Form/Image XObject 的 `/OC`，使默认隐藏的图层静默显露。两个真实 OFF 图层反例先红后绿；现在沿原 structured unsupported 拒绝尚未表示的语义，未假称实现 OCG。`pdf-review/REPORT.md` 对应 77pass/0skip/exit0；内存 AST 撤门使目标两项再次失败，生产源不变。原默认 writer/facade/HTTP 未改。
+- **71ee8c78**：prepare 冻结候选原件的内容 hash、纳秒 mtime 和长度；实际目标按原归属收窄后，在备份前和备份完成、首个替换前复核。验证或备份期间外部改写原 PDF/同stem PNG，即使长度和时间戳不变，两接口均409 `source_changed`，保外部新字节、其他原件和写回历史，清 staging，原几何/像素 verify、备份及回滚保留。
+- 写回正式联合资格 `writeback-toctou/regression-final.xml`：**67pass/0fail/5skip、实际exit0**，其中新8项已包含；涵盖原写回事务、真实409、hatch及选定 Python/Workerd 重放。5skip是4项 Windows目录fsync条件与1项 POSIX权限条件。旧实现8项全红；内存 AST 仅撤 `_check_write_back_sources` 后同8项全部200≠409、exit1，真实源码无漂移。源/命令/退出/反证见 `DELIVERY.md`、`freeze.json`、`argv.json`。
+- root补验 `writeback-toctou/root-source-compat.xml`：**15pass/0skip/0fail、实际exit0**，核另一图同名文件的归属收窄与 safe/Workerd 历史 Q 保存/写回等兼容。提交前 Ruff check/format 和 diff检查均0；app SHA `1c8c5fd0465c7390aa8b48346c36eb0f0ad2696e4143dbae41b581cfee75a897`、新测试 SHA `9d1ba1b509bbacff73f6b41751774176264f86abd719b43c822c7fd4e2002647` 与正式资格一致。不把不同窗口测试数量相加成全仓绿。
+- **结论边界**：本轮未跑全仓套件、正常认证产品 UI 或 macOS/安装物矩阵；前轮583/1320及前端候选资格只保各自窗口。写回最终检查与 OS replace 之间仍有任意外部程序写入窗口，本修复不宣称原子 CAS；保留为后续并发协议问题。
+- **待解决优先项**：候选需区分普通输出快照与显式历史来源，修首次 P 的同次执行证明、冷开/明确运行采用新来源、script=null入口及历史来源自身的 baked/profile 判据；完整前端仍未启用。P2b INPUT 冷恢复、P2c 真迁移、普通 PDF→SVG 有界 child/facade/HTTP 与字体/文本精度、N5裁切/N4图例及 M1/M2/M3最终回归和平台资格继续待办，见 NEXT_PHASE。
+- **纠正继续保留**：真实 native producer没有磁盘原件绑定，普通磁盘 FileAsset固定safe；不再以不可达的 native磁盘写回作为既有回归。六文件未联验草稿已保 OUT并恢复，未提交。`p2-live-render-proof-design/REVIEW.md` 仅是只读设计提案，尚未实施或行为验证。
+- 原main再次核clean@69bcafae。三名既有代理均已完成并确认无源码WIP、自有live进程或句柄；已交付测试/草稿与证据保留。本轮没有新常驻服务、浏览器或调度器，root各测试命令均已终局。文档引用/规则索引41pass/0skip/exit0（`pause-docs.xml`），agents_budget --check实际exit0、原有OVER提示保留，diff --check实际0。当前按用户要求暂停，不启动下一批。
+- 停前只读身份审计 `pause-final-audit.json` 实际exit0：当前app/新测试SHA匹配正式资格、四份XML数量一致、两功能提交在当前分支、无产品diff/未跟踪WIP、原main干净。该审计核证据与身份，不冒重新执行产品测试；文档以独立提交收尾。
+
+### 2026-11-09 真实执行事实纠正：不扩不可达能力，修实际原件竞争（进行中）
+
+- **纠正此前native磁盘写回回归推断**：真实native fixture及三独立源码链核验一致，bridge的descriptors(project_root=None)使original_artifact=None/artifacts为空/can_writeback_artifact=False。当前合法native来源是runtime（可以有runtime归档PDF/SVG），不是可写回F.pdf原件；runtime UI/后端原已禁止写回。磁盘FileAsset原解析器固定safe，实际保存生成safe/python_pool receipt。因此“已有普通native磁盘origin写回被新守卫禁用”没有真实producer，不能仅凭手构descriptor或路由条件称回归。前轮和本轮早期的相应推断以此纠正，保原记录作为历史而非继续执行依据。
+- root新native磁盘测试在准备阶段无archive，补静态SHA仍无；证据在native-archive-review。这个未证能力测试完整移OUT，不作为现有功能验收。尚未联验的native verifier/producer六文件WIP已完整保仓库外并精确恢复HEAD，未提交、未授新协议资格；不为虚构原件身份扩大执行/敏感数据协议。
+- **确认可达的候选前端问题**：真实safe磁盘保存得到fullref，同活请求200；冷开后旧origin409且不执行，而旧无origin正常render200并执行。候选会从snapshot-only普通面板无条件派生origin；已固化origin在显式执行后原失效逻辑还保旧来源。候选仍不启用，正在区分显式历史来源与普通输出ref，复用原明确运行/来源采用事务，保冷开与历史意图。script=null入口和当前baked/profile误判也保真实反证，不能冒已修。
+- **确认现有生产写回数据风险**：prepare后、verify期间外部改原PDF或同stem PNG，即使字节长度和mtime_ns完全不变，旧事务仍200并覆盖外部新字节。OUT两项合法PDF/PNG staging反例实际2fail/exit1，原备份含外部版；不是伪格式或科学差异。root修原事务冻结/commit前复核，执行代理补八项源/载体/入口/时刻反例，保清理和原回滚。外部程序最终check→replace的原子性没有由项目锁自动证明，不扩大结论。
+- **已交付**8129b8d6：PDF新叶子明确拒绝未表示的XObject /OC，77项定向通过，两个真实OFF图层反例与AST撤门首红保留；无默认writer/前端/导出入口扩展。此为实际正确性修复，和未验WIP严格区分。
+- 当前证据根E:/0 - Project/svg-review-20261109-resumed；源恢复/未验草稿保native-verifier、native-facts目录，写回真实反例保writeback-toctou，候选来源对照保native-archive-review/frontend-review。目标active，继续真实稳定性工作，不标完成或暂停。
+
+### 2026-11-09 更新目标后恢复（早期推断见上条纠正）
+
+- 自动续行后先核actual goal，状态已由外部恢复为active；随后用户编辑目标为开源稳定/不回归、多代理、唯一分支/功能commit。沿原树/分支，从clean f46e871e继续；不新建分支/worktree，不推送/合并/发布。前轮为实际进展，不把暂停误当完整目标完成。
+- 独立PDF定向审查取得Form/Image OFF OCG真实反例：原PDF默认白页，旧新叶子却成功画红块（115200 channel不同）。已在原Do准入补未表示 /OC 的structured unsupported；不是实现OCG规则。2项先红后绿，整pdfcontent/model/retirement三文件77pass/0skip/exit0，AST撤门使原两项准确红；5行生产改动与2测试独立功能提交，源码/证据见本轮resumed/pdf-review。未改变默认writer/facade/产品入口。
+- native写回继续实现原one_shot隔离候选：执行代理负责pool/execspec/worker及必要Workerd精确env控制，PDF代理转原bridge/nativesession的实际私有事实producer，root负责app事务及真实接口测试。字段必须来自真实启动/compile/input，不用当前文件SHA冒compile事实、不猜argv/env/答案；不存getpass口令、不改变receipt公开投影/日志/遥测边界。未知输入据实保留，通用terminal/交互资格未取得不能冒完成。
+- 前端代理只读反证另发现script=null有效origin入口被挡、当前同名素材的baked/profile错误决定历史来源资格；4对照通过/5目标失败，候选/生产源均未改。等native正例资格后才原子应用候选并修入口，避免重开已知普通native写回回归。
+- root真实native磁盘写回首例先在准备阶段发现磁盘F.pdf checked archive缺失，尚未到新的verify路径；单项首红保留，正在诊断真实来源，不伪造归档。未据此宣称native写回或完整历史编辑通过。
+- 本轮证据根E:/0 - Project/svg-review-20261109-resumed；当前3代理按独立所有权并行，尚无本轮完整资格或新产品UI。上一轮583/1320等只保留原窗口，不混为本轮新验证。
 
 ### 2026-11-09 本轮安全收口、分功能提交并按用户要求暂停
 

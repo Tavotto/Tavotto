@@ -1,28 +1,37 @@
 # SVG 计算图表编辑：当前效果与下一阶段安排
 
-> 当前状态：2026-11-09，按用户最新要求完成本轮收口后暂停，不自动接续。沿现有实施树E:/0 - Project/Tavotto-svg-r00、分支zixu.wang/svg-computational-r00，起点d745e6cb；最新提交与最终检查见PROGRESS。完整功能尚未达到PR验收标准。
+> 当前状态：2026-11-09本轮修复完成，按用户最新要求暂停。最新产品提交71ee8c78，沿原唯一树/分支；全部计划只在用户明确恢复后执行。完整前端未启用、最终功能未验收，不宣称可发布。
 > [PROGRESS.md](PROGRESS.md)保留日期证据，[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)维护SG00–17完整范围，[NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)仅供明确恢复后复制使用。
 
 ## 1. 当前判断
 
 方向仍是计算图表编辑：沿用轴模型、显式数据绑定与可信 Python/Figure 来源；普通 SVG 本身没有的科学语义不从图形位置猜出。已有声明式计算编辑、保存/版本、静态 SVG 矢量合成、普通位图 SVG 及精确来源检查继续保留，其既有资格窗口见 PROGRESS。
 
-本轮交付分成两项独立基础能力：应用层按完整历史引用、基准 P 和真实 live receipt 接纳 render/PNG/export 等请求；PDF 原内容流到现有 IR 的内部适配。前者只允许已存在的执行实例，旧无 origin 请求保持原路径；后者尚未接入 facade/HTTP，不能据此宣称普通 PDF 已可导出 SVG。
+此前已提交两项独立基础能力：应用层按完整历史引用、基准 P 和真实 live receipt 接纳 render/PNG/export 等请求；PDF 原内容流到现有 IR 的内部适配。前者只允许已存在的执行实例，旧无 origin 请求保持原路径；后者尚未接入 facade/HTTP，不能据此宣称普通 PDF 已可导出 SVG。本轮另提交8129b8d6的隐藏图层保护和71ee8c78的外部原件并发保护。
 
-**前端自动来源接线延期启用。** 完整候选在受影响测试中通过，但收尾复核确认：snapshot-only 的普通 native 磁盘图也会自动发送 origin，随后撞上尚未完成的 native 写回验证。这会损失原有能力。本轮保留完整候选和失败/通过记录，恢复已提交前端；不能用置灰按钮、仅 native 特例或跳过写回 verify 结束该问题。
+**前端自动来源接线仍延期启用，但前轮native原件回归的理由已被真实证据纠正。** 当前native描述符没有磁盘原件绑定，磁盘写回实际固定safe；合法runtime native原本就无原件可写回，不为此扩新协议。真实候选缺口是snapshot-only普通safe面板冷开被无条件当历史来源、显式运行后已固化旧origin未正式采用新来源，以及script=null和当前元信息误判。先修这些可达问题，再启用候选。
+
+写回验证和备份期间外部更改被覆盖已修：冻结候选目标身份/内容，在最终目标收窄后、备份前和首替换前复核，失败409保外部新字节并清staging。关联67pass/5skip，另15项来源/归属兼容通过；最终检查与替换之间仍非针对外部程序的原子CAS，后续并发协议需单独处理。
 
 | 范围 | 当前进展 | 仍需完成 |
 | --- | --- | --- |
-| 历史执行基础 | 既有 render/export/PNG execution-id 守卫；本轮 app 复用原 resolver、ledger、实际 receipt 和同一 worker，真实 safe/Workerd/native HTTP 21 项通过 | 自动捕获与所有前端消费者须和 native 写回验证原子启用；正常认证产品 UI 尚未复验 |
-| 其他历史消费者 | specfix、history、sync 与 safe 磁盘写回接入同一接纳结构；本轮补 Q 保存及写回、公开 RenderPlan 身份验证 | 旧无 owner 引用、完整错误/迟到及平台矩阵仍需最终资格；native origin 写回目前拒绝，不能标完成 |
+| 历史执行基础 | 既有 render/export/PNG execution-id 守卫；app 复用原 resolver、ledger、实际 receipt 和同一 worker，原窗口真实 safe/Workerd/native HTTP 21 项通过 | 自动捕获与所有前端消费者须基于同次执行正证及明确来源采用接通；正常认证产品 UI 尚未复验，不扩native磁盘写回 |
+| 其他历史消费者 | specfix、history、sync 与 safe 磁盘写回接入同一接纳结构；Q 保存/写回及公开 RenderPlan 身份已有验证；本轮补外部原件并发保护 | 旧无 owner 引用、完整错误/迟到及平台矩阵仍需最终资格；最终check→replace外部writer原子性待结构性方案 |
 | 前端候选 | 来源键、回包身份、临时 PNG、导出、版本/undo、记录来源与确认归属均有候选和专项证据 | 候选不是生产启用状态；恢复时审阅最终归档，不重复套早期 WIP |
-| PDF 内部适配 | 原内容流/CTM/clip/CID 字形/透明组/图像及预算；受控 approved-font ordinary 实物两条往返零像素差 | 原 RenderHost 有界 child/facade/导出入口未接；通用字体、连续文本隐式起点精度及复杂资源未全面保真 |
+| PDF 内部适配 | 原内容流/CTM/clip/CID 字形/透明组/图像及预算；受控 approved-font ordinary 实物两条往返零像素差；本轮XObject /OC不再静默漏语义 | 原 RenderHost 有界 child/facade/导出入口未接；OCG未实现而是明确unsupported，通用字体、连续文本隐式起点精度及复杂资源未全面保真 |
 | 冷恢复与迁移 | 被动 origin 持久化、INPUT 包闭包与迁移基础已提交 | P2b 明确授权后原 Preparation 冷重建、P2c 真删源/新父进程迁移未完成 |
 | 视觉与最终验收 | 既有图片重复 clip 修复、位图 SVG、普通 SVG 矢量合成保留 | N5 刻度/标题裁切、N4 图例、复杂 SVG/图族、全部入口、M1/M2/M3 与平台安装物未验收 |
 
 ## 2. 证据与暂停现场
 
-本轮证据根 **E:/0 - Project/svg-review-20261109**：
+最新证据根 **E:/0 - Project/svg-review-20261109-resumed**：
+
+- `writeback-toctou/DELIVERY.md`、`freeze.json`、`regression-final.xml`：71ee8c78对应67pass/5skip、旧实现8项首红与AST撤门8项反证；`root-source-compat.xml`为另15项来源/归属兼容。app及测试SHA与提交前资格一致，未跑全仓。
+- `pdf-review/REPORT.md`：8129b8d6对应77项定向通过，两个真实OFF图层反例与AST反证。新内部叶子尚无产品入口。
+- `native-archive-review/`、`native-facts/`、`native-verifier/`：真实producer纠正、未联验草稿归档及六文件恢复证明；草稿不得直接套回。
+- `frontend-review/REVIEW.md`：候选可达缺口；`p2-live-render-proof-design/REVIEW.md`是未实施、未行为验证的同次执行正证提案，不能当已有API使用。
+
+此前证据根 **E:/0 - Project/svg-review-20261109** 保留以下独立源码窗口：
 
 - `p2-app-backend-tests/DELIVERY.md`：真实三控制面 21 项、完整引用反证及首红；`native-writeback-third-path.md` 是独立验证器的 OUT 实验，未实现产品接线。
 - `root-qualification/`：应用消费者补充、既有导出/写回/specfix 回归、最终构建与文档门禁；具体结果、退出码和冻结窗口见各 XML/JSON，不能把重叠测试相加为全仓资格。
@@ -45,16 +54,17 @@
 
 **退出**：正负来源/报告一致，所有要求格式格有实现或明确未完成记录，保原编辑/文件/事务。已提交a4ffd5f3/1def88dc/1b7c5006/2c4d5aaa/4985938c/96cbbb33不要重套候选或重做；新增修复各自commit，不以局部绿宣布P3/总目标完成。
 
-### 批次 2：P2a 历史来源和同次热编辑
+### 批次 2：P2a 来源接线与既有普通编辑不回归
 
-先完成 native 磁盘图写回验证，再恢复前端完整候选。当前 app 接纳与底层守卫已在原 resolver/ledger/receipt 上实现，不另建 worker 路由或执行许可表。归档 origin 是完整 ref+原序 P，当前 overrides 是全量 Q；有效的只读归档不自动授予执行权限。
+不实施前轮误推断的native磁盘原件写回：真实producer没有这样的描述符绑定；普通磁盘身份固定safe，runtime native原已禁止写回。原有native热编辑/预览/导出守卫保留。
 
-- 先重现“普通 native 磁盘图已有 snapshot→编辑/保存→写回”的回归；native 热态仍是权威，任何失败须保持原件零变化。不能撤掉 origin、借当前同名 safe 会话、放宽像素门或隐藏按钮解决。
-- 第三路径 OUT 单例表明：原 `pool.one_shot` 可以只作独立候选验证器；native Q 的同次 manifest/PNG 必须强制经过原几何和像素两门，不能落入 `fresh_only`。原 native route/receipt 不授给候选。产品仍需冻结实际 interpreter、argv、cwd、env、输入回答和源修订；当前 one_shot 不具通用显式 cwd/env 接口，未知值不可猜空。一般 native 重新执行可能在 verify 前写原件，原 preparation runner 又会取消/替换热态，均不能直接拿来用。
-- 完成验证结构和真实安全反例后，再审阅 `p2-app-frontend/pause-closeout/` 最终 41 路径候选。自动捕获、renderKey/队列/latest/recent/exact/mounted、PNG/导出、specfix/写回、版本与 sync 必须一起接通；保正常无 origin 的 Python/旧项目行为。
-- 补正常认证 HTTP/UI、无 owner 旧引用、首改后 Q 保存/重开/包闭包、错项目/receipt/P/eid/epoch 和迟到反例。明确运行之外，冷来源不得隐式 build/respawn/fallback。
+- **已完成，不重做**：71ee8c78修原写回事务验证/备份期间原件竞争，两个入口/两载体/两窗口8项反例及关联67pass/5skip、另15项兼容通过。不放宽重放两门；剩余最终检查到替换的外部writer窗口单独审结构。
+- 前端区分显式figureOrigin历史意图与snapshot-only普通输出，不能凭归档可读就推导live执行权限。首次P捕获与实际渲染/正式采用绑定，保普通Python冷开原流程；显式历史来源不得悄悄改用当前同名脚本。
+- 同次执行正证先冻结合同和反例：仅可选投影实际本次render的eid、已核receipt/owner/P；缺证据省略正证，保原normal render冷构建、Workerd透明重开、native普通渲染的成败与默认响应。当前receipt不能补签旧响应，撤销事实不能作正向执行权限。现有只读设计尚未实现，不据此直接接前端。
+- 复用原明确运行、来源重连/采用和文档事务更新新receipt/P；不能仅清输出ref却留下无法再次使用的旧origin。补真实safe冷开/明确运行对照，旧源/迟到结果不入exact。
+- 审阅最终41路径候选后一次应用并修script=null入口、来源自己的baked/profile资格；候选测试/构建通过只覆盖对应源码窗口。正常认证UI和全部受影响消费者仍须最终验证。
 
-**退出**：真实 safe/Workerd/native 热改与 undo 零重跑；native 原有磁盘写回不回归，失败409原件零变化；恢复后的全部前端消费者和正式/派生构建、真实 UI 同一源码窗口通过。前端候选和 OUT 单例不能关闭 P2a。
+**退出**：普通Python现有冷开、运行、写回/历史恢复保持；历史来源选择明确且同次渲染一致，错误/迟到不借来源；正式/派生构建和真实UI通过。不能以不可达的native原件身份制造新能力或新验收项。
 
 ### 批次 3：P2b 复用原 Preparation 的 INPUT 冷恢复
 
@@ -93,7 +103,7 @@ N4 复用 legendmodel 的 entry→series/custom 绑定，覆盖同名同色、�
 
 ## 4. 无人值守接续规则
 
-当前已按用户最新要求暂停；以下仅在用户明确恢复后执行。未创建常驻调度器。
+当前已按用户要求暂停；以下仅适用于用户明确恢复后的活跃会话，优先正确性与回归，不创建常驻调度器。读取本文不触发继续执行。
 
 1. 沿当前唯一树/分支，不新建或切分支/worktree；保改动和首红，不 reset/stash/git add .，不 push/PR/合并/发布。按功能定向 commit，状态文档另交。
 2. 每批：规则/实际状态→最小实现→必要反证→受影响验证→退出码/源SHA/实物→定向提交→日期checkpoint→下一批。先前绿组源未变不重跑，最终冻结后才做完整链。
