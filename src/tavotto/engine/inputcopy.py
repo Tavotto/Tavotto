@@ -126,6 +126,9 @@ def offer(root: str | os.PathLike, requested: str) -> dict | None:
     if not is_native_absolute(requested):
         return None
     source = figcapture.remap_target(_rules(root), requested)
+    source = (
+        os.path.normpath(source) if source else source
+    )  # 规则里的 `to` 可能是正斜杠写法（Windows）
     if not source or not is_native_absolute(source) or not os.path.exists(source):
         return None
     directory = os.path.dirname(requested)
