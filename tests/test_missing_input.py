@@ -800,8 +800,8 @@ def test_folder_probes_list_the_linked_folder_under_the_scripts_own_paths(remapp
     ]
     walked = {root: sorted(files) for root, _dirs, files in os.walk(str(old))}
     assert walked == {str(old): ["a.csv", "b.csv"], str(old / "sub"): ["c.csv"]}
-    # `Path.iterdir`（3.13 起取 `DirEntry.path`）给的是数据实际所在的路径：读起来是同一份
     assert sorted(p.name for p in old.iterdir()) == ["a.csv", "b.csv", "sub"]
+    assert all(p.parent == old for p in old.iterdir())
     assert sorted(p.read_text() for p in old.iterdir() if p.suffix == ".csv") == ["1", "2"]
     assert sorted(str(p) for p in old.glob("*.csv")) == [str(old / "a.csv"), str(old / "b.csv")]
     assert sorted(str(p) for p in old.rglob("*.csv"))[-1] == str(old / "sub" / "c.csv")

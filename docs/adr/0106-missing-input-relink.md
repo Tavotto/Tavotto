@@ -243,7 +243,7 @@ AI 修复成功率的也一并加上。
    `isdir` 要文件夹）就答 True；`os.stat|lstat|listdir|scandir` 在原路径抛 `FileNotFoundError` 后对目标再调一次；
    `Path.glob|rglob`（3.13 起绑的是 import 时的 `os.scandir`）在目标文件夹里 glob、结果换回脚本写的前缀。`getsize` /
    `getmtime` / `Path.stat` / `os.walk` / 模块 `glob` 都经这几层。列目录给的是名字，`glob` / `os.walk` 拼回去的仍是脚本写
-   的路径，随后的读经改指表（`Path.iterdir` 在 3.13 起取 `DirEntry.path`，给的是数据实际所在的路径，读到的是同一份）。
+   的路径，随后的读经改指表（`Path.iterdir` 与 `Path.stat` 另包一层：3.10 / 3.11 经 `_accessor` 调 import 时绑的 `os.*`）。
    原路径在时返回值原样、零额外开销；查表本身的 realpath / stat 线程内重入直接走原函数。**C++ 读取器（ovito
    `import_file`、h5py / netCDF 的原生打开）仍不查表**，出口照旧是 ADR 0110 的经确认改写。
 2. **静态一侧同口径**：`static_missing` 里探路 / glob 问的常量按 `open` 算（`probe_kind` 仍说要的是不是文件夹——

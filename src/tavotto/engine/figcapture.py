@@ -6125,6 +6125,8 @@ def install_input_remap(
     real_p_exists, real_p_is_file = pathlib.Path.exists, pathlib.Path.is_file
     real_p_is_dir = pathlib.Path.is_dir
     real_p_glob, real_p_rglob = pathlib.Path.glob, pathlib.Path.rglob
+    real_p_stat, real_p_lstat = pathlib.Path.stat, pathlib.Path.lstat
+    real_p_iterdir = pathlib.Path.iterdir
     real_open = builtins.open
     real_io_open = io.open
     real_path_open = pathlib.Path.open
@@ -6375,6 +6377,36 @@ def install_input_remap(
 
         return globbed
 
+    def _path_stat(real):
+        """`Path.stat` / `lstat`：3.10 / 3.11 经 `_accessor` 调 import 时绑的 `os.stat`，上面的 `os.stat` 管不到。"""
+
+        def stat(self, *args, **kwargs):
+            try:
+                return real(self, *args, **kwargs)
+            except FileNotFoundError:
+                if _reentrant():
+                    raise
+                target = _probe_target(self, PROBE_WANT_ANY)
+                if target is None:
+                    _note_probe(self, PROBE_ANY_KIND)
+                    raise
+            return real(pathlib.Path(target), *args, **kwargs)
+
+        return stat
+
+    def path_iterdir(self):
+        """`Path.iterdir`：原文件夹不在、规则指向的文件夹在时列那里，给回 `self / 名字`——与 `os.listdir` /
+        `glob` 一样是脚本写的前缀（3.10 经 `_accessor`、3.13 起取 `DirEntry.path`，两样都不经上面那层）。"""
+        if rules and not _reentrant():
+            with _Busy():
+                present = real_p_exists(self)
+            target = None if present else _probe_target(self, PROBE_WANT_DIR)
+            if target is not None:
+                return (self / name for name in real_listdir(target))
+            if not present:
+                _note_probe(self, PROBE_DIR_KIND)
+        return real_p_iterdir(self)
+
     os.path.exists = _bool_probe(real_exists, PROBE_WANT_ANY, PROBE_ANY_KIND)
     os.path.lexists = _bool_probe(real_lexists, PROBE_WANT_ANY, PROBE_ANY_KIND)
     os.path.isfile = _bool_probe(real_isfile, PROBE_WANT_FILE, PROBE_ANY_KIND)
@@ -6387,6 +6419,8 @@ def install_input_remap(
     pathlib.Path.is_file = _path_probe(real_p_is_file, PROBE_WANT_FILE, PROBE_ANY_KIND)
     pathlib.Path.is_dir = _path_probe(real_p_is_dir, PROBE_WANT_DIR, PROBE_DIR_KIND)
     pathlib.Path.glob, pathlib.Path.rglob = _path_glob(real_p_glob), _path_glob(real_p_rglob)
+    pathlib.Path.stat, pathlib.Path.lstat = _path_stat(real_p_stat), _path_stat(real_p_lstat)
+    pathlib.Path.iterdir = path_iterdir
 
     def uninstall() -> None:
         builtins.open = real_open
@@ -6405,6 +6439,8 @@ def install_input_remap(
         pathlib.Path.exists, pathlib.Path.is_file = real_p_exists, real_p_is_file
         pathlib.Path.is_dir = real_p_is_dir
         pathlib.Path.glob, pathlib.Path.rglob = real_p_glob, real_p_rglob
+        pathlib.Path.stat, pathlib.Path.lstat = real_p_stat, real_p_lstat
+        pathlib.Path.iterdir = real_p_iterdir
 
     return uninstall
 
