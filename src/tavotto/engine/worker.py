@@ -1675,6 +1675,26 @@ class Worker(wireproto.V1Handler):
         self.execution_id = executionfact.new_id()
         executionfact.write(self.out_dir, self._execution_watch, self.execution_id)
 
+    def _overlay_wanted(self) -> bool:
+        """本次运行要不要装暂存覆盖层：常规运行（无授权根）与 MCP 授权根运行都装；校验运行的改道层 / 写回的隔离重放
+        各自有自己的写改道，不叠加。运维开关 `TAVOTTO_SAFE_OVERLAY=0`（同 `TAVOTTO_EXECUTION_FALLBACK` 的写法）整个关掉覆盖层，
+        回到守卫「跳过 + 记账」的老行为（现场出问题时的退路，也是守卫 / 账本老用例的前提）。"""
+        if os.environ.get("TAVOTTO_SAFE_OVERLAY", "").strip().lower() in (
+            "0",
+            "false",
+            "off",
+            "no",
+        ):
+            return False
+        if self.write_roots is None:
+            return True
+        try:
+            _, isolation = writetripwire.split_isolation(self.write_roots)
+            _, redirect = writetripwire.split_roots(self.write_roots)
+        except ValueError:
+            return False
+        return isolation is None and redirect is None
+
     def _install_write_tripwire(self) -> None:
         """装写入根绊线（#898）：白名单 = 命令行给的授权根 + 引擎自己的会话目录 + 基础设施目录。
 
@@ -1906,6 +1926,23 @@ class Worker(wireproto.V1Handler):
         ledger.install()
         if self.write_roots is not None:
             self._install_write_tripwire()
+        # 暂存覆盖层（#1813）：装在账本与绊线之后（最外层）——先把脚本对项目内文件的写 / 改名 / 删除与读回换进本次运行的
+        # 暂存区，账本看到的才不是项目里那条路径。覆盖层接不了的操作仍落到上面的守卫（跳过并记账）。
+        overlay_dir = self.out_dir.parent / "overlay"
+        use_overlay = self._overlay_wanted()
+        if use_overlay:
+
+            def _overlay_handled(op, kind, paths, dests):
+                print(f"[overlay] 暂存层接住 {op}: {paths[0] if paths else ''}", file=sys.stderr)
+                ledger.blocked(op, kind, *paths, dests=dests, overlay=True)
+
+            writetripwire.install_overlay(
+                str(self.figures_dir),
+                str(overlay_dir),
+                on_handled=_overlay_handled,
+                suspended=lambda: ledger._busy,
+            )
+            ledger.quiet_if = writetripwire.in_internal
 
         # 拦截必须发生在 import 脚本之前（多数脚本 from paper_style import save）
         mfigure.Figure.savefig = _patched_savefig
@@ -1995,6 +2032,8 @@ class Worker(wireproto.V1Handler):
             _record_write_attempts(True)
             if self.write_roots is not None:
                 writetripwire.arm(True)
+            if use_overlay:
+                writetripwire.arm_overlay(True)
             try:
                 # paper_style 是某些图库的私有方言，不是引擎的依赖：没有就跳过，
                 # 靠 _patched_savefig 这条通用兜底捕获。曾经这里是无保护的 import，
@@ -2098,6 +2137,10 @@ class Worker(wireproto.V1Handler):
                 else:
                     # 恰好一次加载才可信；零次（入口模块此前已在 sys.modules，如被 paper_style 提前 import）或多次 → None
                     self._source_sha256 = entry_shas[0] if len(entry_shas) == 1 else None
+                if use_overlay:
+                    # 覆盖层只活在脚本运行期间：之后引擎自己的读写看到的是真实的项目；暂存区丢弃
+                    writetripwire.arm_overlay(False)
+                    writetripwire.discard_overlay(str(overlay_dir))
                 if self.write_roots is not None:
                     writetripwire.arm(False)
                     # 脚本 `except PermissionError` 吞掉、或以别的错误收场，事实都在：越界的写**尝试**发生过，

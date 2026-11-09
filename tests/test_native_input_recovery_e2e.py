@@ -30,6 +30,7 @@ def test_a_reviewed_static_path_edit_can_recover_the_two_attempt_sequence(tmp_pa
         "tmp.write_text('2')\n"
         "os.replace(tmp, final)\n"
         "value = int(final.read_text())\n"
+        "os.stat(final)\n"  # 暂存覆盖层（#1813）够不着 stat：safe 仍 safe_file_operation_blocked
         "plt.plot([0, data], [0, value])\n"
     )
     script = root / "fig.py"

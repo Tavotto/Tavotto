@@ -4760,6 +4760,8 @@ class BlockedFileOps:
         self._rewritten: set[str] = set()
         #: 只读相对路径回退的解析函数（worker 装回退后挂上）：脚本交出的路径 → 回退实际会去读的路径。
         self.read_redirect = None
+        #: 暂存覆盖层（`writetripwire.install_overlay`）自己探测项目文件时为真：那不是脚本的观察，不记账（#1813）。
+        self.quiet_if = None
         #: 弱信号计数 {(kind, via): n}；拦下的操作计数 {(op, kind): n}（含没被回读的，只存次数）
         self._signals: dict[tuple[str, str], int] = {}
         self._counts: dict[tuple[str, str], int] = {}
@@ -4774,6 +4776,12 @@ class BlockedFileOps:
     @_busy.setter
     def _busy(self, value: bool) -> None:
         self._tls.busy = value
+
+    @property
+    def _muted(self) -> bool:
+        """正在进行的探测不是脚本的观察：账本自己在记账（`_busy`），或暂存覆盖层自己在探测项目里的文件（`quiet_if`）。"""
+        quiet = self.quiet_if
+        return self._busy or (quiet is not None and bool(quiet()))
 
     @property
     def _check_depth(self) -> int:
@@ -4829,10 +4837,14 @@ class BlockedFileOps:
             self._busy = was
         self.blocked("savefig", self.KIND_SAVEFIG, *names)
 
-    def blocked(self, op: str, kind: str, *paths, dests=()) -> None:
+    def blocked(self, op: str, kind: str, *paths, dests=(), overlay: bool = False) -> None:
         """守卫拦下了 `op`（`os.replace` / `Path.unlink` / `savefig`…）：记它影响的路径。永不抛。
 
-        `dests`：`paths` 里属于改名 / 移动**目的**的那几条（直接运行后它们存在、不是被移走的）。"""
+        `dests`：`paths` 里属于改名 / 移动**目的**的那几条（直接运行后它们存在、不是被移走的）。
+        `overlay`：这次操作被暂存覆盖层接住了（没有落到项目里，但覆盖层里读回的是一致的视图，#1813）：
+        覆盖层看得到的读（open / `exists` / `Path.read_*`）在到达账本之前就已经换成覆盖层里的路径，不会命中它；
+        覆盖层够不着的观察（`os.stat` / `listdir` / `scandir`…）照旧命中。它造成的「文件不存在」是脚本真实会遇到的，
+        不是守卫造成的（`explains` 不认）。"""
         try:
             if not self._active:
                 return
@@ -4841,7 +4853,7 @@ class BlockedFileOps:
                 return
             key = (op, kind)
             self._counts[key] = min(self._counts.get(key, 0) + 1, self.MAX_COUNT)
-            if kind == self.KIND_RENAME and self._savefig_covers(affected[0]):
+            if kind == self.KIND_RENAME and not overlay and self._savefig_covers(affected[0]):
                 # 直接运行时这次改名必然成功（源刚被 savefig 写出）；这里被守卫静默跳过，目的地永远不会出现
                 self._signal(kind, self.VIA_RENAME_SRC)
             dest_set = {p for p in (self._norm(x) for x in dests) if p}
@@ -4853,7 +4865,14 @@ class BlockedFileOps:
                 self._spill_paths(op, kind, affected, dest_set)
                 return
             self._events.append(
-                {"op": op, "kind": kind, "paths": affected, "dests": dest_set, "observed": False}
+                {
+                    "op": op,
+                    "kind": kind,
+                    "paths": affected,
+                    "dests": dest_set,
+                    "observed": False,
+                    **({"overlay": True} if overlay else {}),
+                }
             )
         except Exception:  # noqa: BLE001 —— 记账失败就少一条，不影响脚本
             return
@@ -4922,7 +4941,7 @@ class BlockedFileOps:
 
     def observe(self, path, mode="r") -> None:
         """脚本打开了 `path`（`mode` 是 `open` 的模式串）。永不抛。"""
-        if not (self._events or self._spill) or not self._active or self._busy:
+        if not (self._events or self._spill) or not self._active or self._muted:
             return
         self._busy = True
         try:
@@ -4955,7 +4974,7 @@ class BlockedFileOps:
     def opened(self, path, mode) -> None:
         """写模式（`w` / `x`）的底层 open **成功返回**了：脚本自己重写了这条路径，此后读到的是它写的
         （与直接运行一致），清掉它的嫌疑。open 抛异常（如被拦删除后 `x` 撞上还在的旧文件）时不调用，记录保留。永不抛。"""
-        if not (self._events or self._spill) or not self._active or self._busy:
+        if not (self._events or self._spill) or not self._active or self._muted:
             return
         self._busy = True
         try:
@@ -5015,7 +5034,7 @@ class BlockedFileOps:
         与脚本写成功的后代——里面没被重写的文件仍受污点覆盖。
         `path` 是被删目录**之内**的子目录时：`parents`（`makedirs` / `mkdir(parents=True)`）会连父目录一起重建；
         否则直接运行里父目录不在、会 FileNotFoundError，这里的成功是分叉，记为观察。永不抛。"""
-        if not (self._events or self._spill) or not self._active or self._busy:
+        if not (self._events or self._spill) or not self._active or self._muted:
             return
         self._busy = True
         try:
@@ -5050,7 +5069,7 @@ class BlockedFileOps:
         结果（异常、随后读到的旧文件）与直接运行不同，本身就是一次观察，不必等它回读。
         写入（直跑后同样存在）、改名移动的**目的**、被拦截的 savefig 目标（直跑后也存在）不走这条捷径：
         `x` 在两边都会失败。永不抛。"""
-        if not (self._events or self._spill) or not self._active or self._busy:
+        if not (self._events or self._spill) or not self._active or self._muted:
             return
         self._busy = True
         try:
@@ -5100,7 +5119,7 @@ class BlockedFileOps:
 
     def observe_stat(self, path) -> None:
         """脚本查了 `path` 的状态（`exists` / `isfile` / `stat`）。永不抛。"""
-        if not (self._events or self._spill) or not self._active or self._busy:
+        if not (self._events or self._spill) or not self._active or self._muted:
             return
         self._busy = True
         try:
@@ -5139,7 +5158,7 @@ class BlockedFileOps:
     # ---- 弱信号 / 异常归因（V2 PR3a） ----
     def observe_listing(self, path) -> None:
         """脚本列了目录 `path`（`listdir` / `scandir`）。目录里有受影响路径时，条目数与直接运行不同：弱信号。永不抛。"""
-        if not (self._events or self._spill) or not self._active or self._busy:
+        if not (self._events or self._spill) or not self._active or self._muted:
             return
         self._busy = True
         try:
@@ -5189,7 +5208,7 @@ class BlockedFileOps:
         reals = [real]
         hits = []
         for ev in (*self._events, *self._spill.values()):
-            if ev["kind"] not in (self.KIND_SAVEFIG, self.KIND_RENAME):
+            if ev["kind"] not in (self.KIND_SAVEFIG, self.KIND_RENAME) or ev.get("overlay"):
                 continue
             if isinstance(ev["paths"], list):
                 if any(self._covers(p, r) for p in ev["paths"] for r in reals):
@@ -5211,7 +5230,7 @@ class BlockedFileOps:
     def note_failed_call(self, exc: BaseException, via: str) -> None:
         """某个被包装的调用（stat / `os.open` / 守卫放行的改名删除）抛了文件不存在，且指向受影响路径：弱信号
         （脚本可能 `except OSError` 吞掉）。异常若一路到达终局，`explains` 再升级。永不抛。"""
-        if not (self._events or self._spill) or not self._active or self._busy:
+        if not (self._events or self._spill) or not self._active or self._muted:
             return
         self._busy = True
         try:
@@ -5235,7 +5254,7 @@ class BlockedFileOps:
 
     def note_missing_stat(self, exc: BaseException) -> None:
         """被拦截的 savefig 目标上的 stat 落空了（任何探路都算）：记下此刻的观察序号，供 `explain_exit` 判"退出由它控制"。永不抛。"""
-        if not (self._events or self._spill) or not self._active or self._busy:
+        if not (self._events or self._spill) or not self._active or self._muted:
             return
         self._busy = True
         try:
@@ -5251,7 +5270,7 @@ class BlockedFileOps:
         """探路调用（`exists` / `isfile` / `Path.exists`…）对被拦截的 savefig 目标**返回了假**：记下此刻的观察序号。
         POSIX 上落空本来经 `os.stat` 抛 `FileNotFoundError` 被 `note_missing_stat` 记下；Windows 3.12+ 的这些探路是 C 实现、
         不碰 `os.stat`，只能从返回值认。两条路径记同一个序号，重复无害。永不抛。"""
-        if not (self._events or self._spill) or not self._active or self._busy:
+        if not (self._events or self._spill) or not self._active or self._muted:
             return
         self._busy = True
         try:

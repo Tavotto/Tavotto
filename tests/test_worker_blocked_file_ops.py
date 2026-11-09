@@ -282,6 +282,15 @@ MOVE_INTO_DIR_READ_MOVED = MOVE_INTO_DIR_READ_UNRELATED.replace(
 MOVE_INTO_DIR_READ_SOURCE = MOVE_INTO_DIR_READ_UNRELATED.replace("archive/summary.csv", "seed.txt")
 
 
+@pytest.fixture(autouse=True)
+def _guard_without_the_overlay(monkeypatch):
+    """这份文件看护的是**守卫 + 账本**（跳过并记账、回读判 material）。#1813 之后 safe worker 默认装暂存覆盖层，
+    把项目内的写 / 改名 / 删除接进暂存区、读回一致，上面这些脚本多数不再被判 blocked——覆盖层的行为在
+    `test_worker_overlay.py`。这里用运维开关 `TAVOTTO_SAFE_OVERLAY=0` 回到守卫的老行为，让守卫与账本的细则（溢出、
+    `x` 独占创建、关键字目的地、目录污点……）继续被真 worker 钉住——它们仍是覆盖层模拟不了时的退路。"""
+    monkeypatch.setenv("TAVOTTO_SAFE_OVERLAY", "0")
+
+
 @pytest.fixture
 def figs(tmp_path):
     root = tmp_path / "figs"
