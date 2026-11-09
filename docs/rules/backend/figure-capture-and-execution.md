@@ -9,7 +9,7 @@
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 50
-改到: `engine/figcapture.py`、`artifactcontext.py`、`execspec.py`、`runconfig.py`、`scriptargs.py`、`workdir.py`、`databinding.py`、`inputremap.py`、`worker.py` 的 savefig 拦截与 sys.argv
+改到: `engine/figcapture.py`、`artifactcontext.py`、`execspec.py`、`runconfig.py`、`scriptargs.py`、`workdir.py`、`databinding.py`、`inputremap.py`、`inputcopy.py`、`worker.py` 的 savefig 拦截与 sys.argv
 主题: Figure 捕获、执行描述与 live-figure 会话 → `figure-capture-and-execution.md`
 必守要点: 捕获三条入口同源；`safe_spec()` / `worker_argv()` 唯一出处、argv 只经 `safe_spec`；表单 schema 是建议不是门槛
 -->
@@ -189,6 +189,11 @@ order: 50
     异常文本 / traceback 仍可能含路径。traceback 截断、读里再发生写失败、异常无文件名、相对路径、
     找不到对应读取常量的动态路径、子进程和未观察到的读取不猜。
     看护 `tests/test_native_missing_read_observation.py`、`tests/test_native_input_recovery_e2e.py`。
+    **native 缺读取的第二条出路：复制（ADR 0173，`engine/inputcopy.py`）**：上述确证成立、路径是本机绝对路径、改指表命中它且命中的那份是存在的普通文件时，
+    载荷多一个 `copy` 提议；用户点了才经 `POST /api/engine/input-copy` 把那份文件**复制**到脚本要读的原路径（源只取自改指表、不覆盖、不建目录、
+    原子写、记本机撤销记录），再重跑。每个结果都落在 `done` / `exists` / `denied` / `macos_protected` / `auth_failed` 之一，卡片 c2–c4 各有出路；
+    提权只做这一次复制（Windows 壳的 `--elevated-copy`、macOS `osascript`），macOS 受保护文件夹不提权。native 仍不改指、不装钩子。
+    看护 `tests/test_input_copy.py`、`tests/test_input_copy_e2e.py`。
     **对账只认和这次异常对得上的落空（#1253）**：异常没有 `filename`、消息里也没有引号括着的路径时，只认
     消息里按路径段点了名的那次落空（`figcapture._named_miss`），**不退到「最近一次落空的」**——被 `try` 吞掉的可选读、
     `importlib.metadata` 对不存在的 `sys.path` 条目（Homebrew 的 `python313.zip`）试 zipfile 打开，都会排在后面，

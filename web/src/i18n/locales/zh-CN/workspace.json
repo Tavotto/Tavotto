@@ -1039,7 +1039,11 @@
       "originConfirm_other": "有 {{count}} 个库要你确认包名",
       "originUnknown_other": "有 {{count}} 个库的来源还没法确定",
       "pythonChange": "正在换成 Python {{version}}…",
-      "pythonChangeDownload": "正在换成 Python {{version}}（下载约 {{size}} MB）…"
+      "pythonChangeDownload": "正在换成 Python {{version}}（下载约 {{size}} MB）…",
+      "copyAsk": "脚本要从 {{path}} 读数据",
+      "copyDenied": "没有权限写到 {{dir}}",
+      "copyProtected": "{{dir}} 受系统保护，写不进去",
+      "copyFailed": "没能把数据复制到 {{dir}}"
     },
     "btn": {
       "later": "稍后",
@@ -1080,7 +1084,12 @@
       "send": "发送",
       "revertAiEdit": "回滚 AI 的修改",
       "cancelScan": "取消检查",
-      "confirmOrigins": "确认包名"
+      "confirmOrigins": "确认包名",
+      "copyRun": "复制过去再运行",
+      "otherData": "换一份数据",
+      "grantCopy": "授权后复制",
+      "openPrivacy": "打开系统设置",
+      "rewritePath": "改脚本里的路径"
     },
     "card": {
       "stepOf": "第 {{n}} 步，共 {{total}} 步：{{name}}",
@@ -1509,6 +1518,17 @@
         "refused": "AI 服务拒绝了这次请求",
         "other": "AI 这次没能修好"
       }
+    },
+    "hint": {
+      "copyRun": "会把你指认的 {{source}} 复制一份到 {{target}}，原文件不动。",
+      "grantCopy": "会弹出系统的授权窗口，同意后再复制；原文件不动。",
+      "openPrivacy": "在“隐私与安全性 → 完全磁盘访问”里勾上 {{product}}，再回来重新运行。"
+    },
+    "folder": {
+      "desktop": "桌面",
+      "documents": "文稿",
+      "downloads": "下载",
+      "icloud": "iCloud 云盘"
     }
   },
   "canvasMenu": {

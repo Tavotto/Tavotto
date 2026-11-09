@@ -449,6 +449,9 @@ fn allowed_hits() -> Vec<Hit> {
             "relaunch_outside_package_if_needed",
             "process::exit",
         ),
+        // 提权复制助手（ADR 0173）：`main()` 里崩溃过滤器与 MSIX 脱离之后、Builder 之前，命令行是固定子命令时
+        // 本进程只为一次复制而存在——没有窗口、没有 sidecar、没有退出标记可写（那是 UI 实例的东西）
+        h("elevated_copy.rs", "run_if_requested", "process::exit"),
         // sidecar.rs 为 spawn 子进程导入的类型（不含 exit）
         h("sidecar.rs", "", "use std::process::Child"),
         h("sidecar.rs", "", "use std::process::ChildStdin"),

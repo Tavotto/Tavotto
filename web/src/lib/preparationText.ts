@@ -18,6 +18,8 @@ import type {
   ConvertSourceLanguage,
   EnvCandidate,
   GuiDialogPayload,
+  MissingInputCopy,
+  MissingInputCopyState,
   MissingInputOffer,
   PreparationActionKind,
   PreparationAttempt,
@@ -35,6 +37,13 @@ export type PrepPrimary =
   | { kind: 'adopt'; candidate: EnvCandidate }
   | { kind: 'workdir'; payload: WorkdirConfirmation }
   | { kind: 'missing_input'; payload: MissingInputOffer }
+  /** 缺数据 · 复制提议（ADR 0173）：把用户指认过的那份复制到脚本要的位置再运行 / 授权后复制 / 打开系统设置 / 改脚本里的路径 / 换一份数据 */
+  | { kind: 'copy_run'; payload: MissingInputOffer }
+  | { kind: 'grant_copy'; payload: MissingInputOffer }
+  | { kind: 'open_privacy' }
+  /** 直接进经确认改写脚本的逐行预览（ADR 0110）：数据已经指认过，不再弹选择器 */
+  | { kind: 'rewrite_path'; payload: MissingInputOffer }
+  | { kind: 'other_data'; payload: MissingInputOffer }
   | { kind: 'enter_edit'; count: number }
   | { kind: 'reopen'; label: 'retry' | 'continue' }
   | { kind: 'open_environment' }
@@ -136,7 +145,19 @@ export interface PrepContext {
   engineExited?: boolean
   /** 教程层 / 教程项目激活：任何「连接 AI」相关 UI 都不出现（ADR 0136） */
   tutorial?: boolean
+  /** 用户点过「复制过去再运行」之后卡片该落在哪一档（`inputCopyStore`，按「尝试 + 路径」记）；没有 = 照后端载荷 */
+  copyOverrides?: Record<string, CopyOverride>
 }
+
+/** 复制没成功时的落点（后端 `input-copy` 的结果）；成功会直接重跑，不留在这里 */
+export interface CopyOverride {
+  state: Exclude<MissingInputCopyState, 'ask'>
+  protected_kind?: MissingInputCopy['protected_kind']
+}
+
+/** 复制提议那几张卡的状态存取键：同一次尝试里的同一条路径 */
+export const copyOverrideKey = (attemptId: string | null | undefined, requested: string | null | undefined): string =>
+  `${attemptId ?? ''}\u0000${requested ?? ''}`
 
 const has = (report: PreparationReport, kind: PreparationActionKind) =>
   report.actions.some((a) => a.kind === kind)
@@ -273,7 +294,8 @@ const PYTHON_FIX_STATES = new Set(['failed', 'blocked'])
  */
 function withRemedy(view: PrepView, report: PreparationReport | null | undefined, ctx: PrepContext): PrepView {
   const remedy = report && isRemedy(report.remedy) ? report.remedy : null
-  if (!ctx.tutorial && AI_SECONDARY_ONLY_STATES.has(view.state)) return { ...view, remedy, aiFix: true }
+  // 复制提议的 c1 只有一个要用户答的问题，不摆 AI 入口；复制被拒 / 失败后（c2 起）才摆
+  if (!ctx.tutorial && AI_SECONDARY_ONLY_STATES.has(view.state)) return { ...view, remedy, aiFix: view.sentence.key !== 'copyAsk' }
   // 带修复令牌的「文件夹读不了」卡：AI 对权限无能为力（fixsession 3g 也不许它动文件夹）——只留「修复权限」一个主按钮 + 稍后，不摆 AI 入口
   // 解释器写不了 Tavotto 自己的缓存：用户代码一行没跑，改脚本没用——同样只留确定的那一颗主按钮，不摆 AI 入口
   // TeX 命令 / 宏包缺失同理：这是系统里的 TeX 发行版，改脚本没用（QA-WIN-29）
@@ -484,7 +506,7 @@ function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContex
     case 'cancelled':
       return view('cancelled', 'cancelled', v, runPrimary(report, 'runAgain'), { tone: 'mute', step: 1 })
     default:
-      return needsSomething(report, script)
+      return needsSomething(report, script, ctx)
   }
 }
 
@@ -519,8 +541,49 @@ function completed(report: PreparationReport, entry: PrepEntry, ctx: PrepContext
   })
 }
 
+/** 过长的路径中间换成 `…`，保留开头的盘符 / 根与尾巴（`/Users/…/data/values.csv`）；够短原样 */
+export function tailOfPath(path: string, max = 44): string {
+  if (path.length <= max) return path
+  const sep = path.includes('\\') && !path.includes('/') ? '\\' : '/'
+  const parts = path.split(sep)
+  const head = parts.length > 1 && parts[0] === '' ? sep + (parts[1] ?? '') : (parts[0] ?? '')
+  let tail = parts[parts.length - 1] ?? ''
+  for (let i = parts.length - 2; i > 1; i--) {
+    const next = `${parts[i]}${sep}${tail}`
+    if (head.length + 2 + next.length > max) break
+    tail = next
+  }
+  return `${head}${sep}…${sep}${tail}`
+}
+
+/**
+ * 缺数据 · 用户之前指认过这份数据（ADR 0173）：一句话 + 一个主按钮 + 至多两个次按钮，没有「稍后」（卡片只能缩小）。
+ * 每个终态至少有两条出路：c1 复制 / 换一份；c2 授权后复制；c3 打开系统设置；c4 改脚本里的路径——c2 以后都带「改脚本里的路径」与「让 AI 修复」
+ */
+function copyCard(
+  payload: MissingInputOffer,
+  copy: MissingInputCopy,
+  v: { script: string },
+  override: CopyOverride | undefined,
+): PrepView {
+  const state = override?.state ?? copy.state
+  const kind = override?.protected_kind ?? copy.protected_kind
+  const rewrite: PrepPrimary = { kind: 'rewrite_path', payload }
+  const opts = { step: 1 as const, ghost: null }
+  // 一句话不许把卡片撑高：路径只留尾巴（文件名与上一两级），完整路径在悬停说明里
+  const vals = { ...v, path: tailOfPath(copy.target), dir: copy.dir_name || copy.dir, source: copy.source, target: copy.target }
+  if (state === 'denied') return view('missing_data', 'copyDenied', vals, { kind: 'grant_copy', payload }, { ...opts, secondary: rewrite })
+  if (state === 'macos_protected') {
+    // 受保护的是哪个文件夹：桌面 / 文稿 / 下载 / iCloud 云盘由卡片按语言说名字（`folderKind`），外置卷说它自己的名字
+    const values = { ...vals, dir: copy.protected_name ?? vals.dir, folderKind: kind && kind !== 'volume' ? kind : null }
+    return view('missing_data', 'copyProtected', values, { kind: 'open_privacy' }, { ...opts, secondary: rewrite })
+  }
+  if (state === 'auth_failed') return view('missing_data', 'copyFailed', vals, rewrite, opts)
+  return view('missing_data', 'copyAsk', vals, { kind: 'copy_run', payload }, { ...opts, secondary: { kind: 'other_data', payload } })
+}
+
 /** 等用户 / 走不通：先看要先答的事，再看结局 */
-function needsSomething(report: PreparationReport, script: string): PrepView {
+function needsSomething(report: PreparationReport, script: string, ctx: PrepContext): PrepView {
   const v = { script }
   const env = find(report, 'environment_choice')
   if (env) {
@@ -609,7 +672,11 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
           : 'fileOpsBlocked'
     return view('file_ops_blocked', key, v, null, { tone: 'bad', step: 1 })
   }
-  if (missing) return view('missing_data', 'missingData', v, { kind: 'missing_input', payload: missing.payload }, { step: 1 })
+  if (missing) {
+    const copy = missing.payload.copy
+    if (copy) return copyCard(missing.payload, copy, v, ctx.copyOverrides?.[copyOverrideKey(report.provider.attempt_id, missing.payload.requested)])
+    return view('missing_data', 'missingData', v, { kind: 'missing_input', payload: missing.payload }, { step: 1 })
+  }
   const fallback = has(report, 'recheck') ? act('recheck', 'recheck') : null
   switch (report.outcome.kind) {
     case 'stale':

@@ -7,6 +7,7 @@ mod app_update;
 #[cfg(test)]
 mod app_update_flow_tests;
 mod crash_dump;
+mod elevated_copy;
 // 分派由 macOS 的 native_drop 与 Windows 的 native_drop_win 用；Linux 上它只剩单测（分派规则各平台一样，照样跑）
 #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 mod drop_paths;
@@ -2109,6 +2110,9 @@ fn main() {
     crash_dump::install();
     // 带 MSIX 包身份（从 Codex 桌面版等拉起）就脱离包重新拉起自己后退出——在建任何窗口 / 写任何配置之前（#1574）
     msix_breakaway::relaunch_outside_package_if_needed();
+    // 提权复制助手（ADR 0173）：命令行是 `--elevated-copy <源> <目标>` 就只做这一次复制并退出——
+    // 不进 Builder、不开窗口、不起 sidecar、不读写任何配置
+    elevated_copy::run_if_requested();
     let state = AppState {
         sidecar: Mutex::new(None),
         port: Arc::new(Mutex::new(None)),

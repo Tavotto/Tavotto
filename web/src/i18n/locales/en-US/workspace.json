@@ -1094,7 +1094,11 @@
       "originUnknown_one": "Can't tell where {{count}} library comes from",
       "originUnknown_other": "Can't tell where {{count}} libraries come from",
       "pythonChange": "Switching to Python {{version}}…",
-      "pythonChangeDownload": "Switching to Python {{version}} (about {{size}} MB to download)…"
+      "pythonChangeDownload": "Switching to Python {{version}} (about {{size}} MB to download)…",
+      "copyAsk": "The script reads data from {{path}}",
+      "copyDenied": "No permission to write to {{dir}}",
+      "copyProtected": "{{dir}} is protected by the system",
+      "copyFailed": "Couldn't copy the data to {{dir}}"
     },
     "btn": {
       "later": "Later",
@@ -1136,7 +1140,12 @@
       "send": "Send",
       "revertAiEdit": "Revert the AI's change",
       "cancelScan": "Cancel check",
-      "confirmOrigins": "Confirm packages"
+      "confirmOrigins": "Confirm packages",
+      "copyRun": "Copy it there and run",
+      "otherData": "Use other data",
+      "grantCopy": "Allow, then copy",
+      "openPrivacy": "Open System Settings",
+      "rewritePath": "Change the path in the script"
     },
     "card": {
       "stepOf": "Step {{n}} of {{total}}: {{name}}",
@@ -1573,6 +1582,17 @@
         "refused": "The AI service refused this request",
         "other": "The AI couldn't fix it this time"
       }
+    },
+    "hint": {
+      "copyRun": "Copies the {{source}} you pointed to into {{target}}. The original stays untouched.",
+      "grantCopy": "Shows the system permission prompt, then copies. The original stays untouched.",
+      "openPrivacy": "Turn on {{product}} under Privacy & Security → Full Disk Access, then come back and run again."
+    },
+    "folder": {
+      "desktop": "Desktop",
+      "documents": "Documents",
+      "downloads": "Downloads",
+      "icloud": "iCloud Drive"
     }
   },
   "canvasMenu": {

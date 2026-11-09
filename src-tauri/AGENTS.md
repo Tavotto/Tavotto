@@ -19,7 +19,7 @@
 <!-- BEGIN GENERATED: agents-routes -->
 | 改到 | 主题（细则在 `docs/rules/desktop/`） | 必守要点 |
 | --- | --- | --- |
-| `src-tauri/src/main.rs`、`build.rs`、`capabilities/`、`src/tavotto/desktop.py`、`web/src/lib/desktop.ts`、`sidecar/port_memory.rs` | 壳 → sidecar 进程关系、外链、`#[tauri::command]` 的 ACL 三处同步 → `process-and-acl.md` | 前端仍由 sidecar Flask 提供；组件不得 import `@tauri-apps/*`；新增 command 必须 build.rs / capabilities / generate_handler 同步 |
+| `src-tauri/src/main.rs`、`elevated_copy.rs`、`build.rs`、`capabilities/`、`src/tavotto/desktop.py`、`web/src/lib/desktop.ts`、`sidecar/port_memory.rs` | 壳 → sidecar 进程关系、外链、`#[tauri::command]` 的 ACL 三处同步 → `process-and-acl.md` | 前端仍由 sidecar Flask 提供；组件不得 import `@tauri-apps/*`；新增 command 必须 build.rs / capabilities / generate_handler 同步 |
 | `CloseGate`、`CloseAsk`、`hold_window()`、`Sidecar::poll_exit()`、`boot_engine`、`session-state.json`、`exit_guard_tests.rs` | 关窗询问闸（issue #223）与引擎意外退出标记（ADR 0129） → `close-gate-and-engine-exit.md` | 关窗闸默认不拦、必须留看门狗；绕过 `RunEvent::Exit` 的退出必须先写 clean（`e2e_exit` / `updater_builder()`） |
 | `src-tauri/src/rescue.rs`、`src-tauri/src/shell_report.rs`、`shell/error.html`、`capabilities/rescue-page.json`、`tests/golden/diag_shell_report.json`、`sidecar/safe_start.rs`、`sidecar/startup_phase.rs` | sidecar 起不来时的原生救援页 → `rescue-page.md` | 只在「从未进入编辑态」时可用；只许主窗口壳自带 `error.html` 调用，`remote-*.json` 不得出现 `allow-rescue-*` |
 | `window_chrome.rs`、`fullscreen_observer.rs`、`native_drop.rs`、`drop_paths::classify`、`tests/golden/drop_script_rule.json` | 窗框与拖放（ADR 0092） → `window-chrome-and-file-drop.md` | `disable_drag_drop_handler()` 必须留着；路径分派只在 `drop_paths::classify`；Windows 主窗口 `decorations(false)` |

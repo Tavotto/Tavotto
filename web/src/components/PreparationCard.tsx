@@ -23,10 +23,13 @@ import { WorkdirChooseButton } from '@/components/WorkdirRow'
 import {
   backendCodeMsg,
   backendErrorText,
+  copyInputData,
   fetchDependencyOffer,
   isNativeTerminal,
   ignoreImportFolder,
+  openFullDiskAccessSettings,
   repairImportFolder,
+  type MissingInputOffer,
   type GuiDialogPayload,
   type PreparationAttempt,
   type PreparationReport,
@@ -41,7 +44,7 @@ import { markAutoShown, wasAutoShown } from '@/lib/guideCardSeen'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { originFactsOf, originViewOfCard } from '@/lib/importOrigin'
 import type { RemedyEnv } from '@/lib/fixRemedy'
-import { dialogKinds, finishedWithFigures, nativeFallbackNote, prepRowKey, prepView, runAttempts, targetName, withAiUnavailable, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
+import { copyOverrideKey, dialogKinds, finishedWithFigures, nativeFallbackNote, prepRowKey, prepView, runAttempts, targetName, withAiUnavailable, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
 import { dependenciesLine, issueLine, roleLabel, scanCard, scanLine, type ScanCardKind } from '@/lib/projectScanText'
 import { missingRequirements, readTokens, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
 import { cn } from '@/lib/utils'
@@ -53,6 +56,7 @@ import { parseRenames } from '@/lib/overrideIdentity'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
+import { useInputCopyStore } from '@/store/inputCopyStore'
 import { useExitNoticeStore } from '@/store/exitNoticeStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectScanStore } from '@/store/projectScanStore'
@@ -164,6 +168,7 @@ export function PreparationCard() {
   const editReady = useEditReady(entry?.editRenders ?? {})
   // 壳确认引擎退出了：断线那一句不再说「正在重连」（没人在重连），见 PrepContext.engineExited
   const engineExited = useExitNoticeStore((s) => s.engineExit !== null)
+  const copyOverrides = useInputCopyStore((s) => s.overrides)
   const scanned = !entry && !hidden ? scanCard(scan, { slow, forced, lost }) : null
 
   let view: PrepView | null = null
@@ -182,6 +187,7 @@ export function PreparationCard() {
       editReady,
       missingArgs,
       engineExited,
+      copyOverrides,
     })
   }
 
@@ -653,6 +659,16 @@ function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
       return workdir ? pt(`btn.workdir.${workdir}`) : pt('btn.workdir.none')
     case 'missing_input':
       return pt('btn.pointAtData')
+    case 'copy_run':
+      return pt('btn.copyRun')
+    case 'grant_copy':
+      return pt('btn.grantCopy')
+    case 'open_privacy':
+      return pt('btn.openPrivacy')
+    case 'rewrite_path':
+      return pt('btn.rewritePath')
+    case 'other_data':
+      return pt('btn.otherData')
     case 'enter_edit':
       return p.count > 1 ? pt('btn.viewFigures', { count: p.count }) : pt('btn.enterEdit')
     case 'reopen':
@@ -804,14 +820,70 @@ async function folderDecisionAndRerun(entry: PrepEntry, decide: () => Promise<un
   } catch (e) {
     return guard.still() ? backendErrorText(e) : null
   }
+  if (!guard.still()) return null
+  await rerunEntry(entry)
+  return null
+}
+
+/** 重跑这张卡对应的脚本：报告里有「运行」类动作就认领它，没有就按目标重新打开并运行 */
+async function rerunEntry(entry: PrepEntry): Promise<void> {
   const report = entry.report
-  if (!guard.still() || !report) return null
+  if (!report) return
   const store = useProjectPreparationStore.getState()
   const can = (kind: 'run_when_ready' | 'run') => report.actions.some((a) => a.kind === kind)
   const rerun = can('run_when_ready') ? 'run_when_ready' : can('run') ? 'run' : null
   if (rerun) await store.act(entry.key, rerun)
   else await store.open(entry.target, { run: true, placeIn: entry.placeIn })
+}
+
+/**
+ * 「复制过去再运行」/「授权后复制」（ADR 0173）：后端按改指表现场推出源、复制、回终态。
+ * 成功（含目标已经在）就重跑；被拒落到 c2 / c3 / c4（只换这张卡的档，报告不动）。绝不停在报错上：每种结果都有一张卡。
+ */
+async function copyDataAndRerun(entry: PrepEntry, payload: MissingInputOffer, elevate: boolean): Promise<string | null> {
+  const guard = captureProjectEpoch()
+  const requested = payload.requested
+  if (!requested) return null
+  let result: Awaited<ReturnType<typeof copyInputData>>
+  try {
+    result = await copyInputData(payload.script, requested, elevate)
+  } catch (e) {
+    return guard.still() ? backendErrorText(e) : null
+  }
+  if (!guard.still()) return null
+  if (result.state === 'done' || result.state === 'exists') {
+    await rerunEntry(entry)
+    return null
+  }
+  useInputCopyStore.getState().set(copyOverrideKey(entry.report?.provider.attempt_id, requested), {
+    state: result.state as 'denied' | 'macos_protected' | 'auth_failed',
+    protected_kind: result.protected_kind,
+  })
   return null
+}
+
+/** 「改脚本里的路径」：数据已经指认过，直接请后端出逐行预览（ADR 0110），不再弹选择器；预览失败就落回指认框并说原因 */
+async function rewritePathDirect(entry: PrepEntry, payload: MissingInputOffer): Promise<string | null> {
+  const env = useEnvStore.getState()
+  env.requestMissingInput(payload, entry.pj)
+  if (!payload.requested || !payload.copy?.source) return null
+  const err = await useEnvStore.getState().previewRewrite(payload.requested, payload.copy.source, 'file')
+  if (err) useEnvStore.setState({ rewriteError: err })
+  return null
+}
+
+/** 悬停说明：解释放 title，不堆在卡面上 */
+function primaryTitle(p: PrepPrimary): string | undefined {
+  switch (p.kind) {
+    case 'copy_run':
+      return p.payload.copy ? pt('hint.copyRun', { source: p.payload.copy.source, target: p.payload.copy.target }) : undefined
+    case 'grant_copy':
+      return pt('hint.grantCopy')
+    case 'open_privacy':
+      return pt('hint.openPrivacy', { product: PRODUCT_NAME })
+    default:
+      return undefined
+  }
 }
 
 /** 主按钮做的事（与 T09 面板同一组真实动作；卡片只换了呈现） */
@@ -836,8 +908,20 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         if (!workdir) return null
         return useEnvStore.getState().setWorkdirMode(workdir, { confirmed: true })
       case 'missing_input':
+      case 'other_data':
         useEnvStore.getState().requestMissingInput(p.payload, entry.pj)
         return null
+      case 'copy_run':
+        return copyDataAndRerun(entry, p.payload, false)
+      case 'grant_copy':
+        return copyDataAndRerun(entry, p.payload, true)
+      case 'rewrite_path':
+        return rewritePathDirect(entry, p.payload)
+      case 'open_privacy': {
+        const res = await openFullDiskAccessSettings().catch(() => null)
+        // 没能自己打开：把该去哪儿勾说出来（同一句悬停说明）
+        return res?.opened ? null : pt('hint.openPrivacy', { product: PRODUCT_NAME })
+      }
       case 'enter_edit': {
         const figures = report?.captured ?? []
         if (figures.length !== 1) {
@@ -1397,7 +1481,9 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
       : view.sentence.key === 'tex'
         ? // TeX 编译错误 / 原因不明：说 errors:backend.<code> 那句针对性说明（缺命令 / 缺宏包用 prep.line.texCommand / texPackage 短句）
           translate(`backend.${String(view.sentence.values.code)}`, { ns: 'errors', ...view.sentence.values })
-        : pt(`line.${view.sentence.key}`, view.sentence.values))
+        : view.sentence.key === 'copyProtected' && typeof view.sentence.values.folderKind === 'string'
+          ? pt('line.copyProtected', { ...view.sentence.values, dir: pt(`folder.${view.sentence.values.folderKind}`) })
+          : pt(`line.${view.sentence.key}`, view.sentence.values))
   const originView = localError ? null : originViewOfCard(view.state)
   const attrs = {
     'data-prep-state': localError ? 'action_failed' : view.state,
@@ -1421,6 +1507,7 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
       variant="primary"
       size="md"
       data-prep-primary={primaryId(p)}
+      title={primaryTitle(p)}
       loading={pending || (p.kind === 'ai_fix' && fixBusy)}
       disabled={pending || disabled}
       onClick={async () => {
@@ -1579,6 +1666,7 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
         variant="ghost"
         size="md"
         data-prep-alt={primaryId(view.secondary)}
+        title={primaryTitle(view.secondary)}
         className="text-ink-2"
         onClick={async () => {
           const err = await runPrimary(view.secondary!, workdir)

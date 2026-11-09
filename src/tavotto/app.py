@@ -116,6 +116,7 @@ from .engine import (
     handoff as engine_handoff,
     handoffreceipt as engine_handoffreceipt,
     inputbroker as engine_inputbroker,
+    inputcopy as engine_inputcopy,
     inputremap as engine_inputremap,
     inputtranscript as engine_inputtranscript,
     journalremote as engine_journalremote,
@@ -11312,6 +11313,79 @@ def api_engine_input_remap_delete():
     return jsonify({"ok": True, "input_remap": state})
 
 
+@app.post("/api/engine/input-copy")
+def api_engine_input_copy():
+    """用户点了「复制过去再运行」/「授权后复制」（ADR 0173）：把他指认过的那份数据复制到脚本要读的原路径。
+
+    `{script, requested, elevate?}`。源只取自改指表（请求里没有源）；`requested` 必须是这份脚本里能对上的、
+    此刻仍不存在的读取路径，且只认窗口里的会话（与确认改写脚本同一道门）。结果 `{state}`：`done` / `exists`
+    前端直接重跑；`denied` / `macos_protected` / `auth_failed` 就是卡片的 c2 / c3 / c4。不抛：每种结果都有终态。
+    """
+    ctx = current_ctx()
+    root = str(ctx.path)
+    body = request.get_json(force=True) or {}
+    script, requested = body.get("script"), body.get("requested")
+    try:
+        _script_edit_binding()
+        path = engine_scriptbackup.resolve(ctx.path, script)
+    except engine_scriptbackup.ScriptEditError as exc:
+        return _script_edit_error(exc)
+    if not isinstance(requested, str) or not engine_inputcopy.is_native_absolute(requested):
+        return _input_remap_error(
+            engine_inputremap.RemapError(
+                engine_inputremap.ERROR_REQUESTED_INVALID, "需要脚本读取的绝对路径"
+            )
+        )
+    if not os.path.lexists(requested):
+        # 目标仍不存在时才要求它对得上脚本里的读取常量；已经在了（比如用户刚手动放回去）就是「已存在」，不复制
+        rel = path.relative_to(ctx.path).as_posix()
+        if (
+            engine_inputremap.native_miss(rel, root, {"filename": requested, "cwd": ""}, rules=[])
+            is None
+        ):
+            return _input_remap_error(
+                engine_inputremap.RemapError(
+                    engine_inputremap.ERROR_REQUESTED_INVALID, "脚本里没有对应的读取路径"
+                )
+            )
+    result = engine_inputcopy.run(root, requested, elevate=body.get("elevate") is True)
+    LOG.info("数据复制: %s（%s）", result.get("state"), result.get("reason") or "-")
+    return jsonify({"ok": True, **result})
+
+
+@app.post("/api/engine/input-copy/privacy-settings")
+def api_engine_input_copy_privacy_settings():
+    """c3 的主按钮：打开 macOS「完全磁盘访问」面板（固定地址，不收参数）。只认窗口里的会话。"""
+    try:
+        _script_edit_binding()
+    except engine_scriptbackup.ScriptEditError as exc:
+        return _script_edit_error(exc)
+    return jsonify({"ok": True, "opened": engine_inputcopy.open_full_disk_access()})
+
+
+@app.delete("/api/engine/input-copy")
+def api_engine_input_copy_undo():
+    """撤销一次复制（ADR 0173）：只删「还是当时复制的那份」。"""
+    ctx = current_ctx()
+    body = request.get_json(force=True) or {}
+    target = body.get("target")
+    try:
+        _script_edit_binding()
+    except engine_scriptbackup.ScriptEditError as exc:
+        return _script_edit_error(exc)
+    if not isinstance(target, str):
+        return _input_remap_error(
+            engine_inputremap.RemapError(engine_inputremap.ERROR_REQUESTED_INVALID, "需要 target")
+        )
+    return jsonify({"ok": True, **engine_inputcopy.undo(str(ctx.path), target)})
+
+
+@app.get("/api/engine/input-copy")
+def api_engine_input_copy_records():
+    """本机的复制记录（设置里将来列出来、可撤销）。"""
+    return jsonify({"ok": True, "records": engine_inputcopy.records(str(current_ctx().path))})
+
+
 # --------------------- 经确认改写脚本里的数据路径（ADR 0110）---------------------
 # 改指表救不回的那几档（exists / glob / C++ 读取器）：用户指认数据位置 → 预览逐行 diff → 勾选确认 →
 # 两处备份后原子替换。**只有浏览器 / 桌面界面能提交**：令牌绑定会话 cookie，只凭本机进程凭据
@@ -11884,6 +11958,10 @@ def _native_missing_input_offer(failure, session, plan):
                 engine_preparation._script_revision(plan.project_root, plan.script)
                 == plan.script_revision
             ):
+                # ADR 0173：这条路径已有用户确认过的数据身份时，多给一个「复制过去再运行」的提议
+                copy = engine_inputcopy.offer(plan.project_root, offer.get("requested") or "")
+                if copy is not None:
+                    offer["copy"] = copy
                 failure.missing_input = offer
     except Exception:  # noqa: BLE001 — recovery observation never replaces the original failure
         pass  # Missing recovery evidence must never replace the original error.
