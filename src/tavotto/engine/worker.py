@@ -2123,10 +2123,17 @@ class Worker(wireproto.V1Handler):
     def _stems_summary(self) -> dict:
         # `source` / `source_sha256` 是加字段，不升协议版本（ADR 0003 §1：两侧容忍未知字段）。
         # `source_sha256` 是**本进程当初执行的版本**：去重回旧会话时二次 build 拿到的也是它，不是磁盘现状。
-        return {
+        result = {
             **self.session.stems_summary(self.dropped_figures, self.pdf_pages),
             "source_sha256": self._source_sha256,
         }
+        # The tripwire ledger records attempts before opening a path; it does
+        # not prove that a file was successfully written or still exists.
+        if self.write_roots and any(
+            str(root).startswith(writetripwire.REDIRECT_PROJECT_PREFIX) for root in self.write_roots
+        ):
+            result["redirected_write_attempts"] = writetripwire.redirected()
+        return result
 
     def _render(
         self, stem: str, timings: dict | None = None, preview_dpi: int | None = None
@@ -2151,7 +2158,14 @@ class Worker(wireproto.V1Handler):
             }
         if cmd == "build":
             # legacy 形状一字不变（test_legacy_envelope_keeps_the_old_response_shape）：`source_sha256` 只给 v1 信封
-            return {"ok": True, **{k: v for k, v in self.build().items() if k != "source_sha256"}}
+            return {
+                "ok": True,
+                **{
+                    k: v
+                    for k, v in self.build().items()
+                    if k not in {"source_sha256", "redirected_write_attempts"}
+                },
+            }
         if cmd == "export" and (req.get("require_built") or req.get("snapshot_only")):
             if not self.built or req.get("stem") not in self.session.states:
                 return {

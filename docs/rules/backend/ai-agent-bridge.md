@@ -361,6 +361,13 @@ order: 240
 转换运行检查与采用后重开共用发现逻辑的首个入口；主入口失败或不出图，不能改跑辅助函数取得部分图后放行。
 真实错误交回既有有界修正流程。看护 `tests/test_ai_convert_app.py`（真 worker 主入口失败、辅助函数可出图、修正后采用）。
 
+**输出完整性线索**：转换检查用 `convertcontext.file_reference_hints` 列原源码的静态文件名字面量，
+再列本次 worker 的改道写入尝试；两份都只保留经 `readscope` 脱敏的 basename、去重、限量并标记截断。
+前者可能是输入，后者可能失败或之后被删除；动态路径、helper、临时目录、C 扩展和外部程序也可能漏记。
+没有 worker 记录是 `null`，不是空列表；完整性始终 `unknown`，不能从出图或名单推断所有输出 / 内容等价。
+线索随 comparison 留存并交给 check 与采用前界面，项目原件仍不受校验写入影响；看护
+`tests/test_convert_output_evidence.py`（真实 worker / 暂存恢复 / 删除反例）。
+
 **R / MATLAB 来源（ADR 0143 修订，2026-10-23）**：`POST /api/ai/convert` 多一个可选 `source_language`（`python` 缺省 | `r` | `matlab`）。
 r / matlab 时 `library` 必须缺省，后端用 `sourcelang.detect`（纯标准库；`.R` / `.r` / `.m` 纯文本、≤ 1 MB、UTF-8；`.m` 带 Objective-C 特征或
 MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `convert_source_language_mismatch`。**不运行 R / MATLAB**：对照只用请求给的 `path` 或脚本旁

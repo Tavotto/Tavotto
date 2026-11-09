@@ -4380,6 +4380,14 @@ export interface ConvertComparison {
   reference?: string | null
   /** `unknown` = 未对照验证（没有原图）；`side_by_side` = 并排给人看（不是判定）。老后端没有 */
   verification?: 'unknown' | 'side_by_side'
+  /** Partial evidence, not a declaration that either script produced these files. */
+  output_evidence?: {
+    source_references: string[]
+    source_truncated: boolean
+    write_attempts: string[] | null
+    attempts_truncated: boolean
+    completeness: 'unknown'
+  }
 }
 
 /** 「生成可编辑版本」的来源语言（后端 `sourcelang.LANGUAGES`）：`python` = 位图库出的图；`r` / `matlab` = 转写 */

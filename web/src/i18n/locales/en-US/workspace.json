@@ -1406,6 +1406,13 @@
         "matlab": "This is a MATLAB script; {{product}} can write a separate, directly editable Matplotlib version and leave the original untouched."
       },
       "unverified": "{{product}} didn’t run R / MATLAB. Compare side by side before using it",
+      "outputEvidence": "Capturing a figure cannot prove the original tables, logs, or other outputs were preserved. Check before adopting.",
+      "outputSourceReferences": "Filenames mentioned in the original (may include inputs): {{files}}",
+      "outputWriteAttempts": "Redirected write attempts during validation (not proof of a completed write): {{files}}",
+      "outputNoAttempts": "No redirected write attempts were recorded for this run.",
+      "outputAttemptsUnavailable": "No write record is available for this run.",
+      "outputEvidenceTruncated": "There are too many filenames to show all entries.",
+      "outputEvidenceLimits": "These clues may be incomplete; dynamic paths, temporary files, and external processes may not be recorded.",
       "adoptAdds": "Adopting only adds {{files}}; your original script is not touched",
       "installed": "Installed {{names}} for this project",
       "btn": {

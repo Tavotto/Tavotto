@@ -27,6 +27,7 @@ MAX_BYTES = 16 * 1024 * 1024
 MAX_DEPTH = 4
 MAX_REFERENCES = 512
 MAX_SELECTED_FILES = 16
+MAX_OUTPUT_EVIDENCE = 20
 _SOURCE_EXT = frozenset({".py", ".r", ".m"})
 _STRINGS = re.compile(r"'((?:[^'\n]|'')*)'|\"((?:[^\"\n]|\"\")*)\"")
 _CALL = re.compile(r"\b([A-Za-z]\w*)\s*\(")
@@ -148,6 +149,33 @@ def _references(text: str, suffix: str) -> tuple[list[str], list[str]]:
     literals = [a.replace("''", "'") or b.replace('""', '"') for a, b in _STRINGS.findall(text)]
     calls = _CALL.findall(_STRINGS.sub(" ", text)) if suffix == ".m" else []
     return literals, calls
+
+
+def file_reference_hints(source: bytes, suffix: str) -> tuple[list[str], bool]:
+    """Names mentioned in source, not a classification of inputs or outputs.
+
+    Reuse the dependency nomination pass. Dynamic paths, helper code and
+    arbitrary language semantics remain unknown; never treat this as an output
+    contract or proof that a source program writes any of these names.
+    """
+    text = readscope.scrub(source.decode("utf-8", errors="replace"))
+    literals, _ = _references(text, suffix.lower())
+    names = set()
+    for literal in literals:
+        name = evidence_basename(literal)
+        if name is not None and re.fullmatch(r".+\.[A-Za-z][A-Za-z0-9]{0,11}", name):
+            names.add(name)
+    ordered = sorted(names)
+    return ordered[:MAX_OUTPUT_EVIDENCE], len(ordered) > MAX_OUTPUT_EVIDENCE
+
+
+def evidence_basename(path: str) -> str | None:
+    """Only a bounded, scrubbed filename can leave the local conversion ledger."""
+    name = path.replace("\\", "/").rsplit("/", 1)[-1]
+    if not name or len(name) > 128 or any(ord(ch) < 32 for ch in name):
+        return None
+    clean = readscope.scrub(name)
+    return clean if clean == name else None
 
 
 def selected_paths(root: Path, value: object) -> tuple[str, ...]:
