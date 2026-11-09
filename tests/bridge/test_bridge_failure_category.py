@@ -47,8 +47,7 @@ def test_error_after_a_figure_carries_the_same_category_at_barrier_and_exit(
     script = project / "fig.py"
     write(
         script,
-        "import matplotlib.pyplot as plt\nplt.plot([1, 2])\n"
-        "open('private-data.csv').read()\n",
+        "import matplotlib.pyplot as plt\nplt.plot([1, 2])\nopen('private-data.csv').read()\n",
     )
     with bridge_session(script, cwd=str(project)) as session:
         barrier = session.wait_event("barrier")
