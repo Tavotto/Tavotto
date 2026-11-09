@@ -324,7 +324,14 @@ def test_applescript_quoting_survives_hostile_filenames(tmp_path):
     argv = inputcopy.macos_osascript_argv(str(src), str(dst), os.getuid(), os.getgid())
     argv = [a.replace(" with administrator privileges", "") for a in argv]
     proc = subprocess.run(
-        argv, capture_output=True, text=True, timeout=30, check=False, cwd=str(tmp_path)
+        argv,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
+        cwd=str(tmp_path),
     )
     assert proc.returncode == 0, proc.stderr
     assert dst.read_bytes() == b"data"
