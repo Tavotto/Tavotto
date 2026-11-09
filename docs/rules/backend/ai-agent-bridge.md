@@ -835,3 +835,12 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 ### 无输出看门狗（`ai.stalled`）
 
 `ai_bridge._SilenceWatch`：每个 CLI 进程一个，只观察。stdout 静默达 `STALL_AFTER_S`（120）发一次 `ai.stalled{session, stalled: true, idle_s}`，再有输出发 `{stalled: false}` 复位；**不杀进程**（慢慢思考的模型会被误杀），总超时 `TIMEOUT_S` 不变。状态只在看门狗对象里、不进会话字典。前端 `aiStore.setStalled` 把它翻译成状态行「AI 已经 N 秒没有动静」+「取消 / 重试」（重试 = 取消、等收尾、再原样重发）。看护 `tests/test_ai_silence_watch.py`、`assistantStalled.test.tsx`。
+
+### 外部 CLI 的沙盒与写入行为在目标平台真跑（错题本 L-130 升级，2026-11-09）
+
+接外部 CLI 的写入、沙盒，或「失败后指望模型换参数重试」这类行为，目标平台用真 CLI 跑一次；假 CLI 绿只证明我方编排。
+进不了 CI 就在 PR 写明未验，并排进 Windows Lab。按平台分档的能力，先列每个平台默认落在哪一档，再让那一档的完整流程在
+该平台走一遍；恢复路径在工具控制流里接通明确授权，别只靠模型按提示自行重试。为什么：转换链路用例全用不带沙盒的假 Codex，Windows unelevated 沙盒里自带写入工具一律失败（#1604）；
+写大文件时事件流静默、写入被拒后换位置写，都是真模型才复现（#1628）；2026-11-07 一份用户反馈：Windows 没有第①档
+沙盒，命令一律返回 `sandbox_unavailable`，设计指望模型带 `outside_sandbox` 重试，真模型没重试，用户批准修复后什么都没
+发生（#1793）。

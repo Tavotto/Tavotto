@@ -46,6 +46,11 @@ order: 220
   `envStore` 同样有项目代际（`resetProject()` 换代）：`refresh` / `setPython` / `setProjectPython` /
   `setWorkdirMode` / `revertAdoptedEnvironment` 在 await 之后、**写状态的那一侧**判代际——调用方在拿到结果之后
   再判已经晚了（写在返回之前就发生了，#605 评审）。看护 `store/projectSwitchDepRepair.test.ts`。
+  **await 之后先判上下文还在，写 store 读最新状态；请求身份取不复用的代次（错题本 L-123 升级，2026-11-09）。**
+  切项目、换运行目录、收起或删行之后，旧续体回来不得落账；身份不能从会被作废、收起或清项目删除的显示行推导，
+  替代请求必须拿新代次。用延迟响应矩阵看护，撤掉守卫要红。为什么：切项目或并发下载后旧续体仍落账，三个 PR 连报
+  P1（#1631、#1734、#1756）；2026-11-07 运行目录探测在途时删行再立即重跑，新请求复用了旧代次，统一作废用例只覆盖
+  已落地的捕获，靠完整评审才补获（#1800）。
   `aiStore`（改图助手的对话）同样在 `resetForNewProject()` 里 `clear()` 换代（#589）：会话记下所属项目
   （`project`），发起 / 撤销 / 中止都钉在它上面；`start` / `revert` / `cancel` 在 await 之后判代际，
   撤销的后果（标脏、提示）由 `revertSession` 在 `revert()` 回 `true` 之后才写；`ai.*` 事件带发起项目的
