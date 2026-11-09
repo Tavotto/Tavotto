@@ -304,8 +304,8 @@
       "status": "active",
       "platform": "both",
       "summary": {
-        "zh-CN": "多图排版里拖面板的角 = 整张图等比缩放（整个在图里的标注一起缩、拖动 / 方向键移动时一起走，胶囊实时显示缩放比与图内字号）；拖边往里 = 裁剪，停在图边 / 内容边缘，按住 ⌥ 才裁进内容；没裁剪过的图从图边往外拖 = 改图幅，文字大小不变",
-        "en-US": "In a multi-figure layout, drag a figure's corner to scale it proportionally (annotations entirely inside it scale with it and also move with it when the figure is dragged or nudged; the scale and in-figure text size are shown live); drag an edge inward to crop, stopping at the figure edge and the content edge unless you hold ⌥; drag an uncropped figure's edge outward to resize the figure, keeping text size"
+        "zh-CN": "多图排版里拖面板的角 = 整张图等比缩放（整个在图里的标注一起缩、拖动 / 方向键移动时一起走，胶囊实时显示缩放比与图内字号）；没裁剪过的图拖边（往外往里）= 改图幅，文字大小不变，缩到文字放不下时提示等比缩小文字；按住 ⌥ 拖边 = 裁剪",
+        "en-US": "In a multi-figure layout, drag a figure's corner to scale it proportionally (annotations entirely inside it scale with it and also move with it when the figure is dragged or nudged; the scale and in-figure text size are shown live); drag an uncropped figure's edge outward or inward to resize the figure, keeping text size, with an offer to scale text down when it no longer fits; hold ⌥ while dragging an edge to crop"
       },
       "entry": "多图排版 → 选中一张图 → 拖四个角 / 四条边",
       "e2e": [
@@ -316,6 +316,10 @@
         {
           "spec": "layout-panel-edge-crop.spec.ts",
           "title": "排版里拖面板的右边往外：改图幅重新出图，高度与左边不动；撤销一步回到原样"
+        },
+        {
+          "spec": "layout-panel-edge-crop.spec.ts",
+          "title": "排版里拖面板的右边往里：改图幅缩小重新出图，文字 pt 不变；按住 ⌥ 才是裁剪"
         }
       ]
     },

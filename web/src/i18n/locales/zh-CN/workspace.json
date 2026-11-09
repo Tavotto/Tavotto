@@ -145,6 +145,8 @@
     "layoutGrowHeight": "改图幅 · 高 {{from}} → {{to}} mm",
     "layoutGrowUnavailable": "这张图现在改不了图幅",
     "layoutGrowWidth": "改图幅 · 宽 {{from}} → {{to}} mm",
+    "layoutShrinkFitText": "缩小到 {{pct}}%",
+    "layoutShrinkTextOverflow": "文字放不下了，要等比缩小吗？",
     "frameGrow": "扩充画布 · {{side}} +{{mm}} mm",
     "frameAtEdge": "到图边 · {{side}}没有留白",
     "frameTrim": "收紧留白 · {{side}} −{{mm}} mm",

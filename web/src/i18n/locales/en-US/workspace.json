@@ -151,6 +151,8 @@
     "layoutGrowHeight": "Resize figure · height {{from}} → {{to}} mm",
     "layoutGrowUnavailable": "This figure can't be resized right now",
     "layoutGrowWidth": "Resize figure · width {{from}} → {{to}} mm",
+    "layoutShrinkFitText": "Scale to {{pct}}%",
+    "layoutShrinkTextOverflow": "Text no longer fits. Scale it down?",
     "frameGrow": "Extend canvas · {{side}} +{{mm}} mm",
     "frameAtEdge": "At figure edge · no margin on {{side}}",
     "frameTrim": "Tighten margin · {{side}} −{{mm}} mm",

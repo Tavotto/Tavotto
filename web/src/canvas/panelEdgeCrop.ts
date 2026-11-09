@@ -1,6 +1,8 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { msg, type UiMessage } from '@/i18n'
 import { cropDragStatus, edgeGrowDragStatus } from '@/lib/dragStatus'
+import { axisOverflowMm, planTextFit } from '@/lib/edgeShrinkFit'
+import { effectiveOverride } from '@/lib/effectiveOverride'
 import { figureFrameFacts } from '@/lib/figureEdgeFrame'
 import {
   depthOf,
@@ -13,7 +15,7 @@ import {
   type EdgeGrowPlan,
 } from '@/lib/panelEdgeCrop'
 import type { ResizeDir } from '@/lib/geometry'
-import { setFigureFrame } from '@/store/actions'
+import { setFigureFrame, setFigureFrameScaled } from '@/store/actions'
 import { setTxnAnchor, useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { exactPanelManifest, useRenderStore } from '@/store/renderStore'
@@ -73,10 +75,11 @@ const isFullCrop = (c: CropRect) => c.x <= 1e-9 && c.y <= 1e-9 && c.w >= 1 - 1e-
  * 只是这一边的取景窗在收 / 放；图的缩放比（mm / 原图幅）不变。停靠点与 ⌥ 放行见 `lib/panelEdgeCrop`。
  * 拖动中的含义（裁掉多少、停在哪）放进 `interaction.dragStatus`，胶囊只读它。
  *
- * **没裁剪过的图从图边继续往外 = 改这张图的图幅**（ADR 0161 修订 2026-11-06）：与单图拖角同一条
+ * **没裁剪过的图拖边 = 改这张图的图幅，往外往里都是**（ADR 0161 修订 2026-11-06 / 2026-11-09）：与单图拖角同一条
  * `figure.size_mm` override，缩放比不变，所以文字 pt 不变。拖动中只放虚线预览框（`interaction.figureEdgeBox`），
- * 松手丢掉裁剪事务、`setFigureFrame` 一次（一条历史 + 一次渲染），新图回来前留虚线框。
- * 权威同单图：只认精确 manifest（`figureFrameFacts`）；裁剪过 / 只读 / 权威缺席时停在图边，胶囊说原因。
+ * 松手丢掉裁剪事务、`setFigureFrame` 一次（一条历史 + 一次渲染），新图回来前留虚线框。往里缩到文字放不下时，
+ * 新图回来那一刻提示「等比缩小文字」（`offerTextFit`）。**按住 ⌥ = 裁剪**（拖动中随时按 / 松都即时切换）。
+ * 权威同单图：只认精确 manifest（`figureFrameFacts`）；裁剪过的图拖边仍是调裁剪框，往外停在图边，胶囊说原因。
  */
 export function startPanelEdgeCrop(e: ReactPointerEvent, panel: PanelObject, side: CropSide) {
   e.stopPropagation()
@@ -124,61 +127,168 @@ export function startPanelEdgeCrop(e: ReactPointerEvent, panel: PanelObject, sid
   store.beginTxn(hist('adjustCrop'))
   setTxnAnchor(objectId, { x: imgX + fullW / 2, y: imgY + fullH / 2 })
 
-  trackPointer(e, {
-    onMove: (ev, dxPx, dyPx) => {
-      const t = getTransform()
-      const dMm = pxToMm(horizontal ? dxPx : dyPx, t)
-      // l / t 往里 = 坐标增大；r / b 往里 = 坐标减小
-      const inward = side === 'l' || side === 't' ? dMm : -dMm
-      const tolMm = useUiStore.getState().snapEnabled ? snapTolMm(t) : 0
-      const want = depth0 + inward / fullDim
-      const plan = planEdgeDepth({
-        depth0,
-        want,
-        oppDepth,
-        inkDepth,
-        tol: tolMm / fullDim,
-        alt: ev.altKey,
-      })
-      const next = withEdgeDepth(crop0, side, plan.depth)
-      const full = isFullCrop(next)
-      const c = full ? { x: 0, y: 0, w: 1, h: 1 } : next
-      const box = { x: imgX + fullW * c.x, y: imgY + fullH * c.y, w: fullW * c.w, h: fullH * c.h }
-      // 裁剪事务照常写（此时已回到未裁剪），之后只是在它上面叠预览：松手一并丢掉
-      const outMm = -want * fullDim
-      lastGrow = frame
-        ? planEdgeGrow({ side, box0, sizeMm: frame.sizeMm, maxMm: frame.limits.max, outMm, tolMm })
+  // 最近一次指针位移与当时的 ⌥ 状态：停住鼠标后按下 / 松开 ⌥ 要按新状态重算预览，松手也以最终状态为准
+  let lastAlt = false
+  let lastDx = 0
+  let lastDy = 0
+  let hasMove = false
+  const apply = (altKey: boolean, dxPx: number, dyPx: number) => {
+    hasMove = true
+    lastAlt = altKey
+    lastDx = dxPx
+    lastDy = dyPx
+    const t = getTransform()
+    const dMm = pxToMm(horizontal ? dxPx : dyPx, t)
+    // l / t 往里 = 坐标增大；r / b 往里 = 坐标减小
+    const inward = side === 'l' || side === 't' ? dMm : -dMm
+    const tolMm = useUiStore.getState().snapEnabled ? snapTolMm(t) : 0
+    const want = depth0 + inward / fullDim
+    // 没裁剪过、能改图幅的图：不按 ⌥ = 改图幅（两个方向），按住 ⌥ = 裁剪；裁剪过 / 改不了图幅的图照旧只裁剪
+    const resizing = frame != null && !altKey
+    const plan = resizing
+      ? { depth: 0, state: 'full' as const }
+      : planEdgeDepth({
+          depth0,
+          want,
+          oppDepth,
+          inkDepth,
+          tol: tolMm / fullDim,
+          // ⌥ 在这里已经是「要裁剪」：没裁剪过的图按着它进来，越过内容边缘不再另设一道闸
+          alt: altKey,
+        })
+    const next = withEdgeDepth(crop0, side, plan.depth)
+    const full = isFullCrop(next)
+    const c = full ? { x: 0, y: 0, w: 1, h: 1 } : next
+    const box = { x: imgX + fullW * c.x, y: imgY + fullH * c.y, w: fullW * c.w, h: fullH * c.h }
+    // 裁剪事务照常写（改图幅时它停在未裁剪），之后只是在它上面叠预览：松手一并丢掉
+    const outMm = -want * fullDim
+    lastGrow =
+      resizing && frame
+        ? planEdgeGrow({
+            side,
+            box0,
+            sizeMm: frame.sizeMm,
+            maxMm: frame.limits.max,
+            minMm: frame.limits.min,
+            outMm,
+            tolMm,
+          })
         : null
-      ix().setFigureEdgeBox(lastGrow?.box ?? null)
-      if (lastGrow && frame) {
-        ix().setDragStatus(
-          edgeGrowDragStatus({ side, from: frame.sizeMm, to: lastGrow.sizeMm, box: lastGrow.box }),
-        )
-      } else {
-        status(plan.state, plan.depth, box, outMm > tolMm)
-      }
-      store.txnUpdate((d) => {
-        const o = d.objects.find((x) => x.id === objectId)
-        if (!o || o.type !== 'panel') return
-        // 未裁剪用 delete：`crop = undefined` 在没有这个键时也算一次改动，什么都没变却多一条历史
-        if (full) delete o.crop
-        else o.crop = { ...c }
-        o.x = box.x
-        o.y = box.y
-        o.w = box.w
-        o.h = box.h
-      })
-    },
-    onEnd: (moved, _ev, end) => {
+    ix().setFigureEdgeBox(lastGrow?.box ?? null)
+    if (lastGrow && frame) {
+      ix().setDragStatus(
+        edgeGrowDragStatus({ side, from: frame.sizeMm, to: lastGrow.sizeMm, box: lastGrow.box }),
+      )
+    } else {
+      status(plan.state, plan.depth, box, outMm > tolMm)
+    }
+    store.txnUpdate((d) => {
+      const o = d.objects.find((x) => x.id === objectId)
+      if (!o || o.type !== 'panel') return
+      // 未裁剪用 delete：`crop = undefined` 在没有这个键时也算一次改动，什么都没变却多一条历史
+      if (full) delete o.crop
+      else o.crop = { ...c }
+      o.x = box.x
+      o.y = box.y
+      o.w = box.w
+      o.h = box.h
+    })
+  }
+  const onKey = (ke: KeyboardEvent) => {
+    if (ke.key !== 'Alt' || !hasMove || ke.altKey === lastAlt) return
+    ke.preventDefault()
+    apply(ke.altKey, lastDx, lastDy)
+  }
+  window.addEventListener('keydown', onKey)
+  window.addEventListener('keyup', onKey)
+
+  trackPointer(e, {
+    onMove: (ev, dxPx, dyPx) => apply(ev.altKey, dxPx, dyPx),
+    onEnd: (moved, ev, end) => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keyup', onKey)
+      // 松手那一刻的 ⌥ 才算数：与最后一次预览不同就先按它重算一次
+      if (moved && !end.cancelled && hasMove && ev.altKey !== lastAlt) apply(ev.altKey, lastDx, lastDy)
       ix().end()
       const grow = moved && !end.cancelled ? lastGrow : null
       // pointercancel = 这次交互被系统作废，一律丢弃：不留裁剪、不进历史
       store.endTxn({ discard: !moved || end.cancelled || grow != null })
-      if (grow) {
+      if (grow && frame) {
         const before = useRenderStore.getState().byKey
+        const axis = horizontal ? 0 : 1
+        const shrunk = grow.sizeMm[axis] < frame.sizeMm[axis]
+        // 拖之前这一维已经探出去多少：老图本来就压边的那部分不算这次缩小的账
+        const overBefore = shrunk ? axisOverflowMm(manifest, horizontal) : 0
         setFigureFrame(objectId, grow.sizeMm, grow.pos)
-        holdPlaceholder(objectId, grow.box, grow.sizeMm, before)
+        holdPlaceholder(
+          objectId,
+          grow.box,
+          grow.sizeMm,
+          before,
+          shrunk
+            ? () =>
+                offerTextFit(objectId, side, {
+                  before: frame.sizeMm,
+                  overBefore,
+                  now: grow.sizeMm,
+                  maxMm: frame.limits.max,
+                })
+            : undefined,
+        )
       }
     },
   })
 }
+
+const sameSize = (v: unknown, size: readonly [number, number]) =>
+  Array.isArray(v) && v.length === 2 && v[0] === size[0] && v[1] === size[1]
+
+/**
+ * 往里拖缩小图幅、新图回来之后：这一维有文字被挤出图幅（预检「元素超出图幅」同一判据）就挂一条带按钮的通知，
+ * 问要不要等比缩小文字（ADR 0161 修订 2026-11-09）。点了 = 页面上的框不动，按刚好放得下的图幅重新出图、整体缩进框里；
+ * 估短了，新图回来再量一遍、再问一次。用户在这期间撤销或别处改了图幅，按钮就什么都不做并收起。
+ */
+function offerTextFit(
+  panelId: string,
+  side: CropSide,
+  ctx: { before: readonly [number, number]; overBefore: number; now: readonly [number, number]; maxMm?: number },
+) {
+  const panel = useDocumentStore.getState().doc.objects.find((o) => o.id === panelId)
+  if (panel?.type !== 'panel') return
+  const manifest = exactPanelManifest(useRenderStore.getState(), panel)
+  if (!manifest) return
+  const horizontal = side === 'l' || side === 'r'
+  const plan = planTextFit({
+    side,
+    before: ctx.before,
+    overBefore: ctx.overBefore,
+    now: ctx.now,
+    overNow: axisOverflowMm(manifest, horizontal),
+    maxMm: ctx.maxMm,
+  })
+  if (!plan) return
+  const owner = `edge-text-fit:${panelId}`
+  const ui = useUiStore.getState()
+  ui.setStatus(cbMsg('layoutShrinkTextOverflow'), 'info', {
+    owner,
+    action: {
+      label: cbMsg('layoutShrinkFitText', { pct: String(Math.round(plan.scale * 100)) }),
+      run: () => {
+        useUiStore.getState().clearStatusOwnedBy(owner)
+        const p = useDocumentStore.getState().doc.objects.find((o) => o.id === panelId)
+        if (p?.type !== 'panel') return
+        // 提示挂着的时候撤销 / 改过图幅：这条建议已经不对应画布上的图了
+        if (!sameSize(effectiveOverride(p.overrides, 'figure', 'size_mm')?.value, ctx.now)) return
+        const box = { x: p.x, y: p.y, w: p.w, h: p.h }
+        const before = useRenderStore.getState().byKey
+        setFigureFrameScaled(panelId, plan.sizeMm, box)
+        holdPlaceholder(panelId, box, plan.sizeMm, before, () =>
+          offerTextFit(panelId, side, { ...ctx, now: plan.sizeMm }),
+        )
+      },
+    },
+  })
+}
+
+const cbMsg = (key: string, values?: Record<string, unknown>): UiMessage =>
+  msg(`contextBar.${key}`, values, 'workspace')
