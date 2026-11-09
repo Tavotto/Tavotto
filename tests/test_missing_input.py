@@ -775,6 +775,44 @@ def test_path_glob_follows_a_rule_for_a_folder_named_in_the_pattern(remapped, tm
     assert list(pathlib.Path(".").glob("elsewhere/*.csv")) == []
 
 
+def test_path_glob_keeps_rglob_depth_and_directory_only_patterns(remapped, tmp_path):
+    """Codex #1821 P2 两条：`rglob("sub/*.csv")` 要在每一层找 `sub`，不能把 `sub` 当成前缀；`glob("*/")` 末尾的
+    `/` 表示只要文件夹，换到规则目标里 glob 时不能丢。"""
+    new = tmp_path / "new"
+    _touch(new / "sub" / "a.csv", "1")
+    _touch(new / "nested" / "sub" / "b.csv", "2")
+    _touch(new / "top.csv", "3")
+    old = tmp_path / "old"
+    remapped([{"kind": P, "from": str(old), "to": str(new)}])
+    assert sorted(str(p.relative_to(old)) for p in old.rglob("sub/*.csv")) == [
+        os.path.join("nested", "sub", "b.csv"),
+        os.path.join("sub", "a.csv"),
+    ]
+    # 与本解释器直接 glob 真实文件夹一致（3.11 起只给文件夹；3.10 自己就连文件一起给）
+    native = sorted(p.name for p in new.glob("*/"))  # `new` 本身在：包装原样放行
+    assert sorted(p.name for p in old.glob("*/")) == native
+
+
+def test_the_fallback_does_not_let_a_rule_fake_a_script_directory_file(remapped, tmp_path):
+    """Codex #1821 P2：回退判「脚本目录里有没有这个文件」时，`os.path.isfile` 在 POSIX 上内部调的是此刻的
+    `os.stat`——改指层包过之后，一条指向脚本目录的绝对规则会让不存在的候选「是文件」，回退就抢在相对规则前面。"""
+    project = tmp_path / "project"
+    project.mkdir()
+    rel_target = _touch(tmp_path / "new" / "a.csv", "1")
+    abs_target = _touch(tmp_path / "elsewhere" / "a.csv", "ABS")
+    remapped(
+        [
+            {"kind": P, "from": "", "to": str(rel_target.parent)},
+            {"kind": F, "from": str(project / "a.csv"), "to": str(abs_target)},
+        ]
+    )
+    undo = figcapture.install_relative_read_fallback(str(project), str(project))
+    try:
+        assert open("a.csv").read() == "1"
+    finally:
+        undo()
+
+
 def test_relative_probes_are_left_to_the_sandbox_hint_unless_asked(remapped):
     """沙盒 cwd 下相对探路落空：数据多半就在脚本目录里，出口是「在脚本目录里运行」（`ProbeMisses`），
     不当缺数据；cwd 已是脚本目录 / 项目根（`record_relative_probes`）才记。"""

@@ -5599,7 +5599,15 @@ def observed_local_modules(
 #: 文件系统。改指层（`install_input_remap`，装在回退之内）会让 stat / isfile 按用户规则作答——回退若经它问，
 #: 规则目标就冒充了「沙盒里已经有」，脚本旁边的原件被跳过（Codex #1821 P1）。顺序永远是 原路径 → 脚本目录 → 规则。
 _FS_STAT = os.stat
-_FS_ISFILE = os.path.isfile
+
+
+def _fs_isfile(path) -> bool:
+    """`os.path.isfile` 的真实文件系统版：POSIX 上 `isfile` 内部调的是**此刻**的 `os.stat`（改指层包过的），
+    所以只捕获 `isfile` 本身挡不住改指（Codex #1821 P2）；直接用 import 时的 `os.stat`。"""
+    try:
+        return stat.S_ISREG(_FS_STAT(path).st_mode)
+    except (OSError, ValueError):
+        return False
 
 
 def install_relative_read_fallback(
@@ -5690,7 +5698,7 @@ def install_relative_read_fallback(
                 return None
         except ValueError:
             return None
-        if not _FS_ISFILE(cand):
+        if not _fs_isfile(cand):
             return None
         return cand
 
@@ -6366,20 +6374,23 @@ def install_input_remap(
 
         return probe
 
-    def _path_glob(real):
+    def _path_glob(real, recursive=False):
         """`Path.glob` / `rglob`：3.13 起它们绑的是 import 时的 `os.scandir`，上面那几层管不到。pattern 打头的
         不含通配符的几段与 `self` 拼成实际要列的文件夹（`Path(".").glob("old/*.csv")` 列的是 `old`，Codex #1821 P2）；
         那个文件夹不在、规则指向的文件夹在时，在那里 glob 剩下的模式，结果换回脚本写的前缀（随后的读经改指表）。"""
 
         def globbed(self, pattern, *args, **kwargs):
             if rules and not _reentrant() and isinstance(pattern, (str, os.PathLike)):
-                parts = [
-                    p
-                    for p in os.fspath(pattern).replace("\\", "/").split("/")
-                    if p not in ("", ".")
-                ]
+                text = os.fspath(pattern).replace("\\", "/")
+                parts = [p for p in text.split("/") if p not in ("", ".")]
                 head: list[str] = []
-                while len(parts) > 1 and not any(c in parts[0] for c in "*?[") and parts[0] != "..":
+                # `rglob` 的模式在每一层都匹配（`rglob("sub/*.csv")` 找任意深度的 `sub`）：字面段不能拆成前缀
+                while (
+                    not recursive
+                    and len(parts) > 1
+                    and not any(c in parts[0] for c in "*?[")
+                    and parts[0] != ".."
+                ):
                     head.append(parts.pop(0))
                 if parts:
                     base = self.joinpath(*head) if head else self
@@ -6388,7 +6399,8 @@ def install_input_remap(
                     target = None if present else _probe_target(base, PROBE_WANT_DIR)
                     if target is not None:
                         root = pathlib.Path(target)
-                        rest = "/".join(parts)
+                        # 末尾的 `/` 表示只要文件夹，拼回去时不能丢（Codex #1821 P2）
+                        rest = "/".join(parts) + ("/" if text.endswith("/") else "")
                         return (
                             base / p.relative_to(root) for p in real(root, rest, *args, **kwargs)
                         )
@@ -6437,7 +6449,8 @@ def install_input_remap(
     pathlib.Path.exists = _path_probe(real_p_exists, PROBE_WANT_ANY, PROBE_ANY_KIND)
     pathlib.Path.is_file = _path_probe(real_p_is_file, PROBE_WANT_FILE, PROBE_ANY_KIND)
     pathlib.Path.is_dir = _path_probe(real_p_is_dir, PROBE_WANT_DIR, PROBE_DIR_KIND)
-    pathlib.Path.glob, pathlib.Path.rglob = _path_glob(real_p_glob), _path_glob(real_p_rglob)
+    pathlib.Path.glob = _path_glob(real_p_glob)
+    pathlib.Path.rglob = _path_glob(real_p_rglob, recursive=True)
     pathlib.Path.stat, pathlib.Path.lstat = _path_stat(real_p_stat), _path_stat(real_p_lstat)
     pathlib.Path.iterdir = path_iterdir
 
