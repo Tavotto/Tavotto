@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from tavotto.engine import figcapture, pool as engine_pool, workdir, writetripwire
+from tavotto.engine import figcapture, inputremap, pool as engine_pool, workdir, writetripwire
 
 try:
     WORKER_PY = engine_pool.find_worker_python()
@@ -460,3 +460,25 @@ def test_the_ops_switch_restores_the_old_guard_behaviour(world, monkeypatch):
     err = _blocked(world, ISSUE)
     assert {o["op"] for o in err.extra["operations"]} == {"Path.write_text", "os.replace"}
     assert (world[0] / "cache.csv").read_text() == "1"
+
+
+@needs_worker
+def test_a_linked_input_and_an_overlay_intermediate_work_together(world, tmp_path):
+    """数据改指（ADR 0106）与覆盖层同时生效：缺失的输入经改指读到链接的数据，脚本自己写的中间文件经覆盖层读回。
+    覆盖层在改指外面：脚本本次写 / 改名 / 删除过的路径，覆盖层里的版本优先（直接运行时脚本写了就读到自己写的），
+    没碰过的路径落到改指层，改指只在原路径缺失时才查表。"""
+    root, out = world
+    missing = tmp_path / "absent" / "values.csv"
+    inputremap.add_rule(
+        str(root), {"kind": "file", "from": str(missing), "to": str(root / "data" / "values.csv")}
+    )
+    body = (
+        f"data = int(open({str(missing)!r}).read())\n"
+        "tmp, final = here / 'cache.tmp', here / 'cache.csv'\n"
+        "tmp.write_text(str(data * 2))\n"
+        "os.replace(tmp, final)\n"
+        "note(data=data, value=int(final.read_text()), cache_exists=final.exists())\n"
+    )
+    seen, _ = _ok(world, body)
+    assert seen == {"data": 7, "value": 14, "cache_exists": True}
+    assert (root / "cache.csv").read_text() == "1"
