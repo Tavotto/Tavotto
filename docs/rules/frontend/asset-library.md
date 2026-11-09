@@ -431,3 +431,6 @@ RenderCore，必须明确报 `svg_asset_export_unsupported`，不能交付空图
 - **R / MATLAB 入口（ADR 0143 修订「项目内入口」）**：素材卡的 `capability.foreign_source` 与脚本库的 `/api/registry` `foreign_scripts` 都是**后端报的事实**，
   前端不按后缀配对、不自己判语言。素材卡：选中这样的图，列表外一句（`reasonText` 换成「这张图是 R / MATLAB 画的」）+ 主按钮「生成可编辑版本」；脚本库：单独一组、每行文件名 + 语言，
   **没有 ▶**、不进 `groupOf` / 运行状态机 / 准备会话，点一行 = 出主页那张卡。两处动作都在 `lib/foreignEntry.ts`，落到同一个 `foreignScriptStore` 提议与 `convertStore.start`，不另起流程。
+  采用前的 `ConvertCompare` 原样展示后端 `comparison.output_evidence` 的源码文件名线索和改道写入尝试；
+  未记录、无可用记录、列表截断各自说清，不把线索标成已完成输出或完整性证明。旧后端的 R / MATLAB
+  结果仍提示出图不等于输出完整。看护 `components/PreparationCard.test.tsx`。

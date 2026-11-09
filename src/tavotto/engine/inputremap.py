@@ -25,8 +25,10 @@ import ast
 import contextlib
 import glob
 import hashlib
+import hmac
 import json
 import os
+import secrets
 import threading
 import time
 from pathlib import Path
@@ -303,6 +305,45 @@ def add_rule(root: str | os.PathLike, rule: dict) -> dict:
         config.set_project_settings(str(root), {SETTINGS_KEY: {"rules": rules}})
         _bump(root)
         return state(root)
+
+
+_PREFIX_REFERENCE_KEY = secrets.token_bytes(32)
+
+
+def prefix_reference(root: str | os.PathLike, rule: dict, gen: int) -> str:
+    """Opaque, process-local reference to one prefix at one project generation."""
+    identity = json.dumps(
+        [_gen_key(root), rule["from"], rule["to"], gen], ensure_ascii=True, separators=(",", ":")
+    ).encode("utf-8")
+    return "prefix_" + hmac.new(_PREFIX_REFERENCE_KEY, identity, hashlib.sha256).hexdigest()[:24]
+
+
+def existing_prefix(root: str | os.PathLike, reference: str) -> tuple[dict, int] | None:
+    """Resolve a report's opaque prefix reference; never invent a file under it."""
+    if not isinstance(reference, str) or not reference.isascii() or len(reference) != 31:
+        return None
+    with project_mutex(root):
+        gen = generation(root)
+        for rule in _entries(root):
+            if rule["kind"] == figcapture.REMAP_PREFIX and hmac.compare_digest(
+                prefix_reference(root, rule, gen), reference
+            ):
+                return ({k: rule[k] for k in ("kind", "from", "to")}, gen)
+    return None
+
+
+def replace_existing_prefix(
+    root: str | os.PathLike, expected: dict, expected_generation: int, chosen: str
+) -> dict:
+    """Change only an approved existing prefix, rejecting intervening mapping changes."""
+    target = chosen_path(chosen)
+    if not os.path.isdir(target):
+        raise RemapError(ERROR_CHOSEN_INVALID, "指认的位置不是文件夹", path=chosen)
+    with project_mutex(root):
+        found = existing_prefix(root, prefix_reference(root, expected, expected_generation))
+        if generation(root) != expected_generation or found is None or found[0] != expected:
+            raise RemapChanged("数据改指表已变化，请重新检查并确认")
+        return add_rule(root, {**expected, "to": target})
 
 
 def restore_raw(root: str | os.PathLike, raw) -> dict:

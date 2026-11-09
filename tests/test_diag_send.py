@@ -1383,7 +1383,12 @@ class TestContractMirrors:
             "note",
             # API 1.1.0（infra #28）起的可选字段；同意时客户端带上（diagsend `_init`，ADR 0134）。
             "error_summary",
+            # API 1.5.0 起的可选回信开关（diagsend `_init`，ADR 0145）。
+            "want_reply",
         }
+        assert init["want_reply"]["type"] == "boolean"
+        assert init["want_reply"]["default"] is False
+        assert "want_reply" not in api["components"]["schemas"]["InitBody"]["required"]
 
 
 # =========================================================================== 终态不变量（I1 / I2 / I3）

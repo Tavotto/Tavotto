@@ -1531,6 +1531,32 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
       expect(foreignCard()?.querySelector('[data-convert-installed]')?.textContent).toBe('已为这个项目装好 pandas 和 statsmodels')
     })
 
+    it('对照时列出源文件名线索和本次改道写入尝试，不把它们当成输出完整性证明', async () => {
+      vi.mocked(fetchConvert).mockResolvedValue({
+        ...readyR,
+        comparison: {
+          ...readyR.comparison,
+          output_evidence: {
+            source_references: ['input.csv', 'report-a.xlsx', 'report-b.xlsx'],
+            source_truncated: true,
+            write_attempts: ['report-a.xlsx'],
+            attempts_truncated: false,
+            completeness: 'unknown',
+          },
+        },
+      })
+      await mountBoth()
+      await offer('fig.R', 'r')
+      await act(async () => startBtn()!.click())
+      await settle()
+      const evidence = foreignCard()?.querySelector('[data-convert-output-evidence]')
+      expect(evidence?.textContent).toContain('report-b.xlsx')
+      expect(evidence?.textContent).toContain('report-a.xlsx')
+      expect(evidence?.textContent).toContain('可能包含输入')
+      expect(evidence?.textContent).toContain('不能证明')
+      expect(evidence?.textContent).toContain('仅显示部分')
+    })
+
     it('ready 时说清楚采用只会新增哪个文件、原脚本不动；后端没给清单就不说', async () => {
       vi.mocked(fetchConvert).mockResolvedValue({ ...readyR, adopt_adds: ['sub/fig_matplotlib.py'] })
       await mountBoth()

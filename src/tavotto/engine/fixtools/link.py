@@ -11,6 +11,9 @@
 3. 弹 approve 卡（`ctx.ask`）：没有界面 = `needs_approval`，用户说不 = 什么都不写。
 4. 同意后先打快照（项目设置的 `input_remap` 键在快照里，回滚精确恢复，含「原来没有」），再 `inputremap.link`。
    不改脚本、不复制数据、不放宽写入边界；规则只影响只读打开，且只在原路径打不开时才查。
+
+目录前缀没有能认出的具体文件时，报告给既有规则一个本进程、项目与代次绑定的不可猜标识；
+`mode=prefix` 只允许把该既有前缀改指到用户确认的目录，不凭前缀猜文件。范围、确认、快照和换代照旧。
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ from __future__ import annotations
 import os
 
 from ..agent_runner.wires import ToolResult
-from .base import FixContext, FixTool, err, home_relative, obj, resolve_or_error
+from .base import FixContext, FixTool, err, home_relative, obj, ok, resolve_or_error
 from .change import _done, _snapshot_or_error, approve
 from .readscope import scrub
 
@@ -60,11 +63,107 @@ def describe_rule(rule: dict) -> str:
     return f"{src} -> {rule['to']}"
 
 
+def _notify_remap(ctx: FixContext, state: dict) -> None:
+    if ctx.on_input_remap_changed is not None:
+        try:
+            ctx.on_input_remap_changed(state, "added")
+        except Exception:  # noqa: BLE001 - 通知窗口失败不影响已落盘的规则
+            pass
+
+
+def _repoint_prefix(
+    ctx: FixContext, reference: str, chosen: object, summary: str, evidence: str
+) -> ToolResult:
+    """Re-point an existing directory rule without guessing an individual source file."""
+    from .. import inputremap
+
+    root = str(ctx.project_root)
+    found = inputremap.existing_prefix(root, reference)
+    if found is None:
+        return err(
+            "requested_unknown",
+            "No current prefix data link matches `requested`; read the report again.",
+        )
+    previous, generation = found
+    resolved = resolve_or_error(ctx, chosen, "link_data_file")
+    if isinstance(resolved, ToolResult):
+        return resolved
+    real = resolved.real
+    if not os.path.isdir(real):
+        return err("chosen_not_directory", "A prefix link requires the destination folder itself.")
+    if os.path.normcase(os.path.realpath(previous["to"])) == os.path.normcase(real):
+        if inputremap.existing_prefix(root, reference) != (previous, generation):
+            return err("input_remap_changed", "The data links changed; read the report again.")
+        return ok(
+            "This prefix already points to that folder. Data links apply to safe execution; "
+            "native execution reads the script's original paths instead. Nothing changed.",
+            "no change",
+        )
+    source_label = previous["from"] or "(any relative path)"
+    denied = approve(
+        ctx,
+        "link_data_file",
+        summary,
+        details=scrub(
+            "This can change where all missing read-only paths using this prefix are looked up, "
+            "not just one file; more specific links still take precedence. Your script and data are "
+            "not changed. Native execution does not use data links.\n"
+            f"New destination: {real}\nExisting source prefix: {source_label}\n"
+            f"Current destination: {previous['to']}\nWhy this folder: {evidence}"
+        ),
+    )
+    if denied is not None:
+        return denied
+    if ctx.cancel is not None and ctx.cancel.is_set():
+        return err("cancelled", "The repair was cancelled; the data link was not changed.")
+    # Approval described this exact rule. Re-check the target and keep snapshot
+    # plus compare-and-replace under the project's mapping lock.
+    checked = resolve_or_error(ctx, real, "link_data_file")
+    if isinstance(checked, ToolResult):
+        return checked
+    if os.path.normcase(checked.real) != os.path.normcase(real):
+        return err("chosen_changed", "The selected folder changed; choose and confirm it again.")
+    try:
+        with inputremap.project_mutex(root):
+            current = inputremap.existing_prefix(root, reference)
+            if current is None or current != (previous, generation):
+                raise inputremap.RemapChanged("数据改指表已变化，请重新检查并确认")
+            bad = _snapshot_or_error(ctx, "link_data_file")
+            if bad is not None:
+                return bad
+            state = inputremap.replace_existing_prefix(root, previous, generation, checked.real)
+    except inputremap.RemapChanged:
+        return err(
+            "input_remap_changed", "The data links changed; read the report and confirm again."
+        )
+    except inputremap.RemapError as exc:
+        return err(str(exc.code)[:60], f"That folder cannot be linked: {exc}")
+    except OSError:
+        return err("settings_not_saved", "The project setting could not be saved.")
+    _notify_remap(ctx, state)
+    return _done(
+        ctx,
+        f"Updated the existing prefix {source_label} to {home_relative(ctx, checked.real)}. "
+        "It can affect all matching paths in safe execution; more specific links still take precedence. "
+        "Native execution does not use data links. "
+        "Now call try_run to verify the result.",
+        "data prefix linked",
+    )
+
+
 def link_data_file(ctx: FixContext, args: dict) -> ToolResult:
     from .. import inputremap
 
     requested = args.get("requested")
-    if not isinstance(requested, str) or not requested.strip() or len(requested) > REQUESTED_MAX:
+    mode = args.get("mode", "file")
+    if mode not in ("file", "prefix"):
+        return err("bad_arguments", "`mode` must be `file` or `prefix`.")
+    if (
+        not isinstance(requested, str)
+        or (mode == "file" and not requested.strip())
+        or "\x00" in requested
+        or len(requested) > REQUESTED_MAX
+    ):
         return err(
             "bad_arguments",
             "`requested` must be the path string the script uses, exactly as the run report shows it.",
@@ -79,6 +178,8 @@ def link_data_file(ctx: FixContext, args: dict) -> ToolResult:
     script = _script_rel(ctx)
     if script is None:
         return err("no_script", "There is no script to connect data to in this session.")
+    if mode == "prefix":
+        return _repoint_prefix(ctx, requested, args.get("chosen"), summary, evidence)
     root = str(ctx.project_root)
 
     known = inputremap.known_requests(script, root, _reported_payload(ctx))
@@ -140,12 +241,7 @@ def link_data_file(ctx: FixContext, args: dict) -> ToolResult:
         return err(str(exc.code)[:60], f"That location cannot be linked: {exc}")
     except OSError:
         return err("settings_not_saved", "The project setting could not be saved.")
-    notify = ctx.on_input_remap_changed
-    if notify is not None:
-        try:
-            notify(state, "added")
-        except Exception:  # noqa: BLE001 - 通知窗口失败不影响已落盘的规则
-            pass
+    _notify_remap(ctx, state)
     return _done(
         ctx,
         f"Linked: {requested} -> {shown} (rule: {describe_rule(rule)}). The script was not changed. "
@@ -164,12 +260,21 @@ LINK_TOOLS: tuple[FixTool, ...] = (
         "`chosen` = the file (or the folder that holds it) you found; it must be somewhere you may read. "
         "Only reading is redirected, and only when the original path cannot be opened. It also re-points an "
         "existing data link (run report `data_links`) whose linked file turns out to be the wrong one. "
+        "If a prefix link has no known individual requested paths, use mode=prefix and its `prefix_id` "
+        "as `requested`, and ask the user for the destination folder. This can change all matching paths under the "
+        "existing prefix, so it always needs explicit approval; never infer a missing filename. "
+        "Data links apply in safe execution, not native execution. "
         "Afterwards call try_run.",
         obj(
             {
                 "requested": {
                     "type": "string",
-                    "description": "The path the script asks for, as shown in the run report.",
+                    "description": "The path the script asks for, or in prefix mode the opaque prefix_id from the run report.",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["file", "prefix"],
+                    "description": "Default file; prefix only re-points an existing directory link to a chosen folder.",
                 },
                 "chosen": {
                     "type": "string",

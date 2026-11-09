@@ -393,6 +393,12 @@ id = `plan_id` = 会话报告的 `provider.attempt_id`）。白名单：目标�
 阶段轨迹（不含 `facts`）、回执的控制面 / 来源 / 完整度、`error.code` + 闭集 `reason`、取消事实、起止时间；**不含**脚本路径、
 入口名、解释器与项目路径、`error.message`、`note`、`required_input` 内容。完整规则见 `diagnostics.md`「任务绑定诊断」。
 
+失败尝试还可带两项不含路径的观测：safe 被文件守卫拦下时，复用 `receipt.project_fidelity` 的闭集投影保留本次账本；
+native 脚本异常退出时，只保留 bridge 当场按内置异常类型归类的闭集 `exception_category`。未提供、无图前退出但没有
+异常、分类不可信或旧 worker 不支持时都留空；`file_not_found` 不证明缺的是输入，也不从 traceback 推断读写。
+两次回退各自冻结自己的事实，不从后一次反填前一次。看护 `tests/test_fallback_failure_evidence_e2e.py`、
+`tests/bridge/test_bridge_failure_category.py` 与 `tests/test_task_diagnostics.py`。
+
 ## 速查表原要点（#815 精简时迁入，原文照搬）
 
 速查表那一格为让 Codex 自动拼接留出余量而收成索引；下面是当时的全文，与上文同等有效。

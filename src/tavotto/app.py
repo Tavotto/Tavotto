@@ -11759,11 +11759,15 @@ def _native_preparation_runner(pl, before_retry=None):
         )
         if unreadable is not None:
             raise unreadable
-        raise engine_pool.WorkerError(
+        failure = engine_pool.WorkerError(
             str(error.get("message") or "脚本运行出错"),
             traceback_text=str(error.get("traceback") or ""),
             code=engine_pool.SCRIPT_ERROR_CODE,
         )
+        category = getattr(session, "exception_category", None)
+        if category:
+            failure.extra["exception_category"] = category
+        raise failure
     try:
         resp = session.ensure_built()
     except engine_runcodes.RunError as exc:
@@ -11819,11 +11823,15 @@ def _native_run_error(session):
     owned = session.owned
     if owned is not None:
         tail = owned.stderr.text()
-    return engine_pool.WorkerError(
+    failure = engine_pool.WorkerError(
         f"脚本退出（退出码 {session.exit_code}），没有留下可编辑的图",
         traceback_text=tail,
         code=engine_pool.SCRIPT_ERROR_CODE if session.exit_code else "no_figure_captured",
     )
+    category = getattr(session, "exception_category", None)
+    if failure.code == engine_pool.SCRIPT_ERROR_CODE and category:
+        failure.extra["exception_category"] = category
+    return failure
 
 
 def _launch_preparation(ctx: "ProjectCtx", plan, on_done=None) -> None:
@@ -14156,6 +14164,11 @@ def _convert_runner(
                 "partial": result.get("partial", False),
                 "failed_figures": result.get("failed_figures") or [],
                 "dropped_figures": result.get("dropped_figures", 0),
+                # Only the conversion runner consumes these project-relative
+                # attempts; an older worker or absent ledger stays unknown.
+                "redirected_write_attempts": getattr(
+                    worker, "last_build_redirected_write_attempts", None
+                ),
             }
             if with_manifests and worker is not None:
                 out["source_sha256"] = getattr(worker, "last_build_source_sha256", None)

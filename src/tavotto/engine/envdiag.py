@@ -24,12 +24,15 @@ _OUTCOMES = {"done", "failed", "cancelled", "unknown"}
 _lock = threading.RLock()
 _write_lock = threading.Lock()
 _cache: OrderedDict[str, list[dict]] = OrderedDict()
+_pending_writes: set[str] = set()
 _loading: dict[str, list[tuple[str, str, float]]] = {}
 _MAX_JOBS = 16
 _MAX_PACKAGES = 200
 _MAX_PROJECTS = 64
 _RETENTION_S = 7 * 24 * 3600
 _MAX_FILE_BYTES = 2 * 1024 * 1024
+_SHARING_RETRY_DELAYS_S = (0, 0.025, 0.075, 0.15, 0.3, 0.5)
+_WINDOWS_SHARING_ERRORS = frozenset({5, 32, 33})
 
 
 def _name(value: object) -> str | None:
@@ -188,34 +191,61 @@ def _load(key: str, path: Path | None = None) -> list[dict]:
             rows = []
         _cache[key] = [_project(r) for r in rows[-_MAX_JOBS:] if isinstance(r, dict)]
         while len(_cache) > _MAX_PROJECTS:
-            _cache.popitem(last=False)
+            evicted, _ = _cache.popitem(last=False)
+            _pending_writes.discard(evicted)
     _cache.move_to_end(key)
     rows = _cache[key]
     cutoff = time.time() - _RETENTION_S
     retained = [
         row for row in rows if row.get("finished_at") is not None and row["finished_at"] >= cutoff
     ]
-    if len(retained) != len(rows):
+    pruned = len(retained) != len(rows)
+    if pruned:
         rows[:] = retained
         # A newer record may have refreshed the file mtime: erase individual
         # expired rows from disk as well as from the long-lived process cache.
+    if pruned or key in _pending_writes:
+        _pending_writes.discard(key)
         threading.Thread(target=_save, args=(key, path or _path(key)), daemon=True).start()
     return rows
 
 
 def _save(key: str, path: Path) -> None:
-    try:
-        # Serialise saves and snapshot only after acquiring the writer lock, so an
-        # older asynchronous save can never overwrite a newer observation.
-        with _write_lock:
-            with _lock:
-                if key not in _cache:
-                    return
-                data = json.dumps(_cache[key], ensure_ascii=True).encode()
-            atomicio.write_bytes(path, data, mode=0o600)
-            _prune(path.parent, keep=key)
-    except Exception:  # noqa: BLE001 - observations must not change a job's outcome
-        pass
+    for delay in _SHARING_RETRY_DELAYS_S:
+        if delay:
+            # Do not block unrelated projects while Windows releases a reader.
+            time.sleep(delay)
+        try:
+            # Each attempt snapshots after acquiring the writer lock: another
+            # observation may have arrived while a sharing conflict cleared.
+            with _write_lock:
+                with _lock:
+                    if key not in _cache:
+                        return
+                    data = json.dumps(_cache[key], ensure_ascii=True).encode()
+                atomicio.write_bytes(path, data, mode=0o600)
+                _prune(path.parent, keep=key)
+                with _lock:
+                    if (
+                        key not in _cache
+                        or json.dumps(_cache[key], ensure_ascii=True).encode() == data
+                    ):
+                        _pending_writes.discard(key)
+            return
+        except atomicio.AtomicWriteError as exc:
+            cause = exc.__cause__
+            if (
+                exc.code != "replace_failed"
+                or getattr(cause, "winerror", None) not in _WINDOWS_SHARING_ERRORS
+            ):
+                return
+        except Exception:  # noqa: BLE001 - observations must not change a job's outcome
+            return
+    # A reader can hold the file longer than the bounded retries. A later
+    # access should try the cleanup again instead of trusting the memory cache.
+    with _lock:
+        if key in _cache:
+            _pending_writes.add(key)
 
 
 def _prune(directory: Path, *, keep: str) -> None:

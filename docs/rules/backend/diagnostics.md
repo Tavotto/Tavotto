@@ -22,6 +22,9 @@ Python 发行包名、实际观察到的已安装包名与版本、能点名的�
 这段记录保存在应用数据目录的有界缓存（每项目最近 16 次、最多 64 个项目）；每条超过 7 天后不再导出，
 并在下次访问该项目记录时从磁盘清除。应用没有运行或项目未访问时，过期数据会暂留到下一次清理。
 写盘失败不影响安装或渲染；重启前尚未完成的异步写入可能丢失。
+Windows 上诊断缓存原子替换若遇共享冲突（WinError 5 / 32 / 33），后台有界退让并在每次尝试时重取
+该进程的最新缓存；等待不持写锁。长时间占用耗尽重试后记为待写，下次访问该项目记录时再尝试；
+其他写盘错误不重试，进程退出后待写标记不保留。看护 `tests/test_windows_regressions.py` 的诊断缓存用例。
 诊断包 README 和发送前说明必须明确披露包名与版本。此例外由用户在 2026-10-31 明确授权，见 ADR 0016 修订。
 
 - 文本脱敏的唯一实现下沉在 `engine/diagnostictext.py`；`diagnostics.redact_text` 保留公开入口，
@@ -262,6 +265,10 @@ Python 发行包名、实际观察到的已安装包名与版本、能点名的�
   新来源加字段 = 在它的 `diagnostic_projection` 里加一行并过一个形状守卫；**不许**递归复制 `to_payload()`。
   看护：`test_export_projection_never_reads_the_full_payload`（把 `to_payload` 毒化照样出快照）、各 sentinel 用例
   （原文 + 大小写 + hex + base64 + urlsafe + url 编码 + md5/sha1/sha256 都不出现）。
+- 准备失败的 safe 守卫账本只复用 `receipt.project_fidelity` 的操作类别、计数与盲区闭集；native 未处理异常只收
+  bridge 在异常现场生成的内置类型闭集 `exception_category`。没有运行期事实就不填，`file_not_found` 不区分读与写；
+  不采集异常类名原文、路径、消息或 traceback。看护 `tests/test_fallback_failure_evidence_e2e.py` 与
+  `tests/bridge/test_bridge_failure_category.py`。
 - **重试是新 attempt。** 每次尝试各有 id 与自己的快照；`retry_of` 在**写入新快照时**连到同一主语（同文档 / 同图 / 同脚本）
   最近一次失败，旧快照不被改写；读旧失败时 `later_attempts` 现算（≤ 8 条）。后来的成功不会清掉旧失败的 request / error。
 - **认领。** 登记按 `(项目, 类别, id)`；端点只用请求的项目取。别的项目的 id、没有过的 id 一律 404 + `reason: not_found`，

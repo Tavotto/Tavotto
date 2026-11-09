@@ -397,6 +397,7 @@ class NativeSession:
         #: 逐图的实际完成事实（P08a）：活图 / 失败图 / 只读原件各自声明的能力与时刻。`stems` 只列活图。
         self.figure_facts: list[dict] = []
         self.script_error: dict | None = None
+        self.exception_category: str | None = None
         self.terminal_error: dict | None = None
         self.exit_code: int | None = None
         self.figures_captured = 0
@@ -538,11 +539,16 @@ class NativeSession:
                 # 不进事件日志（里头有路径）：先于状态落定，读到 BARRIER 的人一定看到这一个 barrier 的事实
                 with self._lock:
                     self.figure_facts = list(facts)
+            script_error = frame.get("script_error")
+            category = executionfact.valid_exception_category(
+                script_error.get("exception_category") if isinstance(script_error, dict) else None
+            )
             self._set_state(
                 BARRIER,
                 barrier_reason=str(frame.get("reason") or ""),
                 stems=list(stems),
-                script_error=frame.get("script_error") or None,
+                script_error=script_error or None,
+                exception_category=category,
             )
         elif name == "released":
             with self._lock:
@@ -565,6 +571,9 @@ class NativeSession:
                 ENDED,
                 exit_code=_as_int(frame.get("code")),
                 figures_captured=_as_int(frame.get("figures")) or 0,
+                exception_category=executionfact.valid_exception_category(
+                    frame.get("exception_category")
+                ),
             )
         elif name == "shutdown":
             with self._lock:

@@ -287,6 +287,74 @@ import matplotlib  # noqa: E402 —— safe 档由 Tavotto 挑解释器，backen
 matplotlib.use("Agg")
 import matplotlib.figure as mfigure  # noqa: E402
 
+
+def _repair_incomplete_font_registry() -> bool:
+    """Recover an incomplete Matplotlib font registry without rewriting its cache.
+
+    Matplotlib rebuilds a cache when a selected font file is missing, but not
+    when its default family has no entry at all. Re-scan with Matplotlib's own
+    FontManager, preserve existing entries and references to the manager, and
+    add the newly discovered faces only when the default is actually usable.
+    """
+    from matplotlib import font_manager
+
+    manager = font_manager.fontManager
+    try:
+        default = str(manager.defaultFamily["ttf"]).casefold()
+
+        def usable(entries):
+            return any(
+                str(entry.name).casefold() == default and os.path.isfile(entry.fname)
+                for entry in entries
+            )
+
+        if usable(manager.ttflist):
+            return False
+        fresh = font_manager.FontManager()
+        if not usable(fresh.ttflist):
+            return False
+
+        def key(entry):
+            return tuple(
+                str(getattr(entry, attr, ""))
+                for attr in (
+                    "fname",
+                    "index",
+                    "name",
+                    "style",
+                    "variant",
+                    "weight",
+                    "stretch",
+                    "size",
+                )
+            )
+
+        def merged(old, discovered):
+            # An obsolete entry for the default face would win the matching
+            # tie and make Matplotlib rebuild/write its cache anyway.
+            keep = [
+                entry
+                for entry in old
+                if str(entry.name).casefold() != default or os.path.isfile(entry.fname)
+            ]
+            known = {key(entry) for entry in keep}
+            return keep + [entry for entry in discovered if key(entry) not in known]
+
+        clear_cached = manager._findfont_cached.cache_clear
+        ttf = merged(manager.ttflist, fresh.ttflist)
+        afm = merged(manager.afmlist, fresh.afmlist)
+        manager.ttflist[:] = ttf
+        manager.afmlist[:] = afm
+        clear_cached()
+        return True
+    except Exception as exc:  # noqa: BLE001 — retain original failure if a rescan is unavailable
+        print(
+            f"[fonts] Matplotlib font registry recovery unavailable: {type(exc).__name__}",
+            file=sys.stderr,
+        )
+        return False
+
+
 #: safe worker 要装进私有包的引擎模块——**整条平铺 import 闭包**，一次装完
 #: （safe 档不像 native 那样要分两阶段避开 matplotlib：这里 matplotlib 本来就先 import）。
 _ENGINE_MODULES = (
@@ -1559,6 +1627,13 @@ class Worker(wireproto.V1Handler):
         t_build = time.perf_counter()
         if self.built:
             return self._stems_summary()
+        # Font enumeration can be slow on some systems. Do it under the build
+        # watchdog, after the worker handshake but before any user code runs.
+        if _repair_incomplete_font_registry():
+            print(
+                "[fonts] Recovered an incomplete Matplotlib font registry for this worker.",
+                file=sys.stderr,
+            )
         # 快照账绑「这一次脚本执行」：同 worker 重试（instrument / 发布阶段临时失败）也从一份新账开始
         self.session.begin_save_moments()
         self.configure_run({})
@@ -2048,10 +2123,17 @@ class Worker(wireproto.V1Handler):
     def _stems_summary(self) -> dict:
         # `source` / `source_sha256` 是加字段，不升协议版本（ADR 0003 §1：两侧容忍未知字段）。
         # `source_sha256` 是**本进程当初执行的版本**：去重回旧会话时二次 build 拿到的也是它，不是磁盘现状。
-        return {
+        result = {
             **self.session.stems_summary(self.dropped_figures, self.pdf_pages),
             "source_sha256": self._source_sha256,
         }
+        # The tripwire ledger records attempts before opening a path; it does
+        # not prove that a file was successfully written or still exists.
+        if self.write_roots and any(
+            str(root).startswith(writetripwire.REDIRECT_PROJECT_PREFIX) for root in self.write_roots
+        ):
+            result["redirected_write_attempts"] = writetripwire.redirected()
+        return result
 
     def _render(
         self, stem: str, timings: dict | None = None, preview_dpi: int | None = None
@@ -2076,7 +2158,14 @@ class Worker(wireproto.V1Handler):
             }
         if cmd == "build":
             # legacy 形状一字不变（test_legacy_envelope_keeps_the_old_response_shape）：`source_sha256` 只给 v1 信封
-            return {"ok": True, **{k: v for k, v in self.build().items() if k != "source_sha256"}}
+            return {
+                "ok": True,
+                **{
+                    k: v
+                    for k, v in self.build().items()
+                    if k not in {"source_sha256", "redirected_write_attempts"}
+                },
+            }
         if cmd == "export" and (req.get("require_built") or req.get("snapshot_only")):
             if not self.built or req.get("stem") not in self.session.states:
                 return {

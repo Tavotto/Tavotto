@@ -22,6 +22,12 @@ order: 60
   golden vectors 在 `tests/golden/patch_vectors.json`——Rust supervisor 要
   逐字节复现，改任一侧必须同步另一侧。cancel 只是尽力而为的 no-op，硬取消 =
   kill + 重启。完整契约见 `docs/adr/0003-worker-protocol-v1.md`，改协议前先读。
+- **转换校验的写入线索**：只有带项目改道写入根的 worker，v1 build 响应才带
+  `redirected_write_attempts`；它是既有 `writetripwire.redirected()` 中至多 64 条项目相对路径，
+  在文件真正打开前记录，可能包含失败或后来删除的写入，不能用作文件存在或内容一致的证明。
+  Python 池和 workerd 池均记录同次 build 的值，失败清空，旧 worker 缺字段为 unknown；
+  legacy 响应不加字段。只有转换层消费并先去路径、脱敏、限量才展示，不进遥测。看护
+  `tests/test_convert_output_evidence.py`。
 - **计时管道与性能基线（2026-08-18）**：worker 的 build/render/export 响应带
   `timings`（`script_build_ms` / `patch_apply_ms` / `canvas_draw_ms` /
   `manifest_ms`；**没有 `svg_ms`**——SVG 序列化与 draw 在 matplotlib 里分不开），

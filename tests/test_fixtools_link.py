@@ -448,6 +448,7 @@ def test_the_system_prompt_teaches_the_missing_data_routine():
     p = fixsession.SYSTEM_PROMPT
     assert "missing_input" in p and "link_data_file" in p and "find_files" in p
     assert "pick_file" in p and "NEVER edit the script" in p
+    assert "prefix_id" in p and "mode=prefix" in p and "not native" in p
 
 
 # --------------------------------------------------------------------------- 用户选过的文件免第二张卡
@@ -538,6 +539,8 @@ def test_prompt_and_description_say_link_data_file_has_its_own_card():
 
     assert "do NOT propose_fix" in fixsession.SYSTEM_PROMPT
     assert "do NOT call propose_fix first" in REGISTRY["link_data_file"].description
+    assert "Prefix mode" in REGISTRY["ask_user"].description
+    assert "always asks separately" in REGISTRY["ask_user"].description
 
 
 # --------------------------------------------------------------------------- 选项的 path 与标签兜底
@@ -735,6 +738,303 @@ def test_a_folder_link_reports_the_concrete_path_the_script_opens(box):
     assert not r.is_error, r.content
     target = figcapture.remap_target(_rules(box), "data/x.csv")
     assert os.path.normcase(os.path.normpath(target)) == os.path.normcase(str(data))
+
+
+@pytest.mark.parametrize("relative", [False, True], ids=["absolute-prefix", "empty-prefix"])
+def test_dynamic_legacy_prefix_can_be_repointed_by_its_existing_identity(box, relative):
+    """A prefix does not identify one file; re-point its directory only with explicit approval."""
+    from tavotto.engine import figcapture
+
+    source_dir = box.tmp / "missing"
+    source = "x.csv" if relative else str(source_dir / "x.csv")
+    script_text = (
+        "from pathlib import Path\n"
+        f"root = Path({str(source_dir) if not relative else '.'!r})\n"
+        "name = 'x' + '.csv'\nopen(root / name).read()\n"
+    )
+    ctx, script, _ = _setup(box, script_text=script_text, report=lambda: {"outcome": "error"})
+    wrong = put(box.home / "Desktop" / "old" / "x.csv", "old\n")
+    right = put(box.home / "Downloads" / "new" / "x.csv", "right\n")
+    rule, _ = inputremap.link(box.proj, source, str(wrong), "file")
+    assert rule["kind"] == "prefix"
+    assert source not in inputremap.known_requests("fig.py", box.proj)
+    before = _sha(script)
+
+    body = json.loads(call(ctx, "read_run_report", {}).content)
+    link = body["data_links"]["links"][0]
+    assert link["requested"] == [] and link["prefix_id"].startswith("prefix_")
+    r = call(
+        ctx,
+        "link_data_file",
+        _args(right, requested=link["prefix_id"], chosen=str(right.parent), mode="prefix"),
+    )
+    assert not r.is_error, r.content
+    assert len(ctx.asker.cards) == 1
+    assert "all" in ctx.asker.cards[0]["details"].lower()
+    assert os.path.normcase(os.path.realpath(figcapture.remap_target(_rules(box), source))) == (
+        os.path.normcase(str(right.resolve()))
+    )
+    assert (
+        _sha(script) == before and wrong.read_text() == "old\n" and right.read_text() == "right\n"
+    )
+
+
+def test_repointing_a_prefix_requires_an_existing_rule_and_a_directory(box):
+    ctx, _, data = _setup(box, report=lambda: {"outcome": "error"})
+    before = config.project_settings(str(box.proj))
+    r = call(
+        ctx,
+        "link_data_file",
+        _args(data, requested="not-linked", chosen=str(data.parent), mode="prefix"),
+    )
+    assert r.is_error and r.code == "requested_unknown"
+    assert config.project_settings(str(box.proj)) == before and not ctx.asker.cards
+
+    inputremap.link(box.proj, "data/x.csv", str(data), "file")
+    link = json.loads(call(ctx, "read_run_report", {}).content)["data_links"]["links"][0]
+    r = call(ctx, "link_data_file", _args(data, requested=link["prefix_id"], mode="prefix"))
+    assert r.is_error and r.code == "chosen_not_directory"
+    assert not ctx.asker.cards
+
+
+def test_repointing_a_prefix_requires_new_explicit_consent(box):
+    ctx, _, data = _setup(box, ask="no", report=lambda: {"outcome": "error"})
+    old = put(box.home / "Desktop" / "old" / "data" / "x.csv", "old")
+    rule, _ = inputremap.link(box.proj, "data/x.csv", str(old), "file")
+    before = inputremap.raw_setting(box.proj)
+    link = json.loads(call(ctx, "read_run_report", {}).content)["data_links"]["links"][0]
+    # Choosing a file in an earlier step is not consent to redirect every file under a prefix.
+    ctx.user_chosen_paths[os.path.normcase(str(data.parent.parent.resolve()))] = 42
+    r = call(
+        ctx,
+        "link_data_file",
+        _args(data, requested=link["prefix_id"], chosen=str(data.parent.parent), mode="prefix"),
+    )
+    assert r.is_error and r.code == "needs_approval"
+    assert inputremap.raw_setting(box.proj) == before and snapshots.list_ids(ctx) == []
+
+
+def test_prefix_approval_discloses_scope_even_when_source_path_is_long(box):
+    ctx, _, data = _setup(box, ask="no", report=lambda: {"outcome": "error"})
+    old = box.home / "old"
+    old.mkdir()
+    inputremap.add_rule(box.proj, {"kind": "prefix", "from": "part/" * 400, "to": str(old)})
+    link = json.loads(call(ctx, "read_run_report", {}).content)["data_links"]["links"][0]
+    r = call(
+        ctx,
+        "link_data_file",
+        _args(data, requested=link["prefix_id"], chosen=str(data.parent), mode="prefix"),
+    )
+    assert r.is_error and r.code == "needs_approval"
+    details = ctx.asker.cards[0]["details"]
+    assert "all missing read-only paths" in details and "more specific" in details
+    assert "Native execution" in details
+    assert "part/" * 400 in details and "Current destination:" in details
+
+
+def test_stale_prefix_reference_cannot_change_a_different_mapping(box):
+    ctx, _, data = _setup(box, report=lambda: {"outcome": "error"})
+    old = put(box.home / "Desktop" / "old" / "data" / "x.csv", "old")
+    inputremap.link(box.proj, "data/x.csv", str(old), "file")
+    link = json.loads(call(ctx, "read_run_report", {}).content)["data_links"]["links"][0]
+    inputremap.add_rule(box.proj, {"kind": "prefix", "from": "other", "to": str(data.parent)})
+    before = inputremap.raw_setting(box.proj)
+    r = call(
+        ctx,
+        "link_data_file",
+        _args(data, requested=link["prefix_id"], chosen=str(data.parent.parent), mode="prefix"),
+    )
+    assert r.is_error and r.code == "requested_unknown"
+    assert inputremap.raw_setting(box.proj) == before and not ctx.asker.cards
+
+
+def test_prefix_reference_is_bound_to_the_project_and_rejects_untrusted_tokens(box):
+    ctx, _, data = _setup(box, report=lambda: {"outcome": "error"})
+    inputremap.link(box.proj, "data/x.csv", str(data), "file")
+    token = json.loads(call(ctx, "read_run_report", {}).content)["data_links"]["links"][0][
+        "prefix_id"
+    ]
+    other = box.home / "other-project"
+    other.mkdir()
+    inputremap.add_rule(other, {"kind": "prefix", "from": "", "to": str(data.parent.parent)})
+    assert inputremap.existing_prefix(other, token) is None
+    for invalid in ("🌿", "prefix_" + "0" * 24):
+        r = call(
+            ctx,
+            "link_data_file",
+            _args(data, requested=invalid, chosen=str(data.parent), mode="prefix"),
+        )
+        assert r.is_error and r.code == "requested_unknown"
+
+
+def test_prefix_repoint_rejects_outside_and_credential_directories(box):
+    ctx, _, data = _setup(box, report=lambda: {"outcome": "error"})
+    inputremap.link(box.proj, "data/x.csv", str(data), "file")
+    token = json.loads(call(ctx, "read_run_report", {}).content)["data_links"]["links"][0][
+        "prefix_id"
+    ]
+    before = inputremap.raw_setting(box.proj)
+    outside = box.tmp / "outside"
+    outside.mkdir()
+    secret = box.home / ".ssh"
+    secret.mkdir()
+    for target in (outside, secret):
+        r = call(
+            ctx, "link_data_file", _args(data, requested=token, chosen=str(target), mode="prefix")
+        )
+        assert r.is_error and r.code in ("outside_scope", "denied")
+    assert inputremap.raw_setting(box.proj) == before and not ctx.asker.cards
+
+
+def test_prefix_changed_during_approval_is_not_overwritten(box):
+    ctx, _, data = _setup(box, report=lambda: {"outcome": "error"})
+    old = put(box.home / "Desktop" / "old" / "data" / "x.csv", "old")
+    third = put(box.home / "Desktop" / "third" / "data" / "x.csv", "third")
+    rule, _ = inputremap.link(box.proj, "data/x.csv", str(old), "file")
+    link = json.loads(call(ctx, "read_run_report", {}).content)["data_links"]["links"][0]
+
+    def change_during_approval(card):
+        inputremap.add_rule(box.proj, {**rule, "to": str(third.parent.parent)})
+        return {"answer": "yes"}
+
+    ctx.ask = change_during_approval
+    r = call(
+        ctx,
+        "link_data_file",
+        _args(data, requested=link["prefix_id"], chosen=str(data.parent.parent), mode="prefix"),
+    )
+    assert r.is_error and r.code == "input_remap_changed"
+    assert _rules(box)[0]["to"] == str(third.parent.parent)
+    assert snapshots.list_ids(ctx) == []
+
+
+def test_prefix_target_replaced_during_approval_is_not_silently_redirected(box):
+    ctx, _, data = _setup(box, report=lambda: {"outcome": "error"})
+    inputremap.link(box.proj, "data/x.csv", str(data), "file")
+    link = json.loads(call(ctx, "read_run_report", {}).content)["data_links"]["links"][0]
+    before = inputremap.raw_setting(box.proj)
+    chosen = box.home / "chosen"
+    chosen.mkdir()
+    replacement = box.home / "replacement"
+    replacement.mkdir()
+    probe = box.home / "symlink-probe"
+    try:
+        probe.symlink_to(replacement, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks are unavailable")
+    if os.name == "nt":
+        os.rmdir(probe)
+    else:
+        probe.unlink()
+
+    def change_target(card):
+        chosen.rmdir()
+        chosen.symlink_to(replacement, target_is_directory=True)
+        return {"answer": "yes"}
+
+    ctx.ask = change_target
+    r = call(
+        ctx,
+        "link_data_file",
+        _args(data, requested=link["prefix_id"], chosen=str(chosen), mode="prefix"),
+    )
+    assert r.is_error and r.code == "chosen_changed"
+    assert inputremap.raw_setting(box.proj) == before and snapshots.list_ids(ctx) == []
+
+
+def test_repointing_a_windows_drive_prefix_keeps_its_source_identity(box):
+    from tavotto.engine import figcapture
+
+    ctx, _, data = _setup(box, report=lambda: {"outcome": "error"})
+    old = box.home / "Desktop" / "old"
+    old.mkdir(parents=True)
+    inputremap.add_rule(box.proj, {"kind": "prefix", "from": "Q:/", "to": str(old)})
+    link = json.loads(call(ctx, "read_run_report", {}).content)["data_links"]["links"][0]
+    r = call(
+        ctx,
+        "link_data_file",
+        _args(data, requested=link["prefix_id"], chosen=str(data.parent), mode="prefix"),
+    )
+    assert not r.is_error, r.content
+    assert _rules(box)[0]["from"] == "Q:/"
+    assert os.path.realpath(figcapture.remap_target(_rules(box), "Q:\\x.csv")) == str(
+        data.resolve()
+    )
+
+
+def test_repointing_prefix_preserves_more_specific_file_rules(box):
+    from tavotto.engine import figcapture
+
+    ctx, _, data = _setup(box, report=lambda: {"outcome": "error"})
+    old = put(box.home / "Desktop" / "old" / "data" / "x.csv", "old")
+    exact = put(box.home / "Desktop" / "special.csv", "exact")
+    inputremap.link(box.proj, "data/x.csv", str(old), "file")
+    inputremap.add_rule(box.proj, {"kind": "file", "from": "data/x.csv", "to": str(exact)})
+    report = json.loads(call(ctx, "read_run_report", {}).content)["data_links"]
+    prefix = next(link for link in report["links"] if link["kind"] == "prefix")
+    r = call(
+        ctx,
+        "link_data_file",
+        _args(data, requested=prefix["prefix_id"], chosen=str(data.parent.parent), mode="prefix"),
+    )
+    assert not r.is_error, r.content
+    assert "more specific" in ctx.asker.cards[0]["details"]
+    assert os.path.realpath(figcapture.remap_target(_rules(box), "data/x.csv")) == str(
+        exact.resolve()
+    )
+    assert os.path.realpath(figcapture.remap_target(_rules(box), "data/y.csv")) == str(
+        (data.parent / "y.csv").resolve()
+    )
+
+
+def test_a_matching_prefix_is_reported_as_no_change_and_native_does_not_use_it(box):
+    ctx, _, data = _setup(box, report=lambda: {"outcome": "error"})
+    inputremap.link(box.proj, "data/x.csv", str(data), "file")
+    report = json.loads(call(ctx, "read_run_report", {}).content)["data_links"]
+    assert "Native execution" in report["fact"]
+    link = report["links"][0]
+    before = inputremap.raw_setting(box.proj)
+    r = call(
+        ctx,
+        "link_data_file",
+        _args(data, requested=link["prefix_id"], chosen=str(data.parent.parent), mode="prefix"),
+    )
+    assert not r.is_error and not r.mutated and "native execution" in r.content
+    assert inputremap.raw_setting(box.proj) == before and snapshots.list_ids(ctx) == []
+
+
+def test_repointed_dynamic_prefix_is_used_by_trial_and_can_be_rolled_back(box):
+    source_dir = box.home / "missing"
+    source = str(source_dir / "x.csv")
+    script_text = (
+        "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+        "from pathlib import Path\n"
+        f"root = Path({str(source_dir)!r})\n"
+        "name = 'x' + '.csv'\n"
+        "rows = [l.split(',') for l in (root / name).read_text().split()]\n"
+        "plt.plot([float(a) for a, b in rows], [float(b) for a, b in rows])\n"
+    )
+    ctx, script, _ = _setup(box, script_text=script_text, report=lambda: {"outcome": "error"})
+    wrong = put(box.home / "Desktop" / "old" / "x.csv", "bad data\n")
+    right = put(box.home / "Downloads" / "new" / "x.csv", "1,2\n3,4\n")
+    inputremap.link(box.proj, source, str(wrong), "file")
+    before = inputremap.raw_setting(box.proj)
+    before_script = _sha(script)
+    first = call(ctx, "try_run", {"env": "e"})
+    assert "exit code 1" in first.content, first.content
+    link = json.loads(call(ctx, "read_run_report", {}).content)["data_links"]["links"][0]
+    result = call(
+        ctx,
+        "link_data_file",
+        _args(right, requested=link["prefix_id"], chosen=str(right.parent), mode="prefix"),
+    )
+    assert not result.is_error, result.content
+    snap = ctx.call_meta["snapshot"]
+    run = call(ctx, "try_run", {"env": "e"})
+    assert "exit code 0" in run.content and "figures: 1" in run.content, run.content
+    assert _sha(script) == before_script and right.read_text() == "1,2\n3,4\n"
+    assert not call(ctx, "rollback", {"snapshot": snap}).is_error
+    assert inputremap.raw_setting(box.proj) == before
 
 
 def test_read_run_report_has_no_data_links_without_rules(box):

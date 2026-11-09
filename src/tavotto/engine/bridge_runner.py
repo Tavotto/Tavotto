@@ -1580,6 +1580,7 @@ def main(argv: list | None = None) -> int:
             "code": "script_error",
             "message": f"{type(exc).__name__}: {exc}",
             "traceback": traceback.format_exc(),
+            "exception_category": _PKG.executionfact.exception_category(exc),
             # 跳过之后仍失败、而失败是脚本加进 sys.path 的项目外目录读不了（ADR 0153）：只带目录名
             **_unreadable_folder_extra(exc, args),
             **_foreign_abi_extra(exc, args),
@@ -1632,7 +1633,13 @@ def main(argv: list | None = None) -> int:
         # 与 `tavotto run` 的 status-file 同一判据：按预览发布账本数，不按捕获到的 Figure 数——
         # 预览没发布成的图不算「完成」，桌面卡片与终端不得一个说 2、一个说 1（P01b，EX12，Codex #958）
         figures = len(figcapture.published_preview_stems(args.out_dir)) if args.out_dir else 0
-        run.control.event("exit", code=exit_code, figures=figures)
+        category = (run.script_error or {}).get("exception_category")
+        run.control.event(
+            "exit",
+            code=exit_code,
+            figures=figures,
+            **({"exception_category": category} if category else {}),
+        )
         run.control.close()
     return exit_code
 
