@@ -21,6 +21,6 @@ test('排版整版导出：停在灰掉的 PY 复选框上，气泡说明为什�
   const hint = (await row.getAttribute('data-export-format-hint'))!
   expect(hint.length).toBeGreaterThan(0)
   await row.locator('input[type="checkbox"]').hover({ force: true })
-  await expect(page.getByRole('tooltip')).toHaveText(hint, { timeout: 5_000 })
+  await expect(page.locator('[data-tooltip] > [data-tooltip-label]')).toHaveText(hint, { timeout: 5_000 })
   if (process.env.TAVOTTO_E2E_SHOT) await page.screenshot({ path: `${process.env.TAVOTTO_E2E_SHOT}/py-hint.png` })
 })
