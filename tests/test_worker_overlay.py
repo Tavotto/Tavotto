@@ -4,7 +4,7 @@
 native 按 ADR 0106 不用数据改指，读原本缺失的路径 `FileNotFoundError`。常见的「写临时文件 → os.replace → 读回」就会这样。
 
 现在：这几类操作改道进**本次运行的暂存覆盖层**（`writetripwire.install_overlay`，复用校验运行改道层的视图实现，
-运行结束丢弃），Python 层的读（open / `Path.read_*` / `exists` / `is_file` / `is_dir` / `getsize` / numpy `DataSource`）看到覆盖后的
+运行结束丢弃），Python 层**读内容**的入口（open / `Path.read_*` / `os.open` / numpy `DataSource`）看到覆盖后的
 视图；**用户项目一个字节不改**。覆盖层够不着的观察（`os.stat` / `listdir` / `scandir` / 子进程 / C 层读）仍按守卫账本的老规矩：
 `os.stat` 之类命中确定偏差（blocked），列目录是弱信号（suspect），子进程 / C 层是写在 `unobserved` 里的盲区。
 
@@ -87,9 +87,9 @@ def _ok(world, body: str, *, project_mode: bool = False) -> dict:
     """成功（不退回 native）、项目逐字节不变，回观察到的值。"""
     root, out = world
     before = _snapshot(root)
-    _worker, resp = _run(world, body, project_mode=project_mode)
+    worker, resp = _run(world, body, project_mode=project_mode)
     assert _snapshot(root) == before, "用户项目被改动了"
-    assert not (root.parent / "overlay").exists()
+    assert not (worker.out_dir.parent / "overlay").exists(), "覆盖层暂存区没有丢弃"
     return json.loads(out.read_text()) if out.exists() else {}, resp
 
 
@@ -119,14 +119,14 @@ tmp, final = here / "cache.tmp", here / "cache.csv"
 tmp.write_text("2")
 os.replace(tmp, final)
 value = int(final.read_text())
-note(value=value, tmp=tmp.exists(), final=final.exists())
+note(value=value)
 """
 
 
 @needs_worker
 def test_the_issue_script_runs_in_safe_and_leaves_the_project_untouched(world):
     seen, resp = _ok(world, ISSUE)
-    assert seen == {"value": 2, "tmp": False, "final": True}, "读回的是脚本写的那份"
+    assert seen == {"value": 2}, "读回的是脚本写的那份"
     assert (world[0] / "cache.csv").read_text() == "1"
     # 说得清这次有操作被覆盖层接住，且没有确定偏差
     fid = resp["runtime"]["fidelity"]
@@ -164,24 +164,95 @@ def test_every_python_level_read_sees_the_overlay(world, project_mode, readback)
 
 @needs_worker
 @MODES
-def test_delete_makes_exists_false_in_every_python_level_check(world, project_mode):
+def test_a_deleted_file_cannot_be_opened_or_read(world, project_mode):
     p = "Path('cache.csv')" if project_mode else "here / 'cache.csv'"
     body = (
         f"p = {p}\n"
         "os.remove(p)\n"
-        "try:\n    open(p)\n    opened = True\nexcept FileNotFoundError:\n    opened = False\n"
-        "note(exists=p.exists(), isfile=p.is_file(), isdir=p.is_dir(), ope=os.path.exists(p),"
-        " opf=os.path.isfile(p), opened=opened)\n"
+        "r = {}\n"
+        "for name, fn in (('open', lambda: open(p)), ('read_text', p.read_text), ('os.open', lambda: os.open(p, os.O_RDONLY))):\n"
+        "    try:\n        fn()\n        r[name] = 'ok'\n    except FileNotFoundError:\n        r[name] = 'enoent'\n"
+        "note(**r)\n"
     )
     seen, _ = _ok(world, body, project_mode=project_mode)
-    assert seen == {
-        "exists": False,
-        "isfile": False,
-        "isdir": False,
-        "ope": False,
-        "opf": False,
-        "opened": False,
-    }
+    assert seen == {"open": "enoent", "read_text": "enoent", "os.open": "enoent"}
+
+
+@needs_worker
+@MODES
+@pytest.mark.parametrize(
+    "probe",
+    ["p.exists()", "p.is_file()", "os.path.exists(p)", "os.path.isfile(p)", "os.path.getsize(p)"],
+)
+def test_an_existence_probe_of_an_overlay_path_is_still_blocked(world, project_mode, probe):
+    """覆盖层只保证「读内容」一致。存在性 / 元数据探测说「在」之后脚本常走 C 层读（覆盖层够不着），
+    所以对覆盖层里有状态的路径，探测照旧按老规矩判 material（回退 native）——绝不能答「在」就当没事。"""
+    p = "Path('cache.csv')" if project_mode else "here / 'cache.csv'"
+    body = f"p = {p}\np.write_text('2')\n{probe}\n"
+    err = _blocked(world, body, project_mode=project_mode)
+    assert [o["op"] for o in err.extra["operations"]] == ["Path.write_text"]
+    assert (world[0] / "cache.csv").read_text() == "1"
+
+
+@needs_worker
+def test_exists_then_a_c_level_style_read_never_silently_reads_the_old_value(world):
+    """修复前（只让覆盖层答 exists）这里静默读到项目里的旧值 1；现在 exists 命中账本，整次回退 native。
+    读内容的 os 层绕过（子进程读真实文件系统）模拟 C 层读。"""
+    body = (
+        "import subprocess\n"
+        "p = here / 'cache.csv'\n"
+        "p.write_text('2')\n"
+        "if p.exists():\n"
+        "    r = subprocess.run([sys.executable, '-c', 'print(open(sys.argv[1]).read())', str(p)],"
+        " capture_output=True, text=True)\n"
+        "    note(c_layer=r.stdout.strip())\n"
+    )
+    err = _blocked(world, body)
+    assert [o["op"] for o in err.extra["operations"]] == ["Path.write_text"]
+
+
+@needs_worker
+def test_probing_a_path_without_overlay_state_is_unchanged(world):
+    body = (
+        "(here / 'new.txt').write_text('n')\n"
+        "note(seed=(here / 'seed.txt').exists(), isdir=os.path.isdir(here / 'data'),"
+        " size=os.path.getsize(here / 'seed.txt'), missing=(here / 'nope').exists())\n"
+    )
+    seen, _ = _ok(world, body)
+    assert seen == {"seed": True, "isdir": True, "size": 3, "missing": False}
+
+
+@needs_worker
+def test_a_reused_worker_can_build_three_times_with_a_fresh_overlay_each_time(world):
+    """脚本前两次在写 / 改名之后失败（会话被复用、同一个 worker 进程重跑），第三次成功：
+    每次都从空覆盖层开始（上一轮的写 / 白名单不残留），包装重装不叠出错误。"""
+    root, out = world
+    log = out.parent / "runs.log"
+    src = HDR.format(out=str(out)) + (
+        f"LOG = Path({str(log)!r})\n"
+        "LOG.open('a').write(f'{os.getpid()}\\n')\n"
+        "n = len(LOG.read_text().split())\n"
+        "p = here / 'cache.csv'\n"
+        "before = p.read_text()\n"
+        "p.write_text('x')\n"
+        "os.replace(p, here / 'moved.csv')\n"
+        "after = open(here / 'moved.csv').read()\n"
+        "note(before=before, after=after, n=n)\n"
+        "if n < 3:\n    raise RuntimeError('try again')\n"
+    )
+    (root / "script.py").write_text(src, encoding="utf-8")
+    workdir.set_mode(root, workdir.MODE_SANDBOX)
+    for attempt in (1, 2, 3):
+        try:
+            worker, _resp = engine_pool.build("script.py", str(root), "__main__")
+            assert attempt == 3
+            assert not (worker.out_dir.parent / "overlay").exists()
+        except engine_pool.WorkerError:
+            assert attempt < 3
+        # 每次都读到项目里的原件（上一轮覆盖层里的改名 / 写没有残留）
+        assert json.loads(out.read_text()) == {"before": "1", "after": "x", "n": attempt}
+        assert (root / "cache.csv").read_text() == "1"
+    assert len(set(log.read_text().split())) == 1, "三次都在同一个 worker 进程里"
 
 
 @needs_worker
@@ -191,10 +262,11 @@ def test_unlink_and_a_second_delete_follow_real_semantics(world):
         "p.unlink()\n"
         "try:\n    p.unlink()\n    again = 'ok'\nexcept FileNotFoundError:\n    again = 'enoent'\n"
         "p.unlink(missing_ok=True)\n"
-        "note(exists=p.exists(), again=again)\n"
+        "try:\n    open(p)\n    gone = False\nexcept FileNotFoundError:\n    gone = True\n"
+        "note(gone=gone, again=again)\n"
     )
     seen, _ = _ok(world, body)
-    assert seen == {"exists": False, "again": "enoent"}
+    assert seen == {"gone": True, "again": "enoent"}
 
 
 @needs_worker
@@ -202,17 +274,19 @@ def test_renaming_a_project_original_gives_a_consistent_view(world):
     body = (
         "src, dst = here / 'cache.csv', here / 'cache.bak'\n"
         "os.rename(src, dst)\n"
-        "note(src=src.exists(), dst=dst.read_text(), dst_exists=dst.is_file())\n"
+        "try:\n    open(src)\n    src_there = True\nexcept FileNotFoundError:\n    src_there = False\n"
+        "note(src=src_there, dst=dst.read_text())\n"
     )
     seen, _ = _ok(world, body)
-    assert seen == {"src": False, "dst": "1", "dst_exists": True}
+    assert seen == {"src": False, "dst": "1"}
 
 
 @needs_worker
 def test_shutil_move_of_a_project_original(world):
     body = (
         "shutil.move(str(here / 'seed.txt'), str(here / 'moved.txt'))\n"
-        "note(old=(here / 'seed.txt').exists(), new=(here / 'moved.txt').read_text())\n"
+        "try:\n    open(here / 'seed.txt')\n    old = True\nexcept FileNotFoundError:\n    old = False\n"
+        "note(old=old, new=(here / 'moved.txt').read_text())\n"
     )
     seen, _ = _ok(world, body)
     assert seen == {"old": False, "new": "abc"}
@@ -225,9 +299,9 @@ def test_repeated_writes_and_write_delete_write(world):
         "p.write_text('a'); p.write_text('b')\n"
         "first = p.read_text()\n"
         "os.remove(p)\n"
-        "gone = not p.exists()\n"
+        "try:\n    open(p)\n    gone = False\nexcept FileNotFoundError:\n    gone = True\n"
         "p.write_text('c')\n"
-        "note(first=first, gone=gone, last=p.read_text(), size=os.path.getsize(p))\n"
+        "note(first=first, gone=gone, last=p.read_text(), size=len(p.read_text()))\n"
     )
     seen, _ = _ok(world, body)
     assert seen == {"first": "b", "gone": True, "last": "c", "size": 1}
@@ -269,10 +343,10 @@ def test_a_missing_parent_directory_is_a_real_file_not_found(world):
 def test_a_new_file_in_an_existing_project_directory(world):
     body = (
         "(here / 'data' / 'new.csv').write_text('n')\n"
-        "note(read=(here / 'data' / 'new.csv').read_text(), has=(here / 'data' / 'new.csv').exists())\n"
+        "note(read=(here / 'data' / 'new.csv').read_text())\n"
     )
     seen, _ = _ok(world, body)
-    assert seen == {"read": "n", "has": True}
+    assert seen == {"read": "n"}
 
 
 @needs_worker
@@ -414,9 +488,9 @@ def test_case_variants_of_a_path_are_the_same_overlay_file_on_a_folding_volume(w
 def test_the_overlay_does_not_outlive_the_run(world):
     """脚本跑完之后引擎自己的读写看到真实的项目：覆盖层窗口已关、暂存区已丢。"""
     root, out = world
-    _run(world, "(here / 'cache.csv').write_text('2')\nnote(v=1)\n")
+    worker, _resp = _run(world, "(here / 'cache.csv').write_text('2')\nnote(v=1)\n")
     assert (root / "cache.csv").read_text() == "1"
-    assert not (root.parent / "overlay").exists()
+    assert not (worker.out_dir.parent / "overlay").exists()
 
 
 # ---------------------------------------------------------------- 账本：覆盖层事件的语义
@@ -458,7 +532,7 @@ def test_the_ops_switch_restores_the_old_guard_behaviour(world, monkeypatch):
     """`TAVOTTO_SAFE_OVERLAY=0`：回到守卫「跳过 + 记账」——同一个脚本重新判 blocked，项目照旧不动（修复前的行为）。"""
     monkeypatch.setenv("TAVOTTO_SAFE_OVERLAY", "0")
     err = _blocked(world, ISSUE)
-    assert {o["op"] for o in err.extra["operations"]} == {"Path.write_text", "os.replace"}
+    assert [o["op"] for o in err.extra["operations"]] == ["os.replace"]
     assert (world[0] / "cache.csv").read_text() == "1"
 
 
@@ -477,8 +551,8 @@ def test_a_linked_input_and_an_overlay_intermediate_work_together(world, tmp_pat
         "tmp, final = here / 'cache.tmp', here / 'cache.csv'\n"
         "tmp.write_text(str(data * 2))\n"
         "os.replace(tmp, final)\n"
-        "note(data=data, value=int(final.read_text()), cache_exists=final.exists())\n"
+        "note(data=data, value=int(final.read_text()))\n"
     )
     seen, _ = _ok(world, body)
-    assert seen == {"data": 7, "value": 14, "cache_exists": True}
+    assert seen == {"data": 7, "value": 14}
     assert (root / "cache.csv").read_text() == "1"

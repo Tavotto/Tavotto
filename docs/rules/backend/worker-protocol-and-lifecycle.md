@@ -121,8 +121,10 @@ order: 60
   safe worker 常规运行（与 MCP 授权根运行；校验运行的改道层、写回的隔离重放各有自己的改道，不叠加）在 `ledger.install()` 与绊线之后装
   `writetripwire.install_overlay(项目, <会话目录>/overlay)`：`Path.write_text`、`os.remove|unlink|rmdir|rename|replace`、`Path.unlink`、`shutil.rmtree|move`
   里**落在项目内**的那些，换进本次运行的暂存区（复用校验运行改道层的视图：白名单 / 写时复制 / 同一份 `_resolve`；每次 build 开始与脚本结束各丢一次，
-  窗口只在脚本运行期间开），读（`open` / `io.open` / `Path.open|read_*` / `os.open` / `os.path.exists|isfile|isdir|getsize` / `Path.exists|is_file|is_dir` /
-  numpy `DataSource.open`）看覆盖后的视图，项目逐字节不变。**覆盖层包装装在账本外面**——先换路径，账本看到的是暂存路径，覆盖层看得到的读不命中它；
+  窗口只在脚本运行期间开），读**内容**的入口（`open` / `io.open` / `Path.open|read_*` / `os.open` / numpy `DataSource.open`）看覆盖后的视图，项目逐字节不变。
+  **存在性 / 元数据探测不是「覆盖层接管」的入口**（`os.path.exists|isfile|isdir|getsize`、`Path.exists|is_file|is_dir`、`stat` 等）：对覆盖层里有状态的路径，答案仍取覆盖层视图，
+  但**照旧让账本看见对项目路径的这次探测**（命中就按老规矩 material → 回退 native）——探测答「在」之后脚本常走 C 层读（h5py / sqlite…），覆盖层够不着，
+  读到旧值或缺失就是 safe 里的静默错图；覆盖层只能比旧行为更好、不能更差。没有覆盖层状态的路径探测与以前一致。**覆盖层包装装在账本外面**——先换路径，账本看到的是暂存路径，覆盖层看得到的读不命中它；
   覆盖层自己探测项目文件时账本静音（`BlockedFileOps.quiet_if`）。被覆盖层接住的操作照样 `ledger.blocked(..., overlay=True)` 记一笔：**够不着的观察**
   （`os.stat` / `Path.stat`、`os.path.lexists|islink`、`listdir` / `scandir` 与 glob 等）仍命中——`stat` 类是 material（确定偏差），列目录是弱信号（suspect），
   子进程 / C 层读是 `unobserved` 盲区，规矩与以前完全一样；覆盖层事件造成的 `FileNotFoundError` 是脚本真实会遇到的，`explains` 不认。

@@ -958,16 +958,18 @@ def _w_exists(orig):
     @functools.wraps(orig)
     def fn(path, *args, **kwargs):
         if _state["overlay"]:
-            # 覆盖层模式：覆盖层说了算的路径**不再问项目里的真实文件**——账本把 `exists` 当成观察，先问一次项目里那条
-            # 路径，就等于脚本「看见了」被它自己改过的东西
+            # 覆盖层模式：对**覆盖层里有状态的路径**，存在性探测仍照旧让账本看见（问一次项目里那条路径，命中就按老规矩记
+            # material → 回退 native）。覆盖层只保证「读内容」的入口一致；探测说「在」之后脚本常去走 C 层读（h5py / sqlite…），
+            # 那条路径覆盖层够不着，读到旧值或缺失就是静默错图——所以不能用覆盖层视图作答后当没事。答案本身仍取覆盖层视图。
+            result = orig(path, *args, **kwargs)
             if _ov_view():
                 r = _resolve(path)
                 if r is not None:
                     if _white(r[1]):
                         return False
                     if _real_exists(r[2]):
-                        return orig(r[2], *args, **kwargs)
-            return orig(path, *args, **kwargs)
+                        return True
+            return result
         result = orig(path, *args, **kwargs)
         if not _redirect_on():
             return result
@@ -989,6 +991,7 @@ def _w_path_check(orig):
     @functools.wraps(orig)
     def fn(path, *args, **kwargs):
         if _state["overlay"]:
+            result = orig(path, *args, **kwargs)  # 同 `_w_exists`：账本照旧看见对项目路径的探测
             if _ov_view() and not (
                 kwargs.get("follow_symlinks") is False and _ORIG["islink"](path)
             ):
@@ -997,8 +1000,8 @@ def _w_path_check(orig):
                     if _white(r[1]):
                         return False
                     if _real_exists(r[2]):
-                        return orig(pathlib.Path(r[2]), *args, **kwargs)
-            return orig(path, *args, **kwargs)
+                        return True
+            return result
         result = orig(path, *args, **kwargs)
         if not _redirect_on():
             return result
@@ -1020,7 +1023,7 @@ def _w_path_check(orig):
 def _w_getsize(orig):
     @functools.wraps(orig)
     def getsize(path):
-        if _redirect_on() and (not _state["overlay"] or _ov_view()):
+        if _redirect_on() and not _state["overlay"]:
             target = _map(path, write=False)
             if target is not None:
                 path = target
@@ -1372,8 +1375,8 @@ def install_overlay(project: str, directory: str, *, on_handled=None, suspended=
 
     safe worker 的守卫把项目（真实图库）内的 `Path.write_text` / 改名 / 删除静默跳过，脚本随后读回受影响路径就是「看到的世界与
     直接运行不同」。覆盖层把这几类操作改道进 `directory`（本次运行自己的暂存区，运行结束丢弃），读路径（`open` / `io.open` /
-    `Path.open|read_*` / `os.open` / `os.path.exists|isfile|isdir|getsize` / `Path.exists|is_file|is_dir` / numpy `DataSource.open`）
-    看到覆盖后的视图；用户项目一个字节不改。与校验运行的改道层（ADR 0143）同一套视图实现，区别只有：
+    `Path.open|read_*` / `os.open` / numpy `DataSource.open`）
+    看到覆盖后的视图；`exists|isfile|isdir|getsize` 等探测对覆盖层有状态的路径答覆盖层视图、但仍让账本看见（命中记 material，防 C 层读静默错图）；用户项目一个字节不改。与校验运行的改道层（ADR 0143）同一套视图实现，区别只有：
 
     * 只接管 `Path.write_text`、`os.remove|unlink|rmdir|rename|replace`、`Path.unlink`、`shutil.rmtree|move`；`open('w')` 改写已有文件
       不拦的契约不变（只有覆盖层里**已有状态**的路径才继续走覆盖层，免得读回更早的那份）；`mkdir` / `copy*` / `write_bytes` 原样；
