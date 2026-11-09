@@ -41,6 +41,7 @@ from . import (
     ai_tasks,
     atomicio,
     config,
+    convertcompare,
     convertcontext,
     convertfidelity,
     convertoutputs,
@@ -571,6 +572,35 @@ MISSING_OUTPUT_CHECK = "output.source"
 MISSING_OUTPUT_REASON = "source_outputs_missing"
 
 
+def _public(write: dict) -> dict:
+    """Only the file name and the source line leave the module; the literal's directories stay local."""
+    return {"name": write["name"], "line": write["line"]}
+
+
+def _file_rows(writes: list[dict], judged: list | None, contents: dict) -> list[dict]:
+    """One row per certain source write for the UI: `state` is `missing` or the content verdict
+    (`match` | `differs` | `incomparable` + `reason`); `diffs` are coordinates only, never values. `[]` = not judged."""
+    if judged is None:
+        return []
+    gone = {w["name"] for w in judged}
+    rows = []
+    for w in writes[: convertcontext.MAX_OUTPUT_EVIDENCE]:
+        row = _public(w)
+        if w["name"] in gone:
+            row["state"] = "missing"
+        else:
+            got = contents.get(w["name"]) or {
+                "status": convertcompare.INCOMPARABLE,
+                "reason": "compare_failed",
+            }
+            row["state"] = got["status"]
+            for key in ("reason", "diff_count", "diffs"):
+                if key in got and (key == "reason" or got["status"] == convertcompare.DIFFERS):
+                    row[key] = got[key]
+        rows.append(row)
+    return rows
+
+
 def _output_evidence(cand: ConvertCandidate, out: dict) -> dict:
     """转换结果的非图形输出证据（#1810 线索 + #1809 校验判定）。**完整性永远 unknown**：名字有没有写出不证明内容 / 计算一致。
 
@@ -610,8 +640,18 @@ def _output_evidence(cand: ConvertCandidate, out: dict) -> dict:
                 written = None
             else:
                 written |= {n.replace("\\", "/").rsplit("/", 1)[-1].casefold() for n in listed}
+    contents: dict = {}
     if written is not None:
         judged = convertsrcwrites.missing(writes, written)
+        # 内容核对必须趁候选文件还在改道区（沙盒文件已被 worker 拷进改道区）时做，之后候选目录里的这些文件随时会清掉
+        contents = convertcompare.check_outputs(
+            writes,
+            project_root=cand.project_root,
+            script_rel=cand.script_rel,
+            area=Path(longpath.long(cand.dir / REDIRECT_DIRNAME)),
+            written=written,
+            inputs_read=out.get("inputs_read"),
+        )
     seen = cand.extras.setdefault("missing_outputs_seen", set())
     corrected = judged is not None and not judged and bool(seen)
     if judged:
@@ -627,10 +667,11 @@ def _output_evidence(cand: ConvertCandidate, out: dict) -> dict:
         "attempts_truncated": isinstance(raw_attempts, list)
         and (len(raw_attempts) >= 64 or len(attempts or ()) > convertcontext.MAX_OUTPUT_EVIDENCE),
         "completeness": "unknown",
-        "source_writes": writes[: convertcontext.MAX_OUTPUT_EVIDENCE],
-        "missing_outputs": judged[: convertcontext.MAX_OUTPUT_EVIDENCE]
+        "source_writes": [_public(w) for w in writes[: convertcontext.MAX_OUTPUT_EVIDENCE]],
+        "missing_outputs": [_public(w) for w in judged[: convertcontext.MAX_OUTPUT_EVIDENCE]]
         if judged is not None
         else None,
+        "files": _file_rows(writes, judged, contents),
         "missing_truncated": judged is not None
         and len(judged) > convertcontext.MAX_OUTPUT_EVIDENCE,
         "output_check": "unknown" if judged is None else ("missing" if judged else "written"),
@@ -1435,6 +1476,9 @@ def stage(cand: ConvertCandidate) -> None:
         "original_rel": cand.original_rel,
         "comparison": cand.comparison,
         "has_preview": bool(cand.preview_svg),
+        # 「让 AI 再对一次」要从 ready 候选还原出能再校验的候选，基线只能是起跑时那份
+        "project_before": cand.project_before,
+        **({"ai": cand.extras["ai"]} if isinstance(cand.extras.get("ai"), dict) else {}),
         "created": time.time(),
     }
     try:
@@ -1715,6 +1759,8 @@ def status(sid: str, project: str) -> dict:
         "comparison": meta.get("comparison"),
         "has_preview": bool(meta.get("has_preview")) and (cdir / PREVIEW_NAME).is_file(),
         "adopted_script": meta.get("adopted_script"),
+        # 「让 AI 再对一次」正在跑：候选在变，界面据此禁用采用
+        "realigning": resuming(sid) and state == "ready",
         # 采用会在项目里新增的文件（项目相对路径；原脚本不动）。ready 时按**此刻**的项目重算（重名会自动加序号）
         "adopt_adds": adopt_names(
             project, str(meta.get("script_rel") or ""), str(meta.get("target_name") or "")
@@ -1739,7 +1785,7 @@ def _write_meta(cdir: Path, meta: dict) -> None:
     atomicio.write_bytes(longpath.long(cdir / META_NAME), atomicio.dumps_json(meta))
 
 
-def adopt(sid: str, project: str) -> dict:
+def adopt(sid: str, project: str, specified: object = None) -> dict:
     """把待采用候选**新建**进项目（原脚本同目录；O_EXCL，不覆盖，重名加序号）。回 `{script, name}`。
 
     重入：已采用过的直接回上次的结果（不再写第二个文件）。原脚本此刻的字节必须仍是起跑基线、候选字节必须仍是留存时的
@@ -1749,13 +1795,41 @@ def adopt(sid: str, project: str) -> dict:
         return {"script": meta["adopted_script"], "name": Path(meta["adopted_script"]).name}
     if meta.get("state") != "ready":
         raise ConvertError("convert_not_ready", 409)
+    if resuming(sid):
+        raise ConvertError("convert_resume_busy", 409)
     root = Path(project)
     script_rel = str(meta["script_rel"])
     script_path = root / script_rel
     # 锁序固定：先原脚本、再目标兄弟脚本（只有本函数同时持有这两把）。「核原脚本字节仍是起跑基线 → 新建兄弟」必须在
     # 原脚本的锁里做完：否则别处 Tavotto 编辑在两步之间改了原脚本，基于旧源生成的候选照样被采用。
+    chosen = _specified_outputs(meta, specified)
+    if chosen:
+        # 用户在清单里为缺的文件指定了本机文件：只登记「哪个输出 → 哪个文件名」进这次采用的回执，指定的文件一个字节都不动
+        meta["specified_outputs"] = chosen
     with scriptlock.script_guard(script_path):
-        return _adopt_locked(cdir, meta, root, script_rel, script_path)
+        made = _adopt_locked(cdir, meta, root, script_rel, script_path)
+    return {**made, "specified_outputs": chosen} if chosen else made
+
+
+def _specified_outputs(meta: dict, value: object) -> list[dict]:
+    """`[{"name", "file"}]`：只认清单里确实「没写出」的文件名；`file` 只留 basename（目录是用户本机的，不进回执）。"""
+    if not isinstance(value, list):
+        return []
+    files = ((meta.get("comparison") or {}).get("output_evidence") or {}).get("files") or []
+    missing = {f.get("name") for f in files if isinstance(f, dict) and f.get("state") == "missing"}
+    out: list[dict] = []
+    for item in value[: convertcontext.MAX_OUTPUT_EVIDENCE]:
+        if not isinstance(item, dict) or item.get("name") not in missing:
+            continue
+        file = item.get("file")
+        base = file.replace("\\", "/").rsplit("/", 1)[-1][:128] if isinstance(file, str) else ""
+        if (
+            base
+            and all(ord(ch) >= 32 for ch in base)
+            and item["name"] not in {o["name"] for o in out}
+        ):
+            out.append({"name": item["name"], "file": base})
+    return out
 
 
 def _adopt_locked(cdir: Path, meta: dict, root: Path, script_rel: str, script_path: Path) -> dict:
@@ -1917,6 +1991,108 @@ def prepare_resume(sid: str, project: str) -> tuple[Path, dict, threading.Event]
         ev = threading.Event()
         _RESUMES[sid] = ev
     return cdir, meta, ev
+
+
+def _describe_diffs(diffs: list, count: int) -> str:
+    """Coordinates only (never values) as one phrase for the Agent."""
+    parts = []
+    for d in diffs:
+        if "sheet" in d:
+            parts.append(f"sheet {d['sheet']} cell {d['cell']}")
+        elif "row" in d:
+            parts.append(f"row {d['row']} column {d['col']}")
+        elif "line" in d:
+            parts.append(f"line {d['line']}")
+        elif d.get("kind") == "shape":
+            parts.append("different number of rows or columns")
+        elif d.get("kind") == "sheets":
+            parts.append("different sheet names or order")
+    more = f", {count} in total" if count > len(parts) else ""
+    return "; ".join(parts) + more
+
+
+def realign_note(target: str, files: object) -> str | None:
+    """The one correction a user may ask for when outputs differ from the old results: file names, counts and
+    coordinates only, never data values. None when nothing differs."""
+    lines = []
+    for f in files if isinstance(files, list) else []:
+        if not isinstance(f, dict) or f.get("state") != convertcompare.DIFFERS:
+            continue
+        text = ai_prompt_pack.convert_fix_text(
+            ("output.content", "source_outputs_differ"),
+            {
+                "target": target,
+                "files": f.get("name"),
+                "details": _describe_diffs(f.get("diffs") or [], int(f.get("diff_count") or 0)),
+            },
+        )
+        if text:
+            lines.append(text)
+    return ai_prompt_pack.correction_prompt(ai_prompt_pack.DEFAULT, lines) if lines else None
+
+
+def prepare_realign(sid: str, project: str) -> tuple[Path, dict, threading.Event, str]:
+    """「让 AI 再对一次」的同步部分：只有 ready 且清单里确有「不同」才接受；登记取消标记（与续跑共用一把锁，同一候选同时只有一个作业）。"""
+    cdir, meta = _load_meta(sid, project)
+    if meta.get("state") != "ready":
+        raise ConvertError("convert_not_ready", 409)
+    evidence = (meta.get("comparison") or {}).get("output_evidence") or {}
+    note = realign_note(str(meta.get("target_name") or ""), evidence.get("files"))
+    if note is None:
+        raise ConvertError("convert_nothing_to_realign", 409)
+    with _RESUMES_LOCK:
+        if sid in _RESUMES:
+            raise ConvertError("convert_resume_busy", 409)
+        ev = threading.Event()
+        _RESUMES[sid] = ev
+    return cdir, meta, ev, note
+
+
+def run_realign(
+    sid: str,
+    project: str,
+    cdir: Path,
+    meta: dict,
+    cancel: threading.Event,
+    note: str,
+    *,
+    runner,
+    correct,
+) -> dict:
+    """一次有界修正：原会话的 Agent 在**同一个候选**上只对「不同」的文件再核一次，修完重新比（`correct` 起的 Task Core 会话
+    走同一套提交前校验与内容核对）。候选先整份备份：修正没起来 / 没过 / 失败，一律还原成修正前的那份，仍是 `ready`、仍可采用
+    （清单照旧）；只有用户中途放弃（`cancel`）才删。回 `{"state": "ready" | "cancelled"}`；登记一定摘掉。"""
+    import tempfile
+
+    root = Path(project)
+    backup = Path(tempfile.mkdtemp(prefix="tavotto-realign-"))
+    try:
+        shutil.copytree(longpath.long(cdir), backup / "cand", dirs_exist_ok=True)
+        cand = None
+        try:
+            cand = _rebuild(cdir, meta, root)
+            cand.extras["runner"] = runner
+            cand.extras["cancel"] = cancel
+            cand.extras["resume"] = True
+            if isinstance(meta.get("ai"), dict):
+                cand.extras["ai"] = meta["ai"]
+            correct(cand, note, project, cancel)
+        except Exception:  # noqa: BLE001 —— 起不来 / 修正出错：还原，不把候选弄丢
+            pass
+        with _RESUMES_LOCK:
+            cancelled = cancel.is_set()
+            if cancelled:
+                remove_dir(cdir)
+            elif cand is None or not cand.ready:
+                # 修正没有产生新的可采用候选：把备份原样放回
+                shutil.rmtree(longpath.long(cdir), ignore_errors=True)
+                shutil.copytree(backup / "cand", longpath.long(cdir))
+            _RESUMES.pop(sid, None)
+        return {"state": "cancelled" if cancelled else "ready"}
+    finally:
+        shutil.rmtree(backup, ignore_errors=True)
+        with _RESUMES_LOCK:
+            _RESUMES.pop(sid, None)
 
 
 def _drop_candidate_files(cdir: Path, meta: dict) -> None:

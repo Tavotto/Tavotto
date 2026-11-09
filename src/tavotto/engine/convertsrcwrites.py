@@ -196,6 +196,13 @@ def _usable(value: str) -> str | None:
     return clean if clean == name else None
 
 
+def _rel(literal: str) -> str:
+    flat = literal.replace("\\", "/")
+    while flat.startswith("./"):
+        flat = flat[2:]
+    return flat
+
+
 def _named(masked: str, span: tuple[int, int]) -> tuple[str | None, tuple[int, int]]:
     m = re.match(r"\s*([A-Za-z_.][\w.]*)\s*=(?!=)", masked[span[0] : span[1]])
     if m is None:
@@ -203,9 +210,9 @@ def _named(masked: str, span: tuple[int, int]) -> tuple[str | None, tuple[int, i
     return m.group(1), (span[0] + m.end(), span[1])
 
 
-def _r_writes(text: str) -> list[tuple[str, int]]:
+def _r_writes(text: str) -> list[tuple[str, int, str]]:
     masked = _mask_r(text)
-    found: list[tuple[str, int]] = []
+    found: list[tuple[str, int, str]] = []
     names = "|".join(re.escape(n) for n in sorted(_R_WRITERS, key=len, reverse=True))
     pattern = re.compile(rf"(?<![\w.$@])(?:[A-Za-z][\w.]*::)?({names})\s*\(")
     for count, m in enumerate(pattern.finditer(masked)):
@@ -248,7 +255,7 @@ def _r_writes(text: str) -> list[tuple[str, int]]:
         literal = _literal(text, masked, value)
         name = _usable(literal) if literal is not None else None
         if name is not None:
-            found.append((name, text.count("\n", 0, start) + 1))
+            found.append((name, text.count("\n", 0, start) + 1, _rel(literal)))
     return found
 
 
@@ -269,7 +276,7 @@ def _matlab_flat(masked: str) -> tuple[str, list[int]]:
     return "".join(out), depths
 
 
-def _matlab_writes(text: str) -> list[tuple[str, int]]:
+def _matlab_writes(text: str) -> list[tuple[str, int, str]]:
     masked = _mask_matlab(text)
     flat, depths = _matlab_flat(masked)
     stop = _M_STOP.search(flat)
@@ -285,7 +292,7 @@ def _matlab_writes(text: str) -> list[tuple[str, int]]:
         running.append(total)
     names = "|".join(sorted(_M_WRITERS, key=len, reverse=True))
     pattern = re.compile(rf"(?<![\w.@$])({names})\s*\(")
-    found: list[tuple[str, int]] = []
+    found: list[tuple[str, int, str]] = []
     for count, m in enumerate(pattern.finditer(masked, 0, limit)):
         if count >= MAX_CALLS:
             break
@@ -304,25 +311,29 @@ def _matlab_writes(text: str) -> list[tuple[str, int]]:
             if mode is None or not re.match(r"^[waWA]", mode):
                 continue
         literal = _literal(text, masked, spans[path_at])
-        name = _usable(literal.replace("''", "'")) if literal is not None else None
+        literal = literal.replace("''", "'") if literal is not None else None
+        name = _usable(literal) if literal is not None else None
         if name is not None:
-            found.append((name, text.count("\n", 0, start) + 1))
+            found.append((name, text.count("\n", 0, start) + 1, _rel(literal)))
     return found
 
 
 def certain_writes(source: bytes, language: str) -> list[dict]:
-    """`[{"name": basename, "line": n}]`: literal-path write calls in plain top-level statements.
+    """`[{"name": basename, "line": n, "path": relative literal}]` (`path` stays internal): literal-path write calls in plain top-level statements.
 
     Only R / MATLAB sources are read; any other language, an undecodable file or a
     dynamic path yields nothing, which means *unknown* (never "no outputs")."""
     if language not in ("r", "matlab"):
         return []
     text = source.decode("utf-8", errors="replace")
-    pairs = _r_writes(text) if language == "r" else _matlab_writes(text)
-    first: dict[str, int] = {}
-    for name, line in pairs:
-        first.setdefault(name, line)
-    return [{"name": n, "line": first[n]} for n in sorted(first, key=lambda n: (first[n], n))]
+    triples = _r_writes(text) if language == "r" else _matlab_writes(text)
+    first: dict[str, tuple[int, str]] = {}
+    for name, line, rel in triples:
+        first.setdefault(name, (line, rel))
+    return [
+        {"name": n, "line": first[n][0], "path": first[n][1]}
+        for n in sorted(first, key=lambda n: (first[n][0], n))
+    ]
 
 
 def written_names(area: Path) -> set[str] | None:

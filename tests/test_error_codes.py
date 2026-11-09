@@ -338,6 +338,7 @@ USER_VISIBLE_CODES = {
     "convert_source_language_mismatch": {"script"},
     "convert_not_awaiting_dependencies": set(),
     "convert_resume_busy": set(),
+    "convert_nothing_to_realign": set(),
     # 这个请求 id 已被新指令取代（改写后再发），不会再执行 / 取代时发现旧请求其实已经开始
     "ai_request_superseded": set(),
     "ai_supersede_conflict": set(),

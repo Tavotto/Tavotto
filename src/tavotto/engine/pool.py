@@ -3037,6 +3037,7 @@ class EngineWorker:
         self.last_build_runtime: dict | None = None
         self.last_build_redirected_write_attempts: list[str] | None = None
         self.last_build_sandbox_files: dict | None = None
+        self.last_build_inputs_read: dict | None = None
         self.last_build_execution_id: str | None = None
         self.last_used = time.time()
         # 这一代从日志的哪个字节开始（append 模式，目录跨代复用）
@@ -3562,12 +3563,14 @@ class EngineWorker:
             self.last_build_source_sha256 = None
             self.last_build_redirected_write_attempts = None
             self.last_build_sandbox_files = None
+            self.last_build_inputs_read = None
             raise WorkerError(str(exc), code=exc.code) from exc
         except BaseException:
             self.build_failed = True
             self.last_build_source_sha256 = None
             self.last_build_redirected_write_attempts = None
             self.last_build_sandbox_files = None
+            self.last_build_inputs_read = None
             raise
         self.build_failed = False
         self.built = True
@@ -3582,6 +3585,8 @@ class EngineWorker:
         self.last_build_redirected_write_attempts = attempts if isinstance(attempts, list) else None
         sandbox_files = resp.get("sandbox_files")
         self.last_build_sandbox_files = sandbox_files if isinstance(sandbox_files, dict) else None
+        inputs_read = resp.get("inputs_read")
+        self.last_build_inputs_read = inputs_read if isinstance(inputs_read, dict) else None
         misses = resp.get("probe_misses")
         self.last_build_probe_misses = misses if isinstance(misses, list) else None
         self.last_build_execution_id = resp.get("execution_id")
@@ -3600,6 +3605,7 @@ class EngineWorker:
             self.last_build_source_sha256 = None
             self.last_build_redirected_write_attempts = None
             self.last_build_sandbox_files = None
+            self.last_build_inputs_read = None
             raise
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样
@@ -4015,6 +4021,7 @@ class WorkerdWorker:
         self.last_build_runtime: dict | None = None
         self.last_build_redirected_write_attempts: list[str] | None = None
         self.last_build_sandbox_files: dict | None = None
+        self.last_build_inputs_read: dict | None = None
         self.last_build_execution_id: str | None = None
         self.child_pid: int | None = None
         self.last_used = time.time()
@@ -4335,12 +4342,14 @@ class WorkerdWorker:
             self.last_build_source_sha256 = None
             self.last_build_redirected_write_attempts = None
             self.last_build_sandbox_files = None
+            self.last_build_inputs_read = None
             raise WorkerError(str(exc), code=exc.code) from exc
         except BaseException:
             self.build_failed = True  # 与 EngineWorker 同一个判据
             self.last_build_source_sha256 = None
             self.last_build_redirected_write_attempts = None
             self.last_build_sandbox_files = None
+            self.last_build_inputs_read = None
             raise
         self.build_failed = False
         self.built = True
@@ -4355,6 +4364,8 @@ class WorkerdWorker:
         self.last_build_redirected_write_attempts = attempts if isinstance(attempts, list) else None
         sandbox_files = resp.get("sandbox_files")
         self.last_build_sandbox_files = sandbox_files if isinstance(sandbox_files, dict) else None
+        inputs_read = resp.get("inputs_read")
+        self.last_build_inputs_read = inputs_read if isinstance(inputs_read, dict) else None
         misses = resp.get("probe_misses")
         self.last_build_probe_misses = misses if isinstance(misses, list) else None
         self.last_build_execution_id = resp.get("execution_id")
@@ -4373,6 +4384,7 @@ class WorkerdWorker:
             self.last_build_source_sha256 = None
             self.last_build_redirected_write_attempts = None
             self.last_build_sandbox_files = None
+            self.last_build_inputs_read = None
             raise
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样

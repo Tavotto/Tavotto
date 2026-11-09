@@ -380,6 +380,19 @@ order: 240
 文件名在不证明内容和计算一致。沙盒 cwd 下合并改道区与 worker 回报的 `sandbox_files`（任一里有就算写出）。内置执行器的 `check` 对同一组缺项只报一次，再次出现照常放行。看护 `tests/test_convert_missing_outputs.py`
 （静态抽取正反例 / 真 worker 判定 / 成功、补齐、仍缺、无法确认四种终态）。
 
+**内容核对（#1809 第二层）**：候选写出了的「能确定的写出」，若项目里已有同名旧结果（脚本旁优先、其次项目根），`convertcompare`
+在校验窗口内（候选文件还在改道区；沙盒 cwd 的文件由 worker 先拷进改道区 `.tavotto-sandbox/`，各 ≤ 8 MiB、合计 ≤ 64 MiB）逐个比：
+csv / tsv 按单元格（数值相对 1e-9 / 绝对 1e-12，文本原样，行列数须一致），xlsx 用标准库读（逐表顺序、逐格值、**不信 `<dimension>`**，
+不比样式，不依赖 openpyxl），txt / log 逐行原样；不比原始字节。每个文件 `files[]` 一行：`state` = `missing` | `match` | `differs` |
+`incomparable`；`differs` 带 `diff_count` 与至多 5 处坐标（`{sheet, cell}` / `{row, col}` / `{line}` / `{kind: shape | sheets}`，**没有值**）；
+`incomparable` 带 `reason` ∈ `no_previous` / `stale`（旧结果 mtime 早于候选这次读过的任一输入，输入 mtime 来自 worker 回报的
+`inputs_read`）/ `format` / `too_large`（超大小 / 时间 / 单元格预算）/ `inputs_unknown`（观察记录缺失、截断或为空）/ `compare_failed`
+（比较器自身异常——任何异常都只是 incomparable，不是校验失败）。内容差异**不**自动进修正：「让 AI 再对一次」是用户点的一次有界修正
+（`POST /api/ai/convert/<sid>/realign` → `prepare_realign` / `run_realign`，提示只有文件名、坐标和计数；修正前整份备份，没产出新的
+可采用候选就原样还原，仍 `ready`；用户中途放弃才删）。`status.realigning` 为真时采用 409 `convert_resume_busy`。
+采用 `POST /adopt` 可带 `specified_outputs: [{name, file}]`：只认清单里 `missing` 的名字，`file` 只留 basename，登记进 meta 与采用回执，
+被指定的文件一个字节都不动。看护 `tests/test_convert_output_content.py`。
+
 **R / MATLAB 来源（ADR 0143 修订，2026-10-23）**：`POST /api/ai/convert` 多一个可选 `source_language`（`python` 缺省 | `r` | `matlab`）。
 r / matlab 时 `library` 必须缺省，后端用 `sourcelang.detect`（纯标准库；`.R` / `.r` / `.m` 纯文本、≤ 1 MB、UTF-8；`.m` 带 Objective-C 特征或
 MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `convert_source_language_mismatch`。**不运行 R / MATLAB**：对照只用请求给的 `path` 或脚本旁

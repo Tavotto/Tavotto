@@ -38,6 +38,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchAiSession: vi.fn(),
   fetchConvert: vi.fn(),
   adoptConvert: vi.fn(),
+  realignConvert: vi.fn(),
   discardConvert: vi.fn(),
   resolveConvertDependencies: vi.fn(),
   replanConvertDependencies: vi.fn(),
@@ -118,7 +119,7 @@ import { useAiStore } from '@/store/aiStore'
 import { requestAiFix } from '@/lib/api'
 import { useAiFixStore } from '@/store/aiFixStore'
 import { useOnboardingStore } from '@/store/onboardingStore'
-import { adoptConvert, aiCancel, discardConvert, fetchAiSession, fetchConvert, replanConvertDependencies, resolveConvertDependencies, setConvertUnsandboxedWindows, startConvert } from '@/lib/api'
+import { adoptConvert, aiCancel, realignConvert, discardConvert, fetchAiSession, fetchConvert, replanConvertDependencies, resolveConvertDependencies, setConvertUnsandboxedWindows, startConvert } from '@/lib/api'
 import type { DependencyPreparationOffer } from '@/lib/api'
 
 declare global {
@@ -1560,6 +1561,109 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
       expect(evidence?.textContent).toContain('可能包含输入')
       expect(evidence?.textContent).toContain('不能证明')
       expect(evidence?.textContent).toContain('仅显示部分')
+    })
+
+    describe('输出清单（#1809）', () => {
+      const filesOf = (files: import('@/lib/api').ConvertOutputFile[]) => ({
+        ...readyR,
+        comparison: {
+          ...readyR.comparison,
+          output_evidence: {
+            source_references: [], source_truncated: false, write_attempts: [], attempts_truncated: false, completeness: 'unknown' as const,
+            files,
+          },
+        },
+      })
+      const ready = async (files: import('@/lib/api').ConvertOutputFile[]) => {
+        vi.mocked(fetchConvert).mockResolvedValue(filesOf(files))
+        await mountBoth()
+        await offer('fig.R', 'r')
+        await act(async () => startBtn()!.click())
+        await settle()
+      }
+      const row = (name: string) => foreignCard()?.querySelector(`[data-convert-file="${name}"]`) as HTMLElement
+      const primary = () => foreignCard()?.querySelector('[data-convert-adopt]') as HTMLButtonElement
+      const click = (el: Element | null | undefined) => act(async () => (el as HTMLElement).click())
+
+      it('每个状态一个词；没法比的原因放 title；那句“不能证明”放清单的 title，不占一行', async () => {
+        await ready([
+          { name: 'a.csv', line: 1, state: 'match' },
+          { name: 'b.csv', line: 2, state: 'differs', diff_count: 1, diffs: [{ row: 2, col: 1 }] },
+          { name: 'c.xlsx', line: 3, state: 'incomparable', reason: 'stale' },
+          { name: 'd.csv', line: 4, state: 'incomparable', reason: 'no_previous' },
+          { name: 'e.csv', line: 5, state: 'incomparable', reason: 'inputs_unknown' },
+          { name: 'f.rds', line: 6, state: 'incomparable', reason: 'format' },
+          { name: 'g.csv', line: 7, state: 'incomparable', reason: 'too_large' },
+        ])
+        const state = (n: string) => row(n).querySelector('[data-convert-file-state]') as HTMLElement
+        expect(state('a.csv').textContent).toBe('一致')
+        expect(state('b.csv').textContent).toBe('不同')
+        expect(state('c.xlsx').textContent).toBe('没法比')
+        expect(state('c.xlsx').title).toBe('旧结果比输入数据还早，可能已经过期')
+        expect(state('d.csv').title).toBe('项目里没有这个文件的旧结果')
+        expect(state('e.csv').title).toBe('不知道读了哪些数据')
+        expect(state('f.rds').title).toBe('这种格式没法比')
+        expect(state('g.csv').title).toBe('文件太大没比')
+        const block = foreignCard()?.querySelector('[data-convert-output-evidence]') as HTMLElement
+        expect(block.title).toContain('不能证明')
+        expect(block.textContent).not.toContain('不能证明')
+        expect(foreignCard()?.querySelector('[data-convert-unverified]')?.textContent).toContain('没有运行 R / MATLAB')
+      })
+
+      it('缺的文件：行内「我来指定」「不需要」都有动作；都没处理就点采用先问一句，再点才采用', async () => {
+        const pick = vi.spyOn(window, 'prompt').mockReturnValue('/data/my-report.csv')
+        await ready([
+          { name: 'a.csv', line: 1, state: 'missing' },
+          { name: 'b.csv', line: 2, state: 'missing' },
+        ])
+        await click(primary())
+        expect(adoptConvert).not.toHaveBeenCalled()
+        expect(foreignCard()?.textContent).toContain('还有 2 个文件没处理，仍要采用吗？')
+        expect(primary().textContent).toBe('仍然采用')
+        await click(row('a.csv').querySelector('[data-convert-file-specify]'))
+        expect(pick).toHaveBeenCalled()
+        expect(row('a.csv').querySelector('[data-convert-file-state]')?.textContent).toBe('已指定')
+        await click(row('b.csv').querySelector('[data-convert-file-skip]'))
+        expect(row('b.csv').querySelector('[data-convert-file-state]')?.textContent).toBe('不需要')
+        // 都处理完：问句消失，采用的回执带着「指定」（只有文件名，没有目录）
+        expect(primary().textContent).toBe('采用新版本')
+        await click(primary())
+        expect(adoptConvert).toHaveBeenCalledWith('sid-r', expect.anything(), [{ name: 'a.csv', file: 'my-report.csv' }])
+        pick.mockRestore()
+      })
+
+      it('问过之后选「仍然采用」：没处理的文件不挡采用', async () => {
+        await ready([{ name: 'a.csv', line: 1, state: 'missing' }])
+        await click(primary())
+        expect(adoptConvert).not.toHaveBeenCalled()
+        await click(primary())
+        expect(adoptConvert).toHaveBeenCalledWith('sid-r', expect.anything())
+      })
+
+      it('有「不同」：采用钮改「照样采用」，「让 AI 再对一次」在「放弃」左边并真的发请求、轮询到新清单', async () => {
+        const differs = [{ name: 'b.csv', line: 2, state: 'differs' as const, diff_count: 1, diffs: [{ row: 2, col: 1 }] }]
+        vi.mocked(realignConvert).mockReset().mockResolvedValue({ session: 'sid-r', realigning: true })
+        await ready(differs)
+        expect(primary().textContent).toBe('照样采用')
+        const realign = foreignCard()?.querySelector('[data-convert-realign]') as HTMLElement
+        const discard = foreignCard()?.querySelector('[data-convert-discard]') as HTMLElement
+        expect(realign.textContent).toBe('让 AI 再对一次')
+        expect(realign.compareDocumentPosition(discard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+        vi.mocked(fetchConvert).mockResolvedValue({ ...filesOf([{ name: 'b.csv', line: 2, state: 'match' }]), realigning: false })
+        await click(realign)
+        await settle()
+        expect(realignConvert).toHaveBeenCalledWith('sid-r', expect.anything())
+        expect(row('b.csv').querySelector('[data-convert-file-state]')?.textContent).toBe('一致')
+        expect(foreignCard()?.querySelector('[data-convert-realign]')).toBeNull()
+        expect(primary().textContent).toBe('采用新版本')
+      })
+
+      it('没有 files（动态路径 / 老后端）：退回旧的几行说明，不出清单', async () => {
+        await ready([])
+        expect(foreignCard()?.querySelector('[data-convert-files]')).toBeNull()
+        expect(foreignCard()?.querySelector('[data-convert-output-evidence]')?.textContent).toContain('不能证明')
+        expect(primary().textContent).toBe('采用新版本')
+      })
     })
 
     it('ready 时说清楚采用只会新增哪个文件、原脚本不动；后端没给清单就不说', async () => {

@@ -32,6 +32,8 @@ order: 60
   `sandbox_files: {names: [会话沙盒里此刻还在的文件相对名，≤200], truncated: bool}`，排除 `__pycache__` / `*.pyc` / `_tavotto_*`
   引擎内部文件。只给名字不给内容，仅供 `ai_convert` 比对「来源里能确定的写出」有没有被写出（沙盒 cwd 的相对写入校验后即销毁，
   只有这里看得到）；legacy 响应剥掉，池（Python / workerd）按 build 记录、失败清空、缺字段为 unknown，不进界面 / 诊断包 / 遥测 / 日志。
+  同条件的响应另带 `inputs_read: {files: [{path, mtime_ns}], truncated}`（观察器记到的项目内只读输入，供旧结果新鲜度判断；
+  无观察报告为 null）；worker 另把沙盒里的这些文件（有界）拷进改道区 `.tavotto-sandbox/`，供父进程在沙盒销毁前比内容。同样不出界面 / 诊断包 / 遥测。
   看护 `tests/test_convert_missing_outputs.py`。
 - **计时管道与性能基线（2026-08-18）**：worker 的 build/render/export 响应带
   `timings`（`script_build_ms` / `patch_apply_ms` / `canvas_draw_ms` /

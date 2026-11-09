@@ -9,6 +9,7 @@ import { create } from 'zustand'
 import {
   ApiError,
   adoptConvert,
+  realignConvert,
   agentById,
   aiCancel,
   backendErrorText,
@@ -74,6 +75,8 @@ export interface ConvertEntry {
   stoppedLate?: boolean
   /** 这一轮开始的时刻（ms）；运行中的卡片据此显示「已用 X 分钟」 */
   startedAt?: number
+  /** 「让 AI 再对一次」正在跑 */
+  realigning?: boolean
   /** 运行中后端给的活动提示（`writing_long`）：只换进度行的文字；没有 / 恢复 = null */
   activity?: 'writing_long' | null
 }
@@ -82,7 +85,9 @@ interface ConvertState {
   entries: Record<string, ConvertEntry>
   /** `language` 缺省 python（`library` 必填）；`r` / `matlab` 时 `library` 传 null */
   start: (script: string, library: string | null, path: string | null, language?: ConvertSourceLanguage, referenceFiles?: string[], afterConnect?: boolean) => Promise<void>
-  adopt: (script: string) => Promise<string | null>
+  adopt: (script: string, specified?: Array<{ name: string; file: string }>) => Promise<string | null>
+  /** 「让 AI 再对一次」：后端对「不同」的文件有界修正一次；这里轮询到它结束并换上新的对照 */
+  realign: (script: string) => Promise<void>
   discard: (script: string) => Promise<void>
   /** 依赖卡片的主按钮（问一次 / 名单外）：回显卡片摘要，后端装 + 接着校验同一个候选；`system` 卡片没有这个动作 */
   resolveDeps: (script: string) => Promise<void>
@@ -571,13 +576,37 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
     }
   },
 
-  adopt: async (script) => {
+  realign: async (script) => {
+    const cur = get().entries[script]
+    if (!cur?.session || cur.phase !== 'ready' || cur.realigning) return
+    const session = cur.session
+    const pj = currentProjectId()
+    const guard = captureProjectEpoch()
+    set1(script, { realigning: true })
+    try {
+      await realignConvert(session, pj)
+      for (;;) {
+        await new Promise((r) => setTimeout(r, POLL_MS))
+        if (!guard.still()) return
+        const status = await fetchConvert(session, pj)
+        if (!status.realigning) {
+          set1(script, { realigning: false, status })
+          return
+        }
+      }
+    } catch {
+      // 后端没起来 / 对账失败：候选没有被动过（失败一律还原），回到原来的清单，不另起错误卡
+      if (guard.still()) set1(script, { realigning: false })
+    }
+  },
+
+  adopt: async (script, specified) => {
     const cur = get().entries[script]
     if (!cur?.session) return null
     const guard = captureProjectEpoch()
     set1(script, { phase: 'adopting', error: null, reason: null })
     try {
-      const made = await adoptConvert(cur.session, currentProjectId())
+      const made = specified && specified.length > 0 ? await adoptConvert(cur.session, currentProjectId(), specified) : await adoptConvert(cur.session, currentProjectId())
       if (!guard.still()) return null
       acceptedSessions.delete(scopeKey(currentProjectId(), script))
       set1(script, { phase: 'adopted', adopted: made.script })

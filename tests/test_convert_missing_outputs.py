@@ -8,6 +8,8 @@ unknown) run through the real task pipeline with a scripted CLI.
 # ruff: noqa: F811 - imported pytest fixtures
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from tavotto.engine import ai_convert, convertsrcwrites, workdir
@@ -300,7 +302,9 @@ def test_sandbox_listing_is_capped_and_hides_internal_files(tmp_path):
     (tmp_path / "sub" / "kept.csv").write_text("x")
     (tmp_path / "mod.pyc").write_bytes(b"x")
     (tmp_path / "_tavotto_shadow_spawn_main.py").write_text("x")
-    fake = SimpleNamespace(sandbox=tmp_path)
+    fake = SimpleNamespace(
+        sandbox=tmp_path, write_roots=None, _keep_sandbox_outputs=lambda names: None
+    )
     assert worker.Worker._sandbox_files(fake) == {"names": ["sub/kept.csv"], "truncated": False}
     for i in range(worker._MAX_SANDBOX_FILES + 5):
         (tmp_path / f"f{i:04}.txt").write_text("x")
@@ -464,3 +468,21 @@ def test_sandbox_default_corrected_to_written(project, monkeypatch):
     assert len(state["prompts"]) == 2
     evidence = status["comparison"]["output_evidence"]
     assert evidence["output_check"] == "written" and evidence["corrected"] is True
+
+
+def test_adopting_records_only_names_of_the_users_specified_files(project, monkeypatch):
+    client, sid, _session, status, _state = _pipeline(
+        project, monkeypatch, source=R_FILE, first="", later=""
+    )
+    assert status["comparison"]["output_evidence"]["output_check"] == "missing"
+    body = {
+        "specified_outputs": [
+            {"name": "table.csv", "file": "/Users/me/private/dir/my-table.csv"},
+            {"name": "report-b.xlsx", "file": 5},  # not a name: dropped
+            {"name": "never-listed.csv", "file": "x.csv"},  # not a missing output: dropped
+        ]
+    }
+    made = client.post(f"/api/ai/convert/{sid}/adopt", json=body)
+    assert made.status_code == 200
+    assert made.get_json()["specified_outputs"] == [{"name": "table.csv", "file": "my-table.csv"}]
+    assert "private" not in json.dumps(made.get_json())
