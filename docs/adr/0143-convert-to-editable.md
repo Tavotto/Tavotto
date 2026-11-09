@@ -386,7 +386,7 @@ savefig 收到已打开的流时再处理。已识别的构造调用同样在运
   项目外且不在白名单的写仍是 `write_outside_roots`（改道只认项目这一个前缀）。
 * **读回**：打开读取 / `exists|isfile|isdir|getsize` 时项目内路径若在改道区有同名文件就读改道区的。**写时复制**：以追加 / 读写模式改一个已存在的项目文件，先把原文件复制进改道区再改，项目里的那份不动。
   `x` 模式 / `O_EXCL` 遇项目里已有同名文件照常 `FileExistsError`；`mkdir` 遇项目里已有目录照常 `FileExistsError`（`exist_ok=True` 无副作用）。
-* **限制**（不是缺陷，写进 `writetripwire` 头注）：`os.stat` / `listdir` / `scandir` / `glob` / `Path.exists|stat|iterdir` 看不到改道区的文件；`os.symlink|link|truncate` 不改道（仍走绊线 → 失败）；
+* **限制**（当时，后续 `Path.exists` 等布尔检查见 2026-11-08 修订）：`os.stat` / `listdir` / `scandir` / `glob` / `Path.exists|stat|iterdir` 看不到改道区的文件；`os.symlink|link|truncate` 不改道（仍走绊线 → 失败）；
   目录的删除 / 改名不改道（走绊线 → 失败）；C 层 / 子进程写看不见，由校验后的项目指纹复核（`_project_untouched`）兜住 → 仍判失败；Windows 未实测。
 * 候选目录指纹（`ai_figure_edit._tree`）不看根下的 `redirected/`；`keep_failed` 留诊断用的候选时先删改道区（里面可能有用户数据的衍生文件）。
 * **范围**：转换与改图（`figure_edit`）的候选校验共用 `run_validation`，一起生效；改图里“写项目文件”不再落到 `not measured`，照常测量（项目外的写仍是）。
@@ -400,7 +400,7 @@ savefig 收到已打开的流时再处理。已识别的构造调用同样在运
   * 模拟：文件创建 / 覆盖 / 追加 / 读回 / 写时复制；删除与改名（白名单，仅文件）；`x` / `O_EXCL` 遇项目里同名文件 `FileExistsError`；被删文件处追加 = 新建；在项目目录里建暂存子目录并删除**纯暂存**目录 / 树。
   * 真实语义报错：往项目目录路径 `open/os.open` 写 → `IsADirectoryError`；项目文件上 `mkdir` → `FileExistsError`；文件 `rename/replace/copyfile` 到项目目录上 → `IsADirectoryError`；`copytree` 到已有目标 → `FileExistsError`。
   * 失败（绊线）：项目已有目录的 `rmdir/rmtree/目录改名`；目录改名到已有目录 / 文件上；`copytree(dirs_exist_ok=True)`；`copymode/copystat` 到仅在项目里的文件；白名单文件处 `mkdir`；`shutil.move` 进项目目录且同名项已存在；`copytree` 源目录项目与暂存区各一半；`symlink/link/truncate`。
-  * 无法失败只能文档化的未包装读：`os.stat|listdir|scandir`、`glob`、`Path.exists|stat|iterdir` 看不到暂存区。目录没有白名单（目录删除一律走上面的失败）。
+  * 当时无法失败只能文档化的未包装读：`os.stat|listdir|scandir`、`glob`、`Path.exists|stat|iterdir` 看不到暂存区（`Path.exists` 等布尔检查后续见 2026-11-08 修订）。目录没有白名单（目录删除一律走上面的失败）。
 
 ## 修订（2026-11-02）：Codex 转换的目标文件由 Tavotto 在沙盒外代写（TVD-BCZ0，维护者批准方案 A）
 
@@ -408,3 +408,11 @@ Windows 上给 Codex 加 `windows.sandbox="unelevated"` 后命令能跑，但 Co
 决定：转换会话里目标文件**由 Tavotto 写**。Codex 经本次调用级 `-c mcp_servers.tavotto_convert.*`（所有平台，令牌只经环境变量名，工具免 Codex 审批，不写用户 `config.toml`）拉起 `tavotto fix-mcp --convert-id <会话>`，
 它只暴露一个工具 `write_conversion_target(content)`——**没有路径参数**，写的永远是候选工作区里那一个目标文件（`convertwrite.py`，≤ 2 MiB、原子写、会话令牌、会话结束即失效）。其余不变：写完之后的校验 / 采用流程原样；工具失败且目标缺失 = `agent_write_denied`。
 Claude Code 自带的 Write 不受该沙盒影响、内置执行器本来就由 Tavotto 写，都不加。细则与看护：`docs/rules/backend/ai-agent-bridge.md`「转换目标由 Tavotto 代写」。
+
+## 修订（2026-11-08）：pathlib 布尔检查与改道读回使用同一视图
+
+候选脚本写出中间文件后以 `Path.exists()` / `is_file()` / `is_dir()` 检查再读取时，原改道层只包装
+`os.path`，这些 pathlib 查询看不到改道区，校验会错误失败。三种布尔查询复用同一项目路径解析、改道区与白名单，
+随校验窗口启停；`follow_symlinks=False` 查询链接本身。写入授权、原项目零改动及 MCP 非改道模式不变。
+此修订不模拟 `stat` 的元数据或目录枚举，也不声称能验证外语源脚本的每一项输出都被转换保留。
+真 worker 回归覆盖新建 / 删除 / 重建与符号链接，见 `tests/test_convert_shadow_validation.py`。

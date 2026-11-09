@@ -24,13 +24,14 @@ pickle / `shutil.copyfile` / 根内符号链接指向根外 / 线程与 fork 子
 （`builtins.open` / `io.open` / `os.open` / `os.mkdir|rmdir|remove|unlink|rename|replace` / `shutil.copyfile|copymode|copystat|copytree|rmtree|move` /
 `os.path.exists|isfile|isdir|getsize`），**只在 `arm(True)` 窗口里、只对落在项目内的路径**生效：换完路径再交给原函数，
 审计钩子看到的已经是候选目录里的路径。项目外、也不在白名单的写照旧是 `write_outside_roots`（改道只认项目这一个前缀）。
-读：打开读取时，项目内路径若在改道区有同名文件就读改道区的（写完再读回来可行）；`os.path.exists|isfile|isdir|getsize` 同理。
-改道**不**覆盖（限制，不是缺陷）：`os.stat` / `os.listdir` / `os.scandir` / `glob` / `Path.exists|stat|iterdir`（读不到改道区的文件），
+读：打开读取时，项目内路径若在改道区有同名文件就读改道区的（写完再读回来可行）；`os.path.exists|isfile|isdir|getsize` 和
+`Path.exists|is_file|is_dir` 同理。`follow_symlinks=False` 的查询保留链接本身的语义。
+改道**不**覆盖（限制，不是缺陷）：`os.stat` / `os.listdir` / `os.scandir` / `glob` / `Path.stat|iterdir`（读不到改道区的文件），
 `os.symlink|link|truncate`（仍走绊线 → 失败），C 层写（同下面的盲区：绊线看不见，由校验后的项目指纹复核兜住 → 失败）。
 改动已存在的项目文件（追加 / 读写模式）：先把原文件复制进改道区再改（写时复制），项目里的那份不动；
 **白名单（whiteout）**：脚本通过改道层删除 / 改名走一个项目路径（含只存在于项目里的用户文件——项目里的原件不动），该路径记进
 本窗口的白名单集合（worker 内存里，`install` 时清空；校验 worker 每次运行后退役，所以每次执行都从空集合开始），之后所有被包装的读 / 查询
-（`open` 读、`os.open`、`os.path.exists|isfile|isdir|getsize`、`shutil.copyfile` 的 src）都把它当不存在；再次创建 / 写该路径会清掉标记。
+（`open` 读、`os.open`、`os.path.exists|isfile|isdir|getsize`、`Path.exists|is_file|is_dir`、`shutil.copyfile` 的 src）都把它当不存在；再次创建 / 写该路径会清掉标记。
 目录的删除 / 改名不改道（走绊线 → 失败）；`os.stat` 等未包装的查询仍会看到项目里的原件（同上面的限制）。
 `os.open` 不带 `O_CREAT` 打开项目里已有的文件（如 `O_WRONLY|O_TRUNC`）：先在改道区物化（截断 = 空文件，其余 = 复制）；原件不存在或已被白名单标记则保持 `FileNotFoundError`。
 
@@ -42,7 +43,7 @@ pickle / `shutil.copyfile` / 根内符号链接指向根外 / 线程与 fork 子
 **失败的（不改道，写入根绊线拒绝）**：项目里已有目录的 `rmdir` / `rmtree` / 目录改名（暂存副本删掉后原内容会重新露出来）、
 目录改名到项目里已有的目录 / 文件上、`copytree(dirs_exist_ok=True)` 合并进项目目录、`copymode` / `copystat` 到只存在于项目里的文件、
 在被删除的文件处 `mkdir`、`shutil.move` 进项目目录且同名项已在项目里、`copytree` 的源目录同时存在于项目与暂存区、`symlink|link|truncate`。
-未包装、所以看不到暂存区的**读**（只能文档化，没法失败）：`os.stat|listdir|scandir`、`glob`、`Path.exists|stat|iterdir`。
+未包装、所以看不到暂存区的**读**（只能文档化，没法失败）：`os.stat|listdir|scandir`、`glob`、`Path.stat|iterdir`。
 
 **隔离重放（QA-WIN-51，只属于写回校验）**：`install_isolation(暂存目录, 写回目标们)` 复用上面这套包装，但只改道那几个精确文件，
 没有授权根绊线；审计钩子只盯这些目标，改道层不能忠实模拟的写（`os.truncate|symlink|link`、目录级改动）在落到原件之前失败。
@@ -842,6 +843,29 @@ def _w_exists(orig):
     return fn
 
 
+def _w_path_check(orig):
+    """Make pathlib's boolean checks see the same overlay as open()."""
+
+    @functools.wraps(orig)
+    def fn(path, *args, **kwargs):
+        result = orig(path, *args, **kwargs)
+        if not _redirect_on():
+            return result
+        # A no-follow query concerns the link itself, not its redirected target.
+        if kwargs.get("follow_symlinks") is False and _ORIG["islink"](path):
+            return result
+        r = _resolve(path)
+        if r is None:
+            return result
+        if _white(r[1]):
+            return False
+        if result:
+            return True
+        return orig(pathlib.Path(r[2]), *args, **kwargs) if _real_exists(r[2]) else False
+
+    return fn
+
+
 def _w_getsize(orig):
     @functools.wraps(orig)
     def getsize(path):
@@ -1008,6 +1032,7 @@ def _install_redirect() -> None:
         open=builtins.open,
         isdir=path.isdir,
         isfile=path.isfile,
+        islink=path.islink,
         lexists=path.lexists,
         makedirs=os.makedirs,
         copyfile=shutil.copyfile,
@@ -1024,6 +1049,8 @@ def _install_redirect() -> None:
     os.replace = _w_rename(os.replace)
     for name in ("exists", "isfile", "isdir"):
         setattr(path, name, _w_exists(getattr(path, name)))
+    for name in ("exists", "is_file", "is_dir"):
+        setattr(pathlib.Path, name, _w_path_check(getattr(pathlib.Path, name)))
     path.getsize = _w_getsize(path.getsize)
     shutil.copyfile = _w_copyfile(shutil.copyfile)
     shutil.copy2 = _w_copy2(shutil.copy2)
