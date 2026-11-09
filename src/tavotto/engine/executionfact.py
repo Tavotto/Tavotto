@@ -1,4 +1,4 @@
-"""Opaque evidence of crossing the safe worker's user-code execution boundary.
+"""Bounded evidence of user-code execution and built-in exception categories.
 
 Markers are request-scoped, disposable IPC, not documents or execution history.
 They contain no script names, paths, argv, or user output. A failed write is not
@@ -17,6 +17,43 @@ from pathlib import Path
 
 _WATCH = re.compile(r"[0-9a-f]{32}\Z")
 _EXECUTION = re.compile(r"[0-9a-f]{48}\Z")
+
+# Only built-in exception categories cross the diagnostic boundary. They say
+# what escaped the script, not which operation caused it or whether a missing
+# file was an input. In particular, exception text and filenames never enter it.
+EXCEPTION_CATEGORIES = (
+    "file_not_found",
+    "permission_denied",
+    "file_exists",
+    "is_directory",
+    "not_directory",
+    "timeout",
+    "module_not_found",
+    "import_error",
+    "os_error",
+    "other",
+)
+
+
+def exception_category(exc: BaseException) -> str:
+    for cls, category in (
+        (FileNotFoundError, "file_not_found"),
+        (PermissionError, "permission_denied"),
+        (FileExistsError, "file_exists"),
+        (IsADirectoryError, "is_directory"),
+        (NotADirectoryError, "not_directory"),
+        (TimeoutError, "timeout"),
+        (ModuleNotFoundError, "module_not_found"),
+        (ImportError, "import_error"),
+        (OSError, "os_error"),
+    ):
+        if isinstance(exc, cls):
+            return category
+    return "other"
+
+
+def valid_exception_category(value) -> str | None:
+    return value if isinstance(value, str) and value in EXCEPTION_CATEGORIES else None
 
 
 def valid_watch(value) -> bool:

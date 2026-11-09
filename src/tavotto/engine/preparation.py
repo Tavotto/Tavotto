@@ -67,6 +67,7 @@ from . import (
     execpolicy,
     execspec,
     exectrace,
+    executionfact,
     figcapture,
     inputbroker,
     inputremap,
@@ -830,6 +831,9 @@ class PreparationResult:
     #: 这次执行里每一问 input 的去向（T08，`inputbroker.InputFacts.payload()`）：只有计数与闭集理由，只给
     #: 诊断快照的白名单投影。**不进 `to_payload()`**。
     input_facts: dict | None = None
+    #: Closed-set observations from this failed attempt, never exception text or paths.
+    failure_fidelity: dict | None = None
+    failure_exception_category: str | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -1201,6 +1205,17 @@ class PreparationService:
                 )
                 return
             error = {"code": getattr(exc, "code", "") or "worker_error", "message": str(exc)}
+            extra = getattr(exc, "extra", None)
+            if isinstance(extra, dict):
+                if error["code"] == pool.FILE_OPERATION_BLOCKED_CODE:
+                    result.failure_fidelity = receipt.project_fidelity(extra.get("fidelity"))
+                if (
+                    plan.execution == execspec.PROFILE_NATIVE
+                    and error["code"] == pool.SCRIPT_ERROR_CODE
+                ):
+                    result.failure_exception_category = executionfact.valid_exception_category(
+                        extra.get("exception_category")
+                    )
             _attach_local_detail(
                 error, exc, sensitive=bool(plan.run is not None and plan.run.sensitive)
             )
@@ -1891,6 +1906,10 @@ def diagnostic_projection(plan: PreparationPlan, result: PreparationResult) -> d
                     "code": taskdiag.code(err.get("code")),
                     "reason": taskdiag.closed(err.get("reason"), STALE_REASONS),
                     "executed": taskdiag.flag(err.get("executed")),
+                    "fidelity": receipt.project_fidelity(result.failure_fidelity),
+                    "exception_category": taskdiag.closed(
+                        result.failure_exception_category, executionfact.EXCEPTION_CATEGORIES
+                    ),
                 }
                 if err
                 else None

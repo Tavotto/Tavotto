@@ -634,6 +634,38 @@ def test_a_failed_script_attempt_is_frozen_and_a_later_success_does_not_rewrite_
     assert _get(client, "preparation", ref1, pj).get_json()["snapshot"] == snap
 
 
+def test_failed_safe_fidelity_is_projected_through_the_existing_closed_schema(
+    prep_client, tmp_path, run_aware_pool, sessions
+):
+    root = _project(tmp_path, "p")
+    (root / "tavotto_registry.json").unlink()
+    (root / "fig.pdf").unlink()
+    pj = _open(prep_client, root)
+    error = engine_pool.WorkerError(SECRET, code="safe_file_operation_blocked")
+    error.extra = {
+        "fidelity": {
+            "level": "deviated",
+            "blocked": [
+                {"op": "os.replace", "kind": "rename", "count": 1, "path": SECRET},
+                {"op": SECRET, "kind": "rename", "count": 1},
+            ],
+            "intercepted": [{"op": "os.replace", "kind": "rename", "count": 1}],
+            "signals": [],
+            "unobserved": [SECRET],
+            "secret": SECRET,
+        }
+    }
+    run_aware_pool["error"] = error
+    report = _run_session(prep_client, pj, {"script": "fig.py"})
+    response = _get(prep_client, "preparation", report["provider"]["attempt_id"], pj)
+    assert response.status_code == 200
+    text = response.get_data(as_text=True)
+    assert_no_secret(text)
+    fidelity = response.get_json()["snapshot"]["error"]["fidelity"]
+    assert fidelity["blocked"] == [{"op": "os.replace", "kind": "rename", "count": 1}]
+    assert fidelity["unobserved"] == []
+
+
 def test_a_cancelled_preparation_is_recorded_with_the_cancel_fact(
     prep_client, tmp_path, run_aware_pool, sessions
 ):

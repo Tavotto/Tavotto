@@ -262,6 +262,10 @@ Python 发行包名、实际观察到的已安装包名与版本、能点名的�
   新来源加字段 = 在它的 `diagnostic_projection` 里加一行并过一个形状守卫；**不许**递归复制 `to_payload()`。
   看护：`test_export_projection_never_reads_the_full_payload`（把 `to_payload` 毒化照样出快照）、各 sentinel 用例
   （原文 + 大小写 + hex + base64 + urlsafe + url 编码 + md5/sha1/sha256 都不出现）。
+- 准备失败的 safe 守卫账本只复用 `receipt.project_fidelity` 的操作类别、计数与盲区闭集；native 未处理异常只收
+  bridge 在异常现场生成的内置类型闭集 `exception_category`。没有运行期事实就不填，`file_not_found` 不区分读与写；
+  不采集异常类名原文、路径、消息或 traceback。看护 `tests/test_fallback_failure_evidence_e2e.py` 与
+  `tests/bridge/test_bridge_failure_category.py`。
 - **重试是新 attempt。** 每次尝试各有 id 与自己的快照；`retry_of` 在**写入新快照时**连到同一主语（同文档 / 同图 / 同脚本）
   最近一次失败，旧快照不被改写；读旧失败时 `later_attempts` 现算（≤ 8 条）。后来的成功不会清掉旧失败的 request / error。
 - **认领。** 登记按 `(项目, 类别, id)`；端点只用请求的项目取。别的项目的 id、没有过的 id 一律 404 + `reason: not_found`，
