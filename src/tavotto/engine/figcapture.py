@@ -4130,7 +4130,7 @@ class InputObserver:
     def __init__(self, project_root: str, *, observe_failed_reads: bool = False) -> None:
         self.project_root = os.path.abspath(project_root)
         self._observe_failed_reads = observe_failed_reads
-        self._failed_reads: list[tuple[BaseException, str, str]] = []
+        self._failed_read_codes = ()
         self._seen: dict[str, str] = {}  # realpath → 项目相对 POSIX 路径
         self.truncated = False
         self._uninstall = None
@@ -4175,8 +4175,8 @@ class InputObserver:
         except Exception:  # noqa: BLE001 —— 观察器绝不影响脚本
             return
 
-    def _note_failed_read(self, exc: FileNotFoundError, file, mode) -> None:
-        """Keep the actual exception identity; a later failed write is not this read."""
+    def _failed_read_fact(self, file, mode) -> dict | None:
+        """A frame-local fact, retained only as long as its own traceback."""
         if not self._observe_failed_reads or getattr(self._pause, "depth", 0):
             return
         try:
@@ -4190,27 +4190,33 @@ class InputObserver:
             name = os.fsdecode(os.fspath(file))
             if not name or len(name) > 4096 or any(ord(c) < 32 for c in name):
                 return
-            if any(previous is exc for previous, _, _ in self._failed_reads):
-                return
-            if len(self._failed_reads) >= 16:
-                self._failed_reads.pop(0)
-            self._failed_reads.append((exc, name, os.getcwd()))
+            return {"requested": name, "cwd": os.getcwd()}
         except Exception:  # noqa: BLE001 — observation must never change the user's exception
             return
 
     def uncaught_missing_read(self, exc: BaseException | None) -> dict | None:
-        """Only the exact escaping read failure; caught/other failures stay unknown."""
+        """Inspect only this escaping exception's own bounded traceback.
+
+        Holding caught exception objects would retain their caller frames and
+        potentially large scientific arrays for the rest of a long run.
+        """
+        if not self._observe_failed_reads or not isinstance(exc, FileNotFoundError):
+            return None
         try:
-            return next(
-                (
-                    {"requested": name, "cwd": cwd}
-                    for previous, name, cwd in self._failed_reads
-                    if previous is exc
-                ),
-                None,
-            )
-        finally:
-            self._failed_reads.clear()
+            trace = exc.__traceback__
+            for _ in range(256):
+                if trace is None:
+                    break
+                frame = trace.tb_frame
+                if frame.f_code in self._failed_read_codes:
+                    local = frame.f_locals
+                    fact = local.get("_read_failure_fact")
+                    if local.get("observer") is self and isinstance(fact, dict):
+                        return dict(fact)
+                trace = trace.tb_next
+        except Exception:  # noqa: BLE001 — never replace the user's original failure
+            return None
+        return None
 
     def install(self):
         """装上 open 的观察包装（三处 Python open + numpy 的 `DataSource.open`）；返回卸载函数。"""
@@ -4223,8 +4229,8 @@ class InputObserver:
             def observed_open(file, mode="r", *args, **kwargs):
                 try:
                     fh = original(file, mode, *args, **kwargs)
-                except FileNotFoundError as exc:
-                    observer._note_failed_read(exc, file, mode)
+                except FileNotFoundError:
+                    _read_failure_fact = observer._failed_read_fact(file, mode)  # noqa: F841
                     raise
                 if _readonly_mode(mode):
                     observer._note(file)
@@ -4235,15 +4241,18 @@ class InputObserver:
         def observed_path_open(self_path, mode="r", *args, **kwargs):
             try:
                 fh = real_path_open(self_path, mode, *args, **kwargs)
-            except FileNotFoundError as exc:
-                observer._note_failed_read(exc, self_path, mode)
+            except FileNotFoundError:
+                _read_failure_fact = observer._failed_read_fact(self_path, mode)  # noqa: F841
                 raise
             if _readonly_mode(mode):
                 observer._note(self_path)
             return fh
 
-        builtins.open = _wrap(real_open)
-        io.open = _wrap(real_io_open)
+        observed_builtin_open = _wrap(real_open)
+        observed_io_open = _wrap(real_io_open)
+        self._failed_read_codes = (observed_builtin_open.__code__, observed_path_open.__code__)
+        builtins.open = observed_builtin_open
+        io.open = observed_io_open
         pathlib.Path.open = observed_path_open
 
         self._channels = ["python_open"]

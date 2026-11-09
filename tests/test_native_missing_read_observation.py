@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import gc
 import io
 import json
+import weakref
 from pathlib import Path
 
 import pytest
@@ -26,7 +28,7 @@ def test_uncaught_missing_read_keeps_the_actual_exception(kind, tmp_path):
                 Path(missing).read_text(encoding="utf-8")
         fact = observer.uncaught_missing_read(failure.value)
         assert fact is not None and fact["requested"] == str(missing)
-        assert observer.uncaught_missing_read(failure.value) is None
+        assert observer.uncaught_missing_read(failure.value) == fact
     finally:
         observer.uninstall()
 
@@ -45,7 +47,7 @@ def test_a_caught_read_followed_by_a_failed_write_to_the_same_path_is_not_a_read
         observer.uninstall()
 
 
-def test_failure_observation_is_opt_in_and_bounded(tmp_path):
+def test_failure_observation_is_opt_in(tmp_path):
     missing = tmp_path / "missing"
     observer = figcapture.InputObserver(str(tmp_path))
     observer.install()
@@ -55,16 +57,52 @@ def test_failure_observation_is_opt_in_and_bounded(tmp_path):
         assert observer.uncaught_missing_read(failure.value) is None
     finally:
         observer.uninstall()
+
+
+def test_observation_of_an_exception_traceback_is_bounded(tmp_path):
+    def deep_read(depth):
+        if depth:
+            return deep_read(depth - 1)
+        return open(tmp_path / "missing.csv", encoding="utf-8")
+
     observer = figcapture.InputObserver(str(tmp_path), observe_failed_reads=True)
     observer.install()
     try:
-        failures = []
-        for i in range(20):
-            with pytest.raises(FileNotFoundError) as failure:
-                open(tmp_path / str(i) / "data", encoding="utf-8")
-            failures.append(failure.value)
-        assert len(observer._failed_reads) == 16
-        assert observer.uncaught_missing_read(failures[0]) is None
+        with pytest.raises(FileNotFoundError) as failure:
+            deep_read(300)
+        assert observer.uncaught_missing_read(failure.value) is None
+    finally:
+        observer.uninstall()
+
+
+def test_unreadable_custom_traceback_does_not_replace_the_original_failure(tmp_path):
+    class CustomMissing(FileNotFoundError):
+        def __getattribute__(self, name):
+            if name == "__traceback__":
+                raise RuntimeError("custom exception")
+            return super().__getattribute__(name)
+
+    observer = figcapture.InputObserver(str(tmp_path), observe_failed_reads=True)
+    assert observer.uncaught_missing_read(CustomMissing()) is None
+
+
+def test_cwd_is_the_one_at_the_failed_read_even_after_a_caught_reraise(tmp_path, monkeypatch):
+    start = tmp_path / "start"
+    later = tmp_path / "later"
+    start.mkdir()
+    later.mkdir()
+    monkeypatch.chdir(start)
+    observer = figcapture.InputObserver(str(tmp_path), observe_failed_reads=True)
+    observer.install()
+    try:
+        with pytest.raises(FileNotFoundError) as failure:
+            try:
+                open(start / "missing.csv", encoding="utf-8")
+            except FileNotFoundError:
+                monkeypatch.chdir(later)
+                raise
+        fact = observer.uncaught_missing_read(failure.value)
+        assert fact is not None and fact["cwd"] == str(start)
     finally:
         observer.uninstall()
 
@@ -83,3 +121,27 @@ def test_private_read_fact_is_not_published_with_native_state_or_events():
     assert "private-read-canary" not in json.dumps(list(session.events))
     assert session.take_missing_read() == fact
     assert session.take_missing_read() is None
+
+
+def test_a_caught_missing_read_does_not_keep_the_callers_objects_alive(tmp_path):
+    class Payload:
+        pass
+
+    def caught_read():
+        payload = Payload()
+        ref = weakref.ref(payload)
+        try:
+            open(tmp_path / "missing.csv", encoding="utf-8")
+        except FileNotFoundError:
+            pass
+        return ref
+
+    observer = figcapture.InputObserver(str(tmp_path), observe_failed_reads=True)
+    observer.install()
+    try:
+        ref = caught_read()
+        gc.collect()
+        assert ref() is None
+    finally:
+        observer.uncaught_missing_read(None)
+        observer.uninstall()

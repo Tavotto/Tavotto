@@ -1593,8 +1593,6 @@ def main(argv: list | None = None) -> int:
         traceback.print_exc()
     finally:
         hook.uninstall()
-        if _INPUTS is not None and run.script_error is None:
-            _INPUTS.uncaught_missing_read(None)  # release caught exceptions after a successful run
     run.freeze_inputs()
 
     if run.terminated:

@@ -181,8 +181,9 @@ order: 50
     `FileNotFoundError("cg_data.parquet")` 整条消息就是路径，同样取——加 cwd），父进程
     `inputremap.native_miss` 拿静态证据对——整串相等或按路径段是前缀、只认对上的那条，对不上就不判、
     码一字不变；对上了码仍是 `script_error`，只挂 `via = native` 的载荷。这几档的出口是经确认改写脚本
-    （`script-edits.md`）。native 不改指。桌面自有的 native bridge 对 Python 只读打开另记最近 16 个
-    落空；只有**同一个异常对象**最终以 `FileNotFoundError` 冒出、绝对路径能与当前脚本中
+    （`script-edits.md`）。native 不改指。桌面自有的 native bridge 只检查最终冒出的异常自身的 traceback
+    中至多 256 帧，不持有已被脚本捕获的异常；只有 Python 只读打开的**同一个异常对象**最终以
+    `FileNotFoundError` 冒出、绝对路径能与当前脚本中
     可识别的读取常量对上、脚本修订未变且运行不敏感时，才给同一个经用户预览确认的改写入口。新增的结构化
     读取事实只走本机会话私有控制面与认证后的恢复载荷，不进 native 会话公开状态或任务诊断；原有本地
     异常文本 / traceback 仍可能含路径。相对路径、找不到对应读取常量的动态路径、子进程和未观察到的读取不猜。
