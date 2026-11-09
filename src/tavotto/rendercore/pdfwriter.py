@@ -117,6 +117,11 @@ def _num(v: float) -> str:
     return s if s not in ("", "-0") else "0"
 
 
+def glyph_width_1000(face, gid: int) -> float:
+    """The exact width written in a CIDFont /W array (not a text advance)."""
+    return round(face.advance(gid) * 1000.0 / face.upem, 3)
+
+
 def _rgb(p: ir.RGB) -> str:
     return " ".join(_num(c) for c in p)
 
@@ -870,10 +875,10 @@ class PdfWriter:
                     pikepdf.Stream(self.pdf, data, Subtype=pikepdf.Name.CIDFontType0C)
                 )
             descriptor = self.pdf.make_indirect(pikepdf.Dictionary(desc))
-            widths = {use.code(g): face.advance(g) * 1000.0 / face.upem for g in use.used}
+            widths = {use.code(g): glyph_width_1000(face, g) for g in use.used}
             w_array: list = []
             for code in sorted(widths):
-                w_array += [code, [round(widths[code], 3)]]
+                w_array += [code, [widths[code]]]
             cid: dict = {
                 "/Type": pikepdf.Name.Font,
                 "/BaseFont": pikepdf.Name("/" + base),
