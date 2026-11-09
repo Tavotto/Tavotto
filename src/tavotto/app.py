@@ -11687,6 +11687,39 @@ def _discard_updating(tmps: list[tuple[Path, Path]]) -> None:
             LOG.warning("写回失败后清理临时文件失败: %s", leftover, exc_info=True)
 
 
+def _write_back_source_versions(targets: list[Path]) -> dict:
+    """冻结待覆盖文件的字节身份；不能读的候选等最终目标收窄后再拒绝。"""
+    versions = {}
+    for target in targets:
+        try:
+            before = target.stat()
+            digest = _sha1_of(target)
+            after = target.stat()
+            stamp = (before.st_mtime_ns, before.st_size)
+            versions[target] = (
+                (stamp, digest) if stamp == (after.st_mtime_ns, after.st_size) else None
+            )
+        except OSError:
+            versions[target] = None
+    return versions
+
+
+def _check_write_back_sources(tmps: list[tuple[Path, Path]], versions: dict) -> None:
+    """重放和备份期间出现外部新版本时，保留新版本，不覆盖它。"""
+    current = _write_back_source_versions([target for target, _tmp in tmps])
+    for target, _tmp in tmps:
+        expected = versions.get(target)
+        if expected is None:
+            raise WriteBackPersistError(f"无法核验写回原件: {target.name}")
+        actual = current[target]
+        if actual != expected:
+            raise SourceChangedError(
+                target.name,
+                expected[0][0] // 1_000_000_000,
+                actual[0][0] // 1_000_000_000 if actual is not None else 0,
+            )
+
+
 def _new_backup_dir(root: Path) -> Path:
     """本次写回**独占**的备份目录：`<月日_时分秒>`，同一秒已被占用就接 `-2`、`-3`…
 
@@ -11806,6 +11839,7 @@ def _write_source_files(
     _refuse_pdf_pages_source(worker, src)
 
     targets = [p for p in (src.with_suffix(ext) for ext in WRITE_BACK_EXT) if p.exists()]
+    source_versions = _write_back_source_versions(targets)
     man_hot = _hot_manifest(worker, stem, patches)
 
     # ---- verify：全新 worker 全量重放，staging 也从它出 ----------------------
@@ -11900,7 +11934,9 @@ def _write_source_files(
         with remap_guard:
             if figure_origin_session is not None:
                 figure_origin_session.check()
+            _check_write_back_sources(tmps, source_versions)
             backup_dir = _backup_targets(tmps, project_backup_dir(), stem)
+            _check_write_back_sources(tmps, source_versions)
             for target, tmp in tmps:
                 try:
                     tmp.replace(target)
@@ -11911,7 +11947,12 @@ def _write_source_files(
                     raise FileLockedError(target.name, str(exc), failed, rolled, failed) from exc
                 done.append(target)
                 updated.append(target.name)
-    except (engine_inputremap.RemapChanged, _FigureOriginError):
+    except (
+        engine_inputremap.RemapChanged,
+        _FigureOriginError,
+        SourceChangedError,
+        WriteBackPersistError,
+    ):
         _discard_updating(tmps)
         raise
     # 目录项落盘放在整个替换循环**之后**、且只尽力而为：此刻各 replace 都已
