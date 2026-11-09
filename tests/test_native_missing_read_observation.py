@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import io
+import json
 from pathlib import Path
 
 import pytest
 
-from tavotto.engine import figcapture
+from tavotto.engine import figcapture, nativesession
 
 
 @pytest.mark.parametrize("kind", ["open", "io", "path"])
@@ -66,3 +67,19 @@ def test_failure_observation_is_opt_in_and_bounded(tmp_path):
         assert observer.uncaught_missing_read(failures[0]) is None
     finally:
         observer.uninstall()
+
+
+def test_private_read_fact_is_not_published_with_native_state_or_events():
+    session = nativesession.NativeSession(session_id="private", descriptor={})
+    fact = {"requested": "/private-read-canary/data.csv", "cwd": "/private-read-canary"}
+    session._on_frame(
+        {
+            nativesession.EVENT_KEY: "barrier",
+            "script_error": {"code": "script_error", "exception_category": "file_not_found"},
+            "missing_read": fact,
+        }
+    )
+    assert "private-read-canary" not in json.dumps(session.public_state())
+    assert "private-read-canary" not in json.dumps(list(session.events))
+    assert session.take_missing_read() == fact
+    assert session.take_missing_read() is None
