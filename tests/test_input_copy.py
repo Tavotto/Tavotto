@@ -447,3 +447,55 @@ def test_undo_uses_only_the_recorded_target(project, tmp_path):
     stray.write_bytes(b"7\n")
     assert inputcopy.undo(str(project), str(stray))["state"] == "not_recorded"
     assert stray.exists()
+
+
+@pytest.mark.skipif(
+    os.name == "nt", reason="POSIX 的 rename 才会覆盖；Windows 走 rename 本身不覆盖"
+)
+def test_no_hardlink_volume_never_overwrites_a_file_created_in_the_race(tmp_path, monkeypatch):
+    """Codex #1822 P1：盘不支持硬链接时，旧实现「查无再 rename」会覆盖竞争进程刚建的同名文件。"""
+    src = tmp_path / "src.csv"
+    src.write_bytes(b"ours")
+    dst = tmp_path / "dst.csv"
+    real_rename, real_open = os.rename, os.open
+
+    def no_link(a, b, *args, **kw):
+        raise OSError(errno.EOPNOTSUPP, "hard links unsupported")
+
+    def racer():
+        if not dst.exists():
+            with open(dst, "wb") as f:  # 别的进程恰好在发布前一刻建了目标
+                f.write(b"theirs")
+
+    def rename(a, b, *args, **kw):
+        if os.fspath(b) == str(dst):
+            racer()
+        return real_rename(a, b, *args, **kw)
+
+    def open_(path, flags, *args, **kw):
+        if os.fspath(path) == str(dst):
+            racer()
+        return real_open(path, flags, *args, **kw)
+
+    monkeypatch.setattr(inputcopy.os, "link", no_link)
+    monkeypatch.setattr(inputcopy.os, "rename", rename)
+    monkeypatch.setattr(inputcopy.os, "open", open_)
+    with pytest.raises(FileExistsError):
+        inputcopy.copy_no_overwrite(str(src), str(dst))
+    assert dst.read_bytes() == b"theirs"
+    assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".tavotto-copy")] == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX 硬链接回退路径")
+def test_no_hardlink_volume_still_copies_when_target_is_free(tmp_path, monkeypatch):
+    src = tmp_path / "src.csv"
+    src.write_bytes(b"ours")
+    dst = tmp_path / "dst.csv"
+
+    def no_link(a, b, *args, **kw):
+        raise OSError(errno.EOPNOTSUPP, "hard links unsupported")
+
+    monkeypatch.setattr(inputcopy.os, "link", no_link)
+    inputcopy.copy_no_overwrite(str(src), str(dst))
+    assert dst.read_bytes() == b"ours"
+    assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".tavotto-copy")] == []

@@ -24,6 +24,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import hashlib
 import os
@@ -239,11 +240,27 @@ def _publish_no_overwrite(tmp: str, target: str) -> None:
     except OSError as exc:
         if exc.errno in (errno.EACCES, errno.EPERM, errno.EROFS, errno.ENOSPC):
             raise
-        # 盘不支持硬链接（exFAT / SMB 等）：退成「查无再 rename」，窗口只有这一步之间
-        if os.path.lexists(target):
-            raise FileExistsError(errno.EEXIST, "exists", target) from exc
-        os.rename(tmp, target)
+        # 盘不支持硬链接（exFAT / SMB 等）：rename 在 POSIX 上会覆盖，不能用「查无再 rename」（两步之间
+        # 别的进程建的同名文件会被换掉）。改由内核独占创建目标（O_EXCL，原子且不覆盖）再把内容写进去
+        _publish_by_exclusive_create(tmp, target)
         return
+    os.unlink(tmp)
+
+
+def _publish_by_exclusive_create(tmp: str, target: str) -> None:
+    """不支持硬链接时的发布：`O_CREAT | O_EXCL` 由内核保证「目标已在就失败」，写失败只删自己建的那个。"""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(target, flags, 0o644)  # 目标此刻存在 → FileExistsError，别人的文件一字不动
+    try:
+        with os.fdopen(fd, "wb") as out, open(tmp, "rb") as src:
+            for chunk in iter(lambda: src.read(_CHUNK), b""):
+                out.write(chunk)
+            out.flush()
+            os.fsync(out.fileno())
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(target)  # 只可能是自己刚独占建出来的这一份
+        raise
     os.unlink(tmp)
 
 
