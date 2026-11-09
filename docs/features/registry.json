@@ -236,6 +236,31 @@
       ]
     },
     {
+      "id": "assets.missing-input-copy",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "脚本直接运行时读不到已指认过的数据：经确认把那份数据复制到脚本要读的原路径再重跑；没权限时授权后复制，macOS 受保护文件夹引导去系统设置，仍不行就改脚本里的路径",
+        "en-US": "When a script run directly can't read data you already pointed to: copy it to the path the script expects after confirmation and rerun; ask for permission if the folder isn't writable, point to System Settings for macOS protected folders, or fall back to changing the path in the script"
+      },
+      "entry": "运行脚本时右下引导卡「脚本要从 … 读数据」：〔复制过去再运行〕；没权限时〔授权后复制〕，macOS 受保护文件夹〔打开系统设置〕，复制不成时〔改脚本里的路径〕",
+      "e2e": [
+        {
+          "spec": "missing-input-copy.spec.ts",
+          "title": "缺数据 · 复制：native 读不到原路径 → 复制过去再运行 → 文件出现在原路径、重跑出图"
+        },
+        {
+          "spec": "missing-input-copy.spec.ts",
+          "title": "缺数据 · 复制：目标目录写不进去 → 「授权后复制」，且「改脚本里的路径」点得到"
+        }
+      ],
+      "desktop_manual": [
+        "Windows：把脚本读的绝对路径所在目录设成普通用户不可写（如 C:\\Program Files 下的子目录），数据此前已指认过；运行后点「复制过去再运行」出现「没有权限写到 …」，点「授权后复制」弹出 UAC，同意后文件出现在原路径并自动重跑出图；在 UAC 里点取消：卡片变成「没能把数据复制到 …」，只剩「改脚本里的路径」与「让 AI 修复」",
+        "macOS：同样的目录需要管理员权限（如 /Library 下的子目录）时点「授权后复制」，系统弹出管理员授权窗口，同意后文件出现在原路径并重跑；取消授权：卡片变成「没能把数据复制到 …」",
+        "macOS：脚本读的路径在「桌面」下一个本应用没有权限的位置时，卡片是「桌面 受系统保护，写不进去」，点「打开系统设置」会打开「隐私与安全性 → 完全磁盘访问」，勾上本应用、重新运行后复制成功"
+      ]
+    },
+    {
       "id": "canvas.place-and-render",
       "status": "active",
       "platform": "both",

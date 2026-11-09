@@ -46,6 +46,8 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   repairImportFolder: vi.fn(),
   ignoreImportFolder: vi.fn(),
   aiRevert: vi.fn(),
+  copyInputData: vi.fn(),
+  openFullDiskAccessSettings: vi.fn(),
 }))
 vi.mock('@/store/aiRenameRebind', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/store/aiRenameRebind')>()),
@@ -74,6 +76,8 @@ import {
   probeScript,
   repairImportFolder,
   ignoreImportFolder,
+  copyInputData,
+  openFullDiskAccessSettings,
   type CapturedFigureDescriptor,
   type PreparationAction,
   type PreparationAttempt,
@@ -97,6 +101,7 @@ import { seedExactRender } from '@/test/renderFixtures'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useEnvStore } from '@/store/envStore'
+import { useInputCopyStore } from '@/store/inputCopyStore'
 import { useUiStore } from '@/store/uiStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { addRuntimePanelToCanvas, openFastEdit } from '@/store/workspace'
@@ -3085,6 +3090,184 @@ describe('准备出错：后端本地详情接到已有恢复动作（P05a，AC-
     mockFix.mockReset()
     useAiFixStore.getState().reset()
     useAiStore.setState({ caps: null })
+  })
+})
+
+describe('缺数据 · 复制提议（ADR 0173）：c1–c4 四张卡', () => {
+  const copyOf = (state: string, extra: Record<string, unknown> = {}) => ({
+    state, token: 'tok-1', source: '/moved/values.csv', target: '/wanted/data/values.csv', dir: '/wanted/data', dir_name: 'data', ...extra,
+  })
+  const payloadOf = (state: string, extra: Record<string, unknown> = {}) => ({
+    script: 'plot.py', requested: '/wanted/data/values.csv', absolute: true, via: 'native', others: [], copy: copyOf(state, extra),
+  })
+  const failed = (payload: object) => report({
+    ...fromBackend('plain_exception'),
+    outcome: { kind: 'failed', code: 'script_error' },
+    provider: { plan_id: 'prep-plan', attempt_id: 'att-1', attempts: 1, dependency: null },
+    requirements: [{ id: 'data', kind: 'input_location', code: 'script_error', origin: 'last_attempt', blocking: false, payload }],
+    actions: [action('run'), action('recheck')],
+  } as never)
+  const line = () => panel().querySelector('[data-prep-line]')?.textContent ?? ''
+  const aiFix = () => panel().querySelector('[data-prep-ai-fix]')
+  const later = () => Array.from(panel().querySelectorAll('button')).find((b) => b.textContent === '稍后')
+  const click = async (el: Element | null | undefined) => {
+    await act(async () => (el as HTMLButtonElement).click())
+  }
+
+  beforeEach(() => {
+    vi.mocked(copyInputData).mockReset()
+    vi.mocked(openFullDiskAccessSettings).mockReset()
+    useInputCopyStore.getState().clear()
+    useAiFixStore.getState().reset()
+  })
+  afterEach(() => useEnvStore.getState().dismissMissingInput())
+
+  it('c1：一句话 + 主「复制过去再运行」+ 次「换一份数据」，没有 AI 修复也没有「稍后」，卡片只有一句话一个主按钮', async () => {
+    await mount()
+    await openWith(failed(payloadOf('ask')))
+    expect(panel().dataset.prepState).toBe('missing_data')
+    expect(line()).toBe('脚本要从 /wanted/data/values.csv 读数据')
+    expect(primary()?.dataset.prepPrimary).toBe('copy_run')
+    expect(primary()?.textContent).toBe('复制过去再运行')
+    expect(primary()?.title).toContain('/moved/values.csv')
+    expect(secondary()?.textContent).toBe('换一份数据')
+    expect(aiFix()).toBeNull()
+    expect(later()).toBeUndefined()
+    expect(visibleSentenceCount(panel())).toBeLessThanOrEqual(1) // 句末不带句号
+    expect(visiblePrimaryButtons(panel())).toBe(1)
+  })
+
+  it('c1 的长路径只留尾巴，不把卡片撑高', async () => {
+    const long = '/Users/someone/research/long-project-name/experiments/2026-11/raw/values.csv'
+    await mount()
+    await openWith(failed({ ...payloadOf('ask'), requested: long, copy: copyOf('ask', { target: long }) }))
+    expect(line()).toContain('…')
+    expect(line()).toContain('values.csv')
+    expect(line().length).toBeLessThan(80)
+  })
+
+  it('「复制过去再运行」：请求只带不透明令牌（没有路径、没有源）；成功就重跑', async () => {
+    vi.mocked(copyInputData).mockResolvedValue({ ok: true, state: 'done', target: '/wanted/data/values.csv' })
+    mockAct.mockResolvedValue(report() as never)
+    await mount()
+    await openWith(failed(payloadOf('ask')))
+    await click(primary())
+    expect(copyInputData).toHaveBeenCalledWith('tok-1', false)
+    expect(mockAct).toHaveBeenCalledWith('psess-1', expect.objectContaining({ action_id: 'act-run' }), 'pj-a', expect.anything())
+  })
+
+  it('目标本来就在（exists）同样重跑', async () => {
+    vi.mocked(copyInputData).mockResolvedValue({ ok: true, state: 'exists' })
+    mockAct.mockResolvedValue(report() as never)
+    await mount()
+    await openWith(failed(payloadOf('ask')))
+    await click(primary())
+    expect(mockAct).toHaveBeenCalled()
+  })
+
+  it('c2：没有权限 → 「授权后复制」主 + 「改脚本里的路径」次 + AI 修复；点授权带 elevate=true', async () => {
+    vi.mocked(copyInputData).mockResolvedValueOnce({ ok: true, state: 'denied', reason: 'access_denied' })
+    await mount()
+    await openWith(failed(payloadOf('ask')))
+    await click(primary())
+    expect(line()).toBe('没有权限写到 data')
+    expect(primary()?.dataset.prepPrimary).toBe('grant_copy')
+    expect(primary()?.textContent).toBe('授权后复制')
+    expect(secondary()?.textContent).toBe('改脚本里的路径')
+    expect(aiFix()).not.toBeNull()
+    expect(later()).toBeUndefined()
+    vi.mocked(copyInputData).mockResolvedValueOnce({ ok: true, state: 'auth_failed', reason: 'cancelled' })
+    await click(primary())
+    expect(copyInputData).toHaveBeenLastCalledWith('tok-1', true)
+  })
+
+  it('c4：授权被拒 / 仍失败 → 只剩「改脚本里的路径」与「让 AI 修复」', async () => {
+    vi.mocked(copyInputData).mockResolvedValueOnce({ ok: true, state: 'denied' })
+    await mount()
+    await openWith(failed(payloadOf('ask')))
+    await click(primary())
+    vi.mocked(copyInputData).mockResolvedValueOnce({ ok: true, state: 'auth_failed', reason: 'cancelled' })
+    await click(primary())
+    expect(line()).toBe('没能把数据复制到 data')
+    expect(primary()?.dataset.prepPrimary).toBe('rewrite_path')
+    expect(primary()?.textContent).toBe('改脚本里的路径')
+    expect(secondary()).toBeNull()
+    expect(aiFix()).not.toBeNull()
+  })
+
+  it('后端一开始就判定复制不成（父目录不存在 / 源不是文件）→ 直接是 c4，不叫用户白点一次', async () => {
+    await mount()
+    await openWith(failed(payloadOf('auth_failed', { reason: 'no_parent' })))
+    expect(primary()?.dataset.prepPrimary).toBe('rewrite_path')
+    expect(secondary()).toBeNull()
+    expect(aiFix()).not.toBeNull()
+    expect(copyInputData).not.toHaveBeenCalled()
+  })
+
+  it('c3：macOS 受保护文件夹 → 用真实文件夹名；主「打开系统设置」（悬停说怎么勾）次「改脚本里的路径」', async () => {
+    vi.mocked(copyInputData).mockResolvedValueOnce({ ok: true, state: 'macos_protected', protected_kind: 'desktop' })
+    vi.mocked(openFullDiskAccessSettings).mockResolvedValue({ ok: true, opened: true })
+    await mount()
+    await openWith(failed(payloadOf('ask')))
+    await click(primary())
+    expect(line()).toBe('桌面 受系统保护，写不进去')
+    expect(primary()?.dataset.prepPrimary).toBe('open_privacy')
+    expect(primary()?.textContent).toBe('打开系统设置')
+    expect(primary()?.title).toContain('完全磁盘访问')
+    expect(secondary()?.textContent).toBe('改脚本里的路径')
+    expect(aiFix()).not.toBeNull()
+    await click(primary())
+    expect(openFullDiskAccessSettings).toHaveBeenCalledTimes(1)
+    expect(copyInputData).toHaveBeenCalledTimes(1) // 管理员密码解决不了 TCC：没有第二次复制 / 提权
+  })
+
+  it('c3 的外置卷说卷自己的名字', async () => {
+    await mount()
+    await openWith(failed(payloadOf('macos_protected', { protected_kind: 'volume', protected_name: 'LabDisk' })))
+    expect(line()).toBe('LabDisk 受系统保护，写不进去')
+  })
+
+  it('「改脚本里的路径」直接进逐行预览：用已指认的源，不再弹选择器', async () => {
+    const preview = vi.fn().mockResolvedValue(null)
+    useEnvStore.setState({ previewRewrite: preview })
+    await mount()
+    await openWith(failed(payloadOf('auth_failed', { reason: 'no_parent' })))
+    await click(primary())
+    expect(preview).toHaveBeenCalledWith('/wanted/data/values.csv', '/moved/values.csv', 'file')
+    expect(useEnvStore.getState().missingInput?.requested).toBe('/wanted/data/values.csv')
+  })
+
+  it('「改脚本里的路径」预览失败时落回指认框并带上原因', async () => {
+    useEnvStore.setState({ previewRewrite: vi.fn().mockResolvedValue('一处都改不了') })
+    await mount()
+    await openWith(failed(payloadOf('auth_failed', { reason: 'no_parent' })))
+    await click(primary())
+    expect(useEnvStore.getState().rewriteError).toBe('一处都改不了')
+  })
+
+  it('「换一份数据」打开原来的指认框，不复制', async () => {
+    await mount()
+    await openWith(failed(payloadOf('ask')))
+    await click(secondary())
+    expect(useEnvStore.getState().missingInput?.via).toBe('native')
+    expect(copyInputData).not.toHaveBeenCalled()
+  })
+
+  it('重新运行出新尝试后，上一次的落点不再套在新卡上', async () => {
+    vi.mocked(copyInputData).mockResolvedValueOnce({ ok: true, state: 'denied' })
+    await mount()
+    await openWith(failed(payloadOf('ask')))
+    await click(primary())
+    expect(primary()?.dataset.prepPrimary).toBe('grant_copy')
+    await openWith({ ...failed(payloadOf('ask')), provider: { plan_id: 'p', attempt_id: 'att-2', attempts: 2, dependency: null } } as never)
+    expect(primary()?.dataset.prepPrimary).toBe('copy_run')
+  })
+
+  it('没有复制提议的 native 缺读取，仍是原来的「指认数据」卡', async () => {
+    await mount()
+    await openWith(failed({ script: 'plot.py', requested: '/x/y.csv', absolute: true, via: 'native', others: [] }))
+    expect(primary()?.dataset.prepPrimary).toBe('missing_input')
+    expect(later()).toBeDefined()
   })
 })
 

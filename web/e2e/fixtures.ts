@@ -53,10 +53,17 @@ export interface AppOptions {
    * 的补丁，见该文件）。只在源码形态（`python`）下可用，不能与 `TAVOTTO_EXE` 的打包产物一起用。
    */
   offline?: boolean
+  /**
+   * 开着会话认证起（默认关，见下面 `TAVOTTO_INSECURE_NO_AUTH`）：用例用 `RunningApp.loginURL`（带 `#dnonce=`）进页面换 cookie。
+   * 只有「要页面 cookie 才给」的能力需要它（浏览器模式下的「允许并运行」= 用户点一次才换 native，ADR 0127 修订 2026-10-30）。
+   */
+  auth?: boolean
 }
 
 export interface RunningApp {
   baseURL: string
+  /** `auth: true` 时启动日志里的登录地址（带 `#dnonce=`）；否则 null */
+  loginURL: string | null
   port: number
   home: string
   figures: string
@@ -98,7 +105,7 @@ export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
         // e2e 测的是界面行为，不是会话认证；认证有自己的真 HTTP 套件
         // （tests/test_browser_auth.py）与 smoke_app 的强制断言。开着的话
         // 每个 page.goto 都得先带 fragment 换 cookie，与多标签页用例互相绞。
-        TAVOTTO_INSECURE_NO_AUTH: '1',
+        TAVOTTO_INSECURE_NO_AUTH: opts.auth ? '0' : '1',
         // 匿名用量统计硬关。两件事：① e2e 每次都是全新的配置目录，
         // 同意态是 unset，首启询问框会盖在画布上，之后每一次点击都点在
         // 遮罩上；② 就算它不挡路，CI 也绝不该产生真实的产品事件。
@@ -141,8 +148,19 @@ export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
     await new Promise((r) => setTimeout(r, 500))
   }
 
+  let loginURL: string | null = null
+  if (opts.auth) {
+    const until = Date.now() + 30_000
+    while (!loginURL && Date.now() < until) {
+      loginURL = logs.join('').match(/http:\/\/127\.0\.0\.1:\d+\/?#dnonce=[\w-]+/)?.[0] ?? null
+      if (!loginURL) await new Promise((r) => setTimeout(r, 200))
+    }
+    if (!loginURL) throw new Error(`启动日志里没有登录地址\n${logs.join('')}`)
+  }
+
   return {
     baseURL,
+    loginURL,
     port,
     home,
     figures: figures ?? '',

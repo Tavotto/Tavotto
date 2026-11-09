@@ -63,6 +63,10 @@ EXEMPT: dict[tuple[str, str], str] = {
         "web:en-US",
         "project:browser.shortcut.documents",
     ): "系统文件夹名 Documents（目录选择器的常用起点）",
+    (
+        "web:en-US",
+        "workspace:prep.folder.documents",
+    ): "系统文件夹名 Documents（macOS 受保护文件夹卡片点名用户要去哪个文件夹，ADR 0173）",
     ("shell:ZH", "help_docs"): "「使用文档」= 帮助手册（菜单「帮助」里那一项）",
 }
 

@@ -5582,6 +5582,28 @@ export interface MissingInputOffer {
   probe_kind?: MissingInputProbeKind | string
   /** 脚本里写着、此刻哪儿都找不到的其它路径（这次指认可能顺带修好） */
   others: MissingInputItem[]
+  /**
+   * native 运行读不到这条绝对路径、而用户之前指认过这份数据时，后端给的「复制到脚本要的位置」提议（ADR 0173）。
+   * `source` = 用户指认的那份；`target` = 脚本要读的路径；`dir` = 要写进的目录（`dir_name` 是它的末段）。
+   */
+  copy?: MissingInputCopy
+}
+
+export type MissingInputCopyState = 'ask' | 'denied' | 'macos_protected' | 'auth_failed'
+
+export interface MissingInputCopy {
+  state: MissingInputCopyState
+  /** 服务端存下的不透明令牌：点复制时只回它，请求里没有任何路径（ADR 0173） */
+  token: string
+  source: string
+  target: string
+  dir: string
+  dir_name: string
+  /** macOS 受保护位置的类别（`volume` 另带 `protected_name`）；只给 `macos_protected` 那一档说名字用 */
+  protected_kind?: 'desktop' | 'documents' | 'downloads' | 'icloud' | 'volume'
+  protected_name?: string
+  /** 注定复制不成时的原因（源不是文件 / 父目录不存在）：只用于诊断，卡片不说 */
+  reason?: string
 }
 
 export interface InputRemapRule {
@@ -5610,6 +5632,30 @@ export const addInputRemap = (requested: string, chosen: string, chosenKind: 'fi
       body: JSON.stringify({ requested, chosen, chosen_kind: chosenKind }),
     },
   )
+
+export interface InputCopyResult {
+  ok: true
+  state: 'done' | 'exists' | 'denied' | 'macos_protected' | 'auth_failed'
+  target?: string
+  via?: 'normal' | 'elevated'
+  reason?: string
+  protected_kind?: MissingInputCopy['protected_kind']
+}
+
+/**
+ * 把用户指认过的数据复制到脚本要读的原路径（ADR 0173）。路径与源都由后端自己决定，请求里只有提议令牌。
+ * `elevate` 只在用户点了「授权后复制」时为 true；`done` / `exists` 之后前端直接重跑。
+ */
+export const copyInputData = (token: string, elevate = false) =>
+  jsonFetch<InputCopyResult>('/api/engine/input-copy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, elevate }),
+  })
+
+/** c3 的主按钮：打开 macOS「完全磁盘访问」面板（后端按固定地址拉起，页面没有 opener 权限） */
+export const openFullDiskAccessSettings = () =>
+  jsonFetch<{ ok: boolean; opened: boolean }>('/api/engine/input-copy/privacy-settings', { method: 'POST' })
 
 /** 删一条改指规则：删了就回到「找不到就报错」 */
 export const removeInputRemap = (kind: InputRemapRule['kind'], from: string) =>

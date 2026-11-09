@@ -7,7 +7,7 @@
 <!-- agents-route
 sheet: src-tauri/AGENTS.md
 order: 10
-改到: `src-tauri/src/main.rs`、`build.rs`、`capabilities/`、`src/tavotto/desktop.py`、`web/src/lib/desktop.ts`、`sidecar/port_memory.rs`
+改到: `src-tauri/src/main.rs`、`elevated_copy.rs`、`build.rs`、`capabilities/`、`src/tavotto/desktop.py`、`web/src/lib/desktop.ts`、`sidecar/port_memory.rs`
 主题: 壳 → sidecar 进程关系、外链、`#[tauri::command]` 的 ACL 三处同步 → `process-and-acl.md`
 必守要点: 前端仍由 sidecar Flask 提供；组件不得 import `@tauri-apps/*`；新增 command 必须 build.rs / capabilities / generate_handler 同步
 -->
@@ -40,3 +40,7 @@ order: 10
   invoke 会被**静默拒绝**（reveal_export「点了没反应」就是这么坏的）；
   失败路径不许吞——回退时把完整文件路径告诉用户。三处齐全的看护读结构不读子串
   （`tests/support/rustsrc.py`，枚举在 `tests/test_desktop_codex_button.py`）。
+- **提权复制助手（ADR 0173）**：壳可执行文件带固定子命令 `--elevated-copy <源> <目标>` 时，`main()` 在崩溃过滤器与 MSIX 脱离之后、建 Builder 之前
+  调用 `elevated_copy::run_if_requested()`，只做一次复制就退出（不开窗口、不起 sidecar、不碰配置 / 退出标记）；它**不是** `#[tauri::command]`、不进 ACL，
+  页面拿不到它——只有引擎经 `ShellExecuteExW("runas")` 拉起（可执行路径来自壳放进 sidecar 环境的 `TAVOTTO_SHELL_EXE`）。助手自己再校验一遍参数，
+  退出码与 `engine/inputcopy.HELPER_*` 同源（`tests/test_input_copy.py` 读 Rust 源码对）。
