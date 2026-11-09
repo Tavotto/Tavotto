@@ -241,10 +241,100 @@ def test_matlab_source_is_judged_the_same_way(world):
     assert ai_convert.run_validation(cand, runner)["status"] == "ok"
 
 
-def test_sandbox_cwd_writes_are_unobservable_so_nothing_is_judged(world):
-    result, _ = validate(world, PLOT, mode=workdir.MODE_SANDBOX)
+SANDBOX = workdir.MODE_SANDBOX
+WRITES_ALL = (
+    "open('table.csv', 'w').write('x')\nopen('report-a.xlsx', 'wb').write(b'x')\n"
+    "open('report-b.xlsx', 'wb').write(b'y')\n"
+)
+
+
+def test_sandbox_cwd_plot_only_candidate_is_missing(world):
+    result, _ = validate(world, PLOT, mode=SANDBOX)
+    assert result["status"] == ai_convert.MISSING_OUTPUTS_STATUS, result
+    assert [m["name"] for m in result["output_evidence"]["missing_outputs"]] == [
+        "table.csv",
+        "report-a.xlsx",
+        "report-b.xlsx",
+    ]
+
+
+def test_sandbox_cwd_writes_count_as_written(world):
+    result, cand = validate(world, WRITES_ALL + PLOT, mode=SANDBOX)
     assert result["status"] == "ok", result
-    assert result["output_evidence"]["missing_outputs"] is None
+    assert result["output_evidence"]["output_check"] == "written"
+    assert not (cand.project_root / "sub" / "table.csv").exists()
+
+
+def test_sandbox_cwd_write_then_delete_is_missing(world):
+    code = "import os\nopen('table.csv', 'w').write('x')\nos.remove('table.csv')\n" + PLOT
+    result, _ = validate(world, code, source=b'write.csv(d, "table.csv")\nplot(1)\n', mode=SANDBOX)
+    assert result["status"] == ai_convert.MISSING_OUTPUTS_STATUS, result
+
+
+def test_sandbox_report_carries_no_internal_files_and_only_names(world):
+    root, cand, runner = world
+    seen = []
+
+    def spy(*args, **kwargs):
+        out = runner(*args, **kwargs)
+        seen.append(out)
+        return out
+
+    workdir.set_mode(root, SANDBOX)
+    cand.base_bytes = R_SOURCE
+    cand.new_bytes = ("open('kept.csv', 'w').write('x')\n" + PLOT).encode()
+    cand.target.write_bytes(cand.new_bytes)
+    ai_convert.run_validation(cand, spy)
+    # the spawn bootstrap `_tavotto_shadow_spawn_main.py` lives in the sandbox too, and must not be reported
+    assert seen[0]["sandbox_files"] == {"names": ["kept.csv"], "truncated": False}, seen[0]
+
+
+def test_sandbox_listing_is_capped_and_hides_internal_files(tmp_path):
+    from types import SimpleNamespace
+
+    from tavotto.engine import worker
+
+    (tmp_path / "__pycache__").mkdir()
+    (tmp_path / "__pycache__" / "m.pyc").write_bytes(b"x")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "kept.csv").write_text("x")
+    (tmp_path / "mod.pyc").write_bytes(b"x")
+    (tmp_path / "_tavotto_shadow_spawn_main.py").write_text("x")
+    fake = SimpleNamespace(sandbox=tmp_path)
+    assert worker.Worker._sandbox_files(fake) == {"names": ["sub/kept.csv"], "truncated": False}
+    for i in range(worker._MAX_SANDBOX_FILES + 5):
+        (tmp_path / f"f{i:04}.txt").write_text("x")
+    listed = worker.Worker._sandbox_files(fake)
+    assert listed["truncated"] and len(listed["names"]) == worker._MAX_SANDBOX_FILES
+
+
+def test_a_truncated_sandbox_listing_is_not_judged(world):
+    root, cand, runner = world
+
+    def noisy(*args, **kwargs):
+        out = runner(*args, **kwargs)
+        return {**out, "sandbox_files": {"names": ["f1.txt"], "truncated": True}}
+
+    workdir.set_mode(root, SANDBOX)
+    cand.base_bytes = R_SOURCE
+    cand.target.write_bytes(PLOT.encode())
+    result = ai_convert.run_validation(cand, noisy)
+    assert result["status"] == "ok" and result["output_evidence"]["missing_outputs"] is None
+
+
+def test_an_old_worker_without_the_sandbox_report_is_unknown_in_sandbox_cwd(world):
+    root, cand, runner = world
+
+    def old(*args, **kwargs):
+        out = dict(runner(*args, **kwargs))
+        out.pop("sandbox_files", None)
+        return out
+
+    workdir.set_mode(root, SANDBOX)
+    cand.base_bytes = R_SOURCE
+    cand.target.write_bytes(PLOT.encode())
+    result = ai_convert.run_validation(cand, old)
+    assert result["status"] == "ok" and result["output_evidence"]["missing_outputs"] is None
 
 
 def test_missing_worker_ledger_is_unknown_not_missing(world):
@@ -274,7 +364,9 @@ R_FILE = (
 WRITES = "open('table.csv', 'w').write('x')\nopen('report-b.xlsx', 'wb').write(b'y')\n"
 
 
-def _pipeline(project, monkeypatch, *, source: str, first: str, later: str):
+def _pipeline(
+    project, monkeypatch, *, source: str, first: str, later: str, mode=workdir.MODE_PROJECT
+):
     m, client, figs, state = project
     worker_tmp = figs.parent / "worker-tmp"
     worker_tmp.mkdir()
@@ -282,7 +374,7 @@ def _pipeline(project, monkeypatch, *, source: str, first: str, later: str):
         monkeypatch.setenv(var, str(worker_tmp))
     monkeypatch.setenv("LOCALAPPDATA", str(figs.parent / "localappdata"))
     (figs / "fig.R").write_bytes(source.encode())
-    workdir.set_mode(figs, workdir.MODE_PROJECT)
+    workdir.set_mode(figs, mode)
     plot_only = GOOD
     body = {"first": first + plot_only, "later": later + plot_only}
     state["code"] = (
@@ -354,3 +446,21 @@ def test_state_unknown_when_the_source_path_is_not_a_literal(project, monkeypatc
     evidence = status["comparison"]["output_evidence"]
     assert evidence["output_check"] == "unknown" and evidence["missing_outputs"] is None
     assert client.post(f"/api/ai/convert/{sid}/adopt").status_code == 200
+
+
+def test_sandbox_default_still_corrects_once_and_ends_adoptable(project, monkeypatch):
+    client, sid, session, status, state = _pipeline(
+        project, monkeypatch, source=R_FILE, first="", later="", mode=SANDBOX
+    )
+    assert len(state["prompts"]) == 2 and session["task"]["outcome"] == "completed"
+    assert status["comparison"]["output_evidence"]["output_check"] == "missing"
+    assert client.post(f"/api/ai/convert/{sid}/adopt").status_code == 200
+
+
+def test_sandbox_default_corrected_to_written(project, monkeypatch):
+    client, sid, session, status, state = _pipeline(
+        project, monkeypatch, source=R_FILE, first="", later=WRITES, mode=SANDBOX
+    )
+    assert len(state["prompts"]) == 2
+    evidence = status["comparison"]["output_evidence"]
+    assert evidence["output_check"] == "written" and evidence["corrected"] is True

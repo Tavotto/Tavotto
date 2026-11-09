@@ -375,9 +375,9 @@ order: 240
 （其余字段同 ok），不当 ok。`ConvertAdapter._render` 只在「编排器接着真会修正」（`_correction_pending`：`max_corrections` 与
 `corrections` / `agent_runs` 余量）时记 `output.source` / `source_outputs_missing` 失败，进有界修正，提示只含缺的文件名；
 修正之后仍缺**不判失败、不挡采用**，缺项随 `comparison.output_evidence` 带出。该对象新增字段：`source_writes` / `missing_outputs`
-（`null` = 没法判定：非 R / MATLAB、没有能确定的写出、无改道记录、沙盒 cwd 的相对写入看不到；`[]` = 都写出了；否则
+（`null` = 没法判定：非 R / MATLAB、没有能确定的写出、无改道记录、沙盒 cwd 下 worker 没回报或回报被截断；`[]` = 都写出了；否则
 `[{name, line}]`）/ `missing_truncated` / `output_check`（`written` | `missing` | `unknown`）/ `corrected`。`completeness` 仍恒 `unknown`：
-文件名在不证明内容和计算一致。内置执行器的 `check` 对同一组缺项只报一次，再次出现照常放行。看护 `tests/test_convert_missing_outputs.py`
+文件名在不证明内容和计算一致。沙盒 cwd 下合并改道区与 worker 回报的 `sandbox_files`（任一里有就算写出）。内置执行器的 `check` 对同一组缺项只报一次，再次出现照常放行。看护 `tests/test_convert_missing_outputs.py`
 （静态抽取正反例 / 真 worker 判定 / 成功、补齐、仍缺、无法确认四种终态）。
 
 **R / MATLAB 来源（ADR 0143 修订，2026-10-23）**：`POST /api/ai/convert` 多一个可选 `source_language`（`python` 缺省 | `r` | `matlab`）。

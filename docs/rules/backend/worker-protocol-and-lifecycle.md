@@ -28,6 +28,11 @@ order: 60
   Python 池和 workerd 池均记录同次 build 的值，失败清空，旧 worker 缺字段为 unknown；
   legacy 响应不加字段。只有转换层消费并先去路径、脱敏、限量才展示，不进遥测。看护
   `tests/test_convert_output_evidence.py`。
+- **转换校验的沙盒文件回报（#1809）**：与 `redirected_write_attempts` 同条件（只有带改道根的 worker）的 v1 build 响应另带
+  `sandbox_files: {names: [会话沙盒里此刻还在的文件相对名，≤200], truncated: bool}`，排除 `__pycache__` / `*.pyc` / `_tavotto_*`
+  引擎内部文件。只给名字不给内容，仅供 `ai_convert` 比对「来源里能确定的写出」有没有被写出（沙盒 cwd 的相对写入校验后即销毁，
+  只有这里看得到）；legacy 响应剥掉，池（Python / workerd）按 build 记录、失败清空、缺字段为 unknown，不进界面 / 诊断包 / 遥测 / 日志。
+  看护 `tests/test_convert_missing_outputs.py`。
 - **计时管道与性能基线（2026-08-18）**：worker 的 build/render/export 响应带
   `timings`（`script_build_ms` / `patch_apply_ms` / `canvas_draw_ms` /
   `manifest_ms`；**没有 `svg_ms`**——SVG 序列化与 draw 在 matplotlib 里分不开），

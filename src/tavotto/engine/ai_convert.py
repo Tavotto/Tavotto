@@ -595,14 +595,21 @@ def _output_evidence(cand: ConvertCandidate, out: dict) -> dict:
     writes = convertsrcwrites.certain_writes(cand.base_bytes, cand.source_language)
     judged: list | None = None
     written = None
-    # 只有改道记录真的在场才有资格判：沙盒 cwd 的相对写入落在会话沙盒里（校验后即销毁），看不到 ≠ 没写
-    if (
-        writes
-        and isinstance(raw_attempts, list)
-        and cand.extras.get("redirect_cleared") is True
-        and workdir.mode_for(cand.project_root) != workdir.MODE_SANDBOX
-    ):
+    # 只有改道记录真的在场才有资格判。项目目录 cwd：写入都落改道区；沙盒 cwd：相对写入落会话沙盒（校验后即销毁），
+    # 由 worker 在结束时回报沙盒里最后还在的文件名（`sandbox_files`）。两处任一有就算写出；回报缺失或被截断时沙盒档不判。
+    if writes and isinstance(raw_attempts, list) and cand.extras.get("redirect_cleared") is True:
         written = convertsrcwrites.written_names(longpath.long(cand.dir / REDIRECT_DIRNAME))
+        if written is not None and workdir.mode_for(cand.project_root) == workdir.MODE_SANDBOX:
+            sandbox = out.get("sandbox_files")
+            listed = sandbox.get("names") if isinstance(sandbox, dict) else None
+            if (
+                not isinstance(listed, list)
+                or sandbox.get("truncated")
+                or not all(isinstance(n, str) for n in listed)
+            ):
+                written = None
+            else:
+                written |= {n.replace("\\", "/").rsplit("/", 1)[-1].casefold() for n in listed}
     if written is not None:
         judged = convertsrcwrites.missing(writes, written)
     seen = cand.extras.setdefault("missing_outputs_seen", set())

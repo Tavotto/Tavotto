@@ -14287,6 +14287,7 @@ def _convert_runner(
                 "redirected_write_attempts": getattr(
                     worker, "last_build_redirected_write_attempts", None
                 ),
+                "sandbox_files": getattr(worker, "last_build_sandbox_files", None),
             }
             if with_manifests and worker is not None:
                 out["source_sha256"] = getattr(worker, "last_build_source_sha256", None)

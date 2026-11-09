@@ -2246,7 +2246,36 @@ class Worker(wireproto.V1Handler):
             str(root).startswith(writetripwire.REDIRECT_PROJECT_PREFIX) for root in self.write_roots
         ):
             result["redirected_write_attempts"] = writetripwire.redirected()
+            result["sandbox_files"] = self._sandbox_files()
         return result
+
+    def _sandbox_files(self) -> dict:
+        """Relative names of the files still in the session sandbox right now (conversion validation only).
+
+        Names only, capped; internal files are filtered. A relative write in sandbox cwd lands here and
+        the sandbox is discarded after validation, so this is the only place it can be seen."""
+        names: list[str] = []
+        truncated = False
+        try:
+            for dirpath, dirs, files in os.walk(self.sandbox):
+                dirs[:] = sorted(d for d in dirs if d not in _SANDBOX_INTERNAL)
+                for name in sorted(files):
+                    if (
+                        name in _SANDBOX_INTERNAL
+                        or name.startswith("_tavotto_")
+                        or name.endswith(".pyc")
+                    ):
+                        continue
+                    if len(names) >= _MAX_SANDBOX_FILES:
+                        truncated = True
+                        break
+                    rel = os.path.relpath(os.path.join(dirpath, name), self.sandbox)
+                    names.append(rel.replace(os.sep, "/"))
+                if truncated:
+                    break
+        except OSError:
+            return {"names": [], "truncated": True}
+        return {"names": names, "truncated": truncated}
 
     def _render(
         self, stem: str, timings: dict | None = None, preview_dpi: int | None = None
@@ -2276,7 +2305,7 @@ class Worker(wireproto.V1Handler):
                 **{
                     k: v
                     for k, v in self.build().items()
-                    if k not in {"source_sha256", "redirected_write_attempts"}
+                    if k not in {"source_sha256", "redirected_write_attempts", "sandbox_files"}
                 },
             }
         if cmd == "export" and (req.get("require_built") or req.get("snapshot_only")):
@@ -2580,6 +2609,10 @@ def _json_default(o):
         return float(o)
     except (TypeError, ValueError):
         return str(o)
+
+
+_MAX_SANDBOX_FILES = 200
+_SANDBOX_INTERNAL = frozenset({"__pycache__"})
 
 
 def _parse_write_roots(raw) -> list[str] | None:
