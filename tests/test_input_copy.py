@@ -33,6 +33,18 @@ def _link(root, requested, chosen):
     inputremap.link(str(root), str(requested), str(chosen), "file")
 
 
+def _fail_tmp_open(monkeypatch, failure):
+    """只让「创建临时文件」那一次 `os.open` 失败（项目设置的记录写入等别的 open 照常）。"""
+    real = os.open
+
+    def selective(path, *a, **k):
+        if ".tavotto-copy" in os.fspath(path):
+            return failure(path)
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(os, "open", selective)
+
+
 def _token(root, target):
     return inputcopy.offer(str(root), str(target))["token"]
 
@@ -178,7 +190,7 @@ def test_a_failed_or_cancelled_elevation_ends_on_the_last_card(
     def fail(src, dst):
         raise inputcopy.CopyError("auth_failed", failure)
 
-    monkeypatch.setattr(os, "open", deny)
+    _fail_tmp_open(monkeypatch, deny)
     monkeypatch.setattr(inputcopy, "_elevate", fail)
     res = inputcopy.run(str(project), _token(project, target), elevate=True)
     assert (res["state"], res["reason"]) == ("auth_failed", failure)
@@ -196,7 +208,7 @@ def test_read_only_media_and_full_disks_end_on_the_last_card_without_offering_a_
         def boom(*_a, _c=code, **_k):
             raise OSError(_c, os.strerror(_c))
 
-        monkeypatch.setattr(os, "open", boom)
+        _fail_tmp_open(monkeypatch, boom)
         res = inputcopy.run(str(project), _token(project, target), elevate=True)
         assert (res["state"], res["reason"]) == ("auth_failed", reason)
     assert asked == []
@@ -213,7 +225,7 @@ def test_eperm_in_a_protected_macos_folder_is_the_system_protection_card(
     def eperm(*_a, **_k):
         raise PermissionError(errno.EPERM, "Operation not permitted")
 
-    monkeypatch.setattr(os, "open", eperm)
+    _fail_tmp_open(monkeypatch, eperm)
     res = inputcopy.run(str(project), _token(project, target), elevate=True)
     assert res["state"] == "macos_protected" and res["protected_kind"] == "desktop"
     assert asked == []  # 管理员密码解决不了 TCC，不提权
@@ -226,7 +238,7 @@ def test_eperm_elsewhere_is_an_ordinary_permission_problem(project, tmp_path, mo
     def eperm(*_a, **_k):
         raise PermissionError(errno.EPERM, "Operation not permitted")
 
-    monkeypatch.setattr(os, "open", eperm)
+    _fail_tmp_open(monkeypatch, eperm)
     assert inputcopy.run(str(project), _token(project, target))["state"] == "denied"
 
 
@@ -236,7 +248,7 @@ def test_an_unclassified_error_still_lands_on_a_card(project, tmp_path, monkeypa
     def odd(*_a, **_k):
         raise OSError(errno.EIO, "io")
 
-    monkeypatch.setattr(os, "open", odd)
+    _fail_tmp_open(monkeypatch, odd)
     assert inputcopy.run(str(project), _token(project, target))["state"] == "auth_failed"
 
 
@@ -389,7 +401,7 @@ def test_elevation_refuses_executable_looking_targets_and_system_directories(
     def deny(*_a, **_k):
         raise PermissionError(errno.EACCES, "denied")
 
-    monkeypatch.setattr(os, "open", deny)
+    _fail_tmp_open(monkeypatch, deny)
     res = inputcopy.run(str(project), _token(project, target), elevate=True)
     assert (res["state"], res["reason"]) == ("auth_failed", "refused_target")
 
@@ -499,3 +511,168 @@ def test_no_hardlink_volume_still_copies_when_target_is_free(tmp_path, monkeypat
     inputcopy.copy_no_overwrite(str(src), str(dst))
     assert dst.read_bytes() == b"ours"
     assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".tavotto-copy")] == []
+
+
+# ---------------------------------------------------------------- 写到一半被杀：残缺目标不能被当成「已存在」（Codex #1822 P2）
+
+_PARTIAL = b"7\n" * 4  # 比源短的残缺内容
+
+
+def _no_hardlinks(monkeypatch):
+    def no_link(a, b, *args, **kw):
+        raise OSError(errno.EOPNOTSUPP, "hard links unsupported")
+
+    monkeypatch.setattr(inputcopy.os, "link", no_link)
+
+
+def _crash_after_partial_write(monkeypatch, target):
+    """模拟独占创建目标、内容只写了一半就被杀：留下残缺目标，跳过一切清理（BaseException 直冲出去）。"""
+
+    def publish(tmp, dst):
+        fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        os.write(fd, _PARTIAL)
+        os.close(fd)
+        raise SystemExit("killed")
+
+    monkeypatch.setattr(inputcopy, "_publish_by_exclusive_create", publish)
+
+
+@posix_only
+def test_a_target_left_half_written_by_a_killed_copy_is_replaced_not_reused(
+    project, tmp_path, monkeypatch
+):
+    source, target = _setup(tmp_path, project)
+    source.write_bytes(b"7\n" * 4096)
+    token = _token(project, target)
+    _no_hardlinks(monkeypatch)
+    with monkeypatch.context() as m:
+        _crash_after_partial_write(m, target)
+        with pytest.raises(SystemExit):
+            inputcopy.run(str(project), token)
+    assert target.read_bytes() == _PARTIAL  # 残缺文件确实留下了
+    (row,) = inputcopy.records(str(project))
+    assert row["state"] == "pending"
+    res = inputcopy.run(str(project), token)  # 下一次点击
+    assert res["state"] == "done", res
+    assert target.read_bytes() == source.read_bytes()
+    (row,) = inputcopy.records(str(project))
+    assert row["state"] == "done"
+    assert [p.name for p in target.parent.iterdir()] == ["values.csv"]
+
+
+@posix_only
+def test_a_real_sigkill_in_the_middle_of_the_write_is_recovered(project, tmp_path):
+    """真进程：子进程在写目标的第一块之后被 SIGKILL；父进程再点一次，得到完整内容。"""
+    import signal
+    import textwrap
+
+    source, target = _setup(tmp_path, project)
+    source.write_bytes(b"x" * (64 * 1024))
+    script = textwrap.dedent(
+        f"""
+        import errno, os, sys
+        sys.path.insert(0, {str(__import__("pathlib").Path(inputcopy.__file__).parents[2])!r})
+        from tavotto.engine import inputcopy
+        token = inputcopy.offer({str(project)!r}, {str(target)!r})["token"]
+        def no_link(a, b, *x, **k): raise OSError(errno.EOPNOTSUPP, "no")
+        inputcopy.os.link = no_link
+        inputcopy._CHUNK = 4096
+        real_fdopen = os.fdopen
+        class Killer:
+            def __init__(self, f): self.f = f
+            def __enter__(self): self.f.__enter__(); return self
+            def __exit__(self, *a): return self.f.__exit__(*a)
+            def write(self, b):
+                self.f.write(b); self.f.flush()
+                if os.path.exists({str(target)!r}):  # 只有目标已被独占创建出来、写了第一块之后才杀
+                    os.kill(os.getpid(), 9)
+            def __getattr__(self, n): return getattr(self.f, n)
+        def fdopen(fd, *a, **k):
+            f = real_fdopen(fd, *a, **k)
+            return Killer(f) if os.fstat(fd).st_size == 0 and os.path.exists({str(target)!r}) else f
+        os.fdopen = fdopen
+        inputcopy.run({str(project)!r}, token)
+        """
+    )
+    env = {
+        **os.environ,
+        "TAVOTTO_CONFIG_DIR": os.environ["TAVOTTO_CONFIG_DIR"],
+        "TAVOTTO_DATA_DIR": os.environ["TAVOTTO_DATA_DIR"],
+    }
+    proc = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, check=False)
+    assert proc.returncode == -signal.SIGKILL, proc.stderr.decode()[-400:]
+    assert 0 < target.stat().st_size < source.stat().st_size  # 被杀在中途：目标残缺
+    res = inputcopy.run(str(project), inputcopy.offer(str(project), str(target))["token"])
+    assert res["state"] == "done", res
+    assert target.read_bytes() == source.read_bytes()
+
+
+def test_a_same_named_file_without_a_record_is_the_users_and_is_never_deleted(project, tmp_path):
+    _, target = _setup(tmp_path, project)
+    target.write_bytes(b"truncated-looking")
+    res = inputcopy.run(str(project), _token(project, target))
+    assert res["state"] == "exists"
+    assert target.read_bytes() == b"truncated-looking"
+
+
+def test_a_completed_copy_with_a_done_record_is_exists_even_if_the_user_edited_it(
+    project, tmp_path
+):
+    _, target = _setup(tmp_path, project)
+    token = _token(project, target)
+    assert inputcopy.run(str(project), token)["state"] == "done"
+    assert inputcopy.run(str(project), token)["state"] == "exists"
+    target.write_bytes(b"user edited afterwards")  # done 记录 + 内容变了：是用户后来改的，绝不删
+    assert inputcopy.run(str(project), token)["state"] == "exists"
+    assert target.read_bytes() == b"user edited afterwards"
+
+
+@posix_only
+def test_a_pending_record_with_complete_content_is_promoted_not_recopied(project, tmp_path):
+    source, target = _setup(tmp_path, project)
+    token = _token(project, target)
+    sha = inputcopy._sha256_of(str(source))
+    target.write_bytes(source.read_bytes())  # 写完了，只是被杀在「改成 done」之前
+    inputcopy._put_record(
+        str(project),
+        str(source),
+        str(target),
+        sha,
+        source.stat().st_size,
+        via="normal",
+        state="pending",
+    )
+    mtime = target.stat().st_mtime_ns
+    assert inputcopy.run(str(project), token)["state"] == "exists"
+    assert target.stat().st_mtime_ns == mtime
+    (row,) = inputcopy.records(str(project))
+    assert row["state"] == "done"
+
+
+@posix_only
+def test_a_partial_target_that_cannot_be_removed_ends_on_the_last_card(
+    project, tmp_path, monkeypatch
+):
+    source, target = _setup(tmp_path, project)
+    token = _token(project, target)
+    target.write_bytes(_PARTIAL)
+    inputcopy._put_record(
+        str(project),
+        str(source),
+        str(target),
+        inputcopy._sha256_of(str(source)),
+        source.stat().st_size,
+        via="normal",
+        state="pending",
+    )
+    real_unlink = os.unlink
+
+    def deny(path, *a, **k):
+        if os.fspath(path) == str(target):
+            raise PermissionError(errno.EACCES, "denied")
+        return real_unlink(path, *a, **k)
+
+    monkeypatch.setattr(inputcopy.os, "unlink", deny)
+    res = inputcopy.run(str(project), token)
+    assert (res["state"], res["reason"]) == ("auth_failed", "stale_partial_not_removed")
+    assert target.read_bytes() == _PARTIAL  # 没有拿残缺数据当成功，也没有动它

@@ -46,6 +46,8 @@ STATE_DENIED = "denied"
 STATE_PROTECTED = "macos_protected"
 STATE_FAILED = "auth_failed"
 # 只出现在接口结果里（卡片不会停在这两档：成功就重跑）
+STATE_PENDING = "pending"  # 复制记录的状态：发布前先记 pending，核对写完再改 done
+STATE_DONE = "done"
 RESULT_DONE = "done"
 RESULT_EXISTS = "exists"
 
@@ -531,6 +533,10 @@ def run(root: str | os.PathLike, token: object, *, elevate: bool = False) -> dic
 
     `state` ∈ `done`（复制好了）/ `exists`（目标本来就在，没动它）/ `denied` / `macos_protected` / `auth_failed`。
     前两档前端直接重跑；后三档就是卡片 c2 / c3 / c4。**任何分支都不抛**：每一种结果都有一个终态。
+
+    发布前先记一条 `pending` 记录、核对写完后改成 `done`：写到一半进程被杀（不支持硬链接的盘上是独占创建目标再写内容）
+    会留下残缺目标，下次点击时靠这条记录认出它是**我们自己没写完的那份**，删掉重来，绝不拿残缺数据重跑成「已存在」。
+    没有记录的同名文件一律是用户自己的，绝不删。
     """
     requested = lookup(root, token)  # 路径值是服务端当时观察到的那一份，不是请求里的字符串
     if requested is None:
@@ -539,6 +545,21 @@ def run(root: str | os.PathLike, token: object, *, elevate: bool = False) -> dic
         source, target = resolve(root, requested)
     except CopyError as exc:
         return _result(exc.state, exc.reason, requested)
+    try:
+        src_sha, src_size = _sha256_of(source), os.path.getsize(source)
+    except OSError as exc:
+        err = _classify(exc, os.path.dirname(target))
+        return _result(err.state, err.reason, target)
+    try:
+        if os.path.lexists(target):
+            verdict = _existing_target(root, target, src_sha, src_size)
+            if verdict == "exists":
+                return {"state": RESULT_EXISTS, "target": target}
+        recorded = _put_record(
+            root, source, target, src_sha, src_size, via="normal", state=STATE_PENDING
+        )
+    except CopyError as exc:
+        return _result(exc.state, exc.reason, target)
     try:
         try:
             digest = copy_no_overwrite(source, target)
@@ -550,20 +571,71 @@ def run(root: str | os.PathLike, token: object, *, elevate: bool = False) -> dic
             if not os.path.isfile(target):
                 raise CopyError(STATE_FAILED, "not_created") from exc
             digest = _sha256_of(target)
-            if digest != _sha256_of(
-                source
-            ):  # `cp -n` 遇到突然出现的同名文件会静默跳过：那不是我们复制的
+            if digest != src_sha:  # `cp -n` 遇到突然出现的同名文件会静默跳过：那不是我们复制的
                 raise CopyError(STATE_FAILED, "not_created") from exc
             via = "elevated"
     except FileExistsError:
+        _drop_pending(root, recorded)  # 别人抢先建了：那不是我们的，记录作废
         return {"state": RESULT_EXISTS, "target": target}
     except CopyError as exc:
+        _drop_pending(root, recorded)
         return _result(exc.state, exc.reason, target)
     except OSError as exc:  # 兜底：绝不让一个没分类的异常变成卡片上的「报错」
+        _drop_pending(root, recorded)
         err = _classify(exc, os.path.dirname(target))
         return _result(err.state, err.reason, target)
-    record(root, source, target, digest, via)
+    try:
+        _put_record(
+            root, source, target, digest, os.path.getsize(target), via=via, state=STATE_DONE
+        )
+    except (CopyError, OSError):
+        pass  # 复制已完成且核对过；记录只是撤销用，留着 pending 也会被下次判成「内容对得上」
     return {"state": RESULT_DONE, "target": target, "via": via}
+
+
+def _existing_target(root: str | os.PathLike, target: str, src_sha: str, src_size: int) -> str:
+    """目标此刻已存在：是用户的文件（或我们完整写好的）→ `"exists"`；是我们上次没写完的残缺文件 → 删掉并回 `"removed"`。
+
+    判据只有记录：有一条针对这个目标、`state == pending`、而内容与源对不上的 → 残缺；pending 但内容完整（只差改状态）→ 补记 done、算已存在；
+    没有记录 / done → 用户的文件，不碰。删不掉 → `CopyError(auth_failed)`，绝不拿残缺数据重跑。
+    """
+    with _LOCK:
+        rows = _records(root)
+        row = next((r for r in rows if r.get("target") == target), None)
+    if row is None or row.get("state", STATE_DONE) != STATE_PENDING:
+        if not os.path.exists(target):
+            raise CopyError(STATE_FAILED, "dangling_target")  # 悬空符号链接：不穿过它去写
+        return "exists"
+    path = row["target"]  # 只用记录里存的那一份做路径运算
+    try:
+        complete = (
+            os.path.isfile(path)
+            and not os.path.islink(path)
+            and os.path.getsize(path) == row.get("size") == src_size
+            and _sha256_of(path) == row.get("sha256") == src_sha
+        )
+    except OSError:
+        complete = False
+    if complete:
+        with contextlib.suppress(CopyError, OSError):
+            _put_record(
+                root,
+                row.get("source", ""),
+                path,
+                src_sha,
+                src_size,
+                via=row.get("via", "normal"),
+                state=STATE_DONE,
+            )
+        return "exists"
+    if os.path.islink(path) or not os.path.isfile(path):
+        # 记录说是我们写的，但那里现在不是一份普通文件（被换成了别的东西）：不删，也不当作完整
+        raise CopyError(STATE_FAILED, "stale_partial_not_removed")
+    try:
+        os.unlink(path)
+    except OSError as exc:
+        raise CopyError(STATE_FAILED, "stale_partial_not_removed") from exc
+    return "removed"
 
 
 def _result(state: str, reason: str, target: str) -> dict:
@@ -574,25 +646,45 @@ def _result(state: str, reason: str, target: str) -> dict:
     return out
 
 
-def record(root: str | os.PathLike, source: str, target: str, digest: str, via: str) -> None:
-    """记一条本机可撤销记录（目标 + 当时的大小与指纹）。写不进去不影响这次复制。"""
+def _put_record(
+    root: str | os.PathLike,
+    source: str,
+    target: str,
+    digest: str,
+    size: int,
+    *,
+    via: str,
+    state: str,
+) -> dict:
+    """写（或替换）这个目标的复制记录；`pending` 写不进去就不复制（没有记录就认不出残缺文件）。"""
+    row = {
+        "target": target,
+        "source": source,
+        "sha256": digest,
+        "size": size,
+        "via": via,
+        "state": state,
+        "at": time.time(),
+    }
     try:
-        size = os.path.getsize(target)
         with _LOCK:
             rows = [r for r in _records(root) if r.get("target") != target]
-            rows.append(
-                {
-                    "target": target,
-                    "source": source,
-                    "sha256": digest,
-                    "size": size,
-                    "via": via,
-                    "at": time.time(),
-                }
-            )
+            rows.append(row)
             config.set_project_settings(str(root), {SETTINGS_KEY: rows[-MAX_RECORDS:]})
-    except OSError:
-        pass
+    except OSError as exc:
+        raise CopyError(STATE_FAILED, "record_failed") from exc
+    return row
+
+
+def _drop_pending(root: str | os.PathLike, row: dict) -> None:
+    """这次复制没做成：撤掉刚写的 pending 记录（别人的 / 已有记录不动）。"""
+    with _LOCK, contextlib.suppress(OSError):
+        rows = _records(root)
+        keep = [
+            r for r in rows if not (r.get("target") == row["target"] and r.get("at") == row["at"])
+        ]
+        if len(keep) != len(rows):
+            config.set_project_settings(str(root), {SETTINGS_KEY: keep or None})
 
 
 def _records(root: str | os.PathLike) -> list[dict]:
