@@ -1016,9 +1016,10 @@ def app_project(tmp_path):
         m.close_project(pid, wait=True)
 
 
+# 用 `lexists` 探路：它不查改指表（exists / isfile / is_file 查，ADR 0106 修订 2026-11-09），改写脚本是唯一出口
 EXISTS_SCRIPT = (
     "import os\n"
-    'if not os.path.exists("{old}/data/values.txt"):\n'
+    'if not os.path.lexists("{old}/data/values.txt"):\n'
     '    raise SystemExit("找不到数据")\n'
     "import matplotlib.pyplot as plt\n"
     'value = float(open("{old}/data/values.txt").read())\n'
@@ -1361,6 +1362,8 @@ def test_static_entries_carry_what_the_probe_wants(tmp_path):
         f'Path("{OLD}/frames").iterdir()\n'
         f'os.path.isfile("{OLD}/a.csv")\n'
         f'os.path.exists("{OLD}/b.csv")\n'
+        f'os.path.lexists("{OLD}/d.csv")\n'
+        f'import_file("{OLD}/e.dump")\n'
         'os.listdir("rel_runs")\n'
         f'open("{OLD}/c.csv")\n',
         encoding="utf-8",
@@ -1370,8 +1373,11 @@ def test_static_entries_carry_what_the_probe_wants(tmp_path):
     }
     assert got[f"{OLD}/runs.v1"] == (inputremap.VIA_PROBE, inputremap.PROBE_DIR)
     assert got[f"{OLD}/frames"] == (inputremap.VIA_PROBE, inputremap.PROBE_DIR)
-    assert got[f"{OLD}/a.csv"] == (inputremap.VIA_PROBE, inputremap.PROBE_FILE)
-    assert got[f"{OLD}/b.csv"] == (inputremap.VIA_PROBE, inputremap.PROBE_ANY)
+    # exists / isfile 查改指表：只被它们问过的救得回，按 open 算（ADR 0106 修订 2026-11-09）
+    assert got[f"{OLD}/a.csv"] == (inputremap.VIA_OPEN, inputremap.PROBE_ANY)
+    assert got[f"{OLD}/b.csv"] == (inputremap.VIA_OPEN, inputremap.PROBE_ANY)
+    assert got[f"{OLD}/d.csv"] == (inputremap.VIA_PROBE, inputremap.PROBE_ANY)
+    assert got[f"{OLD}/e.dump"] == (inputremap.VIA_PROBE, inputremap.PROBE_FILE)
     assert got["rel_runs"] == (inputremap.VIA_PROBE, inputremap.PROBE_DIR)
     assert got[f"{OLD}/c.csv"] == (inputremap.VIA_OPEN, inputremap.PROBE_ANY)
 
@@ -1398,13 +1404,13 @@ def test_http_refuses_a_file_for_a_directory_probe(app_project, tmp_path):
 
 
 def test_http_refuses_a_folder_that_leaves_a_file_probe_pointing_at_a_folder(app_project, tmp_path):
-    """只接受文件的探路（`isfile`）：用户选了一个与它同名的**文件夹**，推出的规则会把常量改成那个文件夹，`isfile()`
+    """只接受文件的探路（ovito `import_file`；`isfile` 已查改指表、不走改写）：用户选了一个与它同名的**文件夹**，推出的规则会把常量改成那个文件夹，`isfile()`
     照样 False、同一个框再弹（Codex 评 #730 P2）。判的是改写之后这一条落到哪里——落到文件才接受；选文件、
     或选里面真有这个文件的上级文件夹都照常。"""
     m, root = app_project
     client = m.app.test_client()
     (root / "fig.py").write_text(
-        f'import os\nif not os.path.isfile("{OLD}/INPUT"):\n    raise SystemExit(1)\n',
+        f'from ovito.io import import_file\nimport_file("{OLD}/INPUT")\n',
         encoding="utf-8",
     )
     decoy = tmp_path / "decoy" / "INPUT"

@@ -172,10 +172,10 @@ order: 50
     ③ **改道**：只在**原路径打开抛 `FileNotFoundError` 之后**查表（原路径存在永远读原件、成功的打开零
     开销），只读、目标是文件才改；判据 `figcapture.remap_target` 父进程与 worker 共用一份。改指表进
     `ExecutionSpec.input_remap`（本机路径，**不进** `stable_payload`），`worker_argv` 只在非空时多
-    `--input-remap <json>`，三条 spawn 路径都从 `inputremap.rules_for` 取。**探路调用（exists / glob /
-    listdir）与 C++ 读取器救不回**——载荷里 `via` 标 `probe` / `glob` / `native`，对话框不给选择器；
-    绝对路径常量的 `via` 同样按它所在的调用判（被 `exists()` 问的给了选择器就是「指认 → 重跑 → 又弹」
-    的死循环）。先判空再 `sys.exit` 的（`script_exited`）与「没出图」一样挂静态载荷。**C++ 读取器**
+    `--input-remap <json>`，三条 spawn 路径都从 `inputremap.rules_for` 取。**探路调用（lexists / isdir / stat /
+    getsize / glob / listdir）与 C++ 读取器救不回**（exists / isfile / is_file 查表，见下文 2026-11-09 修订）——载荷里 `via` 标
+    `probe` / `glob` / `native`，对话框不给选择器；绝对路径常量的 `via` 同样按它所在的调用判（被 `getsize()` 问的给了
+    选择器就是「指认 → 重跑 → 又弹」的死循环）。先判空再 `sys.exit` 的（`script_exited`）与「没出图」一样挂静态载荷。**C++ 读取器**
     （ADR 0110 §一）：`missing_input_of` 说不出时 worker 给 `script_error` 多带 `extra.enoent`
     （`figcapture.enoent_fact`：`filename`，或 h5py 那种只在消息里的 `named`——pyarrow 的
     `FileNotFoundError("cg_data.parquet")` 整条消息就是路径，同样取——加 cwd），父进程
@@ -198,6 +198,11 @@ order: 50
     消息里按路径段点了名的那次落空（`figcapture._named_miss`），**不退到「最近一次落空的」**——被 `try` 吞掉的可选读、
     `importlib.metadata` 对不存在的 `sys.path` 条目（Homebrew 的 `python313.zip`）试 zipfile 打开，都会排在后面，
     以前被指认成「缺的输入」。`sys.path` 条目本身不记账（`_is_sys_path_entry`，也不占 `MAX_INPUT_MISSES` 名额）。
+    **exists / isfile 查改指表（ADR 0106 修订 2026-11-09）**：`os.path.exists|isfile` / `Path.exists|is_file` 原路径不在时
+    按 `remap_target` 查表、目标是存在的文件就答 True；静态里只被它们问过的常量（`inputremap.REMAPPED_PROBES`）按 `open` 算。
+    其余探路（lexists / isdir / stat / getsize / 列目录 / glob）仍不查表。没救回的探路记进 `InputMisses.probes`（绝对路径总记、
+    相对的只在 cwd 不是沙盒时记）；对不上只读打开时，脚本构造的 `FileNotFoundError`（无 errno、单个字符串）按路径段点了名某条、
+    且它此刻不在 → `missing_input`，与只读打开同形（对话框给选择器、`link_data_file` 接得上）。
     数据在脚本目录里找得到、只是沙盒 cwd 下 C++ 读取器看不见时，静态证据里它不是「哪儿都找不到」的候选：
     不挂 native 载荷，错误仍是 `script_error` + `extra.enoent`（诊断，行为不变）。
     ④ **代次 + 按项目的一把互斥锁**（ADR 0106 §五，`inputremap.project_mutex`，可重入）：改指表按项目一个代次（跨重启单调）。

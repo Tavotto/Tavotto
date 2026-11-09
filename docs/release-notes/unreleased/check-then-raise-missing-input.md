@@ -1,0 +1,3 @@
+## Link missing data for scripts that check the path first
+
+Scripts that check whether a data file exists before reading it (`os.path.exists`, `os.path.isfile`, `Path.exists`, `Path.is_file`) can now be pointed at the moved file from the missing-data dialog, or by the AI fixer after you confirm, and then run normally without editing the script. This includes scripts that build the path from their own location and raise their own `FileNotFoundError` naming it, which previously showed up as a generic script error that could not be linked. Checks that list folders, use glob patterns or read file sizes still need the file put back where the script expects it, or the confirmed script rewrite.

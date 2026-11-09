@@ -94,6 +94,12 @@ PROBE_KIND_OF = {
 }
 
 
+#: 查改指表的探路（ADR 0106 修订 2026-11-09）：worker 的 `os.path.exists|isfile` / `Path.exists|is_file` 在原路径
+#: 不在时经同一张表答「在不在」，所以**只被它们问过**的路径改指救得回来，按 `open` 算。其余探路（stat / getsize /
+#: 列目录 / glob / isdir）照旧救不回。
+REMAPPED_PROBES = frozenset({"exists", "isfile", "is_file"})
+
+
 def _merged_kind(kinds) -> str:
     """同一串被几处问过：只要文件夹 / 只要文件的那一边说了算；两边都有或都没说就是 `any`。"""
     kinds = set(kinds or ())
@@ -645,7 +651,9 @@ def _ancestor(path: str, levels: int, *, dirname=os.path.dirname) -> str:
 # ---------------------------------------------------------------- 弹窗载荷
 
 
-def _probe_via_of_constants(tree: ast.AST, kinds: dict[int, set] | None = None) -> dict[int, str]:
+def _probe_via_of_constants(
+    tree: ast.AST, kinds: dict[int, set] | None = None, funcs: dict[int, set] | None = None
+) -> dict[int, str]:
     """`id(Constant)` → `probe` / `glob`：这个常量是探路调用问的那条路径（绝对的也算）。
 
     与 `databinding.probe_literals` 同一张表（`PATH_PROBE_FUNCS` / `DIR_PROBE_FUNCS` /
@@ -656,9 +664,11 @@ def _probe_via_of_constants(tree: ast.AST, kinds: dict[int, set] | None = None) 
     给了 `kinds` 就顺带记下每个常量被问成什么（`PROBE_KIND_OF`；glob 的目标与 `root_dir` 是文件夹）。
     """
     kinds = kinds if kinds is not None else {}
+    funcs = funcs if funcs is not None else {}
 
-    def _kind(node_id: int, kind: str) -> None:
+    def _kind(node_id: int, kind: str, func: str = "") -> None:
         kinds.setdefault(node_id, set()).add(kind)
+        funcs.setdefault(node_id, set()).add(func)
 
     # 只赋值过一次的名字 → 它的常量（`DATA = "/abs/x.csv"` 再 `exists(DATA)` 是最常见的写法）。
     # 赋值不止一次的不跟：说不清探的是哪一个值
@@ -697,7 +707,7 @@ def _probe_via_of_constants(tree: ast.AST, kinds: dict[int, set] | None = None) 
             if databinding._func_name(ctor.func) in aliases.path_ctors and inner is not None:
                 if name in databinding.PATH_METHOD_PROBES:
                     out[id(inner)] = VIA_PROBE
-                    _kind(id(inner), PROBE_KIND_OF.get(name, PROBE_ANY))
+                    _kind(id(inner), PROBE_KIND_OF.get(name, PROBE_ANY), name)
                 elif name in databinding.PATH_METHOD_GLOBS:
                     out[id(inner)] = VIA_GLOB
                     _kind(id(inner), PROBE_DIR)
@@ -719,10 +729,29 @@ def _probe_via_of_constants(tree: ast.AST, kinds: dict[int, set] | None = None) 
             continue
         if name in databinding.PATH_PROBE_FUNCS or name in databinding.DIR_PROBE_FUNCS:
             out[id(target)] = VIA_PROBE
-            _kind(id(target), PROBE_KIND_OF.get(name, PROBE_ANY))
+            _kind(id(target), PROBE_KIND_OF.get(name, PROBE_ANY), name)
         elif aliases.glob_call(node.func) is not None:
             out[id(target)] = VIA_GLOB
     return out
+
+
+def _remapped_probe_texts(source: str) -> frozenset[str]:
+    """只被查改指表的探路（`REMAPPED_PROBES`）问过的字符串常量：改指救得回来，`static_missing` 按 `open` 算。
+    同一串还被别的探路（glob / listdir / getsize / `Path(...)` 上没包的方法）问过、或问它的调用认不出名字的，不算。"""
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return frozenset()
+    funcs: dict[int, set] = {}
+    via = _probe_via_of_constants(tree, None, funcs)
+    by_text: dict[str, set] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) in via:
+            names = funcs.get(id(node)) or {""}
+            if via[id(node)] != VIA_PROBE:
+                names = {""}
+            by_text.setdefault(node.value, set()).update(names)
+    return frozenset(t for t, names in by_text.items() if names <= REMAPPED_PROBES)
 
 
 def _probe_kinds_by_text(source: str) -> dict[str, str]:
@@ -1030,10 +1059,13 @@ def static_missing(
 
     source = _script_source(root_path, script_path)
     kinds = _probe_kinds_by_text(source)
+    remapped_probes = _remapped_probe_texts(source)
 
     def _add(path: str, absolute: bool, via: str) -> None:
         if len(out) >= MAX_OTHERS or any(o["path"] == path for o in out):
             return
+        if via == VIA_PROBE and path in remapped_probes:
+            via = VIA_OPEN  # 只被 exists / isfile / is_file 问过：它们也查改指表，救得回来
         # 只有真走改指表的读取（`open`）才会被规则救回来；exists / glob / listdir 不查表——规则碰巧能解析
         # 那一串，脚本照样走「不存在」那一支，这一条要留着按「改指救不回」说（Codex 评 #716 P2）
         if via == VIA_OPEN and _resolved(rules, path):

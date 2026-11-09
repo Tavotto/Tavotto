@@ -229,9 +229,10 @@ def test_a_path_only_the_report_knows_is_accepted(box):
 
 
 def test_a_path_the_script_only_probes_cannot_be_linked_and_the_script_is_not_edited(box):
+    # getsize 不查改指表（只有 exists / isfile / is_file 查）：链接救不回
     script = put(
         box.proj / "fig.py",
-        "import os, sys\nif not os.path.exists('data/x.csv'):\n    sys.exit('no data')\n",
+        "import os, sys\nif not os.path.getsize('data/x.csv'):\n    sys.exit('no data')\n",
     )
     data = put(box.home / "Downloads" / "data" / "x.csv", "1,2\n")
     before = _sha(script)
@@ -239,6 +240,42 @@ def test_a_path_the_script_only_probes_cannot_be_linked_and_the_script_is_not_ed
     r = call(ctx, "link_data_file", _args(data))
     assert r.is_error and r.code == "link_unreachable"
     assert ctx.ask.cards == [] and _rules(box) == [] and _sha(script) == before
+
+
+def test_a_path_the_script_checked_then_reported_itself_can_be_linked(box):
+    """一份用户反馈：脚本按 `__file__` 拼绝对路径、先 exists 再自己 raise。worker 报的载荷与只读打开同形，
+    AI 经用户确认就能接上（exists 也查改指表，ADR 0106 修订 2026-11-09），不再是 `requested_unknown`。"""
+    script = put(
+        box.proj / "fig.py",
+        "from pathlib import Path\nDATA = Path(__file__).resolve().parent / 'x.csv'\n"
+        "if not DATA.exists():\n    raise FileNotFoundError(f'not found: {DATA}')\n",
+    )
+    data = put(box.home / "Downloads" / "x.csv", "1,2\n")
+    requested = str(box.proj / "x.csv")
+    payload = inputremap.payload_for("fig.py", box.proj, {"requested": requested, "absolute": True})
+    asker = Asker("yes")
+    ctx = make_ctx(
+        box,
+        script_path=script,
+        ask=asker,
+        report=lambda: {"requirements": [{"kind": "input_location", "payload": payload}]},
+    )
+    r = call(ctx, "link_data_file", _args(data, requested=requested))
+    assert not r.is_error, r.content
+    assert len(asker.cards) == 1 and len(_rules(box)) == 1
+
+
+def test_a_literal_only_checked_with_exists_can_be_linked(box):
+    """常量只被 exists 问过（先判再读的最常见写法）：同样接得上。"""
+    script = put(
+        box.proj / "fig.py",
+        "import os, sys\nif not os.path.exists('data/x.csv'):\n    sys.exit('no data')\n"
+        "open('data/x.csv').read()\n",
+    )
+    data = put(box.home / "Downloads" / "data" / "x.csv", "1,2\n")
+    ctx = make_ctx(box, script_path=script, ask=Asker("yes"))
+    assert not call(ctx, "link_data_file", _args(data)).is_error
+    assert len(_rules(box)) == 1
 
 
 # --------------------------------------------------------------------------- chosen 的范围

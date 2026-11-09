@@ -5949,6 +5949,26 @@ class InputMisses:
 
     def __init__(self) -> None:
         self.items: list[dict] = []
+        #: 探路调用（`os.path.exists|isfile` / `Path.exists|is_file`）答「没有」的路径：同形 `{requested, cwd}`，
+        #: 只保留最近 `MAX_INPUT_MISSES` 条（库自己的探路会刷，要的是脚本报错前最近问过的那几条）。只给
+        #: 「脚本先 exists、再自己 raise FileNotFoundError 点名这条」对账用（ADR 0106 修订 2026-11-09）。
+        self.probes: list[dict] = []
+
+    def note_probe(self, name, cwd: str | None = None) -> None:
+        if isinstance(name, os.PathLike):
+            name = os.fspath(name)
+        if not isinstance(name, str) or not name or len(name) > 4096 or "\n" in name:
+            return
+        if cwd is None:
+            try:
+                cwd = os.getcwd()
+            except OSError:
+                cwd = ""
+        entry = {"requested": name, "cwd": cwd}
+        if entry in self.probes:
+            self.probes.remove(entry)
+        self.probes.append(entry)
+        del self.probes[:-MAX_INPUT_MISSES]
 
     def note(self, name, cwd: str | None = None) -> None:
         """`cwd` 是 `name` 相对的那个目录；不给就是此刻的 cwd（脚本写的相对路径就是相对它）。"""
@@ -6068,7 +6088,12 @@ def path_literals(source: str | None) -> tuple[list[tuple[str, ...]], list[tuple
 
 
 def install_input_remap(
-    rules, misses: InputMisses, base_dir: str | None = None, *, script_source: str | None = None
+    rules,
+    misses: InputMisses,
+    base_dir: str | None = None,
+    *,
+    script_source: str | None = None,
+    record_relative_probes: bool = False,
 ):
     """装上改指（ADR 0106）与落空记账；返回卸载函数。
 
@@ -6082,8 +6107,15 @@ def install_input_remap(
     只在**原路径打开抛 `FileNotFoundError`** 之后查表：成功的打开零额外开销，原路径存在时
     永远读原路径。只读模式才改（写 / 追加 / 读写一个字节都不改道）；改指目标必须是文件，
     否则原样抛出原来那个异常。
+
+    探路（ADR 0106 修订 2026-11-09）：`os.path.exists|isfile` / `Path.exists|is_file` 在原路径不在时同样查表——
+    规则指向存在的文件就答 True（随后的只读打开经同一张表改道）；没救回的路径记进 `misses.probes`。原路径在时
+    返回值原样、零额外开销。绝对路径总记；相对路径只在 `record_relative_probes` 时记——沙盒 cwd
+    下的相对探路落空另有 `ProbeMisses` 那条路（数据多半就在脚本目录里，出口是「在脚本目录里运行」，不是缺数据）。
     """
     rules = clean_remap_rules(rules)
+    real_exists, real_isfile = os.path.exists, os.path.isfile
+    real_p_exists, real_p_is_file = pathlib.Path.exists, pathlib.Path.is_file
     real_open = builtins.open
     real_io_open = io.open
     real_path_open = pathlib.Path.open
@@ -6134,7 +6166,7 @@ def install_input_remap(
         target = remap_target(rules, shown)
         if target is None and shown != name:
             target = remap_target(rules, name)
-        if target is not None and os.path.isfile(target):
+        if target is not None and real_isfile(target):
             return target, shown
         return None, shown
 
@@ -6200,12 +6232,55 @@ def install_input_remap(
     if real_ds_open is not None:
         datasource.open = remapped_datasource_open
 
+    def _note_probe(path) -> None:
+        try:
+            raw = os.fspath(path)
+        except TypeError:
+            return
+        if not isinstance(raw, str) or not raw:
+            return
+        if not (os.path.isabs(raw) or ntpath.isabs(raw)):
+            if not record_relative_probes:
+                return
+        elif _is_sys_path_entry(raw):
+            return
+        misses.note_probe(raw)
+
+    def _probe_answer(path, ok) -> bool:
+        if ok:
+            return ok
+        # 原路径不在：用户确认过的改指规则指向一个存在的文件，就答「在」——随后的只读打开经同一张表改道，
+        # 两边看到的是同一份数据（ADR 0106 修订 2026-11-09）。只答「在不在」，不改 stat / getsize / 列目录
+        alt, _ = _alt(path)
+        if alt is not None:
+            return True
+        _note_probe(path)
+        return ok
+
+    def _bool_probe(real):
+        def probe(path, *args, **kwargs):
+            return _probe_answer(path, real(path, *args, **kwargs))
+
+        return probe
+
+    def _path_probe(real):
+        def probe(self, *args, **kwargs):
+            return _probe_answer(self, real(self, *args, **kwargs))
+
+        return probe
+
+    os.path.exists, os.path.isfile = _bool_probe(real_exists), _bool_probe(real_isfile)
+    pathlib.Path.exists = _path_probe(real_p_exists)
+    pathlib.Path.is_file = _path_probe(real_p_is_file)
+
     def uninstall() -> None:
         builtins.open = real_open
         io.open = real_io_open
         pathlib.Path.open = real_path_open
         if real_ds_open is not None:
             datasource.open = real_ds_open
+        os.path.exists, os.path.isfile = real_exists, real_isfile
+        pathlib.Path.exists, pathlib.Path.is_file = real_p_exists, real_p_is_file
 
     return uninstall
 
@@ -6539,14 +6614,16 @@ def _message_of(exc: BaseException) -> str | None:
     return text if text and "\n" not in text and len(text) <= 4096 else None
 
 
-def _named_miss(fnf: BaseException, misses: InputMisses) -> str | None:
+def _named_miss(
+    fnf: BaseException, misses: InputMisses, items: list[dict] | None = None
+) -> str | None:
     """异常消息里点了名的那次落空（从最近的往前找）；没点名回 None。点名按路径段边界：
-    `data.txt` 不算点了 `a.txt`，`d` 不算点了 `d.txt`。"""
+    `data.txt` 不算点了 `a.txt`，`d` 不算点了 `d.txt`。`items` 不给就是只读打开的落空。"""
     text = _message_of(fnf)
     if text is None:
         return None
     text = text.replace("\\", "/")
-    for item in reversed(misses.items):
+    for item in reversed(misses.items if items is None else items):
         needle = item["requested"].replace("\\", "/")
         # 路径分隔符同样不是边界：`data` 不算点了 `data/file.parquet`，`file.parquet` 也不算（Codex #1297）
         if re.search(rf"(?<![\w.\-/]){re.escape(needle)}(?![\w\-/]|\.\w)", text):
@@ -6564,8 +6641,10 @@ def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
     落空的」**——那会指认与这次异常无关的路径（#1253）。
     """
     fnf = _file_not_found_in(exc)
-    if fnf is None or not misses.items:
+    if fnf is None:
         return None
+    if not misses.items:
+        return _probe_miss_of(fnf, misses)
     names = misses.names()
     filename = getattr(fnf, "filename", None)
     if not isinstance(filename, (str, os.PathLike)):
@@ -6589,7 +6668,8 @@ def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
                     except (OSError, ValueError):
                         continue
             if requested is None:
-                return None  # 带了文件名却不是一次只读打开落空的：不判
+                # 带了文件名却不是一次只读打开落空的：不判（脚本自己抛的、点了名一次探路落空的除外）
+                return _probe_miss_of(fnf, misses)
     else:
         # 没文件名、消息里也没有引号括着的路径：只认**消息里点名了的**那次落空（numpy 的
         # `"d.txt not found."`、pyarrow 的 `FileNotFoundError("cg_data.parquet")`）。点不了名就不判——
@@ -6597,7 +6677,7 @@ def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
         # （importlib.metadata 的 zipfile 打开）都会排在后面，指认一个与这次异常无关的路径（#1253）。
         requested = _named_miss(fnf, misses)
         if requested is None:
-            return None
+            return _probe_miss_of(fnf, misses)
     entry = next(m for m in reversed(misses.items) if m["requested"] == requested)
     parsed = remap_parts(requested)
     return {
@@ -6605,6 +6685,37 @@ def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
         "absolute": bool(parsed and parsed[0]),
         "cwd": entry["cwd"],
         "misses": names,
+    }
+
+
+def _probe_miss_of(fnf: BaseException, misses: InputMisses) -> dict | None:
+    """「脚本先 `exists()` / `is_file()` 探路、答没有，再**自己** `raise FileNotFoundError(...)` 点名这条」→
+    `missing_input` 的事实（ADR 0106 修订 2026-11-09）；对不上回 None。
+
+    三条都要有才判：异常是脚本构造的（`errno` 为 None——系统抛的 ENOENT 都带 errno，写进不存在的目录不在此列）；
+    消息按路径段边界点了名某次落空的探路（同 `_named_miss`）；那条路径此刻确实不在（被回退 / 别处救回来的不算）。
+    这四种「问文件在不在」的探路查同一张改指表（`install_input_remap`），所以事实与只读打开的落空同形（不带 `via`）：
+    对话框给选择器，AI 的 `link_data_file` 接得上。
+    """
+    if not misses.probes or getattr(fnf, "errno", None) is not None:
+        return None
+    requested = _named_miss(fnf, misses, misses.probes)
+    if requested is None:
+        return None
+    entry = next(m for m in reversed(misses.probes) if m["requested"] == requested)
+    try:
+        os.lstat(os.path.join(entry["cwd"], requested))
+        return None  # 此刻在：不是缺数据
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError):
+        return None
+    parsed = remap_parts(requested)
+    return {
+        "requested": requested,
+        "absolute": bool(parsed and parsed[0]),
+        "cwd": entry["cwd"],
+        "misses": misses.names(),
     }
 
 

@@ -195,8 +195,8 @@ def link_data_file(ctx: FixContext, args: dict) -> ToolResult:
     if known[requested] != inputremap.VIA_OPEN:
         return err(
             "link_unreachable",
-            "The script checks that path in a way a data link cannot reach (exists / glob / listing, or a "
-            "native reader), so linking would not help. The script itself would have to change, and this "
+            "The script checks that path in a way a data link cannot reach (folder listing / glob / size or "
+            "stat check, or a native reader), so linking would not help. The script itself would have to change, and this "
             "assistant never edits scripts. Tell the user in plain words and finish with not_fixed.",
         )
 

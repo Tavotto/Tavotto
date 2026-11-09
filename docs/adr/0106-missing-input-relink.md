@@ -227,10 +227,38 @@ ovito `import_file`、h5py / netCDF 的原生打开、`exists` / `glob` / `listd
 快照覆盖项目设置的 `input_remap` 键，`rollback` 精确恢复（含「原来没有」）并换代；`try_run` 在副本里也装上同一份规则（脚本目录内的绝对路径规则换算到副本路径）。
 不变：不改脚本、不复制数据、不放宽写入边界、规则只在原路径打不开时才查。全文见 ADR 0149 §七修订与 `docs/rules/backend/ai-agent-bridge.md`「link_data_file」一节。
 
+## 修订（2026-11-09）：`exists` / `isfile` 也查改指表；「先 exists、再自己 raise」认成缺数据
+
+一份用户反馈：脚本按 `Path(__file__).resolve().parent` 拼出数据路径，读之前 `if not path.exists(): raise
+FileNotFoundError(f"... {path}")`；数据其实在上一级文件夹。没有一次只读打开落空 → `script_error`，对话框不弹；
+AI 修复找到了文件、用户也亲手选了，`link_data_file` 仍答 `requested_unknown`。即便认出来，按原 §四也只能答「救不回」。
+用户（2026-11-09）：这是我们自己把路堵上了，AI 要能真的接上，卡片也要能一键修好。
+
+**推翻原 §四 与「不做的事」里对 `exists` 的那一半**（ADR 0047「回退不扩到 exists」不变——那是**猜**的回退；
+这里是用户亲手指认、确认过的规则）：
+
+1. **四种「问文件在不在」的探路查同一张改指表**：worker 的 `os.path.exists|isfile` / `Path.exists|is_file`
+   （`install_input_remap` 同一层）在原路径不在时按 `remap_target` 查表，目标是存在的文件就答 True；随后的只读
+   打开经同一张表改道，两边看到同一份数据。原路径在时返回值原样、零额外开销；没救回的照旧 False。
+   `lexists` / `isdir` / `stat` / `getsize` / 列目录 / glob / C++ 读取器**仍不查表**（改指只给文件、只答在不在），它们
+   的出口照旧是 ADR 0110 的经确认改写。
+2. **静态一侧同口径**：`static_missing` 里**只被**这四种问过的常量（`inputremap.REMAPPED_PROBES`）按 `open` 算——
+   对话框给选择器，`link_data_file` 接得上；同一串还被不查表的探路问过的仍按探路。
+3. **认出「先 exists、再自己 raise」**：同一层把探路答「没有」的路径记进 `InputMisses.probes`（绝对路径总记；相对的
+   只在 cwd 不是沙盒时记——沙盒 cwd 下数据多半就在脚本目录，出口是 #1254「在脚本目录里运行」）。§一.2 对不上只读
+   打开时再看它：异常是脚本自己构造的（`errno` 为 None、单个字符串实参）、消息按路径段边界点了名某条
+   （`_named_miss` 同一把尺子）、那条此刻确实不在——三条都满足才报 `missing_input`，事实与只读打开同形。
+
+代价：脚本据 `exists` 分叉的逻辑在**有规则**时走「在」那一支——这正是用户指认的意图；规则只来自用户亲手指认或
+经确认的 AI，可在设置里删。`exists` 答在、但脚本随后用 `getsize` / `stat` 问原路径的，仍会落空（不查表），报错照旧。
+看护：`tests/test_missing_input.py`（四种探路查表 / 认领判据 / 真 worker 两种 cwd 模式下指认一次就出图 / 沙盒相对不改判 /
+静态口径）、`tests/test_fixtools_link.py`（AI 接得上动态路径与只被 exists 问过的常量；getsize 仍 `link_unreachable`）、
+`tests/test_script_edit.py`（改写通道改用不查表的探路继续看护）。
+
 ## 不做的事
 
 * 不按文件名在磁盘上搜索、不猜候选（FO08 的「旁边有同名不同值」）。
-* 不把改指扩到 `exists` / `stat` / `glob` / `listdir`，不包 C++ 读取器。
+* 不把改指扩到 `stat` / `glob` / `listdir` / `isdir`，不包 C++ 读取器（`exists` / `isfile` 见 2026-11-09 修订）。
 * 不改写入边界：沙盒 cwd、`Path.unlink` / `write_text` 守卫、savefig 不落盘原样。
 * 不拷贝、不软链接用户数据到任何地方。
 * 不对 `os.path.join` / f-string 拼出来的路径做静态判断（运行时仍经 §一.1 的记账被认出）。
