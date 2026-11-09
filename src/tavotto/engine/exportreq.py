@@ -293,6 +293,7 @@ class OriginalSource:
     source_policy: str | None = None
     expected_source: dict | None = None
     figure_snapshot: dict | None = None
+    figure_origin: dict | None = None
     #: 来源驱动采用（ADR 0139 §五）：用户确认时那份重画的字节摘要；带真实编辑的请求必须带它
     confirmed_reconstruction_sha256: str | None = None
     #: 画布上的标注（text / arrow / shape，QA-WIN-20）：**坐标已由前端换算到原图图幅**（图左上角为原点、mm），
@@ -429,6 +430,11 @@ class ExportRequest:
                 else {}
             ),
             **(
+                {"figure_origin": self.original.figure_origin}
+                if self.original and self.original.figure_origin is not None
+                else {}
+            ),
+            **(
                 {"chart_source": self.original.chart_source}
                 if self.original and self.original.chart_source is not None
                 else {}
@@ -494,7 +500,11 @@ def render_plan_ref(req: ExportRequest, resources: list[dict]) -> dict:
         semantic["canvas"] = {
             "page_w_mm": req.canvas.page_w_mm,
             "page_h_mm": req.canvas.page_h_mm,
-            "objects": req.canvas.objects,
+            # A private execution reference selects the input; the resolved
+            # resource's public receipt identity supplies render semantics.
+            "objects": [
+                {k: v for k, v in obj.items() if k != "figure_origin"} for obj in req.canvas.objects
+            ],
         }
     if req.original is not None:
         semantic["original"] = {
@@ -667,6 +677,28 @@ def _figure_snapshot(source):
         raise ExportRequestError("bad_request", "Invalid Figure snapshot reference", {}) from exc
 
 
+def _figure_origin(source, source_id):
+    if "figure_origin" not in source:
+        return None
+    if any(
+        key in source
+        for key in (
+            "chart",
+            "chart_source",
+            "source_policy",
+            "expected_source",
+            "confirmed_reconstruction_sha256",
+        )
+    ):
+        raise ExportRequestError("bad_request", "Conflicting Figure sources", {})
+    from .svgstore import validate_origin
+
+    try:
+        return validate_origin(source["figure_origin"], source_id=source_id)
+    except (ValueError, TypeError, RecursionError) as exc:
+        raise ExportRequestError("bad_request", "Invalid historical Figure input", {}) from exc
+
+
 #: `original.objects` 里允许的类型：标注。面板不许（图自己就是 `figure_id`；第二张图是整版的事）。
 ORIGINAL_OBJECT_TYPES = ("text", "arrow", "shape")
 
@@ -808,6 +840,7 @@ def _original_source(source: Any) -> OriginalSource:
     figure_id = str(source.get("figure_id") or "")
     if not figure_id:
         raise ExportRequestError("missing_figure", "按原图导出没有说是哪一张图", {})
+    origin = _figure_origin(source, figure_id)
     chart, profile, edits = _chart_render_state(source)
     if chart is not None:
         overrides = edits
@@ -826,6 +859,7 @@ def _original_source(source: Any) -> OriginalSource:
         source_policy=source.get("source_policy"),
         expected_source=_source_basis(source, overrides),
         figure_snapshot=_figure_snapshot(source),
+        figure_origin=origin,
         confirmed_reconstruction_sha256=source.get("confirmed_reconstruction_sha256"),
         overrides=frozen_overrides,
         w_mm=float(source["w_mm"]) if source.get("w_mm") else None,
@@ -945,6 +979,7 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
             if isinstance(obj, dict):
                 _source_basis(obj, obj.get("overrides"))
                 _figure_snapshot(obj)
+                _figure_origin(obj, obj.get("id"))
         canvas = CanvasSource(
             page_w_mm=_float(source.get("page_w_mm"), "page_w_mm"),
             page_h_mm=_float(source.get("page_h_mm"), "page_h_mm"),
