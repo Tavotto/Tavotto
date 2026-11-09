@@ -320,8 +320,12 @@ def research_prepare(case: str, tex: bool, source_package: bool) -> str:
         "/work/science-venv/bin/python -m pip install -q -r /work/runtime-constraints.txt",
         "/work/tavotto-venv/bin/python scripts/fetch_fonts.py",
         "/work/tavotto-venv/bin/python scripts/fetch_fonts.py --check",
-        "/work/science-venv/bin/python -m pip install -q -c /work/runtime-constraints.txt"
-        f" -r tests/compat/research-environments/{case}.txt",
+        # pip's own retries do not cover the git subprocess used by VCS requirements.
+        # Retry the same constrained install; never proceed if every attempt fails.
+        "installed=0; for attempt in 1 2 3; do"
+        " if /work/science-venv/bin/python -m pip install -q -c /work/runtime-constraints.txt"
+        f" -r tests/compat/research-environments/{case}.txt; then installed=1; break; fi;"
+        ' if [ "$attempt" -lt 3 ]; then sleep 5; fi; done; [ "$installed" = 1 ]',
     ]
     if source_package:
         lines += [

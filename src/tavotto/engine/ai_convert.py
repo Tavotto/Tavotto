@@ -666,6 +666,36 @@ def run_validation(
         }
     if not out.get("stems"):
         return {"status": "no_figure", "code": "no_figures_captured"}
+    output_evidence = None
+    if isinstance(cand, ConvertCandidate):
+        references, source_truncated = convertcontext.file_reference_hints(
+            cand.base_bytes, cand.script_path.suffix
+        )
+        raw_attempts = out.get("redirected_write_attempts")
+        attempts = None
+        if isinstance(raw_attempts, list):
+            attempts = sorted(
+                {
+                    name
+                    for item in raw_attempts
+                    if isinstance(item, str) and item and len(item) <= 1024
+                    if (name := convertcontext.evidence_basename(item)) is not None
+                }
+            )
+        output_evidence = {
+            "source_references": references,
+            "source_truncated": source_truncated,
+            "write_attempts": attempts[: convertcontext.MAX_OUTPUT_EVIDENCE]
+            if attempts is not None
+            else None,
+            # The ledger is capped at 64. Equality is conservatively treated
+            # as possibly truncated even when there happened to be exactly 64.
+            "attempts_truncated": isinstance(raw_attempts, list)
+            and (
+                len(raw_attempts) >= 64 or len(attempts or ()) > convertcontext.MAX_OUTPUT_EVIDENCE
+            ),
+            "completeness": "unknown",
+        }
     return {
         "status": "ok",
         "stems": list(out["stems"]),
@@ -673,6 +703,7 @@ def run_validation(
         "svg": out.get("svg"),
         # 改图任务的 `check` 要数据指纹：runner 愿意给 manifest 就原样带上（转换任务不读）
         "manifests": out.get("manifests"),
+        **({"output_evidence": output_evidence} if output_evidence is not None else {}),
         **({"source_sha256": out["source_sha256"]} if "source_sha256" in out else {}),
     }
 
@@ -716,6 +747,19 @@ def agent_check(cand: ConvertCandidate, *, evidence: list | None = None) -> tupl
     if status == "ok":
         count = len(res.get("stems") or [])
         message = f"check passed: {count} figure(s) captured"
+        output = res.get("output_evidence")
+        if isinstance(output, dict):
+            message += (
+                "; source filename references (may be inputs): "
+                + json.dumps(output["source_references"], ensure_ascii=False)
+                + "; redirected write attempts (not necessarily completed): "
+                + json.dumps(output["write_attempts"], ensure_ascii=False)
+                + ". This is partial evidence, not proof that source outputs are preserved."
+                + " Compare the source and candidate, preserve required non-figure outputs,"
+                + " and report TAVOTTO_NEEDS_INPUT if their semantics cannot be retained."
+            )
+            if output["source_truncated"] or output["attempts_truncated"]:
+                message += " At least one filename list was truncated."
         if evidence is not None:
             message += f"; {len(evidence)} rendered preview(s) attached in capture order."
             if len(evidence) != count:
@@ -873,6 +917,11 @@ def comparison_of(cand: ConvertCandidate, validation: dict) -> dict:
         # 没有原图可比 = 未对照验证（四态 unknown）：R / MATLAB 从不被运行，界面据此说一句“请并排看一眼再采用”
         "reference": original["path"] if original else None,
         "verification": VERIFICATION_SIDE_BY_SIDE if original else VERIFICATION_UNKNOWN,
+        **(
+            {"output_evidence": validation["output_evidence"]}
+            if isinstance(validation.get("output_evidence"), dict)
+            else {}
+        ),
     }
 
 

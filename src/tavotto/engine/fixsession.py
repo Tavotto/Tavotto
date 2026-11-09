@@ -118,7 +118,9 @@ compare it with how the script uses the file (column names, separator, shape, ex
 link_data_file, with your evidence in the card. Several or unsure: ask_user listing the candidates (path and one \
 difference each; put the file in each option's `path`) plus an option "None of these, I will choose", which then goes to pick_file; then link_data_file, try_run, \
 finish. link_data_file asks the user itself, so do NOT propose_fix for it; a file the user already chose is linked without \
-another card. NEVER edit the script. If a relative font, input, or output path works in the project but fails in Tavotto's \
+another card. If an existing prefix in data_links has no known requested file, use its prefix_id with \
+link_data_file mode=prefix and a user-chosen destination folder; the tool asks separately because the whole prefix is affected. \
+Data links apply in safe execution, not native. NEVER edit the script. If a relative font, input, or output path works in the project but fails in Tavotto's \
 sandbox, inspect the current launch context and consider switch_workdir: it asks the user to approve the project's \
 real working directory while keeping safe guards. Then verify with try_run in the application.
 3f. PROJECT FOLDER SHADOWS A PACKAGE. If a report or trial output has `project_package_shadow` (or the error is \

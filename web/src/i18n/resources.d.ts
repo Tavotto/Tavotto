@@ -6414,6 +6414,13 @@ export default interface Resources {
         "installed": "已为这个项目装好 {{names}}",
         "noPreview": "暂无预览",
         "original": "原图",
+        "outputAttemptsUnavailable": "这次没有可用的写入记录。",
+        "outputEvidence": "成功出图不能证明原脚本的表格、日志等输出都已保留，请采用前核对。",
+        "outputEvidenceLimits": "这些线索可能不全，动态路径、临时文件和外部程序的写入可能未记录。",
+        "outputEvidenceTruncated": "文件名过多，仅显示部分记录。",
+        "outputNoAttempts": "这次没有记录到改道写入尝试。",
+        "outputSourceReferences": "原脚本提及的文件名（可能包含输入）：{{files}}",
+        "outputWriteAttempts": "校验时改道的写入尝试（不代表写入成功）：{{files}}",
         "ready": "新版本生成好了，对照一下再决定",
         "redrawn": "重画的新版本",
         "references": {

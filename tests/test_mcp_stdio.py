@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from support.pipedrain import StderrDrain
+from tests.support.mcp_desktop_isolation import hide_desktop_installations
 
 ROOT = Path(__file__).resolve().parent.parent
 SERVER = ROOT / "codex-plugin" / "mcp" / "server.py"
@@ -115,6 +116,7 @@ def degraded_client(tmp_path):
     venv_dir = tmp_path / "bare-venv"
     venv.EnvBuilder(with_pip=False).create(str(venv_dir))
     bare = venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python3")
+    hide_desktop_installations(bare)
     empty = tmp_path / "empty-bin"
     empty.mkdir()
     env = {
@@ -371,6 +373,7 @@ def test_diagnostics_reach_the_host_as_utf8_even_under_an_ansi_code_page(tmp_pat
     venv_dir = tmp_path / "bare-venv"
     venv.EnvBuilder(with_pip=False).create(str(venv_dir))
     bare = venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python3")
+    hide_desktop_installations(bare)
     empty = tmp_path / "empty-bin"
     empty.mkdir()
     env = {
