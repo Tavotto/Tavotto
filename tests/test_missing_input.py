@@ -742,6 +742,39 @@ def test_a_script_that_checks_exists_then_raises_itself_is_a_probe_miss(remapped
     assert figcapture.missing_input_of(FileNotFoundError(f"missing: {data}"), misses) is None
 
 
+def test_the_script_directory_still_wins_over_a_rule_when_probes_are_remapped(remapped, tmp_path):
+    """Codex #1821 P1：顺序永远是 原路径 → 脚本目录（只读回退）→ 用户规则。回退判「沙盒里有没有」问的是真实
+    文件系统；改指层让 stat 按规则作答之后，回退若经它问，规则目标会冒充「沙盒里已经有」，脚本旁边的原件被跳过。"""
+    project = tmp_path / "project"
+    _touch(project / "data.csv", "ORIGINAL")
+    mapped = _touch(tmp_path / "mapped" / "data.csv", "MAPPED")
+    remapped([{"kind": P, "from": "", "to": str(mapped.parent)}])  # 装在内层
+    undo = figcapture.install_relative_read_fallback(
+        str(project), str(project)
+    )  # 外层，cwd 是空沙盒
+    try:
+        assert open("data.csv").read() == "ORIGINAL"
+        assert pathlib.Path("data.csv").read_text() == "ORIGINAL"
+        # 脚本目录里没有的，才轮到规则
+        _touch(tmp_path / "mapped" / "only_mapped.csv", "M2")
+        assert open("only_mapped.csv").read() == "M2"
+    finally:
+        undo()
+
+
+def test_path_glob_follows_a_rule_for_a_folder_named_in_the_pattern(remapped, tmp_path):
+    """Codex #1821 P2：`Path(".").glob("old/*.csv")`——要列的文件夹写在模式里，不是接收者本身。"""
+    new = tmp_path / "new"
+    _touch(new / "a.csv", "1")
+    _touch(new / "b.csv", "2")
+    remapped([{"kind": P, "from": "old", "to": str(new)}])
+    got = sorted(str(p) for p in pathlib.Path(".").glob("old/*.csv"))
+    assert got == [os.path.join("old", "a.csv"), os.path.join("old", "b.csv")]
+    assert [open(g).read() for g in got] == ["1", "2"]
+    assert sorted(p.name for p in pathlib.Path(".").glob("old/**/*.csv")) == ["a.csv", "b.csv"]
+    assert list(pathlib.Path(".").glob("elsewhere/*.csv")) == []
+
+
 def test_relative_probes_are_left_to_the_sandbox_hint_unless_asked(remapped):
     """沙盒 cwd 下相对探路落空：数据多半就在脚本目录里，出口是「在脚本目录里运行」（`ProbeMisses`），
     不当缺数据；cwd 已是脚本目录 / 项目根（`record_relative_probes`）才记。"""

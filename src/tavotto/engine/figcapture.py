@@ -5595,6 +5595,13 @@ def observed_local_modules(
     return out
 
 
+#: 本模块 import 那一刻的 `os.stat` / `os.path.isfile`：只读回退判「沙盒里 / 脚本目录里在不在」必须问**真实的**
+#: 文件系统。改指层（`install_input_remap`，装在回退之内）会让 stat / isfile 按用户规则作答——回退若经它问，
+#: 规则目标就冒充了「沙盒里已经有」，脚本旁边的原件被跳过（Codex #1821 P1）。顺序永远是 原路径 → 脚本目录 → 规则。
+_FS_STAT = os.stat
+_FS_ISFILE = os.path.isfile
+
+
 def install_relative_read_fallback(
     script_dir: str, project_root: str, sandbox_dir: str | None = None
 ):
@@ -5631,7 +5638,7 @@ def install_relative_read_fallback(
         return None if rel.startswith("..") or rel == "." else rel
 
     def _present(path) -> bool:
-        """回退自己的「这条路径在不在」——走 `os.stat`，**不经** `os.path.exists`。
+        """回退自己的「这条路径在不在」——走 import 时的 `os.stat`（`_FS_STAT`），**不经** `os.path.exists`，也不经改指层。
 
         `os.path.exists` 在沙盒会话里已被 `install_probe_observer` 换成记账版（观察器先装、回退后装）：
         回退每问一次「沙盒里有没有这份」就会被记成脚本在沙盒里落空了一次探路，哪怕随后正是回退把读救回来、
@@ -5639,7 +5646,7 @@ def install_relative_read_fallback(
         ValueError，准备卡标题「运行出错了」却问选运行目录）。证据必须只来自**脚本自己**的探路。
         """
         try:
-            os.stat(path)
+            _FS_STAT(path)
         except (OSError, ValueError):
             return False
         return True
@@ -5683,7 +5690,7 @@ def install_relative_read_fallback(
                 return None
         except ValueError:
             return None
-        if not os.path.isfile(cand):
+        if not _FS_ISFILE(cand):
             return None
         return cand
 
@@ -6360,19 +6367,31 @@ def install_input_remap(
         return probe
 
     def _path_glob(real):
-        """`Path.glob` / `rglob`：3.13 起它们绑的是 import 时的 `os.scandir`，上面那几层管不到。原文件夹不在、
-        规则指向的文件夹在时，在那里 glob，结果换回脚本写的前缀（随后的读经改指表）；其余原样。"""
+        """`Path.glob` / `rglob`：3.13 起它们绑的是 import 时的 `os.scandir`，上面那几层管不到。pattern 打头的
+        不含通配符的几段与 `self` 拼成实际要列的文件夹（`Path(".").glob("old/*.csv")` 列的是 `old`，Codex #1821 P2）；
+        那个文件夹不在、规则指向的文件夹在时，在那里 glob 剩下的模式，结果换回脚本写的前缀（随后的读经改指表）。"""
 
         def globbed(self, pattern, *args, **kwargs):
-            if rules and not _reentrant():
-                with _Busy():
-                    present = real_p_exists(self)
-                target = None if present else _probe_target(self, PROBE_WANT_DIR)
-                if target is not None:
-                    base = pathlib.Path(target)
-                    return (
-                        self / p.relative_to(base) for p in real(base, pattern, *args, **kwargs)
-                    )
+            if rules and not _reentrant() and isinstance(pattern, (str, os.PathLike)):
+                parts = [
+                    p
+                    for p in os.fspath(pattern).replace("\\", "/").split("/")
+                    if p not in ("", ".")
+                ]
+                head: list[str] = []
+                while len(parts) > 1 and not any(c in parts[0] for c in "*?[") and parts[0] != "..":
+                    head.append(parts.pop(0))
+                if parts:
+                    base = self.joinpath(*head) if head else self
+                    with _Busy():
+                        present = real_p_exists(base)
+                    target = None if present else _probe_target(base, PROBE_WANT_DIR)
+                    if target is not None:
+                        root = pathlib.Path(target)
+                        rest = "/".join(parts)
+                        return (
+                            base / p.relative_to(root) for p in real(root, rest, *args, **kwargs)
+                        )
             return real(self, pattern, *args, **kwargs)
 
         return globbed
