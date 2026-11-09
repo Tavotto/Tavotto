@@ -407,6 +407,12 @@ order: 50
   `Exception` / `OSError` 一律不算——同一个 try 里读数据失败不能变成「缺参数」，那会抢掉缺数据指认的出路），
   不读 SystemExit 的文字；没有 `parse_kind`。
   以前它是 `script_exited`（「去掉那句 exit」），界面不给「运行参数」。看护：`tests/test_worker_exit_report.py`。
+- **直接读取缺失参数的未捕获 `IndexError`（TVD-9VNB）**：`worker._direct_argv_index_error` 只认实际失败的入口脚本字节码是
+  对本次运行原始 `sys.argv` 列表的直接常量下标读取、下标确已越界，而且回溯中进入脚本后的帧都没有在异常期间继续执行。
+  列表身份或内容被改、错误来自另一容器 / 二次下标、动态下标、帮助模块抛错、字节码不能识别，或分支汇入加载序列的
+  中途使实际容器不确定，均保留 `script_error`；
+  绝不靠同一行出现 `argv` 推断。确认时复用 `script_needs_arguments` 和既有运行参数入口，不猜 `parse_kind`，
+  敏感参数仍不进入消息、回溯或日志。看护：`tests/test_worker_exit_report.py` / `tests/test_run_argv_privacy.py`。
 - **登记**（`engine/runconfig.py`）：本机 Tavotto 数据目录 `runconfigs/<项目摘要>.json`，不写用户项目（只读项目照样能用）。
   同 (脚本, argv, 敏感标记) 复用引用，改任一 token = 新引用（"编辑 = 新修订"，在途 spec 与旧产物不变）。`sensitive=True` 只活在进程内存，
   文件里只有占位；格式版本高于本读者 → `run_config_unsupported`。错误码：`invalid_argv`(400) / `run_config_missing` /

@@ -318,7 +318,7 @@ export function backendCodeMsg(
   // parseMissingKeyHandler 会把缺失的 key 原样吐回来（界面上看得见是哪条），
   // 那样 defaultValue 永远轮不到，缺文案时用户看到的就是 `backend.xxx`。
   if (code === 'artifact_source_unavailable') return artifactErrorMsg({ params })
-  // T03：用户给了精确参数、脚本自己的解析器仍然拒绝——同一个稳定码，文案不能再说"没带参数"
+  // T03：用户给了参数但脚本仍因参数停下——同一个稳定码，文案不能再说"没带参数"
   if (code === 'script_needs_arguments' && Number(params?.argv_count) > 0) {
     return msg('backend.script_rejected_arguments', params ?? {}, 'errors')
   }

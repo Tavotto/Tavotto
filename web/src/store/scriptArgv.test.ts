@@ -101,7 +101,7 @@ describe('按草稿调 probeScript', () => {
   })
 })
 
-describe('参数被脚本自己的解析器拒绝时的文案', () => {
+describe('脚本需要运行参数时的文案', () => {
   it('带 argv_count 的 script_needs_arguments 不再说"没带参数"', async () => {
     const { backendCodeMsg } = await import('@/lib/api')
     const { formatMessage } = await import('@/i18n')
@@ -110,6 +110,8 @@ describe('参数被脚本自己的解析器拒绝时的文案', () => {
     expect(given).toContain('3')
     expect(given).not.toEqual(none)
     expect(none).toContain('不带任何参数')
+    expect(given).not.toContain('解析器')
+    expect(none).not.toContain('解析器')
   })
 })
 
