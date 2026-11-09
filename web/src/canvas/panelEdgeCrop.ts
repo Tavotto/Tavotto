@@ -127,66 +127,88 @@ export function startPanelEdgeCrop(e: ReactPointerEvent, panel: PanelObject, sid
   store.beginTxn(hist('adjustCrop'))
   setTxnAnchor(objectId, { x: imgX + fullW / 2, y: imgY + fullH / 2 })
 
-  trackPointer(e, {
-    onMove: (ev, dxPx, dyPx) => {
-      const t = getTransform()
-      const dMm = pxToMm(horizontal ? dxPx : dyPx, t)
-      // l / t 往里 = 坐标增大；r / b 往里 = 坐标减小
-      const inward = side === 'l' || side === 't' ? dMm : -dMm
-      const tolMm = useUiStore.getState().snapEnabled ? snapTolMm(t) : 0
-      const want = depth0 + inward / fullDim
-      // 没裁剪过、能改图幅的图：不按 ⌥ = 改图幅（两个方向），按住 ⌥ = 裁剪；裁剪过 / 改不了图幅的图照旧只裁剪
-      const resizing = frame != null && !ev.altKey
-      const plan = resizing
-        ? { depth: 0, state: 'full' as const }
-        : planEdgeDepth({
-            depth0,
-            want,
-            oppDepth,
-            inkDepth,
-            tol: tolMm / fullDim,
-            // ⌥ 在这里已经是「要裁剪」：没裁剪过的图按着它进来，越过内容边缘不再另设一道闸
-            alt: ev.altKey,
+  // 最近一次指针位移与当时的 ⌥ 状态：停住鼠标后按下 / 松开 ⌥ 要按新状态重算预览，松手也以最终状态为准
+  let lastAlt = false
+  let lastDx = 0
+  let lastDy = 0
+  let hasMove = false
+  const apply = (altKey: boolean, dxPx: number, dyPx: number) => {
+    hasMove = true
+    lastAlt = altKey
+    lastDx = dxPx
+    lastDy = dyPx
+    const t = getTransform()
+    const dMm = pxToMm(horizontal ? dxPx : dyPx, t)
+    // l / t 往里 = 坐标增大；r / b 往里 = 坐标减小
+    const inward = side === 'l' || side === 't' ? dMm : -dMm
+    const tolMm = useUiStore.getState().snapEnabled ? snapTolMm(t) : 0
+    const want = depth0 + inward / fullDim
+    // 没裁剪过、能改图幅的图：不按 ⌥ = 改图幅（两个方向），按住 ⌥ = 裁剪；裁剪过 / 改不了图幅的图照旧只裁剪
+    const resizing = frame != null && !altKey
+    const plan = resizing
+      ? { depth: 0, state: 'full' as const }
+      : planEdgeDepth({
+          depth0,
+          want,
+          oppDepth,
+          inkDepth,
+          tol: tolMm / fullDim,
+          // ⌥ 在这里已经是「要裁剪」：没裁剪过的图按着它进来，越过内容边缘不再另设一道闸
+          alt: altKey,
+        })
+    const next = withEdgeDepth(crop0, side, plan.depth)
+    const full = isFullCrop(next)
+    const c = full ? { x: 0, y: 0, w: 1, h: 1 } : next
+    const box = { x: imgX + fullW * c.x, y: imgY + fullH * c.y, w: fullW * c.w, h: fullH * c.h }
+    // 裁剪事务照常写（改图幅时它停在未裁剪），之后只是在它上面叠预览：松手一并丢掉
+    const outMm = -want * fullDim
+    lastGrow =
+      resizing && frame
+        ? planEdgeGrow({
+            side,
+            box0,
+            sizeMm: frame.sizeMm,
+            maxMm: frame.limits.max,
+            minMm: frame.limits.min,
+            outMm,
+            tolMm,
           })
-      const next = withEdgeDepth(crop0, side, plan.depth)
-      const full = isFullCrop(next)
-      const c = full ? { x: 0, y: 0, w: 1, h: 1 } : next
-      const box = { x: imgX + fullW * c.x, y: imgY + fullH * c.y, w: fullW * c.w, h: fullH * c.h }
-      // 裁剪事务照常写（改图幅时它停在未裁剪），之后只是在它上面叠预览：松手一并丢掉
-      const outMm = -want * fullDim
-      lastGrow =
-        resizing && frame
-          ? planEdgeGrow({
-              side,
-              box0,
-              sizeMm: frame.sizeMm,
-              maxMm: frame.limits.max,
-              minMm: frame.limits.min,
-              outMm,
-              tolMm,
-            })
-          : null
-      ix().setFigureEdgeBox(lastGrow?.box ?? null)
-      if (lastGrow && frame) {
-        ix().setDragStatus(
-          edgeGrowDragStatus({ side, from: frame.sizeMm, to: lastGrow.sizeMm, box: lastGrow.box }),
-        )
-      } else {
-        status(plan.state, plan.depth, box, outMm > tolMm)
-      }
-      store.txnUpdate((d) => {
-        const o = d.objects.find((x) => x.id === objectId)
-        if (!o || o.type !== 'panel') return
-        // 未裁剪用 delete：`crop = undefined` 在没有这个键时也算一次改动，什么都没变却多一条历史
-        if (full) delete o.crop
-        else o.crop = { ...c }
-        o.x = box.x
-        o.y = box.y
-        o.w = box.w
-        o.h = box.h
-      })
-    },
-    onEnd: (moved, _ev, end) => {
+        : null
+    ix().setFigureEdgeBox(lastGrow?.box ?? null)
+    if (lastGrow && frame) {
+      ix().setDragStatus(
+        edgeGrowDragStatus({ side, from: frame.sizeMm, to: lastGrow.sizeMm, box: lastGrow.box }),
+      )
+    } else {
+      status(plan.state, plan.depth, box, outMm > tolMm)
+    }
+    store.txnUpdate((d) => {
+      const o = d.objects.find((x) => x.id === objectId)
+      if (!o || o.type !== 'panel') return
+      // 未裁剪用 delete：`crop = undefined` 在没有这个键时也算一次改动，什么都没变却多一条历史
+      if (full) delete o.crop
+      else o.crop = { ...c }
+      o.x = box.x
+      o.y = box.y
+      o.w = box.w
+      o.h = box.h
+    })
+  }
+  const onKey = (ke: KeyboardEvent) => {
+    if (ke.key !== 'Alt' || !hasMove || ke.altKey === lastAlt) return
+    ke.preventDefault()
+    apply(ke.altKey, lastDx, lastDy)
+  }
+  window.addEventListener('keydown', onKey)
+  window.addEventListener('keyup', onKey)
+
+  trackPointer(e, {
+    onMove: (ev, dxPx, dyPx) => apply(ev.altKey, dxPx, dyPx),
+    onEnd: (moved, ev, end) => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keyup', onKey)
+      // 松手那一刻的 ⌥ 才算数：与最后一次预览不同就先按它重算一次
+      if (moved && !end.cancelled && hasMove && ev.altKey !== lastAlt) apply(ev.altKey, lastDx, lastDy)
       ix().end()
       const grow = moved && !end.cancelled ? lastGrow : null
       // pointercancel = 这次交互被系统作废，一律丢弃：不留裁剪、不进历史

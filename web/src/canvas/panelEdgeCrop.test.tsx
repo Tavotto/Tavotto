@@ -382,6 +382,42 @@ describe('排版：没裁剪过的图从图边往外拖 = 改图幅（ADR 0161 �
     expect(useDocumentStore.getState().past).toHaveLength(1)
   })
 
+  it('停住鼠标后才按下 ⌥ 再松手：按松手时的 ⌥ 提交裁剪，不是改图幅', () => {
+    startPanelHandleDrag(down(), 'pa', 'e')
+    fire('pointermove', [-5, 0])
+    fire('pointermove', [-10, 0])
+    expect(useInteractionStore.getState().figureEdgeBox).not.toBeNull()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Alt', altKey: true }))
+    expect(useInteractionStore.getState().figureEdgeBox).toBeNull()
+    fire('pointerup', [-10, 0], { altKey: true })
+    expect(get().crop?.w).toBeCloseTo(0.9, 12)
+    expect(sizeOverride()).toBeUndefined()
+  })
+
+  it('按着 ⌥ 拖、停住后松开 ⌥ 再松手：改图幅，不是裁剪', () => {
+    startPanelHandleDrag(down(), 'pa', 'e')
+    fire('pointermove', [-5, 0], { altKey: true })
+    fire('pointermove', [-10, 0], { altKey: true })
+    expect(get().crop).toBeDefined()
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Alt', altKey: false }))
+    expect(get().crop).toBeUndefined()
+    fire('pointerup', [-10, 0])
+    expect(sizeOverride()).toEqual([90, 75])
+    expect(get().crop).toBeUndefined()
+  })
+
+  it('键盘事件漏了也行：松手事件的 ⌥ 与最后一次预览不同，以松手为准；松手后监听已移除', () => {
+    startPanelHandleDrag(down(), 'pa', 'e')
+    fire('pointermove', [-5, 0])
+    fire('pointermove', [-10, 0])
+    fire('pointerup', [-10, 0], { altKey: true })
+    expect(get().crop?.w).toBeCloseTo(0.9, 12)
+    expect(sizeOverride()).toBeUndefined()
+    const ev = new KeyboardEvent('keydown', { key: 'Alt', altKey: true, cancelable: true })
+    window.dispatchEvent(ev)
+    expect(ev.defaultPrevented).toBe(false)
+  })
+
   it('往里拖（不按 ⌥）= 缩小图幅，文字 pt 不变；不裁剪（ADR 0161 修订 2026-11-09）', () => {
     const readout = drag('e', [-20, 0])
     expect(readout).toMatchObject({ text: '改图幅 · 宽 100 → 80 mm', box: { x: 10, w: 80 } })
