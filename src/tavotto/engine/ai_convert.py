@@ -44,6 +44,7 @@ from . import (
     convertcontext,
     convertfidelity,
     convertoutputs,
+    convertsrcwrites,
     discover,
     execspec,
     longpath,
@@ -55,6 +56,7 @@ from . import (
     sourcelang,
     syncnoise,
     taskdiag,
+    workdir,
     writetripwire,
 )
 from .ai_tasks import FAILED, UNKNOWN, VERIFIED, CheckResult, NeedsInput, TaskError
@@ -562,6 +564,73 @@ def validation_roots(cand) -> tuple[str, ...]:
     )
 
 
+MISSING_OUTPUTS_STATUS = "missing_outputs"
+#: 校验结果里“校验跑通、出了图”的状态：缺输出的候选仍是可采用的（一轮修正之后），所以与 ok 同属成功类
+VALIDATED_STATUSES = ("ok", MISSING_OUTPUTS_STATUS)
+MISSING_OUTPUT_CHECK = "output.source"
+MISSING_OUTPUT_REASON = "source_outputs_missing"
+
+
+def _output_evidence(cand: ConvertCandidate, out: dict) -> dict:
+    """转换结果的非图形输出证据（#1810 线索 + #1809 校验判定）。**完整性永远 unknown**：名字有没有写出不证明内容 / 计算一致。
+
+    `missing_outputs`：`None` = 没法判定（来源不是 R / MATLAB、没有能确定的写出、校验没有改道记录——沙盒 cwd 里的相对写入
+    看不到、改道区没清干净）；`[]` = 能确定的写出都在这次校验里真的写出了；非空 = `[{"name", "line"}]`，这次运行没有写出它们
+    （写了又删 / 写失败 / 根本没写，都以改道区里最后还在不在为准）。`output_check` 是同一结论的闭集：`written` | `missing` | `unknown`。
+    `corrected`：先前某轮缺过、这一轮补齐了。"""
+    references, source_truncated = convertcontext.file_reference_hints(
+        cand.base_bytes, cand.script_path.suffix
+    )
+    raw_attempts = out.get("redirected_write_attempts")
+    attempts = None
+    if isinstance(raw_attempts, list):
+        attempts = sorted(
+            {
+                name
+                for item in raw_attempts
+                if isinstance(item, str) and item and len(item) <= 1024
+                if (name := convertcontext.evidence_basename(item)) is not None
+            }
+        )
+    writes = convertsrcwrites.certain_writes(cand.base_bytes, cand.source_language)
+    judged: list | None = None
+    written = None
+    # 只有改道记录真的在场才有资格判：沙盒 cwd 的相对写入落在会话沙盒里（校验后即销毁），看不到 ≠ 没写
+    if (
+        writes
+        and isinstance(raw_attempts, list)
+        and cand.extras.get("redirect_cleared") is True
+        and workdir.mode_for(cand.project_root) != workdir.MODE_SANDBOX
+    ):
+        written = convertsrcwrites.written_names(longpath.long(cand.dir / REDIRECT_DIRNAME))
+    if written is not None:
+        judged = convertsrcwrites.missing(writes, written)
+    seen = cand.extras.setdefault("missing_outputs_seen", set())
+    corrected = judged is not None and not judged and bool(seen)
+    if judged:
+        seen.update(w["name"] for w in judged)
+    return {
+        "source_references": references,
+        "source_truncated": source_truncated,
+        "write_attempts": attempts[: convertcontext.MAX_OUTPUT_EVIDENCE]
+        if attempts is not None
+        else None,
+        # The ledger is capped at 64. Equality is conservatively treated
+        # as possibly truncated even when there happened to be exactly 64.
+        "attempts_truncated": isinstance(raw_attempts, list)
+        and (len(raw_attempts) >= 64 or len(attempts or ()) > convertcontext.MAX_OUTPUT_EVIDENCE),
+        "completeness": "unknown",
+        "source_writes": writes[: convertcontext.MAX_OUTPUT_EVIDENCE],
+        "missing_outputs": judged[: convertcontext.MAX_OUTPUT_EVIDENCE]
+        if judged is not None
+        else None,
+        "missing_truncated": judged is not None
+        and len(judged) > convertcontext.MAX_OUTPUT_EVIDENCE,
+        "output_check": "unknown" if judged is None else ("missing" if judged else "written"),
+        "corrected": corrected,
+    }
+
+
 def run_validation(
     cand: ConvertCandidate | ai_figure_edit.Candidate, runner, *, evidence: list | None = None
 ) -> dict:
@@ -667,37 +736,12 @@ def run_validation(
     if not out.get("stems"):
         return {"status": "no_figure", "code": "no_figures_captured"}
     output_evidence = None
+    missing_outputs: list = []
     if isinstance(cand, ConvertCandidate):
-        references, source_truncated = convertcontext.file_reference_hints(
-            cand.base_bytes, cand.script_path.suffix
-        )
-        raw_attempts = out.get("redirected_write_attempts")
-        attempts = None
-        if isinstance(raw_attempts, list):
-            attempts = sorted(
-                {
-                    name
-                    for item in raw_attempts
-                    if isinstance(item, str) and item and len(item) <= 1024
-                    if (name := convertcontext.evidence_basename(item)) is not None
-                }
-            )
-        output_evidence = {
-            "source_references": references,
-            "source_truncated": source_truncated,
-            "write_attempts": attempts[: convertcontext.MAX_OUTPUT_EVIDENCE]
-            if attempts is not None
-            else None,
-            # The ledger is capped at 64. Equality is conservatively treated
-            # as possibly truncated even when there happened to be exactly 64.
-            "attempts_truncated": isinstance(raw_attempts, list)
-            and (
-                len(raw_attempts) >= 64 or len(attempts or ()) > convertcontext.MAX_OUTPUT_EVIDENCE
-            ),
-            "completeness": "unknown",
-        }
+        output_evidence = _output_evidence(cand, out)
+        missing_outputs = output_evidence["missing_outputs"] or []
     return {
-        "status": "ok",
+        "status": MISSING_OUTPUTS_STATUS if missing_outputs else "ok",
         "stems": list(out["stems"]),
         "size_mm": out.get("size_mm"),
         "svg": out.get("svg"),
@@ -744,10 +788,27 @@ def agent_check(cand: ConvertCandidate, *, evidence: list | None = None) -> tupl
     if not convertcontext.unchanged(cand.project_root, cand.context, snapshot_dir=cand.dir):
         return False, "convert_context_changed"
     status = res.get("status")
-    if status == "ok":
+    output = res.get("output_evidence")
+    if status == MISSING_OUTPUTS_STATUS and isinstance(output, dict):
+        names = [w["name"] for w in output["missing_outputs"]]
+        told = cand.extras.setdefault("missing_outputs_told", set())
+        if frozenset(names) not in told:
+            # One report per distinct set: the Agent writes them, or stops insisting (the task's own correction is the other bound).
+            told.add(frozenset(names))
+            return False, (
+                "missing_outputs: the source writes these files, but this candidate did not write them "
+                "in the isolated validation run: "
+                + json.dumps(names, ensure_ascii=False)
+                + ". Add the writes with the original paths, data and calculations; if they cannot be "
+                "retained, say so with TAVOTTO_NEEDS_INPUT."
+            )
+    if status in VALIDATED_STATUSES:
         count = len(res.get("stems") or [])
         message = f"check passed: {count} figure(s) captured"
-        output = res.get("output_evidence")
+        if status == MISSING_OUTPUTS_STATUS:
+            message += "; still not written in validation (reported to the user): " + json.dumps(
+                [w["name"] for w in output["missing_outputs"]], ensure_ascii=False
+            )
         if isinstance(output, dict):
             message += (
                 "; source filename references (may be inputs): "
@@ -778,6 +839,9 @@ def _run_with_cancel(runner, cand: ConvertCandidate, rel: str, cancel) -> tuple[
     """跑校验运行；运行中取消到来时，若 runner 带 `force_cancel(figures_dir, rel, write_roots)`（app 注入，= `pool.force_cancel`
     的同键硬杀）就当场结束在跑的探测。回 `(输出, 是否因取消被硬杀)`。runner 没有该入口（纯引擎单测）则等同直接调用。"""
     figures_dir, roots = str(cand.project_root), validation_roots(cand)
+    if isinstance(cand, ConvertCandidate):
+        # Only what THIS run wrote may count as a produced output: an earlier round's file must not vouch for it.
+        cand.extras["redirect_cleared"] = clear_redirect_area(cand)
     # 每次校验执行都从空的改道区开始（agent_check / 提交前 / 依赖重试 / 续跑共用同一候选目录），
     # 否则 `open(p, 'x')` 第二次失败、追加再读的脚本累积数据；删不掉就明确失败，不拿旧数据继续
     if not clear_redirect_area(cand):
@@ -966,6 +1030,15 @@ def write_denied(cand: ConvertCandidate) -> bool:
     )
 
 
+def _correction_pending(run) -> bool:
+    """任务编排器此刻还会不会为一次失败再开一轮有界修正（与 `ai_tasks._admit_correction` 的预算判据同一处读数）。
+    缺输出这种“修一次、修不好也不挡采用”的失败，只在它为真时才记成失败。"""
+    budget = run.envelope.budget
+    if budget.max_corrections <= 0:
+        return False
+    return all(run.used[k] < budget.limit(k) for k in ("corrections", "agent_runs"))
+
+
 def _failure_check(result: dict, st: str) -> CheckResult:
     """校验运行没通过 → 一条 `render.capture` 检查（任务的提交前验证与续跑共用，原因码闭集只写这一处）。"""
     if result["status"] == "cancelled":
@@ -1151,15 +1224,29 @@ class ConvertAdapter:
         if result["status"] == DEPS_INSTALLED_STOPPED:
             cand.late_installed = True  # 候选要留（`hold` / `discard` 据此）；这条检查只是占位，`hold` 紧接着以 needs_input 终局
             return [_check("render.capture", st, "goal", UNKNOWN, DEPENDENCY_INSTALLED_LATE_REASON)]
-        if result["status"] == "ok":
+        if result["status"] in VALIDATED_STATUSES:
             cand.comparison = comparison_of(cand, result)
             svg = result.get("svg")
             cand.preview_svg = (
                 svg if isinstance(svg, str) and len(svg) <= PREVIEW_MAX_BYTES else None
             )
-            return [
+            checks = [
                 _check("render.capture", st, "goal", VERIFIED, stems=result["stems"]),
             ]
+            if result["status"] == MISSING_OUTPUTS_STATUS and _correction_pending(run):
+                # 只有“接着真会修正”才判失败：否则（修正已用过 / 没预算）结果照常交给用户，缺项随 comparison 带出
+                missing = result["output_evidence"]["missing_outputs"]
+                checks.append(
+                    _check(
+                        MISSING_OUTPUT_CHECK,
+                        st,
+                        "goal",
+                        FAILED,
+                        MISSING_OUTPUT_REASON,
+                        files=[w["name"] for w in missing],
+                    )
+                )
+            return checks
         return [_failure_check(result, st)]
 
     def hold(self, cand: ConvertCandidate):
@@ -1918,7 +2005,7 @@ def run_resume(
             # 摘要对不上 / 又遇到系统 Python：回到等用户，卡片换成新的（带 notice）
             _set_state(cdir, meta, STATE_AWAITING, dependency_card=cand.hold)
             return {"state": STATE_AWAITING}
-        if result["status"] == "ok":
+        if result["status"] in VALIDATED_STATUSES:
             untouched = [
                 c for c in ADAPTER._project_untouched(cand, "precommit") if c.verdict != VERIFIED
             ]
@@ -2045,7 +2132,7 @@ def _correct_once(
     if untouched:
         failure = {"reason": PROJECT_CHANGED_REASON}
         _drop_candidate_files(cdir, meta)
-    elif isinstance(validation, dict) and validation.get("status") != "ok":
+    elif isinstance(validation, dict) and validation.get("status") not in VALIDATED_STATUSES:
         failure = _failure_of(_failure_check(validation, "precommit"))
     else:
         failure = original_failure  # 修正后没走到校验运行（语法 / 目标缺失 / Agent 异常退出）：原因沿用修正前那条

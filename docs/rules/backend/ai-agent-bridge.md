@@ -368,6 +368,18 @@ order: 240
 线索随 comparison 留存并交给 check 与采用前界面，项目原件仍不受校验写入影响；看护
 `tests/test_convert_output_evidence.py`（真实 worker / 暂存恢复 / 删除反例）。
 
+**缺输出判定（#1809）**：R / MATLAB 来源里**字面量路径、位于顶层普通语句**的写出调用（`convertsrcwrites.certain_writes`：R 的
+`write.csv` / `saveWorkbook` / `write_xlsx` / `saveRDS` / `cat(file=)` 等，MATLAB 的 `writetable` / `xlswrite` / `fopen(..,'w')` 等；
+图形输出与读取不算，变量 / 拼接 / 分支 / 循环 / 函数体 / 绝对路径 / `..` 一律不算）才是「能确定的写出」。每次校验运行前清空改道区，
+运行后以改道区里**最后还在**的文件名为准（写了又删、写失败都算没写出）；有缺项时 `run_validation` 回 `status: "missing_outputs"`
+（其余字段同 ok），不当 ok。`ConvertAdapter._render` 只在「编排器接着真会修正」（`_correction_pending`：`max_corrections` 与
+`corrections` / `agent_runs` 余量）时记 `output.source` / `source_outputs_missing` 失败，进有界修正，提示只含缺的文件名；
+修正之后仍缺**不判失败、不挡采用**，缺项随 `comparison.output_evidence` 带出。该对象新增字段：`source_writes` / `missing_outputs`
+（`null` = 没法判定：非 R / MATLAB、没有能确定的写出、无改道记录、沙盒 cwd 的相对写入看不到；`[]` = 都写出了；否则
+`[{name, line}]`）/ `missing_truncated` / `output_check`（`written` | `missing` | `unknown`）/ `corrected`。`completeness` 仍恒 `unknown`：
+文件名在不证明内容和计算一致。内置执行器的 `check` 对同一组缺项只报一次，再次出现照常放行。看护 `tests/test_convert_missing_outputs.py`
+（静态抽取正反例 / 真 worker 判定 / 成功、补齐、仍缺、无法确认四种终态）。
+
 **R / MATLAB 来源（ADR 0143 修订，2026-10-23）**：`POST /api/ai/convert` 多一个可选 `source_language`（`python` 缺省 | `r` | `matlab`）。
 r / matlab 时 `library` 必须缺省，后端用 `sourcelang.detect`（纯标准库；`.R` / `.r` / `.m` 纯文本、≤ 1 MB、UTF-8；`.m` 带 Objective-C 特征或
 MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `convert_source_language_mismatch`。**不运行 R / MATLAB**：对照只用请求给的 `path` 或脚本旁
