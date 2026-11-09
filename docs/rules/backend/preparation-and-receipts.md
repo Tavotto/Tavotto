@@ -400,7 +400,8 @@ native 脚本异常退出时，只保留 bridge 当场按内置异常类型归�
 `tests/bridge/test_bridge_failure_category.py` 与 `tests/test_task_diagnostics.py`。
 
 桌面自有 native 的缺失只读打开可以提供经用户确认的脚本路径改写（见 `figure-capture-and-execution.md`）；
-路径只留在本机私有会话与恢复入口，不写入终局诊断。没有观察到同一读取异常冒出或无法对应稳定源码时不推断。
+新增结构化读取事实不写入终局诊断；原有本地异常文本 / traceback 仍可能含路径。没有观察到同一读取异常
+冒出或无法对应稳定源码时不推断。
 
 ## 速查表原要点（#815 精简时迁入，原文照搬）
 

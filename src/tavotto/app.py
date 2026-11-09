@@ -11837,7 +11837,7 @@ def _native_run_error(session):
 def _native_missing_input_offer(failure, session, plan):
     """Offer the existing reviewed rewrite only for a proven native read failure.
 
-    It is not a safe-worker link: native reads the original path. Dynamic or
+    It is not a safe-worker link: native reads the original path. Unmatched or
     relative paths, sensitive runs, writes and unobserved readers remain unknown.
     """
     take = getattr(session, "take_missing_read", None)
