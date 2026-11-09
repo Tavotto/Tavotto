@@ -684,6 +684,11 @@ class _Interpreter:
                 self.graphics_state(resources.ExtGState[a[0]], state)
             elif op == "Do":
                 obj = resources.XObject[a[0]]
+                # XObject visibility depends on the document's optional-content
+                # configuration. The current IR has no such visibility fact;
+                # accepting its paint would expose a default-hidden layer.
+                if obj.get("/OC") is not None:
+                    _fail("XObject optional-content visibility", op, unsupported=True)
                 if str(obj.get("/Subtype")) == "/Image":
                     node = self.image(obj, state)
                 elif str(obj.get("/Subtype")) == "/Form":

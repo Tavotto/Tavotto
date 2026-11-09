@@ -450,6 +450,36 @@ def test_actual_isolated_transparency_form_is_not_distributed_per_child(tmp_path
     assert result.facts["counts"]["forms"] == 1
 
 
+@pytest.mark.parametrize("kind", ["Form", "Image"])
+def test_optional_content_xobject_cannot_silently_show_default_hidden_paint(tmp_path, host, kind):
+    import pikepdf as q
+
+    def resources(pdf):
+        layer = pdf.make_indirect(q.Dictionary(Type=q.Name.OCG, Name="Hidden"))
+        pdf.Root.OCProperties = q.Dictionary(
+            OCGs=q.Array([layer]), D=q.Dictionary(BaseState=q.Name.ON, OFF=q.Array([layer]))
+        )
+        if kind == "Form":
+            obj = q.Stream(pdf, b"1 0 0 rg 0 0 80 80 re f")
+            obj.BBox, obj.Resources = q.Array([0, 0, 100, 100]), q.Dictionary()
+        else:
+            obj = q.Stream(pdf, bytes([255, 0, 0]) * 4)
+            obj.Width = obj.Height = 2
+            obj.BitsPerComponent, obj.ColorSpace = 8, q.Name.DeviceRGB
+        obj.Type, obj.Subtype, obj.OC = q.Name.XObject, q.Name("/" + kind), layer
+        return q.Dictionary(XObject=q.Dictionary(Hidden=obj))
+
+    op = b"/Hidden Do" if kind == "Form" else b"q 80 0 0 80 0 0 cm /Hidden Do Q"
+    data = _document(op, resources, size=(100, 100))
+    original = tmp_path / "original-hidden.pdf"
+    original.write_bytes(data)
+    assert host.render(original, width_px=300).packed() == bytes([255]) * (300 * 300 * 3)
+    with pytest.raises(pdfcontent.PDFContentError) as error:
+        pdfcontent.pdf_to_ir(data)
+    assert error.value.code == "pdfcontent_unsupported"
+    assert error.value.operation == "Do"
+
+
 def test_recursive_form_is_rejected_before_reentering_stream():
     import pikepdf as q
 
