@@ -3027,6 +3027,22 @@ describe('准备出错：后端本地详情接到已有恢复动作（P05a，AC-
     expect(details()!.querySelector('[data-prep-traceback]')).not.toBeNull()
   })
 
+  it('native 读取落空后保留 script_error，仍可打开经确认的路径改写入口', async () => {
+    const payload = {
+      script: 'plot.py', requested: '/missing/input.csv', absolute: true, via: 'native', others: [],
+    }
+    await mount()
+    await openWith(report({
+      ...fromBackend('plain_exception'),
+      outcome: { kind: 'failed', code: 'script_error' },
+      requirements: [{ id: 'data', kind: 'input_location', code: 'script_error', origin: 'last_attempt', blocking: false, payload }],
+    }))
+    expect(primary()?.dataset.prepPrimary).toBe('missing_input')
+    await act(async () => primary()!.click())
+    expect(useEnvStore.getState().missingInput).toEqual(payload)
+    useEnvStore.getState().dismissMissingInput()
+  })
+
   it('读不到数据：也有「使用你的 AI 来修复」次按钮，点击起修复，主按钮不变', async () => {
     const mockFix = vi.mocked(requestAiFix)
     mockFix.mockReset()

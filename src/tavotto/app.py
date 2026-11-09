@@ -11731,7 +11731,7 @@ def _native_preparation_runner(pl, before_retry=None):
     ):
         state = session.wait_for_state((engine_nativesession.BARRIER,), 3600.0)
     if state != engine_nativesession.BARRIER:
-        raise _native_run_error(session)
+        raise _native_missing_input_offer(_native_run_error(session), session, pl)
     if session.script_error:
         # 脚本自己炸了：不吞（AC-21）。让进程把退出走完（它在 script_end 屏障上），再按真实异常收场
         error = dict(session.script_error)
@@ -11767,7 +11767,7 @@ def _native_preparation_runner(pl, before_retry=None):
         category = getattr(session, "exception_category", None)
         if category:
             failure.extra["exception_category"] = category
-        raise failure
+        raise _native_missing_input_offer(failure, session, pl)
     try:
         resp = session.ensure_built()
     except engine_runcodes.RunError as exc:
@@ -11831,6 +11831,62 @@ def _native_run_error(session):
     category = getattr(session, "exception_category", None)
     if failure.code == engine_pool.SCRIPT_ERROR_CODE and category:
         failure.extra["exception_category"] = category
+    return failure
+
+
+def _native_missing_input_offer(failure, session, plan):
+    """Offer the existing reviewed rewrite only for a proven native read failure.
+
+    It is not a safe-worker link: native reads the original path. Dynamic or
+    relative paths, sensitive runs, writes and unobserved readers remain unknown.
+    """
+    take = getattr(session, "take_missing_read", None)
+    fact = take() if callable(take) else None
+    if (
+        failure.code != engine_pool.SCRIPT_ERROR_CODE
+        or getattr(session, "exception_category", None) != "file_not_found"
+        or not isinstance(fact, dict)
+        or not plan.script
+        or not plan.script_revision
+        or (plan.run is not None and plan.run.sensitive)
+    ):
+        return failure
+    name, cwd = fact.get("requested"), fact.get("cwd")
+    parsed = engine_figcapture.remap_parts(name) if isinstance(name, str) else None
+    if parsed is None or not parsed[0] or not isinstance(cwd, str):
+        return failure
+    try:
+        if (
+            engine_preparation._script_revision(plan.project_root, plan.script)
+            != plan.script_revision
+        ):
+            return failure
+        # Existing safe-only links must not hide a missing native input. Source
+        # literals are only nominations; script-edit still validates the diff.
+        matched = engine_inputremap.native_miss(
+            plan.script, plan.project_root, {"filename": name, "cwd": cwd}, rules=[]
+        )
+        if (
+            engine_preparation._script_revision(plan.project_root, plan.script)
+            != plan.script_revision
+        ):
+            return failure
+        # A path-shaped output literal is not a candidate for an input edit,
+        # even when it prefixes the same observed filename.
+        reads = engine_inputremap.static_missing(
+            plan.script, plan.project_root, [], reads_only=True
+        )
+        if matched is not None and any(row.get("path") == matched["literal"] for row in reads):
+            offer = engine_inputremap.payload_for(
+                plan.script, plan.project_root, matched, via=engine_inputremap.VIA_NATIVE
+            )
+            if (
+                engine_preparation._script_revision(plan.project_root, plan.script)
+                == plan.script_revision
+            ):
+                failure.missing_input = offer
+    except Exception:  # noqa: BLE001 — recovery observation never replaces the original failure
+        pass  # Missing recovery evidence must never replace the original error.
     return failure
 
 

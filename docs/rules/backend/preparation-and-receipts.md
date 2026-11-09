@@ -399,6 +399,9 @@ native 脚本异常退出时，只保留 bridge 当场按内置异常类型归�
 两次回退各自冻结自己的事实，不从后一次反填前一次。看护 `tests/test_fallback_failure_evidence_e2e.py`、
 `tests/bridge/test_bridge_failure_category.py` 与 `tests/test_task_diagnostics.py`。
 
+桌面自有 native 的缺失只读打开可以提供经用户确认的脚本路径改写（见 `figure-capture-and-execution.md`）；
+路径只留在本机私有会话与恢复入口，不写入终局诊断。没有观察到同一读取异常冒出或无法对应稳定源码时不推断。
+
 ## 速查表原要点（#815 精简时迁入，原文照搬）
 
 速查表那一格为让 Codex 自动拼接留出余量而收成索引；下面是当时的全文，与上文同等有效。

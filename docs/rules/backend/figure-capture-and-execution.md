@@ -181,7 +181,12 @@ order: 50
     `FileNotFoundError("cg_data.parquet")` 整条消息就是路径，同样取——加 cwd），父进程
     `inputremap.native_miss` 拿静态证据对——整串相等或按路径段是前缀、只认对上的那条，对不上就不判、
     码一字不变；对上了码仍是 `script_error`，只挂 `via = native` 的载荷。这几档的出口是经确认改写脚本
-    （`script-edits.md`）。native 不改指。
+    （`script-edits.md`）。native 不改指。桌面自有的 native bridge 对 Python 只读打开另记最近 16 个
+    落空；只有**同一个异常对象**最终以 `FileNotFoundError` 冒出、绝对路径能与当前脚本中
+    可识别的读取常量对上、脚本修订未变且运行不敏感时，才给同一个经用户预览确认的改写入口。路径仅走
+    本机会话私有控制面与认证后的恢复载荷，不进 native 会话公开状态或任务诊断；相对 / 动态路径、
+    子进程和未观察到的读取不猜。
+    看护 `tests/test_native_missing_read_observation.py`、`tests/test_native_input_recovery_e2e.py`。
     **对账只认和这次异常对得上的落空（#1253）**：异常没有 `filename`、消息里也没有引号括着的路径时，只认
     消息里按路径段点了名的那次落空（`figcapture._named_miss`），**不退到「最近一次落空的」**——被 `try` 吞掉的可选读、
     `importlib.metadata` 对不存在的 `sys.path` 条目（Homebrew 的 `python313.zip`）试 zipfile 打开，都会排在后面，

@@ -4127,8 +4127,10 @@ class InputObserver:
     回退换出来的路径经内层的观察器记下，正是脚本实际读到的那份。
     """
 
-    def __init__(self, project_root: str) -> None:
+    def __init__(self, project_root: str, *, observe_failed_reads: bool = False) -> None:
         self.project_root = os.path.abspath(project_root)
+        self._observe_failed_reads = observe_failed_reads
+        self._failed_reads: list[tuple[BaseException, str, str]] = []
         self._seen: dict[str, str] = {}  # realpath → 项目相对 POSIX 路径
         self.truncated = False
         self._uninstall = None
@@ -4173,6 +4175,43 @@ class InputObserver:
         except Exception:  # noqa: BLE001 —— 观察器绝不影响脚本
             return
 
+    def _note_failed_read(self, exc: FileNotFoundError, file, mode) -> None:
+        """Keep the actual exception identity; a later failed write is not this read."""
+        if not self._observe_failed_reads or getattr(self._pause, "depth", 0):
+            return
+        try:
+            if not _readonly_mode(mode) or type(file) not in (
+                str,
+                bytes,
+                pathlib.PosixPath,
+                pathlib.WindowsPath,
+            ):
+                return
+            name = os.fsdecode(os.fspath(file))
+            if not name or len(name) > 4096 or any(ord(c) < 32 for c in name):
+                return
+            if any(previous is exc for previous, _, _ in self._failed_reads):
+                return
+            if len(self._failed_reads) >= 16:
+                self._failed_reads.pop(0)
+            self._failed_reads.append((exc, name, os.getcwd()))
+        except Exception:  # noqa: BLE001 — observation must never change the user's exception
+            return
+
+    def uncaught_missing_read(self, exc: BaseException | None) -> dict | None:
+        """Only the exact escaping read failure; caught/other failures stay unknown."""
+        try:
+            return next(
+                (
+                    {"requested": name, "cwd": cwd}
+                    for previous, name, cwd in self._failed_reads
+                    if previous is exc
+                ),
+                None,
+            )
+        finally:
+            self._failed_reads.clear()
+
     def install(self):
         """装上 open 的观察包装（三处 Python open + numpy 的 `DataSource.open`）；返回卸载函数。"""
         real_open = builtins.open
@@ -4182,7 +4221,11 @@ class InputObserver:
 
         def _wrap(original):
             def observed_open(file, mode="r", *args, **kwargs):
-                fh = original(file, mode, *args, **kwargs)
+                try:
+                    fh = original(file, mode, *args, **kwargs)
+                except FileNotFoundError as exc:
+                    observer._note_failed_read(exc, file, mode)
+                    raise
                 if _readonly_mode(mode):
                     observer._note(file)
                 return fh
@@ -4190,7 +4233,11 @@ class InputObserver:
             return observed_open
 
         def observed_path_open(self_path, mode="r", *args, **kwargs):
-            fh = real_path_open(self_path, mode, *args, **kwargs)
+            try:
+                fh = real_path_open(self_path, mode, *args, **kwargs)
+            except FileNotFoundError as exc:
+                observer._note_failed_read(exc, self_path, mode)
+                raise
             if _readonly_mode(mode):
                 observer._note(self_path)
             return fh

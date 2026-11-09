@@ -3561,7 +3561,7 @@ export default interface Resources {
       "missingBody": "编辑图内元素需要一个装了 matplotlib 的 Python。摆放、标注和导出不受影响。",
       "missingInputDetails": "详情",
       "missingInputLater": "稍后",
-      "missingInputNative": "脚本直接用专门的读取库打开这份数据，这类读取没法自动改指到别处。",
+      "missingInputNative": "这次读取无法自动改指到别处。",
       "missingInputOpen": "指认数据位置…",
       "missingInputOthers": "脚本里这些路径现在也找不到，按同样规律能找到的会一并修好：",
       "missingInputPathPlaceholder": "粘贴数据文件或所在文件夹的完整路径",

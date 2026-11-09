@@ -891,6 +891,7 @@ class BridgeRun:
         self.session = None  # figsession.LiveFigureSession（第二阶段才有）
         self.handler = None  # wireproto.V1Handler
         self.script_error: dict | None = None
+        self.missing_read: dict | None = None
         self.released = False
         #: 这一次屏障的 `release_barrier()` 已经在 continue 里干净地做完了（`barrier()` 的
         #: `finally` 不再做第二遍：第二遍会把已经恢复成原样的 Figure 快照成空列表存下来）。
@@ -1334,6 +1335,7 @@ class BridgeRun:
             figure_facts=self.session.figure_facts(_SAVEFIG_OBSERVATIONS),
             script_error=self.script_error,
             rebase_warnings=self.rebase_warnings or None,
+            **({"missing_read": self.missing_read} if self.missing_read else {}),
         )
         try:
             while not self.released:
@@ -1548,7 +1550,7 @@ def main(argv: list | None = None) -> int:
     }
     if args.observe_inputs and args.project_root:
         # 输入观察装在用户代码之前；numpy 那条通道等用户 import numpy 时补（观察器自己不 import 任何东西）
-        _INPUTS = figcapture.InputObserver(args.project_root)
+        _INPUTS = figcapture.InputObserver(args.project_root, observe_failed_reads=True)
         _INPUTS.install()
         callbacks["numpy.lib._datasource"] = _INPUTS.observe_numpy_datasource
     # 钩子：**自己不 import matplotlib**，只在用户 import 到的那一刻挂上去。
@@ -1576,6 +1578,8 @@ def main(argv: list | None = None) -> int:
         exit_code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
     except BaseException as exc:  # noqa: BLE001 — 脚本炸了也要把已有的图交出去
         exit_code = 1
+        if _INPUTS is not None:
+            run.missing_read = _INPUTS.uncaught_missing_read(exc)
         run.script_error = {
             "code": "script_error",
             "message": f"{type(exc).__name__}: {exc}",
@@ -1589,6 +1593,8 @@ def main(argv: list | None = None) -> int:
         traceback.print_exc()
     finally:
         hook.uninstall()
+        if _INPUTS is not None and run.script_error is None:
+            _INPUTS.uncaught_missing_read(None)  # release caught exceptions after a successful run
     run.freeze_inputs()
 
     if run.terminated:
@@ -1639,6 +1645,7 @@ def main(argv: list | None = None) -> int:
             code=exit_code,
             figures=figures,
             **({"exception_category": category} if category else {}),
+            **({"missing_read": run.missing_read} if run.missing_read else {}),
         )
         run.control.close()
     return exit_code

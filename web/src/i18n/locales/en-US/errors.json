@@ -762,7 +762,7 @@
     "missingInputLater": "Later",
     "missingInputOpen": "Show where the data is…",
     "missingInputRemembered": "Data location remembered; running again",
-    "missingInputNative": "The script opens the data directly with a dedicated reader library, which can’t be redirected automatically.",
+    "missingInputNative": "This read cannot be redirected automatically in this run.",
     "missingInputRewriteHint": "The path in the script can be changed to where the data is now: you see every line that will change first, the script is backed up, and you can restore it at any time. Or put the data back where the script expects it (relative paths start from the script’s folder).",
     "missingInputPreviewRewrite": "Preview the change",
     "rewriteTitle": "Confirm changing the script",
