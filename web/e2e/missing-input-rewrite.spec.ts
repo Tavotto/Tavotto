@@ -48,7 +48,7 @@ function writeProject(dir: string): string {
 }
 
 test(
-  '探路找不到数据：预览逐行改动 → 勾选确认 → 改写脚本、留备份 → 重跑按那份数据出图',
+  '改指救不回的数据：预览逐行改动 → 勾选确认 → 改写脚本、留备份 → 重跑按那份数据出图',
   { tag: '@feature:assets.missing-input-rewrite' },
   async ({ app, page }, testInfo) => {
     const stamp = Date.now()
