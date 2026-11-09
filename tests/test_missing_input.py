@@ -756,22 +756,58 @@ def test_relative_probes_are_left_to_the_sandbox_hint_unless_asked(remapped):
 
 
 def test_file_probes_answer_through_the_remap_table(remapped, tmp_path):
-    """exists / isfile / Path.exists / Path.is_file 在原路径不在时查同一张改指表：规则指向存在的文件就答「在」，
-    随后的读经同一张表改道——「先 exists 再读」的脚本指认一次就跑通。规则没救回的照旧 False 并记账；
-    is_dir / getsize 不查表（改指只给文件）。"""
+    """exists / isfile / lexists / Path.exists / Path.is_file / stat / getsize 在原路径不在时查同一张改指表：
+    规则指向存在的文件就按它答，随后的读经同一张表改道——「先检查再读」的脚本指认一次就跑通。
+    类型对不上的（问文件夹、目标是文件）照旧 False；没救回的照旧 False 并记账。"""
     gone = tmp_path / "gone" / "data.csv"
     truth = _touch(tmp_path / "moved" / "data.csv", "truth")
     misses = remapped([{"kind": F, "from": str(gone), "to": str(truth)}])
-    assert os.path.exists(str(gone)) and os.path.isfile(str(gone))
+    assert os.path.exists(str(gone)) and os.path.isfile(str(gone)) and os.path.lexists(str(gone))
     assert gone.exists() and gone.is_file()
+    assert os.path.getsize(str(gone)) == 5 and gone.stat().st_size == 5
     assert gone.read_text() == "truth"
-    assert not gone.is_dir()
-    with pytest.raises(FileNotFoundError):
-        os.path.getsize(str(gone))
+    assert all(p["requested"] != str(gone) for p in misses.probes)  # 救回来的不记账
+    assert not gone.is_dir() and not os.path.isdir(str(gone))  # 目标是文件：问文件夹照旧 False
     other = tmp_path / "gone" / "other.csv"
     assert not other.exists()
+    with pytest.raises(FileNotFoundError):
+        os.stat(str(other))
     assert misses.probes[-1]["requested"] == str(other)
-    assert all(p["requested"] != str(gone) for p in misses.probes)
+
+
+def test_folder_probes_list_the_linked_folder_under_the_scripts_own_paths(remapped, tmp_path):
+    """数据文件夹整个挪走、用户指认了新文件夹（`prefix` 规则）：listdir / scandir / isdir / os.walk / glob /
+    Path.iterdir / Path.glob 都看到新文件夹的内容，而给回脚本的路径仍是脚本写的那个前缀——随后的读经改指表。"""
+    import glob
+
+    old = tmp_path / "old" / "runs"
+    new = tmp_path / "new" / "runs"
+    _touch(new / "a.csv", "1")
+    _touch(new / "b.csv", "2")
+    _touch(new / "sub" / "c.csv", "3")
+    remapped([{"kind": P, "from": str(old), "to": str(new)}])
+    assert os.path.isdir(str(old)) and old.is_dir() and old.exists()
+    assert sorted(os.listdir(str(old))) == ["a.csv", "b.csv", "sub"]
+    with os.scandir(str(old)) as it:
+        assert sorted(e.name for e in it) == ["a.csv", "b.csv", "sub"]
+    hits = sorted(glob.glob(str(old / "*.csv")))
+    assert hits == [str(old / "a.csv"), str(old / "b.csv")]
+    assert [open(h).read() for h in hits] == ["1", "2"]
+    assert sorted(glob.glob(str(old / "**" / "*.csv"), recursive=True)) == [
+        str(old / "a.csv"),
+        str(old / "b.csv"),
+        str(old / "sub" / "c.csv"),
+    ]
+    walked = {root: sorted(files) for root, _dirs, files in os.walk(str(old))}
+    assert walked == {str(old): ["a.csv", "b.csv"], str(old / "sub"): ["c.csv"]}
+    # `Path.iterdir`（3.13 起取 `DirEntry.path`）给的是数据实际所在的路径：读起来是同一份
+    assert sorted(p.name for p in old.iterdir()) == ["a.csv", "b.csv", "sub"]
+    assert sorted(p.read_text() for p in old.iterdir() if p.suffix == ".csv") == ["1", "2"]
+    assert sorted(str(p) for p in old.glob("*.csv")) == [str(old / "a.csv"), str(old / "b.csv")]
+    assert sorted(str(p) for p in old.rglob("*.csv"))[-1] == str(old / "sub" / "c.csv")
+    # 没规则命中的文件夹：照旧不存在
+    with pytest.raises(FileNotFoundError):
+        os.listdir(str(tmp_path / "elsewhere"))
 
 
 def test_enoent_fact_names_a_bare_message_path_and_native_miss_pairs_it(tmp_path):
@@ -889,6 +925,45 @@ def test_a_script_that_checks_then_raises_is_missing_input_and_one_pick_fixes_it
     worker, resp = engine_pool.build("fig.py", str(figs), "__main__")
     assert sorted(resp.get("stems") or {}) == ["values"]
     assert "[loaded] [4.0, 5.0, 6.0]" in worker._log_tail()
+
+
+GLOB_FOLDER = """
+import glob, os
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+RUNS = {runs!r}
+files = sorted(glob.glob(os.path.join(RUNS, "*.csv")))
+if not files:
+    raise FileNotFoundError(f"no csv files in {{RUNS}}")
+values = [float(open(f).read()) for f in files]
+print("[loaded]", values, [os.path.basename(f) for f in files])
+plt.plot(values)
+plt.savefig("runs.png")
+"""
+
+
+@needs_worker
+def test_a_globbed_data_folder_that_moved_is_fixed_by_pointing_at_the_new_folder(figs, tmp_path):
+    """数据文件夹整个挪走，脚本 `glob("<文件夹>/*.csv")` 一个都找不到、自己报错：`missing_input`、要的是文件夹；
+    指认新文件夹一次，重跑 glob 就找到那里的文件、读到那里的数据（ADR 0106 修订 2026-11-09）。"""
+    old = tmp_path / "old" / "runs"
+    (figs / "fig.py").write_text(GLOB_FOLDER.format(runs=str(old)), encoding="utf-8")
+    workdir.set_mode(figs, workdir.MODE_SANDBOX)
+    with pytest.raises(engine_pool.WorkerError) as err:
+        engine_pool.build("fig.py", str(figs), "__main__")
+    assert err.value.code == engine_pool.MISSING_INPUT_CODE
+    offer = err.value.missing_input
+    assert offer is not None and offer["via"] == inputremap.VIA_OPEN
+    assert offer["requested"] == str(old) and offer["probe_kind"] == inputremap.PROBE_DIR
+    new = tmp_path / "new" / "runs"
+    _touch(new / "a.csv", "7")
+    _touch(new / "b.csv", "8")
+    inputremap.link(figs, offer["requested"], str(new), "dir")
+    engine_pool.shutdown_all(str(figs), wait=True)
+    worker, resp = engine_pool.build("fig.py", str(figs), "__main__")
+    assert sorted(resp.get("stems") or {}) == ["runs"]
+    assert "[loaded] [7.0, 8.0] ['a.csv', 'b.csv']" in worker._log_tail()
 
 
 @needs_worker
@@ -1020,10 +1095,10 @@ def test_a_script_that_checks_then_exits_gets_the_static_list(figs):
 
 
 def test_absolute_paths_that_are_only_probed_get_no_picker(tmp_path):
-    """绝对路径被 `listdir()` / `glob()` / `getsize()` 问的是探路，不是读：改指表救不回，给了选择器就是死循环
-    （指认 → 重跑 → 照样落空 → 同一个框再弹）。`exists()` / `Path(...).exists()` 例外：它们查改指表（ADR 0106
-    修订 2026-11-09），只被它们问过的按 `open` 算；同一串还被救不回的探路问过的照旧是探路。
-    先赋给一个只赋值一次的名字再探（`DATA = "…"; exists(DATA)`）同样算。"""
+    """绝对路径被 `exists()` / `listdir()` / `glob()` / `getsize()` / `Path(...).exists()` 问：探路也查改指表
+    （ADR 0106 修订 2026-11-09），按 `open` 给选择器，问的是文件夹 / glob 的 `probe_kind` 是 `dir`。只有不查表的
+    ovito `import_file`（C++ 读取器）问过的仍是探路——给了选择器就是死循环（指认 → 重跑 → 照样落空 → 再弹）。
+    先赋给一个只赋值一次的名字再探（`DATA = "…"; exists(DATA)`）同样认得出是哪一串。"""
     (tmp_path / "fig.py").write_text(
         "import glob, os\nfrom pathlib import Path\n"
         'if not os.path.exists("/nonexistent/tavotto/a/x.csv"):\n    raise SystemExit(1)\n'
@@ -1044,27 +1119,33 @@ def test_absolute_paths_that_are_only_probed_get_no_picker(tmp_path):
         # glob 的起算目录 `root_dir=` 同样是 glob 在问（模式是变量也一样）
         'glob.glob("*.csv", root_dir="/nonexistent/tavotto/k")\n'
         'ROOT = "/nonexistent/tavotto/l"\npat = "*.csv"\ng.glob(pat, root_dir=ROOT)\n'
-        # 救不回的 stat 系；同一串 exists 也问过，仍按探路算
         'os.path.getsize("/nonexistent/tavotto/m/s.csv")\n'
-        'os.path.exists("/nonexistent/tavotto/m/s.csv")\n',
+        # 不查表的 C++ 读取器；同一串 exists 也问过，仍按探路算
+        "from ovito.io import import_file\n"
+        'import_file("/nonexistent/tavotto/n/t.dump")\n'
+        'os.path.exists("/nonexistent/tavotto/n/t.dump")\n',
         encoding="utf-8",
     )
-    got = {o["path"]: o["via"] for o in inputremap.static_missing("fig.py", tmp_path, [])}
+    got = {
+        o["path"]: (o["via"], o["probe_kind"])
+        for o in inputremap.static_missing("fig.py", tmp_path, [])
+    }
+    OP, ANY_, DIR_ = inputremap.VIA_OPEN, inputremap.PROBE_ANY, inputremap.PROBE_DIR
     assert got == {
-        # exists 查改指表：只被 exists 问过（或 exists + open）的救得回
-        "/nonexistent/tavotto/a/x.csv": inputremap.VIA_OPEN,
-        "/nonexistent/tavotto/b/runs": inputremap.VIA_PROBE,
-        "/nonexistent/tavotto/c/*.csv": inputremap.VIA_GLOB,
-        "/nonexistent/tavotto/d/y.csv": inputremap.VIA_OPEN,
-        "/nonexistent/tavotto/e/z.csv": inputremap.VIA_OPEN,
-        "/nonexistent/tavotto/f/w.csv": inputremap.VIA_OPEN,
-        "/nonexistent/tavotto/m/s.csv": inputremap.VIA_PROBE,
+        "/nonexistent/tavotto/a/x.csv": (OP, ANY_),
+        "/nonexistent/tavotto/b/runs": (OP, DIR_),
+        "/nonexistent/tavotto/c/*.csv": (OP, DIR_),
+        "/nonexistent/tavotto/d/y.csv": (OP, ANY_),
+        "/nonexistent/tavotto/e/z.csv": (OP, ANY_),
+        "/nonexistent/tavotto/f/w.csv": (OP, ANY_),
         # 赋值两次的 TWICE：说不清被探的是哪一个，两个值又都不在任何读取调用里——不是能证明的输入，不列
-        "/nonexistent/tavotto/h/*.csv": inputremap.VIA_GLOB,
-        "/nonexistent/tavotto/i/*.csv": inputremap.VIA_GLOB,
-        "/nonexistent/tavotto/j/t.csv": inputremap.VIA_OPEN,
-        "/nonexistent/tavotto/k": inputremap.VIA_GLOB,
-        "/nonexistent/tavotto/l": inputremap.VIA_GLOB,
+        "/nonexistent/tavotto/h/*.csv": (OP, DIR_),
+        "/nonexistent/tavotto/i/*.csv": (OP, DIR_),
+        "/nonexistent/tavotto/j/t.csv": (OP, ANY_),
+        "/nonexistent/tavotto/k": (OP, DIR_),
+        "/nonexistent/tavotto/l": (OP, DIR_),
+        "/nonexistent/tavotto/m/s.csv": (OP, ANY_),
+        "/nonexistent/tavotto/n/t.dump": (inputremap.VIA_PROBE, inputremap.PROBE_FILE),
     }
 
 
@@ -1113,11 +1194,12 @@ def test_only_arguments_of_read_calls_count_as_missing_data(tmp_path):
 
 
 def test_the_requested_path_keeps_the_probe_classification_of_the_same_literal(tmp_path):
-    """运行时缺的那一串在脚本里也被救不回的探路问过（`present = getsize("x.csv"); open("x.csv")`）：顶层
-    `via` 跟着静态那一条走，不给选择器——改指救不回 getsize，脚本照样退出（Codex 评 #716 P2）。
-    只被 exists 问过的不在此列（exists 也查改指表，ADR 0106 修订 2026-11-09）。"""
+    """运行时缺的那一串在脚本里也被不查改指表的探路问过（`import_file("x.csv"); open("x.csv")`，ovito 的 C++
+    读取器）：顶层 `via` 跟着静态那一条走，不给选择器——改指救不回它（Codex 评 #716 P2）。Python 的探路
+    （exists / getsize / listdir / glob）都查改指表，不在此列（ADR 0106 修订 2026-11-09）。"""
     (tmp_path / "fig.py").write_text(
-        'import os, sys\npresent = os.path.getsize("x.csv")\ndata = open("x.csv").read()\n'
+        'import sys\nfrom ovito.io import import_file\npresent = import_file("x.csv")\n'
+        'data = open("x.csv").read()\n'
         "if not present:\n    sys.exit(1)\n"
         'open("y.csv")\n',
         encoding="utf-8",
@@ -1567,9 +1649,9 @@ def test_a_remap_that_yields_no_figures_removes_the_old_registration(client, fig
 
 
 def test_a_probe_only_miss_stays_offered_when_a_broad_rule_resolves_it(tmp_path):
-    """一条宽泛的改指规则碰巧让某条只被救不回的探路（getsize / listdir / glob）问过的路径「解析得了」：那些
-    探路不查改指表，脚本照样走「不存在」那一支——这一条仍要在载荷里，按「改指救不回」说（Codex 评 #716 P2）。
-    真读取（open）与 exists（它也查表，ADR 0106 修订 2026-11-09）的照旧被压掉。"""
+    """一条宽泛的改指规则碰巧让某条只被不查表的读取器（ovito `import_file`）问过的路径「解析得了」：它照样
+    读不到——这一条仍要在载荷里，按「改指救不回」说（Codex 评 #716 P2）。真读取（open）与 Python 的探路
+    （exists / getsize / listdir / glob 都查表，ADR 0106 修订 2026-11-09）被规则救回的照旧被压掉。"""
     root = tmp_path / "proj"
     root.mkdir()
     moved = tmp_path / "moved"
@@ -1577,10 +1659,9 @@ def test_a_probe_only_miss_stays_offered_when_a_broad_rule_resolves_it(tmp_path)
     _touch(moved / "data" / "flag.txt")
     _touch(moved / "data" / "seen.txt")
     (root / "fig.py").write_text(
-        "import os\n"
-        'if not os.path.getsize("data/flag.txt"):\n'
-        "    raise SystemExit(1)\n"
-        'if not os.path.exists("data/seen.txt"):\n'
+        "import os\nfrom ovito.io import import_file\n"
+        'import_file("data/flag.txt")\n'
+        'if not os.path.getsize("data/seen.txt"):\n'
         "    raise SystemExit(1)\n"
         'open("data/values.txt").read()\n',
         encoding="utf-8",

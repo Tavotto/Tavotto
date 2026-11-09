@@ -229,10 +229,10 @@ def test_a_path_only_the_report_knows_is_accepted(box):
 
 
 def test_a_path_the_script_only_probes_cannot_be_linked_and_the_script_is_not_edited(box):
-    # getsize 不查改指表（只有 exists / isfile / is_file 查）：链接救不回
+    # ovito 的 import_file 是 C++ 读取器、不查改指表（Python 的探路都查）：链接救不回
     script = put(
         box.proj / "fig.py",
-        "import os, sys\nif not os.path.getsize('data/x.csv'):\n    sys.exit('no data')\n",
+        "from ovito.io import import_file\nimport_file('data/x.csv')\n",
     )
     data = put(box.home / "Downloads" / "data" / "x.csv", "1,2\n")
     before = _sha(script)
@@ -263,6 +263,26 @@ def test_a_path_the_script_checked_then_reported_itself_can_be_linked(box):
     r = call(ctx, "link_data_file", _args(data, requested=requested))
     assert not r.is_error, r.content
     assert len(asker.cards) == 1 and len(_rules(box)) == 1
+
+
+def test_a_globbed_data_folder_can_be_linked_to_where_it_moved(box):
+    """`glob("<文件夹>/*.csv")` 批量读：用户（经 AI）指认挪去的文件夹，推出文件夹规则——glob 也查改指表。"""
+    old = box.proj / "runs"
+    script = put(
+        box.proj / "fig.py",
+        f"import glob\nfiles = glob.glob({str(old / '*.csv')!r})\n"
+        "if not files:\n    raise FileNotFoundError('no csv')\n",
+    )
+    put(box.home / "Downloads" / "runs" / "a.csv", "1,2\n")
+    ctx = make_ctx(box, script_path=script, ask=Asker("yes"))
+    r = call(
+        ctx,
+        "link_data_file",
+        _args(box.home / "Downloads" / "runs", requested=str(old / "*.csv")),
+    )
+    assert not r.is_error, r.content
+    [rule] = _rules(box)
+    assert rule["kind"] == "prefix" and rule["to"] == str(box.home / "Downloads" / "runs")
 
 
 def test_a_literal_only_checked_with_exists_can_be_linked(box):

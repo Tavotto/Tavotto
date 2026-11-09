@@ -12,7 +12,9 @@ test.beforeEach(async ({ page }) => {
 /**
  * 改指表救不回的数据路径，经确认改写脚本里的那串（ADR 0110）——真后端、真 worker、真浏览器。
  *
- * 形状：脚本写死一个不存在的绝对路径，先 `exists()` 判空再 `sys.exit`（改指救不回的「探路」），再读它。
+ * 形状：脚本写死一个不存在的绝对路径，用底层的 `os.open` 读它（不经 Python 的打开入口，改指表救不回——
+ * 与 C++ 读取器同一档 `native`；Python 的探路 exists / listdir / glob 自 ADR 0106 2026-11-09 修订起都查改指表，
+ * 不再是这条出口的代表）。
  * 数据在另一个目录里。链路：运行并发现图 → 弹「找不到脚本要读的数据」（没有「记住位置」那条路）→
  * 浏览器模式粘贴数据所在文件夹 →「预览要改的地方」→ 确认页写出要改的文件与逐行 diff →
  * 不勾选不能改 → 勾选 →「修改脚本」→ 自动重跑，图按那份数据画出来（图名由数据决定：`values_42`）。
@@ -29,9 +31,7 @@ function writeProject(dir: string): string {
     'matplotlib.use("Agg")',
     'import matplotlib.pyplot as plt',
     '',
-    `if not os.path.exists("${OLD}"):`,
-    '    sys.exit("找不到数据")',
-    `with open("${OLD}") as f:`,
+    `with os.fdopen(os.open("${OLD}", os.O_RDONLY)) as f:`,
     '    value = f.read().strip()',
     'fig, ax = plt.subplots()',
     'ax.plot([0, 1], [0, int(value)])',
@@ -64,7 +64,7 @@ test(
     await expect(page.locator('[data-script-row="fig.py"]')).toBeVisible({ timeout: 30_000 })
     await page.locator('[data-script-run="fig.py"]').click()
 
-    // 1) 弹框：说出脚本要的那一串；是探路，给的是改写的出口
+    // 1) 弹框：说出脚本要的那一串；改指救不回，给的是改写的出口
     const dialog = page.locator('[data-dialog="missing-input"]')
     await expect(dialog).toBeVisible({ timeout: 120_000 })
     await expect(dialog.locator('[data-missing-input-path]')).toHaveText(OLD)
@@ -80,8 +80,8 @@ test(
     await expect(confirm).toBeVisible({ timeout: 30_000 })
     expect(readFileSync(path.join(dir, 'fig.py'), 'utf-8')).toBe(original)
     await expect(confirm.locator('[data-rewrite-warning]')).toContainText('fig.py')
-    // exists 与连带的 open 同一份 diff
-    await expect(confirm.locator('[data-rewrite-rows] li')).toHaveCount(2)
+    // 脚本里只写了一处
+    await expect(confirm.locator('[data-rewrite-rows] li')).toHaveCount(1)
     await testInfo.attach('确认界面', {
       body: await confirm.screenshot(),
       contentType: 'image/png',
