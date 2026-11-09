@@ -93,6 +93,32 @@ def test_a_caught_read_then_a_failed_write_never_offers_a_data_rewrite(tmp_path)
         assert not [r for r in final["requirements"] if r["kind"] == "input_location"]
 
 
+def test_nested_opener_offers_the_inner_missing_input_not_the_outer_path(tmp_path):
+    root = tmp_path / "project"
+    root.mkdir()
+    data = tmp_path / "absent" / "data.csv"
+    key = tmp_path / "absent" / "key.csv"
+    script = root / "fig.py"
+    script.write_text(
+        "import os\n"
+        f"key = {str(key)!r}\n"
+        "def opener(p, flags):\n"
+        "    open(key, encoding='utf-8').read()\n"
+        "    return os.open(p, flags)\n"
+        f"open({str(data)!r}, encoding='utf-8', opener=opener)\n",
+        encoding="utf-8",
+    )
+    with sidecar_app(root, tmp_path / "work", env_overrides=ENV) as app:
+        status, report = app.call(
+            "/api/engine/preparation-sessions", {"script": "fig.py", "execution": "native"}
+        )
+        assert status == 201, report
+        final = _settled(app, _run(app, report))
+        (requirement,) = [r for r in final["requirements"] if r["kind"] == "input_location"]
+        assert requirement["payload"]["requested"] == str(key)
+        assert requirement["payload"]["requested"] != str(data)
+
+
 def test_sensitive_native_run_does_not_offer_the_private_path(tmp_path):
     failure = pool.WorkerError("failed", code="script_error")
     session = SimpleNamespace(

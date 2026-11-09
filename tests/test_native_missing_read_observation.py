@@ -5,6 +5,7 @@ from __future__ import annotations
 import gc
 import io
 import json
+import os
 import weakref
 from pathlib import Path
 
@@ -42,6 +43,65 @@ def test_a_caught_read_followed_by_a_failed_write_to_the_same_path_is_not_a_read
             open(missing, encoding="utf-8")
         with pytest.raises(FileNotFoundError) as failure:
             open(missing, "w", encoding="utf-8")
+        assert observer.uncaught_missing_read(failure.value) is None
+    finally:
+        observer.uninstall()
+
+
+def test_nested_custom_opener_identifies_the_originating_read(tmp_path):
+    data = tmp_path / "missing" / "data.csv"
+    key = tmp_path / "missing" / "key.csv"
+    observer = figcapture.InputObserver(str(tmp_path), observe_failed_reads=True)
+    observer.install()
+    try:
+
+        def opener(_path, _flags):
+            return open(key, encoding="utf-8")
+
+        with pytest.raises(FileNotFoundError) as failure:
+            open(data, encoding="utf-8", opener=opener)
+        fact = observer.uncaught_missing_read(failure.value)
+        assert fact is not None and fact["requested"] == str(key)
+    finally:
+        observer.uninstall()
+
+
+def test_nested_opener_beyond_the_trace_limit_is_unknown(tmp_path):
+    def deep_read(depth):
+        if depth:
+            return deep_read(depth - 1)
+        return open(tmp_path / "key.csv", encoding="utf-8")
+
+    def opener(_path, _flags):
+        return deep_read(300)
+
+    observer = figcapture.InputObserver(str(tmp_path), observe_failed_reads=True)
+    observer.install()
+    try:
+        with pytest.raises(FileNotFoundError) as failure:
+            open(tmp_path / "data.csv", encoding="utf-8", opener=opener)
+        assert observer.uncaught_missing_read(failure.value) is None
+    finally:
+        observer.uninstall()
+
+
+@pytest.mark.parametrize("kind", ["observed_write", "unobserved_open", "no_filename"])
+def test_an_opener_cannot_attribute_a_different_failure_to_its_outer_read(kind, tmp_path):
+    data = tmp_path / "missing" / "data.csv"
+    key = tmp_path / "missing" / "key.csv"
+
+    def opener(_path, _flags):
+        if kind == "observed_write":
+            return open(key, "w", encoding="utf-8")
+        if kind == "unobserved_open":
+            return os.open(key, os.O_RDONLY)
+        raise FileNotFoundError("custom opener")
+
+    observer = figcapture.InputObserver(str(tmp_path), observe_failed_reads=True)
+    observer.install()
+    try:
+        with pytest.raises(FileNotFoundError) as failure:
+            open(data, encoding="utf-8", opener=opener)
         assert observer.uncaught_missing_read(failure.value) is None
     finally:
         observer.uninstall()

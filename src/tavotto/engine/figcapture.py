@@ -4204,6 +4204,7 @@ class InputObserver:
             return None
         try:
             trace = exc.__traceback__
+            candidate = None
             for _ in range(256):
                 if trace is None:
                     break
@@ -4211,9 +4212,21 @@ class InputObserver:
                 if frame.f_code in self._failed_read_codes:
                     local = frame.f_locals
                     fact = local.get("_read_failure_fact")
-                    if local.get("observer") is self and isinstance(fact, dict):
-                        return dict(fact)
+                    if local.get("observer") is self:
+                        # A deeper observed write must clear an outer read; its
+                        # failure is not evidence of a missing input.
+                        candidate = dict(fact) if isinstance(fact, dict) else None
                 trace = trace.tb_next
+            if trace is not None or candidate is None:
+                return None  # deeper frames may contain the real failure
+            filename = exc.filename
+            if type(filename) not in (str, bytes, pathlib.PosixPath, pathlib.WindowsPath):
+                return None
+            # A custom opener can fail inside an unobserved os.open or raise a
+            # new exception: the outer wrapper's path is not necessarily the
+            # failing path. Only the exception's own filename can confirm it.
+            if os.fsdecode(os.fspath(filename)) == candidate["requested"]:
+                return candidate
         except Exception:  # noqa: BLE001 — never replace the user's original failure
             return None
         return None
