@@ -843,10 +843,11 @@ async function rerunEntry(entry: PrepEntry): Promise<void> {
 async function copyDataAndRerun(entry: PrepEntry, payload: MissingInputOffer, elevate: boolean): Promise<string | null> {
   const guard = captureProjectEpoch()
   const requested = payload.requested
-  if (!requested) return null
+  const token = payload.copy?.token
+  if (!requested || !token) return null
   let result: Awaited<ReturnType<typeof copyInputData>>
   try {
-    result = await copyInputData(payload.script, requested, elevate)
+    result = await copyInputData(token, elevate)
   } catch (e) {
     return guard.still() ? backendErrorText(e) : null
   }

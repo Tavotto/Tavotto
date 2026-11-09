@@ -33,6 +33,10 @@ def _link(root, requested, chosen):
     inputremap.link(str(root), str(requested), str(chosen), "file")
 
 
+def _token(root, target):
+    return inputcopy.offer(str(root), str(target))["token"]
+
+
 def _setup(tmp_path, root, *, parent=True):
     source = tmp_path / "moved" / "values.csv"
     source.parent.mkdir()
@@ -84,7 +88,7 @@ def test_a_directory_source_is_never_copied(project, tmp_path):
     inputremap.add_rule(str(project), {"kind": "file", "from": str(target), "to": str(folder)})
     got = inputcopy.offer(str(project), str(target))
     assert (got["state"], got["reason"]) == ("auth_failed", "source_not_file")
-    res = inputcopy.run(str(project), str(target))
+    res = inputcopy.run(str(project), _token(project, target))
     assert (res["state"], res["reason"]) == ("auth_failed", "source_not_file")
     assert not target.exists()
 
@@ -94,7 +98,7 @@ def test_a_directory_source_is_never_copied(project, tmp_path):
 
 def test_copy_makes_an_identical_file_and_leaves_no_temp_file(project, tmp_path):
     source, target = _setup(tmp_path, project)
-    res = inputcopy.run(str(project), str(target))
+    res = inputcopy.run(str(project), _token(project, target))
     assert res["state"] == "done" and res["via"] == "normal"
     assert target.read_bytes() == b"7\n"
     assert source.read_bytes() == b"7\n"  # 原件不动
@@ -104,7 +108,7 @@ def test_copy_makes_an_identical_file_and_leaves_no_temp_file(project, tmp_path)
 def test_an_existing_target_is_never_overwritten(project, tmp_path):
     _, target = _setup(tmp_path, project)
     target.write_bytes(b"MINE")
-    res = inputcopy.run(str(project), str(target))
+    res = inputcopy.run(str(project), _token(project, target))
     assert res["state"] == "exists"
     assert target.read_bytes() == b"MINE"
     assert sorted(p.name for p in target.parent.iterdir()) == ["values.csv"]
@@ -116,7 +120,7 @@ def test_a_dangling_symlink_target_is_not_written_through(project, tmp_path):
     _, target = _setup(tmp_path, project)
     elsewhere = tmp_path / "elsewhere.csv"
     target.symlink_to(elsewhere)
-    res = inputcopy.run(str(project), str(target))
+    res = inputcopy.run(str(project), _token(project, target))
     assert res["state"] == "auth_failed"
     assert not elsewhere.exists()
 
@@ -129,7 +133,7 @@ def test_no_permission_is_denied_and_not_elevated_unless_asked(project, tmp_path
     monkeypatch.setattr(inputcopy, "_elevate", lambda s, t: asked.append((s, t)))
     target.parent.chmod(0o555)
     try:
-        res = inputcopy.run(str(project), str(target))
+        res = inputcopy.run(str(project), _token(project, target))
         assert (res["state"], res["reason"]) == ("denied", "access_denied")
         assert asked == []  # 没点「授权后复制」绝不提权
         assert not target.exists()
@@ -152,7 +156,7 @@ def test_elevation_runs_only_after_denied_and_only_for_this_copy(project, tmp_pa
     monkeypatch.setattr(inputcopy, "_elevate", fake)
     target.parent.chmod(0o555)
     try:
-        res = inputcopy.run(str(project), str(target), elevate=True)
+        res = inputcopy.run(str(project), _token(project, target), elevate=True)
     finally:
         target.parent.chmod(0o755)
     assert res["state"] == "done" and res["via"] == "elevated"
@@ -176,7 +180,7 @@ def test_a_failed_or_cancelled_elevation_ends_on_the_last_card(
 
     monkeypatch.setattr(os, "open", deny)
     monkeypatch.setattr(inputcopy, "_elevate", fail)
-    res = inputcopy.run(str(project), str(target), elevate=True)
+    res = inputcopy.run(str(project), _token(project, target), elevate=True)
     assert (res["state"], res["reason"]) == ("auth_failed", failure)
     assert not target.exists()
 
@@ -193,7 +197,7 @@ def test_read_only_media_and_full_disks_end_on_the_last_card_without_offering_a_
             raise OSError(_c, os.strerror(_c))
 
         monkeypatch.setattr(os, "open", boom)
-        res = inputcopy.run(str(project), str(target), elevate=True)
+        res = inputcopy.run(str(project), _token(project, target), elevate=True)
         assert (res["state"], res["reason"]) == ("auth_failed", reason)
     assert asked == []
 
@@ -210,7 +214,7 @@ def test_eperm_in_a_protected_macos_folder_is_the_system_protection_card(
         raise PermissionError(errno.EPERM, "Operation not permitted")
 
     monkeypatch.setattr(os, "open", eperm)
-    res = inputcopy.run(str(project), str(target), elevate=True)
+    res = inputcopy.run(str(project), _token(project, target), elevate=True)
     assert res["state"] == "macos_protected" and res["protected_kind"] == "desktop"
     assert asked == []  # 管理员密码解决不了 TCC，不提权
 
@@ -223,7 +227,7 @@ def test_eperm_elsewhere_is_an_ordinary_permission_problem(project, tmp_path, mo
         raise PermissionError(errno.EPERM, "Operation not permitted")
 
     monkeypatch.setattr(os, "open", eperm)
-    assert inputcopy.run(str(project), str(target))["state"] == "denied"
+    assert inputcopy.run(str(project), _token(project, target))["state"] == "denied"
 
 
 def test_an_unclassified_error_still_lands_on_a_card(project, tmp_path, monkeypatch):
@@ -233,7 +237,7 @@ def test_an_unclassified_error_still_lands_on_a_card(project, tmp_path, monkeypa
         raise OSError(errno.EIO, "io")
 
     monkeypatch.setattr(os, "open", odd)
-    assert inputcopy.run(str(project), str(target))["state"] == "auth_failed"
+    assert inputcopy.run(str(project), _token(project, target))["state"] == "auth_failed"
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="TCC 只在 macOS")
@@ -254,7 +258,7 @@ def test_protected_kind_names_the_tcc_folders(monkeypatch, tmp_path):
 
 def test_undo_removes_only_the_copy_we_made(project, tmp_path):
     _, target = _setup(tmp_path, project)
-    assert inputcopy.run(str(project), str(target))["state"] == "done"
+    assert inputcopy.run(str(project), _token(project, target))["state"] == "done"
     (row,) = inputcopy.records(str(project))
     assert row["size"] == 2 and len(row["sha256"]) == 64
     # 用户后来改过：不删
@@ -269,7 +273,7 @@ def test_undo_removes_only_the_copy_we_made(project, tmp_path):
 
 def test_the_record_stays_in_local_project_settings_only(project, tmp_path):
     _, target = _setup(tmp_path, project)
-    inputcopy.run(str(project), str(target))
+    inputcopy.run(str(project), _token(project, target))
     assert config.project_settings(str(project))["input_copies"][0]["target"] == str(target)
     # 不进项目目录
     assert not any(p.name == "input_copies" for p in project.rglob("*"))
@@ -379,7 +383,7 @@ def test_elevation_refuses_executable_looking_targets_and_system_directories(
         raise PermissionError(errno.EACCES, "denied")
 
     monkeypatch.setattr(os, "open", deny)
-    res = inputcopy.run(str(project), str(target), elevate=True)
+    res = inputcopy.run(str(project), _token(project, target), elevate=True)
     assert (res["state"], res["reason"]) == ("auth_failed", "refused_target")
 
 
@@ -392,7 +396,7 @@ def test_windows_acl_deny_is_the_denied_card_and_leaves_nothing(project, tmp_pat
         ["icacls", folder, "/deny", "*S-1-1-0:(OI)(CI)(WD,AD)"], check=True, capture_output=True
     )
     try:
-        res = inputcopy.run(str(project), str(target))
+        res = inputcopy.run(str(project), _token(project, target))
         assert res["state"] == "denied", res
         assert not target.exists()
     finally:
@@ -410,6 +414,29 @@ def test_windows_copy_handles_non_ascii_and_spaces_without_overwriting(project, 
     target = tmp_path / "脚本 要的" / "数据 值.csv"
     target.parent.mkdir()
     inputremap.link(str(project), str(target), str(source), "file")
-    assert inputcopy.run(str(project), str(target))["state"] == "done"
+    assert inputcopy.run(str(project), _token(project, target))["state"] == "done"
     assert target.read_bytes() == b"1,2\r\n"
-    assert inputcopy.run(str(project), str(target))["state"] == "exists"
+    assert inputcopy.run(str(project), _token(project, target))["state"] == "exists"
+
+
+def test_a_forged_or_foreign_token_never_reaches_the_filesystem(project, tmp_path):
+    _, target = _setup(tmp_path, project)
+    token = _token(project, target)
+    # 请求里能带的只有令牌：路径串、别的项目的令牌、非字符串都拒绝
+    for bad in (str(target), "nope", None, 5, "../" + token):
+        res = inputcopy.run(str(project), bad)
+        assert (res["state"], res["reason"]) == ("auth_failed", "no_source"), bad
+    other = tmp_path / "other-project"
+    other.mkdir()
+    assert inputcopy.run(str(other), token)["reason"] == "no_source"
+    assert not target.exists()
+    assert inputcopy.run(str(project), token)["state"] == "done"
+
+
+def test_undo_uses_only_the_recorded_target(project, tmp_path):
+    _, target = _setup(tmp_path, project)
+    inputcopy.run(str(project), _token(project, target))
+    stray = tmp_path / "wanted" / "other.csv"
+    stray.write_bytes(b"7\n")
+    assert inputcopy.undo(str(project), str(stray))["state"] == "not_recorded"
+    assert stray.exists()

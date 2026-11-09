@@ -36,8 +36,10 @@ native 去读**脚本写的原路径**，路径不存在，`FileNotFoundError`�
 
 ### 二、复制的条件与边界（`inputcopy.run`，`POST /api/engine/input-copy`）
 
-- **源永远来自改指表**，请求里只有 `{script, requested, elevate}`；`requested` 必须是目标尚不存在时仍对得上脚本读取常量的路径
-  （`inputremap.native_miss` 同一把尺子），端点只认窗口里的会话（与确认改写脚本同一道门，`_script_edit_binding`）。
+- **请求里没有路径。**提议载荷带一个不透明令牌 `copy.token`（服务端观察到 native 读取落空那一刻存下的 `(项目, 脚本, 读取路径)`，进程内、有上限、按项目绑定），
+  `POST /api/engine/input-copy` 只收 `{token, elevate}`：读取路径取自服务端存的那份，**源永远来自改指表**，用户可控的字符串到不了任何文件系统调用
+  （CodeQL `py/path-injection` 的污点断在这里；选令牌而不是「在脚本读取常量里找相等项」，是因为 native 观察到的是完整读取路径，
+  脚本里可能只有它的目录常量）。端点只认窗口里的会话（与确认改写脚本同一道门，`_script_edit_binding`）。撤销只按设置里存的记录取目标。
 - 只复制**文件**；源是目录 → 不复制（c4）。目标**已存在**（任何形态）→ 不复制、不覆盖、视作成功直接重跑；悬空符号链接不穿过去写（c4）。
   父目录不存在 → 不建多级目录（c4）。
 - 先用普通权限；**原子写**：同目录临时名写满、`fsync`，再以不覆盖的方式发布（POSIX `link` + 删临时名；盘不支持硬链接退成「查无再 rename」；

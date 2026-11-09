@@ -116,7 +116,37 @@ def protected_kind(directory: str) -> str | None:
     return None
 
 
-def offer(root: str | os.PathLike, requested: str) -> dict | None:
+#: 提议令牌 → 服务端当时观察到的 `(项目根, 脚本, 读取路径)`。路径值永远来自服务端自己的观察（native 运行时的读取事实），
+#: 请求里只有一个不透明令牌，只当字典键用：用户可控的字符串到不了任何文件系统调用（CodeQL py/path-injection 的污点断在这里）。
+_OFFERS: dict[str, tuple[str, str, str]] = {}
+_OFFERS_MAX = 64
+
+
+def _mint(root: str | os.PathLike, script: str, requested: str) -> str:
+    key = (str(root), script, requested)
+    with _LOCK:
+        for token, value in _OFFERS.items():
+            if value == key:
+                return token
+        token = secrets.token_urlsafe(16)
+        _OFFERS[token] = key
+        while len(_OFFERS) > _OFFERS_MAX:
+            _OFFERS.pop(next(iter(_OFFERS)))
+        return token
+
+
+def lookup(root: str | os.PathLike, token: object) -> str | None:
+    """令牌对应的读取路径（服务端自己存的那一份）；令牌未知、或属于别的项目回 None。"""
+    if not isinstance(token, str):
+        return None
+    with _LOCK:
+        value = _OFFERS.get(token)
+    if value is None or value[0] != str(root):
+        return None
+    return value[2]
+
+
+def offer(root: str | os.PathLike, requested: str, script: str = "") -> dict | None:
     """native 读 `requested` 落空时的复制提议；不该提议回 None（走原有出路）。
 
     条件：`requested` 是本机绝对路径；改指表命中它；命中的那份**存在**。其余形状都不提议：
@@ -133,6 +163,7 @@ def offer(root: str | os.PathLike, requested: str) -> dict | None:
         return None
     directory = os.path.dirname(requested)
     base = {
+        "token": _mint(root, script, requested),
         "source": source,
         "target": requested,
         "dir": directory,
@@ -466,12 +497,15 @@ def _sha256_of(path: str) -> str:
     return h.hexdigest()
 
 
-def run(root: str | os.PathLike, requested: str, *, elevate: bool = False) -> dict:
+def run(root: str | os.PathLike, token: object, *, elevate: bool = False) -> dict:
     """点了「复制过去再运行」/「授权后复制」：返回 `{state, reason?, …}`。
 
     `state` ∈ `done`（复制好了）/ `exists`（目标本来就在，没动它）/ `denied` / `macos_protected` / `auth_failed`。
     前两档前端直接重跑；后三档就是卡片 c2 / c3 / c4。**任何分支都不抛**：每一种结果都有一个终态。
     """
+    requested = lookup(root, token)  # 路径值是服务端当时观察到的那一份，不是请求里的字符串
+    if requested is None:
+        return {"state": STATE_FAILED, "reason": "no_source"}
     try:
         source, target = resolve(root, requested)
     except CopyError as exc:
@@ -556,6 +590,7 @@ def undo(root: str | os.PathLike, target: str) -> dict:
         row = next((r for r in rows if r["target"] == target), None)
         if row is None:
             return {"state": "not_recorded"}
+        target = row["target"]  # 此后只用设置里存的那一份，不用请求里的字符串
         if not os.path.lexists(target):
             _drop(root, rows, target)
             return {"state": "missing"}

@@ -5593,6 +5593,8 @@ export type MissingInputCopyState = 'ask' | 'denied' | 'macos_protected' | 'auth
 
 export interface MissingInputCopy {
   state: MissingInputCopyState
+  /** 服务端存下的不透明令牌：点复制时只回它，请求里没有任何路径（ADR 0173） */
+  token: string
   source: string
   target: string
   dir: string
@@ -5641,14 +5643,14 @@ export interface InputCopyResult {
 }
 
 /**
- * 把用户指认过的数据复制到脚本要读的原路径（ADR 0173）。源由后端按改指表推出，请求里没有源。
+ * 把用户指认过的数据复制到脚本要读的原路径（ADR 0173）。路径与源都由后端自己决定，请求里只有提议令牌。
  * `elevate` 只在用户点了「授权后复制」时为 true；`done` / `exists` 之后前端直接重跑。
  */
-export const copyInputData = (script: string, requested: string, elevate = false) =>
+export const copyInputData = (token: string, elevate = false) =>
   jsonFetch<InputCopyResult>('/api/engine/input-copy', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ script, requested, elevate }),
+    body: JSON.stringify({ token, elevate }),
   })
 
 /** c3 的主按钮：打开 macOS「完全磁盘访问」面板（后端按固定地址拉起，页面没有 opener 权限） */

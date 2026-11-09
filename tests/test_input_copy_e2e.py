@@ -11,7 +11,6 @@ import os
 import pytest
 
 from support import nativekit
-from support.foundation_app import HttpError
 from test_execution_fallback_e2e import ENV, SESSIONS, _create, _run, _settled, sidecar_app
 
 pytestmark = nativekit.needs_user_python
@@ -77,9 +76,7 @@ def test_a_confirmed_data_identity_is_copied_to_the_original_path_and_the_rerun_
         assert offer["copy"]["state"] == "ask"
         assert (offer["copy"]["source"], offer["copy"]["target"]) == (str(data), str(missing))
         assert not missing.exists()  # 提议本身什么都不写
-        status, res = app.call(
-            "/api/engine/input-copy", {"script": "fig.py", "requested": str(missing)}
-        )
+        status, res = app.call("/api/engine/input-copy", {"token": offer["copy"]["token"]})
         assert status == 200 and res["state"] == "done", res
         assert missing.read_text(encoding="utf-8") == "7"
         assert data.read_text(encoding="utf-8") == "7"  # 原件不动
@@ -89,9 +86,7 @@ def test_a_confirmed_data_identity_is_copied_to_the_original_path_and_the_rerun_
         assert (root / "cache.csv").read_text() == "7"
         # 第二次点：目标已在，不覆盖、不报错
         missing.write_text("mine", encoding="utf-8")
-        status, again = app.call(
-            "/api/engine/input-copy", {"script": "fig.py", "requested": str(missing)}
-        )
+        status, again = app.call("/api/engine/input-copy", {"token": offer["copy"]["token"]})
         assert status == 200 and again["state"] == "exists", again
         assert missing.read_text(encoding="utf-8") == "mine"
 
@@ -106,9 +101,7 @@ def test_without_a_confirmed_data_identity_nothing_is_offered(tmp_path):
             assert "copy" not in req["payload"]
         assert not missing.exists()
         # 端点也不会凭空复制
-        status, res = app.call(
-            "/api/engine/input-copy", {"script": "fig.py", "requested": str(missing)}
-        )
+        status, res = app.call("/api/engine/input-copy", {"token": "no-such-token"})
         assert status == 200 and res["state"] == "auth_failed" and res["reason"] == "no_source"
         assert not missing.exists()
 
@@ -122,9 +115,7 @@ def test_a_missing_parent_directory_is_the_last_card_and_is_not_created(tmp_path
         )
         offer = _offer(_first_run(app))
         assert (offer["copy"]["state"], offer["copy"]["reason"]) == ("auth_failed", "no_parent")
-        status, res = app.call(
-            "/api/engine/input-copy", {"script": "fig.py", "requested": str(missing)}
-        )
+        status, res = app.call("/api/engine/input-copy", {"token": offer["copy"]["token"]})
         assert status == 200 and res["state"] == "auth_failed" and res["reason"] == "no_parent"
         assert not missing.parent.exists()
 
@@ -140,19 +131,17 @@ def test_a_read_only_directory_reports_denied_and_leaves_nothing_behind(tmp_path
             "/api/engine/input-remap",
             {"requested": str(missing), "chosen": str(data), "chosen_kind": "file"},
         )
-        _first_run(app)
+        offer = _offer(_first_run(app))
         missing.parent.chmod(0o555)
         try:
-            status, res = app.call(
-                "/api/engine/input-copy", {"script": "fig.py", "requested": str(missing)}
-            )
+            status, res = app.call("/api/engine/input-copy", {"token": offer["copy"]["token"]})
         finally:
             missing.parent.chmod(0o755)
         assert status == 200 and res["state"] == "denied", res
         assert list(missing.parent.iterdir()) == []
 
 
-def test_the_endpoint_only_accepts_a_path_the_script_really_reads(tmp_path):
+def test_the_endpoint_takes_only_an_opaque_token_never_a_path(tmp_path):
     root, data, missing = _project(tmp_path)
     stray = tmp_path / "incoming" / "other.csv"
     with sidecar_app(root, tmp_path / "work", env_overrides=ENV) as app:
@@ -160,11 +149,19 @@ def test_the_endpoint_only_accepts_a_path_the_script_really_reads(tmp_path):
             "/api/engine/input-remap",
             {"requested": str(missing), "chosen": str(data), "chosen_kind": "file"},
         )
-        for bad in (str(stray), "relative.csv", 5):
-            with pytest.raises(HttpError) as exc:
-                app.call("/api/engine/input-copy", {"script": "fig.py", "requested": bad})
-            assert exc.value.status == 400, bad
-        with pytest.raises(HttpError) as exc:
-            app.call("/api/engine/input-copy", {"script": "../x.py", "requested": str(missing)})
-        assert exc.value.status >= 400
+        offer = _offer(_first_run(app))
+        # 请求里的路径串、脚本名一律不被当成来源：没有令牌就是「没有来源」
+        for body in (
+            {"script": "fig.py", "requested": str(missing)},
+            {"script": "fig.py", "requested": str(stray)},
+            {"token": str(missing)},
+            {"token": 5},
+        ):
+            status, res = app.call("/api/engine/input-copy", body)
+            assert status == 200 and (res["state"], res["reason"]) == (
+                "auth_failed",
+                "no_source",
+            ), body
         assert not stray.exists() and not missing.exists()
+        status, res = app.call("/api/engine/input-copy", {"token": offer["copy"]["token"]})
+        assert res["state"] == "done"

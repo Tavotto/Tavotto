@@ -11317,38 +11317,20 @@ def api_engine_input_remap_delete():
 def api_engine_input_copy():
     """用户点了「复制过去再运行」/「授权后复制」（ADR 0173）：把他指认过的那份数据复制到脚本要读的原路径。
 
-    `{script, requested, elevate?}`。源只取自改指表（请求里没有源）；`requested` 必须是这份脚本里能对上的、
-    此刻仍不存在的读取路径，且只认窗口里的会话（与确认改写脚本同一道门）。结果 `{state}`：`done` / `exists`
-    前端直接重跑；`denied` / `macos_protected` / `auth_failed` 就是卡片的 c2 / c3 / c4。不抛：每种结果都有终态。
+    `{token, elevate?}`。`token` 是提议载荷里 `copy.token`：服务端观察到 native 读取落空那一刻存下的不透明令牌，
+    请求里**没有任何路径**——读取路径与脚本都取自服务端自己存的那一份，源取自改指表。端点只认窗口里的会话
+    （与确认改写脚本同一道门，`_script_edit_binding`）。结果 `{state}`：`done` / `exists` 前端直接重跑；
+    `denied` / `macos_protected` / `auth_failed` 就是卡片的 c2 / c3 / c4。不抛：每种结果都有终态。
     """
     ctx = current_ctx()
-    root = str(ctx.path)
     body = request.get_json(force=True) or {}
-    script, requested = body.get("script"), body.get("requested")
     try:
         _script_edit_binding()
-        path = engine_scriptbackup.resolve(ctx.path, script)
     except engine_scriptbackup.ScriptEditError as exc:
         return _script_edit_error(exc)
-    if not isinstance(requested, str) or not engine_inputcopy.is_native_absolute(requested):
-        return _input_remap_error(
-            engine_inputremap.RemapError(
-                engine_inputremap.ERROR_REQUESTED_INVALID, "需要脚本读取的绝对路径"
-            )
-        )
-    if not os.path.lexists(requested):
-        # 目标仍不存在时才要求它对得上脚本里的读取常量；已经在了（比如用户刚手动放回去）就是「已存在」，不复制
-        rel = path.relative_to(ctx.path).as_posix()
-        if (
-            engine_inputremap.native_miss(rel, root, {"filename": requested, "cwd": ""}, rules=[])
-            is None
-        ):
-            return _input_remap_error(
-                engine_inputremap.RemapError(
-                    engine_inputremap.ERROR_REQUESTED_INVALID, "脚本里没有对应的读取路径"
-                )
-            )
-    result = engine_inputcopy.run(root, requested, elevate=body.get("elevate") is True)
+    result = engine_inputcopy.run(
+        str(ctx.path), body.get("token"), elevate=body.get("elevate") is True
+    )
     LOG.info("数据复制: %s（%s）", result.get("state"), result.get("reason") or "-")
     return jsonify({"ok": True, **result})
 
@@ -11959,7 +11941,9 @@ def _native_missing_input_offer(failure, session, plan):
                 == plan.script_revision
             ):
                 # ADR 0173：这条路径已有用户确认过的数据身份时，多给一个「复制过去再运行」的提议
-                copy = engine_inputcopy.offer(plan.project_root, offer.get("requested") or "")
+                copy = engine_inputcopy.offer(
+                    plan.project_root, offer.get("requested") or "", plan.script
+                )
                 if copy is not None:
                     offer["copy"] = copy
                 failure.missing_input = offer

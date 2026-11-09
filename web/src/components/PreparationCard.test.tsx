@@ -3095,7 +3095,7 @@ describe('准备出错：后端本地详情接到已有恢复动作（P05a，AC-
 
 describe('缺数据 · 复制提议（ADR 0173）：c1–c4 四张卡', () => {
   const copyOf = (state: string, extra: Record<string, unknown> = {}) => ({
-    state, source: '/moved/values.csv', target: '/wanted/data/values.csv', dir: '/wanted/data', dir_name: 'data', ...extra,
+    state, token: 'tok-1', source: '/moved/values.csv', target: '/wanted/data/values.csv', dir: '/wanted/data', dir_name: 'data', ...extra,
   })
   const payloadOf = (state: string, extra: Record<string, unknown> = {}) => ({
     script: 'plot.py', requested: '/wanted/data/values.csv', absolute: true, via: 'native', others: [], copy: copyOf(state, extra),
@@ -3146,13 +3146,13 @@ describe('缺数据 · 复制提议（ADR 0173）：c1–c4 四张卡', () => {
     expect(line().length).toBeLessThan(80)
   })
 
-  it('「复制过去再运行」：请求只带脚本与路径（没有源）；成功就重跑', async () => {
+  it('「复制过去再运行」：请求只带不透明令牌（没有路径、没有源）；成功就重跑', async () => {
     vi.mocked(copyInputData).mockResolvedValue({ ok: true, state: 'done', target: '/wanted/data/values.csv' })
     mockAct.mockResolvedValue(report() as never)
     await mount()
     await openWith(failed(payloadOf('ask')))
     await click(primary())
-    expect(copyInputData).toHaveBeenCalledWith('plot.py', '/wanted/data/values.csv', false)
+    expect(copyInputData).toHaveBeenCalledWith('tok-1', false)
     expect(mockAct).toHaveBeenCalledWith('psess-1', expect.objectContaining({ action_id: 'act-run' }), 'pj-a', expect.anything())
   })
 
@@ -3178,7 +3178,7 @@ describe('缺数据 · 复制提议（ADR 0173）：c1–c4 四张卡', () => {
     expect(later()).toBeUndefined()
     vi.mocked(copyInputData).mockResolvedValueOnce({ ok: true, state: 'auth_failed', reason: 'cancelled' })
     await click(primary())
-    expect(copyInputData).toHaveBeenLastCalledWith('plot.py', '/wanted/data/values.csv', true)
+    expect(copyInputData).toHaveBeenLastCalledWith('tok-1', true)
   })
 
   it('c4：授权被拒 / 仍失败 → 只剩「改脚本里的路径」与「让 AI 修复」', async () => {

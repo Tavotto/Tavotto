@@ -190,7 +190,7 @@ order: 50
     找不到对应读取常量的动态路径、子进程和未观察到的读取不猜。
     看护 `tests/test_native_missing_read_observation.py`、`tests/test_native_input_recovery_e2e.py`。
     **native 缺读取的第二条出路：复制（ADR 0173，`engine/inputcopy.py`）**：上述确证成立、路径是本机绝对路径、改指表命中它且命中的那份是存在的普通文件时，
-    载荷多一个 `copy` 提议；用户点了才经 `POST /api/engine/input-copy` 把那份文件**复制**到脚本要读的原路径（源只取自改指表、不覆盖、不建目录、
+    载荷多一个 `copy` 提议；用户点了才经 `POST /api/engine/input-copy`（只收提议里的不透明令牌，路径服务端自己存）把那份文件**复制**到脚本要读的原路径（源只取自改指表、不覆盖、不建目录、
     原子写、记本机撤销记录），再重跑。每个结果都落在 `done` / `exists` / `denied` / `macos_protected` / `auth_failed` 之一，卡片 c2–c4 各有出路；
     提权只做这一次复制（Windows 壳的 `--elevated-copy`、macOS `osascript`），macOS 受保护文件夹不提权。native 仍不改指、不装钩子。
     看护 `tests/test_input_copy.py`、`tests/test_input_copy_e2e.py`。
