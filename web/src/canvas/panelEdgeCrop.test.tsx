@@ -6,11 +6,13 @@
  * 吸附半径 6px ≈ 1.6mm ≈ 1.6% 图宽。ink_bbox 左缘在 0.10。
  */
 import { formatMessage, literal } from '@/i18n'
+import { produce } from 'immer'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { Manifest } from '@/lib/api'
+import { syncPanelNativeSize } from '@/lib/panelNativeSize'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
@@ -88,6 +90,53 @@ async function setup(extra: Partial<PanelObject> = {}, ink: typeof INK | null = 
   useDocumentStore.setState({ past: [], future: [] })
 }
 
+const ylabelOut = (fracLeft: number) =>
+  ({
+    gid: 'ylabel',
+    role: 'axis_label',
+    label: 'y',
+    bbox: [-fracLeft, 0.2, 0.05, 0.6],
+    editable: [],
+    draggable: true,
+  }) as Manifest['elements'][number]
+
+/** 把当前面板的渲染换成带这些元素的 manifest（图幅不变） */
+function mountWith(extra: Manifest['elements']) {
+  const p = get()
+  const base = manifestOf(INK, true)
+  useRenderStore.getState().patch(renderKeyOf(p), {
+    fileId: p.fileId,
+    manifest: { ...base, elements: [...base.elements, ...extra] },
+    svg: '<svg xmlns="http://www.w3.org/2000/svg"/>',
+    rev: 1,
+    status: 'ready',
+    lastPatches: JSON.stringify(p.overrides),
+  })
+}
+
+/** 模拟新图回来：同步器按缩放比不变换算面板（`syncPanelNativeSize`），再放上这个变体的精确渲染 */
+function settle(size: [number, number], extra: Manifest['elements'] = []) {
+  useDocumentStore.setState((s) => ({
+    doc: produce(s.doc, (d) => {
+      const o = d.objects.find((x) => x.id === 'pa') as PanelObject
+      syncPanelNativeSize(o, size[0], size[1])
+    }),
+  }))
+  const p = get()
+  const base = manifestOf(INK, true)
+  act(() => {
+    useRenderStore.getState().patch(renderKeyOf(p), {
+      fileId: p.fileId,
+      manifest: { ...base, size_mm: size, elements: [...base.elements, ...extra] },
+      svg: '<svg xmlns="http://www.w3.org/2000/svg"/>',
+      rev: 2,
+      status: 'ready',
+      lastPatches: JSON.stringify(p.overrides),
+    })
+    useRenderStore.setState((s) => ({ latest: { ...s.latest, [p.fileId]: renderKeyOf(p) } }))
+  })
+}
+
 const down = () =>
   ({ clientX: 0, clientY: 0, button: 0, stopPropagation() {} }) as unknown as React.PointerEvent
 const fire = (
@@ -110,6 +159,7 @@ function drag(dir: 'w' | 'e' | 'n' | 's', to: [number, number], mods: { altKey?:
 }
 
 afterEach(() => {
+  useUiStore.getState().setStatus(null)
   useInteractionStore.getState().end()
   useInteractionStore.getState().setFigureFramePending(null)
 })
@@ -321,9 +371,9 @@ describe('排版：没裁剪过的图从图边往外拖 = 改图幅（ADR 0161 �
     expect(useInteractionStore.getState().figureFramePending).toBeNull()
   })
 
-  it('同一下拖动先往里再往外：裁剪一并丢掉，只留图幅一条历史', () => {
+  it('同一下拖动先按 ⌥ 往里裁、松开 ⌥ 再往外：裁剪一并丢掉，只留图幅一条历史', () => {
     startPanelHandleDrag(down(), 'pa', 'e')
-    fire('pointermove', [-5, 0])
+    fire('pointermove', [-5, 0], { altKey: true })
     expect(get().crop).toBeDefined()
     fire('pointermove', [20, 0])
     fire('pointerup', [20, 0])
@@ -332,9 +382,63 @@ describe('排版：没裁剪过的图从图边往外拖 = 改图幅（ADR 0161 �
     expect(useDocumentStore.getState().past).toHaveLength(1)
   })
 
-  it('往里拖仍是裁剪，不碰图幅', () => {
-    drag('e', [-5, 0])
+  it('往里拖（不按 ⌥）= 缩小图幅，文字 pt 不变；不裁剪（ADR 0161 修订 2026-11-09）', () => {
+    const readout = drag('e', [-20, 0])
+    expect(readout).toMatchObject({ text: '改图幅 · 宽 100 → 80 mm', box: { x: 10, w: 80 } })
+    expect(sizeOverride()).toEqual([80, 75])
+    expect(get().crop).toBeUndefined()
+    expect(useDocumentStore.getState().past).toHaveLength(1)
+  })
+
+  it('往里钳到引擎下限（20 mm）', () => {
+    drag('e', [-95, 0])
+    expect(sizeOverride()).toEqual([20, 75])
+  })
+
+  it('按住 ⌥ 往里 = 裁剪，不碰图幅；越过内容边缘不另设闸', () => {
+    drag('e', [-5, 0], { altKey: true })
     expect(get().crop?.w).toBeCloseTo(0.95, 12)
+    expect(sizeOverride()).toBeUndefined()
+    drag('w', [20, 0], { altKey: true })
+    expect(get().crop?.x).toBeCloseTo(0.2, 12)
+  })
+
+  it('缩小后文字被挤出图幅：新图回来时提示，点了按刚好放得下的图幅出、页面框不动', () => {
+    drag('e', [-20, 0])
+    expect(sizeOverride()).toEqual([80, 75])
+    // 新图回来：y 轴标题探出左边 5 mm
+    settle([80, 75], [ylabelOut(5 / 80)])
+    const ui = useUiStore.getState()
+    expect(ui.status && formatMessage(ui.status)).toBe('文字放不下了，要等比缩小吗？')
+    expect(ui.statusAction && formatMessage(ui.statusAction.label)).toBe('缩小到 94%')
+    act(() => ui.statusAction!.run())
+    expect(useUiStore.getState().status).toBeNull()
+    expect(sizeOverride()).toEqual([85, 79.69])
+    expect(useDocumentStore.getState().past).toHaveLength(2)
+    // 渲染回来同步器按缩放比不变换算后，页面上的框正好是拖到的那个
+    settle([85, 79.69])
+    expect(get().w).toBeCloseTo(80, 6)
+    expect(get().h).toBeCloseTo(75, 6)
+    expect(get()).toMatchObject({ x: 10, y: 20 })
+    expect(useUiStore.getState().status).toBeNull()
+  })
+
+  it('缩小后没有新增探出（原来就压边的不算）：不提示；往外拖从不提示', () => {
+    mountWith([ylabelOut(2 / 100)])
+    drag('e', [-20, 0])
+    settle([80, 75], [ylabelOut(2 / 80)])
+    expect(useUiStore.getState().status).toBeNull()
+    drag('e', [20, 0])
+    settle([100, 75], [ylabelOut(10 / 100)])
+    expect(useUiStore.getState().status).toBeNull()
+  })
+
+  it('提示挂着时撤销了：点按钮什么都不做', () => {
+    drag('e', [-20, 0])
+    settle([80, 75], [ylabelOut(5 / 80)])
+    const run = useUiStore.getState().statusAction!.run
+    act(() => useDocumentStore.getState().undo())
+    act(() => run())
     expect(sizeOverride()).toBeUndefined()
   })
 

@@ -1140,6 +1140,33 @@ export function setFigureFrame(
 }
 
 /**
+ * 改图幅但**页面上的框保持 `box`**（排版拖边缩小后的「等比缩小文字」，ADR 0161 修订 2026-11-09）：
+ * 图按 `sizeMm` 出，整体等比缩进 `box`，文字 pt 随缩放比一起变小。一条历史、一次渲染。
+ *
+ * 渲染回来时 `useEngineSync` 按缩放比不变把 w / h 乘以「新图幅 / 旧原生图幅」（`syncPanelNativeSize`），
+ * 所以这里先按旧原生图幅把 w / h 摆成「乘完正好是 box」的值——缩放比只在这一步变，换算仍只有那一处。
+ */
+export function setFigureFrameScaled(
+  panelId: string,
+  sizeMm: [number, number],
+  box: { x: number; y: number; w: number; h: number },
+) {
+  finishActiveGesture()
+  updateObject<PanelObject>(panelId, hist('setProp', { prop: propLabel('size_mm') }), (o) => {
+    upsertOverrides(o, [{ gid: 'figure', prop: 'size_mm', value: sizeMm }])
+    o.x = box.x
+    o.y = box.y
+    if (o.nativeW > 0 && o.nativeH > 0) {
+      o.w = (box.w * o.nativeW) / sizeMm[0]
+      o.h = (box.h * o.nativeH) / sizeMm[1]
+    }
+  })
+  const panel = findObject(panelId)
+  if (panel?.type === 'panel') requestRender(panel, true)
+  emitActivity({ kind: 'element.property_changed', prop: 'size_mm' })
+}
+
+/**
  * 关掉图内文字的一种效果（背景 / 描边）：写开关 `false`，**并把从属字段的
  * override 一并清掉**——一条历史、一次渲染。
  *

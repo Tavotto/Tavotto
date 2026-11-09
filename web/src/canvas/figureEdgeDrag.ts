@@ -10,7 +10,14 @@ const PLACEHOLDER_MAX_MS = 20_000
  * 松手后到新图回来之前，画布上只留虚线框（`interaction.figureFramePending`）：旧图按旧尺寸画在新位置上会错位闪一下。
  * 新图的判据 = 这张面板当前变体已有精确渲染（`exactPanelRender`）**且**面板的 nativeW / nativeH 已追上目标图幅（同步器校正完）；撤销 / 面板没了 / 超时也收。
  */
-export function holdPlaceholder(panelId: string, box: { x: number; y: number; w: number; h: number }, sizeMm: [number, number], before: Readonly<Record<string, PanelRender>>) {
+export function holdPlaceholder(
+  panelId: string,
+  box: { x: number; y: number; w: number; h: number },
+  sizeMm: [number, number],
+  before: Readonly<Record<string, PanelRender>>,
+  /** 新图回来、几何校正到位的那一刻（只在成功时调；撤销 / 失败 / 超时不调）：排版拖边缩小后量「文字放不下」用 */
+  onSettled?: () => void,
+) {
   const ix = useInteractionStore
   const stop: (() => void)[] = []
   let timer = 0
@@ -44,8 +51,10 @@ export function holdPlaceholder(panelId: string, box: { x: number; y: number; w:
       exactPanelRender(useRenderStore.getState(), p) &&
       Math.abs(p.nativeW - sizeMm[0]) <= 0.05 &&
       Math.abs(p.nativeH - sizeMm[1]) <= 0.05
-    )
+    ) {
       done()
+      onSettled?.()
+    }
   }
   ix.getState().setFigureFramePending({ id: panelId, box, sizeMm })
   stop.push(useRenderStore.subscribe(check), useDocumentStore.subscribe(check))

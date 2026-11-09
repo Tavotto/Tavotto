@@ -254,7 +254,7 @@ order: 210
   （`zoomToSelection.fastEditCanvasBox`）。导出：`singleAnnotatedDocument(…, pad)` 页面 = 图幅 + 留白、图落在 (左, 上)，请求带 `original.pad_mm`，原图口径检查按这个页面判
   （`buildOriginalSpec(…, pad)`）。留白不写回脚本。**权威只认精确 manifest**（`figureFrameFacts`）：缺席 / 被裁 / 旋转 / `size_mm` 只读时整组不挂。
   看护：`lib/framePad.test.ts`、`canvas/frameDrag.test.tsx`、`lib/singleExportDoc.test.ts`、`lib/exportRequest.test.ts`、`e2e/figure-edge-resize.spec.ts`。
-- **多图排版里面板的边 = 裁剪、角 = 连图内标注一起缩放（ADR 0161，2026-11-02；2026-11-04 修订去掉开关）**：`mode === 'layout'` 下，未旋转 / 未翻转、未锁定面板的四条**边柄**
+- **多图排版里面板的边 = 改图幅（⌥ = 裁剪）、角 = 连图内标注一起缩放（ADR 0161，2026-11-02；2026-11-04 修订去掉开关；2026-11-09 修订往里也改图幅）**：`mode === 'layout'` 下，未旋转 / 未翻转、未锁定面板的四条**边柄**
   走 `canvas/panelEdgeCrop.startPanelHandleDrag`（`OverlaySvg` 的唯一入口；不放进 `startResizeDrag` 是因为它要 `trackPointer`，`interactions` 反向 import 就成环）→ 写 `panel.crop`
   （与裁剪工具同一字段：相对原图幅的 0–1 分数、y 向下；同一条历史标签 `adjustCrop`；整图锚在画布上不动，缩放比不变）。停靠点是纯函数 `lib/panelEdgeCrop.planEdgeDepth`：
   往外到未裁剪（0）为止（**没裁剪过的图从图边继续往外 = 改图幅，见本条末尾**）→ 图边 → **内容边缘**（manifest `gid=="figure"` 的可选 `ink_bbox`，只经 `exactPanelManifest` 读；缺席 = 没有紧凑停靠点也没有闸）→ 越过内容边缘必须按住 ⌥
@@ -266,4 +266,7 @@ order: 210
   规范库没载入 / 读不到 = 不判。选中面板不拖时胶囊多「贴合内容」（`actions.fitPanelsToContent`，缺 ink_bbox 置灰）「取消裁剪」。
   **图边往外 = 改图幅（ADR 0161 修订 2026-11-06）**：`figureFrameFacts` 有值（未裁剪、精确 manifest、`size_mm` 可编辑）时越过吸附半径走纯函数 `planEdgeGrow`：只改被拖那一维，两轴各按自己的缩放比换算（被拉伸过的老面板），缩放比不变所以文字 pt 不变。
   拖动中写 `interaction.figureEdgeBox`，虚线框由 `PageEdgeResize.LayoutFramePreview` 画（只挂在排版；预览与松手后的 `figureFramePending` 占位共用，缺了它 `PanelView` 收起旧图时画布上什么都不剩）；松手先丢裁剪事务再 `setFigureFrame` + `holdPlaceholder`，一条历史。裁剪过 / 不可编辑时停在图边，`cropDragStatus.growBlocked` 说原因。回到未裁剪用 `delete o.crop`：`= undefined` 会给什么都没变的拖动留一条空历史。
-  看护：`lib/panelEdgeCrop.test.ts`、`canvas/panelEdgeCrop.test.tsx`、`canvas/layoutCornerFollow.test.tsx`、`canvas/context-bar/dragStatusBar.test.tsx`。
+  **图边往里也 = 改图幅、⌥ = 裁剪（ADR 0161 修订 2026-11-09）**：`figureFrameFacts` 有值时不按 ⌥ 两个方向都走 `planEdgeGrow`（`outMm` 可负，钳到 `size_mm` 的 min / max），按住 ⌥ 才走 `planEdgeDepth` 裁剪（`alt` 同时放行越过内容边缘）；拖动中按 / 松 ⌥ 即时切换。裁剪过 / 图幅不可编辑的面板边柄照旧只裁剪。
+  缩小后 `holdPlaceholder` 的 `onSettled` 在新图回来那一刻调 `offerTextFit`：这一维**新增**探出量（`lib/edgeShrinkFit.axisOverflowMm`，逐元素判据就是预检「元素超出图幅」的 `preflight.drawnFigureRect`，同源 `engine/preflight.py::element_overflow`）超过容差 → 通知轨挂一条带按钮的提示
+  （`setStatus` + `action`，owner `edge-text-fit:<id>`）；点了走 `actions.setFigureFrameScaled`：页面框不动，按 `planTextFit` 的「刚好放得下」图幅（现在 + 新增探出量，不超过拖之前）出图、整体等比缩进框里，一条历史；估短了新图回来再问一次。提示挂着时撤销 / 改过图幅，按钮什么都不做。
+  看护：`lib/panelEdgeCrop.test.ts`、`lib/edgeShrinkFit.test.ts`、`canvas/panelEdgeCrop.test.tsx`、`canvas/layoutCornerFollow.test.tsx`、`canvas/context-bar/dragStatusBar.test.tsx`、`e2e/layout-panel-edge-crop.spec.ts`。

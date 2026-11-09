@@ -5859,6 +5859,8 @@ export default interface Resources {
       "layoutResetCropTip": "恢复完整图幅，不再裁剪",
       "layoutScale": "缩放 {{from}}% → {{to}}%",
       "layoutScalePtFull": "缩放 {{from}}% → {{to}}% · 图内最小字号 {{ptFrom}} → {{ptTo}} pt",
+      "layoutShrinkFitText": "缩小到 {{pct}}%",
+      "layoutShrinkTextOverflow": "文字放不下了，要等比缩小吗？",
       "layoutSideB": "下",
       "layoutSideL": "左",
       "layoutSideR": "右",

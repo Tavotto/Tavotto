@@ -10,7 +10,7 @@ import type { CropRect } from '@/types/document'
  * 一条边用「深度」说话：这条边从图边往里走了多少（分数）。
  *   l: crop.x · r: 1 − (x + w) · t: crop.y · b: 1 − (y + h)
  * 往外最多回到深度 0（未裁剪）；往里依次是 图边(0) → 内容边缘(inkDepth) → 越过内容边缘。
- * 没裁剪过的图从图边继续往外是改图幅，不再是裁剪：见 `planEdgeGrow`。
+ * 没裁剪过的图拖边（不按 ⌥）是改图幅，不是裁剪：见 `planEdgeGrow`；按住 ⌥ 才走这里的裁剪。
  */
 
 export type CropSide = 'l' | 'r' | 't' | 'b'
@@ -99,7 +99,7 @@ export function planEdgeDepth(i: EdgePlanInput): EdgePlan {
   return { depth: ink as number, state: 'tight' }
 }
 
-/** 排版里把一条图边往外拖 = 改图幅：松手时写什么、拖动中预览框画在哪（ADR 0161 修订 2026-11-06） */
+/** 排版里拖一条图边 = 改图幅：松手时写什么、拖动中预览框画在哪（ADR 0161 修订 2026-11-06 / 2026-11-09） */
 export interface EdgeGrowPlan {
   /** 新图幅（脚本 mm） */
   sizeMm: [number, number]
@@ -110,9 +110,9 @@ export interface EdgeGrowPlan {
 }
 
 /**
- * 没裁剪过的图，边已经在图边上，指针继续往外 `outMm`（页面 mm）→ 这条边对应的那一维图幅加长，缩放比不变，
- * 所以图内文字在页面上的 pt 不变。吸附半径内仍算停在图边上（null），擦到边不会误改图幅；
- * 钳到引擎上限后没有实际变化时也回 null，调用方照图边处理。
+ * 没裁剪过的图，边在图边上，指针往外（`outMm` > 0）或往里（`outMm` < 0，页面 mm）→ 这条边对应的那一维图幅
+ * 加长 / 缩短，缩放比不变，所以图内文字在页面上的 pt 不变。吸附半径内仍算停在图边上（null），擦到边不会误改图幅；
+ * 钳到引擎上 / 下限后没有实际变化时也回 null，调用方照图边处理。往里缩到文字放不下时由 `lib/edgeShrinkFit` 事后提示。
  */
 export function planEdgeGrow(i: {
   side: CropSide
@@ -120,19 +120,23 @@ export function planEdgeGrow(i: {
   sizeMm: readonly [number, number]
   /** 引擎给 `size_mm` 的上界；缺席 = 不限 */
   maxMm?: number
+  /** 引擎给 `size_mm` 的下界；缺席 = 只保证 > 0 */
+  minMm?: number
   outMm: number
   /** 吸附半径（页面 mm） */
   tolMm: number
 }): EdgeGrowPlan | null {
-  const { side, box0, sizeMm, maxMm, outMm, tolMm } = i
-  if (!(outMm > tolMm)) return null
+  const { side, box0, sizeMm, maxMm, minMm, outMm, tolMm } = i
+  if (!(Math.abs(outMm) > tolMm)) return null
   const horizontal = side === 'l' || side === 'r'
   const axis = horizontal ? 0 : 1
   // 按两轴各自的缩放比换算：老项目里被拉伸过的面板宽高比 ≠ 图幅，共用一个比例会让预览框与落定的框差一截
   const k = (horizontal ? box0.w : box0.h) / sizeMm[axis]
   const round2 = (v: number) => Math.round(v * 100) / 100
-  const dim = Math.min(maxMm ?? Infinity, round2(sizeMm[axis] + outMm / k))
-  if (!(dim > sizeMm[axis])) return null
+  // 下限缺席时至少留 1 mm：图幅 0 / 负数引擎会拒
+  const floor = Math.max(minMm ?? 0, 1)
+  const dim = Math.max(floor, Math.min(maxMm ?? Infinity, round2(sizeMm[axis] + outMm / k)))
+  if (Math.abs(dim - sizeMm[axis]) < 0.005) return null
   const grown = (dim - sizeMm[axis]) * k
   const box = {
     x: side === 'l' ? box0.x - grown : box0.x,
