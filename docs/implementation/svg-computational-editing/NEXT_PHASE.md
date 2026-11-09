@@ -1,87 +1,60 @@
 # SVG 计算图表编辑：当前效果与下一阶段安排
 
-> 当前复核：2026-11-08 21:22（Asia/Shanghai）。**按用户要求暂停，本文不授权自动继续。** 实施树E:/0 - Project/Tavotto-svg-r00，沿用zixu.wang/svg-computational-r00；产品HEAD 50e3817f（图片边缘修复），8d42122c为执行消费者守卫提交，后续文档提交以实际HEAD为准。原Tavotto/main@69bcafae干净、未合入；本轮未新分支/fetch/远程写入。
+> 当前状态：2026-11-09，按用户最新要求完成本轮收口后暂停，不自动接续。沿现有实施树E:/0 - Project/Tavotto-svg-r00、分支zixu.wang/svg-computational-r00，起点d745e6cb；最新提交与最终检查见PROGRESS。完整功能尚未达到PR验收标准。
 > [PROGRESS.md](PROGRESS.md)保留日期证据，[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)维护SG00–17完整范围，[NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)仅供明确恢复后复制使用。
 
 ## 1. 当前判断
 
-本轮已提交两项独立改动：**既有执行的导出/PNG守卫和原resolver同实例复核（8d42122c）**，以及**PDF/SVG写出与SVG再导入的重复图片边缘裁剪修复（50e3817f）**。执行链700pass/6skip、RenderCore与导出1075pass/68skip、Rust65pass，均exit0；真实safe/native/Workerd临时导出后恢复原编辑态。完整前端来源消费者及普通PDF解析器仍未接通，候选完整归档后退出生产；此前c09fc110被动来源持久化保留。当前仍不能称完整功能已达到PR验收标准。
+方向仍是计算图表编辑：沿用轴模型、显式数据绑定与可信 Python/Figure 来源；普通 SVG 本身没有的科学语义不从图形位置猜出。已有声明式计算编辑、保存/版本、静态 SVG 矢量合成、普通位图 SVG 及精确来源检查继续保留，其既有资格窗口见 PROGRESS。
 
-计算编辑和项目持久化的核心链路已具备，静态SVG合成、批量归属、精确来源与本轮位图SVG/报告修复均已提交；**完整产品尚未验收**。方向仍是轴模型、显式数据绑定和可信绘图来源。普通SVG未包含的科学语义须显式绑定，拖动文字不等于恢复数据或Python来源。
+本轮交付分成两项独立基础能力：应用层按完整历史引用、基准 P 和真实 live receipt 接纳 render/PNG/export 等请求；PDF 原内容流到现有 IR 的内部适配。前者只允许已存在的执行实例，旧无 origin 请求保持原路径；后者尚未接入 facade/HTTP，不能据此宣称普通 PDF 已可导出 SVG。
 
-| 范围 | 当前已实现/已验证 | 仍待解决 |
+**前端自动来源接线延期启用。** 完整候选在受影响测试中通过，但收尾复核确认：snapshot-only 的普通 native 磁盘图也会自动发送 origin，随后撞上尚未完成的 native 写回验证。这会损失原有能力。本轮保留完整候选和失败/通过记录，恢复已提交前端；不能用置灰按钮、仅 native 特例或跳过写回 verify 结束该问题。
+
+| 范围 | 当前进展 | 仍需完成 |
 | --- | --- | --- |
-| 计算编辑 | Inspector真实属性编辑、undo/redo、保存、命名稿及声明式冷恢复已有证据 | 历史Figure全链热/冷编辑、图例联动、完整图族 |
-| 包与历史显示 | 35成员混合包、双画布11对象、5完整ref、2INPUT图/8附件；取消/迟到确认/最新稿恢复已提交 | A/C/D History render500来源缺口，完整删源冷迁移、真runtime包 |
-| 静态SVG合成 | 1def88dc：矢量合成、overflow物理裁切、原图单scene；专项及Chrome29点 | gradient/mask/pattern/marker等完整矩阵、Office/Inkscape |
-| 批量任务 | 1b7c5006：旧终态不推进新批，旧prepare不污染新批；runtime有合法默认名 | 默认输出名不是恢复原科学来源名，完整命名/host矩阵仍待 |
-| 精确来源/检查 | 96cbbb33：问题面板与报告复用隐藏PNG/完整归档正证，单张/批量等事实后冻结；保真缺失及旧代次反例 | 旧文档native与源页面/显示框口径仍需统一；替代host归档读取未接通 |
-| 位图与实际逐图批次 | 4985938c：PNG/JPEG/TIFF原图SVG复用Image；真实六图、6冲突另存续行，28成功含5报告，仅1失败；PNG四格式/64×48像素/32×24mm已独立核验 | 普通PDF无配对的SVG仍失败；位图SVG是内嵌像素，不是矢量科学数据 |
-| 实际整版 | 新job7b4f551976024465 PDF/PNG/TIFF+报告成功；6份实际报告与主问题面板均无missing-asset；旧独立几何证据保留其窗口 | ordinary.pdf无可信SVG配对使整版SVG partial；历史runtime-edited的unapplied-override仍正确报告 |
-| P2基础及本轮守卫 | 8d42122c：原resolver复核和export/PNG守卫；700pass/6skip、Rust65pass；此前被动来源持久化保持 | app接纳、自动捕获、全消费者及完整HTTP/UI未验证；底层通过不等于历史编辑全链可用 |
-| P3图片边缘修复 | 50e3817f：三处重复clip同根修复，13实物例已包含于1075pass/68skip；5项有效反证，src零漂移 | 普通PDF解析器仅OUT未验首稿，通用PDF→SVG及完整格式矩阵仍缺 |
-| 上一轮P3检查 | 前端84文件1969pass/0skip；后端冻结112pass及预检42pass；旧导出171pass/1skip；正式/派生构建与i18n均0 | 不累计窗口；旧组起始未捕获完整SHA；未重跑完整109/全仓/平台资格 |
-| 视觉与入口 | 普通SVG四格式独立尺寸/文字/颜色正确；旧稿/引用保持 | 刻度/标题裁切N5、图例N4、替代host/桌面/发行与平台资格 |
-
-后端原109文件首红仍为3539pass/16fail/128skip、exit1；4条旧SVG判据及12条夹具已分别修复/正式复验，未把原首红覆盖为绿。原128skip的84平台条件/41缺Inkscape/旧GS/pdfminer/Poppler各1仍是该历史窗口事实；前轮夹具25skip也不算通过。
+| 历史执行基础 | 既有 render/export/PNG execution-id 守卫；本轮 app 复用原 resolver、ledger、实际 receipt 和同一 worker，真实 safe/Workerd/native HTTP 21 项通过 | 自动捕获与所有前端消费者须和 native 写回验证原子启用；正常认证产品 UI 尚未复验 |
+| 其他历史消费者 | specfix、history、sync 与 safe 磁盘写回接入同一接纳结构；本轮补 Q 保存及写回、公开 RenderPlan 身份验证 | 旧无 owner 引用、完整错误/迟到及平台矩阵仍需最终资格；native origin 写回目前拒绝，不能标完成 |
+| 前端候选 | 来源键、回包身份、临时 PNG、导出、版本/undo、记录来源与确认归属均有候选和专项证据 | 候选不是生产启用状态；恢复时审阅最终归档，不重复套早期 WIP |
+| PDF 内部适配 | 原内容流/CTM/clip/CID 字形/透明组/图像及预算；受控 approved-font ordinary 实物两条往返零像素差 | 原 RenderHost 有界 child/facade/导出入口未接；通用字体、连续文本隐式起点精度及复杂资源未全面保真 |
+| 冷恢复与迁移 | 被动 origin 持久化、INPUT 包闭包与迁移基础已提交 | P2b 明确授权后原 Preparation 冷重建、P2c 真删源/新父进程迁移未完成 |
+| 视觉与最终验收 | 既有图片重复 clip 修复、位图 SVG、普通 SVG 矢量合成保留 | N5 刻度/标题裁切、N4 图例、复杂 SVG/图族、全部入口、M1/M2/M3 与平台安装物未验收 |
 
 ## 2. 证据与暂停现场
 
-本轮证据根 **E:/0 - Project/svg-review-20261108**，最新索引见PROGRESS的21:22 checkpoint：p2-consumer-guards（最终706项、真实三控制面及反证）、p3-pdf-content-production（13实物、32文件1143项、5反证）、p2-consumer-frontend（20路径延期候选及18文件恢复证明）、root-qualification/p2-consumer-*（根复核与Ruff）。原产品UI本轮未重开。此前p2-guard-production/p2-origin-*与下列P3记录各有独立源码窗口，不外推为本轮全链资格：
+本轮证据根 **E:/0 - Project/svg-review-20261109**：
 
-- root-qualification：round-frontend-first（84文件1969项）、raster-source-final（112项）、preflight-contract-first（42项），实际exit0且源码零漂移；正式/playground/widget各build/check及i18n为0。
-- p3-source-checks与p3-raster-svg：代码、专项、4+3个有效AST反证、首红、已知skip和源码释放清单。
-- round-ui/verified-outputs.json：真实六图28成功/1失败、5逐图+1整版报告无误报，PNG原字节与SVG/TIFF像素相同，SVG浏览器正常显示。actual-jobs.json列出实际job，不混入取消冲突。
-- round-ui/root-close-proof.json：browser17 close0、exec17200/child0；PID10400/39352消失、24139无监听；1794源/11HTTPbundle末核。A/B/C/D图表内容/命名稿与执行计数保留；A自动保存updatedAt及派生revision变化，配置变化为最近打开时间和版本查询缓存。已捕获旧配置正文并记录字段差异，未恢复/覆盖；不能声称全部持久文件字节不变。
-- p3-pdf-svg/REPORT.md：OUT-only结构实验，无可直接应用的生产补丁。W/W*丢失和CID/ToUnicode反例已实证，详见下一批第3项。
-- 四份状态文档引用/规则索引41项通过，预算检查exit0（既有OVER提示保留）；root-qualification/docs-final与agents-budget-final保留实际退出码。
+- `p2-app-backend-tests/DELIVERY.md`：真实三控制面 21 项、完整引用反证及首红；`native-writeback-third-path.md` 是独立验证器的 OUT 实验，未实现产品接线。
+- `root-qualification/`：应用消费者补充、既有导出/写回/specfix 回归、最终构建与文档门禁；具体结果、退出码和冻结窗口见各 XML/JSON，不能把重叠测试相加为全仓资格。
+- `p2-app-frontend/REVIEW.md` 与 `pause-closeout/`：完整候选、源码 SHA、1052 项受影响验证、正式构建首红及修复记录、来源反证、恢复基线证明。候选通过不等于产品已启用。
+- `p3-pdf-production/`：新适配专项、全部 RenderCore 及旧契约回归、5 条 AST 反证、普通 PDF 零差实物和未批准字体的真实残差。
 
-下表保留**2026-11-07历史窗口**，证据根E:/0 - Project/svg-review-20261106；不能与本轮相加。
-
-| 证据路径 | 结论 |
-| --- | --- |
-| n3f-svg-production/batch-source-facts-frontend-first-exit.json | 正式76文件1726pass/0skip，1503源零漂移 |
-| n3f-svg-production/source-facts-production-final-exit.json | 当前后端3文件56pass/0skip，289源零漂移 |
-| n3f-svg-production/source-facts-production-first-exit.json | 较早受影响194pass/1skip；最后badSVG增量另由final验证 |
-| n3f-svg-production/platform-fixtures-production-first-exit.json | 正式两完整文件253pass/25skip；生产守卫不变 |
-| n3f-svg-production/batch-source-facts-*-exit.json | 新正式构建、playground/widget build/check均actual_exit0 |
-| p3-batch-export-ui/output/playwright/26.json、review-actual-jobs.json | 正常认证UI真实validate/start/state；六图与冲突续行，非伪造POST |
-| p3-batch-export-ui/review-artifacts-final.json | 新整版独立PDFium/Pillow尺寸、文字、12色点、PNG/TIFF像素及保存稿身份对齐 |
-| p3-batch-export-ui/review-original-artifacts-final.json | 六图文件SHA/像素；PNG原字节与无密度、PDF实际mm、SVG四格式、完整refs/patch保持 |
-| p3-batch-export-ui/root-close-proof.json、service-exit.json | 1792源/11HTTPbundle停前核；close30=0，exec40459/child0，79648/61324消失，24129无监听 |
-
-原A/B/C/D及data/config/AS/命名稿保留，执行计数counter/module/argv各4；无本轮live浏览器/服务/测试，既有代理已结束。本UI仅验证普通原图路径；标注/留白有专项证据，尚未在本轮真实UI铺满矩阵。观察器PDF容器字节误判首红保留，纠正为既有copy_foreign合同下的独立像素与来源SHA检查。
-
-该历史窗口的收尾审计见status-review-round-pause-20261107/audit.json：当时源/bundle与8份正式回执一致；正文/绑定/计数及12份非config文件SHA不变。当时隔离验证环境config.json哈希有变化，未捕获旧正文，具体字段差异未知，未恢复/覆盖配置；保audit-first-red，不称整个配置完全不变。本轮已补配置旧正文基线与字段差异，见本节上方2026-11-08记录。历史文档门禁41pass，预算检查exit0（既有OVER提示保留）。
+旧证据根 `E:/0 - Project/svg-review-20261108` 及更早记录继续保留。先前实际 UI 的普通 PDF→SVG 失败尚未被本轮产品 UI 关闭；本轮没有重新开 UI、发布、推送或合入 main。原 `E:/0 - Project/Tavotto` 仍保留 main；不要在恢复时覆盖用户稿件或重新安装既有目标。
 
 ## 3. 用户恢复后分批安排与退出条件
 
-恢复顺序：**P2a来源接纳与全部热编辑消费者→P2b原INPUT冷恢复→P2c完整迁移→N5裁切→N4图例→M1/M2/M3**；下列批次1的P3剩余能力作为独立支线推进。编号保留以便既有引用，当前不执行下面任务。
+恢复顺序：**P2a来源接纳与全部热编辑消费者→P2b原INPUT冷恢复→P2c完整迁移→N5裁切→N4图例→M1/M2/M3**；下列批次1的P3剩余能力作为独立支线推进。编号保留以便既有引用，本轮从P2a与独立P3支线续接。
 
 ### 批次 1：P3剩余一致性与能力合同
 
 1. **已完成，不重做**：96cbbb33修复问题面板/报告来源误报，4985938c支持普通位图原图SVG；正负/刷新/ABA/迟到反例及实际报告已验证。余项是复杂内容、所有入口及完整scope×format矩阵，不把只读正证当执行资格。
 2. 独立核旧文档native40/48、源PDF35.278/源SVG42.333mm与放置/框的合同。当前只修了Produced测量值，不强改文档native或来源字节；接N5时贯穿显示/请求/实物一致性。
-3. **普通PDF→SVG及含该PDF的整版SVG仍未实现**。本轮实验已证明直接使用PDFium getter会丢W/W*（受控例10.2273%像素错）与实际CID/GID身份（01可错成00），且轮廓不等于live text。下一步先取得可信原内容display list/字体与裁剪事实，再接原IR/SVGwriter，保原PDF SHA、页框/透明/资源；验证普通PDF像素差和复杂矩阵。不伪配同名SVG、不整页栅格化或仅改提示关闭缺口。该结构支线不能阻止独立的P2就绪任务，缺格保留M2未完成。
-   此前原内容驱动实验已补W*、ca/CA与isolated组并在两例零像素差，CID→GID/TJ反例取对字形；普通PDF的>8像素差1.1867%及文字轮廓问题仍未闭合。本轮50e3817f已把SMask例的冗余图像clip根因落实为独立生产修复，不能因此宣称解析器可用。未验解析器首稿保存在p3-pdf-content-production/pdfcontent-deferred.py/patch，生产模块已撤回；后续先审查并补其字体/CMap/算子/预算和保真资格，再接facade/HTTP。不要重做已完成的三处图片clip修复。
+3. **普通PDF→SVG及含该PDF的整版SVG产品入口仍未实现**。本轮已提交 `rendercore/pdfcontent.py` 内部原内容流适配，支持范围与失败合同见 `p3-pdf-production/REPORT.md`；52项专项包含于1320pass/68skip回归。原字体程序/实际CID→GID/宽度证明可让受控批准字体进入原文本链，ordinary实物两路线零像素差；不能因此授予未批准字体和任意连续文本精度资格。
+   下一步将 native 解码放进原 RenderHost 有界 child，再接原 pdfbackend/facade/IR/SVGwriter 与逐格式失败合同，保源SHA、页框、透明与资源。预算计数不能替代 native 内存/时间边界，不在 Flask parent 直接解析。补非批准字体 hinting/轮廓残差、多个 Tj 隐式起点精度与复杂算子/资源和 HTTP/UI；不伪配同名SVG、不整页栅格化。旧 `pdfcontent-deferred.py` 首稿已被本轮内部模块取代，不重复套用；50e3817f图片clip修复保持，不重做。
 4. 补普通SVG标注/留白、透明/复杂组及scope×format的实际UI/独立实物矩阵；复用已绿专项，不无限重复原普通六图绿流程。
 
 **退出**：正负来源/报告一致，所有要求格式格有实现或明确未完成记录，保原编辑/文件/事务。已提交a4ffd5f3/1def88dc/1b7c5006/2c4d5aaa/4985938c/96cbbb33不要重套候选或重做；新增修复各自commit，不以局部绿宣布P3/总目标完成。
 
 ### 批次 2：P2a 历史来源和同次热编辑
 
-闭式合同已在ADR0166 §3a落实为figureOrigin={version:1,snapshot:<完整ref>,patches:<基准有序patches>}，当前overrides独立代表完整Q。42382027已提交render守卫，c09fc110已提交被动持久化/包闭包/迁移；本轮又补齐原resolver的同实例复核及export/PNG底层守卫，不要重新套combined候选。首编辑自动捕获与所有应用消费者仍未启用，须一起完成。归档只有patch_hash，不能反推或默认为空P。
+先完成 native 磁盘图写回验证，再恢复前端完整候选。当前 app 接纳与底层守卫已在原 resolver/ledger/receipt 上实现，不另建 worker 路由或执行许可表。归档 origin 是完整 ref+原序 P，当前 overrides 是全量 Q；有效的只读归档不自动授予执行权限。
 
-- 持久来源贯穿原文档 commit/事务、首改/undo/redo、AS/命名稿/版本/多画布、复制与包闭包/完整ref迁移。首改清输出 figureSnapshot 后仍保来源；引用本身不授执行许可。
-- renderKey、队列、request/API、回包、latest/recent/exact/mounted/PNG、导出及写回消费者同步同一来源身份；不新建 store/writer，不借旧 manifest 写几何。
-- 复用safe/Workerd/native的render/export/PNG守卫和`enginesession.resolve(existing_only=True, existing_worker=...)`；下一步是app正常认证/fullref/receipt接纳。归档receipt只有public_facts，不含完整spec/profile；必须与实际live候选receipt逐维匹配，再由原pool/REGISTRY复核同一实例，不能新建路由表或从同名当前图猜归属。服务端核真实 worker/session、execution identity 与 native epoch，parent/Workerd重连/child均不得隐式 build/respawn。不能只加旧端忽略的字段。
-- 普通无来源 Python 原路径保持；历史来源不退同名当前图、不把 native 降 safe。来源回包不能从 archived SVG 制造 editable manifest。
-- 接纳时区分归档输入P与当前输出Q：用完整origin引用和P读取不可变归档，再核真实live receipt/owner及原resolver实例。旧引用可能没有executionOwner，须补兼容验证；不能借当前同名文件、猜profile或把旧引用一概视为已授权。带origin的请求不得混入chart/chart_source及当前原件选择策略。
-- 前后端接线须覆盖render JSON、PNG+manifest及纯PNG响应、typed ExportRequest、保存时Q的输出冻结，并逐项补specfix/写回事务、preflight、documentColors/alignAction、来源正证与跨项目复制。既有`_engine_attempt`的冷启动重试不能进入历史守卫路径；归档读取成功不等于当前Q已有可编辑几何。
+- 先重现“普通 native 磁盘图已有 snapshot→编辑/保存→写回”的回归；native 热态仍是权威，任何失败须保持原件零变化。不能撤掉 origin、借当前同名 safe 会话、放宽像素门或隐藏按钮解决。
+- 第三路径 OUT 单例表明：原 `pool.one_shot` 可以只作独立候选验证器；native Q 的同次 manifest/PNG 必须强制经过原几何和像素两门，不能落入 `fresh_only`。原 native route/receipt 不授给候选。产品仍需冻结实际 interpreter、argv、cwd、env、输入回答和源修订；当前 one_shot 不具通用显式 cwd/env 接口，未知值不可猜空。一般 native 重新执行可能在 verify 前写原件，原 preparation runner 又会取消/替换热态，均不能直接拿来用。
+- 完成验证结构和真实安全反例后，再审阅 `p2-app-frontend/pause-closeout/` 最终 41 路径候选。自动捕获、renderKey/队列/latest/recent/exact/mounted、PNG/导出、specfix/写回、版本与 sync 必须一起接通；保正常无 origin 的 Python/旧项目行为。
+- 补正常认证 HTTP/UI、无 owner 旧引用、首改后 Q 保存/重开/包闭包、错项目/receipt/P/eid/epoch 和迟到反例。明确运行之外，冷来源不得隐式 build/respawn/fallback。
 
-**退出**：正式 safe/Workerd/native 加真实认证 HTTP/UI：同次热编辑/undo零重跑；冷、错pj/ref/receipt/basepatch/eid/epoch及迟到回包不隐式执行、不入exact；普通 Python 回归通过；来源首改后保存/重开/包闭包仍完整。来源持久化与真实接纳按完整功能分别提交，不能用 OUT 候选测试冒充产品通过。
-
-最新前端延期差量见`p2-consumer-frontend/pause-closeout/frontend-origin-consumers-WIP.patch`，基于423c7280，20路径完整候选已归档；18个tracked文件恢复到该HEAD原字节、2个新增测试移出仓库，apply-check通过。该候选仍缺specfix/update_source、来源正证、当前原件策略隔离与PanelView的PNG历史fallback，不具提交资格。恢复后结合后端接纳逐项审阅，不直接启用。更早`p2-origin-frontend/deferred-from-passive-consistent.patch`保留作历史；`full-frontend-wip.patch`基于4fe4658e，与已提交被动代码重叠，不能整包重复apply。候选的局部测试不替代产品接线。
+**退出**：真实 safe/Workerd/native 热改与 undo 零重跑；native 原有磁盘写回不回归，失败409原件零变化；恢复后的全部前端消费者和正式/派生构建、真实 UI 同一源码窗口通过。前端候选和 OUT 单例不能关闭 P2a。
 
 ### 批次 3：P2b 复用原 Preparation 的 INPUT 冷恢复
 
@@ -120,7 +93,7 @@ N4 复用 legendmodel 的 entry→series/custom 绑定，覆盖同名同色、�
 
 ## 4. 无人值守接续规则
 
-以下仅在用户明确恢复任务后适用；当前暂停，不创建调度或继续运行。
+当前已按用户最新要求暂停；以下仅在用户明确恢复后执行。未创建常驻调度器。
 
 1. 沿当前唯一树/分支，不新建或切分支/worktree；保改动和首红，不 reset/stash/git add .，不 push/PR/合并/发布。按功能定向 commit，状态文档另交。
 2. 每批：规则/实际状态→最小实现→必要反证→受影响验证→退出码/源SHA/实物→定向提交→日期checkpoint→下一批。先前绿组源未变不重跑，最终冻结后才做完整链。
