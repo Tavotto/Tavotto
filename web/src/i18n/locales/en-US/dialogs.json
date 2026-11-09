@@ -180,7 +180,7 @@
     "scriptHint": "Edited copy of the script. The original isn’t touched.",
     "scriptSkipped": "Not written: {{items}}",
     "scriptUnavailable": {
-      "canvas_scope": "Single figures only",
+      "canvas_scope": "Choose “Each figure separately” to export .py",
       "no_script": "No script for this figure"
     },
     "mergePdf": "Combine into one multi-page PDF: {{name}} ({{count}} pages)",
