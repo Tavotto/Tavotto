@@ -5595,6 +5595,21 @@ def observed_local_modules(
     return out
 
 
+#: 本模块 import 那一刻的 `os.stat` / `os.path.isfile`：只读回退判「沙盒里 / 脚本目录里在不在」必须问**真实的**
+#: 文件系统。改指层（`install_input_remap`，装在回退之内）会让 stat / isfile 按用户规则作答——回退若经它问，
+#: 规则目标就冒充了「沙盒里已经有」，脚本旁边的原件被跳过（Codex #1821 P1）。顺序永远是 原路径 → 脚本目录 → 规则。
+_FS_STAT = os.stat
+
+
+def _fs_isfile(path) -> bool:
+    """`os.path.isfile` 的真实文件系统版：POSIX 上 `isfile` 内部调的是**此刻**的 `os.stat`（改指层包过的），
+    所以只捕获 `isfile` 本身挡不住改指（Codex #1821 P2）；直接用 import 时的 `os.stat`。"""
+    try:
+        return stat.S_ISREG(_FS_STAT(path).st_mode)
+    except (OSError, ValueError):
+        return False
+
+
 def install_relative_read_fallback(
     script_dir: str, project_root: str, sandbox_dir: str | None = None
 ):
@@ -5631,7 +5646,7 @@ def install_relative_read_fallback(
         return None if rel.startswith("..") or rel == "." else rel
 
     def _present(path) -> bool:
-        """回退自己的「这条路径在不在」——走 `os.stat`，**不经** `os.path.exists`。
+        """回退自己的「这条路径在不在」——走 import 时的 `os.stat`（`_FS_STAT`），**不经** `os.path.exists`，也不经改指层。
 
         `os.path.exists` 在沙盒会话里已被 `install_probe_observer` 换成记账版（观察器先装、回退后装）：
         回退每问一次「沙盒里有没有这份」就会被记成脚本在沙盒里落空了一次探路，哪怕随后正是回退把读救回来、
@@ -5639,7 +5654,7 @@ def install_relative_read_fallback(
         ValueError，准备卡标题「运行出错了」却问选运行目录）。证据必须只来自**脚本自己**的探路。
         """
         try:
-            os.stat(path)
+            _FS_STAT(path)
         except (OSError, ValueError):
             return False
         return True
@@ -5683,7 +5698,7 @@ def install_relative_read_fallback(
                 return None
         except ValueError:
             return None
-        if not os.path.isfile(cand):
+        if not _fs_isfile(cand):
             return None
         return cand
 
@@ -5940,6 +5955,11 @@ def _is_sys_path_entry(name: str) -> bool:
     )
 
 
+#: 探路查改指表时目标要是什么（`install_input_remap`）；记账里的 `kind`（`dir` = 问的是文件夹）
+PROBE_WANT_FILE, PROBE_WANT_DIR, PROBE_WANT_ANY = "file", "dir", "any"
+PROBE_ANY_KIND, PROBE_DIR_KIND = "any", "dir"
+
+
 class InputMisses:
     """一次 build 里**原路径打开失败、改指也没救回来**的只读打开：脚本写的那串 + 当时的 cwd。
 
@@ -5949,6 +5969,24 @@ class InputMisses:
 
     def __init__(self) -> None:
         self.items: list[dict] = []
+        #: 探路调用（`os.path.exists|isfile` / `Path.exists|is_file`）答「没有」的路径：同形 `{requested, cwd}`，
+        #: 只保留最近 `MAX_INPUT_MISSES` 条（库自己的探路会刷，要的是脚本报错前最近问过的那几条）。只给
+        #: 「脚本先 exists、再自己 raise FileNotFoundError 点名这条」对账用（ADR 0106 修订 2026-11-09）。
+        self.probes: list[dict] = []
+
+    def note_probe(self, name, cwd: str | None = None, *, kind: str = "any") -> None:
+        if isinstance(name, os.PathLike):
+            name = os.fspath(name)
+        if not isinstance(name, str) or not name or len(name) > 4096 or "\n" in name:
+            return
+        if cwd is None:
+            try:
+                cwd = os.getcwd()
+            except OSError:
+                cwd = ""
+        self.probes = [p for p in self.probes if (p["requested"], p["cwd"]) != (name, cwd)]
+        self.probes.append({"requested": name, "cwd": cwd, "kind": kind})
+        del self.probes[:-MAX_INPUT_MISSES]
 
     def note(self, name, cwd: str | None = None) -> None:
         """`cwd` 是 `name` 相对的那个目录；不给就是此刻的 cwd（脚本写的相对路径就是相对它）。"""
@@ -6068,7 +6106,12 @@ def path_literals(source: str | None) -> tuple[list[tuple[str, ...]], list[tuple
 
 
 def install_input_remap(
-    rules, misses: InputMisses, base_dir: str | None = None, *, script_source: str | None = None
+    rules,
+    misses: InputMisses,
+    base_dir: str | None = None,
+    *,
+    script_source: str | None = None,
+    record_relative_probes: bool = False,
 ):
     """装上改指（ADR 0106）与落空记账；返回卸载函数。
 
@@ -6082,8 +6125,23 @@ def install_input_remap(
     只在**原路径打开抛 `FileNotFoundError`** 之后查表：成功的打开零额外开销，原路径存在时
     永远读原路径。只读模式才改（写 / 追加 / 读写一个字节都不改道）；改指目标必须是文件，
     否则原样抛出原来那个异常。
+
+    探路（ADR 0106 修订 2026-11-09）：`os.path.exists|lexists|isfile|isdir`、`Path.exists|is_file|is_dir`、
+    `os.stat|lstat|listdir|scandir` 在原路径不在时同样查表（`whole=True`）——规则指向存在、类型对得上的位置就按它答
+    （布尔探路答 True，stat / 列目录对目标再调一次；`glob` / `os.walk` / `Path.iterdir` / `getsize` 都经这几个）；没救回的
+    路径记进 `misses.probes`。原路径在时返回值原样、零额外开销。绝对路径总记；相对路径只在 `record_relative_probes` 时记——沙盒 cwd
+    下的相对探路落空另有 `ProbeMisses` 那条路（数据多半就在脚本目录里，出口是「在脚本目录里运行」，不是缺数据）。
     """
     rules = clean_remap_rules(rules)
+    real_exists, real_lexists = os.path.exists, os.path.lexists
+    real_isfile, real_isdir = os.path.isfile, os.path.isdir
+    real_stat, real_lstat = os.stat, os.lstat
+    real_listdir, real_scandir = os.listdir, os.scandir
+    real_p_exists, real_p_is_file = pathlib.Path.exists, pathlib.Path.is_file
+    real_p_is_dir = pathlib.Path.is_dir
+    real_p_glob, real_p_rglob = pathlib.Path.glob, pathlib.Path.rglob
+    real_p_stat, real_p_lstat = pathlib.Path.stat, pathlib.Path.lstat
+    real_p_iterdir = pathlib.Path.iterdir
     real_open = builtins.open
     real_io_open = io.open
     real_path_open = pathlib.Path.open
@@ -6123,6 +6181,10 @@ def install_input_remap(
 
     def _alt(file) -> tuple[str | None, str | None]:
         """回 `(改指目标, 记账用的名字)`；不是路径（fd / 文件对象）两个都是 None。"""
+        with _Busy():  # realpath / isfile 不再经探路查表与记账
+            return _alt_now(file)
+
+    def _alt_now(file) -> tuple[str | None, str | None]:
         if not isinstance(file, (str, os.PathLike)):
             return None, None
         name = os.fspath(file)
@@ -6134,7 +6196,7 @@ def install_input_remap(
         target = remap_target(rules, shown)
         if target is None and shown != name:
             target = remap_target(rules, name)
-        if target is not None and os.path.isfile(target):
+        if target is not None and real_isfile(target):
             return target, shown
         return None, shown
 
@@ -6200,12 +6262,217 @@ def install_input_remap(
     if real_ds_open is not None:
         datasource.open = remapped_datasource_open
 
+    #: 查表本身（`_script_name` 的 realpath、`_is_sys_path_entry`）也会 stat / 判存在：线程内重入时直接走原函数，
+    #: 不再查表、不记账——否则落空的 lstat 查表时再 lstat，一路递归下去
+    busy = threading.local()
+
+    def _reentrant() -> bool:
+        return getattr(busy, "depth", 0) > 0
+
+    class _Busy:
+        def __enter__(self):
+            busy.depth = getattr(busy, "depth", 0) + 1
+
+        def __exit__(self, *exc):
+            busy.depth -= 1
+
+    def _probe_names(path) -> tuple[str | None, str | None]:
+        """`(原样那串, 记账 / 查表用的名字)`；不是路径（fd、文件对象）回 `(None, None)`。"""
+        if not isinstance(path, (str, os.PathLike)):
+            return None, None
+        try:
+            raw = os.fspath(path)
+        except TypeError:
+            return None, None
+        if not isinstance(raw, str) or not raw:
+            return None, None
+        return raw, _script_name(raw)
+
+    def _note_probe(path, kind: str) -> None:
+        with _Busy():
+            _note_probe_now(path, kind)
+
+    def _note_probe_now(path, kind: str) -> None:
+        raw, _ = _probe_names(path)
+        if raw is None:
+            return
+        if not (os.path.isabs(raw) or ntpath.isabs(raw)):
+            if not record_relative_probes:
+                return
+        elif _is_sys_path_entry(raw):
+            return
+        misses.note_probe(raw, kind=kind)
+
+    def _probe_target(path, want: str) -> str | None:
+        """原路径不在时按改指表换算（`whole=True`：探的可以就是规则的 `from` 文件夹本身），目标是 `want`
+        （`file` / `dir` / `any`）且确实在才回它；没有规则命中、目标不在或类型不对回 None。"""
+        if not rules:
+            return None
+        with _Busy():
+            return _probe_target_now(path, want)
+
+    def _probe_target_now(path, want: str) -> str | None:
+        raw, shown = _probe_names(path)
+        if raw is None:
+            return None
+        target = remap_target(rules, shown, whole=True)
+        if target is None and shown != raw:
+            target = remap_target(rules, raw, whole=True)
+        if target is None:
+            return None
+        if want == PROBE_WANT_FILE:
+            ok = real_isfile(target)
+        elif want == PROBE_WANT_DIR:
+            ok = real_isdir(target)
+        else:
+            ok = real_lexists(target)
+        return target if ok else None
+
+    def _bool_probe(real, want, kind):
+        # 原路径不在：用户确认过的改指规则指向一个存在、类型对得上的位置，就答「在」——随后的只读打开 / 列目录 /
+        # stat 经同一张表改道，看到的是同一份数据（ADR 0106 修订 2026-11-09）。原路径在时返回值原样
+        def probe(path, *args, **kwargs):
+            ok = real(path, *args, **kwargs)
+            if ok or _reentrant():
+                return ok
+            if _probe_target(path, want) is not None:
+                return True
+            _note_probe(path, kind)
+            return ok
+
+        return probe
+
+    def _redirected(real, want, kind):
+        """`os.stat` / `lstat` / `listdir` / `scandir`：原路径抛 `FileNotFoundError` 才查表，目标换算后再调一次
+        （列目录给的是名字，`glob` / `os.walk` / `Path.iterdir` 拼回去的仍是脚本写的路径，随后的读经改指表）。"""
+
+        def redirected(path=None, *args, **kwargs):
+            if path is None:
+                return real(*args, **kwargs)
+            try:
+                return real(path, *args, **kwargs)
+            except FileNotFoundError:
+                if kwargs.get("dir_fd") is not None or _reentrant():
+                    raise
+                target = _probe_target(path, want)
+                if target is None:
+                    _note_probe(path, kind)
+                    raise
+            return real(target, *args, **kwargs)
+
+        return redirected
+
+    def _path_probe(real, want, kind):
+        def probe(self, *args, **kwargs):
+            ok = real(self, *args, **kwargs)
+            if ok or _reentrant():
+                return ok
+            if _probe_target(self, want) is not None:
+                return True
+            _note_probe(self, kind)
+            return ok
+
+        return probe
+
+    def _path_glob(real, recursive=False):
+        """`Path.glob` / `rglob`：3.13 起它们绑的是 import 时的 `os.scandir`，上面那几层管不到。pattern 打头的
+        不含通配符的几段与 `self` 拼成实际要列的文件夹（`Path(".").glob("old/*.csv")` 列的是 `old`，Codex #1821 P2）；
+        那个文件夹不在、规则指向的文件夹在时，在那里 glob 剩下的模式，结果换回脚本写的前缀（随后的读经改指表）。"""
+
+        def globbed(self, pattern, *args, **kwargs):
+            if rules and not _reentrant() and isinstance(pattern, (str, os.PathLike)):
+                text = os.fspath(pattern).replace("\\", "/")
+                parts = [p for p in text.split("/") if p not in ("", ".")]
+                head: list[str] = []
+                # `rglob` 的模式在每一层都匹配（`rglob("sub/*.csv")` 找任意深度的 `sub`）：字面段不能拆成前缀
+                while (
+                    not recursive
+                    and len(parts) > 1
+                    and not any(c in parts[0] for c in "*?[")
+                    and parts[0] != ".."
+                ):
+                    head.append(parts.pop(0))
+                if parts:
+                    base = self.joinpath(*head) if head else self
+                    with _Busy():
+                        present = real_p_exists(base)
+                    target = None if present else _probe_target(base, PROBE_WANT_DIR)
+                    if target is not None:
+                        root = pathlib.Path(target)
+                        # 末尾的 `/` 表示只要文件夹，拼回去时不能丢（Codex #1821 P2）
+                        rest = "/".join(parts) + ("/" if text.endswith("/") else "")
+                        return (
+                            base / p.relative_to(root) for p in real(root, rest, *args, **kwargs)
+                        )
+            return real(self, pattern, *args, **kwargs)
+
+        return globbed
+
+    def _path_stat(real):
+        """`Path.stat` / `lstat`：3.10 / 3.11 经 `_accessor` 调 import 时绑的 `os.stat`，上面的 `os.stat` 管不到。"""
+
+        def stat(self, *args, **kwargs):
+            try:
+                return real(self, *args, **kwargs)
+            except FileNotFoundError:
+                if _reentrant():
+                    raise
+                target = _probe_target(self, PROBE_WANT_ANY)
+                if target is None:
+                    _note_probe(self, PROBE_ANY_KIND)
+                    raise
+            return real(pathlib.Path(target), *args, **kwargs)
+
+        return stat
+
+    def path_iterdir(self):
+        """`Path.iterdir`：原文件夹不在、规则指向的文件夹在时列那里，给回 `self / 名字`——与 `os.listdir` /
+        `glob` 一样是脚本写的前缀（3.10 经 `_accessor`、3.13 起取 `DirEntry.path`，两样都不经上面那层）。"""
+        if rules and not _reentrant():
+            with _Busy():
+                present = real_p_exists(self)
+            target = None if present else _probe_target(self, PROBE_WANT_DIR)
+            if target is not None:
+                return (self / name for name in real_listdir(target))
+            if not present:
+                _note_probe(self, PROBE_DIR_KIND)
+        return real_p_iterdir(self)
+
+    os.path.exists = _bool_probe(real_exists, PROBE_WANT_ANY, PROBE_ANY_KIND)
+    os.path.lexists = _bool_probe(real_lexists, PROBE_WANT_ANY, PROBE_ANY_KIND)
+    os.path.isfile = _bool_probe(real_isfile, PROBE_WANT_FILE, PROBE_ANY_KIND)
+    os.path.isdir = _bool_probe(real_isdir, PROBE_WANT_DIR, PROBE_DIR_KIND)
+    os.stat = _redirected(real_stat, PROBE_WANT_ANY, PROBE_ANY_KIND)
+    os.lstat = _redirected(real_lstat, PROBE_WANT_ANY, PROBE_ANY_KIND)
+    os.listdir = _redirected(real_listdir, PROBE_WANT_DIR, PROBE_DIR_KIND)
+    os.scandir = _redirected(real_scandir, PROBE_WANT_DIR, PROBE_DIR_KIND)
+    pathlib.Path.exists = _path_probe(real_p_exists, PROBE_WANT_ANY, PROBE_ANY_KIND)
+    pathlib.Path.is_file = _path_probe(real_p_is_file, PROBE_WANT_FILE, PROBE_ANY_KIND)
+    pathlib.Path.is_dir = _path_probe(real_p_is_dir, PROBE_WANT_DIR, PROBE_DIR_KIND)
+    pathlib.Path.glob = _path_glob(real_p_glob)
+    pathlib.Path.rglob = _path_glob(real_p_rglob, recursive=True)
+    pathlib.Path.stat, pathlib.Path.lstat = _path_stat(real_p_stat), _path_stat(real_p_lstat)
+    pathlib.Path.iterdir = path_iterdir
+
     def uninstall() -> None:
         builtins.open = real_open
         io.open = real_io_open
         pathlib.Path.open = real_path_open
         if real_ds_open is not None:
             datasource.open = real_ds_open
+        os.path.exists, os.path.lexists = real_exists, real_lexists
+        os.path.isfile, os.path.isdir = real_isfile, real_isdir
+        os.stat, os.lstat, os.listdir, os.scandir = (
+            real_stat,
+            real_lstat,
+            real_listdir,
+            real_scandir,
+        )
+        pathlib.Path.exists, pathlib.Path.is_file = real_p_exists, real_p_is_file
+        pathlib.Path.is_dir = real_p_is_dir
+        pathlib.Path.glob, pathlib.Path.rglob = real_p_glob, real_p_rglob
+        pathlib.Path.stat, pathlib.Path.lstat = real_p_stat, real_p_lstat
+        pathlib.Path.iterdir = real_p_iterdir
 
     return uninstall
 
@@ -6539,14 +6806,16 @@ def _message_of(exc: BaseException) -> str | None:
     return text if text and "\n" not in text and len(text) <= 4096 else None
 
 
-def _named_miss(fnf: BaseException, misses: InputMisses) -> str | None:
+def _named_miss(
+    fnf: BaseException, misses: InputMisses, items: list[dict] | None = None
+) -> str | None:
     """异常消息里点了名的那次落空（从最近的往前找）；没点名回 None。点名按路径段边界：
-    `data.txt` 不算点了 `a.txt`，`d` 不算点了 `d.txt`。"""
+    `data.txt` 不算点了 `a.txt`，`d` 不算点了 `d.txt`。`items` 不给就是只读打开的落空。"""
     text = _message_of(fnf)
     if text is None:
         return None
     text = text.replace("\\", "/")
-    for item in reversed(misses.items):
+    for item in reversed(misses.items if items is None else items):
         needle = item["requested"].replace("\\", "/")
         # 路径分隔符同样不是边界：`data` 不算点了 `data/file.parquet`，`file.parquet` 也不算（Codex #1297）
         if re.search(rf"(?<![\w.\-/]){re.escape(needle)}(?![\w\-/]|\.\w)", text):
@@ -6564,8 +6833,10 @@ def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
     落空的」**——那会指认与这次异常无关的路径（#1253）。
     """
     fnf = _file_not_found_in(exc)
-    if fnf is None or not misses.items:
+    if fnf is None:
         return None
+    if not misses.items:
+        return _probe_miss_of(fnf, misses)
     names = misses.names()
     filename = getattr(fnf, "filename", None)
     if not isinstance(filename, (str, os.PathLike)):
@@ -6589,7 +6860,8 @@ def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
                     except (OSError, ValueError):
                         continue
             if requested is None:
-                return None  # 带了文件名却不是一次只读打开落空的：不判
+                # 带了文件名却不是一次只读打开落空的：不判（脚本自己抛的、点了名一次探路落空的除外）
+                return _probe_miss_of(fnf, misses)
     else:
         # 没文件名、消息里也没有引号括着的路径：只认**消息里点名了的**那次落空（numpy 的
         # `"d.txt not found."`、pyarrow 的 `FileNotFoundError("cg_data.parquet")`）。点不了名就不判——
@@ -6597,7 +6869,7 @@ def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
         # （importlib.metadata 的 zipfile 打开）都会排在后面，指认一个与这次异常无关的路径（#1253）。
         requested = _named_miss(fnf, misses)
         if requested is None:
-            return None
+            return _probe_miss_of(fnf, misses)
     entry = next(m for m in reversed(misses.items) if m["requested"] == requested)
     parsed = remap_parts(requested)
     return {
@@ -6606,6 +6878,42 @@ def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
         "cwd": entry["cwd"],
         "misses": names,
     }
+
+
+def _probe_miss_of(fnf: BaseException, misses: InputMisses) -> dict | None:
+    """「脚本先 `exists()` / `is_file()` 探路、答没有，再**自己** `raise FileNotFoundError(...)` 点名这条」→
+    `missing_input` 的事实（ADR 0106 修订 2026-11-09）；对不上回 None。
+
+    三条都要有才判：异常是脚本构造的（`errno` 为 None——系统抛的 ENOENT 都带 errno，写进不存在的目录不在此列）；
+    消息按路径段边界点了名某次落空的探路（同 `_named_miss`）；那条路径此刻确实不在（被回退 / 别处救回来的不算）。
+    探路同样查改指表（`install_input_remap`），所以事实与只读打开的落空同形（不带 `via`；问的是文件夹时多带
+    `probe_kind: "dir"`）：对话框给选择器，AI 的 `link_data_file` 接得上。
+    """
+    if not misses.probes or getattr(fnf, "errno", None) is not None:
+        return None
+    requested = _named_miss(fnf, misses, misses.probes)
+    if requested is None:
+        return None
+    entry = next(m for m in reversed(misses.probes) if m["requested"] == requested)
+    try:
+        os.lstat(os.path.join(entry["cwd"], requested))
+        return None  # 此刻在：不是缺数据
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError):
+        return None
+    parsed = remap_parts(requested)
+    fact = {
+        "requested": requested,
+        "absolute": bool(parsed and parsed[0]),
+        "cwd": entry["cwd"],
+        "misses": misses.names(),
+    }
+    if entry.get("kind") == PROBE_DIR_KIND:
+        fact["probe_kind"] = (
+            PROBE_DIR_KIND  # 问的是文件夹（listdir / isdir / glob）：对话框只给「选择文件夹」
+        )
+    return fact
 
 
 # ---------------------------------------------------------------- 未使用的缺失 import

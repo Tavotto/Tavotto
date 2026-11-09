@@ -1890,6 +1890,8 @@ class Worker(wireproto.V1Handler):
             self._input_misses,
             str(self.workdir or self.sandbox),
             script_source=script_source,
+            # 沙盒 cwd 下的相对探路落空走 `_probe_misses`（出口是「在脚本目录里运行」），不当缺数据
+            record_relative_probes=self.workdir is not None,
         )
         if self.workdir is None:
             figcapture.install_probe_observer(self._probe_misses, str(self.sandbox))

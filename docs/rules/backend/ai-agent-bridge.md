@@ -672,7 +672,7 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
 看护 `tests/test_fixtools_link.py`（含真子进程的整链用例）、`tests/test_missing_input.py::test_the_endpoint_and_ai_repair_share_one_link_function`。
 
 - **一律问**：approve 卡 = 模型给的一句话 `summary` + 折叠 `details`（脚本要的串、完整路径、`evidence`、规则含义）。没有 `ctx.ask` / 非 yes = `needs_approval`，规则与快照都不写。
-- **判据都在弹卡之前**：默认 `mode=file` 的 `requested` 必须在 `inputremap.known_requests`（报告 `missing_input` 载荷 ∪ 脚本里以常量出现且此刻找不到的路径 ∪ 已经接上的：靠现有规则才读得到的常量与现有 `file` 规则的 `from`，TVD-6Z9R）里（按 `match_request` 规范化比对），否则 `requested_unknown`；其 `via` 不是 `open`（探路 / glob / C++ 读取器）→ `link_unreachable`（要改脚本，AI 不改）。
+- **判据都在弹卡之前**：默认 `mode=file` 的 `requested` 必须在 `inputremap.known_requests`（报告 `missing_input` 载荷 ∪ 脚本里以常量出现且此刻找不到的路径 ∪ 已经接上的：靠现有规则才读得到的常量与现有 `file` 规则的 `from`，TVD-6Z9R）里（按 `match_request` 规范化比对），否则 `requested_unknown`；其 `via` 不是 `open`（C++ 读取器：ovito `import_file`、h5py 等）→ `link_unreachable`（要改脚本，AI 不改）。Python 的探路（exists / isfile / isdir / stat / getsize / listdir / glob / os.walk）都查改指表，它们问的路径与「先检查、再自己 raise」认出的路径都按 `open`，接得上；glob 与文件夹条目推文件夹规则（ADR 0106 修订 2026-11-09）。
   `chosen` 过 `ctx.scope.check`（凭据位置 `denied`、范围外 `outside`）、存在、`inputremap.rule_for_choice` 当场推得出规则，才打扰用户。
 - **同一套推导与落盘**：文件模式写入只经 `inputremap.link`（= `rule_for_choice` + `add_rule`；`POST /api/engine/input-remap` 调的也是它）。快照先于写入，`settings_keys()` 含 `input_remap`；
   回滚经 `inputremap.restore_raw`（项目锁 + 换代），**只在改指表真的变了才动**，别的回滚不让它换代。应用侧通知 `FixContext.on_input_remap_changed(state, "added"|"restored")` 由 `app._fix_remap_notifier` 在 `bound_project` 下做收会话 / 取消试运行 / SSE（工作线程没有请求上下文）。
