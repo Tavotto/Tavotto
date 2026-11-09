@@ -103,7 +103,7 @@ class FixContext:
     #: Reviewed (canonical name, exact version constraint) -> approval step.
     approved_installs: dict = field(default_factory=dict)
     #: 用户亲手选过的路径：真实路径 -> 选它的那一步（`pick_file` 的回答、`ask_user` 选中的选项里写着的存在的路径）。
-    #: `link_data_file` 的 `chosen` 在这里就不再弹第二张卡（选择本身就是确认）
+    #: `link_data_file` 的文件模式 `chosen` 在这里就不再弹第二张卡；前缀模式影响整条规则，仍要确认
     user_chosen_paths: dict = field(default_factory=dict)
     #: 本会话持有的环境租约 `[(解释器, 租约 id)]`：`change_python` 动手前给项目当前用的受管环境那一代加租约（`envlease`），
     #: 换到新一代后 `retire_unused` 才不会删掉旧代、`rollback` 才有地方回去；会话收尾时 `release_leases()`

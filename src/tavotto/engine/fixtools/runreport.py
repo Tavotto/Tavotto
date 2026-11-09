@@ -117,7 +117,7 @@ def _data_links_fact(ctx: FixContext) -> dict | None:
     from .link import _reported_payload, _script_rel
 
     try:
-        rules = inputremap.rules_for(ctx.project_root)
+        generation, rules = inputremap.snapshot(ctx.project_root)
     except Exception:  # noqa: BLE001 - 事实是锦上添花，读不到设置不能让报告失败
         return None
     if not rules:
@@ -151,20 +151,28 @@ def _data_links_fact(ctx: FixContext) -> dict | None:
             {
                 "kind": r["kind"],
                 "applies_to": r["from"] or "(any relative path)",
+                **(
+                    {"prefix_id": inputremap.prefix_reference(ctx.project_root, r, generation)}
+                    if r["kind"] == figcapture.REMAP_PREFIX
+                    else {}
+                ),
                 "requested": requested,
                 "reads_instead": home_relative(ctx, r["to"]),
                 "target_exists": os.path.exists(r["to"]),
             }
         )
     return {
-        "fact": "Data links are active for this project: when the script cannot open a path, Tavotto reads the "
-        "linked location instead. The user (or an earlier repair) chose them.",
+        "fact": "Data links exist for this project: in safe execution, when the original read fails, Tavotto "
+        "can read the linked location instead. Native execution reads the original paths and does not use "
+        "these links. The user (or an earlier repair) chose them.",
         "links": links,
         "meaning": "If the script fails while reading or parsing data (for example JSONDecodeError, missing "
         "columns, wrong shape), the linked file may be the wrong one. To re-point a link, call link_data_file "
         "with one of that link's `requested` strings exactly as written (never `applies_to`, which for a "
-        "`prefix` link is a folder prefix, not a path the script opens); the user is asked first. A link with "
-        "an empty `requested` list has no script path Tavotto can tie to it and cannot be re-pointed this way.",
+        "`prefix` link is a folder prefix, not a path the script opens); the user is asked first. If a prefix "
+        "has no known `requested` paths, it can instead be re-pointed as a whole: use `mode=prefix`, its "
+        "`prefix_id` as `requested`, and a user-confirmed destination folder as `chosen`. This "
+        "can change all matching missing reads and requires explicit approval; do not guess a filename.",
     }
 
 
