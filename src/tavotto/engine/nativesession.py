@@ -398,6 +398,7 @@ class NativeSession:
         self.figure_facts: list[dict] = []
         self.script_error: dict | None = None
         self.exception_category: str | None = None
+        self._missing_read: dict | None = None  # private local recovery fact, never an event
         self.terminal_error: dict | None = None
         self.exit_code: int | None = None
         self.figures_captured = 0
@@ -529,6 +530,7 @@ class NativeSession:
                 self.execution_script = script
             self._set_state(RUNNING_SCRIPT, execution_started=True)
         elif name == "barrier":
+            self._capture_missing_read(frame)
             with self._lock:
                 if self.state != BARRIER:
                     self.snapshot_epoch += 1
@@ -564,6 +566,7 @@ class NativeSession:
         elif name == INPUT_REQUEST_EVENT:
             self._on_input_request(frame)
         elif name == "exit":
+            self._capture_missing_read(frame)
             with self._lock:
                 self._barrier_snapshot_epoch = None
             self._release_lease()
@@ -580,6 +583,35 @@ class NativeSession:
                 self._barrier_snapshot_epoch = None
             self._release_lease()
             self._set_state(ENDED)
+
+    def _capture_missing_read(self, frame: dict) -> None:
+        """Keep bounded paths privately, never in the event history or public state."""
+        error = frame.get("script_error")
+        category = frame.get("exception_category") or (
+            error.get("exception_category") if isinstance(error, dict) else None
+        )
+        if executionfact.valid_exception_category(category) != "file_not_found":
+            return
+        fact = frame.get("missing_read")
+        if not isinstance(fact, dict):
+            return
+        requested, cwd = fact.get("requested"), fact.get("cwd")
+        if not all(
+            isinstance(value, str)
+            and 0 < len(value) <= 4096
+            and all(ord(char) >= 32 for char in value)
+            for value in (requested, cwd)
+        ):
+            return
+        with self._lock:
+            if self.state in TERMINAL_STATES:
+                return
+            self._missing_read = {"requested": requested, "cwd": cwd}
+
+    def take_missing_read(self) -> dict | None:
+        with self._lock:
+            fact, self._missing_read = self._missing_read, None
+            return dict(fact) if fact is not None else None
 
     def _accept_release_fact(self, frame: dict) -> bool:
         """Accept one trusted release fact, under ``_lock``; both channels agree.

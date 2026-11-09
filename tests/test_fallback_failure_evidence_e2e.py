@@ -41,6 +41,7 @@ def test_linked_safe_input_then_native_missing_input_preserves_both_failure_fact
         safe, native = final["attempt_history"]
         assert (safe["profile"], safe["code"]) == ("safe", "safe_file_operation_blocked")
         assert (native["profile"], native["code"]) == ("native", "script_error")
+        assert not [r for r in final["requirements"] if r["kind"] == "input_location"]
         snapshots = []
         for attempt in (safe, native):
             status, document = app.call(

@@ -759,7 +759,7 @@
     "missingInputLater": "稍后",
     "missingInputOpen": "指认数据位置…",
     "missingInputRemembered": "已记住数据位置，正在重新运行",
-    "missingInputNative": "脚本直接用专门的读取库打开这份数据，这类读取没法自动改指到别处。",
+    "missingInputNative": "这次读取无法自动改指到别处。",
     "missingInputRewriteHint": "可以把脚本里的这个路径改成数据现在的位置：改之前会先给你看每一处改动并备份，随时能恢复。也可以把数据放回脚本写的位置（相对路径从脚本所在的文件夹算起）。",
     "missingInputPreviewRewrite": "预览要改的地方",
     "rewriteTitle": "确认修改脚本",
