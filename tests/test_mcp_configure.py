@@ -28,6 +28,7 @@ from pathlib import Path
 import pytest
 
 from tests.support import pluginkit as kit
+from tests.support.mcp_desktop_isolation import hide_desktop_installations
 
 ROOT = kit.ROOT
 SOURCE_CONFIGURE = ROOT / "codex-plugin" / "integrations" / "configure.py"
@@ -102,7 +103,7 @@ def _run_configure(plugin: Path, args: list[str], tmp_path: Path, **env_extra: s
     )
 
 
-def _bare_python(tmp_path: Path) -> str:
+def _bare_python(tmp_path: Path, *, no_desktop: bool = False) -> str:
     """一个**没有** tavotto 的解释器：不带 pip 的新 venv（不继承系统 site-packages）。"""
     d = tmp_path / "bare venv"
     venv.EnvBuilder(with_pip=False, system_site_packages=False).create(d)
@@ -114,6 +115,8 @@ def _bare_python(tmp_path: Path) -> str:
         subprocess.run([str(py), "-c", "import tavotto"], capture_output=True, env=env).returncode
         != 0
     )
+    if no_desktop:
+        hide_desktop_installations(py)
     return str(py)
 
 
@@ -384,7 +387,7 @@ def test_engine_found_only_through_the_shell_env_is_pinned(
     """启动器解释器没有引擎、引擎只能靠当前 shell 的变量找到：钉进 TAVOTTO_MCP_PYTHON，
     且钉住后在最小环境里再验过（来源变成 mcp_env）。"""
     mod = _load(unpacked / "integrations" / "configure.py")
-    bare = _bare_python(tmp_path)
+    bare = _bare_python(tmp_path, no_desktop=True)
     # PYTHONPATH 也剥掉：build 在本进程里探 bare，继承了它 bare 就「有引擎」，来源变 current
     for name in ("TAVOTTO_MCP_PYTHON", "TAVOTTO_WORKER_PYTHON", "MM_WORKER_PYTHON", "PYTHONPATH"):
         monkeypatch.delenv(name, raising=False)
@@ -414,7 +417,7 @@ def test_no_engine_anywhere_still_yields_a_config_with_real_recovery_steps(
 ):
     """引擎哪儿都没有：配置照出（降级 server 有 tavotto_health），stderr 的恢复命令是
     这份包里启动器的真实绝对路径，不是 `<插件目录>` 占位。"""
-    bare = _bare_python(tmp_path)
+    bare = _bare_python(tmp_path, no_desktop=True)
     proc = _run_configure(
         unpacked,
         # 解释器路径带空格（bare venv）：Trae 会拒它（command 里不许有空格），这里用不受限的 cursor
