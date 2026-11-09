@@ -1632,6 +1632,17 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
         pick.mockRestore()
       })
 
+      it('「我来指定」取消（prompt 返回 null）：那一行保持未处理，不报错、不登记', async () => {
+        const pick = vi.spyOn(window, 'prompt').mockReturnValue(null)
+        await ready([{ name: 'a.csv', line: 1, state: 'missing' }])
+        await click(row('a.csv').querySelector('[data-convert-file-specify]'))
+        expect(pick).toHaveBeenCalled()
+        expect(row('a.csv').querySelector('[data-convert-file-specify]')).not.toBeNull()
+        expect(row('a.csv').querySelector('[data-convert-file-state]')).toBeNull()
+        expect(foreignCard()?.dataset.convertPhase).toBe('ready')
+        pick.mockRestore()
+      })
+
       it('问过之后选「仍然采用」：没处理的文件不挡采用', async () => {
         await ready([{ name: 'a.csv', line: 1, state: 'missing' }])
         await click(primary())
