@@ -869,7 +869,7 @@ export default interface Resources {
       "scriptHint": "修改后的脚本，原脚本不动",
       "scriptSkipped": "未写入：{{items}}",
       "scriptUnavailable": {
-        "canvas_scope": "需要单张图",
+        "canvas_scope": "整版不能导出 .py，要选「每张图单独导出」",
         "no_script": "这张图没有脚本"
       },
       "showInFolder": "在文件夹中显示",

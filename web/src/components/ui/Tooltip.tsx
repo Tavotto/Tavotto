@@ -39,7 +39,7 @@ export function Tip({ label, shortcut, side = 'bottom', children }: TipProps) {
             // 使刚获得焦点的编辑器收不到这一下键。
           )}
         >
-          <span>{label}</span>
+          <span data-tooltip-label>{label}</span>
           {shortcut && (
             <span className="text-xs tabular-nums text-surface/60">{shortcut}</span>
           )}

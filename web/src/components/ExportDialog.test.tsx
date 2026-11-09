@@ -568,8 +568,8 @@ describe('输出范围', () => {
     // 没有范围选择的单图档里，EPS 灰着的原因不能指向不存在的「每张图单独导出」
     const epsBox = formatBox('EPS')
     expect(epsBox.disabled).toBe(true)
-    expect(epsBox.closest('label')!.title).toContain('没有可重新运行的脚本')
-    expect(epsBox.closest('label')!.title).not.toContain('每张图单独导出')
+    expect(epsBox.closest('label')!.getAttribute('data-export-format-hint')).toContain('没有可重新运行的脚本')
+    expect(epsBox.closest('label')!.getAttribute('data-export-format-hint')).not.toContain('每张图单独导出')
     expect(text()).not.toContain('先选中一张图')
     expect(document.body.querySelector('[data-export-preview-stage] [data-canvas-thumb]'), '预览显示页面').toBeTruthy()
     expect(document.body.querySelector('[data-export-preview-size]')?.textContent).toContain('80 × 60 mm')
@@ -1479,7 +1479,7 @@ describe('来源读后端 route（#1209）', () => {
       await setupRaster([])
       await settle()
       expect(box()?.disabled).toBe(true)
-      expect(row()?.getAttribute('title')).toBe(i18n.t('dialogs:export.scriptUnavailable.no_script'))
+      expect(row()?.getAttribute('data-export-format-hint')).toBe(i18n.t('dialogs:export.scriptUnavailable.no_script'))
     })
   })
 
@@ -3024,7 +3024,7 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
     expect(ppiSelect()).toBeNull()
     const eps = formatBox('EPS')
     expect(eps.disabled).toBe(true)
-    expect(eps.closest('label')!.title).toContain('EPS 只支持导出单张图')
+    expect(eps.closest('label')!.getAttribute('data-export-format-hint')).toContain('EPS 只支持导出单张图')
     await click(formatBox('TIFF'))
     expect(ppiSelect(), 'TIFF 是位图，分辨率那一行要出现').toBeTruthy()
     // 「这次会写哪几个文件」的预览行已按工作台批次去掉；发出去的格式清单在请求体里判
@@ -3058,7 +3058,7 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
     await setup(9)
     const eps = formatBox('EPS')
     expect(eps.disabled).toBe(true)
-    expect(eps.closest('label')!.title).toContain('没有可重新运行的脚本')
+    expect(eps.closest('label')!.getAttribute('data-export-format-hint')).toContain('没有可重新运行的脚本')
   })
 
   it('勾着 EPS 切回画布：请求里自动不带它，界面把原因摆出来；只勾 EPS 时按钮变灰', async () => {

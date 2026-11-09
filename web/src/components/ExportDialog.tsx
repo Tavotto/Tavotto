@@ -57,6 +57,7 @@ import { ExportZoomStage } from "./ExportZoomStage";
 import { ExportLocationRow } from "./ExportLocationRow";
 import { useProjectSettingsPending } from "@/lib/projectSettingsPatch";
 import { Checkbox } from "./ui/Checkbox";
+import { Tip } from "./ui/Tooltip";
 import { Segmented } from "./ui/Segmented";
 import {
   engineErrorMsg,
@@ -3149,23 +3150,28 @@ function FormatCheck({
   /** 禁用原因那段可见文字的 id */
   describedBy?: string;
 }) {
+  // 说明走应用自己的气泡（`Tip`），不用原生 `title`：灰掉的 `<input>` 不派发指针事件，停在复选框上原生提示永远不出，
+  // 而「为什么灰」恰恰是灰掉时最要紧的那句。禁用时复选框不吃指针，悬停落到整行 label 上
   return (
-    <label
-      data-export-format={format}
-      title={hint}
-      aria-disabled={disabled || undefined}
-      className={cn(
-        "flex min-h-7 items-center gap-2 font-medium",
-        disabled ? "cursor-not-allowed text-ink-faint" : "text-ink",
-      )}
-    >
-      <Checkbox
-        checked={checked}
-        onChange={onChange}
-        disabled={disabled}
-        aria-describedby={describedBy}
-      />
-      <span>{format.toUpperCase()}</span>
-    </label>
+    <Tip label={hint} side="top">
+      <label
+        data-export-format={format}
+        data-export-format-hint={hint}
+        aria-disabled={disabled || undefined}
+        className={cn(
+          "flex min-h-7 items-center gap-2 font-medium",
+          disabled ? "cursor-not-allowed text-ink-faint" : "text-ink",
+        )}
+      >
+        <Checkbox
+          checked={checked}
+          onChange={onChange}
+          disabled={disabled}
+          aria-describedby={describedBy}
+          className={disabled ? "pointer-events-none" : undefined}
+        />
+        <span>{format.toUpperCase()}</span>
+      </label>
+    </Tip>
   );
 }
