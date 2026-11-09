@@ -34,6 +34,7 @@ import threading
 import time
 
 from . import config, figcapture, inputremap
+from .runtime import CREATE_NO_WINDOW
 
 SETTINGS_KEY = "input_copies"
 MAX_RECORDS = 50
@@ -411,7 +412,14 @@ def _elevate_macos(source: str, target: str) -> None:
     argv = macos_osascript_argv(source, target, os.getuid(), os.getgid())
     try:
         proc = subprocess.run(  # noqa: S603 — 固定可执行文件 + 列表参数，无 shell
-            argv, capture_output=True, text=True, timeout=ELEVATION_TIMEOUT_S, check=False
+            argv,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=ELEVATION_TIMEOUT_S,
+            check=False,
+            creationflags=CREATE_NO_WINDOW,
         )
     except subprocess.TimeoutExpired as exc:  # run() 超时已经杀了自己起的那个子进程
         raise CopyError(STATE_FAILED, "timeout") from exc
@@ -482,7 +490,11 @@ def open_full_disk_access() -> bool:
         return False
     try:
         proc = subprocess.run(  # noqa: S603 — 固定可执行文件 + 固定地址
-            ["/usr/bin/open", FULL_DISK_ACCESS_URL], capture_output=True, timeout=15, check=False
+            ["/usr/bin/open", FULL_DISK_ACCESS_URL],
+            capture_output=True,
+            timeout=15,
+            check=False,
+            creationflags=CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError):
         return False
