@@ -118,6 +118,8 @@
     "collapse": "Show less",
     "copy": "Copy message",
     "expand": "Show more",
+    "refCount_one": "{{count}} image attached",
+    "refCount_other": "{{count}} images attached",
     "resend": "Send again"
   },
   "sessionError": {
@@ -210,7 +212,13 @@
     "connectAi": "Connect AI",
     "noAi": "No AI connected yet.",
     "connectMore": "Connect more AI…",
-    "aiModel": "AI & model"
+    "aiModel": "AI & model",
+    "refAttach": "Attach images · up to 4, or paste / drop them in",
+    "refRemove": "Remove this image",
+    "refChipAria": "Reference image {{name}}",
+    "refNoVision": "This model can't see images, ",
+    "refNoVisionOnly": "This model can't see images",
+    "refSwitch": "switch to {{model}}"
   },
   "process": {
     "thought": "Thought for {{duration}}",
@@ -259,6 +267,9 @@
     "done": "Done",
     "failed": "Failed",
     "interrupted": "Interrupted",
+    "refOverflow": "Up to 4 images; the rest were skipped",
+    "refUndecodable": "Couldn't open that image. Try a PNG or JPEG.",
+    "refUploadFailed": "That image didn't go through. Try again.",
     "reverted": "Reverted",
     "running": "Running",
     "timeout": "Timed out"

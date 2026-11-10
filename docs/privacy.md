@@ -199,7 +199,11 @@ AI the user chose, in one of two ways:
   are accepted only on the local machine or a private network.
 
 What is sent is the user's instruction plus whatever the assistant reads from the
-project to do the job, which can include the script and files in the project folder.
+project to do the job, which can include the script and files in the project folder,
+and any images you attach to an instruction as references. Attached images are kept
+only in Tavotto's local data folder for the duration of the task (unsent ones are
+deleted within an hour), are never added to your project, to usage statistics or to a
+diagnostics bundle, and go only to the AI you connected.
 Tavotto itself does not upload AI prompts, responses or diffs anywhere (see "Data
 Tavotto does not upload"). The AI service, or the command-line tool in the first
 case, has its own network, account and privacy behavior and is not a background

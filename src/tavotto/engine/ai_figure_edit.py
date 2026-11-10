@@ -27,6 +27,7 @@ from pathlib import Path
 
 from . import (
     ai_prompt_pack,
+    ai_refimages,
     ai_tasks,
     config,
     discover,
@@ -174,14 +175,18 @@ def _entry_changed(x: list | None, y: list | None) -> bool:
 
 #: 候选目录里的改道区（校验运行写进项目的文件落这里；ADR 0143 修订 2026-10-30）：不算“候选里多出来的文件”
 REDIRECT_DIRNAME = "redirected"
+#: 候选目录里的用户参考图（ADR 0175）：同样不算“候选里多出来的文件”，也绝不会被当成要写回的东西（名字的唯一出处在 `ai_refimages`）
+REFERENCE_DIRNAME = ai_refimages.REFERENCE_DIRNAME
 
 
 def _tree(root: Path) -> dict[str, str] | None:
-    """候选目录的 `{相对路径: sha256}`（不含根下的改道区）；文件数超限回 None。"""
+    """候选目录的 `{相对路径: sha256}`（不含根下的改道区与参考图区）；文件数超限回 None。"""
     out: dict[str, str] = {}
     root = longpath.long(root)  # Windows 上深目录超 260 字符也要走得通（相对路径结果不受前缀影响）
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-        skip = {"__pycache__"} | ({REDIRECT_DIRNAME} if Path(dirpath) == root else set())
+        skip = {"__pycache__"} | (
+            {REDIRECT_DIRNAME, REFERENCE_DIRNAME} if Path(dirpath) == root else set()
+        )
         dirnames[:] = sorted(d for d in dirnames if d not in skip)
         for name in sorted(filenames):
             p = Path(dirpath) / name

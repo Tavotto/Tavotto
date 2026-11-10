@@ -137,6 +137,7 @@ export default interface Resources {
       "collapse": "收起",
       "copy": "复制消息",
       "expand": "展开",
+      "refCount_other": "附了 {{count}} 张图",
       "resend": "重新发送"
     },
     "notice": {
@@ -194,6 +195,12 @@ export default interface Resources {
       "placeholderNoPanel": "先选中一张可编辑的图",
       "probing": "正在查找本机 CLI…",
       "processSteps_other": "{{count}} 步",
+      "refAttach": "附参考图 · 最多 4 张，也可粘贴或拖入",
+      "refChipAria": "参考图 {{name}}",
+      "refNoVision": "这个模型看不了图，",
+      "refNoVisionOnly": "这个模型看不了图",
+      "refRemove": "去掉这张图",
+      "refSwitch": "换成 {{model}}",
       "resendSame": "重新发送",
       "retry": "重试",
       "retryChangedBody": "上一次任务虽然失败，但脚本可能已被改动。再次运行会在现有内容上再改一遍，确定重试吗？",
@@ -276,6 +283,9 @@ export default interface Resources {
       "done": "完成",
       "failed": "失败",
       "interrupted": "已中断",
+      "refOverflow": "最多附 4 张图，多的没收",
+      "refUndecodable": "这张图打不开，换成 PNG 或 JPEG 试试",
+      "refUploadFailed": "图没传上，再试一次",
       "reverted": "已回滚",
       "running": "运行中",
       "timeout": "超时"

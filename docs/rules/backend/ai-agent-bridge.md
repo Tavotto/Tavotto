@@ -878,3 +878,14 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 写大文件时事件流静默、写入被拒后换位置写，都是真模型才复现（#1628）；2026-11-07 一份用户反馈：Windows 没有第①档
 沙盒，命令一律返回 `sandbox_unavailable`，设计指望模型带 `outside_sandbox` 重试，真模型没重试，用户批准修复后什么都没
 发生（#1793）。
+
+## 改图助手的参考图（ADR 0175，`engine/ai_refimages.py`）
+
+用户附的图经 `POST /api/ai/ref-images`（请求体 = 图片字节，魔数认 PNG / JPEG / GIF / WebP，≤ 4 MiB、≤ 4000 万像素）暂存到 `data_dir()/cache/ai_refs_staged/`（1 h 过期、× 即删），`/api/ai/run` 只带 `ref_images` id（≤ 4，`valid_ids`）。`ai_bridge.run(ref_images=)` 经 `_attach_ref_images` 把图**移**进工作目录：
+
+- 有候选（TAF / 内置执行器）：`<候选>/_reference/ref-N.<ext>`，提示词给相对路径；`ai_figure_edit._tree` 排除候选根下的这个目录（`REFERENCE_DIRNAME` 唯一出处在 `ai_refimages`），所以不算「改了别的文件」，也不会被写回；随候选一起清。
+- 无候选（外部 CLI 原地改）：`data_dir()/cache/ai_refs/<sid>/`，提示词给绝对路径，Claude 经 `RunContext.read_dirs` 多一个 `--add-dir`（只在附图时出现）；`_finish_session` / `_drop_attempt_files` 删，24 h 兜底。**绝不写用户项目目录。**
+- 提示词段 `ai_prompt_pack.ref_images_note` 不进 `V1` 闭集（同转换提示词一节）；不附图时整段一行都不执行，请求 / 提示词 / 工作区 / 历史行逐字节不变。
+- `sessions.ref_count` 只存张数；`SESSION_DTO_KEYS` 带 `ref_count`。图片不进历史、遥测、诊断包。
+- 能力清单的 `no_vision`（执行器与连接上的可选字段）来自 `ai_refimages.known_text_only`：只列**确定**看不了图的型号，判不出的不列、照常发送；前端不镜像名单。
+- 看护：`tests/test_ai_refimages.py`。

@@ -71,6 +71,7 @@ from .engine import (
     ai_history as engine_ai_history,
     ai_oauth as engine_ai_oauth,
     ai_providers as engine_ai_providers,
+    ai_refimages as engine_ai_refimages,
     ai_tasks as engine_ai_tasks,
     artifactcontext as engine_artifactcontext,
     artifactinspect as engine_artifactinspect,
@@ -14343,6 +14344,8 @@ def _ai_run_impl():
             # 文件变了就接统一刷新（reason=ai），在 ai.done 之前做完（ADR 0041）
             on_changed=lambda script: _after_ai_change(ctx, script),
             task_hooks=_ai_task_hooks(ctx, info["script"], info["entry"], selection),
+            # 用户附的参考图（ADR 0175）：只是暂存 id，图片本身早已经由 `/api/ai/ref-images` 上传；不附图时恒为空
+            ref_images=engine_ai_refimages.valid_ids(body.get("ref_images")),
         )
     except engine_ai.DuplicateRequest as dup:
         # 同一条请求已经登记过：返回既有会话，不 spawn、不重复记遥测
@@ -14371,6 +14374,27 @@ def _ai_run_impl():
         "ai_assistant_invoked", {"agent": agent if agent in allowed else "other"}
     )
     return jsonify({"session": sid, "script": info["script"]})
+
+
+@app.post("/api/ai/ref-images")
+def api_ai_ref_image_stage():
+    """暂存一张用户附的参考图（ADR 0175，请求体就是图片字节）：→ `{id, mime, bytes, width, height}`。
+    前端先把图缩到 ≤ 4 MiB 再传；这里按魔数再核一遍，不认的格式 / 过大 = 400 / 413 带稳定码。过会话认证，同其它 `/api/ai/*`。"""
+    raw = request.get_data(cache=False, as_text=False) or b""
+    if len(raw) > engine_ai_refimages.MAX_BYTES:
+        return jsonify({"error": "图片过大", "code": "ref_image_too_large", "params": {}}), 413
+    try:
+        return jsonify(engine_ai_refimages.stage(raw))
+    except engine_ai_refimages.RefImageError as exc:
+        status = 413 if exc.code == "ref_image_too_large" else 400
+        return jsonify({"error": exc.code, "code": exc.code, "params": {}}), status
+
+
+@app.delete("/api/ai/ref-images/<rid>")
+def api_ai_ref_image_discard(rid):
+    """用户把附的图去掉：删暂存。幂等（已经没了也回 ok）。"""
+    engine_ai_refimages.discard(rid)
+    return jsonify({"ok": True})
 
 
 # --- 「生成可编辑版本」（ADR 0143）：位图库画的图 → 改图助手另写一份 Matplotlib 版**新**脚本，原脚本不动 -------

@@ -39,6 +39,7 @@ from . import (
     ai_history,
     ai_oauth,
     ai_providers,
+    ai_refimages,
     cli_failure,
     config,
     convertwrite,
@@ -152,6 +153,9 @@ def _finish_session(
         ai_history.record_cancel_result(sess["id"], "finished")  # 结果与终态一致，不悬挂
     # 结束时刻：详情的 `ended_ms`（#1098 单独合入时前端靠它判 cancelled 快照是不是终态；这里与 `final` 同时置位）
     convertwrite.close(str(sess.get("id") or ""))  # 代写工具的令牌随会话终态失效
+    ai_refimages.remove_session(
+        str(sess.get("id") or "")
+    )  # 旧路径的参考图随会话收尾删（候选里的随候选清理）
     sess["ended_ms"] = int(time.time() * 1000)
     sess["final"] = True
     _trace_settle_session(sess, task_result)
@@ -438,6 +442,7 @@ def _trace_settle_session(sess: dict, task_result: dict | None) -> None:
 def _drop_attempt_files(sid: str, snap: Path, cand=None) -> None:
     """这次尝试没有真正起任务（被拒绝）：清掉为它备好的快照 / sidecar / 日志（TAF：连同候选目录），不留半成品。"""
     convertwrite.close(sid)
+    ai_refimages.remove_session(sid)
     for leftover in (snap, SNAP_DIR / f"{sid}.json", SNAP_DIR / f"{sid}.stderr.log"):
         try:
             leftover.unlink()
@@ -629,6 +634,8 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict, npm_available: bo
         "detection_source": res.source,
         "models": models,
         "default_model": default_model,
+        # 加字段（ADR 0175）：确定只吃文字、看不了参考图的型号；没有就不出这个键，判不出的不列
+        **({"no_vision": nv} if (nv := ai_refimages.text_only_models(models)) else {}),
         # 加字段：与 models 并行的型号详情（显示名 / 说明 / 每型号自己的强度档位）
         "model_details": [
             {
@@ -1517,6 +1524,7 @@ def _cmd(
     convert_mcp: ai_agents.ConvertMcp | None = None,
     convert_task: bool = False,
     convert_unsandboxed: bool = False,
+    read_dirs: tuple[str, ...] = (),
 ) -> tuple[list[str], dict[str, str]]:
     """→ (命令行, 需要追加到环境的变量)。第三方接口全部走这两样注入，
     绝不改写用户自己的 ~/.claude 或 ~/.codex 配置。
@@ -1563,6 +1571,7 @@ def _cmd(
             convert_mcp=convert_mcp,
             convert_task=convert_task,
             convert_unsandboxed=convert_unsandboxed,
+            read_dirs=read_dirs,
         )
     )
     return list(spec.argv), dict(spec.env)
@@ -1727,6 +1736,32 @@ def _endpoint_backed(agent_id: str, endpoint_id: str | None) -> bool:
     return bool(args or env)
 
 
+def _attach_ref_images(sid: str, cand, ref_ids) -> tuple[str, tuple[str, ...], int]:
+    """把用户附的参考图放进这次任务的工作目录 → (提示词里追加的一段, CLI 需要额外放行读取的目录, 图片数)。
+
+    有候选工作区（TAF / 内置执行器）：图在 `<候选>/_reference/`，提示词给相对路径（Agent 的 cwd 就是候选）；
+    没有（外部 CLI 原地改）：图在数据目录的会话目录里，提示词给绝对路径、Claude 另加 `--add-dir`。**两条都不写用户项目目录。**
+    暂存里找不到的图静默跳过，一张都没有就等于没附。"""
+    if not ref_ids:
+        return "", (), 0
+    from . import ai_prompt_pack
+
+    if cand is not None:
+        dest = Path(cand.dir) / ai_refimages.REFERENCE_DIRNAME
+        names = ai_refimages.materialize(ref_ids, dest)
+        paths = [f"{ai_refimages.REFERENCE_DIRNAME}/{n}" for n in names]
+        dirs: tuple[str, ...] = ()
+    else:
+        ai_refimages.prune_sessions()
+        dest = ai_refimages.session_dir(sid)
+        names = ai_refimages.materialize(ref_ids, dest)
+        paths = [str(dest / n) for n in names]
+        dirs = (str(dest),) if names else ()
+    if not names:
+        return "", (), 0
+    return ai_prompt_pack.ref_images_note(paths), dirs, len(names)
+
+
 def run(
     agent: str,
     script: str,
@@ -1741,6 +1776,7 @@ def run(
     client_request_id: str | None = None,
     task_hooks: dict | None = None,
     convert: dict | None = None,
+    ref_images: list[str] | None = None,
 ) -> str:
     """启动一次 AI 修改任务，返回 session id。事件经 on_event(name, data) 回调。
 
@@ -1759,6 +1795,10 @@ def run(
     `convert_to_editable` 任务：Agent 在候选工作区里**新建**一份 Matplotlib 版脚本，`script` 只读（字节不动）；过了检查的
     候选留存待采用（`ai_convert.adopt`），本函数从不写项目文件。此时 `task_hooks` 只用 `runner`（校验运行）。**不看** TAF
     实验开关（该任务默认开，逃生口是 `ai_convert.enabled()`）。
+
+    `ref_images`（ADR 0175）：用户在输入框里附的参考图的暂存 id（`ai_refimages.stage` 给的）。给了就把图移进这次任务的工作目录
+    （候选里的 `_reference/`，旧路径是数据目录里的会话目录——绝不进用户项目），提示词末尾追加一段说明；不给时一切逐字节不变。
+    只对改图任务有效，转换任务忽略。
 
     `client_request_id`：前端点发送时生成的 UUID。同 (项目, id) 已登记过就抛 `DuplicateRequest`、
     **不 spawn**——「任何操作都不得让同一条 AI 修改被无意执行两次」。去重先于忙检查：
@@ -1980,6 +2020,12 @@ def run(
             )
             if cand is not None:
                 prompt += "\n\n" + ai_figure_edit.prompt_note(cand)
+        # 用户附的参考图（ADR 0175）：不附图时这一段一行都不执行
+        ref_note, ref_dirs, ref_count = _attach_ref_images(
+            sid, cand if convert is None else None, ref_images
+        )
+        if ref_note:
+            prompt += "\n\n" + ref_note
         stderr_log = open(SNAP_DIR / f"{sid}.stderr.log", "wb", buffering=0)
         endpoint = ai_providers.resolve(agent, endpoint_id)
         builtin = agent == ai_agents.BUILTIN_ID
@@ -2022,6 +2068,8 @@ def run(
             # 是否转换任务与设置值**显式**传给适配器（它不读全局配置）；是否真生效（仅 Windows）由适配器判
             cmd_kw["convert_task"] = True
             cmd_kw["convert_unsandboxed"] = config.convert_unsandboxed_windows()
+        if ref_dirs:
+            cmd_kw["read_dirs"] = ref_dirs
         cmd, extra_env = _cmd(
             agent, prompt, agent_cwd, model=model, effort=effort, endpoint=endpoint, **cmd_kw
         )
@@ -2059,6 +2107,7 @@ def run(
                     "prompt": user_prompt,
                     "snapshot_path": str(snap),
                     "client_request_id": client_request_id,
+                    "ref_count": ref_count,
                     **(
                         {
                             "task_type": envelope.task_type,
@@ -2154,6 +2203,10 @@ def run(
         }
         if convert is not None:
             sess["kind"] = "convert"
+        if ref_count:
+            sess["ref_count"] = (
+                ref_count  # 对外只给张数（`SESSION_DTO_KEYS`）；图片本身不进会话 / 历史
+            )
         if task_run is not None:
             #: 对外：任务类型与结局摘要（收尾时补全）；对内：候选与 Task Core 的运行对象（`SESSION_INTERNAL_KEYS`）
             sess["task"] = {"task_type": envelope.task_type, "outcome": None}
@@ -3170,6 +3223,7 @@ SESSION_DTO_KEYS: tuple[str, ...] = (
     "task",
     "cancel_requested",
     "rev",
+    "ref_count",
 )
 #: **终态字段清单**：会话结束时一起确定、落进历史库的那一组。服务重启后「sidecar 合并历史」的路径用它整体覆盖 sidecar，
 #: 不再逐个字段抄（漏抄一个就会出现「final 为 true 但 error 是空」这类分叉）。新增终态字段时只改这里。

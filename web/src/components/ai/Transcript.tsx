@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronRight, Pencil, RefreshCw, Sparkles, Wrench, type IconComponent } from '@/components/ui/icons'
+import { ChevronRight, Image as ImageIcon, Pencil, RefreshCw, Sparkles, Wrench, type IconComponent } from '@/components/ui/icons'
 import { ICON_SIZE, IconSlot as RowIconSlot } from '@/components/ui/Icon'
 import { ThinkingOrb, type OrbForm } from '@/components/ui/ThinkingOrb'
 import { SwapText } from '@/components/ui/SwapText'
@@ -441,6 +441,19 @@ function UserBubble({
             {ai(expanded ? 'message.collapse' : 'message.expand')}
           </button>
         )}
+        {/* 用户附的参考图（ADR 0175）：本页发起的显示缩略图，接回 / 历史里只剩张数；没附图就什么都不画 */}
+        {session.refThumbs?.length ? (
+          <div data-ai-user-refs className="mt-1.5 flex flex-wrap justify-end gap-1">
+            {session.refThumbs.map((src, i) => (
+              <img key={i} src={src} alt="" draggable={false} className="size-8 rounded-sm object-cover inset-ring inset-ring-border" />
+            ))}
+          </div>
+        ) : session.refCount ? (
+          <span data-ai-user-refs className="type-meta mt-1 inline-flex items-center gap-1">
+            <ImageIcon size={ICON_SIZE.sm} aria-hidden />
+            {ai('message.refCount', { count: session.refCount })}
+          </span>
+        ) : null}
       </div>
       {/* 目标 · 时刻与操作只在 hover / 键盘进入时出现（不占注意力，占位不跳） */}
       <div
