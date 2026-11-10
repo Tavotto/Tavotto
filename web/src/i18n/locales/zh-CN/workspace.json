@@ -997,6 +997,10 @@
     "fit_canvas": "双击空白处，画布回到正中",
     "edge_crop": "拖边改图幅，按住 {{alt}} 改为裁剪",
     "ruler_guides": "从标尺拖出对齐线",
+    "shift_axis": "按住 ⇧ 拖动，只沿一个方向走",
+    "no_snap": "按住 {{mod}} 拖动，暂时不吸附",
+    "arrow_nudge": "方向键微移，⇧ 大步、{{alt}} 小步",
+    "shift_rotate": "按住 ⇧ 旋转，15° 一档",
     "pageBoundsOpen": "打开画布页"
   },
   "prep": {

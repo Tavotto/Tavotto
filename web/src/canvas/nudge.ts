@@ -29,6 +29,7 @@ import {
   panelFullRect,
 } from '@/lib/elementGeom'
 import { msg } from '@/i18n'
+import { emitActivity } from '@/lib/activity'
 import type { Manifest } from '@/lib/api'
 import { useDocumentStore } from '@/store/documentStore'
 import { finishActiveGesture, registerGesture } from '@/store/gestureCoordinator'
@@ -389,7 +390,9 @@ export function finishNudge(): void {
   }
   release(b)
   if (b.kind === 'layout') {
-    useDocumentStore.getState().endTxn({ discard: b.dx === 0 && b.dy === 0 })
+    const moved = b.dx !== 0 || b.dy !== 0
+    useDocumentStore.getState().endTxn({ discard: !moved })
+    if (moved) emitActivity({ kind: 'object.nudged' })
   } else {
     const [dfx, dfy] = b.toFrac(b.dx, b.dy)
     b.mover!.commit(dfx, dfy, true)

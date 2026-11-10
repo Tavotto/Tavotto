@@ -260,3 +260,75 @@
 .hint-fade[data-hide] {
   opacity: 0;
 }
+
+/* 第二批：锁向 / 不吸附 / 微移 / 旋转 */
+.hint-panel[data-move-ease] {
+  transition:
+    left 260ms var(--ease-snap),
+    top 260ms var(--ease-snap);
+}
+.hint-axis {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 0;
+  border-top: 1px dashed var(--color-sel);
+  opacity: 0;
+  transition: opacity 140ms;
+}
+.hint-axis[data-show] {
+  opacity: 0.7;
+}
+.hint-snapline {
+  position: absolute;
+  z-index: 4;
+  left: 44px;
+  right: 44px;
+  height: 1px;
+  background: var(--color-sel);
+  opacity: 0;
+}
+.hint-snapline[data-show] {
+  opacity: 1;
+}
+.hint-note {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1.5px solid var(--color-sel);
+  background: var(--color-paper);
+  transform-origin: 50% 50%;
+}
+.hint-note[data-ease] {
+  transition: transform 320ms var(--ease-snap);
+}
+.hint-note__text {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 50%;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--color-paper-ink) 70%, transparent);
+}
+.hint-knob {
+  position: absolute;
+  left: 50%;
+  box-sizing: border-box;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  border: 1.5px solid var(--color-sel);
+  border-radius: 50%;
+  background: var(--color-paper);
+}
+.hint-knob::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  width: 1px;
+  height: 11px;
+  margin-left: -0.5px;
+  background: var(--color-sel);
+}
