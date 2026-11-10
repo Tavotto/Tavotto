@@ -37,6 +37,10 @@
   → `library: "svg"`，`path: null`、`in_project: false`。没有文件证据也说：safe 档项目模式下这次写入本来就被守卫拦了，
   磁盘上不会有文件；AST 两条同时成立 + 运行事实「没捕获到 Figure」才说。有 matplotlib 家族、有别的库在存图、动态 import、
   看不全一律沉默。
+* **只复制现成图片（反馈包 TVD-537W）**：不画图、只把现成的 PDF / PNG 复制成成品的交付脚本——没有 matplotlib 家族、没有任何
+  存图 / 画图 / 写 SVG 的调用、看得全，有 `shutil` 复制 / 移动或 `x.write_bytes(y.read_bytes())`，且本次运行后素材盘点里有
+  新写出的图片（时间看 mtime，另看复制改不回去的那个时间：`shutil.copy2` 会把 mtime 改回旧值）→ `{"kind": "copied_images",
+  "in_project": true, "path": 项目相对路径}`。它本来就不画图：卡片直说，修法为空（不摆 AI 修复、不给转写）。
 
 纯标准库；被 `prepsession` import（Flask 父进程 import 链）。
 """
@@ -44,13 +48,14 @@
 from __future__ import annotations
 
 import ast
+import os
 import re
 from pathlib import Path
 
 from . import discover, importscan, scanbudget
 
 # 素材盘点的可见性判据：单一出处（`iter_assets` 同一份），不在这里抄第二份
-from .project_refresh import PDF_EXT as _PDF_EXT, is_inventoried, iter_assets
+from .project_refresh import IMG_EXT as _IMG_EXT, PDF_EXT as _PDF_EXT, is_inventoried, iter_assets
 from .workdir import MODE_PROJECT, MODE_PROJECT_ROOT, MODE_SANDBOX
 
 #: 会让 Tavotto 能捕获到 figure 的家族；脚本或其本地模块 import 了其中任何一个都不提示。
@@ -530,11 +535,26 @@ def _allowed_exts(libs: list[str]) -> frozenset[str]:
     return out
 
 
+def _copy_fresh_time(st: os.stat_result) -> float:
+    """复制出来的文件「是不是这次写的」：`shutil.copy2` 会把 mtime 改回源文件的旧值，所以再看一个复制改不回去的时间——
+    POSIX 的 `st_ctime`（inode 变更时间，copystat 也会刷新它）；Windows 的创建时间（`st_birthtime`，新建的文件才新，
+    覆盖已有文件且用 copy2 时仍看不出，那种情况不说）。"""
+    if os.name == "nt":
+        # 3.12 起才有 `st_birthtime`；3.10 / 3.11 的 Windows 上 `st_ctime` 就是创建时间（3.12 起这层语义才弃用）
+        extra = getattr(st, "st_birthtime", None)
+        if extra is None:
+            extra = st.st_ctime
+    else:
+        extra = st.st_ctime
+    return max(st.st_mtime, float(extra or 0.0))
+
+
 def _new_inventory_file(
-    root: Path, run_started_at: float | None, exts: frozenset[str]
+    root: Path, run_started_at: float | None, exts: frozenset[str], *, copied: bool = False
 ) -> str | None:
     """素材盘点（`iter_assets`，带时间预算，不新开遍历）里 mtime 不早于本次运行开始的文件里最新的那个的项目相对路径；
-    没有 / 没传开始时间 / 读不了 → None。盘点只认 png / jpg / tiff / pdf，svg / eps 等盘点外的格式只能走字面量路径证据。"""
+    没有 / 没传开始时间 / 读不了 → None。盘点只认 png / jpg / tiff / pdf，svg / eps 等盘点外的格式只能走字面量路径证据。
+    `copied`：找的是复制出来的文件，时间按 `_copy_fresh_time` 取。"""
     if run_started_at is None:
         return None
     best: tuple[float, str] | None = None
@@ -544,7 +564,8 @@ def _new_inventory_file(
             if path.suffix.lower() not in exts:
                 continue
             try:
-                mtime = path.stat().st_mtime
+                st = path.stat()
+                mtime = _copy_fresh_time(st) if copied else st.st_mtime
                 rel = path.relative_to(root).as_posix()
             except (OSError, ValueError):
                 continue
@@ -587,7 +608,8 @@ def detect(
     sandbox_dir: str | None = None,
 ) -> dict | None:
     """脚本（含有界跟进的本地模块）是不是用位图库自己写了图片文件；是则回 `{"kind": "raster_script",
-    "library": <LIBRARIES 之一>, "in_project": bool, "path": 项目相对路径 | None}`，否则 None（含「看不全」）。读不了 / 解析不了一律 None，不抛。
+    "library": <LIBRARIES 之一>, "in_project": bool, "path": 项目相对路径 | None}`；只复制现成图片的脚本回
+    `{"kind": "copied_images", "in_project": True, "path": 项目相对路径}`；否则 None（含「看不全」）。读不了 / 解析不了一律 None，不抛。
 
     **文件证据**：至少一处字面量输出路径解析出的文件此刻存在且 mtime 不早于 `run_started_at`（本次运行开始，
     epoch 秒）才回提示；没传 `run_started_at` 也按没有证据（None）。沙盒模式（默认）下相对路径按
@@ -606,7 +628,7 @@ def detect(
     if scan.truncated or scan.problems:
         return None  # 反面判据（有没有 matplotlib）看不全：不说
     saves: list[tuple[str, str | None]] = []
-    mpl_any = draw_strong = draw_weak = svg_markup = svg_write = False
+    mpl_any = draw_strong = draw_weak = svg_markup = svg_write = copies = False
     for rel in scan.files:
         text, problem = discover.read_source(root_p / rel)  # PEP 263 / BOM；解不出就不说
         if problem is not None or text is None:
@@ -623,6 +645,7 @@ def detect(
         draw_weak = draw_weak or fs.pil_draw_weak
         svg_markup = svg_markup or _has_svg_markup(tree)
         svg_write = svg_write or _writes_svg_text(fs)
+        copies = copies or _copies_files(fs)
         saves += fs.saves
     # 扫描只读 .py；编译扩展 / 命名空间包的内部看不见，已在 scan 里记入 problems 或不进 files，这里不再猜
     if mpl_any:
@@ -650,7 +673,56 @@ def detect(
     # 手写 SVG：别的库都没在存图（`saves` 为空）、看得全（无动态 import）、SVG 标记与写 .svg 两条同时成立
     if svg_markup and svg_write and not saves and not scan.dynamic and not draw_weak:
         return _svg_hint()
+    # 只复制现成图片的交付脚本（反馈包 TVD-537W）：不 import 任何画图库、没有任何存图 / 画图 / 写 SVG 的调用、看得全，
+    # 有复制文件的调用，且本次运行后项目素材盘点里有新写出的图片——它本来就不画图，修不出 Figure
+    # 写 SVG 只在「有 SVG 标记」时才算画图：`dst.write_bytes(src.read_bytes())` 的目标是变量时也会被 `_writes_svg_text`
+    # 当成「可能写 .svg」，不能因此把复制脚本挡在外面
+    if (
+        not saves
+        and not draw_weak
+        and not (svg_markup and svg_write)
+        and not scan.dynamic
+        and copies
+    ):
+        found = _new_inventory_file(root_p, run_started_at, _INVENTORY_EXTS, copied=True)
+        if found is not None:
+            return {"kind": KIND_COPIED, "in_project": True, "path": found}
     return None
+
+
+#: 「只复制现成图片」那一类提示的 kind（与 `raster_script` 并列；没有 `library`，修法也不是转写）
+KIND_COPIED = "copied_images"
+#: 素材盘点认的图片格式（单一出处 `project_refresh`）
+_INVENTORY_EXTS = frozenset(_IMG_EXT | _PDF_EXT)
+#: 复制文件的函数（解析后的点分全名）
+_COPY_FUNCS = frozenset(
+    {
+        "shutil.copy",
+        "shutil.copy2",
+        "shutil.copyfile",
+        "shutil.copyfileobj",
+        "shutil.copytree",
+        "shutil.move",
+    }
+)
+
+
+def _copies_files(fs: _FileScan) -> bool:
+    """这个文件里有没有一处复制文件的调用：`shutil` 的复制 / 移动，或 `x.write_bytes(y.read_bytes())`。"""
+    for call in fs._save_calls:
+        func = call.func
+        if fs._resolve(func) in _COPY_FUNCS:
+            return True
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr == "write_bytes"
+            and len(call.args) == 1
+            and isinstance(call.args[0], ast.Call)
+            and isinstance(call.args[0].func, ast.Attribute)
+            and call.args[0].func.attr == "read_bytes"
+        ):
+            return True
+    return False
 
 
 #: 手写 SVG 的写入入口：内置 `open`（没被 import 遮住）与这两个模块函数；模式实参必须是含 w / a / x 的字面量

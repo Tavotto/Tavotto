@@ -61,7 +61,7 @@ function rerunnableView(v: ReturnType<typeof prepView>): boolean {
   // `edit_opening` / `edit_ready` 是已完成会话叠上「本地已进入过编辑」的视图：后端那边同样是可重跑的 completed，
   // 本地编辑记录不能把再点一次 ▶ 变成只重开旧结果（Codex #1044 r4285899694）
   if (
-    ['completed', 'completed_unlinked', 'completed_partial', 'no_figure', 'no_figure_raster', 'not_registered', 'edit_opening', 'edit_ready'].includes(
+    ['completed', 'completed_unlinked', 'completed_partial', 'no_figure', 'no_figure_raster', 'no_figure_copied', 'not_registered', 'edit_opening', 'edit_ready'].includes(
       v.state,
     )
   )

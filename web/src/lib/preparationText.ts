@@ -500,6 +500,15 @@ function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContex
             step: 1,
           })
         }
+        if (report.no_figure_hint?.kind === 'copied_images') {
+          // 只复制现成图片的脚本（不画图）：说清楚它本来就没画图，直接打开输出的图片；不是失败卡，不摆 AI 修复（TVD-537W）
+          return view('no_figure_copied', 'noFigureCopied', v, { kind: 'open_assets' }, {
+            secondary: { kind: 'dismiss' },
+            ghost: null,
+            tone: 'mute',
+            step: 1,
+          })
+        }
         return view('no_figure', 'noFigure', v, { kind: 'dismiss' }, { ghost: null, tone: 'mute', step: 1 })
       }
       return view('not_registered', 'notRegistered', v, { kind: 'open_registry' }, { tone: 'bad', step: 1 })

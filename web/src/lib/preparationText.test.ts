@@ -168,6 +168,32 @@ describe('智能修复（ADR 0148）：主按钮读 remedy，每张失败卡都�
     expect(convert.aiFix).toBe(true)
   })
 
+  it('只复制现成图片的脚本（TVD-537W）：一句话指向输出的图片，不摆 AI 修复', () => {
+    const copied = (remedy: unknown) =>
+      view(
+        failed(remedy, {
+          phase: 'partial',
+          outcome: { kind: 'execution_finished_no_figure', code: 'no_figures_captured' },
+          no_figure_hint: { kind: 'copied_images', in_project: true, path: 'Figure3.pdf' },
+        }),
+      )
+    // 后端此时不给 remedy；就算老后端给了 ai_fix，这张卡也不摆 AI
+    for (const remedy of [null, { kind: 'ai_fix' }]) {
+      const v = copied(remedy)
+      expect(v.state).toBe('no_figure_copied')
+      expect(v.sentence.key).toBe('noFigureCopied')
+      expect(v.primary).toEqual({ kind: 'open_assets' })
+      expect(v.aiFix).toBe(false)
+    }
+    // 没有这条提示的「没出图」照旧（AI 主按钮）
+    const plain = view(
+      failed({ kind: 'ai_fix' }, { phase: 'partial', outcome: { kind: 'execution_finished_no_figure', code: 'no_figures_captured' } }),
+    )
+    expect(plain.state).toBe('no_figure')
+    expect(plain.primary).toEqual({ kind: 'ai_fix' })
+    expect(t('prep.line.noFigureCopied', { ns: 'workspace' })).not.toMatch(/[。.]$/)
+  })
+
   describe('装不了的缺包不再以 AI 为主按钮（ADR 0148 修订 2026-11-01）', () => {
     const missing = (remedy: unknown) =>
       failed(remedy, { outcome: { kind: 'failed', code: 'missing_dependency' } })

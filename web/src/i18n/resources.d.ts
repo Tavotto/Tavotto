@@ -6620,6 +6620,7 @@ export default interface Resources {
         "missingData": "找不到要读的数据",
         "needsArgs": "脚本要运行参数",
         "noFigure": "跑完了，没有出图",
+        "noFigureCopied": "这个脚本只输出了图片文件、没有画图，可以直接打开输出的图片",
         "notRegistered": "图没能登记",
         "offline": "连接断了，正在重连…",
         "originConfirm_other": "有 {{count}} 个库要你确认包名",
