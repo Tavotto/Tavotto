@@ -65,7 +65,8 @@ Windows 的 Alt 键帽、译文都自动跟，仓库里不放视频文件；场�
   `activeDays` / `lastActiveDay`。旧的 `hintSeen` 不动（一句话提示仍按它）。旧 blob 没有这几项 = 全新的账；
 - 新增两条活动信号（闭集，只有枚举）：`view.fitted`（`fitStage` 一处发）、`panel.edge_dragged { outcome }`
   （`startPanelEdgeCrop` 松手成功时一处发）。「挪对象」「拉参考线」复用已有的 `history.pushed` 标签；
-- **没有新增遥测**：这两条信号不进遥测映射，账只在本机。
+- **没有新增遥测**：这两条信号不进遥测映射，账只在本机。用户主动发送的诊断包里，`onboarding.hint_seen_keys`
+  照旧只列种类名（闭集，前后端对拍 `test_onboarding_closed_sets_match_frontend`）：出过至少一次的动画卡也算「看过」。
 
 ## 没做的
 
