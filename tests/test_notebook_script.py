@@ -785,3 +785,105 @@ def test_shim_is_part_of_the_fingerprint_so_replace_rules_stay_self_consistent(t
             tmp_path, "n.ipynb", notebookscript.extract(_nb(("code", "display(2)")))
         )
     assert (first.status, again.status, newer.status) == ("created", "reused", "updated")
+
+
+# ---------------------------------------------------------------- 替身的三个边界（Codex #1838）
+
+
+def _py(*cells) -> str:
+    return _text(*cells)
+
+
+def test_future_imports_are_hoisted_before_the_shim_and_the_file_compiles():
+    text = _py(("code", "from __future__ import annotations\ndisplay(1)"))
+    compile(text, "n.py", "exec")
+    assert text.index("from __future__ import annotations") < text.index("def display")
+    _run(text)
+
+
+def test_a_future_import_in_a_later_cell_is_hoisted_merged_and_deduplicated():
+    text = _py(
+        ("code", "x = 1"),
+        ("code", "from __future__ import annotations"),
+        ("code", "from __future__ import annotations, division\ny = 2"),
+    )
+    compile(text, "n.py", "exec")
+    assert [ln for ln in text.splitlines() if ln.startswith("from __future__")] == [
+        "from __future__ import annotations, division"
+    ]
+    first_code = next(ln for ln in text.splitlines() if ln and not ln.startswith("#"))
+    assert first_code == "from __future__ import annotations, division"
+    assert "# [notebook] 已把 from __future__" in text
+
+
+def test_a_future_import_with_no_shim_still_compiles_when_it_was_not_in_the_first_cell():
+    compile(
+        _py(("code", "import os"), ("code", "from __future__ import annotations")), "n.py", "exec"
+    )
+
+
+def test_final_check_is_compile_so_an_indented_future_import_is_refused():
+    with pytest.raises(notebookscript.NotebookError) as e:
+        notebookscript.extract(_nb(("code", "if True:\n    from __future__ import annotations")))
+    assert e.value.code == "notebook_syntax_error"
+
+
+def test_top_level_await_is_still_accepted():
+    notebookscript.extract(_nb(("code", "import asyncio\nawait asyncio.sleep(0)")))
+
+
+def test_mixed_imports_only_wrap_the_ipython_names():
+    text = _py(("code", "import math, IPython\nr = math.sqrt(4)"))
+    assert _run(text)["r"] == 2.0
+    text = _py(("code", "import math as m, IPython as ip, os\nr = m.sqrt(9)\nq = ip.display"))
+    ns = _run(text)
+    assert ns["r"] == 3.0 and ns["os"].__name__ == "os"
+
+
+def test_a_mixed_import_still_fails_for_the_real_missing_package():
+    with pytest.raises(ModuleNotFoundError, match="nosuchpkg_xyz"):
+        _run(_py(("code", "import nosuchpkg_xyz, IPython")))
+
+
+def test_a_function_parameter_named_display_does_not_count_as_a_global_definition():
+    text = _py(("code", "def f(display):\n    return display\ndisplay(1)"))
+    assert "def display" in text
+    _run(text)
+
+
+def test_a_local_display_inside_a_function_does_not_trigger_the_shim():
+    text = _py(("code", "def f():\n    display = 3\n    return display\nr = f()"))
+    assert "_tavotto" not in text and _run(text)["r"] == 3
+
+
+def test_a_nested_function_reading_the_global_display_triggers_the_shim():
+    text = _py(
+        (
+            "code",
+            "def outer():\n    def inner():\n        return display(1)\n    return inner()\nr = outer()",
+        )
+    )
+    assert "def display" in text and _run(text)["r"] is None
+
+
+def test_a_nested_function_reading_an_outer_local_display_does_not():
+    text = _py(
+        (
+            "code",
+            "def outer(display):\n    def inner():\n        return display\n    return inner()\nr = outer(5)",
+        )
+    )
+    assert "_tavotto" not in text
+
+
+def test_a_module_level_binding_or_a_global_declared_assignment_counts():
+    assert "_tavotto" not in _py(("code", "for display in [1]:\n    pass\ndisplay"))
+    assert "_tavotto" not in _py(
+        ("code", "def setup():\n    global display\n    display = print\nsetup()\ndisplay(1)")
+    )
+
+
+def test_a_local_assignment_in_a_function_does_not_define_the_global_display():
+    text = _py(("code", "def f():\n    display = 3\n    return display\nf()\ndisplay(1)"))
+    assert "def display" in text
+    _run(text)

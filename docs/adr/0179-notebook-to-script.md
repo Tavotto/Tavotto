@@ -57,12 +57,12 @@
 7. **语法核验**：每个单元处理完仍不合法（注释不掉的真语法错误）→ `notebook_syntax_error`，参数 `{cell, line}`（第几个单元、单元内第几行；只给位置，不把内容放进错误 / 诊断）；整份拼完再 `ast.parse` 一次，不过同样不落盘。
 8. **文件头三行**：中文一句 + 英文一句（来源笔记本名、「这是自动生成的副本，改它不会改动笔记本」，产品名取 `brand.PRODUCT_NAME`），第三行是本功能自己的标记 `# <DIST_NAME>-notebook: <笔记本文件名> sha256=<正文哈希>`。笔记本文件名里的控制字符换 `_`（POSIX 文件名可含换行，不许撑破头）。
 9. 上限 50 MiB（整份在内存里解析，必须有界；与联系作者附件同一量级）；上传路径的上限卡在读取本身（`_read_body_capped`）。
-10. **IPython 内置名的替身（只在用到时才加，只在生成的 `.py` 里）**：语法核验之后再 `ast` 看整份代码——
-    * 读取了 `display` / `get_ipython` 而笔记本自己没绑定它（赋值 / `def` / `class` / 非星号 import 都算绑定）→ 在正文最前补带注释的替身：`display` 是什么都不做的函数（传进来的是 Figure 也不做事，图由本软件自己捕获）；
-      `get_ipython()` 返回一个「任何属性、任何调用都安静返回 None」的对象（覆盖 `.run_line_magic` / `.system` / `.magic`）。用到哪个垫哪个。
-    * 每条 `import IPython…` / `from IPython… import …`（只这两类，别的 import 一个字不碰）包进 `try: … except ImportError:`，失败时被导入的名字给那个安静对象（`get_ipython` 给返回它的函数；`import *` 无名可给，只吞错误，`display` 仍由上一条补）。
-      装了 IPython 时真的导入照常成功、替身不生效；一行里还有别的语句的不包（不拆语句）。目标：**只因为没装 IPython 而失败的笔记本抽出来能跑**；缺别的包照旧失败，走现有失败卡。
-    * 没用到这些名字、也没有 IPython 的 import 时正文逐字不变。替身是正文的一部分，文件头的正文哈希把它算进去，§三的「没被改过」判断自洽。
+10. **IPython 内置名的替身与 `__future__`（只在生成的 `.py` 里）**，语法核验之后再加工：
+    * **`from __future__ import …` 提到文件最前**：Jupyter 里每个单元各自编译，`__future__` 导入放在中间也合法；拼成一个文件就非法了。所有**顶层**的 `from __future__ import …` 合并去重（保持出现顺序）提到正文最前（文件头注释之后），原位置留一行 `# [notebook] 已把 … 提到文件最前`。缩进里的（本来就非法）不动，由最终的 `compile` 拒绝（`notebook_syntax_error`）。
+    * **最终核验用 `compile`**（带 `PyCF_ALLOW_TOP_LEVEL_AWAIT`，顶层 `await` 照旧放行）而不是只 `ast.parse`：`__future__` 位置这类 `ast.parse` 放过的错，在落盘前拦住。
+    * **`display` / `get_ipython` 的替身**：用 `symtable`（CPython 自己的作用域分析）判——模块级读到、而笔记本在**模块级**没绑定（顶层赋值 / `def` / `class` / import / `for` / `with … as`，或函数里 `global` 后赋值）才补；函数、类、lambda、推导式里的参数与局部名不算绑定，函数里把它当局部 / 外层函数的名字读也不算「用了全局的」。补在 future 导入之后、正文之前：`display` 是什么都不做的函数（传进 Figure 也不做事，图由本软件自己捕获）；`get_ipython()` 返回一个「任何属性、任何调用都安静返回 None」的对象（覆盖 `.run_line_magic` / `.system` / `.magic`）。用到哪个垫哪个。
+    * **IPython 的 import 兜底**：每条 `import IPython…` / `from IPython… import …`（只这两类，别的 import 一个字不碰）包进 `try: … except ImportError:`，失败时被导入的名字给那个安静对象（`get_ipython` 给返回它的函数；`import *` 无名可给，只吞错误）。**混合导入拆开**：`import math, IPython` → `import math` 原样（失败照旧失败，绝不让 `math` 悄悄变成安静对象）+ 只有 IPython 项进 try；别名同理。装了 IPython 时真导入照常成功；一行里还有别的语句的不动。目标：**只因为没装 IPython 而失败的笔记本抽出来能跑**；缺别的包照旧失败，走现有失败卡。
+    * 没有 future 导入、没有 IPython 的 import、也没读到这两个名字时正文逐字不变。加工后的内容是正文的一部分，文件头的正文哈希把它算进去，§三的「没被改过」判断自洽。
 
 ### 三、落盘规则（`engine/notebookscript.place`）
 

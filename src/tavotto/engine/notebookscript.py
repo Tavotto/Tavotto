@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import re
+import symtable
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -234,9 +235,11 @@ def extract(data: bytes) -> Extraction:
         line = getattr(exc, "lineno", None) or 0
         cell = next((c for lo, hi, c in spans if lo <= line <= hi), 0)
         raise NotebookError("notebook_syntax_error", 422, {"cell": cell, "line": line}) from None
-    body = _apply_shim(body, tree)
     try:
-        ast.parse(body)
+        body = _apply_shim(body, tree)
+        # 最终核验用 `compile`：`ast.parse` 放过的错（`__future__` 位置之类）在落盘前拦住，不等用户运行。
+        # 顶层 `await`（IPython 的 autoawait）与 `ast.parse` 一样放行
+        compile(body, "<notebook>", "exec", flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT)
     except (SyntaxError, ValueError, RecursionError, MemoryError):
         raise NotebookError("notebook_syntax_error", 422, {"cell": 0, "line": 0}) from None
     return Extraction(body=body, code_cells=code_cells, commented_lines=commented)
@@ -267,76 +270,152 @@ def _is_ipython_import(node: ast.AST) -> bool:
     return False
 
 
-def _bound_names(tree: ast.AST) -> set[str]:
-    out: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            out.add(node.id)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            out.add(node.name)
-        elif isinstance(node, ast.arg):
-            out.add(node.arg)
-        elif isinstance(node, ast.ExceptHandler) and node.name:
-            out.add(node.name)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            for a in node.names:
-                if a.name != "*":
-                    out.add(a.asname or a.name.split(".")[0])
-    return out
+def _scope_facts(body: str) -> tuple[set[str], set[str]]:
+    """`(模块级绑定的名字, 被当作全局名读取的名字)`——用 CPython 自己的作用域分析（`symtable`），不手写遍历。
+
+    绑定只算**模块级**：顶层赋值 / `def` / `class` / import / `for` / `with … as`，以及函数里先 `global` 再赋值的；
+    函数、类、lambda、推导式里的参数与局部名不算。读取只算解析到全局的：函数里 `display` 是局部名或外层函数的名字时，读它不算用了全局的 `display`。
+    """
+    bound: set[str] = set()
+    used: set[str] = set()
+
+    def visit(table, top: bool) -> None:
+        for sym in table.get_symbols():
+            name = sym.get_name()
+            if top:
+                if sym.is_assigned() or sym.is_imported() or sym.is_namespace():
+                    bound.add(name)
+                if sym.is_referenced():
+                    used.add(name)
+            else:
+                if sym.is_declared_global() and sym.is_assigned():
+                    bound.add(name)
+                if sym.is_referenced() and sym.is_global():
+                    used.add(name)
+        for child in table.get_children():
+            visit(child, False)
+
+    visit(symtable.symtable(body, "<notebook>", "exec"), True)
+    return bound, used
 
 
-def _import_fallback(node: ast.AST) -> list[str]:
+def _alias(a: ast.alias) -> str:
+    return f"{a.name} as {a.asname}" if a.asname else a.name
+
+
+def _bound_name(node: ast.AST, a: ast.alias) -> str:
+    if isinstance(node, ast.ImportFrom):
+        return a.asname or a.name
+    return a.asname or a.name.split(".")[0]
+
+
+def _is_ipython_alias(node: ast.AST, a: ast.alias) -> bool:
+    if isinstance(node, ast.ImportFrom):
+        return True  # 同一条 from 的模块相同：整条都是 IPython
+    return a.name == "IPython" or a.name.startswith("IPython.")
+
+
+def _import_fallback(node: ast.AST, aliases: list[ast.alias]) -> list[str]:
     """没装 IPython 时被导入的名字各给什么：`get_ipython` 是返回安静对象的函数，其余都是安静对象本身"""
     names = []
-    for a in node.names:  # type: ignore[attr-defined]
+    for a in aliases:
         if a.name == "*":
             continue
-        bound = a.asname or (a.name if isinstance(node, ast.ImportFrom) else a.name.split(".")[0])
+        bound = _bound_name(node, a)
         value = "_tavotto_get_ipython" if bound == "get_ipython" else "_tavotto_quiet"
         names.append(f"{bound} = {value}")
     return names or ["pass"]
 
 
-def _apply_shim(body: str, tree: ast.AST) -> str:
-    """笔记本读了 `display` / `get_ipython` 却没自己定义，或有 IPython 的 import：给替身，让没装 IPython 也能跑。
+def _whole_lines(lines: list[str], node: ast.AST) -> tuple[int, int, str] | None:
+    """语句独占的行区间 `(起, 止, 缩进)`；与别的语句同一行（`;`）就 None——不拆语句"""
+    lo, hi = node.lineno - 1, node.end_lineno - 1  # type: ignore[attr-defined]
+    indent = lines[lo][: node.col_offset]  # type: ignore[attr-defined]
+    if indent.strip() or lines[hi][node.end_col_offset :].strip():  # type: ignore[attr-defined]
+        return None
+    return lo, hi, indent
 
-    * 读到的名字没被笔记本绑定（赋值 / def / 非星号 import）→ 在正文最前补不做事的 `display` /
-      返回「任何属性调用都安静返回 None」对象的 `get_ipython`；
-    * 每条 `import IPython…` / `from IPython… import …` 包进 `try: … except ImportError:`，失败时被导入的名字给安静对象
-      （只动 IPython 的 import，别的 import 一个字不碰）；一行里还有别的语句的不包（不拆语句）。
-    没用到这些名字、也没有 IPython 的 import 时正文逐字不变。
+
+def _apply_shim(body: str, tree: ast.Module) -> str:
+    """抽出的正文再加工三件事（都只动生成的 `.py`）：
+
+    1. **`from __future__ import …` 提到文件最前**：`__future__` 导入必须在文件最前，而 Jupyter 里每个单元各自编译、放在中间也合法，
+       拼成一个文件就非法了。所有**顶层**的 `from __future__ import …` 合并去重（保持出现顺序）提到最前，原位置留一行注释；
+       缩进里的（本来就非法）不动，由最终的 `compile` 核验拒绝。
+    2. **IPython 的 import 兜底**：每条 `import IPython…` / `from IPython… import …` 包进 `try: … except ImportError:`，失败时被导入的名字给
+       安静对象。`import math, IPython` 这类混合导入**拆开**：别的名字原样导入、失败照旧失败，只有 IPython 那几项进 try；
+       一行里还有别的语句的不动。
+    3. **`display` / `get_ipython` 的替身**：按作用域（`symtable`）判，笔记本在模块级读到而自己没绑定才补；补在 future 导入之后、正文之前。
+    没有 future 导入、没有 IPython 的 import、也没读到这两个名字时，正文逐字不变。
     """
-    used = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
-    bound = _bound_names(tree)
+    lines = body.split("\n")
+    bound, used = _scope_facts(body)
     need_display = "display" in used and "display" not in bound
     need_get = "get_ipython" in used and "get_ipython" not in bound
-    lines = body.split("\n")
+    # 编辑项：(起行, 止行, 替换行)；自下而上套用，行号不乱
+    edits: list[tuple[int, int, list[str]]] = []
+    futures: list[str] = []
     wrapped = False
-    imports = [n for n in ast.walk(tree) if _is_ipython_import(n)]
-    for node in sorted(imports, key=lambda n: -n.lineno):  # 自下而上改，行号不乱
-        lo, hi = node.lineno - 1, node.end_lineno - 1
-        indent = lines[lo][: node.col_offset]
-        if indent.strip() or lines[hi][node.end_col_offset :].strip():
-            continue
-        block = [f"{indent}try:"]
-        block += [
-            f"{indent}    {ln[len(indent) :]}" if ln.strip() else ln for ln in lines[lo : hi + 1]
-        ]
-        block += [f"{indent}except ImportError:"]
-        block += [f"{indent}    {ln}" for ln in _import_fallback(node)]
-        lines[lo : hi + 1] = block
-        wrapped = True
-    if not (need_display or need_get or wrapped):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == "__future__":
+            span = _whole_lines(lines, node)
+            if span is None or span[2]:
+                continue
+            for a in node.names:
+                if a.name not in futures:
+                    futures.append(a.name)
+            edits.append(
+                (
+                    span[0],
+                    span[1],
+                    [
+                        f"{_NOTE}已把 from __future__ import {', '.join(a.name for a in node.names)} 提到文件最前"
+                    ],
+                )
+            )
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            if not _is_ipython_import(node):
+                continue
+            mine = [a for a in node.names if _is_ipython_alias(node, a)]
+            span = _whole_lines(lines, node)
+            if span is None:
+                continue
+            lo, hi, indent = span
+            rest = [a for a in node.names if a not in mine]
+            if rest:  # 混合导入：别的名字原样导入，只有 IPython 那几项进 try
+                head = [f"{indent}import {', '.join(_alias(a) for a in rest)}"]
+                stmt = [f"{indent}import {', '.join(_alias(a) for a in mine)}"]
+            else:
+                head = []
+                stmt = [ln[len(indent) :] if ln.strip() else ln for ln in lines[lo : hi + 1]]
+                stmt = [f"{indent}{ln}" for ln in stmt]
+            block = (
+                head
+                + [f"{indent}try:"]
+                + [f"{indent}    {ln[len(indent) :]}" if ln.strip() else ln for ln in stmt]
+            )
+            block += [f"{indent}except ImportError:"] + [
+                f"{indent}    {ln}" for ln in _import_fallback(node, mine)
+            ]
+            edits.append((lo, hi, block))
+            wrapped = True
+    for lo, hi, repl in sorted(edits, key=lambda e: -e[0]):
+        lines[lo : hi + 1] = repl
+    if not (futures or need_display or need_get or wrapped):
         return body
-    shim = "# --- 笔记本里用到了 IPython 的名字：下面是不做事的替身，没装 IPython 也能跑（图由本软件自己捕获）---\n"
-    shim += _SHIM_QUIET
-    if wrapped:
-        shim += "_tavotto_get_ipython = lambda: _tavotto_quiet\n"
-    if need_display:
-        shim += _SHIM_DISPLAY
-    if need_get:
-        shim += _SHIM_GET_IPYTHON
-    return shim + "\n" + "\n".join(lines)
+    head = f"from __future__ import {', '.join(futures)}\n" if futures else ""
+    shim = ""
+    if need_display or need_get or wrapped:
+        shim = "# --- 笔记本里用到了 IPython 的名字：下面是不做事的替身，没装 IPython 也能跑（图由本软件自己捕获）---\n"
+        shim += _SHIM_QUIET
+        if wrapped:
+            shim += "_tavotto_get_ipython = lambda: _tavotto_quiet\n"
+        if need_display:
+            shim += _SHIM_DISPLAY
+        if need_get:
+            shim += _SHIM_GET_IPYTHON
+        shim += "\n"
+    return head + shim + "\n".join(lines)
 
 
 def render(notebook_name: str, extraction: Extraction) -> str:
