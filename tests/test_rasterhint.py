@@ -1036,3 +1036,98 @@ def test_hand_written_svg_in_a_followed_local_module_counts(tmp_path):
     _write(tmp_path, "make.py", "import svgout\nsvgout.go()\n")
     hint = rasterhint.detect(tmp_path, "make.py", "project", run_started_at=START)
     assert hint is not None and hint["library"] == "svg"
+
+
+# ---- 只复制现成图片的交付脚本（反馈包 TVD-537W）：不画图，跑完没有 Figure 是本来就这样 ----
+
+COPY_SCRIPT = """
+    import shutil
+    from pathlib import Path
+    here = Path(__file__).resolve().parent
+    for ext in ("pdf", "png"):
+        dst = here / f"Figure3.{ext}"
+        shutil.copyfile(here / "input" / f"Figure3_source.{ext}", dst)
+        print("Saved", dst)
+"""
+
+
+def _copy_project(root: Path, body: str = COPY_SCRIPT) -> None:
+    _write(root, "run_fig.py", body)
+    (root / "input").mkdir(exist_ok=True)
+    for ext in ("pdf", "png"):
+        (root / "input" / f"Figure3_source.{ext}").write_bytes(b"x")
+
+
+def _age(path: Path, seconds: float = 3600) -> None:
+    old = time.time() - seconds
+    os.utime(path, (old, old))
+
+
+def test_a_script_that_only_copies_images_into_the_project_gets_the_copied_hint(tmp_path):
+    _copy_project(tmp_path)
+    for f in (tmp_path / "input").iterdir():
+        _age(f)
+    start = time.time() - 1
+    (tmp_path / "Figure3.pdf").write_bytes(b"x")  # 这次运行写出的成品
+    (tmp_path / "Figure3.png").write_bytes(b"x")
+    hint = rasterhint.detect(tmp_path, "run_fig.py", "sandbox", run_started_at=start)
+    assert hint == {"kind": "copied_images", "in_project": True, "path": "Figure3.pdf"}
+
+
+def test_a_copy_script_that_wrote_nothing_new_gets_no_hint(tmp_path):
+    _copy_project(tmp_path)
+    later = (
+        time.time() + 120
+    )  # 「本次运行」开始于所有文件之后：盘点里没有本次新写的（旧成品 / 只读了输入）
+    assert rasterhint.detect(tmp_path, "run_fig.py", "sandbox", run_started_at=later) is None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # 画了 matplotlib 图又复制了文件：没出图另有原因，不说「只复制图片」
+        "import shutil\nimport matplotlib.pyplot as plt\nplt.plot([1])\nshutil.copy('input/Figure3_source.png', 'Figure3.png')\n",
+        # 用 Pillow 存了图：那是位图提示的事
+        "import shutil\nfrom PIL import Image\nImage.new('L', (2, 2)).save('Figure3.png')\nshutil.copy('a', 'b')\n",
+        # 没有任何复制调用
+        "from pathlib import Path\nprint(Path('input').exists())\n",
+        # 动态 import：看不全
+        "import importlib, shutil\nimportlib.import_module('x' + 'y')\nshutil.copy('a', 'b')\n",
+    ],
+)
+def test_copy_hint_stays_silent_without_clean_copy_evidence(tmp_path, body):
+    _copy_project(tmp_path, body)
+    for f in (tmp_path / "input").iterdir():
+        _age(f)
+    start = time.time() - 1
+    (tmp_path / "Figure3.png").write_bytes(b"x")
+    hint = rasterhint.detect(tmp_path, "run_fig.py", "project_root", run_started_at=start)
+    assert hint is None or hint.get("kind") != "copied_images"
+
+
+def test_read_bytes_write_bytes_counts_as_a_copy(tmp_path):
+    body = (
+        "from pathlib import Path\n"
+        "Path('Figure3.pdf').write_bytes(Path('input/Figure3_source.pdf').read_bytes())\n"
+    )
+    _copy_project(tmp_path, body)
+    for f in (tmp_path / "input").iterdir():
+        _age(f)
+    start = time.time() - 1
+    (tmp_path / "Figure3.pdf").write_bytes(b"x")
+    hint = rasterhint.detect(tmp_path, "run_fig.py", "project_root", run_started_at=start)
+    assert hint == {"kind": "copied_images", "in_project": True, "path": "Figure3.pdf"}
+
+
+def test_copy2_keeps_the_old_mtime_but_the_new_file_still_counts(tmp_path):
+    """`shutil.copy2` 把 mtime 改回源文件的旧值：只看 mtime 会漏掉；新建的文件另一个时间是新的。"""
+    import shutil
+
+    _copy_project(tmp_path)
+    for f in (tmp_path / "input").iterdir():
+        _age(f)
+    start = time.time() - 1
+    shutil.copy2(tmp_path / "input" / "Figure3_source.pdf", tmp_path / "Figure3.pdf")
+    assert (tmp_path / "Figure3.pdf").stat().st_mtime < start  # 前提：mtime 确实是旧的
+    hint = rasterhint.detect(tmp_path, "run_fig.py", "sandbox", run_started_at=start)
+    assert hint == {"kind": "copied_images", "in_project": True, "path": "Figure3.pdf"}

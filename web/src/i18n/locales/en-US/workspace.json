@@ -1048,6 +1048,7 @@
       "editReady": "Editing",
       "editOpening": "Opening the editor…",
       "noFigure": "Finished without a figure",
+      "noFigureCopied": "This script only writes out image files and doesn't draw a figure, so you can open the output images directly",
       "notRegistered": "The figure couldn't be registered",
       "cancelled": "Stopped",
       "envLocked": "The Python fixed in Settings is missing components",

@@ -7330,13 +7330,17 @@ export interface PreparationReport {
   /** 智能修复路由选的唯一修法（ADR 0148，`engine/fixrouter.py`）；没失败 / 还在跑 / 老后端 = null 或缺省。认不出的形状前端当没有（`isRemedy`） */
   remedy?: Remedy | null
   /** 跑完没出图时的原因（`rasterhint`）：脚本自己用位图库把图片写成了文件，不是 Matplotlib 图；只是提示，不改 outcome / facts。老后端没有 */
-  no_figure_hint?: {
-    kind: 'raster_script'
-    library: RasterLibrary
-    in_project?: boolean
-    /** 能确定的输出文件（项目相对路径，素材库定位用）；拿不到 / 在项目外 / 老后端为 null 或缺省 */
-    path?: string | null
-  } | null
+  no_figure_hint?:
+    | {
+        kind: 'raster_script'
+        library: RasterLibrary
+        in_project?: boolean
+        /** 能确定的输出文件（项目相对路径，素材库定位用）；拿不到 / 在项目外 / 老后端为 null 或缺省 */
+        path?: string | null
+      }
+    /** 只复制现成图片的脚本（不画图）：输出的图片在素材库里（`rasterhint.KIND_COPIED`）；这时报告没有 remedy */
+    | { kind: 'copied_images'; in_project?: boolean; path?: string | null }
+    | null
   result: {
     status: string
     error?: PreparationResultError | null

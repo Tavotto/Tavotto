@@ -996,6 +996,7 @@
       "editReady": "已进入编辑",
       "editOpening": "正在打开编辑…",
       "noFigure": "跑完了，没有出图",
+      "noFigureCopied": "这个脚本只输出了图片文件、没有画图，可以直接打开输出的图片",
       "notRegistered": "图没能登记",
       "cancelled": "已停止",
       "envLocked": "设置里固定的 Python 缺组件",

@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 import threading
 import time
 from pathlib import Path
@@ -476,3 +477,30 @@ def test_an_attempt_without_pdf_pages_omits_the_key(client, tmp_path, fake_pool,
     assert _act(client, sid, _action(report, "run")["id"], 1).status_code == 202
     final = _terminal(client, sid, timeout=10.0)
     assert "pdf_pages" not in final
+
+
+def test_a_script_that_only_copies_images_gets_the_copied_hint_and_no_remedy(
+    client, tmp_path, fake_pool, sessions
+):
+    """只复制现成图片的交付脚本（反馈包 TVD-537W）：跑完没 Figure 是本来就这样——指向输出的图片，不路由进 AI 修复 / 转写。"""
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    (root / "input").mkdir()
+    (root / "input" / "src.pdf").write_bytes(b"x")
+    old = time.time() - 3600
+    os.utime(root / "input" / "src.pdf", (old, old))
+
+    def build():
+        (root / "Figure3.pdf").write_bytes(b"x")
+        return {"ok": True, "stems": {}, "descriptors": [], "runtime": {"pid": 1}}
+
+    fake_pool["build_resp"] = build
+    src = "import shutil\nshutil.copyfile('input/src.pdf', 'Figure3.pdf')\nprint('Saved')\n"
+    final = _no_figure_report(client, root, src)
+    assert final["outcome"]["kind"] == "execution_finished_no_figure"
+    assert final["no_figure_hint"] == {
+        "kind": "copied_images",
+        "in_project": True,
+        "path": "Figure3.pdf",
+    }
+    assert final["remedy"] is None

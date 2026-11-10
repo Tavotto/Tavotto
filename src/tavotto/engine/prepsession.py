@@ -3155,6 +3155,9 @@ class SessionService:
             return None
         if derived["phase"] in (PHASE_RUNNING, PHASE_AWAITING_RUNTIME_INPUT):
             return None
+        if (no_figure_hint or {}).get("kind") == rasterhint.KIND_COPIED:
+            # 只复制现成图片的脚本：本来就不画图，没有可修的（AI / 转写都白跑一轮），卡片只指向输出的图片（TVD-537W）
+            return None
         code = str(
             outcome.get("code") or ((result.error or {}).get("code") if result else "") or ""
         )

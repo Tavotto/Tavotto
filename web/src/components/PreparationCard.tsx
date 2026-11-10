@@ -258,7 +258,7 @@ const TONE_ICON: Record<Exclude<PrepTone, null>, ReactNode> = {
 function toneIcon(tone: PrepTone, state: string): ReactNode {
   if (!tone) return null
   // 几个状态有自己更具体的记号（设计稿 v2）
-  if (state === 'no_figure' || state === 'no_figure_raster') return <ImageOff size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
+  if (state === 'no_figure' || state === 'no_figure_raster' || state === 'no_figure_copied') return <ImageOff size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
   if (state === 'offline') return <Unplug playIn size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
   if (state === 'restarted') return <RotateCcw size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
   if (state === 'input_secret') return <KeyRound size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
@@ -625,6 +625,7 @@ const ARGS_FOLDED = new Set([
   'failed',
   'no_figure',
   'no_figure_raster',
+  'no_figure_copied',
   'completed',
   'completed_unlinked',
   'completed_partial',
