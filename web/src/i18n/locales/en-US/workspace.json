@@ -1139,6 +1139,7 @@
       "openAssets": "Open library",
       "aiFix": "Fix it with your AI",
       "send": "Send",
+      "sendUs": "Send it to us",
       "revertAiEdit": "Revert the AI's change",
       "cancelScan": "Cancel check",
       "confirmOrigins": "Confirm packages",
@@ -1232,7 +1233,8 @@
       "errorFull": "Full error output",
       "errorTruncated": "Too long; only the last part is kept.",
       "noFigureWhy": "It left no Figure open.",
-      "failedFigures": "Figures that failed: {{names}} ({{codes}}). The others can be edited as usual.",
+      "failedFigures": "Figures that failed: {{names}}. The others can be edited as usual.",
+      "failedFiguresWhy": "Figures that failed: {{names}}. {{why}} The others can be edited as usual.",
       "unlinked": "{{names}}, made earlier with other arguments, is no longer linked. Run again with those arguments to restore it.",
       "history": {
         "title": "Run history",

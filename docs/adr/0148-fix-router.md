@@ -125,3 +125,22 @@ AI 环境修复任务本身（PR D）；`change_python` 的执行（PR B）；AI
 之前直接 `feedback`（`tried` 照常带）：冲突不在脚本里，AI 修复（不许改用户脚本）、转写、换环境都改变不了它——原来落到第 5 条
 给 `ai_fix`，用户点两次都是空跑。闭集与字段表不变，只多一条 golden 向量；失败卡的错误文案（指向「项目接入状态」里的手工指认）不变。
 「同名不同目录的两份脚本自动分开登记」是另一件事，单独立 ADR。看护 `tests/test_fixrouter.py::test_stem_ownership_conflict_is_never_routed_to_ai`。
+
+## 修订 2026-11-10：失败卡的出口不是死胡同（产品负责人裁决：用户都是小白，失败只落三种结局）
+
+后端路由 **`fixrouter.choose` 不变**（闭集、字段表、golden 向量都不动）；这一批是 remedy 之上的**呈现层排序**与几处「只翻译」的补齐，
+判据没有搬进前端（remedy 仍是后端说的那一个）：
+
+1. **没连 AI（`connect_ai`）**：「使用你的 AI 来修复」点下去只是去设置页，原来想做的事没成。发送入口开着（前端自己的一个事实
+   `PrepContext.canSendReport` = `diagSendStore.capability !== null`，设置页同一判据）时，主按钮是「发给我们看看」（`feedback` / `sendUs`），
+   AI 降为次按钮；入口关着维持原样。已连 AI（`ai_fix`）不变。这是同一个 remedy 的按钮排序，不是新的路由结论，所以不改 `fixrouter.py`。
+2. **`feedback` 不再摆 AI 次按钮**：fixrouter 已判定 AI / 转写 / 换环境都修不了（图名冲突、缺的包认不出、修法走满）。这条收窄了
+   2026-10 的「每次失败都出」，例外现在是 `switch_native`（静默）与 `feedback`。
+3. **`multiple_stem_conflict`**：remedy 仍是 `feedback`，但卡片（`not_registered`）保留自己的主按钮「打开接入中心」——那里指定用哪个才是真能解决的路。
+4. **必败的「再试一次」**：`interpreter_cache_denied` 后端没给 `switch`、`change_python` 但 `to` 为空（失败卡 / blocked）时，发送入口开着则主按钮是「发给我们看看」。
+5. **准备卡对几个码直接说 `errors:backend.<code>` 那句人话**（`output_folder_read_only`、`script_exited`、没有修复令牌的 `import_folder_unreadable`），
+   原始报错留在详情里；`blocked` 的一句话是后端给的原因（`engine.dependencyBlocked_*`，与依赖弹窗同一张表），声明里有装不了的几行 / 目标环境查不了时
+   主按钮是「换用我的 Python」/「打开设置」，其余确定性原因不再把必败的「重新检查」当主按钮。
+6. **跑完没出图 + 缺数据**：后端 `preparation._stem_missing` 以前只带 `workdir_hint`、丢了 `pool.missing_stem_error` 算好的 `missing_input`，
+   所以准备会话里 `no_figures_captured*` 没有 `input_location` 需求；现在一并带上（载荷与渲染入口同一份），卡片走与 `missing_data` 相同的指认出口。
+   「只复制现成图片」「位图脚本」两种提示仍排在前面（#1823 不回退）。
