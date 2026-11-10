@@ -37,6 +37,7 @@ from pathlib import Path
 #: 与 `ai_data_figure` 的上限同一口径（那边 import 这里，所以数在两处各写一份并由测试对拍相等）
 MAX_BYTES = 5 * 1024 * 1024
 MAX_ROWS = 100_000
+MAX_COLUMNS = 64
 #: 压缩包成员数 / 声明的解压后总大小 / 单个成员解压上限
 MAX_MEMBERS = 1000
 MAX_UNZIPPED = 100 * 1024 * 1024
@@ -52,6 +53,7 @@ ERROR_CODES = (
     "data_sheet_not_found",
     "data_too_large",
     "data_too_long",
+    "data_too_wide",
     "data_unreadable",
 )
 
@@ -369,7 +371,8 @@ class XlsxBook:
     # ---- 取值
     def read(self, sheet: str | int | None = None) -> list[list[str]]:
         """一张表的格子 → 行列表（全空行丢掉；每行补齐到「最右一个非空格」的宽度）。行数超 `MAX_ROWS + 1`（含表头）
-        → `data_too_long`。"""
+        → `data_too_long`；非空格子落在第 `MAX_COLUMNS` 列之后 → `data_too_wide`（**在补齐之前**判：稀疏表里一个远在
+        XFD 列的格子会把每一行撑到 16384 列，几十 KB 的文件就能吃光内存）。"""
         info = self.resolve(sheet)
         data = self._read(self._sheet_member[info.index])
         sst = self._shared_strings()
@@ -391,6 +394,8 @@ class XlsxBook:
                 next_col = col + 1
                 val = self._cell_text(el, sst, date_xf)
                 if val != "":
+                    if col >= MAX_COLUMNS:
+                        raise XlsxError("data_too_wide", str(col + 1))
                     cur[col] = val
                 el.clear()
             elif tag == "row" and cur is not None:

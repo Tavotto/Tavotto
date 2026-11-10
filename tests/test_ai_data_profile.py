@@ -188,7 +188,11 @@ def test_v1_csv_behaviour_unchanged_for_unknown_suffix(tmp_path):
 
 
 def test_limits_are_one_number_in_both_modules():
-    assert (xlsxread.MAX_BYTES, xlsxread.MAX_ROWS) == (adf.MAX_BYTES, adf.MAX_ROWS)
+    assert (xlsxread.MAX_BYTES, xlsxread.MAX_ROWS, xlsxread.MAX_COLUMNS) == (
+        adf.MAX_BYTES,
+        adf.MAX_ROWS,
+        adf.MAX_COLUMNS,
+    )
 
 
 # --------------------------------------------------------------------------- XLSX 取值
@@ -807,3 +811,26 @@ def test_all_new_codes_are_registered():
     for c in xlsxread.ERROR_CODES + ("data_format_unsupported",):
         assert c in adf.ERROR_CODES
         adf.DataSourceError(c)
+
+
+def test_xlsx_sparse_far_column_is_refused_before_rows_are_padded(tmp_path):
+    """稀疏表里远在 XFD 列的一个值不许把每一行撑到 16384 列：读的时候就按 `MAX_COLUMNS` 拒绝，不等补齐之后。"""
+    rows = "".join(f'<row r="{i}"><c r="XFD{i}"><v>1</v></c></row>' for i in range(2, 4002))
+    xml = (
+        f'<?xml version="1.0"?><worksheet xmlns="{_NS}"><sheetData>'
+        '<row r="1"><c r="A1" t="inlineStr"><is><t>a</t></is></c></row>'
+        f"{rows}</sheetData></worksheet>"
+    )
+    p = make_xlsx(tmp_path / "sparse.xlsx", {"S": [["a"]]}, sheet_xml_override={"S": xml})
+    with pytest.raises(xlsxread.XlsxError) as e:
+        xlsxread.read_xlsx_values(p)
+    assert e.value.code == "data_too_wide"
+    with pytest.raises(adf.DataSourceError) as e2:
+        adf.inspect_data_source(p)
+    assert e2.value.code == "data_too_wide"
+    prof = adf.profile_folder(tmp_path)
+    assert [(s.path, s.code) for s in prof.skipped] == [("sparse.xlsx", "data_too_wide")]
+    # 远处的**空**格子不算：只有样式、没有值的格子不撑宽
+    xml2 = xml.replace("<v>1</v>", "")
+    q = make_xlsx(tmp_path / "blank.xlsx", {"S": [["a"]]}, sheet_xml_override={"S": xml2})
+    assert xlsxread.read_xlsx_values(q) == [["a"]]
