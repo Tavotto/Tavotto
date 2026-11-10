@@ -289,6 +289,28 @@ describe('第二层：修饰键与微移（用过两天才解锁）', () => {
     expect(stats().arrow_nudge?.done).toBe(true)
   })
 
+  it('槽位被占着时攒下的小拖动会过期：几分钟后一次普通拖动不会招出「方向键微移」', () => {
+    unlock()
+    expect(showHint('multi_select')).toBe(true) // 别的提示占着槽位
+    dragged({ size: 'tiny' })
+    dragged({ size: 'tiny' })
+    dragged({ size: 'tiny' })
+    expect(current()).toBe('multi_select')
+    useHintStore.getState().dismiss()
+    vi.advanceTimersByTime(3 * 60 * 1000)
+    dragged()
+    expect(current()).toBeNull()
+    expect(stats().arrow_nudge).toBeUndefined()
+    // 窗口内、但这一次不是小拖动：也不出
+    dragged({ size: 'tiny' })
+    dragged({ size: 'tiny' })
+    useOnboardingStore.setState({ hintsOff: true })
+    dragged({ size: 'tiny' })
+    useOnboardingStore.setState({ hintsOff: false })
+    dragged()
+    expect(current()).toBeNull()
+  })
+
   it('很小的拖动不算进「反复挪」：对齐线那张卡不抢在微移前面；方向键挪的算', () => {
     unlock(false)
     moved()

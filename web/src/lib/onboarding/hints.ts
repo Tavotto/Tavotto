@@ -266,10 +266,12 @@ function onDragged(d: Extract<ActivityDetail, { kind: 'object.dragged' }>): void
   if (d.mods === 'meta' || d.mods === 'both') learnCardHint('no_snap')
   const foughtSnap = d.size === 'tiny' && d.mods === 'none' && lastSnapAt > 0 && now - lastSnapAt <= SNAP_FIGHT_MS
   lastSnapAt = d.snapped && d.mods === 'none' ? now : 0
-  if (d.size === 'tiny') recentTiny = [...recentTiny.filter((t) => now - t <= TINY_WINDOW_MS), now]
+  // 过期的先清掉（每次拖动都清，不只在小拖动时）；只有这一次本身是小拖动才可能凑够三次（Codex #1835）
+  recentTiny = recentTiny.filter((t) => now - t <= TINY_WINDOW_MS)
+  if (d.size === 'tiny') recentTiny.push(now)
   // 先判更具体的笨办法，都不是才算一次普通的「挪」
   if (foughtSnap && showCardHint('no_snap', now)) return
-  if (recentTiny.length >= TINY_COUNT && showCardHint('arrow_nudge', now)) {
+  if (d.size === 'tiny' && recentTiny.length >= TINY_COUNT && showCardHint('arrow_nudge', now)) {
     recentTiny = []
     return
   }
