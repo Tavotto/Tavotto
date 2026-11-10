@@ -29,7 +29,7 @@
  * | 画的矩形差一点就是正方 / 线差一点就是水平 | 按住 ⇧ 画正的、直的 | ⇧ 画过一次 |
  * | 放大着的时候用鼠标滚轮一格一格地挪 | 按住空格拖动平移 | 拖着平移过一次 |
  * | 连着给两个元素改同一个样式属性 | ⇧ 点击多选，一次改完 | 图内多选过一次 |
- * | 已经学会 / 关掉了 5 张卡 | 按 ? 看全部快捷键 | 打开过快捷键帮助 |
+ * | 刚学会一条手势，且学会 / 关掉的卡累计到 5 张（点 × 的那一刻不出） | 按 ? 看全部快捷键 | 打开过快捷键帮助 |
  *
  * 节奏：每条最多出 `CARD_MAX_SHOWS` 次、两次之间至少隔 `CARD_MIN_GAP_MS`；每次启动最多 `CARD_SESSION_BUDGET` 张；
  * 分层解锁按 `activeDays`；与一句话提示共用 `useHintStore.current` 一个槽位。
@@ -233,7 +233,10 @@ function maybeGraduate(): void {
   if (done >= GRADUATE_AFTER) showCardHint('shortcut_help')
 }
 
-/** 用户点了卡上的 ×：这条别再提 */
+/**
+ * 用户点了卡上的 ×：这条别再提。**这里不检查「攒够五张」**——用户刚说了「别提了」，紧跟着再弹一张快捷键卡是打扰；
+ * 关掉的照样计数，下次学会一条手势时补出（Codex #1837）。
+ */
 export function dismissCardForGood(kind: CardHintKind): void {
   useOnboardingStore.getState().markHintDone(kind)
   useHintStore.getState().dismiss()

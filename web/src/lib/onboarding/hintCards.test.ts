@@ -414,6 +414,18 @@ describe('第三批：改字 / 画正 / 平移 / 多选 / 快捷键帮助', () =
     useUiStore.setState({ shortcutHelpOpen: false })
   })
 
+  it('点 × 凑够五张的那一刻不出（刚说了别提了）；关掉的照样计数，下次学会一条时补出', () => {
+    days(5)
+    const learn = useOnboardingStore.getState().markHintDone
+    for (const k of ['fit_canvas', 'ruler_guides', 'shift_axis', 'arrow_nudge'] as const) learn(k)
+    edgeResized()
+    expect(current()).toBe('edge_crop')
+    dismissCardForGood('edge_crop') // 第五张，是关掉的
+    expect(current()).toBeNull()
+    emitActivity({ kind: 'view.drag_panned' }) // 之后学会一条：补出
+    expect(current()).toBe('shortcut_help')
+  })
+
   it('没到第三层的天数：攒够五条也不出', () => {
     days(2)
     const learn = useOnboardingStore.getState().markHintDone
