@@ -13,7 +13,7 @@ import {
   type CardHintKind,
 } from '@/lib/onboarding/hints'
 import { useEffectiveTheme } from '@/lib/theme'
-import { ALT, cn } from '@/lib/utils'
+import { ALT, MOD, cn } from '@/lib/utils'
 import { useDialogLayerStore } from '@/store/dialogLayerStore'
 import { fitStage } from '@/store/zoomToSelection'
 import { useFeedbackCornerBusy } from '@/store/feedbackCorner'
@@ -146,7 +146,7 @@ export function HintCard() {
       </div>
       <div className="flex min-h-10 items-center gap-1 py-1 pl-3 pr-1.5">
         <p data-hint-card-text className="min-w-0 flex-1 text-sm text-ink">
-          {t(`hints.${shown}`, { alt: ALT })}
+          {t(`hints.${shown}`, { alt: ALT, mod: MOD })}
         </p>
         {action && (
           <Button variant="ghost" size="sm" data-hint-card-action className="shrink-0 text-ink" onClick={action.run}>

@@ -66,6 +66,22 @@ export type ActivityDetail =
   | { kind: 'view.fitted' }
   /** 多图排版里拖图的一条边并松手成功：`resized` = 改了图幅，`cropped` = 裁剪（按着 ⌥，或这张图只能裁） */
   | { kind: 'panel.edge_dragged'; outcome: 'resized' | 'cropped' }
+  /**
+   * 画布对象被鼠标拖着挪了一次并松手成功（`startMoveDrag` 一处发）。全是粗粒度的手势形状，没有位置：
+   * `track` = 手走的路几乎是一条横 / 竖线（吸附之前的原始位移算）；`size` = 挪得很小（不到 2 mm）；
+   * `mods` = 松手时按着的修饰键（⇧ 锁向 / ⌘·Ctrl 关吸附）；`snapped` = 最后一帧吸上了什么。
+   */
+  | {
+      kind: 'object.dragged'
+      track: 'straight' | 'free'
+      size: 'tiny' | 'normal'
+      mods: 'none' | 'shift' | 'meta' | 'both'
+      snapped: boolean
+    }
+  /** 用方向键把画布对象微移了一段并落进历史（`finishNudge` 一处发；图内元素的微移不发） */
+  | { kind: 'object.nudged' }
+  /** 标注被拖着转了一次并松手成功：`near` = 停在离 15° 档位不到 3° 但没对上；`snapped` = 按着 ⇧ 按档转的 */
+  | { kind: 'object.rotated'; near: boolean; snapped: boolean }
 
 export type ActivityKind = ActivityDetail['kind']
 
@@ -95,6 +111,9 @@ export const ACTIVITY_KINDS: readonly ActivityKind[] = [
   'document.saved',
   'view.fitted',
   'panel.edge_dragged',
+  'object.dragged',
+  'object.nudged',
+  'object.rotated',
 ]
 
 /**
@@ -114,6 +133,11 @@ export const ACTIVITY_PAYLOAD_KEYS: ReadonlySet<string> = new Set([
   'field',
   'scope',
   'menu',
+  'track',
+  'size',
+  'mods',
+  'snapped',
+  'near',
 ])
 
 export function emitActivity(detail: ActivityDetail): void {

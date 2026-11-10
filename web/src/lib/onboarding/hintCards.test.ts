@@ -47,7 +47,7 @@ let stop: (() => void) | null = null
 const current = () => useHintStore.getState().current
 const stats = () => useOnboardingStore.getState().hintStats
 const edgeResized = () => emitActivity({ kind: 'panel.edge_dragged', outcome: 'resized' })
-const moved = () => emitActivity({ kind: 'history.pushed', label: 'history.moveObject' })
+const moved = () => emitActivity({ kind: 'object.dragged', track: 'free', size: 'normal', mods: 'none', snapped: false })
 
 beforeEach(async () => {
   vi.useFakeTimers()
@@ -58,7 +58,7 @@ beforeEach(async () => {
   useHintStore.setState({ current: null, token: 0 })
   useDialogLayerStore.setState({ open: 0 })
   useUnexpectedErrorStore.setState({ card: null })
-  useUiStore.setState({ elementPanelId: null, showRulers: true })
+  useUiStore.setState({ elementPanelId: null, showRulers: true, snapEnabled: true })
   useWorkspaceStore.getState().clear()
   useViewportStore.setState({ viewW: 800, viewH: 600, zoom: 1, panX: 0, panY: 0, fitted: true, tweening: false })
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_hint_cards')
@@ -223,6 +223,91 @@ describe('画布回正（fit_canvas）', () => {
     useViewportStore.setState({ panX: 5000, panY: 5000, fitted: true })
     vi.advanceTimersByTime(DRIFT_SETTLE_MS)
     expect(current()).toBeNull()
+  })
+})
+
+describe('第二层：修饰键与微移（用过两天才解锁）', () => {
+  const dragged = (over: Partial<{ track: 'straight' | 'free'; size: 'tiny' | 'normal'; mods: 'none' | 'shift' | 'meta' | 'both'; snapped: boolean }> = {}) =>
+    emitActivity({ kind: 'object.dragged', track: 'free', size: 'normal', mods: 'none', snapped: false, ...over })
+  /** 用够两天；对齐线那张（第一层）默认记成学会了，免得它占住唯一的槽位——要看它的用例传 false */
+  const unlock = (guidesLearned = true) => {
+    useOnboardingStore.setState({ activeDays: 2 })
+    if (guidesLearned) useOnboardingStore.getState().markHintDone('ruler_guides')
+  }
+
+  it('没用够两天：第二层一条都不出，也不记账', () => {
+    dragged({ track: 'straight' })
+    emitActivity({ kind: 'object.rotated', near: true, snapped: false })
+    expect(current()).toBeNull()
+    expect(stats().shift_axis).toBeUndefined()
+    expect(stats().shift_rotate).toBeUndefined()
+  })
+
+  it('手走了一条直线 → 「按住 ⇧」；⇧ 拖过 = 学会', () => {
+    unlock()
+    dragged({ track: 'straight' })
+    expect(current()).toBe('shift_axis')
+    dragged({ track: 'straight', mods: 'shift' })
+    expect(current()).toBeNull()
+    expect(stats().shift_axis?.done).toBe(true)
+  })
+
+  it('吸上之后 4 秒内又来一次很小的拖动 → 「暂时不吸附」；隔久了 / 没吸上 / 吸附关着都不算', () => {
+    unlock()
+    dragged({ snapped: true })
+    vi.advanceTimersByTime(5000)
+    dragged({ size: 'tiny' })
+    expect(current()).toBeNull() // 隔了 5 秒
+    dragged({ size: 'tiny' })
+    expect(current()).toBeNull() // 上一次没吸上
+    useUiStore.setState({ snapEnabled: false })
+    dragged({ snapped: true })
+    dragged({ size: 'tiny' })
+    expect(current()).not.toBe('no_snap') // 吸附关着
+    useHintStore.getState().dismiss()
+    useOnboardingStore.setState({ hintStats: {} })
+    unlock()
+    resetHintSessionForTest()
+    useUiStore.setState({ snapEnabled: true })
+    dragged({ snapped: true })
+    vi.advanceTimersByTime(1500)
+    dragged({ size: 'tiny' })
+    expect(current()).toBe('no_snap')
+    dragged({ mods: 'meta' })
+    expect(stats().no_snap?.done).toBe(true)
+  })
+
+  it('20 秒内 3 次很小的拖动 → 「方向键微移」；用方向键挪过 = 学会', () => {
+    unlock()
+    dragged({ size: 'tiny' })
+    dragged({ size: 'tiny' })
+    expect(current()).toBeNull()
+    dragged({ size: 'tiny' })
+    expect(current()).toBe('arrow_nudge')
+    emitActivity({ kind: 'object.nudged' })
+    expect(current()).toBeNull()
+    expect(stats().arrow_nudge?.done).toBe(true)
+  })
+
+  it('很小的拖动不算进「反复挪」：对齐线那张卡不抢在微移前面；方向键挪的算', () => {
+    unlock(false)
+    moved()
+    moved()
+    dragged({ size: 'tiny' })
+    expect(current()).toBeNull()
+    emitActivity({ kind: 'object.nudged' })
+    expect(current()).toBe('ruler_guides')
+  })
+
+  it('旋转差一点没对上档 → 「按住 ⇧ 旋转」；对上了 / 离得远不出；⇧ 转过 = 学会', () => {
+    unlock()
+    emitActivity({ kind: 'object.rotated', near: false, snapped: false })
+    expect(current()).toBeNull()
+    emitActivity({ kind: 'object.rotated', near: true, snapped: false })
+    expect(current()).toBe('shift_rotate')
+    emitActivity({ kind: 'object.rotated', near: false, snapped: true })
+    expect(current()).toBeNull()
+    expect(stats().shift_rotate?.done).toBe(true)
   })
 })
 
