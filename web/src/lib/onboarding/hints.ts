@@ -25,6 +25,11 @@
  * | 吸上之后 4 秒内又来一次很小的拖动 | 按住 ⌘ / Ctrl 暂时不吸附 | ⌘ / Ctrl 拖过一次 |
  * | 20 秒内 3 次不到 2 mm 的拖动 | 方向键微移 | 用方向键挪过画布对象 |
  * | 旋转停在离 15° 档位不到 3° 处 | 按住 ⇧ 按 15° 一档转 | ⇧ 转过一次 |
+ * | 在右栏改了图里一段文字的内容 | 双击图里的文字直接改 | 双击改过一次 |
+ * | 画的矩形差一点就是正方 / 线差一点就是水平 | 按住 ⇧ 画正的、直的 | ⇧ 画过一次 |
+ * | 放大着的时候用鼠标滚轮一格一格地挪 | 按住空格拖动平移 | 拖着平移过一次 |
+ * | 连着给两个元素改同一个样式属性 | ⇧ 点击多选，一次改完 | 图内多选过一次 |
+ * | 刚学会一条手势，且学会 / 关掉的卡累计到 5 张（点 × 的那一刻不出） | 按 ? 看全部快捷键 | 打开过快捷键帮助 |
  *
  * 节奏：每条最多出 `CARD_MAX_SHOWS` 次、两次之间至少隔 `CARD_MIN_GAP_MS`；每次启动最多 `CARD_SESSION_BUDGET` 张；
  * 分层解锁按 `activeDays`；与一句话提示共用 `useHintStore.current` 一个槽位。
@@ -65,6 +70,11 @@ export const CARD_HINTS = [
   'no_snap',
   'arrow_nudge',
   'shift_rotate',
+  'dblclick_text',
+  'shift_draw',
+  'space_pan',
+  'shift_multi',
+  'shortcut_help',
 ] as const satisfies readonly HintKind[]
 export type CardHintKind = (typeof CARD_HINTS)[number]
 export const isCardHint = (k: HintKind | null): k is CardHintKind =>
@@ -79,6 +89,11 @@ export const CARD_TIER: Record<CardHintKind, 1 | 2 | 3> = {
   no_snap: 2,
   arrow_nudge: 2,
   shift_rotate: 2,
+  dblclick_text: 1,
+  shift_draw: 2,
+  space_pan: 2,
+  shift_multi: 3,
+  shortcut_help: 3,
 }
 /** 每一层要求累计用过几天（本地日期计）才解锁 */
 export const TIER_MIN_DAYS: Record<1 | 2 | 3, number> = { 1: 0, 2: 2, 3: 5 }
@@ -135,9 +150,41 @@ export function canvasDriftedNow(): boolean {
   return driftedAway(stageFitFrame(doc.objects, doc.page, id, fastEditCanvasBox(doc, id)), visible)
 }
 
+/** 学会 / 关掉了这么多张卡之后，告诉用户「全部快捷键在哪」 */
+export const GRADUATE_AFTER = 5
+/** 「连着给两个元素改同一个属性」的时间窗 */
+export const SAME_PROP_WINDOW_MS = 30000
+/** 从快速改字 / 右键菜单里改的文字不算「去右栏改」：菜单打开后这么久内的改动都归它 */
+export const QUICK_EDIT_GRACE_MS = 60000
+/** 只有这些样式属性算「可以多选一次改完」（位置 / 尺寸类是拖出来的，不算） */
+const BATCHABLE_PROPS: ReadonlySet<string> = new Set([
+  'color',
+  'linewidth',
+  'linestyle',
+  'marker',
+  'markersize',
+  'alpha',
+  'fontsize',
+  'fontfamily',
+  'fontweight',
+  'facecolor',
+  'edgecolor',
+])
+
+/** 画布此刻是不是放大到装不下了（取景框有一边比窗口里看得见的长）：平移才有意义 */
+export function zoomedInNow(): boolean {
+  const visible = currentVisibleRectMm()
+  if (!visible) return false
+  const doc = useDocumentStore.getState().doc
+  const id = fastEditPanelOf(useWorkspaceStore.getState())
+  const frame = stageFitFrame(doc.objects, doc.page, id, fastEditCanvasBox(doc, id))
+  return frame.w > visible.w || frame.h > visible.h
+}
+
 /** 这张卡此刻说得对吗（场景还在不在）；出之前判一次，出了之后场景变了就收起 */
 export function cardApplicable(kind: CardHintKind): boolean {
   if (kind === 'fit_canvas') return canvasDriftedNow()
+  if (kind === 'space_pan') return zoomedInNow()
   // 吸附关着的时候谈不上「暂时不吸附」
   if (kind === 'no_snap') return useUiStore.getState().snapEnabled
   // 拖边裁剪与标尺只在多图排版里成立：拖边裁剪是排版手势，标尺在单图编辑里不画
@@ -173,11 +220,23 @@ export function showCardHint(kind: CardHintKind, now: number = Date.now()): bool
 
 /** 用户自己用过这个功能了：记「学会」，正开着的那张一并收起 */
 export function learnCardHint(kind: CardHintKind): void {
+  const was = useOnboardingStore.getState().hintStats[kind]?.done === true
   useOnboardingStore.getState().markHintDone(kind)
   if (useHintStore.getState().current === kind) useHintStore.getState().dismiss()
+  // 刚又学会一条、攒够数了：正是说「全部快捷键在哪」的时候（它自己不算数，免得自己招自己）
+  if (!was && kind !== 'shortcut_help') maybeGraduate()
 }
 
-/** 用户点了卡上的 ×：这条别再提 */
+function maybeGraduate(): void {
+  const stats = useOnboardingStore.getState().hintStats
+  const done = CARD_HINTS.filter((k) => k !== 'shortcut_help' && stats[k]?.done).length
+  if (done >= GRADUATE_AFTER) showCardHint('shortcut_help')
+}
+
+/**
+ * 用户点了卡上的 ×：这条别再提。**这里不检查「攒够五张」**——用户刚说了「别提了」，紧跟着再弹一张快捷键卡是打扰；
+ * 关掉的照样计数，下次学会一条手势时补出（Codex #1837）。
+ */
 export function dismissCardForGood(kind: CardHintKind): void {
   useOnboardingStore.getState().markHintDone(kind)
   useHintStore.getState().dismiss()
@@ -259,6 +318,24 @@ let recentTiny: number[] = []
 /** 上一次拖动吸上了的时刻（没吸上 = 0） */
 let lastSnapAt = 0
 
+/** 上一次改的样式属性、时刻，以及之后有没有换过选中的元素 */
+let lastProp: { prop: string; at: number; reselected: boolean } | null = null
+/** 最近一次打开快速改字 / 右键菜单的时刻 */
+let quickEditAt = 0
+
+function onPropertyChanged(prop: string): void {
+  const now = Date.now()
+  if (prop === 'text') {
+    // 从快速改字 / 右键菜单里改的就是我们要教的那条路；从右栏改的才提示
+    if (now - quickEditAt > QUICK_EDIT_GRACE_MS) showCardHint('dblclick_text', now)
+    return
+  }
+  if (!BATCHABLE_PROPS.has(prop)) return
+  const again = lastProp && lastProp.prop === prop && lastProp.reselected && now - lastProp.at <= SAME_PROP_WINDOW_MS
+  lastProp = { prop, at: now, reselected: false }
+  if (again) showCardHint('shift_multi', now)
+}
+
 /** 一次拖动松手：先记学会，再按「最像哪种笨办法」出一张（一个槽位，先到先得） */
 function onDragged(d: Extract<ActivityDetail, { kind: 'object.dragged' }>): void {
   const now = Date.now()
@@ -311,6 +388,31 @@ function onSignal(d: ActivityDetail): void {
     case 'history.pushed':
       if (d.label === 'history.addGuide') learnCardHint('ruler_guides')
       return
+    case 'shape.drawn':
+      if (d.snapped) learnCardHint('shift_draw')
+      else if (d.near) showCardHint('shift_draw')
+      return
+    case 'view.drag_panned':
+      learnCardHint('space_pan')
+      return
+    case 'view.wheel_struggled':
+      showCardHint('space_pan')
+      return
+    case 'figure.text_quick_edit':
+      quickEditAt = Date.now()
+      learnCardHint('dblclick_text')
+      return
+    case 'menu.opened':
+      quickEditAt = Date.now()
+      return
+    case 'element.property_changed':
+      onPropertyChanged(d.prop)
+      return
+    case 'element.selection_changed':
+      // 图内多选过（⇧ 点击或框选）= 会了；换了一个单选 = 「改完一个去改下一个」的中间那一步
+      if (d.count >= 2) learnCardHint('shift_multi')
+      else if (d.count === 1 && lastProp) lastProp.reselected = true
+      return
     case 'selection.changed': {
       if (useUiStore.getState().elementPanelId) return // 图内编辑态里的画布选区不算
       if (d.count >= 2) {
@@ -357,6 +459,10 @@ export function startHintEngine(): () => void {
       }
     }, DRIFT_SETTLE_MS)
   })
+  // 打开过快捷键帮助 = 知道它在哪了
+  const unsubHelp = useUiStore.subscribe((s, prev) => {
+    if (s.shortcutHelpOpen && !prev.shortcutHelpOpen) learnCardHint('shortcut_help')
+  })
   // 排版手势的两张卡：离开多图排版就不对了
   const unsubMode = useWorkspaceStore.subscribe((s, prev) => {
     if (s.mode === prev.mode) return
@@ -393,6 +499,9 @@ export function startHintEngine(): () => void {
     recentMoves = []
     recentTiny = []
     lastSnapAt = 0
+    lastProp = null
+    quickEditAt = 0
+    unsubHelp()
     unsubViewport()
     unsubMode()
     unsubSelection()

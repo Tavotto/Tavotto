@@ -58,7 +58,7 @@ beforeEach(async () => {
   useHintStore.setState({ current: null, token: 0 })
   useDialogLayerStore.setState({ open: 0 })
   useUnexpectedErrorStore.setState({ card: null })
-  useUiStore.setState({ elementPanelId: null, showRulers: true, snapEnabled: true })
+  useUiStore.setState({ elementPanelId: null, showRulers: true, snapEnabled: true, shortcutHelpOpen: false })
   useWorkspaceStore.getState().clear()
   useViewportStore.setState({ viewW: 800, viewH: 600, zoom: 1, panX: 0, panY: 0, fitted: true, tweening: false })
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_hint_cards')
@@ -330,6 +330,108 @@ describe('第二层：修饰键与微移（用过两天才解锁）', () => {
     emitActivity({ kind: 'object.rotated', near: false, snapped: true })
     expect(current()).toBeNull()
     expect(stats().shift_rotate?.done).toBe(true)
+  })
+})
+
+describe('第三批：改字 / 画正 / 平移 / 多选 / 快捷键帮助', () => {
+  const days = (n: number) => useOnboardingStore.setState({ activeDays: n })
+  const setProp = (prop: string) => emitActivity({ kind: 'element.property_changed', prop })
+  const selectOne = () => emitActivity({ kind: 'element.selection_changed', count: 1 })
+
+  it('在右栏改了图里的文字 → 「双击直接改」；从快速改字 / 右键菜单里改的不算；双击改过 = 学会', () => {
+    emitActivity({ kind: 'menu.opened', menu: 'text' })
+    setProp('text')
+    expect(current()).toBeNull()
+    vi.advanceTimersByTime(61_000)
+    setProp('text')
+    expect(current()).toBe('dblclick_text')
+    emitActivity({ kind: 'figure.text_quick_edit' })
+    expect(current()).toBeNull()
+    expect(stats().dblclick_text?.done).toBe(true)
+  })
+
+  it('画得差一点就规整 → 「按住 ⇧」；按着 ⇧ 画过 = 学会', () => {
+    days(2)
+    emitActivity({ kind: 'shape.drawn', near: false, snapped: false })
+    expect(current()).toBeNull()
+    emitActivity({ kind: 'shape.drawn', near: true, snapped: false })
+    expect(current()).toBe('shift_draw')
+    emitActivity({ kind: 'shape.drawn', near: false, snapped: true })
+    expect(stats().shift_draw?.done).toBe(true)
+  })
+
+  it('滚轮一格一格地挪 → 「空格拖动」，只在放大到装不下时；拖着平移过 = 学会', () => {
+    days(2)
+    emitActivity({ kind: 'view.wheel_struggled' })
+    expect(current()).toBeNull() // 整页都看得见：用不着平移
+    expect(stats().space_pan).toBeUndefined()
+    useViewportStore.setState({ zoom: 6, fitted: false })
+    emitActivity({ kind: 'view.wheel_struggled' })
+    expect(current()).toBe('space_pan')
+    emitActivity({ kind: 'view.drag_panned' })
+    expect(current()).toBeNull()
+    expect(stats().space_pan?.done).toBe(true)
+  })
+
+  it('连着给两个元素改同一个样式属性 → 「⇧ 多选」；同一个元素连改 / 换了属性 / 隔太久 / 位置类属性都不算', () => {
+    days(5)
+    setProp('color')
+    setProp('color') // 没换元素：在同一个上调
+    expect(current()).toBeNull()
+    selectOne()
+    setProp('linewidth') // 换了属性
+    expect(current()).toBeNull()
+    selectOne()
+    vi.advanceTimersByTime(31_000)
+    setProp('linewidth') // 隔太久
+    expect(current()).toBeNull()
+    setProp('loc')
+    selectOne()
+    setProp('loc') // 位置是拖出来的
+    expect(current()).toBeNull()
+    setProp('color')
+    selectOne()
+    setProp('color')
+    expect(current()).toBe('shift_multi')
+    emitActivity({ kind: 'element.selection_changed', count: 2 })
+    expect(current()).toBeNull()
+    expect(stats().shift_multi?.done).toBe(true)
+  })
+
+  it('学会第五条的那一刻 → 「按 ? 看全部快捷键」；它自己不算数；打开过帮助 = 学会', () => {
+    days(5)
+    emitActivity({ kind: 'view.drag_panned' }) // 才学会第一条：还早
+    expect(current()).toBeNull()
+    useOnboardingStore.setState({ hintStats: {} })
+    const learn = useOnboardingStore.getState().markHintDone
+    for (const k of ['fit_canvas', 'edge_crop', 'ruler_guides', 'shift_axis'] as const) learn(k)
+    expect(current()).toBeNull()
+    emitActivity({ kind: 'object.nudged' }) // 第五条：方向键微移
+    expect(current()).toBe('shortcut_help')
+    useUiStore.setState({ shortcutHelpOpen: true })
+    expect(current()).toBeNull()
+    expect(stats().shortcut_help?.done).toBe(true)
+    useUiStore.setState({ shortcutHelpOpen: false })
+  })
+
+  it('点 × 凑够五张的那一刻不出（刚说了别提了）；关掉的照样计数，下次学会一条时补出', () => {
+    days(5)
+    const learn = useOnboardingStore.getState().markHintDone
+    for (const k of ['fit_canvas', 'ruler_guides', 'shift_axis', 'arrow_nudge'] as const) learn(k)
+    edgeResized()
+    expect(current()).toBe('edge_crop')
+    dismissCardForGood('edge_crop') // 第五张，是关掉的
+    expect(current()).toBeNull()
+    emitActivity({ kind: 'view.drag_panned' }) // 之后学会一条：补出
+    expect(current()).toBe('shortcut_help')
+  })
+
+  it('没到第三层的天数：攒够五条也不出', () => {
+    days(2)
+    const learn = useOnboardingStore.getState().markHintDone
+    for (const k of ['fit_canvas', 'edge_crop', 'ruler_guides', 'shift_axis'] as const) learn(k)
+    emitActivity({ kind: 'object.nudged' })
+    expect(current()).toBeNull()
   })
 })
 

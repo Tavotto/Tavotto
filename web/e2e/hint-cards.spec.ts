@@ -182,3 +182,22 @@ test(
     await page.screenshot({ path: testInfo.outputPath('hint-tiny-moves.png') })
   },
 )
+
+test(
+  '学会第五条手势的那一刻出「按 ? 看全部快捷键」卡，点「打开」进快捷键帮助，之后不再出',
+  { tag: '@feature:onboarding.hint-cards' },
+  async ({ app, page }, testInfo) => {
+    const a = await app()
+    // 已经会四条了；再让画布适应一次（⌘1）就是第五条
+    await toLayout(page, a.baseURL, ['edge_crop', 'ruler_guides', 'shift_axis', 'arrow_nudge'])
+    await expect(page.locator('[data-hint-card]')).toHaveCount(0)
+    await page.keyboard.press('ControlOrMeta+1')
+    const card = await expectCard(page, 'shortcut_help')
+    await page.screenshot({ path: testInfo.outputPath('hint-shortcut-help.png') })
+    await card.locator('[data-hint-card-action]').click()
+    await expect(page.locator('[data-dialog="shortcut-help"]')).toBeVisible()
+    await page.locator('[data-dialog="shortcut-help"] [data-dialog-close]').click()
+    await expect(page.locator('[data-dialog="shortcut-help"]')).toHaveCount(0)
+    await expect(page.locator('[data-hint-card]')).toHaveCount(0)
+  },
+)

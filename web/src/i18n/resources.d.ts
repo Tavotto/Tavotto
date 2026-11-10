@@ -6071,6 +6071,7 @@ export default interface Resources {
     },
     "hints": {
       "arrow_nudge": "方向键微移，⇧ 大步、{{alt}} 小步",
+      "dblclick_text": "双击图里的文字，直接改",
       "edge_crop": "拖边改图幅，按住 {{alt}} 改为裁剪",
       "fast_edit_entered": "你的改动会保存到当前排版，原始文件不动。",
       "fit_canvas": "双击空白处，画布回到正中",
@@ -6083,7 +6084,12 @@ export default interface Resources {
       "problem_found": "左侧「问题」可定位对象和属性字段。",
       "ruler_guides": "从标尺拖出对齐线",
       "shift_axis": "按住 ⇧ 拖动，只沿一个方向走",
-      "shift_rotate": "按住 ⇧ 旋转，15° 一档"
+      "shift_draw": "按住 ⇧ 画正方形和直线",
+      "shift_multi": "⇧ 点击多选，一次改完",
+      "shift_rotate": "按住 ⇧ 旋转，15° 一档",
+      "shortcutHelpOpen": "打开",
+      "shortcut_help": "按 ? 看全部快捷键",
+      "space_pan": "按住空格拖动，平移画布"
     },
     "history": {
       "addArrow": "添加箭头",

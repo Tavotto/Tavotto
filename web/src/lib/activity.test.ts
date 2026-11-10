@@ -39,6 +39,10 @@ const SAMPLES: Record<ActivityKind, ActivityDetail> = {
   'object.dragged': { kind: 'object.dragged', track: 'straight', size: 'normal', mods: 'none', snapped: false },
   'object.nudged': { kind: 'object.nudged' },
   'object.rotated': { kind: 'object.rotated', near: true, snapped: false },
+  'shape.drawn': { kind: 'shape.drawn', near: true, snapped: false },
+  'view.drag_panned': { kind: 'view.drag_panned' },
+  'view.wheel_struggled': { kind: 'view.wheel_struggled' },
+  'figure.text_quick_edit': { kind: 'figure.text_quick_edit' },
 }
 
 describe('kind 闭集', () => {

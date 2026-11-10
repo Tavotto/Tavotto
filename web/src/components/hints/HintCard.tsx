@@ -33,6 +33,8 @@ const STAGE_H = 180
 const ACTIONS: Partial<Record<CardHintKind, { label: string; run: () => void }>> = {
   // `fitStage` 自己会发 `view.fitted` → 提示引擎记「学会」并收起这张卡
   fit_canvas: { label: 'topbar.fitCanvas', run: fitStage },
+  // 打开帮助 → 提示引擎盯着 `shortcutHelpOpen`，记「学会」并收起
+  shortcut_help: { label: 'hints.shortcutHelpOpen', run: () => useUiStore.getState().setShortcutHelpOpen(true) },
 }
 
 /**

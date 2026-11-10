@@ -2,7 +2,7 @@
  * 一次拖动的粗粒度形状（给提示引擎，ADR 0177）：只出枚举与布尔，判据按**手走的原始位移**算。
  */
 import { describe, expect, it } from 'vitest'
-import { dragShape } from './interactions'
+import { dragShape, drawShape } from './interactions'
 
 const none = { shiftKey: false, metaKey: false, ctrlKey: false }
 
@@ -28,5 +28,22 @@ describe('dragShape', () => {
   })
   it('payload 里只有形状，没有位置', () => {
     expect(Object.keys(dragShape(12.34, 56.78, none, false)).sort()).toEqual(['kind', 'mods', 'size', 'snapped', 'track'])
+  })
+})
+
+describe('drawShape', () => {
+  it('矩形 / 椭圆两边差不到一成 = 差一点就是正的；正好相等或差得多都不算', () => {
+    expect(drawShape('rect', { x: 30, y: 28 }, { w: 30, h: 28 }, false).near).toBe(true)
+    expect(drawShape('ellipse', { x: 30, y: 30 }, { w: 30, h: 30 }, false).near).toBe(false)
+    expect(drawShape('rect', { x: 30, y: 18 }, { w: 30, h: 18 }, false).near).toBe(false)
+  })
+  it('线 / 箭头离水平或竖直不到 4° = 差一点就是直的；正好水平不算', () => {
+    expect(drawShape('line', { x: 40, y: 1.5 }, { w: 40, h: 1.5 }, false).near).toBe(true)
+    expect(drawShape('arrow', { x: -1, y: 40 }, { w: 1, h: 40 }, false).near).toBe(true)
+    expect(drawShape('line', { x: 40, y: 0 }, { w: 40, h: 0 }, false).near).toBe(false)
+    expect(drawShape('line', { x: 40, y: 20 }, { w: 40, h: 20 }, false).near).toBe(false)
+  })
+  it('按着 ⇧ 画的：snapped，不再算「差一点」', () => {
+    expect(drawShape('rect', { x: 30, y: 28 }, { w: 30, h: 28 }, true)).toEqual({ kind: 'shape.drawn', near: false, snapped: true })
   })
 })
