@@ -895,3 +895,111 @@ def test_guidance_has_no_internal_jargon_in_user_facing_error_texts():
             assert code in table, (loc, code)
             if loc == "zh-CN":
                 assert not re.search("配方|图族|执行器", table[code]), code
+
+
+# --------------------------------------------------------------------------- Codex #1829 P2 三条
+def test_eligible_probes_the_no_x_case_for_families_with_optional_x(tmp_path):
+    """distribution 的 x 可选：没有类别列时也要探「不带 x」，不能因为 xs 为空就一条值检查都不跑。"""
+    _write(tmp_path, "one.csv", [["v"]] + [[i] for i in (1, 2, 3, 4)])
+    p = adf.profile_folder(tmp_path)
+    (e,) = p.tables
+    c = fam(
+        R.eligible(e, NONE, values=adf.inspect_data_source(tmp_path / "one.csv")), "distribution"
+    )
+    assert c.status == "partial"
+    assert c.rejected_marks == {
+        "hist": "hist_density_n_small",
+        "density": "hist_density_n_small",
+        "box": "box_violin_n_small",
+        "violin": "box_violin_n_small",
+    }
+
+
+def test_eligible_and_validate_agree_on_the_same_data(profile, folder, tmp_path):
+    """对拍：eligible 说拒的图元，validate 对最有利的配方也拒（同码）；说能画的，validate 不报这些取值码。"""
+    nsmall = {"box_violin_n_small", "hist_density_n_small"}
+    _write(tmp_path, "one.csv", [["v"]] + [[i] for i in (1, 2, 3, 4)])
+    _write(tmp_path, "ten.csv", [["v"]] + [[i] for i in range(12)])
+    p = adf.profile_folder(tmp_path)
+    for name in ("one.csv", "ten.csv"):
+        e = entry(p, name)
+        v = adf.inspect_data_source(tmp_path / name)
+        el = fam(R.eligible(e, NONE, values=v), "distribution")
+        for mark in R.FAMILIES["distribution"].marks:
+            r = rec(name, "distribution", [mark], ["v"])
+            got = codes(R.validate_recipe(p, r, confirmed=NONE, values=v)) & nsmall
+            if mark in el.rejected_marks:
+                assert got == {el.rejected_marks[mark]}, (name, mark)
+            else:
+                assert not got, (name, mark)
+    # 有类别列的表同样一致
+    e = entry(profile, "small.csv")
+    v = vals(folder, "small.csv")
+    el = fam(R.eligible(e, NONE, values=v), "comparison")
+    for mark in ("box", "violin"):
+        r = rec("small.csv", "comparison", [mark], ["response"], x="condition")
+        assert codes(R.validate_recipe(profile, r, confirmed=NONE, values=v)) & nsmall == {
+            el.rejected_marks[mark]
+        }
+
+
+def test_candidate_dedup_ignores_the_why_sentence(profile, folder):
+    a = rec("long.csv", "comparison", ["jitter"], ["response"], x="condition", why="第一句说法")
+    b = rec("long.csv", "comparison", ["jitter"], ["response"], x="condition", why="换一句说法")
+    other = rec(
+        "long.csv", "comparison", ["box", "jitter"], ["response"], x="condition", why="真不同"
+    )
+    res = R.enforce_order(profile, [a, b, other], confirmed=NONE, values=vals(folder, "long.csv"))
+    assert [r.why for r in res.kept] == ["第一句说法", "真不同"]
+    assert res.dropped[0].index == 1 and res.dropped[0].problems[0].code == "duplicate_candidate"
+
+
+def test_paired_completeness_is_judged_per_facet_cell(tmp_path):
+    conf = R.Confirmed("paired", "mouse")
+    rows = [["phase", "mouse", "site", "v"]]
+    for site in ("s1", "s2"):
+        for m in range(1, 6):
+            for ph in ("pre", "post"):
+                rows.append([ph, f"m{m}", site, m])
+    _write(tmp_path, "pf.csv", rows)
+    p = adf.profile_folder(tmp_path)
+    v = adf.inspect_data_source(tmp_path / "pf.csv")
+    r = rec(
+        "pf.csv",
+        "paired",
+        ["paired_lines"],
+        ["v"],
+        x="phase",
+        unit="mouse",
+        paired=True,
+        facet="site",
+    )
+    assert R.validate_recipe(p, r, confirmed=conf, values=v) == []
+    # 不分面时同一个个体在每个条件下有两个值：仍然不完整
+    nofacet = rec("pf.csv", "paired", ["paired_lines"], ["v"], x="phase", unit="mouse", paired=True)
+    assert "paired_incomplete" in codes(R.validate_recipe(p, nofacet, confirmed=conf, values=v))
+    # 分面内缺一个条件：仍然被拒
+    rows2 = [r_ for r_ in rows if not (r_[2] == "s2" and r_[1] == "m3" and r_[0] == "post")]
+    _write(tmp_path, "pf.csv", rows2)
+    p2 = adf.profile_folder(tmp_path)
+    v2 = adf.inspect_data_source(tmp_path / "pf.csv")
+    assert "paired_incomplete" in codes(R.validate_recipe(p2, r, confirmed=conf, values=v2))
+
+
+def test_trajectory_count_limit_is_per_panel(tmp_path):
+    n = R.MAX_TRAJECTORIES
+    rows = [["t", "id", "arm", "y"]]
+    for arm in ("a", "b"):
+        for i in range(n):
+            for t in (1, 2, 3):
+                rows.append([t, f"{arm}{i}", arm, i + t])
+    _write(tmp_path, "tr.csv", rows)
+    p = adf.profile_folder(tmp_path)
+    v = adf.inspect_data_source(tmp_path / "tr.csv")
+    conf = R.Confirmed("repeated", "id")
+    faceted = rec("tr.csv", "trajectories", ["line"], ["y"], x="t", unit="id", facet="arm")
+    assert R.validate_recipe(p, faceted, confirmed=conf, values=v) == []  # 每格 30 条
+    one = rec("tr.csv", "trajectories", ["line"], ["y"], x="t", unit="id")
+    assert "trajectories_limit_exceeded" in codes(
+        R.validate_recipe(p, one, confirmed=conf, values=v)
+    )

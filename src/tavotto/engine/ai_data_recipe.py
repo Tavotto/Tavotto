@@ -823,13 +823,16 @@ def _value_problems(
         if not xs_by or min(len(x) for x in xs_by.values()) < MIN_X_TREND:
             P.append(Problem("trend_too_few_x", "x"))
     if spec.key == "paired" and r.x is not None and r.unit is not None:
-        per_unit: dict[str, dict[str, int]] = {}
+        # 配对键含分面：每个分面格内逐个体判（同一个体在别的分面里的测量不算它的重复）
+        per_unit: dict[tuple, dict[str, int]] = {}
         levels: set[str] = set()
-        for u, lv, yv in zip(v.cells(r.unit), v.cells(r.x), v.nums(y0)):
+        facet_cells = v.keys([r.facet])
+        for f, u, lv, yv in zip(facet_cells, v.cells(r.unit), v.cells(r.x), v.nums(y0)):
             if yv is None:
                 continue
             levels.add(lv)
-            per_unit.setdefault(u, {})[lv] = per_unit.setdefault(u, {}).get(lv, 0) + 1
+            d = per_unit.setdefault((f, u), {})
+            d[lv] = d.get(lv, 0) + 1
         ok = len(levels) == 2 and all(
             set(d) == levels and all(n == 1 for n in d.values()) for d in per_unit.values()
         )
@@ -855,7 +858,10 @@ def _value_problems(
         ):
             P.append(Problem("interval_bounds_invalid", "y"))
     if spec.key == "trajectories" and r.unit is not None:
-        if len(set(v.cells(r.unit))) > MAX_TRAJECTORIES:
+        per_panel: dict[tuple, set[str]] = {}
+        for f, u in zip(v.keys([r.facet]), v.cells(r.unit)):
+            per_panel.setdefault(f, set()).add(u)
+        if max((len(us) for us in per_panel.values()), default=0) > MAX_TRAJECTORIES:
             P.append(Problem("trajectories_limit_exceeded", "unit"))
     if spec.key == "dose_response" and r.x is not None:
         if any(x <= 0 for x in v.nums(r.x) if x is not None):
@@ -1148,7 +1154,9 @@ def _probe_marks(spec: FamilySpec, s: adf.DataSummary, values: adf.DataSummary) 
     其余取值规则依赖具体配方，留给 `validate_recipe`。"""
     v = _Values(values)
     ys = _columns_of(s, spec.y_types)
-    xs = _columns_of(s, spec.x_types) if spec.x_types else [None]
+    xs: list[str | None] = list(_columns_of(s, spec.x_types)) if spec.x_types else []
+    if not spec.x_required or not xs:
+        xs.insert(0, None)  # x 可选的族（distribution）：「不带 x」也是一种配方，要探
     pairs = [(x, y) for x in xs[:_PROBE_PAIRS] for y in ys[:_PROBE_PAIRS] if x != y][:_PROBE_PAIRS]
     if not pairs:
         return {}
@@ -1226,7 +1234,9 @@ def enforce_order(
         if problems:
             dropped.append(Dropped(i, tuple(problems)))
             continue
-        fp = repr(r.to_dict())
+        fp = repr(
+            {k: val for k, val in r.to_dict().items() if k != "why"}
+        )  # 指纹只含决定画面的字段
         if fp in seen:
             dropped.append(Dropped(i, (Problem("duplicate_candidate"),)))
             continue
