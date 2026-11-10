@@ -434,6 +434,9 @@ RenderCore，必须明确报 `svg_asset_export_unsupported`，不能交付空图
   采用前的 `ConvertCompare` 原样展示后端 `comparison.output_evidence` 的源码文件名线索和改道写入尝试；
   未记录、无可用记录、列表截断各自说清，不把线索标成已完成输出或完整性证明。旧后端的 R / MATLAB
   结果仍提示出图不等于输出完整。看护 `components/PreparationCard.test.tsx`。
+  `output_evidence.files`（#1809）非空时，清单替代那几行线索：每个能确定的写出一行，状态词「一致 / 不同 / 没法比 / 没写出」，没法比的原因放 title，
+  「成功出图不能证明…」那句放清单的 title；缺的文件行内「我来指定」（桌面走 `pickAnyFile`，只登记文件名、文件不动）与「不需要」，
+  有没处理的行时点采用先问一句；有「不同」时采用钮改「照样采用」，「让 AI 再对一次」（`realignConvert`）在底部「放弃」左边。看护 `PreparationCard.test.tsx`。
 
 - **拖 / 粘贴文件进画布（ADR 0176，2026-11-10）**：系统文件拖到画布、⌘V 粘贴图片，**每一样东西按类型接住**，全文在 ADR 0176 的终态表。
   * 图片（PNG / JPG / TIFF / PDF / SVG，后缀表 `ASSET_EXTENSIONS` 与后端 `engine/assetimport.EXTENSIONS` 同源，`tests/golden/asset_import_extensions.json`）一律 `lib/canvasFileIntake.importAndPlace`：

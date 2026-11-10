@@ -495,6 +495,14 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         frozenset({"target"}),
         "新文件 {target} 没有写出来（或是空的）；在当前工作目录里创建它。",
     ),
+    "fix_missing_outputs": (
+        frozenset({"target", "files"}),
+        "原脚本会写出 {files}，但 {target} 在隔离校验里没有写出它们；用原脚本同样的路径、数据和计算补上这些写出（只补这几个文件）。",
+    ),
+    "fix_outputs_differ": (
+        frozenset({"target", "files", "details"}),
+        "{target} 写出的 {files} 与项目里原脚本的旧结果在这些位置不同：{details}。对照原脚本核对数据读取、计算和写出方式，只改 {target}；不要拿旧结果里的值去覆盖。",
+    ),
     "fix_extra_files": (
         frozenset({"files"}),
         "工作目录里除了新文件还改动了 {files}；把它们恢复成原样，只写那一个新文件。",
@@ -619,4 +627,16 @@ def convert_fix_text(key: tuple[str, str | None], observed: dict) -> str | None:
         return _convert_render("fix_target_missing", target=target)
     if key == ("candidate.tree", "other_file_changed"):
         return _convert_render("fix_extra_files", files=o.get("files"))
+    if key == ("output.content", "source_outputs_differ"):
+        return _convert_render(
+            "fix_outputs_differ",
+            target=target,
+            files=o.get("files") or "",
+            details=o.get("details") or "",
+        )
+    if key == ("output.source", "source_outputs_missing"):
+        files = o.get("files") or ""
+        if isinstance(files, list):
+            files = ", ".join(str(f) for f in files)
+        return _convert_render("fix_missing_outputs", target=target, files=files)
     return None

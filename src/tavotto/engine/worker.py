@@ -2246,7 +2246,81 @@ class Worker(wireproto.V1Handler):
             str(root).startswith(writetripwire.REDIRECT_PROJECT_PREFIX) for root in self.write_roots
         ):
             result["redirected_write_attempts"] = writetripwire.redirected()
+            result["sandbox_files"] = self._sandbox_files()
+            result["inputs_read"] = self._inputs_read()
         return result
+
+    def _inputs_read(self) -> dict | None:
+        """Project-relative inputs the script opened read-only, with mtimes (conversion validation only).
+
+        Lets the parent tell whether an old output in the project is newer than everything the candidate
+        read. None = no observer report; `truncated` / partial observation is the parent's `inputs_unknown`."""
+        report = self._inputs_report
+        if not isinstance(report, dict):
+            return None
+        files = []
+        for entry in report.get("files") or []:
+            rel = entry.get("path") if isinstance(entry, dict) else None
+            if not isinstance(rel, str):
+                continue
+            try:
+                mtime = os.stat(os.path.join(str(self.figures_dir), rel)).st_mtime_ns
+            except OSError:
+                return None
+            files.append({"path": rel, "mtime_ns": mtime})
+        return {"files": files, "truncated": bool(report.get("truncated"))}
+
+    def _keep_sandbox_outputs(self, names: list[str]) -> None:
+        """Copy the (bounded) sandbox outputs under the redirect area so the parent can compare their
+        content before the sandbox is discarded. Best effort: anything not copied stays name-only."""
+        try:
+            if not getattr(self, "write_roots", None):
+                return
+            _roots, redirect = writetripwire.split_roots(self.write_roots)
+            if redirect is None:
+                return
+            dest_root = Path(redirect[1]) / SANDBOX_KEEP_DIRNAME
+            total = 0
+            for rel in names:
+                src = Path(self.sandbox) / rel
+                size = src.stat().st_size
+                if size > _MAX_KEPT_FILE_BYTES or total + size > _MAX_KEPT_TOTAL_BYTES:
+                    continue
+                total += size
+                dest = dest_root / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(src, dest)
+        except (OSError, ValueError):
+            return
+
+    def _sandbox_files(self) -> dict:
+        """Relative names of the files still in the session sandbox right now (conversion validation only).
+
+        Names only, capped; internal files are filtered. A relative write in sandbox cwd lands here and
+        the sandbox is discarded after validation, so this is the only place it can be seen."""
+        names: list[str] = []
+        truncated = False
+        try:
+            for dirpath, dirs, files in os.walk(self.sandbox):
+                dirs[:] = sorted(d for d in dirs if d not in _SANDBOX_INTERNAL)
+                for name in sorted(files):
+                    if (
+                        name in _SANDBOX_INTERNAL
+                        or name.startswith("_tavotto_")
+                        or name.endswith(".pyc")
+                    ):
+                        continue
+                    if len(names) >= _MAX_SANDBOX_FILES:
+                        truncated = True
+                        break
+                    rel = os.path.relpath(os.path.join(dirpath, name), self.sandbox)
+                    names.append(rel.replace(os.sep, "/"))
+                if truncated:
+                    break
+        except OSError:
+            return {"names": [], "truncated": True}
+        self._keep_sandbox_outputs(names)
+        return {"names": names, "truncated": truncated}
 
     def _render(
         self, stem: str, timings: dict | None = None, preview_dpi: int | None = None
@@ -2276,7 +2350,13 @@ class Worker(wireproto.V1Handler):
                 **{
                     k: v
                     for k, v in self.build().items()
-                    if k not in {"source_sha256", "redirected_write_attempts"}
+                    if k
+                    not in {
+                        "source_sha256",
+                        "redirected_write_attempts",
+                        "sandbox_files",
+                        "inputs_read",
+                    }
                 },
             }
         if cmd == "export" and (req.get("require_built") or req.get("snapshot_only")):
@@ -2580,6 +2660,13 @@ def _json_default(o):
         return float(o)
     except (TypeError, ValueError):
         return str(o)
+
+
+_MAX_SANDBOX_FILES = 200
+SANDBOX_KEEP_DIRNAME = ".tavotto-sandbox"
+_MAX_KEPT_FILE_BYTES = 8 * 1024 * 1024
+_MAX_KEPT_TOTAL_BYTES = 64 * 1024 * 1024
+_SANDBOX_INTERNAL = frozenset({"__pycache__"})
 
 
 def _parse_write_roots(raw) -> list[str] | None:
