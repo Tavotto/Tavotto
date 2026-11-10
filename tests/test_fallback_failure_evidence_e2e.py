@@ -27,6 +27,7 @@ def test_linked_safe_input_then_native_missing_input_preserves_both_failure_fact
         "tmp.write_text('2')\n"
         "os.replace(tmp, final)\n"
         "value = int(final.read_text())\n"
+        "os.stat(final)\n"  # 暂存覆盖层（#1813）够不着 stat：safe 仍 blocked，才有「两次失败事实」可保存
         "plt.plot([0, data], [0, value])\n",
         encoding="utf-8",
     )

@@ -62,6 +62,10 @@ export type ActivityDetail =
   | { kind: 'menu.opened'; menu: 'panel' | 'panel-layout-only' | 'text' | 'mark' | 'multi' }
   /** 文档写盘成功 */
   | { kind: 'document.saved' }
+  /** 用户让画布「适应」了一次（双击空白 / 快捷键 / 菜单 / 工具条，同一个 `fitStage`；程序自己的适配不发） */
+  | { kind: 'view.fitted' }
+  /** 多图排版里拖图的一条边并松手成功：`resized` = 改了图幅，`cropped` = 裁剪（按着 ⌥，或这张图只能裁） */
+  | { kind: 'panel.edge_dragged'; outcome: 'resized' | 'cropped' }
 
 export type ActivityKind = ActivityDetail['kind']
 
@@ -89,6 +93,8 @@ export const ACTIVITY_KINDS: readonly ActivityKind[] = [
   'figure.added_to_layout',
   'menu.opened',
   'document.saved',
+  'view.fitted',
+  'panel.edge_dragged',
 ]
 
 /**

@@ -53,7 +53,8 @@ def test_deleted_output_is_an_attempt_not_proof_of_a_retained_file(world):
     )
     cand.target.write_bytes(cand.new_bytes)
     result = ai_convert.run_validation(cand, runner)
-    assert result["status"] == "ok", result
+    # #1809: an attempted-then-deleted certain output is "missing", never a pass
+    assert result["status"] == ai_convert.MISSING_OUTPUTS_STATUS, result
     assert "temporary.csv" in result["output_evidence"]["write_attempts"]
     assert result["output_evidence"]["completeness"] == "unknown"
     assert not (cand.dir / ai_convert.REDIRECT_DIRNAME / "sub" / "temporary.csv").exists()

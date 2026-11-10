@@ -150,7 +150,9 @@ worker 在脚本 build 期间用 `sys.addaudithook` 的 `open` 事件（及 `os.
 （`writetripwire.redirect_entries` / `split_roots`）。worker 见到它就在 `install(redirect=)` 里包装 Python 层写入口，**落在项目内的写**换到 `<候选目录>/redirected/<项目相对路径>`，
 项目外且不在白名单的写仍 `write_outside_roots`。**MCP 来源的 `write_roots` 不含改道条目，绊线语义不变**——不要把改道扩到 MCP（那里绊线就是要失败）。
 读回（打开读取、`os.path.exists|isfile|isdir|getsize` 与 `Path.exists|is_file|is_dir`）看同一改道区与白名单；不跟随符号链接的查询仍查链接本身，追加 / 读写模式写时复制；限制与盲区（`stat|listdir|glob|Path.stat`、C 层写由校验后的项目指纹兜住）见 `writetripwire` 头注与 ADR 0143 后续修订。
-候选目录指纹 `ai_figure_edit._tree` 不看根下 `redirected/`。看护 `tests/test_convert_shadow_validation.py`（真 worker）、`tests/test_write_redirect.py`。
+候选目录指纹 `ai_figure_edit._tree` 不看根下 `redirected/`。
+同一套视图实现还服务 safe worker 的常规运行：**暂存覆盖层**（`writetripwire.install_overlay`，#1813，`overlay` 模式）——只接管项目内的 `Path.write_text` / 删除 / 改名，
+模拟不了的交回守卫而不是 `write_outside_roots`；与校验改道、隔离重放互斥（`worker._overlay_wanted`）。细则见 `worker-protocol-and-lifecycle.md`「暂存覆盖层」。看护 `tests/test_convert_shadow_validation.py`（真 worker）、`tests/test_write_redirect.py`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

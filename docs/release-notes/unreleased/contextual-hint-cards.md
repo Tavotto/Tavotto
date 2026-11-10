@@ -1,0 +1,3 @@
+## Animated hint cards teach hidden gestures when you need them
+
+Several gestures were easy to miss: double-clicking empty space to recenter the canvas, holding ⌥ (Alt) while dragging a figure's edge to crop instead of resize, and dragging alignment guides out of the rulers. Tavotto now shows a small animated card in the bottom-right corner of the window when it sees you doing one of these the slow way — the canvas has drifted mostly out of view, you just resized a figure by its edge, or you moved objects several times in a row without any guides. Each card shows at most twice, never again once you have used the gesture yourself or closed the card, and all of them can be turned off under Settings › General › Action hints.
