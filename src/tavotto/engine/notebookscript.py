@@ -361,15 +361,16 @@ def _apply_shim(body: str, tree: ast.Module) -> str:
             span = _whole_lines(lines, node)
             if span is None or span[2]:
                 continue
+            # 去重按「特性 + 别名」：`annotations as ann` 与 `annotations` 是两个不同的绑定，别名丢了后面读 `ann` 就 NameError
             for a in node.names:
-                if a.name not in futures:
-                    futures.append(a.name)
+                if _alias(a) not in futures:
+                    futures.append(_alias(a))
             edits.append(
                 (
                     span[0],
                     span[1],
                     [
-                        f"{_NOTE}已把 from __future__ import {', '.join(a.name for a in node.names)} 提到文件最前"
+                        f"{_NOTE}已把 from __future__ import {', '.join(_alias(a) for a in node.names)} 提到文件最前"
                     ],
                 )
             )

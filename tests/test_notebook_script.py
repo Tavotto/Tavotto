@@ -816,6 +816,22 @@ def test_a_future_import_in_a_later_cell_is_hoisted_merged_and_deduplicated():
     assert "# [notebook] 已把 from __future__" in text
 
 
+def test_hoisting_future_imports_keeps_their_aliases():
+    """`from __future__ import annotations as ann` 提前时别名不能丢：后面读 `ann` 的笔记本照旧能跑；
+    同一特性的不同别名、带别名与不带别名各算各的绑定。"""
+    text = _py(
+        ("code", "x = 1"),
+        ("code", "from __future__ import annotations as ann\nflag = ann.compiler_flag"),
+        ("code", "from __future__ import annotations, division as dv\nother = dv.compiler_flag"),
+    )
+    assert [ln for ln in text.splitlines() if ln.startswith("from __future__")] == [
+        "from __future__ import annotations as ann, annotations, division as dv"
+    ]
+    ns: dict = {}
+    exec(compile(text, "nb.py", "exec"), ns)  # noqa: S102
+    assert ns["flag"] == ns["ann"].compiler_flag and ns["other"] == ns["dv"].compiler_flag
+
+
 def test_a_future_import_with_no_shim_still_compiles_when_it_was_not_in_the_first_cell():
     compile(
         _py(("code", "import os"), ("code", "from __future__ import annotations")), "n.py", "exec"
