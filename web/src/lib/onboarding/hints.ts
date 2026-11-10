@@ -30,6 +30,7 @@ import { onActivity, type ActivityDetail } from '@/lib/activity'
 import { createDismissTimer } from '@/lib/dismissTimer'
 import { useDialogLayerStore } from '@/store/dialogLayerStore'
 import { useDocumentStore } from '@/store/documentStore'
+import { feedbackCornerBusy } from '@/store/feedbackCorner'
 import { useInteractionStore } from '@/store/interactionStore'
 import { hintSeen, useOnboardingStore, type HintKind } from '@/store/onboardingStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -127,6 +128,8 @@ export function showCardHint(kind: CardHintKind, now: number = Date.now()): bool
   if (ob.hintsOff || ob.status === 'active') return false
   if (useHintStore.getState().current) return false
   if (useDialogLayerStore.getState().open > 0) return false
+  // 反馈卡占着右下角：这时出了也画不出来，白白记一次、白走 30 秒（Codex #1830）
+  if (feedbackCornerBusy()) return false
   if (sessionCards >= CARD_SESSION_BUDGET) return false
   if (ob.activeDays < TIER_MIN_DAYS[CARD_TIER[kind]]) return false
   const stat = ob.hintStats[kind]

@@ -7,8 +7,15 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { NotificationRail } from '@/components/StatusBar'
 import { emitActivity } from '@/lib/activity'
-import { resetHintSessionForTest, startHintEngine, useHintStore } from '@/lib/onboarding/hints'
+import {
+  CARD_AUTO_DISMISS_MS,
+  hintDismissTimer,
+  resetHintSessionForTest,
+  startHintEngine,
+  useHintStore,
+} from '@/lib/onboarding/hints'
 import { useDialogLayerStore } from '@/store/dialogLayerStore'
+import { useDiagSendStore } from '@/store/diagSendStore'
 import { configureOnboardingPersistence, useOnboardingStore } from '@/store/onboardingStore'
 import { useUiStore } from '@/store/uiStore'
 import { useUnexpectedErrorStore } from '@/store/unexpectedErrorStore'
@@ -44,6 +51,7 @@ beforeEach(async () => {
   useHintStore.setState({ current: null, token: 0 })
   useDialogLayerStore.setState({ open: 0 })
   useUnexpectedErrorStore.setState({ card: null })
+  useDiagSendStore.setState({ open: false })
   useUiStore.setState({ rightOpen: true, status: null })
   useWorkspaceStore.getState().clear()
   stop = startHintEngine()
@@ -102,7 +110,8 @@ describe('HintCard', () => {
   })
 
   it('有模态对话框 / 反馈卡在场时让位：不画，但不收起，之后回来', async () => {
-    show('edge_crop')
+    // 走真的出卡路径：带着 30 秒自动收起的表
+    emitActivity({ kind: 'panel.edge_dragged', outcome: 'resized' })
     await act(async () => {})
     act(() => useDialogLayerStore.setState({ open: 1 }))
     act(() => vi.advanceTimersByTime(400))
@@ -110,9 +119,34 @@ describe('HintCard', () => {
     expect(useHintStore.getState().current).toBe('edge_crop')
     act(() => useDialogLayerStore.setState({ open: 0 }))
     expect(card()).not.toBeNull()
-    act(() => useUnexpectedErrorStore.setState({ card: { token: 1 } }))
+    act(() => {
+      useDiagSendStore.setState({ capability: { enabled: true } as never, open: false })
+      useUnexpectedErrorStore.setState({ card: { token: 1 } })
+    })
     act(() => vi.advanceTimersByTime(400))
     expect(card()).toBeNull()
     expect(useHintStore.getState().current).toBe('edge_crop')
+    // 让位期间不走表：盖了很久也不会在用户没看见的时候自己收起
+    act(() => vi.advanceTimersByTime(CARD_AUTO_DISMISS_MS * 3))
+    expect(useHintStore.getState().current).toBe('edge_crop')
+    act(() => useUnexpectedErrorStore.setState({ card: null }))
+    expect(card()).not.toBeNull()
+  })
+
+  it('焦点在 × 上把卡关掉：hold 放开，下一张卡照常到时自己收起', async () => {
+    emitActivity({ kind: 'panel.edge_dragged', outcome: 'resized' })
+    await act(async () => {})
+    const close = card()!.querySelector<HTMLElement>('[data-hint-card-close]')!
+    act(() => close.focus())
+    act(() => card()!.dispatchEvent(new Event('pointerover', { bubbles: true })))
+    act(() => close.click())
+    act(() => vi.advanceTimersByTime(400))
+    expect(card()).toBeNull()
+    show('fit_canvas')
+    await act(async () => {})
+    act(() => hintDismissTimer.start(CARD_AUTO_DISMISS_MS, () => useHintStore.getState().dismiss()))
+    expect(hintDismissTimer.running).toBe(true)
+    act(() => vi.advanceTimersByTime(CARD_AUTO_DISMISS_MS))
+    expect(useHintStore.getState().current).toBeNull()
   })
 })

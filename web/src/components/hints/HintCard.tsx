@@ -16,10 +16,9 @@ import { useEffectiveTheme } from '@/lib/theme'
 import { ALT, cn } from '@/lib/utils'
 import { useDialogLayerStore } from '@/store/dialogLayerStore'
 import { fitStage } from '@/store/zoomToSelection'
-import { useExitNoticeStore } from '@/store/exitNoticeStore'
+import { useFeedbackCornerBusy } from '@/store/feedbackCorner'
 import { useNoticeRailStore } from '@/store/noticeRailStore'
 import { useUiStore } from '@/store/uiStore'
-import { useUnexpectedErrorStore } from '@/store/unexpectedErrorStore'
 import { usePrepCardClearance } from '../FeedbackCorner'
 
 // 场景连同 vendor/stageshow 整块按需加载：不出提示的会话一个字节都不下
@@ -52,9 +51,7 @@ export function HintCard() {
   const token = useHintStore((s) => s.token)
   const overModal = useDialogLayerStore((s) => s.open > 0)
   // 反馈卡（意外错误 / 上次没正常退出）占着这个角：让位
-  const unexpected = useUnexpectedErrorStore((s) => !!s.card)
-  const previousExit = useExitNoticeStore((s) => !!s.previous)
-  const cornerBusy = unexpected || previousExit
+  const cornerBusy = useFeedbackCornerBusy()
   // 属性栏收起时卡落在画布上：通知轨有东西就抬到它上面，别盖住通知上的按钮
   const railTop = useNoticeRailStore((s) => s.top)
   const rightOpen = useUiStore((s) => s.rightOpen)
@@ -85,13 +82,24 @@ export function HintCard() {
     held.current.delete(r)
     hintDismissTimer.release(r)
   }
-  useEffect(
-    () => () => {
-      for (const r of held.current) hintDismissTimer.release(r)
-      held.current.clear()
-    },
-    [],
-  )
+  const releaseAll = () => {
+    for (const r of held.current) hintDismissTimer.release(r)
+    held.current.clear()
+  }
+  // 卡片不画了（× / 学会 / 到时 / 让位）就把指针与焦点的 hold 放掉：节点是被摘掉的，pointerleave / blur 不会再来，
+  // 而 `HintCard` 自己一直挂着——不放的话下一条提示永远不走表、占着唯一的槽位（Codex #1830）
+  const visible = !!kind && !overModal && !cornerBusy
+  useEffect(() => {
+    if (!visible) releaseAll()
+  }, [visible, token])
+  // 让位期间（对话框 / 反馈卡盖着）不走表：用户没看见的那几十秒不算数，回来接着数
+  const hidden = !!kind && (overModal || cornerBusy)
+  useEffect(() => {
+    if (!hidden) return
+    hintDismissTimer.hold('hint-card-hidden')
+    return () => hintDismissTimer.release('hint-card-hidden')
+  }, [hidden])
+  useEffect(() => releaseAll, [])
 
   if (!presence.mounted || !shown) return null
   const action = ACTIONS[shown]

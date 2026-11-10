@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
 import { emitActivity } from '@/lib/activity'
 import { useDialogLayerStore } from '@/store/dialogLayerStore'
+import { useDiagSendStore } from '@/store/diagSendStore'
+import { useUnexpectedErrorStore } from '@/store/unexpectedErrorStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { configureOnboardingPersistence, migratePersisted, useOnboardingStore } from '@/store/onboardingStore'
 import { useUiStore } from '@/store/uiStore'
@@ -55,6 +57,7 @@ beforeEach(async () => {
   resetHintSessionForTest()
   useHintStore.setState({ current: null, token: 0 })
   useDialogLayerStore.setState({ open: 0 })
+  useUnexpectedErrorStore.setState({ card: null })
   useUiStore.setState({ elementPanelId: null, showRulers: true })
   useWorkspaceStore.getState().clear()
   useViewportStore.setState({ viewW: 800, viewH: 600, zoom: 1, panX: 0, panY: 0, fitted: true, tweening: false })
@@ -249,6 +252,17 @@ describe('节奏与开关', () => {
     edgeResized()
     expect(current()).toBe('multi_select')
     expect(stats().edge_crop).toBeUndefined()
+  })
+
+  it('反馈卡占着右下角时不出，也不记账（出了也画不出来）', () => {
+    useDiagSendStore.setState({ capability: { enabled: true } as never, open: false })
+    useUnexpectedErrorStore.setState({ card: { token: 1 } })
+    edgeResized()
+    expect(current()).toBeNull()
+    expect(stats().edge_crop).toBeUndefined()
+    useUnexpectedErrorStore.setState({ card: null })
+    edgeResized()
+    expect(current()).toBe('edge_crop')
   })
 
   it('设置里关掉操作提示：动画卡与一句话提示都不出', () => {
