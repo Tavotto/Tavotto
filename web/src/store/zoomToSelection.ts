@@ -1,3 +1,4 @@
+import { emitActivity } from '@/lib/activity'
 import { boundsOf, visualBounds, type Rect } from '@/lib/geometry'
 import type { CanvasObject, FigureDocument } from '@/types/document'
 import { frameCanvasOf, isZeroPad } from '@/lib/framePad'
@@ -144,4 +145,5 @@ export function fitStage(): void {
   const doc = useDocumentStore.getState().doc
   const id = fastEditPanelOf(useWorkspaceStore.getState())
   applyStageFit(stageFitFrame(doc.objects, doc.page, id, fastEditCanvasBox(doc, id)), true)
+  emitActivity({ kind: 'view.fitted' })
 }
