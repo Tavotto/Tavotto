@@ -546,7 +546,13 @@ def test_parent_side_stays_standard_library():
         "bad = [m for m in ('openpyxl','pandas','numpy','matplotlib','lxml','defusedxml') if m in sys.modules]\n"
         "print(bad)"
     )
-    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     assert out.returncode == 0 and out.stdout.strip() == "[]", out.stderr
 
 
