@@ -229,8 +229,14 @@
     "retry": "Retry save",
     "saveAs": "Save as…",
     "saveErrorBody": "Your changes are kept for now, not yet on disk.",
-    "tooNewBody": "Tavotto didn’t open it, so the file on disk is unchanged. Upgrade and try again.",
-    "tooNewTitle": "This layout comes from a newer Tavotto (schema {{schema}})",
+    "tooNewBody": "{{product}} didn’t open it, so the file is unchanged. Update and try again.",
+    "tooNewTitle": "This layout comes from a newer {{product}}",
+    "checkUpdate": "Check for updates",
+    "updateReady": "The new version is downloaded. Click “Restart now” in the top bar to open this layout.",
+    "updateFound": "Version {{version}} is available.",
+    "updateInstall": "Download and update",
+    "updateNone": "You’re on the latest version. This layout can open once a newer version is released.",
+    "updateCheckFailed": "Couldn’t check for updates. Check your connection and try again.",
     "moreActions": "More ways to resolve"
   },
   "document": {
@@ -649,6 +655,7 @@
     "doneProject": "Saved to project: {{file}}",
     "failed": "Save failed. Your changes are safe — check disk space and try again.",
     "projectConflict": "{{file}} in the project was changed elsewhere, so nothing was written. Decide in the dialog.",
+    "projectConflictElsewhere": "{{file}} in the project was changed elsewhere, so nothing was written. Go back to that layout and save again to decide what to do.",
     "projectFailed": "Couldn’t save {{file}} in the project: {{reason}}",
     "projectSkipped": "{{file}} in the project wasn’t written: you switched layouts or projects after pressing Save. Go back to that layout and save again.",
     "skippedSwitched": "You switched layouts or projects after pressing Save, so nothing was written to the project. Go back to that layout and save again."

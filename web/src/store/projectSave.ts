@@ -136,7 +136,8 @@ async function writeOnce(ctx: SaveContext): Promise<boolean> {
         },
       })
     } else if (typeof revision === 'string') {
-      ui.setStatus(msg('save.projectConflict', { file: binding.file }, 'workspace'), 'error')
+      // 此刻开着的已经不是那份排版：不弹对话框（见上），所以这句话不能叫用户去「对话框里决定」
+      ui.setStatus(msg('save.projectConflictElsewhere', { file: binding.file }, 'workspace'), 'error')
     } else {
       ui.setStatus(
         msg('save.projectFailed', { file: binding.file, reason: backendErrorText(e) }, 'workspace'),

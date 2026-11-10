@@ -221,8 +221,14 @@
     "retry": "重试保存",
     "saveAs": "另存为…",
     "saveErrorBody": "改动已暂存，尚未写入磁盘。",
-    "tooNewBody": "Tavotto 没有打开它，磁盘文件没有改动。升级后再试。",
-    "tooNewTitle": "这份排版来自更新的 Tavotto（schema {{schema}}）",
+    "tooNewBody": "{{product}} 没有打开它，文件没有改动。升级后再试。",
+    "tooNewTitle": "这份排版来自更新的 {{product}}",
+    "checkUpdate": "检查更新",
+    "updateReady": "新版已经下好，点顶栏的「现在重启」就能打开这份排版。",
+    "updateFound": "有新版 {{version}}。",
+    "updateInstall": "下载并更新",
+    "updateNone": "已经是最新版，这份排版要等新版发布才能打开。",
+    "updateCheckFailed": "没能检查更新，请确认网络后再点一次。",
     "moreActions": "其他处理方式"
   },
   "document": {
@@ -625,6 +631,7 @@
     "doneProject": "已保存到项目：{{file}}",
     "failed": "无法保存。改动仍在，请检查磁盘空间后重试。",
     "projectConflict": "项目里的 {{file}} 已在别处改过，这次没有写入。请在弹出的对话框里决定。",
+    "projectConflictElsewhere": "项目里的 {{file}} 已在别处改过，这次没有写入。回到那份排版再保存，就能决定怎么处理。",
     "projectFailed": "没能存进项目里的 {{file}}：{{reason}}",
     "projectSkipped": "没有写入项目里的 {{file}}：按下保存之后切换了排版或项目。回到那份排版再保存一次。",
     "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。"

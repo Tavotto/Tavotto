@@ -26,7 +26,7 @@ import { requestRelinkMissing } from '@/lib/clipboard'
 import { runUndoRedo } from '@/hooks/useKeyboard'
 import { createPackage, openPackage } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
-import { dragRegionProps, TRAFFIC_LIGHTS_INSET, WINDOW_CONTROLS_INSET, windowChrome } from '@/lib/desktop'
+import { dragRegionProps, isDesktop, TRAFFIC_LIGHTS_INSET, WINDOW_CONTROLS_INSET, windowChrome } from '@/lib/desktop'
 import { keyOf } from '@/lib/keymap'
 import { foreignProjectLabel } from '@/lib/projectLabel'
 import { currentProjectId } from '@/lib/session'
@@ -50,7 +50,7 @@ import {
 import { runManualSave } from '@/store/actions'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { useUiStore } from '@/store/uiStore'
-import { useUpdateStore } from '@/store/updateStore'
+import { fetchNewerDesktopBuild, useUpdateStore } from '@/store/updateStore'
 import { BrandMark } from './ui/BrandMark'
 import { Button } from './ui/Button'
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from './ui/Menu'
@@ -648,8 +648,15 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
   if (issue === 'too_new' && notice?.kind === 'schema_too_new') {
     return (
       <>
-        {head(t('docBanner.tooNewTitle', { schema: notice.schema }), t('docBanner.tooNewBody'))}
+        {head(t('docBanner.tooNewTitle', { product: PRODUCT_NAME }), t('docBanner.tooNewBody', { product: PRODUCT_NAME }))}
         {row(
+          <>
+          {/* 桌面版：主按钮直接去查新版（查到顺手下载）；浏览器版没有壳里的更新通道，保持「知道了」 */}
+          {isDesktop() && (
+            <Button variant="primary" size="sm" data-docbanner-check-update onClick={done(() => void checkNewerBuild())}>
+              {t('docBanner.checkUpdate')}
+            </Button>
+          )}
           <Button
             size="sm"
             onClick={done(() => {
@@ -659,12 +666,34 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
             })}
           >
             {t('docBanner.dismiss')}
-          </Button>,
+          </Button>
+          </>,
         )}
       </>
     )
   }
   return null
+}
+
+/** 「检查更新」之后用一条 toast 说结果；有新版但没下好时，toast 上的动作直接下载并更新 */
+async function checkNewerBuild(): Promise<void> {
+  const ui = useUiStore.getState()
+  const outcome = await fetchNewerDesktopBuild()
+  if (outcome === 'ready') {
+    ui.setStatus(msg('docBanner.updateReady', undefined, 'workspace'), 'info')
+  } else if (outcome === 'found') {
+    const version = useUpdateStore.getState().desktopUpdate?.version ?? ''
+    ui.setStatus(msg('docBanner.updateFound', { version }, 'workspace'), 'info', {
+      action: {
+        label: msg('docBanner.updateInstall', undefined, 'workspace'),
+        run: () => void useUpdateStore.getState().installDesktop(),
+      },
+    })
+  } else if (outcome === 'none') {
+    ui.setStatus(msg('docBanner.updateNone', undefined, 'workspace'), 'info')
+  } else {
+    ui.setStatus(msg('docBanner.updateCheckFailed', undefined, 'workspace'), 'error')
+  }
 }
 
 export function DocumentMenu() {

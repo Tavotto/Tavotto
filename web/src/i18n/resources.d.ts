@@ -741,6 +741,7 @@ export default interface Resources {
       "cancelled": "已取消导出",
       "cancelledNote": "已取消，没有写出任何文件。",
       "canvasObjects_other": "{{count}} 个对象",
+      "changeLocationExport": "换个位置导出",
       "checkLabel": "检查",
       "checkScopeCanvasNamed": "查整个画布「{{name}}」",
       "checkScopeFigureNamed": "仅查原图「{{name}}」",
@@ -806,6 +807,7 @@ export default interface Resources {
       "locationLabel": "位置",
       "locationPickTitle": "选择导出文件夹",
       "locationUpdating": "正在更新…",
+      "lowerDpiExport": "改用 {{dpi}} dpi 导出",
       "mergePdf": "合成一个多页 PDF：{{name}}（{{count}} 页）",
       "mmSize": "{{w}} × {{h}} mm",
       "needsRerun": "这张图需要重新运行脚本才能按原图导出。也可以改按画布导出（版面按画布，保真度较低）。",
@@ -5423,7 +5425,7 @@ export default interface Resources {
       "buttonLabel": "写回原始文件",
       "confirm": "写回原始文件",
       "copyBackupDir": "复制备份目录",
-      "divergenceBody": "：当前编辑状态与「重开项目后重放一遍」的结果不一致，原文件未改动。请把下面的信息报告给开发者。",
+      "divergenceBody": "：现在的修改和重新打开后的样子对不上，原文件没有动。",
       "divergenceTitle": "写回已阻断",
       "done": "完成",
       "failed": "无法写回 {{stem}}：{{error}}",
@@ -5435,10 +5437,11 @@ export default interface Resources {
       "pageWrite": "写回",
       "pagesLabel": "写回窗口的页",
       "readOnlyTitle": "项目已关闭「允许写回原始文件」，可在项目设置里打开。",
+      "rerender": "重新渲染",
       "restoreBody": "恢复：在「写回记录」里回到任一版本，或从备份目录拷回。生成图的脚本不会改动。",
       "rewriting": "正在重新渲染…",
-      "scriptChanged": "生成脚本 {{script}} 已改动，当前仍是旧代码。请重新渲染这张图，确认后再写回。",
-      "sizeMismatch": "写回后的页面尺寸与重放结果对不上。文件已替换，原件在备份目录，请取回并报告给开发者。",
+      "scriptChanged": "生成脚本 {{script}} 已改动，现在看到的还是旧图。",
+      "sizeMismatch": "写回后的页面尺寸和预期对不上。文件已替换，原件在上面的备份目录里。",
       "sourceChanged": "素材 {{file}} 已在外部改动。重新加载图库后再写回。",
       "statusPlain": "已写回原始文件：{{files}}（备份在 {{dir}}）",
       "statusWithAnnotations_other": "已写回原始文件：{{files}}（含 {{count}} 条标注，备份在 {{dir}}）",
@@ -5881,6 +5884,7 @@ export default interface Resources {
       "title": "界面出错了"
     },
     "docBanner": {
+      "checkUpdate": "检查更新",
       "conflictDisk": "磁盘上：{{canvases}} 张画布 · {{objects}} 个对象 · 改动于 {{time}}",
       "conflictDiskUnknown": "无法读取磁盘上的内容摘要",
       "conflictExternal": "磁盘上的排版已被外部修改，本窗口的编辑未写入，以免覆盖。",
@@ -5903,8 +5907,13 @@ export default interface Resources {
       "retry": "重试保存",
       "saveAs": "另存为…",
       "saveErrorBody": "改动已暂存，尚未写入磁盘。",
-      "tooNewBody": "Tavotto 没有打开它，磁盘文件没有改动。升级后再试。",
-      "tooNewTitle": "这份排版来自更新的 Tavotto（schema {{schema}}）"
+      "tooNewBody": "{{product}} 没有打开它，文件没有改动。升级后再试。",
+      "tooNewTitle": "这份排版来自更新的 {{product}}",
+      "updateCheckFailed": "没能检查更新，请确认网络后再点一次。",
+      "updateFound": "有新版 {{version}}。",
+      "updateInstall": "下载并更新",
+      "updateNone": "已经是最新版，这份排版要等新版发布才能打开。",
+      "updateReady": "新版已经下好，点顶栏的「现在重启」就能打开这份排版。"
     },
     "document": {
       "defaultName": "新排版"
@@ -6925,6 +6934,7 @@ export default interface Resources {
       "doneProject": "已保存到项目：{{file}}",
       "failed": "无法保存。改动仍在，请检查磁盘空间后重试。",
       "projectConflict": "项目里的 {{file}} 已在别处改过，这次没有写入。请在弹出的对话框里决定。",
+      "projectConflictElsewhere": "项目里的 {{file}} 已在别处改过，这次没有写入。回到那份排版再保存，就能决定怎么处理。",
       "projectFailed": "没能存进项目里的 {{file}}：{{reason}}",
       "projectSkipped": "没有写入项目里的 {{file}}：按下保存之后切换了排版或项目。回到那份排版再保存一次。",
       "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。"
