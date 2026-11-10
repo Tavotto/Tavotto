@@ -24,6 +24,7 @@ async function shot(page: Page, name: string) {
   mkdirSync(SHOTS, { recursive: true })
   for (const scheme of ['light', 'dark'] as const) {
     await page.emulateMedia({ colorScheme: scheme })
+    await page.waitForTimeout(800) // 主题切换有过渡，等它落定再拍
     await page.screenshot({ path: path.join(SHOTS, `${name}-${scheme}.png`) })
   }
   await page.emulateMedia({ colorScheme: 'light' })

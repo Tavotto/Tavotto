@@ -990,7 +990,7 @@
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out",
     "zoomValue": "Zoom {{percent}}%",
-    "issueLastDoc": "Last layout not opened",
+    "issueLastDoc": "Last layout not reached",
     "issueTooNew": "Newer layout",
     "issueAria": "Layout status: {{status}}. Show details",
     "documentRenameHint": "Click for layout actions; double-click or F2 to rename",
@@ -1610,9 +1610,9 @@
     "autoNewUnnamed": "Couldn’t open your last layout, so a new one was started.",
     "blockedWrite": "Pick a layout on the canvas first.",
     "choose": "Pick one to open",
-    "continueNew": "Start a new layout",
+    "continueNew": "Use a new layout",
     "entrySuperseded": "The project was switched, so this action wasn’t carried out.",
-    "heldChoose": "Pick a layout on the canvas and your last action will carry on.",
+    "heldChoose": "Choose on the canvas and your last action will carry on.",
     "indexDegraded": "The record of your last layout couldn’t be read, so a blank layout was opened. Your older layouts are still there — look in “Open layout”.",
     "meta": {
       "pill": "Auto-recovery info not updated",
@@ -1628,7 +1628,7 @@
       "missing": "Last layout not found",
       "prepareFailed": "Example layout didn’t open",
       "tooNew": "Last layout is from a newer version",
-      "unavailable": "Last layout isn’t open yet"
+      "unavailable": "Can’t reach your last layout right now"
     },
     "retry": "Try again",
     "title": {
@@ -1638,7 +1638,7 @@
       "missing": "The last layout “{{name}}” wasn’t found.",
       "prepareFailed": "The example layout didn’t open.",
       "tooNew": "The last layout “{{name}}” is from a newer Tavotto and can’t be opened by this version.",
-      "unavailable": "Your last layout isn’t open yet."
+      "unavailable": "Can’t reach your last layout right now."
     }
   },
   "renderProgress": {
