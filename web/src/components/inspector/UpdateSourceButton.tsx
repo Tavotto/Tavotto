@@ -14,7 +14,7 @@ import {
 } from '@/lib/writeBackAnnotations'
 import { dirTail } from '@/lib/pathDisplay'
 import { noticeWriteBackMultipage } from '@/lib/writeBackMultipageNotice'
-import { isJustBakedBaseline } from '@/store/actions'
+import { isJustBakedBaseline, rebuildPanel } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
@@ -22,6 +22,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { Button } from '../ui/Button'
+import { SendReportButton } from '../SendReportButton'
 import { Dialog } from '../ui/Dialog'
 import { CopyButton } from '../settings/CopyButton'
 import { Tab, TabList, TabPanel } from '../ui/Tabs'
@@ -132,8 +133,18 @@ async function runWriteBack(
  * 被阻断的写回：按 code 给可执行的下一步。这三条都不是「重试一次就好」的错误，
  * 文案必须说清楚「为什么被拦」和「该做什么」，否则用户只会反复点确认。
  */
-function BlockedNotice({ error }: { error: WriteBackFailure }) {
-  useTranslation('inspector')
+function BlockedNotice({
+  error,
+  panels,
+  onRerendered,
+}: {
+  error: WriteBackFailure
+  panels: PanelObject[]
+  /** 重新渲染做完之后（清掉这条阻断，用户可以直接再点写回） */
+  onRerendered: () => void
+}) {
+  useTranslation(['inspector', 'common'])
+  const [rendering, setRendering] = useState(false)
   const body = (error.api?.body ?? {}) as {
     code?: string
     file?: string
@@ -148,6 +159,23 @@ function BlockedNotice({ error }: { error: WriteBackFailure }) {
         ? wb('scriptChanged', { script: body.script ?? '' })
         : null
 
+  /** 脚本改过了：把这一批里用得上它的图重新渲染一遍（与右键「重新构建」同一个动作） */
+  const rerender = async () => {
+    const withScript = panels.filter((p) => p.script)
+    const named = body.script ? withScript.filter((p) => p.script!.endsWith(body.script!)) : []
+    setRendering(true)
+    let failed = false
+    try {
+      for (const p of named.length ? named : withScript) {
+        if ((await rebuildPanel(p.id)) === 'failed') failed = true
+      }
+    } finally {
+      setRendering(false)
+    }
+    // 渲染失败时错误已落在那张图上，这里不清阻断：用户没有一张新图可写
+    if (!failed) onRerendered()
+  }
+
   if (body.code === 'replay_divergence') {
     const diffs = body.diffs ?? []
     return (
@@ -159,26 +187,38 @@ function BlockedNotice({ error }: { error: WriteBackFailure }) {
             {wb('divergenceBody')}
           </span>
         </p>
+        {/* 内部字段只在折叠的「详情」里，也随反馈包走；一句话 + 一个主按钮 */}
+        <SendReportButton variant="primary" />
         {diffs.length > 0 && (
-          <ul className="flex flex-col gap-0.5">
-            {diffs.slice(0, 5).map((d, i) => (
-              <li key={`${d.gid}-${d.field}-${i}`} className="font-mono text-xs text-ink-2">
-                {d.gid || 'figure'}.{d.field}
-              </li>
-            ))}
-            {diffs.length > 5 && (
-              <li className="text-xs text-ink-3">{wb('moreDiffs', { count: diffs.length - 5 })}</li>
-            )}
-          </ul>
+          <Details className="text-xs text-ink-3" data-write-back-diffs>
+            <Summary className="cursor-default">{translate('notice.details', { ns: 'common' })}</Summary>
+            <ul className="mt-1 flex flex-col gap-0.5">
+              {diffs.slice(0, 5).map((d, i) => (
+                <li key={`${d.gid}-${d.field}-${i}`} className="font-mono text-xs text-ink-2">
+                  {d.gid || 'figure'}.{d.field}
+                </li>
+              ))}
+              {diffs.length > 5 && (
+                <li className="text-xs text-ink-3">{wb('moreDiffs', { count: diffs.length - 5 })}</li>
+              )}
+            </ul>
+          </Details>
         )}
       </div>
     )
   }
   if (detail) {
     return (
-      <p className="rounded-sm border border-border bg-surface-2 p-2 text-xs leading-relaxed text-ink-2">
-        {detail}
-      </p>
+      <div className="flex flex-col gap-1.5 rounded-sm border border-border bg-surface-2 p-2">
+        <p className="text-xs leading-relaxed text-ink-2">{detail}</p>
+        {body.code === 'script_changed' && panels.some((p) => p.script) && (
+          <div>
+            <Button size="sm" variant="primary" data-write-back-rerender disabled={rendering} onClick={() => void rerender()}>
+              {wb('rerender')}
+            </Button>
+          </div>
+        )}
+      </div>
     )
   }
   return <p className="text-xs text-danger">{wb('updateFailed', { error: error.message })}</p>
@@ -397,7 +437,10 @@ result ? (
             </p>
           )}
           {result.sizeMismatch && (
-            <p className="text-xs leading-relaxed text-danger">{wb('sizeMismatch')}</p>
+            <div className="flex flex-col items-start gap-1.5">
+              <p className="text-xs leading-relaxed text-danger">{wb('sizeMismatch')}</p>
+              <SendReportButton variant="primary" />
+            </div>
           )}
         </div>
       ) : (
@@ -434,7 +477,7 @@ result ? (
               <p className="text-xs text-ink-3">{wb('annotationsBlocked', { reason: blockedReason })}</p>
             )
           )}
-          {error && <BlockedNotice error={error} />}
+          {error && <BlockedNotice error={error} panels={panels} onRerendered={() => setError(null)} />}
         </div>
       )
   )

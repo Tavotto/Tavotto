@@ -13,7 +13,14 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('@/store/actions', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/store/actions')>()),
+  rebuildPanel: vi.fn(async () => 'rebuilt'),
+}))
+
 import { WriteBackDialog } from '@/components/inspector/UpdateSourceButton'
+import { rebuildPanel } from '@/store/actions'
+import { useDiagSendStore } from '@/store/diagSendStore'
 import { formatMessage, i18n } from '@/i18n'
 import { writeBackMultipageOwner } from '@/lib/writeBackMultipageNotice'
 import { useUiStore } from '@/store/uiStore'
@@ -98,11 +105,12 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-const render = () =>
+const scripted: PanelObject = { ...panel, id: 'p2', script: 'figs/fig1.py' }
+const render = (panels: PanelObject[] = [panel]) =>
   act(() =>
     root.render(
       <TooltipProvider>
-        <WriteBackDialog panels={[panel]} open onOpenChange={() => {}} />
+        <WriteBackDialog panels={panels} open onOpenChange={() => {}} />
       </TooltipProvider>,
     ),
   )
@@ -140,20 +148,50 @@ describe('写回被阻断时的文案', () => {
     expect(text()).toContain('Fig1.pdf')
   })
 
-  it('script_changed：告诉用户当前渲染的还是旧代码，需重新渲染', async () => {
+  it('script_changed：一句话 + 「重新渲染」主按钮，点下去重画那张图并撤掉阻断', async () => {
     stubFetch(409, {
       error: '脚本已改动…',
       code: 'script_changed',
       script: 'fig1.py',
     })
-    render()
+    vi.mocked(rebuildPanel).mockClear()
+    render([scripted])
     await confirm()
-    expect(text()).toContain('旧代码')
-    expect(text()).toContain('重新渲染')
     expect(text()).toContain('fig1.py')
+    const btn = document.body.querySelector<HTMLButtonElement>('[data-write-back-rerender]')!
+    expect(btn).not.toBeNull()
+    expect(btn.dataset.variant).toBe('primary')
+    await act(async () => {
+      btn.click()
+      await Promise.resolve()
+    })
+    expect(rebuildPanel).toHaveBeenCalledWith('p2')
+    // 渲染完阻断撤掉，用户可以直接再点写回
+    expect(document.body.querySelector('[data-write-back-rerender]')).toBeNull()
+    expect(text()).not.toContain('fig1.py')
   })
 
-  it('replay_divergence：醒目警示 + 列出前几条分歧元素', async () => {
+  it('script_changed：重新渲染失败时不撤阻断（没有新图可写）', async () => {
+    stubFetch(409, { error: '脚本已改动…', code: 'script_changed', script: 'fig1.py' })
+    vi.mocked(rebuildPanel).mockResolvedValueOnce('failed' as never)
+    render([scripted])
+    await confirm()
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[data-write-back-rerender]')!.click()
+      await Promise.resolve()
+    })
+    expect(document.body.querySelector('[data-write-back-rerender]')).not.toBeNull()
+  })
+
+  it('script_changed：图没有脚本可重画时不摆按钮', async () => {
+    stubFetch(409, { error: '脚本已改动…', code: 'script_changed', script: 'fig1.py' })
+    render()
+    await confirm()
+    expect(document.body.querySelector('[data-write-back-rerender]')).toBeNull()
+  })
+
+  it('replay_divergence：人话一句 + 发送反馈主按钮，内部字段折进「详情」', async () => {
+    useDiagSendStore.setState({ capability: { enabled: true, note_max_chars: 1000, retention_days: 30, categories: ['other'] } } as never)
     stubFetch(409, {
       error: '热编辑状态与全新重放不一致…',
       code: 'replay_divergence',
@@ -165,9 +203,25 @@ describe('写回被阻断时的文案', () => {
     render()
     await confirm()
     expect(text()).toContain('写回已阻断')
-    expect(text()).toContain('报告给开发者')
-    expect(text()).toContain('axes_0.bbox')
-    expect(text()).toContain('axes_0.title.anchor')
+    const send = document.body.querySelector<HTMLButtonElement>('[data-send-report]')!
+    expect(send).not.toBeNull()
+    expect(send.dataset.variant).toBe('primary')
+    // 内部字段不直接摆出来：只在默认收起的折叠里
+    const fold = document.body.querySelector<HTMLDetailsElement>('details[data-write-back-diffs]')!
+    expect(fold.open).toBe(false)
+    expect(fold.textContent).toContain('axes_0.bbox')
+    expect(fold.textContent).toContain('axes_0.title.anchor')
+    useDiagSendStore.setState({ capability: null })
+  })
+
+  it('replay_divergence：反馈开关关着时不渲染按钮，也没有「报告给开发者」', async () => {
+    useDiagSendStore.setState({ capability: null })
+    stubFetch(409, { error: 'x', code: 'replay_divergence', diffs: [] })
+    render()
+    await confirm()
+    expect(text()).toContain('写回已阻断')
+    expect(document.body.querySelector('[data-send-report]')).toBeNull()
+    expect(text()).not.toContain('开发者')
   })
 
   /*
@@ -280,8 +334,18 @@ describe('写回成功的回执', () => {
     stubFetch(200, { ...OK_BODY, post_check: 'size_mismatch' })
     render()
     await confirm()
-    expect(text()).toContain('页面尺寸与重放结果对不上')
+    expect(text()).toContain('页面尺寸和预期对不上')
     expect(text()).toContain('备份')
+    expect(text()).not.toContain('开发者')
+  })
+
+  it('落盘后尺寸对不上：有反馈开关时给「发送问题反馈」主按钮', async () => {
+    useDiagSendStore.setState({ capability: { enabled: true, note_max_chars: 1000, retention_days: 30, categories: ['other'] } } as never)
+    stubFetch(200, { ...OK_BODY, post_check: 'size_mismatch' })
+    render()
+    await confirm()
+    expect(document.body.querySelector('[data-send-report]')).not.toBeNull()
+    useDiagSendStore.setState({ capability: null })
   })
 })
 
