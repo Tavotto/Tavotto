@@ -54,7 +54,8 @@ import {
 import { ICON_SIZE, IconSlot } from "@/components/ui/Icon";
 import { CanvasThumb } from "./CanvasThumb";
 import { ExportZoomStage } from "./ExportZoomStage";
-import { ExportLocationRow } from "./ExportLocationRow";
+import { ExportLocationRow, useExportLocationPicker } from "./ExportLocationRow";
+import { RASTER_TOO_LARGE, isLocationFailure, largestDpiWithinLimit } from "@/lib/exportRecovery";
 import { useProjectSettingsPending } from "@/lib/projectSettingsPatch";
 import { Checkbox } from "./ui/Checkbox";
 import { Tip } from "./ui/Tooltip";
@@ -1219,6 +1220,22 @@ export function ExportDialog() {
   /** 主按钮 / 再次导出 / 重试的同一个入口：一批或单张 */
   const startExport = () => (batchMode ? startBatch() : void start("ask"));
 
+  /**
+   * 位图太大之后的「改用 N dpi 导出」：先把分辨率设成 N，等它落进表单再走同一个入口重新导出
+   * （`start()` 读的是渲染时的 `ppi`，同一个事件处理里直接调会还是旧值）。
+   */
+  const [rerunAtPpi, setRerunAtPpi] = useState<string | null>(null);
+  const lowerDpiAndExport = (dpi: number) => {
+    setPpi(String(dpi));
+    setRerunAtPpi(String(dpi));
+  };
+  useEffect(() => {
+    if (rerunAtPpi === null || String(ppi) !== rerunAtPpi) return;
+    setRerunAtPpi(null);
+    startExport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rerunAtPpi, ppi]);
+
   /** 起作业本身失败的原因（store 里的 `startError`） */
   const sendFailureReason = (): string => {
     const st = useExportStore.getState().startError;
@@ -1597,6 +1614,8 @@ export function ExportDialog() {
           edited={editedDuringExport}
           onRetry={startExport}
           onReveal={revealTarget ? revealDone : undefined}
+          currentPpi={Number(ppi)}
+          onLowerDpi={lowerDpiAndExport}
         />
       )}
     </div>
@@ -2839,14 +2858,51 @@ export function ResultBlock({
   edited,
   onRetry,
   onReveal,
+  currentPpi,
+  onLowerDpi,
 }: {
   job: ExportJob;
   edited: boolean;
   onRetry: () => void;
+  /** 对话框此刻的分辨率（作业请求里没带 ppi 时的退路） */
+  currentPpi?: number;
+  /** 「改用 N dpi 导出」：把对话框分辨率设成 N 并重新导出 */
+  onLowerDpi?: (dpi: number) => void;
   /** 在系统文件管理器中显示第一件写出的文件（只在能显示时给）；摘要行上的唯一动作 */
   onReveal?: () => void;
 }) {
   useTranslation(["dialogs", "errors"]);
+  // 「换个位置导出」：选完新文件夹直接重新导出（同目录重试必败，所以这类失败不给「重试」）
+  const picker = useExportLocationPicker(onRetry);
+  /**
+   * 失败的出口（三种结局之二、之三）：位置写不了 → 换个位置；位图太大 → 改用不超上限的最大一档 dpi，
+   * 算不出就发送问题反馈；null = 没有专属出口，调用方沿用原来的动作。
+   */
+  const failureAction = (
+    code: string | null | undefined,
+    params: Record<string, unknown> | undefined,
+  ): ReactNode | null => {
+    if (isLocationFailure(code)) {
+      return (
+        <Button size="sm" variant="primary" data-export-change-location onClick={() => void picker.change()}>
+          {ex("changeLocationExport")}
+        </Button>
+      );
+    }
+    if (code === RASTER_TOO_LARGE) {
+      const reqPpi = Number((job.request as { ppi?: unknown } | undefined)?.ppi);
+      const now = Number.isFinite(reqPpi) && reqPpi > 0 ? reqPpi : (currentPpi ?? NaN);
+      const dpi = onLowerDpi ? largestDpiWithinLimit(params, now, PPI_VALUES.map(Number)) : null;
+      return dpi !== null ? (
+        <Button size="sm" variant="primary" data-export-lower-dpi={dpi} onClick={() => onLowerDpi!(dpi)}>
+          {ex("lowerDpiExport", { dpi })}
+        </Button>
+      ) : (
+        <SendReportButton variant="primary" />
+      );
+    }
+    return null;
+  };
   if (job.status === "cancelled") {
     return <Notice tone="neutral">{ex("cancelledNote")}</Notice>;
   }
@@ -2868,19 +2924,22 @@ export function ResultBlock({
     );
   }
   if (job.status === "failed" && !job.outputs.length) {
+    const special = failureAction(job.error?.code, job.error?.params);
     return (
+      <>
       <Notice
         tone="danger"
         data-export-failed
         action={
-          job.error?.recoverable !== false ? (
+          special ??
+          (job.error?.recoverable !== false ? (
             <Button size="sm" onClick={onRetry}>
               {ex("retry")}
             </Button>
           ) : (
             // 没有可执行的修复动作：发送问题反馈就是这张卡的主按钮（开关关着时不渲染）
             <SendReportButton variant="primary" />
-          )
+          ))
         }
       >
         {translate(`backend.${job.error?.code ?? "export_failed"}`, {
@@ -2892,7 +2951,14 @@ export function ResultBlock({
         })}
         {/* 那一次的诊断（T04）：折叠，主按钮仍是重试；key 绑作业，重试出新作业就是新的一份 */}
         {job.job_id && <TaskDiagnostic key={job.job_id} kind="export" refId={job.job_id} />}
+        {picker.error && (
+          <p data-export-location-error className="mt-1 text-sm text-danger-content">
+            {picker.error}
+          </p>
+        )}
       </Notice>
+      {picker.dialog}
+      </>
     );
   }
   const savedCount = job.outputs.filter(outputSaved).length;
@@ -2920,6 +2986,7 @@ export function ResultBlock({
   const clean = failedCount === 0 && !note;
   // 摘要一句话 + 至多一个动作；逐个文件、核验、警告、诊断都在默认折叠的「详情」里（卡片一句话读懂）
   return (
+    <>
     <Notice
       tone={failedCount > 0 ? (savedCount > 0 ? "warn" : "danger") : clean ? "ok" : "warn"}
       data-export-result
@@ -2938,6 +3005,9 @@ export function ResultBlock({
           <Button size="sm" data-export-reveal onClick={onReveal}>
             {ex("showInFolder")}
           </Button>
+        ) : firstFailure ? (
+          // 一件都没写出来：失败原因就是摘要，出口也在摘要行上
+          failureAction(firstFailure.error?.code, firstFailure.error?.params)
         ) : undefined
       }
       detail={
@@ -2979,6 +3049,13 @@ export function ResultBlock({
     >
       {note}
     </Notice>
+    {picker.error && (
+      <p data-export-location-error className="text-sm text-danger-content">
+        {picker.error}
+      </p>
+    )}
+    {picker.dialog}
+    </>
   );
 }
 

@@ -122,7 +122,7 @@ describe('智能修复（ADR 0148）：主按钮读 remedy，每张失败卡都�
     expect(t('prep.btn.revertAiEdit', { ns: 'workspace' })).toBe('回滚 AI 的修改')
   })
 
-  it('feedback：一句话 + 主按钮「发送」；AI 次按钮仍在（每次失败都出）', () => {
+  it('feedback：一句话 + 主按钮「发送」；AI 次按钮照旧在（只有图名归属冲突不摆，见下）', () => {
     const v = view(failed({ kind: 'feedback', tried: ['switch_native'] }))
     expect(v.state).toBe('feedback')
     expect(v.sentence.key).toBe('feedback')
@@ -292,6 +292,161 @@ describe('智能修复（ADR 0148）：主按钮读 remedy，每张失败卡都�
     expect(v.primary).toEqual({ kind: 'feedback' })
     expect(v.aiFix).toBe(false)
     expect(t('prep.line.aiUnavailable', { ns: 'workspace' })).toBe('这个问题 AI 暂时还不会修')
+  })
+})
+
+describe('失败出口不是死胡同（2026-11-10）', () => {
+  const action = (kind: string) => ({ id: `a-${kind}`, kind, config_revision: 1, impact: {} })
+  const base = (over: Record<string, unknown> = {}) =>
+    ({
+      phase: 'action_required',
+      outcome: { kind: 'failed', code: 'script_error' },
+      target: { kind: 'script', script: 'a.py' },
+      checks: [],
+      requirements: [],
+      actions: [action('run'), action('recheck')],
+      provider: { plan_id: 'p', attempt_id: 'att-1', attempts: 1, dependency: null },
+      ...over,
+    }) as unknown as PreparationReport
+  const view = (r: PreparationReport, c: Partial<PrepContext> = {}) =>
+    prepView({ ...lost, connection: 'ok', report: r } as PrepEntry, { ...ctx, ...c })
+  const send = { canSendReport: true }
+
+  describe('1. 没连 AI（connect_ai）：主按钮是「发给我们看看」，AI 降为次按钮', () => {
+    it('发送入口开着：主按钮 feedback / sendUs，AI 次按钮在，remedy 仍是 connect_ai', () => {
+      const v = view(base({ remedy: { kind: 'connect_ai' } }), send)
+      expect(v.state).toBe('failed')
+      expect(v.primary).toEqual({ kind: 'feedback', label: 'sendUs' })
+      expect(v.aiFix).toBe(true)
+      expect(v.remedy?.kind).toBe('connect_ai')
+      expect(t('prep.btn.sendUs', { ns: 'workspace' })).toBe('发给我们看看')
+    })
+    it('发送入口关着（或没传）：维持原样，主按钮仍是 AI', () => {
+      expect(view(base({ remedy: { kind: 'connect_ai' } }), { canSendReport: false }).primary).toEqual({ kind: 'ai_fix' })
+      expect(view(base({ remedy: { kind: 'connect_ai' } })).primary).toEqual({ kind: 'ai_fix' })
+    })
+    it('已连 AI（ai_fix）不变：主按钮仍是 AI', () => {
+      const v = view(base({ remedy: { kind: 'ai_fix' } }), send)
+      expect(v.primary).toEqual({ kind: 'ai_fix' })
+      expect(v.aiFix).toBe(false)
+    })
+  })
+
+  describe('2. blocked 把后端给的原因当那一句话', () => {
+    const blocked = (code: string, reasons: string[] = []) =>
+      base({
+        outcome: { kind: 'blocked', code },
+        checks: [{ id: 'dependencies', status: 'blocked', code, detail: { reasons } }],
+        actions: [action('recheck')],
+      })
+    it('冲突类原因：句子是 dependencyBlocked_*，发送入口开着主按钮退到发给我们看看，不是必败的重新检查', () => {
+      const v = view(blocked('dependency_blocked', ['dependency_conflict']), send)
+      expect(v.state).toBe('blocked')
+      expect(v.sentence.key).toBe('errorText')
+      expect(v.sentence.values.textKey).toBe('engine.dependencyBlocked_dependency_conflict')
+      expect(v.primary).toEqual({ kind: 'feedback', label: 'sendUs' })
+      expect(t(String(v.sentence.values.textKey), { ns: 'errors' })).toContain('依赖声明')
+    })
+    it('发送入口关着：仍给重新检查（维持原样），但句子已是原因', () => {
+      const v = view(blocked('dependency_blocked', ['dependency_conflict']))
+      expect(v.sentence.key).toBe('errorText')
+      expect(v.primary).toMatchObject({ kind: 'action', action: 'recheck' })
+    })
+    it('有出路的原因：声明里有装不了的几行 -> 换用我的 Python；目标环境检查不了 -> 打开设置', () => {
+      expect(view(blocked('dependency_blocked', ['dependency_declaration_unsupported']), send).primary).toEqual({ kind: 'pick_environment' })
+      expect(view(blocked('dependency_blocked', ['dependency_target_unavailable']), send).primary).toEqual({ kind: 'open_environment' })
+    })
+    it('有出路的原因不被 remedy 换成 AI 主按钮（AI 仍是次按钮）', () => {
+      const v = view({ ...blocked('dependency_blocked', ['dependency_declaration_unsupported']), remedy: { kind: 'ai_fix' } } as PreparationReport, send)
+      expect(v.primary).toEqual({ kind: 'pick_environment' })
+      expect(v.aiFix).toBe(true)
+    })
+    it('原因认不出：笼统的「现在还不能运行」照旧', () => {
+      const v = view(blocked('dependency_blocked', ['something_new']), send)
+      expect(v.sentence.key).toBe('blocked')
+    })
+  })
+
+  describe('3. 跑完没出图 + 缺数据：走与 missing_data 相同的指认出口', () => {
+    const noFigure = (over: Record<string, unknown> = {}) =>
+      base({
+        phase: 'partial',
+        outcome: { kind: 'execution_finished_no_figure', code: 'no_figures_captured' },
+        requirements: [{ id: 'data', kind: 'input_location', code: 'missing_input', origin: 'last_attempt', blocking: false, payload: { script: 'a.py', requested: null, others: [] } }],
+        ...over,
+      })
+    it('有 input_location：missing_data 卡 + 指认数据，AI 次按钮在', () => {
+      const v = view(noFigure({ remedy: { kind: 'connect_ai' } }), send)
+      expect(v.state).toBe('missing_data')
+      expect(v.primary).toMatchObject({ kind: 'missing_input' })
+      expect(v.aiFix).toBe(true)
+    })
+    it('没有 input_location：仍是「跑完了，没有出图」', () => {
+      expect(view(noFigure({ requirements: [] })).state).toBe('no_figure')
+    })
+    it('只复制现成图片的判断优先（#1823 不回退）', () => {
+      const v = view(noFigure({ no_figure_hint: { kind: 'copied_images', in_project: true, path: 'F.pdf' } }))
+      expect(v.state).toBe('no_figure_copied')
+    })
+  })
+
+  describe('4. 图名归属冲突：保留「打开接入中心」，不摆 AI', () => {
+    const conflict = base({
+      phase: 'partial',
+      outcome: { kind: 'failed', code: 'multiple_stem_conflict' },
+      remedy: { kind: 'feedback', tried: [] },
+    })
+    it('主按钮仍是打开接入中心，没有 AI 次按钮', () => {
+      const v = view(conflict, send)
+      expect(v.state).toBe('not_registered')
+      expect(v.primary).toEqual({ kind: 'open_registry' })
+      expect(v.aiFix).toBe(false)
+    })
+  })
+
+  describe('5. 必败的「再试一次」改成发给我们看看', () => {
+    const cacheDenied = (switchTo?: string) =>
+      base({
+        outcome: { kind: 'failed', code: 'interpreter_cache_denied' },
+        result: { error: { code: 'interpreter_cache_denied', params: switchTo ? { switch: switchTo } : {} } },
+        remedy: { kind: 'change_python', from: '3.9', to: null, env: null },
+      })
+    it('interpreter_cache_denied 后端没给 switch：发送入口开着 -> 发给我们看看', () => {
+      expect(view(cacheDenied(), send).primary).toEqual({ kind: 'feedback', label: 'sendUs' })
+      expect(view(cacheDenied()).primary).toMatchObject({ kind: 'action', action: 'run' })
+    })
+    it('给了 switch 仍是「改用自带的 Python」', () => {
+      expect(view(cacheDenied('global'), send).primary).toEqual({ kind: 'use_builtin_python', scope: 'global' })
+    })
+    it('change_python 但没有目标版本：发给我们看看；没有入口时不动', () => {
+      const r = base({ outcome: { kind: 'failed', code: 'python_out_of_range' }, remedy: { kind: 'change_python', from: '3.14', to: null, env: null } })
+      expect(view(r, send).primary).toEqual({ kind: 'feedback', label: 'sendUs' })
+      expect(view(r).primary).toMatchObject({ kind: 'action', action: 'run' })
+    })
+  })
+
+  describe('6. 失败码自己的人话当那一句话，原始报错留在详情', () => {
+    const withCode = (code: string, over: Record<string, unknown> = {}) =>
+      base({
+        outcome: { kind: 'failed', code },
+        result: { error: { code, message: 'x', traceback: 'Traceback\nPermissionError: [Errno 13]', params: {} } },
+        ...over,
+      })
+    it.each(['output_folder_read_only', 'script_exited', 'import_folder_unreadable'])('%s -> errorText', (code) => {
+      const v = view(withCode(code))
+      expect(v.state).toBe('failed')
+      expect(v.sentence.key).toBe('errorText')
+      expect(v.sentence.values.textKey).toBe(`backend.${code}`)
+      expect(t(`backend.${code}`, { ns: 'errors', product: 'T', error: 'SystemExit: 1', folder: 'D' })).not.toMatch(/^backend\./)
+    })
+    it('输出文件夹没写权限：重试没用，发送入口开着主按钮是发给我们看看', () => {
+      expect(view(withCode('output_folder_read_only'), send).primary).toEqual({ kind: 'feedback', label: 'sendUs' })
+      expect(view(withCode('output_folder_read_only')).primary).toMatchObject({ action: 'run' })
+    })
+    it('Windows 有修复令牌的 import_folder_unreadable 仍是修复权限', () => {
+      const v = view(withCode('import_folder_unreadable', { result: { error: { code: 'import_folder_unreadable', params: { repair_token: 'tok', folder: 'D' } } } }))
+      expect(v.state).toBe('folder_unreadable')
+    })
   })
 })
 

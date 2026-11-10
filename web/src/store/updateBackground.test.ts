@@ -24,7 +24,7 @@ import {
 } from '@/lib/desktop'
 import { resetHostSyncForTest } from '@/lib/hostSync'
 import { pendingUpdateNotice } from '@/lib/updateNotice'
-import { autoDownloadOn, checkUpdateOnStartup, useUpdateStore } from './updateStore'
+import { autoDownloadOn, checkUpdateOnStartup, fetchNewerDesktopBuild, useUpdateStore } from './updateStore'
 
 const INFO = { version: '9.9.9', notes: 'n', source: 'mirror' as const }
 const DESKTOP_STATUS = {
@@ -294,5 +294,29 @@ describe('启动同步已接入编辑器（ADR 0170）', () => {
     await settle()
     expect(useUpdateStore.getState().desktopReady).not.toBeNull()
     expect(useUpdateStore.getState().desktopError).toBeNull()
+  })
+})
+
+describe('fetchNewerDesktopBuild（「这份排版来自更新的版本」横幅的「检查更新」）', () => {
+  it('查到新版 → 顺手下载 → ready；不自己安装', async () => {
+    vi.mocked(checkDesktopUpdate).mockResolvedValue(INFO)
+    vi.mocked(downloadDesktopUpdate).mockResolvedValue({ version: '9.9.9', source: 'github' })
+    expect(await fetchNewerDesktopBuild()).toBe('ready')
+    expect(downloadDesktopUpdate).toHaveBeenCalledOnce()
+    expect(installDesktopUpdate).not.toHaveBeenCalled()
+  })
+  it('查到新版但下载没成：found（调用方给「下载并更新」）', async () => {
+    vi.mocked(checkDesktopUpdate).mockResolvedValue(INFO)
+    vi.mocked(downloadDesktopUpdate).mockRejectedValue(new Error('x'))
+    expect(await fetchNewerDesktopBuild()).toBe('found')
+  })
+  it('已是最新：none，不下载', async () => {
+    vi.mocked(checkDesktopUpdate).mockResolvedValue(null)
+    expect(await fetchNewerDesktopBuild()).toBe('none')
+    expect(downloadDesktopUpdate).not.toHaveBeenCalled()
+  })
+  it('查询失败：error', async () => {
+    vi.mocked(checkDesktopUpdate).mockRejectedValue(new Error('offline'))
+    expect(await fetchNewerDesktopBuild()).toBe('error')
   })
 })

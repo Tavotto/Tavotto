@@ -78,6 +78,8 @@ _CODE_REGISTRIES = (
     "tavotto.engine.inputremap",
     # TAF 数据出图（ADR 0138 Phase 5）：`DataSourceError(code)` 由 app 的 400 漏斗转出；码表 `ERROR_CODES`，构造时校验
     "tavotto.engine.ai_data_figure",
+    # 数据出图 v2：XLSX 读取的稳定码（`XlsxError(code)` 由 `ai_data_figure` 转成 `DataSourceError`，码表并进上面那份）
+    "tavotto.engine.xlsxread",
     # ADR 0110：改写脚本里的数据路径与共享的备份底座——`ScriptEditError(code)` 由 app 的 409 漏斗转出
     "tavotto.engine.scriptbackup",
     "tavotto.engine.scriptedit",
@@ -93,6 +95,8 @@ _CODE_REGISTRIES = (
     "tavotto.engine.folderrepair",
     # 「跳过这个文件夹」（ADR 0154）：`IgnoreError.code` 由 `/api/engine/path-ignore` 转成 JSON
     "tavotto.engine.pathignore",
+    # 拖 / 粘贴文件进画布（ADR 0176）：`POST /api/assets/import` 的 code 经 `_import_error` 漏斗转成 JSON（带中文 error 原文）
+    "tavotto.engine.assetimport",
 )
 
 
@@ -143,6 +147,16 @@ def _declared_codes(text: str) -> set[str]:
 # code——审计 P1-02：错误尾部不许泄漏中文，所以每个 code 都要有两种语言的
 # 文案，且占位符与 params 对得上）
 USER_VISIBLE_CODES = {
+    # --- ADR 0176：拖 / 粘贴文件进画布（`POST /api/assets/import`）；只有大小上限带参数，其余固定文案 ---
+    "asset_import_too_large": {"limit_mb"},
+    "asset_import_unsupported_type": set(),
+    "asset_import_unreadable": set(),
+    "asset_import_empty": set(),
+    "asset_import_not_writable": set(),
+    "asset_import_disk_full": set(),
+    "asset_import_write_failed": set(),
+    "asset_import_not_visible": set(),
+    "asset_import_name_exhausted": set(),
     "svg_asset_unsupported": set(),
     "svg_asset_export_unsupported": set(),
     "no_project": set(),
@@ -338,6 +352,8 @@ USER_VISIBLE_CODES = {
     "convert_source_language_mismatch": {"script"},
     "convert_not_awaiting_dependencies": set(),
     "convert_resume_busy": set(),
+    "convert_nothing_to_realign": set(),
+    "convert_realigning": set(),
     # 这个请求 id 已被新指令取代（改写后再发），不会再执行 / 取代时发现旧请求其实已经开始
     "ai_request_superseded": set(),
     "ai_supersede_conflict": set(),
@@ -358,6 +374,13 @@ USER_VISIBLE_CODES = {
     "data_empty": set(),
     "data_header_invalid": set(),
     "data_ragged": set(),
+    # 数据出图 v2（数据文件夹 / TSV / XLSX，`xlsxread`）
+    "data_format_unsupported": set(),
+    "data_excel_unsupported": set(),
+    "data_xlsx_invalid": set(),
+    "data_xlsx_too_large": set(),
+    "data_xlsx_unsafe": set(),
+    "data_sheet_not_found": set(),
     "figure_name_exhausted": set(),
     # 拒绝之后清待确认行也失败了：状态不确定（503），客户端保持同一个 rid
     "ai_request_unresolved": set(),

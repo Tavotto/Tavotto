@@ -12,6 +12,16 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const desktop = vi.hoisted(() => ({ on: false }))
+vi.mock('@/lib/desktop', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/desktop')>()),
+  isDesktop: () => desktop.on,
+}))
+vi.mock('@/store/updateStore', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/store/updateStore')>()),
+  fetchNewerDesktopBuild: vi.fn(async () => 'none'),
+}))
+
 vi.mock('@/store/documentStore', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/store/documentStore')>()),
   recoverLocalCopy: vi.fn(() => true),
@@ -20,6 +30,9 @@ vi.mock('@/store/documentStore', async (importOriginal) => ({
 import { emptyProject, type TextObject } from '@/types/document'
 import { recoverLocalCopy, useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
+import { fetchNewerDesktopBuild } from '@/store/updateStore'
+import { useUiStore } from '@/store/uiStore'
+import { formatMessage } from '@/i18n'
 import { DocumentMenu, SaveStateLabel } from './TopBar'
 
 declare global {
@@ -68,6 +81,8 @@ afterEach(async () => {
   useDocumentStore.setState({ docNotice: null, saveState: 'saved', saveIssue: null })
   useProjectStore.setState({ lastDocumentIssue: null })
   vi.mocked(recoverLocalCopy).mockClear()
+  desktop.on = false
+  useUiStore.getState().setStatus(null)
 })
 
 const chip = () => host.querySelector<HTMLElement>('[data-save-state]')!
@@ -136,12 +151,50 @@ describe('出事：锚点色胶囊 + 说明块', () => {
     expect(pill()!.dataset.docStatusPill).toBe('too_new')
     const pop = await openPill()
     expect(pop!.dataset.docStatusPopover).toBe('too_new')
-    expect(pop!.textContent).toContain('99')
+    expect(pop!.textContent, '不出现内部术语').not.toContain('schema')
+    expect(pop!.querySelector('[data-docbanner-check-update]'), '浏览器版没有壳里的更新通道').toBeNull()
     const dismiss = pop!.querySelector<HTMLButtonElement>('button')!
     await act(async () => dismiss.click())
     expect(useDocumentStore.getState().docNotice).toBeNull()
     expect(useProjectStore.getState().lastDocumentIssue, '同一份的「打开上次文档」只会再失败').toBeNull()
     expect(pill()).toBeNull()
+  })
+
+  describe('版本过新（桌面版）：主按钮「检查更新」', () => {
+    const showTooNew = async () => {
+      desktop.on = true
+      await act(async () => {
+        useDocumentStore.setState({ docNotice: { kind: 'schema_too_new', docId: 'd_new', schema: 99 } })
+      })
+      return (await openPill())!
+    }
+    it('「检查更新」是主按钮，点下去走 fetchNewerDesktopBuild；已是最新就如实说', async () => {
+      vi.mocked(fetchNewerDesktopBuild).mockClear().mockResolvedValue('none')
+      const pop = await showTooNew()
+      const btn = pop.querySelector<HTMLButtonElement>('[data-docbanner-check-update]')!
+      expect(btn.dataset.variant).toBe('primary')
+      await act(async () => { btn.click(); await Promise.resolve() })
+      expect(fetchNewerDesktopBuild).toHaveBeenCalledTimes(1)
+      expect(formatMessage(useUiStore.getState().status)).toContain('最新')
+    })
+    it('查到新版但没下好：toast 上的动作是「下载并更新」', async () => {
+      vi.mocked(fetchNewerDesktopBuild).mockResolvedValue('found')
+      const pop = await showTooNew()
+      await act(async () => { pop.querySelector<HTMLButtonElement>('[data-docbanner-check-update]')!.click(); await Promise.resolve() })
+      const ui = useUiStore.getState()
+      expect(ui.statusAction).not.toBeNull()
+      expect(formatMessage(ui.statusAction!.label)).toContain('下载并更新')
+    })
+    it('没查成：错误语气，不假装成功', async () => {
+      vi.mocked(fetchNewerDesktopBuild).mockResolvedValue('error')
+      const pop = await showTooNew()
+      await act(async () => { pop.querySelector<HTMLButtonElement>('[data-docbanner-check-update]')!.click(); await Promise.resolve() })
+      expect(useUiStore.getState().statusTone).toBe('error')
+    })
+    it('「知道了」仍在（次按钮）', async () => {
+      const pop = await showTooNew()
+      expect(pop.querySelectorAll('button').length).toBe(2)
+    })
   })
 
   it('保存失败：danger 胶囊，字就是保存状态那句，播报区有字', async () => {

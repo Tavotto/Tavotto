@@ -270,3 +270,5 @@ order: 210
   缩小后 `holdPlaceholder` 的 `onSettled` 在新图回来那一刻调 `offerTextFit`：这一维**新增**探出量（`lib/edgeShrinkFit.axisOverflowMm`，逐元素判据就是预检「元素超出图幅」的 `preflight.drawnFigureRect`，同源 `engine/preflight.py::element_overflow`）超过容差 → 通知轨挂一条带按钮的提示
   （`setStatus` + `action`，owner `edge-text-fit:<id>`）；点了走 `actions.setFigureFrameScaled`：页面框不动，按 `planTextFit` 的「刚好放得下」图幅（现在 + 新增探出量，不超过拖之前）出图、整体等比缩进框里，一条历史；估短了新图回来再问一次。提示挂着时撤销 / 改过图幅，按钮什么都不做。
   看护：`lib/panelEdgeCrop.test.ts`、`lib/edgeShrinkFit.test.ts`、`canvas/panelEdgeCrop.test.tsx`、`canvas/layoutCornerFollow.test.tsx`、`canvas/context-bar/dragStatusBar.test.tsx`、`e2e/layout-panel-edge-crop.spec.ts`。
+  **拖 / 粘贴文件进画布（ADR 0176）**：舞台 `onDrop` 的系统文件由 `useCanvasScriptDrop` 分派（图片 → `importAndPlace` → `addPanelToCanvas`，不绕过加图分层链；`.py` 的「打开并运行、图放进这张画布」不变）。
+  单图编辑里拖进来的图与素材卡拖入一样：不带点、按常规规则摆放并切到多图排版。细则见 `asset-library.md` 末条。

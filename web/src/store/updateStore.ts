@@ -374,6 +374,26 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
  * 启动时静默查一次。**桌面与浏览器各走各的**：桌面壳里后端的 updater 是
  * 关着的，查它只会拿到一句「已停用」；浏览器模式里 Tauri 的 check 根本不存在。
  */
+export type NewerBuildOutcome = 'ready' | 'found' | 'none' | 'error'
+
+/**
+ * 「这份排版来自更新的版本」横幅的「检查更新」（只在桌面版）：现在就查，查到了顺手下载。
+ * `ready` = 新版已下好（顶栏「现在重启」）；`found` = 有新版但还没下好（调用方给「下载并更新」）；
+ * `none` = 已是最新；`error` = 没查成。走壳的自有命令（`checkDesktop`），组件不碰 `@tauri-apps/*`。
+ */
+export async function fetchNewerDesktopBuild(): Promise<NewerBuildOutcome> {
+  const s = useUpdateStore.getState()
+  await s.checkDesktop()
+  let now = useUpdateStore.getState()
+  if (now.desktopError) return 'error'
+  if (!now.desktopUpdate) return 'none'
+  if (!now.desktopReady) {
+    await now.downloadDesktopInBackground()
+    now = useUpdateStore.getState()
+  }
+  return now.desktopReady ? 'ready' : 'found'
+}
+
 export function checkUpdateOnStartup(): void {
   const s = useUpdateStore.getState()
   if (!isDesktop()) {

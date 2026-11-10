@@ -18,6 +18,10 @@ pickle / `shutil.copyfile` / 根内符号链接指向根外 / 线程与 fork 子
   不能拦）；
 * `os.chmod|utime|setxattr` 这类改属性的事件没纳入。
 
+**暂存覆盖层（#1813，ADR 0127 修订 2026-11-09，`install_overlay`）**：同一套改道视图的另一个用法——safe worker 的常规运行里，守卫原本静默跳过的
+项目内 `Path.write_text` / 改名 / 删除改道进本次运行的暂存区，读回看到一致的视图；覆盖层模拟不了的情形**交回原守卫**（不是 `write_outside_roots`）。
+细节见 `install_overlay` 的文档与 `docs/rules/backend/worker-protocol-and-lifecycle.md`。
+
 **改道模式（ADR 0143 修订 2026-10-30，只属于 AI 转换 / 改图的校验运行）**：`write_roots` 里带一对 `redirect-project:` /
 `redirect-dir:` 条目（`redirect_entries`）时，同一个窗口里**落在项目内的写**不再失败，而是被换到 `<redirect-dir>/<相对项目路径>`——
 候选脚本保留「在数据旁写 CSV / 图」的原样行为，校验照样通过，用户项目文件逐字节不变。机制是在 `install` 时包装 Python 层入口
@@ -111,6 +115,12 @@ _state: dict = {
     "only_fold": {},  # 隔离模式里目录不区分大小写的目标：小写路径 → 上面的键
     "redirect": None,  # (项目真实路径, 项目 normcase 路径, 改道区真实路径, 改道区 normcase 路径)
     "redirect_installed": False,
+    "overlay": False,  # 暂存覆盖层模式（`install_overlay`）：safe worker 常规运行里项目内的写 / 改名 / 删除落进本次运行的覆盖层
+    "overlay_installed": False,
+    "overlay_armed": False,  # 覆盖层的窗口开关（与绊线的 `armed` 分开：覆盖层模式不装审计钩子，不能借 `armed` 去开它）
+    "touched": False,  # 覆盖层里此刻有没有任何东西（写过 / 白名单）：没有就读路径零开销
+    "suspended": None,  # 覆盖层的「暂停」谓词（账本自己在记账 / 解析回退路径时为真：那时的探测要看真实的文件系统）
+    "on_handled": None,  # 覆盖层成功接住一次操作后的回调 `(op, kind, paths, dests)`（worker 用它给守卫账本记一笔）
     "whiteouts": set(),  # 本窗口里被删除 / 改名走的项目路径（键 = normcase 的项目相对路径）
     "roots": (),
     "display_base": "",
@@ -344,6 +354,8 @@ def install(roots, *, display_base: str = "", redirect: tuple[str, str] | None =
     _state["whiteouts"] = set()
     _state["only"] = None
     _state["only_fold"] = {}
+    _state["overlay"] = False
+    _state["touched"] = False
     if redirect is None:
         _state["redirect"] = None
     else:
@@ -396,6 +408,8 @@ def install_isolation(directory: str, files, *, display_base: str = "") -> None:
     _state["redirect"] = (pr, os.path.normcase(pr), rd, os.path.normcase(rd))
     _state["only"] = real_files
     _state["only_fold"] = fold
+    _state["overlay"] = False
+    _state["touched"] = False
     folds_case(os.path.normcase(pr))
     _install_redirect()
     if not _state["installed"]:
@@ -465,11 +479,38 @@ def split_roots(entries) -> tuple[list[str], tuple[str, str] | None]:
 
 _ORIG: dict = {}
 _rtls = threading.local()
+#: 导入时的 `shutil.rmtree`：清暂存区用它，不经任何守卫 / 改道包装（那不是脚本的操作）
+_RMTREE = shutil.rmtree
 _MAX_REDIRECTED = 64
 
 
 def _redirect_on() -> bool:
-    return _state["armed"] and _state["redirect"] is not None and not getattr(_rtls, "busy", False)
+    on = _state["armed"] or (_state["overlay"] and _state["overlay_armed"])
+    if not on or _state["redirect"] is None or getattr(_rtls, "busy", False):
+        return False
+    suspended = _state["suspended"]
+    return not (_state["overlay"] and suspended is not None and suspended())
+
+
+class _Unsupported(Exception):
+    """覆盖层模式：这次操作覆盖层无法忠实模拟——交回原来的守卫（跳过 + 记账），行为与没有覆盖层时一字不差。"""
+
+
+def _unsupported(event: str, real: str) -> None:
+    """改道层「失败即关闭」的出口。校验 / 隔离重放里是 `write_outside_roots`；覆盖层里是交回守卫。"""
+    if _state["overlay"]:
+        raise _Unsupported(event)
+    _violation(event, real)
+
+
+def in_internal() -> bool:
+    """此刻是不是本模块自己在探测文件系统（账本据此不把引擎的探测当成脚本的观察）。"""
+    return bool(getattr(_rtls, "busy", False))
+
+
+def _ov_view() -> bool:
+    """覆盖层模式下读路径要不要查覆盖层：窗口开着、覆盖层里有东西、且不是本模块内部的探测。"""
+    return _state["overlay"] and _state["touched"] and _redirect_on()
 
 
 def _resolve(raw):
@@ -496,8 +537,12 @@ def _resolve(raw):
         rel = os.path.relpath(rp, project)
         if rel == os.pardir or rel.startswith(os.pardir + os.sep):
             return None
+        key = os.path.normcase(rel)
+        if _state["overlay"] and folds_case(project_n):
+            # 不区分大小写的卷（Windows / macOS 默认卷）：`Final.CSV` 与 `final.csv` 是同一个文件，键与暂存路径都折成小写
+            key = rel = key.lower()
         target = rdir if rel == "." else os.path.join(rdir, rel)
-        return rp, os.path.normcase(rel), target
+        return rp, key, target
     except (OSError, ValueError):
         return None
     finally:
@@ -518,6 +563,27 @@ def _white(key: str) -> bool:
     return key in _state["whiteouts"]
 
 
+def _whiteout(key: str) -> None:
+    _state["touched"] = True
+    _state["whiteouts"].add(key)
+
+
+def _note(op: str, kind: str, *paths, dests=()) -> None:
+    """覆盖层成功接住了一次操作：交给 worker 的回调（守卫账本记它影响的路径，覆盖层够不到的观察仍会命中）。永不抛。"""
+    cb = _state["on_handled"]
+    if cb is None or not _state["overlay"]:
+        return
+    try:
+        cb(op, kind, tuple(paths), tuple(dests))
+    except Exception:  # noqa: BLE001 —— 记账失败就少一条，不影响脚本
+        pass
+
+
+def _ov_has(r) -> bool:
+    """覆盖层里这个项目路径此刻有自己的状态（写过 / 被删过）：这时真实的项目路径不再是脚本该看到的那份。"""
+    return _white(r[1]) or _real_exists(r[2])
+
+
 def _trip_if_project_link(op: str, raw) -> None:
     """删除 / 改名 / 移走作用在**链接本身**（最后一段不跟随）：`_resolve` 走 realpath 会落到链接目标上，
     把「删别名」模拟成「删目标」。项目里的符号链接不模拟，失败即关闭。"""
@@ -527,18 +593,19 @@ def _trip_if_project_link(op: str, raw) -> None:
         return  # 隔离重放：只有指向写回目标的链接才算
     try:
         lexical = os.path.abspath(os.fsdecode(os.fspath(raw)))
-        inside = os.path.islink(lexical) and _under(
+        inside = _ORIG["islink"](lexical) and _under(
             os.path.normcase(os.path.realpath(os.path.dirname(lexical))), [_state["redirect"][1]]
         )
     except (OSError, ValueError):
         return
     if inside:
-        _violation(op, lexical)  # 在 try 外：它抛的 PermissionError 也是 OSError，不能被上面吞掉
+        _unsupported(op, lexical)  # 在 try 外：它抛的 PermissionError 也是 OSError，不能被上面吞掉
 
 
 def _prepare_write(r) -> None:
     """改道写之前：项目里的父目录真实存在时，补建改道区里的父目录（保住 `FileNotFoundError` 的原有语义）。"""
     rp, key, target = r
+    _state["touched"] = True
     prev = getattr(_rtls, "busy", False)
     _rtls.busy = True
     try:
@@ -567,6 +634,8 @@ def _map(raw, *, write: bool) -> str | None:
         _prepare_write(r)
         return r[2]
     if _white(r[1]):
+        if _state["overlay"]:
+            raise _enoent(raw)  # 脚本自己删掉的文件：与直接运行一样落空（且不记成「缺输入」）
         return r[2]
     prev = getattr(_rtls, "busy", False)
     _rtls.busy = True
@@ -625,38 +694,63 @@ def _enoent(path) -> FileNotFoundError:
     return FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), path)
 
 
+def _open_target(file, mode):
+    """`open(file, mode)` 实际该打开哪条路径（改道 / 覆盖层之后）；写时复制与已删除的语义都在这里。"""
+    m = mode if isinstance(mode, str) else "r"
+    if any(c in m for c in "wax+"):
+        r = _resolve(file)
+        if r is not None:
+            if _state["overlay"] and not _ov_has(r):
+                # 覆盖层没接管过这条路径：`open('w')` 改写已有文件不拦的契约不变（改道只管覆盖层里已有状态的路径，
+                # 免得写进真实文件之后读回的却是覆盖层里更早的那份）
+                return file
+            white = _white(r[1])
+            creates = any(c in m for c in "wax")
+            if _proj_dir(r) and not _real_exists(r[2]):
+                raise _eisdir(
+                    file
+                )  # 项目里这里是目录：真实语义就是 IsADirectoryError，不改道成普通文件
+            if "x" in m and not white and _real_exists(file):
+                raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), file)
+            if white and not creates:
+                # 已删除的文件不能读写打开（r+）：改道区里没有它 → FileNotFoundError
+                if _state["overlay"]:
+                    raise _enoent(file)
+                return r[2]
+            _prepare_write(r)
+            if "w" not in m and "x" not in m and not white:
+                _cow(file, r[2])
+            if creates:
+                _state["whiteouts"].discard(r[1])
+            return r[2]
+        return file
+    if _state["overlay"] and not _ov_view():
+        return file
+    target = _map(file, write=False)
+    return file if target is None else target
+
+
 def _w_open(orig):
     @functools.wraps(orig)
     def open_(file, mode="r", *args, **kwargs):
         if _redirect_on():
-            m = mode if isinstance(mode, str) else "r"
-            if any(c in m for c in "wax+"):
-                r = _resolve(file)
-                if r is not None:
-                    white = _white(r[1])
-                    creates = any(c in m for c in "wax")
-                    if _proj_dir(r) and not _real_exists(r[2]):
-                        raise _eisdir(
-                            file
-                        )  # 项目里这里是目录：真实语义就是 IsADirectoryError，不改道成普通文件
-                    if "x" in m and not white and _real_exists(file):
-                        raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), file)
-                    if white and not creates:
-                        file = r[
-                            2
-                        ]  # 已删除的文件不能读写打开（r+）：改道区里没有它 → FileNotFoundError
-                    else:
-                        _prepare_write(r)
-                        if "w" not in m and "x" not in m and not white:
-                            _cow(file, r[2])
-                        if creates:
-                            _state["whiteouts"].discard(r[1])
-                        file = r[2]
-            else:
-                target = _map(file, write=False)
-                if target is not None:
-                    file = target
+            file = _open_target(file, mode)
         return orig(file, mode, *args, **kwargs)
+
+    return open_
+
+
+def _w_path_open(orig):
+    """`Path.open`（含 `read_text` / `read_bytes` 与 3.10 的 `write_text`）：账本把观察装在 `Path.open` 上，
+    不在这里先换成覆盖层里的路径，账本看到的就是项目里那条（脚本读回覆盖层里写的东西被当成观察）。"""
+
+    @functools.wraps(orig)
+    def open_(self, mode="r", *args, **kwargs):
+        if _redirect_on() and kwargs.get("opener") is None:
+            target = _open_target(self, mode)
+            if target is not self:
+                return orig(pathlib.Path(target), mode, *args, **kwargs)
+        return orig(self, mode, *args, **kwargs)
 
     return open_
 
@@ -667,6 +761,8 @@ def _w_os_open(orig):
         if dir_fd is None and _redirect_on():
             if flags & _WRITE_FLAGS:
                 r = _resolve(path)
+                if r is not None and _state["overlay"] and not _ov_has(r):
+                    r = None  # 覆盖层没接管过这条路径：写照旧落在项目里（与 `open('w')` 同一个契约）
                 if r is not None:
                     white = _white(r[1])
                     creates = bool(flags & os.O_CREAT)
@@ -675,6 +771,8 @@ def _w_os_open(orig):
                     if creates and flags & os.O_EXCL and not white and _real_exists(path):
                         raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), path)
                     if white and not creates:
+                        if _state["overlay"]:
+                            raise _enoent(path)
                         path = r[2]  # 已删除：没有 O_CREAT 就打不开
                     else:
                         _prepare_write(r)
@@ -684,7 +782,7 @@ def _w_os_open(orig):
                         if creates:
                             _state["whiteouts"].discard(r[1])
                         path = r[2]
-            else:
+            elif not _state["overlay"] or _ov_view():
                 target = _map(path, write=False)
                 if target is not None:
                     path = target
@@ -701,7 +799,7 @@ def _w_mkdir(orig):
                 r = _resolve(path)
                 if r is None or not _white(r[1]):
                     raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), path)
-                _violation("os.mkdir", r[0])  # 被“删掉”的文件处建目录：不模拟
+                _unsupported("os.mkdir", r[0])  # 被“删掉”的文件处建目录：不模拟
             target = _map(path, write=True)
             if target is not None:
                 path = target
@@ -710,7 +808,7 @@ def _w_mkdir(orig):
     return mkdir
 
 
-def _w_remove(orig):
+def _w_remove(orig, op="os.remove"):
     """remove / unlink：项目里的文件“删掉”= 删改道区里的副本 + 白名单标记，项目里的那份不动（之后读它 / 查它都当不存在）。"""
 
     @functools.wraps(orig)
@@ -725,15 +823,21 @@ def _w_remove(orig):
                 over = _real_exists(target)
                 real = _real_exists(rp)
                 if real and _ORIG["isdir"](rp):
-                    _violation("os.remove", rp)
+                    _unsupported("os.remove", rp)
                 if over:
                     orig(target)
-                    if real:
-                        _state["whiteouts"].add(key)
+                    if real or _state["overlay"]:
+                        _whiteout(
+                            key
+                        )  # 覆盖层里：连只存在于覆盖层的路径也记「已删」，之后的探路由覆盖层作答
+                    _note(op, "delete", rp)
                     return None
                 if real:
-                    _state["whiteouts"].add(key)
+                    _whiteout(key)
+                    _note(op, "delete", rp)
                     return None
+                if _state["overlay"]:
+                    raise _Unsupported(op)  # 哪里都没有它：交回守卫（与没有覆盖层时一样跳过并记账）
                 raise _enoent(path)
         return orig(path, dir_fd=dir_fd)
 
@@ -751,75 +855,102 @@ def _w_rmdir(orig):
             r = _resolve(path)
             if r is not None:
                 if _proj_dir(r):
-                    _violation("os.rmdir", r[0])  # 显式失败：不依赖后面的删除账本去“跳过”它
+                    _unsupported("os.rmdir", r[0])  # 显式失败：不依赖后面的删除账本去“跳过”它
                 if _real_exists(r[2]):
                     path = r[2]
+                    _note("os.rmdir", "delete_dir", r[0])
         return orig(path, dir_fd=dir_fd)
 
     return fn
 
 
-def _w_rename(orig):
+def _rename_core(orig, op, src, dst):
+    """改名 / 移动一个文件的改道逻辑（`os.rename|replace` 与覆盖层里的 `shutil.move` 共用）。
+
+    覆盖层模式下覆盖层够不着的情形抛 `_Unsupported`，调用方交回守卫；其余模式下是 `write_outside_roots`。"""
+    _trip_if_project_link("os.rename", src)
+    _trip_if_project_link(
+        "os.rename", dst
+    )  # 目标是链接时 rename 替换的是链接本身，不是它指向的文件
+    rs = _resolve(src)
+    rd = _resolve(dst)
+    if _state["overlay"]:
+        if rs is None and not (rd is not None and _ov_has(rd)):
+            # 源不在项目里、目的地也没被覆盖层接管过：与没有覆盖层时一样直接做（不去改项目里别的东西）
+            return orig(src, dst)
+        if (
+            op == "os.rename"
+            and os.name == "nt"
+            and rd is not None
+            and not _white(rd[1])
+            and (_real_exists(rd[2]) or _real_exists(rd[0]))
+        ):
+            # Windows 的 os.rename 目的地已存在就 FileExistsError（os.replace 才覆盖）
+            raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), dst)
+    if rd is not None and _proj_dir(rd):
+        # 目的地在项目里是目录：文件改名到目录上是 IsADirectoryError；目录对目录要合并 / 替换，不模拟 → 走绊线
+        src_is_dir = (rs is not None and _ORIG["isdir"](rs[2])) or (
+            rs is None and _ORIG["isdir"](os.fsdecode(os.fspath(src)))
+        )
+        if not src_is_dir:
+            raise _eisdir(dst)
+        _unsupported("os.rename", rd[0])
+    if (
+        rd is not None
+        and _real_exists(rd[0])
+        and (
+            (rs is not None and _ORIG["isdir"](rs[2]))
+            or (rs is None and _ORIG["isdir"](os.fsdecode(os.fspath(src))))
+        )
+    ):
+        _unsupported("os.rename", rd[0])  # 目录改名到项目里已有的文件上：不模拟
+    if rs is not None and _state["overlay"] and not _white(rs[1]):
+        if not _real_exists(rs[2]) and not _real_exists(rs[0]):
+            raise _Unsupported(op)  # 源哪里都没有：交回守卫（与没有覆盖层时一样跳过并记账）
+    if rd is not None:
+        _prepare_write(rd)
+    d = rd[2] if rd is not None else dst
+    done = False
+    if rs is not None:
+        rp, key, target = rs
+        if _white(key):
+            raise _enoent(src)
+        over = _real_exists(target)
+        real = _real_exists(rp)
+        if real and _ORIG["isdir"](rp):
+            _unsupported("os.rename", rp)  # 项目里的目录被改名走：不模拟
+        elif over:
+            orig(target, d)
+            if real or _state["overlay"]:
+                _whiteout(key)
+            done = True
+        elif real:
+            # 只存在于项目里的文件被改名走：内容复制到目的地，项目里的原件不动，源路径标成已删除
+            prev = getattr(_rtls, "busy", False)
+            _rtls.busy = True
+            try:
+                _ORIG["copyfile"](rp, d)
+            finally:
+                _rtls.busy = prev
+            _whiteout(key)
+            done = True
+        else:
+            raise _enoent(src)
+    if not done:
+        orig(src, d)
+    if rd is not None:
+        _state["whiteouts"].discard(rd[1])
+    if rs is not None or rd is not None:
+        moved = tuple(r[0] for r in (rs, rd) if r is not None)
+        _note(op, "rename", *moved, dests=(rd[0],) if rd is not None else ())
+    return None
+
+
+def _w_rename(orig, op="os.rename"):
     @functools.wraps(orig)
     def rename(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
         if src_dir_fd is None and dst_dir_fd is None and _redirect_on():
-            _trip_if_project_link("os.rename", src)
-            _trip_if_project_link(
-                "os.rename", dst
-            )  # 目标是链接时 rename 替换的是链接本身，不是它指向的文件
-            rs = _resolve(src)
-            rd = _resolve(dst)
-            if rd is not None and _proj_dir(rd):
-                # 目的地在项目里是目录：文件改名到目录上是 IsADirectoryError；目录对目录要合并 / 替换，不模拟 → 走绊线
-                src_is_dir = (rs is not None and _ORIG["isdir"](rs[2])) or (
-                    rs is None and _ORIG["isdir"](os.fsdecode(os.fspath(src)))
-                )
-                if not src_is_dir:
-                    raise _eisdir(dst)
-                _violation("os.rename", rd[0])
-            if (
-                rd is not None
-                and _real_exists(rd[0])
-                and (
-                    (rs is not None and _ORIG["isdir"](rs[2]))
-                    or (rs is None and _ORIG["isdir"](os.fsdecode(os.fspath(src))))
-                )
-            ):
-                _violation("os.rename", rd[0])  # 目录改名到项目里已有的文件上：不模拟
-            if rd is not None:
-                _prepare_write(rd)
-            d = rd[2] if rd is not None else dst
-            done = False
-            if rs is not None:
-                rp, key, target = rs
-                if _white(key):
-                    raise _enoent(src)
-                over = _real_exists(target)
-                real = _real_exists(rp)
-                if real and _ORIG["isdir"](rp):
-                    _violation("os.rename", rp)  # 项目里的目录被改名走：不模拟
-                elif over:
-                    orig(target, d)
-                    if real:
-                        _state["whiteouts"].add(key)
-                    done = True
-                elif real:
-                    # 只存在于项目里的文件被改名走：内容复制到目的地，项目里的原件不动，源路径标成已删除
-                    prev = getattr(_rtls, "busy", False)
-                    _rtls.busy = True
-                    try:
-                        _ORIG["copyfile"](rp, d)
-                    finally:
-                        _rtls.busy = prev
-                    _state["whiteouts"].add(key)
-                    done = True
-                else:
-                    raise _enoent(src)
-            if not done:
-                orig(src, d)
-            if rd is not None:
-                _state["whiteouts"].discard(rd[1])
-            return None
+            return _rename_core(orig, op, src, dst)
         return orig(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
 
     return rename
@@ -828,6 +959,19 @@ def _w_rename(orig):
 def _w_exists(orig):
     @functools.wraps(orig)
     def fn(path, *args, **kwargs):
+        if _state["overlay"]:
+            # 覆盖层模式：对**覆盖层里有状态的路径**，存在性探测仍照旧让账本看见（问一次项目里那条路径，命中就按老规矩记
+            # material → 回退 native）。覆盖层只保证「读内容」的入口一致；探测说「在」之后脚本常去走 C 层读（h5py / sqlite…），
+            # 那条路径覆盖层够不着，读到旧值或缺失就是静默错图——所以不能用覆盖层视图作答后当没事。答案本身仍取覆盖层视图。
+            result = orig(path, *args, **kwargs)
+            if _ov_view():
+                r = _resolve(path)
+                if r is not None:
+                    if _white(r[1]):
+                        return False
+                    if _real_exists(r[2]):
+                        return True
+            return result
         result = orig(path, *args, **kwargs)
         if not _redirect_on():
             return result
@@ -848,6 +992,18 @@ def _w_path_check(orig):
 
     @functools.wraps(orig)
     def fn(path, *args, **kwargs):
+        if _state["overlay"]:
+            result = orig(path, *args, **kwargs)  # 同 `_w_exists`：账本照旧看见对项目路径的探测
+            if _ov_view() and not (
+                kwargs.get("follow_symlinks") is False and _ORIG["islink"](path)
+            ):
+                r = _resolve(path)
+                if r is not None:
+                    if _white(r[1]):
+                        return False
+                    if _real_exists(r[2]):
+                        return True
+            return result
         result = orig(path, *args, **kwargs)
         if not _redirect_on():
             return result
@@ -869,7 +1025,7 @@ def _w_path_check(orig):
 def _w_getsize(orig):
     @functools.wraps(orig)
     def getsize(path):
-        if _redirect_on():
+        if _redirect_on() and not _state["overlay"]:
             target = _map(path, write=False)
             if target is not None:
                 path = target
@@ -950,13 +1106,13 @@ def _w_copytree(orig):
             if rsrc is not None and _real_exists(rsrc[2]):
                 if _real_exists(rsrc[0]):
                     # 源目录一半在项目里、一半在暂存区：合并视图不模拟 → 失败即关闭
-                    _violation("shutil.copytree", rsrc[0])
+                    _unsupported("shutil.copytree", rsrc[0])
                 src = rsrc[2]
             rd = _resolve(dst)
             if rd is not None:
                 if _real_exists(rd[0]) and not _white(rd[1]):
                     if kwargs.get("dirs_exist_ok") or (len(args) >= 5 and args[4]):
-                        _violation("shutil.copytree", rd[0])  # 合并进项目里已有的目录：不模拟
+                        _unsupported("shutil.copytree", rd[0])  # 合并进项目里已有的目录：不模拟
                     raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), dst)
                 dst = _map(dst, write=True)
         return orig(src, dst, *args, **kwargs)
@@ -975,12 +1131,34 @@ def _w_rmtree(orig):
             r = _resolve(path)
             if r is not None:
                 if _real_exists(r[0]):
-                    _violation("shutil.rmtree", r[0])
+                    _unsupported("shutil.rmtree", r[0])
                 if _real_exists(r[2]):
                     path = r[2]
+                    _note("shutil.rmtree", "delete_dir", r[0])
         return orig(path, *args, **kwargs)
 
     return rmtree
+
+
+def _overlay_move(orig, src, dst, *args, **kwargs):
+    """覆盖层里的 `shutil.move`：只模拟「文件改名」（含改名到另一个目录下），目录级的移动交回守卫。"""
+    _trip_if_project_link("shutil.move", src)
+    _trip_if_project_link("shutil.move", dst)
+    rs = _resolve(src)
+    rd = _resolve(dst)
+    if rs is None and not (rd is not None and _ov_has(rd)):
+        return orig(src, dst, *args, **kwargs)
+    if args or kwargs:
+        raise _Unsupported("shutil.move")  # copy_function 之类的自定义：不模拟
+    src_s, dst_s = os.fsdecode(os.fspath(src)), os.fsdecode(os.fspath(dst))
+    if rd is not None:
+        if _proj_dir(rd) or (_real_exists(rd[2]) and _ORIG["isdir"](rd[2])):
+            raise _Unsupported("shutil.move")  # 移进目录：不模拟
+    elif _ORIG["isdir"](dst_s):
+        dst_s = os.path.join(dst_s, os.path.basename(src_s.rstrip("/" + (os.sep or "/"))))
+    if rs is not None and _real_exists(rs[0]) and _ORIG["isdir"](rs[0]):
+        raise _Unsupported("shutil.move")  # 项目里的目录被整个移走：不模拟
+    return _rename_core(_ORIG["replace"], "shutil.move", src_s, dst_s)
 
 
 def _w_move(orig):
@@ -988,6 +1166,8 @@ def _w_move(orig):
     def move(src, dst, *args, **kwargs):
         if not _redirect_on():
             return orig(src, dst, *args, **kwargs)
+        if _state["overlay"]:
+            return _overlay_move(orig, src, dst, *args, **kwargs)
         _trip_if_project_link("shutil.move", src)
         _trip_if_project_link("shutil.move", dst)
         rs = _resolve(src)
@@ -999,7 +1179,7 @@ def _w_move(orig):
             if _real_exists(rs[0]) and _ORIG["isdir"](rs[0]):
                 # 项目里已有的目录被整个移走：改道区只有它的一部分（新写的文件），只移暂存副本会让
                 # 原有文件留在原处、目标里缺一块——不模拟，与 rename / rmtree 同一条失败即关闭
-                _violation("shutil.move", rs[0])
+                _unsupported("shutil.move", rs[0])
             if _real_exists(rs[2]):
                 src, overlay_src = rs[2], True
         if rd is not None:
@@ -1010,12 +1190,12 @@ def _w_move(orig):
                     os.fsdecode(os.fspath(dst)), os.path.basename(os.fsdecode(os.fspath(src)))
                 )
                 if _real_exists(inner):
-                    _violation("shutil.move", rd[0])  # 移进目录时同名项已在项目里：不模拟
+                    _unsupported("shutil.move", rd[0])  # 移进目录时同名项已在项目里：不模拟
                 _ORIG["makedirs"](rd[2], exist_ok=True)
             dst = rd[2]
         result = orig(src, dst, *args, **kwargs)
         if overlay_src and _real_exists(rs[0]):
-            _state["whiteouts"].add(rs[1])  # 改道区里的副本被移走了，项目里的原件不能重新露出来
+            _whiteout(rs[1])  # 改道区里的副本被移走了，项目里的原件不能重新露出来
         if rd is not None:
             _state["whiteouts"].discard(rd[1])
         return result
@@ -1023,40 +1203,73 @@ def _w_move(orig):
     return move
 
 
+def _not_in_overlay(orig, wrapper):
+    """覆盖层模式不接管的入口（mkdir / copy*）：直通，保持它们今天的行为（写照旧落在项目里）。"""
+
+    @functools.wraps(orig)
+    def fn(*args, **kwargs):
+        if _state["overlay"]:
+            return orig(*args, **kwargs)
+        return wrapper(*args, **kwargs)
+
+    return fn
+
+
+def _quiet(fn):
+    """本模块自己的探测：期间账本不记观察、改道包装直通。"""
+
+    @functools.wraps(fn)
+    def quiet(*args, **kwargs):
+        prev = getattr(_rtls, "busy", False)
+        _rtls.busy = True
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _rtls.busy = prev
+
+    return quiet
+
+
+def _capture_orig() -> None:
+    path = os.path
+    _ORIG.update(
+        open=_quiet(builtins.open),
+        isdir=_quiet(path.isdir),
+        isfile=_quiet(path.isfile),
+        islink=_quiet(path.islink),
+        lexists=_quiet(path.lexists),
+        makedirs=_quiet(os.makedirs),
+        copyfile=_quiet(shutil.copyfile),
+        replace=os.replace,
+    )
+
+
 def _install_redirect() -> None:
     """包装 Python 层写入口（只装一次；窗口外 / 没配改道区时每个包装都是直通）。"""
     if _state["redirect_installed"]:
         return
     path = os.path
-    _ORIG.update(
-        open=builtins.open,
-        isdir=path.isdir,
-        isfile=path.isfile,
-        islink=path.islink,
-        lexists=path.lexists,
-        makedirs=os.makedirs,
-        copyfile=shutil.copyfile,
-    )
+    _capture_orig()
     wrapped_open = _w_open(builtins.open)
     builtins.open = wrapped_open
     io.open = wrapped_open
     os.open = _w_os_open(os.open)
-    os.mkdir = _w_mkdir(os.mkdir)
+    os.mkdir = _not_in_overlay(os.mkdir, _w_mkdir(os.mkdir))
     os.remove = _w_remove(os.remove)
-    os.unlink = _w_remove(os.unlink)
+    os.unlink = _w_remove(os.unlink, "os.unlink")
     os.rmdir = _w_rmdir(os.rmdir)
     os.rename = _w_rename(os.rename)
-    os.replace = _w_rename(os.replace)
+    os.replace = _w_rename(os.replace, "os.replace")
     for name in ("exists", "isfile", "isdir"):
         setattr(path, name, _w_exists(getattr(path, name)))
     for name in ("exists", "is_file", "is_dir"):
         setattr(pathlib.Path, name, _w_path_check(getattr(pathlib.Path, name)))
     path.getsize = _w_getsize(path.getsize)
-    shutil.copyfile = _w_copyfile(shutil.copyfile)
-    shutil.copy2 = _w_copy2(shutil.copy2)
-    shutil.copymode = _w_copyattr(shutil.copymode)
-    shutil.copystat = _w_copyattr(shutil.copystat)
-    shutil.copytree = _w_copytree(shutil.copytree)
+    shutil.copyfile = _not_in_overlay(shutil.copyfile, _w_copyfile(shutil.copyfile))
+    shutil.copy2 = _not_in_overlay(shutil.copy2, _w_copy2(shutil.copy2))
+    shutil.copymode = _not_in_overlay(shutil.copymode, _w_copyattr(shutil.copymode))
+    shutil.copystat = _not_in_overlay(shutil.copystat, _w_copyattr(shutil.copystat))
+    shutil.copytree = _not_in_overlay(shutil.copytree, _w_copytree(shutil.copytree))
     shutil.rmtree = _w_rmtree(shutil.rmtree)
     shutil.move = _w_move(shutil.move)
     # Python < 3.11：pathlib 的 `_NormalAccessor` 在 import 时把 `io.open` / `os.mkdir|unlink|rmdir|rename|replace` 绑成类属性，
@@ -1074,3 +1287,181 @@ def _install_redirect() -> None:
             if hasattr(accessor, name):
                 setattr(accessor, name, staticmethod(fn))
     _state["redirect_installed"] = True
+
+
+# --------------------------------------------------------------------------- 暂存覆盖层（safe worker 的常规运行，#1813）
+def _w_write_text(orig):
+    """`Path.write_text`：safe worker 的守卫原本把项目内的这类写直接跳过；覆盖层里它落进本次运行的暂存区，
+    之后脚本读回（open / `Path.read_*` / `exists`）看到的就是它写的。覆盖层接不了的（目标是项目里的目录）交回守卫。"""
+
+    @functools.wraps(orig)
+    def write_text(self, data, *args, **kwargs):
+        if _redirect_on():
+            r = _resolve(self)
+            if r is not None:
+                if _proj_dir(r) and not _real_exists(r[2]):
+                    raise _Unsupported("Path.write_text")
+                _prepare_write(r)
+                _state["whiteouts"].discard(r[1])
+                try:
+                    result = orig(pathlib.Path(r[2]), data, *args, **kwargs)
+                except FileNotFoundError as exc:
+                    # 项目里的父目录不存在：直接运行一样 FileNotFoundError，指的是脚本交出的路径，不是暂存区里的
+                    raise FileNotFoundError(exc.errno, exc.strerror, os.fspath(self)) from None
+                _note("Path.write_text", "write", r[0])
+                return result
+        return orig(self, data, *args, **kwargs)
+
+    return write_text
+
+
+def _w_path_unlink(orig):
+    @functools.wraps(orig)
+    def unlink(self, missing_ok=False):
+        if _redirect_on():
+            r = _resolve(self)
+            if r is not None:
+                _trip_if_project_link("Path.unlink", self)
+                rp, key, target = r
+                if _white(key):
+                    if missing_ok:
+                        return None
+                    raise _enoent(self)
+                over = _real_exists(target)
+                real = _real_exists(rp)
+                if (real and _ORIG["isdir"](rp)) or (over and _ORIG["isdir"](target)):
+                    raise _Unsupported("Path.unlink")
+                if over:
+                    orig(pathlib.Path(target))
+                    _whiteout(key)
+                    _note("Path.unlink", "delete", rp)
+                    return None
+                if real:
+                    _whiteout(key)
+                    _note("Path.unlink", "delete", rp)
+                    return None
+                # 哪里都没有它：交给守卫（`missing_ok` 的空操作 / 没有 missing_ok 时跳过并记账，与没有覆盖层时一样）
+        return orig(self, missing_ok=missing_ok)
+
+    return unlink
+
+
+def _w_datasource_open(orig):
+    """numpy 的 `DataSource.open`（`np.loadtxt` / `genfromtxt` 经它）：它的打开器在 numpy 载入时就绑了原来的 `io.open`，
+    我们换进去的 open 包装够不着，不在这里换路径它读的就是项目里没改过的那份。"""
+
+    @functools.wraps(orig)
+    def open_(self, path, mode="r", *args, **kwargs):
+        if _redirect_on():
+            path = _open_target(path, mode)
+        return orig(self, path, mode, *args, **kwargs)
+
+    return open_
+
+
+def _ov(orig, fn):
+    """覆盖层包装的统一出口：`fn` 抛 `_Unsupported` 就交回 `orig`（守卫：跳过并记账——与没有覆盖层时一字不差）。"""
+
+    @functools.wraps(orig)
+    def wrapped(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except _Unsupported:
+            return orig(*args, **kwargs)
+
+    return wrapped
+
+
+def install_overlay(project: str, directory: str, *, on_handled=None, suspended=None) -> None:
+    """装暂存覆盖层（ADR 0063 之外的 safe worker 常规运行；#1813）。
+
+    safe worker 的守卫把项目（真实图库）内的 `Path.write_text` / 改名 / 删除静默跳过，脚本随后读回受影响路径就是「看到的世界与
+    直接运行不同」。覆盖层把这几类操作改道进 `directory`（本次运行自己的暂存区，运行结束丢弃），读路径（`open` / `io.open` /
+    `Path.open|read_*` / `os.open` / numpy `DataSource.open`）
+    看到覆盖后的视图；`exists|isfile|isdir|getsize` 等探测对覆盖层有状态的路径答覆盖层视图、但仍让账本看见（命中记 material，防 C 层读静默错图）；用户项目一个字节不改。与校验运行的改道层（ADR 0143）同一套视图实现，区别只有：
+
+    * 只接管 `Path.write_text`、`os.remove|unlink|rmdir|rename|replace`、`Path.unlink`、`shutil.rmtree|move`；`open('w')` 改写已有文件
+      不拦的契约不变（只有覆盖层里**已有状态**的路径才继续走覆盖层，免得读回更早的那份）；`mkdir` / `copy*` / `write_bytes` 原样；
+    * 覆盖层模拟不了的情形（目录级改动、项目里的符号链接、哪里都没有的源）不失败，而是交回守卫——跳过并记账，行为与以前一字不差；
+    * `suspended`：账本自己在记账 / 解析只读回退路径时为真，那时覆盖层让路（账本要对账的是**真实**文件系统上的路径）；
+    * 覆盖层够不着的观察（`os.stat` / `listdir` / `scandir` / `glob` / C 层读 / 子进程）仍按守卫账本的老规矩命中：`on_handled`
+      让 worker 把每次被覆盖层接住的操作也记进账本。
+
+    不装审计钩子、没有授权根：只在 `arm(True)` 的窗口里、只对落在项目内的路径起作用。"""
+    discard_overlay(directory)
+    os.makedirs(directory, exist_ok=True)
+    rd = os.path.realpath(directory)
+    pr = os.path.realpath(project)
+    _state["redirect"] = (pr, os.path.normcase(pr), rd, os.path.normcase(rd))
+    _state["only"] = None
+    _state["only_fold"] = {}
+    _state["whiteouts"] = set()
+    _state["redirected"] = []
+    _state["overlay"] = True
+    _state["touched"] = False
+    _state["on_handled"] = on_handled
+    _state["suspended"] = suspended
+    folds_case(os.path.normcase(pr))
+    _install_overlay_wrappers()
+
+
+def discard_overlay(directory: str) -> None:
+    """丢弃覆盖层的暂存区（每次运行开始前、结束后各一次）；目录本来就不在是正常的。**永不抛**：Windows 上脚本还开着
+    暂存文件的句柄（全局 `f = p.open()`）时删不掉，那只是磁盘上多留一会儿——它在运行结束的 `finally` 里，抛出来会顶掉
+    脚本真实的结局。每次运行用自己的新目录（worker 按运行取名），删不掉的旧目录读不进下一次运行，下次开跑前再清。"""
+    prev = getattr(_rtls, "busy", False)
+    _rtls.busy = True  # 本模块自己的文件系统操作：账本不记成脚本的观察
+    try:
+        _RMTREE(directory, ignore_errors=True)
+    finally:
+        _rtls.busy = prev
+
+
+def disable_overlay() -> None:
+    """关覆盖层模式（用例 / 同进程里换别的模式用）：包装还在，但模式开关一关全部直通。"""
+    _state["overlay"] = False
+    _state["overlay_armed"] = False
+    _state["touched"] = False
+    _state["on_handled"] = None
+    _state["suspended"] = None
+    _state["whiteouts"] = set()
+    _state["redirect"] = None
+
+
+def arm_overlay(on: bool) -> None:
+    """开 / 关覆盖层窗口（脚本 build 期间开；之后引擎自己的读写不经过覆盖层）。"""
+    _state["overlay_armed"] = bool(on)
+
+
+def overlay_active() -> bool:
+    return bool(_state["overlay"])
+
+
+def _install_overlay_wrappers() -> None:
+    """包装覆盖层接管的入口。每次 `install_overlay` 都重装一遍（装在此刻最外层）：账本每次 build 都重新装，
+    覆盖层的包装必须在它外面——先把路径换成覆盖层里的，账本看到的才不是项目里那条。重装叠出来的旧层只是多一次直通。"""
+    path = os.path
+    _capture_orig()
+    wrapped_open = _w_open(builtins.open)
+    builtins.open = wrapped_open
+    io.open = wrapped_open
+    pathlib.Path.open = _w_path_open(pathlib.Path.open)
+    os.open = _w_os_open(os.open)
+    os.remove = _ov(os.remove, _w_remove(os.remove, "os.remove"))
+    os.unlink = _ov(os.unlink, _w_remove(os.unlink, "os.unlink"))
+    os.rmdir = _ov(os.rmdir, _w_rmdir(os.rmdir))
+    os.rename = _ov(os.rename, _w_rename(os.rename, "os.rename"))
+    os.replace = _ov(os.replace, _w_rename(os.replace, "os.replace"))
+    shutil.rmtree = _ov(shutil.rmtree, _w_rmtree(shutil.rmtree))
+    shutil.move = _ov(shutil.move, _w_move(shutil.move))
+    pathlib.Path.write_text = _ov(pathlib.Path.write_text, _w_write_text(pathlib.Path.write_text))
+    pathlib.Path.unlink = _ov(pathlib.Path.unlink, _w_path_unlink(pathlib.Path.unlink))
+    for name in ("exists", "isfile", "isdir"):
+        setattr(path, name, _w_exists(getattr(path, name)))
+    for name in ("exists", "is_file", "is_dir"):
+        setattr(pathlib.Path, name, _w_path_check(getattr(pathlib.Path, name)))
+    path.getsize = _w_getsize(path.getsize)
+    datasource = getattr(sys.modules.get("numpy.lib._datasource"), "DataSource", None)
+    if datasource is not None and hasattr(datasource, "open"):
+        datasource.open = _w_datasource_open(datasource.open)
+    _state["overlay_installed"] = True

@@ -108,11 +108,27 @@
   },
   "canvasDrop": {
     "running": "Running “{{name}}”. Its figure will go on this canvas.",
-    "outsideProject": "“{{name}}” isn’t in this project’s folder, so it wasn’t run. To use it, drop it on the home screen.",
-    "cannotRun": "“{{name}}” has spaces at the start or end of its name and can’t be run yet. Rename it and drop it again.",
-    "notScript": "“{{name}}” isn’t a Python script. Drop a .py file.",
+    "runningFirst": "Running “{{name}}”. The other {{count}} scripts weren’t run this time.",
+    "openedAndRunning": "Opened the project “{{name}}” is in, and running it.",
+    "outsideProject": "“{{name}}” isn’t in this project, so it hasn’t been run.",
+    "outsideForeign": "“{{name}}” isn’t in this project.",
+    "openItsProject": "Open its project",
+    "openProjectFailed": "Couldn’t open the project “{{name}}” is in.",
+    "cannotRun": "“{{name}}” has spaces at the start or end of its name and can’t be run directly yet.",
     "noPath": "Choose “{{name}}” again in the next window.",
-    "browser": "Scripts can’t be dropped in the browser. Run “{{name}}” from the script library on the left."
+    "browser": "The browser can’t tell which folder “{{name}}” is in, so it can’t run it directly.",
+    "noProjectFolder": "There’s no project folder here to put it in.",
+    "placedOne": "Added to the canvas: “{{name}}”",
+    "placedMany_one": "Added {{count}} image to the canvas",
+    "placedMany_other": "Added {{count}} images to the canvas",
+    "importFailed": "“{{name}}” couldn’t be added to the canvas. {{reason}}",
+    "importFailedMany_one": "{{count}} file couldn’t be added to the canvas.",
+    "importFailedMany_other": "{{count}} files couldn’t be added to the canvas.",
+    "unsupportedType": "“{{name}}” can’t go on the canvas. Images, scripts and project packages can.",
+    "unsupportedImage": "Images in the format of “{{name}}” can’t go on the canvas yet. PNG, JPG, TIFF, PDF and SVG can.",
+    "packageFailed": "“{{name}}” couldn’t be opened as a project package. {{reason}}",
+    "packageOnly_one": "Opened the project package “{{name}}”. {{count}} other file wasn’t handled this time.",
+    "packageOnly_other": "Opened the project package “{{name}}”. {{count}} other files weren’t handled this time."
   },
   "canvasTools": {
     "fit": "Fit",
@@ -229,8 +245,14 @@
     "retry": "Retry save",
     "saveAs": "Save as…",
     "saveErrorBody": "Your changes are kept for now, not yet on disk.",
-    "tooNewBody": "Tavotto didn’t open it, so the file on disk is unchanged. Upgrade and try again.",
-    "tooNewTitle": "This layout comes from a newer Tavotto (schema {{schema}})",
+    "tooNewBody": "{{product}} didn’t open it, so the file is unchanged. Update and try again.",
+    "tooNewTitle": "This layout comes from a newer {{product}}",
+    "checkUpdate": "Check for updates",
+    "updateReady": "The new version is downloaded. Click “Restart now” in the top bar to open this layout.",
+    "updateFound": "Version {{version}} is available.",
+    "updateInstall": "Download and update",
+    "updateNone": "You’re on the latest version. This layout can open once a newer version is released.",
+    "updateCheckFailed": "Couldn’t check for updates. Check your connection and try again.",
     "moreActions": "More ways to resolve"
   },
   "document": {
@@ -649,6 +671,7 @@
     "doneProject": "Saved to project: {{file}}",
     "failed": "Save failed. Your changes are safe — check disk space and try again.",
     "projectConflict": "{{file}} in the project was changed elsewhere, so nothing was written. Decide in the dialog.",
+    "projectConflictElsewhere": "{{file}} in the project was changed elsewhere, so nothing was written. Go back to that layout and save again to decide what to do.",
     "projectFailed": "Couldn’t save {{file}} in the project: {{reason}}",
     "projectSkipped": "{{file}} in the project wasn’t written: you switched layouts or projects after pressing Save. Go back to that layout and save again.",
     "skippedSwitched": "You switched layouts or projects after pressing Save, so nothing was written to the project. Go back to that layout and save again."
@@ -1016,6 +1039,9 @@
     "multi_select": "Use the floating bar by the selection to align and distribute.",
     "problem_found": "“Problems” on the left locates the object and its property field.",
     "layout_page_bounds": "The white page is the size of the exported figure. Single- and double-column widths follow the current spec; adjust them on the Canvas tab on the right.",
+    "fit_canvas": "Double-click empty space to recenter",
+    "edge_crop": "Drag an edge to resize; hold {{alt}} to crop",
+    "ruler_guides": "Drag a guide out of the ruler",
     "pageBoundsOpen": "Open Canvas tab"
   },
   "prep": {
@@ -1139,6 +1165,7 @@
       "openAssets": "Open library",
       "aiFix": "Fix it with your AI",
       "send": "Send",
+      "sendUs": "Send it to us",
       "revertAiEdit": "Revert the AI's change",
       "cancelScan": "Cancel check",
       "confirmOrigins": "Confirm packages",
@@ -1232,7 +1259,8 @@
       "errorFull": "Full error output",
       "errorTruncated": "Too long; only the last part is kept.",
       "noFigureWhy": "It left no Figure open.",
-      "failedFigures": "Figures that failed: {{names}} ({{codes}}). The others can be edited as usual.",
+      "failedFigures": "Figures that failed: {{names}}. The others can be edited as usual.",
+      "failedFiguresWhy": "Figures that failed: {{names}}. {{why}} The others can be edited as usual.",
       "unlinked": "{{names}}, made earlier with other arguments, is no longer linked. Run again with those arguments to restore it.",
       "history": {
         "title": "Run history",
@@ -1425,6 +1453,35 @@
       "outputAttemptsUnavailable": "No write record is available for this run.",
       "outputEvidenceTruncated": "There are too many filenames to show all entries.",
       "outputEvidenceLimits": "These clues may be incomplete; dynamic paths, temporary files, and external processes may not be recorded.",
+      "files": {
+        "state": {
+          "match": "Same",
+          "differs": "Different",
+          "incomparable": "Can't compare",
+          "missing": "Not written"
+        },
+        "why": {
+          "no_previous": "The project has no earlier result for this file",
+          "stale": "The earlier result is older than the input data and may be out of date",
+          "format": "This format can't be compared",
+          "too_large": "The file was too large to compare",
+          "inputs_unknown": "It's unknown which data was read",
+          "compare_failed": "The comparison ran into a problem"
+        },
+        "btn": {
+          "specify": "Choose a file",
+          "skip": "Not needed",
+          "realign": "Have AI check again"
+        },
+        "chosen": {
+          "specify": "Chosen",
+          "skip": "Not needed"
+        },
+        "askAdopt_one": "{{count}} file isn't handled yet. Adopt anyway?",
+        "askAdopt_other": "{{count}} files aren't handled yet. Adopt anyway?",
+        "adoptAnyway": "Adopt anyway",
+        "adoptAsIs": "Adopt as is"
+      },
       "adoptAdds": "Adopting only adds {{files}}; your original script is not touched",
       "installed": "Installed {{names}} for this project",
       "btn": {

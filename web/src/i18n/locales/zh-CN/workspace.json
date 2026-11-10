@@ -104,11 +104,24 @@
   },
   "canvasDrop": {
     "running": "正在运行「{{name}}」，出图后放进这张画布",
-    "outsideProject": "「{{name}}」不在当前项目的文件夹里，没有运行。要用它，请回到主页把它拖进来。",
-    "cannotRun": "「{{name}}」的文件名首尾有空格，暂时不能直接运行。请改名后再拖进来。",
-    "notScript": "「{{name}}」不是 Python 脚本。请拖入 .py 文件。",
+    "runningFirst": "正在运行「{{name}}」，其余 {{count}} 个脚本这次没有运行",
+    "openedAndRunning": "已打开「{{name}}」所在的项目，正在运行它",
+    "outsideProject": "「{{name}}」不在当前项目里，还没有运行。",
+    "outsideForeign": "「{{name}}」不在当前项目里。",
+    "openItsProject": "打开它所在的项目",
+    "openProjectFailed": "没能打开「{{name}}」所在的项目。",
+    "cannotRun": "「{{name}}」的文件名首尾有空格，暂时不能直接运行。",
     "noPath": "请在接下来的窗口里再选一次「{{name}}」。",
-    "browser": "浏览器里拖不进脚本。请在左侧脚本库里运行「{{name}}」。"
+    "browser": "浏览器拿不到「{{name}}」在哪个文件夹，没法直接运行它。",
+    "noProjectFolder": "这里没有项目文件夹可放。",
+    "placedOne": "已放进画布：「{{name}}」",
+    "placedMany_other": "已放进 {{count}} 张图",
+    "importFailed": "「{{name}}」没能放进画布。{{reason}}",
+    "importFailedMany_other": "有 {{count}} 个文件没能放进画布。",
+    "unsupportedType": "「{{name}}」放不进画布，能放进来的有图片、脚本和项目包。",
+    "unsupportedImage": "「{{name}}」这种格式的图还放不进画布，能放的有 PNG、JPG、TIFF、PDF、SVG。",
+    "packageFailed": "「{{name}}」没能作为项目包打开。{{reason}}",
+    "packageOnly_other": "已打开项目包「{{name}}」，另外 {{count}} 个文件这次没有处理"
   },
   "canvasTools": {
     "fit": "适应",
@@ -221,8 +234,14 @@
     "retry": "重试保存",
     "saveAs": "另存为…",
     "saveErrorBody": "改动已暂存，尚未写入磁盘。",
-    "tooNewBody": "Tavotto 没有打开它，磁盘文件没有改动。升级后再试。",
-    "tooNewTitle": "这份排版来自更新的 Tavotto（schema {{schema}}）",
+    "tooNewBody": "{{product}} 没有打开它，文件没有改动。升级后再试。",
+    "tooNewTitle": "这份排版来自更新的 {{product}}",
+    "checkUpdate": "检查更新",
+    "updateReady": "新版已经下好，点顶栏的「现在重启」就能打开这份排版。",
+    "updateFound": "有新版 {{version}}。",
+    "updateInstall": "下载并更新",
+    "updateNone": "已经是最新版，这份排版要等新版发布才能打开。",
+    "updateCheckFailed": "没能检查更新，请确认网络后再点一次。",
     "moreActions": "其他处理方式"
   },
   "document": {
@@ -625,6 +644,7 @@
     "doneProject": "已保存到项目：{{file}}",
     "failed": "无法保存。改动仍在，请检查磁盘空间后重试。",
     "projectConflict": "项目里的 {{file}} 已在别处改过，这次没有写入。请在弹出的对话框里决定。",
+    "projectConflictElsewhere": "项目里的 {{file}} 已在别处改过，这次没有写入。回到那份排版再保存，就能决定怎么处理。",
     "projectFailed": "没能存进项目里的 {{file}}：{{reason}}",
     "projectSkipped": "没有写入项目里的 {{file}}：按下保存之后切换了排版或项目。回到那份排版再保存一次。",
     "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。"
@@ -966,6 +986,9 @@
     "multi_select": "用选区旁的浮动栏对齐和分布。",
     "problem_found": "左侧「问题」可定位对象和属性字段。",
     "layout_page_bounds": "白色纸面就是导出的 Figure 尺寸；单栏、双栏宽度按当前规范，可在右侧「画布」页调整。",
+    "fit_canvas": "双击空白处，画布回到正中",
+    "edge_crop": "拖边改图幅，按住 {{alt}} 改为裁剪",
+    "ruler_guides": "从标尺拖出对齐线",
     "pageBoundsOpen": "打开画布页"
   },
   "prep": {
@@ -1083,6 +1106,7 @@
       "openAssets": "打开素材库",
       "aiFix": "使用你的 AI 来修复",
       "send": "发送",
+      "sendUs": "发给我们看看",
       "revertAiEdit": "回滚 AI 的修改",
       "cancelScan": "取消检查",
       "confirmOrigins": "确认包名",
@@ -1170,7 +1194,8 @@
       },
       "errorFull": "完整错误信息",
       "errorTruncated": "太长，只保留了最后一部分。",
-      "failedFigures": "没画出来的图：{{names}}（{{codes}}）。其余的图可以照常编辑。",
+      "failedFigures": "没画出来的图：{{names}}。其余的图可以照常编辑。",
+      "failedFiguresWhy": "没画出来的图：{{names}}。{{why}}其余的图可以照常编辑。",
       "unlinked": "此前带其他参数生成的 {{names}} 已不再关联，用原参数再运行一次即可恢复。",
       "history": {
         "title": "运行记录",
@@ -1361,6 +1386,34 @@
       "outputAttemptsUnavailable": "这次没有可用的写入记录。",
       "outputEvidenceTruncated": "文件名过多，仅显示部分记录。",
       "outputEvidenceLimits": "这些线索可能不全，动态路径、临时文件和外部程序的写入可能未记录。",
+      "files": {
+        "state": {
+          "match": "一致",
+          "differs": "不同",
+          "incomparable": "没法比",
+          "missing": "没写出"
+        },
+        "why": {
+          "no_previous": "项目里没有这个文件的旧结果",
+          "stale": "旧结果比输入数据还早，可能已经过期",
+          "format": "这种格式没法比",
+          "too_large": "文件太大没比",
+          "inputs_unknown": "不知道读了哪些数据",
+          "compare_failed": "比对时出了问题"
+        },
+        "btn": {
+          "specify": "我来指定",
+          "skip": "不需要",
+          "realign": "让 AI 再对一次"
+        },
+        "chosen": {
+          "specify": "已指定",
+          "skip": "不需要"
+        },
+        "askAdopt_other": "还有 {{count}} 个文件没处理，仍要采用吗？",
+        "adoptAnyway": "仍然采用",
+        "adoptAsIs": "照样采用"
+      },
       "adoptAdds": "采用只会新增 {{files}}，原脚本不动",
       "installed": "已为这个项目装好 {{names}}",
       "btn": {

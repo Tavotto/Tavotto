@@ -12,16 +12,34 @@
  *
  * 判据来自活动信号 + store 现状；「看过没有」记在 onboardingStore（本机，
  * 不依赖遥测同意）。**教程进行中不出提示**——coachmark 已经在说话了。
+ *
+ * **动画卡提示（ADR 0177）**：藏起来的手势用一张会动的小卡教（`components/hints/HintCard`）。
+ * 它们不在「第一次」时说，而在**看到用户正在用笨办法时**说；用户自己用过一次那个功能就算学会、永不再提。
+ *
+ * | 触发（笨办法） | 卡片 | 学会 |
+ * | --- | --- | --- |
+ * | 画布大半移出窗口、停手 2 秒 | 双击空白处回正 | 让画布「适应」过一次（任何入口） |
+ * | 多图排版里拖图边改了图幅 | 按住 ⌥ 改为裁剪 | 拖边裁剪过一次 |
+ * | 多图排版里 30 秒内挪了 3 次对象、还没有参考线 | 从标尺拖出对齐线 | 拉出过一条参考线 |
+ *
+ * 节奏：每条最多出 `CARD_MAX_SHOWS` 次、两次之间至少隔 `CARD_MIN_GAP_MS`；每次启动最多 `CARD_SESSION_BUDGET` 张；
+ * 分层解锁按 `activeDays`；与一句话提示共用 `useHintStore.current` 一个槽位。
  */
 import { create } from 'zustand'
 import { onActivity, type ActivityDetail } from '@/lib/activity'
 import { createDismissTimer } from '@/lib/dismissTimer'
+import { useDialogLayerStore } from '@/store/dialogLayerStore'
 import { useDocumentStore } from '@/store/documentStore'
+import { feedbackCornerBusy } from '@/store/feedbackCorner'
+import { useInteractionStore } from '@/store/interactionStore'
 import { hintSeen, useOnboardingStore, type HintKind } from '@/store/onboardingStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useValidationStore } from '@/store/validationStore'
+import { currentVisibleRectMm, useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspace'
+import { fastEditPanelOf } from '@/store/workspaceStore'
+import { fastEditCanvasBox, stageFitFrame } from '@/store/zoomToSelection'
 
 /**
  * 带锚点的提示：不进通知轨，由锚点所在的组件（`PageBoundsHint`，挂在右栏页签条下）自己画。
@@ -31,6 +49,113 @@ export const ANCHORED_HINTS: ReadonlySet<HintKind> = new Set<HintKind>(['layout_
 
 /** 提示自动收起的时长；用户也可以随手关 */
 export const HINT_AUTO_DISMISS_MS = 9000
+
+/* ───────── 动画卡提示（ADR 0177） ───────── */
+
+/** 动画卡提示：由 `components/hints/HintCard` 画，不进通知轨；仍占 `useHintStore.current` 这一个槽位 */
+export const CARD_HINTS = ['fit_canvas', 'edge_crop', 'ruler_guides'] as const satisfies readonly HintKind[]
+export type CardHintKind = (typeof CARD_HINTS)[number]
+export const isCardHint = (k: HintKind | null): k is CardHintKind =>
+  k !== null && (CARD_HINTS as readonly HintKind[]).includes(k)
+
+/** 分层：1 = 看得见摸得着的基本手势；2 = 修饰键；3 = 效率。层数越高越晚解锁 */
+export const CARD_TIER: Record<CardHintKind, 1 | 2 | 3> = { fit_canvas: 1, edge_crop: 1, ruler_guides: 1 }
+/** 每一层要求累计用过几天（本地日期计）才解锁 */
+export const TIER_MIN_DAYS: Record<1 | 2 | 3, number> = { 1: 0, 2: 2, 3: 5 }
+/** 每条最多出几次；× 关掉或自己学会就不再出 */
+export const CARD_MAX_SHOWS = 2
+/** 同一条两次之间至少隔这么久（20 小时 ≈「至少隔一天」，又不卡在整点上） */
+export const CARD_MIN_GAP_MS = 20 * 60 * 60 * 1000
+/** 每次启动最多出几张卡 */
+export const CARD_SESSION_BUDGET = 2
+/** 卡片自己收起的时长（动画一遍 8 秒上下，够看两遍再多一点）；指针停在卡上不走表 */
+export const CARD_AUTO_DISMISS_MS = 30000
+/** 画布跑偏后停手多久才提示 */
+export const DRIFT_SETTLE_MS = 2000
+/** 「反复挪对象」：这么长时间内挪了这么多次 */
+export const NUDGE_WINDOW_MS = 30000
+export const NUDGE_COUNT = 3
+const MOVE_LABELS: ReadonlySet<string> = new Set(['history.moveObject', 'history.moveObjects'])
+
+let sessionCards = 0
+/** 只给测试：把「本次启动已出几张卡」清零 */
+export function resetHintSessionForTest(): void {
+  sessionCards = 0
+}
+
+type Box = { x: number; y: number; w: number; h: number }
+
+/**
+ * 画布是不是「跑偏了」：取景框（适应画布要框住的那块）露在窗口里的部分，既不到它自己的三成、也不到窗口的三成。
+ * 两个条件都要：放大看细节时露出来的只是页面一角（第一条成立），但窗口里满满都是页面（第二条不成立）——那不是跑偏。
+ */
+export function driftedAway(frame: Box, visible: Box): boolean {
+  const w = Math.min(frame.x + frame.w, visible.x + visible.w) - Math.max(frame.x, visible.x)
+  const h = Math.min(frame.y + frame.h, visible.y + visible.h) - Math.max(frame.y, visible.y)
+  const inter = w > 0 && h > 0 ? w * h : 0
+  const frameArea = frame.w * frame.h
+  const viewArea = visible.w * visible.h
+  if (!(frameArea > 0) || !(viewArea > 0)) return false
+  return inter / frameArea < 0.3 && inter / viewArea < 0.3
+}
+
+/** 此刻画布跑偏了吗：不在适应模式、没有补间 / 手势在走，且 `driftedAway` */
+export function canvasDriftedNow(): boolean {
+  const vp = useViewportStore.getState()
+  if (vp.fitted || vp.tweening) return false
+  if (useInteractionStore.getState().kind !== 'none') return false
+  const visible = currentVisibleRectMm()
+  if (!visible) return false
+  const doc = useDocumentStore.getState().doc
+  const id = fastEditPanelOf(useWorkspaceStore.getState())
+  return driftedAway(stageFitFrame(doc.objects, doc.page, id, fastEditCanvasBox(doc, id)), visible)
+}
+
+/** 这张卡此刻说得对吗（场景还在不在）；出之前判一次，出了之后场景变了就收起 */
+export function cardApplicable(kind: CardHintKind): boolean {
+  if (kind === 'fit_canvas') return canvasDriftedNow()
+  // 另两条只在多图排版里成立：拖边裁剪是排版手势，标尺在单图编辑里不画
+  if (useWorkspaceStore.getState().mode !== 'layout') return false
+  if (kind === 'ruler_guides') {
+    return useUiStore.getState().showRulers && useDocumentStore.getState().doc.guides.length === 0
+  }
+  return true
+}
+
+/** 出一张动画卡；返回是否真的出了。不出的原因一律不记账（下次场景再来还能出） */
+export function showCardHint(kind: CardHintKind, now: number = Date.now()): boolean {
+  const ob = useOnboardingStore.getState()
+  if (ob.hintsOff || ob.status === 'active') return false
+  if (useHintStore.getState().current) return false
+  if (useDialogLayerStore.getState().open > 0) return false
+  // 反馈卡占着右下角：这时出了也画不出来，白白记一次、白走 30 秒（Codex #1830）
+  if (feedbackCornerBusy()) return false
+  if (sessionCards >= CARD_SESSION_BUDGET) return false
+  if (ob.activeDays < TIER_MIN_DAYS[CARD_TIER[kind]]) return false
+  const stat = ob.hintStats[kind]
+  if (stat?.done || (stat?.shows ?? 0) >= CARD_MAX_SHOWS) return false
+  if (stat && stat.shows > 0 && now - stat.lastAt < CARD_MIN_GAP_MS) return false
+  if (!cardApplicable(kind)) return false
+  ob.recordHintShown(kind)
+  sessionCards += 1
+  useHintStore.setState((s) => ({ current: kind, token: s.token + 1 }))
+  hintDismissTimer.start(CARD_AUTO_DISMISS_MS, () => useHintStore.getState().dismiss())
+  return true
+}
+
+/** 用户自己用过这个功能了：记「学会」，正开着的那张一并收起 */
+export function learnCardHint(kind: CardHintKind): void {
+  useOnboardingStore.getState().markHintDone(kind)
+  if (useHintStore.getState().current === kind) useHintStore.getState().dismiss()
+}
+
+/** 用户点了卡上的 ×：这条别再提 */
+export function dismissCardForGood(kind: CardHintKind): void {
+  useOnboardingStore.getState().markHintDone(kind)
+  useHintStore.getState().dismiss()
+}
+
+const localDay = (d = new Date()) => `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`
 
 interface HintState {
   current: HintKind | null
@@ -87,6 +212,7 @@ const isSelectionHint = (k: HintKind | null) => k === 'panel_editable' || k === 
 /** 显示一条；已经看过 / 教程进行中 / 已经有一条在显示 / 锚点不在 → 不显示 */
 export function showHint(kind: HintKind): boolean {
   if (hintSeen(kind)) return false
+  if (useOnboardingStore.getState().hintsOff) return false
   if (useOnboardingStore.getState().status === 'active') return false
   if (useHintStore.getState().current) return false
   if (!anchorAvailable(kind)) return false
@@ -98,8 +224,30 @@ export function showHint(kind: HintKind): boolean {
   return true
 }
 
+/** 最近几次「挪对象」的时刻（滑动窗口） */
+let recentMoves: number[] = []
+
 function onSignal(d: ActivityDetail): void {
   switch (d.kind) {
+    case 'view.fitted':
+      learnCardHint('fit_canvas')
+      return
+    case 'panel.edge_dragged':
+      // 裁剪过了 = 已经会了；改了图幅 = 正是说「按住 ⌥ 就是裁剪」的时候
+      if (d.outcome === 'cropped') learnCardHint('edge_crop')
+      else showCardHint('edge_crop')
+      return
+    case 'history.pushed': {
+      if (d.label === 'history.addGuide') {
+        learnCardHint('ruler_guides')
+        return
+      }
+      if (!MOVE_LABELS.has(d.label)) return
+      const now = Date.now()
+      recentMoves = [...recentMoves.filter((t) => now - t <= NUDGE_WINDOW_MS), now]
+      if (recentMoves.length >= NUDGE_COUNT && showCardHint('ruler_guides', now)) recentMoves = []
+      return
+    }
     case 'selection.changed': {
       if (useUiStore.getState().elementPanelId) return // 图内编辑态里的画布选区不算
       if (d.count >= 2) {
@@ -130,7 +278,28 @@ let stop: (() => void) | null = null
 /** 启动提示引擎（幂等）；随 Workspace 生命周期清理 */
 export function startHintEngine(): () => void {
   if (stop) return stop
+  useOnboardingStore.getState().touchActiveDay(localDay())
   const unsubActivity = onActivity(onSignal)
+  // 画布跑偏：视口每动一下重新计时，停手 `DRIFT_SETTLE_MS` 后还偏着才说；已出的那张在画布回来后收起
+  let driftTimer: ReturnType<typeof setTimeout> | null = null
+  const unsubViewport = useViewportStore.subscribe((s, prev) => {
+    if (s.zoom === prev.zoom && s.panX === prev.panX && s.panY === prev.panY) return
+    if (driftTimer) clearTimeout(driftTimer)
+    driftTimer = setTimeout(() => {
+      driftTimer = null
+      if (useHintStore.getState().current === 'fit_canvas') {
+        if (!canvasDriftedNow()) useHintStore.getState().dismiss()
+      } else if (canvasDriftedNow()) {
+        showCardHint('fit_canvas')
+      }
+    }, DRIFT_SETTLE_MS)
+  })
+  // 排版手势的两张卡：离开多图排版就不对了
+  const unsubMode = useWorkspaceStore.subscribe((s, prev) => {
+    if (s.mode === prev.mode) return
+    const cur = useHintStore.getState().current
+    if ((cur === 'edge_crop' || cur === 'ruler_guides') && s.mode !== 'layout') useHintStore.getState().dismiss()
+  })
   // 「第一次发现问题」不是一个动作，是检查结果——盯 validation store
   // 提示的内容是「问题可定位到对象和字段」，所以只认**能定位到对象**的问题：空画布上只有文档级问题
   // （无对象可定位）时不弹，等第一个落在对象上的问题出现才说（2026-10-31 UI 审计 B6）
@@ -157,6 +326,10 @@ export function startHintEngine(): () => void {
     }
   })
   stop = () => {
+    if (driftTimer) clearTimeout(driftTimer)
+    recentMoves = []
+    unsubViewport()
+    unsubMode()
     unsubSelection()
     unsubEdit()
     unsubActivity()

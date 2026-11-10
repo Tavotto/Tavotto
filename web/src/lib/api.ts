@@ -2328,6 +2328,31 @@ export interface PackageOpenResult {
   drifted: string[]
 }
 
+/**
+ * 把一个文件作为素材放进当前项目文件夹（ADR 0176，`POST /api/assets/import`）。
+ * 后端按**内容**判类型、清洗文件名、同名同内容复用 / 异内容改名、不覆盖；`id` 与 `/api/panels` 的素材 id 同一个值。
+ * `pj` = 发起那一刻的项目（切项目的窗口里文件绝不写进别的项目）。
+ */
+export interface ImportedAsset {
+  id: string
+  name: string
+  file: string
+  kind: 'pdf' | 'svg' | 'raster'
+  /** 项目里已有内容相同的文件，没有写第二份 */
+  reused: boolean
+  /** 同名异内容：自动改成了 `名 (2).ext` */
+  renamed: boolean
+  bytes: number
+}
+
+export function importAsset(file: Blob, name: string, pj?: string | null): Promise<ImportedAsset> {
+  return jsonFetch<ImportedAsset>(
+    `/api/assets/import?name=${encodeURIComponent(name)}`,
+    { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file },
+    pj,
+  )
+}
+
 export function openPackage(file: File): Promise<PackageOpenResult> {
   const form = new FormData()
   form.append('package', file)
@@ -4370,6 +4395,20 @@ export const discardAiEditDependencies = (sid: string, pj: string | null) =>
 
 /* ----------------- 生成可编辑版本（ADR 0143，`/api/ai/convert*`） ----------------- */
 
+/** 转换清单里的一行：来源脚本里能确定的写出（字面量路径、顶层语句）× 这次校验与项目旧结果的核对；差异只有坐标，没有数据值 */
+export interface ConvertOutputFile {
+  name: string
+  /** 来源脚本里的行号 */
+  line: number
+  /** `missing` = 校验里没有写出；其余是内容与项目旧结果的核对结论 */
+  state: 'missing' | 'match' | 'differs' | 'incomparable'
+  /** `incomparable` 的原因 */
+  reason?: 'no_previous' | 'stale' | 'format' | 'too_large' | 'inputs_unknown' | 'compare_failed'
+  /** `differs`：差异总数与前几处坐标 */
+  diff_count?: number
+  diffs?: Array<{ sheet?: string; cell?: string; row?: number; col?: number; line?: number; kind?: 'shape' | 'sheets' }>
+}
+
 /** 对照数据（`ai_convert.comparison_of`）：不含像素差（`pixel_diff` 恒 null——位图与矢量重画没有可辩护的逐像素差） */
 export interface ConvertComparison {
   original: { path: string; bytes: number; sha256: string; width_px: number | null; height_px: number | null } | null
@@ -4387,6 +4426,12 @@ export interface ConvertComparison {
     write_attempts: string[] | null
     attempts_truncated: boolean
     completeness: 'unknown'
+    /** 逐个文件的清单；`[]` / 没有 = 没法判定（动态路径、沙盒回报缺失等），界面退回几行说明。老后端没有 */
+    files?: ConvertOutputFile[]
+    /** `null` = 没法判定；非空 = 校验里没写出的文件 */
+    missing_outputs?: Array<{ name: string; line: number }> | null
+    output_check?: 'written' | 'missing' | 'unknown'
+    corrected?: boolean
   }
 }
 
@@ -4438,6 +4483,8 @@ export interface ConvertStatus {
   adopted_script?: string | null
   /** `state === 'ready'`：采用会在项目里新增的文件（项目相对路径，原脚本不动）；老后端没有 */
   adopt_adds?: string[]
+  /** 「让 AI 再对一次」正在跑：候选在变，采用先禁用 */
+  realigning?: boolean
 }
 
 const jsonPost = (body?: unknown): RequestInit => ({
@@ -4466,8 +4513,17 @@ export const startConvert = (
 export const fetchConvert = (sid: string, pj: string | null) =>
   jsonFetch<ConvertStatus>(`/api/ai/convert/${encodeURIComponent(sid)}`, undefined, pj)
 
-export const adoptConvert = (sid: string, pj: string | null) =>
-  jsonFetch<{ script: string; name: string }>(`/api/ai/convert/${encodeURIComponent(sid)}/adopt`, jsonPost(), pj)
+/** `specified`：用户为清单里没写出的文件指定的本机文件（只登记进这次采用的回执，文件不动；只送文件名，不送目录） */
+export const adoptConvert = (sid: string, pj: string | null, specified?: Array<{ name: string; file: string }>) =>
+  jsonFetch<{ script: string; name: string; specified_outputs?: Array<{ name: string; file: string }> }>(
+    `/api/ai/convert/${encodeURIComponent(sid)}/adopt`,
+    jsonPost(specified && specified.length > 0 ? { specified_outputs: specified } : undefined),
+    pj,
+  )
+
+/** 「让 AI 再对一次」：只对清单里「不同」的文件有界修正一次；前端轮询 `fetchConvert` 看 `realigning` 与新的 `comparison` */
+export const realignConvert = (sid: string, pj: string | null) =>
+  jsonFetch<{ session: string; realigning: boolean }>(`/api/ai/convert/${encodeURIComponent(sid)}/realign`, jsonPost(), pj)
 
 export const discardConvert = (sid: string, pj: string | null) =>
   jsonFetch<{ ok: boolean }>(`/api/ai/convert/${encodeURIComponent(sid)}/discard`, jsonPost(), pj)

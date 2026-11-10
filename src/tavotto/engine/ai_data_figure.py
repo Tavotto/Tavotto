@@ -12,6 +12,7 @@ v1 的硬边界（`02-architecture.md` §四、`04-security-model.md`）：被�
 * 有限浮点数 = 数值；`inf` 与其它文字 = **不是数**：不画（折线上记作断开、柱图里整行不画），并逐行报告原因；
 * x 列全部是 ISO 日期（`YYYY-MM-DD`）= 时间轴，不当成类别字符串；日期数值的纪元固定为 1970-01-01（生成的脚本在画图前
   `set_epoch`，不受用户 matplotlibrc 的 `date.epoch` 影响）；
+* v2（`profile_folder`）：同一套规则读 CSV / TSV / XLSX（`xlsxread`），整文件夹给受控摘要，不执行、不写文件。
 * 单位只取自列名后缀，且只认闭集 `UNITS`（`time_s` → `time (s)`、`temperature_C` → `temperature (°C)`）；不认识就原样写列名，
   **绝不补单位**。
 """
@@ -28,6 +29,8 @@ import re
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from . import xlsxread
 
 #: 受控摘要的上限：超出就拒绝（`too_large`），不截断着给一个看起来完整的摘要
 MAX_BYTES = 5 * 1024 * 1024
@@ -73,7 +76,11 @@ ERROR_CODES = (
     "data_too_long",
     "data_ragged",
     "figure_name_exhausted",
+    # v2（数据文件夹 / TSV / XLSX）：不认识的后缀、`.xls` 等旧格式、XLSX 的各种读不了（码表在 `xlsxread.ERROR_CODES`，
+    # 其中与上面重名的只登记一次）
+    "data_format_unsupported",
 )
+ERROR_CODES = ERROR_CODES + tuple(c for c in xlsxread.ERROR_CODES if c not in ERROR_CODES)
 
 
 class DataSourceError(ValueError):
@@ -154,14 +161,32 @@ class ColumnSummary:
         }
 
 
+#: 分组列：不同取值个数的上限（>12 个取值的类别列不当分组，多半是标签 / 名字）
+MAX_GROUP_LEVELS = 12
+
+LAYOUTS = ("long", "wide", "matrix", "unknown")
+
+
 @dataclass
 class DataSummary:
+    """一张表的受控摘要。`layout` / `groups` / `id_like` / `repeats` 的判定规则见 `_structure` 的文档（保守：判不出
+    就 `unknown` / 空 / None，不猜）；它们只是给上层（和模型）的线索，不决定任何科学含义。
+
+    `rows` 是行数据（`plan_mapping` / `plotted_data` 要用）；`profile_folder` 的条目为省内存不带行数据（`rows == []`），
+    行数记在 `row_count`——要出图再对那个文件 / 工作表 `inspect_data_source` 一次。"""
+
     path_name: str
     sha256: str
     size: int
     columns: list[str]
     rows: list[list[str]]
     per_column: dict[str, ColumnSummary]
+    sheet: str | None = None
+    layout: str = "unknown"
+    groups: dict[str, int] = field(default_factory=dict)
+    id_like: list[str] = field(default_factory=list)
+    repeats: bool | None = None
+    row_count: int | None = None
 
     def to_dict(self) -> dict:
         """给前端 / 历史库 / 模型看的那份：**不带行数据**，只带列名、类型与计数（`privacy_policy`）。"""
@@ -170,14 +195,30 @@ class DataSummary:
             "sha256": self.sha256,
             "size": self.size,
             "columns": list(self.columns),
-            "rows": len(self.rows),
+            "rows": self.row_count if self.row_count is not None else len(self.rows),
             "per_column": {c: s.to_dict() for c, s in self.per_column.items()},
+            "sheet": self.sheet,
+            "layout": self.layout,
+            "groups": dict(self.groups),
+            "id_like": list(self.id_like),
+            "repeats": self.repeats,
         }
 
 
-def inspect_data_source(path: str | Path) -> DataSummary:
-    """读一份 CSV 的受控摘要（标准库 `csv`，逗号分隔，UTF-8 / UTF-8 BOM）。调用方负责路径在项目内（`contained_path`）。"""
-    p = Path(path)
+#: 表格文件后缀（小写）：CSV / TSV 同一条解析，XLSX 经 `xlsxread`；旧 Excel 格式明确拒绝
+CSV_SUFFIXES = (".csv",)
+TSV_SUFFIXES = (".tsv", ".tab")
+XLSX_SUFFIXES = (".xlsx",)
+TABLE_SUFFIXES = CSV_SUFFIXES + TSV_SUFFIXES + XLSX_SUFFIXES
+LEGACY_EXCEL_SUFFIXES = xlsxread.LEGACY_SUFFIXES
+
+
+def _from_xlsx_error(exc: xlsxread.XlsxError) -> DataSourceError:
+    return DataSourceError(exc.code, str(exc).partition(": ")[2])
+
+
+def _read_delimited(p: Path, delimiter: str) -> tuple[list[list[str]], str, int]:
+    """`(表, 原始字节的 sha256, 字节数)`：UTF-8 / UTF-8 BOM；上限与错误码是 CSV / TSV 共用的一份。"""
     try:
         size = p.stat().st_size
         if size > MAX_BYTES:
@@ -190,9 +231,53 @@ def inspect_data_source(path: str | Path) -> DataSummary:
     except UnicodeDecodeError:
         raise DataSourceError("data_decode_error") from None
     try:
-        table = list(csv.reader(io.StringIO(text, newline="")))
+        table = list(csv.reader(io.StringIO(text, newline=""), delimiter=delimiter))
     except csv.Error as exc:
         raise DataSourceError("data_malformed", str(exc)[:200]) from None
+    return table, hashlib.sha256(raw).hexdigest(), size
+
+
+def inspect_data_source(path: str | Path, sheet: str | int | None = None) -> DataSummary:
+    """读一份表的受控摘要。后缀 `.tsv` / `.tab` 按制表符分隔、`.xlsx` 读 `sheet`（表名 / 序号 0 起 / `None` = 第一张可见表）、
+    `.xls` / `.xlsm` / `.xlsb` 拒绝（`data_excel_unsupported`）；**其余一律按 CSV 读**（v1 行为不变：后缀的白名单由调用方
+    管，如 `ai_data_task` 的 `data_not_csv`）。UTF-8 / UTF-8 BOM。调用方负责路径在项目内（`contained_path`）。"""
+    p = Path(path)
+    suffix = p.suffix.lower()
+    if suffix in LEGACY_EXCEL_SUFFIXES:
+        raise DataSourceError("data_excel_unsupported", suffix)
+    if suffix in XLSX_SUFFIXES:
+        try:
+            with xlsxread.XlsxBook(p) as book:
+                return _summarize_book(book, sheet)
+        except xlsxread.XlsxError as exc:
+            raise _from_xlsx_error(exc) from None
+    table, sha, size = _read_delimited(p, "\t" if suffix in TSV_SUFFIXES else ",")
+    return _summarize(table, path_name=p.name, sha256=sha, size=size)
+
+
+def _summarize_book(
+    book: xlsxread.XlsxBook, sheet: str | int | None, *, keep_rows: bool = True
+) -> DataSummary:
+    info = book.resolve(sheet)
+    return _summarize(
+        book.read(info.index),
+        path_name=book.name,
+        sha256=book.raw_sha256,
+        size=book.size,
+        sheet=info.name,
+        keep_rows=keep_rows,
+    )
+
+
+def _summarize(
+    table: list[list[str]],
+    *,
+    path_name: str,
+    sha256: str,
+    size: int,
+    sheet: str | None = None,
+    keep_rows: bool = True,
+) -> DataSummary:
     table = [r for r in table if any(c.strip() for c in r)]  # 纯空行不算数据行
     if not table:
         raise DataSourceError("data_empty")
@@ -210,6 +295,8 @@ def inspect_data_source(path: str | Path) -> DataSummary:
         if len(r) != len(header):
             raise DataSourceError("data_ragged")
     per = {h: ColumnSummary(h) for h in header}
+    # 取值集合只为「分组列」判定：超过 `MAX_GROUP_LEVELS` 个就不再收（长度 > 上限即「太多」）
+    levels: dict[str, set[str]] = {h: set() for h in header}
     for r in rows:
         for h, cell in zip(header, r):
             s = per[h]
@@ -220,16 +307,271 @@ def inspect_data_source(path: str | Path) -> DataSummary:
                     s.dates += 1
                 if len(s.text) < TEXT_SAMPLES:
                     s.text.append(cell.strip())
+                lv = levels[h]
+                if len(lv) <= MAX_GROUP_LEVELS:
+                    lv.add(cell.strip())
             else:
                 setattr(s, cls, getattr(s, cls) + 1)
+    layout, groups, id_like, repeats = _structure(header, rows, per, levels)
     return DataSummary(
-        path_name=p.name,
-        sha256=hashlib.sha256(raw).hexdigest(),
+        path_name=path_name,
+        sha256=sha256,
         size=size,
         columns=header,
-        rows=rows,
+        rows=rows if keep_rows else [],
         per_column=per,
+        sheet=sheet,
+        layout=layout,
+        groups=groups,
+        id_like=id_like,
+        repeats=repeats,
+        row_count=None if keep_rows else len(rows),
     )
+
+
+# --------------------------------------------------------------------------- 结构线索（布局 / 分组 / 编号）
+_ID_WORDS = frozenset(
+    {
+        "subject",
+        "sample",
+        "patient",
+        "animal",
+        "mouse",
+        "rat",
+        "participant",
+        "individual",
+        "specimen",
+    }
+)
+_ID_SUFFIX_WORDS = frozenset({"no", "number", "code", "index"})
+_ID_CJK = ("编号", "个体", "受试", "被试", "样本", "动物", "小鼠", "大鼠", "患者", "病人")
+_CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def _id_name(name: str) -> bool:
+    """列名像个体编号：词切分（驼峰与非字母数字处切开、转小写）后——最后一个词是 `id`；或只有一个词且在
+    `_ID_WORDS`（`subject` / `sample` / `patient` / `animal` / `mouse` / `rat` / `participant` / `individual` / `specimen`）；
+    或两个词，前一个在 `_ID_WORDS`、后一个是 `no` / `number` / `code` / `index`；或名字含 `_ID_CJK` 里的中文词。
+    `sample_mean`、`rating`、`valid` 这类**不算**（词边界，不做子串匹配；中文词除外）。"""
+    tokens = [t for t in re.split(r"[^a-z0-9]+", _CAMEL.sub(" ", name).lower()) if t]
+    if tokens and tokens[-1] == "id":
+        return True
+    if len(tokens) == 1 and tokens[0] in _ID_WORDS:
+        return True
+    if len(tokens) == 2 and tokens[0] in _ID_WORDS and tokens[1] in _ID_SUFFIX_WORDS:
+        return True
+    return any(w in name for w in _ID_CJK)
+
+
+def _structure(
+    header: list[str],
+    rows: list[list[str]],
+    per: dict[str, ColumnSummary],
+    levels: dict[str, set[str]],
+) -> tuple[str, dict[str, int], list[str], bool | None]:
+    """`(layout, groups, id_like, repeats)`。全部保守：拿不准就 `unknown` / 空 / None，不猜。定义（一处，下面是实现）：
+
+    * **groups**：列 kind 是 `text`（没有数、不是日期、没有 `nan`）、不同取值（去首尾空白、区分大小写）个数 `k` 满足
+      `2 <= k <= MAX_GROUP_LEVELS`（12），且非空格子数 > `k`（有取值重复出现；全不同的是标签不是分组）。
+      值 = `k`。数字编码的分组（`1 2 3`）与混合列不算——不猜。
+    * **id_like**：`_id_name` 认的列名（线索一）**并且**这一列的非空值至少两种不同取值、整列是文字或全是整数
+      （线索二；日期 / 混合 / 有小数的数不算）。只是线索，不代表真是个体。
+    * **repeats**：没有 id_like 列 → `None`；有 → 任一 id_like 列「非空格子数 > 不同取值数」（某个编号出现在不止一行）为
+      `True`，否则 `False`。
+    * **layout**（按此顺序判，全不满足 = `unknown`）：
+      `matrix` = 至少 3 列、第一列是文字且各行取值互不相同（行标签），其余列全是数、且其余列的表头集合 == 行标签集合
+      （对称，如相关 / 混淆矩阵）；刻意很窄；
+      `long` = 有 groups、没有混合列，且数值列恰有 1 或 2 个（一个值列，可再有一个 x / 时间列）；
+      `wide` = 没有 groups、没有混合列，第一列是数 / 日期 / 互不相同的文字，其余**至少 2 列**全是数（行 = 位置，列 = 系列）。
+      单个 y 的两列表 `x, y`、分组加多个数值列、带备注文字列的表，一律 `unknown`。"""
+    n = len(rows)
+    groups: dict[str, int] = {}
+    for h in header:
+        s = per[h]
+        k = len(levels[h])
+        if s.kind == "text" and s.nan == 0 and 2 <= k <= MAX_GROUP_LEVELS and s.text_count > k:
+            groups[h] = k
+    col_of = {h: i for i, h in enumerate(header)}
+    id_like: list[str] = []
+    repeats: bool | None = None
+    for h in header:
+        s = per[h]
+        if not _id_name(h) or s.kind not in ("text", "numeric") or s.nan:
+            continue
+        vals = [r[col_of[h]].strip() for r in rows]
+        vals = [v for v in vals if v]
+        if s.kind == "numeric" and not all(float(v).is_integer() for v in vals):
+            continue
+        distinct = len(set(vals))
+        if distinct < 2:
+            continue
+        id_like.append(h)
+        repeats = bool(repeats) or len(vals) > distinct
+    kinds = {h: per[h].kind for h in header}
+    numeric = [h for h in header if kinds[h] == "numeric"]
+    layout = "unknown"
+    if "mixed" not in kinds.values():
+        first = header[0]
+        first_labels: set[str] | None = None
+        if kinds[first] == "text" and per[first].nan == 0 and per[first].text_count == n:
+            labs = [r[0].strip() for r in rows]
+            if len(set(labs)) == n:
+                first_labels = set(labs)
+        rest = header[1:]
+        if (
+            first_labels is not None
+            and len(header) >= 3
+            and all(kinds[h] == "numeric" for h in rest)
+            and set(rest) == first_labels
+        ):
+            layout = "matrix"
+        elif groups and len(numeric) in (1, 2):
+            layout = "long"
+        elif (
+            not groups
+            and len(rest) >= 2
+            and all(kinds[h] == "numeric" for h in rest)
+            and (kinds[first] in ("numeric", "date") or first_labels is not None)
+        ):
+            layout = "wide"
+    return layout, groups, id_like, repeats
+
+
+# --------------------------------------------------------------------------- 整文件夹摘要
+#: 一次最多摘要多少张表（XLSX 每个工作表算一张）/ 最多记多少条跳过 / 最多看多少个目录项；超了标 `truncated`，不静默截断
+MAX_PROFILE_TABLES = 20
+MAX_PROFILE_SKIPPED = 50
+PROFILE_SCAN_MAX = 50_000
+
+
+@dataclass(frozen=True)
+class TableEntry:
+    """文件夹里的一张表。`path` 是相对所选文件夹的 POSIX 路径；`summary` 不带行数据（见 `DataSummary`）。"""
+
+    path: str
+    sheet: str | None
+    hidden: bool
+    summary: DataSummary
+
+    def to_dict(self) -> dict:
+        return {"path": self.path, "hidden": self.hidden, **self.summary.to_dict()}
+
+
+@dataclass(frozen=True)
+class SkippedEntry:
+    """读不了的文件（或 XLSX 里读不了的一张表）：`code` 是 `ERROR_CODES` 里的稳定码。"""
+
+    path: str
+    sheet: str | None
+    code: str
+
+    def to_dict(self) -> dict:
+        return {"path": self.path, "sheet": self.sheet, "code": self.code}
+
+
+@dataclass(frozen=True)
+class FolderProfile:
+    """`truncated_reason`：`tables`（表超过 `MAX_PROFILE_TABLES`）/ `skipped`（跳过项超过 `MAX_PROFILE_SKIPPED`）/
+    `scan`（目录项超过 `PROFILE_SCAN_MAX`，没看完）；多个同时成立时取先发生的那个（`scan` 只在没有别的原因时才记）。"""
+
+    tables: tuple[TableEntry, ...]
+    skipped: tuple[SkippedEntry, ...]
+    truncated: bool
+    truncated_reason: str | None
+
+    def to_dict(self) -> dict:
+        return {
+            "tables": [t.to_dict() for t in self.tables],
+            "skipped": [k.to_dict() for k in self.skipped],
+            "truncated": self.truncated,
+            "truncated_reason": self.truncated_reason,
+        }
+
+
+def profile_folder(root: str | Path) -> FolderProfile:
+    """一个文件夹里全部表（`.csv` / `.tsv` / `.tab` / `.xlsx`，后缀大小写不敏感）的受控摘要。
+
+    遍历规则就是 `discover.walk_files`（与 `/api/ai/data-files` 同一份：隐藏 / `PRUNE_DIRS` 剪枝、不跟随链接）；按相对
+    POSIX 路径排序，XLSX 内按工作簿里的表顺序（隐藏表也列，`hidden=True`）。`.xls` / `.xlsm` / `.xlsb` 进 `skipped`
+    （`data_excel_unsupported`）；Excel 的锁文件 `~$*` 不是数据，不列。单个文件 / 工作表读不了只进 `skipped`
+    （相对路径 + 稳定码），不让整个文件夹失败。不执行、不写任何东西；`root` 不是目录 → `data_not_found`。"""
+    from . import discover
+
+    base = Path(root)
+    if not base.is_dir():
+        raise DataSourceError("data_not_found")
+    found, scan_truncated = discover.walk_files(
+        base, TABLE_SUFFIXES + LEGACY_EXCEL_SUFFIXES, scan_max=PROFILE_SCAN_MAX
+    )
+    found = sorted(f for f in found if not Path(f[0]).name.startswith("~$"))
+    tables: list[TableEntry] = []
+    skipped: list[SkippedEntry] = []
+    reason: str | None = None
+
+    def skip(rel: str, sheet: str | None, code: str) -> bool:
+        """记一条跳过；记满了返回 False（调用方停）。"""
+        nonlocal reason
+        if len(skipped) >= MAX_PROFILE_SKIPPED:
+            reason = reason or "skipped"
+            return False
+        skipped.append(SkippedEntry(rel, sheet, code))
+        return True
+
+    for rel, _size in found:
+        if len(tables) >= MAX_PROFILE_TABLES:
+            reason = "tables"
+            break
+        p = base / rel
+        suffix = p.suffix.lower()
+        if suffix in LEGACY_EXCEL_SUFFIXES:
+            if not skip(rel, None, "data_excel_unsupported"):
+                break
+            continue
+        if suffix in XLSX_SUFFIXES:
+            try:
+                book = xlsxread.XlsxBook(p)
+            except xlsxread.XlsxError as exc:
+                if not skip(rel, None, exc.code):
+                    break
+                continue
+            except Exception:  # noqa: BLE001 - 单个文件的任何意外都不该拖垮整个文件夹
+                if not skip(rel, None, "data_unreadable"):
+                    break
+                continue
+            with book:
+                for info in book.sheets:
+                    if len(tables) >= MAX_PROFILE_TABLES:
+                        reason = "tables"
+                        break
+                    try:
+                        summ = _summarize_book(book, info.index, keep_rows=False)
+                    except (DataSourceError, xlsxread.XlsxError) as exc:
+                        if not skip(rel, info.name, exc.code):
+                            break
+                        continue
+                    except Exception:  # noqa: BLE001
+                        if not skip(rel, info.name, "data_unreadable"):
+                            break
+                        continue
+                    tables.append(TableEntry(rel, info.name, info.hidden, summ))
+            if reason:
+                break
+            continue
+        try:
+            table, sha, size = _read_delimited(p, "\t" if suffix in TSV_SUFFIXES else ",")
+            summ = _summarize(table, path_name=p.name, sha256=sha, size=size, keep_rows=False)
+        except DataSourceError as exc:
+            if not skip(rel, None, exc.code):
+                break
+            continue
+        except Exception:  # noqa: BLE001
+            if not skip(rel, None, "data_unreadable"):
+                break
+            continue
+        tables.append(TableEntry(rel, None, False, summ))
+    if reason is None and scan_truncated:
+        reason = "scan"
+    return FolderProfile(tuple(tables), tuple(skipped), reason is not None, reason)
 
 
 # --------------------------------------------------------------------------- 列映射

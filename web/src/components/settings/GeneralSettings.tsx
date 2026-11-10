@@ -207,6 +207,7 @@ function CanvasGroup() {
  */
 function Learning({ close }: { close: () => void }) {
   const status = useOnboardingStore((s) => s.status)
+  const hintsOff = useOnboardingStore((s) => s.hintsOff)
   // 副本可能在磁盘上却不在最近列表里：设置页打开才问一次
   useEffect(() => {
     ensureTutorialStatus()
@@ -261,6 +262,14 @@ function Learning({ close }: { close: () => void }) {
               {st('tutorial.resetHints')}
             </MenuItem>
           </Menu>
+        </SettingRow>
+        <SettingRow label={st('tutorial.hints')} controlId="setting-hints" data-settings-anchor="general.hints">
+          <Toggle
+            aria-labelledby={settingRowLabelId('setting-hints')}
+            id="setting-hints"
+            checked={!hintsOff}
+            onChange={(v) => useOnboardingStore.getState().setHintsOff(!v)}
+          />
         </SettingRow>
         <SettingRow label={st('shortcuts.label')} data-settings-anchor="general.shortcuts">
           {/* 「按 ? 随时打开」原本是一段帮助文字。键位本身就是最短的说法——画成键帽

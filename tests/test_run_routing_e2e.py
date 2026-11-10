@@ -67,6 +67,7 @@ tmp, final = here / "cache.tmp", here / "cache.csv"
 tmp.write_text("2")
 os.replace(tmp, final)
 value = int(final.read_text())
+os.stat(final)  # 暂存覆盖层（#1813）够不着 stat：safe 仍被拦
 """
     + FIG
 )

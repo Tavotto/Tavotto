@@ -123,6 +123,20 @@ describe('onboarding 摘要', () => {
       hint_seen_keys: [],
     })
   })
+
+  it('动画卡提示（ADR 0177）：出过至少一次的算看过；只学会、没出过的不算；时间与次数不出包', () => {
+    useOnboardingStore.setState({
+      ...ONBOARDING_DEFAULTS,
+      hintSeen: { multi_select: 1_760_000_000_002 },
+      hintStats: {
+        edge_crop: { shows: 2, lastAt: 1_760_000_000_003, done: true },
+        fit_canvas: { shows: 0, lastAt: 0, done: true },
+      },
+    })
+    const snap = buildFrontendDiagnosticSnapshot()
+    expect(snap.onboarding.hint_seen_keys).toEqual(['multi_select', 'edge_crop'])
+    expect(JSON.stringify(snap)).not.toContain('1760000000')
+  })
 })
 
 describe('frontend state snapshot', () => {

@@ -47,3 +47,18 @@ describe('engineErrorMsg 带结构化 params', () => {
     expect(text).not.toContain('{{')
   })
 })
+
+describe('进程级失败不再把内部原话直出（SIGKILL / 退出码 / request_id）', () => {
+  const raw = '渲染进程退出了：被信号 SIGKILL 结束（0xC0000005）。request_id=r-123'
+  it.each(['session_dead', 'protocol_mismatch', 'workerd_dead', 'workerd_unavailable', 'non_finite_response', 'preview_poisoned'])(
+    '%s：说一句人话，技术原文留在 EngineError.message / traceback 里',
+    (code) => {
+      const err = new EngineError(raw, 'tail line', code)
+      const text = formatMessage(engineErrorMsg(err))
+      expect(text).not.toMatch(/SIGKILL|0xC0000005|request_id|\{\{|^backend\./)
+      expect(text.length).toBeGreaterThan(8)
+      expect(err.message).toBe(raw)
+      expect(err.traceback).toBe('tail line')
+    },
+  )
+})

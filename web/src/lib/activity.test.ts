@@ -34,6 +34,8 @@ const SAMPLES: Record<ActivityKind, ActivityDetail> = {
   'figure.added_to_layout': { kind: 'figure.added_to_layout', outcome: 'added' },
   'menu.opened': { kind: 'menu.opened', menu: 'panel' },
   'document.saved': { kind: 'document.saved' },
+  'view.fitted': { kind: 'view.fitted' },
+  'panel.edge_dragged': { kind: 'panel.edge_dragged', outcome: 'resized' },
 }
 
 describe('kind 闭集', () => {

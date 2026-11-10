@@ -33,7 +33,7 @@ function union(rects: DOMRect[]): Box | undefined {
  * 水平相交时按序挑一个**整张都在窗口里**的位置：① 准备卡上方 8px（上面放得下这张卡的实测高度）；
  * ② 准备卡左侧 8px、贴底（左边放得下卡宽）；③ 都放不下（窗口太小）就留在默认位置——宁可叠，也不把卡推出窗口。
  */
-function usePrepCardClearance(active: boolean, self: RefObject<HTMLElement | null>): Clearance {
+export function usePrepCardClearance(active: boolean, self: RefObject<HTMLElement | null>): Clearance {
   const [clearance, setClearance] = useState<Clearance>(null)
   useEffect(() => {
     if (!active || typeof document === 'undefined') {
