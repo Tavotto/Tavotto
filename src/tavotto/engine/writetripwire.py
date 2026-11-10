@@ -1404,11 +1404,10 @@ def install_overlay(project: str, directory: str, *, on_handled=None, suspended=
 
 
 def discard_overlay(directory: str) -> None:
-    """丢弃覆盖层的暂存区（每次运行开始前、结束后各一次）；目录本来就不在是正常的。"""
-    try:
-        shutil.rmtree(directory)
-    except FileNotFoundError:
-        pass
+    """丢弃覆盖层的暂存区（每次运行开始前、结束后各一次）；目录本来就不在是正常的。**永不抛**：Windows 上脚本还开着
+    暂存文件的句柄（全局 `f = p.open()`）时删不掉，那只是磁盘上多留一会儿——它在运行结束的 `finally` 里，抛出来会顶掉
+    脚本真实的结局。每次运行用自己的新目录（worker 按运行取名），删不掉的旧目录读不进下一次运行，下次开跑前再清。"""
+    shutil.rmtree(directory, ignore_errors=True)
 
 
 def disable_overlay() -> None:

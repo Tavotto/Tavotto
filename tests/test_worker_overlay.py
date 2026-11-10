@@ -558,3 +558,42 @@ def test_a_linked_input_and_an_overlay_intermediate_work_together(world, tmp_pat
     seen, _ = _ok(world, body)
     assert seen == {"data": 7, "value": 14}
     assert (root / "cache.csv").read_text() == "1"
+
+
+@needs_worker
+def test_a_reader_left_open_by_the_script_does_not_turn_success_into_an_error(world):
+    """脚本写了暂存文件、又把读句柄留在全局里（Windows 上删不掉暂存区）：运行照样成功，结局不被清理顶掉；
+    同一个 worker 再跑一次也读不到上一次的暂存（每次运行一个新目录）。#1824 Codex P2"""
+    root, out = world
+    body = (
+        "p = here / 'cache.csv'\n"
+        "before = p.read_text()\n"
+        "p.write_text('2')\n"
+        "f = p.open()\n"
+        "value = f.read()\n"
+        "note(before=before, value=value)\n"
+    )
+    (root / "script.py").write_text(HDR.format(out=str(out)) + body, encoding="utf-8")
+    workdir.set_mode(root, workdir.MODE_SANDBOX)
+    for _ in range(2):
+        engine_pool.build("script.py", str(root), "__main__")
+        assert json.loads(out.read_text()) == {"before": "1", "value": "2"}
+        assert (root / "cache.csv").read_text() == "1"
+
+
+def test_overlay_renames_past_the_event_cap_still_do_not_explain_a_missing_source(tmp_path):
+    """账本满 `MAX_EVENTS` 之后的覆盖层改名进溢出账也带着覆盖层标记：源被覆盖层真实移走后的「文件不存在」
+    不是守卫造成的，第 1 次与第 201 次同一种改名判法一致；守卫跳过的改名溢出后照旧认。#1824 Codex P2"""
+    cap = figcapture.BlockedFileOps.MAX_EVENTS
+    srcs = [tmp_path / f"s{i}.csv" for i in range(cap + 1)]
+    for overlay in (True, False):
+        ledger = figcapture.BlockedFileOps()
+        for i, src in enumerate(srcs):
+            dest = tmp_path / f"d{i}.csv"
+            ledger.blocked(
+                "os.replace", ledger.KIND_RENAME, src, dest, dests=(dest,), overlay=overlay
+            )
+        assert len(ledger._events) == cap and ledger._spill
+        for src in (srcs[0], srcs[-1]):
+            exc = FileNotFoundError(2, "No such file", str(src))
+            assert ledger.explains(exc) is (not overlay), (overlay, src)

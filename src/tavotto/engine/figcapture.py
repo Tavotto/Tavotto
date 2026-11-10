@@ -4749,7 +4749,7 @@ class BlockedFileOps:
 
     def __init__(self) -> None:
         self._events: list[dict] = []
-        self._spill: dict[tuple[str, str], dict] = {}
+        self._spill: dict[tuple[str, str, bool], dict] = {}
         self._active = True
         #: `_busy`（引擎自己在记账 / 自检）与 `_check_depth`（正在进行的探路调用）是**逐线程**的状态：
         #: 钩子是进程全局的，别的线程（脚本自己的线程、测试遗留的后台轮询）同时跑 `os.path.exists`
@@ -4862,7 +4862,7 @@ class BlockedFileOps:
                     r for r in self._rewritten if not any(self._covers(p, r) for p in affected)
                 }
             if len(self._events) >= self.MAX_EVENTS:
-                self._spill_paths(op, kind, affected, dest_set)
+                self._spill_paths(op, kind, affected, dest_set, overlay=overlay)
                 return
             self._events.append(
                 {
@@ -4893,12 +4893,20 @@ class BlockedFileOps:
         self._signals[key] = min(self._signals.get(key, 0) + 1, self.MAX_COUNT)
 
     def _spill_paths(
-        self, op: str, kind: str, affected: list[str], dest_set: frozenset | set = frozenset()
+        self,
+        op: str,
+        kind: str,
+        affected: list[str],
+        dest_set: frozenset | set = frozenset(),
+        *,
+        overlay: bool = False,
     ) -> None:
-        """超过 `MAX_EVENTS` 的操作不丢：影响的路径并进该 (op, kind) 的溢出集合，终局仍能判回读。"""
-        ev = self._spill.get((op, kind))
+        """超过 `MAX_EVENTS` 的操作不丢：影响的路径并进该 (op, kind) 的溢出集合，终局仍能判回读。
+        覆盖层接住的与守卫跳过的分开记（`overlay` 标记跟着走，`explains` 才不会把溢出账里覆盖层的改名当成被跳过的，#1824 Codex P2）。"""
+        key = (op, kind, overlay)
+        ev = self._spill.get(key)
         if ev is None:
-            ev = self._spill[(op, kind)] = {
+            ev = self._spill[key] = {
                 "op": op,
                 "kind": kind,
                 "paths": set(),
@@ -4906,6 +4914,7 @@ class BlockedFileOps:
                 "observed": False,
                 "lost": False,
                 "coarse": False,
+                **({"overlay": True} if overlay else {}),
             }
         if ev["lost"]:
             return

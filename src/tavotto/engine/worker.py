@@ -1928,9 +1928,12 @@ class Worker(wireproto.V1Handler):
             self._install_write_tripwire()
         # 暂存覆盖层（#1813）：装在账本与绊线之后（最外层）——先把脚本对项目内文件的写 / 改名 / 删除与读回换进本次运行的
         # 暂存区，账本看到的才不是项目里那条路径。覆盖层接不了的操作仍落到上面的守卫（跳过并记账）。
-        overlay_dir = self.out_dir.parent / "overlay"
+        overlay_root = self.out_dir.parent / "overlay"
+        # 每次运行一个新目录：上一次还被脚本句柄占着、没删掉的暂存文件不会被这一次读到（Windows，#1824 Codex P2）
+        overlay_dir = overlay_root / f"run-{os.getpid()}-{time.monotonic_ns()}"
         use_overlay = self._overlay_wanted()
         if use_overlay:
+            writetripwire.discard_overlay(str(overlay_root))  # 清掉之前留下的（句柄已关的那些）
 
             def _overlay_handled(op, kind, paths, dests):
                 print(f"[overlay] 暂存层接住 {op}: {paths[0] if paths else ''}", file=sys.stderr)
@@ -2140,7 +2143,9 @@ class Worker(wireproto.V1Handler):
                 if use_overlay:
                     # 覆盖层只活在脚本运行期间：之后引擎自己的读写看到的是真实的项目；暂存区丢弃
                     writetripwire.arm_overlay(False)
-                    writetripwire.discard_overlay(str(overlay_dir))
+                    writetripwire.discard_overlay(
+                        str(overlay_root)
+                    )  # 尽力而为、永不抛：句柄还开着就留到下次开跑前
                 if self.write_roots is not None:
                     writetripwire.arm(False)
                     # 脚本 `except PermissionError` 吞掉、或以别的错误收场，事实都在：越界的写**尝试**发生过，
