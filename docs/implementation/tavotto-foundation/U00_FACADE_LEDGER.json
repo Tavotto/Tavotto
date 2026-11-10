@@ -949,8 +949,8 @@
       "callers": [
         {
           "file": "src/tavotto/app.py",
-          "symbol": "scan_panels",
-          "role": "/api/panels：素材原始尺寸 → originalspec.asset_spec（native_*_mm 与 original_spec 同一次计算）"
+          "symbol": "_asset_probe",
+          "role": "/api/panels（scan_panels 经它）与素材导入的落盘前验证（ADR 0176）共用的探针：素材原始尺寸 → originalspec.asset_spec（native_*_mm 与 original_spec 同一次计算）"
         },
         {
           "file": "src/tavotto/app.py",
