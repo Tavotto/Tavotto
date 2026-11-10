@@ -23,6 +23,9 @@ SCRIPT = (
     "tmp, final = root / (name + '.tmp'), root / (name + '.csv')\n"
     "tmp.write_text(str(data))\n"
     "os.replace(tmp, final)\n"
+    # 覆盖层（#1813 方案 A）兜得住写 / 改名 / 读回；对覆盖层路径的元数据探测仍回退 native（防 C 层读旧值），
+    # 这里用它造出「A 不行、落到 C」的那条路
+    "os.path.getsize(final)\n"
     "value = int(final.read_text())\n"
     "plt.plot([0, data], [0, value])\n"
 )

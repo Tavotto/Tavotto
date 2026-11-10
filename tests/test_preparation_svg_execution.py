@@ -30,7 +30,9 @@ def test_native_preexecution_failure_preserves_safe_fact_in_polled_report(projec
         "from pathlib import Path\ndef main():\n"
         '    p = Path(__file__).parent / "blocked.txt"\n'
         '    p.write_text("2")\n'
-        "    p.read_text()\n",
+        "    p.read_text()\n"
+        "    import os\n"
+        "    os.stat(p)  # 暂存覆盖层（#1813）够不着 stat：safe 仍 blocked\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(m, "_desktop_initiated", lambda: True)

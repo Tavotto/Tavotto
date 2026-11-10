@@ -6005,13 +6005,16 @@ export default interface Resources {
       "notWrittenBack": "留白只在 Tavotto 导出时生效，不写回脚本"
     },
     "hints": {
+      "edge_crop": "拖边改图幅，按住 {{alt}} 改为裁剪",
       "fast_edit_entered": "你的改动会保存到当前排版，原始文件不动。",
+      "fit_canvas": "双击空白处，画布回到正中",
       "layout_page_bounds": "白色纸面就是导出的 Figure 尺寸；单栏、双栏宽度按当前规范，可在右侧「画布」页调整。",
       "multi_select": "用选区旁的浮动栏对齐和分布。",
       "pageBoundsOpen": "打开画布页",
       "panel_editable": "双击进入图内编辑。",
       "panel_layout_only": "这张图可在版面上摆放；连接源脚本后能改图里的内容。",
-      "problem_found": "左侧「问题」可定位对象和属性字段。"
+      "problem_found": "左侧「问题」可定位对象和属性字段。",
+      "ruler_guides": "从标尺拖出对齐线"
     },
     "history": {
       "addArrow": "添加箭头",

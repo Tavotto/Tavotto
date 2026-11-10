@@ -77,8 +77,8 @@ CASES = [
         value = int(final.read_text())
         """,
         False,
-        "safe",  # 伤害闸门（ADR 0133）：含 os.replace 的脚本不直达 native；真 safe worker 仍拦下，由 0127 静默回退接手
-        True,
+        "safe",  # 伤害闸门（ADR 0133）：含 os.replace 的脚本不直达 native；#1813 之后真 safe worker 经暂存覆盖层直接成功
+        False,
     ),
     (
         "replace_relative_in_project_mode",
@@ -89,7 +89,35 @@ CASES = [
         value = int(open("cache.csv").read())
         """,
         True,
-        "safe",  # 伤害闸门（ADR 0133）：含 os.replace 的脚本不直达 native；真 safe worker 仍拦下，由 0127 静默回退接手
+        "safe",  # 伤害闸门（ADR 0133）：含 os.replace 的脚本不直达 native；#1813 之后真 safe worker 经暂存覆盖层直接成功
+        False,
+    ),
+    (
+        "replace_then_stat_in_sandbox_mode",
+        """
+        from pathlib import Path
+        here = Path(__file__).resolve().parent
+        tmp, final = here / "cache.tmp", here / "cache.csv"
+        tmp.write_text("2")
+        os.replace(tmp, final)
+        value = int(final.read_text())
+        os.stat(final)
+        """,
+        False,
+        "safe",  # 覆盖层够不着 stat：仍被拦，由 0127 静默回退接手
+        True,
+    ),
+    (
+        "replace_then_stat_in_project_mode",
+        """
+        with open("cache.tmp", "w") as f:
+            f.write("2")
+        os.replace("cache.tmp", "cache.csv")
+        value = int(open("cache.csv").read())
+        os.stat("cache.csv")
+        """,
+        True,
+        "safe",
         True,
     ),
     (

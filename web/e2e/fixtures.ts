@@ -243,7 +243,22 @@ export function writeRuntimeNamedProject(dir: string): void {
  */
 export const ONBOARDING_FLOW_VERSION = 4
 
-const WELCOME_SEEN = JSON.stringify({ schemaVersion: 1, flowVersion: ONBOARDING_FLOW_VERSION, status: 'not_started', welcomeSeenAt: 1 })
+/**
+ * 动画卡提示（ADR 0177）的种类，必须等于 `web/src/lib/onboarding/hints.ts` 的 `CARD_HINTS`
+ * （`src/lib/onboarding/e2eFlowVersion.test.ts` 看护两者相等）。默认状态把它们都记成「学会了」：
+ * 卡片是窗口右下角的一张浮卡，拖边 / 平移 / 挪对象的用例会把它招出来、盖住右下角的东西。
+ * 要测卡片的用例自己摆状态（`hint-cards.spec.ts`）。
+ */
+export const CARD_HINTS = ['fit_canvas', 'edge_crop', 'ruler_guides'] as const
+const CARDS_LEARNED = Object.fromEntries(CARD_HINTS.map((k) => [k, { shows: 0, lastAt: 0, done: true }]))
+
+const WELCOME_SEEN = JSON.stringify({
+  schemaVersion: 1,
+  flowVersion: ONBOARDING_FLOW_VERSION,
+  status: 'not_started',
+  welcomeSeenAt: 1,
+  hintStats: CARDS_LEARNED,
+})
 
 /** 每个用例自带一个干净实例；用例里按需 `await app()` 拿到它。 */
 export const test = base.extend<{ app: (o?: AppOptions) => Promise<RunningApp>; firstRunWelcome: boolean }>({

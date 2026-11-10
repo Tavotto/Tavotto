@@ -71,7 +71,7 @@ describe('activityToTelemetry（纯函数）', () => {
     expect(activityToTelemetry({ kind: 'selection.grouped', count: 2 }, false)).toBeNull()
   })
 
-  it('其余十五种 kind 一条都不映射——activity bus 不是遥测的转发器', () => {
+  it('其余各种 kind 一条都不映射——activity bus 不是遥测的转发器', () => {
     const others = ACTIVITY_KINDS.filter(
       (k) => !['selection.aligned', 'selection.grouped', 'selection.ungrouped'].includes(k),
     )

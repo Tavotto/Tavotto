@@ -1032,6 +1032,9 @@
     "multi_select": "Use the floating bar by the selection to align and distribute.",
     "problem_found": "“Problems” on the left locates the object and its property field.",
     "layout_page_bounds": "The white page is the size of the exported figure. Single- and double-column widths follow the current spec; adjust them on the Canvas tab on the right.",
+    "fit_canvas": "Double-click empty space to recenter",
+    "edge_crop": "Drag an edge to resize; hold {{alt}} to crop",
+    "ruler_guides": "Drag a guide out of the ruler",
     "pageBoundsOpen": "Open Canvas tab"
   },
   "prep": {

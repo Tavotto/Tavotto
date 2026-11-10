@@ -6,6 +6,17 @@
       "agent": "claude",
       "models": [
         {
+          "prefix": "claude-fable-5-2",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "default": "high"
+        },
+        {
           "prefix": "claude-fable-5-1",
           "efforts": [
             "low",
@@ -157,7 +168,7 @@
           "default": "medium"
         }
       ],
-      "source": "https://platform.claude.com/docs/en/build-with-claude/effort ; https://platform.claude.com/docs/en/about-claude/models/overview（2026-10-25 核对：xhigh 只有 5 系列 / opus-4-7 / opus-4-8；opus-4-6、sonnet-4-6、mythos-preview 到 max；Haiku 4.5 及更早不支持；claude-opus-4-5 只配合 budget_tokens 的 extended thinking，runner 不支持，故不给）"
+      "source": "https://platform.claude.com/docs/en/build-with-claude/effort ; https://platform.claude.com/docs/en/about-claude/models/overview（2026-10-25 核对，2026-11-10 补 fable-5-2：五档、默认 high；xhigh 只有 5 系列 / opus-4-7 / opus-4-8；opus-4-6、sonnet-4-6、mythos-preview 到 max；Haiku 4.5 及更早不支持；claude-opus-4-5 只配合 budget_tokens 的 extended thinking，runner 不支持，故不给）"
     },
     {
       "origin": "https://api.openai.com",
@@ -414,7 +425,7 @@
         "claude-sonnet-5-5",
         "claude-opus-5-5",
         "claude-haiku-5-5",
-        "claude-fable-5-1"
+        "claude-fable-5-2"
       ],
       "source": "https://docs.claude.com/en/api/overview",
       "oauth": null,

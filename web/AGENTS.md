@@ -54,7 +54,7 @@
 | `canvas/context-bar/`、`actions.beginCrop`、`store/arrangeStore`、`arrangeButtons.ts` | 多选浮动栏与共享排列参照 → `multi-selection-context-bar.md` | 进裁剪一律 `beginCrop`；浮动栏只发意图；参照只有 `arrangeStore` |
 | `canvas/ObjectContextMenu.tsx`、`QuickEdit.tsx`、`quickEditStore`、`rebuildPanel`、`SyncOverridesDialog` / `syncOverridesStore`、写回窗口的「写回记录」页 `WriteBackRecords` | 画布对象的右键菜单 → `object-context-menu.md` | 五份清单只发意图；「更改为」的判据在 `lib/shapeSwitch.ts`；同步并写回只走标准 `WriteBackDialog` |
 | `SettingsDialog`、`settings/*`、`store/packageStore.ts`、`store/updateStore.ts`、遥测同意控件 | 设置外壳与包管理 → `settings-shell-and-packages.md` | 外壳尺寸是合同；`run` 只在 `PackagesSettings` 里被调；查找只在点「在 PyPI 查找」时出网 |
-| `lib/activity.ts`、`store/onboardingStore.ts`、`lib/onboarding/*`、`data-*` 锚点、活动区 | 交互式 Onboarding 与本地活动信号 → `onboarding-and-activity.md` | 活动信号闭集；step id 是持久化格式；`[role=status]` 绝不当选择器 |
+| `lib/activity.ts`、`store/onboardingStore.ts`、`lib/onboarding/*`、`components/hints/*`、`vendor/stageshow`、`data-*` 锚点、活动区 | 交互式 Onboarding 与本地活动信号 → `onboarding-and-activity.md` | 活动信号闭集；step id 是持久化格式；`[role=status]` 绝不当选择器；动画卡的动作必须和真行为一致 |
 | `store/liveSync.ts`、`useServerEvents`、`lib/activityTelemetry.ts`、命令面板 id | Codex / AI 刷新、入口整合与遥测映射 → `ai-refresh-and-telemetry-mapping.md` | 刷新入口只有 `refreshProjectNow()`；活动 → 遥测映射只在一处 |
 | `web/src/diagnostics/`、`data-display-key`、`settings/DiagnosticsSendDialog.tsx`、`store/diagSendStore.ts`、`components/contact/*`、`store/contactStore.ts` | 前端诊断：状态快照与交互轨迹 → `frontend-diagnostics.md` | 只观察不当真源、吞异常；不记 mousemove；诊断与联系作者只在用户点「发送」时发出、失败只给复制 |
 | `web/src/perf/`、`PerfProbeHud`、`interactionStore.begin/end`、热路径上的 `perfSpan` / `perfInput` / `perfCount` | 拖动性能探针 → `perf-probe.md` | 热路径只 import `perf/core.ts`、没录制时零成本；自动测试绝不改文档 |
