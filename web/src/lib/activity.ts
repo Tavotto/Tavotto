@@ -82,6 +82,17 @@ export type ActivityDetail =
   | { kind: 'object.nudged' }
   /** 标注被拖着转了一次并松手成功：`near` = 停在离 15° 档位不到 3° 但没对上；`snapped` = 按着 ⇧ 按档转的 */
   | { kind: 'object.rotated'; near: boolean; snapped: boolean }
+  /**
+   * 用绘制工具拖出了一个形状 / 一条线（`startDraw` 松手落对象时一处发；点一下落默认尺寸的不发，文字工具不发）。
+   * `near` = 没按 ⇧ 却画得差一点就是正方 / 正圆、或差一点就是水平 / 竖直；`snapped` = 按着 ⇧ 画的。
+   */
+  | { kind: 'shape.drawn'; near: boolean; snapped: boolean }
+  /** 按住画布拖着平移了一次（空格 + 拖 / 中键拖，`startPan` 一处发） */
+  | { kind: 'view.drag_panned' }
+  /** 放大着的时候连着用鼠标滚轮一格一格地挪画布（`CanvasStage` 的滚轮监听自己数，够数才发一声） */
+  | { kind: 'view.wheel_struggled' }
+  /** 双击图里的文字，打开了快速改字（`PanelView` 双击一处发） */
+  | { kind: 'figure.text_quick_edit' }
 
 export type ActivityKind = ActivityDetail['kind']
 
@@ -114,6 +125,10 @@ export const ACTIVITY_KINDS: readonly ActivityKind[] = [
   'object.dragged',
   'object.nudged',
   'object.rotated',
+  'shape.drawn',
+  'view.drag_panned',
+  'view.wheel_struggled',
+  'figure.text_quick_edit',
 ]
 
 /**

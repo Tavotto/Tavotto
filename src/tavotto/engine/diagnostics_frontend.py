@@ -590,6 +590,11 @@ _CLOSED_LISTS: dict[str, frozenset[str]] = {
             "no_snap",
             "arrow_nudge",
             "shift_rotate",
+            "dblclick_text",
+            "shift_draw",
+            "space_pan",
+            "shift_multi",
+            "shortcut_help",
         }
     ),
 }

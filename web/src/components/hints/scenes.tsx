@@ -7,6 +7,11 @@
  *   - axis：拖对象时按住 ⇧ 只沿位移较大的那个方向走（`startMoveDrag` 的 `axisLock`）；
  *   - snap：拖对象靠近别的对象的边会吸上去，按住 ⌘ / Ctrl 这一下不吸（`startMoveDrag` 的 `metaKey || ctrlKey`）；
  *   - nudge：方向键一步 0.5 mm、⇧ 一步 5 mm（`canvas/nudge.ts` 的 `NUDGE_STEP_MM`）；
+ *   - text：双击图里带文字内容的元素 = 快速改字，弹层贴着光标、内容输入框已聚焦（`PanelView` 双击 → `openQuickEdit({ focusText })`）；
+ *   - draw：矩形 / 椭圆工具拖的时候按住 ⇧ 锁成正方形 / 正圆，锚在起点（`startDraw`）；
+ *   - pan：按住空格，指针变成手，拖动平移画布（`CanvasStage` 的 `spaceDown` → `startPan`）；
+ *   - multi：图内 ⇧ 点击加选（`PanelView.onPrimaryDown` 的 `toggleSelectedGid`），属性改动落到选中的每一个；右栏只示意成一角；
+ *   - help：按 ? 打开快捷键帮助（`useKeyboard` → `ShortcutHelp`），表里的键位只是示意，不是全表；
  *   - rotate：拖标注上方的旋转柄，按住 ⇧ 按 15° 一档（`canvas/rotateDrag.ts` 的 `ROTATE_SNAP_STEP`）；真画布转的时候没有角度读数，这里也不画。
  * 胶囊里的字用真画布同一条译文（`workspace:contextBar.*`），键帽按平台（`ALT` / `MOD`）。
  * 舞台、光标、拖拽来自 vendor/stageshow（MIT）；本文件整块按需加载（`HintCard` 里 `lazy`）。
@@ -669,6 +674,345 @@ function RotateScene({ theme, play, onLoop }: SceneProps) {
   )
 }
 
+/* ───────── 8. 双击图里的文字直接改 ───────── */
+
+type TextS = { open: boolean; typed: string; hide: boolean }
+const TEXT0: TextS = { open: false, typed: '', hide: false }
+/** 示意图的标题：样本图里的内容（像用户脚本里写的那样是英文），不是界面文案 */
+const SAMPLE_TITLE = 'Kinetics'
+
+const textScript = async (a: Act<TextS>) => {
+  await a.wait(600)
+  await a.click('title', { double: true })
+  await a.set({ open: true })
+  await a.wait(700)
+  await a.type('typed', ' (a)', { interval: 110 })
+  await a.wait(2100)
+  await a.move(REST)
+  await fadeReset(a, TEXT0)
+}
+
+function TextScene({ theme, play, onLoop }: SceneProps) {
+  return (
+    <Stage<TextS>
+      specimen
+      unframed
+      width={W}
+      height={H}
+      theme={theme}
+      play={play}
+      className="hint-stage"
+      initial={TEXT0}
+      poster={{ ...TEXT0, open: true, typed: ' (a)' }}
+      script={looped(textScript, onLoop)}
+      cursor={{ at: REST, idle: false, ripple: true }}
+    >
+      {(s) => (
+        <div className="hint-work">
+          <div className="hint-fade" data-hide={s.hide || undefined}>
+            <div className="hint-page" style={{ left: 70, top: 14, width: 180, height: 152 }}>
+              <span className="hint-title">
+                <span data-target="title" data-picked={s.open || undefined}>
+                  {SAMPLE_TITLE}
+                </span>
+              </span>
+              <div style={{ position: 'absolute', left: 22, top: 34 }}>
+                <MiniPlot w={136} h={108} tag="" t={1} />
+              </div>
+            </div>
+            {/* 快速改字：贴着光标出来的小弹层，内容输入框已聚焦 */}
+            <div className="hint-quick" data-show={s.open || undefined} style={{ left: 148, top: 46 }}>
+              <span className="hint-quick__field">
+                {SAMPLE_TITLE}
+                {s.typed}
+                <i className="hint-caret" />
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+    </Stage>
+  )
+}
+
+/* ───────── 9. 按住 ⇧ 画正方形 ───────── */
+
+type DrawS = { w: number; h: number; drawing: boolean; ease: boolean; keys: string[] | null; down: boolean; hide: boolean }
+const DRAW0: DrawS = { w: 0, h: 0, drawing: false, ease: false, keys: null, down: false, hide: false }
+const DRAW_AT = { x: 116, y: 50 }
+const DRAW_GO = { x: 76, y: 62 }
+
+const drawScript = async (a: Act<DrawS>) => {
+  await a.wait(500)
+  const pull = async (square: boolean) => {
+    await a.move(DRAW_AT)
+    await a.set({ drawing: true, ease: false })
+    await a.drag(
+      { x: DRAW_AT.x + DRAW_GO.x, y: DRAW_AT.y + DRAW_GO.y },
+      (p, o) => {
+        const w = Math.max(0, Math.round(p.x - o.x))
+        const h = Math.max(0, Math.round(p.y - o.y))
+        const side = Math.max(w, h)
+        a.put(square ? { w: side, h: side } : { w, h })
+      },
+      { duration: 900, cursor: 'preserve' },
+    )
+    await a.set({ drawing: false })
+  }
+  // 不按键：想画正方形，画成了长方形
+  await pull(false)
+  await a.wait(900)
+  await a.set({ keys: [MOD, 'Z'], down: true })
+  await a.wait(160)
+  await a.set({ w: 0, h: 0, down: false })
+  await a.wait(450)
+  await a.set({ keys: null })
+  await a.wait(250)
+  // 按住 ⇧：锁成正方形
+  await a.set({ keys: ['⇧'], down: true })
+  await a.wait(350)
+  await pull(true)
+  await a.wait(1900)
+  await a.set({ keys: null })
+  await a.move(REST)
+  await fadeReset(a, DRAW0)
+}
+
+function DrawScene({ theme, play, onLoop }: SceneProps) {
+  return (
+    <Stage<DrawS>
+      specimen
+      unframed
+      width={W}
+      height={H}
+      theme={theme}
+      play={play}
+      className="hint-stage"
+      initial={DRAW0}
+      poster={{ ...DRAW0, w: DRAW_GO.x, h: DRAW_GO.x, keys: ['⇧'], down: true }}
+      script={looped(drawScript, onLoop)}
+      cursor={{ at: REST, idle: false }}
+    >
+      {(s) => (
+        <div className="hint-work">
+          <div className="hint-fade" data-hide={s.hide || undefined}>
+            <div className="hint-page" data-cursor="crosshair" style={{ left: 40, top: 26, width: 240, height: 128 }} />
+            {s.w > 0 && (
+              <div
+                className="hint-shape"
+                data-drawing={s.drawing || undefined}
+                style={{ left: DRAW_AT.x, top: DRAW_AT.y, width: s.w, height: s.h }}
+              />
+            )}
+          </div>
+          <Keys caps={s.keys} down={s.down} />
+        </div>
+      )}
+    </Stage>
+  )
+}
+
+/* ───────── 10. 按住空格拖动平移 ───────── */
+
+type PanS = { dx: number; dy: number; keys: string[] | null; down: boolean; hand: boolean; hide: boolean }
+const PAN0: PanS = { dx: 0, dy: 0, keys: null, down: false, hand: false, hide: false }
+const PAN_GO = { x: -96, y: -54 }
+
+const panScript = async (a: Act<PanS>) => {
+  await a.wait(600)
+  await a.move({ x: 190, y: 110 })
+  await a.set({ keys: ['Space'], down: true, hand: true })
+  await a.wait(450)
+  await a.drag({ x: 190 + PAN_GO.x, y: 110 + PAN_GO.y }, (p, o) => a.put({ dx: Math.round(p.x - o.x), dy: Math.round(p.y - o.y) }), {
+    duration: 1300,
+  })
+  await a.wait(500)
+  await a.set({ keys: null, hand: false })
+  await a.wait(1700)
+  await a.move(REST)
+  await fadeReset(a, PAN0)
+}
+
+function PanScene({ theme, play, onLoop }: SceneProps) {
+  return (
+    <Stage<PanS>
+      specimen
+      unframed
+      width={W}
+      height={H}
+      theme={theme}
+      play={play}
+      className="hint-stage"
+      initial={PAN0}
+      poster={{ ...PAN0, dx: PAN_GO.x, dy: PAN_GO.y, keys: ['Space'], down: true, hand: true }}
+      script={looped(panScript, onLoop)}
+      cursor={{ at: REST, idle: false }}
+    >
+      {(s) => (
+        <div className="hint-work" data-cursor={s.hand ? 'open' : undefined}>
+          <div className="hint-fade" data-hide={s.hide || undefined}>
+            {/* 放大着：纸面比窗口大，只看得见左上那一块 */}
+            <div className="hint-page" style={{ left: 24, top: 20, width: 420, height: 250, transform: `translate(${s.dx}px, ${s.dy}px)` }}>
+              <div style={{ position: 'absolute', left: 20, top: 18 }}>
+                <MiniPlot w={180} h={150} tag="a" />
+              </div>
+              <div style={{ position: 'absolute', left: 220, top: 18 }}>
+                <MiniPlot w={180} h={150} tag="b" tone={1} />
+              </div>
+            </div>
+          </div>
+          <Keys caps={s.keys} down={s.down} />
+        </div>
+      )}
+    </Stage>
+  )
+}
+
+/* ───────── 11. ⇧ 点击多选，一次改完 ───────── */
+
+type MultiS = { sel: number[]; tone: number; keys: string[] | null; down: boolean; hide: boolean }
+const MULTI0: MultiS = { sel: [], tone: 0, keys: null, down: false, hide: false }
+const CURVES = ['M24 118 C70 60 120 40 196 34', 'M24 126 C80 104 130 78 196 66']
+
+const multiScript = async (a: Act<MultiS>) => {
+  await a.wait(600)
+  await a.click('curve-0')
+  await a.set({ sel: [0] })
+  await a.wait(500)
+  await a.set({ keys: ['⇧'], down: true })
+  await a.wait(350)
+  await a.click('curve-1')
+  await a.set({ sel: [0, 1] })
+  await a.wait(500)
+  await a.set({ keys: null })
+  // 去右栏点一个颜色：两条线一起变
+  await a.click('swatch')
+  await a.set({ tone: 1 })
+  await a.wait(2100)
+  await a.move(REST)
+  await fadeReset(a, MULTI0)
+}
+
+function MultiScene({ theme, play, onLoop }: SceneProps) {
+  return (
+    <Stage<MultiS>
+      specimen
+      unframed
+      width={W}
+      height={H}
+      theme={theme}
+      play={play}
+      className="hint-stage"
+      initial={MULTI0}
+      poster={{ ...MULTI0, sel: [0, 1], tone: 1 }}
+      script={looped(multiScript, onLoop)}
+      cursor={{ at: REST, idle: false, ripple: true }}
+    >
+      {(s) => (
+        <div className="hint-work">
+          <div className="hint-fade" data-hide={s.hide || undefined}>
+            <div className="hint-page" style={{ left: 16, top: 14, width: 220, height: 152 }}>
+              <svg width={220} height={152} className="hint-plot">
+                <rect x={20.5} y={12.5} width={184} height={122} className="hint-plot__axes" />
+                {CURVES.map((d, i) => (
+                  <g key={i}>
+                    {s.sel.includes(i) && <path d={d} className="hint-curve-halo" />}
+                    <path d={d} className="hint-plot__curve hint-curve" data-tone={s.tone ? 2 : i} />
+                  </g>
+                ))}
+              </svg>
+              <i data-target="curve-0" style={{ position: 'absolute', left: 104, top: 44, width: 8, height: 8 }} />
+              <i data-target="curve-1" style={{ position: 'absolute', left: 124, top: 82, width: 8, height: 8 }} />
+            </div>
+            {/* 右栏的一角：颜色那一行 */}
+            <div className="hint-side">
+              <span className="hint-side__row" />
+              <span className="hint-side__swatches">
+                <i data-c="0" />
+                <i data-c="1" />
+                <i data-c="2" data-target="swatch" data-on={s.tone ? true : undefined} />
+              </span>
+              <span className="hint-side__row" />
+              <span className="hint-side__row" data-short />
+            </div>
+          </div>
+          <Keys caps={s.keys} down={s.down} />
+        </div>
+      )}
+    </Stage>
+  )
+}
+
+/* ───────── 12. 按 ? 看全部快捷键 ───────── */
+
+type HelpS = { open: boolean; keys: string[] | null; down: boolean; hide: boolean }
+const HELP0: HelpS = { open: false, keys: null, down: false, hide: false }
+const HELP_ROWS: [number, string[]][] = [
+  [58, [MOD, 'Z']],
+  [74, ['⇧', '2']],
+  [46, [ALT, '↑']],
+  [66, ['Space']],
+  [52, [MOD, 'K']],
+  [70, ['?']],
+]
+
+const helpScript = async (a: Act<HelpS>) => {
+  await a.wait(700)
+  await a.set({ keys: ['?'], down: true })
+  await a.wait(200)
+  await a.set({ open: true, down: false })
+  await a.wait(600)
+  await a.set({ keys: null })
+  await a.wait(2600)
+  await fadeReset(a, HELP0)
+}
+
+function HelpScene({ theme, play, onLoop }: SceneProps) {
+  return (
+    <Stage<HelpS>
+      specimen
+      unframed
+      width={W}
+      height={H}
+      theme={theme}
+      play={play}
+      className="hint-stage"
+      initial={HELP0}
+      poster={{ ...HELP0, open: true }}
+      script={looped(helpScript, onLoop)}
+      cursor={{ at: REST, idle: false }}
+    >
+      {(s) => (
+        <div className="hint-work">
+          <div className="hint-fade" data-hide={s.hide || undefined}>
+            <div className="hint-page" style={{ left: 40, top: 26, width: 240, height: 128 }}>
+              <div style={{ position: 'absolute', left: 16, top: 26 }}>
+                <MiniPlot w={84} h={76} tag="a" t={1} />
+              </div>
+              <div style={{ position: 'absolute', left: 116, top: 26 }}>
+                <MiniPlot w={84} h={76} tag="b" tone={1} t={1} />
+              </div>
+            </div>
+            <div className="hint-sheet" data-show={s.open || undefined}>
+              {HELP_ROWS.map(([w, caps], i) => (
+                <span key={i} className="hint-sheet__row">
+                  <i style={{ width: w }} />
+                  <span>
+                    {caps.map((c) => (
+                      <kbd key={c}>{c}</kbd>
+                    ))}
+                  </span>
+                </span>
+              ))}
+            </div>
+          </div>
+          <Keys caps={s.keys} down={s.down} />
+        </div>
+      )}
+    </Stage>
+  )
+}
+
 const SCENES: Record<CardHintKind, (p: SceneProps) => React.JSX.Element> = {
   fit_canvas: FitScene,
   edge_crop: EdgeScene,
@@ -677,6 +1021,11 @@ const SCENES: Record<CardHintKind, (p: SceneProps) => React.JSX.Element> = {
   no_snap: SnapScene,
   arrow_nudge: NudgeScene,
   shift_rotate: RotateScene,
+  dblclick_text: TextScene,
+  shift_draw: DrawScene,
+  space_pan: PanScene,
+  shift_multi: MultiScene,
+  shortcut_help: HelpScene,
 }
 
 /** 一张卡的动画。`key` 由调用方给（换提示 / 重播时重挂） */

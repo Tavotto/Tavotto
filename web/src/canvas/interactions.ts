@@ -331,6 +331,33 @@ export function draggableSelection(): {
 /*  移动                                                                       */
 /* -------------------------------------------------------------------------- */
 
+/** 画出来的矩形 / 椭圆两边差不到这么多（相对长边）算「差一点就是正的」 */
+const NEAR_SQUARE = 0.1
+/** 线 / 箭头离水平或竖直不到这么多度算「差一点就是直的」 */
+const NEAR_AXIS_DEG = 4
+
+/** 一次绘制的粗粒度形状（纯函数）：`vec` = 起点到终点，`box` = 落下来的包围盒 */
+export function drawShape(
+  tool: Exclude<Tool, 'select'>,
+  vec: { x: number; y: number },
+  box: { w: number; h: number },
+  shift: boolean,
+): Extract<ActivityDetail, { kind: 'shape.drawn' }> {
+  let near = false
+  if (!shift) {
+    if (tool === 'rect' || tool === 'ellipse') {
+      const long = Math.max(box.w, box.h)
+      const diff = Math.abs(box.w - box.h)
+      near = long > 0 && diff > 0.05 && diff / long < NEAR_SQUARE
+    } else if (tool === 'arrow' || tool === 'line') {
+      const deg = (Math.atan2(Math.abs(vec.y), Math.abs(vec.x)) * 180) / Math.PI
+      const off = Math.min(deg, 90 - deg)
+      near = off > 0.2 && off < NEAR_AXIS_DEG
+    }
+  }
+  return { kind: 'shape.drawn', near, snapped: shift }
+}
+
 /** 手走的路「几乎是一条横 / 竖线」：一个方向超过这么远… */
 const STRAIGHT_MIN_MM = 10
 /** …另一个方向偏了不到这么多 */
@@ -810,7 +837,10 @@ export function startPan(e: ReactPointerEvent) {
   trackPointer(e, {
     threshold: 0,
     onMove: (_ev, dx, dy) => useViewportStore.getState().setPan(panX + dx, panY + dy),
-    onEnd: () => interaction().end(),
+    onEnd: (moved, _ev, end) => {
+      interaction().end()
+      if (moved && !end.cancelled) emitActivity({ kind: 'view.drag_panned' })
+    },
   })
 }
 
@@ -982,6 +1012,10 @@ export function startDraw(e: ReactPointerEvent, tool: Exclude<Tool, 'select'>) {
       store.commit(hist('addShape', { shape: drawnToolMsg(tool) }), (d) => {
         d.objects.push(created)
       })
+      // 给提示引擎（ADR 0177）：真拖出来的形状 / 线，差一点就规整却没按 ⇧
+      if (moved && draft && draft.w > 0.5 && tool !== 'text') {
+        emitActivity(drawShape(tool, { x: end.x - start.x, y: end.y - start.y }, draft, ev.shiftKey))
+      }
       const ui = useUiStore.getState()
       // 在图内编辑态画标注：新对象属于画布层，必须先退出图内编辑，
       // 属性页才会跟到新对象上（否则它的属性根本改不了）

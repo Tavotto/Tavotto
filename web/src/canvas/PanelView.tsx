@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperti
 import { createPortal } from 'react-dom'
 import { perfCount, perfRenderPainted } from '@/perf/core'
 import { formatMessage, msg, t as translate } from '@/i18n'
+import { emitActivity } from '@/lib/activity'
 import { listJoin } from '@/i18n/format'
 import { enginePreviewPngSnapshot, EngineError, panelSrc, type Manifest, type ManifestElement } from '@/lib/api'
 import { useDecodedSvg } from '@/lib/useDecodedSvg'
@@ -989,6 +990,7 @@ function ElementHitLayer({
         if (!hit?.editable.some((f) => f.prop === 'text' && f.type === 'text')) return
         useUiStore.getState().setSelectedGid(hit.gid)
         openQuickEdit({ kind: 'element', panelId: obj.id, gid: hit.gid, focusText: true }, e)
+        emitActivity({ kind: 'figure.text_quick_edit' })
       })}
     >
       {band && (

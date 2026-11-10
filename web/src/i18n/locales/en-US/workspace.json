@@ -1046,6 +1046,12 @@
     "no_snap": "Hold {{mod}} while dragging to skip snapping",
     "arrow_nudge": "Arrow keys nudge; ⇧ for big steps, {{alt}} for fine",
     "shift_rotate": "Hold ⇧ while rotating to snap to 15°",
+    "dblclick_text": "Double-click text in the figure to edit it",
+    "shift_draw": "Hold ⇧ to draw squares and straight lines",
+    "space_pan": "Hold Space and drag to pan",
+    "shift_multi": "⇧-click to select several and change them at once",
+    "shortcut_help": "Press ? for all shortcuts",
+    "shortcutHelpOpen": "Open",
     "pageBoundsOpen": "Open Canvas tab"
   },
   "prep": {

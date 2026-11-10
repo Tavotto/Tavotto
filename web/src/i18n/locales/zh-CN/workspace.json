@@ -993,6 +993,12 @@
     "no_snap": "按住 {{mod}} 拖动，暂时不吸附",
     "arrow_nudge": "方向键微移，⇧ 大步、{{alt}} 小步",
     "shift_rotate": "按住 ⇧ 旋转，15° 一档",
+    "dblclick_text": "双击图里的文字，直接改",
+    "shift_draw": "按住 ⇧ 画正方形和直线",
+    "space_pan": "按住空格拖动，平移画布",
+    "shift_multi": "⇧ 点击多选，一次改完",
+    "shortcut_help": "按 ? 看全部快捷键",
+    "shortcutHelpOpen": "打开",
     "pageBoundsOpen": "打开画布页"
   },
   "prep": {
