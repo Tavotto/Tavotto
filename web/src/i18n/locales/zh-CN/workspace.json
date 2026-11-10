@@ -966,6 +966,9 @@
     "multi_select": "用选区旁的浮动栏对齐和分布。",
     "problem_found": "左侧「问题」可定位对象和属性字段。",
     "layout_page_bounds": "白色纸面就是导出的 Figure 尺寸；单栏、双栏宽度按当前规范，可在右侧「画布」页调整。",
+    "fit_canvas": "双击空白处，画布回到正中",
+    "edge_crop": "拖边改图幅，按住 {{alt}} 改为裁剪",
+    "ruler_guides": "从标尺拖出对齐线",
     "pageBoundsOpen": "打开画布页"
   },
   "prep": {

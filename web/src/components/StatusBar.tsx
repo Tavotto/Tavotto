@@ -8,12 +8,12 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { Spinner } from '@/components/ui/Spinner'
 import { SwapText } from '@/components/ui/SwapText'
 import { runUndoRedo } from '@/hooks/useKeyboard'
-import { ANCHORED_HINTS, hintDismissTimer, useHintStore } from '@/lib/onboarding/hints'
+import { ANCHORED_HINTS, hintDismissTimer, isCardHint, useHintStore } from '@/lib/onboarding/hints'
 import { literal, msg, t as translate, type UiMessage } from '@/i18n'
 import { useFormatMessage } from '@/i18n/react'
 import type { DismissTimer } from '@/lib/dismissTimer'
 import { DURATION, usePresence } from '@/lib/motion'
-import { cn } from '@/lib/utils'
+import { ALT, cn } from '@/lib/utils'
 import { useCanvasToolbarVisible } from './CanvasToolbar'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
@@ -316,11 +316,12 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   // 带锚点的提示（`ANCHORED_HINTS`）由锚点所在组件自己画，不进这条轨；它仍占 current 的槽位
   // live region 仍取 current（锚点提示的画面由锚点组件画，但读屏照样要听见；锚点组件自己不加 aria-live，免得播两遍）
   const current = useHintStore((s) => s.current)
-  const hint = current && ANCHORED_HINTS.has(current) ? null : current
+  // 动画卡（ADR 0177）同理：由 `components/hints/HintCard` 画，轨上不出，活动区照播
+  const hint = current && (ANCHORED_HINTS.has(current) || isCardHint(current)) ? null : current
   const hintToken = useHintStore((s) => s.token)
   const dismissHint = useHintStore((s) => s.dismiss)
   const hintText = hint ? t(`hints.${hint}`) : ''
-  const liveHintText = current ? t(`hints.${current}`) : ''
+  const liveHintText = current ? t(`hints.${current}`, { alt: ALT }) : ''
   const toolbarUp = useCanvasToolbarVisible()
 
   // 「编辑原图」这一次把图加进了文档（此前不在）：说出口，并给撤销；回排版 / 撤销即消失

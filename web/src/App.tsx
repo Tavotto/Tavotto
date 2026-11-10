@@ -54,6 +54,7 @@ import { subscribePruneSelection } from '@/hooks/usePruneSelection'
 import { ProjectPicker } from '@/components/ProjectPicker'
 import { NativeTutorial } from '@/components/onboarding/NativeTutorial'
 import { startActivityTelemetry } from '@/lib/activityTelemetry'
+import { HintCard } from '@/components/hints/HintCard'
 import { startHintEngine } from '@/lib/onboarding/hints'
 import { useAiStore } from '@/store/aiStore'
 import { useAssetStore } from '@/store/assetStore'
@@ -370,6 +371,8 @@ function Workspace() {
         <ContactHost />
         {/* 意外错误 / 上次没正常退出的反馈卡：贴窗口右下角（不在画布的通知轨里） */}
         <FeedbackCorner />
+        {/* 动画卡提示（ADR 0177）：同一个角、同一个宽度；反馈卡在场时让位 */}
+        <HintCard />
         <UpdateNoticeDialog />
         <CommandPalette />
         <ShortcutHelp />
