@@ -122,12 +122,12 @@ describe('智能修复（ADR 0148）：主按钮读 remedy，每张失败卡都�
     expect(t('prep.btn.revertAiEdit', { ns: 'workspace' })).toBe('回滚 AI 的修改')
   })
 
-  it('feedback：一句话 + 主按钮「发送」；后端判定 AI 修不了，不再摆 AI 次按钮', () => {
+  it('feedback：一句话 + 主按钮「发送」；AI 次按钮照旧在（只有图名归属冲突不摆，见下）', () => {
     const v = view(failed({ kind: 'feedback', tried: ['switch_native'] }))
     expect(v.state).toBe('feedback')
     expect(v.sentence.key).toBe('feedback')
     expect(v.primary).toEqual({ kind: 'feedback' })
-    expect(v.aiFix).toBe(false)
+    expect(v.aiFix).toBe(true)
     expect(t('prep.line.feedback', { ns: 'workspace' })).toBe('这个脚本暂时用不了，发给我们看看？')
   })
 
@@ -280,7 +280,7 @@ describe('智能修复（ADR 0148）：主按钮读 remedy，每张失败卡都�
     for (const vec of golden.vectors) {
       const v = view(failed(vec.remedy))
       expect(v.remedy?.kind, vec.name).toBe((vec.remedy as Remedy).kind)
-      if (vec.remedy.kind === 'switch_native' || vec.remedy.kind === 'feedback') expect(v.aiFix).toBe(false)
+      if (vec.remedy.kind === 'switch_native') expect(v.aiFix).toBe(false)
       else expect(v.aiFix || v.primary?.kind === 'ai_fix', vec.name).toBe(true)
     }
   })

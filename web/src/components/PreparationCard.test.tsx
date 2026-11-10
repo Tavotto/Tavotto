@@ -4185,9 +4185,8 @@ describe('智能修复（ADR 0148）：每张失败卡都有「✦ 使用你的 
   })
 
   it('失败卡都有这颗按钮（蓝色描边用语义 token，不是主按钮）；ready / 运行中 / 成功没有', async () => {
-    const withBtn = ['errPlain', 'errRemedyAi', 'errRemedyConnect', 'depsRuntime', 'depsUnknown', 'depsUnresolvable', 'depsStdlib', 'fileOpsBlocked']
-    // errRemedyFeedback：后端判定 AI 修不了，不摆 AI 次按钮
-    const without = ['ready', 'running', 'completedMany', 'cancelled', 'workdir', 'errRemedyFeedback']
+    const withBtn = ['errPlain', 'errRemedyAi', 'errRemedyConnect', 'errRemedyFeedback', 'depsRuntime', 'depsUnknown', 'depsUnresolvable', 'depsStdlib', 'fileOpsBlocked']
+    const without = ['ready', 'running', 'completedMany', 'cancelled', 'workdir']
     for (const name of [...withBtn, ...without]) {
       await mount()
       await openWith(report(STATES[name]))
@@ -4248,7 +4247,7 @@ describe('智能修复（ADR 0148）：每张失败卡都有「✦ 使用你的 
     expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这个脚本暂时用不了，发给我们看看？')
     expect(panel().querySelector('[data-send-report]')?.textContent).toBe('发送')
     expect(primary()).toBeNull() // 反馈卡的主按钮是 SendReportButton（打开发送对话框，源码默认不勾）
-    expect(aiBtn()).toBeNull() // 后端判定 AI / 转写 / 换环境都修不了：不再摆 AI 次按钮
+    expect(aiBtn()).not.toBeNull()
   })
 
   it('没连 AI（connect_ai）：发送入口开着时主按钮是「发给我们看看」，AI 降为次按钮；入口关着维持原样', async () => {

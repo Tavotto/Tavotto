@@ -369,8 +369,10 @@ function withRemedy(view: PrepView, report: PreparationReport | null | undefined
       slot: null,
     }
   }
-  // `feedback` 是后端判定「AI / 转写 / 换环境都修不了」（fixrouter：图名冲突、缺的包认不出、修法已走满），不摆 AI 次按钮
-  return { ...out, aiFix: remedy?.kind !== 'switch_native' && remedy?.kind !== 'feedback' && out.primary?.kind !== 'ai_fix' }
+  // 图名归属冲突（`not_registered` + remedy `feedback`）：冲突不在脚本里，AI 修不了（ADR 0148 修订 2026-11-02），不摆 AI 次按钮。
+  // 其余 `feedback`（修法走满、缺的包认不出）照旧摆——「每次失败都出」的裁决不在这里收窄
+  const conflict = remedy?.kind === 'feedback' && view.state === 'not_registered'
+  return { ...out, aiFix: remedy?.kind !== 'switch_native' && !conflict && out.primary?.kind !== 'ai_fix' }
 }
 
 /**

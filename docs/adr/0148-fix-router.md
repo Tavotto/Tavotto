@@ -134,8 +134,8 @@ AI 环境修复任务本身（PR D）；`change_python` 的执行（PR B）；AI
 1. **没连 AI（`connect_ai`）**：「使用你的 AI 来修复」点下去只是去设置页，原来想做的事没成。发送入口开着（前端自己的一个事实
    `PrepContext.canSendReport` = `diagSendStore.capability !== null`，设置页同一判据）时，主按钮是「发给我们看看」（`feedback` / `sendUs`），
    AI 降为次按钮；入口关着维持原样。已连 AI（`ai_fix`）不变。这是同一个 remedy 的按钮排序，不是新的路由结论，所以不改 `fixrouter.py`。
-2. **`feedback` 不再摆 AI 次按钮**：fixrouter 已判定 AI / 转写 / 换环境都修不了（图名冲突、缺的包认不出、修法走满）。这条收窄了
-   2026-10 的「每次失败都出」，例外现在是 `switch_native`（静默）与 `feedback`。
+2. **图名归属冲突不摆 AI 次按钮**：只限 `not_registered` 卡且 remedy 为 `feedback`（冲突不在脚本里，AI 修不了，见上一条修订 2026-11-02）。
+   其余 `feedback`（修法走满、缺的包认不出）的 AI 次按钮照旧——「每次失败都出」的裁决不在这一批收窄。
 3. **`multiple_stem_conflict`**：remedy 仍是 `feedback`，但卡片（`not_registered`）保留自己的主按钮「打开接入中心」——那里指定用哪个才是真能解决的路。
 4. **必败的「再试一次」**：`interpreter_cache_denied` 后端没给 `switch`、`change_python` 但 `to` 为空（失败卡 / blocked）时，发送入口开着则主按钮是「发给我们看看」。
 5. **准备卡对几个码直接说 `errors:backend.<code>` 那句人话**（`output_folder_read_only`、`script_exited`、没有修复令牌的 `import_folder_unreadable`），
