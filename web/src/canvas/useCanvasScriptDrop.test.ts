@@ -24,14 +24,19 @@ const mocks = vi.hoisted(() => ({
   openPackageFile: vi.fn(),
   isDesktop: vi.fn(() => false),
   pickScriptFile: vi.fn(async () => null as string | null),
+  nativeAvailable: false,
+  nativeHandler: null as null | ((d: unknown) => void),
 }))
 vi.mock('@/lib/api', async (orig) => ({ ...(await orig<typeof import('@/lib/api')>()), importAsset: mocks.importAsset }))
 vi.mock('@/lib/packageImport', () => ({ openPackageFile: mocks.openPackageFile }))
 vi.mock('@/lib/desktop', async (orig) => ({
   ...(await orig<typeof import('@/lib/desktop')>()),
   isDesktop: mocks.isDesktop,
-  nativeFileDropAvailable: async () => false,
-  onNativeFileDrop: async () => () => {},
+  nativeFileDropAvailable: async () => mocks.nativeAvailable,
+  onNativeFileDrop: async (h: (d: unknown) => void) => {
+    mocks.nativeHandler = h
+    return () => {}
+  },
   pickScriptFile: mocks.pickScriptFile,
 }))
 
@@ -105,7 +110,7 @@ declare global {
 }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
-async function drop(files: File[], uris: string[] = []) {
+async function drop(files: File[], uris: string[] = [], native?: unknown) {
   let handler!: ReturnType<typeof useCanvasScriptDrop>
   const Probe = () => {
     handler = useCanvasScriptDrop()
@@ -117,6 +122,7 @@ async function drop(files: File[], uris: string[] = []) {
   const canvasId = useDocumentStore.getState().activeCanvasId
   await act(async () => {
     handler(dropOf(files, uris), { canvasId, at: { x: 50, y: 40 } })
+    if (native) mocks.nativeHandler!(native)
     await new Promise((r) => setTimeout(r, 0))
     await new Promise((r) => setTimeout(r, 0))
   })
@@ -130,6 +136,7 @@ describe('整次放下', () => {
     useDocumentStore.setState({ doc: { ...base, objects: [] }, past: [], future: [], txn: null })
     useDiagSendStore.setState({ capability: { enabled: true } as never, open: false })
     useAssetStore.setState({ panels: [], byId: {}, unsupported: [], loaded: true } as never)
+    mocks.nativeAvailable = false
     mocks.importAsset.mockImplementation(async (_f: Blob, name: string) => asset(name))
     vi.spyOn(useAssetStore.getState(), 'load').mockImplementation(async () => {
       const got = await Promise.all(mocks.importAsset.mock.results.map((r) => (r.value as Promise<ImportedAsset>).catch(() => null)))
@@ -282,5 +289,36 @@ describe('整次放下', () => {
     useProjectStore.setState({ switching: true })
     await drop([png('a.png')])
     expect(mocks.importAsset).not.toHaveBeenCalled()
+  })
+
+  it('原生事件里 R 脚本的 `script` 已是绝对路径：项目根下的走转换提议，不是「不在项目里」', async () => {
+    mocks.nativeAvailable = true
+    await drop([named('plot.R')], [], { kind: 'foreign_script', folder: '/Users/me/paper', script: '/Users/me/paper/plot.R', name: 'plot.R', ignored: 0 })
+    expect(useForeignScriptStore.getState().offer).toEqual({ script: 'plot.R', language: 'r' })
+  })
+
+  it('原生事件里项目外的 MATLAB 脚本：按钮打开的是它真正的父目录', async () => {
+    mocks.nativeAvailable = true
+    const openProject = vi.fn(async () => ({}) as never)
+    useProjectStore.setState({ open: openProject } as never)
+    await drop([named('plot.m')], [], { kind: 'foreign_script', folder: '/Users/me/other', script: '/Users/me/other/plot.m', name: 'plot.m', ignored: 0 })
+    await act(async () => {
+      status().statusAction!.run()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(openProject).toHaveBeenCalledExactlyOnceWith('/Users/me/other')
+  })
+
+  it('原生事件里的 .py 路径同样直接用 `script`（项目根下的 .py 照常运行）', async () => {
+    mocks.nativeAvailable = true
+    await drop([named('plot.py')], [], { kind: 'script', folder: '/Users/me/paper', script: '/Users/me/paper/plot.py', name: 'plot.py', ignored: 0 })
+    expect(open).toHaveBeenCalledWith({ script: 'plot.py', reuse_last_success: true }, expect.anything())
+  })
+
+  it('图片上传一直挂着：脚本仍按原生路径运行，不等图片', async () => {
+    mocks.nativeAvailable = true
+    mocks.importAsset.mockImplementation(() => new Promise(() => {}))
+    await drop([png('a.png'), named('plot.py')], [], { kind: 'script', folder: '/Users/me/paper', script: '/Users/me/paper/plot.py', name: 'plot.py', ignored: 0 })
+    expect(open).toHaveBeenCalledOnce()
   })
 })

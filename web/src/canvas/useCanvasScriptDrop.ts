@@ -162,7 +162,7 @@ export function useCanvasScriptDrop() {
         if (path) runDroppedScript(path, place, { skipped: skipped.current })
         else if (drop.kind === 'foreign_script') {
           const language = foreignLanguageOf(drop.name)
-          if (language) offerDroppedForeign(`${drop.folder.replace(/[\\/]+$/, '')}/${drop.script}`, language)
+          if (language) offerDroppedForeign(drop.script, language)
           else flushTail()
         } else flushTail()
       },
@@ -266,19 +266,24 @@ export function useCanvasScriptDrop() {
     const rest: IntakeProblem[] = plan.unsupported.map((u) => ({ name: u.name, image: u.image }))
     const script = plan.scripts[0] ?? plan.foreign[0]
     const skip = skippedScripts(plan)
-    void (async () => {
-      const res = plan.assets.length > 0 ? await importAndPlace(plan.assets, { place }) : null
-      if (res?.aborted) return
-      if (!script) {
+    // 脚本那一半（DOM 侧的配对登记、uri-list 的读取）必须在 drop 事件里**同步**做完：壳的原生事件只等 `PAIR_GRACE_MS`，
+    // 宿主的 `DataTransfer` 在事件返回后也读不到；图片上传在后面异步跑，两者互不等待
+    const images = plan.assets.length > 0 ? importAndPlace(plan.assets, { place }) : Promise.resolve(null)
+    if (!script) {
+      void images.then((res) => {
+        if (res?.aborted) return
         if (res) reportImageResult(res, rest)
         else reportProblems(rest)
-        return
-      }
-      // 有脚本：脚本那一句先说，没成的东西排在它后面（带按钮、有最后发言权）
-      const problems = [...(res?.problems ?? []), ...rest]
-      tail = () => void reportProblems(problems)
-      setTimeout(flushTail, PAIR_GRACE_MS + 500)
-      dropScript(onlyFile(dt, script), place, skip)
-    })()
+      })
+      return
+    }
+    // 有脚本：脚本那一句先说，没成的东西排在它后面（带按钮、有最后发言权）
+    tail = () =>
+      void images.then((res) => {
+        if (res?.aborted) return
+        reportProblems([...(res?.problems ?? []), ...rest])
+      })
+    setTimeout(flushTail, PAIR_GRACE_MS + 500)
+    dropScript(onlyFile(dt, script), place, skip)
   }
 }

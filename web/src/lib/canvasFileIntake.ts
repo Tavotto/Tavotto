@@ -15,6 +15,7 @@ import { currentProjectId } from '@/lib/session'
 import { foreignLanguageOf } from '@/lib/foreignScript'
 import { isScriptName } from '@/lib/scriptImport'
 import { useAssetStore } from '@/store/assetStore'
+import { runDiscreteAction } from '@/store/gestureCoordinator'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore, type StatusAction } from '@/store/uiStore'
@@ -179,16 +180,20 @@ export async function importAndPlace(
   const sameCanvas = opts.place ? useDocumentStore.getState().activeCanvasId === opts.place.canvasId : false
   const at = sameCanvas ? opts.place?.at : undefined
   const placed: string[] = []
-  for (const [i, { file, asset }] of imported.entries()) {
-    const info = useAssetStore.getState().byId[asset.id]
-    if (!info) {
-      // 后端落盘后核过它在素材清单里；这里仍对不上（清单取失败 / 被别处删了）：如实算没成，别静默
-      problems.push({ name: file.name, reason: backendCodeMsg('asset_import_not_visible', {}, '') })
-      continue
+  // 上传 / 重扫是异步的，回来时用户可能正在别的手势里：放置是离散动作，先收手势再放（`runDiscreteAction`，
+  // 不看焦点的 `app` 档），否则 `commit` 会并进那次事务——取消拖动连图一起回滚、一次撤销撤掉两件事
+  runDiscreteAction('app', null, () => {
+    for (const [i, { file, asset }] of imported.entries()) {
+      const info = useAssetStore.getState().byId[asset.id]
+      if (!info) {
+        // 后端落盘后核过它在素材清单里；这里仍对不上（清单取失败 / 被别处删了）：如实算没成，别静默
+        problems.push({ name: file.name, reason: backendCodeMsg('asset_import_not_visible', {}, '') })
+        continue
+      }
+      addPanelToCanvas(info, i === 0 ? at?.x : undefined, i === 0 ? at?.y : undefined)
+      placed.push(asset.name)
     }
-    addPanelToCanvas(info, i === 0 ? at?.x : undefined, i === 0 ? at?.y : undefined)
-    placed.push(asset.name)
-  }
+  })
   return { placed, problems, aborted: false }
 }
 

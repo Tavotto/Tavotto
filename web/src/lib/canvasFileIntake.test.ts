@@ -8,6 +8,7 @@ import { formatMessage } from '@/i18n'
 import { ApiError, type ImportedAsset, type PanelInfo } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
 import { useAssetStore } from '@/store/assetStore'
+import { registerGesture } from '@/store/gestureCoordinator'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
@@ -207,6 +208,30 @@ describe('importAndPlace', () => {
     expect(queued).not.toBeNull()
     queued!()
     expect(objects()).toHaveLength(1)
+  })
+
+  it('上传挂起期间用户开了手势（事务）：放置先收手势再放，取消手势不丢图、一次撤销只撤图', async () => {
+    let release!: () => void
+    imports.importAsset.mockImplementation(
+      (_f: Blob, name: string) => new Promise<ImportedAsset>((r) => (release = () => r(asset(name)))),
+    )
+    const pending = importAndPlace([file('late.png')])
+    // 用户在上传期间开始了一次拖动：事务开着，手势登记了自己的收尾
+    const doc = useDocumentStore.getState()
+    doc.beginTxn({ key: 'x' } as never)
+    const unregister = registerGesture(() => useDocumentStore.getState().endTxn())
+    release()
+    await pending
+    unregister()
+    expect(useDocumentStore.getState().txn).toBeNull()
+    // 手势已被收尾（提交），之后「取消」不会回滚图
+    useDocumentStore.getState().endTxn({ discard: true })
+    expect(objects()).toHaveLength(1)
+    // 撤销一次：图作为独立一条历史被撤掉，且只撤了它
+    const before = useDocumentStore.getState().past.length
+    expect(before).toBeGreaterThanOrEqual(1)
+    useDocumentStore.getState().undo()
+    expect(objects()).toHaveLength(0)
   })
 
   it('同名同内容复用：照样放上画布（用户要的是放一张）', async () => {
