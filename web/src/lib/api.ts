@@ -2353,7 +2353,7 @@ export function importAsset(file: Blob, name: string, pj?: string | null): Promi
   )
 }
 
-/** `.ipynb` 抽成同名 `.py` 的结果（ADR 0178）：`script` 是项目相对路径；`status` 见后端 `notebookscript.Placed` */
+/** `.ipynb` 抽成同名 `.py` 的结果（ADR 0179）：`script` 是项目相对路径；`status` 见后端 `notebookscript.Placed` */
 export interface NotebookScript {
   notebook: string
   script: string
@@ -6886,7 +6886,7 @@ export interface RegistryView {
   all_scripts: ScriptInventoryEntry[]
   /** 项目内后端认得出语言的 R / MATLAB 脚本（只能“生成可编辑版本”，不能运行；老后端没有） */
   foreign_scripts?: ForeignSource[]
-  /** 项目内还没转成脚本的 Jupyter 笔记本（后端 `notebookscript.inventory`，ADR 0178；老后端没有） */
+  /** 项目内还没转成脚本的 Jupyter 笔记本（后端 `notebookscript.inventory`，ADR 0179；老后端没有） */
   notebook_scripts?: NotebookSource[]
 }
 

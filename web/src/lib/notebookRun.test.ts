@@ -1,5 +1,5 @@
 /**
- * `runNotebook`（ADR 0178）：所有入口共用的「转成脚本并运行」。判据的主语：发给后端的是路径抽取还是内容上传、
+ * `runNotebook`（ADR 0179）：所有入口共用的「转成脚本并运行」。判据的主语：发给后端的是路径抽取还是内容上传、
  * 发给准备会话 store 的 `open` 入参、留给用户的那一句（成功说一句、失败带「发送问题反馈」）、换项目后的静默。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'

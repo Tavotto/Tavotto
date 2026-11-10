@@ -34,7 +34,7 @@ export type DropTarget =
   /** 是 R / MATLAB 脚本，但宿主没给路径：同 `no-path`，退回选择器并说出是哪个文件 */
   | { kind: 'foreign-no-path'; name: string; language: ForeignLanguage }
   /**
-   * 放下的是 Jupyter 笔记本（`.ipynb`，ADR 0178）且拿到了路径：打开它所在的文件夹，然后把它抽成同名 `.py` 再运行。
+   * 放下的是 Jupyter 笔记本（`.ipynb`，ADR 0179）且拿到了路径：打开它所在的文件夹，然后把它抽成同名 `.py` 再运行。
    * `notebook` 是它在那个目录里的文件名
    */
   | { kind: 'notebook-path'; folder: string; notebook: string }

@@ -6,7 +6,7 @@
 //! * 只认**真实存在的本地绝对路径**：先看原串是不是绝对路径，再 `canonicalize`（解开
 //!   符号链接与 `..`）；拿不到规范路径的一律丢掉，不猜。
 //! * 放下的东西里**第一个 `.py`** 赢：打开它所在的文件夹（项目 = 脚本所在的文件夹），
-//!   脚本本身一起交给前端（说出口 + 关联）；没有 `.py` 时**第一个 Jupyter 笔记本**（`.ipynb`，ADR 0178）同样打开它
+//!   脚本本身一起交给前端（说出口 + 关联）；没有 `.py` 时**第一个 Jupyter 笔记本**（`.ipynb`，ADR 0179）同样打开它
 //!   所在的文件夹，前端据此把它抽成同名 `.py` 再运行（后缀区分大小写，与 `web/src/lib/scriptImport.ts::isNotebookName`、
 //!   后端 `notebookscript.SUFFIX` 同一份）；再没有时**第一个外语脚本**（`.R` / `.r` / `.m`，
 //!   ADR 0143 修订二；大小写与 `web/src/lib/foreignScript.ts`、后端 `sourcelang.extension_hint` 同一份，
@@ -30,7 +30,7 @@ pub enum DropTarget {
         name: String,
         ignored: usize,
     },
-    /// 放下的是 Jupyter 笔记本（`.ipynb`）：打开 `folder`，由前端抽成同名 `.py` 再运行（ADR 0178）
+    /// 放下的是 Jupyter 笔记本（`.ipynb`）：打开 `folder`，由前端抽成同名 `.py` 再运行（ADR 0179）
     Notebook {
         folder: String,
         notebook: String,

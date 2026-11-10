@@ -207,7 +207,7 @@ type Importer = ReturnType<typeof useScriptImport>
  * 多张由卡片让用户挑。只开目录不跑的话，同一文件夹里拖进不同脚本打开的都是同一个项目，画布上恢复的是
  * 上次的排版，用户看到的永远是第一张图（2026-10-21 诊断包）。只给目录的入口（目录浏览器、拖文件夹）不运行任何脚本。
  *
- * Jupyter 笔记本（`.ipynb`，ADR 0178）与 `.py` 同一条路：打开它所在的文件夹，然后抽成同名 `.py` 再运行
+ * Jupyter 笔记本（`.ipynb`，ADR 0179）与 `.py` 同一条路：打开它所在的文件夹，然后抽成同名 `.py` 再运行
  * （`runNotebook`，原笔记本不动）；拿不到路径时与 R / MATLAB 一样退回选择器，选中它所在的文件夹。
  *
  * 拖放（ADR 0092）：macOS / Windows 桌面壳旁听系统拖放、交来 canonicalize 过的真实路径
@@ -255,7 +255,7 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
       return ok
     })
 
-  /** 笔记本（ADR 0178）：打开所在文件夹，再抽成同名 .py 运行；`skipped` = 同一次放下里没处理的个数 */
+  /** 笔记本（ADR 0179）：打开所在文件夹，再抽成同名 .py 运行；`skipped` = 同一次放下里没处理的个数 */
   const openNotebook = (folder: string, name: string, skipped = 0): Promise<boolean> =>
     openPath(folder).then((ok) => {
       // 项目已经打开：后面的话（已生成 / 没成的原因 + 反馈按钮）走通知轨，由 runNotebook 自己说

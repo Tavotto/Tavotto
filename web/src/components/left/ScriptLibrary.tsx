@@ -152,7 +152,7 @@ export function ScriptLibrary({ query }: { query: string }) {
   // R / MATLAB 脚本（后端 `foreign_scripts`，ADR 0143 修订「项目内入口」）：只能“生成可编辑版本”，不进下面的运行分组
   const foreign = (view?.foreign_scripts ?? []).filter((f) => !q || f.script.toLowerCase().includes(q))
 
-  // Jupyter 笔记本（后端 `notebook_scripts`，ADR 0178）：还没转成脚本的才列；点一下抽成同名 .py 并运行，之后它就是上面的普通脚本
+  // Jupyter 笔记本（后端 `notebook_scripts`，ADR 0179）：还没转成脚本的才列；点一下抽成同名 .py 并运行，之后它就是上面的普通脚本
   const notebooks = (view?.notebook_scripts ?? []).filter((n) => !q || n.notebook.toLowerCase().includes(q))
 
   const groups = new Map<Group, ScriptInventoryEntry[]>()

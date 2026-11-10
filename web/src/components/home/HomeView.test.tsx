@@ -308,7 +308,7 @@ describe('老手版', () => {
     expect(desktop.pickScriptFile).not.toHaveBeenCalled()
   })
 
-  describe('Jupyter 笔记本（ADR 0178）：打开所在文件夹，再抽成同名 .py 运行', () => {
+  describe('Jupyter 笔记本（ADR 0179）：打开所在文件夹，再抽成同名 .py 运行', () => {
     it('放下带路径的 .ipynb：打开所在目录、接着转成脚本并运行（路径是打开后的项目相对名），不走 .py 的 prepare', async () => {
       await mount()
       const ev = await dropOn(host.querySelector('[data-home-dropzone]')!, { uris: 'file:///Users/me/fig/论文 图.ipynb', files: ['论文 图.ipynb'] })

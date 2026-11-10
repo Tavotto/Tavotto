@@ -26,7 +26,7 @@ export type IntakeKind =
   /** 素材扫描认的图片（PNG / JPG / TIFF / PDF / SVG）：上传、成为素材、放上画布 */
   | 'asset'
   | 'script'
-  /** Jupyter 笔记本（`.ipynb`，ADR 0178）：抽成同名 `.py` 再运行 */
+  /** Jupyter 笔记本（`.ipynb`，ADR 0179）：抽成同名 `.py` 再运行 */
   | 'notebook'
   /** R / MATLAB 脚本：打开所在项目并提议「生成可编辑版本」 */
   | 'foreign'
