@@ -9,6 +9,7 @@
   | 两侧 | 看护 |
   | --- | --- |
   | `engine/patchspec.py` ↔ `workerd/src/patchspec.rs`+`pyfloat.rs` | `tests/golden/patch_vectors.json`（逐字节） |
+  | 拖 / 粘贴进画布的「哪些后缀算素材图片」（ADR 0176）：`engine/assetimport.EXTENSIONS` ↔ `web/src/lib/canvasFileIntake.ts` 的 `ASSET_EXTENSIONS`；后端另与素材扫描认的后缀（`engine/project_refresh` 的 `PDF_EXT` / `SVG_EXT` / `IMG_EXT`）对账 | `tests/golden/asset_import_extensions.json`；`tests/test_asset_import.py::test_extension_list_matches_the_scanner_and_the_frontend_golden` + `canvasFileIntake.test.ts` 各跑一遍 |
   | 渲染请求意图闭集（ADR 0159）：`engine/pool.py` 的 `PURPOSES` / `BACKGROUND_DEFERRED` ↔ `web/src/lib/renderPurpose.ts` 的 `RenderPurpose` / `RENDER_DEFERRED_CODE` | `tests/test_pool_adaptive_cap.py::test_purpose_set_and_deferred_code_match_the_frontend` |
   | `engine/preflight.py` ↔ `web/src/lib/preflight.ts` | `tests/golden/preflight_vectors.json`（只比判据不比措辞） |
   | `engine/journals.py` ↔ `web/src/lib/journals.ts`（期刊库加载 / 校验 / 折叠 / 出处链接，失败码闭集；含 `profiles._validate` ↔ `profile.ts` `validateSpecShape`（栏宽 null）、`list_profiles` ↔ `listProfiles` ↔ `specBinding.builtinCatalog` 的 `listed` 过滤、`all_profile_ids` ↔ `isHiddenBuiltin`，以及闭集常量与严重度抬升映射，ADR 0155） | `tests/golden/journal_vectors.json`（夹具期刊，`scripts/gen_journal_vectors.py`）：`tests/test_journal_catalog.py` + `web/src/lib/journals.test.ts` 各跑一遍 |

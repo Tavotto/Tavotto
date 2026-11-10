@@ -2,14 +2,14 @@
 
 > 原文出自 `web/AGENTS.md`「素材库普通入口（2026-08-26，Compatibility Bridge Session 5）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`scriptRunStore.test.ts`、`ScriptLibrary.test.tsx`、`AssetBrowser.runtime.test.tsx`、`AssetBrowser.tiff.test.tsx`、`lib/panelSrc.test.ts`、`projectSwitchAssets.test.ts`、`openRequest.test.ts`、`FigurePickerDialog.test.tsx`、`AssetBrowser.foreign.test.tsx`、`ScriptLibrary.foreign.test.tsx`、`e2e/asset-library.spec.ts`、`projectSwitchDepRepair.test.ts`、`projectSwitchAi.test.ts`、`rebuildProgressId.golden.test.ts`
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`scriptRunStore.test.ts`、`ScriptLibrary.test.tsx`、`AssetBrowser.runtime.test.tsx`、`AssetBrowser.tiff.test.tsx`、`lib/panelSrc.test.ts`、`projectSwitchAssets.test.ts`、`openRequest.test.ts`、`FigurePickerDialog.test.tsx`、`AssetBrowser.foreign.test.tsx`、`ScriptLibrary.foreign.test.tsx`、`e2e/asset-library.spec.ts`、`projectSwitchDepRepair.test.ts`、`projectSwitchAi.test.ts`、`rebuildProgressId.golden.test.ts`、`lib/canvasFileIntake.test.ts`、`canvas/useCanvasScriptDrop.test.ts`、`lib/clipboardImagePaste.test.ts`
 
 <!-- agents-route
 sheet: web/AGENTS.md
 order: 220
-改到: `AssetBrowser`、`ScriptLibrary`、`scriptRunStore` / `runtimeAssetStore` / `scriptLibraryStore` / `assetStore` / `depRepairStore` / `envStore` / `aiStore`、`FigurePickerDialog`
+改到: `AssetBrowser`、`ScriptLibrary`、`scriptRunStore` / `runtimeAssetStore` / `scriptLibraryStore` / `assetStore` / `depRepairStore` / `envStore` / `aiStore`、`FigurePickerDialog`、`lib/canvasFileIntake.ts` / `canvas/useCanvasScriptDrop.ts` / `lib/packageImport.ts`（拖 / 粘贴文件进画布）
 主题: 素材库普通入口 → `asset-library.md`
-必守要点: 七个 store 都有项目代际；同脚本防并发；多 Figure 结果绝不只显示第一张；素材卡加图走 `addFigureToLayout`
+必守要点: 七个 store 有项目代际；同脚本防并发；多 Figure 不只显示第一张；加图走 `addFigureToLayout`；拖入图走 `importAndPlace`
 -->
 
 素材面板分「图」（FileAsset + RuntimeFigureAsset 同一个 listbox，runtime
@@ -434,3 +434,15 @@ RenderCore，必须明确报 `svg_asset_export_unsupported`，不能交付空图
   采用前的 `ConvertCompare` 原样展示后端 `comparison.output_evidence` 的源码文件名线索和改道写入尝试；
   未记录、无可用记录、列表截断各自说清，不把线索标成已完成输出或完整性证明。旧后端的 R / MATLAB
   结果仍提示出图不等于输出完整。看护 `components/PreparationCard.test.tsx`。
+
+- **拖 / 粘贴文件进画布（ADR 0176，2026-11-10）**：系统文件拖到画布、⌘V 粘贴图片，**每一样东西按类型接住**，全文在 ADR 0176 的终态表。
+  * 图片（PNG / JPG / TIFF / PDF / SVG，后缀表 `ASSET_EXTENSIONS` 与后端 `engine/assetimport.EXTENSIONS` 同源，`tests/golden/asset_import_extensions.json`）一律 `lib/canvasFileIntake.importAndPlace`：
+    逐个 `importAsset`（`POST /api/assets/import`，字节上传、发起项目随请求带走）→ `assetStore.load({ force: true })` 重扫（不合并在途那份）→ **经 `addPanelToCanvas`** 放置（恢复门的 `deferUserEntry` 因此自动生效；排队时落点丢掉）。
+    不造第二套对象模型、不直接调 `actions.addPanel`。第一张放落点，其余不带点（常规摆放避让已有对象）；上传 / 重扫之后**两处**都要判项目没换（换了整批作废、什么都不说），落点的画布变了就不带点。
+    没有项目（`currentProjectId() === null`：playground / MCP 画布）不发请求。
+  * **失败出口只有三种结局**（静默做完并说一句 / 一句话 + 一个主按钮直接完成用户原来想做的事 / 真做不了「发送问题反馈」）：问题一律经 `reportProblems`（带 `feedbackAction()`，引擎说反馈入口关着才不画按钮），
+    不出现无按钮的红色报错，也不出现「请去某处做某事」。一批里既有脚本又有没成的：脚本那一句先说，问题排在它后面（`flushTail`，带按钮的问题有最后发言权）。
+  * 项目外的 `.py` / R / MATLAB：主按钮「打开它所在的项目」（`openItsProject`，与主页同一条打开并运行 / 出「生成可编辑版本」卡）；项目包走 `lib/packageImport.openPackageFile`，与顶栏「导入项目包」是同一条流程。
+  * 粘贴：`handlePasteEvent` 在**不是对象负载**时看图片文件，有文字就不拦，输入框 / 对话框让位（`runDiscreteAction`）；文件名 `pasted-<时间戳>.png`。
+  * 桌面壳的原生拖放处理是关掉的，图片走 DOM `File` 字节，**不依赖壳的路径事件**；没有脚本的一次放下里壳那条 `unsupported` 事件不配对、静默过期。系统图片拖动时不画落点预览（dragover 读不到文件内容，没有真实尺寸，不造假）。
+  * 看护：`lib/canvasFileIntake.test.ts`、`canvas/useCanvasScriptDrop.test.ts`、`lib/clipboardImagePaste.test.ts`、后端 `tests/test_asset_import.py`。
