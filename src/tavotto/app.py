@@ -14697,38 +14697,8 @@ def api_ai_data_files():
     if not engine_ai_figure_edit.enabled():
         return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
     root = require_project()
-    found: list[tuple[str, int]] = []
-    truncated = False
-    seen = 0
-    stack = [str(root)]
-    # 手写栈 + scandir 逐项迭代：每看一项计一次数，到预算立刻停（`os.walk` 会先把整个目录枚举完才让我们数）；
-    # 已收集的保留。剪枝规则不变：隐藏目录、PRUNE_DIRS、不跟随链接、跳过链接文件
-    while stack and not truncated:
-        cur = stack.pop()
-        try:
-            it = os.scandir(cur)
-        except OSError:
-            continue
-        with it:
-            for entry in it:
-                seen += 1
-                if seen > _DATA_FILES_SCAN_MAX:
-                    truncated = True
-                    break
-                name = entry.name
-                try:
-                    if entry.is_symlink():
-                        continue
-                    if entry.is_dir(follow_symlinks=False):
-                        if not name.startswith(".") and name not in engine_discover.PRUNE_DIRS:
-                            stack.append(entry.path)
-                        continue
-                    if not name.lower().endswith(".csv") or name.startswith("."):
-                        continue
-                    size = entry.stat(follow_symlinks=False).st_size
-                except OSError:
-                    continue
-                found.append((Path(entry.path).relative_to(root).as_posix(), size))
+    # walk 规则（剪枝 / 隐藏 / 不跟随链接 / 扫描预算）与数据文件夹摘要共用 `discover.walk_files` 那一份
+    found, truncated = engine_discover.walk_files(root, (".csv",), scan_max=_DATA_FILES_SCAN_MAX)
     found.sort()
     if len(found) > _DATA_FILES_MAX:
         found, truncated = found[:_DATA_FILES_MAX], True
