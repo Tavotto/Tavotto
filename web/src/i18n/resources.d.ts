@@ -5501,7 +5501,7 @@ export default interface Resources {
       "openFailed": "打不开项目：{{error}}",
       "panelMissing": "没找到图 {{stem}}——脚本可能还没产出，或它在别的图库里",
       "projectOpened": "已打开项目 {{name}}",
-      "restoreTimeout": "这次交接的图没有放进排版：上次的排版还没打开，图在素材库里。",
+      "restoreTimeout": "这次交接的图在素材库里：先在画布上选一份排版，再把它加进来。",
       "runtimeNeedsRun": "{{stem}} 已登记为运行时图，但还没有预览——到素材库的「脚本」区运行一次。",
       "superseded": "项目已切换，这次交接没有放入。"
     },
@@ -6852,11 +6852,13 @@ export default interface Resources {
     },
     "restore": {
       "autoAdopted": "已打开本机找到的排版“{{name}}”",
-      "blockedWrite": "上次的排版还没打开。",
+      "autoNew": "上次的排版“{{name}}”打不开，已开了一份新排版。",
+      "autoNewUnnamed": "上次的排版打不开，已开了一份新排版。",
+      "blockedWrite": "先在画布上选一份排版。",
       "choose": "选一份打开",
       "continueNew": "继续新建",
       "entrySuperseded": "项目已切换，这次操作没有执行。",
-      "entryTimeout": "等了很久上次的排版仍没处理，这次操作没有执行。",
+      "heldChoose": "先在画布上选一份排版，刚才的操作会接着做。",
       "indexDegraded": "上次的恢复记录读不了，先开了一份空白排版。旧排版还在，可以在“打开排版”里找。",
       "meta": {
         "pill": "下次自动恢复信息没更新",

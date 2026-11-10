@@ -2474,17 +2474,6 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
 describe('进入编辑遇到上次的排版还没恢复好', () => {
   afterEach(() => resetRestoreGateForTests())
 
-  it('blocked（需要用户先处理恢复）：什么都没放进去，卡片留着，不说已进入编辑', async () => {
-    await mount()
-    await openWith(report(STATES.completed))
-    vi.mocked(addRuntimePanelToCanvas).mockImplementation((() => null) as never)
-    vi.mocked(openFastEdit).mockImplementation((() => 'blocked') as never)
-    await act(async () => primary()!.click())
-    expect(useUiStore.getState().guideCard).not.toBe('closed')
-    expect(panel()).not.toBeNull()
-    expect(useDocumentStore.getState().doc.objects).toEqual([])
-  })
-
   /** 真实的排队：openFastEdit 的替身走真 `deferUserEntry`，落地时放面板 */
   const realDeferral = () => {
     vi.mocked(addRuntimePanelToCanvas).mockImplementation((() => null) as never)
@@ -2494,7 +2483,7 @@ describe('进入编辑遇到上次的排版还没恢复好', () => {
         putPanel(id)
         return 'editing'
       }
-      return entry === 'deferred' ? 'deferred' : 'blocked'
+      return 'deferred'
     }) as never)
   }
 

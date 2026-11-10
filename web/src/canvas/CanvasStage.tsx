@@ -1,9 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { perfCount } from '@/perf/core'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { EmptyPickCards } from './EmptyPickCards'
+import { RestoreIssueBody } from '@/components/RestoreIssueBody'
+import { Card } from '@/components/ui/Card'
+import { heldEntryCount, subscribeHeldEntries } from '@/store/documentRestore'
 import { runTutorialEntry } from '@/lib/onboarding/tutorial'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -545,6 +548,8 @@ function EmptyHint() {
   const panels = useAssetStore((s) => s.panels)
   const hasAssets = panels.length > 0
   const inTutorial = useProjectStore((s) => s.project?.tutorial === true)
+  const restoreIssue = useDocumentStore((s) => (s.restoreGate.state === 'needs_user' ? s.restoreIssue : null))
+  const held = useSyncExternalStore(subscribeHeldEntries, heldEntryCount) > 0
   if (!selectionEmpty) return null
   const showCards = assetsLoaded && hasAssets
   const onLightPaper = groundInkFor(null, page) === 'paper-ink'
@@ -556,6 +561,22 @@ function EmptyHint() {
     viewH,
     paper: { x: panX, y: panY, w: mmToWorld(page.w) * zoom, h: mmToWorld(page.h) * zoom },
   })
+  // 上次的排版没能恢复：这份空白是占位，不许写——不摆「添加图」/ 选图卡（点了也放不进去），把出口摆在这里。
+  // 用户已经动了手（动作记着，见 `deferUserEntry`）时描一圈强调边：选完就接着做
+  if (restoreIssue) {
+    return (
+      <div
+        data-canvas-restore-issue
+        data-restore-held={held ? '' : undefined}
+        className="absolute w-max max-w-80 -translate-x-1/2 -translate-y-1/2"
+        style={{ left: cx, top: cy }}
+      >
+        <Card appearance="raised" padding="md" className={cn('flex flex-col gap-1.5', held && 'outline outline-2 outline-accent')}>
+          <RestoreIssueBody issue={restoreIssue} close={() => {}} held={held} />
+        </Card>
+      </div>
+    )
+  }
   return (
     // `w-max`：绝对定位盒子的 shrink-to-fit 只看 left 右侧剩下的空间，纸面中心靠近
     // 视口右缘时提示会被折成十几个字一行的一根细柱（2026-09-11 走查截图）；

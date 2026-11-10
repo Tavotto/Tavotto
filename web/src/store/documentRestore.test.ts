@@ -248,7 +248,7 @@ describe('恢复门：占位文档零持久化副作用（不变量 1）', () =>
     await adopting
   })
 
-  it('needs_user 期间用户的编辑被拒时，状态条说一句「上次的排版还没打开」（同一句节流，不刷屏）', async () => {
+  it('needs_user（暂时读不到）期间底层编辑被拒：先自动再试一次，仍不成才说一句去画布上选（同一句节流，不刷屏）', async () => {
     seedSavedLast()
     be.state.fail.session = 500
     const app = await boot()
@@ -260,10 +260,18 @@ describe('恢复门：占位文档零持久化副作用（不变量 1）', () =>
       const key = (s.status as { key?: string } | null)?.key
       if (key) spy.push(key)
     })
+    const gets = () => be.state.calls.filter((c) => c === 'GET session').length
+    const before = gets()
     ds(app).commit(literal('加字'), (d) => { d.objects.push(text('t1', 'x')) })
+    // 自动再试在路上：门回到 restoring，落定后仍是 needs_user
+    await reached(() => gets() > before && app.doc.getRestoreGate().state === 'needs_user')
+    expect(spy.filter((k) => k === 'restore.blockedWrite')).toHaveLength(0)
+    const afterRetry = gets()
     ds(app).commit(literal('再加'), (d) => { d.objects.push(text('t2', 'y')) })
+    ds(app).commit(literal('三加'), (d) => { d.objects.push(text('t3', 'z')) })
     unsub()
     expect(spy.filter((k) => k === 'restore.blockedWrite')).toHaveLength(1)
+    expect(gets()).toBe(afterRetry) // 每轮只自动试一次
     expect(ds(app).doc.objects).toEqual([])
   })
 })
@@ -712,7 +720,7 @@ describe('教程 prepare（A20）', () => {
     expect(objectIds(app)).toEqual(['panel_tut', 't_first'])
   })
 
-  it('准备失败（回调吞掉装载失败、正常返回 false）→ needs_user{prepare_failed}，初始空白不标 ready，出口是继续新建', async () => {
+  it('准备失败（回调吞掉装载失败、正常返回 false）→ needs_user{prepare_failed}，初始空白不标 ready；用户一动手就开新排版', async () => {
     const app = await boot()
     await app.proj.useProjectStore.getState().adoptOpenedProject(
       { open: true, id: 'p_t', figures_dir: '/figs/t' },
@@ -722,7 +730,9 @@ describe('教程 prepare（A20）', () => {
     expect(app.doc.getRestoreGate().state).toBe('needs_user')
     ds(app).commit(literal('加字'), (d) => { d.objects.push(text('t1', 'x')) })
     expect(ds(app).doc.objects).toEqual([])
-    expect(await app.restore.continueNew()).toBe(true)
+    // 示例没打开、也没有别的可接：用户一动手就静默开新排版（ADR 0120 修订 2026-11-10），不用先去找「继续新建」
+    await reached(() => app.doc.getRestoreGate().state === 'ready')
+    expect(app.doc.getRestoreGate()).toMatchObject({ reason: 'continued_new' })
     ds(app).commit(literal('加字'), (d) => { d.objects.push(text('t1', 'x')) })
     expect(objectIds(app)).toEqual(['t1'])
   })

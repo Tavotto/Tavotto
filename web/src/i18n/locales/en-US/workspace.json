@@ -1606,11 +1606,13 @@
   },
   "restore": {
     "autoAdopted": "Opened the layout “{{name}}” found on this computer",
-    "blockedWrite": "Your last layout isn’t open yet.",
+    "autoNew": "Couldn’t open your last layout “{{name}}”, so a new one was started.",
+    "autoNewUnnamed": "Couldn’t open your last layout, so a new one was started.",
+    "blockedWrite": "Pick a layout on the canvas first.",
     "choose": "Pick one to open",
     "continueNew": "Start a new layout",
     "entrySuperseded": "The project was switched, so this action wasn’t carried out.",
-    "entryTimeout": "Your last layout still wasn’t handled, so this action wasn’t carried out.",
+    "heldChoose": "Pick a layout on the canvas and your last action will carry on.",
     "indexDegraded": "The record of your last layout couldn’t be read, so a blank layout was opened. Your older layouts are still there — look in “Open layout”.",
     "meta": {
       "pill": "Auto-recovery info not updated",

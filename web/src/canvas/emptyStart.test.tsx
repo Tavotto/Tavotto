@@ -17,6 +17,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CanvasStage } from '@/canvas/CanvasStage'
 import { CARD_W, EmptyPickCards, pickColumns, pickRows } from '@/canvas/EmptyPickCards'
 import { LayerTree } from '@/components/left/LayerTree'
+import { RestoreIssueBody } from '@/components/RestoreIssueBody'
+import type { RestoreIssue } from '@/store/documentRestore'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { t } from '@/i18n'
 import type { PanelInfo } from '@/lib/api'
@@ -215,5 +217,52 @@ describe('侧栏的空态', () => {
     await mount(<LayerTree />)
     expect(document.body.textContent).toContain(t('layerTree.emptyTitle', { ns: 'workspace' }))
     expect(document.querySelectorAll('button')).toHaveLength(0)
+  })
+})
+
+/**
+ * 上次的排版没能恢复（ADR 0120 修订 2026-11-10）：这份空白是不许写的占位——画布正中摆的是恢复的出口
+ * （一句话 + 一个主按钮），不是「添加图」/ 选图卡（点了也放不进去）。主语：`data-canvas-restore-issue` 那一块。
+ */
+describe('恢复没成时的空画布', () => {
+  const needsUser = (kind: RestoreIssue['kind']) =>
+    act(async () =>
+      useDocumentStore.setState({
+        restoreGate: { state: 'needs_user', gen: 7, pj: 'p1', docId: null, reason: 'failed' },
+        restoreIssue: { pj: 'p1', gen: 7, kind, ref: { id: 'd_x', name: 'Fig X' }, alternatives: [] },
+      }),
+    )
+  afterEach(() =>
+    useDocumentStore.setState({
+      restoreGate: { state: 'ready', gen: 8, pj: 'p1', docId: 'd_empty_start', reason: 'explicit' },
+      restoreIssue: null,
+    }),
+  )
+
+  it('画布正中是恢复卡（一个主按钮），不摆「添加图」与选图卡', async () => {
+    useAssetStore.setState({ panels: [asset('a.pdf')], byId: {}, loaded: true })
+    await mount(<CanvasStage />)
+    expect(document.querySelector('[data-canvas-empty-hint]')).not.toBeNull()
+    await needsUser('missing')
+    const card = document.querySelector<HTMLElement>('[data-canvas-restore-issue]')
+    expect(card).not.toBeNull()
+    expect(document.querySelector('[data-canvas-empty-hint]')).toBeNull()
+    const actions = [...card!.querySelectorAll<HTMLElement>('[data-restore-action]')]
+    expect(actions.map((a) => a.dataset.restoreAction)).toEqual(['continue-new'])
+    expect(actions[0].dataset.variant).toBe('primary')
+    expect(card!.dataset.restoreHeld).toBeUndefined()
+  })
+
+  it('暂时读不到且有动作在等：「继续新建」从 ⋯ 里拿出来摆在「重试」旁边；没有动作在等时仍折着', async () => {
+    const issue: RestoreIssue = { pj: 'p1', gen: 7, kind: 'unavailable', ref: { id: 'd_x', name: 'Fig X' }, alternatives: [] }
+    const shown = () =>
+      [...document.querySelectorAll<HTMLElement>('[data-restore-action]')].map((a) => a.dataset.restoreAction)
+    await mount(<RestoreIssueBody issue={issue} close={() => {}} />)
+    expect(shown()).toEqual(['retry'])
+    await act(async () => root.unmount())
+    await mount(<RestoreIssueBody issue={issue} close={() => {}} held />)
+    expect(shown()).toEqual(['retry', 'continue-new'])
+    expect(document.querySelector('[data-restore-action="retry"]')!.getAttribute('data-variant')).toBe('primary')
+    expect(document.querySelector('[data-restore-action="continue-new"]')!.getAttribute('data-variant')).not.toBe('primary')
   })
 })

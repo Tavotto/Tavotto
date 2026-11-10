@@ -15,9 +15,19 @@ import { Menu, MenuItem } from './ui/Menu'
  *  - 那份找不到 / 读不出来 / 版本过新 → 有已验证的别的排版就「打开“它”」，没有就「继续新建」；
  *  - 本机找到了几份 → 「选一份打开」（点开是名单）；
  *  - 示例没打开 → 「继续新建」。
+ * 同一块也摆在空画布正中（`canvas/CanvasStage` 的 `RestoreIssueCard`）：恢复没成时画布是一份空白占位，出口不能只藏在顶栏。
  * 「继续新建」不删任何旧稿：旧候选与旧正文一个字节不动，之后晚到的旧响应也盖不过新文档。
  */
-export function RestoreIssueBody({ issue, close }: { issue: RestoreIssue; close: () => void }) {
+export function RestoreIssueBody({
+  issue,
+  close,
+  held = false,
+}: {
+  issue: RestoreIssue
+  close: () => void
+  /** 有用户动作正等着这次选择（画布上那张卡传）：暂时读不到时把「继续新建」从 ⋯ 里拿出来——它是此刻唯一一定走得通的路 */
+  held?: boolean
+}) {
   const { t } = useTranslation('workspace')
   const name = issue.ref?.name || t('docBanner.lastDocUnnamed')
   const done = (fn: () => unknown) => () => {
@@ -82,7 +92,17 @@ export function RestoreIssueBody({ issue, close }: { issue: RestoreIssue; close:
       </Button>
     )
     // 备选（含「打开本机副本」）折在 ⋯ 里：服务暂时不可用的这段时间里它们是仅有的出路
-    folded = [...alts.map((a) => openAlt(a.id, a)), newItem]
+    folded = [...alts.map((a) => openAlt(a.id, a)), ...(held ? [] : [newItem])]
+    if (held) {
+      primary = (
+        <>
+          {primary}
+          <Button size="sm" data-restore-action="continue-new" onClick={done(continueNew)}>
+            {t('restore.continueNew')}
+          </Button>
+        </>
+      )
+    }
   } else if (issue.kind === 'choose') {
     primary = (
       <Menu
