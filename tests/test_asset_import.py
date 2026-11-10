@@ -123,7 +123,9 @@ def test_extension_list_matches_the_scanner_and_the_frontend_golden():
     ours = {e for exts in assetimport.EXTENSIONS.values() for e in exts}
     assert ours == scanned
     golden = json.loads(
-        (Path(__file__).parent / "golden" / "asset_import_extensions.json").read_text()
+        (Path(__file__).parent / "golden" / "asset_import_extensions.json").read_text(
+            encoding="utf-8"
+        )
     )
     assert ours == set(golden["extensions"])
 
