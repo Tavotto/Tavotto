@@ -970,6 +970,7 @@ function AssistantPanelBody() {
             onDragOver={(e) => {
               if (!panel || noAgent || !Array.from(e.dataTransfer?.types ?? []).includes('Files')) return
               e.preventDefault()
+              e.stopPropagation() // 拖进输入框的图只归输入框，不让外层的拖放处理接走
               setDropping(true)
             }}
             onDragLeave={(e) => {
@@ -980,6 +981,7 @@ function AssistantPanelBody() {
               const files = Array.from(e.dataTransfer?.files ?? [])
               if (files.length === 0) return
               e.preventDefault()
+              e.stopPropagation()
               setDropping(false)
               addRefFiles(files)
             }}
@@ -1008,6 +1010,7 @@ function AssistantPanelBody() {
                 const files = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith('image/'))
                 if (files.length === 0) return
                 e.preventDefault()
+                e.stopPropagation()
                 addRefFiles(files)
               }}
               onKeyDown={(e) => {
