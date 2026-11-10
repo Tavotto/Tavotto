@@ -29,7 +29,11 @@ function normalize(p: string): string {
  * 只按字面比（壳交来的路径 canonicalize 过，项目根是后端解析过的路径）：解不开的符号链接宁可说「不在项目里」，不猜。
  */
 export function projectRelativeScript(root: string, path: string): string | null {
-  if (!isScriptName(path)) return null
+  return isScriptName(path) ? projectRelativePath(root, path) : null
+}
+
+/** 同上，不限类型（R / MATLAB 脚本在项目里时要用）；判据只有这一份 */
+export function projectRelativePath(root: string, path: string): string | null {
   const r = normalize(root)
   const p = normalize(path)
   const fold = windowsLike(r) || windowsLike(p)

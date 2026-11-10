@@ -2328,6 +2328,31 @@ export interface PackageOpenResult {
   drifted: string[]
 }
 
+/**
+ * 把一个文件作为素材放进当前项目文件夹（ADR 0176，`POST /api/assets/import`）。
+ * 后端按**内容**判类型、清洗文件名、同名同内容复用 / 异内容改名、不覆盖；`id` 与 `/api/panels` 的素材 id 同一个值。
+ * `pj` = 发起那一刻的项目（切项目的窗口里文件绝不写进别的项目）。
+ */
+export interface ImportedAsset {
+  id: string
+  name: string
+  file: string
+  kind: 'pdf' | 'svg' | 'raster'
+  /** 项目里已有内容相同的文件，没有写第二份 */
+  reused: boolean
+  /** 同名异内容：自动改成了 `名 (2).ext` */
+  renamed: boolean
+  bytes: number
+}
+
+export function importAsset(file: Blob, name: string, pj?: string | null): Promise<ImportedAsset> {
+  return jsonFetch<ImportedAsset>(
+    `/api/assets/import?name=${encodeURIComponent(name)}`,
+    { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file },
+    pj,
+  )
+}
+
 export function openPackage(file: File): Promise<PackageOpenResult> {
   const form = new FormData()
   form.append('package', file)

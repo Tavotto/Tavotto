@@ -95,6 +95,8 @@ _CODE_REGISTRIES = (
     "tavotto.engine.folderrepair",
     # 「跳过这个文件夹」（ADR 0154）：`IgnoreError.code` 由 `/api/engine/path-ignore` 转成 JSON
     "tavotto.engine.pathignore",
+    # 拖 / 粘贴文件进画布（ADR 0176）：`POST /api/assets/import` 的 code 经 `_import_error` 漏斗转成 JSON（带中文 error 原文）
+    "tavotto.engine.assetimport",
 )
 
 
@@ -145,6 +147,16 @@ def _declared_codes(text: str) -> set[str]:
 # code——审计 P1-02：错误尾部不许泄漏中文，所以每个 code 都要有两种语言的
 # 文案，且占位符与 params 对得上）
 USER_VISIBLE_CODES = {
+    # --- ADR 0176：拖 / 粘贴文件进画布（`POST /api/assets/import`）；只有大小上限带参数，其余固定文案 ---
+    "asset_import_too_large": {"limit_mb"},
+    "asset_import_unsupported_type": set(),
+    "asset_import_unreadable": set(),
+    "asset_import_empty": set(),
+    "asset_import_not_writable": set(),
+    "asset_import_disk_full": set(),
+    "asset_import_write_failed": set(),
+    "asset_import_not_visible": set(),
+    "asset_import_name_exhausted": set(),
     "svg_asset_unsupported": set(),
     "svg_asset_export_unsupported": set(),
     "no_project": set(),

@@ -74,6 +74,7 @@ from .engine import (
     ai_tasks as engine_ai_tasks,
     artifactcontext as engine_artifactcontext,
     artifactinspect as engine_artifactinspect,
+    assetimport as engine_assetimport,
     atomicio as engine_atomicio,
     bakedbaseline as engine_baked,
     bootstrap as engine_bootstrap,
@@ -625,6 +626,26 @@ def _unsupported_tiff(exc):
     return jsonify({"error": exc.message, "code": exc.code, "params": exc.params}), 422
 
 
+def _asset_probe(p: Path, kind: str) -> tuple[dict, dict]:
+    """素材文件 → `(probe, original_spec)`：「这个文件能不能成为素材、有多大」的判据**只有这一份**。
+
+    `scan_panels` 逐个素材用它；`POST /api/assets/import` 在落盘前用它验证上传的字节（ADR 0176），
+    所以「导进来了、素材库里却没有」在结构上不会发生。TIFF 范围另由调用方先过 `tiffprobe.check`。
+    """
+    if kind == "svg":
+        from . import svgasset
+
+        _, probe = svgasset.read(p)
+    else:
+        probe = pdfbackend.probe_asset(p, kind)
+    # 「这张图有多大」只算一次（`engine/originalspec`，ADR 0028）。
+    # `native_*_mm` 是那份 spec 的投影而不是第二次计算——改造前位图那一
+    # 档在这里现猜一个 ppi（`600 if png else 300`），猜完既不说也没有
+    # 别处能对账；现在密度先按文件自己写的物理密度读，读不到才落到同样
+    # 那两个数，且 `original_spec.dpi_source` 会说出来它是假定的。
+    return probe, engine_originalspec.asset_spec(p, kind, probe)
+
+
 def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
     """扫描 figures 目录：PDF 是首选（矢量）；无同名 PDF 的图片按位图收录。
 
@@ -666,18 +687,7 @@ def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
             "mtime": int(p.stat().st_mtime),
         }
         try:
-            if kind == "svg":
-                from . import svgasset
-
-                _, probe = svgasset.read(p)
-            else:
-                probe = pdfbackend.probe_asset(p, kind)
-            # 「这张图有多大」只算一次（`engine/originalspec`，ADR 0028）。
-            # `native_*_mm` 是那份 spec 的投影而不是第二次计算——改造前位图那一
-            # 档在这里现猜一个 ppi（`600 if png else 300`），猜完既不说也没有
-            # 别处能对账；现在密度先按文件自己写的物理密度读，读不到才落到同样
-            # 那两个数，且 `original_spec.dpi_source` 会说出来它是假定的。
-            spec = engine_originalspec.asset_spec(p, kind, probe)
+            probe, spec = _asset_probe(p, kind)
             entry.update(
                 kind=kind,
                 native_w_mm=spec["logical_w_mm"],
@@ -1208,6 +1218,121 @@ def api_panels():
     )
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+def _import_error(code: str, status: int, params: dict | None = None):
+    text = engine_assetimport.ERRORS.get(code, code)
+    resp = jsonify({"error": text, "code": code, "params": params or {}})
+    resp.status_code = status
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _import_write_error(exc: BaseException):
+    """落盘失败 → 稳定 code：磁盘满 / 只读或没权限 / 其它（原因只进日志，不进响应）"""
+    cause = exc.__cause__ if isinstance(exc, engine_atomicio.AtomicWriteError) else exc
+    num = getattr(cause, "errno", None)
+    LOG.warning("导入素材落盘失败: %s", type(cause).__name__)
+    if num in (errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC)):
+        return _import_error("asset_import_disk_full", 507)
+    if num in (errno.EACCES, errno.EPERM, errno.EROFS):
+        return _import_error("asset_import_not_writable", 403)
+    return _import_error("asset_import_write_failed", 500)
+
+
+@app.post("/api/assets/import")
+def api_assets_import():
+    """把上传的一个文件作为素材放进**当前项目文件夹**（ADR 0176）。
+
+    请求：`POST /api/assets/import?name=<文件名>`，body 是文件的原始字节（`application/octet-stream`）。
+    `name` 只取 basename 并清洗，客户端不能指定目录；类型按**内容**判，后缀只是名字。
+    响应：`{id, name, file, kind, reused, renamed, bytes}`——`id` 与 `/api/panels` 的素材 id 同一个值，
+    `reused`：已有内容相同的文件、没有写第二份；`renamed`：同名异内容、自动改成了 `名 (2).ext`。
+    会话认证走全局 guard；写盘只在项目根、不覆盖已有文件、先验证后落盘（`engine/assetimport`）。
+    """
+    from . import svgasset
+
+    root = require_project().resolve()
+    limit = engine_assetimport.MAX_BYTES
+    too_large = {"limit_mb": limit // (1024 * 1024)}
+    if request.content_length is not None and request.content_length > limit:
+        return _import_error("asset_import_too_large", 413, too_large)
+    try:
+        data = _read_body_capped(limit)
+    except Exception:  # noqa: BLE001 — 读流失败不该 500：当作没收到
+        return _import_error("asset_import_empty", 400)
+    if len(data) > limit:
+        return _import_error("asset_import_too_large", 413, too_large)
+    if not data:
+        return _import_error("asset_import_empty", 400)
+    content = engine_assetimport.sniff(data)
+    if content is None:
+        return _import_error("asset_import_unsupported_type", 415)
+    stem, given_ext = engine_assetimport.clean_name(request.args.get("name", ""))
+    ext = engine_assetimport.extension_for(content, given_ext)
+    kind = "pdf" if content == "pdf" else "svg" if content == "svg" else "raster"
+    digest = hashlib.sha256(data).hexdigest()
+
+    def visible(path: Path) -> bool:
+        return any(p == path for p, _ in engine_refresh.iter_assets(root, reg=current_registry()))
+
+    with engine_assetimport.LOCK:
+        tmp = engine_assetimport.temp_path(root, ext)
+        try:
+            try:
+                engine_assetimport.write_temp(tmp, data)
+            except (OSError, engine_atomicio.AtomicWriteError) as exc:
+                return _import_write_error(exc)
+            # 落盘前先用素材扫描自己的探针验证：扫不出来的文件一个字节都不留在项目里
+            try:
+                if ext in TIFF_EXT:
+                    tiffprobe.check(tmp)
+                _asset_probe(tmp, kind)
+            except (tiffprobe.UnsupportedTiff, svgasset.UnsupportedSVG) as exc:
+                return _import_error(exc.code, 422, getattr(exc, "params", None))
+            except Exception:  # noqa: BLE001 — 损坏 / 加密 / 解析不了：同一个 code
+                LOG.info("导入素材验证失败（%s）", content, exc_info=True)
+                return _import_error("asset_import_unreadable", 422)
+            for allow_reuse in (True, False):
+                try:
+                    plan = engine_assetimport.choose(
+                        root, stem, ext, digest, len(data), allow_reuse=allow_reuse
+                    )
+                except engine_assetimport.ImportRefused as exc:
+                    return _import_error(exc.code, exc.status, exc.params)
+                if plan.reuse is not None:
+                    if visible(plan.reuse):
+                        return jsonify(_import_result(plan.reuse, kind, reused=True, renamed=False))
+                    continue  # 已有那份被「同 stem 的 PDF」让位藏起来了：改走新名字
+                dest = root / plan.name
+                try:
+                    engine_assetimport.place_exclusive(tmp, dest)
+                except FileExistsError:
+                    return _import_error("asset_import_name_exhausted", 409)
+                except (OSError, engine_atomicio.AtomicWriteError) as exc:
+                    return _import_write_error(exc)
+                if not visible(dest):
+                    engine_assetimport.discard(dest)
+                    return _import_error("asset_import_not_visible", 409)
+                resp = jsonify(_import_result(dest, kind, reused=False, renamed=dest.stem != stem))
+                resp.status_code = 201
+                return resp
+            return _import_error("asset_import_not_visible", 409)
+        finally:
+            engine_assetimport.discard(tmp)
+
+
+def _import_result(path: Path, kind: str, *, reused: bool, renamed: bool) -> dict:
+    root = require_project().resolve()
+    return {
+        "id": str(path.relative_to(root)),
+        "name": path.stem,
+        "file": path.name,
+        "kind": kind,
+        "reused": reused,
+        "renamed": renamed,
+        "bytes": path.stat().st_size,
+    }
 
 
 @app.get("/api/panel-stem")

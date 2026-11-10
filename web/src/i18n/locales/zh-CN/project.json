@@ -92,7 +92,7 @@
     "browseMore": "浏览更多项目",
     "import": {
       "dropNoPath": "系统没有告诉 {{product}}「{{name}}」在哪个文件夹，请在接下来的窗口里选中它。",
-      "dropNotScript": "「{{name}}」不是 Python 脚本。请拖入 .py 文件。",
+      "dropNotScript": "「{{name}}」打不开。主页可以拖入脚本（.py、.R、.m）或项目文件夹。",
       "droppedMany": "拖入了 {{total}} 项，只用了「{{name}}」打开项目",
       "foreignNotFound": "这个文件夹里没找到「{{name}}」，请选它所在的文件夹。",
       "folderTitle": "选择脚本所在的文件夹",

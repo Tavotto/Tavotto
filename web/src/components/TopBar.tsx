@@ -18,13 +18,12 @@ import {
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   newBlankDocument,
-  openLayoutDocument,
   openRecentEntry,
   setDocumentName,
 } from '@/store/actions'
-import { requestRelinkMissing } from '@/lib/clipboard'
 import { runUndoRedo } from '@/hooks/useKeyboard'
-import { createPackage, openPackage } from '@/lib/api'
+import { createPackage } from '@/lib/api'
+import { openPackageFile } from '@/lib/packageImport'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { dragRegionProps, isDesktop, TRAFFIC_LIGHTS_INSET, WINDOW_CONTROLS_INSET, windowChrome } from '@/lib/desktop'
 import { keyOf } from '@/lib/keymap'
@@ -182,18 +181,7 @@ function importPackage() {
     if (!file) return
     const ui = useUiStore.getState()
     try {
-      const res = await openPackage(file)
-      await openLayoutDocument(res.doc)
-      const missing = requestRelinkMissing()
-      const drift = res.drifted.length
-      if (!missing && !drift) {
-        ui.setStatus(
-          msg('status.packageOpened', { createdAt: res.manifest.created_at ?? '' }, 'workspace'),
-          'done',
-        )
-      } else if (drift) {
-        ui.setStatus(msg('status.packageDrift', { count: drift }, 'workspace'), 'error')
-      }
+      await openPackageFile(file)
     } catch (e) {
       ui.setStatus(
         msg(
