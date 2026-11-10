@@ -2353,6 +2353,31 @@ export function importAsset(file: Blob, name: string, pj?: string | null): Promi
   )
 }
 
+/** `.ipynb` 抽成同名 `.py` 的结果（ADR 0178）：`script` 是项目相对路径；`status` 见后端 `notebookscript.Placed` */
+export interface NotebookScript {
+  notebook: string
+  script: string
+  status: 'created' | 'updated' | 'reused' | 'renamed'
+}
+
+/** 项目里的 `.ipynb`（项目相对路径）→ 它旁边的同名 `.py`；笔记本只读，不覆盖用户自己的同名脚本 */
+export function extractNotebook(notebook: string, pj?: string | null): Promise<NotebookScript> {
+  return jsonFetch<NotebookScript>(
+    '/api/notebook/extract',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notebook }) },
+    pj,
+  )
+}
+
+/** 拿不到路径时：把笔记本内容交给后端，抽成当前项目根里的 `.py`（笔记本本身不存进项目） */
+export function importNotebook(file: Blob, name: string, pj?: string | null): Promise<NotebookScript> {
+  return jsonFetch<NotebookScript>(
+    `/api/notebook/import?name=${encodeURIComponent(name)}`,
+    { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file },
+    pj,
+  )
+}
+
 export function openPackage(file: File): Promise<PackageOpenResult> {
   const form = new FormData()
   form.append('package', file)
@@ -6861,6 +6886,13 @@ export interface RegistryView {
   all_scripts: ScriptInventoryEntry[]
   /** 项目内后端认得出语言的 R / MATLAB 脚本（只能“生成可编辑版本”，不能运行；老后端没有） */
   foreign_scripts?: ForeignSource[]
+  /** 项目内还没转成脚本的 Jupyter 笔记本（后端 `notebookscript.inventory`，ADR 0178；老后端没有） */
+  notebook_scripts?: NotebookSource[]
+}
+
+export interface NotebookSource {
+  /** 笔记本（项目相对路径） */
+  notebook: string
 }
 
 export const fetchRegistry = () => jsonFetch<RegistryView>('/api/registry')

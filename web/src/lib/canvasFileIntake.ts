@@ -13,7 +13,7 @@ import { ApiError, backendCodeMsg, backendErrorMsg, importAsset, type ImportedAs
 import type { CanvasDropPlace } from '@/lib/canvasScriptDrop'
 import { currentProjectId } from '@/lib/session'
 import { foreignLanguageOf } from '@/lib/foreignScript'
-import { isScriptName } from '@/lib/scriptImport'
+import { isNotebookName, isScriptName } from '@/lib/scriptImport'
 import { useAssetStore } from '@/store/assetStore'
 import { runDiscreteAction } from '@/store/gestureCoordinator'
 import { useDiagSendStore } from '@/store/diagSendStore'
@@ -26,6 +26,8 @@ export type IntakeKind =
   /** 素材扫描认的图片（PNG / JPG / TIFF / PDF / SVG）：上传、成为素材、放上画布 */
   | 'asset'
   | 'script'
+  /** Jupyter 笔记本（`.ipynb`，ADR 0178）：抽成同名 `.py` 再运行 */
+  | 'notebook'
   /** R / MATLAB 脚本：打开所在项目并提议「生成可编辑版本」 */
   | 'foreign'
   /** 项目包（`.tavotto` / `.magplot` / zip）：走顶栏「导入项目包」同一条流程 */
@@ -49,6 +51,7 @@ export function intakeKindOf(file: { name: string; type?: string }): IntakeKind 
   const ext = extOf(file.name)
   if ((ASSET_EXTENSIONS as readonly string[]).includes(ext)) return 'asset'
   if (isScriptName(file.name)) return 'script'
+  if (isNotebookName(file.name)) return 'notebook'
   if (foreignLanguageOf(file.name)) return 'foreign'
   if ((PACKAGE_EXTENSIONS as readonly string[]).includes(ext)) return 'package'
   if (OTHER_IMAGE_EXTENSIONS.includes(ext)) return 'otherImage'
@@ -62,14 +65,15 @@ export function intakeKindOf(file: { name: string; type?: string }): IntakeKind 
 export interface IntakePlan {
   assets: File[]
   scripts: File[]
+  notebooks: File[]
   foreign: File[]
   packages: File[]
-  /** 接不住的：别的图片格式 / 数据文件 / 笔记本 / 未知 */
+  /** 接不住的：别的图片格式 / 数据文件 / 未知 */
   unsupported: { name: string; image: boolean }[]
 }
 
 export function planIntake(files: readonly File[]): IntakePlan {
-  const plan: IntakePlan = { assets: [], scripts: [], foreign: [], packages: [], unsupported: [] }
+  const plan: IntakePlan = { assets: [], scripts: [], notebooks: [], foreign: [], packages: [], unsupported: [] }
   for (const f of files) {
     switch (intakeKindOf(f)) {
       case 'asset':
@@ -77,6 +81,9 @@ export function planIntake(files: readonly File[]): IntakePlan {
         break
       case 'script':
         plan.scripts.push(f)
+        break
+      case 'notebook':
+        plan.notebooks.push(f)
         break
       case 'foreign':
         plan.foreign.push(f)
@@ -143,7 +150,7 @@ export interface PlaceResult {
   aborted: boolean
 }
 
-const reasonOf = (e: unknown): UiMessage =>
+export const reasonOf = (e: unknown): UiMessage =>
   e instanceof ApiError || (e instanceof Error && e.message) ? backendErrorMsg(e) : literal(String(e))
 
 /**

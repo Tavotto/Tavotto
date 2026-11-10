@@ -33,6 +33,13 @@ export type DropTarget =
   | { kind: 'foreign-path'; folder: string; script: string; language: ForeignLanguage }
   /** 是 R / MATLAB 脚本，但宿主没给路径：同 `no-path`，退回选择器并说出是哪个文件 */
   | { kind: 'foreign-no-path'; name: string; language: ForeignLanguage }
+  /**
+   * 放下的是 Jupyter 笔记本（`.ipynb`，ADR 0178）且拿到了路径：打开它所在的文件夹，然后把它抽成同名 `.py` 再运行。
+   * `notebook` 是它在那个目录里的文件名
+   */
+  | { kind: 'notebook-path'; folder: string; notebook: string }
+  /** 是笔记本，但宿主没给路径：页面能读到它的内容，由后端抽取并存进当前项目；主页没有项目，由主页退回选择器 */
+  | { kind: 'notebook-no-path'; name: string }
   /** 放下的不是 .py（也不是目录；带了 file:// 路径的文件同样落在这里） */
   | { kind: 'not-script'; name: string }
   /** 什么文件都没有（拖进来的是文字 / 链接） */
@@ -48,6 +55,13 @@ export const baseName = (path: string) => path.replace(/[\\/]+$/, '').split(/[\\
  * 真可以以空格结尾，`plot.py ` 的扩展名是 `py `，不是脚本；`.py` 这样的隐藏文件没有扩展名。
  */
 export const isScriptName = (path: string) => !/[\\/]$/.test(path) && /.\.py$/i.test(baseName(path))
+
+/**
+ * 什么算 Jupyter 笔记本：最后一段以 `.ipynb` 结尾（**区分大小写**，Jupyter 只生成小写）、前面至少还有一个字符、
+ * 不以分隔符结尾。与壳的 `drop_paths::is_notebook`、后端 `notebookscript.SUFFIX` 严格同源，两侧各自与
+ * `tests/golden/drop_script_rule.json` 比（`dropScriptRule.golden.test.ts`）。不 trim（同 `isScriptName`）。
+ */
+export const isNotebookName = (path: string) => !/[\\/]$/.test(path) && /.\.ipynb$/.test(baseName(path))
 
 /**
  * 页面只拿到一串路径、不能 stat：以分隔符结尾，或最后一段没有扩展名，才当目录。
@@ -69,7 +83,7 @@ export function parentDir(path: string): string {
 
 /** 选择器 / 拖放给出的一条路径 → 该打开的目录。`.py` 取上级，其余原样（当目录打开） */
 export function folderForPath(path: string): string {
-  return isScriptName(path) || foreignLanguageOf(path) ? parentDir(path) : path
+  return isScriptName(path) || isNotebookName(path) || foreignLanguageOf(path) ? parentDir(path) : path
 }
 
 /** 选择器 / 拖放给出的一条路径 → 打开 `folderForPath` 之后要运行的脚本（项目相对，即文件名）；不是 .py 就 null */
@@ -118,6 +132,7 @@ export function dropTargetOf(dt: DropData): DropTarget {
     const path = first ? pathFromFileUri(first) : null
     if (path) {
       if (isScriptName(path) || looksLikeDir(path)) return { kind: 'path', folder: folderForPath(path), script: scriptForPath(path) }
+      if (isNotebookName(path)) return { kind: 'notebook-path', folder: parentDir(path), notebook: baseName(path) }
       const foreign = foreignLanguageOf(path)
       if (foreign) return { kind: 'foreign-path', folder: parentDir(path), script: baseName(path), language: foreign }
       // 拿到了路径但放下的是 pdf 之类：如实说不收，不拿它当项目去开（Codex #688）
@@ -127,6 +142,7 @@ export function dropTargetOf(dt: DropData): DropTarget {
   const file = dt.files.length > 0 ? dt.files[0] : null
   if (!file) return { kind: 'none' }
   if (isScriptName(file.name)) return { kind: 'no-path', name: file.name }
+  if (isNotebookName(file.name)) return { kind: 'notebook-no-path', name: file.name }
   const foreign = foreignLanguageOf(file.name)
   return foreign ? { kind: 'foreign-no-path', name: file.name, language: foreign } : { kind: 'not-script', name: file.name }
 }

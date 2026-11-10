@@ -102,6 +102,11 @@
     "moveUp": "上移",
     "moveDown": "下移"
   },
+  "notebook": {
+    "converted": "已从「{{notebook}}」生成「{{script}}」，正在运行它",
+    "convertedMore_other": "已从「{{notebook}}」生成「{{script}}」，正在运行它；其余 {{count}} 个文件这次没有处理",
+    "failed": "「{{name}}」没能转成脚本。{{reason}}"
+  },
   "canvasDrop": {
     "running": "正在运行「{{name}}」，出图后放进这张画布",
     "runningFirst": "正在运行「{{name}}」，其余 {{count}} 个脚本这次没有运行",
@@ -701,7 +706,10 @@
     "copyPath": "复制路径",
     "pathCopied": "已复制：{{path}}",
     "pathCopyFailed": "无法写入剪贴板。脚本在：{{path}}",
-    "rowActions": "{{script}} 的更多操作"
+    "rowActions": "{{script}} 的更多操作",
+    "group_notebook": "Jupyter 笔记本",
+    "notebookRun": "转成脚本并运行",
+    "notebookRunAria": "把笔记本 {{notebook}} 转成脚本并运行"
   },
   "spineZone": {
     "label": "{{side}} · {{dir}}刻度 {{state}} · {{action}}",

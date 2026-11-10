@@ -12,10 +12,12 @@ import {
   runtimePreviewUrl,
   type CapturedFigureDescriptor,
   type ForeignSource,
+  type NotebookSource,
   type ScriptInventoryEntry,
 } from '@/lib/api'
 import { splitNoticeText } from '@/lib/noticeText'
 import { offerForeignConvert } from '@/lib/foreignEntry'
+import { runNotebook } from '@/lib/notebookRun'
 import { formatCm } from '@/lib/units'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { addRuntimePanelToCanvas } from '@/store/workspace'
@@ -150,6 +152,9 @@ export function ScriptLibrary({ query }: { query: string }) {
   // R / MATLAB 脚本（后端 `foreign_scripts`，ADR 0143 修订「项目内入口」）：只能“生成可编辑版本”，不进下面的运行分组
   const foreign = (view?.foreign_scripts ?? []).filter((f) => !q || f.script.toLowerCase().includes(q))
 
+  // Jupyter 笔记本（后端 `notebook_scripts`，ADR 0178）：还没转成脚本的才列；点一下抽成同名 .py 并运行，之后它就是上面的普通脚本
+  const notebooks = (view?.notebook_scripts ?? []).filter((n) => !q || n.notebook.toLowerCase().includes(q))
+
   const groups = new Map<Group, ScriptInventoryEntry[]>()
   for (const entry of scripts) {
     const g = groupOf(entry, runStates[entry.script], prepEntries[`script:${entry.script}`], registryAt)
@@ -177,7 +182,7 @@ export function ScriptLibrary({ query }: { query: string }) {
   if (!view) {
     return loading ? <ScriptSkeleton /> : null
   }
-  if (scripts.length === 0 && foreign.length === 0) {
+  if (scripts.length === 0 && foreign.length === 0 && notebooks.length === 0) {
     return q ? (
       <EmptyState art="search" title={sc('noMatch')} data-script-no-match />
     ) : (
@@ -214,6 +219,19 @@ export function ScriptLibrary({ query }: { query: string }) {
           </section>
         )
       })}
+      {notebooks.length > 0 && (
+        <section className="mt-1">
+          <h4 className="flex h-7 items-center gap-1.5 px-1" data-script-group="notebook">
+            <span className="type-section">{sc('group_notebook')}</span>
+            <span className="type-meta">{notebooks.length}</span>
+          </h4>
+          <ul aria-label={sc('group_notebook')}>
+            {notebooks.map((n) => (
+              <NotebookRow key={n.notebook} source={n} />
+            ))}
+          </ul>
+        </section>
+      )}
       {foreign.length > 0 && (
         <section className="mt-1">
           <h4 className="flex h-7 items-center gap-1.5 px-1" data-script-group="foreign">
@@ -228,6 +246,40 @@ export function ScriptLibrary({ query }: { query: string }) {
         </section>
       )}
     </div>
+  )
+}
+
+/**
+ * 一行 Jupyter 笔记本：文件名 + 一颗「转成脚本并运行」钮（与脚本行的 ▶ 同一种钮）。
+ * 它还不是脚本：不进准备会话 / 运行状态机；点了才抽成同名 .py（笔记本不动），之后那份 .py 成为上面的普通脚本。
+ */
+function NotebookRow({ source }: { source: NotebookSource }) {
+  useTranslation('workspace')
+  const [busy, setBusy] = useState(false)
+  const run = () => {
+    if (busy) return
+    setBusy(true)
+    void runNotebook({ path: source.notebook }).finally(() => setBusy(false))
+  }
+  return (
+    <li data-notebook-row={source.notebook}>
+      <div className={cn(listRowClass(), 'gap-1.5 pl-3 pr-0.5')}>
+        <span className="min-w-0 flex-1 truncate text-sm text-ink" title={source.notebook}>
+          {source.notebook}
+        </span>
+        <IconButton
+          iconSize="sm"
+          label={sc('notebookRunAria', { notebook: source.notebook })}
+          tip={sc('notebookRun')}
+          disabled={busy}
+          data-notebook-run={source.notebook}
+          onClick={run}
+          className="text-ink-3 group-hover:text-ink focus-visible:text-ink"
+        >
+          <Play size={ICON_SIZE.sm} />
+        </IconButton>
+      </div>
+    </li>
   )
 }
 

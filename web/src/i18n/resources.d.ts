@@ -3324,6 +3324,15 @@ export default interface Resources {
       "non_finite_on_disk": "磁盘上的排版文件含有 NaN 或 ∞，不是合法 JSON，无法读取。该文件未被 Tavotto 改动，请检查写入它的外部工具。",
       "non_finite_response": "这张图里有算不出的数值（空值或除以零得到的无穷大），没法显示。检查一下数据。",
       "not_parameterizable": "这张图不可参数化：没有对应脚本。",
+      "notebook_empty": "文件是空的。",
+      "notebook_no_code": "这个笔记本里没有可以运行的代码。",
+      "notebook_not_found": "找不到这个笔记本。",
+      "notebook_path_outside_project": "这个笔记本不在当前项目里。",
+      "notebook_syntax_error": "笔记本里第 {{cell}} 段代码有看不懂的写法，转成脚本后运行不了。",
+      "notebook_too_large": "笔记本超过 {{limit_mb}} MB，太大了。",
+      "notebook_unreadable": "这个文件不是能打开的笔记本。",
+      "notebook_unsupported_type": "这不是 .ipynb 笔记本。",
+      "notebook_unsupported_version": "这是很旧版本的笔记本，暂时转不了。",
       "oauth_flow_not_found": "这次登录已结束，请重新开始。",
       "oauth_start_failed": "无法连接登录服务，请检查网络后再试。",
       "oauth_unavailable": "这个服务暂不支持账号登录。",
@@ -5537,7 +5546,7 @@ export default interface Resources {
       "browseMore": "浏览更多项目",
       "import": {
         "dropNoPath": "系统没有告诉 {{product}}「{{name}}」在哪个文件夹，请在接下来的窗口里选中它。",
-        "dropNotScript": "「{{name}}」打不开。主页可以拖入脚本（.py、.R、.m）或项目文件夹。",
+        "dropNotScript": "「{{name}}」打不开。主页可以拖入脚本（.py、.R、.m）、笔记本（.ipynb）或项目文件夹。",
         "droppedMany": "拖入了 {{total}} 项，只用了「{{name}}」打开项目",
         "folderTitle": "选择脚本所在的文件夹",
         "foreignNotFound": "这个文件夹里没找到「{{name}}」，请选它所在的文件夹。",
@@ -6203,6 +6212,11 @@ export default interface Resources {
         "body": "会结束 {{target}}，脚本其余部分不再运行。画布上的图会留下，但不再与运行中的进程相连。",
         "title": "终止脚本？"
       }
+    },
+    "notebook": {
+      "converted": "已从「{{notebook}}」生成「{{script}}」，正在运行它",
+      "convertedMore_other": "已从「{{notebook}}」生成「{{script}}」，正在运行它；其余 {{count}} 个文件这次没有处理",
+      "failed": "「{{name}}」没能转成脚本。{{reason}}"
     },
     "pageEdge": {
       "height": "高 {{mm}} mm",
@@ -7045,12 +7059,15 @@ export default interface Resources {
       "group_needsFix": "需要修复",
       "group_noFigure": "跑完没有图",
       "group_notRun": "尚未运行",
+      "group_notebook": "Jupyter 笔记本",
       "group_runtimeNames": "运行后才知道输出",
       "linkedCount_other": "{{count}} 张图",
       "loadFailed": "无法读取脚本清单",
       "loading": "正在读取脚本清单…",
       "noMatch": "没有符合条件的脚本",
       "notRunNote": "没跑过",
+      "notebookRun": "转成脚本并运行",
+      "notebookRunAria": "把笔记本 {{notebook}} 转成脚本并运行",
       "openEnvSettings": "选择渲染环境",
       "pathCopied": "已复制：{{path}}",
       "pathCopyFailed": "无法写入剪贴板。脚本在：{{path}}",

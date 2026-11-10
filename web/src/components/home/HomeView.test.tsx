@@ -40,6 +40,9 @@ const desktop = vi.hoisted(() => {
 })
 vi.mock('@/lib/desktop', async (orig) => ({ ...(await orig<Record<string, unknown>>()), ...desktop }))
 
+const notebook = vi.hoisted(() => ({ runNotebook: vi.fn(async (..._a: unknown[]) => true) }))
+vi.mock('@/lib/notebookRun', () => notebook)
+
 const tutorial = vi.hoisted(() => ({
   runTutorialEntry: vi.fn(() => 'started'),
   openSampleProject: vi.fn(async () => ({ ok: true, kind: 'opened' })),
@@ -124,6 +127,7 @@ beforeEach(() => {
   open.mockClear()
   remove.mockClear()
   prepOpen.mockClear()
+  notebook.runNotebook.mockClear()
   useProjectPreparationStore.setState({ open: prepOpen })
   desktop.isDesktop.mockReturnValue(true)
   desktop.pickScriptFile.mockClear()
@@ -302,6 +306,75 @@ describe('老手版', () => {
     expect(host.querySelector('[role="alert"]')!.textContent).toContain('fig.pdf')
     expect(open).not.toHaveBeenCalled()
     expect(desktop.pickScriptFile).not.toHaveBeenCalled()
+  })
+
+  describe('Jupyter 笔记本（ADR 0178）：打开所在文件夹，再抽成同名 .py 运行', () => {
+    it('放下带路径的 .ipynb：打开所在目录、接着转成脚本并运行（路径是打开后的项目相对名），不走 .py 的 prepare', async () => {
+      await mount()
+      const ev = await dropOn(host.querySelector('[data-home-dropzone]')!, { uris: 'file:///Users/me/fig/论文 图.ipynb', files: ['论文 图.ipynb'] })
+      expect(ev.defaultPrevented).toBe(true)
+      expect(open).toHaveBeenCalledWith('/Users/me/fig', false)
+      expect(notebook.runNotebook.mock.calls).toEqual([[{ path: '论文 图.ipynb' }, { skipped: 0 }]])
+      expect(prepOpen).not.toHaveBeenCalled()
+      expect(host.querySelector('[role="alert"]')).toBeNull()
+    })
+
+    it('目录没打开成功就不转', async () => {
+      open.mockRejectedValueOnce(new Error('cannot open'))
+      await mount()
+      await dropOn(main(), { uris: 'file:///Users/me/fig/a.ipynb', files: ['a.ipynb'] })
+      expect(notebook.runNotebook).not.toHaveBeenCalled()
+    })
+
+    it('桌面壳选择器选了 .ipynb：同一条路', async () => {
+      desktop.pickScriptFile.mockResolvedValueOnce('/Users/me/paper/a.ipynb')
+      await mount()
+      await click(host.querySelector<HTMLButtonElement>('[data-home-dropzone]')!)
+      expect(open).toHaveBeenCalledWith('/Users/me/paper', false)
+      expect(notebook.runNotebook.mock.calls).toEqual([[{ path: 'a.ipynb' }, { skipped: 0 }]])
+    })
+
+    it('只有文件名（没有路径）：像 .py 一样说清是哪个文件、退回选择器，不是「打不开」', async () => {
+      desktop.pickScriptFile.mockResolvedValueOnce(null)
+      await mount()
+      await dropOn(main(), { files: ['a.ipynb'] })
+      expect(host.textContent).toContain(`系统没有告诉 ${PRODUCT_NAME}「a.ipynb」`)
+      expect(host.querySelector('[role="alert"]')).toBeNull()
+      expect(desktop.pickScriptFile).toHaveBeenCalledTimes(1)
+      expect(open).not.toHaveBeenCalled()
+    })
+
+    describe('浏览器拖入 .ipynb（拿不到路径）→ 选文件夹', () => {
+      const pickFolder = async () => {
+        await act(async () => {})
+        await click(document.querySelector<HTMLButtonElement>('[data-dir-browser-confirm]')!)
+        await act(async () => {})
+      }
+      beforeEach(() => {
+        desktop.isDesktop.mockReturnValue(false)
+        browseHasFile = false
+        browseCalls.length = 0
+      })
+
+      it('选对文件夹：打开它并转成脚本运行', async () => {
+        browseHasFile = true
+        await mount()
+        await dropOn(host.querySelector('[data-home-dropzone]')!, { files: ['fig.ipynb'] })
+        await pickFolder()
+        expect(browseCalls.some((u) => u.includes('has_file=fig.ipynb'))).toBe(true)
+        expect(open).toHaveBeenCalledWith('/srv', false)
+        expect(notebook.runNotebook.mock.calls).toEqual([[{ path: 'fig.ipynb' }, { skipped: 0 }]])
+      })
+
+      it('选错文件夹：一句话说没找到，不开项目不转；对话框还在', async () => {
+        await mount()
+        await dropOn(host.querySelector('[data-home-dropzone]')!, { files: ['fig.ipynb'] })
+        await pickFolder()
+        expect(document.querySelector('[role="dialog"]')!.textContent).toContain('这个文件夹里没找到「fig.ipynb」')
+        expect(open).not.toHaveBeenCalled()
+        expect(notebook.runNotebook).not.toHaveBeenCalled()
+      })
+    })
   })
 
   describe('R / MATLAB 脚本（ADR 0143 修订）：不再被当成“不是脚本”，走入口卡', () => {
@@ -532,6 +605,23 @@ describe('系统拖放（桌面壳交来真实路径，ADR 0092）', () => {
     await fire({ kind: 'foreign_script', folder: '/a', script: '/a/f.R', name: 'f.R', ignored: 2 })
     expect(useForeignScriptStore.getState().offer).toEqual({ script: 'f.R', language: 'r' })
     expect(JSON.stringify(status())).toContain('home.import.droppedMany')
+  })
+
+  it('壳交来笔记本（notebook）：开所在文件夹、转成脚本运行；多拖了几个把没处理的个数交给它说', async () => {
+    await mount()
+    await fire({ kind: 'notebook', folder: '/Users/me/fig', notebook: '/Users/me/fig/a.ipynb', name: 'a.ipynb', ignored: 0 })
+    expect(open).toHaveBeenCalledWith('/Users/me/fig', false)
+    expect(notebook.runNotebook.mock.calls).toEqual([[{ path: 'a.ipynb' }, { skipped: 0 }]])
+    expect(prepOpen).not.toHaveBeenCalled()
+    await fire({ kind: 'notebook', folder: '/Users/me/fig', notebook: '/Users/me/fig/b.ipynb', name: 'b.ipynb', ignored: 2 })
+    expect(notebook.runNotebook.mock.calls[1]).toEqual([{ path: 'b.ipynb' }, { skipped: 2 }])
+  })
+
+  it('壳交来笔记本：项目没打开成就不转', async () => {
+    open.mockRejectedValueOnce(new Error('nope'))
+    await mount()
+    await fire({ kind: 'notebook', folder: '/a', notebook: '/a/n.ipynb', name: 'n.ipynb', ignored: 0 })
+    expect(notebook.runNotebook).not.toHaveBeenCalled()
   })
 
   it('不支持的类型：说不收，什么都不打开', async () => {
