@@ -62,6 +62,7 @@ from werkzeug.formparser import FormDataParser
 
 from . import pdfbackend, richtext, tiffprobe
 from .engine import (
+    ai_attachments as engine_ai_attachments,
     ai_bridge as engine_ai,
     ai_connections as engine_ai_connections,
     ai_convert as engine_ai_convert,
@@ -71,7 +72,6 @@ from .engine import (
     ai_history as engine_ai_history,
     ai_oauth as engine_ai_oauth,
     ai_providers as engine_ai_providers,
-    ai_refimages as engine_ai_refimages,
     ai_tasks as engine_ai_tasks,
     artifactcontext as engine_artifactcontext,
     artifactinspect as engine_artifactinspect,
@@ -14344,8 +14344,8 @@ def _ai_run_impl():
             # 文件变了就接统一刷新（reason=ai），在 ai.done 之前做完（ADR 0041）
             on_changed=lambda script: _after_ai_change(ctx, script),
             task_hooks=_ai_task_hooks(ctx, info["script"], info["entry"], selection),
-            # 用户附的参考图（ADR 0175）：只是暂存 id，图片本身早已经由 `/api/ai/ref-images` 上传；不附图时恒为空
-            ref_images=engine_ai_refimages.valid_ids(body.get("ref_images")),
+            # 用户附的参考图（ADR 0175）：只是暂存 id，图片本身早已经由 `/api/ai/attachments` 上传；不附图时恒为空
+            attachments=engine_ai_attachments.valid_ids(body.get("attachments")),
         )
     except engine_ai.DuplicateRequest as dup:
         # 同一条请求已经登记过：返回既有会话，不 spawn、不重复记遥测
@@ -14376,24 +14376,24 @@ def _ai_run_impl():
     return jsonify({"session": sid, "script": info["script"]})
 
 
-@app.post("/api/ai/ref-images")
-def api_ai_ref_image_stage():
-    """暂存一张用户附的参考图（ADR 0175，请求体就是图片字节）：→ `{id, mime, bytes, width, height}`。
-    前端先把图缩到 ≤ 4 MiB 再传；这里按魔数再核一遍，不认的格式 / 过大 = 400 / 413 带稳定码。过会话认证，同其它 `/api/ai/*`。"""
+@app.post("/api/ai/attachments")
+def api_ai_attachment_stage():
+    """暂存一个用户附的文件（ADR 0175，请求体就是文件字节，`?name=` 是原文件名）：→ `{id, kind, mime, bytes, width, height, name}`。
+    图片前端先缩到 ≤ 4 MiB 再传；这里按魔数再核一遍，过大 = 413 带稳定码。过会话认证，同其它 `/api/ai/*`。"""
     raw = request.get_data(cache=False, as_text=False) or b""
-    if len(raw) > engine_ai_refimages.MAX_BYTES:
-        return jsonify({"error": "图片过大", "code": "ref_image_too_large", "params": {}}), 413
+    if len(raw) > engine_ai_attachments.MAX_FILE_BYTES:
+        return jsonify({"error": "文件过大", "code": "attachment_too_large", "params": {}}), 413
     try:
-        return jsonify(engine_ai_refimages.stage(raw))
-    except engine_ai_refimages.RefImageError as exc:
-        status = 413 if exc.code == "ref_image_too_large" else 400
+        return jsonify(engine_ai_attachments.stage(raw, request.args.get("name", "")))
+    except engine_ai_attachments.AttachmentError as exc:
+        status = 413 if exc.code == "attachment_too_large" else 400
         return jsonify({"error": exc.code, "code": exc.code, "params": {}}), status
 
 
-@app.delete("/api/ai/ref-images/<rid>")
-def api_ai_ref_image_discard(rid):
+@app.delete("/api/ai/attachments/<rid>")
+def api_ai_attachment_discard(rid):
     """用户把附的图去掉：删暂存。幂等（已经没了也回 ok）。"""
-    engine_ai_refimages.discard(rid)
+    engine_ai_attachments.discard(rid)
     return jsonify({"ok": True})
 
 

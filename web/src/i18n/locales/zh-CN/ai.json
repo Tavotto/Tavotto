@@ -113,10 +113,10 @@
     "untitled": "未命名"
   },
   "message": {
+    "attachmentCount_other": "附了 {{count}} 个文件",
     "collapse": "收起",
     "copy": "复制消息",
     "expand": "展开",
-    "refCount_other": "附了 {{count}} 张图",
     "resend": "重新发送"
   },
   "sessionError": {
@@ -209,12 +209,13 @@
     "noAi": "还没有连接 AI。",
     "connectMore": "连接更多 AI…",
     "aiModel": "AI 与模型",
-    "refAttach": "附参考图 · 最多 4 张，也可粘贴或拖入",
-    "refRemove": "去掉这张图",
-    "refChipAria": "参考图 {{name}}",
-    "refNoVision": "这个模型看不了图，",
-    "refNoVisionOnly": "这个模型看不了图",
-    "refSwitch": "换成 {{model}}"
+    "attachTip": "附文件 · 最多 6 个，也可粘贴或拖入",
+    "attachRemove": "去掉这个文件",
+    "attachChipAria": "附件 {{name}}",
+    "attachNoVision": "这个模型看不了图，",
+    "attachNoVisionOnly": "这个模型看不了图",
+    "attachSwitch": "换成 {{model}}",
+    "attachAria": "附文件"
   },
   "process": {
     "thought": "已思考 {{duration}}",
@@ -258,13 +259,13 @@
     "aiTaskRejected": "助手的修改没通过检查，项目未改动",
     "aiTaskVerified": "助手已修改脚本，数据核对一致，正在重新渲染…",
     "aiTimeout": "AI 任务超时",
+    "attachOverflow": "最多附 6 个文件，多的没收",
+    "attachTooLarge": "有文件太大了（单个不超过 25 MB），没附上",
+    "attachUploadFailed": "文件没传上，再试一次",
     "cancelled": "已取消",
     "done": "完成",
     "failed": "失败",
     "interrupted": "已中断",
-    "refOverflow": "最多附 4 张图，多的没收",
-    "refUndecodable": "这张图打不开，换成 PNG 或 JPEG 试试",
-    "refUploadFailed": "图没传上，再试一次",
     "reverted": "已回滚",
     "running": "运行中",
     "timeout": "超时"

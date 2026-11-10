@@ -35,11 +35,11 @@ from pathlib import Path
 
 from . import (
     ai_agents,
+    ai_attachments,
     ai_connections,
     ai_history,
     ai_oauth,
     ai_providers,
-    ai_refimages,
     cli_failure,
     config,
     convertwrite,
@@ -153,7 +153,7 @@ def _finish_session(
         ai_history.record_cancel_result(sess["id"], "finished")  # 结果与终态一致，不悬挂
     # 结束时刻：详情的 `ended_ms`（#1098 单独合入时前端靠它判 cancelled 快照是不是终态；这里与 `final` 同时置位）
     convertwrite.close(str(sess.get("id") or ""))  # 代写工具的令牌随会话终态失效
-    ai_refimages.remove_session(
+    ai_attachments.remove_session(
         str(sess.get("id") or "")
     )  # 旧路径的参考图随会话收尾删（候选里的随候选清理）
     sess["ended_ms"] = int(time.time() * 1000)
@@ -442,7 +442,7 @@ def _trace_settle_session(sess: dict, task_result: dict | None) -> None:
 def _drop_attempt_files(sid: str, snap: Path, cand=None) -> None:
     """这次尝试没有真正起任务（被拒绝）：清掉为它备好的快照 / sidecar / 日志（TAF：连同候选目录），不留半成品。"""
     convertwrite.close(sid)
-    ai_refimages.remove_session(sid)
+    ai_attachments.remove_session(sid)
     for leftover in (snap, SNAP_DIR / f"{sid}.json", SNAP_DIR / f"{sid}.stderr.log"):
         try:
             leftover.unlink()
@@ -635,7 +635,7 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict, npm_available: bo
         "models": models,
         "default_model": default_model,
         # 加字段（ADR 0175）：确定只吃文字、看不了参考图的型号；没有就不出这个键，判不出的不列
-        **({"no_vision": nv} if (nv := ai_refimages.text_only_models(models)) else {}),
+        **({"no_vision": nv} if (nv := ai_attachments.text_only_models(models)) else {}),
         # 加字段：与 models 并行的型号详情（显示名 / 说明 / 每型号自己的强度档位）
         "model_details": [
             {
@@ -1736,30 +1736,32 @@ def _endpoint_backed(agent_id: str, endpoint_id: str | None) -> bool:
     return bool(args or env)
 
 
-def _attach_ref_images(sid: str, cand, ref_ids) -> tuple[str, tuple[str, ...], int]:
-    """把用户附的参考图放进这次任务的工作目录 → (提示词里追加的一段, CLI 需要额外放行读取的目录, 图片数)。
+def _attach_attachments(sid: str, cand, ids) -> tuple[str, tuple[str, ...], int]:
+    """把用户附的文件放进这次任务的工作目录 → (提示词里追加的一段, CLI 需要额外放行读取的目录, 文件数)。
 
-    有候选工作区（TAF / 内置执行器）：图在 `<候选>/_reference/`，提示词给相对路径（Agent 的 cwd 就是候选）；
-    没有（外部 CLI 原地改）：图在数据目录的会话目录里，提示词给绝对路径、Claude 另加 `--add-dir`。**两条都不写用户项目目录。**
-    暂存里找不到的图静默跳过，一张都没有就等于没附。"""
-    if not ref_ids:
+    有候选工作区（TAF / 内置执行器）：文件在 `<候选>/_attachments/`，提示词给相对路径（Agent 的 cwd 就是候选）；
+    没有（外部 CLI 原地改）：文件在数据目录的会话目录里，提示词给绝对路径、Claude 另加 `--add-dir`。**两条都不写用户项目目录。**
+    暂存里找不到的文件静默跳过，一个都没有就等于没附。"""
+    if not ids:
         return "", (), 0
     from . import ai_prompt_pack
 
     if cand is not None:
-        dest = Path(cand.dir) / ai_refimages.REFERENCE_DIRNAME
-        names = ai_refimages.materialize(ref_ids, dest)
-        paths = [f"{ai_refimages.REFERENCE_DIRNAME}/{n}" for n in names]
+        dest = Path(cand.dir) / ai_attachments.ATTACHMENTS_DIRNAME
+        placed = ai_attachments.materialize(ids, dest)
+        shown = [f"{ai_attachments.ATTACHMENTS_DIRNAME}/{x['name']}" for x in placed]
         dirs: tuple[str, ...] = ()
     else:
-        ai_refimages.prune_sessions()
-        dest = ai_refimages.session_dir(sid)
-        names = ai_refimages.materialize(ref_ids, dest)
-        paths = [str(dest / n) for n in names]
-        dirs = (str(dest),) if names else ()
-    if not names:
+        ai_attachments.prune_sessions()
+        dest = ai_attachments.session_dir(sid)
+        placed = ai_attachments.materialize(ids, dest)
+        shown = [str(dest / x["name"]) for x in placed]
+        dirs = (str(dest),) if placed else ()
+    if not placed:
         return "", (), 0
-    return ai_prompt_pack.ref_images_note(paths), dirs, len(names)
+    images = [p for p, x in zip(shown, placed) if x["kind"] == "image"]
+    files = [p for p, x in zip(shown, placed) if x["kind"] != "image"]
+    return ai_prompt_pack.attachments_note(images, files), dirs, len(placed)
 
 
 def run(
@@ -1776,7 +1778,7 @@ def run(
     client_request_id: str | None = None,
     task_hooks: dict | None = None,
     convert: dict | None = None,
-    ref_images: list[str] | None = None,
+    attachments: list[str] | None = None,
 ) -> str:
     """启动一次 AI 修改任务，返回 session id。事件经 on_event(name, data) 回调。
 
@@ -1796,8 +1798,8 @@ def run(
     候选留存待采用（`ai_convert.adopt`），本函数从不写项目文件。此时 `task_hooks` 只用 `runner`（校验运行）。**不看** TAF
     实验开关（该任务默认开，逃生口是 `ai_convert.enabled()`）。
 
-    `ref_images`（ADR 0175）：用户在输入框里附的参考图的暂存 id（`ai_refimages.stage` 给的）。给了就把图移进这次任务的工作目录
-    （候选里的 `_reference/`，旧路径是数据目录里的会话目录——绝不进用户项目），提示词末尾追加一段说明；不给时一切逐字节不变。
+    `attachments`（ADR 0175）：用户在输入框里附的文件的暂存 id（`ai_attachments.stage` 给的）。给了就把文件移进这次任务的工作目录
+    （候选里的 `_attachments/`，旧路径是数据目录里的会话目录——绝不进用户项目），提示词末尾追加一段说明；不给时一切逐字节不变。
     只对改图任务有效，转换任务忽略。
 
     `client_request_id`：前端点发送时生成的 UUID。同 (项目, id) 已登记过就抛 `DuplicateRequest`、
@@ -2021,8 +2023,8 @@ def run(
             if cand is not None:
                 prompt += "\n\n" + ai_figure_edit.prompt_note(cand)
         # 用户附的参考图（ADR 0175）：不附图时这一段一行都不执行
-        ref_note, ref_dirs, ref_count = _attach_ref_images(
-            sid, cand if convert is None else None, ref_images
+        ref_note, ref_dirs, attachment_count = _attach_attachments(
+            sid, cand if convert is None else None, attachments
         )
         if ref_note:
             prompt += "\n\n" + ref_note
@@ -2107,7 +2109,7 @@ def run(
                     "prompt": user_prompt,
                     "snapshot_path": str(snap),
                     "client_request_id": client_request_id,
-                    "ref_count": ref_count,
+                    "attachment_count": attachment_count,
                     **(
                         {
                             "task_type": envelope.task_type,
@@ -2203,9 +2205,9 @@ def run(
         }
         if convert is not None:
             sess["kind"] = "convert"
-        if ref_count:
-            sess["ref_count"] = (
-                ref_count  # 对外只给张数（`SESSION_DTO_KEYS`）；图片本身不进会话 / 历史
+        if attachment_count:
+            sess["attachment_count"] = (
+                attachment_count  # 对外只给张数（`SESSION_DTO_KEYS`）；图片本身不进会话 / 历史
             )
         if task_run is not None:
             #: 对外：任务类型与结局摘要（收尾时补全）；对内：候选与 Task Core 的运行对象（`SESSION_INTERNAL_KEYS`）
@@ -3223,7 +3225,7 @@ SESSION_DTO_KEYS: tuple[str, ...] = (
     "task",
     "cancel_requested",
     "rev",
-    "ref_count",
+    "attachment_count",
 )
 #: **终态字段清单**：会话结束时一起确定、落进历史库的那一组。服务重启后「sidecar 合并历史」的路径用它整体覆盖 sidecar，
 #: 不再逐个字段抄（漏抄一个就会出现「final 为 true 但 error 是空」这类分叉）。新增终态字段时只改这里。

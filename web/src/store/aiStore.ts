@@ -54,6 +54,19 @@ export interface AiEntry {
   at?: number
 }
 
+/** 一条消息里附的一个文件的展示信息（不含内容） */
+export interface AttachmentView {
+  kind: 'image' | 'file'
+  name: string
+  ext: string
+  /** 图片的缩略图（data URL）；文件为空串 */
+  thumb: string
+}
+/** 随一次发送附的文件：后端暂存 id + 展示信息 */
+export interface SentAttachment extends AttachmentView {
+  id: string
+}
+
 export interface AiSession {
   id: string
   agent: AiAgentId
@@ -81,9 +94,9 @@ export interface AiSession {
   /** 任务结局（TAF）：与 `status` 分开记，老后端没有；只翻译不判断 */
   task?: AiTaskSummary
   startedAt: number
-  /** 用户附的参考图：本页发起的会话有缩略图（data URL，只在页面内存里）；接回 / 历史里只剩张数 `refCount`（ADR 0175） */
-  refThumbs?: string[]
-  refCount?: number
+  /** 用户附的文件：本页发起的会话有明细（图片带缩略图 data URL，只在页面内存里）；接回 / 历史里只剩个数 `attachmentCount`（ADR 0175） */
+  attachments?: AttachmentView[]
+  attachmentCount?: number
   /** 会话结束（done / failed / timeout / cancelled）的时刻：状态行的总耗时与最后一步的耗时以它收尾 */
   finishedAt?: number
   /**
@@ -142,7 +155,7 @@ export interface AiSubmission {
   overrides: unknown[]
   phase: SubmissionPhase
   /** 随这条指令附的参考图（后端暂存 id + 缩略图）；同 rid 重发时原样再带，不附图时没有这个字段 */
-  refImages?: { id: string; thumb: string }[]
+  attachments?: SentAttachment[]
 }
 
 /** 早于 HTTP 响应到达的 SSE 事件，等会话建好再按序回放 */
@@ -244,7 +257,7 @@ interface AiState {
     /** 提交时草稿的写入戳（发送前已把草稿写成功拿到的）；确认后后端按「草稿戳没变」清草稿，不比文本 */
     draftStamp?: number | null
     /** 用户附的参考图（已上传暂存，ADR 0175）；不附图时不传 */
-    refImages?: { id: string; thumb: string }[]
+    attachments?: SentAttachment[]
   }) => Promise<SubmitOutcome>
   /**
    * 把后端此刻仍在跑的会话接回来（只读占位），并把本地还当它在跑、后端却已结束的会话收尾
@@ -657,7 +670,7 @@ export const useAiStore = create<AiState>((set, get) => ({
 
   submissions: {},
 
-  start: async ({ project, generation, prompt, fileId, panelId, gid, label, scope, target, overrides, canvas, script = null, draftStamp = null, refImages }) => {
+  start: async ({ project, generation, prompt, fileId, panelId, gid, label, scope, target, overrides, canvas, script = null, draftStamp = null, attachments }) => {
     // 发任务前再确认一次：首选那个可能刚被关掉 / 刚被检测成不可用
     if (!canDispatch(get())) throw new Error('no-usable-agent')
     if (get().generation !== generation) throw new ProjectChangedError()
@@ -687,7 +700,7 @@ export const useAiStore = create<AiState>((set, get) => ({
       canvas: canvas ?? null,
       overrides,
       phase: 'sending',
-      ...(refImages?.length ? { refImages } : {}),
+      ...(attachments?.length ? { attachments } : {}),
     }
     set((s) => ({ submissions: { ...s.submissions, [rid]: sub } }))
     // spawn 之前先把账本写进后端（原文 + 目标）：刷新 / 崩溃 / 换端口之后还认得「这条发出过」
@@ -1063,7 +1076,7 @@ function dropUnclaimedRestoreBuffer(): void {
 function restoredPlaceholder(
   e: Pick<AiHistoryEntry, 'id' | 'provider' | 'prompt' | 'script' | 'scope' | 'target' | 'status' | 'started_ms'> & {
     client_request_id?: string | null
-    ref_count?: number | null
+    attachment_count?: number | null
   },
   pj: string | null,
 ): AiSession {
@@ -1087,7 +1100,7 @@ function restoredPlaceholder(
     startedAt: e.started_ms,
     restored: true,
     ...(e.client_request_id ? { requestId: e.client_request_id } : {}),
-    ...(e.ref_count ? { refCount: e.ref_count } : {}),
+    ...(e.attachment_count ? { attachmentCount: e.attachment_count } : {}),
   }
 }
 
@@ -1580,7 +1593,7 @@ async function dispatch(rid: string, born: number): Promise<SubmitOutcome> {
         scope: sub.target.scope,
         target: sub.target.target,
         canvas: sub.canvas,
-        ...(sub.refImages?.length ? { ref_images: sub.refImages.map((x) => x.id) } : {}),
+        ...(sub.attachments?.length ? { attachments: sub.attachments.map((x) => x.id) } : {}),
         client_request_id: rid,
       },
       sub.project,
@@ -1709,7 +1722,9 @@ function accept(
     gid: sub.target.gid,
     scope: sub.target.scope,
     target: sub.target.target,
-    ...(sub.refImages?.length ? { refThumbs: sub.refImages.map((x) => x.thumb), refCount: sub.refImages.length } : {}),
+    ...(sub.attachments?.length
+      ? { attachments: sub.attachments.map(({ kind, name, ext, thumb }) => ({ kind, name, ext, thumb })), attachmentCount: sub.attachments.length }
+      : {}),
     entries: (detail?.transcript ?? []).map((e) => ({ kind: e.kind as AiDeltaKind, text: e.text })),
     status: toStatus(status),
     changed: how.kind === 'queried' ? !!(how.changed || detail?.changed) : false,
@@ -1738,7 +1753,7 @@ function accept(
                 scope: session.scope,
                 target: session.target,
                 prompt: session.prompt,
-                ...(session.refThumbs ? { refThumbs: session.refThumbs, refCount: session.refCount } : {}),
+                ...(session.attachments ? { attachments: session.attachments, attachmentCount: session.attachmentCount } : {}),
                 restored: false,
                 entries: settled && detail?.transcript?.length
                   ? mergeTranscript(x.entries, detail.transcript)

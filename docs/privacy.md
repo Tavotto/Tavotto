@@ -200,7 +200,7 @@ AI the user chose, in one of two ways:
 
 What is sent is the user's instruction plus whatever the assistant reads from the
 project to do the job, which can include the script and files in the project folder,
-and any images you attach to an instruction as references. Attached images are kept
+and any files you attach to an instruction (pictures or data files). Attached files are kept
 only in Tavotto's local data folder for the duration of the task (unsent ones are
 deleted within an hour), are never added to your project, to usage statistics or to a
 diagnostics bundle, and go only to the AI you connected.

@@ -396,7 +396,7 @@ _ADDED_COLUMNS = {
     # 跨进程严格递增、无撞号。客户端凭水位 `GET /api/ai/sessions/changes?since=` 对账错过的终态。老行 NULL = 纪元之前（不出现在增量里）。
     "rev": "INTEGER",
     # 用户附了几张参考图（ADR 0175）：只存张数，图片本身不进库。老行 / 没附图的行为 NULL
-    "ref_count": "INTEGER",
+    "attachment_count": "INTEGER",
 }
 
 
@@ -565,9 +565,10 @@ def record_start(sess: dict, db_path: Path | None = None) -> tuple[bool, str]:
                 now_ms if owner_token is not None else None,
             ),
         )
-        if sess.get("ref_count"):
+        if sess.get("attachment_count"):
             con.execute(
-                "UPDATE sessions SET ref_count=? WHERE id=?", (int(sess["ref_count"]), sess["id"])
+                "UPDATE sessions SET attachment_count=? WHERE id=?",
+                (int(sess["attachment_count"]), sess["id"]),
             )
         _stamp(con, sess["id"])
     return True, sess["id"]

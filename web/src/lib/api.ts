@@ -3484,7 +3484,7 @@ export interface AiAgentCaps {
    * 加字段协议：旧后端不带（缺省 = 只有 id），第三方接口接管时为空。
    */
   model_details?: AiModelDetail[]
-  /** 确定只吃文字、看不了参考图的型号（后端 `ai_refimages.known_text_only`，ADR 0175）；没有 / 老后端 = 都不知道，照常发送 */
+  /** 确定只吃文字、看不了参考图的型号（后端 `ai_attachments.known_text_only`，ADR 0175）；没有 / 老后端 = 都不知道，照常发送 */
   no_vision?: string[]
   efforts: string[]
   default_effort: string | null
@@ -4062,7 +4062,7 @@ export interface AiHistoryEntry {
   pinned: boolean
   revert_available: boolean
   /** 用户附了几张参考图（只有张数，图片不进历史；没附 / 老记录 = 空） */
-  ref_count?: number | null
+  attachment_count?: number | null
   transcript: { kind: string; text: string }[]
 }
 
@@ -4122,8 +4122,8 @@ export interface AiRunRequest {
   scope?: string
   target?: string
   canvas?: string | null
-  /** 用户附的参考图：`uploadAiRefImage` 给的暂存 id（最多 4 个）；不附图时不带这个字段（请求逐字节不变） */
-  ref_images?: string[]
+  /** 用户附的参考图：`uploadAiAttachment` 给的暂存 id（最多 4 个）；不附图时不带这个字段（请求逐字节不变） */
+  attachments?: string[]
   /**
    * 点「发送」时生成的请求 id（UUID），与后端 `api_ai_run` 的 `client_request_id` 同名同义：
    * 同 (项目, id) 再 POST 后端返回既有会话、不再 spawn。重发「同一条」必须带同一个 id；
@@ -4157,17 +4157,17 @@ export const aiRun = (req: AiRunRequest, pj: string | null, timeoutMs: number = 
   ).finally(() => clearTimeout(timer))
 }
 
-/** 暂存一张用户附的参考图（请求体就是图片字节，ADR 0175）；前端先缩到 ≤ 4 MiB 再传 */
-export const uploadAiRefImage = (blob: Blob, pj: string | null) =>
-  jsonFetch<{ id: string; mime: string; bytes: number; width: number | null; height: number | null }>(
-    '/api/ai/ref-images',
+/** 暂存一个用户附的文件（请求体就是文件字节，`name` 是原文件名，ADR 0175）；图片前端先缩到 ≤ 4 MiB 再传 */
+export const uploadAiAttachment = (blob: Blob, name: string, pj: string | null) =>
+  jsonFetch<{ id: string; kind: 'image' | 'file'; mime: string | null; bytes: number; width: number | null; height: number | null; name: string }>(
+    `/api/ai/attachments?name=${encodeURIComponent(name)}`,
     { method: 'POST', headers: { 'Content-Type': blob.type || 'application/octet-stream' }, body: blob },
     pj,
   )
 
-/** 用户把附的图去掉：删后端的暂存。尽力而为（失败也不影响用户；暂存一小时后自己清） */
-export const discardAiRefImage = (id: string, pj: string | null) =>
-  jsonFetch<{ ok: boolean }>(`/api/ai/ref-images/${encodeURIComponent(id)}`, { method: 'DELETE' }, pj)
+/** 用户把附的文件去掉：删后端的暂存。尽力而为（失败也不影响用户；暂存一小时后自己清） */
+export const discardAiAttachment = (id: string, pj: string | null) =>
+  jsonFetch<{ ok: boolean }>(`/api/ai/attachments/${encodeURIComponent(id)}`, { method: 'DELETE' }, pj)
 
 /** 后端按请求 id 登记的会话摘要（`GET /api/ai/requests/<id>`） */
 export interface AiRequestStatus {

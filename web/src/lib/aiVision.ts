@@ -1,7 +1,7 @@
 import { hasConnectionView, readyConnections, usableAgents, type AiAgentCaps, type AiCapabilities, type AiConnection } from '@/lib/api'
 
 /**
- * 参考图要不要提醒「这个模型看不了图」（ADR 0175）。判据只有后端一份（`engine/ai_refimages.known_text_only`，随能力清单的
+ * 参考图要不要提醒「这个模型看不了图」（ADR 0175）。判据只有后端一份（`engine/ai_attachments.known_text_only`，随能力清单的
  * `no_vision` 下发）：这里**只认清单里写明的**，判不出的当能看（照常发送、不拦）。
  */
 export function modelSeesNothing(info: Pick<AiAgentCaps, 'no_vision'> | null | undefined, model: string | null | undefined): boolean {

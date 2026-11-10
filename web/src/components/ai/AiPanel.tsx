@@ -12,9 +12,9 @@ import {
   LayoutList,
   Minus,
   MoveHorizontal,
+  Paperclip,
   Square,
   Type,
-  X,
   type IconComponent,
 } from '@/components/ui/icons'
 import { describeRequestFailure } from '@/lib/noticeText'
@@ -39,9 +39,10 @@ import { ApiError } from '@/lib/api'
 import { refreshProjectNow } from '@/store/liveSync'
 import { AiLedgerError, connectionInfo, effortsForModel, isDataFigureSession, isOpenSession, isSessionOf, modelDetail, resolveEffort, ProjectChangedError, submissionBlocks, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
 import { useDocumentStore } from '@/store/documentStore'
-import { refTargetKey, useAiRefStore, type AddSummary, type RefItem } from '@/store/aiRefStore'
+import { attachTargetKey, useAiAttachStore, type AddSummary, type AttachItem } from '@/store/aiAttachStore'
+import { AttachPreviewCard } from './AttachCards'
 import { findSightedChoice, modelSeesNothing } from '@/lib/aiVision'
-import { REF_IMAGE_MAX } from '@/lib/aiRefImages'
+import { ATTACH_MAX } from '@/lib/aiAttachments'
 import { dropZoneClass } from '../ui/dropZone'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -345,12 +346,12 @@ function AssistantPanelBody() {
   // 发送从「取草稿快照」到 start 返回是异步的：这一段里再点 / ⌘↵ 不许开第二次发送
   const sendInFlight = useRef(false)
   // 参考图（ADR 0175）：与草稿同一把键，只活在页面内存里；图一加进来就传后端暂存，发送时只带暂存 id
-  const refKey = refTargetKey(claimedProject, panel?.fileId ?? null)
-  const refItems = useAiRefStore((s) => s.byTarget[refKey]) ?? NO_REFS
+  const refKey = attachTargetKey(claimedProject, panel?.fileId ?? null)
+  const refItems = useAiAttachStore((s) => s.byTarget[refKey]) ?? NO_REFS
   const [dropping, setDropping] = useState(false)
   const addRefFiles = (files: File[]) => {
     if (!panel || files.length === 0) return
-    void useAiRefStore
+    void useAiAttachStore
       .getState()
       .add(refKey, claimedProject, files)
       .then((r) => noteRefAdd(r))
@@ -570,7 +571,7 @@ function AssistantPanelBody() {
       // 只有输入框里发的才带参考图（历史里「重新发送 / 重试」的是那一轮的原话）；还在上传的图等它们落定
       const refs =
         source === 'composer'
-          ? (await useAiRefStore.getState().settle(refKey)).map((x) => ({ id: x.serverId as string, thumb: x.thumb }))
+          ? (await useAiAttachStore.getState().settle(refKey)).map((x) => ({ id: x.serverId as string, kind: x.kind, name: x.name, ext: x.ext, thumb: x.thumb }))
           : []
       if (projectMoved()) return
       const outcome = await useAiStore.getState().start({
@@ -587,10 +588,10 @@ function AssistantPanelBody() {
         canvas: useDocumentStore.getState().activeCanvasId,
         script: panel.script ?? null,
         draftStamp: snap.stamp,
-        ...(refs.length ? { refImages: refs } : {}),
+        ...(refs.length ? { attachments: refs } : {}),
       })
       // 提交（后端的任务或本页的未确认提交）已经接管了这些图：清掉输入框里的一排
-      if (refs.length) useAiRefStore.getState().release(refKey)
+      if (refs.length) useAiAttachStore.getState().release(refKey)
       // 只有后端给出会话 id 才算送达；本地没再动过（`seq` 不变）才清输入框，**不比文本**。
       // 没拿到草稿戳（后端不可用）时后端不会动草稿，这里也不清；`unconfirmed` 时原样留着（面板进「已发出未确认」）
       if (outcome === 'accepted' && source === 'composer' && snap.stamp !== null) clearIfUnchanged(snap.seq)
@@ -956,7 +957,20 @@ function AssistantPanelBody() {
                     : ai('panel.draftRestored')}
             </p>
           )}
-          {panel && refItems.length > 0 && <NoVisionNote />}
+          {panel && refItems.some((x) => x.kind === 'image') && <NoVisionNote />}
+          {panel && refItems.length > 0 && (
+            <div data-ai-attach-row className="mx-3 mb-1 flex flex-wrap items-end gap-3 px-1 pb-1.5 pt-2">
+              {refItems.map((it, i) => (
+                <AttachPreviewCard
+                  key={it.key}
+                  view={it}
+                  index={i}
+                  uploading={it.status === 'uploading'}
+                  onRemove={() => useAiAttachStore.getState().remove(refKey, claimedProject, it.key)}
+                />
+              ))}
+            </div>
+          )}
           {panel && (
             <ContextBand panel={panel} element={element} axes={axes} scope={scope} scopes={scopes} />
           )}
@@ -1006,9 +1020,12 @@ function AssistantPanelBody() {
                 if (!draftLoading) setPrompt(e.target.value) // 草稿还没载入：输入框只读，程序化的变更也不收（两层）
               }}
               onPaste={(e) => {
-                // 粘贴截图 / 复制的图片文件：当参考图收；粘的是文字就照常（不拦）
-                const files = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith('image/'))
+                // 粘贴截图 / 复制的文件：当附件收；粘的是文字就照常（不拦）
+                const files = Array.from(e.clipboardData?.files ?? [])
                 if (files.length === 0) return
+                // 从表格 / 网页复制来的内容常常同时带一张渲染图和文字：有文字又只有图片时当文字粘贴，不拦
+                const hasText = !!e.clipboardData?.getData?.('text/plain')
+                if (hasText && files.every((f) => f.type.startsWith('image/'))) return
                 e.preventDefault()
                 e.stopPropagation()
                 addRefFiles(files)
@@ -1027,12 +1044,7 @@ function AssistantPanelBody() {
               )}
             />
             <div className="flex h-[26px] min-w-0 items-center gap-0.5 [grid-area:start]">
-              <RefAttach
-                disabled={!panel || noAgent}
-                items={refItems}
-                onFiles={addRefFiles}
-                onRemove={(key) => useAiRefStore.getState().remove(refKey, claimedProject, key)}
-              />
+              <AttachButton disabled={!panel || noAgent || refItems.length >= ATTACH_MAX} onFiles={addRefFiles} />
               <AgentPills panel={panel} element={element} axes={axes} scope={scope} scopes={scopes} />
             </div>
             <div className="flex items-center self-end [grid-area:end]">
@@ -1092,29 +1104,16 @@ function SendStopGlyph({ stop, busy }: { stop: boolean; busy: boolean }) {
   )
 }
 
-const NO_REFS: readonly RefItem[] = []
+const NO_REFS: readonly AttachItem[] = []
 
-/** 一次加图的结局 → 至多一句话（没有任何一种结局会卡住发送）；非图片的文件静默忽略 */
+/** 一次加文件的结局 → 至多一句话（没有任何一种结局会卡住发送）；非图片的文件静默忽略 */
 function noteRefAdd(r: AddSummary): void {
-  const key = r.undecodable ? 'refUndecodable' : r.uploadFailed ? 'refUploadFailed' : r.overflow ? 'refOverflow' : null
+  const key = r.tooLarge ? 'attachTooLarge' : r.uploadFailed ? 'attachUploadFailed' : r.overflow ? 'attachOverflow' : null
   if (key) useUiStore.getState().setStatus(msg(`status.${key}`, undefined, 'ai'), 'info')
 }
 
-/**
- * 输入框工具行里的参考图：一枚图片钮（点开选文件）+ 已附的缩略图（22px，右上角 × 去掉）。全部挤在原有的工具行里——
- * 不加行、不撑大输入框；说明放在气泡里，不堆字。粘贴 / 拖入由输入框自己接，走同一个 `onFiles`。
- */
-function RefAttach({
-  disabled,
-  items,
-  onFiles,
-  onRemove,
-}: {
-  disabled: boolean
-  items: readonly RefItem[]
-  onFiles: (files: File[]) => void
-  onRemove: (key: string) => void
-}) {
+/** 输入框工具行里的回形针：点开选文件（任意格式）。粘贴 / 拖入由输入框自己接，走同一个 `onFiles`；已附的文件在输入框上方的预览行里 */
+function AttachButton({ disabled, onFiles }: { disabled: boolean; onFiles: (files: File[]) => void }) {
   useTranslation('ai')
   const input = useRef<HTMLInputElement>(null)
   return (
@@ -1122,60 +1121,30 @@ function RefAttach({
       <input
         ref={input}
         type="file"
-        accept="image/*"
         multiple
         hidden
-        data-ai-ref-input
+        data-ai-attach-input
         onChange={(e) => {
           onFiles(Array.from(e.target.files ?? []))
-          e.target.value = '' // 同一张图删了再选也要触发
+          e.target.value = '' // 同一个文件删了再选也要触发
         }}
       />
-      <Tip label={ai('panel.refAttach')}>
+      <Tip label={ai('panel.attachTip')}>
         <button
           type="button"
-          data-ai-ref-attach
-          disabled={disabled || items.length >= REF_IMAGE_MAX}
-          aria-label={ai('panel.refAttach')}
+          data-ai-attach-btn
+          disabled={disabled}
+          aria-label={ai('panel.attachAria')}
           onClick={() => input.current?.click()}
           className={cn(
             'grid size-[26px] shrink-0 place-items-center rounded-sm border-0 bg-transparent text-ink-2',
             'outline-none transition-colors duration-fast hover:bg-surface-hover hover:text-ink focus-visible:focus-ring',
-            'disabled:pointer-events-none disabled:opacity-40',
+            'disabled:cursor-not-allowed disabled:opacity-40',
           )}
         >
-          <ImageIcon size={ICON_SIZE.sm} aria-hidden />
+          <Paperclip size={ICON_SIZE.sm} aria-hidden />
         </button>
       </Tip>
-      {items.map((it) => (
-        <span
-          key={it.key}
-          data-ai-ref-chip={it.status}
-          title={it.name}
-          className="group/ref relative ms-0.5 size-[22px] shrink-0 rounded-sm inset-ring inset-ring-border"
-        >
-          <img
-            src={it.thumb}
-            alt={ai('panel.refChipAria', { name: it.name })}
-            draggable={false}
-            className={cn('size-full rounded-sm object-cover transition-opacity duration-fast', it.status === 'uploading' && 'opacity-50')}
-          />
-          {/* 去掉的 × 盖在缩略图上、指针到了 / 键盘聚焦才出现：不占行宽，也不在 22px 的小图上常驻一枚黑点 */}
-          <button
-            type="button"
-            data-ai-ref-remove
-            aria-label={ai('panel.refRemove')}
-            title={ai('panel.refRemove')}
-            onClick={() => onRemove(it.key)}
-            className={cn(
-              'absolute inset-0 grid place-items-center rounded-sm bg-ink/60 text-surface opacity-0 outline-none',
-              'transition-opacity duration-fast group-hover/ref:opacity-100 focus-visible:opacity-100 focus-visible:focus-ring',
-            )}
-          >
-            <X size={ICON_SIZE.xs} aria-hidden />
-          </button>
-        </span>
-      ))}
     </>
   )
 }
@@ -1194,16 +1163,16 @@ function NoVisionNote() {
     st.setModel(choice.id as AiAgentId, choice.model)
   }
   return (
-    <p data-ai-draft-note="no-vision" className="mb-1.5 px-1 text-xs text-ink-3">
-      {choice ? ai('panel.refNoVision') : ai('panel.refNoVisionOnly')}
+    <p data-ai-draft-note="no-vision" className="mb-1.5 px-1 text-center text-xs text-ink-3">
+      {choice ? ai('panel.attachNoVision') : ai('panel.attachNoVisionOnly')}
       {choice && (
         <button
           type="button"
-          data-ai-ref-switch
+          data-ai-attach-switch
           onClick={switchTo}
           className="rounded-sm text-accent outline-none hover:underline focus-visible:focus-ring"
         >
-          {ai('panel.refSwitch', { model: choice.model })}
+          {ai('panel.attachSwitch', { model: choice.model })}
         </button>
       )}
     </p>
@@ -1278,7 +1247,7 @@ const COMPOSER_PILL_CLASS = cn(
 
 function AgentPills({ panel, ...rest }: Omit<TargetProps, 'panel'> & { panel: PanelObject | null }) {
   useTranslation('ai')
-  const { active, cur, model } = useAgentChoice()
+  const { active, cur, model, activeConn } = useAgentChoice()
   if (!panel || !active || !cur) return null
   return (
     <>
@@ -1287,8 +1256,16 @@ function AgentPills({ panel, ...rest }: Omit<TargetProps, 'panel'> & { panel: Pa
         align="start"
         side="top"
         trigger={
-          <button type="button" data-ai-pill="model" aria-label={ai('panel.agentModel')} className={COMPOSER_PILL_CLASS}>
-            <span className="min-w-0 truncate">{modelText(cur, model)}</span>
+          <button
+            type="button"
+            data-ai-pill="model"
+            aria-label={ai('panel.agentModel')}
+            title={modelText(cur, model)}
+            className={COMPOSER_PILL_CLASS}
+          >
+            {/* 提供方用 logo 表示、不再写「ChatGPT ·」这样的字；全名在 title 里 */}
+            <BrandLogo logo={activeConn?.logo ?? cur.icon_key} size={14} />
+            <span className="min-w-0 truncate">{model ? modelLabel(cur, model) : cur.display_name}</span>
             <ChevronDown size={ICON_SIZE.xs} aria-hidden className="shrink-0 opacity-70" />
           </button>
         }
