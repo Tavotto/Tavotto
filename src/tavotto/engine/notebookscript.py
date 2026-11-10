@@ -150,6 +150,9 @@ def _fix_code_cell(source: str) -> tuple[list[str], int]:
         try:
             ast.parse("\n".join(lines))
             return lines, commented
+        except (ValueError, RecursionError, MemoryError):
+            # 源码里有空字节 / 嵌套深到解析器放弃：核验不了就是不过，不落盘
+            raise _Unfixable(0) from None
         except SyntaxError as exc:
             n = exc.lineno or 0
             if not 1 <= n <= len(lines) or not _is_ipython_line(lines[n - 1]):
@@ -227,8 +230,8 @@ def extract(data: bytes) -> Extraction:
     body = "\n".join(out).rstrip("\n") + "\n"
     try:
         ast.parse(body)
-    except SyntaxError as exc:
-        line = exc.lineno or 0
+    except (SyntaxError, ValueError, RecursionError, MemoryError) as exc:
+        line = getattr(exc, "lineno", None) or 0
         cell = next((c for lo, hi, c in spans if lo <= line <= hi), 0)
         raise NotebookError("notebook_syntax_error", 422, {"cell": cell, "line": line}) from None
     return Extraction(body=body, code_cells=code_cells, commented_lines=commented)

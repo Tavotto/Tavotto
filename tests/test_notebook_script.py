@@ -183,6 +183,14 @@ def test_a_real_syntax_error_is_refused_with_cell_and_line():
     assert "print" not in json.dumps(e.value.params)
 
 
+def test_a_cell_the_parser_cannot_verify_is_refused_not_crashed():
+    deep = "x = " + "(" * 400 + "1" + ")" * 400
+    for src in ("x = 1\x00", deep):
+        with pytest.raises(notebookscript.NotebookError) as e:
+            notebookscript.extract(_nb(("code", "a = 1"), ("code", src)))
+        assert e.value.code == "notebook_syntax_error" and e.value.params["cell"] == 2
+
+
 def test_too_large_is_refused_before_parsing(monkeypatch):
     monkeypatch.setattr(notebookscript, "MAX_BYTES", 100)
     with pytest.raises(notebookscript.NotebookError) as e:
