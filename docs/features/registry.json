@@ -1418,6 +1418,22 @@
           "title": "功能：画布文字标注切到竖排——标注的屏幕外接框由宽变高、字段落盘，切回横排字段消失（ADR 0163）"
         }
       ]
+    },
+    {
+      "id": "convert.output-checklist",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "生成可编辑版本（R / MATLAB 来源）采用前列出来源脚本写出的表格和日志：逐个标出没写出 / 与项目旧结果一致 / 不同 / 没法比；缺的文件行内「我来指定」或「不需要」后可采用；有不同时可「让 AI 再对一次」",
+        "en-US": "Before adopting an editable version of an R / MATLAB script, list the tables and logs the source writes, marking each as not written, same as the project's earlier result, different or can't compare; missing files can be pointed at or skipped before adopting, and differences can be sent back to the AI once"
+      },
+      "entry": "生成可编辑版本的对照卡（采用前）",
+      "e2e": [
+        {
+          "spec": "convert-output-checklist.spec.ts",
+          "title": "转换输出清单：状态词、缺的文件行内处理后可采用、让 AI 再对一次后清单更新"
+        }
+      ]
     }
   ]
 }
