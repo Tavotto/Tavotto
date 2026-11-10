@@ -539,9 +539,13 @@ def _copy_fresh_time(st: os.stat_result) -> float:
     """复制出来的文件「是不是这次写的」：`shutil.copy2` 会把 mtime 改回源文件的旧值，所以再看一个复制改不回去的时间——
     POSIX 的 `st_ctime`（inode 变更时间，copystat 也会刷新它）；Windows 的创建时间（`st_birthtime`，新建的文件才新，
     覆盖已有文件且用 copy2 时仍看不出，那种情况不说）。"""
-    extra = (
-        getattr(st, "st_birthtime", 0.0) if os.name == "nt" else st.st_ctime
-    )  # Windows 上 st_ctime 的语义已弃用
+    if os.name == "nt":
+        # 3.12 起才有 `st_birthtime`；3.10 / 3.11 的 Windows 上 `st_ctime` 就是创建时间（3.12 起这层语义才弃用）
+        extra = getattr(st, "st_birthtime", None)
+        if extra is None:
+            extra = st.st_ctime
+    else:
+        extra = st.st_ctime
     return max(st.st_mtime, float(extra or 0.0))
 
 
@@ -671,7 +675,15 @@ def detect(
         return _svg_hint()
     # 只复制现成图片的交付脚本（反馈包 TVD-537W）：不 import 任何画图库、没有任何存图 / 画图 / 写 SVG 的调用、看得全，
     # 有复制文件的调用，且本次运行后项目素材盘点里有新写出的图片——它本来就不画图，修不出 Figure
-    if not saves and not draw_weak and not svg_write and not scan.dynamic and copies:
+    # 写 SVG 只在「有 SVG 标记」时才算画图：`dst.write_bytes(src.read_bytes())` 的目标是变量时也会被 `_writes_svg_text`
+    # 当成「可能写 .svg」，不能因此把复制脚本挡在外面
+    if (
+        not saves
+        and not draw_weak
+        and not (svg_markup and svg_write)
+        and not scan.dynamic
+        and copies
+    ):
         found = _new_inventory_file(root_p, run_started_at, _INVENTORY_EXTS, copied=True)
         if found is not None:
             return {"kind": KIND_COPIED, "in_project": True, "path": found}

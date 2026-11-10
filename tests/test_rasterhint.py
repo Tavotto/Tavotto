@@ -1131,3 +1131,37 @@ def test_copy2_keeps_the_old_mtime_but_the_new_file_still_counts(tmp_path):
     assert (tmp_path / "Figure3.pdf").stat().st_mtime < start  # 前提：mtime 确实是旧的
     hint = rasterhint.detect(tmp_path, "run_fig.py", "sandbox", run_started_at=start)
     assert hint == {"kind": "copied_images", "in_project": True, "path": "Figure3.pdf"}
+
+
+def test_write_bytes_to_a_variable_destination_still_counts_as_a_copy(tmp_path):
+    """目标是变量时 `_writes_svg_text` 会按「可能写 .svg」算；没有 SVG 标记就不是手写 SVG，复制提示照给（Codex #1823）。"""
+    body = (
+        "from pathlib import Path\n"
+        "src = Path('input/Figure3_source.pdf')\n"
+        "dst = Path('Figure3.pdf')\n"
+        "dst.write_bytes(src.read_bytes())\n"
+    )
+    _copy_project(tmp_path, body)
+    for f in (tmp_path / "input").iterdir():
+        _age(f)
+    start = time.time() - 1
+    (tmp_path / "Figure3.pdf").write_bytes(b"x")
+    hint = rasterhint.detect(tmp_path, "run_fig.py", "project_root", run_started_at=start)
+    assert hint == {"kind": "copied_images", "in_project": True, "path": "Figure3.pdf"}
+
+
+class _Stat:
+    def __init__(self, mtime, ctime, birthtime=None):
+        self.st_mtime = mtime
+        self.st_ctime = ctime
+        if birthtime is not None:
+            self.st_birthtime = birthtime
+
+
+def test_copy_fresh_time_on_windows_without_birthtime_falls_back_to_ctime(monkeypatch):
+    """3.10 / 3.11 的 Windows 没有 `st_birthtime`，`st_ctime` 就是创建时间（Codex #1823）。"""
+    monkeypatch.setattr(rasterhint.os, "name", "nt")
+    assert rasterhint._copy_fresh_time(_Stat(10.0, 50.0)) == 50.0
+    assert rasterhint._copy_fresh_time(_Stat(10.0, 50.0, birthtime=70.0)) == 70.0
+    monkeypatch.setattr(rasterhint.os, "name", "posix")
+    assert rasterhint._copy_fresh_time(_Stat(10.0, 50.0, birthtime=70.0)) == 50.0

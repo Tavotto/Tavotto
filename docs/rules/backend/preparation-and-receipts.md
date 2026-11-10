@@ -235,7 +235,7 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   **手写 SVG（ADR 0143 修订 2026-11-01）**：不用画图库、源码有 `<svg` 字面量且有往 `.svg`（或判不出扩展名的路径）写文本的调用，无 matplotlib / 别的库存图 / 动态 import → `library: svg`、`path: null`，不要求文件证据。
   **只复制现成图片（反馈包 TVD-537W，2026-11-10）**：不画图、只把现成 PDF / PNG 复制成成品的交付脚本 → `{"kind": "copied_images", "in_project": true, "path": …}`（没有 `library`）。
   条件：无 matplotlib 家族、无任何存图 / Pillow 画图 / 写 SVG 调用、无动态 import，有 `shutil.copy*` / `copyfileobj` / `copytree` / `move` 或 `x.write_bytes(y.read_bytes())`，
-  且②的素材盘点里有本次新写的图片——时间取 mtime 与复制改不回去的那个时间的较大者（POSIX `st_ctime`；Windows `st_birthtime`，`copy2` 覆盖已有文件时看不出就不说）。
+  且②的素材盘点里有本次新写的图片——时间取 mtime 与复制改不回去的那个时间的较大者（POSIX `st_ctime`；Windows `st_birthtime`，3.10 / 3.11 没有它时用当时就是创建时间的 `st_ctime`；`copy2` 覆盖已有文件时看不出就不说）。
   此时 `remedy` 为 `null`（没有可修的，不路由进 AI / 转写），卡片 `no_figure_copied`：一句话 + 主按钮「打开素材库」，不是失败卡、不摆 AI 入口。
   看护 `tests/test_rasterhint.py`、`tests/test_preparation_session_lifecycle.py`、`web/src/components/PreparationCard.test.tsx`、`web/src/lib/preparationText.test.ts`。
 - **依赖准备并入同一个会话（T06）**：phase `preparing_environment` 由依赖作业事实派生；装好后同一会话按新环境重新检查（只重算差额，
