@@ -216,7 +216,17 @@ describe('入口与预览行', () => {
     expect(cards[0].className).not.toContain('-ml-')
     expect(cards[1].className).toContain('-ml-')
     expect(cards.map((c) => Number(c.style.zIndex))).toEqual([0, 1, 2])
-    for (const c of cards) expect(c.className).toContain('hover:z-sticky')
+    // 计算后的层级关系（行内 zIndex 优先于 class）：悬停 / 聚焦哪张，哪张就高于左右两张
+    const z = (c: HTMLElement) => (c.style.zIndex === 'var(--z-sticky)' ? 10 : Number(c.style.zIndex))
+    await act(async () => cards[1].dispatchEvent(new PointerEvent('pointerover', { bubbles: true })))
+    expect(z(cards[1])).toBeGreaterThan(z(cards[0]))
+    expect(z(cards[1])).toBeGreaterThan(z(cards[2]))
+    await act(async () => cards[1].dispatchEvent(new PointerEvent('pointerout', { bubbles: true })))
+    expect(cards.map(z)).toEqual([0, 1, 2])
+    await act(async () => qa('[data-ai-attach-remove]')[0].focus())
+    expect(z(cards[0])).toBeGreaterThan(z(cards[1]))
+    await act(async () => qa('[data-ai-attach-remove]')[0].blur())
+    expect(cards.map(z)).toEqual([0, 1, 2])
     // 键盘聚焦顺序不变：DOM 顺序就是选择顺序，× 都在自己那张卡里
     expect(qa('[data-ai-attach-remove]').map((b) => b.closest('[data-ai-attach-chip]')?.getAttribute('title'))).toEqual(['1.png', '2.png', '3.csv'])
   })

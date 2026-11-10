@@ -43,14 +43,20 @@ export function AttachPreviewCard({
   onRemove: () => void
 }) {
   useTranslation('ai')
+  // 悬停 / 聚焦的那张提到最上层：行内 zIndex 比 class 优先，所以层级也走行内（用 --z-sticky token，高于按序号叠放的 0..5）
+  const [raised, setRaised] = useState(false)
   return (
     <span
+      onPointerEnter={() => setRaised(true)}
+      onPointerLeave={() => setRaised(false)}
+      onFocus={() => setRaised(true)}
+      onBlur={() => setRaised(false)}
       data-ai-attach-chip={uploading ? 'uploading' : 'ready'}
       title={view.name}
-      style={{ '--tilt': `${tiltOf(index)}deg`, zIndex: index } as CSSProperties}
+      style={{ '--tilt': `${tiltOf(index)}deg`, zIndex: raised ? 'var(--z-sticky)' : index } as CSSProperties}
       className={cn(
         // 相邻卡片微微遮挡（后一张压住前一张约 20% 卡宽）；悬停 / 聚焦的那张提到最上层，× 才够得着
-        'group/card relative block shrink-0 rotate-[var(--tilt)] rounded-md shadow-thumb hover:z-sticky focus-within:z-sticky',
+        'group/card relative block shrink-0 rotate-[var(--tilt)] rounded-md shadow-thumb',
         index > 0 && (view.kind === 'image' ? '-ml-2.5' : '-ml-3.5'),
         'transition-[transform,box-shadow] duration-base ease-out motion-reduce:transition-none',
         'hover:-translate-y-0.5 hover:rotate-0 hover:shadow-lift focus-within:-translate-y-0.5 focus-within:rotate-0 focus-within:shadow-lift',
