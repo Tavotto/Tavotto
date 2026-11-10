@@ -78,6 +78,8 @@ _CODE_REGISTRIES = (
     "tavotto.engine.inputremap",
     # TAF 数据出图（ADR 0138 Phase 5）：`DataSourceError(code)` 由 app 的 400 漏斗转出；码表 `ERROR_CODES`，构造时校验
     "tavotto.engine.ai_data_figure",
+    # 数据出图 v2：XLSX 读取的稳定码（`XlsxError(code)` 由 `ai_data_figure` 转成 `DataSourceError`，码表并进上面那份）
+    "tavotto.engine.xlsxread",
     # ADR 0110：改写脚本里的数据路径与共享的备份底座——`ScriptEditError(code)` 由 app 的 409 漏斗转出
     "tavotto.engine.scriptbackup",
     "tavotto.engine.scriptedit",
@@ -360,6 +362,13 @@ USER_VISIBLE_CODES = {
     "data_empty": set(),
     "data_header_invalid": set(),
     "data_ragged": set(),
+    # 数据出图 v2（数据文件夹 / TSV / XLSX，`xlsxread`）
+    "data_format_unsupported": set(),
+    "data_excel_unsupported": set(),
+    "data_xlsx_invalid": set(),
+    "data_xlsx_too_large": set(),
+    "data_xlsx_unsafe": set(),
+    "data_sheet_not_found": set(),
     "figure_name_exhausted": set(),
     # 拒绝之后清待确认行也失败了：状态不确定（503），客户端保持同一个 rid
     "ai_request_unresolved": set(),
