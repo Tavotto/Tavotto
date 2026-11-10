@@ -1367,7 +1367,7 @@ def _notebook_failure(exc: BaseException):
 
 @app.post("/api/notebook/extract")
 def api_notebook_extract():
-    """项目里的 `.ipynb` → 它旁边的同名 `.py`（ADR 0178）。请求 `{"notebook": <项目相对路径>}`。
+    """项目里的 `.ipynb` → 它旁边的同名 `.py`（ADR 0179）。请求 `{"notebook": <项目相对路径>}`。
 
     路径只经 `projectenv.contained_path` 钉回项目内（`..` / 软链接 / 项目外绝对路径都在那一步现形）；
     只读笔记本、只写它旁边的 `.py`，用户的笔记本与同名脚本一个字节不动。响应 `{notebook, script, status}`。
@@ -6706,7 +6706,7 @@ def api_registry():
             # 加字段（老前端忽略）：项目内认得出语言的 R / MATLAB 脚本（ADR 0143 修订「项目内入口」）。
             # 独立于 `all_scripts`：它们不能“打开并运行”，不进运行环境探测 / 依赖准备 / 可运行脚本判据。
             "foreign_scripts": engine_foreignsource.inventory(Path(ctx.path)),
-            # 加字段（老前端忽略）：项目内还没转成脚本的 Jupyter 笔记本（ADR 0178）。同样独立于 `all_scripts`：
+            # 加字段（老前端忽略）：项目内还没转成脚本的 Jupyter 笔记本（ADR 0179）。同样独立于 `all_scripts`：
             # 它们不是脚本，要先抽成同名 `.py`（`POST /api/notebook/extract`）才进脚本库的运行分组
             "notebook_scripts": engine_notebookscript.inventory(Path(ctx.path)),
         }

@@ -54,7 +54,7 @@ TS + Tailwind v4）。
 | `legendmodel.py`（`LegendEntries`、`rebuild_legend`、`legend_pos_cfg`）、`FigState.reapply` | 图例条目模型与位置模型 → `legend-model.md` | `texts_j` 的 j 是原始序号；重建型 prop 一律 `rebuild_legend`；三条位置 prop 写槽位再整体重建 |
 | `colorbarmodel.py`（`_cb_reorient`、`extend`、`follow_map`）、色条轴 position | 色条：方向、延伸与大小 → `colorbar.md` | 就地结构改造、`fig.axes` 顺序不动；色阶兄弟只认 `scale_siblings`；布局归属只认显式宿主 |
 | `tickmodel.py`（`tick_cfg` / `apply_tick_model` / `TickSet` / `TickLabel`）、`spinemodel.spine_cfg`、`manifest.spine_geometry` | 刻度定位、边框模型与 spines 几何 → `ticks-and-spines.md` | 写进 cfg 再整体重建，没表态 = 脚本原样；刻度记忆表只活一次测量；spines 端点取 `Spine.get_path()` |
-| `engine/registry.py`、`discover.py`、`probe.py`、`projscan.py`、`/api/registry/*`、`/api/project/scan*` | 注册表、静态扫描与试运行探测 → `registry-discovery-and-probe.md` | 冲突只报告不裁决；probe 失败不写注册表；导入即扫描只读零执行、看不全 = partial 不是「没有」 |
+| `engine/registry.py`、`discover.py`、`probe.py`、`projscan.py`、`/api/registry/*`、`/api/project/scan*`、`engine/notebookscript.py` / `/api/notebook/*` | 注册表、静态扫描与试运行探测 → `registry-discovery-and-probe.md` | 冲突只报告不裁决；probe 失败不写注册表；导入即扫描只读零执行、看不全 = partial 不是「没有」 |
 | `engine/runtimeasset.py`、`runtime:` id、`/api/runtime/*` | RuntimeFigureAsset → `runtime-figure-assets.md` | id 不透明；端点只读绝不执行；写回硬拒绝；导出必须当次 live 渲染 |
 | `engine/previewbudget.py`、`preview_complexity.py`、`preview_hybrid.py`、`figsession.render()` | 编辑预览的表示法与复杂度预算 → `preview-complexity-budget.md` | 判定在 `read_text()` 之前；超限是一次成功渲染；降级 ≠ 只读 |
 | `engine/depresolve.py`、`managedenv.py`、`deprepair.py`、`userenvs.py`、`rootenv.py`、`envadvice.py`、`projectenv.probe_environment`、`pool.mutating_environment`、`importscan.py`、`distmeta.py`、`depplan.py` | 受控依赖修复、联合准备、来源解析、镜像回退 → `dependency-repair-and-packages.md` | 内置 runtime 永不是安装目标；pip exit 0 ≠ 修好；用户显式决定过的环境不碰；来源解析默认零执行 |

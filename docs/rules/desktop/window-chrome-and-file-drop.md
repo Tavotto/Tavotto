@@ -24,6 +24,6 @@ order: 40
   页面 HTML5 拖放整片失效）；macOS 上 `native_drop.rs` 只旁听 `performDragOperation:` 读路径、发
   `tavotto:file-drop`、再调原实现；Windows 上 `native_drop_win.rs` 收页面在 drop 捕获阶段经
   `postMessageWithAdditionalObjects` 转来的 File（`{"tavotto":"file-drop"}`，与 `desktop.ts` 的 `DROP_MESSAGE` 同源），
-  读 `ICoreWebView2File::Path()` 后走同一条（ADR 0092 修订 2026-11-03）。路径分派只在 `drop_paths::classify`（绝对 + canonicalize，Rust 单测；`.py` > 外语脚本 `.R`/`.r`/`.m` > 文件夹，ADR 0143 修订二），
+  读 `ICoreWebView2File::Path()` 后走同一条（ADR 0092 修订 2026-11-03）。路径分派只在 `drop_paths::classify`（绝对 + canonicalize，Rust 单测；`.py` > Jupyter 笔记本 `.ipynb`（小写，ADR 0179：打开所在文件夹、前端抽成同名 `.py` 再运行）> 外语脚本 `.R`/`.r`/`.m` > 文件夹，ADR 0143 修订二），
   视图分派在前端（只有主页订阅）；两侧同源由 `tests/test_desktop_file_drop.py` 看护，「什么算脚本」与页面
   `scriptImport.ts` 同源由 `tests/golden/drop_script_rule.json`（两侧各读）看护。

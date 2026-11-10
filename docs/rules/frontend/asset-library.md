@@ -2,14 +2,14 @@
 
 > 原文出自 `web/AGENTS.md`「素材库普通入口（2026-08-26，Compatibility Bridge Session 5）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`scriptRunStore.test.ts`、`ScriptLibrary.test.tsx`、`AssetBrowser.runtime.test.tsx`、`AssetBrowser.tiff.test.tsx`、`lib/panelSrc.test.ts`、`projectSwitchAssets.test.ts`、`openRequest.test.ts`、`FigurePickerDialog.test.tsx`、`AssetBrowser.foreign.test.tsx`、`ScriptLibrary.foreign.test.tsx`、`e2e/asset-library.spec.ts`、`projectSwitchDepRepair.test.ts`、`projectSwitchAi.test.ts`、`rebuildProgressId.golden.test.ts`、`lib/canvasFileIntake.test.ts`、`canvas/useCanvasScriptDrop.test.ts`、`lib/clipboardImagePaste.test.ts`
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`scriptRunStore.test.ts`、`ScriptLibrary.test.tsx`、`AssetBrowser.runtime.test.tsx`、`AssetBrowser.tiff.test.tsx`、`lib/panelSrc.test.ts`、`projectSwitchAssets.test.ts`、`openRequest.test.ts`、`FigurePickerDialog.test.tsx`、`AssetBrowser.foreign.test.tsx`、`ScriptLibrary.foreign.test.tsx`、`e2e/asset-library.spec.ts`、`projectSwitchDepRepair.test.ts`、`projectSwitchAi.test.ts`、`rebuildProgressId.golden.test.ts`、`lib/canvasFileIntake.test.ts`、`canvas/useCanvasScriptDrop.test.ts`、`lib/clipboardImagePaste.test.ts`、`lib/notebookRun.test.ts`、`ScriptLibrary.notebook.test.tsx`、`e2e/notebook-to-script.spec.ts`
 
 <!-- agents-route
 sheet: web/AGENTS.md
 order: 220
-改到: `AssetBrowser`、`ScriptLibrary`、`scriptRunStore` / `runtimeAssetStore` / `scriptLibraryStore` / `assetStore` / `depRepairStore` / `envStore` / `aiStore`、`FigurePickerDialog`、`lib/canvasFileIntake.ts` / `canvas/useCanvasScriptDrop.ts` / `lib/packageImport.ts`（拖 / 粘贴文件进画布）
+改到: `AssetBrowser`、`ScriptLibrary`、`scriptRunStore` / `runtimeAssetStore` / `scriptLibraryStore` / `assetStore` / `depRepairStore` / `envStore` / `aiStore`、`FigurePickerDialog`、`lib/canvasFileIntake.ts` / `canvas/useCanvasScriptDrop.ts` / `lib/packageImport.ts` / `lib/notebookRun.ts`
 主题: 素材库普通入口 → `asset-library.md`
-必守要点: 七个 store 有项目代际；同脚本防并发；多 Figure 不只显示第一张；加图走 `addFigureToLayout`；拖入图走 `importAndPlace`
+必守要点: 七 store 有项目代际；同脚本防并发；多 Figure 全显示；加图 `addFigureToLayout`；拖图 `importAndPlace`；笔记本 `runNotebook`
 -->
 
 素材面板分「图」（FileAsset + RuntimeFigureAsset 同一个 listbox，runtime
@@ -449,3 +449,10 @@ RenderCore，必须明确报 `svg_asset_export_unsupported`，不能交付空图
   * 粘贴：`handlePasteEvent` 在**不是对象负载**时看图片文件，有文字就不拦，输入框 / 对话框让位（`runDiscreteAction`）；文件名 `pasted-<时间戳>.png`。
   * 桌面壳的原生拖放处理是关掉的，图片走 DOM `File` 字节，**不依赖壳的路径事件**；没有脚本的一次放下里壳那条 `unsupported` 事件不配对、静默过期。系统图片拖动时不画落点预览（dragover 读不到文件内容，没有真实尺寸，不造假）。
   * 看护：`lib/canvasFileIntake.test.ts`、`canvas/useCanvasScriptDrop.test.ts`、`lib/clipboardImagePaste.test.ts`、后端 `tests/test_asset_import.py`。
+
+- **`.ipynb` 抽成同名 `.py` 再运行（ADR 0179，2026-11-10）**：三个入口（脚本库一行、拖进画布、拖进主页）共用 `lib/notebookRun.runNotebook`——后端抽取（`POST /api/notebook/extract` 项目相对路径 /
+  `/api/notebook/import` 内容上传，确定性、不经 AI、不联网），再 `projectPreparationStore.open(scriptTarget(script,{reuse:true}),{run:true, placeIn})`，**不另造运行路径**，也不在前端解析笔记本。
+  * 脚本库：`/api/registry` 的 `notebook_scripts`（后端报「还没转成脚本的」；已转过且 `.py` 不比笔记本旧的不列）单独一组，行样式沿用 R / MATLAB 那一组，主动作是行里一颗 ▶ 样式的钮（`data-notebook-run`）；
+    不进 `groupOf` / 运行状态机 / 准备会话。画布：优先级 `.py` > 笔记本 > R/MATLAB（与壳 `drop_paths::classify` 一致）；拿到路径 → 项目里直接抽取运行、项目外给「打开它所在的项目」；拿不到路径（浏览器、壳没交来）→ 读 `File` 内容上传，**不弹选择器**。
+  * 失败一律 `sayNotebookFailed`（一句话 + `feedbackAction()`）；抽取 / 上传期间换项目整件作废、不说；没有项目（playground / MCP 画布）不发请求。
+  * 看护：`lib/notebookRun.test.ts`、`ScriptLibrary.notebook.test.tsx`、`canvas/useCanvasScriptDrop.test.ts`（笔记本一组）、`components/home/HomeView.test.tsx`（笔记本）、`e2e/notebook-to-script.spec.ts`、后端 `tests/test_notebook_script.py`。
