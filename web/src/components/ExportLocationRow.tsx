@@ -51,14 +51,13 @@ export function projectRelativeLocation(
 
 const ex = (key: string) => translate(`export.${key}`, { ns: 'dialogs' })
 
-export function ExportLocationRow({ disabled = false }: { disabled?: boolean }) {
-  useTranslation('dialogs')
+/**
+ * 「选个新文件夹」这一套（原生选择器 / 目录浏览器 → 写项目的导出文件夹）：位置行与导出失败后的
+ * 「换个位置导出」共用，只有这一份。`onChosen` 在新位置写成功之后调（取消 / 失败不调）。
+ * `dialog` 是浏览器版要挂出来的目录浏览器（桌面版恒为 null）。
+ */
+export function useExportLocationPicker(onChosen?: () => void) {
   const exportDir = useProjectStore((s) => s.project?.export_dir ?? null)
-  const homeDir = useProjectStore((s) => s.project?.home_dir ?? null)
-  const projectDir = useProjectStore((s) => s.project?.figures_dir ?? null)
-  const projectName = useProjectStore((s) => s.project?.name ?? null)
-  // 写入没落地前位置还是旧的：说「正在更新…」，导出键由对话框同一个信号挡住（否则会写到旧目录）
-  const updating = useProjectSettingsPending()
   const [browsing, setBrowsing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -68,7 +67,9 @@ export function ExportLocationRow({ disabled = false }: { disabled?: boolean }) 
       await applyProjectSettingsPatch({ export_dir: dir })
     } catch (e) {
       setError(backendErrorText(e))
+      return
     }
+    onChosen?.()
   }
   const change = async () => {
     if (isDesktop()) {
@@ -78,6 +79,33 @@ export function ExportLocationRow({ disabled = false }: { disabled?: boolean }) 
       setBrowsing(true)
     }
   }
+  const dialog = browsing ? (
+    <DirBrowser
+      mode="open"
+      title={ex('locationPickTitle')}
+      // 从当前导出目录的上一级打开、把它高亮——一眼看到同级；上一级打不开就回落到它自己
+      initialPath={(exportDir && parentDir(exportDir)) || exportDir || undefined}
+      fallbackPath={exportDir ?? undefined}
+      highlight={exportDir ?? undefined}
+      onClose={() => setBrowsing(false)}
+      onPick={(path) => {
+        setBrowsing(false)
+        void choose(path)
+      }}
+    />
+  ) : null
+  return { change, error, dialog }
+}
+
+export function ExportLocationRow({ disabled = false }: { disabled?: boolean }) {
+  useTranslation('dialogs')
+  const exportDir = useProjectStore((s) => s.project?.export_dir ?? null)
+  const homeDir = useProjectStore((s) => s.project?.home_dir ?? null)
+  const projectDir = useProjectStore((s) => s.project?.figures_dir ?? null)
+  const projectName = useProjectStore((s) => s.project?.name ?? null)
+  // 写入没落地前位置还是旧的：说「正在更新…」，导出键由对话框同一个信号挡住（否则会写到旧目录）
+  const updating = useProjectSettingsPending()
+  const { change, error, dialog } = useExportLocationPicker()
   const shown = exportDir
     ? (projectRelativeLocation(exportDir, projectDir, projectName) ?? abbreviateHome(exportDir, homeDir))
     : null
@@ -110,21 +138,7 @@ export function ExportLocationRow({ disabled = false }: { disabled?: boolean }) 
           </p>
         </FormRow>
       )}
-      {browsing && (
-        <DirBrowser
-          mode="open"
-          title={ex('locationPickTitle')}
-          // 从当前导出目录的上一级打开、把它高亮——一眼看到同级；上一级打不开就回落到它自己
-          initialPath={(exportDir && parentDir(exportDir)) || exportDir || undefined}
-          fallbackPath={exportDir ?? undefined}
-          highlight={exportDir ?? undefined}
-          onClose={() => setBrowsing(false)}
-          onPick={(path) => {
-            setBrowsing(false)
-            void choose(path)
-          }}
-        />
-      )}
+      {dialog}
     </>
   )
 }

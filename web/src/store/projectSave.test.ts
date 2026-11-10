@@ -406,6 +406,23 @@ describe('写回的并发与项目切换', () => {
     expect(statusText()).toContain('没有写入项目里的 tavottofile/排版一.json')
   })
 
+  it('冲突回来时已经切到别的排版：不弹对话框，这句话也不叫人去「对话框里决定」', async () => {
+    projectFiles.set('排版一', '{"on":"disk"}')
+    bind({ revision: 'stale-rev' })
+    edit('t1')
+    const release = gate()
+    const a = runManualSave()
+    await new Promise((r) => setTimeout(r, 20))
+    await s().switchDocument(emptyProject(), 'd_other')
+    release()
+    await a
+    expect(useUiStore.getState().layoutOpen).toBe(false)
+    expect(useUiStore.getState().layoutConflict).toBeNull()
+    expect(useUiStore.getState().statusTone).toBe('error')
+    expect(statusText()).toContain('tavottofile/排版一.json')
+    expect(statusText()).not.toContain('对话框')
+  })
+
   it('A 有一次在路上、一次排着时切到 B 按 ⌘S：B 自成一项写进 B 的文件，不被并进 A 的排队', async () => {
     bind()
     edit('t1')

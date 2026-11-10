@@ -336,6 +336,18 @@ describe('rebuildPanel：作废热会话 + 按当前 overrides 重画', () => {
     expect(order).toEqual(['invalidate', 'render'])
   })
 
+  it('目标不在文档里（同步并写回的临时面板 sync:…）：按它自己的文件身份作废并重画，文档不动', async () => {
+    const detached = panel('sync:q9', { fileId: 'Fig9.pdf', overrides: [...ov] }) as PanelObject
+    const before = JSON.stringify(objs())
+    engineRender.mockClear()
+    expect(await rebuildPanel('sync:q9', detached)).toBe('rebuilt')
+    expect(engineInvalidate).toHaveBeenCalledWith('Fig9.pdf')
+    expect(engineRender).toHaveBeenCalledTimes(1)
+    expect(engineRender.mock.calls[0][0]).toBe('Fig9.pdf')
+    expect(JSON.stringify(objs())).toBe(before)
+    expect(await rebuildPanel('sync:q9')).toBe('skipped') // 不给临时面板就还是找不到
+  })
+
   it('后端说作废不了（native 会话）：照常重画，但要说源脚本没有重跑', async () => {
     engineInvalidate.mockResolvedValue({ invalidated: false, reason: 'native_session' })
     expect(await rebuildPanel('p1')).toBe('rerendered')

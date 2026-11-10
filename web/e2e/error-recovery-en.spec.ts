@@ -220,8 +220,10 @@ test('导出目录不可写：导出失败给英文报错，且不丢项目', as
     .first()
   await expect(err).toBeVisible({ timeout: 120_000 })
   await expectNoCjk(err, '导出失败错误')
-  // 失败必须留一条出去的路，否则用户只能关掉对话框重来
-  await expect(dialog.getByRole('button', { name: /Try again/i })).toBeVisible()
+  // 失败必须留一条**走得通**的路：目录写不了时同一个目录再试必败，出口是「换个位置导出」（2026-11-10），不是「Try again」
+  const relocate = dialog.locator('[data-export-change-location]')
+  await expect(relocate).toBeVisible()
+  await expectNoCjk(relocate, '导出失败的出口按钮')
 
   // 不丢项目：关掉对话框画布还在
   await page.keyboard.press('Escape')

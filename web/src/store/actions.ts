@@ -1516,8 +1516,10 @@ async function settledRender(key: string): Promise<void> {
  * overrides 重画了，**要说出来**）/ `failed`（渲染错误已落在该变体上：画布角标 +
  * 属性页的错误块显示，这里**不叠一条 toast**）/ `skipped`（不是可编辑面板）。
  */
-export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
-  const panel = findObject(panelId)
+export async function rebuildPanel(panelId: string, detached?: PanelObject): Promise<RebuildOutcome> {
+  // `detached`：目标图不在文档里（「同步并写回」的临时面板，id 形如 `sync:…`）——按它自己的文件 / 脚本身份重画
+  const stand = detached && detached.id === panelId ? detached : undefined
+  const panel = findObject(panelId) ?? stand
   if (panel?.type !== 'panel' || !panel.script) return 'skipped'
   try { refuseArtifactOperation(panel) } catch (e) { status(engineErrorMsg(e), 'error'); return 'failed' }
   // 字号还在安静计时里时点「重新构建」：先把那次编辑收进历史，重画的才是定稿的 overrides
@@ -1539,7 +1541,7 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
   }
   // 等后端这一趟的时间里面板可能被删了：以此刻文档里的那份为准
   if (!owner.still()) return 'skipped'
-  const fresh = findObject(panelId)
+  const fresh = findObject(panelId) ?? stand
   if (fresh?.type !== 'panel' || fresh.fileId !== fileId) return 'skipped'
   const store = useRenderStore.getState()
   store.markStale([fileId])
