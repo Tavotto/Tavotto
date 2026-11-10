@@ -154,6 +154,7 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
     选覆盖 / 另存重发这一张后继续；取消 = 取消当前这张并停掉剩余，已写出的如实报（汇总为 `partial`）；某张导不出（文件名不合法 / 源文件没了）
     记一笔失败继续；收尾后 `aggregateBatch` 合成一份汇总作业给 `ResultBlock`（部分失败走既有 `partialSummary`）。统一文件名输入在这一档隐藏
     （每张用各自的名字）。route 按每张各取一次，迟迟不来按退路发，不卡住整批。
+- **导出失败的出口**（2026-11-10，`lib/exportRecovery.ts` + `ResultBlock`）：`export_dir_unwritable` / `tmp_dir_failed` 的主按钮是「换个位置导出」（与「位置」行同一个 `useExportLocationPicker`，选完写项目导出文件夹再走同一个 `start()`；同目录「重试」必败，不给）；`export_raster_too_large` 的主按钮是「改用 N dpi 导出」（N = 候选里不超上限的最大一档，当前 dpi 取作业请求的 `ppi`，像素数按 dpi 平方缩、宽高向上取整；对话框把分辨率设成 N 后走同一个 `start()`，载荷仍只由 `buildExportRequest()` 构造），算不出档位退回「发送问题反馈」。作业级失败与「一件都没写出来」的逐项失败两处都带这个出口。看护 `exportFailureActions.test.tsx`、`lib/exportRecovery.test.ts`、`ExportDialog.test.tsx`「位图太大」。
 - **导出永远可点，没有知情确认勾选框**（2026-10-21）：阻断项 / 无法核验项 / 没查成不再拦「开始导出」。检查区只有摘要芯片（计数）与「在问题面板中查看」；**没有逐条阻断清单、没有任何警告句、不变红**（用户 10-21 裁决）。**原来记入 proof report 的确认，改成自动记「导出时未处理的项」**：有未处理项就强制生成样式检查报告
   （`reportRequired`，开关置灰），`forced` / `acknowledged`（阻断与无法核验的规则码）/ `check_failed` / `acknowledged_check_failed`
   照旧写，语义变为「导出时仍未处理」而不是「用户点过头」；请求的 `validation` 有阻断项时恒为 `{policy:'acknowledged',
