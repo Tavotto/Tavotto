@@ -145,6 +145,8 @@ function BlockedNotice({
 }) {
   useTranslation(['inspector', 'common'])
   const [rendering, setRendering] = useState(false)
+  // 重新渲染没有办法做（目标不是可重画的面板）：不再摆一个点了没用的按钮
+  const [rerenderUnavailable, setRerenderUnavailable] = useState(false)
   const body = (error.api?.body ?? {}) as {
     code?: string
     file?: string
@@ -164,16 +166,21 @@ function BlockedNotice({
     const withScript = panels.filter((p) => p.script)
     const named = body.script ? withScript.filter((p) => p.script!.endsWith(body.script!)) : []
     setRendering(true)
-    let failed = false
+    let ok = true
+    let unavailable = false
     try {
       for (const p of named.length ? named : withScript) {
-        if ((await rebuildPanel(p.id)) === 'failed') failed = true
+        // 只有真的重画成功才算数；'skipped' = 没渲染任何东西，不是成功
+        const outcome = await rebuildPanel(p.id, p)
+        if (outcome === 'skipped') unavailable = true
+        if (outcome !== 'rebuilt' && outcome !== 'rerendered') ok = false
       }
     } finally {
       setRendering(false)
     }
-    // 渲染失败时错误已落在那张图上，这里不清阻断：用户没有一张新图可写
-    if (!failed) onRerendered()
+    if (unavailable) setRerenderUnavailable(true)
+    // 渲染失败 / 没渲染时阻断留着：用户没有一张新图可写
+    if (ok) onRerendered()
   }
 
   if (body.code === 'replay_divergence') {
@@ -211,7 +218,8 @@ function BlockedNotice({
     return (
       <div className="flex flex-col gap-1.5 rounded-sm border border-border bg-surface-2 p-2">
         <p className="text-xs leading-relaxed text-ink-2">{detail}</p>
-        {body.code === 'script_changed' && panels.some((p) => p.script) && (
+        {body.code === 'script_changed' && rerenderUnavailable && <SendReportButton variant="primary" />}
+        {body.code === 'script_changed' && !rerenderUnavailable && panels.some((p) => p.script) && (
           <div>
             <Button size="sm" variant="primary" data-write-back-rerender disabled={rendering} onClick={() => void rerender()}>
               {wb('rerender')}

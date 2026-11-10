@@ -165,7 +165,7 @@ describe('写回被阻断时的文案', () => {
       btn.click()
       await Promise.resolve()
     })
-    expect(rebuildPanel).toHaveBeenCalledWith('p2')
+    expect(rebuildPanel).toHaveBeenCalledWith('p2', expect.anything())
     // 渲染完阻断撤掉，用户可以直接再点写回
     expect(document.body.querySelector('[data-write-back-rerender]')).toBeNull()
     expect(text()).not.toContain('fig1.py')
@@ -181,6 +181,34 @@ describe('写回被阻断时的文案', () => {
       await Promise.resolve()
     })
     expect(document.body.querySelector('[data-write-back-rerender]')).not.toBeNull()
+  })
+
+  it('script_changed：重新渲染什么都没渲染（skipped）时不撤阻断，按钮换成发送问题反馈', async () => {
+    useDiagSendStore.setState({ capability: { enabled: true, note_max_chars: 1000, retention_days: 30, categories: ['other'] } } as never)
+    stubFetch(409, { error: '脚本已改动…', code: 'script_changed', script: 'fig1.py' })
+    vi.mocked(rebuildPanel).mockResolvedValueOnce('skipped' as never)
+    render([scripted])
+    await confirm()
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[data-write-back-rerender]')!.click()
+      await Promise.resolve()
+    })
+    expect(text()).toContain('fig1.py') // 阻断还在
+    expect(document.body.querySelector('[data-write-back-rerender]')).toBeNull() // 不留点了没用的按钮
+    expect(document.body.querySelector('[data-send-report]')).not.toBeNull()
+    useDiagSendStore.setState({ capability: null })
+  })
+
+  it('script_changed：把面板本身交给 rebuildPanel（临时面板不在文档里也能重画）', async () => {
+    stubFetch(409, { error: '脚本已改动…', code: 'script_changed', script: 'fig1.py' })
+    vi.mocked(rebuildPanel).mockClear()
+    render([{ ...scripted, id: 'sync:p2' }])
+    await confirm()
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[data-write-back-rerender]')!.click()
+      await Promise.resolve()
+    })
+    expect(rebuildPanel).toHaveBeenCalledWith('sync:p2', expect.objectContaining({ id: 'sync:p2', fileId: 'Fig1.pdf' }))
   })
 
   it('script_changed：图没有脚本可重画时不摆按钮', async () => {
