@@ -107,7 +107,7 @@ test('打开后：确认之前零连接，点发送才连；失败说人话并�
 
 const SHOTS = process.env.TAVOTTO_E2E_SHOTS
 
-test('故障卡 → 打开 → 发送：脚本运行失败卡里入口在折叠详情（主按钮仍是「再试一次」）；打开只备包，点发送才连', async ({
+test('故障卡 → 打开 → 发送：没连 AI 的脚本运行失败卡，主按钮就是「发给我们看看」；打开只备包，点发送才连', async ({
   app,
   page,
 }) => {
@@ -142,14 +142,10 @@ test('故障卡 → 打开 → 发送：脚本运行失败卡里入口在折叠�
     await card.locator('[data-prep-primary]').click() // 打开并运行：点一次就检查并认领（V2 PR4）
     await expect(card).toHaveAttribute('data-prep-state', /failed|error/, { timeout: 120_000 })
 
-    // 主按钮仍是修复类（使用你的 AI 来修复），发送反馈住在「⋯ → 全部详情」展开的详情里
-    const primaryBtn = card.locator('[data-prep-primary]')
-    await expect(primaryBtn).toHaveCount(1)
-    await expect(primaryBtn).not.toHaveAttribute('data-send-report', /.*/)
-    const entry = card.locator('[data-prep-details] [data-send-report]')
-    // 失败卡版式 1：一句话 + 一个主按钮，详情在页眉「⋯」里（菜单项「全部详情」原位展开）
-    await card.locator('[data-prep-more]').click()
-    await page.locator('[data-prep-menu-all-details]').click()
+    // 没连 AI、发送入口开着（ADR 0148 修订 2026-11-10）：点「使用你的 AI 来修复」只会被带去连 AI，原来想做的事没成——
+    // 卡片的主按钮就是「发给我们看看」（`SendReportButton`，不是普通主按钮），AI 降为次按钮；不用先翻进折叠详情
+    await expect(card.locator('[data-prep-primary]')).toHaveCount(0)
+    const entry = card.locator('[data-send-report]').first()
     await expect(entry).toBeVisible()
     expect(connections).toBe(0)
 

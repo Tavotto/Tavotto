@@ -2539,8 +2539,20 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('只画好了 1/2 张图，bad 没画出来')
     expect(primary()?.dataset.prepPrimary).toBe('enter_edit')
     await toggleDetails()
+    // 原始码不进句子：有 errors:backend.<code> 的人话说人话
     expect(details()?.querySelector('[data-prep-failed-figures]')?.textContent).toBe(
-      '没画出来的图：bad（preview_capture_failed）。其余的图可以照常编辑。',
+      '没画出来的图：bad。画这些图时脚本出错了，没能捕获。其余的图可以照常编辑。',
+    )
+  })
+
+  it('部分捕获：失败码没有人话时不显示括号，也不露原始码', async () => {
+    await mount()
+    await openWith(
+      report({ ...STATES.completedPartial, failed_figures: [{ stem: 'bad', code: 'some_unknown_code' }] }),
+    )
+    await toggleDetails()
+    expect(details()?.querySelector('[data-prep-failed-figures]')?.textContent).toBe(
+      '没画出来的图：bad。其余的图可以照常编辑。',
     )
   })
 
@@ -4353,6 +4365,21 @@ describe('智能修复（ADR 0148）：每张失败卡都有「✦ 使用你的 
     expect(aiBtn()).not.toBeNull()
   })
 
+  it('没连 AI（connect_ai）：发送入口开着时主按钮是「发给我们看看」，AI 降为次按钮；入口关着维持原样', async () => {
+    await mount()
+    await openWith(report(STATES.errRemedyConnect))
+    expect(panel().querySelector('[data-send-report]')?.textContent).toBe('发给我们看看')
+    expect(primary()).toBeNull() // 主按钮是 SendReportButton，不是普通主按钮
+    expect(aiBtn()?.textContent).toBe('使用你的 AI 来修复')
+    await act(async () => root.unmount())
+    host.remove()
+    useDiagSendStore.setState({ capability: null })
+    await mount()
+    await openWith(report(STATES.errRemedyConnect))
+    expect(primary()?.dataset.prepPrimary).toBe('ai_fix')
+    expect(panel().querySelector('[data-send-report]')).toBeNull()
+  })
+
   it('没连 AI：点它打开设置的 AI 页；连好（caps 里出现可用的 AI）后自动接着进入修复，不用再点', async () => {
     mockFix.mockResolvedValue({ ok: false, reason: 'ai_fix_unavailable' })
     await mount()
@@ -4539,5 +4566,108 @@ describe('版本不合自动换 Python（ADR 0114 修订 2026-10-23）：一句�
     await openWith(report(STATES.preparing))
     expect(panel().dataset.prepState).toBe('preparing')
     expect(panel().querySelector('[data-prep-python-change]')).toBeNull()
+  })
+})
+
+describe('失败出口不是死胡同（2026-11-10）', () => {
+  const failedWith = (code: string, over: Partial<PreparationReport> = {}): Partial<PreparationReport> => ({
+    phase: 'action_required',
+    outcome: { kind: 'failed', code },
+    actions: [action('run'), action('recheck')],
+    result: { error: { code, message: 'x', traceback: 'Traceback (most recent call last):\n  File "a.py", line 1\nPermissionError: [Errno 13] denied' } } as unknown as PreparationReport['result'],
+    ...over,
+  })
+
+  beforeEach(() => {
+    useDiagSendStore.setState({ capability: { enabled: true } as never })
+  })
+  afterEach(() => {
+    useDiagSendStore.setState({ capability: null })
+  })
+
+  it('输出文件夹没写权限：那一句话是 errors 里的人话，原始报错在详情里；没有「再试一次」', async () => {
+    await mount()
+    await openWith(report(failedWith('output_folder_read_only')))
+    expect(panel().dataset.prepState).toBe('failed')
+    const line = panel().querySelector('[data-prep-line]')!.textContent!
+    expect(line).toContain('没有该文件夹的写入权限')
+    expect(line).not.toContain('PermissionError')
+    expect(panel().querySelector('[data-send-report]')?.textContent).toBe('发给我们看看')
+    expect(primary()).toBeNull()
+    await toggleDetails()
+    expect(details()!.querySelector('[data-prep-error]')?.textContent).toContain('PermissionError')
+  })
+
+  it('脚本自己 sys.exit：那一句话是 script_exited 的人话，不是「运行出错了」', async () => {
+    await mount()
+    await openWith(
+      report(failedWith('script_exited', { result: { error: { code: 'script_exited', message: 'x', traceback: 'SystemExit: 1' } } as unknown as PreparationReport['result'] })),
+    )
+    const line = panel().querySelector('[data-prep-line]')!.textContent!
+    expect(line).toContain('sys.exit()')
+    expect(line).toContain('SystemExit: 1')
+  })
+
+  it('现在还不能运行：卡片那一句话是后端给的原因，不再只有「重新检查」', async () => {
+    await mount()
+    await openWith(
+      report({
+        phase: 'action_required',
+        outcome: { kind: 'blocked', code: 'dependency_blocked' },
+        checks: [{ id: 'dependencies', status: 'blocked', code: 'dependency_blocked', detail: { reasons: ['dependency_conflict'] } }],
+        actions: [action('recheck')],
+      }),
+    )
+    expect(panel().dataset.prepState).toBe('blocked')
+    expect(panel().querySelector('[data-prep-line]')!.textContent).toContain('依赖声明互相矛盾')
+    expect(panel().querySelector('[data-send-report]')?.textContent).toBe('发给我们看看')
+    expect(panel().querySelector('[data-prep-primary="recheck"]')).toBeNull()
+  })
+
+  it('跑完没出图但判出缺数据：卡片是「找不到要读的数据」+ 指认数据', async () => {
+    await mount()
+    await openWith(
+      report({
+        phase: 'partial',
+        outcome: { kind: 'execution_finished_no_figure', code: 'no_figures_captured' },
+        requirements: [{ id: 'data', kind: 'input_location', code: 'missing_input', origin: 'last_attempt', blocking: false, payload: { script: 'plot.py', requested: null, others: [] } }] as unknown as PreparationReport['requirements'],
+        actions: [action('run'), action('recheck')],
+      }),
+    )
+    expect(panel().dataset.prepState).toBe('missing_data')
+    expect(primary()?.dataset.prepPrimary).toBe('missing_input')
+  })
+
+  it('图名归属冲突：主按钮仍是「打开接入中心」，没有 AI 次按钮', async () => {
+    await mount()
+    await openWith(
+      report({
+        phase: 'partial',
+        outcome: { kind: 'failed', code: 'multiple_stem_conflict' },
+        remedy: { kind: 'feedback', tried: [] },
+        actions: [action('recheck')],
+      }),
+    )
+    expect(primary()?.dataset.prepPrimary).toBe('open_registry')
+    expect(panel().querySelector('[data-prep-ai-fix]')).toBeNull()
+  })
+
+  it('拒绝码没有文案：详情里不渲染空行；有文案的照常显示', async () => {
+    await mount()
+    await openWith(report(failedWith('script_error')))
+    const key = Object.keys(useProjectPreparationStore.getState().entries)[0]!
+    await act(async () => {
+      useProjectPreparationStore.setState((st) => ({
+        entries: { ...st.entries, [key]: { ...st.entries[key]!, rejection: { code: 'preparation_no_such_code_xyz' } } },
+      }))
+    })
+    await toggleDetails()
+    expect(details()!.querySelector('[data-prep-rejection]')).toBeNull()
+    await act(async () => {
+      useProjectPreparationStore.setState((st) => ({
+        entries: { ...st.entries, [key]: { ...st.entries[key]!, rejection: { code: 'worker_timeout' } } },
+      }))
+    })
+    expect(details()!.querySelector('[data-prep-rejection]')?.textContent).toContain('渲染超时')
   })
 })
