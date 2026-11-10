@@ -479,6 +479,8 @@ def split_roots(entries) -> tuple[list[str], tuple[str, str] | None]:
 
 _ORIG: dict = {}
 _rtls = threading.local()
+#: 导入时的 `shutil.rmtree`：清暂存区用它，不经任何守卫 / 改道包装（那不是脚本的操作）
+_RMTREE = shutil.rmtree
 _MAX_REDIRECTED = 64
 
 
@@ -1407,7 +1409,12 @@ def discard_overlay(directory: str) -> None:
     """丢弃覆盖层的暂存区（每次运行开始前、结束后各一次）；目录本来就不在是正常的。**永不抛**：Windows 上脚本还开着
     暂存文件的句柄（全局 `f = p.open()`）时删不掉，那只是磁盘上多留一会儿——它在运行结束的 `finally` 里，抛出来会顶掉
     脚本真实的结局。每次运行用自己的新目录（worker 按运行取名），删不掉的旧目录读不进下一次运行，下次开跑前再清。"""
-    shutil.rmtree(directory, ignore_errors=True)
+    prev = getattr(_rtls, "busy", False)
+    _rtls.busy = True  # 本模块自己的文件系统操作：账本不记成脚本的观察
+    try:
+        _RMTREE(directory, ignore_errors=True)
+    finally:
+        _rtls.busy = prev
 
 
 def disable_overlay() -> None:

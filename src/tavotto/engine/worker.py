@@ -1923,17 +1923,19 @@ class Worker(wireproto.V1Handler):
         # 账本的 open / stat 观察装在**最外层**（回退之外）：看到的必须是脚本交出的那条路径。
         # 装在回退之下，沙盒里 `savefig("stage.png")` 记下的 `<沙盒>/stage.png` 永远等不到
         # 被回退改指成 `<项目>/stage.png` 的读，旧图就被静默读走了（#952 Codex P1）。
-        ledger.install()
-        if self.write_roots is not None:
-            self._install_write_tripwire()
-        # 暂存覆盖层（#1813）：装在账本与绊线之后（最外层）——先把脚本对项目内文件的写 / 改名 / 删除与读回换进本次运行的
-        # 暂存区，账本看到的才不是项目里那条路径。覆盖层接不了的操作仍落到上面的守卫（跳过并记账）。
         overlay_root = self.out_dir.parent / "overlay"
         # 每次运行一个新目录：上一次还被脚本句柄占着、没删掉的暂存文件不会被这一次读到（Windows，#1824 Codex P2）
         overlay_dir = overlay_root / f"run-{os.getpid()}-{time.monotonic_ns()}"
         use_overlay = self._overlay_wanted()
         if use_overlay:
-            writetripwire.discard_overlay(str(overlay_root))  # 清掉之前留下的（句柄已关的那些）
+            # 清掉之前留下的（句柄已关的那些）：在账本装上之前做，引擎自己的清理不进账
+            writetripwire.discard_overlay(str(overlay_root))
+        ledger.install()
+        if self.write_roots is not None:
+            self._install_write_tripwire()
+        # 暂存覆盖层（#1813）：装在账本与绊线之后（最外层）——先把脚本对项目内文件的写 / 改名 / 删除与读回换进本次运行的
+        # 暂存区，账本看到的才不是项目里那条路径。覆盖层接不了的操作仍落到上面的守卫（跳过并记账）。
+        if use_overlay:
 
             def _overlay_handled(op, kind, paths, dests):
                 print(f"[overlay] 暂存层接住 {op}: {paths[0] if paths else ''}", file=sys.stderr)
