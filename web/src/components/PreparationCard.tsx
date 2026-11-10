@@ -51,7 +51,8 @@ import { cn } from '@/lib/utils'
 import { useCanvasToolbarVisible } from '@/components/CanvasToolbar'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
-import { aiRevert, convertOriginalUrl, convertPreviewUrl, effectiveAgent, setConvertUnsandboxedWindows } from '@/lib/api'
+import { isDesktop, pickAnyFile } from '@/lib/desktop'
+import { aiRevert, type ConvertOutputFile, convertOriginalUrl, convertPreviewUrl, effectiveAgent, setConvertUnsandboxedWindows } from '@/lib/api'
 import { parseRenames } from '@/lib/overrideIdentity'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { useDepRepairStore } from '@/store/depRepairStore'
@@ -1020,8 +1021,77 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
   }
 }
 
+/** 清单上「没写出」的那几行用户选了什么（本地状态；采用前先问也读它）。`specify` 带着选中的文件名（只登记，文件不动） */
+type FileChoice = { kind: 'specify'; file: string } | { kind: 'skip' }
+interface FileChoices {
+  choices: Record<string, FileChoice>
+  choose: (name: string, v: FileChoice) => void
+  /** 点过「采用」而还有没处理的行：卡片那一句换成问句、主按钮换成「仍然采用」 */
+  asked: boolean
+  ask: () => void
+}
+
+/** 「指定」：桌面版走系统文件选择框；没有桌面壳的浏览器模式退回输入一个文件名。取消 = null */
+async function chooseSpecifiedFile(name: string): Promise<string | null> {
+  const picked = isDesktop() ? await pickAnyFile(name) : window.prompt(name)
+  const base = picked?.replace(/\\/g, '/').split('/').pop()?.trim()
+  return base ? base : null
+}
+
+/** 清单：来源脚本里能确定的写出逐个一行；状态词与缺的文件的两个小按钮都在这一行里，不新开块 */
+function ConvertFiles({ files, ui }: { files: ConvertOutputFile[]; ui: FileChoices | undefined }) {
+  return (
+    <ul data-convert-files className="m-0 flex list-none flex-col divide-y divide-border overflow-hidden rounded-xs border border-border p-0 text-sm">
+      {files.map((f) => {
+        const choice = ui?.choices[f.name]
+        return (
+          <li key={f.name} data-convert-file={f.name} className="flex h-8 items-center gap-2 px-2.5">
+            <span className="min-w-0 flex-1 truncate text-ink" title={f.name}>{f.name}</span>
+            {f.state !== 'missing' ? (
+              <span
+                data-convert-file-state={f.state}
+                title={f.state === 'incomparable' ? pt(`convert.files.why.${f.reason ?? 'compare_failed'}`) : undefined}
+                className={cn(
+                  'shrink-0',
+                  f.state === 'differs' ? 'font-medium text-ink' : 'text-ink-3',
+                  f.state === 'incomparable' && 'cursor-help underline decoration-dotted underline-offset-2',
+                )}
+              >
+                {pt(`convert.files.state.${f.state}`)}
+              </span>
+            ) : choice ? (
+              <span data-convert-file-state={choice.kind} title={choice.kind === 'specify' ? choice.file : undefined} className="shrink-0 text-ink-3">
+                {pt(`convert.files.chosen.${choice.kind}`)}
+              </span>
+            ) : (
+              <span className="-mr-1.5 flex shrink-0 items-center gap-0.5">
+                <span className="mr-1 text-ink-3">{pt('convert.files.state.missing')}</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-convert-file-specify
+                  className="text-accent"
+                  onClick={async () => {
+                    const file = await chooseSpecifiedFile(f.name)
+                    if (file) ui?.choose(f.name, { kind: 'specify', file })
+                  }}
+                >
+                  {pt('convert.files.btn.specify')}
+                </Button>
+                <Button variant="ghost" size="sm" data-convert-file-skip className="text-ink-2" onClick={() => ui?.choose(f.name, { kind: 'skip' })}>
+                  {pt('convert.files.btn.skip')}
+                </Button>
+              </span>
+            )}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
 /** 对照视图：左原图、右新版（SVG 预览）；版式数据（宽高比差）只当提示，不替用户判 */
-function ConvertCompare({ entry }: { entry: NonNullable<ReturnType<typeof useConvertStore.getState>['entries'][string]> }) {
+function ConvertCompare({ entry, files }: { entry: NonNullable<ReturnType<typeof useConvertStore.getState>['entries'][string]>; files?: FileChoices }) {
   const st = entry.status
   const cmp = st?.comparison
   const orig = cmp?.original?.path
@@ -1057,7 +1127,11 @@ function ConvertCompare({ entry }: { entry: NonNullable<ReturnType<typeof useCon
           {pt('convert.unverified', { product: PRODUCT_NAME })}
         </p>
       ) : null}
-      {outputEvidence ? (
+      {outputEvidence?.files && outputEvidence.files.length > 0 ? (
+        <div data-convert-output-evidence title={pt('convert.outputEvidence')}>
+          <ConvertFiles files={outputEvidence.files} ui={files} />
+        </div>
+      ) : outputEvidence ? (
         <div data-convert-output-evidence className="flex flex-col gap-1 text-sm text-ink-2">
           <p>{pt('convert.outputEvidence')}</p>
           {outputEvidence.source_references.length > 0 ? (
@@ -1156,6 +1230,7 @@ function convertFlow(
   entry: PrepEntry | undefined,
   /** 失败码 agent_write_denied + Windows 能力键在且为 false + 这次助手是 Codex：主按钮换成「允许不受沙盒限制并重试」 */
   offerUnsandboxed = false,
+  files?: FileChoices,
 ): { title: string; slot?: ReactNode; primary?: ReactNode; ghost?: ReactNode } {
   const store = useConvertStore.getState()
   const retry = () => void store.start(p.script, p.library, p.path, p.language)
@@ -1231,10 +1306,15 @@ function convertFlow(
         ),
       }
     case 'ready':
-    case 'adopting':
+    case 'adopting': {
+      const rows = c.status?.comparison?.output_evidence?.files ?? []
+      const undecided = rows.filter((f) => f.state === 'missing' && !files?.choices[f.name]).length
+      const differs = rows.some((f) => f.state === 'differs')
+      const asking = !!files?.asked && undecided > 0
+      const busy = c.phase === 'adopting' || !!c.realigning
       return {
-        title: pt(c.stoppedLate ? 'convert.stoppedLate' : 'convert.ready'),
-        slot: <ConvertCompare entry={c} />,
+        title: asking ? pt('convert.files.askAdopt', { count: undecided }) : pt(c.stoppedLate ? 'convert.stoppedLate' : 'convert.ready'),
+        slot: <ConvertCompare entry={c} files={files} />,
         primary: (
           <Button
             variant="primary"
@@ -1242,24 +1322,35 @@ function convertFlow(
             data-convert-adopt
             data-prep-primary="convert_adopt"
             loading={c.phase === 'adopting'}
-            disabled={c.phase === 'adopting'}
+            disabled={busy}
             onClick={async () => {
-              const made = await store.adopt(p.script)
+              // 还有缺的文件没处理：第一次点只问一句（可点，不灰），第二次才真采用
+              if (undecided > 0 && !asking) return files?.ask()
+              const specified = Object.entries(files?.choices ?? {}).flatMap(([name, v]) => (v.kind === 'specify' ? [{ name, file: v.file }] : []))
+              const made = await store.adopt(p.script, specified)
               if (!made) return
               // 采用规则（ADR 0139 PR1 同款）：新脚本另起面板，原位图面板不动——用既有的「打开并运行」接进画布
               void useProjectPreparationStore.getState().open(scriptTarget(made), { run: true, rerun: false })
               store.clear(p.script)
             }}
           >
-            {pt('convert.btn.adopt')}
+            {pt(asking ? 'convert.files.adoptAnyway' : differs ? 'convert.files.adoptAsIs' : 'convert.btn.adopt')}
           </Button>
         ),
         ghost: (
-          <Button variant="ghost" size="md" data-convert-discard className="text-ink-2" disabled={c.phase === 'adopting'} onClick={() => void store.discard(p.script)}>
-            {pt('convert.btn.discard')}
-          </Button>
+          <>
+            {differs ? (
+              <Button variant="ghost" size="md" data-convert-realign className="text-accent" loading={!!c.realigning} disabled={busy} onClick={() => void store.realign(p.script)}>
+                {pt('convert.files.btn.realign')}
+              </Button>
+            ) : null}
+            <Button variant="ghost" size="md" data-convert-discard className="text-ink-2" disabled={busy} onClick={() => void store.discard(p.script)}>
+              {pt('convert.btn.discard')}
+            </Button>
+          </>
         ),
       }
+    }
     case 'failed': {
       // Missing evidence needs an explicit reference selection before another attempt.
       const needsInput = c.reason === 'needs_input' || c.reason === 'convert_reference_invalid'
@@ -1323,10 +1414,19 @@ function useConvertFlow(
   identity: unknown,
 ): ReturnType<typeof convertFlow> | null {
   const [draft, setDraft] = useState<{ identity: unknown; text: string } | null>(null)
+  // 清单上的选择跟着这一次转换会话走：换了会话（重试 / 放弃）就清空
+  const [picked, setPicked] = useState<{ session: string | null; choices: Record<string, FileChoice>; asked: boolean }>({ session: null, choices: {}, asked: false })
+  const own = picked.session === (c?.session ?? null) ? picked : { session: c?.session ?? null, choices: {}, asked: false }
+  const fileUi: FileChoices = {
+    choices: own.choices,
+    choose: (n, v) => setPicked({ ...own, choices: { ...own.choices, [n]: v } }),
+    asked: own.asked,
+    ask: () => setPicked({ ...own, asked: true }),
+  }
   useConvertTick(c?.phase === 'running')
   const sandboxOff = useAiStore((s) => s.caps?.convert_unsandboxed_windows === false)
   const isCodex = useAiStore((s) => effectiveAgent(s.agent, s.caps) === 'codex')
-  const flow = c && p ? convertFlow(c, p, entry, sandboxOff && isCodex) : null
+  const flow = c && p ? convertFlow(c, p, entry, sandboxOff && isCodex, fileUi) : null
   if (!flow || !p || c?.phase !== 'failed' || !['needs_input', 'convert_reference_invalid'].includes(c.reason ?? '')) return flow
   const text = draft && draft.identity === identity ? draft.text : ''
   const files = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)

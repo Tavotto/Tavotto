@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from . import exectrace
 
-PRICING_VERSION = "2026-10-27"
+PRICING_VERSION = "2026-11-10"
 CURRENCY = "USD"
 
 #: 厂商 → 出处（核对日期即 `PRICING_VERSION`）。
@@ -33,6 +33,7 @@ _BASE_URLS = {
 #: (厂商, 模型 id) → 每百万 Token 的价格：input（未命中缓存）/ cached（缓存命中）/ output。
 #: `tiers`：按这一轮的输入 Token 数分档（Haiku 5.5：≤100k / >100k）。
 TABLE: dict[tuple[str, str], dict] = {
+    ("anthropic", "claude-fable-5-2"): {"input": 8.0, "cached": 0.20, "output": 40.0},
     ("anthropic", "claude-fable-5-1"): {"input": 10.0, "cached": 0.25, "output": 50.0},
     ("anthropic", "claude-opus-5-5"): {"input": 4.0, "cached": 0.20, "output": 20.0},
     ("anthropic", "claude-sonnet-5-5"): {"input": 2.0, "cached": 0.10, "output": 10.0},

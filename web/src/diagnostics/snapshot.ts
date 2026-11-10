@@ -168,7 +168,13 @@ function onboardingSummary(): FrontendDiagnosticSnapshot['onboarding'] {
     flow_version: o.flowVersion,
     completed_steps: o.completedSteps.filter(isStepId),
     welcome_seen: o.welcomeSeenAt != null,
-    hint_seen_keys: Object.keys(o.hintSeen).filter(isHintKind),
+    // 一句话提示看过的 + 动画卡出过至少一次的（ADR 0177）：同一个闭集，后端 `_CLOSED_LISTS` 逐字对拍
+    hint_seen_keys: [
+      ...Object.keys(o.hintSeen),
+      ...Object.entries(o.hintStats)
+        .filter(([, st]) => (st?.shows ?? 0) > 0)
+        .map(([k]) => k),
+    ].filter(isHintKind),
   }
 }
 
