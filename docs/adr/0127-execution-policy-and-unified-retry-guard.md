@@ -144,3 +144,10 @@ D1 的授权边界（桌面用户发起）原本只拦「路由选的 native」�
 * **代价**：脚本在一次运行里最多被执行 3 次（原来是 2 次）；safe 档在被拦之前的外部副作用会重复，沿用 D1「场景 17」的裁决与说明。
 
 **看护**：`tests/test_entry_retry_session.py`（浏览器 / 桌面 / 无认证三种来源换入口成功、换入口仍被拦后桌面 native 与浏览器确认卡、没有静态可解析入口时走原分支且不盲试、总次数上限、换入口脚本级失败仍按原 blocked 回退且用 `__main__`、过期 / 取消不回退不出确认卡）。
+
+## 修订（2026-11-09）：safe 的暂存覆盖层让「写临时文件 → 改名 → 读回」不再触发回退（#1813）
+
+**现象**：Windows 0.21.1 一份反馈包里，数据改指已存在，后一次 safe 运行 `safe_file_operation_blocked`、native 重试 `script_error`；合成复现（`Path.write_text(tmp)` → `os.replace(tmp, final)` → `final.read_text()`，经真桌面准备会话）确认：守卫把项目内的写 / 改名跳过，读回被判 material，回退到 native 后 native（ADR 0106 不用数据改指）读原本缺失的路径 `FileNotFoundError`。
+**决定（用户批准修法 A）**：把守卫原本「跳过」的项目内写 / 改名 / 删除改道进**本次运行的暂存覆盖层**（worker 会话目录下，运行结束丢弃），Python 层的读看到覆盖后的视图；用户项目一个字节不改。能一致呈现的操作不再算 material、不再触发回退。
+**不变**：覆盖层够不着的观察（`os.stat` / `listdir` / `scandir` / C 层读 / 子进程）仍按守卫账本的老规矩命中；覆盖层模拟不了的操作交回原守卫（跳过并记账）；`open('w')` 改写已有文件不拦的契约不变；0106 的数据改指、只读回退、输入观察器的安装顺序语义不变；native 的契约不变。
+细则：`docs/rules/backend/worker-protocol-and-lifecycle.md`「暂存覆盖层」；实现 `writetripwire.install_overlay`（复用 ADR 0143 改道层的视图实现）；看护 `tests/test_worker_overlay.py`。
