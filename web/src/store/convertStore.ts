@@ -582,13 +582,16 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
     const session = cur.session
     const pj = currentProjectId()
     const guard = captureProjectEpoch()
+    // 每次 await 之后都要再认一次：切了项目（条目已清）或这条已换成别的会话，旧会话的回包一律不写
+    const mine = () => guard.still() && get().entries[script]?.session === session
     set1(script, { realigning: true })
     try {
       await realignConvert(session, pj)
       for (;;) {
         await new Promise((r) => setTimeout(r, POLL_MS))
-        if (!guard.still()) return
+        if (!mine()) return
         const status = await fetchConvert(session, pj)
+        if (!mine()) return
         if (!status.realigning) {
           set1(script, { realigning: false, status })
           return
@@ -596,7 +599,7 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
       }
     } catch {
       // 后端没起来 / 对账失败：候选没有被动过（失败一律还原），回到原来的清单，不另起错误卡
-      if (guard.still()) set1(script, { realigning: false })
+      if (mine()) set1(script, { realigning: false })
     }
   },
 
