@@ -306,7 +306,7 @@ def test_a_difference_can_be_realigned_once_and_is_rechecked(project, monkeypatc
         assert "row 2 column 2" in state["prompts"][1] and "report.csv" in state["prompts"][1]
         assert "1,3" not in state["prompts"][1], "coordinates only, no data values"
         assert got["state"] == "ready"
-        assert got["comparison"]["output_evidence"]["files"][0]["state"] == "match"
+        assert got["comparison"]["output_evidence"]["files"][0]["state"] == "match", got
         assert client.post(f"/api/ai/convert/{sid}/realign").status_code == 409, (
             "nothing differs now"
         )

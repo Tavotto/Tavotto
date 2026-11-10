@@ -25,6 +25,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -62,6 +63,8 @@ from . import (
 )
 from .ai_tasks import FAILED, UNKNOWN, VERIFIED, CheckResult, NeedsInput, TaskError
 from .imageheader import image_dimensions
+
+LOG = logging.getLogger(__name__)
 
 TASK_TYPE = "convert_to_editable"
 CONVERT_DIR = config.data_dir() / "cache" / "ai_convert"
@@ -2078,9 +2081,11 @@ def run_realign(
             cand.extras["resume"] = True
             if isinstance(meta.get("ai"), dict):
                 cand.extras["ai"] = meta["ai"]
-            correct(cand, note, project, cancel)
+            outcome = correct(cand, note, project, cancel)
+            if not cand.ready:
+                LOG.warning("realign %s produced no adoptable candidate: %r", sid, outcome)
         except Exception:  # noqa: BLE001 —— 起不来 / 修正出错：还原，不把候选弄丢
-            pass
+            LOG.warning("realign %s could not run; restoring the candidate", sid, exc_info=True)
         with _RESUMES_LOCK:
             cancelled = cancel.is_set()
             if cancelled:
