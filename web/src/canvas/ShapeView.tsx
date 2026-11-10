@@ -2,14 +2,16 @@ import { MM_PER_PT } from '@/lib/units'
 import {
   bracePath,
   cornerRadius,
-  dashArray,
+  defaultLineJoin,
   hitStrokeWidth,
   PATH_HIT_SHAPES,
+  shapeInset,
   shapeOutline,
+  svgStroke,
 } from '@/lib/shapeGeometry'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { ShapeObject } from '@/types/document'
-import { lineEndpoints } from '@/types/document'
+import { lineEndpoints, shapeStrokeOn } from '@/types/document'
 
 /**
  * 形状：几何公式与后端 _draw_shape 一一对应（engine 侧同名注释），
@@ -25,26 +27,21 @@ export function ShapeView({ obj, hit = 'none' }: { obj: ShapeObject; hit?: 'stro
   const w = Math.max(mmToWorld(obj.w), 0.001)
   const h = Math.max(mmToWorld(obj.h), 0.001)
   const sw = Math.max(mmToWorld(obj.strokePt * MM_PER_PT), 0.05)
-  const inset = sw / 2 // 描边居中，内缩半个线宽让外沿正好贴合包围盒
+  // 描边居中，内缩半个线宽让外沿正好贴合包围盒；无边框时不内缩，填充铺满包围盒
+  const inset = shapeInset(obj, sw)
+  const strokeOn = shapeStrokeOn(obj)
   const fill = obj.fill ?? 'none'
   const fillOpacity = obj.fill ? (obj.fillOpacity ?? 1) : undefined
-  const dash = dashArray(obj.dash, sw)
   // 描边内缩后的矩形（与后端 rect 同一个 Rect），圆角钳制也以它为准
-  const rectW = Math.max(w - sw, 0.001)
-  const rectH = Math.max(h - sw, 0.001)
+  const rectW = Math.max(w - 2 * inset, 0.001)
+  const rectH = Math.max(h - 2 * inset, 0.001)
   const rectR = obj.cornerRadius
     ? cornerRadius(mmToWorld(obj.cornerRadius), rectW, rectH)
     : undefined
 
-  const stroke = {
-    stroke: obj.color,
-    strokeWidth: sw,
-    strokeDasharray: dash,
-    strokeLinejoin: 'round' as const,
-    // dotted 的线段长只有 0.01×线宽，「点」全靠圆线帽画出来；缺省 butt 线帽下
-    // 点是零面积，整圈描边直接不可见。与后端 _draw_shape 的 lineCap=1 同源。
-    strokeLinecap: 'round' as const,
-  }
+  // dotted 的「点」全靠圆线帽，svgStroke 里点线强制圆头（与后端 `geometry.stroke_cap` 同源）；
+  // 无边框 = 一个描边属性都不给（SVG 缺省 stroke 就是 none）
+  const stroke = strokeOn ? svgStroke(obj, sw, defaultLineJoin(obj.shape)) : {}
 
   const poly = (pts: [number, number][]) => (
     <polygon
@@ -130,7 +127,8 @@ export function ShapeView({ obj, hit = 'none' }: { obj: ShapeObject; hit?: 'stro
         (() => {
           const o = shapeOutline(obj.shape, w, h, inset, obj.sides)
           if (!o) return null
-          const filled = obj.shape !== 'brace' && !!obj.fill
+          // 无边框又无填充的形状整块可点（否则只剩一圈看不见的轮廓能点中）
+          const filled = obj.shape !== 'brace' && (!!obj.fill || !strokeOn)
           const common = {
             'data-hit-shape': '',
             fill: filled ? 'transparent' : 'none',

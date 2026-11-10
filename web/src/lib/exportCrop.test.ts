@@ -103,6 +103,17 @@ describe('描边 / 箭头外扩（与 RenderCore 绘制同源）', () => {
     const newField = visibleContentBounds([arrow({ headEnd: 'open' })])!
     expect(newField.h).toBeCloseTo(2 * 2.2 * 2 * MM)
   })
+  it('箭头端型大小 / 方头线端按新口径外扩（ADR 0174），缺省与旧口径逐字相同', () => {
+    // 帽半宽 1.7×线宽×档位 + 线端半宽 0.5×线宽
+    const big = visibleContentBounds([arrow({ headEnd: 'open', headSizeEnd: 'large' })])!
+    expect(big.h).toBeCloseTo(2 * (1.7 * 1.5 + 0.5) * 2 * MM)
+    const small = visibleContentBounds([arrow({ headEnd: 'open', headSizeEnd: 'small' })])!
+    expect(small.h).toBeCloseTo(2 * (1.7 * 0.7 + 0.5) * 2 * MM)
+    const squareCap = visibleContentBounds([arrow({ lineCap: 'square' })])!
+    expect(squareCap.h).toBeCloseTo(2 * Math.SQRT1_2 * 2 * MM)
+    const medium = visibleContentBounds([arrow({ headEnd: 'open', headSizeEnd: 'medium' })])!
+    expect(medium.h).toBeCloseTo(2 * 2.2 * 2 * MM)
+  })
   it('箭头在裁切边上：整体平移后描边仍在 [0, 页面] 内', () => {
     const doc = docOf([arrow({ head: 'end' })])
     const c = croppedDocument(doc)

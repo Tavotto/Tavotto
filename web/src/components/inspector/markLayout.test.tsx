@@ -197,7 +197,7 @@ describe('图形选择有名称和键盘路径', () => {
     expect(endTrigger()).toBeTruthy()
     await act(async () => endTrigger().click())
     const options = endRadios()
-    expect(options).toHaveLength(4)
+    expect(options).toHaveLength(7) // 无 / 开口 / 三角 / 燕尾 / 菱形 / 圆点 / 短线（ADR 0174）
     for (const o of options) {
       expect(o.getAttribute('aria-label')?.trim().length).toBeGreaterThan(0)
       expect(o.textContent?.trim().length).toBeGreaterThan(0)

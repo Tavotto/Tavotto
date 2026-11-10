@@ -16,6 +16,11 @@ Arrow / Shape 不是 IR 里的节点：它们在编译期变成路径（`Path` �
 polygon / triangle / diamond 同样内缩，line / brace 只描边、圆线帽；`dotted` 的
 「点」全靠圆线帽画出来（段长 0.01 × 线宽）。
 
+ADR 0174 加的属性（全部缺省 = 旧画法，旧文档逐字不变）：形状 `stroke: false`（无边框：不描边、填充铺满框）、
+`stroke_opacity`、`dash` 加三种、`line_cap` / `line_join`；箭头加三种端型（dot / diamond / stealth）与
+`head_size_start` / `head_size_end`。每一条与 `web/src/lib/shapeGeometry.ts` 同源，由共享向量
+`tests/golden/shape_geometry_vectors.json` 接住。
+
 纯标准库。
 """
 
@@ -45,13 +50,58 @@ def polygon_points(sides: int, w: float, h: float, inset: float) -> list[tuple[f
     ]
 
 
+#: 线型段长表（线宽的倍数，「画 / 空 / 画 / 空…」）；与前端 `shapeGeometry.DASH_RATIOS` 严格同源。
+#: `dotted` 不在表里：它的「点」是 0.01×线宽 的段加圆线帽画出来的。
+DASH_RATIOS: dict[str, tuple[float, ...]] = {
+    "dashed": (4.0, 2.5),
+    "longdash": (8.0, 3.0),
+    "dashdot": (4.0, 2.5, 1.0, 2.5),
+    "longdashdot": (8.0, 3.0, 1.0, 3.0),
+}
+
+
 def dash_pattern(dash: object, sw: float) -> tuple[float, ...]:
     """虚线间距按线宽比例换算；与前端 shapeGeometry.dashArray 同一比例。空元组 = 实线。"""
-    if dash == "dashed":
-        return (round(sw * 4, 3), round(sw * 2.5, 3))
     if dash == "dotted":
         return (round(max(sw * 0.01, 0.01), 3), round(sw * 2, 3))
-    return ()
+    ratios = DASH_RATIOS.get(dash) if isinstance(dash, str) else None
+    return tuple(round(sw * r, 3) for r in ratios) if ratios else ()
+
+
+#: 缺省线端：圆头（加线端 / 拐角属性之前就是这么画的）。
+DEFAULT_LINE_CAP = "round"
+
+
+def stroke_cap(cap: object, dash: object) -> str:
+    """实际生效的线端；点线强制圆头（点靠圆线帽才有面积）。与前端 `shapeGeometry.strokeCap` 同源。"""
+    if dash == "dotted":
+        return "round"
+    return cap if cap in ("butt", "round", "square") else DEFAULT_LINE_CAP  # type: ignore[return-value]
+
+
+def default_line_join(shape: object) -> str:
+    """缺省拐角：封闭形状 / 箭头圆角；直线与大括号尖角。与前端 `shapeGeometry.defaultLineJoin` 同源。"""
+    return "miter" if shape in ("line", "brace") else "round"
+
+
+def _line_join(o: dict, default: str) -> str:
+    j = o.get("line_join")
+    return j if j in ("miter", "round", "bevel") else default
+
+
+def _unit(v: object) -> float | None:
+    """描边不透明度：缺省 / 非有限数 / ≥1 → None（不透明）；其余钳到 [0, 1)。"""
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v >= 1:
+        return None
+    return max(0.0, float(v))
+
+
+#: 端型大小三档的缩放系数；缺省 / 中 = 1。与前端 `shapeGeometry.HEAD_SIZE_FACTOR` 同源。
+HEAD_SIZE_FACTOR = {"small": 0.7, "medium": 1.0, "large": 1.5}
+#: 实心端型让线段回缩的距离（帽长的倍数）；dot 回缩半径、在 `head_geometry` 里单算。
+HEAD_TRIM = {"triangle": 0.75, "stealth": 0.6, "diamond": 0.5}
+#: 燕尾凹口离尖的距离（帽长的倍数）。
+STEALTH_NOTCH = 0.7
 
 
 # ---------------------------------------------------------------------------
@@ -116,13 +166,22 @@ def curve_segment(
 # ---------------------------------------------------------------------------
 # 形状
 # ---------------------------------------------------------------------------
-def _stroke(o: dict, sw: float, *, join: str = "miter", dash: bool = True) -> Stroke:
+def _alpha(o: dict) -> float:
+    """描边不透明度；缺省 = 1。`0` 是合法取值（完全透明），不能被当成「没设」。"""
+    u = _unit(o.get("stroke_opacity"))
+    return 1.0 if u is None else u
+
+
+def _stroke(o: dict, sw: float, *, join: str, dash: bool = True) -> Stroke:
+    """对象的一条描边。线端 / 拐角 / 不透明度 / 线型都从对象上读（缺省 = 旧画法）；
+    `dash=False` 给箭头端型（端型不画虚线，也不受点线强制圆头影响）。"""
+    d = o.get("dash") if dash else None
     return Stroke(
-        paint=Paint(hex2rgb(o.get("color", "#000000"))),
+        paint=Paint(hex2rgb(o.get("color", "#000000")), _alpha(o)),
         width=sw,
-        cap="round",
-        join=join,
-        dash=dash_pattern(o.get("dash"), sw) if dash else (),
+        cap=stroke_cap(o.get("line_cap"), d),
+        join=_line_join(o, join),
+        dash=dash_pattern(d, sw) if dash else (),
     )
 
 
@@ -141,10 +200,15 @@ def shape_paths(o: dict, w: float, h: float) -> list[Path]:
         if o.get("fill")
         else None
     )
-    inset = sw / 2
     kind = o.get("shape")
     oid = str(o.get("id", ""))
-    filled_stroke = _stroke(o, sw, join="round")
+    # 无边框（`stroke: false`，只对封闭形状）：不描边、填充铺满整个框（不再内缩半个线宽）；
+    # 直线与大括号只有描边，不看这个字段
+    stroke_on = kind in ("line", "brace") or o.get("stroke") is not False
+    inset = sw / 2 if stroke_on else 0.0
+    filled_stroke = _stroke(o, sw, join=default_line_join(kind)) if stroke_on else None
+    if filled_stroke is None and fill is None and kind not in ("line", "brace"):
+        return []  # 既无填充也无边框：什么都不画（IR 不收「既不填也不描」的路径）
 
     if kind == "rect":
         radius_mm = float(o.get("corner_radius_mm") or 0)
@@ -180,7 +244,7 @@ def shape_paths(o: dict, w: float, h: float) -> list[Path]:
         segs.append(curve_segment((inset, h / 2), (cx, h / 2), (cx, h / 2 + tip_gap)))
         segs.append(("L", cx, h * 0.75))
         segs.append(curve_segment((cx, h * 0.75), (cx, h - inset), (w - inset, h - inset)))
-        return [Path(tuple(segs), stroke=_stroke(o, sw), object_id=oid)]
+        return [Path(tuple(segs), stroke=_stroke(o, sw, join="miter"), object_id=oid)]
     # line：端点与箭头同一套算法（框比例坐标 → 绝对 pt）；缺省即水平中线
     s = o.get("start") or {"rx": 0.0, "ry": 0.5}
     e = o.get("end") or {"rx": 1.0, "ry": 0.5}
@@ -188,7 +252,7 @@ def shape_paths(o: dict, w: float, h: float) -> list[Path]:
         (float(s["rx"]) * w, float(s["ry"]) * h),
         (float(e["rx"]) * w, float(e["ry"]) * h),
     ]
-    return [Path(polyline_segments(pts, False), stroke=_stroke(o, sw), object_id=oid)]
+    return [Path(polyline_segments(pts, False), stroke=_stroke(o, sw, join="miter"), object_id=oid)]
 
 
 # ---------------------------------------------------------------------------
@@ -206,58 +270,101 @@ def arrow_heads(o: dict) -> tuple[str, str]:
     )
 
 
-def arrow_paths(o: dict, w: float, h: float) -> list[Path]:
-    """逐点复刻前端 ArrowView 几何：帽长 4×线宽、帽半宽 1.7×线宽、仅 triangle 端线段
-    回缩 0.75×帽长、圆线帽；端型独立 + 虚线。"""
+def _head_size(o: dict, which: str) -> float:
+    size = o.get(f"head_size_{which}")
+    return HEAD_SIZE_FACTOR.get(size, 1.0) if isinstance(size, str) else 1.0
+
+
+def head_geometry(
+    kind: str,
+    tip: tuple[float, float],
+    sign: float,
+    u: tuple[float, float],
+    sw: float,
+    f: float,
+) -> tuple[tuple | None, float]:
+    """一个端型的几何 + 杆在这一端回缩的距离。与前端 `shapeGeometry.arrowGeometry` 的 `headOf` 逐点对应。
+
+    `sign` = 1 是终点（向后是 -u）、-1 是起点；`u` 是 起点 → 终点 的单位向量。
+    形状：`("poly", pts)` 实心多边形（triangle / stealth / diamond）、`("dot", cx, cy, r)` 实心圆、
+    `("open", pts)` 开口折线、`("bar", pts)` 短线；不认识的端型 → `(None, 0)`（杆到尖、不画端型）。"""
+    ux, uy = u
+    nx, ny = -uy, ux
+    length, half = sw * 4.0 * f, sw * 1.7 * f
+
+    def at(d: float, s: float) -> tuple[float, float]:
+        return (tip[0] - sign * ux * d + nx * s, tip[1] - sign * uy * d + ny * s)
+
+    if kind == "triangle":
+        return ("poly", [tip, at(length, half), at(length, -half)]), length * HEAD_TRIM["triangle"]
+    if kind == "stealth":
+        pts = [tip, at(length, half), at(length * STEALTH_NOTCH, 0.0), at(length, -half)]
+        return ("poly", pts), length * HEAD_TRIM["stealth"]
+    if kind == "diamond":
+        pts = [tip, at(length / 2, half), at(length, 0.0), at(length / 2, -half)]
+        return ("poly", pts), length * HEAD_TRIM["diamond"]
+    if kind == "dot":
+        cx, cy = at(half, 0.0)
+        return ("dot", cx, cy, half), half
+    if kind == "open":
+        return ("open", [at(length, half), tip, at(length, -half)]), 0.0
+    if kind == "bar":
+        return ("bar", [at(0.0, half), at(0.0, -half)]), 0.0
+    return None, 0.0
+
+
+def arrow_geometry(o: dict, w: float, h: float) -> dict:
+    """箭头的框空间几何：端点、回缩后的杆、两个端型（`head_geometry` 的形状）。
+    与前端 `arrowGeometry` 同一个函数（共享向量接住）。"""
     sw = max(float(o.get("stroke_pt", 1.0)), 0.05)
-    color = Paint(hex2rgb(o.get("color", "#000000")))
-    oid = str(o.get("id", ""))
     ax, ay = float(o["start"]["rx"]) * w, float(o["start"]["ry"]) * h
     bx, by = float(o["end"]["rx"]) * w, float(o["end"]["ry"]) * h
     dx, dy = bx - ax, by - ay
     ln = math.hypot(dx, dy) or 1.0
-    ux, uy = dx / ln, dy / ln
-    nx, ny = -uy, ux
-    head_len, head_half = sw * 4.0, sw * 1.7
+    u = (dx / ln, dy / ln)
     hs, he = arrow_heads(o)
-    trim = head_len * 0.75
-    p1 = (ax + (ux * trim if hs == "triangle" else 0), ay + (uy * trim if hs == "triangle" else 0))
-    p2 = (bx - (ux * trim if he == "triangle" else 0), by - (uy * trim if he == "triangle" else 0))
-    out = [Path(polyline_segments([p1, p2], False), stroke=_stroke(o, sw), object_id=oid)]
-    for tip_x, tip_y, sign, kind in ((bx, by, 1.0, he), (ax, ay, -1.0, hs)):
-        if kind == "none":
+    start_head, start_trim = head_geometry(hs, (ax, ay), -1.0, u, sw, _head_size(o, "start"))
+    end_head, end_trim = head_geometry(he, (bx, by), 1.0, u, sw, _head_size(o, "end"))
+    return {
+        "a": (ax, ay),
+        "b": (bx, by),
+        "p1": (ax + u[0] * start_trim, ay + u[1] * start_trim),
+        "p2": (bx - u[0] * end_trim, by - u[1] * end_trim),
+        "start_head": start_head,
+        "end_head": end_head,
+    }
+
+
+def arrow_paths(o: dict, w: float, h: float) -> list[Path]:
+    """逐点复刻前端 ArrowView 几何（`arrow_geometry`）：帽长 4×线宽、帽半宽 1.7×线宽（再乘端型大小档位）、
+    实心端型回缩线段；端型独立 + 虚线 + 描边不透明度 + 线端 / 拐角（缺省圆头 / 圆角）。"""
+    sw = max(float(o.get("stroke_pt", 1.0)), 0.05)
+    color = Paint(hex2rgb(o.get("color", "#000000")), _alpha(o))
+    oid = str(o.get("id", ""))
+    g = arrow_geometry(o, w, h)
+    out = [
+        Path(
+            polyline_segments([g["p1"], g["p2"]], False),
+            stroke=_stroke(o, sw, join="miter"),
+            object_id=oid,
+        )
+    ]
+    # 端型的拐角：开口 V 缺省圆角（它有拐角），短线只有一段、沿用旧产物的 miter
+    head_strokes = {
+        "open": _stroke(o, sw, join="round", dash=False),
+        "bar": _stroke(o, sw, join="miter", dash=False),
+    }
+    for head in (g["end_head"], g["start_head"]):
+        if head is None:
             continue
-        base_x, base_y = tip_x - sign * ux * head_len, tip_y - sign * uy * head_len
-        wing1 = (base_x + nx * head_half, base_y + ny * head_half)
-        wing2 = (base_x - nx * head_half, base_y - ny * head_half)
-        if kind == "triangle":
+        if head[0] == "poly":
+            out.append(Path(polyline_segments(head[1], True), fill=color, object_id=oid))
+        elif head[0] == "dot":
+            _, cx, cy, r = head
+            segs = ellipse_segments(cx - r, cy - r, 2 * r, 2 * r)
+            out.append(Path(segs, fill=color, object_id=oid))
+        else:  # open / bar：描边路径
             out.append(
-                Path(
-                    polyline_segments([(tip_x, tip_y), wing1, wing2], True),
-                    fill=color,
-                    object_id=oid,
-                )
-            )
-        elif kind == "open":
-            out.append(
-                Path(
-                    polyline_segments([wing1, (tip_x, tip_y), wing2], False),
-                    stroke=Stroke(color, sw, cap="round", join="round"),
-                    object_id=oid,
-                )
-            )
-        elif kind == "bar":
-            out.append(
-                Path(
-                    polyline_segments(
-                        [
-                            (tip_x + nx * head_half, tip_y + ny * head_half),
-                            (tip_x - nx * head_half, tip_y - ny * head_half),
-                        ],
-                        False,
-                    ),
-                    stroke=Stroke(color, sw, cap="round"),
-                    object_id=oid,
-                )
+                Path(polyline_segments(head[1], False), stroke=head_strokes[head[0]], object_id=oid)
             )
     return out

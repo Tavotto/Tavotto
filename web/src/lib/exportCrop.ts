@@ -1,5 +1,6 @@
-import type { CanvasObject, FigureDocument } from '@/types/document'
+import type { CanvasObject, DashStyle, FigureDocument, LineCap } from '@/types/document'
 import { objectRotation } from '@/types/document'
+import { headSizeFactor, strokeCap } from './shapeGeometry'
 import { ptToMm } from './units'
 
 /**
@@ -26,20 +27,38 @@ export interface CropRect {
  * * 文本框描边居中在框边上 → 越出半个 `border_pt`（缺省 0.75）；
  * * 线宽下限 0.05 pt。
  */
+/** 线端越出线的外扩（线宽的倍数）：圆头 / 平头的横向都是半个线宽，方头的角最远 √2/2 */
+function capHalf(cap: LineCap | undefined, dash: DashStyle | undefined): number {
+  return strokeCap(cap, dash) === 'square' ? Math.SQRT1_2 : 0.5
+}
+
 function strokeOutset(o: CanvasObject): number {
   switch (o.type) {
     case 'text':
       return o.borderColor ? ptToMm(Math.max(o.borderPt ?? 0.75, 0.05) / 2) : 0
     case 'shape':
-      return o.shape === 'line' || o.shape === 'brace' ? ptToMm(Math.max(o.strokePt, 0.05) / 2) : 0
+      return o.shape === 'line' || o.shape === 'brace'
+        ? ptToMm(Math.max(o.strokePt, 0.05) * capHalf(o.lineCap, o.dash))
+        : 0
     case 'arrow': {
       const sw = Math.max(o.strokePt, 0.05)
-      // 与 `geometry.arrow_heads` 同一判据：新字段任一在就只看新字段，否则看旧 head（缺省 end）
-      const anyHead =
+      // 哪一端有端型：与 `geometry.arrow_heads` 同一判据（新字段任一在就只看新字段，否则看旧 head，缺省 end）
+      const legacy = o.head ?? 'end'
+      const hasStart =
         o.headStart !== undefined || o.headEnd !== undefined
-          ? (o.headStart ?? 'none') !== 'none' || (o.headEnd ?? 'none') !== 'none'
-          : (o.head ?? 'end') !== 'none'
-      return ptToMm(anyHead ? sw * 2.2 : sw / 2)
+          ? (o.headStart ?? 'none') !== 'none'
+          : legacy === 'both'
+      const hasEnd =
+        o.headStart !== undefined || o.headEnd !== undefined
+          ? (o.headEnd ?? 'none') !== 'none'
+          : legacy === 'end' || legacy === 'both'
+      if (!hasStart && !hasEnd) return ptToMm(sw * capHalf(o.lineCap, o.dash))
+      // 端型帽半宽 1.7×线宽×大小档位，再加线端半宽（0.5，方头最远 0.71）；只算有端型的那端
+      const f = Math.max(
+        hasStart ? headSizeFactor(o.headSizeStart) : 0,
+        hasEnd ? headSizeFactor(o.headSizeEnd) : 0,
+      )
+      return ptToMm(sw * (1.7 * f + 0.5))
     }
     default:
       return 0

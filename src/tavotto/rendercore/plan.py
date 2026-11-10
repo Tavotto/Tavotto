@@ -408,11 +408,13 @@ def _text_node(
     return Group(tuple(children), transform=transform, object_id=oid)
 
 
-def _shape_node(o: dict, page_h: float) -> Node:
+def _shape_node(o: dict, page_h: float) -> Node | None:
     _x, _y, w, h = _box_pt(o, allow_zero=True)
     paths = (
         geometry.arrow_paths(o, w, h) if o.get("type") == "arrow" else geometry.shape_paths(o, w, h)
     )
+    if not paths:
+        return None  # 无边框又无填充的形状：什么都不画（ADR 0174）
     return Group(
         tuple(paths), transform=_object_transform(o, page_h), object_id=str(o.get("id", ""))
     )

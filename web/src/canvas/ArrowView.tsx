@@ -1,12 +1,19 @@
 import { MM_PER_PT } from '@/lib/units'
-import { arrowGeometry, dashArray, hitStrokeWidth, type ArrowHeadShape } from '@/lib/shapeGeometry'
+import {
+  arrowGeometry,
+  hitStrokeWidth,
+  isFilledHead,
+  strokeOpacityOf,
+  svgStroke,
+  type ArrowHeadShape,
+} from '@/lib/shapeGeometry'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { ArrowObject } from '@/types/document'
 
 /**
- * 箭头：两端点存比例坐标；端型独立（triangle 实心 / open 开口 / bar 短线）。
- * 几何与后端 _draw_arrow 一一对应：帽长 4×线宽、帽半宽 1.7×线宽、
- * 仅 triangle 端回缩 0.75×帽长、圆线帽 + 开口端圆接角（后端 lineCap/lineJoin=1）。
+ * 箭头：两端点存比例坐标；端型独立（triangle / stealth / diamond / dot 实心，open 开口，bar 短线）。
+ * 几何与后端 `geometry.arrow_paths` 一一对应（`lib/shapeGeometry.arrowGeometry` 是前端唯一出处）：
+ * 帽长 4×线宽、帽半宽 1.7×线宽（再乘端型大小档位）、实心端回缩；线端 / 拐角缺省圆头 + 圆角。
  *
  * `hit` 由 ObjectView 决定：包围盒不再承担命中，命中交给下面那条沿线段的透明线。
  */
@@ -18,18 +25,21 @@ export function ArrowView({ obj, hit = 'none' }: { obj: ArrowObject; hit?: 'stro
 
   const { a, b, p1, p2, headHalf, startHead, endHead } = arrowGeometry(obj, w, h, sw)
 
-  // strokeLinejoin 必须显式给 round：后端 open 端型是 lineJoin=1，
-  // SVG 缺省却是 miter，尖角对不上（同一条箭头两边画出来不一样）
-  const stroke = {
-    stroke: obj.color,
-    strokeWidth: sw,
-    strokeLinecap: 'round' as const,
-    strokeLinejoin: 'round' as const,
-  }
+  // 描边属性只此一处（lib/shapeGeometry.svgStroke）：线端 / 拐角缺省圆头 + 圆角——后端 open 端型是
+  // lineJoin=1，SVG 缺省却是 miter，尖角对不上；斜接上限也要写成与 PDF 同一个数
+  const stroke = svgStroke(obj, sw, 'round')
+  // 端型不画虚线；实心端型用描边色填充，不透明度与杆同一个值
+  const headStroke = svgStroke(obj, sw, 'round', false)
+  const opacity = strokeOpacityOf(obj.strokeOpacity)
   const renderHead = (head: ArrowHeadShape | null) => {
     if (!head) return null
-    if (head.kind === 'triangle') return <polygon points={head.points} fill={obj.color} />
-    return <path d={head.d} fill="none" {...stroke} />
+    if (head.kind === 'dot') {
+      return <circle cx={head.cx} cy={head.cy} r={head.r} fill={obj.color} fillOpacity={opacity} />
+    }
+    if (isFilledHead(head)) {
+      return <polygon points={head.points} fill={obj.color} fillOpacity={opacity} />
+    }
+    return <path d={head.d} fill="none" {...headStroke} />
   }
 
   return (
@@ -64,7 +74,6 @@ export function ArrowView({ obj, hit = 'none' }: { obj: ArrowObject; hit?: 'stro
         y1={p1.y}
         x2={p2.x}
         y2={p2.y}
-        strokeDasharray={dashArray(obj.dash, sw)}
         {...stroke}
       />
       {renderHead(endHead)}
