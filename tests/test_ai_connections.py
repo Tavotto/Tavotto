@@ -1489,6 +1489,7 @@ ANTH_MODELS = [
     "claude-sonnet-4-6",
     "claude-haiku-4-5",
     "claude-opus-4-5-20251101",
+    "claude-fable-5-2",
     "claude-fable-5-1",
     "claude-mythos-preview",
 ]
@@ -1523,6 +1524,7 @@ def test_efforts_follow_the_catalog_origin_and_model(world):
             [],
             None,
         ),  # 只配合 budget_tokens 的 extended thinking：runner 不支持
+        "claude-fable-5-2": (X5, "high"),
         "claude-fable-5-1": (X5, "high"),
         "claude-mythos-preview": (M4, "high"),
     }

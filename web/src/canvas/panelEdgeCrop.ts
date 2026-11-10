@@ -1,5 +1,6 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { msg, type UiMessage } from '@/i18n'
+import { emitActivity } from '@/lib/activity'
 import { cropDragStatus, edgeGrowDragStatus } from '@/lib/dragStatus'
 import { axisOverflowMm, planTextFit } from '@/lib/edgeShrinkFit'
 import { effectiveOverride } from '@/lib/effectiveOverride'
@@ -213,6 +214,8 @@ export function startPanelEdgeCrop(e: ReactPointerEvent, panel: PanelObject, sid
       const grow = moved && !end.cancelled ? lastGrow : null
       // pointercancel = 这次交互被系统作废，一律丢弃：不留裁剪、不进历史
       store.endTxn({ discard: !moved || end.cancelled || grow != null })
+      // 提示引擎要知道「刚拖过一次边、是改图幅还是裁剪」（ADR 0177）；没动 / 被作废不算
+      if (moved && !end.cancelled) emitActivity({ kind: 'panel.edge_dragged', outcome: grow ? 'resized' : 'cropped' })
       if (grow && frame) {
         const before = useRenderStore.getState().byKey
         const axis = horizontal ? 0 : 1

@@ -3192,8 +3192,10 @@ export default interface Resources {
       "convert_not_awaiting_dependencies": "这份新版本现在不在等你决定装包，请刷新后再看。",
       "convert_not_found": "找不到这份待采用的新版本（可能已放弃、已过期，或属于别的项目）。",
       "convert_not_ready": "新版本还没生成好，或没有通过检查。",
+      "convert_nothing_to_realign": "没有需要再对一次的文件。",
       "convert_outside_project": "新版本的位置不在项目里，已拒绝写入。",
       "convert_project_changed": "项目里的文件在生成之后被改动过，已拒绝继续。请重新生成。",
+      "convert_realigning": "正在让 AI 重新对照，稍等",
       "convert_reference_invalid": "参考文件不可用。请使用当前项目内可读取的普通文件；不接受凭据、链接或超出大小限制的文件。",
       "convert_resume_busy": "正在装包并接着生成，请稍等。",
       "convert_source_changed": "原脚本在生成之后被改过，这份新版本是按旧版本写的。请重新生成。",
@@ -6030,13 +6032,16 @@ export default interface Resources {
       "notWrittenBack": "留白只在 Tavotto 导出时生效，不写回脚本"
     },
     "hints": {
+      "edge_crop": "拖边改图幅，按住 {{alt}} 改为裁剪",
       "fast_edit_entered": "你的改动会保存到当前排版，原始文件不动。",
+      "fit_canvas": "双击空白处，画布回到正中",
       "layout_page_bounds": "白色纸面就是导出的 Figure 尺寸；单栏、双栏宽度按当前规范，可在右侧「画布」页调整。",
       "multi_select": "用选区旁的浮动栏对齐和分布。",
       "pageBoundsOpen": "打开画布页",
       "panel_editable": "双击进入图内编辑。",
       "panel_layout_only": "这张图可在版面上摆放；连接源脚本后能改图里的内容。",
-      "problem_found": "左侧「问题」可定位对象和属性字段。"
+      "problem_found": "左侧「问题」可定位对象和属性字段。",
+      "ruler_guides": "从标尺拖出对齐线"
     },
     "history": {
       "addArrow": "添加箭头",
@@ -6462,6 +6467,34 @@ export default interface Resources {
           "syntax_error": "生成的脚本有语法错误",
           "target_missing": "助手没有写出新脚本",
           "unknown": "没能生成可编辑版本"
+        },
+        "files": {
+          "adoptAnyway": "仍然采用",
+          "adoptAsIs": "照样采用",
+          "askAdopt_other": "还有 {{count}} 个文件没处理，仍要采用吗？",
+          "btn": {
+            "realign": "让 AI 再对一次",
+            "skip": "不需要",
+            "specify": "我来指定"
+          },
+          "chosen": {
+            "skip": "不需要",
+            "specify": "已指定"
+          },
+          "state": {
+            "differs": "不同",
+            "incomparable": "没法比",
+            "match": "一致",
+            "missing": "没写出"
+          },
+          "why": {
+            "compare_failed": "比对时出了问题",
+            "format": "这种格式没法比",
+            "inputs_unknown": "不知道读了哪些数据",
+            "no_previous": "项目里没有这个文件的旧结果",
+            "stale": "旧结果比输入数据还早，可能已经过期",
+            "too_large": "文件太大没比"
+          }
         },
         "foreign": {
           "matlab": "这是 MATLAB 脚本，{{product}} 可以另写一份能直接编辑的 Matplotlib 版本，原脚本不动。",

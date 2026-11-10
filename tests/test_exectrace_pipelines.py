@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from tavotto.engine import ai_bridge, ai_pricing, exectrace, fixsession
+from tavotto.engine import ai_bridge, ai_catalog, ai_pricing, exectrace, fixsession
 from tests.test_ai_figure_edit import (  # noqa: F401
     EDIT,
     FIX,
@@ -291,6 +291,24 @@ def test_pricing_tiers_and_unknown_models():
     assert ai_pricing.vendor_of({"base_url": "https://api.anthropic.com/"}) == "anthropic"
     assert ai_pricing.vendor_of({"base_url": "https://api.anthropic.com.evil.example"}) is None
     assert set(ai_pricing.SOURCES) == {v for v, _ in ai_pricing.TABLE}
+    # Fable 5.2：$8 / $0.20（缓存命中 0.025x）/ $40（官方定价页 2026-11-10 核对）
+    assert ai_pricing.estimate(
+        "anthropic", "claude-fable-5-2", input_tokens=1_000_000, cached=500_000, output=1_000_000
+    ) == pytest.approx(4.0 + 0.1 + 40.0)
+
+
+def test_every_official_model_hint_has_a_price():
+    """官方端点在「连接 AI」里推荐的型号，定价表必须有价——否则用户选了它，费用估算是空的（Fable 5.2 漏过一次）。"""
+    vendors = json.loads(ai_catalog.CATALOG_PATH.read_text(encoding="utf-8"))["vendors"]
+    official = [v for v in vendors if ai_pricing.vendor_of(v)]
+    assert {ai_pricing.vendor_of(v) for v in official} == set(ai_pricing.SOURCES)
+    missing = [
+        (v["id"], m)
+        for v in official
+        for m in v.get("models_hint") or []
+        if (ai_pricing.vendor_of(v), m) not in ai_pricing.TABLE
+    ]
+    assert missing == []
 
 
 # ================================================================ 智能修复（fixsession + run_tool）

@@ -75,3 +75,34 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## 提示动画的舞台（stageshow，MIT）
+
+`web/src/vendor/stageshow/` 的舞台、脚本、光标与键帽（14 个文件；除 `keys.tsx` 的键帽表改用 Tavotto 的平台键名外原样）取自
+[benjitaylor/skills](https://github.com/benjitaylor/skills) 提交 299140f 的 `stageshow/kit/`（1.1.1）。
+只取舞台这一层：不含上游的窗口 / 手机 / 消息等部件，也不含它附带的第三方品牌图标与应用图标。
+Tavotto 用它画情景提示动画卡里的小场景，见 ADR 0177。
+
+```
+MIT License
+
+Copyright (c) 2026 Benji Taylor
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

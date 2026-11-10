@@ -966,6 +966,9 @@
     "multi_select": "用选区旁的浮动栏对齐和分布。",
     "problem_found": "左侧「问题」可定位对象和属性字段。",
     "layout_page_bounds": "白色纸面就是导出的 Figure 尺寸；单栏、双栏宽度按当前规范，可在右侧「画布」页调整。",
+    "fit_canvas": "双击空白处，画布回到正中",
+    "edge_crop": "拖边改图幅，按住 {{alt}} 改为裁剪",
+    "ruler_guides": "从标尺拖出对齐线",
     "pageBoundsOpen": "打开画布页"
   },
   "prep": {
@@ -1361,6 +1364,34 @@
       "outputAttemptsUnavailable": "这次没有可用的写入记录。",
       "outputEvidenceTruncated": "文件名过多，仅显示部分记录。",
       "outputEvidenceLimits": "这些线索可能不全，动态路径、临时文件和外部程序的写入可能未记录。",
+      "files": {
+        "state": {
+          "match": "一致",
+          "differs": "不同",
+          "incomparable": "没法比",
+          "missing": "没写出"
+        },
+        "why": {
+          "no_previous": "项目里没有这个文件的旧结果",
+          "stale": "旧结果比输入数据还早，可能已经过期",
+          "format": "这种格式没法比",
+          "too_large": "文件太大没比",
+          "inputs_unknown": "不知道读了哪些数据",
+          "compare_failed": "比对时出了问题"
+        },
+        "btn": {
+          "specify": "我来指定",
+          "skip": "不需要",
+          "realign": "让 AI 再对一次"
+        },
+        "chosen": {
+          "specify": "已指定",
+          "skip": "不需要"
+        },
+        "askAdopt_other": "还有 {{count}} 个文件没处理，仍要采用吗？",
+        "adoptAnyway": "仍然采用",
+        "adoptAsIs": "照样采用"
+      },
       "adoptAdds": "采用只会新增 {{files}}，原脚本不动",
       "installed": "已为这个项目装好 {{names}}",
       "btn": {

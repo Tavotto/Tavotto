@@ -1675,6 +1675,26 @@ class Worker(wireproto.V1Handler):
         self.execution_id = executionfact.new_id()
         executionfact.write(self.out_dir, self._execution_watch, self.execution_id)
 
+    def _overlay_wanted(self) -> bool:
+        """本次运行要不要装暂存覆盖层：常规运行（无授权根）与 MCP 授权根运行都装；校验运行的改道层 / 写回的隔离重放
+        各自有自己的写改道，不叠加。运维开关 `TAVOTTO_SAFE_OVERLAY=0`（同 `TAVOTTO_EXECUTION_FALLBACK` 的写法）整个关掉覆盖层，
+        回到守卫「跳过 + 记账」的老行为（现场出问题时的退路，也是守卫 / 账本老用例的前提）。"""
+        if os.environ.get("TAVOTTO_SAFE_OVERLAY", "").strip().lower() in (
+            "0",
+            "false",
+            "off",
+            "no",
+        ):
+            return False
+        if self.write_roots is None:
+            return True
+        try:
+            _, isolation = writetripwire.split_isolation(self.write_roots)
+            _, redirect = writetripwire.split_roots(self.write_roots)
+        except ValueError:
+            return False
+        return isolation is None and redirect is None
+
     def _install_write_tripwire(self) -> None:
         """装写入根绊线（#898）：白名单 = 命令行给的授权根 + 引擎自己的会话目录 + 基础设施目录。
 
@@ -1903,9 +1923,31 @@ class Worker(wireproto.V1Handler):
         # 账本的 open / stat 观察装在**最外层**（回退之外）：看到的必须是脚本交出的那条路径。
         # 装在回退之下，沙盒里 `savefig("stage.png")` 记下的 `<沙盒>/stage.png` 永远等不到
         # 被回退改指成 `<项目>/stage.png` 的读，旧图就被静默读走了（#952 Codex P1）。
+        overlay_root = self.out_dir.parent / "overlay"
+        # 每次运行一个新目录：上一次还被脚本句柄占着、没删掉的暂存文件不会被这一次读到（Windows，#1824 Codex P2）
+        overlay_dir = overlay_root / f"run-{os.getpid()}-{time.monotonic_ns()}"
+        use_overlay = self._overlay_wanted()
+        if use_overlay:
+            # 清掉之前留下的（句柄已关的那些）：在账本装上之前做，引擎自己的清理不进账
+            writetripwire.discard_overlay(str(overlay_root))
         ledger.install()
         if self.write_roots is not None:
             self._install_write_tripwire()
+        # 暂存覆盖层（#1813）：装在账本与绊线之后（最外层）——先把脚本对项目内文件的写 / 改名 / 删除与读回换进本次运行的
+        # 暂存区，账本看到的才不是项目里那条路径。覆盖层接不了的操作仍落到上面的守卫（跳过并记账）。
+        if use_overlay:
+
+            def _overlay_handled(op, kind, paths, dests):
+                print(f"[overlay] 暂存层接住 {op}: {paths[0] if paths else ''}", file=sys.stderr)
+                ledger.blocked(op, kind, *paths, dests=dests, overlay=True)
+
+            writetripwire.install_overlay(
+                str(self.figures_dir),
+                str(overlay_dir),
+                on_handled=_overlay_handled,
+                suspended=lambda: ledger._busy,
+            )
+            ledger.quiet_if = writetripwire.in_internal
 
         # 拦截必须发生在 import 脚本之前（多数脚本 from paper_style import save）
         mfigure.Figure.savefig = _patched_savefig
@@ -1995,6 +2037,8 @@ class Worker(wireproto.V1Handler):
             _record_write_attempts(True)
             if self.write_roots is not None:
                 writetripwire.arm(True)
+            if use_overlay:
+                writetripwire.arm_overlay(True)
             try:
                 # paper_style 是某些图库的私有方言，不是引擎的依赖：没有就跳过，
                 # 靠 _patched_savefig 这条通用兜底捕获。曾经这里是无保护的 import，
@@ -2098,6 +2142,12 @@ class Worker(wireproto.V1Handler):
                 else:
                     # 恰好一次加载才可信；零次（入口模块此前已在 sys.modules，如被 paper_style 提前 import）或多次 → None
                     self._source_sha256 = entry_shas[0] if len(entry_shas) == 1 else None
+                if use_overlay:
+                    # 覆盖层只活在脚本运行期间：之后引擎自己的读写看到的是真实的项目；暂存区丢弃
+                    writetripwire.arm_overlay(False)
+                    writetripwire.discard_overlay(
+                        str(overlay_root)
+                    )  # 尽力而为、永不抛：句柄还开着就留到下次开跑前
                 if self.write_roots is not None:
                     writetripwire.arm(False)
                     # 脚本 `except PermissionError` 吞掉、或以别的错误收场，事实都在：越界的写**尝试**发生过，
@@ -2246,7 +2296,81 @@ class Worker(wireproto.V1Handler):
             str(root).startswith(writetripwire.REDIRECT_PROJECT_PREFIX) for root in self.write_roots
         ):
             result["redirected_write_attempts"] = writetripwire.redirected()
+            result["sandbox_files"] = self._sandbox_files()
+            result["inputs_read"] = self._inputs_read()
         return result
+
+    def _inputs_read(self) -> dict | None:
+        """Project-relative inputs the script opened read-only, with mtimes (conversion validation only).
+
+        Lets the parent tell whether an old output in the project is newer than everything the candidate
+        read. None = no observer report; `truncated` / partial observation is the parent's `inputs_unknown`."""
+        report = self._inputs_report
+        if not isinstance(report, dict):
+            return None
+        files = []
+        for entry in report.get("files") or []:
+            rel = entry.get("path") if isinstance(entry, dict) else None
+            if not isinstance(rel, str):
+                continue
+            try:
+                mtime = os.stat(os.path.join(str(self.figures_dir), rel)).st_mtime_ns
+            except OSError:
+                return None
+            files.append({"path": rel, "mtime_ns": mtime})
+        return {"files": files, "truncated": bool(report.get("truncated"))}
+
+    def _keep_sandbox_outputs(self, names: list[str]) -> None:
+        """Copy the (bounded) sandbox outputs under the redirect area so the parent can compare their
+        content before the sandbox is discarded. Best effort: anything not copied stays name-only."""
+        try:
+            if not getattr(self, "write_roots", None):
+                return
+            _roots, redirect = writetripwire.split_roots(self.write_roots)
+            if redirect is None:
+                return
+            dest_root = Path(redirect[1]) / SANDBOX_KEEP_DIRNAME
+            total = 0
+            for rel in names:
+                src = Path(self.sandbox) / rel
+                size = src.stat().st_size
+                if size > _MAX_KEPT_FILE_BYTES or total + size > _MAX_KEPT_TOTAL_BYTES:
+                    continue
+                total += size
+                dest = dest_root / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(src, dest)
+        except (OSError, ValueError):
+            return
+
+    def _sandbox_files(self) -> dict:
+        """Relative names of the files still in the session sandbox right now (conversion validation only).
+
+        Names only, capped; internal files are filtered. A relative write in sandbox cwd lands here and
+        the sandbox is discarded after validation, so this is the only place it can be seen."""
+        names: list[str] = []
+        truncated = False
+        try:
+            for dirpath, dirs, files in os.walk(self.sandbox):
+                dirs[:] = sorted(d for d in dirs if d not in _SANDBOX_INTERNAL)
+                for name in sorted(files):
+                    if (
+                        name in _SANDBOX_INTERNAL
+                        or name.startswith("_tavotto_")
+                        or name.endswith(".pyc")
+                    ):
+                        continue
+                    if len(names) >= _MAX_SANDBOX_FILES:
+                        truncated = True
+                        break
+                    rel = os.path.relpath(os.path.join(dirpath, name), self.sandbox)
+                    names.append(rel.replace(os.sep, "/"))
+                if truncated:
+                    break
+        except OSError:
+            return {"names": [], "truncated": True}
+        self._keep_sandbox_outputs(names)
+        return {"names": names, "truncated": truncated}
 
     def _render(
         self, stem: str, timings: dict | None = None, preview_dpi: int | None = None
@@ -2276,7 +2400,13 @@ class Worker(wireproto.V1Handler):
                 **{
                     k: v
                     for k, v in self.build().items()
-                    if k not in {"source_sha256", "redirected_write_attempts"}
+                    if k
+                    not in {
+                        "source_sha256",
+                        "redirected_write_attempts",
+                        "sandbox_files",
+                        "inputs_read",
+                    }
                 },
             }
         if cmd == "export" and (req.get("require_built") or req.get("snapshot_only")):
@@ -2580,6 +2710,13 @@ def _json_default(o):
         return float(o)
     except (TypeError, ValueError):
         return str(o)
+
+
+_MAX_SANDBOX_FILES = 200
+SANDBOX_KEEP_DIRNAME = ".tavotto-sandbox"
+_MAX_KEPT_FILE_BYTES = 8 * 1024 * 1024
+_MAX_KEPT_TOTAL_BYTES = 64 * 1024 * 1024
+_SANDBOX_INTERNAL = frozenset({"__pycache__"})
 
 
 def _parse_write_roots(raw) -> list[str] | None:

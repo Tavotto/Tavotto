@@ -28,6 +28,13 @@ order: 60
   Python 池和 workerd 池均记录同次 build 的值，失败清空，旧 worker 缺字段为 unknown；
   legacy 响应不加字段。只有转换层消费并先去路径、脱敏、限量才展示，不进遥测。看护
   `tests/test_convert_output_evidence.py`。
+- **转换校验的沙盒文件回报（#1809）**：与 `redirected_write_attempts` 同条件（只有带改道根的 worker）的 v1 build 响应另带
+  `sandbox_files: {names: [会话沙盒里此刻还在的文件相对名，≤200], truncated: bool}`，排除 `__pycache__` / `*.pyc` / `_tavotto_*`
+  引擎内部文件。只给名字不给内容，仅供 `ai_convert` 比对「来源里能确定的写出」有没有被写出（沙盒 cwd 的相对写入校验后即销毁，
+  只有这里看得到）；legacy 响应剥掉，池（Python / workerd）按 build 记录、失败清空、缺字段为 unknown，不进界面 / 诊断包 / 遥测 / 日志。
+  同条件的响应另带 `inputs_read: {files: [{path, mtime_ns}], truncated}`（观察器记到的项目内只读输入，供旧结果新鲜度判断；
+  无观察报告为 null）；worker 另把沙盒里的这些文件（有界）拷进改道区 `.tavotto-sandbox/`，供父进程在沙盒销毁前比内容。同样不出界面 / 诊断包 / 遥测。
+  看护 `tests/test_convert_missing_outputs.py`。
 - **计时管道与性能基线（2026-08-18）**：worker 的 build/render/export 响应带
   `timings`（`script_build_ms` / `patch_apply_ms` / `canvas_draw_ms` /
   `manifest_ms`；**没有 `svg_ms`**——SVG 序列化与 draw 在 matplotlib 里分不开），
@@ -117,6 +124,22 @@ order: 60
   装在回退之下会永远对不上，#952 第三轮 P1）的 open / `os.stat` 包装在
   **拦下之后**看到脚本打开（读，含 `r+`/`a+`）或 stat 了受影响路径，才算 material；脚本自己以 `w`/`x` 重写
   该路径则清掉嫌疑（成功重写的后代同时记入「已重写」集合，目录级污点盖不到它——`rmtree` 后重建目录再写再读；目录重建**只在直跑也会得到同样成功结果之后**才记：`os.mkdir` 成功、或 `makedirs(exist_ok=True)` / `Path.mkdir(exist_ok=True)` 撞上守卫留下的目录（外层吞掉），豁免该目录自身的状态查询；非 `exist_ok` 的 `os.mkdir` 撞上还在的目录（直跑里它成功）抛 `FileExistsError` 是守卫造成的分叉，本身记为观察；被删目录之下没重建就 `open(...,'w')` 写子文件（直跑里 `FileNotFoundError`）也是分叉，不给「已重写」豁免、记为观察；`makedirs` / `mkdir(parents=True)` 建被删目录之内的子目录会连父目录一起重建，不带 `parents` 的算分叉；里面没被重写的文件仍受污点；后来的阻断撤销豁免）；相对只读读还要按回退的同一判据（`install_relative_read_fallback(...).resolve`）解析出实际会读的项目路径一并比对（绝对路径的阻断 + 沙盒里相对路径的回读）；守卫按签名取参，`dst=` / `src=` / `path=` 关键字与位置参数等价（**只在底层 open 成功返回之后清**；`x` 撞上被我们拦删而留下的旧文件抛 `FileExistsError` 时不清，且这次失败本身就是一次观察——直接运行里删除生效、`x` 会成功，不等回读；**只对直跑结果会让该路径不存在的事件**生效：删除、删除目录、改名/移动的源；被拦的写入、改名/移动的目的、savefig 目标直跑后同样存在，`x` 两边都失败，不走这条捷径），`shutil.move` 进已存在目录只记 `dst/basename(src)` 与源，不把整个目录记成受影响，被拦截的 `savefig` 目标记**有效目标名**（`figcapture.savefig_effective_names`：无后缀且无 `format=` 时**只**记补了 `rcParams["savefig.format"]`/`png` 后缀的名字、不记字面名（matplotlib 不会写它，否则同名无关旧文件被读会误判），`format=` 显式则字面名）、只认读内容、不认 `exists`（校验打印不判失败），先于拦截的读、读别的路径、从没回读（`test_workdir_mode` 那种顺手删过期输出）都不算。
+  **暂存覆盖层（#1813，ADR 0127 修订 2026-11-09）**：上面那些「悄悄跳过」里，**写 / 改名 / 删除**不再让常见的「写临时文件 → `os.replace` → 读回」判 material。
+  safe worker 常规运行（与 MCP 授权根运行；校验运行的改道层、写回的隔离重放各有自己的改道，不叠加）在 `ledger.install()` 与绊线之后装
+  `writetripwire.install_overlay(项目, <会话目录>/overlay)`：`Path.write_text`、`os.remove|unlink|rmdir|rename|replace`、`Path.unlink`、`shutil.rmtree|move`
+  里**落在项目内**的那些，换进本次运行的暂存区（复用校验运行改道层的视图：白名单 / 写时复制 / 同一份 `_resolve`；每次 build 开始与脚本结束各丢一次，
+  窗口只在脚本运行期间开），读**内容**的入口（`open` / `io.open` / `Path.open|read_*` / `os.open` / numpy `DataSource.open`）看覆盖后的视图，项目逐字节不变。
+  **存在性 / 元数据探测不是「覆盖层接管」的入口**（`os.path.exists|isfile|isdir|getsize`、`Path.exists|is_file|is_dir`、`stat` 等）：对覆盖层里有状态的路径，答案仍取覆盖层视图，
+  但**照旧让账本看见对项目路径的这次探测**（命中就按老规矩 material → 回退 native）——探测答「在」之后脚本常走 C 层读（h5py / sqlite…），覆盖层够不着，
+  读到旧值或缺失就是 safe 里的静默错图；覆盖层只能比旧行为更好、不能更差。没有覆盖层状态的路径探测与以前一致。**覆盖层包装装在账本外面**——先换路径，账本看到的是暂存路径，覆盖层看得到的读不命中它；
+  覆盖层自己探测项目文件时账本静音（`BlockedFileOps.quiet_if`）。被覆盖层接住的操作照样 `ledger.blocked(..., overlay=True)` 记一笔：**够不着的观察**
+  （`os.stat` / `Path.stat`、`os.path.lexists|islink`、`listdir` / `scandir` 与 glob 等）仍命中——`stat` 类是 material（确定偏差），列目录是弱信号（suspect），
+  子进程 / C 层读是 `unobserved` 盲区，规矩与以前完全一样；覆盖层事件造成的 `FileNotFoundError` 是脚本真实会遇到的，`explains` 不认。
+  **覆盖层模拟不了的一律交回原来的守卫**（跳过并记账，行为一字不差）：项目里已有目录的 `rmdir/rmtree/改名/移走`、项目里的符号链接（删 / 改名 / 移走）、
+  哪里都没有的源（删除 / 改名一个不存在的路径）、`shutil.move` 进目录 / 带自定义参数。**不改的既有契约**：`open('w')` 改写已有文件不拦（只有覆盖层里**已有状态**的路径
+  才继续走覆盖层，免得读回更早的那份）；`mkdir` / `copy*` / `write_bytes` / 指向项目外的符号链接原样；3.10 的 `pathlib._NormalAccessor` 不改道（`Path.rename|replace` 在 3.10 仍是今天的行为）。
+  不区分大小写的卷上键与暂存路径折成小写。看护 `tests/test_worker_overlay.py`（真 worker，逐字节核项目前后）。
+
   material 非空时 build 以该 code 结束——脚本跑到末尾、`except Exception` 吞掉了异常、或因读不到而崩
   （原因是守卫不是 `missing_input`）、或随后 `sys.exit` 非零，一律如此。载荷只有类别（`operations`）、
   `required_execution="preserve_file_semantics"` 与 `adapter_available=false`，没有路径（message 会进

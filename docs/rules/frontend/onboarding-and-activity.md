@@ -2,14 +2,14 @@
 
 > 原文出自 `web/AGENTS.md`「交互式 Onboarding 与本地活动信号（2026-09-02，ADR 0040）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`onboardingStore.test.ts`、`activity.test.ts`、`lib/onboarding/*.test.ts`、`nativeTutorial.test.tsx`、`lib/liveRegionSelector.test.ts`、`e2e/tutorial.spec.ts`
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`onboardingStore.test.ts`、`lib/onboarding/hintCards.test.ts`、`e2e/hint-cards.spec.ts`、`activity.test.ts`、`lib/onboarding/*.test.ts`、`nativeTutorial.test.tsx`、`lib/liveRegionSelector.test.ts`、`e2e/tutorial.spec.ts`
 
 <!-- agents-route
 sheet: web/AGENTS.md
 order: 150
-改到: `lib/activity.ts`、`store/onboardingStore.ts`、`lib/onboarding/*`、`data-*` 锚点、活动区
+改到: `lib/activity.ts`、`store/onboardingStore.ts`、`lib/onboarding/*`、`components/hints/*`、`vendor/stageshow`、`data-*` 锚点、活动区
 主题: 交互式 Onboarding 与本地活动信号 → `onboarding-and-activity.md`
-必守要点: 活动信号闭集；step id 是持久化格式；`[role=status]` 绝不当选择器
+必守要点: 活动信号闭集；step id 是持久化格式；`[role=status]` 绝不当选择器；动画卡的动作必须和真行为一致
 -->
 
 完整版在 `docs/adr/0040-onboarding-coachmarks-and-hints.md`（Activity Bus / 状态 / 提示）与
@@ -71,6 +71,16 @@ order: 150
   已评估**不做**：「选中多张 → 组合成 Figure / 进入排版」——活动信号里「多选」与「导入多个文件」不可区分
   （`selection.changed` 只有 count；导入是 `figure.added_to_layout` / `project.opened`，不带来源），P04 明说导入多文件≠组合意图，
   没有干净信号就不做；多选对齐 / 分布由既有 `multi_select` 覆盖，问题定位 / 修复入口由既有 `problem_found` + 问题抽屉覆盖。
+* **动画卡提示（2026-11-10，ADR 0177）**：藏起来的手势用窗口右下角一张会动的小卡教（`components/hints/HintCard` + `scenes.tsx`，
+  舞台来自 `vendor/stageshow`，整块按需加载）。规则：① **看到笨办法才出**（画布跑偏停手 2 秒 / 排版里拖边改了图幅 / 30 秒内挪 3 次对象），
+  **自己用过一次就算学会、永不再提**；每条最多 2 次、隔 20 小时，每次启动最多 2 张，点 × = 别再提，到时收起 / 场景变了收起不算；
+  ② 账在 `onboardingStore.hintStats`（`hintSeen` 仍只管一句话提示），「操作提示」开关 `hintsOff` 两类一起关，`resetHints` 两本账一起清；
+  ③ 与一句话提示共用 `useHintStore.current` 一个槽位，轨上不画卡片种类（`isCardHint`）、活动区照播；④ 不出的原因一律**不记账**；
+  ⑤ **场景里每个动作必须和真行为一致**，胶囊文案用真画布同一条译文、键帽用 `ALT` / `MOD`——改了手势先改场景；
+  ⑥ 新增一张卡 = `HINT_KINDS` + `CARD_HINTS` + `CARD_TIER` + 场景 + 两种语言的 `hints.<kind>` + `e2e/fixtures.ts` 的 `CARD_HINTS`
+  （e2e 默认把卡片记成学会了，否则它会在别的用例里冒出来；`e2eFlowVersion.test.ts` 看护）；⑦ 卡片与反馈卡同角：反馈卡在场让位，
+  属性栏收起时抬到通知轨之上；⑧ `vendor/stageshow` 原样不改，唯一的本地改动是 `keys.tsx` 的键帽表用 `MOD` / `ALT`（升级按上游同名文件替换后重打这一处；出处、提交号与许可在 `THIRD_PARTY_NOTICES.md`），只许从 `components/hints/` 引用。**没有新增遥测。**
+  看护：`lib/onboarding/hintCards.test.ts`、`components/hints/hintCard.test.tsx`、`e2e/hint-cards.spec.ts`。
 * **教程层的边界**：portal 到 `body`、`z-overlay`（对话框压在它上面），打开期间 `#root` 加 `inert`；层里的按键
   不冒泡到 window（工作台快捷键不在看不见的画布上生效）；系统拖进来的文件拒收（`dropEffect = 'none'`，不读
   `DataTransfer.files`）只说一句，主页的 `onNativeFileDrop` 在教程层开着时也不认（第二道闸）。新手态（没开始过、

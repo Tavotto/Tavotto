@@ -1016,6 +1016,9 @@
     "multi_select": "Use the floating bar by the selection to align and distribute.",
     "problem_found": "“Problems” on the left locates the object and its property field.",
     "layout_page_bounds": "The white page is the size of the exported figure. Single- and double-column widths follow the current spec; adjust them on the Canvas tab on the right.",
+    "fit_canvas": "Double-click empty space to recenter",
+    "edge_crop": "Drag an edge to resize; hold {{alt}} to crop",
+    "ruler_guides": "Drag a guide out of the ruler",
     "pageBoundsOpen": "Open Canvas tab"
   },
   "prep": {
@@ -1425,6 +1428,35 @@
       "outputAttemptsUnavailable": "No write record is available for this run.",
       "outputEvidenceTruncated": "There are too many filenames to show all entries.",
       "outputEvidenceLimits": "These clues may be incomplete; dynamic paths, temporary files, and external processes may not be recorded.",
+      "files": {
+        "state": {
+          "match": "Same",
+          "differs": "Different",
+          "incomparable": "Can't compare",
+          "missing": "Not written"
+        },
+        "why": {
+          "no_previous": "The project has no earlier result for this file",
+          "stale": "The earlier result is older than the input data and may be out of date",
+          "format": "This format can't be compared",
+          "too_large": "The file was too large to compare",
+          "inputs_unknown": "It's unknown which data was read",
+          "compare_failed": "The comparison ran into a problem"
+        },
+        "btn": {
+          "specify": "Choose a file",
+          "skip": "Not needed",
+          "realign": "Have AI check again"
+        },
+        "chosen": {
+          "specify": "Chosen",
+          "skip": "Not needed"
+        },
+        "askAdopt_one": "{{count}} file isn't handled yet. Adopt anyway?",
+        "askAdopt_other": "{{count}} files aren't handled yet. Adopt anyway?",
+        "adoptAnyway": "Adopt anyway",
+        "adoptAsIs": "Adopt as is"
+      },
       "adoptAdds": "Adopting only adds {{files}}; your original script is not touched",
       "installed": "Installed {{names}} for this project",
       "btn": {

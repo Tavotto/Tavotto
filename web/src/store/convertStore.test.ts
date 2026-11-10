@@ -10,11 +10,12 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   resolveConvertDependencies: vi.fn(),
   replanConvertDependencies: vi.fn(),
   aiCancel: vi.fn().mockResolvedValue({ ok: true }),
+  realignConvert: vi.fn(),
 }))
 
 vi.mock('@/store/connectAiStore', () => ({ requestConnectAi: vi.fn() }))
 
-import { ApiError, aiCancel, discardConvert, fetchAiSession, fetchConvert, replanConvertDependencies, resolveConvertDependencies, startConvert } from '@/lib/api'
+import { ApiError, aiCancel, discardConvert, fetchAiSession, fetchConvert, realignConvert, replanConvertDependencies, resolveConvertDependencies, startConvert } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
 import { useAiStore } from '@/store/aiStore'
 import { requestConnectAi } from '@/store/connectAiStore'
@@ -867,4 +868,23 @@ describe('convertStore：AI 任务阶段点停止先看取消回复（Codex #133
     await vi.advanceTimersByTimeAsync(POLL_MS + 10)
     await p
   })
+
+  it('让 AI 再对一次：对账回包回来时已切到别的项目，旧项目的结果不写进新项目的同名条目', async () => {
+    useConvertStore.setState({ entries: { 'plot.py': { phase: 'ready', session: 'sA', realigning: false } as never } })
+    vi.mocked(realignConvert).mockResolvedValueOnce(undefined as never)
+    let release!: (v: unknown) => void
+    vi.mocked(fetchConvert).mockReturnValueOnce(new Promise((r) => (release = r)) as never)
+    const p = useConvertStore.getState().realign('plot.py')
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    expect(fetchConvert).toHaveBeenCalledWith('sA', 'A')
+    // 回包之前切到项目 B，B 里同一个脚本已有自己的条目
+    setCurrentProjectId('B')
+    useConvertStore.setState({ entries: { 'plot.py': { phase: 'ready', session: 'sB', realigning: false } as never } })
+    release({ session: 'sA', state: 'ready', realigning: false, comparison: { from: 'A' } })
+    await p
+    const e = useConvertStore.getState().entries['plot.py'] as unknown as { session: string; status?: unknown }
+    expect(e.session).toBe('sB')
+    expect(e.status).toBeUndefined()
+  })
+
 })

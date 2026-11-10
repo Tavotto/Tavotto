@@ -14287,6 +14287,8 @@ def _convert_runner(
                 "redirected_write_attempts": getattr(
                     worker, "last_build_redirected_write_attempts", None
                 ),
+                "sandbox_files": getattr(worker, "last_build_sandbox_files", None),
+                "inputs_read": getattr(worker, "last_build_inputs_read", None),
             }
             if with_manifests and worker is not None:
                 out["source_sha256"] = getattr(worker, "last_build_source_sha256", None)
@@ -14497,7 +14499,9 @@ def api_ai_convert_adopt(sid):
     """采用新版本：后端把候选脚本**新建**进项目（原脚本同目录，重名加序号，永不覆盖），随后统一刷新。"""
     ctx = current_ctx()
     try:
-        made = engine_ai_convert.adopt(sid, str(ctx.path.resolve()))
+        body = request.get_json(silent=True)
+        specified = body.get("specified_outputs") if isinstance(body, dict) else None
+        made = engine_ai_convert.adopt(sid, str(ctx.path.resolve()), specified)
     except engine_ai_convert.ConvertError as exc:
         return _convert_error(exc)
     refresh = engine_ai.refresh_outcome(
@@ -14559,6 +14563,34 @@ def api_ai_convert_dependencies(sid):
         engine_ai_convert.cancel_registration(sid)
         raise
     return jsonify({"session": sid, "state": engine_ai_convert.STATE_RESUMING}), 202
+
+
+@app.post("/api/ai/convert/<sid>/realign")
+def api_ai_convert_realign(sid):
+    """「让 AI 再对一次」：候选写出的表格 / 日志与项目里的旧结果「不同」时，让原会话的 Agent 在同一个候选上有界地修正一次
+    （提示只有文件名与差异坐标，不含数据），修完重新比。失败一律还原成修正前的候选。前端轮询 `GET /api/ai/convert/<sid>`
+    看 `realigning` 与新的 `comparison`。"""
+    ctx = current_ctx()
+    project = str(ctx.path.resolve())
+    try:
+        cdir, meta, cancel, note = engine_ai_convert.prepare_realign(sid, project)
+    except engine_ai_convert.ConvertError as exc:
+        return _convert_error(exc)
+    try:
+        threading.Thread(
+            target=engine_ai_convert.run_realign,
+            args=(sid, project, cdir, meta, cancel, note),
+            kwargs={
+                "runner": _convert_runner(ctx, str(meta["script_rel"])),
+                "correct": engine_ai.correct_convert,
+            },
+            name="convert-realign",
+            daemon=True,
+        ).start()
+    except RuntimeError:
+        engine_ai_convert.cancel_registration(sid)
+        raise
+    return jsonify({"session": sid, "state": "ready", "realigning": True}), 202
 
 
 @app.get("/api/ai/convert/auto-install-envs")

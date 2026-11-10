@@ -55,6 +55,7 @@ tmp, final = here / (name + ".tmp"), here / (name + ".csv")
 tmp.write_text("2")
 os.replace(tmp, final)
 value = int(final.read_text())
+os.stat(final)  # 暂存覆盖层（#1813）接得住写 / 改名 / 读回，够不着 stat——这一行让 safe 仍被拦，回退照旧发生
 fig, ax = plt.subplots(figsize=(3, 2))
 ax.plot([0, 1], [value, value])
 """
