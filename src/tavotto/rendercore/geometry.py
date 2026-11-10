@@ -172,12 +172,20 @@ def _alpha(o: dict) -> float:
     return 1.0 if u is None else u
 
 
-def _stroke(o: dict, sw: float, *, join: str, dash: bool = True) -> Stroke:
+def arrow_opacity(o: dict) -> float:
+    """箭头的整体不透明度（杆 + 两端端型作为一个整体，`plan._shape_node` 把它放在 `Group.opacity` 上）。
+
+    杆伸进实心端型里、开口端型与杆在尖上重叠：逐条路径各自带 alpha 的话，重叠处会叠深。
+    所以箭头的路径本身一律不透明，透明度走透明组（组内 alpha 从 1 起算）；画布 `ArrowView` 同样用 `<g opacity>`。"""
+    return _alpha(o)
+
+
+def _stroke(o: dict, sw: float, *, join: str, dash: bool = True, opaque: bool = False) -> Stroke:
     """对象的一条描边。线端 / 拐角 / 不透明度 / 线型都从对象上读（缺省 = 旧画法）；
     `dash=False` 给箭头端型（端型不画虚线，也不受点线强制圆头影响）。"""
     d = o.get("dash") if dash else None
     return Stroke(
-        paint=Paint(hex2rgb(o.get("color", "#000000")), _alpha(o)),
+        paint=Paint(hex2rgb(o.get("color", "#000000")), 1.0 if opaque else _alpha(o)),
         width=sw,
         cap=stroke_cap(o.get("line_cap"), d),
         join=_line_join(o, join),
@@ -339,20 +347,20 @@ def arrow_paths(o: dict, w: float, h: float) -> list[Path]:
     """逐点复刻前端 ArrowView 几何（`arrow_geometry`）：帽长 4×线宽、帽半宽 1.7×线宽（再乘端型大小档位）、
     实心端型回缩线段；端型独立 + 虚线 + 描边不透明度 + 线端 / 拐角（缺省圆头 / 圆角）。"""
     sw = max(float(o.get("stroke_pt", 1.0)), 0.05)
-    color = Paint(hex2rgb(o.get("color", "#000000")), _alpha(o))
+    color = Paint(hex2rgb(o.get("color", "#000000")))  # 不透明度在组上（arrow_opacity）
     oid = str(o.get("id", ""))
     g = arrow_geometry(o, w, h)
     out = [
         Path(
             polyline_segments([g["p1"], g["p2"]], False),
-            stroke=_stroke(o, sw, join="miter"),
+            stroke=_stroke(o, sw, join="miter", opaque=True),
             object_id=oid,
         )
     ]
     # 端型的拐角：开口 V 缺省圆角（它有拐角），短线只有一段、沿用旧产物的 miter
     head_strokes = {
-        "open": _stroke(o, sw, join="round", dash=False),
-        "bar": _stroke(o, sw, join="miter", dash=False),
+        "open": _stroke(o, sw, join="round", dash=False, opaque=True),
+        "bar": _stroke(o, sw, join="miter", dash=False, opaque=True),
     }
     for head in (g["end_head"], g["start_head"]):
         if head is None:

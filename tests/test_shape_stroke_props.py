@@ -205,21 +205,36 @@ def test_stroke_opacity_edge_values(raw, alpha):
     assert p.stroke.paint.alpha == alpha
 
 
-def test_stroke_opacity_applies_to_the_arrow_shaft_and_every_head_kind():
+def test_arrow_opacity_is_one_transparency_group_and_no_child_carries_alpha():
+    """杆伸进端型、开口端型与杆在尖上重叠：各路径自己带 alpha 会叠深。所以不透明度只在整支箭头的组上，
+    路径本身一律不透明（画布 `ArrowView` 同一做法：外层 `<g opacity>`）。"""
+    from tavotto.rendercore import plan
+
     for kind in ("triangle", "stealth", "diamond", "dot", "open", "bar"):
         o = dict(
             BASE,
+            type="arrow",
+            x_mm=0,
+            y_mm=0,
+            w_mm=20,
+            h_mm=4,
             start={"rx": 0, "ry": 0},
             end={"rx": 1, "ry": 0},
             head_start=kind,
             head_end=kind,
             stroke_opacity=0.3,
+            dash="dashed",
         )
         paths = geometry.arrow_paths(o, 50.0, 10.0)
         assert len(paths) == 3
         for p in paths:
             alpha = p.stroke.paint.alpha if p.stroke is not None else p.fill.alpha
-            assert alpha == pytest.approx(0.3), kind
+            assert alpha == 1.0, kind
+        assert geometry.arrow_opacity(o) == pytest.approx(0.3)
+        node = plan._shape_node(o, 100.0)
+        assert node.opacity == pytest.approx(0.3) and len(node.children) == 3
+    opaque = plan._shape_node(dict(o, stroke_opacity=None), 100.0)
+    assert opaque.opacity == 1.0
 
 
 def test_zero_opacity_is_valid_and_validates_in_the_ir():

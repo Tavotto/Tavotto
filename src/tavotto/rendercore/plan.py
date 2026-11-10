@@ -415,8 +415,13 @@ def _shape_node(o: dict, page_h: float) -> Node | None:
     )
     if not paths:
         return None  # 无边框又无填充的形状：什么都不画（ADR 0174）
+    # 箭头的不透明度是整支箭头的透明组（杆与端型重叠处不叠深）；形状的描边不透明度在描边 Paint 上
+    opacity = geometry.arrow_opacity(o) if o.get("type") == "arrow" else 1.0
     return Group(
-        tuple(paths), transform=_object_transform(o, page_h), object_id=str(o.get("id", ""))
+        tuple(paths),
+        transform=_object_transform(o, page_h),
+        opacity=opacity,
+        object_id=str(o.get("id", "")),
     )
 
 

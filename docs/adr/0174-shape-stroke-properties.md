@@ -69,7 +69,7 @@
 
 ### 描边不透明度与 EPS
 
-进 `ir.Paint.alpha`（描边的 `Paint` 与箭头端型的填充 `Paint`），PDF / SVG / PNG 同一份 IR。**EPS 没有透明**：`epswriter` 对 alpha < 1 的路径抛 `UnsupportedCapability`，与今天的填充不透明度、面板不透明度同一条路径（EPS 这一项逐项失败、其余格式照常）。不为描边另开特例。
+**形状**：进描边 `ir.Paint.alpha`（填充有自己的 `fillOpacity`）。**箭头**：作用于整支箭头（杆 + 两端端型作为一个整体）——杆伸进实心端型、开口端型与杆在尖上重叠，逐条路径各带 alpha 会在重叠处叠深。所以箭头的路径本身一律不透明，不透明度放在整支箭头的透明组上（`geometry.arrow_opacity` → `plan._shape_node` 的 `Group.opacity`，组内 alpha 从 1 起算；画布 `ArrowView` / 预览 `ThumbShape` 用外层 `<g opacity>`，图元不带 stroke-opacity / fill-opacity）。看护：`tests/test_compose_shape_stroke.py` 经 PDF 栅格化逐像素量，半透明箭头的重叠处与单层一样深（各端型 × 实线 / 虚线）。PDF / SVG / PNG 同一份 IR。**EPS 没有透明**：`epswriter` 对 alpha < 1 的路径与透明组抛 `UnsupportedCapability`，与今天的填充不透明度、面板不透明度同一条路径（EPS 这一项逐项失败、其余格式照常）。不为描边另开特例。
 
 ### 不受影响的消费者（逐个查过）
 

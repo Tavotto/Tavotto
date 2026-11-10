@@ -128,3 +128,47 @@ def test_svg_export_of_a_no_stroke_shape_has_no_stroke_attribute(tmp_path):
         HbFaceProvider(fonts.FontRegistry.discover()),
     )
     assert "stroke-width" in out2.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("dash", [None, "dashed"])
+@pytest.mark.parametrize("head", ["diamond", "dot", "stealth", "triangle", "open"])
+def test_translucent_arrow_does_not_darken_where_the_shaft_overlaps_the_head(tmp_path, head, dash):
+    """显示与导出一致的判据（逐像素）：半透明箭头里，杆伸进端型的重叠处与端型单独的地方一样深。
+    各路径自带 alpha 的旧做法会在重叠处叠深（0.4 → 0.64）。"""
+    from PIL import Image
+
+    out = tmp_path / "a.png"
+    canvas = pdfbackend.compose(60.0, 20.0)
+    try:
+        canvas.place(
+            {
+                "id": "o",
+                "type": "arrow",
+                "x_mm": 5,
+                "y_mm": 8,
+                "w_mm": 50,
+                "h_mm": 0,
+                "stroke_pt": 6.0,
+                "color": "#000000",
+                "start": {"rx": 0, "ry": 0},
+                "end": {"rx": 1, "ry": 0},
+                "head_start": "none",
+                "head_end": head,
+                **({"dash": dash} if dash else {}),
+                "head_size_end": "large",
+                "stroke_opacity": 0.4,
+            },
+            300,
+            lambda x, d: None,
+        )
+        canvas.save_png(out, 300)
+    finally:
+        canvas.close()
+    im = Image.open(out).convert("L")
+    w, h = im.size
+    row = h * 8 // 20  # 箭杆所在的像素行
+    vals = [im.getpixel((x, row)) for x in range(w)]
+    darkest = min(vals)
+    # 单层 0.4 黑在白底上 = 255 × 0.6 = 153；叠深会到 ≈ 92
+    assert darkest >= 150, darkest
+    assert any(140 <= v <= 160 for v in vals)

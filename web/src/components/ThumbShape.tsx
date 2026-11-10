@@ -28,25 +28,31 @@ export function ThumbShape({ obj }: { obj: ArrowObject | ShapeObject }) {
   const wrap = rot ? `rotate(${rot} ${obj.x + w / 2} ${obj.y + h / 2})` : undefined
   const strokeOn = obj.type === 'arrow' || shapeStrokeOn(obj)
   const stroke = strokeOn
-    ? svgStroke(obj, sw, obj.type === 'arrow' ? 'round' : defaultLineJoin(obj.shape))
+    ? svgStroke(
+        obj.type === 'arrow' ? { ...obj, strokeOpacity: undefined } : obj,
+        sw,
+        obj.type === 'arrow' ? 'round' : defaultLineJoin(obj.shape),
+      )
     : {}
   const at = `translate(${obj.x} ${obj.y})`
 
   if (obj.type === 'arrow') {
     const g = arrowGeometry(obj, w, h, sw)
-    const headStroke = svgStroke(obj, sw, 'round', false)
+    // 不透明度在整支箭头的 <g> 上（同画布 ArrowView），图元自己不带 alpha
+    const bare = { ...obj, strokeOpacity: undefined }
+    const headStroke = svgStroke(bare, sw, 'round', false)
     const opacity = strokeOpacityOf(obj.strokeOpacity)
     const head = (hd: typeof g.endHead) =>
       !hd ? null : hd.kind === 'dot' ? (
-        <circle cx={hd.cx} cy={hd.cy} r={hd.r} fill={obj.color} fillOpacity={opacity} />
+        <circle cx={hd.cx} cy={hd.cy} r={hd.r} fill={obj.color} />
       ) : isFilledHead(hd) ? (
-        <polygon points={hd.points} fill={obj.color} fillOpacity={opacity} />
+        <polygon points={hd.points} fill={obj.color} />
       ) : (
         <path d={hd.d} fill="none" {...headStroke} />
       )
     return (
       <g data-thumb-shape="arrow" transform={wrap}>
-        <g transform={at}>
+        <g transform={at} opacity={opacity}>
           <line x1={g.p1.x} y1={g.p1.y} x2={g.p2.x} y2={g.p2.y} {...stroke} />
           {head(g.endHead)}
           {head(g.startHead)}

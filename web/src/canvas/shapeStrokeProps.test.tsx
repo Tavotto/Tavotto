@@ -149,13 +149,19 @@ describe('描边不透明度', () => {
     expect(full.hasAttribute('stroke-opacity')).toBe(false)
   })
 
-  it('箭头：杆与每个实心端型（polygon / circle）同一个不透明度', () => {
-    const svg = dom(
-      <ArrowView obj={arrow({ headStart: 'dot', headEnd: 'stealth', strokeOpacity: 0.3 })} />,
-    )
-    expect(attr(svg.querySelector('line:not([data-hit-line])'), 'stroke-opacity')).toBe('0.3')
-    expect(attr(svg.querySelector('circle'), 'fill-opacity')).toBe('0.3')
-    expect(attr(svg.querySelector('polygon'), 'fill-opacity')).toBe('0.3')
+  it('箭头：不透明度只在整支箭头的 <g> 上，杆与端型自己不带 alpha（重叠处不叠深）', () => {
+    for (const head of ['dot', 'stealth', 'diamond', 'triangle', 'open'] as const) {
+      const svg = dom(<ArrowView obj={arrow({ headStart: head, headEnd: head, strokeOpacity: 0.3, dash: 'dashed' })} />)
+      const g = [...svg.querySelectorAll('g[opacity]')]
+      expect(g, head).toHaveLength(1)
+      expect(attr(g[0], 'opacity')).toBe('0.3')
+      for (const el of svg.querySelectorAll('line:not([data-hit-line]),path,polygon,circle')) {
+        expect(el.hasAttribute('stroke-opacity'), head).toBe(false)
+        expect(el.hasAttribute('fill-opacity'), head).toBe(false)
+      }
+    }
+    // 100% 不套组
+    expect(dom(<ArrowView obj={arrow()} />).querySelector('g[opacity]')).toBeNull()
   })
 
   it('导出载荷：缺省 / 100% 不发，其余原样', () => {

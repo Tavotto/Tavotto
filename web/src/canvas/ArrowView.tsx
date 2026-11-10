@@ -27,17 +27,19 @@ export function ArrowView({ obj, hit = 'none' }: { obj: ArrowObject; hit?: 'stro
 
   // 描边属性只此一处（lib/shapeGeometry.svgStroke）：线端 / 拐角缺省圆头 + 圆角——后端 open 端型是
   // lineJoin=1，SVG 缺省却是 miter，尖角对不上；斜接上限也要写成与 PDF 同一个数
-  const stroke = svgStroke(obj, sw, 'round')
-  // 端型不画虚线；实心端型用描边色填充，不透明度与杆同一个值
-  const headStroke = svgStroke(obj, sw, 'round', false)
+  // 不透明度作用于整支箭头（杆 + 两端端型）：用外层 <g opacity>，各图元自己不带 alpha，
+  // 杆伸进端型的重叠处才不会叠深；PDF / SVG 导出同一做法（`geometry.arrow_opacity` → `Group.opacity`）
+  const bare = { ...obj, strokeOpacity: undefined }
+  const stroke = svgStroke(bare, sw, 'round')
+  const headStroke = svgStroke(bare, sw, 'round', false)
   const opacity = strokeOpacityOf(obj.strokeOpacity)
   const renderHead = (head: ArrowHeadShape | null) => {
     if (!head) return null
     if (head.kind === 'dot') {
-      return <circle cx={head.cx} cy={head.cy} r={head.r} fill={obj.color} fillOpacity={opacity} />
+      return <circle cx={head.cx} cy={head.cy} r={head.r} fill={obj.color} />
     }
     if (isFilledHead(head)) {
-      return <polygon points={head.points} fill={obj.color} fillOpacity={opacity} />
+      return <polygon points={head.points} fill={obj.color} />
     }
     return <path d={head.d} fill="none" {...headStroke} />
   }
@@ -69,6 +71,7 @@ export function ArrowView({ obj, hit = 'none' }: { obj: ArrowObject; hit?: 'stro
         strokeLinecap="round"
         style={{ pointerEvents: hit }}
       />
+      <g opacity={opacity}>
       <line
         x1={p1.x}
         y1={p1.y}
@@ -78,6 +81,7 @@ export function ArrowView({ obj, hit = 'none' }: { obj: ArrowObject; hit?: 'stro
       />
       {renderHead(endHead)}
       {renderHead(startHead)}
+      </g>
     </svg>
   )
 }
