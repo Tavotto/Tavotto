@@ -116,9 +116,16 @@ def test_every_scanned_asset_type_imports_and_shows_in_panels(project, make, nam
     assert _files(root) == [name]  # 没有留下临时文件
 
 
-def test_extension_list_matches_the_scanner():
+def test_extension_list_matches_the_scanner_and_the_frontend_golden():
+    import json
+
     scanned = project_refresh.PDF_EXT | project_refresh.SVG_EXT | project_refresh.IMG_EXT
-    assert {e for exts in assetimport.EXTENSIONS.values() for e in exts} == scanned
+    ours = {e for exts in assetimport.EXTENSIONS.values() for e in exts}
+    assert ours == scanned
+    golden = json.loads(
+        (Path(__file__).parent / "golden" / "asset_import_extensions.json").read_text()
+    )
+    assert ours == set(golden["extensions"])
 
 
 def test_type_comes_from_content_not_from_the_name(project):

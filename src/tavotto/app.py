@@ -1233,7 +1233,7 @@ def _import_write_error(exc: BaseException):
     cause = exc.__cause__ if isinstance(exc, engine_atomicio.AtomicWriteError) else exc
     num = getattr(cause, "errno", None)
     LOG.warning("导入素材落盘失败: %s", type(cause).__name__)
-    if num in (errno.ENOSPC, errno.EDQUOT):
+    if num in (errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC)):
         return _import_error("asset_import_disk_full", 507)
     if num in (errno.EACCES, errno.EPERM, errno.EROFS):
         return _import_error("asset_import_not_writable", 403)

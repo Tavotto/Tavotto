@@ -5519,7 +5519,7 @@ export default interface Resources {
       "browseMore": "浏览更多项目",
       "import": {
         "dropNoPath": "系统没有告诉 {{product}}「{{name}}」在哪个文件夹，请在接下来的窗口里选中它。",
-        "dropNotScript": "「{{name}}」不是 Python 脚本。请拖入 .py 文件。",
+        "dropNotScript": "「{{name}}」打不开。主页可以拖入脚本（.py、.R、.m）或项目文件夹。",
         "droppedMany": "拖入了 {{total}} 项，只用了「{{name}}」打开项目",
         "folderTitle": "选择脚本所在的文件夹",
         "foreignNotFound": "这个文件夹里没找到「{{name}}」，请选它所在的文件夹。",
@@ -5779,12 +5779,25 @@ export default interface Resources {
       "sessionUnauthenticated": "此页面没有 Tavotto 会话。请从终端或应用重新启动 Tavotto，从它打开的带凭据链接进入。"
     },
     "canvasDrop": {
-      "browser": "浏览器里拖不进脚本。请在左侧脚本库里运行「{{name}}」。",
-      "cannotRun": "「{{name}}」的文件名首尾有空格，暂时不能直接运行。请改名后再拖进来。",
+      "browser": "浏览器拿不到「{{name}}」在哪个文件夹，没法直接运行它。",
+      "cannotRun": "「{{name}}」的文件名首尾有空格，暂时不能直接运行。",
+      "importFailed": "「{{name}}」没能放进画布。{{reason}}",
+      "importFailedMany_other": "有 {{count}} 个文件没能放进画布。",
       "noPath": "请在接下来的窗口里再选一次「{{name}}」。",
-      "notScript": "「{{name}}」不是 Python 脚本。请拖入 .py 文件。",
-      "outsideProject": "「{{name}}」不在当前项目的文件夹里，没有运行。要用它，请回到主页把它拖进来。",
-      "running": "正在运行「{{name}}」，出图后放进这张画布"
+      "noProjectFolder": "这里没有项目文件夹可放。",
+      "openItsProject": "打开它所在的项目",
+      "openProjectFailed": "没能打开「{{name}}」所在的项目。",
+      "openedAndRunning": "已打开「{{name}}」所在的项目，正在运行它",
+      "outsideForeign": "「{{name}}」不在当前项目里。",
+      "outsideProject": "「{{name}}」不在当前项目里，还没有运行。",
+      "packageFailed": "「{{name}}」没能作为项目包打开。{{reason}}",
+      "packageOnly_other": "已打开项目包「{{name}}」，另外 {{count}} 个文件这次没有处理",
+      "placedMany_other": "已放进 {{count}} 张图",
+      "placedOne": "已放进画布：「{{name}}」",
+      "running": "正在运行「{{name}}」，出图后放进这张画布",
+      "runningFirst": "正在运行「{{name}}」，其余 {{count}} 个脚本这次没有运行",
+      "unsupportedImage": "「{{name}}」这种格式的图还放不进画布，能放的有 PNG、JPG、TIFF、PDF、SVG。",
+      "unsupportedType": "「{{name}}」放不进画布，能放进来的有图片、脚本和项目包。"
     },
     "canvasList": {
       "canvasName": "画布名",

@@ -1,0 +1,4 @@
+{
+  "_comment": "拖 / 粘贴进画布时「哪些后缀算素材图片」的严格同源对（ADR 0176）：后端 `engine/assetimport.EXTENSIONS` 与前端 `lib/canvasFileIntake.ASSET_EXTENSIONS` 各自与本文件比，也与素材扫描认的后缀（`engine/project_refresh`）比。",
+  "extensions": [".jpeg", ".jpg", ".pdf", ".png", ".svg", ".tif", ".tiff"]
+}
