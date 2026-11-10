@@ -209,6 +209,18 @@ describe('入口与预览行', () => {
     expect(qa('[data-ai-attach-chip]').map((c) => c.title)).toEqual(['a.csv', 'b.png', 'c.csv'])
   })
 
+  it('相邻卡片微微重叠（后一张压住前一张），悬停 / 聚焦的那张提到最上层', async () => {
+    await mount()
+    await paste([png('1.png'), png('2.png'), csv('3.csv')])
+    const cards = qa('[data-ai-attach-chip]')
+    expect(cards[0].className).not.toContain('-ml-')
+    expect(cards[1].className).toContain('-ml-')
+    expect(cards.map((c) => Number(c.style.zIndex))).toEqual([0, 1, 2])
+    for (const c of cards) expect(c.className).toContain('hover:z-sticky')
+    // 键盘聚焦顺序不变：DOM 顺序就是选择顺序，× 都在自己那张卡里
+    expect(qa('[data-ai-attach-remove]').map((b) => b.closest('[data-ai-attach-chip]')?.getAttribute('title'))).toEqual(['1.png', '2.png', '3.csv'])
+  })
+
   it('点 × 去掉一个：卡片消失，后端暂存也删', async () => {
     await mount()
     await paste([png('a.png'), csv('b.csv')])

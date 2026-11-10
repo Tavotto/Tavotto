@@ -959,7 +959,7 @@ function AssistantPanelBody() {
           )}
           {panel && refItems.some((x) => x.kind === 'image') && <NoVisionNote />}
           {panel && refItems.length > 0 && (
-            <div data-ai-attach-row className="mx-3 mb-1 flex flex-wrap items-end gap-3 px-1 pb-1.5 pt-2">
+            <div data-ai-attach-row className="mx-3 mb-1 flex flex-wrap items-end gap-y-3 px-2 pb-1.5 pt-2">
               {refItems.map((it, i) => (
                 <AttachPreviewCard
                   key={it.key}

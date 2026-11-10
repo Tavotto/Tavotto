@@ -47,9 +47,11 @@ export function AttachPreviewCard({
     <span
       data-ai-attach-chip={uploading ? 'uploading' : 'ready'}
       title={view.name}
-      style={{ '--tilt': `${tiltOf(index)}deg` } as CSSProperties}
+      style={{ '--tilt': `${tiltOf(index)}deg`, zIndex: index } as CSSProperties}
       className={cn(
-        'group/card relative block shrink-0 rotate-[var(--tilt)] rounded-md shadow-thumb',
+        // 相邻卡片微微遮挡（后一张压住前一张约 20% 卡宽）；悬停 / 聚焦的那张提到最上层，× 才够得着
+        'group/card relative block shrink-0 rotate-[var(--tilt)] rounded-md shadow-thumb hover:z-sticky focus-within:z-sticky',
+        index > 0 && (view.kind === 'image' ? '-ml-2.5' : '-ml-3.5'),
         'transition-[transform,box-shadow] duration-base ease-out motion-reduce:transition-none',
         'hover:-translate-y-0.5 hover:rotate-0 hover:shadow-lift focus-within:-translate-y-0.5 focus-within:rotate-0 focus-within:shadow-lift',
         'motion-reduce:hover:translate-y-0 motion-reduce:focus-within:translate-y-0',
