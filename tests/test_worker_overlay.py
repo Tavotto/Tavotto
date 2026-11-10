@@ -106,6 +106,8 @@ def _worker_version() -> tuple[int, int]:
         [WORKER_PY, "-c", "import sys; print(sys.version_info[0], sys.version_info[1])"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=True,
     ).stdout.split()
     return int(out[0]), int(out[1])
