@@ -348,3 +348,32 @@ def test_prepare_session_with_pyarrow_reading_a_cwd_relative_parquet_gets_the_hi
         assert final["outcome"]["code"] == "script_error", final["outcome"]
         req = _hint_of(final)
         assert req is not None and req["payload"]["probes"] == ["cg_data.parquet"]
+
+
+CHECK_THEN_PRINT_SCRIPT = """\
+import os
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+if os.path.exists("data/values.txt"):
+    plt.plot([1, 2, 3])
+else:
+    print("找不到数据")
+"""
+
+
+@needs_worker
+def test_prepare_session_with_no_figure_and_a_missing_input_carries_the_relink_offer(tmp_path):
+    """脚本先判空、数据不在就什么也不画：0 张图（`no_figures_captured*`）时报告里也要带 `input_location`
+    （与 `missing_data` 同一份指认载荷），卡片才有「指认数据」入口，不是只剩一句「没有出图」。"""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(CHECK_THEN_PRINT_SCRIPT, encoding="utf-8")
+    with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+        final = _run_session(app)
+        assert final["phase"] == "partial", final
+        assert final["outcome"]["code"].startswith("no_figures_captured"), final["outcome"]
+        (req,) = [r for r in final["requirements"] if r["kind"] == "input_location"]
+        assert req["blocking"] is False
+        assert [o["path"] for o in req["payload"]["others"]] == ["data/values.txt"]
