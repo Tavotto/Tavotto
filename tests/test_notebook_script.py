@@ -668,3 +668,120 @@ def test_discover_walk_rules_apply_to_notebooks(tmp_path):
     (tmp_path / "ok.ipynb").write_bytes(b"{}")
     assert [p.name for p in discover.iter_notebooks(tmp_path)] == ["ok.ipynb"]
     assert discover.iter_scripts(tmp_path) == []
+
+
+# ---------------------------------------------------------------- IPython 内置名的替身
+
+
+def _run(text: str, *, block_ipython: bool = True) -> dict:
+    """exec 抽出来的脚本；`block_ipython` 时模拟「环境里没装 IPython」（sys.modules 里置 None → import 抛 ImportError）"""
+    import sys
+    from unittest import mock
+
+    ns: dict = {"__name__": "nbtest"}
+    blocked = {"IPython": None, "IPython.display": None} if block_ipython else {}
+    with mock.patch.dict(sys.modules, blocked):
+        exec(compile(text, "nb.py", "exec"), ns)  # noqa: S102
+    return ns
+
+
+def _text(*cells) -> str:
+    return notebookscript.render("n.ipynb", notebookscript.extract(_nb(*cells)))
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "display(df)",
+        "fig = object()  # 传进来的是图（matplotlib Figure）也不做事\ndisplay(fig)",
+        "get_ipython().run_line_magic('matplotlib', 'inline')\nget_ipython().system('ls')\nget_ipython().magic('x')",
+        "from IPython.display import display, Image, HTML\ndisplay(Image('a.png'))\ndisplay(HTML('<b>x</b>'))",
+        "import IPython\nIPython.display.display(1)",
+        "import IPython.display as d\nd.display(1)",
+        "from IPython import get_ipython\nget_ipython().run_line_magic('x', 'y')",
+        "if True:\n    from IPython.display import display\n    display(1)",
+        "from IPython.display import *\ndisplay(1)",
+    ],
+)
+def test_notebooks_that_only_fail_for_lack_of_ipython_run_without_it(src):
+    df = "df = None\n" if "display(df)" in src else ""
+    ns = _run(_text(("code", df + src)))
+    assert isinstance(ns, dict)  # exec 没抛
+
+
+def test_the_shim_is_only_added_when_the_names_are_used_and_otherwise_bytes_are_unchanged():
+    plain = notebookscript.extract(_nb(("code", "import os\nx = 1")))
+    assert plain.body == "# %%\nimport os\nx = 1\n"
+    assert "_tavotto" not in plain.body
+    used = notebookscript.extract(_nb(("code", "display(1)"))).body
+    assert "def display" in used and "_tavotto_quiet" in used and "def get_ipython" not in used
+
+
+def test_names_the_notebook_defines_itself_are_not_shadowed():
+    body = notebookscript.extract(
+        _nb(("code", "def display(x):\n    return 7\nr = display(1)"))
+    ).body
+    assert "_tavotto" not in body
+    assert (
+        _run(
+            notebookscript.render(
+                "n.ipynb",
+                notebookscript.extract(
+                    _nb(("code", "def display(x):\n    return 7\nr = display(1)"))
+                ),
+            )
+        )["r"]
+        == 7
+    )
+
+
+def test_only_ipython_imports_are_wrapped_nothing_else_is_touched():
+    body = notebookscript.extract(
+        _nb(
+            (
+                "code",
+                "import os\nimport numpy as np\nfrom IPython.display import display\ndisplay(os)",
+            )
+        )
+    ).body
+    assert "import os\nimport numpy as np\n" in body
+    assert body.count("try:") == 1 and "except ImportError:" in body
+    # 只因为没装 IPython 才失败；别的 import 失败照旧失败（不被吞）
+    with pytest.raises(ModuleNotFoundError):
+        _run(_text(("code", "import definitely_not_installed_pkg_xyz")))
+
+
+def test_with_ipython_present_the_real_import_wins_over_the_fallback():
+    import sys
+    import types
+    from unittest import mock
+
+    fake = types.ModuleType("IPython")
+    fake_display = types.ModuleType("IPython.display")
+    fake_display.display = lambda *a, **k: "real"
+    fake.display = fake_display
+    with mock.patch.dict(sys.modules, {"IPython": fake, "IPython.display": fake_display}):
+        ns: dict = {}
+        exec(
+            compile(
+                _text(("code", "from IPython.display import display\nr = display(1)")),
+                "n.py",
+                "exec",
+            ),
+            ns,
+        )  # noqa: S102
+    assert ns["r"] == "real"
+
+
+def test_shim_is_part_of_the_fingerprint_so_replace_rules_stay_self_consistent(tmp_path):
+    with assetimport.LOCK:
+        first = notebookscript.place(
+            tmp_path, "n.ipynb", notebookscript.extract(_nb(("code", "display(1)")))
+        )
+        again = notebookscript.place(
+            tmp_path, "n.ipynb", notebookscript.extract(_nb(("code", "display(1)")))
+        )
+        newer = notebookscript.place(
+            tmp_path, "n.ipynb", notebookscript.extract(_nb(("code", "display(2)")))
+        )
+    assert (first.status, again.status, newer.status) == ("created", "reused", "updated")

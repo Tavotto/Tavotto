@@ -229,12 +229,114 @@ def extract(data: bytes) -> Extraction:
         raise NotebookError("notebook_no_code")
     body = "\n".join(out).rstrip("\n") + "\n"
     try:
-        ast.parse(body)
+        tree = ast.parse(body)
     except (SyntaxError, ValueError, RecursionError, MemoryError) as exc:
         line = getattr(exc, "lineno", None) or 0
         cell = next((c for lo, hi, c in spans if lo <= line <= hi), 0)
         raise NotebookError("notebook_syntax_error", 422, {"cell": cell, "line": line}) from None
+    body = _apply_shim(body, tree)
+    try:
+        ast.parse(body)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        raise NotebookError("notebook_syntax_error", 422, {"cell": 0, "line": 0}) from None
     return Extraction(body=body, code_cells=code_cells, commented_lines=commented)
+
+
+# ---------------------------------------------------------------------------
+# IPython 内置名的替身（只在笔记本真用到时才加）
+# ---------------------------------------------------------------------------
+
+_SHIM_QUIET = (
+    "class _TavottoQuiet:\n"
+    "    def __getattr__(self, name):\n"
+    "        return self\n"
+    "    def __call__(self, *args, **kwargs):\n"
+    "        return None\n"
+    "_tavotto_quiet = _TavottoQuiet()\n"
+)
+_SHIM_DISPLAY = "def display(*args, **kwargs):\n    return None\n"
+_SHIM_GET_IPYTHON = "def get_ipython():\n    return _tavotto_quiet\n"
+
+
+def _is_ipython_import(node: ast.AST) -> bool:
+    if isinstance(node, ast.Import):
+        return any(a.name == "IPython" or a.name.startswith("IPython.") for a in node.names)
+    if isinstance(node, ast.ImportFrom):
+        mod = node.module or ""
+        return node.level == 0 and (mod == "IPython" or mod.startswith("IPython."))
+    return False
+
+
+def _bound_names(tree: ast.AST) -> set[str]:
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            out.add(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            out.add(node.name)
+        elif isinstance(node, ast.arg):
+            out.add(node.arg)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            out.add(node.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for a in node.names:
+                if a.name != "*":
+                    out.add(a.asname or a.name.split(".")[0])
+    return out
+
+
+def _import_fallback(node: ast.AST) -> list[str]:
+    """没装 IPython 时被导入的名字各给什么：`get_ipython` 是返回安静对象的函数，其余都是安静对象本身"""
+    names = []
+    for a in node.names:  # type: ignore[attr-defined]
+        if a.name == "*":
+            continue
+        bound = a.asname or (a.name if isinstance(node, ast.ImportFrom) else a.name.split(".")[0])
+        value = "_tavotto_get_ipython" if bound == "get_ipython" else "_tavotto_quiet"
+        names.append(f"{bound} = {value}")
+    return names or ["pass"]
+
+
+def _apply_shim(body: str, tree: ast.AST) -> str:
+    """笔记本读了 `display` / `get_ipython` 却没自己定义，或有 IPython 的 import：给替身，让没装 IPython 也能跑。
+
+    * 读到的名字没被笔记本绑定（赋值 / def / 非星号 import）→ 在正文最前补不做事的 `display` /
+      返回「任何属性调用都安静返回 None」对象的 `get_ipython`；
+    * 每条 `import IPython…` / `from IPython… import …` 包进 `try: … except ImportError:`，失败时被导入的名字给安静对象
+      （只动 IPython 的 import，别的 import 一个字不碰）；一行里还有别的语句的不包（不拆语句）。
+    没用到这些名字、也没有 IPython 的 import 时正文逐字不变。
+    """
+    used = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+    bound = _bound_names(tree)
+    need_display = "display" in used and "display" not in bound
+    need_get = "get_ipython" in used and "get_ipython" not in bound
+    lines = body.split("\n")
+    wrapped = False
+    imports = [n for n in ast.walk(tree) if _is_ipython_import(n)]
+    for node in sorted(imports, key=lambda n: -n.lineno):  # 自下而上改，行号不乱
+        lo, hi = node.lineno - 1, node.end_lineno - 1
+        indent = lines[lo][: node.col_offset]
+        if indent.strip() or lines[hi][node.end_col_offset :].strip():
+            continue
+        block = [f"{indent}try:"]
+        block += [
+            f"{indent}    {ln[len(indent) :]}" if ln.strip() else ln for ln in lines[lo : hi + 1]
+        ]
+        block += [f"{indent}except ImportError:"]
+        block += [f"{indent}    {ln}" for ln in _import_fallback(node)]
+        lines[lo : hi + 1] = block
+        wrapped = True
+    if not (need_display or need_get or wrapped):
+        return body
+    shim = "# --- 笔记本里用到了 IPython 的名字：下面是不做事的替身，没装 IPython 也能跑（图由本软件自己捕获）---\n"
+    shim += _SHIM_QUIET
+    if wrapped:
+        shim += "_tavotto_get_ipython = lambda: _tavotto_quiet\n"
+    if need_display:
+        shim += _SHIM_DISPLAY
+    if need_get:
+        shim += _SHIM_GET_IPYTHON
+    return shim + "\n" + "\n".join(lines)
 
 
 def render(notebook_name: str, extraction: Extraction) -> str:

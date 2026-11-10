@@ -57,6 +57,12 @@
 7. **语法核验**：每个单元处理完仍不合法（注释不掉的真语法错误）→ `notebook_syntax_error`，参数 `{cell, line}`（第几个单元、单元内第几行；只给位置，不把内容放进错误 / 诊断）；整份拼完再 `ast.parse` 一次，不过同样不落盘。
 8. **文件头三行**：中文一句 + 英文一句（来源笔记本名、「这是自动生成的副本，改它不会改动笔记本」，产品名取 `brand.PRODUCT_NAME`），第三行是本功能自己的标记 `# <DIST_NAME>-notebook: <笔记本文件名> sha256=<正文哈希>`。笔记本文件名里的控制字符换 `_`（POSIX 文件名可含换行，不许撑破头）。
 9. 上限 50 MiB（整份在内存里解析，必须有界；与联系作者附件同一量级）；上传路径的上限卡在读取本身（`_read_body_capped`）。
+10. **IPython 内置名的替身（只在用到时才加，只在生成的 `.py` 里）**：语法核验之后再 `ast` 看整份代码——
+    * 读取了 `display` / `get_ipython` 而笔记本自己没绑定它（赋值 / `def` / `class` / 非星号 import 都算绑定）→ 在正文最前补带注释的替身：`display` 是什么都不做的函数（传进来的是 Figure 也不做事，图由本软件自己捕获）；
+      `get_ipython()` 返回一个「任何属性、任何调用都安静返回 None」的对象（覆盖 `.run_line_magic` / `.system` / `.magic`）。用到哪个垫哪个。
+    * 每条 `import IPython…` / `from IPython… import …`（只这两类，别的 import 一个字不碰）包进 `try: … except ImportError:`，失败时被导入的名字给那个安静对象（`get_ipython` 给返回它的函数；`import *` 无名可给，只吞错误，`display` 仍由上一条补）。
+      装了 IPython 时真的导入照常成功、替身不生效；一行里还有别的语句的不包（不拆语句）。目标：**只因为没装 IPython 而失败的笔记本抽出来能跑**；缺别的包照旧失败，走现有失败卡。
+    * 没用到这些名字、也没有 IPython 的 import 时正文逐字不变。替身是正文的一部分，文件头的正文哈希把它算进去，§三的「没被改过」判断自洽。
 
 ### 三、落盘规则（`engine/notebookscript.place`）
 
@@ -104,7 +110,7 @@ status: created | updated | reused | renamed
 ## 不做的事
 
 * **不执行、不转换输出**：不带输出图片；不尝试等价物（`%matplotlib inline`、`!pip install` 都只是注释）；运行时缺依赖仍走现有的失败卡与修复。
-* **不垫 IPython 运行时**：笔记本里调用 `display(...)`、`get_ipython()` 等 IPython 内置名的，抽出来的脚本运行会 `NameError`——由现有失败卡接住（不在本 ADR 里加 shim，见「后续」）。
+* **不装 IPython 运行时**：只垫 `display` / `get_ipython` 两个名字与 IPython 的 import 兜底（§二第 10 条）；`Image`、`HTML` 等被导入的名字只是什么都不做的占位，不渲染。
 * **不反向写回**：改 `.py` 不会改笔记本；不做 `.py` → `.ipynb`。
 * 不认 nbformat 3 及更早（升级旧笔记本不是我们的事）；不认 `.IPYNB`（Jupyter 只生成小写）。
 * 不新增界面控件形态：脚本区的行沿用现有 R / MATLAB 那一组的行样式；不加说明文字。
@@ -115,8 +121,13 @@ status: created | updated | reused | renamed
 * 前端：`lib/notebookRun.test.ts`、`canvas/useCanvasScriptDrop.test.ts`（笔记本一组）、`components/home/HomeView.test.tsx`、`components/left/ScriptLibrary.notebook.test.tsx`、`lib/scriptImport.test.ts` / `dropScriptRule.golden.test.ts`；壳 `drop_paths.rs` 单测与 golden；`e2e/notebook-to-script.spec.ts`（脚本库一行转成脚本并运行 → 图出现、笔记本字节不变；浏览器拖到画布走内容上传）。
 * `pnpm test && pnpm build && pnpm i18n:check`、`python scripts/build_browser_playground.py --check`、`cargo test` / `cargo fmt --check` / `cargo clippy`、`python scripts/dev/agents_budget.py --check`。
 
+## 已知限制
+
+* 笔记本在子目录、浏览器拿不到路径时（内容上传），`.py` 落在**项目根**而不是子目录，可能与子目录里已转的那份重复；需要时再做按内容哈希去重。
+* 写不进去（只读项目）只给「发送问题反馈」，没接只读修复入口。
+
 ## 后续（建议，未做）
 
-1. 抽出来的脚本在头部加一小段 shim（`display = print`-级别、`get_ipython` 空实现）让常见笔记本直接跑通——属于「猜」，需拍板。
+1. 已做（§二第 10 条）。
 2. 笔记本里的 `plt.show()` 之后的内联输出对应的图：当前靠脚本自己 `savefig` / 现有的运行捕获；没有 `savefig` 的笔记本是否默认存图交给现有「运行后发现图」。
-3. 拖项目里的 `.py` 同款的「浏览器按文件名 + 内容哈希匹配项目里的笔记本」：浏览器拿不到路径时现在把笔记本内容抽到**项目根**（即使它在子目录里），可能与子目录里已转的那份重复——需要时再做哈希去重。
+3. 见「已知限制」第一条。
