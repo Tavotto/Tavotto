@@ -903,3 +903,23 @@ def test_a_local_assignment_in_a_function_does_not_define_the_global_display():
     text = _py(("code", "def f():\n    display = 3\n    return display\nf()\ndisplay(1)"))
     assert "def display" in text
     _run(text)
+
+
+def test_scope_analysis_survives_a_stricter_symtable(monkeypatch):
+    """Python 3.14 的 `symtable` 不收顶层 `await` 与不在文件头的 `__future__` 导入（3.13 及以前放行）：分析在等价副本上做，
+    副本也走不通时退到保守判断——都不能因为分析工具的限制把笔记本整本拒掉，替身照样按需补上。"""
+    cells = (
+        ("code", "x = 1"),
+        ("code", "from __future__ import annotations"),
+        ("code", "async def f():\n    return 1\ny = await f()\ndisplay(y)"),
+    )
+    assert "def display" in _py(*cells)
+
+    def boom(*_a, **_k):
+        raise SyntaxError("stricter symtable")
+
+    monkeypatch.setattr(notebookscript.symtable, "symtable", boom)
+    text = _py(*cells)
+    assert "def display" in text  # 保守判断：读到了、顶层没定义 → 补
+    own = _py(("code", "def display(v):\n    return v\ndisplay(1)"))
+    assert "已把" not in own and own.count("def display") == 1  # 笔记本自己定义的不被覆盖

@@ -270,6 +270,94 @@ def _is_ipython_import(node: ast.AST) -> bool:
     return False
 
 
+class _Analyzable(ast.NodeTransformer):
+    """作用域分析用的等价副本：名字与作用域结构不变，只去掉 `symtable` 不收的两样东西。
+
+    Python 3.14 起 `symtable.symtable` 与 `compile` 一样严：顶层 `await`（IPython 的 autoawait，笔记本里合法）与
+    不在文件开头的 `from __future__ import …`（拼成一个文件之前各单元里合法）都会让它直接 `SyntaxError`，3.13 及以前放行。
+    这里把 `async def` 之外的 `await x` 换成 `x`、`async for / with` 与异步推导式换成同步写法，顶层的 `__future__` 导入去掉——
+    这些都不引入、不去掉任何名字，也不改变名字属于哪个作用域。只用于分析，不落盘。
+    """
+
+    def __init__(self) -> None:
+        self._async_depth = 0
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+        self._async_depth += 1
+        try:
+            self.generic_visit(node)
+        finally:
+            self._async_depth -= 1
+        return node
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        # 同步函数里的 `await` 本来就非法（最终的 `compile` 会拒）；这里照样换掉，只为分析能走完
+        saved, self._async_depth = self._async_depth, 0
+        try:
+            self.generic_visit(node)
+        finally:
+            self._async_depth = saved
+        return node
+
+    visit_Lambda = visit_FunctionDef  # type: ignore[assignment]
+
+    def visit_Module(self, node: ast.Module) -> ast.AST:
+        node.body = [
+            st
+            for st in node.body
+            if not (isinstance(st, ast.ImportFrom) and st.level == 0 and st.module == "__future__")
+        ]
+        self.generic_visit(node)
+        return node
+
+    def visit_Await(self, node: ast.Await) -> ast.AST:
+        self.generic_visit(node)
+        return node if self._async_depth else node.value
+
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> ast.AST:
+        self.generic_visit(node)
+        if self._async_depth:
+            return node
+        return ast.copy_location(
+            ast.For(target=node.target, iter=node.iter, body=node.body, orelse=node.orelse), node
+        )
+
+    def visit_AsyncWith(self, node: ast.AsyncWith) -> ast.AST:
+        self.generic_visit(node)
+        if self._async_depth:
+            return node
+        return ast.copy_location(ast.With(items=node.items, body=node.body), node)
+
+    def visit_comprehension(self, node: ast.comprehension) -> ast.AST:
+        self.generic_visit(node)
+        if not self._async_depth:
+            node.is_async = 0
+        return node
+
+
+def _analyzable(body: str) -> str:
+    tree = _Analyzable().visit(ast.parse(body))
+    ast.fix_missing_locations(tree)
+    return ast.unparse(tree)
+
+
+def _coarse_scope_facts(body: str) -> tuple[set[str], set[str]]:
+    """`symtable` 走不通时的保守判断：宁可多认「用到了」，绑定只认模块顶层语句直接绑定的名字"""
+    tree = ast.parse(body)
+    used = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+    bound: set[str] = set()
+    for st in tree.body:
+        if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound.add(st.name)
+        elif isinstance(st, (ast.Import, ast.ImportFrom)):
+            bound.update((a.asname or a.name).split(".")[0] for a in st.names if a.name != "*")
+        elif isinstance(st, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = st.targets if isinstance(st, ast.Assign) else [st.target]
+            for t in targets:
+                bound.update(n.id for n in ast.walk(t) if isinstance(n, ast.Name))
+    return bound, used
+
+
 def _scope_facts(body: str) -> tuple[set[str], set[str]]:
     """`(模块级绑定的名字, 被当作全局名读取的名字)`——用 CPython 自己的作用域分析（`symtable`），不手写遍历。
 
@@ -295,7 +383,12 @@ def _scope_facts(body: str) -> tuple[set[str], set[str]]:
         for child in table.get_children():
             visit(child, False)
 
-    visit(symtable.symtable(body, "<notebook>", "exec"), True)
+    try:
+        visit(symtable.symtable(_analyzable(body), "<notebook>", "exec"), True)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        # `symtable` 自己过不去（它比 `ast.parse` 严，而且各版本不一样）：退到保守判断，不因为分析工具的限制拒绝笔记本——
+        # 读取 = 任何位置读到的名字；绑定 = 模块顶层语句直接绑定的名字
+        return _coarse_scope_facts(body)
     return bound, used
 
 
