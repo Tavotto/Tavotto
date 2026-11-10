@@ -3,7 +3,11 @@
  * **每个动作都要和真行为一致**（改了手势先改这里）：
  *   - fit：双击纸外灰色区域 → 适应画布（`CanvasStage.onDoubleClick` → `fitStage`）；
  *   - edge：多图排版里拖图边 = 改图幅、文字不变；按住 ⌥ = 裁剪、内容不动（`canvas/panelEdgeCrop`，ADR 0161）；
- *   - guide：从上方标尺往下拖出横向参考线，拖对象靠近时吸上去（`startGuideDrag` / 吸附）。
+ *   - guide：从上方标尺往下拖出横向参考线，拖对象靠近时吸上去（`startGuideDrag` / 吸附）；
+ *   - axis：拖对象时按住 ⇧ 只沿位移较大的那个方向走（`startMoveDrag` 的 `axisLock`）；
+ *   - snap：拖对象靠近别的对象的边会吸上去，按住 ⌘ / Ctrl 这一下不吸（`startMoveDrag` 的 `metaKey || ctrlKey`）；
+ *   - nudge：方向键一步 0.5 mm、⇧ 一步 5 mm（`canvas/nudge.ts` 的 `NUDGE_STEP_MM`）；
+ *   - rotate：拖标注上方的旋转柄，按住 ⇧ 按 15° 一档（`canvas/rotateDrag.ts` 的 `ROTATE_SNAP_STEP`）；真画布转的时候没有角度读数，这里也不画。
  * 胶囊里的字用真画布同一条译文（`workspace:contextBar.*`），键帽按平台（`ALT` / `MOD`）。
  * 舞台、光标、拖拽来自 vendor/stageshow（MIT）；本文件整块按需加载（`HintCard` 里 `lazy`）。
  */
@@ -340,10 +344,339 @@ function GuideScene({ theme, play, onLoop }: SceneProps) {
   )
 }
 
+/* ───────── 小工具：淡出再回到开头（看不见的重置） ───────── */
+
+async function fadeReset<S extends { hide: boolean }>(a: Act<S>, initial: S) {
+  await a.set({ hide: true } as Partial<S>)
+  await a.wait(320)
+  await a.snap({ ...initial, hide: true })
+  await a.set({ hide: false } as Partial<S>)
+  await a.wait(200)
+}
+
+/** 两张图的小版面：a 固定，b 由场景摆 */
+function TwoPanels({
+  bx,
+  by,
+  selected,
+  ease,
+  children,
+}: {
+  bx: number
+  by: number
+  selected?: boolean
+  ease?: boolean
+  children?: React.ReactNode
+}) {
+  return (
+    <div className="hint-page" style={{ left: 40, top: 26, width: 240, height: 128 }}>
+      <div style={{ position: 'absolute', left: 16, top: 26 }}>
+        <MiniPlot w={84} h={76} tag="a" t={1} />
+      </div>
+      <div
+        className="hint-panel"
+        data-target="b"
+        data-selected={selected || undefined}
+        data-move-ease={ease || undefined}
+        style={{ left: bx, top: by, width: 84, height: 76 }}
+      >
+        <MiniPlot w={84} h={76} tag="b" tone={1} t={1} />
+      </div>
+      {children}
+    </div>
+  )
+}
+const B0 = { x: 116, y: 26 }
+const REST = { x: 28, y: 164 }
+
+/* ───────── 4. 按住 ⇧ 拖动：只沿一个方向走 ───────── */
+
+type AxisS = { bx: number; by: number; drag: boolean; ease: boolean; keys: string[] | null; down: boolean; lock: boolean; hide: boolean }
+const AXIS0: AxisS = { bx: B0.x, by: B0.y, drag: false, ease: false, keys: null, down: false, lock: false, hide: false }
+const AXIS_GO = { x: 30, y: 9 }
+
+const axisScript = async (a: Act<AxisS>) => {
+  await a.wait(500)
+  // 不按键：手一歪，图就跟着歪下去了
+  await a.move('b')
+  let from = a.center('b')
+  await a.set({ drag: true, ease: false })
+  await a.drag({ x: from.x + AXIS_GO.x, y: from.y + AXIS_GO.y }, (p, o) =>
+    a.put({ bx: B0.x + Math.round(p.x - o.x), by: B0.y + Math.round(p.y - o.y) }),
+  )
+  await a.set({ drag: false })
+  await a.wait(900)
+  await a.set({ keys: [MOD, 'Z'], down: true })
+  await a.wait(160)
+  await a.set({ bx: B0.x, by: B0.y, ease: true, down: false })
+  await a.wait(500)
+  await a.set({ keys: null })
+  await a.wait(300)
+  // 按住 ⇧：手照样歪，图只横着走
+  await a.move('b')
+  from = a.center('b')
+  await a.set({ keys: ['⇧'], down: true, ease: false })
+  await a.wait(350)
+  await a.set({ drag: true, lock: true })
+  await a.drag({ x: from.x + AXIS_GO.x, y: from.y + AXIS_GO.y }, (p, o) => a.put({ bx: B0.x + Math.round(p.x - o.x) }))
+  await a.set({ drag: false })
+  await a.wait(1900)
+  await a.set({ keys: null, lock: false })
+  await a.move(REST)
+  await fadeReset(a, AXIS0)
+}
+
+function AxisScene({ theme, play, onLoop }: SceneProps) {
+  return (
+    <Stage<AxisS>
+      specimen
+      unframed
+      width={W}
+      height={H}
+      theme={theme}
+      play={play}
+      className="hint-stage"
+      initial={AXIS0}
+      poster={{ ...AXIS0, bx: B0.x + AXIS_GO.x, keys: ['⇧'], down: true, lock: true }}
+      script={looped(axisScript, onLoop)}
+      cursor={{ at: REST, idle: false }}
+    >
+      {(s) => (
+        <div className="hint-work">
+          <div className="hint-fade" data-hide={s.hide || undefined}>
+            <TwoPanels bx={s.bx} by={s.by} selected={s.drag || s.lock} ease={s.ease}>
+              <i className="hint-axis" data-show={s.lock || undefined} style={{ top: B0.y + 38 }} />
+            </TwoPanels>
+          </div>
+          <Keys caps={s.keys} down={s.down} />
+        </div>
+      )}
+    </Stage>
+  )
+}
+
+/* ───────── 5. 按住 ⌘ / Ctrl 拖动：暂时不吸附 ───────── */
+
+type SnapS = { by: number; drag: boolean; snapped: boolean; keys: string[] | null; down: boolean; hide: boolean }
+const SNAP_START = 44
+const SNAP_AT = 26
+const SNAP_WANT = 30
+const SNAP0: SnapS = { by: SNAP_START, drag: false, snapped: false, keys: null, down: false, hide: false }
+const SNAP_TOL = 6
+
+const snapScript = async (a: Act<SnapS>) => {
+  await a.wait(500)
+  // 往上拖：靠近 a 的上沿就被吸过去
+  await a.move('b')
+  let from = a.center('b')
+  await a.set({ drag: true })
+  await a.drag({ x: from.x, y: from.y - (SNAP_START - SNAP_WANT) }, (p, o) => {
+    const raw = SNAP_START + (p.y - o.y)
+    const snap = Math.abs(raw - SNAP_AT) <= SNAP_TOL
+    a.put({ by: snap ? SNAP_AT : Math.round(raw), snapped: snap })
+  })
+  await a.set({ by: SNAP_AT, snapped: false, drag: false })
+  await a.wait(700)
+  // 想往下挪一点点：又被吸回去
+  await a.move('b')
+  from = a.center('b')
+  await a.set({ drag: true })
+  await a.drag({ x: from.x, y: from.y + (SNAP_WANT - SNAP_AT) }, () => a.put({ by: SNAP_AT, snapped: true }), { duration: 500 })
+  await a.set({ snapped: false, drag: false })
+  await a.wait(700)
+  // 按住 ⌘ / Ctrl：想放哪就放哪
+  await a.set({ keys: [MOD], down: true })
+  await a.wait(350)
+  await a.move('b')
+  from = a.center('b')
+  await a.set({ drag: true })
+  await a.drag({ x: from.x, y: from.y + (SNAP_WANT - SNAP_AT) }, (p, o) => a.put({ by: SNAP_AT + Math.round(p.y - o.y) }), {
+    duration: 600,
+  })
+  await a.set({ by: SNAP_WANT, drag: false })
+  await a.wait(1900)
+  await a.set({ keys: null })
+  await a.move(REST)
+  await fadeReset(a, SNAP0)
+}
+
+function SnapScene({ theme, play, onLoop }: SceneProps) {
+  return (
+    <Stage<SnapS>
+      specimen
+      unframed
+      width={W}
+      height={H}
+      theme={theme}
+      play={play}
+      className="hint-stage"
+      initial={SNAP0}
+      poster={{ ...SNAP0, by: SNAP_WANT, keys: [MOD], down: true }}
+      script={looped(snapScript, onLoop)}
+      cursor={{ at: REST, idle: false }}
+    >
+      {(s) => (
+        <div className="hint-work">
+          <div className="hint-fade" data-hide={s.hide || undefined}>
+            <TwoPanels bx={B0.x} by={s.by} selected={s.drag} />
+            {/* 吸附线：只在拖动中、吸上的那一帧闪现（满色，与真画布同一约定） */}
+            <div className="hint-snapline" data-show={s.snapped || undefined} style={{ top: 26 + SNAP_AT }} />
+          </div>
+          <Keys caps={s.keys} down={s.down} />
+        </div>
+      )}
+    </Stage>
+  )
+}
+
+/* ───────── 6. 方向键微移 ───────── */
+
+type NudgeS = { bx: number; by: number; keys: string[] | null; down: boolean; hide: boolean }
+const NUDGE0: NudgeS = { bx: B0.x, by: B0.y + 6, keys: null, down: false, hide: false }
+const STEP = 2 // 0.5 mm 一步（示意）
+const BIG = 20 // ⇧ 一步 5 mm
+
+const nudgeScript = async (a: Act<NudgeS>) => {
+  await a.wait(700)
+  const tap = async (caps: string[], patch: (s: NudgeS) => Partial<NudgeS>) => {
+    await a.set({ keys: caps, down: true })
+    await a.set(patch)
+    await a.wait(170)
+    await a.set({ down: false })
+    await a.wait(230)
+  }
+  // 差一点对不齐：按三下 ↑
+  for (let i = 0; i < 3; i++) await tap(['↑'], (s) => ({ by: s.by - STEP }))
+  await a.wait(900)
+  // ⇧ = 大步
+  await tap(['⇧', '→'], (s) => ({ bx: s.bx + BIG }))
+  await a.wait(1700)
+  await a.set({ keys: null })
+  await fadeReset(a, NUDGE0)
+}
+
+function NudgeScene({ theme, play, onLoop }: SceneProps) {
+  return (
+    <Stage<NudgeS>
+      specimen
+      unframed
+      width={W}
+      height={H}
+      theme={theme}
+      play={play}
+      className="hint-stage"
+      initial={NUDGE0}
+      poster={{ ...NUDGE0, by: B0.y, keys: ['↑'], down: false }}
+      script={looped(nudgeScript, onLoop)}
+      cursor={{ at: REST, idle: false }}
+    >
+      {(s) => (
+        <div className="hint-work">
+          <div className="hint-fade" data-hide={s.hide || undefined}>
+            <TwoPanels bx={s.bx} by={s.by} selected ease />
+          </div>
+          <Keys caps={s.keys} down={s.down} />
+        </div>
+      )}
+    </Stage>
+  )
+}
+
+/* ───────── 7. 按住 ⇧ 旋转：15° 一档 ───────── */
+
+type RotS = { deg: number; ease: boolean; keys: string[] | null; down: boolean; hide: boolean }
+const ROT0: RotS = { deg: 0, ease: false, keys: null, down: false, hide: false }
+const ROT_C = { x: 160, y: 98 }
+const ROT_BOX = { w: 104, h: 36 }
+const KNOB_GAP = 16
+const ROT_R = ROT_BOX.h / 2 + KNOB_GAP
+const rad = (d: number) => (d * Math.PI) / 180
+const knobAt = (deg: number) => ({ x: ROT_C.x + ROT_R * Math.sin(rad(deg)), y: ROT_C.y - ROT_R * Math.cos(rad(deg)) })
+const degAt = (p: { x: number; y: number }) => (Math.atan2(p.x - ROT_C.x, -(p.y - ROT_C.y)) * 180) / Math.PI
+
+const rotScript = async (a: Act<RotS>) => {
+  await a.wait(500)
+  const turn = async (to: number, snap: boolean) => {
+    await a.move(knobAt(0))
+    await a.drag(knobAt(to), (p) => a.put({ deg: snap ? Math.round(degAt(p) / 15) * 15 : Math.round(degAt(p)) }), {
+      duration: 1100,
+      path: (t) => knobAt(to * t),
+    })
+  }
+  // 不按键：想转 45°，停在了 41°
+  await a.set({ ease: false })
+  await turn(41, false)
+  await a.wait(900)
+  await a.set({ keys: [MOD, 'Z'], down: true })
+  await a.wait(160)
+  await a.set({ deg: 0, ease: true, down: false })
+  await a.wait(500)
+  await a.set({ keys: null })
+  await a.wait(300)
+  // 按住 ⇧：一档一档跳，正好 45°
+  await a.set({ keys: ['⇧'], down: true, ease: false })
+  await a.wait(350)
+  await turn(43, true)
+  await a.set({ deg: 45 })
+  await a.wait(1900)
+  await a.set({ keys: null })
+  await a.move(REST)
+  await fadeReset(a, ROT0)
+}
+
+function RotateScene({ theme, play, onLoop }: SceneProps) {
+  return (
+    <Stage<RotS>
+      specimen
+      unframed
+      width={W}
+      height={H}
+      theme={theme}
+      play={play}
+      className="hint-stage"
+      initial={ROT0}
+      poster={{ ...ROT0, deg: 45, keys: ['⇧'], down: true }}
+      script={looped(rotScript, onLoop)}
+      cursor={{ at: REST, idle: false }}
+    >
+      {(s) => (
+        <div className="hint-work">
+          <div className="hint-fade" data-hide={s.hide || undefined}>
+            <div className="hint-page" style={{ left: 40, top: 26, width: 240, height: 128 }} />
+            <div
+              className="hint-note"
+              data-ease={s.ease || undefined}
+              style={{
+                left: ROT_C.x - ROT_BOX.w / 2,
+                top: ROT_C.y - ROT_BOX.h / 2,
+                width: ROT_BOX.w,
+                height: ROT_BOX.h,
+                transform: `rotate(${s.deg}deg)`,
+              }}
+            >
+              <span className="hint-note__text" />
+              <i className="hint-handle" data-side="nw" />
+              <i className="hint-handle" data-side="ne" />
+              <i className="hint-handle" data-side="sw" />
+              <i className="hint-handle" data-side="se" />
+              <i className="hint-knob" style={{ top: -KNOB_GAP - 4 }} />
+            </div>
+          </div>
+          <Keys caps={s.keys} down={s.down} />
+        </div>
+      )}
+    </Stage>
+  )
+}
+
 const SCENES: Record<CardHintKind, (p: SceneProps) => React.JSX.Element> = {
   fit_canvas: FitScene,
   edge_crop: EdgeScene,
   ruler_guides: GuideScene,
+  shift_axis: AxisScene,
+  no_snap: SnapScene,
+  arrow_nudge: NudgeScene,
+  shift_rotate: RotateScene,
 }
 
 /** 一张卡的动画。`key` 由调用方给（换提示 / 重播时重挂） */

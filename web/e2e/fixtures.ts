@@ -249,7 +249,7 @@ export const ONBOARDING_FLOW_VERSION = 4
  * 卡片是窗口右下角的一张浮卡，拖边 / 平移 / 挪对象的用例会把它招出来、盖住右下角的东西。
  * 要测卡片的用例自己摆状态（`hint-cards.spec.ts`）。
  */
-export const CARD_HINTS = ['fit_canvas', 'edge_crop', 'ruler_guides'] as const
+export const CARD_HINTS = ['fit_canvas', 'edge_crop', 'ruler_guides', 'shift_axis', 'no_snap', 'arrow_nudge', 'shift_rotate'] as const
 const CARDS_LEARNED = Object.fromEntries(CARD_HINTS.map((k) => [k, { shows: 0, lastAt: 0, done: true }]))
 
 const WELCOME_SEEN = JSON.stringify({

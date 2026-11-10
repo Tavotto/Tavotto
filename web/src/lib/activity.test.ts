@@ -36,6 +36,9 @@ const SAMPLES: Record<ActivityKind, ActivityDetail> = {
   'document.saved': { kind: 'document.saved' },
   'view.fitted': { kind: 'view.fitted' },
   'panel.edge_dragged': { kind: 'panel.edge_dragged', outcome: 'resized' },
+  'object.dragged': { kind: 'object.dragged', track: 'straight', size: 'normal', mods: 'none', snapped: false },
+  'object.nudged': { kind: 'object.nudged' },
+  'object.rotated': { kind: 'object.rotated', near: true, snapped: false },
 }
 
 describe('kind 闭集', () => {

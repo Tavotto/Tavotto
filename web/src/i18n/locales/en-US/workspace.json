@@ -1042,6 +1042,10 @@
     "fit_canvas": "Double-click empty space to recenter",
     "edge_crop": "Drag an edge to resize; hold {{alt}} to crop",
     "ruler_guides": "Drag a guide out of the ruler",
+    "shift_axis": "Hold ⇧ while dragging to move along one axis",
+    "no_snap": "Hold {{mod}} while dragging to skip snapping",
+    "arrow_nudge": "Arrow keys nudge; ⇧ for big steps, {{alt}} for fine",
+    "shift_rotate": "Hold ⇧ while rotating to snap to 15°",
     "pageBoundsOpen": "Open Canvas tab"
   },
   "prep": {

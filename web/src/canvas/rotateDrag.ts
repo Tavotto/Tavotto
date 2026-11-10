@@ -1,6 +1,7 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
 
 import { msg, type UiMessage } from '@/i18n'
+import { emitActivity } from '@/lib/activity'
 import { normalizeRotationDeg, pointerBearingDeg, snapRotationDeg } from '@/lib/geometry'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
@@ -13,6 +14,8 @@ const hist = (key: string): UiMessage => msg(`history.${key}`, undefined, 'works
 
 /** ⇧ 吸附的档位（度） */
 export const ROTATE_SNAP_STEP = 15
+/** 离档位不到这么多度算「差一点」 */
+const NEAR_STEP_DEG = 3
 
 /**
  * 旋转柄拖动（文字标注的任意角度，ADR 0163）。
@@ -59,9 +62,16 @@ export function startRotateDrag(e: ReactPointerEvent, objectId: string) {
         for (const k of fitKeys) o[k] = (next ? box : box0)[k]
       })
     },
-    onEnd: (moved, _ev, end) => {
+    onEnd: (moved, ev, end) => {
       interaction().end()
       store.endTxn({ discard: !moved || end.cancelled })
+      if (moved && !end.cancelled) {
+        // 给提示引擎（ADR 0177）：停在离档位很近却没对上 = 多半想要个整角度
+        const p = clientToMm(ev.clientX, ev.clientY)
+        const deg = rot0 + (pointerBearingDeg(cx, cy, p.x, p.y) - bearing0)
+        const off = Math.abs(deg - snapRotationDeg(deg, ROTATE_SNAP_STEP))
+        emitActivity({ kind: 'object.rotated', near: !ev.shiftKey && off > 0.05 && off < NEAR_STEP_DEG, snapped: ev.shiftKey })
+      }
     },
   })
 }

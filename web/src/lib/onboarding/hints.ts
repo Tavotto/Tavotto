@@ -20,7 +20,11 @@
  * | --- | --- | --- |
  * | 画布大半移出窗口、停手 2 秒 | 双击空白处回正 | 让画布「适应」过一次（任何入口） |
  * | 多图排版里拖图边改了图幅 | 按住 ⌥ 改为裁剪 | 拖边裁剪过一次 |
- * | 多图排版里 30 秒内挪了 3 次对象、还没有参考线 | 从标尺拖出对齐线 | 拉出过一条参考线 |
+ * | 多图排版里 30 秒内挪了 3 次对象（鼠标拖或方向键；很小的拖动不算）、还没有参考线 | 从标尺拖出对齐线 | 拉出过一条参考线 |
+ * | 手几乎走了一条横 / 竖线（没按 ⇧） | 按住 ⇧ 只沿一个方向走 | ⇧ 拖过一次 |
+ * | 吸上之后 4 秒内又来一次很小的拖动 | 按住 ⌘ / Ctrl 暂时不吸附 | ⌘ / Ctrl 拖过一次 |
+ * | 20 秒内 3 次不到 2 mm 的拖动 | 方向键微移 | 用方向键挪过画布对象 |
+ * | 旋转停在离 15° 档位不到 3° 处 | 按住 ⇧ 按 15° 一档转 | ⇧ 转过一次 |
  *
  * 节奏：每条最多出 `CARD_MAX_SHOWS` 次、两次之间至少隔 `CARD_MIN_GAP_MS`；每次启动最多 `CARD_SESSION_BUDGET` 张；
  * 分层解锁按 `activeDays`；与一句话提示共用 `useHintStore.current` 一个槽位。
@@ -53,13 +57,29 @@ export const HINT_AUTO_DISMISS_MS = 9000
 /* ───────── 动画卡提示（ADR 0177） ───────── */
 
 /** 动画卡提示：由 `components/hints/HintCard` 画，不进通知轨；仍占 `useHintStore.current` 这一个槽位 */
-export const CARD_HINTS = ['fit_canvas', 'edge_crop', 'ruler_guides'] as const satisfies readonly HintKind[]
+export const CARD_HINTS = [
+  'fit_canvas',
+  'edge_crop',
+  'ruler_guides',
+  'shift_axis',
+  'no_snap',
+  'arrow_nudge',
+  'shift_rotate',
+] as const satisfies readonly HintKind[]
 export type CardHintKind = (typeof CARD_HINTS)[number]
 export const isCardHint = (k: HintKind | null): k is CardHintKind =>
   k !== null && (CARD_HINTS as readonly HintKind[]).includes(k)
 
 /** 分层：1 = 看得见摸得着的基本手势；2 = 修饰键；3 = 效率。层数越高越晚解锁 */
-export const CARD_TIER: Record<CardHintKind, 1 | 2 | 3> = { fit_canvas: 1, edge_crop: 1, ruler_guides: 1 }
+export const CARD_TIER: Record<CardHintKind, 1 | 2 | 3> = {
+  fit_canvas: 1,
+  edge_crop: 1,
+  ruler_guides: 1,
+  shift_axis: 2,
+  no_snap: 2,
+  arrow_nudge: 2,
+  shift_rotate: 2,
+}
 /** 每一层要求累计用过几天（本地日期计）才解锁 */
 export const TIER_MIN_DAYS: Record<1 | 2 | 3, number> = { 1: 0, 2: 2, 3: 5 }
 /** 每条最多出几次；× 关掉或自己学会就不再出 */
@@ -75,7 +95,11 @@ export const DRIFT_SETTLE_MS = 2000
 /** 「反复挪对象」：这么长时间内挪了这么多次 */
 export const NUDGE_WINDOW_MS = 30000
 export const NUDGE_COUNT = 3
-const MOVE_LABELS: ReadonlySet<string> = new Set(['history.moveObject', 'history.moveObjects'])
+/** 「一点一点挪」：这么长时间内有这么多次不到 2 mm 的拖动 */
+export const TINY_WINDOW_MS = 20000
+export const TINY_COUNT = 3
+/** 「跟吸附较劲」：吸上之后这么快又来一次很小的拖动 */
+export const SNAP_FIGHT_MS = 4000
 
 let sessionCards = 0
 /** 只给测试：把「本次启动已出几张卡」清零 */
@@ -114,10 +138,14 @@ export function canvasDriftedNow(): boolean {
 /** 这张卡此刻说得对吗（场景还在不在）；出之前判一次，出了之后场景变了就收起 */
 export function cardApplicable(kind: CardHintKind): boolean {
   if (kind === 'fit_canvas') return canvasDriftedNow()
-  // 另两条只在多图排版里成立：拖边裁剪是排版手势，标尺在单图编辑里不画
-  if (useWorkspaceStore.getState().mode !== 'layout') return false
-  if (kind === 'ruler_guides') {
-    return useUiStore.getState().showRulers && useDocumentStore.getState().doc.guides.length === 0
+  // 吸附关着的时候谈不上「暂时不吸附」
+  if (kind === 'no_snap') return useUiStore.getState().snapEnabled
+  // 拖边裁剪与标尺只在多图排版里成立：拖边裁剪是排版手势，标尺在单图编辑里不画
+  if (kind === 'edge_crop' || kind === 'ruler_guides') {
+    if (useWorkspaceStore.getState().mode !== 'layout') return false
+    if (kind === 'ruler_guides') {
+      return useUiStore.getState().showRulers && useDocumentStore.getState().doc.guides.length === 0
+    }
   }
   return true
 }
@@ -226,6 +254,38 @@ export function showHint(kind: HintKind): boolean {
 
 /** 最近几次「挪对象」的时刻（滑动窗口） */
 let recentMoves: number[] = []
+/** 最近几次「很小的拖动」的时刻 */
+let recentTiny: number[] = []
+/** 上一次拖动吸上了的时刻（没吸上 = 0） */
+let lastSnapAt = 0
+
+/** 一次拖动松手：先记学会，再按「最像哪种笨办法」出一张（一个槽位，先到先得） */
+function onDragged(d: Extract<ActivityDetail, { kind: 'object.dragged' }>): void {
+  const now = Date.now()
+  if (d.mods === 'shift' || d.mods === 'both') learnCardHint('shift_axis')
+  if (d.mods === 'meta' || d.mods === 'both') learnCardHint('no_snap')
+  const foughtSnap = d.size === 'tiny' && d.mods === 'none' && lastSnapAt > 0 && now - lastSnapAt <= SNAP_FIGHT_MS
+  lastSnapAt = d.snapped && d.mods === 'none' ? now : 0
+  // 过期的先清掉（每次拖动都清，不只在小拖动时）；只有这一次本身是小拖动才可能凑够三次（Codex #1835）
+  recentTiny = recentTiny.filter((t) => now - t <= TINY_WINDOW_MS)
+  if (d.size === 'tiny') recentTiny.push(now)
+  // 先判更具体的笨办法，都不是才算一次普通的「挪」
+  if (foughtSnap && showCardHint('no_snap', now)) return
+  if (d.size === 'tiny' && recentTiny.length >= TINY_COUNT && showCardHint('arrow_nudge', now)) {
+    recentTiny = []
+    return
+  }
+  // 很小的拖动先攒着看是不是「一点一点挪」，不急着算进「反复挪」——否则对齐线那张卡总是抢在微移前面
+  if (d.size === 'tiny') return
+  if (d.track === 'straight' && d.mods === 'none' && showCardHint('shift_axis', now)) return
+  noteMove(now)
+}
+
+/** 又挪了一次对象（鼠标拖或方向键）：更具体的卡都没出，才轮到「从标尺拖出对齐线」 */
+function noteMove(now: number): void {
+  recentMoves = [...recentMoves.filter((t) => now - t <= NUDGE_WINDOW_MS), now]
+  if (recentMoves.length >= NUDGE_COUNT && showCardHint('ruler_guides', now)) recentMoves = []
+}
 
 function onSignal(d: ActivityDetail): void {
   switch (d.kind) {
@@ -237,17 +297,20 @@ function onSignal(d: ActivityDetail): void {
       if (d.outcome === 'cropped') learnCardHint('edge_crop')
       else showCardHint('edge_crop')
       return
-    case 'history.pushed': {
-      if (d.label === 'history.addGuide') {
-        learnCardHint('ruler_guides')
-        return
-      }
-      if (!MOVE_LABELS.has(d.label)) return
-      const now = Date.now()
-      recentMoves = [...recentMoves.filter((t) => now - t <= NUDGE_WINDOW_MS), now]
-      if (recentMoves.length >= NUDGE_COUNT && showCardHint('ruler_guides', now)) recentMoves = []
+    case 'object.dragged':
+      onDragged(d)
       return
-    }
+    case 'object.nudged':
+      learnCardHint('arrow_nudge')
+      noteMove(Date.now())
+      return
+    case 'object.rotated':
+      if (d.snapped) learnCardHint('shift_rotate')
+      else if (d.near) showCardHint('shift_rotate')
+      return
+    case 'history.pushed':
+      if (d.label === 'history.addGuide') learnCardHint('ruler_guides')
+      return
     case 'selection.changed': {
       if (useUiStore.getState().elementPanelId) return // 图内编辑态里的画布选区不算
       if (d.count >= 2) {
@@ -328,6 +391,8 @@ export function startHintEngine(): () => void {
   stop = () => {
     if (driftTimer) clearTimeout(driftTimer)
     recentMoves = []
+    recentTiny = []
+    lastSnapAt = 0
     unsubViewport()
     unsubMode()
     unsubSelection()

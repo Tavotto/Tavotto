@@ -1,6 +1,7 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { perfInput, perfRelease, perfSpan } from '@/perf/core'
 import { msg, t, type UiMessage } from '@/i18n'
+import { emitActivity, type ActivityDetail } from '@/lib/activity'
 // 元素名的措辞只有这一份（元素树 / 属性页 / 快速编辑都用它）：轮换的 toast
 // 要说「子图 2（右轴）」，不能在画布层再拼一套。
 import { engineLabel } from '@/components/inspector/roles/registry'
@@ -330,6 +331,32 @@ export function draggableSelection(): {
 /*  移动                                                                       */
 /* -------------------------------------------------------------------------- */
 
+/** 手走的路「几乎是一条横 / 竖线」：一个方向超过这么远… */
+const STRAIGHT_MIN_MM = 10
+/** …另一个方向偏了不到这么多 */
+const STRAIGHT_DRIFT_MM = 1
+/** 「挪得很小」的上限 */
+const TINY_MOVE_MM = 2
+
+/** 一次拖动的粗粒度形状（纯函数；只出枚举与布尔，没有位置） */
+export function dragShape(
+  rawDx: number,
+  rawDy: number,
+  ev: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean },
+  snapped: boolean,
+): Extract<ActivityDetail, { kind: 'object.dragged' }> {
+  const ax = Math.abs(rawDx)
+  const ay = Math.abs(rawDy)
+  const meta = ev.metaKey || ev.ctrlKey
+  return {
+    kind: 'object.dragged',
+    track: Math.max(ax, ay) >= STRAIGHT_MIN_MM && Math.min(ax, ay) < STRAIGHT_DRIFT_MM ? 'straight' : 'free',
+    size: Math.hypot(rawDx, rawDy) < TINY_MOVE_MM ? 'tiny' : 'normal',
+    mods: ev.shiftKey ? (meta ? 'both' : 'shift') : meta ? 'meta' : 'none',
+    snapped,
+  }
+}
+
 export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
   const store = useDocumentStore.getState()
   const { targets, blockedGroups, picked } = draggableSelection()
@@ -343,12 +370,18 @@ export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
 
   interaction().begin('move')
   store.beginTxn(moveLabel(picked))
+  // 给提示引擎的手势形状（ADR 0177）：手走的原始位移（吸附 / 锁向之前）与最后一帧有没有吸上
+  let rawDx = 0
+  let rawDy = 0
+  let lastSnapped = false
 
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
       const t = getTransform()
       let dx = pxToMm(dxPx, t)
       let dy = pxToMm(dyPx, t)
+      rawDx = dx
+      rawDy = dy
       if (ev.shiftKey) {
         ;[dx, dy] = axisLock(dx, dy)
       }
@@ -370,6 +403,7 @@ export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
         snapY = snap.guideYs
       }
       interaction().setSnap(snapX, snapY)
+      lastSnapped = snapX.length > 0 || snapY.length > 0
 
       store.txnUpdate((d) => {
         for (const o of d.objects) {
@@ -380,10 +414,11 @@ export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
         }
       })
     },
-    onEnd: (moved, _ev, end) => {
+    onEnd: (moved, ev, end) => {
       interaction().end()
       // pointercancel = 这次交互被系统作废，一律丢弃：不留位移、不进历史
       store.endTxn({ discard: !moved || end.cancelled })
+      if (moved && !end.cancelled) emitActivity(dragShape(rawDx, rawDy, ev, lastSnapped))
     },
   })
 }

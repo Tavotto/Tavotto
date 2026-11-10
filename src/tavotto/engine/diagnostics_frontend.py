@@ -586,6 +586,10 @@ _CLOSED_LISTS: dict[str, frozenset[str]] = {
             "fit_canvas",
             "edge_crop",
             "ruler_guides",
+            "shift_axis",
+            "no_snap",
+            "arrow_nudge",
+            "shift_rotate",
         }
     ),
 }
