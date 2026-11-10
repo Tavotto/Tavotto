@@ -97,6 +97,8 @@ _CODE_REGISTRIES = (
     "tavotto.engine.pathignore",
     # 拖 / 粘贴文件进画布（ADR 0176）：`POST /api/assets/import` 的 code 经 `_import_error` 漏斗转成 JSON（带中文 error 原文）
     "tavotto.engine.assetimport",
+    # `.ipynb` 抽成同名 `.py`（ADR 0178）：`NotebookError(code)` 由 app 的 `_notebook_error` 漏斗转成 JSON
+    "tavotto.engine.notebookscript",
 )
 
 
