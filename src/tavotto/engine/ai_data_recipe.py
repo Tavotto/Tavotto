@@ -478,16 +478,17 @@ FAMILIES: dict[str, FamilySpec] = {
 }
 FAMILY_KEYS = tuple(FAMILIES)
 
-#: 批次 1 的族本 PR 之后的模板 PR 才逐族打开；注册表只放真能跑的（同 `AGENT_REGISTRY` 的纪律）。本 PR 没有模板：
-#: 这里是「下一个 PR 要实现的那批」，由测试钉住 ⊆ 批次 1。
-_RENDERABLE = frozenset({"comparison", "trend", "relationship", "distribution"})
+#: 「真有模板」只有一个出处：`ai_data_template.RENDERERS`（注册表只放真能跑的，同 `AGENT_REGISTRY` 的纪律）。
+#: 批次 2 / 3 与批次 1 里还没写模板的族有完整的资格判定，但 `renderable()` 为假，模板逐族打开。
 
 
 def renderable(family: str) -> bool:
-    """这类图现在有模板能画吗。批次 2 / 3 有完整的资格判定，但模板以后才有。"""
+    """这类图现在有模板能画吗（由 `ai_data_template.RENDERERS` 驱动）。"""
     if family not in FAMILIES:
         raise ValueError(f"未知的族：{family}")
-    return family in _RENDERABLE
+    from . import ai_data_template  # 延后 import：模板模块反过来 import 本模块
+
+    return family in ai_data_template.RENDERERS
 
 
 for _f in FAMILIES.values():
