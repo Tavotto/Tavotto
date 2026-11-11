@@ -322,11 +322,12 @@ order: 240
   （`tests/test_ai_data_recipe.py` 钉每个码都有句子、准则不出现表里没有的族 / 图元）。阈值全是 `ai_data_recipe` 的具名常量。
 - **数据出图 v2 的模板与期望指纹（`engine/ai_data_template.py`，ADR 0178）**：`render_recipe_script(entry, recipe, data_rel=, stem=, style=)` 只接受通过
   `validate_recipe` 的配方，不认识的组合抛 `TemplateError`、不画近似。**一份实现两处用**：读表 / 单元格解析 / 汇总 / 抖动 / 箱 / 核密度 / 拟合都是模块里的普通函数
-  （`RUNTIME_FUNCTIONS`），生成的脚本用 `inspect.getsource` 原样内嵌它们（XLSX 是 `xlsxread` 的源码原文），父进程的 `expected_fingerprints` 调用的是同一批函数；
-  列名 / 表名 / 文件名只以 `repr()` 字面量进脚本（来源注释是 ASCII JSON，不含 `why`），脚本 AST 的标识符集合与数据无关。每个数据 artist 的 label 在整张图里唯一
+  （`RUNTIME_FUNCTIONS`），这些函数的源码（`inspect.getsource`）与 `xlsxread` 的源码原文被收进**旁边的公共模块** `tavotto_plot_<sha256 前 8 位>.py`（`runtime_module()`，内容寻址、对所有图逐字节相同、不含数据，
+  落盘只新建、同字节复用、异字节按损坏报错不覆盖——落盘在下一个 PR），脚本只剩 import + 常量 + `main()`（`render_recipe_script` 返回 `Rendered`）；父进程的 `expected_fingerprints` 调用的是同一批函数；
+  列名 / 表名 / 文件名只以 `repr()` 字面量进脚本（来源注释是 ASCII JSON，不含 `why`），脚本 AST 的标识符集合与数据无关。脚本不改 `sys.path`（两条入口都把脚本目录放在 `sys.path[0]`，`tests/bridge/test_bridge_generated_figure_script.py` 钉 native）。每个数据 artist 的 label 在整张图里唯一
   （`make_label`），验证器按 label 匹配。**可核 = 散点（points / jitter）、Line2D（line / step / hline_summary / fit_line）、柱组（bar）；不核 = errorbar / band / box / violin**
   （误差棒容器与 `fill_between` 在 manifest 里没有 label 字段）——`fingerprint_coverage` 如实列出，不折算成 verified；没有任何可核层 = 这张图的数据没法核。
-  样式数字取自 `profiles.load()`（`style_from_profile`，取不到才用具名默认）；分类色是 Okabe–Ito（公开色盲安全色板）。看护 `tests/test_ai_data_template.py`（真 safe worker 对拍）。
+  样式数字取自 `profiles.load()`（`style_from_profile`，取不到才用具名默认）；分类色是 Okabe–Ito（公开色盲安全色板）。看护 `tests/test_ai_data_template.py`（真 safe worker 对拍）与 `tests/bridge/test_bridge_generated_figure_script.py`。
 - **TAF 改图（`engine/ai_figure_edit.py`，Phase 3a）**：只在 `config.ai_settings()["taf"]["enabled"] is True`（默认关、无界面开关）
   时由 `ai_bridge.run` 走到；开关关着时旧路径逐字不变（cwd 是项目目录、不写任务列、`ADAPTERS` 为空）。开着时：spawn 之前在
   `data_dir()/cache/ai_candidates/<sid>/` **字节复制**目标脚本（+ 项目根的 `paper_style.py`，绝不建链接），拍原项目有界指纹（跳过

@@ -472,8 +472,19 @@ def build_case(folder, profile, case):
     return e, values
 
 
-def run_in_worker(work: Path, script: str, stem: str) -> dict:
-    (work / f"{stem}.py").write_text(script, encoding="utf-8")
+def rs(*a, **k) -> str:
+    """只要脚本文本。"""
+    return T.render_recipe_script(*a, **k).script
+
+
+def write_rendered(work: Path, rendered: T.Rendered, stem: str) -> None:
+    """脚本与公共模块并排落盘（测试里模拟下一个 PR 的落盘：只新建）。"""
+    (work / f"{stem}.py").write_text(rendered.script, encoding="utf-8")
+    (work / rendered.runtime_name).write_bytes(rendered.runtime)
+
+
+def run_in_worker(work: Path, rendered: T.Rendered, stem: str) -> dict:
+    write_rendered(work, rendered, stem)
     w = pool.one_shot(f"{stem}.py", str(work), "main")
     try:
         w.ensure_built()
@@ -581,8 +592,8 @@ def test_unchecked_layers_are_not_counted_as_verified():
 
 
 # --------------------------------------------------------------------------- 画出来的 artist 类型与图上的诚实
-def introspect(work: Path, script: str, stem="fig", pre="") -> dict:
-    (work / f"{stem}.py").write_text(script, encoding="utf-8")
+def introspect(work: Path, rendered: T.Rendered, stem="fig", pre="") -> dict:
+    write_rendered(work, rendered, stem)
     code = (
         "import json, runpy, matplotlib\n"
         "matplotlib.use('Agg')\n"
@@ -777,7 +788,7 @@ def test_log_axis_and_jitter_are_deterministic(shapes, folder, profile, tmp_path
     xs = [p[0] for p in a[0]]
     assert len(set(xs)) > len(set(round(x) for x in xs))  # 真的错开了
     assert all(abs(x - round(x)) <= 0.8 * 0.6 / 2 + 1e-12 for x in xs)
-    assert "random" not in s
+    assert "random" not in s.script and b"import random" not in s.runtime
 
 
 # --------------------------------------------------------------------------- 注入防线（AST，不用子串）
@@ -833,16 +844,12 @@ def test_hostile_names_never_become_identifiers_or_code(tmp_path):
             "h.csv", "comparison", ["jitter", ("hline_summary", "mean_sd", Q)], [v], x=g, group=s
         )
 
-    base = T.render_recipe_script(
-        bp.tables[0], base_recipe("grp", "side", "val"), data_rel="h.csv", stem="fig"
-    )
+    base = rs(bp.tables[0], base_recipe("grp", "side", "val"), data_rel="h.csv", stem="fig")
     for h in HOSTILE:
         d = tmp_path / f"h{abs(hash(h))}"
         d.mkdir()
         hp = hostile_table(d, h + "g", h + "s", h + "u", h + "v")
-        src = T.render_recipe_script(
-            hp.tables[0], base_recipe(h + "g", h + "s", h + "v"), data_rel="h.csv", stem="fig"
-        )
+        src = rs(hp.tables[0], base_recipe(h + "g", h + "s", h + "v"), data_rel="h.csv", stem="fig")
         assert identifiers(src) == identifiers(base), h
         # 数据里的文字只作为字符串常量出现；来源注释是 ASCII 单行
         assert not any(
@@ -881,27 +888,10 @@ def test_running_a_script_with_hostile_names_runs_no_injected_code(tmp_path):
         assert got[e["label"]][0]["parts"][e["part"]] == e["digest"]
 
 
-def test_script_is_static_standard_only_and_parseable(folder, profile):
-    allowed_imports = {
-        "__future__",
-        "csv",
-        "math",
-        "re",
-        "pathlib",
-        "matplotlib",
-        "datetime",
-        "hashlib",
-        "posixpath",
-        "xml",
-        "zipfile",
-        "zlib",
-        "dataclasses",
-        "font_manager",
-    }
+def test_script_is_short_static_and_imports_only_matplotlib_and_the_sibling_module(folder, profile):
+    name = T.runtime_module()[0][: -len(".py")]
     for cid, table, sheet, recipe, _ in CASES:
-        src = T.render_recipe_script(
-            entry_of(profile, table, sheet), recipe, data_rel=table, stem="fig"
-        )
+        src = rs(entry_of(profile, table, sheet), recipe, data_rel=table, stem="fig")
         tree = ast.parse(src)
         mods = set()
         for n in ast.walk(tree):
@@ -909,26 +899,29 @@ def test_script_is_static_standard_only_and_parseable(folder, profile):
                 mods |= {a.name.split(".")[0] for a in n.names}
             elif isinstance(n, ast.ImportFrom):
                 mods.add((n.module or "").split(".")[0])
-        assert mods <= allowed_imports, (cid, mods - allowed_imports)
-        assert not mods & {"pandas", "scipy", "tavotto", "numpy", "random"}, cid
+        assert mods == {"__future__", "pathlib", "matplotlib", name}, (cid, mods)
+        # 没有第二份实现：脚本里除 main 以外没有函数定义
+        assert [n.name for n in tree.body if isinstance(n, ast.FunctionDef)] == ["main"], cid
         mains = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main"]
-        assert len(mains) == 1 and not mains[0].args.args, cid
+        assert not mains[0].args.args, cid
+        assert len(src.splitlines()) <= 130, (cid, len(src.splitlines()))
         assert "fig.savefig(Path(__file__).resolve().parent / 'fig.pdf')" in src
         assert "Path(__file__).resolve().parent / " + repr(table) in src
-        # 不 import 别的名字、不 exec / eval / open 之外的 IO
         called = {
             n.func.id
             for n in ast.walk(tree)
             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
         }
         assert not called & {"exec", "eval", "compile", "__import__"}, cid
+        # 运行时函数一律经别名调用
+        assert "tp.read_" in src and f"import {name} as tp" in src
 
 
 def test_source_comment_carries_provenance_but_not_why(folder, profile):
     cid, table, sheet, recipe, _ = CASES[0]
     e = entry_of(profile, table, sheet)
     recipe = R.FigureRecipe.from_dict({**recipe.to_dict(), "why": "UNIQUE-WHY-SENTENCE-7731"})
-    src = T.render_recipe_script(e, recipe, data_rel=table, stem="fig")
+    src = rs(e, recipe, data_rel=table, stem="fig")
     line = next(ln for ln in src.splitlines() if ln.startswith("# tavotto-source: "))
     meta = json.loads(line[len("# tavotto-source: ") :])
     assert (
@@ -941,25 +934,54 @@ def test_source_comment_carries_provenance_but_not_why(folder, profile):
 
 
 # --------------------------------------------------------------------------- 内嵌的就是同一份源码
-def test_embedded_helpers_are_the_functions_the_parent_uses(folder, profile):
-    e = entry_of(profile, "cmp.csv")
-    src = T.render_recipe_script(e, CASES[0][3], data_rel="cmp.csv", stem="fig")
-    for f in T.RUNTIME_FUNCTIONS:
-        text = inspect.getsource(f).rstrip("\n")
-        if f in T._XLSX_ONLY:
-            assert text not in src  # CSV 脚本里没有 XLSX 读取
-        else:
-            assert text in src, f.__name__
-    assert "XlsxBook" not in src
-
-
-def test_helper_block_runs_standalone_and_agrees_with_the_parent(folder):
-    """把脚本里内嵌的那段单独 exec，函数输出与父进程模块里的同名函数逐值相等（防「内嵌的和父进程用的悄悄不同」）。"""
-    e = adf.profile_folder(folder).tables[0]
-    src = T.render_recipe_script(e, CASES[0][3], data_rel="cmp.csv", stem="fig")
-    block = src[src.index(T.HELPERS_BEGIN) : src.index(T.HELPERS_END)]
+def runtime_ns() -> dict:
     ns: dict = {}
-    exec("import csv, math, re\n" + block, ns)  # noqa: S102 - 测试里执行我们自己生成的内嵌块
+    exec(compile(T.runtime_module()[1].decode("utf-8"), "runtime", "exec"), ns)  # noqa: S102 - 我们自己生成的公共模块
+    return ns
+
+
+def test_runtime_module_is_content_addressed_identical_for_every_figure_and_data_free(
+    folder, profile
+):
+    name, data = T.runtime_module()
+    import hashlib
+
+    assert (
+        name == f"tavotto_plot_{hashlib.sha256(data).hexdigest()[:8]}.py"
+        and name[:-3].isidentifier()
+    )
+    outs = [
+        T.render_recipe_script(entry_of(profile, table, sheet), recipe, data_rel=table, stem="fig")
+        for _, table, sheet, recipe, _ in CASES
+    ]
+    assert {(o.runtime_name, o.runtime) for o in outs} == {(name, data)}  # 对所有图逐字节相同
+    text = data.decode("utf-8")
+    # 不含任何数据：列名 / 分组名 / 单元格文字 / 文件名都不在里面
+    for needle in (
+        "condition",
+        "response_mV",
+        "drugA",
+        "cmp.csv",
+        "trend.csv",
+        "subject",
+        "s1",
+        "对照",
+        "ctrl",
+    ):
+        assert needle not in text, needle
+    # 头部说明：生成的、共用的、别改
+    assert text.startswith('"""Tavotto 生成的绘图公共模块') and "请不要修改" in text.split('"""')[1]
+
+
+def test_runtime_module_holds_the_exact_function_sources_the_parent_uses():
+    text = T.runtime_module()[1].decode("utf-8")
+    for f in T.RUNTIME_FUNCTIONS:
+        assert inspect.getsource(f).rstrip("\n") in text, f.__name__
+    assert "XlsxBook" in text  # 一个模块覆盖三种数据源，不按图裁剪
+
+
+def test_runtime_module_runs_standalone_and_agrees_with_the_parent(folder):
+    ns = runtime_ns()
     samples = [
         [1.0],
         [1.0, 2.0],
@@ -975,9 +997,7 @@ def test_helper_block_runs_standalone_and_agrees_with_the_parent(folder):
     assert ns["box_stats"](samples[4]) == T.box_stats(samples[4])
     assert ns["kde_curve"](samples[4]) == T.kde_curve(samples[4])
     assert ns["linear_fit"]([1, 2, 3], [2, 4, 7]) == T.linear_fit([1, 2, 3], [2, 4, 7])
-    d1 = ns["comparison_data"](*_cmp_args(folder))
-    d2 = T.comparison_data(*_cmp_args(folder))
-    assert d1 == d2
+    assert ns["comparison_data"](*_cmp_args(folder)) == T.comparison_data(*_cmp_args(folder))
 
 
 def _cmp_args(folder):
@@ -985,43 +1005,27 @@ def _cmp_args(folder):
     return v.columns, v.rows, "condition", "response_mV", "site", None, "value_desc"
 
 
-def test_xlsx_reader_embedded_in_the_script_is_the_xlsxread_source(folder, profile):
-    e = entry_of(profile, "cmp.xlsx", "Data")
-    r = CASES[5][3]
-    src = T.render_recipe_script(e, r, data_rel="cmp.xlsx", stem="fig")
-    block = src[src.index(T.XLSX_BEGIN) + len(T.XLSX_BEGIN) : src.index(T.XLSX_END)].strip("\n")
+def test_xlsx_reader_in_the_runtime_module_is_the_xlsxread_source(folder):
+    text = T.runtime_module()[1].decode("utf-8")
+    block = text[text.index(T.XLSX_BEGIN) + len(T.XLSX_BEGIN) : text.index(T.XLSX_END)].strip("\n")
     original = inspect.getsource(xlsxread)
-    tree = ast.parse(original)
-    doc_end = tree.body[0].end_lineno
+    doc_end = ast.parse(original).body[0].end_lineno
     expect_lines = [
         ln
         for i, ln in enumerate(original.splitlines(), start=1)
         if i > doc_end and not ln.startswith("from __future__")
     ]
     assert block.strip() == "\n".join(expect_lines).strip()  # 逐字：不是手抄的第二份
-    assert (
-        "def read_xlsx" in src
-        and "read_delimited(DATA" not in src
-        and "read_xlsx(DATA, SHEET)" in src
-    )
-    # 内嵌的读法与 Tavotto 的读法给出同样的表
-    ns: dict = {}
-    exec(
-        "from __future__ import annotations\nimport csv, math, re\n"
-        + src[src.index(T.HELPERS_BEGIN) : src.index("def main")],
-        ns,
-    )  # noqa: S102
+    ns = runtime_ns()
     header, rows = ns["read_xlsx"](folder / "cmp.xlsx", "Data")
     v = adf.inspect_data_source(folder / "cmp.xlsx", "Data")
     assert header == v.columns and rows == v.rows
 
 
 def test_tsv_scripts_use_the_tab_delimiter(folder, profile):
-    src = T.render_recipe_script(
-        entry_of(profile, "cmp.tsv"), CASES[4][3], data_rel="cmp.tsv", stem="fig"
-    )
-    assert "read_delimited(DATA, '\\t')" in src
-    assert "read_delimited(DATA, ',')" in T.render_recipe_script(
+    src = rs(entry_of(profile, "cmp.tsv"), CASES[4][3], data_rel="cmp.tsv", stem="fig")
+    assert "tp.read_delimited(DATA, '\\t')" in src
+    assert "tp.read_delimited(DATA, ',')" in rs(
         entry_of(profile, "cmp.csv"), CASES[0][3], data_rel="cmp.csv", stem="fig"
     )
 
@@ -1115,7 +1119,7 @@ def test_order_by_value_sorts_categories_by_mean(folder):
 def test_unsupported_recipes_raise_instead_of_drawing_an_approximation(folder, profile):
     e = entry_of(profile, "cmp.csv")
     with pytest.raises(T.TemplateError) as ei:
-        T.render_recipe_script(
+        rs(
             e,
             mk("cmp.csv", "relationship", ["points"], ["response_mV"], x="subject"),
             data_rel="cmp.csv",
@@ -1123,7 +1127,7 @@ def test_unsupported_recipes_raise_instead_of_drawing_an_approximation(folder, p
         )
     assert ei.value.code == "template_family_unsupported"
     with pytest.raises(T.TemplateError) as ei:
-        T.render_recipe_script(
+        rs(
             e,
             mk("cmp.csv", "comparison", ["hist"], ["response_mV"], x="condition"),
             data_rel="cmp.csv",
@@ -1131,7 +1135,7 @@ def test_unsupported_recipes_raise_instead_of_drawing_an_approximation(folder, p
         )
     assert ei.value.code == "template_mark_unsupported"
     with pytest.raises(T.TemplateError) as ei:
-        T.render_recipe_script(
+        rs(
             e,
             mk("cmp.csv", "comparison", ["points"], ["response_mV"], x="condition", scale="log_x"),
             data_rel="cmp.csv",
@@ -1139,7 +1143,7 @@ def test_unsupported_recipes_raise_instead_of_drawing_an_approximation(folder, p
         )
     assert ei.value.code == "template_option_unsupported"
     with pytest.raises(T.TemplateError) as ei:
-        T.render_recipe_script(
+        rs(
             entry_of(profile, "trend.csv"),
             mk("cmp.csv", "comparison", ["points"], ["response_mV"], x="condition"),
             data_rel="cmp.csv",
@@ -1147,7 +1151,7 @@ def test_unsupported_recipes_raise_instead_of_drawing_an_approximation(folder, p
         )
     assert ei.value.code == "template_recipe_mismatch"
     with pytest.raises(T.TemplateError) as ei:
-        T.render_recipe_script(
+        rs(
             e,
             mk("cmp.csv", "comparison", ["points"], ["nope"], x="condition"),
             data_rel="cmp.csv",
@@ -1182,7 +1186,7 @@ def test_every_allowed_mark_renders_for_both_families(folder, profile):
                 ["response_mV" if fam == "comparison" else "signal"],
                 **kw,
             )
-            src = T.render_recipe_script(entry_of(profile, table), r, data_rel=table, stem="f")
+            src = rs(entry_of(profile, table), r, data_rel=table, stem="f")
             ast.parse(src)
 
 
@@ -1233,7 +1237,7 @@ def test_style_numbers_come_from_the_profile_not_the_template():
         ),
     )
     r = mk("x.csv", "comparison", ["points"], ["v"], x="g")
-    src = T.render_recipe_script(e, r, data_rel="x.csv", stem="f", style=s1)
+    src = rs(e, r, data_rel="x.csv", stem="f", style=s1)
     assert (
         "'font.size': 11.0" in src.replace('"', "'")
         and repr(100.0 / 25.4) in src
@@ -1267,8 +1271,8 @@ def test_hostile_file_and_sheet_names_stay_string_literals(folder, profile):
     e = entry_of(profile, "cmp.xlsx", "Data")
     hostile_rel = "d'); __import__('os').system('touch PWNED'); ('.xlsx"
     r = mk("cmp.xlsx", "comparison", ["points"], ["response_mV"], x="condition", sheet="Data")
-    base = T.render_recipe_script(e, r, data_rel="cmp.xlsx", stem="fig")
-    src = T.render_recipe_script(e, r, data_rel=hostile_rel, stem="fig")
+    base = rs(e, r, data_rel="cmp.xlsx", stem="fig")
+    src = rs(e, r, data_rel=hostile_rel, stem="fig")
     assert identifiers(src) == identifiers(base)
     consts = {
         n.value
@@ -1347,6 +1351,57 @@ def test_template_module_is_parent_side_stdlib_only():
 
 def test_bar_scripts_pin_the_axis_to_zero_and_others_do_not(folder, profile):
     e = entry_of(profile, "cmp.csv")
-    bar = T.render_recipe_script(e, CASES[1][3], data_rel="cmp.csv", stem="f")
-    other = T.render_recipe_script(e, CASES[0][3], data_rel="cmp.csv", stem="f")
+    bar = rs(e, CASES[1][3], data_rel="cmp.csv", stem="f")
+    other = rs(e, CASES[0][3], data_rel="cmp.csv", stem="f")
     assert "ax.set_ylim(bottom=0)" in bar and "set_ylim" not in other
+
+
+# --------------------------------------------------------------------------- 静态扫描不会把公共模块当成一张图
+def test_static_scans_never_register_the_runtime_module_as_a_figure(tmp_path):
+    """判据的主语：`discover` / `projscan` 对**项目文件夹**的静态扫描。公共模块没有存图调用也没有 main：不进静态起草 /
+    注册表候选，也不是 `projscan` 的目标。已知现象（观察，不是承诺）：它仍作为一个普通 .py 出现在脚本清单里
+    （`reason: no_static_output`、`can_probe: true`、不是 target）——要让清单也跳过它，最小处理是把 `tavotto_plot_` 加进
+    `discover.SKIP_PREFIXES`（基础设施脚本），本 PR 不改扫描规则的语义。"""
+    from tavotto.engine import discover, projscan
+
+    figs = tmp_path / "proj" / "tavotto_figures"
+    figs.mkdir(parents=True)
+    (figs / "d.csv").write_text(
+        "g,v\n" + "\n".join(f"{g},{i}" for g in "ab" for i in range(6)) + "\n"
+    )
+    e = adf.profile_folder(figs).tables[0]
+    r = mk("d.csv", "comparison", ["jitter"], ["v"], x="g")
+    out = T.render_recipe_script(e, r, data_rel="d.csv", stem="fig")
+    (figs / "fig.py").write_text(out.script, encoding="utf-8")
+    (figs / out.runtime_name).write_bytes(out.runtime)
+    root = tmp_path / "proj"
+    drafted = discover.discover(root)["scripts"]
+    assert set(drafted) == {"tavotto_figures/fig.py"}  # 静态起草：只有那张图
+    assert drafted["tavotto_figures/fig.py"]["stems"] == ["fig"]
+    rep = projscan.scan(root)
+    assert [t["script"] for t in rep["targets"]] == ["tavotto_figures/fig.py"]
+    by = {s["script"]: s for s in rep["scripts"]}
+    mod = by[f"tavotto_figures/{out.runtime_name}"]
+    assert (
+        mod["registered"] is False
+        and mod["static_stems"] == []
+        and mod["reason"] == "no_static_output"
+    )
+
+
+def test_runtime_module_has_no_figure_entry_and_does_nothing_on_import():
+    tree = ast.parse(T.runtime_module()[1].decode("utf-8"))
+    assert not [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main"]
+    assert not any(
+        isinstance(n, ast.Attribute) and n.attr in ("savefig", "show") for n in ast.walk(tree)
+    )
+    imported = {
+        a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names
+    }
+    assert (
+        "matplotlib" not in imported and "numpy" not in imported
+    )  # 顶层不 import 科学栈（pick_fonts 里是函数内 import）
+    top_calls = [
+        n for n in tree.body if isinstance(n, ast.Expr) and not isinstance(n.value, ast.Constant)
+    ]
+    assert top_calls == []  # 顶层没有「导入即执行」的调用语句

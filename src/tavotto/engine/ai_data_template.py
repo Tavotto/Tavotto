@@ -5,9 +5,14 @@
 不会成为标识符或代码，也不进注释正文（来源注释是 ASCII JSON）。调用方先 `ai_data_recipe.validate_recipe`；这里对不认识的
 组合直接抛 `TemplateError`，**不静默画个近似的**。
 
-**一份实现，两处使用。** 读表、单元格解析、汇总、确定性抖动、箱线 / 核密度 / 拟合的数值全是本模块里的普通函数
-（`RUNTIME_FUNCTIONS`）；生成的脚本把这些函数的**源码**（`inspect.getsource`）原样内嵌，父进程算期望指纹时调用的就是
-同一批函数，不是抄第二份。XLSX 读取同理：内嵌的是 `xlsxread` 的源码原文（去掉模块 docstring 与 `__future__` 行）。
+**一份实现，两处使用；脚本形态 = 短脚本 + 旁边一个公共模块**（用户 2026-11-11 拍板）。读表、单元格解析、汇总、确定性抖动、
+箱线 / 核密度 / 拟合的数值全是本模块里的普通函数（`RUNTIME_FUNCTIONS`）；它们的**源码**（`inspect.getsource`）连同 `xlsxread` 的
+源码原文被收进一个公共模块（`runtime_module()`：`tavotto_plot_<内容 sha256 前 8 位>.py`，对所有图逐字节相同、不含任何数据、
+一个模块覆盖 CSV / TSV / XLSX 三种数据源），生成的脚本只剩 docstring、来源注释、`import tavotto_plot_xxxxxxxx as tp`、常量和
+`main()`；父进程算期望指纹调用的就是同一批函数，不是抄第二份。**落盘规则**（下一个 PR 实现；本模块不写任何文件）：脚本与公共模块
+都只新建，永不覆盖；公共模块已存在且字节相同就复用，存在但字节不同按损坏报错、不覆盖；内容变了名字就变，老脚本继续 import 它们当时的
+那一版。脚本不自己改 `sys.path`：safe worker 与 native bridge 都把脚本所在目录放在 `sys.path[0]`（与 `python 脚本.py` 相同），
+真 worker 与真 native bridge 两条入口各有用例钉住（cwd 与脚本目录不同的情形也钉了）。
 `tests/test_ai_data_template.py` 用真 safe worker 对拍：manifest 的数据指纹与这里算的期望逐字节相等。
 
 **哪些层能核**（`engine/manifest.py::data_fingerprint` 的覆盖面 × `figureverify.data_matches_expected` 按 label 匹配）：
@@ -22,6 +27,8 @@ from __future__ import annotations
 import ast
 import csv
 import datetime
+import functools
+import hashlib
 import inspect
 import json
 import math
@@ -490,8 +497,6 @@ RUNTIME_FUNCTIONS = (
     pick_fonts,
 )
 #: 只有 XLSX 数据源的脚本才内嵌 `read_xlsx` 与 xlsxread；CSV / TSV 的脚本里没有它们
-_XLSX_ONLY = (read_xlsx,)
-_DELIMITED_ONLY = (read_delimited,)
 
 # =========================================================================== 样式（出处：出版规范 profile）
 #: Okabe & Ito（2008）的色盲安全分类色（公开发表的调色板，无许可证限制）；去掉对比弱的黄色。仓库里没有批准的分类色表
@@ -636,6 +641,10 @@ def _source_comment(entry: adf.TableEntry, recipe: recipe_mod.FigureRecipe, data
     )
 
 
+XLSX_BEGIN = "# ---- begin xlsxread（Tavotto 的 XLSX 读取，原文内嵌）"
+XLSX_END = "# ---- end xlsxread"
+
+
 def _xlsx_source() -> str:
     """`xlsxread` 的源码原文，去掉模块 docstring 与 `from __future__` 行（脚本自己在顶部写 `__future__`）。"""
     src = inspect.getsource(xlsxread)
@@ -651,38 +660,75 @@ def _xlsx_source() -> str:
     return "\n".join(ln for i, ln in enumerate(lines, start=1) if i not in drop).strip("\n") + "\n"
 
 
-XLSX_BEGIN = "# ---- begin xlsxread（Tavotto 的 XLSX 读取，原文内嵌）"
-XLSX_END = "# ---- end xlsxread"
-HELPERS_BEGIN = "# ---- begin runtime（读表 / 汇总 / 布局；Tavotto 算期望值用的是同一份源码）"
-HELPERS_END = "# ---- end runtime"
+RUNTIME_PREFIX = "tavotto_plot_"
+RUNTIME_ALIAS = "tp"
+_RUNTIME_DOC = (
+    '"""Tavotto 生成的绘图公共模块：读表（CSV / TSV / XLSX）、单元格解析、汇总、布局、抖动、箱线 / 核密度 / 拟合的数值函数。\n\n'
+    "由 Tavotto 生成，被**同目录里 Tavotto 生成的绘图脚本**共用；请不要修改它——文件名里的 8 位十六进制是本文件全部字节的\n"
+    "sha256 前缀，内容变了名字就对不上。Tavotto 只新建、不覆盖：以后版本换了实现会生成另一个名字的文件，现有脚本继续用\n"
+    "它们当时 import 的这一份。模块里不含任何数据。\n"
+    '"""\n'
+)
 
 
-def _runtime_block(is_xlsx: bool) -> str:
-    funcs = [f for f in RUNTIME_FUNCTIONS if f not in (_DELIMITED_ONLY if is_xlsx else _XLSX_ONLY)]
-    parts = [HELPERS_BEGIN, _ISO_DATE_PREAMBLE.rstrip("\n"), ""]
-    for f in funcs:
-        parts.append(inspect.getsource(f).rstrip("\n"))
-        parts.append("")
-    parts.append(HELPERS_END)
-    return "\n".join(parts)
-
-
-def _header(entry, recipe, data_rel, title, is_xlsx):
-    return [
-        f'"""由 Tavotto 根据数据生成的图（data_to_figure v2：{title}）。之后就是一份普通的绘图脚本，可以随意修改。"""',
-        f"# tavotto-source: {_source_comment(entry, recipe, data_rel)}",
+def _runtime_source() -> str:
+    """公共模块的全文：说明 + 全部运行时函数的源码（`inspect.getsource`，与父进程算期望值调用的是同一批）+ `xlsxread` 的源码原文。
+    对所有图逐字节相同，不含任何数据。"""
+    parts = [
+        _RUNTIME_DOC.rstrip("\n"),
         "from __future__ import annotations",
         "",
         "import csv",
         "import math",
         "import re",
+        "",
+        _ISO_DATE_PREAMBLE.rstrip("\n"),
+        "",
+        "",
+    ]
+    for f in RUNTIME_FUNCTIONS:
+        parts.append(inspect.getsource(f).rstrip("\n"))
+        parts.append("")
+        parts.append("")
+    parts += [XLSX_BEGIN, _xlsx_source().rstrip("\n"), XLSX_END, ""]
+    return "\n".join(parts)
+
+
+@functools.lru_cache(maxsize=1)
+def runtime_module() -> tuple[str, bytes]:
+    """`(文件名, 字节)`：与生成的脚本放在同一目录的公共模块。文件名按内容寻址 `tavotto_plot_<sha256 前 8 位>.py`
+    （合法的模块名）。**落盘规则**（下一个 PR 实现，本模块不写任何文件）：脚本与公共模块都只新建；公共模块已存在且字节相同
+    → 复用；存在但字节不同 → 按损坏报错，**不覆盖**；内容变了名字就变，老脚本继续 import 它当时的那一版。"""
+    data = _runtime_source().encode("utf-8")
+    return f"{RUNTIME_PREFIX}{hashlib.sha256(data).hexdigest()[:8]}.py", data
+
+
+def _header(entry, recipe, data_rel, title, is_xlsx):
+    name = runtime_module()[0][: -len(".py")]
+    return [
+        f'"""由 Tavotto 根据数据生成的图（data_to_figure v2：{title}）。之后就是一份普通的绘图脚本，可以随意修改。\n\n'
+        f'读表、汇总、布局的函数在同目录的 {name}.py 里（Tavotto 生成，别改它；它不含数据）。"""',
+        f"# tavotto-source: {_source_comment(entry, recipe, data_rel)}",
+        "from __future__ import annotations",
+        "",
         "from pathlib import Path",
         "",
         "import matplotlib.pyplot as plt",
         "from matplotlib.patches import Patch",
         "",
+        f"import {name} as {RUNTIME_ALIAS}",
+        "",
         f"DATA = Path(__file__).resolve().parent / {data_rel!r}",
     ]
+
+
+_RUNTIME_CALL = re.compile(r"\b(" + "|".join(f.__name__ for f in RUNTIME_FUNCTIONS) + r")\(")
+
+
+def _via_runtime(lines: list[str]) -> list[str]:
+    """脚本 `main()` 里对运行时函数的调用都经公共模块别名 `tp.` 走。只处理生成的代码行（数据里的文字只在顶部常量里，
+    且是 `repr()` 字面量，不经过这里）。"""
+    return [_RUNTIME_CALL.sub(lambda m: f"{RUNTIME_ALIAS}.{m.group(1)}(", ln) for ln in lines]
 
 
 def _rc_lines(style: dict, many_panels: bool) -> list[str]:
@@ -794,18 +840,15 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
         f"XLABEL = {adf.axis_label(recipe.x)!r}",
         f"YLABEL = {adf.axis_label(recipe.y[0])!r}",
         f"PALETTE = {list(PALETTE)!r}",
-        "",
-        "",
-        _runtime_block(is_xlsx),
     ]
-    if is_xlsx:
-        L += ["", "", XLSX_BEGIN, _xlsx_source().rstrip("\n"), XLSX_END]
     if is_xlsx:
         reader = "read_xlsx(DATA, SHEET)"
     else:
         delim = "'\\t'" if entry.path.lower().endswith((".tsv", ".tab")) else "','"
         reader = f"read_delimited(DATA, {delim})"
-    L += ["", "", "def main():", f"    header, rows = {reader}"]
+    L += ["", "", "def main():"]
+    main_at = len(L)
+    L.append(f"    header, rows = {reader}")
     L += [
         "    d = comparison_data(header, rows, X, Y, GROUP, FACET, ORDER)",
         "    cats, groups, panels = d['cats'], d['groups'], d['panels']",
@@ -861,7 +904,7 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
         "    main()",
         "",
     ]
-    return "\n".join(L)
+    return "\n".join(L[:main_at] + _via_runtime(L[main_at:]))
 
 
 # --------------------------------------------------------------------------- trend
@@ -942,18 +985,15 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
         f"YLABEL = {ylabel!r}",
         f"PALETTE = {list(PALETTE)!r}",
         f"LINESTYLES = {list(LINESTYLES)!r}",
-        "",
-        "",
-        _runtime_block(is_xlsx),
     ]
-    if is_xlsx:
-        L += ["", "", XLSX_BEGIN, _xlsx_source().rstrip("\n"), XLSX_END]
     if is_xlsx:
         reader = "read_xlsx(DATA, SHEET)"
     else:
         delim = "'\\t'" if entry.path.lower().endswith((".tsv", ".tab")) else "','"
         reader = f"read_delimited(DATA, {delim})"
-    L += ["", "", "def main():", f"    header, rows = {reader}"]
+    L += ["", "", "def main():"]
+    main_at = len(L)
+    L.append(f"    header, rows = {reader}")
     if x_is_date:
         L += [
             "    import matplotlib.dates",
@@ -1021,10 +1061,20 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
         "    main()",
         "",
     ]
-    return "\n".join(L)
+    return "\n".join(L[:main_at] + _via_runtime(L[main_at:]))
 
 
 RENDERERS = {"comparison": _render_comparison, "trend": _render_trend}
+
+
+@dataclass(frozen=True)
+class Rendered:
+    """一次渲染的产物：脚本文本 + 它 import 的公共模块（文件名与字节，对所有图逐字节相同）。落盘是调用方的事（下一个 PR）：
+    两个文件都只新建；公共模块已存在且字节相同就复用，存在但字节不同按损坏报错、不覆盖。"""
+
+    script: str
+    runtime_name: str
+    runtime: bytes
 
 
 def render_recipe_script(
@@ -1034,14 +1084,16 @@ def render_recipe_script(
     data_rel: str,
     stem: str,
     style: dict | None = None,
-) -> str:
-    """配方 → 完整的绘图脚本文本。`entry` 是配方指的那张表（来自 `profile_folder`，不带行数据：脚本运行时自己读文件）；
+) -> Rendered:
+    """配方 → 短脚本 + 公共模块。`entry` 是配方指的那张表（来自 `profile_folder`，不带行数据：脚本运行时自己读文件）；
     `data_rel` 是数据文件相对**脚本所在目录**的 POSIX 路径（调用方保证不出数据文件夹）；`stem` 决定输出 `<stem>.pdf`；
-    `style` 缺省取 `profiles.load()` 的默认出版规范。调用方须先 `validate_recipe`；对不认识的组合抛 `TemplateError`。"""
+    `style` 缺省取 `profiles.load()` 的默认出版规范。调用方须先 `validate_recipe`；对不认识的组合抛 `TemplateError`。
+    脚本里数据文字只以 `repr()` 字面量出现；公共模块不含任何数据。"""
     _check(entry, recipe)
     if style is None:
         style = style_from_profile()
-    return RENDERERS[recipe.family](entry, recipe, data_rel, stem, style)
+    name, data = runtime_module()
+    return Rendered(RENDERERS[recipe.family](entry, recipe, data_rel, stem, style), name, data)
 
 
 # =========================================================================== 期望数据指纹（父进程；与脚本同一批函数）

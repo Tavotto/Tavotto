@@ -48,8 +48,15 @@ v1（ADR 0138 Phase 5）只读**一个 CSV**，只会折线 / 柱两种图，列
 
 ## 模板与期望指纹（批次 1：comparison、trend；`ai_data_template.py`）
 
-脚本由 `render_recipe_script` 生成：只 import 标准库 + matplotlib，无参 `main()`、静态输出名、数据路径相对脚本；头部注释写来源（文件名 + sha256 + 配方 JSON，ASCII、单行、**不含 `why`**）。
-读表、汇总、抖动、箱、核密度、拟合等数值函数是模板模块里的普通函数，脚本内嵌它们的源码、父进程算期望值调用同一批——不是「两处各抄一份、靠测试对拍」；XLSX 读取内嵌的是 `xlsxread` 的源码原文。
+**脚本形态：短脚本 + 旁边一个公共文件**（用户 2026-11-11 选定；此前的方案是把约 380 行运行时整段内嵌进每个脚本，被否）。
+`render_recipe_script` 返回 `Rendered(script, runtime_name, runtime)`：脚本只剩 docstring、来源注释（文件名 + sha256 + 配方 JSON，ASCII、单行、**不含 `why`**）、
+`import tavotto_plot_xxxxxxxx as tp`、常量和无参 `main()`（matplotlib 调用保持直白，用户与改图助手在这里改），数据路径相对脚本，输出名静态。
+读表、汇总、抖动、箱、核密度、拟合等数值函数是模板模块里的普通函数；公共模块 = 这批函数的源码（`inspect.getsource`）+ `xlsxread` 的源码原文，父进程算期望值调用同一批函数——
+不是「两处各抄一份、靠测试对拍」。公共模块对所有图逐字节相同、**不含任何数据**（数据文字只以 `repr()` 字面量出现在脚本里），一个模块覆盖三种数据源。
+文件名按内容寻址 `tavotto_plot_<sha256 前 8 位>.py`（合法的模块名）：内容变了名字就变。**落盘规则**（`tavotto_figures/` 落盘是下一个 PR 的事，本 PR 不写任何用户文件）：
+脚本与公共模块都只新建、永不覆盖；公共模块已存在且字节相同 → 复用；存在但字节不同 → 按损坏报错、不覆盖；老脚本继续 import 它们当时的那一版，新旧版本的公共模块并存。
+脚本不改 `sys.path`：safe worker 与 native bridge 都把脚本目录放在 `sys.path[0]`。静态扫描（`discover` / `projscan`）不会把公共模块当成一张图（没有存图调用、没有 `main`），
+它只作为普通 .py 出现在脚本清单里（`no_static_output`）；要让清单也跳过它，最小处理是把前缀 `tavotto_plot_` 加进 `discover.SKIP_PREFIXES`（待决定）。
 期望指纹只对父进程**能逐字节算准**、并且验证器**能按 label 匹配**的层声明：散点、Line2D、柱组可核；误差线、误差带、箱、小提琴不核（manifest 里没有 label 字段 / 由 matplotlib 拼成），
 `fingerprint_coverage` 如实列出，没有可核层就报告「这张图的数据没法核」，绝不折算成 verified。图上的诚实：汇总层必有定义与 n 的说明（`mean ± SD; n = 12`，各格 n 不同则 n 写进刻度标签），
 柱的轴含 0，不画星号与 P 值，抖动是确定性的。样式数字来自出版规范 profile，分类色用公开的 Okabe–Ito 色盲安全色板。
