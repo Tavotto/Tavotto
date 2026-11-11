@@ -744,7 +744,7 @@ export function ExportDialog() {
   const unlisted = (f: ExportFormat) => !!journalAdvice?.listed && !journalAdvice.listed.has(f);
   const withJournalNote = (f: ExportFormat, hint: string) =>
     unlisted(f)
-      ? `${hint} · ${ex("journalUnlisted", { journal: journalAdvice!.journal, format: f.toUpperCase() })}`
+      ? `${hint}\n${ex("journalUnlisted", { journal: journalAdvice!.journal, format: f.toUpperCase() })}`
       : hint;
   const ppiOptions = useMemo(() => {
     const extra = journalAdvice?.dpi != null ? String(journalAdvice.dpi) : null;
@@ -755,7 +755,7 @@ export function ExportDialog() {
   const journalDpiNote = journalAdvice?.dpi != null
     ? ex("journalDpi", {
         journal: journalAdvice.journal,
-        detail: journalAdvice.dpiParts.map(([k, v]) => (k ? `${k} ${v}` : String(v))).join("、"),
+        detail: journalAdvice.dpiParts.map(([k, v]) => (k ? `${k} ${v}` : String(v))).join("\n"),
       })
     : null;
   // 只出 PDF 时这条规则自己就不出场（`exportContextRaw()` 先看格式里有没有
@@ -2021,7 +2021,7 @@ export function ExportDialog() {
                   className="w-56"
                 />
                 {journalDpiNote && (
-                  <Tip label={journalDpiNote} side="top">
+                  <Tip label={journalDpiNote} side="top" tone="light">
                     <button type="button" data-export-journal-dpi aria-label={journalDpiNote} className="inline-flex shrink-0 text-ink-3">
                       <Info size={ICON_SIZE.xs} aria-hidden />
                     </button>
@@ -3308,7 +3308,7 @@ function FormatCheck({
   // 说明走应用自己的气泡（`Tip`），不用原生 `title`：灰掉的 `<input>` 不派发指针事件，停在复选框上原生提示永远不出，
   // 而「为什么灰」恰恰是灰掉时最要紧的那句。禁用时复选框不吃指针，悬停落到整行 label 上
   return (
-    <Tip label={hint} side="top">
+    <Tip label={hint} side="top" tone="light">
       <label
         data-export-format={format}
         data-export-format-hint={hint}
