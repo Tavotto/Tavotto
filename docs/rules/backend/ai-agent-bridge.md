@@ -318,16 +318,16 @@ order: 240
   `validate_recipe(profile, recipe, confirmed=, values=)`：结构规则只看 `FolderProfile`，取值规则（每组 n、非负、重复 x、dose > 0……）只在给了带行数据的摘要时才判，
   不给就不判（`eligible()` 把它们列在 `unchecked`，不假装判过）；`unit` / `paired` 只认 `Confirmed`（用户在对话里点选确认过的设计与个体编号列），
   `DataSummary.id_like` / `repeats` 只是线索、永不当已确认；`enforce_order` 在模型排序之后再强制一遍（柱加误差线不排在含原始点的画法前、不合格剔除带原因、剩不足 2 个如实返回）。
-  `renderable(family)` 的出处是 `ai_data_recipe.RENDERABLE`（现在只有 comparison、trend；`ai_data_template` import 时核它与 `RENDERERS` 逐项一致）。选图准则文字 `ai_prompt_pack.data_figure_guidance()` **由这三张表渲染**，不许另抄第二份规则清单
+  `renderable(family)` 的出处是 `ai_data_recipe.RENDERABLE`（现在是批次 1 的四族 comparison、trend、relationship、distribution；`ai_data_template` import 时核它与 `RENDERERS` 逐项一致）。选图准则文字 `ai_prompt_pack.data_figure_guidance()` **由这三张表渲染**，不许另抄第二份规则清单
   （`tests/test_ai_data_recipe.py` 钉每个码都有句子、准则不出现表里没有的族 / 图元）。阈值全是 `ai_data_recipe` 的具名常量。
 - **数据出图 v2 的模板与期望指纹（`engine/ai_data_template.py`，ADR 0178）**：`render_recipe_script(entry, recipe, data_rel=, stem=, style=)` 只接受通过
   `validate_recipe` 的配方，不认识的组合抛 `TemplateError`、不画近似。**一份实现两处用**：读表 / 单元格解析 / 汇总 / 抖动 / 箱 / 核密度 / 拟合都是模块里的普通函数
   （`RUNTIME_FUNCTIONS`），这些函数的源码（`inspect.getsource`）与 `xlsxread` 的源码原文被收进**旁边的公共模块** `tavotto_plot_<sha256 前 8 位>.py`（`runtime_module()`，内容寻址、对所有图逐字节相同、不含数据，
   落盘只新建、同字节复用、异字节按损坏报错不覆盖——落盘在下一个 PR），脚本只剩 import + 常量 + `main()`（`render_recipe_script` 返回 `Rendered`）；父进程的 `expected_fingerprints` 调用的是同一批函数；
   列名 / 表名 / 文件名只以 `repr()` 字面量进脚本（来源注释是 ASCII JSON，不含 `why`），脚本 AST 的标识符集合与数据无关。脚本不改 `sys.path`（两条入口都把脚本目录放在 `sys.path[0]`，`tests/bridge/test_bridge_generated_figure_script.py` 钉 native）。每个数据 artist 的 label 在整张图里唯一
-  （`make_label`），验证器按 label 匹配。**可核 = 散点（points / jitter）、Line2D（line / step / hline_summary / fit_line）、柱组（bar）；不核 = errorbar / band / box / violin**
+  （`make_label`），验证器按 label 匹配。**可核 = 散点（points / jitter）、Line2D（line / step / hline_summary / fit_line / density / ecdf）、柱组（bar / hist）；不核 = errorbar / band / box / violin**
   （误差棒容器与 `fill_between` 在 manifest 里没有 label 字段）——`fingerprint_coverage` 如实列出，不折算成 verified；没有任何可核层 = 这张图的数据没法核。
-  样式数字取自 `profiles.load()`（`style_from_profile`，取不到才用具名默认）；分类色是 Okabe–Ito（公开色盲安全色板）。看护 `tests/test_ai_data_template.py`（真 safe worker 对拍）与 `tests/bridge/test_bridge_generated_figure_script.py`。
+  relationship / distribution 的规则（Freedman–Diaconis 分箱、Scott 带宽、ECDF 阶梯、在画出来的坐标里拟合的最小二乘线）各只有运行时里一份实现，可画的图元组合由 `validate_recipe` 与模板同口径拒绝（ADR 0178）。样式数字取自 `profiles.load()`（`style_from_profile`，取不到才用具名默认）；分类色是 Okabe–Ito（公开色盲安全色板）。看护 `tests/test_ai_data_template.py`（真 safe worker 对拍）与 `tests/bridge/test_bridge_generated_figure_script.py`。
 - **TAF 改图（`engine/ai_figure_edit.py`，Phase 3a）**：只在 `config.ai_settings()["taf"]["enabled"] is True`（默认关、无界面开关）
   时由 `ai_bridge.run` 走到；开关关着时旧路径逐字不变（cwd 是项目目录、不写任务列、`ADAPTERS` 为空）。开着时：spawn 之前在
   `data_dir()/cache/ai_candidates/<sid>/` **字节复制**目标脚本（+ 项目根的 `paper_style.py`，绝不建链接），拍原项目有界指纹（跳过
@@ -887,3 +887,14 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 写大文件时事件流静默、写入被拒后换位置写，都是真模型才复现（#1628）；2026-11-07 一份用户反馈：Windows 没有第①档
 沙盒，命令一律返回 `sandbox_unavailable`，设计指望模型带 `outside_sandbox` 重试，真模型没重试，用户批准修复后什么都没
 发生（#1793）。
+
+## 改图助手的附件（ADR 0175，`engine/ai_attachments.py`）
+
+用户附的文件（图片或任意数据文件）经 `POST /api/ai/attachments?name=`（请求体 = 文件字节）暂存到 `data_dir()/cache/ai_attachments_staged/<id>__<安全文件名>`（1 h 过期、× 即删）。图片按魔数认 PNG / JPEG / GIF / WebP（≤ 4 MiB、≤ 4000 万像素），其余单个 ≤ 25 MiB、一次合计 ≤ 50 MiB、≤ 6 个。`/api/ai/run` 只带 `attachments` id（`valid_ids`）。`ai_bridge.run(attachments=)` 经 `_attach_attachments` 把文件**移**进工作目录（`materialize`，重名加序号，合计超限之后的静默跳过）：
+
+- 有候选（TAF / 内置执行器）：`<候选>/_attachments/<名>`，提示词给相对路径；`ai_figure_edit._tree` 排除候选根下的这个目录（`ATTACHMENTS_DIRNAME` 唯一出处在 `ai_attachments`），所以不算「改了别的文件」，也不会被写回；随候选一起清。
+- 无候选（外部 CLI 原地改）：`data_dir()/cache/ai_attachments/<sid>/`，提示词给绝对路径，Claude 经 `RunContext.read_dirs` 多一个 `--add-dir`（只在附文件时出现）；`_finish_session` / `_drop_attempt_files` 删，24 h 兜底。**绝不写用户项目目录。**
+- 提示词段 `ai_prompt_pack.attachments_note` 不进 `V1` 闭集（同转换提示词一节）：「参考图」与「数据 / 其他附件」分别列路径；不附文件时整段一行都不执行，请求 / 提示词 / 工作区 / 历史行逐字节不变。
+- `sessions.attachment_count` 只存个数；`SESSION_DTO_KEYS` 带 `attachment_count`。文件不进历史、遥测、诊断包。
+- 能力清单的 `no_vision`（执行器与连接上的可选字段）来自 `ai_attachments.known_text_only`：只列**确定**看不了图的型号，判不出的不列、照常发送；前端不镜像名单。
+- 看护：`tests/test_ai_attachments.py`。

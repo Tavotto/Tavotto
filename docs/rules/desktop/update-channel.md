@@ -44,5 +44,8 @@ order: 60
   后台改走镜像的条件＝同一版本后台走 GitHub 连续失败 3 次，或新版发布超过 3 天且试过至少一次，跨重启记在 `app_config_dir()/update-source.json`
   （`update_source_memory.rs`；发布时间取清单 `pub_date`，取不到用本机首次见到的时刻；读写失败静默）。与 check 不同来源的来源一律重新 check 且必须同版本，
   别的版本 / 没有该版本＝`version_mismatch` 直接用镜像，不悄悄换版本、也不计入失败。非大陆环境一个字不变。
+  ⑥ **第三个下载来源：国内自建边缘节点（ADR 0121 §十，2026-11-11）**：`Source::Edge`，清单 `EDGE_MANIFEST_URL`（`up.tavotto.cn`）；**只在大陆·后台**插进 `plan_for`
+  （`[GitHub, 节点, 镜像]`；改道后 `[节点, 镜像, GitHub]`，仍 `Steady`），check 顺序 / 手动下载 / 非大陆一个字不变。节点同样过 `decide_updater`（根换成节点根）+ pin host；
+  404 或连不上 = 来源不可用、换下一个（服务器删清单即关停，客户端不发版）；失败不触发镜像 `Cooldown`；`outcome_of` 把节点赢与镜像赢同样对待。界面文案与镜像共用，不出现「节点」。
   看护：`app_update.rs` 的顺序单测 + `update_source_memory.rs` 单测、`app_update_flow_tests.rs`（本地假 HTTP 服务 + 测试密钥签名的包，从不调用 `apply`；后台下载用 `install_pending` 注入「装」的替身）、
   `main.rs` 的 `run_event_exit_writes_clean_after_the_sidecar_is_gone`（退出时装包排在 clean 之后、只有一处）。

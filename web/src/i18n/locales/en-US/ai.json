@@ -115,6 +115,8 @@
     "untitled": "untitled"
   },
   "message": {
+    "attachmentCount_one": "{{count}} file attached",
+    "attachmentCount_other": "{{count}} files attached",
     "collapse": "Show less",
     "copy": "Copy message",
     "expand": "Show more",
@@ -210,7 +212,14 @@
     "connectAi": "Connect AI",
     "noAi": "No AI connected yet.",
     "connectMore": "Connect more AI…",
-    "aiModel": "AI & model"
+    "aiModel": "AI & model",
+    "attachTip": "Attach files · up to 6, or paste / drop them in",
+    "attachRemove": "Remove this file",
+    "attachChipAria": "Attachment {{name}}",
+    "attachNoVision": "This model can't see images, ",
+    "attachNoVisionOnly": "This model can't see images",
+    "attachSwitch": "switch to {{model}}",
+    "attachAria": "Attach files"
   },
   "process": {
     "thought": "Thought for {{duration}}",
@@ -255,6 +264,9 @@
     "aiTaskRejected": "The assistant’s edit didn’t pass the checks; your project is unchanged",
     "aiTaskVerified": "The assistant edited the script and the data checks out; re-rendering…",
     "aiTimeout": "The assistant timed out",
+    "attachOverflow": "Up to 6 files; the rest were skipped",
+    "attachTooLarge": "A file was too large (25 MB each) and wasn't attached",
+    "attachUploadFailed": "That file didn't go through. Try again.",
     "cancelled": "Cancelled",
     "done": "Done",
     "failed": "Failed",

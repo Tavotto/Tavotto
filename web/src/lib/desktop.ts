@@ -728,7 +728,7 @@ export async function runHostIntegration(
  * 更新包的签名由壳里的公钥校验（tauri.conf.json 的 plugins.updater.pubkey），
  * 私钥只在 CI 里；来源不影响信任，校验不过当场失败，装不上去。
  */
-export type UpdateSource = 'mirror' | 'github'
+export type UpdateSource = 'mirror' | 'github' | 'edge'
 
 export interface DesktopUpdateInfo {
   version: string
