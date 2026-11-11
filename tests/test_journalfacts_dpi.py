@@ -63,8 +63,8 @@ def test_match_and_threshold_boundaries(fact, context):
     snapshot = copy.deepcopy(original)
     for dpi, status in [
         (799, "violated"),
-        (800, "satisfied_recorded_requirements"),
-        (801, "satisfied_recorded_requirements"),
+        (800, "satisfied_evaluated_raster_dpi_facts"),
+        (801, "satisfied_evaluated_raster_dpi_facts"),
     ]:
         result = evaluate_dpi_facts(original, context, dpi)
         assert result["status"] == status
@@ -110,7 +110,7 @@ def test_all_stages_is_not_unknown_stage(fact, context):
     context.pop("stage")
     assert (
         evaluate_dpi_facts(bundle({**fact, "stage": "any"}), context, 800)["status"]
-        == "satisfied_recorded_requirements"
+        == "satisfied_evaluated_raster_dpi_facts"
     )
     assert (
         evaluate_dpi_facts(bundle({**fact, "stage": "unknown"}), context, 800)["status"]
@@ -204,3 +204,47 @@ def test_missing_stage_is_invalid_not_any(fact, context):
     del fact["stage"]
     with pytest.raises(FactValidationError):
         evaluate_dpi_facts(bundle(fact), context, 1000)
+
+
+def test_unknown_dpi_subject_is_unverified_even_when_generic_passes(fact, context):
+    generic = {**fact, "id": "generic", "value": 300}
+    photo = {**fact, "id": "photo", "subject": "photograph_resolution", "value": 600}
+    result = evaluate_dpi_facts(bundle(generic, photo), context, 400)
+    assert result["status"] == "unknown"
+    assert result["facts"][0]["status"] == "satisfied"
+    assert result["facts"][1] == {
+        "id": "photo",
+        "subject": "photograph_resolution",
+        "source": "guide",
+        "origin": "journal",
+        "status": "unknown",
+        "reason": "unsupported_subject",
+    }
+    assert result["unevaluated_facts"] == [
+        {"id": "photo", "subject": "photograph_resolution", "reason": "unsupported_subject"}
+    ]
+    assert result["catalog_completeness"] == "unknown"
+
+
+def test_other_subjects_and_non_numeric_results_are_listed(fact, context):
+    width = {**fact, "id": "width", "subject": "width", "unit": "mm", "value": 80}
+    advice = {**fact, "id": "typical", "strength": "typical"}
+    inapplicable = {**fact, "id": "other_kind", "conditions": {"figure_kind": "halftone"}}
+    result = evaluate_dpi_facts(bundle(fact, width, advice, inapplicable), context, 800)
+    assert result["status"] == "satisfied_evaluated_raster_dpi_facts"
+    assert {
+        item["id"]: (item["subject"], item["reason"]) for item in result["unevaluated_facts"]
+    } == {
+        "width": ("width", "unsupported_subject"),
+        "typical": ("raster_dpi", "advice"),
+        "other_kind": ("raster_dpi", "not_applicable"),
+    }
+
+
+def test_unresolved_supported_facts_listed_once(fact, context):
+    context.pop("figure_kind")
+    result = evaluate_dpi_facts(bundle(fact), context, 800)
+    assert result["status"] == "unknown"
+    assert result["unevaluated_facts"] == [
+        {"id": "line", "subject": "raster_dpi", "reason": "unknown_applicability"}
+    ]
