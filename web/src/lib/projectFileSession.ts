@@ -33,8 +33,22 @@ const sameAxis = (a: ProjectFileAxis, b: ProjectFileAxis) => a === null ? b === 
   : b !== null && a.editor_id === b.editor_id && a.sequence === b.sequence
 const copy = <T>(value: T): T => structuredClone(value)
 
+/** `randomUUID` 只在安全上下文存在（MCP 宿主假源等非安全上下文是合法运行环境）：
+ *  与 aiStore.newRequestId 同一兜底——`getRandomValues` 拼 v4。 */
+function randomUuid(): string {
+  const c = globalThis.crypto
+  if (c?.randomUUID) return c.randomUUID()
+  const b = new Uint8Array(16)
+  if (c?.getRandomValues) c.getRandomValues(b)
+  else for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256)
+  b[6] = (b[6] & 0x0f) | 0x40
+  b[8] = (b[8] & 0x3f) | 0x80
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`
+}
+
 /** 一个活跃编辑器一个内存实例；不从共享 localStorage 取得 editor_id。 */
-export function createProjectFileEditor(editorId = `editor_${crypto.randomUUID()}`) {
+export function createProjectFileEditor(editorId = `editor_${randomUuid()}`) {
   type Row = {
     support: 'unknown' | 'supported' | 'unsupported' | 'unavailable'
     generation: number; axis: ProjectFileAxis; baseAxis: ProjectFileAxis
@@ -61,7 +75,7 @@ export function createProjectFileEditor(editorId = `editor_${crypto.randomUUID()
     },
     newRecoveryBranch(address: ProjectFileAddress): void {
       const row = rowOf(address)
-      row.editorId = `editor_${crypto.randomUUID()}`
+      row.editorId = `editor_${randomUuid()}`
       row.localSequence = 0
     },
     markUserEdit(address: ProjectFileAddress): void {
