@@ -380,6 +380,19 @@ def line_xy(xs, vals):
     return (xs, vals) if any(v == v for v in vals) else None
 
 
+def isolated_idx(vals):
+    """孤立的有效位置的下标：自己有值、前后都没有（缺失或到头）。折线在这里画不出线段，要靠标记让它可见；
+    给 `markevery` 用（只标这几个点，别给整条线加标记）。"""
+    n = len(vals)
+    return [
+        i
+        for i, v in enumerate(vals)
+        if v == v
+        and (i == 0 or vals[i - 1] != vals[i - 1])
+        and (i == n - 1 or vals[i + 1] != vals[i + 1])
+    ]
+
+
 def trend_centers(pool, summary):
     """每个不同的 x 一个汇总值：`(xs, 中心, 下限, 上限)`；这个 x 上没有有效值 → 中心 NaN（线在这里断开）。"""
     xs, vals = pool
@@ -513,6 +526,7 @@ RUNTIME_FUNCTIONS = (
     trend_pool,
     finite_pairs,
     line_xy,
+    isolated_idx,
     trend_centers,
     band_xy,
     error_xy,
@@ -977,13 +991,15 @@ def _trend_layer_lines(layer, tag_m: str, lw: list[float]) -> list[str]:
                 "for u, uxs, uvals in trend_units(d, p, g, y):",
                 "    ln = line_xy(uxs, uvals)",
                 "    if ln:",
-                f"        {draw}(*ln, color=color, linestyle=ls, linewidth={thick!r}{extra}, label=make_label({tag_m!r}, g, p, {tag}, u))",
+                "        iso = isolated_idx(ln[1])",
+                f"        {draw}(*ln, color=color, linestyle=ls, linewidth={thick!r}{extra}, marker='o' if iso else 'None', markersize=2.5, markevery=iso or None, label=make_label({tag_m!r}, g, p, {tag}, u))",
             ]
         return [
             f"cx, cc, _lo, _hi = trend_centers(pool, {s!r})",
             "ln = line_xy(cx, cc)",
             "if ln:",
-            f"    {draw}(*ln, color=color, linestyle=ls, linewidth={thick!r}{extra}, label={lab})",
+            "    iso = isolated_idx(ln[1])",
+            f"    {draw}(*ln, color=color, linestyle=ls, linewidth={thick!r}{extra}, marker='o' if iso else 'None', markersize=2.5, markevery=iso or None, label={lab})",
         ]
     if m == "band":
         return [
@@ -1032,6 +1048,7 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
         f"X_IS_DATE = {x_is_date!r}",
         f"XLABEL = {adf.axis_label(recipe.x)!r}",
         f"YLABEL = {ylabel!r}",
+        f"YLABELS = {[adf.axis_label(y) for y in recipe.y]!r}",
         f"PALETTE = {list(PALETTE)!r}",
         f"LINESTYLES = {list(LINESTYLES)!r}",
     ]
@@ -1086,12 +1103,15 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
     if recipe.scale in ("log_x", "log_xy"):
         L.append('        ax.set_xscale("log")')
     L += [
-        "    keys = groups if GROUP else (YS if len(YS) > 1 else [])",
-        "    if keys:",
-        "        axes[0][0].legend(",
-        "            handles=[Patch(facecolor=PALETTE[i % len(PALETTE)], label=name) for i, name in enumerate(keys)],",
-        f"            frameon={bool(style['legend_frame'])!r},",
-        "        )",
+        "    keys = groups if GROUP else (YLABELS if len(YS) > 1 else [])",
+        "    handles = [Patch(facecolor=PALETTE[i % len(PALETTE)], label=name) for i, name in enumerate(keys)]",
+        "    if GROUP and len(YS) > 1:  # 线型按 y 列区分：图例里补「线型 ↔ y 列」",
+        "        handles += [",
+        "            plt.Line2D([], [], color=PALETTE[-1], linestyle=LINESTYLES[i % len(LINESTYLES)], label=name)",
+        "            for i, name in enumerate(YLABELS)",
+        "        ]",
+        "    if handles:",
+        f"        axes[0][0].legend(handles=handles, frameon={bool(style['legend_frame'])!r})",
     ]
     if summ:
         pos = _summary_text(recipe, _PER_POINT_MARKS)

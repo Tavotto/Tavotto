@@ -1782,3 +1782,85 @@ def test_comparison_note_and_tick_n_match_each_category_by_group_cell(tmp_path):
     assert probe(work2, rendered, "result = [t.get_text() for t in fig.texts]") == [
         "mean ± SD; n = 3"
     ]
+
+
+def _iso_folder(tmp: Path) -> Path:
+    """a：有效位置 1、3、4、6（1 和 6 孤立）；b 整条只有 x=3 一个有效位置。每个位置 2 个重复。"""
+    valid = {"a": {1, 3, 4, 6}, "b": {3}}
+    rows = [["x", "arm", "y"]]
+    for arm, ok in valid.items():
+        for x in range(1, 9):
+            for k in range(2):
+                rows.append([x, arm, round(x + k * 0.5, 3) if x in ok else ""])
+    tmp.mkdir(parents=True, exist_ok=True)
+    (tmp / "iso.csv").write_text(_csv(rows), encoding="utf-8")
+    return tmp
+
+
+@needs_worker
+@pytest.mark.parametrize("mark", ["line", "step"])
+def test_isolated_valid_position_stays_visible_without_marking_the_whole_line(mark, tmp_path):
+    """两侧都缺失的孤立有效位置（含整条只剩一个位置）：线画不出线段，必须在该位置有可见标记；连续的段不加标记。"""
+    work = _iso_folder(tmp_path / "w")
+    r = mk("iso.csv", "trend", [(mark, "mean_sd")], ["y"], x="x", group="arm")
+    rendered, values = _render_in(
+        work, "iso.csv", r, allow=("trend_too_few_x",)
+    )  # 校验拒；模板对它也要诚实
+    body = (
+        "result = {}\n"
+        "for ln in fig.axes[0].lines:\n"
+        "    xs = [float(v) for v in ln.get_xdata()]\n"
+        "    ys = [float(v) for v in ln.get_ydata()]\n"
+        "    me = ln.get_markevery()\n"
+        "    idx = [] if ln.get_marker() in ('None', '', None) else (list(range(len(xs))) if me is None else list(me))\n"
+        "    result[ln.get_label()] = [xs[i] for i in idx if ys[i] == ys[i]]\n"
+    )
+    got = probe(work, rendered, body)
+    assert got[f"{mark} | a"] == [1.0, 6.0], got
+    assert got[f"{mark} | b"] == [3.0], got
+    # 同一条线、同一份数据：真 worker 对拍仍过（标记不改变 xy 指纹，label 不变）
+    man = run_in_worker(work, rendered, "fig")
+    from tavotto.engine import figureverify as fv
+
+    res = fv.data_matches_expected(man, T.expected_fingerprints(values, r))
+    assert res and all(c.verdict == fv.VERIFIED for c in res), [(c.id, c.verdict) for c in res]
+
+
+def _multi_y_folder(tmp: Path) -> Path:
+    rows = [["x", "arm", "sig_mV", "cur_mV"]]
+    for arm in ("a", "b"):
+        for x in range(1, 5):
+            for k in range(2):
+                rows.append([x, arm, x + k, 10 + x * k])
+    tmp.mkdir(parents=True, exist_ok=True)
+    (tmp / "my.csv").write_text(_csv(rows), encoding="utf-8")
+    return tmp
+
+
+_LEGEND = (
+    "lg = fig.axes[0].get_legend()\n"
+    "result = {'texts': [t.get_text() for t in lg.get_texts()] if lg else [],\n"
+    "          'styles': [getattr(h, 'get_linestyle', lambda: None)() for h in lg.legend_handles] if lg else []}\n"
+)
+
+
+@needs_worker
+def test_legend_explains_linestyle_per_y_column_when_grouped(tmp_path):
+    work = _multi_y_folder(tmp_path / "w")
+    g = mk("my.csv", "trend", [("line", "mean_sd")], ["sig_mV", "cur_mV"], x="x", group="arm")
+    rendered, _ = _render_in(work, "my.csv", g)
+    got = probe(work, rendered, _LEGEND)
+    assert got["texts"] == ["a", "b", "sig (mV)", "cur (mV)"], (
+        got
+    )  # 分组色块照旧 + 线型 ↔ y 列（轴标题写法）
+    assert got["styles"][2:] == ["-", "--"], got
+    # 不分组、多 y：颜色区分 y，图例是 y 列（同一套写法）；单个 y：图例不变
+    n = mk("my.csv", "trend", [("line", "mean_sd")], ["sig_mV", "cur_mV"], x="x")
+    rendered, _ = _render_in(work, "my.csv", n)
+    assert probe(work, rendered, _LEGEND)["texts"] == ["sig (mV)", "cur (mV)"]
+    one = mk("my.csv", "trend", [("line", "mean_sd")], ["sig_mV"], x="x", group="arm")
+    rendered, _ = _render_in(work, "my.csv", one)
+    assert probe(work, rendered, _LEGEND)["texts"] == ["a", "b"]
+    solo = mk("my.csv", "trend", [("line", "mean_sd")], ["sig_mV"], x="x")
+    rendered, _ = _render_in(work, "my.csv", solo)
+    assert probe(work, rendered, _LEGEND)["texts"] == []
