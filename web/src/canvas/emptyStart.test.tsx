@@ -253,6 +253,21 @@ describe('恢复没成时的空画布', () => {
     expect(card!.dataset.restoreHeld).toBeUndefined()
   })
 
+  it('选着画图工具点卡片、选区里留着东西：卡片都还在（Codex #1839）', async () => {
+    await mount(<CanvasStage />)
+    await needsUser('missing')
+    await act(async () => useUiStore.getState().setTool('rect'))
+    const btn = document.querySelector<HTMLElement>('[data-canvas-restore-issue] [data-restore-action]')!
+    await act(async () => {
+      btn.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }))
+      btn.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, button: 0, clientX: 10, clientY: 10 }))
+    })
+    expect(useSelectionStore.getState().ids).toEqual([])
+    await act(async () => useSelectionStore.getState().set(['ghost']))
+    expect(document.querySelector('[data-canvas-restore-issue] [data-restore-action]')).not.toBeNull()
+    await act(async () => useUiStore.getState().setTool('select'))
+  })
+
   it('暂时读不到且有动作在等：「继续新建」从 ⋯ 里拿出来摆在「重试」旁边；没有动作在等时仍折着', async () => {
     const issue: RestoreIssue = { pj: 'p1', gen: 7, kind: 'unavailable', ref: { id: 'd_x', name: 'Fig X' }, alternatives: [] }
     const shown = () =>

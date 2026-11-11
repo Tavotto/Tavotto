@@ -567,7 +567,8 @@ function EmptyHint() {
   const inTutorial = useProjectStore((s) => s.project?.tutorial === true)
   const restoreIssue = useDocumentStore((s) => (s.restoreGate.state === 'needs_user' ? s.restoreIssue : null))
   const held = useSyncExternalStore(subscribeHeldEntries, heldEntryCount) > 0
-  if (!selectionEmpty) return null
+  // 恢复卡不看选区：它是这时唯一的出口，选区里留着什么都不能把它收走（Codex #1839）
+  if (!selectionEmpty && !restoreIssue) return null
   const showCards = assetsLoaded && hasAssets
   const onLightPaper = groundInkFor(null, page) === 'paper-ink'
   // 锚在纸面**可见部分**的中心：侧栏一开、画布被挤到一边时提示跟着纸面走，
@@ -587,6 +588,8 @@ function EmptyHint() {
         data-restore-held={held ? '' : undefined}
         className="absolute w-max max-w-80 -translate-x-1/2 -translate-y-1/2"
         style={{ left: cx, top: cy }}
+        // 卡片上的按下不许漏给画布：选着画图工具时会就地起一笔、把卡片连同按钮一起收走（Codex #1839）
+        onPointerDown={(e) => e.stopPropagation()}
       >
         <Card appearance="raised" padding="md" className={cn('flex flex-col gap-1.5', held && 'outline outline-2 outline-accent')}>
           <RestoreIssueBody issue={restoreIssue} close={() => {}} held={held} />
