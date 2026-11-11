@@ -283,6 +283,82 @@ def test_eps_with_translucent_annotation_fails_only_that_item(env, inner_eps):
     assert _out(body, "pdf")["status"] == "done"  # 不静默丢，也不拖累其它格式
 
 
+def _glass(**over):
+    return {
+        "type": "shape",
+        "id": "s1",
+        "shape": "rect",
+        "x_mm": 5,
+        "y_mm": 5,
+        "w_mm": 20,
+        "h_mm": 10,
+        "fill": "#ff0000",
+        "fill_opacity": 0.5,
+        "stroke_pt": 1,
+        **over,
+    }
+
+
+def test_eps_opaque_option_writes_translucent_annotations_as_solid_in_eps_only(env, inner_eps):
+    """「EPS 按不透明导出」：EPS 成功、颜色不变（纯红，不和白色混），PDF 仍保留半透明。"""
+    client, _ = env
+    status, body = _post(client, _vector(["pdf", "eps"], [_glass()], eps_opaque=True))
+    assert status == 200, body
+    eps = _out(body, "eps")
+    assert eps["status"] == "done", eps
+    data = _path(body, "eps").read_bytes()
+    tail = data[data.index(b"tvt_state restore") :]
+    assert b"1 0 0 setrgbcolor" in tail  # 颜色没变、没有和白色混
+    assert b"/ca" not in data and b"/CA" not in data  # EPS 里没有透明
+    pdf = _path(body, "pdf").read_bytes()
+    with pymupdf.open(stream=pdf, filetype="pdf") as d:
+        xref_text = "".join(d.xref_object(x) for x in range(1, d.xref_length()))
+    assert "/ca .5" in xref_text, xref_text  # 其它格式仍保留半透明
+
+
+def test_eps_opaque_also_flattens_group_opacity_and_stroke_alpha():
+    from tavotto.rendercore import epswriter, ir
+
+    red = ir.Paint((1.0, 0.0, 0.0), 0.4)
+    path = ir.Path(
+        segments=(("M", 0, 0), ("L", 10, 0), ("L", 10, 10), ("Z",)),
+        fill=red,
+        stroke=ir.Stroke(paint=ir.Paint((0.0, 0.0, 1.0), 0.3), width=1.0),
+    )
+    page = ir.Page(100, 100, (ir.Group(children=(path,), opacity=0.5),))
+    flat = epswriter.flatten_alpha(page)
+    group = flat.children[0]
+    assert group.opacity == 1.0
+    assert group.children[0].fill == ir.Paint((1.0, 0.0, 0.0), 1.0)
+    assert group.children[0].stroke.paint == ir.Paint((0.0, 0.0, 1.0), 1.0)
+    assert page.children[0].opacity == 0.5  # 原页面（给其它格式的那份）不动
+    for node in (flat.children[0], *flat.children[0].children):
+        assert not {"object_alpha", "group_opacity"} & set(ir.operations_of(node))
+
+
+def test_eps_opaque_is_strict_and_absent_is_byte_identical(env):
+    base = _vector(["pdf", "eps"], [_glass()])
+    plain = exportreq.normalize(base)
+    assert plain.eps_opaque is False
+    assert "eps_opaque" not in plain.to_payload()
+    # 只认严格的 True；整版导出不认
+    assert exportreq.normalize({**base, "eps_opaque": "yes"}).eps_opaque is False
+    assert exportreq.normalize({**base, "eps_opaque": True}).eps_opaque is True
+    assert exportreq.normalize({**base, "eps_opaque": True}).to_payload()["eps_opaque"] is True
+    # 计划身份：缺省与「显式 false」相同；真为 true 才不同
+    ident = lambda spec: exportreq.render_plan_ref(exportreq.normalize(spec), [])["plan_identity"]  # noqa: E731
+    assert ident(base) == ident({**base, "eps_opaque": False})
+    assert ident(base) != ident({**base, "eps_opaque": True})
+    canvas = {
+        "scope": "canvas",
+        "filename": "C",
+        "formats": ["pdf"],
+        "page_w_mm": 100,
+        "page_h_mm": 80,
+    }
+    assert exportreq.normalize({**canvas, "eps_opaque": True}).eps_opaque is False
+
+
 def test_eps_opaque_shapes_are_written_as_ps_paths(env, inner_eps):
     client, _ = env
     box = {

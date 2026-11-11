@@ -2733,7 +2733,7 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
     """带标注的 EPS（自写叠加，ADR 0046 补记）：worker 的 matplotlib 照旧出原图 EPS，再由 `engine/epsoverlay`
     把它原样嵌进外层 EPS，叠上 RenderCore 为**同一组标注**编出的 IR（`rendercore/epswriter` 写成 PostScript 运算符）。
     PostScript 没有透明：标注含 alpha<1 / 位图等 PS 表达不了的东西时，这一项逐项失败（`eps_annotations_unsupported`），
-    其余格式照常交付，不静默丢标注。"""
+    其余格式照常交付，不静默丢标注。`req.eps_opaque`（用户在导出前选了「EPS 按不透明导出」）时，EPS 这一份把常量 alpha 与组不透明度压成 1。"""
     from .rendercore import epswriter, facade as rc_facade, plan as rc_plan
 
     src = req.original
@@ -2782,7 +2782,12 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
             if msg not in job.warnings:
                 job.warnings.append(msg)
         try:
-            text, _facts = epswriter.overlay_ps(compiled.page, provider, prefix=prefix)
+            text, _facts = epswriter.overlay_ps(
+                # 「EPS 按不透明导出」：只压 EPS 这一份的 IR，其它格式用的页面不受影响
+                epswriter.flatten_alpha(compiled.page) if req.eps_opaque else compiled.page,
+                provider,
+                prefix=prefix,
+            )
         except epswriter.UnsupportedCapability as exc:
             return engine_exportjob.Produced(
                 format=fmt,

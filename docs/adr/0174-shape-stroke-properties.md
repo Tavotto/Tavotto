@@ -69,7 +69,7 @@
 
 ### 描边不透明度与 EPS
 
-**形状**：进描边 `ir.Paint.alpha`（填充有自己的 `fillOpacity`）。**箭头**：作用于整支箭头（杆 + 两端端型作为一个整体）——杆伸进实心端型、开口端型与杆在尖上重叠，逐条路径各带 alpha 会在重叠处叠深。所以箭头的路径本身一律不透明，不透明度放在整支箭头的透明组上（`geometry.arrow_opacity` → `plan._shape_node` 的 `Group.opacity`，组内 alpha 从 1 起算；画布 `ArrowView` / 预览 `ThumbShape` 用外层 `<g opacity>`，图元不带 stroke-opacity / fill-opacity）。看护：`tests/test_compose_shape_stroke.py` 经 PDF 栅格化逐像素量，半透明箭头的重叠处与单层一样深（各端型 × 实线 / 虚线）。PDF / SVG / PNG 同一份 IR。**EPS 没有透明**：`epswriter` 对 alpha < 1 的路径与透明组抛 `UnsupportedCapability`，与今天的填充不透明度、面板不透明度同一条路径（EPS 这一项逐项失败、其余格式照常）。不为描边另开特例。
+**形状**：进描边 `ir.Paint.alpha`（填充有自己的 `fillOpacity`）。**箭头**：作用于整支箭头（杆 + 两端端型作为一个整体）——杆伸进实心端型、开口端型与杆在尖上重叠，逐条路径各带 alpha 会在重叠处叠深。所以箭头的路径本身一律不透明，不透明度放在整支箭头的透明组上（`geometry.arrow_opacity` → `plan._shape_node` 的 `Group.opacity`，组内 alpha 从 1 起算；画布 `ArrowView` / 预览 `ThumbShape` 用外层 `<g opacity>`，图元不带 stroke-opacity / fill-opacity）。看护：`tests/test_compose_shape_stroke.py` 经 PDF 栅格化逐像素量，半透明箭头的重叠处与单层一样深（各端型 × 实线 / 虚线）。PDF / SVG / PNG 同一份 IR。**EPS 没有透明**：`epswriter` 对 alpha < 1 的路径与透明组抛 `UnsupportedCapability`，与今天的填充不透明度、面板不透明度同一条路径（EPS 这一项逐项失败、其余格式照常）。不为描边另开特例。**后续（2026-11-11，改为导出前提醒）**：EPS 这一项不再事后才失败。单图「原图 + 画布标注」导 EPS、标注里有半透明时，点「开始导出」先问一句：「改导出 PDF」（EPS 换成 PDF，PDF 已勾就只是去掉 EPS）/「EPS 按不透明导出」（请求带 `eps_opaque: true`，后端 `epswriter.flatten_alpha` 只把 EPS 这一份 IR 的常量 alpha 与组不透明度压成 1——颜色不变、不和白色混，其余格式照旧保留半透明）/ 取消。判定在前端 `lib/epsOpacity.ts`（读载荷里的标注对象，判据与后端 `operations_of` 的 `object_alpha` / `group_opacity` 对齐），提示是 `components/EpsOpacityPrompt.tsx`，`ExportDialog` 只在发请求前接一行。位图 / 外来页仍按原样拒绝；`eps_annotations_unsupported` 保留，作为没走对话框的调用（API / 脚本）与这两类的兜底。
 
 ### 不受影响的消费者（逐个查过）
 

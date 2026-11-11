@@ -132,6 +132,7 @@ import { apiUrl } from "@/lib/session";
 import { boundedCount, captureTelemetry } from "@/lib/telemetry";
 import { cn } from "@/lib/utils";
 import { canRevealInFileManager, isDesktop, revealExportedFile } from "@/lib/desktop";
+import { useEpsOpacityGate } from "./EpsOpacityPrompt";
 import { annotationsBelow, annotationsOf, singleAnnotatedDocument } from "@/lib/singleExportDoc";
 import { useOriginalAvailability } from "@/hooks/useOriginalSpec";
 import { useRuntimePreview } from "@/hooks/useRuntimePreview";
@@ -1156,6 +1157,7 @@ export function ExportDialog() {
     });
   };
 
+  const epsGate = useEpsOpacityGate(setFormats);
   const start = useCallback(
     async (overwrite: OverwritePolicy) => {
       /*
@@ -1183,7 +1185,10 @@ export function ExportDialog() {
         withProof: withReport,
         strictInspection: strict,
       });
-      await runExport(buildRequestInput(overwrite));
+      const input = buildRequestInput(overwrite);
+      // EPS 画不出标注里的半透明：先问用户（逻辑在 EpsOpacityPrompt，命中就不在这里发）
+      if (epsGate.intercept(input, runExport)) return;
+      await runExport(input);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
@@ -2094,6 +2099,7 @@ export function ExportDialog() {
         </FormSection>
       </fieldset>
       </div>
+      {epsGate.prompt}
     </Dialog>
   );
 

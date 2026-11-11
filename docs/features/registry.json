@@ -945,6 +945,22 @@
       ]
     },
     {
+      "id": "export.eps-opacity-prompt",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "导 EPS 前提醒：标注里有半透明时，选改导出 PDF 或 EPS 按不透明导出",
+        "en-US": "Before exporting EPS with semi-transparent annotations, choose PDF instead or an opaque EPS"
+      },
+      "entry": "单图编辑加半透明标注 → ⌘E → 勾 EPS → 开始导出",
+      "e2e": [
+        {
+          "spec": "export-eps-opacity.spec.ts",
+          "title": "选了 EPS 且标注半透明：点导出先问；选「EPS 按不透明导出」后 EPS 落盘"
+        }
+      ]
+    },
+    {
       "id": "export.preview-zoom",
       "status": "active",
       "platform": "both",
