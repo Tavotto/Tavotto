@@ -1295,6 +1295,25 @@ def test_implied_grant_absorbable_only_for_undecided_to_user_interpreter_default
     assert not preparation.implied_grant_absorbable(str(root), undecided, derived)
 
 
+def test_implied_grant_absorbable_for_the_runtime_evidence_default_too(tmp_path, monkeypatch):
+    """ADR 0047 修订：沙盒里那一次的运行时证据派生出的脚本目录默认，与用户自己的 Python 同一种吸收。"""
+    from tavotto.engine import workdir
+
+    root = _project(tmp_path, "p")
+    monkeypatch.setattr(workdir, "_user_interpreter_probe", lambda r: False)
+    undecided = _grant()
+    assert workdir.adopt_runtime_evidence(str(root), {"source": "runtime"})
+    derived = _grant(implied="runtime_evidence", mode="project")
+    assert workdir.grant_for(str(root)) == derived
+    assert preparation.implied_grant_absorbable(str(root), undecided, derived)
+    # 理由对不上此刻的世界（说是用户 Python、实际是运行时证据）→ 不吸收
+    assert not preparation.implied_grant_absorbable(
+        str(root), undecided, _grant(implied="user_interpreter", mode="project")
+    )
+    workdir.set_mode(str(root), "sandbox")
+    assert not preparation.implied_grant_absorbable(str(root), undecided, derived)
+
+
 def _adopt_during_run(monkeypatch, root, *, explicit: str | None = None):
     """替身：执行线程里的「检测并采用」把项目切成用户自己的 Python（探针变真）；`explicit` 给了就是
     『采用的同时用户（别的会话）也设了这一档』——授权变化不再只是派生默认。"""
