@@ -38,6 +38,13 @@ _TEMPLATES: dict[str, frozenset[str]] = {
     "context_stem": frozenset({"stem"}),
     "context_element": frozenset({"gid", "label"}),
     "context_overrides": frozenset({"overrides"}),
+    "context_journal": frozenset({"journal", "requirements"}),
+    "journal_font_min": frozenset({"pt"}),
+    "journal_font_max": frozenset({"pt"}),
+    "journal_fonts": frozenset({"names"}),
+    "journal_line_min": frozenset({"pt"}),
+    "journal_widths": frozenset({"widths"}),
+    "journal_dpi": frozenset({"dpi"}),
     "request": frozenset({"user_prompt"}),
     "candidate_note": frozenset({"project_root"}),
     "correction_header": frozenset(),
@@ -150,6 +157,17 @@ V1 = {
             "用户已在界面上做了这些非破坏性修改（渲染时叠加的 override，"
             "代表期望状态，供参考）：{overrides}"
         ),
+        # 项目按期刊检查时才出现（`context["journal"]`，见 `journal_context`）；没有它时 V1 的输出逐字节不变
+        "context_journal": (
+            "这个项目按期刊「{journal}」的作图要求检查：{requirements}。"
+            "用户提到投稿、期刊要求或「按要求改」时以这些为准；用户没要求的部分不要为了凑要求去改。"
+        ),
+        "journal_font_min": "字号不小于 {pt} pt",
+        "journal_font_max": "字号不大于 {pt} pt",
+        "journal_fonts": "西文字体用 {names} 之一",
+        "journal_line_min": "线宽不小于 {pt} pt",
+        "journal_widths": "图宽取 {widths} mm 之一",
+        "journal_dpi": "位图分辨率不低于 {dpi} dpi",
         "request": "用户需求：{user_prompt}",
         "candidate_note": (
             "注意：当前工作目录是目标脚本的工作副本；原项目目录 {project_root} 只供只读参考"
@@ -204,10 +222,82 @@ def figure_edit_prompt(
         ctx_lines.append(pack.render("context_element", gid=ctx["gid"], label=ctx.get("label", "")))
     if ctx.get("overrides"):
         ctx_lines.append(pack.render("context_overrides", overrides=ctx["overrides"]))
+    journal_line = journal_context(pack, ctx.get("journal"))
+    if journal_line:
+        ctx_lines.append(journal_line)
     if ctx_lines:
         lines += ["", *ctx_lines]
     lines += ["", pack.render("request", user_prompt=user_prompt)]
     return "\n".join(lines)
+
+
+#: 期刊上下文的边界：这一段来自前端请求体，只收形状对、大小有界的值；任何一项不对就整段不写（它只是参考，不该挡住改图）
+_JOURNAL_LABEL_MAX = 200
+_JOURNAL_LIST_MAX = 12
+_JOURNAL_NAME_MAX = 80
+
+
+def _pos_num(v: object) -> float | None:
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    f = float(v)
+    return f if f > 0 and f < 10000 and f == f else None
+
+
+def _fmt(v: float) -> str:
+    return f"{v:g}"
+
+
+def journal_context(pack: PromptPack, raw: object) -> str | None:
+    """前端给的期刊要求（`{label, min_font_pt?, max_font_pt?, fonts?, min_line_pt?, widths_mm?, min_dpi?}`）→ 一句上下文。
+
+    形状不对（不是对象、名字不是非空短字符串、数不是正数、列表超长 / 元素类型不对）一律回 None：整段不写，
+    不半写、不抛——这段只是给 Agent 的参考，坏了不该让改图失败。一条要求都没有也回 None。
+    """
+    if not isinstance(raw, dict):
+        return None
+    label = raw.get("label")
+    if not isinstance(label, str) or not label.strip() or len(label) > _JOURNAL_LABEL_MAX:
+        return None
+    parts: list[str] = []
+    for key, tpl in (("min_font_pt", "journal_font_min"), ("max_font_pt", "journal_font_max")):
+        if key in raw and raw[key] is not None:
+            v = _pos_num(raw[key])
+            if v is None:
+                return None
+            parts.append(pack.render(tpl, pt=_fmt(v)))
+    fonts = raw.get("fonts")
+    if fonts is not None:
+        if (
+            not isinstance(fonts, list)
+            or len(fonts) > _JOURNAL_LIST_MAX
+            or not all(
+                isinstance(x, str) and x.strip() and len(x) <= _JOURNAL_NAME_MAX for x in fonts
+            )
+        ):
+            return None
+        if fonts:
+            parts.append(pack.render("journal_fonts", names=" / ".join(x.strip() for x in fonts)))
+    if raw.get("min_line_pt") is not None:
+        v = _pos_num(raw["min_line_pt"])
+        if v is None:
+            return None
+        parts.append(pack.render("journal_line_min", pt=_fmt(v)))
+    widths = raw.get("widths_mm")
+    if widths is not None:
+        nums = [_pos_num(x) for x in widths] if isinstance(widths, list) else [None]
+        if len(nums) > _JOURNAL_LIST_MAX or any(n is None for n in nums):
+            return None
+        if nums:
+            parts.append(pack.render("journal_widths", widths=" / ".join(_fmt(n) for n in nums)))
+    if raw.get("min_dpi") is not None:
+        v = _pos_num(raw["min_dpi"])
+        if v is None:
+            return None
+        parts.append(pack.render("journal_dpi", dpi=_fmt(v)))
+    if not parts:
+        return None
+    return pack.render("context_journal", journal=label.strip(), requirements="；".join(parts))
 
 
 def candidate_note(pack: PromptPack, project_root) -> str:

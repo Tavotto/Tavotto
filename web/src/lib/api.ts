@@ -4139,6 +4139,8 @@ export interface AiRunRequest {
   scope?: string
   target?: string
   canvas?: string | null
+  /** 项目按期刊检查时的期刊要求摘要（`lib/journalAi`）；后端写成提示词里的一句。没有 = 不带 */
+  journal?: import('./journalAi').JournalAiContext
   /** 用户附的参考图：`uploadAiAttachment` 给的暂存 id（最多 4 个）；不附图时不带这个字段（请求逐字节不变） */
   attachments?: string[]
   /**
