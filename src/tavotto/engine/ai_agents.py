@@ -208,6 +208,9 @@ class RunContext:
     #: 适配器不读全局配置。仅 Codex 用：(Windows ∧ 转换 ∧ 设置为真) 才以 `danger-full-access` 起（方案 B，`codex_sandbox_mode`）
     convert_task: bool = False
     convert_unsandboxed: bool = False
+    #: 额外放行**只读**的目录（用户附的参考图在数据目录里，不在 cwd 之内，ADR 0175）。只有 Claude 需要（`--add-dir`）；
+    #: Codex 的 workspace-write 沙盒本来就能读 cwd 之外，内置执行器的图在候选里，都忽略它
+    read_dirs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1538,6 +1541,9 @@ class ClaudeAgent(AgentDefinition):
         # 目录明确给了所选型号的档位时，请求的档位必须在其中；明确无档位就不传
         if ctx.effort and not (ctx.endpoint_args or ctx.endpoint_env) and self._effort_ok(ctx):
             cmd += ["--effort", ctx.effort]
+        if ctx.read_dirs:
+            # 放最后：`--add-dir` 接一串目录，后面不能再跟位置参数（提示词已在 `-p` 之后）
+            cmd += ["--add-dir", *ctx.read_dirs]
         return SpawnSpec(cmd, dict(ctx.endpoint_env))
 
     #: 修复会话里允许 Claude 自带命令行跑的只读命令（`Bash(<命令>)` 与 `Bash(<命令> *)` 各一条）。**故意不含 cat / head / tail / grep**：

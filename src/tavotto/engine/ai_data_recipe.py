@@ -330,7 +330,7 @@ FAMILIES: dict[str, FamilySpec] = {
             "看分布",
             1,
             when_use="读者要看一个量取值的分布：集中在哪、散多开、有没有离群或双峰。单组用直方图 / 密度，多组用 ECDF、箱线或小提琴叠原始点。",
-            when_not="要比较的只是各组均值（用 comparison）；每组值太少时不画直方图 / 密度（画原始点）。",
+            when_not="要比较的只是各组均值（用 comparison）；每组值太少时不画直方图 / 密度（画原始点）。直方图 / 密度 / ECDF 不用对数轴，也不与箱线、小提琴、原始点叠在同一张图里（值在横轴与纵轴不同）；ECDF 不与直方图 / 密度叠（纵轴含义不同）。",
             x_types=("cat",),
             x_required=False,
             y_types=("num",),
@@ -478,16 +478,17 @@ FAMILIES: dict[str, FamilySpec] = {
 }
 FAMILY_KEYS = tuple(FAMILIES)
 
-#: 批次 1 的族本 PR 之后的模板 PR 才逐族打开；注册表只放真能跑的（同 `AGENT_REGISTRY` 的纪律）。本 PR 没有模板：
-#: 这里是「下一个 PR 要实现的那批」，由测试钉住 ⊆ 批次 1。
-_RENDERABLE = frozenset({"comparison", "trend", "relationship", "distribution"})
+#: 现在真有模板、能出图的族。**唯一出处在这里**（本模块是叶子，模板模块 import 本模块，不能反过来——import 环门禁）；
+#: `ai_data_template` 在 import 时核它的 `RENDERERS` 与这张表逐项相同，多写少写当场抛。
+#: 批次 2 / 3 与批次 1 里还没写模板的族有完整的资格判定，但不在表里，模板逐族打开。
+RENDERABLE: tuple[str, ...] = ("comparison", "trend", "relationship", "distribution")
 
 
 def renderable(family: str) -> bool:
-    """这类图现在有模板能画吗。批次 2 / 3 有完整的资格判定，但模板以后才有。"""
+    """这类图现在有模板能画吗（`RENDERABLE`）。"""
     if family not in FAMILIES:
         raise ValueError(f"未知的族：{family}")
-    return family in _RENDERABLE
+    return family in RENDERABLE
 
 
 for _f in FAMILIES.values():
@@ -960,6 +961,19 @@ def validate_recipe(
             P.append(Problem("summary_misplaced", f"layers[{i}].summary", layer.mark))
     if not any(m in spec.primary for m in marks):
         P.append(Problem("no_primary_mark", "layers"))
+    # 模板能画的组合（图元与坐标的搭配）：分类轴上没有对数 x；分布的「值在横轴」图元不与「值在纵轴」图元叠、不用对数轴、
+    # ECDF（累积比例）不与直方图 / 密度（个数 / 密度）叠在同一纵轴上
+    if recipe.family in ("comparison", "distribution") and recipe.scale in ("log_x", "log_xy"):
+        P.append(Problem("mark_not_allowed", "scale", "log_x"))
+    if recipe.family == "distribution":
+        value_on_x = {"hist", "ecdf", "density"}
+        ms = set(marks)
+        if ms & value_on_x and ms - value_on_x:
+            P.append(Problem("mark_not_allowed", "layers", "value_axis"))
+        if "ecdf" in ms and ms & {"hist", "density"}:
+            P.append(Problem("mark_not_allowed", "layers", "ecdf_with_hist"))
+        if ms & value_on_x and recipe.scale != "linear":
+            P.append(Problem("mark_not_allowed", "scale", "log"))
     if not any(layer.role == "main" for layer in recipe.layers) or len(
         set((ly.mark, ly.role) for ly in recipe.layers)
     ) != len(recipe.layers):

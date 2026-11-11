@@ -570,6 +570,39 @@ def test_tight_crop_keeps_the_page_the_editor_shows(project, tmp_path):
 @pytest.mark.parametrize(
     "patch",
     [
+        {"gid": "axes_0.xlabel", "prop": "pos_frac", "value": [0.4, 0.9]},
+        {"gid": "axes_0.title", "prop": "pos_frac", "value": [0.35, 0.08]},
+        {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.5, 0.3]},
+    ],
+    ids=["axis-label", "title", "legend"],
+)
+def test_moves_on_a_tight_cropped_figure_land_where_the_editor_shows(project, tmp_path, patch):
+    """`bbox_inches="tight"` 的图，界面上的位置是**裁出来那一页**里的比例（ADR 0098）：
+    块按整张 figsize 换算就差出裁掉的那一圈，挪个文字就 `script_export_diverged`（一份用户反馈）。"""
+    client, figs = project
+    (figs / "fig1.py").write_text(
+        SCRIPT.replace('fig.savefig("Fig1.pdf")', 'fig.savefig("Fig1.pdf", bbox_inches="tight")'),
+        encoding="utf-8",
+    )
+    subprocess.run([WORKER_PY, "fig1.py"], cwd=figs, check=True)
+    pool.shutdown_all(figures_dir=str(figs), wait=True)
+    body = _export(client, [patch])
+    assert body["status"] == "done", body
+    assert _script_output(body)["script_report"]["written"] == 1
+    exported = Path(body["export_dir"])
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "points.csv").write_text("0,9,2,10,4,7.5", encoding="utf-8")
+    (run_dir / "edited.py").write_bytes((exported / "Fig1_edited.py").read_bytes())
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    subprocess.run([WORKER_PY, "edited.py"], cwd=run_dir, check=True, env=env)
+    assert _largest_channel_diff(run_dir / "Fig1.pdf", exported / "Fig1.pdf") <= _SNAP_NOISE
+
+
+@real_worker
+@pytest.mark.parametrize(
+    "patch",
+    [
         {"gid": "axes_0.title", "prop": "fontfamily", "value": "serif"},
         {"gid": "axes_0.xlabel", "prop": "fontfamily", "value": "DejaVu Serif"},
         {"gid": "axes_0.xticks", "prop": "fontfamily", "value": "serif"},

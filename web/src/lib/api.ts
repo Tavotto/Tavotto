@@ -1882,6 +1882,10 @@ interface ExportBox {
   h_mm: number
 }
 
+/** 导出载荷里的线型 / 端型（缺省 = 实线 / 无，不发；取值与文档里同名，ADR 0174） */
+type ExportDash = 'dashed' | 'dotted' | 'longdash' | 'dashdot' | 'longdashdot'
+type ExportHeadType = 'none' | 'triangle' | 'open' | 'bar' | 'dot' | 'diamond' | 'stealth'
+
 export type ExportObject =
   | (ExportBox & ArtifactRequestFields & {
       type: 'panel'
@@ -1931,9 +1935,17 @@ export type ExportObject =
       stroke_pt: number
       color: string
       head: 'none' | 'end' | 'both'
-      head_start?: 'none' | 'triangle' | 'open' | 'bar'
-      head_end?: 'none' | 'triangle' | 'open' | 'bar'
-      dash?: 'dashed' | 'dotted'
+      head_start?: ExportHeadType
+      head_end?: ExportHeadType
+      /** 端型大小；缺省 = 中（ADR 0174） */
+      head_size_start?: 'small' | 'large'
+      head_size_end?: 'small' | 'large'
+      dash?: ExportDash
+      /** 描边不透明度 0–1；缺省 1 */
+      stroke_opacity?: number
+      /** 线端 / 拐角；缺省 = 圆头 / 圆角 */
+      line_cap?: 'butt' | 'round' | 'square'
+      line_join?: 'miter' | 'bevel' | 'round'
       rotation_deg?: number
     })
   | (ExportBox & {
@@ -1948,7 +1960,12 @@ export type ExportObject =
       corner_radius_mm?: number
       sides?: number
       fill_opacity?: number
-      dash?: 'dashed' | 'dotted'
+      dash?: ExportDash
+      /** 无边框（只发 `false`；缺省 = 有描边；直线 / 大括号忽略） */
+      stroke?: false
+      stroke_opacity?: number
+      line_cap?: 'butt' | 'round' | 'square'
+      line_join?: 'miter' | 'bevel' | 'round'
       rotation_deg?: number
     })
 
@@ -3484,6 +3501,8 @@ export interface AiAgentCaps {
    * 加字段协议：旧后端不带（缺省 = 只有 id），第三方接口接管时为空。
    */
   model_details?: AiModelDetail[]
+  /** 确定只吃文字、看不了参考图的型号（后端 `ai_attachments.known_text_only`，ADR 0175）；没有 / 老后端 = 都不知道，照常发送 */
+  no_vision?: string[]
   efforts: string[]
   default_effort: string | null
 
@@ -3706,6 +3725,8 @@ export interface AiConnection {
   state: 'ready' | 'needs_auth' | 'error'
   models: string[]
   model_details?: AiModelDetail[]
+  /** 同 `AiAgentCaps.no_vision` */
+  no_vision?: string[]
   default_model: string | null
   efforts?: string[]
   default_effort?: string | null
@@ -4057,6 +4078,8 @@ export interface AiHistoryEntry {
   ended_ms: number | null
   pinned: boolean
   revert_available: boolean
+  /** 用户附了几张参考图（只有张数，图片不进历史；没附 / 老记录 = 空） */
+  attachment_count?: number | null
   transcript: { kind: string; text: string }[]
 }
 
@@ -4116,6 +4139,8 @@ export interface AiRunRequest {
   scope?: string
   target?: string
   canvas?: string | null
+  /** 用户附的参考图：`uploadAiAttachment` 给的暂存 id（最多 4 个）；不附图时不带这个字段（请求逐字节不变） */
+  attachments?: string[]
   /**
    * 点「发送」时生成的请求 id（UUID），与后端 `api_ai_run` 的 `client_request_id` 同名同义：
    * 同 (项目, id) 再 POST 后端返回既有会话、不再 spawn。重发「同一条」必须带同一个 id；
@@ -4148,6 +4173,18 @@ export const aiRun = (req: AiRunRequest, pj: string | null, timeoutMs: number = 
     pj,
   ).finally(() => clearTimeout(timer))
 }
+
+/** 暂存一个用户附的文件（请求体就是文件字节，`name` 是原文件名，ADR 0175）；图片前端先缩到 ≤ 4 MiB 再传 */
+export const uploadAiAttachment = (blob: Blob, name: string, pj: string | null) =>
+  jsonFetch<{ id: string; kind: 'image' | 'file'; mime: string | null; bytes: number; width: number | null; height: number | null; name: string }>(
+    `/api/ai/attachments?name=${encodeURIComponent(name)}`,
+    { method: 'POST', headers: { 'Content-Type': blob.type || 'application/octet-stream' }, body: blob },
+    pj,
+  )
+
+/** 用户把附的文件去掉：删后端的暂存。尽力而为（失败也不影响用户；暂存一小时后自己清） */
+export const discardAiAttachment = (id: string, pj: string | null) =>
+  jsonFetch<{ ok: boolean }>(`/api/ai/attachments/${encodeURIComponent(id)}`, { method: 'DELETE' }, pj)
 
 /** 后端按请求 id 登记的会话摘要（`GET /api/ai/requests/<id>`） */
 export interface AiRequestStatus {

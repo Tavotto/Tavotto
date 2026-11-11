@@ -26,7 +26,7 @@ ADR 0094 设计过「写回原脚本」，但它改的是用户文件，所以�
 
 - 字体：与引擎同一条族链（用户选的字体 + 本机回退尾巴，尾巴经 manifest 的 `font_fallback_tail` 拿到，含探测到的中日韩字体），公式字体同步切到 custom 字体集；「中英两格」的选择值也支持。
 - `plt.show()`：没有 savefig 的图（`capture_source=pyplot`）块多挂一个 `plt.show` 钩子（`_watch_show`，只在需要时才带进块，普通脚本不多 import pyplot）。这种图没有文件名，按引擎给 stem 的同一顺序（第几张没存盘的图）认。推翻 0094 Q11 的「v1 不支持」。既不保存也不显示的图没有生效时机，`script_export_no_savefig`。
-- `bbox_inches="tight"`：块在 savefig 那一刻改图，tight 若按改后的样子重裁，改字号就会改图幅，与界面不一致（Tavotto 的图幅在脚本跑完时定下）。这个框只有格式自己的 renderer 量得准，读它要私有 API（0094 Q10 不许），所以把界面上的框写进块（manifest `frame.savefig_in`，英寸），`savefig` 时只替换 `tight`。代价：导出之后再改脚本的数据，这个框不会跟着变；删掉 `_install` 最后一个参数就恢复自动裁切。
+- `bbox_inches="tight"`：块在 savefig 那一刻改图，tight 若按改后的样子重裁，改字号就会改图幅，与界面不一致（Tavotto 的图幅在脚本跑完时定下）。这个框只有格式自己的 renderer 量得准，读它要私有 API（0094 Q10 不许），所以把界面上的框写进块（manifest `frame.savefig_in`，英寸），`savefig` 时只替换 `tight`。代价：导出之后再改脚本的数据，这个框不会跟着变；删掉 `_install` 最后一个参数就恢复自动裁切。同一个框也是挪位置的基准：引擎的 `pos_frac` / `loc_frac` 是**这一页**里的比例（ADR 0098），块的 `_disp` 在有框时按框换算（与 `pathgeom.frac_to_display` 同口径），不按整张 figsize。
 
 `WRITES` 与 `NOT_WRITABLE` 合起来覆盖 `overrides.HANDLERS` 的每个键，新键忘了表态用例就红。这一版写得进 105 个键，155 个明说不写：`WRITES` 里的键都在 `tests/support/invariant_figures.py` 上逐键过了验证，普查没过的（单根柱、图例条目显隐、隐藏子图、刻度线宽）移进 `NOT_WRITABLE`，靠 `script_report.skipped` 如实告诉用户。
 
