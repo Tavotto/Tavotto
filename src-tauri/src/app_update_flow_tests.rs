@@ -277,8 +277,11 @@ fn app(keys: &Keys) -> tauri::App<MockRuntime> {
 }
 
 struct Rig {
+    keys: Keys,
     mirror: Fake,
     github: Fake,
+    /// 边缘节点：默认是个什么都没有的服务（清单 404 = 节点关闭）；用例用 `with_edge` 开张
+    edge: Fake,
     app: tauri::App<MockRuntime>,
     cool: Cooldown,
 }
@@ -291,12 +294,22 @@ impl Rig {
     ) -> Self {
         let mirror = serve(|b| mirror(b, &keys)).await;
         let github = serve(|b| github(b, &keys)).await;
+        let edge = serve(|_| Vec::new()).await;
         Self {
             app: app(&keys),
+            keys,
             mirror,
             github,
+            edge,
             cool: Cooldown::default(),
         }
+    }
+    async fn with_edge(
+        mut self,
+        edge: impl FnOnce(&str, &Keys) -> Vec<(&'static str, Route)>,
+    ) -> Self {
+        self.edge = serve(|b| edge(b, &self.keys)).await;
+        self
     }
     /// 两边都健康，版本相同
     async fn both_healthy() -> Self {
@@ -312,6 +325,8 @@ impl Rig {
             mirror: self.mirror.url("/latest.json"),
             mirror_root: self.mirror.base.clone(),
             github: self.github.url("/latest.json"),
+            edge: self.edge.url("/latest.json"),
+            edge_root: self.edge.base.clone(),
         }
     }
     fn make(&self) -> impl Fn() -> tauri_plugin_updater::UpdaterBuilder {
@@ -712,6 +727,8 @@ async fn run_check_and_run_install_guard_their_state() {
         mirror: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
         mirror_root: "http://127.0.0.1:9".into(),
         github: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
+        edge: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
+        edge_root: "http://127.0.0.1:9".into(),
     };
     assert!(run_check(&make, &dead, &state, &CN, &limits())
         .await
@@ -869,6 +886,8 @@ async fn a_newer_manifest_is_fine_for_reinstall_and_an_older_one_is_an_honest_fa
         mirror: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
         mirror_root: "http://127.0.0.1:9".into(),
         github: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
+        edge: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
+        edge_root: "http://127.0.0.1:9".into(),
     };
     let e = run_reinstall_check(&rig.make(), &dead, &state, &CN, &limits())
         .await
@@ -1361,6 +1380,8 @@ async fn a_failed_check_keeps_the_downloaded_package_installable() {
         mirror: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
         mirror_root: "http://127.0.0.1:9".into(),
         github: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
+        edge: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
+        edge_root: "http://127.0.0.1:9".into(),
     };
     assert!(run_check(&make, &dead, &state, &CN, &limits())
         .await
@@ -1393,6 +1414,8 @@ async fn a_failed_check_without_a_downloaded_package_still_clears_the_candidate(
         mirror: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
         mirror_root: "http://127.0.0.1:9".into(),
         github: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
+        edge: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
+        edge_root: "http://127.0.0.1:9".into(),
     };
     assert!(run_check(&make, &dead, &state, &CN, &limits())
         .await
@@ -2176,4 +2199,151 @@ async fn manual_mainland_moves_to_the_mirror_on_its_first_byte_without_comparing
     let (r, events, _) = manual_install(&rig, &state, &p, &l).await;
     assert_eq!(r.unwrap(), Source::Mirror);
     assert_eq!(starts(&events), 2);
+}
+
+/* ------------- 边缘节点（ADR 0121 修订 2026-11-11）：只分担大陆·后台下载 ------------- */
+
+/// GitHub 清单健康、但包地址 500（后台下载在 GitHub 一环失败）。
+fn github_pkg_500(b: &str, k: &Keys) -> Vec<(&'static str, Route)> {
+    let mut r = healthy(b, "9.9.9", &k.sign_b64(PKG), PKG);
+    r[1].1 = Route::Status(500);
+    r
+}
+
+/// 大陆·后台下载的前置：check 由镜像答（CN 顺序），随后 `run_download` 走 `[GitHub, 节点, 镜像]`。
+async fn mainland_pending(rig: &Rig) -> UpdateState {
+    let state = UpdateState::default();
+    run_check(&rig.make(), &rig.endpoints(), &state, &CN, &limits())
+        .await
+        .unwrap()
+        .unwrap();
+    state
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_mainland_background_download_falls_to_the_edge_before_the_mirror() {
+    let rig = Rig::new(
+        Keys::new(),
+        |b, k| healthy(b, "9.9.9", &k.sign_b64(PKG), PKG),
+        github_pkg_500,
+    )
+    .await
+    .with_edge(|b, k| healthy(b, "9.9.9", &k.sign_b64(PKG), PKG))
+    .await;
+    let state = mainland_pending(&rig).await;
+    let d = run_download(&rig.make(), &rig.endpoints(), &state, &limits(), &|_| {})
+        .await
+        .unwrap();
+    assert_eq!(d.source, Source::Edge);
+    assert_eq!(rig.edge.hits(PKG_PATH), 1);
+    assert_eq!(rig.mirror.hits(PKG_PATH), 0, "节点下成了，镜像不用碰");
+    assert!(!state.cooldown.active(), "节点不是镜像，不触发冷却");
+    // 记账：GitHub 失败一次、节点兜住 = GitHub 失败 +1（与镜像兜住一样）
+    let m = state.memory.snapshot().expect("大陆后台下载会留记忆");
+    assert_eq!((m.tries, m.failures), (1, 1));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_closed_or_lagging_edge_is_skipped_and_the_mirror_finishes_the_job() {
+    // 节点清单 404（关闭）：GitHub 失败后直接落到镜像，且不进冷却
+    let rig = Rig::new(
+        Keys::new(),
+        |b, k| healthy(b, "9.9.9", &k.sign_b64(PKG), PKG),
+        github_pkg_500,
+    )
+    .await;
+    let state = mainland_pending(&rig).await;
+    let d = run_download(&rig.make(), &rig.endpoints(), &state, &limits(), &|_| {})
+        .await
+        .unwrap();
+    assert_eq!(d.source, Source::Mirror);
+    assert_eq!(rig.edge.hits("/latest.json"), 1, "问过节点，404");
+    assert_eq!(rig.edge.hits(PKG_PATH), 0);
+    assert!(!state.cooldown.active(), "节点失败不触发镜像冷却");
+
+    // 节点落后一个版本：VersionMismatch，同样跳过，绝不悄悄换版本
+    let rig = Rig::new(
+        Keys::new(),
+        |b, k| healthy(b, "9.9.9", &k.sign_b64(PKG), PKG),
+        github_pkg_500,
+    )
+    .await
+    .with_edge(|b, k| healthy(b, "9.9.8", &k.sign_b64(PKG), PKG))
+    .await;
+    let state = mainland_pending(&rig).await;
+    let d = run_download(&rig.make(), &rig.endpoints(), &state, &limits(), &|_| {})
+        .await
+        .unwrap();
+    assert_eq!(d.source, Source::Mirror);
+    assert_eq!(
+        rig.edge.hits("/releases/9.9.8/pkg"),
+        0,
+        "落后的版本一个字节都不下"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_edge_is_pinned_to_its_host_and_its_package_must_live_under_its_root() {
+    let rig = Rig::new(
+        Keys::new(),
+        |b, k| healthy(b, "9.9.9", &k.sign_b64(PKG), PKG),
+        |b, k| healthy(b, "9.9.9", &k.sign_b64(PKG), PKG),
+    )
+    .await;
+    // 节点清单把包指到镜像地址（不在节点根下）：不跟随，当不可用
+    let mirror_pkg = format!("{}{PKG_PATH}", rig.mirror.base);
+    let rig = rig
+        .with_edge(move |_, k| {
+            vec![(
+                "/latest.json",
+                manifest("9.9.9", &mirror_pkg, &k.sign_b64(PKG)),
+            )]
+        })
+        .await;
+    let f = rig.check(&[Source::Edge]).await.err().unwrap();
+    assert_eq!(
+        kinds(&f),
+        vec![(Source::Edge, Stage::Check, Kind::NotOnMirror)]
+    );
+
+    // 节点清单重定向到别的主机：不跟随
+    let github_url = format!("{}/latest.json", rig.github.base);
+    let rig = rig
+        .with_edge(move |_, _| vec![("/latest.json", Route::Redirect(github_url))])
+        .await;
+    let f = rig.check(&[Source::Edge]).await.err().unwrap();
+    assert_eq!(kinds(&f)[0].0, Source::Edge);
+    assert_eq!(rig.github.hits("/latest.json"), 0, "重定向没被跟随");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_edge_never_joins_a_check_or_a_manual_download() {
+    let rig = Rig::new(
+        Keys::new(),
+        |b, k| healthy(b, "9.9.9", &k.sign_b64(PKG), PKG),
+        |b, k| healthy(b, "9.9.9", &k.sign_b64(PKG), PKG),
+    )
+    .await
+    .with_edge(|b, k| healthy(b, "9.9.9", &k.sign_b64(PKG), PKG))
+    .await;
+    // check：只问 [镜像, GitHub]
+    let state = mainland_pending(&rig).await;
+    assert_eq!(rig.edge.hits("/latest.json"), 0);
+    // 手动下载：[GitHub, 镜像]，GitHub 健康就用它，节点依旧没被碰
+    let pending = state.pending.try_lock().unwrap().clone().unwrap();
+    let (_seen, install) = recorder();
+    let src = install_pending(
+        &rig.make(),
+        &rig.endpoints(),
+        &state,
+        &limits(),
+        &pending,
+        &|_| {},
+        install,
+    )
+    .await
+    .unwrap();
+    assert_eq!(src, Source::Github);
+    assert_eq!(rig.edge.hits("/latest.json"), 0);
+    assert_eq!(rig.edge.hits(PKG_PATH), 0);
 }

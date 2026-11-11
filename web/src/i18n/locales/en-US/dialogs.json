@@ -1813,6 +1813,7 @@
       "sourceUsed": "Update source: {{source}}",
       "sourceName": {
         "mirror": "China mirror",
+        "edge": "China mirror",
         "github": "GitHub"
       },
       "attemptsTitle": "Failures per source",

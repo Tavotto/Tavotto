@@ -94,7 +94,7 @@ when the new version is more than about 3 days old and still not downloaded (the
 app remembers the attempt count and the time it first saw that version in a small
 local file, `update-source.json`, in its settings folder; it contains no path or
 identifier); a download you start yourself gives GitHub about 8 seconds and moves
-to the mirror if GitHub sends nothing by then or would need more than about 2 minutes. Either source sees what any HTTPS request reveals (IP address,
+to the mirror if GitHub sends nothing by then or would need more than about 2 minutes. In mainland China the background download may also be served by a third source, a server operated by the Tavotto maintainers at `up.tavotto.cn` (mainland China), tried after GitHub and before the mirror; it is never used for the update check or for a download you start yourself, and it is switched off on the server side when it is not available. Each source sees what any HTTPS request reveals (IP address,
 time, the updater's user agent) and nothing else: no identifier, no telemetry, no
 project content. Which source the installer came from does not affect trust — the
 installer's signature is always verified with the public key built into the app, and
