@@ -626,6 +626,9 @@ builtins.__import__=guarded
 import tavotto.rendercore.pdfcontent
 """
     result = subprocess.run(
-        [sys.executable, "-B", "-X", "utf8", "-c", code], capture_output=True, text=True
+        [sys.executable, "-B", "-X", "utf8", "-c", code],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stdout + result.stderr

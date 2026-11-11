@@ -177,6 +177,7 @@ print(json.dumps(out))
         text=True,
         capture_output=True,
         timeout=30,
+        encoding="utf-8",
     )
     assert process.returncode == 0, process.stderr
     assert json.loads(process.stdout) == ["9007199254740992", "9007199254740993", "1", "1.0"]

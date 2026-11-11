@@ -854,6 +854,7 @@ print('stdlib-only')
         capture_output=True,
         text=True,
         timeout=30,
+        encoding="utf-8",
     )
     assert child.returncode == 0, child.stderr
     assert child.stdout.strip() == "stdlib-only"

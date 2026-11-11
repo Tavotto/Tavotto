@@ -158,7 +158,12 @@ def test_parent_import_does_not_load_scientific_or_native_dependencies(tmp_path)
         "assert chartprocess.active_count()==0\n"
     )
     result = subprocess.run(
-        [PYTHON, "-B", "-c", code], cwd=tmp_path, capture_output=True, text=True, timeout=10
+        [PYTHON, "-B", "-c", code],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
 

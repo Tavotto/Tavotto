@@ -424,6 +424,7 @@ assert state['revision'] == sys.argv[3]
         text=True,
         timeout=15,
         check=False,
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == "conflict"
@@ -456,6 +457,7 @@ else:
             text=True,
             timeout=15,
             check=False,
+            encoding="utf-8",
         )
     finally:
         layoutsession.release_file_lock(fd)

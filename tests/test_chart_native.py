@@ -355,6 +355,7 @@ def test_native_main_passes_paired_manifest_and_roles_over_json():
         capture_output=True,
         text=True,
         timeout=30,
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     response = json.loads(result.stdout)

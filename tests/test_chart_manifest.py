@@ -224,6 +224,7 @@ def test_import_does_not_load_scientific_stack(tmp_path):
         text=True,
         check=False,
         timeout=15,
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
 

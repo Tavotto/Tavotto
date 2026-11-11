@@ -208,6 +208,7 @@ def test_worker_svg_scaffold_does_not_build_a_session(tmp_path):
             "SYSTEMROOT": __import__("os").environ.get("SYSTEMROOT", ""),
             "USERPROFILE": __import__("os").environ.get("USERPROFILE", ""),
         },
+        encoding="utf-8",
     )
     assert proc.returncode == 0, proc.stderr[-400:]
     payload = __import__("json").loads(proc.stdout.strip().splitlines()[-1])
