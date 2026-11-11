@@ -38,3 +38,17 @@ describe('isLocationFailure', () => {
     expect(isLocationFailure(undefined)).toBe(false)
   })
 })
+
+describe('missingSourceFigure', () => {
+  it('画布（RenderCore 结构化 source_code）与单图（source_missing）都认', async () => {
+    const { missingSourceFigure } = await import('./exportRecovery')
+    expect(missingSourceFigure('export_render_failed', { figure: 'a.png', source_code: 'source_missing' })).toBe('a.png')
+    expect(missingSourceFigure('source_missing', { figure: 'a.png' })).toBe('a.png')
+  })
+  it('别的编译失败、缺 figure 都不是这一类', async () => {
+    const { missingSourceFigure } = await import('./exportRecovery')
+    expect(missingSourceFigure('export_render_failed', { figure: 'a.png', source_code: 'source_unreadable' })).toBeNull()
+    expect(missingSourceFigure('export_render_failed', { reason: 'source:source_missing: a' })).toBeNull()
+    expect(missingSourceFigure('source_missing', {})).toBeNull()
+  })
+})

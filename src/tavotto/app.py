@@ -1599,6 +1599,12 @@ def _resolve_panel_source(
         path = safe_resolve(o["id"])
     except tiffprobe.UnsupportedTiff as exc:
         raise _export_tiff_error(exc) from exc
+    except NotFound as exc:
+        # 作业里没有 HTTP 响应可回：`abort(404)` 原样冒出去会变成 export_failed + werkzeug 的英文原话，
+        # 界面只能给必败的「重试」。图不在了 = 结构化 source_missing + figure，界面据此给「重新找到这张图」
+        raise engine_exportreq.ExportRequestError(
+            "source_missing", "这张图的源文件现在不可用", {"figure": rel_id}
+        ) from exc
     if engine_exportroute.wants_execution(runtime=False, overrides=overrides, rerender=rerender):
         rendered = _serialize_figure(
             rel_id,

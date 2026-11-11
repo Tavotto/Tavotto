@@ -21,6 +21,8 @@ vi.mock('@/lib/projectSettingsPatch', async (importOriginal) => ({
 import { ResultBlock } from '@/components/ExportDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDiagSendStore } from '@/store/diagSendStore'
+import { useDocumentStore } from '@/store/documentStore'
+import { useClipboardStore } from '@/lib/clipboard'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -155,5 +157,63 @@ describe('别的失败不变', () => {
     expect(direct).toHaveLength(1)
     await act(async () => { direct[0].click() })
     expect(onRetry).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('缺图（面板指向的图不在了）', () => {
+  const FIG = 'results\\case6.png'
+  const missing = () => failed('export_render_failed', { id: FIG, figure: FIG, source_code: 'source_missing', reason: 'source:source_missing: x' })
+  const setPanels = (fileIds: string[]) => {
+    const doc = useDocumentStore.getState().doc
+    useDocumentStore.setState({
+      doc: { ...doc, objects: fileIds.map((fileId, i) => ({ id: `p${i}`, type: 'panel', fileId, name: 'case6' })) as never },
+    })
+  }
+  beforeEach(() => {
+    setPanels([FIG])
+    useClipboardStore.setState({ pending: null })
+  })
+
+  it('一句人话 + 主按钮「重新找到这张图」，没有必败的「重试」', async () => {
+    await render(missing())
+    const card = document.body.querySelector('[data-export-failed]')!
+    expect(card.textContent).toContain('case6.png')
+    expect(card.textContent).not.toContain('source_missing')
+    const btn = q('[data-export-find-source]')!
+    expect(btn.dataset.variant).toBe('primary')
+    const direct = Array.from(card.querySelectorAll('button')).filter((b) => !b.closest('details'))
+    expect(direct).toEqual([btn])
+  })
+
+  it('点下去只把这一张交给重链接；链上了就直接重新导出', async () => {
+    const onRetry = vi.fn()
+    await render(missing(), { onRetry })
+    await act(async () => { q('[data-export-find-source]')!.click() })
+    const pending = useClipboardStore.getState().pending
+    expect(pending).toMatchObject({ mode: 'relink', relocate: true, missing: [{ fileId: FIG, name: 'case6', count: 1 }] })
+    await act(async () => {
+      setPanels(['moved\\case6.png'])
+      useClipboardStore.setState({ pending: null })
+    })
+    expect(onRetry).toHaveBeenCalledTimes(1)
+  })
+
+  it('取消 / 保持缺失：不导出（再导一次必败）', async () => {
+    const onRetry = vi.fn()
+    await render(missing(), { onRetry })
+    await act(async () => { q('[data-export-find-source]')!.click() })
+    await act(async () => { useClipboardStore.setState({ pending: null }) })
+    expect(onRetry).not.toHaveBeenCalled()
+  })
+
+  it('单图导出的 source_missing 同一个出口', async () => {
+    await render(failed('source_missing', { figure: FIG }))
+    expect(q('[data-export-find-source]')).not.toBeNull()
+  })
+
+  it('排版里已经没有引用它的面板：退回「发送问题反馈」，不给点了没反应的按钮', async () => {
+    setPanels([])
+    await render(missing())
+    expect(q('[data-export-find-source]')).toBeNull()
   })
 })

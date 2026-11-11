@@ -333,6 +333,8 @@
     "locationLabel": "Location",
     "locationDefault": "Project export folder",
     "locationChange": "Change…",
+    "findMissingSource": "Find this figure",
+    "missingSourceNote": "One figure can’t be found: {{name}}.",
     "changeLocationExport": "Export to another folder",
     "lowerDpiExport": "Export at {{dpi}} dpi",
     "toast": {
