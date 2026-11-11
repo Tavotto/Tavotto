@@ -85,7 +85,8 @@ order: 90
   **未命中** → 三个镜像（runner 默认 / archive.ubuntu.com / mirrors.edge.kernel.org）各给一份 180 s 总预算（update 与下载共用，3 × 180 s < 安装步的 12 分钟），`Acquire::Retries=3`、
   `Acquire::http(s)::Timeout=30`，先 `--download-only` 进缓存目录再 `--no-download` 安装，装完剪掉版本 != 已装版本的旧 .deb
   （restore-keys 带回的旧版本会让命中路径同包装两版）；安装步自己 `timeout-minutes: 12`，慢下载早失败，不吃满 job 的 20 分钟。
-  **镜像回退作用于临时源配置副本**：runner 使用 `mirror+file:/etc/apt/apt-mirrors.txt` 时，必须将副本中的 URI 改为所选镜像，apt 更新、下载和安装都读同一副本；原 `/etc/apt` 与 `Signed-By` 不改，无法安全隔离则失败。
+  **Tauri 镜像回退使用临时源配置副本**：runner 使用 `mirror+file:/etc/apt/apt-mirrors.txt` 时，将副本中的 URI 改为所选镜像；apt 更新、下载和安装均读同一副本，原 `/etc/apt` 和 `Signed-By` 不改，无法安全隔离则失败。
+  `posix-e2e` 的 `playwright install --with-deps` 自己 apt-get update，前面先跑 `scripts/ci/apt_use_reachable_mirror.sh`：依次探 InRelease，azure 不通时在 runner 全局源文件和 apt-mirrors.txt 中改主机到第一个可达镜像，保留签名；azure 通或全部不通时不改。
   **缓存不是信任来源**：网络路径由 apt 按签名索引校验；PR / merge_group 读 push main 上 `cache-seed` 种的条目（默认分支作用域），
   精确键命中不再保存，所以不会像合并候选那样每个 ref 各 save 一份。合同：`tests/test_merge_queue_workflows.py::TestTauriAptCache`
   （两处逐字相同 / key / 超时 / 脚本桩跑三条路径）与 `TestBuildReuseAndCaches` 的枚举。**验法**：首次运行 miss 并保存；
