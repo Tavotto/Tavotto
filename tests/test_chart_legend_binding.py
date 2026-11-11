@@ -19,6 +19,8 @@ import pytest
 
 from tavotto.engine import chartmodel, svgchart
 from tavotto.engine.chartprofile import NATIVE_PROFILE
+from tavotto.svgcompose import ComposeError, compose_native_scene
+from tavotto.svgscene import scene_inventory
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -72,7 +74,8 @@ def build_model() -> dict:
             },
         ],
         "dataset": data,
-        "scene_digest": "a" * 64,
+        # 组合路径会按真实源字节核对（verify_scene），digest 必须来自同一 fixture
+        "scene_digest": scene_inventory(build_source())["scene_digest"],
         "data_digest": chartmodel.digest_of(data),
         "engine": {"matplotlib": "test", "numpy": "test", "tavotto": "test"},
     }
@@ -269,3 +272,209 @@ def test_worker_invalid_legend_contract_is_rejected_cleanly():
     response = run_worker(scaffold_request(model) | {"legend": binding["legend"]})
     assert not response["ok"]
     assert response["code"] == "chart_model_invalid"
+
+
+# ---------------------------------------------------------------------------
+# 组合器（B9/T5）：旧图例区域 → legend role 的放置、移除与防线
+# ---------------------------------------------------------------------------
+
+
+def compose(model=None, binding=None, scaffold=None):
+    model = model or build_model()
+    binding = binding or build_binding(build_model())
+    scaffold = scaffold or svgchart.scaffold_fragment(
+        model, FRAME, render_profile=NATIVE_PROFILE, legend=binding["legend"]
+    )
+    return compose_native_scene(build_source(), binding, scaffold, model), model
+
+
+def test_composition_replaces_old_legend_region_with_the_new_legend_tree():
+    binding = build_binding(build_model())
+    result, _ = compose(binding=binding)
+    assert result["composition"]["composed"] is True
+    assert not result["composition"]["limitations"]
+    placement = next(p for p in result["composition"]["placements"] if p["role"] == "legend:leg1")
+    assert placement["source_node"] == "legend_region"
+    assert "axes_0.legend" in placement["native_gids"]
+    assert result["manifest"]["svg_targets"]["axes_0.legend"]["transform"] == ["axes_0.legend"]
+    root = parse_result_svg(result)
+    removed = result["composition"]["source_id_map"]["legend_region"]
+    assert not any(e.get("id") == removed for e in root.iter())  # 旧区域确实被移除
+    legend_node = next(e for e in root.iter() if e.get("id") == "axes_0.legend")
+    # payload 插在旧区域的父槽位：图例节点在旧区域同一父节点（original g）之下
+    assert any(
+        legend_node in list(parent) or any(c is legend_node for c in parent.iter())
+        for parent in root.iter()
+        if (parent.get("id") or "").startswith("tvsrc_")
+    )
+    texts = [e.get("id") for e in legend_node.iter() if e.get("id")]
+    assert "axes_0.legend.texts_0" in texts and "axes_0.legend.texts_1" in texts
+
+
+def parse_result_svg(result):
+    import xml.etree.ElementTree as ET
+
+    return ET.fromstring(result["svg"])
+
+
+def test_composition_refuses_legend_region_overlapping_a_bound_series_node():
+    model = build_model()
+    binding = build_binding(model)
+    # 图例区域 = 含 curve1 的祖先 g：validate_binding 的互斥只查同 id，
+    # 祖先重叠由组合器的 targets 重叠检查拒绝。
+    binding["legend"][0]["node"] = "original"
+    scaffold = svgchart.scaffold_fragment(
+        model, FRAME, render_profile=NATIVE_PROFILE, legend=binding["legend"]
+    )
+    with pytest.raises(ComposeError) as ei:
+        compose_native_scene(build_source(), binding, scaffold, model)
+    assert ei.value.code == "compose_fragment_invalid"
+
+
+def test_composition_hard_fails_when_the_scaffold_has_no_legend_role():
+    """R1 反证：绑定带 legend、脚手架没产出 legend role → 硬失败而非图例消失。"""
+    model = build_model()
+    binding = build_binding(model)
+    # 旧形状脚手架：同一模型但不带 legend（角色表里没有 legend:leg1）
+    scaffold = svgchart.scaffold_fragment(model, FRAME, render_profile=NATIVE_PROFILE)
+    assert "legend:leg1" not in scaffold["roles"]
+    with pytest.raises(ComposeError) as ei:
+        compose_native_scene(build_source(), binding, scaffold, model)
+    assert ei.value.code == "compose_fragment_invalid"
+    assert "legend" in ei.value.detail
+
+
+def test_composition_unregistered_legend_owner_is_hard_failure():
+    """R1 第二防线反证：ownership 登记了 legend role 但 instrument 没认出。"""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.figure
+    from matplotlib.lines import Line2D
+
+    from tavotto.engine.chartmanifest import ChartManifestError, render_scaffold
+
+    fig = matplotlib.figure.Figure(figsize=(2, 2), dpi=72)
+    ax = fig.add_axes([0.15, 0.15, 0.7, 0.7])
+    (line,) = ax.plot([0, 1], [0, 1])
+    # 未挂到 axes 的图例：ax.get_legend() 拿不到，instrument 不会登记它
+    stray = matplotlib.legend.Legend(ax, [Line2D([], [], color="black")], ["ghost"])
+    frame = {"view_box": [0, 0, 144, 144], "w_pt": 144, "h_pt": 144, "preserve": "none"}
+    with pytest.raises(ChartManifestError, match="unregistered_owner"):
+        render_scaffold(
+            fig,
+            {"axes:ax1": ax, "series:s1": [line], "legend:leg1": stray},
+            frame,
+            [],
+            coordinate_space="scene-viewport-pt",
+        )
+
+
+def test_hidden_legend_composes_as_a_display_none_shell_at_the_old_slot():
+    model = build_model()
+    binding = build_binding(model)
+    legend_gid = "axes_0.legend"
+    scaffold = svgchart.scaffold_fragment(
+        model,
+        FRAME,
+        render_profile=NATIVE_PROFILE,
+        legend=binding["legend"],
+        patches=[{"gid": legend_gid, "prop": "visible", "value": False}],
+    )
+    assert not scaffold["warnings"] and scaffold["unrestored"] == 0
+    result, _ = compose(model=model, binding=binding, scaffold=scaffold)
+    assert result["composition"]["composed"] is True
+    root = parse_result_svg(result)
+    node = next(e for e in root.iter() if e.get("id") == legend_gid)
+    assert node.get("display") == "none"
+    assert not any(e.tag.endswith(("path", "rect", "text")) for e in node.iter())
+
+
+# ---------------------------------------------------------------------------
+# app 层主闸（B11）：legacy profile + legend → chart_render_unsupported
+# ---------------------------------------------------------------------------
+
+
+def test_app_replay_refuses_legacy_profile_with_legend_contract(tmp_path, monkeypatch):
+    from tavotto import app as m
+    from tavotto.engine import pool, project_watch
+
+    m.reset_projects()
+    root = tmp_path / "project"
+    root.mkdir()
+    corpus = Path(__file__).resolve().parents[1] / "tests" / "support" / "svg_corpus"
+    (root / "chart.svg").write_bytes((corpus / "line_two_series.svg").read_bytes())
+    m.open_project(str(root))
+    monkeypatch.setenv(
+        "TAVOTTO_WORKER_PYTHON",
+        str(Path(__file__).resolve().parents[1] / ".venv" / "Scripts" / "python.exe"),
+    )
+    monkeypatch.setattr(
+        pool, "get", lambda *a, **k: pytest.fail("chart compute built a script session")
+    )
+    try:
+        client = m.app.test_client()
+        legend = [
+            {
+                "id": "leg1",
+                "node": "legend_1",
+                "rect": [300.0, 40.0, 60.0, 40.0],
+                "entries": [{"index": 0, "label": "series one", "series_node": "line2d_13"}],
+            }
+        ]
+        bound = client.post(
+            "/api/svg/chart/bind",
+            json={
+                "file": "chart.svg",
+                "axes_id": "ax1",
+                "rect": [51.5, 26.1, 297.6, 183.7],
+                "x": {
+                    "p1_user": 0.0,
+                    "p1_value": 0.0,
+                    "p2_user": 1.0,
+                    "p2_value": 10.0,
+                    "scale": "linear",
+                },
+                "y": {
+                    "p1_user": 0.0,
+                    "p1_value": 0.0,
+                    "p2_user": 1.0,
+                    "p2_value": 100.0,
+                    "scale": "linear",
+                },
+                "series": [{"node": "line2d_13", "x_col": "x", "y_col": "y1"}],
+                "dataset_text": "x,y1\n0,0.0\n5,25.0\n10,100.0\n",
+                "completeness": "self-contained",
+                "legend": legend,
+            },
+        )
+        assert bound.status_code == 200, bound.json
+        model, binding = bound.json["model"], bound.json["binding"]
+        # native profile：带 legend 的完整链路真实可用（组合含新图例）
+        native = client.post(
+            "/api/svg/chart/compute",
+            json={
+                "file": "chart.svg",
+                "model": model,
+                "binding": binding,
+                "render_profile": "native-manifest/1",
+                "overrides": [],
+            },
+        )
+        assert native.status_code == 200, native.json
+        assert "axes_0.legend" in native.json["svg"]
+        # legacy profile：主闸拒绝，不静默忽略图例合同
+        legacy = client.post(
+            "/api/svg/chart/compute",
+            json={
+                "file": "chart.svg",
+                "model": model,
+                "binding": binding,
+                "render_profile": "legacy-scaffold/1",
+            },
+        )
+        assert legacy.status_code == 422
+        assert legacy.json["code"] == "chart_render_unsupported"
+    finally:
+        m.reset_projects()
+        project_watch.stop()

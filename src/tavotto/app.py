@@ -1338,12 +1338,19 @@ _CHART_SOURCE_UNSET = object()
 
 
 def _chart_scaffold_via_worker(
-    model: dict, frame: dict, *, render_profile: str | None = None, patches: list | None = None
+    model: dict,
+    frame: dict,
+    *,
+    render_profile: str | None = None,
+    patches: list | None = None,
+    legend: list | None = None,
 ) -> dict:
     """用项目 worker 解释器跑一次脚手架子进程（无脚本、无会话、用完即弃）。
 
     解释器解析走 `pool.resolve_worker_python` 的既有优先级（项目环境决定论）；
     matplotlib 缺失/坏环境时错误以稳定码上抛，不静默换内置 runtime。
+    ``legend``（N4）：绑定合同的 legend 块，非空时透传给 worker——worker 端
+    用同一个 validate_legend_spec 再核一遍，不信任父进程。
     """
     import base64
 
@@ -1353,6 +1360,8 @@ def _chart_scaffold_via_worker(
     req = {"model": model, "frame": frame, "salt": "tavotto"}
     if render_profile is not None:
         req.update(render_profile=render_profile, patches=patches or [])
+    if legend:
+        req["legend"] = legend
     payload = chartprocess.run_request(root, req, timeout=_CHART_SPAWN_TIMEOUT_S)
     if not payload.get("ok"):
         raise engine_pool.WorkerError(
@@ -1652,7 +1661,12 @@ def _render_chart_snapshot(
                 result = _chart_scaffold_via_worker(model, frame)
             else:
                 result = _chart_scaffold_via_worker(
-                    model, frame, render_profile=requested_profile, patches=requested_edits
+                    model,
+                    frame,
+                    render_profile=requested_profile,
+                    patches=requested_edits,
+                    # N4：legend 合同随 binding 走——脚手架据此创建真图例。
+                    **({"legend": binding["legend"]} if binding.get("legend") else {}),
                 )
             actual = result.get("engine") or {}
             for key in ("matplotlib", "numpy"):

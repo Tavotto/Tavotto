@@ -635,6 +635,12 @@ def _hidden_native_containers(fragment, roles, manifest, main_role):
         gid = info["primary_gid"]
         if role.startswith("axes:") and hidden(gid) and _find_by_id(fragment, gid) is None:
             ET.SubElement(fragment, f"{{{SVG_NS}}}g", {"id": gid, "display": "none"})
+    # 隐藏的图例同样只补 display:none 壳（matplotlib 对 visible=False 的图例
+    # 整个不输出；组合后预览仍要有一个可点回「显示」的目标）。
+    for role, info in roles.items():
+        gid = info["primary_gid"]
+        if role.startswith("legend:") and hidden(gid) and _find_by_id(fragment, gid) is None:
+            ET.SubElement(fragment, f"{{{SVG_NS}}}g", {"id": gid, "display": "none"})
     axes = _find_by_id(fragment, main_gid)
     if axes is not None:
         for role, info in roles.items():
@@ -690,6 +696,13 @@ def compose_native_scene(source_svg: bytes, binding: dict, scaffold: dict, model
     main_role = f"axes:{model['axes'][0]['id']}"
     if main_role not in roles or not all(r.get("primary_gid") for r in roles.values()):
         raise ComposeError("compose_fragment_invalid", "native ownership roles")
+    # N4 legend 合同（R1 防线）：绑定声明了 legend role 而脚手架没产出它时，
+    # 必须硬失败。若放行，placement 的 native_gids 为空、role_nodes 为空——
+    # 旧图例区域被移除而 payload 为空，图例凭空消失（比保留旧装饰更糟）。
+    for item in binding.get("legend", []) or []:
+        legend_role = f"legend:{item['id']}"
+        if legend_role not in roles or not roles[legend_role].get("primary_gid"):
+            raise ComposeError("compose_fragment_invalid", "native legend ownership role")
     hidden_axes = _hidden_native_containers(fragment, roles, scaffold["manifest"], main_role)
     # A real contiguous container remains a useful fast path. Its absence is
     # not a limitation: pseudo artists are represented by the final target map.
@@ -711,6 +724,13 @@ def compose_native_scene(source_svg: bytes, binding: dict, scaffold: dict, model
         )
         for entry in binding["entries"]
     ]
+    # N4 legend 合同：旧图例区域节点 → legend role，并入 targets——天然获得
+    # 上面的重叠检查（图例区域与系列/轴区域重叠 = compose_fragment_invalid）。
+    legend_targets = [
+        ({"object": f"legend:{item['id']}", "node": item["node"]}, source_index[item["node"]])
+        for item in binding.get("legend", []) or []
+    ]
+    targets.extend(legend_targets)
     scene_order = {node: i for i, node in enumerate(scene.iter())}
     targets.sort(key=lambda item: scene_order[item[1]])
     if any(a is not b and _is_descendant(a, b) for _, a in targets for _, b in targets):
@@ -856,7 +876,8 @@ def compose_native_scene(source_svg: bytes, binding: dict, scaffold: dict, model
             wrapper.append(copy.deepcopy(node))
         return wrapper
 
-    native_sequence = _native_series_sequence(fragment, roles, auxiliary_roles)
+    legend_role_set = {f"legend:{item['id']}" for item in binding.get("legend", []) or []}
+    native_sequence = _native_series_sequence(fragment, roles, (*auxiliary_roles, *legend_role_set))
     native_interleaved = len(native_sequence) != len(set(native_sequence))
     source_sequence = [
         entry["object"] for entry, _ in targets if entry["object"] in set(native_sequence)
@@ -884,6 +905,13 @@ def compose_native_scene(source_svg: bytes, binding: dict, scaffold: dict, model
                 node = _find_by_id(fragment, info["primary_gid"])
                 if node is not None:
                     roots.append(node)
+        for role in legend_role_set:
+            # axes 级图例在 fragment 里本来就是 axes 的子树（随 axes 副本走）；
+            # figure 级图例（fig.legend_i）不在其中，必须作为独立 root 并入，
+            # 否则旧图例区域被移除而新图例没画（半接）。
+            node = _find_by_id(fragment, roles[role]["primary_gid"])
+            if node is not None and not _is_descendant(node, native_axes):
+                roots.append(node)
         for node in bound:
             common_parent.remove(node)
         common_parent.insert(first_index, payload(roots, transform))
@@ -931,6 +959,11 @@ def compose_native_scene(source_svg: bytes, binding: dict, scaffold: dict, model
                     nodes.append(furniture)
                     inserted_roles.add(main_role)
                 nodes.extend(role_nodes(role))
+            elif role.startswith("legend:") and role not in inserted_roles:
+                # 图例是单 artist 子树：按实际绘制节点整树搬移（轴家具剔除不适用
+                # ——图例不在 axes DOM 组的「其它 role」语义里）
+                nodes.extend(role_nodes(role))
+                inserted_roles.add(role)
             elif role in roles and role not in inserted_roles:
                 # Colorbar solids and outline belong to the proxy role, but
                 # remain in the actual colorbar axes subtree at its source slot.
