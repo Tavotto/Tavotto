@@ -437,6 +437,16 @@ def _structure(
     return layout, groups, id_like, repeats
 
 
+def xlsx_sheets(path: str | Path) -> list[dict] | None:
+    """一个 XLSX 的工作表清单 `[{"name", "hidden"}]`（工作簿里的顺序，隐藏表也列）；读不了回 None。只读工作簿目录，不读单元格。
+    `/api/ai/data-files` 给每个 XLSX 带上它；整文件夹的逐表摘要仍只有 `profile_folder` 那一份遍历。"""
+    try:
+        with xlsxread.XlsxBook(Path(path)) as book:
+            return [{"name": i.name, "hidden": bool(i.hidden)} for i in book.sheets]
+    except Exception:  # noqa: BLE001 —— 单个文件读不了只是不带清单，不拖垮列表
+        return None
+
+
 # --------------------------------------------------------------------------- 整文件夹摘要
 #: 一次最多摘要多少张表（XLSX 每个工作表算一张）/ 最多记多少条跳过 / 最多看多少个目录项；超了标 `truncated`，不静默截断
 MAX_PROFILE_TABLES = 20

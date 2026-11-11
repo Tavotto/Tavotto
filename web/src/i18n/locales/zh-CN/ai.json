@@ -498,5 +498,109 @@
     "waiting": "等你决定安装缺少的依赖",
     "missing": "校验时缺少 {{names}}；安装后会重新检查并应用修改。",
     "installing": "正在准备依赖，完成后会重新检查…"
+  },
+  "dataFigureV2": {
+    "question": {
+      "pick_table": "用哪张表画？",
+      "pick_value": "要画的是哪一列的数值？",
+      "pick_group": "按哪一列分组比较？",
+      "pick_x": "横轴用哪一列？",
+      "pick_design": "这些数据是同一个对象被重复测量的吗？",
+      "pick_unit": "哪一列标出了是哪个对象？"
+    },
+    "option": {
+      "table": "{{file}}：{{rows}} 行，{{groups}} 组",
+      "table_sheet": "{{file}} 的「{{sheet}}」：{{rows}} 行，{{groups}} 组",
+      "column": "{{column}}",
+      "design_independent": "每一行是不同的对象",
+      "design_repeated": "同一个对象被重复测了好几次",
+      "unsure": "不确定"
+    },
+    "candidate": {
+      "points_mean": {
+        "title": "原始点 + 均值",
+        "why": "每个点都画出来，再标出各组均值，能同时看到差别和离散程度。"
+      },
+      "box_points": {
+        "title": "箱线 + 原始点",
+        "why": "看每组的中位数和分布范围，点保留了每个观测。"
+      },
+      "violin_points": {
+        "title": "小提琴 + 原始点",
+        "why": "看每组数值分布的形状，点保留了每个观测。"
+      },
+      "ecdf_groups": {
+        "title": "累积分布",
+        "why": "不分箱地比较各组的整体分布。"
+      },
+      "bar_error": {
+        "title": "柱 + 误差线",
+        "why": "各组均值一目了然，误差线是标准差；个别点会藏在柱里。"
+      },
+      "line_points": {
+        "title": "点 + 折线",
+        "why": "按顺序连起来，看量怎么随横轴变化。"
+      },
+      "line_band": {
+        "title": "均值线 + 误差带",
+        "why": "每个横轴位置取均值，带是标准差，看总体趋势和波动。"
+      },
+      "line_units": {
+        "title": "每个对象一条线",
+        "why": "同一对象的重复测量连成线，看每个对象各自怎么变。"
+      },
+      "scatter_fit": {
+        "title": "散点 + 拟合线",
+        "why": "看两个量有没有关联；虚线是最小二乘直线，只描述、不下结论。"
+      },
+      "scatter": {
+        "title": "散点",
+        "why": "每个点是一个观测，看两个量的关系。"
+      },
+      "hist": {
+        "title": "直方图",
+        "why": "看这个量集中在哪、散得多开。"
+      },
+      "ecdf": {
+        "title": "累积分布",
+        "why": "不分箱地看整个分布。"
+      },
+      "density": {
+        "title": "密度曲线",
+        "why": "平滑地看分布的形状。"
+      },
+      "box_points_single": {
+        "title": "箱线 + 原始点",
+        "why": "看中位数和分布范围，点保留了每个观测。"
+      }
+    },
+    "reason": {
+      "no_usable_table": "这个文件夹里没有能画的数据表。",
+      "value_column_mixed": "数值列里混着文字（比如「<0.1」），先整理一下再画。",
+      "table_not_found": "找不到你选的那张表。",
+      "no_numeric_column": "这张表里没有数值列。",
+      "matrix_unsupported": "这种方阵形式的表暂时画不了。",
+      "no_renderable_family": "这张表暂时没有能画的画法。",
+      "all_candidates_rejected": "备选都没通过检查。",
+      "candidate_template_unsupported": "这种画法暂时画不出来。",
+      "candidate_render_failed": "这个备选没能画出来。",
+      "candidate_timeout": "这个备选画得太久，已放弃。",
+      "candidate_thumbnail_failed": "这个备选的小图没生成出来。",
+      "candidate_fingerprint_mismatch": "画出来的数据和文件对不上，这个备选已去掉。",
+      "candidate_write_blocked": "这个备选想写到别处，已拦下。",
+      "common_module_conflict": "同目录里那份公共文件被改过；为了不覆盖你的文件，这次没有生成。",
+      "stem_taken": "这个图名刚被占用了，请再试一次。",
+      "figures_dir_unusable": "tavotto_figures 不是普通文件夹，没有生成。",
+      "target_exists": "同名脚本已经存在，没有覆盖它。",
+      "register_failed": "没能把新图登记进项目，新建的文件已撤回。",
+      "data_changed": "数据文件在生成备选之后变过了，请重新生成。",
+      "rows_not_plotted": "有些行没有画出来。"
+    },
+    "result": {
+      "verified": "图画好了，数据和文件逐项对上。",
+      "unverifiable": "图画好了，但这类图没法逐项核对数据。",
+      "mismatch": "图里的数据和文件对不上；不对的话可以删掉这份新脚本。",
+      "unknown": "图画好了，数据核对没能完成。"
+    }
   }
 }

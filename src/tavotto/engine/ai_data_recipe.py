@@ -19,7 +19,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from pathlib import Path
 
 from . import ai_data_figure as adf
 
@@ -1272,8 +1273,532 @@ def enforce_order(
     return OrderResult(kept, tuple(dropped), tuple(moves), len(kept) < MIN_CANDIDATES)
 
 
+# --------------------------------------------------------------------------- 确定性备选（不调模型；模型路径的底座）
+#: 选择题的稳定码（前端 `errors` 之外的 `dataFigure.question.<码>`）与备选的标题 / 理由码（`dataFigure.candidate.<码>.title|why`）。
+#: 后端不写界面文案；这两张表就是前端中英文文案要覆盖的闭集（`tests/test_ai_data_propose.py` 对着 locale 核）。
+QUESTION_CODES = ("pick_table", "pick_value", "pick_group", "pick_x", "pick_design", "pick_unit")
+CANDIDATE_CODES = (
+    "points_mean",
+    "box_points",
+    "violin_points",
+    "ecdf_groups",
+    "bar_error",
+    "line_points",
+    "line_band",
+    "line_units",
+    "scatter_fit",
+    "scatter",
+    "hist",
+    "ecdf",
+    "density",
+    "box_points_single",
+)
+#: 备选为空时的原因码（`Candidates.reasons`；备选被护栏剔除的原因另在 `dropped` 里，用 `REJECTIONS` 的码）
+NOTHING_REASONS = (
+    "no_usable_table",
+    "value_column_mixed",  # 数值列里混着文字（`<0.1`、`n/a`）：不猜，请用户先整理
+    "table_not_found",
+    "no_numeric_column",
+    "matrix_unsupported",
+    "no_renderable_family",
+    "all_candidates_rejected",
+)
+#: 一个选择题最多给几个列选项（不含「不确定」）
+MAX_OPTIONS = 4
+#: 选表的选择题最多列几张表（超出的用一句话点名列）
+MAX_TABLE_OPTIONS = 8
+
+
+@dataclass(frozen=True)
+class Option:
+    """选择题的一个选项：`code` 是文案码，`params` 是文案里的插值（文件名、列名、行数…），`answer` 是用户选它时前端原样并进
+    下一次请求 `answers` 的键值（后端只认自己出过的键）。"""
+
+    code: str
+    params: dict
+    answer: dict
+
+    def to_dict(self) -> dict:
+        return {"code": self.code, "params": dict(self.params), "answer": dict(self.answer)}
+
+
+@dataclass(frozen=True)
+class NeedsChoice:
+    """决定科学含义的一件事只能由用户定：给 2–4 个选项（选表最多 `MAX_TABLE_OPTIONS`）和可选的「不确定」。「不确定」一定有
+    安全的默认（每个问题的默认写在 `default_candidates` 的列角色定义里），所以任何回答都能继续走下去，不会卡死。"""
+
+    question_code: str
+    options: tuple[Option, ...]
+    unsure: Option | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "question_code": self.question_code,
+            "options": [o.to_dict() for o in self.options],
+            "unsure": self.unsure.to_dict() if self.unsure else None,
+        }
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """一个备选：配方（已过 `validate_recipe`）+ 标题 / 理由文案码（`CANDIDATE_CODES`）。排在第一的就是推荐。"""
+
+    code: str
+    recipe: FigureRecipe
+
+
+@dataclass(frozen=True)
+class Candidates:
+    """`items` 为空 = 这张表现在画不出（`reasons` 是 `NOTHING_REASONS` 里的码，`dropped` 是被护栏剔除的备选与原因）。
+    `confirmed` 是实际生效的已确认事实（用户只有一个编号列时「重复测量」自动落到它上面）。"""
+
+    table: str
+    sheet: str | None
+    items: tuple[Candidate, ...]
+    dropped: tuple[Dropped, ...] = ()
+    reasons: tuple[str, ...] = ()
+    confirmed: Confirmed = field(default_factory=Confirmed)
+
+
+def _is_id_like_col(s: adf.DataSummary, col: str) -> bool:
+    return col in s.id_like
+
+
+def _usable_table(t: adf.TableEntry) -> bool:
+    s = t.summary
+    n = s.row_count if s.row_count is not None else len(s.rows)
+    return n >= 1 and any(
+        s.per_column[c].kind == "numeric" and c not in s.id_like for c in s.columns
+    )
+
+
+def _table_option(t: adf.TableEntry) -> Option:
+    s = t.summary
+    rows = s.row_count if s.row_count is not None else len(s.rows)
+    params = {"file": t.path, "rows": rows, "groups": len(s.groups)}
+    answer = {"table": t.path}
+    if t.sheet is not None:
+        params["sheet"] = t.sheet
+        answer["sheet"] = t.sheet
+    return Option("table_sheet" if t.sheet is not None else "table", params, answer)
+
+
+def _col_options(key: str, cols: list[str], s: adf.DataSummary) -> tuple[Option, ...]:
+    return tuple(
+        Option("column", {"column": c, "kind": s.per_column[c].kind}, {key: c})
+        for c in cols[:MAX_OPTIONS]
+    )
+
+
+def _unsure(key: str) -> Option:
+    return Option("unsure", {}, {key: "unsure"})
+
+
+def pick_table(
+    profile: adf.FolderProfile, table: str | None, sheet: str | None, hint: str | None
+) -> adf.TableEntry | NeedsChoice | str:
+    """选表：指名的表（`table` + 可选 `sheet`）；没指名且只有一张可用表就用它；多张 → 选择题（每张一句人话）；`hint` 里按词点名
+    了唯一一张表的文件名或工作表名也算指名。返回表 / 选择题 / 原因码（`no_usable_table` / `table_not_found`）。"""
+    if table is not None:
+        hits = [
+            t for t in profile.tables if t.path == table and (sheet is None or t.sheet == sheet)
+        ]
+        if not hits:
+            return "table_not_found"
+        if len(hits) > 1:  # 同一个 XLSX 的多张工作表又没指名工作表：先问是哪一张
+            return NeedsChoice(
+                "pick_table", tuple(_table_option(t) for t in hits[:MAX_TABLE_OPTIONS])
+            )
+        return hits[0]
+    usable = [t for t in profile.tables if _usable_table(t)]
+    shown = [t for t in usable if not t.hidden] or usable
+    if not shown:
+        mixed = any(
+            c.kind == "mixed" for t in profile.tables for c in t.summary.per_column.values()
+        )
+        return "value_column_mixed" if mixed else "no_usable_table"
+    if len(shown) == 1:
+        return shown[0]
+    if hint:
+        names = [Path(t.path).name for t in shown] + [t.sheet for t in shown if t.sheet]
+        named = adf._mentioned(hint, names)
+        if named:
+            hit = [t for t in shown if Path(t.path).name == named[0] or t.sheet == named[0]]
+            if len(hit) == 1:
+                return hit[0]
+    return NeedsChoice("pick_table", tuple(_table_option(t) for t in shown[:MAX_TABLE_OPTIONS]))
+
+
+@dataclass(frozen=True)
+class _Roles:
+    ys: tuple[str, ...]  # 数值列（trend 可多个，其余只用第一个）
+    cats: tuple[str, ...]  # 分组列（非编号）
+    x_ord: str | None  # 有序数值 / 日期 x（None = 没有或有歧义）
+    x_numeric: bool  # x_ord 是数值（不是日期）：relationship 才可用
+
+
+def _resolve_roles(
+    entry: adf.TableEntry, hint: str | None, picks: dict
+) -> _Roles | NeedsChoice | str:
+    """列角色的挑选规则（**一处文字定义，下面是实现**；保守：能由结构或用户点名唯一确定就确定，有歧义就问，绝不猜）。
+
+    记号：`ids` = `id_like` 列（**永不**当 y / x / 分组，只可能经用户确认成 `unit`）；`nums` = 数值列（kind `numeric`，去掉 ids）；
+    `dates` = 日期列；`cats` = `groups` 里的列（去掉 ids，列顺序）。`hint` 里按词点名的列（`ai_data_figure._mentioned`，
+    不做语义猜测）和选择题的回答 `picks`（键 `y` / `group` / `x`，值是列名或 `unsure`）都算「指定」。
+
+    1. **y（测的量）**：`picks.y` → 点名的第一个数值列 → 只有一个 `nums` 就是它 → 宽表（layout `wide`、第一列是数值 / 日期）：
+       第一列是 x、其余数值列都是 y（至多 3 个，更多就问）→ 其它情况有多个数值列：**问**（选项 = 前 4 个数值列）；
+       `unsure` 的默认 = 最后一个数值列（惯例：条件 / 时间在前、测量值在后）；没有数值列 → 画不了（`no_numeric_column`）。
+    2. **分组列**：`cats` 只有一个就是它；多个：`picks.group` → 点名的第一个 → **问**（选项 = 各分组列，前 4 个）；`unsure` 的默认
+       = 最左的分组列（它是比较的横轴，另一个——恰好两个分组列时——当颜色分组，否则不用）。
+    3. **x（有序横轴）**：除 y 外还剩下的日期列 + 数值列（`xs`）：恰好一个就是它；多个：`picks.x` → 点名的第一个 → 宽表第一列；
+       都没有且**没有分组列** → **问**（`unsure` 的默认 = 最左的日期列，没有就最左的数值列）；有分组列时不问，不出 trend /
+       relationship（分组比较与分布是主图，不拿一个猜出来的横轴去换）。有横轴时分组列做颜色分组（恰好两个分组列时另一个做分面）。
+    4. layout 是 `matrix`（对称矩阵）→ 画不了（`matrix_unsupported`）：模板没有热图。"""
+    s = entry.summary
+    cols = s.columns
+    ids = set(s.id_like)
+    nums = [c for c in cols if s.per_column[c].kind == "numeric" and c not in ids]
+    dates = [c for c in cols if s.per_column[c].kind == "date" and c not in ids]
+    cats = [c for c in cols if c in s.groups and c not in ids]
+    if s.layout == "matrix":
+        return "matrix_unsupported"
+    if not nums:
+        mixed = any(s.per_column[c].kind == "mixed" for c in cols)
+        return "value_column_mixed" if mixed else "no_numeric_column"
+    named = adf._mentioned(hint, cols) if hint else []
+    wide_x = cols[0] if s.layout == "wide" and cols[0] in (nums + dates) else None
+    # --- y
+    ys: list[str]
+    p = picks.get("y")
+    named_y = [c for c in named if c in nums]
+    if p in nums:
+        ys = [p]
+    elif p == "unsure":
+        ys = [nums[-1]]
+    elif named_y:
+        ys = [named_y[0]]
+    elif len(nums) == 1:
+        ys = [nums[0]]
+    elif wide_x is not None and 2 <= len([c for c in nums if c != wide_x]) <= 3 and not cats:
+        ys = [c for c in nums if c != wide_x]
+    else:
+        return NeedsChoice("pick_value", _col_options("y", nums, s), _unsure("y"))
+    # --- 分组列
+    if len(cats) > 1:
+        gp = picks.get("group")
+        named_c = [c for c in named if c in cats]
+        if gp in cats:
+            cats = [gp] + [c for c in cats if c != gp]
+        elif gp == "unsure":
+            pass
+        elif named_c:
+            cats = [named_c[0]] + [c for c in cats if c != named_c[0]]
+        else:
+            return NeedsChoice("pick_group", _col_options("group", cats, s), _unsure("group"))
+    # --- x
+    xs = [c for c in dates + nums if c not in ys]
+    x_ord: str | None = None
+    px = picks.get("x")
+    named_x = [c for c in named if c in xs]
+    if len(xs) == 1:
+        x_ord = xs[0]
+    elif len(xs) > 1:
+        if px in xs:
+            x_ord = px
+        elif named_x:
+            x_ord = named_x[0]
+        elif wide_x in xs:
+            x_ord = wide_x
+        elif not cats:
+            if px == "unsure":
+                x_ord = (dates or xs)[0]
+            else:
+                return NeedsChoice("pick_x", _col_options("x", xs, s), _unsure("x"))
+    return _Roles(
+        tuple(ys), tuple(cats), x_ord, bool(x_ord and s.per_column[x_ord].kind == "numeric")
+    )
+
+
+def _recipe(entry: adf.TableEntry, code: str, family: str, layers, ys, **roles) -> FigureRecipe:
+    return FigureRecipe(
+        table=entry.path,
+        sheet=entry.sheet,
+        family=family,
+        layers=tuple(Layer(*lay) for lay in layers),
+        y=tuple(ys),
+        why=code,  # 确定性备选的 `why` 就是理由码（前端按码取文案）；模型备选才是一句话
+        **roles,
+    )
+
+
+def default_candidates(
+    profile: adf.FolderProfile,
+    *,
+    table: str | None = None,
+    sheet: str | None = None,
+    confirmed: Confirmed,
+    hint: str | None = None,
+    values: adf.DataSummary | None = None,
+    picks: dict | None = None,
+) -> Candidates | NeedsChoice:
+    """不调模型的备选：对选定的表给 2–4 个现在**有模板能画**（`RENDERABLE`）的配方，全部经 `validate_recipe` + `enforce_order`。
+
+    * 选表、列角色挑选的规则见 `pick_table` / `_resolve_roles`（有歧义 → `NeedsChoice`，不猜）；`hint` 只做「按词点名列 / 文件」的确定性
+      匹配；`unit` / `paired` 只来自 `confirmed`（`id_like` / `repeats` 只是线索——编号列存在、编号重复、用户还没表态且能画趋势时问一次
+      「同一对象重复测量吗」，`unsure` = 当独立数据画、不带编号；确认「重复测量」且有多个编号列时再问用哪一列）。
+    * 每个备选组是「按顺序试、第一个合格的入选」的几个等价画法；组的顺序就是推荐顺序：有序横轴在时趋势 / 关系图在前，随后是分组比较
+      （原始点优先）与分布，柱加误差线排最后（`enforce_order` 在此之上再强制一遍）；至多取 4 组。取值类规则（每组 n、非负、重复 x）要 `values`（选中那张表带行数据的摘要）；不给就只判结构。
+    * 一个都画不了 → `Candidates(items=())`，带 `reasons`；被护栏剔除的备选在 `dropped`。
+    """
+    picks = dict(picks or {})
+    chosen = pick_table(profile, table, sheet, hint)
+    if isinstance(chosen, NeedsChoice):
+        return chosen
+    if isinstance(chosen, str):
+        return Candidates(table or "", sheet, (), reasons=(chosen,), confirmed=confirmed)
+    entry = chosen
+    s = entry.summary
+    roles = _resolve_roles(entry, hint, picks)
+    if isinstance(roles, NeedsChoice):
+        return roles
+    if isinstance(roles, str):
+        return Candidates(entry.path, entry.sheet, (), reasons=(roles,), confirmed=confirmed)
+    # 重复测量：只有用户确认过才带编号列
+    eff = confirmed
+    if (
+        confirmed.design == "repeated"
+        and confirmed.unit_col is not None
+        and confirmed.unit_col not in s.per_column
+    ):
+        eff = Confirmed("repeated")  # 回答里的列名不是这张表的列：当没给，走下面的唯一 / 提问
+        confirmed = eff
+    if confirmed.design == "repeated" and confirmed.unit_col is None:
+        ids = [c for c in s.id_like]
+        if len(ids) == 1:
+            eff = Confirmed("repeated", ids[0])
+        elif picks.get("unit") in ids:
+            eff = Confirmed("repeated", picks["unit"])
+        elif picks.get("unit") == "unsure" or not ids:
+            eff = Confirmed()
+        else:
+            return NeedsChoice("pick_unit", _col_options("unit", ids, s), _unsure("unit"))
+    can_trend = roles.x_ord is not None
+    if eff.design is None and s.repeats and can_trend and picks.get("design") != "unsure":
+        return NeedsChoice(
+            "pick_design",
+            (
+                Option("design_independent", {}, {"design": "independent"}),
+                Option("design_repeated", {}, {"design": "repeated"}),
+            ),
+            _unsure("design"),
+        )
+    unit = eff.unit_col if eff.design == "repeated" else None
+    y = roles.ys[0]
+    ok_families = {
+        e.family
+        for e in eligible(entry, eff, values=values)
+        if e.status in ("ok", "partial") and e.renderable
+    }
+    groups: list[list[tuple[str, FigureRecipe]]] = []
+
+    def grp(*alts: tuple[str, FigureRecipe]) -> None:
+        groups.append(list(alts))
+
+    cats = roles.cats
+    # 有序横轴在时：趋势 / 关系图是主图，分组列做颜色分组、恰好两个分组列时另一个做分面；没有横轴时分组列是比较的横轴
+    gx = {"group": cats[0], **({"facet": cats[1]} if len(cats) == 2 else {})} if cats else {}
+    if roles.x_ord is not None:
+        x = roles.x_ord
+        if "trend" in ok_families:
+            alts = []
+            if unit:
+                alts.append(
+                    (
+                        "line_units",
+                        _recipe(
+                            entry,
+                            "line_units",
+                            "trend",
+                            [("line", "none", "main"), ("points", "none", "overlay")],
+                            roles.ys,
+                            x=x,
+                            unit=unit,
+                            **gx,
+                        ),
+                    )
+                )
+            alts += [
+                (
+                    "line_points",
+                    _recipe(
+                        entry,
+                        "line_points",
+                        "trend",
+                        [("points", "none", "main"), ("line", "none", "overlay")],
+                        roles.ys,
+                        x=x,
+                        **gx,
+                    ),
+                ),
+                (
+                    "line_band",
+                    _recipe(
+                        entry,
+                        "line_band",
+                        "trend",
+                        [
+                            ("line", "mean_sd", "main"),
+                            ("band", "mean_sd", "overlay"),
+                            ("points", "none", "overlay"),
+                        ],
+                        roles.ys,
+                        x=x,
+                        **gx,
+                    ),
+                ),
+            ]
+            grp(*alts)
+            if unit:  # 个体线之外再给一张跨个体的汇总
+                grp(alts[-1])
+        if roles.x_numeric and "relationship" in ok_families:
+            grp(
+                (
+                    "scatter_fit",
+                    _recipe(
+                        entry,
+                        "scatter_fit",
+                        "relationship",
+                        [("points", "none", "main"), ("fit_line", "none", "overlay")],
+                        [y],
+                        x=x,
+                        **({"group": cats[0]} if cats else {}),
+                    ),
+                ),
+                (
+                    "scatter",
+                    _recipe(
+                        entry,
+                        "scatter",
+                        "relationship",
+                        [("points", "none", "main")],
+                        [y],
+                        x=x,
+                        **({"group": cats[0]} if cats else {}),
+                    ),
+                ),
+            )
+    if cats and "comparison" in ok_families:
+        xc = cats[0]
+        g2 = cats[1] if len(cats) == 2 else None
+        grp(
+            (
+                "points_mean",
+                _recipe(
+                    entry,
+                    "points_mean",
+                    "comparison",
+                    [("jitter", "none", "main"), ("hline_summary", "mean_sd", "overlay")],
+                    [y],
+                    x=xc,
+                    group=g2,
+                ),
+            )
+        )
+        grp(
+            *(
+                (
+                    code,
+                    _recipe(
+                        entry,
+                        code,
+                        "comparison",
+                        [(mark, "none", "main"), ("jitter", "none", "overlay")],
+                        [y],
+                        x=xc,
+                        group=g2,
+                    ),
+                )
+                for code, mark in (("box_points", "box"), ("violin_points", "violin"))
+            )
+        )
+    if cats and "distribution" in ok_families:
+        grp(
+            (
+                "ecdf_groups",
+                _recipe(
+                    entry,
+                    "ecdf_groups",
+                    "distribution",
+                    [("ecdf", "none", "main")],
+                    [y],
+                    group=cats[0],
+                ),
+            )
+        )
+    if cats and "comparison" in ok_families:
+        grp(
+            (
+                "bar_error",
+                _recipe(
+                    entry,
+                    "bar_error",
+                    "comparison",
+                    [("bar", "mean_sd", "main"), ("errorbar", "mean_sd", "overlay")],
+                    [y],
+                    x=cats[0],
+                ),
+            )
+        )
+    if not cats and roles.x_ord is None and "distribution" in ok_families:
+        for code, layers in (
+            ("hist", [("hist", "none", "main")]),
+            ("ecdf", [("ecdf", "none", "main")]),
+            ("box_points_single", [("box", "none", "main"), ("jitter", "none", "overlay")]),
+            ("density", [("density", "none", "main")]),
+        ):
+            grp((code, _recipe(entry, code, "distribution", layers, [y])))
+    if not groups:
+        return Candidates(
+            entry.path, entry.sheet, (), reasons=("no_renderable_family",), confirmed=eff
+        )
+    picked: list[tuple[str, FigureRecipe]] = []
+    dropped: list[Dropped] = []
+    for gi, alts in enumerate(groups):
+        for code, rec in alts:
+            problems = validate_recipe(profile, rec, confirmed=eff, values=values)
+            if len(rec.y) > 1 and any(p.code == "dual_axis_unsupported" for p in problems):
+                # 量纲不同的几列不画同一张图（不做双 y 轴）：退到第一列，不静默丢掉也不报错
+                rec = replace(rec, y=rec.y[:1])
+                problems = validate_recipe(profile, rec, confirmed=eff, values=values)
+            if not problems:
+                picked.append((code, rec))
+                break
+            dropped.append(Dropped(gi, tuple(problems)))
+    res = enforce_order(
+        profile, [r for _, r in picked][:MAX_CANDIDATES], confirmed=eff, values=values
+    )
+    by_recipe = {id(r): c for c, r in picked}
+    items = tuple(Candidate(by_recipe[id(r)], r) for r in res.kept)
+    dropped += list(res.dropped)
+    if not items:
+        return Candidates(
+            entry.path, entry.sheet, (), tuple(dropped), ("all_candidates_rejected",), eff
+        )
+    return Candidates(entry.path, entry.sheet, items, tuple(dropped), (), eff)
+
+
 __all__ = [
     "ASK_FIRST",
+    "CANDIDATE_CODES",
+    "Candidate",
+    "Candidates",
+    "NOTHING_REASONS",
+    "NeedsChoice",
+    "Option",
+    "QUESTION_CODES",
+    "default_candidates",
+    "pick_table",
     "COMMON_REJECTIONS",
     "ERROR_CODES",
     "FAMILIES",
