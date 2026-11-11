@@ -15,6 +15,22 @@
     ],
     "tavotto_error": null
   },
+  "data_source_signatures": [
+    {
+      "data_source": "glob_dir",
+      "path_style": "cwd",
+      "behavior_kinds": [
+        "zero_figures",
+        "pixel_mismatch",
+        "structure_mismatch",
+        "edit_failed"
+      ],
+      "tavotto_errors": [
+        null,
+        "script_error"
+      ]
+    }
+  ],
   "repro": {
     "script": "tests/compat_guardian/families/G5-sandbox-empty-glob-empty-figure/repro.py",
     "sha256": "fd3da51851dd539e38fccb09bb96b3f0f488064fd4d0d414dd48f42e8deb1138",

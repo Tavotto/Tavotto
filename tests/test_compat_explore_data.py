@@ -130,6 +130,16 @@ class Values(unittest.TestCase):
         self.assertEqual(parts, manifest["chain"][0]["params"]["data_files"])
         self.assertIn("glob", files["s.py"].decode())
 
+    def test_the_explore_row_names_the_data_source_and_its_path_style(self):
+        """triage links G4 / G5 by this axis when a loop or another parent changes the call site."""
+        parent = fake_parent(list(range(7)))
+        manifest, _files = build_or_skip(self, parent, "glob_dir", 4)
+        got = ex.data_source_of(manifest)
+        self.assertEqual(got["transform"], "glob_dir")
+        self.assertEqual(got["path_style"], manifest["chain"][0]["params"]["path_style"])
+        self.assertIn(got["path_style"], data.PATH_STYLES)
+        self.assertIsNone(ex.data_source_of({"chain": [{"name": "x", "axis": "output_name"}]}))
+
     def test_seeds_cover_every_path_style_and_encoding(self):
         parent = fake_parent([1, 2, 3])
         styles, encodings, names = set(), set(), set()
