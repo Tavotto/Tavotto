@@ -54,4 +54,4 @@ order: 20
   归还焦点又把气泡打开，鼠标点开必现、键盘打开不现，加个 await 能让用例绿，缺陷原样留在产品里（#311、#315）；
   2026-11-02 合并组红在与本 PR 无关的桌面壳握手超时用例（实为 spawn 失败），一分钟内重新入队、没记 issue（#1603）。
   2026-11-11 合并组除两个 Gate 外全是 cancelled，被当成机器故障连排两次；
-  快速失败下先红的腿自己也显示 cancelled，Gate summary 的 `root_failures` 早已点名 posix-e2e 里一条钉旧行为的用例，check-run 注解里也有「本腿失败」（#1828）。
+  快速失败下先红的腿自己也显示 cancelled，Gate summary 的 `root_failures` 早已点名 posix-e2e 里一条钉旧行为的用例，check-run 注解里也有「本腿失败」（#1828）；同日另一 PR 的 summary `root_failures` 为空、被踢四次，要按 completedAt 找最早结束的非 success 腿、看它注解里有没有「本腿失败，merge_group 快速失败」（#1846）。
