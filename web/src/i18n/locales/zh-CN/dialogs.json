@@ -317,6 +317,8 @@
     "locationLabel": "位置",
     "locationDefault": "项目的导出目录",
     "locationChange": "更改…",
+    "changeLocationExport": "换个位置导出",
+    "lowerDpiExport": "改用 {{dpi}} dpi 导出",
     "toast": {
       "conflict": "导出停在这里，等你决定同名文件怎么处理。",
       "failed": "导出失败，没有写出文件。",

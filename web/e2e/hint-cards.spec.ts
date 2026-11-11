@@ -11,6 +11,9 @@ import type { Page } from '@playwright/test'
 
 // 老手态、一句话提示都看过（它们与卡片共用一个槽位），卡片的账是空的
 const FRESH_CARDS = JSON.stringify({
+  // 用过好几天了：第二层（修饰键 / 微移）的卡也解锁
+  activeDays: 5,
+  lastActiveDay: 'e2e',
   schemaVersion: 1,
   flowVersion: ONBOARDING_FLOW_VERSION,
   status: 'completed',
@@ -25,12 +28,12 @@ const FRESH_CARDS = JSON.stringify({
   },
 })
 
-async function toLayout(page: Page, baseURL: string) {
+async function toLayout(page: Page, baseURL: string, learned: string[] = []) {
   // fixtures 的默认状态先写（把卡片都记成学会了），这里再盖掉；只在这一格还是默认值时盖，刷新后保留应用自己写的账
   await page.addInitScript((blob) => {
     const cur = window.localStorage.getItem('tavotto.onboarding')
     if (cur === null || cur.includes('"not_started"')) window.localStorage.setItem('tavotto.onboarding', blob)
-  }, FRESH_CARDS)
+  }, JSON.stringify({ ...JSON.parse(FRESH_CARDS), hintStats: Object.fromEntries(learned.map((k) => [k, { shows: 0, lastAt: 0, done: true }])) }))
   await page.goto(baseURL)
   const card = page.locator('[data-card="Fig1_kinetics.pdf"]')
   await expect(card).toHaveCount(1, { timeout: 30_000 })
@@ -137,6 +140,64 @@ test(
     await nudge(-8)
     await nudge(5)
     await page.waitForTimeout(600)
+    await expect(page.locator('[data-hint-card]')).toHaveCount(0)
+  },
+)
+
+test(
+  '手拖了一条直线出「按住 ⇧」卡，按住 ⇧ 拖一次就收起；一点一点挪出「方向键微移」或「暂时不吸附」卡',
+  { tag: '@feature:onboarding.hint-cards' },
+  async ({ app, page }, testInfo) => {
+    const a = await app()
+    // 对齐线那张（第一层）记成学会了：这条只看第二层
+    const first = await toLayout(page, a.baseURL, ['ruler_guides'])
+    const drag = async (dx: number, dy: number, shift = false) => {
+      const b = (await first.boundingBox())!
+      const x = b.x + b.width / 2
+      const y = b.y + b.height / 2
+      await page.mouse.move(x, y)
+      await page.mouse.down()
+      if (shift) await page.keyboard.down('Shift')
+      await page.mouse.move(x + dx, y + dy, { steps: 6 })
+      await page.mouse.up()
+      if (shift) await page.keyboard.up('Shift')
+    }
+    // 笨办法：小心翼翼地横着拖了一长段
+    await drag(90, 0)
+    const axis = await expectCard(page, 'shift_axis')
+    await expect(axis.locator('[data-hint-card-text]')).toContainText('⇧')
+    await page.screenshot({ path: testInfo.outputPath('hint-shift-axis.png') })
+    // 自己按住 ⇧ 拖了一次 = 学会
+    await drag(-60, 8, true)
+    await expect(page.locator('[data-hint-card]')).toHaveCount(0)
+
+    // 笨办法：一点一点挪（每次两三个像素）。吸上过就先教「暂时不吸附」，否则教「方向键微移」——两张都对
+    await drag(3, 0)
+    await drag(0, 3)
+    await drag(-3, 0)
+    const card = page.locator('[data-hint-card]')
+    await expect(card).toBeVisible()
+    expect(['arrow_nudge', 'no_snap']).toContain(await card.getAttribute('data-hint-card'))
+    await expect(card.locator('.ss-stage')).toHaveCount(1, { timeout: 15_000 })
+    await page.screenshot({ path: testInfo.outputPath('hint-tiny-moves.png') })
+  },
+)
+
+test(
+  '学会第五条手势的那一刻出「按 ? 看全部快捷键」卡，点「打开」进快捷键帮助，之后不再出',
+  { tag: '@feature:onboarding.hint-cards' },
+  async ({ app, page }, testInfo) => {
+    const a = await app()
+    // 已经会四条了；再让画布适应一次（⌘1）就是第五条
+    await toLayout(page, a.baseURL, ['edge_crop', 'ruler_guides', 'shift_axis', 'arrow_nudge'])
+    await expect(page.locator('[data-hint-card]')).toHaveCount(0)
+    await page.keyboard.press('ControlOrMeta+1')
+    const card = await expectCard(page, 'shortcut_help')
+    await page.screenshot({ path: testInfo.outputPath('hint-shortcut-help.png') })
+    await card.locator('[data-hint-card-action]').click()
+    await expect(page.locator('[data-dialog="shortcut-help"]')).toBeVisible()
+    await page.locator('[data-dialog="shortcut-help"] [data-dialog-close]').click()
+    await expect(page.locator('[data-dialog="shortcut-help"]')).toHaveCount(0)
     await expect(page.locator('[data-hint-card]')).toHaveCount(0)
   },
 )

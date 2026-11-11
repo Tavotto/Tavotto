@@ -74,6 +74,7 @@ from .engine import (
     ai_tasks as engine_ai_tasks,
     artifactcontext as engine_artifactcontext,
     artifactinspect as engine_artifactinspect,
+    assetimport as engine_assetimport,
     atomicio as engine_atomicio,
     bakedbaseline as engine_baked,
     bootstrap as engine_bootstrap,
@@ -132,6 +133,7 @@ from .engine import (
     nativeperm as engine_nativeperm,
     nativesession as engine_nativesession,
     normalize as engine_normalize,
+    notebookscript as engine_notebookscript,
     originalspec as engine_originalspec,
     originrecord as engine_originrecord,
     patchspec as engine_patchspec,
@@ -625,6 +627,26 @@ def _unsupported_tiff(exc):
     return jsonify({"error": exc.message, "code": exc.code, "params": exc.params}), 422
 
 
+def _asset_probe(p: Path, kind: str) -> tuple[dict, dict]:
+    """素材文件 → `(probe, original_spec)`：「这个文件能不能成为素材、有多大」的判据**只有这一份**。
+
+    `scan_panels` 逐个素材用它；`POST /api/assets/import` 在落盘前用它验证上传的字节（ADR 0176），
+    所以「导进来了、素材库里却没有」在结构上不会发生。TIFF 范围另由调用方先过 `tiffprobe.check`。
+    """
+    if kind == "svg":
+        from . import svgasset
+
+        _, probe = svgasset.read(p)
+    else:
+        probe = pdfbackend.probe_asset(p, kind)
+    # 「这张图有多大」只算一次（`engine/originalspec`，ADR 0028）。
+    # `native_*_mm` 是那份 spec 的投影而不是第二次计算——改造前位图那一
+    # 档在这里现猜一个 ppi（`600 if png else 300`），猜完既不说也没有
+    # 别处能对账；现在密度先按文件自己写的物理密度读，读不到才落到同样
+    # 那两个数，且 `original_spec.dpi_source` 会说出来它是假定的。
+    return probe, engine_originalspec.asset_spec(p, kind, probe)
+
+
 def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
     """扫描 figures 目录：PDF 是首选（矢量）；无同名 PDF 的图片按位图收录。
 
@@ -666,18 +688,7 @@ def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
             "mtime": int(p.stat().st_mtime),
         }
         try:
-            if kind == "svg":
-                from . import svgasset
-
-                _, probe = svgasset.read(p)
-            else:
-                probe = pdfbackend.probe_asset(p, kind)
-            # 「这张图有多大」只算一次（`engine/originalspec`，ADR 0028）。
-            # `native_*_mm` 是那份 spec 的投影而不是第二次计算——改造前位图那一
-            # 档在这里现猜一个 ppi（`600 if png else 300`），猜完既不说也没有
-            # 别处能对账；现在密度先按文件自己写的物理密度读，读不到才落到同样
-            # 那两个数，且 `original_spec.dpi_source` 会说出来它是假定的。
-            spec = engine_originalspec.asset_spec(p, kind, probe)
+            probe, spec = _asset_probe(p, kind)
             entry.update(
                 kind=kind,
                 native_w_mm=spec["logical_w_mm"],
@@ -1208,6 +1219,221 @@ def api_panels():
     )
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+def _import_error(code: str, status: int, params: dict | None = None):
+    text = engine_assetimport.ERRORS.get(code, code)
+    resp = jsonify({"error": text, "code": code, "params": params or {}})
+    resp.status_code = status
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _import_write_error(exc: BaseException):
+    """落盘失败 → 稳定 code：磁盘满 / 只读或没权限 / 其它（原因只进日志，不进响应）"""
+    cause = exc.__cause__ if isinstance(exc, engine_atomicio.AtomicWriteError) else exc
+    num = getattr(cause, "errno", None)
+    LOG.warning("导入素材落盘失败: %s", type(cause).__name__)
+    if num in (errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC)):
+        return _import_error("asset_import_disk_full", 507)
+    if num in (errno.EACCES, errno.EPERM, errno.EROFS):
+        return _import_error("asset_import_not_writable", 403)
+    return _import_error("asset_import_write_failed", 500)
+
+
+@app.post("/api/assets/import")
+def api_assets_import():
+    """把上传的一个文件作为素材放进**当前项目文件夹**（ADR 0176）。
+
+    请求：`POST /api/assets/import?name=<文件名>`，body 是文件的原始字节（`application/octet-stream`）。
+    `name` 只取 basename 并清洗，客户端不能指定目录；类型按**内容**判，后缀只是名字。
+    响应：`{id, name, file, kind, reused, renamed, bytes}`——`id` 与 `/api/panels` 的素材 id 同一个值，
+    `reused`：已有内容相同的文件、没有写第二份；`renamed`：同名异内容、自动改成了 `名 (2).ext`。
+    会话认证走全局 guard；写盘只在项目根、不覆盖已有文件、先验证后落盘（`engine/assetimport`）。
+    """
+    from . import svgasset
+
+    root = require_project().resolve()
+    limit = engine_assetimport.MAX_BYTES
+    too_large = {"limit_mb": limit // (1024 * 1024)}
+    if request.content_length is not None and request.content_length > limit:
+        return _import_error("asset_import_too_large", 413, too_large)
+    try:
+        data = _read_body_capped(limit)
+    except Exception:  # noqa: BLE001 — 读流失败不该 500：当作没收到
+        return _import_error("asset_import_empty", 400)
+    if len(data) > limit:
+        return _import_error("asset_import_too_large", 413, too_large)
+    if not data:
+        return _import_error("asset_import_empty", 400)
+    content = engine_assetimport.sniff(data)
+    if content is None:
+        return _import_error("asset_import_unsupported_type", 415)
+    stem, given_ext = engine_assetimport.clean_name(request.args.get("name", ""))
+    ext = engine_assetimport.extension_for(content, given_ext)
+    kind = "pdf" if content == "pdf" else "svg" if content == "svg" else "raster"
+    digest = hashlib.sha256(data).hexdigest()
+
+    def visible(path: Path) -> bool:
+        return any(p == path for p, _ in engine_refresh.iter_assets(root, reg=current_registry()))
+
+    with engine_assetimport.LOCK:
+        tmp = engine_assetimport.temp_path(root, ext)
+        try:
+            try:
+                engine_assetimport.write_temp(tmp, data)
+            except (OSError, engine_atomicio.AtomicWriteError) as exc:
+                return _import_write_error(exc)
+            # 落盘前先用素材扫描自己的探针验证：扫不出来的文件一个字节都不留在项目里
+            try:
+                if ext in TIFF_EXT:
+                    tiffprobe.check(tmp)
+                _asset_probe(tmp, kind)
+            except (tiffprobe.UnsupportedTiff, svgasset.UnsupportedSVG) as exc:
+                return _import_error(exc.code, 422, getattr(exc, "params", None))
+            except Exception:  # noqa: BLE001 — 损坏 / 加密 / 解析不了：同一个 code
+                LOG.info("导入素材验证失败（%s）", content, exc_info=True)
+                return _import_error("asset_import_unreadable", 422)
+            for allow_reuse in (True, False):
+                try:
+                    plan = engine_assetimport.choose(
+                        root, stem, ext, digest, len(data), allow_reuse=allow_reuse
+                    )
+                except engine_assetimport.ImportRefused as exc:
+                    return _import_error(exc.code, exc.status, exc.params)
+                if plan.reuse is not None:
+                    if visible(plan.reuse):
+                        return jsonify(_import_result(plan.reuse, kind, reused=True, renamed=False))
+                    continue  # 已有那份被「同 stem 的 PDF」让位藏起来了：改走新名字
+                dest = root / plan.name
+                try:
+                    engine_assetimport.place_exclusive(tmp, dest)
+                except FileExistsError:
+                    return _import_error("asset_import_name_exhausted", 409)
+                except (OSError, engine_atomicio.AtomicWriteError) as exc:
+                    return _import_write_error(exc)
+                if not visible(dest):
+                    engine_assetimport.discard(dest)
+                    return _import_error("asset_import_not_visible", 409)
+                resp = jsonify(_import_result(dest, kind, reused=False, renamed=dest.stem != stem))
+                resp.status_code = 201
+                return resp
+            return _import_error("asset_import_not_visible", 409)
+        finally:
+            engine_assetimport.discard(tmp)
+
+
+def _import_result(path: Path, kind: str, *, reused: bool, renamed: bool) -> dict:
+    root = require_project().resolve()
+    return {
+        "id": str(path.relative_to(root)),
+        "name": path.stem,
+        "file": path.name,
+        "kind": kind,
+        "reused": reused,
+        "renamed": renamed,
+        "bytes": path.stat().st_size,
+    }
+
+
+def _notebook_error(exc: engine_notebookscript.NotebookError):
+    text = engine_notebookscript.ERRORS.get(exc.code, exc.code)
+    resp = jsonify({"error": text, "code": exc.code, "params": exc.params})
+    resp.status_code = exc.status
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _notebook_result(root: Path, placed: engine_notebookscript.Placed, notebook: str):
+    """`script` 是项目相对 POSIX 路径（与 `/api/registry` 的脚本键同一种写法）；`status` 见 `notebookscript.Placed`"""
+    resp = jsonify(
+        {
+            "notebook": notebook,
+            "script": engine_discover.rel_key(placed.path, root),
+            "status": placed.status,
+        }
+    )
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _notebook_failure(exc: BaseException):
+    if isinstance(exc, engine_notebookscript.NotebookError):
+        return _notebook_error(exc)
+    if isinstance(exc, engine_assetimport.ImportRefused):
+        return _import_error(exc.code, exc.status, exc.params)
+    return _import_write_error(exc)
+
+
+@app.post("/api/notebook/extract")
+def api_notebook_extract():
+    """项目里的 `.ipynb` → 它旁边的同名 `.py`（ADR 0179）。请求 `{"notebook": <项目相对路径>}`。
+
+    路径只经 `projectenv.contained_path` 钉回项目内（`..` / 软链接 / 项目外绝对路径都在那一步现形）；
+    只读笔记本、只写它旁边的 `.py`，用户的笔记本与同名脚本一个字节不动。响应 `{notebook, script, status}`。
+    会话认证走全局 guard。
+    """
+    ctx = current_ctx()
+    body = request.get_json(silent=True)
+    raw = str(body.get("notebook", "") if isinstance(body, dict) else "").strip()
+    if not raw:
+        return _notebook_error(engine_notebookscript.NotebookError("notebook_not_found", 404))
+    real = engine_projectenv.contained_path(ctx.path, raw)
+    if real is None:
+        return _notebook_error(
+            engine_notebookscript.NotebookError("notebook_path_outside_project", 400)
+        )
+    target = Path(real)
+    if target.suffix != engine_notebookscript.SUFFIX or target.is_dir():
+        return _notebook_error(
+            engine_notebookscript.NotebookError("notebook_unsupported_type", 400)
+        )
+    if not target.is_file():
+        return _notebook_error(engine_notebookscript.NotebookError("notebook_not_found", 404))
+    root = Path(os.path.realpath(str(ctx.path)))
+    try:
+        placed = engine_notebookscript.convert_file(target)
+    except (
+        engine_notebookscript.NotebookError,
+        engine_assetimport.ImportRefused,
+        OSError,
+        engine_atomicio.AtomicWriteError,
+    ) as exc:
+        return _notebook_failure(exc)
+    return _notebook_result(root, placed, target.relative_to(root).as_posix())
+
+
+@app.post("/api/notebook/import")
+def api_notebook_import():
+    """上传的 `.ipynb` 字节 → 当前项目根里的 `.py`（浏览器拿不到路径时用；笔记本本身不存进项目）。
+
+    `POST /api/notebook/import?name=<文件名>`，body 是笔记本原始字节。上限卡在读取本身（`_read_body_capped`）；
+    `name` 只取 basename 并清洗，客户端不能指定目录。响应同 `/api/notebook/extract`。
+    """
+    root = require_project().resolve()
+    limit = engine_notebookscript.MAX_BYTES
+    too_large = engine_notebookscript.NotebookError(
+        "notebook_too_large", 413, {"limit_mb": limit // (1024 * 1024)}
+    )
+    if request.content_length is not None and request.content_length > limit:
+        return _notebook_error(too_large)
+    try:
+        data = _read_body_capped(limit)
+    except Exception:  # noqa: BLE001 — 读流失败不该 500：当作没收到
+        return _notebook_error(engine_notebookscript.NotebookError("notebook_empty", 400))
+    if len(data) > limit:
+        return _notebook_error(too_large)
+    name = request.args.get("name", "") or "notebook.ipynb"
+    try:
+        placed = engine_notebookscript.convert_bytes(root, name, data)
+    except (
+        engine_notebookscript.NotebookError,
+        engine_assetimport.ImportRefused,
+        OSError,
+        engine_atomicio.AtomicWriteError,
+    ) as exc:
+        return _notebook_failure(exc)
+    return _notebook_result(root, placed, "")
 
 
 @app.get("/api/panel-stem")
@@ -6480,6 +6706,9 @@ def api_registry():
             # 加字段（老前端忽略）：项目内认得出语言的 R / MATLAB 脚本（ADR 0143 修订「项目内入口」）。
             # 独立于 `all_scripts`：它们不能“打开并运行”，不进运行环境探测 / 依赖准备 / 可运行脚本判据。
             "foreign_scripts": engine_foreignsource.inventory(Path(ctx.path)),
+            # 加字段（老前端忽略）：项目内还没转成脚本的 Jupyter 笔记本（ADR 0179）。同样独立于 `all_scripts`：
+            # 它们不是脚本，要先抽成同名 `.py`（`POST /api/notebook/extract`）才进脚本库的运行分组
+            "notebook_scripts": engine_notebookscript.inventory(Path(ctx.path)),
         }
     )
 

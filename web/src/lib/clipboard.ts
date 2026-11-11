@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { msg, t as translate, type UiMessage } from '@/i18n'
+import { intakePastedImages, pastedAssetFiles } from '@/lib/canvasFileIntake'
 import { newId } from '@/lib/id'
 import { migrateFigureFrames } from '@/lib/figureFrameMigration'
 import { figureTextToAnnotation } from '@/lib/figureTextCopy'
@@ -240,7 +241,7 @@ export function handleCopyEvent(e: ClipboardEvent): boolean {
 export function handlePasteEvent(e: ClipboardEvent): boolean {
   const text = e.clipboardData?.getData('text/plain') ?? ''
   const payload = parsePayload(text)
-  if (!payload) return false
+  if (!payload) return pasteImageFiles(e, text)
   // 桌面壳「编辑 → 粘贴」与预置 ⌘V 加速键直达这里，不经 keydown：先过离散动作闸门——
   // 输入框 / 对话框里让位（不收手势），否则先落定开着的连续编辑，粘贴不并进方向键
   // 微调那条撤销（Codex #671）
@@ -248,6 +249,25 @@ export function handlePasteEvent(e: ClipboardEvent): boolean {
     runDiscreteAction('canvas', e.target, () => {
       if (!consumePayload(payload)) return false
       e.preventDefault()
+      return true
+    }) ?? false
+  )
+}
+
+/**
+ * 剪贴板里不是本工具的对象负载、而是图片文件（截图、从文件管理器复制的 PNG / PDF / SVG…）：放进画布（ADR 0176）。
+ * 与拖入同一条导入路径（`canvasFileIntake`：复制进项目文件夹成为素材 → `addPanelToCanvas`）。
+ * **有文字就不拦**：电子表格 / 网页的复制常带一张预览图，那是在粘文字，外部文字粘贴不在这里管；
+ * 输入框 / 对话框里让位（与对象粘贴同一个 `runDiscreteAction` 判据），浏览器照常处理。
+ */
+function pasteImageFiles(e: ClipboardEvent, text: string): boolean {
+  if (text.trim()) return false
+  const files = pastedAssetFiles(e.clipboardData)
+  if (!files.length) return false
+  return (
+    runDiscreteAction('canvas', e.target, () => {
+      e.preventDefault()
+      void intakePastedImages(files)
       return true
     }) ?? false
   )

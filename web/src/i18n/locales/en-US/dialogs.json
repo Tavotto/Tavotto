@@ -326,6 +326,8 @@
     "locationLabel": "Location",
     "locationDefault": "Project export folder",
     "locationChange": "Change…",
+    "changeLocationExport": "Export to another folder",
+    "lowerDpiExport": "Export at {{dpi}} dpi",
     "toast": {
       "conflict": "Export is waiting for you to decide what to do with same-name files.",
       "failed": "Export failed. No files were written.",

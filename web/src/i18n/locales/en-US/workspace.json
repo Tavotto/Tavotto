@@ -106,13 +106,35 @@
     "moveUp": "Move up",
     "moveDown": "Move down"
   },
+  "notebook": {
+    "converted": "Made “{{script}}” from “{{notebook}}” and started running it",
+    "convertedMore_one": "Made “{{script}}” from “{{notebook}}” and started running it; {{count}} other file wasn’t used this time",
+    "convertedMore_other": "Made “{{script}}” from “{{notebook}}” and started running it; {{count}} other files weren’t used this time",
+    "failed": "“{{name}}” couldn’t be turned into a script. {{reason}}"
+  },
   "canvasDrop": {
     "running": "Running “{{name}}”. Its figure will go on this canvas.",
-    "outsideProject": "“{{name}}” isn’t in this project’s folder, so it wasn’t run. To use it, drop it on the home screen.",
-    "cannotRun": "“{{name}}” has spaces at the start or end of its name and can’t be run yet. Rename it and drop it again.",
-    "notScript": "“{{name}}” isn’t a Python script. Drop a .py file.",
+    "runningFirst": "Running “{{name}}”. The other {{count}} scripts weren’t run this time.",
+    "openedAndRunning": "Opened the project “{{name}}” is in, and running it.",
+    "outsideProject": "“{{name}}” isn’t in this project, so it hasn’t been run.",
+    "outsideForeign": "“{{name}}” isn’t in this project.",
+    "openItsProject": "Open its project",
+    "openProjectFailed": "Couldn’t open the project “{{name}}” is in.",
+    "cannotRun": "“{{name}}” has spaces at the start or end of its name and can’t be run directly yet.",
     "noPath": "Choose “{{name}}” again in the next window.",
-    "browser": "Scripts can’t be dropped in the browser. Run “{{name}}” from the script library on the left."
+    "browser": "The browser can’t tell which folder “{{name}}” is in, so it can’t run it directly.",
+    "noProjectFolder": "There’s no project folder here to put it in.",
+    "placedOne": "Added to the canvas: “{{name}}”",
+    "placedMany_one": "Added {{count}} image to the canvas",
+    "placedMany_other": "Added {{count}} images to the canvas",
+    "importFailed": "“{{name}}” couldn’t be added to the canvas. {{reason}}",
+    "importFailedMany_one": "{{count}} file couldn’t be added to the canvas.",
+    "importFailedMany_other": "{{count}} files couldn’t be added to the canvas.",
+    "unsupportedType": "“{{name}}” can’t go on the canvas. Images, scripts and project packages can.",
+    "unsupportedImage": "Images in the format of “{{name}}” can’t go on the canvas yet. PNG, JPG, TIFF, PDF and SVG can.",
+    "packageFailed": "“{{name}}” couldn’t be opened as a project package. {{reason}}",
+    "packageOnly_one": "Opened the project package “{{name}}”. {{count}} other file wasn’t handled this time.",
+    "packageOnly_other": "Opened the project package “{{name}}”. {{count}} other files weren’t handled this time."
   },
   "canvasTools": {
     "fit": "Fit",
@@ -229,8 +251,14 @@
     "retry": "Retry save",
     "saveAs": "Save as…",
     "saveErrorBody": "Your changes are kept for now, not yet on disk.",
-    "tooNewBody": "Tavotto didn’t open it, so the file on disk is unchanged. Upgrade and try again.",
-    "tooNewTitle": "This layout comes from a newer Tavotto (schema {{schema}})",
+    "tooNewBody": "{{product}} didn’t open it, so the file is unchanged. Update and try again.",
+    "tooNewTitle": "This layout comes from a newer {{product}}",
+    "checkUpdate": "Check for updates",
+    "updateReady": "The new version is downloaded. Click “Restart now” in the top bar to open this layout.",
+    "updateFound": "Version {{version}} is available.",
+    "updateInstall": "Download and update",
+    "updateNone": "You’re on the latest version. This layout can open once a newer version is released.",
+    "updateCheckFailed": "Couldn’t check for updates. Check your connection and try again.",
     "moreActions": "More ways to resolve"
   },
   "document": {
@@ -649,6 +677,7 @@
     "doneProject": "Saved to project: {{file}}",
     "failed": "Save failed. Your changes are safe — check disk space and try again.",
     "projectConflict": "{{file}} in the project was changed elsewhere, so nothing was written. Decide in the dialog.",
+    "projectConflictElsewhere": "{{file}} in the project was changed elsewhere, so nothing was written. Go back to that layout and save again to decide what to do.",
     "projectFailed": "Couldn’t save {{file}} in the project: {{reason}}",
     "projectSkipped": "{{file}} in the project wasn’t written: you switched layouts or projects after pressing Save. Go back to that layout and save again.",
     "skippedSwitched": "You switched layouts or projects after pressing Save, so nothing was written to the project. Go back to that layout and save again."
@@ -709,7 +738,10 @@
     "copyPath": "Copy path",
     "pathCopied": "Copied: {{path}}",
     "pathCopyFailed": "Couldn’t write to the clipboard. The script is at: {{path}}",
-    "rowActions": "More actions for {{script}}"
+    "rowActions": "More actions for {{script}}",
+    "group_notebook": "Jupyter notebooks",
+    "notebookRun": "Turn into a script and run",
+    "notebookRunAria": "Turn the notebook {{notebook}} into a script and run it"
   },
   "spineZone": {
     "label": "{{side}} · {{dir}} ticks {{state}} · {{action}}",
@@ -1019,6 +1051,16 @@
     "fit_canvas": "Double-click empty space to recenter",
     "edge_crop": "Drag an edge to resize; hold {{alt}} to crop",
     "ruler_guides": "Drag a guide out of the ruler",
+    "shift_axis": "Hold ⇧ while dragging to move along one axis",
+    "no_snap": "Hold {{mod}} while dragging to skip snapping",
+    "arrow_nudge": "Arrow keys nudge; ⇧ for big steps, {{alt}} for fine",
+    "shift_rotate": "Hold ⇧ while rotating to snap to 15°",
+    "dblclick_text": "Double-click text in the figure to edit it",
+    "shift_draw": "Hold ⇧ to draw squares and straight lines",
+    "space_pan": "Hold Space and drag to pan",
+    "shift_multi": "⇧-click to select several and change them at once",
+    "shortcut_help": "Press ? for all shortcuts",
+    "shortcutHelpOpen": "Open",
     "pageBoundsOpen": "Open Canvas tab"
   },
   "prep": {
@@ -1142,6 +1184,7 @@
       "openAssets": "Open library",
       "aiFix": "Fix it with your AI",
       "send": "Send",
+      "sendUs": "Send it to us",
       "revertAiEdit": "Revert the AI's change",
       "cancelScan": "Cancel check",
       "confirmOrigins": "Confirm packages",
@@ -1235,7 +1278,8 @@
       "errorFull": "Full error output",
       "errorTruncated": "Too long; only the last part is kept.",
       "noFigureWhy": "It left no Figure open.",
-      "failedFigures": "Figures that failed: {{names}} ({{codes}}). The others can be edited as usual.",
+      "failedFigures": "Figures that failed: {{names}}. The others can be edited as usual.",
+      "failedFiguresWhy": "Figures that failed: {{names}}. {{why}} The others can be edited as usual.",
       "unlinked": "{{names}}, made earlier with other arguments, is no longer linked. Run again with those arguments to restore it.",
       "history": {
         "title": "Run history",

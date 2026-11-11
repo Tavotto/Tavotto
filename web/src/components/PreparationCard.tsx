@@ -37,7 +37,7 @@ import {
   type WorkdirConfirmation,
   type WorkdirMode,
 } from '@/lib/api'
-import { formatMessage, t as translate } from '@/i18n'
+import { formatMessage, i18n, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { envNotUsedSentence, visibleNotUsed } from '@/lib/envRejectionText'
 import { markAutoShown, wasAutoShown } from '@/lib/guideCardSeen'
@@ -170,6 +170,7 @@ export function PreparationCard() {
   // 壳确认引擎退出了：断线那一句不再说「正在重连」（没人在重连），见 PrepContext.engineExited
   const engineExited = useExitNoticeStore((s) => s.engineExit !== null)
   const copyOverrides = useInputCopyStore((s) => s.overrides)
+  const canSendReport = useDiagSendStore((s) => s.capability !== null)
   const scanned = !entry && !hidden ? scanCard(scan, { slow, forced, lost }) : null
 
   let view: PrepView | null = null
@@ -189,6 +190,7 @@ export function PreparationCard() {
       missingArgs,
       engineExited,
       copyOverrides,
+      canSendReport,
     })
   }
 
@@ -694,7 +696,7 @@ function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
     case 'ai_fix':
       return pt('btn.aiFix')
     case 'feedback':
-      return pt('btn.send')
+      return p.label === 'sendUs' ? pt('btn.sendUs') : pt('btn.send')
     case 'repair_folder':
       return pt('btn.repairFolder')
     case 'skip_folder':
@@ -1580,7 +1582,10 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
     (view.state === 'no_figure_raster'
       ? // 没有落盘文件（动态路径 / 只 show / 文件还没出现）：不说「画成图片」，说「画的、不能直接编辑」（ADR 0143 修订 2026-10-23）
         pt(report?.no_figure_hint?.path ? 'rasterHint.line' : 'rasterHint.lineNoFile', view.sentence.values)
-      : view.sentence.key === 'tex'
+      : view.sentence.key === 'errorText'
+        ? // 失败码 / 阻塞原因自己在 errors.json 里那一句人话（原始报错留在下面的详情里）
+          translate(String(view.sentence.values.textKey), { ns: 'errors', ...view.sentence.values })
+        : view.sentence.key === 'tex'
         ? // TeX 编译错误 / 原因不明：说 errors:backend.<code> 那句针对性说明（缺命令 / 缺宏包用 prep.line.texCommand / texPackage 短句）
           translate(`backend.${String(view.sentence.values.code)}`, { ns: 'errors', ...view.sentence.values })
         : view.sentence.key === 'copyProtected' && typeof view.sentence.values.folderKind === 'string'
@@ -1597,7 +1602,7 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
   const scriptTargetName = 'id' in entry.target ? null : entry.target.script
 
   // 反馈卡的主按钮：复用设置页同一个入口（开关关着时不渲染）；其余主按钮是下面那颗普通 Button
-  const feedbackPrimary = p?.kind === 'feedback' ? <SendReportButton variant="primary" size="md" label={pt('btn.send')} /> : null
+  const feedbackPrimary = p?.kind === 'feedback' ? <SendReportButton variant="primary" size="md" label={primaryLabel(p, null)} /> : null
   const fixBusy = fix?.phase === 'starting'
   const fixAction = async () => {
     setLocalError(null)
@@ -2179,6 +2184,15 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   const dialog = dialogReq?.kind === 'gui_dialog' ? dialogReq.payload : null
   const prepare = report?.actions.find((a) => a.kind === 'prepare_dependencies')
   const error = report?.result?.error
+  // 拒绝码没有文案时不渲染那一行（backendCodeMsg 兜底给空串，原来会摆出一行空白）
+  const rejectionText = entry.rejection
+    ? formatMessage(backendCodeMsg(entry.rejection.code, entry.rejection.params, ''))
+    : ''
+  // 没画出来的图为什么：码有 errors:backend.<code> 的人话就说人话，没有就不说（不摆原始码）
+  const failedFiguresWhy = [...new Set((report?.failed_figures ?? []).map((f) => f.code).filter((c): c is string => !!c))]
+    .filter((c) => i18n.exists(`backend.${c}`, { ns: 'errors' }))
+    .map((c) => translate(`backend.${c}`, { ns: 'errors' }))
+    .join('')
   const attempt = report?.provider.attempt_id
   const dep = report?.provider.dependency
   const originFacts = originFactsOf(report)
@@ -2254,10 +2268,12 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
       )}
       {(report?.failed_figures ?? []).length > 0 && report?.phase === 'partial' && (
         <p data-prep-failed-figures>
-          {pt('detail.failedFigures', {
-            names: listJoin((report.failed_figures ?? []).map((f) => f.stem)),
-            codes: listJoin([...new Set((report.failed_figures ?? []).map((f) => f.code).filter((c): c is string => !!c))]),
-          })}
+          {failedFiguresWhy
+            ? pt('detail.failedFiguresWhy', {
+                names: listJoin((report?.failed_figures ?? []).map((f) => f.stem)),
+                why: failedFiguresWhy,
+              })
+            : pt('detail.failedFigures', { names: listJoin((report?.failed_figures ?? []).map((f) => f.stem)) })}
         </p>
       )}
       {(report?.unlinked_stems ?? []).length > 0 && finishedWithFigures(report) && (
@@ -2334,11 +2350,7 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
         </p>
       )}
       {report?.facts && <Facts report={report} />}
-      {entry.rejection && (
-        <p data-prep-rejection={entry.rejection.code}>
-          {formatMessage(backendCodeMsg(entry.rejection.code, entry.rejection.params, ''))}
-        </p>
-      )}
+      {rejectionText && <p data-prep-rejection={entry.rejection?.code}>{rejectionText}</p>}
       {entry.failure && (
         <p className="text-danger">
           {formatMessage(backendCodeMsg(entry.failure.code, entry.failure.params, entry.failure.message))}

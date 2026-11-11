@@ -1343,6 +1343,10 @@ class PreparationService:
         hint = getattr(err, "workdir_hint", None)
         if isinstance(hint, dict):
             entry.result.workdir_hint = dict(hint)
+        # 先判空、数据不在就什么也不画（0 张图）：静态指认载荷与渲染入口同一份，准备会话也要带，卡片才有「指认数据」入口
+        offer = getattr(err, "missing_input", None)
+        if isinstance(offer, dict):
+            entry.result.missing_input = dict(offer)
         self._finish(entry, STATUS_ERROR, note="脚本跑完了，但这张面板没有被捕获")
         return True
 

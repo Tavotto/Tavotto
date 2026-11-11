@@ -2,12 +2,12 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「项目系统（后端侧）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_projects.py`、`test_paths_and_baked.py`、`test_project_refresh.py`、`test_project_watch.py`、`test_project_readiness.py`、`test_original_spec.py`、`test_tutorial.py`、`test_tiff_assets.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_projects.py`、`test_paths_and_baked.py`、`test_project_refresh.py`、`test_project_watch.py`、`test_project_readiness.py`、`test_original_spec.py`、`test_tutorial.py`、`test_tiff_assets.py`、`test_asset_import.py`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 220
-改到: `app.py` 的 `PROJECTS` / `_request_ctx` / `bound_project`、`project_refresh.py`、`project_watch.py`、`readiness.py`、`originalspec.py`、`tutorial.py`、`tiffprobe.py`
+改到: `app.py` 的 `PROJECTS` / `_request_ctx` / `bound_project`、`project_refresh.py`、`project_watch.py`、`readiness.py`、`originalspec.py`、`tutorial.py`、`tiffprobe.py`、`assetimport.py` / `POST /api/assets/import`
 主题: 项目系统（后端侧） → `project-system.md`
 必守要点: 指名不存在的项目 409 绝不落默认项目；派生刷新只有 `app.refresh_project()`；readiness 只报告不动手
 -->
@@ -175,3 +175,10 @@ order: 220
   默认沙盒档里 Tavotto 的写守卫本来就不让项目内的写落盘，所以这个码只在脚本目录档 / 项目根档 / native 档出现。
 * **从没打开过的只读文件夹**也能打开：`_open_project` 写不进注册表（无 `W_OK` 或 EROFS/EACCES/EPERM）时，静态扫描草稿只留在内存（`Registry.load_data(..., "<memory>")`），一个字节都不写进去；之后的刷新写不了走已有的 write_failed 路径。另存出的副本里注册表照常落盘。
 * 看护用例：`tests/test_readonly_project_save_as.py`、`tests/test_error_codes.py`。
+
+- **把文件作为素材放进项目（ADR 0176，`POST /api/assets/import`）**：拖 / 粘贴文件进画布的后端那一半，逻辑在 `engine/assetimport.py`（纯标准库、Flask 父进程一侧）+ `app.py` 的端点。
+  * **只写当前项目的项目根**，客户端只给 `name`（basename，清洗：NFC、非法 / 控制字符换 `_`、去首尾空白与点、Windows 保留名前缀 `_`、长度截断，最后过 `exportreq.check_filename`），不能指定目录；会话认证走全局 guard，不得绕过。
+  * **类型按内容判**（魔数 / 文本形状，`assetimport.sniff`），后缀不参与；扩展名集合与素材扫描同一份（`EXTENSIONS` ↔ `project_refresh`，`tests/golden/asset_import_extensions.json`）。上限 `MAX_BYTES` 卡在读取本身（`_read_body_capped`，不靠 `Content-Length`）。
+  * **「能不能成为素材」只有 `app._asset_probe` 一份**，`scan_panels` 与本端点共用：落盘前在隐藏临时文件上验证（TIFF 先 `tiffprobe.check`），验证不过一个字节不留；落盘后再用 `iter_assets` 核一遍真在清单里，不在就撤回（`asset_import_not_visible`）。
+  * **不覆盖**：同名同内容（sha256）复用；同名异内容改名 `名 (2).ext`；占用判据是「同层同基名（不分大小写、NFC）的任一素材扩展名」，因此也避开同 stem PDF / 位图互相让位。放最终名字用硬链接（目标存在内核拒绝），不支持硬链接退到持锁查一次再 `atomicio.publish_file`；落盘只经 `atomicio`。
+  * 新增错误码必须在 `assetimport.ERRORS`（`ERROR_CODES` 被 `test_error_codes` 读）与两份 errors.json 同时出现。

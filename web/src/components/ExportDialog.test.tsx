@@ -4302,3 +4302,37 @@ describe('合成一个多页 PDF（#1370，PdfPages 导出）', () => {
     expect(exportBodies.every((b) => b.merge_pdf === undefined)).toBe(true)
   })
 })
+
+describe('位图太大：改用不超上限的最大一档 dpi 重新导出（对话框里）', () => {
+  afterEach(() => { resetExportState(); initI18n('zh-CN') })
+  const jsonResponse = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  const TOO_BIG = {
+    job_id: 'big', status: 'failed', request: { ppi: 600 }, outputs: [], warnings: [], conflicts: [],
+    error: { code: 'export_raster_too_large', params: { width: 20000, height: 20000, max_pixels: 100_000_000 }, recoverable: true },
+  }
+
+  it('点「改用 300 dpi 导出」：分辨率变成 300，并以 ppi 300 重新发起导出', async () => {
+    writeExportDefaults({ formats: ['png'], dpi: '600', withProof: false, strictInspection: false })
+    await setup(9)
+    const bodies: Array<Record<string, unknown>> = []
+    let first = true
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (/\/api\/export\/start(\?|$)/.test(String(url)) && init?.method === 'POST') {
+        bodies.push(JSON.parse(String(init.body)))
+        if (first) { first = false; return jsonResponse({ ...TOO_BIG, status: 'running', error: null }) }
+        return jsonResponse({ job_id: 'j2', status: 'running', outputs: [], warnings: [], conflicts: [], error: null })
+      }
+      return jsonResponse({})
+    }) as typeof fetch
+    await act(async () => { await runExport({ scope: 'canvas', formats: ['png'], filename: 'Keep name', ppi: 600, documentId: 'd_export', doc: useDocumentStore.getState().doc }) })
+    await act(async () => { applyExportJob(TOO_BIG as never) })
+    const btn = document.querySelector<HTMLButtonElement>('[data-export-lower-dpi]')!
+    expect(btn).not.toBeNull()
+    expect(bodies[0].ppi).toBe(600)
+    await act(async () => { btn.click() })
+    await act(async () => {})
+    expect(bodies.length).toBe(2)
+    expect(bodies[1].ppi).toBe(300)
+    expect(readExportDefaults().dpi).toBe('300')
+  })
+})

@@ -326,6 +326,17 @@ missing. Computing it never leaves the machine and never runs the user's code:
   Tavotto process on the same machine.
 * **Tutorial progress** (which step you are on, which one-time hints you have
   seen) is stored in the browser's local storage on this machine only.
+* **Adding an image to the canvas** (dragging or pasting a PNG, JPG, TIFF, PDF or SVG)
+  copies that file into the project folder on this machine and shows it as an
+  ordinary figure. It is validated and written locally by the Tavotto process the
+  window is already talking to over the loopback connection; nothing is uploaded,
+  and no usage-statistics event is added for it.
+* **Turning a Jupyter notebook into a script** (dropping a `.ipynb` on the canvas or the
+  home screen, or using the notebook row in the script list) reads the notebook's JSON and
+  writes a plain `.py` copy of its code cells next to it, entirely on this machine, by the
+  Tavotto process the window is already talking to over the loopback connection. Nothing
+  in the notebook is executed, uploaded or sent to an AI service, the notebook itself is
+  never modified, and no usage-statistics event is added for it.
 
 ## Diagnostics bundle
 

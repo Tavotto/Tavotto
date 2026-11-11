@@ -6,7 +6,9 @@
 //! * 只认**真实存在的本地绝对路径**：先看原串是不是绝对路径，再 `canonicalize`（解开
 //!   符号链接与 `..`）；拿不到规范路径的一律丢掉，不猜。
 //! * 放下的东西里**第一个 `.py`** 赢：打开它所在的文件夹（项目 = 脚本所在的文件夹），
-//!   脚本本身一起交给前端（说出口 + 关联）；没有 `.py` 时**第一个外语脚本**（`.R` / `.r` / `.m`，
+//!   脚本本身一起交给前端（说出口 + 关联）；没有 `.py` 时**第一个 Jupyter 笔记本**（`.ipynb`，ADR 0179）同样打开它
+//!   所在的文件夹，前端据此把它抽成同名 `.py` 再运行（后缀区分大小写，与 `web/src/lib/scriptImport.ts::isNotebookName`、
+//!   后端 `notebookscript.SUFFIX` 同一份）；再没有时**第一个外语脚本**（`.R` / `.r` / `.m`，
 //!   ADR 0143 修订二；大小写与 `web/src/lib/foreignScript.ts`、后端 `sourcelang.extension_hint` 同一份，
 //!   `.M` 不算）同样打开它所在的文件夹，前端据此提议「生成可编辑版本」而不是运行；
 //!   都没有脚本时**第一个文件夹**当项目打开；都没有就是「不支持的类型」，把第一个的名字交给前端提示。
@@ -25,6 +27,13 @@ pub enum DropTarget {
     Script {
         folder: String,
         script: String,
+        name: String,
+        ignored: usize,
+    },
+    /// 放下的是 Jupyter 笔记本（`.ipynb`）：打开 `folder`，由前端抽成同名 `.py` 再运行（ADR 0179）
+    Notebook {
+        folder: String,
+        notebook: String,
         name: String,
         ignored: usize,
     },
@@ -71,6 +80,15 @@ fn is_script(p: &Path) -> bool {
             .is_some_and(|e| e.eq_ignore_ascii_case("py"))
 }
 
+/// Jupyter 笔记本：后缀恰好是 `.ipynb`（区分大小写；`.ipynb` 本身是没有扩展名的隐藏文件，不算）。
+/// 与 `web/src/lib/scriptImport.ts::isNotebookName`、后端 `notebookscript.SUFFIX` 严格同源（`drop_script_rule.json`）。
+fn is_notebook(p: &Path) -> bool {
+    p.is_file()
+        && p.extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e == "ipynb")
+}
+
 /// R / MATLAB 脚本的后缀：只认 `.R` / `.r` / `.m`（区分大小写，`.M` 不算；
 /// 与 `web/src/lib/foreignScript.ts::foreignLanguageOf`、`sourcelang.extension_hint` 同一份）。
 /// 后缀只是粗判，内容由后端复核（`.m` 也是 Objective-C 的后缀）。
@@ -96,6 +114,15 @@ pub fn classify(paths: &[PathBuf]) -> Option<DropTarget> {
             folder: display_path(folder)?,
             script: display_path(script)?,
             name: name_of(script),
+            ignored,
+        });
+    }
+    if let Some(nb) = real.iter().find(|p| is_notebook(p)) {
+        let folder = nb.parent()?;
+        return Some(DropTarget::Notebook {
+            folder: display_path(folder)?,
+            notebook: display_path(nb)?,
+            name: name_of(nb),
             ignored,
         });
     }
@@ -258,6 +285,97 @@ mod tests {
     }
 
     #[test]
+    fn a_notebook_opens_its_folder_and_names_itself() {
+        let d = scratch("notebook");
+        let nb = d.join("论文 图.ipynb");
+        touch(&nb);
+        match classify(std::slice::from_ref(&nb)).unwrap() {
+            DropTarget::Notebook {
+                folder,
+                notebook,
+                name,
+                ignored,
+            } => {
+                assert_eq!(folder, display_path(&d).unwrap());
+                assert_eq!(notebook, display_path(&nb).unwrap());
+                assert_eq!(name, "论文 图.ipynb");
+                assert_eq!(ignored, 0);
+            }
+            other => panic!("expected Notebook, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn only_the_exact_lowercase_suffix_counts_as_a_notebook() {
+        let d = scratch("notebook-no");
+        for name in [
+            "a.IPYNB",
+            "b.Ipynb",
+            ".ipynb",
+            "ipynb",
+            "c.ipynb.txt",
+            "d.ipynb_checkpoints",
+        ] {
+            let f = d.join(name);
+            touch(&f);
+            assert_eq!(
+                classify(std::slice::from_ref(&f)),
+                Some(DropTarget::Unsupported { name: name.into() }),
+                "{name}"
+            );
+        }
+        // 叫 a.ipynb 的目录不是笔记本：按文件夹走
+        let dir = d.join("dir.ipynb");
+        fs::create_dir(&dir).unwrap();
+        assert!(matches!(
+            classify(std::slice::from_ref(&dir)),
+            Some(DropTarget::Folder { .. })
+        ));
+    }
+
+    #[test]
+    fn multi_drop_py_beats_notebook_beats_foreign_beats_folder() {
+        let d = scratch("notebook-many");
+        let sub = d.join("sub");
+        fs::create_dir(&sub).unwrap();
+        let nb = d.join("a.ipynb");
+        let nb2 = d.join("b.ipynb");
+        let r = d.join("c.R");
+        let py = d.join("d.py");
+        for f in [&nb, &nb2, &r, &py] {
+            touch(f);
+        }
+        // 笔记本赢文件夹和外语脚本；多个笔记本第一个赢
+        match classify(&[sub.clone(), r.clone(), nb.clone(), nb2.clone()]).unwrap() {
+            DropTarget::Notebook { name, ignored, .. } => {
+                assert_eq!(name, "a.ipynb");
+                assert_eq!(ignored, 3);
+            }
+            other => panic!("expected Notebook, got {other:?}"),
+        }
+        // .py 仍然赢笔记本，不管谁在前面
+        match classify(&[nb, nb2, py]).unwrap() {
+            DropTarget::Script { name, .. } => assert_eq!(name, "d.py"),
+            other => panic!("expected Script, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_notebook_payload_shape_is_what_the_frontend_reads() {
+        let v = serde_json::to_value(DropTarget::Notebook {
+            folder: "/x".into(),
+            notebook: "/x/a.ipynb".into(),
+            name: "a.ipynb".into(),
+            ignored: 1,
+        })
+        .unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({"kind": "notebook", "folder": "/x", "notebook": "/x/a.ipynb", "name": "a.ipynb", "ignored": 1})
+        );
+    }
+
+    #[test]
     fn a_folder_is_the_project_itself() {
         let d = scratch("folder");
         let sub = d.join("paper figs");
@@ -389,6 +507,14 @@ mod tests {
                     assert_eq!(n, name_of(&judged));
                     "foreign_script"
                 }
+                Some(DropTarget::Notebook {
+                    folder, name: n, ..
+                }) => {
+                    let up = judged.parent().unwrap();
+                    assert_eq!(folder, display_path(up).unwrap(), "{name:?}");
+                    assert_eq!(n, name_of(&judged));
+                    "notebook"
+                }
                 Some(DropTarget::Folder { folder, .. }) => {
                     assert_eq!(folder, display_path(&judged).unwrap(), "{name:?}");
                     "folder"
@@ -411,8 +537,8 @@ mod tests {
                 );
             }
         }
-        // 四档都真的出现过，否则某一档判错了也量不出来
-        assert_eq!(seen.len(), 4, "{seen:?}");
+        // 五档都真的出现过，否则某一档判错了也量不出来
+        assert_eq!(seen.len(), 5, "{seen:?}");
     }
 
     #[test]

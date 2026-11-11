@@ -72,7 +72,8 @@ order: 150
   （`selection.changed` 只有 count；导入是 `figure.added_to_layout` / `project.opened`，不带来源），P04 明说导入多文件≠组合意图，
   没有干净信号就不做；多选对齐 / 分布由既有 `multi_select` 覆盖，问题定位 / 修复入口由既有 `problem_found` + 问题抽屉覆盖。
 * **动画卡提示（2026-11-10，ADR 0177）**：藏起来的手势用窗口右下角一张会动的小卡教（`components/hints/HintCard` + `scenes.tsx`，
-  舞台来自 `vendor/stageshow`，整块按需加载）。规则：① **看到笨办法才出**（画布跑偏停手 2 秒 / 排版里拖边改了图幅 / 30 秒内挪 3 次对象），
+  舞台来自 `vendor/stageshow`，整块按需加载）。规则：① **看到笨办法才出**（画布跑偏停手 2 秒 / 排版里拖边改了图幅 / 30 秒内挪 3 次对象；第二层：手走直线 / 跟吸附较劲 / 一点一点挪 / 旋转差一点，
+  全表（三批共 12 条，含评估后不做的两条及理由）在 ADR 0177；一次拖动**先判具体的、都不是才算一次「挪」**），
   **自己用过一次就算学会、永不再提**；每条最多 2 次、隔 20 小时，每次启动最多 2 张，点 × = 别再提，到时收起 / 场景变了收起不算；
   ② 账在 `onboardingStore.hintStats`（`hintSeen` 仍只管一句话提示），「操作提示」开关 `hintsOff` 两类一起关，`resetHints` 两本账一起清；
   ③ 与一句话提示共用 `useHintStore.current` 一个槽位，轨上不画卡片种类（`isCardHint`）、活动区照播；④ 不出的原因一律**不记账**；

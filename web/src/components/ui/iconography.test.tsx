@@ -57,7 +57,7 @@ const isTest = (path: string) => /\.test\.tsx?$/.test(path)
 const SVG_ALLOWLIST: Record<string, number> = {
   '/src/components/ui/icons/createIcon.tsx': 1, // 图标集本体：142 个图标都从这一个 <svg> 出来
   '/src/canvas/ShapeView.tsx': 1, // 画布形状本体
-  '/src/components/hints/scenes.tsx': 1, // 提示动画里的迷你样本图（坐标轴 + 一条曲线，演的是「一张 matplotlib 图」被拖 / 被裁，ADR 0177）
+  '/src/components/hints/scenes.tsx': 2, // 提示动画里的迷你样本图（坐标轴 + 曲线，演的是「一张 matplotlib 图」被拖 / 被裁；另一张两条曲线的，演图内多选，ADR 0177）
   '/src/vendor/stageshow/cursor.tsx': 1, // 提示动画里的光标（圆点 / 箭头样式；vendored，ADR 0177）
   '/src/vendor/stageshow/cursors.tsx': 8, // 提示动画里的 macOS 光标图形（箭头 / 手 / 抓 / 四向缩放等 8 种；演的是鼠标本身，vendored）
   '/src/canvas/ArrowView.tsx': 1, // 画布箭头本体
