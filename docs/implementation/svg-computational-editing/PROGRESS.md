@@ -55,6 +55,19 @@
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
 
+### 2026-11-11 PR00–PR07 本地收敛实施（本轮）
+
+- 用户明确恢复实施：唯一树 `E:/0 - Project/Tavotto-svg-r00` / 分支 `zixu.wang/svg-computational-r00`，不新建分支/worktree、不 reset/stash、不 push/PR。起点 `332a346e`（文档），`origin/main` 与 merge-base 均为 `2bc94f7f`。
+- 本轮功能提交：`48faabb0`（同次执行正证）、`784026d8`（前端全部消费者）、`70a4ab19`（保存不被不可读绑定阻塞/离开冲刷不丢）、`bde0959c`（缺脚本源新码）、`e37f7188`、`89cc846b`（冷安装真实运行验证）、`0da6a146`（static/declarative SVG 资源判据）、`5981e0e0`（facade 清单调用点）、`aa70a585`（动态 http_status 门禁）、`bff1ecc7`（Windows 子进程 UTF-8 解码）；文档收口另计。
+- **PR01**：`tests/test_figure_execution_proof.py` 9 项通过（safe / Workerd / native 真实 worker），撤掉 ledger eid 与 native 屏障守卫后目标 2 项真实变红；`include_figure_execution` 严格布尔，缺证据只省略字段。
+- **PR02**：41 路径候选按 SHA 核对后应用，并改为显式 `figureOrigin`（输出快照不再派生）+ 后端正证门控首编辑捕获；修 4 个入口缺陷；前端完整套件 **13236 pass / 2 fail**，2 项在 `origin/main` 上同样失败（本机 Windows 生成物/换行环境）；`pnpm build`/`lint`/`i18n:check` 均 exit 0。
+- **PR03**：INPUT/包/迁移组全绿；`test_package_install_e2e.py` 新增冷进程验证：缺脚本时 `script_source_missing` 且零执行，显式提供脚本与 INPUT 后一次真实执行，页尺寸/文字一致、跨产物像素门限通过；未把包当完整项目备份，不自动运行外来代码。
+- **PR04**：A 路径（脚本来源）图例/坐标真实 worker 组全绿；**N5（显示帧 F/刻度标题裁切）与 N4（普通 SVG 声明式图例所有权）未完成**：N5 仅有仓库外原型且其自述未接生产消费者（`E:/0 - Project/svg-review-20261106/n5-tick-clipping-review/`），N4 仅有只读评审、无实现。本轮不半接协议，按诚实范围保留。
+- **PR05**：导出/写回组全绿（含平台 skip）；写回最终 check→OS replace 的外部 writer 窗口做第三路径审查，结论 `temporary_mitigation`，不声称原子 CAS；普通 PDF→SVG 保持原失败合同、不在本 PR。
+- **PR06**：`ruff check .` / `format --check .` exit 0；`cargo test`（`PYTHON` 显式指向本树 `.venv`）/`clippy -D warnings`/`fmt --check` exit 0；正式前端构建、playground/widget `--check` exit 0；`smoke_app.py` exit 0；equivalence/invariants/文档门禁 exit 0。全仓后端按 6 片并行跑完（28357 项）：94 项失败，绝大多数为本机 Windows 符号链接/junction、venv/pip/MCP/Codex 环境与并行争用；串行复核后 EPS 9 项实际通过，真实问题已修（动态状态码 AST 门禁、facade 清单、widget 产物、9 处子进程 UTF-8），其余 4 项在 `origin/main` 上同样失败（poppler 版本、pytest 9 monkeypatch、环境自动探测、依赖授权）。全仓 28357 项的最终绿需按 CI 拓扑在线上腿复核。
+- **真实 UI**：Chromium 下 `golden-paths.spec.ts::导出 PDF 后文件真的落盘` **pass**；WebKit 未安装（`playwright install` 缺失）。`asset-library.spec.ts::完整链` 被真实「新版本 0.21.1 已发布」弹窗挡住后随夹具拆除以 `0xC0000409` 退出，未完成；不是功能断言失败，线上 posix-e2e 需复跑该登记用例。
+- **未完成/待外部**：N5/N4；全仓最终绿、`full-ci`/required Gates、macOS/Linux 真产物、安装/签名/公证、真宿主 MCP/桌面壳；普通 PDF→SVG。未 push、未创建远端 PR/issue、未合并或发布。
+
 ### 2026-11-11 补记最新功能分支现场
 
 - 用户要求将最新分支情况也写入文档。已补NEXT_PHASE当前分支表、NEXT_PHASE_PROMPT复制正文与PROGRESS环境快照，并同步总计划入口；没有恢复产品开发。

@@ -3,6 +3,14 @@
 > 更新：2026-11-11（Asia/Shanghai）。本轮只盘点、更新计划与提示词；产品开发仍暂停，没有开始下面的实施任务，也没有创建远端 PR。
 > 目标：在当前分支准备一份功能范围清楚、实现闭合、可审查且具备合并验证条件的 SVG 计算编辑 PR。完整产品范围仍以 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) / ADR 0166 为准；历史证据按日期保留在 [PROGRESS.md](PROGRESS.md)，执行提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。
 
+## 0. 本轮执行结果（2026-11-11，本地）
+
+- **已完成并提交**：PR00 基线/范围；PR01 同次执行正证；PR02 全部前端消费者 + 4 个入口修复 + 保存链路回归修复；PR03 INPUT/包/迁移验证与缺脚本源正确报错；PR05 导出/写回复验与写回残余竞争第三路径审查。
+- **验证**：受影响后端组、前端完整套件（13236 pass / 2 项在 origin/main 同样失败）、Ruff、Cargo、正式前端构建、playground/widget check、smoke_app、equivalence/invariants/文档门禁均通过；全仓后端 28357 项按 6 片并行跑完，94 项失败经串行复核后确认为 Windows 环境/并行争用，真实问题已修。
+- **真实 UI**：Chromium 下导出落盘用例通过；WebKit 浏览器未安装；长链用例被真实更新弹窗挡住后随夹具拆除，未完成。
+- **未完成**：PR04 的 N5（显示帧 F / 刻度标题裁切）与 N4（普通 SVG 声明式图例所有权）——N5 只有仓库外原型且未接生产消费者，N4 只有只读评审；本轮不半接协议。普通 PDF→SVG 保持原失败合同。
+- **剩余外部步骤**：线上 `full-ci`/required Gates、macOS/Linux 真产物与安装链、真宿主 MCP/桌面壳；未 push、未创建远端 PR、未合并或发布。
+
 ## 1. 当前状态与 PR 的完成口径
 
 ### 1.1 本次实际核对

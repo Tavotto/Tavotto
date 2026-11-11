@@ -120,7 +120,9 @@ packagerelocation只在活跃Prepared内准备全量oldRef→newRef、原序正�
 - 底层提供独立`render_existing`、`export_existing`和`preview_png_existing`动作，复用原renderer、完整patch处理及导出/PNG的状态中立语义。私有expected_execution_id由父端实际执行事实产生；safe/Workerd发送前和回复后核同实例，子端核真实执行ID；不得build、重开session或respawn。旧无守卫参数调用保持原协议和行为。
 - native额外核同一transport、PID、generation和snapshot_epoch/屏障；epoch留在父端，子端回真实执行ID。守卫不授权重新运行，不将native降为safe。看护为`test_existing_execution_dispatch.py`、`test_native_existing_execution.py`及Rust同名定向测试。
 - `enginesession.resolve(existing_only=True, existing_worker=...)`仅复核实际候选：safe沿原pool键使用候选的run/artifact/write_roots并要求同一实例；native沿原REGISTRY路由核同一session及执行归属。没有另建路由表，候选缺失或不匹配不触发执行；该私有参数本身不替代应用的完整ref/receipt接纳。
-- **尚未接通**：应用完整ref/receipt接纳、首编辑自动捕获、render/PNG/export/specfix/writeback及全部缓存/回包消费者、Preparation冷重建。看护增加`test_existing_consumers.py`；底层守卫和被动持久化的通过不代表历史编辑全链已经安全可用。
+- **尚未接通（2026-11-08 状态，已由下条取代）**：应用完整ref/receipt接纳、首编辑自动捕获、render/PNG/export/specfix/writeback及全部缓存/回包消费者、Preparation冷重建。看护增加`test_existing_consumers.py`；底层守卫和被动持久化的通过不代表历史编辑全链已经安全可用。
+- **2026-11-11 接通状态**：首编辑捕获只在后端本次渲染的正证（`figure_execution`，`app._figure_execution_evidence`：本次实际 eid、同实例/代次/屏障、receipt 与本次原序 P）与当前完整来源/P 匹配时发生；`figureOriginFor` 只读显式 `figureOrigin`，输出快照不再自动升级为历史输入。render/PNG/specfix/写回/记录/history/sync/原图/整版/批量导出/preflight 已接同一来源并在回包核 echo；同名当前 B 的 baked/profile 不再决定历史 A 的资格。冷开没有活执行时明确回退当前来源，不伪造历史身份。看护：`tests/test_figure_execution_proof.py`、`tests/test_figure_origin_consumers.py`、`web/src/store/figureOriginCapture.test.ts`、`web/src/store/figureOriginGaps.test.ts`。
+- **仍未接通**：N5（显示帧 F 与刻度/标题裁切，仓库外原型未接生产消费者）与 N4（普通 SVG 声明式图表的图例所有权）。A 路径（脚本来源）的图例/坐标流程完整；B/C 路径的图例所有权与 F 帧仍是阻塞项，见 `docs/implementation/svg-computational-editing/NEXT_PHASE.md`。
 
 ### 4. 明确不做（本轮）
 

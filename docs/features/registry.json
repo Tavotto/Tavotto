@@ -699,6 +699,22 @@
       ]
     },
     {
+      "id": "canvas.historical-source-edit",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "可信来源图内编辑：保存、重开、预检与导出保持同一处修改",
+        "en-US": "Edit a figure from its trusted source and keep the same change across save, reopen, preflight and export"
+      },
+      "entry": "素材库 → 双击图 → 图内编辑 → 保存 → 重开 → 导出",
+      "e2e": [
+        {
+          "spec": "asset-library.spec.ts",
+          "title": "完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 PDF/PNG"
+        }
+      ]
+    },
+    {
       "id": "style.panel",
       "status": "active",
       "platform": "both",
