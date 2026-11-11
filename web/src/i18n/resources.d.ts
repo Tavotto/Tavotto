@@ -1694,7 +1694,12 @@ export default interface Resources {
       },
       "import": "从文件导入",
       "inUse": "本项目在用",
+      "journalBadge": "期刊要求 · 只读",
+      "journalEntry": "{{name}} · 期刊",
       "keyRules": "关键要求",
+      "leaveJournalBody": "改用「{{name}}」后，期刊要求与出处会一起移除，可以撤销。",
+      "leaveJournalConfirm": "改用这套规范",
+      "leaveJournalTitle": "不再按「{{journal}}」检查？",
       "library": {
         "spec": "规范库",
         "style": "样式库"
@@ -4971,10 +4976,12 @@ export default interface Resources {
     "hideElementTip": "隐藏元素",
     "history": {
       "addFill": "添加填充",
+      "addStroke": "添加描边",
       "addTextBg": "添加文字背景",
       "addTextBorder": "添加文字描边",
       "annotationsWrittenBack_other": "写回 {{count}} 条标注",
       "clearFill": "清除填充",
+      "clearStroke": "清除描边",
       "clearTextBg": "清除文字背景",
       "clearTextBorder": "清除文字描边",
       "editText": "编辑文字",
@@ -4995,10 +5002,14 @@ export default interface Resources {
       "setFontFamily": "修改字体",
       "setFontSize": "修改字号",
       "setHeadEnd": "修改终点端型",
+      "setHeadSizeEnd": "修改终点端型大小",
+      "setHeadSizeStart": "修改起点端型大小",
       "setHeadStart": "修改起点端型",
       "setHeight": "修改高度",
       "setInterpretation": "科学文本解释",
+      "setLineCap": "修改线端",
       "setLineHeight": "修改行距",
+      "setLineJoin": "修改拐角",
       "setPadding": "修改内边距",
       "setPageBackground": "修改页面背景",
       "setPageBgColor": "修改页面背景色",
@@ -5008,6 +5019,7 @@ export default interface Resources {
       "setPanelScale": "修改图的缩放",
       "setSides": "修改边数",
       "setStrokeColor": "修改描边颜色",
+      "setStrokeOpacity": "修改描边不透明度",
       "setStrokeWidth": "修改线宽",
       "setSubscript": "设为下标",
       "setSuperscript": "设为上标",
@@ -5368,29 +5380,59 @@ export default interface Resources {
     "show": "显示",
     "stroke": {
       "addFill": "添加填充",
+      "addStroke": "添加描边",
       "appearance": "外观",
+      "cap": {
+        "butt": "平头",
+        "round": "圆头",
+        "square": "方头"
+      },
+      "capDotted": "点线靠圆头画点，线端固定为圆头",
+      "capRow": "线端",
       "color": "颜色",
       "cornerRadius": "圆角",
       "dash": "线型",
       "dashStyle": {
+        "dashdot": "点划线",
         "dashed": "虚线",
         "dotted": "点线",
+        "longdash": "长虚线",
+        "longdashdot": "长点划线",
         "solid": "实线"
       },
       "end": "终点",
+      "endSize": "终点大小",
       "fill": "填充",
       "fillOpacity": "不透明度",
       "head": {
         "bar": "短线",
+        "diamond": "菱形",
+        "dot": "圆点",
         "none": "无",
         "open": "开口",
+        "stealth": "燕尾",
         "triangle": "三角"
       },
+      "join": {
+        "bevel": "斜角",
+        "miter": "尖角",
+        "round": "圆角"
+      },
+      "joinRow": "拐角",
       "lineWidth": "线宽",
+      "more": "更多",
+      "moreCount": "{{n}} 项",
       "reverse": "反转方向",
       "sides": "边数",
+      "size": {
+        "large": "大",
+        "medium": "中",
+        "small": "小"
+      },
       "start": "起点",
-      "strokeColor": "描边"
+      "startSize": "起点大小",
+      "strokeColor": "描边",
+      "strokeOpacity": "描边不透明度"
     },
     "summaryMarks": "{{count}} 标注",
     "summaryPanels": "{{count}} 张图",
@@ -5689,7 +5731,7 @@ export default interface Resources {
       "openFailed": "打不开项目：{{error}}",
       "panelMissing": "没找到图 {{stem}}——脚本可能还没产出，或它在别的图库里",
       "projectOpened": "已打开项目 {{name}}",
-      "restoreTimeout": "这次交接的图没有放进排版：上次的排版还没打开，图在素材库里。",
+      "restoreTimeout": "这次交接的图在素材库里：先在画布上选一份排版，再把它加进来。",
       "runtimeNeedsRun": "{{stem}} 已登记为运行时图，但还没有预览——到素材库的「脚本」区运行一次。",
       "superseded": "项目已切换，这次交接没有放入。"
     },
@@ -7107,11 +7149,13 @@ export default interface Resources {
     },
     "restore": {
       "autoAdopted": "已打开本机找到的排版“{{name}}”",
-      "blockedWrite": "上次的排版还没打开。",
+      "autoNew": "上次的排版“{{name}}”打不开，已开了一份新排版。",
+      "autoNewUnnamed": "上次的排版打不开，已开了一份新排版。",
+      "blockedWrite": "先在画布上选一份排版。",
       "choose": "选一份打开",
-      "continueNew": "继续新建",
+      "continueNew": "用新排版",
       "entrySuperseded": "项目已切换，这次操作没有执行。",
-      "entryTimeout": "等了很久上次的排版仍没处理，这次操作没有执行。",
+      "heldChoose": "先在画布上选一下，刚才的操作会接着做。",
       "indexDegraded": "上次的恢复记录读不了，先开了一份空白排版。旧排版还在，可以在“打开排版”里找。",
       "meta": {
         "pill": "下次自动恢复信息没更新",
@@ -7127,7 +7171,7 @@ export default interface Resources {
         "missing": "上次的排版找不到了",
         "prepareFailed": "示例排版没能打开",
         "tooNew": "上次的排版来自更新版本",
-        "unavailable": "上次的排版暂时没打开"
+        "unavailable": "暂时接不上上次的排版"
       },
       "retry": "重试",
       "title": {
@@ -7137,7 +7181,7 @@ export default interface Resources {
         "missing": "上次的排版“{{name}}”找不到了。",
         "prepareFailed": "示例排版没能打开。",
         "tooNew": "上次的排版“{{name}}”来自更新版本的 Tavotto，这个版本打不开。",
-        "unavailable": "上次的排版暂时没打开。"
+        "unavailable": "暂时接不上上次的排版。"
       }
     },
     "runtimePanel": {
@@ -7462,7 +7506,7 @@ export default interface Resources {
       "importPackage": "导入项目包…",
       "insertShape": "插入形状",
       "issueAria": "排版状态：{{status}}。查看详情",
-      "issueLastDoc": "上次的排版没打开",
+      "issueLastDoc": "没接上上次的排版",
       "issueTooNew": "排版版本较新",
       "more": "更多",
       "moreGroup": {

@@ -2,7 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「UI 视觉纪律」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`components/ui/foundation.test.ts`、`ui/notice.test.tsx`、`e2e/notice-no-push.spec.ts`、`components/settings/themePreference.test.tsx`、`e2e/theme.spec.ts`、`components/ui/summaryRow.test.tsx`、`components/ui/keyboardPrimitives.test.tsx`、`lib/motion.test.tsx`、`components/ui/icons/motion.test.tsx`、`src/tokenContrast.test.ts`、`iconography.test.tsx`、`e2e/contrast.ts`、`components/canvasToolbar.test.tsx`、`e2e/canvas-toolbar.spec.ts`、`e2e/topbar-narrow.spec.ts`、`lib/keymap.test.tsx`、`canvas/overlayGrammar.test.tsx`
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`components/ui/foundation.test.ts`、`ui/notice.test.tsx`、`e2e/notice-no-push.spec.ts`、`components/settings/themePreference.test.tsx`、`e2e/theme.spec.ts`、`components/ui/summaryRow.test.tsx`、`components/ui/keyboardPrimitives.test.tsx`、`lib/motion.test.tsx`、`components/ui/icons/motion.test.tsx`、`src/tokenContrast.test.ts`、`iconography.test.tsx`、`e2e/contrast.ts`、`components/canvasToolbar.test.tsx`、`e2e/canvas-toolbar.spec.ts`、`e2e/topbar-narrow.spec.ts`、`lib/keymap.test.tsx`、`canvas/overlayGrammar.test.tsx`、`src/statusErrorActions.test.ts`
 
 <!-- agents-route
 sheet: web/AGENTS.md
@@ -198,6 +198,21 @@ ink-3 半速、仍在动）、发出后到第一个字之间状态行前那一�
   「本排版」是一行 Notice（事实用 · 连起来 +「画布设置 ›」，起步提示折进详情）。
 - **时长**：只用现有 motion token（详情展开 `Reveal` 180ms；通知轨入场 180 / 退场 120 = base / fast，规格的 200 / 130 落到最近一档）；位移 ≤ 4px 的
   纪律保留（规格写的 6px 没采，`motion.test` 的 ≤4px 门禁在）；reduced-motion 由 index.css 全局兜底直接切换。
+
+## 失败出口三种结局与红色提示门禁（2026-11-11）
+
+每个失败出口只能是三种结局之一：① 静默做完并说一句；② 一句话 + 一个能直接完成用户原动作的主按钮；
+③ 真做不了 →「发给我们看看」（`feedbackAction()`）。禁止「纯文字报错，用户不知道怎么继续」。
+
+门禁 `web/src/statusErrorActions.test.ts`（扫描器 `web/src/test/statusErrorScan.ts`，TypeScript AST）：
+`setStatus(…, 'error')` 的每个调用点要么第三实参带 `action`，要么登记进台账 `web/src/statusErrorLedger.json`——
+键 = 文件 + 文案 key（不用行号，同键多处用 `count`），`reason` 一句人话说明为什么不需要按钮
+（用户再做一次原动作就行 / 紧跟着弹出带按钮的卡片 / 改选后再点……）。实际集合与台账必须相等：
+新增未登记红，台账里有陈旧条目（提示已加按钮或已删）也红。
+认出的包装助手：`sayDrop`（别名 `say`）、`sayNotebook`、`store/actions.ts` 的 `status`；新的包装只要把 tone 当形参透传给
+`setStatus` 就会被自动认出。tone 是变量 / 调用、opts 是展开的调用点「判不出就别判」，不进红。
+`reason` 以 `TODO(dead-end): ` 开头 = 真死胡同、理由写不出、待修（写明该怎么修）；这类条目数钉在测试的
+`DEAD_END_CAP`，**只许降不许升**——修掉一条（加按钮或改结局）就删台账条目并把上限改小。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 
