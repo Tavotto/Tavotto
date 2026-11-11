@@ -2539,7 +2539,7 @@
       "origin": "Catalog record label (unverified)",
       "originJournal": "Journal entry",
       "originPublisher": "Publisher entry",
-      "sourceScopeUnknown": "Source document scope: Not established",
+      "sourceScopeUnknown": "Source scope: Not established",
       "derivation": "Source derivation",
       "value": "Recorded value",
       "comparison": "Field comparison (structural only; not applicability or compliance)",

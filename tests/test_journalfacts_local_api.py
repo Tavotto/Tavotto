@@ -133,6 +133,22 @@ def test_actual_flask_encoded_response_is_bounded(http_client, monkeypatch):
         "/api/journal-facts/journal", json={"journal_id": "fx-journal"}, headers=headers
     )
     assert result.status_code == 413 and result.json["code"] == "result_too_large"
+    assert isinstance(result.json.get("error"), str) and result.json["error"].strip()
+    assert "facts" not in result.json and result.headers["Cache-Control"] == "no-store"
+
+
+def test_remote_oversized_facts_error_has_fallback(http_client, monkeypatch):
+    client, headers = http_client
+
+    def oversized(*args, **kwargs):
+        raise facts.FactsError("result_too_large")
+
+    monkeypatch.setattr(facts, "get_facts", oversized)
+    result = client.post(
+        "/api/journal-facts/journal", json={"journal_id": "fx-journal"}, headers=headers
+    )
+    assert result.status_code == 413 and result.json["code"] == "result_too_large"
+    assert isinstance(result.json.get("error"), str) and result.json["error"].strip()
     assert "facts" not in result.json and result.headers["Cache-Control"] == "no-store"
 
 

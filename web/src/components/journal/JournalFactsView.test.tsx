@@ -289,7 +289,7 @@ describe('source facts viewer', () => {
     await click(buttonWith('View source facts'))
     await click(buttonWith('Read sources'))
     expect(host.textContent).toContain('Catalog record label (unverified): Journal entry')
-    expect(host.textContent).toContain('Source document scope: Not established')
+    expect(host.textContent).toContain('Source scope: Not established')
     expect(host.textContent).toContain('https://ems.press/author-guidelines')
     expect(host.textContent).toContain(item.quote)
     expect(host.textContent).not.toContain('Source level: Journal source')

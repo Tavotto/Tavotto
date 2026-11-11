@@ -27,6 +27,7 @@
     "refreshReconstruction": "更新重画对照"
   },
   "backend": {
+    "result_too_large": "期刊事实结果过大，暂无法显示。",
     "artifact_source_unavailable": "当前操作无法使用所选源图模式，未应用本次修改。请保留原图显示。",
     "ai_agent_disabled": "{{agent}} 已在设置中关闭。在「改图助手」里打开后再试。",
     "ai_agent_executable_invalid": "无法用作该 Agent 的可执行文件：{{path}}。原设置不变。",
@@ -908,7 +909,6 @@
     "discouragedColormap": "色谱 {{cmap}} 不是感知均匀的，规范推荐 {{recommended}}",
     "elementOutsideFigure": "有元素超出图幅 {{mm}} mm，导出时会裁掉超出的部分。",
     "exportRasterDpi": "导出 {{formats}} 用的 {{dpi}}dpi 低于当前检查阈值 {{min}}dpi",
-    "exportRasterDpiJournalSourceUnverified": "导出 {{formats}} 用的 {{dpi}}dpi 低于当前检查阈值 {{min}}dpi；此回执未核验该阈值的期刊出处",
     "fitWithoutCi": "有拟合曲线但没有置信区间填充带。投稿通常要求给出拟合的不确定度。",
     "fontBelowFloor": "图内文字的有效字号 {{effective}} pt 低于绝对下限 {{floor}} pt。",
     "fontFamilySubstituted": "图内文字用 {{family}}，规范要求 {{want}}。",
@@ -937,7 +937,6 @@
     "paletteSemantic": "色谱 {{cmap}} 不在推荐色系里（按 sequential / diverging / categorical 语义选：{{url}}）。",
     "panelTextNotVerifiable": "这张矢量图还没有引擎 manifest（未渲染或非脚本产物），图内文字字号与字体无法自动核验。",
     "rasterDpi": "这张位图的等效分辨率 {{dpi}}dpi 低于当前检查阈值 {{min}}dpi",
-    "rasterDpiJournalSourceUnverified": "这张位图的等效分辨率 {{dpi}}dpi 低于当前检查阈值 {{min}}dpi；此回执未核验该阈值的期刊出处",
     "rasterTextNotVerifiable": "位图没有矢量文字层，字号无法核验。请确认最终字号大于规范下限。",
     "renderError": "这张图最近一次渲染失败，导出前请先修复",
     "spinesNotEnclosed": "坐标轴缺 {{sides}} 边。规范要求封闭坐标轴。",

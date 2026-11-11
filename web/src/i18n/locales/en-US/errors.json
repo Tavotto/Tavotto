@@ -27,6 +27,7 @@
     "refreshReconstruction": "Update redraw comparison"
   },
   "backend": {
+    "result_too_large": "The journal facts result is too large to display.",
     "artifact_source_unavailable": "Selected-source mode cannot complete this operation. No edit was applied; keep the original view.",
     "ai_agent_disabled": "{{agent}} is turned off in settings. Turn it back on under Figure assistants.",
     "ai_agent_executable_invalid": "Can’t use that file as this agent’s executable: {{path}}. Your previous setting is unchanged.",
@@ -911,7 +912,6 @@
     "discouragedColormap": "The colormap {{cmap}} isn't perceptually uniform; the profile recommends {{recommended}}.",
     "elementOutsideFigure": "An element extends {{mm}} mm past the figure edge. The part outside is cut off on export.",
     "exportRasterDpi": "Exporting {{formats}} at {{dpi}} dpi is below the current check threshold of {{min}} dpi",
-    "exportRasterDpiJournalSourceUnverified": "Exporting {{formats}} at {{dpi}} dpi is below the current check threshold of {{min}} dpi; this report has not verified its journal source",
     "fitWithoutCi": "A fitted curve has no confidence band. Submissions usually require the uncertainty of the fit.",
     "fontBelowFloor": "Figure text has an effective size of {{effective}} pt, below the absolute floor of {{floor}} pt.",
     "fontFamilySubstituted": "Figure text uses {{family}}; the profile requires {{want}}.",
@@ -940,7 +940,6 @@
     "paletteSemantic": "The colormap {{cmap}} isn't one of the recommended scientific palettes (pick by sequential / diverging / categorical meaning: {{url}}).",
     "panelTextNotVerifiable": "This vector figure has no engine manifest yet (not rendered or not from a script), so its text size and font can't be checked automatically.",
     "rasterDpi": "This raster figure's effective resolution {{dpi}}dpi is below the current check threshold of {{min}}dpi",
-    "rasterDpiJournalSourceUnverified": "This raster figure's effective resolution {{dpi}}dpi is below the current check threshold of {{min}}dpi; this report has not verified its journal source",
     "rasterTextNotVerifiable": "Text in a raster figure can’t be checked automatically. Confirm the final size is above the profile’s floor.",
     "renderError": "This figure's last render failed — fix it before exporting",
     "spinesNotEnclosed": "The axes are missing {{sides}}. The profile requires them enclosed.",
