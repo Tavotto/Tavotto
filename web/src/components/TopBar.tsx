@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  BookOpen,
   Check,
   ChevronDown,
   CircleAlert,
@@ -66,6 +67,7 @@ import { ConflictActions, ConflictDetail } from './DocumentBanner'
 import { RestoreIssueBody, RestoreMetaBody } from './RestoreIssueBody'
 import { useWindowFullscreen } from '@/hooks/useWindowChrome'
 import { MOD, cn } from '@/lib/utils'
+import { journalCatalogUi } from '@/lib/journalUi'
 import { msg, t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
 import { useFormatMessage } from '@/i18n/react'
@@ -117,6 +119,7 @@ export function TopBar() {
         </span>
         <DocumentMenu />
         <SaveStateLabel />
+        <JournalChip />
       </div>
 
       {/* 撤销 / 重做挨着导出（2026-10-07 设计审计 §10.1 P2）：此前孤零零在顶栏正中，离它撤的东西（左边的文档）
@@ -267,6 +270,34 @@ const PILL_TONE: Record<StatusTone, string> = {
   ok: 'bg-ok-surface text-ok-content inset-ring inset-ring-ok-border',
   warn: 'bg-warn-surface text-warn-content inset-ring inset-ring-warn-border',
   danger: 'bg-danger-surface text-danger-content inset-ring inset-ring-danger-border',
+}
+
+/**
+ * 这份排版按哪本期刊检查（2026-11-11「期刊贯通」）：期刊名贴在文档名后面，点它去设置 › 期刊规范。
+ * 没按期刊 / 期刊入口关着时不渲染；窄于 900 只留图标（名字给读屏与气泡）。只读文档绑定，不另判什么。
+ */
+function JournalChip() {
+  const { t } = useTranslation('workspace')
+  const label = useDocumentStore((s) => (journalCatalogUi() ? s.doc.profile?.journalRef?.label : undefined))
+  if (!label) return null
+  const title = t('topbar.journalTitle', { journal: label })
+  return (
+    <button
+      type="button"
+      data-topbar-journal
+      title={title}
+      aria-label={title}
+      onClick={() => useUiStore.getState().setSettingsOpen(true, 'spec')}
+      className={cn(
+        'inline-flex h-6 min-w-0 max-w-48 shrink items-center gap-1 rounded-full px-2 text-xs font-medium outline-none',
+        'focus-visible:focus-ring',
+        PILL_TONE.neutral,
+      )}
+    >
+      <BookOpen size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
+      <span className="truncate max-[899px]:sr-only">{label}</span>
+    </button>
+  )
 }
 
 function useDocIssue(): DocIssue | null {
