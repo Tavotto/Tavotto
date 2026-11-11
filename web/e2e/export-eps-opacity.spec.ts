@@ -21,13 +21,13 @@ async function openAnnotatedFigure(page: Page, baseURL: string) {
   // 插一个三角形标注、加填充、填充不透明度 50%
   await page.locator('[data-tool-menu="annotate"]').click({ timeout: 10_000 })
   // 「插入形状」直接落一个形状（不用拖）；三角形是封闭形状、能加填充
-  await page.getByRole('menuitem', { name: '三角形' }).click({ timeout: 10_000 })
+  await page.locator('[data-insert-shape="triangle"]').click({ timeout: 10_000 })
   // 刚插入的形状没被选中：点三角形左边的斜边选上它（命中的是描边）
   const shape = page.locator('[data-canvas-stage] [data-object-id]').last() // 最上层 = 刚插入的形状（图在它下面）
   await expect(shape).toBeVisible({ timeout: 10_000 })
   const box = (await shape.boundingBox())!
   await page.mouse.click(box.x + box.width * 0.25, box.y + box.height * 0.5)
-  await page.getByRole('button', { name: '添加填充' }).click({ timeout: 10_000 })
+  await page.locator('[data-effect-add="fill"]').click({ timeout: 10_000 })
   const opacity = page.locator('[data-prop="fillOpacity"] input')
   await opacity.fill('50')
   await opacity.press('Enter')

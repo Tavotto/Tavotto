@@ -545,6 +545,7 @@ export function ShapeSection({ objs }: { objs: ShapeObject[] }) {
               on={fillOn}
               label={sk('fill')}
               addLabel={sk('addFill')}
+              anchor="fill"
               onAdd={() => patch(hist('addFill'), (o) => (o.fill = '#FFFFFF'))}
               onOff={() => patch(hist('clearFill'), (o) => (o.fill = null))}
             />
