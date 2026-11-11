@@ -163,6 +163,7 @@ function JournalFactsSession({ journalId, journalLabel }: { journalId: string; j
             {valueLabel(fact) ? <p>{text('value')}: {valueLabel(fact)}</p> :
               <p className="break-all">{text('cannotInterpret')}: {fact.subject} · {fact.relation} · {JSON.stringify(fact.value)} {fact.unit ?? ''}</p>}
             <p>{text('strength')}: {strengthLabel(fact.strength)} · {text('stageLabel')}: {stageLabel(fact.stage)} · {text('origin')}: {originLabel(fact.origin)}</p>
+            <p className="text-ink-2">{text('sourceScopeUnknown')}</p>
             {fact.conditions && Object.entries(fact.conditions).map(([key, value]) => {
               const label = conditionLabel(key, value)
               return <p key={key} className="break-words">{label ?? `${text('cannotInterpret')}: ${JSON.stringify({ [key]: value })}`}</p>

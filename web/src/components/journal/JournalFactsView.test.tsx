@@ -159,7 +159,7 @@ describe('source facts viewer', () => {
     expect(host.textContent).toContain(`Raster resolution ${expected}`)
     expect(host.textContent).toContain('Figure kind: Combination')
     expect(host.textContent).toContain('Recommended')
-    expect(host.textContent).toContain('Journal source')
+    expect(host.textContent).toContain('Journal entry')
     expect(host.textContent).not.toContain(`raster_dpi: ${relation}`)
   })
 
@@ -213,7 +213,7 @@ describe('source facts viewer', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(page({ facts: [item] })), { status: 200 }))
     await click(buttonWith('View source facts'))
     await click(buttonWith('Read sources'))
-    expect(host.textContent).toContain('Publisher source')
+    expect(host.textContent).toContain('Publisher entry')
     expect(host.textContent).toContain('Only for this special case')
     expect(host.textContent).toContain('other_stage')
     expect(host.textContent).toContain('other_strength')
@@ -279,6 +279,20 @@ describe('source facts viewer', () => {
     await change('Object (optional)', 'panel:none')
     await click(buttonWith('Read sources'))
     expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body)).inspection.object_label).toBe('none')
+  })
+
+
+  it('does not represent a generic document as journal-specific from origin alone', async () => {
+    const item = { id: 'formats', subject: 'figure_format', relation: 'text', value: 'Vector graphics preferred', strength: 'preferred', stage: 'production', origin: 'journal', source: 's', review: { status: 'verified', reviewed: '2026-11-11', method: 'fixture' }, quote: 'Vector graphics formats (EPS, PDF) are strongly preferred to raster ones (JPEG, PNG).' }
+    const mock = page({ facts: [item], sources: { s: { url: 'https://ems.press/author-guidelines', retrieved: '2026-11-04' } } })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(mock), { status: 200 }))
+    await click(buttonWith('View source facts'))
+    await click(buttonWith('Read sources'))
+    expect(host.textContent).toContain('Catalog record label (unverified): Journal entry')
+    expect(host.textContent).toContain('Source document scope: Not established')
+    expect(host.textContent).toContain('https://ems.press/author-guidelines')
+    expect(host.textContent).toContain(item.quote)
+    expect(host.textContent).not.toContain('Source level: Journal source')
   })
 
 })

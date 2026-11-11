@@ -912,9 +912,9 @@ export default interface Resources {
     },
     "journal": {
       "card": {
-        "adviceBody": "{{journal}} 说明 {{body}} pt 为正文最小字号",
-        "adviceBoth": "{{journal}} 说明 {{body}} pt 为正文最小字号，{{script}} pt 为上下标最小字号",
-        "adviceScript": "{{journal}} 说明 {{script}} pt 为上下标最小字号",
+        "adviceBody": "字号记录，请参阅来源原文",
+        "adviceBoth": "字号记录，请参阅来源原文",
+        "adviceScript": "字号记录，请参阅来源原文",
         "archive": "存档",
         "aria": "出处",
         "open": "打开原网页"
@@ -966,9 +966,9 @@ export default interface Resources {
         "notice": "来源事实独立于本项目的规范快照，不改变预检。独立语义审校未认证；全刊覆盖范围未知。",
         "object": "对象（可选）",
         "open": "查看来源事实",
-        "origin": "来源层级",
-        "originJournal": "期刊",
-        "originPublisher": "出版社",
+        "origin": "目录记录标注（未核实）",
+        "originJournal": "期刊条目",
+        "originPublisher": "出版社条目",
         "page": "目录版本 {{rev}}，从第 {{offset}} 条开始",
         "permitted": "允许",
         "preferred": "首选",
@@ -981,6 +981,7 @@ export default interface Resources {
         "retrieved": "采集日期：{{date}}",
         "revision": "修回",
         "source": "来源",
+        "sourceScopeUnknown": "来源文件适用范围：未核实",
         "stage": "投稿阶段",
         "stageLabel": "阶段",
         "strength": "语气",

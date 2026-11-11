@@ -202,16 +202,16 @@ export function cardConclusion(path: string, s: JournalFieldSource): string {
   return [field, valueText(path, s)].filter(Boolean).join(' ')
 }
 
-/** Elsevier 一类的建议性字号：「X 说明 7 pt 为正文最小字号，6 pt 为上下标最小字号」。 */
-export function adviceSentence(journal: string, entries: Record<string, JournalFieldSource>): string | null {
+/** Elsevier 一类的建议性字号：说明仅供参考，不推断原文语气或把来源归因给所选期刊。 */
+export function adviceSentence(_journal: string, entries: Record<string, JournalFieldSource>): string | null {
   const num = (s?: JournalFieldSource) => (typeof s?.value === 'number' ? fmt(s.value) : '')
   const body = entries.min_effective_font_size_pt
   const script = entries.min_script_font_size_pt
   const b = body?.affects === 'advice' ? num(body) : ''
   const sc = script?.affects === 'advice' ? num(script) : ''
-  if (b && sc) return jt('card.adviceBoth', { journal, body: b, script: sc })
-  if (b) return jt('card.adviceBody', { journal, body: b })
-  if (sc) return jt('card.adviceScript', { journal, script: sc })
+  if (b && sc) return jt('card.adviceBoth')
+  if (b) return jt('card.adviceBody')
+  if (sc) return jt('card.adviceScript')
   return null
 }
 

@@ -17,7 +17,7 @@ import { JournalPicker } from './JournalPicker'
 import { JournalRequirements } from './JournalRequirements'
 import { SourceButton } from './SourceButton'
 import { clearJournal, selectJournal } from '@/store/actions'
-import { pickJournal } from '@/lib/journalPick'
+import { fieldLabel, pickJournal } from '@/lib/journalPick'
 import { JOURNAL_UI_DEV_KEY } from '@/lib/journalUi'
 import { IssueJournalSource, IssueRow } from '../left/ProblemTreeRows'
 import { exportContextIssues } from '@/lib/validation'
@@ -132,7 +132,7 @@ describe('出处卡', () => {
   const entries = (id: string, path: string) =>
     [[path, journalSources(id, loadCatalog(vectors.catalog))[path]]] as [string, ReturnType<typeof journalSources>[string]][]
 
-  it('没有快照：摘录排在白纸上，命中的数标 mark；底栏是结论 + 「期刊 · 域名 · 日期 · PDF」+ 打开原网页 ↗', async () => {
+  it('没有快照：摘录排在白纸上，命中的数标 mark；底栏是结论 + 「域名 · 日期 · PDF」+ 打开原网页 ↗', async () => {
     await mount(<SourceButton journal="Fixture Press" entries={entries('fx-alpha', 'min_raster_dpi')} name="位图分辨率" />)
     await click(q('[data-journal-source]'))
     expect(q('[data-journal-sentence]')?.textContent).toBe('位图分辨率 ≥ 600 dpi')
@@ -140,7 +140,7 @@ describe('出处卡', () => {
     const mark = q('[data-journal-quote] mark')
     expect(mark?.textContent).toBe('600')
     expect(mark?.className).toContain('bg-paper-highlight')
-    expect(q('[data-journal-meta]')?.textContent).toBe('Fixture Press · example.invalid · 2000-01-01 · PDF')
+    expect(q('[data-journal-meta]')?.textContent).toBe('example.invalid · 2000-01-01 · PDF')
     const open = q('[data-journal-open]') as HTMLAnchorElement
     expect(open.getAttribute('href')).toBe('https://example.invalid/fx-press/guide.pdf#page=12')
     expect(open.getAttribute('target')).toBe('_blank')
@@ -149,6 +149,33 @@ describe('出处卡', () => {
     // 不是实心按钮；没有存档就没有「存档」链接
     expect(open.getAttribute('data-variant')).toBeNull()
     expect(q('[data-journal-archive]')).toBeNull()
+  })
+
+  it('通用来源：只显示实际来源域名，不把选刊名当出处', async () => {
+    const generic = entries('fx-alpha', 'min_raster_dpi')
+    expect(generic[0][1].coverage).toBe('publisher_general')
+    await mount(<SourceButton journal="Selected Journal" entries={generic} name="分辨率" />)
+    await click(q('[data-journal-source]'))
+    expect(q('[data-journal-meta]')?.textContent).toBe('example.invalid · 2000-01-01 · PDF')
+    expect(q('[data-journal-meta]')?.textContent).not.toContain('Selected Journal')
+    expect((q('[data-journal-open]') as HTMLAnchorElement).href).toBe(generic[0][1].link)
+  })
+
+  it('旧项目的来源范围未知：不猜归属，显示读取的链接且不改保存快照', async () => {
+    selectJournal('fx-beta')
+    const profile = structuredClone(useDocumentStore.getState().doc.profile!)
+    const source = profile.journalSources!.min_raster_dpi
+    delete (source as Partial<typeof source>).coverage
+    delete (source as Partial<typeof source>).source_scope
+    delete (source as Partial<typeof source>).rule_scope
+    act(() => useDocumentStore.setState((st) => ({ doc: { ...st.doc, profile } })))
+    const before = structuredClone(useDocumentStore.getState().doc.profile)
+    useJournalCatalogStore.setState({ catalog: loadCatalog(EMPTY_CATALOG) })
+    await mount(<JournalRequirements />)
+    await click(q('[data-journal-row="min_raster_dpi"] [data-journal-source]'))
+    expect(q('[data-journal-meta]')?.textContent).toBe('www.nature.com · 2026-10-31')
+    expect((q('[data-journal-open]') as HTMLAnchorElement).href).toBe(source.link)
+    expect(useDocumentStore.getState().doc.profile).toEqual(before)
   })
 
   it('有存档：底栏右侧多一个灰色文字链接「存档」', async () => {
@@ -172,7 +199,7 @@ describe('出处卡', () => {
     expect(box!.querySelector('[aria-hidden]')).not.toBeNull() // 渐隐层
     expect(q('[data-journal-quote]')).toBeNull()
     expect(q('[data-journal-sentence]')?.textContent).toBe('位图分辨率 ≥ 300 dpi')
-    expect(q('[data-journal-meta]')?.textContent).toBe('Nature Energy · www.nature.com · 2026-10-31')
+    expect(q('[data-journal-meta]')?.textContent).toBe('www.nature.com · 2026-10-31')
     expect(q('[data-journal-open]')).not.toBeNull()
   })
 
@@ -209,9 +236,84 @@ describe('出处卡', () => {
       />,
     )
     await click(q('[data-journal-source]'))
-    expect(q('[data-journal-sentence]')?.textContent).toBe('Elsevier 说明 7 pt 为正文最小字号，6 pt 为上下标最小字号')
+    expect(q('[data-journal-sentence]')?.textContent).toBe('字号记录，请参阅来源原文')
     expect(document.body.querySelectorAll('[data-journal-entry]')).toHaveLength(2)
     expect(document.body.querySelectorAll('[data-journal-sentence]')).toHaveLength(1)
+  })
+
+  it('多条证据分别显示来源、日期、链接与存档，不把首条归到其他条', async () => {
+    const src = journalSources('fx-adv', loadCatalog(vectors.catalog))
+    const body = { ...src.min_effective_font_size_pt, url: 'https://first.invalid/guide', link: 'https://first.invalid/guide#:~:text=body', retrieved: '2025-01-01', kind: 'html' as const, archive_url: 'https://archive.invalid/first' }
+    const script = { ...src.min_script_font_size_pt, url: 'https://second.invalid/guide.pdf', link: 'https://second.invalid/guide.pdf#page=4', retrieved: '2026-02-03', kind: 'pdf' as const, archive_url: 'https://archive.invalid/second' }
+    await mount(<SourceButton journal="Selected Journal" name="字号" entries={[
+      ['min_effective_font_size_pt', body], ['min_script_font_size_pt', script],
+    ]} />)
+    await click(q('[data-journal-source]'))
+    const first = q('[data-journal-entry="min_effective_font_size_pt"]')!
+    const second = q('[data-journal-entry="min_script_font_size_pt"]')!
+    expect(first.querySelector('[data-journal-meta]')?.textContent).toBe('first.invalid · 2025-01-01')
+    expect(second.querySelector('[data-journal-meta]')?.textContent).toBe('second.invalid · 2026-02-03 · PDF')
+    expect(first.querySelector('[data-journal-open]')?.getAttribute('href')).toBe(body.link)
+    expect(second.querySelector('[data-journal-open]')?.getAttribute('href')).toBe(script.link)
+    expect(first.querySelector('[data-journal-archive]')?.getAttribute('href')).toBe(body.archive_url)
+    expect(second.querySelector('[data-journal-archive]')?.getAttribute('href')).toBe(script.archive_url)
+    const firstName = first.querySelector('[data-journal-open]')?.getAttribute('aria-label')
+    const secondName = second.querySelector('[data-journal-open]')?.getAttribute('aria-label')
+    expect(firstName).toContain('打开原网页')
+    expect(secondName).toContain('打开原网页')
+    expect(firstName).not.toBe(secondName)
+    expect(q('[data-journal-sentence]')?.textContent).toBe('字号记录，请参阅来源原文')
+  })
+
+  it('岩土工程刊字号反例：标题不合成数值和正文类别，原文与两条出处保留', async () => {
+    const src = journalSources('fx-adv', loadCatalog(vectors.catalog))
+    const general = { ...src.min_effective_font_size_pt, value: 8, snapshot: null, quote: 'Make sure you use uniform lettering and sizing of your original artwork(usually 8 pt).', link: 'https://example.invalid/journal' }
+    const subscript = { ...src.min_script_font_size_pt, value: 6, snapshot: null, quote: 'As a general rule, the lettering on the artwork should have a finished, printed size of 7 pt for normal text and no smaller than 6 pt for subscript and superscript characters.', link: 'https://example.invalid/publisher' }
+    await mount(<SourceButton journal="Selected Journal" name="字号" entries={[
+      ['min_effective_font_size_pt', general], ['min_script_font_size_pt', subscript],
+    ]} />)
+    await click(q('[data-journal-source]'))
+    expect(q('[data-journal-sentence]')?.textContent).toBe('字号记录，请参阅来源原文')
+    expect([...document.body.querySelectorAll('[data-journal-quote]')].map((node) => node.textContent)).toEqual([general.quote, subscript.quote])
+    expect([...document.body.querySelectorAll('[data-journal-open]')].map((node) => node.getAttribute('href'))).toEqual([general.link, subscript.link])
+    expect(q('[data-journal-entry="min_effective_font_size_pt"]')?.textContent).not.toContain('最小字号')
+  })
+
+  it('字段中文名称相同时，多条来源链接仍有不同且可见的序号', async () => {
+    expect(fieldLabel('axis_policy.label_format')).toBe(fieldLabel('axis_policy.label_format_regex'))
+    const source = entries('fx-alpha', 'min_raster_dpi')[0][1]
+    await mount(<SourceButton journal="Selected Journal" name="坐标轴" entries={[
+      ['axis_policy.label_format', { ...source, link: 'https://example.invalid/a' }],
+      ['axis_policy.label_format_regex', { ...source, link: 'https://example.invalid/b' }],
+    ]} />)
+    await click(q('[data-journal-source]'))
+    const links = [...document.body.querySelectorAll('[data-journal-open]')]
+    expect(links).toHaveLength(2)
+    expect(links[0].getAttribute('aria-label')).toContain('1/2')
+    expect(links[1].getAttribute('aria-label')).toContain('2/2')
+    expect(links[0].getAttribute('aria-label')).not.toBe(links[1].getAttribute('aria-label'))
+    const rows = [...document.body.querySelectorAll('[data-journal-entry]')]
+    expect(rows[0].textContent).toContain('1/2')
+    expect(rows[1].textContent).toContain('2/2')
+  })
+
+  it('同一个 PDF 的不同页各有独立链接；旧快照没有范围元数据仍可用', async () => {
+    const src = journalSources('fx-adv', loadCatalog(vectors.catalog))
+    const body = { ...src.min_effective_font_size_pt, url: 'https://example.invalid/guide.pdf', link: 'https://example.invalid/guide.pdf#page=2', kind: 'pdf' as const }
+    const script = { ...src.min_script_font_size_pt, url: body.url, link: 'https://example.invalid/guide.pdf#page=9', kind: 'pdf' as const }
+    for (const source of [body, script]) {
+      delete (source as Partial<typeof source>).coverage
+      delete (source as Partial<typeof source>).source_scope
+      delete (source as Partial<typeof source>).rule_scope
+    }
+    await mount(<SourceButton journal="Selected Journal" name="字号" entries={[
+      ['min_effective_font_size_pt', body], ['min_script_font_size_pt', script],
+    ]} />)
+    await click(q('[data-journal-source]'))
+    const links = [...document.body.querySelectorAll('[data-journal-open]')]
+    expect(links.map((link) => link.getAttribute('href'))).toEqual([body.link, script.link])
+    expect(body.coverage).toBeUndefined()
+    expect(script.coverage).toBeUndefined()
   })
 
   it('没有出处的项不渲染按钮（期刊没规定就没有卡可开）', async () => {
