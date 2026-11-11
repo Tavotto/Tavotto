@@ -3005,22 +3005,112 @@ class TestTauriAptCache:
             "命中路径要排在 apt-get update 之前"
         )
 
-    def test_posix_e2e_picks_a_reachable_mirror_before_playwright_runs_apt(self):
+    PICK_SCRIPT = ROOT / "scripts" / "ci" / "apt_use_reachable_mirror.sh"
+
+    def test_playwright_with_deps_legs_pick_a_reachable_mirror_first(self):
         """`--with-deps` 自己 apt-get update，不经上面的脚本；11-11 azure 解析失败时 posix-e2e 三片全红。"""
-        code = _code(_job(CI, "posix-e2e"))
-        pick = code.index("../scripts/ci/apt_use_reachable_mirror.sh")
-        assert pick < code.index("pnpm exec playwright install --with-deps chromium")
-        script = ROOT / "scripts" / "ci" / "apt_use_reachable_mirror.sh"
-        assert os.access(script, os.X_OK)
-        text = script.read_text(encoding="utf-8")
-        for needle in (
-            "apt-mirrors.txt",
-            "archive.ubuntu.com",
-            "mirrors.edge.kernel.org",
-            "--max-time",
+        perf = (ROOT / ".github" / "workflows" / "performance-agent.yml").read_text(
+            encoding="utf-8"
+        )
+        for code, cmd in (
+            (_code(_job(CI, "posix-e2e")), "pnpm exec playwright install --with-deps chromium"),
+            (perf, 'pnpm exec playwright install --with-deps "$PERF_BROWSER"'),
         ):
-            assert needle in text, needle
-        assert "apt-mirrors.txt" in self.SCRIPT.read_text(encoding="utf-8")
+            lines = [ln.strip() for ln in code.splitlines()]
+            assert cmd in lines, cmd
+            at = lines.index(cmd)
+            assert lines[at - 1] == "../scripts/ci/apt_use_reachable_mirror.sh", lines[
+                at - 3 : at + 1
+            ]
+        assert os.access(self.PICK_SCRIPT, os.X_OK)
+
+    def test_mirror_picker_rewrites_all_three_source_shapes_only_when_azure_is_down(self, tmp_path):
+        """用桩 curl / sudo 跑真脚本：azure 通 → 一字不改；azure 不通 → .list / .sources / apt-mirrors.txt
+        都换到第一个通的镜像；全不通 → 一字不改、仍退出 0（交给 apt 报错）。"""
+        import shutil
+        import subprocess
+
+        if os.name == "nt":
+            pytest.skip("bash 脚本只在 Linux runner 上跑")
+        bindir = tmp_path / "bin"
+        bindir.mkdir()
+        etc = tmp_path / "apt"
+        etc.mkdir()
+        originals = {
+            "ubuntu.sources": "URIs: mirror+file:/etc/apt/apt-mirrors.txt\n",
+            "apt-mirrors.txt": "http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n"
+            "https://archive.ubuntu.com/ubuntu/\tpriority:2\n",
+            "legacy.list": "deb http://azure.archive.ubuntu.com/ubuntu/ noble main\n",
+            "other.list": "deb https://packages.microsoft.com/ubuntu/24.04/prod noble main\n",
+        }
+
+        def reset() -> None:
+            for name, body in originals.items():
+                (etc / name).write_text(body)
+
+        def stub(name: str, body: str) -> None:
+            f = bindir / name
+            f.write_text("#!/usr/bin/env bash\n" + body)
+            f.chmod(0o755)
+
+        stub(
+            "sudo",
+            'if [ "$1" = find ]; then shift; exec find "$APT_ETC" "${@:2}"; fi\nexec "$@"',
+        )
+        # 最后一个参数是 URL；主机在 DOWN 里就失败
+        stub(
+            "curl",
+            'url="${@: -1}"; h="${url#http://}"; h="${h%%/*}"\n'
+            'case " $DOWN " in *" $h "*) exit 6 ;; esac\nexit 0',
+        )
+        stub(
+            "sed",
+            'if "$REAL_SED" --version >/dev/null 2>&1; then exec "$REAL_SED" "$@"; fi\n'
+            '[ "$1" = -i ] && shift && exec "$REAL_SED" -i "" "$@"\nexec "$REAL_SED" "$@"',
+        )
+
+        def run(down: str) -> subprocess.CompletedProcess:
+            reset()
+            return subprocess.run(
+                ["bash", str(self.PICK_SCRIPT)],
+                env={
+                    **os.environ,
+                    "PATH": f"{bindir}:{os.environ['PATH']}",
+                    "APT_ETC": str(etc),
+                    "DOWN": down,
+                    "REAL_SED": shutil.which("sed") or "sed",
+                },
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+
+        def ubuntu_hosts() -> set[str]:
+            hosts = set()
+            for name in ("apt-mirrors.txt", "legacy.list"):
+                for word in (etc / name).read_text().split():
+                    host = urlsplit(word).hostname if word.startswith("http") else None
+                    if host and ("ubuntu.com" in host or host == "mirrors.edge.kernel.org"):
+                        hosts.add(host)
+            return hosts
+
+        up = run(down="")
+        assert up.returncode == 0, up.stderr
+        assert {n: (etc / n).read_text() for n in originals} == originals
+
+        azure_down = run(down="azure.archive.ubuntu.com")
+        assert azure_down.returncode == 0, azure_down.stderr
+        assert ubuntu_hosts() == {"archive.ubuntu.com"}
+        assert (etc / "other.list").read_text() == originals["other.list"]
+        assert (etc / "ubuntu.sources").read_text() == originals["ubuntu.sources"]
+
+        two_down = run(down="azure.archive.ubuntu.com archive.ubuntu.com")
+        assert two_down.returncode == 0, two_down.stderr
+        assert ubuntu_hosts() == {"mirrors.edge.kernel.org"}
+
+        all_down = run(down="azure.archive.ubuntu.com archive.ubuntu.com mirrors.edge.kernel.org")
+        assert all_down.returncode == 0, all_down.stderr
+        assert {n: (etc / n).read_text() for n in originals} == originals
 
     def test_script_paths_with_stubbed_apt(self, tmp_path):
         """用桩 sudo / apt-get / timeout 跑真脚本：命中走本地不 update；未命中第一镜像超时后换镜像成功；
