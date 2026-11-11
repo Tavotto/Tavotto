@@ -637,7 +637,7 @@ def _tools() -> list[dict]:
 
 
 #: 只在期刊库总开关打开时才出现在 tools/list 的工具（处理器在 HANDLERS，关着时调用回 `journal_catalog_disabled`）
-JOURNAL_CATALOG_TOOLS = ("tavotto_list_journals",)
+JOURNAL_CATALOG_TOOLS = ("tavotto_list_journals", "tavotto_get_journal_facts")
 #: 带手写 `journal` 覆盖、因而也认 `journal_id` 的工具
 JOURNAL_ID_TOOLS = (
     "tavotto_open_figure",
@@ -678,6 +678,31 @@ def _add_journal_catalog_tools(tools: list[dict], by_name: dict) -> None:
             },
         }
     )
+
+    if bridge.journal_facts_enabled():
+        tools.append(
+            {
+                "name": "tavotto_get_journal_facts",
+                "title": "读取期刊来源事实",
+                "description": (
+                    "只读 v2：按 query 搜索期刊，或按 journal_id 分页读取原文来源与完整事实。"
+                    "事实带条件、阶段和要求强度，不能忽略条件当成通用预检；不可用时不冒充 v1 数据。"
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "搜索刊名、ISSN、别名或出版社"},
+                        "journal_id": {
+                            "type": "string",
+                            "description": "读取指定期刊的事实，与 query 二选一",
+                        },
+                        "offset": {"type": "integer", "minimum": 0},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                    },
+                    "additionalProperties": False,
+                },
+            }
+        )
 
 
 # ------------------------------- 工具实现 -----------------------------------
@@ -1205,6 +1230,23 @@ def _call_list_journals(args: dict) -> dict:
     }
 
 
+def _call_journal_facts(args: dict) -> dict:
+    query = args.get("query", "")
+    journal_id = args.get("journal_id")
+    offset, limit = args.get("offset", 0), args.get("limit", 20)
+    if (
+        not isinstance(query, str)
+        or (journal_id is not None and (not isinstance(journal_id, str) or not journal_id))
+        or (journal_id is not None and "query" in args)
+        or type(offset) is not int
+        or type(limit) is not int
+        or set(args) - {"query", "journal_id", "offset", "limit"}
+    ):
+        raise RpcError(INVALID_PARAMS, "查询、期刊 ID 或分页参数不正确")
+    out = bridge.journal_facts(query, journal_id, offset, limit)
+    return {"content": _text(json.dumps(out, ensure_ascii=False)), "structuredContent": out}
+
+
 def _call_export(args: dict) -> dict:
     # dpi **不能写成 `or 600`**：显式给的 0 是写错了，不是「没给」，
     # 悄悄替它换成 600 会让用户以为自己的参数生效了
@@ -1585,6 +1627,7 @@ HANDLERS = {
     # 受期刊库总开关管：关着时不在 tools/list，直接调用回 `journal_catalog_disabled`（ADR 0155 §9）。
     # 开关打开（ADR 0155 §11）后与遥测的工具名闭集（`usage.TOOLS`）一一对应
     "tavotto_list_journals": _call_list_journals,
+    "tavotto_get_journal_facts": _call_journal_facts,
 }
 
 #: 结果里挂 UI 的工具（与 `_tools()` 的 `_meta` 一致）
@@ -2040,7 +2083,9 @@ class Server:
         from_canvas = (
             args.pop(ORIGIN_ARG, None) == ORIGIN_CANVAS if isinstance(args, dict) else False
         )
-        if from_canvas:
+        # v2 fact lookups intentionally emit no telemetry event: their new tool
+        # name is outside the current consent scope, including the generic bucket.
+        if from_canvas or name == "tavotto_get_journal_facts":
             return call_tool(name, args)
         started = time.monotonic()
         outcome = "internal_error"

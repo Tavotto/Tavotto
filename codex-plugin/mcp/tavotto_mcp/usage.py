@@ -15,6 +15,7 @@ from __future__ import annotations
 #: 两侧由 tests/test_mcp_usage.py 对拍。
 #: 例外：`tavotto_guide`（ADR 0170）有意不在这里——加进闭集要升 CONSENT_VERSION、所有用户重新同意，
 #: 决定在等维护者；在此之前它走 `other` 桶（不计入具体工具名）。
+#: `tavotto_get_journal_facts` 不计任何遥测事件，避免扩大已同意的采集范围。
 TOOLS = (
     "tavotto_health",
     "tavotto_open_figure",

@@ -437,3 +437,127 @@ def test_v2_snapshot_isolated_and_hash_checked(tmp_path):
     response = request(app, "/v2/journal-catalog/snapshots/" + name, token=token)
     assert response["status"] == 503 and json.loads(response["body"])["code"] == "catalog_invalid"
     assert response["headers"]["Cache-Control"] == "no-store"
+
+
+def test_empty_bundle_needs_verified_scoped_coverage_to_publish():
+    obj = bundle()
+    obj["facts"] = []
+    validate_bundle(obj)
+    with pytest.raises(FactValidationError):
+        validate_bundle(obj, require_verified=True)
+    obj["coverage"] = [
+        {
+            "id": "figure_section_dpi",
+            "subject": "raster_resolution",
+            "result": "not_stated",
+            "scope": "The Figures section of the captured author guide",
+            "sources": ["guide"],
+            "review": {"status": "pending"},
+        }
+    ]
+    validate_bundle(obj)
+    with pytest.raises(FactValidationError):
+        validate_bundle(obj, require_verified=True)
+    obj["coverage"][0]["review"] = {
+        "status": "verified",
+        "reviewed": "2026-11-11",
+        "method": "fixture",
+    }
+    assert validate_bundle(obj, require_verified=True) == obj
+    for mutation in (
+        lambda b: b["coverage"][0].update(scope=" "),
+        lambda b: b["coverage"][0].update(sources=[]),
+        lambda b: b["coverage"][0].update(sources=["unknown"]),
+        lambda b: b["coverage"][0].update(result="not_stated_anywhere"),
+        lambda b: b["coverage"].append(copy.deepcopy(b["coverage"][0])),
+    ):
+        altered = copy.deepcopy(obj)
+        mutation(altered)
+        with pytest.raises(FactValidationError):
+            validate_bundle(altered, require_verified=True)
+
+
+def test_noncontiguous_context_keeps_its_own_source_and_text():
+    obj = bundle()
+    obj["sources"]["intro"] = {
+        "url": "https://example.invalid/introduction",
+        "kind": "html",
+        "retrieved": "2026-11-11",
+    }
+    obj["facts"][0]["context"] = [
+        {"source": "intro", "quote": "Authors are encouraged to follow these guidelines."}
+    ]
+    obj["facts"][0]["conditions"]["purpose"] = "online_color"
+    obj["facts"][0]["strength"] = "recommended"
+    assert decode_bundle(json.dumps(obj).encode()) == obj
+    for mutation in (
+        lambda b: b["facts"][0]["context"][0].update(source="absent"),
+        lambda b: b["facts"][0]["context"][0].update(quote=" "),
+        lambda b: b["facts"][0].update(context=[]),
+        lambda b: b["facts"][0]["context"][0].update(unexpected="value"),
+    ):
+        altered = copy.deepcopy(obj)
+        mutation(altered)
+        with pytest.raises(FactValidationError):
+            validate_bundle(altered)
+
+
+def test_revision_and_acceptance_remain_distinct_with_latex_condition():
+    obj = bundle()
+    first = copy.deepcopy(obj["facts"][5])
+    first.update(
+        id="revision_files",
+        subject="file_organization",
+        relation="text",
+        value="Separate figure files in revision",
+        stage="revision",
+        quote="In revision figures are separate files.",
+    )
+    second = copy.deepcopy(first)
+    second.update(
+        id="accepted_latex",
+        subject="file_format",
+        relation="in",
+        value=["EPS", "TIFF"],
+        stage="accepted",
+        conditions={"submission_system": "latex"},
+        quote="For accepted LaTeX submissions, use EPS or TIFF.",
+    )
+    obj["facts"].extend([first, second])
+    result = decode_bundle(json.dumps(obj).encode(), require_verified=True)
+    assert result["facts"][-2]["stage"] == "revision"
+    assert result["facts"][-1]["stage"] == "accepted"
+    assert result["facts"][-1]["conditions"] == {"submission_system": "latex"}
+    assert result["facts"][-2]["stage"] != result["facts"][-1]["stage"]
+
+
+def test_structured_condition_preserves_strict_bounds_and_units():
+    obj = bundle()
+    obj["facts"][0]["conditions"] = {
+        "figure_kind": "line",
+        "width": {
+            "relation": "interval",
+            "value": {"lower": 80, "upper": 180, "lower_inclusive": False, "upper_inclusive": True},
+            "unit": "mm",
+        },
+        "fine_line": True,
+    }
+    assert decode_bundle(json.dumps(obj).encode()) == obj
+    condition = obj["facts"][0]["conditions"]["width"]
+    for mutation in (
+        lambda c: c.pop("unit"),
+        lambda c: c.update(unit=" "),
+        lambda c: c.update(unit=None),
+        lambda c: c.update(unit=123),
+        lambda c: c["value"].update(lower=float("inf")),
+        lambda c: c["value"].update(lower_inclusive="false"),
+        lambda c: c["value"].update(lower=180, upper=180, lower_inclusive=False),
+        lambda c: c["value"].update(lower=200),
+        lambda c: c.update(relation="unknown-comparison"),
+        lambda c: c.update(unexpected="silently ignored"),
+    ):
+        altered = copy.deepcopy(obj)
+        mutation(altered["facts"][0]["conditions"]["width"])
+        with pytest.raises(FactValidationError):
+            validate_bundle(altered)
+    assert condition["value"]["lower_inclusive"] is False

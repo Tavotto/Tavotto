@@ -1377,6 +1377,7 @@ NORMAL_TOOLS = (
     "tavotto_close_session",
     "tavotto_guide",
     "tavotto_list_journals",
+    "tavotto_get_journal_facts",
 )
 
 

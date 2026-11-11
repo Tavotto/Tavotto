@@ -156,6 +156,7 @@ OPTIONAL_ENGINE_MODULES = (
     "execspec",
     "fixtools.readscope",
     "journalremote",
+    "journalfacts_remote",
     "journals",
     "runconfig",
     "scriptargs",
@@ -203,6 +204,65 @@ def _remember_mcp_client_name(client_info) -> None:
     if isinstance(name, str):
         slug = _AGENT_HOST_RE.sub("-", name.strip().lower()).strip("-")[:31].strip("-")
         _MCP_CLIENT_NAME = slug or None
+
+
+def journal_facts_enabled() -> bool:
+    """v2 facts require the journal switch and a compatible engine; older engines stay usable."""
+    module = _optional_engine("journalfacts_remote")
+    return (
+        journal_catalog_enabled()
+        and module is not None
+        and callable(getattr(module, "search", None))
+        and callable(getattr(module, "get_facts", None))
+        and isinstance(getattr(module, "FactsError", None), type)
+    )
+
+
+def journal_facts(query: str, journal_id: str | None, offset: int, limit: int) -> dict:
+    """Only translates the engine's read-only v2 facts; never produces a v1 override."""
+    if not journal_catalog_enabled():
+        raise BridgeError("期刊目录入口当前不可用。", code="journal_catalog_disabled")
+    if not journal_facts_enabled():
+        raise BridgeError(
+            "当前引擎还不能读取期刊事实，请升级 Tavotto。", code="engine_capability_missing"
+        )
+    module = _optional_engine("journalfacts_remote")
+    _journal_remote()  # report agent client type through the existing shared channel
+    try:
+        if journal_id is not None:
+            return module.get_facts(journal_id, offset=offset, limit=limit)
+        return module.search(query, offset=offset, limit=limit)
+    except module.FactsError as exc:
+        if exc.code in ("quota_hour", "quota_day", "ip_day", "ip_tokens"):
+            raise BridgeError(
+                "期刊目录下载额度已用完，请稍后再试；不要更换设备令牌绕过额度。",
+                code="journal_quota_exceeded",
+                retry_after_s=exc.retry_after_s,
+            ) from exc
+        if exc.code in ("offline", "disabled", "network", "server_error"):
+            raise BridgeError(
+                "v2 期刊事实当前不可用；已有 v1 规范不能冒充 v2 事实。", code="journal_offline"
+            ) from exc
+        if exc.code in (
+            "index_invalid",
+            "signature_invalid",
+            "key_unknown",
+            "rev_rollback",
+            "index_conflict",
+            "bundle_invalid",
+            "cache_invalid",
+            "invalid_json",
+        ):
+            raise BridgeError(
+                "期刊事实未通过签名或完整性校验，不能使用。", code="journal_verification_failed"
+            ) from exc
+        if exc.code == "unknown_journal":
+            raise BridgeError("期刊事实目录中没有这本刊。", code="journal_unknown") from exc
+        if exc.code == "bad_request":
+            raise BridgeError("查询、期刊 ID 或分页参数不正确。", code="bad_request") from exc
+        raise BridgeError(
+            "期刊事实暂不可用；请稍后重试。", code="journal_facts_unavailable"
+        ) from exc
 
 
 def _journal_remote():
