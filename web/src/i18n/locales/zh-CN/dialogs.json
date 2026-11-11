@@ -726,6 +726,7 @@
     "title": "科研预设"
   },
   "profiles": {
+    "journalBaseOutputName": "期刊检查基础",
     "useForCanvas": "用于当前画布",
     "useForCanvasSaveFirst": "先保存这份样式的改动，再用于画布",
     "binding": {

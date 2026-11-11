@@ -2372,6 +2372,18 @@ describe('P02 · 检查的是哪份产物（对象头不再复述文件名清单
 describe('T33 · 检查摘要按导出目标取范围', () => {
   const second: PanelObject = { ...panel, id: 'p2', fileId: 'Fig2.pdf', x: 0, y: 60, script: 'fig2.py' }
 
+  it('期刊底旧绑定的导出结论用中性名称', async () => {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) } })
+    await act(async () => useDocumentStore.getState().commit(literal('期刊底'), (d) => { d.profile = { id: 'journal-base-v1' } }))
+    const before = structuredClone(useDocumentStore.getState().doc.profile)
+    await mountDialogs()
+    await openDialog()
+    const ok = document.body.querySelector('[data-export-check-ok]')
+    expect(ok?.textContent).toContain('期刊检查基础')
+    expect(ok?.textContent).not.toContain('期刊未规定的项一律不判')
+    expect(useDocumentStore.getState().doc.profile).toEqual(before)
+  })
+
   it('按原图：别的图的阻断项与页面级警告都不算进来；按画布：都算', async () => {
     // 80×40 的页面：page-aspect 一条 warn（页面级）；Fig2 上 7.5pt：一条 error（别的图）
     await stage({

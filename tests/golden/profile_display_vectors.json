@@ -1,0 +1,6 @@
+[
+  {"id":"journal-base-v1","label":"期刊底（期刊未规定的项一律不判）","expected":"期刊检查基础"},
+  {"id":"journal-base-v1","label":"用户自定义名称","expected":"用户自定义名称"},
+  {"id":"custom-profile","label":"期刊底（期刊未规定的项一律不判）","expected":"期刊底（期刊未规定的项一律不判）"},
+  {"id":"lab-publication-v1","label":"课题组规范","expected":"课题组规范"}
+]

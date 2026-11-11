@@ -737,6 +737,7 @@
     "title": "Research presets"
   },
   "profiles": {
+    "journalBaseOutputName": "Journal check base",
     "useForCanvas": "Use for this canvas",
     "useForCanvasSaveFirst": "Save your changes to this style first",
     "binding": {

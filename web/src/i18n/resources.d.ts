@@ -1604,6 +1604,7 @@ export default interface Resources {
       "import": "从文件导入",
       "inUse": "本项目在用",
       "journalBadge": "期刊要求 · 只读",
+      "journalBaseOutputName": "期刊检查基础",
       "journalEntry": "{{name}} · 期刊",
       "keyRules": "关键要求",
       "leaveJournalBody": "改用「{{name}}」后，期刊要求与出处会一起移除，可以撤销。",

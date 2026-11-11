@@ -2896,7 +2896,8 @@ def cached_preflight(session: Session) -> dict | None:
 def format_preflight(session: Session, profile: dict, issues: list[dict], summary: dict) -> str:
     """人类可读的那一份（Codex 会把它念给用户听）。"""
     head = (
-        f"《{profile.get('label', profile['profile_id'])}》 v{profile['version']} · {session.stem}"
+        f"《{engine_profiles.stamp(profile).get('label') or profile['profile_id']}》 "
+        f"v{profile['version']} · {session.stem}"
     )
     size = session.manifest.get("size_mm") if session.manifest else None
     lines = [head]

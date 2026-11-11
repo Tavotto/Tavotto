@@ -382,6 +382,17 @@ describe('空态、筛选与「查不了」', () => {
   }
   const evidence = () => container.querySelector('[data-problem-evidence]')?.textContent ?? ''
 
+  it('旧期刊底快照的检查证据显示中性名称，不改项目绑定', async () => {
+    await seedTwoCanvases('journal-base-v1' as never, 'journal-base-v1' as never, 'free-form-v1')
+    const before = structuredClone(useDocumentStore.getState().doc.profile)
+    await mount(<ProblemPanel />)
+    expect(evidence()).toContain('期刊检查基础')
+    expect(evidence()).not.toContain('期刊未规定的项一律不判')
+    await act(async () => setLocale('en-US'))
+    expect(evidence()).toContain('Journal check base')
+    expect(useDocumentStore.getState().doc.profile).toEqual(before)
+  })
+
   it('几张画布绑了不同的规范、整份没问题：证据把实际用过的几套都说出来，不只报当前画布那一套', async () => {
     await seedTwoCanvases('free-form-v1', 'lab-publication-v1', 'free-form-v1')
     await mount(<ProblemPanel />)

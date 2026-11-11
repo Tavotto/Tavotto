@@ -15,7 +15,7 @@ import { formatRelativeTime, listJoin } from '@/i18n/format'
 import { t as translate } from '@/i18n'
 import { focusFailureMessage, focusIssue } from '@/lib/issueFocus'
 import { problemContextNow } from '@/lib/problemContext'
-import { profileName } from '@/lib/profileText'
+import { profileOutputName } from '@/lib/profileText'
 import {
   bucketsByCategory,
   bucketsByFigure,
@@ -801,7 +801,7 @@ function NoneEvidence() {
     const nameOf = (binding: typeof activeBinding) => {
       const resolved = resolveDocumentSpec(binding, catalog)
       const record = resolved.profileId ? specs.find((r) => r.id === resolved.profileId) : undefined
-      return record ? profileName(record) : resolved.profile.label
+      return profileOutputName(resolved.profile, record)
     }
     let figures = 0
     const used: string[] = []
