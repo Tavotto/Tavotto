@@ -2947,18 +2947,16 @@ export function invalidateFigureSnapshots(
       if (panel.type !== 'panel') continue
       const snapshotRetired = matchesSource(panel.fileId, panel.figureSnapshot) ||
         !!(panel.figureSnapshot && receipts.has(panel.figureSnapshot.receiptId))
-      // A historical input names one execution. When that execution is retired
-      // the input can never be admitted again, so the panel must fall back to
-      // the current source instead of keeping a dead origin.
-      const origin = panel.figureOrigin
-      const originRetired = origin !== undefined && (
-        matchesSource(origin.snapshot.sourceId, origin.snapshot) || receipts.has(origin.snapshot.receiptId))
-      if (!snapshotRetired && !originRetired) continue
+      if (!snapshotRetired) continue
       // Even without a live ref, an in-flight save may have captured the preceding run.
       // Publish a persistent change so a corrective save follows that stale write.
       objects[i] = { ...panel }
-      if (snapshotRetired) delete (objects[i] as PanelObject).figureSnapshot
-      if (originRetired) delete (objects[i] as PanelObject).figureOrigin
+      // Retirement revokes the retired execution's hot-edit permission only. The
+      // explicit figureOrigin is the panel's persisted historical input: it stays
+      // until the user explicitly adopts a source through the panel's own
+      // transaction — never on a broadcast whose run may still fail, be
+      // cancelled or arrive late.
+      delete (objects[i] as PanelObject).figureSnapshot
     }
   }
   const [doc, docPatches] = produceWithPatches(state.doc, (d) => clear(d.objects))

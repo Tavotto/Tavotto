@@ -159,22 +159,75 @@ describe('immutable Figure snapshot association', () => {
     expect(currentPanel().figureSnapshot).toEqual(ownerB)
   })
 
-  it('retires a historical input whose execution was replaced, keeping another owner', () => {
+  it('preserves the historical input when its execution is retired, keeping another owner', () => {
     const ownerB = {
       ...ref(), receiptId: 'receipt-B', snapshotId: 'snap-B',
       executionOwner: { script: 'other.py', run_config: null },
     }
     s().commit(literal('shared source'), (d) => { d.objects.push(panel('p2')) })
-    mergeSavedFigureSnapshots(saved(), { p1: ref(), p2: ownerB })
     s().commit(literal('historical'), (d) => {
       (d.objects[0] as PanelObject).figureOrigin = { version: 1, snapshot: ref(), patches: [] }
       ;(d.objects[1] as PanelObject).figureOrigin = { version: 1, snapshot: ownerB, patches: [] }
     })
+    // Adding an explicit origin clears the pre-origin snapshot; a backend save
+    // whose receipt matches each origin re-attaches it before the rerun.
+    mergeSavedFigureSnapshots(saved(), { p1: ref(), p2: ownerB })
     invalidateFigureSnapshots([], null, ['receipt-one'])
-    // A dead origin can never be admitted again; the panel falls back to the current source.
-    expect(currentPanel().figureOrigin).toBeUndefined()
+    // Retirement revokes the old execution's hot permission; the persisted
+    // historical input stays until an explicit adoption replaces it.
+    expect(currentPanel().figureOrigin).toEqual({ version: 1, snapshot: ref(), patches: [] })
     expect(currentPanel().figureSnapshot).toBeUndefined()
     expect((s().doc.objects[1] as PanelObject).figureOrigin).toEqual({ version: 1, snapshot: ownerB, patches: [] })
+    expect((s().doc.objects[1] as PanelObject).figureSnapshot).toEqual(ownerB)
+  })
+
+  it('an owner-start fact preserves every historical input and adds no undo entry', () => {
+    mergeSavedFigureSnapshots(saved(), { p1: ref() })
+    s().commit(literal('historical'), (d) => {
+      (d.objects[0] as PanelObject).figureOrigin = { version: 1, snapshot: ref(), patches: [] }
+    })
+    s().commit(literal('second panel'), (d) => {
+      const p2 = panel('p2')
+      p2.figureOrigin = { version: 1, snapshot: ref(), patches: [] }
+      d.objects.push(p2)
+    })
+    const past = s().past.length
+    // The actual start broadcast: derived sources under the owner, no receipts yet.
+    invalidateFigureSnapshots(['one.pdf'], null, [], [owner])
+    expect(currentPanel().figureOrigin).toEqual({ version: 1, snapshot: ref(), patches: [] })
+    expect((s().doc.objects[1] as PanelObject).figureOrigin).toEqual({ version: 1, snapshot: ref(), patches: [] })
+    expect(currentPanel().figureSnapshot).toBeUndefined()
+    expect((s().doc.objects[1] as PanelObject).figureSnapshot).toBeUndefined()
+    // The broadcast itself is not an edit: no undo entry, and a failing run
+    // (no further facts) changes nothing else.
+    expect(s().past.length).toBe(past)
+    invalidateFigureSnapshots(['one.pdf'], null, [], [owner])
+    expect(currentPanel().figureOrigin).toEqual({ version: 1, snapshot: ref(), patches: [] })
+    expect((s().doc.objects[1] as PanelObject).figureOrigin).toEqual({ version: 1, snapshot: ref(), patches: [] })
+  })
+
+  it('a retired historical input persists through the real save path', async () => {
+    const disk = autosaveDisk()
+    disk.snapshots({ p1: ref() })
+    await saveNow()
+    const id = s().documentId
+    s().commit(literal('historical'), (d) => {
+      (d.objects[0] as PanelObject).figureOrigin = { version: 1, snapshot: ref(), patches: [] }
+    })
+    // Re-attach the matching backend snapshot, then retire it: the origin must
+    // survive the retirement AND the corrective write that persists it.
+    mergeSavedFigureSnapshots(saved(), { p1: ref() })
+    invalidateFigureSnapshots([], null, ['receipt-one'])
+    expect(currentPanel().figureOrigin).toEqual({ version: 1, snapshot: ref(), patches: [] })
+    expect(currentPanel().figureSnapshot).toBeUndefined()
+    disk.snapshots({})
+    stopAutosave = startAutosave()
+    flushAutosave()
+    await vi.waitFor(() => expect(disk.completed()).toBeGreaterThanOrEqual(2), { timeout: 2200 })
+    const reopened = await readAutosaveDoc(id)
+    const savedPanel = reopened.doc!.canvases[0].objects[0] as PanelObject
+    expect(savedPanel.figureOrigin).toEqual({ version: 1, snapshot: ref(), patches: [] })
+    expect(savedPanel.figureSnapshot).toBeUndefined()
   })
 
   it('records a retired receipt even without any live ref, but does not replay into later history opens', async () => {
