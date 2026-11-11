@@ -644,7 +644,6 @@
     }
   },
   "save": {
-    "actionRetry": "再存一次",
     "conflict": "排版已在别处改过，请先处理冲突。",
     "doneLocal": "已保存在本机（没有打开项目）",
     "doneProject": "已保存到项目：{{file}}",

@@ -84,14 +84,14 @@ afterEach(() => {
   setCurrentProjectId(null)
 })
 
-describe('自动保存写盘失败 →「再存一次」', () => {
+describe('自动保存写盘失败 →「重试保存」', () => {
   it('提示带按钮；点下去真的重新写盘，存成后提示收掉', async () => {
     autosavePut = 500
     edit('t1')
     await saveNow()
     expect(ui().statusTone).toBe('error')
     expect(statusText()).toContain('无法保存到磁盘')
-    expect(actionLabel()).toBe('再存一次')
+    expect(actionLabel()).toBe('重试保存')
     expect(autosave.has('d_fail')).toBe(false)
 
     autosavePut = 200
@@ -142,12 +142,12 @@ describe('自动保存被另一个窗口的新版挡下 →「重新加载」', 
 })
 
 describe('⌘S 保存', () => {
-  it('写盘失败：提示带「再存一次」，点下去重新走整条 ⌘S', async () => {
+  it('写盘失败：提示带「重试保存」，点下去重新走整条 ⌘S', async () => {
     autosavePut = 500
     edit('t1')
     await runManualSave()
     expect(statusText()).toContain('无法保存')
-    expect(actionLabel()).toBe('再存一次')
+    expect(actionLabel()).toBe('重试保存')
 
     autosavePut = 200
     ui().statusAction!.run()
@@ -174,7 +174,7 @@ describe('⌘S 保存', () => {
   })
 })
 
-describe('写进项目文件失败 →「再存一次」', () => {
+describe('写进项目文件失败 →「重试保存」', () => {
   it('提示带按钮；点下去用同一个保存上下文再写一次项目文件', async () => {
     setCurrentProjectId('pjA')
     setProjectFile({ projectId: 'pjA', name: '排版一', file: 'tavottofile/排版一.json', revision: null, dirty: true })
@@ -182,7 +182,7 @@ describe('写进项目文件失败 →「再存一次」', () => {
     edit('t1')
     await runManualSave()
     expect(statusText()).toContain('没能存进项目里的')
-    expect(actionLabel()).toBe('再存一次')
+    expect(actionLabel()).toBe('重试保存')
     expect(layoutPosts).toBe(1)
     expect(projectFiles.size).toBe(0)
 

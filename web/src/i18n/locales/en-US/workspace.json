@@ -672,7 +672,6 @@
     }
   },
   "save": {
-    "actionRetry": "Save again",
     "conflict": "This layout was changed elsewhere. Resolve the conflict first.",
     "doneLocal": "Saved on this computer (no project open)",
     "doneProject": "Saved to project: {{file}}",

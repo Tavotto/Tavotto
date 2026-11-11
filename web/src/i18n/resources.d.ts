@@ -7080,7 +7080,6 @@ export default interface Resources {
       "placeholderHint": "双击即可编辑，会运行 {{script}} 重新生成。"
     },
     "save": {
-      "actionRetry": "再存一次",
       "conflict": "排版已在别处改过，请先处理冲突。",
       "doneLocal": "已保存在本机（没有打开项目）",
       "doneProject": "已保存到项目：{{file}}",

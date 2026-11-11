@@ -5,7 +5,7 @@
  *  - 冲突类 →「重新加载」：`reloadFromDisk()` 先把本窗口的内存版本存进恢复槽位再读盘，**两边都不丢**
  *    （与顶栏冲突说明块的主按钮同一个函数）。会丢掉某一方的「覆盖」不在 toast 上给，仍只在顶栏芯片的 ⋯ 里、
  *    先问一句；
- *  - 写盘失败类 →「再存一次」：真的重新走一遍原动作。
+ *  - 写盘失败类 →「重试保存」：真的重新走一遍原动作。
  *
  * 按钮点下去 toast 不会自己收（`StatusBar` 只转发 `run`），所以每个按钮自己负责收掉或换成结果。
  */
@@ -61,10 +61,10 @@ export function reloadLatestAction(docId: string, owner: string = AUTOSAVE_FAILU
   }
 }
 
-/** 「再存一次」：`run` 是原动作（自动保存 → 再写一次本机；⌘S → 整条 ⌘S；写项目 → 同一个上下文再写）。 */
+/** 「重试保存」：`run` 是原动作（自动保存 → 再写一次本机；⌘S → 整条 ⌘S；写项目 → 同一个上下文再写）。 */
 export function retrySaveAction(run: () => unknown, owner: string = AUTOSAVE_FAILURE_OWNER): StatusAction {
   return {
-    label: msg('save.actionRetry', undefined, 'workspace'),
+    label: msg('docBanner.retry', undefined, 'workspace'),
     run: () => {
       clearOwn(owner)
       void run()
@@ -73,7 +73,7 @@ export function retrySaveAction(run: () => unknown, owner: string = AUTOSAVE_FAI
 }
 
 /**
- * 自动保存那一轮的「再存一次」：先收掉提示再写；又失败会经 `tavotto:autosave-error` 换上新的一条，
+ * 自动保存那一轮的「重试保存」：先收掉提示再写；又失败会经 `tavotto:autosave-error` 换上新的一条，
  * 成功了顶栏的保存状态自己回到「已保存」，不另说一句（「已保存在本机」对开着项目的人是错话）。
  */
 export function retryAutosaveAction(): StatusAction {
@@ -83,7 +83,7 @@ export function retryAutosaveAction(): StatusAction {
 /**
  * 自动保存失败 / 被挡下（`tavotto:autosave-error` 的 detail）：stale = 另一个窗口已经存过更新的版本，
  * external = 磁盘上那份被外部改过——后端都挡下了这次覆盖；io = 写盘本身没成。
- * 出口：冲突 →「重新加载」，写盘失败 →「再存一次」。
+ * 出口：冲突 →「重新加载」，写盘失败 →「重试保存」。
  */
 export function reportAutosaveFailure(detail: { id?: string; reason?: string } | undefined): void {
   const reason = detail?.reason
