@@ -478,16 +478,17 @@ FAMILIES: dict[str, FamilySpec] = {
 }
 FAMILY_KEYS = tuple(FAMILIES)
 
-#: 批次 1 的族本 PR 之后的模板 PR 才逐族打开；注册表只放真能跑的（同 `AGENT_REGISTRY` 的纪律）。本 PR 没有模板：
-#: 这里是「下一个 PR 要实现的那批」，由测试钉住 ⊆ 批次 1。
-_RENDERABLE = frozenset({"comparison", "trend", "relationship", "distribution"})
+#: 现在真有模板、能出图的族。**唯一出处在这里**（本模块是叶子，模板模块 import 本模块，不能反过来——import 环门禁）；
+#: `ai_data_template` 在 import 时核它的 `RENDERERS` 与这张表逐项相同，多写少写当场抛。
+#: 批次 2 / 3 与批次 1 里还没写模板的族有完整的资格判定，但不在表里，模板逐族打开。
+RENDERABLE: tuple[str, ...] = ("comparison", "trend")
 
 
 def renderable(family: str) -> bool:
-    """这类图现在有模板能画吗。批次 2 / 3 有完整的资格判定，但模板以后才有。"""
+    """这类图现在有模板能画吗（`RENDERABLE`）。"""
     if family not in FAMILIES:
         raise ValueError(f"未知的族：{family}")
-    return family in _RENDERABLE
+    return family in RENDERABLE
 
 
 for _f in FAMILIES.values():
