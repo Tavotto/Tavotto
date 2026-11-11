@@ -1478,6 +1478,22 @@
           "title": "改图助手附文件：回形针 / 预览卡重叠且悬停那张在最上层可点 × / 发送只带暂存 id / 对话里两个气泡可展开"
         }
       ]
+    },
+    {
+      "id": "canvas.shape-stroke-options",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "画布形状可关掉描边（填充铺满）、箭头与形状可设描边不透明度、更多线型、线端与拐角，箭头可选圆点 / 菱形 / 燕尾端型和大小；低频项在属性栏「更多」里",
+        "en-US": "Canvas shapes can drop their outline (the fill then covers the whole box); shapes and arrows get stroke opacity, more dash styles, line cap and corner options, and arrows get dot / diamond / stealth heads in three sizes; the less common ones sit under \"More\" in the Appearance panel"
+      },
+      "entry": "画布 → 选中矩形 / 箭头 → 右栏「外观」（描边开关、「更多」）",
+      "e2e": [
+        {
+          "spec": "shape-stroke.spec.ts",
+          "title": "功能：矩形可关掉描边（填充铺满框）、「更多」里改线端；箭头可换燕尾端型"
+        }
+      ]
     }
   ]
 }

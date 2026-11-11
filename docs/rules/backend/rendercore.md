@@ -58,6 +58,7 @@ order: 330
   （`docs/rules/repo/same-origin-pairs.md`），由共享向量 `tests/golden/shape_geometry_vectors.json` 接住
   （退役前从旧 facade 记下；`tests/test_rendercore_geometry.py` 与 `web/src/lib/shapeGeometry.golden.test.ts`
   各跑一遍），两边都改的时候一起改、重录那份向量。
+  ADR 0174 的描边属性（`stroke: false` 无边框、`stroke_opacity`、四种线型、`line_cap` / `line_join`、三种新端型与 `head_size_*`）同在这一对里，缺省都不写；旧文档的路径由 `tests/golden/shape_legacy_paths.json` 逐字看住。无边框又无填充的形状不出路径（IR 不收空路径）；描边 alpha < 1 的 EPS 与填充 alpha 一样逐项失败。
 - **字体只认 allowlist 里的字节**（ADR 0060）：`rendercore/fonts_allowlist.json` 是唯一真值（16 张 OFL 脸：
   Liberation 2.1.5 × 12 + Noto Sans SC / Noto Serif SC 子集各一张；**CJK 脸随族**：serif → Noto Serif SC，sans-serif / monospace → Noto Sans SC，`fonts.cjk_family_of` / `FaceProvider.cjk_face(family)`，ADR 0060 2026-11-04 修订；覆盖表 `cjk` 层取两张脸的交集），身份 = sha256 + face 序号，不是族名；注册表扫目录逐个算 hash，
   不在表里的进 `rejected`、绝不当字体用；找不到脸抛 `FontsUnavailable(code)`，**不摸系统字体、不用别的脸冒充**。

@@ -253,12 +253,8 @@ def test_tables_are_consistent():
 
 
 def test_renderable_is_a_subset_of_batch_one():
-    assert {k for k in R.FAMILIES if R.renderable(k)} == {
-        "comparison",
-        "trend",
-        "relationship",
-        "distribution",
-    }
+    """「真有模板」的出处是 `RENDERABLE`，`ai_data_template` import 时核它与 `RENDERERS` 一致（relationship / distribution 留给下一个 PR）。"""
+    assert {k for k in R.FAMILIES if R.renderable(k)} == {"comparison", "trend"}
     assert all(R.FAMILIES[k].batch == 1 for k in R.FAMILIES if R.renderable(k))
     with pytest.raises(ValueError):
         R.renderable("sankey")
@@ -873,7 +869,7 @@ def test_guidance_fixed_questions_and_output_requirements():
         "不把只有柱加误差线的画法排在",
     ):
         assert needle in G
-    assert "只有：`comparison`、`trend`、`relationship`、`distribution`" in G
+    assert "只有：`comparison`、`trend`" in G
     assert "SD、SEM 还是 95% CI" in G  # 误差线必须写明
     assert "连线暗示两点之间的值可内插" in G and "轴必须含 0" in G
 

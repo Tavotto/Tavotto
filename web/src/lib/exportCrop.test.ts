@@ -103,6 +103,33 @@ describe('描边 / 箭头外扩（与 RenderCore 绘制同源）', () => {
     const newField = visibleContentBounds([arrow({ headEnd: 'open' })])!
     expect(newField.h).toBeCloseTo(2 * 2.2 * 2 * MM)
   })
+  it('箭头端型大小 / 方头线端按新口径外扩（ADR 0174），缺省与旧口径逐字相同', () => {
+    // 帽半宽 1.7×线宽×档位 + 线端半宽 0.5×线宽
+    const big = visibleContentBounds([arrow({ headEnd: 'open', headSizeEnd: 'large' })])!
+    expect(big.h).toBeCloseTo(2 * (1.7 * 1.5 + 0.5) * 2 * MM)
+    const small = visibleContentBounds([arrow({ headEnd: 'open', headSizeEnd: 'small' })])!
+    expect(small.h).toBeCloseTo(2 * (1.7 * 0.7 + 0.5) * 2 * MM)
+    const squareCap = visibleContentBounds([arrow({ lineCap: 'square' })])!
+    expect(squareCap.h).toBeCloseTo(2 * Math.SQRT1_2 * 2 * MM)
+    const medium = visibleContentBounds([arrow({ headEnd: 'open', headSizeEnd: 'medium' })])!
+    expect(medium.h).toBeCloseTo(2 * 2.2 * 2 * MM)
+  })
+  it('尖角的三角形：尖顶伸出框外按真实几何算；圆角 / 斜角 / 矩形 / 无边框都不外扩', () => {
+    const tri = (over: Record<string, unknown> = {}) =>
+      ({ id: 's', type: 'shape', shape: 'triangle', x: 10, y: 10, w: 40 * MM, h: 40 * MM, strokePt: 4, color: '#000', fill: null, ...over }) as CanvasObject
+    // 40×40 pt、4 pt 描边：顶点内缩 2 pt，半顶角 atan(1/2)，尖伸出 2/sin − 2 = 2√5 − 2 pt
+    const over = 2 * Math.sqrt(5) - 2
+    const miter = visibleContentBounds([tri({ lineJoin: 'miter' })])!
+    expect(miter.h).toBeCloseTo((40 + 2 * over) * MM)
+    expect(miter.y).toBeCloseTo(10 - over * MM)
+    expect(visibleContentBounds([tri()])!.h).toBeCloseTo(40 * MM)
+    expect(visibleContentBounds([tri({ lineJoin: 'bevel' })])!.h).toBeCloseTo(40 * MM)
+    expect(visibleContentBounds([tri({ lineJoin: 'miter', stroke: false })])!.h).toBeCloseTo(40 * MM)
+    expect(visibleContentBounds([tri({ lineJoin: 'miter', shape: 'rect' })])!.h).toBeCloseTo(40 * MM)
+    // 超过斜接上限（10）的极尖角退成斜角，不外扩
+    const sliver = visibleContentBounds([tri({ lineJoin: 'miter', w: 2 * MM, h: 80 * MM, strokePt: 0.5 })])!
+    expect(sliver.h).toBeCloseTo(80 * MM)
+  })
   it('箭头在裁切边上：整体平移后描边仍在 [0, 页面] 内', () => {
     const doc = docOf([arrow({ head: 'end' })])
     const c = croppedDocument(doc)

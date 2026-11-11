@@ -1882,6 +1882,10 @@ interface ExportBox {
   h_mm: number
 }
 
+/** 导出载荷里的线型 / 端型（缺省 = 实线 / 无，不发；取值与文档里同名，ADR 0174） */
+type ExportDash = 'dashed' | 'dotted' | 'longdash' | 'dashdot' | 'longdashdot'
+type ExportHeadType = 'none' | 'triangle' | 'open' | 'bar' | 'dot' | 'diamond' | 'stealth'
+
 export type ExportObject =
   | (ExportBox & ArtifactRequestFields & {
       type: 'panel'
@@ -1931,9 +1935,17 @@ export type ExportObject =
       stroke_pt: number
       color: string
       head: 'none' | 'end' | 'both'
-      head_start?: 'none' | 'triangle' | 'open' | 'bar'
-      head_end?: 'none' | 'triangle' | 'open' | 'bar'
-      dash?: 'dashed' | 'dotted'
+      head_start?: ExportHeadType
+      head_end?: ExportHeadType
+      /** 端型大小；缺省 = 中（ADR 0174） */
+      head_size_start?: 'small' | 'large'
+      head_size_end?: 'small' | 'large'
+      dash?: ExportDash
+      /** 描边不透明度 0–1；缺省 1 */
+      stroke_opacity?: number
+      /** 线端 / 拐角；缺省 = 圆头 / 圆角 */
+      line_cap?: 'butt' | 'round' | 'square'
+      line_join?: 'miter' | 'bevel' | 'round'
       rotation_deg?: number
     })
   | (ExportBox & {
@@ -1948,7 +1960,12 @@ export type ExportObject =
       corner_radius_mm?: number
       sides?: number
       fill_opacity?: number
-      dash?: 'dashed' | 'dotted'
+      dash?: ExportDash
+      /** 无边框（只发 `false`；缺省 = 有描边；直线 / 大括号忽略） */
+      stroke?: false
+      stroke_opacity?: number
+      line_cap?: 'butt' | 'round' | 'square'
+      line_join?: 'miter' | 'bevel' | 'round'
       rotation_deg?: number
     })
 

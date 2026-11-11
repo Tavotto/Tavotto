@@ -2,7 +2,8 @@ import { figureSnapshotFor } from './figureSnapshot'
 import { artifactRequestFields } from './artifactValidation'
 import type { ExportObject } from './api'
 import type { CanvasObject } from '@/types/document'
-import { panelRotation } from '@/types/document'
+import { panelRotation, shapeStrokeOn } from '@/types/document'
+import { DEFAULT_LINE_CAP, defaultLineJoin, strokeOpacityOf } from './shapeGeometry'
 
 /**
  * 画布对象 → 导出载荷。
@@ -79,7 +80,13 @@ function toExportObject(o: CanvasObject): ExportObject {
         // 新端型只在文档写了新字段时发；后端在缺失时按旧 head 推导
         head_start: o.headStart,
         head_end: o.headEnd,
+        // 端型大小：缺省 / 中 = 不发（ADR 0174）
+        head_size_start: o.headSizeStart && o.headSizeStart !== 'medium' ? o.headSizeStart : undefined,
+        head_size_end: o.headSizeEnd && o.headSizeEnd !== 'medium' ? o.headSizeEnd : undefined,
         dash: o.dash && o.dash !== 'solid' ? o.dash : undefined,
+        stroke_opacity: strokeOpacityOf(o.strokeOpacity),
+        line_cap: o.lineCap && o.lineCap !== DEFAULT_LINE_CAP ? o.lineCap : undefined,
+        line_join: o.lineJoin && o.lineJoin !== 'round' ? o.lineJoin : undefined,
         rotation_deg: o.rotationDeg || undefined,
       }
     case 'shape':
@@ -97,6 +104,11 @@ function toExportObject(o: CanvasObject): ExportObject {
         sides: o.shape === 'polygon' ? (o.sides ?? 6) : undefined,
         fill_opacity: o.fill && o.fillOpacity != null && o.fillOpacity < 1 ? o.fillOpacity : undefined,
         dash: o.dash && o.dash !== 'solid' ? o.dash : undefined,
+        // 无边框只对封闭形状发（直线 / 大括号只有描边）；无边框时描边相关的其余字段都不发
+        stroke: shapeStrokeOn(o) ? undefined : false,
+        stroke_opacity: shapeStrokeOn(o) ? strokeOpacityOf(o.strokeOpacity) : undefined,
+        line_cap: o.lineCap && o.lineCap !== DEFAULT_LINE_CAP ? o.lineCap : undefined,
+        line_join: o.lineJoin && o.lineJoin !== defaultLineJoin(o.shape) ? o.lineJoin : undefined,
         rotation_deg: o.rotationDeg || undefined,
       }
   }
