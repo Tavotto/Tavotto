@@ -459,7 +459,9 @@ export function ProblemPanel() {
            根本还没查过（T-54，PR #214 第六轮评审）。首检是静态骨架（加载四种写法之一）。 */
         <TreeSkeleton />
       ) : shown.length === 0 ? (
-        all.length === 0 ? (
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          <JperProblemStageNotice issues={shown} emptyScope={scope === 'document' ? 'document' : 'active'} />
+        {all.length === 0 ? (
           /* 空态给证据：按哪套规范、查了几张图、什么时候——「没问题」得说得出凭什么 */
           <NoneEvidence />
         ) : issues.length === 0 ? (
@@ -481,7 +483,8 @@ export function ProblemPanel() {
             title={pr('noneInFilter')}
             action={{ label: pr('clearFilter'), onClick: () => useUiStore.getState().setProblemFilter(null) }}
           />
-        )
+        )}
+        </div>
       ) : (
         <ProblemTreeContext.Provider value={tree}>
           <ul

@@ -1945,6 +1945,39 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
 })
 
 describe('JPER 问题面板的画布级来源提示', () => {
+  it('没有显示的问题时仍提示当前范围内保存的历史来源，不把无问题当作阶段已核验', async () => {
+    await seed()
+    const sourceUrl = 'https://journals.sagepub.com/pb-assets/JPER-Guidelines-for-Submission-of-Accepted-Manuscripts-2019.pdf'
+    const journal = {
+      id: 'journal-base-v1',
+      journalRef: { id: 'journal-of-planning-education-and-research', label: 'JPER', catalogRev: 6, retrieved: '2026-11-03' },
+      journalSources: { max_font_size_pt: { url: sourceUrl } },
+    }
+    const state = useDocumentStore.getState()
+    const active = state.canvases.find((c) => c.id === state.activeCanvasId)!
+    useDocumentStore.setState({
+      doc: { ...state.doc, name: '当前画布', profile: { id: 'free-form-v1' } },
+      canvases: [active, { ...active, id: 'jper-canvas', name: '历史画布', profile: journal as never }],
+    })
+    useValidationStore.setState({ issues: [], results: [], ready: true, failed: false, queued: false, running: false })
+    useUiStore.setState({ problemScope: 'document' })
+    await mount(<ProblemPanel />)
+    const notice = () => container.querySelector('[data-jper-problem-stage-notice]')
+    expect(notice()?.textContent).toContain('历史画布')
+    expect(notice()?.textContent).toContain('当前指南尚未核实')
+    expect(notice()?.textContent).toContain('不能确认任何问题或阈值来自该来源')
+    expect(container.querySelector('[data-problem-evidence]')).not.toBeNull()
+    expect(notice()?.closest('.overflow-y-auto')).not.toBeNull()
+    await act(async () => useUiStore.setState({ problemScope: 'canvas' }))
+    expect(notice()).toBeNull()
+    expect(container.querySelector('[data-jper-empty-stage-context]')).toBeNull()
+    await act(async () => useDocumentStore.setState((s) => ({ doc: { ...s.doc, profile: journal as never } })))
+    expect(notice()?.textContent).toContain('当前画布')
+    expect(notice()?.textContent).not.toContain('历史画布')
+    await act(async () => useValidationStore.setState({ ready: false }))
+    expect(notice()).toBeNull()
+  })
+
   it('合并相关画布，使用实时名称和可滚动结构，不将问题或阈值归因于该来源', async () => {
     await seed()
     const sourceUrl = 'https://journals.sagepub.com/pb-assets/JPER-Guidelines-for-Submission-of-Accepted-Manuscripts-2019.pdf'
