@@ -14386,8 +14386,12 @@ def api_ai_attachment_stage():
     try:
         return jsonify(engine_ai_attachments.stage(raw, request.args.get("name", "")))
     except engine_ai_attachments.AttachmentError as exc:
-        status = 413 if exc.code == "attachment_too_large" else 400
-        return jsonify({"error": exc.code, "code": exc.code, "params": {}}), status
+        # 每个 code 字面量写出、带中文原文回退（test_error_codes 逐个核对两种语言都有文案）
+        if exc.code == "attachment_too_large":
+            return jsonify({"error": "文件过大", "code": "attachment_too_large", "params": {}}), 413
+        if exc.code == "attachment_empty":
+            return jsonify({"error": "文件是空的", "code": "attachment_empty", "params": {}}), 400
+        return jsonify({"error": "这个文件附不上", "code": "attachment_invalid", "params": {}}), 400
 
 
 @app.delete("/api/ai/attachments/<rid>")
