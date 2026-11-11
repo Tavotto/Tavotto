@@ -704,12 +704,17 @@ def implied_grant_absorbable(project_root: str, old: dict, new: dict) -> bool:
         return False
     if workdir.decided(project_root):
         return False
-    derived = {
-        "cwd_write": {"granted": True, "granted_at": None, "mode": workdir.MODE_PROJECT},
-        "decided": False,
-        "implied_by": workdir.IMPLIED_BY_USER_INTERPRETER,
-    }
-    return new == derived and workdir.grant_for(project_root) == derived
+    # 派生理由两种（`workdir.IMPLIED_BY`）：自动采用了用户自己的 Python，或沙盒里那一次的运行时证据说数据只在脚本
+    # 目录里（ADR 0047 修订，`pool._adopt_script_dir`）——两者授予的范围一字不差
+    for reason in workdir.IMPLIED_BY:
+        derived = {
+            "cwd_write": {"granted": True, "granted_at": None, "mode": workdir.MODE_PROJECT},
+            "decided": False,
+            "implied_by": reason,
+        }
+        if new == derived and workdir.grant_for(project_root) == derived:
+            return True
+    return False
 
 
 def _binding_sans_mode(binding: dict | None) -> dict | None:
@@ -999,7 +1004,7 @@ class PreparationService:
             # 审计：这次运行吸收了一次派生授权（不是用户点头的授权）。facts 只收标量，随 `trace` 进回执旁的诊断
             entry.result.trace.mark(
                 "check",
-                grant_absorbed=workdir.IMPLIED_BY_USER_INTERPRETER,
+                grant_absorbed=fresh.grant.get("implied_by") or "",
                 grant_mode=(fresh.grant.get("cwd_write") or {}).get("mode"),
             )
         return fresh

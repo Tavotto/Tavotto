@@ -100,6 +100,13 @@ def _stored(figures_dir: str | Path) -> dict | None:
 
 #: 「没决定过时默认用脚本目录」的理由（闭集；ADR 0107 §二）：这个项目此刻用的是用户自己的 Python。
 IMPLIED_BY_USER_INTERPRETER = "user_interpreter"
+#: 第二个理由（ADR 0047 修订，2026-11-11 用户拍板）：沙盒里跑过一次，运行时证据说脚本要的数据只在脚本目录里
+#: （`probe_hint` 至少一条找得到）——`pool._build_with` 记下它、静默改在脚本目录重跑一次。
+IMPLIED_BY_RUNTIME_EVIDENCE = "runtime_evidence"
+IMPLIED_BY = (IMPLIED_BY_USER_INTERPRETER, IMPLIED_BY_RUNTIME_EVIDENCE)
+#: 运行时证据的记录（项目设置，与 `workdir` 键分开）：它是**观察到的事实**，不是用户的决定——用户在渲染环境里
+#: 选过任何一档（含沙盒），`decided()` 为真，这条就不再起作用
+EVIDENCE_KEY = "workdir_runtime_evidence"
 
 #: 「这个项目此刻生效的是不是用户自己的 Python」的判据（`pool.user_interpreter_in_effect`），由 pool 在
 #: 加载时登记。pool 在模块层 import 本模块；这里若回头 import pool，workdir 就进了 bootstrap / managedenv /
@@ -117,15 +124,47 @@ def register_user_interpreter_probe(probe: Callable[[str | Path], bool]) -> None
 def implied_by(figures_dir: str | Path) -> str | None:
     """没决定过时，默认档**为什么不是沙盒**；是沙盒回 None。决定过的项目一律 None（用户的决定压过默认）。
 
-    今天只有一个理由：项目用的是用户自己的 Python（`pool.user_interpreter_in_effect`：项目级决策指向项目外、
+    第一个理由：项目用的是用户自己的 Python（`pool.user_interpreter_in_effect`：项目级决策指向项目外、
     不归 Tavotto 管的解释器）——与原生 `cd 脚本目录 && python fig.py` 一致，默认就在脚本目录里跑（ADR 0107 §二，
     用户 2026-09-28 拍板）。这是**派生的默认，不是写下来的设置**：解释器改回内置 / 受管，默认随之回到沙盒；
     用户在渲染环境里选过任何一档（含沙盒），就按他选的。只读设置与 `stat`，不起子进程。
+
+    第二个理由是运行时证据（`IMPLIED_BY_RUNTIME_EVIDENCE`，见 `adopt_runtime_evidence`）。
     """
     if decided(figures_dir):
         return None
     probe = _user_interpreter_probe
-    return IMPLIED_BY_USER_INTERPRETER if probe is not None and probe(figures_dir) else None
+    if probe is not None and probe(figures_dir):
+        return IMPLIED_BY_USER_INTERPRETER
+    return IMPLIED_BY_RUNTIME_EVIDENCE if _runtime_evidence(figures_dir) else None
+
+
+def _runtime_evidence(figures_dir: str | Path) -> bool:
+    stored = (config.project_settings(str(Path(figures_dir))) or {}).get(EVIDENCE_KEY)
+    return isinstance(stored, dict) and stored.get("mode") == MODE_PROJECT
+
+
+def adopt_runtime_evidence(figures_dir: str | Path, hint) -> bool:
+    """沙盒里跑完（失败 / 没出图 / glob 回空画出空图），`hint` 是 `probe_hint` 给的运行时证据（数据只在脚本目录里
+    找得到）→ 记下这条证据，默认档随之变成脚本目录（派生、`decided` 仍为假），回 True；调用方据此关掉这个项目的
+    会话、在脚本目录里重跑一次。
+
+    ADR 0047 修订（2026-11-11 用户拍板「所有用户当小白：低风险可撤销的事静默替用户决定」）：原来只给「改为在脚本
+    目录里运行」的入口要用户点；那一下点的就是同一件事。守卫、savefig 捕获、写回一字不动，变的只是 cwd——与
+    ADR 0107 §二（用户自己的 Python 默认脚本目录）同一档风险。三条护栏：① 用户决定过（含选了沙盒）不动；
+    ② 此刻默认已不是沙盒不动（已经有理由了）；③ 证据必须是 `probe_hint` 的运行时载荷（`source = runtime`，
+    至少一条相对目标在脚本目录里找得到）。撤销：渲染环境里选沙盒（= 一次决定，从此不再自动）。
+    """
+    if not isinstance(hint, dict) or hint.get("source") != "runtime":
+        return False
+    if decided(figures_dir) or implied_by(figures_dir) is not None:
+        return False
+    if mode_for(figures_dir) != MODE_SANDBOX:
+        return False
+    config.set_project_settings(
+        str(Path(figures_dir)), {EVIDENCE_KEY: {"mode": MODE_PROJECT, "at": time.time()}}
+    )
+    return True
 
 
 def default_mode(figures_dir: str | Path) -> str:
@@ -184,8 +223,8 @@ def set_mode(figures_dir: str | Path, mode: str) -> dict:
 
 
 def forget(figures_dir: str | Path) -> None:
-    """回到「没决定过」：键整个清掉（测试与「重新询问」用）。"""
-    config.set_project_settings(str(Path(figures_dir)), {SETTINGS_KEY: None})
+    """回到「没决定过」：键整个清掉（测试与「重新询问」用），运行时证据一并清掉。"""
+    config.set_project_settings(str(Path(figures_dir)), {SETTINGS_KEY: None, EVIDENCE_KEY: None})
 
 
 def grant_for(figures_dir: str | Path) -> dict:
