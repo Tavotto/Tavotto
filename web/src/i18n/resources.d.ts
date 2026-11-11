@@ -5907,7 +5907,7 @@ export default interface Resources {
       "zoomAlt": "{{name}} 大图预览"
     },
     "autosave": {
-      "diskFailed": "无法保存到磁盘。改动已暂存，请检查磁盘空间后重试。",
+      "diskFailed": "没能保存到磁盘。",
       "docConflict": "这份排版已在另一个窗口打开，同时编辑会互相覆盖。",
       "staleOtherWindow": "另一窗口保存了更新的版本。改动只保留在这里，未写入磁盘。"
     },
@@ -7114,6 +7114,7 @@ export default interface Resources {
       "projectConflictElsewhere": "项目里的 {{file}} 已在别处改过，这次没有写入。回到那份排版再保存，就能决定怎么处理。",
       "projectFailed": "没能存进项目里的 {{file}}：{{reason}}",
       "projectSkipped": "没有写入项目里的 {{file}}：按下保存之后切换了排版或项目。回到那份排版再保存一次。",
+      "reloadFailed": "没能读到磁盘上的那一版",
       "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。"
     },
     "scan": {
@@ -7277,7 +7278,6 @@ export default interface Resources {
       "elementNotCopyable": "{{name}}还不能复制",
       "elementNotCopyableGeneric": "这个元素还不能复制",
       "elementsHidden_other": "已隐藏 {{count}} 个元素，可在「已隐藏元素」里恢复",
-      "errorTitle": "这一步没有完成",
       "geometrySyncing": "正在同步图形几何，请稍候再试",
       "groupBlocked": {
         "incomplete": "组里有成员这一版拿不到位置，暂时不能整组移动或缩放",
@@ -7375,6 +7375,7 @@ export default interface Resources {
       "previewPending": "图形预览正在同步，画面可能尚未更新。",
       "restoreWaiting": "还有图在渲染，渲染完才能恢复",
       "restore_other": "恢复原样 · {{count}} 项",
+      "retry": "再试一次",
       "row": {
         "annotation": "画布标注",
         "axisLabel": "轴标题",
