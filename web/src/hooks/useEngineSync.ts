@@ -383,6 +383,13 @@ type NativeSizeFix = {
   hMm: number
   /** 换算时在页面上不动的点；不给 = 包围盒左上角（x/y 不变） */
   anchor?: TxnAnchor
+  /**
+   * /2 计算框：这份 exact 渲染 `render_frame` 的外框原点（源 viewport pt）。
+   * 与面板持久化的 `chartFrame.originPt` 不一致时随尺寸修一并写——**必须同一条
+   * 收尾**（见 applyNativeSizeFixes），缺席 = 这版渲染没有 /2 外框声明（/1、老后端），
+   * 已持久化的落位原样保留（那是文档的坐标合同，不因一次回退删掉）。
+   */
+  originPt?: readonly [number, number]
 }
 
 /**
@@ -399,11 +406,20 @@ function nativeSizeFixes(
     // A same-name live manifest is not geometry evidence for this archived pair.
     if (hasFigureSnapshotPreview(o) && useUiStore.getState().elementPanelId !== o.id) continue
     if (!o.overrides.length && figureOriginFor(o) === undefined && o.fileKind === 'raster' && /\.png$/i.test(o.fileId) && useUiStore.getState().elementPanelId !== o.id && !useRenderStore.getState().tracked[o.fileId]) continue
-    const size = (figureOriginFor(o) === undefined ? byKey[renderKeyOf(o)] : exactPanelRender({ byKey }, o))?.manifest?.size_mm
+    const render = figureOriginFor(o) === undefined ? byKey[renderKeyOf(o)] : exactPanelRender({ byKey }, o)
+    const size = render?.manifest?.size_mm
     if (!size) continue
     const [wMm, hMm] = size
-    if (Math.abs(o.nativeW - wMm) <= 0.05 && Math.abs(o.nativeH - hMm) <= 0.05) continue
-    fixes.push({ id: o.id, wMm, hMm })
+    // /2 外框原点跟**同一份**渲染走：manifest.size_mm（=F 尺寸）与 render_frame
+    // 的 left/top 是同一次 draw 的两端，拆开对版本就会让 computedFramePatch 的
+    // oldL/oldT 与 nativeW/H 失配（useEngineSync 顶部注释的老坑在这里的形状）
+    let originPt: readonly [number, number] | undefined
+    if (o.chartFrame && render.renderFrame) {
+      const [left, top] = render.renderFrame.rect_pt
+      originPt = o.chartFrame.originPt[0] === left && o.chartFrame.originPt[1] === top ? undefined : [left, top]
+    }
+    if (Math.abs(o.nativeW - wMm) <= 0.05 && Math.abs(o.nativeH - hMm) <= 0.05 && originPt === undefined) continue
+    fixes.push({ id: o.id, wMm, hMm, ...(originPt !== undefined ? { originPt } : {}) })
   }
   return fixes
 }
@@ -411,8 +427,16 @@ function nativeSizeFixes(
 function applyNativeSizeFixes(d: FigureDocument, fixes: readonly NativeSizeFix[]) {
   for (const fix of fixes) {
     const o = d.objects.find((x) => x.id === fix.id)
+    if (o?.type !== 'panel') continue
     // 换算（缩放比不变、旋转时宽高互换、按锚点反推 x/y）只在 `lib/panelNativeSize`
     // 一处：撤销 / 重做落地时的换基走的也是它
-    if (o?.type === 'panel') syncPanelNativeSize(o, fix.wMm, fix.hMm, { anchor: fix.anchor })
+    syncPanelNativeSize(o, fix.wMm, fix.hMm, { anchor: fix.anchor })
+    // nativeW/H 与 chartFrame.originPt **同一条收尾写入**：分两次写 = 两者来自
+    // 不同版本的渲染，缩放比与外框落位各漂各的（341-346 注释的老坑），撤销 /
+    // 重做也会把这两个字段拆到两条历史里。补进的是 immer 草稿，与上面的尺寸
+    // 修正并进同一条历史。
+    if (fix.originPt && o.chartFrame) {
+      o.chartFrame = { ...o.chartFrame, version: 1, renderProfile: 'native-manifest/2', originPt: [fix.originPt[0], fix.originPt[1]] }
+    }
   }
 }

@@ -346,6 +346,7 @@
     "restoreAspect": "恢复原始比例",
     "restoreNativeSize": "恢复原始尺寸",
     "adoptScriptFrame": "改用脚本保存时的图幅",
+    "adoptComputedFrame": "采用计算渲染外框",
     "restoreStyle": "恢复原样并解除样式跟随",
     "alignNewFigure": "按样式对齐新图",
     "alignNewText": "按样式对齐新标注",

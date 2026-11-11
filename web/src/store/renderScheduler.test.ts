@@ -64,7 +64,7 @@ describe('chart调度仍使用唯一renderStore', () => {
     expect(send.mock.calls[0][7]).toEqual(original.chart)
   })
 
-  it('来源附件参与none占位并在防抖时深拷贝，第九参只在ref存在时发送', () => {
+  it('来源附件参与none占位并在防抖时深拷贝，第九参只在ref存在时发送；/1 面板第11参不带profile', () => {
     const p: PanelObject = chartPanel()
     p.chartSource = { schema: 1, sourceId: p.fileId, bytesSha256: 'a'.repeat(64), sizeBytes: 100,
       sceneDigest: p.chart!.model.scene_digest }
@@ -75,9 +75,12 @@ describe('chart调度仍使用唯一renderStore', () => {
     requestRender(p, 'defer')
     p.chartSource.bytesSha256 = 'b'.repeat(64)
     vi.advanceTimersByTime(300)
-    expect(send.mock.calls[0]).toHaveLength(9)
+    expect(send.mock.calls[0]).toHaveLength(11)
     expect(send.mock.calls[0][8]).toEqual(original.chartSource)
     expect(send.mock.calls[0][8]).not.toBe(p.chartSource)
+    // 第 10/11 参（figureOrigin / renderProfile）：无 origin 的 /1 面板都缺席
+    expect(send.mock.calls[0][9]).toBeUndefined()
+    expect(send.mock.calls[0][10]).toBeUndefined()
   })
 })
 

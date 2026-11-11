@@ -1,4 +1,5 @@
 import { installMomentSources, TIMELINE_THUMB_PX, type PanelSource, type ThumbSources } from '@/lib/momentCapture'
+import { validComputedFrame, type ComputedRenderFrame } from '@/lib/chartFrame'
 import { chartRequestIdentity, chartSourceFields, type ChartRenderProfile } from '@/lib/chartSource'
 import { hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
 import { figureOriginFor, figureOriginIdentity, sameFigureOrigin, validFigureOrigin } from '@/lib/figureSnapshot'
@@ -67,6 +68,14 @@ export interface PanelRender {
   artifactValidation?: AdoptionGuard
   rev: number
   manifest: Manifest | null
+  /**
+   * native-manifest/2 计算框：这次实际 SVG draw 的外框声明（闭式形状判据的唯一
+   * 出处是引擎 `engine/chartframe.py`，前端消费方 `lib/chartFrame.ts`）。从响应
+   * 顶层 `render_frame`（稳定出口）或 `manifest.render_frame` 读，经
+   * `validComputedFrame` 收下；/1、老后端、畸形声明都没有它（undefined）。
+   * 采用进文档的唯一入口是 `actions.adoptComputedFrame`。
+   */
+  renderFrame?: ComputedRenderFrame
   /** 已处理好的 SVG 文本（去掉 width/height，铺满容器） */
   svg: string | null
   /**
@@ -833,6 +842,12 @@ export const useRenderStore = create<RenderState>((set, get) => ({
                   { path: res.environment_switched.python }, 'errors'), 'info')
             void useEnvStore.getState().refresh()
           }
+          // /2 计算框（N5 第 3 步）：manifest 内嵌出口优先、响应顶层稳定出口兜底，
+          // 经闭式形状判据收下；/1、老后端、畸形声明都没有它——显式写 undefined，
+          // 不让同键条目上上一版的声明跨变体残留（patch 是浅合并）。
+          const embeddedFrame = (res.manifest as { render_frame?: unknown } | null)?.render_frame
+          const frameRaw = embeddedFrame ?? (res as { render_frame?: unknown }).render_frame
+          const renderFrame = validComputedFrame(frameRaw) ? (frameRaw as ComputedRenderFrame) : undefined
           const next: Partial<PanelRender> = {
             fileId,
             ...(figureOrigin !== undefined ? { figureOrigin } : {}),
@@ -841,6 +856,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             ...(chart ? { chartRequest: chartRequestIdentity(chart, chartSource, renderProfile), chartRevision: res.chart_revision } : {}),
             rev: res.rev,
             manifest: res.manifest,
+            renderFrame,
             status: 'ready',
             error: null,
             projectEnv: null,

@@ -34,6 +34,12 @@ import {
   LEGACY_FRAME_OVERRIDE,
   migrateFigureFrames,
 } from '@/lib/figureFrame'
+import {
+  applyComputedFrameDraft,
+  computedFramePatch,
+  validComputedFrame,
+  type PairedFrameAuthority,
+} from '@/lib/chartFrame'
 import { modKey } from '@/lib/utils'
 import { captureTelemetry } from '@/lib/telemetry'
 import {
@@ -91,7 +97,7 @@ import { captureSaveContext, reportSaveSkipped, stillCurrent } from './saveConte
 import { useInteractionStore } from './interactionStore'
 import { aliasClearPlan } from '@/lib/aliasOverrides'
 import { fitContentCrop, isContentFit } from '@/lib/panelEdgeCrop'
-import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, structuralPanelManifest, useRenderStore } from './renderStore'
+import { exactPanelManifest, exactPanelRender, rejectArtifactRenders, renderEpoch, renderKeyOf, renderRequestIdentity, structuralPanelManifest, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
 import { askConfirm, isTimelineOpen, useUiStore, type StatusTone } from './uiStore'
 import { useViewportStore } from './viewportStore'
@@ -1470,8 +1476,8 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
   requestRender(fresh, 'none')
   const key = renderKeyOf(fresh)
   if (figureOriginFor(fresh) !== undefined) await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, undefined, 'foreground', undefined, undefined, figureOriginFor(fresh))
-  else if (fresh.chartSource !== undefined) await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh), 'foreground', fresh.chart, fresh.chartSource)
-  else if (fresh.chart) await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh), 'foreground', fresh.chart)
+  else if (fresh.chartSource !== undefined) await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh), 'foreground', fresh.chart, fresh.chartSource, undefined, fresh.chartFrame?.renderProfile)
+  else if (fresh.chart) await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh), 'foreground', fresh.chart, undefined, undefined, fresh.chartFrame?.renderProfile)
   else await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh))
   await settledRender(key)
   const succeeded = useRenderStore.getState().get(key).status === 'ready'
@@ -3036,6 +3042,42 @@ export function restorePanelNativeSize(ids: string[]) {
   updatePanels(ids, hist('restoreNativeSize'), (o) => {
     setContentSize(o, o.nativeW * (o.crop?.w ?? 1), o.nativeH * (o.crop?.h ?? 1))
   })
+}
+
+/**
+ * 采用 native-manifest/2 计算框（N5 第 3 步）：把这张面板**精确配对**那一版渲染的
+ * `render_frame` 写进文档——外框落位与尺寸换成 F（缩放比不变、图内分数类 override
+ * 与数据不动），`chartFrame.originPt` 与 nativeW/H **同一条历史**。判据与换算只在
+ * `lib/chartFrame` 一处；缺权威（还在渲染、迟到旧变体、声明畸形、新框与裁剪
+ * 不相交）不采用、不弹错——界面上按钮的可用性判据也是同一出处。
+ *
+ * 持久化字段 `chartFrame` 的**唯一写入入口**（`useEngineSync` 只在同一份 exact
+ * 渲染落地时同步已采用面板的 originPt，不创建）。
+ */
+export function adoptComputedFrame(panelId: string): boolean {
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel') return false
+  const render = exactPanelRender(useRenderStore.getState(), panel)
+  if (!render?.renderFrame || !render.chartRevision || !validComputedFrame(render.renderFrame)) return false
+  const inputIdentity = renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource, figureOriginFor(panel), panel.chartFrame?.renderProfile)
+  const authority: PairedFrameAuthority = {
+    inputIdentity,
+    renderRevision: render.chartRevision,
+    frame: render.renderFrame,
+  }
+  // 预演一遍（纯函数）：新框与裁剪不相交时就地不采用，不让 commit 的 recipe
+  // 半路抛错——与 adoptScriptFrame 的 frameSwitchPatch 预检同一取舍
+  try {
+    computedFramePatch(panel, authority, inputIdentity)
+  } catch {
+    return false
+  }
+  commit(hist('adoptComputedFrame'), (d) => {
+    const index = d.objects.findIndex((x) => x.id === panelId)
+    if (index < 0) return
+    applyComputedFrameDraft(d, index, panelId, authority, inputIdentity)
+  })
+  return true
 }
 
 /**

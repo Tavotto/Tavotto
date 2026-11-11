@@ -359,6 +359,7 @@
     "restoreAspect": "Restore original ratio",
     "restoreNativeSize": "Restore original size",
     "adoptScriptFrame": "Use the figure size the script saved",
+    "adoptComputedFrame": "Use the rendered computed frame",
     "restoreStyle": "Restore original and stop following style",
     "alignNewFigure": "Match new figure to style",
     "alignNewText": "Match new annotation to style",

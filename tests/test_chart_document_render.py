@@ -5,11 +5,13 @@ from __future__ import annotations
 import base64
 import copy
 import json
+from urllib.parse import quote
 
 import pytest
 
 from tavotto import app as m
 from tavotto.engine import chartprofile, documentassets
+from test_chart_documents_v4 import _get_named, _save_named, env as env
 from test_chart_native_api import SOURCE, _assert_line, _bind, _color, _render, project as project
 from test_chart_native_export import PT_MM, _assert_svg_color, _export, _original, _panel
 
@@ -265,3 +267,114 @@ def test_source_without_chart_cannot_enter_the_legacy_execution_path(
     response = client.post(endpoint, json={"id": "not-a-chart.py", "chart_source": None})
     assert response.status_code == 422, response.get_json()
     assert response.get_json()["code"] == "chart_model_invalid"
+
+
+def _frame_document(chart, edits, *, frame: bool):
+    """v4 文档；frame=True 时面板把 /2 的 chartFrame（渲染外框落位）持久化在文档对象上。"""
+    panel = {
+        "id": "panel_frame",
+        "type": "panel",
+        "fileId": "chart.svg",
+        "fileKind": "svg",
+        "nativeW": 100 * PT_MM,
+        "nativeH": 100 * PT_MM,
+        "x": 5,
+        "y": 7,
+        "w": 100 * PT_MM,
+        "h": 100 * PT_MM,
+        "overrides": list(edits),
+        "chart": copy.deepcopy(chart),
+    }
+    if frame:
+        panel["chartFrame"] = {
+            "version": 1,
+            "renderProfile": "native-manifest/2",
+            "originPt": [0, 0],
+        }
+    return {
+        "schema": 4,
+        "project": {"id": "p_frame", "name": "计算框"},
+        "canvases": [
+            {
+                "id": "c1",
+                "name": "Figure 1",
+                "page": {"w": 200, "h": 160},
+                "objects": [panel],
+                "guides": [],
+            }
+        ],
+        "activeCanvasId": "c1",
+        "createdAt": 1,
+        "updatedAt": 2,
+    }
+
+
+def test_v2_panel_survives_save_and_cold_replay_pairs_with_the_direct_render(env):
+    """保存 /2 面板（profile 持久化在文档对象上）→ 冻结链照显式 profile 重放；重开冷重放与直接渲染配对。
+
+    旧文档缺 chartFrame 仍走 /1；畸形的 profile 交 validate_profile 判定、保存 422。
+    """
+    client, _root, _data = env
+    chart = _bind(client)
+    edits = [_color("#ff0000")]
+    body = {
+        "id": "chart.svg",
+        "chart": chart,
+        "patches": edits,
+        "render_profile": chartprofile.COMPLETE_PROFILE,
+        "inline_svg": True,
+    }
+    direct = client.post("/api/engine/render", json=body)
+    assert direct.status_code == 200, direct.get_json()
+    direct = direct.get_json()
+    frame = direct["render_frame"]
+    assert frame["rect_pt"][2:] == list(direct["manifest"]["render_frame"]["rect_pt"][2:])
+
+    _save_named(client, _frame_document(chart, edits, frame=True), "Frame")
+    _stored, stored = _get_named(client, "Frame")
+    panel = stored["canvases"][0]["objects"][0]
+    # chartFrame 原样过冻结链（profile 持久化在文档对象上），figureSnapshot 照旧不进文档
+    assert panel["chartFrame"] == {
+        "version": 1,
+        "renderProfile": "native-manifest/2",
+        "originPt": [0, 0],
+    }
+    assert "figureSnapshot" not in panel
+    replayed = client.post(
+        "/api/engine/render", json={**body, "chart_source": panel["chartSource"]}
+    )
+    assert replayed.status_code == 200, replayed.get_json()
+    replayed = replayed.get_json()
+    assert replayed["svg"] == direct["svg"]
+    assert replayed["manifest"] == direct["manifest"]
+    assert replayed["render_frame"] == frame
+    # 带冻结来源的重放身份绑 input sha（与 /1 的保存输入配对同一条规则），与直接渲染必然不同
+    assert replayed["chart_revision"] != direct["chart_revision"]
+
+    # 旧文档缺 chartFrame：冷重放维持 /1（无外框声明）
+    _save_named(client, _frame_document(chart, edits, frame=False), "LegacyPanel")
+    _stored, legacy = _get_named(client, "LegacyPanel")
+    assert "chartFrame" not in legacy["canvases"][0]["objects"][0]
+    one = client.post(
+        "/api/engine/render",
+        json={
+            "id": "chart.svg",
+            "chart": chart,
+            "patches": edits,
+            "chart_source": legacy["canvases"][0]["objects"][0]["chartSource"],
+            "inline_svg": True,
+        },
+    )
+    assert one.status_code == 200, one.get_json()
+    one = one.get_json()
+    assert one.get("render_frame") is None
+    assert one["manifest"].get("render_frame") is None
+
+    # 畸形 profile：显式值交 validate_profile，保存当场拒绝
+    bad = _frame_document(chart, edits, frame=True)
+    bad["canvases"][0]["objects"][0]["chartFrame"]["renderProfile"] = "native-manifest/9"
+    response = client.post(
+        f"/api/documents/v4/layouts/{quote('BadFrame')}?target=project&base_revision=absent",
+        json=bad,
+    )
+    assert response.status_code == 422, response.get_json()
