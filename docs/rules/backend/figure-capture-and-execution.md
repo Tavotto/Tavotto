@@ -137,7 +137,7 @@ order: 50
     （build 响应在有记录时也带 `probe_misses`），`workdir.probe_hint` 拿**首开同一把尺子**（`databinding._probe_hit`，项目外不看、
     glob 有预算）按脚本目录再判，至少一条找得到才在错误上挂 **`workdir_hint`**——载荷与首开确认框同形
     （`reason = script_dir_evidence`、推荐 `project`，多 `source = "runtime"`）。**它不是 `confirmation`**：后者是起会话前要先答的门，
-    所有入口见到都会停下；`workdir_hint` 只诊断，码与消息一字不变，不自动切换。HTTP 错误体与试运行错误（`_attach_workdir_hint`）
+    所有入口见到都会停下；`workdir_hint` 本身只诊断，码与消息一字不变。**没决定过的项目自动切换（ADR 0047 2026-11-11 修订）**：`pool._build_with`（所有真正跑用户脚本的入口都经它）见到失败上的 `workdir_hint`、或成功 build 的 `workdir_hint_of_build`，且 `workdir.adopt_runtime_evidence` 的护栏成立（没决定过、默认是沙盒、载荷 `source = runtime`）→ 记证据、`shutdown_all(root)`、`before_retry` 后在脚本目录里重跑一次（`adopt_script_dir=False`，不再换第二次）。派生默认 `implied_by = runtime_evidence`，准备计划按 `implied_grant_absorbable` 就地吸收。决定过（含选了沙盒）的项目照旧只给入口。HTTP 错误体与试运行错误（`_attach_workdir_hint`）
     各带一份，不新造错误码。**C++ 读取器也算运行时证据**：错误的 `extra.enoent`（`filename`，或 pyarrow 那种整条消息就是路径的 `named`）
 若是相对路径（cwd 之内的绝对路径换回相对），`pool.workdir_hint_for` 把它当一条 `path` 证据并进同一次判定——脚本目录里找得到就出引导；
 **不放宽 ADR 0110 的 `native_miss` 候选**，码与 `missing_input` 不动。前端（`ApiError.workdirHint` / `PanelRender.workdirHint` /
@@ -241,7 +241,7 @@ order: 50
     （glob / listdir / exists）只在脚本目录找得到（`script_parent`，ADR 0084）——才抛
     `workdir_confirmation_required`（结构化选项 / 证据 / 怎么回答，四类入口同一个 code）；
     证据说不出话（`none` / `unknown`）或默认够用（`default_ok`）不问。**不猜、不就近替换、
-    不搜同名、不自动切到真实 cwd**；决定项目级、问一次记一次，切回沙盒撤销授权但决定留着。
+    不搜同名、首开不自动切到真实 cwd**（运行之后有运行时证据的自动切换见上文 ADR 0047 修订）；决定项目级、问一次记一次，切回沙盒撤销授权但决定留着。
   * 每张捕获 Figure 的结构化描述（`CapturedFigureDescriptor`）唯一实现在
     `figcapture`：asset id `runtime:<script>#<stem>`（不透明标识，entry
     刻意不进 id）、`source_fingerprint`（只是 stale hint，别声称覆盖数据

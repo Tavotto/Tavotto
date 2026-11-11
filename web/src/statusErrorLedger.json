@@ -410,6 +410,12 @@
       "reason": "重跑几个配置时有失败的；这句只汇总是哪几个（其余照常运行），每个失败本身在脚本运行行里各自报告。"
     },
     {
+      "file": "store/journalStyle.ts",
+      "key": "stylePanel.bindCancelled",
+      "count": 1,
+      "reason": "「按期刊调整」新建样式存库期间画布 / 文档 / 项目变了，不绑到别的画布；用户回到那张画布再点一次即可，句子已说明（Codex #1851）。"
+    },
+    {
       "file": "store/styleBinding.ts",
       "key": "stylePanel.bindCancelled",
       "count": 1,

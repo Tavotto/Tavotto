@@ -418,7 +418,8 @@
     "unlockObjects": "解锁 {{count}} 个对象",
     "hideObjects": "隐藏 {{count}} 个对象",
     "showObjects": "显示 {{count}} 个对象",
-    "setFramePad": "修改画布留白"
+    "setFramePad": "修改画布留白",
+    "journalStyle": "按 {{journal}} 调整样式「{{name}}」"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -789,7 +790,17 @@
     "pendingSizeCancelled": "字号调整未应用：图形状态已变化或渲染失败，请重试。",
     "bindCancelled": "切换了画布，刚才选的样式没有绑上，请在那张画布上再选一次",
     "bindMissing": "要绑定的那套样式已经不在样式库里了，没有改动",
-    "editCancelled": "样式或画布刚换过，刚才的改动没有生效，请再改一次"
+    "editCancelled": "样式或画布刚换过，刚才的改动没有生效，请再改一次",
+    "journalMismatch": "{{count}} 项不合 {{journal}}",
+    "journalAdjust": "按期刊调整",
+    "journalAnnotation": "画布文字",
+    "journalAdjusted": "已按 {{journal}} 调整样式，可撤销",
+    "journalRetry": "再试一次",
+    "journalProp": {
+      "fontsize": "字号",
+      "fontfamily": "字体",
+      "linewidth": "线宽"
+    }
   },
   "status": {
     "dragSyncCancelled": "图形未能同步，后续拖动没有应用，请重试。",
@@ -1537,47 +1548,47 @@
       "sendNo": "不发送",
       "gotIt": "知道了",
       "busy": "已经有一个修复在进行",
-        "stop": "停止",
-        "activity": {
-          "generic": "AI 正在处理…",
-          "denied": "AI 换了一种方法继续",
-          "thePackages": "需要的包",
-          "read_run_report": "正在查看运行报告",
-          "read_file": "正在查看文件",
-          "list_dir": "正在查看文件夹",
-          "find_files": "正在查找文件",
-          "grep_files": "正在搜索文件内容",
-          "list_environments": "正在查看 Python 环境",
-          "inspect_environment": "正在检查 Python 环境",
-          "read_logs": "正在查看日志",
-          "lookup_package": "正在查询包名",
-          "try_import": "正在尝试导入",
-          "try_run": "正在试运行脚本",
-          "install_packages": "正在安装 {{detail}}",
-          "change_python": "正在新建 Python 环境",
-          "switch_execution": "正在调整运行方式",
-          "select_environment": "正在切换环境",
-          "convert_script": "正在生成可编辑版本",
-          "link_data_file": "正在接入数据文件",
-          "ignore_import_folder": "正在跳过这个文件夹",
-          "run_command": "正在运行命令…",
-          "rollback": "正在撤销刚才的改动",
-          "propose_fix": "正在准备修复方案",
-          "ask_user": "正在向你提问",
-          "pick_file": "请选择一个文件",
-          "prepare_diagnostics": "正在整理要发送的说明",
-          "finish": "正在收尾"
-        },
-        "stalled": {
-          "cli_waiting_approval": "AI 在等待批准",
-          "cli_tool_not_delivered": "AI 的请求没有送达",
-          "stalled": "AI 暂时没有响应"
-        },
-        "stalledWhy": {
-          "cli_waiting_approval": "Codex 或 Claude Code 在等待批准，Tavotto 无法代为确认。停止后可以重试。",
-          "cli_tool_not_delivered": "AI 的请求没有送达，可能在等待批准。停止后可以重试。",
-          "stalled": "AI 暂时没有响应，稍后会自动停止。"
-        },
+      "stop": "停止",
+      "activity": {
+        "generic": "AI 正在处理…",
+        "denied": "AI 换了一种方法继续",
+        "thePackages": "需要的包",
+        "read_run_report": "正在查看运行报告",
+        "read_file": "正在查看文件",
+        "list_dir": "正在查看文件夹",
+        "find_files": "正在查找文件",
+        "grep_files": "正在搜索文件内容",
+        "list_environments": "正在查看 Python 环境",
+        "inspect_environment": "正在检查 Python 环境",
+        "read_logs": "正在查看日志",
+        "lookup_package": "正在查询包名",
+        "try_import": "正在尝试导入",
+        "try_run": "正在试运行脚本",
+        "install_packages": "正在安装 {{detail}}",
+        "change_python": "正在新建 Python 环境",
+        "switch_execution": "正在调整运行方式",
+        "select_environment": "正在切换环境",
+        "convert_script": "正在生成可编辑版本",
+        "link_data_file": "正在接入数据文件",
+        "ignore_import_folder": "正在跳过这个文件夹",
+        "run_command": "正在运行命令…",
+        "rollback": "正在撤销刚才的改动",
+        "propose_fix": "正在准备修复方案",
+        "ask_user": "正在向你提问",
+        "pick_file": "请选择一个文件",
+        "prepare_diagnostics": "正在整理要发送的说明",
+        "finish": "正在收尾"
+      },
+      "stalled": {
+        "cli_waiting_approval": "AI 在等待批准",
+        "cli_tool_not_delivered": "AI 的请求没有送达",
+        "stalled": "AI 暂时没有响应"
+      },
+      "stalledWhy": {
+        "cli_waiting_approval": "Codex 或 Claude Code 在等待批准，Tavotto 无法代为确认。停止后可以重试。",
+        "cli_tool_not_delivered": "AI 的请求没有送达，可能在等待批准。停止后可以重试。",
+        "stalled": "AI 暂时没有响应，稍后会自动停止。"
+      },
       "notFixed": "这次没能修好",
       "failed": {
         "cli_waiting_approval": "AI 卡在它自己的审批上，已自动停止",

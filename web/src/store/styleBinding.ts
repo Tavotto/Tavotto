@@ -563,6 +563,14 @@ const STYLE_SAVE_FAILED_OWNER = 'stylePanel.saveFailed'
  * 副本，状态栏说一句；副本建了但改动没存进去，删掉那份副本。
  */
 export function editBoundStyle(edit: StyleEdit): Promise<boolean> {
+  return editBoundStyleAll([edit])
+}
+
+/**
+ * 同上，一次改好几项（「按期刊调整」）：存库一次、画布一次 commit、撤销一步。`label` 换掉历史里的
+ * 「改样式」那句（给出这次是按哪本期刊调的）。
+ */
+export function editBoundStyleAll(edits: StyleEdit[], label?: (name: string) => UiMessage): Promise<boolean> {
   const origin = generation()
   // 发起时绑的是哪一条：排队期间用户改绑了别的，这一笔不能落到那一条上（Codex #547 P1）。
   // 排在前面的、我们自己的任务把内置样式复制成副本并改绑时记了 `redirects`，顺着它走
@@ -579,7 +587,7 @@ export function editBoundStyle(edit: StyleEdit): Promise<boolean> {
       return false
     }
     const before = resolvedStyle(binding)
-    const next = withEdit(before, edit)
+    const next = edits.reduce(withEdit, before)
     const api = useProfileStore.getState()
     const rec = recordOf(binding.id)
     let stored: ProfileRecord | null
@@ -657,7 +665,7 @@ export function editBoundStyle(edit: StyleEdit): Promise<boolean> {
     if (redirectKey) redirects.set(redirectKey, stored.id)
     try {
       commitWith(
-        hist('editStyle', { name }),
+        label ? label(name) : hist('editStyle', { name }),
         (d) => {
           d.style = styleWith(stored.id, stored.data, owned)
           // 写的是**变化量**：标注只改了字号时，不把颜色 / 字体一起重新套一遍（Codex #547 P1）
