@@ -33,6 +33,7 @@ import { bindingFor, journalCarry, resolveDocumentSpec, type SpecCatalogEntry } 
 import { journalCatalogUi } from '@/lib/journalUi'
 import { JournalPicker } from '../journal/JournalPicker'
 import { JournalRequirements } from '../journal/JournalRequirements'
+import { JournalSourceIdentityWarning } from '../journal/JournalSourceIdentityWarning'
 import { JournalFactsView } from '../journal/JournalFactsView'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProfileStore } from '@/store/profileStore'
@@ -629,6 +630,7 @@ export function ProfilesSettings({
                 <JournalPicker />
               </SettingRow>
             )}
+            {journalOn && doc.profile?.journalRef && <JournalSourceIdentityWarning />}
             {journalOn && doc.profile?.journalRef && (
               <DiagnosticDisclosure variant="row" data-journal-disclosure title={translate('journal.requirements', { ns: 'dialogs' })}>
                 <JournalRequirements />

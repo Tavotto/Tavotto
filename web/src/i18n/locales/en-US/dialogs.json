@@ -2479,6 +2479,7 @@
     "imageFailed": "One of the images didn't load, so they can't be compared. Choose \"Keep the original\"."
   },
   "journal": {
+    "sourceIdentityWarning": "The heading of historical text captured for a saved source in this layout says Adult, while Child is selected. The source identity needs verification; check the author guidelines. Existing preflight rules are unchanged.",
     "factView": {
       "open": "View source facts",
       "close": "Close source facts",

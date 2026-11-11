@@ -146,6 +146,26 @@ describe('规范库里的「按期刊」条目', () => {
   })
 })
 
+it('flags an affected saved Child source above the collapsed requirements without changing the binding', async () => {
+  selectJournal('fx-beta')
+  await act(async () => useDocumentStore.setState((s) => {
+    const profile = s.doc.profile!
+    const source = profile.journalSources!.min_raster_dpi
+    const url = 'https://www.tandfonline.com/action/authorSubmission?show=instructions&journalCode=hapn21'
+    return { doc: { ...s.doc, profile: { ...profile,
+      journalRef: { ...profile.journalRef!, id: 'applied-neuropsychology-child' },
+      journalSources: { ...profile.journalSources, min_raster_dpi: { ...source, url, link: url } },
+    } } }
+  }))
+  const before = JSON.stringify(useDocumentStore.getState().doc.profile)
+  await mount()
+  const warning = q('[data-journal-source-identity-warning]')
+  expect(warning?.textContent).toContain('来源身份待核')
+  expect(warning?.closest('[data-spec-binding]')).not.toBeNull()
+  expect(warning?.closest('[data-journal-disclosure]')).toBeNull()
+  expect(JSON.stringify(useDocumentStore.getState().doc.profile)).toBe(before)
+})
+
 describe('从期刊换到库里的另一份', () => {
   it('先问一句；取消则期刊绑定原样，确认才换', async () => {
     selectJournal('fx-beta')
