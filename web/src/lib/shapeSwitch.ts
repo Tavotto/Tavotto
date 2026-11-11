@@ -176,6 +176,10 @@ export function switchObject(o: CanvasObject, target: SwitchKind): CanvasObject 
     // （与画布工具新建的形状同一个默认）。形状之间切换照常带着自己的填充。
     fill: o.type === 'shape' ? o.fill : null,
     ...(o.type === 'shape' && o.fillOpacity != null ? { fillOpacity: o.fillOpacity } : {}),
+    // 无边框只有封闭形状读（直线 / 大括号永远有描边，目标是它们就不带）
+    ...(o.type === 'shape' && o.stroke === false && target !== 'line' && target !== 'brace'
+      ? { stroke: false }
+      : {}),
     ...(target === 'line' ? { start: ends.start, end: ends.end } : {}),
     ...(target === 'polygon' ? { sides: DEFAULT_SIDES } : {}),
   } satisfies ShapeObject
@@ -204,6 +208,9 @@ const KIND_FIELDS = [
   'head',
   'headStart',
   'headEnd',
+  'headSizeStart',
+  'headSizeEnd',
+  'stroke',
 ] as const
 
 type KindKey = (typeof KIND_FIELDS)[number]
@@ -216,7 +223,14 @@ type KindKey = (typeof KIND_FIELDS)[number]
  * `shapeSwitch.test.ts` 也按这张表逐项断言「切换后原样保留」，所以将来多一个
  * 共有样式，它自动多一条用例。
  */
-export const SHARED_STYLE_FIELDS = ['strokePt', 'color', 'dash'] as const
+export const SHARED_STYLE_FIELDS = [
+  'strokePt',
+  'color',
+  'dash',
+  'strokeOpacity',
+  'lineCap',
+  'lineJoin',
+] as const
 type SharedStyleKey = (typeof SHARED_STYLE_FIELDS)[number]
 
 /** 联合类型的**全部**键（`keyof (A | B)` 只给交集，这里要的是并集） */

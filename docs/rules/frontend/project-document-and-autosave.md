@@ -151,7 +151,7 @@ order: 200
   native 图放置的旧回调仍守其原项目代际，不能因保留执行事实而在另一个项目插图；执行事实只登记一次。
 - **启动恢复判决（2026-10-11，ADR 0120，替代下面 2026-09-26 那条的前两道判断）**：「项目 ready」与「文档 ready」分开。
   documentStore 的恢复门（`restoring` / `needs_user` / `ready`，带 `gen` + `pj` 令牌）是**唯一**的「文档准备好了没有」：
-  - 门关着时内存里是**占位文档**：`commit` / 事务 / 撤销重做 / 画布与标签增删改 / `renameProject` / `applyDerivedUpdate` 一律拒（状态条节流说一句），
+  - 门关着时内存里是**占位文档**：`commit` / 事务 / 撤销重做 / 画布与标签增删改 / `renameProject` / `applyDerivedUpdate` 一律拒，
     `flushAutosave` 回 `'skipped'`，`switchDocument(…, { placeholder: true })` 不写 currentDoc / docIndex / 归属；remember-last 订阅、
     时间线自动节点与关键时刻都看门。**新增一个文档写入口必须同时看门**（看护 `store/restoreGate.test.ts` 的入口遍历）。
   - **离开旧文档的冲刷在设门之前**（`resetForNewProject` 第一步），DiskWriter 已排的旧文档写入不清。
@@ -165,7 +165,12 @@ order: 200
     坏（`invalid`）≠ 太新；暂态先有界重试原目标，首选明确失败 → `needs_user`，只列只读验证过的其他候选，**不悄悄换旧稿**；
     纯打开意图（没有后端 durable 记录）没有正文 → 退回 durable 那份，不算故障。**读不到不自动退回本机**：会话端点重试后仍不可用、或正文读失败（非 404）→ `needs_user`，本机线索 / 本机副本只作用户明确选择的候选；只有确认的 404 才自动按本机恢复。每条安装路径都经 `installChecked`：读到的正文 revision 与指针 / 扫描 / 提供候选时记下的不同，或指针曾明确缺席而正文出现 → 先问 `/owner`，只有 owners+verified 且 revision 对得上才装；备选探测不能用新 revision 抹掉缺席证据。C1 校正的本机归属须在安排本机副本首次写盘之前完成。判决表全文在 `documentRestore.ts` 文件头与 ADR 0120 §二。
     恢复期间排队的用户加图 / 粘贴操作跨同项目的「重试」保留，直到成功落定执行一次；显式新建、打开其他文档与切项目仍取代它。加图返回 `null` 时 UI 不报「已添加」、不关闭接入中心。
-  - `needs_user` 的出口在顶栏文档状态芯片（`restore` issue，`components/RestoreIssueBody.tsx`）：一句话 + 一个主按钮（重试 / 打开另一份 /
+  - **用户的动作不丢（ADR 0120 修订 2026-11-10）**：用户级入口（加图 / 拖放 / 粘贴 / 进入编辑）一律先过 `deferUserEntry`，门关着就记住、
+    文档定下来之后执行一次，只回 `run` / `deferred`——**不许新增「拒掉并说一句」的入口**。`needs_user` 期间用户动了手（含底层写入被拒）走
+    `resolveHeldIssue`：没有别的排版可接 → 静默继续新建并说一句；暂时读不到 → 自动再试一次；其余等用户选。绝不替用户挑旧稿。
+    外部交接落图前等 `whenDocumentSettledForEntry`（同一套），不直接等 `whenDocumentReady`。
+  - `needs_user` 的出口在**空画布正中的恢复卡**（`CanvasStage` 的 `data-canvas-restore-issue`，此时不摆「添加图」/ 选图卡）与顶栏文档状态芯片
+    （`restore` issue），两处同一个 `components/RestoreIssueBody.tsx`：一句话 + 一个主按钮（重试 / 打开另一份 /
     继续新建），其余折叠；`lastDocumentIssue` 只是 `restoreIssue.ref` 的薄适配。保存成功（`saved → clean`）不清恢复问题；保存元数据
     失败（autosave 回 `metadata:"failed"`）是另一件事 `restoreMetaIssue`，与 `saveState` 正交。
   - 外部交接：`queueNative()` 不等文档；落图 / Figure 选择器先 `whenDocumentReady(pj)`，被取代 → 不落、超时 120 s → `deferred`。

@@ -134,6 +134,7 @@ export default interface Resources {
       "untitled": "未命名"
     },
     "message": {
+      "attachmentCount_other": "附了 {{count}} 个文件",
       "collapse": "收起",
       "copy": "复制消息",
       "expand": "展开",
@@ -159,6 +160,13 @@ export default interface Resources {
       "agentModel": "执行器与模型",
       "agentNote": "直接修改脚本；每次运行前自动快照，可回滚。",
       "aiModel": "AI 与模型",
+      "attachAria": "附文件",
+      "attachChipAria": "附件 {{name}}",
+      "attachNoVision": "这个模型看不了图，",
+      "attachNoVisionOnly": "这个模型看不了图",
+      "attachRemove": "去掉这个文件",
+      "attachSwitch": "换成 {{model}}",
+      "attachTip": "附文件 · 最多 6 个，也可粘贴或拖入",
       "checkResult": "查询结果",
       "checkUnreachable": "暂时联系不上后端，稍后再查询。",
       "cli": "CLI：{{version}}",
@@ -272,6 +280,9 @@ export default interface Resources {
       "aiTaskRejected": "助手的修改没通过检查，项目未改动",
       "aiTaskVerified": "助手已修改脚本，数据核对一致，正在重新渲染…",
       "aiTimeout": "AI 任务超时",
+      "attachOverflow": "最多附 6 个文件，多的没收",
+      "attachTooLarge": "有文件太大了（单个不超过 25 MB），没附上",
+      "attachUploadFailed": "文件没传上，再试一次",
       "cancelled": "已取消",
       "done": "完成",
       "failed": "失败",
@@ -2828,6 +2839,7 @@ export default interface Resources {
         "restartStrong": "请重启 Tavotto",
         "signatureNote": "更新包由官方签名，安装前会校验；校验不过不会安装。你的项目、排版与设置都不在应用的安装目录里，升级不受影响。",
         "sourceName": {
+          "edge": "国内镜像",
           "github": "GitHub",
           "mirror": "国内镜像"
         },
@@ -3171,6 +3183,9 @@ export default interface Resources {
       "asset_import_unreadable": "这个文件打不开，可能已损坏，或设了密码。",
       "asset_import_unsupported_type": "这不是能放进画布的图片。能放的有 PNG、JPG、TIFF、PDF、SVG。",
       "asset_import_write_failed": "写入项目文件夹时出错了。",
+      "attachment_empty": "文件是空的。",
+      "attachment_invalid": "这个文件附不上，换一个试试。",
+      "attachment_too_large": "文件太大了，单个附件最多 25 MB。",
       "backend_retired": "环境变量 TAVOTTO_RENDER_BACKEND={{value}} 指向已退役的 PyMuPDF 渲染后端。去掉这个变量即用默认渲染后端。",
       "backend_unavailable": "渲染后端不可用（依赖或字体缺失）：{{reason}}。请重新安装。",
       "backend_unknown": "环境变量 TAVOTTO_RENDER_BACKEND={{value}} 不是可用的渲染后端。去掉这个变量即用默认渲染后端。",
@@ -4869,10 +4884,12 @@ export default interface Resources {
     "hideElementTip": "隐藏元素",
     "history": {
       "addFill": "添加填充",
+      "addStroke": "添加描边",
       "addTextBg": "添加文字背景",
       "addTextBorder": "添加文字描边",
       "annotationsWrittenBack_other": "写回 {{count}} 条标注",
       "clearFill": "清除填充",
+      "clearStroke": "清除描边",
       "clearTextBg": "清除文字背景",
       "clearTextBorder": "清除文字描边",
       "editText": "编辑文字",
@@ -4893,10 +4910,14 @@ export default interface Resources {
       "setFontFamily": "修改字体",
       "setFontSize": "修改字号",
       "setHeadEnd": "修改终点端型",
+      "setHeadSizeEnd": "修改终点端型大小",
+      "setHeadSizeStart": "修改起点端型大小",
       "setHeadStart": "修改起点端型",
       "setHeight": "修改高度",
       "setInterpretation": "科学文本解释",
+      "setLineCap": "修改线端",
       "setLineHeight": "修改行距",
+      "setLineJoin": "修改拐角",
       "setPadding": "修改内边距",
       "setPageBackground": "修改页面背景",
       "setPageBgColor": "修改页面背景色",
@@ -4906,6 +4927,7 @@ export default interface Resources {
       "setPanelScale": "修改图的缩放",
       "setSides": "修改边数",
       "setStrokeColor": "修改描边颜色",
+      "setStrokeOpacity": "修改描边不透明度",
       "setStrokeWidth": "修改线宽",
       "setSubscript": "设为下标",
       "setSuperscript": "设为上标",
@@ -5266,29 +5288,59 @@ export default interface Resources {
     "show": "显示",
     "stroke": {
       "addFill": "添加填充",
+      "addStroke": "添加描边",
       "appearance": "外观",
+      "cap": {
+        "butt": "平头",
+        "round": "圆头",
+        "square": "方头"
+      },
+      "capDotted": "点线靠圆头画点，线端固定为圆头",
+      "capRow": "线端",
       "color": "颜色",
       "cornerRadius": "圆角",
       "dash": "线型",
       "dashStyle": {
+        "dashdot": "点划线",
         "dashed": "虚线",
         "dotted": "点线",
+        "longdash": "长虚线",
+        "longdashdot": "长点划线",
         "solid": "实线"
       },
       "end": "终点",
+      "endSize": "终点大小",
       "fill": "填充",
       "fillOpacity": "不透明度",
       "head": {
         "bar": "短线",
+        "diamond": "菱形",
+        "dot": "圆点",
         "none": "无",
         "open": "开口",
+        "stealth": "燕尾",
         "triangle": "三角"
       },
+      "join": {
+        "bevel": "斜角",
+        "miter": "尖角",
+        "round": "圆角"
+      },
+      "joinRow": "拐角",
       "lineWidth": "线宽",
+      "more": "更多",
+      "moreCount": "{{n}} 项",
       "reverse": "反转方向",
       "sides": "边数",
+      "size": {
+        "large": "大",
+        "medium": "中",
+        "small": "小"
+      },
       "start": "起点",
-      "strokeColor": "描边"
+      "startSize": "起点大小",
+      "strokeColor": "描边",
+      "strokeOpacity": "描边不透明度"
     },
     "summaryMarks": "{{count}} 标注",
     "summaryPanels": "{{count}} 张图",
@@ -5587,7 +5639,7 @@ export default interface Resources {
       "openFailed": "打不开项目：{{error}}",
       "panelMissing": "没找到图 {{stem}}——脚本可能还没产出，或它在别的图库里",
       "projectOpened": "已打开项目 {{name}}",
-      "restoreTimeout": "这次交接的图没有放进排版：上次的排版还没打开，图在素材库里。",
+      "restoreTimeout": "这次交接的图在素材库里：先在画布上选一份排版，再把它加进来。",
       "runtimeNeedsRun": "{{stem}} 已登记为运行时图，但还没有预览——到素材库的「脚本」区运行一次。",
       "superseded": "项目已切换，这次交接没有放入。"
     },
@@ -7006,11 +7058,13 @@ export default interface Resources {
     },
     "restore": {
       "autoAdopted": "已打开本机找到的排版“{{name}}”",
-      "blockedWrite": "上次的排版还没打开。",
+      "autoNew": "上次的排版“{{name}}”打不开，已开了一份新排版。",
+      "autoNewUnnamed": "上次的排版打不开，已开了一份新排版。",
+      "blockedWrite": "先在画布上选一份排版。",
       "choose": "选一份打开",
-      "continueNew": "继续新建",
+      "continueNew": "用新排版",
       "entrySuperseded": "项目已切换，这次操作没有执行。",
-      "entryTimeout": "等了很久上次的排版仍没处理，这次操作没有执行。",
+      "heldChoose": "先在画布上选一下，刚才的操作会接着做。",
       "indexDegraded": "上次的恢复记录读不了，先开了一份空白排版。旧排版还在，可以在“打开排版”里找。",
       "meta": {
         "pill": "下次自动恢复信息没更新",
@@ -7026,7 +7080,7 @@ export default interface Resources {
         "missing": "上次的排版找不到了",
         "prepareFailed": "示例排版没能打开",
         "tooNew": "上次的排版来自更新版本",
-        "unavailable": "上次的排版暂时没打开"
+        "unavailable": "暂时接不上上次的排版"
       },
       "retry": "重试",
       "title": {
@@ -7036,7 +7090,7 @@ export default interface Resources {
         "missing": "上次的排版“{{name}}”找不到了。",
         "prepareFailed": "示例排版没能打开。",
         "tooNew": "上次的排版“{{name}}”来自更新版本的 Tavotto，这个版本打不开。",
-        "unavailable": "上次的排版暂时没打开。"
+        "unavailable": "暂时接不上上次的排版。"
       }
     },
     "runtimePanel": {
@@ -7300,6 +7354,7 @@ export default interface Resources {
         "fontsize": "字号",
         "linewidth": "线宽"
       },
+      "journalRetry": "再试一次",
       "load": "读取样式",
       "manage": "管理样式…",
       "mismatch_other": "{{count}} 处与样式不一致",
@@ -7370,7 +7425,7 @@ export default interface Resources {
       "importPackage": "导入项目包…",
       "insertShape": "插入形状",
       "issueAria": "排版状态：{{status}}。查看详情",
-      "issueLastDoc": "上次的排版没打开",
+      "issueLastDoc": "没接上上次的排版",
       "issueTooNew": "排版版本较新",
       "journalTitle": "按「{{journal}}」检查 · 点开期刊规范",
       "more": "更多",

@@ -116,7 +116,10 @@ function sizeEdit(styleValue: unknown, seen: number[], lo: number | null, hi: nu
   let to = cur
   if (lo !== null && to < lo) to = lo
   if (hi !== null && to > hi) to = hi
-  return { from: round2(cur), to: round2(to) }
+  // 最常见的值本身合要求、只有少数出界（如 [8, 8, 6] 下限 7）：仍要改——按角色写成这个值，出界的
+  // 那几个跟着对齐；「从」报出界那个，别显示成 8 → 8（Codex #1851 P2）
+  const from = to !== cur ? cur : all.find((v) => (lo !== null && v < lo - 1e-6) || (hi !== null && v > hi + 1e-6))!
+  return { from: round2(from), to: round2(to) }
 }
 
 const familyName = (v: unknown): string | null => {
@@ -133,21 +136,25 @@ export function journalStyleEdits(input: JournalStyleInput, t: JournalStyleTarge
   if (t.minPt !== null || t.maxPt !== null) {
     for (const [role, prop] of FONT_SIZE_SLOTS) {
       const e = sizeEdit(el[role]?.[prop], nums(input.observed[role]?.[prop]), t.minPt, t.maxPt)
-      if (e && e.to !== e.from) out.push({ kind: 'element', role, prop, value: e.to, from: e.from })
+      if (e) out.push({ kind: 'element', role, prop, value: e.to, from: e.from })
     }
     // 画布标注只抬下限：上限是给图内文字的，子图序号 / 大标题按期刊惯例常比它大
     if (t.minPt !== null) {
       const e = sizeEdit(input.style?.annotation?.sizePt, input.annotationSizes, t.minPt, null)
-      if (e && e.to !== e.from) out.push({ kind: 'annotation', prop: 'sizePt', value: e.to, from: e.from })
+      if (e) out.push({ kind: 'annotation', prop: 'sizePt', value: e.to, from: e.from })
     }
   }
 
   if (t.minLinePt !== null) {
     for (const [role, prop] of LINE_WIDTH_SLOTS) {
-      const seen = nums(input.observed[role]?.[prop]).filter((v) => v > 0)
+      const all = nums(input.observed[role]?.[prop])
       const own = el[role]?.[prop]
-      const e = sizeEdit(typeof own === 'number' && own > 0 ? own : undefined, seen, t.minLinePt, null)
-      if (e && e.to !== e.from) out.push({ kind: 'element', role, prop, value: e.to, from: e.from })
+      const ownValue = typeof own === 'number' && own > 0 ? own : undefined
+      // 0 宽 = 有意藏起来的线。线宽按角色整体写，会把它一起抬成看得见的——这个角色里有 0 宽的
+      // （且样式没统一设过）就不动它，宁可少调也不让藏起来的线冒出来（Codex #1851 P2）
+      if (ownValue === undefined && all.some((v) => v === 0)) continue
+      const e = sizeEdit(ownValue, all.filter((v) => v > 0), t.minLinePt, null)
+      if (e) out.push({ kind: 'element', role, prop, value: e.to, from: e.from })
     }
   }
 

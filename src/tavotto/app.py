@@ -62,6 +62,7 @@ from werkzeug.formparser import FormDataParser
 
 from . import pdfbackend, richtext, tiffprobe
 from .engine import (
+    ai_attachments as engine_ai_attachments,
     ai_bridge as engine_ai,
     ai_connections as engine_ai_connections,
     ai_convert as engine_ai_convert,
@@ -14345,6 +14346,8 @@ def _ai_run_impl():
             # 文件变了就接统一刷新（reason=ai），在 ai.done 之前做完（ADR 0041）
             on_changed=lambda script: _after_ai_change(ctx, script),
             task_hooks=_ai_task_hooks(ctx, info["script"], info["entry"], selection),
+            # 用户附的参考图（ADR 0175）：只是暂存 id，图片本身早已经由 `/api/ai/attachments` 上传；不附图时恒为空
+            attachments=engine_ai_attachments.valid_ids(body.get("attachments")),
         )
     except engine_ai.DuplicateRequest as dup:
         # 同一条请求已经登记过：返回既有会话，不 spawn、不重复记遥测
@@ -14373,6 +14376,31 @@ def _ai_run_impl():
         "ai_assistant_invoked", {"agent": agent if agent in allowed else "other"}
     )
     return jsonify({"session": sid, "script": info["script"]})
+
+
+@app.post("/api/ai/attachments")
+def api_ai_attachment_stage():
+    """暂存一个用户附的文件（ADR 0175，请求体就是文件字节，`?name=` 是原文件名）：→ `{id, kind, mime, bytes, width, height, name}`。
+    图片前端先缩到 ≤ 4 MiB 再传；这里按魔数再核一遍，过大 = 413 带稳定码。过会话认证，同其它 `/api/ai/*`。"""
+    raw = request.get_data(cache=False, as_text=False) or b""
+    if len(raw) > engine_ai_attachments.MAX_FILE_BYTES:
+        return jsonify({"error": "文件过大", "code": "attachment_too_large", "params": {}}), 413
+    try:
+        return jsonify(engine_ai_attachments.stage(raw, request.args.get("name", "")))
+    except engine_ai_attachments.AttachmentError as exc:
+        # 每个 code 字面量写出、带中文原文回退（test_error_codes 逐个核对两种语言都有文案）
+        if exc.code == "attachment_too_large":
+            return jsonify({"error": "文件过大", "code": "attachment_too_large", "params": {}}), 413
+        if exc.code == "attachment_empty":
+            return jsonify({"error": "文件是空的", "code": "attachment_empty", "params": {}}), 400
+        return jsonify({"error": "这个文件附不上", "code": "attachment_invalid", "params": {}}), 400
+
+
+@app.delete("/api/ai/attachments/<rid>")
+def api_ai_attachment_discard(rid):
+    """用户把附的图去掉：删暂存。幂等（已经没了也回 ok）。"""
+    engine_ai_attachments.discard(rid)
+    return jsonify({"ok": True})
 
 
 # --- 「生成可编辑版本」（ADR 0143）：位图库画的图 → 改图助手另写一份 Matplotlib 版**新**脚本，原脚本不动 -------

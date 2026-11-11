@@ -21,6 +21,7 @@ import type { FigureDocument, PanelObject, TextObject } from '@/types/document'
 import { useDocumentStore } from './documentStore'
 import { useProfileStore } from './profileStore'
 import { exactPanelManifest, useRenderStore } from './renderStore'
+import { documentGeneration } from './styleWork'
 import { bindCanvasStyle, canvasStyle, editBoundStyleAll, resolvedStyle } from './styleBinding'
 import { useUiStore } from './uiStore'
 
@@ -102,6 +103,9 @@ export async function adjustStyleToJournal(renderable: readonly string[]): Promi
     if (ok) useUiStore.getState().setStatus(msg('stylePanel.journalAdjusted', { journal: plan.journal }, 'workspace'), 'done')
     return ok
   }
+  // 新建样式要等一次存库：期间换了画布 / 文档 / 项目，绑定会落到别的画布上——先记下发起时的代次，
+  // 回来对不上就不绑，说一句（与 `editBoundStyleAll` 同一判据；Codex #1851 P1）
+  const origin = documentGeneration(useDocumentStore.getState())
   const rec = await useProfileStore
     .getState()
     .create('style', plan.journal, styleData(plan.edits) as unknown as Record<string, unknown>)
@@ -114,7 +118,13 @@ export async function adjustStyleToJournal(renderable: readonly string[]): Promi
           ? msg('stylePanel.saveFailed', { reason: err.message }, 'workspace')
           : msg('stylePanel.saveFailedPlain', undefined, 'workspace'),
         'error',
+        // 存库失败（如自定义样式满了 / 写盘失败）：给一次重试，原样再走一遍
+        { action: { label: msg('stylePanel.journalRetry', undefined, 'workspace'), run: () => void adjustStyleToJournal(renderable) } },
       )
+    return false
+  }
+  if (documentGeneration(useDocumentStore.getState()) !== origin) {
+    useUiStore.getState().setStatus(msg('stylePanel.bindCancelled', undefined, 'workspace'), 'error')
     return false
   }
   bindCanvasStyle(rec.id)

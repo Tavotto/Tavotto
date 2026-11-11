@@ -24,7 +24,7 @@ from __future__ import annotations
 import os
 import re
 
-from . import ai_agents, ai_catalog, ai_oauth, ai_providers, config, netpolicy
+from . import ai_agents, ai_attachments, ai_catalog, ai_oauth, ai_providers, config, netpolicy
 from .agent_runner.wires import check_base_url
 
 #: 订阅类连接 id → (内部 agent, 厂商 id, 显示名（产品名，不翻译）, logo 键)
@@ -341,6 +341,7 @@ def _subscription_connections(agents_info: dict[str, dict]) -> list[dict]:
                 "state": state,
                 "models": models,
                 "model_details": details,
+                **({"no_vision": nv} if (nv := ai_attachments.text_only_models(models)) else {}),
                 "default_model": caps.default_model,
                 "efforts": list(caps.efforts) if agent and agent.supports_effort_selection else [],
                 "default_effort": caps.default_effort,
@@ -414,6 +415,7 @@ def _key_connection(
         "state": state,
         "models": models,
         "model_details": details,
+        **({"no_vision": nv} if (nv := ai_attachments.text_only_models(models)) else {}),
         "default_model": default_model,
         "efforts": efforts,
         "default_effort": default_effort,
