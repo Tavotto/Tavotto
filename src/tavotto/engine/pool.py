@@ -5894,8 +5894,12 @@ def _build_with(
     allow_project_env: bool,
     before_retry=None,
     before_build=None,
+    adopt_script_dir: bool = True,
 ):
     """`build` / `build_owned` 共用的编排：`take()` 回 `(worker, created)`。
+
+    沙盒里跑完、运行时证据说数据只在脚本目录里（失败 / 没出图带 `workdir_hint`，或成功但 glob 回空）且项目没决定过
+    工作目录：静默改在脚本目录里重跑一次（ADR 0047 修订，`_adopt_script_dir`），之后的结局就是那一次的结局。
 
     `before_retry()`：自动接手换了项目的解释器决策——连同它派生的工作目录默认（用户自己的 Python →
     脚本目录，ADR 0107 §二）——之后、第二次执行之前调一次。按计划执行的调用方（准备接口）在这里核
@@ -5904,20 +5908,73 @@ def _build_with(
     if before_build is not None:
         before_build(worker)
     try:
-        return worker, worker.ensure_built(), created
+        resp = worker.ensure_built()
     except WorkerError as exc:
+        if adopt_script_dir and _adopt_script_dir(figures_dir, getattr(exc, "workdir_hint", None)):
+            return _rebuild_in_script_dir(
+                take,
+                script_name,
+                figures_dir,
+                created,
+                allow_project_env,
+                before_retry,
+                before_build,
+            )
         if not allow_project_env or not should_try_project_env(exc):
             raise
         outcome = try_project_env(figures_dir, script_name, exc.module)
         if not outcome.get("ok"):
             exc.project_env = outcome
             raise
+    else:
+        # build 成功但沙盒里 glob 回空、脚本目录里有文件：画出来的多半是一张没数据的图（#1254），同样换目录重跑
+        if adopt_script_dir and _adopt_script_dir(figures_dir, workdir_hint_of_build(worker)):
+            return _rebuild_in_script_dir(
+                take,
+                script_name,
+                figures_dir,
+                created,
+                allow_project_env,
+                before_retry,
+                before_build,
+            )
+        return worker, resp, created
     if before_retry is not None:
         before_retry()
     worker, created_again = take()
     if before_build is not None:
         before_build(worker)
     return worker, worker.ensure_built(), created or created_again
+
+
+def _adopt_script_dir(figures_dir: str, hint) -> bool:
+    """运行时证据说数据只在脚本目录里（`hint` 是 `workdir.probe_hint` 的载荷）且项目没决定过工作目录 →
+    记下证据、关掉这个项目的会话（cwd 是 spawn 时定的，别的脚本的热会话也端着沙盒，写回重放要与热态同一个 cwd），
+    回 True。护栏全在 `workdir.adopt_runtime_evidence`（ADR 0047 修订）。"""
+    if not workdir.adopt_runtime_evidence(figures_dir, hint):
+        return False
+    LOG.info("运行时证据：数据在脚本目录里，项目改在脚本目录里运行并重跑一次（%s）", figures_dir)
+    shutdown_all(figures_dir)
+    return True
+
+
+def _rebuild_in_script_dir(
+    take, script_name, figures_dir, created, allow_project_env, before_retry, before_build
+):
+    """换到脚本目录之后的那一次重跑：与缺包自动接手同一个顺序（先 `before_retry` 核计划，再取会话）。
+    重跑本身仍可走缺包自动接手；不会再换一次目录（模式已不是沙盒，`probe_hint` 不再给证据，另外显式关掉）。"""
+    if before_retry is not None:
+        before_retry()
+    worker, resp, created_again = _build_with(
+        take,
+        script_name,
+        figures_dir,
+        allow_project_env=allow_project_env,
+        before_retry=before_retry,
+        before_build=before_build,
+        adopt_script_dir=False,
+    )
+    return worker, resp, created or created_again
 
 
 def _remember_retirements(victims) -> None:
