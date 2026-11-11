@@ -802,6 +802,8 @@ export default interface Resources {
         "failedItems": "核验未通过：{{items}}"
       },
       "jobLost": "找不到这次导出的作业。文件可能已写出，请检查导出目录或重新导出。",
+      "journalDpi": "{{journal}}：{{detail}} dpi",
+      "journalUnlisted": "{{journal}} 未列出 {{format}}",
       "locationChange": "更改…",
       "locationDefault": "项目的导出目录",
       "locationLabel": "位置",
