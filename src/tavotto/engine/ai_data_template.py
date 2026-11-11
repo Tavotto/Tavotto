@@ -674,7 +674,10 @@ RUNTIME_FUNCTIONS = (
 #: Okabe & Ito（2008）的色盲安全分类色（公开发表的调色板，无许可证限制）；去掉对比弱的黄色。仓库里没有批准的分类色表
 #: （profile 推荐的 Crameri batlowS 不随 matplotlib 提供，装了才有）——要换由用户拍板。
 PALETTE = ("#0072B2", "#D55E00", "#009E73", "#E69F00", "#56B4E9", "#CC79A7", "#000000")
-LINESTYLES = ("-", "--", ":")
+LINESTYLES = ("-", "--", ":")  # 多个 y 列（分组时）的线型表
+#: 拟合线的专用线型：不在 `LINESTYLES` 里，保证「拟合线」与「第二个 y 的线」永不同形（两者同图出现时各有说明）
+FIT_LINESTYLE = "-."
+assert FIT_LINESTYLE not in LINESTYLES
 SUMMARY_TEXT = {
     "mean_sd": "mean ± SD",
     "mean_sem": "mean ± SEM",
@@ -856,7 +859,7 @@ def _summary_text(recipe: recipe_mod.FigureRecipe) -> str:
 LAYER_NOTES = {
     "box": "box: median, quartiles, whiskers to 1.5 IQR",
     "violin": "violin: Gaussian kernel density, Scott bandwidth",
-    "fit_line": "dashed line: least-squares fit (descriptive)",
+    "fit_line": "dash-dot line: least-squares fit (descriptive)",
     "hist": "bins: Freedman-Diaconis rule, shared by all groups",
     "density": "density: Gaussian kernel, Scott bandwidth",
     "ecdf": "ECDF: step function of the sorted values",
@@ -867,11 +870,18 @@ def _layer_notes(recipe: recipe_mod.FigureRecipe) -> list[str]:
     notes = [LAYER_NOTES[layer.mark] for layer in recipe.layers if layer.mark in LAYER_NOTES]
     if "fit_line" in {layer.mark for layer in recipe.layers} and recipe.scale != "linear":
         notes = [
-            n + ", fitted on log10 of the log axes" if n.startswith("dashed line") else n
+            n + ", fitted on log10 of the log axes" if n.startswith("dash-dot line") else n
             for n in notes
         ]
-    if recipe.family == "trend" and any(layer.mark == "hline_summary" for layer in recipe.layers):
-        notes.append("dotted line: center of the whole series")
+    for layer in recipe.layers:
+        if layer.mark == "hline_summary" and layer.summary != "none":
+            # 水平线画的是汇总的中心值：均值或中位数，由该层的 summary 推出
+            stat = "median" if layer.summary == "median_iqr" else "mean"
+            notes.append(
+                f"dotted line: whole-series {stat}"
+                if recipe.family == "trend"
+                else f"horizontal lines: {stat}"
+            )
     return list(dict.fromkeys(notes))
 
 
@@ -1246,7 +1256,7 @@ def _trend_layer_lines(layer, tag_m: str, lw: list[float], logs=(False, False)) 
         return [
             f"seg = fit_segment(pool, {logs[0]!r}, {logs[1]!r})",
             "if seg:",
-            f"    ax.plot(*seg, color=color, linestyle='--', linewidth={mid!r}, label={lab})",
+            f"    ax.plot(*seg, color=color, linestyle={FIT_LINESTYLE!r}, linewidth={mid!r}, label={lab})",
         ]
     if m == "hline_summary":
         return [
@@ -1421,7 +1431,7 @@ def _render_relationship(entry, recipe, data_rel, stem, style) -> str:
             lines = [
                 f"seg = fit_segment((xs, ys), {logx!r}, {logy!r})",
                 "if seg:",
-                f"    ax.plot(*seg, color=color, linestyle='--', linewidth={mid!r}, label=make_label({tag!r}, g, p))",
+                f"    ax.plot(*seg, color=color, linestyle={FIT_LINESTYLE!r}, linewidth={mid!r}, label=make_label({tag!r}, g, p))",
             ]
         L += ["            " + ln for ln in lines]
     L += [

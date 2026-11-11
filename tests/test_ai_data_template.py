@@ -1607,7 +1607,7 @@ def test_uniform_n_goes_into_the_note_and_trend_notes_n_per_point(folder, profil
         tmp_path,
         T.render_recipe_script(entry_of(profile, "uni.csv"), r, data_rel="uni.csv", stem="fig"),
     )
-    assert got["texts"] == ["mean ± SD; n = 6"]
+    assert got["texts"] == ["mean ± SD; horizontal lines: mean; n = 6"]
     assert got["size"][0] == pytest.approx(150 / 25.4) and got["size"][1] == pytest.approx(
         got["size"][0] * 9 / 16
     )  # 多面板：双栏、16:9
@@ -1890,7 +1890,7 @@ def test_relationship_and_distribution_marks_are_plain_editable_artists(shapes_b
 @needs_worker
 def test_notes_state_the_binning_bandwidth_and_fit_rules_and_n(shapes_b):
     assert shapes_b["rel"]["texts"] == [
-        "dashed line: least-squares fit (descriptive); n = 16"
+        "dash-dot line: least-squares fit (descriptive); n = 16"
     ]  # 每组 16 个有效点（缺 y 与 x 为 nan 的行不画）
     assert "fitted on log10 of the log axes" in shapes_b["rel_log"]["texts"][0]
     note = shapes_b["hist_density"]["texts"][0]
@@ -2289,7 +2289,8 @@ def test_trend_note_counts_the_population_each_summary_actually_summarizes(tmp_p
         )
         has_ser = any(ly[0] == "hline_summary" for ly in layers if isinstance(ly, tuple))
         got = _note_of(work, layers, **kw)
-        dotted = "; dotted line: center of the whole series" if has_ser else ""
+        stat = "median" if layers is MIX else "mean"
+        dotted = f"; dotted line: whole-series {stat}" if has_ser else ""
         if has_pos and has_ser:
             names = {
                 "mixed": "line: mean ± SD; horizontal lines: median with IQR",
@@ -2353,7 +2354,7 @@ def test_comparison_note_and_tick_n_match_each_category_by_group_cell(tmp_path):
     r2 = mk("n.csv", "comparison", ["jitter", ("hline_summary", "mean_sd", Q)], ["y"], x="cond")
     rendered, _ = _render_in(work2, "n.csv", r2)
     assert probe(work2, rendered, "result = [t.get_text() for t in fig.texts]") == [
-        "mean ± SD; n = 3"
+        "mean ± SD; horizontal lines: mean; n = 3"
     ]
 
 
@@ -2497,7 +2498,7 @@ def test_relationship_draws_fits_and_counts_only_finite_pairs(tmp_path):
                 assert y == pytest.approx(icpt + slope * x)
     note = got["texts"][0]
     assert note.endswith("n = 6-8 per group and panel"), note
-    assert "dashed line: least-squares fit" in note
+    assert "dash-dot line: least-squares fit" in note
     one = _rel_folder(tmp_path / "w1")
     only_s1 = [["x", "y", "arm"]] + [
         [i + 1, i * 1.5, a] for a, k in (("a", 7), ("b", 6)) for i in range(k)
@@ -2609,10 +2610,7 @@ def test_note_names_which_mark_shows_which_summary(tmp_path):
     )
     rendered, _ = _render_in(work, "gap.csv", t)
     (text,) = probe(work, rendered, "result = [t.get_text() for t in fig.texts]")
-    assert (
-        "dashed line: least-squares fit" in text
-        and "dotted line: center of the whole series" in text
-    )
+    assert "dash-dot line: least-squares fit" in text and "dotted line: whole-series mean" in text
     n = sum(1 for ln in _csv_rows(work / "gap.csv")[1:] if _finite(ln[3]))
     assert text.endswith(f"n = {n}"), text  # 拟合线与整系列水平线汇总的都是全部有限观测
 
@@ -2622,3 +2620,103 @@ def _csv_rows(path: Path):
 
     with open(path, newline="", encoding="utf-8") as fh:
         return list(csv.reader(fh))
+
+
+@pytest.mark.parametrize(
+    "family, layers, scale, bad, kw",
+    [
+        ("comparison", ["jitter"], "log_y", "y", {"x": "g"}),
+        ("comparison", ["jitter"], "log_y", "y", {"x": "g", "group": "arm", "facet": "site"}),
+        ("trend", [("line", "mean_sd")], "log_y", "y", {"x": "x", "group": "arm", "facet": "site"}),
+        ("trend", [("line", "mean_sd")], "log_x", "x", {"x": "x", "group": "arm", "facet": "site"}),
+        ("trend", [("line", "mean_sd")], "log_xy", "x", {"x": "x"}),
+        ("relationship", ["points"], "log_x", "x", {"x": "x", "group": "arm", "facet": "site"}),
+        ("relationship", ["points"], "log_y", "y", {"x": "x", "group": "arm", "facet": "site"}),
+        ("relationship", ["points", "fit_line"], "log_xy", "y", {"x": "x"}),
+        ("distribution", ["box"], "log_y", "y", {"x": "g", "group": "arm"}),
+        ("distribution", ["jitter"], "log_y", "y", {"x": "g", "facet": "site"}),
+    ],
+)
+def test_nonpositive_values_on_a_log_axis_never_pass_validation(
+    family, layers, scale, bad, kw, tmp_path
+):
+    """对数轴上有 0 或负数的配方过不了校验（校验是权威）：只有一个分组 / 分面格里有坏值也一样；模板不用静默丢点。"""
+    rows = [["g", "x", "y", "arm", "site"]]
+    for arm in ("a", "b"):
+        for site in ("s1", "s2"):
+            for i in range(1, 9):
+                bad_here = arm == "b" and site == "s2" and i == 5
+                x = (0 if bad == "x" else -1) if bad_here and bad == "x" else i
+                y = (0 if bad == "y" else -2) if bad_here and bad == "y" else i * 1.5
+                rows.append([f"c{i % 3}", x, y, arm, site])
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "log.csv").write_text(_csv(rows), encoding="utf-8")
+    prof = adf.profile_folder(tmp_path)
+    values = adf.inspect_data_source(tmp_path / "log.csv", None)
+    r = mk("log.csv", family, layers, ["y"], scale=scale, **kw)
+    codes = {p.code for p in R.validate_recipe(prof, r, confirmed=NONE, values=values)}
+    assert "log_nonpositive" in codes, (family, scale, codes)
+
+
+@needs_worker
+def test_fit_line_has_its_own_linestyle_distinct_from_the_y_linestyles(tmp_path):
+    """多 y 分组时线型表给第二、三个 y；拟合线用不在表里的专用线型，同图出现时样式不同、各有说明。"""
+    assert T.FIT_LINESTYLE not in T.LINESTYLES
+    work = _multi_y_folder(tmp_path / "w")
+    r = mk(
+        "my.csv",
+        "trend",
+        [("line", "mean_sd"), ("fit_line", "none", Q)],
+        ["sig_mV", "cur_mV"],
+        x="x",
+        group="arm",
+    )
+    rendered, _ = _render_in(work, "my.csv", r)
+    body = (
+        "ax = fig.axes[0]\n"
+        "lg = ax.get_legend()\n"
+        "result = {'lines': {l.get_label(): l.get_linestyle() for l in ax.lines},\n"
+        "          'legend': [t.get_text() for t in lg.get_texts()],\n"
+        "          'legend_styles': [h.get_linestyle() for h in lg.legend_handles if hasattr(h, 'get_linestyle')],\n"
+        "          'texts': [t.get_text() for t in fig.texts]}\n"
+    )
+    got = probe(work, rendered, body)
+    fit = {v for k, v in got["lines"].items() if k.startswith("fit_line")}
+    ys = {v for k, v in got["lines"].items() if k.startswith("line")}
+    assert fit == {"-."} and not fit & ys and ys == {"-", "--"}, got["lines"]
+    assert "-." not in got["legend_styles"]  # 图例里的线型都是 y 列的
+    assert got["legend"] == ["a", "b", "sig (mV)", "cur (mV)"]
+    assert "dash-dot line: least-squares fit" in got["texts"][0]
+    rel = _rel_folder(tmp_path / "wr")
+    rr = mk("rel.csv", "relationship", ["points", "fit_line"], ["y"], x="x")
+    rendered, _ = _render_in(rel, "rel.csv", rr, allow=("column_type_mismatch",))
+    lines = probe(rel, rendered, "result = [l.get_linestyle() for l in fig.axes[0].lines]")
+    assert lines == ["-."]  # relationship 的拟合线同一专用线型
+
+
+@needs_worker
+@pytest.mark.parametrize(
+    "summary, stat",
+    [("mean_sd", "mean"), ("mean_sem", "mean"), ("mean_ci95", "mean"), ("median_iqr", "median")],
+)
+def test_horizontal_line_note_names_the_statistic_from_its_summary(summary, stat, tmp_path):
+    work = _gap_folder(tmp_path / "w")
+    c = mk("gap.csv", "comparison", ["points", ("hline_summary", summary, Q)], ["y"], x="arm")
+    rendered, _ = _render_in(work, "gap.csv", c)
+    (text,) = probe(work, rendered, "result = [t.get_text() for t in fig.texts]")
+    assert f"horizontal lines: {stat}" in text and "center" not in text, text
+    t = mk("gap.csv", "trend", ["points", ("hline_summary", summary, Q)], ["y"], x="x")
+    rendered, _ = _render_in(work, "gap.csv", t)
+    (text,) = probe(work, rendered, "result = [t.get_text() for t in fig.texts]")
+    assert f"dotted line: whole-series {stat}" in text and "center" not in text, text
+    # 一张图里两种统计量的水平线各写各的
+    both = mk(
+        "gap.csv",
+        "comparison",
+        ["points", ("hline_summary", "mean_sd", Q), ("hline_summary", "median_iqr", "reference")],
+        ["y"],
+        x="arm",
+    )
+    rendered, _ = _render_in(work, "gap.csv", both)
+    (text,) = probe(work, rendered, "result = [t.get_text() for t in fig.texts]")
+    assert "horizontal lines: mean" in text and "horizontal lines: median" in text, text
