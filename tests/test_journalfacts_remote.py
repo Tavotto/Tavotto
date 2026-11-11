@@ -483,3 +483,68 @@ def test_nonexclusive_permission_and_preference_are_returned_without_projection(
         ("permitted", ["MS Office"]),
     ]
     assert "override" not in page and "preflight" not in page
+
+
+def test_direct_facts_refreshes_index_and_reports_verified_offline_cache(isolated, monkeypatch):
+    key, _ = isolated
+    original = fact_bundle()
+    updated = copy.deepcopy(original)
+    updated["facts"][0]["value"] = 1400
+    updated["facts"][0]["quote"] = "Line art: 1400 dpi."
+    bodies = {1: json.dumps(original).encode(), 2: json.dumps(updated).encode()}
+    indices = {rev: index_for(raw, rev) for rev, raw in bodies.items()}
+    current = {"rev": 1, "offline": False}
+    requests = []
+
+    def request(method, url, cap, headers):
+        requests.append((url, headers))
+        if current["offline"]:
+            raise journalremote.RemoteCatalogError("network")
+        if url.endswith("index.signed.json"):
+            assert "fx-journal" not in url and "X-Tavotto-Device" not in headers
+            return 200, signed(key, indices[current["rev"]])
+        return 200, bodies[current["rev"]]
+
+    monkeypatch.setattr(client, "_request", request)
+    first = client.get_facts("fx-journal")
+    assert first["catalog_rev"] == 1 and first["facts"][0]["value"] == 1200
+    current["rev"] = 2
+    second = client.get_facts("fx-journal")
+    assert second["catalog_rev"] == 2 and second["facts"][0]["value"] == 1400
+    assert second["sync_state"] == "updated" and second["sync_code"] is None
+    current["offline"] = True
+    cached = client.get_facts("fx-journal")
+    assert cached["catalog_rev"] == 2 and cached["facts"][0]["value"] == 1400
+    assert cached["source"] == "cache" and cached["sync_state"] == "offline"
+    assert cached["sync_code"] == "network"
+    n = len(requests)
+    monkeypatch.setattr(journalremote, "disabled", lambda: True)
+    assert client.get_facts("fx-journal")["sync_state"] == "disabled"
+    assert len(requests) == n
+
+
+def test_direct_facts_finds_journal_added_after_cached_index(isolated, monkeypatch):
+    key, _ = isolated
+    raw = json.dumps(fact_bundle()).encode()
+    old = index_for(raw, 1)
+    old["journals"] = {}
+    client._save_index(signed(key, old), old)
+    new = index_for(raw, 2)
+
+    def request(method, url, cap, headers):
+        if url.endswith("index.signed.json"):
+            return 200, signed(key, new)
+        return 200, raw
+
+    monkeypatch.setattr(client, "_request", request)
+    result = client.get_facts("fx-journal")
+    assert result["journal_id"] == "fx-journal" and result["catalog_rev"] == 2
+    assert result["sync_state"] == "updated" and result["facts_total"] == 1
+
+
+def test_invalid_journal_id_does_not_trigger_index_request(isolated, monkeypatch):
+    calls = []
+    monkeypatch.setattr(client, "_request", lambda *args: calls.append(args))
+    with pytest.raises(client.FactsError, match="bad_request"):
+        client.get_facts("invalid/id")
+    assert calls == []

@@ -33,6 +33,8 @@ Deploy behind an explicitly configured `/v2/journal-catalog/` reverse proxy only
 
 ## Client and Agent
 
+Each direct journal-facts read refreshes the public signed index before selecting a cached bundle, so updated requirements are not silently frozen. The index request includes no journal ID or device token. If refresh fails, the response reports `sync_state` / `sync_code` and may return previously verified cached facts; no cache means explicit unavailable. Paginated reads can observe a new revision between pages; clients should compare `catalog_rev` and restart pagination if it changes.
+
 `journalfacts_remote` verifies the index using the existing production key authority, checks each on-demand bundle against its signed hash and ID, and verifies every cached or fetched snapshot against its content-addressed name. A separate `journal-catalog-v2/cache.sqlite3` transaction stores the current signed index and enforces a monotonic v2 revision; v1 and v2 share only the existing device token. A missing v2 cache is an explicit unavailable result, never a v1/seed facts response. `TAVOTTO_NO_JOURNAL_SYNC` stops v2 network access as well.
 
 The v2 transport uses the shared platform HTTPS trust but refuses redirects, including redirects to another host, to avoid forwarding a device token. It targets `www.tavotto.com` directly for the overseas endpoint; that route still requires a separately configured and tested website proxy before it is available. On network/server failure it can try the other configured host; on signature, hash, rollback or quota failure it does not switch hosts to hide the error.

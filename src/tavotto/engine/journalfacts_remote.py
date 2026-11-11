@@ -436,6 +436,14 @@ def get_journal(jid: str, *, ui_locale: str | None = None, _allow_refresh: bool 
 def get_facts(jid: str, *, offset: int = 0, limit: int = 20, ui_locale: str | None = None) -> dict:
     """Page facts and scoped coverage together, with all referenced sources."""
     _validate_page(offset, limit)
+    if not isinstance(jid, str) or re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,95}", jid) is None:
+        raise FactsError("bad_request")
+    # Refresh the public signed index even when the journal is already cached.
+    # No journal ID or device token is sent with this request. On failure, sync
+    # returns a verified cache and exposes its status to the caller.
+    state = sync(ui_locale)
+    if state["index"] is None:
+        raise FactsError(state["code"] or "offline")
     result = get_journal(jid, ui_locale=ui_locale)
     bundle = result["bundle"]
     facts = bundle["facts"]
@@ -448,6 +456,8 @@ def get_facts(jid: str, *, offset: int = 0, limit: int = 20, ui_locale: str | No
         "journal_id": bundle["journal_id"],
         "journal": bundle["journal"],
         "catalog_completeness": "unknown",
+        "sync_state": state["state"],
+        "sync_code": state["code"],
         "facts": [],
         "coverage": [],
         "sources": {},
