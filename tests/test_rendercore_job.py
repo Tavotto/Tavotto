@@ -853,3 +853,23 @@ def test_svg_panel_gap_names_the_right_code_per_source_kind():
     code, params = _svg_panel_gap(rp, gaps, [])
     assert code == "svg_source_unsupported"
     assert "execution:a" in params["id"] and "static:s" in params["id"]
+
+
+def test_missing_panel_source_reports_structured_code_and_figure(project, provider, tmp_path):
+    """面板指向的图不在了：失败带结构化 `source_code=source_missing` + `figure`，前端据此给「重新找到这张图」，
+    不必解析 reason 文案（一份用户反馈：重试必败、连点六次）。"""
+    rel = "figs/gone.png"
+    export_dir = tmp_path / "out"
+    job = exportjob.prepare(
+        _spec(
+            [{"type": "panel", "id": rel, "x_mm": 5, "y_mm": 5, "w_mm": 60, "h_mm": 40}],
+            formats=("png",),
+        ),
+        export_dir,
+    )
+    payload = _run(job, project, provider)
+    assert payload["status"] == "failed", payload
+    error = payload["error"]
+    assert error["code"] == "export_render_failed"
+    assert error["params"]["source_code"] == "source_missing"
+    assert error["params"]["figure"] == rel

@@ -65,4 +65,21 @@ describe('RelinkDialog', () => {
     // 路径留尾巴：从左边裁（rtl 容器里钉住从左到右）
     expect(row('old/machine/Gone.pdf').querySelector('[dir="rtl"]')!.textContent).toContain('old/machine/Gone.pdf')
   })
+
+  it('缺的那一项还留在素材清单里（导出时才发现）：不拿它配它自己，配到别处同名的那张', async () => {
+    useAssetStore.setState({
+      byId: {
+        'old/case6.png': { id: 'old/case6.png', name: 'case6', folder: 'old', kind: 'png', native_w_mm: 80, native_h_mm: 60, mtime: 1 },
+        'new/case6.png': { id: 'new/case6.png', name: 'case6', folder: 'new', kind: 'png', native_w_mm: 80, native_h_mm: 60, mtime: 1 },
+      },
+    } as never)
+    act(() => root.render(<RelinkDialog />))
+    await act(async () =>
+      useClipboardStore.getState().setPending({ mode: 'relink', missing: [{ fileId: 'old/case6.png', name: 'case6', count: 1 }] }),
+    )
+    const row = document.querySelector('[data-relink-row="old/case6.png"]')!
+    expect(row.querySelector('[data-relink-by-name]')).not.toBeNull()
+    expect(row.textContent).toContain('case6（new）')
+    expect(row.textContent).not.toContain('（old）')
+  })
 })

@@ -352,6 +352,23 @@ export function requestRelinkMissing(): number {
   return missingMap.size
 }
 
+/**
+ * 导出时发现某张图不在了：只把引用这一张的面板交给重链接对话框（同名素材自动配上）。
+ * 文档里没有面板引用它 = false，不弹框。
+ */
+export function requestRelinkSource(fileId: string): boolean {
+  const { doc } = useDocumentStore.getState()
+  let missing: MissingAsset | null = null
+  for (const o of doc.objects) {
+    if (o.type !== 'panel' || o.fileId !== fileId) continue
+    if (missing) missing.count += 1
+    else missing = { fileId, name: o.name ?? fileId.split(/[\\/]/).pop() ?? fileId, count: 1 }
+  }
+  if (!missing) return false
+  useClipboardStore.getState().setPending({ mode: 'relink', missing: [missing] })
+  return true
+}
+
 /** 就地重链接：把文档里引用缺失素材的面板换到所选素材（一条历史）。 */
 export function materializeRelink(resolved: MissingAsset[]): void {
   const assets = useAssetStore.getState().byId

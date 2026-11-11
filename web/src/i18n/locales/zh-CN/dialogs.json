@@ -317,6 +317,8 @@
     "locationLabel": "位置",
     "locationDefault": "项目的导出目录",
     "locationChange": "更改…",
+    "findMissingSource": "重新找到这张图",
+    "missingSourceNote": "有一张图找不到了：{{name}}。",
     "changeLocationExport": "换个位置导出",
     "lowerDpiExport": "改用 {{dpi}} dpi 导出",
     "toast": {

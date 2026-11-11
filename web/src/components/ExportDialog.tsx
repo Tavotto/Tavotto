@@ -55,7 +55,8 @@ import { ICON_SIZE, IconSlot } from "@/components/ui/Icon";
 import { CanvasThumb } from "./CanvasThumb";
 import { ExportZoomStage } from "./ExportZoomStage";
 import { ExportLocationRow, useExportLocationPicker } from "./ExportLocationRow";
-import { RASTER_TOO_LARGE, isLocationFailure, largestDpiWithinLimit } from "@/lib/exportRecovery";
+import { RASTER_TOO_LARGE, isLocationFailure, largestDpiWithinLimit, missingSourceFigure } from "@/lib/exportRecovery";
+import { requestRelinkSource, useClipboardStore } from "@/lib/clipboard";
 import { useProjectSettingsPending } from "@/lib/projectSettingsPatch";
 import { Checkbox } from "./ui/Checkbox";
 import { Tip } from "./ui/Tooltip";
@@ -2874,6 +2875,28 @@ export function ResultBlock({
   useTranslation(["dialogs", "errors"]);
   // 「换个位置导出」：选完新文件夹直接重新导出（同目录重试必败，所以这类失败不给「重试」）
   const picker = useExportLocationPicker(onRetry);
+  // 「重新找到这张图」：开重链接对话框；链上了（文档里不再有面板指着那个旧 id）就直接重新导出，
+  // 取消 / 保持缺失就什么都不做（再导一次必败）
+  const [relinking, setRelinking] = useState<string | null>(null);
+  const relinkPending = useClipboardStore((s) => s.pending);
+  const relinkOpened = useRef(false);
+  useEffect(() => {
+    if (!relinking) return;
+    if (relinkPending) {
+      relinkOpened.current = true;
+      return;
+    }
+    if (!relinkOpened.current) return;
+    relinkOpened.current = false;
+    const still = useDocumentStore
+      .getState()
+      .doc.objects.some((o) => o.type === "panel" && o.fileId === relinking);
+    setRelinking(null);
+    if (!still) onRetry();
+  }, [relinking, relinkPending, onRetry]);
+  const missingFigure = (job.status === "failed" && !job.outputs.length)
+    ? missingSourceFigure(job.error?.code, job.error?.params)
+    : null;
   /**
    * 失败的出口（三种结局之二、之三）：位置写不了 → 换个位置；位图太大 → 改用不超上限的最大一档 dpi，
    * 算不出就发送问题反馈；null = 没有专属出口，调用方沿用原来的动作。
@@ -2882,6 +2905,26 @@ export function ResultBlock({
     code: string | null | undefined,
     params: Record<string, unknown> | undefined,
   ): ReactNode | null => {
+    const missing = missingSourceFigure(code, params);
+    if (missing) {
+      const panelThere = useDocumentStore
+        .getState()
+        .doc.objects.some((o) => o.type === "panel" && o.fileId === missing);
+      return panelThere ? (
+        <Button
+          size="sm"
+          variant="primary"
+          data-export-find-source
+          onClick={() => {
+            if (requestRelinkSource(missing)) setRelinking(missing);
+          }}
+        >
+          {ex("findMissingSource")}
+        </Button>
+      ) : (
+        <SendReportButton variant="primary" />
+      );
+    }
     if (isLocationFailure(code)) {
       return (
         <Button size="sm" variant="primary" data-export-change-location onClick={() => void picker.change()}>
@@ -2942,13 +2985,15 @@ export function ResultBlock({
           ))
         }
       >
-        {translate(`backend.${job.error?.code ?? "export_failed"}`, {
-          ns: "errors",
-          ...(job.error?.params ?? {}),
-          defaultValue: ex("operationFailed", {
-            error: job.error?.code ?? "",
-          }),
-        })}
+        {missingFigure
+          ? ex("missingSourceNote", { name: missingFigure.split(/[\\/]/).pop() ?? missingFigure })
+          : translate(`backend.${job.error?.code ?? "export_failed"}`, {
+              ns: "errors",
+              ...(job.error?.params ?? {}),
+              defaultValue: ex("operationFailed", {
+                error: job.error?.code ?? "",
+              }),
+            })}
         {/* 那一次的诊断（T04）：折叠，主按钮仍是重试；key 绑作业，重试出新作业就是新的一份 */}
         {job.job_id && <TaskDiagnostic key={job.job_id} kind="export" refId={job.job_id} />}
         {picker.error && (

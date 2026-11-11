@@ -587,7 +587,10 @@ def test_missing_source_is_a_structured_error(env):
     )
     assert status in (200, 500)
     assert body["status"] == "failed"
-    assert body["error"]["code"] in ("source_missing", "export_failed")
+    # 「图不在了」必须是结构化的 source_missing + figure：界面据此给「重新找到这张图」。
+    # 曾经放过 export_failed，结果用户看到的是 werkzeug 的「404 Not Found: The requested URL…」+ 必败的重试
+    assert body["error"]["code"] == "source_missing", body["error"]
+    assert body["error"]["params"]["figure"] == "nope.pdf"
 
 
 def _reencrypt(figs: Path, name: str, *, user_pw: str) -> None:
