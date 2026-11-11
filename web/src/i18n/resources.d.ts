@@ -7436,6 +7436,7 @@ export default interface Resources {
       "issueAria": "排版状态：{{status}}。查看详情",
       "issueLastDoc": "没接上上次的排版",
       "issueTooNew": "排版版本较新",
+      "journalTitle": "按「{{journal}}」检查 · 点开期刊规范",
       "more": "更多",
       "moreGroup": {
         "file": "文件",
