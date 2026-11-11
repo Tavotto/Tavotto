@@ -846,7 +846,12 @@
         "otherOff": "斜体：样式里写的是「{{value}}」，不算斜体——应用时照原值写（点一下改为斜体）"
       }
     },
-    "clearRow": "清除整行（{{row}}）：这一行的每一格都回到未设置"
+    "clearRow": "清除整行（{{row}}）：这一行的每一格都回到未设置",
+    "journalEntry": "{{name}} · 期刊",
+    "journalBadge": "期刊要求 · 只读",
+    "leaveJournalTitle": "不再按「{{journal}}」检查？",
+    "leaveJournalBody": "改用「{{name}}」后，期刊要求与出处会一起移除，可以撤销。",
+    "leaveJournalConfirm": "改用这套规范"
   },
   "readiness": {
     "addToCanvas": "添加到画布",
