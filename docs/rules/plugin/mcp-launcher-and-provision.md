@@ -73,7 +73,7 @@ order: 20
 - **第三条路：桌面版的 `tavotto-cli mcp`**（2026-10-27，「接入 AI 编辑器」）：宿主配置直接写
   `<桌面版>/tavotto-cli mcp`，冻结产物在进程内跑**同一个** `tavotto_mcp` 服务端（`engine/mcpserve.py`），不经
   本文件的解析器、不需要 `--provision`。解析器与候选链不变：插件（Codex / Claude Code 市场）照旧走 `mcp/server.py`；
-  pip / pipx 装的 `tavotto mcp` 没有 `codex-plugin/`，如实报 `mcp_server_not_bundled`、不降级成假的工具列表。
+  pip / pipx / uvx 装的 `tavotto mcp`：wheel 自带 `tavotto_mcp` 包（2026-11-11，`pyproject.toml` `force-include`，只此一包，不带插件其余部分），`mcpserve._import_server` 源码树优先、其次直接 import 已安装的；旧版 wheel 没有它时如实报 `mcp_server_not_bundled`、不降级成假的工具列表。无头沙盒：`uvx --from "tavotto[worker]" tavotto mcp`（不带 `[worker]` 也能握手 / 列工具 / health，真出图要 worker 依赖）。wheel 里没有画布产物，服务端不挂内嵌画布、工具照常。
 
 - **启动器 `mcp/server.py` 是运行时解析器（2026-08-20 重做）**：候选链
   当前解释器 → `TAVOTTO_MCP_PYTHON`（显式，失败要指名道姓报
