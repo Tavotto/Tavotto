@@ -2480,6 +2480,7 @@
   },
   "journal": {
     "jperStageWarning": "A saved source in this layout corresponds to historical guidelines for the final version of accepted manuscripts. Current preflight does not distinguish submission stages. Current requirements have not been verified; check the journal guidelines.",
+    "jperProblemGeneralWarning": "A historical source saved for these canvases concerns the final version of accepted manuscripts. Preflight does not distinguish submission stages, and current guidelines have not been verified. This notice does not establish that any issue or threshold comes from that source.",
     "sourceIdentityWarning": "The heading of historical text captured for a saved source in this layout says Adult, while Child is selected. The source identity needs verification; check the author guidelines. Existing preflight rules are unchanged.",
     "factView": {
       "open": "View source facts",

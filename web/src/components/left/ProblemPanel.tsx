@@ -66,6 +66,7 @@ import { CategoryCards, FigureCards, UnverifiableEntry } from './ProblemCards'
 import { ProblemTreeContext, type ProblemTreeCtx } from './problemTree'
 import { GroupNode } from './ProblemTreeRows'
 import { useScopedProblems } from './useProblemScope'
+import { JperProblemStageNotice } from './JperProblemStageNotice'
 
 
 /** 本组文案在 errors:problems.* 下（问题的措辞与检查项同一个命名空间） */
@@ -491,6 +492,7 @@ export function ProblemPanel() {
             aria-label={pr('listLabel')}
             className="min-h-0 flex-1 overflow-y-auto pb-2"
           >
+            <JperProblemStageNotice issues={shown} />
             {single ? (
               <li data-problem-tier="actionable">
                 <ul>{tree.body(single, 0)}</ul>

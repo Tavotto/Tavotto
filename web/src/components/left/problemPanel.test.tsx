@@ -7,7 +7,7 @@
 import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
-import { literal, setLocale } from '@/i18n'
+import { literal, msg, setLocale } from '@/i18n'
 import { RENDER_RETRY_DELAYS_MS } from '@/lib/imgRetry'
 import { problemContextNow } from '@/lib/problemContext'
 import { drillKey } from '@/lib/problemList'
@@ -1941,5 +1941,103 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     await reachC()
     expect(useUiStore.getState().problemScope).toBe('figure')
     expect(rows().find((r) => r.getAttribute('aria-current') === 'true')).toBeTruthy()
+  })
+})
+
+describe('JPER 问题面板的画布级来源提示', () => {
+  it('合并相关画布，使用实时名称和可滚动结构，不将问题或阈值归因于该来源', async () => {
+    await seed()
+    const sourceUrl = 'https://journals.sagepub.com/pb-assets/JPER-Guidelines-for-Submission-of-Accepted-Manuscripts-2019.pdf'
+    const source = { value: 300, url: sourceUrl, link: sourceUrl, affects: 'preflight', unset: false }
+    const journalId = 'journal-of-planning-education-and-research'
+    const binding = (id: string, url = sourceUrl) => ({
+      id: 'journal-base-v1', journalRef: { id, label: 'JPER', catalogRev: 6, retrieved: '2026-11-03' },
+      journalSources: { min_raster_dpi: { ...source, url } }, journal: { min_raster_dpi: 300 },
+    })
+    const state = useDocumentStore.getState()
+    const a = state.activeCanvasId
+    const canvasA = state.canvases.find((c) => c.id === a)!
+    useDocumentStore.setState({
+      doc: { ...state.doc, name: '相同画布', profile: binding(journalId) as never },
+      canvases: [
+        { ...canvasA, name: '陈旧名称', profile: binding('other') as never },
+        { ...canvasA, id: 'canvas-b', name: '相同画布', profile: binding(journalId) as never },
+        { ...canvasA, id: 'canvas-c', name: '无关画布', profile: binding('other') as never },
+      ],
+    })
+    const base = useValidationStore.getState().issues[0]
+    expect(base).toBeTruthy()
+    const row = (canvasId: string, ruleCode = 'raster-dpi', min: unknown = '600') => ({
+      ...base, issueId: `${canvasId}-${ruleCode}`, ruleCode, objectRef: { ...base.objectRef, canvasId },
+      message: msg('preflight.rasterDpi', { dpi: '100', min }, 'errors'),
+    })
+    const issues = [row(a), row('canvas-b'), row('canvas-c')]
+    useValidationStore.setState({ issues, ready: true, failed: false, queued: false, running: false })
+    const before = structuredClone(useDocumentStore.getState().doc)
+    await mount(<ProblemPanel />)
+    const notice = () => container.querySelector('[data-jper-problem-stage-notice]')
+    expect(container.querySelectorAll('[data-jper-problem-stage-notice]')).toHaveLength(1)
+    expect(notice()?.textContent).toContain('相同画布 · 1')
+    expect(notice()?.textContent).toContain('相同画布 · 2')
+    expect(notice()?.textContent).not.toContain('无关画布')
+    expect(notice()?.textContent).toContain('录用后最终稿')
+    expect(notice()?.textContent).toContain('预检未区分投稿阶段')
+    expect(notice()?.textContent).toContain('当前指南尚未核实')
+    expect(notice()?.textContent).toContain('不能确认任何问题或阈值来自该来源')
+    expect(notice()?.textContent).not.toContain('300')
+    expect(notice()?.textContent).not.toContain('600')
+    expect(notice()?.querySelector('[role="status"]')).not.toBeNull()
+    const tree = container.querySelector('[data-problem-tree]')!
+    container.style.height = '80px'
+    expect(tree.classList.contains('overflow-y-auto')).toBe(true)
+    expect(tree.classList.contains('min-h-0')).toBe(true)
+    expect(notice()?.tagName).toBe('LI')
+    expect(notice()?.closest('[data-problem-tree]')).toBe(tree)
+    expect(notice()?.classList.contains('shrink-0')).toBe(false)
+    expect(useDocumentStore.getState().doc).toEqual(before)
+    expect(useValidationStore.getState().issues).toEqual(issues)
+    await act(async () => useDocumentStore.setState((s) => ({ doc: { ...s.doc, name: '实时改名' } })))
+    expect(notice()?.textContent).toContain('实时改名 · 1')
+    expect(notice()?.textContent).toContain('相同画布 · 2')
+    expect(useDocumentStore.getState().canvases[0].name).toBe('陈旧名称')
+    await act(async () => useUiStore.setState({ problemScope: 'canvas' }))
+    expect(notice()?.textContent).toContain('实时改名 · 1')
+    expect(notice()?.textContent).not.toContain('相同画布 · 2')
+    await act(async () => useUiStore.setState({ problemScope: 'document' }))
+    expect(notice()?.textContent).toContain('相同画布 · 2')
+    for (const min of ['300', '600', '', null]) {
+      await act(async () => useValidationStore.setState({ issues: [row(a, 'raster-dpi', min)] }))
+      expect(notice()?.textContent).toContain('不能确认任何问题或阈值来自该来源')
+      expect(notice()?.textContent).not.toContain('300')
+      expect(notice()?.textContent).not.toContain('600')
+    }
+    const fontBinding = {
+      ...binding(journalId),
+      journalSources: { 'font_family.latin_accepted': { ...source, value: ['Gill Sans'] } },
+      journal: { font_family: { latin_accepted: ['Gill Sans'] } },
+    }
+    const font = { ...row(a, 'font-family-substituted'), message: msg('preflight.fontFamilySubstituted', { family: 'Arial', want: '' }, 'errors') }
+    await act(async () => useDocumentStore.setState((s) => ({ doc: { ...s.doc, profile: fontBinding as never } })))
+    await act(async () => useValidationStore.setState({ issues: [font] }))
+    expect(notice()?.textContent).toContain('不能确认任何问题或阈值来自该来源')
+    await act(async () => useValidationStore.setState({ issues: [row(a, 'tick-direction')] }))
+    expect(notice()?.textContent).toContain('不能确认任何问题或阈值来自该来源')
+    for (const bad of [
+      `${sourceUrl}?download=1`, `${sourceUrl}#page=1`, sourceUrl.toLowerCase(),
+      sourceUrl.replace('journals.sagepub.com', 'journals.sagepub.com.evil.invalid'),
+    ]) {
+      await act(async () => useDocumentStore.setState((s) => ({ doc: { ...s.doc, profile: binding(journalId, bad) as never } })))
+      expect(notice()).toBeNull()
+    }
+    await act(async () => useDocumentStore.setState((s) => ({ doc: { ...s.doc, profile: binding('other') as never } })))
+    expect(notice()).toBeNull()
+    await act(async () => useDocumentStore.setState((s) => ({ doc: { ...s.doc, profile: { ...binding(journalId), journalSources: undefined } as never } })))
+    expect(notice()).toBeNull()
+    await act(async () => useDocumentStore.setState((s) => ({ doc: { ...s.doc, profile: binding(journalId) as never } })))
+    await act(async () => { await setLocale('en-US') })
+    expect(notice()?.textContent).toContain('final version of accepted manuscripts')
+    expect(notice()?.textContent).toContain('does not distinguish submission stages')
+    expect(notice()?.textContent).toContain('current guidelines have not been verified')
+    expect(notice()?.textContent).toContain('does not establish that any issue or threshold comes from that source')
   })
 })

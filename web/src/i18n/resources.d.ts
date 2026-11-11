@@ -1045,6 +1045,7 @@ export default interface Resources {
       "formatsAccepted": "可接受 {{list}}",
       "formatsPreferred": "推荐 {{list}}",
       "hasRequirement": "有要求",
+      "jperProblemGeneralWarning": "所列画布保存的历史来源针对录用后最终稿；预检未区分投稿阶段，当前指南尚未核实。此提示不能确认任何问题或阈值来自该来源。",
       "jperStageWarning": "此排版保存的来源对应历史录用稿最终版指南；当前预检未区分投稿阶段。当前要求尚未核实，请核对期刊指南。",
       "listAria": "期刊列表",
       "needsNetwork": "这本期刊需要联网下载",
