@@ -28,6 +28,11 @@ import {
 import { useDocumentStore } from '@/store/documentStore'
 import { queueFontSize } from './queuedFontSize'
 import { useProfileStore } from '@/store/profileStore'
+import { adjustStyleToJournal, journalStylePlan } from '@/store/journalStyle'
+import type { JournalStyleEdit } from '@/lib/journalStyle'
+import { styleRoleLabel } from '@/lib/stylePresets'
+import { Tip } from '../ui/Tooltip'
+import { useFigureFamilies } from '../settings/StyleProfileFields'
 import {
   exactPanelManifest,
   panelRender,
@@ -762,6 +767,17 @@ function ApplyStyle() {
   const objects = useDocumentStore((s) => s.doc.objects)
   const byKey = useRenderStore((s) => s.byKey)
   const latest = useRenderStore((s) => s.latest)
+  const specBinding = useDocumentStore((s) => s.doc.profile)
+  const families = useFigureFamilies()
+  const renderable = useMemo(
+    () => families.options.filter((o) => !families.unavailable.includes(o)),
+    [families],
+  )
+  /** 项目按期刊检查、画布上有不合期刊的字号 / 字体 / 线宽：给一颗「按期刊调整」（用户点了才改，ADR 0029） */
+  const journalPlan = useMemo(
+    () => journalStylePlan(renderable),
+    [specBinding, binding, objects, byKey, latest, records, renderable], // eslint-disable-line react-hooks/exhaustive-deps
+  )
 
   useEffect(() => {
     if (!loaded) void useProfileStore.getState().load()
@@ -846,6 +862,18 @@ function ApplyStyle() {
               </Button>
             </div>
           )}
+          {journalPlan && journalPlan.edits.length > 0 && (
+            <div data-style-journal className="mt-1.5 flex h-7 items-center gap-1.5">
+              <Tip label={<span className="block whitespace-pre-line">{journalPlan.edits.map(journalEditText).join('\n')}</span>} side="top">
+                <span tabIndex={0} className="min-w-0 flex-1 truncate text-xs text-ink-2">
+                  {sp('journalMismatch', { count: journalPlan.edits.length, journal: journalPlan.journal })}
+                </span>
+              </Tip>
+              <Button data-style-journal-adjust variant="ghost" onClick={() => void adjustStyleToJournal(renderable)}>
+                {sp('journalAdjust')}
+              </Button>
+            </div>
+          )}
           <div className="mt-2 flex items-center gap-1.5">
             {(restoreCount > 0 || binding) && (
               <Button
@@ -873,6 +901,14 @@ function ApplyStyle() {
       )}
     </section>
   )
+}
+
+/** 「按期刊调整」的一项改动说成一行：「刻度 字号 6 → 7 pt」「轴标签 字体 DejaVu Sans → Arial」 */
+function journalEditText(e: JournalStyleEdit): string {
+  const who = e.kind === 'annotation' ? sp('journalAnnotation') : styleRoleLabel(e.role)
+  const what = sp(`journalProp.${e.kind === 'annotation' ? 'fontsize' : e.prop === 'fontfamily' ? 'fontfamily' : e.prop.includes('font') ? 'fontsize' : 'linewidth'}`)
+  const unit = e.kind === 'element' && e.prop === 'fontfamily' ? '' : ' pt'
+  return `${who} ${what} ${String(e.from)} → ${String(e.value)}${unit}`
 }
 
 /** 「跟随样式」节开着没开：本机记一份（一个人的习惯，不进文档、不跨设备；读写失败就按默认开着） */

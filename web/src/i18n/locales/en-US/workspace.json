@@ -435,7 +435,8 @@
     "unlockObjects": "Unlock {{count}} objects",
     "hideObjects": "Hide {{count}} objects",
     "showObjects": "Show {{count}} objects",
-    "setFramePad": "Change canvas margin"
+    "setFramePad": "Change canvas margin",
+    "journalStyle": "Adjust style “{{name}}” to {{journal}}"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -821,7 +822,16 @@
     "pendingSizeCancelled": "The font size was not applied because the figure changed or rendering failed. Try again.",
     "bindCancelled": "You switched canvases, so the style you picked wasn’t applied — pick it again on that canvas",
     "bindMissing": "That style is no longer in the library — nothing was changed",
-    "editCancelled": "The style or canvas just changed, so your change wasn’t applied — please make it again"
+    "editCancelled": "The style or canvas just changed, so your change wasn’t applied — please make it again",
+    "journalMismatch": "{{count}} not matching {{journal}}",
+    "journalAdjust": "Adjust to journal",
+    "journalAnnotation": "Canvas text",
+    "journalAdjusted": "Style adjusted to {{journal}}. You can undo this.",
+    "journalProp": {
+      "fontsize": "size",
+      "fontfamily": "font",
+      "linewidth": "line width"
+    }
   },
   "status": {
     "dragSyncCancelled": "The figure could not sync, so the later drag was not applied. Try again.",
@@ -1605,47 +1615,47 @@
       "sendNo": "Don't send",
       "gotIt": "Got it",
       "busy": "A fix is already in progress",
-        "stop": "Stop",
-        "activity": {
-          "generic": "The AI is working…",
-          "denied": "The AI is trying another way",
-          "thePackages": "the packages it needs",
-          "read_run_report": "Reading the run report",
-          "read_file": "Reading a file",
-          "list_dir": "Reading a folder",
-          "find_files": "Finding files",
-          "grep_files": "Searching file contents",
-          "list_environments": "Checking Python environments",
-          "inspect_environment": "Checking a Python environment",
-          "read_logs": "Reading logs",
-          "lookup_package": "Looking up a package",
-          "try_import": "Trying an import",
-          "try_run": "Test-running the script",
-          "install_packages": "Installing {{detail}}",
-          "change_python": "Creating a Python environment",
-          "switch_execution": "Changing how the script runs",
-          "select_environment": "Switching environment",
-          "convert_script": "Making an editable version",
-          "link_data_file": "Connecting the data file",
-          "ignore_import_folder": "Skipping this folder",
-          "run_command": "Running a command…",
-          "rollback": "Undoing the last change",
-          "propose_fix": "Preparing a fix",
-          "ask_user": "Asking you a question",
-          "pick_file": "Choose a file",
-          "prepare_diagnostics": "Writing the details to send",
-          "finish": "Wrapping up"
-        },
-        "stalled": {
-          "cli_waiting_approval": "The AI is waiting for approval",
-          "cli_tool_not_delivered": "The AI’s request didn’t arrive",
-          "stalled": "The AI isn’t responding"
-        },
-        "stalledWhy": {
-          "cli_waiting_approval": "Codex or Claude Code is waiting for approval, and Tavotto can’t approve it for you. Stop to try again.",
-          "cli_tool_not_delivered": "The AI’s request didn’t arrive. It may be waiting for approval. Stop to try again.",
-          "stalled": "The AI isn’t responding. It will stop automatically soon."
-        },
+      "stop": "Stop",
+      "activity": {
+        "generic": "The AI is working…",
+        "denied": "The AI is trying another way",
+        "thePackages": "the packages it needs",
+        "read_run_report": "Reading the run report",
+        "read_file": "Reading a file",
+        "list_dir": "Reading a folder",
+        "find_files": "Finding files",
+        "grep_files": "Searching file contents",
+        "list_environments": "Checking Python environments",
+        "inspect_environment": "Checking a Python environment",
+        "read_logs": "Reading logs",
+        "lookup_package": "Looking up a package",
+        "try_import": "Trying an import",
+        "try_run": "Test-running the script",
+        "install_packages": "Installing {{detail}}",
+        "change_python": "Creating a Python environment",
+        "switch_execution": "Changing how the script runs",
+        "select_environment": "Switching environment",
+        "convert_script": "Making an editable version",
+        "link_data_file": "Connecting the data file",
+        "ignore_import_folder": "Skipping this folder",
+        "run_command": "Running a command…",
+        "rollback": "Undoing the last change",
+        "propose_fix": "Preparing a fix",
+        "ask_user": "Asking you a question",
+        "pick_file": "Choose a file",
+        "prepare_diagnostics": "Writing the details to send",
+        "finish": "Wrapping up"
+      },
+      "stalled": {
+        "cli_waiting_approval": "The AI is waiting for approval",
+        "cli_tool_not_delivered": "The AI’s request didn’t arrive",
+        "stalled": "The AI isn’t responding"
+      },
+      "stalledWhy": {
+        "cli_waiting_approval": "Codex or Claude Code is waiting for approval, and Tavotto can’t approve it for you. Stop to try again.",
+        "cli_tool_not_delivered": "The AI’s request didn’t arrive. It may be waiting for approval. Stop to try again.",
+        "stalled": "The AI isn’t responding. It will stop automatically soon."
+      },
       "notFixed": "Couldn't fix it this time",
       "failed": {
         "cli_waiting_approval": "The AI got stuck on its own approval and was stopped",
