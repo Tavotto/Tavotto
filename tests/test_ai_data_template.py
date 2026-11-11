@@ -1359,9 +1359,8 @@ def test_bar_scripts_pin_the_axis_to_zero_and_others_do_not(folder, profile):
 # --------------------------------------------------------------------------- 静态扫描不会把公共模块当成一张图
 def test_static_scans_never_register_the_runtime_module_as_a_figure(tmp_path):
     """判据的主语：`discover` / `projscan` 对**项目文件夹**的静态扫描。公共模块没有存图调用也没有 main：不进静态起草 /
-    注册表候选，也不是 `projscan` 的目标。已知现象（观察，不是承诺）：它仍作为一个普通 .py 出现在脚本清单里
-    （`reason: no_static_output`、`can_probe: true`、不是 target）——要让清单也跳过它，最小处理是把 `tavotto_plot_` 加进
-    `discover.SKIP_PREFIXES`（基础设施脚本），本 PR 不改扫描规则的语义。"""
+    注册表候选，也不是 `projscan` 的目标；脚本清单把它标成 `infrastructure`（`discover.SKIP_PREFIXES` 里的 `tavotto_plot_`，与
+    `paper_style` 同类），不当成「没出图的脚本」。"""
     from tavotto.engine import discover, projscan
 
     figs = tmp_path / "proj" / "tavotto_figures"
@@ -1381,12 +1380,10 @@ def test_static_scans_never_register_the_runtime_module_as_a_figure(tmp_path):
     rep = projscan.scan(root)
     assert [t["script"] for t in rep["targets"]] == ["tavotto_figures/fig.py"]
     by = {s["script"]: s for s in rep["scripts"]}
+    assert discover.is_infrastructure_name(out.runtime_name)
+    assert not discover.is_infrastructure_name("fig.py")
     mod = by[f"tavotto_figures/{out.runtime_name}"]
-    assert (
-        mod["registered"] is False
-        and mod["static_stems"] == []
-        and mod["reason"] == "no_static_output"
-    )
+    assert mod["registered"] is False and mod["reason"] == "infrastructure"
 
 
 def test_runtime_module_has_no_figure_entry_and_does_nothing_on_import():
