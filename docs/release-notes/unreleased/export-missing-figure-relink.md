@@ -1,0 +1,3 @@
+## When a figure in the layout can’t be found, export says which one and lets you find it
+
+If an image used in a layout was moved, renamed or deleted, exporting used to fail with an internal error message and a “Try again” button that could only fail again. Export now says, in one sentence, which figure can’t be found, and offers “Find this figure”: it opens the relink dialog for just that figure (a file with the same name elsewhere in the project is matched automatically), and once it is relinked the export runs again by itself. Single-figure exports no longer show a raw “404 Not Found” message in this case. In two-line notices, the action button and “Details” are now centered vertically.
