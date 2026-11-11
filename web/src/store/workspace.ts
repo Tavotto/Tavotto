@@ -219,7 +219,7 @@ function ensurePanel(
 }
 
 /** `deferred` = 上次的排版还在恢复，已排队、就绪后执行一次；`blocked` = 需要用户先处理恢复问题，没执行 */
-export type OpenFastEditOutcome = 'editing' | 'layout_only' | 'missing' | 'deferred' | 'blocked'
+export type OpenFastEditOutcome = 'editing' | 'layout_only' | 'missing' | 'deferred'
 
 /**
  * 打开一张图 = **换看那一张**（2026-10-21 用户拍板），不是往当前画布上再加一张：
@@ -254,7 +254,7 @@ export function openFastEdit(
     if (opts?.guard && !opts.guard()) return
     void openFastEdit(figureId, { descriptor: opts?.descriptor })
   })
-  if (entry !== 'run') return entry === 'deferred' ? 'deferred' : 'blocked'
+  if (entry !== 'run') return 'deferred'
   const got = ensurePanel(figureId, 'newCanvas', opts?.descriptor)
   if (!got) {
     useUiStore
@@ -298,7 +298,7 @@ export function openFastEdit(
   return 'layout_only'
 }
 
-export type AddToLayoutOutcome = 'added' | 'focused' | 'missing' | 'deferred' | 'blocked'
+export type AddToLayoutOutcome = 'added' | 'focused' | 'missing' | 'deferred'
 
 /**
  * 「添加到画布」。**已经在文档里就只是聚焦它**——重复点不会叠出第二个面板，
@@ -306,7 +306,7 @@ export type AddToLayoutOutcome = 'added' | 'focused' | 'missing' | 'deferred' | 
  */
 export function addFigureToLayout(figureId: string): AddToLayoutOutcome {
   const entry = deferUserEntry(() => void addFigureToLayout(figureId))
-  if (entry !== 'run') return entry === 'deferred' ? 'deferred' : 'blocked'
+  if (entry !== 'run') return 'deferred'
   const willCreate = !findFigurePanel(figureId)
   if (willCreate && !figureSource(figureId)) {
     useUiStore

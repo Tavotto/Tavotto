@@ -393,15 +393,10 @@ export function releaseRestoreGate(): void {
   setGate({ state: 'ready', gen: ++gateSeq, pj: null, docId: null, reason: 'superseded' })
 }
 
-/** 门关着时被拒的写入：`needs_user` 时由 `documentRestore` 登记的通知器说一句（自带节流） */
+/** 门关着时被拒的写入：`needs_user` 时交给 `documentRestore` 登记的处理（静默开新排版 / 自动再试 / 说一句去哪选） */
 let blockedWriteNotifier: (() => void) | null = null
 export function onBlockedWrite(fn: (() => void) | null): void {
   blockedWriteNotifier = fn
-}
-
-/** 用户动作被拒时说一句（`needs_user`；自带节流，登记在 `documentRestore`）。用户级入口在门前自己拦时用 */
-export function noteBlockedWrite(): void {
-  blockedWriteNotifier?.()
 }
 
 /** 写入口的门：占位文档不许写。`notify` = 用户动作被拒，要说一句；派生写入静默 */

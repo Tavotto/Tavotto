@@ -66,12 +66,12 @@ export function noteAddedPanelFor(host: EnterEditHost, assetId: string, added: P
  * 进入编辑 = 稳定动作 `openFastEdit`（加进文档并说出口 → 进入图内编辑 → 引擎按热会话渲染，脚本不再跑）。
  * 素材清单还没取到这张新图时先用这次捕获的描述符把它加进画布，再进入编辑。只处理**一张**图（多张要用户挑，调用方不走这里）。
  *
- * 回 `'entered'`（已进入且卡片收起）/ `'deferred'`（上次的排版还在恢复：入口已排队，落地后才收卡片）/
- * `'blocked'`（上次的排版还要用户先处理，什么都没放进去，卡片留着）/ `'stale'`（挂起期间换了项目，什么都没做）/
+ * 回 `'entered'`（已进入且卡片收起）/ `'deferred'`（上次的排版还在恢复、或恢复没成正等用户选：入口已记住，落地后才收卡片）/
+ * `'stale'`（挂起期间换了项目，什么都没做）/
  * `'not_entered'`（图找不到可用来源 `missing`、或进不了图内编辑 `layout_only`：没有真的进入编辑，卡片留着，手动「进入编辑」仍在）。
  * **只有真正进入编辑（`openFastEdit` 回 `editing`）才收卡片、记编辑。**
  */
-export type EnterEditOutcome = 'entered' | 'deferred' | 'blocked' | 'stale' | 'not_entered'
+export type EnterEditOutcome = 'entered' | 'deferred' | 'stale' | 'not_entered'
 
 export async function enterEdit(host: EnterEditHost, d: CapturedFigureDescriptor): Promise<EnterEditOutcome> {
   // 挂起期间可能切了项目：续延带着 A 的描述符，绝不能把 A 的面板加进 B 的版面
@@ -122,10 +122,6 @@ export async function enterEdit(host: EnterEditHost, d: CapturedFigureDescriptor
     if (found) noteAddedPanelFor(host, d.asset_id, found.panel)
     else host.note(d.asset_id, editRenderOf(d.asset_id))
     useUiStore.getState().setGuideCard('closed')
-  }
-  if (outcome === 'blocked') {
-    // 上次的排版还要用户先处理：这次什么都没放进去（门已经说了「上次的排版还没打开」）——卡片留着，处理完再点
-    return 'blocked'
   }
   if (outcome === 'deferred') {
     // 上次的排版还在恢复：入口已排队，**真的落进文档之后**才收卡片；被取代 / 超时（没落）就留着
