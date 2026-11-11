@@ -232,7 +232,7 @@ async function resetForNewProject(pj: string | null): Promise<RestoreToken> {
   // 1. 冲刷当前文档的自动保存（切走的文档可从「最近文档」取回）；手势先收掉，
   //    否则松手那一笔会落进换上来的空白文档
   settleGesturesBeforeLeaving()
-  flushAutosave()
+  flushAutosave({ leaving: true })
   const token = beginRestore(pj)
   // 2. 清选择 / 图内编辑态 / 渲染缓存
   useSelectionStore.getState().set([])
@@ -650,7 +650,7 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     // 与切项目（`resetForNewProject`）、`dropProject` 是同一句 `flushAutosave()`。
     // 排版时间线的关键时刻（ADR 0101）：回主页 = 离开这份排版（先收手势、再打点）
     settleAndMarkLeaving(get().phase === 'open')
-    flushAutosave()
+    flushAutosave({ leaving: true })
     set({ phase: 'none' })
     pushPickerEntry()
   },
@@ -672,7 +672,7 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     // 编辑中的文档先落本机兜底副本。此刻磁盘那一份必然写不进去（同样 409），
     // 但 flushAutosave 绝不会因为写盘失败去清本机副本，改动不会丢。
     settleGesturesBeforeLeaving()
-    flushAutosave()
+    flushAutosave({ leaving: true })
     // 先冲刷再忘掉 pj：反过来的话这份自动保存会落到后端的默认项目里去。
     setCurrentProjectId(null)
     // 项目没了：这个项目上还在等的恢复不再有人等（等待者拿 superseded）

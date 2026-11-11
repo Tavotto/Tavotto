@@ -925,6 +925,18 @@ function requireDocumentResponseFormat(res: Response, format?: DocumentFormat): 
   }
 }
 
+/**
+ * A namespace endpoint that answers "there is no such contract here": 404/405,
+ * or a v4 request whose reply lacks the v4 format header. This is *not* a
+ * transient outage; treating it as one blocks saves and vetoes the other
+ * namespace's valid document.
+ */
+function namespaceUnsupported(error: unknown, format?: DocumentFormat): boolean {
+  if (!(error instanceof ApiError)) return false
+  if (error.status === 404 || error.status === 405) return true
+  return format === 'v4' && error.status === 400 && error.body?.code === 'invalid_document'
+}
+
 function requireDocumentSchema(raw: unknown, format?: DocumentFormat): unknown {
   if (format === 'v4' && (!raw || typeof raw !== 'object' || (raw as { schema?: unknown }).schema !== 4)) {
     throw new ApiError('Unexpected document schema.', 400, { code: 'invalid_document' })
@@ -1148,9 +1160,20 @@ export async function fetchProjectFile(documentId: string, pj: string, format?: 
     const value = await projectFileRequest(signal => documentJsonFetch(format)<ProjectFileRead>(
       `/api/layout-session/project-file/${encodeURIComponent(documentId)}`, { signal }, pj,
     ))
-    return validProjectFileView(value) ? value : { version: 1, status: 'unavailable' }
+    if (validProjectFileView(value)) return value
+    // A structureless reply (old backend / proxy / catch-all 200) means the
+    // endpoint is absent, not that the binding is momentarily unreadable:
+    // blocking saves there loses user edits. A body that *claims* the
+    // contract (has `status`/`version`) but cannot be understood — a future
+    // version or a malformed view — still fails closed.
+    const record = value && typeof value === 'object' ? (value as Record<string, unknown>) : null
+    if (record?.status === 'unavailable') return { version: 1, status: 'unavailable' }
+    if (record?.status !== undefined || record?.version !== undefined) {
+      return { version: 1, status: 'unavailable' }
+    }
+    return { status: 'unsupported' }
   } catch (error) {
-    if (error instanceof ApiError && error.status === 404) return { status: 'unsupported' }
+    if (namespaceUnsupported(error, format)) return { status: 'unsupported' }
     throw error
   }
 }
@@ -1376,7 +1399,12 @@ export async function fetchLayoutSessionResult(pj?: string | null, format?: Docu
     }
   } catch (e) {
     if (e instanceof ApiError) {
-      return e.status === 404 ? { kind: 'unsupported' } : { kind: 'unavailable', status: e.status }
+      // A backend that does not implement this namespace answers with a
+      // generic error (or a plain 200 the format check rejects). That is
+      // "unsupported", never a transient outage that may veto the other
+      // namespace's valid document.
+      if (namespaceUnsupported(e, format)) return { kind: 'unsupported' }
+      return { kind: 'unavailable', status: e.status }
     }
     return { kind: 'unavailable', status: null }
   }
@@ -1459,7 +1487,7 @@ export async function fetchLayoutOwnerEvidence(
         : {}),
     }
   } catch (e) {
-    return e instanceof ApiError && e.status === 404 ? 'unsupported' : 'unavailable'
+    return namespaceUnsupported(e, format) ? 'unsupported' : 'unavailable'
   }
 }
 
@@ -1579,7 +1607,7 @@ export async function fetchRecoveryCandidates(
       index: INDEX_STATUSES.find((s) => s === body?.index) ?? 'ok',
     }
   } catch (e) {
-    return e instanceof ApiError && e.status === 404 ? 'unsupported' : 'unavailable'
+    return namespaceUnsupported(e, format) ? 'unsupported' : 'unavailable'
   }
 }
 

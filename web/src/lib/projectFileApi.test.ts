@@ -5,15 +5,20 @@ import { ApiError, cancelProjectFile, confirmProjectFile, fetchProjectFile, putA
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
 
 describe('项目文件关联 HTTP wire', () => {
-  it('仅明确404是旧后端；503/无结构200/未来版本不能假装无绑定', async () => {
+  it('仅明确404或无结构回包是旧后端；503/未来版本/坏视图不能假装无绑定', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 404 })))
     expect(await fetchProjectFile('working', 'project')).toEqual({ status: 'unsupported' })
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ code: 'session_unavailable', error: 'cannot read state' }, { status: 503 })))
     await expect(fetchProjectFile('working', 'project')).rejects.toBeInstanceOf(ApiError)
-    for (const body of [{}, { version: 2, status: 'ok', binding: null }]) {
-      vi.stubGlobal('fetch', vi.fn(async () => Response.json(body)))
-      expect(await fetchProjectFile('working', 'project')).toEqual({ version: 1, status: 'unavailable' })
-    }
+    // A catch-all 200 without any contract fields is an absent endpoint: it
+    // must not block autosave (that would lose the user's edits).
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({})))
+    expect(await fetchProjectFile('working', 'project')).toEqual({ status: 'unsupported' })
+    // A body that claims the contract but is unreadable fails closed.
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ version: 2, status: 'ok', binding: null })))
+    expect(await fetchProjectFile('working', 'project')).toEqual({ version: 1, status: 'unavailable' })
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ status: 'unavailable' })))
+    expect(await fetchProjectFile('working', 'project')).toEqual({ version: 1, status: 'unavailable' })
   })
 
   it.each(['read', 'reserve', 'confirm', 'cancel'] as const)('%s有界超时，不让saveNow永远等一个忽略abort的宿主', async operation => {

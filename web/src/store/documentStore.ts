@@ -1138,7 +1138,7 @@ export const useDocumentStore = create<DocumentState>((rawSet, get) => {
     const token = opts?.restoreToken
     if (!placeholder) {
       const hadContent = hasContent(get().buildProject())
-      if (flushAutosave() === 'error' && hadContent && confirmLoss && !(await confirmLoss())) {
+      if (flushAutosave({ leaving: true }) === 'error' && hadContent && confirmLoss && !(await confirmLoss())) {
         return false
       }
     }
@@ -1620,7 +1620,10 @@ function createDocumentDisk(format: DocumentFormat) {
   api: {
     put: (id, pd, baseline, revision, pj, opts) => {
       const address = pj ? projectFileAddress(id, format, pj) : null
-      if (opts && address && projectFileEditor.support(address) !== 'unsupported') {
+      // Only a save that actually captured the binding is gated by the
+      // metadata contract. A plain save (old backend, leave flush) must never
+      // be blocked by an unavailable binding it never used.
+      if (opts?.projectFileEdit && address && projectFileEditor.support(address) !== 'unsupported') {
         if (projectFileEditor.support(address) === 'unavailable') {
           throw projectFileReadErrors.get(projectFileKey(address)) ?? new ApiError(t('save.projectBindingUnavailable', { ns: 'workspace' }), 503, { code: 'session_unavailable' })
         }
@@ -1763,13 +1766,18 @@ export function hydrateProjectFile(
   return read
 }
 
-/** 立刻把当前项目文档写入自动保存（本机副本同步 + 磁盘异步）。 */
-export function flushAutosave(): FlushResult {
+/** 立刻把当前项目文档写入自动保存（本机副本同步 + 磁盘异步）。
+ *
+ * `leaving`：文档/项目就要被换掉（切文档、切项目、关页）。这种冲刷不能被
+ * 「项目文件元信息还在读」推迟——推迟之后文档已换，排队的正文就没人写了，
+ * 用户在离开前最后一笔编辑会丢。 */
+export function flushAutosave(options?: { leaving?: boolean }): FlushResult {
   // 性能探针（ADR 0075）：同步那一段在主线程上，落在拖动途中就是一次卡顿
-  return perfSpan('autosave.flush', flushAutosaveNow)
+  return perfSpan('autosave.flush', () => flushAutosaveNow(options))
 }
 
-function flushAutosaveNow(): FlushResult {
+function flushAutosaveNow(options?: { leaving?: boolean }): FlushResult {
+  const leaving = options?.leaving === true
   // 占位文档（恢复还没落定）一个字节都不写：它不是用户的文档，写了 last / 最近文档 / 本机副本就是假的
   if (isDocumentPlaceholder()) return 'skipped'
   const state = useDocumentStore.getState()
@@ -1810,12 +1818,16 @@ function flushAutosaveNow(): FlushResult {
   const snapshots: DiskSaveContext = { ...captureFigureSnapshotSave(pd, owner), ...(chartContext ? { chartContext } : {}) }
   if (owner) {
     const address = projectFileAddress(state.documentId, state.documentFormat, owner)
-    if (projectFileEditor.support(address) === 'unknown' || projectFileHydrations.has(projectFileKey(address))) {
+    const support = projectFileEditor.support(address)
+    if (!leaving && (support === 'unknown' || projectFileHydrations.has(projectFileKey(address)))) {
       deferredProjectFileFlushes.set(projectFileKey(address), state.loadSeq)
       void hydrateProjectFile()
       return localOk ? 'saved' : 'error'
     }
-    snapshots.projectFileContext = projectFileEditor.capture(address)
+    // A leave flush writes the body plainly: there is no time to wait for the
+    // binding, and dropping the write would lose the user's last edit. Normal
+    // saves keep the captured context so an unreadable binding fails closed.
+    if (!leaving) snapshots.projectFileContext = projectFileEditor.capture(address)
     snapshots.moment = captureDocumentMoment(useDocumentStore.getState(), owner, useTimelineStore.getState().gen)
   }
   diskFor(state.documentFormat).schedule(state.documentId, pd, owner, snapshots)
@@ -3154,7 +3166,7 @@ export function startAutosave(): () => void {
     const unsaved = hasUnsavedWork(useDocumentStore.getState().saveState)
     // 拦不拦都要冲刷：防抖窗口内的最后一次改动不能丢
     cancelPendingAutosave()
-    flushAutosave()
+    flushAutosave({ leaving: true })
     // 文案由浏览器决定（自定义文案早已被各家忽略），这里只表态要不要拦。
     if (unsaved) {
       e.preventDefault()

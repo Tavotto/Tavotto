@@ -113,6 +113,19 @@ async function finishInstall(installed: Promise<boolean>) {
 }
 
 describe('立即保存消费同一次捕获已覆盖的防抖', () => {
+  it('leaving flush writes the last edit while project-file metadata is still pending', async () => {
+    const { installed } = await beginInstall()
+    edit('last edit before leaving')
+    // A document/project switch must not lose the last edit behind hydration.
+    expect(flushAutosave({ leaving: true })).toBe('saved')
+    await settle()
+    const leaves = puts().filter(request => request.body && textOf(request.body) === 'last edit before leaving')
+    expect(leaves).toHaveLength(1)
+    metadata.resolve()
+    expect(await installed).toBe(true)
+    await settle()
+  })
+
   it('真实TextView挂载测量已入首次正文与Moment；安装加防抖只发一次PUT', async () => {
     const { installed } = await beginInstall()
     const receipt = await finishInstall(installed)
