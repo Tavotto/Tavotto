@@ -18,7 +18,7 @@ import { useJournalCatalogStore } from '@/store/journalCatalogStore'
 import { useProfileStore } from '@/store/profileStore'
 import { useUiStore } from '@/store/uiStore'
 import { emptyProject } from '@/types/document'
-import { ProfilesSettings } from './ProfilesSettings'
+import { ProfilesSettings, withColumnWidth } from './ProfilesSettings'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -161,5 +161,58 @@ describe('从期刊换到库里的另一份', () => {
     await act(async () => useBtn.click())
     await act(async () => useUiStore.getState().confirm!.resolve(true))
     expect(useDocumentStore.getState().doc.profile?.journalRef).toBeUndefined()
+  })
+})
+
+describe('从期刊复制出来的规范（带期刊自有栏位）', () => {
+  const COLS = [
+    { id: 'c1', label: { zh: '1 栏', en: '1 column' }, width_mm: 90, qualifier: 'exact' },
+    { id: 'c2', label: { zh: '1.5 栏', en: '1.5 columns' }, width_mm: 140, qualifier: 'exact' },
+    { id: 'c3', label: { zh: '2 栏', en: '2 columns' }, width_mm: 190, qualifier: 'exact' },
+  ]
+
+  it('编辑区逐栏一行（改的是栏位本身），不摆改了也不生效的单 / 双栏两格', async () => {
+    const base = BUILTIN_SPECS[0]
+    const copy = {
+      ...base,
+      id: 'u1',
+      display_name: 'Acta 副本',
+      name_key: '',
+      built_in: false,
+      read_only: false,
+      data: { ...(base.data as object), profile_id: 'u1', page_columns: COLS, widths_mm: { single: 90, double: 190, tolerance_mm: 0.5, allow_custom: true } },
+    }
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ profiles: [...BUILTIN_SPECS, copy] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    ) as typeof fetch
+    await mount()
+    await pickOption('Acta 副本')
+    expect([...document.body.querySelectorAll('[data-profile-column]')].map((e) => e.getAttribute('data-profile-column'))).toEqual(['c1', 'c2', 'c3'])
+    // 编辑区里没有单 / 双栏宽的输入框（上面「正在使用」的摘要是本项目在用的那份，不算）
+    expect(document.body.querySelector('[aria-label="单栏宽"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="双栏宽"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="1.5 栏"]')).not.toBeNull()
+  })
+
+  it('改一栏：单 / 双栏由 exact 栏位重算（最窄 / 最宽），不留对不上的旧数', () => {
+    const d = { page_columns: COLS, widths_mm: { single: 90, double: 190, tolerance_mm: 0.5 } }
+    const next = withColumnWidth(d, 2, 200) as { page_columns: { width_mm: number }[]; widths_mm: Record<string, unknown> }
+    expect(next.page_columns.map((c) => c.width_mm)).toEqual([90, 140, 200])
+    expect(next.widths_mm).toEqual({ single: 90, double: 200, tolerance_mm: 0.5 })
+    expect(d.page_columns[2].width_mm).toBe(190) // 不改原草稿
+  })
+})
+
+describe('期刊条目下的写盘失败', () => {
+  it('复制失败（如自定义规范满了）：原因摆出来', async () => {
+    selectJournal('fx-beta')
+    await mount()
+    await act(async () => {
+      useProfileStore.setState({ error: { message: '自定义配置最多 50 条' } as never })
+    })
+    expect(document.body.textContent).toContain('自定义配置最多 50 条')
   })
 })

@@ -21,7 +21,7 @@ import { useTranslation } from 'react-i18next'
 import { Copy, Download, Ellipsis, Plus, RotateCcw, Trash2, Upload, X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Badge } from '../ui/Badge'
-import { msg, t as translate } from '@/i18n'
+import { currentLocale, msg, t as translate } from '@/i18n'
 import type { ProfileKind, ProfileRecord } from '@/lib/api'
 import {
   profileName,
@@ -58,7 +58,7 @@ import {
 } from './SettingRow'
 import { StyleSamplePreview } from './StyleSamplePreview'
 import { StyleProfileFields } from './StyleProfileFields'
-import { derivePageColumns } from '@/lib/profile'
+import { derivePageColumns, type PageColumnSpec } from '@/lib/profile'
 import { clearPath, rawValueText, readPath, writePath } from './profilePath'
 
 const st = (key: string, values?: Record<string, unknown>) =>
@@ -144,6 +144,33 @@ const KEY_RULES = ['minFont', 'singleWidth', 'doubleWidth', 'minDpi'] as const
 
 /** 规范库下拉里「按期刊」那条虚拟条目的值（不会与真实记录 id 撞：后端 id 只有字母数字与连字符） */
 const JOURNAL_ENTRY = '\u0000journal'
+
+/** 草稿里的期刊自有栏位（从期刊复制出来的规范带着它）；没有 = null */
+function draftColumns(draft: Record<string, unknown> | null): PageColumnSpec[] | null {
+  const cols = draft?.page_columns
+  return Array.isArray(cols) && cols.length ? (cols as PageColumnSpec[]) : null
+}
+
+const columnLabel = (c: PageColumnSpec) => (currentLocale() === 'en-US' ? c.label.en : c.label.zh)
+
+/**
+ * 改一栏的宽度。栏位是页宽判据的权威（`derivePageColumns` 先看它），所以从期刊复制来的规范**改的是栏位本身**；
+ * `widths_mm.single / double` 跟着由 exact 栏位重算（最窄 / 最宽，只有一栏时双栏为 null），与期刊折叠同一口径（ADR 0155 §3b），
+ * 不留一对与栏位对不上的旧数（Codex #1849 P2）。
+ */
+export function withColumnWidth(d: Record<string, unknown>, index: number, width: number): Record<string, unknown> {
+  const next = structuredClone(d)
+  const cols = next.page_columns as PageColumnSpec[]
+  cols[index] = { ...cols[index], width_mm: width }
+  const exact = cols.filter((c) => (c.qualifier ?? 'exact') === 'exact').map((c) => c.width_mm)
+  if (exact.length) {
+    const widths = { ...((next.widths_mm as Record<string, unknown>) ?? {}) }
+    widths.single = Math.min(...exact)
+    widths.double = exact.length > 1 ? Math.max(...exact) : null
+    next.widths_mm = widths
+  }
+  return next
+}
 
 /** 期刊没写时也只显示数值的字段（不是期刊会规定的东西，或者有固定的推荐值） */
 const PLAIN_WHEN_SILENT = new Set(['widths_mm.tolerance_mm', 'preferred_formats.export_dpi_default'])
@@ -851,7 +878,10 @@ export function ProfilesSettings({
               })}
             </ProfileFieldGroup>
           )
-        })
+        }).concat(
+          // 从期刊条目复制 / 导入失败（如自定义规范满了）：原因照样摆出来，不只在普通条目的分支里（Codex #1849 P2）
+          error ? [<Notice key="journal-error" tone="danger">{conflict ? st('conflict', { name: conflict.display_name }) : error.message}</Notice>] : [],
+        )
       ) : !selected ? (
         /* 一条都没有时不摆一整套禁用的输入框，只给出口（审计 T42）。
            入口是**导入**不是「新建」：新建等于从选中的那条复制一份，清单空着
@@ -886,6 +916,31 @@ export function ProfilesSettings({
           {grouped.map(({ group, fields: groupFields }) => (
             <ProfileFieldGroup key={group} group={group}>
               {groupFields.map((f) => {
+                // 带期刊自有栏位的规范（从期刊复制来的）：单 / 双栏两格换成逐栏一行，改的是栏位本身（Codex #1849 P2）
+                const cols = draftColumns(draft)
+                if (cols && f.path === 'widths_mm.double') return null
+                if (cols && f.path === 'widths_mm.single') {
+                  return cols.map((c, i) =>
+                    editable ? (
+                      <SettingRow key={`col-${c.id}`} label={columnLabel(c)} density="compact" data-profile-column={c.id}>
+                        <NumberField
+                          value={c.width_mm}
+                          min={10}
+                          max={1000}
+                          step={1}
+                          precision={0}
+                          unit="mm"
+                          fill
+                          ariaLabel={columnLabel(c)}
+                          className="w-28"
+                          onChange={(v) => setDraft((d) => (d ? withColumnWidth(d, i, v) : d))}
+                        />
+                      </SettingRow>
+                    ) : (
+                      <SettingValueRow key={`col-${c.id}`} label={columnLabel(c)} value={formatValue(c.width_mm, 'mm')} />
+                    ),
+                  )
+                }
                 const raw = readPath(draft ?? {}, f.path)
                 const set = typeof raw === 'number' && Number.isFinite(raw)
                 // 写着但控件认不出（导入的 `"12pt"`）：照原值显示、能清，不说成「未设置」
