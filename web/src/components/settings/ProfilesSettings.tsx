@@ -142,6 +142,32 @@ function ProfileFieldGroup({ group, children }: { group: string; children: React
  */
 const KEY_RULES = ['minFont', 'singleWidth', 'doubleWidth', 'minDpi'] as const
 
+/** 规范库下拉里「按期刊」那条虚拟条目的值（不会与真实记录 id 撞：后端 id 只有字母数字与连字符） */
+const JOURNAL_ENTRY = '\u0000journal'
+
+/**
+ * 期刊条目下一个字段的显示值：期刊写了（折进预检的）→ 那个数；没写 → 「未规定」，后面小字说实际按多少检查。
+ * 判据与上面 `KeyRules` 同一套：出处表里 `affects === 'preflight'` 才算期刊规定的；栏宽由期刊自有栏位派生时也算。
+ */
+function journalFieldValue(
+  f: NumField,
+  profile: Record<string, unknown>,
+  sources: Record<string, { affects?: string }>,
+): string {
+  const raw = readPath(profile, f.path)
+  const fromJournal =
+    sources[f.path]?.affects === 'preflight' ||
+    (f.path.startsWith('widths_mm.') && f.path !== 'widths_mm.tolerance_mm' && sources.page_columns?.affects === 'preflight')
+  if (fromJournal) return formatValue(raw, f.unit)
+  if (f.path === 'min_effective_font_size_pt') {
+    const advice = (profile.advisories as { role?: string; value_pt?: number }[] | undefined)?.find((a) => a.role === 'body_min')
+    if (advice?.value_pt != null) return `${st('unspecified')} · ${st('adviceHint', { pt: advice.value_pt })}`
+  }
+  // 底里是 null（栏宽）或 0（字号下限）= 根本不检查，只说「未规定」
+  if (raw === null || raw === undefined || raw === 0) return st('unspecified')
+  return `${st('unspecified')} · ${st('defaultHint', { value: raw, unit: f.unit ?? '' }).trim()}`
+}
+
 function KeyRules({
   profile,
   journalSources,
@@ -224,9 +250,16 @@ export function ProfilesSettings({
     setSelectedId(null)
   }, [kind])
 
+  /**
+   * 本项目按期刊检查时，库里多一条「按期刊」的虚拟条目，而且**默认看的就是它**：此前下拉退回库里第一条（默认规范），
+   * 下面列着它的 80 / 150 mm，与上面期刊的 90 / 140 / 190 mm 同屏打架，用户读成「现在按 80 / 150 检查」。
+   * 期刊底 `journal-base-v1` 不列出（ADR 0155 §2），这条虚拟条目是它在库里唯一的露面方式。
+   */
+  const journalRef = useDocumentStore((s) => (kind === 'spec' && journalCatalogUi() ? s.doc.profile?.journalRef : undefined))
+  const viewJournal = !!journalRef && (selectedId === null || selectedId === JOURNAL_ENTRY)
   const selected = useMemo(
-    () => records.find((r) => r.id === selectedId) ?? records[0] ?? null,
-    [records, selectedId],
+    () => records.find((r) => r.id === selectedId) ?? (viewJournal ? null : (records[0] ?? null)),
+    [records, selectedId, viewJournal],
   )
 
   // 选中项换了就重置草稿。**不做 merge**：把上一条的编辑内容带到下一条上，
@@ -308,7 +341,17 @@ export function ProfilesSettings({
   const duplicate = async () => {
     if (!(await leaveDraft())) return
     await withBusy(async () => {
-      if (!selected) return
+      if (!selected) {
+        // 期刊条目：复制的是**本项目实际在用**的那份（期刊底 + 期刊覆盖折好的全文），成为一份普通的自定义规范。
+        // `listed: false` 是期刊底自己的身份，带进副本的话这份自定义在清单里也会被藏起来
+        if (!viewJournal || !journalRef || !resolved) return
+        const { listed: _listed, ...data } = resolved.profile as unknown as Record<string, unknown>
+        const rec = await useProfileStore
+          .getState()
+          .create(kind, st('copyOf', { name: journalRef.label }), data)
+        if (rec) setSelectedId(rec.id)
+        return
+      }
       // 名字**在前端拼**：后端的 `display_name` 对内置来说是中文兜底
       // （真正的名字是 `name_key` 查出来的），让后端拼就会在英文界面里
       // 造出一条叫「默认样式 副本」的配置。
@@ -412,8 +455,17 @@ export function ProfilesSettings({
   })
 
   /** 「为当前项目选择规范」：写一条带快照的绑定进文档（可撤销、正确 dirty）。 */
-  const useForProject = () => {
+  const useForProject = async () => {
     if (!selected || kind !== 'spec') return
+    // 按期刊检查时换成库里的另一份 = 期刊绑定整套放下（`journalCarry`）。这一步不再静默发生：先问一句
+    if (journalRef) {
+      const ok = await askConfirm({
+        title: msg('profiles.leaveJournalTitle', { journal: journalRef.label }, 'dialogs'),
+        body: msg('profiles.leaveJournalBody', { name: profileName(selected) }, 'dialogs'),
+        confirmLabel: msg('profiles.leaveJournalConfirm', undefined, 'dialogs'),
+      })
+      if (!ok) return
+    }
     commit(msg('history.setPublicationProfile', undefined, 'workspace'), (d) => {
       d.profile = bindingFor(asCatalogEntry(selected), {
         ...journalCarry(doc.profile, selected.id),
@@ -566,7 +618,8 @@ export function ProfilesSettings({
                 />
               </SettingRow>
             )}
-            <DiagnosticDisclosure variant="row" title={st('snapshotTitle')}>
+            {/* 按期刊检查时全部规则就在下面的「按期刊」条目里（每项说清期刊写没写），这里不再摆第二份 */}
+            {!journalRef && <DiagnosticDisclosure variant="row" title={st('snapshotTitle')}>
               <p className="type-caption">{st('snapshotHint')}</p>
               {SPEC_FIELDS.map((f) => (
                 <DiagnosticItem
@@ -578,7 +631,7 @@ export function ProfilesSettings({
                   )}
                 />
               ))}
-            </DiagnosticDisclosure>
+            </DiagnosticDisclosure>}
           </FieldGroup>
         </FormSection>
       )}
@@ -598,12 +651,16 @@ export function ProfilesSettings({
               <span className="type-caption">{st('empty')}</span>
             ) : (
               <Select
-                value={selected?.id ?? ''}
+                value={viewJournal ? JOURNAL_ENTRY : (selected?.id ?? '')}
                 onChange={(id) => void select(id)}
                 ariaLabel={st(`library.${kind}`)}
                 title={selected ? profileTechnicalDetail(selected) : undefined}
                 className="w-65 min-w-0 shrink"
-                options={records.map((r) => ({
+                options={[
+                  ...(journalRef
+                    ? [{ value: JOURNAL_ENTRY, label: `${st('journalEntry', { name: journalRef.label })} · ${st('inUse')}` }]
+                    : []),
+                  ...records.map((r) => ({
                   value: r.id,
                   label: [
                     profileName(r),
@@ -612,7 +669,8 @@ export function ProfilesSettings({
                   ]
                     .filter(Boolean)
                     .join(' · '),
-                }))}
+                  })),
+                ]}
               />
             )}
             <Menu
@@ -626,7 +684,7 @@ export function ProfilesSettings({
               <MenuItem icon={Plus} onSelect={() => void create()} disabled={!records.length}>
                 {st('new')}
               </MenuItem>
-              <MenuItem icon={Copy} onSelect={() => void duplicate()} disabled={!selected}>
+              <MenuItem icon={Copy} onSelect={() => void duplicate()} disabled={!selected && !viewJournal}>
                 {st('duplicate')}
               </MenuItem>
               <MenuItem icon={Download} onSelect={() => void exportOne()} disabled={!selected}>
@@ -737,11 +795,60 @@ export function ProfilesSettings({
               </span>
             </div>
           )}
+          {/* 「按期刊」条目的身份行：只读、在用；唯一的动作是从它复制出一份可改的自定义规范 */}
+          {viewJournal && journalRef && (
+            <div data-profile-identity data-profile-journal className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-2">
+              <span className="min-w-0 truncate text-base font-medium text-ink">{journalRef.label}</span>
+              <Badge>{st('journalBadge')}</Badge>
+              <span className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-1.5">
+                <StatusPill tone="ok" dot>
+                  {st('inUse')}
+                </StatusPill>
+                <Button variant="ghost" size="sm" onClick={duplicate} loading={busy} data-profile-duplicate>
+                  <Copy size={ICON_SIZE.sm} aria-hidden />
+                  {st('duplicateToEdit')}
+                </Button>
+              </span>
+            </div>
+          )}
         </FieldGroup>
       </FormSection>
 
       {/* 编辑区（Style 与 Spec 各是各的一套字段） */}
-      {!selected ? (
+      {viewJournal && resolved ? (
+        /* 按期刊：本项目实际在用的值，每项说清期刊写没写；期刊有自己的栏位表时单 / 双栏两行并成一行「栏宽」 */
+        grouped.map(({ group, fields: groupFields }) => {
+          const profile = resolved.profile as unknown as Record<string, unknown>
+          const sources = doc.profile?.journalSources ?? {}
+          const cols = derivePageColumns(profile as never)
+          const ownColumns = Array.isArray(profile.page_columns) && profile.page_columns.length > 0 && cols.length > 0
+          return (
+            <ProfileFieldGroup key={group} group={group}>
+              {groupFields.map((f) => {
+                if (ownColumns && f.path === 'widths_mm.double') return null
+                if (ownColumns && f.path === 'widths_mm.single') {
+                  return (
+                    <SettingValueRow
+                      key="columns"
+                      data-journal-field="page_columns"
+                      label={st('field.columns')}
+                      value={`${cols.map((c) => c.width_mm).join(' / ')} mm`}
+                    />
+                  )
+                }
+                return (
+                  <SettingValueRow
+                    key={f.path}
+                    data-journal-field={f.path}
+                    label={st(`field.${f.labelKey}`)}
+                    value={journalFieldValue(f, profile, sources)}
+                  />
+                )
+              })}
+            </ProfileFieldGroup>
+          )
+        })
+      ) : !selected ? (
         /* 一条都没有时不摆一整套禁用的输入框，只给出口（审计 T42）。
            入口是**导入**不是「新建」：新建等于从选中的那条复制一份，清单空着
            的时候它没有可复制的来源，摆上去就是一颗按了没反应的按钮。

@@ -857,7 +857,12 @@
         "otherOff": "Italic: the style says “{{value}}”, which doesn’t count as italic — applying writes it as is (click to make italic)"
       }
     },
-    "clearRow": "Clear the whole {{row}} row: every cell goes back to not set"
+    "clearRow": "Clear the whole {{row}} row: every cell goes back to not set",
+    "journalEntry": "{{name}} · Journal",
+    "journalBadge": "Journal requirements · read-only",
+    "leaveJournalTitle": "Stop checking against “{{journal}}”?",
+    "leaveJournalBody": "Switching to “{{name}}” removes the journal requirements and their sources. You can undo this.",
+    "leaveJournalConfirm": "Use this spec"
   },
   "readiness": {
     "addToCanvas": "Add to canvas",

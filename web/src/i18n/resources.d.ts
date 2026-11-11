@@ -1590,7 +1590,12 @@ export default interface Resources {
       },
       "import": "从文件导入",
       "inUse": "本项目在用",
+      "journalBadge": "期刊要求 · 只读",
+      "journalEntry": "{{name}} · 期刊",
       "keyRules": "关键要求",
+      "leaveJournalBody": "改用「{{name}}」后，期刊要求与出处会一起移除，可以撤销。",
+      "leaveJournalConfirm": "改用这套规范",
+      "leaveJournalTitle": "不再按「{{journal}}」检查？",
       "library": {
         "spec": "规范库",
         "style": "样式库"
