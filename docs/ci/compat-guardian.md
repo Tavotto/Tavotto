@@ -377,7 +377,7 @@ Tavotto 侧走产品自己的发现链（静态注册表，不足时试运行探
 
 | 层 | 适用 | 判据 | 差异 kind（类别） |
 | --- | --- | --- | --- |
-| fidelity | 全部可执行候选 | 原生 PNG 与 Tavotto 零 patch PNG（同一 `FIDELITY_WIDTH`），`pixelcompare.verdict` 用 `FIDELITY_TOLERANCE`——与 CompatBench 同一档，不另设 | `pixel_mismatch`、`render_failed`（export_or_fidelity）；证据含三项指标、control/tavotto/diff PNG 的相对路径与 sha256 |
+| fidelity | 全部可执行候选 | 原生 PNG 与 Tavotto 零 patch PNG（同一 `FIDELITY_WIDTH`），`pixelcompare.verdict` 用 `FIDELITY_TOLERANCE`——与 CompatBench 同一档，不另设；manifest 里与父本**同脚本同入口**、声明 `expected.fidelity=false` 的用例的 stem（CompatBench 也不比它的像素，例如 constrained_layout 在原生里就不收敛）不判，记进阶段的 `declared_unjudged`（stem → 声明理由）；同路径被顶掉、改名成 `<脚本>-N` 的副本按原生驱动报的 `saved_stems`（这张图写过的 savefig stem）认回原名。其余 stem 照常判；全部被豁免时记 `not_covered` | `pixel_mismatch`、`render_failed`（export_or_fidelity）；证据含三项指标、control/tavotto/diff PNG 的相对路径与 sha256 |
 | structure | 仅保型 | 父本在 Tavotto 里的 `{gid.prop: value}` 快照（每次 explore 运行每个父本只算一次）的每个键，候选里必须存在且 `_same_value`；候选多出的键不算；**数据指纹**（manifest 每个数据类元素的只读 `data_fingerprint`，快照键 `gid.__data__.part` → sha256 + shape + finite）逐部件精确比较，不等记 `structure_mismatch`（evidence 带 `aspect: "data"` 与两侧 shape/finite），任一侧 `over_budget` / `unavailable` 则结构层 `not_run`、候选落 unknown；阶段记录里 `data_compared` 是真比过的部件数（0 = 没比数据） | `structure_mismatch`（manifest_semantics） |
 | edit / replay / export | 仅保型 | 继承父本用例已评审的 `mutations` 与 `export_formats`（缺省 pdf、png），在同一 worker 上调 `compat_matrix.stage_edit/stage_replay/stage_export` | `edit_failed`（editing_capability）、`replay_mismatch`（replay_inconsistency）、`export_failed`（export_or_fidelity） |
 
