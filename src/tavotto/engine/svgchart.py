@@ -31,11 +31,19 @@ def scaffold_fragment(
     salt: str = "tavotto",
     render_profile: str = LEGACY_PROFILE,
     patches=(),
+    legend=(),
 ) -> dict:
-    """保持旧渲染协议；native 的 Figure、属性与 manifest 都在场景物理 pt 中。"""
+    """保持旧渲染协议；native 的 Figure、属性与 manifest 都在场景物理 pt 中。
+
+    ``legend``（N4）：绑定合同的 legend 块（非空列表）。legacy 组合器没有
+    真图例能力，非空 legend 在这里直接拒绝（防御层；app 层主闸报
+    ``chart_render_unsupported``）。
+    """
     profile = chartprofile.validate_profile(render_profile)
     edits = chartprofile.validate_overrides(patches, render_profile=profile)
     if profile == LEGACY_PROFILE:
+        if legend:
+            raise ValueError("legend contract requires a native render profile")
         return _scaffold_fragment(model, frame, salt=salt)
     import matplotlib
 
@@ -48,6 +56,7 @@ def scaffold_fragment(
             native=True,
             patches=edits,
             **({"complete_frame": True} if profile == chartprofile.COMPLETE_PROFILE else {}),
+            **({"legend": list(legend)} if legend else {}),
         )
 
 
@@ -59,6 +68,7 @@ def _scaffold_fragment(
     native: bool = False,
     patches=(),
     complete_frame: bool = False,
+    legend=(),
 ) -> dict:
     """模型 + 场景框 → ``{"fragment": bytes, "facts": {...}}``。
 
@@ -69,10 +79,17 @@ def _scaffold_fragment(
     使场景映射后视觉尺寸正确。每个语义对象带 ``data-tavotto`` 角色标记
     （matplotlib gid → SVG id），组合按角色取完整产物。
 
+    ``legend``（N4）：非空时按合同创建真 Legend（follow 条目 handle = 系列
+    实际 artist、custom 条目 = 代理示意线），位置写进 legendmodel 位置模型。
+
     非 uniform（preserveAspectRatio="none"）时 pt 换算取两轴比例的几何平均
     并在 facts 里如实声明——位置的映射仍逐轴精确。
     """
     chartmodel.validate_model(model)
+    if legend:
+        # worker 不信任父进程：合同判据在这里再过一遍（与 validate_binding
+        # 消费的是同一个 validate_legend_spec，不存在第二套判据）。
+        chartmodel.validate_legend_spec(legend, model)
     view_box = frame.get("view_box")
     if not isinstance(view_box, list) or len(view_box) != 4:
         raise ValueError("frame.view_box must be [x,y,w,h]")
@@ -237,8 +254,29 @@ def _scaffold_fragment(
         ax.set_ylabel(str(ax_cfg["ylabel"]), fontsize=10.0 / render_scale)
     paired = None
     if native:
+        from pathlib import Path
+
+        from tavotto.engine import bridgeboot
         from tavotto.engine.chartmanifest import render_scaffold
 
+        runtime = bridgeboot.load_engine_modules(
+            str(Path(__file__).resolve().parent), bridgeboot.ENGINE_SIBLINGS
+        )
+        legend_follow = (
+            _scaffold_legends(
+                fig,
+                ax,
+                ownership,
+                legend,
+                u2pt=u2pt,
+                w_pt=w_pt,
+                h_pt=h_pt,
+                render_scale=render_scale,
+                runtime=runtime,
+            )
+            if legend
+            else None
+        )
         paired = render_scaffold(
             fig,
             ownership,
@@ -246,6 +284,7 @@ def _scaffold_fragment(
             list(patches),
             salt=salt,
             coordinate_space="scene-viewport-pt",
+            legend_follow=legend_follow,
             **({"complete_frame": True} if complete_frame else {}),
         )
     else:
@@ -289,6 +328,67 @@ def _scaffold_fragment(
         "axes_rect_user": [ax_x, ax_y, ax_w, ax_h],
     }
     return {"fragment": text.encode("utf-8"), "facts": facts}
+
+
+def _scaffold_legends(fig, ax, ownership, legend, *, u2pt, w_pt, h_pt, render_scale, runtime):
+    """按 legend 合同在 scaffold 里创建真 Legend（N4），返回条目 → 系列映射。
+
+    follow 条目的 handle 取**系列的实际 artist/容器**（matplotlib 自己的
+    handler 从它派生示意线，与真实 Figure 的 ``ax.legend()`` 逐字同一条路；
+    ``chartmanifest._claims`` 已把误差成员归进同一角色）；custom 条目造代理
+    Line2D——样式取缺省、文字取合同 label（不从旧 SVG 色值捕获初始样式，
+    那是按色猜；示意线 = pristine 快照，后续可用既有 handle_* override 编辑）。
+
+    位置按合同 rect（场景用户单位）经 u2pt 换算写进 ``legendmodel`` 位置模型的
+    loc_frac 槽：**区域外接矩形左上角对齐 legend 盒左上角**（N4 冻结决策 A）。
+    tuple loc 的 matplotlib 语义锚的是盒的**左下**角（``Legend._findoffset``），
+    所以量一次盒高把锚点从左上角下移到左下角。复用现有位置模型，不新发明
+    位置表达；字号与刻度标签同一换算（``10.0 / render_scale``）。
+
+    返回 ``{"legend:<id>": ["series:<sid>" | None, …]}``（按新图例条目位置），
+    交给 ``render_scaffold`` 在 instrument 后落进条目模型——判据主语是用户
+    指认，不是指纹猜测。
+    """
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.lines import Line2D
+
+    legendmodel = runtime.legendmodel
+    renderer = FigureCanvasAgg(fig).get_renderer()
+    legend_follow: dict[str, list[str | None]] = {}
+    for order, item in enumerate(legend):
+        entries = sorted(item["entries"], key=lambda e: e["index"])
+        handles, labels, series_roles = [], [], []
+        for entry in entries:
+            labels.append(str(entry["label"]))
+            sid = entry.get("series")
+            if sid is None:
+                handles.append(Line2D([], [], color="black"))
+                series_roles.append(None)
+            else:
+                source = ownership[f"series:{sid}"]
+                handles.append(
+                    source[0] if isinstance(source, list) and len(source) == 1 else source
+                )
+                series_roles.append(f"series:{sid}")
+        # 第一条挂 axes（instrument 登记 axes_0.legend）；同 axes 的第二条会被
+        # matplotlib 顶掉，所以后续挂 figure 级（fig.legends，登记 fig.legend_i）
+        kwargs = {"fontsize": 10.0 / render_scale}
+        leg = (
+            ax.legend(handles, labels, **kwargs)
+            if order == 0
+            else fig.legend(handles, labels, **kwargs)
+        )
+        # instrument 会把 gid 重登记为 axes_0.legend / fig.legend_i；这里先挂
+        # 合同 id，让 roles 的 input_gids 留下合同 id 的痕迹（可追溯）。
+        leg.set_gid(f"tv-legend-{item['id']}")
+        ownership[f"legend:{item['id']}"] = leg
+        x_pt, y_pt = apply(u2pt, float(item["rect"][0]), float(item["rect"][1]))
+        box = leg.get_window_extent(renderer)
+        cfg = legendmodel.legend_pos_cfg(leg)
+        cfg["loc_frac"] = [x_pt / w_pt, (y_pt + box.height) / h_pt]
+        legendmodel.apply_legend_pos_model(leg)
+        legend_follow[f"legend:{item['id']}"] = series_roles
+    return legend_follow
 
 
 def _iter_artists(item):
@@ -410,6 +510,7 @@ def main() -> None:
                 salt=str(req.get("salt", "tavotto")),
                 render_profile=req.get("render_profile", LEGACY_PROFILE),
                 patches=req.get("patches", ()),
+                legend=req.get("legend", ()),
             )
             out = {
                 "ok": True,

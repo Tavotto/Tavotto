@@ -458,7 +458,7 @@ def validate_legend_spec(legend: Any, model: dict) -> list:
     """
     if not isinstance(legend, list) or not legend:
         raise ChartModelError("chart_model_invalid", "binding.legend must be a non-empty list")
-    known_series = {sr["id"] for sr in model["series"]}
+    known_series = {sr["id"]: sr.get("kind") for sr in model["series"]}
     ids: set[str] = set()
     nodes: set[str] = set()
     for i, item in enumerate(legend):
@@ -508,11 +508,20 @@ def validate_legend_spec(legend: Any, model: dict) -> list:
                 )
             indexes.add(index)
             _str(entry.get("label"), f"binding.legend[{i}].entries[{k}].label")
-            if "series" in entry and entry["series"] not in known_series:
-                raise ChartModelError(
-                    "chart_model_invalid",
-                    f"binding.legend[{i}].entries[{k}].series {entry['series']!r} is not in the model",
-                )
+            if "series" in entry:
+                if entry["series"] not in known_series:
+                    raise ChartModelError(
+                        "chart_model_invalid",
+                        f"binding.legend[{i}].entries[{k}].series {entry['series']!r} is not in the model",
+                    )
+                if known_series[entry["series"]] == "image":
+                    # matplotlib 没有图像系列的图例 handler：跟着它创建会静默
+                    # 丢条目（半接），必须在合同闸就拒绝，不进脚手架。
+                    raise ChartModelError(
+                        "chart_model_invalid",
+                        f"binding.legend[{i}].entries[{k}]: an image series cannot be "
+                        "followed by a legend entry",
+                    )
     return legend
 
 

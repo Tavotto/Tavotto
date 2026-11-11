@@ -293,6 +293,51 @@ def _primary_gid(state, gids, root, container_type):
     return None
 
 
+def _legend_source_gid(state, source) -> str | None:
+    """源对象在原生登记表里的元素 gid（legend_entry.source_gid 的取值）。"""
+    for el in state.elements:
+        art = el["artist"]
+        if art is source or getattr(art, "container", None) is source:
+            return el["gid"]
+    return None
+
+
+def _apply_legend_follow_contract(ownership: dict, state, legend_follow: dict) -> None:
+    """声明式 legend 合同的显式指认（N4）：条目 → 源对象按合同落进条目模型。
+
+    instrument 的 ``bind_legend_entries`` 靠示意线指纹**猜**源（自建 Legend 的
+    既有判据）；同名同色的两个系列并列时它会弃权，而声明式合同这里是**用户
+    逐条指认**——判据主语从「指纹匹配」变成「用户指认」，不存在并列弃权。
+    在 manifest/patch 之前把合同映射写进条目模型，后续 ``sync_legends``、重建
+    与 manifest 的 ``legend_entry`` 字段都以它为准；custom 条目显式无源
+    （指纹猜测的并列命中也一并撤销——跟随会把代理示意线换成源派生，违背
+    「保持脚本原样」）。
+    """
+    for legend_role, series_roles in legend_follow.items():
+        leg = ownership.get(legend_role)
+        model = getattr(leg, "_mm_entries", None)
+        if model is None or not isinstance(series_roles, list) or len(series_roles) != model.n:
+            raise ChartManifestError("chart_manifest_ownership_invalid", "legend_follow_contract")
+        for j, series_role in enumerate(series_roles):
+            if series_role is None:
+                model.sources[j] = None
+                model.source_gids[j] = None
+                model.default_binding[j] = "custom"
+                model.binding_override.pop(j, None)
+                continue
+            source = ownership.get(series_role)
+            if source is None:
+                raise ChartManifestError(
+                    "chart_manifest_ownership_invalid", f"legend_follow_source {series_role!r}"
+                )
+            if isinstance(source, list) and len(source) == 1:
+                # plot 系列的 ownership 值是单元素列表；容器（bar/errorbar）保持原样
+                source = source[0]
+            model.sources[j] = source
+            model.source_gids[j] = _legend_source_gid(state, source)
+            model.default_binding[j] = "follow_source"
+
+
 def render_scaffold(
     fig,
     ownership: dict,
@@ -303,6 +348,7 @@ def render_scaffold(
     salt: str = "tavotto",
     coordinate_space: str = "viewbox-user",
     complete_frame: bool = False,
+    legend_follow: dict | None = None,
 ) -> dict:
     """全新 scaffold Figure + 完整 patch 列表 → 配对 SVG/native manifest。
 
@@ -310,6 +356,11 @@ def render_scaffold(
     ``axes:id`` / ``series:id`` / ``colorbar:id`` / ``legend:id`` / ``text:id`` /
     ``figure:id``。轴家具隐式跟轴，其他对象必须明确声明。角色、原始输入 gid、
     原生 editable gid、实际 SVG id 分开返回；SVG id 不授予后代所有权。
+
+    ``legend_follow``（N4，可选）：声明式 legend 合同的显式指认——
+    ``{"legend:<id>": ["series:<id>" | None, …]}``，列表按新图例的条目位置给出
+    每项跟随的系列（None = custom）。instrument 之后、manifest/patch 之前落进
+    条目模型，判据主语是**用户指认**而不是指纹猜测。
 
     无法在当前 scaffold 找到的完整 patch（包括原场景未拥有对象）稳定拒绝，
     不能为了预览静默丢弃。setter/identity 失败由 warnings 与 unrestored 显式
@@ -334,6 +385,8 @@ def render_scaffold(
     claims, inputs = _claims(fig, ownership, Container, Artist)
     state = runtime.overrides.FigState(fig)
     runtime.manifest.instrument(state)
+    if legend_follow:
+        _apply_legend_follow_contract(ownership, state, legend_follow)
     gid_roles = _owners(state, claims, runtime)
     for patch in canonical:
         gid = patch["gid"]
