@@ -190,8 +190,7 @@ describe('选了 EPS 且标注里有半透明', () => {
     const order = [...prompt()!.querySelectorAll('[data-eps-opacity]')].map((b) => b.getAttribute('data-eps-opacity'))
     expect(order).toEqual(['pdf', 'cancel', 'opaque'])
     expect(document.activeElement, '焦点在主按钮上').toBe(choice('opaque'))
-    const scrims = [...document.querySelectorAll('[data-dialog-scrim], .z-overlay')]
-    expect(scrims.some((el) => el.className.includes('bg-shadow/15')), '叠层半浓度遮罩').toBe(true)
+    expect(document.querySelector('[class*="bg-shadow/15"]'), '叠层半浓度遮罩（栈底是 30%）').toBeTruthy()
   })
 
   it('改导出 PDF：EPS 换成 PDF（PDF 已勾就只是去掉 EPS），请求里没有 eps_opaque，对话框里的勾选跟着变', async () => {
