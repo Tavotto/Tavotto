@@ -190,7 +190,7 @@ describe('缺图（面板指向的图不在了）', () => {
     await render(missing(), { onRetry })
     await act(async () => { q('[data-export-find-source]')!.click() })
     const pending = useClipboardStore.getState().pending
-    expect(pending).toMatchObject({ mode: 'relink', missing: [{ fileId: FIG, name: 'case6', count: 1 }] })
+    expect(pending).toMatchObject({ mode: 'relink', relocate: true, missing: [{ fileId: FIG, name: 'case6', count: 1 }] })
     await act(async () => {
       setPanels(['moved\\case6.png'])
       useClipboardStore.setState({ pending: null })

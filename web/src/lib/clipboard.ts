@@ -303,7 +303,11 @@ interface ClipboardState {
    */
   pending:
     | { mode: 'paste'; payload: ClipPayload; missing: MissingAsset[] }
-    | { mode: 'relink'; missing: MissingAsset[] }
+    /**
+     * `relocate`：导出时发现图挪了位置、来重新找它（「重新找到这张图」）——是**同一张图换了地址**，
+     * 面板上的图内修改原样保留；不带 = 项目包导入后的素材替换，修改换成新素材自己的基线（原行为）。
+     */
+    | { mode: 'relink'; missing: MissingAsset[]; relocate?: boolean }
     | null
   setPending: (p: ClipboardState['pending']) => void
 }
@@ -365,12 +369,16 @@ export function requestRelinkSource(fileId: string): boolean {
     else missing = { fileId, name: o.name ?? fileId.split(/[\\/]/).pop() ?? fileId, count: 1 }
   }
   if (!missing) return false
-  useClipboardStore.getState().setPending({ mode: 'relink', missing: [missing] })
+  useClipboardStore.getState().setPending({ mode: 'relink', missing: [missing], relocate: true })
   return true
 }
 
-/** 就地重链接：把文档里引用缺失素材的面板换到所选素材（一条历史）。 */
-export function materializeRelink(resolved: MissingAsset[]): void {
+/**
+ * 就地重链接：把文档里引用缺失素材的面板换到所选素材（一条历史）。
+ * `keepEdits`：同一张图换了地址（导出时「重新找到这张图」）——面板上用户的图内修改不动，
+ * 不拿新素材的基线盖掉，否则紧接着的自动重新导出会把没写回的修改悄悄丢掉。
+ */
+export function materializeRelink(resolved: MissingAsset[], { keepEdits = false }: { keepEdits?: boolean } = {}): void {
   const assets = useAssetStore.getState().byId
   const relink = resolved.filter((m) => m.relinkTo && assets[m.relinkTo])
   if (!relink.length) {
@@ -393,7 +401,7 @@ export function materializeRelink(resolved: MissingAsset[]): void {
       o.script = info.script ?? null
       o.cost = info.cost
       o.name = info.name
-      o.overrides = info.baked_overrides ? structuredClone(info.baked_overrides) : []
+      if (!keepEdits) o.overrides = info.baked_overrides ? structuredClone(info.baked_overrides) : []
     }
     // 新素材的写回基线原样放进来（身份不按旧素材的 manifest 重抄，ADR 0083）
   }, { overrides: 'restored' })

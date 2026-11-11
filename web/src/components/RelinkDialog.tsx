@@ -64,7 +64,7 @@ export function RelinkDialog() {
 
   const confirm = () => {
     if (pending.mode === 'paste') materializePaste(pending.payload, choices)
-    else materializeRelink(choices)
+    else materializeRelink(choices, { keepEdits: !!pending.relocate })
     setPending(null)
   }
   const cancel = () => setPending(null)
