@@ -19,7 +19,7 @@
  */
 import { msg } from '@/i18n'
 import { currentProjectId } from '@/lib/session'
-import { whenDocumentReady } from '@/store/documentStore'
+import { whenDocumentSettledForEntry } from '@/store/documentRestore'
 import { findFigurePanel, openFastEdit } from '@/store/workspace'
 import { useAssetStore } from '@/store/assetStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
@@ -133,7 +133,7 @@ export function resetUrlOpenRequestClaimForTests(): void {
 function landFigure(fileId: string): OpenOutcome {
   const existed = findFigurePanel(fileId) != null
   const outcome = openFastEdit(fileId)
-  if (outcome === 'deferred' || outcome === 'blocked') return 'deferred'
+  if (outcome === 'deferred') return 'deferred'
   return outcome === 'missing' ? 'missing' : existed ? 'selected' : 'placed'
 }
 
@@ -202,7 +202,8 @@ export async function applyOpenRequest(req: OpenRequest): Promise<OpenOutcome> {
   const documentSettled = async (): Promise<boolean> => {
     // 等的是**这次交接要落进的那个项目**（打开项目那一步之后定下的），不是等到的那一刻碰巧是哪个：
     // 等的途中用户切走了，应当拿 superseded，而不是转头去等新项目的文档
-    const verdict = await whenDocumentReady(targetPj)
+    // 恢复没成时不干等用户：和用户自己动手一样处理（静默开新排版 / 自动再试 / 等画布上的卡）
+    const verdict = await whenDocumentSettledForEntry(targetPj)
     if (verdict === 'ready') return true
     ui.setStatus(
       msg(verdict === 'timeout' ? 'handoff.restoreTimeout' : 'handoff.superseded', undefined, 'project'),

@@ -51,8 +51,11 @@ order: 210
   文字标注选中时选框顶上有旋转柄（`rotateDrag.ts`，⇧ 吸 15°，ADR 0163）；对齐 / 分布 / 间距 / 拖动吸附 /
   多选联合框一律取 `visualBounds`（转出来的外接框），写回只平移 x / y，别回去拿未旋转盒；形状
   triangle/diamond/polygon/brace + 圆角/
-  虚线/填充透明度；箭头 headStart/headEnd（triangle/open/bar，旧 head 字段
-  兼容推导）；文字下划线/行距/内边距/背景/描边。**前后端几何公式同源**
+  虚线（实 / 虚 / 点 / 长虚线 / 点划线 / 长点划线）/填充透明度；箭头 headStart/headEnd（triangle/open/bar/dot/diamond/stealth，旧 head 字段
+  兼容推导，大小三档 `headSizeStart/End`）；**描边属性（ADR 0174）**：形状 `stroke: false` = 无边框（只落盘 false，
+  读取只走 `shapeStrokeOn()`，无边框时填充铺满框、`shapeInset()`）、`strokeOpacity`、`lineCap` / `lineJoin`（点线强制圆头，
+  `strokeCap()`），新字段缺省一律不写、描边 SVG 属性只在 `svgStroke()` 一处出（ShapeView / ArrowView / ThumbShape 共用）；
+  新的低频项收进属性栏折叠行「更多」；文字下划线/行距/内边距/背景/描边。**前后端几何公式同源**
   （shapeGeometry.ts ↔ `rendercore/geometry.py` `polygon_points`/`dash_pattern`，共享向量
   `tests/golden/shape_geometry_vectors.json` 两侧各跑一遍），改一边必须同步另一边，
   pytest 从合成的 PDF 内容流抽坐标做几何级看护（`tests/test_compose_arrow.py`）。

@@ -9,7 +9,7 @@
 
 ## 一、结论先行
 
-- 全产品只有**一套**图标：`components/ui/icons` 里自己画的 149 个（2026-10-23 为联系作者附件方块补画通用文件 `File`，2026-10-22 补画设置页「支持」钮的实心红心 `Heart` 与「联系作者」的信封 `Mail`，2026-10-07 补画 `ListChecks`，2026-10-13 补画 `Menu`，2026-10-19 为新手教程补画 `ArrowRight` 与拖动把手 `GripVertical`）。名字与 lucide 时代
+- 全产品只有**一套**图标：`components/ui/icons` 里自己画的 150 个（2026-11-11 为改图助手附件钮补画回形针 `Paperclip`，2026-10-23 为联系作者附件方块补画通用文件 `File`，2026-10-22 补画设置页「支持」钮的实心红心 `Heart` 与「联系作者」的信封 `Mail`，2026-10-07 补画 `ListChecks`，2026-10-13 补画 `Menu`，2026-10-19 为新手教程补画 `ArrowRight` 与拖动把手 `GripVertical`）。名字与 lucide 时代
   一一相同，同一语义只用一个名字（第四节的表不动）。**任何第三方图标库都不许再
   import**（门禁按 import 路径判）。
 - 画法：24 网格；所有线条 2 单位描边、圆头圆角，按比例缩放；闭合外形外角 ≥ 2.5、
@@ -160,6 +160,7 @@ Circle / Lock / TriangleAlert / Info / CircleCheck。坐标仍在 24 单位里�
 | 可编辑的图（由脚本生成、能改图内对象） | `SquareMousePointer`，唯一出处 `ui/semanticIcons.EditableFigureIcon` | `Braces` |
 | 整张图（图内编辑的图幅） | `Fullscreen`（`roles/roleIcons`） | `Frame` |
 | 改图助手 | `Sparkles`（一大一小两颗火花） | — |
+| 给改图助手附文件（输入框工具行，2026-11-11） | `Paperclip`（一笔画成的回形针） | 起初借用的 `Image`——附件不只是图片 |
 | 样式（左轨「样式」面板，2026-09-24） | `Paintbrush` | — |
 | 回到项目列表（顶栏左上角的主页钮，2026-09-26） | `House` | — |
 | 应用菜单（Windows 桌面版顶栏最左，弹出「文件 / 编辑 / 显示 / 帮助」，2026-10-13） | `Menu`（三道等长横线） | — |

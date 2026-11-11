@@ -1,5 +1,13 @@
-import type { ArrowObject, DashStyle, ShapeKind } from '@/types/document'
-import { arrowHeads } from '@/types/document'
+import type {
+  ArrowObject,
+  DashStyle,
+  HeadSize,
+  LineCap,
+  LineJoin,
+  ShapeKind,
+  ShapeObject,
+} from '@/types/document'
+import { arrowHeads, shapeStrokeOn } from '@/types/document'
 
 /** 正 N 边形顶点（内切于包围盒，顶点朝上）；与后端 _polygon_points 同一公式 */
 export function polygonPoints(
@@ -108,11 +116,88 @@ export const PATH_HIT_SHAPES: ReadonlySet<ShapeKind> = new Set<ShapeKind>([
   'brace',
 ])
 
-/** 虚线间距按线宽比例换算；与后端 _dash_pattern 同一比例 */
+/**
+ * 线型的段长表（线宽的倍数，「画 / 空 / 画 / 空…」）；与后端 `rendercore/geometry.DASH_RATIOS` 严格同源
+ * （共享向量 `tests/golden/shape_geometry_vectors.json`，ADR 0174）。
+ * `dotted` 不在表里：它的「点」是 0.01×线宽 的段加圆线帽画出来的，段长另算。
+ */
+export const DASH_RATIOS: Readonly<Record<string, readonly number[]>> = {
+  dashed: [4, 2.5],
+  longdash: [8, 3],
+  dashdot: [4, 2.5, 1, 2.5],
+  longdashdot: [8, 3, 1, 3],
+}
+
+/** 虚线间距按线宽比例换算；与后端 dash_pattern 同一比例 */
 export function dashArray(dash: DashStyle | undefined, sw: number): string | undefined {
-  if (dash === 'dashed') return `${sw * 4} ${sw * 2.5}`
   if (dash === 'dotted') return `${sw * 0.01} ${sw * 2}`
-  return undefined
+  const ratios = dash ? DASH_RATIOS[dash] : undefined
+  return ratios ? ratios.map((r) => sw * r).join(' ') : undefined
+}
+
+/** 缺省线端：圆头（加线端 / 拐角属性之前就是这么画的） */
+export const DEFAULT_LINE_CAP: LineCap = 'round'
+
+/**
+ * 实际生效的线端。`dotted` 的「点」靠圆线帽才有面积（段长只有 0.01×线宽），
+ * 所以点线**强制圆头**，用户选的平头 / 方头在点线下不生效（属性栏里那一行也置灰）。
+ * 与后端 `geometry.stroke_cap` 同一条规则。
+ */
+export function strokeCap(cap: LineCap | undefined, dash: DashStyle | undefined): LineCap {
+  if (dash === 'dotted') return 'round'
+  return cap === 'butt' || cap === 'square' || cap === 'round' ? cap : DEFAULT_LINE_CAP
+}
+
+/**
+ * 缺省拐角：封闭形状 / 箭头是圆角；直线与大括号是尖角（后端一直是 miter，
+ * 画布以前写 round——它们没有可见的拐角，两种写法画出来一样，这里把画布对齐到后端）。
+ */
+export function defaultLineJoin(shape?: ShapeKind): LineJoin {
+  return shape === 'line' || shape === 'brace' ? 'miter' : 'round'
+}
+
+/** 尖角的斜接上限：PDF 的缺省是 10，SVG 的缺省是 4——不写死的话很尖的三角在画布上被削成斜角、导出却是尖的 */
+export const STROKE_MITER_LIMIT = 10
+
+/** 描边不透明度：缺省 / ≥1 = 不透明（返回 undefined，不写属性）；非有限数同缺省 */
+export function strokeOpacityOf(v: number | undefined): number | undefined {
+  if (v == null || !Number.isFinite(v) || v >= 1) return undefined
+  return Math.max(0, v)
+}
+
+/**
+ * 形状的描边内缩量：描边居中，内缩半个线宽让外沿正好贴合包围盒；**无边框时不内缩**，
+ * 填充铺满整个包围盒（与后端 `shape_paths` 同一条）。直线 / 大括号永远有描边。
+ */
+export function shapeInset(o: Pick<ShapeObject, 'shape' | 'stroke'>, sw: number): number {
+  return shapeStrokeOn(o) ? sw / 2 : 0
+}
+
+/**
+ * 一条描边的 SVG 属性（**ShapeView / ArrowView / 缩略图 ThumbShape 共用**）。
+ * `sw` 已是该处单位的线宽；`withDash` 为 false 时给箭头端型（端型不画虚线）。
+ */
+export function svgStroke(
+  o: {
+    color: string
+    dash?: DashStyle
+    strokeOpacity?: number
+    lineCap?: LineCap
+    lineJoin?: LineJoin
+  },
+  sw: number,
+  join: LineJoin,
+  withDash = true,
+) {
+  return {
+    stroke: o.color,
+    strokeWidth: sw,
+    strokeDasharray: withDash ? dashArray(o.dash, sw) : undefined,
+    strokeLinecap: withDash ? strokeCap(o.lineCap, o.dash) : strokeCap(o.lineCap, undefined),
+    strokeLinejoin: o.lineJoin ?? join,
+    strokeMiterlimit: STROKE_MITER_LIMIT,
+    strokeOpacity: strokeOpacityOf(o.strokeOpacity),
+  }
 }
 
 /**
@@ -150,18 +235,54 @@ export function hitStrokeWidth(strokeW: number, zoom: number, minWidth = 0): num
 
 type Pt = { x: number; y: number }
 
-/** 箭头的一个端型的几何：triangle = 实心多边形点串；open / bar = 描边路径 */
+/** 端型三档的缩放系数；缺省 / `medium` = 1（加档位之前的尺寸）。与后端 `geometry.HEAD_SIZE_FACTOR` 同源 */
+export const HEAD_SIZE_FACTOR: Readonly<Record<HeadSize, number>> = {
+  small: 0.7,
+  medium: 1,
+  large: 1.5,
+}
+
+export const headSizeFactor = (size: HeadSize | undefined): number =>
+  (size && HEAD_SIZE_FACTOR[size]) || 1
+
+/**
+ * 箭头的一个端型的几何：triangle / stealth / diamond = 实心多边形点串；dot = 实心圆；
+ * open / bar = 描边路径。
+ */
 export type ArrowHeadShape =
-  | { kind: 'triangle'; points: string }
+  | { kind: 'triangle' | 'stealth' | 'diamond'; points: string }
+  | { kind: 'dot'; cx: number; cy: number; r: number }
   | { kind: 'open' | 'bar'; d: string }
+
+/** 实心端型（用描边色填充、不描边）：画布 / 缩略图一律走这一条判别 */
+export const isFilledHead = (h: ArrowHeadShape): h is Exclude<ArrowHeadShape, { kind: 'open' | 'bar' }> =>
+  h.kind !== 'open' && h.kind !== 'bar'
+
+/**
+ * 线段在这个端型处回缩的距离（帽长的倍数）：让杆收在端型里、不戳出尖。
+ * 只有实心端型回缩（open / bar 线到尖）。与后端 `geometry.HEAD_TRIM` 同源。
+ * dot 的回缩是半径（= 帽半宽，不是帽长的倍数），在 `arrowGeometry` 里单算。
+ */
+export const HEAD_TRIM: Readonly<Record<string, number>> = {
+  triangle: 0.75,
+  stealth: 0.6,
+  diamond: 0.5,
+}
+/** 燕尾凹口离尖的距离（帽长的倍数） */
+export const STEALTH_NOTCH = 0.7
 
 /**
  * 箭头的真实几何（**ArrowView 与导出预览 `CanvasThumb` 的箭头共用的唯一出处**）。
- * 与后端 _draw_arrow 一一对应：帽长 4×线宽、帽半宽 1.7×线宽、仅 triangle 端回缩 0.75×帽长。
- * `w` / `h` 是包围盒、`sw` 是线宽，三者同单位（画布传世界 px，预览传页面 mm）；结果在包围盒左上角为原点的坐标里。
+ * 与后端 `geometry.arrow_paths` 一一对应：帽长 4×线宽、帽半宽 1.7×线宽（再乘端型大小档位）、
+ * 实心端型回缩线段（`HEAD_TRIM`）。`w` / `h` 是包围盒、`sw` 是线宽，三者同单位
+ * （画布传世界 px，预览传页面 mm）；结果在包围盒左上角为原点的坐标里。
+ * `headLen` / `headHalf` 取两端里较大的（命中带用）。
  */
 export function arrowGeometry(
-  obj: Pick<ArrowObject, 'start' | 'end' | 'head' | 'headStart' | 'headEnd'>,
+  obj: Pick<
+    ArrowObject,
+    'start' | 'end' | 'head' | 'headStart' | 'headEnd' | 'headSizeStart' | 'headSizeEnd'
+  >,
   w: number,
   h: number,
   sw: number,
@@ -175,40 +296,76 @@ export function arrowGeometry(
   const uy = dy / len
   const nx = -uy
   const ny = ux
-  const headLen = sw * 4
-  const headHalf = sw * 1.7
   const heads = arrowHeads(obj as ArrowObject)
+  const fStart = headSizeFactor(obj.headSizeStart)
+  const fEnd = headSizeFactor(obj.headSizeEnd)
 
-  const headOf = (kind: string, tip: Pt, sign: 1 | -1): ArrowHeadShape | null => {
-    const bx = tip.x - sign * ux * headLen
-    const by = tip.y - sign * uy * headLen
-    if (kind === 'triangle') {
-      return {
-        kind,
-        points: `${tip.x},${tip.y} ${bx + nx * headHalf},${by + ny * headHalf} ${bx - nx * headHalf},${by - ny * headHalf}`,
+  /** 一端：尖在 tip，`sign` = 1 终点（向后是 -u），-1 起点；返回形状与线段在这一端回缩的距离 */
+  const headOf = (
+    kind: string,
+    tip: Pt,
+    sign: 1 | -1,
+    f: number,
+  ): { shape: ArrowHeadShape | null; trim: number } => {
+    const L = sw * 4 * f
+    const H = sw * 1.7 * f
+    // 沿箭杆向后 d、横向偏 s 的点
+    const at = (d: number, s: number): Pt => ({
+      x: tip.x - sign * ux * d + nx * s,
+      y: tip.y - sign * uy * d + ny * s,
+    })
+    const pts = (...ps: Pt[]) => ps.map((p) => `${p.x},${p.y}`).join(' ')
+    switch (kind) {
+      case 'triangle':
+        return {
+          shape: { kind, points: pts(tip, at(L, H), at(L, -H)) },
+          trim: L * HEAD_TRIM.triangle,
+        }
+      case 'stealth':
+        return {
+          shape: { kind, points: pts(tip, at(L, H), at(L * STEALTH_NOTCH, 0), at(L, -H)) },
+          trim: L * HEAD_TRIM.stealth,
+        }
+      case 'diamond':
+        return {
+          shape: { kind, points: pts(tip, at(L / 2, H), at(L, 0), at(L / 2, -H)) },
+          trim: L * HEAD_TRIM.diamond,
+        }
+      case 'dot': {
+        const c = at(H, 0)
+        return { shape: { kind, cx: c.x, cy: c.y, r: H }, trim: H }
       }
-    }
-    if (kind === 'open') {
-      return {
-        kind,
-        d: `M ${bx + nx * headHalf},${by + ny * headHalf} L ${tip.x},${tip.y} L ${bx - nx * headHalf},${by - ny * headHalf}`,
+      case 'open': {
+        const p1 = at(L, H)
+        const p2 = at(L, -H)
+        return {
+          shape: { kind, d: `M ${p1.x},${p1.y} L ${tip.x},${tip.y} L ${p2.x},${p2.y}` },
+          trim: 0,
+        }
       }
+      case 'bar': {
+        const p1 = at(0, H)
+        const p2 = at(0, -H)
+        return { shape: { kind, d: `M ${p1.x},${p1.y} L ${p2.x},${p2.y}` }, trim: 0 }
+      }
+      default:
+        return { shape: null, trim: 0 }
     }
-    if (kind === 'bar') {
-      return { kind, d: `M ${tip.x + nx * headHalf},${tip.y + ny * headHalf} L ${tip.x - nx * headHalf},${tip.y - ny * headHalf}` }
-    }
-    return null
   }
 
-  // 仅实心三角端回缩线段（其余端型线到尖）
-  const trim = headLen * 0.75
-  const p1 = {
-    x: a.x + (heads.start === 'triangle' ? ux * trim : 0),
-    y: a.y + (heads.start === 'triangle' ? uy * trim : 0),
+  const s = headOf(heads.start, a, -1, fStart)
+  const e = headOf(heads.end, b, 1, fEnd)
+  const p1 = { x: a.x + ux * s.trim, y: a.y + uy * s.trim }
+  const p2 = { x: b.x - ux * e.trim, y: b.y - uy * e.trim }
+  const fMax = Math.max(heads.start !== 'none' ? fStart : 1, heads.end !== 'none' ? fEnd : 1)
+  return {
+    a,
+    b,
+    p1,
+    p2,
+    headLen: sw * 4 * fMax,
+    headHalf: sw * 1.7 * fMax,
+    startHead: s.shape,
+    endHead: e.shape,
   }
-  const p2 = {
-    x: b.x - (heads.end === 'triangle' ? ux * trim : 0),
-    y: b.y - (heads.end === 'triangle' ? uy * trim : 0),
-  }
-  return { a, b, p1, p2, headLen, headHalf, startHead: headOf(heads.start, a, -1), endHead: headOf(heads.end, b, 1) }
 }

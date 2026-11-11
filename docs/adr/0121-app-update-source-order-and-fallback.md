@@ -1,6 +1,6 @@
 # ADR 0121：应用内更新的来源顺序与回退——国内 COS 镜像优先（大陆环境），GitHub Release 兜底
 
-日期：2026-10-12（2026-11-04、2026-11-05 修订）· 状态：**Proposed（实现与测试已在分支内；镜像侧由 `Tavotto/infra` 提供，真实 COS 未验）**
+日期：2026-10-12（2026-11-04、2026-11-05、2026-11-11 修订）· 状态：**Proposed（实现与测试已在分支内；镜像侧由 `Tavotto/infra` 提供，真实 COS 未验）**
 相关：[0002 桌面壳](0002-tauri-desktop-shell.md)「应用内更新」一节、[0076 macOS Intel 构建](0076-macos-intel-desktop-build.md)；
 规则全文 `docs/rules/frontend/desktop-and-update.md`、`src-tauri/AGENTS.md`「更新通道」；隐私声明 `docs/privacy.md`「Update checks」
 
@@ -192,6 +192,48 @@ GitHub 比镜像新（镜像滞后）、或还没有这个版本，都记 `versi
 
 **接受的代价**：大陆用户会在后台对 GitHub 发请求（`docs/privacy.md`「Update checks」已写明）；GitHub 在大陆不稳时，一个版本最多要多等 3 次启动才改道镜像
 （或 3 天）；手动下载在 GitHub 被丢包时要多等一个 check 超时。**未验证（NOT_RUN）**：真实大陆网络下 GitHub 的实际表现与阈值是否合适、Windows 真机。
+
+### 十、第三个下载来源：国内自建边缘节点（2026-11-11 修订，维护者决定）
+
+**动机**：`dl.tavotto.cn` 按流量计费；11-09 至 11-11 实测，CDN 流量约一半是 updater 包（`nsis.zip` / `app.tar.gz`）——大陆用户后台先走 GitHub，
+经常失败后落到镜像（§九）。维护者买了一台国内轻量服务器（5 Mbps、每月 500 GB 流量、3 年），只用来分担**后台**下载（用户不等，慢点无所谓）。
+手动下载（用户在等）不走它，仍是 §九 的 `[GitHub, 镜像]` + `Trial`。
+
+**来源**：`Source::Edge`（serde / `Source::parse` 名 `edge`），清单 `https://up.tavotto.cn/updater/latest.json`（常量 `EDGE_MANIFEST_URL`，与 `MIRROR_MANIFEST_URL` 并列；
+`Endpoints` 多 `edge` / `edge_root`）。**tauri.conf.json 的 endpoints 仍只有 GitHub 一条。**
+
+**顺序**：check 一个字不变（`source_order` / `detect_order` 只出镜像 / GitHub，节点**不参与 check**，也不影响「第一个答上来的说了算」）。
+`plan_for` 只在「大陆·后台」插入节点，仍是 `Pace::Steady`：
+
+| 场景 | 来源顺序 | 步调 |
+| --- | --- | --- |
+| 非大陆（含冷却、含单来源）· 手动 / 后台 | 不变（§四–§五·补） | `Probe` |
+| 大陆·手动（含救援页） | `[GitHub, 镜像]`，不走节点 | `Trial` |
+| 大陆·后台（默认） | `[GitHub, 节点, 镜像]` | `Steady` |
+| 大陆·后台（GitHub 连续失败 3 次 / 超期，§九 记忆） | `[节点, 镜像, GitHub]` | `Steady` |
+
+节点是「第三个下载来源」：节点在 GitHub 与镜像之间，意思是 GitHub 不行先试便宜的节点（流量已买断上限），节点不行才花 CDN 的钱。
+§九 的「改走镜像」在大陆·后台里现在读作「改为节点（再镜像）优先」，判据（3 次 / 3 天）与记忆文件一个字不变。
+
+**契约**（服务器端另行实现，本仓库只认这些）：`GET https://up.tavotto.cn/updater/latest.json` 是 Tauri 格式清单，与镜像清单同版本、`signature` 逐字相同，
+只是每个平台的 `url` 改为 `https://up.tavotto.cn/releases/<version>/<文件名>`。`decide_updater`（§四·补）对节点同样适用（根换成 `https://up.tavotto.cn`，包地址不在
+`{节点根}/releases/<version>/` 下 = `not_on_mirror`）；节点同样 pin host，重定向到别的主机不跟随。验签用内置公钥——节点只决定「从哪下」，不决定「信谁」。
+
+**404 即不可用，关停不需要发版**：节点关闭 / 当月流量快用完 / 还没同步到时，服务器让清单回 404（或干脆连不上），客户端把它当作 check 失败，`fetch` 换下一个来源；
+节点落后一个版本同理（`fetch` 对非 check 来源重新 check 且要求同版本，不符 = `version_mismatch`，跳过）。所以**关停节点 = 服务器删掉清单**，已安装的客户端无需任何改动。
+带宽只有 5 Mbps，多人同时下会慢，但只要在出字节就不放弃（`Steady`；30 s 停滞看门狗照旧）。
+
+**失败记账**：节点失败**不**触发镜像的 `Cooldown`（那是镜像专用的，`trip` 仍只对 `Source::Mirror`）；节点没有自己的进程内冷却——后台一次启动只下一次，
+一次多问一个 404 清单的代价可以忽略，不值得多一份状态。`update_source_memory::outcome_of` 不用改：它只认「赢的是不是 GitHub」，节点赢 = 镜像赢——
+GitHub 先失败、节点兜住记 `GithubFailed`（计数 +1，第 3 次起改节点优先）；改道后节点直接赢、GitHub 没试 / 只报别的版本记 `Neutral`（不加不清）。判据不被节点破坏（单测钉住）。
+
+**界面 / 遥测**：`UpdateSource` 多 `'edge'`；界面「更新来源」与失败记录里它与镜像用同一句文案（zh「国内镜像」/ en「China mirror」），不出现「节点」字样。
+遥测白名单不动（不含来源字段）。
+
+**隐私**：桌面版大陆环境后台下载可能联系 `up.tavotto.cn`（维护者运营，位于中国大陆），与镜像同样只收到标准 HTTPS 请求元数据；已同步 `docs/privacy.md`。
+
+**接受的代价**：大陆用户后台多一个来源，GitHub 失败后多问一次节点清单（≤ 10 s check 超时，节点 404 时是毫秒级）；节点 5 Mbps 下大包可能下得很慢，但 `Steady` 不因慢而放弃。
+**未验证（NOT_RUN）**：真实 `up.tavotto.cn`（服务器端另一人实现）与大陆真实网络；Windows 真机。**生效范围**：只对包含本改动的客户端之后的升级生效。
 
 ## 与既有承诺的冲突（已同步更新的面向用户文档）
 

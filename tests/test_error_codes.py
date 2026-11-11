@@ -151,6 +151,10 @@ def _declared_codes(text: str) -> set[str]:
 # code——审计 P1-02：错误尾部不许泄漏中文，所以每个 code 都要有两种语言的
 # 文案，且占位符与 params 对得上）
 USER_VISIBLE_CODES = {
+    # --- ADR 0175：改图助手附文件（`POST /api/ai/attachments`）；固定文案 ---
+    "attachment_too_large": set(),
+    "attachment_empty": set(),
+    "attachment_invalid": set(),
     # --- ADR 0176：拖 / 粘贴文件进画布（`POST /api/assets/import`）；只有大小上限带参数，其余固定文案 ---
     "asset_import_too_large": {"limit_mb"},
     "asset_import_unsupported_type": set(),

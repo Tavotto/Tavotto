@@ -1800,6 +1800,7 @@
       "sourceUsed": "更新来源：{{source}}",
       "sourceName": {
         "mirror": "国内镜像",
+        "edge": "国内镜像",
         "github": "GitHub"
       },
       "attemptsTitle": "各来源的失败记录",

@@ -90,6 +90,7 @@ def tavotto_observe(project: Path, script: str, deep: dict | None = None) -> dic
                     error={
                         "code": err.get("code") or "no_stems",
                         "message": str(err.get("message", ""))[:300],
+                        "workdir_hint": isinstance(err.get("workdir_hint"), dict),
                     },
                 )
                 return obs
@@ -105,13 +106,20 @@ def tavotto_observe(project: Path, script: str, deep: dict | None = None) -> dic
             obs["savefig_calls"] = _savefig_calls(worker)
             obs["pdf_pages"] = _pdf_pages(worker)
             obs["dropped_figures"] = int(built.get("dropped_figures") or 0)
+            # the "run in the script directory" hint the product offers on a successful build whose glob came back empty
+            obs["workdir_hint"] = pool.workdir_hint_of_build(worker) is not None
             if deep:
                 _observe_deep(obs, worker, manifests, deep, project, script, entry)
         finally:
             pool.discard(worker)
     except Exception as exc:  # noqa: BLE001 - product failure is an observation, recorded
         code = getattr(exc, "code", None) or type(exc).__name__
-        obs["error"] = {"code": str(code), "message": str(exc)[:300]}
+        obs["error"] = {
+            "code": str(code),
+            "message": str(exc)[:300],
+            # whether the error the user sees carries the one-click "run in the script directory" entry (#1299)
+            "workdir_hint": isinstance(getattr(exc, "workdir_hint", None), dict),
+        }
     return obs
 
 
@@ -1096,6 +1104,7 @@ def explore(args) -> int:
             "suite": manifest["parent"]["suite"],
             "chain": [s["name"] for s in manifest["chain"]],
             "axis_vector": manifest["axis_vector"],
+            "data_source": data_source_of(manifest),
             "class": manifest["class"],
             "seed": manifest["seed"],
             "ast_signature": manifest["ast_signature"],
@@ -1202,8 +1211,23 @@ def evidence_summary(record: dict) -> dict | None:
             "error": (tavotto or {}).get("error"),
             "stems": {k: v["titles"] for k, v in ((tavotto or {}).get("stems") or {}).items()},
             "dropped_figures": int((tavotto or {}).get("dropped_figures") or 0),
+            "workdir_hint": bool((tavotto or {}).get("workdir_hint")),
         },
     }
+
+
+def data_source_of(manifest: dict) -> dict | None:
+    """`{transform, path_style}` of the candidate's data-source step, or None when the chain reads no data.
+
+    Triage links a finding to a known family by this axis too: the same cwd-relative reader wrapped in a
+    loop or moved to another parent changes the call site but not the cause."""
+    for step in manifest.get("chain") or []:
+        if step.get("axis") == "data_source":
+            return {
+                "transform": step["name"],
+                "path_style": (step.get("params") or {}).get("path_style"),
+            }
+    return None
 
 
 def confirm_differences(

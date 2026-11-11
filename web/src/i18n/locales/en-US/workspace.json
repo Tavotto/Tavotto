@@ -1032,7 +1032,7 @@
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out",
     "zoomValue": "Zoom {{percent}}%",
-    "issueLastDoc": "Last layout not opened",
+    "issueLastDoc": "Last layout not reached",
     "issueTooNew": "Newer layout",
     "issueAria": "Layout status: {{status}}. Show details",
     "documentRenameHint": "Click for layout actions; double-click or F2 to rename",
@@ -1058,7 +1058,7 @@
     "multi_select": "Use the floating bar by the selection to align and distribute.",
     "problem_found": "“Problems” on the left locates the object and its property field.",
     "layout_page_bounds": "The white page is the size of the exported figure. Single- and double-column widths follow the current spec; adjust them on the Canvas tab on the right.",
-    "fit_canvas": "Double-click empty space to recenter",
+    "fit_canvas": "Double-click empty space to fit",
     "edge_crop": "Drag an edge to resize; hold {{alt}} to crop",
     "ruler_guides": "Drag a guide out of the ruler",
     "shift_axis": "Hold ⇧ while dragging to move along one axis",
@@ -1068,7 +1068,7 @@
     "dblclick_text": "Double-click text in the figure to edit it",
     "shift_draw": "Hold ⇧ to draw squares and straight lines",
     "space_pan": "Hold Space and drag to pan",
-    "shift_multi": "⇧-click to select several and change them at once",
+    "shift_multi": "⇧-click several, then change them all",
     "shortcut_help": "Press ? for all shortcuts",
     "shortcutHelpOpen": "Open",
     "pageBoundsOpen": "Open Canvas tab"
@@ -1692,11 +1692,13 @@
   },
   "restore": {
     "autoAdopted": "Opened the layout “{{name}}” found on this computer",
-    "blockedWrite": "Your last layout isn’t open yet.",
+    "autoNew": "Couldn’t open your last layout “{{name}}”, so a new one was started.",
+    "autoNewUnnamed": "Couldn’t open your last layout, so a new one was started.",
+    "blockedWrite": "Pick a layout on the canvas first.",
     "choose": "Pick one to open",
-    "continueNew": "Start a new layout",
+    "continueNew": "Use a new layout",
     "entrySuperseded": "The project was switched, so this action wasn’t carried out.",
-    "entryTimeout": "Your last layout still wasn’t handled, so this action wasn’t carried out.",
+    "heldChoose": "Choose on the canvas and your last action will carry on.",
     "indexDegraded": "The record of your last layout couldn’t be read, so a blank layout was opened. Your older layouts are still there — look in “Open layout”.",
     "meta": {
       "pill": "Auto-recovery info not updated",
@@ -1712,7 +1714,7 @@
       "missing": "Last layout not found",
       "prepareFailed": "Example layout didn’t open",
       "tooNew": "Last layout is from a newer version",
-      "unavailable": "Last layout isn’t open yet"
+      "unavailable": "Can’t reach your last layout right now"
     },
     "retry": "Try again",
     "title": {
@@ -1722,7 +1724,7 @@
       "missing": "The last layout “{{name}}” wasn’t found.",
       "prepareFailed": "The example layout didn’t open.",
       "tooNew": "The last layout “{{name}}” is from a newer Tavotto and can’t be opened by this version.",
-      "unavailable": "Your last layout isn’t open yet."
+      "unavailable": "Can’t reach your last layout right now."
     }
   },
   "renderProgress": {

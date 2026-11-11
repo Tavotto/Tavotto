@@ -14,6 +14,7 @@ import { requestCheckConnection } from '@/store/connectAiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Reveal } from '../ui/Field'
 import { Notice } from '../ui/Notice'
+import { AttachmentBubble } from './AttachCards'
 import { CopyAction } from './CopyAction'
 import { DiffView } from './DiffView'
 import { EditDependencyNotice } from './EditDependencyNotice'
@@ -442,6 +443,10 @@ function UserBubble({
           </button>
         )}
       </div>
+      {/* 附件是第二个气泡（ADR 0175）：本页发起的是一叠卡牌，刷新 / 历史里只有个数；没附文件就什么都不画 */}
+      {session.attachments?.length || session.attachmentCount ? (
+        <AttachmentBubble views={session.attachments} count={session.attachmentCount} />
+      ) : null}
       {/* 目标 · 时刻与操作只在 hover / 键盘进入时出现（不占注意力，占位不跳） */}
       <div
         data-ai-user-actions
