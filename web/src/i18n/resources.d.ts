@@ -5580,7 +5580,7 @@ export default interface Resources {
       "openFailed": "打不开项目：{{error}}",
       "panelMissing": "没找到图 {{stem}}——脚本可能还没产出，或它在别的图库里",
       "projectOpened": "已打开项目 {{name}}",
-      "restoreTimeout": "这次交接的图没有放进排版：上次的排版还没打开，图在素材库里。",
+      "restoreTimeout": "这次交接的图在素材库里：先在画布上选一份排版，再把它加进来。",
       "runtimeNeedsRun": "{{stem}} 已登记为运行时图，但还没有预览——到素材库的「脚本」区运行一次。",
       "superseded": "项目已切换，这次交接没有放入。"
     },
@@ -6998,11 +6998,13 @@ export default interface Resources {
     },
     "restore": {
       "autoAdopted": "已打开本机找到的排版“{{name}}”",
-      "blockedWrite": "上次的排版还没打开。",
+      "autoNew": "上次的排版“{{name}}”打不开，已开了一份新排版。",
+      "autoNewUnnamed": "上次的排版打不开，已开了一份新排版。",
+      "blockedWrite": "先在画布上选一份排版。",
       "choose": "选一份打开",
-      "continueNew": "继续新建",
+      "continueNew": "用新排版",
       "entrySuperseded": "项目已切换，这次操作没有执行。",
-      "entryTimeout": "等了很久上次的排版仍没处理，这次操作没有执行。",
+      "heldChoose": "先在画布上选一下，刚才的操作会接着做。",
       "indexDegraded": "上次的恢复记录读不了，先开了一份空白排版。旧排版还在，可以在“打开排版”里找。",
       "meta": {
         "pill": "下次自动恢复信息没更新",
@@ -7018,7 +7020,7 @@ export default interface Resources {
         "missing": "上次的排版找不到了",
         "prepareFailed": "示例排版没能打开",
         "tooNew": "上次的排版来自更新版本",
-        "unavailable": "上次的排版暂时没打开"
+        "unavailable": "暂时接不上上次的排版"
       },
       "retry": "重试",
       "title": {
@@ -7028,7 +7030,7 @@ export default interface Resources {
         "missing": "上次的排版“{{name}}”找不到了。",
         "prepareFailed": "示例排版没能打开。",
         "tooNew": "上次的排版“{{name}}”来自更新版本的 Tavotto，这个版本打不开。",
-        "unavailable": "上次的排版暂时没打开。"
+        "unavailable": "暂时接不上上次的排版。"
       }
     },
     "runtimePanel": {
@@ -7353,7 +7355,7 @@ export default interface Resources {
       "importPackage": "导入项目包…",
       "insertShape": "插入形状",
       "issueAria": "排版状态：{{status}}。查看详情",
-      "issueLastDoc": "上次的排版没打开",
+      "issueLastDoc": "没接上上次的排版",
       "issueTooNew": "排版版本较新",
       "more": "更多",
       "moreGroup": {

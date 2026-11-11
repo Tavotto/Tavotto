@@ -217,6 +217,16 @@ describe('A22 / A33：终局与 native', () => {
     }
   })
 
+  it('上次的排版找不到、也没有别的可接：交接不等用户——静默开新排版，图照常落进去', async () => {
+    be.setLast('p_a', 'd_gone', '丢了的排版')
+    const app = await boot()
+    await app.doc.restoreSession()
+    expect(app.doc.getRestoreGate().state).toBe('needs_user')
+    expect(await app.handoff.applyOpenRequest({ stem: 'Fig1' })).toBe('placed')
+    expect(panelsOf(app)).toHaveLength(1)
+    expect(app.doc.getRestoreGate()).toMatchObject({ state: 'ready', reason: 'continued_new' })
+  })
+
   it('URL 交接整个页面生命周期只认一次：StrictMode 双挂载不重放，也不丢', async () => {
     const app = await boot()
     window.history.replaceState(null, '', '/?open=Fig1&native=n_9')
@@ -332,18 +342,95 @@ describe('用户级入口在恢复中排队（素材卡双击 / 加入排版 / �
     await vi.waitFor(() => expect(panelsOf(app)).toHaveLength(1))
   })
 
-  it('needs_user：直接拒掉并说一句，不排队——用户选了出口之后也不会补一个', async () => {
+  // ADR 0120 修订（2026-11-10）：恢复没成时用户动了手，动作记住、出口之后执行——不再拒掉让用户重做
+  it('needs_user（暂时读不到）：动作记住并自动再试一次；后端好了 → 图落进恢复出来的那份排版', async () => {
     seedSaved()
     be.state.failGetDoc.set('d_saved', 500)
     const app = await setAssets(await boot())
     const ws = await import('@/store/workspace')
     await app.doc.restoreSession()
     expect(app.doc.getRestoreGate().state).toBe('needs_user')
-    expect(ws.addFigureToLayout('Fig1.pdf')).toBe('blocked')
-    expect(ws.openFastEdit('Fig1.pdf')).toBe('blocked')
-    expect(statusKey(app)).toBe('restore.blockedWrite')
-    await app.restore.continueNew()
+    be.state.failGetDoc.clear()
+    expect(ws.addFigureToLayout('Fig1.pdf')).toBe('deferred')
+    await vi.waitFor(() => expect(app.doc.getRestoreGate()).toMatchObject({ state: 'ready', reason: 'restored' }))
+    // 那份排版里本来就有这张图：加入排版 = 聚焦它，不叠第二个面板
+    await vi.waitFor(() => expect(panelsOf(app).map((p) => p.id)).toEqual(['panel_saved']))
+    expect(app.doc.useDocumentStore.getState().documentId).toBe('d_saved')
+  })
+
+  it('needs_user（暂时读不到）：自动再试仍不成 → 只再试一次，说一句去画布上选；选「继续新建」后记住的动作接着做', async () => {
+    seedSaved()
+    be.state.failGetDoc.set('d_saved', 500)
+    const app = await setAssets(await boot())
+    const ws = await import('@/store/workspace')
+    await app.doc.restoreSession()
+    const gets = () => be.state.calls.filter((c) => c === 'GET session').length
+    const before = gets()
+    expect(ws.addFigureToLayout('Fig1.pdf')).toBe('deferred')
+    await vi.waitFor(() => expect(statusKey(app)).toBe('restore.heldChoose'))
+    expect(app.doc.getRestoreGate().state).toBe('needs_user')
+    expect(gets()).toBe(before + 1)
+    expect(app.restore.heldEntryCount()).toBe(1)
+    // 再动一次手：不再自动重试，动作同样记住
+    expect(ws.openFastEdit('Fig1.pdf')).toBe('deferred')
     await new Promise((r) => setTimeout(r, 20))
+    expect(gets()).toBe(before + 1)
+    expect(panelsOf(app)).toEqual([])
+    await app.restore.continueNew()
+    await vi.waitFor(() => expect(panelsOf(app)).toHaveLength(1))
+    expect(app.restore.heldEntryCount()).toBe(0)
+    expect(app.doc.getRestoreGate()).toMatchObject({ state: 'ready', reason: 'continued_new' })
+    // 旧排版一个字节不动
+    expect(JSON.parse(be.state.slots.get('d_saved')!.body).canvases[0].objects).toHaveLength(1)
+  })
+
+  it('needs_user（上次的排版找不到、也没有别的可接）：静默开一份新排版并说一句，图直接放进去', async () => {
+    be.setLast('p_a', 'd_gone', '丢了的排版')
+    const app = await setAssets(await boot())
+    const ws = await import('@/store/workspace')
+    await app.doc.restoreSession()
+    expect(app.doc.getRestoreGate().state).toBe('needs_user')
+    const issue = app.doc.useDocumentStore.getState().restoreIssue
+    expect(issue).toMatchObject({ kind: 'missing', alternatives: [] })
+    expect(ws.addFigureToLayout('Fig1.pdf')).toBe('deferred')
+    await vi.waitFor(() => expect(panelsOf(app)).toHaveLength(1))
+    expect(app.doc.getRestoreGate()).toMatchObject({ state: 'ready', reason: 'continued_new' })
+    await vi.waitFor(() => expect(statusKey(app)).toBe('restore.autoNew'))
+  })
+
+  it('needs_user（有别的排版可接）：不替用户挑旧稿——等用户选；打开另一份后图落进那一份', async () => {
+    // 上次那份（last）的正文没了；上一份（prev）还在——它是已验证的备选，但绝不自动打开
+    const other: ProjectDocument = emptyProject()
+    other.project.name = '另一份'
+    other.updatedAt = 50
+    be.putSlot('d_other', other, 'p_a')
+    be.session('p_a').prev = { doc_id: 'd_other', name: '另一份', at: 3 }
+    be.setLast('p_a', 'd_gone', '丢了的排版')
+    const app = await setAssets(await boot())
+    const ws = await import('@/store/workspace')
+    await app.doc.restoreSession()
+    const issue = app.doc.useDocumentStore.getState().restoreIssue!
+    expect(issue.alternatives.map((a) => a.id)).toContain('d_other')
+    expect(ws.addFigureToLayout('Fig1.pdf')).toBe('deferred')
+    await vi.waitFor(() => expect(statusKey(app)).toBe('restore.heldChoose'))
+    expect(app.doc.getRestoreGate().state).toBe('needs_user')
+    expect(panelsOf(app)).toEqual([])
+    await app.restore.openAlternative('d_other')
+    await vi.waitFor(() => expect(panelsOf(app)).toHaveLength(1))
+    expect(app.doc.useDocumentStore.getState().documentId).toBe('d_other')
+  })
+
+  it('needs_user 期间记住的动作，切了项目才丢：说一句，不往新项目放', async () => {
+    seedSaved()
+    be.state.failGetDoc.set('d_saved', 500)
+    const app = await setAssets(await boot())
+    const ws = await import('@/store/workspace')
+    await app.doc.restoreSession()
+    expect(ws.addFigureToLayout('Fig1.pdf')).toBe('deferred')
+    await vi.waitFor(() => expect(statusKey(app)).toBe('restore.heldChoose'))
+    await app.proj.useProjectStore.getState().adoptOpenedProject({ open: true, id: 'p_b', figures_dir: '/figs/b' })
+    expect(statusKey(app)).toBe('restore.entrySuperseded')
+    expect(app.restore.heldEntryCount()).toBe(0)
     expect(panelsOf(app)).toEqual([])
   })
 
