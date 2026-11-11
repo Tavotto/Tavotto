@@ -4116,6 +4116,8 @@ export interface AiRunRequest {
   scope?: string
   target?: string
   canvas?: string | null
+  /** 项目按期刊检查时的期刊要求摘要（`lib/journalAi`）；后端写成提示词里的一句。没有 = 不带 */
+  journal?: import('./journalAi').JournalAiContext
   /**
    * 点「发送」时生成的请求 id（UUID），与后端 `api_ai_run` 的 `client_request_id` 同名同义：
    * 同 (项目, id) 再 POST 后端返回既有会话、不再 spawn。重发「同一条」必须带同一个 id；

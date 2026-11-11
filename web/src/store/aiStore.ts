@@ -36,6 +36,16 @@ import {
 import { PRODUCT_NAME } from '@/lib/brand'
 import { parseRenames, type IdentityRename, type RebindDirection } from '@/lib/overrideIdentity'
 import type { DraftTarget, LedgerWrite } from '@/lib/aiDraft'
+import { journalAiContext, type JournalAiContext } from '@/lib/journalAi'
+import { journalCatalogUi } from '@/lib/journalUi'
+import { useDocumentStore } from './documentStore'
+
+/** 发给改图助手的期刊上下文（只读此刻文档的绑定；期刊入口关着时不带） */
+function journalField(): { journal?: JournalAiContext } {
+  if (!journalCatalogUi()) return {}
+  const j = journalAiContext(useDocumentStore.getState().doc.profile)
+  return j ? { journal: j } : {}
+}
 
 export type AiStatus = 'running' | 'done' | 'failed' | 'timeout' | 'cancelled' | 'reverted'
 /** 改动作用范围：决定发给后端的上下文粒度（gid/label 怎么拼） */
@@ -1570,6 +1580,8 @@ async function dispatch(rid: string, born: number): Promise<SubmitOutcome> {
         scope: sub.target.scope,
         target: sub.target.target,
         canvas: sub.canvas,
+        // 项目按期刊检查：带上期刊要求摘要，「按投稿要求改」时 Agent 有据可依（开关关着 / 没按期刊 = 不带）
+        ...journalField(),
         client_request_id: rid,
       },
       sub.project,

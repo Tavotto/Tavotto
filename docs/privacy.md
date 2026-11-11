@@ -200,6 +200,8 @@ AI the user chose, in one of two ways:
 
 What is sent is the user's instruction plus whatever the assistant reads from the
 project to do the job, which can include the script and files in the project folder.
+When the project is checked against a journal, the request also carries that journal's
+name and figure requirements (font sizes, fonts, line width, figure widths, resolution).
 Tavotto itself does not upload AI prompts, responses or diffs anywhere (see "Data
 Tavotto does not upload"). The AI service, or the command-line tool in the first
 case, has its own network, account and privacy behavior and is not a background

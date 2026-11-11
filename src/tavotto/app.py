@@ -14316,6 +14316,8 @@ def _ai_run_impl():
         "scope": body.get("scope"),
         "target": body.get("target"),
         "canvas": body.get("canvas"),
+        # 项目按期刊检查时前端给的期刊要求摘要；形状由 `ai_prompt_pack.journal_context` 把关，不对就整段不写
+        "journal": body.get("journal"),
     }
     ctx = current_ctx()
     agent, model, endpoint_id, refused = _apply_connection(
