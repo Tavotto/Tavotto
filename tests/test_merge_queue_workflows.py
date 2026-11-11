@@ -3085,12 +3085,14 @@ class TestTauriAptCache:
                 encoding="utf-8",
             )
 
+        mirror_hosts = {"azure.archive.ubuntu.com", "archive.ubuntu.com", "mirrors.edge.kernel.org"}
+
         def ubuntu_hosts() -> set[str]:
             hosts = set()
             for name in ("apt-mirrors.txt", "legacy.list"):
                 for word in (etc / name).read_text().split():
                     host = urlsplit(word).hostname if word.startswith("http") else None
-                    if host and ("ubuntu.com" in host or host == "mirrors.edge.kernel.org"):
+                    if host in mirror_hosts:
                         hosts.add(host)
             return hosts
 
