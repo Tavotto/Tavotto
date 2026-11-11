@@ -171,6 +171,19 @@ export interface FigureOrigin {
   patches: PanelOverride[]
 }
 
+/**
+ * native-manifest/2 计算框的持久记号：只存布局落位（`originPt` 是渲染外框
+ * `rect_pt` 在源 viewport pt 坐标里的左上角）与 profile，**不存第二份科学模型**——
+ * 模型与绑定仍只在 `PanelObject.chart`。形状判据的唯一出处是引擎
+ * `engine/chartframe.py`（前端消费方 `lib/chartFrame.ts`）；缺席 = 面板仍是
+ * native-manifest/1 的 source viewport 落位。旧前端读到会忽略。
+ */
+export interface PanelChartFrame {
+  version: 1
+  renderProfile: 'native-manifest/2'
+  originPt: [number, number]
+}
+
 export interface PanelObject extends ObjectBase {
   type: 'panel'
   fileId: string
@@ -205,6 +218,12 @@ export interface PanelObject extends ObjectBase {
    */
   chart?: PanelChartState
   chartSource?: ChartSourceRef
+  /**
+   * native-manifest/2 计算框的布局落位（见 `PanelChartFrame`）：只持久
+   * origin/profile，科学语义仍只在 `chart`。旧前端读到会忽略——面板退化为
+   * /1 的 source viewport 预览，不丢数据。
+   */
+  chartFrame?: PanelChartFrame
   /**
    * 锁定的图内元素 gid：画布命中测试跳过它们，避免误选误拖。
    * 只影响交互，不影响渲染与导出；元素树里仍可选中（用于解锁）。

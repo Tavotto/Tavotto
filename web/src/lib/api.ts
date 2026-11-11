@@ -14,6 +14,7 @@ import type { Remedy } from '@/lib/fixRemedy'
 import type { FigureExecutionProof } from '@/lib/figureExecutionProof'
 import type { ChartSourceRef, FigureDocument, FigureOrigin, FigureSnapshot, PanelChartState, ProjectDocument } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
+import type { ComputedRenderFrame } from '@/lib/chartFrame'
 import type { IdentityRename } from '@/lib/overrideIdentity'
 import type { PreviewMetadata } from '@/lib/previewBudget'
 import type { ScriptArgsSchema } from '@/lib/scriptArgsForm'
@@ -2100,7 +2101,7 @@ export type ExportObject =
       figure_origin?: FigureOrigin
       chart?: PanelChartState
   chart_source?: ChartSourceRef
-      chart_render_profile?: 'legacy-scaffold/1' | 'native-manifest/1'
+      chart_render_profile?: 'legacy-scaffold/1' | 'native-manifest/1' | 'native-manifest/2'
       id: string
       overrides?: { gid: string; prop: string; value: unknown; identity?: string }[]
       /** 0–1 归一化、top-origin，与 PanelObject.crop 同构，原样直传 */
@@ -2177,7 +2178,7 @@ export type ExportOriginalSource = ArtifactRequestFields & {
   figure_origin?: FigureOrigin
   chart?: PanelChartState
   chart_source?: ChartSourceRef
-  chart_render_profile?: 'legacy-scaffold/1' | 'native-manifest/1'
+  chart_render_profile?: 'legacy-scaffold/1' | 'native-manifest/1' | 'native-manifest/2'
   overrides?: { gid: string; prop: string; value: unknown; identity?: string }[]
   w_mm?: number | null
   h_mm?: number | null
@@ -3108,6 +3109,12 @@ export interface Manifest {
   save_moment?: 'restored'
   /** 快照没用上的原因（闭集，`figcapture.SAVE_MOMENT_REASONS`）；只用来区分文案之外的诊断，界面照旧说「与存盘文件不同」。 */
   save_moment_unavailable?: string
+  /**
+   * native-manifest/2（计算图表）才有：这次实际 SVG draw 的外框声明（闭式形状
+   * 判据的唯一出处是引擎 `engine/chartframe.py`，前端消费方 `lib/chartFrame.ts`）。
+   * /1 与老引擎不发它。
+   */
+  render_frame?: ComputedRenderFrame
 }
 
 export interface EngineRenderResponse {

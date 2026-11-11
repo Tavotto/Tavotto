@@ -512,16 +512,8 @@ class _Translator:
 
         return bool(parts) and match(el, len(parts) - 1)
 
-    def _style(self, el, parent):
-        result = {k: v for k, v in parent.items() if k in _INHERITED}
-        # SVG's UA rule clips non-root svg/symbol viewports. Overflow is not
-        # inherited, but explicit inherit must see the parent's computed value.
-        default_overflow = (
-            "hidden"
-            if _tag(el) == "symbol" or (_tag(el) == "svg" and el is not self.root)
-            else "visible"
-        )
-        result["overflow"] = default_overflow
+    def cascade_declarations(self, el):
+        """Winning explicit declarations, before inheritance/default resolution."""
         own, priorities = {}, {}
 
         def apply(declarations, specificity, order):
@@ -540,6 +532,19 @@ class _Translator:
             if self._matches(el, selector):
                 apply(declarations, (0, *spec), order)
         apply(_declarations(el.get("style", "")), (1, 0, 0, 0), 0)
+        return own
+
+    def _style(self, el, parent):
+        result = {k: v for k, v in parent.items() if k in _INHERITED}
+        # SVG's UA rule clips non-root svg/symbol viewports. Overflow is not
+        # inherited, but explicit inherit must see the parent's computed value.
+        default_overflow = (
+            "hidden"
+            if _tag(el) == "symbol" or (_tag(el) == "svg" and el is not self.root)
+            else "visible"
+        )
+        result["overflow"] = default_overflow
+        own = self.cascade_declarations(el)
         for k, v in own.items():
             if k == "overflow" and v in ("unset", "revert", "revert-layer"):
                 result[k] = "visible" if v == "unset" else default_overflow

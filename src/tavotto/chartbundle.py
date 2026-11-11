@@ -181,7 +181,7 @@ def _render_state(
 ) -> tuple[str, list[dict]]:
     try:
         profile = chartprofile.validate_profile(render_profile)
-        if version2 or profile == chartprofile.NATIVE_PROFILE:
+        if version2 or profile in chartprofile.NATIVE_PROFILES:
             _keys(chart, {"model", "binding"}, "chart")
             raw = _json_bytes({**chart, "render_profile": profile, "overrides": overrides})
             if len(raw) > MAX_CHART_BYTES:
@@ -227,7 +227,7 @@ def embed_chart(
         },
         "rendered": {"canonical_sha256": _visible_digest(root)},
     }
-    if profile == chartprofile.NATIVE_PROFILE:
+    if profile in chartprofile.NATIVE_PROFILES:
         payload.update(schema=BUNDLE_SCHEMA_V2, render_profile=profile, overrides=edits)
     raw = _json_bytes(payload)
     if len(raw) > MAX_PAYLOAD_BYTES:

@@ -146,13 +146,29 @@ def test_native_chart_invalid_edits_are_not_silently_filtered_or_defaulted(scope
 
 
 @pytest.mark.parametrize("scope", ["original", "canvas", "merge"])
-@pytest.mark.parametrize("profile", [None, "native", "native-manifest/2", True])
+@pytest.mark.parametrize("profile", [None, "native", "native-manifest/3", True])
 def test_export_rejects_unknown_chart_render_profile(scope, profile):
+    # native-manifest/2 自本步起是受支持 profile（PROFILES 扩容，exportreq
+    # 共享同一闭集）；仍不存在的 /3 继续钉「闭集外拒收」。
     spec, target = _native_chart_spec(scope)
     target["chart_render_profile"] = profile
     with pytest.raises(exportreq.ExportRequestError) as caught:
         exportreq.normalize(spec)
     assert caught.value.code == "chart_model_unsupported"
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas", "merge"])
+def test_export_accepts_native_manifest_2_chart_render_profile(scope):
+    """PROFILES 扩容后 exportreq.validate_profile 自动收 /2（PLAN §一：不加码，加测试）。"""
+    spec, target = _native_chart_spec(scope)
+    target["chart_render_profile"] = chartprofile.COMPLETE_PROFILE
+    normalized = exportreq.normalize(spec)
+    if scope == "canvas":
+        assert normalized.canvas.objects[0]["chart_render_profile"] == (
+            chartprofile.COMPLETE_PROFILE
+        )
+    else:
+        assert normalized.original.chart_render_profile == chartprofile.COMPLETE_PROFILE
 
 
 @pytest.mark.parametrize("scope", ["original", "canvas", "merge"])

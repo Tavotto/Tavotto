@@ -27,12 +27,13 @@ def validate(edits, **kwargs):
 def test_known_profiles_and_legacy_identity_are_explicit():
     assert profile.validate_profile(profile.LEGACY_PROFILE) == "legacy-scaffold/1"
     assert profile.validate_profile(profile.NATIVE_PROFILE) == "native-manifest/1"
+    assert profile.validate_profile(profile.COMPLETE_PROFILE) == "native-manifest/2"
     assert profile.identity(BASE, profile.LEGACY_PROFILE) == BASE
     assert profile.identity(BASE, profile.LEGACY_PROFILE, []) == BASE
     assert profile.identity(BASE, profile.NATIVE_PROFILE, []) != BASE
 
 
-@pytest.mark.parametrize("unknown", [None, True, 1, {}, [], "native-manifest/2", "native", ""])
+@pytest.mark.parametrize("unknown", [None, True, 1, {}, [], "native-manifest/3", "native", ""])
 def test_unknown_profile_never_selects_an_existing_renderer(unknown):
     with pytest.raises(profile.ChartProfileError, match="chart_model_unsupported"):
         profile.validate_profile(unknown)

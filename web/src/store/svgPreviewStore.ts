@@ -644,8 +644,8 @@ function writeTransform(op: Extract<PendingOp, { kind: 'transform' }>): void {
     const own = op.scale
       ? (() => {
           const { s: k, ox, oy } = op.scale
-          const e = ox * vb[0] * (1 - k) + tx
-          const f = oy * vb[1] * (1 - k) + ty
+          const e = ((basis.originX ?? 0) + ox * vb[0]) * (1 - k) + tx
+          const f = ((basis.originY ?? 0) + oy * vb[1]) * (1 - k) + ty
           return `matrix(${k},0,0,${k},${e},${f})`
         })()
       : `translate(${tx},${ty})`

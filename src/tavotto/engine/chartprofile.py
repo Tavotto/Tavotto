@@ -15,7 +15,9 @@ from . import chartmodel, patchspec
 
 LEGACY_PROFILE = "legacy-scaffold/1"
 NATIVE_PROFILE = "native-manifest/1"
-PROFILES = frozenset({LEGACY_PROFILE, NATIVE_PROFILE})
+COMPLETE_PROFILE = "native-manifest/2"
+NATIVE_PROFILES = frozenset({NATIVE_PROFILE, COMPLETE_PROFILE})
+PROFILES = frozenset({LEGACY_PROFILE, *NATIVE_PROFILES})
 MAX_STATE_BYTES = SVGBudget().max_text_chars // 2
 MAX_JSON_DEPTH = 64
 MAX_JSON_NODES = SVGBudget().max_expanded_elements

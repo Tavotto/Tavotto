@@ -229,6 +229,21 @@ def test_native_v2_roundtrip_retains_explicit_profile_and_complete_original_edit
     assert edits == before
 
 
+def test_native_v2_complete_profile_roundtrip_is_accepted():
+    """native-manifest/2 自本步起是受支持 profile：包层接受并原样保留身份。"""
+    edits = [{"gid": "axes_0.lines_0", "prop": "color", "value": "red"}]
+    exported = embed_chart(
+        RENDERED, SOURCE, chart(), render_profile=chartprofile.COMPLETE_PROFILE, overrides=edits
+    )
+    payload = _payload(exported)
+    assert payload["schema"] == chartbundle.BUNDLE_SCHEMA_V2
+    assert payload["render_profile"] == chartprofile.COMPLETE_PROFILE
+    restored = extract_chart(exported)
+    assert restored.render_profile == chartprofile.COMPLETE_PROFILE
+    assert restored.overrides == edits
+    assert restored.chart == chart()
+
+
 @pytest.mark.parametrize("missing", ["render_profile", "overrides"])
 def test_v2_cannot_silently_default_a_missing_render_contract(missing):
     exported = native_bundle()
@@ -241,7 +256,9 @@ def test_v2_cannot_silently_default_a_missing_render_contract(missing):
 @pytest.mark.parametrize(
     "updates,code",
     [
-        ({"render_profile": "native-manifest/2"}, "chart_model_unsupported"),
+        # native-manifest/2 自本步起是受支持 profile（NATIVE_PROFILES），换成
+        # 仍不存在的 /3 继续钉「闭集外拒收」这条不变量。
+        ({"render_profile": "native-manifest/3"}, "chart_model_unsupported"),
         ({"render_profile": {"module": "evil"}}, "chart_model_unsupported"),
         ({"overrides": None}, "chart_model_invalid"),
         (

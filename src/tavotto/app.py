@@ -1372,6 +1372,7 @@ def _chart_scaffold_via_worker(
         "paint_order_overrides",
         "warnings",
         "unrestored",
+        "render_frame",
     ):
         if key in payload:
             result[key] = payload[key]
@@ -1458,6 +1459,7 @@ class _ChartSnapshot:
     overrides: list = dataclasses.field(default_factory=list)
     manifest: dict | None = None
     composition: dict | None = None
+    render_frame: dict | None = None
 
 
 def _read_chart_source(path: Path) -> bytes:
@@ -1646,7 +1648,7 @@ def _render_chart_snapshot(
                         "chart_engine_mismatch", f"engine {key} does not match the model", {}
                     )
             _assert_chart_source(path, source_sha)
-            if requested_profile == chartprofile.NATIVE_PROFILE:
+            if requested_profile in chartprofile.NATIVE_PROFILES:
                 combined = svgcompose.compose_native_scene(source, binding, result, model)
                 composition = combined.get("composition") or {}
                 if (
@@ -1710,6 +1712,7 @@ def _render_chart_snapshot(
         edits,
         scaffold.get("manifest"),
         scaffold.get("composition"),
+        scaffold.get("render_frame"),
     )
 
 
@@ -1769,6 +1772,7 @@ def api_svg_chart_compute():
             "model_digest": chartmodel.digest_of(model),
             "binding_digest": chartmodel.digest_of(binding),
             "engine": snapshot.engine,
+            "render_frame": snapshot.render_frame,
             **({"manifest": snapshot.manifest} if snapshot.manifest is not None else {}),
         }
     )
@@ -1788,7 +1792,11 @@ def _api_chart_render_body(body, *, png: bool = False):
         return jsonify({"code": "chart_model_invalid", "error": "id is required"}), 422
     # A的来源驱动重建与B的显式声明式计算不能在一次请求里互相冒充。
     _refuse_artifact_policy(body.get("source_policy"), body.get("expected_source"))
-    if body.get("render_profile", chartprofile.NATIVE_PROFILE) != chartprofile.NATIVE_PROFILE:
+    if (
+        not isinstance(body.get("render_profile", chartprofile.NATIVE_PROFILE), str)
+        or body.get("render_profile", chartprofile.NATIVE_PROFILE)
+        not in chartprofile.NATIVE_PROFILES
+    ):
         return jsonify({"code": "chart_model_unsupported", "error": "native profile required"}), 422
     width = None
     with_manifest = body.get("with_manifest", False)
@@ -1815,7 +1823,7 @@ def _api_chart_render_body(body, *, png: bool = False):
         snapshot = _render_chart_snapshot(
             rel_id,
             body.get("chart"),
-            render_profile=chartprofile.NATIVE_PROFILE,
+            render_profile=body.get("render_profile", chartprofile.NATIVE_PROFILE),
             overrides=body.get("patches", []),
             **({"chart_source": body["chart_source"]} if "chart_source" in body else {}),
         )
@@ -1852,6 +1860,7 @@ def _api_chart_render_body(body, *, png: bool = False):
                 "manifest": snapshot.manifest,
                 "warnings": [],
                 "unrestored": 0,
+                "render_frame": snapshot.render_frame,
                 "preview": previewbudget.metadata(
                     svg_bytes=len(snapshot.svg), mode=mode, reason=reason, estimated_nodes=count
                 ),
@@ -3355,7 +3364,12 @@ def _freeze_document_sources(document: dict, *, capture_figures: bool = True) ->
             snapshot = _render_chart_snapshot(
                 obj["fileId"],
                 obj["chart"],
-                render_profile=chartprofile.NATIVE_PROFILE,
+                # 显式值优先（含 /2，合法性交 validate_profile 判定）；旧文档缺字段维持 /1。
+                render_profile=(
+                    obj["chart_render_profile"]
+                    if obj.get("chart_render_profile") is not None
+                    else chartprofile.NATIVE_PROFILE
+                ),
                 overrides=obj.get("overrides", []),
                 **({"chart_source": obj["chartSource"]} if "chartSource" in obj else {}),
             )
@@ -3919,7 +3933,14 @@ def _chart_canonical(snapshot: _ChartSnapshot, tmp_dir: Path):
     provider = rc_facade.provider()
     files = {}
     page, notes = svg_to_ir(
-        snapshot.svg, snapshot.scene["w_pt"], snapshot.scene["h_pt"], provider, files=files
+        snapshot.svg,
+        *(
+            snapshot.render_frame["rect_pt"][2:]
+            if snapshot.render_frame is not None
+            else (snapshot.scene["w_pt"], snapshot.scene["h_pt"])
+        ),
+        provider,
+        files=files,
     )
     stem = "chart-" + snapshot.render_revision
     pdf_path, svg_path = tmp_dir / (stem + ".pdf"), tmp_dir / (stem + ".svg")
@@ -6091,7 +6112,12 @@ def _api_chart_package_install():
                     _render_chart_snapshot(
                         obj["fileId"],
                         obj["chart"],
-                        render_profile=chartprofile.NATIVE_PROFILE,
+                        # 与 _freeze_document_sources 同源：显式值优先，缺省维持 /1。
+                        render_profile=(
+                            obj["chart_render_profile"]
+                            if obj.get("chart_render_profile") is not None
+                            else chartprofile.NATIVE_PROFILE
+                        ),
                         overrides=obj.get("overrides", []),
                         chart_source=obj["chartSource"],
                         source_storage=stage / engine_config.PROJECT_STORE_DIRNAME,

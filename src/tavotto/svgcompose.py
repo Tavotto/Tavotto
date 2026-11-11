@@ -368,13 +368,17 @@ def _intersection(a, b):
     ]
 
 
-def _native_context(root, parent, resolver, size):
+def _native_context(root, parent, resolver, size, viewport_clip=None):
     """只消费现有 SVGIR 样式/clip 与 svgcoord CTM，不重测原生文字或路径。"""
     from tavotto.rendercore import ir, svgir
     from tavotto.svgcoord import apply, compose, node_matrix
 
     chain = [parent, *_ancestors(root, parent)]
-    opacity, clip, limits = 1.0, [0.0, 0.0, 1.0, 1.0], []
+    opacity, clip, limits = (
+        1.0,
+        list(viewport_clip) if viewport_clip is not None else [0.0, 0.0, 1.0, 1.0],
+        [],
+    )
     style = svgir._DEFAULT
     for owner in reversed(chain):
         style = resolver._style(owner, style)
@@ -724,14 +728,33 @@ def compose_native_scene(source_svg: bytes, binding: dict, scaffold: dict, model
             node.set("id", value)
             source_ids.add(value)
     resolver = svgir._Translator(scene, *size, None, None)
+    render_frame = scaffold.get("render_frame")
+    source_nodes = None
+    viewport_clip = None
+    if render_frame is not None:
+        from tavotto import chartframecompose
+        from tavotto.engine import chartframe
+
+        render_frame = chartframe.validate_frame(render_frame)
+        left, top, width, height = render_frame["rect_pt"]
+        viewport_clip = [left / size[0], top / size[1], width / size[0], height / size[1]]
+        source_nodes = chartframecompose.freeze_source_presentation(scene, resolver)
     contexts = {}
     placements = []
     limitations = []
     for entry, target in targets:
         parent = parents[target]
         if parent not in contexts:
-            contexts[parent] = _native_context(scene, parent, resolver, size)
+            contexts[parent] = _native_context(
+                scene,
+                parent,
+                resolver,
+                size,
+                **({"viewport_clip": viewport_clip} if render_frame is not None else {}),
+            )
         alpha, clip, limits = contexts[parent]
+        if render_frame is not None:
+            clip = chartframe.source_fraction_rect(render_frame, clip)
         transform = compose(invert(mapping), invert(node_matrix(scene, parent.get("id"))))
         placements.append(
             {
@@ -796,6 +819,8 @@ def compose_native_scene(source_svg: bytes, binding: dict, scaffold: dict, model
     for node in scene.iter():
         node.attrib.pop(_NATIVE_VIEWPORT_PT_ATTR, None)
         node.attrib.pop(_NATIVE_TARGETS_ATTR, None)
+        if render_frame is not None:
+            node.attrib.pop(chartframe.MARKER, None)
     source_id_map = isolate_svg(scene, prefix=prefix, owned_class=source_class)
     isolate_svg(fragment, prefix="", owned_class=native_class)
     root_defs = scene.find("s:defs", NS)
@@ -982,6 +1007,15 @@ def compose_native_scene(source_svg: bytes, binding: dict, scaffold: dict, model
     if warnings or unrestored:
         limitations.append("native_patch_unrestored")
     limitations = sorted(set(limitations))
+    if render_frame is not None:
+        scene = chartframecompose.envelope(
+            scene,
+            source_nodes,
+            render_frame,
+            source_size=size,
+            source_mapping=mapping,
+            source_view_box=vb,
+        )
     result = ET.tostring(scene, encoding="utf-8", xml_declaration=True)
     parse_svg(result)
     return {

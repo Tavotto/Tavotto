@@ -4,6 +4,9 @@ export interface SvgPreviewCoordinates {
   width: number
   height: number
   unitsPerPt: number
+  /** /2 fractions use render F, while target DOM coordinates remain physical S pt. */
+  originX?: number
+  originY?: number
 }
 
 const NATIVE_VIEWPORT = 'data-tavotto-native-viewport-pt'
@@ -26,6 +29,14 @@ export function svgPreviewCoordinates(
       if (parts.length !== 2 || !parts.every(part => POSITIVE_NUMBER.test(part))) return null
       const [width, height] = parts.map(Number)
       if (![width, height].every(n => Number.isFinite(n) && n > 0)) return null
+      const frame = node.getAttribute('data-tavotto-native-render-frame-pt')
+      if (frame !== null) {
+        const values = frame.trim().split(/\s+/).map(Number)
+        if (values.length !== 4 || !values.every(Number.isFinite)) return null
+        const [left, top, frameWidth, frameHeight] = values
+        if (left > 0 || top > 0 || frameWidth <= 0 || frameHeight <= 0 || left+frameWidth < width || top+frameHeight < height) return null
+        return { space: 'native-pt', width: frameWidth, height: frameHeight, unitsPerPt: 1, originX: left, originY: top }
+      }
       return { space: 'native-pt', width, height, unitsPerPt: 1 }
     }
     if (node === svg) break

@@ -302,6 +302,7 @@ def render_scaffold(
     stem: str = "chart",
     salt: str = "tavotto",
     coordinate_space: str = "viewbox-user",
+    complete_frame: bool = False,
 ) -> dict:
     """全新 scaffold Figure + 完整 patch 列表 → 配对 SVG/native manifest。
 
@@ -360,6 +361,24 @@ def render_scaffold(
         with runtime.manifest.capture_preview_manifest(state, stem) as measured:
             fig.savefig(stream, format="svg", metadata={"Date": None, "Creator": None})
             manifest = measured()
+            render_frame = None
+            if complete_frame:
+                from matplotlib.transforms import Bbox
+
+                from tavotto.engine import chartframe
+
+                if coordinate_space != "scene-viewport-pt":
+                    raise ChartManifestError("chart_manifest_frame_invalid", "complete_frame_space")
+                ink = next(
+                    (e.get("ink_bbox") for e in manifest["elements"] if e["gid"] == "figure"), None
+                )
+                render_frame = chartframe.from_ink(scene_size, ink)
+                left, top, width, height = render_frame["rect_pt"]
+                box = Bbox.from_bounds(
+                    left / 72, (scene_size[1] - top - height) / 72, width / 72, height / 72
+                )
+                with runtime.manifest.pathgeom.measured_output_frame(fig, box):
+                    manifest = measured()
     # SVG 的最终 draw 可以增加刻度；原生 measured 同步的是最终登记表。
     gid_roles = _owners(state, claims, runtime)
     fragment = strip_matplotlib_doctype(stream.getvalue())
@@ -413,6 +432,9 @@ def render_scaffold(
         "warnings": warnings,
         "unrestored": len(failed | state.unrestored),
     }
+    if render_frame is not None:
+        result["render_frame"] = render_frame
+        result["manifest"]["render_frame"] = copy.deepcopy(render_frame)
     if coordinate_space == "scene-viewport-pt":
         result["svg_members"] = _gid_svg_members(state, gid_roles, svg_ids, runtime)
         result["paint_order_overrides"] = [

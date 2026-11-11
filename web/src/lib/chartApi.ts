@@ -1,12 +1,13 @@
 // SVG 计算图表的服务调用（ADR 0166，SG10）。判据在后端（chartmodel/chartbind/
 // svgcompose）；这里只做形状化的请求/响应与稳定错误码透传，不做第二份判定。
-import type { ApiError } from './api'
+import type { ApiError, Manifest } from './api'
+import type { ComputedRenderFrame } from '@/lib/chartFrame'
 import { apiUrl, withProject } from '@/lib/session'
 import type { ChartBinding, ChartModel } from '../types/chartModel'
 import type { ChartSourceRef, PanelChartState, PanelOverride } from '../types/document'
 
 export interface ChartComputeOptions {
-  render_profile: 'native-manifest/1'
+  render_profile: 'native-manifest/1' | 'native-manifest/2'
   overrides: PanelOverride[]
   /** 重新绑定时由后端核对编辑的科学所有权；前端不按 gid 猜迁移。 */
   previous_chart?: PanelChartState | null
@@ -72,6 +73,10 @@ export interface ChartComputeResult {
   model_digest: string
   binding_digest: string
   engine: { matplotlib: string, numpy: string, tavotto: string }
+  /** native-manifest/2 才有：这次实际 draw 的外框声明（含在 manifest 内，顶层是稳定出口）。 */
+  render_frame?: ComputedRenderFrame
+  /** 引擎算出 manifest 时就有（native-manifest/1、/2 都发）；老引擎不发。 */
+  manifest?: Manifest
 }
 
 /** 稳定错误码从响应体透传（后端 ERROR_CODES / BindError / SceneError 闭集）。 */

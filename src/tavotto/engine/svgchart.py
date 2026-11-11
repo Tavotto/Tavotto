@@ -41,11 +41,24 @@ def scaffold_fragment(
 
     # Text 在构造时采 rcParams；不能等 savefig 时才关闭 TeX。
     with matplotlib.rc_context({"text.usetex": False, "savefig.bbox": None}):
-        return _scaffold_fragment(model, frame, salt=salt, native=True, patches=edits)
+        return _scaffold_fragment(
+            model,
+            frame,
+            salt=salt,
+            native=True,
+            patches=edits,
+            **({"complete_frame": True} if profile == chartprofile.COMPLETE_PROFILE else {}),
+        )
 
 
 def _scaffold_fragment(
-    model: dict, frame: dict, *, salt: str, native: bool = False, patches=()
+    model: dict,
+    frame: dict,
+    *,
+    salt: str,
+    native: bool = False,
+    patches=(),
+    complete_frame: bool = False,
 ) -> dict:
     """模型 + 场景框 → ``{"fragment": bytes, "facts": {...}}``。
 
@@ -233,6 +246,7 @@ def _scaffold_fragment(
             list(patches),
             salt=salt,
             coordinate_space="scene-viewport-pt",
+            **({"complete_frame": True} if complete_frame else {}),
         )
     else:
         fig.canvas.draw()  # realize transforms & locators（exp2 口径）
