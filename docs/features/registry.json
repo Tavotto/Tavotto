@@ -1113,6 +1113,22 @@
       ]
     },
     {
+      "id": "style.journal-adjust",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "按期刊调整样式：项目按期刊检查时，左栏样式面板列出不合期刊的字号 / 字体 / 线宽，一键调到期刊要求（一次撤销全回去）",
+        "en-US": "Adjust style to journal: when a project is checked against a journal, the Style panel lists font sizes, fonts and line widths that do not match and adjusts them in one undoable step"
+      },
+      "entry": "左栏 → 样式 → 跟随样式 → 按期刊调整",
+      "e2e": [
+        {
+          "spec": "journal-style.spec.ts",
+          "title": "按期刊调整样式：不合期刊的字号一键调到期刊范围，一次撤销全回去"
+        }
+      ]
+    },
+    {
       "id": "settings.appearance",
       "status": "active",
       "platform": "both",

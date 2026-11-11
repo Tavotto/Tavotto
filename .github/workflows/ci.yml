@@ -2751,6 +2751,9 @@ jobs:
         timeout-minutes: 35
         run: |
           pnpm install --frozen-lockfile
+          # `--with-deps` 自己跑 apt-get update，不经 install_tauri_linux_deps.sh 的换镜像；
+          # 先挑一个此刻连得上的 Ubuntu 镜像（azure 通就什么都不改）。
+          ../scripts/ci/apt_use_reachable_mirror.sh
           pnpm exec playwright install --with-deps chromium
           # 先让 Playwright 报出本 shard 的预期用例，再真正执行；
           # 注册表校验以计划的身份集合为主语，不许因为没有执行就悄悄漏报。

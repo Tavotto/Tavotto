@@ -122,6 +122,7 @@ import { DEFAULT_PROFILE_ID, type PublicationProfile } from "@/lib/profile";
 import { profileName } from "@/lib/profileText";
 import { useLocale } from "@/i18n/react";
 import { journalCatalogUi } from "@/lib/journalUi";
+import { applyJournalExport, journalExportAdvice } from "@/lib/journalExport";
 import {
   bindingFor,
   journalCarry,
@@ -161,7 +162,7 @@ import {
 import { useProfileStore } from "@/store/profileStore";
 import { useProjectStore } from "@/store/projectStore";
 import { useDocumentStore } from "@/store/documentStore";
-import { dialogCovered, EXPORT_DONE_DISMISS_MS, useUiStore } from "@/store/uiStore";
+import { askConfirm, dialogCovered, EXPORT_DONE_DISMISS_MS, useUiStore } from "@/store/uiStore";
 import { useWorkspaceStore } from "@/store/workspace";
 import { isRuntimePanel, type ArrowObject, type CanvasObject, type FigureDocument, type PanelObject, type ShapeObject, type TextObject } from "@/types/document";
 import type { ThumbObject } from "@/types/thumb";
@@ -333,6 +334,11 @@ export function ExportDialog() {
     () => readExportDefaults().formats,
   );
   const [ppi, setPpi] = useState(() => readExportDefaults().dpi);
+  /**
+   * 按期刊检查时导出初值跟着期刊走（`lib/journalExport`）：每个「文档 + 期刊」只套一次——之后用户在对话框里改的
+   * 格式 / 分辨率照常留着，不在每次打开时被期刊再冲掉一遍
+   */
+  const journalApplied = useRef<string | null>(null);
   const [filename, setFilename] = useState(doc.name);
   /** 用户亲手改过文件名（之后切范围不再替他换默认名） */
   const [filenameTouched, setFilenameTouched] = useState(false);
@@ -591,6 +597,10 @@ export function ExportDialog() {
   /** 这次生效的那套规范的 id：规范下拉的显示值、严格核验的 `profile_id` 都认它 */
   const checkProfileId =
     resolved.profileId ?? (checkOnActive ? profileId : DEFAULT_PROFILE_ID);
+  /** 这次检查的那张画布是不是按期刊选的（规范下拉据此多出期刊那一项） */
+  const checkJournal =
+    journalCatalogUi() &&
+    !!(checkOnActive ? doc.profile : canvases.find((c) => c.id === checkCanvasId)?.profile)?.journalRef;
   /** 这次按哪套规范查的（检查结论里说出来）；取名与问题面板的证据句同一做法 */
   const locale = useLocale();
   const checkSpecName = useMemo(() => {
@@ -643,6 +653,10 @@ export function ExportDialog() {
     setRevealError(null);
     setPickedFigureId(null);
     setProfileId(snap.profile?.id ?? readExportDefaults().profileId);
+    const advice = journalCatalogUi() ? journalExportAdvice(snap.profile) : null;
+    const journalKey = advice
+      ? `${useDocumentStore.getState().documentId}\u0000${snap.profile?.journalRef?.id ?? ""}`
+      : null;
     // 从「定位」/「查看问题」回来：把用户填过的东西原样还回去。换了文档不还
     const restore = parked.current;
     parked.current = null;
@@ -660,6 +674,13 @@ export function ExportDialog() {
       setTransparent(restore.transparent);
       setStrict(restore.strict);
       return;
+    }
+    if (journalKey && journalApplied.current !== journalKey) {
+      journalApplied.current = journalKey;
+      const d = readExportDefaults();
+      const next = applyJournalExport({ formats: d.formats, dpi: d.dpi }, advice);
+      setFormats(next.formats);
+      setPpi(next.dpi);
     }
     // scope 默认跟着当前工作流走，**但原图不可用时不静默改成画布**：
     // 那样用户会拿到一张他没要的图。可用性由下面那一行说出来
@@ -688,6 +709,8 @@ export function ExportDialog() {
     const d = readExportDefaults();
     setFormats(d.formats);
     setPpi(d.dpi);
+    // 后端那份默认值盖回来了：下次打开时期刊再套一次
+    journalApplied.current = null;
     setWithReport(d.withProof);
     setStrict(d.strictInspection);
   }, []);
@@ -713,6 +736,29 @@ export function ExportDialog() {
 
   /* -------------------------------- 检查 --------------------------------- */
   const raster = hasRaster(formats);
+  /** 期刊对导出的要求（气泡与分辨率选项用；初值在打开时已经套过） */
+  const journalAdvice = useMemo(
+    () => (journalCatalogUi() ? journalExportAdvice(doc.profile) : null),
+    [doc.profile],
+  );
+  /** 期刊列了接受的格式、却没列这一种：照样能勾，气泡里说一句 */
+  const unlisted = (f: ExportFormat) => !!journalAdvice?.listed && !journalAdvice.listed.has(f);
+  const withJournalNote = (f: ExportFormat, hint: string) =>
+    unlisted(f)
+      ? `${hint}\n${ex("journalUnlisted", { journal: journalAdvice!.journal, format: f.toUpperCase() })}`
+      : hint;
+  const ppiOptions = useMemo(() => {
+    const extra = journalAdvice?.dpi != null ? String(journalAdvice.dpi) : null;
+    const values: string[] = [...PPI_VALUES];
+    for (const v of [extra, ppi]) if (v && !values.includes(v)) values.push(v);
+    return values.sort((a, b) => Number(a) - Number(b));
+  }, [journalAdvice, ppi]);
+  const journalDpiNote = journalAdvice?.dpi != null
+    ? ex("journalDpi", {
+        journal: journalAdvice.journal,
+        detail: journalAdvice.dpiParts.map(([k, v]) => (k ? `${k} ${v}` : String(v))).join("\n"),
+      })
+    : null;
   // 只出 PDF 时这条规则自己就不出场（`exportContextRaw()` 先看格式里有没有
   // 位图）——**不在这里再判一次**：阈值与适用范围都归求值器，组件里加一层
   // "顺手的"守卫，就是两处判据分叉的起点
@@ -1062,9 +1108,20 @@ export function ExportDialog() {
   };
 
   /* -------------------------------- 动作 --------------------------------- */
-  const applyProfile = (id: string) => {
+  const applyProfile = async (id: string) => {
     // 规范绑定写在当前画布上；检查按的是别的画布时下拉是灰的，这里再挡一道
     if (!checkOnActive) return;
+    const entry0 = catalog.find((e) => e.id === id);
+    // 从期刊换走 = 期刊绑定整套放下（`journalCarry`）：与设置页同一句确认，不静默发生
+    const journalRef = journalCatalogUi() ? doc.profile?.journalRef : undefined;
+    if (journalRef && entry0) {
+      const ok = await askConfirm({
+        title: msg("profiles.leaveJournalTitle", { journal: journalRef.label }, "dialogs"),
+        body: msg("profiles.leaveJournalBody", { name: entry0.display_name }, "dialogs"),
+        confirmLabel: msg("profiles.leaveJournalConfirm", undefined, "dialogs"),
+      });
+      if (!ok) return;
+    }
     setProfileId(id);
     writeExportDefaults({ profileId: id });
     const entry = catalog.find((e) => e.id === id);
@@ -1883,20 +1940,23 @@ export function ExportDialog() {
                       checked={formats.includes("pdf")}
                       onChange={() => toggleFormat("pdf")}
                       format="pdf"
-                      hint={ex("pdfHint")}
+                      hint={withJournalNote("pdf", ex("pdfHint"))}
+                      flagged={unlisted("pdf")}
                     />
                     <FormatCheck
                       checked={formats.includes("png")}
                       onChange={() => toggleFormat("png")}
                       format="png"
-                      hint={ex("pngHint")}
+                      hint={withJournalNote("png", ex("pngHint"))}
+                      flagged={unlisted("png")}
                     />
                     {/* EPS 只在「原图 + 有脚本」时给得出：不可用就禁用并说原因，不藏 */}
                     <FormatCheck
                       checked={formats.includes("eps") && eps.ok}
                       onChange={() => toggleFormat("eps")}
                       format="eps"
-                      hint={eps.ok ? ex("epsHint") : ex(`epsUnavailable.${eps.reason}`)}
+                      hint={eps.ok ? withJournalNote("eps", ex("epsHint")) : ex(`epsUnavailable.${eps.reason}`)}
+                      flagged={eps.ok && unlisted("eps")}
                       disabled={!eps.ok}
                       describedBy={formats.includes("eps") && !eps.ok ? "export-eps-reason" : undefined}
                     />
@@ -1904,13 +1964,15 @@ export function ExportDialog() {
                       checked={formats.includes("tiff")}
                       onChange={() => toggleFormat("tiff")}
                       format="tiff"
-                      hint={ex("tiffHint")}
+                      hint={withJournalNote("tiff", ex("tiffHint"))}
+                      flagged={unlisted("tiff")}
                     />
                     <FormatCheck
                       checked={formats.includes("svg")}
                       onChange={() => toggleFormat("svg")}
                       format="svg"
-                      hint={ex("svgHint")}
+                      hint={withJournalNote("svg", ex("svgHint"))}
+                      flagged={unlisted("svg")}
                     />
                     <FormatCheck
                       checked={withScript && script.ok}
@@ -1956,13 +2018,20 @@ export function ExportDialog() {
                 <Select
                   value={String(ppi)}
                   onChange={setPpi}
-                  options={PPI_VALUES.map((v) => ({
+                  options={ppiOptions.map((v) => ({
                     value: v,
                     label: translate("measure.ppi", { value: v }),
                   }))}
                   ariaLabel={ex("ppiSelectLabel")}
                   className="w-56"
                 />
+                {journalDpiNote && (
+                  <Tip label={journalDpiNote} side="top" tone="light">
+                    <button type="button" data-export-journal-dpi aria-label={journalDpiNote} className="inline-flex shrink-0 text-ink-3">
+                      <Info size={ICON_SIZE.xs} aria-hidden />
+                    </button>
+                  </Tip>
+                )}
                 {pixels && (
                   <span id="export-pixel-preview" className="type-meta min-w-0 truncate tabular-nums">
                     {pixels}
@@ -2006,10 +2075,16 @@ export function ExportDialog() {
                   value={checkProfileId}
                   onChange={applyProfile}
                   disabled={!checkOnActive}
-                  options={catalog.map((p) => ({
-                    value: p.id,
-                    label: p.display_name,
-                  }))}
+                  options={[
+                    // 按期刊检查：期刊底不在规范清单里（ADR 0155 §2），没有这一项下拉就是空白的
+                    ...(checkJournal && !catalog.some((p) => p.id === checkProfileId)
+                      ? [{ value: checkProfileId, label: checkSpecName }]
+                      : []),
+                    ...catalog.map((p) => ({
+                      value: p.id,
+                      label: p.display_name,
+                    })),
+                  ]}
                   ariaLabel={ex("profileAria")}
                   /* 同一张表单里的下拉只有一种宽（全面打磨 D40） */
                   className="w-56"
@@ -3224,6 +3299,7 @@ function FormatCheck({
   hint,
   disabled = false,
   describedBy,
+  flagged = false,
 }: {
   checked: boolean;
   onChange: () => void;
@@ -3232,11 +3308,13 @@ function FormatCheck({
   disabled?: boolean;
   /** 禁用原因那段可见文字的 id */
   describedBy?: string;
+  /** 期刊没列出这种格式：名字右上角一个小圆点，原因在气泡里（不禁用） */
+  flagged?: boolean;
 }) {
   // 说明走应用自己的气泡（`Tip`），不用原生 `title`：灰掉的 `<input>` 不派发指针事件，停在复选框上原生提示永远不出，
   // 而「为什么灰」恰恰是灰掉时最要紧的那句。禁用时复选框不吃指针，悬停落到整行 label 上
   return (
-    <Tip label={hint} side="top">
+    <Tip label={hint} side="top" tone="light">
       <label
         data-export-format={format}
         data-export-format-hint={hint}
@@ -3253,7 +3331,17 @@ function FormatCheck({
           aria-describedby={describedBy}
           className={disabled ? "pointer-events-none" : undefined}
         />
-        <span>{format.toUpperCase()}</span>
+        {/* 期刊没列出：名字右上角一个小圆点（六格均分一行，放不下一枚图标），原因在气泡里 */}
+        <span className="relative">
+          {format.toUpperCase()}
+          {flagged && (
+            <span
+              data-export-format-journal-unlisted
+              aria-hidden
+              className="absolute -right-1.5 top-0.5 size-1 rounded-full bg-ink-3"
+            />
+          )}
+        </span>
       </label>
     </Tip>
   );

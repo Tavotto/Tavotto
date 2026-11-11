@@ -644,6 +644,8 @@ def test_on_success_only_glob_counts_not_the_exists_checks_of_ordinary_scripts(p
         },
     )()
     assert engine_pool.workdir_hint_of_build(worker) is None  # 先判再建的常规写法，不提示
+    # 一张图都没出：`if isdir("data"): plot()` 跳过了画图，目录探路也算证据（Codex #1846 P2）
+    assert engine_pool.workdir_hint_of_build(worker, captured=False)["probes"] == ["cache"]
     worker.last_build_probe_misses = [_glob("data/run_*.txt")]
     assert engine_pool.workdir_hint_of_build(worker)["probes"] == ["data/run_*.txt"]
     worker.last_build_probe_misses = None
@@ -712,3 +714,122 @@ def test_missing_stem_error_keeps_the_probe_misses_so_the_hint_survives_the_rebu
     assert err.workdir_hint["reason"] == workdir.REASON_SCRIPT_DIR_EVIDENCE
     worker.last_build_probe_misses = None
     assert engine_pool.missing_stem_error(worker, "p", []).workdir_hint is None
+
+
+# --------------------------------------------------------------- 没决定过：静默改在脚本目录里重跑（ADR 0047 修订）
+@needs_worker
+def test_an_undecided_project_reruns_in_the_script_dir_and_draws(figs):
+    """Guardian cl-0c29eca81d 的形状：用户什么都不用点，第一次就出图；证据记成派生默认，不是用户的决定。"""
+    (figs / "fig.py").write_text(HELPER_SCRIPT, encoding="utf-8")
+    assert not workdir.decided(figs)
+    worker, resp = engine_pool.build("fig.py", str(figs), "__main__")
+    assert sorted(resp.get("stems") or {}) == ["p"]
+    assert "[parts] 3" in worker._log_tail()
+    assert workdir.mode_for(figs) == workdir.MODE_PROJECT
+    assert workdir.implied_by(figs) == workdir.IMPLIED_BY_RUNTIME_EVIDENCE
+    assert not workdir.decided(figs), "观察到的事实，不冒充用户点过头"
+    grant = workdir.grant_for(figs)
+    assert grant["cwd_write"] == {"granted": True, "granted_at": None, "mode": "project"}
+    # 下一次直接在脚本目录里跑：沙盒里那一遍不再重复
+    engine_pool.shutdown_all(str(figs), wait=True)
+    worker, resp = engine_pool.build("fig.py", str(figs), "__main__")
+    assert sorted(resp.get("stems") or {}) == ["p"] and "probe_misses" not in resp
+
+
+@needs_worker
+def test_a_successful_build_whose_glob_came_back_empty_is_redone_in_the_script_dir(figs):
+    (figs / "fig.py").write_text(EMPTY_SCRIPT, encoding="utf-8")
+    _worker, resp = engine_pool.build("fig.py", str(figs), "__main__")
+    assert sorted(resp.get("stems") or {}) == ["q"]
+    assert workdir.implied_by(figs) == workdir.IMPLIED_BY_RUNTIME_EVIDENCE
+
+
+EXISTS_SCRIPT = """\
+import os
+import matplotlib.pyplot as plt
+
+
+def _has(name):
+    return os.path.isdir(name)
+
+
+if _has("data"):
+    fig, ax = plt.subplots()
+    ax.plot([1, 2, 3])
+    fig.savefig("r.png")
+"""
+
+
+@needs_worker
+def test_a_successful_build_that_skipped_plotting_on_an_exists_check_is_redone(figs):
+    """成功跑完、一张图都没出，证据只有 `isdir` 落空：同样静默改在脚本目录里重跑（Codex #1846 P2）。"""
+    (figs / "fig.py").write_text(EXISTS_SCRIPT, encoding="utf-8")
+    _worker, resp = engine_pool.build("fig.py", str(figs), "__main__")
+    assert sorted(resp.get("stems") or {}) == ["r"]
+    assert workdir.implied_by(figs) == workdir.IMPLIED_BY_RUNTIME_EVIDENCE
+
+
+def test_captured_any_only_widens_on_an_explicitly_empty_capture():
+    assert engine_pool._captured_any({"stems": {"p": {}}})
+    assert not engine_pool._captured_any({"stems": {}})
+    assert engine_pool._captured_any({}) and engine_pool._captured_any(None)
+
+
+@needs_worker
+def test_no_evidence_no_switch_and_the_error_stays_the_scripts_own(figs):
+    (figs / "fig.py").write_text(
+        HELPER_SCRIPT.replace("data/run_*.txt", "data/never_*.txt"), encoding="utf-8"
+    )
+    with pytest.raises(engine_pool.WorkerError) as err:
+        engine_pool.build("fig.py", str(figs), "__main__")
+    assert err.value.code == "script_error"
+    assert workdir.mode_for(figs) == workdir.MODE_SANDBOX
+    assert workdir.implied_by(figs) is None
+
+
+@needs_worker
+def test_choosing_the_sandbox_is_a_decision_the_evidence_never_overrides(figs):
+    (figs / "fig.py").write_text(HELPER_SCRIPT, encoding="utf-8")
+    engine_pool.build("fig.py", str(figs), "__main__")
+    assert workdir.implied_by(figs) == workdir.IMPLIED_BY_RUNTIME_EVIDENCE
+    # 用户在渲染环境里改回沙盒：从此按他的，错误照旧带「在脚本目录里运行」的入口
+    workdir.set_mode(figs, workdir.MODE_SANDBOX)
+    engine_pool.shutdown_all(str(figs), wait=True)
+    with pytest.raises(engine_pool.WorkerError) as err:
+        engine_pool.build("fig.py", str(figs), "__main__")
+    assert err.value.workdir_hint["recommended"] == workdir.MODE_PROJECT
+    assert workdir.mode_for(figs) == workdir.MODE_SANDBOX
+
+
+@needs_worker
+def test_an_undecided_project_reading_a_cwd_relative_parquet_draws(figs):
+    """Guardian cl-0fb5a738f0 的 G4 形状（C++ 读取器）。"""
+    if not _worker_has_pyarrow():
+        pytest.skip("worker 解释器没有 pyarrow")
+    pa = pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
+    pq.write_table(pa.table({"y": [1, 2, 3]}), str(figs / "cg_data.parquet"))
+    (figs / "fig.py").write_text(PARQUET_SCRIPT.format(name="cg_data.parquet"), encoding="utf-8")
+    _, resp = engine_pool.build("fig.py", str(figs), "__main__")
+    assert sorted(resp.get("stems") or {}) == ["p"]
+    assert workdir.implied_by(figs) == workdir.IMPLIED_BY_RUNTIME_EVIDENCE
+
+
+def test_adoption_needs_runtime_evidence_and_an_undecided_sandbox_project(tmp_path, monkeypatch):
+    root = tmp_path / "r"
+    root.mkdir()
+    runtime = {"source": "runtime", "recommended": "project"}
+    assert not workdir.adopt_runtime_evidence(root, None)
+    assert not workdir.adopt_runtime_evidence(root, {"recommended": "project"}), (
+        "首开的静态载荷不算"
+    )
+    workdir.set_mode(root, workdir.MODE_SANDBOX)
+    assert not workdir.adopt_runtime_evidence(root, runtime), "决定过沙盒"
+    workdir.forget(root)
+    monkeypatch.setattr(workdir, "_user_interpreter_probe", lambda r: True)
+    assert not workdir.adopt_runtime_evidence(root, runtime), "默认已经是脚本目录"
+    monkeypatch.setattr(workdir, "_user_interpreter_probe", lambda r: False)
+    assert workdir.adopt_runtime_evidence(root, runtime)
+    assert not workdir.adopt_runtime_evidence(root, runtime), "只换一次"
+    workdir.forget(root)
+    assert workdir.implied_by(root) is None and workdir.mode_for(root) == workdir.MODE_SANDBOX

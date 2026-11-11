@@ -4336,3 +4336,69 @@ describe('位图太大：改用不超上限的最大一档 dpi 重新导出（�
     expect(readExportDefaults().dpi).toBe('300')
   })
 })
+
+describe('按期刊检查时导出初值跟着期刊走（2026-11-11）', () => {
+  const bindActa = async () => {
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('按期刊'), (d) => {
+        d.profile = {
+          id: 'journal-base-v1',
+          journalRef: { id: 'acta-materialia', catalogRev: 1, retrieved: '2026-11-01', label: 'Acta Materialia' },
+          journalSources: {
+            'info.dpi_by_kind': { value: { halftone: 300, 'combination art': 500, 'line art': 1000 }, unset: false },
+            'info.formats_raw': { value: { preferred: ['EPS', 'PDF', 'TIFF', 'JPEG'], accepted: [] }, unset: false },
+          } as never,
+        }
+      })
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+  }
+
+  it('PDF + PNG → PDF + TIFF，分辨率取期刊最高档 1000；PNG 仍能勾，名字后有标记、气泡说期刊没列出', async () => {
+    await setup(9)
+    await bindActa()
+    expect(formatBox('PDF').checked).toBe(true)
+    expect(formatBox('PNG').checked).toBe(false)
+    expect(formatBox('TIFF').checked).toBe(true)
+    expect(formatBox('PNG').disabled).toBe(false)
+    const png = document.body.querySelector('[data-export-formats] [data-export-format="png"]')!
+    expect(png.querySelector('[data-export-format-journal-unlisted]')).not.toBeNull()
+    expect(png.getAttribute('data-export-format-hint')).toContain('Acta Materialia 未列出 PNG')
+    expect(document.body.querySelector('[data-export-format="pdf"] [data-export-format-journal-unlisted]')).toBeNull()
+    expect(document.body.querySelector('[data-export-journal-dpi]')?.getAttribute('aria-label')).toContain('line art 1000')
+    await click(button('开始导出')!)
+    expect(exportBodies.at(-1)!.ppi).toBe(1000)
+  })
+
+  it('同一文档同一期刊只套一次：用户改回 PNG 后再打开不被冲掉', async () => {
+    await setup(9)
+    await bindActa()
+    await click(formatBox('PNG'))
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+    expect(formatBox('PNG').checked).toBe(true)
+  })
+
+  it('「规范」下拉显示期刊名（期刊底不在清单里，此前是空白）', async () => {
+    await setup(9)
+    await bindActa()
+    const trigger = document.body.querySelector('[role="combobox"][aria-label="出版规范"]')
+    expect(trigger?.textContent).toContain('Acta Materialia')
+  })
+
+  it('没按期刊检查：初值与标记照旧', async () => {
+    await setup(9)
+    expect(formatBox('PNG').checked).toBe(true)
+    expect(document.body.querySelector('[data-export-format-journal-unlisted]')).toBeNull()
+    expect(document.body.querySelector('[data-export-journal-dpi]')).toBeNull()
+  })
+})

@@ -331,7 +331,9 @@
       "partial": "导出只完成了一部分，有文件没能写出。",
       "unknown": "找不到这次导出的作业，文件可能已写出。"
     },
-    "viewResult": "查看"
+    "viewResult": "查看",
+    "journalUnlisted": "{{journal}} 未列出 {{format}}",
+    "journalDpi": "{{journal}} 要求（dpi）\n{{detail}}"
   },
   "layout": {
     "conflict": "磁盘上已存在名为「{{name}}」的排版，由其他窗口或外部工具写入。",

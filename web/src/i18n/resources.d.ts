@@ -819,6 +819,8 @@ export default interface Resources {
         "failedItems": "核验未通过：{{items}}"
       },
       "jobLost": "找不到这次导出的作业。文件可能已写出，请检查导出目录或重新导出。",
+      "journalDpi": "{{journal}} 要求（dpi）\n{{detail}}",
+      "journalUnlisted": "{{journal}} 未列出 {{format}}",
       "locationChange": "更改…",
       "locationDefault": "项目的导出目录",
       "locationLabel": "位置",
@@ -6206,6 +6208,7 @@ export default interface Resources {
       "insertPreset": "插入{{name}}",
       "insertShape": "插入{{name}}",
       "insertSymbol": "插入符号 {{symbol}}",
+      "journalStyle": "按 {{journal}} 调整样式「{{name}}」",
       "legendDetach": "断开图例项与来源的跟随",
       "legendFollowSource": "图例项重新跟随来源",
       "lineEndpoint": "调整直线端点",
@@ -7348,6 +7351,16 @@ export default interface Resources {
       "groupLines": "线条",
       "groupText": "文字",
       "italicOf": "{{row}}倾斜",
+      "journalAdjust": "按期刊调整",
+      "journalAdjusted": "已按 {{journal}} 调整样式，可撤销",
+      "journalAnnotation": "画布文字",
+      "journalMismatch": "{{count}} 项不合 {{journal}}",
+      "journalProp": {
+        "fontfamily": "字体",
+        "fontsize": "字号",
+        "linewidth": "线宽"
+      },
+      "journalRetry": "再试一次",
       "load": "读取样式",
       "manage": "管理样式…",
       "mismatch_other": "{{count}} 处与样式不一致",

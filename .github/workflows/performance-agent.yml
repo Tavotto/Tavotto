@@ -100,7 +100,10 @@ jobs:
         working-directory: web
         env:
           PERF_BROWSER: ${{ inputs.browser || 'chromium' }}
-        run: pnpm exec playwright install --with-deps "$PERF_BROWSER"
+        # `--with-deps` 自己 apt-get update；先挑一个此刻连得上的 Ubuntu 镜像（同 ci.yml 的 posix-e2e）
+        run: |
+          ../scripts/ci/apt_use_reachable_mirror.sh
+          pnpm exec playwright install --with-deps "$PERF_BROWSER"
       - name: Run autonomous UI performance suite
         env:
           TAVOTTO_PYTHON: ${{ steps.py.outputs.python-path }}
