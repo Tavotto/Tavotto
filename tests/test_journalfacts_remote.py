@@ -245,6 +245,7 @@ def test_https_redirect_cannot_forward_device_token(tmp_path, monkeypatch):
             pass
 
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls.minimum_version = ssl.TLSVersion.TLSv1_2
     tls.load_cert_chain(str(cert["cert"]), str(cert["key"]))
     dst = ThreadingHTTPServer(("127.0.0.1", 0), Destination)
     dst.socket = tls.wrap_socket(dst.socket, server_side=True)
