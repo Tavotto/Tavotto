@@ -1,7 +1,7 @@
 import { containsChartState, documentAddressKey, documentFormatForSchema, documentNamespaceKey, type DocumentFormat } from '@/lib/documentFormat'
 import { captureChartSourceSave as captureSourceContext, planSavedChartSources, type ChartSourceReceipt, type ChartSourceSaveContext } from '@/lib/chartSourceReceipts'
 import { create } from 'zustand'
-import { sameFigureInputs, sameFigureOrigin, sameFigureSource, validFigureOrigin, validFigureSnapshot, type FigureSnapshotSaveContext } from '@/lib/figureSnapshot'
+import { figureOriginFor, sameFigureInputs, sameFigureOrigin, sameFigureSource, validFigureOrigin, validFigureSnapshot, verifiedFigureOrigin, type FigureSnapshotSaveContext } from '@/lib/figureSnapshot'
 import { figureExecutionOwnerKey } from '@/lib/capturedFigureSources'
 import { perfSpan } from '@/perf/core'
 import { enablePatches, produceWithPatches, type Patch } from 'immer'
@@ -150,7 +150,7 @@ export function registerOverrideStamper(fn: OverrideStamper): () => void {
  *   ——最常见的恢复——看起来和「原地改值」一模一样，推断不出来）。整次提交不抄，
  *   存的是什么就是什么，没带身份的也照旧不带（按位置，与引入身份之前一致）。
  */
-export type CommitOptions = { overrides?: 'edit' | 'restored'; undoAlso?: Recipe }
+export type CommitOptions = { overrides?: 'edit' | 'restored'; figureSources?: 'restored'; undoAlso?: Recipe }
 
 /** `produceWithPatches` + 身份抄写：两段补丁按时序拼成一份（反向补丁倒序）。 */
 function produceStamped(
@@ -163,7 +163,7 @@ function produceStamped(
   const stamp = opts?.overrides === 'restored' ? null : overrideStamper
   const [stamped, more, moreInverse] = produceWithPatches(next, (d) => {
     stamp?.(d, base, next)
-    clearChangedFigureSnapshots(d, base)
+    clearChangedFigureSnapshots(d, base, opts?.figureSources === 'restored')
   })
   return [stamped, [...patches, ...more], [...moreInverse, ...inverse]]
 }
@@ -854,7 +854,7 @@ export const useDocumentStore = create<DocumentState>((rawSet, get) => {
     if (opts?.discard || !txn.patches.length) {
       // 丢弃：把反向补丁打回去，恢复到事务开始前
       const rolledBack = history.rollback(doc, txn)
-      const [clean] = produceWithPatches(rolledBack, (d) => clearChangedFigureSnapshots(d, doc))
+      const [clean] = produceWithPatches(rolledBack, (d) => clearChangedFigureSnapshots(d, doc, true))
       set({ doc: clean, txn: null })
       recordDiagnosticEvent({
         type: 'transaction.cancel',
@@ -910,7 +910,7 @@ export const useDocumentStore = create<DocumentState>((rawSet, get) => {
     // 栈空时什么都不写：空撤销不该换掉 past / future 的引用去惊动订阅者
     // 打回来的 w/h 按条目之前的原生图幅量；图幅在历史之外变过的话换算到此刻的图幅
     const candidate = step.ok ? rebaseToCurrentNative(step.doc, step.entry?.sizeBasis, 'before') : step.doc
-    const [doc] = produceWithPatches(candidate, (d) => clearChangedFigureSnapshots(d, get().doc))
+    const [doc] = produceWithPatches(candidate, (d) => clearChangedFigureSnapshots(d, get().doc, true))
     if (step.ok || step.entry) set({ doc, past: step.past, future: step.future })
     noteUndoRedo('undo.complete', step.ok, step.entry?.label ?? null, before, get())
     return step.ok && step.entry ? step.entry.label : null
@@ -929,7 +929,7 @@ export const useDocumentStore = create<DocumentState>((rawSet, get) => {
     const step = history.redoStep(state.doc, state.past, state.future)
     if (!step.ok && step.entry) console.error('重做补丁应用失败，该条历史已丢弃')
     const candidate = step.ok ? rebaseToCurrentNative(step.doc, step.entry?.sizeBasis, 'after') : step.doc
-    const [doc] = produceWithPatches(candidate, (d) => clearChangedFigureSnapshots(d, state.doc))
+    const [doc] = produceWithPatches(candidate, (d) => clearChangedFigureSnapshots(d, state.doc, true))
     if (step.ok || step.entry) set({ doc, past: step.past, future: step.future })
     noteUndoRedo('redo.complete', step.ok, step.entry?.label ?? null, before, get())
     return step.ok && step.entry ? step.entry.label : null
@@ -2753,20 +2753,36 @@ const snapshotReceiptInvalidated = (ref: FigureSnapshot) => {
 }
 
 /** Editing source/patches invalidates the association; page geometry and exact copies preserve it. */
-function clearChangedFigureSnapshots(next: FigureDocument, before: FigureDocument): void {
+function clearChangedFigureSnapshots(next: FigureDocument, before: FigureDocument, restoredSources = false): void {
   clearChangedChartSources(next, before)
-  if (!next.objects.some(o => o.type === 'panel' && (o.figureSnapshot || o.figureOrigin))) return
   const previous = new Map(before.objects.filter((o) => o.type === 'panel').map((o) => [o.id, o]))
   for (const panel of next.objects) {
     if (panel.type !== 'panel') continue
     const old = previous.get(panel.id)
-    if (old && !sameFigureSource(old, panel)) {
+    if (restoredSources) {
+      // Whole-history restoration owns its own P; never borrow the currently installed source.
+      const origin = figureOriginFor(panel)
+      if (validFigureOrigin(origin, panel.fileId)) panel.figureOrigin = JSON.parse(JSON.stringify(origin))
+    } else if (old && !sameFigureSource(old, panel)) {
       // Replacement cannot carry the old source's lineage; an explicit new matching origin may.
       if (!validFigureOrigin(panel.figureOrigin, panel.fileId) || sameFigureOrigin(panel.figureOrigin, old.figureOrigin)) delete panel.figureOrigin
+    } else if (old && panel.chart === undefined && panel.chartSource === undefined &&
+               old.figureOrigin === undefined &&
+               JSON.stringify(old.overrides) !== JSON.stringify(panel.overrides)) {
+      // Freeze the pre-edit baseline P only when the backend proved this exact
+      // render produced the snapshot. A bare output snapshot is not a
+      // historical input and must not silently become one.
+      const origin = verifiedFigureOrigin(old, currentProjectId())
+      if (origin !== undefined) panel.figureOrigin = origin
     }
     if (!panel.figureSnapshot) continue
+    // A snapshot-only association may be attached/replaced without changing its inputs.
+    // Once P is explicit, the output must still belong to that same origin and Q.
+    const changedInputs = old && (old.figureOrigin !== undefined || panel.figureOrigin !== undefined
+      ? !sameFigureInputs(old, panel)
+      : !sameFigureSource(old, panel) || JSON.stringify(old.overrides) !== JSON.stringify(panel.overrides))
     if (!validFigureSnapshot(panel.figureSnapshot, panel.fileId) ||
-        (old && !sameFigureInputs(old, panel)) ||
+        (changedInputs && !restoredSources) ||
         snapshotReceiptInvalidated(panel.figureSnapshot)) {
       delete panel.figureSnapshot
     }
@@ -2916,12 +2932,21 @@ export function invalidateFigureSnapshots(
   const clear = (objects: FigureDocument['objects']) => {
     for (let i = 0; i < objects.length; i++) {
       const panel = objects[i]
-      if (panel.type !== 'panel' || (!matchesSource(panel.fileId, panel.figureSnapshot) &&
-          !(panel.figureSnapshot && receipts.has(panel.figureSnapshot.receiptId)))) continue
+      if (panel.type !== 'panel') continue
+      const snapshotRetired = matchesSource(panel.fileId, panel.figureSnapshot) ||
+        !!(panel.figureSnapshot && receipts.has(panel.figureSnapshot.receiptId))
+      // A historical input names one execution. When that execution is retired
+      // the input can never be admitted again, so the panel must fall back to
+      // the current source instead of keeping a dead origin.
+      const origin = panel.figureOrigin
+      const originRetired = origin !== undefined && (
+        matchesSource(origin.snapshot.sourceId, origin.snapshot) || receipts.has(origin.snapshot.receiptId))
+      if (!snapshotRetired && !originRetired) continue
       // Even without a live ref, an in-flight save may have captured the preceding run.
       // Publish a persistent change so a corrective save follows that stale write.
       objects[i] = { ...panel }
-      delete (objects[i] as PanelObject).figureSnapshot
+      if (snapshotRetired) delete (objects[i] as PanelObject).figureSnapshot
+      if (originRetired) delete (objects[i] as PanelObject).figureOrigin
     }
   }
   const [doc, docPatches] = produceWithPatches(state.doc, (d) => clear(d.objects))

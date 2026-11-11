@@ -16,7 +16,7 @@
 import { create } from 'zustand'
 import { subscribeMath } from '@/lib/mathtext'
 import { currentProjectId } from '@/lib/session'
-import { hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
+import { needsFigureArchiveSource } from '@/lib/panelSourceEvidence'
 import { resolveDocumentSpec } from '@/lib/specBinding'
 import {
   filterIssues,
@@ -110,7 +110,7 @@ function ensureSources(): Promise<unknown>[] {
   const pending: Promise<unknown>[] = []
   for (const canvas of collectCanvases()) for (const panel of canvas.doc.objects) {
     if (panel.type !== 'panel' || panel.chart !== undefined || panel.chartSource !== undefined) continue
-    if (hasFigureSnapshotPreview(panel)) pending.push(assets.ensureFigureSnapshotSource(panel))
+    if (needsFigureArchiveSource(panel)) pending.push(assets.ensureFigureSnapshotSource(panel))
     else if (panel.fileKind !== 'runtime' && !assets.byId[panel.fileId]) pending.push(assets.ensureOriginalSource(panel.fileId))
   }
   return pending

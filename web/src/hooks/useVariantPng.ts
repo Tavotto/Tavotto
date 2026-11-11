@@ -1,7 +1,8 @@
 import { chartSourceFields } from '@/lib/chartSource'
 import { rejectArtifactRenders, renderKey, renderRequestIdentity } from '@/store/renderStore'
 import { artifactRequestFields, artifactKeySuffix, artifactValidationIssue, ArtifactValidationError, subjectOf, hasRealEdits, type AdoptionGuard } from '@/lib/artifactValidation'
-import type { ChartSourceRef, FigureSnapshot, PanelChartState, PanelOverride } from '@/types/document'
+import type { ChartSourceRef, FigureOrigin, FigureSnapshot, PanelChartState, PanelOverride } from '@/types/document'
+import { sameFigureOrigin, validFigureOrigin } from '@/lib/figureSnapshot'
 import { figureSnapshotPreviewIdentity, hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
 /**
  * 「按 overrides 出一张缩略图」的可复用 hook（issue #131）。
@@ -42,8 +43,8 @@ let cacheEpoch = 0
  * 之后切到项目 B，会直接命中 A 的 blob 并把**别人的图**当成这一版的预览显示
  * 出来，而且一次请求都不发。素材本身被改过（mtime 变了）同理。
  */
-const keyOf = (fileId: string, overrides: unknown[], bucket: number, rev: number, chart?: PanelChartState, chartSource?: ChartSourceRef, owner?: PreviewOwner) =>
-  `${owner ? owner.key : currentProjectId() ?? '-'} ${rev} ${bucket} ${fileId} ${renderRequestIdentity(overrides, chart, chartSource)}`
+const keyOf = (fileId: string, overrides: unknown[], bucket: number, rev: number, chart?: PanelChartState, chartSource?: ChartSourceRef, owner?: PreviewOwner, origin?: FigureOrigin) =>
+  `${owner ? owner.key : currentProjectId() ?? '-'} ${rev} ${bucket} ${fileId} ${renderRequestIdentity(overrides, chart, chartSource, origin)}`
 
 function remember(key: string, url: string) {
   cache.set(key, url)
@@ -83,8 +84,8 @@ export interface VariantPng {
  * 磁盘原像素就是对的（ADR 0139 §五.1）。调用方据此判断「还在出图」——这条路径
  * 永远拿不到 url，不能当成没出好。
  */
-export function variantNeedsRender(overrides: unknown[], artifactValidation?: AdoptionGuard | null, chart?: PanelChartState, reference?: FigureSnapshot): boolean {
-  return reference !== undefined || !!chart || overrides.length > 0 && !(artifactValidation && 'policy' in artifactValidation && !hasRealEdits(overrides as PanelOverride[]))
+export function variantNeedsRender(overrides: unknown[], artifactValidation?: AdoptionGuard | null, chart?: PanelChartState, reference?: FigureSnapshot, origin?: FigureOrigin): boolean {
+  return origin !== undefined || reference !== undefined || !!chart || overrides.length > 0 && !(artifactValidation && 'policy' in artifactValidation && !hasRealEdits(overrides as PanelOverride[]))
 }
 
 export function useVariantPng(
@@ -99,12 +100,13 @@ export function useVariantPng(
   chartSource?: ChartSourceRef,
   owner?: PreviewOwner,
   reference?: FigureSnapshot,
+  origin?: FigureOrigin,
 ): VariantPng {
   const active = !owner || owner.still()
   const archived = hasFigureSnapshotPreview({ figureSnapshot: reference, chart, chartSource })
   const archiveKey = archived ? figureSnapshotPreviewIdentity(reference) : null
-  const cacheable = archived || artifactValidation === undefined
-  const key = keyOf(fileId, overrides, bucket, rev, chart, chartSource, owner) + artifactKeySuffix(artifactValidation)
+  const cacheable = archived || origin !== undefined || artifactValidation === undefined
+  const key = keyOf(fileId, overrides, bucket, rev, chart, chartSource, owner, origin) + artifactKeySuffix(origin === undefined ? artifactValidation : undefined)
     + (archived ? ` archive:${archiveKey ?? 'invalid'}` : '')
   const [state, setState] = useState<VariantPng & {key?: string}>(() => ({
     key,
@@ -126,12 +128,16 @@ export function useVariantPng(
       setState({ key, url: null, loading: false, approximate: true })
       return
     }
+    if (origin !== undefined && (!validFigureOrigin(origin, fileId) || chart !== undefined || chartSource !== undefined)) {
+      setState({ key, url: null, loading: false, approximate: true })
+      return
+    }
     const subject = subjectOf(fileId, overrides as PanelOverride[], artifactValidation)
-    const issue = archived ? null : artifactValidationIssue(subject)
+    const issue = archived || origin !== undefined ? null : artifactValidationIssue(subject)
     if (issue) { setState({ key,url:null,loading:false,approximate:true}); return }
     // 没有 override 的面板与磁盘图一模一样，白跑一次引擎没有意义
     // 来源驱动面板零编辑（只有结构性 FRAME）显示磁盘原像素，同样不出引擎图（ADR 0139 §五.1）
-    if (!variantNeedsRender(overrides, artifactValidation, chart, ...(archived ? [reference] as const : []))) {
+    if (!variantNeedsRender(overrides, artifactValidation, chart, archived ? reference : undefined, origin)) {
       setState({ key, url: null, loading: false, approximate: false })
       return
     }
@@ -148,10 +154,24 @@ export function useVariantPng(
     const current = () => live && epoch === cacheEpoch && project.still() && (!owner || owner.still())
     setState({ key, url: null, loading: true, approximate: false })
     const transport = engineTransport()
+    const frozenOrigin = origin === undefined ? undefined : structuredClone(origin)
     const pending = archived
       ? transport ? Promise.reject(new EngineError('This host does not support archived Figure previews.', '', 'figure_snapshot_preview_unsupported'))
         : enginePreviewPng(fileId, structuredClone(overrides), bucket, ctrl.signal,
           { figure_snapshot: structuredClone(reference) }, pj).then(blob => URL.createObjectURL(blob))
+      : origin !== undefined
+      ? transport
+        ? !transport.supportsFigureOriginRender || !transport.previewPngSnapshot
+          ? Promise.reject(new EngineError('This host does not support historical Figure inputs.', '', 'svg_source_unavailable'))
+          : transport.previewPngSnapshot(fileId, structuredClone(overrides), bucket, ctrl.signal, undefined, undefined, structuredClone(frozenOrigin!)).then(frame => {
+            if (!frame.manifest || !sameFigureOrigin(frozenOrigin, frame.figureOrigin)) {
+              if (frame.url.startsWith('blob:')) URL.revokeObjectURL(frame.url)
+              throw new EngineError('Mismatched historical Figure pixels.', '', 'svg_source_unavailable')
+            }
+            return frame.url
+          })
+        : enginePreviewPngSnapshot(fileId, structuredClone(overrides), bucket, ctrl.signal,
+          { figure_origin: structuredClone(frozenOrigin!) }, pj).then(frame => frame.url)
       : chart
       ? transport
         ? !transport.supportsChartRender || !transport.previewPngSnapshot || (chartSource !== undefined && !transport.supportsChartSourceRender)
@@ -181,7 +201,7 @@ export function useVariantPng(
         if (live) setState({ key, url, loading: false, approximate: false })
       })
       .catch((error) => {
-        if (!archived && current() && artifactValidation &&
+        if (!archived && origin === undefined && current() && artifactValidation &&
             (error instanceof ArtifactValidationError || (error instanceof EngineError && error.code === 'artifact_source_unavailable'))) {
           rejectArtifactRenders(fileId, artifactValidation, error, renderKey(fileId, overrides, artifactValidation))
         }

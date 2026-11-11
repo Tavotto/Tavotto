@@ -67,6 +67,7 @@ describe('historical Figure input survives the original document writer', () => 
     state().commit(literal('no evidence'), d => {
       delete (d.objects[0] as PanelObject).figureSnapshot
       delete (d.objects[0] as PanelObject).figureOrigin
+      d.objects[0].id = 'without-evidence'
     })
     state().commit(literal('edit'), d => { (d.objects[0] as PanelObject).overrides = [] })
     expect(current()).not.toHaveProperty('figureOrigin')
@@ -79,8 +80,8 @@ describe('historical Figure input survives the original document writer', () => 
     expect(current()).not.toHaveProperty('figureOrigin')
   })
 
-  it('keeps ordinary snapshot editing on the old wire without creating a historical origin', async () => {
-    state().commit(literal('ordinary'), d => { d.objects = [panel()] })
+  it('keeps ordinary editing without historical evidence on the old wire', async () => {
+    state().commit(literal('ordinary'), d => { d.objects = [{ ...panel(), id: 'ordinary', figureSnapshot: undefined }] })
     state().commit(literal('edit'), d => { (d.objects[0] as PanelObject).overrides[1].value = 12 })
     expect(current()).not.toHaveProperty('figureOrigin')
     expect(current().figureSnapshot).toBeUndefined()

@@ -1,3 +1,4 @@
+import { figureOriginFor } from './figureSnapshot'
 /**
  * 「原图规格」——**全产品唯一的一份**（ADR 0028）。
  *
@@ -291,11 +292,12 @@ export function getOriginalOutputSpec(
   const renders = useRenderStore.getState()
   // Guarded metadata must belong to this exact, still-valid variant. FRAME alone
   // still exports the original PNG, whose pixel grid and density remain authoritative.
-  const guarded = panel != null && isAdoptedPanel(panel)
+  const historical = panel != null && figureOriginFor(panel) !== undefined
+  const guarded = !historical && panel != null && isAdoptedPanel(panel)
   const originalPng = guarded && !artifactValidationIssue(panel) &&
     originalArtifactOverrides(panel).length === 0
   const render = panel && !originalPng
-    ? (guarded ? exactPanelRender(renders, panel) : renders.byKey[renderKeyOf(panel)])
+    ? (guarded || historical ? exactPanelRender(renders, panel) : renders.byKey[renderKeyOf(panel)])
     : null
   const renderSizeMm = render?.manifest?.size_mm ?? null
   // runtime 素材从来不在 `/api/panels` 里；它的图幅在清单里，描述符是兜底
@@ -305,8 +307,8 @@ export function getOriginalOutputSpec(
   return resolveOriginalSpec({
     figureId,
     panel,
-    renderSizeMm: renderSizeMm ?? runtimeSize,
-    asset: info?.original_spec ?? exactSource?.original_spec ?? null,
-    assetPresent: info != null || exactSource != null || runtime != null,
+    renderSizeMm: renderSizeMm ?? (historical ? null : runtimeSize),
+    asset: historical ? null : info?.original_spec ?? exactSource?.original_spec ?? null,
+    assetPresent: !historical && (info != null || exactSource != null || runtime != null),
   })
 }

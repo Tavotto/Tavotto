@@ -1,4 +1,3 @@
-import { chartPreviewArgs } from '@/lib/chartSource'
 /**
  * 版本缩略图缓存的**身份与回收**（#137 评审 P1）。
  *
@@ -13,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { clearVariantPngCache, useVariantPng, variantNeedsRender } from './useVariantPng'
 import { setCurrentProjectId } from '@/lib/session'
 import { setEngineTransport } from '@/lib/engineTransport'
-import type { ChartSourceRef, PanelChartState } from '@/types/document'
+import type { ChartSourceRef, FigureOrigin, PanelChartState } from '@/types/document'
 import chartVectors from '../../../tests/golden/chart_model_vectors.json'
 
 declare global {
@@ -48,6 +47,7 @@ function Probe({
   rev = 0,
   chart,
   chartSource,
+  origin,
 }: {
   fileId: string
   overrides: unknown[]
@@ -55,9 +55,10 @@ function Probe({
   rev?: number
   chart?: PanelChartState
   chartSource?: ChartSourceRef
+  origin?: FigureOrigin
 }) {
   last = useVariantPng(fileId, overrides, bucket, true, rev, undefined,
-    ...chartPreviewArgs({ chart, chartSource }))
+    chart, chartSource, undefined, undefined, origin)
   return null
 }
 
@@ -272,4 +273,42 @@ describe('variantNeedsRender：哪些版本永远不出引擎图（快照据此�
   it('来源驱动面板只有结构性 FRAME 不出（磁盘原像素即是）', () => expect(variantNeedsRender([frame], guard)).toBe(false))
   it('来源驱动面板有真实编辑要出', () => expect(variantNeedsRender([frame, edit], guard)).toBe(true))
   it('普通面板只要有 override 就出', () => expect(variantNeedsRender([frame], undefined)).toBe(true))
+})
+
+describe('历史输入的 PNG 归属', () => {
+  const origin = (id: string): FigureOrigin => ({ version: 1, snapshot: {
+    version: 1, sourceId: 'History.pdf', patchHash: 'P', receiptId: id, snapshotId: id,
+  }, patches: [{ gid: 'line', prop: 'linewidth', value: 2 }] })
+  const show = async (input: FigureOrigin) => {
+    await act(async () => { root.render(<Probe fileId="History.pdf" overrides={[]} origin={input} />) })
+  }
+
+  it('同Q不同历史不共享像素，迟到A不覆盖B或进入缓存', async () => {
+    let finish!: (value: unknown) => void
+    snapshotPng.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+    const inputA = origin('A')
+    await show(inputA)
+    inputA.snapshot.receiptId = 'changed-after-send'
+    snapshotPng.mockResolvedValueOnce({ url: 'blob:B', manifest: {}, figureOrigin: origin('B') })
+    await show(origin('B'))
+    expect(last.url).toBe('blob:B')
+    await act(async () => { finish({ url: 'blob:late-A', manifest: {}, figureOrigin: origin('A') }) })
+    expect(last.url).toBe('blob:B')
+    expect(revoked).toContain('blob:late-A')
+    snapshotPng.mockResolvedValueOnce({ url: 'blob:new-A', manifest: {}, figureOrigin: origin('A') })
+    await show(origin('A'))
+    expect(last.url).toBe('blob:new-A')
+    expect(snapshotPng).toHaveBeenCalledTimes(3)
+    expect(previewPng).not.toHaveBeenCalled()
+    expect(snapshotPng.mock.calls[0][4]).toEqual({ figure_origin: origin('A') })
+  })
+
+  it('显式混入chart不落普通路径', async () => {
+    const chart = structuredClone(chartVectors.vectors.find(v => v.expect === 'ok')!)
+    await act(async () => { root.render(<Probe fileId="History.pdf" overrides={[]} origin={origin('A')} chart={{ model: chart.model, binding: chart.binding } as unknown as PanelChartState} />) })
+    expect(last.url).toBeNull()
+    expect(last.approximate).toBe(true)
+    expect(snapshotPng).not.toHaveBeenCalled()
+    expect(previewPng).not.toHaveBeenCalled()
+  })
 })

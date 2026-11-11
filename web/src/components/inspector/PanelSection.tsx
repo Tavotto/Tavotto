@@ -832,7 +832,7 @@ export function SourceSection({
       }
     >
       {panel?.script && runtime && <RuntimeSourceArea panel={panel} />}
-      {panel?.script && !runtime && (
+      {(panel?.script || panel?.figureOrigin) && !runtime && (
         <>
           {/* 两页同一份动作行（打磨 O2） */}
           <OriginalFileActions panel={panel} />

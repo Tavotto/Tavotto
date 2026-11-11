@@ -10,8 +10,7 @@ import {
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
 import { engineTransport } from '@/lib/engineTransport'
-import { figureSnapshotSourceKey, type PanelSourceEvidence } from '@/lib/panelSourceEvidence'
-import { hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
+import { figureArchiveSourceInput, figureSnapshotSourceKey, type PanelSourceEvidence } from '@/lib/panelSourceEvidence'
 import type { PanelObject } from '@/types/document'
 import { t } from '@/i18n'
 
@@ -178,7 +177,8 @@ export const useAssetStore = create<AssetState>((set, get) => ({
 
   ensureFigureSnapshotSource: (panel) => {
     const key = figureSnapshotSourceKey(panel)
-    if (!hasFigureSnapshotPreview(panel) || key === null || engineTransport()) return Promise.resolve(false)
+    const source = figureArchiveSourceInput(panel)
+    if (!source || key === null || engineTransport()) return Promise.resolve(false)
     if (Object.hasOwn(get().figureSnapshots, key)) return Promise.resolve(get().figureSnapshots[key])
     const pending = archiveRequests.get(key)
     if (pending) return pending.promise
@@ -188,11 +188,11 @@ export const useAssetStore = create<AssetState>((set, get) => ({
     const controller = new AbortController()
     const current = () => born === epoch && generation === sourceGeneration && pj === currentProjectId()
       && !engineTransport() && !controller.signal.aborted
-    const input = structuredClone(panel)
+    const input = structuredClone({ id: panel.fileId, ...source })
     const promise = archiveTail.then(async () => {
       if (!current()) return false
       // API 校验完整回显 ref、非空 SVG 和物理尺寸；不从字段存在推断归档有效。
-      await fetchFigureSnapshotPreview(input.fileId, input.overrides, input.figureSnapshot!, controller.signal, pj)
+      await fetchFigureSnapshotPreview(input.id, input.patches, input.reference, controller.signal, pj)
       if (!current()) return false
       set(state => ({ figureSnapshots: { ...state.figureSnapshots, [key]: true } }))
       return true

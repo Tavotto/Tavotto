@@ -3,6 +3,7 @@ import { saveIssueMessage } from '@/lib/autosave/diskWriter'
 import { adoptionGuardOf, adoptionOf, clearAdoption, isAdoptedPanel, SCRIPT_BACKED_SOURCE_POLICY, sourceBackedGuard, verdictFromResponse, verifiedSource, type AdoptionGuard, type SourceBackedFigure, type SourceBackedVerdict, artifactBackgroundOriginal, artifactRequestFields, isUnadoptedPngSource, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
 import { currentProjectId } from '@/lib/session'
 import '@/store/figureSnapshotInvalidation'
+import { figureOriginFor } from '@/lib/figureSnapshot'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { requestRender, type RenderPolicy } from '@/store/renderScheduler'
 import { canEditPanel } from '@/lib/panelEditability'
@@ -375,7 +376,7 @@ export function updateObject<T extends CanvasObject>(
 /** 写回历史恢复：面板的 overrides 整份换成那一版存下的（身份原样）。 */
 export function restorePanelOverrides(panelId: string, label: UiMessage, patches: readonly PanelOverride[]) {
   const panel = findObject(panelId)
-  if (panel?.type === 'panel') refuseArtifactOperation(panel)
+  if (panel?.type === 'panel' && figureOriginFor(panel) === undefined) refuseArtifactOperation(panel)
   updateObject<PanelObject>(
     panelId,
     label,
@@ -401,7 +402,7 @@ export function restoreLayoutVersion(label: UiMessage, version: FigureDocument) 
       if (version.layoutGroups?.length) d.layoutGroups = structuredClone(version.layoutGroups)
       else delete d.layoutGroups
     },
-    { overrides: 'restored' },
+    { overrides: 'restored', figureSources: 'restored' },
   )
 }
 
@@ -1440,14 +1441,14 @@ async function settledRender(key: string): Promise<void> {
  */
 export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
   const panel = findObject(panelId)
-  if (panel?.type !== 'panel' || (!panel.script && !panel.chart)) return 'skipped'
-  try { refuseArtifactOperation(panel) } catch (e) { status(engineErrorMsg(e), 'error'); return 'failed' }
+  if (panel?.type !== 'panel' || (!panel.script && !panel.chart && figureOriginFor(panel) === undefined)) return 'skipped'
+  try { if (figureOriginFor(panel) === undefined) refuseArtifactOperation(panel) } catch (e) { status(engineErrorMsg(e), 'error'); return 'failed' }
   // 字号还在安静计时里时点「重新构建」：先把那次编辑收进历史，重画的才是定稿的 overrides
   finishActiveGesture()
   const fileId = panel.fileId
   const owner = captureProjectEpoch(() => useDocumentStore.getState().documentId)
   let invalidated = false
-  if (!panel.chart && !engineTransport()) {
+  if (figureOriginFor(panel) === undefined && !panel.chart && !engineTransport()) {
     try {
       invalidated = (await engineInvalidate(fileId)).invalidated
     } catch (err) {
@@ -1468,7 +1469,8 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
   // 登记 wantPatches、清掉挂着的防抖计时器；真正的发送在下一行，要等它的结果
   requestRender(fresh, 'none')
   const key = renderKeyOf(fresh)
-  if (fresh.chartSource !== undefined) await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh), 'foreground', fresh.chart, fresh.chartSource)
+  if (figureOriginFor(fresh) !== undefined) await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, undefined, 'foreground', undefined, undefined, figureOriginFor(fresh))
+  else if (fresh.chartSource !== undefined) await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh), 'foreground', fresh.chart, fresh.chartSource)
   else if (fresh.chart) await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh), 'foreground', fresh.chart)
   else await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh))
   await settledRender(key)
@@ -1680,6 +1682,10 @@ export function applyMixedAlign(
  * /api/render、写回候选熄灭）全部经由那一份判据，别在消费点各补一刀。
  */
 export function isJustBakedBaseline(panel: PanelObject): boolean {
+  // A historical input is never "just the current baked baseline": the baked
+  // facts belong to whatever execution the asset name currently resolves to,
+  // which may be a different figure entirely. Its own P/Q decide.
+  if (panel.figureOrigin !== undefined) return false
   // 判据本体在 lib/bakedBaseline.isJustBakedBaselineOf（纯函数）；这里只负责去素材表取事实
   return isJustBakedBaselineOf(panel.overrides, useAssetStore.getState().byId[panel.fileId])
 }
@@ -2097,6 +2103,7 @@ export function enterElementEdit(
   const panel = findObject(panelId)
   if (panel?.type !== 'panel') return false
   if (panel.chart && !canEditPanel(panel)) return false
+  if (figureOriginFor(panel) !== undefined) return finishElementEntry(panelId, leftTab)
   const issue = artifactValidationIssue(panel)
   if (issue) {
     status(engineErrorMsg(new ArtifactValidationError(issue)), 'error')
@@ -2123,10 +2130,11 @@ export function enterElementEdit(
 function finishElementEntry(panelId: string, leftTab: 'elements' | 'keep'): boolean {
   const panel = findObject(panelId)
   if (panel?.type !== 'panel') return false
-  const seeded = isAdoptedPanel(panel) || panel.chart ? 0 : seedBakedOverrides(panelId)
+  const seeded = figureOriginFor(panel) !== undefined || isAdoptedPanel(panel) || panel.chart ? 0 : seedBakedOverrides(panelId)
   const ui = useUiStore.getState()
   ui.setElementPanel(panelId)
-  if (isAdoptedPanel(panel)) {
+  if (figureOriginFor(panel) !== undefined) requestRender(panel, true)
+  else if (isAdoptedPanel(panel)) {
     const owner = useDocumentStore.getState()
     const epoch = renderEpoch()
     const pj = currentProjectId()

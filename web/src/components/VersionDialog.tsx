@@ -1841,7 +1841,7 @@ function SnapshotPanel({
   /** 取图档位（RENDER_BUCKETS 之一），见 `snapshotBucket` */
   bucket: number
 }) {
-  const archived = hasFigureSnapshotPreview(panel)
+  const archived = hasFigureSnapshotPreview(panel) || panel.figureOrigin !== undefined
   const wantsVariant = archived || renderOverrides && (!!panel.chart || panel.chartSource !== undefined || panel.overrides.length > 0 || isAdoptedPanel(panel))
   const variant = useVariantPng(
     panel.fileId,

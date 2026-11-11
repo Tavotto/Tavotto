@@ -1,3 +1,4 @@
+import { figureOriginFor, validFigureOrigin } from './figureSnapshot'
 import type { PanelObject } from '@/types/document'
 import { panelRender, useRenderStore, type PanelRender } from '@/store/renderStore'
 
@@ -9,6 +10,8 @@ export function canEditPanel(
   state: RenderFacts = useRenderStore.getState(),
 ): boolean {
   if (!panel) return false
+  const origin = figureOriginFor(panel)
+  if (origin !== undefined) return panel.chart === undefined && panel.chartSource === undefined && validFigureOrigin(origin, panel.fileId)
   if (!panel.chart) return !!panel.script
   // 同一 chart 的旧 patch 变体只证明已有可编辑对象，不授予当前几何权威。
   // renderStore 已拒绝跨 chart/source/binding 的文件级显示退路。

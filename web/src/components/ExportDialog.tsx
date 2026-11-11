@@ -409,7 +409,7 @@ export function ExportDialog() {
     if (!open) return;
     const store = useAssetStore.getState();
     for (const figure of figures) {
-      if (figure.panel?.chart || figure.panel?.figureSnapshot) continue;
+      if (figure.panel?.chart || figure.panel?.figureSnapshot || figure.panel?.figureOrigin) continue;
       void store.ensureOriginalSource(figure.figureId);
     }
   }, [open, figures]);
@@ -879,13 +879,21 @@ export function ExportDialog() {
    * 说原因；勾过它的用户切到画布时，请求里自动不带它（`buildExportRequest`）。
    */
   const unreachable = useMemo(
-    () => (scope === "canvas" ? [...new Set(unavailablePanels(route, formats))] : []),
-    [scope, route, formats],
+    () => (scope === "canvas"
+      ? [...new Set(unavailablePanels(route, formats))].filter((id) => {
+          // The route describes the current same-name source; a historical
+          // input is still drawable from its own execution.
+          const owner = doc.objects.find((o) => o.type === "panel" && o.fileId === id)
+          return !(owner && owner.type === "panel" && owner.figureOrigin !== undefined)
+        })
+      : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [scope, route, formats, doc.objects],
   );
   const eps = useMemo(
-    () => offers ? epsAvailability(scope, figureId, route, single, offers) : epsAvailability(scope, figureId, route, single),
+    () => offers ? epsAvailability(scope, figureId, route, single, offers, panel) : epsAvailability(scope, figureId, route, single, undefined, panel),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [scope, figureId, assets, runtimeAssets, route, offers, single],
+    [scope, figureId, assets, runtimeAssets, route, offers, single, panel],
   );
 
   function inputOf(over?: Partial<ExportRequestInput>): ExportRequestInput {
@@ -1026,7 +1034,7 @@ export function ExportDialog() {
     for (const f of figs) {
       if (!alive()) return;
       // 精确事实也是准备阶段的一部分：不让点击快于只读查询时把隐藏素材误判为缺失。
-      if (!f.panel?.chart && !f.panel?.figureSnapshot) {
+      if (!f.panel?.chart && !f.panel?.figureSnapshot && !f.panel?.figureOrigin) {
         await useAssetStore.getState().ensureOriginalSource(f.figureId);
         if (!alive()) return;
       }
@@ -2152,6 +2160,7 @@ function useFigureThumbSource(
   const svgMarkup = useHtmlMarkup(svg);
   // 引擎 SVG 不在手边（位图档没有矢量 payload、或被字节预算清掉了）：按 overrides 现出一张位图，
   // 不拿磁盘原图冒充改过的那张（整版预览 `CanvasThumb` 的 `editedPanel` 同一条 `useVariantPng`）
+  const historicalArgs: ReturnType<typeof figureSnapshotPreviewArgs> = panel ? figureSnapshotPreviewArgs(panel) : [];
   const variant = useVariantPng(
     panel?.fileId ?? figure.figureId,
     panel?.overrides ?? NO_OVERRIDES,
@@ -2161,11 +2170,11 @@ function useFigureThumbSource(
     panel ? adoptionGuardOf(panel) : undefined,
     panel?.chart, panel?.chartSource,
     owner,
-    ...(panel ? figureSnapshotPreviewArgs(panel) : []),
+    ...historicalArgs,
   );
   // runtime 图的退路是 cache 预览：后端 GET 版给的是「最近一次渲染」，撤销回一个前端已画过的变体时它停在
   // 撤销前（QA-WIN-21）。按此刻的 overrides 取，不是这个状态的图就不挂（预览只是示意，空着比旧图诚实）
-  const runtimeByState = !archived && figure.kind === "runtime" && !!panel && !!figure.cached && !engineTransport();
+  const runtimeByState = !archived && panel?.figureOrigin === undefined && figure.kind === "runtime" && !!panel && !!figure.cached && !engineTransport();
   const runtimePreview = useRuntimePreview(
     figure.figureId,
     panel?.overrides ?? NO_OVERRIDES,
@@ -2179,8 +2188,8 @@ function useFigureThumbSource(
       ? runtimePreview.exact === true
         ? runtimePreview.url
         : null
-      : archived || panel?.chart || panel?.chartSource !== undefined ? null : figureThumbSrc(figure, bucket, owner.pj));
-  const plain = active && !archived && !panel?.chart && panel?.chartSource === undefined && !variant.url && !runtimeByState;
+      : archived || panel?.figureOrigin !== undefined || panel?.chart || panel?.chartSource !== undefined ? null : figureThumbSrc(figure, bucket, owner.pj));
+  const plain = active && !archived && panel?.figureOrigin === undefined && !panel?.chart && panel?.chartSource === undefined && !variant.url && !runtimeByState;
   const sizeMm = render?.manifest?.size_mm ?? figure.sizeMm;
   const ratio =
     sizeMm && sizeMm[0] > 0 && sizeMm[1] > 0 ? sizeMm[0] / sizeMm[1] : 4 / 3;
@@ -2195,7 +2204,7 @@ const NO_OVERRIDES: PanelObject["overrides"] = [];
  * 单图预览（`useFigureThumbSource`）与整版预览（`CanvasThumb` 的 `editedPanel`）共用这一份。
  */
 function showsEdits(panel: PanelObject): boolean {
-  return hasFigureSnapshotPreview(panel) || !!panel.chart || panel.chartSource !== undefined || panel.overrides.length > 0 && !isJustBakedBaseline(panel);
+  return hasFigureSnapshotPreview(panel) || panel.figureOrigin !== undefined || !!panel.chart || panel.chartSource !== undefined || panel.overrides.length > 0 && !isJustBakedBaseline(panel);
 }
 
 /** 整版预览里的一个对象若是带图内修改的面板，返回它（喂给 `CanvasThumb` 的 `editedPanel`） */

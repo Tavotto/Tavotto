@@ -1,5 +1,5 @@
 import { validFigureSnapshot } from './figureSnapshot'
-import type { FigureSnapshot } from '@/types/document'
+import type { FigureOrigin, FigureSnapshot } from '@/types/document'
 
 /** Display identity only. Receipt/hash/archive validity remains a backend fact. */
 export function figureSnapshotPreviewIdentity(reference: unknown): string | null {
@@ -24,6 +24,8 @@ export function hasFigureSnapshotPreview(panel: { figureSnapshot?: unknown; char
 }
 
 /** Keep existing consumers' positional calls unchanged when no archive is selected. */
-export function figureSnapshotPreviewArgs(panel: { figureSnapshot?: unknown; chart?: unknown; chartSource?: unknown }): [] | [FigureSnapshot] {
+export function figureSnapshotPreviewArgs(panel: { figureSnapshot?: unknown; figureOrigin?: unknown; chart?: unknown; chartSource?: unknown }): [figureSnapshot?: FigureSnapshot, figureOrigin?: FigureOrigin] {
+  if (panel.figureOrigin !== undefined) return [panel.figureSnapshot as FigureSnapshot | undefined, panel.figureOrigin as FigureOrigin]
+  if (panel.chart !== undefined || panel.chartSource !== undefined) return []
   return hasFigureSnapshotPreview(panel) ? [panel.figureSnapshot as FigureSnapshot] : []
 }

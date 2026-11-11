@@ -96,7 +96,7 @@ export function figureOfPanel(p: PanelObject): ExportableFigure {
  * 还没有缓存预览时给 null——不猜地址。内嵌画布走它自己的传输层。
  */
 export function figureThumbSrc(figure: ExportableFigure, bucket: number, pj?: string | null): string | null {
-  if (figure.panel && hasFigureSnapshotPreview(figure.panel)) return null
+  if (figure.panel && (hasFigureSnapshotPreview(figure.panel) || figure.panel.figureOrigin !== undefined)) return null
   if (figure.kind === 'unknown' || (figure.kind === 'runtime' && !figure.cached)) return null
   const transport = engineTransport()
   return transport

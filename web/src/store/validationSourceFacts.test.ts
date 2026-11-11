@@ -40,6 +40,44 @@ let stop: (() => void) | undefined
 let documentSequence = 0
 const fetcher = vi.fn<typeof fetch>()
 const missing = () => listIssues().filter(i => i.ruleCode === 'missing-asset')
+
+it('origin-only Q checks archived P, never the same-name current file or current Q', async () => {
+  const output = archive()
+  const baseline = [{ gid: 'line', prop: 'linewidth', value: 2 }, { gid: 'line', prop: 'linewidth', value: 3 }]
+  const panel: PanelObject = { ...output, figureSnapshot: undefined,
+    figureOrigin: { version: 1, snapshot: output.figureSnapshot!, patches: baseline },
+    overrides: [{ gid: 'line', prop: 'linewidth', value: 12 }] }
+  await install(panel)
+  useAssetStore.setState({ byId: { [panel.fileId]: { id: panel.fileId } as never } })
+  fetcher.mockImplementation(async (url, init) => String(url).includes('/figure-preview')
+    ? archiveResponse(JSON.parse(String(init?.body)).figure_snapshot) : new Response('{}', { status: 404 }))
+  runValidation()
+  expect(missing()).toHaveLength(1)
+  await prepareValidationSources()
+  runValidation()
+  expect(missing()).toEqual([])
+  expect(archiveCalls()).toHaveLength(1)
+  expect(JSON.parse(String(archiveCalls()[0][1]?.body))).toEqual({ id: panel.fileId, patches: baseline, figure_snapshot: output.figureSnapshot })
+  expect(useRenderStore.getState().byKey).toEqual({})
+  const changed = { ...panel, figureOrigin: { ...panel.figureOrigin!, patches: [...baseline].reverse() } }
+  fetcher.mockImplementation(async () => new Response('{}', { status: 422 }))
+  expect(await useAssetStore.getState().ensureFigureSnapshotSource(changed)).toBe(false)
+  expect(await useAssetStore.getState().ensureFigureSnapshotSource(changed)).toBe(false)
+  expect(archiveCalls()).toHaveLength(2)
+  expect(await useAssetStore.getState().ensureFigureSnapshotSource(panel)).toBe(true)
+  expect(archiveCalls()).toHaveLength(2)
+})
+
+it('malformed explicit origin cannot borrow an output reference or inventory as source evidence', async () => {
+  const panel = archive()
+  Object.assign(panel, { figureOrigin: { version: 1, snapshot: panel.figureSnapshot, patches: null } })
+  await install(panel)
+  useAssetStore.setState({ byId: { [panel.fileId]: { id: panel.fileId } as never } })
+  await prepareValidationSources()
+  runValidation()
+  expect(missing()).toHaveLength(1)
+  expect(archiveCalls()).toHaveLength(0)
+})
 async function install(panel = png) {
   await useDocumentStore.getState().switchDocument(emptyProject(), `d_source_checks_${++documentSequence}`)
   useDocumentStore.getState().commit(literal('fixture'), d => { d.objects = [structuredClone(panel)] })

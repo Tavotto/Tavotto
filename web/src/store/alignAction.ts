@@ -34,7 +34,7 @@ import { msg } from '@/i18n'
 import { applyMixedAlign } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { finishActiveGesture } from '@/store/gestureCoordinator'
-import { exactPanelManifest, exactPanelRender, renderKey, renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { exactPanelManifest, exactPanelRender, renderRequestIdentity, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import {
@@ -47,7 +47,7 @@ import {
 import type { AuthorityView } from '@/diagnostics'
 import type { PanelObject } from '@/types/document'
 import { effectiveOverride } from '@/lib/effectiveOverride'
-import { adoptionGuardOf } from '@/lib/artifactValidation'
+import { figureOriginFor } from '@/lib/figureSnapshot'
 
 /** 拒绝的原因；调用方据此决定提示什么（都不写文档、不进历史、不渲染） */
 export type AlignBlocked =
@@ -224,10 +224,10 @@ export function alignSelectedPanelElements(panelId: string, mode: AlignMode): Al
 
 /**
  * 权威条目声称自己画的是哪一版 → 还原成变体键。
- * `lastPatches` 存的是 `JSON.stringify(overrides)`，与 `renderKey` 的后半段同源。
+ * `lastPatches` 与当前完整输入身份相同，才属于当前变体。
  */
 const exactKeyOf = (panel: PanelObject, lastPatches: string | null): string | null =>
-  lastPatches == null ? null : renderKey(panel.fileId, JSON.parse(lastPatches), adoptionGuardOf(panel))
+  lastPatches === renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource, figureOriginFor(panel)) ? renderKeyOf(panel) : null
 
 /** 拒绝的原因 → 诊断事件里的闭集取值。两张表分开，是因为 UI 的分类
  *  （提示什么）与诊断的分类（为什么不安全）本来就不是同一个问题。 */

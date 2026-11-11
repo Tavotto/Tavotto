@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import type { Manifest } from '@/lib/api'
 import { useDocumentStore } from '@/store/documentStore'
-import { renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { structuralPanelManifest, useRenderStore } from '@/store/renderStore'
 import type { CanvasObject, PageSetup, PanelObject } from '@/types/document'
 import { normalizeHex } from '../ui/colorPalette'
 
@@ -66,7 +66,7 @@ export function colorOverrideKeysOf(
   const keys: string[] = []
   for (const p of panels) {
     if (p.overrides.length === 0) continue
-    const manifest = state.byKey[renderKeyOf(p)]?.manifest ?? state.byKey[state.latest[p.fileId] ?? '']?.manifest
+    const manifest = structuralPanelManifest(state, p)
     if (!manifest) continue
     for (const ov of p.overrides) {
       const el = manifest.elements.find((e) => e.gid === ov.gid)

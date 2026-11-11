@@ -182,7 +182,7 @@ export function CanvasThumb({
           const key = o.id ?? `i${i}`
           if (o.type === 'panel' && o.fileId) {
             const bucket = pxWidth && w > 0 ? bucketFor((o.w / w) * pxWidth) : 200
-            const archived = hasFigureSnapshotPreview(o as Partial<PanelObject>)
+            const archived = hasFigureSnapshotPreview(o as Partial<PanelObject>) || (o as Partial<PanelObject>).figureOrigin !== undefined
             const href = !active || archived ? null :
               o.fileKind === 'runtime'
                 ? runtimePreviewUrl(o.fileId, nonce[o.fileId], owner.pj)
@@ -366,7 +366,7 @@ function EditedThumbImage({
   // runtime 面板的退路是 cache 预览，而后端 GET 版给的是「最近一次渲染」、不是这组 overrides 的图
   // （撤销回一个前端已画过的变体时它停在撤销前，QA-WIN-21）：按此刻的 overrides 取，**不是这个状态的图就不挂**
   // ——缩略图没有「近似预览」的位置，空着比挂一张撤销前的旧图诚实
-  const archived = hasFigureSnapshotPreview(panel)
+  const archived = hasFigureSnapshotPreview(panel) || panel.figureOrigin !== undefined
   const byState = !archived && panel.fileKind === 'runtime' && !engineTransport()
   const runtimePreview = useRuntimePreview(panel.fileId, panel.overrides, byState, rev, owner)
   const fallback = archived || panel.chart || panel.chartSource !== undefined ? null : byState ? (runtimePreview.exact === true ? runtimePreview.url : null) : fallbackHref

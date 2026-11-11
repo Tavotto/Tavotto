@@ -288,6 +288,49 @@ describe('chart 与普通渲染共用配对状态机', () => {
   })
 })
 
+describe('同次渲染正证的接线', () => {
+  it('普通渲染请求正证并按本次 P 记录，历史来源不请求也不记录', async () => {
+    const { setCurrentProjectId } = await import('@/lib/session')
+    const { clearFigureExecutionProofs, figureExecutionProofFor } = await import('@/lib/figureExecutionProof')
+    clearFigureExecutionProofs()
+    setCurrentProjectId('proj-proof')
+    try {
+      const p = panel('proof', 'Fig1.pdf', [{ gid: 'g', prop: 'linewidth', value: 2 }])
+      const proof = {
+        version: 1, sourceId: 'Fig1.pdf', receiptId: 'r-1',
+        executionOwner: { script: 'plot.py', run_config: null }, patchHash: 'sha256:p',
+      }
+      engineRender.mockResolvedValueOnce({
+        rev: 1, manifest: manifest('Fig1'), svg: '<svg/>', figure_execution: proof,
+      })
+      await useRenderStore.getState().render(p.fileId, p.overrides)
+      expect(engineRender.mock.calls[0][2].includeFigureExecution).toBe(true)
+      expect(figureExecutionProofFor('proj-proof', 'Fig1.pdf', p.overrides)).toEqual(proof)
+
+      // A historical source already carries its own identity; it neither asks
+      // for proof nor overwrites the proof of the current source.
+      const origin = {
+        version: 1 as const,
+        snapshot: {
+          version: 1 as const, sourceId: 'Fig1.pdf', patchHash: 'sha256:p', receiptId: 'r-1',
+          snapshotId: 's-1', executionOwner: { script: 'plot.py', run_config: null },
+        },
+        patches: structuredClone(p.overrides),
+      }
+      engineRender.mockResolvedValueOnce({ rev: 2, manifest: manifest('Fig1'), svg: '<svg/>' })
+      await useRenderStore.getState().render(
+        p.fileId, p.overrides, undefined, undefined, undefined, undefined, 'foreground',
+        undefined, undefined, origin,
+      )
+      expect(engineRender.mock.calls[1][2].includeFigureExecution).toBeUndefined()
+      expect(figureExecutionProofFor('proj-proof', 'Fig1.pdf', p.overrides)).toEqual(proof)
+    } finally {
+      clearFigureExecutionProofs()
+      setCurrentProjectId(null)
+    }
+  })
+})
+
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   engineRender: (id: string, patches: unknown[], opts?: EngineRenderOptions) =>

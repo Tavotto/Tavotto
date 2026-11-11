@@ -1,7 +1,8 @@
 import type { EngineRenderOptions, EngineRenderResponse, Manifest } from './api'
-import type { ChartSourceRef, PanelChartState } from '@/types/document'
+import type { ChartSourceRef, FigureOrigin, PanelChartState } from '@/types/document'
 
 export interface EnginePngSnapshot {
+  figureOrigin?: FigureOrigin
   chartRevision?: string
   url: string
   /** null only for older transports that cannot report a paired PNG draw. */
@@ -31,6 +32,7 @@ export interface EnginePngSnapshot {
  * 文件）。所以本模块**不 import 任何东西**，只存一个可选覆盖。
  */
 export interface EngineTransport {
+  supportsFigureOriginRender?: true
   /** 宿主已实现 opts.chart 的同版 SVG/manifest 渲染才可声明；缺席时不可丢弃 chart。 */
   supportsChartRender?: true
   /** 宿主必须明确兑现不可变来源附件，不得忽略 opts.chart_source。 */
@@ -57,6 +59,7 @@ export interface EngineTransport {
     signal?: AbortSignal,
     chart?: PanelChartState,
     chartSource?: ChartSourceRef,
+    figureOrigin?: FigureOrigin,
   ): Promise<EnginePngSnapshot>
   /**
    * 素材/原图的显示地址。iframe 里没有可寻址的 HTTP 资源时返回 null，

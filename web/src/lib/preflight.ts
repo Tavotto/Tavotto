@@ -19,8 +19,8 @@ import { embedsDiskBitmap, type ExportRoute, type ExportRouteScope } from './exp
 import type { CanvasObject, FigureDocument, FramePad, PanelObject, TextObject } from '@/types/document'
 import { panelFullSize } from '@/types/document'
 import type { Manifest, ManifestElement } from './api'
-import { hasFigureSnapshotPreview } from './figureSnapshotPreview'
-import { figureSnapshotSourceKey, type PanelSourceEvidence } from './panelSourceEvidence'
+import { figureOriginFor } from './figureSnapshot'
+import { needsFigureArchiveSource, figureSnapshotSourceKey, type PanelSourceEvidence } from './panelSourceEvidence'
 
 /**
  * 出版规范预检 —— **规则全部来自 profile，一条都不在这里硬编码**。
@@ -1229,7 +1229,7 @@ function panelSpec(
   // 附件不是磁盘素材表的一员。只有后端已经成功画过当前完整 chart/ref 请求，
   // 才是该来源可用的正证；字段存在、旧 latest 或另一变体都不能授予资格。
   const verifiedChartSource = o.chart && o.chartSource !== undefined && exactPanelRender(render, o)
-  const archived = hasFigureSnapshotPreview(o)
+  const archived = needsFigureArchiveSource(o)
   const archiveKey = archived ? figureSnapshotSourceKey(o) : null
   const verifiedArchive = archiveKey !== null && sources?.figureSnapshots[archiveKey] === true
   const verifiedDisk = !o.chart && o.chartSource === undefined && sources?.originalSources[o.fileId]?.id === o.fileId
@@ -1254,7 +1254,7 @@ function panelSpec(
       : null,
     // 有 override 但引擎那边还没画出这一版：成图会与画布不一致
     unapplied_overrides:
-      o.overrides.length > 0 && r?.lastPatches !== renderRequestIdentity(o.overrides, o.chart, o.chartSource)
+      o.overrides.length > 0 && r?.lastPatches !== renderRequestIdentity(o.overrides, o.chart, o.chartSource, figureOriginFor(o))
         ? o.overrides.length
         : 0,
     hidden: !!o.hidden,

@@ -1,3 +1,7 @@
+import { useDocumentPreviewOwner } from '@/hooks/useDocumentPreviewOwner'
+import { useVariantPng } from '@/hooks/useVariantPng'
+import { figureOriginFields, figureOriginFor, figureOriginIdentity } from '@/lib/figureSnapshot'
+import { captureDocumentPreviewOwner, useDocumentStore } from '@/store/documentStore'
 import { refuseArtifactOperation } from '@/lib/artifactValidation'
 import { useEffect, useMemo, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
@@ -15,7 +19,7 @@ import { cn } from '@/lib/utils'
 import { restorePanelOverrides } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { finishActiveGesture } from '@/store/gestureCoordinator'
-import { useRenderStore } from '@/store/renderStore'
+import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
@@ -44,6 +48,12 @@ const vh = (key: string, values?: Record<string, unknown>) =>
 /** 读取失败也算「有这一页」：入口悄悄消失会让人以为从没写回过 */
 export type RecordsOf = HistoryVersion[] | { error: string }
 
+/** 同名文件的不同历史来源各有自己的记录；普通文件维持原键。 */
+export function writeBackRecordKey(panel: PanelObject): string {
+  const origin = figureOriginFor(panel)
+  return origin === undefined ? panel.fileId : JSON.stringify([panel.fileId, figureOriginIdentity(origin)])
+}
+
 /**
  * 这些图各自的写回记录。素材的 mtime 一变（写回完成后 `assetStore.load()`）就重取，
  * 所以刚写回完，「写回记录」页会自己冒出来。`enabled` 关着就不发请求。
@@ -51,33 +61,41 @@ export type RecordsOf = HistoryVersion[] | { error: string }
 export function useWriteBackRecords(
   fileIds: readonly string[],
   enabled = true,
+  panels?: readonly PanelObject[],
 ): Record<string, RecordsOf> {
-  const key = fileIds.join('\n')
+  const owner = useDocumentPreviewOwner(panels?.[0] ?? fileIds.join('\n'))
+  const inputs = panels
+    ? [...new Map(panels.filter(p => fileIds.includes(p.fileId)).map(p =>
+        [writeBackRecordKey(p), { id: p.fileId, origin: figureOriginFor(p) }] as const))]
+    : fileIds.map(id => [id, { id, origin: undefined }] as const)
+  const key = JSON.stringify([inputs, owner.key])
+  const active = owner.still()
   const mtimes = useAssetStore((s) => fileIds.map((f) => s.byId[f]?.mtime ?? 0).join(','))
   const [loaded, setLoaded] = useState<{ key: string; byFile: Record<string, RecordsOf> }>({
     key: '',
     byFile: {},
   })
   useEffect(() => {
-    if (!enabled || !key) return
+    if (!enabled || !fileIds.length || !active) return
     let alive = true
-    const ids = key.split('\n')
     void Promise.all(
-      ids.map(
-        (id) =>
-          fetchHistory(id).then(
-            (r): [string, RecordsOf] => [id, r.versions ?? []],
-            (e): [string, RecordsOf] => [id, { error: backendErrorText(e) }],
+      inputs.map(
+        ([recordKey, { id, origin }]) =>
+          (origin === undefined ? fetchHistory(id) : fetchHistory(id, { figure_origin: origin }, owner.pj)).then(
+            (r): [string, RecordsOf] => [recordKey, r.versions ?? []],
+            (e): [string, RecordsOf] => [recordKey, { error: backendErrorText(e) }],
           ),
       ),
     ).then((entries) => {
-      if (alive) setLoaded({ key, byFile: Object.fromEntries(entries) })
+      if (alive && owner.still()) setLoaded({ key, byFile: Object.fromEntries(entries) })
     })
     return () => {
       alive = false
     }
-  }, [key, mtimes, enabled])
-  return enabled && loaded.key === key ? loaded.byFile : {}
+    // key freezes file IDs, origins and the document owner.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, mtimes, enabled, active])
+  return enabled && active && loaded.key === key ? loaded.byFile : {}
 }
 
 /** 有记录（或读不出来）的那几张图的 fileId，按传入次序 */
@@ -106,17 +124,17 @@ export function WriteBackRecordsPage({
 }) {
   useTranslation('inspector')
   const files = useMemo(
-    () => fileIdsWithRecords([...new Set(panels.map((p) => p.fileId))], byFile),
+    () => fileIdsWithRecords([...new Set(panels.map(writeBackRecordKey))], byFile),
     [panels, byFile],
   )
   const [picked, setPicked] = useState<string | null>(null)
   const fileId =
     (picked && files.includes(picked) && picked) ||
-    (focusFileId && files.includes(focusFileId) && focusFileId) ||
+    (focusFileId && files.find(key => panels.some(p => p.fileId === focusFileId && writeBackRecordKey(p) === key))) ||
     files[0]
-  const panel = panels.find((p) => p.fileId === fileId)
+  const panel = panels.find((p) => writeBackRecordKey(p) === fileId)
   const records = fileId ? byFile[fileId] : undefined
-  const [confirming, setConfirming] = useState<HistoryVersion | null>(null)
+  const [confirming, setConfirming] = useState<{ key: string; version: HistoryVersion } | null>(null)
   if (!fileId || !panel || !records) return null
 
   if (!Array.isArray(records)) {
@@ -133,7 +151,7 @@ export function WriteBackRecordsPage({
           value={fileId}
           onChange={setPicked}
           ariaLabel={vh('pickFigure')}
-          options={files.map((f) => ({ value: f, label: stemOf(f) }))}
+          options={files.map((f) => ({ value: f, label: stemOf(panels.find(p => writeBackRecordKey(p) === f)?.fileId ?? f) }))}
         />
       )}
       <div className="flex max-h-[44vh] flex-col gap-1 overflow-y-auto">
@@ -143,14 +161,14 @@ export function WriteBackRecordsPage({
             panel={panel}
             version={v}
             isCurrent={v.n === currentN}
-            onRestore={() => setConfirming(v)}
+            onRestore={() => setConfirming({ key: fileId, version: v })}
           />
         ))}
       </div>
 
       <RestoreDialog
         panel={panel}
-        version={confirming}
+        version={confirming?.key === fileId ? confirming.version : null}
         onClose={() => setConfirming(null)}
         onDone={onDone}
       />
@@ -174,6 +192,9 @@ function VersionRow({
   // （2026-10-01 用户拍板；此前的「历史」弹层没有这道守卫）
   const readOnly = useProjectStore((s) => s.project?.settings?.allow_write_back === false)
   const isOrigin = version.n < 0
+  const origin = figureOriginFor(panel)
+  const owner = useDocumentPreviewOwner(panel)
+  const preview = useVariantPng(panel.fileId, version.patches, 320, origin !== undefined, 0, undefined, undefined, undefined, owner, undefined, origin)
   // 横向排：缩略图窄一点，四五个版本也能一屏看完
   return (
     <div
@@ -184,7 +205,7 @@ function VersionRow({
     >
       <img
         loading="lazy"
-        src={historyPreviewUrl(panel.fileId, version.n, 320)}
+        src={origin === undefined ? historyPreviewUrl(panel.fileId, version.n, 320) : preview.url ?? undefined}
         alt=""
         className="h-14 w-[92px] shrink-0 rounded-xs border border-border bg-paper object-contain"
       />
@@ -252,9 +273,17 @@ function RestoreDialog({
     setError(null)
     try {
       // 与写回同一条前置校验：素材被工具之外改过就别按旧状态覆盖（409 source_changed）
-      refuseArtifactOperation(panel)
+      const owner = captureDocumentPreviewOwner()
+      const key = renderKeyOf(panel)
+      const origin = figureOriginFor(panel)
+      if (origin === undefined) refuseArtifactOperation(panel)
       const mtime = useAssetStore.getState().byId[panel.fileId]?.mtime
-      const res = await restoreHistory(panel.fileId, version.n, mtime)
+      const sourceArgs: [source?: ReturnType<typeof figureOriginFields>, pj?: string | null] =
+        origin === undefined ? [] : [figureOriginFields(panel), owner.pj]
+      const res = await restoreHistory(panel.fileId, version.n, mtime,
+        ...sourceArgs)
+      const current = useDocumentStore.getState().doc.objects.find(o => o.id === panel.id)
+      if (!owner.still() || current?.type !== 'panel' || renderKeyOf(current) !== key) return
       // 文件、基线、当前面板的 overrides 三者对齐，否则下次进编辑态又会打架
       // 恢复来的条目带着它们写下那一刻的身份，原样放回（ADR 0083）
       restorePanelOverrides(panel.id, msg('history.restoreVersion', undefined, 'inspector'), res.patches)

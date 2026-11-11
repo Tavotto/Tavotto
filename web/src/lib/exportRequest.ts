@@ -1,5 +1,5 @@
 import { chartSourceFields } from './chartSource'
-import { figureSnapshotFor } from './figureSnapshot'
+import { figureOriginFields, figureOriginFor, figureSnapshotFor } from './figureSnapshot'
 import { artifactRequestFields, artifactValidationIssue, isAdoptedPanel, originalArtifactOverrides } from './artifactValidation'
 /**
  * 统一导出请求的构造 —— **全产品只有这一份**（ADR 0031）。
@@ -147,6 +147,7 @@ export function runtimeRegistration(figureId: string): boolean | null {
 /** Guarded hidden PNGs still require the exact-source export preflight before publication. */
 function canValidateOriginalSource(figureId: string, panel?: PanelObject | null): boolean {
   // 引用只是允许进入后端预检；附件的存在、字节与场景资格仍由后端证明。
+  if (panel?.fileId === figureId && figureOriginFor(panel) !== undefined) return true
   if (panel?.fileId === figureId && panel.chart && panel.chartSource !== undefined) return true
   if (figureId.startsWith('runtime:')) {
     // 素材清单（`/api/runtime/assets`）会把「磁盘上已有同名原件」的 runtime 图让给 FileAsset，清单也可能还没取到；
@@ -193,7 +194,15 @@ export function epsAvailability(
   single = false,
   /** 仅同scope/完整来源事实下可复用的后端offer；由exportRouteStore按独立事实key提供。 */
   offers?: ExportOffers | null,
+  /** 这一格对应的画布面板；历史来源自带执行身份，不借当前同名文件的脚本。 */
+  panel?: PanelObject | null,
 ): { ok: boolean; reason: EpsBlockReason } {
+  if (panel && panel.fileId === figureId && figureOriginFor(panel) !== undefined) {
+    // The backend produces EPS from the origin's live execution; neither the
+    // current same-name script nor the origin-unaware route may deny it.
+    if (scope === 'original') return { ok: true, reason: 'none' }
+    if (single) return { ok: false, reason: 'figure_not_ready' }
+  }
   if (scope !== 'original') {
     if (!single) return { ok: false, reason: 'canvas_scope' }
     // 单图档静默退到画布：先说「这张图没有脚本」（静态文件 / 原文件已删），只有 runtime 图才说「先运行它」
@@ -281,8 +290,8 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
   // EPS 在这次范围 / 这张图上给不出时**不发**它：后端会逐项报 `eps_*` 失败，
   // 但界面上那个选项已经禁用并说了原因，再发一次等于让用户为同一件事看两遍
   const epsOk = (input.offers
-    ? epsAvailability(input.scope, input.figureId ?? null, input.route, false, input.offers)
-    : epsAvailability(input.scope, input.figureId ?? null, input.route)).ok
+    ? epsAvailability(input.scope, input.figureId ?? null, input.route, false, input.offers, input.panel ?? null)
+    : epsAvailability(input.scope, input.figureId ?? null, input.route, false, undefined, input.panel ?? null)).ok
   const formats = FORMATS.filter((f) => input.formats.includes(f) && (f !== 'eps' || epsOk))
   const filename = stripOutputExtension(input.filename, formats)
   const raster = hasRaster(formats)
@@ -316,15 +325,16 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
   } else {
     const sourceOf = (figureId: string, panel: PanelObject | null, spec: OriginalOutputSpec | null): ExportOriginalSource => {
       const chart = panel?.fileId === figureId && panel.chart ? panel.chart : null
-      const patches = chart && panel ? structuredClone(panel.overrides) : panel ? originalArtifactOverrides(panel) : []
+      const patches = panel && (chart || figureOriginFor(panel) !== undefined) ? structuredClone(panel.overrides) : panel ? originalArtifactOverrides(panel) : []
       return {
         figure_id: figureId,
         ...(chart ? { chart: structuredClone(chart), chart_render_profile: 'native-manifest/1' as const } : {}),
         ...(panel?.fileId === figureId ? chartSourceFields(panel.chartSource) : {}),
+        ...(panel?.fileId === figureId ? figureOriginFields(panel) : {}),
         ...(panel && panel.fileId === figureId &&
             JSON.stringify(patches) === JSON.stringify(panel.overrides) && figureSnapshotFor(panel)
           ? { figure_snapshot: figureSnapshotFor(panel) } : {}),
-        ...(panel ? artifactRequestFields(panel) : {}),
+        ...(panel && figureOriginFor(panel) === undefined ? artifactRequestFields(panel) : {}),
         overrides: patches.length ? patches : undefined,
         w_mm: spec?.widthMm ?? null,
         h_mm: spec?.heightMm ?? null,
@@ -368,8 +378,8 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
  */
 export function exportTargetKey(input: ExportRequestInput): string {
   const epsOk = (input.offers
-    ? epsAvailability(input.scope, input.figureId ?? null, input.route, false, input.offers)
-    : epsAvailability(input.scope, input.figureId ?? null, input.route)).ok
+    ? epsAvailability(input.scope, input.figureId ?? null, input.route, false, input.offers, input.panel ?? null)
+    : epsAvailability(input.scope, input.figureId ?? null, input.route, false, undefined, input.panel ?? null)).ok
   const formats = FORMATS.filter((f) => input.formats.includes(f) && (f !== 'eps' || epsOk))
   return JSON.stringify([
     input.documentId,

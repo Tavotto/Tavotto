@@ -1,5 +1,6 @@
 import { artifactValidationIssue, ArtifactValidationError, adoptionGuardOf } from '@/lib/artifactValidation'
 import { engineErrorMsg } from '@/lib/api'
+import { figureOriginFor } from '@/lib/figureSnapshot'
 /**
  * 引擎渲染的**调度器**：把「什么时候麻烦 matplotlib」这件事从 React 里拿出来。
  *
@@ -84,9 +85,10 @@ export function requestRender(
   const policy = policyOf(immediate)
   const store = useRenderStore.getState()
   const key = renderKeyOf(panel)
-  const want = renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource)
+  const origin = figureOriginFor(panel)
+  const want = renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource, origin)
   cancelScheduledRender(panel.id)
-  const issue = artifactValidationIssue(panel)
+  const issue = origin === undefined ? artifactValidationIssue(panel) : null
   if (issue) {
     store.patch(key, { fileId: panel.fileId, status: 'error', code: 'artifact_source_unavailable',
       error: engineErrorMsg(new ArtifactValidationError(issue)), stale: true, manifest: null,
@@ -101,7 +103,7 @@ export function requestRender(
 
   // 防抖那一路是「还在调」，可以先给一张低清；immediate 是定稿，永远默认 dpi
   const dpi = policy !== 'defer' || !hasImageElement(panel) ? undefined : INTERACTIVE_PREVIEW_DPI
-  const snapshot = panel.chart || panel.chartSource !== undefined ? JSON.parse(want) as { patches: unknown[]; chart?: PanelChartState; chart_source?: PanelObject['chartSource'] } : null
+  const snapshot = panel.chart || panel.chartSource !== undefined || origin !== undefined ? JSON.parse(want) as { patches: unknown[]; chart?: PanelChartState; chart_source?: PanelObject['chartSource']; figure_origin?: PanelObject['figureOrigin'] } : null
   const patches = snapshot?.patches ?? panel.overrides
   const chart = snapshot?.chart
   const chartSource = snapshot?.chart_source
@@ -111,7 +113,9 @@ export function requestRender(
   const fire = () => {
     timers.delete(panel.id)
     // 前台请求的调用形状一字不变（只有邻居补渲染多一个实参）
-    void (chartSource !== undefined
+    void (origin !== undefined
+      ? store.render(fileId, patches, dpi, policy, epoch, undefined, purpose, chart, chartSource, snapshot!.figure_origin)
+      : chartSource !== undefined
       ? store.render(fileId, patches, dpi, policy, epoch, adoptionGuardOf(panel), purpose, chart, chartSource)
       : chart
       ? store.render(fileId, patches, dpi, policy, epoch, adoptionGuardOf(panel), purpose, chart)
@@ -139,7 +143,7 @@ export function flushRender(panelId: string) {
   if (panel?.type !== 'panel') return
   const store = useRenderStore.getState()
   cancelScheduledRender(panelId)
-  const want = renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource)
+  const want = renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource, figureOriginFor(panel))
   const state = store.get(renderKeyOf(panel))
   // 判据是「这一版还没画出来」，不是「有没有挂起的计时器」。
   // 旧实现只看计时器：render:'none' 的手势（scrub / 取色）压根不设计时器，

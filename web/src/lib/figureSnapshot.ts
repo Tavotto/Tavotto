@@ -1,3 +1,4 @@
+import { figureExecutionProofFor } from '@/lib/figureExecutionProof'
 import type { FigureOrigin, FigureSnapshot, PanelObject, ProjectDocument } from '@/types/document'
 
 /** Captured with the exact document sent to disk, before any asynchronous work. */
@@ -55,13 +56,55 @@ export function sameFigureOrigin(expected: unknown, actual: unknown): boolean {
   return figureOriginIdentity(expected) === figureOriginIdentity(actual)
 }
 
+/**
+ * Only the explicit historical input is an origin.
+ *
+ * `figureSnapshot` is the **output** archive of some past render; it does not
+ * say which execution produced it, so it must never be promoted into a
+ * historical edit input. A panel with only a snapshot keeps the ordinary
+ * "run the current source" path (the baseline behaviour).
+ */
+export function figureOriginFor(panel: Pick<PanelObject, 'fileId' | 'figureOrigin'>): FigureOrigin | undefined {
+  return panel.figureOrigin !== undefined ? panel.figureOrigin : undefined
+}
+
+/**
+ * Capture the pre-edit baseline P only when the backend proved that this exact
+ * render produced the snapshot we are about to detach from.
+ *
+ * The proof is per-render evidence (`figure_execution`), not a "current
+ * receipt" read after the fact: source id, receipt id, patch hash, owner and
+ * the exact ordered override list all have to match the panel's own snapshot
+ * and pre-edit inputs.
+ */
+export function verifiedFigureOrigin(panel: PanelObject, pj: string | null): FigureOrigin | undefined {
+  const snapshot = panel.figureSnapshot
+  if (snapshot === undefined || !validFigureSnapshot(snapshot, panel.fileId)) return undefined
+  const proof = figureExecutionProofFor(pj, panel.fileId, panel.overrides)
+  if (proof === undefined) return undefined
+  if (proof.sourceId !== panel.fileId || proof.receiptId !== snapshot.receiptId ||
+      proof.patchHash !== snapshot.patchHash) return undefined
+  if (figureOriginIdentity(proof.executionOwner) !== figureOriginIdentity(snapshot.executionOwner)) return undefined
+  // Immer drafts are not structured-cloneable; JSON is the frozen pre-edit input.
+  return {
+    version: 1,
+    snapshot: JSON.parse(JSON.stringify(snapshot)) as FigureSnapshot,
+    patches: JSON.parse(JSON.stringify(panel.overrides)) as FigureOrigin['patches'],
+  }
+}
+
 export function sameFigureSource(a: PanelObject, b: PanelObject): boolean {
   return a.fileId === b.fileId && a.fileKind === b.fileKind &&
     JSON.stringify(a.source) === JSON.stringify(b.source)
 }
 
+export function figureOriginFields(panel: Parameters<typeof figureOriginFor>[0]): { figure_origin?: FigureOrigin } {
+  const origin = figureOriginFor(panel)
+  return origin === undefined ? {} : { figure_origin: structuredClone(origin) }
+}
+
 /** Geometry changes do not change the captured Figure; source and overrides do. */
 export function sameFigureInputs(a: PanelObject, b: PanelObject): boolean {
-  return sameFigureSource(a, b) && sameFigureOrigin(a.figureOrigin, b.figureOrigin) &&
+  return sameFigureSource(a, b) && sameFigureOrigin(figureOriginFor(a), figureOriginFor(b)) &&
     JSON.stringify(a.overrides) === JSON.stringify(b.overrides)
 }

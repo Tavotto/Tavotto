@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
 import { buildExportRequest } from '@/lib/exportRequest'
-import { setCurrentProjectId } from '@/lib/session'
+import { clearFigureExecutionProofs, recordFigureExecutionProof } from '@/lib/figureExecutionProof'
+import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import { emptyProject, type FigureSnapshot, type PanelObject, type ProjectDocument } from '@/types/document'
 import {
   applyDerivedUpdate, captureFigureSnapshotSave, invalidateFigureSnapshots,
@@ -9,9 +10,16 @@ import {
 } from './documentStore'
 
 const s = () => useDocumentStore.getState()
+const owner = { script: 'plot.py', run_config: null }
 const ref = (sourceId = 'one.pdf', snapshotId = 'snap-one'): FigureSnapshot => ({
-  version: 1, sourceId, patchHash: 'patch-one', receiptId: 'receipt-one', snapshotId,
+  version: 1, sourceId, patchHash: 'patch-one', receiptId: 'receipt-one', snapshotId, executionOwner: owner,
 })
+/** The backend proof that the current render produced `ref()` with these ordered overrides. */
+const prove = (reference: FigureSnapshot = ref(), overrides: readonly unknown[] = []) =>
+  recordFigureExecutionProof({
+    version: 1, sourceId: reference.sourceId, receiptId: reference.receiptId,
+    executionOwner: reference.executionOwner ?? owner, patchHash: reference.patchHash,
+  }, { pj: currentProjectId(), fileId: reference.sourceId, overrides })
 const panel = (id = 'p1', fileId = 'one.pdf'): PanelObject => ({
   id, fileId, type: 'panel', fileKind: 'pdf', figureFrame: 1,
   nativeW: 80, nativeH: 60, x: 0, y: 0, w: 80, h: 60, overrides: [],
@@ -22,6 +30,7 @@ let stopAutosave: (() => void) | undefined
 let fetchMock: ReturnType<typeof vi.fn>
 
 beforeEach(async () => {
+  clearFigureExecutionProofs()
   localStorage.clear()
   setCurrentProjectId(null)
   fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => new Response(
@@ -148,6 +157,24 @@ describe('immutable Figure snapshot association', () => {
     expect((s().doc.objects[1] as PanelObject).figureSnapshot).toEqual(ownerB)
     mergeSavedFigureSnapshots(saved(), { p1: ownerB, p2: ownerB })
     expect(currentPanel().figureSnapshot).toEqual(ownerB)
+  })
+
+  it('retires a historical input whose execution was replaced, keeping another owner', () => {
+    const ownerB = {
+      ...ref(), receiptId: 'receipt-B', snapshotId: 'snap-B',
+      executionOwner: { script: 'other.py', run_config: null },
+    }
+    s().commit(literal('shared source'), (d) => { d.objects.push(panel('p2')) })
+    mergeSavedFigureSnapshots(saved(), { p1: ref(), p2: ownerB })
+    s().commit(literal('historical'), (d) => {
+      (d.objects[0] as PanelObject).figureOrigin = { version: 1, snapshot: ref(), patches: [] }
+      ;(d.objects[1] as PanelObject).figureOrigin = { version: 1, snapshot: ownerB, patches: [] }
+    })
+    invalidateFigureSnapshots([], null, ['receipt-one'])
+    // A dead origin can never be admitted again; the panel falls back to the current source.
+    expect(currentPanel().figureOrigin).toBeUndefined()
+    expect(currentPanel().figureSnapshot).toBeUndefined()
+    expect((s().doc.objects[1] as PanelObject).figureOrigin).toEqual({ version: 1, snapshot: ownerB, patches: [] })
   })
 
   it('records a retired receipt even without any live ref, but does not replay into later history opens', async () => {
@@ -333,6 +360,7 @@ describe('immutable Figure snapshot association', () => {
 
   it.each(['override', 'source'] as const)('clears refs when %s is edited and ignores late saves', (kind) => {
     mergeSavedFigureSnapshots(saved(), { p1: ref() })
+    prove()
     const context = saved()
     s().commit(literal('edit'), (d) => {
       const p = d.objects[0] as PanelObject
@@ -340,10 +368,19 @@ describe('immutable Figure snapshot association', () => {
       else p.fileId = 'other.pdf'
     })
     expect(currentPanel().figureSnapshot).toBeUndefined()
+    if (kind === 'override') {
+      // Only a proved same-render baseline becomes a historical input.
+      expect(currentPanel().figureOrigin).toEqual({ version: 1, snapshot: ref(), patches: [] })
+    } else {
+      // Replacing the source never borrows the old name's lineage.
+      expect(currentPanel().figureOrigin).toBeUndefined()
+    }
     mergeSavedFigureSnapshots(context, { p1: ref() })
     expect(currentPanel().figureSnapshot).toBeUndefined()
     s().undo()
-    expect(currentPanel().figureSnapshot).toBeUndefined()
+    expect(currentPanel().figureSnapshot).toEqual(ref())
+    // Undo restores the pre-edit body, which needs no historical input.
+    expect(currentPanel().figureOrigin).toBeUndefined()
   })
 
   it('keeps refs for geometry, crop, flip, rotation and exact duplication', () => {
@@ -424,7 +461,7 @@ describe('immutable Figure snapshot association', () => {
     setCurrentProjectId(null)
   })
 
-  it('omits a variant snapshot when original FRAME-only guarded export strips its overrides', () => {
+  it('exports the selected historical FRAME baseline without borrowing current-original policy', () => {
     const p = {
       ...panel('guarded', 'plot.png'), fileKind: 'raster' as const,
       overrides: [{ gid: 'figure', prop: 'frame', value: 'figsize' }],
@@ -433,13 +470,19 @@ describe('immutable Figure snapshot association', () => {
         bytesSha256: 'a'.repeat(64), sizeBytes: 10,
       },
       figureSnapshot: ref('plot.png'),
+      figureOrigin: { version: 1 as const, snapshot: ref('plot.png'), patches: [{ gid: 'figure', prop: 'frame', value: 'figsize' }] },
     }
     const request = buildExportRequest({
       scope: 'original', figureId: p.fileId, panel: p,
       filename: 'out', formats: ['svg'], ppi: 600, doc: s().doc, documentId: s().documentId,
     }).request
-    expect(request.original).not.toHaveProperty('figure_snapshot')
-    expect(request.original?.overrides).toBeUndefined()
+    expect(request.original?.figure_snapshot).toEqual(p.figureSnapshot)
+    // An explicit historical input travels with its own ordered P; the current
+    // original-source policy is not borrowed.
+    expect(request.original?.figure_origin).toEqual(p.figureOrigin)
+    expect(request.original?.overrides).toEqual(p.overrides)
+    expect(request.original).not.toHaveProperty('source_policy')
+    expect(request.original).not.toHaveProperty('expected_source')
   })
 
   it('transmits refs only for the corresponding source in original and canvas exports', () => {

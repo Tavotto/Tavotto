@@ -1,5 +1,6 @@
 import type { PanelInfo } from './api'
 import { originalArtifactOverrides } from './artifactValidation'
+import { figureOriginFor } from './figureSnapshot'
 import type { PanelObject } from '@/types/document'
 
 /** 这次导出落在哪个范围：画布合成，还是单图「原图」导出。 */
@@ -37,6 +38,9 @@ function legacyEmbedsDiskBitmap(
   scope: ExportRouteScope,
   formats: readonly string[],
 ): boolean {
+  // A historical input is re-rendered from its own execution, never copied
+  // from whatever same-name file the current source resolves to.
+  if (figureOriginFor(o) !== undefined) return false
   if (o.fileKind !== 'raster') return false
   if (scope === 'canvas') return o.overrides.length === 0
   let sent = o.overrides
@@ -121,6 +125,9 @@ export function embedsDiskBitmap(
   formats: readonly string[],
   route?: ExportRoute | null,
 ): boolean {
+  // The route is computed from the current same-name source; it cannot describe
+  // a historical execution. Answer from the origin itself.
+  if (figureOriginFor(o) !== undefined) return false
   const fromRoute = panelRouteOf(route, scope, o.fileId, formats)
   if (fromRoute) return fromRoute.embeds_disk_bitmap
   return legacyEmbedsDiskBitmap(o, assets, scope, formats)

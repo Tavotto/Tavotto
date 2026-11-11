@@ -1,3 +1,4 @@
+import { useDocumentPreviewOwner } from '@/hooks/useDocumentPreviewOwner'
 import { chartRequestIdentity, chartSourceFields } from '@/lib/chartSource'
 import { adoptionGuardOf, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, isSourceBackedZeroEdit, isAdoptedPanel } from '@/lib/artifactValidation'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
@@ -10,7 +11,6 @@ import { useDecodedSvg } from '@/lib/useDecodedSvg'
 import { useHtmlMarkup } from '@/lib/useHtmlMarkup'
 import { useRetryingSrc } from '@/lib/imgRetry'
 import { engineTransport } from '@/lib/engineTransport'
-import { captureProjectEpoch } from '@/lib/projectEpoch'
 import {
   alignEntries,
   blockedGroupsIn,
@@ -60,12 +60,13 @@ import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useRuntimePreview } from '@/hooks/useRuntimePreview'
 import { useFigureSnapshotPreview } from '@/hooks/useFigureSnapshotPreview'
 import { hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
+import { figureOriginFields, figureOriginFor, sameFigureOrigin, validFigureOrigin } from '@/lib/figureSnapshot'
 import { useDisplayedExactManifest, useMountedSvgStore } from '@/store/mountedSvgStore'
 import { useMountedPngStore } from '@/store/mountedPngStore'
 import { reattachPreview, settleFailedAuthority, settleUnbackedCommit } from '@/store/svgPreviewStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
-import type { PanelObject, PanelRotation } from '@/types/document'
+import type { FigureOrigin, PanelObject, PanelRotation } from '@/types/document'
 import {
   panelFullSize,
   panelKind,
@@ -194,14 +195,16 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 来源驱动采用 + 零编辑（只有结构性 FRAME）且**不在图内编辑**：显示磁盘原像素，不出引擎图（ADR 0139 §五.1）。
   // 进入图内编辑的那一刻起显示可编辑基础（重画的 SVG + 命中层），拖动预览才看得见；退出编辑且仍是零编辑就回原像素。
   // 超大图（raster / evicted 档）同理：只有编辑态才用引擎位图，编辑外一律原像素。
-  const originalPixels = isSourceBackedZeroEdit(obj) && !editing
+  const origin = figureOriginFor(obj)
+  const currentArtifactIssue = origin === undefined ? artifactValidationIssue(obj) : null
+  const originalPixels = origin === undefined && isSourceBackedZeroEdit(obj) && !editing
   const needsEngine = !archiveDisplay && !originalPixels &&
-    (!!obj.chart || (obj.overrides.length > 0 && !isJustBakedBaseline(obj)) || tracked || runtime)
+    (obj.figureOrigin !== undefined || !!obj.chart || (obj.overrides.length > 0 && !isJustBakedBaseline(obj)) || tracked || runtime)
   // raster 档下**编辑态也要位图**——否则画布上什么都没有。复用的是同一条
   // PNG 链路（按 patches 出图、状态中立、AbortController + objectURL 生命周期），
   // 不另写第二套。
-  const useEnginePng = !archiveDisplay && !artifactValidationIssue(obj) && !originalPixels &&
-    (!isAdoptedPanel(obj) || (render?.status !== 'error' && !render?.stale && !!render?.manifest)) &&
+  const useEnginePng = !archiveDisplay && !currentArtifactIssue && !originalPixels &&
+    (origin !== undefined || !isAdoptedPanel(obj) || (render?.status !== 'error' && !render?.stale && !!render?.manifest)) &&
     (bitmapOnly ? editing || needsEngine : !editing && needsEngine) && (render?.rev ?? 0) > 0
   const renderRev = render?.rev ?? 0
   const pngSource = render?.manifest ?? null
@@ -213,8 +216,8 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 暂挂**（与 Phase F 的 latest 显示退路同一条纪律）。取图一旦失败，就不能再
   // 拿上一变体的位图冒充当前变体——那正是「预览 ≠ 当前 overrides 且不吵」。
   const enginePng =
-    pngBlob.url && !(isAdoptedPanel(obj) && pngBlob.failed) && !artifactValidationIssue(obj) &&
-    (pngIsCurrent || (pngBlob.chartRequest === (chartRequestIdentity(obj.chart, obj.chartSource) ?? null) && !isAdoptedPanel(obj) && !pngBlob.failed)) ? pngBlob.url : null
+    pngBlob.url && !(isAdoptedPanel(obj) && pngBlob.failed) && !currentArtifactIssue &&
+    (pngIsCurrent || (pngBlob.chartRequest === (chartRequestIdentity(obj.chart, obj.chartSource) ?? null) && sameFigureOrigin(origin, pngBlob.figureOrigin) && !isAdoptedPanel(obj) && !pngBlob.failed)) ? pngBlob.url : null
   // 性能探针（ADR 0075）：位图这一格（raster / evicted / 非编辑态的引擎位图）没有
   // 「SVG 换进 DOM」那一刻，松手 → 图落定要一直量到**这一版自己的位图**加载完
   // （onLoad：取图、解码都已结束）。暂挂的上一变体 / 上一 rev 的那张不算——那是
@@ -248,10 +251,10 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // runtime 面板的 cache 预览**按此刻的 overrides 取**（QA-WIN-21）：后端 GET 版给的是「最近一次渲染」，
   // 撤销回一个前端已画过的变体时它停在撤销前，冷画布就会显示撤销前的图。内嵌画布（transport）没有
   // 这条 HTTP 路，照旧。取到之前 / 没命中这个状态时见 `approxPreview`。
-  const runtimePreview = useRuntimePreview(obj.fileId, obj.overrides, !archiveDisplay && runtime && !transport && !!runtimeState?.cached, previewNonce)
+  const runtimePreview = useRuntimePreview(obj.fileId, obj.overrides, !archiveDisplay && obj.figureOrigin === undefined && runtime && !transport && !!runtimeState?.cached, previewNonce)
   const fileSrc =
     archiveDisplay ? archivePreview.url :
-    obj.chart || obj.chartSource !== undefined || kind === 'unknown' || (runtime && !runtimeState?.cached)
+    obj.figureOrigin !== undefined || obj.chart || obj.chartSource !== undefined || kind === 'unknown' || (runtime && !runtimeState?.cached)
       ? null
       : transport
         ? transport.panelSrc(obj.fileId, kind, bucket, mtime)
@@ -439,7 +442,7 @@ function useEnginePngBlob(
   enabled: boolean,
   rev: number,
   source: Manifest | null,
-): { url: string | null; manifest: Manifest | null; source: Manifest | null; fileId: string | null; variant: string | null; rev: number; failed: boolean; chartRequest: string | null } {
+): { url: string | null; manifest: Manifest | null; source: Manifest | null; fileId: string | null; variant: string | null; rev: number; failed: boolean; chartRequest: string | null; figureOrigin?: FigureOrigin } {
   // `variant` 记的是 `url` 那张图**按哪组 overrides**出的：消费方靠它分辨
   // 「暂挂的上一张」与「就是当前这版」。`failed` = 最近一次取图以失败告终
   // （被新请求顶掉的中断不算）——此后上一张不再冒充当前变体，退位给 SVG /
@@ -454,38 +457,52 @@ function useEnginePngBlob(
     rev: number
     failed: boolean
     chartRequest: string | null
+    figureOrigin?: FigureOrigin
   }>({ url: null, manifest: null, source: null, fileId: null, variant: null, rev: 0, failed: false, chartRequest: null })
   const urlRef = useRef<string | null>(null)
   // 依赖用变体串而不是 overrides 数组：数组每次 commit 都是新引用
   const variant = renderKeyOf(obj)
+  const owner = useDocumentPreviewOwner(obj)
+  const activeOwner = owner.still()
   const { fileId, overrides } = obj
 
   useEffect(() => {
-    if (!enabled) return
+    if (!enabled || !activeOwner) return
     const ctrl = new AbortController()
-    const project = captureProjectEpoch()
+    const project = owner
     const chartRequest = chartRequestIdentity(obj.chart, obj.chartSource) ?? null
     let landed = false
     const transport = engineTransport()
-    const issue = artifactValidationIssue(obj)
-    const pending = obj.chartSource !== undefined && !obj.chart
+    const origin = figureOriginFor(obj) === undefined ? undefined : structuredClone(figureOriginFor(obj))
+    const issue = origin === undefined ? artifactValidationIssue(obj) : null
+    const pending = origin !== undefined && (!validFigureOrigin(origin, fileId) || obj.chart !== undefined || obj.chartSource !== undefined)
+      ? Promise.reject(new EngineError('Invalid historical Figure input.', '', 'svg_source_unavailable'))
+      : origin !== undefined && transport && (!transport.supportsFigureOriginRender || !transport.previewPngSnapshot)
+      ? Promise.reject(new EngineError('This host does not support historical Figure inputs.', '', 'svg_source_unavailable'))
+      : obj.chartSource !== undefined && !obj.chart
       ? Promise.reject(new EngineError('A chart source requires a chart.', '', 'chart_model_invalid'))
       : obj.chart && transport && (!transport.supportsChartRender || !transport.previewPngSnapshot || (obj.chartSource !== undefined && !transport.supportsChartSourceRender))
       ? Promise.reject(new EngineError('This host does not support paired chart pixels.', '', 'chart_render_unsupported'))
-      : issue || (isAdoptedPanel(obj) && transport)
+      : issue || (origin === undefined && isAdoptedPanel(obj) && transport)
       ? Promise.reject(new ArtifactValidationError(issue ?? 'unsupported_render_state'))
       : transport
       ? transport.previewPngSnapshot
-        ? obj.chart
+        ? origin !== undefined
+          ? transport.previewPngSnapshot(fileId, structuredClone(overrides), bucket, ctrl.signal, undefined, undefined, structuredClone(origin))
+          : obj.chart
           ? obj.chartSource !== undefined
             ? transport.previewPngSnapshot(fileId, structuredClone(overrides), bucket, ctrl.signal, structuredClone(obj.chart), structuredClone(obj.chartSource))
             : transport.previewPngSnapshot(fileId, overrides, bucket, ctrl.signal, obj.chart)
           : transport.previewPngSnapshot(fileId, overrides, bucket, ctrl.signal)
         : transport.previewPngUrl(fileId, overrides, bucket, ctrl.signal)
             .then((url) => ({ url, manifest: null }))
-      : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, { ...artifactRequestFields(obj), ...(obj.chart ? { chart: structuredClone(obj.chart) } : {}), ...chartSourceFields(obj.chartSource) })
+      : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, { ...(origin === undefined ? artifactRequestFields(obj) : {}), ...(obj.chart ? { chart: structuredClone(obj.chart) } : {}), ...chartSourceFields(obj.chartSource), ...figureOriginFields(obj) }, owner.pj)
     void pending
       .then((next) => {
+        if (origin !== undefined && (!next.manifest || !('figureOrigin' in next) || !sameFigureOrigin(origin, next.figureOrigin))) {
+          URL.revokeObjectURL(next.url)
+          throw new EngineError('Mismatched historical Figure pixels.', '', 'svg_source_unavailable')
+        }
         if (obj.chart && (!next.manifest || !('chartRevision' in next) || typeof next.chartRevision !== 'string' || !next.chartRevision)) {
           URL.revokeObjectURL(next.url)
           throw new EngineError('The chart response has no paired pixels and geometry.', '', 'chart_render_pair_missing')
@@ -497,11 +514,11 @@ function useEnginePngBlob(
         landed = true
         if (urlRef.current) URL.revokeObjectURL(urlRef.current)
         urlRef.current = next.url
-        setState({ ...next, source, fileId, variant, rev, failed: false, chartRequest })
+        setState({ ...next, source, fileId, variant, rev, failed: false, chartRequest, ...(origin === undefined ? {} : { figureOrigin: origin }) })
       })
       .catch((error) => {
         const guard = adoptionGuardOf(obj)
-        if (!ctrl.signal.aborted && project.still() && guard &&
+        if (origin === undefined && !ctrl.signal.aborted && project.still() && guard &&
             (error instanceof ArtifactValidationError || (error instanceof EngineError && error.code === 'artifact_source_unavailable'))) {
           rejectArtifactRenders(fileId, guard, error, variant)
           useMountedPngStore.getState().clear(obj.id)
@@ -517,7 +534,7 @@ function useEnginePngBlob(
     }
     // overrides 的内容变化由 variant 表达（数组引用每次 commit 都变）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, fileId, variant, bucket, rev, source])
+  }, [enabled, fileId, variant, bucket, rev, source, owner.key, activeOwner])
 
   // 卸载时把最后一张还回去，否则每个被删/被切走的面板都留一块 blob
   useEffect(() => () => {
