@@ -11,7 +11,7 @@ import { setCurrentProjectId } from '@/lib/session'
 import { forgetLayoutRevisions } from '@/lib/layoutRevision'
 import { runManualSave } from './actions'
 import { saveNow, setProjectFile, startAutosave, useDocumentStore } from './documentStore'
-import { reportAutosaveFailure, reportDocOpenElsewhere } from './saveFailureActions'
+import { reportAutosaveFailure } from './saveFailureActions'
 import { useUiStore } from './uiStore'
 
 const text = (id: string): TextObject => ({
@@ -25,6 +25,8 @@ const projectFiles = new Map<string, string>()
 let autosavePut: 200 | 409 | 500 = 200
 let layoutPost: 200 | 500 = 200
 let layoutPosts = 0
+/** 每次自动保存 PUT 的尝试（不论成败） */
+const putAttempts: string[] = []
 
 globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   const u = new URL(String(url), 'http://x')
@@ -32,6 +34,7 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   if (auto) {
     const id = decodeURIComponent(auto[1])
     if (init?.method === 'PUT') {
+      putAttempts.push(id)
       if (autosavePut === 409) return new Response(JSON.stringify({ code: 'stale_write', error: 'x' }), { status: 409 })
       if (autosavePut === 500) return new Response('{"error":"disk full"}', { status: 500 })
       autosave.set(id, String(init.body))
@@ -71,6 +74,7 @@ beforeEach(async () => {
   autosavePut = 200
   layoutPost = 200
   layoutPosts = 0
+  putAttempts.length = 0
   forgetLayoutRevisions()
   setCurrentProjectId(null)
   useUiStore.setState({ layoutOpen: false, layoutIntent: 'saveToProject', status: null, statusAction: null })
@@ -101,6 +105,40 @@ describe('自动保存写盘失败 →「重试保存」', () => {
     expect(ids(autosave.get('d_fail'))).toEqual(['t1'])
     expect(s().saveState).toBe('saved')
     expect(ui().status).toBeNull()
+  })
+})
+
+describe('「重试保存」绑定失败的那份排版', () => {
+  it('自动保存失败后切到别的排版再点：只收掉提示，不对此刻开着的那份写盘', async () => {
+    autosavePut = 500
+    edit('t1')
+    await saveNow()
+    expect(actionLabel()).toBe('重试保存')
+    const action = ui().statusAction!
+    await s().switchDocument(emptyProject(), 'd_other')
+    await new Promise((r) => setTimeout(r, 50)) // 离开时那次冲刷的失败事件先落定
+    edit('b1') // 此刻开着的这份有内容：不核对象的话 saveNow() 会真去写它
+    await saveNow() // 先把 B 自己的防抖写掉（写盘仍是 500，不会真写进去）
+    const before = putAttempts.length
+    action.run()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(putAttempts.length, '没有对此刻开着的排版发起写盘').toBe(before)
+    expect(ui().status).toBeNull()
+  })
+
+  it('⌘S 失败后切到别的排版再点：不对新排版重跑 ⌘S，说「切换了排版」', async () => {
+    autosavePut = 500
+    edit('t1')
+    await runManualSave()
+    const action = ui().statusAction!
+    await s().switchDocument(emptyProject(), 'd_other')
+    await new Promise((r) => setTimeout(r, 50)) // 离开时那次冲刷的失败事件先落定
+    autosavePut = 200
+    autosave.clear()
+    action.run()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(autosave.size).toBe(0)
+    expect(statusText()).toContain('切换了排版')
   })
 })
 
@@ -192,18 +230,5 @@ describe('写进项目文件失败 →「重试保存」', () => {
     expect(layoutPosts).toBe(2)
     expect(ids(projectFiles.get('排版一'))).toEqual(['t1'])
     expect(statusText()).toContain('已保存到项目')
-  })
-})
-
-describe('同一份排版在另一个窗口开着 →「另存为…」', () => {
-  it('提示带按钮；点下去打开「另存为」，提示收掉，不替用户选覆盖', () => {
-    reportDocOpenElsewhere()
-    expect(ui().statusTone).toBe('error')
-    expect(statusText()).toContain('已在另一个窗口打开')
-    expect(actionLabel()).toBe('另存为…')
-    ui().statusAction!.run()
-    expect(ui().layoutOpen).toBe(true)
-    expect(ui().layoutIntent).toBe('save')
-    expect(ui().status).toBeNull()
   })
 })

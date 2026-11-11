@@ -75,7 +75,8 @@ import { installDiagnosticsWiring } from '@/diagnostics/wiring'
 import { installDiagnosticsDevHook } from '@/diagnostics'
 import { useSelectionRouting } from '@/hooks/useSelectionRouting'
 import { isRightOverlay, useUiStore } from '@/store/uiStore'
-import { reportAutosaveFailure, reportDocOpenElsewhere } from '@/store/saveFailureActions'
+import { msg } from '@/i18n'
+import { reportAutosaveFailure } from '@/store/saveFailureActions'
 import { startValidation } from '@/store/validationStore'
 import { startWorkspaceModeSync, useWorkspaceStore } from '@/store/workspace'
 import { dragRegionProps, onDesktopMenu, onDesktopOpen } from '@/lib/desktop'
@@ -231,7 +232,12 @@ function Workspace() {
     // 失败 / 冲突提示与它们的出口按钮住在 `store/saveFailureActions.ts`（用例直接测那里）
     const onAutosaveError = (ev: Event) =>
       reportAutosaveFailure((ev as CustomEvent<{ id?: string; reason?: string }>).detail)
-    const onDocConflict = () => reportDocOpenElsewhere()
+    // 同一份排版在两个窗口开着：目前没有「分叉成一份新排版」的动作（另存为不换 documentId），
+    // 所以这条先不挂按钮，登记在台账里待做
+    const onDocConflict = () =>
+      useUiStore
+        .getState()
+        .setStatus(msg('autosave.docConflict', undefined, 'workspace'), 'error')
     // `tavotto run` 的会话活在后端进程里，比这个窗口长命：重开界面、SSE
     // 断线重连之后都要对一次账，否则一条还停在屏障上的会话在界面上就不存在
     // 了——而那个终端还在等人点「继续运行脚本」。

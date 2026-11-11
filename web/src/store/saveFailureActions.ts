@@ -10,6 +10,7 @@
  * 按钮点下去 toast 不会自己收（`StatusBar` 只转发 `run`），所以每个按钮自己负责收掉或换成结果。
  */
 import { msg } from '@/i18n'
+import { currentProjectId } from '@/lib/session'
 import { useDiagSendStore } from './diagSendStore'
 import { reloadFromDisk, saveNow, useDocumentStore } from './documentStore'
 import { useUiStore, type StatusAction } from './uiStore'
@@ -76,8 +77,15 @@ export function retrySaveAction(run: () => unknown, owner: string = AUTOSAVE_FAI
  * 自动保存那一轮的「重试保存」：先收掉提示再写；又失败会经 `tavotto:autosave-error` 换上新的一条，
  * 成功了顶栏的保存状态自己回到「已保存」，不另说一句（「已保存在本机」对开着项目的人是错话）。
  */
-export function retryAutosaveAction(): StatusAction {
-  return retrySaveAction(() => saveNow())
+export function retryAutosaveAction(docId: string = useDocumentStore.getState().documentId): StatusAction {
+  const pj = currentProjectId()
+  return retrySaveAction(() => {
+    // 失败的是 `docId` 那份：点的时候开着的已是别的排版 / 别的项目，就只收掉提示——不对别的排版乱存。
+    // 那份的未写盘内容仍在本机副本里（写盘失败时不清），切回去由崩溃恢复那条路提供
+    const s = useDocumentStore.getState()
+    if (s.documentId !== docId || currentProjectId() !== pj) return
+    return saveNow()
+  })
 }
 
 /**
@@ -102,26 +110,7 @@ export function reportAutosaveFailure(detail: { id?: string; reason?: string } |
     'error',
     {
       owner: AUTOSAVE_FAILURE_OWNER,
-      action: conflict ? reloadLatestAction(docId) : retryAutosaveAction(),
+      action: conflict ? reloadLatestAction(docId) : retryAutosaveAction(docId),
     },
   )
-}
-
-const DOC_OPEN_ELSEWHERE_OWNER = 'autosave.docConflict'
-
-/**
- * 同一份排版在另一个窗口也开着（`tavotto:doc-conflict`）：出口是「另存为」——这个窗口改在自己的一份上，
- * 两边都不丢、也不再互相覆盖（与顶栏冲突说明块的「另存为…」同一个入口）。不在这里替用户选覆盖或放弃。
- */
-export function reportDocOpenElsewhere(): void {
-  useUiStore.getState().setStatus(msg('autosave.docConflict', undefined, 'workspace'), 'error', {
-    owner: DOC_OPEN_ELSEWHERE_OWNER,
-    action: {
-      label: msg('docBanner.saveAs', undefined, 'workspace'),
-      run: () => {
-        clearOwn(DOC_OPEN_ELSEWHERE_OWNER)
-        useUiStore.getState().setLayoutOpen(true, 'save')
-      },
-    },
-  })
 }

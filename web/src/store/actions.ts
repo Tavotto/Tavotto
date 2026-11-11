@@ -617,7 +617,8 @@ export async function runManualSave(): Promise<void> {
     // 再按一次 ⌘S 的全部动作（本机 + 写项目），不是只重写本机
     ui.setStatus(msg('save.failed', undefined, 'workspace'), 'error', {
       owner: AUTOSAVE_FAILURE_OWNER,
-      action: retrySaveAction(() => runManualSave()),
+      // 切走了就不对此刻开着的那份排版重跑 ⌘S：说「切换了排版，回到那份再保存」
+      action: retrySaveAction(() => (stillCurrent(ctx) ? runManualSave() : reportSaveSkipped(ctx))),
     })
   }
   // dirty / saving：保存期间用户又改了，或又排了一次写。那不是失败，
