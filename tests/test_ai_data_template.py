@@ -75,6 +75,32 @@ def cmp_rows():
     return rows
 
 
+def rel_rows():
+    rows = [["dose_mg", "response_mV", "arm", "site"]]
+    for ai, a in enumerate(("control", "drug")):
+        for si, s in enumerate(("s1", "s2")):
+            for i in range(8):
+                x = round(1 + i * 1.5 + si * 0.25, 3)
+                rows.append([x, round(0.5 + (0.3 + 0.5 * ai) * x + ((i * 7) % 5) * 0.2, 3), a, s])
+    rows += [[3.0, "", "control", "s1"], ["nan", 2.0, "drug", "s2"]]  # 缺失 / NaN：不画
+    return rows
+
+
+def dist_rows():
+    rows = [["latency_ms", "arm", "site", "batch"]]
+    for i in range(120):
+        arm, site, batch = (
+            ("control", "drug")[i % 2],
+            ("s1", "s2")[(i // 2) % 2],
+            ("b1", "b2", "b3")[(i // 4) % 3],
+        )
+        rows.append(
+            [round(40 + (i * 37) % 29 + (i % 2) * 9 + ((i * 13) % 7) * 0.31, 3), arm, site, batch]
+        )
+    rows.append(["", "control", "s1", "b1"])  # 缺失：不画
+    return rows
+
+
 def trend_rows():
     rows = [["time_s", "arm", "site", "subject", "signal", "other"]]
     for ai, a in enumerate(("a", "b")):
@@ -105,6 +131,43 @@ def folder(tmp_path_factory) -> Path:
     (d / "cmp.tsv").write_text(_csv(cmp_rows(), "\t"), encoding="utf-8")
     make_xlsx(d / "cmp.xlsx", {"Data": cmp_rows()})
     (d / "trend.csv").write_text(_csv(trend_rows()), encoding="utf-8")
+    (d / "rel.csv").write_text(_csv(rel_rows()), encoding="utf-8")
+    (d / "rel.tsv").write_text(_csv(rel_rows(), "\t"), encoding="utf-8")
+    make_xlsx(d / "rel.xlsx", {"Data": rel_rows()})
+    (d / "dist.csv").write_text(_csv(dist_rows()), encoding="utf-8")
+    (d / "dist.tsv").write_text(_csv(dist_rows(), "\t"), encoding="utf-8")
+    make_xlsx(d / "dist.xlsx", {"Data": dist_rows()})
+    # 每组恰好 5 个值（箱 / 小提琴的下限）与带文字的脏数据
+    (d / "few.csv").write_text(
+        _csv([["v", "g"]] + [[i * 1.7 + k, g] for k, g in enumerate("ab") for i in range(5)]),
+        encoding="utf-8",
+    )
+    (d / "rel_dirty.csv").write_text(
+        _csv(rel_rows() + [[4.0, "<LOD", "drug", "s1"], ["n/a", 3.0, "drug", "s1"]]),
+        encoding="utf-8",
+    )
+    (d / "dist_dirty.csv").write_text(
+        _csv(dist_rows() + [["<LOD", "drug", "s1", "b1"], ["inf", "drug", "s2", "b2"]]),
+        encoding="utf-8",
+    )
+    (d / "关系.csv").write_text(
+        _csv(
+            [["剂量_mg", "响应_mV", "组别"]]
+            + [
+                [1 + i, 2 + i * (1 + g) + (i % 3) * 0.2, ("对照", "药物")[g]]
+                for g in (0, 1)
+                for i in range(8)
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (d / "分布.csv").write_text(
+        _csv(
+            [["延迟_ms", "组别"]]
+            + [[40 + (i * 11) % 23 + g * 6, ("对照", "药物")[g]] for g in (0, 1) for i in range(30)]
+        ),
+        encoding="utf-8",
+    )
     # 脏数据：y / x 里有文字。校验会拒（混合列不是数值列），但模板对这样的文件也必须与期望值一致（不合并、不填 0、不猜）
     dirty = cmp_rows() + [["drugA", "s2", "m9", "<0.1"], ["ctrl", "s2", "m9", "inf"]]
     (d / "cmp_dirty.csv").write_text(_csv(dirty), encoding="utf-8")
@@ -176,7 +239,10 @@ def folder(tmp_path_factory) -> Path:
 
 @pytest.fixture(scope="module")
 def profile(folder) -> adf.FolderProfile:
-    return adf.profile_folder(folder)
+    from unittest import mock
+
+    with mock.patch.object(adf, "MAX_PROFILE_TABLES", 80):  # 夹具里的表比一次摘要的上限（20）多
+        return adf.profile_folder(folder)
 
 
 def entry_of(profile, table, sheet=None) -> adf.TableEntry:
@@ -457,6 +523,229 @@ CASES = [
         NONE,
     ),
 ]
+CASES += [
+    (
+        "rel-points-fit-group",
+        "rel.csv",
+        None,
+        mk(
+            "rel.csv",
+            "relationship",
+            ["points", ("fit_line", "none", Q)],
+            ["response_mV"],
+            x="dose_mg",
+            group="arm",
+        ),
+        NONE,
+    ),
+    (
+        "rel-facet-group-tsv",
+        "rel.tsv",
+        None,
+        mk(
+            "rel.tsv",
+            "relationship",
+            ["points", ("fit_line", "none", Q)],
+            ["response_mV"],
+            x="dose_mg",
+            group="arm",
+            facet="site",
+        ),
+        NONE,
+    ),
+    (
+        "rel-xlsx-points",
+        "rel.xlsx",
+        "Data",
+        mk(
+            "rel.xlsx",
+            "relationship",
+            ["points"],
+            ["response_mV"],
+            x="dose_mg",
+            sheet="Data",
+            group="site",
+        ),
+        NONE,
+    ),
+    (
+        "rel-log-xy",
+        "rel.csv",
+        None,
+        mk(
+            "rel.csv",
+            "relationship",
+            ["points", ("fit_line", "none", Q)],
+            ["response_mV"],
+            x="dose_mg",
+            scale="log_xy",
+        ),
+        NONE,
+    ),
+    (
+        "rel-log-x-curved-fit",
+        "rel.csv",
+        None,
+        mk(
+            "rel.csv",
+            "relationship",
+            ["points", ("fit_line", "none", Q)],
+            ["response_mV"],
+            x="dose_mg",
+            group="arm",
+            scale="log_x",
+        ),
+        NONE,
+    ),
+    (
+        "rel-log-y",
+        "rel.csv",
+        None,
+        mk(
+            "rel.csv",
+            "relationship",
+            ["points", ("fit_line", "none", Q)],
+            ["response_mV"],
+            x="dose_mg",
+            facet="site",
+            scale="log_y",
+        ),
+        NONE,
+    ),
+    (
+        "rel-non-ascii",
+        "关系.csv",
+        None,
+        mk(
+            "关系.csv",
+            "relationship",
+            ["points", ("fit_line", "none", Q)],
+            ["响应_mV"],
+            x="剂量_mg",
+            group="组别",
+        ),
+        NONE,
+    ),
+    (
+        "dirty-rel-text",
+        "rel_dirty.csv",
+        None,
+        mk(
+            "rel_dirty.csv",
+            "relationship",
+            ["points", ("fit_line", "none", Q)],
+            ["response_mV"],
+            x="dose_mg",
+            group="arm",
+        ),
+        NONE,
+    ),
+    (
+        "dist-ecdf-group",
+        "dist.csv",
+        None,
+        mk("dist.csv", "distribution", ["ecdf"], ["latency_ms"], group="arm"),
+        NONE,
+    ),
+    (
+        "dist-hist-density-facet",
+        "dist.csv",
+        None,
+        mk(
+            "dist.csv",
+            "distribution",
+            ["hist", ("density", "none", Q)],
+            ["latency_ms"],
+            group="arm",
+            facet="site",
+        ),
+        NONE,
+    ),
+    (
+        "dist-hist-only-count",
+        "dist.tsv",
+        None,
+        mk("dist.tsv", "distribution", ["hist"], ["latency_ms"], group="site"),
+        NONE,
+    ),
+    (
+        "dist-xlsx-density",
+        "dist.xlsx",
+        "Data",
+        mk("dist.xlsx", "distribution", ["density"], ["latency_ms"], sheet="Data"),
+        NONE,
+    ),
+    (
+        "dist-box-jitter-x-group",
+        "dist.csv",
+        None,
+        mk(
+            "dist.csv",
+            "distribution",
+            ["box", ("jitter", "none", Q)],
+            ["latency_ms"],
+            x="batch",
+            group="arm",
+        ),
+        NONE,
+    ),
+    (
+        "dist-violin-points-no-x",
+        "dist.csv",
+        None,
+        mk(
+            "dist.csv",
+            "distribution",
+            ["violin", ("points", "none", Q)],
+            ["latency_ms"],
+            group="arm",
+            facet="site",
+        ),
+        NONE,
+    ),
+    (
+        "dist-jitter-log-y",
+        "dist.csv",
+        None,
+        mk(
+            "dist.csv",
+            "distribution",
+            ["box", ("jitter", "none", Q)],
+            ["latency_ms"],
+            x="batch",
+            scale="log_y",
+            order="value_desc",
+        ),
+        NONE,
+    ),
+    (
+        "dist-five-per-group-box",
+        "few.csv",
+        None,
+        mk("few.csv", "distribution", ["box", ("points", "none", Q)], ["v"], x="g"),
+        NONE,
+    ),
+    (
+        "dist-non-ascii",
+        "分布.csv",
+        None,
+        mk("分布.csv", "distribution", ["ecdf"], ["延迟_ms"], group="组别"),
+        NONE,
+    ),
+    (
+        "dirty-dist-text",
+        "dist_dirty.csv",
+        None,
+        mk(
+            "dist_dirty.csv",
+            "distribution",
+            ["hist", ("density", "none", Q)],
+            ["latency_ms"],
+            group="arm",
+        ),
+        NONE,
+    ),
+]
 IDS = [c[0] for c in CASES]
 
 
@@ -559,7 +848,7 @@ def test_every_checkable_layer_has_expected_entries_and_unchecked_ones_have_none
         else:
             assert not has and c.reason, (cid, c)
     assert cov.any_checked and cov.raw_checked == any(
-        c.mark in ("points", "jitter")
+        c.mark in ("points", "jitter", "ecdf")
         or (c.mark in ("line", "step") and recipe.layers[c.index].summary == "none")
         for c in cov.layers
     )
@@ -1121,7 +1410,15 @@ def test_unsupported_recipes_raise_instead_of_drawing_an_approximation(folder, p
     with pytest.raises(T.TemplateError) as ei:
         rs(
             e,
-            mk("cmp.csv", "relationship", ["points"], ["response_mV"], x="subject"),
+            mk(
+                "cmp.csv",
+                "paired",
+                ["paired_lines"],
+                ["response_mV"],
+                x="condition",
+                unit="subject",
+                paired=True,
+            ),
             data_rel="cmp.csv",
             stem="f",
         )
@@ -1163,19 +1460,21 @@ def test_unsupported_recipes_raise_instead_of_drawing_an_approximation(folder, p
 
 
 def test_renderable_follows_the_template_registry():
-    assert set(T.RENDERERS) == {"comparison", "trend"}
+    assert set(T.RENDERERS) == {"comparison", "trend", "relationship", "distribution"}
     assert {k for k in R.FAMILIES if R.renderable(k)} == set(T.RENDERERS)
     # 每个渲染得了的族，允许的图元全部有实现（renderable 与 FAMILIES 口径一致，不留「允许但画不出」的图元）
     for fam, marks in T.MARKS_RENDERED.items():
         assert set(marks) == set(R.FAMILIES[fam].marks), fam
     text = ai_prompt_pack.data_figure_guidance()
-    assert "现在能出图的只有：`comparison`、`trend`；" in text
+    assert "现在能出图的只有：`comparison`、`trend`、`relationship`、`distribution`；" in text
 
 
-def test_every_allowed_mark_renders_for_both_families(folder, profile):
+def test_every_allowed_mark_renders_for_every_template_family(folder, profile):
     for fam, marks, table, kw in (
         ("comparison", T.MARKS_COMPARISON, "cmp.csv", {"x": "condition"}),
         ("trend", T.MARKS_TREND, "trend.csv", {"x": "time_s"}),
+        ("relationship", T.MARKS_RELATIONSHIP, "rel.csv", {"x": "dose_mg"}),
+        ("distribution", T.MARKS_DISTRIBUTION, "dist.csv", {}),
     ):
         for m in marks:
             summary = "mean_sd" if R.MARK_RULES[m].summary == "required" else "none"
@@ -1183,7 +1482,14 @@ def test_every_allowed_mark_renders_for_both_families(folder, profile):
                 table,
                 fam,
                 [(m, summary)],
-                ["response_mV" if fam == "comparison" else "signal"],
+                [
+                    {
+                        "comparison": "response_mV",
+                        "trend": "signal",
+                        "relationship": "response_mV",
+                        "distribution": "latency_ms",
+                    }[fam]
+                ],
                 **kw,
             )
             src = rs(entry_of(profile, table), r, data_rel=table, stem="f")
@@ -1402,3 +1708,269 @@ def test_runtime_module_has_no_figure_entry_and_does_nothing_on_import():
         n for n in tree.body if isinstance(n, ast.Expr) and not isinstance(n.value, ast.Constant)
     ]
     assert top_calls == []  # 顶层没有「导入即执行」的调用语句
+
+
+# --------------------------------------------------------------------------- relationship / distribution：数值规则（独立实现对拍）
+def test_hist_bins_follow_freedman_diaconis_and_match_numpy():
+    np = pytest.importorskip("numpy")
+    vals = [float((i * 37) % 53) + (i % 7) * 0.13 for i in range(97)]
+    edges = T.hist_edges(vals)
+    want = np.histogram_bin_edges(vals, bins="fd")
+    assert len(edges) == len(want) and edges == pytest.approx(list(want))
+    counts = T.hist_counts(vals, edges)
+    assert counts == list(np.histogram(vals, bins=edges)[0]) and sum(counts) == len(
+        vals
+    )  # 右端的值算进最后一个箱
+
+
+def test_hist_edge_cases():
+    assert T.hist_edges([3.0, 3.0, 3.0]) == [2.5, 3.5]  # 全部相同：以该值为中心的一个箱
+    assert T.hist_counts([3.0, 3.0, 3.0], [2.5, 3.5]) == [3]
+    sturges = T.hist_edges(
+        [1.0] * 20 + [2.0, 3.0]
+    )  # IQR = 0：退到 Sturges（ceil(log2 22) + 1 = 6 个箱）
+    assert len(sturges) == 7
+    many = T.hist_edges([float(i) ** 3 for i in range(2000)])
+    assert len(many) <= 51  # 箱数上限 50
+    assert T.hist_counts([0.0, 1.0, 1.0, 2.0], [0.0, 1.0, 2.0]) == [
+        1,
+        3,
+    ]  # 左闭右开、最后一个箱含右端
+    assert T.hist_heights([2, 2], 4, 0.5, True) == [1.0, 1.0] and T.hist_heights(
+        [2, 2], 4, 0.5, False
+    ) == [2.0, 2.0]
+
+
+def test_density_curve_matches_an_independent_kde_and_integrates_to_one():
+    vals = [2.0, 3.1, 3.3, 4.8, 5.0, 5.2, 6.9, 7.4]
+    grid, dens = T.density_curve(vals)
+    bw = statistics.stdev(vals) * len(vals) ** (-0.2)
+    assert T.scott_bandwidth(vals) == pytest.approx(bw)
+    nd = statistics.NormalDist(0, bw)
+    for g, d in list(zip(grid, dens))[::9]:
+        assert d == pytest.approx(statistics.fmean(nd.pdf(g - v) for v in vals))
+    area = sum((dens[i] + dens[i + 1]) / 2 * (grid[i + 1] - grid[i]) for i in range(len(grid) - 1))
+    assert area == pytest.approx(1.0, abs=2e-3)
+    assert grid[0] == pytest.approx(min(vals) - 3 * bw) and grid[-1] == pytest.approx(
+        max(vals) + 3 * bw
+    )
+    g1, d1 = T.density_curve([5.0])  # 单个值：带宽退到 |均值| × 0.05
+    assert T.scott_bandwidth([5.0]) == pytest.approx(0.25) and max(d1) > 0 and len(g1) == 100
+
+
+def test_ecdf_steps_are_the_sorted_values_not_merged():
+    xs, ys = T.ecdf_xy([3.0, 1.0, 2.0, 2.0])
+    assert xs == [1.0, 1.0, 2.0, 2.0, 3.0] and ys == [0.0, 0.25, 0.5, 0.75, 1.0]
+    assert T.ecdf_xy([7.0]) == ([7.0, 7.0], [0.0, 1.0])
+
+
+def test_fit_line_matches_numpy_polyfit_including_log_axes():
+    np = pytest.importorskip("numpy")
+    xs = [1.0, 2.0, 3.5, 5.0, 8.0, 13.0]
+    ys = [2.1, 2.9, 4.2, 5.1, 7.9, 12.2]
+    seg = T.fit_segment((xs, ys))
+    slope, icpt = np.polyfit(xs, ys, 1)
+    assert seg[0] == [1.0, 13.0] and seg[1] == pytest.approx(
+        [icpt + slope * 1.0, icpt + slope * 13.0]
+    )
+    loglog = T.fit_segment((xs, ys), True, True)  # 双对数：在 log10 里拟合，图上仍是直线（两个点）
+    b, a = np.polyfit(np.log10(xs), np.log10(ys), 1)
+    assert len(loglog[0]) == 2 and loglog[1][0] == pytest.approx(10 ** (a + b * np.log10(1.0)))
+    semilog = T.fit_segment((xs, ys), True, False)  # 只有 x 对数：图上是曲线，沿 x 取 50 个点
+    b2, a2 = np.polyfit(np.log10(xs), ys, 1)
+    assert len(semilog[0]) == 50 and semilog[1][-1] == pytest.approx(a2 + b2 * np.log10(13.0))
+    assert T.fit_segment(([1.0, 2.0], [1.0, 2.0]), True, False)[0][0] == pytest.approx(1.0)
+    assert (
+        T.fit_segment(([0.0, 1.0, 2.0], [1.0, 2.0, 3.0]), True, False) is None
+    )  # 对数轴上有 0：不画
+    assert (
+        T.fit_segment(([1.0, 1.0], [1.0, 2.0])) is None and T.fit_segment(([1.0], [1.0])) is None
+    )  # x 全相同 / 点不够
+
+
+def test_n_note_wording():
+    assert T.n_note({("", "a"): 5, ("", "b"): 5}, ["a", "b"], [""]) == "n = 5"
+    assert T.n_note({("", "a"): 5, ("", "b"): 7}, ["a", "b"], [""]) == "n = 5 / 7 (group order)"
+    assert (
+        T.n_note({("s1", "a"): 5, ("s2", "a"): 7}, ["a"], ["s1", "s2"])
+        == "n = 5-7 per group and panel"
+    )
+    assert T.n_note({}, [""], [""]) == ""
+
+
+def test_relationship_data_skips_rows_without_both_numbers(folder):
+    v = adf.inspect_data_source(folder / "rel.csv")
+    d = T.relationship_data(v.columns, v.rows, "dose_mg", "response_mV", "arm", "site")
+    assert sum(len(p[0]) for p in d["pairs"].values()) == 32  # 34 行里缺 y 的和 x 是 nan 的不画
+    assert d["groups"] == ["control", "drug"] and d["panels"] == ["s1", "s2"]
+
+
+def test_distribution_without_x_has_one_unnamed_category(folder):
+    v = adf.inspect_data_source(folder / "dist.csv")
+    d = T.comparison_data(v.columns, v.rows, None, "latency_ms", "arm", None, "as_given")
+    assert d["cats"] == [""] and sum(len(x) for x in d["cells"].values()) == 120  # 缺失那行不进
+    assert len(T.pooled_values(d, "", "control")) == 60 and len(T.all_values(d)) == 120
+
+
+# --------------------------------------------------------------------------- 画出来的 artist 与图下方说明
+@pytest.fixture(scope="module")
+def shapes_b(folder, profile, tmp_path_factory):
+    if WORKER_PY is None:
+        return {}
+    work = tmp_path_factory.mktemp("shapes_b")
+    for f in folder.iterdir():
+        (work / f.name).write_bytes(f.read_bytes())
+    wanted = {
+        "rel": mk(
+            "rel.csv",
+            "relationship",
+            ["points", ("fit_line", "none", Q)],
+            ["response_mV"],
+            x="dose_mg",
+            group="arm",
+        ),
+        "rel_log": mk(
+            "rel.csv",
+            "relationship",
+            ["points", ("fit_line", "none", Q)],
+            ["response_mV"],
+            x="dose_mg",
+            scale="log_xy",
+        ),
+        "hist": mk("dist.csv", "distribution", ["hist"], ["latency_ms"], group="arm"),
+        "hist_density": mk(
+            "dist.csv",
+            "distribution",
+            ["hist", ("density", "none", Q)],
+            ["latency_ms"],
+            group="arm",
+            facet="site",
+        ),
+        "ecdf": mk("dist.csv", "distribution", ["ecdf"], ["latency_ms"], group="arm"),
+        "box_x": mk(
+            "dist.csv", "distribution", ["box", ("jitter", "none", Q)], ["latency_ms"], x="batch"
+        ),
+        "violin_nox": mk("dist.csv", "distribution", ["violin"], ["latency_ms"], group="arm"),
+    }
+    out = {}
+    for name, r in wanted.items():
+        script = T.render_recipe_script(entry_of(profile, r.table), r, data_rel=r.table, stem="fig")
+        out[name] = introspect(work, script)
+    return out
+
+
+@needs_worker
+def test_relationship_and_distribution_marks_are_plain_editable_artists(shapes_b):
+    rel = shapes_b["rel"]["axes"][0]
+    assert rel["collections"].count("PathCollection") == 2 and rel["lines"] == [
+        "Line2D",
+        "Line2D",
+    ]  # 每组一个散点集 + 一条拟合线
+    h = shapes_b["hist"]["axes"][0]
+    assert h["containers"] == ["BarContainer", "BarContainer"] and set(h["patches"]) == {
+        "Rectangle"
+    }
+    hd = shapes_b["hist_density"]["axes"]
+    assert [a["title"] for a in hd] == ["s1", "s2"] and all(
+        a["lines"] == ["Line2D", "Line2D"] for a in hd
+    )
+    e = shapes_b["ecdf"]["axes"][0]
+    assert e["lines"] == ["Line2D", "Line2D"] and e["collections"] == []
+    bx = shapes_b["box_x"]["axes"][0]
+    assert set(bx["lines"]) == {"Line2D"} and "PathCollection" in bx["collections"]
+    assert any(
+        c in shapes_b["violin_nox"]["axes"][0]["collections"]
+        for c in ("PolyCollection", "FillBetweenPolyCollection")
+    )
+
+
+@needs_worker
+def test_notes_state_the_binning_bandwidth_and_fit_rules_and_n(shapes_b):
+    assert shapes_b["rel"]["texts"] == [
+        "dashed line: least-squares fit (descriptive); n = 16"
+    ]  # 每组 16 个有效点（缺 y 与 x 为 nan 的行不画）
+    assert "fitted on log10 of the log axes" in shapes_b["rel_log"]["texts"][0]
+    note = shapes_b["hist_density"]["texts"][0]
+    assert (
+        "bins: Freedman-Diaconis rule, shared by all groups" in note
+        and "density: Gaussian kernel, Scott bandwidth" in note
+    )
+    assert shapes_b["hist"]["texts"][0].startswith("bins: Freedman-Diaconis") and shapes_b["hist"][
+        "texts"
+    ][0].endswith("n = 60")
+    assert shapes_b["ecdf"]["texts"][0] == "ECDF: step function of the sorted values; n = 60"
+    assert shapes_b["box_x"]["texts"][0].startswith("box: median, quartiles, whiskers to 1.5 IQR")
+    assert "P =" not in "".join(shapes_b["rel"]["texts"]) and "R²" not in "".join(
+        shapes_b["rel"]["texts"]
+    )  # 不报显著性、不放 R²
+
+
+@needs_worker
+def test_axes_labels_and_scales_of_the_new_families(shapes_b):
+    assert (
+        shapes_b["hist"]["axes"][0]["ylabel"] == "count"
+        and shapes_b["hist"]["axes"][0]["xlabel"] == "latency (ms)"
+    )
+    assert (
+        shapes_b["hist_density"]["axes"][0]["ylabel"] == "density"
+    )  # 与密度叠画：柱高换成概率密度
+    assert shapes_b["ecdf"]["axes"][0]["ylabel"] == "cumulative proportion"
+    assert (
+        shapes_b["rel_log"]["axes"][0]["xscale"] == "log"
+        and shapes_b["rel_log"]["axes"][0]["yscale"] == "log"
+    )
+    assert shapes_b["box_x"]["axes"][0]["xticks"] == ["b1", "b2", "b3"]
+
+
+def test_coverage_for_the_new_marks():
+    cov = T.fingerprint_coverage(
+        mk("x.csv", "distribution", ["hist", ("density", "none", Q)], ["v"])
+    )
+    assert (
+        all(c.checked for c in cov.layers) and cov.any_checked and not cov.raw_checked
+    )  # 柱高与密度曲线是派生量
+    assert T.fingerprint_coverage(
+        mk("x.csv", "distribution", ["ecdf"], ["v"])
+    ).raw_checked  # 阶梯点就是排序后的原始值
+    cov = T.fingerprint_coverage(
+        mk("x.csv", "distribution", ["violin", ("points", "none", Q)], ["v"])
+    )
+    assert [c.checked for c in cov.layers] == [False, True] and cov.raw_checked
+    assert not T.fingerprint_coverage(
+        mk("x.csv", "distribution", ["box"], ["v"], x="g")
+    ).any_checked
+    cov = T.fingerprint_coverage(
+        mk("x.csv", "relationship", ["points", ("fit_line", "none", Q)], ["v"], x="u")
+    )
+    assert all(c.checked for c in cov.layers) and cov.raw_checked
+
+
+def test_runtime_name_is_never_hardcoded_in_tests():
+    """公共模块名随内容变；用例只经 `runtime_module()` 取名。"""
+    import re
+
+    pat = re.compile(r"tavotto_plot_[0-9a-f]{8}")
+    for f in (
+        Path(__file__),
+        Path(__file__).with_name("test_ai_data_recipe.py"),
+        Path(__file__).parent / "bridge" / "test_bridge_generated_figure_script.py",
+    ):
+        assert not pat.search(f.read_text(encoding="utf-8")), f.name
+
+
+def test_template_rejects_combinations_the_validator_also_rejects(folder, profile):
+    e = entry_of(profile, "dist.csv")
+    for layers, kw, detail in (
+        (["hist", ("jitter", "none", Q)], {}, "orientation"),
+        (["ecdf", ("hist", "none", Q)], {}, "ecdf_with_hist"),
+        (["hist"], {"scale": "log_y"}, "scale_or_x"),
+        (["jitter", "box"], {"scale": "log_x", "x": "batch"}, "scale"),
+    ):
+        with pytest.raises(T.TemplateError) as ei:
+            rs(
+                e,
+                mk("dist.csv", "distribution", layers, ["latency_ms"], **kw),
+                data_rel="dist.csv",
+                stem="f",
+            )
+        assert ei.value.code == "template_option_unsupported", (layers, detail)

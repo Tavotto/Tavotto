@@ -330,7 +330,7 @@ FAMILIES: dict[str, FamilySpec] = {
             "看分布",
             1,
             when_use="读者要看一个量取值的分布：集中在哪、散多开、有没有离群或双峰。单组用直方图 / 密度，多组用 ECDF、箱线或小提琴叠原始点。",
-            when_not="要比较的只是各组均值（用 comparison）；每组值太少时不画直方图 / 密度（画原始点）。",
+            when_not="要比较的只是各组均值（用 comparison）；每组值太少时不画直方图 / 密度（画原始点）。直方图 / 密度 / ECDF 不用对数轴，也不与箱线、小提琴、原始点叠在同一张图里（值在横轴与纵轴不同）；ECDF 不与直方图 / 密度叠（纵轴含义不同）。",
             x_types=("cat",),
             x_required=False,
             y_types=("num",),
@@ -961,6 +961,19 @@ def validate_recipe(
             P.append(Problem("summary_misplaced", f"layers[{i}].summary", layer.mark))
     if not any(m in spec.primary for m in marks):
         P.append(Problem("no_primary_mark", "layers"))
+    # 模板能画的组合（图元与坐标的搭配）：分类轴上没有对数 x；分布的「值在横轴」图元不与「值在纵轴」图元叠、不用对数轴、
+    # ECDF（累积比例）不与直方图 / 密度（个数 / 密度）叠在同一纵轴上
+    if recipe.family in ("comparison", "distribution") and recipe.scale in ("log_x", "log_xy"):
+        P.append(Problem("mark_not_allowed", "scale", "log_x"))
+    if recipe.family == "distribution":
+        value_on_x = {"hist", "ecdf", "density"}
+        ms = set(marks)
+        if ms & value_on_x and ms - value_on_x:
+            P.append(Problem("mark_not_allowed", "layers", "value_axis"))
+        if "ecdf" in ms and ms & {"hist", "density"}:
+            P.append(Problem("mark_not_allowed", "layers", "ecdf_with_hist"))
+        if ms & value_on_x and recipe.scale != "linear":
+            P.append(Problem("mark_not_allowed", "scale", "log"))
     if not any(layer.role == "main" for layer in recipe.layers) or len(
         set((ly.mark, ly.role) for ly in recipe.layers)
     ) != len(recipe.layers):
