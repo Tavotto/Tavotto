@@ -793,6 +793,7 @@
     "journalAdjust": "按期刊调整",
     "journalAnnotation": "画布文字",
     "journalAdjusted": "已按 {{journal}} 调整样式，可撤销",
+    "journalRetry": "再试一次",
     "journalProp": {
       "fontsize": "字号",
       "fontfamily": "字体",
