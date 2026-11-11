@@ -7,6 +7,7 @@ without importing configuration or restoring remaps again.
 
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
 import io
@@ -190,6 +191,100 @@ finally:
 """
 
 
+_COLD_RUN = r"""
+import base64, json, sys
+from pathlib import Path
+sys.path[:0] = [str(Path(sys.argv[1]) / 'src')]
+from tavotto import app as m
+from tavotto.engine import config, inputremap, pool, project_watch, runconfig, svgstore
+from tavotto.rendercore import renderhost
+request = json.loads(sys.stdin.read())
+root = Path(request['root'])
+work = Path(request['work']); work.mkdir(parents=True, exist_ok=True)
+m.app.config['TESTING'] = True
+opened = m.open_project(str(root))
+
+def facts(data, png):
+    import pypdfium2 as pdfium
+    with pdfium.PdfDocument(data) as document:
+        assert len(document) == 1
+        page = document[0]
+        try:
+            textpage = page.get_textpage()
+            try: text = textpage.get_text_range()
+            finally: textpage.close()
+            bitmap = page.render(scale=2)
+            try:
+                rgb = bitmap.to_pil().convert('RGB')
+                rgb.save(png)
+                return {'size': list(page.get_size()), 'px': list(rgb.size), 'text': text}
+            finally: bitmap.close()
+        finally: page.close()
+
+# 1. The package carries no source. A cold attempt must fail clearly and
+#    execute nothing; it may never borrow a same-name file.
+counter = Path(request['counter']); canary = Path(request['canary'])
+before = (counter.read_bytes(), canary.read_bytes())
+missing = None
+try:
+    pool.get('plot.py', str(root), 'main').override('F', [], None, inline_svg=True)
+except Exception as exc:
+    missing = {'code': getattr(exc, 'code', None), 'error': str(exc)}
+finally:
+    pool.shutdown_all(figures_dir=str(root), wait=True)
+assert missing is not None, 'a package without its source executed something'
+assert (counter.read_bytes(), canary.read_bytes()) == before, 'missing source executed the script'
+
+# 2. The user explicitly supplies the source; the run then uses the restored
+#    INPUT at its recorded roles and produces one new execution.
+(root / 'plot.py').write_bytes(base64.b64decode(request['script_b64']))
+for name, encoded in request['inputs_b64'].items():
+    (root / name).write_bytes(base64.b64decode(encoded))
+run = runconfig.selection(root, request['run_id'], script='plot.py')
+worker = pool.get('plot.py', str(root), 'main', run=run)
+try:
+    base = worker.override('F', [], None, inline_svg=True)
+    titles = sorted(f['value'] for e in base['manifest']['elements']
+                    for f in e.get('editable', []) if f['prop'] == 'text')
+    receipt = m._execution_receipt(worker, 'plot.py')
+    patches = request['patches']
+    worker.override('F', patches, None, inline_svg=True)
+    out = work / 'cold.pdf'
+    worker.export('F', patches, str(out), 'pdf', 600)
+    cold = facts(out.read_bytes(), work / 'cold.png')
+    reference = request['reference']
+    record = svgstore.load_document_snapshot(
+        root, reference, source_id=reference['sourceId'], patch_hash=reference['patchHash'],
+        remap_fingerprint=inputremap.fingerprint(root),
+        storage_root=root / config.PROJECT_STORE_DIRNAME / svgstore.STORE_DIRNAME)
+    assert record is not None
+    archived = facts(record['pdf'], work / 'archived.png')
+    from tavotto import pdfbackend
+    # The same worker must be deterministic for this exact P; the archived
+    # artifact is compared separately below because it is a stored export.
+    out2 = work / 'cold2.pdf'
+    worker.export('F', patches, str(out2), 'pdf', 600)
+    facts(out2.read_bytes(), work / 'cold2.png')
+    repeat = pdfbackend.compare_png(work / 'cold.png', work / 'cold2.png')
+    assert repeat['changed_pixel_ratio'] == 0, repeat
+    metrics = pdfbackend.compare_png(work / 'archived.png', work / 'cold.png')
+    print(json.dumps({'missing': missing, 'before': [b.decode() for b in before], 'titles': titles, 'receipt': receipt.receipt_id,
+                      'execution': receipt.instance, 'size': cold['size'], 'px': cold['px'],
+                      'text': cold['text'], 'archived_size': archived['size'],
+                      'archived_px': archived['px'], 'archived_text': archived['text'],
+                      'metrics': metrics}))
+except Exception as exc:
+    import traceback
+    print(json.dumps({'error': str(exc), 'code': getattr(exc, 'code', None),
+                      'extra': getattr(exc, 'extra', None),
+                      'traceback': traceback.format_exc()}))
+    raise
+finally:
+    pool.shutdown_all(figures_dir=str(root), wait=True)
+    m.reset_projects(wait=True); project_watch.stop(); renderhost.shutdown_shared()
+"""
+
+
 @pytest.mark.parametrize("profile", ["safe", "native"])
 def test_actual_install_api_publishes_history_and_cold_reads_without_old_sources_or_reexecution(
     project, tmp_path, monkeypatch, profile
@@ -322,6 +417,16 @@ def test_actual_install_api_publishes_history_and_cold_reads_without_old_sources
                 item["figureSnapshot"] = old
     assert restored == document
     assert counter.read_bytes() == b"run\n" and canary.read_bytes() == b"loaded\n"
+    # The cold run exercises the restored project-root INPUT. The two external
+    # remap targets are machine-local rules asserted above, not package data.
+    script_bytes = b"\n".join(
+        line
+        for line in (source_root / "plot.py").read_bytes().splitlines()
+        if b"old-single" not in line and b"old-series" not in line
+    )
+    input_bytes = {
+        name: (source_root / name).read_bytes() for name in ("data.csv", "raw.bin", "empty.dat")
+    }
 
     package_fixtures._remove_source_and_cache(project, worker_base)
     _remove_owned_directory(source_root, tmp_path, target)
@@ -368,3 +473,63 @@ def test_actual_install_api_publishes_history_and_cold_reads_without_old_sources
         assert row == expected[old["snapshotId"]]
     assert len(actual["results"]) == 2
     assert counter.read_bytes() == b"run\n" and canary.read_bytes() == b"loaded\n"
+
+    if profile != "safe":
+        return
+    # Cold read is not run permission. An explicit run in a new parent process
+    # must use the installed INPUT at its recorded roles and produce one new
+    # execution whose geometry, text and pixels match the archived baseline.
+    cold_run = subprocess.run(
+        [sys.executable, "-B", "-c", _COLD_RUN, str(Path(__file__).resolve().parents[1])],
+        input=json.dumps(
+            {
+                "root": str(target),
+                "work": str(tmp_path / "cold-run-output"),
+                "patches": patches[refs[0]["snapshotId"]],
+                "run_id": run.id,
+                "reference": mapping[refs[0]["snapshotId"]],
+                "script_b64": base64.b64encode(script_bytes).decode("ascii"),
+                "inputs_b64": {
+                    name: base64.b64encode(value).decode("ascii")
+                    for name, value in input_bytes.items()
+                },
+                "counter": str(counter),
+                "canary": str(canary),
+            }
+        ),
+        # Same machine, new parent process: the machine-local run registry and
+        # data dir are inherited (run parameters never travel with a package).
+        env={
+            **os.environ,
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+        },
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=180,
+    )
+    assert cold_run.returncode == 0, cold_run.stdout + cold_run.stderr
+    executed = json.loads(cold_run.stdout)
+    # A package without its source is refused, and executes nothing.
+    assert executed["before"] == ["run\n", "loaded\n"]
+    assert executed["missing"]["code"] == "script_source_missing", executed["missing"]
+    # With the user-supplied source the run uses the restored INPUT exactly once.
+    assert counter.read_bytes() == b"run\nrun\n"
+    assert canary.read_bytes() == b"loaded\nloaded\n"
+    assert any(title.startswith("Captured ") for title in executed["titles"]), executed["titles"]
+    assert executed["size"] == executed["archived_size"]
+    assert executed["px"] == executed["archived_px"]
+    assert executed["text"] == executed["archived_text"]
+    # Cross-artifact comparison (stored export vs a direct worker savefig):
+    # the page, text and content extent must match exactly, and the only
+    # allowed difference is localized font/edge rasterization.
+    assert executed["metrics"]["ok"], json.dumps(executed["metrics"])
+    for key, tol in {
+        "changed_pixel_ratio": 0.02,
+        "mean_abs_diff": 1.0,
+        "max_abs_diff": 200,
+    }.items():
+        assert executed["metrics"][key] <= tol, (key, json.dumps(executed["metrics"]))
+    # A cold run gets its own receipt; it never re-signs the archived one.
+    assert executed["receipt"] != refs[0]["receiptId"]
+    assert executed["execution"]
