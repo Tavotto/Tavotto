@@ -102,3 +102,51 @@ def test_new_journal_stamps_and_mcp_proof_preserve_old_profile(monkeypatch, fixt
     assert proof["profile"]["label"] == "期刊检查基础"
     assert proof["journal_ref"] == p["journal_ref"]
     assert p == before
+
+
+def test_legacy_engine_stamp_is_normalized_consistently(monkeypatch, fixture_catalog):
+    # Implements the actual pre-fix profiles.stamp contract, including journal metadata.
+    def old_stamp(profile):
+        out = {
+            "profile_id": profile.get("profile_id"),
+            "profile_version": profile.get("version"),
+            "label": profile.get("label", ""),
+        }
+        if profile.get("journal"):
+            out["journal"] = profile["journal"]
+            out["derived_from"] = profile.get("derived_from")
+        if profile.get("journal_ref"):
+            out["journal_ref"] = profile["journal_ref"]
+        return out
+
+    monkeypatch.setattr(bridge.engine_profiles, "stamp", old_stamp)
+    monkeypatch.setattr(bridge.engine_telemetry, "capture", lambda *_args, **_kwargs: None)
+    for vector in json.loads((ROOT / "tests/golden/profile_display_vectors.json").read_text()):
+        candidate = {"profile_id": vector["id"], "label": vector["label"], "version": "1"}
+        original = copy.deepcopy(candidate)
+        assert bridge._profile_stamp(candidate)["label"] == vector["expected"]
+        assert candidate == original
+
+    p = journals.journal_profile("fx-delta", fixture_catalog)
+    p["journal_ref"] = journals.journal_ref("fx-delta", fixture_catalog)
+    before = copy.deepcopy(p)
+    s = session(p)
+    s.project, s.script, s.patches = "synthetic", "synthetic.py", []
+    monkeypatch.setattr(bridge, "get_session", lambda _id: s)
+    checks = bridge.run_preflight("synthetic", export_formats=["png"], export_dpi=299)
+    assert checks["profile"]["label"] == "期刊检查基础"
+    assert "期刊检查基础" in checks["report"]
+    assert "期刊未规定的项一律不判" not in checks["report"]
+    issue = next(i for i in checks["warnings"] if i["id"] == "raster-dpi")
+    assert issue["detail"]["min_dpi"] == 300
+    proof = json.loads(
+        bridge._proof_bytes(s, checks, [], 299, ["png"], forced=False, acknowledged=[])
+    )
+    assert proof["profile"] == checks["profile"]
+    assert proof["journal_ref"] == p["journal_ref"]
+    assert p == before
+    # Historical cached results are invalidated rather than reused in new output.
+    s.preflight_cache = {"patch_hash": "synthetic", "profile": old_stamp(p)}
+    assert bridge.cached_preflight(s) is None
+    s.preflight_cache = {"patch_hash": "synthetic", "profile": checks["profile"]}
+    assert bridge.cached_preflight(s) == s.preflight_cache

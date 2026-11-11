@@ -363,6 +363,21 @@ def _journal_module():
     return journals
 
 
+def _profile_stamp(profile: dict) -> dict:
+    """Use the engine stamp, correcting the exact legacy label even with an older engine.
+
+    The copy avoids mutating engine-owned state. The vectors shared with both
+    profile implementations guard the compatibility mapping.
+    """
+    stamp = dict(engine_profiles.stamp(profile))
+    if (
+        stamp.get("profile_id") == "journal-base-v1"
+        and stamp.get("label") == "期刊底（期刊未规定的项一律不判）"
+    ):
+        stamp["label"] = "期刊检查基础"
+    return stamp
+
+
 def journal_selection(
     profile_id: str | None, journal: dict | None, journal_id: str | None
 ) -> tuple[str | None, dict | None, dict | None]:
@@ -2025,7 +2040,7 @@ def open_figure(
             "dynamic_names": reg_info.get("dynamic_names", []),
             "stems": _all_stems(registry),
         },
-        "profile": engine_profiles.stamp(profile),
+        "profile": _profile_stamp(profile),
         **render,
     }
     if profile.get("journal_ref"):
@@ -2693,7 +2708,7 @@ def session_state(session_id: str) -> dict:
         "script": session.script,
         "entry": session.entry,
         "cost": session.cost,
-        "profile": engine_profiles.stamp(session.profile),
+        "profile": _profile_stamp(session.profile),
         "patches": list(session.patches),
         "patch_hash": session.patch_hash(),
         "render_revision": session.rev,
@@ -2849,7 +2864,7 @@ def run_preflight(
         "ok": True,
         "session_id": session.id,
         "stem": session.stem,
-        "profile": engine_profiles.stamp(profile),
+        "profile": _profile_stamp(profile),
         "size_mm": session.manifest.get("size_mm"),
         "patch_hash": session.patch_hash(),
         "errors": summary["errors"],
@@ -2888,7 +2903,7 @@ def cached_preflight(session: Session) -> dict | None:
         return None
     if cached.get("patch_hash") != session.patch_hash():
         return None
-    if cached.get("profile") != engine_profiles.stamp(session.profile):
+    if cached.get("profile") != _profile_stamp(session.profile):
         return None
     return cached
 
@@ -2896,7 +2911,7 @@ def cached_preflight(session: Session) -> dict | None:
 def format_preflight(session: Session, profile: dict, issues: list[dict], summary: dict) -> str:
     """人类可读的那一份（Codex 会把它念给用户听）。"""
     head = (
-        f"《{engine_profiles.stamp(profile).get('label') or profile['profile_id']}》 "
+        f"《{_profile_stamp(profile).get('label') or profile['profile_id']}》 "
         f"v{profile['version']} · {session.stem}"
     )
     size = session.manifest.get("size_mm") if session.manifest else None
@@ -3561,7 +3576,7 @@ def _normalize_figure(
             "patch_hash": b0_hash,
             "worker_generation": getattr(session, "rev", None),
             "original_artifact": original,
-            "profile": engine_profiles.stamp(profile),
+            "profile": _profile_stamp(profile),
         },
     )
     plan = engine_normalize.plan_patches(contract, b0_manifest)
