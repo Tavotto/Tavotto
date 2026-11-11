@@ -3,9 +3,9 @@ import { literal } from '@/i18n'
 import { buildExportRequest } from '@/lib/exportRequest'
 import { clearFigureExecutionProofs, recordFigureExecutionProof } from '@/lib/figureExecutionProof'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
-import { emptyProject, type FigureSnapshot, type PanelObject, type ProjectDocument } from '@/types/document'
+import { emptyProject, type FigureOrigin, type FigureSnapshot, type PanelObject, type ProjectDocument } from '@/types/document'
 import {
-  applyDerivedUpdate, captureFigureSnapshotSave, invalidateFigureSnapshots,
+  adoptReplayedFigureOrigin, applyDerivedUpdate, captureFigureSnapshotSave, invalidateFigureSnapshots,
   flushAutosave, mergeSavedFigureSnapshots, readAutosaveDoc, saveNow, startAutosave, useDocumentStore,
 } from './documentStore'
 
@@ -179,6 +179,27 @@ describe('immutable Figure snapshot association', () => {
     expect(currentPanel().figureSnapshot).toBeUndefined()
     expect((s().doc.objects[1] as PanelObject).figureOrigin).toEqual({ version: 1, snapshot: ownerB, patches: [] })
     expect((s().doc.objects[1] as PanelObject).figureSnapshot).toEqual(ownerB)
+  })
+
+  it('a verified cold-replay adoption re-points the persisted input without an undo entry', () => {
+    mergeSavedFigureSnapshots(saved(), { p1: ref() })
+    s().commit(literal('historical'), (d) => {
+      (d.objects[0] as PanelObject).figureOrigin = {
+        version: 1, snapshot: ref(), patches: [{ gid: 'line', prop: 'color', value: 'red' }],
+      }
+    })
+    const sent = currentPanel().figureOrigin!
+    const adopted: FigureOrigin = { version: 1, snapshot: { ...ref(), receiptId: 'receipt-two', snapshotId: 'snap-two' }, patches: sent.patches }
+    const past = s().past.length
+    adoptReplayedFigureOrigin(sent, adopted, null)
+    expect(currentPanel().figureOrigin).toEqual(adopted)
+    expect(s().past.length).toBe(past)
+    // A drifted echo (different P) and a same echo never adopt.
+    const drifted: FigureOrigin = { version: 1, snapshot: adopted.snapshot, patches: [] }
+    adoptReplayedFigureOrigin(adopted, drifted, null)
+    expect(currentPanel().figureOrigin).toEqual(adopted)
+    adoptReplayedFigureOrigin(adopted, adopted, null)
+    expect(currentPanel().figureOrigin).toEqual(adopted)
   })
 
   it('an owner-start fact preserves every historical input and adds no undo entry', () => {

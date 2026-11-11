@@ -2,7 +2,7 @@ import { PRODUCT_NAME } from './brand'
 import { chartVersionCanvas, chartVersionProject, documentApiPath, documentResponseFormat, type DocumentFormat, type VersionCanvasIdentity } from './documentFormat'
 import type { ChartSourceReceipt } from './chartSourceReceipts'
 import { figureSnapshotPreviewIdentity, sameFigureSnapshotReference } from './figureSnapshotPreview'
-import { sameFigureOrigin, validFigureOrigin, validFigureSnapshot } from './figureSnapshot'
+import { figureOriginIdentity, sameFigureOrigin, validFigureOrigin, validFigureSnapshot } from './figureSnapshot'
 import type { ProjectFileAxis, ProjectFileEdit, ProjectFileRead, ProjectFileRecovery, ProjectFileReservation, ProjectFileResult, ProjectFileView } from './projectFileSession'
 import { classifyArtifactFailure } from '@/lib/artifactReason'
 import type { RenderPurpose } from '@/lib/renderPurpose'
@@ -3112,6 +3112,8 @@ export interface Manifest {
 
 export interface EngineRenderResponse {
   figure_origin?: FigureOrigin
+  /** 冷重放核验通过后采用了新 receipt：`figure_origin` 回显的是重指向后的引用。 */
+  figure_origin_adopted?: boolean
   /** 本次渲染所属执行的正面证据（`include_figure_execution` 请求时才可能出现）。 */
   figure_execution?: FigureExecutionProof
   /** 计算图表最终 SVG + manifest + 完整 patches 的后端渲染身份。 */
@@ -3404,12 +3406,38 @@ function verifyFigureOriginEcho(origin: FigureOrigin | undefined, response: unkn
   }
 }
 
-export function verifyFigureOriginRender(origin: FigureOrigin | undefined, response: EngineRenderResponse): void {
+/**
+ * A verified cold-replay adoption: the same input P and owner re-pointed to the
+ * replayed receipt's reference. Anything else about the echo stays a mismatch.
+ */
+function replayAdoptionOf(sent: FigureOrigin, adopted: unknown): FigureOrigin | undefined {
+  if (adopted === undefined || !validFigureOrigin(adopted, sent.snapshot.sourceId)) return undefined
+  const next = adopted as FigureOrigin
+  if (sameFigureOrigin(sent, next)) return undefined
+  if (next.snapshot.sourceId !== sent.snapshot.sourceId ||
+      next.snapshot.patchHash !== sent.snapshot.patchHash ||
+      !sameFigureOrigin(next.snapshot.executionOwner, sent.snapshot.executionOwner) ||
+      figureOriginIdentity(next.patches) !== figureOriginIdentity(sent.patches)) return undefined
+  return next
+}
+
+export function verifyFigureOriginRender(origin: FigureOrigin | undefined, response: EngineRenderResponse): FigureOrigin | undefined {
+  if (origin !== undefined && response.figure_origin_adopted === true) {
+    const adopted = replayAdoptionOf(origin, response.figure_origin)
+    if (adopted !== undefined) {
+      if (!response || !response.manifest ||
+          (response.preview?.mode !== 'raster' && (typeof response.svg !== 'string' || !response.svg))) {
+        throw new EngineError('The historical Figure response has no matching pixels and geometry.', '', 'svg_source_unavailable')
+      }
+      return adopted
+    }
+  }
   verifyFigureOriginEcho(origin, response)
   if (origin !== undefined && (!response || !response.manifest ||
       (response.preview?.mode !== 'raster' && (typeof response.svg !== 'string' || !response.svg)))) {
     throw new EngineError('The historical Figure response has no matching pixels and geometry.', '', 'svg_source_unavailable')
   }
+  return undefined
 }
 
 /**

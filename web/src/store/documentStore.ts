@@ -1,7 +1,7 @@
 import { containsChartState, documentAddressKey, documentFormatForSchema, documentNamespaceKey, type DocumentFormat } from '@/lib/documentFormat'
 import { captureChartSourceSave as captureSourceContext, planSavedChartSources, type ChartSourceReceipt, type ChartSourceSaveContext } from '@/lib/chartSourceReceipts'
 import { create } from 'zustand'
-import { figureOriginFor, sameFigureInputs, sameFigureOrigin, sameFigureSource, validFigureOrigin, validFigureSnapshot, verifiedFigureOrigin, type FigureSnapshotSaveContext } from '@/lib/figureSnapshot'
+import { figureOriginFor, figureOriginIdentity, sameFigureInputs, sameFigureOrigin, sameFigureSource, validFigureOrigin, validFigureSnapshot, verifiedFigureOrigin, type FigureSnapshotSaveContext } from '@/lib/figureSnapshot'
 import { figureExecutionOwnerKey } from '@/lib/capturedFigureSources'
 import { perfSpan } from '@/perf/core'
 import { enablePatches, produceWithPatches, type Patch } from 'immer'
@@ -42,7 +42,7 @@ import { newId } from '@/lib/id'
 import { boundedCount, captureTelemetry, classifyEditKind } from '@/lib/telemetry'
 import { documentDigest, recordDiagnosticEvent } from '@/diagnostics'
 import { patchRefs } from '@/diagnostics/patches'
-import { defaultCanvasName, type CanvasData, type FigureDocument, type FigureExecutionOwner, type FigureSnapshot, type PanelObject, type ProjectDocument } from '@/types/document'
+import { defaultCanvasName, type CanvasData, type FigureDocument, type FigureExecutionOwner, type FigureOrigin, type FigureSnapshot, type PanelObject, type ProjectDocument } from '@/types/document'
 import {
   SCHEMA_CURRENT,
   canvasToDoc,
@@ -2968,6 +2968,43 @@ export function invalidateFigureSnapshots(
     // including the bound project file, but execution itself adds no undo entry.
     // Only already-persisted save responses may bypass this via snapshotSeq.
     useDocumentStore.setState({ doc, canvases })
+  }
+}
+
+/**
+ * A backend-verified cold replay re-pointed the historical input to the
+ * replayed receipt (PR03: 新执行用新 receipt，通过原来源采用事务落正文).
+ * Panels carrying the exact sent origin adopt together; anything else is
+ * untouched. A persisted backend fact takes no undo entry — the same
+ * discipline as mergeSavedFigureSnapshots — and normal dirty/save scheduling
+ * applies through the snapshot tick.
+ */
+export function adoptReplayedFigureOrigin(
+  sent: FigureOrigin,
+  adopted: FigureOrigin,
+  pj: string | null = currentProjectId(),
+): void {
+  if (pj !== currentProjectId() || writesBlocked(false)) return
+  if (!validFigureOrigin(adopted, adopted.snapshot.sourceId)) return
+  if (adopted.snapshot.sourceId !== sent.snapshot.sourceId ||
+      adopted.snapshot.patchHash !== sent.snapshot.patchHash ||
+      !sameFigureOrigin(adopted.snapshot.executionOwner, sent.snapshot.executionOwner) ||
+      figureOriginIdentity(adopted.patches) !== figureOriginIdentity(sent.patches) ||
+      sameFigureOrigin(sent, adopted)) return
+  const state = useDocumentStore.getState()
+  const replace = (objects: FigureDocument['objects']) => {
+    for (let i = 0; i < objects.length; i++) {
+      const panel = objects[i]
+      if (panel.type !== 'panel' || !sameFigureOrigin(panel.figureOrigin, sent)) continue
+      objects[i] = { ...panel, figureOrigin: JSON.parse(JSON.stringify(adopted)) as FigureOrigin }
+    }
+  }
+  const [doc, docPatches] = produceWithPatches(state.doc, (d) => replace(d.objects))
+  const [canvases, canvasPatches] = produceWithPatches(state.canvases, (cs) => {
+    for (const canvas of cs) replace(canvas.objects)
+  })
+  if (docPatches.length || canvasPatches.length) {
+    useDocumentStore.setState({ doc, canvases, snapshotSeq: state.snapshotSeq + 1 })
   }
 }
 

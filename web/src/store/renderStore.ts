@@ -33,7 +33,7 @@ import { pngManifestOf, useMountedPngStore } from '@/store/mountedPngStore'
 import { currentProjectId } from '@/lib/session'
 import { noticeWorkdirHint, workdirHintOwner, type WorkdirHintNoticeDeps } from '@/lib/workdirHintNotice'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
-import { observeFigureExecution } from '@/lib/figureExecutionEvents'
+import { observeFigureExecution, observeFigureOriginAdoption } from '@/lib/figureExecutionEvents'
 import { recordFigureExecutionProof } from '@/lib/figureExecutionProof'
 import { resolvePreview, VECTOR_PREVIEW, type PreviewMetadata } from '@/lib/previewBudget'
 import { useAssetStore } from '@/store/assetStore'
@@ -800,7 +800,8 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           const res = transport
             ? await transport.render(fileId, current, opts)
             : await engineRender(fileId, current, opts)
-          if (figureOrigin !== undefined) verifyFigureOriginRender(figureOrigin, res)
+          const sentOrigin = figureOrigin
+          const adoptedOrigin = sentOrigin !== undefined ? verifyFigureOriginRender(sentOrigin, res) : undefined
           if (chart && (typeof res.chart_revision !== 'string' || !res.chart_revision || !res.manifest ||
             (res.preview?.mode !== 'raster' && !res.svg))) {
             throw new EngineError('The chart response has no paired SVG and geometry.', '', 'chart_render_pair_missing')
@@ -811,6 +812,11 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           // 性能探针照记「回包到了」，`applied` 留空——它确实没上屏
           if (epochAtStart !== projectEpoch || ctrl.signal.aborted) return
           if (executionOwner.still()) observeFigureExecution(res.figure_snapshot_invalidation, projectAtStart)
+          if (adoptedOrigin !== undefined && sentOrigin !== undefined && executionOwner.still()) {
+            // The cold replay adopted the replayed receipt: re-point the
+            // persisted input through the document coordinator's transaction.
+            observeFigureOriginAdoption(sentOrigin, adoptedOrigin, projectAtStart)
+          }
           // 正证只对「这次请求的这份 P」有效；它是首次编辑冻结基准 P 的唯一凭据。
           if (wantProof && executionOwner.still()) {
             recordFigureExecutionProof(res.figure_execution, { pj: projectAtStart, fileId, overrides: current })

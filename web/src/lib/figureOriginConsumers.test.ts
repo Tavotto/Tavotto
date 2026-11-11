@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
-import { enginePreviewPng, engineSpecfix, fetchHistory, restoreHistory, syncOverrides, updateSourceFiles } from './api'
+import { enginePreviewPng, engineSpecfix, fetchHistory, restoreHistory, syncOverrides, updateSourceFiles, verifyFigureOriginRender } from './api'
 import { canEditPanel } from './panelEditability'
 import { getOriginalOutputSpec } from './originalSpec'
 import { materializePaste, parsePayload } from './clipboard'
@@ -141,5 +141,28 @@ describe('historical source at the existing consumers', () => {
       source_kind: 'vector', logical_w_mm: 999, logical_h_mm: 888, viewport_pt: [1000, 1000], dpi_source: 'unknown',
     } } as never } })
     expect(getOriginalOutputSpec(p.fileId, p)).toMatchObject({ widthMm: 80, heightMm: 60, origin: 'document' })
+  })
+
+  it('render verification accepts only a verified replay adoption echo', () => {
+    const adoptedSnapshot = { ...origin.snapshot, receiptId: 'B', snapshotId: 'archive-B' }
+    const adopted: FigureOrigin = { version: 1, snapshot: adoptedSnapshot, patches: structuredClone(origin.patches) }
+    const paired = {
+      manifest: { stem: 'History', size_mm: [80, 60] as [number, number], elements: [] },
+      preview: { mode: 'raster' as const, reason: 'fallback' as const, svg_bytes: 0, rasterized_artist_count: 0 },
+      rev: 1,
+    }
+    // The backend-verified adoption re-points the input; the caller adopts it.
+    expect(verifyFigureOriginRender(origin, { ...paired, figure_origin: adopted, figure_origin_adopted: true })).toEqual(adopted)
+    // Without the adoption flag the echo must be exact.
+    expect(() => verifyFigureOriginRender(origin, { ...paired, figure_origin: adopted })).toThrow()
+    // A drifted P under an adoption flag is a protocol violation: fail closed.
+    expect(() => verifyFigureOriginRender(origin, {
+      ...paired,
+      figure_origin: { version: 1, snapshot: adoptedSnapshot, patches: [] },
+      figure_origin_adopted: true,
+    })).toThrow()
+    // An exact echo adopts nothing.
+    expect(verifyFigureOriginRender(origin, { ...paired, figure_origin: origin, figure_origin_adopted: true })).toBeUndefined()
+    expect(verifyFigureOriginRender(origin, { ...paired, figure_origin: origin })).toBeUndefined()
   })
 })

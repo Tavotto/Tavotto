@@ -344,12 +344,88 @@ def test_origin_needs_the_complete_reference_and_current_execution(project, monk
         assert world.counter.read_bytes() == b"run\n"
 
 
-def test_cold_archive_is_viewable_but_does_not_authorize_reexecution(project, monkeypatch):
+def _assert_export_line(world, gid, style_fragment):
+    """The adopted origin exports through the original-scope pipeline."""
+    job = _json_ok(_export(world, world.q))
+    assert job["status"] == "done", job
+    outputs = {item["format"]: item for item in job["outputs"]}
+    svg = (Path(job["export_dir"]) / outputs["svg"]["name"]).read_bytes()
+    node = next(node for node in ET.fromstring(svg).iter() if node.get("id") == gid)
+    assert any(style_fragment in node.get("style", "") for node in node.iter())
+
+
+def test_cold_origin_render_replays_the_archived_input_and_adopts(project, monkeypatch):
+    """Cold process + unchanged script: the explicit render request replays P
+    along the ordinary runtime authorization chain, the replay is verified
+    against the archived pair, and the new receipt is adopted for the session
+    (PR03: 先重放 P 并核几何/像素/文字，再接 Q，新 receipt，不伪造旧 receipt)."""
     with _started(project, monkeypatch) as world:
         pool.shutdown_all(figures_dir=str(world.root), wait=True)
         m.reset_projects()
         m.open_project(str(world.root))
-        _forbid_execution(world, monkeypatch)
+        replayed = _render(world, world.q)
+        assert replayed.status_code == 200, replayed.get_json()
+        body = replayed.get_json()
+        # Exactly one replay: P re-executed, verified, then Q on the new session.
+        assert world.counter.read_bytes() == b"run\nrun\n"
+        assert body["figure_origin_adopted"] is True
+        # The replay is a new execution: the response adopts its receipt and the
+        # frontend re-points the persisted reference to the returned snapshot.
+        adopted = body["figure_origin"]
+        assert adopted["patches"] == world.origin["patches"]
+        assert adopted["snapshot"]["patchHash"] == world.origin["snapshot"]["patchHash"]
+        assert adopted["snapshot"]["receiptId"] != world.origin["snapshot"]["receiptId"]
+        assert _field(body["manifest"], world.gid, "linewidth") == 7
+        world.origin = adopted
+        warm = _json_ok(_render(world, world.temporary))
+        assert _field(warm["manifest"], world.gid, "linewidth") == 4
+        assert world.counter.read_bytes() == b"run\nrun\n"
+        assert "figure_origin_adopted" not in warm
+        _assert_export_line(world, world.gid, "stroke-width: 7")
+
+
+def test_cold_origin_adopts_a_new_receipt_after_a_purity_preserving_edit(project, monkeypatch):
+    """Cold process + script drift that keeps the pair pixel-identical: the
+    replay yields a NEW receipt identity, the response adopts it, and the old
+    reference is retired afterwards."""
+    with _started(project, monkeypatch) as world:
+        old_origin = copy.deepcopy(world.origin)
+        pool.shutdown_all(figures_dir=str(world.root), wait=True)
+        script = world.root / "plot.py"
+        program = script.read_text(encoding="utf-8")
+        script.write_text("# a pure comment edit\n" + program, encoding="utf-8")
+        m.reset_projects()
+        m.open_project(str(world.root))
+        replayed = _render(world, world.q)
+        assert replayed.status_code == 200, replayed.get_json()
+        body = replayed.get_json()
+        assert world.counter.read_bytes() == b"run\nrun\n"
+        assert body["figure_origin_adopted"] is True
+        adopted = body["figure_origin"]
+        assert adopted["patches"] == old_origin["patches"]
+        assert adopted["snapshot"]["patchHash"] == old_origin["snapshot"]["patchHash"]
+        assert adopted["snapshot"]["receiptId"] != old_origin["snapshot"]["receiptId"]
+        assert _field(body["manifest"], world.gid, "linewidth") == 7
+        # The adopted reference serves warm without another execution; the
+        # retired one is refused.
+        world.origin = adopted
+        warm = _json_ok(_render(world, world.temporary))
+        assert _field(warm["manifest"], world.gid, "linewidth") == 4
+        assert world.counter.read_bytes() == b"run\nrun\n"
+        assert "figure_origin_adopted" not in warm
+        world.origin = old_origin
+        _assert_rejected(_render(world, world.q))
+        world.origin = adopted
+        _assert_export_line(world, world.gid, "stroke-width: 7")
+
+
+def test_cold_origin_with_forbidden_execution_is_rejected_cleanly(project, monkeypatch):
+    """The archived pair stays viewable, and when execution is denied the cold
+    replay fails as a clean request rejection - zero executions, zero body."""
+    with _started(project, monkeypatch) as world:
+        pool.shutdown_all(figures_dir=str(world.root), wait=True)
+        m.reset_projects()
+        m.open_project(str(world.root))
         preview = _json_ok(
             world.client.post(
                 "/api/documents/v4/figure-preview",
@@ -361,6 +437,13 @@ def test_cold_archive_is_viewable_but_does_not_authorize_reexecution(project, mo
             )
         )
         assert preview["preview_source"] == "figure_snapshot"
+
+        def deny(*args, **kwargs):
+            raise m._FigureOriginError("execution denied by the test")
+
+        monkeypatch.setattr(pool, "get", deny)
+        monkeypatch.setattr(pool, "one_shot", deny)
+        monkeypatch.setattr(world.worker, "ensure_built", deny)
         _assert_rejected(_render(world, world.q))
         _assert_rejected(_preview(world, world.q))
         _assert_export_rejected(world)

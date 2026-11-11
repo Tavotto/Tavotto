@@ -2053,6 +2053,7 @@ class _FigureOriginSession:
     receipt: object
     execution_id: str
     snapshot_epoch: int | None
+    adopted: bool = False
 
     def check(self):
         ledger = self.ctx.svg_executions
@@ -2115,8 +2116,8 @@ class _FigureOriginSession:
         return result
 
 
-def _admit_figure_origin(rel_id, origin):
-    """Exact immutable input P plus the actual live receipt authorize applying Q."""
+def _figure_origin_record(rel_id, origin):
+    """Shared origin validation and archived-pair load for every origin consumer."""
     from .engine import svgstore
 
     try:
@@ -2136,19 +2137,11 @@ def _admit_figure_origin(rel_id, origin):
     )
     if record is None:
         raise _FigureOriginError("The historical Figure input cannot be verified.")
-    owner = record.get("execution_owner")
-    ledger = ctx.svg_executions
-    with ledger.lock:
-        # Legacy references have no owner field. Only a unique actual receipt
-        # and its observed descriptors may establish that missing provenance.
-        states = [ledger.get(owner)] if owner is not None else list(ledger.owners.values())
-        states = [
-            state
-            for state in states
-            if state is not None
-            and not state["unknown"]
-            and record["receipt"]["receipt_id"] in state["receipts"]
-        ]
+    return origin, ctx, record
+
+
+def _figure_origin_sessions(origin, ctx, record, rel_id, states, *, adopted=False):
+    """Unique live worker sessions owning this exact archived pair, per state."""
     matches = []
     for state in states:
         worker = state["worker"]
@@ -2199,13 +2192,180 @@ def _admit_figure_origin(rel_id, origin):
                     rcpt,
                     state["execution_id"],
                     worker.snapshot_epoch if native else None,
+                    adopted,
                 )
             )
+    return matches
+
+
+def _admit_figure_origin(rel_id, origin):
+    """Exact immutable input P plus the actual live receipt authorize applying Q."""
+    origin, ctx, record = _figure_origin_record(rel_id, origin)
+    owner = record.get("execution_owner")
+    ledger = ctx.svg_executions
+    with ledger.lock:
+        # Legacy references have no owner field. Only a unique actual receipt
+        # and its observed descriptors may establish that missing provenance.
+        states = [ledger.get(owner)] if owner is not None else list(ledger.owners.values())
+        states = [
+            state
+            for state in states
+            if state is not None
+            and not state["unknown"]
+            and record["receipt"]["receipt_id"] in state["receipts"]
+        ]
+    matches = _figure_origin_sessions(origin, ctx, record, rel_id, states)
     if len(matches) != 1:
         raise _FigureOriginError("No unique live execution owns the historical Figure input.")
     selected = matches[0]
     selected.check()
     return selected
+
+
+def _verify_replayed_figure_pair(frozen, record):
+    """The replay must reproduce the archived pair: canonical SVG digest first,
+    then the write-back pixel gate. A drifted script never adopts (PR03:
+    先重放 P 并核几何/像素/文字；核不上整体拒绝、零正文)."""
+    from .rendercore import svgcheck
+
+    companion = frozen.svg
+    archived_svg = record.get("svg")
+    if companion is not None and archived_svg is not None:
+        try:
+            fresh_svg = Path(companion.path).read_bytes()
+        except OSError:
+            fresh_svg = b""
+        if fresh_svg and (
+            svgcheck.canonical_digest(fresh_svg) == svgcheck.canonical_digest(archived_svg)
+        ):
+            return
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="figure-origin-verify-", dir=CACHE_DIR) as temporary:
+        directory = Path(temporary)
+        archived_pdf = directory / "archived.pdf"
+        archived_pdf.write_bytes(record["pdf"])
+        archived_png = directory / "archived.png"
+        pdfbackend.render_preview_png(archived_pdf, REPLAY_PIXEL_WIDTH, archived_png)
+        replay_png = directory / "replay.png"
+        pdfbackend.render_preview_png(Path(frozen.path), REPLAY_PIXEL_WIDTH, replay_png)
+        if archived_png.read_bytes() == replay_png.read_bytes():
+            return
+        metrics = pdfbackend.compare_png(archived_png, replay_png)
+        exceeded = {
+            key: metrics.get(key)
+            for key, tol in REPLAY_PIXEL_TOL.items()
+            if _f(metrics.get(key)) is not None and _f(metrics.get(key)) > tol
+        }
+        if metrics.get("ok", False) and not exceeded:
+            return
+        LOG.warning(
+            "Figure origin cold replay diverged from its archived pair: %s（阈值 %s）",
+            metrics,
+            REPLAY_PIXEL_TOL,
+        )
+        raise _FigureOriginError("The historical Figure input no longer matches its archived pair.")
+
+
+def _replay_figure_origin(rel_id, origin, record, ctx):
+    """Cold start only: re-execute the archived input along the same
+    authorization chain as an ordinary runtime render (the user's explicit
+    render request), verify the replay reproduces the archived pair, then adopt
+    the new receipt for this session. The old receipt is never faked; the
+    response echoes the adopted origin so the frontend can re-point its
+    persisted input through its own transaction."""
+    owner = record.get("execution_owner")
+    if owner is None:
+        # Legacy references carry no execution identity: nothing to replay.
+        raise _FigureOriginError("No unique live execution owns the historical Figure input.")
+    sink = []
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="figure-origin-replay-", dir=CACHE_DIR) as temporary:
+        # Start AND build the worker first: the export-grade serializer only
+        # accepts an existing built session (existing_only refuses cold
+        # workers), and building is exactly the ordinary runtime authorization
+        # chain executing the user code once.
+        replay_worker, _replay_stem = _engine_worker(rel_id)
+        replay_worker.ensure_built()
+        frozen = _execution_source(
+            {"id": rel_id, "overrides": origin["patches"]},
+            engine_exportreq.PPI_DEFAULT,
+            sink,
+            Path(temporary),
+            include_svg=True,
+        )
+        if frozen is None:
+            raise _FigureOriginError("The historical Figure input cannot be replayed.")
+        _verify_replayed_figure_pair(frozen, record)
+        # Activate the replayed pair so the adopted reference resolves for every
+        # later consumer of (source, patch hash); the save returns its ref.
+        saved = _save_svg_snapshot(
+            frozen,
+            project_root=ctx.path,
+            execution_owner=owner,
+            activate=True,
+        )
+    if saved is None or not saved.get("snapshot_ref"):
+        raise _FigureOriginError("The historical Figure input cannot be verified.")
+    adopted = {
+        "version": 1,
+        "snapshot": saved["snapshot_ref"],
+        "patches": origin["patches"],
+    }
+    ledger = ctx.svg_executions
+    with ledger.lock:
+        state = ledger.get(owner)
+    if state is None or state["unknown"]:
+        raise _FigureOriginError("No unique live execution owns the historical Figure input.")
+    worker = state["worker"]
+    script = state["owner"]["script"]
+    if engine_enginesession.is_native(worker):
+        execution_id = getattr(worker, "execution_id", None)
+    else:
+        execution_id = _execution_receipt(worker, script).instance
+    if not ledger.admit(owner, worker, execution_id, frozen.receipt["receipt_id"]):
+        raise _FigureOriginError("No unique live execution owns the historical Figure input.")
+    record_view = {"receipt": frozen.receipt, "execution_owner": owner}
+    matches = _figure_origin_sessions(adopted, ctx, record_view, rel_id, [state], adopted=True)
+    if len(matches) != 1:
+        raise _FigureOriginError("No unique live execution owns the historical Figure input.")
+    selected = matches[0]
+    selected.check()
+    return selected
+
+
+def _figure_origin_render_session(rel_id, origin, *, artifact_source):
+    """Render-endpoint origin admission with the cold-replay adoption path.
+
+    A live unique session admits exactly as everywhere else. A cold process
+    (the owner has never executed here) replays the archived input through the
+    ordinary render authorization chain and adopts the replayed receipt after
+    verification. A ledger state that exists without this receipt is a
+    retirement: rejected, no replay, no adoption.
+    """
+    origin, ctx, record = _figure_origin_record(rel_id, origin)
+    owner = record.get("execution_owner")
+    ledger = ctx.svg_executions
+    with ledger.lock:
+        owner_state = ledger.get(owner) if owner is not None else None
+        candidates = [owner_state] if owner is not None else list(ledger.owners.values())
+        states = [
+            state
+            for state in candidates
+            if state is not None
+            and not state["unknown"]
+            and record["receipt"]["receipt_id"] in state["receipts"]
+        ]
+    matches = _figure_origin_sessions(origin, ctx, record, rel_id, states)
+    if len(matches) == 1:
+        selected = matches[0]
+        selected.check()
+        return selected
+    if owner_state is not None or owner is None:
+        # The owner executed here and this pair's receipt is no longer current
+        # (or the reference carries no execution identity): a retirement, not a
+        # cold start.
+        raise _FigureOriginError("No unique live execution owns the historical Figure input.")
+    return _replay_figure_origin(rel_id, origin, record, ctx)
 
 
 class _FigureSerialization(tuple):
@@ -2607,6 +2767,7 @@ def _save_svg_snapshot(
     project_root=None,
     execution_owner=None,
     captured_input_archive=None,
+    activate: bool = False,
 ):
     """Persist a full-quality, verified pair separately from preview caches."""
     from .engine import svgstore
@@ -2628,6 +2789,7 @@ def _save_svg_snapshot(
         execution_owner=execution_owner,
         remap_fingerprint=engine_inputremap.fingerprint(root),
         storage_root=_svg_storage_root(root),
+        activate=activate,
         **_svg_input_archive_kwargs(captured_input_archive),
     )
 
@@ -10345,7 +10507,14 @@ def _api_engine_render_body(body, *, include_figure_execution=False):
     try:
         # 前台取会话期间后台预热让路（不开新的；已在飞的在池锁上与这一路合并成同一条会话）
         with engine_prewarm.PREWARM.foreground():
-            origin_session = _admit_figure_origin(rel_id, origin) if origin is not None else None
+            # 渲染端点独有冷重放：活会话照常准入；冷进程沿 runtime 渲染同一授权链
+            # 重放归档输入并核验后采用新 receipt（PR03）。specfix/PNG/导出等其余
+            # origin 消费者维持严格准入，由采用后的活 receipt 自然恢复。
+            origin_session = (
+                _figure_origin_render_session(rel_id, origin, artifact_source=artifact_source)
+                if origin is not None
+                else None
+            )
             if origin_session is not None:
                 worker, stem = origin_session.worker, origin_session.stem
             else:
@@ -10538,6 +10707,8 @@ def _api_engine_render_body(body, *, include_figure_execution=False):
     if origin_session is not None:
         origin_session.check()
         out["figure_origin"] = origin_session.origin
+        if origin_session.adopted:
+            out["figure_origin_adopted"] = True
     # build 成功、但沙盒里 glob 回空而脚本目录里有文件（图可能是空的，#1254）：同形的引导随成功响应走，
     # 出图结果与状态码不变；没有就不加这个字段
     hint = engine_pool.workdir_hint_of_build(worker)
