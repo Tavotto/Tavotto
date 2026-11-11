@@ -133,6 +133,7 @@ from .engine import (
     nativeperm as engine_nativeperm,
     nativesession as engine_nativesession,
     normalize as engine_normalize,
+    notebookscript as engine_notebookscript,
     originalspec as engine_originalspec,
     originrecord as engine_originrecord,
     patchspec as engine_patchspec,
@@ -1333,6 +1334,106 @@ def _import_result(path: Path, kind: str, *, reused: bool, renamed: bool) -> dic
         "renamed": renamed,
         "bytes": path.stat().st_size,
     }
+
+
+def _notebook_error(exc: engine_notebookscript.NotebookError):
+    text = engine_notebookscript.ERRORS.get(exc.code, exc.code)
+    resp = jsonify({"error": text, "code": exc.code, "params": exc.params})
+    resp.status_code = exc.status
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _notebook_result(root: Path, placed: engine_notebookscript.Placed, notebook: str):
+    """`script` 是项目相对 POSIX 路径（与 `/api/registry` 的脚本键同一种写法）；`status` 见 `notebookscript.Placed`"""
+    resp = jsonify(
+        {
+            "notebook": notebook,
+            "script": engine_discover.rel_key(placed.path, root),
+            "status": placed.status,
+        }
+    )
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _notebook_failure(exc: BaseException):
+    if isinstance(exc, engine_notebookscript.NotebookError):
+        return _notebook_error(exc)
+    if isinstance(exc, engine_assetimport.ImportRefused):
+        return _import_error(exc.code, exc.status, exc.params)
+    return _import_write_error(exc)
+
+
+@app.post("/api/notebook/extract")
+def api_notebook_extract():
+    """项目里的 `.ipynb` → 它旁边的同名 `.py`（ADR 0179）。请求 `{"notebook": <项目相对路径>}`。
+
+    路径只经 `projectenv.contained_path` 钉回项目内（`..` / 软链接 / 项目外绝对路径都在那一步现形）；
+    只读笔记本、只写它旁边的 `.py`，用户的笔记本与同名脚本一个字节不动。响应 `{notebook, script, status}`。
+    会话认证走全局 guard。
+    """
+    ctx = current_ctx()
+    body = request.get_json(silent=True)
+    raw = str(body.get("notebook", "") if isinstance(body, dict) else "").strip()
+    if not raw:
+        return _notebook_error(engine_notebookscript.NotebookError("notebook_not_found", 404))
+    real = engine_projectenv.contained_path(ctx.path, raw)
+    if real is None:
+        return _notebook_error(
+            engine_notebookscript.NotebookError("notebook_path_outside_project", 400)
+        )
+    target = Path(real)
+    if target.suffix != engine_notebookscript.SUFFIX or target.is_dir():
+        return _notebook_error(
+            engine_notebookscript.NotebookError("notebook_unsupported_type", 400)
+        )
+    if not target.is_file():
+        return _notebook_error(engine_notebookscript.NotebookError("notebook_not_found", 404))
+    root = Path(os.path.realpath(str(ctx.path)))
+    try:
+        placed = engine_notebookscript.convert_file(target)
+    except (
+        engine_notebookscript.NotebookError,
+        engine_assetimport.ImportRefused,
+        OSError,
+        engine_atomicio.AtomicWriteError,
+    ) as exc:
+        return _notebook_failure(exc)
+    return _notebook_result(root, placed, target.relative_to(root).as_posix())
+
+
+@app.post("/api/notebook/import")
+def api_notebook_import():
+    """上传的 `.ipynb` 字节 → 当前项目根里的 `.py`（浏览器拿不到路径时用；笔记本本身不存进项目）。
+
+    `POST /api/notebook/import?name=<文件名>`，body 是笔记本原始字节。上限卡在读取本身（`_read_body_capped`）；
+    `name` 只取 basename 并清洗，客户端不能指定目录。响应同 `/api/notebook/extract`。
+    """
+    root = require_project().resolve()
+    limit = engine_notebookscript.MAX_BYTES
+    too_large = engine_notebookscript.NotebookError(
+        "notebook_too_large", 413, {"limit_mb": limit // (1024 * 1024)}
+    )
+    if request.content_length is not None and request.content_length > limit:
+        return _notebook_error(too_large)
+    try:
+        data = _read_body_capped(limit)
+    except Exception:  # noqa: BLE001 — 读流失败不该 500：当作没收到
+        return _notebook_error(engine_notebookscript.NotebookError("notebook_empty", 400))
+    if len(data) > limit:
+        return _notebook_error(too_large)
+    name = request.args.get("name", "") or "notebook.ipynb"
+    try:
+        placed = engine_notebookscript.convert_bytes(root, name, data)
+    except (
+        engine_notebookscript.NotebookError,
+        engine_assetimport.ImportRefused,
+        OSError,
+        engine_atomicio.AtomicWriteError,
+    ) as exc:
+        return _notebook_failure(exc)
+    return _notebook_result(root, placed, "")
 
 
 @app.get("/api/panel-stem")
@@ -6605,6 +6706,9 @@ def api_registry():
             # 加字段（老前端忽略）：项目内认得出语言的 R / MATLAB 脚本（ADR 0143 修订「项目内入口」）。
             # 独立于 `all_scripts`：它们不能“打开并运行”，不进运行环境探测 / 依赖准备 / 可运行脚本判据。
             "foreign_scripts": engine_foreignsource.inventory(Path(ctx.path)),
+            # 加字段（老前端忽略）：项目内还没转成脚本的 Jupyter 笔记本（ADR 0179）。同样独立于 `all_scripts`：
+            # 它们不是脚本，要先抽成同名 `.py`（`POST /api/notebook/extract`）才进脚本库的运行分组
+            "notebook_scripts": engine_notebookscript.inventory(Path(ctx.path)),
         }
     )
 

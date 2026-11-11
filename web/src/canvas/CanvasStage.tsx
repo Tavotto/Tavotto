@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } fr
 import { perfCount } from '@/perf/core'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
+import { emitActivity } from '@/lib/activity'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { EmptyPickCards } from './EmptyPickCards'
 import { RestoreIssueBody } from '@/components/RestoreIssueBody'
@@ -41,6 +42,12 @@ import { placePanelInPage } from '@/lib/panelPlacement'
 import { startDraw, startMarquee, startPan } from './interactions'
 import { groundInkFor } from '@/lib/canvasSelection'
 import { cn } from '@/lib/utils'
+
+/** 鼠标滚轮一格的像素量级（触控板一帧只有几个像素） */
+const WHEEL_NOTCH_PX = 40
+/** 这么长时间内滚了这么多格，算「在用滚轮一格一格地挪画布」 */
+const WHEEL_BURST_MS = 6000
+const WHEEL_BURST_COUNT = 6
 
 export function CanvasStage() {
   perfCount('render.CanvasStage')
@@ -156,8 +163,18 @@ export function CanvasStage() {
         vp.zoomAt(Math.exp(-deltaY * 0.0022), ax, ay)
       } else {
         vp.setPan(vp.panX - deltaX, vp.panY - deltaY)
+        // 给提示引擎（ADR 0177）：鼠标滚轮一格一格地挪（触控板的增量小且常带横向分量，不算）
+        if (deltaX === 0 && Math.abs(deltaY) >= WHEEL_NOTCH_PX) {
+          const now = performance.now()
+          coarse = [...coarse.filter((t) => now - t <= WHEEL_BURST_MS), now]
+          if (coarse.length >= WHEEL_BURST_COUNT) {
+            coarse = []
+            emitActivity({ kind: 'view.wheel_struggled' })
+          }
+        }
       }
     }
+    let coarse: number[] = []
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
   }, [])

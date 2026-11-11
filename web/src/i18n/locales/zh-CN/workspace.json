@@ -102,6 +102,11 @@
     "moveUp": "上移",
     "moveDown": "下移"
   },
+  "notebook": {
+    "converted": "已从「{{notebook}}」生成「{{script}}」，正在运行它",
+    "convertedMore_other": "已从「{{notebook}}」生成「{{script}}」，正在运行它；其余 {{count}} 个文件这次没有处理",
+    "failed": "「{{name}}」没能转成脚本。{{reason}}"
+  },
   "canvasDrop": {
     "running": "正在运行「{{name}}」，出图后放进这张画布",
     "runningFirst": "正在运行「{{name}}」，其余 {{count}} 个脚本这次没有运行",
@@ -701,7 +706,10 @@
     "copyPath": "复制路径",
     "pathCopied": "已复制：{{path}}",
     "pathCopyFailed": "无法写入剪贴板。脚本在：{{path}}",
-    "rowActions": "{{script}} 的更多操作"
+    "rowActions": "{{script}} 的更多操作",
+    "group_notebook": "Jupyter 笔记本",
+    "notebookRun": "转成脚本并运行",
+    "notebookRunAria": "把笔记本 {{notebook}} 转成脚本并运行"
   },
   "spineZone": {
     "label": "{{side}} · {{dir}}刻度 {{state}} · {{action}}",
@@ -989,6 +997,16 @@
     "fit_canvas": "双击空白处，画布回到正中",
     "edge_crop": "拖边改图幅，按住 {{alt}} 改为裁剪",
     "ruler_guides": "从标尺拖出对齐线",
+    "shift_axis": "按住 ⇧ 拖动，只沿一个方向走",
+    "no_snap": "按住 {{mod}} 拖动，暂时不吸附",
+    "arrow_nudge": "方向键微移，⇧ 大步、{{alt}} 小步",
+    "shift_rotate": "按住 ⇧ 旋转，15° 一档",
+    "dblclick_text": "双击图里的文字，直接改",
+    "shift_draw": "按住 ⇧ 画正方形和直线",
+    "space_pan": "按住空格拖动，平移画布",
+    "shift_multi": "⇧ 点击多选，一次改完",
+    "shortcut_help": "按 ? 看全部快捷键",
+    "shortcutHelpOpen": "打开",
     "pageBoundsOpen": "打开画布页"
   },
   "prep": {

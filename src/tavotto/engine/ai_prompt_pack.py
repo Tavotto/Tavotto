@@ -544,6 +544,107 @@ def convert_requirements() -> list[str]:
     ]
 
 
+_TOKEN_ZH = {
+    "num": "数值列",
+    "ord": "数值或日期列（有顺序）",
+    "cat": "分组列（取值个数有上限）",
+    "label": "文字标签列",
+}
+
+
+def _roles_line(r, spec) -> str:
+    def zh(tokens) -> str:
+        return " 或 ".join(_TOKEN_ZH[t] for t in tokens)
+
+    x = (
+        f"`x`：{zh(spec.x_types)}（{'必填' if spec.x_required else '可选'}）"
+        if spec.x_types
+        else "不用 `x`"
+    )
+    n = f"{spec.y_min}" if spec.y_min == spec.y_max else f"{spec.y_min}–{spec.y_max}"
+    parts = [x, f"`y`：{n} 个{zh(spec.y_types)}"]
+    if spec.group:
+        parts.append("`group`：分组列（可选）")
+    if spec.facet:
+        parts.append(f"`facet`：分组列（可选，至多分 {r.MAX_FACETS} 格）")
+    parts.append(
+        {
+            "no": "不用 `unit`",
+            "optional": "`unit`：只有用户确认过个体编号才可带",
+            "required": "`unit`：必须是用户确认过的个体编号列",
+        }[spec.unit]
+    )
+    return "；".join(parts)
+
+
+def data_figure_guidance() -> str:
+    """「从数据到图」的选图准则（给模型看的那份文字）：固定的三个先答问题 + **由 `ai_data_recipe.FAMILIES` / `MARK_RULES` /
+    `REJECTIONS` 渲染**的各类问题、图元含义与拒绝条件 + 输出要求。规则只有那三张表一份，这里不另抄清单；
+    `tests/test_ai_data_recipe.py` 钉住「表里每个码都有对应句子、准则里不出现表里没有的族 / 图元」。"""
+    from . import ai_data_recipe as r
+
+    out: list[str] = [
+        "先回答三件事，再选图：",
+        "1. 读者看完这张图要得出什么结论？（比较各组、看变化趋势、看两个量的关系、看分布……）",
+        "2. 一个数据点是什么？这些点互相独立，还是同一个对象（同一只小鼠、同一个样品）的重复测量？"
+        "列名像编号只是线索，必须问用户确认，不能自己当成事实。",
+        "3. 横轴有没有顺序？顺序中间的值有没有意义（能不能内插）？",
+        "拿不准第 2、3 件事时，用 `ask_user` 问一个选择题，不猜；「不确定」也是一个答案，走最保守的画法（按独立处理、不连线）。",
+        "",
+        f"按科学问题（`family`）选画法；一张图由 {r.MIN_LAYERS}–{r.MAX_LAYERS} 个图元层（`layers`）叠成。图上只放描述性汇总，不做显著性检验、不下统计结论。",
+    ]
+    can = [k for k in r.FAMILY_KEYS if r.renderable(k)]
+    out.append(
+        "现在能出图的只有："
+        + "、".join(f"`{k}`" for k in can)
+        + "；其余各类只做资格判定，不要推荐。"
+    )
+    for spec in r.FAMILIES.values():
+        out += [
+            "",
+            f"## `{spec.key}`（{spec.title}，批次 {spec.batch}）",
+            f"- 什么时候用：{spec.when_use}",
+            f"- 什么时候不用：{spec.when_not}",
+            f"- 列：{_roles_line(r, spec)}",
+            "- 允许的图元："
+            + "、".join(f"`{m}`" for m in spec.marks)
+            + "；主体至少用其中之一："
+            + "、".join(f"`{m}`" for m in spec.primary),
+        ]
+        if spec.polar:
+            out.append("- 坐标：只有这一类可用 `polar`，且横轴必须是角度。")
+        if spec.order_required:
+            out.append("- 排序：`order` 必须是 `value_desc` 或 `value_asc`。")
+        for code in spec.rejects:
+            out.append(f"- 硬性拒绝 `{code}`：{r.REJECTIONS[code]}")
+    out += ["", "## 图元的含义"]
+    for mark, rule in r.MARK_RULES.items():
+        out.append(f"- `{mark}`：{rule.meaning}")
+    out += [
+        "",
+        "## 汇总方式（`summary`）",
+        "可选："
+        + "、".join(f"`{s}`" for s in r.SUMMARIES)
+        + "；误差必须写明是 SD、SEM 还是 95% CI。",
+        "",
+        "## 通用硬性要求（后端逐项校验，违反的备选会被剔除）",
+    ]
+    for code in r.COMMON_REJECTIONS:
+        out.append(f"- `{code}`：{r.REJECTIONS[code]}")
+    out += ["", "## 配方格式（后端严格解析，多一个字段或取值不在闭集里就整份拒收）"]
+    for code in r.RECIPE_REJECTIONS:
+        out.append(f"- `{code}`：{r.REJECTIONS[code]}")
+    out += [
+        "",
+        "## 输出要求",
+        f"- 给 {r.MIN_CANDIDATES}–{r.MAX_CANDIDATES} 个备选画法，按推荐程度排序；每个备选用一句话（`why`，不超过 {r.MAX_WHY} 字）说它让读者看出什么。",
+        "- 对落选的常见画法（例如均值柱加误差线）用一句话说为什么不用。",
+        "- 能露出原始点时，不把只有柱加误差线的画法排在含原始点的画法前面；这条后端会再强制一遍。",
+        "- 画不了的图（桑基、网络、地图等）如实说「目前画不了」，给最接近的画法，不凑数。",
+    ]
+    return "\n".join(out) + "\n"
+
+
 def _on_windows() -> bool:
     """转换提示词按 Tavotto 所在平台加 Windows 一条（Codex 与 Tavotto 跑在同一台机器上）。测试可 monkeypatch。"""
     return os.name == "nt"

@@ -18,7 +18,7 @@ order: 20
   `engine/registry.py`、`engine/pool.py`、`engine/ai_bridge.py`、`engine/config.py`、
   `engine/updater.py`、`engine/runtime.py`、`engine/project_refresh.py`、
   `engine/project_watch.py`、`engine/readiness.py`、`engine/sysmem.py`（池上限读可用内存，ctypes / vm_stat / `/proc/meminfo`，读不到回 None）、`engine/workdir.py`、
-  `engine/databinding.py`、`engine/preparation.py`、`engine/ai_data_figure.py`、`engine/xlsxread.py`（XLSX 只读取值：只用 `zipfile` + `xml.etree`，不引入 openpyxl / pandas；拒绝 DOCTYPE / ENTITY 与 zip 炸弹）被 Flask import，
+  `engine/databinding.py`、`engine/preparation.py`、`engine/ai_data_figure.py`、`engine/ai_data_recipe.py`（画法配方与资格判定，ADR 0178：只依赖标准库与 `ai_data_figure`）、`engine/xlsxread.py`（XLSX 只读取值：只用 `zipfile` + `xml.etree`，不引入 openpyxl / pandas；拒绝 DOCTYPE / ENTITY 与 zip 炸弹）被 Flask import，
   **必须保持纯标准库**。「纯标准库」挡的是科学栈（matplotlib / numpy 由 worker 解释器提供）；
   `pyproject.toml` 声明的运行时依赖（flask / packaging + RenderCore 的五个包，U10 起；ADR 0072）是父进程自己的
   ——`packaging` 自 U04（ADR 0061）起只在 `engine/depresolve.py` 的 intent 读法里延后 import，别处不许 import 它；

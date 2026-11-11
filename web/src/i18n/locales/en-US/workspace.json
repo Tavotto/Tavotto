@@ -106,6 +106,12 @@
     "moveUp": "Move up",
     "moveDown": "Move down"
   },
+  "notebook": {
+    "converted": "Made “{{script}}” from “{{notebook}}” and started running it",
+    "convertedMore_one": "Made “{{script}}” from “{{notebook}}” and started running it; {{count}} other file wasn’t used this time",
+    "convertedMore_other": "Made “{{script}}” from “{{notebook}}” and started running it; {{count}} other files weren’t used this time",
+    "failed": "“{{name}}” couldn’t be turned into a script. {{reason}}"
+  },
   "canvasDrop": {
     "running": "Running “{{name}}”. Its figure will go on this canvas.",
     "runningFirst": "Running “{{name}}”. The other {{count}} scripts weren’t run this time.",
@@ -732,7 +738,10 @@
     "copyPath": "Copy path",
     "pathCopied": "Copied: {{path}}",
     "pathCopyFailed": "Couldn’t write to the clipboard. The script is at: {{path}}",
-    "rowActions": "More actions for {{script}}"
+    "rowActions": "More actions for {{script}}",
+    "group_notebook": "Jupyter notebooks",
+    "notebookRun": "Turn into a script and run",
+    "notebookRunAria": "Turn the notebook {{notebook}} into a script and run it"
   },
   "spineZone": {
     "label": "{{side}} · {{dir}} ticks {{state}} · {{action}}",
@@ -1042,6 +1051,16 @@
     "fit_canvas": "Double-click empty space to recenter",
     "edge_crop": "Drag an edge to resize; hold {{alt}} to crop",
     "ruler_guides": "Drag a guide out of the ruler",
+    "shift_axis": "Hold ⇧ while dragging to move along one axis",
+    "no_snap": "Hold {{mod}} while dragging to skip snapping",
+    "arrow_nudge": "Arrow keys nudge; ⇧ for big steps, {{alt}} for fine",
+    "shift_rotate": "Hold ⇧ while rotating to snap to 15°",
+    "dblclick_text": "Double-click text in the figure to edit it",
+    "shift_draw": "Hold ⇧ to draw squares and straight lines",
+    "space_pan": "Hold Space and drag to pan",
+    "shift_multi": "⇧-click to select several and change them at once",
+    "shortcut_help": "Press ? for all shortcuts",
+    "shortcutHelpOpen": "Open",
     "pageBoundsOpen": "Open Canvas tab"
   },
   "prep": {

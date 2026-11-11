@@ -1139,6 +1139,16 @@ def iter_foreign_scripts(figures_dir: Path) -> list[Path]:
     return _iter_py(Path(figures_dir), include_infrastructure=True, suffixes=FOREIGN_SUFFIXES)
 
 
+#: Jupyter 笔记本后缀（区分大小写；↔ `notebookscript.SUFFIX`）
+NOTEBOOK_SUFFIXES = (".ipynb",)
+
+
+def iter_notebooks(figures_dir: Path) -> list[Path]:
+    """项目内 `.ipynb`（ADR 0179）：walk 规则仍是 `_iter_py` 那一个实现（隐藏目录——含 `.ipynb_checkpoints`——、
+    虚拟环境、缓存都不下探）。它们**不是** `iter_scripts` / `iter_all_scripts` 的成员，不进静态起草 / 注册表 / 探测。"""
+    return _iter_py(Path(figures_dir), include_infrastructure=True, suffixes=NOTEBOOK_SUFFIXES)
+
+
 def iter_all_scripts(
     figures_dir: Path, *, strict: bool = False, budget: scanbudget.Budget | None = None
 ) -> list[Path]:

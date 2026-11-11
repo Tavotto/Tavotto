@@ -13,7 +13,7 @@ import { literal, msg, t as translate, type UiMessage } from '@/i18n'
 import { useFormatMessage } from '@/i18n/react'
 import type { DismissTimer } from '@/lib/dismissTimer'
 import { DURATION, usePresence } from '@/lib/motion'
-import { ALT, cn } from '@/lib/utils'
+import { ALT, MOD, cn } from '@/lib/utils'
 import { useCanvasToolbarVisible } from './CanvasToolbar'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
@@ -321,7 +321,7 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const hintToken = useHintStore((s) => s.token)
   const dismissHint = useHintStore((s) => s.dismiss)
   const hintText = hint ? t(`hints.${hint}`) : ''
-  const liveHintText = current ? t(`hints.${current}`, { alt: ALT }) : ''
+  const liveHintText = current ? t(`hints.${current}`, { alt: ALT, mod: MOD }) : ''
   const toolbarUp = useCanvasToolbarVisible()
 
   // 「编辑原图」这一次把图加进了文档（此前不在）：说出口，并给撤销；回排版 / 撤销即消失

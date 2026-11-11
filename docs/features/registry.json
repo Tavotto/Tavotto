@@ -335,8 +335,8 @@
       "status": "active",
       "platform": "both",
       "summary": {
-        "zh-CN": "情景提示动画卡：看到用户在用笨办法时，窗口右下角出一张会动的小卡教藏起来的手势（画布跑偏 → 双击空白回正；拖边改图幅 → 按住 ⌥ 裁剪；反复挪对象 → 从标尺拖出对齐线）；自己用过就不再提，设置里可关",
-        "en-US": "Contextual hint cards: when the user is doing something the slow way, a small animated card in the window's bottom-right corner teaches the hidden gesture (canvas drifted away → double-click empty space; edge-resize → hold Alt to crop; repeated moves → drag a guide out of the ruler); never shown again once the user has done it, and can be turned off in Settings"
+        "zh-CN": "情景提示动画卡：看到用户在用笨办法时，窗口右下角出一张会动的小卡教藏起来的手势（画布跑偏 → 双击空白回正；拖边改图幅 → 按住 ⌥ 裁剪；反复挪对象 → 从标尺拖出对齐线；拖直线 → 按住 ⇧ 锁向；跟吸附较劲 → 按住 ⌘ / Ctrl；一点点挪 → 方向键微移；旋转差一点 → 按住 ⇧ 按 15° 转；去右栏改图里的文字 → 双击直接改；画得差一点就规整 → 按住 ⇧；滚轮一格格挪 → 空格拖动；挨个改同一属性 → ⇧ 多选；学会五条 → 按 ? 看全部快捷键）；自己用过就不再提，设置里可关",
+        "en-US": "Contextual hint cards: when the user is doing something the slow way, a small animated card in the window's bottom-right corner teaches the hidden gesture (canvas drifted away → double-click empty space; edge-resize → hold Alt to crop; repeated moves → drag a guide out of the ruler; a straight drag → hold Shift to lock the axis; fighting the snap → hold Cmd / Ctrl; tiny drags → arrow-key nudge; a near-miss rotation → hold Shift to snap to 15°; editing in-figure text from the sidebar → double-click it; an almost-square shape → hold Shift; notch-by-notch wheel panning → Space-drag; changing the same property one element at a time → Shift-click multi-select; five gestures learned → press ? for all shortcuts); never shown again once the user has done it, and can be turned off in Settings"
       },
       "entry": "多图排版 → 拖图边 / 把画布拖出窗口 / 连续挪几次对象",
       "e2e": [
@@ -347,6 +347,14 @@
         {
           "spec": "hint-cards.spec.ts",
           "title": "连续挪三次对象出「从标尺拖出对齐线」卡；点 × 之后不再出"
+        },
+        {
+          "spec": "hint-cards.spec.ts",
+          "title": "手拖了一条直线出「按住 ⇧」卡，按住 ⇧ 拖一次就收起；一点一点挪出「方向键微移」或「暂时不吸附」卡"
+        },
+        {
+          "spec": "hint-cards.spec.ts",
+          "title": "学会第五条手势的那一刻出「按 ? 看全部快捷键」卡，点「打开」进快捷键帮助，之后不再出"
         }
       ]
     },

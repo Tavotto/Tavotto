@@ -80,6 +80,8 @@ _CODE_REGISTRIES = (
     "tavotto.engine.ai_data_figure",
     # 数据出图 v2：XLSX 读取的稳定码（`XlsxError(code)` 由 `ai_data_figure` 转成 `DataSourceError`，码表并进上面那份）
     "tavotto.engine.xlsxread",
+    # 数据出图 v2 的画法配方（ADR 0178）：`RecipeError(code)` / `Problem(code)`，码表 `ERROR_CODES` = 拒绝条件表，构造时校验
+    "tavotto.engine.ai_data_recipe",
     # ADR 0110：改写脚本里的数据路径与共享的备份底座——`ScriptEditError(code)` 由 app 的 409 漏斗转出
     "tavotto.engine.scriptbackup",
     "tavotto.engine.scriptedit",
@@ -97,6 +99,8 @@ _CODE_REGISTRIES = (
     "tavotto.engine.pathignore",
     # 拖 / 粘贴文件进画布（ADR 0176）：`POST /api/assets/import` 的 code 经 `_import_error` 漏斗转成 JSON（带中文 error 原文）
     "tavotto.engine.assetimport",
+    # `.ipynb` 抽成同名 `.py`（ADR 0179）：`NotebookError(code)` 由 app 的 `_notebook_error` 漏斗转成 JSON
+    "tavotto.engine.notebookscript",
 )
 
 
@@ -381,6 +385,50 @@ USER_VISIBLE_CODES = {
     "data_xlsx_too_large": set(),
     "data_xlsx_unsafe": set(),
     "data_sheet_not_found": set(),
+    # 数据出图 v2 的画法配方与资格判定（`ai_data_recipe`）：拒绝条件的稳定码，一码一句话
+    "table_not_found": set(),
+    "column_not_found": set(),
+    "column_type_mismatch": set(),
+    "roles_invalid": set(),
+    "no_usable_columns": set(),
+    "mark_not_allowed": set(),
+    "no_primary_mark": set(),
+    "layer_role_invalid": set(),
+    "summary_missing": set(),
+    "summary_misplaced": set(),
+    "unit_unconfirmed": set(),
+    "unit_required": set(),
+    "paired_unconfirmed": set(),
+    "box_violin_n_small": set(),
+    "hist_density_n_small": set(),
+    "fit_line_n_small": set(),
+    "bar_baseline_invalid": set(),
+    "bar_needs_summary": set(),
+    "line_duplicate_x_unconfirmed": set(),
+    "log_nonpositive": set(),
+    "dual_axis_unsupported": set(),
+    "facet_limit_exceeded": set(),
+    "group_limit_exceeded": set(),
+    "coord_not_allowed": set(),
+    "bar_before_raw_points": set(),
+    "duplicate_candidate": set(),
+    "too_many_candidates": set(),
+    "trend_too_few_x": set(),
+    "paired_incomplete": set(),
+    "matrix_too_large": set(),
+    "composition_negative": set(),
+    "composition_total_not_positive": set(),
+    "composition_too_many_parts": set(),
+    "ranking_too_many_items": set(),
+    "ranking_needs_order": set(),
+    "interval_bounds_invalid": set(),
+    "trajectories_limit_exceeded": set(),
+    "dose_nonpositive": set(),
+    "recipe_malformed": set(),
+    "recipe_unknown_key": set(),
+    "recipe_unknown_value": set(),
+    "recipe_layer_count": set(),
+    "recipe_why_invalid": set(),
     "figure_name_exhausted": set(),
     # 拒绝之后清待确认行也失败了：状态不确定（503），客户端保持同一个 rid
     "ai_request_unresolved": set(),
