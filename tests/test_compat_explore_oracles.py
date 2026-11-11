@@ -105,6 +105,37 @@ class PixelJudgment(unittest.TestCase):
         }
         self.assertEqual(OR.unresolved(stages), ["fidelity: stems not compared: ['t']"])
 
+    def test_a_declared_stem_is_not_judged_and_the_others_still_are(self):
+        """cl-13f5402e4d / cl-93c03f6578 / cl-a49ae7316f：manifest 声明 fidelity=false 的图不按像素报。"""
+        a, b = png(self.tmp / "a.png"), png(self.tmp / "b.png", dots=64)
+        got = OR.pixel_judgment(
+            {"c": a, "t": a}, {"c": b, "t": b}, self.out, {"c": "ax_c: expected.fidelity=false"}
+        )
+        self.assertEqual(got["status"], "failed")
+        self.assertEqual([d["evidence"]["stem"] for d in got["differences"]], ["t"])
+        self.assertEqual(got["declared_unjudged"], {"c": "ax_c: expected.fidelity=false"})
+        self.assertEqual(got["compared"], 1)
+
+    def test_a_renamed_same_path_copy_is_matched_by_the_stem_it_saved_as(self):
+        a, b = png(self.tmp / "a.png"), png(self.tmp / "b.png", dots=64)
+        unjudged = {"c": "declared"}
+        got = OR.pixel_judgment(
+            {"s-2": a, "c": a}, {"s-2": b, "c": b}, self.out, unjudged, {"s-2": ["c"], "c": ["c"]}
+        )
+        self.assertEqual((got["status"], got["differences"]), ("not_covered", []))
+        self.assertEqual(sorted(got["declared_unjudged"]), ["c", "s-2"])
+        self.assertEqual(OR.unresolved({"fidelity": OR.stage("fidelity", got["status"])}), [])
+        # 没有声明时，同样的两张图照常报差异（反证：豁免只来自声明）
+        plain = OR.pixel_judgment({"s-2": a, "c": a}, {"s-2": b, "c": b}, self.out)
+        self.assertEqual(len(plain["differences"]), 2)
+
+    def test_declarations_come_from_siblings_on_the_same_script_and_entry(self):
+        got = OR.declared_unjudged(xt.load_parent("compat_engine", "ax_tight_layout"))
+        self.assertIn("ax_constrained_layout", got)
+        self.assertNotIn("ax_tight_layout", got)
+        self.assertNotIn("ax_aspect_equal", got)
+        self.assertEqual(OR.declared_unjudged(fake_parent()), {})
+
     def test_only_common_stems_are_compared(self):
         a = png(self.tmp / "a.png")
         self.assertEqual(OR.pixel_judgment({"x": a}, {"y": a}, self.out)["status"], "not_run")
@@ -637,6 +668,40 @@ class DriverNativeLastWriter(unittest.TestCase):
         self.assertEqual(got["size"], (200, 200), "kept the first figure (aspect 2:1)")
         only_first = self.shots("a = plt.figure(figsize=(4, 2)); a.savefig('o.png')\n")
         self.assertEqual(only_first["size"], (200, 100))
+
+
+class DriverNativeSavedStems(unittest.TestCase):
+    """compat_driver `native` 报每张图写过的 savefig stem：被同路径后写者顶掉、改名的图也认得出原名。"""
+
+    def test_a_displaced_same_path_figure_keeps_the_stem_it_wrote(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "p"
+            project.mkdir()
+            (project / "s.py").write_text(
+                "import matplotlib.pyplot as plt\n"
+                "for _ in range(2):\n"
+                "    plt.figure().savefig('c.pdf')\n"
+                "    plt.figure().savefig('t.pdf')\n",
+                encoding="utf-8",
+            )
+            out = cm.run_driver(
+                sys.executable,
+                "native",
+                {
+                    "script": str(project / "s.py"),
+                    "project": str(project),
+                    "engine_dir": str(cm.ENGINE_DIR),
+                    "entry": "__main__",
+                    "out_dir": str(Path(tmp) / "shots"),
+                    "width": 120,
+                },
+            )
+        self.assertTrue(out["ok"], out)
+        saved = out["saved_stems"]
+        self.assertEqual(saved["c"], ["c"])
+        self.assertEqual(saved["t"], ["t"])
+        copies = {k: v for k, v in saved.items() if k not in ("c", "t")}
+        self.assertEqual(sorted(v[0] for v in copies.values()), ["c", "t"], saved)
 
 
 class DriverNativeRefTitles(unittest.TestCase):
