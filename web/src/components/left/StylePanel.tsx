@@ -864,7 +864,7 @@ function ApplyStyle() {
           )}
           {journalPlan && journalPlan.edits.length > 0 && (
             <div data-style-journal className="mt-1.5 flex h-7 items-center gap-1.5">
-              <Tip label={<span className="block whitespace-pre-line">{journalPlan.edits.map(journalEditText).join('\n')}</span>} side="top">
+              <Tip label={journalPlan.edits.map(journalEditText).join('\n')} side="top" tone="light">
                 <span tabIndex={0} className="min-w-0 flex-1 truncate text-xs text-ink-2">
                   {sp('journalMismatch', { count: journalPlan.edits.length, journal: journalPlan.journal })}
                 </span>
