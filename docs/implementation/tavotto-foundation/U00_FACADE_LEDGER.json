@@ -950,8 +950,8 @@
       "callers": [
         {
           "file": "src/tavotto/app.py",
-          "symbol": "scan_panels",
-          "role": "/api/panels：素材原始尺寸 → originalspec.asset_spec（native_*_mm 与 original_spec 同一次计算）"
+          "symbol": "_asset_original_spec",
+          "role": "/api/panels：素材原始尺寸 → originalspec.asset_spec（native_*_mm 与 original_spec 同一次计算；由 scan_panels 调用）"
         },
         {
           "file": "src/tavotto/app.py",
