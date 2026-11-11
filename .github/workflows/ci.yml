@@ -1867,6 +1867,10 @@ jobs:
           "$BIN/python" -m pip install --quiet "pytest>=8"
           "$BIN/python" -m pytest tests/test_tutorial.py -k "wheel or sdist or installed_wheel" \
             -p no:cacheprovider -q -rs
+          # wheel 自带 `tavotto_mcp`（用户 2026-11-11）：产物里只有这一个插件包，且干净 venv 里
+          # `tavotto mcp` 真能握手 + 列工具、stdout 首帧前零字节（那条用例自己再建一个 venv 装这份 wheel）
+          "$BIN/python" -m pytest tests/test_desktop_mcp_serve.py -k "wheel or sdist" \
+            -p no:cacheprovider -q -rs
       - name: 上传冒烟日志（失败时）
         if: failure()
         uses: actions/upload-artifact@v6

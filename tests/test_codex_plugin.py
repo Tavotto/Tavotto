@@ -1811,7 +1811,10 @@ def test_launcher_reads_a_polyglot_exec_line_longer_than_one_kib(tmp_path):
 
 
 def test_the_plugin_is_not_shipped_in_the_wheel():
-    """插件随 Codex 市场分发，不属于 pip 包（pyproject 的 exclude 看着）。"""
+    """插件随 Codex 市场分发，不属于 pip 包（pyproject 的 exclude 看着）。
+
+    唯一的口子是 wheel / sdist 的 `force-include` 点名的 `tavotto_mcp` 包（`tavotto mcp` 的服务端，用户
+    2026-11-11 同意）；产物侧的断言在 `tests/test_desktop_mcp_serve.py`。"""
     if tomllib is None:
         pytest.skip("需要 tomllib（Python 3.11+）")
     cfg = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
