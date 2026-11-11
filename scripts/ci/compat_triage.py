@@ -500,7 +500,7 @@ def cluster(attributions: list[dict], families: list[dict]) -> list[dict]:
                     "relation": key[6],
                     "call_site": list(key[7]),
                 },
-                "known_family": known_family({**first["signature"]}, families),
+                "known_family": _members_family(members, families),
                 "size": len(members),
                 "members": sorted(m["finding_id"] for m in members),
                 "axes": sorted({a for m in members for a in m.get("axes", [])}),
@@ -511,6 +511,16 @@ def cluster(attributions: list[dict], families: list[dict]) -> list[dict]:
             }
         )
     return out
+
+
+def _members_family(members: list[dict], families: list[dict]) -> str | None:
+    """Known only when **every** member links to a family: one unlinked member keeps the cluster NEW (a new
+    cause must not hide behind an old one). The data-source door can link members of one cluster to
+    different families (a cwd-relative parquet read and a cwd-relative glob behind the same loop): name all."""
+    linked = {known_family(m["signature"], families) for m in members}
+    if None in linked:
+        return None
+    return " + ".join(sorted(linked))
 
 
 def _reproducible(members: list[dict]) -> bool | None:

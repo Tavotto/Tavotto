@@ -402,6 +402,23 @@ class Clusters(unittest.TestCase):
         self.assertIsNone(tg.known_family({**parquet, "path_style": "script_dir"}, families))
         self.assertIsNone(tg.known_family({**parquet, "data_source": None}, families))
 
+    def test_a_cluster_is_known_only_when_every_member_links(self):
+        families = tg.load_families()
+        base = {
+            "behavior_kind": "zero_figures",
+            "call_site": ["loop:figure", "loop:savefig"],
+            "stable_code": "script_error",
+            "path_style": "cwd",
+        }
+        parquet = {"signature": {**base, "data_source": "read_parquet"}}
+        glob = {"signature": {**base, "data_source": "glob_dir"}}
+        unknown = {"signature": {**base, "data_source": "read_hdf5"}}
+        self.assertEqual(
+            tg._members_family([glob, parquet], families),
+            "G4-cwd-relative-reader-zero-figures + G5-sandbox-empty-glob-empty-figure",
+        )
+        self.assertIsNone(tg._members_family([parquet, unknown], families))
+
     def test_triage_reads_the_data_source_off_the_explore_row(self):
         row = {
             "candidate_id": "x",
