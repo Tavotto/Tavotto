@@ -194,6 +194,12 @@ def _declared_codes(text: str) -> set[str]:
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             if any(_name(target) == "error_code" for target in targets):
                 value = node.value
+        elif isinstance(node, ast.Call):
+            # Job results carry the code as a keyword (`Produced(error_code=...)`),
+            # not as a response dict; it is still an emitted code.
+            for keyword in node.keywords:
+                if keyword.arg in {"error_code", "code"} and (code := _literal_code(keyword.value)):
+                    out.add(code)
         if code := _literal_code(value):
             out.add(code)
     return out
@@ -239,6 +245,7 @@ USER_VISIBLE_CODES = {
     "svg_asset_unsupported": set(),
     "svg_asset_export_unsupported": set(),
     "chart_engine_mismatch": set(),
+    "chart_engine_unavailable": set(),
     "chart_model_invalid": set(),
     "chart_model_unsupported": set(),
     "chart_render_unsupported": set(),
@@ -803,6 +810,12 @@ NON_UI_CODES = {
     "bad_handoff_query",
     # `POST /api/handoff/display-ack`（重复交接的显示确认）的参数错误：调用方是前端自己的静默 fire-and-forget，不展示（ADR 0131）
     "bad_handoff_ack",
+    # `POST /api/engine/render` 的 `include_figure_execution` 必须是真布尔：前端只发 true，
+    # 写错是调用方/协议错误，界面不会展示（响应仍带 `error` 原文）。
+    "invalid_include_figure_execution",
+    # 导出作业 / 图表子进程的**状态**字面量，不是错误响应码。
+    "cancelled",
+    "timeout",
     # 一键安装的**进度**状态码，不是错误响应：它们的文案在
     # dialogs:settings.agents.install.error.*（由 pnpm i18n:check
     # 守双语齐全），不该也不能进 errors.backend 那张表。
@@ -1123,6 +1136,41 @@ def test_run_error_payload_carries_params_for_the_frontend():
 # --------------------------------------------------------------------------
 # worker 错误必须带状态码
 # --------------------------------------------------------------------------
+def _worker_error_call_sites(src: str) -> list[str]:
+    return [
+        f"app.py:{index}"
+        for index, line in enumerate(src.splitlines(), start=1)
+        if "_worker_error_payload(" in line and not line.lstrip().startswith(("#", "*", "def "))
+    ]
+
+
+def _worker_error_status_failures(src: str) -> list[str]:
+    """Calls which would return a worker error body without a failure status.
+
+    The status may be a literal 4xx/5xx, or an `http_status` expression
+    (`exc.http_status` / `getattr(exc, "http_status", 500)`) which the worker
+    error contract defines as 4xx/5xx. Wrapped `return` statements are read as
+    one window; the predicate measures the status expression, not formatting.
+    """
+    lines = src.splitlines()
+    bad: list[str] = []
+    for index, line in enumerate(lines):
+        if "_worker_error_payload(" not in line:
+            continue
+        if line.lstrip().startswith(("#", "*", "def ")):
+            continue  # 定义处与注释不算调用
+        window = "\n".join(lines[index : index + 3])
+        tail = window[window.index("_worker_error_payload(") :]
+        if re.search(
+            r",\s*(?:[45]\d\d\b|getattr\([^\n]*[\"']http_status[\"'][^\n]*\)"
+            r"|[A-Za-z_][\w.]*\.http_status\b)",
+            tail,
+        ):
+            continue
+        bad.append(f"app.py:{index + 1}: {line.strip()}")
+    return bad
+
+
 def test_every_worker_error_response_carries_a_failure_status():
     """`_worker_error_payload()` 回的是**裸 dict**——Flask 会把它序列化成
     **HTTP 200**。
@@ -1142,17 +1190,8 @@ def test_every_worker_error_response_carries_a_failure_status():
     看不见的（它们断言的是 body 里的 code，200 与 500 都读得到）。
     """
     src = APP.read_text(encoding="utf-8")
-    seen: list[str] = []
-    bad: list[str] = []
-    for i, line in enumerate(src.splitlines(), start=1):
-        if "_worker_error_payload(" not in line:
-            continue
-        if line.lstrip().startswith(("#", "*", "def ")):
-            continue  # 定义处与注释不算调用
-        seen.append(f"app.py:{i}")
-        if re.search(r"jsonify\(_worker_error_payload\([^)]*\)\)\s*,\s*[45]\d\d", line):
-            continue
-        bad.append(f"app.py:{i}: {line.strip()}")
+    seen = _worker_error_call_sites(src)
+    bad = _worker_error_status_failures(src)
     assert not bad, (
         "这些 worker 错误响应没带失败状态码，会以 HTTP 200 发出去：\n  "
         + "\n  ".join(bad)
@@ -1181,8 +1220,33 @@ def test_every_worker_error_response_carries_a_failure_status():
     # `_write_back_error_response` 的一处 `, 409`（写回 verify 段挂了，原件零改动），11 → 10；
     # ADR 0080 的 /api/engine/specfix 渲染半路死了那一处 `, 500`，10 → 11。
     # #779: paired PNG snapshot adds one explicit HTTP 500 error response, 11 → 12.
-    assert len(seen) == 12, (
-        f"`_worker_error_payload` 的调用点从 12 变成了 {len(seen)}：{seen}\n"
+    # ADR 0166: the SVG scene export path adds one explicit failure response, 12 → 13.
+    assert len(seen) == 13, (
+        f"`_worker_error_payload` 的调用点从 13 变成了 {len(seen)}：{seen}\n"
         "  新增出口 → 把这个数改成新的实测值，并确认它带了状态码；\n"
         "  变少了 → 确认那处是真的删了，而不是搬到了别的文件里。"
     )
+
+
+def test_worker_error_status_gate_rejects_a_missing_or_success_status():
+    assert _worker_error_status_failures("return jsonify(_worker_error_payload(exc)), 409") == []
+    assert (
+        _worker_error_status_failures("return jsonify(_worker_error_payload(exc)), exc.http_status")
+        == []
+    )
+    assert (
+        _worker_error_status_failures(
+            'return jsonify(_worker_error_payload(exc)), getattr(exc, "http_status", 500)'
+        )
+        == []
+    )
+    # A wrapped return still counts: the status is on the next line.
+    assert (
+        _worker_error_status_failures(
+            "return jsonify(_worker_error_payload(exc, x=fact)), getattr(\n"
+            '    exc, "http_status", 500\n)'
+        )
+        == []
+    )
+    assert _worker_error_status_failures("return jsonify(_worker_error_payload(exc))") != []
+    assert _worker_error_status_failures("return jsonify(_worker_error_payload(exc)), 200") != []
