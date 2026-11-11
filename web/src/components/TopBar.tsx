@@ -282,21 +282,22 @@ function JournalChip() {
   if (!label) return null
   const title = t('topbar.journalTitle', { journal: label })
   return (
-    <button
-      type="button"
-      data-topbar-journal
-      title={title}
-      aria-label={title}
-      onClick={() => useUiStore.getState().setSettingsOpen(true, 'spec')}
-      className={cn(
-        'inline-flex h-6 min-w-0 max-w-48 shrink items-center gap-1 rounded-full px-2 text-xs font-medium outline-none',
-        'focus-visible:focus-ring',
-        PILL_TONE.neutral,
-      )}
-    >
-      <BookOpen size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
-      <span className="truncate max-[899px]:sr-only">{label}</span>
-    </button>
+    <Tip label={title} side="bottom" tone="light">
+      <button
+        type="button"
+        data-topbar-journal
+        aria-label={title}
+        onClick={() => useUiStore.getState().setSettingsOpen(true, 'spec')}
+        className={cn(
+          'inline-flex h-6 min-w-0 max-w-48 shrink items-center gap-1 rounded-full px-2 text-xs font-medium outline-none',
+          'focus-visible:focus-ring',
+          PILL_TONE.neutral,
+        )}
+      >
+        <BookOpen size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
+        <span className="truncate max-[899px]:sr-only">{label}</span>
+      </button>
+    </Tip>
   )
 }
 
