@@ -31,6 +31,7 @@ import {
   alignNewFigures,
   bindCanvasStyle,
   editBoundStyle,
+  editBoundStyleAll,
   followLibrary,
   resetStyleBindingSession,
   restoreCanvasStyle,
@@ -260,6 +261,28 @@ describe('绑定后改值 = 改这套样式本身，画布上所有图跟着变'
     expect(useUiStore.getState().status, '点了就收掉提示').toBeNull()
     await vi.waitFor(() => expect(saved.map((x) => x.id)).toEqual(['s1']))
     await vi.waitFor(() => expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBe(12))
+  })
+
+  it('一次改好几项（按期刊调整）存库失败：「再试一次」把整批一起重放，存一次、几项都落到画布', async () => {
+    await seed([panel('a', 'FigA')])
+    stop = startStyleBindingSync()
+    bindCanvasStyle('s1')
+    rerenderAll()
+    useProfileStore.setState({ save: async () => null, error: { code: 'x', message: '撞车' } })
+    expect(
+      await editBoundStyleAll([
+        { kind: 'element', role: 'axis_label', prop: 'fontsize', value: 12 },
+        { kind: 'element', role: 'title', prop: 'fontsize', value: 13 },
+      ]),
+    ).toBe(false)
+    const action = useUiStore.getState().statusAction
+    expect(action, '失败提示要带按钮').not.toBeNull()
+    fakeLibrary([BUILTIN, USER])
+    action!.run()
+    await vi.waitFor(() => expect(saved.map((x) => x.id)).toEqual(['s1']))
+    await vi.waitFor(() => expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBe(12))
+    expect(ov('a', 'axes_0.title', 'fontsize'), '第二项也要重放').toBe(13)
+    expect(saved, '整批只存一次').toHaveLength(1)
   })
 
   it('「再试一次」点下去时已经换了画布 / 文档：不重放（旧值不能写到别的样式上），只收掉提示', async () => {
