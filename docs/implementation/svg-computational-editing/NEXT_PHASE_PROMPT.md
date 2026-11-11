@@ -1,19 +1,33 @@
-# SVG 相关改动：开源稳定性接续提示词
+# SVG 计算图表编辑：提 PR 收敛执行提示词
 
-2026-11-09 本轮修复完成，按用户最新要求暂停。以下只供用户明确恢复时使用，不触发自动续行。结果与真实纠正见 [PROGRESS.md](PROGRESS.md)，详细现状见 [NEXT_PHASE.md](NEXT_PHASE.md)；[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)保留完整SVG范围，未启用候选不算现有产品完成状态。
+更新：2026-11-11。当前产品开发仍暂停；本提示词仅供用户明确恢复实施时复制使用。详细任务、PR范围和退出条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，现状/首红/证据见 [PROGRESS.md](PROGRESS.md)，完整需求见 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。
 
 ~~~text
-继续 Tavotto 当前工作的稳定性收敛，保既有功能和逻辑，最大化复用原功能，使用独立有收益的多子代理并行，在同一分支按功能commit，最后完成必要测试。唯一实施树E:/0 - Project/Tavotto-svg-r00，分支zixu.wang/svg-computational-r00；先核最新PROGRESS、HEAD/diff与受影响规则。不要新建/切换分支/worktree，不reset/stash/git add .，不推送/合并/发布；原main和用户项目/data/config/INPUT/命名稿保留。常规可逆步骤自主推进。
+恢复 Tavotto 当前 SVG 计算图表编辑的 PR 收敛工作。目标是在不影响现有 Python/旧项目功能和逻辑的基础上，完成 NEXT_PHASE.md 中 PR00–PR07 的必做项，产出与最终源码匹配的测试证据和可审查 PR 标题/正文草稿；不能只写计划或以草稿状态代替功能闭合。最大化复用原功能，使用有独立收益的多子代理并行，按功能分别 commit，常规可逆步骤自主完成，不反复问确认。
 
-最新产品提交71ee8c78已修写回验证/备份期间外部原件被覆盖：两入口、PDF/同stem PNG、verify/备份后8项反例已入库，关联67pass/5skip，另15项来源/归属兼容通过。8129b8d6已修内部PDF隐藏图层误显露，77项定向通过。不要重做这两项；完整重放/几何/像素两门、备份和回滚保持。最终check→replace对外部writer并非原子CAS，列独立并发结构问题，不冒已解决。证据E:/0 - Project/svg-review-20261109-resumed，源码与退出码见各DELIVERY/REPORT及XML。
+唯一实施树 E:/0 - Project/Tavotto-svg-r00，分支 zixu.wang/svg-computational-r00。不新建/切换分支或 worktree，不 reset/stash/git add .、不重写既有提交。原 E:/0 - Project/Tavotto 的 main 与全部用户项目、data/config、INPUT、AS/命名稿必须保留。先读根和受影响层 AGENTS、对应规则/ADR及最新 PROGRESS，核实际 HEAD/diff/身份；重新 fetch 核主线。2026-11-11盘点时HEAD=94ef609f（后续文档提交另计），origin/main与merge-base=2bc94f7f，主线独有0/本分支180提交，412文件；这是历史盘点，不是永久基线。当前单分支已从主线派生，不能因原main工作区落后就切回那里开发。
 
-重要纠正：生产native描述符调用descriptors(project_root=None)，没有original_artifact/artifacts，合法native来源是runtime；普通磁盘FileAsset解析固定safe。因此前轮推断的native磁盘origin写回回归未被真实producer成立，不为它扩私有敏感事实/新执行协议。六文件未联验WIP保E:/0 - Project/svg-review-20261109-resumed/native-verifier及native-facts，生产已恢复HEAD；不把该草稿套回。runtime native既有编辑/预览/导出仍需守真实eid/epoch，原无原件写回禁止保持。
+先做PR00：按完整A/B/C需求和当前公开承诺建立需求→入口→实现→用例→证据表，建立大diff的审查地图。默认完成可信Figure来源编辑、普通SVG显式轴/系列/数据绑定、自包含项目恢复，不猜科学数据、不削减既有功能。区分本地可审查、线上可合并、可发布；未曝光的通用普通PDF→SVG是否属于本PR，须以基线/当前UI/ADR和真实必经路径判定，不能无限扩大范围，也不能把回归改叫非目标。
 
-前端41路径候选仍在E:/0 - Project/svg-review-20261109/p2-app-frontend/pause-closeout，未启用。真实缺口是snapshot-only普通safe冷开被无条件派生成历史origin，已固化origin在明确Run后仍留旧receipt；另script=null入口和当前同名素材baked/profile错误决定历史资格。先区分明确历史意图与普通输出ref、首次P捕获的实际渲染/采用依据，复用原明确运行/来源采用文档事务，保普通冷开旧流程，不借同名当前脚本冒历史INPUT。确认完整消费者/响应/回包身份后原子应用候选并补正常认证UI。
+PR01先解决正常render同次执行证明，再做PR02全部前端消费者。当前 figure_execution/include_figure_execution 只有只读提案，尚未实现，参考 E:/0 - Project/svg-review-20261109-resumed/p2-live-render-proof-design/REVIEW.md。正证必须来自本次child实际eid并匹配同版receipt/owner/实例和本次原序P；当前receipt不能给旧响应补签，撤销通知不能授正向权限。可选字段缺省保持原shape/命令/冷build/Workerd透明恢复；缺证据只省略额外正证，不能把普通成功改409。不另建runner/会话账本，不为未证场景扩敏感协议。
 
-同次render正证仅有只读提案，见E:/0 - Project/svg-review-20261109-resumed/p2-live-render-proof-design/REVIEW.md，未实施/未行为验证。若采用，先以真实反例冻结可选合同：消费本次child实际eid，核同版receipt/owner/实例及本次原序P；缺正证只省略额外字段，不改变原normal render的冷build/Workerd恢复/默认shape或把成功变409。当前receipt不能给旧响应补签，svgexecution撤销事实不能授正证；不得另建runner/执行账本或为native磁盘原件扩敏感协议。
+前端41路径候选在 E:/0 - Project/svg-review-20261109/p2-app-frontend/pause-closeout，核完整补丁SHA和当前源码后再集成，不套早期WIP。修真实缺口：输出figureSnapshot不能自动成为显式figureOrigin；首次P捕获需匹配本次exact正证；明确Run成功后通过原文档事务采用新来源，保Q/布局，修自动继承把旧origin补回；失败/取消/迟到保原正文。修script=null有效来源的入口，以及同名当前B的baked/profile误判历史A。render/缓存/exact/PNG/specfix/写回/记录/history/sync/原图整版批量导出一并核来源/P/Q/项目/回包，保普通Python冷开、运行和写回。有效历史来源不得静默借当前同名脚本。
 
-已交付的8129b8d6只修新PDF内部叶子忽略XObject /OC导致隐藏图层显露的静默错图：structured unsupported，77项定向通过/AST反证有效，不称实现OCG。内部PDF叶子未接facade/HTTP；未批准字体和多Tj精度有残差，不能直接曝光。是否继续入口能力按当前实际目标与correctness范围决定，不以旧未验候选充交付。
+重要纠正：真实native描述符project_root=None，无磁盘原件绑定；合法native来源是runtime，普通磁盘FileAsset固定safe。因此“普通native磁盘origin写回回归”的旧推断已撤回，不恢复OUT六文件未联验WIP，不扩不存在的原件能力。runtime无原件的原拒绝保持；native现有热编辑/预览/导出必须保留。
 
-每批实际状态/规则→真实反例→最小结构修复→适当验证→实退出码与源码SHA/实物→定向功能commit。Python先Ruff；前端走正式build及所需派生产物/i18n，不以tsc --noEmit代替。新核心判据须反证，不放容差、不删断言。保护认证/沙盒/隐私/零PyMuPDF和config.data_dir。每60秒内给简短实质更新，仅关闭核明身份的自有进程。保所有首红和草稿，错误推断追加纠正，不抹掉历史；总目标未被完整证据证明前不标complete，不自行暂停。用户再次要求暂停时收尾当前安全批次、记录准确未完成项并停止。
+随后PR03：复用原Preparation/INPUT/execspec/runconfig/runner/租约做明确授权冷恢复；新执行用新receipt，先P核几何/像素/文字再接Q，不伪造旧身份、不猜argv/cwd/env/口令。新父进程/浏览器在自建旧源和派生cache被隔离后验完整迁移，保原包和所有用户稿；声明式自包含冷重放须零用户代码执行。
+
+PR04可独立推进：完成双系列数据/轴/样式/图例/注释联动和保存/undo/版本/冷开；修实际N5标题/刻度裁切与S/F坐标、命中、拖拽、导出一致；N4复用原legendmodel。不得缩小科学内容或改文字掩盖数据/几何错误。复杂SVG/图族按需求矩阵验证，未知科学语义由用户显式绑定。
+
+PR05：完成公开承诺的scope×format与混合/批量导出，独立核源SHA、mm/dpi、文字/色点/像素；正确处理partial/命名冲突/取消与job归属。若PR00认定通用PDF转换为必做，走原有界RenderHost child→pdfbackend/facade→IR/SVGwriter并补字体/文本精度/资源/HTTP/UI，禁止Flask parent native解码、PyMuPDF、伪配SVG或整页栅格冒矢量；否则保原失败合同且不宣传已实现。
+
+已交付不要重做：8129b8d6隐藏图层保护，77项定向通过；71ee8c78写回verify/备份期间保护外部新原件，67pass/5skip，另15项兼容通过；206d3cdf历史来源后端接纳、静态SVG/位图SVG/来源报告和clip修复保持。历史组有不同源码窗口，不累计为最终全仓绿。写回仍prepare→完整重放+几何+像素verify→备份/commit/回滚，冲突409清staging保原件。最终check→OS replace并非任意外部writer原子CAS；做第三路径审查，真实回归必修，临时缓解不关闭根问题、不靠再hash一次冒彻底解决。
+
+PR06最终冻结源码后完成：Python先Ruff再受影响pytest、最后完整后端；web正式vitest/lint/build及所需i18n（Windows设NODE_OPTIONS=--no-experimental-webstorage；不用tsc --noEmit）；本分支已改Rust，跑cargo test/clippy/fmt；按规则更新包内前端/playground/widget并检查。跑equivalence/invariants/CompatBench、smoke_app、正常认证真实UI/E2E与独立产物验收。E2E前先build_frontend，核实际解释器与继承TAVOTTO_EXE，防测旧包。记录真实退出码、命令/cwd/env、源SHA、pass/fail/skip、首红和反证；新核心判据需有界去修复反证，不删断言/放容差。平台缺失记准确待CI腿，不伪造macOS/安装物/宿主通过。
+
+PR07按 .github/pull_request_template.md 产出risk:high审查包：唯一用户问题、前后行为、base/head、完整diff审查地图、同源契约/迁移、最终验证和反证、未验范围、残余风险/必要Third-Path Review、回滚。同步feature registry/UNRELEASED/规则/ADR与支持矩阵镜像。最终做一次完整独立审查，收齐可复现发现修复并定向复验；不得无限重复已有绿组，线上Codex预算按仓库规则。
+
+每文件一个写入者，主代理协调app.py/共享合同、构建、浏览器和commit；冻结测试时停止写被测树。每60秒内给实质进展，批次结果追加PROGRESS；只回收核明身份的自有PID/句柄。外部平台缺失时记录依赖并推进独立就绪工作，不创建常驻调度器，不把时间耗尽当完成。用户再要求暂停时安全收尾并停止。
+
+本提示词授权本地实现/验证/分功能commit与PR草稿准备，不授权push、创建远端PR/issue、发评论/触发review、合并或发布。线上高风险full-ci、当前required Gate/重腿与维护者审查单列待执行；不能声称PR创建前已有远端绿结果。达到本地PR就绪条件后给出完整交接及剩余外部步骤，不擅自扩大范围。
 ~~~

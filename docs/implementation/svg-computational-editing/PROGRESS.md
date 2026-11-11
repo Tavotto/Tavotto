@@ -2,7 +2,7 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **2026-11-09 本轮修复已收尾，按用户最新指令暂停。新增功能提交为 8129b8d6（内部 PDF 隐藏图层保护）和 71ee8c78（写回期间外部原件变更保护）；完整前端候选仍未启用，总目标未完成。以下计划仅在用户明确恢复后执行，不自动接续。**
+> **2026-11-11 仅完成提PR剩余工作盘点、计划与执行提示词更新，产品开发继续暂停，未启动新一轮实现。最新产品修复为8129b8d6和71ee8c78；完整前端候选仍未启用，总目标未完成。PR必做项、条件范围及线上/发布验收的区别见NEXT_PHASE；仅在用户明确恢复实施后执行。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 > 前轮05:10后的91项捕获包资格保留其历史源码窗口；3c现已有实现与新资格，不能再按旧checkpoint重做。不同测试组不相加成最终总数；当前分支实际HEAD/diff优先。
 
@@ -51,9 +51,19 @@
 | P3图片边缘修复 | implemented_and_verified / PDF_conversion_pending | 50e3817f | PDF/SVG写出与SVG重读的重复边界裁剪已修；13实物例含于1075pass/68skip回归，普通PDF解析器未启用 |
 | P3内部PDF内容适配 | internal_adapter_verified / product_entry_pending | be766286、8129b8d6 | 原52专项含于36文件1320pass/68skip；本轮隐藏图层保护另有77项定向通过；原有界child/facade/HTTP未接，字体/精度资格仍缺，不算普通PDF→SVG产品完成 |
 | 原件并发写回保护 | implemented_and_verified / bounded | 71ee8c78 | 原两入口、PDF/同stem PNG、验证/备份两窗口8项反例；关联67pass/5skip及另15项兼容通过。最终检查到OS替换间仍非外部writer原子CAS |
-| R09–R13 | pending | — | 见 NEXT_PHASE.md 第 3 节后续批次与完整 IMPLEMENTATION_PLAN |
+| R09–R13 | pending | — | 见 NEXT_PHASE.md 的 PR00–PR07 收敛任务与完整 IMPLEMENTATION_PLAN；不由计划推断完成 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-11 提PR前剩余工作盘点与计划（仅文档，未恢复产品开发）
+
+- 用户要求为提PR给出剩余计划与提示词。本轮沿原唯一实施树/分支，只更新四份稳定文档，没有新分支/worktree、没有应用OUT候选、没有恢复产品开发或重跑产品测试，产品目标仍暂停。
+- 盘点起点clean `94ef609f`；实际fetch origin exit0后，`origin/main`及merge-base均`2bc94f7fd9b13276f92d100fcd1b0e7075f49a93`。`origin/main...HEAD`主线独有0/本分支180提交，412文件/85633增加/2153删除（本轮文档提交前）。没有观察到需先集成的新主线；原Tavotto仍clean main@69bcafae。不要因原main工作区落后118条就误在原目录切分支开发。
+- NEXT_PHASE重排为PR00范围/审查地图→PR01同次执行证明→PR02完整前端与采用→PR03INPUT冷恢复/迁移，PR04几何/图例和PR05导出/事务独立支线，最后PR06最终资格→PR07审查包。每批有动作、依赖、退出条件和分功能提交约定；恢复后可无人值守推进，当前不触发执行。
+- 明确默认仍交付SVG计算编辑A/B/C及既有功能不回归；区分本地可审查、线上可合并和可发布。未曝光的通用PDF→SVG先按基线/公开承诺/必经路径判定，不能任意扩大PR范围，也不能把真实回归改成非目标。最终check→replace外部writer残余风险继续保根问题与第三路径审查，不冒彻底解决。
+- 当前完整diff含协议、文档/包、写回事务、RenderCore及Rust，PR风险应按high；高风险线上full-ci/当前required Gate和审查仍待实际远端授权与执行。本轮未查询远端现有PR或运行回执，不写成线上全绿；未授权push/创建PR/issue/评论/合并/发布。
+- 历史77、67/5skip、另15及583/1320等只保各自源码窗口。归档frontend-review含已纠正的native磁盘推断，以2026-11-09 THREE_PATHS_AND_MINIMAL_FIX及最新计划为准；同次render正证仍是未实施提案。原首红/草稿/用户数据全部保留。
+- 本轮文档验证：规则索引/文档引用41pass/0skip/0fail、实际exit0，证据 `E:/0 - Project/svg-review-20261111-plan/docs.xml`；agents_budget --check实际exit0（原有OVER提示保留），git diff --check实际0。仅四份稳定计划/进度文档变化，不把文档验证记成产品功能验收。
 
 ### 2026-11-09 本轮两项修复完成，按用户最新要求暂停
 
