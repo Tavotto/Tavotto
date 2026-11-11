@@ -241,7 +241,10 @@ def journal_facts(query: str, journal_id: str | None, offset: int, limit: int) -
             ) from exc
         if exc.code in ("offline", "disabled", "network", "server_error"):
             raise BridgeError(
-                "v2 期刊事实当前不可用；已有 v1 规范不能冒充 v2 事实。", code="journal_offline"
+                "v2 期刊事实当前不可用；已有 v1 规范不能冒充 v2 事实。",
+                code="journal_offline",
+                sync_state=getattr(exc, "sync_state", None),
+                sync_code=getattr(exc, "sync_code", None),
             ) from exc
         if exc.code in (
             "index_invalid",
@@ -254,7 +257,10 @@ def journal_facts(query: str, journal_id: str | None, offset: int, limit: int) -
             "invalid_json",
         ):
             raise BridgeError(
-                "期刊事实未通过签名或完整性校验，不能使用。", code="journal_verification_failed"
+                "期刊事实未通过签名或完整性校验，不能使用。",
+                code="journal_verification_failed",
+                sync_state=getattr(exc, "sync_state", None),
+                sync_code=getattr(exc, "sync_code", None),
             ) from exc
         if exc.code == "unknown_journal":
             raise BridgeError("期刊事实目录中没有这本刊。", code="journal_unknown") from exc

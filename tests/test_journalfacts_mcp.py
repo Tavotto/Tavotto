@@ -101,3 +101,24 @@ def test_frozen_spec_includes_dynamically_loaded_v2_client():
         "tavotto.engine.journalfacts_remote",
         "tavotto.engine.journalfacts_contract",
     } <= literals
+
+
+def test_mcp_offline_cached_index_missing_journal_is_unknown_not_absent(isolated, monkeypatch):
+    key, _ = isolated
+    monkeypatch.setattr(journals, "JOURNAL_CATALOG_AGENTS", True)
+    monkeypatch.setattr(journalremote, "set_client_type", lambda _name: None)
+    raw = json.dumps(fact_bundle()).encode()
+    idx = index_for(raw)
+    idx["journals"] = {}
+    facts._save_index(signed(key, idx), idx)
+    monkeypatch.setattr(journalremote, "disabled", lambda: True)
+    result = server.call_tool("tavotto_get_journal_facts", {"journal_id": "new-journal"})
+    out = result["structuredContent"]
+    assert result["isError"] is True and out["code"] == "journal_offline"
+    assert out["sync_state"] == "disabled" and out["sync_code"] == "disabled"
+    assert "没有这本刊" not in out["error"]
+
+    monkeypatch.setattr(journalremote, "disabled", lambda: False)
+    monkeypatch.setattr(facts, "_request", lambda *args: (200, signed(key, idx)))
+    result = server.call_tool("tavotto_get_journal_facts", {"journal_id": "new-journal"})
+    assert result["structuredContent"]["code"] == "journal_unknown"

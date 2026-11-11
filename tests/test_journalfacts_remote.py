@@ -548,3 +548,32 @@ def test_invalid_journal_id_does_not_trigger_index_request(isolated, monkeypatch
     with pytest.raises(client.FactsError, match="bad_request"):
         client.get_facts("invalid/id")
     assert calls == []
+
+
+def test_missing_journal_requires_successful_index_refresh(isolated, monkeypatch):
+    key, _ = isolated
+    raw = json.dumps(fact_bundle()).encode()
+    idx = index_for(raw)
+    idx["journals"] = {}
+    client._save_index(signed(key, idx), idx)
+    monkeypatch.setattr(client, "_request", lambda *args: (200, signed(key, idx)))
+    with pytest.raises(client.FactsError, match="unknown_journal") as missing:
+        client.get_facts("new-journal")
+    assert missing.value.code == "unknown_journal"
+
+    def offline(*args):
+        raise journalremote.RemoteCatalogError("network")
+
+    monkeypatch.setattr(client, "_request", offline)
+    with pytest.raises(client.FactsError, match="network") as unavailable:
+        client.get_facts("new-journal")
+    assert unavailable.value.sync_state == "offline" and unavailable.value.sync_code == "network"
+    monkeypatch.setattr(journalremote, "disabled", lambda: True)
+    with pytest.raises(client.FactsError, match="disabled") as disabled:
+        client.get_facts("new-journal")
+    assert disabled.value.sync_state == "disabled" and disabled.value.sync_code == "disabled"
+    monkeypatch.setattr(journalremote, "disabled", lambda: False)
+    monkeypatch.setattr(client, "_request", lambda *args: (200, b"{}"))
+    with pytest.raises(client.FactsError, match="index_invalid") as rejected:
+        client.get_facts("new-journal")
+    assert rejected.value.sync_state == "rejected" and rejected.value.sync_code == "index_invalid"

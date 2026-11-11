@@ -80,10 +80,19 @@ def _call(method: str, url: str, cap: int, headers: dict[str, str]) -> tuple[int
 
 
 class FactsError(RuntimeError):
-    def __init__(self, code: str, retry_after_s: int | None = None):
+    def __init__(
+        self,
+        code: str,
+        retry_after_s: int | None = None,
+        *,
+        sync_state: str | None = None,
+        sync_code: str | None = None,
+    ):
         super().__init__(code)
         self.code = code
         self.retry_after_s = retry_after_s
+        self.sync_state = sync_state
+        self.sync_code = sync_code
 
 
 def cache_dir() -> Path:
@@ -442,8 +451,12 @@ def get_facts(jid: str, *, offset: int = 0, limit: int = 20, ui_locale: str | No
     # No journal ID or device token is sent with this request. On failure, sync
     # returns a verified cache and exposes its status to the caller.
     state = sync(ui_locale)
-    if state["index"] is None:
-        raise FactsError(state["code"] or "offline")
+    if state["index"] is None or (
+        jid not in state["index"]["journals"] and state["state"] not in ("updated", "unchanged")
+    ):
+        raise FactsError(
+            state["code"] or "offline", sync_state=state["state"], sync_code=state["code"]
+        )
     result = get_journal(jid, ui_locale=ui_locale)
     bundle = result["bundle"]
     facts = bundle["facts"]
