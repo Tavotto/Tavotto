@@ -740,6 +740,12 @@ export default interface Resources {
     "engineEnv": {
       "title": "渲染环境"
     },
+    "epsOpacity": {
+      "body_other": "这张图有 {{count}} 个半透明标注。",
+      "opaque": "EPS 按不透明导出",
+      "pdf": "改导出 PDF",
+      "title": "EPS 不支持半透明"
+    },
     "export": {
       "advancedLabel": "高级",
       "batchNames": "每张图用各自的名字",
