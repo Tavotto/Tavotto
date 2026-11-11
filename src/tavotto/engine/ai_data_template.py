@@ -1342,11 +1342,14 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
         f"        axes[0][0].legend(handles=handles, frameon={bool(style['legend_frame'])!r})",
     ]
     n_lines, n_parts = [], []
-    if summ:
+    if summ or any(ly.mark == "fit_line" for ly in recipe.layers):
         # n 取自每个汇总层**实际汇总的总体**：逐位置的 = 每个位置的有效观测数；整系列的（水平线）= 整条序列的有效观测总数；
         # 两种都有时都写 per point / per series，分得清是哪个 n
         pos = any(ly.mark in _PER_POINT_MARKS and ly.summary != "none" for ly in recipe.layers)
-        ser = any(ly.mark == "hline_summary" and ly.summary != "none" for ly in recipe.layers)
+        ser = any(
+            (ly.mark == "hline_summary" and ly.summary != "none") or ly.mark == "fit_line"
+            for ly in recipe.layers
+        )
         if pos:
             n_lines.append(
                 "    n_pos = n_phrase(trend_point_counts(pools), 'point', %r)" % (pos and ser)
@@ -1408,17 +1411,17 @@ def _render_relationship(entry, recipe, data_rel, stem, style) -> str:
         "            color = PALETTE[gi % len(PALETTE)]",
         "            xs, ys = relationship_pairs(d, p, g)",
     ]
-    for layer in recipe.layers:
+    for layer, tag in zip(recipe.layers, _layer_tags(recipe)):
         if layer.mark == "points":
             lines = [
                 "if ys:",
-                "    ax.scatter(xs, ys, s=9, color=color, linewidths=0, label=make_label('points', g, p))",
+                f"    ax.scatter(xs, ys, s=9, color=color, linewidths=0, label=make_label({tag!r}, g, p))",
             ]
         else:
             lines = [
                 f"seg = fit_segment((xs, ys), {logx!r}, {logy!r})",
                 "if seg:",
-                f"    ax.plot(*seg, color=color, linestyle='--', linewidth={mid!r}, label=make_label('fit_line', g, p))",
+                f"    ax.plot(*seg, color=color, linestyle='--', linewidth={mid!r}, label=make_label({tag!r}, g, p))",
             ]
         L += ["            " + ln for ln in lines]
     L += [
@@ -1488,9 +1491,9 @@ def _render_distribution(entry, recipe, data_rel, stem, style) -> str:
         "            if not vals:",
         "                continue",
     ]
-    for layer in recipe.layers:
+    for layer, tag in zip(recipe.layers, _layer_tags(recipe)):
         m = layer.mark
-        lab = f"make_label({m!r}, g, p)"
+        lab = f"make_label({tag!r}, g, p)"
         if m == "hist":
             lines = [
                 "counts = hist_counts(vals, edges)",
@@ -1713,12 +1716,13 @@ def _expected_relationship(values, recipe) -> list[dict]:
         values.columns, values.rows, recipe.x, recipe.y[0], recipe.group, recipe.facet
     )
     logx, logy = recipe.scale in ("log_x", "log_xy"), recipe.scale in ("log_y", "log_xy")
+    tags = _layer_tags(recipe)
     out = []
     for p in d["panels"]:
         for g in d["groups"]:
             xs, ys = relationship_pairs(d, p, g)
-            for layer in recipe.layers:
-                lab = make_label(layer.mark, g, p)
+            for layer, tag in zip(recipe.layers, tags):
+                lab = make_label(tag, g, p)
                 if layer.mark == "points":
                     if ys:
                         out.append(_entry(lab, "offsets", _interleave(xs, ys), (len(ys), 2)))
@@ -1735,15 +1739,16 @@ def _expected_distribution_x(values, recipe) -> list[dict]:
     )
     marks = {layer.mark for layer in recipe.layers}
     edges = hist_edges(all_values(d)) if "hist" in marks and all_values(d) else None
+    tags = _layer_tags(recipe)
     out = []
     for p in d["panels"]:
         for g in d["groups"]:
             vals = pooled_values(d, p, g)
             if not vals:
                 continue
-            for layer in recipe.layers:
+            for layer, tag in zip(recipe.layers, tags):
                 m = layer.mark
-                lab = make_label(m, g, p)
+                lab = make_label(tag, g, p)
                 if m == "hist":
                     counts = hist_counts(vals, edges)
                     heights = hist_heights(

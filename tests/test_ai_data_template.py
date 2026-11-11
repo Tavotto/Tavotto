@@ -2296,15 +2296,15 @@ def test_trend_note_counts_the_population_each_summary_actually_summarizes(tmp_p
                 "two_pos": "line: mean ± SD; error bars: mean ± SEM; horizontal lines: mean ± SD",
             }
             summ = names["mixed" if layers is MIX else "two_pos"]
-            want = (
-                f"{summ}{dotted}; n = {_span(per_point)} per point; n = {_span(per_series)} per series"
-            )
+            want = f"{summ}{dotted}; n = {_span(per_point)} per point; n = {_span(per_series)} per series"
         elif has_ser:
             want = f"mean ± SD{dotted}; n = {_span(per_series)}" + (
                 " per series" if len(per_series) > 1 else ""
             )
         else:
-            want = f"mean ± SD; n = {_span(per_point)}" + (" per point" if len(per_point) > 1 else "")
+            want = f"mean ± SD; n = {_span(per_point)}" + (
+                " per point" if len(per_point) > 1 else ""
+            )
         assert got == want, (cid, got, want)
 
 
@@ -2437,3 +2437,188 @@ def test_legend_explains_linestyle_per_y_column_when_grouped(tmp_path):
     solo = mk("my.csv", "trend", [("line", "mean_sd")], ["sig_mV"], x="x")
     rendered, _ = _render_in(work, "my.csv", solo)
     assert probe(work, rendered, _LEGEND)["texts"] == []
+
+
+# =========================================================================== relationship / distribution 同样的纪律
+def _rel_folder(tmp: Path, seps=False) -> Path:
+    """x、y 两列；分组 arm、分面 site；含缺失 / NaN / 文字行（不画、不计 n）。各格点数不同。"""
+    rows = [["x", "y", "arm", "site"]]
+    plan = {
+        ("a", "s1"): 8,
+        ("b", "s1"): 6,
+        ("a", "s2"): 7,
+        ("b", "s2"): 6,
+    }
+    for (arm, site), k in plan.items():
+        if seps:
+            arm, site = {"a": "a | s1", "b": "a"}[arm], {"s1": "b", "s2": "s1 | b"}[site]
+        for i in range(k):
+            rows.append(
+                [i + 1.0, round(2 * i + 1 + (arm != "a") * 3 + (i % 2) * 0.4, 3), arm, site]
+            )
+        rows += [["", 3.0, arm, site], [4.0, "nan", arm, site], [5.0, "<LOD", arm, site]]
+    tmp.mkdir(parents=True, exist_ok=True)
+    (tmp / "rel.csv").write_text(_csv(rows), encoding="utf-8")
+    return tmp
+
+
+_REL_BODY = (
+    "result = {}\n"
+    "for ai, ax in enumerate(fig.axes):\n"
+    "    for c in ax.collections:\n"
+    "        result[f'{ai}:{c.get_label()}'] = [[float(a), float(b)] for a, b in c.get_offsets()]\n"
+    "    for ln in ax.lines:\n"
+    "        result[f'{ai}:{ln.get_label()}'] = [[float(a), float(b)] for a, b in zip(*ln.get_data())]\n"
+    "result['texts'] = [t.get_text() for t in fig.texts]\n"
+)
+
+
+@needs_worker
+def test_relationship_draws_fits_and_counts_only_finite_pairs(tmp_path):
+    work = _rel_folder(tmp_path / "w")
+    r = mk(
+        "rel.csv", "relationship", ["points", "fit_line"], ["y"], x="x", group="arm", facet="site"
+    )
+    rendered, _ = _render_in(work, "rel.csv", r, allow=("column_type_mismatch",))
+    got = probe(work, rendered, _REL_BODY)
+    ns = {
+        ("a", "s1"): 8,
+        ("b", "s1"): 6,
+        ("a", "s2"): 7,
+        ("b", "s2"): 6,
+    }  # 独立数：缺失 / NaN / 文字行不算
+    for ai, site in enumerate(("s1", "s2")):
+        for arm in ("a", "b"):
+            pts = got[f"{ai}:points | {arm} | {site}"]
+            assert len(pts) == ns[(arm, site)]
+            fit = got[f"{ai}:fit_line | {arm} | {site}"]
+            slope, icpt = statistics.linear_regression([p[0] for p in pts], [p[1] for p in pts])
+            for x, y in fit:
+                assert y == pytest.approx(icpt + slope * x)
+    note = got["texts"][0]
+    assert note.endswith("n = 6-8 per group and panel"), note
+    assert "dashed line: least-squares fit" in note
+    one = _rel_folder(tmp_path / "w1")
+    only_s1 = [["x", "y", "arm"]] + [
+        [i + 1, i * 1.5, a] for a, k in (("a", 7), ("b", 6)) for i in range(k)
+    ]
+    (one / "rel.csv").write_text(_csv(only_s1), encoding="utf-8")
+    r1 = mk("rel.csv", "relationship", ["points", "fit_line"], ["y"], x="x", group="arm")
+    rendered, _ = _render_in(one, "rel.csv", r1)
+    assert probe(one, rendered, _REL_BODY)["texts"][0].endswith("n = 7 / 6 (group order)")
+
+
+def _dist_folder(tmp: Path, seps=False) -> Path:
+    rows = [["v", "arm", "site"]]
+    plan = {("a", "s1"): 9, ("b", "s1"): 6, ("a", "s2"): 7, ("b", "s2"): 5}
+    for (arm, site), k in plan.items():
+        if seps:
+            arm, site = {"a": "a | s1", "b": "a"}[arm], {"s1": "b", "s2": "s1 | b"}[site]
+        rows += [[round(1 + i * 0.9 + (arm.startswith("b")) * 2, 3), arm, site] for i in range(k)]
+        rows += [["", arm, site], ["nan", arm, site], ["<LOD", arm, site]]
+    tmp.mkdir(parents=True, exist_ok=True)
+    (tmp / "dist.csv").write_text(_csv(rows), encoding="utf-8")
+    return tmp
+
+
+@needs_worker
+def test_distribution_hist_ecdf_density_all_use_the_counted_n(tmp_path):
+    work = _dist_folder(tmp_path / "w")
+    ns = {("a", "s1"): 9, ("b", "s1"): 6, ("a", "s2"): 7, ("b", "s2"): 5}
+    body = (
+        "result = {}\n"
+        "for ai, ax in enumerate(fig.axes):\n"
+        "    for c in ax.containers:\n"
+        "        result[f'{ai}:{c.get_label()}'] = [float(pt.get_height()) for pt in c.patches]\n"
+        "    for ln in ax.lines:\n"
+        "        result[f'{ai}:{ln.get_label()}'] = [[float(a), float(b)] for a, b in zip(*ln.get_data())]\n"
+        "result['texts'] = [t.get_text() for t in fig.texts]\n"
+    )
+    for mark in ("hist", "ecdf", "density"):
+        r = mk("dist.csv", "distribution", [mark], ["v"], group="arm", facet="site")
+        rendered, _ = _render_in(work, "dist.csv", r, allow=("column_type_mismatch",))
+        got = probe(work, rendered, body)
+        for ai, site in enumerate(("s1", "s2")):
+            for arm in ("a", "b"):
+                k = ns[(arm, site)]
+                data = got[f"{ai}:{mark} | {arm} | {site}"]
+                if mark == "hist":
+                    assert sum(data) == k  # 各箱个数之和 = 这一格的有效值个数
+                elif mark == "ecdf":
+                    assert len(data) == k + 1 and data[-1][1] == pytest.approx(1.0)
+        assert got["texts"][0].endswith("n = 5-9 per group and panel"), (mark, got["texts"])
+
+
+@needs_worker
+@pytest.mark.parametrize(
+    "family, table, layers, kw, builder",
+    [
+        (
+            "relationship",
+            "rel.csv",
+            ["points", ("points", "none", Q), "fit_line"],
+            {"x": "x"},
+            _rel_folder,
+        ),
+        ("distribution", "dist.csv", ["density", ("density", "none", Q)], {}, _dist_folder),
+        ("distribution", "dist.csv", ["hist", ("hist", "none", Q)], {}, _dist_folder),
+    ],
+    ids=["relationship", "distribution-density", "distribution-hist"],
+)
+def test_two_layers_of_one_mark_and_separator_names_keep_labels_unique_and_verified(
+    family, table, layers, kw, builder, tmp_path
+):
+    from tavotto.engine import figureverify as fv
+
+    for seps in (False, True):
+        work = builder(tmp_path / f"w{seps}", seps)
+        y = ["y"] if family == "relationship" else ["v"]
+        r = mk(table, family, layers, y, group="arm", facet="site", **kw)
+        rendered, values = _render_in(work, table, r, allow=("column_type_mismatch",))
+        man = run_in_worker(work, rendered, "fig")
+        got = labelled(man)
+        assert not {k: len(v) for k, v in got.items() if len(v) > 1}, sorted(got)
+        expected = T.expected_fingerprints(values, r)
+        labels = [e["label"] for e in expected]
+        assert expected and len(labels) == len(set(labels)), labels
+        res = fv.data_matches_expected(man, expected)
+        assert all(c.verdict == fv.VERIFIED for c in res), [(c.id, c.verdict) for c in res]
+
+
+@needs_worker
+def test_note_names_which_mark_shows_which_summary(tmp_path):
+    work = _gap_folder(tmp_path / "w")
+    r = mk(
+        "gap.csv",
+        "comparison",
+        [("bar", "mean_sd"), ("errorbar", "median_iqr", Q)],
+        ["y"],
+        x="arm",
+    )
+    rendered, _ = _render_in(work, "gap.csv", r)
+    (text,) = probe(work, rendered, "result = [t.get_text() for t in fig.texts]")
+    assert text.startswith("bars: mean ± SD; error bars: median with IQR; n")
+    one = mk(
+        "gap.csv", "comparison", [("bar", "mean_sd"), ("errorbar", "mean_sd", Q)], ["y"], x="arm"
+    )
+    rendered, _ = _render_in(work, "gap.csv", one)
+    (text,) = probe(work, rendered, "result = [t.get_text() for t in fig.texts]")
+    assert text.startswith("mean ± SD; n")  # 只有一种汇总：简短写法
+    t = mk(
+        "gap.csv", "trend", ["points", "fit_line", ("hline_summary", "mean_sd", Q)], ["y"], x="x"
+    )
+    rendered, _ = _render_in(work, "gap.csv", t)
+    (text,) = probe(work, rendered, "result = [t.get_text() for t in fig.texts]")
+    assert (
+        "dashed line: least-squares fit" in text
+        and "dotted line: center of the whole series" in text
+    )
+    n = sum(1 for ln in _csv_rows(work / "gap.csv")[1:] if _finite(ln[3]))
+    assert text.endswith(f"n = {n}"), text  # 拟合线与整系列水平线汇总的都是全部有限观测
+
+
+def _csv_rows(path: Path):
+    import csv
+
+    with open(path, newline="", encoding="utf-8") as fh:
+        return list(csv.reader(fh))
