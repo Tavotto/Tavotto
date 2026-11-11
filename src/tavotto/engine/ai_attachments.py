@@ -74,6 +74,16 @@ def safe_name(name: object, fallback: str = "file") -> str:
     return base
 
 
+def _contained(base: Path, name: str) -> Path | None:
+    """`base` 下名为 `name` 的那一层路径；规范化后不在 `base` 里（理论上 `safe_name` 已挡住）→ None。
+    落盘前一律过这一道：文件名来自用户，清洗之外再做一次包含性核对。"""
+    base_s = os.path.realpath(base)
+    full = os.path.normpath(os.path.join(base_s, name))
+    if not full.startswith(base_s + os.sep) or os.path.dirname(full) != base_s:
+        return None
+    return Path(full)
+
+
 def _sniff(raw: bytes) -> str | None:
     img = media.from_bytes(raw)
     return img.mime_type if img is not None else None
@@ -118,7 +128,10 @@ def stage(raw: bytes, name: str = "") -> dict:
     root.mkdir(parents=True, exist_ok=True)
     _prune(root, STAGED_TTL_S)
     rid = uuid.uuid4().hex
-    (root / f"{rid}__{clean}").write_bytes(raw)
+    target = _contained(root, f"{rid}__{clean}")
+    if target is None:
+        raise AttachmentError("attachment_invalid")
+    target.write_bytes(raw)
     return {
         "id": rid,
         "kind": kind,
@@ -186,12 +199,14 @@ def materialize(ids: list[str], dest: Path) -> list[dict]:
             kind = "image" if (len(raw) <= MAX_IMAGE_BYTES and _sniff(raw)) else "file"
             name = src.name.split("__", 1)[1] if "__" in src.name else src.name
             dest.mkdir(parents=True, exist_ok=True)
-            target = dest / name
+            target = _contained(dest, name)
             n = 1
-            while target.exists():
+            while target is not None and target.exists():
                 n += 1
                 stem, dot, ext = name.rpartition(".")
-                target = dest / (f"{stem}_{n}.{ext}" if dot else f"{name}_{n}")
+                target = _contained(dest, f"{stem}_{n}.{ext}" if dot else f"{name}_{n}")
+            if target is None:
+                continue
             target.write_bytes(raw)
             src.unlink(missing_ok=True)
             total += size

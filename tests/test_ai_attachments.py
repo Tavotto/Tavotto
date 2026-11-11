@@ -14,6 +14,7 @@ import sys
 import threading
 import zipfile
 from io import BytesIO
+from pathlib import Path
 
 import pytest
 
@@ -476,3 +477,12 @@ def test_text_only_is_claimed_only_when_sure(model, text_only):
 def test_capabilities_omit_no_vision_when_nothing_is_known_text_only():
     assert ai_attachments.text_only_models(["gpt-5", "claude-opus-5-5"]) == []
     assert ai_attachments.text_only_models(["gpt-5", "deepseek-chat"]) == ["deepseek-chat"]
+
+
+def test_contained_rejects_names_escaping_the_base(tmp_path):
+    """落盘前的包含性核对：清洗之外的第二道，`..`、绝对路径、子目录都不许。"""
+    from tavotto.engine import ai_attachments as a
+
+    assert a._contained(tmp_path, "ok.csv") == Path(os.path.realpath(tmp_path)) / "ok.csv"
+    for bad in ("../x.csv", "/etc/passwd", "sub/x.csv", "..", ""):
+        assert a._contained(tmp_path, bad) is None, bad
