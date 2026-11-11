@@ -5897,7 +5897,7 @@ export default interface Resources {
       "zoomAlt": "{{name}} 大图预览"
     },
     "autosave": {
-      "diskFailed": "无法保存到磁盘。改动已暂存，请检查磁盘空间后重试。",
+      "diskFailed": "没能保存到磁盘。",
       "docConflict": "这份排版已在另一个窗口打开，同时编辑会互相覆盖。",
       "staleOtherWindow": "另一窗口保存了更新的版本。改动只保留在这里，未写入磁盘。"
     },

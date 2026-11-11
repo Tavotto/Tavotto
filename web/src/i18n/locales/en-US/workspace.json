@@ -78,7 +78,7 @@
     "zoomAlt": "Large preview of {{name}}"
   },
   "autosave": {
-    "diskFailed": "Couldn’t save to disk. Your changes are kept for now. Check your free space and try again.",
+    "diskFailed": "Couldn’t save to disk.",
     "docConflict": "This layout is open in another window. Editing in both overwrites one of them.",
     "staleOtherWindow": "Another window saved a newer version. Your changes are kept here, not on disk."
   },
