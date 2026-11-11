@@ -153,7 +153,8 @@ def test_conflicting_publishers_are_not_auto_selected(fact, context):
 def test_different_kind_never_conflicts(fact, context):
     other = {**fact, "id": "half", "value": 300, "conditions": {"figure_kind": "halftone"}}
     result = evaluate_dpi_facts(bundle(fact, other), context, 799)
-    assert result["status"] == "violated"
+    assert result["status"] == "unknown"
+    assert result["evaluated_raster_dpi_status"] == "violated"
     assert result["facts"][1]["status"] == "not_applicable"
 
 
@@ -231,7 +232,8 @@ def test_other_subjects_and_non_numeric_results_are_listed(fact, context):
     advice = {**fact, "id": "typical", "strength": "typical"}
     inapplicable = {**fact, "id": "other_kind", "conditions": {"figure_kind": "halftone"}}
     result = evaluate_dpi_facts(bundle(fact, width, advice, inapplicable), context, 800)
-    assert result["status"] == "satisfied_evaluated_raster_dpi_facts"
+    assert result["status"] == "unknown"
+    assert result["evaluated_raster_dpi_status"] == "satisfied_evaluated_raster_dpi_facts"
     assert {
         item["id"]: (item["subject"], item["reason"]) for item in result["unevaluated_facts"]
     } == {
@@ -247,4 +249,42 @@ def test_unresolved_supported_facts_listed_once(fact, context):
     assert result["status"] == "unknown"
     assert result["unevaluated_facts"] == [
         {"id": "line", "subject": "raster_dpi", "reason": "unknown_applicability"}
+    ]
+
+
+@pytest.mark.parametrize(
+    "unsupported",
+    [
+        {"id": "caps", "subject": "photograph_resolution", "unit": "DPI", "value": 600},
+        {"id": "ppi", "subject": "photograph_resolution", "unit": "ppi", "value": 600},
+        {"id": "width", "subject": "page_width", "unit": "mm", "value": 180},
+    ],
+)
+def test_any_unsupported_subject_keeps_overall_unknown(fact, context, unsupported):
+    generic = {**fact, "id": "generic", "value": 300}
+    extra = {**fact, **unsupported}
+    result = evaluate_dpi_facts(bundle(generic, extra), context, 400)
+    assert result["status"] == "unknown"
+    assert result["evaluated_raster_dpi_status"] == "satisfied_evaluated_raster_dpi_facts"
+    assert result["unevaluated_facts"] == [
+        {"id": extra["id"], "subject": extra["subject"], "reason": "unsupported_subject"}
+    ]
+    assert result["catalog_completeness"] == "unknown"
+
+
+def test_free_text_resolution_not_silently_ignored(fact, context):
+    generic = {**fact, "id": "generic", "value": 300}
+    extra = {
+        **fact,
+        "id": "text",
+        "subject": "photograph_resolution",
+        "relation": "text",
+        "value": "at least 600 dpi",
+    }
+    del extra["unit"]
+    result = evaluate_dpi_facts(bundle(generic, extra), context, 400)
+    assert result["status"] == "unknown"
+    assert result["evaluated_raster_dpi_status"] == "satisfied_evaluated_raster_dpi_facts"
+    assert result["unevaluated_facts"] == [
+        {"id": "text", "subject": "photograph_resolution", "reason": "unsupported_subject"}
     ]

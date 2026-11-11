@@ -60,8 +60,9 @@ def evaluate_dpi_facts(bundle: object, context: Mapping[str, object], dpi: objec
     Verdicts apply only to these records, not complete journal compliance.
     Empty, pending, unsupported, contradictory or unmeasured DPI facts do not pass.
     Every fact not numerically evaluated is listed in ``unevaluated_facts``.
-    Other subjects with unit dpi force an unknown DPI verdict; other topics
-    remain outside the DPI verdict and are explicitly listed as unevaluated.
+    All unevaluated facts force the overall status to unknown, regardless of
+    their subject or unit. A separate status describes only the supported
+    raster_dpi records, and never represents complete journal compliance.
     """
     data = validate_bundle(bundle)
     if not isinstance(context, Mapping):
@@ -81,15 +82,14 @@ def evaluate_dpi_facts(bundle: object, context: Mapping[str, object], dpi: objec
                 "reason": "unsupported_subject",
             }
             skipped.append(omitted)
-            if fact.get("unit") == "dpi":
-                results.append(
-                    {
-                        **omitted,
-                        "source": fact["source"],
-                        "origin": fact["origin"],
-                        "status": "unknown",
-                    }
-                )
+            results.append(
+                {
+                    **omitted,
+                    "source": fact["source"],
+                    "origin": fact["origin"],
+                    "status": "unknown",
+                }
+            )
             continue
         result = {
             "id": fact["id"],
@@ -134,18 +134,21 @@ def evaluate_dpi_facts(bundle: object, context: Mapping[str, object], dpi: objec
                     "reason": item.get("reason", item["status"]),
                 }
             )
-    statuses = {item["status"] for item in results}
-    if not results or statuses & {"unknown", "conflict"}:
-        overall = "unknown"
+    supported = [item for item in results if item["subject"] == _SUBJECT]
+    statuses = {item["status"] for item in supported}
+    if not supported or statuses & {"unknown", "conflict"}:
+        evaluated_status = "unknown"
     elif "violated" in statuses:
-        overall = "violated"
+        evaluated_status = "violated"
     elif "satisfied" in statuses:
-        overall = "satisfied_evaluated_raster_dpi_facts"
+        evaluated_status = "satisfied_evaluated_raster_dpi_facts"
     else:
         # Advice, not-applicable or a combination never proves compliance.
-        overall = "unknown"
+        evaluated_status = "unknown"
+    overall = "unknown" if skipped else evaluated_status
     return {
         "status": overall,
+        "evaluated_raster_dpi_status": evaluated_status,
         "facts": results,
         "unevaluated_facts": skipped,
         "catalog_completeness": "unknown",
