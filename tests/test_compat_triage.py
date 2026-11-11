@@ -382,6 +382,70 @@ class Clusters(unittest.TestCase):
         self.assertEqual(tg.known_family(plain, families), g2["id"])
         self.assertIsNone(tg.known_family(with_error, families), "a new error code is NEW")
 
+    def test_a_data_source_cause_links_its_family_whatever_the_call_site(self):
+        """cl-0fb5a738f0 / cl-0c29eca81d: G4 / G5 wrapped in a same-path loop came back as NEW four times."""
+        families = tg.load_families()
+        looped = ["loop:figure", "loop:savefig"]
+        parquet = {
+            "behavior_kind": "zero_figures",
+            "call_site": looped,
+            "stable_code": "script_error",
+            "data_source": "read_parquet",
+            "path_style": "cwd",
+        }
+        glob = {**parquet, "data_source": "glob_dir"}
+        self.assertEqual(tg.known_family(parquet, families), "G4-cwd-relative-reader-zero-figures")
+        self.assertEqual(tg.known_family(glob, families), "G5-sandbox-empty-glob-empty-figure")
+        # every field of the data-source door must match: a new code, a script-relative path or no data
+        # source at all stays NEW
+        self.assertIsNone(tg.known_family({**parquet, "stable_code": "worker_crash"}, families))
+        self.assertIsNone(tg.known_family({**parquet, "path_style": "script_dir"}, families))
+        self.assertIsNone(tg.known_family({**parquet, "data_source": None}, families))
+
+    def test_a_cluster_is_known_only_when_every_member_links(self):
+        families = tg.load_families()
+        base = {
+            "behavior_kind": "zero_figures",
+            "call_site": ["loop:figure", "loop:savefig"],
+            "stable_code": "script_error",
+            "path_style": "cwd",
+        }
+        parquet = {"signature": {**base, "data_source": "read_parquet"}}
+        glob = {"signature": {**base, "data_source": "glob_dir"}}
+        unknown = {"signature": {**base, "data_source": "read_hdf5"}}
+        self.assertEqual(
+            tg._members_family([glob, parquet], families),
+            "G4-cwd-relative-reader-zero-figures + G5-sandbox-empty-glob-empty-figure",
+        )
+        self.assertIsNone(tg._members_family([parquet, unknown], families))
+
+    def test_triage_reads_the_data_source_off_the_explore_row(self):
+        row = {
+            "candidate_id": "x",
+            "outcome": "difference_found",
+            "chain": ["read_parquet", "same_path_loop"],
+            "data_source": {"transform": "read_parquet", "path_style": "cwd"},
+            "evidence": {
+                "native": {"exit_status": 0},
+                "tavotto": {"error": {"code": "script_error"}},
+            },
+        }
+        diff = {"kind": "zero_figures", "evidence": {"tavotto_error": "script_error"}}
+        finding = {"kind": "explore", "row": row, "diff": diff, "source": None}
+        _facts, _attr, sig = tg.classify(finding, tg.load_rules())
+        self.assertEqual((sig["data_source"], sig["path_style"]), ("read_parquet", "cwd"))
+        # family linking only: the cluster identity is unchanged by the new fields
+        key = tg.cluster_key(
+            {
+                **_attr,
+                "stable_code": sig["stable_code"],
+                "signature": sig,
+                "execution_policy": "safe",
+                "dependency_source": "installed_environment",
+            }
+        )
+        self.assertNotIn("read_parquet", repr(key))
+
     def test_known_family_records_link_the_clusters(self):
         result = tg.triage([self.report_path])
         linked = {c["key"]["behavior_kind"]: c["known_family"] for c in result["clusters"]}
