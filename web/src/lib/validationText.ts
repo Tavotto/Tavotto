@@ -292,7 +292,9 @@ export function issueAriaLabel(issue: ValidationIssue): string {
     severityLabel(issue.severity),
     subjectName(issue),
     issueTitle(issue),
-    v.current && v.expected ? pr('ariaValues', { current: v.current, expected: v.expected }) : null,
+    v.current && v.expected
+      ? pr(issue.ruleCode === 'raster-dpi' ? 'ariaThresholdValues' : 'ariaValues', { current: v.current, expected: v.expected })
+      : null,
     pr('ariaLocate'),
   ]
     .filter(Boolean)

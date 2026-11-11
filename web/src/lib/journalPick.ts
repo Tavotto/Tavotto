@@ -6,7 +6,7 @@
  *   搜索     `searchJournals`：名称 / 缩写（aliases）/ ISSN；`groupByPublisher` 按出版社分组
  *   出处卡   `fieldLabel` / `valueText` / `cardSentence` / `highlightQuote`：一句话 + 原文摘录里命中的数加 `<mark>`
  *
- * 期刊没写的项一律说「当前快照未记录」，**不拿任何别的规范补**；`typical` / `recommended` / `range` 的值显示原话，
+ * 快照缺失的项一律说「当前快照未记录」，**不拿任何别的规范补**；`typical` / `recommended` / `range` 的值显示原话，
  * 不显示成一个像判据的数。
  */
 import { currentLocale, t as translate } from '@/i18n'
@@ -266,7 +266,7 @@ export function pathsForCheck(checkId: string): string[] {
     .map(([path]) => path)
 }
 
-/** DPI 问题只能引用与实际阈值相同、真正参与预检的来源。 */
+/** DPI 问题只引用快照中标为参与预检且数值匹配的来源；这不证明其语义或适用条件正确。 */
 export function dpiSourceMatches(source: JournalFieldSource | undefined, threshold: unknown): boolean {
   if (!source || source.unset || source.affects !== 'preflight' || typeof source.value !== 'number') return false
   if (typeof threshold !== 'number' && typeof threshold !== 'string') return false

@@ -971,6 +971,7 @@
     "dpiJournalSourceUnverified": "The journal source for this threshold is not verified in the current snapshot",
     "ariaLocate": "locate this object",
     "ariaValues": "currently {{current}}, requires {{expected}}",
+    "ariaThresholdValues": "currently {{current}}, check threshold {{expected}}",
     "clearFilter": "Show all",
     "cmp": {
       "atLeast": "≥ {{value}}",

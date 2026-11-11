@@ -968,6 +968,7 @@
     "dpiJournalSourceUnverified": "此阈值的期刊出处未在当前快照中核实",
     "ariaLocate": "定位到这个对象",
     "ariaValues": "当前 {{current}}，要求 {{expected}}",
+    "ariaThresholdValues": "当前 {{current}}，检查阈值 {{expected}}",
     "clearFilter": "显示全部",
     "cmp": {
       "atLeast": "≥ {{value}}",

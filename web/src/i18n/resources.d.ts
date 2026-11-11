@@ -4082,6 +4082,7 @@ export default interface Resources {
     },
     "problems": {
       "ariaLocate": "定位到这个对象",
+      "ariaThresholdValues": "当前 {{current}}，检查阈值 {{expected}}",
       "ariaValues": "当前 {{current}}，要求 {{expected}}",
       "cardBlocking_other": "阻断 {{count}}",
       "cardFixTip_other": "修复这里能自动修的 {{count}} 项（含建议），可撤销",

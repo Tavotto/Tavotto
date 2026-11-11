@@ -223,7 +223,7 @@ describe('出处卡', () => {
 describe('要求清单', () => {
   const row = (p: string) => q(`[data-journal-row="${p}"]`)!
 
-  it('期刊没写的要紧项明说「当前快照未记录」且没有出处钮', async () => {
+  it('快照没有来源的要紧项明说「当前快照未记录」且没有出处钮', async () => {
     selectJournal('fx-adv-own')
     await mount(<JournalRequirements />)
     expect(row('min_raster_dpi').textContent).toContain('当前快照未记录')
@@ -291,6 +291,9 @@ describe('预检结果行的出处', () => {
     const issue = exportContextIssues({ formats: ['png'], dpi: 299 }, journalProfile('fx-delta', cat), { documentId: 'd', canvasId })[0]
     await mount(<ul><IssueRow issue={issue} depth={1} current={false} onLocate={() => {}} activeCanvasId={canvasId} /></ul>)
     expect(q('[data-journal-dpi-source-unverified]')?.textContent).toContain('期刊出处未在当前快照中核实')
+    const aria = q('[data-journal-dpi-source-unverified]')?.closest('button')?.getAttribute('aria-label')
+    expect(aria).toContain('检查阈值')
+    expect(aria).not.toContain('要求')
     expect(q('[data-journal-source]')).toBeNull()
     const template = journalSources('fx-beta', cat).min_raster_dpi
     const exercise = async (source: typeof template | undefined, confirmed: boolean) => {
