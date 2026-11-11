@@ -20,6 +20,7 @@ manifest 给指纹的是 Line2D（`xy`）、Collection（`offsets` / `paths`）�
 但验证器按**元素的 label 唯一匹配**，而 matplotlib 的 `fill_between`（PolyCollection）与误差棒容器在 manifest 里没有 label 字段。
 所以可核 = points / jitter（散点 offsets）、line / step（Line2D）、hline_summary、fit_line（Line2D）、bar（柱组）；
 不核 = errorbar、band、box、violin（见 `fingerprint_coverage`）——不折算成 verified，调用方如实报告。
+同一图元以不同 role 叠两层时 label 写成 `图元@role`（`_layer_tags`），保证整张图里每个可核层的 label 唯一。
 """
 
 from __future__ import annotations
@@ -83,8 +84,9 @@ def distinct(values):
 
 def make_label(mark, *parts):
     """artist 的 label：`图元 | 分组 | 分面 | …`（空的部分略去）。每个数据 artist 的 label 在整张图里唯一——
-    Tavotto 按 label 找「画的是哪份数据」。"""
-    return " | ".join([mark] + [p for p in parts if p])
+    Tavotto 按 label 找「画的是哪份数据」。`mark` 由模板给（同一图元在两层出现时带层的 role，见 `_layer_tags`）；数据里的文字
+    先把反斜杠与竖线转义，不会靠自带的「 | 」把两个不同的格拼成同一个名字。"""
+    return " | ".join([mark] + [p.replace("\\", "\\\\").replace("|", "\\|") for p in parts if p])
 
 
 def mean_of(vals):
@@ -392,8 +394,17 @@ def trend_centers(pool, summary):
 
 
 def band_xy(xs, lower, upper):
-    keep = [(a, lo, hi) for a, lo, hi in zip(xs, lower, upper) if lo == lo and hi == hi]
-    return [k[0] for k in keep], [k[1] for k in keep], [k[2] for k in keep]
+    """误差带的数据：**保留缺失位置**（上下界任一为 NaN → 两个都置 NaN），`fill_between` 在 NaN 处把带断开成几段，与汇总线在
+    同样的位置断开——不许把没有观测的区间两侧连起来；没有一个位置能画 → None。"""
+    ok = [lo == lo and hi == hi for lo, hi in zip(lower, upper)]
+    if not any(ok):
+        return None
+    nan = math.nan
+    return (
+        list(xs),
+        [lo if k else nan for lo, k in zip(lower, ok)],
+        [hi if k else nan for hi, k in zip(upper, ok)],
+    )
 
 
 def error_xy(xs, centers, lower, upper):
@@ -425,16 +436,30 @@ def hline_segment(pool, summary):
     return [min(xs), max(xs)], [c, c]
 
 
-def trend_counts(d, summary_layers_pool):
-    """每个汇总点背后的样本个数（去重后的集合），给图下方的 n 说明。"""
+def trend_point_counts(pools):
+    """逐位置汇总（汇总线 / 带 / 误差线）背后的样本个数：每条序列的每个 x 位置上有效观测的个数（没有有效观测的位置不算），
+    各序列的结果并成一个有序集合。"""
     out = set()
-    for xs, vals in summary_layers_pool:
+    for xs, vals in pools:
         by_x = {}
         for a, b in zip(xs, vals):
             if b == b:
                 by_x[a] = by_x.get(a, 0) + 1
         out |= set(by_x.values())
     return sorted(out)
+
+
+def trend_series_counts(pools):
+    """整系列汇总（水平线）背后的样本个数：每条序列全部有限观测的个数（没有有效观测的序列不算），并成一个有序集合。"""
+    return sorted({n for n in (sum(1 for v in vals if v == v) for _, vals in pools) if n})
+
+
+def n_phrase(counts, per, explicit):
+    """`n = 3` / `n = 2–3 per point`；`explicit` 时一律写 `per …`（一张图里有两种汇总、要分得清是哪个 n）。没有样本 → 空串。"""
+    if not counts:
+        return ""
+    core = str(counts[0]) if len(counts) == 1 else "%d–%d" % (counts[0], counts[-1])
+    return "n = %s" % core + (" per " + per if explicit or len(counts) > 1 else "")
 
 
 def pick_fonts(latin, cjk):
@@ -493,7 +518,9 @@ RUNTIME_FUNCTIONS = (
     error_xy,
     fit_segment,
     hline_segment,
-    trend_counts,
+    trend_point_counts,
+    trend_series_counts,
+    n_phrase,
     pick_fonts,
 )
 #: 只有 XLSX 数据源的脚本才内嵌 `read_xlsx` 与 xlsxread；CSV / TSV 的脚本里没有它们
@@ -617,12 +644,35 @@ def _check(entry: adf.TableEntry, recipe: recipe_mod.FigureRecipe) -> None:
         raise TemplateError("template_option_unsupported", "scale")
 
 
+def _layer_tags(recipe: recipe_mod.FigureRecipe) -> list[str]:
+    """每层进 label 的图元名：同一图元只出现一次就是图元名本身；以不同 role 出现多次（`validate_recipe` 允许）就写成
+    `图元@role`——（图元, role）在配方里唯一，所以每个可核层的 label 在整张图里唯一。图例显示的文字另行构造，不受影响。"""
+    count: dict[str, int] = {}
+    for layer in recipe.layers:
+        count[layer.mark] = count.get(layer.mark, 0) + 1
+    return [
+        f"{layer.mark}@{layer.role}" if count[layer.mark] > 1 else layer.mark
+        for layer in recipe.layers
+    ]
+
+
+#: 逐位置汇总（每个 x 位置一个汇总值）的图元；其余带汇总的（`hline_summary`）汇总整条序列
+_PER_POINT_MARKS = ("line", "step", "band", "errorbar")
+
+
 def _summary_layers(recipe: recipe_mod.FigureRecipe) -> list[str]:
     return [layer.summary for layer in recipe.layers if layer.summary != "none"]
 
 
-def _summary_text(recipe: recipe_mod.FigureRecipe) -> str:
-    return " / ".join(dict.fromkeys(SUMMARY_TEXT[s] for s in _summary_layers(recipe)))
+def _summary_text(recipe: recipe_mod.FigureRecipe, marks: tuple[str, ...] | None = None) -> str:
+    """图下方说明里的汇总名；`marks` 给了就只取这些图元的层。"""
+    return " / ".join(
+        dict.fromkeys(
+            SUMMARY_TEXT[layer.summary]
+            for layer in recipe.layers
+            if layer.summary != "none" and (marks is None or layer.mark in marks)
+        )
+    )
 
 
 def _source_comment(entry: adf.TableEntry, recipe: recipe_mod.FigureRecipe, data_rel: str) -> str:
@@ -771,10 +821,10 @@ MARKS_TREND = ("line", "step", "band", "points", "errorbar", "fit_line", "hline_
 MARKS_RENDERED = {"comparison": MARKS_COMPARISON, "trend": MARKS_TREND}
 
 
-def _comparison_layer_lines(layer, ci_tag: str, lw: list[float]) -> list[str]:
+def _comparison_layer_lines(layer, tag: str, lw: list[float]) -> list[str]:
     m, s = layer.mark, layer.summary
     thin, mid, thick = lw[0], lw[min(1, len(lw) - 1)], lw[-1]
-    lab = f"make_label({m!r}, g, p)"
+    lab = f"make_label({tag!r}, g, p)"
     if m in ("points", "jitter"):
         return [
             f"xs, ys = comparison_points(cells, gi, ng, {m == 'jitter'})",
@@ -818,7 +868,7 @@ def _comparison_layer_lines(layer, ci_tag: str, lw: list[float]) -> list[str]:
             "    half = (0.8 / ng) * 0.45",
             "    ax.fill_betweenx(",
             "        grid, [pos - half * v for v in dens], [pos + half * v for v in dens],",
-            f"        facecolor=color, alpha=0.35, edgecolor=color, linewidth={mid!r}, label=make_label('violin', g, p, d['cats'][ci]),",
+            f"        facecolor=color, alpha=0.35, edgecolor=color, linewidth={mid!r}, label=make_label({tag!r}, g, p, d['cats'][ci]),",
             "    )",
         ]
     raise TemplateError("template_mark_unsupported", m)
@@ -863,8 +913,8 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
         "            color = PALETTE[gi % len(PALETTE)]",
         "            cells = comparison_cells(d, p, g)",
     ]
-    for layer in recipe.layers:
-        for line in _comparison_layer_lines(layer, "", lw):
+    for layer, tag in zip(recipe.layers, _layer_tags(recipe)):
+        for line in _comparison_layer_lines(layer, tag, lw):
             L.append("            " + line)
     L += [
         "        ax.set_xticks(range(len(cats)))",
@@ -908,11 +958,11 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
 
 
 # --------------------------------------------------------------------------- trend
-def _trend_layer_lines(layer, lw: list[float], unit: bool, multi_y: bool) -> list[str]:
+def _trend_layer_lines(layer, tag_m: str, lw: list[float]) -> list[str]:
     m, s = layer.mark, layer.summary
     mid, thick = lw[min(1, len(lw) - 1)], lw[-1]
     tag = "ytag"
-    lab = f"make_label({m!r}, g, p, {tag})"
+    lab = f"make_label({tag_m!r}, g, p, {tag})"
     if m in ("points",):
         return [
             "xs, ys = finite_pairs(*pool)",
@@ -927,7 +977,7 @@ def _trend_layer_lines(layer, lw: list[float], unit: bool, multi_y: bool) -> lis
                 "for u, uxs, uvals in trend_units(d, p, g, y):",
                 "    ln = line_xy(uxs, uvals)",
                 "    if ln:",
-                f"        {draw}(*ln, color=color, linestyle=ls, linewidth={thick!r}{extra}, label=make_label({m!r}, g, p, {tag}, u))",
+                f"        {draw}(*ln, color=color, linestyle=ls, linewidth={thick!r}{extra}, label=make_label({tag_m!r}, g, p, {tag}, u))",
             ]
         return [
             f"cx, cc, _lo, _hi = trend_centers(pool, {s!r})",
@@ -938,9 +988,9 @@ def _trend_layer_lines(layer, lw: list[float], unit: bool, multi_y: bool) -> lis
     if m == "band":
         return [
             f"cx, cc, lo, hi = trend_centers(pool, {s!r})",
-            "bx, blo, bhi = band_xy(cx, lo, hi)",
-            "if bx:",
-            f"    ax.fill_between(bx, blo, bhi, facecolor=color, alpha=0.25, linewidth=0, label={lab})",
+            "band = band_xy(cx, lo, hi)",
+            "if band:",
+            f"    ax.fill_between(*band, facecolor=color, alpha=0.25, linewidth=0, label={lab})",
         ]
     if m == "errorbar":
         return [
@@ -969,7 +1019,6 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
     x_is_date = entry.summary.per_column[recipe.x].kind == "date"
     summ = _summary_text(recipe)
     lw = style["line_widths_pt"]
-    multi_y = len(recipe.y) > 1
     L = _header(entry, recipe, data_rel, "变化趋势", is_xlsx)
     if is_xlsx:
         L.append(f"SHEET = {recipe.sheet!r}")
@@ -1020,8 +1069,8 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
         "                pool = trend_pool(d, p, g, y)",
         "                pools.append(pool)",
     ]
-    for layer in recipe.layers:
-        for line in _trend_layer_lines(layer, lw, recipe.unit is not None, multi_y):
+    for layer, tag in zip(recipe.layers, _layer_tags(recipe)):
+        for line in _trend_layer_lines(layer, tag, lw):
             L.append("                " + line)
     L += [
         "        ax.set_xlabel(XLABEL)",
@@ -1045,10 +1094,20 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
         "        )",
     ]
     if summ:
+        pos = _summary_text(recipe, _PER_POINT_MARKS)
+        ser = _summary_text(recipe, ("hline_summary",))
+        both = bool(pos and ser)
+        # n 取自每个汇总层**实际汇总的总体**：逐位置的 = 每个位置的有效观测数；整系列的（水平线）= 整条序列的有效观测总数
+        parts = []
+        if pos:
+            L.append("    n_pos = n_phrase(trend_point_counts(pools), 'point', %r)" % both)
+            parts.append(f"{pos!r}, n_pos")
+        if ser:
+            L.append("    n_ser = n_phrase(trend_series_counts(pools), 'series', %r)" % both)
+            parts.append(f"{(ser + ' over whole series' if both else ser)!r}, n_ser")
         L += [
-            "    counts = trend_counts(d, pools)",
-            "    n_text = '' if not counts else ('n = %d' % counts[0] if len(counts) == 1 else 'n = %d–%d per point' % (counts[0], counts[-1]))",
-            f"    fig.text(0.01, 0.01, {summ!r} + ('; ' + n_text if n_text else ''), fontsize={style['min_font_pt']!r}, ha='left', va='bottom')",
+            "    note = '; '.join(part for part in (%s) if part)" % ", ".join(parts),
+            f"    fig.text(0.01, 0.01, note, fontsize={style['min_font_pt']!r}, ha='left', va='bottom')",
             "    fig.tight_layout(rect=(0, 0.06, 1, 1))",
         ]
     else:
@@ -1175,13 +1234,14 @@ def _expected_comparison(values, recipe) -> list[dict]:
         values.columns, values.rows, recipe.x, recipe.y[0], recipe.group, recipe.facet, recipe.order
     )
     ng = len(d["groups"])
+    tags = _layer_tags(recipe)
     out = []
     for p in d["panels"]:
         for gi, g in enumerate(d["groups"]):
             cells = comparison_cells(d, p, g)
-            for layer in recipe.layers:
+            for layer, tag in zip(recipe.layers, tags):
                 m, s = layer.mark, layer.summary
-                lab = make_label(m, g, p)
+                lab = make_label(tag, g, p)
                 if m in ("points", "jitter"):
                     xs, ys = comparison_points(cells, gi, ng, m == "jitter")
                     if ys:
@@ -1216,15 +1276,16 @@ def _expected_trend(values, recipe) -> list[dict]:
         recipe.unit,
         x_is_date,
     )
+    tags = _layer_tags(recipe)
     out = []
     for p in d["panels"]:
         for g in d["groups"]:
             for y in recipe.y:
                 ytag = y if len(recipe.y) > 1 else ""
                 pool = trend_pool(d, p, g, y)
-                for layer in recipe.layers:
+                for layer, tag in zip(recipe.layers, tags):
                     m, s = layer.mark, layer.summary
-                    lab = make_label(m, g, p, ytag)
+                    lab = make_label(tag, g, p, ytag)
                     if m == "points":
                         xs, ys = finite_pairs(*pool)
                         if ys:
@@ -1236,7 +1297,7 @@ def _expected_trend(values, recipe) -> list[dict]:
                                 if ln:
                                     out.append(
                                         _entry(
-                                            make_label(m, g, p, ytag, u),
+                                            make_label(tag, g, p, ytag, u),
                                             "xy",
                                             _interleave(*ln),
                                             (len(ln[0]), 2),
