@@ -1135,6 +1135,15 @@ class BridgeRun:
                 if req.get("cmd") in {"render_existing", "export_existing", "preview_png_existing"}:
                     # Read the actual run fact, never echo the requested identity.
                     return {**result, "execution_id": run.execution_id}
+                if (
+                    isinstance(req.get("payload"), dict)
+                    and req["payload"].get("include_figure_execution") is True
+                    and _PKG.executionfact.valid_id(run.execution_id)
+                ):
+                    # Opt-in positive proof for the normal render this child actually
+                    # performed. No run fact (e.g. before target compilation) omits the
+                    # field; the normal result is unchanged either way.
+                    return {**result, "execution_id": run.execution_id}
                 return result
 
             def handle_extra(self, cmd, req, payload):

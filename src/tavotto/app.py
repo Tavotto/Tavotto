@@ -106,6 +106,7 @@ from .engine import (
     execspec as engine_execspec,
     exectrace as engine_exectrace,
     exectrace_diag as engine_exectrace_diag,
+    executionfact as engine_executionfact,
     exportjob as engine_exportjob,
     exportreq as engine_exportreq,
     exportroute as engine_exportroute,
@@ -2738,6 +2739,69 @@ def _svg_execution_result(worker):
         ):
             return {}
     return {"figure_snapshot_invalidation": fact} if fact is not None else {}
+
+
+def _figure_execution_evidence(
+    worker, *, source_id, script, patches, resp, dispatch_worker, generation, native_epoch
+):
+    """本次响应所属执行的正面证据；任何一项不成立就返回 `None`。
+
+    只回答「哪个执行、按哪份**原序** P 画出了这次响应」。不替代完整来源校验，
+    也不把 ledger 里别的 receipt 借给这次响应：缺证据就是缺证据，调用方只省略字段。
+    """
+    if dispatch_worker is not worker:
+        return None
+    if not isinstance(resp, dict):
+        return None
+    execution_id = resp.get("execution_id")
+    if not engine_executionfact.valid_id(execution_id):
+        return None
+    if not isinstance(source_id, str) or not source_id:
+        return None
+    identity = _svg_worker_owner(worker, script)
+    ctx = _svg_worker_ctx(worker)
+    if identity is None or ctx is None:
+        return None
+    native = engine_enginesession.is_native(worker)
+    if native:
+        # 同一屏障代次：continue / 迟到 / 新 barrier 都不能借当前代次签旧响应。
+        if (
+            native_epoch is None
+            or worker.execution_id != execution_id
+            or worker.snapshot_epoch != native_epoch
+            or worker.state != engine_nativesession.BARRIER
+        ):
+            return None
+    elif (
+        generation is None
+        or worker.generation != generation
+        or getattr(worker, "last_build_execution_id", None) != execution_id
+        or getattr(worker, "execution_observation_unknown", False)
+    ):
+        return None
+    receipt = _execution_receipt(worker, script)
+    if not receipt.receipt_id or receipt.runtime_rejected:
+        return None
+    # safe/Workerd 的 instance 就是执行事实；native 是 `session_id:epoch`，两套身份
+    # 各按各的原口径比较，不混成一个 eid 公式。
+    expected_instance = f"{worker.session_id}:{native_epoch}" if native else execution_id
+    if receipt.instance != expected_instance:
+        return None
+    state = ctx.svg_executions.get(identity)
+    if (
+        state is None
+        or state["unknown"]
+        or state["worker"] is not worker
+        or state["execution_id"] != execution_id
+    ):
+        return None
+    return {
+        "version": 1,
+        "sourceId": source_id,
+        "receiptId": receipt.receipt_id,
+        "executionOwner": {"script": identity["script"], "run_config": identity["run_config"]},
+        "patchHash": engine_patchspec.patch_hash(patches),
+    }
 
 
 def _svg_expected_receipt(root, source_id):
@@ -10192,8 +10256,21 @@ def api_engine_render():
     `inline_svg` 却没有 `svg`** 不是错误——`preview.mode == "raster"` 时
     worker 按硬闸决定不把那份 SVG 读进内存，manifest / warnings / timings /
     rev 一样不少。老 worker 不返回它时字段整个不出现。
+
+    可选 `include_figure_execution`（严格布尔）：请求在成功响应里附带**本次**执行的
+    正证 `figure_execution`。它只增加证据，不改渲染命令、冷 build、依赖重试与错误
+    语义；任何一项事实不成立时只省略该字段，绝不把原本成功的渲染改成 409。
     """
     body = request.get_json(force=True)
+    include_figure_execution = body.get("include_figure_execution", False)
+    if not isinstance(include_figure_execution, bool):
+        return jsonify(
+            {
+                "error": f"include_figure_execution 必须是布尔值: {include_figure_execution!r}",
+                "code": "invalid_include_figure_execution",
+                "params": {"value": repr(include_figure_execution)},
+            }
+        ), 400
     # 可选 `purpose`（闭集）：`foreground`（缺省 = 老前端）/ `neighbour`（跨图对齐的顺手补渲染，ADR 0159）。
     # neighbour 不刷新池的 LRU 时间；需要冷启动而池已满时不做（409 + `background_render_deferred`，前端保留旧画面）。
     purpose = body.get("purpose", engine_pool.PURPOSE_FOREGROUND)
@@ -10206,12 +10283,13 @@ def api_engine_render():
             }
         ), 400
     with engine_pool.acquire_purpose(purpose):
-        return _api_engine_render_body(body)
+        return _api_engine_render_body(body, include_figure_execution=include_figure_execution)
 
 
-def _api_engine_render_body(body):
+def _api_engine_render_body(body, *, include_figure_execution=False):
     origin = _figure_origin_request(body)
     if "chart" in body:
+        # 声明式图表按 model/data 计算，没有用户代码执行可签；不加正证字段。
         return _api_chart_render_body(body)
     if "chart_source" in body:
         return jsonify({"code": "chart_model_invalid", "error": "chart source requires chart"}), 422
@@ -10310,18 +10388,40 @@ def _api_engine_render_body(body):
                 getattr(wk, "python_generation", ""),
             )
 
+        # 正证必须绑到**这一次实际分派**：依赖重试换了 worker 时，旧代次的事实
+        # 不能拿来签新响应。分派前冻结，响应后逐项复核。
+        dispatch_facts = {}
+
+        def freeze_dispatch(wk):
+            native = engine_enginesession.is_native(wk)
+            dispatch_facts.update(
+                worker=wk,
+                generation=getattr(wk, "generation", None),
+                native_epoch=getattr(wk, "snapshot_epoch", None) if native else None,
+            )
+            return {"include_figure_execution": True} if include_figure_execution and native else {}
+
         if origin_session is not None:
             resp = origin_session.call(
-                "override", body.get("patches", []), preview_dpi, inline_svg=inline_svg
+                "override",
+                body.get("patches", []),
+                preview_dpi,
+                inline_svg=inline_svg,
+                **freeze_dispatch(origin_session.worker),
             )
         else:
+
+            def render_override(wk, st):
+                extra = freeze_dispatch(wk)
+                return wk.override(
+                    st, body.get("patches", []), preview_dpi, inline_svg=inline_svg, **extra
+                )
+
             worker, stem, resp = _engine_attempt(
                 rel_id,
                 worker,
                 stem,
-                lambda wk, st: wk.override(
-                    st, body.get("patches", []), preview_dpi, inline_svg=inline_svg
-                ),
+                render_override,
                 artifact_source=artifact_source,
                 progress_pj=pj,
                 observe_worker=observe_render_worker,
@@ -10421,6 +10521,20 @@ def _api_engine_render_body(body):
         "timings": timings,
         **_svg_execution_result(worker),
     }
+    if include_figure_execution:
+        evidence = _figure_execution_evidence(
+            worker,
+            source_id=rel_id,
+            script=origin_session.script if origin_session is not None else info.get("script", ""),
+            patches=body.get("patches", []),
+            resp=resp,
+            dispatch_worker=dispatch_facts.get("worker"),
+            generation=dispatch_facts.get("generation"),
+            native_epoch=dispatch_facts.get("native_epoch"),
+        )
+        # 缺正证只省略字段：普通成功不因证据不足改判。
+        if evidence is not None:
+            out["figure_execution"] = evidence
     if origin_session is not None:
         origin_session.check()
         out["figure_origin"] = origin_session.origin

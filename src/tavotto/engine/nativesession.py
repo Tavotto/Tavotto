@@ -1052,6 +1052,7 @@ class NativeSession:
         *,
         expected_execution_id: str | None = None,
         expected_snapshot_epoch: int | None = None,
+        include_figure_execution: bool = False,
     ) -> dict:
         """位置参数与 `pool.EngineWorker.override()` 对齐。
 
@@ -1061,6 +1062,10 @@ class NativeSession:
 
         显式历史编辑还须给已验证 receipt 对应的屏障代次；不能在分派时拿
         当前代次代替历史身份。省略两个守卫参数时保留原调用与 wire。
+
+        `include_figure_execution` 只请求本次正常渲染的正面证据：它给 wire 加一个
+        同名字段，响应里带上**本次**真实执行事实。屏障代次/实例在分派前后不一致
+        （continue、迟到事件、重开）时只撤回这份证据，原本成功的渲染照常返回。
         """
         want = patchspec.patch_hash(patches)
         payload = {"cmd": "override", "stem": stem, "patches": patches}
@@ -1069,6 +1074,8 @@ class NativeSession:
             payload["preview_dpi"] = int(preview_dpi)
         if inline_svg:
             payload["inline_svg"] = True
+        if include_figure_execution:
+            payload["include_figure_execution"] = True
         with self._figure_lock:
             existing = self._guard_existing_request(
                 payload, expected_execution_id, expected_snapshot_epoch
@@ -1076,16 +1083,61 @@ class NativeSession:
             owed = self.inconsistent.get(stem)
             if owed is not None and owed != want:
                 raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT)
+            proof = self._proof_context() if include_figure_execution else None
             self.rev += 1
             resp = self._request(
                 payload, REQUEST_TIMEOUT, **({"existing": existing} if existing is not None else {})
             )
+            if proof is not None:
+                resp = self._proof_response(resp, proof)
             self._session_list[stem] = want
             if self._owes(resp):
                 self.inconsistent[stem] = want
             else:
                 self.inconsistent.pop(stem, None)
             return resp
+
+    def _proof_context(self) -> tuple:
+        """冻结一份「这次分派属于哪个实例/屏障」的事实，供响应后复核。"""
+        with self._lock:
+            return (
+                self.session_id,
+                self.generation,
+                self.process_pid,
+                self.transport,
+                self.snapshot_epoch,
+                self.execution_id,
+                self.state,
+                self._barrier_snapshot_epoch,
+            )
+
+    def _proof_response(self, resp: dict, proof: tuple) -> dict:
+        """只有在同一屏障、同一实例、同一执行事实时，才让响应携带正证。
+
+        任何一项变了都只撤回证据：渲染已经成功，不能因为证据不足改判失败。
+        """
+        if not isinstance(resp, dict):
+            return resp
+        execution_id = resp.get("execution_id")
+        with self._lock:
+            current = (
+                self.session_id,
+                self.generation,
+                self.process_pid,
+                self.transport,
+                self.snapshot_epoch,
+                self.execution_id,
+                self.state,
+                self._barrier_snapshot_epoch,
+            )
+        if (
+            current == proof
+            and proof[6] == BARRIER
+            and executionfact.valid_id(execution_id)
+            and execution_id == proof[5]
+        ):
+            return {**resp, "figure_execution_epoch": proof[4]}
+        return {k: v for k, v in resp.items() if k != "execution_id"}
 
     @staticmethod
     def _owes(resp: dict) -> bool:
