@@ -85,6 +85,10 @@ order: 90
   **未命中** → 三个镜像（runner 默认 / archive.ubuntu.com / mirrors.edge.kernel.org）各给一份 180 s 总预算（update 与下载共用，3 × 180 s < 安装步的 12 分钟），`Acquire::Retries=3`、
   `Acquire::http(s)::Timeout=30`，先 `--download-only` 进缓存目录再 `--no-download` 安装，装完剪掉版本 != 已装版本的旧 .deb
   （restore-keys 带回的旧版本会让命中路径同包装两版）；安装步自己 `timeout-minutes: 12`，慢下载早失败，不吃满 job 的 20 分钟。
+  **换镜像要连 `/etc/apt/apt-mirrors.txt` 一起改**：runner 镜像 20261101 起 `ubuntu.sources` 写 `mirror+file:/etc/apt/apt-mirrors.txt`，
+  主机名只在那个文件里；只改 `.list` / `.sources` 等于没换（2026-11-11 azure 在 runner 上解析失败一个多小时，三次尝试全打 azure）。
+  `posix-e2e` 的 `playwright install --with-deps` 自己 apt-get update，前面先跑 `scripts/ci/apt_use_reachable_mirror.sh`
+  （依次探 InRelease、第一个通的就用；azure 通则不改；只换主机不换签名）。
   **缓存不是信任来源**：网络路径由 apt 按签名索引校验；PR / merge_group 读 push main 上 `cache-seed` 种的条目（默认分支作用域），
   精确键命中不再保存，所以不会像合并候选那样每个 ref 各 save 一份。合同：`tests/test_merge_queue_workflows.py::TestTauriAptCache`
   （两处逐字相同 / key / 超时 / 脚本桩跑三条路径）与 `TestBuildReuseAndCaches` 的枚举。**验法**：首次运行 miss 并保存；
