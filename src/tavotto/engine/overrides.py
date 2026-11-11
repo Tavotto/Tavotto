@@ -1418,6 +1418,9 @@ class _SolidHeadRenderer:
             gc.set_dashes(offset, dashes)
 
 
+_NO_INSTANCE_DRAW = object()
+
+
 def _install_solid_head_draw(a) -> None:
     """箭头改虚线时只虚杆、头保持实线（PowerPoint 的画法）。实例级 draw 钩子，同 `_install_patch_resize_draw_hook`：
     只装一次，开关是 `_mm_solid_head`；脚本自己画的虚线箭头不碰（没走这个 setter）。"""
@@ -1425,6 +1428,8 @@ def _install_solid_head_draw(a) -> None:
     if a.__dict__.get("_mm_solid_head_hook") is not None:
         return
     native_draw = a.draw
+    # 脚本自己挂在实例上的 draw（若有）：还原时原样放回，不是删掉（Codex #1848）
+    a._mm_solid_head_prev = a.__dict__.get("draw", _NO_INSTANCE_DRAW)  # noqa: SLF001
 
     def solid_head_draw(renderer, *args, **kwargs):
         if getattr(a, "_mm_solid_head", False):
@@ -1444,9 +1449,13 @@ def _restore_arrow_linestyle(a, orig) -> None:
     a.set_linestyle(orig)
     a._mm_solid_head = False  # noqa: SLF001
     hook = a.__dict__.pop("_mm_solid_head_hook", None)
+    prev = a.__dict__.pop("_mm_solid_head_prev", _NO_INSTANCE_DRAW)
     # 钩子之后又被别的实例钩子包过：只关开关，不拆链
     if hook is not None and a.__dict__.get("draw") is hook:
-        a.__dict__.pop("draw")
+        if prev is _NO_INSTANCE_DRAW:
+            a.__dict__.pop("draw")
+        else:
+            a.draw = prev
 
 
 def _linestyle_name(a) -> str:

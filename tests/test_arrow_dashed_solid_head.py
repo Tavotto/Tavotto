@@ -88,6 +88,21 @@ for style in ["->", "-|>", "<->", "]-[", "simple"]:
     out[style] = {"native": native_dash, "edited": edited,
                   "hooked_after_restore": hooked, "after_restore": after_restore}
     plt.close(fig)
+# 脚本自己挂在实例上的 draw：改线型再撤销后必须原样还在
+fig, ax = plt.subplots()
+a = FancyArrowPatch((0.1, 0.5), (0.9, 0.5), arrowstyle="->", mutation_scale=20)
+ax.add_patch(a)
+seen = []
+def user_draw(renderer, _native=a.draw):
+    seen.append(1)
+    return _native(renderer)
+a.draw = user_draw
+setter(a, "--")
+fig.canvas.draw()
+restore(a, "-")
+fig.canvas.draw()
+out["user_draw"] = {"kept": vars(a).get("draw") is user_draw, "calls": len(seen)}
+plt.close(fig)
 print(json.dumps(out))
 """
 
@@ -98,6 +113,7 @@ def strokes():
         [WORKER_PY, "-c", _DRIVER, str(ENGINE_DIR)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=120,
         check=True,
     )
@@ -121,6 +137,11 @@ def test_restore_removes_hook(strokes, style):
     assert got["hooked_after_restore"] is False, got
     # 还原后脚本自己设的虚线回到 matplotlib 原样（头也虚）：引擎不改用户原画法
     assert got["after_restore"] == got["native"], got
+
+
+def test_restore_keeps_script_instance_draw(strokes):
+    # 脚本在实例上挂了 draw：钩子包着它跑，撤销后放回原处、不是删掉（重放仍会跑它）
+    assert strokes["user_draw"] == {"kept": True, "calls": 2}, strokes["user_draw"]
 
 
 def test_single_outline_styles_stay_dashed(strokes):
