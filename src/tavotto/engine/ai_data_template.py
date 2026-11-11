@@ -26,6 +26,7 @@ manifest 给指纹的是 Line2D（`xy`）、Collection（`offsets` / `paths`）�
 from __future__ import annotations
 
 import ast
+import bisect
 import csv
 import datetime
 import functools
@@ -185,12 +186,18 @@ def box_stats(vals):
     }
 
 
-def kde_curve(vals, points=64):
-    """高斯核密度（Scott 带宽），在数据范围内取 `points` 个点，密度按最大值归一到 1：`(网格, 密度)`。"""
+def scott_bandwidth(vals):
+    """核密度的带宽规则（全产品只有这一条）：Scott 规则 `带宽 = 样本标准差 × n^(-1/5)`；标准差为 0（或 n < 2）时退到
+    `|均值| × 0.05`，均值也是 0 就取 1。"""
     n = len(vals)
-    lo, hi = min(vals), max(vals)
     sd = sd_of(vals)
-    bw = sd * n ** (-0.2) if sd == sd and sd > 0 else (abs(mean_of(vals)) * 0.05 or 1.0)
+    return sd * n ** (-0.2) if sd == sd and sd > 0 else (abs(mean_of(vals)) * 0.05 or 1.0)
+
+
+def kde_curve(vals, points=64):
+    """高斯核密度（Scott 带宽），在数据范围内取 `points` 个点，密度按最大值归一到 1：`(网格, 密度)`（小提琴的形状）。"""
+    lo, hi = min(vals), max(vals)
+    bw = scott_bandwidth(vals)
     grid = [lo + (hi - lo) * i / (points - 1) for i in range(points)]
     dens = [math.fsum(math.exp(-0.5 * ((g - v) / bw) ** 2) for v in vals) for g in grid]
     top = max(dens)
@@ -212,17 +219,18 @@ def linear_fit(xs, ys):
 
 # ---- 比较各组（comparison）
 def comparison_data(header, rows, x, y, group, facet, order):
-    """每个（分面, 类别, 分组）格子里的有效 y 值（行序）。x / 分组 / 分面为空的行不画；y 不是数（空、NaN、文字）的行不画。
+    """每个（分面, 类别, 分组）格子里的有效 y 值（行序）。没有 x（`x` 为 None，distribution 的一种形态）时只有一个类别 `""`。
+    给了 x / 分组 / 分面但格子为空的行不画；y 不是数（空、NaN、文字）的行不画。
     类别顺序：`as_given` = 首次出现；`value_desc` / `value_asc` = 按该类别全部有效值的均值排。"""
-    xi, yi = header.index(x), header.index(y)
+    xi, yi = (header.index(x) if x else None), header.index(y)
     gi = header.index(group) if group else None
     fi = header.index(facet) if facet else None
     cats, groups, panels, cells = [], [], [], {}
     for r in rows:
-        c = r[xi].strip()
+        c = r[xi].strip() if xi is not None else ""
         g = r[gi].strip() if gi is not None else ""
         p = r[fi].strip() if fi is not None else ""
-        if not c or (gi is not None and not g) or (fi is not None and not p):
+        if (xi is not None and not c) or (gi is not None and not g) or (fi is not None and not p):
             continue
         kind, v = parse_cell(r[yi])
         if kind != "numeric":
@@ -429,15 +437,25 @@ def error_xy(xs, centers, lower, upper):
     return [k[0] for k in keep], [k[1] for k in keep], [k[2] for k in keep], [k[3] for k in keep]
 
 
-def fit_segment(pool):
-    """拟合直线在数据 x 范围两端的两个点；点不够 → None。"""
+def fit_segment(pool, logx=False, logy=False):
+    """最小二乘直线（描述性）：点不够或 x 全相同 → None。在**画出来的坐标**里拟合：对数轴那一维先取 log10 再拟合，
+    再换回数据值——两轴同为线性或同为对数时直线在图上仍是直线，取数据 x 范围两端两个点；只有一维是对数时它在图上是曲线，
+    沿 x 取 50 个点。对数轴上有 0 或负数 → None。"""
     xs, ys = finite_pairs(*pool)
-    fit = linear_fit(xs, ys)
+    if (logx and any(x <= 0 for x in xs)) or (logy and any(y <= 0 for y in ys)):
+        return None
+    tx = [math.log10(x) for x in xs] if logx else xs
+    ty = [math.log10(y) for y in ys] if logy else ys
+    fit = linear_fit(tx, ty)
     if fit is None:
         return None
     a, b = fit
-    x0, x1 = min(xs), max(xs)
-    return [x0, x1], [a + b * x0, a + b * x1]
+    t0, t1 = min(tx), max(tx)
+    n = 2 if logx == logy else 50
+    ts = [t0 + (t1 - t0) * i / (n - 1) for i in range(n)]
+    fx = [10.0**t if logx else t for t in ts]
+    fy = [a + b * t for t in ts]
+    return fx, [10.0**v if logy else v for v in fy]
 
 
 def hline_segment(pool, summary):
@@ -460,6 +478,108 @@ def trend_point_counts(pools):
                 by_x[a] = by_x.get(a, 0) + 1
         out |= set(by_x.values())
     return sorted(out)
+
+
+# ---- 看两个量的关系（relationship）
+def relationship_data(header, rows, x, y, group, facet):
+    """每个（分面, 分组）里 x、y 都是有限数的点（行序）；分组 / 分面为空的行不画；x 或 y 不是数（空、NaN、文字）的行不画。"""
+    xi, yi = header.index(x), header.index(y)
+    gi = header.index(group) if group else None
+    fi = header.index(facet) if facet else None
+    panels, groups, pairs = [], [], {}
+    for r in rows:
+        g = r[gi].strip() if gi is not None else ""
+        p = r[fi].strip() if fi is not None else ""
+        if (gi is not None and not g) or (fi is not None and not p):
+            continue
+        kx, vx = parse_cell(r[xi])
+        ky, vy = parse_cell(r[yi])
+        if kx != "numeric" or ky != "numeric":
+            continue
+        panels.append(p)
+        groups.append(g)
+        xs, ys = pairs.setdefault((p, g), ([], []))
+        xs.append(vx)
+        ys.append(vy)
+    return {"panels": distinct(panels) or [""], "groups": distinct(groups) or [""], "pairs": pairs}
+
+
+def relationship_pairs(d, p, g):
+    return d["pairs"].get((p, g), ([], []))
+
+
+def n_note(counts, groups, panels):
+    """图下方说明里的 n：`counts` 是 `{(分面, 分组): 个数}`。各格一样写 `n = k`；不一样且只有一个分面时按分组顺序逐组写；
+    多个分面时写范围。"""
+    ns = [n for n in counts.values() if n]
+    if not ns:
+        return ""
+    if len(set(ns)) == 1:
+        return "n = %d" % ns[0]
+    if len(panels) == 1:
+        order = " / ".join(str(counts.get((panels[0], g), 0)) for g in groups)
+        return "n = " + order + (" (group order)" if len(groups) > 1 else "")
+    return "n = %d-%d per group and panel" % (min(ns), max(ns))
+
+
+# ---- 看分布（distribution）
+def all_values(d):
+    """整张图里的全部有效值（各分面、各分组并起来）：直方图的分箱按它定，各组共用同一组分箱才可比。"""
+    return [v for vs in d["cells"].values() for v in vs]
+
+
+def pooled_values(d, p, g):
+    """这一格（分面 p、分组 g）里的全部值（并起各类别）。"""
+    return [v for (pp, c, gg), vs in d["cells"].items() if pp == p and gg == g for v in vs]
+
+
+def hist_edges(vals):
+    """直方图的分箱规则（全产品只有这一条）：Freedman–Diaconis——箱宽 `2 × IQR × n^(-1/3)`，箱数 = 向上取整(范围 / 箱宽)，
+    限制在 1–50；IQR 为 0 时退到 Sturges（箱数 = ceil(log2 n) + 1）；全部值相同则取以该值为中心、宽 1 的一个箱。
+    箱边在数据范围内等分，返回 `箱数 + 1` 个边。"""
+    s = sorted(vals)
+    n = len(s)
+    lo, hi = s[0], s[-1]
+    if hi == lo:
+        return [lo - 0.5, lo + 0.5]
+    iqr = quantile(s, 0.75) - quantile(s, 0.25)
+    width = 2 * iqr * n ** (-1 / 3)
+    bins = math.ceil((hi - lo) / width) if width > 0 else math.ceil(math.log2(n)) + 1
+    bins = max(1, min(50, bins))
+    return [lo + (hi - lo) * i / bins for i in range(bins + 1)]
+
+
+def hist_counts(vals, edges):
+    """每个箱里的个数：箱左闭右开，最后一个箱右端也算在内（与 numpy 同一约定）。"""
+    counts = [0] * (len(edges) - 1)
+    for v in vals:
+        counts[min(max(bisect.bisect_right(edges, v) - 1, 0), len(counts) - 1)] += 1
+    return counts
+
+
+def hist_heights(counts, n, width, density):
+    """柱高：个数；`density` 为真时换成概率密度 `个数 / (n × 箱宽)`（与密度曲线叠画时用，面积为 1）。"""
+    return [c / (n * width) for c in counts] if density else [float(c) for c in counts]
+
+
+def density_curve(vals, points=100):
+    """高斯核密度估计（带宽 `scott_bandwidth`），在 `[最小值 - 3 × 带宽, 最大值 + 3 × 带宽]` 上取 `points` 个点：
+    `(网格, 概率密度)`，面积约为 1。"""
+    n = len(vals)
+    bw = scott_bandwidth(vals)
+    lo, hi = min(vals) - 3 * bw, max(vals) + 3 * bw
+    grid = [lo + (hi - lo) * i / (points - 1) for i in range(points)]
+    norm = n * bw * math.sqrt(2 * math.pi)
+    return grid, [
+        math.fsum(math.exp(-0.5 * ((g - v) / bw) ** 2) for v in vals) / norm for g in grid
+    ]
+
+
+def ecdf_xy(vals):
+    """经验累积分布的阶梯：从 `(最小值, 0)` 起，把值排序后第 i 个值处升到 `i / n`（逐点，不分箱、不合并重复）。"""
+    s = sorted(vals)
+    n = len(s)
+    return [s[0]] + s, [0.0] + [(i + 1) / n for i in range(n)]
 
 
 def trend_series_counts(pools):
@@ -535,6 +655,17 @@ RUNTIME_FUNCTIONS = (
     trend_point_counts,
     trend_series_counts,
     n_phrase,
+    scott_bandwidth,
+    relationship_data,
+    relationship_pairs,
+    n_note,
+    all_values,
+    pooled_values,
+    hist_edges,
+    hist_counts,
+    hist_heights,
+    density_curve,
+    ecdf_xy,
     pick_fonts,
 )
 #: 只有 XLSX 数据源的脚本才内嵌 `read_xlsx` 与 xlsxread；CSV / TSV 的脚本里没有它们
@@ -543,7 +674,10 @@ RUNTIME_FUNCTIONS = (
 #: Okabe & Ito（2008）的色盲安全分类色（公开发表的调色板，无许可证限制）；去掉对比弱的黄色。仓库里没有批准的分类色表
 #: （profile 推荐的 Crameri batlowS 不随 matplotlib 提供，装了才有）——要换由用户拍板。
 PALETTE = ("#0072B2", "#D55E00", "#009E73", "#E69F00", "#56B4E9", "#CC79A7", "#000000")
-LINESTYLES = ("-", "--", ":")
+LINESTYLES = ("-", "--", ":")  # 多个 y 列（分组时）的线型表
+#: 拟合线的专用线型：不在 `LINESTYLES` 里，保证「拟合线」与「第二个 y 的线」永不同形（两者同图出现时各有说明）
+FIT_LINESTYLE = "-."
+assert FIT_LINESTYLE not in LINESTYLES
 SUMMARY_TEXT = {
     "mean_sd": "mean ± SD",
     "mean_sem": "mean ± SEM",
@@ -647,9 +781,21 @@ def _check(entry: adf.TableEntry, recipe: recipe_mod.FigureRecipe) -> None:
         raise TemplateError("template_option_unsupported", "coord")
     if recipe.paired:
         raise TemplateError("template_option_unsupported", "paired")
-    if recipe.family == "comparison":
+    marks = {layer.mark for layer in recipe.layers}
+    if recipe.family == "comparison" or (
+        recipe.family == "distribution" and not marks & VALUE_ON_X
+    ):
         if recipe.scale not in ("linear", "log_y"):
             raise TemplateError("template_option_unsupported", "scale")
+    if recipe.family == "distribution":
+        if marks & VALUE_ON_X and marks - VALUE_ON_X:
+            raise TemplateError(
+                "template_option_unsupported", "orientation"
+            )  # 值在横轴的图元不与值在纵轴的叠
+        if "ecdf" in marks and marks & {"hist", "density"}:
+            raise TemplateError("template_option_unsupported", "ecdf_with_hist")  # 纵轴含义不同
+        if marks & VALUE_ON_X and (recipe.scale != "linear" or recipe.x is not None):
+            raise TemplateError("template_option_unsupported", "scale_or_x")
     if (
         recipe.family == "trend"
         and recipe.scale in ("log_x", "log_xy")
@@ -678,15 +824,89 @@ def _summary_layers(recipe: recipe_mod.FigureRecipe) -> list[str]:
     return [layer.summary for layer in recipe.layers if layer.summary != "none"]
 
 
-def _summary_text(recipe: recipe_mod.FigureRecipe, marks: tuple[str, ...] | None = None) -> str:
-    """图下方说明里的汇总名；`marks` 给了就只取这些图元的层。"""
-    return " / ".join(
+#: 图下方说明里各带汇总的图元的叫法
+MARK_NAMES = {
+    "line": "line",
+    "step": "step line",
+    "band": "band",
+    "errorbar": "error bars",
+    "bar": "bars",
+    "hline_summary": "horizontal lines",
+}
+
+
+def _summary_text(recipe: recipe_mod.FigureRecipe) -> str:
+    """图下方说明里的汇总名。全图只有一种汇总 → 简短写法（`mean ± SD`）；有几种不同的汇总 → 逐图元写清
+    （`bars: mean ± SD; error bars: median with IQR`；同一图元以不同 role 出现两次再带上 role）。"""
+    layers = [
+        (layer, tag)
+        for layer, tag in zip(recipe.layers, _layer_tags(recipe))
+        if layer.summary != "none"
+    ]
+    if len({layer.summary for layer, _ in layers}) <= 1:
+        return " / ".join(dict.fromkeys(SUMMARY_TEXT[layer.summary] for layer, _ in layers))
+    return "; ".join(
         dict.fromkeys(
-            SUMMARY_TEXT[layer.summary]
-            for layer in recipe.layers
-            if layer.summary != "none" and (marks is None or layer.mark in marks)
+            f"{MARK_NAMES.get(layer.mark, layer.mark)}"
+            + (f" ({layer.role})" if "@" in tag else "")
+            + f": {SUMMARY_TEXT[layer.summary]}"
+            for layer, tag in layers
         )
     )
+
+
+#: 图下方说明里对「非汇总」图元的定义（分箱 / 带宽 / 箱线须 / 拟合各一句；规则本身的唯一实现在运行时函数里）
+LAYER_NOTES = {
+    "box": "box: median, quartiles, whiskers to 1.5 IQR",
+    "violin": "violin: Gaussian kernel density, Scott bandwidth",
+    "fit_line": "dash-dot line: least-squares fit (descriptive)",
+    "hist": "bins: Freedman-Diaconis rule, shared by all groups",
+    "density": "density: Gaussian kernel, Scott bandwidth",
+    "ecdf": "ECDF: step function of the sorted values",
+}
+
+
+def _layer_notes(recipe: recipe_mod.FigureRecipe) -> list[str]:
+    notes = [LAYER_NOTES[layer.mark] for layer in recipe.layers if layer.mark in LAYER_NOTES]
+    if "fit_line" in {layer.mark for layer in recipe.layers} and recipe.scale != "linear":
+        notes = [
+            n + ", fitted on log10 of the log axes" if n.startswith("dash-dot line") else n
+            for n in notes
+        ]
+    for layer in recipe.layers:
+        if layer.mark == "hline_summary" and layer.summary != "none":
+            # 水平线画的是汇总的中心值：均值或中位数，由该层的 summary 推出
+            stat = "median" if layer.summary == "median_iqr" else "mean"
+            notes.append(
+                f"dotted line: whole-series {stat}"
+                if recipe.family == "trend"
+                else f"horizontal lines: {stat}"
+            )
+    return list(dict.fromkeys(notes))
+
+
+def _footer(recipe, style, n_lines: list[str], n_text_expr: str | None) -> list[str]:
+    """图下方的一行说明：汇总定义 + 非汇总图元的规则名 + n（`n_text_expr` 是运行时求值的表达式，None = 不写 n）。
+    没有任何内容要写就只做 `tight_layout()`。说明会换行：按字数估行数给它留出高度。"""
+    static = "; ".join([s for s in [_summary_text(recipe), *_layer_notes(recipe)] if s])
+    if not static and n_text_expr is None:
+        return ["    fig.tight_layout()"]
+    out = list(n_lines)
+    if n_text_expr is None:
+        out.append(f"    note = {static!r}")
+    else:
+        out += [
+            f"    n_text = {n_text_expr}",
+            f"    note = '; '.join(s for s in ({static!r}, n_text) if s)",
+        ]
+    pt = style["min_font_pt"]
+    chars_per_line = max(20, int(style["width_single_mm"] / _MM * 72 / (pt * 0.5)))
+    lines = 1 + (len(static) + 16) // chars_per_line
+    out += [
+        f"    fig.text(0.01, 0.01, note, fontsize={pt!r}, ha='left', va='bottom', wrap=True)",
+        f"    fig.tight_layout(rect=(0, {round(lines * pt * 1.25 / 72 + 0.03, 3)!r} / fig.get_figheight(), 1, 1))",
+    ]
+    return out
 
 
 def _source_comment(entry: adf.TableEntry, recipe: recipe_mod.FigureRecipe, data_rel: str) -> str:
@@ -742,6 +962,7 @@ def _runtime_source() -> str:
         _RUNTIME_DOC.rstrip("\n"),
         "from __future__ import annotations",
         "",
+        "import bisect",
         "import csv",
         "import math",
         "import re",
@@ -832,7 +1053,16 @@ def _figsize(style: dict, panels_expr: str) -> str:
 # --------------------------------------------------------------------------- comparison
 MARKS_COMPARISON = ("points", "jitter", "box", "violin", "bar", "errorbar", "hline_summary")
 MARKS_TREND = ("line", "step", "band", "points", "errorbar", "fit_line", "hline_summary")
-MARKS_RENDERED = {"comparison": MARKS_COMPARISON, "trend": MARKS_TREND}
+MARKS_RELATIONSHIP = ("points", "fit_line")
+MARKS_DISTRIBUTION = ("hist", "ecdf", "density", "box", "violin", "jitter", "points")
+#: distribution 里「值在横轴」的图元（不带类别 x，按颜色分组）；其余图元值在纵轴、类别在横轴
+VALUE_ON_X = frozenset({"hist", "ecdf", "density"})
+MARKS_RENDERED = {
+    "comparison": MARKS_COMPARISON,
+    "trend": MARKS_TREND,
+    "relationship": MARKS_RELATIONSHIP,
+    "distribution": MARKS_DISTRIBUTION,
+}
 
 
 def _comparison_layer_lines(layer, tag: str, lw: list[float]) -> list[str]:
@@ -892,7 +1122,10 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
     is_xlsx = entry.path.lower().endswith(".xlsx")
     summ = _summary_text(recipe)
     lw = style["line_widths_pt"]
-    L = _header(entry, recipe, data_rel, "比较各组", is_xlsx)
+    with_n = bool(summ) or recipe.family == "distribution"
+    L = _header(
+        entry, recipe, data_rel, "比较各组" if recipe.family == "comparison" else "看分布", is_xlsx
+    )
     if is_xlsx:
         L.append(f"SHEET = {recipe.sheet!r}")
     L += [
@@ -901,7 +1134,7 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
         f"GROUP = {recipe.group!r}",
         f"FACET = {recipe.facet!r}",
         f"ORDER = {recipe.order!r}",
-        f"XLABEL = {adf.axis_label(recipe.x)!r}",
+        f"XLABEL = {adf.axis_label(recipe.x) if recipe.x else ''!r}",
         f"YLABEL = {adf.axis_label(recipe.y[0])!r}",
         f"PALETTE = {list(PALETTE)!r}",
     ]
@@ -930,9 +1163,14 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
     for layer, tag in zip(recipe.layers, _layer_tags(recipe)):
         for line in _comparison_layer_lines(layer, tag, lw):
             L.append("            " + line)
+    if recipe.x is None:
+        L.append("        ax.set_xticks([])  # 没有类别轴：只有一个位置，组在其中并排")
+    else:
+        L += [
+            "        ax.set_xticks(range(len(cats)))",
+            f"        ax.set_xticklabels(category_labels(d, p, uneven and {with_n!r}))",
+        ]
     L += [
-        "        ax.set_xticks(range(len(cats)))",
-        f"        ax.set_xticklabels(category_labels(d, p, uneven and {bool(summ)!r}))",
         "        ax.set_xlim(-0.6, len(cats) - 0.4)",
         "        ax.set_xlabel(XLABEL)",
         "        if FACET:",
@@ -951,15 +1189,24 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
         f"            frameon={bool(style['legend_frame'])!r},",
         "        )",
     ]
-    if summ:
-        L += [
-            "    counts = cell_counts(d)",
-            f"    note = {summ!r} + ('; n = %d' % counts[0] if len(counts) == 1 else '; n per group in tick labels')",
-            f"    fig.text(0.01, 0.01, note, fontsize={style['min_font_pt']!r}, ha='left', va='bottom')",
-            "    fig.tight_layout(rect=(0, 0.06, 1, 1))",
-        ]
+    if recipe.x is None:  # 没有类别轴、也就没有刻度标签：各（分面, 分组）的 n 写进说明本身
+        L += _footer(
+            recipe,
+            style,
+            [
+                "    counts = {(p, g): len(d['cells'].get((p, '', g), [])) for p in panels for g in groups}"
+            ],
+            "n_note(counts, groups, panels)" if with_n else None,
+        )
     else:
-        L.append("    fig.tight_layout()")
+        L += _footer(
+            recipe,
+            style,
+            ["    counts = cell_counts(d)"],
+            "('n = %d' % counts[0] if len(counts) == 1 else 'n per group in tick labels')"
+            if with_n
+            else None,
+        )
     L += [
         f"    fig.savefig(Path(__file__).resolve().parent / {stem + '.pdf'!r})",
         "",
@@ -972,7 +1219,7 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
 
 
 # --------------------------------------------------------------------------- trend
-def _trend_layer_lines(layer, tag_m: str, lw: list[float]) -> list[str]:
+def _trend_layer_lines(layer, tag_m: str, lw: list[float], logs=(False, False)) -> list[str]:
     m, s = layer.mark, layer.summary
     mid, thick = lw[min(1, len(lw) - 1)], lw[-1]
     tag = "ytag"
@@ -1017,9 +1264,9 @@ def _trend_layer_lines(layer, tag_m: str, lw: list[float]) -> list[str]:
         ]
     if m == "fit_line":
         return [
-            "seg = fit_segment(pool)",
+            f"seg = fit_segment(pool, {logs[0]!r}, {logs[1]!r})",
             "if seg:",
-            f"    ax.plot(*seg, color=color, linestyle='--', linewidth={mid!r}, label={lab})",
+            f"    ax.plot(*seg, color=color, linestyle={FIT_LINESTYLE!r}, linewidth={mid!r}, label={lab})",
         ]
     if m == "hline_summary":
         return [
@@ -1086,8 +1333,9 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
         "                pool = trend_pool(d, p, g, y)",
         "                pools.append(pool)",
     ]
+    logs = (recipe.scale in ("log_x", "log_xy"), recipe.scale in ("log_y", "log_xy"))
     for layer, tag in zip(recipe.layers, _layer_tags(recipe)):
-        for line in _trend_layer_lines(layer, tag, lw):
+        for line in _trend_layer_lines(layer, tag, lw, logs):
             L.append("                " + line)
     L += [
         "        ax.set_xlabel(XLABEL)",
@@ -1113,25 +1361,31 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
         "    if handles:",
         f"        axes[0][0].legend(handles=handles, frameon={bool(style['legend_frame'])!r})",
     ]
-    if summ:
-        pos = _summary_text(recipe, _PER_POINT_MARKS)
-        ser = _summary_text(recipe, ("hline_summary",))
-        both = bool(pos and ser)
-        # n 取自每个汇总层**实际汇总的总体**：逐位置的 = 每个位置的有效观测数；整系列的（水平线）= 整条序列的有效观测总数
-        parts = []
+    n_lines, n_parts = [], []
+    if summ or any(ly.mark == "fit_line" for ly in recipe.layers):
+        # n 取自每个汇总层**实际汇总的总体**：逐位置的 = 每个位置的有效观测数；整系列的（水平线）= 整条序列的有效观测总数；
+        # 两种都有时都写 per point / per series，分得清是哪个 n
+        pos = any(ly.mark in _PER_POINT_MARKS and ly.summary != "none" for ly in recipe.layers)
+        ser = any(
+            (ly.mark == "hline_summary" and ly.summary != "none") or ly.mark == "fit_line"
+            for ly in recipe.layers
+        )
         if pos:
-            L.append("    n_pos = n_phrase(trend_point_counts(pools), 'point', %r)" % both)
-            parts.append(f"{pos!r}, n_pos")
+            n_lines.append(
+                "    n_pos = n_phrase(trend_point_counts(pools), 'point', %r)" % (pos and ser)
+            )
+            n_parts.append("n_pos")
         if ser:
-            L.append("    n_ser = n_phrase(trend_series_counts(pools), 'series', %r)" % both)
-            parts.append(f"{(ser + ' over whole series' if both else ser)!r}, n_ser")
-        L += [
-            "    note = '; '.join(part for part in (%s) if part)" % ", ".join(parts),
-            f"    fig.text(0.01, 0.01, note, fontsize={style['min_font_pt']!r}, ha='left', va='bottom')",
-            "    fig.tight_layout(rect=(0, 0.06, 1, 1))",
-        ]
-    else:
-        L.append("    fig.tight_layout()")
+            n_lines.append(
+                "    n_ser = n_phrase(trend_series_counts(pools), 'series', %r)" % (pos and ser)
+            )
+            n_parts.append("n_ser")
+    L += _footer(
+        recipe,
+        style,
+        n_lines,
+        "'; '.join(s for s in (%s,) if s)" % ", ".join(n_parts) if n_parts else None,
+    )
     L += [
         f"    fig.savefig(Path(__file__).resolve().parent / {stem + '.pdf'!r})",
         "",
@@ -1143,7 +1397,195 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
     return "\n".join(L[:main_at] + _via_runtime(L[main_at:]))
 
 
-RENDERERS = {"comparison": _render_comparison, "trend": _render_trend}
+# --------------------------------------------------------------------------- relationship
+def _render_relationship(entry, recipe, data_rel, stem, style) -> str:
+    is_xlsx = entry.path.lower().endswith(".xlsx")
+    lw = style["line_widths_pt"]
+    mid = lw[min(1, len(lw) - 1)]
+    logx, logy = recipe.scale in ("log_x", "log_xy"), recipe.scale in ("log_y", "log_xy")
+    L = _header(entry, recipe, data_rel, "看两个量的关系", is_xlsx)
+    if is_xlsx:
+        L.append(f"SHEET = {recipe.sheet!r}")
+    L += [
+        f"X = {recipe.x!r}",
+        f"Y = {recipe.y[0]!r}",
+        f"GROUP = {recipe.group!r}",
+        f"FACET = {recipe.facet!r}",
+        f"XLABEL = {adf.axis_label(recipe.x)!r}",
+        f"YLABEL = {adf.axis_label(recipe.y[0])!r}",
+        f"PALETTE = {list(PALETTE)!r}",
+    ]
+    reader = _reader_expr(entry, is_xlsx)
+    L += ["", "", "def main():"]
+    main_at = len(L)
+    L.append(f"    header, rows = {reader}")
+    L += [
+        "    d = relationship_data(header, rows, X, Y, GROUP, FACET)",
+        "    groups, panels = d['groups'], d['panels']",
+    ]
+    L += _rc_lines(style, True)
+    L += [
+        f"    fig, axes = plt.subplots(1, len(panels), sharex=True, sharey=True, figsize={_figsize(style, 'len(panels)')}, squeeze=False)",
+        "    for pi, (p, ax) in enumerate(zip(panels, axes[0])):",
+        "        for gi, g in enumerate(groups):",
+        "            color = PALETTE[gi % len(PALETTE)]",
+        "            xs, ys = relationship_pairs(d, p, g)",
+    ]
+    for layer, tag in zip(recipe.layers, _layer_tags(recipe)):
+        if layer.mark == "points":
+            lines = [
+                "if ys:",
+                f"    ax.scatter(xs, ys, s=9, color=color, linewidths=0, label=make_label({tag!r}, g, p))",
+            ]
+        else:
+            lines = [
+                f"seg = fit_segment((xs, ys), {logx!r}, {logy!r})",
+                "if seg:",
+                f"    ax.plot(*seg, color=color, linestyle={FIT_LINESTYLE!r}, linewidth={mid!r}, label=make_label({tag!r}, g, p))",
+            ]
+        L += ["            " + ln for ln in lines]
+    L += [
+        "        ax.set_xlabel(XLABEL)",
+        "        if FACET:",
+        "            ax.set_title(p)",
+        "        if pi == 0:",
+        "            ax.set_ylabel(YLABEL)",
+    ]
+    if logx:
+        L.append('        ax.set_xscale("log")')
+    if logy:
+        L.append('        ax.set_yscale("log")')
+    L += _group_legend(style)
+    L += _footer(
+        recipe,
+        style,
+        ["    counts = {k: len(v[0]) for k, v in d['pairs'].items()}"],
+        "n_note(counts, groups, panels)",
+    )
+    L += _tail(stem)
+    return "\n".join(L[:main_at] + _via_runtime(L[main_at:]))
+
+
+# --------------------------------------------------------------------------- distribution
+def _render_distribution(entry, recipe, data_rel, stem, style) -> str:
+    marks = {layer.mark for layer in recipe.layers}
+    if not marks & VALUE_ON_X:  # 值在纵轴：与 comparison 同一套布局（类别 x 可选）
+        return _render_comparison(entry, recipe, data_rel, stem, style)
+    is_xlsx = entry.path.lower().endswith(".xlsx")
+    lw = style["line_widths_pt"]
+    thin, thick = lw[0], lw[-1]
+    density_units = "density" in marks
+    ylabel = (
+        "cumulative proportion"
+        if "ecdf" in marks
+        else ("density" if "density" in marks else "count")
+    )
+    L = _header(entry, recipe, data_rel, "看分布", is_xlsx)
+    if is_xlsx:
+        L.append(f"SHEET = {recipe.sheet!r}")
+    L += [
+        f"Y = {recipe.y[0]!r}",
+        f"GROUP = {recipe.group!r}",
+        f"FACET = {recipe.facet!r}",
+        f"XLABEL = {adf.axis_label(recipe.y[0])!r}",
+        f"YLABEL = {ylabel!r}",
+        f"PALETTE = {list(PALETTE)!r}",
+    ]
+    reader = _reader_expr(entry, is_xlsx)
+    L += ["", "", "def main():"]
+    main_at = len(L)
+    L.append(f"    header, rows = {reader}")
+    L += [
+        "    d = comparison_data(header, rows, None, Y, GROUP, FACET, 'as_given')",
+        "    groups, panels = d['groups'], d['panels']",
+    ]
+    if "hist" in marks:
+        L += ["    edges = hist_edges(all_values(d))", "    width = edges[1] - edges[0]"]
+    L += _rc_lines(style, True)
+    L += [
+        f"    fig, axes = plt.subplots(1, len(panels), sharex=True, sharey=True, figsize={_figsize(style, 'len(panels)')}, squeeze=False)",
+        "    for pi, (p, ax) in enumerate(zip(panels, axes[0])):",
+        "        for gi, g in enumerate(groups):",
+        "            color = PALETTE[gi % len(PALETTE)]",
+        "            vals = pooled_values(d, p, g)",
+        "            if not vals:",
+        "                continue",
+    ]
+    for layer, tag in zip(recipe.layers, _layer_tags(recipe)):
+        m = layer.mark
+        lab = f"make_label({tag!r}, g, p)"
+        if m == "hist":
+            lines = [
+                "counts = hist_counts(vals, edges)",
+                f"heights = hist_heights(counts, len(vals), width, {density_units!r})",
+                "ax.bar(",
+                "    edges[:-1], heights, width=width, align='edge', color=color, alpha=0.45,",
+                f"    edgecolor=color, linewidth={thin!r}, label={lab},",
+                ")",
+            ]
+        elif m == "density":
+            lines = [
+                "grid, dens = density_curve(vals)",
+                f"ax.plot(grid, dens, color=color, linewidth={thick!r}, label={lab})",
+            ]
+        else:
+            lines = [
+                "xs, ys = ecdf_xy(vals)",
+                f"ax.step(xs, ys, where='post', color=color, linewidth={thick!r}, label={lab})",
+            ]
+        L += ["            " + ln for ln in lines]
+    L += [
+        "        ax.set_xlabel(XLABEL)",
+        "        if FACET:",
+        "            ax.set_title(p)",
+        "        if pi == 0:",
+        "            ax.set_ylabel(YLABEL)",
+    ]
+    L += _group_legend(style)
+    L += _footer(
+        recipe,
+        style,
+        ["    counts = {(p, g): len(pooled_values(d, p, g)) for p in panels for g in groups}"],
+        "n_note(counts, groups, panels)",
+    )
+    L += _tail(stem)
+    return "\n".join(L[:main_at] + _via_runtime(L[main_at:]))
+
+
+def _reader_expr(entry, is_xlsx: bool) -> str:
+    if is_xlsx:
+        return "read_xlsx(DATA, SHEET)"
+    delim = "'\\t'" if entry.path.lower().endswith((".tsv", ".tab")) else "','"
+    return f"read_delimited(DATA, {delim})"
+
+
+def _group_legend(style) -> list[str]:
+    return [
+        "    if GROUP:",
+        "        axes[0][0].legend(",
+        "            handles=[Patch(facecolor=PALETTE[i % len(PALETTE)], label=name) for i, name in enumerate(groups)],",
+        f"            frameon={bool(style['legend_frame'])!r},",
+        "        )",
+    ]
+
+
+def _tail(stem: str) -> list[str]:
+    return [
+        f"    fig.savefig(Path(__file__).resolve().parent / {stem + '.pdf'!r})",
+        "",
+        "",
+        'if __name__ == "__main__":',
+        "    main()",
+        "",
+    ]
+
+
+RENDERERS = {
+    "comparison": _render_comparison,
+    "trend": _render_trend,
+    "relationship": _render_relationship,
+    "distribution": _render_distribution,
+}
 if set(RENDERERS) != set(
     recipe_mod.RENDERABLE
 ):  # 两张表必须逐项相同：声明能画的就得真有模板，反之亦然
@@ -1214,7 +1656,7 @@ _UNCHECKED = {
     "box": "matplotlib_derived",  # 箱线由 matplotlib 的 bxp 拼成多条无 label 的线
     "violin": "fill_has_no_label",
 }
-_CHECKED_RAW = frozenset({"points", "jitter"})
+_CHECKED_RAW = frozenset({"points", "jitter", "ecdf"})  # ecdf 的阶梯点就是排序后的全部原始值
 
 
 def fingerprint_coverage(recipe: recipe_mod.FigureRecipe) -> Coverage:
@@ -1244,8 +1686,13 @@ def expected_fingerprints(values: adf.DataSummary, recipe: recipe_mod.FigureReci
     `fingerprint_coverage`）。`values` 是带行数据的摘要（对配方指的那张表 `inspect_data_source`）；与脚本调用同一批函数。"""
     if recipe.family not in RENDERERS:
         raise TemplateError("template_family_unsupported", recipe.family)
-    if recipe.family == "comparison":
+    if recipe.family in ("comparison", "distribution"):
+        marks = {layer.mark for layer in recipe.layers}
+        if marks & VALUE_ON_X:
+            return _expected_distribution_x(values, recipe)
         return _expected_comparison(values, recipe)
+    if recipe.family == "relationship":
+        return _expected_relationship(values, recipe)
     return _expected_trend(values, recipe)
 
 
@@ -1281,6 +1728,66 @@ def _expected_comparison(values, recipe) -> list[dict]:
                                 (len(heights), 2),
                             )
                         )
+    return out
+
+
+def _expected_relationship(values, recipe) -> list[dict]:
+    d = relationship_data(
+        values.columns, values.rows, recipe.x, recipe.y[0], recipe.group, recipe.facet
+    )
+    logx, logy = recipe.scale in ("log_x", "log_xy"), recipe.scale in ("log_y", "log_xy")
+    tags = _layer_tags(recipe)
+    out = []
+    for p in d["panels"]:
+        for g in d["groups"]:
+            xs, ys = relationship_pairs(d, p, g)
+            for layer, tag in zip(recipe.layers, tags):
+                lab = make_label(tag, g, p)
+                if layer.mark == "points":
+                    if ys:
+                        out.append(_entry(lab, "offsets", _interleave(xs, ys), (len(ys), 2)))
+                else:
+                    seg = fit_segment((xs, ys), logx, logy)
+                    if seg:
+                        out.append(_entry(lab, "xy", _interleave(*seg), (len(seg[0]), 2)))
+    return out
+
+
+def _expected_distribution_x(values, recipe) -> list[dict]:
+    d = comparison_data(
+        values.columns, values.rows, None, recipe.y[0], recipe.group, recipe.facet, "as_given"
+    )
+    marks = {layer.mark for layer in recipe.layers}
+    edges = hist_edges(all_values(d)) if "hist" in marks and all_values(d) else None
+    tags = _layer_tags(recipe)
+    out = []
+    for p in d["panels"]:
+        for g in d["groups"]:
+            vals = pooled_values(d, p, g)
+            if not vals:
+                continue
+            for layer, tag in zip(recipe.layers, tags):
+                m = layer.mark
+                lab = make_label(tag, g, p)
+                if m == "hist":
+                    counts = hist_counts(vals, edges)
+                    heights = hist_heights(
+                        counts, len(vals), edges[1] - edges[0], "density" in marks
+                    )
+                    out.append(
+                        _entry(
+                            lab,
+                            "bars",
+                            _interleave([0.0] * len(heights), heights),
+                            (len(heights), 2),
+                        )
+                    )
+                elif m == "density":
+                    grid, dens = density_curve(vals)
+                    out.append(_entry(lab, "xy", _interleave(grid, dens), (len(grid), 2)))
+                else:
+                    xs, ys = ecdf_xy(vals)
+                    out.append(_entry(lab, "xy", _interleave(xs, ys), (len(xs), 2)))
     return out
 
 
@@ -1329,13 +1836,17 @@ def _expected_trend(values, recipe) -> list[dict]:
                             if ln:
                                 out.append(_entry(lab, "xy", _interleave(*ln), (len(ln[0]), 2)))
                     elif m == "fit_line":
-                        seg = fit_segment(pool)
+                        seg = fit_segment(
+                            pool,
+                            recipe.scale in ("log_x", "log_xy"),
+                            recipe.scale in ("log_y", "log_xy"),
+                        )
                         if seg:
-                            out.append(_entry(lab, "xy", _interleave(*seg), (2, 2)))
+                            out.append(_entry(lab, "xy", _interleave(*seg), (len(seg[0]), 2)))
                     elif m == "hline_summary":
                         seg = hline_segment(pool, s)
                         if seg:
-                            out.append(_entry(lab, "xy", _interleave(*seg), (2, 2)))
+                            out.append(_entry(lab, "xy", _interleave(*seg), (len(seg[0]), 2)))
     return out
 
 

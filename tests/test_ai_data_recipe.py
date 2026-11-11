@@ -253,8 +253,13 @@ def test_tables_are_consistent():
 
 
 def test_renderable_is_a_subset_of_batch_one():
-    """「真有模板」的出处是 `RENDERABLE`，`ai_data_template` import 时核它与 `RENDERERS` 一致（relationship / distribution 留给下一个 PR）。"""
-    assert {k for k in R.FAMILIES if R.renderable(k)} == {"comparison", "trend"}
+    """「真有模板」的出处是 `RENDERABLE`，`ai_data_template` import 时核它与 `RENDERERS` 一致。"""
+    assert {k for k in R.FAMILIES if R.renderable(k)} == {
+        "comparison",
+        "trend",
+        "relationship",
+        "distribution",
+    }
     assert all(R.FAMILIES[k].batch == 1 for k in R.FAMILIES if R.renderable(k))
     with pytest.raises(ValueError):
         R.renderable("sankey")
@@ -999,3 +1004,22 @@ def test_trajectory_count_limit_is_per_panel(tmp_path):
     assert "trajectories_limit_exceeded" in codes(
         R.validate_recipe(p, one, confirmed=conf, values=v)
     )
+
+
+# --------------------------------------------------------------------------- 模板能画的组合（relationship / distribution 批次）
+def test_distribution_layer_combinations_follow_what_the_template_can_draw(profile, folder):
+    def p(layers, **kw):
+        r = rec("long.csv", "distribution", layers, ["response"], **kw)
+        return codes(R.validate_recipe(profile, r, confirmed=NONE))
+
+    assert "mark_not_allowed" in p(["hist", "jitter"], group="condition")  # 值在横轴 + 值在纵轴
+    assert "mark_not_allowed" in p(["ecdf", "hist"], group="condition")  # 纵轴含义不同
+    assert "mark_not_allowed" in p(
+        ["ecdf"], group="condition", scale="log_y"
+    )  # 值在横轴的图元不用对数轴
+    assert "mark_not_allowed" in p(["box"], x="condition", scale="log_x")
+    assert p(["hist", "density"], group="condition") == set()
+    assert p(["ecdf"], group="condition") == set()
+    assert p(["box", "jitter"], x="condition", scale="log_y") == set()
+    r = rec("long.csv", "comparison", ["points"], ["response"], x="condition", scale="log_xy")
+    assert "mark_not_allowed" in codes(R.validate_recipe(profile, r, confirmed=NONE))
