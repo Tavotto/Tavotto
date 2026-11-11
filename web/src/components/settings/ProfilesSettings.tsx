@@ -34,6 +34,7 @@ import { journalCatalogUi } from '@/lib/journalUi'
 import { JournalPicker } from '../journal/JournalPicker'
 import { JournalRequirements } from '../journal/JournalRequirements'
 import { JournalSourceIdentityWarning } from '../journal/JournalSourceIdentityWarning'
+import { JournalJperStageWarning } from '../journal/JournalJperStageWarning'
 import { JournalFactsView } from '../journal/JournalFactsView'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProfileStore } from '@/store/profileStore'
@@ -631,6 +632,7 @@ export function ProfilesSettings({
               </SettingRow>
             )}
             {journalOn && doc.profile?.journalRef && <JournalSourceIdentityWarning />}
+            {journalOn && doc.profile?.journalRef && <JournalJperStageWarning />}
             {journalOn && doc.profile?.journalRef && (
               <DiagnosticDisclosure variant="row" data-journal-disclosure title={translate('journal.requirements', { ns: 'dialogs' })}>
                 <JournalRequirements />

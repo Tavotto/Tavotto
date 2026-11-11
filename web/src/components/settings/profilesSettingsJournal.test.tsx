@@ -117,6 +117,24 @@ describe('规范库里的「按期刊」条目', () => {
     expect(document.body.textContent).not.toContain('本项目实际检查的规则')
   })
 
+  it('JPER 已保存历史 PDF 来源时，在项目规范页显示阶段提示', async () => {
+    selectJournal('fx-beta')
+    act(() => useDocumentStore.setState((st) => {
+      const profile = st.doc.profile!
+      const entry = profile.journalSources!.min_raster_dpi
+      return { doc: { ...st.doc, profile: {
+        ...profile,
+        journalRef: { ...profile.journalRef!, id: 'journal-of-planning-education-and-research' },
+        journalSources: { ...profile.journalSources, min_raster_dpi: {
+          ...entry, url: 'https://journals.sagepub.com/pb-assets/JPER-Guidelines-for-Submission-of-Accepted-Manuscripts-2019.pdf',
+        } },
+      } } }
+    }))
+    await mount()
+    expect(q('[data-journal-jper-stage-warning]')?.textContent).toContain('历史录用稿最终版')
+    expect(q('[data-journal-jper-stage-warning]')?.textContent).toContain('预检未区分投稿阶段')
+  })
+
   it('期刊有自己的栏位表：单 / 双栏两行并成一行「栏宽」，列出全部栏位', async () => {
     selectJournal('fx-cols')
     await mount()
