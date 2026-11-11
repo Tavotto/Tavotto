@@ -312,3 +312,48 @@ def test_unrecognized_context_keeps_each_fact_unverified(fact, context):
     assert all(item["status"] == "unknown" for item in result["facts"])
     assert [item["id"] for item in result["unevaluated_facts"]] == ["line", "width"]
     assert result["catalog_completeness"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    "source_context",
+    [
+        [{"source": "guide", "quote": "For online colour only."}],
+        [{"source": "publisher", "quote": "For colour figures only."}],
+        [
+            {"source": "guide", "quote": "For online publication."},
+            {"source": "publisher", "quote": "Authors are encouraged to follow these guidelines."},
+        ],
+    ],
+)
+@pytest.mark.parametrize("dpi", [300, 1200])
+@pytest.mark.parametrize("kind", ["line_art", "halftone"])
+def test_source_context_never_silently_becomes_unconditional(
+    fact, context, source_context, dpi, kind
+):
+    """Verified means a label only; unknown context may change scope or strength."""
+    contextual = {**fact, "context": source_context}
+    before = copy.deepcopy(contextual)
+    context["figure_kind"] = kind
+    out = evaluate_dpi_facts(bundle(contextual), context, dpi)
+    assert out["status"] == "unknown"
+    assert out["evaluated_raster_dpi_status"] == "unknown"
+    assert out["facts"][0]["status"] == "unknown"
+    assert out["facts"][0]["reason"] == "unknown_applicability"
+    assert out["unevaluated_facts"] == [
+        {"id": "line", "subject": "raster_dpi", "reason": "unknown_applicability"}
+    ]
+    assert contextual == before
+
+
+def test_context_qualifier_does_not_change_facts_without_context(fact, context):
+    """Known supported facts remain useful; context cannot be inherited between facts."""
+    contextual = {
+        **fact,
+        "id": "qualified",
+        "context": [{"source": "guide", "quote": "Online only."}],
+    }
+    out = evaluate_dpi_facts(bundle(fact, contextual), context, 1200)
+    assert out["facts"][0]["status"] == "satisfied"
+    assert out["facts"][1]["status"] == "unknown"
+    assert out["status"] == "unknown"
+    assert out["evaluated_raster_dpi_status"] == "unknown"

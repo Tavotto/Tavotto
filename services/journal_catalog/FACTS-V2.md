@@ -23,6 +23,8 @@ A bundle is `{schema:2, journal_id, journal:{label,publisher_id,issn?,eissn?}, s
 
 Each fact has one source and a short verbatim quote; do not put full pages or archives in bundles. Repeated subjects, such as image-kind-specific DPI, remain separate records. Origin and condition remain visible rather than applying an implicit publisher-over-journal merge. Consumers must treat conflicting or unrecognized requirements as unresolved. Validation is all-or-nothing, rejects unknown fields, duplicate fact IDs / JSON keys, broken source references, invalid dates and non-finite numbers. The current implementation is a typed storage and transport contract, not proof that the vocabulary can express every possible requirement; unsupported requirements retain evidence as `text` with the relevant condition, and remain non-executable.
 
+The isolated `journalfacts_dpi` experiment does not interpret source `context` or structured membership predicates. Any fact with source context, free-text conditions, or an unsupported predicate remains unknown even when its review status is verified. This conservative behavior does not certify that unqualified facts have authentic sources or independent review, and the experiment is not wired into preflight.
+
 ## Legacy and deployment
 
 The v1 endpoint and schema remain unchanged. Do not add a v2 condition to a v1 foldable rule: old clients ignore it and apply the number to every figure. A separately audited v1 projection may contain only unconditional rules it can represent faithfully; publisher inheritance and bundled seeds must be checked independently. Old clients reject v2 index schema; seeded IDs are not automatically replaced by same-ID remote v1 bundles. Existing project snapshots remain unchanged.

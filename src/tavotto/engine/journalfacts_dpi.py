@@ -25,7 +25,9 @@ _SUBJECT = "raster_dpi"
 
 def _applicability(fact: dict, context: Mapping[str, object]) -> str:
     """Return matches / not_applicable / unknown, with conjunction semantics."""
-    unknown = bool(fact.get("condition_text"))
+    # Source context can qualify scope or strength and is not machine-decoded.
+    # No supported proof binds it to the structured fields, even for verified facts.
+    unknown = bool(fact.get("condition_text") or fact.get("context"))
     mismatch = False
     stage = fact["stage"]
     if stage == "unknown":
