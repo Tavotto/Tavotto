@@ -86,7 +86,7 @@ export function requestRender(
   const store = useRenderStore.getState()
   const key = renderKeyOf(panel)
   const origin = figureOriginFor(panel)
-  const want = renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource, origin)
+  const want = renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource, origin, panel.chartFrame?.renderProfile)
   cancelScheduledRender(panel.id)
   const issue = origin === undefined ? artifactValidationIssue(panel) : null
   if (issue) {
@@ -108,6 +108,8 @@ export function requestRender(
   const chart = snapshot?.chart
   const chartSource = snapshot?.chart_source
   const fileId = panel.fileId
+  // 计算图表的坐标合同随面板走（/1 面板 undefined，身份与请求形状不变）
+  const renderProfile = panel.chartFrame?.renderProfile
   // 项目代际在**排渲染这一刻**取：防抖窗口里切了项目的话，到点那一次整个作废
   const epoch = renderEpoch()
   const fire = () => {
@@ -116,9 +118,9 @@ export function requestRender(
     void (origin !== undefined
       ? store.render(fileId, patches, dpi, policy, epoch, undefined, purpose, chart, chartSource, snapshot!.figure_origin)
       : chartSource !== undefined
-      ? store.render(fileId, patches, dpi, policy, epoch, adoptionGuardOf(panel), purpose, chart, chartSource)
+      ? store.render(fileId, patches, dpi, policy, epoch, adoptionGuardOf(panel), purpose, chart, chartSource, undefined, renderProfile)
       : chart
-      ? store.render(fileId, patches, dpi, policy, epoch, adoptionGuardOf(panel), purpose, chart)
+      ? store.render(fileId, patches, dpi, policy, epoch, adoptionGuardOf(panel), purpose, chart, undefined, undefined, renderProfile)
       : purpose === 'foreground'
       ? store.render(fileId, patches, dpi, policy, epoch, adoptionGuardOf(panel))
       : store.render(fileId, patches, dpi, policy, epoch, adoptionGuardOf(panel), purpose))
@@ -143,7 +145,7 @@ export function flushRender(panelId: string) {
   if (panel?.type !== 'panel') return
   const store = useRenderStore.getState()
   cancelScheduledRender(panelId)
-  const want = renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource, figureOriginFor(panel))
+  const want = renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource, figureOriginFor(panel), panel.chartFrame?.renderProfile)
   const state = store.get(renderKeyOf(panel))
   // 判据是「这一版还没画出来」，不是「有没有挂起的计时器」。
   // 旧实现只看计时器：render:'none' 的手势（scrub / 取色）压根不设计时器，

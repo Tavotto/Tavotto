@@ -27,7 +27,7 @@ type SourceFactsInput = Pick<ExportRequestInput, 'scope' | 'doc' | 'panel' | 'fi
 function sourceFactsOf(input: SourceFactsInput) {
   const panelFacts = (p: PanelObject, overrides: unknown, sendsChart = true) => {
     const facts = [p.fileId, overrides, p.hidden ? 1 : 0, p.figureSnapshot ?? null]
-    const chart = sendsChart ? chartRequestIdentity(p.chart, p.chartSource) : undefined
+    const chart = sendsChart ? chartRequestIdentity(p.chart, p.chartSource, p.chartFrame?.renderProfile) : undefined
     // 无 chart/ref 时旧 key 逐字不变；复用请求身份，保留在场但畸形的 ref 让后端拒绝。
     if (chart !== undefined) facts.push(chart)
     return facts

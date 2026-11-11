@@ -1254,7 +1254,7 @@ function panelSpec(
       : null,
     // 有 override 但引擎那边还没画出这一版：成图会与画布不一致
     unapplied_overrides:
-      o.overrides.length > 0 && r?.lastPatches !== renderRequestIdentity(o.overrides, o.chart, o.chartSource, figureOriginFor(o))
+      o.overrides.length > 0 && r?.lastPatches !== renderRequestIdentity(o.overrides, o.chart, o.chartSource, figureOriginFor(o), o.chartFrame?.renderProfile)
         ? o.overrides.length
         : 0,
     hidden: !!o.hidden,

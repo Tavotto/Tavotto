@@ -1,4 +1,4 @@
-import { chartSourceFields } from '@/lib/chartSource'
+import { chartSourceFields, type ChartRenderProfile } from '@/lib/chartSource'
 import { rejectArtifactRenders, renderKey, renderRequestIdentity } from '@/store/renderStore'
 import { artifactRequestFields, artifactKeySuffix, artifactValidationIssue, ArtifactValidationError, subjectOf, hasRealEdits, type AdoptionGuard } from '@/lib/artifactValidation'
 import type { ChartSourceRef, FigureOrigin, FigureSnapshot, PanelChartState, PanelOverride } from '@/types/document'
@@ -43,8 +43,8 @@ let cacheEpoch = 0
  * 之后切到项目 B，会直接命中 A 的 blob 并把**别人的图**当成这一版的预览显示
  * 出来，而且一次请求都不发。素材本身被改过（mtime 变了）同理。
  */
-const keyOf = (fileId: string, overrides: unknown[], bucket: number, rev: number, chart?: PanelChartState, chartSource?: ChartSourceRef, owner?: PreviewOwner, origin?: FigureOrigin) =>
-  `${owner ? owner.key : currentProjectId() ?? '-'} ${rev} ${bucket} ${fileId} ${renderRequestIdentity(overrides, chart, chartSource, origin)}`
+const keyOf = (fileId: string, overrides: unknown[], bucket: number, rev: number, chart?: PanelChartState, chartSource?: ChartSourceRef, owner?: PreviewOwner, origin?: FigureOrigin, renderProfile?: ChartRenderProfile) =>
+  `${owner ? owner.key : currentProjectId() ?? '-'} ${rev} ${bucket} ${fileId} ${renderRequestIdentity(overrides, chart, chartSource, origin, renderProfile)}`
 
 function remember(key: string, url: string) {
   cache.set(key, url)
@@ -101,12 +101,13 @@ export function useVariantPng(
   owner?: PreviewOwner,
   reference?: FigureSnapshot,
   origin?: FigureOrigin,
+  renderProfile?: ChartRenderProfile,
 ): VariantPng {
   const active = !owner || owner.still()
   const archived = hasFigureSnapshotPreview({ figureSnapshot: reference, chart, chartSource })
   const archiveKey = archived ? figureSnapshotPreviewIdentity(reference) : null
   const cacheable = archived || origin !== undefined || artifactValidation === undefined
-  const key = keyOf(fileId, overrides, bucket, rev, chart, chartSource, owner, origin) + artifactKeySuffix(origin === undefined ? artifactValidation : undefined)
+  const key = keyOf(fileId, overrides, bucket, rev, chart, chartSource, owner, origin, renderProfile) + artifactKeySuffix(origin === undefined ? artifactValidation : undefined)
     + (archived ? ` archive:${archiveKey ?? 'invalid'}` : '')
   const [state, setState] = useState<VariantPng & {key?: string}>(() => ({
     key,
@@ -185,7 +186,7 @@ export function useVariantPng(
             }
             return frame.url
           })
-        : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, { ...artifactRequestFields(subject), chart: structuredClone(chart), ...chartSourceFields(chartSource) }, pj).then(frame => frame.url)
+        : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, { ...artifactRequestFields(subject), chart: structuredClone(chart), ...chartSourceFields(chartSource), ...(renderProfile !== undefined ? { render_profile: renderProfile } : {}) }, pj).then(frame => frame.url)
       : artifactValidation
       ? transport ? Promise.reject(new ArtifactValidationError('unsupported_render_state'))
         : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, artifactRequestFields(subject), pj).then(s=>s.url)

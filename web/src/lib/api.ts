@@ -3277,6 +3277,11 @@ export interface EngineRenderOptions extends ArtifactRequestFields {
   /** 显式计算图表状态；与完整 patches 一起走同一次配对渲染。 */
   chart?: PanelChartState
   chart_source?: ChartSourceRef
+  /**
+   * 计算图表的坐标合同（`panel.chartFrame?.renderProfile`，仅 /2 面板携带）。
+   * 同一 chart 不同坐标语义不能共用渲染身份；/1 面板不传，请求形状逐字不变。
+   */
+  render_profile?: 'native-manifest/1' | 'native-manifest/2'
   signal?: AbortSignal
   /**
    * 这一次预览 SVG 里**嵌入位图**的 dpi（不给 = worker 的默认）。
@@ -3353,6 +3358,7 @@ export async function engineRender(
       ...(origin !== undefined ? { figure_origin: origin } : {}),
       ...(opts.chart ? { chart: structuredClone(opts.chart) } : {}),
       ...(opts.chart_source !== undefined ? { chart_source: structuredClone(opts.chart_source) } : {}),
+      ...(opts.chart && opts.render_profile !== undefined ? { render_profile: opts.render_profile } : {}),
       source_policy: opts.source_policy,
       expected_source: opts.expected_source,
       ...(opts.confirmed_reconstruction_sha256 ? { confirmed_reconstruction_sha256: opts.confirmed_reconstruction_sha256 } : {}),
@@ -3590,6 +3596,8 @@ export interface EnginePngOptions extends ArtifactRequestFields {
   figure_origin?: FigureOrigin
   chart?: PanelChartState
   chart_source?: ChartSourceRef
+  /** 计算图表的坐标合同（仅 /2 面板携带；见 EngineRenderOptions.render_profile）。 */
+  render_profile?: 'native-manifest/1' | 'native-manifest/2'
   /** Immutable archived pixels only; never a live editable manifest. */
   figure_snapshot?: FigureSnapshot
 }

@@ -227,7 +227,7 @@ export function alignSelectedPanelElements(panelId: string, mode: AlignMode): Al
  * `lastPatches` 与当前完整输入身份相同，才属于当前变体。
  */
 const exactKeyOf = (panel: PanelObject, lastPatches: string | null): string | null =>
-  lastPatches === renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource, figureOriginFor(panel)) ? renderKeyOf(panel) : null
+  lastPatches === renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource, figureOriginFor(panel), panel.chartFrame?.renderProfile) ? renderKeyOf(panel) : null
 
 /** 拒绝的原因 → 诊断事件里的闭集取值。两张表分开，是因为 UI 的分类
  *  （提示什么）与诊断的分类（为什么不安全）本来就不是同一个问题。 */

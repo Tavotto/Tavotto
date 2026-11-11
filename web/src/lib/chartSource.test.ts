@@ -18,6 +18,23 @@ const panel = (): PanelObject => {
 }
 afterEach(() => vi.unstubAllGlobals())
 
+describe('chart 请求身份携带坐标合同（N5 第 2 步）', () => {
+  it('/1 形状逐字不变；/2 才出现 render_profile，且同 chart 不同 profile 是不同身份', () => {
+    const c = chart()
+    expect(chartRequestIdentity(c)).toBe(JSON.stringify(c))
+    const one = chartRequestIdentity(c, undefined, 'native-manifest/1')
+    const two = chartRequestIdentity(c, undefined, 'native-manifest/2')
+    expect(JSON.parse(one!)).toEqual({ chart: c, render_profile: 'native-manifest/1' })
+    expect(JSON.parse(two!)).toEqual({ chart: c, render_profile: 'native-manifest/2' })
+    expect(one).not.toBe(two)
+    const ref = panel().chartSource!
+    expect(JSON.parse(chartRequestIdentity(c, ref, 'native-manifest/2')!))
+      .toEqual({ chart: c, chart_source: ref, render_profile: 'native-manifest/2' })
+    // 无 chart 时不因 profile 出身份（profile 只随计算图表有意义）
+    expect(chartRequestIdentity(undefined, undefined, 'native-manifest/2')).toBeUndefined()
+  })
+})
+
 describe('来源引用只是独立INPUT合同，不成为第二份图表模型', () => {
   it('深拷贝完整引用；无引用省略字段，显式坏引用不静默当成legacy', () => {
     const p = panel(), result = chartSourceFields(p.chartSource)

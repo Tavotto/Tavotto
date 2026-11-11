@@ -1,5 +1,5 @@
 import { installMomentSources, TIMELINE_THUMB_PX, type PanelSource, type ThumbSources } from '@/lib/momentCapture'
-import { chartRequestIdentity, chartSourceFields } from '@/lib/chartSource'
+import { chartRequestIdentity, chartSourceFields, type ChartRenderProfile } from '@/lib/chartSource'
 import { hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
 import { figureOriginFor, figureOriginIdentity, sameFigureOrigin, validFigureOrigin } from '@/lib/figureSnapshot'
 import { artifactKeySuffix, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, verifiedSource, policyOfGuard, retryArtifactEntry, subjectOf, type AdoptionGuard, isAdoptedPanel, adoptionGuardOf } from '@/lib/artifactValidation'
@@ -217,20 +217,20 @@ const EMPTY: PanelRender = {
  * 分隔符用空格是安全的：变体串是 JSON 数组或显式 chart 请求对象，以 `[` / `{` 开头，
  * 拼出来的键不可能与另一个「文件名里带空格」的组合撞上。
  */
-export function renderRequestIdentity(patches: unknown[], chart?: PanelChartState, chartSource?: ChartSourceRef, origin?: FigureOrigin): string {
+export function renderRequestIdentity(patches: unknown[], chart?: PanelChartState, chartSource?: ChartSourceRef, origin?: FigureOrigin, renderProfile?: ChartRenderProfile): string {
   if (origin !== undefined) return JSON.stringify({ patches, chart, chart_source: chartSource, figure_origin: JSON.parse(figureOriginIdentity(origin)) })
-  if (chartSource !== undefined) return JSON.stringify({ patches, chart, chart_source: chartSource })
-  return chart ? JSON.stringify({ patches, chart }) : JSON.stringify(patches)
+  if (chartSource !== undefined) return JSON.stringify({ patches, chart, chart_source: chartSource, ...(renderProfile !== undefined ? { render_profile: renderProfile } : {}) })
+  return chart ? JSON.stringify({ patches, chart, ...(renderProfile !== undefined ? { render_profile: renderProfile } : {}) }) : JSON.stringify(patches)
 }
 
-export function renderKey(fileId: string, patches: unknown[], guard?: unknown, chart?: PanelChartState, chartSource?: ChartSourceRef, origin?: FigureOrigin): string {
-  return `${fileId} ${renderRequestIdentity(patches, chart, chartSource, origin)}${artifactKeySuffix(guard)}`
+export function renderKey(fileId: string, patches: unknown[], guard?: unknown, chart?: PanelChartState, chartSource?: ChartSourceRef, origin?: FigureOrigin, renderProfile?: ChartRenderProfile): string {
+  return `${fileId} ${renderRequestIdentity(patches, chart, chartSource, origin, renderProfile)}${artifactKeySuffix(guard)}`
 }
 
 /** 面板 → 它自己那份渲染态的键（唯一出处，消费方一律用它取状态） */
 export function renderKeyOf(panel: PanelObject): string {
   const origin = figureOriginFor(panel)
-  return renderKey(panel.fileId, panel.overrides, origin === undefined ? adoptionGuardOf(panel) : undefined, panel.chart, panel.chartSource, origin)
+  return renderKey(panel.fileId, panel.overrides, origin === undefined ? adoptionGuardOf(panel) : undefined, panel.chart, panel.chartSource, origin, panel.chartFrame?.renderProfile)
 }
 
 /** Display history is confined to one historical input; ordinary Python keeps its original index. */
@@ -369,6 +369,8 @@ interface RenderState {
     chart?: PanelChartState,
     chartSource?: ChartSourceRef,
     figureOrigin?: FigureOrigin,
+    /** 计算图表的坐标合同（`panel.chartFrame?.renderProfile`）；/1 面板不传。 */
+    renderProfile?: ChartRenderProfile,
   ) => Promise<void>
   /** 脚本变更：转入引擎跟踪并清掉该文件**全部变体**的 lastPatches */
   markStale: (fileIds: string[]) => void
@@ -707,19 +709,19 @@ export const useRenderStore = create<RenderState>((set, get) => ({
       } } }
     }),
 
-  render: async (fileId, patches, previewDpi, policy, epoch, artifactValidation, purpose = 'foreground', chart, chartSource, figureOrigin) => {
+  render: async (fileId, patches, previewDpi, policy, epoch, artifactValidation, purpose = 'foreground', chart, chartSource, figureOrigin, renderProfile) => {
     // 排渲染时的项目已经不是当前项目：连请求都不发（发出去 pj 是新项目的，
     // 渲染的却是旧项目的 fileId 与 patches）
     if (epoch !== undefined && epoch !== projectEpoch) return
     // 完整 JSON 请求身份在入队时冻结；调用方后续换模型不能改写在途请求。
     if (chart || chartSource !== undefined || figureOrigin !== undefined) {
-      const snapshot = JSON.parse(renderRequestIdentity(patches, chart, chartSource, figureOrigin)) as { patches: unknown[]; chart?: PanelChartState; chart_source?: ChartSourceRef; figure_origin?: FigureOrigin }
+      const snapshot = JSON.parse(renderRequestIdentity(patches, chart, chartSource, figureOrigin, renderProfile)) as { patches: unknown[]; chart?: PanelChartState; chart_source?: ChartSourceRef; figure_origin?: FigureOrigin }
       patches = snapshot.patches
       chart = snapshot.chart
       chartSource = snapshot.chart_source
       figureOrigin = snapshot.figure_origin
     }
-    const key = renderKey(fileId, patches, artifactValidation, chart, chartSource, figureOrigin)
+    const key = renderKey(fileId, patches, artifactValidation, chart, chartSource, figureOrigin, renderProfile)
     const family = sourceKey(fileId, figureOrigin)
     // 序号在**请求进来的那一刻**取，不是发出的那一刻：忙时排队的那次要带着
     // 自己的序号走完全程，否则一个早就该被覆盖的旧变体会因为「重试发得晚」
@@ -756,7 +758,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           fileId,
           ...(figureOrigin !== undefined ? { figureOrigin } : {}),
           artifactValidation: artifactValidation ?? undefined,
-          ...(chart ? { chartRequest: chartRequestIdentity(chart, chartSource) } : {}),
+          ...(chart ? { chartRequest: chartRequestIdentity(chart, chartSource, renderProfile) } : {}),
           status: 'rendering',
           error: null,
           traceback: '',
@@ -786,7 +788,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           const source = artifactValidation === undefined ? {} : artifactRequestFields(subjectOf(fileId, current as PanelObject['overrides'], artifactValidation))
           // 只有「当前来源的普通渲染」才要正证：历史来源自己就是身份，声明式图表没有用户代码执行。
           const wantProof = figureOrigin === undefined && chart === undefined && chartSource === undefined && artifactValidation === undefined
-          const opts = { signal: ctrl.signal, previewDpi: dpi, ...(currentPurpose === 'neighbour' ? { purpose: currentPurpose } : {}), ...source, ...(chart ? { chart } : {}), ...chartSourceFields(chartSource), ...(figureOrigin !== undefined ? { figure_origin: figureOrigin } : {}), ...(wantProof ? { includeFigureExecution: true } : {}) }
+          const opts = { signal: ctrl.signal, previewDpi: dpi, ...(currentPurpose === 'neighbour' ? { purpose: currentPurpose } : {}), ...source, ...(chart ? { chart } : {}), ...chartSourceFields(chartSource), ...(figureOrigin !== undefined ? { figure_origin: figureOrigin } : {}), ...(chart && renderProfile !== undefined ? { render_profile: renderProfile } : {}), ...(wantProof ? { includeFigureExecution: true } : {}) }
           const transport = engineTransport()
           if (figureOrigin !== undefined && !validFigureOrigin(figureOrigin, fileId)) throw new EngineError('Invalid historical Figure input.', '', 'svg_source_unavailable')
           if (figureOrigin !== undefined && (chart !== undefined || chartSource !== undefined || artifactValidation != null)) throw new EngineError('Historical Figure inputs cannot be combined with a current source selection.', '', 'svg_source_unavailable')
@@ -836,7 +838,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             ...(figureOrigin !== undefined ? { figureOrigin } : {}),
             projectId: projectAtStart,
             artifactValidation: artifactValidation ?? undefined,
-            ...(chart ? { chartRequest: chartRequestIdentity(chart, chartSource), chartRevision: res.chart_revision } : {}),
+            ...(chart ? { chartRequest: chartRequestIdentity(chart, chartSource, renderProfile), chartRevision: res.chart_revision } : {}),
             rev: res.rev,
             manifest: res.manifest,
             status: 'ready',
@@ -851,7 +853,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             warnings: res.warnings ?? [],
             timings: res.timings ?? {},
             stale: false,
-            lastPatches: renderRequestIdentity(current, chart, chartSource, figureOrigin),
+            lastPatches: renderRequestIdentity(current, chart, chartSource, figureOrigin, renderProfile),
             deferredPatches: null,
             previewDpi: dpi ?? null,
           }
@@ -964,7 +966,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
               error: null,
               code: '',
               wantPatches: null,
-              deferredPatches: renderRequestIdentity(current, chart, chartSource, figureOrigin),
+              deferredPatches: renderRequestIdentity(current, chart, chartSource, figureOrigin, renderProfile),
             })
             return
           }
@@ -1291,7 +1293,7 @@ export function panelRender(
 }
 
 function compatibleChartRender(render: Pick<PanelRender, 'chartRequest' | 'figureOrigin'> | undefined, panel: PanelObject): boolean {
-  return render?.chartRequest === chartRequestIdentity(panel.chart, panel.chartSource) &&
+  return render?.chartRequest === chartRequestIdentity(panel.chart, panel.chartSource, panel.chartFrame?.renderProfile) &&
     sameFigureOrigin(render?.figureOrigin, figureOriginFor(panel))
 }
 
@@ -1341,7 +1343,7 @@ export function exactPanelRender(
 
 function exactOf(own: PanelRender | undefined, panel: PanelObject): PanelRender | null {
   if ((figureOriginFor(panel) === undefined && artifactValidationIssue(panel)) || !own?.manifest || own.stale) return null
-  if (own.lastPatches !== renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource, figureOriginFor(panel))) return null
+  if (own.lastPatches !== renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource, figureOriginFor(panel), panel.chartFrame?.renderProfile)) return null
   if (!sameFigureOrigin(own.figureOrigin, figureOriginFor(panel))) return null
   if (panel.chart && (!own.chartRevision || !compatibleChartRender(own, panel))) return null
   return own

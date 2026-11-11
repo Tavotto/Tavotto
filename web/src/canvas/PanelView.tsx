@@ -217,7 +217,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 拿上一变体的位图冒充当前变体——那正是「预览 ≠ 当前 overrides 且不吵」。
   const enginePng =
     pngBlob.url && !(isAdoptedPanel(obj) && pngBlob.failed) && !currentArtifactIssue &&
-    (pngIsCurrent || (pngBlob.chartRequest === (chartRequestIdentity(obj.chart, obj.chartSource) ?? null) && sameFigureOrigin(origin, pngBlob.figureOrigin) && !isAdoptedPanel(obj) && !pngBlob.failed)) ? pngBlob.url : null
+    (pngIsCurrent || (pngBlob.chartRequest === (chartRequestIdentity(obj.chart, obj.chartSource, obj.chartFrame?.renderProfile) ?? null) && sameFigureOrigin(origin, pngBlob.figureOrigin) && !isAdoptedPanel(obj) && !pngBlob.failed)) ? pngBlob.url : null
   // 性能探针（ADR 0075）：位图这一格（raster / evicted / 非编辑态的引擎位图）没有
   // 「SVG 换进 DOM」那一刻，松手 → 图落定要一直量到**这一版自己的位图**加载完
   // （onLoad：取图、解码都已结束）。暂挂的上一变体 / 上一 rev 的那张不算——那是
@@ -470,7 +470,7 @@ function useEnginePngBlob(
     if (!enabled || !activeOwner) return
     const ctrl = new AbortController()
     const project = owner
-    const chartRequest = chartRequestIdentity(obj.chart, obj.chartSource) ?? null
+    const chartRequest = chartRequestIdentity(obj.chart, obj.chartSource, obj.chartFrame?.renderProfile) ?? null
     let landed = false
     const transport = engineTransport()
     const origin = figureOriginFor(obj) === undefined ? undefined : structuredClone(figureOriginFor(obj))

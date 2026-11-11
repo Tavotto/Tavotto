@@ -1853,6 +1853,7 @@ function SnapshotPanel({
     panel.chart, panel.chartSource,
     owner,
     ...figureSnapshotPreviewArgs(panel),
+    panel.chartFrame?.renderProfile,
   )
   useEffect(() => {
     if (renderOverrides || archived) onApproximate?.(variant.approximate)

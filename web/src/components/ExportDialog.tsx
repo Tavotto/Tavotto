@@ -2171,6 +2171,7 @@ function useFigureThumbSource(
     panel?.chart, panel?.chartSource,
     owner,
     ...historicalArgs,
+    panel?.chartFrame?.renderProfile,
   );
   // runtime 图的退路是 cache 预览：后端 GET 版给的是「最近一次渲染」，撤销回一个前端已画过的变体时它停在
   // 撤销前（QA-WIN-21）。按此刻的 overrides 取，不是这个状态的图就不挂（预览只是示意，空着比旧图诚实）

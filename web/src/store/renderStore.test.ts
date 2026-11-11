@@ -24,8 +24,7 @@ import { msg } from '@/i18n'
 import { currentProjectId } from '@/lib/session'
 import { useUiStore } from '@/store/uiStore'
 import { EDITOR_SVG_HARD_LIMIT_BYTES } from '@/lib/previewBudget'
-import type { PanelObject } from '@/types/document'
-import type { PanelChartState } from '@/types/document'
+import type { PanelObject, PanelChartState } from '@/types/document'
 import chartVectors from '../../../tests/golden/chart_model_vectors.json'
 
 const engineRender = vi.fn()
@@ -455,6 +454,18 @@ describe('变体键', () => {
 
   it('文件名里带空格也不会撞键（变体串必然以 [ 开头）', () => {
     expect(renderKey('my figs/a [1].pdf', [])).not.toBe(renderKey('my figs/a', [1, []]))
+  })
+
+  it('坐标合同参与身份：/1 面板逐字不变，/2 面板同 chart 不同 profile 是不同键', () => {
+    const base = panel('a', 'native.pdf')
+    const chart = { model: { schema: 1, rev: 1, scene_digest: 's' }, binding: { model_rev: 1, scene_digest: 's', entries: [] } } as unknown as PanelChartState
+    const one = { ...base, chart } as PanelObject
+    const two = { ...base, chart, chartFrame: { version: 1 as const, renderProfile: 'native-manifest/2' as const, originPt: [0, 0] as [number, number] } } as PanelObject
+    // /1（无 chartFrame）身份不含 render_profile：旧形状逐字保持
+    expect(renderRequestIdentity([], chart)).toBe(JSON.stringify({ patches: [], chart }))
+    expect(renderRequestIdentity([], chart, undefined, undefined, undefined)).toBe(JSON.stringify({ patches: [], chart }))
+    expect(renderKeyOf(one)).toBe(renderKeyOf({ ...one }))
+    expect(renderKeyOf(one)).not.toBe(renderKeyOf(two))
   })
 })
 
