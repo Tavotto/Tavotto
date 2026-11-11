@@ -10,7 +10,11 @@
 | 项目 | 2026-11-11 盘点结果 |
 | --- | --- |
 | 唯一实施树 / 分支 | `E:/0 - Project/Tavotto-svg-r00` / `zixu.wang/svg-computational-r00`；盘点时工作区干净 |
-| 盘点 HEAD | `94ef609f7d558bec43013e2e37d2c3a6042625e9`；本次状态文档提交另计 |
+| 当前 HEAD（本次分支补记前） | `23c1871739b7422845e3f2cc8ac2ae09f144c878`：PR收敛计划与提示词；本次补记会再产生文档提交，接续以 `git log -1` 为准，不 reset 到本文SHA |
+| 最新产品代码提交 | `71ee8c78`：写回验证/备份期间保护外部新原件；之后截至补记前的提交均为状态文档 |
+| 远端与跟踪 | 本次 `git ls-remote --heads origin` 对指定main/功能分支查询实际exit0：main=`2bc94f7f`，未发现 `refs/heads/zixu.wang/svg-computational-r00`；当前分支未配置upstream，不能当作已有远端功能分支 |
+| 当前主线关系 | 本次补记前 `origin/main...HEAD` 为主线独有0 / 本分支独有181提交；尚未合入 `origin/main`，本次没有push/合并 |
+| 原功能范围盘点基准 | `94ef609f7d558bec43013e2e37d2c3a6042625e9`；下方180提交/412文件数据属于该历史盘点，不是当前HEAD计数 |
 | 主线新鲜度 | 本次 `git fetch origin` 实际 exit 0；`origin/main` 与 merge-base 均为 `2bc94f7fd9b13276f92d100fcd1b0e7075f49a93` |
 | 提交与差异 | 文档更新前 `origin/main...HEAD` 为主线独有 0 / 本分支独有 180 个提交；412 文件、85633 行增加、2153 行删除。该数字描述盘点范围，不代表验收完成率 |
 | 原用户目录 | `E:/0 - Project/Tavotto` 仍为干净 `main@69bcafae`，不是本功能实施树；不在该树切分支或覆盖稿件 |

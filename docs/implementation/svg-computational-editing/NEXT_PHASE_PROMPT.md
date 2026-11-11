@@ -2,10 +2,14 @@
 
 更新：2026-11-11。当前产品开发仍暂停；本提示词仅供用户明确恢复实施时复制使用。详细任务、PR范围和退出条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，现状/首红/证据见 [PROGRESS.md](PROGRESS.md)，完整需求见 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。
 
+分支现场：`zixu.wang/svg-computational-r00`，目录 `E:/0 - Project/Tavotto-svg-r00`；本次补记前HEAD为`23c18717`（PR计划/提示词），最新产品代码为`71ee8c78`。本次远端查询未发现origin同名功能分支，未配置upstream，尚未合入main。本次记录本身会新增文档提交，恢复以实际HEAD/diff为准，完整现场见NEXT_PHASE §1.1。
+
 ~~~text
 恢复 Tavotto 当前 SVG 计算图表编辑的 PR 收敛工作。目标是在不影响现有 Python/旧项目功能和逻辑的基础上，完成 NEXT_PHASE.md 中 PR00–PR07 的必做项，产出与最终源码匹配的测试证据和可审查 PR 标题/正文草稿；不能只写计划或以草稿状态代替功能闭合。最大化复用原功能，使用有独立收益的多子代理并行，按功能分别 commit，常规可逆步骤自主完成，不反复问确认。
 
 唯一实施树 E:/0 - Project/Tavotto-svg-r00，分支 zixu.wang/svg-computational-r00。不新建/切换分支或 worktree，不 reset/stash/git add .、不重写既有提交。原 E:/0 - Project/Tavotto 的 main 与全部用户项目、data/config、INPUT、AS/命名稿必须保留。先读根和受影响层 AGENTS、对应规则/ADR及最新 PROGRESS，核实际 HEAD/diff/身份；重新 fetch 核主线。2026-11-11盘点时HEAD=94ef609f（后续文档提交另计），origin/main与merge-base=2bc94f7f，主线独有0/本分支180提交，412文件；这是历史盘点，不是永久基线。当前单分支已从主线派生，不能因原main工作区落后就切回那里开发。
+
+最新分支补记：上述94ef609f是功能范围盘点基准；PR计划已提交到23c18717，本次补记前该分支181条独有提交，最新产品代码仍为71ee8c78。本次origin远端heads查询没有同名功能分支、upstream为空，未合入main。恢复先核实际最新文档HEAD，不能仅checkout远端main或假定功能分支已推送；本次补记后的文档提交同样应保留。
 
 先做PR00：按完整A/B/C需求和当前公开承诺建立需求→入口→实现→用例→证据表，建立大diff的审查地图。默认完成可信Figure来源编辑、普通SVG显式轴/系列/数据绑定、自包含项目恢复，不猜科学数据、不削减既有功能。区分本地可审查、线上可合并、可发布；未曝光的通用普通PDF→SVG是否属于本PR，须以基线/当前UI/ADR和真实必经路径判定，不能无限扩大范围，也不能把回归改叫非目标。
 

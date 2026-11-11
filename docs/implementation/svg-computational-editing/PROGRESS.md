@@ -6,11 +6,11 @@
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 > 前轮05:10后的91项捕获包资格保留其历史源码窗口；3c现已有实现与新资格，不能再按旧checkpoint重做。不同测试组不相加成最终总数；当前分支实际HEAD/diff优先。
 
-## 环境（2026-11-09 当前快照）
+## 环境（2026-11-11 分支现场；旧运行窗口保留）
 
-- 当前实施树E:/0 - Project/Tavotto-svg-r00，沿用zixu.wang/svg-computational-r00；最新产品HEAD 71ee8c78，后续状态文档提交另计。原E:/0 - Project/Tavotto已重新核对仍clean main@69bcafae、未合入。本轮两项修复独立提交，按用户要求暂停；恢复时核实际HEAD/diff，不reset到文档SHA。
+- 当前实施树`E:/0 - Project/Tavotto-svg-r00`，沿用`zixu.wang/svg-computational-r00`；本次分支补记前HEAD为`23c18717`（PR收敛计划与提示词），最新产品代码为`71ee8c78`。本次补记会再产生文档提交，恢复时以实际HEAD/diff为准，不reset到文档SHA。原`E:/0 - Project/Tavotto`重新核仍clean main@69bcafae、未合入；产品开发保持暂停。
 - 原层序/请求/来源/包核心提交全部保留；后续输入合同f6c4a13d、转换3ed06553、共享导出5bc82a81、恢复82b142d2与上述新批次均独立提交。实际HEAD可能继续前进，续接须先核对，不reset到文档快照。
-- 本轮未 fetch，不把本地 origin/main 当远端新鲜度证明；当前任务未授权 push/远程 PR/合并/发布。
+- 2026-11-11已fetch核`origin/main=2bc94f7f`；本次补记再以`git ls-remote --heads origin`点名查询main与功能分支，actual exit0，仅main有返回、未发现同名远端功能分支。当前分支upstream为空，补记前相对主线独有181提交，未合入main；未执行push/创建远端PR/合并/发布。完整当前分支表见NEXT_PHASE §1.1。
 - 最新证据根 `E:/0 - Project/svg-review-20261109-resumed`；此前 `svg-review-20261109`、`svg-review-20261108` 与 `svg-review-20261106` 保留各自历史资格窗口。已有 venv/前端依赖复用，实际 Python 源码 import 已核对为当前树。测试配置/数据隔离，遥测关闭；前端按 package.json 等价 CLI 验证。
 - 当前安装资格索引n3d-stage-final.json对应0d86b357。N3e最新受影响及构建见n3e-final/；首红n3e-affected/first.*保留。时间线见n3e-import-cycle/implementation-validation.md，保存后恢复见n3e-saved-resume/validation.md，未知响应见n3e-network-recovery/validation.md。初次真实UI见n3e-ui/，2 PUT诊断见n3e-extra-put/diagnosis.md，目录反例/外部候选见n3e-directory-review/；N3f准备见n3f-mixed/qualification.md。各有独立源码窗口，不相加、不沿用旧构建冒称新修复资格。
 - 初次真实UI已归档160条网络事件到n3e-ui/output/playwright/49-status-network.json；root自有Playwright session n3e-svg-20261107已正常close、exit0（50-close-initial）。服务原exec25039经原认证shutdown终局exit0；launcher66892/runtime28916均不存在、24049无监听。停前1777源及11个实际HTTP bundle零漂移，见stop-bundle-verification.json、service-exit.json、stop-confirmed.json。源码冻结已解除，不再按旧live句柄续等或直接重启旧serve。
@@ -54,6 +54,14 @@
 | R09–R13 | pending | — | 见 NEXT_PHASE.md 的 PR00–PR07 收敛任务与完整 IMPLEMENTATION_PLAN；不由计划推断完成 |
 
 ## Checkpoint 追加（保留原记录；最新记录在前）
+
+### 2026-11-11 补记最新功能分支现场
+
+- 用户要求将最新分支情况也写入文档。已补NEXT_PHASE当前分支表、NEXT_PHASE_PROMPT复制正文与PROGRESS环境快照，并同步总计划入口；没有恢复产品开发。
+- 补记前clean `zixu.wang/svg-computational-r00@23c1871739b7422845e3f2cc8ac2ae09f144c878`，目录`E:/0 - Project/Tavotto-svg-r00`。最新产品代码`71ee8c78`；后续截至补记前均为文档。相对origin/main独有181提交，主线独有0；180提交/412文件数据保留其94ef609f历史盘点主语。
+- 点名查询远端main与同名功能分支的`git ls-remote`实际exit0，main返回2bc94f7f、同名功能分支无返回；本地未配置upstream。只将此记为“当次未发现origin同名分支”，不从upstream为空单独推导从未推送。尚未合入main，本轮不push/PR/合并/发布。
+- 原Tavotto目录仍clean main@69bcafae；分支补记自身会产生新文档commit，所以不把23c18717标为以后永远最新的HEAD。后续从实际git状态接续，保持一个实施分支。
+- 补记验证：规则索引/文档引用41pass/0fail/0skip、实际exit0（`E:/0 - Project/svg-review-20261111-plan/branch-docs.xml`），diff --check实际0；只改四份文档，没有产品源码变化。
 
 ### 2026-11-11 提PR前剩余工作盘点与计划（仅文档，未恢复产品开发）
 
