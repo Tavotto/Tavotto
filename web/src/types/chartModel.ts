@@ -97,10 +97,30 @@ export interface ChartModel {
   engine: { matplotlib: string, numpy: string, tavotto: string }
 }
 
+export interface ChartLegendEntry {
+  /** 用户确认的原始序（≥0、唯一）。 */
+  index: number
+  /** 确认预览里旧图例该条目的显示文字（随合同持久化，不运行时反推旧 SVG）。 */
+  label: string
+  /** 缺席 = custom（保持脚本原样示意）；在场 = follow_source（模型 series id）。 */
+  series?: string
+}
+
+export interface ChartLegendBinding {
+  /** 图例 role 名（`legend:<id>`），进 chartmanifest。 */
+  id: string
+  /** 旧 SVG 图例区域节点 id（场景节点；不得与 entries 的 node 重复）。 */
+  node: string
+  /** [x, y, w, h] 场景用户单位（与 axes.rect 同基准；区域外接矩形左上角对齐 legend 盒左上角）。 */
+  rect: [number, number, number, number]
+  entries: ChartLegendEntry[]
+}
+
 export interface ChartBinding {
   model_rev: number
   scene_digest: string
   entries: { object: string, node: string }[]
+  legend?: ChartLegendBinding[]
 }
 
 export interface ChartVerdict {
@@ -360,7 +380,7 @@ export function validateChartModel(model: unknown): ChartVerdict {
 export function validateChartBinding(binding: unknown, model: ChartModel): ChartVerdict {
   if (typeof binding !== 'object' || binding === null) return invalid()
   const b = binding as Record<string, unknown>
-  if (!keysAllowed(b, ['model_rev', 'scene_digest', 'entries'])) return invalid()
+  if (!keysAllowed(b, ['model_rev', 'scene_digest', 'entries', 'legend'])) return invalid()
   if (b.model_rev !== model.rev) return reject('chart_binding_stale')
   if (b.scene_digest !== model.scene_digest) return reject('chart_source_mismatch')
   const entries = b.entries
@@ -384,6 +404,45 @@ export function validateChartBinding(binding: unknown, model: ChartModel): Chart
     if (typeof e.node !== 'string' || !e.node) return invalid()
     if (nodes.has(e.node)) return reject('chart_duplicate_id')
     nodes.add(e.node)
+  }
+  // 可选 legend 合同（N4）：与 engine/chartmodel.py validate_legend_spec 同一判据。
+  if (b.legend !== undefined) {
+    const legend = b.legend
+    if (!Array.isArray(legend) || legend.length === 0) return invalid()
+    const legendIds = new Set<string>()
+    const legendNodes = new Set<string>()
+    for (const rawItem of legend) {
+      if (typeof rawItem !== 'object' || rawItem === null) return invalid()
+      const item = rawItem as Record<string, unknown>
+      if (!keysAllowed(item, ['id', 'node', 'rect', 'entries'])) return invalid()
+      if (typeof item.id !== 'string' || !ID_RE.test(item.id)) return invalid()
+      if (legendIds.has(item.id)) return reject('chart_duplicate_id')
+      legendIds.add(item.id)
+      if (typeof item.node !== 'string' || !item.node) return invalid()
+      if (legendNodes.has(item.node)) return reject('chart_duplicate_id')
+      legendNodes.add(item.node)
+      const rect = item.rect
+      if (!Array.isArray(rect) || rect.length !== 4 || !rect.every(isFiniteNumber)) return invalid()
+      if ((rect[2] as number) <= 0 || (rect[3] as number) <= 0) return invalid()
+      const items = item.entries
+      if (!Array.isArray(items) || items.length === 0) return invalid()
+      const indexes = new Set<number>()
+      for (const rawEntry of items) {
+        if (typeof rawEntry !== 'object' || rawEntry === null) return invalid()
+        const le = rawEntry as Record<string, unknown>
+        if (!keysAllowed(le, ['index', 'series', 'label'])) return invalid()
+        if (typeof le.index !== 'number' || !Number.isInteger(le.index) || le.index < 0) return invalid()
+        if (indexes.has(le.index)) return reject('chart_duplicate_id')
+        indexes.add(le.index)
+        if (typeof le.label !== 'string' || !le.label) return invalid()
+        if (le.series !== undefined
+          && (typeof le.series !== 'string' || !model.series.some(sr => sr.id === le.series))) return invalid()
+      }
+    }
+    // 图例区域节点与绑定条目节点互斥（engine 侧同一判据）
+    for (const node of legendNodes) {
+      if (nodes.has(node)) return reject('chart_duplicate_id')
+    }
   }
   return { ok: true }
 }

@@ -426,9 +426,94 @@ def dumps_model(model: dict) -> str:
 # Binding：场景节点 ↔ 模型对象，带代际
 # ---------------------------------------------------------------------------
 
-_BINDING_KEYS = ("model_rev", "scene_digest", "entries")
+_BINDING_KEYS = ("model_rev", "scene_digest", "entries", "legend")
 _ENTRY_KEYS = ("object", "node")
 _OBJECT_RE = re.compile(r"^(axes|series):([a-z][a-z0-9_]{0,63})$")
+#: 绑定可选 ``legend`` 合同的闭式字段集（N4）：图例区域 ↔ 模型系列的显式关系。
+#: 放 binding 不放 model——它是「场景区域 ↔ 模型对象」关系，与 binding 本职同构；
+#: ``panel_identity`` 已把 binding digest 算进面板身份，图例关系变化自动产生新版本。
+_LEGEND_KEYS = ("id", "node", "rect", "entries")
+_LEGEND_ITEM_KEYS = ("index", "series", "label")
+
+
+def validate_legend_spec(legend: Any, model: dict) -> list:
+    """校验绑定里的可选 ``legend`` 合同（就地返回它）；判据唯一出处。
+
+    两个消费方：``validate_binding``（确认/载入/导出闸）与 worker 脚手架
+    （``svgchart`` 不信任父进程，对照 ``validate_model`` 的既有先例）。判据：
+
+    - ``id``：图例 role 名（``legend:<id>`` 进 chartmanifest），``_ID_RE`` 同款，
+      多条 legend 之间唯一；
+    - ``node``：旧 SVG 图例区域节点 id，legend 之间唯一；与绑定 entries 节点的
+      互斥由 ``validate_binding`` 对照 entries 核对（这里没有 entries 可比）；
+    - ``rect``：[x, y, w, h] 场景用户单位，与 axes.rect 同一判据（供脚手架按
+      legend 盒左上角定位，语义冻结见 N4 计划 §5.3 方案 A）；
+    - ``entries``：每项 ``{index, label, series?}``——index 是用户确认的原始序
+      （≥0、唯一）；label 是确认预览里旧图例该条目的显示文字（**随合同持久化**，
+      冷重放确定性来自文档，不来自对旧 SVG 的再解析）；series 缺席 = custom
+      （该条目保持脚本原样示意、不跟随任何系列），在场必须命中模型 series id
+      （显式指认允许两条指到同一系列——同名同色多系列歧义由显式消解，不猜）。
+
+    不允许只绑区域不列条目——区域绑了、条目未列就是半接。
+    """
+    if not isinstance(legend, list) or not legend:
+        raise ChartModelError("chart_model_invalid", "binding.legend must be a non-empty list")
+    known_series = {sr["id"] for sr in model["series"]}
+    ids: set[str] = set()
+    nodes: set[str] = set()
+    for i, item in enumerate(legend):
+        _keys(item, _LEGEND_KEYS, f"binding.legend[{i}]")
+        legend_id = _str(item.get("id"), f"binding.legend[{i}].id")
+        if not _ID_RE.match(legend_id):
+            raise ChartModelError("chart_model_invalid", f"binding.legend[{i}].id malformed")
+        if legend_id in ids:
+            raise ChartModelError("chart_duplicate_id", f"legend id {legend_id!r} twice")
+        ids.add(legend_id)
+        node = _str(item.get("node"), f"binding.legend[{i}].node")
+        if node in nodes:
+            raise ChartModelError("chart_duplicate_id", f"legend node {node!r} twice")
+        nodes.add(node)
+        rect = item.get("rect")
+        if (
+            not isinstance(rect, list)
+            or len(rect) != 4
+            or any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in rect)
+        ):
+            raise ChartModelError(
+                "chart_model_invalid", f"binding.legend[{i}].rect must be [x,y,w,h]"
+            )
+        for j, v in enumerate(rect):
+            _finite(v, f"binding.legend[{i}].rect[{j}]")
+        if rect[2] <= 0 or rect[3] <= 0:
+            raise ChartModelError(
+                "chart_model_invalid", f"binding.legend[{i}].rect must be positive"
+            )
+        entries = item.get("entries")
+        if not isinstance(entries, list) or not entries:
+            raise ChartModelError(
+                "chart_model_invalid", f"binding.legend[{i}].entries must be a non-empty list"
+            )
+        indexes: set[int] = set()
+        for k, entry in enumerate(entries):
+            _keys(entry, _LEGEND_ITEM_KEYS, f"binding.legend[{i}].entries[{k}]")
+            index = entry.get("index")
+            if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+                raise ChartModelError(
+                    "chart_model_invalid",
+                    f"binding.legend[{i}].entries[{k}].index must be a non-negative int",
+                )
+            if index in indexes:
+                raise ChartModelError(
+                    "chart_duplicate_id", f"binding.legend[{i}] entry index {index} twice"
+                )
+            indexes.add(index)
+            _str(entry.get("label"), f"binding.legend[{i}].entries[{k}].label")
+            if "series" in entry and entry["series"] not in known_series:
+                raise ChartModelError(
+                    "chart_model_invalid",
+                    f"binding.legend[{i}].entries[{k}].series {entry['series']!r} is not in the model",
+                )
+    return legend
 
 
 def validate_binding(binding: Any, model: dict) -> dict:
@@ -466,6 +551,16 @@ def validate_binding(binding: Any, model: dict) -> dict:
         if node in seen_nodes:
             raise ChartModelError("chart_duplicate_id", f"binding node {node!r} twice")
         seen_nodes.add(node)
+    if "legend" in binding:
+        legend = validate_legend_spec(binding["legend"], model)
+        # 图例区域节点与绑定条目节点互斥：一个旧节点要么被系列/轴区域接管，
+        # 要么是图例区域，不能同时是两者（组合端 targets 会重叠）。
+        collisions = sorted(seen_nodes & {item["node"] for item in legend})
+        if collisions:
+            raise ChartModelError(
+                "chart_duplicate_id",
+                f"legend node collides with bound entries: {collisions}",
+            )
     return binding
 
 
@@ -476,6 +571,9 @@ def verify_scene(binding: dict, scene_digest: str, scene_node_ids: set[str]) -> 
             "chart_source_mismatch", "scene bytes changed since the binding was confirmed"
         )
     missing = [e["node"] for e in binding["entries"] if e["node"] not in scene_node_ids]
+    missing += [
+        item["node"] for item in binding.get("legend", []) if item["node"] not in scene_node_ids
+    ]
     if missing:
         raise ChartModelError("chart_node_missing", f"bound nodes absent from the scene: {missing}")
 

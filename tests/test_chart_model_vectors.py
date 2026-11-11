@@ -21,6 +21,13 @@ def test_chart_model_vector(vector):
     def run_model():
         cm.validate_model(model)
 
+    if expect.startswith("binding:"):
+        # N4 legend 合同等向量：模型本身合法，判据落在 validate_binding。
+        run_model()
+        with pytest.raises(cm.ChartModelError) as ei:
+            cm.validate_binding(binding, model)
+        assert ei.value.code == expect.split(":", 1)[1], f"{vector['name']}: {ei.value.detail}"
+        return
     if expect == "ok":
         run_model()
         cm.validate_binding(binding, model)

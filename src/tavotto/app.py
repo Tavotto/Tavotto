@@ -1635,6 +1635,15 @@ def _render_chart_snapshot(
                 binding, scene["scene_digest"], {n["id"] for n in scene["nodes"]}
             )
             if requested_profile == chartprofile.LEGACY_PROFILE:
+                if binding.get("legend"):
+                    # legacy 组合器没有真图例能力（不创建 Legend、不放置 legend
+                    # role）：带着 legend 合同静默忽略它 = 图例凭空消失的半接，
+                    # 不许发生。native 组合的半接由下面的 composed 闸兜住。
+                    raise engine_exportreq.ExportRequestError(
+                        "chart_render_unsupported",
+                        "the legacy render profile cannot honor a legend binding",
+                        {},
+                    )
                 # 保留既有两参调用及历史renderer：v1可见图摘要依赖其精确输出。
                 result = _chart_scaffold_via_worker(model, frame)
             else:

@@ -230,3 +230,116 @@ def test_panel_identity_distinguishes_kinds_models_and_bindings():
         cm.panel_identity(cm.SOURCE_DECLARATIVE, scene, model, None)
     with pytest.raises(cm.ChartModelError):
         cm.panel_identity("mystery", scene, None)
+
+
+# ---------------------------------------------------------------------------
+# N4 legend 合同：binding.legend 的闭式字段集与判据（validate_legend_spec 唯一出处）
+# ---------------------------------------------------------------------------
+
+
+def legend_item(**overrides):
+    item = {
+        "id": "leg1",
+        "node": "legend_region",
+        "rect": [10.0, 10.0, 40.0, 20.0],
+        "entries": [
+            {"index": 0, "label": "series one", "series": "s1"},
+            {"index": 1, "label": "note only"},
+        ],
+    }
+    item.update(overrides)
+    return item
+
+
+def binding_with_legend(model, legend):
+    return {**minimal_binding(model), "legend": legend}
+
+
+def test_legend_contract_accepts_follow_custom_mix():
+    model = minimal_model()
+    binding = binding_with_legend(model, [legend_item()])
+    assert cm.validate_binding(binding, model) is binding
+    # 图例关系变化 = 面板身份变化（binding digest 进 panel_identity）
+    assert cm.panel_identity(cm.SOURCE_DECLARATIVE, "d" * 64, model, binding) != cm.panel_identity(
+        cm.SOURCE_DECLARATIVE, "d" * 64, model, minimal_binding(model)
+    )
+
+
+def test_legend_rect_anchor_top_left_is_semantics_only():
+    # 方案 A（区域外接矩形左上角对齐 legend 盒左上角）只影响脚手架换算，
+    # 合同层只核对 rect 形状；这里钉的是负坐标/大数值仍是合法用户单位。
+    model = minimal_model()
+    cm.validate_binding(
+        binding_with_legend(model, [legend_item(rect=[-5.0, 0.0, 40.0, 20.0])]), model
+    )
+
+
+def test_legend_contract_rejects_each_violation():
+    model = minimal_model()
+    binding = binding_with_legend(
+        model, [legend_item(), legend_item(id="leg1", node="legend_other")]
+    )
+    with pytest.raises(cm.ChartModelError) as ei:
+        cm.validate_binding(binding, model)
+    assert ei.value.code == "chart_duplicate_id"
+    with pytest.raises(cm.ChartModelError) as ei:
+        cm.validate_binding(binding_with_legend(model, [legend_item(node="line2d_13")]), model)
+    assert ei.value.code == "chart_duplicate_id"  # 与 entries 节点互斥
+    bad = [legend_item(entries=[{"index": 0, "label": "a"}, {"index": 0, "label": "b"}])]
+    with pytest.raises(cm.ChartModelError) as ei:
+        cm.validate_binding(binding_with_legend(model, bad), model)
+    assert ei.value.code == "chart_duplicate_id"  # index 重复
+    bad = [legend_item(entries=[{"index": -1, "label": "a"}])]
+    with pytest.raises(cm.ChartModelError) as ei:
+        cm.validate_binding(binding_with_legend(model, bad), model)
+    assert ei.value.code == "chart_model_invalid"  # index 负数
+    bad = [legend_item(entries=[{"index": 0, "label": ""}])]
+    with pytest.raises(cm.ChartModelError) as ei:
+        cm.validate_binding(binding_with_legend(model, bad), model)
+    assert ei.value.code == "chart_model_invalid"  # label 空串
+    bad = [legend_item(entries=[{"index": 0, "label": "a", "series": "ghost"}])]
+    with pytest.raises(cm.ChartModelError) as ei:
+        cm.validate_binding(binding_with_legend(model, bad), model)
+    assert ei.value.code == "chart_model_invalid"  # series 不在模型
+    bad = [legend_item(rect=[10.0, 10.0, 40.0, 0.0])]
+    with pytest.raises(cm.ChartModelError) as ei:
+        cm.validate_binding(binding_with_legend(model, bad), model)
+    assert ei.value.code == "chart_model_invalid"  # rect 非正
+    bad = [legend_item(script="import os")]
+    with pytest.raises(cm.ChartModelError) as ei:
+        cm.validate_binding(binding_with_legend(model, bad), model)
+    assert ei.value.code == "chart_model_invalid"  # 未知键（闭集）
+    bad = [legend_item(entries=[{"index": 0, "label": "a", "visible": True}])]
+    with pytest.raises(cm.ChartModelError) as ei:
+        cm.validate_binding(binding_with_legend(model, bad), model)
+    assert ei.value.code == "chart_model_invalid"  # 条目未知键
+    with pytest.raises(cm.ChartModelError) as ei:
+        cm.validate_binding(binding_with_legend(model, []), model)
+    assert ei.value.code == "chart_model_invalid"  # legend=[]
+    with pytest.raises(cm.ChartModelError) as ei:
+        cm.validate_binding(binding_with_legend(model, [legend_item(entries=[])]), model)
+    assert ei.value.code == "chart_model_invalid"  # 只绑区域不列条目 = 半接
+    with pytest.raises(cm.ChartModelError) as ei:
+        cm.validate_binding(binding_with_legend(model, [{"id": "leg1", "node": "n"}]), model)
+    assert ei.value.code == "chart_model_invalid"  # 缺 rect/entries
+    # 键缺席 = 旧文档照旧合法
+    cm.validate_binding(minimal_binding(model), model)
+
+
+def test_verify_scene_checks_legend_region_nodes():
+    model = minimal_model()
+    binding = binding_with_legend(model, [legend_item()])
+    cm.verify_scene(binding, model["scene_digest"], {"line2d_13", "legend_region"})
+    with pytest.raises(cm.ChartModelError) as ei:
+        cm.verify_scene(binding, model["scene_digest"], {"line2d_13"})
+    assert ei.value.code == "chart_node_missing"
+
+
+def test_validate_legend_spec_is_single_authority_for_worker():
+    # worker 侧（svgchart 不信任父进程）调用同一函数；无绑定 entries 可比，
+    # 只核 legend 内部判据。
+    model = minimal_model()
+    assert cm.validate_legend_spec([legend_item()], model) == [legend_item()]
+    with pytest.raises(cm.ChartModelError) as ei:
+        cm.validate_legend_spec([legend_item(), legend_item(id="leg1", node="n2")], model)
+    assert ei.value.code == "chart_duplicate_id"

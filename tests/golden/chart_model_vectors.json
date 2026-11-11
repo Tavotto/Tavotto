@@ -1164,6 +1164,1192 @@
     ]
    },
    "expect": "chart_source_mismatch"
+  },
+  {
+   "name": "valid-legend-follow-custom",
+   "model": {
+    "schema": "tavotto.chart-model/1",
+    "rev": 1,
+    "axes": [
+     {
+      "id": "ax1",
+      "rect": [
+       51.5,
+       26.1,
+       297.6,
+       183.7
+      ],
+      "xlim": [
+       0.0,
+       10.0
+      ],
+      "ylim": [
+       0.0,
+       100.0
+      ],
+      "xscale": "linear",
+      "yscale": "linear",
+      "invert_x": false,
+      "invert_y": false
+     }
+    ],
+    "series": [
+     {
+      "id": "s1",
+      "kind": "line",
+      "axes": "ax1",
+      "node": "line2d_13",
+      "x": "x",
+      "y": "y1",
+      "style": {
+       "color": "#1f77b4",
+       "linewidth": 2.0
+      }
+     }
+    ],
+    "dataset": {
+     "columns": {
+      "x": [
+       0.0,
+       1.0,
+       2.0
+      ],
+      "y1": [
+       0.0,
+       1.0,
+       4.0
+      ]
+     }
+    },
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "data_digest": "b633397199e50be563a4dad88e674d704b94a844eed34ac3006d0afe1d481ac7",
+    "engine": {
+     "matplotlib": "3.11.2",
+     "numpy": "2.1.0",
+     "tavotto": "0.19.2"
+    }
+   },
+   "binding": {
+    "model_rev": 1,
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "entries": [
+     {
+      "object": "series:s1",
+      "node": "line2d_13"
+     }
+    ],
+    "legend": [
+     {
+      "id": "leg1",
+      "node": "legend_a",
+      "rect": [
+       10.0,
+       10.0,
+       40.0,
+       20.0
+      ],
+      "entries": [
+       {
+        "index": 0,
+        "label": "series one",
+        "series": "s1"
+       },
+       {
+        "index": 1,
+        "label": "note only"
+       }
+      ]
+     }
+    ]
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "valid-legend-two-follows",
+   "model": {
+    "schema": "tavotto.chart-model/1",
+    "rev": 1,
+    "axes": [
+     {
+      "id": "ax1",
+      "rect": [
+       51.5,
+       26.1,
+       297.6,
+       183.7
+      ],
+      "xlim": [
+       0.0,
+       10.0
+      ],
+      "ylim": [
+       0.0,
+       100.0
+      ],
+      "xscale": "linear",
+      "yscale": "linear",
+      "invert_x": false,
+      "invert_y": false
+     }
+    ],
+    "series": [
+     {
+      "id": "s1",
+      "kind": "line",
+      "axes": "ax1",
+      "node": "line2d_13",
+      "x": "x",
+      "y": "y1",
+      "style": {
+       "color": "#1f77b4",
+       "linewidth": 2.0
+      }
+     },
+     {
+      "id": "s2",
+      "kind": "line",
+      "axes": "ax1",
+      "node": "line2d_14",
+      "x": "x",
+      "y": "y1",
+      "style": {
+       "color": "#ff7f0e",
+       "linewidth": 2.0
+      }
+     }
+    ],
+    "dataset": {
+     "columns": {
+      "x": [
+       0.0,
+       1.0,
+       2.0
+      ],
+      "y1": [
+       0.0,
+       1.0,
+       4.0
+      ]
+     }
+    },
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "data_digest": "b633397199e50be563a4dad88e674d704b94a844eed34ac3006d0afe1d481ac7",
+    "engine": {
+     "matplotlib": "3.11.2",
+     "numpy": "2.1.0",
+     "tavotto": "0.19.2"
+    }
+   },
+   "binding": {
+    "model_rev": 1,
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "entries": [
+     {
+      "object": "series:s1",
+      "node": "line2d_13"
+     },
+     {
+      "object": "series:s2",
+      "node": "line2d_14"
+     }
+    ],
+    "legend": [
+     {
+      "id": "leg1",
+      "node": "legend_a",
+      "rect": [
+       10.0,
+       10.0,
+       40.0,
+       20.0
+      ],
+      "entries": [
+       {
+        "index": 0,
+        "label": "a",
+        "series": "s1"
+       }
+      ]
+     },
+     {
+      "id": "leg2",
+      "node": "legend_b",
+      "rect": [
+       10.0,
+       10.0,
+       40.0,
+       20.0
+      ],
+      "entries": [
+       {
+        "index": 0,
+        "label": "b",
+        "series": "s2"
+       }
+      ]
+     }
+    ]
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "reject-legend-duplicate-id",
+   "model": {
+    "schema": "tavotto.chart-model/1",
+    "rev": 1,
+    "axes": [
+     {
+      "id": "ax1",
+      "rect": [
+       51.5,
+       26.1,
+       297.6,
+       183.7
+      ],
+      "xlim": [
+       0.0,
+       10.0
+      ],
+      "ylim": [
+       0.0,
+       100.0
+      ],
+      "xscale": "linear",
+      "yscale": "linear",
+      "invert_x": false,
+      "invert_y": false
+     }
+    ],
+    "series": [
+     {
+      "id": "s1",
+      "kind": "line",
+      "axes": "ax1",
+      "node": "line2d_13",
+      "x": "x",
+      "y": "y1",
+      "style": {
+       "color": "#1f77b4",
+       "linewidth": 2.0
+      }
+     }
+    ],
+    "dataset": {
+     "columns": {
+      "x": [
+       0.0,
+       1.0,
+       2.0
+      ],
+      "y1": [
+       0.0,
+       1.0,
+       4.0
+      ]
+     }
+    },
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "data_digest": "b633397199e50be563a4dad88e674d704b94a844eed34ac3006d0afe1d481ac7",
+    "engine": {
+     "matplotlib": "3.11.2",
+     "numpy": "2.1.0",
+     "tavotto": "0.19.2"
+    }
+   },
+   "binding": {
+    "model_rev": 1,
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "entries": [
+     {
+      "object": "series:s1",
+      "node": "line2d_13"
+     }
+    ],
+    "legend": [
+     {
+      "id": "leg1",
+      "node": "legend_a",
+      "rect": [
+       10.0,
+       10.0,
+       40.0,
+       20.0
+      ],
+      "entries": [
+       {
+        "index": 0,
+        "label": "series one",
+        "series": "s1"
+       },
+       {
+        "index": 1,
+        "label": "note only"
+       }
+      ]
+     },
+     {
+      "id": "leg1",
+      "node": "legend_b",
+      "rect": [
+       10.0,
+       10.0,
+       40.0,
+       20.0
+      ],
+      "entries": []
+     }
+    ]
+   },
+   "expect": "binding:chart_duplicate_id"
+  },
+  {
+   "name": "reject-legend-node-collides-entry",
+   "model": {
+    "schema": "tavotto.chart-model/1",
+    "rev": 1,
+    "axes": [
+     {
+      "id": "ax1",
+      "rect": [
+       51.5,
+       26.1,
+       297.6,
+       183.7
+      ],
+      "xlim": [
+       0.0,
+       10.0
+      ],
+      "ylim": [
+       0.0,
+       100.0
+      ],
+      "xscale": "linear",
+      "yscale": "linear",
+      "invert_x": false,
+      "invert_y": false
+     }
+    ],
+    "series": [
+     {
+      "id": "s1",
+      "kind": "line",
+      "axes": "ax1",
+      "node": "line2d_13",
+      "x": "x",
+      "y": "y1",
+      "style": {
+       "color": "#1f77b4",
+       "linewidth": 2.0
+      }
+     }
+    ],
+    "dataset": {
+     "columns": {
+      "x": [
+       0.0,
+       1.0,
+       2.0
+      ],
+      "y1": [
+       0.0,
+       1.0,
+       4.0
+      ]
+     }
+    },
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "data_digest": "b633397199e50be563a4dad88e674d704b94a844eed34ac3006d0afe1d481ac7",
+    "engine": {
+     "matplotlib": "3.11.2",
+     "numpy": "2.1.0",
+     "tavotto": "0.19.2"
+    }
+   },
+   "binding": {
+    "model_rev": 1,
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "entries": [
+     {
+      "object": "series:s1",
+      "node": "line2d_13"
+     }
+    ],
+    "legend": [
+     {
+      "id": "leg1",
+      "node": "line2d_13",
+      "rect": [
+       10.0,
+       10.0,
+       40.0,
+       20.0
+      ],
+      "entries": [
+       {
+        "index": 0,
+        "label": "series one",
+        "series": "s1"
+       },
+       {
+        "index": 1,
+        "label": "note only"
+       }
+      ]
+     }
+    ]
+   },
+   "expect": "binding:chart_duplicate_id"
+  },
+  {
+   "name": "reject-legend-duplicate-index",
+   "model": {
+    "schema": "tavotto.chart-model/1",
+    "rev": 1,
+    "axes": [
+     {
+      "id": "ax1",
+      "rect": [
+       51.5,
+       26.1,
+       297.6,
+       183.7
+      ],
+      "xlim": [
+       0.0,
+       10.0
+      ],
+      "ylim": [
+       0.0,
+       100.0
+      ],
+      "xscale": "linear",
+      "yscale": "linear",
+      "invert_x": false,
+      "invert_y": false
+     }
+    ],
+    "series": [
+     {
+      "id": "s1",
+      "kind": "line",
+      "axes": "ax1",
+      "node": "line2d_13",
+      "x": "x",
+      "y": "y1",
+      "style": {
+       "color": "#1f77b4",
+       "linewidth": 2.0
+      }
+     }
+    ],
+    "dataset": {
+     "columns": {
+      "x": [
+       0.0,
+       1.0,
+       2.0
+      ],
+      "y1": [
+       0.0,
+       1.0,
+       4.0
+      ]
+     }
+    },
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "data_digest": "b633397199e50be563a4dad88e674d704b94a844eed34ac3006d0afe1d481ac7",
+    "engine": {
+     "matplotlib": "3.11.2",
+     "numpy": "2.1.0",
+     "tavotto": "0.19.2"
+    }
+   },
+   "binding": {
+    "model_rev": 1,
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "entries": [
+     {
+      "object": "series:s1",
+      "node": "line2d_13"
+     }
+    ],
+    "legend": [
+     {
+      "id": "leg1",
+      "node": "legend_a",
+      "rect": [
+       10.0,
+       10.0,
+       40.0,
+       20.0
+      ],
+      "entries": [
+       {
+        "index": 0,
+        "label": "series one",
+        "series": "s1"
+       },
+       {
+        "index": 0,
+        "label": "series one",
+        "series": "s1"
+       }
+      ]
+     }
+    ]
+   },
+   "expect": "binding:chart_duplicate_id"
+  },
+  {
+   "name": "reject-legend-negative-index",
+   "model": {
+    "schema": "tavotto.chart-model/1",
+    "rev": 1,
+    "axes": [
+     {
+      "id": "ax1",
+      "rect": [
+       51.5,
+       26.1,
+       297.6,
+       183.7
+      ],
+      "xlim": [
+       0.0,
+       10.0
+      ],
+      "ylim": [
+       0.0,
+       100.0
+      ],
+      "xscale": "linear",
+      "yscale": "linear",
+      "invert_x": false,
+      "invert_y": false
+     }
+    ],
+    "series": [
+     {
+      "id": "s1",
+      "kind": "line",
+      "axes": "ax1",
+      "node": "line2d_13",
+      "x": "x",
+      "y": "y1",
+      "style": {
+       "color": "#1f77b4",
+       "linewidth": 2.0
+      }
+     }
+    ],
+    "dataset": {
+     "columns": {
+      "x": [
+       0.0,
+       1.0,
+       2.0
+      ],
+      "y1": [
+       0.0,
+       1.0,
+       4.0
+      ]
+     }
+    },
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "data_digest": "b633397199e50be563a4dad88e674d704b94a844eed34ac3006d0afe1d481ac7",
+    "engine": {
+     "matplotlib": "3.11.2",
+     "numpy": "2.1.0",
+     "tavotto": "0.19.2"
+    }
+   },
+   "binding": {
+    "model_rev": 1,
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "entries": [
+     {
+      "object": "series:s1",
+      "node": "line2d_13"
+     }
+    ],
+    "legend": [
+     {
+      "id": "leg1",
+      "node": "legend_a",
+      "rect": [
+       10.0,
+       10.0,
+       40.0,
+       20.0
+      ],
+      "entries": [
+       {
+        "index": -1,
+        "label": "series one",
+        "series": "s1"
+       }
+      ]
+     }
+    ]
+   },
+   "expect": "binding:chart_model_invalid"
+  },
+  {
+   "name": "reject-legend-empty-label",
+   "model": {
+    "schema": "tavotto.chart-model/1",
+    "rev": 1,
+    "axes": [
+     {
+      "id": "ax1",
+      "rect": [
+       51.5,
+       26.1,
+       297.6,
+       183.7
+      ],
+      "xlim": [
+       0.0,
+       10.0
+      ],
+      "ylim": [
+       0.0,
+       100.0
+      ],
+      "xscale": "linear",
+      "yscale": "linear",
+      "invert_x": false,
+      "invert_y": false
+     }
+    ],
+    "series": [
+     {
+      "id": "s1",
+      "kind": "line",
+      "axes": "ax1",
+      "node": "line2d_13",
+      "x": "x",
+      "y": "y1",
+      "style": {
+       "color": "#1f77b4",
+       "linewidth": 2.0
+      }
+     }
+    ],
+    "dataset": {
+     "columns": {
+      "x": [
+       0.0,
+       1.0,
+       2.0
+      ],
+      "y1": [
+       0.0,
+       1.0,
+       4.0
+      ]
+     }
+    },
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "data_digest": "b633397199e50be563a4dad88e674d704b94a844eed34ac3006d0afe1d481ac7",
+    "engine": {
+     "matplotlib": "3.11.2",
+     "numpy": "2.1.0",
+     "tavotto": "0.19.2"
+    }
+   },
+   "binding": {
+    "model_rev": 1,
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "entries": [
+     {
+      "object": "series:s1",
+      "node": "line2d_13"
+     }
+    ],
+    "legend": [
+     {
+      "id": "leg1",
+      "node": "legend_a",
+      "rect": [
+       10.0,
+       10.0,
+       40.0,
+       20.0
+      ],
+      "entries": [
+       {
+        "index": 0,
+        "label": "",
+        "series": "s1"
+       }
+      ]
+     }
+    ]
+   },
+   "expect": "binding:chart_model_invalid"
+  },
+  {
+   "name": "reject-legend-unknown-series",
+   "model": {
+    "schema": "tavotto.chart-model/1",
+    "rev": 1,
+    "axes": [
+     {
+      "id": "ax1",
+      "rect": [
+       51.5,
+       26.1,
+       297.6,
+       183.7
+      ],
+      "xlim": [
+       0.0,
+       10.0
+      ],
+      "ylim": [
+       0.0,
+       100.0
+      ],
+      "xscale": "linear",
+      "yscale": "linear",
+      "invert_x": false,
+      "invert_y": false
+     }
+    ],
+    "series": [
+     {
+      "id": "s1",
+      "kind": "line",
+      "axes": "ax1",
+      "node": "line2d_13",
+      "x": "x",
+      "y": "y1",
+      "style": {
+       "color": "#1f77b4",
+       "linewidth": 2.0
+      }
+     }
+    ],
+    "dataset": {
+     "columns": {
+      "x": [
+       0.0,
+       1.0,
+       2.0
+      ],
+      "y1": [
+       0.0,
+       1.0,
+       4.0
+      ]
+     }
+    },
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "data_digest": "b633397199e50be563a4dad88e674d704b94a844eed34ac3006d0afe1d481ac7",
+    "engine": {
+     "matplotlib": "3.11.2",
+     "numpy": "2.1.0",
+     "tavotto": "0.19.2"
+    }
+   },
+   "binding": {
+    "model_rev": 1,
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "entries": [
+     {
+      "object": "series:s1",
+      "node": "line2d_13"
+     }
+    ],
+    "legend": [
+     {
+      "id": "leg1",
+      "node": "legend_a",
+      "rect": [
+       10.0,
+       10.0,
+       40.0,
+       20.0
+      ],
+      "entries": [
+       {
+        "index": 0,
+        "label": "series one",
+        "series": "ghost"
+       }
+      ]
+     }
+    ]
+   },
+   "expect": "binding:chart_model_invalid"
+  },
+  {
+   "name": "reject-legend-nonpositive-rect",
+   "model": {
+    "schema": "tavotto.chart-model/1",
+    "rev": 1,
+    "axes": [
+     {
+      "id": "ax1",
+      "rect": [
+       51.5,
+       26.1,
+       297.6,
+       183.7
+      ],
+      "xlim": [
+       0.0,
+       10.0
+      ],
+      "ylim": [
+       0.0,
+       100.0
+      ],
+      "xscale": "linear",
+      "yscale": "linear",
+      "invert_x": false,
+      "invert_y": false
+     }
+    ],
+    "series": [
+     {
+      "id": "s1",
+      "kind": "line",
+      "axes": "ax1",
+      "node": "line2d_13",
+      "x": "x",
+      "y": "y1",
+      "style": {
+       "color": "#1f77b4",
+       "linewidth": 2.0
+      }
+     }
+    ],
+    "dataset": {
+     "columns": {
+      "x": [
+       0.0,
+       1.0,
+       2.0
+      ],
+      "y1": [
+       0.0,
+       1.0,
+       4.0
+      ]
+     }
+    },
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "data_digest": "b633397199e50be563a4dad88e674d704b94a844eed34ac3006d0afe1d481ac7",
+    "engine": {
+     "matplotlib": "3.11.2",
+     "numpy": "2.1.0",
+     "tavotto": "0.19.2"
+    }
+   },
+   "binding": {
+    "model_rev": 1,
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "entries": [
+     {
+      "object": "series:s1",
+      "node": "line2d_13"
+     }
+    ],
+    "legend": [
+     {
+      "id": "leg1",
+      "node": "legend_a",
+      "rect": [
+       10.0,
+       10.0,
+       0.0,
+       20.0
+      ],
+      "entries": [
+       {
+        "index": 0,
+        "label": "series one",
+        "series": "s1"
+       },
+       {
+        "index": 1,
+        "label": "note only"
+       }
+      ]
+     }
+    ]
+   },
+   "expect": "binding:chart_model_invalid"
+  },
+  {
+   "name": "reject-legend-unknown-key",
+   "model": {
+    "schema": "tavotto.chart-model/1",
+    "rev": 1,
+    "axes": [
+     {
+      "id": "ax1",
+      "rect": [
+       51.5,
+       26.1,
+       297.6,
+       183.7
+      ],
+      "xlim": [
+       0.0,
+       10.0
+      ],
+      "ylim": [
+       0.0,
+       100.0
+      ],
+      "xscale": "linear",
+      "yscale": "linear",
+      "invert_x": false,
+      "invert_y": false
+     }
+    ],
+    "series": [
+     {
+      "id": "s1",
+      "kind": "line",
+      "axes": "ax1",
+      "node": "line2d_13",
+      "x": "x",
+      "y": "y1",
+      "style": {
+       "color": "#1f77b4",
+       "linewidth": 2.0
+      }
+     }
+    ],
+    "dataset": {
+     "columns": {
+      "x": [
+       0.0,
+       1.0,
+       2.0
+      ],
+      "y1": [
+       0.0,
+       1.0,
+       4.0
+      ]
+     }
+    },
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "data_digest": "b633397199e50be563a4dad88e674d704b94a844eed34ac3006d0afe1d481ac7",
+    "engine": {
+     "matplotlib": "3.11.2",
+     "numpy": "2.1.0",
+     "tavotto": "0.19.2"
+    }
+   },
+   "binding": {
+    "model_rev": 1,
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "entries": [
+     {
+      "object": "series:s1",
+      "node": "line2d_13"
+     }
+    ],
+    "legend": [
+     {
+      "id": "leg1",
+      "node": "legend_a",
+      "rect": [
+       10.0,
+       10.0,
+       40.0,
+       20.0
+      ],
+      "entries": [
+       {
+        "index": 0,
+        "label": "series one",
+        "series": "s1"
+       },
+       {
+        "index": 1,
+        "label": "note only"
+       }
+      ],
+      "binding": "follow_source"
+     }
+    ]
+   },
+   "expect": "binding:chart_model_invalid"
+  },
+  {
+   "name": "reject-legend-empty-list",
+   "model": {
+    "schema": "tavotto.chart-model/1",
+    "rev": 1,
+    "axes": [
+     {
+      "id": "ax1",
+      "rect": [
+       51.5,
+       26.1,
+       297.6,
+       183.7
+      ],
+      "xlim": [
+       0.0,
+       10.0
+      ],
+      "ylim": [
+       0.0,
+       100.0
+      ],
+      "xscale": "linear",
+      "yscale": "linear",
+      "invert_x": false,
+      "invert_y": false
+     }
+    ],
+    "series": [
+     {
+      "id": "s1",
+      "kind": "line",
+      "axes": "ax1",
+      "node": "line2d_13",
+      "x": "x",
+      "y": "y1",
+      "style": {
+       "color": "#1f77b4",
+       "linewidth": 2.0
+      }
+     }
+    ],
+    "dataset": {
+     "columns": {
+      "x": [
+       0.0,
+       1.0,
+       2.0
+      ],
+      "y1": [
+       0.0,
+       1.0,
+       4.0
+      ]
+     }
+    },
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "data_digest": "b633397199e50be563a4dad88e674d704b94a844eed34ac3006d0afe1d481ac7",
+    "engine": {
+     "matplotlib": "3.11.2",
+     "numpy": "2.1.0",
+     "tavotto": "0.19.2"
+    }
+   },
+   "binding": {
+    "model_rev": 1,
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "entries": [
+     {
+      "object": "series:s1",
+      "node": "line2d_13"
+     }
+    ],
+    "legend": []
+   },
+   "expect": "binding:chart_model_invalid"
+  },
+  {
+   "name": "reject-legend-without-entries",
+   "model": {
+    "schema": "tavotto.chart-model/1",
+    "rev": 1,
+    "axes": [
+     {
+      "id": "ax1",
+      "rect": [
+       51.5,
+       26.1,
+       297.6,
+       183.7
+      ],
+      "xlim": [
+       0.0,
+       10.0
+      ],
+      "ylim": [
+       0.0,
+       100.0
+      ],
+      "xscale": "linear",
+      "yscale": "linear",
+      "invert_x": false,
+      "invert_y": false
+     }
+    ],
+    "series": [
+     {
+      "id": "s1",
+      "kind": "line",
+      "axes": "ax1",
+      "node": "line2d_13",
+      "x": "x",
+      "y": "y1",
+      "style": {
+       "color": "#1f77b4",
+       "linewidth": 2.0
+      }
+     }
+    ],
+    "dataset": {
+     "columns": {
+      "x": [
+       0.0,
+       1.0,
+       2.0
+      ],
+      "y1": [
+       0.0,
+       1.0,
+       4.0
+      ]
+     }
+    },
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "data_digest": "b633397199e50be563a4dad88e674d704b94a844eed34ac3006d0afe1d481ac7",
+    "engine": {
+     "matplotlib": "3.11.2",
+     "numpy": "2.1.0",
+     "tavotto": "0.19.2"
+    }
+   },
+   "binding": {
+    "model_rev": 1,
+    "scene_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "entries": [
+     {
+      "object": "series:s1",
+      "node": "line2d_13"
+     }
+    ],
+    "legend": [
+     {
+      "id": "leg1",
+      "node": "legend_a",
+      "rect": [
+       10.0,
+       10.0,
+       40.0,
+       20.0
+      ],
+      "entries": []
+     }
+    ]
+   },
+   "expect": "binding:chart_model_invalid"
   }
  ]
 }

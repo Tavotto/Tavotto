@@ -15,6 +15,15 @@ describe('chart model golden vectors', () => {
   for (const v of caseList) {
     it(v.name, () => {
       const modelVerdict = validateChartModel(v.model)
+      if (v.expect.startsWith('binding:')) {
+        // N4 legend 合同等向量：模型本身合法，判据落在 validateChartBinding。
+        expect(modelVerdict).toEqual({ ok: true })
+        expect(validateChartBinding(v.binding, v.model as never)).toEqual({
+          ok: false,
+          code: v.expect.slice('binding:'.length),
+        })
+        return
+      }
       if (v.expect === 'ok') {
         expect(modelVerdict).toEqual({ ok: true })
         const bindingVerdict = validateChartBinding(v.binding, v.model as never)

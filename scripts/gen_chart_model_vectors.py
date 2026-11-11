@@ -180,6 +180,126 @@ def build_vectors() -> list[dict]:
         case("reject-binding-stale", base_model(), "chart_binding_stale", stale),
         case("reject-binding-scene-mismatch", base_model(), "chart_source_mismatch", mismatched),
     ]
+
+    # N4 legend 合同（binding.legend）：模型本身合法，判据全部落在
+    # validate_binding 里——"binding:<code>" 前缀表示该形状。
+    def legend_binding(model, legend):
+        return {
+            "model_rev": model["rev"],
+            "scene_digest": model["scene_digest"],
+            "entries": [
+                {"object": f"series:{sr['id']}", "node": sr["node"]} for sr in model["series"]
+            ],
+            "legend": legend,
+        }
+
+    def two_series_model():
+        m = base_model()
+        m["series"].append(
+            {
+                "id": "s2",
+                "kind": "line",
+                "axes": "ax1",
+                "node": "line2d_14",
+                "x": "x",
+                "y": "y1",
+                "style": {"color": "#ff7f0e", "linewidth": 2.0},
+            }
+        )
+        return m
+
+    def legend_case(name, model, legend, expect):
+        return case(name, model, expect, legend_binding(model, legend))
+
+    def legend_item(entries=None, **overrides):
+        item = {
+            "id": "leg1",
+            "node": "legend_a",
+            "rect": [10.0, 10.0, 40.0, 20.0],
+            "entries": entries or [],
+        }
+        item.update(overrides)
+        return item
+
+    follow_custom = [
+        {"index": 0, "label": "series one", "series": "s1"},
+        {"index": 1, "label": "note only"},
+    ]
+    vectors += [
+        legend_case("valid-legend-follow-custom", base_model(), [legend_item(follow_custom)], "ok"),
+        # 显式指认可重复：两条各指认一个系列（同名同色歧义由显式消解）
+        legend_case(
+            "valid-legend-two-follows",
+            two_series_model(),
+            [
+                legend_item(
+                    [{"index": 0, "label": "a", "series": "s1"}], id="leg1", node="legend_a"
+                ),
+                legend_item(
+                    [{"index": 0, "label": "b", "series": "s2"}], id="leg2", node="legend_b"
+                ),
+            ],
+            "ok",
+        ),
+        legend_case(
+            "reject-legend-duplicate-id",
+            base_model(),
+            [
+                legend_item(follow_custom),
+                legend_item(node="legend_b"),
+            ],
+            "binding:chart_duplicate_id",
+        ),
+        legend_case(
+            "reject-legend-node-collides-entry",
+            base_model(),
+            [legend_item(follow_custom, node="line2d_13")],
+            "binding:chart_duplicate_id",
+        ),
+        legend_case(
+            "reject-legend-duplicate-index",
+            base_model(),
+            [legend_item([follow_custom[0], dict(follow_custom[0])])],
+            "binding:chart_duplicate_id",
+        ),
+        legend_case(
+            "reject-legend-negative-index",
+            base_model(),
+            [legend_item([dict(follow_custom[0], index=-1)])],
+            "binding:chart_model_invalid",
+        ),
+        legend_case(
+            "reject-legend-empty-label",
+            base_model(),
+            [legend_item([dict(follow_custom[0], label="")])],
+            "binding:chart_model_invalid",
+        ),
+        legend_case(
+            "reject-legend-unknown-series",
+            base_model(),
+            [legend_item([dict(follow_custom[0], series="ghost")])],
+            "binding:chart_model_invalid",
+        ),
+        legend_case(
+            "reject-legend-nonpositive-rect",
+            base_model(),
+            [legend_item(follow_custom, rect=[10.0, 10.0, 0.0, 20.0])],
+            "binding:chart_model_invalid",
+        ),
+        legend_case(
+            "reject-legend-unknown-key",
+            base_model(),
+            [legend_item(follow_custom, binding="follow_source")],
+            "binding:chart_model_invalid",
+        ),
+        legend_case("reject-legend-empty-list", base_model(), [], "binding:chart_model_invalid"),
+        legend_case(
+            "reject-legend-without-entries",
+            base_model(),
+            [legend_item([])],
+            "binding:chart_model_invalid",
+        ),
+    ]
     return vectors
 
 
