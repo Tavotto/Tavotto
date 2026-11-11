@@ -318,7 +318,7 @@ order: 240
   `validate_recipe(profile, recipe, confirmed=, values=)`：结构规则只看 `FolderProfile`，取值规则（每组 n、非负、重复 x、dose > 0……）只在给了带行数据的摘要时才判，
   不给就不判（`eligible()` 把它们列在 `unchecked`，不假装判过）；`unit` / `paired` 只认 `Confirmed`（用户在对话里点选确认过的设计与个体编号列），
   `DataSummary.id_like` / `repeats` 只是线索、永不当已确认；`enforce_order` 在模型排序之后再强制一遍（柱加误差线不排在含原始点的画法前、不合格剔除带原因、剩不足 2 个如实返回）。
-  `renderable(family)` 由 `ai_data_template.RENDERERS` 驱动（现在只有 comparison、trend）。选图准则文字 `ai_prompt_pack.data_figure_guidance()` **由这三张表渲染**，不许另抄第二份规则清单
+  `renderable(family)` 的出处是 `ai_data_recipe.RENDERABLE`（现在只有 comparison、trend；`ai_data_template` import 时核它与 `RENDERERS` 逐项一致）。选图准则文字 `ai_prompt_pack.data_figure_guidance()` **由这三张表渲染**，不许另抄第二份规则清单
   （`tests/test_ai_data_recipe.py` 钉每个码都有句子、准则不出现表里没有的族 / 图元）。阈值全是 `ai_data_recipe` 的具名常量。
 - **数据出图 v2 的模板与期望指纹（`engine/ai_data_template.py`，ADR 0178）**：`render_recipe_script(entry, recipe, data_rel=, stem=, style=)` 只接受通过
   `validate_recipe` 的配方，不认识的组合抛 `TemplateError`、不画近似。**一份实现两处用**：读表 / 单元格解析 / 汇总 / 抖动 / 箱 / 核密度 / 拟合都是模块里的普通函数

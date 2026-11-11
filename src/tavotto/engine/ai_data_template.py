@@ -1065,6 +1065,10 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
 
 
 RENDERERS = {"comparison": _render_comparison, "trend": _render_trend}
+if set(RENDERERS) != set(
+    recipe_mod.RENDERABLE
+):  # 两张表必须逐项相同：声明能画的就得真有模板，反之亦然
+    raise RuntimeError("ai_data_recipe.RENDERABLE 与 ai_data_template.RENDERERS 不一致")
 
 
 @dataclass(frozen=True)
