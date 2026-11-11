@@ -95,6 +95,10 @@ test(
     // 确认是胶囊 toast，不是推挤版面的横条
     await expect(page.locator('[data-toast-layout="pill"][data-status-tone="done"]')).toContainText(String(target), { timeout: 10_000 })
 
+    // 规范库默认看的是期刊本身：列的是本项目实际在用的值（期刊双栏 180 mm），不是默认规范的数
+    await expect(page.locator('[data-profile-journal]')).toContainText('Fixture Beta')
+    await expect(page.locator('[data-journal-field="widths_mm.double"]')).toContainText('180 mm')
+
     // 页宽真的换了；关掉设置回到画布再量
     await closeSettings(page)
     await expect.poll(() => pageWidthMm(page), { message: '页宽没有跟到所选期刊的栏宽' }).toBe(target)
