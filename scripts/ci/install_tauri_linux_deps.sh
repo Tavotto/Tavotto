@@ -62,7 +62,9 @@ attempt_seconds="${TAURI_APT_ATTEMPT_SECONDS:-180}"
 for mirror in "${mirrors[@]}"; do
   if [ -n "$mirror" ]; then
     echo "::warning::换镜像到 $mirror 再试"
-    sudo find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec \
+    # runner 镜像 20261101 起 ubuntu.sources 写的是 `mirror+file:/etc/apt/apt-mirrors.txt`，真正的主机名
+    # 在 apt-mirrors.txt 里——只改 .list / .sources 等于没换（11-11 azure 解析失败时三次尝试全打 azure）。
+    sudo find /etc/apt -type f \( -name '*.list' -o -name '*.sources' -o -name 'apt-mirrors.txt' \) -exec \
       sed -i -E "s#//(azure\.archive\.ubuntu\.com|archive\.ubuntu\.com|mirrors\.edge\.kernel\.org)/#//$mirror/#g" {} +
   fi
   # update 与下载共用这个镜像的预算：下载只拿 update 用剩的时间；超时是 timeout 的退出码 124，
