@@ -160,7 +160,7 @@ order: 240
   中英两份），JSON 里不写中文界面串；`oauth` 本期恒为 `null`（预留位，界面不渲染「登录」）。加载失败 import 时抛
   `CatalogError`，不退成空列表。冻结产物靠 `packaging/tavotto.spec` 的 datas 带上这份 JSON。
   **型号以服务商实时列表为准**：`POST /api/ai/endpoints/models`（`ai_providers.live_models`）对接口
-  `GET {base_url}/v1/models`（`x-api-key` + `Bearer` 两个头、`anthropic-version`，5 s 超时、不跟随重定向），
+  `GET {base_url}/v1/models`（`x-api-key` + `Bearer` 两个头、`anthropic-version`、`User-Agent: Tavotto/<版本>`——urllib 默认的 `Python-urllib` 会被 OpenCode Go 的 Cloudflare 403 掉、读成密钥不对，`test_models_probe_identifies_itself_not_as_python_urllib`；5 s 超时、不跟随重定向），
   只在用户点「从服务商获取」时才联网，设置页渲染不碰网络；成功结果按（接口 id, base_url, 密钥 sha256 前缀）
   缓存一天在 `config.data_dir()/ai_models_cache.json`；**密钥只发往已存地址同源（scheme + host + 端口，
   `ai_providers.live_models` 判，改了地址不带旧密钥 → `key_origin_mismatch`）、只走 https（回环 `localhost` /
@@ -501,6 +501,7 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
 
 - **边界**：纯标准库、3.10 可跑；不 import 科学栈，**不 import `ai_bridge` / `ai_agents` / `ai_tasks`**；内部依赖只有 `tlstrust` 与纯标准库的 `ai_prompt_pack`（convert 提示词的同一份文字）。
   只经 stdout 事件行与父进程说话。入口 `python -m tavotto.engine.agent_runner --cwd <候选目录> --target <相对路径> --wire <名> --base-url <url> --model <名>`。
+- **会话 id**：每个请求（所有协议）都带 `x-opencode-session: <本进程一次生成的随机 32 位十六进制>`——一个 runner 进程 = 一段对话；OpenCode Go 不带就 400 `MissingSessionID`，别家忽略。只是随机数，不含用户信息、不跨进程复用。看护 `test_every_request_carries_one_stable_session_id`。
 - **协议**（`wires.py`）：`anthropic`（`{base}/v1/messages`，`x-api-key` 与 `Authorization: Bearer` 都给，`anthropic-version: 2023-06-01`，
   系统提示与最后一个工具定义带 `cache_control: ephemeral`）、`openai-chat`（`{base}/chat/completions`）、`openai-responses`
   （`{base}/responses`，`store: false`）、`demo`（剧本回放，不联网，端到端测试用）。anthropic 的思考由**调用方声明** `--thinking {adaptive,budget,none}`（默认 `none`，runner 不猜：第三方兼容网关各不相同）：`adaptive` 发 `thinking:{type:adaptive}` + 有 effort 才发 `output_config.effort`（新模型，不发已弃用的 `budget_tokens`）；`budget` 发旧式 `budget_tokens`（必须配 `--effort low|medium|high|max`，`max` 映射到 high 档；缺省 effort 起跑即 `internal/bad_args`、0 次请求，不静默不发 thinking）；`none` 都不发。thinking 块按原样回放，不做 assistant prefill，工具参数一律 `json.loads`。openai-chat 回复里的 `reasoning_content` 存进该轮 `native` 并在回放这一轮 assistant 消息时原样带回（DeepSeek 思考模式必需，报错原文见 wires.py；没有思考内容的轮次不加该键，不加空格占位——会话内始终同一模型）。openai-responses 只在给了 `--effort` 时传 `reasoning.effort`。`--wire openai-responses` 配 `--effort max` 起跑即 `internal/bad_args`、0 次请求（Responses 没有 max 档，不静默不发 reasoning）。

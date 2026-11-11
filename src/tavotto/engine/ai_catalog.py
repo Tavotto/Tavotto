@@ -30,7 +30,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from . import config, netpolicy, tlstrust
+from . import brand, config, netpolicy, tlstrust
 
 log = logging.getLogger(__name__)
 
@@ -314,6 +314,8 @@ def _get_request(base_url: str, url: str, api_key: str) -> urllib.request.Reques
         # 明文 http（回环 / 私网）：把判定时解析出的 IP 钉进 URL 直连，`Host` 头保留原主机名（防 DNS 重绑定）
         url, host_header = netpolicy.pin_url(url)
         extra["Host"] = host_header
+    from .. import __version__
+
     return urllib.request.Request(  # noqa: S310 - 调用方已限定 https / 回环或私网 http
         url,
         headers={
@@ -323,6 +325,9 @@ def _get_request(base_url: str, url: str, api_key: str) -> urllib.request.Reques
             "Authorization": f"Bearer {api_key}",
             "anthropic-version": "2023-06-01",
             "Accept": "application/json",
+            # 必须如实标出自己：urllib 默认的 `Python-urllib/3.x` 会被部分网关的 Cloudflare 当成爬虫直接 403
+            # （OpenCode Go 回 `error code: 1010`），我们再把 403 读成「密钥不对」——用户填对了也连不上
+            "User-Agent": f"{brand.PRODUCT_NAME}/{__version__}",
         },
     )
 

@@ -231,6 +231,16 @@ def test_live_models_success_sends_both_auth_headers(gateway):
     assert hit["headers"]["anthropic-version"] == "2023-06-01"
 
 
+def test_models_probe_identifies_itself_not_as_python_urllib(gateway):
+    """OpenCode Go 的 Cloudflare 把 `Python-urllib/3.x` 当爬虫回 403（`error code: 1010`），我们会把它读成密钥不对。"""
+    from tavotto import __version__
+    from tavotto.engine import brand
+
+    g = gateway()
+    ai_catalog.live_models("e1", g.url, KEY)
+    assert g.hits[0]["headers"]["user-agent"] == f"{brand.PRODUCT_NAME}/{__version__}"
+
+
 def test_base_url_already_ending_in_v1_is_not_doubled():
     assert ai_catalog.models_url("https://gw.example/v1/") == "https://gw.example/v1/models"
     assert (

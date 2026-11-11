@@ -18,6 +18,7 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
@@ -25,6 +26,10 @@ from .. import netpolicy, tlstrust
 from .media import Image
 
 USER_AGENT = "tavotto-agent-runner/1"
+#: 本次会话的随机 id（一个 runner 进程 = 一段对话），每个请求都带在 `x-opencode-session` 里。
+#: OpenCode Go 不带这个头直接 400 `MissingSessionID`（https://opencode.ai/v2/docs/console/go/#where-can-i-use-it）；
+#: 别家网关不认这个头、原样忽略。只是随机数，不含任何用户信息，也不跨会话复用。
+SESSION_ID = uuid.uuid4().hex
 ANTHROPIC_VERSION = "2023-06-01"
 #: 响应体上限（字节）。模型回复远小于它；超了当作异常回复，不读完。
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
@@ -793,6 +798,7 @@ def post_json(
         "Content-Type": "application/json",
         "Accept": "application/json",
         "User-Agent": USER_AGENT,
+        "x-opencode-session": SESSION_ID,
         **headers,
     }
     u = urllib.parse.urlsplit(url)

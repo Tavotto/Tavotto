@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -553,6 +554,15 @@ class TestWires:
         # 第二轮请求里带着第一轮的工具结果（文件内容回到了模型，而不是事件里）
         assert FILE_CANARY in json.dumps(srv.requests[1][2])
         assert FILE_CANARY not in json.dumps(events)
+
+    def test_every_request_carries_one_stable_session_id(self, cand, serve):
+        """OpenCode Go 不带 `x-opencode-session` 直接 400；同一段对话的每一轮必须是同一个 id。"""
+        srv, res, _ = http_run(cand, serve, "anthropic", ANTHROPIC_TURNS)
+        assert res.ok and len(srv.requests) >= 2, "前提：至少两轮请求"
+        ids = {h.get("x-opencode-session") for _, h, _ in srv.requests}
+        assert len(ids) == 1
+        (sid,) = ids
+        assert sid and re.fullmatch(r"[0-9a-f]{32}", sid)
 
     def test_anthropic_request_shape(self, cand, serve):
         srv, res, events = http_run(cand, serve, "anthropic", ANTHROPIC_TURNS, effort="medium")
