@@ -575,10 +575,14 @@ def test_clip_union_validation_and_eps_overlay_reject_structurally(tmp_path, pro
     assert error.value.operation == "clip"
 
 
-@pytest.mark.parametrize("origin", ["static", "execution"])
-def test_native_svg_resource_exception_does_not_expand_static_or_execution_kinds(origin):
+def test_svg_page_resource_is_limited_to_self_contained_static_or_declarative_sources():
     assert "svg" not in ir.FILE_KINDS
-    resource = ir.FileResource("chart.svg", "svg", "a" * 64, origin, "chart")
+    # A static/declarative SVG is a self-contained page (ADR 0166), never an
+    # unpaired execution representation.
+    for origin in ("static", "declarative"):
+        resource = ir.FileResource("chart.svg", "svg", "a" * 64, origin, "chart")
+        ir.validate(ir.Page(100, 100, (ir.ImportedPage("s", (0, 0, 100, 100)),), {"s": resource}))
+    resource = ir.FileResource("chart.svg", "svg", "a" * 64, "execution", "chart")
     with pytest.raises(ir.IRError) as error:
         ir.validate(ir.Page(100, 100, (ir.ImportedPage("s", (0, 0, 100, 100)),), {"s": resource}))
     assert error.value.code == "resource_kind_mismatch"
