@@ -372,3 +372,44 @@ def test_native_production_png_tiff_share_pixels_physical_density_and_background
             ]
             assert any("NotoSansSC" in name for name in names), names
     assert (root / "chart.svg").read_bytes() == SOURCE
+
+
+def test_complete_frame_profile_export_canonical_is_F_scene_stays_S(project):
+    """N5 第 5 步：/2 面板经生产导出 job，canonical 页面 = F、scene 数据仍 S；
+    /1 孪生请求保持 100×100；原源 SVG 字节不变（scope=original 与 canvas）。"""
+    client, root = project
+    chart = _bind(client)
+    original = _original(chart, chart_render_profile=chartprofile.COMPLETE_PROFILE)
+    outputs = _export(client, original=original, formats=("svg", "pdf"), name="frame2")
+    count, size, text, _ = _pdf_page(pdfium, outputs["pdf"])
+    assert count == 1
+    frame_svg = ET.fromstring(outputs["svg"].read_bytes())
+    # viewBox = [min-x, min-y, width, height]：F 外框（墨迹 ∪ S viewport + 1pt 边）
+    frame_box = [float(v) for v in frame_svg.get("viewBox").split()]
+    assert frame_box[2] > 100.5 and frame_box[3] > 100.5
+    assert frame_box[0] < 0 or frame_box[1] < 0  # 有墨迹越出源框，才有负原点
+    assert frame_svg.get("width") == f"{frame_box[2]:g}pt"
+    # canonical PDF 页面 = F（pt），与 SVG envelope 一致
+    assert size == pytest.approx((frame_box[2], frame_box[3]), abs=0.05)
+
+    legacy = _original(chart, chart_render_profile=chartprofile.NATIVE_PROFILE)
+    legacy_outputs = _export(client, original=legacy, formats=("pdf",), name="frame1")
+    _, legacy_size, _, _ = _pdf_page(pdfium, legacy_outputs["pdf"])
+    assert legacy_size == pytest.approx((100, 100), abs=0.02)
+
+    # canvas scope：/2 面板字段带同一 profile（前端持久化形状 chartFrame），
+    # 面板尺寸 = F 的毫米（size 准入按 produced artifact 裁决）
+    panel = _panel(chart, [])
+    panel["chartFrame"] = {
+        "version": 1,
+        "renderProfile": chartprofile.COMPLETE_PROFILE,
+        "originPt": [frame_box[0], frame_box[1]],
+    }
+    panel["w_mm"] = frame_box[2] * PT_MM
+    panel["h_mm"] = frame_box[3] * PT_MM
+    panel.pop("chart_render_profile")
+    page = {"page_w_mm": 160, "page_h_mm": 120, "objects": [panel]}
+    canvas_outputs = _export(client, canvas=page, formats=("pdf",), name="frame2canvas")
+    _, canvas_size, _, _ = _pdf_page(pdfium, canvas_outputs["pdf"])
+    assert canvas_size[0] > 100.5 and canvas_size[1] > 100.5
+    assert (root / "chart.svg").read_bytes() == SOURCE

@@ -318,7 +318,7 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
       // 顺序即 z 序（底 → 顶），隐藏对象不发 —— 与画布预览同一条投影
       objects: toExportObjects(input.doc.objects).map((object): ExportObject =>
         object.type === 'panel' && object.chart
-          ? { ...object, chart_render_profile: 'native-manifest/1', overrides: structuredClone(object.overrides) }
+          ? { ...object, chart_render_profile: object.chartFrame?.renderProfile ?? 'native-manifest/1', overrides: structuredClone(object.overrides) }
           : object,
       ),
     }
@@ -328,7 +328,7 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
       const patches = panel && (chart || figureOriginFor(panel) !== undefined) ? structuredClone(panel.overrides) : panel ? originalArtifactOverrides(panel) : []
       return {
         figure_id: figureId,
-        ...(chart ? { chart: structuredClone(chart), chart_render_profile: 'native-manifest/1' as const } : {}),
+        ...(chart ? { chart: structuredClone(chart), chart_render_profile: panel?.chartFrame?.renderProfile ?? 'native-manifest/1' } : {}),
         ...(panel?.fileId === figureId ? chartSourceFields(panel.chartSource) : {}),
         ...(panel?.fileId === figureId ? figureOriginFields(panel) : {}),
         ...(panel && panel.fileId === figureId &&

@@ -3394,9 +3394,7 @@ def _freeze_document_sources(document: dict, *, capture_figures: bool = True) ->
                 obj["fileId"],
                 obj["chart"],
                 # 显式值优先（含 /2，合法性交 validate_profile 判定）；旧文档缺字段维持 /1。
-                render_profile=(
-                    _document_panel_render_profile(obj) or chartprofile.NATIVE_PROFILE,
-                ),
+                render_profile=_document_panel_render_profile(obj) or chartprofile.NATIVE_PROFILE,
                 overrides=obj.get("overrides", []),
                 **({"chart_source": obj["chartSource"]} if "chartSource" in obj else {}),
             )
@@ -6148,9 +6146,8 @@ def _api_chart_package_install():
                         obj["fileId"],
                         obj["chart"],
                         # 与 _freeze_document_sources 同源：显式值优先，缺省维持 /1。
-                        render_profile=(
-                            _document_panel_render_profile(obj) or chartprofile.NATIVE_PROFILE,
-                        ),
+                        render_profile=_document_panel_render_profile(obj)
+                        or chartprofile.NATIVE_PROFILE,
                         overrides=obj.get("overrides", []),
                         chart_source=obj["chartSource"],
                         source_storage=stage / engine_config.PROJECT_STORE_DIRNAME,
