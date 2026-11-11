@@ -26,6 +26,7 @@ _SUBJECT = "raster_dpi"
 def _applicability(fact: dict, context: Mapping[str, object]) -> str:
     """Return matches / not_applicable / unknown, with conjunction semantics."""
     unknown = bool(fact.get("condition_text"))
+    mismatch = False
     stage = fact["stage"]
     if stage == "unknown":
         unknown = True
@@ -34,7 +35,7 @@ def _applicability(fact: dict, context: Mapping[str, object]) -> str:
         if not isinstance(observed, str) or observed not in _STAGES:
             unknown = True
         elif observed != stage:
-            return "not_applicable"
+            mismatch = True
     for key, expected in fact.get("conditions", {}).items():
         values = _VALUES.get(key)
         observed = context.get(key)
@@ -43,8 +44,10 @@ def _applicability(fact: dict, context: Mapping[str, object]) -> str:
         elif not isinstance(observed, str) or observed not in values:
             unknown = True
         elif observed != expected:
-            return "not_applicable"
-    return "unknown" if unknown else "matches"
+            mismatch = True
+    if unknown:
+        return "unknown"
+    return "not_applicable" if mismatch else "matches"
 
 
 def evaluate_dpi_facts(bundle: object, context: Mapping[str, object], dpi: object) -> dict:
@@ -75,19 +78,19 @@ def evaluate_dpi_facts(bundle: object, context: Mapping[str, object], dpi: objec
             result["reason"] = "unverified_review"
         else:
             applicability = _applicability(fact, context)
-            if applicability != "matches":
+            if fact["relation"] != "gte" or fact.get("unit") != "dpi" or fact["value"] <= 0:
+                result["status"] = "unknown"
+                result["reason"] = "unsupported_relation_or_unit"
+            elif not valid_dpi:
+                result["status"] = "unknown"
+                result["reason"] = "missing_measurement"
+            elif applicability != "matches":
                 result["status"] = applicability
                 if applicability == "unknown":
                     result["reason"] = "unknown_applicability"
             elif fact["strength"] != "required":
                 # These statements remain visible without inventing a minimum.
                 result["status"] = "advice"
-            elif fact["relation"] != "gte" or fact.get("unit") != "dpi" or fact["value"] <= 0:
-                result["status"] = "unknown"
-                result["reason"] = "unsupported_relation_or_unit"
-            elif not valid_dpi:
-                result["status"] = "unknown"
-                result["reason"] = "missing_measurement"
             else:
                 result["status"] = "satisfied" if dpi >= fact["value"] else "violated"
                 required.append((fact["value"], result))

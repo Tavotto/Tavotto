@@ -174,3 +174,33 @@ def test_empty_no_match_unsupported_or_broken_bundle(fact, context):
     assert evaluate_dpi_facts(bundle({**fact, "value": 0}), context, 1000)["status"] == "unknown"
     with pytest.raises(FactValidationError):
         evaluate_dpi_facts(bundle({**fact, "source": "missing"}), context, 1000)
+
+
+@pytest.mark.parametrize("strength", ["required", "typical"])
+def test_unknown_fields_never_become_advice_or_not_applicable(fact, context, strength):
+    # Even a known mismatch must not erase an unsupported source qualification.
+    context["figure_kind"] = "halftone"
+    unknown_condition = {
+        **fact,
+        "strength": strength,
+        "conditions": {"figure_kind": "line_art", "other": "x"},
+    }
+    assert (
+        evaluate_dpi_facts(bundle(unknown_condition), context, 1200)["facts"][0]["status"]
+        == "unknown"
+    )
+    for change in ({"relation": "gt"}, {"unit": "ppi"}, {"value": 0}):
+        result = evaluate_dpi_facts(bundle({**fact, **change, "strength": strength}), context, 1200)
+        assert result["facts"][0]["status"] == "unknown"
+    assert (
+        evaluate_dpi_facts(bundle({**fact, "strength": strength}), context, None)["facts"][0][
+            "status"
+        ]
+        == "unknown"
+    )
+
+
+def test_missing_stage_is_invalid_not_any(fact, context):
+    del fact["stage"]
+    with pytest.raises(FactValidationError):
+        evaluate_dpi_facts(bundle(fact), context, 1000)
