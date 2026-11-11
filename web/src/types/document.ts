@@ -31,11 +31,32 @@ export interface ObjectBase {
   rotationDeg?: number
 }
 
-/** 虚线样式：显示与导出共用同一枚举（间距按线宽比例换算） */
-export type DashStyle = 'solid' | 'dashed' | 'dotted'
+/**
+ * 线型：显示与导出共用同一枚举（间距按线宽比例换算，比例表在 `lib/shapeGeometry.DASH_RATIOS`，
+ * 与后端 `rendercore/geometry.DASH_RATIOS` 同源，ADR 0174）。
+ * 后四种是 ADR 0174 加的：旧版本读到不认识的值按实线画，不会报错。
+ */
+export type DashStyle = 'solid' | 'dashed' | 'dotted' | 'longdash' | 'dashdot' | 'longdashdot'
 
-/** 箭头端型：实心三角 / 开口 V / 垂直短线（尺寸线用） */
-export type ArrowHeadType = 'none' | 'triangle' | 'open' | 'bar'
+/**
+ * 箭头端型：实心三角 / 开口 V / 垂直短线（尺寸线用）；ADR 0174 加：圆点 / 菱形 / 燕尾。
+ * 旧版本读到不认识的端型画不出端型（只剩一条线到端点）。
+ */
+export type ArrowHeadType =
+  | 'none'
+  | 'triangle'
+  | 'open'
+  | 'bar'
+  | 'dot'
+  | 'diamond'
+  | 'stealth'
+
+/** 端型大小三档；缺省 = `medium` = 加档位之前的尺寸，`medium` 不落盘 */
+export type HeadSize = 'small' | 'medium' | 'large'
+
+/** 线端 / 拐角（SVG 与 PDF 的同名取值）；缺省见 `lib/shapeGeometry.DEFAULT_LINE_CAP` / `defaultLineJoin` */
+export type LineCap = 'butt' | 'round' | 'square'
+export type LineJoin = 'miter' | 'round' | 'bevel'
 
 /**
  * 结构化布局组：在轻量成组（groupId）之上叠加的可选排布约束。
@@ -319,7 +340,15 @@ export interface ArrowObject extends ObjectBase {
   head: 'none' | 'end' | 'both'
   headStart?: ArrowHeadType
   headEnd?: ArrowHeadType
+  /** 两端端型大小；缺省 = 中（不写字段，ADR 0174） */
+  headSizeStart?: HeadSize
+  headSizeEnd?: HeadSize
   dash?: DashStyle
+  /** 描边不透明度 0–1；缺省 1（不写字段）。作用于杆与端型 */
+  strokeOpacity?: number
+  /** 线端 / 拐角；缺省 = 圆头 / 圆角（现在的画法），不写字段 */
+  lineCap?: LineCap
+  lineJoin?: LineJoin
 }
 
 export type ShapeKind =
@@ -352,6 +381,16 @@ export interface ShapeObject extends ObjectBase {
   /** 填充透明度 0–1；缺省 1 */
   fillOpacity?: number
   dash?: DashStyle
+  /**
+   * 描边开关：**只有 `false` 会落盘**（= 无边框）；缺省 / `true` = 有描边。
+   * 只对封闭形状有意义，直线与大括号只有描边、一律有。读取走 `shapeStrokeOn()`。
+   */
+  stroke?: boolean
+  /** 描边不透明度 0–1；缺省 1（不写字段） */
+  strokeOpacity?: number
+  /** 线端 / 拐角；缺省见 `lib/shapeGeometry`，等于缺省就不写字段 */
+  lineCap?: LineCap
+  lineJoin?: LineJoin
 }
 
 /**
@@ -387,6 +426,10 @@ export function arrowHeads(o: ArrowObject): { start: ArrowHeadType; end: ArrowHe
  * 不维护的话一支「起点开口 V、终点无」的箭头在老版本里会变回默认的实心三角。
  * 规则只有这一份：属性栏改端型（`StrokeSection`）与直线切换成箭头
  * （`lib/shapeSwitch`）读的是同一个函数。
+ *
+ * ADR 0174 的新端型（dot / diamond / stealth）也只算「这一端有端型」：旧构建读到
+ * 一份带新端型的文档时优先认 `headStart` / `headEnd`，不认识的端型画不出端型（线到端点），
+ * 不会崩；`head` 只在两个新字段都缺席时才被读（那是旧文档），所以这里不需要为新端型选一个「近似的旧值」。
  */
 export function legacyHead(heads: {
   start: ArrowHeadType
@@ -394,6 +437,11 @@ export function legacyHead(heads: {
 }): ArrowObject['head'] {
   const { start, end } = heads
   return start !== 'none' && end !== 'none' ? 'both' : end !== 'none' ? 'end' : 'none'
+}
+
+/** 形状此刻有没有描边。直线 / 大括号只有描边，不看 `stroke` 字段（画布、缩略图、导出同用这一处） */
+export function shapeStrokeOn(o: Pick<ShapeObject, 'shape' | 'stroke'>): boolean {
+  return o.shape === 'line' || o.shape === 'brace' || o.stroke !== false
 }
 
 /** 直线形状（端点语义只对这一种 shape 生效） */

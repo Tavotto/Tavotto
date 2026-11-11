@@ -13,8 +13,15 @@
  */
 import { describe, expect, it } from 'vitest'
 import vectors from '../../../tests/golden/shape_geometry_vectors.json'
-import { dashArray, polygonPoints } from './shapeGeometry'
-import type { DashStyle } from '@/types/document'
+import {
+  arrowGeometry,
+  dashArray,
+  defaultLineJoin,
+  HEAD_SIZE_FACTOR,
+  polygonPoints,
+  strokeCap,
+} from './shapeGeometry'
+import type { ArrowObject, DashStyle, LineCap, ShapeKind } from '@/types/document'
 
 describe('polygonPoints：与共享向量逐位相同', () => {
   it.each(vectors.polygon)('$sides 边 @ $w×$h inset $inset', (vec) => {
@@ -49,5 +56,85 @@ describe('dashArray：与共享向量的比例相同', () => {
       expect(got[0]).toBeCloseTo(vec.stroke_pt * 0.01, 6)
       expect(got[1]).toBeCloseTo(vec.pattern[1], 3)
     }
+  })
+})
+
+describe('线端 / 拐角 / 端型大小：与共享向量逐格相同（ADR 0174）', () => {
+  it.each(vectors.cap)('线端 $cap + 线型 $dash', (vec) => {
+    expect(strokeCap((vec.cap ?? undefined) as LineCap | undefined, (vec.dash ?? undefined) as DashStyle | undefined)).toBe(
+      vec.expect,
+    )
+  })
+
+  it('点线无论选什么线端都是圆头（点靠圆线帽才有面积）', () => {
+    for (const cap of ['butt', 'round', 'square'] as const) expect(strokeCap(cap, 'dotted')).toBe('round')
+  })
+
+  it('缺省拐角按形状族', () => {
+    for (const [shape, join] of Object.entries(vectors.join_default)) {
+      expect(defaultLineJoin(shape as ShapeKind)).toBe(join)
+    }
+  })
+
+  it('端型三档系数', () => {
+    expect(HEAD_SIZE_FACTOR).toEqual(vectors.head_size_factor)
+  })
+})
+
+type Head = ReturnType<typeof arrowGeometry>['endHead']
+
+/** 前端端型 → 向量里的写法（三种实心多边形都叫 poly；open / bar 的路径 d 拆成点） */
+function encodeHead(h: Head): unknown {
+  if (!h) return null
+  const nums = (src: string) => (src.match(/-?\d+(?:\.\d+)?(?:e-?\d+)?/g) ?? []).map(Number)
+  const pairs = (xs: number[]) => xs.reduce<number[][]>((acc, v, i) => (i % 2 ? (acc[acc.length - 1].push(v), acc) : [...acc, [v]]), [])
+  const r9 = (v: number) => Number(v.toFixed(9))
+  if (h.kind === 'dot') return { shape: 'dot', cx: r9(h.cx), cy: r9(h.cy), r: r9(h.r) }
+  if (h.kind === 'open' || h.kind === 'bar') {
+    return { shape: h.kind, points: pairs(nums(h.d)).map((p) => p.map(r9)) }
+  }
+  return { shape: 'poly', points: pairs(nums((h as { points: string }).points)).map((p) => p.map(r9)) }
+}
+
+describe('arrowGeometry：杆端点与端型几何与共享向量逐点相同（ADR 0174）', () => {
+  it.each(vectors.arrow)('$name', (vec) => {
+    const obj = {
+      start: { rx: 0.1, ry: 0.2 },
+      end: { rx: 0.9, ry: 0.8 },
+      head: vec.head,
+      headStart: vec.head_start ?? undefined,
+      headEnd: vec.head_end ?? undefined,
+      headSizeStart: vec.head_size_start ?? undefined,
+      headSizeEnd: vec.head_size_end ?? undefined,
+    } as unknown as Pick<ArrowObject, 'start' | 'end' | 'head' | 'headStart' | 'headEnd' | 'headSizeStart' | 'headSizeEnd'>
+    const g = arrowGeometry(obj, vec.w, vec.h, vec.sw)
+    const close = (a: number[], b: number[]) => a.forEach((v, i) => expect(v).toBeCloseTo(b[i], 7))
+    close([g.p1.x, g.p1.y], vec.p1)
+    close([g.p2.x, g.p2.y], vec.p2)
+    for (const [got, want] of [
+      [encodeHead(g.startHead), vec.start_head],
+      [encodeHead(g.endHead), vec.end_head],
+    ] as const) {
+      if (want == null) {
+        expect(got).toBeNull()
+        continue
+      }
+      const a = got as { shape: string; points?: number[][]; cx?: number; cy?: number; r?: number }
+      const b = want as typeof a
+      expect(a.shape).toBe(b.shape)
+      if (b.points) {
+        expect(a.points).toHaveLength(b.points.length)
+        b.points.forEach((pt, i) => close(a.points![i], pt))
+      } else {
+        close([a.cx!, a.cy!, a.r!], [b.cx!, b.cy!, b.r!])
+      }
+    }
+  })
+
+  it('向量覆盖了每种端型、三档大小和不认识的端型', () => {
+    const names = vectors.arrow.map((v) => v.name).join(' ')
+    for (const k of ['triangle', 'stealth', 'diamond', 'dot', 'open', 'bar', 'foo']) expect(names).toContain(k)
+    expect(names).toContain('small')
+    expect(names).toContain('large')
   })
 })
