@@ -364,6 +364,43 @@ describe('存进项目与绑定', () => {
     expect(useDocumentStore.getState().projectFile).toBeNull()
   })
 
+  it.each([4.0, 4.5, 3.5, 1.5, '4', {}, true, null, -1, 0])('打开异常版本 %s 时保留当前文档和原基线', async (schema) => {
+    const before = structuredClone(useDocumentStore.getState().doc)
+    const id = useDocumentStore.getState().documentId
+    mockFetch.mockResolvedValue({ doc: { ...LAYOUT, schema }, revision: 'rev-future', file: 'tavottofile/Fig 1.json' })
+    await open(['Fig 1'], 'load')
+    await act(async () => { loadRow()!.click() })
+    expect(dialog().textContent).toContain(typeof schema === 'number' && schema > 3 ? '来自更新的' : '排版版本无效')
+    expect(useDocumentStore.getState().documentId).toBe(id)
+    expect(useDocumentStore.getState().doc).toEqual(before)
+    expect(knownLayoutRevision('Fig 1', 'p1')).toBeUndefined()
+    expect(mockSave).not.toHaveBeenCalled()
+    expect(useUiStore.getState().layoutOpen).toBe(true)
+  })
+
+  it.each([
+    [{type:'text',text:'DO-NOT-LOSE'}], null,
+    {schema:3,canvases:[],future:'DO-NOT-LOSE'},
+    {schema:2,objects:{first:'DO-NOT-LOSE'}},
+    {project:{name:'DO-NOT-LOSE'},canvases:[],activeCanvasId:'c'},
+    {objects:[{type:'text',text:'DO-NOT-LOSE'}]},
+    {objs:{first:'DO-NOT-LOSE'}},
+    {schema:2,objects:[{type:'text',text:'kept'},{text:'DO-NOT-LOSE'}]},
+    {objs:[{type:'text',text:'kept'},{type:'unknown',text:'DO-NOT-LOSE'}]},
+  ].map((payload) => [payload]))('旧服务返回损坏或含糊结构时不能绑定或覆盖 %#', async (payload) => {
+    const before = structuredClone(useDocumentStore.getState().doc)
+    const id = useDocumentStore.getState().documentId
+    mockFetch.mockResolvedValue({doc:payload,revision:'rev-broken',file:'tavottofile/Fig 1.json'})
+    await open(['Fig 1'],'load')
+    await act(async () => { loadRow()!.click() })
+    expect(dialog().textContent).toContain('排版版本无效')
+    expect(useDocumentStore.getState().documentId).toBe(id)
+    expect(useDocumentStore.getState().doc).toEqual(before)
+    expect(knownLayoutRevision('Fig 1','p1')).toBeUndefined()
+    expect(mockSave).not.toHaveBeenCalled()
+    expect(useUiStore.getState().layoutOpen).toBe(true)
+  })
+
   it('从「项目里的排版」打开：新会话绑定那个文件，基线是这次读到的那一份', async () => {
     mockFetch.mockResolvedValue({ doc: LAYOUT, revision: 'rev-disk', file: 'tavottofile/Fig 1.json' })
     await open(['Fig 1'], 'load')

@@ -635,6 +635,15 @@ export interface CanvasData {
  */
 export const SCHEMA_CURRENT = 3
 
+/** Shared future-version predicate for all document loading paths. */
+export function futureSchemaOf(raw: unknown): number | null {
+  const d = raw as { schema?: unknown } | null
+  if (!d || typeof d !== 'object') return null
+  const schema = d.schema
+  return typeof schema === 'number' && schema > SCHEMA_CURRENT ? schema : null
+}
+
+
 export interface ProjectDocument {
   schema: typeof SCHEMA_CURRENT
   project: { id: string; name: string }

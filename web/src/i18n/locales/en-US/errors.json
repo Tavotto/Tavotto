@@ -1175,5 +1175,6 @@
     "flipped": "the figure is flipped, so annotation coordinates can’t be mapped",
     "rasterOnly": "this asset is a bitmap only — no vector PDF",
     "rotated": "the figure is rotated, so annotation coordinates can’t be mapped"
-  }
+  },
+  "layoutSchemaInvalid": "The layout version is invalid and the file was not opened. Check the file or update {{product}}."
 }

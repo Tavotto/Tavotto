@@ -4022,6 +4022,7 @@ export default interface Resources {
       "writeBackMultipagePdfExport": "导出",
       "writeBackMultipagePdfNotice": "{{file}} 是脚本用 PdfPages 写的多页 PDF，写回只能写进一张图，不会覆盖它，原文件没有改动。编辑后的图请从导出里拿。"
     },
+    "layoutSchemaInvalid": "排版版本无效，未打开文件；请检查文件或升级 {{product}}。",
     "preflight": {
       "axisLabelFormat": "坐标轴标题「{{label}}」不是规范的「{{want}}」形式",
       "barWithoutErrorbar": "柱状图没有误差棒。柱子若是多次测量的均值，规范要求标出误差。",

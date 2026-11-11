@@ -15382,7 +15382,7 @@ def api_layouts():
     return jsonify({"layouts": names, "modified": {n: seen[n] for n in names}})
 
 
-def serve_document(path: Path):
+def serve_document(path: Path, *, reject_future: bool = False):
     """把一份文档原样交出去，并附上**它这一份**的内容修订号。
 
     自动保存与命名画布文件走同一份实现，因为三条纪律对两者一字不差：
@@ -15402,7 +15402,9 @@ def serve_document(path: Path):
       判据，交出去的仍然是磁盘上那一份字节。
     """
     data = path.read_bytes()
-    engine_documents.loads_document(data)
+    raw = engine_documents.loads_document(data)
+    if reject_future:
+        engine_documents.validate_named_layout_version(raw)
     resp = app.response_class(data, mimetype="application/json")
     resp.headers["Cache-Control"] = "no-store"
     # 内容 hash 放 header 而不是塞进 body——body 就是文档本身，多一个字段会
@@ -15416,7 +15418,7 @@ def api_layout_get(name):
     for d in _layout_read_dirs():
         p = layout_path(name, d)
         if p.exists():
-            resp = serve_document(p)
+            resp = serve_document(p, reject_future=True)
             ctx = _request_ctx()
             if ctx is not None:
                 # ⌘S 会把这份写到哪（ADR 0096）：永远是当前项目 `tavottofile/` 下的那个名字，
