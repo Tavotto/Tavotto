@@ -1189,14 +1189,24 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
         f"            frameon={bool(style['legend_frame'])!r},",
         "        )",
     ]
-    L += _footer(
-        recipe,
-        style,
-        ["    counts = cell_counts(d)"],
-        "('n = %d' % counts[0] if len(counts) == 1 else 'n per group in tick labels')"
-        if with_n
-        else None,
-    )
+    if recipe.x is None:  # 没有类别轴、也就没有刻度标签：各（分面, 分组）的 n 写进说明本身
+        L += _footer(
+            recipe,
+            style,
+            [
+                "    counts = {(p, g): len(d['cells'].get((p, '', g), [])) for p in panels for g in groups}"
+            ],
+            "n_note(counts, groups, panels)" if with_n else None,
+        )
+    else:
+        L += _footer(
+            recipe,
+            style,
+            ["    counts = cell_counts(d)"],
+            "('n = %d' % counts[0] if len(counts) == 1 else 'n per group in tick labels')"
+            if with_n
+            else None,
+        )
     L += [
         f"    fig.savefig(Path(__file__).resolve().parent / {stem + '.pdf'!r})",
         "",
@@ -1832,11 +1842,11 @@ def _expected_trend(values, recipe) -> list[dict]:
                             recipe.scale in ("log_y", "log_xy"),
                         )
                         if seg:
-                            out.append(_entry(lab, "xy", _interleave(*seg), (2, 2)))
+                            out.append(_entry(lab, "xy", _interleave(*seg), (len(seg[0]), 2)))
                     elif m == "hline_summary":
                         seg = hline_segment(pool, s)
                         if seg:
-                            out.append(_entry(lab, "xy", _interleave(*seg), (2, 2)))
+                            out.append(_entry(lab, "xy", _interleave(*seg), (len(seg[0]), 2)))
     return out
 
 

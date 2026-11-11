@@ -2720,3 +2720,114 @@ def test_horizontal_line_note_names_the_statistic_from_its_summary(summary, stat
     rendered, _ = _render_in(work, "gap.csv", both)
     (text,) = probe(work, rendered, "result = [t.get_text() for t in fig.texts]")
     assert "horizontal lines: mean" in text and "horizontal lines: median" in text, text
+
+
+@needs_worker
+@pytest.mark.parametrize("scale", ["linear", "log_x", "log_y", "log_xy"])
+def test_trend_fit_line_shape_follows_the_actual_segment_on_every_axis_scale(scale, tmp_path):
+    """只有一维是对数轴时拟合线是 50 个点的曲线：期望指纹的形状必须是实际长度，真 worker 对拍全 verified。"""
+    from tavotto.engine import figureverify as fv
+
+    work = _gap_folder(tmp_path / "w")
+    r = mk(
+        "gap.csv",
+        "trend",
+        ["points", "fit_line"],
+        ["y"],
+        x="x",
+        group="arm",
+        facet="site",
+        scale=scale,
+    )
+    rendered, values = _render_in(work, "gap.csv", r)
+    man = run_in_worker(work, rendered, "fig")
+    expected = T.expected_fingerprints(values, r)
+    fits = [e for e in expected if e["label"].startswith("fit_line")]
+    assert len(fits) == 4
+    want = [50, 2] if scale in ("log_x", "log_y") else [2, 2]
+    assert all(e["digest"]["shape"] == want for e in fits), [e["digest"]["shape"] for e in fits]
+    res = fv.data_matches_expected(man, expected)
+    assert res and all(c.verdict == fv.VERIFIED for c in res), [
+        (c.id, c.verdict) for c in res if c.verdict != fv.VERIFIED
+    ]
+
+
+def _box_folder(tmp: Path, equal: bool, with_site: bool) -> tuple[Path, dict]:
+    """g（类别 c0..c2）、arm（分组）、site（分面）、v。返回 (目录, {(site, cat, arm): 有效 v 个数})。含空 / nan 行。"""
+    rows = [["g", "arm", "site", "v"]]
+    cells = {}
+    for si, site in enumerate(("s1", "s2") if with_site else ("s1",)):
+        for ci in range(3):
+            for ai, arm in enumerate(("a", "b")):
+                k = 6 if equal else 6 + (si * 3 + ci + ai * 2) % 4
+                cells[(site, f"c{ci}", arm)] = k
+                rows += [
+                    [f"c{ci}", arm, site, round(1 + i * 0.7 + ai + ci * 0.3, 3)] for i in range(k)
+                ]
+                rows += [[f"c{ci}", arm, site, ""], [f"c{ci}", arm, site, "nan"]]
+    tmp.mkdir(parents=True, exist_ok=True)
+    (tmp / "box.csv").write_text(_csv(rows), encoding="utf-8")
+    return tmp, cells
+
+
+def _n_text(counts: dict, groups, panels) -> str:
+    """独立写出的 n 文字（与 `n_note` 同一约定：各格相同 → n = k；单分面逐组；多分面写范围）。"""
+    ns = list(counts.values())
+    if len(set(ns)) == 1:
+        return f"n = {ns[0]}"
+    if len(panels) == 1:
+        return "n = " + " / ".join(str(counts[(panels[0], g)]) for g in groups) + " (group order)"
+    return f"n = {min(ns)}-{max(ns)} per group and panel"
+
+
+@needs_worker
+@pytest.mark.parametrize("mark", ["box", "violin"])
+@pytest.mark.parametrize("with_x", [True, False], ids=["x", "no-x"])
+@pytest.mark.parametrize("equal", [True, False], ids=["equal-n", "uneven-n"])
+@pytest.mark.parametrize("with_site", [True, False], ids=["facet", "no-facet"])
+def test_note_never_points_at_tick_labels_that_do_not_exist(
+    mark, with_x, equal, with_site, tmp_path
+):
+    work, cells = _box_folder(tmp_path / "w", equal, with_site)
+    kw = {"x": "g"} if with_x else {}
+    r = mk(
+        "box.csv",
+        "distribution",
+        [mark],
+        ["v"],
+        group="arm",
+        facet="site" if with_site else None,
+        **kw,
+    )
+    rendered, _ = _render_in(work, "box.csv", r)
+    body = (
+        "result = {'texts': [t.get_text() for t in fig.texts],\n"
+        "          'ticks': [[t.get_text() for t in ax.get_xticklabels()] for ax in fig.axes]}\n"
+    )
+    got = probe(work, rendered, body)
+    note = got["texts"][0]
+    panels = ["s1", "s2"] if with_site else ["s1"]
+    if with_x:
+        if len({*cells.values()}) == 1:
+            assert note.endswith(f"n = {next(iter(cells.values()))}"), note
+        else:
+            assert "tick labels" in note, note
+            for site, ticks in zip(panels, got["ticks"]):
+                want = [
+                    f"c{ci}\n(n = "
+                    + "/".join(str(cells[(site, f"c{ci}", a)]) for a in ("a", "b"))
+                    + ")"
+                    for ci in range(3)
+                ]
+                assert ticks == want, (site, ticks, want)
+    else:
+        assert "tick labels" not in note, note
+        pooled = {
+            (site, arm): sum(cells[(site, f"c{ci}", arm)] for ci in range(3))
+            for site in panels
+            for arm in ("a", "b")
+        }
+        assert note.endswith(_n_text(pooled, ["a", "b"], panels)), (note, pooled)
+        assert all(
+            t == "" for ticks in got["ticks"] for t in ticks
+        )  # 没有刻度，所以 n 只能在说明里
