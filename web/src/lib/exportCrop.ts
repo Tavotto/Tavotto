@@ -1,6 +1,6 @@
 import type { CanvasObject, DashStyle, FigureDocument, LineCap } from '@/types/document'
-import { objectRotation } from '@/types/document'
-import { headSizeFactor, strokeCap } from './shapeGeometry'
+import { objectRotation, shapeStrokeOn } from '@/types/document'
+import { headSizeFactor, shapeInset, shapeOutline, STROKE_MITER_LIMIT, strokeCap } from './shapeGeometry'
 import { ptToMm } from './units'
 
 /**
@@ -21,7 +21,8 @@ export interface CropRect {
 /**
  * 描边 / 箭头头部越过逻辑框的外扩量（mm）。**与 RenderCore 的绘制同源**
  * （`rendercore/geometry.py` / `plan.py`）：
- * * 矩形 / 椭圆 / 多边形等封闭形状把描边内缩半宽，不越框；
+ * * 矩形 / 椭圆 / 多边形等封闭形状把描边内缩半宽，圆角 / 斜角不越框；**尖角**（`lineJoin: 'miter'`）
+ *   在三角形 / 菱形 / 多边形的锐角上会伸出去，按真实顶点算（`miterOverflow`）；
  * * 直线 / 花括号的描边居中在路径上，圆线帽 → 越出半个线宽；
  * * 箭头：帽半宽 1.7×线宽（垂直于箭杆），加圆线帽半宽 → 有端型时 2.2×线宽，无端型 0.5×；
  * * 文本框描边居中在框边上 → 越出半个 `border_pt`（缺省 0.75）；
@@ -32,6 +33,53 @@ function capHalf(cap: LineCap | undefined, dash: DashStyle | undefined): number 
   return strokeCap(cap, dash) === 'square' ? Math.SQRT1_2 : 0.5
 }
 
+/**
+ * 封闭多边形选了尖角时，尖角越出逻辑框的最大量（mm）。顶点与画布 / 导出同一条轮廓（`shapeOutline`，
+ * 内缩半个线宽）；每个顶点的尖角沿外角平分线伸出 `半线宽 / sin(夹角/2)`，超过斜接上限退成斜角
+ * （斜角与圆角都在顶点半线宽的圆里）。矩形的直角尖正好落在框角上，不越框。
+ */
+function miterOverflow(o: Extract<CanvasObject, { type: 'shape' }>): number {
+  if (o.lineJoin !== 'miter' || !shapeStrokeOn(o) || !['triangle', 'diamond', 'polygon'].includes(o.shape)) return 0
+  const half = ptToMm(Math.max(o.strokePt, 0.05)) / 2
+  if (!(half > 0)) return 0
+  const outline = shapeOutline(o.shape, o.w, o.h, shapeInset(o, half * 2), o.sides)
+  if (outline?.kind !== 'poly') return 0
+  const pts = outline.points
+  let over = 0
+  const n = pts.length
+  for (let i = 0; i < n; i++) {
+    const [px, py] = pts[(i + n - 1) % n]
+    const [vx, vy] = pts[i]
+    const [nx, ny] = pts[(i + 1) % n]
+    const ax = px - vx
+    const ay = py - vy
+    const bx = nx - vx
+    const by = ny - vy
+    const la = Math.hypot(ax, ay)
+    const lb = Math.hypot(bx, by)
+    if (!(la > 0 && lb > 0)) continue
+    const cos = Math.max(-1, Math.min(1, (ax * bx + ay * by) / (la * lb)))
+    const sinHalf = Math.sqrt((1 - cos) / 2)
+    let reach = half
+    let tx = vx
+    let ty = vy
+    if (sinHalf > 0 && 1 / sinHalf <= STROKE_MITER_LIMIT) {
+      // 外角平分线 = 两条邻边单位向量之和的反方向
+      const ux = -(ax / la + bx / lb)
+      const uy = -(ay / la + by / lb)
+      const lu = Math.hypot(ux, uy)
+      if (lu > 0) {
+        const d = half / sinHalf
+        tx = vx + (ux / lu) * d
+        ty = vy + (uy / lu) * d
+        reach = 0
+      }
+    }
+    over = Math.max(over, reach - vx, reach - vy, vx + reach - o.w, vy + reach - o.h, -tx, -ty, tx - o.w, ty - o.h)
+  }
+  return Math.max(0, over)
+}
+
 function strokeOutset(o: CanvasObject): number {
   switch (o.type) {
     case 'text':
@@ -39,7 +87,7 @@ function strokeOutset(o: CanvasObject): number {
     case 'shape':
       return o.shape === 'line' || o.shape === 'brace'
         ? ptToMm(Math.max(o.strokePt, 0.05) * capHalf(o.lineCap, o.dash))
-        : 0
+        : miterOverflow(o)
     case 'arrow': {
       const sw = Math.max(o.strokePt, 0.05)
       // 哪一端有端型：与 `geometry.arrow_heads` 同一判据（新字段任一在就只看新字段，否则看旧 head，缺省 end）
