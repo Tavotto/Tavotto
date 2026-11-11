@@ -782,6 +782,9 @@ SCRIPT_EXITED = "script_exited"
 #: 登记的入口函数在脚本里已经不存在（脚本被改写、注册表里的 `entry` 没跟上），且入口没有在运行前被纠正过
 #: （`engine/entryfresh` 才是纠正的唯一出处）。与脚本自己的 `AttributeError` 分开：这不是脚本的错。
 SCRIPT_ENTRY_MISSING = "script_entry_missing"
+#: 脚本文件本身不在了（被移动 / 删除，例如在一个只装了文档包的新目录里显式运行）。
+#: 不能落成 `missing_dependency`：那会让界面让用户去「安装名为 plot 的包」。
+SCRIPT_SOURCE_MISSING = "script_source_missing"
 #: safe 档的守卫拦下了脚本的关键文件操作（删除 / 改名 / 写入真实图库，或被拦截不落盘的 savefig），
 #: 脚本随后又观察了受影响的路径（P01a，ADR 0003）。结果可能与直接 Python 不同：不是完整成功。
 FILE_OPERATION_BLOCKED = "safe_file_operation_blocked"
@@ -1858,6 +1861,12 @@ class Worker(wireproto.V1Handler):
             if self.write_roots is not None:
                 writetripwire.arm(True)
             try:
+                if not self.script_source.is_file():
+                    raise ProtocolError(
+                        SCRIPT_SOURCE_MISSING,
+                        f"脚本文件不存在: {self.script.name}（可能被移动或删除）",
+                        extra={"script": self.script.name, "missing_source": True},
+                    )
                 # paper_style 是某些图库的私有方言，不是引擎的依赖：没有就跳过，
                 # 靠 _patched_savefig 这条通用兜底捕获。曾经这里是无保护的 import，
                 # 任何不带 paper_style.py 的图库都会以 ModuleNotFoundError 开局。

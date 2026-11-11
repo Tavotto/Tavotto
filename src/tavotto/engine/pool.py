@@ -1236,6 +1236,8 @@ def _explain_empty_capture(err: "WorkerError", script_name: str, known, log_tail
 MISSING_INPUT_CODE = "missing_input"
 #: worker 侧 `worker.SCRIPT_ENTRY_MISSING` 的镜像：登记的入口函数在脚本里已经不存在（TVD-CHR5）。
 SCRIPT_ENTRY_MISSING_CODE = "script_entry_missing"
+#: worker 侧 `worker.SCRIPT_SOURCE_MISSING` 的镜像：脚本文件本身不在了（不是缺依赖包）。
+SCRIPT_SOURCE_MISSING_CODE = "script_source_missing"
 #: worker 侧 `worker.SCRIPT_EXITED` 的镜像：脚本自己 `sys.exit(...)`——最常见的是先 `exists()` 判空
 #: 再退出（「找不到数据」），与「跑完没出图」一样只挂静态那部分（ADR 0106 §一.3）。
 SCRIPT_EXITED_CODE = "script_exited"
@@ -2355,6 +2357,7 @@ INTERPRETER_CACHE_DENIED_CODE = "interpreter_cache_denied"
 #: 给 `tests/test_error_codes.py` 门禁读的注册表（它按字面量扫源码，常量式的 code 看不见）。
 ERROR_CODES = (
     SCRIPT_ENTRY_MISSING_CODE,
+    SCRIPT_SOURCE_MISSING_CODE,
     OUTPUT_FOLDER_READ_ONLY_CODE,
     INTERPRETER_CACHE_DENIED_CODE,
     EXPLICIT_UNUSABLE_CODE,
