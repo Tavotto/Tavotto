@@ -1385,6 +1385,70 @@ def _set_arrowstyle(a, v) -> None:
     a.set_arrowstyle(str(v))
 
 
+class _SolidHeadRenderer:
+    """转给真 renderer；一次 draw 里**第二个起**的不同 path 对象（箭头头 / 括号）改用实线画。
+
+    `FancyArrowPatch.draw` 把 ArrowStyle 给出的 `[杆, 头A?, 头B?]` 逐个 `draw_path`，同一个 gc、同一套
+    虚线。按 path 对象认（不按调用次数）：路径效果会把同一条 path 画好几遍。间隙色那一遍（gc 上是
+    反相虚线）对头整个跳过——头是实线，没有间隙。`simple` / `fancy` / `wedge` 杆头是一条轮廓，
+    只有一个 path，原样虚线。
+    """
+
+    def __init__(self, renderer, arrow):
+        self._renderer = renderer
+        self._arrow = arrow
+        self._paths: list = []
+
+    def __getattr__(self, name):
+        return getattr(self._renderer, name)
+
+    def draw_path(self, gc, path, transform, rgbFace=None):  # noqa: N803
+        if not any(p is path for p in self._paths):
+            self._paths.append(path)
+        offset, dashes = gc.get_dashes()
+        if self._paths[0] is path or dashes is None:
+            return self._renderer.draw_path(gc, path, transform, rgbFace)
+        main = getattr(self._arrow, "_dash_pattern", None)
+        if main is not None and (offset, dashes) != tuple(main):
+            return None  # 间隙色那一遍
+        gc.set_dashes(0, None)
+        try:
+            return self._renderer.draw_path(gc, path, transform, rgbFace)
+        finally:
+            gc.set_dashes(offset, dashes)
+
+
+def _install_solid_head_draw(a) -> None:
+    """箭头改虚线时只虚杆、头保持实线（PowerPoint 的画法）。实例级 draw 钩子，同 `_install_patch_resize_draw_hook`：
+    只装一次，开关是 `_mm_solid_head`；脚本自己画的虚线箭头不碰（没走这个 setter）。"""
+    a._mm_solid_head = True  # noqa: SLF001
+    if a.__dict__.get("_mm_solid_head_hook") is not None:
+        return
+    native_draw = a.draw
+
+    def solid_head_draw(renderer, *args, **kwargs):
+        if getattr(a, "_mm_solid_head", False):
+            renderer = _SolidHeadRenderer(renderer, a)
+        return native_draw(renderer, *args, **kwargs)
+
+    a._mm_solid_head_hook = solid_head_draw  # noqa: SLF001
+    a.draw = solid_head_draw
+
+
+def _set_arrow_linestyle(a, v) -> None:
+    a.set_linestyle(str(v))
+    _install_solid_head_draw(a)
+
+
+def _restore_arrow_linestyle(a, orig) -> None:
+    a.set_linestyle(orig)
+    a._mm_solid_head = False  # noqa: SLF001
+    hook = a.__dict__.pop("_mm_solid_head_hook", None)
+    # 钩子之后又被别的实例钩子包过：只关开关，不拆链
+    if hook is not None and a.__dict__.get("draw") is hook:
+        a.__dict__.pop("draw")
+
+
 def _linestyle_name(a) -> str:
     ls = a.get_linestyle()
     named = {"solid": "-", "dashed": "--", "dashdot": "-.", "dotted": ":"}
@@ -5007,10 +5071,8 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     # 锚定框 / 插框（ADR 0100）：cls_key 仍是 `artist`，setter 自己认类型，认不出来就抛
     ("artist", "pos_frac"): (_get_offsetbox_pos, _set_offsetbox_pos_frac),
     ("arrowpatch", "arrowstyle"): (lambda a: a.get_arrowstyle(), _set_arrowstyle),
-    ("arrowpatch", "linestyle"): (
-        lambda a: a.get_linestyle(),
-        lambda a, v: a.set_linestyle(str(v)),
-    ),
+    # 虚线只作用在杆上，头保持实线（`_SolidHeadRenderer`）
+    ("arrowpatch", "linestyle"): (lambda a: a.get_linestyle(), _set_arrow_linestyle),
     ("line", "color"): (lambda a: a.get_color(), lambda a, v: a.set_color(v)),
     ("line", "linewidth"): (lambda a: a.get_linewidth(), lambda a, v: a.set_linewidth(float(v))),
     ("line", "linestyle"): (lambda a: a.get_linestyle(), lambda a, v: a.set_linestyle(v)),
@@ -5353,7 +5415,7 @@ _RESTORE: dict[tuple[str, str], object] = {
     ("patch", "size_frac"): _restore_patch_size,
     ("artist", "pos_frac"): _restore_offsetbox_pos,
     ("arrowpatch", "arrowstyle"): lambda a, orig: a.set_arrowstyle(orig),
-    ("arrowpatch", "linestyle"): lambda a, orig: a.set_linestyle(orig),
+    ("arrowpatch", "linestyle"): _restore_arrow_linestyle,
     ("text", "pos_frac"): _restore_text_pos,
     ("text", "fontfamily"): _restore_text_fontfamily,
     ("ticks", "fontfamily"): _restore_ticks_fontfamily,
