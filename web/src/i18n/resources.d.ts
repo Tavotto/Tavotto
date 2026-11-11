@@ -2826,6 +2826,7 @@ export default interface Resources {
         "restartStrong": "请重启 Tavotto",
         "signatureNote": "更新包由官方签名，安装前会校验；校验不过不会安装。你的项目、排版与设置都不在应用的安装目录里，升级不受影响。",
         "sourceName": {
+          "edge": "国内镜像",
           "github": "GitHub",
           "mirror": "国内镜像"
         },
