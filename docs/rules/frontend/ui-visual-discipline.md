@@ -77,6 +77,8 @@ cursor-not-allowed`；未选中复选框 / 单选边框与关态开关轨道 `bo
 分组的展开走 `ui/Field.Reveal`（`usePresence` 保活退场那 90ms，所以收起后内容还在 DOM 里一小会儿）；
 没写时长的 `transition-*` 默认就是 `--duration-fast` + `--ease-standard`（`motion.test` 守着）。
 **Card 几何默认不变，`lift` 是登记豁免**（宪法第二十五节「Card `lift`」，用户 2026-10-15 裁决）：`<Card lift>` 在 hover / 键盘聚焦时 translateY(-2px) + scale(`--card-lift-scale`，默认 1.015、上限 1.02) + 阴影升到 `shadow-lift`（含 1px accent/20% 描边，不要外发光；用户 2026-10-16 选定整卡放大 + 描边），按下回落，
+
+第二处登记豁免：改图助手的附件预览卡（`components/ai/AttachCards.tsx`，用户 2026-11-11 裁决，ADR 0175）：静止时略微倾斜（确定性角度序列）、悬停 / 聚焦摆正并 translateY(-2px)、`prefers-reduced-motion` 下不位移；只此一处，门禁按文件登记次数。
 reduced-motion 下只换阴影 / 描边，disabled / selected 不浮起；静止态写恒等变换（`translate-y-0 scale-100`）以免 none↔非 none 引发重排。只许首页项目卡（品牌位置）用，别处不开。
 门禁 `foundation.test`（交互态位移 / 缩放仅 Card.tsx 一处）+ `foundationPrimitives.test`（≤2px 整数、缩放 ≤1.02）。
 **键盘契约在原语里**（2026-09-14 apple-design 审计批次 1）：Dialog 打开后焦点

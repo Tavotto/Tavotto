@@ -1464,6 +1464,22 @@
       ]
     },
     {
+      "id": "ai.attachments",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "改图助手输入框可附文件：回形针 / 粘贴 / 拖入，任意格式（图片给模型看、CSV 等数据文件给 AI 读），最多 6 个；输入框上方的预览卡相邻微重叠、悬停那张提到最上层并可点 ×；发送只带暂存 id；对话里文字与附件是两个气泡，附件堆叠、点击展开",
+        "en-US": "Attach files in the assistant's input box: paperclip, paste or drop, any format (images are shown to the model, data files like CSV are read by the AI), up to 6; preview cards above the box overlap slightly and the hovered one comes to the front with a clickable ×; sending carries staged ids only; the conversation shows the text and the attachments as two bubbles, the attachments stacked and expandable on click"
+      },
+      "entry": "改图助手输入框的回形针 / 粘贴 / 拖入",
+      "e2e": [
+        {
+          "spec": "ai-attachments.spec.ts",
+          "title": "改图助手附文件：回形针 / 预览卡重叠且悬停那张在最上层可点 × / 发送只带暂存 id / 对话里两个气泡可展开"
+        }
+      ]
+    },
+    {
       "id": "canvas.shape-stroke-options",
       "status": "active",
       "platform": "both",
