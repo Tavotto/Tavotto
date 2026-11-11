@@ -6,6 +6,8 @@
  *   （`PrepEntry.placeIn`）。路径：macOS / Windows 壳旁听系统拖放交来真实路径（ADR 0092），与画布的 DOM `drop` 配对
  *   （`createCanvasDropPairer`）；拿不到路径的宿主退回系统选择器，说清是哪个文件。
  * * 项目外的 `.py` / R / MATLAB 脚本：一句话 + 主按钮「打开它所在的项目」（与主页同一条打开并运行的路径）。
+ * * Jupyter 笔记本（`.ipynb`，ADR 0179）：在项目里就抽成它旁边的同名 `.py` 并运行（图放进这张画布、落在放下的位置）；项目外的
+ *   同样给「打开它所在的项目」，打开后接着抽取并运行；拿不到路径（浏览器 / 壳没交来）就把内容交给后端、抽成当前项目根里的 `.py`。
  * * R / MATLAB 脚本在项目里：出「生成可编辑版本」那张卡（`foreignScriptStore`），不运行。
  * * 项目包：走顶栏「导入项目包」同一条流程（`lib/packageImport`）。
  * * 别的（数据、笔记本、别的图片格式…）：一句话说清能放什么 + 「发送问题反馈」。
@@ -28,6 +30,7 @@ import {
 import { createCanvasDropPairer, projectRelativePath, projectRelativeScript, type CanvasDropPlace } from '@/lib/canvasScriptDrop'
 import { isDesktop, nativeFileDropAvailable, onNativeFileDrop, pickScriptFile, type NativeFileDrop } from '@/lib/desktop'
 import { foreignLanguageOf, type ForeignLanguage } from '@/lib/foreignScript'
+import { runNotebook } from '@/lib/notebookRun'
 import { openPackageFile } from '@/lib/packageImport'
 import { baseName, dragHasFiles, dropTargetOf, parentDir, pathFromFileUri, type DropData } from '@/lib/scriptImport'
 import { useForeignScriptStore } from '@/store/foreignScriptStore'
@@ -61,12 +64,17 @@ export function acceptsScriptDrag(types: readonly string[]): boolean {
  * 打开 `path` 所在的项目，再接着做用户原本想做的事：`.py` → 「打开并运行」（与主页同一条），
  * R / MATLAB → 出「生成可编辑版本」卡。打不开就说一句 + 「发送问题反馈」。
  */
-export async function openItsProject(path: string, language: ForeignLanguage | null): Promise<void> {
+export async function openItsProject(path: string, language: ForeignLanguage | 'notebook' | null): Promise<void> {
   const name = baseName(path)
   try {
     await useProjectStore.getState().open(parentDir(path))
   } catch {
     say('openProjectFailed', { name }, 'error', feedbackAction())
+    return
+  }
+  // 笔记本：打开项目后接着抽成同名 .py 并运行（它就在刚打开的这个文件夹里）
+  if (language === 'notebook') {
+    await runNotebook({ path: name })
     return
   }
   if (language) {
@@ -82,7 +90,7 @@ export async function openItsProject(path: string, language: ForeignLanguage | n
   say('openedAndRunning', { name }, 'done')
 }
 
-const openItsProjectAction = (path: string, language: ForeignLanguage | null) => ({
+const openItsProjectAction = (path: string, language: ForeignLanguage | 'notebook' | null) => ({
   label: msg('canvasDrop.openItsProject', undefined, 'workspace'),
   run: () => void openItsProject(path, language),
 })
@@ -108,6 +116,22 @@ export function runDroppedScript(path: string, place: CanvasDropPlace, opts?: { 
   if (skipped > 0) say('runningFirst', { name, count: skipped }, 'done')
   else say('running', { name }, 'done')
   flushTail()
+}
+
+/**
+ * 拿到了真实路径的笔记本：在项目里就抽成它旁边的同名 `.py` 并运行（图放进这张画布、落在放下的位置），
+ * 不在项目里给「打开它所在的项目」。「那一句」是异步的（要等后端抽完），没成的东西排在它后面说（`flushTail`）。
+ */
+export function runDroppedNotebook(path: string, place: CanvasDropPlace, opts?: { skipped?: number }): void {
+  const name = baseName(path)
+  const root = useProjectStore.getState().project?.figures_dir
+  const rel = root ? projectRelativePath(root, path) : null
+  if (!rel) {
+    say('outsideProject', { name }, 'error', openItsProjectAction(path, 'notebook'))
+    flushTail()
+    return
+  }
+  void runNotebook({ path: rel }, { place, skipped: opts?.skipped }).finally(flushTail)
 }
 
 /** R / MATLAB 脚本：在项目里就出「生成可编辑版本」那张卡（不运行），不在项目里给「打开它所在的项目」 */
@@ -143,9 +167,9 @@ function onlyFile(dt: DropData, file: File): DropData {
   }
 }
 
-/** 一次放下里被忽略的脚本数：只处理第一个脚本，其余的（含没有 .py 时多出的 R / MATLAB）要说一声 */
+/** 一次放下里被忽略的脚本数：只处理第一个脚本，其余的（含没有 .py 时多出的笔记本、R / MATLAB）要说一声 */
 function skippedScripts(plan: IntakePlan): number {
-  const all = plan.scripts.length + plan.foreign.length
+  const all = plan.scripts.length + plan.notebooks.length + plan.foreign.length
   return all > 0 ? all - 1 : 0
 }
 
@@ -160,6 +184,7 @@ export function useCanvasScriptDrop() {
       run: (drop, place) => {
         const path = nativePath(drop)
         if (path) runDroppedScript(path, place, { skipped: skipped.current })
+        else if (drop.kind === 'notebook') runDroppedNotebook(drop.notebook, place, { skipped: skipped.current })
         else if (drop.kind === 'foreign_script') {
           const language = foreignLanguageOf(drop.name)
           if (language) offerDroppedForeign(drop.script, language)
@@ -209,6 +234,19 @@ export function useCanvasScriptDrop() {
         case 'foreign-path':
           offerDroppedForeign(`${target.folder.replace(/[\\/]+$/, '')}/${target.script}`, target.language)
           return
+        case 'notebook-path':
+          runDroppedNotebook(`${target.folder.replace(/[\\/]+$/, '')}/${target.notebook}`, place, { skipped: skip })
+          return
+        case 'notebook-no-path': {
+          // 拿不到路径（浏览器、壳这次没交来）：页面读得到内容，交给后端抽成当前项目根里的 .py——两种宿主同一条，不弹选择器
+          const file = Array.from(dt.files).find((f) => f.name === target.name) as File | undefined
+          if (!file) {
+            flushTail()
+            return
+          }
+          void runNotebook({ file }, { place, skipped: skip }).finally(flushTail)
+          return
+        }
         case 'no-path':
         case 'foreign-no-path':
           if (!isDesktop()) {
@@ -234,7 +272,8 @@ export function useCanvasScriptDrop() {
       flushTail()
       return
     }
-    if (native.current === false || target.kind === 'path' || target.kind === 'foreign-path') degrade()
+    if (native.current === false || target.kind === 'path' || target.kind === 'foreign-path' || target.kind === 'notebook-path')
+      degrade()
     else pairer.current!.dom(place, degrade)
   }
 
@@ -264,7 +303,8 @@ export function useCanvasScriptDrop() {
       return
     }
     const rest: IntakeProblem[] = plan.unsupported.map((u) => ({ name: u.name, image: u.image }))
-    const script = plan.scripts[0] ?? plan.foreign[0]
+    // 优先级与壳的 `drop_paths::classify` 一致：.py 赢笔记本，笔记本赢 R / MATLAB
+    const script = plan.scripts[0] ?? plan.notebooks[0] ?? plan.foreign[0]
     const skip = skippedScripts(plan)
     // 脚本那一半（DOM 侧的配对登记、uri-list 的读取）必须在 drop 事件里**同步**做完：壳的原生事件只等 `PAIR_GRACE_MS`，
     // 宿主的 `DataTransfer` 在事件返回后也读不到；图片上传在后面异步跑，两者互不等待

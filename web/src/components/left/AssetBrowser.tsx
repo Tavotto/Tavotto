@@ -153,7 +153,7 @@ export function AssetBrowser() {
   const canvases = useDocumentStore((s) => s.canvases)
   const activeCanvasId = useDocumentStore((s) => s.activeCanvasId)
   const scriptCount = useScriptLibraryStore(
-    (s) => (s.view?.all_scripts?.length ?? 0) + (s.view?.foreign_scripts?.length ?? 0),
+    (s) => (s.view?.all_scripts?.length ?? 0) + (s.view?.foreign_scripts?.length ?? 0) + (s.view?.notebook_scripts?.length ?? 0),
   )
   const scriptsLoaded = useScriptLibraryStore((s) => s.loaded)
   const scriptsGeneration = useScriptLibraryStore((s) => s.generation)

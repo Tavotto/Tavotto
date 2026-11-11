@@ -175,6 +175,8 @@ export async function onDesktopOpen(
  */
 export type NativeFileDrop =
   | { kind: 'script'; folder: string; script: string; name: string; ignored: number }
+  /** Jupyter 笔记本（`.ipynb`，ADR 0179）：打开 `folder`，由页面把 `notebook`（全路径）抽成同名 `.py` 再运行 */
+  | { kind: 'notebook'; folder: string; notebook: string; name: string; ignored: number }
   /** R / MATLAB 脚本（`.R` / `.r` / `.m`，ADR 0143 修订二）：打开 `folder`，由页面提议「生成可编辑版本」；语言由页面按文件名后缀判 */
   | { kind: 'foreign_script'; folder: string; script: string; name: string; ignored: number }
   | { kind: 'folder'; folder: string; name: string; ignored: number }
@@ -405,7 +407,7 @@ export async function pickScriptFile(title?: string): Promise<string | null> {
     directory: false,
     multiple: false,
     title,
-    filters: [{ name: 'Python / R / MATLAB', extensions: ['py', 'R', 'r', 'm'] }],
+    filters: [{ name: 'Python / Jupyter / R / MATLAB', extensions: ['py', 'ipynb', 'R', 'r', 'm'] }],
   })
   return typeof picked === 'string' ? picked : null
 }

@@ -331,6 +331,12 @@ missing. Computing it never leaves the machine and never runs the user's code:
   ordinary figure. It is validated and written locally by the Tavotto process the
   window is already talking to over the loopback connection; nothing is uploaded,
   and no usage-statistics event is added for it.
+* **Turning a Jupyter notebook into a script** (dropping a `.ipynb` on the canvas or the
+  home screen, or using the notebook row in the script list) reads the notebook's JSON and
+  writes a plain `.py` copy of its code cells next to it, entirely on this machine, by the
+  Tavotto process the window is already talking to over the loopback connection. Nothing
+  in the notebook is executed, uploaded or sent to an AI service, the notebook itself is
+  never modified, and no usage-statistics event is added for it.
 
 ## Diagnostics bundle
 
