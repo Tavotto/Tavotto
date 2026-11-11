@@ -627,7 +627,7 @@ export function editBoundStyleAll(edits: StyleEdit[], label?: (name: string) => 
               label: msg('stylePanel.retry', undefined, 'workspace'),
               run: () => {
                 useUiStore.getState().clearStatusOwnedBy(STYLE_SAVE_FAILED_OWNER)
-                if (generation() === origin && canvasStyle()?.id === binding.id) void editBoundStyle(edit)
+                if (generation() === origin && canvasStyle()?.id === binding.id) void editBoundStyleAll(edits, label)
               },
             },
           },
