@@ -107,8 +107,12 @@ describe('规范库里的「按期刊」条目', () => {
     expect(identity.textContent).toContain('期刊要求 · 只读')
     // 期刊写了双栏 180 mm：显示期刊的数，不是默认规范的 150
     expect(field('widths_mm.double')).toContain('180 mm')
-    // 期刊没写宽度容差：说「未规定」，再说实际按多少
-    expect(field('widths_mm.tolerance_mm')).toMatch(/未规定 · 默认 [\d.]+ mm/)
+    // 期刊没写正文字号：说「未规定」，再说实际按多少
+    expect(field('default_font_size_pt')).toMatch(/未规定 · 默认 [\d.]+ pt/)
+    // 宽度容差、推荐导出分辨率：期刊没写也只写数（后者按 600 推荐）
+    expect(field('widths_mm.tolerance_mm')).toMatch(/[\d.]+ mm$/)
+    expect(field('widths_mm.tolerance_mm')).not.toContain('未规定')
+    expect(field('preferred_formats.export_dpi_default')).toMatch(/600 dpi$/)
     // 「本项目实际检查的规则」不再摆第二份
     expect(document.body.textContent).not.toContain('本项目实际检查的规则')
   })

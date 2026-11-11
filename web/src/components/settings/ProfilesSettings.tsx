@@ -145,6 +145,9 @@ const KEY_RULES = ['minFont', 'singleWidth', 'doubleWidth', 'minDpi'] as const
 /** 规范库下拉里「按期刊」那条虚拟条目的值（不会与真实记录 id 撞：后端 id 只有字母数字与连字符） */
 const JOURNAL_ENTRY = '\u0000journal'
 
+/** 期刊没写时也只显示数值的字段（不是期刊会规定的东西，或者有固定的推荐值） */
+const PLAIN_WHEN_SILENT = new Set(['widths_mm.tolerance_mm', 'preferred_formats.export_dpi_default'])
+
 /**
  * 期刊条目下一个字段的显示值：期刊写了（折进预检的）→ 那个数；没写 → 「未规定」，后面小字说实际按多少检查。
  * 判据与上面 `KeyRules` 同一套：出处表里 `affects === 'preflight'` 才算期刊规定的；栏宽由期刊自有栏位派生时也算。
@@ -158,7 +161,8 @@ function journalFieldValue(
   const fromJournal =
     sources[f.path]?.affects === 'preflight' ||
     (f.path.startsWith('widths_mm.') && f.path !== 'widths_mm.tolerance_mm' && sources.page_columns?.affects === 'preflight')
-  if (fromJournal) return formatValue(raw, f.unit)
+  // 宽度容差是工具的判据参数、推荐导出分辨率期刊没写就按 600 推荐（用户 2026-11-11 裁决）：都只写数，不说「未规定」
+  if (fromJournal || PLAIN_WHEN_SILENT.has(f.path)) return formatValue(raw, f.unit)
   if (f.path === 'min_effective_font_size_pt') {
     const advice = (profile.advisories as { role?: string; value_pt?: number }[] | undefined)?.find((a) => a.role === 'body_min')
     if (advice?.value_pt != null) return `${st('unspecified')} · ${st('adviceHint', { pt: advice.value_pt })}`
