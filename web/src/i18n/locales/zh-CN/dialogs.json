@@ -2463,7 +2463,7 @@
     "noMatch": "没有匹配的期刊",
     "current": "按「{{name}}」检查",
     "requirements": "期刊要求",
-    "unspecified": "该期刊未规定",
+    "unspecified": "当前快照未记录",
     "hasRequirement": "有要求",
     "unset": "本刊不适用",
     "noJournal": "不按期刊",

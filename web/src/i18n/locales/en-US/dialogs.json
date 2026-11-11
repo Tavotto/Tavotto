@@ -2487,7 +2487,7 @@
     "noMatch": "No matching journal",
     "current": "Checking against {{name}}",
     "requirements": "Journal requirements",
-    "unspecified": "Not specified by the journal",
+    "unspecified": "Not recorded in this snapshot",
     "hasRequirement": "Has a requirement",
     "unset": "Does not apply to this journal",
     "noJournal": "No journal",

@@ -6,7 +6,7 @@
  *   搜索     `searchJournals`：名称 / 缩写（aliases）/ ISSN；`groupByPublisher` 按出版社分组
  *   出处卡   `fieldLabel` / `valueText` / `cardSentence` / `highlightQuote`：一句话 + 原文摘录里命中的数加 `<mark>`
  *
- * 期刊没写的项一律说「该期刊未规定」，**不拿任何别的规范补**；`typical` / `recommended` / `range` 的值显示原话，
+ * 期刊没写的项一律说「当前快照未记录」，**不拿任何别的规范补**；`typical` / `recommended` / `range` 的值显示原话，
  * 不显示成一个像判据的数。
  */
 import { currentLocale, t as translate } from '@/i18n'
@@ -266,6 +266,14 @@ export function pathsForCheck(checkId: string): string[] {
     .map(([path]) => path)
 }
 
+/** DPI 问题只能引用与实际阈值相同、真正参与预检的来源。 */
+export function dpiSourceMatches(source: JournalFieldSource | undefined, threshold: unknown): boolean {
+  if (!source || source.unset || source.affects !== 'preflight' || typeof source.value !== 'number') return false
+  if (typeof threshold !== 'number' && typeof threshold !== 'string') return false
+  const actual = Number(threshold)
+  return Number.isFinite(actual) && Number.isFinite(source.value) && source.value === actual
+}
+
 /** 某检查在这本期刊上有出处的那几条（advice 只收 affects=advice 的）。 */
 export function sourcesForCheck(
   checkId: string,
@@ -280,7 +288,7 @@ export function sourcesForCheck(
 
 /* --------------------------- 「期刊要求」清单的行 --------------------------- */
 
-/** 期刊「要紧的几项」：没有出处就明说「该期刊未规定」，不补。 */
+/** 期刊「要紧的几项」：没有出处就明说「当前快照未记录」，不补。 */
 export const KEY_PATH_GROUPS: string[][] = [
   ['page_columns', 'widths_mm.single', 'widths_mm.double'],
   ['min_effective_font_size_pt', 'min_script_font_size_pt'],

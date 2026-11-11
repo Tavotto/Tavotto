@@ -910,7 +910,8 @@
     "cjkFallbackUnaccepted": "Text with CJK characters is drawn by {{face}} (body font {{family}}), not among the CJK fonts the profile accepts.",
     "discouragedColormap": "The colormap {{cmap}} isn't perceptually uniform; the profile recommends {{recommended}}.",
     "elementOutsideFigure": "An element extends {{mm}} mm past the figure edge. The part outside is cut off on export.",
-    "exportRasterDpi": "Exporting {{formats}} at {{dpi}} dpi is below the profile's {{min}} dpi",
+    "exportRasterDpi": "Exporting {{formats}} at {{dpi}} dpi is below the current check threshold of {{min}} dpi",
+    "exportRasterDpiJournalSourceUnverified": "Exporting {{formats}} at {{dpi}} dpi is below the current check threshold of {{min}} dpi; this report has not verified its journal source",
     "fitWithoutCi": "A fitted curve has no confidence band. Submissions usually require the uncertainty of the fit.",
     "fontBelowFloor": "Figure text has an effective size of {{effective}} pt, below the absolute floor of {{floor}} pt.",
     "fontFamilySubstituted": "Figure text uses {{family}}; the profile requires {{want}}.",
@@ -938,7 +939,8 @@
     "paletteLineMarkers": "None of the {{count}} lines has a marker, so they’re hard to tell apart in black-and-white print or for colorblind readers. Add markers or use distinct line styles.",
     "paletteSemantic": "The colormap {{cmap}} isn't one of the recommended scientific palettes (pick by sequential / diverging / categorical meaning: {{url}}).",
     "panelTextNotVerifiable": "This vector figure has no engine manifest yet (not rendered or not from a script), so its text size and font can't be checked automatically.",
-    "rasterDpi": "This raster figure's effective resolution {{dpi}}dpi is below the profile's {{min}}dpi",
+    "rasterDpi": "This raster figure's effective resolution {{dpi}}dpi is below the current check threshold of {{min}}dpi",
+    "rasterDpiJournalSourceUnverified": "This raster figure's effective resolution {{dpi}}dpi is below the current check threshold of {{min}}dpi; this report has not verified its journal source",
     "rasterTextNotVerifiable": "Text in a raster figure can’t be checked automatically. Confirm the final size is above the profile’s floor.",
     "renderError": "This figure's last render failed — fix it before exporting",
     "spinesNotEnclosed": "The axes are missing {{sides}}. The profile requires them enclosed.",
@@ -966,6 +968,7 @@
     "unappliedOverride": "{{count}} figure edits on this one haven’t been applied to the render, so the output won’t match the canvas."
   },
   "problems": {
+    "dpiJournalSourceUnverified": "The journal source for this threshold is not verified in the current snapshot",
     "ariaLocate": "locate this object",
     "ariaValues": "currently {{current}}, requires {{expected}}",
     "clearFilter": "Show all",

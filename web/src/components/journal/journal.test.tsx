@@ -1,13 +1,13 @@
 /**
  * 期刊选择器与出处卡（ADR 0155 PR 2）：搜索、分组、空目录一行中性话、出处卡的 `<mark>` 与两个链接、
- * 「该期刊未规定」。夹具期刊（`fx-*`），无真实数据。
+ * 「当前快照未记录」。夹具期刊（`fx-*`），无真实数据。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import vectors from '../../../../tests/golden/journal_vectors.json'
-import { literal, setLocale } from '@/i18n'
-import { journalSources, loadCatalog } from '@/lib/journals'
+import { literal, msg, setLocale } from '@/i18n'
+import { journalProfile, journalSources, loadCatalog } from '@/lib/journals'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
 import { BUNDLED_ASSET_BASE, useJournalCatalogStore } from '@/store/journalCatalogStore'
@@ -19,7 +19,8 @@ import { SourceButton } from './SourceButton'
 import { clearJournal, selectJournal } from '@/store/actions'
 import { pickJournal } from '@/lib/journalPick'
 import { JOURNAL_UI_DEV_KEY } from '@/lib/journalUi'
-import { IssueJournalSource } from '../left/ProblemTreeRows'
+import { IssueJournalSource, IssueRow } from '../left/ProblemTreeRows'
+import { exportContextIssues } from '@/lib/validation'
 import type { ValidationIssue } from '@/lib/validation'
 
 declare global {
@@ -222,12 +223,12 @@ describe('出处卡', () => {
 describe('要求清单', () => {
   const row = (p: string) => q(`[data-journal-row="${p}"]`)!
 
-  it('期刊没写的要紧项明说「该期刊未规定」且没有出处钮', async () => {
+  it('期刊没写的要紧项明说「当前快照未记录」且没有出处钮', async () => {
     selectJournal('fx-adv-own')
     await mount(<JournalRequirements />)
-    expect(row('min_raster_dpi').textContent).toContain('该期刊未规定')
+    expect(row('min_raster_dpi').textContent).toContain('当前快照未记录')
     expect(row('min_raster_dpi').querySelector('[data-journal-source]')).toBeNull()
-    expect(row('page_columns').textContent).toContain('该期刊未规定')
+    expect(row('page_columns').textContent).toContain('当前快照未记录')
   })
 
   it('typical 且没有可标的数：只写「有要求」，不显示成「5 pt」，原话在出处卡；有出处钮', async () => {
@@ -251,8 +252,8 @@ describe('预检结果行的出处', () => {
   })
 
   it('问题面板列着几张画布的问题：各读自己所在画布的期刊绑定；活动画布没绑期刊也不影响别的画布', async () => {
-    const issueOn = (canvasId: string) =>
-      ({ ruleCode: 'raster-dpi', message: literal('x'), objectRef: { canvasId } }) as unknown as ValidationIssue
+    const issueOn = (canvasId: string, min: number) =>
+      ({ ruleCode: 'raster-dpi', message: msg('preflight.rasterDpi', { dpi: '1', min: String(min) }, 'errors'), objectRef: { canvasId } }) as unknown as ValidationIssue
     const cat = loadCatalog(vectors.catalog)
     const st = useDocumentStore.getState()
     const a = st.activeCanvasId
@@ -264,8 +265,8 @@ describe('预检结果行的出处', () => {
         { ...st.canvases[0], id: 'cB', name: 'B', profile: profileOf('fx-zeta') } as never,
       ],
     })
-    const dpiOf = async (canvasId: string) => {
-      await mount(<IssueJournalSource issue={issueOn(canvasId)} />)
+    const dpiOf = async (canvasId: string, min: number) => {
+      await mount(<IssueJournalSource issue={issueOn(canvasId, min)} />)
       const btn = q('[data-journal-source]')
       if (!btn) return null
       await click(btn)
@@ -275,12 +276,37 @@ describe('预检结果行的出处', () => {
       })
       return text
     }
-    expect(await dpiOf(a)).toBe('位图分辨率 ≥ 300 dpi')
-    expect(await dpiOf('cB')).toBe('位图分辨率 450 dpi')
+    expect(await dpiOf(a, 300)).toBe('位图分辨率 ≥ 300 dpi')
+    expect(await dpiOf('cB', 450)).toBe('位图分辨率 450 dpi')
     // 活动画布 A 不按期刊：B 的出处钮仍在，A 自己没有
     act(() => clearJournal())
-    expect(await dpiOf(a)).toBeNull()
-    expect(await dpiOf('cB')).toBe('位图分辨率 450 dpi')
+    expect(await dpiOf(a, 300)).toBeNull()
+    expect(await dpiOf('cB', 450)).toBe('位图分辨率 450 dpi')
+  })
+
+  it('DPI 只有快照中有效且数值匹配的预检来源才能归因；旧快照明确未核实', async () => {
+    const cat = loadCatalog(vectors.catalog)
+    selectJournal('fx-delta')
+    const canvasId = useDocumentStore.getState().activeCanvasId
+    const issue = exportContextIssues({ formats: ['png'], dpi: 299 }, journalProfile('fx-delta', cat), { documentId: 'd', canvasId })[0]
+    await mount(<ul><IssueRow issue={issue} depth={1} current={false} onLocate={() => {}} activeCanvasId={canvasId} /></ul>)
+    expect(q('[data-journal-dpi-source-unverified]')?.textContent).toContain('期刊出处未在当前快照中核实')
+    expect(q('[data-journal-source]')).toBeNull()
+    const template = journalSources('fx-beta', cat).min_raster_dpi
+    const exercise = async (source: typeof template | undefined, confirmed: boolean) => {
+      await act(async () => useDocumentStore.setState((st) => ({
+        doc: { ...st.doc, profile: { ...st.doc.profile!, journalSources: source ? { min_raster_dpi: source } : undefined } },
+      })))
+      expect(!!q('[data-journal-source]')).toBe(confirmed)
+      expect(!!q('[data-journal-dpi-source-unverified]')).toBe(!confirmed)
+    }
+    await exercise({ ...template, value: 300, affects: 'preflight', unset: false }, true)
+    await exercise({ ...template, value: 450, affects: 'preflight', unset: false }, false)
+    await exercise({ ...template, value: 300, affects: 'advice', unset: false }, false)
+    await exercise({ ...template, value: 300, affects: 'preflight', unset: true }, false)
+    await exercise(undefined, false)
+    await act(async () => clearJournal())
+    expect(q('[data-journal-dpi-source-unverified]')).toBeNull()
   })
 
   it('没按期刊选过，或这条检查在该期刊里没有出处：什么都不画', async () => {

@@ -2817,6 +2817,18 @@ def run_preflight(
     # 分开是因为它量的是「画出来撞没撞上」，不是「该长什么样」；形状同一份，
     # 进同一份报告（ADR 0051）。
     issues += engine_interference.detect(session.manifest, profile, panel_id=session.stem)
+    if profile.get("journal_ref"):
+        for issue in issues:
+            if issue.get("id") != "raster-dpi":
+                continue
+            # The session stores a profile and journal reference, not a bound
+            # per-rule source record. Do not claim that this threshold is a
+            # journal requirement, even when the catalog has changed since open.
+            issue["text"] = issue["text"].replace("低于规范的", "低于当前检查阈值 ", 1)
+            issue["text"] += "；此回执未核验该阈值的期刊出处"
+            message = issue.get("message")
+            if isinstance(message, dict) and message.get("key") in {"rasterDpi", "exportRasterDpi"}:
+                message["key"] += "JournalSourceUnverified"
     summary = engine_preflight.summarize(issues)
     # 匿名用量统计：**结果算完之后**记一次，且只记四个计数 + 一个布尔。
     # 检查项的文案、字体名、gid、对象 id、stem 一个都不发（白名单里没有这些
