@@ -35,6 +35,20 @@ export interface ChartAxisEvidence {
   scale: string
 }
 
+export interface ChartBindLegendEntryRequest {
+  index: number
+  label: string
+  /** 跟随系列的场景节点（后端翻译成 series id）；缺席 = custom。 */
+  series_node?: string
+}
+
+export interface ChartBindLegendRequest {
+  id: string
+  node: string
+  rect: [number, number, number, number]
+  entries: ChartBindLegendEntryRequest[]
+}
+
 interface ChartBindBaseRequest {
   file: string
   chart_source?: ChartSourceRef
@@ -54,6 +68,8 @@ interface ChartBindBaseRequest {
   dataset_text?: string
   grid_text?: string
   completeness?: string
+  /** N4 图例合同：有才发（缺省请求身份逐字节不变）。 */
+  legend?: ChartBindLegendRequest[]
 }
 
 export type ChartBindRequest = ChartBindBaseRequest & (

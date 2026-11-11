@@ -5,7 +5,7 @@ import { chartBind, chartCompute, chartInspect } from '@/lib/chartApi'
 import type { SceneInventory } from '@/lib/chartApi'
 import type { PanelChartState, PanelObject, PanelOverride } from '@/types/document'
 import { chartBindConfirmReady, useChartBindStore } from './chartBindStore'
-import { DEFAULT_FORM, DEFAULT_SERIES } from './chartBindStore'
+import { DEFAULT_FORM, DEFAULT_SERIES, formFor } from './chartBindStore'
 import { setCurrentProjectId } from '@/lib/session'
 
 vi.mock('@/lib/chartApi', () => ({
@@ -578,5 +578,96 @@ describe('chart bind state safety (F1-F3)', () => {
     expect(s.previewSvg).toBeNull()
     expect(s.previewOk).toBe(false)
     expect(s.error?.code).toBe('chart_source_mismatch')
+  })
+})
+
+describe('N4 legend contract draft', () => {
+  const legendChart = (): PanelChartState => {
+    const chart = restorableChart()
+    chart.binding.legend = [{
+      id: 'leg1', node: 'legendbox', rect: [300, 40, 60, 40],
+      entries: [
+        { index: 0, label: 'curve one', series: 's1' },
+        { index: 1, label: 'note only' },
+      ],
+    }]
+    return chart
+  }
+
+  it('formFor restores the legend with series ids translated back to nodes and excludes the legend node from axesNodes', () => {
+    const chart = legendChart()
+    chart.binding.entries = [...chart.binding.entries, { object: 'axes:ax1', node: 'legendbox' }]
+    useChartBindStore.setState({ form: formFor(chart) })
+    const f = useChartBindStore.getState().form
+    expect(f.legend).toEqual([{
+      id: 'leg1', node: 'legendbox', rect: [300, 40, 60, 40],
+      entries: [
+        { index: 0, label: 'curve one', seriesNode: 'curve' },
+        { index: 1, label: 'note only', seriesNode: '' },
+      ],
+    }])
+    // 图例区域节点不再算轴区域（对齐 colorbar 排除的先例）
+    expect(f.axesNodes).toEqual(['axis-x', 'axis-y'])
+    expect(f.axesNodes).not.toContain('legendbox')
+  })
+
+  it('confirmBinding omits the legend key when the form has none (request identity unchanged)', async () => {
+    vi.mocked(chartBind).mockResolvedValue(CHART)
+    vi.mocked(chartCompute).mockResolvedValue(computed())
+    useChartBindStore.setState({
+      file: 'chart.svg',
+      form: {
+        ...DEFAULT_FORM,
+        series: [{ ...DEFAULT_SERIES, node: 'curve', xCol: 'x', yCol: 'y' }],
+        datasetText: 'x,y\n1,2',
+      },
+    })
+    await useChartBindStore.getState().confirmBinding()
+    expect(vi.mocked(chartBind).mock.calls[0]?.[0]).not.toHaveProperty('legend')
+  })
+
+  it('confirmBinding sends legend entries with series_node when the form has a legend', async () => {
+    vi.mocked(chartBind).mockResolvedValue(CHART)
+    vi.mocked(chartCompute).mockResolvedValue(computed())
+    useChartBindStore.setState({
+      file: 'chart.svg',
+      form: {
+        ...DEFAULT_FORM,
+        series: [{ ...DEFAULT_SERIES, node: 'curve', xCol: 'x', yCol: 'y' }],
+        datasetText: 'x,y\n1,2',
+        legend: [{
+          id: 'leg1', node: 'legendbox', rect: [300, 40, 60, 40],
+          entries: [
+            { index: 0, label: 'curve one', seriesNode: 'curve' },
+            { index: 1, label: 'note only', seriesNode: '' },
+          ],
+        }],
+      },
+    })
+    await useChartBindStore.getState().confirmBinding()
+    expect(vi.mocked(chartBind).mock.calls[0]?.[0]).toMatchObject({
+      legend: [{
+        id: 'leg1', node: 'legendbox', rect: [300, 40, 60, 40],
+        entries: [
+          { index: 0, label: 'curve one', series_node: 'curve' },
+          { index: 1, label: 'note only' },
+        ],
+      }],
+    })
+  })
+
+  it('legend editing actions keep at least one entry and one region', () => {
+    useChartBindStore.getState().addLegend()
+    expect(useChartBindStore.getState().form.legend).toHaveLength(1)
+    useChartBindStore.getState().addLegend()
+    expect(useChartBindStore.getState().form.legend).toHaveLength(1)
+    useChartBindStore.getState().removeLegendEntry(0, 0)
+    expect(useChartBindStore.getState().form.legend[0]?.entries).toHaveLength(1)
+    useChartBindStore.getState().addLegendEntry(0)
+    expect(useChartBindStore.getState().form.legend[0]?.entries).toHaveLength(2)
+    useChartBindStore.getState().removeLegendEntry(0, 0)
+    expect(useChartBindStore.getState().form.legend[0]?.entries).toHaveLength(1)
+    useChartBindStore.getState().removeLegend(0)
+    expect(useChartBindStore.getState().form.legend).toHaveLength(0)
   })
 })

@@ -27,6 +27,11 @@ BINDING_REQUEST_KEYS = (
     "nodes",
     "completeness",
 )
+#: N4 legend 合同的可选请求键（与 ``x`` 的条件追加同一写法：缺省请求逐字节不变）。
+LEGEND_REQUEST_KEYS = ("id", "node", "rect", "entries")
+#: 请求条目以**系列的场景节点**指认跟随对象——series id 由本函数按序分配，
+#: 前端确认时还没有它；落进 binding 前在这里翻译成 series id。
+LEGEND_ENTRY_REQUEST_KEYS = ("index", "label", "series_node")
 
 #: 稳定错误码（确认流程给用户的失败理由）。
 ERROR_CODES = (
@@ -286,8 +291,66 @@ def build_model_and_binding(request: dict, *, engine_identity: dict) -> dict:
         "scene_digest": scene_digest,
         "entries": entries,
     }
+    legend_req = request.get("legend")
+    if legend_req is not None:
+        binding["legend"] = _legend_spec_from_request(legend_req, series, node_ids, graphic_ids)
     chartmodel.validate_binding(binding, model)
     return {"model": model, "binding": binding}
+
+
+def _legend_spec_from_request(
+    legend_req: object, series: list[dict], node_ids: set[str], graphic_ids: set[str]
+) -> list[dict]:
+    """确认请求的 ``legend`` → 绑定合同的 ``legend``（就地翻译 series 节点 → id）。
+
+    判据：区域节点必须在场景里且是图形元素（与系列节点同一 ``graphic_ids`` 口径，
+    否则 `bind_node_not_graphic`）；条目指认的 series_node 必须是本次绑定的某个
+    系列节点。形状与值域的最终把关在 `chartmodel.validate_binding`（同一个闸）。
+    """
+    if not isinstance(legend_req, list) or not legend_req:
+        raise BindError("bind_evidence_invalid", "legend must be a non-empty list")
+    series_by_node = {}
+    for sr in series:
+        series_by_node.setdefault(sr["node"], sr["id"])
+    legend = []
+    for i, item in enumerate(legend_req):
+        if not isinstance(item, dict) or set(item) - set(LEGEND_REQUEST_KEYS):
+            raise BindError("bind_evidence_invalid", f"legend[{i}] field set")
+        node = item.get("node")
+        if node not in node_ids:
+            raise BindError("bind_node_not_graphic", f"legend node {node!r} is not in the scene")
+        if node not in graphic_ids:
+            raise BindError(
+                "bind_node_not_graphic", f"legend node {node!r} is not a graphic element"
+            )
+        entries_req = item.get("entries")
+        if not isinstance(entries_req, list) or not entries_req:
+            raise BindError(
+                "bind_evidence_invalid", f"legend[{i}].entries must be a non-empty list"
+            )
+        entries = []
+        for k, entry in enumerate(entries_req):
+            if not isinstance(entry, dict) or set(entry) - set(LEGEND_ENTRY_REQUEST_KEYS):
+                raise BindError("bind_evidence_invalid", f"legend[{i}].entries[{k}] field set")
+            out = {"index": entry.get("index"), "label": entry.get("label")}
+            series_node = entry.get("series_node")
+            if series_node is not None:
+                if series_node not in series_by_node:
+                    raise BindError(
+                        "bind_node_not_graphic",
+                        f"legend[{i}].entries[{k}].series_node {series_node!r} is not a bound series node",
+                    )
+                out["series"] = series_by_node[series_node]
+            entries.append(out)
+        legend.append(
+            {
+                "id": item.get("id"),
+                "node": node,
+                "rect": item.get("rect"),
+                "entries": entries,
+            }
+        )
+    return legend
 
 
 def preview_deviation(

@@ -1616,6 +1616,23 @@
     "gridData": "网格数据（每行一行数值）",
     "original": "原图",
     "computed": "计算预览",
+    "legend": {
+      "title": "图例区域（重算后的条目跟随各自的系列）",
+      "add": "添加图例区域",
+      "remove": "移除区域",
+      "region": "图例区域节点",
+      "rectX": "图例 X",
+      "rectY": "图例 Y",
+      "rectWidth": "图例宽度",
+      "rectHeight": "图例高度",
+      "entries": "旧图例里的条目，从上到下（从 0 编号）。文字取场景里对应的文本，可自行修改。",
+      "entryIndex": "条目序号",
+      "entryLabel": "条目文字",
+      "follow": "跟随",
+      "custom": "保持脚本原样（不跟随）",
+      "addEntry": "添加条目",
+      "removeEntry": "移除条目"
+    },
     "kind": {
       "line": "折线",
       "scatter": "散点",

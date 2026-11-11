@@ -127,6 +127,48 @@ export function ChartBindDialog() {
             ))}
             <Button data-chart-series-add onClick={s.addSeries}>{t('chartBind.addSeries')}</Button>
           </fieldset>
+          <fieldset className="space-y-3">
+            <legend className="type-title mb-2">{t('chartBind.legend.title')}</legend>
+            {s.form.legend.map((lg, li) => (
+              <div key={li} data-chart-legend={li} className="space-y-2 border-b border-border pb-3">
+                <div className="flex items-center gap-2">
+                  <TextInput aria-label={t('chartBind.legend.region')} data-chart-legend-node
+                    list="chart-bind-nodes" value={lg.node} placeholder={t('chartBind.legend.region')}
+                    onChange={e => s.patchLegend(li, { node: e.target.value })} />
+                  <Button data-chart-legend-remove={li} onClick={() => s.removeLegend(li)}>{t('chartBind.legend.remove')}</Button>
+                </div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {[t('chartBind.legend.rectX'), t('chartBind.legend.rectY'), t('chartBind.legend.rectWidth'), t('chartBind.legend.rectHeight')].map((label, i) => (
+                    <label key={i} className="grid gap-1 text-xs text-ink-2">{label}
+                      <TextInput aria-label={label} data-chart-legend-rect={i} type="number" value={lg.rect[i]}
+                        onChange={e => { const rect = [...lg.rect] as [number, number, number, number]; rect[i] = Number(e.target.value); s.patchLegend(li, { rect }) }} />
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-ink-3">{t('chartBind.legend.entries')}</p>
+                {lg.entries.map((entry, k) => (
+                  <div key={k} data-chart-legend-entry={k} className="grid gap-2 sm:grid-cols-[5rem_1fr_1fr_auto]">
+                    <TextInput aria-label={t('chartBind.legend.entryIndex')} data-chart-legend-entry-index type="number"
+                      value={entry.index} onChange={e => s.patchLegendEntry(li, k, { index: Number(e.target.value) })} />
+                    <TextInput aria-label={t('chartBind.legend.entryLabel')} data-chart-legend-entry-label
+                      list="chart-bind-legend-texts" value={entry.label} placeholder={t('chartBind.legend.entryLabel')}
+                      onChange={e => s.patchLegendEntry(li, k, { label: e.target.value })} />
+                    <Select ariaLabel={t('chartBind.legend.follow')} value={entry.seriesNode}
+                      options={[{ value: '', label: t('chartBind.legend.custom') },
+                        ...s.form.series.filter(sr => sr.node).map(sr => ({ value: sr.node, label: sr.node }))]}
+                      onChange={v => s.patchLegendEntry(li, k, { seriesNode: v })} />
+                    <Button disabled={lg.entries.length === 1} data-chart-legend-entry-remove={k}
+                      onClick={() => s.removeLegendEntry(li, k)}>{t('chartBind.legend.removeEntry')}</Button>
+                  </div>
+                ))}
+                <Button data-chart-legend-entry-add onClick={() => s.addLegendEntry(li)}>{t('chartBind.legend.addEntry')}</Button>
+              </div>
+            ))}
+            {s.form.legend.length === 0 && <Button data-chart-legend-add onClick={s.addLegend}>{t('chartBind.legend.add')}</Button>}
+            <datalist id="chart-bind-legend-texts">
+              {s.scene?.nodes.filter(n => n.text).map(n => <option key={n.id} value={n.text!}>{n.id}</option>)}
+            </datalist>
+          </fieldset>
           <datalist id="chart-bind-nodes">{s.scene?.nodes.map(n => <option key={n.id} value={n.id}>{n.text ?? n.tag}</option>)}</datalist>
           <label className="grid gap-1 text-xs text-ink-2">{t('chartBind.data')}
             <TextArea aria-label={t('chartBind.data')} data-chart-data rows={5} maxRows={12}

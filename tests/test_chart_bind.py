@@ -387,3 +387,96 @@ def test_preview_deviation_reports_deltas():
     # 首行 (x=1.0, y=10.0)：x 在 [0,10] → 0.1；y 在 [0,100] → 0.1
     assert row["recomputed_first_frac"] == pytest.approx((0.1, 0.1))
     assert row["delta"] == pytest.approx([0.0, -0.8])
+
+
+# ---------------------------------------------------------------------------
+# N4 legend 合同：确认请求 → 绑定合同（节点资格 + series 节点 → id 翻译）
+# ---------------------------------------------------------------------------
+
+
+def legend_request(**overrides):
+    legend = [
+        {
+            "id": "leg1",
+            "node": "legendbox",
+            "rect": [300.0, 40.0, 60.0, 40.0],
+            "entries": [
+                {"index": 0, "label": "curve one", "series_node": "curve"},
+                {"index": 1, "label": "note"},
+            ],
+        }
+    ]
+    request = {"legend": legend, "nodes": [*NODES, {"id": "legendbox", "tag": "g"}]}
+    request.update(overrides)
+    return request
+
+
+def test_legend_request_translates_series_nodes_to_ids():
+    out = chartbind.build_model_and_binding(
+        base_request(**legend_request()),
+        engine_identity=ENGINE,
+    )
+    binding = out["binding"]
+    assert binding["legend"] == [
+        {
+            "id": "leg1",
+            "node": "legendbox",
+            "rect": [300.0, 40.0, 60.0, 40.0],
+            "entries": [
+                {"index": 0, "label": "curve one", "series": "s1"},
+                {"index": 1, "label": "note"},
+            ],
+        }
+    ]
+    # 产物过运行时消费的同一个闸
+    assert chartmodel.validate_binding(binding, out["model"]) == binding
+
+
+def test_without_legend_the_binding_keeps_its_old_shape():
+    out = chartbind.build_model_and_binding(base_request(), engine_identity=ENGINE)
+    assert "legend" not in out["binding"]
+
+
+def test_legend_node_must_be_in_the_scene():
+    with pytest.raises(chartbind.BindError) as ei:
+        chartbind.build_model_and_binding(
+            base_request(
+                **legend_request(**{"legend": [dict(legend_request()["legend"][0], node="ghost")]})
+            ),
+            engine_identity=ENGINE,
+        )
+    assert ei.value.code == "bind_node_not_graphic"
+
+
+def test_legend_node_must_be_graphic():
+    # text 节点在场景里但不是图形元素（与系列节点同一 graphic 口径）
+    with pytest.raises(chartbind.BindError) as ei:
+        chartbind.build_model_and_binding(
+            base_request(
+                **legend_request(**{"legend": [dict(legend_request()["legend"][0], node="label")]})
+            ),
+            engine_identity=ENGINE,
+        )
+    assert ei.value.code == "bind_node_not_graphic"
+
+
+def test_legend_entry_series_node_must_be_a_bound_series():
+    legend = legend_request()["legend"]
+    legend[0]["entries"][0] = {"index": 0, "label": "a", "series_node": "pt1"}
+    with pytest.raises(chartbind.BindError) as ei:
+        chartbind.build_model_and_binding(
+            base_request(**legend_request(**{"legend": legend})),
+            engine_identity=ENGINE,
+        )
+    assert ei.value.code == "bind_node_not_graphic"
+
+
+def test_legend_node_cannot_collide_with_a_bound_series_node():
+    legend = legend_request()["legend"]
+    legend[0]["node"] = "curve"
+    with pytest.raises(chartmodel.ChartModelError) as ei:
+        chartbind.build_model_and_binding(
+            base_request(**legend_request(**{"legend": legend})),
+            engine_identity=ENGINE,
+        )
+    assert ei.value.code == "chart_duplicate_id"

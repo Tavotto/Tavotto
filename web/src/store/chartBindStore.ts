@@ -24,6 +24,21 @@ export interface ChartSeriesForm {
   cbarNode?: string
   style?: Record<string, string | number>
 }
+export interface ChartLegendEntryForm {
+  /** 用户确认的原始序（区域内第几项，≥0）。 */
+  index: number
+  /** 确认预览里旧图例该条目的显示文字；初始取场景文本节点的文字、用户可改。 */
+  label: string
+  /** 跟随的系列（以其场景节点指认，确认请求里仍发 series_node）；空 = custom。 */
+  seriesNode: string
+}
+export interface ChartLegendForm {
+  id: string
+  /** 旧 SVG 图例区域节点 id。 */
+  node: string
+  rect: [number, number, number, number]
+  entries: ChartLegendEntryForm[]
+}
 export interface ChartBindForm {
   rect: [number, number, number, number]
   axesNodes: string[]
@@ -34,18 +49,25 @@ export interface ChartBindForm {
   series: ChartSeriesForm[]
   datasetText: string
   gridText: string
+  /** N4 图例合同草稿：空列表 = 本请求不带 legend 键（请求身份不变）。 */
+  legend: ChartLegendForm[]
 }
 export const DEFAULT_AXIS: ChartAxisForm = {
   p1_user: 0, p1_value: 0, p2_user: 1, p2_value: 10, scale: 'linear',
 }
 export const DEFAULT_SERIES: ChartSeriesForm = { node: '', xCol: '', yCol: '', kind: 'line' }
+export const DEFAULT_LEGEND_ENTRY: ChartLegendEntryForm = { index: 0, label: '', seriesNode: '' }
+export const DEFAULT_LEGEND: ChartLegendForm = {
+  id: 'leg1', node: '', rect: [0, 0, 0, 0], entries: [{ ...DEFAULT_LEGEND_ENTRY }],
+}
 export const DEFAULT_FORM: ChartBindForm = {
   rect: [0, 0, 0, 0], axesNodes: [],
   x: { ...DEFAULT_AXIS }, y: { ...DEFAULT_AXIS, p2_value: 100 },
   xKind: 'numeric', categoriesCol: '', series: [{ ...DEFAULT_SERIES }],
-  datasetText: '', gridText: '',
+  datasetText: '', gridText: '', legend: [],
 }
-function formFor(chart?: PanelChartState): ChartBindForm {
+/** 既有 chart → 表单草稿（纯函数；导出给测试与恢复路径复用）。 */
+export function formFor(chart?: PanelChartState): ChartBindForm {
   const form = structuredClone(DEFAULT_FORM)
   const ax = chart?.model.axes[0]
   if (!chart || !ax) return form
@@ -59,8 +81,23 @@ function formFor(chart?: PanelChartState): ChartBindForm {
   )].map(row => row.map(quote).join('\t')).join('\n')
   form.rect = [...ax.rect]
   const colorbarNodes = new Set(chart.model.series.map(sr => sr.cbar_node).filter(Boolean))
+  // 图例区域节点也按「已被合同接管」排除在轴区域之外（对齐 colorbar 先例）
+  const legendNodes = new Set((chart.binding.legend ?? []).map(lg => lg.node))
   form.axesNodes = chart.binding.entries
-    .filter(e => e.object.startsWith('axes:') && !colorbarNodes.has(e.node)).map(e => e.node)
+    .filter(e => e.object.startsWith('axes:') && !colorbarNodes.has(e.node)
+      && !legendNodes.has(e.node)).map(e => e.node)
+  // N4 图例合同还原：series id → 其场景节点（表单以节点指认，确认请求发 series_node）
+  const seriesNodeOf = (id: string) => chart.model.series.find(sr => sr.id === id)?.node ?? ''
+  form.legend = (chart.binding.legend ?? []).map(lg => ({
+    id: lg.id,
+    node: lg.node,
+    rect: [...lg.rect],
+    entries: lg.entries.map(e => ({
+      index: e.index,
+      label: e.label,
+      seriesNode: e.series ? seriesNodeOf(e.series) : '',
+    })),
+  }))
   form.x = { ...DEFAULT_AXIS, scale: ax.xscale, p1_value: ax.xlim[ax.invert_x ? 1 : 0], p2_value: ax.xlim[ax.invert_x ? 0 : 1] }
   form.y = { ...DEFAULT_AXIS, scale: ax.yscale, p1_value: ax.ylim[ax.invert_y ? 1 : 0], p2_value: ax.ylim[ax.invert_y ? 0 : 1] }
   form.xKind = ax.kind === 'categorical' ? 'categorical' : 'numeric'
@@ -107,6 +144,12 @@ interface ChartBindActions {
   patchSeries: (index: number, patch: Partial<ChartSeriesForm>) => void
   addSeries: () => void
   removeSeries: (index: number) => void
+  addLegend: () => void
+  removeLegend: (index: number) => void
+  patchLegend: (index: number, patch: Partial<ChartLegendForm>) => void
+  patchLegendEntry: (legendIndex: number, entryIndex: number, patch: Partial<ChartLegendEntryForm>) => void
+  addLegendEntry: (legendIndex: number) => void
+  removeLegendEntry: (legendIndex: number, entryIndex: number) => void
   loadScene: () => Promise<void>
   confirmBinding: () => Promise<void>
   runPreview: () => Promise<void>
@@ -174,6 +217,34 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
     removeSeries: index => {
       if (get().form.series.length > 1) get().patchForm({ series: get().form.series.filter((_, i) => i !== index) })
     },
+    // N4 图例合同：首批 UI 只建一个区域（后端合同允许多个）；条目至少一条，
+    // 「只绑区域不列条目」在合同层就是半接，UI 不放行。
+    addLegend: () => {
+      if (get().form.legend.length === 0) {
+        get().patchForm({ legend: [{ ...structuredClone(DEFAULT_LEGEND) }] })
+      }
+    },
+    removeLegend: index => get().patchForm({ legend: get().form.legend.filter((_, i) => i !== index) }),
+    patchLegend: (index, patch) => get().patchForm({
+      legend: get().form.legend.map((lg, i) => i === index ? { ...lg, ...patch } : lg),
+    }),
+    patchLegendEntry: (legendIndex, entryIndex, patch) => get().patchForm({
+      legend: get().form.legend.map((lg, i) => i === legendIndex ? {
+        ...lg,
+        entries: lg.entries.map((e, k) => k === entryIndex ? { ...e, ...patch } : e),
+      } : lg),
+    }),
+    addLegendEntry: legendIndex => get().patchForm({
+      legend: get().form.legend.map((lg, i) => i === legendIndex ? {
+        ...lg,
+        entries: [...lg.entries, { ...DEFAULT_LEGEND_ENTRY, index: lg.entries.length }],
+      } : lg),
+    }),
+    removeLegendEntry: (legendIndex, entryIndex) => {
+      const lg = get().form.legend[legendIndex]
+      if (!lg || lg.entries.length <= 1) return
+      get().patchLegend(legendIndex, { entries: lg.entries.filter((_, k) => k !== entryIndex) })
+    },
     loadScene: async () => {
       if (!get().file) return
       const s = startRequest()
@@ -221,6 +292,19 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
           })),
           dataset_text: f.datasetText || undefined,
           grid_text: f.series.some(sr => sr.kind === 'image') ? f.gridText : undefined,
+          // N4 图例合同：有才发——缺省请求与既有身份逐字节相同
+          ...(f.legend.length
+            ? { legend: f.legend.map(lg => ({
+                id: lg.id,
+                node: lg.node,
+                rect: [...lg.rect] as [number, number, number, number],
+                entries: lg.entries.map(e => ({
+                  index: e.index,
+                  label: e.label,
+                  ...(e.seriesNode ? { series_node: e.seriesNode } : {}),
+                })),
+              })) }
+            : {}),
           completeness: 'self-contained',
         })
         if (!ownsRequest(s)) return

@@ -78,3 +78,24 @@ it.each([null, { model: { rev: 1 }, binding: { model_rev: 1 } }])('preserves exp
   await chartCompute('rebound.svg', chart, { render_profile: 'native-manifest/1', overrides: [], previous_chart })
   expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({ previous_chart })
 })
+
+it('serializes the legend contract verbatim and omits the key when absent (N4)', async () => {
+  const fetcher = vi.fn().mockImplementation(async () => new Response('{}', { status: 200 }))
+  vi.stubGlobal('fetch', fetcher)
+  const withoutLegend: ChartBindRequest = {
+    file: 'plain.svg', axes_id: 'ax1', rect: [0, 0, 100, 100],
+    x: { p1_user: 0, p1_value: 0, p2_user: 1, p2_value: 10, scale: 'linear' },
+    y: { p1_user: 0, p1_value: 0, p2_user: 1, p2_value: 10, scale: 'linear' },
+    series: [{ node: 'curve', x_col: 'x', y_col: 'y' }],
+    dataset_text: 'x,y\n1,2', completeness: 'self-contained',
+  }
+  await chartBind(withoutLegend)
+  expect(JSON.parse(fetcher.mock.calls[0][1].body as string)).not.toHaveProperty('legend')
+  const legend = [{
+    id: 'leg1', node: 'legendbox', rect: [10, 10, 40, 20] as [number, number, number, number],
+    entries: [{ index: 0, label: 'one', series_node: 'curve' }, { index: 1, label: 'note' }],
+  }]
+  await chartBind({ ...withoutLegend, file: 'legend.svg', legend })
+  const sent = JSON.parse(fetcher.mock.calls[1][1].body as string)
+  expect(sent.legend).toEqual(legend)
+})

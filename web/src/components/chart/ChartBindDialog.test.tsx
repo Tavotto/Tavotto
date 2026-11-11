@@ -1,6 +1,6 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChartBindDialog } from './ChartBindDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { chartBind, chartCompute, chartInspect } from '@/lib/chartApi'
@@ -217,4 +217,76 @@ it('a late v2 preview after reloading the same document identity never grants co
   expect(document.querySelector('[data-chart-bind-action="confirm"]')).toBeNull()
   expect(currentPanel()).toEqual(before)
   expect(useDocumentStore.getState().past.length).toBe(history)
+})
+
+describe('N4 legend region', () => {
+  const input = (selector: string) => document.querySelector<HTMLInputElement>(selector)!
+  const change = (el: HTMLInputElement, value: string) => {
+    // React 受控输入：走原型 value setter 再发 input 事件，onChange 才会触发
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    setter.call(el, value)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+
+  it('has no legend editor until a region is explicitly added (no fake switch)', async () => {
+    expect(document.querySelector('[data-chart-legend]')).toBeNull()
+    expect(document.querySelector('[data-chart-legend-add]')).not.toBeNull()
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-chart-legend-add]')!.click())
+    expect(document.querySelector('[data-chart-legend="0"]')).not.toBeNull()
+    expect(document.querySelector('[data-chart-legend-add]')).toBeNull()
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-chart-legend-remove="0"]')!.click())
+    expect(document.querySelector('[data-chart-legend]')).toBeNull()
+  })
+
+  it('adds a region with follow/custom entries and the bind request carries the legend contract', async () => {
+    await act(async () => useChartBindStore.getState().patchForm({ datasetText: 'x,a,b\n0,1,2\n1,3,4', series: [
+      { node: 'curve-a', kind: 'line', xCol: 'x', yCol: 'a' },
+      { node: 'curve-b', kind: 'line', xCol: 'x', yCol: 'b' },
+    ] }))
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-chart-legend-add]')!.click())
+    await act(async () => {
+      change(input('[data-chart-legend-node]'), 'legendbox')
+      change(input('[data-chart-legend-entry-index]'), '0')
+      change(input('[data-chart-legend-entry-label]'), 'curve one')
+    })
+    // 条目 0 跟随 curve-a（Select 由 store 断言覆盖；这里直接写表单走完整请求）
+    await act(async () => useChartBindStore.getState().patchLegendEntry(0, 0, { seriesNode: 'curve-a' }))
+    await act(async () => useChartBindStore.getState().addLegendEntry(0))
+    await act(async () => {
+      const entries = document.querySelectorAll('[data-chart-legend-entry]')
+      expect(entries).toHaveLength(2)
+      change(input('[data-chart-legend-entry="1"] [data-chart-legend-entry-index]'), '1')
+      change(input('[data-chart-legend-entry="1"] [data-chart-legend-entry-label]'), 'note only')
+    })
+    await act(async () => button('preview').click())
+    const request = vi.mocked(chartBind).mock.calls[0]?.[0]
+    expect(request).toMatchObject({ legend: [{
+      id: 'leg1', node: 'legendbox',
+      entries: [
+        { index: 0, label: 'curve one', series_node: 'curve-a' },
+        { index: 1, label: 'note only' },
+      ],
+    }] })
+    expect(request.legend[0].rect).toEqual([0, 0, 0, 0])
+  })
+
+  it('restores the legend editor from a chart that already carries the contract', async () => {
+    const restored = structuredClone(restoredChart)
+    restored.binding.legend = [{
+      id: 'leg1', node: 'legendbox', rect: [12, 8, 40, 20],
+      entries: [{ index: 0, label: 'series A', series: 's1' }],
+    }]
+    vi.mocked(chartInspect).mockResolvedValue({ scene_digest: restored.model.scene_digest,
+      w_pt: 100, h_pt: 100, view_box: [0, 0, 100, 100], nodes: [{ id: 'curve-a', tag: 'path' }, { id: 'legendbox', tag: 'g', text: undefined }],
+      truncated: false, restored_chart: restored })
+    vi.mocked(chartBind).mockResolvedValue(restored)
+    await act(async () => useChartBindStore.getState().openFor(panel))
+    await act(async () => button('preview').click())
+    expect(document.querySelector('[data-chart-legend="0"]')).not.toBeNull()
+    expect(input('[data-chart-legend-node]').value).toBe('legendbox')
+    expect(input('[data-chart-legend-entry-label]').value).toBe('series A')
+    await act(async () => button('confirm').click())
+    expect(currentPanel().chart).toEqual(restored)
+    expect(currentPanel().chart?.binding.legend?.[0]?.entries[0]).toEqual({ index: 0, label: 'series A', series: 's1' })
+  })
 })

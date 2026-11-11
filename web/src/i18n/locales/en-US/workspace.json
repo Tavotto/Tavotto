@@ -1682,6 +1682,23 @@
     "gridData": "Grid data (one numeric row per line)",
     "original": "Original",
     "computed": "Computed preview",
+    "legend": {
+      "title": "Legend region (recomputed entries follow their series)",
+      "add": "Add legend region",
+      "remove": "Remove region",
+      "region": "Legend region node",
+      "rectX": "Legend X",
+      "rectY": "Legend Y",
+      "rectWidth": "Legend width",
+      "rectHeight": "Legend height",
+      "entries": "Entries in the old legend, top to bottom (numbered from 0). Text starts from the matching scene text; edit freely.",
+      "entryIndex": "Entry index",
+      "entryLabel": "Entry text",
+      "follow": "Follows",
+      "custom": "Keep as drawn (custom)",
+      "addEntry": "Add entry",
+      "removeEntry": "Remove entry"
+    },
     "kind": {
       "line": "Line",
       "scatter": "Scatter",

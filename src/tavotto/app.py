@@ -1405,7 +1405,7 @@ def api_svg_chart_bind():
     只做判据与产物，不落盘、不执行用户脚本；自包含包先核对声明式冷重放。
     """
 
-    from .engine import chartbind
+    from .engine import chartbind, chartmodel
 
     body = request.get_json(silent=True) or {}
     file_id = body.get("file", "")
@@ -1438,6 +1438,10 @@ def api_svg_chart_bind():
     except engine_pool.WorkerError as exc:
         return jsonify({"code": exc.code, "error": str(exc)}), 503
     except chartbind.BindError as exc:
+        return jsonify({"code": exc.code, "error": exc.detail}), 422
+    except chartmodel.ChartModelError as exc:
+        # legend 合同等绑定级判据在 chartmodel.validate_binding 里拒绝（闭集/
+        # 唯一性/值域）；给 422 的稳定码，不落成 500。
         return jsonify({"code": exc.code, "error": exc.detail}), 422
     return jsonify(result)
 
@@ -2132,6 +2136,22 @@ class _FigureOriginSession:
             raise
         self.check()
         return result
+
+
+def _document_panel_render_profile(obj: dict) -> str | None:
+    """The persisted coordinate contract of a document panel.
+
+    前端把 `chartFrame`（renderProfile + originPt）存进文档面板；导出请求
+    用扁平的 `chart_render_profile`。两处都认：显式值优先，缺字段 = 旧文档
+    维持 /1（由调用方决定缺省）。
+    """
+    flat = obj.get("chart_render_profile")
+    if flat is not None:
+        return str(flat)
+    frame = obj.get("chartFrame")
+    if isinstance(frame, dict) and frame.get("renderProfile") is not None:
+        return str(frame["renderProfile"])
+    return None
 
 
 def _figure_origin_record(rel_id, origin):
@@ -3375,9 +3395,7 @@ def _freeze_document_sources(document: dict, *, capture_figures: bool = True) ->
                 obj["chart"],
                 # 显式值优先（含 /2，合法性交 validate_profile 判定）；旧文档缺字段维持 /1。
                 render_profile=(
-                    obj["chart_render_profile"]
-                    if obj.get("chart_render_profile") is not None
-                    else chartprofile.NATIVE_PROFILE
+                    _document_panel_render_profile(obj) or chartprofile.NATIVE_PROFILE,
                 ),
                 overrides=obj.get("overrides", []),
                 **({"chart_source": obj["chartSource"]} if "chartSource" in obj else {}),
@@ -4033,6 +4051,14 @@ def _export_produce_chart_original(job, src, req, tmp_dir: Path):
         "chart_render_revision": snapshot.render_revision,
         "scene_digest": snapshot.scene["scene_digest"],
     }
+    # /2 的产出与页面都是 F（display frame）；scene 仍是 S（科学坐标）。尺寸门
+    # 与 EPS 页面一律按 F 走，/1 与 legacy 保持 scene（N5 第 5 步：各 scope 同一合同）。
+    frame_pt = (
+        tuple(snapshot.render_frame["rect_pt"][2:])
+        if snapshot.render_frame is not None
+        else (snapshot.scene["w_pt"], snapshot.scene["h_pt"])
+    )
+    frame_mm = [value * 25.4 / 72 for value in frame_pt]
     basis = engine_exportjob.Basis(engine_exportjob.BASIS_CONVERT, snapshot.source_sha256)
     produced = []
     for fmt in req.formats:
@@ -4076,7 +4102,7 @@ def _export_produce_chart_original(job, src, req, tmp_dir: Path):
                 target = _export_scene_eps(
                     job,
                     snapshot.svg,
-                    (snapshot.scene["w_pt"], snapshot.scene["h_pt"]),
+                    frame_pt,
                     tmp_dir / "original.eps",
                 )
             else:
@@ -4092,8 +4118,8 @@ def _export_produce_chart_original(job, src, req, tmp_dir: Path):
                 engine_exportjob.Produced(
                     format=fmt,
                     tmp_path=target,
-                    width_mm=snapshot.scene["w_pt"] * 25.4 / 72,
-                    height_mm=snapshot.scene["h_pt"] * 25.4 / 72,
+                    width_mm=frame_mm[0],
+                    height_mm=frame_mm[1],
                     vector=engine_artifactinspect.svg_vector(target)
                     if fmt == engine_exportreq.FORMAT_SVG
                     else fmt in (engine_exportreq.FORMAT_PDF, engine_exportreq.FORMAT_EPS),
@@ -4816,7 +4842,7 @@ def _export_produce_rendercore(
                     job,
                     str(obj["id"]),
                     obj["chart"],
-                    render_profile=obj.get("chart_render_profile"),
+                    render_profile=_document_panel_render_profile(obj),
                     overrides=obj.get("overrides", ()),
                     **({"chart_source": obj["chart_source"]} if "chart_source" in obj else {}),
                 )
@@ -6123,9 +6149,7 @@ def _api_chart_package_install():
                         obj["chart"],
                         # 与 _freeze_document_sources 同源：显式值优先，缺省维持 /1。
                         render_profile=(
-                            obj["chart_render_profile"]
-                            if obj.get("chart_render_profile") is not None
-                            else chartprofile.NATIVE_PROFILE
+                            _document_panel_render_profile(obj) or chartprofile.NATIVE_PROFILE,
                         ),
                         overrides=obj.get("overrides", []),
                         chart_source=obj["chartSource"],
