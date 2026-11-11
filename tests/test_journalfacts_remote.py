@@ -456,3 +456,4 @@ def test_unknown_structured_conditions_are_returned_intact_not_evaluated(isolate
     page = client.get_facts("fx-journal")
     assert page["facts"][0]["conditions"]["width"] == {"relation": "gt", "value": 100, "unit": "mm"}
     assert "override" not in page and "preflight" not in page
+    assert page["catalog_completeness"] == "unknown"

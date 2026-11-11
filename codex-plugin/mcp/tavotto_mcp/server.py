@@ -685,8 +685,8 @@ def _add_journal_catalog_tools(tools: list[dict], by_name: dict) -> None:
                 "name": "tavotto_get_journal_facts",
                 "title": "读取期刊来源事实",
                 "description": (
-                    "只读 v2：按 query 搜索期刊，或按 journal_id 分页读取原文来源与完整事实。"
-                    "事实带条件、阶段和要求强度，不能忽略条件当成通用预检；不可用时不冒充 v1 数据。"
+                    "只读 v2：按 query 搜索期刊，或按 journal_id 分页读取已收录的来源事实。"
+                    "收录条数不代表全刊规范已核完；事实带条件、阶段和要求强度，不能忽略条件当成通用预检；不可用时不冒充 v1 数据。"
                 ),
                 "inputSchema": {
                     "type": "object",

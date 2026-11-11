@@ -447,6 +447,7 @@ def get_facts(jid: str, *, offset: int = 0, limit: int = 20, ui_locale: str | No
         "source": result["source"],
         "journal_id": bundle["journal_id"],
         "journal": bundle["journal"],
+        "catalog_completeness": "unknown",
         "facts": [],
         "coverage": [],
         "sources": {},
