@@ -90,7 +90,7 @@ describe('自动保存写盘失败 →「重试保存」', () => {
     edit('t1')
     await saveNow()
     expect(ui().statusTone).toBe('error')
-    expect(statusText()).toContain('无法保存到磁盘')
+    expect(statusText()).toContain('没能保存到磁盘')
     expect(actionLabel()).toBe('重试保存')
     expect(autosave.has('d_fail')).toBe(false)
 
