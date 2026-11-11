@@ -842,7 +842,10 @@ def test_every_checkable_layer_has_expected_entries_and_unchecked_ones_have_none
     cov = T.fingerprint_coverage(recipe)
     labels = [e["label"] for e in expected]
     for c in cov.layers:
-        has = any(lab == c.mark or lab.startswith(c.mark + " | ") for lab in labels)
+        has = any(
+            lab.split(" | ")[0] in (c.mark, f"{c.mark}@{recipe.layers[c.index].role}")
+            for lab in labels
+        )
         if c.checked:
             assert has, (cid, c)
         else:
@@ -1974,3 +1977,463 @@ def test_template_rejects_combinations_the_validator_also_rejects(folder, profil
                 stem="f",
             )
         assert ei.value.code == "template_option_unsupported", (layers, detail)
+
+
+# =========================================================================== 评审三条（#1841）：缺失处断开 / label 唯一 / n 说明
+def _gap_folder(tmp: Path) -> Path:
+    """a/s1 在 x=3 处 y 全缺；其余格都完整。每个位置 3 个重复。"""
+    rows = [["x", "arm", "site", "y"]]
+    for arm in ("a", "b"):
+        for site in ("s1", "s2"):
+            for x in range(1, 6):
+                for k in range(3):
+                    miss = arm == "a" and site == "s1" and x == 3
+                    rows.append(
+                        [x, arm, site, "" if miss else round(x + k * 0.5 + (arm == "b"), 3)]
+                    )
+    tmp.mkdir(parents=True, exist_ok=True)
+    (tmp / "gap.csv").write_text(_csv(rows), encoding="utf-8")
+    return tmp
+
+
+def _render_in(tmp: Path, table: str, recipe, allow=()) -> tuple[T.Rendered, adf.DataSummary]:
+    prof = adf.profile_folder(tmp)
+    values = adf.inspect_data_source(tmp / table, None)
+    got = {p.code for p in R.validate_recipe(prof, recipe, confirmed=NONE, values=values)}
+    assert got <= set(allow), got  # 脏数据（y 里有文字）校验会拒；模板对它也必须与期望一致
+    return T.render_recipe_script(entry_of(prof, table), recipe, data_rel=table, stem="fig"), values
+
+
+def probe(work: Path, rendered: T.Rendered, body: str):
+    """在真解释器里跑完脚本的 main()（不存盘），再跑 `body`（可用 fig / plt），把 `result` 当 JSON 取回。"""
+    write_rendered(work, rendered, "fig")
+    code = (
+        "import json, runpy, matplotlib\n"
+        "matplotlib.use('Agg')\n"
+        "import matplotlib.pyplot as plt\n"
+        "plt.Figure.savefig = lambda *a, **k: None\n"
+        f"ns = runpy.run_path({str(work / 'fig.py')!r})\n"
+        "ns['main']()\n"
+        "fig = plt.gcf()\n"
+        f"{body}\n"
+        "print('JSON:' + json.dumps(result))\n"
+    )
+    proc = subprocess.run(
+        [WORKER_PY, "-c", code],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        cwd=str(work),
+        check=True,
+    )
+    return json.loads(next(ln for ln in proc.stdout.splitlines() if ln.startswith("JSON:"))[5:])
+
+
+_FILLS = (
+    "result = {}\n"
+    "for ai, ax in enumerate(fig.axes):\n"
+    "    for c in ax.collections:\n"
+    "        if c.get_label().startswith('band'):\n"
+    "            result[f'{ai}:{c.get_label()}'] = [[min(v[0] for v in p.vertices), max(v[0] for v in p.vertices)] for p in c.get_paths() if len(p.vertices)]\n"
+)
+
+
+@needs_worker
+def test_band_breaks_where_the_summary_line_breaks(tmp_path):
+    """某个 x 位置没有任何观测：汇总线在这里断开，误差带也必须断开，不许把两侧连起来。"""
+    work = _gap_folder(tmp_path / "w")
+    r = mk(
+        "gap.csv",
+        "trend",
+        [("line", "mean_sd"), ("band", "mean_sd", Q)],
+        ["y"],
+        x="x",
+        group="arm",
+        facet="site",
+    )
+    rendered, _ = _render_in(work, "gap.csv", r)
+    spans = probe(work, rendered, _FILLS)
+    gap = spans["0:band | a | s1"]
+    assert gap and all(not (lo < 3 < hi) for lo, hi in gap), gap  # 跨过 x=3 = 在没观测处画了带
+    assert any(hi <= 3 for _, hi in gap) and any(lo >= 3 for lo, _ in gap)  # 两侧各有带
+    for key in ("0:band | b | s1", "1:band | a | s2", "1:band | b | s2"):
+        assert any(lo < 3 < hi for lo, hi in spans[key]), key  # 完整的格：带是连续的
+
+
+@needs_worker
+def test_no_other_mark_connects_across_a_missing_position(tmp_path):
+    """同一毛病在别的图元里：汇总线 / 阶梯线 / 逐点线按连续有效段断开；误差线只出现在有值的位置。"""
+    work = _gap_folder(tmp_path / "w")
+    kinds = (
+        [("line", "mean_sd"), ("errorbar", "mean_sd", Q)],
+        [("step", "mean_sd")],
+    )
+    body = (
+        "result = {}\n"
+        "for ai, ax in enumerate(fig.axes):\n"
+        "    for ln in ax.lines:\n"
+        "        xs, ys = ln.get_data()\n"
+        "        runs, cur = [], []\n"
+        "        for a, b in zip(xs, ys):\n"
+        "            if b != b:\n"
+        "                runs.append(cur); cur = []\n"
+        "            else:\n"
+        "                cur.append(float(a))\n"
+        "        runs.append(cur)\n"
+        "        result[f'{ai}:{ln.get_label()}'] = [[min(r), max(r)] for r in runs if r]\n"
+        "    for c in ax.containers:\n"
+        "        result[f'{ai}:{c.get_label()}'] = sorted({round(float(v[0][0]), 6) for v in c.lines[2][0].get_segments()})\n"
+    )
+    for layers in kinds:
+        r = mk("gap.csv", "trend", layers, ["y"], x="x", group="arm", facet="site")
+        rendered, _ = _render_in(work, "gap.csv", r)
+        got = probe(work, rendered, body)
+        for key, v in got.items():
+            if "| a | s1" not in key:
+                continue
+            if key.split(":", 1)[1].startswith("errorbar"):
+                assert 3.0 not in v and v == [1.0, 2.0, 4.0, 5.0], (layers, key, v)
+            else:
+                assert all(not (lo < 3 < hi) for lo, hi in v), (layers, key, v)
+
+
+@needs_worker
+def test_comparison_hlines_are_separated_per_category(tmp_path):
+    rows = [["cond", "y"]] + [[c, v] for c in "abc" for v in (1.0, 2.0, 3.0)]
+    work = tmp_path / "w"
+    work.mkdir()
+    (work / "c.csv").write_text(_csv(rows), encoding="utf-8")
+    r = mk("c.csv", "comparison", ["points", ("hline_summary", "mean_sd", Q)], ["y"], x="cond")
+    rendered, _ = _render_in(work, "c.csv", r)
+    body = (
+        "ax = fig.axes[0]\n"
+        "ln = [l for l in ax.lines if l.get_label().startswith('hline_summary')][0]\n"
+        "xs = [float(v) for v in ln.get_xdata()]\n"
+        "result = {'nan_at': [i for i, v in enumerate(xs) if v != v], 'n': len(xs)}\n"
+    )
+    got = probe(work, rendered, body)
+    assert got["nan_at"] == [2, 5, 8]
+
+
+@needs_worker
+@pytest.mark.parametrize(
+    "family, layers, kw",
+    [
+        ("trend", [("line", "mean_sd"), ("line", "median_iqr", "overlay")], {}),
+        (
+            "trend",
+            [("line", "mean_sd"), ("line", "mean_sem", "overlay"), ("hline_summary", "mean_sd", Q)],
+            {"group": "arm", "facet": "site"},
+        ),
+        (
+            "comparison",
+            [
+                "points",
+                ("hline_summary", "mean_sd", Q),
+                ("hline_summary", "median_iqr", "reference"),
+            ],
+            {},
+        ),
+        (
+            "comparison",
+            [("bar", "mean_sd"), ("bar", "median_iqr", "overlay"), ("jitter", "none", Q)],
+            {"group": "arm", "facet": "site"},
+        ),
+    ],
+    ids=["trend-two-lines", "trend-lines-hline-grouped", "cmp-two-hlines", "cmp-two-bars-grouped"],
+)
+def test_same_mark_in_two_layers_gets_distinct_labels_and_both_verify(family, layers, kw, tmp_path):
+    """同一图元以不同 role 出现两次：每个可核层的 label 在整张图里唯一（验证器按 label 唯一匹配），期望指纹也一一对应。"""
+    work = _gap_folder(tmp_path / "w")
+    r = mk("gap.csv", family, layers, ["y"], x="x" if family == "trend" else "arm", **kw)
+    rendered, values = _render_in(work, "gap.csv", r)
+    man = run_in_worker(work, rendered, "fig")
+    got = labelled(man)
+    assert not {k: len(v) for k, v in got.items() if len(v) > 1}, sorted(got)
+    expected = T.expected_fingerprints(values, r)
+    labels = [e["label"] for e in expected]
+    assert len(labels) == len(set(labels)), labels
+    from tavotto.engine import figureverify as fv
+
+    results = fv.data_matches_expected(man, expected)
+    assert results and all(c.verdict == fv.VERIFIED for c in results), [
+        (c.id, c.verdict, c.reason_code) for c in results
+    ]
+    # 同一层在不同分组 / 分面格里不同名；两层同一图元的名字互不相同
+    dup_marks = {m for m in {ly[0] for ly in layers} if sum(1 for ly in layers if ly[0] == m) > 1}
+    assert dup_marks
+    for m in dup_marks:
+        kinds = {lab.split(" | ")[0] for lab in labels if lab.split(" | ")[0].startswith(m)}
+        assert len(kinds) == sum(1 for ly in layers if ly[0] == m), kinds
+
+
+@needs_worker
+def test_labels_stay_unique_when_data_text_contains_the_separator(tmp_path):
+    """分组 / 分面名里带分隔符「 | 」时，不同格的 label 也不许撞。"""
+    rows = [["x", "arm", "site", "y"]]
+    for arm, site in (("a | s1", "b"), ("a", "s1 | b")):
+        for x in (1, 2, 3):
+            for k in (0, 1):
+                rows.append([x, arm, site, x + k + len(arm)])
+    work = tmp_path / "w"
+    work.mkdir()
+    (work / "sep.csv").write_text(_csv(rows), encoding="utf-8")
+    r = mk("sep.csv", "trend", [("line", "mean_sd")], ["y"], x="x", group="arm", facet="site")
+    rendered, values = _render_in(work, "sep.csv", r)
+    man = run_in_worker(work, rendered, "fig")
+    got = labelled(man)
+    assert not {k: len(v) for k, v in got.items() if len(v) > 1}, sorted(got)
+    expected = T.expected_fingerprints(values, r)
+    assert len({e["label"] for e in expected}) == len(expected) == 2
+    for e in expected:
+        assert got[e["label"]][0]["parts"][e["part"]] == e["digest"]
+
+
+def _n_table(tmp: Path, cells: dict) -> Path:
+    """cells: {(arm, site): {x: [y 原文…]}}；arm / site 为空串 = 没有这一列的值（整列不写）。"""
+    use_arm = any(a for a, _ in cells)
+    use_site = any(s for _, s in cells)
+    head = ["x"] + (["arm"] if use_arm else []) + (["site"] if use_site else []) + ["y"]
+    rows = [head]
+    for (a, s), per_x in cells.items():
+        for x, ys in per_x.items():
+            for y in ys:
+                rows.append([x] + ([a] if use_arm else []) + ([s] if use_site else []) + [y])
+    tmp.mkdir(parents=True, exist_ok=True)
+    (tmp / "n.csv").write_text(_csv(rows), encoding="utf-8")
+    return tmp
+
+
+def _finite(s) -> bool:
+    try:
+        return math.isfinite(float(s))
+    except ValueError:
+        return False
+
+
+def _independent_ns(cells: dict) -> tuple[set[int], set[int]]:
+    """不经模板：`(每个位置的有效观测数集合, 每条序列的有效观测总数集合)`；缺失 / NaN / 文字不算，0 不算。"""
+    per_point, per_series = set(), set()
+    for per_x in cells.values():
+        tot = 0
+        for ys in per_x.values():
+            k = sum(1 for y in ys if _finite(y))
+            if k:
+                per_point.add(k)
+            tot += k
+        if tot:
+            per_series.add(tot)
+    return per_point, per_series
+
+
+def _span(ns: set[int]) -> str:
+    return str(min(ns)) if len(ns) == 1 else f"{min(ns)}–{max(ns)}"
+
+
+def _note_of(tmp: Path, layers, **kw) -> str:
+    r = mk("n.csv", "trend", layers, ["y"], x="x", **kw)
+    rendered, _ = _render_in(tmp, "n.csv", r, allow=("column_type_mismatch",))
+    (text,) = probe(tmp, rendered, "result = [t.get_text() for t in fig.texts]")
+    return text
+
+
+def _v(k, base=1.0):
+    return [round(base + i * 0.7, 3) for i in range(k)]
+
+
+@needs_worker
+def test_trend_note_counts_the_population_each_summary_actually_summarizes(tmp_path):
+    full = {x: _v(3, x) for x in range(1, 6)}
+    uneven = {1: _v(3), 2: _v(2, 2), 3: _v(3, 3), 4: _v(1, 4), 5: _v(3, 5)}
+    singles = {x: _v(1, x) for x in range(1, 6)}
+    dirty = {
+        1: [1.0, 2.0, 3.0],
+        2: ["", "nan", "<LOD"],  # 整个位置没有有效值：线在这里断开，不计 n
+        3: [2.0, "<LOD", 3.0, ""],
+        4: [5.0, 6.0, 7.0, 8.0],
+        5: [1.0, "NaN", 2.0],
+    }
+    PP = [("line", "mean_sd"), ("band", "mean_sd", Q)]
+    SER = ["points", ("hline_summary", "mean_sd", Q)]
+    MIX = [("line", "mean_sd"), ("hline_summary", "median_iqr", Q)]
+    two_pos = [
+        ("line", "mean_sd"),
+        ("errorbar", "mean_sem", Q),
+        ("hline_summary", "mean_sd", "reference"),
+    ]
+    grouped = {
+        ("a", "s1"): full,
+        ("b", "s1"): uneven,
+        ("a", "s2"): dirty,
+        ("b", "s2"): {x: _v(2, x) for x in range(1, 4)},
+    }
+    cases = [
+        ("pp-uniform", {("", ""): full}, PP, {}),
+        ("pp-uneven", {("", ""): uneven}, PP, {}),
+        ("series-singles", {("", ""): singles}, SER, {}),  # 五个位置各一个观测：n 是 5 不是 1
+        ("mixed-uniform", {("", ""): full}, MIX, {}),
+        ("mixed-uneven", {("", ""): uneven}, MIX, {}),
+        ("mixed-dirty", {("", ""): dirty}, MIX, {}),
+        ("mixed-grouped-faceted", grouped, MIX, {"group": "arm", "facet": "site"}),
+        ("series-grouped", grouped, SER, {"group": "arm", "facet": "site"}),
+        ("pp-grouped", grouped, PP, {"group": "arm", "facet": "site"}),
+        ("pos-and-series", grouped, two_pos, {"group": "arm", "facet": "site"}),
+    ]
+    for cid, cells, layers, kw in cases:
+        work = _n_table(tmp_path / cid, cells)
+        per_point, per_series = _independent_ns(cells)
+        has_pos = any(
+            ly[0] in ("line", "step", "band", "errorbar") for ly in layers if isinstance(ly, tuple)
+        )
+        has_ser = any(ly[0] == "hline_summary" for ly in layers if isinstance(ly, tuple))
+        got = _note_of(work, layers, **kw)
+        dotted = "; dotted line: center of the whole series" if has_ser else ""
+        if has_pos and has_ser:
+            names = {
+                "mixed": "line: mean ± SD; horizontal lines: median with IQR",
+                "two_pos": "line: mean ± SD; error bars: mean ± SEM; horizontal lines: mean ± SD",
+            }
+            summ = names["mixed" if layers is MIX else "two_pos"]
+            want = (
+                f"{summ}{dotted}; n = {_span(per_point)} per point; n = {_span(per_series)} per series"
+            )
+        elif has_ser:
+            want = f"mean ± SD{dotted}; n = {_span(per_series)}" + (
+                " per series" if len(per_series) > 1 else ""
+            )
+        else:
+            want = f"mean ± SD; n = {_span(per_point)}" + (" per point" if len(per_point) > 1 else "")
+        assert got == want, (cid, got, want)
+
+
+@needs_worker
+def test_comparison_note_and_tick_n_match_each_category_by_group_cell(tmp_path):
+    """比较图：每个（分面, 类别, 分组）格子的 n 与独立数出来的一致（缺失 / NaN / 文字行不算）；各格相同 → 说明里一个 n。"""
+    rows = [["cond", "arm", "site", "y"]]
+    spec = {  # (cond, arm, site) -> y 原文
+        ("c1", "a", "s1"): [1, 2, 3, "", "nan"],
+        ("c1", "b", "s1"): [1, 2, "<LOD"],
+        ("c2", "a", "s1"): [3, 4, 5, 6],
+        ("c2", "b", "s1"): [1],
+        ("c1", "a", "s2"): [1, 2],
+        ("c2", "b", "s2"): [2, 3, 4, 5, 6],
+    }
+    for (c, a, s), ys in spec.items():
+        rows += [[c, a, s, y] for y in ys]
+    work = tmp_path / "w"
+    work.mkdir()
+    (work / "n.csv").write_text(_csv(rows), encoding="utf-8")
+    r = mk(
+        "n.csv",
+        "comparison",
+        ["jitter", ("bar", "mean_sd", Q)],
+        ["y"],
+        x="cond",
+        group="arm",
+        facet="site",
+    )
+    rendered, _ = _render_in(work, "n.csv", r, allow=("column_type_mismatch",))
+    body = "result = [[t.get_text() for t in fig.texts], [[t.get_text() for t in ax.get_xticklabels()] for ax in fig.axes]]"
+    texts, ticks = probe(work, rendered, body)
+    assert texts == ["mean ± SD; n per group in tick labels"]
+    n = {k: sum(1 for y in ys if _finite(y)) for k, ys in spec.items()}
+    for ax_ticks, site in zip(ticks, ("s1", "s2")):
+        want = [
+            f"{c}\n(n = " + "/".join(str(n.get((c, a, site), 0)) for a in ("a", "b")) + ")"
+            for c in ("c1", "c2")
+        ]
+        assert ax_ticks == want, (site, ax_ticks, want)
+    # 各格 n 相同：说明里只写一个 n
+    even = [["cond", "y"]] + [[c, v] for c in "ab" for v in (1, 2, 3, "")]
+    work2 = tmp_path / "w2"
+    work2.mkdir()
+    (work2 / "n.csv").write_text(_csv(even), encoding="utf-8")
+    r2 = mk("n.csv", "comparison", ["jitter", ("hline_summary", "mean_sd", Q)], ["y"], x="cond")
+    rendered, _ = _render_in(work2, "n.csv", r2)
+    assert probe(work2, rendered, "result = [t.get_text() for t in fig.texts]") == [
+        "mean ± SD; n = 3"
+    ]
+
+
+def _iso_folder(tmp: Path) -> Path:
+    """a：有效位置 1、3、4、6（1 和 6 孤立）；b 整条只有 x=3 一个有效位置。每个位置 2 个重复。"""
+    valid = {"a": {1, 3, 4, 6}, "b": {3}}
+    rows = [["x", "arm", "y"]]
+    for arm, ok in valid.items():
+        for x in range(1, 9):
+            for k in range(2):
+                rows.append([x, arm, round(x + k * 0.5, 3) if x in ok else ""])
+    tmp.mkdir(parents=True, exist_ok=True)
+    (tmp / "iso.csv").write_text(_csv(rows), encoding="utf-8")
+    return tmp
+
+
+@needs_worker
+@pytest.mark.parametrize("mark", ["line", "step"])
+def test_isolated_valid_position_stays_visible_without_marking_the_whole_line(mark, tmp_path):
+    """两侧都缺失的孤立有效位置（含整条只剩一个位置）：线画不出线段，必须在该位置有可见标记；连续的段不加标记。"""
+    work = _iso_folder(tmp_path / "w")
+    r = mk("iso.csv", "trend", [(mark, "mean_sd")], ["y"], x="x", group="arm")
+    rendered, values = _render_in(
+        work, "iso.csv", r, allow=("trend_too_few_x",)
+    )  # 校验拒；模板对它也要诚实
+    body = (
+        "result = {}\n"
+        "for ln in fig.axes[0].lines:\n"
+        "    xs = [float(v) for v in ln.get_xdata()]\n"
+        "    ys = [float(v) for v in ln.get_ydata()]\n"
+        "    me = ln.get_markevery()\n"
+        "    idx = [] if ln.get_marker() in ('None', '', None) else (list(range(len(xs))) if me is None else list(me))\n"
+        "    result[ln.get_label()] = [xs[i] for i in idx if ys[i] == ys[i]]\n"
+    )
+    got = probe(work, rendered, body)
+    assert got[f"{mark} | a"] == [1.0, 6.0], got
+    assert got[f"{mark} | b"] == [3.0], got
+    # 同一条线、同一份数据：真 worker 对拍仍过（标记不改变 xy 指纹，label 不变）
+    man = run_in_worker(work, rendered, "fig")
+    from tavotto.engine import figureverify as fv
+
+    res = fv.data_matches_expected(man, T.expected_fingerprints(values, r))
+    assert res and all(c.verdict == fv.VERIFIED for c in res), [(c.id, c.verdict) for c in res]
+
+
+def _multi_y_folder(tmp: Path) -> Path:
+    rows = [["x", "arm", "sig_mV", "cur_mV"]]
+    for arm in ("a", "b"):
+        for x in range(1, 5):
+            for k in range(2):
+                rows.append([x, arm, x + k, 10 + x * k])
+    tmp.mkdir(parents=True, exist_ok=True)
+    (tmp / "my.csv").write_text(_csv(rows), encoding="utf-8")
+    return tmp
+
+
+_LEGEND = (
+    "lg = fig.axes[0].get_legend()\n"
+    "result = {'texts': [t.get_text() for t in lg.get_texts()] if lg else [],\n"
+    "          'styles': [getattr(h, 'get_linestyle', lambda: None)() for h in lg.legend_handles] if lg else []}\n"
+)
+
+
+@needs_worker
+def test_legend_explains_linestyle_per_y_column_when_grouped(tmp_path):
+    work = _multi_y_folder(tmp_path / "w")
+    g = mk("my.csv", "trend", [("line", "mean_sd")], ["sig_mV", "cur_mV"], x="x", group="arm")
+    rendered, _ = _render_in(work, "my.csv", g)
+    got = probe(work, rendered, _LEGEND)
+    assert got["texts"] == ["a", "b", "sig (mV)", "cur (mV)"], (
+        got
+    )  # 分组色块照旧 + 线型 ↔ y 列（轴标题写法）
+    assert got["styles"][2:] == ["-", "--"], got
+    # 不分组、多 y：颜色区分 y，图例是 y 列（同一套写法）；单个 y：图例不变
+    n = mk("my.csv", "trend", [("line", "mean_sd")], ["sig_mV", "cur_mV"], x="x")
+    rendered, _ = _render_in(work, "my.csv", n)
+    assert probe(work, rendered, _LEGEND)["texts"] == ["sig (mV)", "cur (mV)"]
+    one = mk("my.csv", "trend", [("line", "mean_sd")], ["sig_mV"], x="x", group="arm")
+    rendered, _ = _render_in(work, "my.csv", one)
+    assert probe(work, rendered, _LEGEND)["texts"] == ["a", "b"]
+    solo = mk("my.csv", "trend", [("line", "mean_sd")], ["sig_mV"], x="x")
+    rendered, _ = _render_in(work, "my.csv", solo)
+    assert probe(work, rendered, _LEGEND)["texts"] == []
