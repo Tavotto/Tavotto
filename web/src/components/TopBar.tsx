@@ -266,7 +266,8 @@ const PILL_TONE: Record<StatusTone, string> = {
   info: 'bg-info-surface text-info-content inset-ring inset-ring-info-border',
   ok: 'bg-ok-surface text-ok-content inset-ring inset-ring-ok-border',
   warn: 'bg-warn-surface text-warn-content inset-ring inset-ring-warn-border',
-  danger: 'bg-danger-surface text-danger-content inset-ring inset-ring-danger-border',
+  // 只描红框、不铺红底（2026-11-11 用户裁定：红色填充太重）
+  danger: 'text-danger-content inset-ring inset-ring-danger-border hover:bg-surface-hover',
 }
 
 function useDocIssue(): DocIssue | null {

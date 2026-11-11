@@ -7252,7 +7252,6 @@ export default interface Resources {
       "elementNotCopyable": "{{name}}还不能复制",
       "elementNotCopyableGeneric": "这个元素还不能复制",
       "elementsHidden_other": "已隐藏 {{count}} 个元素，可在「已隐藏元素」里恢复",
-      "errorTitle": "这一步没有完成",
       "geometrySyncing": "正在同步图形几何，请稍候再试",
       "groupBlocked": {
         "incomplete": "组里有成员这一版拿不到位置，暂时不能整组移动或缩放",
