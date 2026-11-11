@@ -67,6 +67,34 @@ def evaluate_dpi_facts(bundle: object, context: Mapping[str, object], dpi: objec
     data = validate_bundle(bundle)
     if not isinstance(context, Mapping):
         raise TypeError("context must be a mapping")
+    if any(key not in {*_VALUES, "stage"} for key in context):
+        # An unrecognized field may represent an unresolved source conflict,
+        # measurement qualification, or scope restriction. Never discard it.
+        results = [
+            {
+                "id": fact["id"],
+                "subject": fact["subject"],
+                "source": fact["source"],
+                "origin": fact["origin"],
+                "status": "unknown",
+                "reason": "unsupported_context_fields",
+            }
+            for fact in data["facts"]
+        ]
+        return {
+            "status": "unknown",
+            "evaluated_raster_dpi_status": "unknown",
+            "facts": results,
+            "unevaluated_facts": [
+                {
+                    "id": fact["id"],
+                    "subject": fact["subject"],
+                    "reason": "unsupported_context_fields",
+                }
+                for fact in data["facts"]
+            ],
+            "catalog_completeness": "unknown",
+        }
     try:
         valid_dpi = type(dpi) in (int, float) and math.isfinite(dpi) and dpi > 0
     except OverflowError:

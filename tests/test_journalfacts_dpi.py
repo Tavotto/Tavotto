@@ -288,3 +288,27 @@ def test_free_text_resolution_not_silently_ignored(fact, context):
     assert result["unevaluated_facts"] == [
         {"id": "text", "subject": "photograph_resolution", "reason": "unsupported_subject"}
     ]
+
+
+@pytest.mark.parametrize("field", ["unresolved_conflict", "future_scope", None])
+@pytest.mark.parametrize("value", [True, False, "unknown"])
+def test_unrecognized_context_is_never_silently_ignored(fact, context, field, value):
+    context[field] = value
+    result = evaluate_dpi_facts(bundle(fact), context, 1200)
+    assert result["status"] == "unknown"
+    assert result["evaluated_raster_dpi_status"] == "unknown"
+    assert result["facts"][0]["reason"] == "unsupported_context_fields"
+    assert result["unevaluated_facts"] == [
+        {"id": "line", "subject": "raster_dpi", "reason": "unsupported_context_fields"}
+    ]
+
+
+def test_unrecognized_context_keeps_each_fact_unverified(fact, context):
+    context["unresolved_conflict"] = True
+    other = {**fact, "id": "width", "subject": "width", "unit": "mm", "value": 80}
+    result = evaluate_dpi_facts(bundle(fact, other), context, 100)
+    assert result["status"] == "unknown"
+    assert [item["id"] for item in result["facts"]] == ["line", "width"]
+    assert all(item["status"] == "unknown" for item in result["facts"])
+    assert [item["id"] for item in result["unevaluated_facts"]] == ["line", "width"]
+    assert result["catalog_completeness"] == "unknown"
