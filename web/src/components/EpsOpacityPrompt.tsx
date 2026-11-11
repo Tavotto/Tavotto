@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from 'react'
+import { useCallback, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { epsTranslucentCount, swapEpsForPdf } from '@/lib/epsOpacity'
@@ -30,6 +30,7 @@ export function useEpsOpacityGate(setFormats: (formats: string[]) => void): {
   const [pending, setPending] = useState<(Pending & { run: (i: ExportRequestInput) => unknown }) | null>(null)
   // 关的那一小段退场动画里 pending 已经是 null，正文仍要画得出来
   const [last, setLast] = useState<number>(0)
+  const primaryRef = useRef<HTMLButtonElement | null>(null)
 
   const intercept = useCallback(
     (input: ExportRequestInput, run: (i: ExportRequestInput) => unknown) => {
@@ -64,10 +65,13 @@ export function useEpsOpacityGate(setFormats: (formats: string[]) => void): {
       blockDismiss
       onEscape={() => answer('cancel')}
       anchor="eps-opacity"
+      // 盖在导出对话框上：后面再压暗一点；焦点落在主按钮上，Enter = 主按钮
+      dimBehind
+      initialFocusRef={primaryRef}
       footer={{
         start: (
-          <Button variant="secondary" size="lg" data-eps-opacity="opaque" onClick={() => answer('opaque')}>
-            {eo('opaque')}
+          <Button variant="secondary" size="lg" data-eps-opacity="pdf" onClick={() => answer('pdf')}>
+            {eo('pdf')}
           </Button>
         ),
         secondary: (
@@ -76,8 +80,8 @@ export function useEpsOpacityGate(setFormats: (formats: string[]) => void): {
           </Button>
         ),
         primary: (
-          <Button variant="primary" size="lg" data-eps-opacity="pdf" onClick={() => answer('pdf')}>
-            {eo('pdf')}
+          <Button ref={primaryRef} variant="primary" size="lg" data-eps-opacity="opaque" onClick={() => answer('opaque')}>
+            {eo('opaque')}
           </Button>
         ),
       }}
