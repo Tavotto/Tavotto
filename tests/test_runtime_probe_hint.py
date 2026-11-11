@@ -644,6 +644,8 @@ def test_on_success_only_glob_counts_not_the_exists_checks_of_ordinary_scripts(p
         },
     )()
     assert engine_pool.workdir_hint_of_build(worker) is None  # 先判再建的常规写法，不提示
+    # 一张图都没出：`if isdir("data"): plot()` 跳过了画图，目录探路也算证据（Codex #1846 P2）
+    assert engine_pool.workdir_hint_of_build(worker, captured=False)["probes"] == ["cache"]
     worker.last_build_probe_misses = [_glob("data/run_*.txt")]
     assert engine_pool.workdir_hint_of_build(worker)["probes"] == ["data/run_*.txt"]
     worker.last_build_probe_misses = None
@@ -740,6 +742,37 @@ def test_a_successful_build_whose_glob_came_back_empty_is_redone_in_the_script_d
     _worker, resp = engine_pool.build("fig.py", str(figs), "__main__")
     assert sorted(resp.get("stems") or {}) == ["q"]
     assert workdir.implied_by(figs) == workdir.IMPLIED_BY_RUNTIME_EVIDENCE
+
+
+EXISTS_SCRIPT = """\
+import os
+import matplotlib.pyplot as plt
+
+
+def _has(name):
+    return os.path.isdir(name)
+
+
+if _has("data"):
+    fig, ax = plt.subplots()
+    ax.plot([1, 2, 3])
+    fig.savefig("r.png")
+"""
+
+
+@needs_worker
+def test_a_successful_build_that_skipped_plotting_on_an_exists_check_is_redone(figs):
+    """成功跑完、一张图都没出，证据只有 `isdir` 落空：同样静默改在脚本目录里重跑（Codex #1846 P2）。"""
+    (figs / "fig.py").write_text(EXISTS_SCRIPT, encoding="utf-8")
+    _worker, resp = engine_pool.build("fig.py", str(figs), "__main__")
+    assert sorted(resp.get("stems") or {}) == ["r"]
+    assert workdir.implied_by(figs) == workdir.IMPLIED_BY_RUNTIME_EVIDENCE
+
+
+def test_captured_any_only_widens_on_an_explicitly_empty_capture():
+    assert engine_pool._captured_any({"stems": {"p": {}}})
+    assert not engine_pool._captured_any({"stems": {}})
+    assert engine_pool._captured_any({}) and engine_pool._captured_any(None)
 
 
 @needs_worker

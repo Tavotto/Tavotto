@@ -1309,14 +1309,17 @@ def workdir_hint_for(
 SUCCESS_HINT_KINDS = frozenset({figcapture.PROBE_GLOB})
 
 
-def workdir_hint_of_build(worker) -> dict | None:
+def workdir_hint_of_build(worker, *, captured: bool = True) -> dict | None:
     """build 成功之后的引导：脚本在沙盒里 glob 回空却没报错（`ax.plot([])` 画出一条空线），脚本目录里同一个模式
-    有文件 → 同形的 `workdir_hint`（`source = "runtime"`）。出图结果、状态码都不改（#1254）。"""
+    有文件 → 同形的 `workdir_hint`（`source = "runtime"`）。出图结果、状态码都不改（#1254）。
+
+    `captured=False`（成功跑完却一张图都没捕获）：随后的 `missing_stem_error` 会放开全部探路种类，这里同一口径
+    ——`if os.path.exists("data"): plot()` 在沙盒里跳过了画图，同样是数据在脚本目录里的证据（Codex #1846 P2）。"""
     return workdir_hint_for(
         getattr(worker, "script_name", ""),
         getattr(worker, "figures_dir", None),
         getattr(worker, "last_build_probe_misses", None),
-        kinds=SUCCESS_HINT_KINDS,
+        kinds=SUCCESS_HINT_KINDS if captured else None,
     )
 
 
@@ -5898,7 +5901,7 @@ def _build_with(
 ):
     """`build` / `build_owned` 共用的编排：`take()` 回 `(worker, created)`。
 
-    沙盒里跑完、运行时证据说数据只在脚本目录里（失败 / 没出图带 `workdir_hint`，或成功但 glob 回空）且项目没决定过
+    沙盒里跑完、运行时证据说数据只在脚本目录里（失败 / 没出图带 `workdir_hint`，或成功但 glob 回空；成功却一张图都没出时各种探路落空都算）且项目没决定过
     工作目录：静默改在脚本目录里重跑一次（ADR 0047 修订，`_adopt_script_dir`），之后的结局就是那一次的结局。
 
     `before_retry()`：自动接手换了项目的解释器决策——连同它派生的工作目录默认（用户自己的 Python →
@@ -5928,7 +5931,12 @@ def _build_with(
             raise
     else:
         # build 成功但沙盒里 glob 回空、脚本目录里有文件：画出来的多半是一张没数据的图（#1254），同样换目录重跑
-        if adopt_script_dir and _adopt_script_dir(figures_dir, workdir_hint_of_build(worker)):
+        hint = (
+            workdir_hint_of_build(worker, captured=_captured_any(resp))
+            if adopt_script_dir
+            else None
+        )
+        if hint is not None and _adopt_script_dir(figures_dir, hint):
             return _rebuild_in_script_dir(
                 take,
                 script_name,
@@ -5945,6 +5953,13 @@ def _build_with(
     if before_build is not None:
         before_build(worker)
     return worker, worker.ensure_built(), created or created_again
+
+
+def _captured_any(resp) -> bool:
+    """build 响应里有没有捕获到图；读不出来按「有」——只在明确一张都没有时才放宽证据种类。"""
+    if not isinstance(resp, dict) or "stems" not in resp:
+        return True
+    return bool(resp.get("stems"))
 
 
 def _adopt_script_dir(figures_dir: str, hint) -> bool:
