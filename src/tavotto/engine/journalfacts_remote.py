@@ -586,3 +586,100 @@ def snapshot(jid: str, file: str, *, ui_locale: str | None = None) -> Path:
         if last.code not in ("network", "server_error"):
             break
     raise last
+
+
+_INSPECTION_KINDS = frozenset({"line_art", "halftone", "combination"})
+_INSPECTION_STAGES = frozenset({"submission", "revision", "accepted", "production"})
+
+
+def _structured_conditions(fact: dict, kind: str, stage: str) -> dict:
+    """Compare a tiny explicit vocabulary; never infer the source's meaning."""
+    reasons = []
+    parts = []
+    source_stage = fact.get("stage")
+    if stage not in _INSPECTION_STAGES or source_stage not in _INSPECTION_STAGES | {"any"}:
+        parts.append({"field": "stage", "status": "unknown"})
+    else:
+        parts.append(
+            {
+                "field": "stage",
+                "status": "match" if source_stage in ("any", stage) else "mismatch",
+            }
+        )
+    conditions = fact.get("conditions", {})
+    if not isinstance(conditions, dict):
+        reasons.append("invalid_conditions")
+        conditions = {}
+    for key, value in conditions.items():
+        if key != "figure_kind" or kind not in _INSPECTION_KINDS:
+            parts.append({"field": key, "status": "unknown"})
+            continue
+        if isinstance(value, str) and value in _INSPECTION_KINDS:
+            candidates = [value]
+        elif (
+            isinstance(value, dict)
+            and set(value) == {"relation", "value"}
+            and value["relation"] == "in"
+            and isinstance(value["value"], list)
+            and value["value"]
+            and all(isinstance(v, str) and v in _INSPECTION_KINDS for v in value["value"])
+        ):
+            candidates = value["value"]
+        else:
+            parts.append({"field": key, "status": "unknown"})
+            continue
+        parts.append({"field": key, "status": "match" if kind in candidates else "mismatch"})
+    if kind not in _INSPECTION_KINDS:
+        reasons.append("figure_kind_unknown")
+    if fact.get("condition_text"):
+        reasons.append("free_text_condition")
+    if fact.get("context"):
+        reasons.append("source_context_uninterpreted")
+    statuses = {part["status"] for part in parts}
+    status = (
+        "unknown"
+        if reasons or "unknown" in statuses
+        else "mismatch"
+        if "mismatch" in statuses
+        else "match"
+    )
+    return {"status": status, "components": parts, "unknown_reasons": reasons}
+
+
+def inspect_facts_page(page: dict, selection: dict) -> dict:
+    """Compare structured fields only; signed bytes do not prove source semantics."""
+    if not isinstance(selection, dict) or set(selection) - {"object_label", "figure_kind", "stage"}:
+        raise FactsError("bad_request")
+    label = selection.get("object_label")
+    kind = selection.get("figure_kind", "unknown")
+    stage = selection.get("stage", "unknown")
+    if (
+        not isinstance(label, str)
+        or not label.strip()
+        or len(label) > 128
+        or not isinstance(kind, str)
+        or kind not in _INSPECTION_KINDS | {"unknown"}
+        or not isinstance(stage, str)
+        or stage not in _INSPECTION_STAGES | {"unknown"}
+    ):
+        raise FactsError("bad_request")
+    if not isinstance(page, dict) or not isinstance(page.get("facts"), list):
+        raise FactsError("bad_request")
+    result = dict(page)
+    result["inspection"] = {
+        "object_label": label,
+        "figure_kind": kind,
+        "stage": stage,
+        "semantic_review": "not_authenticated",
+        "status": "not_verifiable",
+        "facts": [
+            {
+                "id": fact["id"],
+                "status": "not_verifiable",
+                "reason": "semantic_review_not_authenticated",
+                "structured_conditions": _structured_conditions(fact, kind, stage),
+            }
+            for fact in page["facts"]
+        ],
+    }
+    return result

@@ -224,6 +224,7 @@ def journal_facts(
     offset: int,
     limit: int,
     expected_catalog_rev: int | None = None,
+    inspection: dict | None = None,
 ) -> dict:
     """Only translates the engine's read-only v2 facts; never produces a v1 override."""
     if not journal_catalog_enabled():
@@ -243,8 +244,23 @@ def journal_facts(
                     "当前引擎不支持安全分页，请升级 Tavotto。", code="engine_capability_missing"
                 )
             options["expected_catalog_rev"] = expected_catalog_rev
-        return method(journal_id if journal_id is not None else query, **options)
+        if inspection is not None:
+            inspector = getattr(module, "inspect_facts_page", None)
+            if journal_id is None or not callable(inspector):
+                raise BridgeError(
+                    "当前引擎不能检查这组来源事实，请升级 Tavotto。",
+                    code="engine_capability_missing",
+                )
+            # Validate user selection before any network request.
+            inspector({"facts": []}, inspection)
+        result = method(journal_id if journal_id is not None else query, **options)
+        return inspector(result, inspection) if inspection is not None else result
     except module.FactsError as exc:
+        if exc.code == "result_too_large" and inspection is not None:
+            raise BridgeError(
+                "期刊事实单条记录超出安全大小，当前无法通过查看入口读取。",
+                code="journal_facts_page_too_large",
+            ) from exc
         if exc.code in ("quota_hour", "quota_day", "ip_day", "ip_tokens"):
             raise BridgeError(
                 "期刊目录下载额度已用完，请稍后再试；不要更换设备令牌绕过额度。",
@@ -288,6 +304,15 @@ def journal_facts(
         raise BridgeError(
             "期刊事实暂不可用；请稍后重试。", code="journal_facts_unavailable"
         ) from exc
+
+
+def journal_facts_inspection_budget() -> int:
+    """Use the v2 client's page budget; don't guess for an older engine."""
+    module = _optional_engine("journalfacts_remote")
+    budget = getattr(module, "MAX_PAGE_BYTES", None)
+    if type(budget) is not int or budget <= 0:
+        raise BridgeError("当前引擎不支持安全的期刊事实查看。", code="engine_capability_missing")
+    return budget
 
 
 def _journal_remote():

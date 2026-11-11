@@ -704,6 +704,31 @@ def _add_journal_catalog_tools(tools: list[dict], by_name: dict) -> None:
                             "maximum": 9999999999,
                             "description": "后续页传第一页 catalog_rev；目录变化时须重读。",
                         },
+                        "inspection": {
+                            "type": "object",
+                            "description": "只对本次读取声明一个对象；不写项目，也不证明语义审校。",
+                            "properties": {
+                                "object_label": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                },
+                                "figure_kind": {
+                                    "enum": ["unknown", "line_art", "halftone", "combination"]
+                                },
+                                "stage": {
+                                    "enum": [
+                                        "unknown",
+                                        "submission",
+                                        "revision",
+                                        "accepted",
+                                        "production",
+                                    ]
+                                },
+                            },
+                            "required": ["object_label"],
+                            "additionalProperties": False,
+                        },
                     },
                     "additionalProperties": False,
                 },
@@ -1236,11 +1261,36 @@ def _call_list_journals(args: dict) -> dict:
     }
 
 
+def _inspection_result_size(result: dict, rid: object = None) -> int:
+    """Measure actual UTF-8 JSON with the same encoder as the stdio transport."""
+    value = result if rid is None else {"jsonrpc": "2.0", "id": rid, "result": result}
+    # Stdio frames also include the terminating newline.
+    return len(json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")) + (
+        rid is not None
+    )
+
+
+def _inspection_too_large(result: dict, rid: object = None) -> bool:
+    body = result.get("structuredContent")
+    if not isinstance(body, dict) or "inspection" not in body:
+        return False
+    return _inspection_result_size(result, rid) > bridge.journal_facts_inspection_budget()
+
+
+def _inspection_size_error() -> bridge.BridgeError:
+    return bridge.BridgeError(
+        "期刊事实查看结果超出安全大小；请减小 limit 并从同一 offset 重试。"
+        "若 limit 为 1 仍超限，该条暂无法读取。",
+        code="journal_facts_page_too_large",
+    )
+
+
 def _call_journal_facts(args: dict) -> dict:
     query = args.get("query", "")
     journal_id = args.get("journal_id")
     offset, limit = args.get("offset", 0), args.get("limit", 20)
     expected_rev = args.get("expected_catalog_rev")
+    inspection = args.get("inspection")
     if (
         not isinstance(query, str)
         or (journal_id is not None and (not isinstance(journal_id, str) or not journal_id))
@@ -1251,11 +1301,21 @@ def _call_journal_facts(args: dict) -> dict:
             expected_rev is not None
             and (type(expected_rev) is not int or not 1 <= expected_rev <= 9999999999)
         )
-        or set(args) - {"query", "journal_id", "offset", "limit", "expected_catalog_rev"}
+        or (
+            inspection is not None and (journal_id is None or (offset > 0 and expected_rev is None))
+        )
+        or set(args)
+        - {"query", "journal_id", "offset", "limit", "expected_catalog_rev", "inspection"}
     ):
         raise RpcError(INVALID_PARAMS, "查询、期刊 ID 或分页参数不正确")
-    out = bridge.journal_facts(query, journal_id, offset, limit, expected_rev)
-    return {"content": _text(json.dumps(out, ensure_ascii=False)), "structuredContent": out}
+    if inspection is None:
+        out = bridge.journal_facts(query, journal_id, offset, limit, expected_rev)
+    else:
+        out = bridge.journal_facts(query, journal_id, offset, limit, expected_rev, inspection)
+    result = {"content": _text(json.dumps(out, ensure_ascii=False)), "structuredContent": out}
+    if inspection is not None and _inspection_too_large(result):
+        raise _inspection_size_error()
+    return result
 
 
 def _call_export(args: dict) -> dict:
@@ -1907,7 +1967,22 @@ class Server:
                 arguments = params.get("arguments")
                 if isinstance(arguments, dict):
                     self._confirm_workspace_for_open(arguments)
-            self.conn.result(rid, self.dispatch(method, params))
+            result = self.dispatch(method, params)
+            call_args = params.get("arguments")
+            if (
+                method == "tools/call"
+                and params.get("name") == "tavotto_get_journal_facts"
+                and isinstance(call_args, dict)
+                and call_args.get("inspection") is not None
+                and _inspection_too_large(result, rid)
+            ):
+                payload = _inspection_size_error().payload()
+                result = {
+                    "isError": True,
+                    "content": _text(_human_error(payload)),
+                    "structuredContent": payload,
+                }
+            self.conn.result(rid, result)
         except RpcError as exc:
             self.conn.error(rid, exc)
         except Exception as exc:  # noqa: BLE001 — 任何异常都不许打死连接
