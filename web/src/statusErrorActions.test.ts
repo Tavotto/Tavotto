@@ -25,7 +25,7 @@ import { scan } from './test/statusErrorScan'
 import ledgerJson from './statusErrorLedger.json'
 
 /** `TODO(dead-end)` 条目数上限：只许降不许升（修掉一条就把这个数改小）。 */
-const DEAD_END_CAP = 18
+const DEAD_END_CAP = 12
 
 interface LedgerEntry { file: string; key: string; count: number; reason: string }
 const ledger = ledgerJson.entries as LedgerEntry[]

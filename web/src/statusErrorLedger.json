@@ -2,18 +2,6 @@
   "_说明": "红色状态提示（setStatus(…, 'error')）不带 action 按钮的调用点台账；规则见 docs/rules/frontend/ui-visual-discipline.md「失败出口三种结局」，门禁是 web/src/statusErrorActions.test.ts。键 = file + 文案 key（不用行号），同键多处用 count。reason 以 TODO(dead-end): 开头 = 真死胡同、待修，数量上限钉在测试里只许降不许升。",
   "entries": [
     {
-      "file": "App.tsx",
-      "key": "autosave.staleOtherWindow|autosave.diskFailed",
-      "count": 1,
-      "reason": "TODO(dead-end): 自动保存写盘失败 / 被另一个窗口的新版挡下后只剩一句报错；应挂「再存一次」（失败时）和「重新载入最新版」（另一窗口已存时）。"
-    },
-    {
-      "file": "App.tsx",
-      "key": "autosave.docConflict",
-      "count": 1,
-      "reason": "TODO(dead-end): 自动保存撞上同一文档的外部修改只给一句话；应挂「重新载入」按钮，让用户直接取回磁盘上的那一版。"
-    },
-    {
       "file": "canvas/IssueOverlay.tsx",
       "key": "focusFailureMessage()",
       "count": 1,
@@ -321,18 +309,6 @@
     },
     {
       "file": "store/actions.ts",
-      "key": "save.conflict",
-      "count": 1,
-      "reason": "TODO(dead-end): ⌘S 保存撞上冲突只有一句话；应挂「重新载入」或「另存为」按钮。"
-    },
-    {
-      "file": "store/actions.ts",
-      "key": "save.failed",
-      "count": 1,
-      "reason": "TODO(dead-end): ⌘S 保存失败只有一句话；应挂「再存一次」，并复用 feedbackAction()（发给我们看看）。"
-    },
-    {
-      "file": "store/actions.ts",
       "key": "layout.openSkipped",
       "count": 1,
       "reason": "打开排版途中项目 / 排版变了，不装进去（Codex #1734）；用户在当前项目重新打开即可，句子已说「没打开」。"
@@ -410,12 +386,6 @@
       "reason": "冲突发生时开着的已不是那份排版，不弹冲突框；那次保存属于旧排版，回到它再存即可，句子已说明。"
     },
     {
-      "file": "store/projectSave.ts",
-      "key": "save.projectFailed",
-      "count": 1,
-      "reason": "TODO(dead-end): 保存到项目失败（非冲突）只有一句后端原因；应挂「再存一次」，或 feedbackAction()。"
-    },
-    {
       "file": "store/projectStore.ts",
       "key": "backendErrorMsg()",
       "count": 1,
@@ -450,12 +420,6 @@
       "key": "stylePanel.editCancelled",
       "count": 2,
       "reason": "排队期间画布 / 绑定变了，用户刚敲的值作废（第二处还会删掉没人要的副本）；用户在当前画布重输即可，句子已说「没改」。"
-    },
-    {
-      "file": "store/styleBinding.ts",
-      "key": "stylePanel.saveFailed|stylePanel.saveFailedPlain",
-      "count": 1,
-      "reason": "TODO(dead-end): 改库里的样式存失败，用户刚敲的值没保存，只有一句话；应挂「再试一次」（用同一个值重存）。"
     },
     {
       "file": "store/workspace.ts",

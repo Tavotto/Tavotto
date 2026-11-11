@@ -84,6 +84,7 @@ import {
 import { finishActiveGesture, finishFocusedRichText } from './gestureCoordinator'
 import { writeBoundProjectFile } from './projectSave'
 import { captureSaveContext, reportSaveSkipped, stillCurrent } from './saveContext'
+import { AUTOSAVE_FAILURE_OWNER, reloadLatestAction, retrySaveAction } from './saveFailureActions'
 import { useInteractionStore } from './interactionStore'
 import { aliasClearPlan } from '@/lib/aliasOverrides'
 import { fitContentCrop, isContentFit } from '@/lib/panelEdgeCrop'
@@ -607,9 +608,17 @@ export async function runManualSave(): Promise<void> {
   if (state === 'saved' || state === 'clean') {
     ui.setStatus(msg('save.doneLocal', undefined, 'workspace'), 'done')
   } else if (state === 'conflict') {
-    ui.setStatus(msg('save.conflict', undefined, 'workspace'), 'error')
+    // 先裁决哪一版是对的：「重新加载」取回磁盘那版（本窗口的编辑进恢复槽位，不丢）
+    ui.setStatus(msg('save.conflict', undefined, 'workspace'), 'error', {
+      owner: AUTOSAVE_FAILURE_OWNER,
+      action: reloadLatestAction(ctx.documentId),
+    })
   } else if (state === 'save_error') {
-    ui.setStatus(msg('save.failed', undefined, 'workspace'), 'error')
+    // 再按一次 ⌘S 的全部动作（本机 + 写项目），不是只重写本机
+    ui.setStatus(msg('save.failed', undefined, 'workspace'), 'error', {
+      owner: AUTOSAVE_FAILURE_OWNER,
+      action: retrySaveAction(() => runManualSave()),
+    })
   }
   // dirty / saving：保存期间用户又改了，或又排了一次写。那不是失败，
   // 顶栏的状态会继续往下走，这里不再多说一句话。

@@ -7080,6 +7080,7 @@ export default interface Resources {
       "placeholderHint": "双击即可编辑，会运行 {{script}} 重新生成。"
     },
     "save": {
+      "actionRetry": "再存一次",
       "conflict": "排版已在别处改过，请先处理冲突。",
       "doneLocal": "已保存在本机（没有打开项目）",
       "doneProject": "已保存到项目：{{file}}",
@@ -7088,6 +7089,7 @@ export default interface Resources {
       "projectConflictElsewhere": "项目里的 {{file}} 已在别处改过，这次没有写入。回到那份排版再保存，就能决定怎么处理。",
       "projectFailed": "没能存进项目里的 {{file}}：{{reason}}",
       "projectSkipped": "没有写入项目里的 {{file}}：按下保存之后切换了排版或项目。回到那份排版再保存一次。",
+      "reloadFailed": "没能读到磁盘上的那一版",
       "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。"
     },
     "scan": {
@@ -7339,6 +7341,7 @@ export default interface Resources {
       "previewPending": "图形预览正在同步，画面可能尚未更新。",
       "restoreWaiting": "还有图在渲染，渲染完才能恢复",
       "restore_other": "恢复原样 · {{count}} 项",
+      "retry": "再试一次",
       "row": {
         "annotation": "画布标注",
         "axisLabel": "轴标题",

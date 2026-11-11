@@ -551,6 +551,9 @@ function withEdit(data: StyleProfileData, edit: StyleEdit): StyleProfileData {
   return next
 }
 
+/** 「样式没存上」那条提示的主人：按钮点下去时收掉它 */
+const STYLE_SAVE_FAILED_OWNER = 'stylePanel.saveFailed'
+
 /**
  * 已绑定时，样式面板里改一个值 = **改这套样式本身**，然后当前画布上的图按新值对齐
  * （一次 commit）。进库写队列：轮到它时才读「绑的是哪一条、库里现在是什么」，存成功、
@@ -608,6 +611,18 @@ export function editBoundStyle(edit: StyleEdit): Promise<boolean> {
             ? msg('stylePanel.saveFailed', { reason: err.message }, 'workspace')
             : msg('stylePanel.saveFailedPlain', undefined, 'workspace'),
           'error',
+          {
+            owner: STYLE_SAVE_FAILED_OWNER,
+            // 「再试一次」= 用同一个值再改一遍。排队期间换了画布 / 改绑了，这一笔不属于此刻的画布：不重放，
+            // 只收掉提示（重放会把旧值写到别的样式上）
+            action: {
+              label: msg('stylePanel.retry', undefined, 'workspace'),
+              run: () => {
+                useUiStore.getState().clearStatusOwnedBy(STYLE_SAVE_FAILED_OWNER)
+                if (generation() === origin && canvasStyle()?.id === binding.id) void editBoundStyle(edit)
+              },
+            },
+          },
         )
       return false
     }

@@ -672,6 +672,7 @@
     }
   },
   "save": {
+    "actionRetry": "Save again",
     "conflict": "This layout was changed elsewhere. Resolve the conflict first.",
     "doneLocal": "Saved on this computer (no project open)",
     "doneProject": "Saved to project: {{file}}",
@@ -680,6 +681,7 @@
     "projectConflictElsewhere": "{{file}} in the project was changed elsewhere, so nothing was written. Go back to that layout and save again to decide what to do.",
     "projectFailed": "Couldn’t save {{file}} in the project: {{reason}}",
     "projectSkipped": "{{file}} in the project wasn’t written: you switched layouts or projects after pressing Save. Go back to that layout and save again.",
+    "reloadFailed": "Couldn’t read the version on disk",
     "skippedSwitched": "You switched layouts or projects after pressing Save, so nothing was written to the project. Go back to that layout and save again."
   },
   "scrim": {
@@ -808,6 +810,7 @@
     "copiedBuiltin": "Built-in styles are read-only — copied to “{{name}}” and switched to it",
     "saveFailed": "The style wasn’t saved, so the canvas wasn’t changed: {{reason}}",
     "saveFailedPlain": "The style wasn’t saved, so the canvas wasn’t changed",
+    "retry": "Try again",
     "restoreWaiting": "Some figures are still rendering — restore when they finish",
     "upgradedLegacy": "Style “{{name}}” was saved by an older version — its sizes now count as they appear on the page",
     "detached": "Detached from “{{name}}”",

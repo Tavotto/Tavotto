@@ -244,6 +244,39 @@ describe('绑定后改值 = 改这套样式本身，画布上所有图跟着变'
     expect(useUiStore.getState().statusTone).toBe('error')
   })
 
+  it('存库失败的提示带「再试一次」：点下去用同一个值重存，存成了画布才跟着改', async () => {
+    await seed([panel('a', 'FigA')])
+    stop = startStyleBindingSync()
+    bindCanvasStyle('s1')
+    rerenderAll()
+    useProfileStore.setState({ save: async () => null, error: { code: 'x', message: '撞车' } })
+    expect(await editBoundStyle({ kind: 'element', role: 'axis_label', prop: 'fontsize', value: 12 })).toBe(false)
+    const action = useUiStore.getState().statusAction
+    expect(useUiStore.getState().statusTone).toBe('error')
+    expect(action, '失败提示要带按钮').not.toBeNull()
+    // 库恢复正常：同一个值重放
+    fakeLibrary([BUILTIN, USER])
+    action!.run()
+    expect(useUiStore.getState().status, '点了就收掉提示').toBeNull()
+    await vi.waitFor(() => expect(saved.map((x) => x.id)).toEqual(['s1']))
+    await vi.waitFor(() => expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBe(12))
+  })
+
+  it('「再试一次」点下去时已经换了画布 / 文档：不重放（旧值不能写到别的样式上），只收掉提示', async () => {
+    await seed([panel('a', 'FigA')])
+    bindCanvasStyle('s1')
+    useProfileStore.setState({ save: async () => null, error: { code: 'x', message: '撞车' } })
+    await editBoundStyle({ kind: 'element', role: 'axis_label', prop: 'fontsize', value: 12 })
+    const action = useUiStore.getState().statusAction!
+    fakeLibrary([BUILTIN, USER])
+    await seed([panel('b', 'FigB')])
+    bindCanvasStyle('s1')
+    action.run()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(saved, '没有任何一次存库').toEqual([])
+    expect(useUiStore.getState().status).toBeNull()
+  })
+
   it('内置样式只读：改值时复制一份、改绑到副本，状态栏说一句；内置那条原样', async () => {
     await seed([panel('a', 'FigA')])
     bindCanvasStyle(BUILTIN.id)
