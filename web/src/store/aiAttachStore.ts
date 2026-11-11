@@ -38,13 +38,16 @@ interface AttachState {
   remove: (target: string, pj: string | null, key: string) => void
   /** 等这个槽里还在上传的文件落定，回已经就绪的（发送前调） */
   settle: (target: string) => Promise<AttachItem[]>
-  /** 发送交给了提交之后：清槽，**不**删后端暂存（文件已经被任务拿走 / 提交自己持有 id） */
-  release: (target: string) => void
+  /** 发送交给了提交之后：从槽里拿掉这次提交带走的那几个（按本地键），**不**删后端暂存（文件已经被任务拿走 / 提交自己持有 id）；
+   *  提交途中新加的文件留在输入框里 */
+  release: (target: string, keys: readonly string[]) => void
 }
 
 let seq = 0
 /** 上传中的承诺：`settle` 等它们 */
 const inflight = new Map<string, Promise<void>>()
+/** 每个槽里还没结束的 `add`（含读文件 / 解码阶段，那时还没上卡）：`settle` 先等它们 */
+const pendingAdds = new Map<string, Set<Promise<unknown>>>()
 
 export const attachTargetKey = (project: string | null, fileId: string | null): string => `${project ?? ''}\u0000${fileId ?? ''}`
 
@@ -53,55 +56,17 @@ const totalOf = (items: readonly AttachItem[]) => items.reduce((n, x) => n + x.s
 export const useAiAttachStore = create<AttachState>((set, get) => ({
   byTarget: {},
 
-  add: async (target, pj, files) => {
-    const room = ATTACH_MAX - (get().byTarget[target]?.length ?? 0)
-    const { take, overflow } = pickFiles(files, room)
-    const summary: AddSummary = { overflow, tooLarge: 0, uploadFailed: 0 }
-    // 按选中的顺序逐个处理（并行的话先解完的先上卡，顺序会乱）；上传本身仍然并行，下面一起等
-    const jobs: Promise<void>[] = []
-    for (const file of take) {
-      await (async () => {
-        const prepared = await prepareAttachment(file)
-        if (!prepared.ok) {
-          summary.tooLarge += 1
-          return
-        }
-        const { item: p } = prepared
-        // 解码是异步的：等的途中别的文件可能已经占满了名额 / 合计上限
-        const now = get().byTarget[target] ?? []
-        if (now.length >= ATTACH_MAX || totalOf(now) + p.size > ATTACH_MAX_TOTAL_BYTES) {
-          summary.overflow += 1
-          return
-        }
-        const key = `att${++seq}`
-        const item: AttachItem = { key, kind: p.kind, name: p.name, ext: p.ext, size: p.size, thumb: p.thumb, status: 'uploading' }
-        set((s) => ({ byTarget: { ...s.byTarget, [target]: [...(s.byTarget[target] ?? []), item] } }))
-        const job = uploadAiAttachment(p.blob, p.name, pj).then(
-          (res) => {
-            // 上传期间用户已经点 × 去掉了：后端那份也删掉
-            const still = get().byTarget[target]?.some((x) => x.key === key)
-            if (!still) {
-              void discardAiAttachment(res.id, pj).catch(() => undefined)
-              return
-            }
-            set((s) => ({
-              byTarget: {
-                ...s.byTarget,
-                [target]: (s.byTarget[target] ?? []).map((x) => (x.key === key ? { ...x, status: 'ready', serverId: res.id } : x)),
-              },
-            }))
-          },
-          () => {
-            summary.uploadFailed += 1
-            set((s) => ({ byTarget: { ...s.byTarget, [target]: (s.byTarget[target] ?? []).filter((x) => x.key !== key) } }))
-          },
-        )
-        inflight.set(key, job)
-        jobs.push(job.then(() => void inflight.delete(key)))
-      })()
+  add: (target, pj, files) => {
+    const run = addInto(target, pj, files)
+    const pending = pendingAdds.get(target) ?? new Set<Promise<unknown>>()
+    pendingAdds.set(target, pending)
+    pending.add(run)
+    const done = () => {
+      pending.delete(run)
+      if (!pending.size) pendingAdds.delete(target)
     }
-    await Promise.all(jobs)
-    return summary
+    run.then(done, done)
+    return run
   },
 
   remove: (target, pj, key) => {
@@ -111,14 +76,71 @@ export const useAiAttachStore = create<AttachState>((set, get) => ({
   },
 
   settle: async (target) => {
+    // 先等还在读 / 解码 / 上传的整批加入（发送那一刻的快照；之后再加的不等）
+    await Promise.allSettled([...(pendingAdds.get(target) ?? [])])
     const keys = (get().byTarget[target] ?? []).map((x) => x.key)
     await Promise.all(keys.map((k) => inflight.get(k)).filter((p): p is Promise<void> => !!p))
     return (get().byTarget[target] ?? []).filter((x) => x.status === 'ready' && x.serverId)
   },
 
-  release: (target) =>
+  release: (target, keys) =>
     set((s) => {
+      const drop = new Set(keys)
+      const left = (s.byTarget[target] ?? []).filter((x) => !drop.has(x.key))
+      if (left.length) return { byTarget: { ...s.byTarget, [target]: left } }
       const { [target]: _gone, ...rest } = s.byTarget
       return { byTarget: rest }
     }),
 }))
+
+async function addInto(target: string, pj: string | null, files: readonly File[]): Promise<AddSummary> {
+  const { getState: get, setState: set } = useAiAttachStore
+  const room = ATTACH_MAX - (get().byTarget[target]?.length ?? 0)
+  const { take, overflow } = pickFiles(files, room)
+  const summary: AddSummary = { overflow, tooLarge: 0, uploadFailed: 0 }
+  // 按选中的顺序逐个处理（并行的话先解完的先上卡，顺序会乱）；上传本身仍然并行，下面一起等
+  const jobs: Promise<void>[] = []
+  for (const file of take) {
+    await (async () => {
+      const prepared = await prepareAttachment(file)
+      if (!prepared.ok) {
+        summary.tooLarge += 1
+        return
+      }
+      const { item: p } = prepared
+      // 解码是异步的：等的途中别的文件可能已经占满了名额 / 合计上限
+      const now = get().byTarget[target] ?? []
+      if (now.length >= ATTACH_MAX || totalOf(now) + p.size > ATTACH_MAX_TOTAL_BYTES) {
+        summary.overflow += 1
+        return
+      }
+      const key = `att${++seq}`
+      const item: AttachItem = { key, kind: p.kind, name: p.name, ext: p.ext, size: p.size, thumb: p.thumb, status: 'uploading' }
+      set((s) => ({ byTarget: { ...s.byTarget, [target]: [...(s.byTarget[target] ?? []), item] } }))
+      const job = uploadAiAttachment(p.blob, p.name, pj).then(
+        (res) => {
+          // 上传期间用户已经点 × 去掉了：后端那份也删掉
+          const still = get().byTarget[target]?.some((x) => x.key === key)
+          if (!still) {
+            void discardAiAttachment(res.id, pj).catch(() => undefined)
+            return
+          }
+          set((s) => ({
+            byTarget: {
+              ...s.byTarget,
+              [target]: (s.byTarget[target] ?? []).map((x) => (x.key === key ? { ...x, status: 'ready', serverId: res.id } : x)),
+            },
+          }))
+        },
+        () => {
+          summary.uploadFailed += 1
+          set((s) => ({ byTarget: { ...s.byTarget, [target]: (s.byTarget[target] ?? []).filter((x) => x.key !== key) } }))
+        },
+      )
+      inflight.set(key, job)
+      jobs.push(job.then(() => void inflight.delete(key)))
+    })()
+  }
+  await Promise.all(jobs)
+  return summary
+}

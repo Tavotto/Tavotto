@@ -569,10 +569,8 @@ function AssistantPanelBody() {
         return
       }
       // 只有输入框里发的才带参考图（历史里「重新发送 / 重试」的是那一轮的原话）；还在上传的图等它们落定
-      const refs =
-        source === 'composer'
-          ? (await useAiAttachStore.getState().settle(refKey)).map((x) => ({ id: x.serverId as string, kind: x.kind, name: x.name, ext: x.ext, thumb: x.thumb }))
-          : []
+      const taken = source === 'composer' ? await useAiAttachStore.getState().settle(refKey) : []
+      const refs = taken.map((x) => ({ id: x.serverId as string, kind: x.kind, name: x.name, ext: x.ext, thumb: x.thumb }))
       if (projectMoved()) return
       const outcome = await useAiStore.getState().start({
         project: pinnedProject,
@@ -590,8 +588,8 @@ function AssistantPanelBody() {
         draftStamp: snap.stamp,
         ...(refs.length ? { attachments: refs } : {}),
       })
-      // 提交（后端的任务或本页的未确认提交）已经接管了这些图：清掉输入框里的一排
-      if (refs.length) useAiAttachStore.getState().release(refKey)
+      // 提交（后端的任务或本页的未确认提交）已经接管了这些文件：只拿掉这几个，提交途中新加的留着
+      if (taken.length) useAiAttachStore.getState().release(refKey, taken.map((x) => x.key))
       // 只有后端给出会话 id 才算送达；本地没再动过（`seq` 不变）才清输入框，**不比文本**。
       // 没拿到草稿戳（后端不可用）时后端不会动草稿，这里也不清；`unconfirmed` 时原样留着（面板进「已发出未确认」）
       if (outcome === 'accepted' && source === 'composer' && snap.stamp !== null) clearIfUnchanged(snap.seq)
