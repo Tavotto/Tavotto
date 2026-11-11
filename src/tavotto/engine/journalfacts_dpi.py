@@ -41,11 +41,26 @@ def _applicability(fact: dict, context: Mapping[str, object]) -> str:
     for key, expected in fact.get("conditions", {}).items():
         values = _VALUES.get(key)
         observed = context.get(key)
-        if values is None or not isinstance(expected, str) or expected not in values:
+        if values is None or not isinstance(observed, str) or observed not in values:
             unknown = True
-        elif not isinstance(observed, str) or observed not in values:
+            continue
+        if isinstance(expected, str) and expected in values:
+            candidates = (expected,)
+        elif (
+            isinstance(expected, dict)
+            and set(expected) == {"relation", "value"}
+            and expected["relation"] == "in"
+            and isinstance(expected["value"], list)
+            and expected["value"]
+            and all(isinstance(value, str) and value in values for value in expected["value"])
+        ):
+            candidates = expected["value"]
+        else:
+            # Unknown members make the entire alternative set unknown, even
+            # if one known member appears to match the observed value.
             unknown = True
-        elif observed != expected:
+            continue
+        if observed not in candidates:
             mismatch = True
     if unknown:
         return "unknown"
