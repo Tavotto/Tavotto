@@ -119,7 +119,8 @@ Tavotto 内置了期刊标准库（每条数值都带原文出处）。用户说
 ### 逐条来源事实（v2，工具可用时）
 
 `tavotto_get_journal_facts` 可用时，`{"query":"期刊名"}` 搜索 v2 目录；确认期刊后
-`{"journal_id":"<v2 id>"}` 读取事实与来源。按 `next_offset` 继续直到没有下一页；每页的
+`{"journal_id":"<v2 id>"}` 读取事实与来源。分页时记住第一页的 `catalog_rev`，每个后续请求同时传 `next_offset` 和
+`expected_catalog_rev`；若返回 `journal_catalog_changed`，丢弃已读页并从第一页重读。每页的
 `facts` / `coverage` 各自带来源，`coverage.result=not_stated` 只表示指定来源和范围内未见，
 不能扩大成整个期刊未规定。`catalog_completeness=unknown` 表示全刊覆盖情况未知；事实总数只是刊包
 已收录数量，未出现的主题不能推定已核完或未规定。读取失败或目录不可用时如实告知，不用 v1 / 种子冒充 v2 事实。

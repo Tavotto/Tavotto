@@ -87,12 +87,16 @@ class FactsError(RuntimeError):
         *,
         sync_state: str | None = None,
         sync_code: str | None = None,
+        expected_catalog_rev: int | None = None,
+        current_catalog_rev: int | None = None,
     ):
         super().__init__(code)
         self.code = code
         self.retry_after_s = retry_after_s
         self.sync_state = sync_state
         self.sync_code = sync_code
+        self.expected_catalog_rev = expected_catalog_rev
+        self.current_catalog_rev = current_catalog_rev
 
 
 def cache_dir() -> Path:
@@ -256,16 +260,23 @@ def sync(ui_locale: str | None = None) -> dict:
 
 
 def search(
-    query: str = "", *, offset: int = 0, limit: int = 20, ui_locale: str | None = None
+    query: str = "",
+    *,
+    offset: int = 0,
+    limit: int = 20,
+    ui_locale: str | None = None,
+    expected_catalog_rev: int | None = None,
 ) -> dict:
     """Search signed v2 index only. If unavailable, say so without substituting v1."""
     if not isinstance(query, str) or len(query) > 512:
         raise FactsError("bad_request")
     _validate_page(offset, limit)
+    _validate_expected_rev(expected_catalog_rev)
     result = sync(ui_locale)
     index = result["index"]
     if index is None:
         raise FactsError(result["code"] or "offline")
+    _check_expected_rev(expected_catalog_rev, index["catalog_rev"])
     import unicodedata
 
     needle = unicodedata.normalize("NFKC", query).casefold().strip()
@@ -316,6 +327,18 @@ def _page_fits(value: dict) -> bool:
 def _validate_page(offset: int, limit: int) -> None:
     if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 20:
         raise FactsError("bad_request")
+
+
+def _validate_expected_rev(expected: int | None) -> None:
+    if expected is not None and (type(expected) is not int or not 1 <= expected <= 9_999_999_999):
+        raise FactsError("bad_request")
+
+
+def _check_expected_rev(expected: int | None, current: int) -> None:
+    if expected is not None and expected != current:
+        raise FactsError(
+            "catalog_changed", expected_catalog_rev=expected, current_catalog_rev=current
+        )
 
 
 def _read_bundle(index: dict, jid: str) -> dict | None:
@@ -442,22 +465,43 @@ def get_journal(jid: str, *, ui_locale: str | None = None, _allow_refresh: bool 
     raise last
 
 
-def get_facts(jid: str, *, offset: int = 0, limit: int = 20, ui_locale: str | None = None) -> dict:
+def get_facts(
+    jid: str,
+    *,
+    offset: int = 0,
+    limit: int = 20,
+    ui_locale: str | None = None,
+    expected_catalog_rev: int | None = None,
+) -> dict:
     """Page facts and scoped coverage together, with all referenced sources."""
     _validate_page(offset, limit)
+    _validate_expected_rev(expected_catalog_rev)
     if not isinstance(jid, str) or re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,95}", jid) is None:
         raise FactsError("bad_request")
     # Refresh the public signed index even when the journal is already cached.
     # No journal ID or device token is sent with this request. On failure, sync
     # returns a verified cache and exposes its status to the caller.
     state = sync(ui_locale)
+    if state["index"] is not None:
+        _check_expected_rev(expected_catalog_rev, state["index"]["catalog_rev"])
     if state["index"] is None or (
         jid not in state["index"]["journals"] and state["state"] not in ("updated", "unchanged")
     ):
         raise FactsError(
             state["code"] or "offline", sync_state=state["state"], sync_code=state["code"]
         )
-    result = get_journal(jid, ui_locale=ui_locale)
+    try:
+        result = get_journal(jid, ui_locale=ui_locale)
+    except FactsError as exc:
+        # An index refresh can remove the journal after sync but before its
+        # bundle is read. Do not misreport a version race as a missing journal.
+        # Integrity/cache errors remain errors and are never hidden by a race.
+        if expected_catalog_rev is not None and exc.code in ("unknown_journal", "stale_rev"):
+            current = cached_index()
+            if current is not None:
+                _check_expected_rev(expected_catalog_rev, current["catalog_rev"])
+        raise
+    _check_expected_rev(expected_catalog_rev, result["catalog_rev"])
     bundle = result["bundle"]
     facts = bundle["facts"]
     coverage = bundle.get("coverage", [])

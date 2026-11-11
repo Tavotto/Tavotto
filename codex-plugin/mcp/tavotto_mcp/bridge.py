@@ -218,7 +218,13 @@ def journal_facts_enabled() -> bool:
     )
 
 
-def journal_facts(query: str, journal_id: str | None, offset: int, limit: int) -> dict:
+def journal_facts(
+    query: str,
+    journal_id: str | None,
+    offset: int,
+    limit: int,
+    expected_catalog_rev: int | None = None,
+) -> dict:
     """Only translates the engine's read-only v2 facts; never produces a v1 override."""
     if not journal_catalog_enabled():
         raise BridgeError("期刊目录入口当前不可用。", code="journal_catalog_disabled")
@@ -229,9 +235,15 @@ def journal_facts(query: str, journal_id: str | None, offset: int, limit: int) -
     module = _optional_engine("journalfacts_remote")
     _journal_remote()  # report agent client type through the existing shared channel
     try:
-        if journal_id is not None:
-            return module.get_facts(journal_id, offset=offset, limit=limit)
-        return module.search(query, offset=offset, limit=limit)
+        method = module.get_facts if journal_id is not None else module.search
+        options = {"offset": offset, "limit": limit}
+        if expected_catalog_rev is not None:
+            if "expected_catalog_rev" not in inspect.signature(method).parameters:
+                raise BridgeError(
+                    "当前引擎不支持安全分页，请升级 Tavotto。", code="engine_capability_missing"
+                )
+            options["expected_catalog_rev"] = expected_catalog_rev
+        return method(journal_id if journal_id is not None else query, **options)
     except module.FactsError as exc:
         if exc.code in ("quota_hour", "quota_day", "ip_day", "ip_tokens"):
             raise BridgeError(
@@ -261,6 +273,13 @@ def journal_facts(query: str, journal_id: str | None, offset: int, limit: int) -
                 code="journal_verification_failed",
                 sync_state=getattr(exc, "sync_state", None),
                 sync_code=getattr(exc, "sync_code", None),
+            ) from exc
+        if exc.code == "catalog_changed":
+            raise BridgeError(
+                "期刊目录版本与上一页不一致，请从第一页重新读取。",
+                code="journal_catalog_changed",
+                expected_catalog_rev=exc.expected_catalog_rev,
+                current_catalog_rev=exc.current_catalog_rev,
             ) from exc
         if exc.code == "unknown_journal":
             raise BridgeError("期刊事实目录中没有这本刊。", code="journal_unknown") from exc

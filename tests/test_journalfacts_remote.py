@@ -577,3 +577,129 @@ def test_missing_journal_requires_successful_index_refresh(isolated, monkeypatch
     with pytest.raises(client.FactsError, match="index_invalid") as rejected:
         client.get_facts("new-journal")
     assert rejected.value.sync_state == "rejected" and rejected.value.sync_code == "index_invalid"
+
+
+def test_pagination_revision_guard_rejects_cross_revision_and_allows_offline_cache(
+    isolated, monkeypatch
+):
+    key, _ = isolated
+    first_bundle = fact_bundle()
+    second_fact = copy.deepcopy(first_bundle["facts"][0])
+    second_fact.update(id="photo", conditions={"figure_kind": "photo"}, value=300)
+    first_bundle["facts"].append(second_fact)
+    newer_bundle = copy.deepcopy(first_bundle)
+    added = copy.deepcopy(newer_bundle["facts"][0])
+    added.update(id="new-before", conditions={"figure_kind": "color"})
+    newer_bundle["facts"].insert(0, added)
+    bodies = {1: json.dumps(first_bundle).encode(), 2: json.dumps(newer_bundle).encode()}
+    indices = {rev: index_for(raw, rev) for rev, raw in bodies.items()}
+    state = {"rev": 1, "offline": False}
+
+    def request(method, url, cap, headers):
+        if state["offline"]:
+            raise journalremote.RemoteCatalogError("network")
+        if url.endswith("index.signed.json"):
+            return 200, signed(key, indices[state["rev"]])
+        return 200, bodies[state["rev"]]
+
+    monkeypatch.setattr(client, "_request", request)
+    first = client.get_facts("fx-journal", limit=1)
+    assert first["catalog_rev"] == 1 and first["facts"][0]["id"] == "line"
+    state["offline"] = True
+    cached = client.get_facts("fx-journal", offset=1, limit=1, expected_catalog_rev=1)
+    assert cached["catalog_rev"] == 1 and cached["facts"][0]["id"] == "photo"
+    assert cached["sync_state"] == "offline"
+    state.update(rev=2, offline=False)
+    # A legacy offset-only client would silently repeat "line" from the new revision.
+    legacy = client.get_facts("fx-journal", offset=1, limit=1)
+    assert legacy["catalog_rev"] == 2 and legacy["facts"][0]["id"] == "line"
+    with pytest.raises(client.FactsError, match="catalog_changed") as changed:
+        client.get_facts("fx-journal", offset=1, limit=1, expected_catalog_rev=1)
+    assert changed.value.expected_catalog_rev == 1 and changed.value.current_catalog_rev == 2
+    restarted = client.get_facts("fx-journal", limit=1)
+    assert restarted["catalog_rev"] == 2 and restarted["facts"][0]["id"] == "new-before"
+
+
+def test_revision_guard_catches_concurrent_refresh_during_journal_read(isolated, monkeypatch):
+    key, _ = isolated
+    raw1 = json.dumps(fact_bundle()).encode()
+    newer = fact_bundle()
+    newer["facts"][0]["value"] = 1400
+    raw2 = json.dumps(newer).encode()
+    idx1, idx2 = index_for(raw1, 1), index_for(raw2, 2)
+    client._save_index(signed(key, idx1), idx1)
+
+    def request(method, url, cap, headers):
+        return (200, signed(key, idx1)) if url.endswith("index.signed.json") else (200, raw2)
+
+    monkeypatch.setattr(client, "_request", request)
+    original = client._cached_journal
+
+    def concurrent_refresh(jid):
+        client._save_index(signed(key, idx2), idx2)
+        return original(jid)
+
+    monkeypatch.setattr(client, "_cached_journal", concurrent_refresh)
+    with pytest.raises(client.FactsError, match="catalog_changed") as changed:
+        client.get_facts("fx-journal", offset=1, expected_catalog_rev=1)
+    assert changed.value.current_catalog_rev == 2
+    assert client.cached_index()["catalog_rev"] == 2
+    # A new first page binds to the actual bundle revision even after a race.
+    first = client.get_facts("fx-journal", limit=1)
+    assert first["catalog_rev"] == 2 and first["facts"][0]["value"] == 1400
+
+
+def test_search_page_can_be_bound_to_catalog_revision(isolated, monkeypatch):
+    key, _ = isolated
+    raw = json.dumps(fact_bundle()).encode()
+    idx1, idx2 = index_for(raw, 1), index_for(raw, 2)
+    rev = {"value": 1}
+    monkeypatch.setattr(
+        client,
+        "_request",
+        lambda *args: (200, signed(key, idx1 if rev["value"] == 1 else idx2)),
+    )
+    assert client.search("fixture")["catalog_rev"] == 1
+    rev["value"] = 2
+    with pytest.raises(client.FactsError, match="catalog_changed"):
+        client.search("fixture", offset=1, expected_catalog_rev=1)
+    for invalid in (True, 0, -1, 10_000_000_000, "1"):
+        with pytest.raises(client.FactsError, match="bad_request"):
+            client.search("fixture", expected_catalog_rev=invalid)
+
+
+def test_guard_reports_revision_change_if_concurrent_index_removes_journal(isolated, monkeypatch):
+    key, _ = isolated
+    raw = json.dumps(fact_bundle()).encode()
+    idx1, idx2 = index_for(raw, 1), index_for(raw, 2)
+    idx2["journals"] = {}
+    client._save_index(signed(key, idx1), idx1)
+    monkeypatch.setattr(client, "_request", lambda *args: (200, signed(key, idx1)))
+    original = client._cached_journal
+
+    def concurrent_removal(jid):
+        client._save_index(signed(key, idx2), idx2)
+        return original(jid)
+
+    monkeypatch.setattr(client, "_cached_journal", concurrent_removal)
+    with pytest.raises(client.FactsError, match="catalog_changed") as changed:
+        client.get_facts("fx-journal", offset=1, expected_catalog_rev=1)
+    assert changed.value.expected_catalog_rev == 1 and changed.value.current_catalog_rev == 2
+
+
+@pytest.mark.parametrize("code", ["stale_rev", "cache_invalid", "bundle_invalid"])
+def test_guard_preserves_integrity_errors_during_concurrent_revision(isolated, monkeypatch, code):
+    key, _ = isolated
+    raw = json.dumps(fact_bundle()).encode()
+    idx1, idx2 = index_for(raw, 1), index_for(raw, 2)
+    client._save_index(signed(key, idx1), idx1)
+    monkeypatch.setattr(client, "_request", lambda *args: (200, signed(key, idx1)))
+
+    def interrupted(*args, **kwargs):
+        client._save_index(signed(key, idx2), idx2)
+        raise client.FactsError(code)
+
+    monkeypatch.setattr(client, "get_journal", interrupted)
+    expected_error = "catalog_changed" if code == "stale_rev" else code
+    with pytest.raises(client.FactsError, match=expected_error):
+        client.get_facts("fx-journal", offset=1, expected_catalog_rev=1)

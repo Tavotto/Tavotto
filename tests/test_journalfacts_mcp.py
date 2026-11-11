@@ -122,3 +122,84 @@ def test_mcp_offline_cached_index_missing_journal_is_unknown_not_absent(isolated
     monkeypatch.setattr(facts, "_request", lambda *args: (200, signed(key, idx)))
     result = server.call_tool("tavotto_get_journal_facts", {"journal_id": "new-journal"})
     assert result["structuredContent"]["code"] == "journal_unknown"
+
+
+def test_mcp_paging_rejects_revision_changes_and_gives_recovery(isolated, monkeypatch):
+    key, _ = isolated
+    monkeypatch.setattr(journals, "JOURNAL_CATALOG_AGENTS", True)
+    monkeypatch.setattr(journalremote, "set_client_type", lambda _name: None)
+    bundle = fact_bundle()
+    duplicate = dict(bundle["facts"][0], id="second")
+    bundle["facts"].append(duplicate)
+    raw = json.dumps(bundle).encode()
+    idx1, idx2 = index_for(raw, 1), index_for(raw, 2)
+    current = {"rev": 1}
+
+    def request(method, url, cap, headers):
+        if url.endswith("index.signed.json"):
+            return 200, signed(key, idx1 if current["rev"] == 1 else idx2)
+        return 200, raw
+
+    monkeypatch.setattr(facts, "_request", request)
+    first = server.call_tool("tavotto_get_journal_facts", {"journal_id": "fx-journal", "limit": 1})
+    page = first["structuredContent"]
+    assert page["catalog_rev"] == 1 and page["next_offset"] == 1
+    current["rev"] = 2
+    response = server.call_tool(
+        "tavotto_get_journal_facts",
+        {"journal_id": "fx-journal", "offset": 1, "limit": 1, "expected_catalog_rev": 1},
+    )
+    out = response["structuredContent"]
+    assert response["isError"] and out["code"] == "journal_catalog_changed"
+    assert out["expected_catalog_rev"] == 1 and out["current_catalog_rev"] == 2
+    assert "第一页重新读取" in out["error"] and "facts" not in out
+
+
+def test_guarded_paging_requires_engine_support_but_legacy_calls_still_work(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(journals, "JOURNAL_CATALOG_AGENTS", True)
+    monkeypatch.setattr(journalremote, "set_client_type", lambda _name: None)
+    legacy = SimpleNamespace(
+        FactsError=facts.FactsError,
+        search=lambda query, *, offset, limit: {"catalog_rev": 1, "journals": []},
+        get_facts=lambda jid, *, offset, limit: {"catalog_rev": 1, "facts": []},
+    )
+    real = bridge._optional_engine
+    monkeypatch.setattr(
+        bridge,
+        "_optional_engine",
+        lambda name: legacy if name == "journalfacts_remote" else real(name),
+    )
+    ok = server.call_tool("tavotto_get_journal_facts", {"journal_id": "fx-journal"})
+    assert ok["structuredContent"]["catalog_rev"] == 1
+    guarded = server.call_tool(
+        "tavotto_get_journal_facts", {"journal_id": "fx-journal", "expected_catalog_rev": 1}
+    )
+    assert (
+        guarded["isError"] and guarded["structuredContent"]["code"] == "engine_capability_missing"
+    )
+
+
+def test_mcp_concurrent_journal_removal_returns_revision_changed(isolated, monkeypatch):
+    key, _ = isolated
+    monkeypatch.setattr(journals, "JOURNAL_CATALOG_AGENTS", True)
+    monkeypatch.setattr(journalremote, "set_client_type", lambda _name: None)
+    raw = json.dumps(fact_bundle()).encode()
+    idx1, idx2 = index_for(raw, 1), index_for(raw, 2)
+    idx2["journals"] = {}
+    facts._save_index(signed(key, idx1), idx1)
+    monkeypatch.setattr(facts, "_request", lambda *args: (200, signed(key, idx1)))
+    original = facts._cached_journal
+
+    def concurrent_removal(jid):
+        facts._save_index(signed(key, idx2), idx2)
+        return original(jid)
+
+    monkeypatch.setattr(facts, "_cached_journal", concurrent_removal)
+    result = server.call_tool(
+        "tavotto_get_journal_facts",
+        {"journal_id": "fx-journal", "offset": 1, "expected_catalog_rev": 1},
+    )
+    assert result["isError"] and result["structuredContent"]["code"] == "journal_catalog_changed"
+    assert result["structuredContent"]["current_catalog_rev"] == 2

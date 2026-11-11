@@ -698,6 +698,12 @@ def _add_journal_catalog_tools(tools: list[dict], by_name: dict) -> None:
                         },
                         "offset": {"type": "integer", "minimum": 0},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                        "expected_catalog_rev": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9999999999,
+                            "description": "后续页传第一页 catalog_rev；目录变化时须重读。",
+                        },
                     },
                     "additionalProperties": False,
                 },
@@ -1234,16 +1240,21 @@ def _call_journal_facts(args: dict) -> dict:
     query = args.get("query", "")
     journal_id = args.get("journal_id")
     offset, limit = args.get("offset", 0), args.get("limit", 20)
+    expected_rev = args.get("expected_catalog_rev")
     if (
         not isinstance(query, str)
         or (journal_id is not None and (not isinstance(journal_id, str) or not journal_id))
         or (journal_id is not None and "query" in args)
         or type(offset) is not int
         or type(limit) is not int
-        or set(args) - {"query", "journal_id", "offset", "limit"}
+        or (
+            expected_rev is not None
+            and (type(expected_rev) is not int or not 1 <= expected_rev <= 9999999999)
+        )
+        or set(args) - {"query", "journal_id", "offset", "limit", "expected_catalog_rev"}
     ):
         raise RpcError(INVALID_PARAMS, "查询、期刊 ID 或分页参数不正确")
-    out = bridge.journal_facts(query, journal_id, offset, limit)
+    out = bridge.journal_facts(query, journal_id, offset, limit, expected_rev)
     return {"content": _text(json.dumps(out, ensure_ascii=False)), "structuredContent": out}
 
 
