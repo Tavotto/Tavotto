@@ -53,7 +53,9 @@ OUT_EXTS = figcapture.ARTIFACT_EXTS
 # 测试与工具脚本）；「列给用户挑」的清单（probe.script_inventory）仍然列出
 # 它们，只是标注 reason=infrastructure——用户主动试运行任何项目内 .py 都是
 # 允许的，判据见 is_infrastructure_name()。
-SKIP_PREFIXES = ("paper_style", "_", "test_", "conftest", "setup")
+#: `tavotto_plot_`：数据出图 v2 的内容寻址公共模块（`ai_data_template.runtime_module`，ADR 0178）——被同目录生成的脚本
+#: import，自己不是一张图
+SKIP_PREFIXES = ("paper_style", "_", "test_", "conftest", "setup", "tavotto_plot_")
 SKIP_SUFFIXES = ("_test.py",)
 # 存图调用名。paper_style.save(fig, stem) 这类图库方言与 matplotlib 原生
 # savefig 一起认；参数位置不假设，所有实参都试着求值。

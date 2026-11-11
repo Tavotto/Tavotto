@@ -3,7 +3,9 @@ import { contentBox, type ThumbBox } from '@/lib/versionThumbBox'
 import { applyPanelTransform, panelContentTransform } from '@/lib/panelTransform'
 import { useAssetStore } from '@/store/assetStore'
 import { panelRender, useRenderStore } from '@/store/renderStore'
+import { strokeOpacityOf } from '@/lib/shapeGeometry'
 import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
+import { shapeStrokeOn } from '@/types/document'
 
 /**
  * 时间线节点的缩略图（ADR 0101）：拍节点**那一刻**画布的样子，合成成一张小位图。
@@ -270,6 +272,9 @@ function drawObject(ctx: CanvasRenderingContext2D, o: Exclude<CanvasObject, Pane
   ctx.save()
   ctx.strokeStyle = o.color || '#000'
   ctx.lineWidth = Math.max(0.5, o.strokePt * MM_PER_PT * scale)
+  // 描边不透明度与无边框：缩略图也守（无边框的封闭形状只填不描）
+  ctx.globalAlpha = strokeOpacityOf(o.strokeOpacity) ?? 1
+  const strokeOn = o.type === 'arrow' || shapeStrokeOn(o)
   const ends = o.type === 'arrow' || o.shape === 'line' ? { start: o.start, end: o.end } : null
   if (ends?.start && ends.end) {
     ctx.beginPath()
@@ -282,16 +287,22 @@ function drawObject(ctx: CanvasRenderingContext2D, o: Exclude<CanvasObject, Pane
     ctx.beginPath()
     ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2)
     if (o.fill) {
+      ctx.save()
+      ctx.globalAlpha = 1
       ctx.fillStyle = o.fill
       ctx.fill()
+      ctx.restore()
     }
-    ctx.stroke()
+    if (strokeOn) ctx.stroke()
   } else {
     if (o.fill) {
+      ctx.save()
+      ctx.globalAlpha = 1
       ctx.fillStyle = o.fill
       ctx.fillRect(x, y, w, h)
+      ctx.restore()
     }
-    ctx.strokeRect(x, y, w, h)
+    if (strokeOn) ctx.strokeRect(x, y, w, h)
   }
   ctx.restore()
 }

@@ -471,8 +471,14 @@ class _TickSet:
 
 
 def _disp(fig, fx, fy):
-    # Figure fraction with a top-left origin -> display coordinates.
-    return fx * fig.bbox.width, (1.0 - fy) * fig.bbox.height
+    # Figure fraction with a top-left origin -> display coordinates. A figure saved
+    # with bbox_inches="tight" is the cropped page in the editor, so its fractions
+    # are of that page (inches, bottom-left origin), not of the whole figsize.
+    frame = getattr(fig, "_tavotto_frame", None)
+    if frame is None:
+        return fx * fig.bbox.width, (1.0 - fy) * fig.bbox.height
+    x0, y0, x1, y1 = frame
+    return (x0 + fx * (x1 - x0)) * fig.dpi, (y0 + (1.0 - fy) * (y1 - y0)) * fig.dpi
 
 
 def _text_to(t, fig, fx, fy):
@@ -687,7 +693,9 @@ def _install(table, block, frames):
                 if getattr(self, "_tavotto_adjusted", None) != stem:
                     self._tavotto_adjusted = stem
                     for key in hits:
+                        self._tavotto_frame = frame_of[key].get(stem)
                         _run(self, stem, registry[key][stem])
+                    self._tavotto_frame = None
                 kwargs = _crop(kwargs, frame_of[hits[-1]].get(stem))
             return real(self, fname, *args, **kwargs)
 

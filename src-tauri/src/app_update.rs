@@ -31,6 +31,18 @@ pub fn mirror_root() -> &'static str {
         .expect("MIRROR_MANIFEST_URL 必须是 {镜像根}/updater/latest.json")
 }
 
+/// 国内自建边缘节点的清单地址（ADR 0121 修订 2026-11-11）：只分担大陆环境的**后台**下载，check 不问它、手动下载不走它。
+/// 节点关闭 / 当月流量快用完 / 还没同步到时该文件回 404（或连不上）——客户端当作「这个来源不可用」换下一个，
+/// 关停节点只需服务器删掉清单，客户端不必发版。调整只改这里与 ADR 0121。
+pub const EDGE_MANIFEST_URL: &str = "https://up.tavotto.cn/updater/latest.json";
+
+/// 节点根（同镜像根的口径：包地址必须落在 `{节点根}/releases/<version>/` 下）。
+pub fn edge_root() -> &'static str {
+    EDGE_MANIFEST_URL
+        .strip_suffix("/updater/latest.json")
+        .expect("EDGE_MANIFEST_URL 必须是 {节点根}/updater/latest.json")
+}
+
 /// 镜像出过一次问题（check 或下载失败）后，本进程内这么久不再优先镜像（契约 §6.3）。
 pub const MIRROR_COOLDOWN: Duration = Duration::from_secs(30 * 60);
 
@@ -69,12 +81,15 @@ impl Default for Limits {
 pub enum Source {
     Mirror,
     Github,
+    /// 国内自建边缘节点：只出现在大陆·后台下载的计划里（`plan_for`），`source_order` / check 永远不含它
+    Edge,
 }
 
 impl Source {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "mirror" => Some(Self::Mirror),
+            "edge" => Some(Self::Edge),
             "github" => Some(Self::Github),
             _ => None,
         }
@@ -155,6 +170,9 @@ pub struct Endpoints {
     /// 镜像根（`{根}/updater/latest.json` 的根）；包地址必须落在 `{根}/releases/<version>/` 下
     pub mirror_root: String,
     pub github: Url,
+    /// 边缘节点清单；只在大陆·后台下载计划里被 `fetch` 重新 check 时用到
+    pub edge: Url,
+    pub edge_root: String,
 }
 
 impl Endpoints {
@@ -162,6 +180,16 @@ impl Endpoints {
         match s {
             Source::Mirror => &self.mirror,
             Source::Github => &self.github,
+            Source::Edge => &self.edge,
+        }
+    }
+
+    /// 自建来源（镜像 / 节点）的根：包地址必须落在 `{根}/releases/<version>/` 下；GitHub 不设限。
+    pub fn root(&self, s: Source) -> Option<&str> {
+        match s {
+            Source::Mirror => Some(&self.mirror_root),
+            Source::Edge => Some(&self.edge_root),
+            Source::Github => None,
         }
     }
 }
@@ -374,11 +402,12 @@ where
     F: Fn() -> UpdaterBuilder,
 {
     let connect = limits.connect;
-    // 镜像不许把我们重定向到别的主机（契约 §6.2 #5）；check 与下载共用这个 client 配置
-    let pin_host = (source == Source::Mirror).then(|| {
+    // 镜像 / 节点不许把我们重定向到别的主机（契约 §6.2 #5）；check 与下载共用这个 client 配置
+    let pin_host = (source != Source::Github).then(|| {
+        let u = endpoints.url(source);
         (
-            endpoints.mirror.host_str().unwrap_or_default().to_string(),
-            endpoints.mirror.port_or_known_default(),
+            u.host_str().unwrap_or_default().to_string(),
+            u.port_or_known_default(),
         )
     });
     make()
@@ -422,15 +451,11 @@ where
         log(&e);
         classify(&e)
     })?;
-    if let (Some(update), Source::Mirror) = (&found, source) {
-        match decide_updater(
-            Some(&update.raw_json),
-            &platform_key(update),
-            &endpoints.mirror_root,
-        ) {
+    if let (Some(update), Some(root)) = (&found, endpoints.root(source)) {
+        match decide_updater(Some(&update.raw_json), &platform_key(update), root) {
             Decision::Mirror { .. } => {}
             Decision::Github(reason) => {
-                eprintln!("[updater] 镜像清单不可用: {reason}");
+                eprintln!("[updater] {source:?} 清单不可用: {reason}");
                 return Err(if reason == "url_not_on_mirror" {
                     Kind::NotOnMirror
                 } else {
@@ -668,8 +693,9 @@ pub enum Purpose {
 
 /// 下载计划的**唯一**判据。检查（`source_order`）不变；下载在大陆环境改为 GitHub 优先：
 /// * 非大陆：原有计划（check 来源优先，慢则试探）；
-/// * 大陆·后台：`mirror_first` 为假 → [GitHub, 镜像]、不试探；为真（失败累计 / 超期，见 `update_source_memory`）→ [镜像, GitHub]；
-/// * 大陆·手动：[GitHub, 镜像]，先试用（`Pace::Trial`）。
+/// * 大陆·后台：`mirror_first` 为假 → [GitHub, 节点, 镜像]、不试探；为真（失败累计 / 超期，见 `update_source_memory`）→ [节点, 镜像, GitHub]
+///   （节点只在这里出现，ADR 0121 修订 2026-11-11；节点不可用就是 check 失败 / 版本不符，被 `fetch` 跳过）；
+/// * 大陆·手动：[GitHub, 镜像]，先试用（`Pace::Trial`），不走节点。
 pub fn plan_download(p: &Pending, purpose: Purpose, mirror_first: bool) -> Plan {
     plan_for(p.mainland, p.source, &p.order, purpose, mirror_first)
 }
@@ -692,9 +718,9 @@ pub fn plan_for(
         },
         Purpose::Background => Plan {
             seq: if mirror_first {
-                vec![Source::Mirror, Source::Github]
+                vec![Source::Edge, Source::Mirror, Source::Github]
             } else {
-                vec![Source::Github, Source::Mirror]
+                vec![Source::Github, Source::Edge, Source::Mirror]
             },
             pace: Pace::Steady,
         },
@@ -1284,10 +1310,13 @@ pub fn endpoints<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<Endpoin
         .and_then(|e| Url::parse(e).ok())
         .ok_or_else(|| Failure::code("config_missing"))?;
     let mirror = Url::parse(MIRROR_MANIFEST_URL).map_err(|_| Failure::code("config_missing"))?;
+    let edge = Url::parse(EDGE_MANIFEST_URL).map_err(|_| Failure::code("config_missing"))?;
     Ok(Endpoints {
         mirror,
         mirror_root: mirror_root().to_string(),
         github,
+        edge,
+        edge_root: edge_root().to_string(),
     })
 }
 
@@ -1763,15 +1792,35 @@ mod tests {
             assert_eq!(p.seq.as_slice(), &world[..]);
         }
         // 大陆·后台：GitHub 优先、不试探；mirror_first 才倒过来
+        use Source::{Edge, Github, Mirror};
         let p = plan_for(true, Source::Mirror, &cn, Background, false);
-        assert_eq!((p.seq.as_slice(), p.pace), (&world[..], Steady));
+        assert_eq!(
+            (p.seq.as_slice(), p.pace),
+            (&[Github, Edge, Mirror][..], Steady)
+        );
         let p = plan_for(true, Source::Mirror, &cn, Background, true);
-        assert_eq!((p.seq.as_slice(), p.pace), (&cn[..], Steady));
-        // 大陆·手动：GitHub 先试用，不看 check 来源
+        assert_eq!(
+            (p.seq.as_slice(), p.pace),
+            (&[Edge, Mirror, Github][..], Steady)
+        );
+        // 大陆·手动：GitHub 先试用，不看 check 来源，**不走节点**
         for from in [Source::Mirror, Source::Github] {
             let p = plan_for(true, from, &cn, Manual, false);
             assert_eq!((p.seq.as_slice(), p.pace), (&world[..], Trial));
+            let p = plan_for(true, from, &cn, Manual, true);
+            assert_eq!((p.seq.as_slice(), p.pace), (&world[..], Trial));
         }
+        // 节点不参与 check：两种原始顺序都不含它
+        for o in [
+            source_order(Some("Asia/Shanghai"), None, None),
+            source_order(None, None, None),
+        ] {
+            assert!(!o.contains(&Edge));
+        }
+        // 非大陆不变（含 check 来源就是节点的假想句柄也不会带上它）
+        assert!(!plan_for(false, Github, &world, Background, true)
+            .seq
+            .contains(&Edge));
     }
 
     #[test]
@@ -1792,6 +1841,41 @@ mod tests {
         assert_eq!(m.scheme(), "https");
         assert_eq!(mirror_root(), "https://dl.tavotto.cn");
         assert_eq!(m.host_str(), Some("dl.tavotto.cn"));
+        let e = Url::parse(EDGE_MANIFEST_URL).unwrap();
+        assert_eq!(e.scheme(), "https");
+        assert_eq!(edge_root(), "https://up.tavotto.cn");
+        assert_eq!(e.host_str(), Some("up.tavotto.cn"));
+        assert_eq!(e.path(), "/updater/latest.json");
+        assert_ne!(e.host_str(), m.host_str(), "节点与镜像是两个不同的主机");
+    }
+
+    #[test]
+    fn the_edge_source_parses_and_decide_updater_uses_the_edge_root() {
+        assert_eq!(Source::parse("edge"), Some(Source::Edge));
+        assert_eq!(serde_json::to_string(&Source::Edge).unwrap(), "\"edge\"");
+        let doc = |url: &str| {
+            serde_json::json!({
+                "version": "1.2.3",
+                "platforms": { "windows-x86_64": { "url": url, "signature": "sig" } }
+            })
+        };
+        let ok = doc("https://up.tavotto.cn/releases/1.2.3/Tavotto_1.2.3_x64-setup.nsis.zip");
+        assert!(matches!(
+            decide_updater(Some(&ok), "windows-x86_64", edge_root()),
+            Decision::Mirror { .. }
+        ));
+        // 包地址指向镜像 / 别的主机：节点不跟随
+        for bad in [
+            "https://dl.tavotto.cn/releases/1.2.3/x.zip",
+            "https://up.tavotto.cn.evil.com/releases/1.2.3/x.zip",
+            "https://up.tavotto.cn/releases/1.2.2/x.zip",
+        ] {
+            assert_eq!(
+                decide_updater(Some(&doc(bad)), "windows-x86_64", edge_root()),
+                Decision::Github("url_not_on_mirror"),
+                "{bad}"
+            );
+        }
     }
 
     /// infra 契约 §6.2 的向量（`testdata/updater-vectors.json`，复制自 Tavotto/infra 提交 a7f1000

@@ -46,6 +46,29 @@ v1（ADR 0138 Phase 5）只读**一个 CSV**，只会折线 / 柱两种图，列
 拿不准第 2、3 件事就用 `ask_user` 问一个选择题而不是猜）。折线 = 横轴有序连续且同一对象被连续跟踪，连线暗示可内插，无序类别不连线；柱 = 从 0 起算才有意义的量，
 轴必须含 0，比较均值而每组值不多时优先原始点；误差线必须写明 SD / SEM / 95% CI。不许出现第二份规则清单，测试钉住准则与表一一对应。
 
+## 模板与期望指纹（批次 1：comparison、trend；`ai_data_template.py`）
+
+**脚本形态：短脚本 + 旁边一个公共文件**（用户 2026-11-11 选定；此前的方案是把约 380 行运行时整段内嵌进每个脚本，被否）。
+`render_recipe_script` 返回 `Rendered(script, runtime_name, runtime)`：脚本只剩 docstring、来源注释（文件名 + sha256 + 配方 JSON，ASCII、单行、**不含 `why`**）、
+`import tavotto_plot_xxxxxxxx as tp`、常量和无参 `main()`（matplotlib 调用保持直白，用户与改图助手在这里改），数据路径相对脚本，输出名静态。
+读表、汇总、抖动、箱、核密度、拟合等数值函数是模板模块里的普通函数；公共模块 = 这批函数的源码（`inspect.getsource`）+ `xlsxread` 的源码原文，父进程算期望值调用同一批函数——
+不是「两处各抄一份、靠测试对拍」。公共模块对所有图逐字节相同、**不含任何数据**（数据文字只以 `repr()` 字面量出现在脚本里），一个模块覆盖三种数据源。
+文件名按内容寻址 `tavotto_plot_<sha256 前 8 位>.py`（合法的模块名）：内容变了名字就变。**落盘规则**（`tavotto_figures/` 落盘是下一个 PR 的事，本 PR 不写任何用户文件）：
+脚本与公共模块都只新建、永不覆盖；公共模块已存在且字节相同 → 复用；存在但字节不同 → 按损坏报错、不覆盖；老脚本继续 import 它们当时的那一版，新旧版本的公共模块并存。
+脚本不改 `sys.path`：safe worker 与 native bridge 都把脚本目录放在 `sys.path[0]`。静态扫描（`discover` / `projscan`）不会把公共模块当成一张图（没有存图调用、没有 `main`），
+前缀 `tavotto_plot_` 在 `discover.SKIP_PREFIXES` 里（与 `paper_style` 同类）：脚本清单把它标成 `infrastructure`，不当成「没出图的脚本」。
+期望指纹只对父进程**能逐字节算准**、并且验证器**能按 label 匹配**的层声明：散点、Line2D、柱组可核；误差线、误差带、箱、小提琴不核（manifest 里没有 label 字段 / 由 matplotlib 拼成），
+`fingerprint_coverage` 如实列出，没有可核层就报告「这张图的数据没法核」，绝不折算成 verified。图上的诚实：汇总层必有定义与 n 的说明（`mean ± SD; n = 12`，各格 n 不同则 n 写进刻度标签），
+柱的轴含 0，不画星号与 P 值，抖动是确定性的。样式数字来自出版规范 profile，分类色用公开的 Okabe–Ito 色盲安全色板。
+
+### relationship 与 distribution（批次 1 的后两族）
+
+四个批次 1 的族现在都有模板。**规则各只有一份文字定义 + 一份实现**（公共模块里的纯 Python 函数，父进程与脚本同源）：直方图分箱 = Freedman–Diaconis（箱宽 `2 × IQR × n^(-1/3)`，箱数 1–50，IQR 为 0 退到 Sturges，各组共用同一组箱边）；
+密度带宽 = Scott（`SD × n^(-1/5)`，网格取数据范围两侧各 3 个带宽）；ECDF = 排序后的逐点阶梯；拟合线 = 最小二乘直线，**在画出来的坐标里拟合**（对数轴那一维先取 log10；只有一维是对数时图上是曲线，取 50 个点）。
+这些规则名写在图下方说明里（`bins: Freedman-Diaconis rule …`、`density: Gaussian kernel, Scott bandwidth`、`dashed line: least-squares fit (descriptive)`），不报显著性、不放 R²。
+distribution 有两种形态：值在横轴（hist / ecdf / density，不带类别 x、按颜色分组）与值在纵轴（box / violin / jitter / points，类别 x 可选）；两类不能叠在同一张图，ECDF 不与直方图 / 密度叠（纵轴含义不同），
+值在横轴的图元不用对数轴——这些组合由 `validate_recipe` 拒绝（`mark_not_allowed`），模板对同样的组合抛 `TemplateError`。可核：hist 的柱高、density 曲线、ecdf 阶梯、散点、拟合线；不核：box、violin（同 comparison）。
+
 ## 注入分析：Agent 能读整个文件，表里的文字能影响模型
 
 表里的文字（列名、单元格、工作表名）可以诱导模型，但**模型能交出的只有一份闭集配方**：未知键、未知取值、层数不对、`why` 含换行都在 `from_dict` 当场拒收；

@@ -106,6 +106,49 @@
     },
     "issues": {
       "type": "array"
+    },
+    "data_source_signatures": {
+      "description": "Optional second door for linking: findings whose data-source transform and path style are this family's cause, whatever the call site (parent script, loops).",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "data_source": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path_style": {
+            "type": "string",
+            "minLength": 1
+          },
+          "behavior_kinds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "tavotto_errors": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "required": [
+          "data_source",
+          "path_style",
+          "behavior_kinds",
+          "tavotto_errors"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [

@@ -130,6 +130,7 @@ const RULES: Rule[] = [
     catches: '<div className="hover:scale-105" />',
     spares: '<div className="hover:bg-surface-hover" />',
     exempt: {
+      '/src/components/ai/AttachCards.tsx': { count: 4, why: '改图助手附件卡的悬停摆正 + 抬起（translateY -2px，motion-reduce 下回 0；用户 2026-11-11 裁决，ADR 0175）' },
       '/src/components/ui/Card.tsx': { count: 6, why: 'lift 变体（用户 2026-10-15 裁决）：hover / 聚焦各 -translate-y-0.5 + scale-(--card-lift-scale)（≤2px、≤1.02，读 index.css 变量，foundationPrimitives.test 钉上限）、按下 translate-y-0 / scale-100' },
     },
   },

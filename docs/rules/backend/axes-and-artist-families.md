@@ -79,6 +79,12 @@ order: 80
   后 `set_positions`）；arrowstyle / linestyle 两类箭头都可改
   （识别不出的自定义样式报 "custom"，选它=不动）。前端交互语义见
   `docs/rules/frontend/hit-and-selection-geometry.md`「图内箭头交互」。
+  * **改线型只虚杆、头保持实线（2026-11-11，TVD-AVZ0）**：matplotlib 对整条箭头（杆 + 头）
+    一起加虚线，`->` 的头被切碎。`("arrowpatch", "linestyle")` 的 setter 装一个实例级 draw 钩子
+    （`_SolidHeadRenderer`：一次 draw 里第二个起的不同 path 对象用实线画），restore 拆钩子；
+    脚本自己画的虚线箭头不碰。`simple` / `fancy` / `wedge` 只有一条轮廓，照旧整体虚线。
+    这个键在 `scriptadjust.NOT_WRITABLE` 里，导出 .py 时作为剩余调整由引擎重放，与热态同一份代码。
+    看护：`tests/test_arrow_dashed_solid_head.py`。
   * **纯箭头注释同样可拖（2026-09-24，用户的流程图：10 根箭头全是
     `ax.annotate("", xy=…, xytext=…)`，一根都拖不动）**。annotate 的 arrow_patch 每次
     draw 由 `update_positions` 按注释的 `xy` / `xyann` 重定位——**改 patch 下一帧就弹回**，
