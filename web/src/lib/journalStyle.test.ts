@@ -80,6 +80,26 @@ describe('journalStyleEdits', () => {
     expect(edits).toEqual([{ kind: 'element', role: 'line', prop: 'linewidth', value: 0.5, from: 0.3 }])
   })
 
+  it('最常见的值合要求、少数出界：仍按角色对齐，「从」报出界的那个（Codex #1851 P2）', () => {
+    expect(journalStyleEdits(input({ observed: { ticks: { fontsize: [8, 8, 6] } } }), T({ minPt: 7 }))).toEqual([
+      { kind: 'element', role: 'ticks', prop: 'fontsize', value: 8, from: 6 },
+    ])
+    expect(journalStyleEdits(input({ annotationSizes: [9, 9, 5] }), T({ minPt: 7 }))).toEqual([
+      { kind: 'annotation', prop: 'sizePt', value: 9, from: 5 },
+    ])
+    expect(journalStyleEdits(input({ observed: { line: { linewidth: [1, 1, 0.2] } } }), T({ minLinePt: 0.5 }))).toEqual([
+      { kind: 'element', role: 'line', prop: 'linewidth', value: 1, from: 0.2 },
+    ])
+  })
+
+  it('线宽：角色里有 0 宽（藏起来的线）且样式没设过 → 整个角色不动，免得把它抬出来（Codex #1851 P2）', () => {
+    expect(journalStyleEdits(input({ observed: { line: { linewidth: [0, 0.3] } } }), T({ minLinePt: 0.5 }))).toEqual([])
+    // 样式统一设过线宽：图上不会有 0 宽的同角色元素，照样抬
+    expect(
+      journalStyleEdits(input({ style: { element: { line: { linewidth: 0.3 } } }, observed: { line: { linewidth: [0, 0.3] } } }), T({ minLinePt: 0.5 })),
+    ).toEqual([{ kind: 'element', role: 'line', prop: 'linewidth', value: 0.5, from: 0.3 }])
+  })
+
   it('字体：不在期刊列表里的换成列表里第一个本机画得出的；大小写不敏感', () => {
     const edits = journalStyleEdits(
       input({ observed: { ticks: { fontfamily: ['DejaVu Sans'] }, title: { fontfamily: [['arial', 'sans-serif']] } } }),
