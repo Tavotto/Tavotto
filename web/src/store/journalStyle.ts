@@ -118,6 +118,8 @@ export async function adjustStyleToJournal(renderable: readonly string[]): Promi
           ? msg('stylePanel.saveFailed', { reason: err.message }, 'workspace')
           : msg('stylePanel.saveFailedPlain', undefined, 'workspace'),
         'error',
+        // 存库失败（如自定义样式满了 / 写盘失败）：给一次重试，原样再走一遍
+        { action: { label: msg('stylePanel.journalRetry', undefined, 'workspace'), run: () => void adjustStyleToJournal(renderable) } },
       )
     return false
   }

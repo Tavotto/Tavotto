@@ -827,6 +827,7 @@
     "journalAdjust": "Adjust to journal",
     "journalAnnotation": "Canvas text",
     "journalAdjusted": "Style adjusted to {{journal}}. You can undo this.",
+    "journalRetry": "Try again",
     "journalProp": {
       "fontsize": "size",
       "fontfamily": "font",

@@ -7354,6 +7354,7 @@ export default interface Resources {
         "fontsize": "字号",
         "linewidth": "线宽"
       },
+      "journalRetry": "再试一次",
       "load": "读取样式",
       "manage": "管理样式…",
       "mismatch_other": "{{count}} 处与样式不一致",
