@@ -253,7 +253,7 @@ def test_tables_are_consistent():
 
 
 def test_renderable_is_a_subset_of_batch_one():
-    """「真有模板」由 `ai_data_template.RENDERERS` 驱动（relationship / distribution 留给下一个 PR）。"""
+    """「真有模板」的出处是 `RENDERABLE`，`ai_data_template` import 时核它与 `RENDERERS` 一致。"""
     assert {k for k in R.FAMILIES if R.renderable(k)} == {
         "comparison",
         "trend",
