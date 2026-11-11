@@ -561,3 +561,35 @@ def test_structured_condition_preserves_strict_bounds_and_units():
         with pytest.raises(FactValidationError):
             validate_bundle(altered)
     assert condition["value"]["lower_inclusive"] is False
+
+
+def test_preference_and_nonexclusive_permission_preserve_scope_and_review():
+    obj = bundle()
+    first = copy.deepcopy(obj["facts"][0])
+    first.update(
+        id="preferred_vector_format",
+        subject="figure_file_format",
+        relation="in",
+        value=["EPS"],
+        strength="preferred",
+        conditions={"figure_kind": "vector"},
+        review={"status": "pending"},
+    )
+    first.pop("unit", None)
+    second = copy.deepcopy(first)
+    second.update(
+        id="permitted_office",
+        value=["MS Office"],
+        strength="permitted",
+        conditions={},
+    )
+    obj["facts"] = [first, second]
+    assert decode_bundle(json.dumps(obj).encode()) == obj
+    with pytest.raises(FactValidationError):
+        validate_bundle(obj, require_verified=True)
+    for fact in obj["facts"]:
+        fact["review"] = {"status": "verified", "reviewed": "2026-11-11", "method": "fixture"}
+    assert validate_bundle(obj, require_verified=True)["facts"][1]["strength"] == "permitted"
+    obj["facts"][1]["strength"] = "not-a-strength"
+    with pytest.raises(FactValidationError):
+        validate_bundle(obj)

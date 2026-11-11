@@ -19,7 +19,9 @@ SCHEMA = 2
 MAX_BUNDLE_BYTES = 4 << 20
 _ID = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,95}$")
 _KEY = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
-_STRENGTH = frozenset({"required", "recommended", "typical", "example", "unspecified"})
+_STRENGTH = frozenset(
+    {"required", "recommended", "preferred", "permitted", "typical", "example", "unspecified"}
+)
 _STAGE = frozenset({"any", "submission", "revision", "accepted", "production", "unknown"})
 _RELATIONS = frozenset({"eq", "gt", "gte", "lt", "lte", "interval", "in", "not_in", "text"})
 _NUMERIC = frozenset({"eq", "gt", "gte", "lt", "lte"})

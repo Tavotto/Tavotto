@@ -458,3 +458,28 @@ def test_unknown_structured_conditions_are_returned_intact_not_evaluated(isolate
     assert page["facts"][0]["conditions"]["width"] == {"relation": "gt", "value": 100, "unit": "mm"}
     assert "override" not in page and "preflight" not in page
     assert page["catalog_completeness"] == "unknown"
+
+
+def test_nonexclusive_permission_and_preference_are_returned_without_projection(
+    isolated, monkeypatch
+):
+    key, _ = isolated
+    obj = fact_bundle()
+    preferred = obj["facts"][0]
+    preferred.update(
+        subject="figure_file_format", relation="in", value=["EPS"], strength="preferred"
+    )
+    preferred.pop("unit", None)
+    permitted = copy.deepcopy(preferred)
+    permitted.update(id="office", value=["MS Office"], strength="permitted", conditions={})
+    obj["facts"].append(permitted)
+    raw = json.dumps(obj).encode()
+    idx = index_for(raw)
+    client._save_index(signed(key, idx), idx)
+    monkeypatch.setattr(client, "_request", lambda *args: (200, raw))
+    page = client.get_facts("fx-journal")
+    assert [(f["strength"], f["value"]) for f in page["facts"]] == [
+        ("preferred", ["EPS"]),
+        ("permitted", ["MS Office"]),
+    ]
+    assert "override" not in page and "preflight" not in page
