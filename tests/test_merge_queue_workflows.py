@@ -3005,6 +3005,23 @@ class TestTauriAptCache:
             "命中路径要排在 apt-get update 之前"
         )
 
+    def test_posix_e2e_picks_a_reachable_mirror_before_playwright_runs_apt(self):
+        """`--with-deps` 自己 apt-get update，不经上面的脚本；11-11 azure 解析失败时 posix-e2e 三片全红。"""
+        code = _code(_job(CI, "posix-e2e"))
+        pick = code.index("../scripts/ci/apt_use_reachable_mirror.sh")
+        assert pick < code.index("pnpm exec playwright install --with-deps chromium")
+        script = ROOT / "scripts" / "ci" / "apt_use_reachable_mirror.sh"
+        assert os.access(script, os.X_OK)
+        text = script.read_text(encoding="utf-8")
+        for needle in (
+            "apt-mirrors.txt",
+            "archive.ubuntu.com",
+            "mirrors.edge.kernel.org",
+            "--max-time",
+        ):
+            assert needle in text, needle
+        assert "apt-mirrors.txt" in self.SCRIPT.read_text(encoding="utf-8")
+
     def test_script_paths_with_stubbed_apt(self, tmp_path):
         """用桩 sudo / apt-get / timeout 跑真脚本：命中走本地不 update；未命中第一镜像超时后换镜像成功；
         全部超时则非零退出；剪枝只留版本 == 已装版本的 .deb。"""
@@ -3018,7 +3035,13 @@ class TestTauriAptCache:
         log = tmp_path / "calls.log"
         etc = tmp_path / "apt-sources"
         etc.mkdir()
-        (etc / "ubuntu.sources").write_text("URIs: http://azure.archive.ubuntu.com/ubuntu/\n")
+        (etc / "ubuntu.sources").write_text("URIs: mirror+file:/etc/apt/apt-mirrors.txt\n")
+        # runner 镜像 20261101 起真正的主机名在 apt-mirrors.txt（11-11 只改 .sources 等于没换）
+        (etc / "apt-mirrors.txt").write_text(
+            "http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n"
+            "https://archive.ubuntu.com/ubuntu/\tpriority:2\n"
+        )
+        (etc / "legacy.list").write_text("deb http://azure.archive.ubuntu.com/ubuntu/ noble main\n")
 
         def stub(name: str, body: str) -> None:
             f = bindir / name
@@ -3091,10 +3114,14 @@ class TestTauriAptCache:
             == 3
         )
         hosts = {
+            urlsplit(ln.split()[0]).hostname
+            for ln in (etc / "apt-mirrors.txt").read_text().splitlines()
+            if ln.strip()
+        } | {
             urlsplit(word).hostname
-            for ln in (etc / "ubuntu.sources").read_text().splitlines()
-            if ln.startswith("URIs:")
-            for word in ln.split()[1:]
+            for ln in (etc / "legacy.list").read_text().splitlines()
+            for word in ln.split()
+            if word.startswith("http")
         }
         assert hosts == {"mirrors.edge.kernel.org"}
 
