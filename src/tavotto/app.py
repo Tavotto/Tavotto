@@ -2841,7 +2841,8 @@ def _save_svg_snapshot(
         execution_owner=execution_owner,
         remap_fingerprint=engine_inputremap.fingerprint(root),
         storage_root=_svg_storage_root(root),
-        activate=activate,
+        # 缺省调用形状逐字不变（看护：test_svg_input_capture_handoff 的精确 kwargs）
+        **({"activate": True} if activate else {}),
         **_svg_input_archive_kwargs(captured_input_archive),
     )
 
