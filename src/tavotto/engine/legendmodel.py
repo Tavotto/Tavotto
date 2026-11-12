@@ -176,8 +176,12 @@ def _legend_parent_transform(leg: Legend):
     of `parent.bbox`）是同一个变换——`legend_anchor_state` 的同源判据就是拿它
     去比的。
     """
-    parent = leg.parent  # Axes 或 Figure
-    return parent.transAxes if isinstance(parent, Axes) else parent.transFigure
+    parent = leg.parent  # Axes、Figure 或 SubFigure
+    if isinstance(parent, Axes):
+        return parent.transAxes
+    # `transSubfigure` = 父容器自己的框：根图上它就是 `transFigure`；SubFigure 上 `transFigure`
+    # 却是**根图**的变换，而图例的默认锚框是 SubFigure 自己的 bbox（拖动只走一半就是这么来的）
+    return getattr(parent, "transSubfigure", parent.transFigure)
 
 
 def apply_legend_pos_model(leg: Legend) -> None:

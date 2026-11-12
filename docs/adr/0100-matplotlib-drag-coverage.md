@@ -52,7 +52,7 @@
 | 数据系列、标注箭头、图例项、刻度、3D 轴标题、次坐标轴 / 寄生轴、像素坐标的注释 | 按设计不拖，**拖了什么都不说** | 仍不拖；拖起来 toast 说为什么（见下） |
 | SubFigure 里的子图 | 落点只走一半（2.3 mm） | **未修**（见「不做」） |
 | `ax.table` | 不宣称可拖 | **未修**：拖起来说「暂不支持」 |
-| `fig.add_artist(...)` 加在图幅上的框 | 不登记（点不中） | **未修** |
+| `fig.add_artist(...)` 加在图幅上的框 | 不登记（点不中） | **已修（2026-11-12 修订，见文末）** |
 
 ## 裁决
 
@@ -128,8 +128,7 @@ tight 布局下子图仍由 `PinnedTightLayoutEngine`（ADR 0042）钉住，不�
   算（`pathgeom.root_figure`），不受影响。
 - **`ax.table`**：落位是 `loc` + `bbox`（轴分数），可以照锚定框的办法写一个 `pos_frac`；用户报告里没有
   出现，先说「暂不支持」。
-- **`fig.add_artist(...)` 加在图幅上的框 / 图片**：`instrument` 不登记 `fig.artists` / `fig.patches`，
-  点不中（属于命中登记，ADR 0086 那一侧）。登记之后 Patch 的 `pos_frac` setter 按 transFigure 就能用。
+- ~~**`fig.add_artist(...)` 加在图幅上的框 / 图片**~~：2026-11-12 已修，见文末修订。
 - **mpl_toolkits 插图跟着宿主拖时的预览**：它不是 child_axes，SVG 里与宿主平级；没挪过的它由定位器
   带着宿主走（落点对），但拖宿主时预览里它不动、松手成图才跟上。
 - **constrained 色条撤销的残差**（≤ 0.06 mm，修前 11 mm）：色条摆放读上一帧的装饰物包围盒，要多画
@@ -154,3 +153,39 @@ tight 布局下子图仍由 `PinnedTightLayoutEngine`（ADR 0042）钉住，不�
 - 已有的 `test_text_drag_anchor.py`、`test_layout_engine_pinning.py`、`test_colorbar_resize.py`、
   `test_worker_roundtrip.py`、`test_figure_recognition.py` 里「插图不宣称 position」的三条断言随本 ADR
   改成正向断言（插图钉得住、代理宣称）。
+
+## 修订（2026-11-12）：整张图 / SubFigure 上的元素全部登记
+
+用户来图（假肢抓取实验组图）：`fig.add_artist(Polygon(..., transform=fig.transFigure))` 画的连接梯形
+（把 B 的高亮窗口连到 D 的帧序列）选不中、改不了。排查时 artist 普查（`scripts/dev/matplotlib_artist_census.py
+--api`，新增图级样本）在 main 上报出整张图这一层**全部**漏网：`Polygon` / `Rectangle` / `Line2D` /
+`fig.add_artist(Text)` / 图级 `LineCollection` / `ConnectionPatch` / `fig.figimage` 的 `FigureImage`；SubFigure
+里的 suptitle、文字、图例、形状同样一个都没登记，普查只报一行「SubFigure × N」。
+
+裁决：
+
+- **一处登记、递归进 SubFigure**（`manifest._register_figure_level`）：`texts` / `legends` / `patches` /
+  `lines` / `images` / `artists`，`artists` 按族分派到与子图里同一套角色（Text → `text`、Patch → `patch`、
+  FancyArrowPatch → `arrow_patch`、Line2D → `line`、Collection → `linecoll` / `collection`、位图 → `image`、
+  锚定框照旧、认不出来的 → `artist`）。gid：根图沿用已发出的 `fig.texts_i` / `fig.legend_i` /
+  `fig.artists_j`，新增 `fig.patches_j` / `fig.lines_j` / `fig.images_j`；SubFigure 是
+  `fig.subfigs_k.<同上>`。序号是所属列表下标，存量 gid 一个不动。
+- **图级的形状、线、文字可拖**：形状照旧 `pos_frac`（transform 平移）；图级 `Line2D` 新增
+  `("line", "pos_frac")`，同一套平移（`overrides._set_line_pos_frac`，基准 transform、英寸平移、pin 表）。
+  子图里的曲线仍不宣称可拖（位置是数据）。
+- **量框**：图级集合没有 transData，`_collection_datalim` 改用它自己的 transform 量；`FigureImage` 按
+  `get_extent()`（显示像素）量。量不出的照旧进 `unsupported`。
+- **`ConnectionPatch` 不出端点**（子图里与图级都是）：它的两端由 xyA / xyB 决定，`_posA_posB` 是构造时的
+  占位，从前端点手柄画在图幅对角、拖了不动。改为描真实箭杆（可选中、改样式），不宣称可拖。
+- **SubFigure 里的图例拖动只走一半**：`legendmodel._legend_parent_transform` 对 SubFigure 返回了根图的
+  `transFigure`，而图例的默认锚框是 SubFigure 自己的框；改用 `transSubfigure`（根图上两者相同）。
+- 普查（产品 `manifest.census` 与开发工具）把 SubFigure 当结构件、走进去数它的孩子；SubFigure 的背景
+  patch 与根图的 `fig.patch` 一样算结构件。
+
+仍不做：**SubFigure 里子图的 `position`**（落点只走一半，见上「不做」）——改它要把 manifest 的
+`position` 换成根图分数，存量文档里 SubFigure 子图的 position override 是按子图幅分数写的，重放会整体
+挪位，属于既有项目兼容的取舍，单独开。`FigureImage` 只开 visible / zorder（`figimage` 的落位是像素偏移，
+没有可重放的分数写法）。
+
+看护：`tests/test_figure_level_artists.py`（登记、拖动落点 / 不漂 / 撤销、constrained、SubFigure、
+样式改动、一次性 worker 全量重放）。
