@@ -4056,6 +4056,7 @@ export default interface Resources {
       "overlap": "图互相重叠，确认是有意的压盖再导出",
       "pageAspect": "页面比例 {{ratio}}（{{w}} × {{h}} mm）不在规范允许的 {{allowed}} 之内",
       "pageWidth": "页面宽 {{actual}} mm 不是规范里的栏宽（{{columns}} mm）",
+      "pageWidthMax": "页面宽 {{actual}} mm 超过规范允许的最大宽度 {{max}} mm",
       "paletteLineMarkers": "{{count}} 条曲线均无标记，黑白打印或色觉障碍读者难以区分。可添加标记或使用不同线型。",
       "paletteSemantic": "色谱 {{cmap}} 不在推荐色系里（按 sequential / diverging / categorical 语义选：{{url}}）。",
       "panelTextNotVerifiable": "这张矢量图还没有引擎 manifest（未渲染或非脚本产物），图内文字字号与字体无法自动核验。",

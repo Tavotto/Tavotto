@@ -332,21 +332,39 @@ function checkPage(spec: PreflightSpec, profile: PublicationProfile, sink: Sink)
   const h = num(spec.page.h_mm) ?? 0
   const { single, double, tolerance_mm: tol } = profile.widths_mm
   // 栏位只有一种读法：`page_columns`（期刊自有栏位），没写就由 widths_mm 派生单栏 / 双栏。
-  // 只有 exact 的栏位参与判据（max / typical / range 的宽度不是「等于」）。
-  const columns = derivePageColumns(profile).filter(
-    (c) => (c.qualifier ?? 'exact') === 'exact' && num(c.width_mm) != null,
-  )
-  const matched = columns.some((c) => Math.abs(w - c.width_mm) <= tol)
+  // 参与判据的栏位：exact（页宽须与之相差 ≤ 容差）与 max（页宽不得超过它 + 容差）；
+  // typical / range 的宽度不是「等于」也不是上限，不参与。
+  const allCols = derivePageColumns(profile).filter((c) => num(c.width_mm) != null)
+  const q = (c: { qualifier?: string }) => c.qualifier ?? 'exact'
+  const exact = allCols.filter((c) => q(c) === 'exact')
+  const maxes = allCols.filter((c) => q(c) === 'max')
+  const columns = allCols.filter((c) => q(c) === 'exact' || q(c) === 'max')
+  const matched =
+    exact.some((c) => Math.abs(w - c.width_mm) <= tol) ||
+    maxes.some((c) => w <= c.width_mm + tol)
   if (columns.length && !matched) {
-    const want = columns.map((c) => g(c.width_mm)).join('/')
-    const both = columns.map((c) => `${c.label.zh} (${c.label.en}) ${g(c.width_mm)}`).join(' / ')
-    sink.add('page-width', pf('pageWidth', { actual: g(w), want, columns: both }), {
+    // detail.columns：exact 栏位保持 {id, width_mm}（缺省即 exact），非 exact 的带 qualifier
+    const colDetail = columns.map((c) =>
+      q(c) === 'exact'
+        ? { id: c.id, width_mm: c.width_mm }
+        : { id: c.id, width_mm: c.width_mm, qualifier: q(c) },
+    )
+    const message = maxes.length
+      ? pf('pageWidthMax', { actual: g(w), max: g(Math.max(...maxes.map((c) => c.width_mm))) })
+      : pf('pageWidth', {
+          actual: g(w),
+          want: columns.map((c) => g(c.width_mm)).join('/'),
+          columns: columns
+            .map((c) => `${c.label.zh} (${c.label.en}) ${g(c.width_mm)}`)
+            .join(' / '),
+        })
+    sink.add('page-width', message, {
       detail: {
         page_w_mm: r2(w),
         single_mm: single,
         double_mm: double,
         column: null,
-        columns: columns.map((c) => ({ id: c.id, width_mm: c.width_mm })),
+        columns: colDetail,
       },
       prop: 'page.w',
     })
