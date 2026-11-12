@@ -17943,6 +17943,131 @@ def _project_file_query_sequence(value: object) -> int:
     return int(value)
 
 
+def _project_file_actual_slot_revision(doc_id: str) -> str | None:
+    # 只读sink取目录枚举的实际路径，不用客户端值拼文件系统路径。
+    slot = _file_named(_autosave_directory(), doc_id)
+    return engine_atomicio.existing_revision(slot) if slot is not None else None
+
+
+@app.get("/api/layout-session/project-file/<doc_id>")
+def api_layout_project_file_get(doc_id):
+    if not engine_layoutsession.valid_doc_id(doc_id):
+        return _bad_project_file_request()
+    ctx = current_ctx()
+    key = engine_layoutsession.project_key(ctx.path)
+    try:
+        with _document_lock(_autosave_path(doc_id)):
+            view = engine_layoutsession.read_project_file(
+                key, doc_id, actual_autosave_revision=_project_file_actual_slot_revision(doc_id)
+            )
+    except OSError:
+        view = {"version": 1, "status": "unavailable"}
+    response = jsonify(view)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.post("/api/layout-session/project-file/<doc_id>/reserve")
+def api_layout_project_file_reserve(doc_id):
+    body = request.get_json(silent=True)
+    if (
+        not engine_layoutsession.valid_doc_id(doc_id)
+        or not isinstance(body, dict)
+        or set(body) != {"name", "autosave_revision", "axis", "expected_binding_sequence"}
+        or not isinstance(body["name"], str)
+        or not body["name"]
+    ):
+        return _bad_project_file_request()
+    ctx = current_ctx()
+    target = _project_layout_target(body["name"], ctx)
+    if target is None:
+        return _bad_project_file_request()
+    try:
+        with _document_lock(_autosave_path(doc_id)):
+            result = engine_layoutsession.reserve_project_file(
+                engine_layoutsession.project_key(ctx.path),
+                doc_id,
+                name=target.stem,
+                file=target.relative_to(ctx.path).as_posix(),
+                autosave_revision=body["autosave_revision"],
+                axis=body["axis"],
+                expected_binding_sequence=body["expected_binding_sequence"],
+                actual_autosave_revision=_project_file_actual_slot_revision(doc_id),
+            )
+    except ValueError:
+        return _bad_project_file_request()
+    except OSError:
+        return _session_unavailable()
+    return jsonify(result)
+
+
+@app.post("/api/layout-session/project-file/<doc_id>/confirm")
+def api_layout_project_file_confirm(doc_id):
+    body = request.get_json(silent=True)
+    if (
+        not engine_layoutsession.valid_doc_id(doc_id)
+        or not isinstance(body, dict)
+        or set(body) != {"name", "intent_sequence", "revision"}
+        or not isinstance(body["name"], str)
+        or not body["name"]
+        or not isinstance(body["revision"], str)
+    ):
+        return _bad_project_file_request()
+    ctx = current_ctx()
+    key = engine_layoutsession.project_key(ctx.path)
+    target = _project_layout_target(body["name"], ctx)
+    if target is None:
+        return _bad_project_file_request()
+    try:
+        engine_layoutsession.validate_project_file_edit(
+            {"axis": None, "base_axis": None, "base_revision": body["revision"]}, None
+        )
+        # 不同时取AS和named两个非重入条带锁。票据由reserve持AS锁捕获，
+        # 此处只锁实际named正文；commit在会话锁内再次核完整票据/CAS。
+        with _document_lock(target):
+            pending = engine_layoutsession.pending_project_file(
+                key,
+                doc_id,
+                body["intent_sequence"],
+                name=target.stem,
+                file=target.relative_to(ctx.path).as_posix(),
+            )
+            if pending["state"] != "pending":
+                return jsonify(pending)
+            try:
+                current = engine_atomicio.existing_revision(target)
+            except OSError:
+                return _revision_unreadable()
+            if current != body["revision"]:
+                return _external_change(current, target)
+            result = engine_layoutsession.commit_project_file(
+                key, doc_id, pending["ticket"], revision=current
+            )
+    except ValueError:
+        return _bad_project_file_request()
+    except OSError:
+        return _session_unavailable()
+    return jsonify(result)
+
+
+@app.delete("/api/layout-session/project-file/<doc_id>/intent/<sequence>")
+def api_layout_project_file_cancel(doc_id, sequence):
+    if not engine_layoutsession.valid_doc_id(doc_id):
+        return _bad_project_file_request()
+    ctx = current_ctx()
+    try:
+        result = engine_layoutsession.cancel_project_file_intent(
+            engine_layoutsession.project_key(ctx.path),
+            doc_id,
+            _project_file_query_sequence(sequence),
+        )
+    except ValueError:
+        return _bad_project_file_request()
+    except OSError:
+        return _session_unavailable()
+    return jsonify(result)
+
+
 @app.get("/api/layout-session")
 def api_layout_session_get():
     """`{last, prev, pending, index}`：`last` 只指向可恢复的槽位（durable）、`prev` 是上一份 durable、

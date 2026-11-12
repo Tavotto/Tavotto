@@ -16,6 +16,7 @@ import type { FigureDocument } from '@/types/document'
  * （同名排版 id 在两个项目里也不会串）。
  */
 export interface TimelinePreview {
+  format?: 'v4'
   docId: string
   meta: LayoutVersionMeta
   /** 快照正文；还在取的时候是 null */

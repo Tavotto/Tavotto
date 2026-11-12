@@ -18,6 +18,8 @@ beforeEach(() => {
   useProjectStore.setState({ phase: 'loading', project: null })
   globalThis.fetch = (async (url: unknown) => {
     const u = String(url)
+    // 旧后端对显式新namespace返回404；未知URL的通用200空对象不代表支持v4。
+    if (u.includes('/api/documents/v4/')) return new Response('{}', { status: 404 })
     if (u.includes('/api/project') && !u.includes('/api/projects') && !u.includes('/readiness')) {
       projectCalls += 1
       const r = projectReply()

@@ -1,3 +1,4 @@
+import type { DocumentFormat } from '@/lib/documentFormat'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { versionThumbUrl, type LayoutVersionMeta } from '@/lib/api'
 import { versionDisplayName } from '@/lib/versionSummary'
@@ -73,6 +74,7 @@ interface Box {
  */
 export function TimelineScrubber({
   docId,
+  format,
   versions,
   selectedId,
   summaryOf,
@@ -80,6 +82,7 @@ export function TimelineScrubber({
   onPick,
 }: {
   docId: string
+  format?: DocumentFormat
   /** 列表此刻显示的那些节点，**左旧右新** */
   versions: LayoutVersionMeta[]
   selectedId: string | null
@@ -256,7 +259,7 @@ export function TimelineScrubber({
         // 第一次展开：把这些节点的缩略图都先取回来，之后划过去都是现成的
         for (const v of vs) {
           if (!v.thumb) continue
-          const url = versionThumbUrl(docId, v)
+          const url = versionThumbUrl(docId, v, ...(format === 'v4' ? [format] : []))
           if (preloaded.current.has(url)) continue
           preloaded.current.add(url)
           new Image().src = url
@@ -286,7 +289,7 @@ export function TimelineScrubber({
       }
       kick()
     },
-    [docId, kick, rest],
+    [docId, format, kick, rest],
   )
   const pick = useCallback(() => {
     const a = hover.current.active
@@ -391,7 +394,7 @@ export function TimelineScrubber({
           className="pointer-events-none absolute left-0 top-full z-popover flex flex-col gap-1.5 rounded-lg bg-surface p-2 shadow-pop"
           style={{ width: PEEK_W }}
         >
-          <PeekThumb docId={docId} meta={pv} />
+          <PeekThumb {...(format === 'v4' ? { format } : {})} docId={docId} meta={pv} />
           <span className="flex items-baseline gap-1.5 text-sm">
             <span className="tabular-nums text-ink">
               {formatDate(pv.ts)} {formatTime(pv.ts)}
@@ -414,7 +417,7 @@ const PEEK_FRAME_MIN_H = 96
 const PEEK_FRAME_MAX_H = 168
 
 /** 浮卡里的大一号缩略图：同一张存好的位图，对准页面上有内容的那块；没有位图画草图；都没有留占位 */
-function PeekThumb({ docId, meta }: { docId: string; meta: LayoutVersionMeta }) {
+function PeekThumb({ docId, meta, format }: { docId: string; meta: LayoutVersionMeta; format?: DocumentFormat }) {
   const page = meta.sketch?.page ?? meta.page
   const ratio = page && page.w > 0 && page.h > 0 ? `${page.w} / ${page.h}` : '4 / 3'
   if (meta.thumb && page && page.w > 0 && page.h > 0) {
@@ -430,7 +433,7 @@ function PeekThumb({ docId, meta }: { docId: string; meta: LayoutVersionMeta }) 
         className="rounded-xs border border-border-strong"
         data-timeline-scrubber-peek-crop={box ? '' : undefined}
       >
-        {() => <VersionThumbImage docId={docId} meta={meta} page={page} />}
+        {() => <VersionThumbImage {...(format === 'v4' ? { format } : {})} docId={docId} meta={meta} page={page} />}
       </CropFrame>
     )
   }

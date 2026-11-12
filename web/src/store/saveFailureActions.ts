@@ -11,6 +11,7 @@
  */
 import { msg } from '@/i18n'
 import { currentProjectId } from '@/lib/session'
+import { saveIssueMessage, type SaveIssue } from '@/lib/autosave/diskWriter'
 import { useDiagSendStore } from './diagSendStore'
 import { reloadFromDisk, saveNow, useDocumentStore } from './documentStore'
 import { useUiStore, type StatusAction } from './uiStore'
@@ -79,11 +80,12 @@ export function retrySaveAction(run: () => unknown, owner: string = AUTOSAVE_FAI
  */
 export function retryAutosaveAction(docId: string = useDocumentStore.getState().documentId): StatusAction {
   const pj = currentProjectId()
+  const { documentFormat, loadSeq } = useDocumentStore.getState()
   return retrySaveAction(() => {
     // 失败的是 `docId` 那份：点的时候开着的已是别的排版 / 别的项目，就只收掉提示——不对别的排版乱存。
     // 那份的未写盘内容仍在本机副本里（写盘失败时不清），切回去由崩溃恢复那条路提供
     const s = useDocumentStore.getState()
-    if (s.documentId !== docId || currentProjectId() !== pj) return
+    if (s.documentId !== docId || s.documentFormat !== documentFormat || s.loadSeq !== loadSeq || currentProjectId() !== pj) return
     return saveNow()
   })
 }
@@ -93,12 +95,12 @@ export function retryAutosaveAction(docId: string = useDocumentStore.getState().
  * external = 磁盘上那份被外部改过——后端都挡下了这次覆盖；io = 写盘本身没成。
  * 出口：冲突 →「重新加载」，写盘失败 →「重试保存」。
  */
-export function reportAutosaveFailure(detail: { id?: string; reason?: string } | undefined): void {
+export function reportAutosaveFailure(detail: { id?: string; reason?: string; issue?: SaveIssue } | undefined): void {
   const reason = detail?.reason
   const docId = detail?.id ?? useDocumentStore.getState().documentId
   const conflict = reason === 'stale' || reason === 'external'
   useUiStore.getState().setStatus(
-    msg(
+    saveIssueMessage(detail?.issue, msg(
       reason === 'stale'
         ? 'autosave.staleOtherWindow'
         : reason === 'external'
@@ -106,7 +108,7 @@ export function reportAutosaveFailure(detail: { id?: string; reason?: string } |
           : 'autosave.diskFailed',
       undefined,
       'workspace',
-    ),
+    )),
     'error',
     {
       owner: AUTOSAVE_FAILURE_OWNER,

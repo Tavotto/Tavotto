@@ -1,3 +1,5 @@
+import { timelineCtxKey } from '@/lib/momentCapture'
+export { timelineCtxKey } from '@/lib/momentCapture'
 import { useDocumentStore } from '@/store/documentStore'
 import { useTimelineStore } from '@/store/timelineStore'
 import { askConfirm, useUiStore } from '@/store/uiStore'
@@ -6,10 +8,8 @@ import { askConfirm, useUiStore } from '@/store/uiStore'
  * 时间线的**上下文**：项目代际（`timelineStore.gen`，每次换项目 +1）+ 排版 id。
  * 时间线抽屉（含命名输入）里一切本地状态都属于某一个上下文（Codex #679）。
  */
-export const timelineCtxKey = (gen: number, docId: string) => `${gen}:${docId}`
-
 export const currentTimelineCtx = () =>
-  timelineCtxKey(useTimelineStore.getState().gen, useDocumentStore.getState().documentId)
+  timelineCtxKey(useTimelineStore.getState().gen, useDocumentStore.getState().documentId, useDocumentStore.getState().documentFormat)
 
 /**
  * **await 之后改本地状态的唯一出口**（Codex #679）：在 await 之前调它，拿到的守卫
