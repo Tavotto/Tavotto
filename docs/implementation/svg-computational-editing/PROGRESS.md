@@ -6,6 +6,14 @@
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 > 前轮05:10后的91项捕获包资格保留其历史源码窗口；3c现已有实现与新资格，不能再按旧checkpoint重做。不同测试组不相加成最终总数；当前分支实际HEAD/diff优先。
 
+### 2026-11-12 提交上游 PR #1873
+
+- 用户明确授权提交 PR，目标核定为 `Tavotto/Tavotto:main`；已创建正式 [PR #1873](https://github.com/Tavotto/Tavotto/pull/1873)。创建时 head 为 `0b722f9e`，上游 main 为 `19aa2f72`，共同祖先 `2bc94f7f`；文档同步提交另计。
+- 提交准备按功能分开：`a798cf6d` 忽略本机配置/验收产物；`1137dff1` 登记计算 SVG 生命周期及两条浏览器用例；`0b722f9e` 将本分支 ADR 0166 调整至 0181，并同步引用，避免上游编号撞用。源码变化已逐文件核为 ADR 引用替换，没有修改运行逻辑。
+- 本轮检查：功能登记 75 个 active 功能/97 条 E2E 引用，文档引用/规则索引 41 项、Ruff check/format、agents_budget、正式前端构建/i18n、playground/widget build/check 和 PR Third-Path Review 结构检查均通过。新增忽略规则不屏蔽测试夹具、golden 和正式文档；保留原始 Matplotlib SVG corpus 字节。
+- 功能分支已在 fork 远端，跟踪 `origin/zixu.wang/svg-computational-r00`；上游 main 比共同祖先前进 179 提交，合并预检有待同步冲突，未在本轮大范围合入主线。
+- PR 正文详细说明 A/B/C 工作流、显式数据绑定、图例联动、S/F 合同、保存/迁移、导出、兼容与回滚。`risk:high`、`full-ci` 添加请求返回 GitHub 403，已在正文请求上游维护者设置。未触发 Codex 评审、未入队、未合并或发布。
+
 ### 2026-11-12 无人值守收敛修复（T0→T5）
 
 - 现场：唯一树 `E:/0 - Project/Tavotto-svg-r00` / 分支 `zixu.wang/svg-computational-r00`，起点

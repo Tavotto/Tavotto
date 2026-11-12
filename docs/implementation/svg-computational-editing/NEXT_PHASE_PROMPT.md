@@ -1,8 +1,8 @@
 # SVG 计算图表编辑：提 PR 收敛执行提示词
 
-更新：2026-11-12。**本轮收敛（T0–T5）已完成实施：历史来源 P1、N5 六步、N4 C1–C5、测试红项修复与文档同步均已提交；当前分支可准备 risk:high 的 PR 草稿，仍未 push/建 PR。** 下方 2026-11-11 的提示词正文保留为历史阶段记录；新的接续提示词见文末「2026-11-12 接续」。详细任务、PR范围和退出条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，现状/首红/证据见 [PROGRESS.md](PROGRESS.md)，完整需求见 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。
+更新：2026-11-12。**已推送当前功能分支并提交上游 [PR #1873](https://github.com/Tavotto/Tavotto/pull/1873)，当前阶段是 PR 审查；后续按实际评审意见与 CI 结果安排任务，不重复创建 PR。** 下方 2026-11-11 及创建 PR 前的接续提示词保留为历史记录，其远端操作限制已由本轮用户明确授权取代。详细任务、PR 范围和退出条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，进度见 [PROGRESS.md](PROGRESS.md)，完整需求见 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。
 
-分支现场：`zixu.wang/svg-computational-r00`，目录 `E:/0 - Project/Tavotto-svg-r00`；本轮起点 `0ad27234`，收敛提交见 PROGRESS 2026-11-12 检查点（19 提交）。未配置 upstream，尚未合入 main；远端同名功能分支仍未发现（2026-11-11 查询）。恢复以实际 HEAD/diff 为准。
+分支现场：`zixu.wang/svg-computational-r00`，目录 `E:/0 - Project/Tavotto-svg-r00`；已跟踪 `origin/zixu.wang/svg-computational-r00`。PR 创建时 head 为 `0b722f9e`，目标上游 main 为 `19aa2f72`；文档同步提交另计，恢复以实际 HEAD/diff 为准。上游标签需维护者设置，合并与发布未执行。
 
 ~~~text
 【历史阶段：2026-11-11 提示词，保留不改】恢复 Tavotto 当前 SVG 计算图表编辑的 PR 收敛工作。目标是在不影响现有 Python/旧项目功能和逻辑的基础上，完成 NEXT_PHASE.md 中 PR00–PR07 的必做项，产出与最终源码匹配的测试证据和可审查 PR 标题/正文草稿；不能只写计划或以草稿状态代替功能闭合。最大化复用原功能，使用有独立收益的多子代理并行，按功能分别 commit，常规可逆步骤自主完成，不反复问确认。
