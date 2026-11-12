@@ -15090,7 +15090,7 @@ def api_ai_data_figure_commit():
         abort(400)
     project = str(ctx.path.resolve())
     if rid:
-        # 先去重、后取会话（同 v1）：首次请求已提交、响应丢了，会话已随提交删掉，同 id 重发只能回既有任务的结局
+        # 先去重、后取会话（同 v1）：首次请求已提交、响应丢了（或会话已过期 / 被放弃），同 id 重发只回既有任务的结局，不再取会话
         known = engine_ai.find_request(str(ctx.path.resolve()), rid)
         if known is not None and known["status"] == engine_ai.REQUEST_SUPERSEDED:
             return _agent_error(engine_ai.AgentError("ai_request_superseded"))
