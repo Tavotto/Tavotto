@@ -754,10 +754,7 @@
     "frameLegacyTitle": "Differs from the figure the script saved",
     "frameLegacyBody": "This figure is still shown at its figsize; the script saved it cropped to {{w}} × {{h}} mm. Switching keeps its position; only the outer box changes.",
     "frameLegacyAdopt": "Use the saved figure size",
-    "frameLegacyAdoptBlocked": "The cropped part of this figure lies entirely outside the saved figure size, so nothing would be left after switching. Adjust or reset the crop first.",
-    "frameComputedTitle": "The rendered frame moved",
-    "frameComputedBody": "The last render's ink now spans {{w}} × {{h}} mm. Adopting keeps the data, units and layout anchor; only the outer box follows the render.",
-    "frameComputedAdopt": "Adopt the rendered frame"
+    "frameLegacyAdoptBlocked": "The cropped part of this figure lies entirely outside the saved figure size, so nothing would be left after switching. Adjust or reset the crop first."
   },
   "panelLabel": "Right panel",
   "pinnedAria": "Right panel is pinned; click to auto-hide it",

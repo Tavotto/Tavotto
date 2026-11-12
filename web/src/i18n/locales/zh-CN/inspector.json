@@ -734,10 +734,7 @@
     "frameLegacyTitle": "与脚本保存的原图大小不同",
     "frameLegacyBody": "这张图在排版上仍按 figsize 显示；脚本保存时裁成了 {{w}} × {{h}} mm。改用后位置不变，只是外框变化。",
     "frameLegacyAdopt": "改用原图的图幅",
-    "frameLegacyAdoptBlocked": "这张图裁剪后留下的部分完全在原图的图幅之外，改用后什么都不剩，所以不能切换。先调整或重置裁剪再试。",
-    "frameComputedTitle": "渲染外框变了",
-    "frameComputedBody": "最近一次渲染的墨迹范围是 {{w}} × {{h}} mm。采用后数据、单位与布局锚点不变，只有外框跟着渲染走。",
-    "frameComputedAdopt": "采用渲染外框"
+    "frameLegacyAdoptBlocked": "这张图裁剪后留下的部分完全在原图的图幅之外，改用后什么都不剩，所以不能切换。先调整或重置裁剪再试。"
   },
   "panelLabel": "右侧面板",
   "pinnedAria": "右栏常驻，点击改为自动收起",

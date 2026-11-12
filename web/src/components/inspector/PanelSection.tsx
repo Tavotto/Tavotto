@@ -18,7 +18,6 @@ import {
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { useExactPanelManifest, usePanelRender } from '@/store/renderStore'
 import { frameSwitchAvailable, frameSwitchPatch } from '@/lib/figureFrame'
-import { computedFramePending } from '@/lib/chartFrame'
 import { useCanEditPanel } from '@/lib/panelEditability'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { formatQuantity } from '@/i18n/format'
@@ -26,7 +25,6 @@ import { BASE_FONT_PT, effectiveDpi, effectivePt, formatCm, formatMm, round1 } f
 import { cn } from '@/lib/utils'
 import type { PanelInfo } from '@/lib/api'
 import {
-  adoptComputedFrame,
   adoptScriptFrame,
   beginCrop,
   enterElementEdit,
@@ -89,7 +87,6 @@ export function PanelSection({ objs }: { objs: PanelObject[] }) {
       {one && editable && <ElementEditEntry panel={one} />}
       {one && <PanelCapabilityNote panel={one} />}
       {one && <PanelFrameNote panel={one} />}
-      {one && <PanelComputedFrameNote panel={one} />}
       <GeometrySection objs={objs} />
       <ImageOpsSection objs={objs} />
       {/* 单选的排列（对齐到画布 + 层级）就在这里；多选的排列由属性页统一摆在最后 */}
@@ -189,44 +186,6 @@ export function PanelFrameNote({ panel }: { panel: PanelObject }) {
             </span>
           )}
         </Notice>
-      )}
-    </NoticeReveal>
-  )
-}
-
-/**
- * /2 计算图表：精确渲染的外框比文档里持久的那一版新（改过内容、墨迹动了）。
- * 采用只动外框与落位（`actions.adoptComputedFrame` 一条事务），数据、单位与
- * 科学锚点不动；判据来自精确配对帧的 `render_frame`，没有就不出现。
- */
-export function PanelComputedFrameNote({ panel }: { panel: PanelObject }) {
-  useTranslation('inspector')
-  const manifest = useExactPanelManifest(panel)
-  const frame = manifest?.render_frame
-  const pending = computedFramePending(panel, frame)
-  return (
-    <NoticeReveal open={pending}>
-      {pending && frame && (
-        <Notice
-          data-frame-note="computed"
-          className="mx-3 mb-1.5"
-          title={pn('frameComputedTitle')}
-          detail={pn('frameComputedBody', {
-            w: round1((frame.rect_pt[2] * 25.4) / 72),
-            h: round1((frame.rect_pt[3] * 25.4) / 72),
-          })}
-          action={
-            <Button
-              size="sm"
-              data-frame-adopt="computed"
-              onClick={() => {
-                adoptComputedFrame(panel.id)
-              }}
-            >
-              {pn('frameComputedAdopt')}
-            </Button>
-          }
-        />
       )}
     </NoticeReveal>
   )

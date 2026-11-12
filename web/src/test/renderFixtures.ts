@@ -17,23 +17,18 @@ import type { PanelObject } from '@/types/document'
 export function seedExactRender(
   panel: PanelObject,
   manifest: Manifest,
-  extra: { svg?: string; rev?: number; chartRevision?: string; chartRequest?: string } = {},
+  extra: { svg?: string; rev?: number } = {},
 ): void {
   const key = renderKeyOf(panel)
   const origin = figureOriginFor(panel)
   const source = renderSourceKey(panel)
-  const variant = renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource, origin, panel.chartFrame?.renderProfile)
+  const variant = renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource, origin)
   useRenderStore.getState().patch(key, {
     fileId: panel.fileId,
     ...(origin === undefined ? {} : { figureOrigin: structuredClone(origin) }),
     rev: extra.rev ?? 1,
     manifest,
     svg: extra.svg ?? '<svg/>',
-    ...(extra.chartRevision !== undefined ? { chartRevision: extra.chartRevision } : {}),
-    ...(extra.chartRequest !== undefined ? { chartRequest: extra.chartRequest } : {}),
-    // 真实回包处理把 manifest 内嵌的 render_frame 提到 PanelRender（renderStore）；
-    // 种子必须镜像同一条，否则 exact 有 manifest 却没有帧声明。
-    ...(manifest.render_frame ? { renderFrame: manifest.render_frame } : {}),
     status: 'ready',
     stale: false,
     // 权威判据就是这一条：渲染成功时由 renderStore 写下
