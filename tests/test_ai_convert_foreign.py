@@ -81,7 +81,7 @@ def env(monkeypatch, tmp_path):
     (figs / "data.csv").write_text("x,y\n1,2\n", encoding="utf-8")
     state = {"code": WRITE_GOOD, "prompts": [], "figs": figs, "runner": ok_runner}
 
-    def _cmd(agent_id, prompt, cwd, model=None, effort=None, endpoint=None):
+    def _cmd(agent_id, prompt, cwd, model=None, effort=None, endpoint=None, **_kwargs):
         state["prompts"].append(prompt)
         pre = "import pathlib, sys; d = pathlib.Path(sys.argv[1]); "
         code = state["codes"].pop(0) if state.get("codes") else state["code"]

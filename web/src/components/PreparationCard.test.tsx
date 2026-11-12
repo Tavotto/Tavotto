@@ -38,9 +38,11 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   refreshProject: vi.fn(),
   cancelNativeSession: vi.fn().mockResolvedValue({ confirmed: true, session: {} }),
   startConvert: vi.fn(),
+  setConvertUnsandboxedWindows: vi.fn(),
   fetchAiSession: vi.fn(),
   fetchConvert: vi.fn(),
   adoptConvert: vi.fn(),
+  realignConvert: vi.fn(),
   discardConvert: vi.fn(),
   resolveConvertDependencies: vi.fn(),
   replanConvertDependencies: vi.fn(),
@@ -49,6 +51,8 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   repairImportFolder: vi.fn(),
   ignoreImportFolder: vi.fn(),
   aiRevert: vi.fn(),
+  copyInputData: vi.fn(),
+  openFullDiskAccessSettings: vi.fn(),
 }))
 vi.mock('@/store/aiRenameRebind', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/store/aiRenameRebind')>()),
@@ -81,6 +85,8 @@ import {
   probeScript,
   repairImportFolder,
   ignoreImportFolder,
+  copyInputData,
+  openFullDiskAccessSettings,
   type CapturedFigureDescriptor,
   type PreparationAction,
   type PreparationAttempt,
@@ -104,6 +110,7 @@ import { seedExactRender } from '@/test/renderFixtures'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useEnvStore } from '@/store/envStore'
+import { useInputCopyStore } from '@/store/inputCopyStore'
 import { useUiStore } from '@/store/uiStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { addRuntimePanelToCanvas, openFastEdit } from '@/store/workspace'
@@ -120,7 +127,7 @@ import { useAiStore } from '@/store/aiStore'
 import { requestAiFix } from '@/lib/api'
 import { useAiFixStore } from '@/store/aiFixStore'
 import { useOnboardingStore } from '@/store/onboardingStore'
-import { adoptConvert, aiCancel, discardConvert, fetchAiSession, fetchConvert, replanConvertDependencies, resolveConvertDependencies, startConvert } from '@/lib/api'
+import { adoptConvert, aiCancel, realignConvert, discardConvert, fetchAiSession, fetchConvert, replanConvertDependencies, resolveConvertDependencies, setConvertUnsandboxedWindows, startConvert } from '@/lib/api'
 import type { DependencyPreparationOffer } from '@/lib/api'
 
 declare global {
@@ -1639,6 +1646,146 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
       expect(foreignCard()?.querySelector('[data-convert-installed]')?.textContent).toBe('已为这个项目装好 pandas 和 statsmodels')
     })
 
+    it('对照时列出源文件名线索和本次改道写入尝试，不把它们当成输出完整性证明', async () => {
+      vi.mocked(fetchConvert).mockResolvedValue({
+        ...readyR,
+        comparison: {
+          ...readyR.comparison,
+          output_evidence: {
+            source_references: ['input.csv', 'report-a.xlsx', 'report-b.xlsx'],
+            source_truncated: true,
+            write_attempts: ['report-a.xlsx'],
+            attempts_truncated: false,
+            completeness: 'unknown',
+          },
+        },
+      })
+      await mountBoth()
+      await offer('fig.R', 'r')
+      await act(async () => startBtn()!.click())
+      await settle()
+      const evidence = foreignCard()?.querySelector('[data-convert-output-evidence]')
+      expect(evidence?.textContent).toContain('report-b.xlsx')
+      expect(evidence?.textContent).toContain('report-a.xlsx')
+      expect(evidence?.textContent).toContain('可能包含输入')
+      expect(evidence?.textContent).toContain('不能证明')
+      expect(evidence?.textContent).toContain('仅显示部分')
+    })
+
+    describe('输出清单（#1809）', () => {
+      const filesOf = (files: import('@/lib/api').ConvertOutputFile[]) => ({
+        ...readyR,
+        comparison: {
+          ...readyR.comparison,
+          output_evidence: {
+            source_references: [], source_truncated: false, write_attempts: [], attempts_truncated: false, completeness: 'unknown' as const,
+            files,
+          },
+        },
+      })
+      const ready = async (files: import('@/lib/api').ConvertOutputFile[]) => {
+        vi.mocked(fetchConvert).mockResolvedValue(filesOf(files))
+        await mountBoth()
+        await offer('fig.R', 'r')
+        await act(async () => startBtn()!.click())
+        await settle()
+      }
+      const row = (name: string) => foreignCard()?.querySelector(`[data-convert-file="${name}"]`) as HTMLElement
+      const primary = () => foreignCard()?.querySelector('[data-convert-adopt]') as HTMLButtonElement
+      const click = (el: Element | null | undefined) => act(async () => (el as HTMLElement).click())
+
+      it('每个状态一个词；没法比的原因放 title；那句“不能证明”放清单的 title，不占一行', async () => {
+        await ready([
+          { name: 'a.csv', line: 1, state: 'match' },
+          { name: 'b.csv', line: 2, state: 'differs', diff_count: 1, diffs: [{ row: 2, col: 1 }] },
+          { name: 'c.xlsx', line: 3, state: 'incomparable', reason: 'stale' },
+          { name: 'd.csv', line: 4, state: 'incomparable', reason: 'no_previous' },
+          { name: 'e.csv', line: 5, state: 'incomparable', reason: 'inputs_unknown' },
+          { name: 'f.rds', line: 6, state: 'incomparable', reason: 'format' },
+          { name: 'g.csv', line: 7, state: 'incomparable', reason: 'too_large' },
+        ])
+        const state = (n: string) => row(n).querySelector('[data-convert-file-state]') as HTMLElement
+        expect(state('a.csv').textContent).toBe('一致')
+        expect(state('b.csv').textContent).toBe('不同')
+        expect(state('c.xlsx').textContent).toBe('没法比')
+        expect(state('c.xlsx').title).toBe('旧结果比输入数据还早，可能已经过期')
+        expect(state('d.csv').title).toBe('项目里没有这个文件的旧结果')
+        expect(state('e.csv').title).toBe('不知道读了哪些数据')
+        expect(state('f.rds').title).toBe('这种格式没法比')
+        expect(state('g.csv').title).toBe('文件太大没比')
+        const block = foreignCard()?.querySelector('[data-convert-output-evidence]') as HTMLElement
+        expect(block.title).toContain('不能证明')
+        expect(block.textContent).not.toContain('不能证明')
+        expect(foreignCard()?.querySelector('[data-convert-unverified]')?.textContent).toContain('没有运行 R / MATLAB')
+      })
+
+      it('缺的文件：行内「我来指定」「不需要」都有动作；都没处理就点采用先问一句，再点才采用', async () => {
+        const pick = vi.spyOn(window, 'prompt').mockReturnValue('/data/my-report.csv')
+        await ready([
+          { name: 'a.csv', line: 1, state: 'missing' },
+          { name: 'b.csv', line: 2, state: 'missing' },
+        ])
+        await click(primary())
+        expect(adoptConvert).not.toHaveBeenCalled()
+        expect(foreignCard()?.textContent).toContain('还有 2 个文件没处理，仍要采用吗？')
+        expect(primary().textContent).toBe('仍然采用')
+        await click(row('a.csv').querySelector('[data-convert-file-specify]'))
+        expect(pick).toHaveBeenCalled()
+        expect(row('a.csv').querySelector('[data-convert-file-state]')?.textContent).toBe('已指定')
+        await click(row('b.csv').querySelector('[data-convert-file-skip]'))
+        expect(row('b.csv').querySelector('[data-convert-file-state]')?.textContent).toBe('不需要')
+        // 都处理完：问句消失，采用的回执带着「指定」（只有文件名，没有目录）
+        expect(primary().textContent).toBe('采用新版本')
+        await click(primary())
+        expect(adoptConvert).toHaveBeenCalledWith('sid-r', expect.anything(), [{ name: 'a.csv', file: 'my-report.csv' }])
+        pick.mockRestore()
+      })
+
+      it('「我来指定」取消（prompt 返回 null）：那一行保持未处理，不报错、不登记', async () => {
+        const pick = vi.spyOn(window, 'prompt').mockReturnValue(null)
+        await ready([{ name: 'a.csv', line: 1, state: 'missing' }])
+        await click(row('a.csv').querySelector('[data-convert-file-specify]'))
+        expect(pick).toHaveBeenCalled()
+        expect(row('a.csv').querySelector('[data-convert-file-specify]')).not.toBeNull()
+        expect(row('a.csv').querySelector('[data-convert-file-state]')).toBeNull()
+        expect(foreignCard()?.dataset.convertPhase).toBe('ready')
+        pick.mockRestore()
+      })
+
+      it('问过之后选「仍然采用」：没处理的文件不挡采用', async () => {
+        await ready([{ name: 'a.csv', line: 1, state: 'missing' }])
+        await click(primary())
+        expect(adoptConvert).not.toHaveBeenCalled()
+        await click(primary())
+        expect(adoptConvert).toHaveBeenCalledWith('sid-r', expect.anything())
+      })
+
+      it('有「不同」：采用钮改「照样采用」，「让 AI 再对一次」在「放弃」左边并真的发请求、轮询到新清单', async () => {
+        const differs = [{ name: 'b.csv', line: 2, state: 'differs' as const, diff_count: 1, diffs: [{ row: 2, col: 1 }] }]
+        vi.mocked(realignConvert).mockReset().mockResolvedValue({ session: 'sid-r', realigning: true })
+        await ready(differs)
+        expect(primary().textContent).toBe('照样采用')
+        const realign = foreignCard()?.querySelector('[data-convert-realign]') as HTMLElement
+        const discard = foreignCard()?.querySelector('[data-convert-discard]') as HTMLElement
+        expect(realign.textContent).toBe('让 AI 再对一次')
+        expect(realign.compareDocumentPosition(discard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+        vi.mocked(fetchConvert).mockResolvedValue({ ...filesOf([{ name: 'b.csv', line: 2, state: 'match' }]), realigning: false })
+        await click(realign)
+        await settle()
+        expect(realignConvert).toHaveBeenCalledWith('sid-r', expect.anything())
+        expect(row('b.csv').querySelector('[data-convert-file-state]')?.textContent).toBe('一致')
+        expect(foreignCard()?.querySelector('[data-convert-realign]')).toBeNull()
+        expect(primary().textContent).toBe('采用新版本')
+      })
+
+      it('没有 files（动态路径 / 老后端）：退回旧的几行说明，不出清单', async () => {
+        await ready([])
+        expect(foreignCard()?.querySelector('[data-convert-files]')).toBeNull()
+        expect(foreignCard()?.querySelector('[data-convert-output-evidence]')?.textContent).toContain('不能证明')
+        expect(primary().textContent).toBe('采用新版本')
+      })
+    })
+
     it('ready 时说清楚采用只会新增哪个文件、原脚本不动；后端没给清单就不说', async () => {
       vi.mocked(fetchConvert).mockResolvedValue({ ...readyR, adopt_adds: ['sub/fig_matplotlib.py'] })
       await mountBoth()
@@ -2218,6 +2365,86 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
       expect(primary()?.textContent).toBe('重试')
     })
 
+    describe('写入被拒时的一键方案 B（允许不受沙盒限制并重试）', () => {
+      const realLoadCaps = useAiStore.getState().loadCaps
+      const mk = (id: string, flag: boolean | undefined) =>
+        ({ agents: [{ id, usable: true, models: [], efforts: [], default_model: null, default_effort: null }], ...(flag === undefined ? {} : { convert_unsandboxed_windows: flag }) }) as never
+      const fail = async (code: string, caps: unknown) => {
+        await mount()
+        useUiStore.setState({ guideCard: 'card' })
+        useAiStore.setState({ agent: null, caps: caps as never, loadCaps: vi.fn(async () => {}) })
+        vi.mocked(startConvert).mockReset().mockResolvedValue({ session: 'sid1', script: 'plot.py' })
+        vi.mocked(fetchAiSession).mockResolvedValue({ status: 'failed', final: true, task: { outcome: 'failed', unmet: [{ constraint_id: 'candidate.target', reason_code: code }] } } as never)
+        await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+        await act(async () => primary()!.click())
+        await settle()
+        expect(panel().dataset.convertPhase).toBe('failed')
+      }
+      afterEach(() => useAiStore.setState({ caps: null, loadCaps: realLoadCaps }))
+
+      it('条件满足：主按钮文案正确，一句话不变，「重试」降为次按钮；点了先 PUT 再重试', async () => {
+        await fail('agent_write_denied', mk('codex', false))
+        vi.mocked(setConvertUnsandboxedWindows).mockReset().mockResolvedValue({ convert_unsandboxed_windows: true })
+        expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('AI 没能写入转换工作区，没有生成新脚本。')
+        expect(primary()?.textContent).toBe('允许不受沙盒限制并重试')
+        expect(panel().querySelector('[data-convert-retry]')?.textContent).toBe('重试')
+        expect(startConvert).toHaveBeenCalledTimes(1)
+        await act(async () => primary()!.click())
+        await settle()
+        expect(setConvertUnsandboxedWindows).toHaveBeenCalledWith(true)
+        expect(useAiStore.getState().loadCaps).toHaveBeenCalled()
+        expect(startConvert).toHaveBeenCalledTimes(2)
+        expect(vi.mocked(setConvertUnsandboxedWindows).mock.invocationCallOrder[0]!).toBeLessThan(vi.mocked(startConvert).mock.invocationCallOrder[1]!)
+      })
+
+      it('PUT 失败：不重试，卡片不变，主按钮恢复可点', async () => {
+        await fail('agent_write_denied', mk('codex', false))
+        vi.mocked(setConvertUnsandboxedWindows).mockReset().mockRejectedValue(new Error('boom'))
+        await act(async () => primary()!.click())
+        await settle()
+        expect(startConvert).toHaveBeenCalledTimes(1)
+        expect(panel().dataset.convertPhase).toBe('failed')
+        expect(primary()?.textContent).toBe('允许不受沙盒限制并重试')
+        expect(primary()?.disabled).toBe(false)
+      })
+
+      it('能力刷新让按钮被普通「重试」换掉（卸载）后，仍然只重试一次', async () => {
+        await fail('agent_write_denied', mk('codex', false))
+        vi.mocked(setConvertUnsandboxedWindows).mockReset().mockResolvedValue({ convert_unsandboxed_windows: true })
+        useAiStore.setState({
+          loadCaps: vi.fn(async () => {
+            useAiStore.setState({ caps: mk('codex', true) })
+          }),
+        })
+        await act(async () => primary()!.click())
+        await settle()
+        expect(panel().querySelector('[data-convert-allow-unsandboxed]')).toBeNull()
+        expect(startConvert).toHaveBeenCalledTimes(2)
+      })
+
+      it('PUT 期间切换项目：不再用新项目重试', async () => {
+        await fail('agent_write_denied', mk('codex', false))
+        let release!: (v: { convert_unsandboxed_windows: boolean }) => void
+        vi.mocked(setConvertUnsandboxedWindows).mockReset().mockReturnValue(new Promise((r) => { release = r }))
+        await act(async () => primary()!.click())
+        await act(async () => setCurrentProjectId('pj-b'))
+        await act(async () => release({ convert_unsandboxed_windows: true }))
+        await settle()
+        expect(startConvert).toHaveBeenCalledTimes(1)
+      })
+
+      it.each([
+        ['非 Windows（无能力键）', 'agent_write_denied', mk('codex', undefined)],
+        ['开关已打开', 'agent_write_denied', mk('codex', true)],
+        ['别的失败码', 'no_matplotlib_figure', mk('codex', false)],
+        ['助手不是 Codex', 'agent_write_denied', mk('claude', false)],
+      ])('%s：没有这个按钮，卡片与原来一样', async (_n, code, caps) => {
+        await fail(code, caps)
+        expect(panel().querySelector('[data-convert-allow-unsandboxed]')).toBeNull()
+        expect(primary()?.dataset.prepPrimary).toBe('convert_retry')
+      })
+    })
+
     it('进行中：后端给 writing_long 只换进度行文字，事件恢复后换回；没有新增横条或弹窗', async () => {
       await mount()
       useUiStore.setState({ guideCard: 'card' })
@@ -2421,8 +2648,20 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('只画好了 1/2 张图，bad 没画出来')
     expect(primary()?.dataset.prepPrimary).toBe('enter_edit')
     await toggleDetails()
+    // 原始码不进句子：有 errors:backend.<code> 的人话说人话
     expect(details()?.querySelector('[data-prep-failed-figures]')?.textContent).toBe(
-      '没画出来的图：bad（preview_capture_failed）。其余的图可以照常编辑。',
+      '没画出来的图：bad。画这些图时脚本出错了，没能捕获。其余的图可以照常编辑。',
+    )
+  })
+
+  it('部分捕获：失败码没有人话时不显示括号，也不露原始码', async () => {
+    await mount()
+    await openWith(
+      report({ ...STATES.completedPartial, failed_figures: [{ stem: 'bad', code: 'some_unknown_code' }] }),
+    )
+    await toggleDetails()
+    expect(details()?.querySelector('[data-prep-failed-figures]')?.textContent).toBe(
+      '没画出来的图：bad。其余的图可以照常编辑。',
     )
   })
 
@@ -2471,17 +2710,6 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
 describe('进入编辑遇到上次的排版还没恢复好', () => {
   afterEach(() => resetRestoreGateForTests())
 
-  it('blocked（需要用户先处理恢复）：什么都没放进去，卡片留着，不说已进入编辑', async () => {
-    await mount()
-    await openWith(report(STATES.completed))
-    vi.mocked(addRuntimePanelToCanvas).mockImplementation((() => null) as never)
-    vi.mocked(openFastEdit).mockImplementation((() => 'blocked') as never)
-    await act(async () => primary()!.click())
-    expect(useUiStore.getState().guideCard).not.toBe('closed')
-    expect(panel()).not.toBeNull()
-    expect(useDocumentStore.getState().doc.objects).toEqual([])
-  })
-
   /** 真实的排队：openFastEdit 的替身走真 `deferUserEntry`，落地时放面板 */
   const realDeferral = () => {
     vi.mocked(addRuntimePanelToCanvas).mockImplementation((() => null) as never)
@@ -2491,7 +2719,7 @@ describe('进入编辑遇到上次的排版还没恢复好', () => {
         putPanel(id)
         return 'editing'
       }
-      return entry === 'deferred' ? 'deferred' : 'blocked'
+      return 'deferred'
     }) as never)
   }
 
@@ -2728,6 +2956,22 @@ describe('运行时 input：同一请求只有一个展示面', () => {
     useScriptInputStore.getState().onRequested({ ...req, stdout_tail: '0) raw\n1) smooth\nmode? ' })
     await openWith(report(STATES.input))
     expect(panel().querySelector('[data-script-input-output]')!.textContent).toBe('0) raw\n1) smooth\nmode?')
+  })
+
+  it('没有新提示的读取（readline）：上方那段标成脚本已有的输出；有提示的那问', async () => {
+    await mount(true)
+    useScriptInputStore.getState().onRequested({ ...req, input_kind: 'readline', prompt: '', stdout_tail: 'Your name? ' })
+    await openWith(report(STATES.input))
+    const label = panel().querySelector('[data-script-input-output-label]')
+    expect(label?.textContent).toBe('脚本到目前为止的输出')
+    expect(panel().querySelector('[data-script-input-output]')!.textContent).toBe('Your name?')
+  })
+
+  it('有提示的那一问不加「已有输出」标签', async () => {
+    await mount(true)
+    useScriptInputStore.getState().onRequested(req)
+    await openWith(report(STATES.input))
+    expect(panel().querySelector('[data-script-input-output-label]')).toBeNull()
   })
 
   it('在答题框里填的就是交出去的那一个（「回答」与框共用同一份）', async () => {
@@ -2970,11 +3214,11 @@ describe('Import Origin：「确认包名」打开框', () => {
 })
 
 describe('准备出错：后端本地详情接到已有恢复动作（P05a，AC-26）', () => {
-  it('参数被脚本自己的解析器拒绝：说"不认你填的 N 个参数"，参数编辑器直接展开，详情有参数问题类别', async () => {
+  it('传入参数后脚本仍无法继续：参数编辑器直接展开，详情有参数问题类别', async () => {
     await mount()
     await openWith(report(fromBackend('invalid_argv')))
     expect(panel().dataset.prepState).toBe('needs_args')
-    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('脚本不认你填的 2 个参数')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('已传入 2 个参数，脚本仍无法继续')
     expect(primary()?.dataset.prepPrimary).toBe('reopen')
     await toggleDetails()
     expect(details()!.querySelector('[data-prep-row="parse-kind"]')?.textContent).toContain('有参数的值不合法')
@@ -3039,6 +3283,22 @@ describe('准备出错：后端本地详情接到已有恢复动作（P05a，AC-
     expect(details()!.querySelector('[data-prep-traceback]')).not.toBeNull()
   })
 
+  it('native 读取落空后保留 script_error，仍可打开经确认的路径改写入口', async () => {
+    const payload = {
+      script: 'plot.py', requested: '/missing/input.csv', absolute: true, via: 'native', others: [],
+    }
+    await mount()
+    await openWith(report({
+      ...fromBackend('plain_exception'),
+      outcome: { kind: 'failed', code: 'script_error' },
+      requirements: [{ id: 'data', kind: 'input_location', code: 'script_error', origin: 'last_attempt', blocking: false, payload }],
+    }))
+    expect(primary()?.dataset.prepPrimary).toBe('missing_input')
+    await act(async () => primary()!.click())
+    expect(useEnvStore.getState().missingInput).toEqual(payload)
+    useEnvStore.getState().dismissMissingInput()
+  })
+
   it('读不到数据：也有「使用你的 AI 来修复」次按钮，点击起修复，主按钮不变', async () => {
     const mockFix = vi.mocked(requestAiFix)
     mockFix.mockReset()
@@ -3055,6 +3315,184 @@ describe('准备出错：后端本地详情接到已有恢复动作（P05a，AC-
     mockFix.mockReset()
     useAiFixStore.getState().reset()
     useAiStore.setState({ caps: null })
+  })
+})
+
+describe('缺数据 · 复制提议（ADR 0173）：c1–c4 四张卡', () => {
+  const copyOf = (state: string, extra: Record<string, unknown> = {}) => ({
+    state, token: 'tok-1', source: '/moved/values.csv', target: '/wanted/data/values.csv', dir: '/wanted/data', dir_name: 'data', ...extra,
+  })
+  const payloadOf = (state: string, extra: Record<string, unknown> = {}) => ({
+    script: 'plot.py', requested: '/wanted/data/values.csv', absolute: true, via: 'native', others: [], copy: copyOf(state, extra),
+  })
+  const failed = (payload: object) => report({
+    ...fromBackend('plain_exception'),
+    outcome: { kind: 'failed', code: 'script_error' },
+    provider: { plan_id: 'prep-plan', attempt_id: 'att-1', attempts: 1, dependency: null },
+    requirements: [{ id: 'data', kind: 'input_location', code: 'script_error', origin: 'last_attempt', blocking: false, payload }],
+    actions: [action('run'), action('recheck')],
+  } as never)
+  const line = () => panel().querySelector('[data-prep-line]')?.textContent ?? ''
+  const aiFix = () => panel().querySelector('[data-prep-ai-fix]')
+  const later = () => Array.from(panel().querySelectorAll('button')).find((b) => b.textContent === '稍后')
+  const click = async (el: Element | null | undefined) => {
+    await act(async () => (el as HTMLButtonElement).click())
+  }
+
+  beforeEach(() => {
+    vi.mocked(copyInputData).mockReset()
+    vi.mocked(openFullDiskAccessSettings).mockReset()
+    useInputCopyStore.getState().clear()
+    useAiFixStore.getState().reset()
+  })
+  afterEach(() => useEnvStore.getState().dismissMissingInput())
+
+  it('c1：一句话 + 主「复制过去再运行」+ 次「换一份数据」，没有 AI 修复也没有「稍后」，卡片只有一句话一个主按钮', async () => {
+    await mount()
+    await openWith(failed(payloadOf('ask')))
+    expect(panel().dataset.prepState).toBe('missing_data')
+    expect(line()).toBe('脚本要从 /wanted/data/values.csv 读数据')
+    expect(primary()?.dataset.prepPrimary).toBe('copy_run')
+    expect(primary()?.textContent).toBe('复制过去再运行')
+    expect(primary()?.title).toContain('/moved/values.csv')
+    expect(secondary()?.textContent).toBe('换一份数据')
+    expect(aiFix()).toBeNull()
+    expect(later()).toBeUndefined()
+    expect(visibleSentenceCount(panel())).toBeLessThanOrEqual(1) // 句末不带句号
+    expect(visiblePrimaryButtons(panel())).toBe(1)
+  })
+
+  it('c1 的长路径只留尾巴，不把卡片撑高', async () => {
+    const long = '/Users/someone/research/long-project-name/experiments/2026-11/raw/values.csv'
+    await mount()
+    await openWith(failed({ ...payloadOf('ask'), requested: long, copy: copyOf('ask', { target: long }) }))
+    expect(line()).toContain('…')
+    expect(line()).toContain('values.csv')
+    expect(line().length).toBeLessThan(80)
+  })
+
+  it('「复制过去再运行」：请求只带不透明令牌（没有路径、没有源）；成功就重跑', async () => {
+    vi.mocked(copyInputData).mockResolvedValue({ ok: true, state: 'done', target: '/wanted/data/values.csv' })
+    mockAct.mockResolvedValue(report() as never)
+    await mount()
+    await openWith(failed(payloadOf('ask')))
+    await click(primary())
+    expect(copyInputData).toHaveBeenCalledWith('tok-1', false)
+    expect(mockAct).toHaveBeenCalledWith('psess-1', expect.objectContaining({ action_id: 'act-run' }), 'pj-a', expect.anything())
+  })
+
+  it('目标本来就在（exists）同样重跑', async () => {
+    vi.mocked(copyInputData).mockResolvedValue({ ok: true, state: 'exists' })
+    mockAct.mockResolvedValue(report() as never)
+    await mount()
+    await openWith(failed(payloadOf('ask')))
+    await click(primary())
+    expect(mockAct).toHaveBeenCalled()
+  })
+
+  it('c2：没有权限 → 「授权后复制」主 + 「改脚本里的路径」次 + AI 修复；点授权带 elevate=true', async () => {
+    vi.mocked(copyInputData).mockResolvedValueOnce({ ok: true, state: 'denied', reason: 'access_denied' })
+    await mount()
+    await openWith(failed(payloadOf('ask')))
+    await click(primary())
+    expect(line()).toBe('没有权限写到 data')
+    expect(primary()?.dataset.prepPrimary).toBe('grant_copy')
+    expect(primary()?.textContent).toBe('授权后复制')
+    expect(secondary()?.textContent).toBe('改脚本里的路径')
+    expect(aiFix()).not.toBeNull()
+    expect(later()).toBeUndefined()
+    vi.mocked(copyInputData).mockResolvedValueOnce({ ok: true, state: 'auth_failed', reason: 'cancelled' })
+    await click(primary())
+    expect(copyInputData).toHaveBeenLastCalledWith('tok-1', true)
+  })
+
+  it('c4：授权被拒 / 仍失败 → 只剩「改脚本里的路径」与「让 AI 修复」', async () => {
+    vi.mocked(copyInputData).mockResolvedValueOnce({ ok: true, state: 'denied' })
+    await mount()
+    await openWith(failed(payloadOf('ask')))
+    await click(primary())
+    vi.mocked(copyInputData).mockResolvedValueOnce({ ok: true, state: 'auth_failed', reason: 'cancelled' })
+    await click(primary())
+    expect(line()).toBe('没能把数据复制到 data')
+    expect(primary()?.dataset.prepPrimary).toBe('rewrite_path')
+    expect(primary()?.textContent).toBe('改脚本里的路径')
+    expect(secondary()).toBeNull()
+    expect(aiFix()).not.toBeNull()
+  })
+
+  it('后端一开始就判定复制不成（父目录不存在 / 源不是文件）→ 直接是 c4，不叫用户白点一次', async () => {
+    await mount()
+    await openWith(failed(payloadOf('auth_failed', { reason: 'no_parent' })))
+    expect(primary()?.dataset.prepPrimary).toBe('rewrite_path')
+    expect(secondary()).toBeNull()
+    expect(aiFix()).not.toBeNull()
+    expect(copyInputData).not.toHaveBeenCalled()
+  })
+
+  it('c3：macOS 受保护文件夹 → 用真实文件夹名；主「打开系统设置」（悬停说怎么勾）次「改脚本里的路径」', async () => {
+    vi.mocked(copyInputData).mockResolvedValueOnce({ ok: true, state: 'macos_protected', protected_kind: 'desktop' })
+    vi.mocked(openFullDiskAccessSettings).mockResolvedValue({ ok: true, opened: true })
+    await mount()
+    await openWith(failed(payloadOf('ask')))
+    await click(primary())
+    expect(line()).toBe('桌面 受系统保护，写不进去')
+    expect(primary()?.dataset.prepPrimary).toBe('open_privacy')
+    expect(primary()?.textContent).toBe('打开系统设置')
+    expect(primary()?.title).toContain('完全磁盘访问')
+    expect(secondary()?.textContent).toBe('改脚本里的路径')
+    expect(aiFix()).not.toBeNull()
+    await click(primary())
+    expect(openFullDiskAccessSettings).toHaveBeenCalledTimes(1)
+    expect(copyInputData).toHaveBeenCalledTimes(1) // 管理员密码解决不了 TCC：没有第二次复制 / 提权
+  })
+
+  it('c3 的外置卷说卷自己的名字', async () => {
+    await mount()
+    await openWith(failed(payloadOf('macos_protected', { protected_kind: 'volume', protected_name: 'LabDisk' })))
+    expect(line()).toBe('LabDisk 受系统保护，写不进去')
+  })
+
+  it('「改脚本里的路径」直接进逐行预览：用已指认的源，不再弹选择器', async () => {
+    const preview = vi.fn().mockResolvedValue(null)
+    useEnvStore.setState({ previewRewrite: preview })
+    await mount()
+    await openWith(failed(payloadOf('auth_failed', { reason: 'no_parent' })))
+    await click(primary())
+    expect(preview).toHaveBeenCalledWith('/wanted/data/values.csv', '/moved/values.csv', 'file')
+    expect(useEnvStore.getState().missingInput?.requested).toBe('/wanted/data/values.csv')
+  })
+
+  it('「改脚本里的路径」预览失败时落回指认框并带上原因', async () => {
+    useEnvStore.setState({ previewRewrite: vi.fn().mockResolvedValue('一处都改不了') })
+    await mount()
+    await openWith(failed(payloadOf('auth_failed', { reason: 'no_parent' })))
+    await click(primary())
+    expect(useEnvStore.getState().rewriteError).toBe('一处都改不了')
+  })
+
+  it('「换一份数据」打开原来的指认框，不复制', async () => {
+    await mount()
+    await openWith(failed(payloadOf('ask')))
+    await click(secondary())
+    expect(useEnvStore.getState().missingInput?.via).toBe('native')
+    expect(copyInputData).not.toHaveBeenCalled()
+  })
+
+  it('重新运行出新尝试后，上一次的落点不再套在新卡上', async () => {
+    vi.mocked(copyInputData).mockResolvedValueOnce({ ok: true, state: 'denied' })
+    await mount()
+    await openWith(failed(payloadOf('ask')))
+    await click(primary())
+    expect(primary()?.dataset.prepPrimary).toBe('grant_copy')
+    await openWith({ ...failed(payloadOf('ask')), provider: { plan_id: 'p', attempt_id: 'att-2', attempts: 2, dependency: null } } as never)
+    expect(primary()?.dataset.prepPrimary).toBe('copy_run')
+  })
+
+  it('没有复制提议的 native 缺读取，仍是原来的「指认数据」卡', async () => {
+    await mount()
+    await openWith(failed({ script: 'plot.py', requested: '/x/y.csv', absolute: true, via: 'native', others: [] }))
+    expect(primary()?.dataset.prepPrimary).toBe('missing_input')
+    expect(later()).toBeDefined()
   })
 })
 
@@ -3313,6 +3751,41 @@ describe('打开并运行 + 后端会话内回退的呈现（V2 PR4）', () => {
       expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这个请求已经失效，请重新运行一次脚本。')
       expect(mockAct).not.toHaveBeenCalled()
       expect(primary()?.textContent).toBe('跳过这个文件夹重跑')
+    })
+  })
+
+  describe('TeX 工具链失败：卡片说针对性的那句，不是笼统的「运行出错了」（QA-WIN-29）', () => {
+    const tex = (code: string, params: Record<string, string>, remedy: unknown = { kind: 'ai_fix' }) =>
+      report({
+        phase: 'action_required',
+        outcome: { kind: 'failed', code },
+        actions: [action('run'), action('recheck')],
+        provider: { plan_id: 'p', attempt_id: 'prep-1', attempts: 1, dependency: null },
+        result: { status: 'error', error: { code, message: 'x', params, traceback: 'Traceback\nRuntimeError: boom' } },
+        remedy,
+      } as never)
+
+    it('tex_command_missing：卡上就是那句说明（含缺的命令），不摆 AI 修复', async () => {
+      await mount()
+      await openWith(tex('tex_command_missing', { command: 'latex' }))
+      const line = panel().querySelector('[data-prep-line]')!.textContent ?? ''
+      expect(line).toBe('没找到 latex。装好 TeX 后重启 Tavotto 再试。')
+      expect(panel().querySelector('[data-prep-primary]')?.textContent).toBe('再试一次')
+      expect(panel().querySelector('[data-prep-ai-fix], [data-prep-primary="ai_fix"]')).toBeNull()
+    })
+
+    it('tex_package_missing：短句，长说明在详情里', async () => {
+      await mount()
+      await openWith(tex('tex_package_missing', { file: 'foo.sty' }))
+      expect(panel().querySelector('[data-prep-line]')!.textContent).toBe('缺 LaTeX 宏包 foo.sty，装好后再试。')
+      await act(async () => { panel().querySelector<HTMLElement>('[data-prep-details-toggle]')!.click() })
+      expect(panel().querySelector('[data-prep-tex-why]')!.textContent).toContain('不是 Python 包')
+    })
+
+    it('tex_failed：原因不明也带上 traceback 末行', async () => {
+      await mount()
+      await openWith(tex('tex_failed', {}))
+      expect(panel().querySelector('[data-prep-line]')!.textContent).toContain('RuntimeError: boom')
     })
   })
 
@@ -3990,6 +4463,21 @@ describe('智能修复（ADR 0148）：每张失败卡都有「✦ 使用你的 
     expect(aiBtn()).not.toBeNull()
   })
 
+  it('没连 AI（connect_ai）：发送入口开着时主按钮是「发给我们看看」，AI 降为次按钮；入口关着维持原样', async () => {
+    await mount()
+    await openWith(report(STATES.errRemedyConnect))
+    expect(panel().querySelector('[data-send-report]')?.textContent).toBe('发给我们看看')
+    expect(primary()).toBeNull() // 主按钮是 SendReportButton，不是普通主按钮
+    expect(aiBtn()?.textContent).toBe('使用你的 AI 来修复')
+    await act(async () => root.unmount())
+    host.remove()
+    useDiagSendStore.setState({ capability: null })
+    await mount()
+    await openWith(report(STATES.errRemedyConnect))
+    expect(primary()?.dataset.prepPrimary).toBe('ai_fix')
+    expect(panel().querySelector('[data-send-report]')).toBeNull()
+  })
+
   it('没连 AI：点它打开设置的 AI 页；连好（caps 里出现可用的 AI）后自动接着进入修复，不用再点', async () => {
     mockFix.mockResolvedValue({ ok: false, reason: 'ai_fix_unavailable' })
     await mount()
@@ -4176,5 +4664,108 @@ describe('版本不合自动换 Python（ADR 0114 修订 2026-10-23）：一句�
     await openWith(report(STATES.preparing))
     expect(panel().dataset.prepState).toBe('preparing')
     expect(panel().querySelector('[data-prep-python-change]')).toBeNull()
+  })
+})
+
+describe('失败出口不是死胡同（2026-11-10）', () => {
+  const failedWith = (code: string, over: Partial<PreparationReport> = {}): Partial<PreparationReport> => ({
+    phase: 'action_required',
+    outcome: { kind: 'failed', code },
+    actions: [action('run'), action('recheck')],
+    result: { error: { code, message: 'x', traceback: 'Traceback (most recent call last):\n  File "a.py", line 1\nPermissionError: [Errno 13] denied' } } as unknown as PreparationReport['result'],
+    ...over,
+  })
+
+  beforeEach(() => {
+    useDiagSendStore.setState({ capability: { enabled: true } as never })
+  })
+  afterEach(() => {
+    useDiagSendStore.setState({ capability: null })
+  })
+
+  it('输出文件夹没写权限：那一句话是 errors 里的人话，原始报错在详情里；没有「再试一次」', async () => {
+    await mount()
+    await openWith(report(failedWith('output_folder_read_only')))
+    expect(panel().dataset.prepState).toBe('failed')
+    const line = panel().querySelector('[data-prep-line]')!.textContent!
+    expect(line).toContain('没有该文件夹的写入权限')
+    expect(line).not.toContain('PermissionError')
+    expect(panel().querySelector('[data-send-report]')?.textContent).toBe('发给我们看看')
+    expect(primary()).toBeNull()
+    await toggleDetails()
+    expect(details()!.querySelector('[data-prep-error]')?.textContent).toContain('PermissionError')
+  })
+
+  it('脚本自己 sys.exit：那一句话是 script_exited 的人话，不是「运行出错了」', async () => {
+    await mount()
+    await openWith(
+      report(failedWith('script_exited', { result: { error: { code: 'script_exited', message: 'x', traceback: 'SystemExit: 1' } } as unknown as PreparationReport['result'] })),
+    )
+    const line = panel().querySelector('[data-prep-line]')!.textContent!
+    expect(line).toContain('sys.exit()')
+    expect(line).toContain('SystemExit: 1')
+  })
+
+  it('现在还不能运行：卡片那一句话是后端给的原因，不再只有「重新检查」', async () => {
+    await mount()
+    await openWith(
+      report({
+        phase: 'action_required',
+        outcome: { kind: 'blocked', code: 'dependency_blocked' },
+        checks: [{ id: 'dependencies', status: 'blocked', code: 'dependency_blocked', detail: { reasons: ['dependency_conflict'] } }],
+        actions: [action('recheck')],
+      }),
+    )
+    expect(panel().dataset.prepState).toBe('blocked')
+    expect(panel().querySelector('[data-prep-line]')!.textContent).toContain('依赖声明互相矛盾')
+    expect(panel().querySelector('[data-send-report]')?.textContent).toBe('发给我们看看')
+    expect(panel().querySelector('[data-prep-primary="recheck"]')).toBeNull()
+  })
+
+  it('跑完没出图但判出缺数据：卡片是「找不到要读的数据」+ 指认数据', async () => {
+    await mount()
+    await openWith(
+      report({
+        phase: 'partial',
+        outcome: { kind: 'execution_finished_no_figure', code: 'no_figures_captured' },
+        requirements: [{ id: 'data', kind: 'input_location', code: 'missing_input', origin: 'last_attempt', blocking: false, payload: { script: 'plot.py', requested: null, others: [] } }] as unknown as PreparationReport['requirements'],
+        actions: [action('run'), action('recheck')],
+      }),
+    )
+    expect(panel().dataset.prepState).toBe('missing_data')
+    expect(primary()?.dataset.prepPrimary).toBe('missing_input')
+  })
+
+  it('图名归属冲突：主按钮仍是「打开接入中心」，没有 AI 次按钮', async () => {
+    await mount()
+    await openWith(
+      report({
+        phase: 'partial',
+        outcome: { kind: 'failed', code: 'multiple_stem_conflict' },
+        remedy: { kind: 'feedback', tried: [] },
+        actions: [action('recheck')],
+      }),
+    )
+    expect(primary()?.dataset.prepPrimary).toBe('open_registry')
+    expect(panel().querySelector('[data-prep-ai-fix]')).toBeNull()
+  })
+
+  it('拒绝码没有文案：详情里不渲染空行；有文案的照常显示', async () => {
+    await mount()
+    await openWith(report(failedWith('script_error')))
+    const key = Object.keys(useProjectPreparationStore.getState().entries)[0]!
+    await act(async () => {
+      useProjectPreparationStore.setState((st) => ({
+        entries: { ...st.entries, [key]: { ...st.entries[key]!, rejection: { code: 'preparation_no_such_code_xyz' } } },
+      }))
+    })
+    await toggleDetails()
+    expect(details()!.querySelector('[data-prep-rejection]')).toBeNull()
+    await act(async () => {
+      useProjectPreparationStore.setState((st) => ({
+        entries: { ...st.entries, [key]: { ...st.entries[key]!, rejection: { code: 'worker_timeout' } } },
+      }))
+    })
+    expect(details()!.querySelector('[data-prep-rejection]')?.textContent).toContain('渲染超时')
   })
 })

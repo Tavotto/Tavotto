@@ -282,6 +282,15 @@ MOVE_INTO_DIR_READ_MOVED = MOVE_INTO_DIR_READ_UNRELATED.replace(
 MOVE_INTO_DIR_READ_SOURCE = MOVE_INTO_DIR_READ_UNRELATED.replace("archive/summary.csv", "seed.txt")
 
 
+@pytest.fixture(autouse=True)
+def _guard_without_the_overlay(monkeypatch):
+    """这份文件看护的是**守卫 + 账本**（跳过并记账、回读判 material）。#1813 之后 safe worker 默认装暂存覆盖层，
+    把项目内的写 / 改名 / 删除接进暂存区、读回一致，上面这些脚本多数不再被判 blocked——覆盖层的行为在
+    `test_worker_overlay.py`。这里用运维开关 `TAVOTTO_SAFE_OVERLAY=0` 回到守卫的老行为，让守卫与账本的细则（溢出、
+    `x` 独占创建、关键字目的地、目录污点……）继续被真 worker 钉住——它们仍是覆盖层模拟不了时的退路。"""
+    monkeypatch.setenv("TAVOTTO_SAFE_OVERLAY", "0")
+
+
 @pytest.fixture
 def figs(tmp_path):
     root = tmp_path / "figs"
@@ -659,6 +668,84 @@ def test_ledger_sees_os_path_exists_even_when_it_bypasses_os_stat(tmp_path, monk
         finally:
             uninstall()
         assert getattr(os.path, name) is exists_without_os_stat  # 卸载还原的是安装前那个
+
+
+def test_ledger_probe_depth_and_busy_are_per_thread(tmp_path, monkeypatch):
+    """另一个线程正卡在被包装的 `os.path.exists` 里（探路深度 > 0），本线程的观察照样要记账。
+
+    钩子是进程全局的：脚本自己的线程、或测试遗留的后台轮询同时在探路时，若深度 / busy 是实例级共享，
+    本线程的 `exists` 会被当成「已经在探路里」而漏记（CI macOS 分片偶发红的根因）。"""
+    import os
+    import threading
+
+    inside, release = threading.Event(), threading.Event()
+    real_stat = os.stat
+
+    def slow_exists(path):
+        if str(path) == "/__other_thread_probe__":
+            inside.set()
+            release.wait(10)
+            return False
+        try:
+            real_stat(path)
+        except OSError:
+            return False
+        return True
+
+    monkeypatch.setattr(os.path, "exists", slow_exists)
+    f = tmp_path / "stale.csv"
+    f.write_text("9")
+    ledger = _ledger(tmp_path)
+    uninstall = ledger.install()
+    other = threading.Thread(target=lambda: os.path.exists("/__other_thread_probe__"), daemon=True)
+    try:
+        ledger.blocked("os.remove", "delete", str(f))
+        other.start()
+        assert inside.wait(10)  # 另一个线程此刻正在探路里
+        os.path.exists(str(f))
+        assert [o["op"] for o in ledger.material()] == ["os.remove"]
+    finally:
+        release.set()
+        other.join(10)
+        uninstall()
+
+
+def test_ledger_mkdir_context_is_per_thread(tmp_path, monkeypatch):
+    """另一个线程正卡在 `os.makedirs(..., exist_ok=True)` 里（mkdir 上下文已入栈），本线程裸 `os.mkdir`
+    撞上被拦删除留下的旧目录，照样要按「撞名」记账，不能借用别人的 `exist_ok` 豁免。
+
+    `mk_ctx` 栈和钩子一样是进程全局的：共享时本线程读到的是别人的 (exist_ok=True)，撞名被当成
+    「`exist_ok` 的重建」放过，退出码 0 的分叉漏报。"""
+    import os
+    import threading
+
+    inside, release = threading.Event(), threading.Event()
+    slow_dir = str(tmp_path / "slow_new")
+    real_mkdir = os.mkdir
+
+    def slow_mkdir(path, *args, **kwargs):
+        if str(path) == slow_dir:
+            inside.set()
+            release.wait(10)
+        return real_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "mkdir", slow_mkdir)  # 装钩时被捕获为「真」mkdir
+    old = tmp_path / "old_dir"
+    old.mkdir()
+    ledger = _ledger(tmp_path)
+    uninstall = ledger.install()
+    other = threading.Thread(target=lambda: os.makedirs(slow_dir, exist_ok=True), daemon=True)
+    try:
+        ledger.blocked("shutil.rmtree", "delete_dir", str(old))
+        other.start()
+        assert inside.wait(10)  # 另一个线程此刻正在 makedirs(exist_ok=True) 里
+        with pytest.raises(FileExistsError):
+            os.mkdir(str(old))
+        assert [o["op"] for o in ledger.material()] == ["shutil.rmtree"]
+    finally:
+        release.set()
+        other.join(10)
+        uninstall()
 
 
 def test_ledger_exists_hooks_exempt_savefig_targets_and_restore_originals(tmp_path):

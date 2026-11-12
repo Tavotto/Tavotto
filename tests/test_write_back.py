@@ -526,6 +526,154 @@ def test_a_matching_expected_mtime_lets_the_write_back_through(client, tmp_path,
     assert resp.status_code == 200, resp.get_json()
 
 
+def _bump(path: Path, data: bytes) -> None:
+    """模拟外部程序换了源文件：内容与大小都变，mtime 也往后推。"""
+    st = path.stat()
+    path.write_bytes(data)
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))
+
+
+def _assert_untouched(figs: Path, expect: dict[str, bytes]) -> None:
+    for name, data in expect.items():
+        assert (figs / name).read_bytes() == data, name
+    assert _leftovers(figs) == []
+
+
+def test_source_swapped_during_replay_is_a_409_before_any_backup(client, tmp_path, monkeypatch):
+    """QA-WIN-51：prepare 通过后、备份前（重放阶段）外部换了源图：409，新版不被备份也不被覆盖。"""
+    figs = _figs(tmp_path)
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    real_export = fresh.export
+
+    def export(stem, patches, path, fmt="pdf", dpi=600):
+        r = real_export(stem, patches, path, fmt=fmt, dpi=dpi)
+        if fmt == "pdf":
+            _bump(figs / "Fig1.pdf", b"EXTERNAL-NEW-PDF")
+        return r
+
+    fresh.export = export
+    png_before = (figs / "Fig1.png").read_bytes()
+    resp = client.post(
+        "/api/engine/update_source",
+        json={"id": "Fig1.pdf", "patches": [], "expected_mtime": _mtime(figs / "Fig1.pdf")},
+    )
+    assert resp.status_code == 409, resp.get_json()
+    assert resp.get_json()["code"] == "source_changed"
+    _assert_untouched(figs, {"Fig1.pdf": b"EXTERNAL-NEW-PDF", "Fig1.png": png_before})
+    assert _backup_files() == [], "没通过复核就不该产生备份"
+
+
+def test_source_swapped_after_backup_before_replace_rolls_back_to_zero_change(
+    client, tmp_path, monkeypatch
+):
+    """备份落盘之后、第一个替换之前外部换了源图：409，源图字节不变，无 tmp，备份目录不残留。"""
+    figs = _figs(tmp_path)
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    import shutil
+
+    real = shutil.copyfile
+    state = {"n": 0}
+
+    def copyfile(src, dst, *a, **k):
+        r = real(src, dst, *a, **k)
+        state["n"] += 1
+        if state["n"] == 2:  # 两个目标都备份完了
+            _bump(figs / "Fig1.pdf", b"EXTERNAL-NEW-PDF")
+        return r
+
+    monkeypatch.setattr(m.shutil, "copyfile", copyfile)
+    png_before = (figs / "Fig1.png").read_bytes()
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 409, resp.get_json()
+    assert resp.get_json()["code"] == "source_changed"
+    _assert_untouched(figs, {"Fig1.pdf": b"EXTERNAL-NEW-PDF", "Fig1.png": png_before})
+    assert _backup_files() == []
+
+
+def test_second_target_swapped_before_its_replace_rolls_the_first_back(
+    client, tmp_path, monkeypatch
+):
+    """PDF 已替换、轮到 PNG 前 PNG 被外部换掉：PDF 从备份回滚，409，PNG 保留外部那一版。"""
+    figs = _figs(tmp_path)
+    before_pdf = (figs / "Fig1.pdf").read_bytes()
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    real = Path.replace
+
+    def replace(self, target):
+        r = real(self, target)
+        if Path(target).name == "Fig1.pdf":
+            _bump(figs / "Fig1.png", b"EXTERNAL-NEW-PNG")
+        return r
+
+    monkeypatch.setattr(Path, "replace", replace)
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 409, resp.get_json()
+    assert resp.get_json()["code"] == "source_changed"
+    _assert_untouched(figs, {"Fig1.pdf": before_pdf, "Fig1.png": b"EXTERNAL-NEW-PNG"})
+
+
+def test_external_edit_of_both_after_first_replace_keeps_external_versions(
+    client, tmp_path, monkeypatch
+):
+    """PDF 替换后、PNG 复核前外部同时改了 PDF 和 PNG：回滚不得拿备份盖掉外部 PDF（Codex #1697 P1）。"""
+    figs = _figs(tmp_path)
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    real = m._assert_sources_unchanged
+
+    def recheck(base, paths):
+        # PDF 已发布完成；轮到复核 PNG 的这一刻，外部把两个都改了
+        if [p.name for p in paths] == ["Fig1.png"]:
+            _bump(figs / "Fig1.pdf", b"EXTERNAL-NEW-PDF")
+            _bump(figs / "Fig1.png", b"EXTERNAL-NEW-PNG")
+        return real(base, paths)
+
+    monkeypatch.setattr(m, "_assert_sources_unchanged", recheck)
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 409, resp.get_json()
+    body = resp.get_json()
+    assert body["code"] == "source_changed"
+    assert body["kept_external"] == ["Fig1.pdf"]
+    _assert_untouched(figs, {"Fig1.pdf": b"EXTERNAL-NEW-PDF", "Fig1.png": b"EXTERNAL-NEW-PNG"})
+
+
+def test_external_edit_right_after_replace_is_not_taken_as_ours(client, tmp_path, monkeypatch):
+    """PDF 刚 replace 完、记发布身份之前外部就改了它，接着 PNG 复核失败要回滚：发布身份必须是暂存文件
+    的那一版，外部 PDF 保留，不拿备份覆盖（Codex #1697 P1：替换之后才取指纹会把外部版本当成自己的）。"""
+    figs = _figs(tmp_path)
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    real = Path.replace
+
+    def replace(self, target):
+        r = real(self, target)
+        if Path(target).name == "Fig1.pdf":
+            _bump(figs / "Fig1.pdf", b"EXTERNAL-NEW-PDF")
+            _bump(figs / "Fig1.png", b"EXTERNAL-NEW-PNG")
+        return r
+
+    monkeypatch.setattr(Path, "replace", replace)
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 409, resp.get_json()
+    body = resp.get_json()
+    assert body["code"] == "source_changed"
+    assert body["kept_external"] == ["Fig1.pdf"]
+    _assert_untouched(figs, {"Fig1.pdf": b"EXTERNAL-NEW-PDF", "Fig1.png": b"EXTERNAL-NEW-PNG"})
+
+
+def test_untouched_sources_still_write_back_normally(client, tmp_path, monkeypatch):
+    figs = _figs(tmp_path)
+    hot, fresh = _pair(figs, tmp_path)
+    _use(monkeypatch, hot, fresh)
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 200, resp.get_json()
+    assert (figs / "Fig1.pdf").read_bytes() == b"NEW-pdf"
+    assert _leftovers(figs) == []
+
+
 def test_write_back_blocked_when_the_script_changed_under_the_session(
     client, tmp_path, monkeypatch
 ):

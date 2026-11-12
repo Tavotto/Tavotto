@@ -14,16 +14,20 @@
  * 前端自己的事实只有四样，都不是业务判据：网络连得上没有（`connection`）、参数草稿与会话冻结的那份是否不同（`argsChanged`）、
  * 草稿按后端 schema 还差几个必填参数（`missingArgs`）、加进画布的图首次编辑渲染好了没有（`editReady`）。
  */
-import type {
-  ConvertSourceLanguage,
-  EnvCandidate,
-  GuiDialogPayload,
-  MissingInputOffer,
-  PreparationActionKind,
-  PreparationAttempt,
-  PreparationReport,
-  PreparationRequirement,
-  WorkdirConfirmation,
+import {
+  JOINT_BLOCK_CODES,
+  type ConvertSourceLanguage,
+  type EnvCandidate,
+  type GuiDialogPayload,
+  type MissingInputCopy,
+  type MissingInputCopyState,
+  type MissingInputOffer,
+  type PreparationActionKind,
+  type PreparationAttempt,
+  type PreparationReport,
+  type PreparationRequirement,
+  type WorkdirConfirmation,
+  type JointBlockCode,
 } from '@/lib/api'
 import { listJoin } from '@/i18n/format'
 import { isRemedy, type Remedy, type RemedyEnv } from '@/lib/fixRemedy'
@@ -35,6 +39,13 @@ export type PrepPrimary =
   | { kind: 'adopt'; candidate: EnvCandidate }
   | { kind: 'workdir'; payload: WorkdirConfirmation }
   | { kind: 'missing_input'; payload: MissingInputOffer }
+  /** 缺数据 · 复制提议（ADR 0173）：把用户指认过的那份复制到脚本要的位置再运行 / 授权后复制 / 打开系统设置 / 改脚本里的路径 / 换一份数据 */
+  | { kind: 'copy_run'; payload: MissingInputOffer }
+  | { kind: 'grant_copy'; payload: MissingInputOffer }
+  | { kind: 'open_privacy' }
+  /** 直接进经确认改写脚本的逐行预览（ADR 0110）：数据已经指认过，不再弹选择器 */
+  | { kind: 'rewrite_path'; payload: MissingInputOffer }
+  | { kind: 'other_data'; payload: MissingInputOffer }
   | { kind: 'enter_edit'; count: number }
   | { kind: 'reopen'; label: 'retry' | 'continue' }
   | { kind: 'open_environment' }
@@ -53,8 +64,11 @@ export type PrepPrimary =
   | { kind: 'convert'; script: string; library: string | null; path: string | null; language?: ConvertSourceLanguage }
   /** 智能修复（ADR 0148）：「✦ 使用你的 AI 来修复」。remedy 是 `ai_fix` / `connect_ai` 时它就是主按钮；没连 AI 时点它先去连 */
   | { kind: 'ai_fix' }
-  /** 反馈卡（remedy `feedback`）：「发送」——发送问题反馈（ADR 0118，逐次确认、源码默认不勾） */
-  | { kind: 'feedback' }
+  /**
+   * 反馈卡（remedy `feedback`）：「发送」——发送问题反馈（ADR 0118，逐次确认、源码默认不勾）。
+   * `label: 'sendUs'` = 失败卡上没有别的出路时的主按钮，说「发给我们看看」（`workspace:prep.btn.sendUs`），句子沿用卡片自己的那一句
+   */
+  | { kind: 'feedback'; label?: 'sendUs' }
   /** 项目外文件夹读不了（Windows，ADR 0153 修订）：「修复权限」。`token` 是后端一次性的不透明令牌，前端不持有路径 */
   | { kind: 'repair_folder'; token: string }
   /** 脚本自带的私有依赖文件夹是为别的 Python 版本装的（ADR 0154）：「跳过这个文件夹重跑」。`token` 同上是不透明令牌 */
@@ -136,7 +150,24 @@ export interface PrepContext {
   engineExited?: boolean
   /** 教程层 / 教程项目激活：任何「连接 AI」相关 UI 都不出现（ADR 0136） */
   tutorial?: boolean
+  /** 用户点过「复制过去再运行」之后卡片该落在哪一档（`inputCopyStore`，按「尝试 + 路径」记）；没有 = 照后端载荷 */
+  copyOverrides?: Record<string, CopyOverride>
+  /**
+   * 「发送问题反馈」入口开着（`diagSendStore.capability !== null`，设置页同一判据）。是前端自己的事实、不是业务判据：
+   * 失败卡没有别的出路时主按钮才退到「发给我们看看」；入口关着（或没传）时维持原样，不摆一颗不渲染的按钮
+   */
+  canSendReport?: boolean
 }
+
+/** 复制没成功时的落点（后端 `input-copy` 的结果）；成功会直接重跑，不留在这里 */
+export interface CopyOverride {
+  state: Exclude<MissingInputCopyState, 'ask'>
+  protected_kind?: MissingInputCopy['protected_kind']
+}
+
+/** 复制提议那几张卡的状态存取键：同一次尝试里的同一条路径 */
+export const copyOverrideKey = (attemptId: string | null | undefined, requested: string | null | undefined): string =>
+  `${attemptId ?? ''}\u0000${requested ?? ''}`
 
 const has = (report: PreparationReport, kind: PreparationActionKind) =>
   report.actions.some((a) => a.kind === kind)
@@ -260,6 +291,8 @@ const FAILURE_STATES = new Set([
  * AI 只是次选（它会在可读范围里找文件、经用户确认后接上，不改脚本）。不并进 FAILURE_STATES：那会改掉它的 remedy / 主按钮行为。
  */
 const AI_SECONDARY_ONLY_STATES = new Set(['missing_data'])
+/** 后端 `texdiag.ERROR_CODES`（errors.json 的 backend.<code> 各有两种语言的说明） */
+const TEX_CODES = new Set(['tex_command_missing', 'tex_package_missing', 'tex_compile_failed', 'tex_failed'])
 const AI_PRIMARY_STATES = new Set(['failed', 'deps_failed', 'blocked', 'no_figure', 'not_registered'])
 /** Python 版本不合时主按钮换成「改用 <环境名>」/「选择运行环境」的卡（其余失败卡的主按钮照旧） */
 const PYTHON_FIX_STATES = new Set(['failed', 'blocked'])
@@ -271,14 +304,23 @@ const PYTHON_FIX_STATES = new Set(['failed', 'blocked'])
  */
 function withRemedy(view: PrepView, report: PreparationReport | null | undefined, ctx: PrepContext): PrepView {
   const remedy = report && isRemedy(report.remedy) ? report.remedy : null
-  if (!ctx.tutorial && AI_SECONDARY_ONLY_STATES.has(view.state)) return { ...view, remedy, aiFix: true }
+  // 复制提议的 c1 只有一个要用户答的问题，不摆 AI 入口；复制被拒 / 失败后（c2 起）才摆
+  if (!ctx.tutorial && AI_SECONDARY_ONLY_STATES.has(view.state)) return { ...view, remedy, aiFix: view.sentence.key !== 'copyAsk' }
   // 带修复令牌的「文件夹读不了」卡：AI 对权限无能为力（fixsession 3g 也不许它动文件夹）——只留「修复权限」一个主按钮 + 稍后，不摆 AI 入口
   // 解释器写不了 Tavotto 自己的缓存：用户代码一行没跑，改脚本没用——同样只留确定的那一颗主按钮，不摆 AI 入口
-  if (view.state === 'folder_unreadable' || view.state === 'folder_abi' || view.state === 'cache_denied') {
+  // TeX 命令 / 宏包缺失同理：这是系统里的 TeX 发行版，改脚本没用（QA-WIN-29）
+  if (
+    view.state === 'folder_unreadable' ||
+    view.state === 'folder_abi' ||
+    view.state === 'cache_denied' ||
+    view.state === 'tex_missing'
+  ) {
     return { ...view, remedy, aiFix: false }
   }
   if (ctx.tutorial || !FAILURE_STATES.has(view.state)) return { ...view, remedy }
   let out: PrepView = { ...view, remedy }
+  // 这张卡自己的主按钮就是真能走通的出路（blocked 的原因句配「选择运行环境」/「打开设置」）：remedy 不把它换成 AI
+  const ownExit = view.state === 'blocked' && (view.primary?.kind === 'pick_environment' || view.primary?.kind === 'open_environment')
   if (remedy?.kind === 'revert_ai_edit' && view.state === 'failed') {
     // 脚本自己报错、而它正是 AI 刚改出来的那一版：一句话说清是在 AI 改过之后坏的，主按钮把那次修改退回去再跑一次。
     // 「使用你的 AI 来修复」仍是次按钮（用户想保留那次修改、让 AI 接着改时走它）
@@ -290,7 +332,12 @@ function withRemedy(view: PrepView, report: PreparationReport | null | undefined
       primaryDisabled: false,
       ghost: 'later',
     }
-  } else if (remedy && (remedy.kind === 'ai_fix' || remedy.kind === 'connect_ai') && AI_PRIMARY_STATES.has(view.state)) {
+  } else if (remedy?.kind === 'connect_ai' && AI_PRIMARY_STATES.has(view.state) && !ownExit && ctx.canSendReport) {
+    // 用户还没连 AI：点「使用你的 AI 来修复」只是被带去设置页，原来想做的事还是没成——主按钮改成「发给我们看看」，
+    // AI 降为次按钮（`aiFix` 照常摆）。remedy 仍是 `connect_ai`（后端的事实不动）；这只是同一个 remedy 的按钮排序，
+    // 发送入口关着（`canSendReport` 假）时维持原样（ADR 0148 修订 2026-11-10）
+    out = { ...out, primary: { kind: 'feedback', label: 'sendUs' }, secondary: null, primaryDisabled: false, ghost: 'later' }
+  } else if (remedy && (remedy.kind === 'ai_fix' || remedy.kind === 'connect_ai') && AI_PRIMARY_STATES.has(view.state) && !ownExit) {
     out = { ...out, primary: { kind: 'ai_fix' }, secondary: null, primaryDisabled: false, ghost: 'later' }
   } else if (remedy?.kind === 'choose_environment' && AI_PRIMARY_STATES.has(view.state)) {
     // 缺的包装不了（私有库 / 本地模块 / conda-only）：确定的出路是指向装了它的 Python；AI 只是次入口（`aiFix` 照常摆），
@@ -305,7 +352,12 @@ function withRemedy(view: PrepView, report: PreparationReport | null | undefined
       primaryDisabled: false,
       ghost: 'later',
     }
-  } else if (remedy?.kind === 'feedback') {
+  } else if (remedy?.kind === 'change_python' && remedy.to === null && PYTHON_FIX_STATES.has(view.state) && ctx.canSendReport) {
+    // 版本不合、后端没有可建议的目标版本：「再试一次」必然再失败，没有别的出路就发给我们看看
+    out = { ...out, primary: { kind: 'feedback', label: 'sendUs' }, secondary: null, primaryDisabled: false, ghost: 'later' }
+  } else if (remedy?.kind === 'feedback' && view.state !== 'not_registered') {
+    // `not_registered`（图名归属冲突，remedy 是 `feedback`）保留自己的主按钮「打开接入中心」：errors.json 那句
+    // 「请在「项目接入状态」里指定用哪个」才是真能解决的路；发送入口仍在详情里
     out = {
       ...out,
       state: 'feedback',
@@ -317,7 +369,10 @@ function withRemedy(view: PrepView, report: PreparationReport | null | undefined
       slot: null,
     }
   }
-  return { ...out, aiFix: remedy?.kind !== 'switch_native' && out.primary?.kind !== 'ai_fix' }
+  // 图名归属冲突（`not_registered` + remedy `feedback`）：冲突不在脚本里，AI 修不了（ADR 0148 修订 2026-11-02），不摆 AI 次按钮。
+  // 其余 `feedback`（修法走满、缺的包认不出）照旧摆——「每次失败都出」的裁决不在这里收窄
+  const conflict = remedy?.kind === 'feedback' && view.state === 'not_registered'
+  return { ...out, aiFix: remedy?.kind !== 'switch_native' && !conflict && out.primary?.kind !== 'ai_fix' }
 }
 
 /**
@@ -470,13 +525,26 @@ function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContex
             step: 1,
           })
         }
+        if (report.no_figure_hint?.kind === 'copied_images') {
+          // 只复制现成图片的脚本（不画图）：说清楚它本来就没画图，直接打开输出的图片；不是失败卡，不摆 AI 修复（TVD-537W）
+          return view('no_figure_copied', 'noFigureCopied', v, { kind: 'open_assets' }, {
+            secondary: { kind: 'dismiss' },
+            ghost: null,
+            tone: 'mute',
+            step: 1,
+          })
+        }
+        // 脚本先判空、数据不在就什么也不画：后端把静态指认载荷（`input_location`）一并给了——与 `missing_data` 同一个出口，
+        // 不只剩一句「没有出图」（在上面的两种提示之后看，别回退 #1823 的「只复制现成图片」判断）
+        const lost = find(report, 'input_location')
+        if (lost) return missingDataView(lost, v, report, ctx)
         return view('no_figure', 'noFigure', v, { kind: 'dismiss' }, { ghost: null, tone: 'mute', step: 1 })
       }
       return view('not_registered', 'notRegistered', v, { kind: 'open_registry' }, { tone: 'bad', step: 1 })
     case 'cancelled':
       return view('cancelled', 'cancelled', v, runPrimary(report, 'runAgain'), { tone: 'mute', step: 1 })
     default:
-      return needsSomething(report, script)
+      return needsSomething(report, script, ctx)
   }
 }
 
@@ -511,8 +579,77 @@ function completed(report: PreparationReport, entry: PrepEntry, ctx: PrepContext
   })
 }
 
+/** 过长的路径中间换成 `…`，保留开头的盘符 / 根与尾巴（`/Users/…/data/values.csv`）；够短原样 */
+export function tailOfPath(path: string, max = 44): string {
+  if (path.length <= max) return path
+  const sep = path.includes('\\') && !path.includes('/') ? '\\' : '/'
+  const parts = path.split(sep)
+  const head = parts.length > 1 && parts[0] === '' ? sep + (parts[1] ?? '') : (parts[0] ?? '')
+  let tail = parts[parts.length - 1] ?? ''
+  for (let i = parts.length - 2; i > 1; i--) {
+    const next = `${parts[i]}${sep}${tail}`
+    if (head.length + 2 + next.length > max) break
+    tail = next
+  }
+  return `${head}${sep}…${sep}${tail}`
+}
+
+/**
+ * 缺数据 · 用户之前指认过这份数据（ADR 0173）：一句话 + 一个主按钮 + 至多两个次按钮，没有「稍后」（卡片只能缩小）。
+ * 每个终态至少有两条出路：c1 复制 / 换一份；c2 授权后复制；c3 打开系统设置；c4 改脚本里的路径——c2 以后都带「改脚本里的路径」与「让 AI 修复」
+ */
+function copyCard(
+  payload: MissingInputOffer,
+  copy: MissingInputCopy,
+  v: { script: string },
+  override: CopyOverride | undefined,
+): PrepView {
+  const state = override?.state ?? copy.state
+  const kind = override?.protected_kind ?? copy.protected_kind
+  const rewrite: PrepPrimary = { kind: 'rewrite_path', payload }
+  const opts = { step: 1 as const, ghost: null }
+  // 一句话不许把卡片撑高：路径只留尾巴（文件名与上一两级），完整路径在悬停说明里
+  const vals = { ...v, path: tailOfPath(copy.target), dir: copy.dir_name || copy.dir, source: copy.source, target: copy.target }
+  if (state === 'denied') return view('missing_data', 'copyDenied', vals, { kind: 'grant_copy', payload }, { ...opts, secondary: rewrite })
+  if (state === 'macos_protected') {
+    // 受保护的是哪个文件夹：桌面 / 文稿 / 下载 / iCloud 云盘由卡片按语言说名字（`folderKind`），外置卷说它自己的名字
+    const values = { ...vals, dir: copy.protected_name ?? vals.dir, folderKind: kind && kind !== 'volume' ? kind : null }
+    return view('missing_data', 'copyProtected', values, { kind: 'open_privacy' }, { ...opts, secondary: rewrite })
+  }
+  if (state === 'auth_failed') return view('missing_data', 'copyFailed', vals, rewrite, opts)
+  return view('missing_data', 'copyAsk', vals, { kind: 'copy_run', payload }, { ...opts, secondary: { kind: 'other_data', payload } })
+}
+
+/** 缺数据的卡（指认 / 复制提议）：失败的 `missing_input` 与「没出图但判出缺数据」共用这一处 */
+function missingDataView(
+  missing: Extract<PreparationRequirement, { kind: 'input_location' }>,
+  v: { script: string },
+  report: PreparationReport,
+  ctx: PrepContext,
+): PrepView {
+  const copy = missing.payload.copy
+  if (copy) return copyCard(missing.payload, copy, v, ctx.copyOverrides?.[copyOverrideKey(report.provider.attempt_id, missing.payload.requested)])
+  return view('missing_data', 'missingData', v, { kind: 'missing_input', payload: missing.payload }, { step: 1 })
+}
+
+/** 「发给我们看看」：发送入口开着才有；关着返回 null，调用方退回原来的按钮 */
+const sendUs = (ctx: PrepContext): PrepPrimary | null => (ctx.canSendReport ? { kind: 'feedback', label: 'sendUs' } : null)
+
+/**
+ * 失败码本身在 `errors:backend.<code>` 里就有一句人话、而准备卡原来只显示「运行出错了」+ 原始异常的那几个码
+ * （输出文件夹没写权限 / 脚本自己 `sys.exit` / 项目外文件夹读不了而没有一键修复令牌）：卡片的那一句话用它，原始报错仍在详情里
+ */
+const ERROR_TEXT_CODES = new Set(['output_folder_read_only', 'script_exited', 'import_folder_unreadable'])
+/** 其中没有任何动作能让「再试一次」成功的：没有别的出路就发给我们看看 */
+const ERROR_TEXT_RETRY_FUTILE = new Set(['output_folder_read_only', 'import_folder_unreadable'])
+/** 联合计划 `blocked` 的原因里，有一条用户能走通的出路的（其余是改依赖声明 / 后端判定，没有一键的修法） */
+const BLOCKED_OWN_EXIT: Record<string, PrepPrimary> = {
+  dependency_declaration_unsupported: { kind: 'pick_environment' },
+  dependency_target_unavailable: { kind: 'open_environment' },
+}
+
 /** 等用户 / 走不通：先看要先答的事，再看结局 */
-function needsSomething(report: PreparationReport, script: string): PrepView {
+function needsSomething(report: PreparationReport, script: string, ctx: PrepContext): PrepView {
   const v = { script }
   const env = find(report, 'environment_choice')
   if (env) {
@@ -532,7 +669,13 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
     })
   }
   const pinned = find(report, 'dependency_pinned')
-  if (pinned) return view('deps_pinned', 'envLocked', v, { kind: 'open_environment' })
+  if (pinned) {
+    // 后端量到被固定的解释器里缺哪些 import 就一并列出来（一行，QA-WIN-12）；没量到保持原来的笼统一句
+    const missing = (pinned.payload?.missing ?? []).filter((n): n is string => typeof n === 'string' && n !== '')
+    return missing.length > 0
+      ? view('deps_pinned', 'envLockedMissing', { ...v, names: listJoin(missing) }, { kind: 'open_environment' })
+      : view('deps_pinned', 'envLocked', v, { kind: 'open_environment' })
+  }
   const scope = find(report, 'dependency_scope_choice')
   if (scope) {
     return view('deps_scope', 'depsScope', v, has(report, 'prepare_dependencies') ? act('prepare_dependencies', 'switchScope') : null)
@@ -570,7 +713,7 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
   const missing = find(report, 'input_location')
   const code = report.outcome.code ?? ''
   if (report.outcome.kind === 'failed' && code === 'script_needs_arguments') {
-    // 用户已经给了参数、脚本自己的解析器仍然拒绝（P05a：`params.argv_count` 来自后端本地错误详情）：别再说"要参数"
+    // 用户已经给了参数、脚本仍因参数停下（`params.argv_count` 来自后端本地错误详情）：别再说"没有传入"
     const given = Number(report.result?.error?.params?.argv_count)
     return given > 0
       ? view('needs_args', 'argsRejected', { count: given }, { kind: 'reopen', label: 'continue' }, { slot: 'args', argsOpen: true })
@@ -595,7 +738,7 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
           : 'fileOpsBlocked'
     return view('file_ops_blocked', key, v, null, { tone: 'bad', step: 1 })
   }
-  if (missing) return view('missing_data', 'missingData', v, { kind: 'missing_input', payload: missing.payload }, { step: 1 })
+  if (missing) return missingDataView(missing, v, report, ctx)
   const fallback = has(report, 'recheck') ? act('recheck', 'recheck') : null
   switch (report.outcome.kind) {
     case 'stale':
@@ -607,7 +750,7 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
         // 找不到能跑它的那一套：与缺组件同一张卡（检测模式下后端通常直接给安装待办；没有安装动作时到设置里看）
         return view('env_blocked', 'install', v, has(report, 'prepare_dependencies') ? act('prepare_dependencies', 'install') : { kind: 'open_environment' }, { slot: 'install' })
       }
-      return view('blocked', 'blocked', v, fallback)
+      return blockedView(report, v, fallback, ctx)
     case 'failed':
       if (report.outcome.reason === 'dependency_preparation') return view('deps_failed', 'depsFailed', v, fallback, { tone: 'bad' })
       if (code === 'script_needs_input' || code === 'script_input_timeout') {
@@ -623,9 +766,12 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
       if (code === 'interpreter_cache_denied') {
         // 这个 Python 在 Tavotto 的缓存里建不了目录（脚本还没开始跑）：后端说得出该清哪一层选择就给「改用自带的 Python」，
         // 说不出（失败的本来就是 Tavotto 自己的解释器）就只说这句事实 + 再试一次
+        // 说不出（失败的本来就是 Tavotto 自己的解释器）：「再试一次」必然再失败，改成发给我们看看（发送入口关着才维持原样）
         const sw = report.result?.error?.params?.switch
         const primary: PrepPrimary | null =
-          sw === 'global' || sw === 'project' || sw === 'both' ? { kind: 'use_builtin_python', scope: sw } : (runPrimary(report, 'retry') ?? fallback)
+          sw === 'global' || sw === 'project' || sw === 'both'
+            ? { kind: 'use_builtin_python', scope: sw }
+            : (sendUs(ctx) ?? runPrimary(report, 'retry') ?? fallback)
         return view('cache_denied', 'cacheDenied', v, primary, { tone: 'bad', step: 1 })
       }
       if (code === 'import_folder_unreadable') {
@@ -645,6 +791,24 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
           return view('folder_abi', 'folderAbi', values, { kind: 'skip_folder', token }, { tone: 'bad', step: 1 })
         }
       }
+      if (TEX_CODES.has(code)) {
+        // TeX 工具链失败（缺命令 / 缺宏包或字体 / 编译错误 / 原因不明）：说 errors:backend.<code> 那句针对性说明，
+        // 不再落成笼统的「运行出错了」。参数来自后端 `pool.recovery_params`（command / file / line）；
+        // `tex_failed` 的 {{error}} 取 traceback 末行，与失败卡详情同一读法
+        const params = report.result?.error?.params
+        const tb = (report.result?.error?.traceback ?? '').split('\n').map((l) => l.trim()).filter(Boolean)
+        const values = { ...v, ...params, code, error: String(tb[tb.length - 1] ?? report.result?.error?.message ?? '') }
+        const missing = code === 'tex_command_missing' || code === 'tex_package_missing'
+        const key = code === 'tex_command_missing' ? 'texCommand' : code === 'tex_package_missing' ? 'texPackage' : 'tex'
+        return view(missing ? 'tex_missing' : 'failed', key, values, runPrimary(report, 'retry') ?? fallback, { tone: 'bad', step: 1 })
+      }
+      if (ERROR_TEXT_CODES.has(code)) {
+        const params = report.result?.error?.params
+        const tb = (report.result?.error?.traceback ?? '').split('\n').map((l) => l.trim()).filter(Boolean)
+        const values = { ...v, ...params, textKey: `backend.${code}`, error: String(tb[tb.length - 1] ?? report.result?.error?.message ?? '') }
+        const retry = runPrimary(report, 'retry') ?? fallback
+        return view('failed', 'errorText', values, (ERROR_TEXT_RETRY_FUTILE.has(code) ? sendUs(ctx) : null) ?? retry, { tone: 'bad', step: 1 })
+      }
       // 换成原样运行之后又出错了：一句话说明已经换过（脚本自己的错误原文与运行记录在详情里），主按钮仍是再试一次
       return view('failed', fellBack(report) ? 'failedAfterFallback' : 'failed', v, runPrimary(report, 'retry') ?? fallback, {
         tone: 'bad',
@@ -655,6 +819,20 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
     default:
       return view('attention', 'attention', v, runPrimary(report) ?? fallback)
   }
+}
+
+/**
+ * 「现在还不能运行」（`blocked`，检查就判定走不通且不是缺环境）：把后端给的原因那一句当卡片的话（与依赖弹窗同一张 `engine.dependencyBlocked_*` 表，
+ * 码闭集 = `JOINT_BLOCK_CODES`）。主按钮按原因给能走通的出路；确定性原因下「重新检查」必败，退到发给我们看看（发送入口关着才留「重新检查」）。
+ */
+function blockedView(report: PreparationReport, v: { script: string }, fallback: PrepPrimary | null, ctx: PrepContext): PrepView {
+  const check = report.checks.find((c) => c.id === 'dependencies' && c.status === 'blocked')
+  const reasons = Array.isArray(check?.detail?.reasons) ? (check.detail.reasons as unknown[]) : []
+  const code = [check?.code, ...reasons].find((c): c is JointBlockCode => (JOINT_BLOCK_CODES as readonly unknown[]).includes(c))
+  if (!code) return view('blocked', 'blocked', v, fallback)
+  return view('blocked', 'errorText', { ...v, textKey: `engine.dependencyBlocked_${code}` }, BLOCKED_OWN_EXIT[code] ?? sendUs(ctx) ?? fallback, {
+    tone: 'bad',
+  })
 }
 
 /**

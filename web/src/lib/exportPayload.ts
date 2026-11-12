@@ -3,7 +3,8 @@ import { figureOriginFields, figureOriginFor, figureSnapshotFor } from './figure
 import { artifactRequestFields } from './artifactValidation'
 import type { ExportObject } from './api'
 import type { CanvasObject } from '@/types/document'
-import { panelRotation } from '@/types/document'
+import { panelRotation, shapeStrokeOn } from '@/types/document'
+import { DEFAULT_LINE_CAP, defaultLineJoin, strokeOpacityOf } from './shapeGeometry'
 
 /**
  * 画布对象 → 导出载荷。
@@ -61,10 +62,14 @@ function toExportObject(o: CanvasObject): ExportObject {
         // `fontFamily` 没设过 = 继承默认（衬线），**不发**——后端缺省就是它，
         // 发一个等价的显式值只会让老文档的载荷凭空多一个字段。
         font_family: o.fontFamily,
+        // 原图字体的身份（ADR 0164）：没有就不发；有就原样发（后端 `sourcefont.parse_source_font` 校验）
+        source_font: o.sourceFont,
         // 同理：`interpretation` 没设过 = auto = 后端缺省，不发。
         interpretation: o.interpretation,
         // 同理：`textFormat` 没设过 = 旧标记 = 后端缺省，不发（ADR 0152）。
         text_format: o.textFormat,
+        // 排向：缺席 = 横排 = 后端缺省，不发（ADR 0163）。
+        writing_mode: o.writingMode,
         underline: o.underline || undefined,
         line_height: o.lineHeight,
         padding_mm: o.padding || undefined,
@@ -85,7 +90,13 @@ function toExportObject(o: CanvasObject): ExportObject {
         // 新端型只在文档写了新字段时发；后端在缺失时按旧 head 推导
         head_start: o.headStart,
         head_end: o.headEnd,
+        // 端型大小：缺省 / 中 = 不发（ADR 0174）
+        head_size_start: o.headSizeStart && o.headSizeStart !== 'medium' ? o.headSizeStart : undefined,
+        head_size_end: o.headSizeEnd && o.headSizeEnd !== 'medium' ? o.headSizeEnd : undefined,
         dash: o.dash && o.dash !== 'solid' ? o.dash : undefined,
+        stroke_opacity: strokeOpacityOf(o.strokeOpacity),
+        line_cap: o.lineCap && o.lineCap !== DEFAULT_LINE_CAP ? o.lineCap : undefined,
+        line_join: o.lineJoin && o.lineJoin !== 'round' ? o.lineJoin : undefined,
         rotation_deg: o.rotationDeg || undefined,
       }
     case 'shape':
@@ -103,6 +114,11 @@ function toExportObject(o: CanvasObject): ExportObject {
         sides: o.shape === 'polygon' ? (o.sides ?? 6) : undefined,
         fill_opacity: o.fill && o.fillOpacity != null && o.fillOpacity < 1 ? o.fillOpacity : undefined,
         dash: o.dash && o.dash !== 'solid' ? o.dash : undefined,
+        // 无边框只对封闭形状发（直线 / 大括号只有描边）；无边框时描边相关的其余字段都不发
+        stroke: shapeStrokeOn(o) ? undefined : false,
+        stroke_opacity: shapeStrokeOn(o) ? strokeOpacityOf(o.strokeOpacity) : undefined,
+        line_cap: o.lineCap && o.lineCap !== DEFAULT_LINE_CAP ? o.lineCap : undefined,
+        line_join: o.lineJoin && o.lineJoin !== defaultLineJoin(o.shape) ? o.lineJoin : undefined,
         rotation_deg: o.rotationDeg || undefined,
       }
   }

@@ -775,7 +775,8 @@ class PdfWriter:
             face = use.face
             k = 1000.0 / face.upem
             out.append(f"/{use.name} {_num(run.size)} Tf")
-            out.append(f"1 0 0 1 {_num(node.x + pen)} {_num(node.y)} Tm")
+            skew = ir.SYNTH_ITALIC_SKEW if run.synth_italic else 0
+            out.append(f"1 0 {_num(skew)} 1 {_num(node.x + pen)} {_num(node.y)} Tm")
             cur_rise: float | None = None
             tj: list[str] = []
 
@@ -804,6 +805,11 @@ class PdfWriter:
             glyphs = run.glyphs
             if run.invisible:
                 out.append("3 Tr")  # 不画、只进文本层（ADR 0152 §七）；本段末尾 `0 Tr` 还原
+            elif run.synth_bold:
+                # 模拟粗体：填充 + 同色描边。字形还是原字形，文本层不变（ADR 0169 修订）
+                width = ir.synth_bold_width(run.size)
+                out.append(f"{_rgb(node.paint.rgb)} RG {_num(width)} w 1 j 2 Tr")
+            reset_mode = run.invisible or run.synth_bold
             if run.actual_text is not None:
                 # run 级 ActualText（合成上下标）：整段一个 TJ，基线 = run.rise
                 set_rise(run.rise)
@@ -814,7 +820,7 @@ class PdfWriter:
                     put(g)
                 flush()
                 out.append("EMC")
-                if run.invisible:
+                if reset_mode:
                     out.append("0 Tr")
                 continue
             i = 0
@@ -839,7 +845,7 @@ class PdfWriter:
                         put(g)
                 i = j
             flush()
-            if run.invisible:
+            if reset_mode:
                 out.append("0 Tr")
         out += ["ET", "Q"]
         return "\n".join(out)

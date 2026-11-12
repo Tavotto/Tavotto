@@ -931,3 +931,53 @@ describe('完成回调的项目归属（动态 import 之后复核）', () => {
     }
   })
 })
+
+describe('准备会话成功后把 PdfPages 账本交给导出窗口读的那个 store（QA-MAC-02）', () => {
+  const ledger = [
+    { name: 'all.pdf', pages: 2, captured: 2, stems: ['a', 'b'], path: 'all.pdf', scope: 'project' as const, page_stems: ['a', 'b'], complete: true },
+  ]
+  const done = (over: Partial<PreparationReport> = {}) =>
+    prepReport({
+      phase: 'completed', outcome: { kind: 'succeeded' }, observation_seq: 2,
+      facts: { execution_finished: true, figure_captured: true },
+      target: { kind: 'script', script: 'plot.py', entry: '__main__', asset_id: null, stem: null, run_config: 'cfg-1' },
+      captured: [{ asset_id: 'runtime:plot.py#a' } as never],
+      ...over,
+    })
+  const settle = async () => { for (let i = 0; i < 5; i++) await flush() }
+
+  afterEach(async () => {
+    const { useScriptRunStore } = await import('@/store/scriptRunStore')
+    useScriptRunStore.getState().clear()
+  })
+
+  it('完成报告带账本：记到脚本名下，并带这次运行的配置引用；重跑成没有账本则清掉', async () => {
+    const { useScriptRunStore } = await import('@/store/scriptRunStore')
+    mockCreate.mockResolvedValueOnce(prepReport())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockGet.mockResolvedValueOnce(done({ pdf_pages: ledger }))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    await settle()
+    const rec = useScriptRunStore.getState().byScript['plot.py']
+    expect(rec?.pdfPages).toEqual(ledger)
+    expect(rec?.pdfPagesRunConfig).toBe('cfg-1')
+    mockGet.mockResolvedValueOnce(done({
+      observation_seq: 3,
+      provider: { plan_id: 'prep-plan', attempt_id: 'attempt-2', attempts: 2, dependency: null },
+    }))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    await settle()
+    expect(useScriptRunStore.getState().byScript['plot.py']?.pdfPages).toBeUndefined()
+  })
+
+  it('没有捕获到图的完成报告不动账本', async () => {
+    const { useScriptRunStore } = await import('@/store/scriptRunStore')
+    useScriptRunStore.getState().recordPdfPages('plot.py', ledger, '')
+    mockCreate.mockResolvedValueOnce(prepReport())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockGet.mockResolvedValueOnce(done({ captured: [] }))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    await settle()
+    expect(useScriptRunStore.getState().byScript['plot.py']?.pdfPages).toEqual(ledger)
+  })
+})

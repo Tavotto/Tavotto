@@ -8,12 +8,12 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { Spinner } from '@/components/ui/Spinner'
 import { SwapText } from '@/components/ui/SwapText'
 import { runUndoRedo } from '@/hooks/useKeyboard'
-import { ANCHORED_HINTS, hintDismissTimer, useHintStore } from '@/lib/onboarding/hints'
+import { ANCHORED_HINTS, hintDismissTimer, isCardHint, useHintStore } from '@/lib/onboarding/hints'
 import { literal, msg, t as translate, type UiMessage } from '@/i18n'
 import { useFormatMessage } from '@/i18n/react'
 import type { DismissTimer } from '@/lib/dismissTimer'
 import { DURATION, usePresence } from '@/lib/motion'
-import { cn } from '@/lib/utils'
+import { ALT, MOD, cn } from '@/lib/utils'
 import { useCanvasToolbarVisible } from './CanvasToolbar'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
@@ -196,7 +196,7 @@ function Toast({
   )
 }
 
-/** 错误 toast 的正文（胶囊里的一行）：「这一步没有完成：」+ 原因，截断；全文在 title 与「复制详情」里 */
+/** 错误 toast 的正文（胶囊里的一行）：只有原因那一句，不加前缀（红色图标已经说了「没成」）；放不下才截断，全文在 title 与「复制详情」里 */
 function ErrorBody({ text }: { text: string }) {
   const { t } = useTranslation('workspace')
   const [copied, setCopied] = useState(false)
@@ -207,8 +207,6 @@ function ErrorBody({ text }: { text: string }) {
   }, [copied])
   return (
     <div className="flex min-w-0 flex-1 items-center gap-1.5">
-      <span className="shrink-0 font-medium text-ink">{t('status.errorTitle')}</span>
-      <span aria-hidden className="shrink-0 text-ink-faint">·</span>
       {/* 截断落在里层且是块级：行内的 span 上 overflow / text-overflow 不生效，长路径会穿到按钮底下（Codex #995） */}
       <SwapText className="min-w-0 flex-1" textClassName="block truncate text-ink-2" text={text} title={text} />
       <Button
@@ -316,11 +314,12 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   // 带锚点的提示（`ANCHORED_HINTS`）由锚点所在组件自己画，不进这条轨；它仍占 current 的槽位
   // live region 仍取 current（锚点提示的画面由锚点组件画，但读屏照样要听见；锚点组件自己不加 aria-live，免得播两遍）
   const current = useHintStore((s) => s.current)
-  const hint = current && ANCHORED_HINTS.has(current) ? null : current
+  // 动画卡（ADR 0177）同理：由 `components/hints/HintCard` 画，轨上不出，活动区照播
+  const hint = current && (ANCHORED_HINTS.has(current) || isCardHint(current)) ? null : current
   const hintToken = useHintStore((s) => s.token)
   const dismissHint = useHintStore((s) => s.dismiss)
   const hintText = hint ? t(`hints.${hint}`) : ''
-  const liveHintText = current ? t(`hints.${current}`) : ''
+  const liveHintText = current ? t(`hints.${current}`, { alt: ALT, mod: MOD }) : ''
   const toolbarUp = useCanvasToolbarVisible()
 
   // 「编辑原图」这一次把图加进了文档（此前不在）：说出口，并给撤销；回排版 / 撤销即消失
@@ -584,7 +583,11 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
             <div
               ref={railRef}
               data-notification-rail
-              className="pointer-events-none fixed inset-x-0 bottom-6 z-toast flex flex-col items-center gap-1.5 px-4"
+              className={cn(
+                'pointer-events-none fixed inset-x-0 z-toast flex flex-col items-center gap-1.5 px-4',
+                // 画布底部的浮动工具栏在模态后面也在：胶囊停在它上方，不压住它
+                toolbarUp ? 'bottom-16' : 'bottom-6',
+              )}
             >
               {toasts}
             </div>,

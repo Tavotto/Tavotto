@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  BookOpen,
   Check,
   ChevronDown,
   CircleAlert,
@@ -18,16 +19,15 @@ import {
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   newBlankDocument,
-  openLayoutDocument,
-  openRecentDocument,
+  openRecentEntry,
   setDocumentName,
 } from '@/store/actions'
-import { requestRelinkMissing } from '@/lib/clipboard'
 import { runUndoRedo } from '@/hooks/useKeyboard'
-import { createPackage, openPackage } from '@/lib/api'
+import { createPackage } from '@/lib/api'
 import { chooseProjectPackage } from '@/lib/projectPackageEntry'
+import { openPackageFile } from '@/lib/packageImport'
 import { PRODUCT_NAME } from '@/lib/brand'
-import { dragRegionProps, TRAFFIC_LIGHTS_INSET, WINDOW_CONTROLS_INSET, windowChrome } from '@/lib/desktop'
+import { dragRegionProps, isDesktop, TRAFFIC_LIGHTS_INSET, WINDOW_CONTROLS_INSET, windowChrome } from '@/lib/desktop'
 import { keyOf } from '@/lib/keymap'
 import { foreignProjectLabel } from '@/lib/projectLabel'
 import { currentProjectId } from '@/lib/session'
@@ -51,7 +51,7 @@ import {
 import { runManualSave } from '@/store/actions'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { useUiStore } from '@/store/uiStore'
-import { useUpdateStore } from '@/store/updateStore'
+import { fetchNewerDesktopBuild, useUpdateStore } from '@/store/updateStore'
 import { BrandMark } from './ui/BrandMark'
 import { Button } from './ui/Button'
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from './ui/Menu'
@@ -61,12 +61,14 @@ import { Tip } from './ui/Tooltip'
 import { useRenameFocusReturn } from './ui/useRenameFocusReturn'
 import type { StatusTone } from './ui/Notice'
 import { BuildMismatchChip } from './BuildMismatchChip'
+import { DesktopUpdateChip } from './DesktopUpdateChip'
 import { TutorialChip, useTutorialChipVisible } from './onboarding/TutorialChip'
 import { ContactButton } from './contact/ContactButton'
 import { ConflictActions, ConflictDetail } from './DocumentBanner'
 import { RestoreIssueBody, RestoreMetaBody } from './RestoreIssueBody'
 import { useWindowFullscreen } from '@/hooks/useWindowChrome'
 import { MOD, cn } from '@/lib/utils'
+import { journalCatalogUi } from '@/lib/journalUi'
 import { msg, t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
 import { useFormatMessage } from '@/i18n/react'
@@ -118,6 +120,7 @@ export function TopBar() {
         </span>
         <DocumentMenu />
         <SaveStateLabel />
+        <JournalChip />
       </div>
 
       {/* 撤销 / 重做挨着导出（2026-10-07 设计审计 §10.1 P2）：此前孤零零在顶栏正中，离它撤的东西（左边的文档）
@@ -125,6 +128,7 @@ export function TopBar() {
           导出是顶栏唯一填色主动作 */}
       <div className="flex min-w-0 shrink-0 items-center justify-end gap-2 max-[899px]:gap-1">
         <TutorialChip />
+        <DesktopUpdateChip />
         <BuildMismatchChip />
         <UndoRedo />
         {/* 联系作者（ADR 0145）：撤销重做与导出之间的次级胶囊，不抢导出这颗主按钮；窄于 900 只留图标。
@@ -203,18 +207,7 @@ function importPackage() {
     if (!file) return
     const ui = useUiStore.getState()
     try {
-      const res = await openPackage(file)
-      await openLayoutDocument(res.doc)
-      const missing = requestRelinkMissing()
-      const drift = res.drifted.length
-      if (!missing && !drift) {
-        ui.setStatus(
-          msg('status.packageOpened', { createdAt: res.manifest.created_at ?? '' }, 'workspace'),
-          'done',
-        )
-      } else if (drift) {
-        ui.setStatus(msg('status.packageDrift', { count: drift }, 'workspace'), 'error')
-      }
+      await openPackageFile(file)
     } catch (e) {
       ui.setStatus(
         msg(
@@ -299,7 +292,37 @@ const PILL_TONE: Record<StatusTone, string> = {
   info: 'bg-info-surface text-info-content inset-ring inset-ring-info-border',
   ok: 'bg-ok-surface text-ok-content inset-ring inset-ring-ok-border',
   warn: 'bg-warn-surface text-warn-content inset-ring inset-ring-warn-border',
-  danger: 'bg-danger-surface text-danger-content inset-ring inset-ring-danger-border',
+  // 只描红框、不铺红底（2026-11-11 用户裁定：红色填充太重）
+  danger: 'text-danger-content inset-ring inset-ring-danger-border hover:bg-surface-hover',
+}
+
+/**
+ * 这份排版按哪本期刊检查（2026-11-11「期刊贯通」）：期刊名贴在文档名后面，点它去设置 › 期刊规范。
+ * 没按期刊 / 期刊入口关着时不渲染；窄于 900 只留图标（名字给读屏与气泡）。只读文档绑定，不另判什么。
+ */
+function JournalChip() {
+  const { t } = useTranslation('workspace')
+  const label = useDocumentStore((s) => (journalCatalogUi() ? s.doc.profile?.journalRef?.label : undefined))
+  if (!label) return null
+  const title = t('topbar.journalTitle', { journal: label })
+  return (
+    <Tip label={title} side="bottom" tone="light">
+      <button
+        type="button"
+        data-topbar-journal
+        aria-label={title}
+        onClick={() => useUiStore.getState().setSettingsOpen(true, 'spec')}
+        className={cn(
+          'inline-flex h-6 min-w-0 max-w-48 shrink items-center gap-1 rounded-full px-2 text-xs font-medium outline-none',
+          'focus-visible:focus-ring',
+          PILL_TONE.neutral,
+        )}
+      >
+        <BookOpen size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
+        <span className="truncate max-[899px]:sr-only">{label}</span>
+      </button>
+    </Tip>
+  )
 }
 
 function useDocIssue(): DocIssue | null {
@@ -669,8 +692,15 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
   if (issue === 'too_new' && notice?.kind === 'schema_too_new') {
     return (
       <>
-        {head(t('docBanner.tooNewTitle', { schema: notice.schema }), t('docBanner.tooNewBody'))}
+        {head(t('docBanner.tooNewTitle', { product: PRODUCT_NAME }), t('docBanner.tooNewBody', { product: PRODUCT_NAME }))}
         {row(
+          <>
+          {/* 桌面版：主按钮直接去查新版（查到顺手下载）；浏览器版没有壳里的更新通道，保持「知道了」 */}
+          {isDesktop() && (
+            <Button variant="primary" size="sm" data-docbanner-check-update onClick={done(() => void checkNewerBuild())}>
+              {t('docBanner.checkUpdate')}
+            </Button>
+          )}
           <Button
             size="sm"
             onClick={done(() => {
@@ -680,12 +710,34 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
             })}
           >
             {t('docBanner.dismiss')}
-          </Button>,
+          </Button>
+          </>,
         )}
       </>
     )
   }
   return null
+}
+
+/** 「检查更新」之后用一条 toast 说结果；有新版但没下好时，toast 上的动作直接下载并更新 */
+async function checkNewerBuild(): Promise<void> {
+  const ui = useUiStore.getState()
+  const outcome = await fetchNewerDesktopBuild()
+  if (outcome === 'ready') {
+    ui.setStatus(msg('docBanner.updateReady', undefined, 'workspace'), 'info')
+  } else if (outcome === 'found') {
+    const version = useUpdateStore.getState().desktopUpdate?.version ?? ''
+    ui.setStatus(msg('docBanner.updateFound', { version }, 'workspace'), 'info', {
+      action: {
+        label: msg('docBanner.updateInstall', undefined, 'workspace'),
+        run: () => void useUpdateStore.getState().installDesktop(),
+      },
+    })
+  } else if (outcome === 'none') {
+    ui.setStatus(msg('docBanner.updateNone', undefined, 'workspace'), 'info')
+  } else {
+    ui.setStatus(msg('docBanner.updateCheckFailed', undefined, 'workspace'), 'error')
+  }
 }
 
 export function DocumentMenu() {
@@ -800,7 +852,7 @@ export function DocumentMenu() {
         recent.map((r) => (
           <MenuItem
             key={JSON.stringify([r.format ?? 'legacy', r.id])}
-            onSelect={() => openRecentDocument(r.id, ...(r.format === 'v4' ? [r.format] : []))}
+            onSelect={() => void openRecentEntry(r)}
             shortcut={formatTime(r.savedAt)}
           >
             {/* 文档名是用户内容，作为插值原样透出 */}

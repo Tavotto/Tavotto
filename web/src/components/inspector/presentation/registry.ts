@@ -101,6 +101,7 @@ const CONTROL_BY_TYPE: Record<EditableField['type'], ControlKind> = {
   rect: 'rect',
   order: 'order',
   number_list: 'number-list',
+  gradient: 'gradient',
 }
 
 export function controlKindOf(role: string, field: EditableField): ControlKind {

@@ -261,7 +261,8 @@ def inspect_produced(
 
     out: list[exportjob.Produced] = []
     for p in produced:
-        if p.error_code is not None or p.tmp_path is None:
+        if p.error_code is not None or p.tmp_path is None or p.format == exportjob.SCRIPT_KEY:
+            # 脚本不是图：它的「对不对」已经由重放验证量过（ADR 0171）
             out.append(p)
             continue
         # 多页 PDF（#1370）：检查器只读首页，所以**每一页**各自带着自己的单页文件走同一套检查，

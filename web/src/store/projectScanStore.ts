@@ -77,6 +77,8 @@ let slowTimer: ReturnType<typeof setTimeout> | null = null
 let pollStep = 0
 /** 连续失败的补拉次数；任何一次成功落地清零 */
 let pollFailures = 0
+/** 用户关掉那张条时，那一轮扫描看到的证据摘要；`refresh` 重扫的证据没变就沿用这次「关掉」 */
+let dismissedRevision: string | null = null
 let startInflight: { pj: string | null; promise: Promise<ProjectScan | null> } | null = null
 
 function stopTimers(): void {
@@ -119,10 +121,19 @@ export const useProjectScanStore = create<ProjectScanState>((set, get) => {
   const land = (data: ProjectScan) => {
     const prev = get().scan
     const sameRound = prev?.scan_id === data.scan_id
+    // 「刷新项目」顺带重扫（reason=refresh）：证据与用户关掉那张条时一样，就还是关着——
+    // 否则每次刷新都把选了「稍后」的待准备脚本再弹一遍
+    const stillDismissed =
+      data.reason === 'refresh' &&
+      data.state !== 'running' &&
+      !!dismissedRevision &&
+      data.evidence_revision === dismissedRevision &&
+      get().dismissedScanId !== null
     set({
       scan: data,
       error: null,
       pollLost: false,
+      ...(stillDismissed ? { dismissedScanId: data.scan_id } : {}),
       // 新的一轮扫描（新的 scan_id）自然会再提示；同一轮里关掉的就一直关着
       ...(sameRound ? {} : { slow: false }),
     })
@@ -200,9 +211,10 @@ export const useProjectScanStore = create<ProjectScanState>((set, get) => {
     start: (opts) => {
       const pj = currentProjectId()
       if (!opts?.force && startInflight && startInflight.pj === pj) return startInflight.promise
-      if (opts?.force) {
+      if (opts?.force && opts.reason !== 'refresh') {
         // 重新检查 = 新的一轮：之前关掉的条应当回来
         set({ dismissedScanId: null, forced: false })
+        dismissedRevision = null
       }
       const promise = request(
         () => startProjectScan({ force: opts?.force === true, reason: opts?.reason ?? 'claim' }),
@@ -231,15 +243,20 @@ export const useProjectScanStore = create<ProjectScanState>((set, get) => {
 
     hide: () => {
       const scan = get().scan
+      dismissedRevision = scan?.evidence_revision ?? null
       set({ dismissedScanId: scan?.scan_id ?? null, forced: false })
     },
 
-    reopen: () => set({ dismissedScanId: null, forced: true }),
+    reopen: () => {
+      dismissedRevision = null
+      set({ dismissedScanId: null, forced: true })
+    },
 
     clear: () => {
       generation += 1
       stopTimers()
       startInflight = null
+      dismissedRevision = null
       set({ scan: null, error: null, pollLost: false, dismissedScanId: null, forced: false, slow: false })
     },
   }
@@ -253,4 +270,5 @@ export function resetProjectScanBookkeeping(): void {
   generation += 1
   stopTimers()
   startInflight = null
+  dismissedRevision = null
 }

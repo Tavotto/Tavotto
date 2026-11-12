@@ -15,6 +15,7 @@ FALLBACK_CHAINS: dict[str, tuple[str, ...]] = {
     "sans-serif": ("Arial", "Helvetica", "sans-serif"),
     "monospace": ("'Courier New'", "Courier", "monospace"),
     "cjk": ("'Microsoft YaHei'", "'PingFang SC'", "'Noto Sans CJK SC'", "sans-serif"),
+    "cjk-serif": ("'Songti SC'", "SimSun", "'Noto Serif CJK SC'", "serif"),
 }
 
 #: 批准脸的真实族名（`SfntInfo.family_name`）→ 通用族。matplotlib 文字里碰到这些名字才补回退链。
@@ -23,6 +24,9 @@ APPROVED_FAMILIES: dict[str, str] = {
     "Liberation Sans": "sans-serif",
     "Liberation Mono": "monospace",
     "Noto Sans SC": "cjk",
+    "Noto Sans SC Bold": "cjk",
+    "Noto Serif SC": "cjk-serif",
+    "Noto Serif SC Bold": "cjk-serif",
 }
 
 

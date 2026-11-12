@@ -47,6 +47,8 @@ current fact:
   | Pillow | 12.3.0 | HPND (MIT-CMU) | pip dep + bundled (was already in the desktop closure) | Notice |
   | Liberation Fonts 2.1.5 | — | SIL OFL 1.1 (RFN: Arimo / Tinos / Cousine) | bundled (`resources/fonts/`) | Ship licence text + copyright (done: same directory); embedding subsets in PDFs is permitted (OFL §1); not sold separately |
   | Noto Sans SC (Sans2.004, SC subset) | — | SIL OFL 1.1 (RFN: "Noto") | bundled | Same |
+  | Noto Serif SC (Serif2.001, SC subset) | — | SIL OFL 1.1 (RFN: "Noto") | bundled (added 2026-11-04, ADR 0060 revision) | Same; same noto-cjk commit and licence file as Noto Sans SC |
+  | Noto Sans SC Bold, Noto Serif SC Bold (same versions, SC subset) | — | SIL OFL 1.1 (RFN: "Noto") | bundled (added 2026-11-05, ADR 0060 revision) | Same noto-cjk commit and licence file as the Regular faces |
 
   Under the classification used below, none of these is a **BLOCKER**; pikepdf
   is **REVIEW** (MPL-2.0 notice obligation, already the class of the existing

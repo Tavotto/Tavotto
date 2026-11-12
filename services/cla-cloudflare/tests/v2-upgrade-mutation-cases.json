@@ -85,7 +85,7 @@
     "file": "scripts/v2-upgrade-offline.mjs",
     "before": "statement.setReadBigInts(true);const rows=statement.all();",
     "after": "const rows=statement.all();",
-    "pattern": "v2 upgrade preserves every old typed cell rowid tuple and manual cursor with31 DDL",
+    "pattern": "v2 upgrade preserves every old typed cell rowid tuple and manual cursor with34 DDL",
     "testFile": "tests/independent-v2-upgrade.test.mjs",
     "assertionError": true
   },

@@ -53,6 +53,16 @@ describe('导出载荷', () => {
     expect(styled).toMatchObject({ type: 'text', font_family: 'monospace' })
   })
 
+  it('`sourceFont`（ADR 0164）同一条纪律：没设过载荷逐字不变；设过只发身份（没有路径 / 字节）', () => {
+    const wire = (o: TextObject) => JSON.stringify(toExportObjects([o])[0])
+    expect(wire(text())).not.toContain('source_font')
+    const sf = { family: 'DejaVu Sans', sha256: '0f'.repeat(32), face: 0, bold: true }
+    const sent = JSON.parse(wire(text({ sourceFont: sf, fontFamily: 'sans-serif' })))
+    expect(sent.source_font).toEqual(sf)
+    expect(sent.font_family).toBe('sans-serif') // 回退族照发
+    expect(Object.keys(sent.source_font).sort()).toEqual(['bold', 'face', 'family', 'sha256'])
+  })
+
   it('`interpretation` 同一条纪律：没设过不发，设过才发', () => {
     // 载荷层是**透传**（与 `font_family` 同一条规则，不是第二套）：不发是
     // 因为字段根本不在对象上。「回到默认值就删字段」由 writer 保证——

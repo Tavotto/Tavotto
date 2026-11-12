@@ -16,7 +16,7 @@ function execute(f,t,{transport=t.transport,pause=async()=>{},monotonic=()=>0}={
 // one fixed time. No HTTP/publication or successful-publication expiry transition.
 test('CI wait absent or disabled retains immediate missing-check rejection',async()=>{
  for(const value of [undefined,{enabled:false}])await iso(async f=>{const t=await setup(f);t.config.wait=value;let pauses=0;
-  await assert.rejects(execute(f,t,{pause:async()=>{pauses++;},transport:async(u,i)=>checks(u)?Response.json({total_count:0,check_runs:[]}):t.transport(u,i)}),e=>e.code==='ci_check_ambiguous');assert.equal(pauses,0);
+  await assert.rejects(execute(f,t,{pause:async()=>{pauses++;},transport:async(u,i)=>checks(u)?Response.json({total_count:0,check_runs:[]}):t.transport(u,i)}),e=>e.code==='ci_check_missing');assert.equal(pauses,0);
  });
 });
 test('CI wait revalidates missing-check visibility at fixed time',()=>iso(async f=>{
@@ -179,4 +179,10 @@ test('CI wait validates every observed millisecond sample',()=>iso(async f=>{
   }),e=>['ci_wait_deadline','ci_source_invalid'].includes(e.code),'reject '+mode+' sample '+n);
   assert.ok(samples>=n);
  }
+}));
+for(const [label,patch,code] of [['in progress',{status:'in_progress',conclusion:null},'ci_check_pending'],['failure',{conclusion:'failure'},'ci_check_not_success'],['neutral',{conclusion:'neutral'},'ci_check_not_success']])
+test('CI names a '+label+' CLA check distinctly and never asks the authority',()=>iso(async f=>{
+ const t=await setup(f);let asked=0;
+ await assert.rejects(execute(f,t,{transport:async(u,i)=>{if(authority(u))asked++;if(checks(u))return Response.json({total_count:1,check_runs:[{...t.run,...patch}]});return t.transport(u,i);}}),e=>e.code===code);
+ assert.equal(asked,0);
 }));

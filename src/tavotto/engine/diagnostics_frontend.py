@@ -582,6 +582,19 @@ _CLOSED_LISTS: dict[str, frozenset[str]] = {
             "multi_select",
             "problem_found",
             "layout_page_bounds",
+            # 动画卡提示（ADR 0177）：出过至少一次的也算「看过」
+            "fit_canvas",
+            "edge_crop",
+            "ruler_guides",
+            "shift_axis",
+            "no_snap",
+            "arrow_nudge",
+            "shift_rotate",
+            "dblclick_text",
+            "shift_draw",
+            "space_pan",
+            "shift_multi",
+            "shortcut_help",
         }
     ),
 }

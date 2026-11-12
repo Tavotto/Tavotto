@@ -29,6 +29,7 @@ import {
   panelFullRect,
 } from '@/lib/elementGeom'
 import { msg } from '@/i18n'
+import { emitActivity } from '@/lib/activity'
 import type { Manifest } from '@/lib/api'
 import { useDocumentStore } from '@/store/documentStore'
 import { finishActiveGesture, registerGesture } from '@/store/gestureCoordinator'
@@ -251,10 +252,10 @@ function beginBurst(key: string): boolean {
     }
   } else {
     // 与鼠标拖动同一套可移动判据：锁定跳过、组内有锁定成员整组不动、隐藏的不动
-    const { targets, blockedGroups } = draggableSelection()
+    const { targets, blockedGroups, picked } = draggableSelection()
     warnBlockedGroups(blockedGroups, targets.length > 0)
     if (!targets.length) return false
-    useDocumentStore.getState().beginTxn(moveLabel(targets.length))
+    useDocumentStore.getState().beginTxn(moveLabel(picked))
     b = {
       ...common,
       kind: 'layout',
@@ -389,7 +390,9 @@ export function finishNudge(): void {
   }
   release(b)
   if (b.kind === 'layout') {
-    useDocumentStore.getState().endTxn({ discard: b.dx === 0 && b.dy === 0 })
+    const moved = b.dx !== 0 || b.dy !== 0
+    useDocumentStore.getState().endTxn({ discard: !moved })
+    if (moved) emitActivity({ kind: 'object.nudged' })
   } else {
     const [dfx, dfy] = b.toFrac(b.dx, b.dy)
     b.mover!.commit(dfx, dfy, true)

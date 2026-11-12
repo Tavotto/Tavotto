@@ -183,6 +183,63 @@ def test_a_composed_unicode_superscript_keeps_the_user_text_as_actual_text():
     assert block.missing == ()  # 合成之后没有方框
 
 
+def test_celsius_sign_expands_to_primary_glyphs_and_keeps_the_user_text_as_actual_text():
+    """`25℃`：合成脸里 `℃` 只在 CJK 脸（无衬线）→ 展开成正文脸有的 `°C`，不落 cjk 层；画的是 `°C`、
+    用户写的是 `℃`，`actual_text` 把文本层还给用户。两档都一样（NFKC 等价，与上下标 auto 档不同）。"""
+    for mode in richtext.TEXT_INTERPRETATIONS:
+        block = ty.layout_text(_text(text="25℃", interpretation=mode), FACES)
+        assert block is not None
+        [piece] = block.lines[0].pieces
+        assert (piece.text, piece.layer, piece.logical, piece.actual_text) == (
+            "25°C",
+            "primary",
+            "25℃",
+            "25℃",
+        )
+        assert block.lines[0].logical == "25℃"
+        assert block.cjk_chars == () and block.missing == ()
+
+
+def test_the_expansion_is_measured_and_wrapped_as_expanded_and_never_split():
+    """量宽用展开后的字（4 个拉丁字符），换行也是：`℃` 展开出来的 `°C` 是一个用户字符，
+    超宽逐字兜底时也不在 `°` 与 `C` 之间断开（否则文本层的 ActualText 会断成 `℃` + 空）。"""
+    block = ty.layout_text(_text(text="25℃", w_mm=100.0), FACES)
+    assert block is not None
+    assert block.lines[0].width == pytest.approx(4 * PT * 10.0)
+    # 框窄到放不下一整个词：兜底逐字断，但 `°C` 不拆
+    narrow = ty.layout_text(_text(text="25℃", w_mm=1.8), FACES)
+    assert narrow is not None
+    assert [p.logical for ln in narrow.lines for p in ln.pieces] == ["2", "5", "℃"]
+
+
+def test_the_expansion_is_not_applied_when_the_expanded_glyphs_are_missing():
+    """展开后的 `°` 正文脸也没有 → 不展开，`℃` 原样（仍落 CJK 脸）。"""
+    from tavotto import richtext as rt
+
+    folded = rt.interpret_runs(
+        rt.parse_runs("25℃"),
+        is_primary=lambda cp: cp < 0x80,
+        is_drawable=lambda cp: cp < 0x80 or cp == 0x2103,
+    )
+    assert "".join(r.text for r in folded) == "25℃"
+
+
+def test_the_expansion_follows_the_static_table_even_when_the_users_font_has_the_sign():
+    """原图字体（ADR 0164）自带 `℃` 时，导出也照批准字体的静态表展开成 `°C`——画布只认得那张表
+    （`layerOf`），两边做同一个决定，宽度与换行才不分叉（Codex #1719 P2）。"""
+    from tavotto import glyphplan, richtext as rt
+
+    static = glyphplan.canvas_coverage().primary
+    assert not static(0x2103) and static(ord("°")) and static(ord("C"))
+    folded = rt.interpret_runs(
+        rt.parse_runs("25℃"),
+        is_primary=lambda cp: True,  # 用户那张脸：什么都有，含 ℃
+        is_drawable=lambda cp: True,
+        letterlike_primary=static,
+    )
+    assert "".join(r.text for r in folded) == "25°C"
+
+
 def test_a_drawable_unicode_superscript_stays_a_real_glyph_in_auto_mode():
     """`⁵` 合成脸画得出 → auto 档不折：真上标字形、文本层原样，不需要 ActualText。"""
     block = ty.layout_text(_text(text="10⁵"), FACES)

@@ -996,7 +996,7 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--from", dest="frm", help="installer：先装这个旧包再升级")
     t.add_argument(
         "--mode",
-        help="corpus：smoke | all；convert-live：baseline | cjk-path | long-path | all；render-bench：rotation | cold | cold-store | cold-drive-p | cold-store-drive-p | all；hosts-live：claude-code | codex-cli | …；desktop-live：vscode-claude | cursor-claude | trae-claude",
+        help="corpus：smoke | all；convert-live：baseline | cjk-path | long-path | all；render-bench：rotation | cold | cold-store | cold-drive-p | cold-store-drive-p | all；managed-cli：all | npmjs | mirror；hosts-live：claude-code | codex-cli | …；desktop-live：vscode-claude | cursor-claude | trae-claude",
     )
     t.add_argument("--ref", help="先 prepare 到这个提交（经可信度检查）")
     n = sub.add_parser("network")

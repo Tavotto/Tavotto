@@ -48,3 +48,8 @@ def test_label_text_that_mentions_a_font_declaration_is_not_rewritten():
     assert "style=\"font: 10px 'Liberation Sans', Arial, Helvetica, sans-serif\"" in out
     assert "font-family=\"'Liberation Serif', 'Times New Roman', Times, serif\"" in out
     assert svgfonts.extend_matplotlib_families(out) == out
+
+
+def test_noto_serif_sc_gets_the_serif_cjk_fallback_chain():
+    out = svgfonts.extend_matplotlib_families("<text style=\"font: 9px 'Noto Serif SC'\"/>")
+    assert "'Noto Serif SC', 'Songti SC', SimSun, 'Noto Serif CJK SC', serif" in out

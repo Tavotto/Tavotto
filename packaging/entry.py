@@ -90,6 +90,29 @@ def _reopen_child_pipes() -> None:
 RENDER_CHILD_FLAG = "--render-child"
 
 
+def _journal_selftest(index_path: str | None = None) -> None:
+    """离线验证成品的 Ed25519 闭包；可额外读取一份正式签名目录，不写用户缓存。"""
+    from tavotto.engine import journalremote
+
+    # RFC 8032 §7.1 TEST 1（空消息）。固定外部向量避免签名端与验签端同错同过。
+    key = bytes.fromhex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+    sig = bytes.fromhex(
+        "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555f"
+        "b8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"
+    )
+    if not journalremote._ed25519_verify(key, b"", sig):
+        raise RuntimeError("journal Ed25519 selftest failed: check PyNaCl/_cffi_backend")
+    if journalremote._ed25519_verify(key, b"tampered", sig):
+        raise RuntimeError("journal Ed25519 selftest accepted a tampered message")
+    if index_path is not None:
+        from pathlib import Path
+
+        index = journalremote.verify_envelope(Path(index_path).read_bytes())
+        catalog = journalremote.Cached(index, {}).catalog
+        print(f"journal catalog rev={catalog['catalog_rev']} journals={len(catalog['journals'])}")
+    print("journal Ed25519 selftest passed")
+
+
 def main() -> None:
     # 冻结应用里 sys.path 上没有源码树；datas 把包放在了 _MEIPASS 下
     base = getattr(sys, "_MEIPASS", None)
@@ -118,6 +141,12 @@ def main() -> None:
 
         hashlib.sha256(b"x")
         print(ssl.OPENSSL_VERSION)
+        sys.exit(0)
+    if sys.argv[1:2] == ["--journal-selftest"]:
+        _reopen_child_pipes()
+        if len(sys.argv) > 3:
+            sys.exit(2)
+        _journal_selftest(sys.argv[2] if len(sys.argv) == 3 else None)
         sys.exit(0)
     if sys.argv[1:2] == ["--private-python-smoke"]:
         _reopen_child_pipes()

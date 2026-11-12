@@ -38,6 +38,52 @@ def run(files, labels=(), author="alice", event="pull_request"):
     return G.decide(event, files, list(labels), author)["status"]
 
 
+FRAG = G.FRAGMENT_DIR + "/canvas-edge.md"
+ADD_FRAGMENT = "@@ -0,0 +1,3 @@\n+## Fixed a thing\n+\n+Symptom: x."
+
+
+class TestFragments:
+    """双轨（2026-11-03）：新增片段文件或 UNRELEASED.md 新增 `## `，任一种都通过。"""
+
+    def test_new_fragment_passes(self):
+        files = [f("web/src/App.tsx"), f(FRAG, status="added", patch=ADD_FRAGMENT)]
+        assert run(files) == "success"
+
+    def test_old_style_still_passes(self):
+        assert run([f("web/src/App.tsx"), f(UN, patch=ADD_SECTION)]) == "success"
+
+    def test_neither_fails_and_message_names_both(self):
+        r = G.decide("pull_request", [f("web/src/App.tsx")], [], "alice")
+        assert r["status"] == "failure"
+        assert G.FRAGMENT_DIR in r["message"] and "UNRELEASED.md" in r["message"]
+
+    def test_fragment_without_heading_fails(self):
+        patch = "@@ -0,0 +1,2 @@\n+just text\n+### sub heading"
+        files = [f("web/src/App.tsx"), f(FRAG, status="added", patch=patch)]
+        assert run(files) == "failure"
+
+    def test_removed_fragment_does_not_count(self):
+        patch = "@@ -1,3 +0,0 @@\n-## Old\n-\n-text"
+        files = [f("web/src/App.tsx"), f(FRAG, status="removed", patch=patch)]
+        assert run(files) == "failure"
+
+    def test_readme_and_nested_files_are_not_fragments(self):
+        readme = G.FRAGMENT_DIR + "/README.md"
+        assert not G.is_fragment_path(readme)
+        assert not G.is_fragment_path(G.FRAGMENT_DIR + "/sub/x.md")
+        assert not G.is_fragment_path(G.FRAGMENT_DIR + "/x.txt")
+        assert G.is_fragment_path(FRAG)
+        files = [f("web/src/App.tsx"), f(readme, status="added", patch=ADD_FRAGMENT)]
+        assert run(files) == "failure"
+
+    def test_fragment_without_patch_is_config_error(self):
+        with pytest.raises(G.ConfigError):
+            run([f("web/src/App.tsx"), f(FRAG, status="added")])
+
+    def test_fragment_only_pr_needs_no_note(self):
+        assert run([f(FRAG, status="added", patch=ADD_FRAGMENT)]) == "success"
+
+
 class TestDecide:
     def test_user_visible_without_note_fails(self):
         r = G.decide("pull_request", [f("src/tavotto/engine/x.py")], [], "alice")

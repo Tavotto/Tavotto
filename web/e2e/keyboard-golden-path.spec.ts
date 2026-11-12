@@ -347,7 +347,12 @@ test('纯键盘走完核心闭环：开项目 → 编辑元素 → undo/redo →
   // 那里当预览了，拿它当判据的话这一步不按也绿（空门禁）。
   // （结果现在是一句摘要；逐个文件折在「详情」里，展开才有文件链接）
   await expect(dialog.locator('[data-export-result]')).toBeVisible({ timeout: 120_000 })
-  await dialog.locator('[data-export-result] [data-notice-detail-toggle]').click()
+  // 展开「详情」也走键盘：Tab 聚焦到折叠按钮，Space 展开（不用 locator.click()，
+  // 否则「全程无鼠标」就是一句空话）
+  const detailToggle = '[data-export-result] [data-notice-detail-toggle]'
+  await tabTo(page, `css=${detailToggle}`)
+  await page.keyboard.press('Space')
+  await expect(dialog.locator(detailToggle)).toHaveAttribute('aria-expanded', 'true')
   await expect(dialog.getByRole('link', { name: /\.pdf$/ })).toBeVisible()
 
   // ── 8. 关闭对话框，焦点回到可见控件 ─────────────────────────────────

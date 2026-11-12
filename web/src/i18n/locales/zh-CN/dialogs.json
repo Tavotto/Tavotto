@@ -1,6 +1,6 @@
 {
   "closeGuard": {
-    "body": "这份排版还有未保存的修改。关闭前要保存吗？",
+    "body": "关闭前要保存吗？不保存的话，本机草稿也会留着，下次打开可以恢复。",
     "discard": "不保存",
     "save": "保存并关闭",
     "saveFailed": "保存失败，窗口保持打开。请先解决保存问题，或选择「不保存」直接关闭。",
@@ -17,13 +17,15 @@
     "attachPick": "添加截图/文件",
     "attachRemove": "移除 {{name}}",
     "fileError": {
-      "type": "只支持图片、PDF、Word、Excel、PowerPoint。",
       "empty": "空文件不能作为附件。",
       "count": "最多 {{max}} 个附件。",
       "total": "附件合计不能超过 {{size}}。"
     },
     "diagLabel": "附上诊断信息",
     "diagHint": "日志里可能有脚本打印出的内容，并包含受管环境安装的 Python 包名和版本；不含你的脚本和数据文件。",
+    "diagHintExtras": "日志里可能有脚本打印出的内容，并包含受管环境安装的 Python 包名和版本；另附下面勾选的内容。",
+    "diagExtrasTitle": "额外内容",
+    "diagExtrasPrompt": "作者排查时常要用到下面这些，方便的话一起勾上。",
     "diagPreparing": "正在准备诊断包…",
     "diagReady": "诊断包 · {{size}}",
     "diagFailedPrepare": "诊断包没准备好，请取消勾选或稍后再试。",
@@ -157,12 +159,19 @@
   "engineEnv": {
     "title": "渲染环境"
   },
+  "epsOpacity": {
+    "body_other": "这张图有 {{count}} 个半透明标注。",
+    "opaque": "EPS 按不透明导出",
+    "pdf": "改导出 PDF",
+    "title": "EPS 不支持半透明"
+  },
   "export": {
     "contentLabel": "导出内容",
     "contentWhole": "整版",
     "contentEach": "每张图单独导出",
     "exportedCount_other": "已导出 {{count}} 个文件",
     "resultInspectionFailed_other": "{{count}} 个文件核验未通过，见详情",
+    "resultScriptSkipped_other": "{{count}} 处修改未写入 .py",
     "resultWarnings_other": "有 {{count}} 条提示，见详情",
     "partialSummary": "{{ok}} 个成功，{{failed}} 个失败",
     "previewFit": "适合大小",
@@ -170,6 +179,12 @@
     "previewWhole": "整版",
     "previewFlagged": "有要改的项",
     "batchProgress": "第 {{k}}/{{n}} 张 · {{name}} · {{phase}}",
+    "scriptHint": "修改后的脚本，原脚本不动",
+    "scriptSkipped": "未写入：{{items}}",
+    "scriptUnavailable": {
+      "canvas_scope": "整版不能导出 .py，要选「每张图单独导出」",
+      "no_script": "这张图没有脚本"
+    },
     "mergePdf": "合成一个多页 PDF：{{name}}（{{count}} 页）",
     "batchNames": "每张图用各自的名字",
     "exportAgain": "再次导出",
@@ -249,7 +264,6 @@
     "profileOtherCanvas": "这张图在画布「{{canvas}}」上，按那张画布的规范检查。要换规范，先切到那张画布。",
     "profileSync": "同步到新版",
     "profileUpdateAvailable": "这套规范有了新版本。",
-    "replaced": "已覆盖",
     "reportTitle": "随导出生成一份 JSON 报告，供投稿留档。",
     "reportToggle": "生成样式检查报告",
     "retry": "重试",
@@ -269,6 +283,7 @@
     "sizeUnknownShort": "尺寸未知",
     "start": "开始导出",
     "targetNoFigure": "当前没有图",
+    "svgTextOutlined": "SVG 里的文字已转成路径，不能再当文字编辑。",
     "svgHint": "矢量 · 文字默认保留为文字",
     "tiffHint": "位图 · 无损压缩",
     "title": "导出",
@@ -279,9 +294,6 @@
     "strictToggle": "严格核验产物",
     "strictTitle": "按所选规范重新打开写好的文件核对；不合格或无法核验的文件不会保存。EPS 不核验。",
     "inspection": {
-      "verified": "已核验",
-      "unknown": "未核验",
-      "unknownItems": "未核验：{{items}}",
       "failedItems": "核验未通过：{{items}}",
       "check": {
         "integrity": "完整性",
@@ -311,13 +323,19 @@
     "locationLabel": "位置",
     "locationDefault": "项目的导出目录",
     "locationChange": "更改…",
+    "findMissingSource": "重新找到这张图",
+    "missingSourceNote": "有一张图找不到了：{{name}}。",
+    "changeLocationExport": "换个位置导出",
+    "lowerDpiExport": "改用 {{dpi}} dpi 导出",
     "toast": {
       "conflict": "导出停在这里，等你决定同名文件怎么处理。",
       "failed": "导出失败，没有写出文件。",
       "partial": "导出只完成了一部分，有文件没能写出。",
       "unknown": "找不到这次导出的作业，文件可能已写出。"
     },
-    "viewResult": "查看"
+    "viewResult": "查看",
+    "journalUnlisted": "{{journal}} 未列出 {{format}}",
+    "journalDpi": "{{journal}} 要求（dpi）\n{{detail}}"
   },
   "layout": {
     "conflict": "磁盘上已存在名为「{{name}}」的排版，由其他窗口或外部工具写入。",
@@ -630,7 +648,7 @@
     "landingTitle": "挑一张图，亲手改一次。",
     "loadAnother": "换一个脚本",
     "mobileNote": "精确编辑更适合桌面浏览器。这里可以查看画布；元素树与属性页需要更宽的屏幕。",
-    "noFigureBody": "没有调用 savefig()，pyplot 里也没有留下 figure。下面的脚本输出可能说明了原因。",
+    "noFigureBody": "pyplot 里没有留下 figure。下面的脚本输出可能说明了原因。",
     "noFigureTitle": "脚本跑完了，但没有产生 Matplotlib figure。",
     "overrides_other": "{{count}} 条修改",
     "panelGone": "图不见了。重新加载脚本。",
@@ -754,6 +772,7 @@
     "export": "导出为文件",
     "field": {
       "defaultFont": "正文字号",
+      "columns": "栏宽",
       "doubleWidth": "双栏宽",
       "exportDpi": "推荐导出分辨率",
       "floorFont": "绝对下限",
@@ -793,6 +812,9 @@
     "saved": "已保存「{{name}}」",
     "snapshotHint": "项目保存选中时的规则快照。全局规范之后的修改不影响本项目，除非打开「跟随更新」。",
     "snapshotTitle": "本项目实际检查的规则",
+    "unspecified": "未规定",
+    "adviceHint": "建议 {{pt}} pt",
+    "defaultHint": "默认 {{value}} {{unit}}",
     "unset": "未设置",
     "useForProject": "本项目用这套规范",
     "usedForProject": "本项目改按「{{name}}」检查",
@@ -835,7 +857,12 @@
         "otherOff": "斜体：样式里写的是「{{value}}」，不算斜体——应用时照原值写（点一下改为斜体）"
       }
     },
-    "clearRow": "清除整行（{{row}}）：这一行的每一格都回到未设置"
+    "clearRow": "清除整行（{{row}}）：这一行的每一格都回到未设置",
+    "journalEntry": "{{name}} · 期刊",
+    "journalBadge": "期刊要求 · 只读",
+    "leaveJournalTitle": "不再按「{{journal}}」检查？",
+    "leaveJournalBody": "改用「{{name}}」后，期刊要求与出处会一起移除，可以撤销。",
+    "leaveJournalConfirm": "改用这套规范"
   },
   "readiness": {
     "addToCanvas": "添加到画布",
@@ -844,6 +871,7 @@
     "allScriptsTitle": "全部脚本",
     "autoLink": "自动连接",
     "emptyHint": "运行一个绘图脚本，或者把 PDF / PNG 放进图库目录。",
+    "emptyRuntimeTitle_other": "图库目录是空的，{{count}} 张图来自脚本运行",
     "emptyTitle": "项目里还没有图",
     "group": {
       "editable": "可编辑",
@@ -1350,7 +1378,8 @@
       },
       "viewGuide": "查看使用指南",
       "defaultLabel": "默认助手",
-      "defaultNone": "没有可用的助手"
+      "defaultNone": "没有可用的助手",
+      "convertUnsandboxed": "转换时允许 AI 不受沙盒限制"
     },
     "canvas": {
       "companionsExplain": "关联元素是手动摆过位置的标题、轴标签、图例，以及色条轴与 twinx 孪生轴。不带它们，挪动子图时会留在原地；关掉则只动子图本身。",
@@ -1509,7 +1538,6 @@
           "corrupt_sessions": "会话损坏副本的内容"
         },
         "extraHint": {
-          "source": "原样附上脚本和依赖文件，密钥可能抹不干净，有密钥别勾。",
           "crash_reports": "Windows 崩溃转储是内存快照，可能含文件内容与路径，无法脱敏。",
           "corrupt_sessions": "默认只有名字和大小；勾选附上内容。"
         },
@@ -1781,6 +1809,7 @@
       "sourceUsed": "更新来源：{{source}}",
       "sourceName": {
         "mirror": "国内镜像",
+        "edge": "国内镜像",
         "github": "GitHub"
       },
       "attemptsTitle": "各来源的失败记录",
@@ -1807,8 +1836,8 @@
       "lastCheckedUnknown": "尚未检查，无法判断是不是最新",
       "title": "更新",
       "notesTitle": "更新内容",
-      "autoCheckDesktop": "启动时自动检查",
-      "autoCheckDesktopReason": "桌面版每次启动都会检查，暂时不能关闭"
+      "autoDownload": "后台下载新版本",
+      "restartNow": "现在重启"
     },
     "tutorial": {
       "label": "新手教程",
@@ -1936,21 +1965,19 @@
       "title": "接入 AI 编辑器",
       "connect": "接入",
       "retry": "重试",
-      "chooseFolder": "选择文件夹",
       "running": "接入中…",
       "connected": "已接入",
       "notDetected": "未检测到",
       "disconnected": "已断开",
       "doneNewSession": "接好了。请在 {{host}} 里新开一个会话。",
       "more": "{{host}} 的更多操作",
-      "changeFolder": "更改文件夹",
       "disconnect": "断开",
-      "pickFolderTitle": "让 {{host}} 用 Tavotto 处理哪个文件夹里的图？",
       "stepsTitle": "详情",
       "announce": {
         "ok": "完成。",
         "failed": "没有接好。"
       },
+      "skillModified": "你改过那份使用说明，所以没有动它。",
       "stepState": {
         "done": "完成",
         "skipped": "无需改动",
@@ -1963,6 +1990,7 @@
         "trust": "信任 Tavotto",
         "register": "登记",
         "unregister": "移除登记",
+        "skill": "使用说明",
         "health": "启动检查",
         "server": "MCP 服务",
         "host": "编辑器"
@@ -1970,13 +1998,14 @@
       "error": {
         "host_not_installed": "没检测到 {{host}}。装好并至少打开一次后再试。",
         "mcp_server_not_bundled": "这一版 Tavotto 不带 MCP 服务，请升级桌面版。",
-        "project_root_missing": "先选一个项目文件夹。",
         "project_root_rejected": "不能选整个主目录或磁盘根目录，请选一个具体的项目文件夹。",
         "config_unreadable": "{{host}} 的配置文件读不懂（可能带注释），为免弄坏，没有改它。展开详情看是哪个文件。",
         "config_write_failed": "写不进 {{host}} 的配置文件。展开详情看是哪个文件。",
         "host_cli_failed": "{{host}} 的命令行没能完成登记。展开详情看原文。",
         "server_health_failed": "配置已写好，但 Tavotto 的服务没能启动。展开详情看原因。",
         "codex_install_failed": "Codex 没接好。展开详情看卡在哪一步。",
+        "skill_source_missing": "这一版 Tavotto 里没带使用说明，请升级桌面版。",
+        "skill_write_failed": "接好了，但写不进 {{host}} 的使用说明目录。展开详情看是哪个目录。",
         "unknown_host": "不认识这个编辑器。",
         "cli_not_found": "找不到本机的 Tavotto 命令行（tavotto-cli）。安装包可能不完整，重装桌面版即可。",
         "spawn_failed": "无法启动 Tavotto 命令行。再试一次。",
@@ -1986,7 +2015,18 @@
         "bad_action": "不允许此操作。",
         "not_desktop": "此操作仅在桌面版可用。",
         "other": "没有接好。展开详情看命令的原话。"
-      }
+      },
+      "connectedSkill": "已接入 · 技能 {{version}}",
+      "connectedBuiltin": "已接入 · 用内置说明",
+      "connectedPlugin": "已接入 · 插件 {{version}}",
+      "pluginOutdated": "插件 {{version}} · 有新版",
+      "update": "更新",
+      "updating": "更新中…",
+      "skillKept": "技能改过，未更新",
+      "overwrite": "覆盖",
+      "overwriteTitle": "覆盖 {{host}} 里改过的技能？",
+      "overwriteBody": "你改的内容会换成 Tavotto 自带的版本。",
+      "cancel": "取消"
     }
   },
   "style": {
@@ -2056,11 +2096,16 @@
     }
   },
   "telemetry": {
-    "allow": "分享匿名用量",
+    "allow": "愿意匿名分享",
+    "allowReconsent": "继续匿名分享",
     "decline": "暂不",
-    "intro": "可发送匿名用量统计，了解哪些功能有人用。默认关闭，与账号无关。",
-    "later": "随时可在设置里改。",
-    "reconsentDelta": "比你上次同意时多了三项：导出怎样结束（含失败 / 取消）；AI Agent 调用了哪个 Tavotto 工具、成功与否（不含参数与内容）；以及你主动发送问题反馈时附带的一条不含内容的错误摘要。",
+    "details": "具体会发送什么",
+    "detailsReconsent": "这次新增了什么",
+    "fact": "只发匿名的使用记录，不会发你的图、脚本、数据和文件名。",
+    "later": "随时可以在设置里改",
+    "leadA": "想知道哪些功能用得多、哪里不好用，好决定下一步先改什么。",
+    "leadB": "我们会看大家主要用哪些功能、哪里报错多，用来安排后面的修改。",
+    "leadC": "不分享也完全不影响使用。分享的话，我们能更快发现哪里出了问题。",
     "neverData": "科研数据与图内文字",
     "neverFigures": "你的图与项目文件",
     "neverPaths": "文件名与路径",
@@ -2068,9 +2113,10 @@
     "neverScripts": "脚本与源码",
     "neverTitle": "绝不发送",
     "policy": "隐私政策",
+    "reconsentDelta": "比上次多了一项：AI 编辑器查期刊列表的次数（只记查过，不含搜了什么、查的是哪本）。",
+    "sendsErrorSummary": "你主动反馈问题时附带的错误摘要（不含内容）",
     "sendsFeatures": "你使用了哪些功能",
-    "sendsErrorSummary": "你主动发送问题反馈时，随附一条不含内容的错误摘要",
-    "sendsOutcome": "预检与导出的结果（成功、失败或取消）",
+    "sendsOutcome": "预检和导出的结果",
     "sendsPlatform": "操作系统与处理器架构",
     "sendsTitle": "会发送",
     "sendsVersion": "Tavotto 的版本号",
@@ -2427,12 +2473,17 @@
     "current": "按「{{name}}」检查",
     "requirements": "期刊要求",
     "unspecified": "该期刊未规定",
+    "hasRequirement": "有要求",
     "unset": "本刊不适用",
     "noJournal": "不按期刊",
     "cleared": "已不按期刊检查",
+    "quotaLater": "期刊额度暂时用完了，稍后再试",
+    "needsNetwork": "这本期刊需要联网下载",
     "yes": "是",
     "no": "否",
     "noLimit": "不限",
+    "formatsPreferred": "推荐 {{list}}",
+    "formatsAccepted": "可接受 {{list}}",
     "source": "出处",
     "sourceOf": "{{name}}的出处",
     "picked": "已按「{{name}}」检查",

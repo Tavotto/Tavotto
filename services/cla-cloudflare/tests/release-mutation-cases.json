@@ -1,0 +1,58 @@
+[
+  {
+    "name": "release covers only packets created after it",
+    "file": "src/native/store.ts",
+    "before": "(r.packet IS NULL OR ${created}<=r.created)",
+    "after": "r.packet IS NULL",
+    "pattern": "release: held packet and old signatures stay ineligible",
+    "testFile": "tests/independent-release.test.mjs"
+  },
+  {
+    "name": "unreleased hold blocks packet creation",
+    "file": "src/native/store.ts",
+    "before": "WHERE p.subject=? AND r.packet IS NULL LIMIT 1",
+    "after": "WHERE p.subject=? LIMIT 1",
+    "pattern": "release: the contributor signs a new packet",
+    "testFile": "tests/independent-release.test.mjs"
+  },
+  {
+    "name": "release is holder only",
+    "file": "src/native/service.ts",
+    "before": "if(s.actor!==this.c.holderId)throw new Rejected('release_rejected');",
+    "after": "// mutation: any party may release",
+    "pattern": "release: only the holder, only a held packet, only once",
+    "testFile": "tests/independent-release.test.mjs"
+  },
+  {
+    "name": "release atomic guard is holder only",
+    "file": "src/native/store.ts",
+    "before": "AND expires>${DB_NOW} AND actor=(SELECT holder FROM authority WHERE id=1))\n        AND EXISTS(SELECT 1 FROM eligibility_blocks WHERE packet=?)",
+    "after": "AND expires>${DB_NOW})\n        AND EXISTS(SELECT 1 FROM eligibility_blocks WHERE packet=?)",
+    "pattern": "release: the atomic write itself refuses",
+    "testFile": "tests/independent-release.test.mjs"
+  },
+  {
+    "name": "released hold packet is never reused",
+    "file": "src/native/store.ts",
+    "before": "      AND NOT ${blockedSQL('p.subject','p.created')} LIMIT 2",
+    "after": "      LIMIT 2",
+    "pattern": "release: the contributor signs a new packet",
+    "testFile": "tests/independent-release.test.mjs"
+  },
+  {
+    "name": "released hold packet is never recreated as usable",
+    "file": "src/native/store.ts",
+    "before": "h.actor!=p.subject)) AND NOT ${blockedSQL('p.subject','p.created')}`;",
+    "after": "h.actor!=p.subject))`;",
+    "pattern": "release: the contributor signs a new packet",
+    "testFile": "tests/independent-release.test.mjs"
+  },
+  {
+    "name": "release must be strictly older than the new packet",
+    "file": "src/native/store.ts",
+    "before": "${created}<=r.created",
+    "after": "${created}<r.created",
+    "pattern": "release: a packet created in the same second as the release is refused",
+    "testFile": "tests/independent-release.test.mjs"
+  }
+]

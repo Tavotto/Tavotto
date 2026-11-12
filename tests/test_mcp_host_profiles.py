@@ -82,7 +82,7 @@ SKILL_MODE = {
     "trae": "native",
     "minimax-code": "native",
     "workbuddy": "instruction_fallback",
-    "zcode": "instruction_fallback",
+    "zcode": "native",
 }
 CODEX_ONLY_FIELDS = {"tool_timeout_sec", "startup_timeout_sec", "env_vars", "cwd", "title"}
 

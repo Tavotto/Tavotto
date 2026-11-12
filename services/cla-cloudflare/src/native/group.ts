@@ -3,14 +3,21 @@ import type {Target,Job,CheckProposal} from '../core/types.ts';
 import type {LiveService} from './service.ts';
 import type {RefreshRequest,Publication} from './store.ts';
 import {Rejected} from '../core/types.ts';
+import {GroupExempt} from './service.ts';
 import {BudgetDeferred,FREE_BUDGET,qualificationSQL} from './budget.ts';
 export async function publishGroup(s:LiveService,job:Job,target:Extract<Target,{kind:'merge_group'}>,revision:number,refresh?:{request:RefreshRequest;predecessor:Publication}):Promise<string> {
   if(!s.c.automaticVerificationEnabled || !s.c.automaticPublishingEnabled || !s.c.checkPublishingEnabled || s.c.confirmationSlotEnabled!==true)throw new Rejected('publication_disabled');
   const budget=s.store.budget!;let issued:string|undefined;
   try {
-    if(!refresh && !await s.store.stmt(`SELECT 1 AS ready WHERE ${s.store.positiveAdmission()}`).first())throw new BudgetDeferred('confirmation_capacity');
+    if(!refresh && !await s.store.stmt(`SELECT 1 AS ready WHERE ${s.store.positiveAdmission()}`).first()) {
+      // A busy slot only matters to groups that will publish. One snapshot tells whether every contributor is exempt;
+      // such a group finishes below without the slot. Any other outcome keeps the original wait, unchanged.
+      try{await s.evaluateTarget(target,0,revision,'probe');}
+      catch(probe){if(probe instanceof GroupExempt)throw probe;}
+      throw new BudgetDeferred('confirmation_capacity');
+    }
     const receipt=await s.github.publishGroup(target,async(withdrawnRevision)=>{
-      const check:CheckProposal=await s.evaluateTarget(target,0,revision),exempt=new Set(Object.values(s.c.exemptionIds));
+      const check:CheckProposal=await s.evaluateTarget(target,0,revision,refresh?undefined:'exit'),exempt=new Set(Object.values(s.c.exemptionIds));
       if(withdrawnRevision!==undefined && withdrawnRevision>check.proof.revision)throw new Rejected('refresh_predecessor_unavailable');
       if(check.conclusion!=='success')throw new Rejected('qualification_not_complete');
       // Combined target/history and progress reads plus the invocation epoch leave room for two withdrawal reads.
@@ -24,6 +31,10 @@ export async function publishGroup(s:LiveService,job:Job,target:Extract<Target,{
     else await s.store.settleGroupPublication(job,issued!,'reconcile',receipt.id);
     return refresh?'fresh_publication_requires_reconciliation':'group_publication_requires_reconciliation';
   }catch(error){
+    if(error instanceof GroupExempt && !issued && !refresh) {
+      // Nothing is published and no check run exists. Drop the target's queue entry and idle rows under the job's lease.
+      budget.settlement();await s.store.settleExemptGroup(job);return 'group_exempt_no_publication';
+    }
     if(!issued){
       // A fresh invocation cannot accumulate an unfinished qualification. Finite
       // SQL/HTTP capacity failures use the existing bounded target retry/manual

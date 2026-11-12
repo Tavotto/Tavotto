@@ -1,9 +1,13 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { perfCount } from '@/perf/core'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
+import { emitActivity } from '@/lib/activity'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { EmptyPickCards } from './EmptyPickCards'
+import { RestoreIssueBody } from '@/components/RestoreIssueBody'
+import { Card } from '@/components/ui/Card'
+import { heldEntryCount, subscribeHeldEntries } from '@/store/documentRestore'
 import { runTutorialEntry } from '@/lib/onboarding/tutorial'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -31,13 +35,19 @@ import { ContextBar } from './context-bar/ContextBar'
 import { QuickEdit } from './QuickEdit'
 import { SyncOverridesHost } from '@/components/inspector/SyncOverridesDialog'
 import { PageOutsideMask } from './PageOutsideMask'
-import { FigureEdgeHandles, PageEdgeHandles } from './PageEdgeResize'
+import { FigureEdgeHandles, LayoutFramePreview, PageEdgeHandles } from './PageEdgeResize'
 import { Rulers, RULER_SIZE } from './Rulers'
 import { CanvasContextMenu } from './CanvasContextMenu'
 import { placePanelInPage } from '@/lib/panelPlacement'
 import { startDraw, startMarquee, startPan } from './interactions'
 import { groundInkFor } from '@/lib/canvasSelection'
 import { cn } from '@/lib/utils'
+
+/** 鼠标滚轮一格的像素量级（触控板一帧只有几个像素） */
+const WHEEL_NOTCH_PX = 40
+/** 这么长时间内滚了这么多格，算「在用滚轮一格一格地挪画布」 */
+const WHEEL_BURST_MS = 6000
+const WHEEL_BURST_COUNT = 6
 
 export function CanvasStage() {
   perfCount('render.CanvasStage')
@@ -153,8 +163,18 @@ export function CanvasStage() {
         vp.zoomAt(Math.exp(-deltaY * 0.0022), ax, ay)
       } else {
         vp.setPan(vp.panX - deltaX, vp.panY - deltaY)
+        // 给提示引擎（ADR 0177）：鼠标滚轮一格一格地挪（触控板的增量小且常带横向分量，不算）
+        if (deltaX === 0 && Math.abs(deltaY) >= WHEEL_NOTCH_PX) {
+          const now = performance.now()
+          coarse = [...coarse.filter((t) => now - t <= WHEEL_BURST_MS), now]
+          if (coarse.length >= WHEEL_BURST_COUNT) {
+            coarse = []
+            emitActivity({ kind: 'view.wheel_struggled' })
+          }
+        }
       }
     }
+    let coarse: number[] = []
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
   }, [])
@@ -321,6 +341,7 @@ export function CanvasStage() {
         {fastEdit && <FastEditCanvasMask panelId={activePanelId} objects={objects} />}
         {/* 拖页面四条边改画布大小：只在多图排版（单图编辑没有页面）；命中区在选框覆盖层之下 */}
         {layoutMode && <PageEdgeHandles />}
+        {layoutMode && <LayoutFramePreview />}
         {/* 单图编辑：直接拖这张图的四条边改图幅，手感与上面拖页面边一致 */}
         {fastEdit && <FigureEdgeHandles panelId={activePanelId} />}
 
@@ -544,7 +565,10 @@ function EmptyHint() {
   const panels = useAssetStore((s) => s.panels)
   const hasAssets = panels.length > 0
   const inTutorial = useProjectStore((s) => s.project?.tutorial === true)
-  if (!selectionEmpty) return null
+  const restoreIssue = useDocumentStore((s) => (s.restoreGate.state === 'needs_user' ? s.restoreIssue : null))
+  const held = useSyncExternalStore(subscribeHeldEntries, heldEntryCount) > 0
+  // 恢复卡不看选区：它是这时唯一的出口，选区里留着什么都不能把它收走（Codex #1839）
+  if (!selectionEmpty && !restoreIssue) return null
   const showCards = assetsLoaded && hasAssets
   const onLightPaper = groundInkFor(null, page) === 'paper-ink'
   // 锚在纸面**可见部分**的中心：侧栏一开、画布被挤到一边时提示跟着纸面走，
@@ -555,6 +579,24 @@ function EmptyHint() {
     viewH,
     paper: { x: panX, y: panY, w: mmToWorld(page.w) * zoom, h: mmToWorld(page.h) * zoom },
   })
+  // 上次的排版没能恢复：这份空白是占位，不许写——不摆「添加图」/ 选图卡（点了也放不进去），把出口摆在这里。
+  // 用户已经动了手（动作记着，见 `deferUserEntry`）时描一圈强调边：选完就接着做
+  if (restoreIssue) {
+    return (
+      <div
+        data-canvas-restore-issue
+        data-restore-held={held ? '' : undefined}
+        className="absolute w-max max-w-80 -translate-x-1/2 -translate-y-1/2"
+        style={{ left: cx, top: cy }}
+        // 卡片上的按下不许漏给画布：选着画图工具时会就地起一笔、把卡片连同按钮一起收走（Codex #1839）
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        <Card appearance="raised" padding="md" className={cn('flex flex-col gap-1.5', held && 'outline outline-2 outline-accent')}>
+          <RestoreIssueBody issue={restoreIssue} close={() => {}} held={held} />
+        </Card>
+      </div>
+    )
+  }
   return (
     // `w-max`：绝对定位盒子的 shrink-to-fit 只看 left 右侧剩下的空间，纸面中心靠近
     // 视口右缘时提示会被折成十几个字一行的一根细柱（2026-09-11 走查截图）；

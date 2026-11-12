@@ -19,6 +19,10 @@ order: 210
   readText/writeText，跨标签页粘贴只有这条路全浏览器通。keydown 层不再拦
   ⌘C/⌘V；按钮触发的复制仍走 writeText（点击是用户手势）。e2e
   cross-tab-paste.spec.ts 看护。
+  **图内编辑里选着元素时 ⌘C 复制的是元素**（`handleCopyEvent` → `buildElementClipPayload`，ADR 0163）：文字元素换算成与原文字页面上重合的
+  `TextObject`（`lib/figureTextCopy.ts`，字号走 `pagePtLens`、几何只认权威 manifest）写进**同一份**对象负载，⌘V / 菜单粘贴走既有的
+  `consumePayload` → `materializePaste`（同画布错开 `DUPLICATE_OFFSET_MM`，与 ⌘D 共用）；不能复制的元素（曲线、色块、刻度组）也消费这次复制、
+  只出顶栏胶囊「{元素名}还不能复制」。在图内编辑里粘贴后退出图内编辑、选中新标注。看护 `lib/figureTextClipboard.test.tsx`。
 - **默认画布名只有一个生成器** `types/document.defaultCanvasName(n)`（「Figure N」，
   2026-09-06 审计 T05）：空文档的第一张、新建、教程项目全走它。此前空文档叫
   「Fig 1」、新建的叫「Fig 2」、教程里的叫「Figure 1」，三种写法混在一行标签里。
@@ -47,8 +51,11 @@ order: 210
   文字标注选中时选框顶上有旋转柄（`rotateDrag.ts`，⇧ 吸 15°，ADR 0163）；对齐 / 分布 / 间距 / 拖动吸附 /
   多选联合框一律取 `visualBounds`（转出来的外接框），写回只平移 x / y，别回去拿未旋转盒；形状
   triangle/diamond/polygon/brace + 圆角/
-  虚线/填充透明度；箭头 headStart/headEnd（triangle/open/bar，旧 head 字段
-  兼容推导）；文字下划线/行距/内边距/背景/描边。**前后端几何公式同源**
+  虚线（实 / 虚 / 点 / 长虚线 / 点划线 / 长点划线）/填充透明度；箭头 headStart/headEnd（triangle/open/bar/dot/diamond/stealth，旧 head 字段
+  兼容推导，大小三档 `headSizeStart/End`）；**描边属性（ADR 0174）**：形状 `stroke: false` = 无边框（只落盘 false，
+  读取只走 `shapeStrokeOn()`，无边框时填充铺满框、`shapeInset()`）、`strokeOpacity`、`lineCap` / `lineJoin`（点线强制圆头，
+  `strokeCap()`），新字段缺省一律不写、描边 SVG 属性只在 `svgStroke()` 一处出（ShapeView / ArrowView / ThumbShape 共用）；
+  新的低频项收进属性栏折叠行「更多」；文字下划线/行距/内边距/背景/描边。**前后端几何公式同源**
   （shapeGeometry.ts ↔ `rendercore/geometry.py` `polygon_points`/`dash_pattern`，共享向量
   `tests/golden/shape_geometry_vectors.json` 两侧各跑一遍），改一边必须同步另一边，
   pytest 从合成的 PDF 内容流抽坐标做几何级看护（`tests/test_compose_arrow.py`）。
@@ -250,14 +257,21 @@ order: 210
   （`zoomToSelection.fastEditCanvasBox`）。导出：`singleAnnotatedDocument(…, pad)` 页面 = 图幅 + 留白、图落在 (左, 上)，请求带 `original.pad_mm`，原图口径检查按这个页面判
   （`buildOriginalSpec(…, pad)`）。留白不写回脚本。**权威只认精确 manifest**（`figureFrameFacts`）：缺席 / 被裁 / 旋转 / `size_mm` 只读时整组不挂。
   看护：`lib/framePad.test.ts`、`canvas/frameDrag.test.tsx`、`lib/singleExportDoc.test.ts`、`lib/exportRequest.test.ts`、`e2e/figure-edge-resize.spec.ts`。
-- **多图排版里面板的边 = 裁剪、角 =「连同标注」缩放（ADR 0161，2026-11-02）**：`mode === 'layout'` 下，未旋转 / 未翻转、未锁定面板的四条**边柄**
+- **多图排版里面板的边 = 改图幅（⌥ = 裁剪）、角 = 连图内标注一起缩放（ADR 0161，2026-11-02；2026-11-04 修订去掉开关；2026-11-09 修订往里也改图幅）**：`mode === 'layout'` 下，未旋转 / 未翻转、未锁定面板的四条**边柄**
   走 `canvas/panelEdgeCrop.startPanelHandleDrag`（`OverlaySvg` 的唯一入口；不放进 `startResizeDrag` 是因为它要 `trackPointer`，`interactions` 反向 import 就成环）→ 写 `panel.crop`
   （与裁剪工具同一字段：相对原图幅的 0–1 分数、y 向下；同一条历史标签 `adjustCrop`；整图锚在画布上不动，缩放比不变）。停靠点是纯函数 `lib/panelEdgeCrop.planEdgeDepth`：
-  往外到未裁剪（0）为止 → 图边 → **内容边缘**（manifest `gid=="figure"` 的可选 `ink_bbox`，只经 `exactPanelManifest` 读；缺席 = 没有紧凑停靠点也没有闸）→ 越过内容边缘必须按住 ⌥
+  往外到未裁剪（0）为止（**没裁剪过的图从图边继续往外 = 改图幅，见本条末尾**）→ 图边 → **内容边缘**（manifest `gid=="figure"` 的可选 `ink_bbox`，只经 `exactPanelManifest` 读；缺席 = 没有紧凑停靠点也没有闸）→ 越过内容边缘必须按住 ⌥
   （起手就已在内容里的边不设闸）；吸附半径 `snapTolMm`（屏幕 6 px）。旋转 / 翻转面板的边柄、单图编辑的边柄维持原样（边方向要走内容坐标系的反变换，
-  与"左 / 右"措辞和 ink 停靠点是两套坐标；这类面板精确裁剪走裁剪工具 `startCropDrag`）。角柄等比缩放时，**与面板可见框相交、未锁定未隐藏的标注**按同一固定点、同一比例缩放
+  与"左 / 右"措辞和 ink 停靠点是两套坐标；这类面板精确裁剪走裁剪工具 `startCropDrag`）。角柄等比缩放时，**整个落在面板可见框里、未锁定未隐藏的标注**（成组须整组都在；判据唯一出处 `lib/annotationScale.annotationsInside`）按同一固定点、同一比例缩放
   位置（框中心）/ 尺寸 / `lib/annotationScale.ANNOTATION_SCALED_FIELDS` 里的页面 pt / mm 量（不按对象类型 switch；每帧从起手快照现算），同一事务一条历史；
-  开关 `uiStore.scaleWithAnnotations`（默认开、本机偏好）；非等比那一帧（⌥ 反转锁定）标注留在原处。拖动含义由手势每帧写进 `interaction.dragStatus`（`DragStatus {tone, main, detail?, box}`，描述符；构造在 `lib/dragStatus`，`end()` 清；单图编辑复用同一个形状），
+  没有开关；同一批标注在拖动 / 方向键移动面板时一起平移（`draggableSelection` → `withFollowers`，历史标签按选中个数）；非等比那一帧（⌥ 反转锁定）标注留在原处。拖动含义由手势每帧写进 `interaction.dragStatus`（`DragStatus {tone, main, detail?, box}`，描述符；构造在 `lib/dragStatus`，`end()` 清；单图编辑复用同一个形状），
   `ContextBar` 里的 `DragStatusBar`（`data-drag-status` / `data-drag-tone`）只读不判，贴在 `box` 下方（放不下贴上方），不受「拖动即藏」影响；没有 dragStatus 时其余手势照旧拖动即藏。字号下限读 `resolveDocumentSpec(...).min_effective_font_size_pt`，
-  规范库没载入 / 读不到 = 不判。选中面板不拖时胶囊多「贴合内容」（`actions.fitPanelsToContent`，缺 ink_bbox 置灰）「取消裁剪」「连同标注」。
-  看护：`lib/panelEdgeCrop.test.ts`、`canvas/panelEdgeCrop.test.tsx`、`canvas/layoutCornerFollow.test.tsx`、`canvas/context-bar/dragStatusBar.test.tsx`。
+  规范库没载入 / 读不到 = 不判。选中面板不拖时胶囊多「贴合内容」（`actions.fitPanelsToContent`，缺 ink_bbox 置灰）「取消裁剪」。
+  **图边往外 = 改图幅（ADR 0161 修订 2026-11-06）**：`figureFrameFacts` 有值（未裁剪、精确 manifest、`size_mm` 可编辑）时越过吸附半径走纯函数 `planEdgeGrow`：只改被拖那一维，两轴各按自己的缩放比换算（被拉伸过的老面板），缩放比不变所以文字 pt 不变。
+  拖动中写 `interaction.figureEdgeBox`，虚线框由 `PageEdgeResize.LayoutFramePreview` 画（只挂在排版；预览与松手后的 `figureFramePending` 占位共用，缺了它 `PanelView` 收起旧图时画布上什么都不剩）；松手先丢裁剪事务再 `setFigureFrame` + `holdPlaceholder`，一条历史。裁剪过 / 不可编辑时停在图边，`cropDragStatus.growBlocked` 说原因。回到未裁剪用 `delete o.crop`：`= undefined` 会给什么都没变的拖动留一条空历史。
+  **图边往里也 = 改图幅、⌥ = 裁剪（ADR 0161 修订 2026-11-09）**：`figureFrameFacts` 有值时不按 ⌥ 两个方向都走 `planEdgeGrow`（`outMm` 可负，钳到 `size_mm` 的 min / max），按住 ⌥ 才走 `planEdgeDepth` 裁剪（`alt` 同时放行越过内容边缘）；拖动中按 / 松 ⌥ 即时切换。裁剪过 / 图幅不可编辑的面板边柄照旧只裁剪。
+  缩小后 `holdPlaceholder` 的 `onSettled` 在新图回来那一刻调 `offerTextFit`：这一维**新增**探出量（`lib/edgeShrinkFit.axisOverflowMm`，逐元素判据就是预检「元素超出图幅」的 `preflight.drawnFigureRect`，同源 `engine/preflight.py::element_overflow`）超过容差 → 通知轨挂一条带按钮的提示
+  （`setStatus` + `action`，owner `edge-text-fit:<id>`）；点了走 `actions.setFigureFrameScaled`：页面框不动，按 `planTextFit` 的「刚好放得下」图幅（现在 + 新增探出量，不超过拖之前）出图、整体等比缩进框里，一条历史；估短了新图回来再问一次。提示挂着时撤销 / 改过图幅，按钮什么都不做。
+  看护：`lib/panelEdgeCrop.test.ts`、`lib/edgeShrinkFit.test.ts`、`canvas/panelEdgeCrop.test.tsx`、`canvas/layoutCornerFollow.test.tsx`、`canvas/context-bar/dragStatusBar.test.tsx`、`e2e/layout-panel-edge-crop.spec.ts`。
+  **拖 / 粘贴文件进画布（ADR 0176）**：舞台 `onDrop` 的系统文件由 `useCanvasScriptDrop` 分派（图片 → `importAndPlace` → `addPanelToCanvas`，不绕过加图分层链；`.py` 的「打开并运行、图放进这张画布」不变）。
+  单图编辑里拖进来的图与素材卡拖入一样：不带点、按常规规则摆放并切到多图排版。细则见 `asset-library.md` 末条。

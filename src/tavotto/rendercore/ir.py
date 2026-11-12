@@ -267,6 +267,32 @@ class Glyph:
 
 
 @dataclass(frozen=True)
+class VGlyph:
+    """竖排用的一个字形（ADR 0163「横排 / 竖排」）：HarfBuzz 以 TTB 方向塑形的结果。**不是 IR 节点**——
+    竖排的落笔点由 `rendercore.vertical` 逐字算好，IR 里仍是单字形的 `ShapedText`。
+    单位是字体单位。`y_advance` 取**向下为正**（HarfBuzz 在 TTB 下给负数，这里翻成长度）；
+    `x_offset` / `y_offset` 是 HarfBuzz 已经把「横排原点 → 竖排原点」折进去的偏移（y 向上的字体坐标）：
+    笔位（列中线 x，字格顶边 y）加上它们就是该字形横排原点该落的地方。"""
+
+    gid: int
+    text: str
+    y_advance: int
+    x_offset: int = 0
+    y_offset: int = 0
+
+
+#: 模拟斜体的错切量（x += y × 0.25，约 14°）：与 Chromium / WebKit 的合成斜体相同，画布才对得上导出。
+SYNTH_ITALIC_SKEW = 0.25
+
+
+def synth_bold_width(size: float) -> float:
+    """模拟粗体的描边宽度（pt）：9 pt 及以下是字号的 1/24，36 pt 及以上 1/32，中间线性。
+    与 Skia 的合成粗体同一张表，画布才对得上导出。"""
+    t = min(max((size - 9.0) / 27.0, 0.0), 1.0)
+    return size * (1.0 / 24.0 + (1.0 / 32.0 - 1.0 / 24.0) * t)
+
+
+@dataclass(frozen=True)
 class GlyphRun:
     font: str  # page.resources 里的 FontResource key
     size: float  # pt
@@ -279,6 +305,9 @@ class GlyphRun:
     #: 不画、只进文本层（PDF 文字渲染模式 3；SVG / 位图不画）。标注公式的源码用它：公式本身是
     #: 填充轮廓，文本层里在同一位置放这段看不见的字，阅读器里选中 / 复制拿到 LaTeX（ADR 0152 §七）。
     invisible: bool = False
+    #: 这张脸没有粗 / 斜体、由写入器模拟（ADR 0169 修订，与 Word 同一做法）：粗体 = 字形加描边，斜体 = 字形错切。
+    synth_bold: bool = False
+    synth_italic: bool = False
 
     @property
     def cluster_text(self) -> str:
@@ -679,6 +708,8 @@ def _text(node: ShapedText, page: Page, path: str) -> None:
             raise IRError("bad_glyph", f"actual_text 必须是字符串或 None: {run.actual_text!r}", rp)
         if not isinstance(run.invisible, bool):
             raise IRError("bad_glyph", f"invisible 必须是布尔值: {run.invisible!r}", rp)
+        if not isinstance(run.synth_bold, bool) or not isinstance(run.synth_italic, bool):
+            raise IRError("bad_glyph", "synth_bold / synth_italic 必须是布尔值", rp)
 
 
 def _placement(

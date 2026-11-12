@@ -19,6 +19,7 @@ runExport(input)       起作业 → SSE + 轮询跟进度 → 落终局
 cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动过）
 ```
 
+- **修改后的 .py（ADR 0171）**：格式行第六项 `PY`，不单开一行。可不可用只读 `offers.script`（`scriptAvailability`，缺 route 才看素材表），不可用时禁用、原因在 `title`；不记进导出默认值（每次多跑一遍脚本）。有修改没写进脚本时桌面版胶囊说条数（`resultScriptSkipped`），不开结果块；浏览器版的结果块在摘要行说、详情由 `ScriptSkipped` 列名字。
 - **载荷的构造只有 `lib/exportRequest.buildExportRequest()` 一处**。组件不许
   自己拼那个对象，也不许在第二个 API 上把同一批参数再抄一遍——那正是
   「预检按一套规矩、导出按另一套」的来源。
@@ -67,11 +68,11 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
   列表的缩略图**不发渲染请求**：有图内修改的面板挂 `renderStore` 里已画好的
   SVG，其余走素材库同一条 `panelSrc`。「没选」（`no_figure`，让用户点一张）与
   「没得选」（`no_figures`，项目里一张图都没有）是两句话。
+- **导出回执的详情只放用户要用的**（2026-11-06 用户）：文件名、尺寸、保存位置；核验只说失败，「已核验」「未核验」「已覆盖」不上界面。
 - **产物核验的解读只有 `lib/artifactInspection.inspectionState()` 一处**（2026-09-21，统一实施包 U08，
   ADR 0068）：回执 `outputs[].manifest` 是服务端重新打开封口文件量出的逐项四值
-  （`verified / failed / unknown / not_applicable`）。每件产出一行：**全部可判项 `verified` 才画绿勾
-  「已核验」**；有 `unknown` 按名字列「未核验：…」——中性色、没有勾；有 `failed` 红着列「核验未通过：…」
-  （standard 政策下文件已经交付了，用户投出去之前得知道）；`not_applicable` 不画；**没有 `manifest`
+  （`verified / failed / unknown / not_applicable`）。回执里只有 `failed` 上界面，红着列「核验未通过：…」
+  （standard 政策下文件已经交付了，用户投出去之前得知道）；其余都不画，绝不画绿勾；**没有 `manifest`
   （老服务端 / 检查器没跑）= 未核验**，不是通过。Codex 内嵌画布的「已导出」提示按同一份解读
   （`inspectionRollup`）按文件名点名失败 / 未核验的文件。
 - **严格核验是请求里的可选段**：「检查」组里的「严格核验产物」→ `buildExportRequest({ strictInspection, profileId })`
@@ -87,6 +88,7 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
   `provenance`（源产物公开身份、回执公开事实 `ArtifactReceiptFacts`、节点表）、`ExportJob.trace`（有界阶段轨迹，
   `failed_phase` 是坏在哪一步）。界面**不画、不解读**它们（解读产物核验的仍只有 `inspectionState()`）；要显示时
   先定一份解读的唯一出处，别在组件里各自读字段。它们都是可选键：老服务端没有 = `undefined`，不是错误。
+- **`ArtifactManifestSummary.text_outlined`**（QA-WIN-08）：只在 `format==='svg'` 且为 `true` 时，`ResultBlock` 摘要行并入一句「文字已转成路径，不能再当文字编辑」（与警告等并列，`exportResultClean` 因此判为不干净、不只剩胶囊）；缺席 / false 什么都不画。后端同源在 `docs/rules/backend/export-pipeline.md`。
 
 - **结果就是一句摘要**（2026-10-23）：成功 =「已导出 N 个文件」+ 一个「在文件夹中显示」（动作在摘要行上，脚部不再重复）；有失败 =
   「N 个成功，M 个失败」。逐个文件、每件的核验（已核验 / 未核验）、警告、失败原因、诊断都在默认折叠的「详情」里。**例外：核验未通过
@@ -126,7 +128,7 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
     （面板落 (0,0)、不套用画布缩放 / 裁剪 / 旋转 / 翻转 / 透明度；标注 x/y/w/h 以图内容原点平移、按 图幅 / 画布显示尺寸 缩放，字号 / 线宽 / 内边距 / 描边 / 圆角同比缩放——标注与图的相对大小同画布，与写回 `writeBackAnnotations` 同一口径；图自己的字号照旧不碰）。
     **预览画这份；请求仍是 `scope=original`，`original.objects` 取这份里的标注（`annotationsOf`，z 序；排在图下面的个数进 `objects_below`）**——同一个来源，后端用整版导出那条 RenderCore 合成路径画
     （没有第二套标注绘制，细则见 `docs/rules/backend/export-pipeline.md`）。图幅之外的标注被页面裁掉，不扩大页面。**所有格式照常可选**：EPS 在后端把原图 EPS 嵌进外层 EPS 再叠标注 PostScript，
-    标注含半透明等 PS 画不出的效果时该项逐项失败 `eps_annotations_unsupported`（不在前端禁用）。没有可见标注时请求与从前逐字节相同。
+    标注含半透明等 PS 画不出的效果时该项逐项失败 `eps_annotations_unsupported`（不在前端禁用）；但**点导出前先问**：`lib/epsOpacity.epsTranslucentCount` 数出会进 EPS 叠加层的半透明标注，命中就由 `EpsOpacityPrompt`（`ExportDialog.start()` 里 `epsGate.intercept`）弹「改导出 PDF / EPS 按不透明导出 / 取消」，后者请求带 `eps_opaque: true`（`ExportRequestInput.epsOpaque`，不命中时请求逐字节不变；判据与后端 IR 对齐，看护 `epsOpacity.test.ts` / `EpsOpacityPrompt.test.tsx`）。没有可见标注时请求与从前逐字节相同。
     看护 `lib/singleExportDoc.test.ts`、`ExportDialog.test.tsx`「单图档带入画布上的标注」、`tests/test_export_original_annotations.py`。
   * **单图档原图口径不可用时静默改按画布导**（这张图没有磁盘原件，如脚本现跑出来后重开、素材清单里还没有它）：内部 canvas scope，界面上不出现范围选择、不报错，导出区域按**可见对象的并集包围盒**裁掉页面白边（`lib/exportCrop.cropToVisibleContent`，经 `croppedDocument` 得到一份裁后文档，检查 / proof report / 请求 / 预览都吃这同一份（页面 = 包围盒、对象平移；包围盒含描边半宽与箭头头部外扩，与 RenderCore `geometry.py` 同源）；只改导出输入，不改文档、不进撤销，协议不变），左栏预览与 mm 尺寸显示裁后的区域（`fallbackPage`），文件名仍是这张图的名字。多图整版 / 每张图 / 原图口径不裁。
   * **多图**：左栏顶部缩略图条「整版 / 每张图」，有检查提示（除建议级以外的问题所指的对象）的缩略图带橙点；右栏「导出内容」
@@ -155,6 +157,7 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
     （每张用各自的名字）。route 按每张各取一次，迟迟不来按退路发，不卡住整批。
     批次准备的异步 continuation 必须仍属于同一批 ids；结算必须读取当前 store 的同批次、同一作业快照，不能用发送前闭包里的上一作业终态推进。
     runtime 的显示名与来源 id 分离：先取真实 runtime 名称或持久 source.stem；原名未保存时用既有本地化文件名默认值，不反解 opaque id、不改变完整引用。
+- **导出失败的出口**（2026-11-10，`lib/exportRecovery.ts` + `ResultBlock`）：`export_dir_unwritable` / `tmp_dir_failed` 的主按钮是「换个位置导出」（与「位置」行同一个 `useExportLocationPicker`，选完写项目导出文件夹再走同一个 `start()`；同目录「重试」必败，不给）；`export_raster_too_large` 的主按钮是「改用 N dpi 导出」（N = 候选里不超上限的最大一档，当前 dpi 取作业请求的 `ppi`，像素数按 dpi 平方缩、宽高向上取整；对话框把分辨率设成 N 后走同一个 `start()`，载荷仍只由 `buildExportRequest()` 构造），算不出档位退回「发送问题反馈」。作业级失败与「一件都没写出来」的逐项失败两处都带这个出口。看护 `exportFailureActions.test.tsx`、`lib/exportRecovery.test.ts`、`ExportDialog.test.tsx`「位图太大」。
 - **导出永远可点，没有知情确认勾选框**（2026-10-21）：阻断项 / 无法核验项 / 没查成不再拦「开始导出」。检查区只有摘要芯片（计数）与「在问题面板中查看」；**没有逐条阻断清单、没有任何警告句、不变红**（用户 10-21 裁决）。**原来记入 proof report 的确认，改成自动记「导出时未处理的项」**：有未处理项就强制生成样式检查报告
   （`reportRequired`，开关置灰），`forced` / `acknowledged`（阻断与无法核验的规则码）/ `check_failed` / `acknowledged_check_failed`
   照旧写，语义变为「导出时仍未处理」而不是「用户点过头」；请求的 `validation` 有阻断项时恒为 `{policy:'acknowledged',

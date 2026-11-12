@@ -1,6 +1,7 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { perfInput, perfRelease, perfSpan } from '@/perf/core'
 import { msg, t, type UiMessage } from '@/i18n'
+import { emitActivity, type ActivityDetail } from '@/lib/activity'
 // 元素名的措辞只有这一份（元素树 / 属性页 / 快速编辑都用它）：轮换的 toast
 // 要说「子图 2（右轴）」，不能在画布层再拼一套。
 import { engineLabel } from '@/components/inspector/roles/registry'
@@ -91,7 +92,12 @@ import {
   snapScaleNearest,
 } from '@/lib/scaleSnap'
 import { scaleDragStatus } from '@/lib/dragStatus'
-import { applyAnnotationScale, annotationsOver, captureOrigins } from '@/lib/annotationScale'
+import {
+  applyAnnotationScale,
+  annotationsInside,
+  captureOrigins,
+  withFollowers,
+} from '@/lib/annotationScale'
 import { drawnMinFontPt, panelScale, scaledFontPt } from '@/lib/preflight'
 import { resolveDocumentSpec } from '@/lib/specBinding'
 import { FONT_FLOOR_TOL_PT } from '@/lib/profile'
@@ -311,19 +317,79 @@ function contentAxisLock(
 /**
  * 拖动时排除锁定对象；成组对象整组跟着走，**组内有锁定成员则整组都不动**
  * （规则唯一出处是 actions 的 movableTargets，方向键微调走的是同一个）。
+ * 移动的面板带上整个落在它里面的标注（`lib/annotationScale.withFollowers`，ADR 0161 修订 2026-11-04）。
  */
-export function draggableSelection(): { targets: CanvasObject[]; blockedGroups: number } {
+export function draggableSelection(): {
+  targets: CanvasObject[]
+  blockedGroups: number
+  /** 用户自己选中、能动的个数（不含跟着面板走的标注）：历史标签按它说 */
+  picked: number
+} {
   const { objects, blockedGroups } = movableTargets(useSelectionStore.getState().ids)
-  return { targets: objects.filter((o) => !o.hidden), blockedGroups }
+  const moving = objects.filter((o) => !o.hidden)
+  return { targets: withFollowers(doc().objects, moving), blockedGroups, picked: moving.length }
 }
 
 /* -------------------------------------------------------------------------- */
 /*  移动                                                                       */
 /* -------------------------------------------------------------------------- */
 
+/** 画出来的矩形 / 椭圆两边差不到这么多（相对长边）算「差一点就是正的」 */
+const NEAR_SQUARE = 0.1
+/** 线 / 箭头离水平或竖直不到这么多度算「差一点就是直的」 */
+const NEAR_AXIS_DEG = 4
+
+/** 一次绘制的粗粒度形状（纯函数）：`vec` = 起点到终点，`box` = 落下来的包围盒 */
+export function drawShape(
+  tool: Exclude<Tool, 'select'>,
+  vec: { x: number; y: number },
+  box: { w: number; h: number },
+  shift: boolean,
+): Extract<ActivityDetail, { kind: 'shape.drawn' }> {
+  let near = false
+  if (!shift) {
+    if (tool === 'rect' || tool === 'ellipse') {
+      const long = Math.max(box.w, box.h)
+      const diff = Math.abs(box.w - box.h)
+      near = long > 0 && diff > 0.05 && diff / long < NEAR_SQUARE
+    } else if (tool === 'arrow' || tool === 'line') {
+      const deg = (Math.atan2(Math.abs(vec.y), Math.abs(vec.x)) * 180) / Math.PI
+      const off = Math.min(deg, 90 - deg)
+      near = off > 0.2 && off < NEAR_AXIS_DEG
+    }
+  }
+  return { kind: 'shape.drawn', near, snapped: shift }
+}
+
+/** 手走的路「几乎是一条横 / 竖线」：一个方向超过这么远… */
+const STRAIGHT_MIN_MM = 10
+/** …另一个方向偏了不到这么多 */
+const STRAIGHT_DRIFT_MM = 1
+/** 「挪得很小」的上限 */
+const TINY_MOVE_MM = 2
+
+/** 一次拖动的粗粒度形状（纯函数；只出枚举与布尔，没有位置） */
+export function dragShape(
+  rawDx: number,
+  rawDy: number,
+  ev: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean },
+  snapped: boolean,
+): Extract<ActivityDetail, { kind: 'object.dragged' }> {
+  const ax = Math.abs(rawDx)
+  const ay = Math.abs(rawDy)
+  const meta = ev.metaKey || ev.ctrlKey
+  return {
+    kind: 'object.dragged',
+    track: Math.max(ax, ay) >= STRAIGHT_MIN_MM && Math.min(ax, ay) < STRAIGHT_DRIFT_MM ? 'straight' : 'free',
+    size: Math.hypot(rawDx, rawDy) < TINY_MOVE_MM ? 'tiny' : 'normal',
+    mods: ev.shiftKey ? (meta ? 'both' : 'shift') : meta ? 'meta' : 'none',
+    snapped,
+  }
+}
+
 export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
   const store = useDocumentStore.getState()
-  const { targets, blockedGroups } = draggableSelection()
+  const { targets, blockedGroups, picked } = draggableSelection()
   warnBlockedGroups(blockedGroups, targets.length > 0)
   if (!targets.length) return
   const primary = targets.find((o) => o.id === objectId) ?? targets[0]
@@ -333,13 +399,19 @@ export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
   const cands = candidatesFor(excluded)
 
   interaction().begin('move')
-  store.beginTxn(moveLabel(targets.length))
+  store.beginTxn(moveLabel(picked))
+  // 给提示引擎的手势形状（ADR 0177）：手走的原始位移（吸附 / 锁向之前）与最后一帧有没有吸上
+  let rawDx = 0
+  let rawDy = 0
+  let lastSnapped = false
 
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
       const t = getTransform()
       let dx = pxToMm(dxPx, t)
       let dy = pxToMm(dyPx, t)
+      rawDx = dx
+      rawDy = dy
       if (ev.shiftKey) {
         ;[dx, dy] = axisLock(dx, dy)
       }
@@ -361,6 +433,7 @@ export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
         snapY = snap.guideYs
       }
       interaction().setSnap(snapX, snapY)
+      lastSnapped = snapX.length > 0 || snapY.length > 0
 
       store.txnUpdate((d) => {
         for (const o of d.objects) {
@@ -371,10 +444,11 @@ export function startMoveDrag(e: ReactPointerEvent, objectId: string) {
         }
       })
     },
-    onEnd: (moved, _ev, end) => {
+    onEnd: (moved, ev, end) => {
       interaction().end()
       // pointercancel = 这次交互被系统作废，一律丢弃：不留位移、不进历史
       store.endTxn({ discard: !moved || end.cancelled })
+      if (moved && !end.cancelled) emitActivity(dragShape(rawDx, rawDy, ev, lastSnapped))
     },
   })
 }
@@ -443,19 +517,19 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
   const target = doc().objects.find((o) => o.id === objectId)
   if (!target || target.locked) return
   const orig: Rect = { x: target.x, y: target.y, w: target.w, h: target.h }
-  // 多图排版里拖面板的角：「连同标注」（ADR 0161）——叠在它上面的标注按同一固定点、同一比例一起缩。
+  // 多图排版里拖面板的角：整个落在图里的标注（ADR 0161 修订 2026-11-04）按同一固定点、同一比例一起缩。
   // 起手定下跟随的集合与它们的起手快照（整个手势里不变）；它们随面板一起动，所以不当吸附候选
   const layoutCorner =
     target.type === 'panel' &&
     isCornerDir(dir) &&
     useWorkspaceStore.getState().mode === 'layout'
-  const followEnabled = layoutCorner && useUiStore.getState().scaleWithAnnotations
-  const followOrigins = followEnabled
-    ? captureOrigins(annotationsOver(doc().objects, target as PanelObject))
+  const followOrigins = layoutCorner
+    ? captureOrigins(annotationsInside(doc().objects, target as PanelObject))
     : []
   const excluded = new Set([objectId, ...followOrigins.map((f) => f.id)])
   const cands = candidatesFor(excluded)
   const isText = target.type === 'text'
+  const vertical = target.type === 'text' && target.writingMode === 'vertical'
   const rot = objectRotation(target)
   // 面板的等比与否由它自己的宽高比锁定开关决定，形状仍是默认等比
   const keepRatio = target.type === 'panel' ? panelAspectLocked(target) : !isText
@@ -482,6 +556,7 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
         }
       : null
 
+  let lastPlacedX = orig.x
   interaction().begin('resize')
   const minSrcPt =
     layoutCorner && target.type === 'panel'
@@ -489,7 +564,7 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
       : null
   if (layoutCorner) {
     interaction().setDragStatus(
-      scaleReadout(target as PanelObject, orig, followEnabled, followOrigins.length, minSrcPt),
+      scaleReadout(target as PanelObject, orig, true, followOrigins.length, minSrcPt),
     )
   }
   store.beginTxn(hist('resizeObjects'))
@@ -515,7 +590,11 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
       let next = resizeRect(orig, dir, dx, dy, proportional)
 
       if (isText) {
-        next = { ...next, y: orig.y, h: orig.h }
+        // 文字只改行长：横排改 x / w（y / h 还原），竖排改 y / h（x / w 还原——w 由列数撑开，x 随右边缘，
+        // 都是 `TextView` 量出来写回的，拖动不碰）
+        next = vertical
+          ? { ...next, x: orig.x, w: orig.w }
+          : { ...next, y: orig.y, h: orig.h }
       }
 
       // 缩放时只吸附正在移动的边
@@ -582,7 +661,7 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
 
       const placed = anchoredRect(orig, next, dir, rot)
       // 标注只在等比缩放时跟着走（一个比例才说得清）；这一帧非等比（面板解锁比例）就留在原处
-      const following = followEnabled && proportional && orig.w > 0
+      const following = followOrigins.length > 0 && proportional && orig.w > 0
       const factor = following ? placed.w / orig.w : 1
       if (layoutCorner) {
         interaction().setDragStatus(
@@ -598,10 +677,21 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
       store.txnUpdate((d) => {
         const o = d.objects.find((x) => x.id === objectId)
         if (!o) return
-        o.x = placed.x
-        o.y = placed.y
-        o.w = placed.w
-        if (!isText) o.h = placed.h
+        if (vertical) {
+          // 竖排文字只写行长一侧（y / h）：x / w 归 `TextView` 的写回，这里重写会把它量出来的值盖回按下时的
+          o.y = placed.y
+          o.h = placed.h
+          // 旋转后「固定对侧不动」要把 x 也挪（anchoredRect）：只加这一帧相对上一帧的位移，不覆盖量出来的 x
+          if (placed.x !== lastPlacedX) {
+            o.x += placed.x - lastPlacedX
+            lastPlacedX = placed.x
+          }
+        } else {
+          o.x = placed.x
+          o.y = placed.y
+          o.w = placed.w
+          if (!isText) o.h = placed.h
+        }
         if (followOrigins.length) {
           // 固定点 = 被拖角的对角（面板恒无任意角旋转，anchoredRect 与 scaleFixedPoint 同口径）
           applyAnnotationScale(d.objects, followOrigins, scaleFixedPoint(orig, dir), factor)
@@ -750,7 +840,10 @@ export function startPan(e: ReactPointerEvent) {
   trackPointer(e, {
     threshold: 0,
     onMove: (_ev, dx, dy) => useViewportStore.getState().setPan(panX + dx, panY + dy),
-    onEnd: () => interaction().end(),
+    onEnd: (moved, _ev, end) => {
+      interaction().end()
+      if (moved && !end.cancelled) emitActivity({ kind: 'view.drag_panned' })
+    },
   })
 }
 
@@ -922,6 +1015,10 @@ export function startDraw(e: ReactPointerEvent, tool: Exclude<Tool, 'select'>) {
       store.commit(hist('addShape', { shape: drawnToolMsg(tool) }), (d) => {
         d.objects.push(created)
       })
+      // 给提示引擎（ADR 0177）：真拖出来的形状 / 线，差一点就规整却没按 ⇧
+      if (moved && draft && draft.w > 0.5 && tool !== 'text') {
+        emitActivity(drawShape(tool, { x: end.x - start.x, y: end.y - start.y }, draft, ev.shiftKey))
+      }
       const ui = useUiStore.getState()
       // 在图内编辑态画标注：新对象属于画布层，必须先退出图内编辑，
       // 属性页才会跟到新对象上（否则它的属性根本改不了）

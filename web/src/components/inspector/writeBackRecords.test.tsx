@@ -13,7 +13,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { fetchHistory, restoreHistory, type HistoryVersion } from '@/lib/api'
+import { fetchHistory, restoreHistory, updateSourceFiles, type HistoryVersion } from '@/lib/api'
 import { literal, t } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
@@ -26,6 +26,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   fetchHistory: vi.fn(),
   restoreHistory: vi.fn(),
+  updateSourceFiles: vi.fn(),
 }))
 
 globalThis.fetch = (async () =>
@@ -86,6 +87,7 @@ beforeEach(async () => {
   document.body.innerHTML = ''
   vi.mocked(fetchHistory).mockReset()
   vi.mocked(restoreHistory).mockReset()
+  vi.mocked(updateSourceFiles).mockReset()
   useProjectStore.setState({ project: null } as never)
   useAssetStore.setState({ byId: { 'A.pdf': { mtime: 1 } } } as never)
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_wb_records')
@@ -236,5 +238,70 @@ describe('恢复仍是原来那条路', () => {
     expect(p.overrides[0].gid).toBe('axes_0.xlabel')
     // 恢复完成 → 写回窗口随之关掉（原先是历史弹层关掉）
     expect(closed).toHaveBeenCalledWith(false)
+  })
+
+  it('恢复确认框按项目实际备份目录提示，不再写死 cache/original_backups（QA-WIN-49）', async () => {
+    vi.mocked(fetchHistory).mockResolvedValue({ versions: [version(0), version(1)] } as never)
+    useProjectStore.setState({ project: { backup_dir: 'C:\\Users\\x\\writebackbackups1102' } } as never)
+    await mount(<WriteBackDialog panels={[panel()]} open initialPage="records" onOpenChange={() => {}} />)
+    const restoreBtns = [...document.body.querySelectorAll<HTMLElement>('[data-write-back="restore"]')]
+    await click(restoreBtns[1])
+    expect(text()).toContain('writebackbackups1102')
+    expect(text()).not.toContain('cache/original_backups')
+  })
+
+  it('项目没给备份目录：回落到默认 cache/original_backups', async () => {
+    vi.mocked(fetchHistory).mockResolvedValue({ versions: [version(0), version(1)] } as never)
+    await mount(<WriteBackDialog panels={[panel()]} open initialPage="records" onOpenChange={() => {}} />)
+    const restoreBtns = [...document.body.querySelectorAll<HTMLElement>('[data-write-back="restore"]')]
+    await click(restoreBtns[1])
+    expect(text()).toContain('cache/original_backups')
+  })
+})
+
+describe('同一个框里先写回再恢复：基线跟着本次写回推进', () => {
+  /** 打开框(mtime=1) → 写回成功(load 后磁盘 mtime=500) → 切到写回记录 → 点第一个「恢复」并确认 */
+  async function writeThenRestore(afterWrite?: () => void) {
+    vi.mocked(fetchHistory).mockResolvedValue({ versions: [version(0), version(1)] } as never)
+    vi.mocked(updateSourceFiles).mockResolvedValue({
+      updated: ['A.pdf'], backup_dir: '/b', warnings: [],
+      verification: { replay: 'ok', elements: 3 },
+    } as never)
+    vi.mocked(restoreHistory).mockResolvedValue({ updated: ['A.pdf'], backup_dir: '/b', patches: [] } as never)
+    // 写回后重拉素材列表：磁盘上这张图的 mtime 变成 500
+    useAssetStore.setState({
+      load: async () => {
+        useAssetStore.setState({ byId: { 'A.pdf': { mtime: 500 } } } as never)
+        return null
+      },
+    } as never)
+    await mount(<WriteBackDialog panels={[panel()]} open onOpenChange={() => {}} />)
+    await click(byText(wb('confirm')))
+    await act(async () => {
+      await new Promise<void>((r) => setTimeout(r, 0))
+    })
+    expect(updateSourceFiles).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(updateSourceFiles).mock.calls[0][3]).toBe(1)
+    afterWrite?.()
+    await click(tab('records'))
+    const restoreBtns = [...document.body.querySelectorAll<HTMLElement>('[data-write-back="restore"]')]
+    await click(restoreBtns[1])
+    await click(byText(vh('confirmRestore')))
+    expect(restoreHistory).toHaveBeenCalledTimes(1)
+    return vi.mocked(restoreHistory).mock.calls[0]
+  }
+
+  it('本次写回成功后恢复：带写回后的新 mtime，不再被 source_changed 误拒', async () => {
+    const call = await writeThenRestore()
+    expect(call).toEqual(['A.pdf', 0, 500])
+  })
+
+  it('写回之后素材 store 又被外部改动刷新：不吞进基线，恢复仍带写回完成那一刻的值', async () => {
+    const call = await writeThenRestore(() =>
+      act(() => {
+        useAssetStore.setState({ byId: { 'A.pdf': { mtime: 9999 } } } as never)
+      }),
+    )
+    expect(call).toEqual(['A.pdf', 0, 500])
   })
 })

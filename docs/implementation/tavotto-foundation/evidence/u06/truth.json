@@ -146,7 +146,8 @@
   {
    "id": "cjk",
    "logical": "图一：温度 T (K) 随时间变化 ℃",
-   "note": "汉字与 ℃ 由 Noto Sans SC（CFF CID）画；T (K) 由 LiberationSans-Bold 画"
+   "tounicode_only": "图一：温度 T (K) 随时间变化 °C",
+   "note": "汉字由 Noto Sans SC（CFF CID）画；T (K) 与 ℃ 由 LiberationSans-Bold 画——正文脸没有 ℃，展开成 °C（ADR 0060 2026-11-04 修订），ActualText 回 ℃"
   },
   {
    "id": "combining",

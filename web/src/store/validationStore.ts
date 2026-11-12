@@ -17,6 +17,7 @@ import { create } from 'zustand'
 import { subscribeMath } from '@/lib/mathtext'
 import { currentProjectId } from '@/lib/session'
 import { needsFigureArchiveSource } from '@/lib/panelSourceEvidence'
+import { subscribeSourceFonts } from '@/lib/sourceFontCache'
 import { resolveDocumentSpec } from '@/lib/specBinding'
 import {
   filterIssues,
@@ -309,10 +310,13 @@ export function startValidation(): () => void {
   // 公式排版结果到了（ADR 0152 §七）：排不出来的公式要进问题面板，而「排不出」这个事实
   // 只有排版回来才知道——求值器是纯函数，所以结果一到就重算一遍
   const stopMath = subscribeMath(() => schedule())
+  // 原图字体的本机状态到了（ADR 0164）：同一个理由——「用不了」只有问过本机才知道
+  const stopSourceFonts = subscribeSourceFonts(() => schedule())
 
   return () => {
     cancelScheduled()
     stopMath()
+    stopSourceFonts()
     stopDoc()
     stopRender()
     stopAssets()

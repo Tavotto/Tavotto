@@ -23,7 +23,7 @@ import time
 import traceback
 from collections import deque
 
-from . import bridge, usage, widget
+from . import bridge, guide, updatenotice, usage, widget
 from .rpc import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
@@ -598,6 +598,24 @@ def _tools() -> list[dict]:
                 "additionalProperties": False,
             },
         },
+        {
+            "name": "tavotto_guide",
+            "title": "使用说明",
+            "description": (
+                "只读：取回 Tavotto 的使用说明（技能全文）。宿主没有加载 Tavotto 技能时，开工前先调一次；"
+                "section 可选，取 references 里某一节的名字（不给就是主说明，返回里列出可选节）。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "section": {
+                        "type": "string",
+                        "description": "references 里的某一节，如 other-hosts；不给 = 主说明",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        },
     ]
     by_name = {t["name"]: t for t in tools}
     for name in CANVAS_TOOLS:
@@ -613,7 +631,53 @@ def _tools() -> list[dict]:
         by_name["tavotto_apply_overrides"]["_meta"] = widget.tool_meta(
             invoking="正在重渲染…", invoked="已更新"
         )
+    if bridge.journal_catalog_enabled():
+        _add_journal_catalog_tools(tools, by_name)
     return tools
+
+
+#: 只在期刊库总开关打开时才出现在 tools/list 的工具（处理器在 HANDLERS，关着时调用回 `journal_catalog_disabled`）
+JOURNAL_CATALOG_TOOLS = ("tavotto_list_journals",)
+#: 带手写 `journal` 覆盖、因而也认 `journal_id` 的工具
+JOURNAL_ID_TOOLS = (
+    "tavotto_open_figure",
+    "tavotto_normalize_figure",
+    "tavotto_preflight",
+    "tavotto_export",
+)
+
+
+def _add_journal_catalog_tools(tools: list[dict], by_name: dict) -> None:
+    """内置期刊库的 Agent 入口（ADR 0155 §9）。**只在总开关打开时调用**：关着时 tools/list 里既没有
+    `tavotto_list_journals`，各工具的 schema 里也没有 `journal_id`。"""
+    for name in JOURNAL_ID_TOOLS:
+        by_name[name]["inputSchema"]["properties"]["journal_id"] = {
+            "type": "string",
+            "description": (
+                "内置期刊库的期刊 id（先 tavotto_list_journals 查）：等于中性底规范 + 该期刊的覆盖。"
+                "不能与 profile_id / journal 同时给。"
+            ),
+        }
+    tools.append(
+        {
+            "name": "tavotto_list_journals",
+            "title": "内置期刊库",
+            "description": (
+                "只读：列出内置期刊标准库里的期刊（id / 名称 / 出版社 / 别名）与库版本 catalog_rev。"
+                "query 按名称、出版社、别名模糊过滤。库里没有的期刊不要凭记忆编规范，如实告诉用户。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "名称 / 出版社 / 别名的一段文字（不分大小写与全半角）",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        }
+    )
 
 
 # ------------------------------- 工具实现 -----------------------------------
@@ -681,6 +745,7 @@ def _call_open_batch(target: str, args: dict, plan: dict, *, workdir: str | None
         discover=plan["discover"],
         profile_id=args.get("profile_id"),
         journal=args.get("journal"),
+        journal_id=args.get("journal_id"),
         workdir=workdir,
     )
     detailed = bool(args.get("preflight"))
@@ -828,6 +893,7 @@ def _call_open(args: dict) -> dict:
         stem=args.get("stem"),
         profile_id=args.get("profile_id"),
         journal=args.get("journal"),
+        journal_id=args.get("journal_id"),
         include_png=bool(args.get("include_png")),
         workdir=workdir,
         prepare_dependencies=prepare,
@@ -1100,8 +1166,43 @@ def _call_preflight(args: dict) -> dict:
         str(args.get("session_id") or ""),
         profile_id=args.get("profile_id"),
         journal=args.get("journal"),
+        journal_id=args.get("journal_id"),
     )
     return {"content": _text(out["report"]), "structuredContent": out}
+
+
+def _call_guide(args: dict) -> dict:
+    section = args.get("section")
+    if section is not None and not isinstance(section, str):
+        raise RpcError(INVALID_PARAMS, "section 必须是字符串")
+    out = guide.read_guide(section)
+    if not out["ok"]:
+        raise bridge.BridgeError(
+            out["error"],
+            out["code"],
+            **({"sections": out["sections"]} if "sections" in out else {}),
+        )
+    return {
+        "content": _text(out["text"]),
+        "structuredContent": {
+            "section": out["section"],
+            "sections": out["sections"],
+            "bytes": len(out["text"].encode("utf-8")),
+        },
+    }
+
+
+def _call_list_journals(args: dict) -> dict:
+    query = args.get("query")
+    if query is not None and not isinstance(query, str):
+        raise RpcError(INVALID_PARAMS, "query 必须是字符串")
+    out = bridge.list_journals(query)
+    names = "、".join(j["label"] for j in out["journals"][:20])
+    head = f"内置期刊库（catalog_rev {out['catalog_rev']}）共 {len(out['journals'])} 本"
+    return {
+        "content": _text(head + (f"：{names}" if names else "；库里暂时没有期刊。")),
+        "structuredContent": out,
+    }
 
 
 def _call_export(args: dict) -> dict:
@@ -1116,6 +1217,7 @@ def _call_export(args: dict) -> dict:
         out_dir=args.get("out_dir"),
         profile_id=args.get("profile_id"),
         journal=args.get("journal"),
+        journal_id=args.get("journal_id"),
         explicit_confirm=bool(args.get("explicit_confirm")),
         proof=args.get("proof") is not False,
     )
@@ -1146,6 +1248,12 @@ def _call_export(args: dict) -> dict:
         )
     if out["warnings"]:
         lines.append("worker 警告: " + "; ".join(out["warnings"][:5]))
+    # 新版本提醒：每个 MCP 进程最多一次，只在成功出图时带（失败的导出不该背这个）
+    if ok:
+        update = updatenotice.notice_once(_version())
+        if update is not None:
+            out["update"] = update
+            lines.append(update["message"])
     return {"content": _text(*lines), "structuredContent": out}
 
 
@@ -1176,6 +1284,7 @@ def _call_normalize(args: dict) -> dict:
         out_dir=args.get("out_dir"),
         profile_id=args.get("profile_id"),
         journal=args.get("journal"),
+        journal_id=args.get("journal_id"),
         replay_check=bool(args.get("replay_check")),
         evidence=bool(args.get("evidence")),
     )
@@ -1418,6 +1527,9 @@ def _call_health(args: dict) -> dict:
             out["worker"] = {"python": python, "source": source}
         except Exception as exc:  # noqa: BLE001 — 探测失败也要如实说
             out["worker"] = {"error": str(exc)}
+    update = updatenotice.notice(_version())
+    if update is not None:
+        out["update"] = update
     out["timings"] = {"health_ms": int((_time.monotonic() - t0) * 1000)}
     lines = [
         f"引擎就绪（tavotto {out['engine']['version']}）",
@@ -1427,6 +1539,8 @@ def _call_health(args: dict) -> dict:
         "允许的项目根: " + (os.pathsep.join(out["roots"]) or "（未配置）"),
         "根来源: " + root_info["source"],
     ]
+    if update is not None:
+        lines.append(update["message"])
     return {"content": _text(*lines), "structuredContent": out}
 
 
@@ -1443,12 +1557,17 @@ def _package_identity() -> dict:
         version = v if isinstance(v, str) and v.strip() else None
     except (OSError, ValueError):
         pass
-    return {
+    ident = {
         "package_dir": plugin_dir,
         "plugin_version": version,
         "release_build": os.path.isfile(os.path.join(plugin_dir, "plugin-build.json")),
         "python": sys.executable,
     }
+    if getattr(sys, "frozen", False):
+        # 桌面版：sys.executable 是 tavotto-cli，不是解释器，别冒充；技能脚本经它的 skill-script 子命令跑
+        ident["python"] = None
+        ident["skill_script_command"] = [sys.executable, "skill-script"]
+    return ident
 
 
 HANDLERS = {
@@ -1462,6 +1581,10 @@ HANDLERS = {
     "tavotto_refresh_project": _call_refresh,
     "tavotto_session_state": _call_session_state,
     "tavotto_close_session": _call_close,
+    "tavotto_guide": _call_guide,
+    # 受期刊库总开关管：关着时不在 tools/list，直接调用回 `journal_catalog_disabled`（ADR 0155 §9）。
+    # 开关打开（ADR 0155 §11）后与遥测的工具名闭集（`usage.TOOLS`）一一对应
+    "tavotto_list_journals": _call_list_journals,
 }
 
 #: 结果里挂 UI 的工具（与 `_tools()` 的 `_meta` 一致）
@@ -1962,7 +2085,8 @@ class Server:
                 "tavotto_preflight 体检 → tavotto_export 出图。"
                 "数据本身、坐标范围、加删曲线/子图、colorbar 方向这些必须回代码改；"
                 "改完 .py 之后调 tavotto_refresh_project（不是重跑脚本），Tavotto 界面会自己更新。"
-                "第一次用先调 tavotto_health（健康就不要安装任何东西）；项目路径必须在允许的根内，"
+                "第一次用先调 tavotto_health（健康就不要安装任何东西）；"
+                "宿主没有加载 Tavotto 技能时，开工前先调 tavotto_guide 读使用说明；项目路径必须在允许的根内，"
                 "模型传的路径不是授权。结果带 elided 时用 tavotto_session_state 取件，别猜 gid。"
                 "宿主没有内嵌画布时，同一组工具照样能走完打开→修改→预检→导出。"
             ),

@@ -47,11 +47,11 @@ import {
   beginRestore,
   canCommitRestore,
   consumeSkipRestoreOnce,
+  DOCUMENT_READY_TIMEOUT_MS,
   getRestoreGate,
   installRestoredDocument,
   hydrateProjectFile,
   isRestoreTokenCurrent,
-  noteBlockedWrite,
   onBlockedWrite,
   probeDocument,
   readCurrentDocId,
@@ -63,6 +63,7 @@ import {
   supersedeRestore,
   useDocumentStore,
   whenDocumentReady,
+  type DocumentReadiness,
   type ProbeResult,
   type RestoreGate,
   type RestoreToken,
@@ -763,7 +764,7 @@ export async function continueNew(): Promise<boolean> {
 export function resetRestoreStateForTests(): void {
   inflight.clear()
   lifecycleClues = null
-  lastBlockedNote = 0
+  resetHeldEntriesForTests()
   pendingStartup = null
   retryLineage = null
   resetRestoreGateForTests()
@@ -771,7 +772,7 @@ export function resetRestoreStateForTests(): void {
 
 /* ------------------------------ 用户级入口：恢复中排队 ------------------------------ */
 
-export type EntryGate = 'run' | 'deferred' | 'blocked'
+export type EntryGate = 'run' | 'deferred'
 
 /**
  * 用户级「往文档里写」的入口（素材卡双击 / 加入排版 / 拖放 / 粘贴 / 选图对话框……）刚挂载就可能触发，
@@ -779,12 +780,17 @@ export type EntryGate = 'run' | 'deferred' | 'blocked'
  *
  * 在**入口**（不是 `commit`——不做通用的 recipe 队列）这样处理：
  *  - 门开着 → `'run'`，调用方照常执行；
- *  - `restoring` → `'deferred'`：登记一次，等这轮恢复（含同项目的重试）落定再执行**一次**；
- *    被显式意图取代 / 切项目 / 超时 → 丢掉并说一句；
- *  - `needs_user` → `'blocked'`：用户得先选出口，说一句「上次的排版还没打开」，不排队。
+ *  - 门关着（`restoring` / `needs_user`）→ `'deferred'`：**记住这次动作，文档定下来之后执行一次**，绝不把它丢给用户重做
+ *    （ADR 0120 修订 2026-11-10）：
+ *      · `restoring` 时排的：这轮恢复（含同项目的重试）落定就执行；被显式意图取代的丢掉并说一句
+ *        ——较旧的操作不许写进较新意图建出来的文档；恢复落成 `needs_user` 的，转成下面那种；
+ *      · `needs_user` 时排的（或转过来的）：按失败原因走 `resolveHeldIssue`——没有别的排版可接就静默开新排版，
+ *        暂时读不到就自动再试一次，其余等用户在画布上的那张卡里选；选了哪份（重试成功 / 打开另一份 / 继续新建 /
+ *        「打开排版」里挑一份 / 新建）就落进哪份。
+ *    只有切了项目才丢。
  * `run` 必须是重新调用入口本身（门开了它会走 `'run'` 分支），这样「这个意图此刻还成立吗」由入口自己判。
  */
-/** 最近一次排队的入口自己的结局：`ran` = 真的执行了；`dropped` = 被取代 / 超时 / 换了项目而丢掉 */
+/** 最近一次排队的入口自己的结局：`ran` = 真的执行了；`dropped` = 被取代 / 换了项目而丢掉 */
 export type DeferredEntryOutcome = 'ran' | 'dropped'
 let lastDeferred: Promise<DeferredEntryOutcome> | null = null
 
@@ -799,56 +805,228 @@ export function takeDeferredEntryOutcome(): Promise<DeferredEntryOutcome> | null
   return p
 }
 
+/* ------------------------------ 记住的用户动作 ------------------------------ */
+
+interface HeldEntry {
+  run: () => void
+  pj: string | null
+  /**
+   * 排队那一刻恢复还在路上的代次：只认这一代（或它的同项目重试链）落定。
+   * `null` = 用户已经在「恢复没成」上（排队时就是 `needs_user`，或这轮恢复落成了 `needs_user`）：之后文档由用户选的出口定，
+   * 落进选出来的那份
+   */
+  queuedGen: number | null
+  /** 外部交接：同项目的文档无论怎么定下来的都算（它等的是「这个项目有文档了」，不是某一轮恢复） */
+  anyReady: boolean
+  settle: (o: DeferredEntryOutcome) => void
+}
+
+/** 一次恢复问题上最多记这么多动作（再多就丢最早的——连点十几下不该在选完之后一口气全落进去） */
+const HELD_MAX = 8
+const held: HeldEntry[] = []
+const heldListeners = new Set<() => void>()
+
+/** 画布上那张卡用：此刻有没有动作在等用户选排版（`useSyncExternalStore`） */
+export const subscribeHeldEntries = (fn: () => void): (() => void) => {
+  heldListeners.add(fn)
+  return () => heldListeners.delete(fn)
+}
+export const heldEntryCount = (): number => held.length
+
+function heldChanged(): void {
+  for (const fn of [...heldListeners]) fn()
+}
+
+function hold(entry: HeldEntry): void {
+  if (held.length >= HELD_MAX) held.shift()?.settle('dropped')
+  held.push(entry)
+  heldChanged()
+}
+
+/** 用户在「恢复没成」上选了出口之后，文档以这些理由定下来的都接着执行记住的动作 */
+const CHOSEN_REASONS = new Set<RestoreGate['reason']>(['restored', 'explicit', 'continued_new', 'empty', 'blank_requested'])
+/** 恢复在路上时排的：只有这轮恢复自己落定（没被显式意图取代）才执行 */
+const RESTORED_REASONS = new Set<RestoreGate['reason']>(['restored', 'empty', 'blank_requested'])
+
+function runnable(e: HeldEntry, g: RestoreGate): boolean {
+  if (g.state !== 'ready' || g.pj !== e.pj) return false
+  if (e.anyReady) return true
+  if (e.queuedGen === null) return CHOSEN_REASONS.has(g.reason)
+  const sameLifecycle =
+    g.gen === e.queuedGen ||
+    (!!retryLineage?.generations.has(e.queuedGen) && retryLineage.latest === g.gen && retryLineage.pj === e.pj)
+  return sameLifecycle && RESTORED_REASONS.has(g.reason)
+}
+
+/** 门落定为 ready 之后（微任务里，安装已经做完）：能执行的执行，不能的丢掉并说一句 */
+function flushHeld(gen: number): void {
+  const g = getRestoreGate()
+  if (g.state !== 'ready' || g.gen !== gen || held.length === 0) return
+  const batch = held.splice(0)
+  heldChanged()
+  let dropped = false
+  for (const e of batch) {
+    // 执行途中门又关上（某个动作自己换了文档）：剩下的不再往里写
+    if (runnable(e, getRestoreGate())) {
+      e.run()
+      e.settle('ran')
+    } else {
+      dropped = true
+      e.settle('dropped')
+    }
+  }
+  if (dropped) useUiStore.getState().setStatus(msg('restore.entrySuperseded', undefined, 'workspace'), 'error')
+}
+
+function onGateChanged(): void {
+  const g = getRestoreGate()
+  if (g.state === 'ready') autoRetriedPj = undefined
+  if (held.length === 0) return
+  // 切了项目 / 回到项目列表：这些动作是对旧项目说的
+  const foreign = held.filter((e) => e.pj !== g.pj)
+  if (foreign.length > 0) {
+    for (const e of foreign) {
+      held.splice(held.indexOf(e), 1)
+      e.settle('dropped')
+    }
+    heldChanged()
+    useUiStore.getState().setStatus(msg('restore.entrySuperseded', undefined, 'workspace'), 'error')
+    if (held.length === 0) return
+  }
+  if (g.state === 'ready') {
+    const gen = g.gen
+    void Promise.resolve().then(() => flushHeld(gen))
+  } else if (g.state === 'needs_user') {
+    for (const e of held) e.queuedGen = null
+    resolveHeldIssue()
+  }
+}
+
 export function deferUserEntry(run: () => void): EntryGate {
   ensureHooks()
   const g = getRestoreGate()
   if (g.state === 'ready') return 'run'
-  if (g.state === 'needs_user') {
-    noteBlockedWrite()
-    return 'blocked'
-  }
-  // 排队那一刻的恢复代次，或它的同项目重试链落定，才执行。
-  // 被显式意图取代（新建 / 打开排版 / 打开最近 / 教程 / 继续新建 / 打开另一份 / 切项目）的，
-  // 较旧的操作不许写进较新意图建出来的文档——丢掉并说一句
-  const queuedGen = g.gen
   let settle!: (o: DeferredEntryOutcome) => void
   lastDeferred = new Promise<DeferredEntryOutcome>((r) => (settle = r))
-  void whenDocumentReady(g.pj).then((verdict) => {
-    const now = getRestoreGate()
-    const sameLifecycle =
-      verdict === 'ready' &&
-      now.state === 'ready' &&
-      (now.gen === queuedGen || (retryLineage?.generations.has(queuedGen) && retryLineage.latest === now.gen && retryLineage.pj === g.pj)) &&
-      (now.reason === 'restored' || now.reason === 'empty' || now.reason === 'blank_requested')
-    if (sameLifecycle) {
-      run()
-      settle('ran')
-    } else {
-      settle('dropped')
-      useUiStore
-        .getState()
-        .setStatus(msg(verdict === 'timeout' ? 'restore.entryTimeout' : 'restore.entrySuperseded', undefined, 'workspace'), 'error')
-    }
-  })
+  hold({ run, pj: g.pj, queuedGen: g.state === 'restoring' ? g.gen : null, anyReady: false, settle })
+  if (g.state === 'needs_user') resolveHeldIssue()
   return 'deferred'
 }
 
-/* ------------------------------ 被拒写入的提示 ------------------------------ */
+/**
+ * 外部交接等「`pj` 这个项目的文档」定下来（落图 / 打开 Figure 选择器之前）。与 `whenDocumentReady` 的区别：
+ * 恢复没成（`needs_user`）时不干等用户——和用户自己动手一样走 `resolveHeldIssue`（静默开新排版 / 自动再试 / 等画布上的卡）。
+ * 终局：`ready` 继续落；切了项目 → `superseded`；等了 `timeoutMs` 用户仍没选 → `timeout`。
+ */
+export function whenDocumentSettledForEntry(
+  pj: string | null,
+  opts: { timeoutMs?: number } = {},
+): Promise<DocumentReadiness> {
+  ensureHooks()
+  const g = getRestoreGate()
+  if (g.state === 'ready' || g.pj !== pj) return whenDocumentReady(pj)
+  return new Promise<DocumentReadiness>((resolve) => {
+    let done = false
+    const finish = (r: DocumentReadiness) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      resolve(r)
+    }
+    const entry: HeldEntry = {
+      run: () => finish('ready'),
+      pj,
+      queuedGen: null,
+      anyReady: true,
+      settle: (o) => {
+        if (o === 'dropped') finish('superseded')
+      },
+    }
+    const timer = setTimeout(() => {
+      const i = held.indexOf(entry)
+      if (i >= 0) {
+        held.splice(i, 1)
+        heldChanged()
+      }
+      finish('timeout')
+    }, opts.timeoutMs ?? DOCUMENT_READY_TIMEOUT_MS)
+    hold(entry)
+    if (getRestoreGate().state === 'needs_user') resolveHeldIssue()
+  })
+}
+
+/* ------------------------------ 恢复没成时用户动了手 ------------------------------ */
+
+/** 首选那份明确打不开（不是暂时读不到）：没有别的排版可接时，新排版是唯一的去处 */
+const DEAD_END_KINDS = new Set<RestoreIssueKind>(['missing', 'invalid', 'too_new', 'prepare_failed'])
+/** 暂时读不到：再试一次很可能就好了 */
+const TRANSIENT_KINDS = new Set<RestoreIssueKind>(['unavailable', 'session_unavailable', 'index_degraded'])
+
+/** 这轮「恢复没成」已经替用户自动再试过的项目（门 ready 时清）：每轮只自动试一次，不成就交给用户选 */
+let autoRetriedPj: string | null | undefined
+let resolving = false
+let lastChooseNote = 0
+const CHOOSE_NOTE_GAP_MS = 4000
+
+/**
+ * 恢复没成（`needs_user`）而用户动了手（或交接要落图）。不把问题丢回给用户（2026-11-10 裁决）：
+ *  - 首选那份明确打不开、也没有别的排版可接 → 静默开一份新排版并说一句（旧文件一个字节不动，「打开排版」里还找得到）；
+ *  - 暂时读不到 → 自动再试一次；
+ *  - 其余（有别的排版可接 / 再试仍不成）→ 等用户在画布上那张卡里选，说一句去哪选。
+ * **不**替用户挑一份旧稿打开（ADR 0120 §二「绝不悄悄换旧稿」不动）。
+ */
+export function resolveHeldIssue(): void {
+  const g = getRestoreGate()
+  const issue = useDocumentStore.getState().restoreIssue
+  if (g.state !== 'needs_user' || !issue || issue.pj !== g.pj || resolving) return
+  if (DEAD_END_KINDS.has(issue.kind) && issue.alternatives.length === 0) {
+    const name = issue.kind === 'prepare_failed' ? '' : (issue.ref?.name ?? '')
+    resolving = true
+    void continueNew()
+      .then((ok) => {
+        if (!ok) return
+        useUiStore
+          .getState()
+          .setStatus(msg(name ? 'restore.autoNew' : 'restore.autoNewUnnamed', { name }, 'workspace'), 'info')
+      })
+      .finally(() => {
+        resolving = false
+      })
+    return
+  }
+  if (TRANSIENT_KINDS.has(issue.kind) && autoRetriedPj !== issue.pj) {
+    autoRetriedPj = issue.pj
+    void retryRestore()
+    return
+  }
+  const now = Date.now()
+  if (now - lastChooseNote < CHOOSE_NOTE_GAP_MS) return
+  lastChooseNote = now
+  useUiStore
+    .getState()
+    .setStatus(msg(held.length > 0 ? 'restore.heldChoose' : 'restore.blockedWrite', undefined, 'workspace'), 'info')
+}
 
 let hooked = false
-let lastBlockedNote = 0
-const BLOCKED_NOTE_GAP_MS = 4000
 
-/** 登记一次（模块实例内）：门关着时用户动作被拒，说一句「上次的排版还没打开」，同一句节流 */
+/** 登记一次（模块实例内）：门的变化驱动记住的动作；底层写入被拒（画标注、键盘动作……）同样走 `resolveHeldIssue` */
 function ensureHooks(): void {
   if (hooked) return
   hooked = true
-  onBlockedWrite(() => {
-    const now = Date.now()
-    if (now - lastBlockedNote < BLOCKED_NOTE_GAP_MS) return
-    lastBlockedNote = now
-    useUiStore.getState().setStatus(msg('restore.blockedWrite', undefined, 'workspace'), 'info')
+  onBlockedWrite(resolveHeldIssue)
+  useDocumentStore.subscribe((s, prev) => {
+    if (s.restoreGate !== prev.restoreGate) onGateChanged()
   })
+}
+
+/** 仅给用例：忘掉记住的动作与自动重试记录（真实的全新启动是模块重新求值） */
+export function resetHeldEntriesForTests(): void {
+  for (const e of held.splice(0)) e.settle('dropped')
+  heldChanged()
+  autoRetriedPj = undefined
+  resolving = false
+  lastChooseNote = 0
+  lastDeferred = null
 }
 
 // 登记成 `documentStore.restoreSession` 的实现（见那里的说明：不让 documentStore import 本模块）

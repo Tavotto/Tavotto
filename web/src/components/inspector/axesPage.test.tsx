@@ -51,12 +51,12 @@ const col = (side: string, v: string) =>
   f(`spine_${side}_color`, 'color', v, { group: '边框（逐条）' })
 
 /** 与 engine/manifest.py `_axes_fields` 同形 */
-const axesFields = (over: { sideWidths?: Record<string, number>; aspect?: string } = {}): EditableField[] => [
+const axesFields = (over: { sideWidths?: Record<string, number>; aspect?: string; log?: boolean } = {}): EditableField[] => [
   f('position', 'rect', [0.12, 0.11, 0.77, 0.77]),
   f('visible', 'bool', true),
-  f('xlim', 'pair', [-2.33, 1.83], { group: '数据范围' }),
+  f('xlim', 'pair', over.log ? [1, 40] : [-2.33, 1.83], { group: '数据范围' }),
   f('ylim', 'pair', [-2.05, 1.61], { group: '数据范围' }),
-  f('xscale', 'enum', 'linear', { options: ['linear', 'log'], group: '数据范围' }),
+  f('xscale', 'enum', over.log ? 'log' : 'linear', { options: ['linear', 'log'], group: '数据范围' }),
   f('yscale', 'enum', 'linear', { options: ['linear', 'log'], group: '数据范围' }),
   f('invert_x', 'bool', false, { group: '数据范围' }),
   f('invert_y', 'bool', false, { group: '数据范围' }),
@@ -649,5 +649,35 @@ describe('子图页的低频项收成摘要行', () => {
       foldBtn('grid')!.click()
     })
     expect(foldValue('grid')).toBe('X 开')
+  })
+})
+
+
+describe('对数轴的范围端点', () => {
+  const minBox = () =>
+    host.querySelector('[data-prop="xlim"]')!.querySelectorAll('input')[0] as HTMLInputElement
+
+  it('对数轴上下限填 0 / 负数不写进文档，框退回原数（QA-WIN-37）', async () => {
+    seedRender(makeManifest({ log: true }))
+    await mount()
+    await typeNumber(minBox(), '0')
+    expect(overrideOf('axes_0', 'xlim')).toBeUndefined()
+    expect(minBox().value).toBe('1')
+    await typeNumber(minBox(), '-3')
+    expect(overrideOf('axes_0', 'xlim')).toBeUndefined()
+    expect(minBox().value).toBe('1')
+  })
+
+  it('对数轴上正数下限照常保存', async () => {
+    seedRender(makeManifest({ log: true }))
+    await mount()
+    await typeNumber(minBox(), '0.5')
+    expect(overrideOf('axes_0', 'xlim')).toEqual([0.5, 40])
+  })
+
+  it('线性轴上 0 / 负数下限照常保存', async () => {
+    await mount()
+    await typeNumber(minBox(), '-4')
+    expect((overrideOf('axes_0', 'xlim') as number[])[0]).toBe(-4)
   })
 })

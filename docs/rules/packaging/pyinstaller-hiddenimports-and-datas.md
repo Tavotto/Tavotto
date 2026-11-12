@@ -29,9 +29,10 @@ order: 50
   把整包子模块铺进 hiddenimports（`_windows` / `_macos` / `_openssl` 按平台条件 import），打包环境里没装它就拒绝打包；
   wheel 那边它是 `dependencies` 的一员（`requirements.txt` 钉死镜像）。看护 `tests/test_private_python_tls.py::
   TestStructure`。
+- **延后 import 的 nacl 要显式进 hiddenimports**（2026-11-05）：远程期刊目录索引验签（`engine/journalremote._ed25519_verify`）在函数里延后 import PyNaCl（用户拍板用成熟库、不手写加密；不用 cryptography：Intel Mac 轮子与告警）。`tavotto.spec` 把 `nacl` 全部子模块与 `nacl._sodium` 扩展点名收进，打包环境里没装就拒绝打包；`nacl._sodium` 从原生代码动态导入的顶层 `_cffi_backend` 也必须显式收进（它不属于 `nacl` 包，`collect_submodules("nacl")` 收不到）。漏收的表现是冻结产物里验签一律失败、远程目录永远停在内置种子，而源码模式一切正常。构建后 `tavotto-cli --journal-selftest` 与 `smoke_app.py --exe` 的 GUI 入口都实际验证 RFC 8032 固定向量及篡改拒绝；可附正式签名索引路径，离线核验目录版本和刊数，不写用户缓存。看护 `tests/test_journal_remote.py`、`tests/test_frozen_journal_crypto.py`。
 - **Windows 冻结产物里 OpenSSL 的 DLL 必须与 `_ssl.pyd` 同源**（2026-10-15，#1051）：内置 runtime（两个平台）于 Analysis **之后**以 `Tree` 加入（不进 `datas`，否则里面的 PE 被重新归类为二进制、它的 `libcrypto-3.dll` / `libssl-3.dll` 作为依赖抢先占住顶层，打包 Python 一升 OpenSSL 就 `DLL load failed while importing _ssl`）；spec 在 Analysis 后跑 `scripts/frozen_ssl_gate.py`，构建后 `tavotto-cli --ssl-selftest`（`build_desktop.py` 与 `smoke_app.py --exe` 都跑）。macOS 同一机制会把扩展模块改写成指回 `_internal/` 的 `@rpath`、openblas 等复制到顶层（v0.18.0 多 ≈ 48 MB）；打包后 `build_worker_runtime.diff_collected_runtime()` 逐字节核对 runtime（`build_desktop.py` 与 CI 两条冒烟腿）。看护 `tests/test_frozen_ssl_gate.py`、`tests/test_runtime_build.py`。
 - **`tavotto-cli mcp` 的服务端要整包进 hiddenimports**（2026-10-27，「接入 AI 编辑器」）：`engine/mcpserve.py` 在运行时
-  才 `import tavotto_mcp`（插件那一份服务端，住在 `codex-plugin/mcp/`，不在 `src/` 下、wheel 也不带），静态分析看不见。
+  才 `import tavotto_mcp`（插件那一份服务端，住在 `codex-plugin/mcp/`，不在 `src/` 下；wheel 经 `force-include` 带这一个包，冻结产物仍靠这里收），静态分析看不见。
   `tavotto.spec` 把 `codex-plugin/mcp` 加进 `pathex`、`collect_submodules("tavotto_mcp")` 铺进 hiddenimports，收不到就
   拒绝打包；`scripts/smoke_app.py --exe` 用同目录的 `tavotto-cli` 真跑一次 `mcp` 握手 + `tavotto_health`。漏收的表现是
   宿主里 Tavotto 没有工具、stderr 一行 `mcp_server_not_bundled`。看护 `tests/test_desktop_mcp_serve.py`。

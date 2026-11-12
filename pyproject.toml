@@ -37,7 +37,7 @@ classifiers = [
     "Topic :: Multimedia :: Graphics :: Editors :: Vector-Based",
 ]
 
-# Flask 父进程的运行时闭包：flask + packaging + RenderCore 的五个包 + truststore。科学栈刻意不在这里——
+# Flask 父进程的运行时闭包：flask + packaging + RenderCore 的五个包 + truststore + pynacl。科学栈刻意不在这里——
 # engine/registry.py、pool.py、ai_bridge.py 必须保持纯标准库可 import，matplotlib 由 worker 解释器提供。
 # `packaging` 是 PEP 508 / 440 的参考实现（pip / uv 认的就是它），纯 Python、零依赖、
 # Apache-2.0 OR BSD-2-Clause；U04（ADR 0061）起依赖声明的无损读法与 marker 求值靠它，
@@ -63,6 +63,12 @@ dependencies = [
     # 私有 Python 下载被误报成「检查网络」（2026-09-28 实测）。truststore 在 Windows 走 CryptoAPI 建链
     # （缺根按需拉取）、macOS 走 SecTrust、Linux 走 OpenSSL + 系统 CA。只在 tlstrust 里延后 import。
     "truststore>=0.10,<1",
+    # 远程期刊目录索引的 Ed25519 验签（engine/journalremote.py；PyNaCl = libsodium 绑定，Apache-2.0，原生 abi3 轮子，依赖 cffi）：
+    # 用户 2026-11-05 拍板用成熟库、不手写加密。只在验签函数里延后 import，Flask 父进程启动不加载；
+    # import 不了就当验签失败（目录保持内置种子）。不用 pyca cryptography：它 49 起 PyPI 不再发 macOS x86_64 / universal2
+    # 与 win32 轮子（Intel Mac 桌面版会退到 Rust 源码构建），钉 48.x 又让它在 X.509 / PKCS#7 上我们根本用不到的告警一直挂着；
+    # PyNaCl 1.6.x 三个平台都有 cp38-abi3 轮子，macOS universal2 约 0.4 MB（cryptography 约 7.8 MB）。
+    "pynacl>=1.6,<2",
 ]
 
 [project.optional-dependencies]
@@ -77,7 +83,11 @@ worker = ["matplotlib>=3.8,<3.12", "numpy>=1.24,<3"]
 # 换 minor 是一次要有人负责的决定（跑一遍全仓、看新规则值不值得开）。
 # `tavotto[legacy-pymupdf]` 是自引用 extra（PEP 508，pip ≥ 21.2）：测试的独立读取器经这一个名字进 dev，
 # 而不是在两处各写一遍 pymupdf 的版本范围。
-dev = ["pytest>=8", "build>=1.2", "twine>=5", "ruff>=0.16,<0.17", "tavotto[legacy-pymupdf]"]
+# cryptography 不是运行时依赖（期刊目录验签用 pynacl），也不是测试造 TLS 证书用的（tests/support/tls_certs.py 纯标准库）；
+# 它只会被 twine -> keyring -> secretstorage 间接带进 dev 环境。这里显式写下界 >=50，是为了让 uv.lock 的这份间接依赖
+# 跟上已修告警的版本（48.x 的告警在 X.509 / PKCS#7，与我们无关但会一直挂着）。Intel Mac 桌面构建只装 requirements.txt，
+# 不装 dev extra，所以 49+ 没有 macOS x86_64 轮子不影响它。
+dev = ["pytest>=8", "build>=1.2", "twine>=5", "ruff>=0.16,<0.17", "cryptography>=50", "tavotto[legacy-pymupdf]"]
 # 实验室 CI（scripts/ci/）专用。**刻意不进 dev**：普通开发与 PR 上的
 # `pip install -e ".[dev]"` 不该被迫拖进科学栈的 numpy，而 Flask 父进程的依赖边界
 # （没有科学栈）更是一个字都不能松。视觉回归要 numpy 做像素级比较；Pillow 自 U10 起本来就在
@@ -137,8 +147,19 @@ exclude = ["runtime", "runtime/**", "build/runtime-cache/**", "build/private-pyt
 # 包内数据（profiles/、resources/tutorial_project/）随 packages 自然收进 wheel 与 sdist，
 # 前提是它们不被 .gitignore 挡（hatchling 默认跳过 VCS 忽略的文件）。桌面产物那边
 # PyInstaller **不会**自己收数据文件，见 packaging/tavotto.spec 的 datas。
+#
+# MCP 服务端（`tavotto mcp`，ADR 0009 §1b / 用户 2026-11-11「同意打进 wheel」，1.0 豁免见
+# docs/1.0-release-readiness.md §1.8）：**只**把 `tavotto_mcp` 这一个 Python 包映射成 wheel 顶层包，
+# 让 pip / pipx / uvx 装的 `tavotto mcp` 能直接起服务。**不能**靠 `packages` / `include`：
+# 上面的全局 `exclude` 挡着 `codex-plugin/**`，而它必须继续挡着（技能、`.codex-plugin`、dsh、
+# launch 脚本、integrations 都不该进 pip 包）；`force-include` 只点名这一个目录，是最窄的口子。
+# 画布产物 `widget/canvas.html` 在它的**上一级**（不在这个包里、不进 git），wheel 里没有它，
+# 服务端按 `tavotto_mcp/widget.py` 的缺席语义降级为不挂内嵌画布。
 [tool.hatch.build.targets.wheel]
 packages = ["src/tavotto"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"codex-plugin/mcp/tavotto_mcp" = "tavotto_mcp"
 
 [tool.hatch.build.targets.sdist]
 # 源码包里带上前端构建产物（src/tavotto/web），从 sdist 装也不需要 node。
@@ -152,6 +173,11 @@ include = [
     "LICENSE",
     "pytest.ini",
 ]
+
+# `python -m build` 是「先 sdist、再从 sdist 构建 wheel」：wheel 的 force-include 在 sdist 里找不到
+# `codex-plugin/mcp/tavotto_mcp` 就会构建失败，所以 sdist 也要带上**同一个**目录（只这一个）。
+[tool.hatch.build.targets.sdist.force-include]
+"codex-plugin/mcp/tavotto_mcp" = "codex-plugin/mcp/tavotto_mcp"
 
 # ---------------------------------------------------------------------------
 # Mutation testing（实验室 weekly CI，见 scripts/ci/mutation.py）

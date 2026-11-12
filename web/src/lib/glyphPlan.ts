@@ -20,7 +20,7 @@
  *
  * ```text
  * primary   请求的那个族的脸（Liberation 三族，表取 12 张脸的交集）自己画得出
- * cjk       中日韩脸（Noto Sans SC 子集）画得出（只有码位在 CJK 段、或前两层都没有时才轮到它）
+ * cjk       中日韩脸画得出（表取 Noto Sans SC 与 Noto Serif SC 子集的交集：哪个族的脸都画得出才算）（只有码位在 CJK 段、或前两层都没有时才轮到它）
  * fallback  U10（ADR 0072）起**恒空**——没有隐式回退脸；层名保留是让四步顺序不变
  * missing   谁都画不出——导出上就是一个方框，必须进问题系统
  * ```
@@ -123,8 +123,8 @@ export function missingChars(text: string): string[] {
  * 与 `missingChars` 分开：那一档是「画不出来」，这一档是「画出来了，但不是
  * 你选的那张脸」——压成一句就等于把「方框」和「字体不一致」说成同一件事。
  *
- * **`cjk` 层不算在内。** 中日韩在这条路上只有一张脸（能力限制，界面上已经说
- * 清楚），它不随用户的任何选择变化；为一个恒定的、改不动的限制在每一条中文
+ * **`cjk` 层不算在内。** 中日韩在这条路上由批准的 CJK 脸承担（随族：衬线配
+ * Noto Serif SC、其余配 Noto Sans SC，ADR 0060 2026-11-04 修订），用户没有可选的；为一个恒定的、改不动的限制在每一条中文
  * 标注上挂一条建议，只会训练用户忽略整个问题面板。
  */
 export function substitutedChars(text: string): string[] {

@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {test} from 'node:test';
 import {deploymentPlan,STAGING_ORIGIN} from '../scripts/deployment-plan.mjs';
-import {stagingSQL} from '../scripts/staging-d1.mjs';
+import {stagingRebuildSQL,stagingSQL} from '../scripts/staging-d1.mjs';
 import {validateLive} from '../src/native/config.ts';
 import {LiveStore} from '../src/native/store.ts';
 const read=path=>fs.readFileSync(new URL('../deployment/staging/'+path,import.meta.url));
@@ -40,10 +40,14 @@ test('embedded CLA_CONFIG is config.json and validates with S4 capabilities on',
   validateLive({...c,githubEnabled:true,oauthEnabled:true,signingEnabled:true,checkPublishingEnabled:true,backgroundEnabled:true,
     automaticVerificationEnabled:true,automaticPublishingEnabled:true,confirmationSlotEnabled:true});
 });
-test('served agreement asset matches the pinned individual digest and is a staging text',()=>{
-  const bytes=read('assets/CLA_INDIVIDUAL.md');
+test('served agreement asset matches the pinned individual digest and is a marked staging copy of the real text',()=>{
+  const bytes=read('assets/CLA_INDIVIDUAL.md'),text=bytes.toString('utf8');
   assert.equal(createHash('sha256').update(bytes).digest('hex'),config().policy.agreements.individual.sha256);
-  assert.match(bytes.toString('utf8'),/^# STAGING TEST TEXT/);assert.match(bytes.toString('utf8'),/no legal effect/);
+  assert.match(text,/^> \*\*STAGING COPY — NO LEGAL EFFECT\.\*\*/);assert.match(text,/has no legal effect of any kind/);
+  // Everything after the staging notice is the real agreement, byte for byte.
+  const real=fs.readFileSync(new URL('../../../docs/legal/CLA_INDIVIDUAL.md',import.meta.url),'utf8');
+  assert.equal(text.slice(text.indexOf('\n\n')+2),real);
+  assert.notEqual(config().policy.agreements.individual.sha256,createHash('sha256').update(real).digest('hex'),'a staging signature never carries the real digest');
 });
 test('generated staging SQL seeds a fresh database to readiness',async()=>{
   const sql=new DatabaseSync(':memory:');sql.exec(stagingSQL(config()));
@@ -56,4 +60,30 @@ test('generated staging SQL seeds a fresh database to readiness',async()=>{
   // A config whose holder differs from the seeded row fails closed.
   await assert.rejects(new LiveStore(db,undefined,{...live,holderId:88193521,exemptionIds:{erwanjun:88193521}}).assertReady(),
     e=>e.code==='database_configuration_uninitialized_or_mismatched');
+});
+test('staging rebuild SQL clears immutable rows and returns the database to readiness',()=>{
+  const sql=new DatabaseSync(':memory:');sql.exec('PRAGMA foreign_keys=ON;');sql.exec(stagingSQL(config()));
+  const objects=()=>sql.prepare("SELECT type,count(*) n FROM sqlite_master GROUP BY type ORDER BY type").all().map(r=>`${r.type}:${r.n}`).join(' ');
+  const fresh=objects(),a=sql.prepare('SELECT kind,version,digest FROM cla_native_v2_agreements LIMIT 1').get();
+  sql.prepare('INSERT INTO cla_native_v2_packets VALUES (?,?,?,?,?,?,?)').run('p1',261183172,a.kind,a.version,a.digest,1,2);
+  sql.prepare("INSERT INTO cla_native_v2_eligibility_blocks VALUES ('p1',261183172,1,'party_requested_review')").run();
+  assert.throws(()=>sql.exec('DELETE FROM cla_native_v2_eligibility_blocks'),/immutable/);
+  sql.exec(stagingRebuildSQL(config()));
+  assert.equal(sql.prepare('SELECT count(*) n FROM cla_native_v2_eligibility_blocks').get().n,0);
+  assert.equal(sql.prepare('SELECT count(*) n FROM cla_native_v2_packets').get().n,0);
+  assert.equal(sql.prepare('SELECT holder FROM cla_native_v2_authority').get().holder,config().holderId);
+  assert.equal(objects(),fresh);
+  assert.throws(()=>stagingRebuildSQL({...config(),origin:'https://cla.tavotto.com'}),e=>e.message==='staging_origin_required');
+});
+test('staging CI config mirrors the service identity and passes the trusted consumer validation',async()=>{
+  const {readOnly}=await import('../src/ci/consumer.ts');
+  const ci=JSON.parse(read('ci.json')),c=config();
+  for(const k of ['repository','repositoryId','origin','appId','appSlug','checkName'])assert.deepEqual(ci[k],c[k],k);
+  assert.equal(ci.enabled,true);assert.deepEqual(ci.wait,{enabled:false});
+  const seen=[];const transport=async url=>{seen.push(url);return new Response('{}',{status:200,headers:{'content-type':'application/json'}});};
+  await readOnly(ci,'token',transport)('https://api.github.com/repos/'+ci.repository,'github');
+  assert.deepEqual(seen,['https://api.github.com/repos/'+ci.repository]);
+  await assert.rejects(readOnly(ci,'token',transport)('https://api.github.com/repos/erwanjun/other','github'));
+  await assert.rejects(readOnly({...ci,origin:'http://cla-staging.tavotto.com'},'token',transport)('https://api.github.com/repos/'+ci.repository,'github'),
+    e=>e.code==='ci_configuration_invalid');
 });

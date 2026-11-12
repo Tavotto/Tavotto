@@ -1,10 +1,22 @@
 import type { ReactNode } from 'react'
-import { t } from '@/i18n'
+import { currentLocale, t } from '@/i18n'
 import type { SelectOption } from '@/components/ui/Select'
 import { fontFamilyOptionLabel } from '../roles/registry'
 import { fontStackOf } from './fontStack'
 
 const isGeneric = (v: string) => ['serif', 'sans-serif', 'monospace'].includes(v)
+
+const NO_LABELS = {}
+const ROWS = new WeakMap<readonly string[], WeakMap<object, { lang: string; rows: Map<string, SelectOption> }>>()
+function rowCache(options: readonly string[], labels: Readonly<Record<string, string>> | undefined) {
+  const lang = currentLocale()
+  let byLabels = ROWS.get(options)
+  if (!byLabels) ROWS.set(options, (byLabels = new WeakMap()))
+  const key = labels ?? NO_LABELS
+  let hit = byLabels.get(key)
+  if (!hit || hit.lang !== lang) byLabels.set(key, (hit = { lang, rows: new Map() }))
+  return hit.rows
+}
 
 /**
  * 字体下拉（图内文字）的选项与收起态：用户只挑具体字体，不出现「衬线 / 无衬线 / 等宽」。
@@ -39,8 +51,10 @@ export function fontFamilySelectModel({
   onChange: (v: string) => void
 }): { options: SelectOption[]; value: string; onChange: (v: string) => void; title?: string } {
   const named = labelOf ?? ((o: string) => fontFamilyOptionLabel(o, labels, options))
-  const row = (o: string): SelectOption => ({
+  const build = (o: string): SelectOption => ({
     value: o,
+    // 中英文名都搜得到，不管界面是哪种语言
+    searchText: [o, labels?.[o], named(o)].filter(Boolean).join(' '),
     label: (
       <span style={{ fontFamily: fontStackOf(o) }}>
         {named(o)}
@@ -48,6 +62,16 @@ export function fontFamilySelectModel({
       </span>
     ),
   })
+  // 行按 (options 引用, labels 引用, 语言) 缓存：本机有几百个族，选中文字后每次重渲染都重造几百行 JSX 与显示名，
+  // 符号插入因此慢了一倍。带 `extra` / `labelOf`（调用方每次新造的函数）的不缓存。
+  const rows = !extra && !labelOf ? rowCache(options, labels) : undefined
+  const row = (o: string): SelectOption => {
+    const hit = rows?.get(o)
+    if (hit) return hit
+    const made = build(o)
+    rows?.set(o, made)
+    return made
+  }
   const face = isGeneric(value) ? faces?.[value] : undefined
   const resolved = (g: string) => !!faces?.[g]
   // 通用族行只在「它解析得出脸」时拿掉；解析不出来的（老引擎 / 没有这一族）留着，当前值才有对应项

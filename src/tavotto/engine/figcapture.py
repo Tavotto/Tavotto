@@ -146,6 +146,7 @@ from __future__ import annotations
 import builtins
 import contextlib
 import dataclasses
+import gc
 import glob
 import hashlib
 import inspect
@@ -204,6 +205,7 @@ __all__ = [
     "INPUT_OBSERVER_MAX_FILES",
     "OBSERVATION_PARTIAL",
     "MAX_PYPLOT_FALLBACK",
+    "BufferSaves",
     "ShownFigures",
     "PdfPagesLedger",
     "MAX_PDF_PAGES_LEDGER",
@@ -1068,7 +1070,7 @@ class CapturedFigureDescriptor:
     #: 认领这个 stem 的 savefig 调用（`savefig_call()` 的形态，按调用顺序，最多
     #: `MAX_SAVEFIG_CALLS` 次，另加超出后新出现的格式各一次）。三档，「不知道」是独立一档：
     #: `None` = 没观察到（`paper_style.save` 捷径整个被替换、看不见参数；旧 payload
-    #: 没有这个键也是这一档）；`()` = 确实没有 savefig（pyplot 捕获）；非空 = 记下的调用。
+    #: 没有这个键也是这一档）；`()` = 确实没有 savefig（pyplot 捕获）；非空 = 记下的调用（只存进缓冲区的 pyplot 捕获也算）。
     savefig_calls: tuple | None = None
     #: 产出这张图的运行配置引用（T03；本机不透明 id，不是 argv）。空 = 没给参数——此时 payload 里**没有**
     #: 这个键，旧描述符与对拍用例一个字节不变。
@@ -1117,8 +1119,8 @@ def build_descriptor(
       磁盘上碰巧躺着同名文件而来源是 pyplot 时它必须是 False——那份文件
       不是这张图写的，往上写回就是覆盖一个不相干的文件；
     * `can_writeback_source`（改写用户脚本）v1 一律 False；
-    * `savefig_calls`：None（没观察到）/ 调用列表；pyplot 捕获从没 savefig 过，
-      给了非空列表就抛（同一条「来源标错当场炸」）。
+    * `savefig_calls`：None（没观察到）/ 调用列表。pyplot 捕获没有写过文件，列表为空，或只含它写进
+      缓冲区的那几次（`BufferSaves`，#749）——缓冲区不是原件，来源仍是 pyplot。
     """
     script = normalize_relative_script(script)
     if not isinstance(entry, str) or not entry:
@@ -1156,8 +1158,6 @@ def build_descriptor(
             isinstance(c, dict) for c in savefig_calls
         ):
             raise ValueError(f"savefig_calls 必须是对象列表或 None: {savefig_calls!r}")
-        if capture_source == SOURCE_PYPLOT and savefig_calls:
-            raise ValueError("pyplot 捕获的 Figure 没有 savefig 调用，savefig_calls 必须为空")
         savefig_calls = tuple(dict(c) for c in savefig_calls)
     return CapturedFigureDescriptor(
         asset_id=runtime_asset_id(script, stem, run_config),
@@ -3209,6 +3209,15 @@ def frame_call(calls, original_artifact: str | None):
     return calls[0]
 
 
+def defines_frame(capture_source: str | None, calls) -> bool:
+    """这张图有没有一次 savefig 来定义图幅（ADR 0098）：savefig 来源有；pyplot 来源只有写进过缓冲区的
+    （`BufferSaves`，#749）才有——缓冲区那次生成的文件就是脚本交出去的那份，图幅要与它一致。
+    三条入口（safe worker / 浏览器 / native）同一个判据。"""
+    if capture_source in (None, SOURCE_SAVEFIG):
+        return True
+    return bool(calls)
+
+
 def frame_extra_artists(calls, extras, call):
     """与 `call` 同一次调用的 `bbox_extra_artists` 对象（`extras` 与 `calls` 逐项对齐）。"""
     if not calls or call is None or not extras:
@@ -3220,9 +3229,10 @@ def frame_extra_artists(calls, extras, call):
 
 
 def savefig_calls_of(calls: dict, stem: str, capture_source: str):
-    """描述符的 `savefig_calls`：pyplot 捕获 = `[]`（确实没存过盘）；savefig 捕获
+    """描述符的 `savefig_calls`：pyplot 捕获默认 `[]`（确实没存盘）；只存进过缓冲区的 pyplot 捕获
+    带着那几次缓冲区调用的参数（`BufferSaves`，没写文件，来源仍是 pyplot）；savefig 捕获
     取记下的调用，没有记录 = None（没观察到，不是「没有」）。"""
-    if capture_source == SOURCE_PYPLOT:
+    if capture_source == SOURCE_PYPLOT and stem not in calls:
         return []
     seq = calls.get(stem)
     return None if seq is None else list(seq)
@@ -3635,6 +3645,35 @@ def claimed_ids(capture) -> set[int]:
     return {id(f) for f in (capture or {}).values()}
 
 
+class DropBook:
+    """没能留强引用的图的账（按**身份**去重）：`ShownFigures` 与 `BufferSaves` 共用一本。
+
+    同一张图可以两本账都超出上限（每张既存缓冲区又 `plt.show()`、再 close）；各数各的会把它丢两次。
+    `add` 按身份只收一次；图被回收后身份没了，但已收的计数还在——所以「丢了几张」= 收过几张
+    减去**现在仍活着、且已另有着落**的（跑完仍开着 / 被 savefig 认领 / 在缓冲区账里补回来的，
+    这些归 `collect_pyplot_figures` 的上限或 `capture` 去数）。
+    """
+
+    def __init__(self):
+        self._members: weakref.WeakSet = weakref.WeakSet()
+        self.count = 0
+
+    def add(self, fig) -> None:
+        if fig not in self._members:
+            self._members.add(fig)
+            self.count += 1
+
+    def discard(self, fig) -> None:
+        """这张图有了着落（被 savefig 认领）：不再算「没留住」。"""
+        if fig in self._members:
+            self._members.discard(fig)
+            self.count -= 1
+
+    def unaccounted(self, accounted_ids) -> int:
+        alive_accounted = sum(1 for f in list(self._members) if id(f) in accounted_ids)
+        return max(0, self.count - alive_accounted)
+
+
 class ShownFigures:
     """`plt.show()` 那一刻还开着的 pyplot Figure 的账（有界）。
 
@@ -3648,16 +3687,12 @@ class ShownFigures:
     判据 `claimed_ids`），之后才认领的会在下一次 show 时腾出名额。不改 Gcf 的活动图（不碰 `plt.figure(num)`），脚本之后的 `plt.gcf()` 不变。
     """
 
-    def __init__(self, limit: int = MAX_PYPLOT_FALLBACK):
-        import weakref
-
+    def __init__(self, limit: int = MAX_PYPLOT_FALLBACK, book: "DropBook | None" = None):
         self.limit = max(0, int(limit))
         self.kept: list = []
-        #: 超出上限、没留引用的张数（含此刻仍开着的）；跑完时仍开着的那些由 `collect_pyplot_figures` 自己数，
-        #: 用 `overflow_closed` 从这里扣掉，免得同一张图丢两次。
-        self.overflow = 0
+        #: 没留强引用的图（超出上限）记在这本账里；与 `BufferSaves` 共用同一本，一张图两边都超出也只数一次
+        self.book = book if book is not None else DropBook()
         self._seen = weakref.WeakSet()
-        self._overflowed = weakref.WeakSet()
 
     def note(self, plt, capture: dict | None = None) -> None:
         """记下此刻 Gcf 里所有开着的 Figure（show 调用时）。`capture` 是 savefig 已认领的图（见 `claimed_ids`）。"""
@@ -3674,16 +3709,109 @@ class ShownFigures:
             if len(self.kept) < self.limit:
                 self.kept.append(fig)
             else:
-                self.overflow += 1
-                self._overflowed.add(fig)
+                self.book.add(fig)
 
-    def overflow_closed(self, plt, capture: dict | None = None) -> int:
-        """超出上限、且跑完时已经关掉、也没被 savefig 认领的张数
-        （仍开着的归 `collect_pyplot_figures` 数，认领了的已经在 `capture` 里）。"""
-        claimed = claimed_ids(capture)
-        open_ids = {id(m.canvas.figure) for m in plt._pylab_helpers.Gcf.get_all_fig_managers()}
-        accounted = sum(1 for f in list(self._overflowed) if id(f) in open_ids or id(f) in claimed)
-        return max(0, self.overflow - accounted)
+
+class BufferSaves:
+    """写进文件对象（BytesIO 等）、没有 stem 可认领的 savefig 的账（有界），safe worker 与浏览器共用这一份。
+
+    `savefig(buf); Image.open(buf).save("x.tiff"); plt.close(fig)` 这种脚本里，缓冲区那次是这张图
+    **唯一**的一次存盘：没有 stem 可认领，脚本随后又把图关了，跑完时 pyplot 里已经没有它——不记下来
+    就一张图都捕获不到（#749）。账里记两样：图本身，和这些缓冲区调用的参数（`savefig_call`，
+    `bbox_inches="tight"` 等）——图是活着还是被关掉，兜底 stem 都带着同一份参数走（见 `collect_pyplot_figures`）。
+
+    * **强引用有上限**（`limit`）：「建图 → 存缓冲区 → 关图」的批量脚本不能把每张关掉的图都留到脚本结束。
+      所有图只排**一个**全局顺序（弱引用），强引用永远钉在其中最早的至多 `limit` 张上；
+    * **被路径 savefig 认领了就让出名额**（`claim`），名额交给最早的、仍活着的等待者；先认领、后存缓冲区的
+      图不进账；
+    * **真丢了要进结构化计数**（`lost`）；`figures()` 先 `gc.collect()`（Figure 有引用环，回收时机不定，
+      不先回收「活着的补回来、死了的算丢」会随 GC 时机漂移），且期间 stdout 改道 stderr（worker 的 stdout
+      是协议流，用户对象的 `__del__` 里 print 不许写进去）；
+    * 参数账不拖住内存：`bbox_extra_artists` 只存弱引用（artist 反过来引用图，存强引用图就永远回收不掉）。
+    """
+
+    def __init__(self, limit: int = MAX_PYPLOT_FALLBACK, book: "DropBook | None" = None):
+        self.limit = max(0, int(limit))
+        #: 没钉住强引用的图记在这本账里（与 `ShownFigures` 共用时一张图只数一次）
+        self.book = book if book is not None else DropBook()
+        #: 记下、未被认领、仍活着的图 → 全局存盘序号（唯一的顺序；弱引用，不拖住内存）
+        self._order: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+        #: 序号 → 图：**永远**钉住最早的至多 `limit` 张（强引用，脚本关掉它们也补得回来）
+        self._pinned: dict = {}
+        #: 图 → [弱引用, 这张图自己的缓冲区调用表（None = 不知道）, 与之逐项对齐的 extras（弱引用元组或 None）]
+        self._calls: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+        self._seq = 0
+        self._noted = 0  # 记下且未被认领的张数（含已被回收的），`lost()` 用它减去仍活着的
+        #: 被路径 savefig 认领过的图：之后再存缓冲区也不回名单
+        self._claimed: weakref.WeakSet = weakref.WeakSet()
+
+    def note(self, fig, call: dict | None = None, extra=None) -> None:
+        """一次写进缓冲区的 savefig。`call` 是 `savefig_call` 的结果（None = 参数没观察到），`extra` 是 `bbox_extra_artists`。"""
+        if fig in self._claimed:
+            return
+        refs = None
+        if extra is not None:
+            try:
+                refs = tuple(weakref.ref(a) for a in extra)
+            except TypeError:  # 不可迭代 / 不可弱引用：参数记不全，整份当「不知道」
+                call = None
+        mine = self._calls.get(fig)
+        if mine is None:
+            mine = self._calls[fig] = [weakref.ref(fig), [], []]
+        _record_writer_call(mine, call, refs)
+        if fig in self._order:
+            return
+        self._seq += 1
+        self._order[fig] = self._seq
+        self._noted += 1
+        if len(self._pinned) < self.limit:
+            self._pinned[self._seq] = fig
+        else:
+            self.book.add(fig)
+
+    def claim(self, fig) -> None:
+        """这张图被路径 savefig 认领了（有了 stem）：移出名单；它若钉着名额，把名额交给**最早的**
+        下一张仍活着、还没钉住的图——钉住的永远是全局顺序里最早的那几张。"""
+        self._claimed.add(fig)
+        self._calls.pop(fig, None)
+        self.book.discard(fig)
+        seq = self._order.pop(fig, None)
+        if seq is None:
+            return
+        self._noted -= 1
+        if self._pinned.pop(seq, None) is None:
+            return
+        waiting = [(s, f) for f, s in self._order.items() if s not in self._pinned]
+        if waiting:
+            s, f = min(waiting, key=lambda sf: sf[0])
+            self._pinned[s] = f
+
+    def __bool__(self) -> bool:
+        return self._noted > 0
+
+    def figures(self) -> list:
+        """交给兜底的图：仍活着的，按全局存盘先后（钉住的一定在其中）。"""
+        with contextlib.redirect_stdout(sys.stderr):
+            gc.collect()
+        return [f for f, _ in sorted(self._order.items(), key=lambda kv: kv[1])]
+
+    def lost(self) -> int:
+        """没钉住、已被回收的张数（在 `figures()` 之后问才准）；仍活着的在 `figures()` 里，不算。"""
+        return self.book.unaccounted({id(f) for f in self._order})
+
+    def calls_of(self, fig) -> tuple[list[dict] | None, list] | None:
+        """这张图的缓冲区调用表与逐项对齐的 `bbox_extra_artists` 对象；没存过缓冲区 = None，
+        调用表是 None = 有一次没观察到（整份「不知道」）。"""
+        mine = self._calls.get(fig)
+        if mine is None:
+            return None
+        if mine[1] is None:
+            return None, []
+        extras = [
+            None if refs is None else [a for a in (r() for r in refs) if a is not None]
+            for refs in mine[2]
+        ]
+        return list(mine[1]), extras
 
 
 def collect_pyplot_figures(
@@ -3692,6 +3820,9 @@ def collect_pyplot_figures(
     plt,
     limit: int = MAX_PYPLOT_FALLBACK,
     shown: ShownFigures | None = None,
+    buffers: BufferSaves | None = None,
+    savefig_calls: dict | None = None,
+    savefig_extras: dict | None = None,
 ) -> tuple[list[str], int]:
     """把脚本里 show 过或跑完仍活着、且没被 savefig 认领的 pyplot Figure 补进 `capture`。
 
@@ -3709,6 +3840,13 @@ def collect_pyplot_figures(
     `shown`（safe worker 传；见 `ShownFigures`）：`plt.show()` 时开着、之后被 `plt.close()` 的图排在
     跑完仍活着的图**之前**（它们先于脚本结尾出现），同一张图仍只一个 stem、仍受同一个上限。
     不传 = 只看跑完仍活着的（浏览器 playground 与 native 的既有行为）。
+
+    `buffers`（safe worker 与浏览器都传；见 `BufferSaves`）：只存进过文件对象、没有 stem 的图。还开着的
+    照常按 `get_fignums()` 的位置补；脚本已经关掉的排在最后、按存盘先后补。真丢的并进返回的张数。
+    `plt` 可以是 None（脚本只用 `Figure()`、从没 import pyplot）：那时只补 `buffers` 的。
+    传了 `savefig_calls` / `savefig_extras` 时，这些图缓冲区那几次 savefig 的参数记到**它们的兜底 stem** 名下
+    （图是活着还是被关掉都一样）：来源仍是 pyplot（缓冲区不是磁盘上的原件），但预览 / 导出的图幅
+    与脚本生成的那份一致（`bbox_inches="tight"`，ADR 0098）。
     """
     seen = claimed_ids(capture)
     pending = []
@@ -3717,20 +3855,29 @@ def collect_pyplot_figures(
             continue
         seen.add(id(fig))
         pending.append(fig)
-    for num in plt.get_fignums():
-        fig = plt.figure(num)
+    live = [plt.figure(num) for num in plt.get_fignums()] if plt is not None else []
+    retained = buffers.figures() if buffers is not None else []
+    for fig in live + retained:
         if id(fig) in seen:
             continue
         seen.add(id(fig))
         pending.append(fig)
     dropped = max(0, len(pending) - max(0, int(limit)))
-    if dropped:
-        pending = pending[: max(0, int(limit))]
-    if shown is not None:
-        dropped += shown.overflow_closed(plt, capture)
+    # 没留强引用的图（show 账、缓冲区账共用一本 `DropBook`）：现在仍有着落的（待补的、已认领的）不算，
+    # 其余按身份只数一次
+    books = {id(b.book): b.book for b in (shown, buffers) if b is not None}
+    accounted = claimed_ids(capture) | {id(f) for f in pending}
+    dropped += sum(b.unaccounted(accounted) for b in books.values())
+    pending = pending[: max(0, int(limit))]
     stems = fallback_stems(capture.keys(), script_stem, len(pending))
     for stem, fig in zip(stems, pending):
         capture[stem] = fig
+        recorded = buffers.calls_of(fig) if buffers is not None else None
+        if recorded is not None and savefig_calls is not None:
+            calls, extras = recorded
+            savefig_calls[stem] = calls
+            if calls is not None and savefig_extras is not None:
+                savefig_extras[stem] = extras
     return stems, dropped
 
 
@@ -4008,8 +4155,10 @@ class InputObserver:
     回退换出来的路径经内层的观察器记下，正是脚本实际读到的那份。
     """
 
-    def __init__(self, project_root: str) -> None:
+    def __init__(self, project_root: str, *, observe_failed_reads: bool = False) -> None:
         self.project_root = os.path.abspath(project_root)
+        self._observe_failed_reads = observe_failed_reads
+        self._failed_read_codes = ()
         self._seen: dict[str, str] = {}  # realpath → 项目相对 POSIX 路径
         self.truncated = False
         self._uninstall = None
@@ -4054,6 +4203,62 @@ class InputObserver:
         except Exception:  # noqa: BLE001 —— 观察器绝不影响脚本
             return
 
+    def _failed_read_fact(self, file, mode) -> dict | None:
+        """A frame-local fact, retained only as long as its own traceback."""
+        if not self._observe_failed_reads or getattr(self._pause, "depth", 0):
+            return
+        try:
+            if not _readonly_mode(mode) or type(file) not in (
+                str,
+                bytes,
+                pathlib.PosixPath,
+                pathlib.WindowsPath,
+            ):
+                return
+            name = os.fsdecode(os.fspath(file))
+            if not name or len(name) > 4096 or any(ord(c) < 32 for c in name):
+                return
+            return {"requested": name, "cwd": os.getcwd()}
+        except Exception:  # noqa: BLE001 — observation must never change the user's exception
+            return
+
+    def uncaught_missing_read(self, exc: BaseException | None) -> dict | None:
+        """Inspect only this escaping exception's own bounded traceback.
+
+        Holding caught exception objects would retain their caller frames and
+        potentially large scientific arrays for the rest of a long run.
+        """
+        if not self._observe_failed_reads or not isinstance(exc, FileNotFoundError):
+            return None
+        try:
+            trace = exc.__traceback__
+            candidate = None
+            for _ in range(256):
+                if trace is None:
+                    break
+                frame = trace.tb_frame
+                if frame.f_code in self._failed_read_codes:
+                    local = frame.f_locals
+                    fact = local.get("_read_failure_fact")
+                    if local.get("observer") is self:
+                        # A deeper observed write must clear an outer read; its
+                        # failure is not evidence of a missing input.
+                        candidate = dict(fact) if isinstance(fact, dict) else None
+                trace = trace.tb_next
+            if trace is not None or candidate is None:
+                return None  # deeper frames may contain the real failure
+            filename = exc.filename
+            if type(filename) not in (str, bytes, pathlib.PosixPath, pathlib.WindowsPath):
+                return None
+            # A custom opener can fail inside an unobserved os.open or raise a
+            # new exception: the outer wrapper's path is not necessarily the
+            # failing path. Only the exception's own filename can confirm it.
+            if os.fsdecode(os.fspath(filename)) == candidate["requested"]:
+                return candidate
+        except Exception:  # noqa: BLE001 — never replace the user's original failure
+            return None
+        return None
+
     def install(self):
         """装上 open 的观察包装（三处 Python open + numpy 的 `DataSource.open`）；返回卸载函数。"""
         real_open = builtins.open
@@ -4063,7 +4268,11 @@ class InputObserver:
 
         def _wrap(original):
             def observed_open(file, mode="r", *args, **kwargs):
-                fh = original(file, mode, *args, **kwargs)
+                try:
+                    fh = original(file, mode, *args, **kwargs)
+                except FileNotFoundError:
+                    _read_failure_fact = observer._failed_read_fact(file, mode)  # noqa: F841
+                    raise
                 if _readonly_mode(mode):
                     observer._note(file)
                 return fh
@@ -4071,13 +4280,20 @@ class InputObserver:
             return observed_open
 
         def observed_path_open(self_path, mode="r", *args, **kwargs):
-            fh = real_path_open(self_path, mode, *args, **kwargs)
+            try:
+                fh = real_path_open(self_path, mode, *args, **kwargs)
+            except FileNotFoundError:
+                _read_failure_fact = observer._failed_read_fact(self_path, mode)  # noqa: F841
+                raise
             if _readonly_mode(mode):
                 observer._note(self_path)
             return fh
 
-        builtins.open = _wrap(real_open)
-        io.open = _wrap(real_io_open)
+        observed_builtin_open = _wrap(real_open)
+        observed_io_open = _wrap(real_io_open)
+        self._failed_read_codes = (observed_builtin_open.__code__, observed_path_open.__code__)
+        builtins.open = observed_builtin_open
+        io.open = observed_io_open
         pathlib.Path.open = observed_path_open
 
         self._channels = ["python_open"]
@@ -4561,21 +4777,47 @@ class BlockedFileOps:
 
     def __init__(self) -> None:
         self._events: list[dict] = []
-        self._spill: dict[tuple[str, str], dict] = {}
+        self._spill: dict[tuple[str, str, bool], dict] = {}
         self._active = True
-        self._busy = False
+        #: `_busy`（引擎自己在记账 / 自检）与 `_check_depth`（正在进行的探路调用）是**逐线程**的状态：
+        #: 钩子是进程全局的，别的线程（脚本自己的线程、测试遗留的后台轮询）同时跑 `os.path.exists`
+        #: 时，若共用一个计数，本线程的观察会被当成「已经在探路里」而漏记。见下面两个属性。
+        self._tls = threading.local()
         self._uninstall = None
         #: 脚本自己 `w` / `x` 重写成功的路径：目录级污点（`rmtree` 后重建）盖不到它们。后来的阻断会撤销。
         self._rewritten: set[str] = set()
         #: 只读相对路径回退的解析函数（worker 装回退后挂上）：脚本交出的路径 → 回退实际会去读的路径。
         self.read_redirect = None
+        #: 暂存覆盖层（`writetripwire.install_overlay`）自己探测项目文件时为真：那不是脚本的观察，不记账（#1813）。
+        self.quiet_if = None
         #: 弱信号计数 {(kind, via): n}；拦下的操作计数 {(op, kind): n}（含没被回读的，只存次数）
         self._signals: dict[tuple[str, str], int] = {}
         self._counts: dict[tuple[str, str], int] = {}
-        #: 正在执行的「探路」调用（`exists` / `isfile` / `Path.exists`…）深度：它们本来就靠 stat 落空作答，不算 stat 失败
-        self._check_depth = 0
+        #: 「探路」调用（`exists` / `isfile` / `Path.exists`…）的深度见 `_check_depth`：它们本来就靠 stat 落空作答，不算 stat 失败
         #: 观察序号：每次脚本的 open / stat / 列目录 +1。`explain_exit` 要求"落空的 savefig 目标探测"是退出前最后一次观察。
         self._seq = 0
+
+    @property
+    def _busy(self) -> bool:
+        return getattr(self._tls, "busy", False)
+
+    @_busy.setter
+    def _busy(self, value: bool) -> None:
+        self._tls.busy = value
+
+    @property
+    def _muted(self) -> bool:
+        """正在进行的探测不是脚本的观察：账本自己在记账（`_busy`），或暂存覆盖层自己在探测项目里的文件（`quiet_if`）。"""
+        quiet = self.quiet_if
+        return self._busy or (quiet is not None and bool(quiet()))
+
+    @property
+    def _check_depth(self) -> int:
+        return getattr(self._tls, "check_depth", 0)
+
+    @_check_depth.setter
+    def _check_depth(self, value: int) -> None:
+        self._tls.check_depth = value
 
     # ---- 记账 ----
     @staticmethod
@@ -4623,10 +4865,14 @@ class BlockedFileOps:
             self._busy = was
         self.blocked("savefig", self.KIND_SAVEFIG, *names)
 
-    def blocked(self, op: str, kind: str, *paths, dests=()) -> None:
+    def blocked(self, op: str, kind: str, *paths, dests=(), overlay: bool = False) -> None:
         """守卫拦下了 `op`（`os.replace` / `Path.unlink` / `savefig`…）：记它影响的路径。永不抛。
 
-        `dests`：`paths` 里属于改名 / 移动**目的**的那几条（直接运行后它们存在、不是被移走的）。"""
+        `dests`：`paths` 里属于改名 / 移动**目的**的那几条（直接运行后它们存在、不是被移走的）。
+        `overlay`：这次操作被暂存覆盖层接住了（没有落到项目里，但覆盖层里读回的是一致的视图，#1813）：
+        覆盖层看得到的读（open / `exists` / `Path.read_*`）在到达账本之前就已经换成覆盖层里的路径，不会命中它；
+        覆盖层够不着的观察（`os.stat` / `listdir` / `scandir`…）照旧命中。它造成的「文件不存在」是脚本真实会遇到的，
+        不是守卫造成的（`explains` 不认）。"""
         try:
             if not self._active:
                 return
@@ -4635,7 +4881,7 @@ class BlockedFileOps:
                 return
             key = (op, kind)
             self._counts[key] = min(self._counts.get(key, 0) + 1, self.MAX_COUNT)
-            if kind == self.KIND_RENAME and self._savefig_covers(affected[0]):
+            if kind == self.KIND_RENAME and not overlay and self._savefig_covers(affected[0]):
                 # 直接运行时这次改名必然成功（源刚被 savefig 写出）；这里被守卫静默跳过，目的地永远不会出现
                 self._signal(kind, self.VIA_RENAME_SRC)
             dest_set = {p for p in (self._norm(x) for x in dests) if p}
@@ -4644,10 +4890,17 @@ class BlockedFileOps:
                     r for r in self._rewritten if not any(self._covers(p, r) for p in affected)
                 }
             if len(self._events) >= self.MAX_EVENTS:
-                self._spill_paths(op, kind, affected, dest_set)
+                self._spill_paths(op, kind, affected, dest_set, overlay=overlay)
                 return
             self._events.append(
-                {"op": op, "kind": kind, "paths": affected, "dests": dest_set, "observed": False}
+                {
+                    "op": op,
+                    "kind": kind,
+                    "paths": affected,
+                    "dests": dest_set,
+                    "observed": False,
+                    **({"overlay": True} if overlay else {}),
+                }
             )
         except Exception:  # noqa: BLE001 —— 记账失败就少一条，不影响脚本
             return
@@ -4668,12 +4921,20 @@ class BlockedFileOps:
         self._signals[key] = min(self._signals.get(key, 0) + 1, self.MAX_COUNT)
 
     def _spill_paths(
-        self, op: str, kind: str, affected: list[str], dest_set: frozenset | set = frozenset()
+        self,
+        op: str,
+        kind: str,
+        affected: list[str],
+        dest_set: frozenset | set = frozenset(),
+        *,
+        overlay: bool = False,
     ) -> None:
-        """超过 `MAX_EVENTS` 的操作不丢：影响的路径并进该 (op, kind) 的溢出集合，终局仍能判回读。"""
-        ev = self._spill.get((op, kind))
+        """超过 `MAX_EVENTS` 的操作不丢：影响的路径并进该 (op, kind) 的溢出集合，终局仍能判回读。
+        覆盖层接住的与守卫跳过的分开记（`overlay` 标记跟着走，`explains` 才不会把溢出账里覆盖层的改名当成被跳过的，#1824 Codex P2）。"""
+        key = (op, kind, overlay)
+        ev = self._spill.get(key)
         if ev is None:
-            ev = self._spill[(op, kind)] = {
+            ev = self._spill[key] = {
                 "op": op,
                 "kind": kind,
                 "paths": set(),
@@ -4681,6 +4942,7 @@ class BlockedFileOps:
                 "observed": False,
                 "lost": False,
                 "coarse": False,
+                **({"overlay": True} if overlay else {}),
             }
         if ev["lost"]:
             return
@@ -4716,7 +4978,7 @@ class BlockedFileOps:
 
     def observe(self, path, mode="r") -> None:
         """脚本打开了 `path`（`mode` 是 `open` 的模式串）。永不抛。"""
-        if not (self._events or self._spill) or not self._active or self._busy:
+        if not (self._events or self._spill) or not self._active or self._muted:
             return
         self._busy = True
         try:
@@ -4749,7 +5011,7 @@ class BlockedFileOps:
     def opened(self, path, mode) -> None:
         """写模式（`w` / `x`）的底层 open **成功返回**了：脚本自己重写了这条路径，此后读到的是它写的
         （与直接运行一致），清掉它的嫌疑。open 抛异常（如被拦删除后 `x` 撞上还在的旧文件）时不调用，记录保留。永不抛。"""
-        if not (self._events or self._spill) or not self._active or self._busy:
+        if not (self._events or self._spill) or not self._active or self._muted:
             return
         self._busy = True
         try:
@@ -4809,7 +5071,7 @@ class BlockedFileOps:
         与脚本写成功的后代——里面没被重写的文件仍受污点覆盖。
         `path` 是被删目录**之内**的子目录时：`parents`（`makedirs` / `mkdir(parents=True)`）会连父目录一起重建；
         否则直接运行里父目录不在、会 FileNotFoundError，这里的成功是分叉，记为观察。永不抛。"""
-        if not (self._events or self._spill) or not self._active or self._busy:
+        if not (self._events or self._spill) or not self._active or self._muted:
             return
         self._busy = True
         try:
@@ -4844,7 +5106,7 @@ class BlockedFileOps:
         结果（异常、随后读到的旧文件）与直接运行不同，本身就是一次观察，不必等它回读。
         写入（直跑后同样存在）、改名移动的**目的**、被拦截的 savefig 目标（直跑后也存在）不走这条捷径：
         `x` 在两边都会失败。永不抛。"""
-        if not (self._events or self._spill) or not self._active or self._busy:
+        if not (self._events or self._spill) or not self._active or self._muted:
             return
         self._busy = True
         try:
@@ -4894,7 +5156,7 @@ class BlockedFileOps:
 
     def observe_stat(self, path) -> None:
         """脚本查了 `path` 的状态（`exists` / `isfile` / `stat`）。永不抛。"""
-        if not (self._events or self._spill) or not self._active or self._busy:
+        if not (self._events or self._spill) or not self._active or self._muted:
             return
         self._busy = True
         try:
@@ -4933,7 +5195,7 @@ class BlockedFileOps:
     # ---- 弱信号 / 异常归因（V2 PR3a） ----
     def observe_listing(self, path) -> None:
         """脚本列了目录 `path`（`listdir` / `scandir`）。目录里有受影响路径时，条目数与直接运行不同：弱信号。永不抛。"""
-        if not (self._events or self._spill) or not self._active or self._busy:
+        if not (self._events or self._spill) or not self._active or self._muted:
             return
         self._busy = True
         try:
@@ -4983,7 +5245,7 @@ class BlockedFileOps:
         reals = [real]
         hits = []
         for ev in (*self._events, *self._spill.values()):
-            if ev["kind"] not in (self.KIND_SAVEFIG, self.KIND_RENAME):
+            if ev["kind"] not in (self.KIND_SAVEFIG, self.KIND_RENAME) or ev.get("overlay"):
                 continue
             if isinstance(ev["paths"], list):
                 if any(self._covers(p, r) for p in ev["paths"] for r in reals):
@@ -5005,7 +5267,7 @@ class BlockedFileOps:
     def note_failed_call(self, exc: BaseException, via: str) -> None:
         """某个被包装的调用（stat / `os.open` / 守卫放行的改名删除）抛了文件不存在，且指向受影响路径：弱信号
         （脚本可能 `except OSError` 吞掉）。异常若一路到达终局，`explains` 再升级。永不抛。"""
-        if not (self._events or self._spill) or not self._active or self._busy:
+        if not (self._events or self._spill) or not self._active or self._muted:
             return
         self._busy = True
         try:
@@ -5029,7 +5291,7 @@ class BlockedFileOps:
 
     def note_missing_stat(self, exc: BaseException) -> None:
         """被拦截的 savefig 目标上的 stat 落空了（任何探路都算）：记下此刻的观察序号，供 `explain_exit` 判"退出由它控制"。永不抛。"""
-        if not (self._events or self._spill) or not self._active or self._busy:
+        if not (self._events or self._spill) or not self._active or self._muted:
             return
         self._busy = True
         try:
@@ -5045,7 +5307,7 @@ class BlockedFileOps:
         """探路调用（`exists` / `isfile` / `Path.exists`…）对被拦截的 savefig 目标**返回了假**：记下此刻的观察序号。
         POSIX 上落空本来经 `os.stat` 抛 `FileNotFoundError` 被 `note_missing_stat` 记下；Windows 3.12+ 的这些探路是 C 实现、
         不碰 `os.stat`，只能从返回值认。两条路径记同一个序号，重复无害。永不抛。"""
-        if not (self._events or self._spill) or not self._active or self._busy:
+        if not (self._events or self._spill) or not self._active or self._muted:
             return
         self._busy = True
         try:
@@ -5146,7 +5408,14 @@ class BlockedFileOps:
         real_path_mkdir = pathlib.Path.mkdir
         #: 正在进行的 `makedirs` / `Path.mkdir` 的 (exist_ok, parents)：内部的 `os.mkdir` 撞上还在的目录时
         #: 由外层自己吞掉（`exist_ok`），不是脚本看到的异常
-        mk_ctx: list[tuple[bool, bool]] = []
+        #: 逐线程：钩子是进程全局的，别的线程正在 `makedirs(exist_ok=True)` 里时，本线程裸 `os.mkdir` 不能借用它的豁免
+        mk_tls = threading.local()
+
+        def _mk_ctx() -> list[tuple[bool, bool]]:
+            stack = getattr(mk_tls, "stack", None)
+            if stack is None:
+                stack = mk_tls.stack = []
+            return stack
 
         def _open_through(original, file, mode, args, kwargs):
             # 自带 `opener`（常见用法是 `os.open(p, f, dir_fd=fd)`）：路径怎么解析由 opener 说了算，不当 cwd 相对路径记账
@@ -5219,14 +5488,14 @@ class BlockedFileOps:
             def counted(*args, **kwargs):
                 # `Path.mkdir(exist_ok=True)` 内部自己会 `is_dir()`（3.10 / 3.11 在撞上旧目录之后、
                 # 豁免记账之前）：那是 mkdir 的实现，不是脚本的观察
-                if not ledger._check_depth and not mk_ctx and args:
+                if not ledger._check_depth and not _mk_ctx() and args:
                     ledger.observe_stat(args[0])
                 ledger._check_depth += 1
                 try:
                     result = original(*args, **kwargs)
                 finally:
                     ledger._check_depth -= 1
-                if args and not result and not mk_ctx:
+                if args and not result and not _mk_ctx():
                     ledger.note_missing_path(args[0])
                 return result
 
@@ -5274,6 +5543,7 @@ class BlockedFileOps:
         os.scandir = watched_scandir
 
         def watched_mkdir(path, *args, **kwargs):
+            mk_ctx = _mk_ctx()
             tolerant, parents = mk_ctx[-1] if mk_ctx else (False, False)
             try:
                 result = real_mkdir(path, *args, **kwargs)
@@ -5287,6 +5557,7 @@ class BlockedFileOps:
             return result
 
         def watched_makedirs(name, mode=0o777, exist_ok=False):
+            mk_ctx = _mk_ctx()
             mk_ctx.append((bool(exist_ok), True))
             try:
                 return real_makedirs(name, mode, exist_ok)
@@ -5296,6 +5567,7 @@ class BlockedFileOps:
         def watched_path_mkdir(self_path, mode=0o777, parents=False, exist_ok=False):
             # 3.10 的 `Path.mkdir` 走导入时绑定的 `self._accessor.mkdir`，看不到上面的 `os.mkdir` 包装——
             # 这里自己按结果记账（3.11+ 内层 `os.mkdir` 包装也会记一次，重复记账无害）
+            mk_ctx = _mk_ctx()
             mk_ctx.append((bool(exist_ok), bool(parents)))
             try:
                 result = real_path_mkdir(self_path, mode, parents, exist_ok)
@@ -5379,6 +5651,21 @@ def observed_local_modules(
     return out
 
 
+#: 本模块 import 那一刻的 `os.stat` / `os.path.isfile`：只读回退判「沙盒里 / 脚本目录里在不在」必须问**真实的**
+#: 文件系统。改指层（`install_input_remap`，装在回退之内）会让 stat / isfile 按用户规则作答——回退若经它问，
+#: 规则目标就冒充了「沙盒里已经有」，脚本旁边的原件被跳过（Codex #1821 P1）。顺序永远是 原路径 → 脚本目录 → 规则。
+_FS_STAT = os.stat
+
+
+def _fs_isfile(path) -> bool:
+    """`os.path.isfile` 的真实文件系统版：POSIX 上 `isfile` 内部调的是**此刻**的 `os.stat`（改指层包过的），
+    所以只捕获 `isfile` 本身挡不住改指（Codex #1821 P2）；直接用 import 时的 `os.stat`。"""
+    try:
+        return stat.S_ISREG(_FS_STAT(path).st_mode)
+    except (OSError, ValueError):
+        return False
+
+
 def install_relative_read_fallback(
     script_dir: str, project_root: str, sandbox_dir: str | None = None
 ):
@@ -5415,7 +5702,7 @@ def install_relative_read_fallback(
         return None if rel.startswith("..") or rel == "." else rel
 
     def _present(path) -> bool:
-        """回退自己的「这条路径在不在」——走 `os.stat`，**不经** `os.path.exists`。
+        """回退自己的「这条路径在不在」——走 import 时的 `os.stat`（`_FS_STAT`），**不经** `os.path.exists`，也不经改指层。
 
         `os.path.exists` 在沙盒会话里已被 `install_probe_observer` 换成记账版（观察器先装、回退后装）：
         回退每问一次「沙盒里有没有这份」就会被记成脚本在沙盒里落空了一次探路，哪怕随后正是回退把读救回来、
@@ -5423,7 +5710,7 @@ def install_relative_read_fallback(
         ValueError，准备卡标题「运行出错了」却问选运行目录）。证据必须只来自**脚本自己**的探路。
         """
         try:
-            os.stat(path)
+            _FS_STAT(path)
         except (OSError, ValueError):
             return False
         return True
@@ -5467,7 +5754,7 @@ def install_relative_read_fallback(
                 return None
         except ValueError:
             return None
-        if not os.path.isfile(cand):
+        if not _fs_isfile(cand):
             return None
         return cand
 
@@ -5724,6 +6011,11 @@ def _is_sys_path_entry(name: str) -> bool:
     )
 
 
+#: 探路查改指表时目标要是什么（`install_input_remap`）；记账里的 `kind`（`dir` = 问的是文件夹）
+PROBE_WANT_FILE, PROBE_WANT_DIR, PROBE_WANT_ANY = "file", "dir", "any"
+PROBE_ANY_KIND, PROBE_DIR_KIND = "any", "dir"
+
+
 class InputMisses:
     """一次 build 里**原路径打开失败、改指也没救回来**的只读打开：脚本写的那串 + 当时的 cwd。
 
@@ -5733,6 +6025,24 @@ class InputMisses:
 
     def __init__(self) -> None:
         self.items: list[dict] = []
+        #: 探路调用（`os.path.exists|isfile` / `Path.exists|is_file`）答「没有」的路径：同形 `{requested, cwd}`，
+        #: 只保留最近 `MAX_INPUT_MISSES` 条（库自己的探路会刷，要的是脚本报错前最近问过的那几条）。只给
+        #: 「脚本先 exists、再自己 raise FileNotFoundError 点名这条」对账用（ADR 0106 修订 2026-11-09）。
+        self.probes: list[dict] = []
+
+    def note_probe(self, name, cwd: str | None = None, *, kind: str = "any") -> None:
+        if isinstance(name, os.PathLike):
+            name = os.fspath(name)
+        if not isinstance(name, str) or not name or len(name) > 4096 or "\n" in name:
+            return
+        if cwd is None:
+            try:
+                cwd = os.getcwd()
+            except OSError:
+                cwd = ""
+        self.probes = [p for p in self.probes if (p["requested"], p["cwd"]) != (name, cwd)]
+        self.probes.append({"requested": name, "cwd": cwd, "kind": kind})
+        del self.probes[:-MAX_INPUT_MISSES]
 
     def note(self, name, cwd: str | None = None) -> None:
         """`cwd` 是 `name` 相对的那个目录；不给就是此刻的 cwd（脚本写的相对路径就是相对它）。"""
@@ -5852,7 +6162,12 @@ def path_literals(source: str | None) -> tuple[list[tuple[str, ...]], list[tuple
 
 
 def install_input_remap(
-    rules, misses: InputMisses, base_dir: str | None = None, *, script_source: str | None = None
+    rules,
+    misses: InputMisses,
+    base_dir: str | None = None,
+    *,
+    script_source: str | None = None,
+    record_relative_probes: bool = False,
 ):
     """装上改指（ADR 0106）与落空记账；返回卸载函数。
 
@@ -5866,8 +6181,23 @@ def install_input_remap(
     只在**原路径打开抛 `FileNotFoundError`** 之后查表：成功的打开零额外开销，原路径存在时
     永远读原路径。只读模式才改（写 / 追加 / 读写一个字节都不改道）；改指目标必须是文件，
     否则原样抛出原来那个异常。
+
+    探路（ADR 0106 修订 2026-11-09）：`os.path.exists|lexists|isfile|isdir`、`Path.exists|is_file|is_dir`、
+    `os.stat|lstat|listdir|scandir` 在原路径不在时同样查表（`whole=True`）——规则指向存在、类型对得上的位置就按它答
+    （布尔探路答 True，stat / 列目录对目标再调一次；`glob` / `os.walk` / `Path.iterdir` / `getsize` 都经这几个）；没救回的
+    路径记进 `misses.probes`。原路径在时返回值原样、零额外开销。绝对路径总记；相对路径只在 `record_relative_probes` 时记——沙盒 cwd
+    下的相对探路落空另有 `ProbeMisses` 那条路（数据多半就在脚本目录里，出口是「在脚本目录里运行」，不是缺数据）。
     """
     rules = clean_remap_rules(rules)
+    real_exists, real_lexists = os.path.exists, os.path.lexists
+    real_isfile, real_isdir = os.path.isfile, os.path.isdir
+    real_stat, real_lstat = os.stat, os.lstat
+    real_listdir, real_scandir = os.listdir, os.scandir
+    real_p_exists, real_p_is_file = pathlib.Path.exists, pathlib.Path.is_file
+    real_p_is_dir = pathlib.Path.is_dir
+    real_p_glob, real_p_rglob = pathlib.Path.glob, pathlib.Path.rglob
+    real_p_stat, real_p_lstat = pathlib.Path.stat, pathlib.Path.lstat
+    real_p_iterdir = pathlib.Path.iterdir
     real_open = builtins.open
     real_io_open = io.open
     real_path_open = pathlib.Path.open
@@ -5907,6 +6237,10 @@ def install_input_remap(
 
     def _alt(file) -> tuple[str | None, str | None]:
         """回 `(改指目标, 记账用的名字)`；不是路径（fd / 文件对象）两个都是 None。"""
+        with _Busy():  # realpath / isfile 不再经探路查表与记账
+            return _alt_now(file)
+
+    def _alt_now(file) -> tuple[str | None, str | None]:
         if not isinstance(file, (str, os.PathLike)):
             return None, None
         name = os.fspath(file)
@@ -5918,7 +6252,7 @@ def install_input_remap(
         target = remap_target(rules, shown)
         if target is None and shown != name:
             target = remap_target(rules, name)
-        if target is not None and os.path.isfile(target):
+        if target is not None and real_isfile(target):
             return target, shown
         return None, shown
 
@@ -5984,12 +6318,217 @@ def install_input_remap(
     if real_ds_open is not None:
         datasource.open = remapped_datasource_open
 
+    #: 查表本身（`_script_name` 的 realpath、`_is_sys_path_entry`）也会 stat / 判存在：线程内重入时直接走原函数，
+    #: 不再查表、不记账——否则落空的 lstat 查表时再 lstat，一路递归下去
+    busy = threading.local()
+
+    def _reentrant() -> bool:
+        return getattr(busy, "depth", 0) > 0
+
+    class _Busy:
+        def __enter__(self):
+            busy.depth = getattr(busy, "depth", 0) + 1
+
+        def __exit__(self, *exc):
+            busy.depth -= 1
+
+    def _probe_names(path) -> tuple[str | None, str | None]:
+        """`(原样那串, 记账 / 查表用的名字)`；不是路径（fd、文件对象）回 `(None, None)`。"""
+        if not isinstance(path, (str, os.PathLike)):
+            return None, None
+        try:
+            raw = os.fspath(path)
+        except TypeError:
+            return None, None
+        if not isinstance(raw, str) or not raw:
+            return None, None
+        return raw, _script_name(raw)
+
+    def _note_probe(path, kind: str) -> None:
+        with _Busy():
+            _note_probe_now(path, kind)
+
+    def _note_probe_now(path, kind: str) -> None:
+        raw, _ = _probe_names(path)
+        if raw is None:
+            return
+        if not (os.path.isabs(raw) or ntpath.isabs(raw)):
+            if not record_relative_probes:
+                return
+        elif _is_sys_path_entry(raw):
+            return
+        misses.note_probe(raw, kind=kind)
+
+    def _probe_target(path, want: str) -> str | None:
+        """原路径不在时按改指表换算（`whole=True`：探的可以就是规则的 `from` 文件夹本身），目标是 `want`
+        （`file` / `dir` / `any`）且确实在才回它；没有规则命中、目标不在或类型不对回 None。"""
+        if not rules:
+            return None
+        with _Busy():
+            return _probe_target_now(path, want)
+
+    def _probe_target_now(path, want: str) -> str | None:
+        raw, shown = _probe_names(path)
+        if raw is None:
+            return None
+        target = remap_target(rules, shown, whole=True)
+        if target is None and shown != raw:
+            target = remap_target(rules, raw, whole=True)
+        if target is None:
+            return None
+        if want == PROBE_WANT_FILE:
+            ok = real_isfile(target)
+        elif want == PROBE_WANT_DIR:
+            ok = real_isdir(target)
+        else:
+            ok = real_lexists(target)
+        return target if ok else None
+
+    def _bool_probe(real, want, kind):
+        # 原路径不在：用户确认过的改指规则指向一个存在、类型对得上的位置，就答「在」——随后的只读打开 / 列目录 /
+        # stat 经同一张表改道，看到的是同一份数据（ADR 0106 修订 2026-11-09）。原路径在时返回值原样
+        def probe(path, *args, **kwargs):
+            ok = real(path, *args, **kwargs)
+            if ok or _reentrant():
+                return ok
+            if _probe_target(path, want) is not None:
+                return True
+            _note_probe(path, kind)
+            return ok
+
+        return probe
+
+    def _redirected(real, want, kind):
+        """`os.stat` / `lstat` / `listdir` / `scandir`：原路径抛 `FileNotFoundError` 才查表，目标换算后再调一次
+        （列目录给的是名字，`glob` / `os.walk` / `Path.iterdir` 拼回去的仍是脚本写的路径，随后的读经改指表）。"""
+
+        def redirected(path=None, *args, **kwargs):
+            if path is None:
+                return real(*args, **kwargs)
+            try:
+                return real(path, *args, **kwargs)
+            except FileNotFoundError:
+                if kwargs.get("dir_fd") is not None or _reentrant():
+                    raise
+                target = _probe_target(path, want)
+                if target is None:
+                    _note_probe(path, kind)
+                    raise
+            return real(target, *args, **kwargs)
+
+        return redirected
+
+    def _path_probe(real, want, kind):
+        def probe(self, *args, **kwargs):
+            ok = real(self, *args, **kwargs)
+            if ok or _reentrant():
+                return ok
+            if _probe_target(self, want) is not None:
+                return True
+            _note_probe(self, kind)
+            return ok
+
+        return probe
+
+    def _path_glob(real, recursive=False):
+        """`Path.glob` / `rglob`：3.13 起它们绑的是 import 时的 `os.scandir`，上面那几层管不到。pattern 打头的
+        不含通配符的几段与 `self` 拼成实际要列的文件夹（`Path(".").glob("old/*.csv")` 列的是 `old`，Codex #1821 P2）；
+        那个文件夹不在、规则指向的文件夹在时，在那里 glob 剩下的模式，结果换回脚本写的前缀（随后的读经改指表）。"""
+
+        def globbed(self, pattern, *args, **kwargs):
+            if rules and not _reentrant() and isinstance(pattern, (str, os.PathLike)):
+                text = os.fspath(pattern).replace("\\", "/")
+                parts = [p for p in text.split("/") if p not in ("", ".")]
+                head: list[str] = []
+                # `rglob` 的模式在每一层都匹配（`rglob("sub/*.csv")` 找任意深度的 `sub`）：字面段不能拆成前缀
+                while (
+                    not recursive
+                    and len(parts) > 1
+                    and not any(c in parts[0] for c in "*?[")
+                    and parts[0] != ".."
+                ):
+                    head.append(parts.pop(0))
+                if parts:
+                    base = self.joinpath(*head) if head else self
+                    with _Busy():
+                        present = real_p_exists(base)
+                    target = None if present else _probe_target(base, PROBE_WANT_DIR)
+                    if target is not None:
+                        root = pathlib.Path(target)
+                        # 末尾的 `/` 表示只要文件夹，拼回去时不能丢（Codex #1821 P2）
+                        rest = "/".join(parts) + ("/" if text.endswith("/") else "")
+                        return (
+                            base / p.relative_to(root) for p in real(root, rest, *args, **kwargs)
+                        )
+            return real(self, pattern, *args, **kwargs)
+
+        return globbed
+
+    def _path_stat(real):
+        """`Path.stat` / `lstat`：3.10 / 3.11 经 `_accessor` 调 import 时绑的 `os.stat`，上面的 `os.stat` 管不到。"""
+
+        def stat(self, *args, **kwargs):
+            try:
+                return real(self, *args, **kwargs)
+            except FileNotFoundError:
+                if _reentrant():
+                    raise
+                target = _probe_target(self, PROBE_WANT_ANY)
+                if target is None:
+                    _note_probe(self, PROBE_ANY_KIND)
+                    raise
+            return real(pathlib.Path(target), *args, **kwargs)
+
+        return stat
+
+    def path_iterdir(self):
+        """`Path.iterdir`：原文件夹不在、规则指向的文件夹在时列那里，给回 `self / 名字`——与 `os.listdir` /
+        `glob` 一样是脚本写的前缀（3.10 经 `_accessor`、3.13 起取 `DirEntry.path`，两样都不经上面那层）。"""
+        if rules and not _reentrant():
+            with _Busy():
+                present = real_p_exists(self)
+            target = None if present else _probe_target(self, PROBE_WANT_DIR)
+            if target is not None:
+                return (self / name for name in real_listdir(target))
+            if not present:
+                _note_probe(self, PROBE_DIR_KIND)
+        return real_p_iterdir(self)
+
+    os.path.exists = _bool_probe(real_exists, PROBE_WANT_ANY, PROBE_ANY_KIND)
+    os.path.lexists = _bool_probe(real_lexists, PROBE_WANT_ANY, PROBE_ANY_KIND)
+    os.path.isfile = _bool_probe(real_isfile, PROBE_WANT_FILE, PROBE_ANY_KIND)
+    os.path.isdir = _bool_probe(real_isdir, PROBE_WANT_DIR, PROBE_DIR_KIND)
+    os.stat = _redirected(real_stat, PROBE_WANT_ANY, PROBE_ANY_KIND)
+    os.lstat = _redirected(real_lstat, PROBE_WANT_ANY, PROBE_ANY_KIND)
+    os.listdir = _redirected(real_listdir, PROBE_WANT_DIR, PROBE_DIR_KIND)
+    os.scandir = _redirected(real_scandir, PROBE_WANT_DIR, PROBE_DIR_KIND)
+    pathlib.Path.exists = _path_probe(real_p_exists, PROBE_WANT_ANY, PROBE_ANY_KIND)
+    pathlib.Path.is_file = _path_probe(real_p_is_file, PROBE_WANT_FILE, PROBE_ANY_KIND)
+    pathlib.Path.is_dir = _path_probe(real_p_is_dir, PROBE_WANT_DIR, PROBE_DIR_KIND)
+    pathlib.Path.glob = _path_glob(real_p_glob)
+    pathlib.Path.rglob = _path_glob(real_p_rglob, recursive=True)
+    pathlib.Path.stat, pathlib.Path.lstat = _path_stat(real_p_stat), _path_stat(real_p_lstat)
+    pathlib.Path.iterdir = path_iterdir
+
     def uninstall() -> None:
         builtins.open = real_open
         io.open = real_io_open
         pathlib.Path.open = real_path_open
         if real_ds_open is not None:
             datasource.open = real_ds_open
+        os.path.exists, os.path.lexists = real_exists, real_lexists
+        os.path.isfile, os.path.isdir = real_isfile, real_isdir
+        os.stat, os.lstat, os.listdir, os.scandir = (
+            real_stat,
+            real_lstat,
+            real_listdir,
+            real_scandir,
+        )
+        pathlib.Path.exists, pathlib.Path.is_file = real_p_exists, real_p_is_file
+        pathlib.Path.is_dir = real_p_is_dir
+        pathlib.Path.glob, pathlib.Path.rglob = real_p_glob, real_p_rglob
+        pathlib.Path.stat, pathlib.Path.lstat = real_p_stat, real_p_lstat
+        pathlib.Path.iterdir = real_p_iterdir
 
     return uninstall
 
@@ -6323,14 +6862,16 @@ def _message_of(exc: BaseException) -> str | None:
     return text if text and "\n" not in text and len(text) <= 4096 else None
 
 
-def _named_miss(fnf: BaseException, misses: InputMisses) -> str | None:
+def _named_miss(
+    fnf: BaseException, misses: InputMisses, items: list[dict] | None = None
+) -> str | None:
     """异常消息里点了名的那次落空（从最近的往前找）；没点名回 None。点名按路径段边界：
-    `data.txt` 不算点了 `a.txt`，`d` 不算点了 `d.txt`。"""
+    `data.txt` 不算点了 `a.txt`，`d` 不算点了 `d.txt`。`items` 不给就是只读打开的落空。"""
     text = _message_of(fnf)
     if text is None:
         return None
     text = text.replace("\\", "/")
-    for item in reversed(misses.items):
+    for item in reversed(misses.items if items is None else items):
         needle = item["requested"].replace("\\", "/")
         # 路径分隔符同样不是边界：`data` 不算点了 `data/file.parquet`，`file.parquet` 也不算（Codex #1297）
         if re.search(rf"(?<![\w.\-/]){re.escape(needle)}(?![\w\-/]|\.\w)", text):
@@ -6348,8 +6889,10 @@ def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
     落空的」**——那会指认与这次异常无关的路径（#1253）。
     """
     fnf = _file_not_found_in(exc)
-    if fnf is None or not misses.items:
+    if fnf is None:
         return None
+    if not misses.items:
+        return _probe_miss_of(fnf, misses)
     names = misses.names()
     filename = getattr(fnf, "filename", None)
     if not isinstance(filename, (str, os.PathLike)):
@@ -6373,7 +6916,8 @@ def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
                     except (OSError, ValueError):
                         continue
             if requested is None:
-                return None  # 带了文件名却不是一次只读打开落空的：不判
+                # 带了文件名却不是一次只读打开落空的：不判（脚本自己抛的、点了名一次探路落空的除外）
+                return _probe_miss_of(fnf, misses)
     else:
         # 没文件名、消息里也没有引号括着的路径：只认**消息里点名了的**那次落空（numpy 的
         # `"d.txt not found."`、pyarrow 的 `FileNotFoundError("cg_data.parquet")`）。点不了名就不判——
@@ -6381,7 +6925,7 @@ def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
         # （importlib.metadata 的 zipfile 打开）都会排在后面，指认一个与这次异常无关的路径（#1253）。
         requested = _named_miss(fnf, misses)
         if requested is None:
-            return None
+            return _probe_miss_of(fnf, misses)
     entry = next(m for m in reversed(misses.items) if m["requested"] == requested)
     parsed = remap_parts(requested)
     return {
@@ -6390,6 +6934,42 @@ def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
         "cwd": entry["cwd"],
         "misses": names,
     }
+
+
+def _probe_miss_of(fnf: BaseException, misses: InputMisses) -> dict | None:
+    """「脚本先 `exists()` / `is_file()` 探路、答没有，再**自己** `raise FileNotFoundError(...)` 点名这条」→
+    `missing_input` 的事实（ADR 0106 修订 2026-11-09）；对不上回 None。
+
+    三条都要有才判：异常是脚本构造的（`errno` 为 None——系统抛的 ENOENT 都带 errno，写进不存在的目录不在此列）；
+    消息按路径段边界点了名某次落空的探路（同 `_named_miss`）；那条路径此刻确实不在（被回退 / 别处救回来的不算）。
+    探路同样查改指表（`install_input_remap`），所以事实与只读打开的落空同形（不带 `via`；问的是文件夹时多带
+    `probe_kind: "dir"`）：对话框给选择器，AI 的 `link_data_file` 接得上。
+    """
+    if not misses.probes or getattr(fnf, "errno", None) is not None:
+        return None
+    requested = _named_miss(fnf, misses, misses.probes)
+    if requested is None:
+        return None
+    entry = next(m for m in reversed(misses.probes) if m["requested"] == requested)
+    try:
+        os.lstat(os.path.join(entry["cwd"], requested))
+        return None  # 此刻在：不是缺数据
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError):
+        return None
+    parsed = remap_parts(requested)
+    fact = {
+        "requested": requested,
+        "absolute": bool(parsed and parsed[0]),
+        "cwd": entry["cwd"],
+        "misses": misses.names(),
+    }
+    if entry.get("kind") == PROBE_DIR_KIND:
+        fact["probe_kind"] = (
+            PROBE_DIR_KIND  # 问的是文件夹（listdir / isdir / glob）：对话框只给「选择文件夹」
+        )
+    return fact
 
 
 # ---------------------------------------------------------------- 未使用的缺失 import

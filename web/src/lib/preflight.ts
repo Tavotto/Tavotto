@@ -14,6 +14,8 @@ import {
 import { effectiveCanvasFamily } from './typography'
 import { textDiagnostics } from './glyphPlan'
 import { mathBoxOf } from './mathtext'
+import { isSourceFont } from './sourceFont'
+import { sourceFontState } from './sourceFontCache'
 import { parseRuns } from './richText'
 import { embedsDiskBitmap, type ExportRoute, type ExportRouteScope } from './exportRoute'
 import type { CanvasObject, FigureDocument, FramePad, PanelObject, TextObject } from '@/types/document'
@@ -105,7 +107,7 @@ const EPS_MM = 0.05
  * `engine/preflight.py::FIGURE_CLIP_EPS_MM` 同名同值，理由写在那边：布局框不是
  * 墨迹，0.56 mm 的探出已经是肉眼可见的裁切，容差只吸收框自己的抖动）。
  */
-const FIGURE_CLIP_EPS_MM = 0.3
+export const FIGURE_CLIP_EPS_MM = 0.3
 
 /** 超出图幅不查的角色（`figure` 按定义满幅；`ticks` 组由单条 `ticklabel` 代言） */
 const CLIP_SKIP_ROLES = new Set(['figure', 'ticks'])
@@ -182,6 +184,13 @@ export interface PreflightTextSpec {
    * 缺席 = 没有已知失败。
    */
   math_errors?: { src: string; why: string }[]
+  /**
+   * 原图字体（ADR 0164）此刻在这台机器上用不了：名字保留、导出按 `font_family` 的批准族画。
+   * 本机状态由调用方带进来（前端读 `lib/sourceFontCache`，`ok` / 还没问到的不算）。缺席 = 能用 / 没有。
+   */
+  source_font_missing?: { family: string; reason: string }
+  /** 文字由原图字体（本机用户脸）排：批准字体的覆盖表不适用，字形缺失以导出的 `glyph_missing` 为准 */
+  source_font_in_use?: boolean
   rect_mm: [number, number, number, number]
   hidden: boolean
 }
@@ -981,7 +990,9 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
     }
     // 字形覆盖：量的是**渲染表示**（标记拆掉、该合成的已合成），
     // 判据与 `engine/preflight.py` 同源，读同一张生成的覆盖表。
-    const { missing, substituted } = textDiagnostics(t.text, t.interpretation, t.text_format)
+    const { missing, substituted } = t.source_font_in_use
+      ? { missing: [], substituted: [] } // 用户脸的覆盖表在本机、不在批准集合里：不拿批准表冒充（ADR 0164）
+      : textDiagnostics(t.text, t.interpretation, t.text_format)
     if (missing.length) {
       const chars = missing.join('')
       sink.add('glyph-missing', pf('textGlyphMissing', { chars, count: String(missing.length) }), {
@@ -1002,6 +1013,15 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
       sink.add('cjk-fallback-missing', pf('textCjkFallbackMissing'), {
         objectIds: [t.id],
       })
+    }
+    // 原图字体用不了（ADR 0164）：名字保留 + 回退，不把「画出来的不是它」藏起来
+    if (t.source_font_missing?.family) {
+      const { family: font, reason } = t.source_font_missing
+      sink.add(
+        'source-font-unavailable',
+        pf(SOURCE_FONT_MESSAGES[reason] ?? 'textSourceFontUnreadable', { font, fallback: family || 'serif' }),
+        { objectIds: [t.id], detail: { font, reason }, prop: 'fontFamily' },
+      )
     }
     // 排不出来的公式：导出时按源码原样画（不吞字）并给 `math_unrenderable` 警告；这里让它
     // 进问题面板。事实（哪些公式失败）由 spec 带进来——求值器不起排版进程。
@@ -1052,6 +1072,45 @@ function clipRect(el: ManifestElement): [number, number, number, number] | null 
 }
 
 /**
+ * 一个元素**真画出来的那部分**（相对图幅的分数 `[x, y, w, h]`，y 向下）；不查超出图幅的角色 / 隐藏 / 不成形 /
+ * 整个被裁掉 = null。`checkPanelClipping`（预检「元素超出图幅」）与排版拖边缩小后的「文字放不下」
+ * （`lib/edgeShrinkFit`）共用这一份，判据只有一个出处。
+ *
+ * **判据的主语是「真画出来的那部分」，不是「数据到哪儿」。** manifest 的
+ * bbox 对曲线 / 散点 / 填充这类元素是**未裁剪的整个数据范围**（离群点、显式
+ * 收窄的 xlim 都会撑大它），而 matplotlib 在 `clip_bbox` 处把它切掉，框外一笔
+ * 都不画。不折进来的话，一个 x=1e3 而 xlim=(0,1) 的离群散点会报出几万毫米的
+ * 阻断级「超出图幅」，可图幅边界处根本没有任何本该显示的内容被切掉。
+ * `clip_bbox` 缺席 = 不裁——`clip_on=False` 的文字 / 标注 / 图例正是如此，
+ * 它们真的会画到图幅外，照旧要报。
+ */
+export function drawnFigureRect(el: ManifestElement): [number, number, number, number] | null {
+  if (CLIP_SKIP_ROLES.has(el.role)) return null
+  if (field(el, 'visible') === false) return null
+  const bbox = el.bbox
+  if (!bbox || bbox.length !== 4) return null
+  let x = num(bbox[0])
+  let y = num(bbox[1])
+  let w = num(bbox[2])
+  let h = num(bbox[3])
+  if (x == null || y == null || w == null || h == null) return null
+  const clipped = clipRect(el)
+  if (clipped) {
+    const [cx, cy, cw, ch] = clipped
+    const x0 = Math.max(x, cx)
+    const y0 = Math.max(y, cy)
+    const x1 = Math.min(x + w, cx + cw)
+    const y1 = Math.min(y + h, cy + ch)
+    if (x1 <= x0 || y1 <= y0) return null // 整个被裁掉了，一笔墨都没画出来
+    x = x0
+    y = y0
+    w = x1 - x0
+    h = y1 - y0
+  }
+  return [x, y, w, h]
+}
+
+/**
  * 图内元素超出图幅——导出时超出的部分会被**静默**裁掉（审计 T14）。
  * 与 `engine/preflight.py::_check_panel_clipping` 逐条同源：bbox **先折进
  * `clip_bbox`**（matplotlib 真会画出来的那部分），再看四边超出 [0, 1] 折成图自身
@@ -1065,35 +1124,9 @@ function checkPanelClipping(panel: PreflightPanelSpec, sink: Sink): void {
   if (wMm <= 0 || hMm <= 0) return
   const pid = panel.id
   for (const el of manifest.elements) {
-    if (CLIP_SKIP_ROLES.has(el.role)) continue
-    if (field(el, 'visible') === false) continue
-    const bbox = el.bbox
-    if (!bbox || bbox.length !== 4) continue
-    let x = num(bbox[0])
-    let y = num(bbox[1])
-    let w = num(bbox[2])
-    let h = num(bbox[3])
-    if (x == null || y == null || w == null || h == null) continue
-    // **判据的主语是「真画出来的那部分」，不是「数据到哪儿」。** manifest 的
-    // bbox 对曲线 / 散点 / 填充这类元素是**未裁剪的整个数据范围**（离群点、显式
-    // 收窄的 xlim 都会撑大它），而 matplotlib 在 `clip_bbox` 处把它切掉，框外一笔
-    // 都不画。不折进来的话，一个 x=1e3 而 xlim=(0,1) 的离群散点会报出几万毫米的
-    // 阻断级「超出图幅」，可图幅边界处根本没有任何本该显示的内容被切掉。
-    // `clip_bbox` 缺席 = 不裁——`clip_on=False` 的文字 / 标注 / 图例正是如此，
-    // 它们真的会画到图幅外，照旧要报。
-    const clipped = clipRect(el)
-    if (clipped) {
-      const [cx, cy, cw, ch] = clipped
-      const x0 = Math.max(x, cx)
-      const y0 = Math.max(y, cy)
-      const x1 = Math.min(x + w, cx + cw)
-      const y1 = Math.min(y + h, cy + ch)
-      if (x1 <= x0 || y1 <= y0) continue // 整个被裁掉了，一笔墨都没画出来
-      x = x0
-      y = y0
-      w = x1 - x0
-      h = y1 - y0
-    }
+    const drawn = drawnFigureRect(el)
+    if (!drawn) continue
+    const [x, y, w, h] = drawn
     // 四边各自探出多少（图自身 mm）；取最糟的一边，并列时取先出现的
     let side = 'left'
     let over = -x * wMm
@@ -1283,6 +1316,36 @@ export function mathErrorsOf(
   return out.length ? out : undefined
 }
 
+/** 原图字体用不了的原因 → 文案 key（↔ `engine/preflight.py` 的 `_SOURCE_FONT_MESSAGES`，逐项相同） */
+export const SOURCE_FONT_MESSAGES: Record<string, string> = {
+  not_found: 'textSourceFontNotFound',
+  embedding_restricted: 'textSourceFontEmbeddingRestricted',
+  too_large: 'textSourceFontTooLarge',
+  unsupported_format: 'textSourceFontUnsupportedFormat',
+  unreadable: 'textSourceFontUnreadable',
+  invalid: 'textSourceFontInvalid',
+  unsupported: 'textSourceFontUnsupported',
+}
+
+/**
+ * 一段标注文字的原图字体此刻在本机用不了吗（ADR 0164）。`ok` 与「还没问到」都不算——「还不知道」与
+ * 「用不了」是两个答案；状态到达时 `subscribeSourceFonts` 通知问题面板重算。
+ */
+export function sourceFontMissingOf(o: TextObject): { family: string; reason: string } | undefined {
+  if (o.hidden || !isSourceFont(o.sourceFont)) return undefined
+  const state = sourceFontState(o.sourceFont, o.sourceFont)
+  return state === 'ok' || state === 'unknown'
+    ? undefined
+    : { family: o.sourceFont.family, reason: state }
+}
+
+/** 原图字体此刻可用（状态 `ok`）：这段文字实际由本机用户脸排。 */
+export function sourceFontInUse(o: TextObject): true | undefined {
+  return isSourceFont(o.sourceFont) && sourceFontState(o.sourceFont, o.sourceFont) === 'ok'
+    ? true
+    : undefined
+}
+
 export function buildSpec(
   doc: FigureDocument,
   assets: Record<string, PanelInfo>,
@@ -1328,6 +1391,8 @@ export function buildSpec(
         interpretation: o.type === 'text' ? o.interpretation : undefined,
         text_format: o.type === 'text' ? o.textFormat : undefined,
         math_errors: o.type === 'text' ? mathErrorsOf(o) : undefined,
+        source_font_missing: o.type === 'text' ? sourceFontMissingOf(o) : undefined,
+        source_font_in_use: o.type === 'text' ? sourceFontInUse(o) : undefined,
         rect_mm: rect(o),
         hidden: !!o.hidden,
       })),

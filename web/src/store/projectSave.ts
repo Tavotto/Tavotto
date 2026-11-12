@@ -30,6 +30,7 @@ import {
   useDocumentStore,
 } from './documentStore'
 import { captureSaveContext, reportSaveSkipped, stillCurrent, type SaveContext } from './saveContext'
+import { AUTOSAVE_FAILURE_OWNER, retrySaveAction } from './saveFailureActions'
 import { useUiStore } from './uiStore'
 import { emitLayoutSaved } from '@/lib/layoutSaved'
 import { captureMoment } from '@/lib/timelineCheckpoint'
@@ -169,11 +170,14 @@ async function writeOnce(ctx: SaveContext): Promise<boolean> {
         },
       })
     } else if (typeof revision === 'string') {
-      ui.setStatus(msg('save.projectConflict', { file: binding.file }, 'workspace'), 'error')
+      // 此刻开着的已经不是那份排版：不弹对话框（见上），所以这句话不能叫用户去「对话框里决定」
+      ui.setStatus(msg('save.projectConflictElsewhere', { file: binding.file }, 'workspace'), 'error')
     } else {
+      // 「再存一次」= 同一个保存上下文再写一遍项目文件（切走了 `writeOnce` 自己会说「没写成」）
       ui.setStatus(
         msg('save.projectFailed', { file: binding.file, reason: backendErrorText(e) }, 'workspace'),
         'error',
+        { owner: AUTOSAVE_FAILURE_OWNER, action: retrySaveAction(() => writeBoundProjectFile(ctx)) },
       )
     }
     return false

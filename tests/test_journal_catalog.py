@@ -1,7 +1,7 @@
 """内置期刊标准库（ADR 0155）：数据结构、双侧同源、每条校验各自的失败码。
 
 向量里的期刊是**测试夹具**（fx-*，example.invalid），不是真实期刊；真实
-`journals.json` 在本 PR 里刻意是空库，这里只证明「空库合法」与「结构随包分发」。
+随包的 `journals.json` 是 PR 3 的种子（几十本头部期刊 + 出版社通用标准），这里证明它合法、没有夹具 / 假期刊、结构随包分发。
 """
 
 from __future__ import annotations
@@ -39,9 +39,103 @@ def test_shipped_catalog_is_valid_and_sits_next_to_publication_json():
     assert journals.journals_path().name == journals.JOURNALS_FILE
     doc = journals.load_catalog()
     assert doc["schema"] == 1
-    # PR 1 刻意是空库：真实数据必须逐条带出处、经人工核对后才进来
-    assert doc["publishers"] == {} and doc["journals"] == {}
-    assert journals.list_journals() == []
+    # PR 3：几十本头部期刊 + 出版社通用标准的种子（完整目录走服务端，不进仓库，ADR 0155 §4b）
+    assert 30 <= len(doc["journals"]) <= 100
+    assert len(journals.list_journals()) == len(doc["journals"])
+
+
+def test_shipped_seed_has_no_fixture_or_fake_journals():
+    """夹具期刊只许在 golden 向量里；PR 1 复审遗留的 7 本 `-sample` 假期刊不得回来。"""
+    doc = journals.load_catalog()
+    bad = [j for j in doc["journals"] if j.startswith("fx-") or j.endswith("-sample")]
+    assert bad == []
+    assert "example.invalid" not in json.dumps(doc)
+
+
+def test_every_shipped_journal_folds_into_a_checkable_profile():
+    doc = journals.load_catalog()
+    for jid in doc["journals"]:
+        prof = journals.journal_profile(jid)
+        assert prof["profile_id"] == journals.BASE_PROFILE_ID
+        journals.journal_override(jid)
+        journals.journal_sources(jid)
+
+
+def test_shipped_seed_keeps_the_agreed_special_rulings():
+    """用户裁决的几条在种子里必须成立（Elsevier 建议级字号、科学通报字高按字号计、Nature 栏位）。"""
+    # Elsevier：7 pt 是正文最小（建议级），6 pt 是上下标最小（只进提示、不进字号判据）
+    elsevier = journals.journal_sources("chemical-engineering-journal")
+    assert elsevier["min_effective_font_size_pt"]["affects"] == "advice"
+    assert elsevier["min_script_font_size_pt"]["value"] == 6
+    adv = journals.journal_override("chemical-engineering-journal")["advisories"]
+    assert {(a["role"], a["value_pt"]) for a in adv} == {("body_min", 7), ("script_min", 6)}
+    assert "min_effective_font_size_pt" not in journals.journal_override(
+        "chemical-engineering-journal"
+    )
+    # 科学通报「字高 7 pt」按字号计，原话保留
+    kt = journals.journal_sources("kexue-tongbao")["min_effective_font_size_pt"]
+    assert kt["value"] == 7 and kt["derivation"] == "字高按字号计" and "字高" in kt["quote"]
+    # 用户裁决恢复（覆盖 Codex 驳回）：Science 用自家栏名「2 栏 121 mm / 3 栏 184 mm」，栏位限定词按原文 usually 是 typical
+    sci = {
+        c["label"]["en"]: (c["width_mm"], c["qualifier"])
+        for c in journals.journal_profile("science")["page_columns"]
+    }
+    assert sci["2 columns"] == (121, "typical") and sci["3 columns"] == (184, "typical")
+    # Elsevier 的栏位表在出版社上，系内期刊都继承到：单栏 90 / 1.5 栏 140 / 双栏 190（exact），摘录是原文里连续的一段
+    for jid in ("chemical-engineering-journal", "water-research", "acta-materialia"):
+        ec = {
+            c["label"]["en"]: c["width_mm"] for c in journals.journal_profile(jid)["page_columns"]
+        }
+        assert ec == {"Single column": 90, "1.5 column": 140, "Double column": 190}
+    quote = journals.journal_sources("chemical-engineering-journal")["page_columns"]["quote"]
+    assert quote.startswith("Single column 90 mm") and quote.endswith("190 mm")
+    # Nature 自己的栏位表：89 / 183 mm 都是 exact，页宽判据读得到
+    cols = {
+        c["label"]["en"]: c["width_mm"] for c in journals.journal_profile("nature")["page_columns"]
+    }
+    assert cols == {"single column": 89, "double column": 183}
+
+
+def test_bundled_snapshots_are_served_by_the_existing_assets_route(tmp_path, monkeypatch):
+    """快照图的资产根是 `/assets/journal-catalog/`：走既有的 `/assets/<path>`（公开前缀、不可变缓存），
+    不另开路由、不动 `security._PUBLIC_PREFIXES`。前端常量与随包目录必须是同一个位置。"""
+    from tavotto import app as m
+
+    ts = (ROOT / "web" / "src" / "store" / "journalCatalogStore.ts").read_text(encoding="utf-8")
+    assert "BUNDLED_ASSET_BASE = '/assets/journal-catalog/'" in ts
+    snap = next(
+        (ROOT / "web" / "public" / "assets" / "journal-catalog" / "snapshots").glob("*.webp")
+    )
+    dest = tmp_path / "assets" / "journal-catalog" / "snapshots"
+    dest.mkdir(parents=True)
+    (dest / snap.name).write_bytes(snap.read_bytes())
+    monkeypatch.setattr(m, "WEB_DIST", tmp_path)
+    m.app.config["TESTING"] = True
+    r = m.app.test_client().get(f"/assets/journal-catalog/snapshots/{snap.name}")
+    assert r.status_code == 200
+    assert r.mimetype == "image/webp"
+    assert "immutable" in r.headers.get("Cache-Control", "")
+    assert r.data == snap.read_bytes()
+
+
+def test_shipped_snapshots_are_bundled_and_content_addressed():
+    import hashlib
+
+    doc = journals.load_catalog()
+    snap_dir = ROOT / "web" / "public" / "assets" / "journal-catalog" / "snapshots"
+    used: set[str] = set()
+    for owner in [*doc["publishers"].values(), *doc["journals"].values()]:
+        for rule in (owner.get("rules") or {}).values():
+            if "snapshot" in rule:
+                used.add(rule["snapshot"]["file"])
+    assert used, "种子里应当有带快照的出处"
+    for f in used:
+        data = (snap_dir / Path(f).name).read_bytes()
+        assert data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+        assert f == f"snapshots/{hashlib.sha256(data).hexdigest()}.webp"
+    assert {p.name for p in snap_dir.glob("*.webp")} == {
+        Path(f).name for f in used
+    }  # 没有无人引用的快照
 
 
 def test_shipped_catalog_is_not_gitignored():

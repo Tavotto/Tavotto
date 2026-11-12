@@ -11,6 +11,7 @@ import {
 } from '@/lib/api'
 import {
   checkDesktopUpdate,
+  downloadDesktopUpdate,
   installDesktopUpdate,
   isDesktop,
   relaunchDesktop,
@@ -18,6 +19,7 @@ import {
   type UpdateAttempt,
   type UpdateSource,
 } from '@/lib/desktop'
+import { startHostSync } from '@/lib/hostSync'
 import { readDismissedUpdate, writeDismissedUpdate } from '@/lib/updateNotice'
 
 /**
@@ -26,7 +28,9 @@ import { readDismissedUpdate, writeDismissedUpdate } from '@/lib/updateNotice'
  * （「稍后」按版本记住）+「⋯」上的圆点；用户在
  * 「设置 → 检查更新」里可以手动立即检查、关掉自动检查、或直接执行升级。
  *
- * 升级永远不静默进行：学术制图要可复现，版本什么时候变必须是用户按下按钮的结果。
+ * 升级永远不静默**替换**：学术制图要可复现，版本什么时候变必须是用户的决定。桌面版「后台自动下载」
+ * （默认开、设置里可关）只把新版**下载好**，下好后顶栏出「新版已就绪」胶囊；装上去只发生在用户点
+ * 「现在重启」或退出应用时（壳侧，ADR 0121 修订 2026-11-04），运行中的会话永远不混用新旧代码。
  *
  * **两条互斥的升级通道**（不是两套 UI，是两种机制）：
  *   * 浏览器 / pip / pipx：Python updater（`/api/update/*`）跑 pip 装 wheel，
@@ -70,6 +74,13 @@ interface UpdateState {
   autoCheckSaving: boolean
   autoCheckFailure: { value: boolean; message: UiMessage } | null
   setAutoCheck: (v: boolean) => Promise<void>
+  /**
+   * 桌面「后台自动下载」偏好：存在后端用户配置（`status.auto_download`，默认开），读 `autoDownloadOn(status)`。
+   * 不放 localStorage——桌面端口会变，按 origin 隔离的存储会让「关掉」悄悄复位。
+   */
+  autoDownloadSaving: boolean
+  autoDownloadFailure: UiMessage | null
+  setAutoDownload: (v: boolean) => Promise<void>
   /** 对这个版本说「稍后」 */
   dismiss: (version: string) => void
 
@@ -95,8 +106,14 @@ interface UpdateState {
    * 不更新：拿一个失败的时刻去支撑「那时是最新的」就是在编。
    */
   desktopCheckedAtMs: number | null
+  /** 后台已下好、验过签、等着装的那一版（壳里留着包）；null = 没有 */
+  desktopReady: { version: string; source: UpdateSource } | null
   checkDesktop: () => Promise<void>
+  /** 后台下载 `desktopUpdate`（不安装）；失败静默：不写 desktopError，用户仍可手动下载 */
+  downloadDesktopInBackground: () => Promise<void>
   installDesktop: () => Promise<void>
+  /** 「现在重启」：用已下好的包安装（不再下载），装完立刻重启 */
+  restartNow: () => Promise<void>
   relaunching: boolean
   relaunchFailed: boolean
   relaunch: () => Promise<void>
@@ -106,6 +123,14 @@ interface UpdateState {
 function attemptsOf(e: unknown): UpdateAttempt[] {
   const a = (e as { attempts?: unknown } | null)?.attempts
   return Array.isArray(a) ? (a as UpdateAttempt[]) : []
+}
+
+/**
+ * 「后台自动下载」是否开着。**以后端明确回报的为准**（桌面下 `/api/update/check` 的停用响应里带 `auto_download`，
+ * 默认 true）；取不到状态时按「关」走旧行为（弹询问框、点了才下），不替用户做没确认过的下载。
+ */
+export function autoDownloadOn(status: Pick<UpdateStatus, 'auto_download'> | null): boolean {
+  return status?.auto_download === true
 }
 
 export const useUpdateStore = create<UpdateState>((set, get) => ({
@@ -119,6 +144,9 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   checkError: null,
   autoCheckSaving: false,
   autoCheckFailure: null,
+  autoDownloadSaving: false,
+  autoDownloadFailure: null,
+  desktopReady: null,
   desktopPhase: 'idle',
   desktopUpdate: null,
   desktopProgress: null,
@@ -206,6 +234,21 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     }
   },
 
+  setAutoDownload: async (v) => {
+    if (get().autoDownloadSaving || !get().status) return
+    set({ autoDownloadSaving: true, autoDownloadFailure: null })
+    try {
+      const saved = await patchUpdateSettings({ auto_download: v })
+      const status = get().status
+      if (status) set({ status: { ...status, auto_download: saved.auto_download } })
+    } catch (e) {
+      // 保持上一次确认过的值，不乐观翻转；失败说一句（设置页的开关下面）
+      set({ autoDownloadFailure: backendErrorMsg(e) })
+    } finally {
+      set({ autoDownloadSaving: false })
+    }
+  },
+
   dismiss: (version) => {
     writeDismissedUpdate(version)
     set({ dismissedVersion: version })
@@ -215,8 +258,11 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     if (get().desktopPhase !== 'idle') return
     set({ desktopPhase: 'checking', desktopError: null, desktopAttempts: [] })
     try {
-      const info = await checkDesktopUpdate()
+      const info = await checkDesktopUpdate(get().desktopReady?.version)
+      const ready = get().desktopReady
       set({
+        // 壳在查到别的版本 / 没有新版时会丢掉旧包；这边同步，别留一个指着已丢的包的胶囊
+        desktopReady: ready && info?.version === ready.version ? ready : null,
         desktopUpdate: info,
         desktopSource: info?.source ?? null,
         desktopChecked: true,
@@ -224,11 +270,15 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       })
     } catch (e) {
       // 离线是常态，但用户按下的按钮必须有下文——无声无息的按钮和坏掉没区别
+      // 重查失败时壳里的旧句柄已经作废（desktop.ts / run_check 都先清它），界面就不能还挂着
+      // 旧版本和一个只会回 no_pending_update 的「下载并安装」——一起撤掉。
+      // 例外：后台已下好、验过签的那一版——两边都保留它的候选（Codex #1730），「现在重启」照样能用
+      const ready = get().desktopReady
+      const keep = ready && get().desktopUpdate?.version === ready.version
       set({
-        // 重查失败时壳里的旧句柄已经作废（desktop.ts / run_check 都先清它），界面就不能还挂着
-        // 旧版本和一个只会回 no_pending_update 的「下载并安装」——一起撤掉
-        desktopUpdate: null,
-        desktopSource: null,
+        desktopUpdate: keep ? get().desktopUpdate : null,
+        desktopSource: keep ? get().desktopSource : null,
+        desktopReady: keep ? ready : null,
         desktopError: e instanceof Error ? e.message : t('update.desktopCheckFailed', { ns: 'errors' }),
         desktopAttempts: attemptsOf(e),
       })
@@ -239,10 +289,17 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
 
   installDesktop: async () => {
     if (get().desktopPhase !== 'idle' || !get().desktopUpdate) return
-    set({ desktopPhase: 'downloading', desktopProgress: 0, desktopError: null, desktopAttempts: [] })
+    // 后台已下好同一版本的包：壳直接用它安装，没有下载过程
+    const fromReady = get().desktopReady?.version === get().desktopUpdate?.version
+    set({
+      desktopPhase: 'downloading',
+      desktopProgress: fromReady ? 1 : 0,
+      desktopError: null,
+      desktopAttempts: [],
+    })
     try {
       const used = await installDesktopUpdate((f) => set({ desktopProgress: f }))
-      set({ desktopSource: used })
+      set({ desktopSource: used, desktopReady: null })
       // 装完了但还跑着旧进程：与 pip 那条同一条纪律，重启才算换版本
       set({ desktopPhase: 'installed' })
       // 匿名用量统计：**装成功之后**才记（下载失败 / 用户中途取消都不算）。
@@ -259,11 +316,40 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       set({
         desktopPhase: 'idle',
         desktopProgress: null,
+        // 壳在动手装之前就把槽里的包取走了：失败后不再声称「已就绪」（用户可在设置里重新下载）
+        desktopReady: null,
         desktopError:
           e instanceof Error ? e.message : t('update.desktopInstallFailed', { ns: 'errors' }),
         desktopAttempts: attemptsOf(e),
       })
     }
+  },
+
+  downloadDesktopInBackground: async () => {
+    const info = get().desktopUpdate
+    if (get().desktopPhase !== 'idle' || !info) return
+    set({ desktopPhase: 'downloading', desktopProgress: 0, desktopAttempts: [] })
+    try {
+      const done = await downloadDesktopUpdate((f) => set({ desktopProgress: f }))
+      // 期间若用户重新检查过、候选已换，不把别的版本标成就绪
+      if (get().desktopUpdate?.version === done.version) {
+        set({ desktopReady: { version: done.version, source: done.source }, desktopSource: done.source })
+      }
+    } catch (e) {
+      // 静默：不弹窗、不写 desktopError、不出胶囊——「⋯」圆点与设置页里手动下载的入口都还在。
+      // 逐来源失败记录留给设置页「技术详情」
+      set({ desktopAttempts: attemptsOf(e) })
+    } finally {
+      set({ desktopPhase: 'idle', desktopProgress: null })
+    }
+  },
+
+  restartNow: async () => {
+    if (get().relaunching || get().desktopPhase !== 'idle') return
+    if (get().desktopReady?.version !== get().desktopUpdate?.version) return
+    await get().installDesktop()
+    // Windows 上装包时壳会让进程自行退出；走到这里说明是 macOS 就地替换完，重启即可
+    if (get().desktopPhase === 'installed') await get().relaunch()
   },
 
   relaunch: async () => {
@@ -288,8 +374,39 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
  * 启动时静默查一次。**桌面与浏览器各走各的**：桌面壳里后端的 updater 是
  * 关着的，查它只会拿到一句「已停用」；浏览器模式里 Tauri 的 check 根本不存在。
  */
+export type NewerBuildOutcome = 'ready' | 'found' | 'none' | 'error'
+
+/**
+ * 「这份排版来自更新的版本」横幅的「检查更新」（只在桌面版）：现在就查，查到了顺手下载。
+ * `ready` = 新版已下好（顶栏「现在重启」）；`found` = 有新版但还没下好（调用方给「下载并更新」）；
+ * `none` = 已是最新；`error` = 没查成。走壳的自有命令（`checkDesktop`），组件不碰 `@tauri-apps/*`。
+ */
+export async function fetchNewerDesktopBuild(): Promise<NewerBuildOutcome> {
+  const s = useUpdateStore.getState()
+  await s.checkDesktop()
+  let now = useUpdateStore.getState()
+  if (now.desktopError) return 'error'
+  if (!now.desktopUpdate) return 'none'
+  if (!now.desktopReady) {
+    await now.downloadDesktopInBackground()
+    now = useUpdateStore.getState()
+  }
+  return now.desktopReady ? 'ready' : 'found'
+}
+
 export function checkUpdateOnStartup(): void {
   const s = useUpdateStore.getState()
-  if (isDesktop()) void s.checkDesktop()
-  else void s.check(false)
+  if (!isDesktop()) {
+    void s.check(false)
+    return
+  }
+  void (async () => {
+    // 先取偏好（桌面下 /api/update/check 不联网，只回停用响应 + auto_download）；取不到按关（旧行为）
+    await s.check(false)
+    // 状态到位了：顺手同步已接入编辑器的技能（ADR 0170）；后台自动下载开着才连 Codex 插件一起更新。不等它
+    startHostSync(autoDownloadOn(useUpdateStore.getState().status))
+    await s.checkDesktop()
+    const now = useUpdateStore.getState()
+    if (autoDownloadOn(now.status) && now.desktopUpdate) await now.downloadDesktopInBackground()
+  })()
 }

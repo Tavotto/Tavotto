@@ -367,10 +367,16 @@ describe('用户级加图入口在恢复期间排队（deferUserEntry）', () =>
     expect(be.slotBytes('d_text')).toBe(original)
   })
 
-  it('restoring 转 needs_user：已排的加图不落进占位文档；用户继续新建之后也一个都不落', async () => {
+  // ADR 0120 修订（2026-11-10）：恢复落成 needs_user 之后，已排的动作不再丢——落进用户选出来的那份
+  it('restoring 转 needs_user（有别的排版可接）：已排的加图不落进占位文档，也不替用户挑旧稿；用户继续新建之后落进新排版，恰好一次', async () => {
     seedSaved('d_a', 'p_a', { last: false })
     be.owners.set('d_b', 'p_a')
     be.setLast('p_a', 'd_b', 'Draft B') // B 缺失 → needs_user
+    localStorage.setItem('tavotto.currentDoc', 'd_a') // A 是已验证的备选
+    localStorage.setItem(
+      'tavotto.docIndex',
+      JSON.stringify([{ id: 'd_a', name: 'A', savedAt: 1, objects: 1, canvases: 2, projectId: 'p_a' }]),
+    )
     const app = await boot()
     await app.assets.useAssetStore.getState().load()
     const ws = await import('@/store/workspace')
@@ -382,17 +388,20 @@ describe('用户级加图入口在恢复期间排队（deferUserEntry）', () =>
     await restoring
     await settle()
     expect(app.doc.useDocumentStore.getState().restoreGate.state).toBe('needs_user')
+    expect(app.doc.useDocumentStore.getState().restoreIssue!.alternatives.map((x) => x.id)).toContain('d_a')
+    expect(app.doc.useDocumentStore.getState().documentId, '替用户挑了一份旧稿打开').not.toBe('d_a')
     expect(figCount(app), '加图落进了 needs_user 期间的占位文档').toBe(0)
-    expect(ws.addFigureToLayout('Fig1.pdf')).toBe('blocked')
+    expect(ws.addFigureToLayout('Fig1.pdf')).toBe('deferred')
     const r = await restore()
     await r.continueNew()
+    await until(() => figCount(app) === 1, 3000)
     await settle()
-    await new Promise((r2) => setTimeout(r2, 50))
-    expect(figCount(app), '继续新建之后，needs_user 之前排的加图应被丢弃').toBe(0)
+    expect(figCount(app), '同一张图排了两次，只落一个面板').toBe(1)
+    expect(app.doc.useDocumentStore.getState().restoreGate).toMatchObject({ state: 'ready', reason: 'continued_new' })
   })
 
-  it('恢复先到 needs_user、同项目重试成功：此前排队的加图仍执行一次', async () => {
-    be.setLast('p_a', 'd_text', '暂时缺失')
+  it('restoring 转 needs_user（上次那份找不到、没有别的可接）：已排的加图直接落进静默新开的排版，恰好一次', async () => {
+    be.setLast('p_a', 'd_text', '找不到了')
     const app = await boot()
     await app.assets.useAssetStore.getState().load()
     const ws = await import('@/store/workspace')
@@ -402,12 +411,43 @@ describe('用户级加图入口在恢复期间排队（deferUserEntry）', () =>
     expect(ws.addFigureToLayout('Fig1.pdf')).toBe('deferred')
     gate.release()
     await restoring
-    expect(app.doc.useDocumentStore.getState().restoreGate.state).toBe('needs_user')
-    expect(figCount(app)).toBe(0)
-    const body = savedProject('找回的文档')
+    await until(() => figCount(app) === 1, 3000)
+    await settle()
+    expect(app.doc.useDocumentStore.getState().restoreGate).toMatchObject({ state: 'ready', reason: 'continued_new' })
+    expect(currentShape(app).documentId).not.toBe('d_text')
+    expect(figCount(app)).toBe(1)
+  })
+
+  /** 正文暂时读不到（一直 500，直到 `up()`）：恢复、自动再试都落成 needs_user{unavailable} */
+  const bodyDown = () => {
+    const body = savedProject('暂时读不到的文档')
     body.canvases[0].objects = [text('t_only', 'kept', 3, 4)]
     be.putSlot('d_text', body)
     be.owners.set('d_text', 'p_a')
+    be.setLast('p_a', 'd_text', body.project.name)
+    let down = true
+    be.fail((r) => down && r.method === 'GET' && r.docId === 'd_text', 500, 9999)
+    return { up: () => void (down = false) }
+  }
+
+  it('恢复先到 needs_user（暂时读不到）、自动再试也不成、用户重试成功：此前排队的加图仍执行一次，落进恢复出来的文档', async () => {
+    const net = bodyDown()
+    const app = await boot()
+    await app.assets.useAssetStore.getState().load()
+    const ws = await import('@/store/workspace')
+    const gate = be.hold(isSessionGet)
+    const restoring = app.doc.restoreSession()
+    await gate.reached
+    expect(ws.addFigureToLayout('Fig1.pdf')).toBe('deferred')
+    const before = be.count(isSessionGet)
+    gate.release()
+    await restoring
+    // 落成 needs_user 后自动再试一次（只一次），仍读不到
+    await until(() => be.count(isSessionGet) === before + 1 && app.doc.useDocumentStore.getState().restoreGate.state === 'needs_user', 3000)
+    await settle()
+    expect(be.count(isSessionGet)).toBe(before + 1)
+    expect(figCount(app)).toBe(0)
+    net.up()
     expect((await (await restore()).retryRestore()).kind).toBe('restored')
     await until(() => figCount(app) === 1, 3000)
     expect(currentShape(app).documentId).toBe('d_text')
@@ -415,8 +455,8 @@ describe('用户级加图入口在恢复期间排队（deferUserEntry）', () =>
     expect(figCount(app)).toBe(1)
   })
 
-  it('第一次重试期间排队、第二次重试成功：操作仍只落到恢复出的文档一次', async () => {
-    be.setLast('p_a', 'd_text', '暂时缺失')
+  it('第一次重试期间排队、之后重试成功：操作仍只落到恢复出的文档一次', async () => {
+    const net = bodyDown()
     const app = await boot()
     await app.assets.useAssetStore.getState().load()
     const ws = await import('@/store/workspace')
@@ -427,11 +467,12 @@ describe('用户级加图入口在恢复期间排队（deferUserEntry）', () =>
     expect(ws.addFigureToLayout('Fig1.pdf')).toBe('deferred')
     gate.release()
     expect((await firstRetry).kind).toBe('needs_user')
+    // 记着动作落成 needs_user：自动再试一次，仍读不到
+    await until(() => app.doc.useDocumentStore.getState().restoreGate.state === 'restoring', 3000).catch(() => {})
+    await until(() => app.doc.useDocumentStore.getState().restoreGate.state === 'needs_user', 3000)
+    await settle()
     expect(figCount(app)).toBe(0)
-    const body = savedProject('找回的文档')
-    body.canvases[0].objects = [text('t_only', 'kept', 3, 4)]
-    be.putSlot('d_text', body)
-    be.owners.set('d_text', 'p_a')
+    net.up()
     expect((await (await restore()).retryRestore()).kind).toBe('restored')
     await until(() => figCount(app) === 1, 3000)
     expect(currentShape(app).documentId).toBe('d_text')

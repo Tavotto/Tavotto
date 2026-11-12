@@ -75,7 +75,7 @@
     "zoomAlt": "{{name}} 大图预览"
   },
   "autosave": {
-    "diskFailed": "无法保存到磁盘。改动已暂存，请检查磁盘空间后重试。",
+    "diskFailed": "没能保存到磁盘。",
     "docConflict": "这份排版已在另一个窗口打开，同时编辑会互相覆盖。",
     "staleOtherWindow": "另一窗口保存了更新的版本。改动只保留在这里，未写入磁盘。"
   },
@@ -102,13 +102,31 @@
     "moveUp": "上移",
     "moveDown": "下移"
   },
+  "notebook": {
+    "converted": "已从「{{notebook}}」生成「{{script}}」，正在运行它",
+    "convertedMore_other": "已从「{{notebook}}」生成「{{script}}」，正在运行它；其余 {{count}} 个文件这次没有处理",
+    "failed": "「{{name}}」没能转成脚本。{{reason}}"
+  },
   "canvasDrop": {
     "running": "正在运行「{{name}}」，出图后放进这张画布",
-    "outsideProject": "「{{name}}」不在当前项目的文件夹里，没有运行。要用它，请回到主页把它拖进来。",
-    "cannotRun": "「{{name}}」的文件名首尾有空格，暂时不能直接运行。请改名后再拖进来。",
-    "notScript": "「{{name}}」不是 Python 脚本。请拖入 .py 文件。",
+    "runningFirst": "正在运行「{{name}}」，其余 {{count}} 个脚本这次没有运行",
+    "openedAndRunning": "已打开「{{name}}」所在的项目，正在运行它",
+    "outsideProject": "「{{name}}」不在当前项目里，还没有运行。",
+    "outsideForeign": "「{{name}}」不在当前项目里。",
+    "openItsProject": "打开它所在的项目",
+    "openProjectFailed": "没能打开「{{name}}」所在的项目。",
+    "cannotRun": "「{{name}}」的文件名首尾有空格，暂时不能直接运行。",
     "noPath": "请在接下来的窗口里再选一次「{{name}}」。",
-    "browser": "浏览器里拖不进脚本。请在左侧脚本库里运行「{{name}}」。"
+    "browser": "浏览器拿不到「{{name}}」在哪个文件夹，没法直接运行它。",
+    "noProjectFolder": "这里没有项目文件夹可放。",
+    "placedOne": "已放进画布：「{{name}}」",
+    "placedMany_other": "已放进 {{count}} 张图",
+    "importFailed": "「{{name}}」没能放进画布。{{reason}}",
+    "importFailedMany_other": "有 {{count}} 个文件没能放进画布。",
+    "unsupportedType": "「{{name}}」放不进画布，能放进来的有图片、脚本和项目包。",
+    "unsupportedImage": "「{{name}}」这种格式的图还放不进画布，能放的有 PNG、JPG、TIFF、PDF、SVG。",
+    "packageFailed": "「{{name}}」没能作为项目包打开。{{reason}}",
+    "packageOnly_other": "已打开项目包「{{name}}」，另外 {{count}} 个文件这次没有处理"
   },
   "canvasTools": {
     "fit": "适应",
@@ -141,6 +159,12 @@
     "layoutCropFull": "到图边 · {{side}}未裁剪",
     "layoutCropTight": "紧凑 · {{side}}贴合内容",
     "layoutCropTrim": "裁掉留白 · {{side}} {{mm}} mm",
+    "layoutGrowCropped": "取消裁剪后才能改图幅",
+    "layoutGrowHeight": "改图幅 · 高 {{from}} → {{to}} mm",
+    "layoutGrowUnavailable": "这张图现在改不了图幅",
+    "layoutGrowWidth": "改图幅 · 宽 {{from}} → {{to}} mm",
+    "layoutShrinkFitText": "缩小到 {{pct}}%",
+    "layoutShrinkTextOverflow": "文字放不下了，要等比缩小吗？",
     "frameGrow": "扩充画布 · {{side}} +{{mm}} mm",
     "frameAtEdge": "到图边 · {{side}}没有留白",
     "frameTrim": "收紧留白 · {{side}} −{{mm}} mm",
@@ -157,8 +181,6 @@
     "layoutFitContentNone": "这张图还没有内容边缘信息（需要更新的渲染服务），暂时不能贴合内容",
     "layoutFollow_other": "标注 {{count}} 个一起缩放",
     "layoutFollowNone": "标注不动",
-    "layoutFollowToggle": "连同标注",
-    "layoutFollowToggleTip": "缩放图时，叠在它上面的标注（文字、箭头、形状）按同一个比例一起缩放",
     "layoutResetCrop": "取消裁剪",
     "layoutResetCropTip": "恢复完整图幅，不再裁剪",
     "layoutScale": "缩放 {{from}}% → {{to}}%",
@@ -217,8 +239,14 @@
     "retry": "重试保存",
     "saveAs": "另存为…",
     "saveErrorBody": "改动已暂存，尚未写入磁盘。",
-    "tooNewBody": "Tavotto 没有打开它，磁盘文件没有改动。升级后再试。",
-    "tooNewTitle": "这份排版来自更新的 Tavotto（schema {{schema}}）",
+    "tooNewBody": "{{product}} 没有打开它，文件没有改动。升级后再试。",
+    "tooNewTitle": "这份排版来自更新的 {{product}}",
+    "checkUpdate": "检查更新",
+    "updateReady": "新版已经下好，点顶栏的「现在重启」就能打开这份排版。",
+    "updateFound": "有新版 {{version}}。",
+    "updateInstall": "下载并更新",
+    "updateNone": "已经是最新版，这份排版要等新版发布才能打开。",
+    "updateCheckFailed": "没能检查更新，请确认网络后再点一次。",
     "moreActions": "其他处理方式"
   },
   "document": {
@@ -391,7 +419,8 @@
     "unlockObjects": "解锁 {{count}} 个对象",
     "hideObjects": "隐藏 {{count}} 个对象",
     "showObjects": "显示 {{count}} 个对象",
-    "setFramePad": "修改画布留白"
+    "setFramePad": "修改画布留白",
+    "journalStyle": "按 {{journal}} 调整样式「{{name}}」"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -516,7 +545,9 @@
     "deleteCount": "删除 {{count}} 个对象",
     "cropRotatedReason": "旋转过的图暂不能裁剪，先取消旋转",
     "copy": "复制",
-    "paste": "粘贴"
+    "paste": "粘贴",
+    "copyAsAnnotation": "复制为标注",
+    "pasteAsAnnotation": "粘贴为标注"
   },
   "rail": {
     "assets": "素材",
@@ -620,10 +651,12 @@
     "doneProject": "已保存到项目：{{file}}",
     "failed": "无法保存。改动仍在，请检查磁盘空间后重试。",
     "projectConflict": "项目里的 {{file}} 已在别处改过，这次没有写入。请在弹出的对话框里决定。",
+    "projectConflictElsewhere": "项目里的 {{file}} 已在别处改过，这次没有写入。回到那份排版再保存，就能决定怎么处理。",
     "projectFailed": "没能存进项目里的 {{file}}：{{reason}}",
     "projectBindingUnavailable": "项目文件关联尚未确认，本次还没有写入命名文件。改动仍在本机，请重试或重新打开排版。",
     "projectBindingSuperseded": "已写入 {{file}}，但下次保存目标尚未确认。较晚选择的目标会保留，请重新打开这份排版后继续保存。",
     "projectSkipped": "没有写入项目里的 {{file}}：按下保存之后切换了排版或项目。回到那份排版再保存一次。",
+    "reloadFailed": "没能读到磁盘上的那一版",
     "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。"
   },
   "scrim": {
@@ -678,7 +711,10 @@
     "copyPath": "复制路径",
     "pathCopied": "已复制：{{path}}",
     "pathCopyFailed": "无法写入剪贴板。脚本在：{{path}}",
-    "rowActions": "{{script}} 的更多操作"
+    "rowActions": "{{script}} 的更多操作",
+    "group_notebook": "Jupyter 笔记本",
+    "notebookRun": "转成脚本并运行",
+    "notebookRunAria": "把笔记本 {{notebook}} 转成脚本并运行"
   },
   "spineZone": {
     "label": "{{side}} · {{dir}}刻度 {{state}} · {{action}}",
@@ -744,6 +780,7 @@
     "copiedBuiltin": "内置样式不能改，已复制为「{{name}}」并改用它",
     "saveFailed": "样式没存上，画布没有改：{{reason}}",
     "saveFailedPlain": "样式没存上，画布没有改",
+    "retry": "再试一次",
     "restoreWaiting": "还有图在渲染，渲染完才能恢复",
     "upgradedLegacy": "样式「{{name}}」是旧版本存的，已改为按页面上的实际大小计",
     "detached": "已脱离「{{name}}」",
@@ -756,7 +793,17 @@
     "pendingSizeCancelled": "字号调整未应用：图形状态已变化或渲染失败，请重试。",
     "bindCancelled": "切换了画布，刚才选的样式没有绑上，请在那张画布上再选一次",
     "bindMissing": "要绑定的那套样式已经不在样式库里了，没有改动",
-    "editCancelled": "样式或画布刚换过，刚才的改动没有生效，请再改一次"
+    "editCancelled": "样式或画布刚换过，刚才的改动没有生效，请再改一次",
+    "journalMismatch": "{{count}} 项不合 {{journal}}",
+    "journalAdjust": "按期刊调整",
+    "journalAnnotation": "画布文字",
+    "journalAdjusted": "已按 {{journal}} 调整样式，可撤销",
+    "journalRetry": "再试一次",
+    "journalProp": {
+      "fontsize": "字号",
+      "fontfamily": "字体",
+      "linewidth": "线宽"
+    }
   },
   "status": {
     "dragSyncCancelled": "图形未能同步，后续拖动没有应用，请重试。",
@@ -807,6 +854,8 @@
     "nothingToRedo": "没有可重做的操作",
     "nothingToUndo": "没有可撤销的操作",
     "nudgeNotMovable": "选中的图内元素不能移动",
+    "elementNotCopyable": "{{name}}还不能复制",
+    "elementNotCopyableGeneric": "这个元素还不能复制",
     "objectCopied": "已复制 {{name}}",
     "objectsCopied": "已复制 {{count}} 个对象",
     "overridesCleared": "已清空这张图的图内修改",
@@ -851,7 +900,6 @@
       "locked": "组里有锁定的成员，先解锁才能整组移动或缩放",
       "incomplete": "组里有成员这一版拿不到位置，暂时不能整组移动或缩放"
     },
-    "errorTitle": "这一步没有完成",
     "copyDetails": "复制详情",
     "copiedDetails": "已复制"
   },
@@ -881,6 +929,12 @@
     "exportPackage": "导出项目包",
     "exportTip": "导出 PNG / PDF",
     "fitCanvas": "适应画布",
+    "foreignOpen": {
+      "body": "这份排版属于项目「{{name}}」，在这里打开，里面用到的脚本图会找不到。",
+      "bodyUnnamed": "这份排版属于另一个项目，在这里打开，里面用到的脚本图会找不到。",
+      "confirm": "仍然打开",
+      "title": "打开别的项目的排版"
+    },
     "fromOtherProject": "· 其他项目",
     "fromProject": "· 项目 {{name}}",
     "importPackage": "导入项目包…",
@@ -932,12 +986,13 @@
     "zoomIn": "放大",
     "zoomOut": "缩小",
     "zoomValue": "缩放 {{percent}}%",
-    "issueLastDoc": "上次的排版没打开",
+    "issueLastDoc": "没接上上次的排版",
     "issueTooNew": "排版版本较新",
     "issueAria": "排版状态：{{status}}。查看详情",
     "documentRenameHint": "单击打开排版菜单；双击或按 F2 重命名",
     "zoomValueInput": "缩放比例（%）",
-    "zoomSelection": "缩放到选中对象"
+    "zoomSelection": "缩放到选中对象",
+    "journalTitle": "按「{{journal}}」检查 · 点开期刊规范"
   },
   "tutorialChip": {
     "label": "新手教程"
@@ -946,6 +1001,11 @@
     "banner": "工具已更新，刷新后使用新版本",
     "chip": "界面需要刷新"
   },
+  "updateReady": {
+    "chip": "新版已就绪",
+    "body": "新版 {{version}} 已下载好，退出时会自动装上。",
+    "restart": "现在重启"
+  },
   "hints": {
     "panel_editable": "双击进入图内编辑。",
     "panel_layout_only": "这张图可在版面上摆放；连接源脚本后能改图里的内容。",
@@ -953,6 +1013,19 @@
     "multi_select": "用选区旁的浮动栏对齐和分布。",
     "problem_found": "左侧「问题」可定位对象和属性字段。",
     "layout_page_bounds": "白色纸面就是导出的 Figure 尺寸；单栏、双栏宽度按当前规范，可在右侧「画布」页调整。",
+    "fit_canvas": "双击空白处，画布回到正中",
+    "edge_crop": "拖边改图幅，按住 {{alt}} 改为裁剪",
+    "ruler_guides": "从标尺拖出对齐线",
+    "shift_axis": "按住 ⇧ 拖动，只沿一个方向走",
+    "no_snap": "按住 {{mod}} 拖动，暂时不吸附",
+    "arrow_nudge": "方向键微移，⇧ 大步、{{alt}} 小步",
+    "shift_rotate": "按住 ⇧ 旋转，15° 一档",
+    "dblclick_text": "双击图里的文字，直接改",
+    "shift_draw": "按住 ⇧ 画正方形和直线",
+    "space_pan": "按住空格拖动，平移画布",
+    "shift_multi": "⇧ 点击多选，一次改完",
+    "shortcut_help": "按 ? 看全部快捷键",
+    "shortcutHelpOpen": "打开",
     "pageBoundsOpen": "打开画布页"
   },
   "prep": {
@@ -983,9 +1056,13 @@
       "editReady": "已进入编辑",
       "editOpening": "正在打开编辑…",
       "noFigure": "跑完了，没有出图",
+      "noFigureCopied": "这个脚本只输出了图片文件、没有画图，可以直接打开输出的图片",
       "notRegistered": "图没能登记",
       "cancelled": "已停止",
       "envLocked": "设置里固定的 Python 缺组件",
+      "envLockedMissing": "设置里固定的 Python 缺 {{names}}",
+      "texCommand": "没找到 {{command}}。装好 TeX 后重启 Tavotto 再试。",
+      "texPackage": "缺 LaTeX 宏包 {{file}}，装好后再试。",
       "envChoice": "用项目里自带的那套运行？",
       "envChoiceOpen": "要先选用哪一套运行",
       "workdir": "在哪个目录运行？",
@@ -1005,7 +1082,7 @@
       "fileOpsBlockedSafeOnly": "这个项目设成了只用安全运行；脚本改了文件又去读，结果会不同，所以没有出图",
       "fileOpsBlockedOff": "原样运行被关掉了；脚本改了项目里的文件又去读，安全运行结果会不同，所以没有出图",
       "failedAfterFallback": "安全运行不能照常执行，改用原样运行后又出错了",
-      "argsRejected_other": "脚本不认你填的 {{count}} 个参数",
+      "argsRejected_other": "已传入 {{count}} 个参数，脚本仍无法继续",
       "inputUnanswered": "脚本中途要你回答，再运行一次就能答",
       "inputUnansweredSecret": "脚本要口令，再运行一次时输入（口令不会被记住）",
       "missingData": "找不到要读的数据",
@@ -1023,7 +1100,11 @@
       "originConfirm_other": "有 {{count}} 个库要你确认包名",
       "originUnknown_other": "有 {{count}} 个库的来源还没法确定",
       "pythonChange": "正在换成 Python {{version}}…",
-      "pythonChangeDownload": "正在换成 Python {{version}}（下载约 {{size}} MB）…"
+      "pythonChangeDownload": "正在换成 Python {{version}}（下载约 {{size}} MB）…",
+      "copyAsk": "脚本要从 {{path}} 读数据",
+      "copyDenied": "没有权限写到 {{dir}}",
+      "copyProtected": "{{dir}} 受系统保护，写不进去",
+      "copyFailed": "没能把数据复制到 {{dir}}"
     },
     "btn": {
       "later": "稍后",
@@ -1062,9 +1143,15 @@
       "openAssets": "打开素材库",
       "aiFix": "使用你的 AI 来修复",
       "send": "发送",
+      "sendUs": "发给我们看看",
       "revertAiEdit": "回滚 AI 的修改",
       "cancelScan": "取消检查",
-      "confirmOrigins": "确认包名"
+      "confirmOrigins": "确认包名",
+      "copyRun": "复制过去再运行",
+      "otherData": "换一份数据",
+      "grantCopy": "授权后复制",
+      "openPrivacy": "打开系统设置",
+      "rewritePath": "改脚本里的路径"
     },
     "card": {
       "stepOf": "第 {{n}} 步，共 {{total}} 步：{{name}}",
@@ -1134,7 +1221,7 @@
       "argsHidden_other": "{{count}} 个（含口令，不显示）",
       "installs": "将安装",
       "installTo": "装到",
-      "noFigureWhy": "没有调用 savefig，也没留下 Figure。",
+      "noFigureWhy": "没有留下 Figure。",
       "prompt": "脚本的提问",
       "parseKind": "参数问题",
       "parseKinds": {
@@ -1144,7 +1231,8 @@
       },
       "errorFull": "完整错误信息",
       "errorTruncated": "太长，只保留了最后一部分。",
-      "failedFigures": "没画出来的图：{{names}}（{{codes}}）。其余的图可以照常编辑。",
+      "failedFigures": "没画出来的图：{{names}}。其余的图可以照常编辑。",
+      "failedFiguresWhy": "没画出来的图：{{names}}。{{why}}其余的图可以照常编辑。",
       "unlinked": "此前带其他参数生成的 {{names}} 已不再关联，用原参数再运行一次即可恢复。",
       "history": {
         "title": "运行记录",
@@ -1328,13 +1416,49 @@
         "matlab": "这是 MATLAB 脚本，{{product}} 可以另写一份能直接编辑的 Matplotlib 版本，原脚本不动。"
       },
       "unverified": "{{product}} 没有运行 R / MATLAB，请并排看一眼再采用",
+      "outputEvidence": "成功出图不能证明原脚本的表格、日志等输出都已保留，请采用前核对。",
+      "outputSourceReferences": "原脚本提及的文件名（可能包含输入）：{{files}}",
+      "outputWriteAttempts": "校验时改道的写入尝试（不代表写入成功）：{{files}}",
+      "outputNoAttempts": "这次没有记录到改道写入尝试。",
+      "outputAttemptsUnavailable": "这次没有可用的写入记录。",
+      "outputEvidenceTruncated": "文件名过多，仅显示部分记录。",
+      "outputEvidenceLimits": "这些线索可能不全，动态路径、临时文件和外部程序的写入可能未记录。",
+      "files": {
+        "state": {
+          "match": "一致",
+          "differs": "不同",
+          "incomparable": "没法比",
+          "missing": "没写出"
+        },
+        "why": {
+          "no_previous": "项目里没有这个文件的旧结果",
+          "stale": "旧结果比输入数据还早，可能已经过期",
+          "format": "这种格式没法比",
+          "too_large": "文件太大没比",
+          "inputs_unknown": "不知道读了哪些数据",
+          "compare_failed": "比对时出了问题"
+        },
+        "btn": {
+          "specify": "我来指定",
+          "skip": "不需要",
+          "realign": "让 AI 再对一次"
+        },
+        "chosen": {
+          "specify": "已指定",
+          "skip": "不需要"
+        },
+        "askAdopt_other": "还有 {{count}} 个文件没处理，仍要采用吗？",
+        "adoptAnyway": "仍然采用",
+        "adoptAsIs": "照样采用"
+      },
       "adoptAdds": "采用只会新增 {{files}}，原脚本不动",
       "installed": "已为这个项目装好 {{names}}",
       "btn": {
         "start": "生成可编辑版本",
         "adopt": "采用新版本",
         "discard": "放弃",
-        "retry": "重试"
+        "retry": "重试",
+        "allowUnsandboxedRetry": "允许不受沙盒限制并重试"
       },
       "deps": {
         "askOnce": "要给这个环境（{{env}}）装缺的包吗？",
@@ -1413,6 +1537,7 @@
       "confirmOutside": "允许运行",
       "commandAria": "将要运行的命令",
       "reasonLabel": "AI 的理由：{{reason}}",
+      "outsideNoSandbox": "由于电脑没有沙盒，需要在您确认后继续",
       "outsideBackup": "运行前会备份项目里的脚本，出问题可以恢复。",
       "skip": "跳过",
       "useIt": "用它",
@@ -1513,6 +1638,17 @@
       "scopeUnknown": "当前运行范围尚未确定。",
       "notScript": "当前目标不是可声明输入的脚本。",
       "captured": "实际运行记录的输入摘要：{{revision}}"
+    },
+    "hint": {
+      "copyRun": "会把你指认的 {{source}} 复制一份到 {{target}}，原文件不动。",
+      "grantCopy": "会弹出系统的授权窗口，同意后再复制；原文件不动。",
+      "openPrivacy": "在“隐私与安全性 → 完全磁盘访问”里勾上 {{product}}，再回来重新运行。"
+    },
+    "folder": {
+      "desktop": "桌面",
+      "documents": "文稿",
+      "downloads": "下载",
+      "icloud": "iCloud 云盘"
     }
   },
   "canvasMenu": {
@@ -1525,11 +1661,13 @@
   },
   "restore": {
     "autoAdopted": "已打开本机找到的排版“{{name}}”",
-    "blockedWrite": "上次的排版还没打开。",
+    "autoNew": "上次的排版“{{name}}”打不开，已开了一份新排版。",
+    "autoNewUnnamed": "上次的排版打不开，已开了一份新排版。",
+    "blockedWrite": "先在画布上选一份排版。",
     "choose": "选一份打开",
-    "continueNew": "继续新建",
+    "continueNew": "用新排版",
     "entrySuperseded": "项目已切换，这次操作没有执行。",
-    "entryTimeout": "等了很久上次的排版仍没处理，这次操作没有执行。",
+    "heldChoose": "先在画布上选一下，刚才的操作会接着做。",
     "indexDegraded": "上次的恢复记录读不了，先开了一份空白排版。旧排版还在，可以在“打开排版”里找。",
     "meta": {
       "pill": "下次自动恢复信息没更新",
@@ -1545,7 +1683,7 @@
       "missing": "上次的排版找不到了",
       "prepareFailed": "示例排版没能打开",
       "tooNew": "上次的排版来自更新版本",
-      "unavailable": "上次的排版暂时没打开"
+      "unavailable": "暂时接不上上次的排版"
     },
     "retry": "重试",
     "title": {
@@ -1555,7 +1693,7 @@
       "missing": "上次的排版“{{name}}”找不到了。",
       "prepareFailed": "示例排版没能打开。",
       "tooNew": "上次的排版“{{name}}”来自更新版本的 Tavotto，这个版本打不开。",
-      "unavailable": "上次的排版暂时没打开。"
+      "unavailable": "暂时接不上上次的排版。"
     }
   },
   "renderProgress": {

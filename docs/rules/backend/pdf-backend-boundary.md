@@ -4,7 +4,7 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_rendercore_facade.py`、`tests/test_retirement_scan.py`、`tests/test_glyph_plan.py`、`tests/test_font_family_options.py`、`tests/test_cmap_facts.py`、`tests/test_cjk_figure_text.py`、`tests/test_render_cache.py`、`tests/test_windows_regressions.py`
 > 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_merge_queue_workflows.py::TestApprovedFontsAndRetirementScan`、`tests/test_retirement_scan.py`
-> `.github/AGENTS.md`「必守要点」压缩前原文（2026-10-23，与正文同等有效）：U10（ADR 0072）：RenderCore 是默认后端、字体不进 git——每条装项目的腿先 `fetch_fonts.py`（闭集在合同用例里；缓存只含归档，命中仍逐项验 SHA），wheel / 冻结产物出来之后扫原生库名单 + METADATA + 字体 13 张；没有一条 `pip install` 再点名 pymupdf
+> `.github/AGENTS.md`「必守要点」压缩前原文（2026-10-23，与正文同等有效）：U10（ADR 0072）：RenderCore 是默认后端、字体不进 git——每条装项目的腿先 `fetch_fonts.py`（闭集在合同用例里；缓存只含归档，命中仍逐项验 SHA），wheel / 冻结产物出来之后扫原生库名单 + METADATA + 字体 16 张；没有一条 `pip install` 再点名 pymupdf
 > `.github/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：U10（ADR 0072）：装项目的腿先 `fetch_fonts.py`；产物出来后扫原生库名单 + METADATA + 字体；没有 `pip install` 再点名 pymupdf
 
 <!-- agents-route
@@ -36,7 +36,7 @@ order: 70
   `importlib.import_module` / `__import__` 字面量）、发行版声明的运行时依赖闭包（递归、无 extra；
   同一 site-packages 里的读取器不算）、干净新进程（`-I`）装 meta_path 阻断器后跑主要路径（契约层
   14 条 + doctor + MCP bridge；阻断器先在标准库模块上证明会咬）、产物 native 名单（零 mupdf、PDFium +
-  qpdf 在、字体 13 张）+ wheel METADATA、SBOM——`tests/test_retirement_scan.py` 随 pytest 跑前三把，
+  qpdf 在、字体 16 张）+ wheel METADATA、SBOM——`tests/test_retirement_scan.py` 随 pytest 跑前三把，
   ci.yml 的 package / windows-exe-smoke / macos-app-smoke 各扫自己的产物。**主语是应用 / 发行 /
   runtime 闭包，不是硬盘**：`tests/**` 的读取器、`scripts/dev/**`、维护者资产脚本
   （`build_dmg_background.py` 那几份）、用户科学脚本自己的 `import fitz`、git 历史与文档字样都不是残留，
@@ -72,7 +72,7 @@ order: 70
   画得出这个字」。浏览器没有字体引擎，读的是生成物
   `pdfbackend/canvas_coverage.json`（`scripts/gen_canvas_coverage.py --check`
   看住它与真字体一致）。**git 里不含任何字体二进制**；发行物（wheel / 桌面包）只带 allowlist 按 sha256
-  钉住的 13 张 OFL 脸，构建时由 `scripts/fetch_fonts.py` 取进包里（ADR 0060 / 0072）。看护
+  钉住的 16 张 OFL 脸，构建时由 `scripts/fetch_fonts.py` 取进包里（ADR 0060 / 0072）。看护
   `tests/test_font_provenance.py`（git 零字体 + 包内恰好是 allowlist）与 `tests/test_rendercore_fonts.py`（每条打包步骤之前取字体）。
 - **本机字体族随 manifest 下发（2026-09-13，用户反馈「支持的字体太少」）**：
   `manifest.installed_font_families()` 问的是 matplotlib 自己的 `fontManager.ttflist`

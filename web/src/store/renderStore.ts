@@ -337,6 +337,12 @@ interface RenderState {
    */
   latestSeq: Record<string, number>
   /**
+   * 已采用面板（ADR 0139）**属性表专用**的上一版 manifest，键 = fileId + 采用 guard 后缀。
+   * 只由真实的采用渲染成功写入；**不写 `latest`**（那里刻意不写是来源隔离）。
+   * 只供 `sameGuardFallbackManifest` 读；来源失效（rejectArtifactRenders）/ 忘掉文件 / 清场时一并删。
+   */
+  adoptedManifest: Record<string, Manifest>
+  /**
    * 每个文件**最近成功的若干个变体键**（新的在前，上限 RECENT_VARIANTS）。
    * 撤销 / 版本恢复的落点几乎总在这几档里：留着就能当场把精确 SVG 与 manifest
    * 换回来（选择框也跟着立刻复位），而不是文档已经退回、画面还挂着退回前那张。
@@ -691,6 +697,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
   tracked: {},
   latest: {},
   latestSeq: {},
+  adoptedManifest: {},
   recent: {},
   building: {},
   inconsistent: {},
@@ -902,7 +909,13 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           // 已经上屏，旧变体的响应再回来不该把画面拽回去（同文件的另一个副本
           // 仍可能在等这份结果，所以不能整个丢掉）。
           set((s) => {
-            if (artifactValidation) return { byKey: { ...s.byKey, [key]: { ...(s.byKey[key] ?? EMPTY), ...next } } }
+            if (artifactValidation) {
+              const suffix = artifactKeySuffix(artifactValidation)
+              return {
+                byKey: { ...s.byKey, [key]: { ...(s.byKey[key] ?? EMPTY), ...next } },
+                ...(suffix && next.manifest ? { adoptedManifest: { ...s.adoptedManifest, [`${fileId}${suffix}`]: next.manifest } } : {}),
+              }
+            }
             const fresher = seq >= (s.latestSeq[family] ?? 0)
             const recent = [
               key,
@@ -1151,7 +1164,8 @@ export const useRenderStore = create<RenderState>((set, get) => ({
       delete recent[fileId]
       const inconsistent = { ...s.inconsistent }
       delete inconsistent[fileId]
-      return { byKey, tracked, latest, latestSeq, recent, inconsistent }
+      const adoptedManifest = Object.fromEntries(Object.entries(s.adoptedManifest).filter(([k]) => !k.startsWith(`${fileId}\u0000`)))
+      return { byKey, tracked, latest, latestSeq, adoptedManifest, recent, inconsistent }
     }),
 
   prune: (live) => {
@@ -1238,6 +1252,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
       tracked: {},
       latest: {},
       latestSeq: {},
+      adoptedManifest: {},
       recent: {},
       building: {},
       inconsistent: {},
@@ -1263,6 +1278,18 @@ export function rejectArtifactRenders(fileId: string, guard: AdoptionGuard, erro
       stale:true,manifest:null,svg:null,svgBytes:0,svgSeq:0})
     for (const [id, png] of Object.entries(useMountedPngStore.getState().byPanel)) {
       if (png.key === key) useMountedPngStore.getState().clear(id)
+    }
+  }
+  // 属性表退路缓存同样失效：来源出问题后不许再拿它冒充
+  {
+    const suffix = artifactKeySuffix(guard)
+    if (suffix) {
+      useRenderStore.setState((s) => {
+        const k = `${fileId}${suffix}`
+        if (!(k in s.adoptedManifest)) return s
+        const { [k]: _drop, ...rest } = s.adoptedManifest
+        return { adoptedManifest: rest }
+      })
     }
   }
   // 来源驱动面板的确认失效：编辑保留、不自动换基，给「重新对照确认」这一个出路
@@ -1541,6 +1568,31 @@ export function usePanelRender(panel: PanelObject | null | undefined): PanelRend
   )
   const issue = panel && figureOriginFor(panel) === undefined ? artifactValidationIssue(panel) : null
   return useMemo(() => issue ? invalidArtifactRender(issue, own) : (own?.manifest ? own : mergeRender(own, prev)), [own, prev, issue])
+}
+
+/**
+ * 已采用面板（ADR 0139）的**属性表专用**显示退路：新变体的 manifest 还没回来时，
+ * 只许退到 `adoptedManifest`（真实采用渲染成功时按 fileId+guard 后缀写入，不碰 `latest`）里**同一个采用 guard**的上一版——
+ * 同一份来源 / 同一次采用，只是 overrides 不同，元素清单（gid / 可编辑字段）不变。
+ * guard 不同（换了来源字节、重新采用、另一副本）一律不退，返回 null：不许拿别的素材的 manifest 冒充。
+ * 只供「列字段 / 认 role」的只读显示；几何仍只认 `exactPanelManifest`。
+ * 为什么要有：逐字输入每个字都提交一次 override，新变体 manifest 回来前属性表若卸成构建提示，
+ * 回来时重挂的文字框会全选，下一个字就替换了前一个（QA-WIN-35）。
+ */
+export function sameGuardFallbackManifest(
+  state: Pick<RenderState, 'adoptedManifest'>,
+  panel: PanelObject,
+): Manifest | null {
+  if (!isAdoptedPanel(panel) || artifactValidationIssue(panel)) return null
+  const suffix = artifactKeySuffix(adoptionGuardOf(panel))
+  if (!suffix) return null
+  return state.adoptedManifest[`${panel.fileId}${suffix}`] ?? null
+}
+
+export function usePanelInspectorManifest(panel: PanelObject | null | undefined): Manifest | null {
+  const render = usePanelRender(panel)
+  const fallback = useRenderStore((s) => (panel ? sameGuardFallbackManifest(s, panel) : null))
+  return render?.manifest ?? fallback
 }
 
 /**

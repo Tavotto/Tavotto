@@ -7,8 +7,9 @@ mod app_update;
 #[cfg(test)]
 mod app_update_flow_tests;
 mod crash_dump;
-// 分派只有 macOS 的 native_drop 在用；别的平台上它只剩单测（分派规则各平台一样，照样跑）
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod elevated_copy;
+// 分派由 macOS 的 native_drop 与 Windows 的 native_drop_win 用；Linux 上它只剩单测（分派规则各平台一样，照样跑）
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 mod drop_paths;
 #[cfg(test)]
 mod exit_guard_tests;
@@ -19,13 +20,18 @@ mod i18n;
 mod msix_breakaway;
 #[cfg(target_os = "macos")]
 mod native_drop;
+#[cfg(windows)]
+mod native_drop_win;
 #[cfg(test)]
 mod reinstall_guard_tests;
 mod remote;
 mod rescue;
+mod screen_ppi;
 mod shell_report;
 mod sidecar;
+mod update_source_memory;
 mod window_chrome;
+mod window_fit;
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -63,6 +69,8 @@ struct AppState {
     restarting: AtomicBool,
     /// 主窗口上一次告诉页面的全屏状态（macOS，见 `window_chrome::FULLSCREEN_EVENT`）。
     fullscreen: window_chrome::FullscreenTracker,
+    /// 主窗口所在屏幕的物理 ppi 去重底账（ADR 0168 第二节，`screen_ppi::SCREEN_PPI_EVENT`）。
+    screen_ppi: screen_ppi::PpiCache,
     /// 本次启动带进来的交接请求（`Tavotto --open <目录> [--stem <s>]`）。
     /// 首启走这条：项目交给 sidecar 的 `--figures`，stem 拼进落地 URL 的
     /// `?open=`。**第二次启动不走这里**——单实例插件会把 argv 转发给已经在
@@ -308,7 +316,7 @@ fn reveal_export(app: tauri::AppHandle, dir: String, name: String) -> Result<(),
         .map_err(|e| e.to_string())
 }
 
-/// 主页拖放能不能拿到真实路径（ADR 0092）：macOS 上旁听装好了才是 true，其余平台
+/// 主页拖放能不能拿到真实路径（ADR 0092）：macOS / Windows 上旁听装好了才是 true，其余平台
 /// 一律 false，前端据此走「提示文件名 + 选择器」的降级。只读、无参数。
 #[tauri::command]
 fn native_file_drop() -> bool {
@@ -316,7 +324,11 @@ fn native_file_drop() -> bool {
     {
         native_drop::installed()
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        native_drop_win::installed()
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         false
     }
@@ -380,15 +392,15 @@ fn checked_project_dir(path: &str) -> Result<PathBuf, String> {
 /// 这里：安装器只有 `engine/codexinstall.py` 那一份，按钮与终端命令永远走同一条
 /// 实现（看护 `tests/test_desktop_codex_button.py`）。
 ///
-/// `action` 是**闭集**（`install` / `doctor`）——webview 递不进任意 argv，也递不进
-/// `uninstall`：卸载不该是一个按得动的按钮。
+/// `action` 是**闭集**（`install` / `doctor` / `upgrade`）——webview 递不进任意 argv，也递不进
+/// `uninstall`：卸载不该是一个按得动的按钮。`upgrade` 是面板里「更新」按钮（插件落后时），走引擎同一条升级通道。
 ///
 /// **失败也是一行 JSON**（引擎的 `--json` 纪律），所以这里不看退出码，只找 stdout
 /// 里最后那行 JSON。真的一行都没有（CLI 没找到 / spawn 不起来 / 输出被截断）才回
 /// `Err`，回的是**稳定 code**，由前端翻成人话——英文 code 不进界面。
 #[tauri::command]
 async fn codex_integration(app: tauri::AppHandle, action: String) -> Result<String, String> {
-    if action != "install" && action != "doctor" {
+    if action != "install" && action != "doctor" && action != "upgrade" {
         return Err("bad_action".into());
     }
     run_cli_json(app, vec!["codex".into(), action, "--json".into()]).await
@@ -441,19 +453,42 @@ fn host_cli_args(
             }
             args.push(action.into());
         }
-        "connect" | "disconnect" => {
+        "connect" | "disconnect" | "connect_force_skill" => {
             let h = host.ok_or_else(|| "bad_args".to_string())?;
             if !HOST_IDS.contains(&h) {
                 return Err("bad_host".into());
             }
-            args.push(action.into());
+            // 「覆盖」按钮：用户确认过才带 `--force-skill`，覆盖被改过的技能副本；它不收文件夹
+            let sub = if action == "disconnect" {
+                "disconnect"
+            } else {
+                "connect"
+            };
+            args.push(sub.into());
             args.push(h.into());
+            if action == "connect_force_skill" {
+                if project_root.is_some() {
+                    return Err("bad_args".into());
+                }
+                args.push("--force-skill".into());
+            }
             if let Some(root) = project_root {
                 if action != "connect" || root.is_empty() {
                     return Err("bad_args".into());
                 }
                 args.push("--project-root".into());
                 args.push(root.into());
+            }
+        }
+        // 启动同步（ADR 0170）：`sync` 只补技能，`sync_plugins` 另外允许更新 Codex 插件（桌面版后台自动下载开着时才发）。
+        // 两者都不收宿主和文件夹：同步只处理已接入的宿主。
+        "sync" | "sync_plugins" => {
+            if host.is_some() || project_root.is_some() {
+                return Err("bad_args".into());
+            }
+            args.push("sync".into());
+            if action == "sync_plugins" {
+                args.push("--upgrade-plugins".into());
             }
         }
         _ => return Err("bad_action".into()),
@@ -524,6 +559,51 @@ mod host_cli_tests {
             host_cli_args("connect", Some("zcode"), Some("")),
             Err("bad_args".into())
         );
+    }
+
+    #[test]
+    fn sync_is_a_closed_pair_and_takes_no_host_or_folder() {
+        assert_eq!(
+            host_cli_args("sync", None, None),
+            ok(&["hosts", "sync", "--json"])
+        );
+        assert_eq!(
+            host_cli_args("sync_plugins", None, None),
+            ok(&["hosts", "sync", "--upgrade-plugins", "--json"])
+        );
+        for a in ["sync", "sync_plugins"] {
+            assert_eq!(
+                host_cli_args(a, Some("codex"), None),
+                Err("bad_args".into())
+            );
+            assert_eq!(host_cli_args(a, None, Some("/p")), Err("bad_args".into()));
+        }
+        // 开关只能从 sync_plugins 来：没有任何别的 action 能带出 --upgrade-plugins
+        assert_eq!(
+            host_cli_args("sync --upgrade-plugins", None, None),
+            Err("bad_action".into())
+        );
+    }
+
+    #[test]
+    fn force_skill_is_its_own_action_and_takes_a_known_host_only() {
+        assert_eq!(
+            host_cli_args("connect_force_skill", Some("cursor"), None),
+            ok(&["hosts", "connect", "cursor", "--force-skill", "--json"])
+        );
+        assert_eq!(
+            host_cli_args("connect_force_skill", Some("sh"), None),
+            Err("bad_host".into())
+        );
+        assert_eq!(
+            host_cli_args("connect_force_skill", Some("cursor"), Some("/p")),
+            Err("bad_args".into())
+        );
+        // 普通 connect / disconnect 永远不带 --force-skill
+        for a in ["connect", "disconnect"] {
+            let got = host_cli_args(a, Some("cursor"), None).unwrap();
+            assert!(!got.iter().any(|x| x == "--force-skill"), "{a}");
+        }
     }
 
     #[test]
@@ -963,14 +1043,16 @@ fn open_remote_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     let slot = state.remote.clone();
     let nav_handle = app.clone();
     let new_window_handle = app.clone();
+    let (remote_size, remote_min) =
+        window_fit::fit_to_primary(app, (1280.0, 860.0), (1024.0, 680.0));
     let win = tauri::WebviewWindowBuilder::new(
         app,
         REMOTE_WINDOW,
         tauri::WebviewUrl::App(connect_page_url(locale).into()),
     )
     .title(i18n::text(locale).remote_window_title)
-    .inner_size(1280.0, 860.0)
-    .min_inner_size(1024.0, 680.0)
+    .inner_size(remote_size.0, remote_size.1)
+    .min_inner_size(remote_min.0, remote_min.1)
     .incognito(true)
     .initialization_script(REMOTE_WINDOW_MARKER)
     // 与主窗口同理：把 HTML5 拖放还给页面（素材拖进画布）
@@ -1399,6 +1481,8 @@ fn restore_main_window_state(win: &tauri::WebviewWindow) {
     if let Err(e) = win.restore_state(window_state_flags()) {
         eprintln!("restore main window state: {e}");
     }
+    // 插件把保存过的物理尺寸原样设回、不看工作区：换了屏幕 / 缩放后可能比屏幕还大（window_fit.rs）
+    window_fit::clamp_restored_window(win, (1024.0, 680.0));
 }
 
 /// Windows：主窗口的菜单栏藏起来（窗框形态见 `window_chrome`）。菜单仍挂在窗口上——加速键
@@ -1639,6 +1723,36 @@ fn current_fullscreen(window: tauri::WebviewWindow) -> Result<bool, String> {
             .app_handle()
             .try_state::<AppState>()
             .is_some_and(|state| state.fullscreen.get()))
+}
+
+/// 主窗口所在屏幕的物理 ppi（回读，防事件早于前端监听）。`None` = 读不到，页面按缩放倍数取整。
+/// 只读缓存：真正去读屏幕的是主线程上的 [`announce_screen_ppi`]。
+#[tauri::command]
+fn screen_ppi(window: tauri::WebviewWindow) -> Result<Option<f64>, String> {
+    only_main_window(&window)?;
+    Ok(window
+        .app_handle()
+        .try_state::<AppState>()
+        .and_then(|state| state.screen_ppi.get()))
+}
+
+/// 重读主窗口所在屏幕的 ppi；真变了（含第一次）才发 `tavotto:screen-ppi`。只在主线程调
+/// （窗口建好时、`Moved` / `ScaleFactorChanged`）。
+fn announce_screen_ppi(window: &tauri::Window) {
+    if window.label() != MAIN_WINDOW {
+        return;
+    }
+    let Some(state) = window.app_handle().try_state::<AppState>() else {
+        return;
+    };
+    let now = screen_ppi::read(window);
+    if state.screen_ppi.update(now) {
+        let _ = window.app_handle().emit_to(
+            MAIN_WINDOW,
+            screen_ppi::SCREEN_PPI_EVENT,
+            serde_json::json!({ "ppi": now }),
+        );
+    }
 }
 
 /// 告诉主窗口的页面全屏状态；`FullscreenTracker` 去重，真变了才发 `tavotto:fullscreen`。
@@ -1899,6 +2013,30 @@ async fn update_install(
     .await
 }
 
+/// 应用内更新·后台下载的实现：只下载 + 验签，放进 `UpdateState::ready`，不安装。
+async fn update_download(
+    app: &tauri::AppHandle,
+    state: &app_update::UpdateState,
+    emit: app_update::Emit<'_>,
+) -> Result<app_update::Downloaded, app_update::Failure> {
+    let endpoints = app_update::endpoints(app)?;
+    // 大陆环境后台先 GitHub / 改镜像的跨重启记忆，放 app_config_dir（读写失败静默）
+    state.memory.bind(
+        app.path()
+            .app_config_dir()
+            .ok()
+            .map(|d| update_source_memory::path(&d)),
+    );
+    app_update::run_download(
+        &|| updater_builder(app),
+        &endpoints,
+        state,
+        &app_update::Limits::default(),
+        emit,
+    )
+    .await
+}
+
 /// 救援页「重新安装」的实现：查 + 装一气呵成，允许同版本（`app_update::run_reinstall`）。
 /// 只有 `rescue::rescue_reinstall` 调它（先过 `gate_reinstall`）。
 async fn update_reinstall(
@@ -1949,11 +2087,32 @@ async fn desktop_update_install(
     .await
 }
 
+/// 应用内更新·后台下载上一次查到的那一版（「后台自动下载」开着时，前端在启动查到新版后调）。
+/// 只下载 + 用内置公钥验签，包放进内存里的 `ready` 槽，**不安装**——装上去只发生在
+/// `desktop_update_install`（用户点「现在重启」，用槽里的包，不再下载）或退出应用时（`RunEvent::Exit`）。
+/// 与 check / install 同一把锁：下载期间它们回 `busy`。只许主窗口调。
+#[tauri::command]
+async fn desktop_update_download(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, app_update::UpdateState>,
+    on_event: tauri::ipc::Channel<app_update::DownloadEvent>,
+) -> Result<app_update::Downloaded, app_update::Failure> {
+    only_main_window(&window).map_err(|_| app_update::Failure::code("main_window_only"))?;
+    update_download(&app, &state, &|ev| {
+        let _ = on_event.send(ev);
+    })
+    .await
+}
+
 fn main() {
     // 最先：越早装，启动早期的崩溃越有转储可收（仅 Windows 生效，见 crash_dump.rs）
     crash_dump::install();
     // 带 MSIX 包身份（从 Codex 桌面版等拉起）就脱离包重新拉起自己后退出——在建任何窗口 / 写任何配置之前（#1574）
     msix_breakaway::relaunch_outside_package_if_needed();
+    // 提权复制助手（ADR 0173）：命令行是 `--elevated-copy <源> <目标>` 就只做这一次复制并退出——
+    // 不进 Builder、不开窗口、不起 sidecar、不读写任何配置
+    elevated_copy::run_if_requested();
     let state = AppState {
         sidecar: Mutex::new(None),
         port: Arc::new(Mutex::new(None)),
@@ -1964,6 +2123,7 @@ fn main() {
         engine_gen: AtomicU64::new(0),
         restarting: AtomicBool::new(false),
         fullscreen: window_chrome::FullscreenTracker::default(),
+        screen_ppi: screen_ppi::PpiCache::default(),
         open: parse_open_args(&std::env::args().skip(1).collect::<Vec<_>>()),
         // 真正的初值在 build_menu 里按配置目录读；这里先摆默认档，
         // 免得 set_menu_locale 把「和现在一样」误判成需要重建。
@@ -2027,10 +2187,12 @@ fn main() {
             connect_remote,
             desktop_update_check,
             desktop_update_install,
+            desktop_update_download,
             show_app_menu,
             take_previous_exit,
             current_engine_exit,
             current_fullscreen,
+            screen_ppi,
             restart_engine,
             rescue::rescue_status,
             rescue::rescue_retry,
@@ -2042,6 +2204,13 @@ fn main() {
             rescue::rescue_diag_save
         ])
         .on_window_event(|window, event| {
+            // 主窗口换屏 / 换缩放：重读屏幕 ppi（点阵进度条按它选点径，ADR 0168）
+            if matches!(
+                event,
+                tauri::WindowEvent::Moved(_) | tauri::WindowEvent::ScaleFactorChanged { .. }
+            ) {
+                announce_screen_ppi(window);
+            }
             // macOS 全屏：主信号是原生的 will / did 通知（`fullscreen_observer`），这里只做对账兜底；
             // 主窗口没了就摘掉观察者。
             #[cfg(target_os = "macos")]
@@ -2108,6 +2277,9 @@ fn main() {
                 marker.mark_running();
                 let _ = state.marker.set(marker);
             }
+            // 小屏 / 高缩放下窗口不得大于工作区（window_fit.rs）
+            let (main_size, main_min) =
+                window_fit::fit_to_primary(&handle, (1280.0, 860.0), (1024.0, 680.0));
             let win = tauri::WebviewWindowBuilder::new(
                 app,
                 MAIN_WINDOW,
@@ -2115,9 +2287,10 @@ fn main() {
                 tauri::WebviewUrl::App(format!("splash.html?lang={}", boot_locale.tag()).into()),
             )
             .title("Tavotto")
-            .inner_size(1280.0, 860.0)
-            // 三栏工作台的断点下限：再窄左右栏会互相挤压（见 CLAUDE.md 视觉纪律）
-            .min_inner_size(1024.0, 680.0)
+            .inner_size(main_size.0, main_size.1)
+            // 三栏工作台的断点下限：再窄左右栏会互相挤压（见 CLAUDE.md 视觉纪律）；
+            // 屏幕装不下时由 window_fit 收到工作区以内
+            .min_inner_size(main_min.0, main_min.1)
             // 窗框与页面顶栏融成一片（window_chrome.rs）：macOS 标题栏叠在页面上、红绿灯进顶栏，
             // Windows 去掉系统窗框、窗口按钮由页面画；并注入窗框标记，页面据它让出红绿灯 /
             // 摆出「菜单」与窗口按钮
@@ -2148,6 +2321,16 @@ fn main() {
             // macOS 主窗口本来就是显示的，但插件已跳过建窗时的恢复：这里补上，否则记不住位置与大小
             #[cfg(target_os = "macos")]
             restore_main_window_state(&win);
+            // 屏幕 ppi 的初值（之后由 Moved / ScaleFactorChanged 更新）
+            announce_screen_ppi(&win.as_ref().window());
+            // 主页拖放拿真实路径（Windows）：页面在 drop 里把 File 经 postMessageWithAdditionalObjects
+            // 交过来，这里读 ICoreWebView2File 的路径。同样不装 Tauri 的拖放处理器。见 native_drop_win.rs。
+            #[cfg(windows)]
+            {
+                let drop_handle = handle.clone();
+                let _ = win
+                    .with_webview(move |pw| native_drop_win::install(pw.controller(), drop_handle));
+            }
             // 主页拖放拿真实路径：只旁听 performDragOperation，不装 Tauri 的拖放处理器
             // （上面那条注释说的 HTML5 拖放照旧归页面）。见 native_drop.rs 与 ADR 0092。
             #[cfg(target_os = "macos")]
@@ -2186,6 +2369,11 @@ fn main() {
                 if let Some(m) = state.marker.get() {
                     m.mark_clean();
                 }
+            }
+            // 最后：后台已下好的更新包在退出时装上（下次打开就是新版）。必须排在 sidecar 收掉与 clean 之后——
+            // Windows 上插件 install 会起安装器并自行退出进程（`updater_builder` 的 on_before_exit 也会写 clean）
+            if let Some(updates) = app_handle.try_state::<app_update::UpdateState>() {
+                app_update::install_ready_on_exit(&updates);
             }
         }
     });
@@ -2287,12 +2475,14 @@ mod tests {
         for cmd in [
             "async fn desktop_update_check(",
             "async fn desktop_update_install(",
+            "async fn desktop_update_download(",
         ] {
             let body = body_of(main, cmd);
             assert!(body.contains("only_main_window(&window)"), "{cmd}");
         }
         assert!(body_of(main, "async fn desktop_update_check(").contains("update_check(&app"));
         assert!(body_of(main, "async fn desktop_update_install(").contains("update_install(&app"));
+        assert!(body_of(main, "async fn desktop_update_download(").contains("update_download(&app"));
         let rescue = &production_sources()[3].1;
         assert_eq!(production_sources()[3].0, "rescue.rs");
         assert!(rescue.contains("crate::update_check(&app"));
@@ -2363,6 +2553,16 @@ mod tests {
         let shutdown = tail.find("shutdown_sidecar()").expect("先收 sidecar");
         let clean = tail.find("mark_clean()").expect("再写 clean");
         assert!(shutdown < clean, "clean 必须在 sidecar 收掉之后写");
+        // 退出时装后台下好的更新包：必须在 sidecar 收掉、clean 写过之后（Windows 的安装器会让进程自行退出）
+        let install = tail
+            .find("install_ready_on_exit(")
+            .expect("退出时要装已下好的更新包");
+        assert!(clean < install, "退出时装更新包必须排在 mark_clean 之后");
+        assert_eq!(
+            main.matches("install_ready_on_exit(").count(),
+            1,
+            "退出时装包只有 RunEvent::Exit 这一处"
+        );
     }
 
     #[test]

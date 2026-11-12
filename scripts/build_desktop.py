@@ -324,6 +324,24 @@ def main() -> None:
         )
     print(f"* tavotto-cli: ssl 自检通过（{(ssl_probe.stdout or '').strip()}）")
 
+    # PyNaCl 的原生 CFFI 依赖只有成品里真验签才能验证，doctor 不触发它。
+    journal_probe = subprocess.run(
+        [str(cli), "--journal-selftest"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+    if journal_probe.returncode != 0:
+        raise SystemExit(
+            f"tavotto-cli --journal-selftest 失败（退出码 {journal_probe.returncode}）：\n"
+            f"  stdout: {(journal_probe.stdout or '').strip()[:400]}\n"
+            f"  stderr: {(journal_probe.stderr or '').strip()[-800:]}\n"
+            "  检查 PyNaCl 的 nacl._sodium 与 _cffi_backend 是否都已进入成品。"
+        )
+    print(f"* tavotto-cli: {(journal_probe.stdout or '').strip()}")
+
     # `tavotto run` 的**打包闭包复核**（ADR 0021）。`runcli` / `runspec` /
     # `runcodes` 这几个模块是靠 PyInstaller 的字节码分析被收进去的——与
     # `handoff` / `codexinstall` 同一条既有路径，spec 里没有它们的名字。
@@ -390,6 +408,72 @@ def main() -> None:
     cmd += arch_config
     run(cmd)
     out = ROOT / "src-tauri" / "target" / "release" / "bundle"
+    if sys.platform == "darwin":
+        # tauri 把 dist/Tavotto 里的符号链接复制成了真文件（同一份库在 .app 里存 2～3 次）；还原回去。
+        # 发行链在 CI 里于签名前做同一件事（desktop-tauri.yml「还原符号链接」）。
+        # 不写死 Tavotto.app：beta 等改了 productName 的构建叫别的名字。找不到就当场失败，不静默跳过
+        apps = sorted((out / "macos").glob("*.app"))
+        if len(apps) != 1:
+            sys.exit(
+                f"* 还原符号链接：{out / 'macos'} 下应恰有一个 .app，实际 {[a.name for a in apps]}"
+            )
+        app = apps[0]
+        run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "relink_macos_symlinks.py"),
+                "relink",
+                "--src",
+                str(ROOT / "dist" / "Tavotto"),
+                "--app",
+                str(app),
+            ]
+        )
+        run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "relink_macos_symlinks.py"),
+                "check",
+                "--app",
+                str(app),
+            ]
+        )
+        # 换链接会破坏 Tauri 已打上的 adhoc 签名封存（Codex #1728）：本地这条路自己重签一遍并验收。
+        # 发行链在「还原符号链接」之后另有正式签名 / 公证 / 打 dmg，不走这里。
+        codesign = str(ROOT / "scripts" / "codesign_macos.py")
+        run(
+            [
+                sys.executable,
+                codesign,
+                "sign",
+                "--app",
+                str(app),
+                "--identity",
+                "-",
+                "--entitlements",
+                str(ROOT / "packaging" / "entitlements.plist"),
+            ]
+        )
+        run([sys.executable, codesign, "verify", "--app", str(app)])
+        # Tauri 的 dmg 打在还原之前（里面是带重复、签名已失效的旧 .app）：用还原并重签后的 .app 重打同名 dmg
+        if "dmg" in args.bundles.split(","):
+            for stale in sorted((out / "dmg").glob("*.dmg")):
+                stale.unlink()
+                run(
+                    [
+                        "hdiutil",
+                        "create",
+                        "-volname",
+                        app.stem,
+                        "-srcfolder",
+                        str(app),
+                        "-format",
+                        "UDZO",
+                        "-ov",
+                        str(stale),
+                    ]
+                )
+                print(f"* 重打 dmg（还原后的 .app；朴素版式，品牌安装界面只在发行链）: {stale}")
     print(f"* 产物目录: {out}")
 
 

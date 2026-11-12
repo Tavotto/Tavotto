@@ -28,7 +28,7 @@ import { artifactRequestFields, artifactValidationIssue, isAdoptedPanel, origina
 import { t as translate } from '@/i18n'
 import type { ExportObject, ExportOriginalSource, ExportRequest } from './api'
 import { checkFilename, stripOutputExtension, type FilenameReason } from './exportName'
-import { epsFromOffers, epsFromRoute, type ExportOffers, type ExportRoute } from './exportRoute'
+import { epsFromOffers, epsFromRoute, scriptFromRoute, type ExportOffers, type ExportRoute } from './exportRoute'
 import { getOriginalOutputSpec, type OriginalOutputSpec } from './originalSpec'
 import { isZeroPad } from './framePad'
 import { originalSourceFacts, useAssetStore } from '@/store/assetStore'
@@ -183,6 +183,28 @@ function canValidateOriginalSource(figureId: string, panel?: PanelObject | null)
  * 素材清单里的 `script`（那正是「注册表声明了映射没有」）。**不可用时不隐藏
  * 选项、不静默丢掉它**：禁用并说原因，发出去的请求里也不带它。
  */
+export type ScriptBlockReason = 'none' | 'canvas_scope' | 'no_script'
+
+/**
+ * 修改后的 .py 这次给不给得出（ADR 0171）：只有单张图、且它有脚本。事实读后端的 `offers.script`；
+ * 缺 route 时才看素材清单里有没有 `script`（与 `epsAvailability` 同一条退路）。
+ * 脚本在 savefig 之外怎么画图这类事实前端不知道，后端逐项失败并说原因。
+ */
+export function scriptAvailability(
+  scope: ExportScope,
+  figureId: string | null,
+  route?: ExportRoute | null,
+): { ok: boolean; reason: ScriptBlockReason } {
+  if (scope !== 'original') return { ok: false, reason: 'canvas_scope' }
+  if (!figureId) return { ok: false, reason: 'no_script' }
+  const fromRoute = scriptFromRoute(route, scope, figureId)
+  if (fromRoute) return fromRoute
+  if (figureId.startsWith('runtime:') || useAssetStore.getState().byId[figureId]?.script) {
+    return { ok: true, reason: 'none' }
+  }
+  return { ok: false, reason: 'no_script' }
+}
+
 export type EpsBlockReason = 'none' | 'canvas_scope' | 'no_script' | 'figure_not_ready'
 
 export function epsAvailability(
@@ -229,6 +251,13 @@ export interface ExportRequestInput {
   background?: ExportBackground
   overwrite?: OverwritePolicy
   includeReport?: boolean
+  /** 同时导出修改后的 .py（ADR 0171）。只对单张图有意义；调用方已按 `scriptAvailability` 收窄 */
+  includeScript?: boolean
+  /**
+   * 「EPS 按不透明导出」（导出前提醒的第二个选择，`lib/epsOpacity`）：只在这次真会发 EPS、且单图带标注时才进请求
+   * （`eps_opaque: true`），否则请求与从前逐字节相同。
+   */
+  epsOpaque?: boolean
   acknowledged?: readonly string[]
   documentId: string | null
   doc: FigureDocument
@@ -310,6 +339,9 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
     },
     include_style_check_report: input.includeReport === true,
     document_id: input.documentId,
+    ...(input.includeScript && input.scope === 'original' && !input.mergePages
+      ? { include_edited_script: true }
+      : {}),
   }
   if (input.scope === 'canvas') {
     request.canvas = {
@@ -363,6 +395,10 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
       }
     }
   }
+  // 「EPS 按不透明导出」：这次真会发 EPS 且单图带标注才带；不带时请求与从前逐字节相同
+  if (input.epsOpaque && formats.includes('eps') && request.original?.objects?.length) {
+    request.eps_opaque = true
+  }
   if (input.report) request.style_check_report = input.report
   // 只在勾了严格时才带 `inspection`：不勾时载荷与从前逐字节相同（老服务端不认这个键也无妨）
   if (input.strictInspection) {
@@ -370,7 +406,9 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
   }
   const revision = snapshotRevision(request)
   request.document_revision = revision
-  return { request, names: formats.map((f) => `${filename}.${f}`), revision }
+  const names = formats.map((f) => `${filename}.${f}`)
+  if (request.include_edited_script) names.push(`${filename}_edited.py`) // 后端 `exportjob.SCRIPT_SUFFIX`
+  return { request, names, revision }
 }
 
 /**
@@ -389,6 +427,7 @@ export function exportTargetKey(input: ExportRequestInput): string {
     input.scope === 'original' ? (input.mergePages?.map((p) => p.figureId) ?? input.figureId ?? null) : null,
     stripOutputExtension(input.filename, formats),
     formats,
+    input.includeScript === true,
     input.exportDir ?? null,
   ])
 }

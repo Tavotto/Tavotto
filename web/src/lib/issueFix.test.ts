@@ -657,6 +657,46 @@ describe('画布层仍在前端', () => {
   })
 })
 
+describe('页宽修复读栏位表（page_columns）', () => {
+  const issue = { ruleCode: 'page-width' } as ValidationIssue
+  const journalProfile = {
+    ...profile,
+    widths_mm: { ...profile.widths_mm, single: 90, double: 190 },
+    page_columns: [
+      { id: 'single-column', label: { zh: '单栏', en: 'Single column' }, width_mm: 90, qualifier: 'exact' },
+      { id: '1-5-column', label: { zh: '1.5 栏', en: '1.5 column' }, width_mm: 140, qualifier: 'exact' },
+      { id: 'double-column', label: { zh: '双栏', en: 'Double column' }, width_mm: 190, qualifier: 'exact' },
+      { id: 'upper', label: { zh: '宽度上限', en: 'Upper bound' }, width_mm: 230, qualifier: 'max' },
+    ],
+  } as typeof profile
+
+  it('选项是期刊栏位里判据认的（exact）那几档，带它自己的栏名；max / typical 的栏位不给', () => {
+    const opts = fixOptions(issue, journalProfile)
+    expect(opts.map((o) => [o.choice, o.params?.mm])).toEqual([
+      ['single-column', 90],
+      ['1-5-column', 140],
+      ['double-column', 190],
+    ])
+    expect(opts[1].labelKey).toBe('column')
+    expect(opts[1].params?.name).toBe('1.5 栏')
+  })
+
+  it('选哪一栏就改成哪一栏的宽；不在表里的 choice 算不出计划', () => {
+    const doc = useDocumentStore.getState().doc
+    expect(planFix(issue, journalProfile, doc, '1-5-column')).toEqual({ kind: 'pageWidth', widthMm: 140 })
+    expect(planFix(issue, journalProfile, doc, 'upper')).toBeNull()
+    expect(planFix(issue, journalProfile, doc, 'nope')).toBeNull()
+  })
+
+  it('没写 page_columns 的规范仍是单栏 / 双栏两档（旧措辞）', () => {
+    const opts = fixOptions(issue, profile)
+    expect(opts.map((o) => [o.choice, o.labelKey])).toEqual([
+      ['single', 'single'],
+      ['double', 'double'],
+    ])
+  })
+})
+
 describe('跨画布', () => {
   it('修另一张画布上的问题时先切过去', async () => {
     await seed()

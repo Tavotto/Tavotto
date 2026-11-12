@@ -90,14 +90,19 @@ LINES = {
     "combining": "cafe\u0301 x\u0303y \u00e9",
 }
 #: 各把尺子对同一行该抽出什么。`logical` = ActualText 优先（PDFium / poppler / 本文件的读取器），
-#: `tounicode_only` = 只看 ToUnicode（pdfminer）。合成上下标那一行两者不同——这是刻意的、可解释的差异。
+#: `tounicode_only` = 只看 ToUnicode（pdfminer）。合成上下标与字母式符号展开那两行两者不同——这是刻意的、可解释的差异。
 EXPECT = {
     "ascii": {"logical": "Tavotto U06: efficient flow, E = mc2, H2O"},
     "sci": {
         "logical": "10⁵ m⁻² — Δλ = 532 nm, μ ≈ 1.5",
         "tounicode_only": "10⁵ m-2 — Δλ = 532 nm, μ ≈ 1.5",
     },
-    "cjk": {"logical": "图一：温度 T (K) 随时间变化 ℃"},
+    # `℃` 正文批准脸没有，画成正文脸的 `°C`（字母式符号展开，ADR 0060 2026-11-04 修订）：
+    # ActualText 回 `℃`，只看 ToUnicode 的读取器读到 `°C`——与合成上下标同一口径
+    "cjk": {
+        "logical": "图一：温度 T (K) 随时间变化 ℃",
+        "tounicode_only": "图一：温度 T (K) 随时间变化 °C",
+    },
     # 用户打的是分解形式（e + U+0301）：ToUnicode 回的就是它，不归一化
     "combining": {"logical": "cafe\u0301 x\u0303y \u00e9"},
 }
@@ -212,7 +217,7 @@ def test_fonts_are_embedded_subsets_of_both_program_kinds_with_tounicode(written
         "LiberationSerif",
         "LiberationSans-Bold",
         "LiberationMono-Italic",
-        "NotoSansSC-Regular",
+        "NotoSansSC-Bold",
     } <= bases
     for name, f in fnt.items():
         assert f["type0"] and f["identity_h"], name
@@ -296,9 +301,10 @@ def test_pure_reader_decodes_every_line_through_tounicode_and_actualtext(written
     logical = [r["logical"] for r in runs]
     for key, exp in EXPECT.items():
         assert exp["logical"] in logical, (key, logical)
-    # ToUnicode 那一层：合成上下标是 `m-2`；其它行两层相同
+    # ToUnicode 那一层：合成上下标是 `m-2`、`℃` 是 `°C`；其它行两层相同
     tounicode = [r["text"] for r in runs]
     assert EXPECT["sci"]["tounicode_only"] in tounicode, tounicode
+    assert EXPECT["cjk"]["tounicode_only"] in tounicode, tounicode
     assert "�" not in "".join(tounicode), "有 code 在 ToUnicode 里查不到"
 
 
@@ -316,7 +322,7 @@ def test_pdfminer_sees_the_tounicode_layer_only(written):
     text = pdfminer.extract_text(str(written["path"]))
     flat = "".join(ch for ch in text if not ch.isspace())
     assert "".join(ch for ch in EXPECT["sci"]["tounicode_only"] if not ch.isspace()) in flat, text
-    assert "".join(ch for ch in EXPECT["cjk"]["logical"] if not ch.isspace()) in flat
+    assert "".join(ch for ch in EXPECT["cjk"]["tounicode_only"] if not ch.isspace()) in flat
 
 
 def _pdftotext(path: Path) -> tuple[str, str]:

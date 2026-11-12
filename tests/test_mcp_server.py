@@ -201,6 +201,8 @@ def test_tools_list_shape():
         "tavotto_refresh_project",
         "tavotto_session_state",
         "tavotto_close_session",
+        "tavotto_guide",
+        "tavotto_list_journals",  # 期刊库开关已打开（ADR 0155 §11）
     ]
     for t in tools:
         assert t["description"] and t["inputSchema"]["type"] == "object"
@@ -4072,3 +4074,132 @@ def test_raster_replay_compares_canonical_manifests(project, raster_pool, monkey
     monkeypatch.setattr(bridge.engine_pool, "one_shot", lambda *a, **k: FakeWorker())
     monkeypatch.setattr(bridge.engine_pool, "discard", lambda *a, **k: None)
     assert bridge.verify_replay(out["session_id"])["ok"]
+
+
+# ----------------- 内置期刊库的 Agent 入口（ADR 0155 §9；夹具库 fx-*） -----------------
+@pytest.fixture
+def journal_catalog_on(tmp_path, monkeypatch):
+    """开关打开 + 夹具期刊库（测试专用：生产里没有任何入口能设这个常量）。"""
+    from tavotto.engine import journals
+
+    vectors = json.loads(
+        (Path(__file__).parent / "golden" / "journal_vectors.json").read_text("utf-8")
+    )
+    path = tmp_path / "journals.json"
+    path.write_text(json.dumps(vectors["catalog"]), encoding="utf-8")
+    monkeypatch.setenv(journals.JOURNALS_ENV, str(path))
+    monkeypatch.setattr(journals, "JOURNAL_CATALOG_AGENTS", True)
+    return journals
+
+
+def _tool_names() -> list[str]:
+    return [t["name"] for t in server._tools()]
+
+
+@pytest.fixture
+def journal_catalog_off(monkeypatch):
+    """造「开关关着」：开关已随 ADR 0155 §11 打开，关着时的行为仍是契约（回滚时用）。"""
+    from tavotto.engine import journals
+
+    monkeypatch.setattr(journals, "JOURNAL_CATALOG_AGENTS", False)
+
+
+def test_journal_surface_is_absent_while_the_switch_is_off(journal_catalog_off):
+    tools = {t["name"]: t for t in server._tools()}
+    assert "tavotto_list_journals" not in tools
+    for name in server.JOURNAL_ID_TOOLS:
+        assert "journal_id" not in tools[name]["inputSchema"]["properties"]
+
+
+def test_journal_id_is_refused_with_a_structured_code_while_off(
+    project, fake_pool, journal_catalog_off
+):
+    sid = _open(project)
+    for name, args in (
+        ("tavotto_preflight", {"session_id": sid, "journal_id": "fx-alpha"}),
+        ("tavotto_export", {"session_id": sid, "journal_id": "fx-alpha"}),
+        ("tavotto_open_figure", {"project_path": str(project), "journal_id": "fx-alpha"}),
+        ("tavotto_list_journals", {}),
+    ):
+        res = _call(name, args)
+        assert res["isError"] is True and _body(res)["code"] == "journal_catalog_disabled", name
+
+
+def test_journal_surface_appears_when_the_switch_is_on(journal_catalog_on):
+    tools = {t["name"]: t for t in server._tools()}
+    assert "tavotto_list_journals" in tools
+    for name in server.JOURNAL_ID_TOOLS:
+        assert tools[name]["inputSchema"]["properties"]["journal_id"]["type"] == "string"
+    assert tools["tavotto_list_journals"]["inputSchema"]["additionalProperties"] is False
+
+
+def test_list_journals_tool_filters_and_reports_catalog_rev(journal_catalog_on):
+    full = _body(_call("tavotto_list_journals", {}))
+    assert full["catalog_rev"] == 1 and {j["id"] for j in full["journals"]} >= {"fx-alpha"}
+    hit = _body(_call("tavotto_list_journals", {"query": "ＦＸＡ"}))
+    assert [j["id"] for j in hit["journals"]] == ["fx-alpha"]
+    assert _body(_call("tavotto_list_journals", {"query": "zzz"}))["journals"] == []
+
+
+def test_journal_id_equals_the_desktop_binding_in_preflight_and_proof(
+    project, fake_pool, journal_catalog_on, tmp_path
+):
+    sid = _open(project)
+    out = _body(_call("tavotto_preflight", {"session_id": sid, "journal_id": "fx-alpha"}))
+    expected = journal_catalog_on.journal_override("fx-alpha")
+    assert out["profile"]["profile_id"] == journal_catalog_on.BASE_PROFILE_ID
+    assert out["profile"]["journal"] == expected
+    ref = out["journal_ref"]
+    assert ref["id"] == "fx-alpha" and ref["catalog_rev"] == 1 and ref["retrieved"]
+    assert out["profile"]["journal_ref"] == ref
+    # 导出：结果与 proof report 都带 journal_ref
+    done = bridge.export(sid, formats=["pdf"], journal_id="fx-alpha", explicit_confirm=True)
+    assert done["journal_ref"] == ref
+    proof = json.loads(Path(done["proof_path"]).read_text("utf-8"))
+    assert proof["journal_ref"] == ref and proof["profile"]["journal_ref"] == ref
+
+
+def test_journal_id_on_open_pins_the_session_profile(project, fake_pool, journal_catalog_on):
+    opened = _body(
+        _call("tavotto_open_figure", {"project_path": str(project), "journal_id": "fx-alpha"})
+    )
+    assert opened["journal_ref"]["id"] == "fx-alpha"
+    # 之后不带参数的预检沿用会话里的期刊，journal_ref 还在
+    again = _body(_call("tavotto_preflight", {"session_id": opened["session_id"]}))
+    assert again["journal_ref"] == opened["journal_ref"]
+
+
+def test_journal_id_conflicts_and_unknown_are_structured(project, fake_pool, journal_catalog_on):
+    sid = _open(project)
+    for extra in ({"profile_id": "lab-publication-v1"}, {"journal": {"widths_mm": {"single": 50}}}):
+        res = _call("tavotto_preflight", {"session_id": sid, "journal_id": "fx-alpha", **extra})
+        assert res["isError"] is True and _body(res)["code"] == "journal_id_conflict"
+    res = _call("tavotto_preflight", {"session_id": sid, "journal_id": "no-such"})
+    assert res["isError"] is True and _body(res)["code"] == "journal_unknown"
+    batch = _call(
+        "tavotto_open_figure",
+        {"project_path": str(project), "stems": ["Fig1"], "journal_id": "no-such"},
+    )
+    assert batch["isError"] is True and _body(batch)["code"] == "journal_unknown"
+
+
+@pytest.fixture
+def old_engine_journals(monkeypatch):
+    """旧引擎：已有 `engine.journals`（桌面期刊库），但没有 Agent 入口的新 API。"""
+    import types
+
+    old = types.SimpleNamespace(list_journals=lambda *a, **k: [], catalog_rev=lambda *a, **k: 1)
+    real = bridge._optional_engine
+    monkeypatch.setattr(
+        bridge, "_optional_engine", lambda name: old if name == "journals" else real(name)
+    )
+
+
+def test_old_engine_journals_module_without_agent_api_means_off(old_engine_journals, project):
+    tools = {t["name"]: t for t in server._tools()}  # 不抛 AttributeError
+    assert "tavotto_list_journals" not in tools
+    assert "journal_id" not in tools["tavotto_preflight"]["inputSchema"]["properties"]
+    res = _call("tavotto_list_journals", {})
+    assert res["isError"] is True and _body(res)["code"] == "journal_catalog_disabled"
+    res = _call("tavotto_open_figure", {"project_path": str(project), "journal_id": "fx-alpha"})
+    assert res["isError"] is True and _body(res)["code"] == "journal_catalog_disabled"

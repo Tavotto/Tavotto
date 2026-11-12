@@ -28,7 +28,7 @@ vi.mock('@/lib/api', async (orig) => {
 })
 
 import { PanelView } from '@/canvas/PanelView'
-import { useRenderStore } from '@/store/renderStore'
+import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import type { PanelObject } from '@/types/document'
 
@@ -133,5 +133,56 @@ describe('runtime 冷画布的预览按此刻的 overrides 取', () => {
     await act(async () => release({ blob: new Blob(['R']), exact: true }))
     expect(img()?.getAttribute('src')).toMatch(/^blob:mock\//)
     expect(img()?.getAttribute('src')).not.toBe(leftSrc)
+  })
+})
+
+/**
+ * QA-WIN-30：恢复草稿后打开项目内已存排版，画布仍显示草稿标题。
+ * 根因：`panelRender` 在自己这版没画过时退回同文件 `latest`（草稿那版）的 SVG，`engineSvgStandby` 把它
+ * 挂了上去，压过了按此刻 overrides 取到的 cache 预览，而且 `showSvg` 为真时「近似预览」角标也不出——
+ * 无提示地显示另一个状态的图。
+ * 反证：把 `engineSvgStandby` 里的 `foreignStandby` 一项拿掉 → 前两条红。
+ */
+describe('runtime 面板自己这版没画过时不拿同文件另一版的 SVG 冒充', () => {
+  const DRAFT = [{ gid: 'axes_0.title', prop: 'text', value: 'Close guard active C' }]
+  const draftSvg = '<svg data-draft="1"><text>Close guard active C</text></svg>'
+
+  beforeEach(() => {
+    // 草稿那版在本会话画过（latest 指向它）；已存排版的面板是另一个变体（这里是零 overrides）
+    const draftKey = renderKeyOf(panel(DRAFT))
+    useRenderStore.setState({
+      byKey: {
+        [draftKey]: {
+          fileId: FILE_ID,
+          rev: 3,
+          status: 'ready',
+          manifest: { size_mm: [80, 60], elements: [] },
+          svg: draftSvg,
+          svgBytes: draftSvg.length,
+          lastPatches: JSON.stringify(DRAFT),
+        },
+      },
+      latest: { [FILE_ID]: draftKey },
+    } as never)
+  })
+
+  it('cache 里有这个状态的图 → 画布挂它，不挂草稿那版的 SVG', async () => {
+    previewForState.mockResolvedValue({ blob: new Blob(['<svg/>']), exact: true })
+    await mount(panel([]))
+    expect(host.innerHTML).not.toContain('Close guard active C')
+    expect(img()?.getAttribute('src')).toMatch(/^blob:mock\//)
+    expect(text()).not.toContain('近似预览')
+  })
+
+  it('取预览的请求还在路上 → 也不先露出草稿那版', async () => {
+    previewForState.mockImplementation(() => new Promise(() => {}))
+    await mount(panel([]))
+    expect(host.innerHTML).not.toContain('Close guard active C')
+  })
+
+  it('cache 里没有这个状态的图 → 仍显示手边能给的，但必须出「近似预览」', async () => {
+    previewForState.mockResolvedValue({ blob: new Blob(['<svg/>']), exact: false })
+    await mount(panel([]))
+    expect(text()).toContain('近似预览')
   })
 })

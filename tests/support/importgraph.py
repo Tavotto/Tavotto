@@ -391,6 +391,11 @@ LAYERS: dict[str, tuple[str, ...]] = {
         "tavotto/rendercore/placement.py",
         "tavotto/rendercore/raster.py",
         "tavotto/rendercore/svgcheck.py",
+        # ADR 0164：文档里 source_font 的形状与解析（纯标准库；本机定位在 userfonts，native 层）
+        "tavotto/rendercore/sourcefont.py",
+        # ADR 0163：竖排列版面（纯标准库 + 本层 typography / ir；HarfBuzz 竖排塑形在 hbshaper，native 层）。
+        # 依赖方向单向：vertical → typography；排向分派在 plan，typography 不依赖 vertical（不成环）
+        "tavotto/rendercore/vertical.py",
     ),
     "rendercore_native": ("tavotto/rendercore/",),
 }

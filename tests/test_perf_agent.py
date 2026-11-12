@@ -1618,3 +1618,33 @@ def test_parse_error_cleans_owned_sidecars_and_preserves_foreign_siblings(
         not (tmp_path / name).exists() for name in _old_sidecar_reports() if name != foreign_name
     )
     assert json.loads(summary.read_text(encoding="utf-8"))["regression_status"] == "failed"
+
+
+def test_render_counters_are_kept_in_the_summary():
+    data = {**report(), "render_counters": {"layout": 1620, "recalc_style": 5480}}
+    summary = A.summarize(data)
+    assert summary["render_counters"] == {"layout": 1620, "recalc_style": 5480}
+    assert A.compose_run_summary(summary, "ok")["render_counters"] == summary["render_counters"]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        None,
+        "x",
+        {},
+        {"layout": 1},
+        {"layout": -1, "recalc_style": 2},
+        {"layout": True, "recalc_style": 2},
+    ],
+)
+def test_bad_or_missing_render_counters_are_none_and_do_not_change_the_status(raw):
+    summary = A.summarize({**report(), "render_counters": raw})
+    assert summary["render_counters"] is None
+    assert summary["status"] == "ok"
+
+
+def test_render_counters_never_decide_a_comparison():
+    now = {**report(), "render_counters": {"layout": 99999, "recalc_style": 99999}}
+    old = {**report(), "render_counters": {"layout": 1, "recalc_style": 1}}
+    assert A.compare(now, old)["status"] == "pass"

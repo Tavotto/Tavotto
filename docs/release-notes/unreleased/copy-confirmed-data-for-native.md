@@ -1,0 +1,3 @@
+## Copy your confirmed data to where a script reads it
+
+When a script run directly on your computer cannot read an absolute path and you have already pointed Tavotto at that data, the card now offers to copy your file to the path the script expects, then run again. It copies a regular file only, never overwrites, and keeps your original untouched. If the folder is not writable, you can approve a one-time copy with the system prompt (on macOS protected folders such as Desktop, open System Settings instead). If copying is not possible you can still change the path in the script after reviewing every line, or ask your AI to fix it.

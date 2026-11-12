@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { CircleQuestionMark, Crop, Link2, Minimize2, Pencil, RotateCcw } from '@/components/ui/icons'
+import { CircleQuestionMark, Crop, Minimize2, Pencil, RotateCcw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import type { UiMessage } from '@/i18n'
@@ -18,7 +18,6 @@ import {
   updateObjects,
 } from '@/store/actions'
 import { useExactPanelManifest } from '@/store/renderStore'
-import { useUiStore } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import { useAssetStore } from '@/store/assetStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
@@ -141,13 +140,12 @@ function PanelObjectActions({ obj }: { obj: PanelObject }) {
 }
 
 /**
- * 多图排版里选中一张面板（不在拖动）时，胶囊里的"裁剪与标注"三件事（ADR 0161）：
- * 「贴合内容」一次把四边裁到内容边缘（缺 `ink_bbox` 或已贴合时置灰）、「取消裁剪」（`resetPanelCrop`）、
- * 「连同标注」开关（缩放面板时叠在上面的标注一起缩，存在 `uiStore`，本机偏好）。单图编辑里不出。
+ * 多图排版里选中一张面板（不在拖动）时，胶囊里的裁剪两件事（ADR 0161）：
+ * 「贴合内容」一次把四边裁到内容边缘（缺 `ink_bbox` 或已贴合时置灰）、「取消裁剪」（`resetPanelCrop`）。
+ * 图里的标注跟不跟着图走按位置自动定（`lib/annotationScale`），没有开关。单图编辑里不出。
  */
 function LayoutPanelActions({ obj }: { obj: PanelObject }) {
   const layout = useWorkspaceStore((s) => s.mode === 'layout')
-  const follow = useUiStore((s) => s.scaleWithAnnotations)
   const manifest = useExactPanelManifest(obj)
   if (!layout) return null
   const ink = manifest?.elements.find((e) => e.gid === 'figure')?.ink_bbox
@@ -175,18 +173,6 @@ function LayoutPanelActions({ obj }: { obj: PanelObject }) {
         >
           <RotateCcw size={ICON_SIZE.sm} />
           {qb('layoutResetCrop')}
-        </Button>
-      </Tip>
-      <Tip label={qb('layoutFollowToggleTip')} side="bottom">
-        <Button
-          size="md"
-          data-layout-action="follow-annotations"
-          active={follow}
-          aria-pressed={follow}
-          onClick={() => useUiStore.getState().setCanvasPref({ scaleWithAnnotations: !follow })}
-        >
-          <Link2 size={ICON_SIZE.sm} />
-          {qb('layoutFollowToggle')}
         </Button>
       </Tip>
     </>

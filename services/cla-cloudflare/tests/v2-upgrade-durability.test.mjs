@@ -24,7 +24,7 @@ test('v2 upgrade synthetic WAL commit survives close reopen and old-plan recogni
 test('v2 upgrade synthetic WAL late DDL failure survives close reopen with original source data and schema',()=>{
  const f=fixture();try{
   const plan=prepareSyntheticV2Upgrade(f.db),exec=f.db.exec.bind(f.db);let ddl=0;
-  f.db.exec=sql=>{const result=exec(sql);if(/^(ALTER|CREATE)/.test(sql) && ++ddl===31)throw Error('SYNTHETIC LAST DDL FAILED');return result;};
+  f.db.exec=sql=>{const result=exec(sql);if(/^(ALTER|CREATE)/.test(sql) && ++ddl===34)throw Error('SYNTHETIC LAST DDL FAILED');return result;};
   assert.throws(()=>applySyntheticV2Upgrade(f.db,plan,enabled),/LAST DDL FAILED/);assert.equal(f.db.isTransaction,false);
   const db=f.reopen(),after=prepareSyntheticV2Upgrade(db);assert.deepEqual(after,plan);assert.equal(after.status,'prepared');
  }finally{f.close();}

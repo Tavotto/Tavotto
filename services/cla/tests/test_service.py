@@ -1148,7 +1148,7 @@ class GateTests(unittest.TestCase):
         self.assertEqual(self.gate.signed_logins([self.run], self.policy)[0], set())
         result = self.gate.decide("merge_group", self.policy, [], [])
         self.assertEqual(result["status"], "failure")
-        self.assertEqual(result["reason"], "fresh_merge_verification_required")
+        self.assertEqual(result["reason"], "group_snapshot_required")
 
     def test_exempt_login_cannot_bypass_authoritative_service(self):
         contributor = {"login": "erwanjun", "sources": ["pr_author", "commit_author"]}
@@ -1162,10 +1162,24 @@ class GateTests(unittest.TestCase):
         proof = dict(
             self.proof, kind="merge_group", base_sha=BASE, members=[{"pr": 826, "head_sha": HEAD}]
         )
-        context = dict(self.context, kind="merge_group", base_sha=BASE)
+        # Unit-test the retained, disabled proof evaluator after independent enumeration.
+        # This context is not an HTTP/CLI claim of a complete GitHub snapshot.
+        context = dict(
+            self.context,
+            kind="merge_group",
+            base_sha=BASE,
+            group_members=[{"pr": 826, "headSha": HEAD}],
+        )
         self.assertEqual(self.verdict(proof=proof, context=context), {"*"})
         result = self.gate.decide("merge_group", self.policy, [self.run], [], context=context)
         self.assertEqual(result["status"], "success")
+        missing_snapshot = dict(context)
+        del missing_snapshot["group_members"]
+        result = self.gate.decide(
+            "merge_group", self.policy, [self.run], [], context=missing_snapshot
+        )
+        self.assertEqual(result["status"], "failure")
+        self.assertEqual(result["reason"], "group_snapshot_required")
         self.assertEqual(self.verdict(proof=proof, context=dict(context, base_sha="d" * 40)), set())
         self.assertEqual(self.verdict(proof=proof, context=dict(context, not_before=106)), set())
         self.assertEqual(self.verdict(proof=proof), set())

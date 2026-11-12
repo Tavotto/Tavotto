@@ -36,6 +36,12 @@ for _stream in (sys.stdout, sys.stderr):
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def _allowlist_faces() -> int:
+    """白名单里有几张脸（只在父进程判结果时读源码树里的表；冻结的 child 不调它）。"""
+    table = ROOT / "src" / "tavotto" / "rendercore" / "fonts_allowlist.json"
+    return len(json.loads(table.read_text(encoding="utf-8"))["faces"])
+
+
 def frozen_entry(argv: list[str]) -> int:
     if argv[:1] == ["--render-child"]:
         from tavotto.rendercore import renderchild
@@ -184,8 +190,9 @@ def freeze_checks(result: dict, returncode: int, png_is_file: bool) -> list[tupl
             any("pdfium" in lib for lib in result.get("native_libraries", [])),
         ),
         (
-            "fonts_bundled_13",
-            result.get("fonts_found") == 13 and not result.get("fonts_missing"),
+            # 张数取白名单本身（2026-11-04 2026-11-05 加 Noto 粗体后 16 张），不写死
+            "fonts_bundled_all",
+            result.get("fonts_found") == _allowlist_faces() and not result.get("fonts_missing"),
         ),
         (
             "probe_reports_the_cropbox_size",

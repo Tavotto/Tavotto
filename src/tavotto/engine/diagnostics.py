@@ -38,6 +38,7 @@ from pathlib import Path
 from . import (
     ai_bridge,
     bootstrap,
+    cmddiag,
     config,
     depresolve,
     diagnostics_frontend,
@@ -98,7 +99,9 @@ WORKER_LOG_SENSITIVE_SCAN_BYTES = 16 * 1024 * 1024
 #: none / partial / done + 几个计数与 `config_merged` 布尔；不带路径与包族名）。
 #: 14 = report.json 顶层 `render_pool`（渲染池健康摘要：上限 / 存活 / 累计淘汰与冷启动 / 最近几次冷启动的分段毫秒；
 #: `pool.health_snapshot()`，闭集字段，不带脚本名与路径，TVM-Y37X）。
-BUNDLE_SCHEMA_VERSION = 14
+#: 15 = report.json 的 project 段新增 `missing_commands`（脚本拉起外部命令却找不到可执行文件时的闭集事实：命令名白名单
+#: 原样/其余哈希、渲染进程 PATH 上有没有、固定常见目录枚举里有没有、Homebrew keg 未链接布尔、PATH 形状；TVD-1FCJ）。
+BUNDLE_SCHEMA_VERSION = 15
 #: 两个子 schema 各自独立演进（ADR 0016 §20）。读取方**忽略不认识的字段**。
 FRONTEND_SNAPSHOT_SCHEMA = 1
 TRACE_SCHEMA = 1
@@ -367,6 +370,13 @@ def _project_section(project: dict | None, roots: list[tuple[str, str]]) -> dict
             for r in (records if isinstance(records, list) else [])
             if isinstance(r, dict)
         ]
+    if "missing_commands" in out:
+        records = out.get("missing_commands")
+        out["missing_commands"] = [
+            _missing_command_for_export(r)
+            for r in (records if isinstance(records, list) else [])
+            if isinstance(r, dict)
+        ][:8]
     if "managed_environment_jobs" in out:
         from . import envdiag
 
@@ -432,6 +442,40 @@ def _import_name_for_export(name: str) -> str:
     if text in depresolve.CURATED or text in depresolve.SAME_NAME:
         return text
     return _module_name_for_export(text) if text else ""
+
+
+def _missing_command_for_export(record: dict) -> dict:
+    """一条「找不到外部命令」现场 → report.json 里的样子（`cmddiag`）。字段白名单，没有路径与用户文字：
+    命令名在公开白名单里原样、其余 `cmd:<哈希>`（与缺依赖现场同一个 `_digest`）；目录只认 `cmddiag.dir_names()` 的枚举名。"""
+    at = record.get("at")
+    names = cmddiag.dir_names()
+    name = str(record.get("command") or "")
+    if name and name not in cmddiag.PUBLIC_COMMANDS:
+        name = "cmd:" + _digest(name)
+    has = record.get("path_has") if isinstance(record.get("path_has"), dict) else {}
+    segments = record.get("path_segments")
+
+    def _tri(key: str) -> bool | None:
+        v = record.get(key)
+        return None if v is None else bool(v)
+
+    out = {
+        "at": _iso(at) if isinstance(at, (int, float)) else "",
+        "command": name,
+        "on_path": bool(record.get("on_path")),
+        "path": {
+            "segments": segments if isinstance(segments, int) and segments >= 0 else 0,
+            "has": {k: bool(v) for k, v in sorted(has.items()) if k in names},
+        },
+        "found_in": sorted(
+            k for k in (record.get("found_in") or []) if isinstance(k, str) and k in names
+        ),
+        "keg_present": _tri("keg_present"),
+        "keg_unlinked": _tri("keg_unlinked"),
+    }
+    if record.get("scan_truncated"):
+        out["scan_truncated"] = True
+    return out
 
 
 def _missing_dependency_for_export(record: dict, roots: list[tuple[str, str]]) -> dict:
@@ -1883,6 +1927,9 @@ def _readme(
         "  （report.json 的 project.missing_dependencies 段：最近几次「缺依赖」的现场——缺的包名\n"
         "  （只有公开的常见科研包原样，其余换成哈希）、脚本文件名哈希、当时用的是哪类 Python、\n"
         "  体检过的其他 Python 的版本与结论、一键修复各选项能否使用；路径按段换成哈希）\n"
+        "  （report.json 的 project.missing_commands 段：脚本调用外部命令却找不到时的现场——命令名\n"
+        "  （只有公开常见工具原样，其余换成哈希）、渲染进程的 PATH 上有没有它、几个固定常见安装位置\n"
+        "  （只写位置名，不写路径）里有没有、Homebrew 装了但未链接的是/否（目录太多没扫完时标 scan_truncated，是/否留空），以及 PATH 的段数；不含任何路径）\n"
         "  （report.json 的 project.managed_environment_jobs 段：受管环境安装和重建请求的 Python 包名、\n"
         "  实际观察到的已安装包名和版本、结果及环境代；不含路径、包源网址、凭据或 pip 原始输出）\n"
         + extra_zh
@@ -1906,6 +1953,11 @@ def _readme(
         "  hashed script name, which kind of Python was rendering, the version and verdict of\n"
         "  every other Python that was checked, and whether each one-click fix was available;\n"
         "  paths are hashed segment by segment)\n"
+        "  (report.json, project.missing_commands: when a script calls an external command that cannot be\n"
+        "  found — the command name (public well-known tools as-is, others hashed), whether it is on the\n"
+        "  render process PATH, whether it exists in a few fixed common install locations (location names\n"
+        "  only, no paths), whether a Homebrew install is present but unlinked (null plus scan_truncated when too many\n"
+        "  directories to scan), and the PATH segment count; no paths at all)\n"
         "  (report.json, project.managed_environment_jobs: requested Python package names, observed installed\n"
         "  package names and versions, outcomes and environment generations; no paths, index URLs,\n"
         "  credentials or raw pip output)\n"

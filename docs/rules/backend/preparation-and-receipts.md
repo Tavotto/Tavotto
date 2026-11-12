@@ -22,6 +22,19 @@ order: 320
   （`pool.resolve_worker_python` / `projectenv.state` / `workdir` / `depresolve`），不替产品
   选环境、不装包、不改 cwd。终局字段先于终局 `status` 写（与 `exportjob` 同一条纪律）。
 - **失败时报告带 `remedy`（智能修复路由，ADR 0148 提议）**：`prepsession.report` 在失败 / 没出图 / 走不通的结局上调用 `fixrouter.choose`，把唯一修法放进新字段 `remedy`（闭集 `switch_native / install_packages / change_python / convert_to_matplotlib / ai_fix / connect_ai / feedback`，一次运行最多 3 种，第 4 次 `feedback`）。路由只标注、不执行：safe→native 仍由 `execpolicy.decide_fallback` 做（ADR 0127 不改）。「AI 连没连」由 app 注入 `SESSIONS.ai_connected`（`ai_bridge.capabilities()` 的 `usable`），引擎不探测。诊断包 `detail-runs.json` 的 `fix_journey` 读 `SESSIONS.fix_journeys`。看护 `tests/test_fixrouter*.py`。
+- **新失败码进路由先问 AI 手上有没有能解决它的工具（错题本 L-138 升级，2026-11-05）。** 路由没点名的码按「AI 连没连」
+  落到 `ai_fix`。写路由时核修复工具集里有没有能改这件事的工具、AI 看不看得到关键事实；没有就补确定性的按钮或工具，
+  或给 `feedback`。为什么：八个 PR 都是用户反馈里 AI 绕几轮没结果：读不了的依赖夹换两代环境也没用（#1507），
+  外来 ABI 的文件夹去要别的 Python（#1564），改不了登记的入口（#1565），看不到内置环境（#1572），解释器被系统拒写
+  仍给 AI 入口（#1595），设不了 argv（#1605），看不到刚才的 AI 修改（#1608），图名冲突根本不在脚本里（#1642）。
+- **给一类结局配出口前，按脚本表达同一意图的常见写法逐个核用户最后落到哪（错题本 L-154 升级，2026-11-11）。**
+  分类按机制划线（哪种调用、哪个画图库、有没有 argparse、出没出图）时，用例只证明「分对了」，不证明用户走得通。
+  改结局、路由或成功判据前，先列同一意图的常见写法——先 `exists` 再自己 raise、按 `__file__` 拼路径、glob 整个
+  文件夹、直接读 `sys.argv[1]`、只复制现成图片、除了图还写表格——每种一条用例，断言终态是成功或一个用户点得到
+  的选项；有写法只能落到通用报错、误导文案或「请手动改」，就是产品把路堵上了。为什么：四份用户反馈两天里暴露
+  同一形状：直接读 argv 的脚本拿不到补参入口（#1805）；先检查再 raise 的脚本按 ADR 0106 旧线「探路救不回」，AI
+  与用户指认都接不上（#1821）；只复制现成图片的脚本被说成「多半数据没找到」并推荐 AI 修复（#1823）；转换校验
+  只看出图，Python 版漏写原脚本的 Excel 也算成功（#1825）。
 - **执行只有一条路**：`pool.build_owned()`（`build()` + 池锁里给出的 `created`）。准备接口不另写
   `get + ensure_built`——自动 fallback 只有一份实现，漏掉一个入口就是「素材库里能打开、准备
   接口打不开」。已 build 且解释器决策没变的会话直接用它记下的 build 响应装配回执，不发请求。
@@ -235,7 +248,11 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   只是提示：不改 `outcome` / `facts`，不改捕获。界面一句话 + 主按钮「打开素材库」（现成入口），原因说明折叠在详情；库名映射 `preparationText.RASTER_LIBRARY_NAME` 与 `rasterhint.LIBRARIES` 同源。
   **Pillow 例外（ADR 0143 修订 2026-10-23）**：上面的“硬条件 / import matplotlib 即沉默”只管文件证据路径；AST 能证明是 Pillow 画图脚本（`ImageDraw.Draw` 对象上的绘制调用，或 `Image.new` 之后 `.save` / `.show`）时，没有文件证据也给 hint（`path: null`、`in_project: false`），同时 import matplotlib 只认强证据（绘制调用）。其它库不变。
   **手写 SVG（ADR 0143 修订 2026-11-01）**：不用画图库、源码有 `<svg` 字面量且有往 `.svg`（或判不出扩展名的路径）写文本的调用，无 matplotlib / 别的库存图 / 动态 import → `library: svg`、`path: null`，不要求文件证据。
-  看护 `tests/test_rasterhint.py`、`tests/test_preparation_session_lifecycle.py`、`web/src/components/PreparationCard.test.tsx`。
+  **只复制现成图片（反馈包 TVD-537W，2026-11-10）**：不画图、只把现成 PDF / PNG 复制成成品的交付脚本 → `{"kind": "copied_images", "in_project": true, "path": …}`（没有 `library`）。
+  条件：无 matplotlib 家族、无任何存图 / Pillow 画图 / 写 SVG 调用、无动态 import，有 `shutil.copy*` / `copyfileobj` / `copytree` / `move` 或 `x.write_bytes(y.read_bytes())`，
+  且②的素材盘点里有本次新写的图片——时间取 mtime 与复制改不回去的那个时间的较大者（POSIX `st_ctime`；Windows `st_birthtime`，3.10 / 3.11 没有它时用当时就是创建时间的 `st_ctime`；`copy2` 覆盖已有文件时看不出就不说）。
+  此时 `remedy` 为 `null`（没有可修的，不路由进 AI / 转写），卡片 `no_figure_copied`：一句话 + 主按钮「打开素材库」，不是失败卡、不摆 AI 入口。
+  看护 `tests/test_rasterhint.py`、`tests/test_preparation_session_lifecycle.py`、`web/src/components/PreparationCard.test.tsx`、`web/src/lib/preparationText.test.ts`。
 - **依赖准备并入同一个会话（T06）**：phase `preparing_environment` 由依赖作业事实派生；装好后同一会话按新环境重新检查（只重算差额，
   报告多 `dependency_delta`），失败 / 取消保留原代并重新给新的授权动作；脚本跑到一半才发现缺包 = 新的一次尝试
   （outcome `needs_dependencies`，`rerun_required`），不叫"从异常点继续"。认领与失效检查在会话锁内。
@@ -394,6 +411,16 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 id = `plan_id` = 会话报告的 `provider.attempt_id`）。白名单：目标类别、argv 个数与 `rc_…` 引用、计划那一刻的环境来源 / 版本、
 阶段轨迹（不含 `facts`）、回执的控制面 / 来源 / 完整度、`error.code` + 闭集 `reason`、取消事实、起止时间；**不含**脚本路径、
 入口名、解释器与项目路径、`error.message`、`note`、`required_input` 内容。完整规则见 `diagnostics.md`「任务绑定诊断」。
+
+失败尝试还可带两项不含路径的观测：safe 被文件守卫拦下时，复用 `receipt.project_fidelity` 的闭集投影保留本次账本；
+native 脚本异常退出时，只保留 bridge 当场按内置异常类型归类的闭集 `exception_category`。未提供、无图前退出但没有
+异常、分类不可信或旧 worker 不支持时都留空；`file_not_found` 不证明缺的是输入，也不从 traceback 推断读写。
+两次回退各自冻结自己的事实，不从后一次反填前一次。看护 `tests/test_fallback_failure_evidence_e2e.py`、
+`tests/bridge/test_bridge_failure_category.py` 与 `tests/test_task_diagnostics.py`。
+
+桌面自有 native 的缺失只读打开可以提供经用户确认的脚本路径改写（见 `figure-capture-and-execution.md`）；
+新增结构化读取事实不写入终局诊断；原有本地异常文本 / traceback 仍可能含路径。没有观察到同一读取异常
+冒出或无法对应稳定源码时不推断。
 
 ## 速查表原要点（#815 精简时迁入，原文照搬）
 

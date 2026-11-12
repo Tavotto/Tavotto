@@ -684,6 +684,96 @@ def journal_profile(journal_id: str, catalog: dict | None = None) -> dict:
     return profiles_mod.load(BASE_PROFILE_ID, journal=journal_override(journal_id, catalog))
 
 
+#: Agent（MCP / codex-plugin）侧能不能用期刊库的总开关，与桌面入口
+#: `web/src/lib/journalUi.ts` 的 `JOURNAL_CATALOG_UI` **同一个开关、同一个值**（ADR 0155 §9）：
+#: 关着时新工具不进 tools/list、`journal_id` 一律回 `journal_catalog_disabled`；数据就绪那个 PR
+#: 把两边一起改成 true。严格同源对，`tests/test_journal_agents.py` 从 TS 源文件读字面值对拍。
+#: 生产里没有任何用户入口能改它（不读环境变量）；测试 monkeypatch 这个常量。
+JOURNAL_CATALOG_AGENTS = True
+
+#: Agent 入口自己的失败码（不属于库校验的闭集 `ERROR_CODES`，TS 侧没有对应物）
+AGENT_ERROR_CODES = (
+    "journal_catalog_disabled",  # 入口开关关着
+    "journal_id_conflict",  # journal_id 与手写 profile_id / journal 同时给
+    # 远程目录（ADR 0155 §10）：这本刊的标准要从服务端下载，下不来时**明确报错、不静默退回**
+    "journal_quota_exceeded",  # 服务端额度用完（令牌 / IP 限额）；带 retry_after_s，别换令牌重试
+    "journal_offline",  # 这本刊本地没有、又联不上网（或同步开关关着）
+    "journal_verification_failed",  # 验签 / 哈希 / 目录校验没过，整份弃用；不要采用任何来自它的数值
+)
+
+
+def agents_enabled() -> bool:
+    """每次读模块常量（测试里 monkeypatch 立即生效）。"""
+    return JOURNAL_CATALOG_AGENTS is True
+
+
+def journal_ref(journal_id: str, catalog: dict | None = None) -> dict:
+    """与桌面 `journalRef` 同口径（`{id, catalogRev, retrieved}`；`retrieved` 取该期刊全部出处里最晚的
+    取回日期，没有出处则空串）。键用 snake_case：`{id, catalog_rev, retrieved}`。"""
+    cat = load_catalog(catalog)
+    _require(cat, journal_id)
+    dates = sorted(s["retrieved"] for s in journal_sources(journal_id, cat).values())
+    return {
+        "id": journal_id,
+        "catalog_rev": int(cat["catalog_rev"]),
+        "retrieved": dates[-1] if dates else "",
+    }
+
+
+def select_for_agent(
+    journal_id: str,
+    profile_id: str | None,
+    journal: dict | None,
+    catalog: dict | None = None,
+) -> tuple[str, dict, dict]:
+    """Agent 按期刊 id 选期刊 → `(profile_id, journal 覆盖, journal_ref)`。
+
+    语义同桌面 `selectJournal`：绑定中性底 `journal-base-v1` + 折叠出的覆盖。与手写
+    `profile_id` / `journal` 同时给 = `journal_id_conflict`（不猜谁赢）；开关关着 =
+    `journal_catalog_disabled`；未知 id = `journal_unknown`。
+    """
+    if not agents_enabled():
+        raise _fail("journal_catalog_disabled", "期刊标准库对 Agent 的入口尚未开放")
+    if profile_id is not None or journal is not None:
+        raise _fail(
+            "journal_id_conflict",
+            "journal_id 不能与 profile_id / journal 同时给：要么按期刊 id，要么手写规范 / 覆盖",
+        )
+    if not isinstance(journal_id, str) or not journal_id.strip():
+        raise _fail("journal_unknown", "journal_id 必须是非空字符串")
+    cat = load_catalog(catalog)
+    return BASE_PROFILE_ID, _override_of_checked(cat, journal_id), journal_ref(journal_id, cat)
+
+
+def _override_of_checked(cat: dict, journal_id: str) -> dict:
+    _require(cat, journal_id)
+    return _override_of(cat, journal_id)
+
+
+def search_journals(query: str | None = None, catalog: dict | None = None) -> dict:
+    """给 Agent 列期刊：`{catalog_rev, journals[{id, label, publisher, aliases}]}`。
+
+    `query` 按名字模糊过滤：NFKC + 小写后，是 id / 名称 / 出版社名 / 别名之一的子串即命中
+    （与别名撞名同一个归一口径）。目录为空如实返回空列表。
+    """
+    cat = load_catalog(catalog)
+    needle = _alias_key(query) if isinstance(query, str) else ""
+    out = []
+    for item in list_journals(cat):
+        names = [item["journal_id"], item["label"], item["publisher_label"], *item["aliases"]]
+        if needle and not any(needle in _alias_key(n) for n in names):
+            continue
+        out.append(
+            {
+                "id": item["journal_id"],
+                "label": item["label"],
+                "publisher": item["publisher_label"],
+                "aliases": item["aliases"],
+            }
+        )
+    return {"catalog_rev": int(cat["catalog_rev"]), "journals": out}
+
+
 def source_link(source: dict, anchor: str | None) -> str:
     """「打开原网页」的链接：html 用 text fragment 锚，pdf 用 `#page=N`，否则裸 url。
     严格同源对：`journals.ts` 的 `sourceLink`。"""

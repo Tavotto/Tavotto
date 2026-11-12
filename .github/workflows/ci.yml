@@ -17,7 +17,7 @@ name: CI
 #                   「最新 main + 队列前序 PR + 当前 PR」造出组合提交，
 #                   全部快线 + 全部重型资格在它上面真实跑一遍，
 #                   三个 Gate 全绿才允许合入 main。
-#   docs-only       只改 docs/release-notes/**.md（不含 UNRELEASED.md）的 PR / 队列候选：
+#   docs-only       只改 docs/release-notes/**.md（不含 UNRELEASED.md 与 unreleased/ 片段）的 PR / 队列候选：
 #                   `docs-scope` 分类 job 输出 docs_only，七个快线与五个重型 job skipped，
 #                   Gate 凭分类 job 的 success + 输出放行（见 docs-scope 段与 aggregate_gate.py）。
 #   push main       轻量落地审计（main-landing-audit）：结构契约 + 受管生成物
@@ -99,27 +99,38 @@ on:
   merge_group:
     types: [checks_requested]
 
-# 同一个 PR 上新 push 之后，旧 SHA 的 run 立刻取消：它就算全绿也已经没有 merge
-# value，占着的却是所有人共用的运行器额度。
+# **同一个 head SHA 上的 run 只排队、绝不互相取消**（2026-11-04）。
 #
-# **cancel-in-progress 只对 PR 开**：push 到 main 的每一次 run 都是那个 commit
-# 的唯一验证记录，连着合两个 PR 时把前一个取消掉，main 上就留了一段没验过的
-# 历史；merge_group run 是队列候选的资格验证，被取消 = 候选白等 90 分钟超时。
+# 旧写法按 PR 号分组、PR 事件 cancel-in-progress=true：同一 SHA 上出现第二个 PR 事件
+# （推提交后补打 `full-ci`；`gh pr create --label a --label b` 的 opened + labeled；连打两个
+# 标签）就把已经起了 job 的第一个 run 整套取消。被取消的 run 里 `CI fast gate` /
+# `CI integration gate`（`if: always()`）会以 FAILURE / CANCELLED 留在这个 SHA 上，之后第二个
+# run 全绿，required rollup 仍是 FAILURE + SUCCESS → PR 一直 BLOCKED，重跑翻不绿，只能推空
+# 提交换 head（实证：#1664 #1714 #1745 #1748 #1751；#1745 在 72b52b2c9 上 run 41840570035 被
+# 41840677929 取消，29 job cancelled、gate FAILURE）。曾试过在 Gate 侧修（#1666，已关）：
+# 被取消 run 里的 Gate 被 GitHub 记为 CANCELLED 而非 skipped，rollup 照样失败，此路不通。
 #
-# 这里说的是**外部取消**（新 push / 人手取消，没有任何 Gate 给出结论）。与之不同的是
-# **自身判红后的收尾**：merge_group 里五条重腿任一红了，它最后一步 `gh run cancel` 取消
-# 本 run 其余 job，而 `CI integration gate` / `CI fast gate` 都是 `if: always()`——
-# 官方 workflow-cancellation 文档：取消开始时服务端重新求值条件，`always()` 为真的 job
-# 「continues to run」——于是 Gate 照跑并以 failure 结论完成（上游 cancelled 一律红），
-# required check 不会缺席。规则与看护见 docs/rules/ci/ci-lanes.md「合并组快速失败」。
-# tag / release 工作流不在这个文件里，天然不受影响。
+# 现在 group 带 head SHA、cancel-in-progress 恒为 false：同 SHA 的事件进同一个组，正在跑的
+# 跑完，后来的最多一个 pending，更新的 pending 顶掉旧 pending——被顶掉的 run 从没起过 job，
+# 不产生任何 check run，所以不会在 SHA 上留红。不同 SHA 不同组，新 push 不会排在旧 SHA 后面。
+# 旧 SHA 不再靠 concurrency 取消，改由 `cancel-superseded` job 在新 run 一开头取消同 PR 旧
+# SHA 的 run（旧 SHA 的 Gate 不影响新 SHA，取消它们安全）。
 #
-# group 里带 `github.workflow`（codeql.yml 各有各的槽）+ `github.event_name`
-# （PR / merge_group / push 三种 run 绝不同组，谁也取消不了谁）。merge_group
-# 的临时分支 SHA 与 PR head SHA 不同，绝不能把二者视作同一个执行。
+# push main 的每一次 run 都是那个 commit 的唯一验证记录，merge_group run 被取消 = 候选白等
+# 90 分钟超时，二者本来就不取消，现在 PR 也不取消。
+#
+# 这里说的是**外部取消**。与之不同的是**自身判红后的收尾**：merge_group 里五条重腿任一红了，
+# 它最后一步 `gh run cancel` 取消本 run 其余 job，而两个 Gate 是 `if: always()`——官方
+# workflow-cancellation 文档：取消开始时服务端重新求值条件，`always()` 为真的 job「continues
+# to run」，Gate 照跑并以 failure 完成，required check 不会缺席。规则与看护见
+# docs/rules/ci/ci-lanes.md「同 SHA 不互相取消」「合并组快速失败」。
+#
+# group 里带 `github.workflow`（codeql.yml 各有各的槽）+ `github.event_name`（PR /
+# merge_group / push 绝不同组）。merge_group 的临时分支 SHA 与 PR head SHA 不同，绝不能把二者
+# 视作同一个执行。
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.ref }}
+  cancel-in-progress: false
 
 # 这个工作流从头到尾只读代码、跑测试、造临时产物，一个字节都不往仓库写。
 # 不显式收紧的话 GITHUB_TOKEN 会拿到仓库默认的那套权限（含 contents: write），
@@ -147,6 +158,40 @@ env:
 # 老 sdist（`--prefer-binary` 在没有可用 wheel 时仍会回落 sdist，挡不住这条路）。锁版本的安装（runtime_pins / 兼容矩阵）不加——`==` 本来就不会回溯。
 
 jobs:
+  # 取消同一个 PR 上**旧 SHA** 的 CI run（CodeQL 自己的组仍按 PR 取消）（concurrency 不再替我们做这件事，见顶部注释）。
+  # 不在任何 Gate 的 needs 里：它失败 / 被跳过（fork PR 的只读 token）只是旧 run 多跑一会儿，
+  # 绝不影响本 SHA 的结论。只取消 head_sha 不同且比自己更早创建的 run：同 SHA 的 run 永远不碰；
+  # 连推两次时旧 run 的这个 job 可能晚于新 run 才起跑，不限「更早」它会反过来取消新提交的验证（#1787 Codex P1）。
+  cancel-superseded:
+    name: Cancel superseded runs
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: 取消旧 SHA 的 run（同 PR 的未完成 run）
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          for wf in ci.yml; do
+            for st in queued in_progress pending waiting; do
+              gh api --paginate "repos/$REPO/actions/workflows/$wf/runs?event=pull_request&status=$st&per_page=100" \
+                --jq ".workflow_runs[] | select(.head_sha != \"$HEAD_SHA\" and .id < $RUN_ID and any(.pull_requests[]?; .number == $PR_NUMBER)) | .id" \
+              | while read -r id; do
+                  echo "cancel $wf run $id (旧 SHA)"
+                  gh api -X POST "repos/$REPO/actions/runs/$id/cancel" >/dev/null || true
+                done
+            done
+          done
+
   # ────────────────────────────────────────────────────────────────
   # 快线里最便宜的一格：Ruff。**十几秒回来**，只装一个 wheel，不碰科学栈、
   # 不建前端、不编 Rust。
@@ -277,9 +322,15 @@ jobs:
   #    **全部取自默认分支**（与两个 Gate 取 aggregate_gate.py 同一条纪律），
   #    PR 侧只经 GitHub API 读元数据。因此这里**没有 actions/checkout**。
   # 3. **权限最小。** contents: read 读默认分支的文件与 compare 出来的提交列表，
-  #    pull-requests: read 读 PR 的 base / head / 提交数快照。不写 comment、
-  #    不写 status——签署 UX 归签名服务商，这一格只负责判定。没有任何 secret。启用 provider 时才需要再加
-  #    `checks: read`（读它那条 check 的结论），届时同步改 tests 里的权限断言。
+  #    pull-requests: read 读 PR 快照。不写 comment、不写 status，也不读 App check。
+  #
+  # **服务模式（ADR 0172）**：只在可信 policy 启用 tavotto-cla-v1 后生效。
+  # * 全员按不可变账号 id 豁免的 PR / 合并组先在本地通过，不问服务。
+  # * 其余由可信默认分支的 cla_eligibility_fetch.py 问 policy.authority_origin；
+  #   不带凭据、不跟跳转，网络错误最多重试约两分钟。nonce 与 not-before 在本次生成。
+  # * 回答或错误文件都交 cla_gate.py 精确核对；服务不可达、未签或回答不匹配一律红。
+  #   签完后重跑检查或推新提交。分支规则仍只认既有 Gate，不新增 required context。
+  # * #1794 的判定器与 fetch 必须先合入默认分支，本接线才能启用服务模式。
   #
   # 用 pull_request 而**不是** pull_request_target：后者会让这个 job 拿到写
   # 权限与 secret，然后所有防护都变成「别执行 PR 的代码」这一条人为纪律。
@@ -302,6 +353,7 @@ jobs:
     # 与其它快线一致；**merge_group 必须在内**（见上面第 1 条）。
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-24.04
+    # 含服务取数约两分钟的重试预算；元数据读取、最后一次判定另留余量。
     timeout-minutes: 10
     permissions:
       contents: read
@@ -318,6 +370,9 @@ jobs:
           set -euo pipefail
           TRUSTED="$RUNNER_TEMP/trusted-cla"
           mkdir -p "$TRUSTED/scripts/ci" "$TRUSTED/.github" "$TRUSTED/docs/legal"
+          # 只解析一次默认分支，避免取文件途中 main 更新导致 policy / 脚本版本混用。
+          REF=$(gh api "repos/$REPO/commits/$REF" --jq .sha)
+          [[ "$REF" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::默认分支 SHA 无效"; exit 1; }
           fetch() {   # $1 = 仓库内路径
             gh api "repos/$REPO/contents/$1?ref=$REF" --jq .content \
               | base64 -d > "$TRUSTED/$1"
@@ -328,6 +383,12 @@ jobs:
           fetch docs/legal/CLA_INDIVIDUAL.md
           fetch docs/legal/CLA_CORPORATE.md
           echo "TRUSTED=$TRUSTED" >> "$GITHUB_ENV"
+          mode=$(jq -r 'if .provider.configured == true and .provider.protocol == "tavotto-cla-v1" then "yes" else "no" end' \
+            "$TRUSTED/.github/cla-policy.json")
+          echo "CLA_SERVICE_MODE=$mode" >> "$GITHUB_ENV"
+          if [ "$mode" = "yes" ]; then
+            fetch scripts/ci/cla_eligibility_fetch.py
+          fi
 
       # PR 侧只读元数据：作者 + 每个 commit 的 author + Co-authored-by。
       # 只看 PR 发起人是不够的——commit 作者和 co-author 同样在投稿。
@@ -367,6 +428,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/pr-commits.json"
@@ -378,6 +440,10 @@ jobs:
             exit 1
           fi
 
+          if [ "$head" != "$PR_HEAD" ]; then
+            echo "::error::PR head 已改变，重跑当前提交的检查。"
+            exit 1
+          fi
           cmp="repos/$REPO/compare/$base...$head"
           gh api --paginate "$cmp?per_page=100" --jq '.commits' > "$out"
           test -s "$out"
@@ -401,18 +467,114 @@ jobs:
           echo "CLA_EXPECTED_COMMITS=$want" >> "$GITHUB_ENV"
           echo "提交数核对通过：$got / $want（compare ${base:0:8}...${head:0:8}）"
 
+      # 合并组候选的全部提交（只在服务模式）：判定器据此判「全员豁免」。同样只读元数据，
+      # 同样对账：枚举条数 == 去重条数 == compare 自报的 total_commits，head 必须在其中。
+      - name: 收集合并组候选的提交（只读元数据）
+        if: github.event_name == 'merge_group'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REPOSITORY_ID: ${{ github.event.repository.id }}
+          GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+          GROUP_HEAD: ${{ github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+          if [ "${CLA_SERVICE_MODE:-no}" != "yes" ]; then
+            echo "服务未启用：合并组判 not_applicable，不需要提交列表。"
+            exit 0
+          fi
+          if ! [[ "$GROUP_BASE" =~ ^[0-9a-f]{40}$ && "$GROUP_HEAD" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::读不出合并组的 base / head：「$GROUP_BASE」「$GROUP_HEAD」"
+            exit 1
+          fi
+          out="$RUNNER_TEMP/group-commits.json"
+          cmp="repos/$REPO/compare/$GROUP_BASE...$GROUP_HEAD"
+          gh api --paginate "$cmp?per_page=100" --jq '.commits' > "$out"
+          test -s "$out"
+          total=$(gh api "$cmp?per_page=1" --jq '.total_commits')
+          shas="$RUNNER_TEMP/group-shas.txt"
+          jq -r '.[].sha' "$out" > "$shas"
+          got=$(wc -l < "$shas" | tr -d ' ')
+          uniq=$(sort -u "$shas" | wc -l | tr -d ' ')
+          if [ "$got" != "$uniq" ] || [ "$got" != "$total" ]; then
+            echo "::error::取到 $got 个提交（去重后 $uniq），compare 自报 $total 个——枚举不全，不能按它判定。"
+            exit 1
+          fi
+          if ! grep -qx "$GROUP_HEAD" "$shas"; then
+            echo "::error::head $GROUP_HEAD 不在取到的 $got 个提交里——比的不是这个候选。"
+            exit 1
+          fi
+          # 独立读 GitHub mergeQueue；不用 authority 的成员表决定该检查哪些 PR。
+          # gh graphql --paginate 只自动推进名为 endCursor 的变量。
+          # GraphQL variables must remain literal until gh sends the query.
+          # shellcheck disable=SC2016
+          query='query($owner:String!,$name:String!,$branch:String!,$endCursor:String) {
+            repository(owner:$owner,name:$name) { databaseId mergeQueue(branch:$branch) {
+              entries(first:100,after:$endCursor) { totalCount pageInfo { hasNextPage endCursor }
+                nodes { id position baseCommit { oid } headCommit { oid }
+                  pullRequest { number headRefOid baseRefName } } } } } }'
+          queue() {
+            gh api graphql --paginate -f query="$query" -f owner="${REPO%%/*}" \
+              -f name="${REPO#*/}" -f branch=main
+          }
+          before="$RUNNER_TEMP/group-queue-before.json"
+          after="$RUNNER_TEMP/group-queue-after.json"
+          queue > "$before"
+          # 这里只选取要读的 PR；完整分页、唯一候选、连续位置由可信 gate 最终核验。
+          numbers="$RUNNER_TEMP/group-pr-numbers.txt"
+          jq -s -r --arg base "$GROUP_BASE" --arg head "$GROUP_HEAD" '
+            [.[].data.repository.mergeQueue.entries.nodes[]] | sort_by(.position) as $q |
+            [$q[] | select(.baseCommit.oid == $base and .headCommit.oid == $head)] as $matches |
+            if ($matches | length) != 1 then error("candidate absent or ambiguous")
+            else $q[] | select(.position <= $matches[0].position) | .pullRequest.number end' \
+            "$before" > "$numbers"
+          records="$RUNNER_TEMP/group-pr-records.json"
+          : > "$records"
+          while IFS= read -r n; do
+            [[ "$n" =~ ^[1-9][0-9]*$ ]] || { echo "::error::队列 PR 号无效"; exit 1; }
+            pr_before="$RUNNER_TEMP/group-pr-$n-before.json"
+            pr_after="$RUNNER_TEMP/group-pr-$n-after.json"
+            pr_commits="$RUNNER_TEMP/group-pr-$n-commits.json"
+            gh api "repos/$REPO/pulls/$n" > "$pr_before"
+            read -r pr_base pr_head <<< "$(jq -r '"\(.base.sha) \(.head.sha)"' "$pr_before")"
+            [[ "$pr_base" =~ ^[0-9a-f]{40}$ && "$pr_head" =~ ^[0-9a-f]{40}$ ]] \
+              || { echo "::error::队列 PR base/head 无效"; exit 1; }
+            pr_cmp="repos/$REPO/compare/$pr_base...$pr_head"
+            gh api --paginate "$pr_cmp?per_page=100" --jq '.commits' > "$pr_commits"
+            read -r compare_base pr_total <<< "$(gh api "$pr_cmp?per_page=1" \
+              --jq '"\(.base_commit.sha) \(.total_commits)"')"
+            [[ "$compare_base" =~ ^[0-9a-f]{40}$ && "$pr_total" =~ ^[1-9][0-9]*$ ]] \
+              || { echo "::error::队列 PR compare 无效"; exit 1; }
+            gh api "repos/$REPO/pulls/$n" > "$pr_after"
+            jq -n --slurpfile before "$pr_before" --slurpfile after "$pr_after" \
+              --slurpfile commits "$pr_commits" --arg compare_base "$compare_base" \
+              --argjson total "$pr_total" \
+              '{before:$before[0],after:$after[0],commits:($commits | add),compare_base:$compare_base,total_commits:$total}' \
+              >> "$records"
+          done < "$numbers"
+          queue > "$after"
+          jq -n --argjson repository_id "$REPOSITORY_ID" --arg base "$GROUP_BASE" --arg head "$GROUP_HEAD" \
+            --slurpfile before "$before" --slurpfile after "$after" --slurpfile prs "$records" \
+            '{repository_id:$repository_id,base_sha:$base,head_sha:$head,queue_before:$before,queue_after:$after,prs:$prs}' \
+            > "$RUNNER_TEMP/group-snapshot.json"
+          echo "CLA_EXPECTED_COMMITS=$got" >> "$GITHUB_ENV"
+          echo "提交数核对通过：$got（compare ${GROUP_BASE:0:8}...${GROUP_HEAD:0:8}）"
+
       # -I（隔离模式）：不把脚本目录挂进 sys.path、无视 PYTHONPATH——
       # 与两个 Gate 同一双保险。
       - name: 判定
         env:
+          REPOSITORY_ID: ${{ github.event.repository.id }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+          GROUP_HEAD: ${{ github.event.merge_group.head_sha }}
           # 不可变账号 id：线下签署按它认 PR 作者（login 能改名、能被抢注）。
           # 用环境变量而不是参数传——判定器取自默认分支，参数要等它先落 main 才认得。
           CLA_PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
         run: |
           set -euo pipefail
-          # provider.configured=true 之后这里还要多传 --provider-checks-json，
-          # 并给 job 加 `checks: read`——步骤见 docs/legal/CLA_AUTOMATION_SETUP.md。
           ARGS=(--event "${{ github.event_name }}"
                 --policy "$TRUSTED/.github/cla-policy.json"
                 --repo-root "$TRUSTED")
@@ -422,11 +584,57 @@ jobs:
                    --commits-json "$RUNNER_TEMP/pr-commits.json"
                    --expected-commits "$CLA_EXPECTED_COMMITS")
           fi
+          if [ "${CLA_SERVICE_MODE:-no}" != "yes" ]; then
+            python3 -I "$TRUSTED/scripts/ci/cla_gate.py" "${ARGS[@]}"
+            exit 0
+          fi
+
+          FETCH_ARGS=(--event "${{ github.event_name }}"
+                      --policy "$TRUSTED/.github/cla-policy.json")
+          if [ "${{ github.event_name }}" = "merge_group" ]; then
+            target="$GROUP_HEAD"
+            ARGS+=(--commits-json "$RUNNER_TEMP/group-commits.json"
+                   --expected-commits "$CLA_EXPECTED_COMMITS"
+                   --group-snapshot-json "$RUNNER_TEMP/group-snapshot.json"
+                   --verification-base "$GROUP_BASE")
+            FETCH_ARGS+=(--base "$GROUP_BASE")
+          else
+            target="$PR_HEAD"
+            ARGS+=(--verification-pr "$PR_NUMBER")
+            FETCH_ARGS+=(--pr "$PR_NUMBER")
+          fi
+          ARGS+=(--verification-head "$target" --verification-repository-id "$REPOSITORY_ID")
+          verdict="$RUNNER_TEMP/cla-verdict.json"
+          summary="$RUNNER_TEMP/cla-summary.md"
+          # 预判只负责全员 id 豁免与输入错误；不接受 App check 或任何旧回答。
+          rc=0
+          GITHUB_STEP_SUMMARY="$summary" python3 -I "$TRUSTED/scripts/ci/cla_gate.py" "${ARGS[@]}" \
+            > "$verdict" || rc=$?
+          if [ "$rc" -ne 1 ] || jq -e '.problems | any(startswith("unresolved:"))' "$verdict" > /dev/null; then
+            cat "$verdict"
+            if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat "$summary" >> "$GITHUB_STEP_SUMMARY"; fi
+            exit "$rc"
+          fi
+
+          # 绑定这次校验：随机 nonce + 开始时间；只有 fetch 能访问 policy 里的固定 origin。
+          nonce=$(python3 -I -c 'import secrets; print(secrets.token_urlsafe(32))')
+          not_before=$(date +%s)
+          answer="$RUNNER_TEMP/cla-eligibility.json"
+          # 先写失败文件：fetch 自身报错（含配置/运行异常）也必须交判定器给出红结论。
+          echo '{"error":"fetch_failed"}' > "$answer"
+          if ! env -u GH_TOKEN -u GITHUB_TOKEN -u ACTIONS_RUNTIME_TOKEN \
+            python3 -I "$TRUSTED/scripts/ci/cla_eligibility_fetch.py" "${FETCH_ARGS[@]}" \
+              --head "$target" --nonce="$nonce" --out "$answer" --budget-seconds 120; then
+            echo '{"error":"fetch_failed"}' > "$answer"
+          fi
+          ARGS+=(--verification-not-before "$not_before"
+                 --eligibility-nonce="$nonce"
+                 --eligibility-json "$answer")
           python3 -I "$TRUSTED/scripts/ci/cla_gate.py" "${ARGS[@]}"
 
   # ────────────────────────────────────────────────────────────────
-  # 发行说明闸：用户可见的 PR 必须往 docs/release-notes/UNRELEASED.md 新增一个
-  # `## ` 待发条目，内部 PR 打 `no-release-note` 标签豁免（约定与理由见
+  # 发行说明闸：用户可见的 PR 必须新增 docs/release-notes/unreleased/<主题>.md 片段
+  # （或旧写法：往 UNRELEASED.md 新增 `## `）待发条目，内部 PR 打 `no-release-note` 标签豁免（约定与理由见
   # docs/RELEASING.md；判定逻辑与「用户可见路径」清单在
   # scripts/ci/release_note_gate.py，看护在 tests/test_release_note_gate.py）。
   #
@@ -520,7 +728,7 @@ jobs:
 
   # ────────────────────────────────────────────────────────────────
   # docs-only 快车道的分类 job：这次改动是不是**只**碰了 docs/release-notes/ 下的发行说明
-  # （不含 UNRELEASED.md——有测试读它）。判据与理由在 scripts/ci/docs_scope.py，
+  # （不含 UNRELEASED.md 与 unreleased/ 片段——有测试读它们）。判据与理由在 scripts/ci/docs_scope.py，
   # 看护在 tests/test_docs_scope.py 与 tests/test_merge_queue_workflows.py::TestDocsOnlyFastLane。
   #
   # 为什么存在：发版当天补发行说明的纯文档 PR 以前要跑满整条 CI 加合并队列（v0.19.2
@@ -553,6 +761,7 @@ jobs:
       pull-requests: read
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
+      e2e_specs_changed: ${{ steps.classify.outputs.e2e_specs_changed }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -1565,7 +1774,7 @@ jobs:
           python -m pip install --upgrade pip build
           python -m build
       # 退役扫描（U10，ADR 0072）：wheel 的 METADATA 运行时 Requires-Dist 零 pymupdf、里面没有原生库、
-      # 批准字体 13 张 + 覆盖表都在——主语是**这个 wheel**（产物），不是 checkout。
+      # 批准字体 16 张 + 覆盖表都在——主语是**这个 wheel**（产物），不是 checkout。
       - name: 退役扫描（wheel）
         shell: bash
         run: python scripts/ci/retirement_scan.py --skip source,deps,block --wheel dist/*.whl
@@ -1658,6 +1867,10 @@ jobs:
           "$BIN/python" -m pip install --quiet "pytest>=8"
           "$BIN/python" -m pytest tests/test_tutorial.py -k "wheel or sdist or installed_wheel" \
             -p no:cacheprovider -q -rs
+          # wheel 自带 `tavotto_mcp`（用户 2026-11-11）：产物里只有这一个插件包，且干净 venv 里
+          # `tavotto mcp` 真能握手 + 列工具、stdout 首帧前零字节（那条用例自己再建一个 venv 装这份 wheel）
+          "$BIN/python" -m pytest tests/test_desktop_mcp_serve.py -k "wheel or sdist" \
+            -p no:cacheprovider -q -rs
       - name: 上传冒烟日志（失败时）
         if: failure()
         uses: actions/upload-artifact@v6
@@ -1704,10 +1917,17 @@ jobs:
     # 显式按事件分支，不写 `!= 'pull_request'` 这种过宽条件：那种否定式会把
     # push / schedule / 未来新增的任何事件全兜进重型路径，而 PR 字段只在
     # pull_request 事件里存在——merge_group payload 里没有 draft / labels。
+    # **改到 e2e 用例的 PR 在 PR 上也跑这条腿**（不管 risk 档、有没有 full-ci）：`docs-scope` 的输出
+    # `e2e_specs_changed`（web/e2e/** 与 playwright 配置，见 scripts/ci/docs_scope.py）为 true 时，
+    # windows-exe-smoke 与 posix-e2e 两条 e2e 腿一起在 PR 上跑——#1736 只改了一步 e2e 的
+    # click→Tab，PR 上这两条腿都 skipped，进合并组才第一次跑、Windows webkit 红了被踢
+    # （merge group run 41817554523）。merge_group / full-ci 的条件不变；Gate 见
+    # ci-integration-gate 的 `--e2e-legs`，规则 docs/rules/ci/ci-lanes.md。
     if: >-
       (github.event_name == 'merge_group'
       || (github.event_name == 'pull_request'
-          && contains(github.event.pull_request.labels.*.name, 'full-ci')))
+          && (contains(github.event.pull_request.labels.*.name, 'full-ci')
+              || needs.docs-scope.outputs.e2e_specs_changed == 'true')))
       && needs.docs-scope.outputs.docs_only != 'true'
     # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
     needs: [docs-scope, frontend]
@@ -1870,7 +2090,7 @@ jobs:
           print("内置 runtime 与 runtime/ 逐字节一致")
           PY
 
-      # 退役扫描（U10，ADR 0072）：冻结产物里的原生库名单零 mupdf、PDFium / qpdf 在、字体 13 张——主语是 dist/。
+      # 退役扫描（U10，ADR 0072）：冻结产物里的原生库名单零 mupdf、PDFium / qpdf 在、字体 16 张——主语是 dist/。
       - name: 退役扫描（冻结产物）
         shell: bash
         run: python scripts/ci/retirement_scan.py --skip source,deps,block --dist dist/Tavotto
@@ -2317,7 +2537,7 @@ jobs:
           print("内置 runtime 与 runtime/ 逐字节一致")
           PY
 
-      # 退役扫描（U10，ADR 0072）：冻结产物里的原生库名单零 mupdf、PDFium / qpdf 在、字体 13 张——主语是 dist/。
+      # 退役扫描（U10，ADR 0072）：冻结产物里的原生库名单零 mupdf、PDFium / qpdf 在、字体 16 张——主语是 dist/。
       - name: 退役扫描（冻结产物）
         shell: bash
         run: python scripts/ci/retirement_scan.py --skip source,deps,block --dist dist/Tavotto
@@ -2442,10 +2662,17 @@ jobs:
     # 合并资格档：与另外两条重腿同档，只在 merge_group 的组合提交（或带
     # `full-ci` 标签的 PR）上跑，PR 快线不受影响。显式按事件分支，不写
     # `!= 'pull_request'` 那种过宽的否定条件。
+    # **改到 e2e 用例的 PR 在 PR 上也跑这条腿**（不管 risk 档、有没有 full-ci）：`docs-scope` 的输出
+    # `e2e_specs_changed`（web/e2e/** 与 playwright 配置，见 scripts/ci/docs_scope.py）为 true 时，
+    # windows-exe-smoke 与 posix-e2e 两条 e2e 腿一起在 PR 上跑——#1736 只改了一步 e2e 的
+    # click→Tab，PR 上这两条腿都 skipped，进合并组才第一次跑、Windows webkit 红了被踢
+    # （merge group run 41817554523）。merge_group / full-ci 的条件不变；Gate 见
+    # ci-integration-gate 的 `--e2e-legs`，规则 docs/rules/ci/ci-lanes.md。
     if: >-
       (github.event_name == 'merge_group'
       || (github.event_name == 'pull_request'
-          && contains(github.event.pull_request.labels.*.name, 'full-ci')))
+          && (contains(github.event.pull_request.labels.*.name, 'full-ci')
+              || needs.docs-scope.outputs.e2e_specs_changed == 'true')))
       && needs.docs-scope.outputs.docs_only != 'true'
     # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
     needs: [docs-scope, frontend]
@@ -2528,6 +2755,9 @@ jobs:
         timeout-minutes: 35
         run: |
           pnpm install --frozen-lockfile
+          # `--with-deps` 自己跑 apt-get update，不经 install_tauri_linux_deps.sh 的换镜像；
+          # 先挑一个此刻连得上的 Ubuntu 镜像（azure 通就什么都不改）。
+          ../scripts/ci/apt_use_reachable_mirror.sh
           pnpm exec playwright install --with-deps chromium
           # 先让 Playwright 报出本 shard 的预期用例，再真正执行；
           # 注册表校验以计划的身份集合为主语，不许因为没有执行就悄悄漏报。
@@ -2709,6 +2939,11 @@ jobs:
           GATE_FULL_CI: ${{ github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'full-ci') || (github.event.action == 'unlabeled' && github.event.label.name == 'full-ci')) }}
           DOCS_ONLY: ${{ needs.docs-scope.outputs.docs_only }}
           DOCS_SCOPE_RESULT: ${{ needs.docs-scope.result }}
+          E2E_SPECS_CHANGED: ${{ needs.docs-scope.outputs.e2e_specs_changed }}
+        # **改到 e2e 用例的普通 PR**（`E2E_SPECS_CHANGED == true`，仅 --allow-deferred 那一档）：windows-exe-smoke /
+        # posix-e2e 在 PR 上本该跑（它们的 `if:` 读同一个输出），所以多传 `--e2e-classifier docs-scope
+        # --e2e-legs …`：判定器核对分类 job success + 输出后，要求这两条腿**真实 success**、其余重型全 skipped
+        # （仍推迟到 merge_group）。证据不成立时参数根本不传（与引入前逐字相同）。
         # **docs-only 快车道**（`docs-scope` 在这个 Gate 的 needs 里，但不在 required 闭集里）：
         #   * docs_only=true：多传 `--classifier docs-scope --docs-only-skippable <五个重型>`，
         #     判定器核对分类 job 的 success + 输出后才放行 skipped（merge_group 上同样生效）；
@@ -2728,6 +2963,9 @@ jobs:
           if [ "$DOCS_ONLY" = "true" ]; then
             EXTRA=(--classifier docs-scope
                    --docs-only-skippable backend-platforms,package,windows-exe-smoke,macos-app-smoke,posix-e2e)
+          elif [ "$GATE_EVENT" = "pull_request" ] && [ "$GATE_FULL_CI" != "true" ] \
+               && [ "$DOCS_SCOPE_RESULT" = "success" ] && [ "$E2E_SPECS_CHANGED" = "true" ]; then
+            EXTRA=(--e2e-classifier docs-scope --e2e-legs "windows-exe-smoke,posix-e2e")
           elif [ "$DOCS_SCOPE_RESULT" = "success" ]; then
             NEEDS_JSON=$(printf '%s' "$NEEDS_JSON" | jq -c 'del(.["docs-scope"])')
           fi

@@ -2,6 +2,9 @@
  * 内置期刊标准库（TS 侧）。与 Python 的 `tests/test_journal_catalog.py` 跑**同一份**
  * `tests/golden/journal_vectors.json`（夹具期刊，非真实数据；向量里连闭集常量一起比）。
  */
+import { createHash } from 'node:crypto'
+import { readdirSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import vectors from '../../../tests/golden/journal_vectors.json'
 import shipped from '@journals'
@@ -83,13 +86,50 @@ function codeOf(fn: () => unknown): string {
   return 'NO_ERROR'
 }
 
+type Rules = { rules?: Record<string, { snapshot?: { file: string } }> }
+
 describe('随包的期刊库', () => {
-  it('PR 1 是合法的空库', () => {
+  it('随包的是一份合法的种子库：几十本头部期刊 + 出版社通用标准，没有测试夹具、没有假期刊', () => {
     expect(loadCatalog().schema).toBe(1)
     expect(catalogRev()).toBeGreaterThanOrEqual(1)
-    expect(Object.keys((shipped as { publishers: object }).publishers)).toEqual([])
-    expect(Object.keys((shipped as { journals: object }).journals)).toEqual([])
-    expect(listJournals()).toEqual([])
+    const cat = shipped as {
+      publishers: Record<string, unknown>
+      journals: Record<string, { label: string; publisher: string }>
+    }
+    const ids = Object.keys(cat.journals)
+    expect(ids.length).toBeGreaterThanOrEqual(30)
+    expect(ids.length).toBeLessThanOrEqual(100)
+    expect(listJournals().length).toBe(ids.length)
+    // 夹具期刊只许在 golden 向量里；种子里一本假的都不能有（PR 1 复审遗留：7 本 -sample）
+    expect(ids.filter((id) => id.startsWith('fx-') || id.endsWith('-sample'))).toEqual([])
+    expect(JSON.stringify(shipped)).not.toContain('example.invalid')
+    // 每本期刊都能折成覆盖、折成可预检的规范、列出处（加载已全量校验，这里再走一遍求值路径）
+    for (const id of ids) {
+      expect(journalProfile(id).profile_id).toBe(JOURNAL_BASE_PROFILE_ID)
+      journalOverride(id)
+      journalSources(id)
+    }
+  })
+
+  it('种子引用的每张快照图都随包：文件在、是 webp、文件名就是内容的 sha256（内容寻址）', () => {
+    const dir = resolve(__dirname, '../../public/assets/journal-catalog/snapshots')
+    const files = new Set<string>()
+    for (const o of [
+      ...Object.values((shipped as { publishers: Record<string, Rules> }).publishers),
+      ...Object.values((shipped as { journals: Record<string, Rules> }).journals),
+    ]) {
+      for (const r of Object.values(o.rules ?? {})) if (r.snapshot) files.add(r.snapshot.file)
+    }
+    expect(files.size).toBeGreaterThan(0)
+    for (const f of files) {
+      const bytes = readFileSync(resolve(dir, f.replace(/^snapshots\//, '')))
+      expect(bytes.subarray(0, 4).toString('latin1')).toBe('RIFF')
+      expect(bytes.subarray(8, 12).toString('latin1')).toBe('WEBP')
+      expect(f).toBe(`snapshots/${createHash('sha256').update(bytes).digest('hex')}.webp`)
+    }
+    // 包里没有没人引用的快照（不白占体积）
+    const onDisk = readdirSync(dir)
+    expect(onDisk.filter((n) => !files.has(`snapshots/${n}`))).toEqual([])
   })
 
   it('journal-base-v1 不进规范下拉，但取得到且是中性底', () => {
@@ -274,5 +314,12 @@ describe('折叠语义', () => {
     expect(s.min_raster_dpi.link.endsWith('/guide.pdf#page=12')).toBe(true)
     expect(s.min_raster_dpi.page).toBe(12)
     expect(s['widths_mm.double'].link).toBe(s['widths_mm.double'].url)
+  })
+})
+
+describe('出版社只给「建议」栏宽时不收窄页宽（#1745 Codex P2）', () => {
+  it('APS 原文允许单栏 / 1.5 栏 / 双栏、只给了单栏宽度：PRL 不把 85 mm 当唯一合规宽度', () => {
+    const spec = journalProfile('physical-review-letters') as { widths_mm?: { single?: number | null } }
+    expect(spec.widths_mm?.single ?? null).toBeNull()
   })
 })

@@ -18,7 +18,8 @@
  * **本文件是纯计算**：文档 + 规范 + 这条问题进，计划出——不碰 store、不写磁盘、
  * 不发后端，于是 `lib/validation.ts` 判 `fixKind` 时可以直接调它。
  */
-import { FALLBACK_MIN_FONT_SIZE_PT, type PublicationProfile } from './profile'
+import { FALLBACK_MIN_FONT_SIZE_PT, derivePageColumns, type PublicationProfile } from './profile'
+import { currentLocale } from '@/i18n'
 import type { ValidationIssue } from './validation'
 import type { FigureDocument } from '@/types/document'
 
@@ -109,16 +110,32 @@ export interface FixOption {
 }
 
 /**
- * 这条问题的可选修复。只有 `page-width` 这一条：单栏还是双栏是**用户的
- * 排版决定**，两个答案同样合理，工具不许替他挑。
+ * 栏位表里**判据认的**那几档（`qualifier` 为 exact；限定词是 max / typical 等的栏位页宽预检不认，
+ * 改到那个宽度也不会让 `page-width` 通过）。读 `derivePageColumns`——期刊自有的 `page_columns`
+ * 优先（Science 的「2 栏 / 3 栏」、Elsevier 的 1.5 栏），没写就由 `widths_mm` 派生单栏 / 双栏。
+ */
+function exactColumns(profile: PublicationProfile) {
+  return derivePageColumns(profile).filter(
+    (c) => (c.qualifier ?? 'exact') === 'exact' && num(c.width_mm) != null && c.width_mm > 0,
+  )
+}
+
+/**
+ * 这条问题的可选修复。只有 `page-width` 这一条：改成哪一栏是**用户的排版决定**，
+ * 几个答案同样合理，工具不许替他挑。选项就是规范里判据认的栏位（单栏 / 双栏沿用原来的措辞，
+ * 期刊自有的栏用它自己的栏名）。
  */
 export function fixOptions(issue: ValidationIssue, profile: PublicationProfile): FixOption[] {
   if (issue.ruleCode !== 'page-width') return []
-  const { single, double } = profile.widths_mm
-  const out: FixOption[] = []
-  if (num(single) != null) out.push({ choice: 'single', labelKey: 'single', params: { mm: single } })
-  if (num(double) != null) out.push({ choice: 'double', labelKey: 'double', params: { mm: double } })
-  return out
+  return exactColumns(profile).map((c) =>
+    c.id === 'single' || c.id === 'double'
+      ? { choice: c.id, labelKey: c.id, params: { mm: c.width_mm } }
+      : {
+          choice: c.id,
+          labelKey: 'column',
+          params: { name: currentLocale() === 'en-US' ? c.label.en : c.label.zh, mm: c.width_mm },
+        },
+  )
 }
 
 /**
@@ -195,7 +212,7 @@ function writeFontSize(
 }
 
 function planPageWidth(profile: PublicationProfile, choice?: FixChoice): FixPlan | null {
-  if (choice !== 'single' && choice !== 'double') return null
-  const w = num(profile.widths_mm[choice])
-  return w == null || w <= 0 ? null : { kind: 'pageWidth', widthMm: w }
+  if (choice == null) return null
+  const col = exactColumns(profile).find((c) => c.id === choice)
+  return col ? { kind: 'pageWidth', widthMm: col.width_mm } : null
 }

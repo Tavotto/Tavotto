@@ -53,10 +53,17 @@ export interface AppOptions {
    * 的补丁，见该文件）。只在源码形态（`python`）下可用，不能与 `TAVOTTO_EXE` 的打包产物一起用。
    */
   offline?: boolean
+  /**
+   * 开着会话认证起（默认关，见下面 `TAVOTTO_INSECURE_NO_AUTH`）：用例用 `RunningApp.loginURL`（带 `#dnonce=`）进页面换 cookie。
+   * 只有「要页面 cookie 才给」的能力需要它（浏览器模式下的「允许并运行」= 用户点一次才换 native，ADR 0127 修订 2026-10-30）。
+   */
+  auth?: boolean
 }
 
 export interface RunningApp {
   baseURL: string
+  /** `auth: true` 时启动日志里的登录地址（带 `#dnonce=`）；否则 null */
+  loginURL: string | null
   port: number
   home: string
   figures: string
@@ -109,11 +116,13 @@ export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
         // e2e 测的是界面行为，不是会话认证；认证有自己的真 HTTP 套件
         // （tests/test_browser_auth.py）与 smoke_app 的强制断言。开着的话
         // 每个 page.goto 都得先带 fragment 换 cookie，与多标签页用例互相绞。
-        TAVOTTO_INSECURE_NO_AUTH: '1',
+        TAVOTTO_INSECURE_NO_AUTH: opts.auth ? '0' : '1',
         // 匿名用量统计硬关。两件事：① e2e 每次都是全新的配置目录，
         // 同意态是 unset，首启询问框会盖在画布上，之后每一次点击都点在
         // 遮罩上；② 就算它不挡路，CI 也绝不该产生真实的产品事件。
         TAVOTTO_NO_TELEMETRY: '1',
+        // 远程期刊目录（ADR 0155 §10）：e2e 不连生产；要测它的用例用 page.route 假后端，不走真实远端
+        TAVOTTO_NO_JOURNAL_SYNC: '1',
         // 「发送问题反馈」发行版默认开启、内置端点是生产（ADR 0118）。e2e 绝不连生产：默认硬关；
         // 要测它的用例（diagnostics-send.spec.ts）显式传 '0' + 回环端点。
         TAVOTTO_NO_DIAG_UPLOAD: '1',
@@ -150,8 +159,19 @@ export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
     await new Promise((r) => setTimeout(r, 500))
   }
 
+  let loginURL: string | null = null
+  if (opts.auth) {
+    const until = Date.now() + 30_000
+    while (!loginURL && Date.now() < until) {
+      loginURL = logs.join('').match(/http:\/\/127\.0\.0\.1:\d+\/?#dnonce=[\w-]+/)?.[0] ?? null
+      if (!loginURL) await new Promise((r) => setTimeout(r, 200))
+    }
+    if (!loginURL) throw new Error(`启动日志里没有登录地址\n${logs.join('')}`)
+  }
+
   return {
     baseURL,
+    loginURL,
     port,
     home,
     figures: figures ?? '',
@@ -234,7 +254,22 @@ export function writeRuntimeNamedProject(dir: string): void {
  */
 export const ONBOARDING_FLOW_VERSION = 4
 
-const WELCOME_SEEN = JSON.stringify({ schemaVersion: 1, flowVersion: ONBOARDING_FLOW_VERSION, status: 'not_started', welcomeSeenAt: 1 })
+/**
+ * 动画卡提示（ADR 0177）的种类，必须等于 `web/src/lib/onboarding/hints.ts` 的 `CARD_HINTS`
+ * （`src/lib/onboarding/e2eFlowVersion.test.ts` 看护两者相等）。默认状态把它们都记成「学会了」：
+ * 卡片是窗口右下角的一张浮卡，拖边 / 平移 / 挪对象的用例会把它招出来、盖住右下角的东西。
+ * 要测卡片的用例自己摆状态（`hint-cards.spec.ts`）。
+ */
+export const CARD_HINTS = ['fit_canvas', 'edge_crop', 'ruler_guides', 'shift_axis', 'no_snap', 'arrow_nudge', 'shift_rotate', 'dblclick_text', 'shift_draw', 'space_pan', 'shift_multi', 'shortcut_help'] as const
+const CARDS_LEARNED = Object.fromEntries(CARD_HINTS.map((k) => [k, { shows: 0, lastAt: 0, done: true }]))
+
+const WELCOME_SEEN = JSON.stringify({
+  schemaVersion: 1,
+  flowVersion: ONBOARDING_FLOW_VERSION,
+  status: 'not_started',
+  welcomeSeenAt: 1,
+  hintStats: CARDS_LEARNED,
+})
 
 /** 每个用例自带一个干净实例；用例里按需 `await app()` 拿到它。 */
 export const test = base.extend<{ app: (o?: AppOptions) => Promise<RunningApp>; firstRunWelcome: boolean }>({

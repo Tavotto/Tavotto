@@ -2,8 +2,11 @@
 
 本文件展开 SKILL.md「会话入口」各状态的恢复动作。**健康会话一个字都不用读。**
 
-下面的安装命令是 **Codex** 的。用户在别的宿主里（Cursor、Claude、VS Code、Trae、DSH、
+下面的安装命令是 **Codex** 的。用户在别的宿主里（Cursor、Claude、VS Code、Trae、Antigravity、DSH、
 WorkBuddy、ZCode……）时，安装和重载看 `other-hosts.md`；引擎侧的恢复（provision、错误码）两边一样。
+
+**用户装了 Tavotto 桌面版**：先请他打开桌面版「设置 › 改图助手 › 接入 AI 编辑器」，在 Codex 那一行点
+「接入」、选好要处理的文件夹，再新开 Codex 会话——不用敲命令。那里没有 Codex、或接入失败，再用下面的命令。
 
 ## 插件没有在本会话加载（工具列表里没有 `tavotto_health`）
 
@@ -95,7 +98,13 @@ marketplace add/upgrade。
 
 ## 插件有新版本（`update.status == "available"`）
 
-当前任务照常做完。收尾时提醒**一次**：
+**MCP 路径**：`tavotto_health` 的结果、以及本进程第一次成功的 `tavotto_export` 的结果会带 `update`
+（每 24 小时最多查一次，后台刷新、从不拖慢调用）。任务照常做完，收尾把其中 `message` 转述给用户**一次**，
+不自己执行升级。`update.how` 说明这个 MCP 是怎么起来的：`desktop` = 桌面版自带的
+`tavotto-cli mcp`，让用户打开 Tavotto 桌面版更新，再新开会话；`codex_plugin` = 插件启动，
+`update.upgrade_command` 就是要给用户的那一行；缺省 = 判不出，只说有新版、请更新后新开会话。
+
+**交接路径**（`handoff.py` 的 JSON 里带 `update`）：当前任务照常做完。收尾时提醒**一次**：
 
 ```sh
 codex plugin marketplace upgrade tavotto

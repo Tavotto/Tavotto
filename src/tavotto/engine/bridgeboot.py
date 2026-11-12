@@ -121,6 +121,7 @@ _TOPLEVEL_TO_RESTORE = (
     "figsession",
     "executionfact",
     "inputdeclaration",
+    "cmddiag",
     "wireproto",
     "previewbudget",
     "preview_complexity",

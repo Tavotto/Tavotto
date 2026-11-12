@@ -549,3 +549,18 @@ def set_ai_settings(patch: dict) -> dict:
         cfg["ai"] = merged
         save(cfg)
         return merged
+
+
+#: 「转换时允许 AI 不受沙盒限制」（Windows 设置里的一个开关，默认关；方案 B）。只在 Windows 的转换会话里让 Codex 以
+#: `--sandbox danger-full-access` 运行，其它任务与平台完全不受影响（判定在 `ai_agents.codex_sandbox_policy`）
+CONVERT_UNSANDBOXED_KEY = "convert_unsandboxed_windows"
+
+
+def convert_unsandboxed_windows() -> bool:
+    """只认明确的 True；缺省 / 畸形值 = 关。读到的是用户存的值，**不含**平台判断（非 Windows 上适配器自己忽略）。"""
+    return ai_settings().get(CONVERT_UNSANDBOXED_KEY) is True
+
+
+def set_convert_unsandboxed_windows(enabled: bool) -> bool:
+    set_ai_settings({CONVERT_UNSANDBOXED_KEY: bool(enabled)})
+    return bool(enabled)

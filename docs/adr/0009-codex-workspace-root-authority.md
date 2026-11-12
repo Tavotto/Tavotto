@@ -2,7 +2,7 @@
 
 状态：已实施；真实 Codex Desktop 视觉证据按
 [`../acceptance/codex-desktop-canvas.md`](../acceptance/codex-desktop-canvas.md) 收集
-（2026-08-24）
+（2026-08-24）；§1b 本机兜底 2026-11-04 / 11-05 修订（维护者裁决）
 
 相关：[0006 Codex MCP App](0006-codex-mcp-app-and-publication-profile.md)
 
@@ -36,6 +36,39 @@
 `tavotto_health.root_authority` 暴露来源、规范化根、generation、警告、client 名称/
 版本/协议、initialize 实际声明的 capability 名称、Roots/工作区确认状态，以及当前
 这次失败属于哪一档（`authorization`）。它是诊断记录，不从版本号猜 capability。
+
+### 1b. 本机兜底 `TAVOTTO_MCP_SCOPE=local`（2026-11-04 / 11-05 修订，维护者裁决）
+
+**背景**：桌面设置「接入 AI 编辑器」原先第一次接入必须先选一个项目文件夹，写成 `TAVOTTO_MCP_ROOTS`。它排在
+来源 1，于是会自己报项目的宿主（Claude Code 的 `roots/list`、VS Code / WorkBuddy 的工作区 cwd）也被锁在那一个
+文件夹里，换个项目就 `path_out_of_scope`；不报项目的宿主（Claude 桌面版、Trae……）又只能靠它。维护者要求
+「点一下就自动加到宿主里」；11-05 进一步裁决：「全部放开，除了 .env 和私钥凭据文件，用户可能把数据放在任何目录，
+我们不能自己加锁把自己锁住」。
+
+**决策**：
+
+* 按钮（`engine/hostconnect.py`）不再写 `TAVOTTO_MCP_ROOTS`。会自己报项目的宿主（`HOSTS_WITH_OWN_WORKSPACE`）
+  `env` 为空，走上面的 2–5；其余宿主只写 `TAVOTTO_MCP_SCOPE=local`。命令行 `--project-root` 照旧写来源 1。
+* `TAVOTTO_MCP_SCOPE=local` 只改**兜底**：来源 1 与宿主明确给出的可用目录（`roots/list` 非空、用户确认的目录、
+  工作区变量）照旧优先，**不被它扩宽**；`roots/list` 还没问过（`pending` / `stale`）时先问，不抢先落下来。
+  宿主没给可用目录时（清单为空 / 全被拒 / 查询失败 / 根本没有这条路），来源记为 `local_scope`，范围是**本机任意
+  位置**（任何盘、主目录本身、UNC 路径都算；`roots` 只列出 `/` 或各盘符根供诊断，判范围不靠它）。相对路径没有
+  可靠基准，要求绝对路径（`ambiguous_workspace_root`）。
+* **只拦凭据类文件**，用改图助手同一份黑名单（`engine/fixtools/readscope.py`，ADR 0149 §三：`.env*`、私钥形状、
+  SSH / 云服务等凭据目录、浏览器登录数据、Tavotto 自己的密钥文件）。**判的是系统真正走过的那条路**（用户 2026-11-05
+  裁决「逐段解析」）：`bridge._lookup_chain` 按操作系统打开文件的顺序逐段走（POSIX：`..` 在解析后的真实位置上回退；
+  Windows：先按字面折叠 `..`，再跟符号链接与目录联接），沿途每一段、每一跳链接都按实际类型过黑名单，最后再判真实路径；
+  任何一步拿不准（权限、竞态、成环）一律拒。「字面折叠后」与「解析后」两点判法是结构性缺口（折叠后可能指向另一个对象，
+  补实例会被构造下一种，Codex #1757 三轮绕过），不用。判「这条路径能不能碰」**只经 `bridge._judge_path`**：打开目标、
+  MCP 来源的 `argv` 路径、会话恢复都过。引擎里没有那份
+  黑名单（旧引擎）就一律拦，失败封闭。被拦回 `path_denied`（`narrow_the_path`）。
+* 这一档不装写入根绊线：范围本来就是本机任意位置，与 GUI 里自己运行脚本同一条线。
+* 宿主交来的主目录本身照旧拒（ADR 0109）：本机兜底是 Tavotto 自己写的一档，不是把宿主的 `roots = ~` 当真。
+* 旧按钮写过的 `TAVOTTO_MCP_ROOTS=<hosts.json 里记的文件夹>`，在 `hosts list` 时一次性迁移成新形状；用户手写的
+  别的文件夹不碰。
+
+**代价**：没报项目的宿主里，模型能让 Tavotto 打开、运行的脚本从「一个文件夹里的」变成「本机任意位置的」；
+维护者判断宿主模型本身足够安全，凭据类文件照拦。看护 `tests/test_mcp_local_scope.py`、`tests/test_mcp_path_walk_property.py`（随机目录树的性质测试）、`tests/test_hosts_connect.py`。
 
 ### 2. 模型给候选，用户给权限
 

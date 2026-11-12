@@ -646,7 +646,7 @@ def test_export_under_the_candidate_verifies_text_layer_fonts_and_carrier_from_t
     assert mf["backend"] == "rendercore" and mf["plan_identity"].startswith("sha256:")
     assert mf["checks"]["text_layer"] == "verified"  # 期望的行「Hello 图」从 ToUnicode 抽回来了
     assert mf["checks"]["fonts_embedded"] == "verified" and mf["checks"]["carrier"] == "verified"
-    assert mf["fonts_used"] == ["LiberationSerif", "NotoSansSC-Regular"]
+    assert mf["fonts_used"] == ["LiberationSerif", "NotoSerifSC-Regular"]  # 默认衬线 → 衬线 CJK 脸
     png = _out(body, "png")["manifest"]
     assert png["checks"]["dpi_tag"] == "verified"  # 候选的 PNG 写真实 ppi 的 pHYs
     # 面板里的源页用的是没嵌入的 Helvetica（夹具）：候选如实报 fonts_embedded failed（可选项，standard 照样交付）
@@ -655,6 +655,40 @@ def test_export_under_the_candidate_verifies_text_layer_fonts_and_carrier_from_t
     mf = _out(body, "pdf")["manifest"]
     assert mf["checks"]["fonts_embedded"] == "failed" and mf["verdict"] == "accepted"
     assert "Helvetica" in mf["fonts_used"]
+
+
+@pytest.mark.parametrize(
+    ("family", "cjk_base", "latin_base"),
+    [
+        ("serif", "NotoSerifSC-Regular", "LiberationSerif"),
+        ("sans-serif", "NotoSansSC-Regular", "LiberationSans"),
+        ("monospace", "NotoSansSC-Regular", "LiberationMono"),
+    ],
+)
+def test_chinese_in_canvas_text_is_drawn_by_the_cjk_face_of_its_family(
+    client, tmp_path, family, cjk_base, latin_base
+):
+    """CJK 脸随族（ADR 0060 2026-11-04 修订）。主语：**导出的 PDF 页面内容流里，「温」「度」两个字形所引用的
+    字体资源**（独立读取器 `pdfread`，不看 manifest / 计划自述的 fonts_used），不是计划里选了哪张脸。
+    画布上衬线标注的中文是宋体：导出里画这两个字的必须是 Noto Serif SC，不是 Noto Sans SC。"""
+    _project(tmp_path)
+    spec = _text_only()
+    spec["canvas"]["objects"][0]["text"] = "温度 25"
+    spec["canvas"]["objects"][0]["font_family"] = family
+    spec["formats"] = ["pdf"]
+    body = client.post("/api/export", json=spec).get_json()
+    assert body["status"] == "done", body
+    pdf = (Path(body["export_dir"]) / _out(body, "pdf")["name"]).read_bytes()
+    objs = pdfread.objects(pdf)
+    head, content = pdfread.page(objs)
+    fonts = pdfread.fonts(objs, head)
+    maps = {name: pdfread.decode_tounicode(f["tounicode"]) for name, f in fonts.items()}
+    drawn = {}  # 字符 → 画它的字体程序（BaseFont 去掉子集前缀）
+    for run in pdfread.text_runs(content, maps):
+        for res_name, code in run["codes"]:
+            drawn[maps[res_name][code]] = fonts[res_name]["base"]
+    assert drawn["温"] == drawn["度"] == cjk_base, drawn
+    assert drawn["2"] == drawn["5"] == latin_base, drawn  # 拉丁数字仍由请求族的 Liberation 脸画
 
 
 def test_a_child_that_renders_the_wrong_pixel_size_is_caught_by_the_size_check(

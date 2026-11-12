@@ -8,7 +8,7 @@
   glyph / cluster / advance / offset）、度量（`advance` / `ascender` / `descender`）。
   真实实现在 `hbshaper`（uharfbuzz + fontTools，native 适配层）；测试用一张合成的
   假脸就能把本模块跑完（纯模型不需要候选包）。
-* `FaceSet`：正文脸 + 唯一一张 CJK 脸。**没有 fallback 脸**——旧后端的第 3 层
+* `FaceSet`：正文脸 + 一张 CJK 脸（随族：serif → Noto Serif SC，其余 → Noto Sans SC，ADR 0060 2026-11-04 修订）。**没有 fallback 脸**——旧后端的第 3 层
   （渲染器自己挑一张 Noto Serif）在这条路上不存在，`coverage()` 的 fallback oracle 恒 False，
   于是 `glyphplan.layer_of` 只会给出 primary / cjk / missing 三档：画不出的字就是
   `missing`，进问题系统，**不暗中回退系统脸**（RC-037、任务书「本轮集合外明示限制」）。
@@ -16,7 +16,7 @@
 换行 / 对齐 / 行高 / 上下标 / 下划线的**用户合同**逐条从 `_draw_text` 搬过来（贪心按
 单元换行、CJK 逐字、拉丁按词、单词超宽逐字兜底、CSS 行盒基线、下划线画在正文基线、
 上下标比例走 `richtext`），前端 TextView 与它是同一套语义。会变的只有 D07 批准的那几项：
-脸换了（Liberation / Noto Sans SC），asc / desc 换成新脸的 OS/2 typo 度量。
+脸换了（Liberation / Noto Sans SC / Noto Serif SC），asc / desc 换成新脸的 OS/2 typo 度量。
 
 坐标：本模块在**页面 y 向下的 pt 空间**里算（与画布语义同向，公式照抄不用翻），
 `plan.compile_page()` 把每个基线点翻到 y 向上时只翻一次。
@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from .. import glyphplan, richtext
-from .ir import FontResource, Glyph, mm2pt
+from .ir import FontResource, Glyph, VGlyph, mm2pt
 
 #: 画布文字能选的字体族。**闭集，顺序即默认序**——与 `web/src/lib/typography.ts` 的
 #: `CANVAS_TEXT_FAMILIES` 和旧 facade 同名常量逐字相同（`test_typography_families.py` 钉着
@@ -41,6 +41,10 @@ CANVAS_TEXT_DEFAULT_FAMILY = CANVAS_TEXT_FAMILIES[0]
 
 #: 覆盖表枚举到哪（与旧 facade 同一个数：BMP + SMP）。
 COVERAGE_MAX_CP = 0x30000
+
+#: 画布文字的排向（`writing_mode` 字段；缺席 = 横排）。闭集只有这一个非默认值——与
+#: `web/src/lib/typography.ts` 的 `WRITING_MODE_VERTICAL` 同值（ADR 0163）。
+WRITING_VERTICAL = "vertical"
 
 #: 换行单元的判据（历史判据，只管「逐字还是按词」，不是覆盖判据；见 glyphplan）。
 _CJK_BREAK = 0x2E80
@@ -63,19 +67,41 @@ class Face(Protocol):
 
 
 @dataclass(frozen=True)
+class SynthFace:
+    """一张脸 + 要模拟的粗 / 斜（ADR 0169 修订）。字形、度量全是原来那张脸的，只有落笔时写入器多描一道边或错切。"""
+
+    face: Face
+    synth_bold: bool = False
+    synth_italic: bool = False
+
+    def __getattr__(self, name: str):
+        return getattr(self.face, name)
+
+
+def synthesized(face: Face, bold: bool, italic: bool) -> Face:
+    """要模拟时包一层，不用模拟就是原脸。"""
+    return SynthFace(face, bold, italic) if bold or italic else face
+
+
+@dataclass(frozen=True)
 class FaceSet:
     primary: Face
     cjk: Face | None
     #: (片段斜体, 片段粗体) → 该片段的正文脸（已与对象自身的粗 / 斜合并）。行内样式
     #: （LaTeX 写法的 `\\textit{}` / `\\textbf{}`，ADR 0152）用它换脸；缺席（测试假脸）时退回正文脸。
     variant: Callable[[bool, bool], Face] | None = None
+    #: 同上，换 CJK 脸（ADR 0169 修订）；缺席（测试假脸）时 CJK 脸不变。
+    cjk_variant: Callable[[bool, bool], Face | None] | None = None
 
     def styled(self, italic: bool, bold: bool) -> FaceSet:
-        """行内样式片段该用的那一套脸（CJK 脸不变：中日韩没有斜体 / 粗体变体可换）。"""
-        if not (italic or bold) or self.variant is None:
+        """行内样式片段该用的那一套脸。"""
+        if not (italic or bold):
             return self
-        face = self.variant(italic, bold)
-        return self if face is self.primary else FaceSet(face, self.cjk, self.variant)
+        face = self.variant(italic, bold) if self.variant is not None else self.primary
+        cjk = self.cjk_variant(italic, bold) if self.cjk_variant is not None else self.cjk
+        if face == self.primary and cjk == self.cjk:
+            return self
+        return FaceSet(face, cjk, self.variant, self.cjk_variant)
 
     def face_of(self, layer: str) -> Face:
         """哪一层交给哪张脸落笔。`missing` 仍交给正文脸：它画出的是 .notdef（方框），
@@ -96,18 +122,45 @@ class FaceProvider(Protocol):
 
     def face_for(self, family: str, bold: bool, italic: bool) -> Face: ...
 
-    def cjk_face(self) -> Face | None: ...
+    def cjk_face(self, family: str, bold: bool = False) -> Face | None: ...
 
 
-def faces_for(provider: FaceProvider, family: object, bold: bool, italic: bool) -> FaceSet:
+def faces_for(
+    provider: FaceProvider,
+    family: object,
+    bold: bool,
+    italic: bool,
+    *,
+    user_face: Callable[[bool, bool], Face | None] | None = None,
+    user_cjk: Callable[[bool, bool], Face | None] | None = None,
+) -> FaceSet:
+    """族 / 粗 / 斜 → 一套脸。`user_face(粗, 斜)` / `user_cjk(粗, 斜)`（ADR 0164、0169）按要的粗斜给用户本机脸，
+    回 None = 这一层用不了用户脸，走批准脸；要模拟的粗斜已经包在返回的脸上。
+
+    `family` 决定回退到哪一族。批准的拉丁脸四种样式齐全；批准的 CJK 脸有常规和粗体，斜体模拟。"""
     fam = latin_family(family)
-    primary = provider.face_for(fam, bool(bold), bool(italic))
+    base = (bool(bold), bool(italic))
 
-    def variant(run_italic: bool, run_bold: bool) -> Face:
-        b, i = bool(bold) or run_bold, bool(italic) or run_italic
-        return primary if (b, i) == (bool(bold), bool(italic)) else provider.face_for(fam, b, i)
+    def merged(run_italic: bool, run_bold: bool) -> tuple[bool, bool]:
+        return base[0] or run_bold, base[1] or run_italic
 
-    return FaceSet(primary, provider.cjk_face(), variant)
+    def primary_for(want_bold: bool, want_italic: bool) -> Face:
+        user = user_face(want_bold, want_italic) if user_face is not None else None
+        return user if user is not None else provider.face_for(fam, want_bold, want_italic)
+
+    def cjk_for(want_bold: bool, want_italic: bool) -> Face | None:
+        user = user_cjk(want_bold, want_italic) if user_cjk is not None else None
+        if user is not None:
+            return user
+        face = provider.cjk_face(fam, want_bold)
+        return synthesized(face, False, want_italic) if face is not None else None
+
+    return FaceSet(
+        primary_for(*base),
+        cjk_for(*base),
+        lambda i, b: primary_for(*merged(i, b)),
+        lambda i, b: cjk_for(*merged(i, b)),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +235,13 @@ def shape_segment(
         face = faces.face_of(layer)
         out.append(
             ShapedPiece(
-                face, layer, seg, face.shape(seg), size, rise, logical[pos : pos + len(seg)]
+                face,
+                layer,
+                seg,
+                face.shape(seg),
+                size,
+                rise,
+                user_text(logical[pos : pos + len(seg)]),
             )
         )
         pos += len(seg)
@@ -228,10 +287,41 @@ class TextBlock:
     underline: bool
     #: 这段文字里画不出来的字符（去重、原文顺序）——按**渲染表示**量（合成过上下标之后）。
     missing: tuple[str, ...]
-    #: 落在 cjk 层的字符（换族不换它；不算换脸）。
+    #: 落在 cjk 层的字符（CJK 脸随族，但不算换脸）。
     cjk_chars: tuple[str, ...]
     #: 排不出来的公式：(源码, 原因)。这些公式按源码原样画了（`$…$`），调用方把它们报成问题
     math_failures: tuple[tuple[str, str], ...] = ()
+    #: 竖排（ADR 0163）：非空时 `lines` 为空，文字按列落笔（`rendercore.vertical`）。横排恒为空。
+    columns: tuple[VColumn, ...] = ()
+
+
+@dataclass(frozen=True)
+class VItem:
+    """竖排一列里的一件东西，`pos` 是它沿列方向离列首的距离（pt，向下为正）。
+
+    * `upright`：直立的字（中日韩 / 假名 / 全角标点）——`face` + 逐字的竖排字形，`size` 字号；
+    * `side`：侧躺的一段（拉丁 / 数字 …）——一个 `ShapedPiece`，按横排塑形，落笔时整体顺时针转 90°；
+    * `math`：侧躺的公式——`(排版结果, 源码)`，`length` 是它占的长度，`piece` 是文本层占位（可为 None）。"""
+
+    kind: str
+    pos: float
+    length: float
+    face: Face | None = None
+    size: float = 0.0
+    glyphs: tuple[VGlyph, ...] = ()
+    piece: ShapedPiece | None = None
+    math: tuple[dict, str] | None = None
+
+
+@dataclass(frozen=True)
+class VColumn:
+    cx: float  # 列中线 x（pt，页面 y 向下空间）
+    side_x: float  # 侧躺段 / 公式（转 90° 前的横排）基线所在的 x：em 方框中点落在列中线上
+    top: float  # 列首 y（pt）：对齐已折进来
+    length: float
+    items: tuple[VItem, ...]
+    #: 这一列**用户写的**原文（与横排 `LaidOutLine.logical` 同义）
+    logical: str
 
 
 #: 行内样式：(斜体, 粗体)。
@@ -239,8 +329,49 @@ Style = tuple[bool, bool]
 _PLAIN: Style = (False, False)
 
 #: 换行单元里的一片：(渲染文字, script, 用户原文, 行内样式)。渲染文字与用户原文**逐字符对齐**
-#: （`richtext.interpret_runs` 的合成是单字符 → 单字符的表查，长度不变）。
+#: （合成上下标是单字符 → 单字符的表查，长度不变）。字母式符号展开（`℃` → `°C`，
+#: `richtext.LETTERLIKE_EXPANSION`）是一个字符 → 多个字符：用户原文那一侧在展开出来的
+#: 第 2 个起的位置补 `ELIDED`，对齐不破，换行 / 量宽 / 合并那些按下标走的代码一行不用改；
+#: 真正交给 `ShapedPiece.logical` / `LaidOutLine.logical` 之前由 `user_text()` 去掉。
 Unit = list[tuple[str, str, str, Style]]
+
+#: 展开占位：Unicode 非字符（U+FDD0），正常文字里不会出现
+ELIDED = "\ufdd0"
+
+
+def user_text(logical: str) -> str:
+    """去掉展开占位后的用户原文（`℃` 展开成 `°C` 时，`logical` 是 `℃` + 占位）。"""
+    return logical.replace(ELIDED, "")
+
+
+def cjk_probe(units: Unit) -> str:
+    """一行 / 一列里要拿去问「有没有落到 cjk 层」的字：用户原文，但字母式符号展开成功的
+    （`℃` → `°C`、`K` → `K`）按它**实际画的字**问——不然 `℃` 会被误报成画在 cjk 脸上。"""
+    out: list[str] = []
+    for text, sc, logical, _ in units:
+        for ch, lch in zip(text, logical):
+            if lch == ELIDED:
+                continue
+            out.append(ch if lch in richtext.LETTERLIKE_EXPANSION and ch != lch else lch)
+    return "".join(out)
+
+
+def _align_logical(src: str, rendered: str) -> str:
+    """片段的源文字 + 它的渲染文字 → 与渲染文字逐字符对齐的用户原文（展开处补 `ELIDED`）。"""
+    out: list[str] = []
+    k = 0
+    i = 0
+    while i < len(rendered):
+        ch = src[k]
+        exp = richtext.LETTERLIKE_EXPANSION.get(ch)
+        if exp is not None and rendered.startswith(exp, i):
+            out.append(ch + ELIDED * (len(exp) - 1))
+            i += len(exp)
+        else:
+            out.append(ch)
+            i += 1
+        k += 1
+    return "".join(out)
 
 
 #: 公式在换行单元里的 script 标记；占位字符见 `MathSlots`
@@ -305,8 +436,16 @@ def _rstrip(u: Unit) -> Unit:
 
 
 def _chars_of(u: Unit) -> list[Unit]:
-    """把一个换行单元拆成逐字符的单元；script / 样式标记与原文跟着每个字符走。"""
-    return [[(ch, sc, lch, st)] for seg, sc, logical, st in u for ch, lch in zip(seg, logical)]
+    """把一个换行单元拆成逐字符的单元；script / 样式标记与原文跟着每个字符走。
+    字母式符号展开出来的字（`℃` → `°C`）算**一个**用户字符，不在它中间断开。"""
+    out: list[Unit] = []
+    for seg, sc, logical, st in u:
+        for ch, lch in zip(seg, logical):
+            if lch == ELIDED and out:
+                out[-1].append((ch, sc, lch, st))
+            else:
+                out.append([(ch, sc, lch, st)])
+    return out
 
 
 def interpreted_pieces(
@@ -339,11 +478,17 @@ def interpreted_pieces(
             is_primary=cov.primary,
             is_drawable=lambda cp: glyphplan.layer_of(cp, cov) != "missing",
             mode=interpretation,
+            # 展开与否按批准字体的静态覆盖表定（与画布 `layerOf` 同一份）：原图字体自带 `℃` 时
+            # 画布不知道，导出也不能自己另作决定（见 `richtext.interpret_runs`）
+            letterlike_primary=glyphplan.canvas_coverage().primary,
         ):
-            logical = run.text[pos : pos + len(r.text)] if not run.script else r.text
+            if run.script:
+                logical = r.text
+            else:
+                logical = _align_logical(run.text[pos:], r.text)
+                pos += len(user_text(logical))
             assert len(logical) == len(r.text), (run, r)
             out.append((r.text, r.script, logical, style))
-            pos += len(r.text)
     return out
 
 
@@ -355,11 +500,16 @@ def break_lines(
     interpretation: str,
     text_format: str | None = None,
     slots: MathSlots | None = None,
+    measure: Callable[[Unit], float] | None = None,
 ) -> list[Unit]:
     """贪心换行——与旧 facade `_draw_text` 逐句相同：行内标记先解析成片段，Unicode 上下标
     按 `richtext.interpret_runs` 受控解释；CJK 逐字、拉丁按词（空格附着前词）；单个单元
-    自己就超宽时先独占一行再逐字断。返回每行的片段序列（已 rstrip）。"""
+    自己就超宽时先独占一行再逐字断。返回每行的片段序列（已 rstrip）。
+
+    `measure`：一个单元沿「行」方向的长度。缺省是横排的字宽；竖排（ADR 0163）传入沿列方向的长度
+    （直立字取竖排进退、侧躺字取横排字宽）——**折行算法只有这一份**，横排 / 竖排只差这把尺。"""
     lines: list[Unit] = []
+    width_of = measure if measure is not None else (lambda u: _unit_w(u, faces, size, slots))
     for line_runs in _run_lines(text, text_format):
         units: list[Unit] = []
         cur: Unit = []
@@ -389,20 +539,20 @@ def break_lines(
 
         line: Unit = []
         for u in units:
-            if len(_chars_of(u)) > 1 and _unit_w(_rstrip(u), faces, size, slots) > box_w:
+            if len(_chars_of(u)) > 1 and width_of(_rstrip(u)) > box_w:
                 if line:
                     lines.append(_rstrip(line))
                     line = []
                 for cu in _chars_of(u):
                     cand = line + cu
-                    if line and _unit_w(_rstrip(cand), faces, size, slots) > box_w:
+                    if line and width_of(_rstrip(cand)) > box_w:
                         lines.append(_rstrip(line))
                         line = list(cu)
                     else:
                         line = cand
                 continue
             cand = line + u
-            if line and _unit_w(_rstrip(cand), faces, size, slots) > box_w:
+            if line and width_of(_rstrip(cand)) > box_w:
                 lines.append(_rstrip(line))
                 line = list(u)
             else:
@@ -433,7 +583,7 @@ def _run_lines(text: str, text_format: str | None) -> list[list[richtext.TextRun
 
 
 def _same_run(a: ShapedPiece, b: ShapedPiece) -> bool:
-    return a.face is b.face and a.size == b.size and a.rise == b.rise and a.layer == b.layer
+    return a.face == b.face and a.size == b.size and a.rise == b.rise and a.layer == b.layer
 
 
 def _math_text_piece(face: Face, src: str, width_pt: float, size: float) -> ShapedPiece | None:
@@ -464,26 +614,38 @@ def _math_text_piece(face: Face, src: str, width_pt: float, size: float) -> Shap
     return ShapedPiece(face, "primary", text, tuple(glyphs), size, 0.0, text, invisible=True)
 
 
-def layout_text(t: dict, faces: FaceSet, math: dict | None = None) -> TextBlock | None:
-    """画布文字对象（`text` / `size_pt` / `x_mm` … 与旧 facade 同一份字段）→ 已排版的块。
-    空白文字回 None（什么都不画）。
-
-    `math`：公式排版结果（`math_key(源码, 族)` → 结果），调用方事先排好（`engine.mathtypeset`）；
-    本模块不起子进程。缺席 = 公式按源码画、不报问题（没有接公式排版的调用方，行为与 PR 4 之前相同）。"""
-    text = t.get("text", "")
-    if not text.strip():
-        return None
+def text_params(
+    t: dict, math: dict | None = None
+) -> tuple[MathSlots | None, float, float, float, str, str | None]:
+    """横排 / 竖排共用的字段解析（唯一一份）：`(slots, size, line_h, pad, interp, fmt)`。
+    竖排（`vertical.layout_text`）与横排（`layout_text`）都从这里取，二者对字段的理解不会分叉。"""
     size = float(t.get("size_pt", 9))
     line_h = float(t.get("line_height") or 1.25)
     pad = mm2pt(float(t.get("padding_mm") or 0))
     interp = str(t.get("interpretation") or richtext.DEFAULT_INTERPRETATION)
     fmt = t.get("text_format") if t.get("text_format") in richtext.TEXT_FORMATS else None
+    fam = latin_family(t.get("font_family"))
+    slots = MathSlots(lambda src: math.get(math_key(src, fam))) if math is not None else None
+    return slots, size, line_h, pad, interp, fmt
+
+
+def layout_text(t: dict, faces: FaceSet, math: dict | None = None) -> TextBlock | None:
+    """画布文字对象（`text` / `size_pt` / `x_mm` … 与旧 facade 同一份字段）→ 已排版的块。**只排横排**；
+    竖排（ADR 0163）走 `vertical.layout_text`，由调用方（`plan`）按 `writing_mode` 分派——本模块不依赖
+    `vertical`（它依赖本模块），避免 import 环。空白文字回 None（什么都不画）。
+
+    `math`：公式排版结果（`math_key(源码, 族)` → 结果），调用方事先排好（`engine.mathtypeset`）；
+    本模块不起子进程。缺席 = 公式按源码画、不报问题（没有接公式排版的调用方，行为与 PR 4 之前相同）。"""
+    if t.get("writing_mode") == WRITING_VERTICAL:
+        # 宁可当场报错，也不把竖排对象悄悄按横排排出来（错图比报错更糟）
+        raise ValueError("竖排文字请走 vertical.layout_text（plan 按 writing_mode 分派）")
+    text = t.get("text", "")
+    if not text.strip():
+        return None
+    slots, size, line_h, pad, interp, fmt = text_params(t, math)
     x0, y0 = mm2pt(t["x_mm"]) + pad, mm2pt(t["y_mm"]) + pad
     box_w = mm2pt(t["w_mm"]) - 2 * pad
     align = t.get("align", "left")
-
-    fam = latin_family(t.get("font_family"))
-    slots = MathSlots(lambda src: math.get(math_key(src, fam))) if math is not None else None
     units_lines = break_lines(text, faces, size, box_w, interp, fmt, slots)
     asc, desc = faces.primary.ascender, faces.primary.descender
     baseline0 = y0 + size * ((line_h - (asc - desc)) / 2 + asc)
@@ -547,10 +709,9 @@ def layout_text(t: dict, faces: FaceSet, math: dict | None = None) -> TextBlock 
                     pieces.append(piece)
                     piece_x.append(start)
                 after_math = False
-        logical = "".join(
-            seg_logical for _, sc, seg_logical, _ in line if not (sc == MATH and slots is not None)
-        )
-        rendered += logical
+        body = [seg for seg in line if not (seg[1] == MATH and slots is not None)]
+        logical = user_text("".join(seg[2] for seg in body))
+        rendered += cjk_probe(body)
         out.append(
             LaidOutLine(
                 x,

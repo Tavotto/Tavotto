@@ -17,6 +17,7 @@ order: 290
   `via ∈ {probe, glob, native}` 条目选完数据位置之后的确认页（ADR 0110）；0094 的写回脚本落地后走
   同一个底座。没有任何自动路径：样式跟随、规范修图、AI 刷新、MCP / Codex 插件、`tavotto run`、启动迁移
   一律不得调用提交 / 复原端点。
+- **导出修改后的 .py（ADR 0171）不是改脚本**：产物是导出目录里的新文件，不走这里的备份 / 确认，也绝不写原脚本；规则在 `export-pipeline.md`。
 - **共享底座 `engine/scriptbackup.py`（单文件）**：
   * `resolve(root, script)`——写哪个文件由服务端按项目 + 项目相对路径定（`projectenv.contained_path`），
     请求里不收绝对路径。拒绝：脚本或它在项目内的任一父目录是符号链接（`script_is_symlink`；指到项目外的

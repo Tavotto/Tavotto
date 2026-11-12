@@ -70,7 +70,7 @@ import getpass, json, os, sys
 # 昂贵的科学计算：外部计数文件观测它跑了几次（不是 AST 判）
 with open("compute.log", "a") as f:
     f.write("computed\\n")
-state = {"obj": object(), "pid": os.getpid()}
+state = {"obj": object(), "pid": os.getpid(), "ppid": os.getppid()}
 obj_id = id(state["obj"])
 
 def where():
@@ -87,6 +87,7 @@ tok = getpass.getpass("Token: ")
 seen["getpass_len"] = len(tok)
 seen["getpass_where"] = where()
 seen["start_pid"] = state["pid"]
+seen["start_ppid"] = state["ppid"]
 with open("seen.json", "w") as f:
     json.dump(seen, f)
 fig, ax = plt.subplots()
@@ -104,7 +105,6 @@ def test_four_input_forms_continue_in_the_same_process(tmp_path, caplog):
 
     p1 = wait_pending(session, "input")
     assert p1["prompt"] == "Your name? " and p1["masked"] is False
-    assert session.process_pid == session.owned.pid
     session.answer_input(p1["request_id"], text="Ada")
 
     p2 = wait_pending(session, "readline")
@@ -124,10 +124,11 @@ def test_four_input_forms_continue_in_the_same_process(tmp_path, caplog):
     assert seen["readline"] == "second line\n"
     assert seen["read"] == "body one\nbody two"
     assert seen["getpass_len"] == len(SECRET)
-    pid = session.owned.pid
+    pid = seen["start_pid"]
+    # 同一个进程：四次回答前后脚本 pid 不变；握手自报的就是它，纳管的是它或其 launcher 父进程
+    dk.assert_owned_process_identity(session, pid, seen["start_ppid"])
     for key in ("input_where", "readline_where", "read_where", "getpass_where"):
         assert seen[key] == {"pid": pid, "same_obj": True}, f"{key} 不是原地续跑"
-    assert seen["start_pid"] == pid
     assert (work / "compute.log").read_text().splitlines() == ["computed"], "科学计算不止一次"
     assert session.pending_input is None
 
@@ -461,13 +462,14 @@ def test_sized_readline_stops_at_size_without_waiting_for_newline():
 
 
 def test_readlines_honours_the_size_hint_like_a_real_text_stream(tmp_path):
-    """`readlines(hint)`:累计长度达到 hint 就停,不继续发起提问(Codex #1022 第九轮);`read(0)` / `readline(0)`
-    同样不提问。真文件:`StringIO('aa\\nbb\\n').readlines(3)` 只回第一行。"""
+    """`readlines(hint)`:累计长度**超过** hint 才停(CPython iobase.c,QA-WIN-56;此前误写成「达到」);
+    `read(0)` / `readline(0)` 不提问。真文件:`StringIO('aa\\nbb\\n').readlines(3)` 回两行,
+    `readlines(2)` 只回第一行。"""
     script = (
         dk.FIGURE_HEADER
         + """\
 import json, sys
-bounded = sys.stdin.readlines(3)           # 第一行 'aa\\n' 已经 3 个字符:读够即止
+bounded = sys.stdin.readlines(3)           # 'aa\\n' 恰好 3 个字符不算超过:继续读;'bb\\n' 之后 6 > 3 才停
 zero = (sys.stdin.read(0), sys.stdin.readline(0))
 tail = input("next? ")                     # 真正的下一问应当是这条,而不是又一个 readline
 json.dump([bounded, list(zero), tail], open("hint.json", "w"))
@@ -476,11 +478,13 @@ json.dump([bounded, list(zero), tail], open("hint.json", "w"))
     session = start(tmp_path, script)
     p = wait_pending(session, "readline")
     session.answer_input(p["request_id"], text="aa")
+    p2 = wait_pending(session, "readline")  # 等于 hint 不停:还要再问一行
+    session.answer_input(p2["request_id"], text="bb")
     nxt = wait_pending(session, None)
-    assert nxt["kind"] == "input", f"readlines(3) 读够之后还在提问: {nxt['kind']}"
+    assert nxt["kind"] == "input", f"readlines(3) 超过之后还在提问: {nxt['kind']}"
     session.answer_input(nxt["request_id"], text="done")
     dk.finish(session)
-    assert dk.read_json(tmp_path / "work" / "hint.json") == [["aa\n"], ["", ""], "done"]
+    assert dk.read_json(tmp_path / "work" / "hint.json") == [["aa\n", "bb\n"], ["", ""], "done"]
 
 
 def test_input_consumes_buffered_stdin_before_asking(tmp_path):

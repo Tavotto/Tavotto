@@ -2,14 +2,14 @@
 
 > 原文出自 `web/AGENTS.md`「素材库普通入口（2026-08-26，Compatibility Bridge Session 5）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`scriptRunStore.test.ts`、`ScriptLibrary.test.tsx`、`AssetBrowser.runtime.test.tsx`、`AssetBrowser.tiff.test.tsx`、`lib/panelSrc.test.ts`、`projectSwitchAssets.test.ts`、`openRequest.test.ts`、`FigurePickerDialog.test.tsx`、`AssetBrowser.foreign.test.tsx`、`ScriptLibrary.foreign.test.tsx`、`e2e/asset-library.spec.ts`、`projectSwitchDepRepair.test.ts`、`projectSwitchAi.test.ts`、`rebuildProgressId.golden.test.ts`
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`scriptRunStore.test.ts`、`ScriptLibrary.test.tsx`、`AssetBrowser.runtime.test.tsx`、`AssetBrowser.tiff.test.tsx`、`lib/panelSrc.test.ts`、`projectSwitchAssets.test.ts`、`openRequest.test.ts`、`FigurePickerDialog.test.tsx`、`AssetBrowser.foreign.test.tsx`、`ScriptLibrary.foreign.test.tsx`、`e2e/asset-library.spec.ts`、`projectSwitchDepRepair.test.ts`、`projectSwitchAi.test.ts`、`rebuildProgressId.golden.test.ts`、`lib/canvasFileIntake.test.ts`、`canvas/useCanvasScriptDrop.test.ts`、`lib/clipboardImagePaste.test.ts`、`lib/notebookRun.test.ts`、`ScriptLibrary.notebook.test.tsx`、`e2e/notebook-to-script.spec.ts`
 
 <!-- agents-route
 sheet: web/AGENTS.md
 order: 220
-改到: `AssetBrowser`、`ScriptLibrary`、`scriptRunStore` / `runtimeAssetStore` / `scriptLibraryStore` / `assetStore` / `depRepairStore` / `envStore` / `aiStore`、`FigurePickerDialog`
+改到: `AssetBrowser`、`ScriptLibrary`、`scriptRunStore` / `runtimeAssetStore` / `scriptLibraryStore` / `assetStore` / `depRepairStore` / `envStore` / `aiStore`、`FigurePickerDialog`、`lib/canvasFileIntake.ts` / `canvas/useCanvasScriptDrop.ts` / `lib/packageImport.ts` / `lib/notebookRun.ts`
 主题: 素材库普通入口 → `asset-library.md`
-必守要点: 七个 store 都有项目代际；同脚本防并发；多 Figure 结果绝不只显示第一张；素材卡加图走 `addFigureToLayout`
+必守要点: 七 store 有项目代际；同脚本防并发；多 Figure 全显示；加图 `addFigureToLayout`；拖图 `importAndPlace`；笔记本 `runNotebook`
 -->
 
 素材面板分「图」（FileAsset + RuntimeFigureAsset 同一个 listbox，runtime
@@ -46,6 +46,13 @@ order: 220
   `envStore` 同样有项目代际（`resetProject()` 换代）：`refresh` / `setPython` / `setProjectPython` /
   `setWorkdirMode` / `revertAdoptedEnvironment` 在 await 之后、**写状态的那一侧**判代际——调用方在拿到结果之后
   再判已经晚了（写在返回之前就发生了，#605 评审）。看护 `store/projectSwitchDepRepair.test.ts`。
+  **await 之后先判上下文还在，写 store 读最新状态；请求身份取不复用的代次（错题本 L-123 升级，2026-11-09）。**
+  切项目、换运行目录、收起或删行之后，旧续体回来不得落账；身份不能从会被作废、收起或清项目删除的显示行推导，
+  替代请求必须拿新代次。用延迟响应矩阵看护，撤掉守卫要红。为什么：切项目或并发下载后旧续体仍落账，三个 PR 连报
+  P1（#1631、#1734、#1756）；2026-11-07 运行目录探测在途时删行再立即重跑，新请求复用了旧代次，统一作废用例只覆盖
+  已落地的捕获，靠完整评审才补获（#1800）。
+  2026-11-11 转换对照结果在切项目后才返回，只在请求前判过代次，旧项目的对照写进新项目，评审报 P1（#1825）。
+  同日样式面板「按期刊调整」新建样式在途时换画布，回来绑到了当前画布上，评审报 P1（#1851）。
   `aiStore`（改图助手的对话）同样在 `resetForNewProject()` 里 `clear()` 换代（#589）：会话记下所属项目
   （`project`），发起 / 撤销 / 中止都钉在它上面；`start` / `revert` / `cancel` 在 await 之后判代际，
   撤销的后果（标脏、提示）由 `revertSession` 在 `revert()` 回 `true` 之后才写；`ai.*` 事件带发起项目的
@@ -426,3 +433,28 @@ RenderCore，必须明确报 `svg_asset_export_unsupported`，不能交付空图
 - **R / MATLAB 入口（ADR 0143 修订「项目内入口」）**：素材卡的 `capability.foreign_source` 与脚本库的 `/api/registry` `foreign_scripts` 都是**后端报的事实**，
   前端不按后缀配对、不自己判语言。素材卡：选中这样的图，列表外一句（`reasonText` 换成「这张图是 R / MATLAB 画的」）+ 主按钮「生成可编辑版本」；脚本库：单独一组、每行文件名 + 语言，
   **没有 ▶**、不进 `groupOf` / 运行状态机 / 准备会话，点一行 = 出主页那张卡。两处动作都在 `lib/foreignEntry.ts`，落到同一个 `foreignScriptStore` 提议与 `convertStore.start`，不另起流程。
+  采用前的 `ConvertCompare` 原样展示后端 `comparison.output_evidence` 的源码文件名线索和改道写入尝试；
+  未记录、无可用记录、列表截断各自说清，不把线索标成已完成输出或完整性证明。旧后端的 R / MATLAB
+  结果仍提示出图不等于输出完整。看护 `components/PreparationCard.test.tsx`。
+  `output_evidence.files`（#1809）非空时，清单替代那几行线索：每个能确定的写出一行，状态词「一致 / 不同 / 没法比 / 没写出」，没法比的原因放 title，
+  「成功出图不能证明…」那句放清单的 title；缺的文件行内「我来指定」（桌面走 `pickAnyFile`，只登记文件名、文件不动）与「不需要」，
+  有没处理的行时点采用先问一句；有「不同」时采用钮改「照样采用」，「让 AI 再对一次」（`realignConvert`）在底部「放弃」左边。看护 `PreparationCard.test.tsx`。
+
+- **拖 / 粘贴文件进画布（ADR 0176，2026-11-10）**：系统文件拖到画布、⌘V 粘贴图片，**每一样东西按类型接住**，全文在 ADR 0176 的终态表。
+  * 图片（PNG / JPG / TIFF / PDF / SVG，后缀表 `ASSET_EXTENSIONS` 与后端 `engine/assetimport.EXTENSIONS` 同源，`tests/golden/asset_import_extensions.json`）一律 `lib/canvasFileIntake.importAndPlace`：
+    逐个 `importAsset`（`POST /api/assets/import`，字节上传、发起项目随请求带走）→ `assetStore.load({ force: true })` 重扫（不合并在途那份）→ **经 `addPanelToCanvas`** 放置（恢复门的 `deferUserEntry` 因此自动生效；排队时落点丢掉）。
+    不造第二套对象模型、不直接调 `actions.addPanel`。第一张放落点，其余不带点（常规摆放避让已有对象）；上传 / 重扫之后**两处**都要判项目没换（换了整批作废、什么都不说），落点的画布变了就不带点。
+    没有项目（`currentProjectId() === null`：playground / MCP 画布）不发请求。
+  * **失败出口只有三种结局**（静默做完并说一句 / 一句话 + 一个主按钮直接完成用户原来想做的事 / 真做不了「发送问题反馈」）：问题一律经 `reportProblems`（带 `feedbackAction()`，引擎说反馈入口关着才不画按钮），
+    不出现无按钮的红色报错，也不出现「请去某处做某事」。一批里既有脚本又有没成的：脚本那一句先说，问题排在它后面（`flushTail`，带按钮的问题有最后发言权）。
+  * 项目外的 `.py` / R / MATLAB：主按钮「打开它所在的项目」（`openItsProject`，与主页同一条打开并运行 / 出「生成可编辑版本」卡）；项目包走 `lib/packageImport.openPackageFile`，与顶栏「导入项目包」是同一条流程。
+  * 粘贴：`handlePasteEvent` 在**不是对象负载**时看图片文件，有文字就不拦，输入框 / 对话框让位（`runDiscreteAction`）；文件名 `pasted-<时间戳>.png`。
+  * 桌面壳的原生拖放处理是关掉的，图片走 DOM `File` 字节，**不依赖壳的路径事件**；没有脚本的一次放下里壳那条 `unsupported` 事件不配对、静默过期。系统图片拖动时不画落点预览（dragover 读不到文件内容，没有真实尺寸，不造假）。
+  * 看护：`lib/canvasFileIntake.test.ts`、`canvas/useCanvasScriptDrop.test.ts`、`lib/clipboardImagePaste.test.ts`、后端 `tests/test_asset_import.py`。
+
+- **`.ipynb` 抽成同名 `.py` 再运行（ADR 0179，2026-11-10）**：三个入口（脚本库一行、拖进画布、拖进主页）共用 `lib/notebookRun.runNotebook`——后端抽取（`POST /api/notebook/extract` 项目相对路径 /
+  `/api/notebook/import` 内容上传，确定性、不经 AI、不联网），再 `projectPreparationStore.open(scriptTarget(script,{reuse:true}),{run:true, placeIn})`，**不另造运行路径**，也不在前端解析笔记本。
+  * 脚本库：`/api/registry` 的 `notebook_scripts`（后端报「还没转成脚本的」；已转过且 `.py` 不比笔记本旧的不列）单独一组，行样式沿用 R / MATLAB 那一组，主动作是行里一颗 ▶ 样式的钮（`data-notebook-run`）；
+    不进 `groupOf` / 运行状态机 / 准备会话。画布：优先级 `.py` > 笔记本 > R/MATLAB（与壳 `drop_paths::classify` 一致）；拿到路径 → 项目里直接抽取运行、项目外给「打开它所在的项目」；拿不到路径（浏览器、壳没交来）→ 读 `File` 内容上传，**不弹选择器**。
+  * 失败一律 `sayNotebookFailed`（一句话 + `feedbackAction()`）；抽取 / 上传期间换项目整件作废、不说；没有项目（playground / MCP 画布）不发请求。
+  * 看护：`lib/notebookRun.test.ts`、`ScriptLibrary.notebook.test.tsx`、`canvas/useCanvasScriptDrop.test.ts`（笔记本一组）、`components/home/HomeView.test.tsx`（笔记本）、`e2e/notebook-to-script.spec.ts`、后端 `tests/test_notebook_script.py`。

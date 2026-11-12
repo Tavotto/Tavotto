@@ -100,7 +100,7 @@ _PATH_BASELINE = list(sys.path)
 #: manifest / overrides**——它们在模块层 import matplotlib 与 numpy，而
 #: `import matplotlib` 会当场读 cwd 下的 matplotlibrc、钉死 rcParams，
 #: 用户脚本自己那句 `matplotlib.use(...)` 的语义就不一样了。
-_PHASE1 = ("figcapture", "patchspec", "executionfact", "inputdeclaration")
+_PHASE1 = ("figcapture", "patchspec", "executionfact", "inputdeclaration", "cmddiag")
 #: 第二阶段（屏障那一刻才装）：要 matplotlib/numpy 的那几个，而那时用户早就
 #: import 过了；外加只被它们平铺 import 到的纯标准库模块。
 #:
@@ -838,7 +838,7 @@ class _BridgeStdin(io.TextIOBase):
         return out
 
     def readlines(self, hint=-1):  # noqa: D102
-        # 与 IOBase.readlines 一致：hint <= 0 / None 读到 EOF；否则累计长度达到 hint 就停（读够即止，不再提问）
+        # 与 IOBase.readlines 一致：hint <= 0 / None 读到 EOF；否则累计长度「超过」hint 才停（CPython iobase.c：length > hint）
         out = []
         total = 0
         while True:
@@ -847,7 +847,7 @@ class _BridgeStdin(io.TextIOBase):
                 return out
             out.append(line)
             total += len(line)
-            if hint is not None and hint > 0 and total >= hint:
+            if hint is not None and hint > 0 and total > hint:
                 return out
 
 
@@ -902,6 +902,7 @@ class BridgeRun:
         self.session = None  # figsession.LiveFigureSession（第二阶段才有）
         self.handler = None  # wireproto.V1Handler
         self.script_error: dict | None = None
+        self.missing_read: dict | None = None
         self.released = False
         #: 这一次屏障的 `release_barrier()` 已经在 continue 里干净地做完了（`barrier()` 的
         #: `finally` 不再做第二遍：第二遍会把已经恢复成原样的 Figure 快照成空列表存下来）。
@@ -1471,6 +1472,7 @@ class BridgeRun:
                 if self._captured_inputs is not None and self._captured_input_archive is not None
                 else {}
             ),
+            **({"missing_read": self.missing_read} if self.missing_read else {}),
         )
         try:
             while not self.released:
@@ -1612,6 +1614,15 @@ def _unreadable_folder_extra(exc: BaseException, args) -> dict:
     return {"unreadable_folder": fact, "unreadable_folder_private": private} if fact else {}
 
 
+def _missing_command_extra(exc: BaseException, args) -> dict:
+    """脚本拉起外部命令却找不到可执行文件：`{"missing_command": {...}}`（与 safe worker 同一份 `cmddiag.collect`，TVD-V7R4）。
+    带参数运行时命令名可能由 argv 变形而来，口径同 worker 的敏感运行；任何意外都当没有，绝不盖掉原来的脚本错误。"""
+    try:
+        return _PKG.cmddiag.collect(exc, sensitive=bool(args.user_argv))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _foreign_abi_extra(exc: BaseException, args) -> dict:
     """脚本失败是不是「它加进 `sys.path` 的私有目录里的编译扩展是为别的 Python 小版本编的」（ADR 0154）。
     判据在 `bridgeboot.foreign_abi_facts`（与 safe worker 同一份）；任何意外都当没有，绝不盖掉原来的脚本错误。"""
@@ -1676,7 +1687,7 @@ def main(argv: list | None = None) -> int:
     }
     if args.observe_inputs and args.project_root:
         # 输入观察装在用户代码之前；numpy 那条通道等用户 import numpy 时补（观察器自己不 import 任何东西）
-        _INPUTS = figcapture.InputObserver(args.project_root)
+        _INPUTS = figcapture.InputObserver(args.project_root, observe_failed_reads=True)
         _INPUTS.install()
         callbacks["numpy.lib._datasource"] = _INPUTS.observe_numpy_datasource
     # 钩子：**自己不 import matplotlib**，只在用户 import 到的那一刻挂上去。
@@ -1710,13 +1721,17 @@ def main(argv: list | None = None) -> int:
         exit_code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
     except BaseException as exc:  # noqa: BLE001 — 脚本炸了也要把已有的图交出去
         exit_code = 1
+        if _INPUTS is not None:
+            run.missing_read = _INPUTS.uncaught_missing_read(exc)
         run.script_error = {
             "code": "script_error",
             "message": f"{type(exc).__name__}: {exc}",
             "traceback": traceback.format_exc(),
+            "exception_category": _PKG.executionfact.exception_category(exc),
             # 跳过之后仍失败、而失败是脚本加进 sys.path 的项目外目录读不了（ADR 0153）：只带目录名
             **_unreadable_folder_extra(exc, args),
             **_foreign_abi_extra(exc, args),
+            **_missing_command_extra(exc, args),
         }
         traceback.print_exc()
     finally:
@@ -1765,7 +1780,14 @@ def main(argv: list | None = None) -> int:
         # 与 `tavotto run` 的 status-file 同一判据：按预览发布账本数，不按捕获到的 Figure 数——
         # 预览没发布成的图不算「完成」，桌面卡片与终端不得一个说 2、一个说 1（P01b，EX12，Codex #958）
         figures = len(figcapture.published_preview_stems(args.out_dir)) if args.out_dir else 0
-        run.control.event("exit", code=exit_code, figures=figures)
+        category = (run.script_error or {}).get("exception_category")
+        run.control.event(
+            "exit",
+            code=exit_code,
+            figures=figures,
+            **({"exception_category": category} if category else {}),
+            **({"missing_read": run.missing_read} if run.missing_read else {}),
+        )
         run.control.close()
     return exit_code
 

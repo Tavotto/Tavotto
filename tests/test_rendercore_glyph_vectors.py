@@ -101,7 +101,7 @@ def test_vectors_differ_from_the_retired_backend_only_in_the_approved_ways():
 def test_the_coverage_table_lost_only_the_fallback_layer_and_gained_only_approved_primary():
     """覆盖表那一侧同一条闭集判据（在切默认那一刻对着两张表量出来的数字，ADR 0072）：旧 primary 653 个码位 →
     新 2305（+1668 / −16；ADR 0060 §1 的 +1684 是 U06 evidence 那张按 serif-regular 出的表，这张是 12 脸交集），
-    旧 cjk 34 012 → 30 887（Hangul 等不在），旧 fallback 27 610 → 0。数字变了就是字体集合 / 算法变了，
+    旧 cjk 34 012 → 30 874（Hangul 等不在；表取 Noto Sans SC 与 Noto Serif SC 的交集，比单取 Sans 少 13 个兼容汉字，ADR 0060 2026-11-04 修订），旧 fallback 27 610 → 0。数字变了就是字体集合 / 算法变了，
     先改 ADR 0060 §1 / 0072 再改这里。"""
 
     def cps(layers: dict, name: str) -> set[int]:
@@ -111,7 +111,7 @@ def test_the_coverage_table_lost_only_the_fallback_layer_and_gained_only_approve
     assert (len(cps(old, "primary")), len(cps(new, "primary"))) == (653, 2305)
     assert len(cps(new, "primary") - cps(old, "primary")) == 1668
     assert len(cps(old, "primary") - cps(new, "primary")) == 16
-    assert (len(cps(old, "cjk")), len(cps(new, "cjk"))) == (34012, 30887)
+    assert (len(cps(old, "cjk")), len(cps(new, "cjk"))) == (34012, 30874)
     assert (len(cps(old, "fallback")), len(cps(new, "fallback"))) == (27610, 0)
 
 

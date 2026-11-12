@@ -14,14 +14,14 @@
 
 | profile | 证据 | 配置落点（stdout 合并到哪） | 顶层 / 条目字段 | 超时 | Skill |
 | --- | --- | --- | --- | --- | --- |
-| `cursor` | search_snippet | `<项目>/.cursor/mcp.json`（或 `~/.cursor/mcp.json`） | `mcpServers` / `command` `args` `env` | 未核实，不写 | native：`.cursor/skills/` 或 `.agents/skills/` |
-| `zcode` | official_source | `<项目>/.agents/mcp.json`，或 MCP 设置界面 | `mcpServers` / `command` `args` `env` | `timeoutMs`（毫秒） | instruction_fallback |
+| `cursor` | search_snippet | `<项目>/.cursor/mcp.json`（或 `~/.cursor/mcp.json`） | `mcpServers` / `command` `args` `env` | 未核实，不写 | native：`.cursor/skills/` 或 `.agents/skills/`；用户级 `~/.cursor/skills` |
+| `zcode` | official_source | `<项目>/.agents/mcp.json`，或 MCP 设置界面 | `mcpServers` / `command` `args` `env` | `timeoutMs`（毫秒） | native：用户级 `~/.zcode/skills` |
 | `dsh` | official_source | Cordis patch：`dsh web --patch <文件>`，或 `$DSH_HOME/profiles/<名>/cordis.patch.yml` | `insert` → `@deepseek-ai/dsh-mcp-client` → `serverName` `transport: stdio` `command` `args` `env` | `toolCallTimeoutMs`（毫秒） | native：`.dsh/skills/` 或 `.agents/skills/` |
 | `workbuddy` | official_source | WorkBuddy：插件 → MCP Server → 配置 MCP | `mcpServers` / `command` `args` `env` | 无按服务器字段（CLI 用 `MCP_TOOL_TIMEOUT`），不写 | instruction_fallback |
 | `claude-code` | official_source | `<项目>/.mcp.json`（project 作用域） | `mcpServers` / `type: stdio` `command` `args` `env` | `timeout`（毫秒，≥1000） | native：`.claude/skills/` 或 `~/.claude/skills/` |
 | `claude-desktop` | official_source | `claude_desktop_config.json`（macOS `~/Library/Application Support/Claude/`，Windows `%APPDATA%\Claude\`） | `mcpServers` / `command` `args` `env`（Windows 另加展开后的 `APPDATA`） | 无该字段 | instruction_fallback |
-| `trae` | official_source | 一键链接 `trae://` / `trae-cn://`；MCP 窗口 → 手动添加；或 `<项目>/.trae/mcp.json` | `mcpServers` / `command` `args` `env` | `env` 里的 `START_MCP_TIMEOUT_MS` / `RUN_MCP_TIMEOUT_MS`（毫秒，字符串） | native：`.trae/skills/`（全局 `~/.trae` / `~/.trae-cn`） |
-| `vscode` | official_source | `<项目>/.vscode/mcp.json` | **`servers`** / `type: stdio` `command` `args` `env` | 无该字段 | native：`.github/skills/` 或 `.agents/skills/` |
+| `trae` | official_source | 一键链接 `trae://` / `trae-cn://`；MCP 窗口 → 手动添加；或 `<项目>/.trae/mcp.json` | `mcpServers` / `command` `args` `env` | `env` 里的 `START_MCP_TIMEOUT_MS` / `RUN_MCP_TIMEOUT_MS`（毫秒，字符串） | native：`.trae/skills/`（全局国内版 `~/.trae-cn` 官方，国际版 `~/.trae` 待验） |
+| `vscode` | official_source | `<项目>/.vscode/mcp.json` | **`servers`** / `type: stdio` `command` `args` `env` | 无该字段 | native：`.github/skills/` 或 `.agents/skills/`；用户级 `~/.copilot/skills` |
 | `minimax-code` | official_source | `<项目>/.mcp.json`（mcode 会话主目录，不向上找） | `mcpServers` / `type: stdio` `command` `args` `env` | `timeout`（毫秒） | native：`.agents/skills/` `.claude/skills/` `.minimax/skills/` |
 
 工具超时的唯一出处是包里 Codex 配置的 `tool_timeout_sec`（1800 秒）；有经核实字段的
@@ -37,7 +37,8 @@
 - 来源：<https://cursor.com/docs/mcp>、<https://cursor.com/docs/skills>（摘要）。VS Code 官方文档的
   「MCP 配置发现」表也独立列出 Cursor 的 `.cursor/mcp.json` / `~/.cursor/mcp.json`。
 - stdio 字段 `type` `command` `args` `env` `envFile`；插值 `${env:NAME}` `${workspaceFolder}` 等（我们不用）。
-- Skill：项目 `.agents/skills/`、`.cursor/skills/`，兼容读取 `.claude/skills/`、`.codex/skills/`。
+- Skill：项目 `.agents/skills/`、`.cursor/skills/`；用户级官方 `~/.cursor/skills`，另读 `~/.agents/skills`、`~/.claude/skills`、`~/.codex/skills`
+  （2026-11-06 核实）。桌面「接入」写 `~/.cursor/skills/tavotto-figure/`。**待验**：同时接入 Claude Code 时 `~/.claude/skills` 里的同名技能会不会出现两份。
 - MCP Apps：未核实，画布一栏 `not_run`。
 
 ### ZCode（official_source，2026-09-28 重查）
@@ -55,6 +56,7 @@
   **同一份 Claude 清单直接可装**（ADR 0109），清单里为它加了 `timeoutMs`。市场条目不写 `version`
   （Claude Code 要求版本只在 plugin.json）——ZCode 按条目 `version` 判更新，所以**不会提示有新版**，
   更新要手动 `zcode plugins update tavotto@tavotto`。
+- Skill：用户级官方 `~/.zcode/skills`，设置里可逐技能开关（2026-11-06 核实）；桌面「接入」写 `~/.zcode/skills/tavotto-figure/`；SKILL.md 的 `description` 不超过 1024 字符（`tests/test_host_skills.py` 看护）。
 - 客户端能力：**不回 `roots/list`**、不声明 elicitation、不渲染 MCP Apps；server 进程的 cwd 是工作区目录，
   授权落到 `RootAuthority` 的 cwd 兜底（主目录本身会被拒）。工具结果超过约 50 KB 截断后交给模型。
 - 打开项目会连接项目配置里的全部 MCP 服务——不可信仓库里先看 `.zcode/config.json`。
@@ -108,6 +110,7 @@
 - 已知宿主行为：WorkBuddy 5.6.2 一轮后回收 CLI 进程（ADR 0078 已处理会话接力）。GUI 里 CLI 带
   `--strict-mcp-config` 起、插件 MCP 由 GUI 读出再投给 CLI，合并规则与 CLI 相同。
 - 连接器商店审核与完整 Buddy 应用不在范围内。
+- Skill：官方未写明用户级目录；本机存在 `~/.workbuddy/skills`，桌面「接入」写那里，**待验**宿主是否真的读它（2026-11-06）。
 
 ### Claude Code（official_source）
 
@@ -149,7 +152,7 @@
   macOS `~/Library/Logs/Claude/mcp*.log`、Windows `%APPDATA%\Claude\logs`。
 - 官方排障：Windows 上 server 环境里可能没有 `APPDATA`，要在 `env` 里写展开后的值——Tavotto 的
   配置目录在 Windows 上正是 `%APPDATA%\Tavotto`，所以 Windows 上生成时带上 `APPDATA`。
-- 没有项目 cwd / Roots：授权完全来自 `TAVOTTO_MCP_ROOTS`（用户选的目录），不用桌面启动目录或 HOME 兜底。
+- 没有项目 cwd / Roots：配置生成器（`--project-root`）授权来自 `TAVOTTO_MCP_ROOTS`；桌面「接入」按钮写 `TAVOTTO_MCP_SCOPE=local`，范围是本机任意位置、只拦凭据类文件（ADR 0009 §1b，2026-11-05）。
 - Linux 没有官方 Claude Desktop；`.mcpb` 扩展是可选包装，本轮不做。
 - 宿主内置的 Node / 云端代码执行环境不是本机 Python，路径也不是本机文件系统——不能传给本地 Tavotto。
 
@@ -166,7 +169,7 @@
   超时写在 `env` 里 `START_MCP_TIMEOUT_MS` / `RUN_MCP_TIMEOUT_MS`（毫秒）。变量只有 `${workspaceFolder}`（我们不用）。
 - **登记 ≠ 智能体能调用**：内置智能体自动带上全部 MCP；自定义智能体要在 MCP 一栏勾上 tavotto。
 - 客户端能力（文档列出的）：tools、日志、超时；**没有 roots、elicitation、MCP Apps**——授权只靠 `TAVOTTO_MCP_ROOTS`。
-- Skill：项目 `.trae/skills/<名>/SKILL.md`；全局国际版 `~/.trae/skills`、国内版 `~/.trae-cn/skills`；项目
+- Skill：项目 `.trae/skills/<名>/SKILL.md`；全局国内版官方 `~/.trae-cn/skills`（2026-11-06 核实），国际版 `~/.trae/skills` 仅第三方说法、**待验**；桌面「接入」只写已存在的编辑器目录；项目
   `.agents/skills` 要在设置里开开关才认。**不照抄** `.cursor/skills` / `.claude/skills`（文档没说认）。
 - 插件：国内版 IDE 的「插件市场」是官方货架（清单格式、上架与从 GitHub 安装都没有文档），国际版没有；
   企业版 TraeCode CLI 2.0 的安装包里有 `.claude-plugin` / `.codex-plugin` 清单的字样，但要企业账号，未验证。
@@ -197,7 +200,7 @@
   我们不用）。
 - 核对：MCP: List Servers → Show Output；Chat 的 Configure Tools 勾选工具；MCP: Reset Cached Tools。
   受限模式（未信任工作区）不会启动工作区服务。
-- Skill：项目 `.github/skills/`、`.claude/skills/`、`.agents/skills/`；个人 `~/.copilot/skills/` 等。
+- Skill：项目 `.github/skills/`、`.claude/skills/`、`.agents/skills/`；用户级官方 `~/.copilot/skills`，本地会话另读 `~/.claude/skills`、`~/.agents/skills`（2026-11-06 核实）。桌面「接入」写 `~/.copilot/skills/tavotto-figure/`。**待验**：与 Claude Code 同时接入时的同名技能。
 - MCP Apps：支持，受设置 `chat.mcp.apps.enabled` 控制；组织策略禁用时如实告知，**测试与生成器都不替用户改设置**。
 - 远程窗口（SSH / WSL / Dev Containers）不在首版承诺内。
 
@@ -208,7 +211,7 @@
   （2.0 起共享，本机残留是 0 字节空文件，按 `{}` 处理）与 `~/.gemini/antigravity/mcp_config.json`（旧）。
   Windows 的 `~` 是 `%USERPROFILE%`。
 - 「装了没有」只认 `~/.gemini/config` 或 `~/.gemini/antigravity` 存在；`~/.gemini` 本身 Gemini CLI 也会建，不算。
-- 没有已知深链协议，不写超时字段、不装 Skill；执行器（`agy -p`）不在范围。
+- 没有已知深链协议，不写超时字段；Skill：官方 `~/.gemini/config/skills`（2026-11-06 核实），桌面「接入」写 `~/.gemini/config/skills/tavotto-figure/`；执行器（`agy -p`）不在范围。
 
 ## 失败分档（宿主里「没工具」不是一件事）
 
@@ -217,6 +220,6 @@
 | 宿主 MCP 列表里 tavotto 红 / 起不来 | 服务器没启动 | 宿主日志；`<python> <包>/mcp/server.py --health` 在终端跑不跑得起来 | 重新生成配置（`--python` 指一个真能跑的解释器）；包目录挪过就重新生成 |
 | 列表里是绿的，但对话里没有工具 | 工具没发现 / 当前智能体未启用 | VS Code Configure Tools、Trae 智能体 MCP 栏、DSH 等 `mcp__tavotto__*` 出现 | 在所用智能体里启用；重开对话 |
 | 只有 `tavotto_health` 一个工具 | 引擎不可用（降级 server） | health 的 `code`：`desktop_only` / `tavotto_missing` / `engine_too_old` / `engine_incompatible` / `engine_unavailable` | 按 code 只修那一项（provision / pipx / 升级引擎） |
-| 工具在，但打开图报 `path_out_of_scope` / `no_workspace_root` | 项目未授权 | health 的 `roots` / `root_authority.source` | 用正确的 `--project-root` 重新生成；不要放宽到 HOME |
+| 工具在，但打开图报 `path_out_of_scope` / `no_workspace_root` | 项目未授权 | health 的 `roots` / `root_authority.source` | 用正确的 `--project-root` 重新生成；要放开整台机器就用按钮写的 `TAVOTTO_MCP_SCOPE=local`（只拦凭据类文件，ADR 0009 §1b），不要把 `TAVOTTO_MCP_ROOTS` 设成 HOME（会被拒） |
 | 工具正常、没有画布 | UI 没显示 | `checks.canvas_resource.ok` 为真但宿主不渲染 MCP Apps | 这是宿主能力 / 设置；工具流程照常走完，不要把外部窗口叫「内嵌画布」 |
 | 宿主提示被管理员 / 策略禁止 | 组织策略 | 宿主的策略提示 | 找管理员；**不要**把「全部工具自动批准 / 关闭安全策略」当通用修复 |

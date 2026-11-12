@@ -469,6 +469,20 @@ jobs:
               --config '{"bundle":{"createUpdaterArtifacts":false}}' ${ARCH_CONFIG[@]+"${ARCH_CONFIG[@]}"}
           fi
 
+      - name: 还原符号链接（macOS：去掉 Tauri 复制出来的重复二进制）
+        # PyInstaller 的 dist/Tavotto 用相对符号链接让同一份库只存一次（Python 解释器库 ×3、libqpdf ×2、
+        # PIL 的 .dylibs ×2 …）；tauri build 搬进 .app 时把它们全部解引用成真拷贝（实测 dist 19 个链接 → .app 0 个，
+        # 多 ≈ 20 MB 解压 / 十几 MB 压缩）。必须在**签名之前**换回链接——签完每份拷贝带各自的签名，字节就不同了。
+        # `check` 随后量最终 .app 的真文件：sidecar 里（runtime/ 除外）不许再有 ≥256 KB 的同内容重复。
+        # 看护：tests/test_relink_macos_symlinks.py。
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=src-tauri/target/release/bundle/macos/Tavotto.app
+          python scripts/relink_macos_symlinks.py relink --src dist/Tavotto --app "$APP"
+          python scripts/relink_macos_symlinks.py check --app "$APP"
+
       - name: 收集调试符号（另存，不进安装包、不进更新清单）
         # 发出去的二进制仍是剥光的；这里把同一次构建出的符号文件另存成独立的
         # workflow artifact `debug-symbols-<腿>`，崩溃栈 / .dmp 靠它符号化。

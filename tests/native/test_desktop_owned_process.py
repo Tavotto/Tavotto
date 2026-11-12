@@ -71,6 +71,8 @@ with open("observed.json", "w") as f:
         "cwd": os.getcwd(),
         "marker": os.environ.get("TAVOTTO_P06_MARKER"),
         "exe": sys.executable,
+        "pid": os.getpid(),
+        "ppid": os.getppid(),
         "token_visible": "TAVOTTO_BRIDGE_TOKEN" in os.environ,
     }, f)
 print("OBSERVED-DONE", flush=True)
@@ -107,7 +109,7 @@ def test_spawn_uses_the_launch_identity_and_real_file_semantics(tmp_path):
         assert list(img.size) == seen["size"]
     assert (work / "cache.json").read_text() == '{"v": 2}'
     assert "OBSERVED-DONE" in dk.tail(session)
-    assert session.process_pid == session.owned.pid
+    dk.assert_owned_process_identity(session, seen["pid"], seen["ppid"])
 
     dk.finish(session)
     assert session.exit_code == 0 and session.owned.finished

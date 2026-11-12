@@ -4179,7 +4179,7 @@ dependencies = [
 
 [[package]]
 name = "tavotto-desktop"
-version = "0.20.0"
+version = "0.21.1"
 dependencies = [
  "base64 0.22.1",
  "iana-time-zone",
@@ -4206,6 +4206,7 @@ dependencies = [
  "time",
  "tokio",
  "url",
+ "webview2-com",
  "windows",
 ]
 

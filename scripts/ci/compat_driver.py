@@ -28,6 +28,7 @@ import collections
 import contextlib
 import io
 import json
+import math
 import os
 import re
 import runpy
@@ -99,6 +100,44 @@ def _reference_invocation(req: dict, default_cwd: str) -> tuple[str, list[str]]:
 
 
 # ---------------------------------------------------------------- 原生对照
+class _NativeSaveWatcher:
+    """Observe every post-save stale signal, including those followed by a draw."""
+
+    def __init__(self, original):
+        self.original = original
+        self.changed = False
+
+    def __call__(self, artist, value):
+        if value:
+            self.changed = True
+        if self.original is not None:
+            return self.original(artist, value)
+        return None
+
+
+def _tight_layout_parameters(engine):
+    """Return a safe immutable parameter snapshot, or None when not understood."""
+    try:
+        params = engine.get()
+        if type(params) is not dict or set(params) != {"pad", "h_pad", "w_pad", "rect"}:
+            return None
+
+        def number(value):
+            return type(value) in (int, float) and math.isfinite(value)
+
+        values = [params[name] for name in ("pad", "h_pad", "w_pad")]
+        if any(value is not None and not number(value) for value in values):
+            return None
+        rect = params["rect"]
+        if rect is not None:
+            if type(rect) not in (tuple, list) or len(rect) != 4 or not all(map(number, rect)):
+                return None
+            rect = tuple(rect)
+        return (*values, rect)
+    except Exception:  # noqa: BLE001 - unknown layout state cannot justify freezing
+        return None
+
+
 @contextlib.contextmanager
 def _observe_native_crop(figure):
     """Observe Matplotlib's resolved crop during the original save, without another draw.
@@ -136,6 +175,7 @@ def run_native(req: dict) -> int:
     matplotlib.use("Agg")
     import matplotlib.figure as mfigure
     import matplotlib.pyplot as plt
+    from matplotlib.layout_engine import TightLayoutEngine
 
     sys.path.insert(0, os.path.dirname(req["script"]))
     sys.path.insert(0, req["project"])
@@ -151,6 +191,13 @@ def run_native(req: dict) -> int:
     calls: dict = {}
     extras: dict = {}
     crops: dict = {}
+    # id(Figure) → 它成功写过的 savefig stem：同一路径被后写者顶掉、改名成 `<脚本>-N` 的图，
+    # 像素层靠这张表认出它原本存的是哪张已登记的图（`expected.fidelity=false` 的声明按 stem 写）
+    saved_as: dict[int, set] = {}
+    save_counts: dict[int, int] = {}
+    save_watchers: dict[int, tuple[object, _NativeSaveWatcher]] = {}
+    save_layouts: dict[int, tuple[object, tuple]] = {}
+    watcher_pristine: dict[int, bool] = {}
     # 写进 `PdfPages` 的图：与产品三条入口同一个类、同一个位置（保存成功之后记，脚本结束先于 pyplot 兜底认领），
     # 否则对照组没有 `all_samples` 这张图、两边 stem 对不上（#1370）
     pdf_pages = figcapture.PdfPagesLedger()
@@ -164,6 +211,7 @@ def run_native(req: dict) -> int:
         with _observe_native_crop(self) as observed:
             result = real_savefig(self, fname, *args, **kwargs)  # ← 照常写出去
         if stem:  # 成功写盘之后才记账（失败的保存不顶替任何人），与 native bridge 同序
+            saved_as.setdefault(id(self), set()).add(stem)
             figcapture.note_savefig_writer(
                 writers,
                 captured,
@@ -181,6 +229,23 @@ def run_native(req: dict) -> int:
             crops[id(call)] = observed[0]
         elif figcapture.is_pdf_pages(fname):
             pdf_pages.note(fname, self)
+        # Only a single, unmodified saved Figure can be sampled without an
+        # additional tight-layout iteration. A draw must not clear the record of
+        # a previous change; if the observer is replaced, do not freeze layout.
+        save_counts[id(self)] = save_counts.get(id(self), 0) + 1
+        if stem and save_counts[id(self)] == 1:
+            try:
+                engine = self.get_layout_engine()
+                if type(engine) is not TightLayoutEngine:
+                    return result
+                params = _tight_layout_parameters(engine)
+                if params is not None:
+                    watcher = _NativeSaveWatcher(self.stale_callback)
+                    self.stale_callback = watcher
+                    save_watchers[id(self)] = (self, watcher)
+                    save_layouts[id(self)] = (engine, params)
+            except Exception:  # noqa: BLE001 - observing must not fail a native save
+                pass
         return result
 
     mfigure.Figure.savefig = recording_savefig
@@ -208,6 +273,14 @@ def run_native(req: dict) -> int:
         )
     finally:
         mfigure.Figure.savefig = real_savefig
+        for figure, watcher in save_watchers.values():
+            try:
+                intact = getattr(figure, "stale_callback", None) is watcher
+                watcher_pristine[id(figure)] = intact and not watcher.changed
+                if intact:
+                    figure.stale_callback = watcher.original
+            except Exception:  # noqa: BLE001 - unknown observation cannot justify freezing
+                watcher_pristine[id(figure)] = False
 
     # 写了文件却因 stem 被别的图持有而没认领的图（`panel.png` 甲 / `panel.pdf` 乙）：先于 pyplot 兜底补进来，
     # 与产品三条入口同一个函数、同一个顺序——对照组也要有 `panel-2` 这张图，否则像素层只剩甲
@@ -242,10 +315,28 @@ def run_native(req: dict) -> int:
         try:
             if call:
                 # The save-time crop is authoritative even if rcParams changed later.
-                with matplotlib.rc_context({"savefig.bbox": None}):
-                    real_savefig(
-                        fig, path, format="png", dpi=max(50, width / w_in), bbox_inches=crop
-                    )
+                engine = fig.get_layout_engine()
+                saved_layout = save_layouts.get(id(fig))
+                freeze = (
+                    type(engine) is TightLayoutEngine
+                    and save_counts.get(id(fig)) == 1
+                    and watcher_pristine.get(id(fig), False)
+                    and saved_layout is not None
+                    and engine is saved_layout[0]
+                    and _tight_layout_parameters(engine) == saved_layout[1]
+                )
+                if freeze:
+                    # Re-sampling the already saved Figure should preserve its
+                    # layout, not execute the user's layout engine a second time.
+                    fig.set_layout_engine("none")
+                try:
+                    with matplotlib.rc_context({"savefig.bbox": None}):
+                        real_savefig(
+                            fig, path, format="png", dpi=max(50, width / w_in), bbox_inches=crop
+                        )
+                finally:
+                    if freeze:
+                        fig.set_layout_engine(engine)
             else:
                 # Pyplot-only captures have no original save to replay.
                 real_savefig(fig, path, format="png", dpi=max(50, width / w_in))
@@ -258,6 +349,7 @@ def run_native(req: dict) -> int:
         shots=shots,
         size_mm=sizes,
         fallback_stems=sorted(fallback),
+        saved_stems={s: sorted(saved_as.get(id(f), ())) for s, f in captured.items()},
         log=_tail(log.getvalue()),
     )
 

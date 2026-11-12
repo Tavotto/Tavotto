@@ -219,6 +219,10 @@ SHOT_PAGES: dict[str, str] = {
 }
 
 
+#: managed-cli：只收锁里的来源键（各走一次）或 all（依次全部）
+MANAGED_CLI_MODES = ("all", "npmjs", "mirror")
+
+
 TASKS: dict[str, Task] = {
     t.id: t
     for t in (
@@ -280,6 +284,22 @@ TASKS: dict[str, Task] = {
                 "MCP 由 venv 里的仓库 server.py 直接拉起，未经过插件的 mcp/launch 与插件安装路径",
                 "L4/L5 需要登录与真实模型调用：未获授权时一律 blocked，不推定",
                 "只覆盖 CLI，不覆盖桌面版 / IDE 宿主",
+            ),
+        ),
+        Task(
+            id="managed-cli",
+            kind="managed-cli",
+            summary="应用内托管安装 Codex 真机验收：按锁从指定来源下载、校验、解包、--version（不登录、不调模型）",
+            timeout_s=2400,
+            modes=MANAGED_CLI_MODES,
+            claim=(
+                "对每个来源：产品的 managedcli.provision 在 Lab（zh-CN、Defender 开、直连国内网络）上装出锁里那棵树"
+                "（独立复算 tree_sha256 一致）且 `--version` 报锁里的版本"
+            ),
+            unverified=(
+                "只验 codex 的托管安装；不经过界面里的「安装」按钮与进度条",
+                "直连一次的耗时不是速度结论；慢了换源的判据在单来源模式下不触发",
+                "Server 2025 不是 Windows 10 / 11 客户端",
             ),
         ),
         Task(
@@ -4912,8 +4932,12 @@ def driver_argv(
 #: ZCode 那份 enabled=false，WorkBuddy 没有它的信任记录就不加载
 CONNECT_DECOY = "lab-keep-me"
 CONNECT_DECOY_ENTRY = {"command": "cmd.exe", "args": ["/c", "exit", "0"], "env": {}}
-#: 按钮写的那一条里，授权根的环境变量（`TAVOTTO_MCP_ROOTS`，与服务端读的同名）
+#: 按钮写的那一条里，授权根的环境变量（`TAVOTTO_MCP_ROOTS`，与服务端读的同名）。点一下就接、不选文件夹之后（用户
+#: 2026-11-04，ADR 0009 §1b）按钮不再写它
 CONNECT_ROOTS_ENV = "TAVOTTO_MCP_ROOTS"
+#: 按钮应当给每个宿主写的 `env`——执行器自己的知识，不 import 产品：WorkBuddy 的服务 cwd 是会话工作目录、自己报项目，
+#: 什么都不写；ZCode 写本机兜底（服务端的范围 = 本机任意位置，只拦凭据类文件）
+CONNECT_EXPECTED_ENV = {"zcode": {"TAVOTTO_MCP_SCOPE": "local"}, "workbuddy": {}}
 
 
 def connect_targets(host_id: str, home: Path) -> list[tuple[Path, tuple[str, ...]]]:
@@ -4978,7 +5002,7 @@ def _same_path(a: str, b: str) -> bool:
 
 def judge_connect_written(connect: dict) -> dict:
     """按钮写完之后逐字核对：每个目标文件里有且只多了 tavotto 一条；命令 = 安装目录里的 tavotto-cli.exe，参数 = ["mcp"]，
-    env 只有授权根 = 选的那个文件夹；几个文件里的那一条相同；WorkBuddy 另有这一条的信任记录（键按执行器自己的算法算）。"""
+    env = `CONNECT_EXPECTED_ENV` 里这个宿主的那一份；几个文件里的那一条相同；WorkBuddy 另有这一条的信任记录（键按执行器自己的算法算）。"""
     problems: list[str] = []
     written = None
     for f, path in connect["targets"]:
@@ -5000,10 +5024,9 @@ def judge_connect_written(connect: dict) -> dict:
         if entry.get("args") != ["mcp"]:
             problems.append(f"{f.name}: args {entry.get('args')!r} != ['mcp']")
         env = entry.get("env")
-        if not isinstance(env, dict) or set(env) != {CONNECT_ROOTS_ENV}:
-            problems.append(f"{f.name}: env keys {sorted(env or {})!r} != [{CONNECT_ROOTS_ENV}]")
-        elif not _same_path(str(env[CONNECT_ROOTS_ENV]), str(connect["proj"])):
-            problems.append(f"{f.name}: {CONNECT_ROOTS_ENV} is not the chosen folder")
+        want_env = CONNECT_EXPECTED_ENV[connect["host_id"]]
+        if env != want_env:
+            problems.append(f"{f.name}: env {env!r} != {want_env!r}")
         if written is None:
             written = entry
         elif entry != written:
@@ -5118,8 +5141,6 @@ def _connect_driver_round(
         connect["host_id"],
         "--action",
         action,
-        "--folder",
-        str(connect["proj"]),
         "--out-dir",
         str(ev),
         "--label",
@@ -6429,6 +6450,47 @@ def run_page_shot_task(lab: Lab, run_dir: Path, env: dict, mode: str) -> dict:
     }
 
 
+def run_managed_cli_task(lab: Lab, run_dir: Path, env: dict, mode: str) -> dict:
+    """调仓库里的 `scripts/verify_managed_cli.py --source <mode>`（一次性数据目录、验完即删），读它最后一行 JSON。"""
+    if mode not in MANAGED_CLI_MODES:
+        return {"result": "error", "summary": f"unknown mode {mode!r}"}
+    script = lab.repo / "scripts" / "verify_managed_cli.py"
+    if not script.is_file():
+        return {
+            "result": "not_run",
+            "summary": "scripts/verify_managed_cli.py not in the prepared checkout",
+        }
+    ev = run_dir / "evidence"
+    work = run_dir / "work"
+    work.mkdir(parents=True, exist_ok=True)
+    env = dict(env, TEMP=str(work), TMP=str(work))
+    argv = [str(lab.venv_python()), str(script), "--source", mode]
+    step = _run_logged(argv, lab.repo, env, ev / "verify", TASKS["managed-cli"].timeout_s - 60)
+    if step.get("spawn_error"):
+        return {"result": "environment_unavailable", "summary": step["spawn_error"], "step": step}
+    try:
+        lines = Path(f"{ev / 'verify'}.stdout.log").read_text(encoding="utf-8").strip().splitlines()
+        report = json.loads(lines[-1])
+    except (OSError, ValueError, IndexError):
+        return {
+            "result": "error",
+            "summary": f"no JSON from verifier (exit={step.get('exit_code')})",
+            "step": step,
+        }
+    results = report.get("results") or []
+    brief = "; ".join(
+        f"{r.get('source')}: {'ok' if r.get('ok') else r.get('error') or 'mismatch'} ({r.get('seconds')}s)"
+        for r in results
+    )
+    return {
+        "result": "passed" if report.get("ok") and step.get("exit_code") == 0 else "failed",
+        "summary": f"codex {report.get('version')} — {brief}",
+        "mode": mode,
+        "managed_cli": report,
+        "step": step,
+    }
+
+
 def _run_body(
     lab: Lab,
     task: Task,
@@ -6503,6 +6565,8 @@ def _run_body(
             model_conf or {},
             (pkg or {}).get("mode") or DESKTOP_LIVE_MODES[0],
         )
+    if task.kind == "managed-cli":
+        return run_managed_cli_task(lab, run_dir, env, (pkg or {}).get("mode") or "all")
     if task.kind == "installer":
         return run_installer_task(
             lab, run_dir, env, (pkg or {}).get("package", ""), (pkg or {}).get("from")

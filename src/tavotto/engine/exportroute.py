@@ -40,6 +40,8 @@ HOW_COPY, HOW_CONVERT, HOW_REDRAW, HOW_UNAVAILABLE = "copy", "convert", "redraw"
 REASON_SOURCE_NEEDS_EXECUTION = "source_needs_execution"
 REASON_EPS_NOT_FOR_CANVAS = "eps_not_for_canvas"
 REASON_EPS_NEEDS_SCRIPT = "eps_needs_script"
+REASON_SCRIPT_NOT_FOR_CANVAS = "script_export_not_for_canvas"
+REASON_SCRIPT_NO_SCRIPT = "script_export_no_script"
 REASON_SVG_SOURCE_UNSUPPORTED = "svg_source_unsupported"
 REASON_SVG_ASSET_UNSUPPORTED = "svg_asset_export_unsupported"
 
@@ -153,6 +155,12 @@ def panel_route(
             has_script=can_draw,
             has_snapshot=has_snapshot,
             wants_svg="svg" in formats,
+        ),
+        # 修改后的脚本（ADR 0171）：与格式无关，只看是不是单张图、有没有脚本
+        "script": (
+            _unavailable(REASON_SCRIPT_NOT_FOR_CANVAS)
+            if canvas
+            else ({"how": HOW_REDRAW} if can_draw else _unavailable(REASON_SCRIPT_NO_SCRIPT))
         ),
     }
     return {

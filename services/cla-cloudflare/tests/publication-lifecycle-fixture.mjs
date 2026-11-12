@@ -97,6 +97,9 @@ export async function fixture({delegated=true,grantLifetime,group=false,prefix=2
     data={...old,...body,id,head_sha:old?.head_sha??body.head_sha,app:{id:c.appId,slug:c.appSlug}};
     runs.set(id,structuredClone(data));await hooks.afterMutation?.(call,data);
    }
+  }else if(path.startsWith('/users/')){
+   const login=decodeURIComponent(path.slice('/users/'.length));assert.ok(Object.hasOwn(c.exemptionIds,login),'only a pinned exemption login is resolved');
+   data={id:c.exemptionIds[login],login,type:'User'};
   }else throw Error('UNEXPECTED_SYNTHETIC_PATH '+path);
   return Response.json(structuredClone(data));
  };

@@ -13,7 +13,21 @@ import { mergePrefixBinding } from './merge-prefix.ts';
 import type { MergePrefixAssessment, MergePrefixReader, MergePrefixTarget } from './merge-prefix.ts';
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
-export interface EvidenceInput { name:string; address:string; signature:string; attestations:Record<string,boolean> }
+// Control-flow signals from the first merge-prefix snapshot (see publishGroup): every contributor of the prefix is
+// exempt, or at least one is not. They are thrown only when a caller asks for an exempt probe; no other path sees them.
+export class GroupExempt extends Rejected {constructor(){super('group_all_exempt');}}
+export class GroupMixed extends Rejected {constructor(){super('group_has_non_exempt');}}
+export type ExemptProbe='exit'|'probe';
+// Wording shown beside each attestation. Version 1: the original Chinese-only page;
+// version 2: the bilingual redesign (docs/implementation/cla-consent-ui/). Evidence
+// records which wording the signer saw; every version ever written stays readable.
+export const CONSENT_UI_VERSION = '2';
+export const CONSENT_UI_VERSIONS:readonly string[] = ['1','2'];
+// Signature styles the signing page offers. Kept here (not imported from src/pdf, which must stay out of the Worker
+// bundle); tests/signed-pdf-styles.test.mjs keeps this list, the page's and src/pdf/styles.ts identical.
+export const SIGNATURE_STYLE_IDS=['signature','formal','pen','hand'] as const;
+const isSignatureStyle=(v:unknown)=>typeof v==='string' && (SIGNATURE_STYLE_IDS as readonly string[]).includes(v);
+export interface EvidenceInput { name:string; address:string; signature:string; attestations:Record<string,boolean>; signature_style?:string }
 export class LiveService {
   readonly c:LiveConfig; readonly store:LiveStore; readonly github:GitHub; private readonly key:CryptoKey;
   readonly delegation:Delegation;
@@ -79,7 +93,10 @@ export class LiveService {
     const nonce=randomToken(); await this.store.addAuthenticatedIntent(await sha256(nonce),s,p,role as Role|'hold',now+300); return nonce;
   }
   private validateEvidence(input:EvidenceInput,role:Role):void {
-    if (!input || canonical(Object.keys(input).sort()) !== canonical(['address','attestations','name','signature']) ||
+    // signature_style is optional (only how the typed signature looks); records without it draw in the default style.
+    const keys=input && typeof input==='object'?Object.keys(input).sort():[];
+    if (!input || canonical(keys.filter(k=>k!=='signature_style')) !== canonical(['address','attestations','name','signature']) ||
+        ('signature_style' in input && !isSignatureStyle(input.signature_style)) ||
         [input.name,input.address,input.signature].some(v=>typeof v!=='string' || !v.trim() || v.length>1000) ||
         input.signature!==input.name || role==='holder' && input.name!==this.c.holderName ||
         !input.attestations || canonical(Object.keys(input.attestations).sort()) !== canonical(attestations(role).sort()) ||
@@ -93,7 +110,7 @@ export class LiveService {
     if(!d || d.kind!==p.kind || d.version!==p.version || await sha256(d.content)!==p.digest)throw new Rejected('agreement_unavailable');
     this.validateEvidence(input,requested); const revision=await this.store.revision();
     const record={...input,protocol:'cla-signature-v1',packet:p.id,agreement_kind:p.kind,agreement_version:p.version,
-      agreement_sha256:p.digest,role:requested,github_id:s.actor,github_login_at_signing:s.login,signed_at_unix:now,consent_ui_version:'1'};
+      agreement_sha256:p.digest,role:requested,github_id:s.actor,github_login_at_signing:s.login,signed_at_unix:now,consent_ui_version:CONSENT_UI_VERSION};
     const raw=canonical(record),cipher=await seal(this.key,raw,`signature:${p.id}:${requested}:${p.digest}`);
     await this.store.assertReady();
     const committed=await this.store.signAtomic({session:s,packet:p,intentHash:await sha256(nonce),role:requested,cipher,
@@ -113,6 +130,14 @@ export class LiveService {
     await this.store.assertReady();
     return {revision:await this.store.holdAtomic(s,p,await sha256(nonce),await this.store.revision(),await this.store.databaseNow())};
   }
+  async release(token:string,csrf:string,origin:string|null,packet:string):Promise<{revision:number}> {
+    this.signing(); const s=await this.authorize(token,csrf,origin),p=await this.packetFor(s,packet);
+    if(s.actor!==this.c.holderId)throw new Rejected('release_rejected');
+    await this.store.assertReady(); const held=await this.store.holdState(p.id);
+    if(!held || held.released_at!==null)throw new Rejected('release_not_held');
+    // A release is not a signature: nothing becomes eligible until the contributor signs a new packet.
+    return {revision:await this.store.releaseAtomic(s,p,await this.store.revision(),await this.store.databaseNow())};
+  }
   private async evidenceRecord(p:Packet,row:SignatureRow):Promise<Record<string,unknown>> {
     // Completion can qualify after the deadline, but both signatures must have
     // actually been recorded within that packet's original signing interval.
@@ -122,11 +147,11 @@ export class LiveService {
     if (await sha256(raw)!==row.evidence_hash) throw new Rejected('evidence_unavailable');
     let data:Record<string,unknown>; try { data=JSON.parse(raw); } catch { throw new Rejected('evidence_unavailable'); }
     const fields={protocol:'cla-signature-v1',packet:p.id,agreement_kind:p.kind,agreement_version:p.version,
-      agreement_sha256:p.digest,role:row.role,github_id:row.actor,signed_at_unix:row.created,consent_ui_version:'1'};
-    if (Object.entries(fields).some(([k,v])=>data?.[k]!==v) || typeof data.github_login_at_signing!=='string' ||
+      agreement_sha256:p.digest,role:row.role,github_id:row.actor,signed_at_unix:row.created};
+    if (Object.entries(fields).some(([k,v])=>data?.[k]!==v) || !CONSENT_UI_VERSIONS.includes(data?.consent_ui_version as string) || typeof data.github_login_at_signing!=='string' ||
         !/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(data.github_login_at_signing)) throw new Rejected('evidence_binding_mismatch');
     this.validateEvidence({name:data.name as string,address:data.address as string,signature:data.signature as string,
-      attestations:data.attestations as Record<string,boolean>},row.role); return data;
+      attestations:data.attestations as Record<string,boolean>,...('signature_style' in data?{signature_style:data.signature_style as string}:{})},row.role); return data;
   }
   // Evidence plaintext remains local; checkpoints retain only the verified row identity.
   async stagedVerifyEvidence(p:Packet,row:SignatureRow):Promise<void> {await this.evidenceRecord(p,row);}
@@ -134,7 +159,10 @@ export class LiveService {
     const s=await this.session(token),p=await this.packetFor(s,packet);
     if (!['contributor','holder'].includes(role as string)) throw new Rejected('role_rejected');
     const row=(await this.store.signatures(p.id)).find(x=>x.role===role);
-    if (!row) throw new Rejected('evidence_unavailable'); return this.evidenceRecord(p,row);
+    if (!row) throw new Rejected('evidence_unavailable');
+    // evidenceRecord has already decrypted and checked the row against its stored hash, so that hash is
+    // a fingerprint of exactly the evidence returned here. It is for the signed-PDF certificate only.
+    return {...await this.evidenceRecord(p,row),evidence_sha256:row.evidence_hash};
   }
   async audit(token:string,id:string):Promise<unknown> {
     const p=await this.packetFor(await this.session(token),id),revision=await this.store.revision(),d=await this.store.document(p.digest);
@@ -142,7 +170,7 @@ export class LiveService {
     const rows=await this.store.signatures(p.id),personal=[];
     for(const row of rows)personal.push(await this.evidenceRecord(p,row));
     const contributor=rows.find(row=>row.role==='contributor' && row.actor===p.subject);
-    const delegated=contributor?await this.delegation.audit(p,contributor,await this.store.subjectBlocked(p.subject)):null;
+    const delegated=contributor?await this.delegation.audit(p,contributor,!!await this.store.packetBlock(p)):null;
     // Expiry/account changes during the bounded export cannot retain an old authorization to read.
     await this.packetFor(await this.session(token),id);
     if(await this.store.revision()!==revision)throw new Rejected('state_changed');
@@ -157,7 +185,7 @@ export class LiveService {
   }
   async status(token:string,id:string):Promise<unknown> {
     const s=await this.session(token),p=await this.packetFor(s,id);
-    const revision=await this.store.revision(),rows=await this.store.signatures(p.id),blocked=await this.store.subjectBlocked(p.subject);
+    const revision=await this.store.revision(),rows=await this.store.signatures(p.id),block=await this.store.packetBlock(p),blocked=!!block;
     for(const row of rows)await this.evidenceRecord(p,row);
     const personalCompleted=await this.store.completed(p.id),contributor=rows.find(row=>row.role==='contributor' && row.actor===p.subject);
     let delegated={recorded:false,current:false,state:'none',canAudit:false,executedAt:0,expiresAt:0};
@@ -169,10 +197,11 @@ export class LiveService {
     if(delegated.current && observed>=delegated.expiresAt)delegated={...delegated,current:false,state:'expired'};
     if(await this.store.revision()!==revision)throw new Rejected('state_changed');
     const completed=personalCompleted || delegated.current,current=packetAgreementMatches(this.c,p) && (completed || currentPacket(this.c,p,observed)),role=s.actor===this.c.holderId?'holder':'contributor';
-    return {packet:p,completed,personalCompleted,delegated,signingDeadline:p.valid_until,actor:{id:s.actor,login:s.login,role},revision,now:observed,blocked,current,
+    return {packet:p,completed,personalCompleted,delegated,signingDeadline:p.valid_until,actor:{id:s.actor,login:s.login,role},revision,now:observed,blocked,
+      released:blocked && block!.released_at!==null,block:block?{packet:block.packet,heldAt:block.held_at,releasedAt:block.released_at}:null,current,
       signatures:rows.map(r=>({role:r.role,actor:r.actor,created:r.created})),
       canSign:this.c.signingEnabled && currentPacket(this.c,p,observed) && !personalCompleted && !blocked && !rows.some(r=>r.role===role) && (role==='contributor' || rows.some(r=>r.role==='contributor')),
-      canHold:this.c.signingEnabled && !blocked};
+      canHold:this.c.signingEnabled && !blocked,canRelease:this.c.signingEnabled && role==='holder' && block?.released_at===null};
   }
   async packets(token:string,cursor?:string):Promise<unknown> {
     const s=await this.session(token);
@@ -184,7 +213,11 @@ export class LiveService {
       ORDER BY created DESC,id DESC LIMIT 21`,s.actor,s.actor,this.c.holderId,
       ...(anchor?[anchor.created,anchor.created,anchor.id]:[])).all<{id:string}>()).results;
     const packets=rows.slice(0,20);
-    return {actor:{id:s.actor,login:s.login,role:s.actor===this.c.holderId?'holder':'contributor'},packets,
+    return {actor:{id:s.actor,login:s.login,role:s.actor===this.c.holderId?'holder':'contributor',
+      // The holder must sign with exactly this name (validateEvidence); show it instead of failing late.
+      ...(s.actor===this.c.holderId?{holderName:this.c.holderName}:{})},
+      // The counterparty's name is printed in the published agreement ("Us"); a contributor sees who countersigns.
+      holderName:this.c.holderName,packets,
       nextCursor:rows.length>20?packets[packets.length-1]!.id:null};
   }
   private async qualified(subject:number,ceiling?:{expires:number},now?:number):Promise<boolean> {
@@ -233,18 +266,25 @@ export class LiveService {
       conclusion:good?'success':'failure',proof,text:'tavotto-cla-v1\n'+canonical(proof),
       ...(ceiling.expires<Number.MAX_SAFE_INTEGER?{authorityExpires:ceiling.expires}:{})};
   }
-  async assessMergePrefix(input:MergePrefixTarget,reservedSQL=0,expectedRevision?:number):Promise<MergePrefixAssessment> {
+  async assessMergePrefix(input:MergePrefixTarget,reservedSQL=0,expectedRevision?:number,probe?:ExemptProbe):Promise<MergePrefixAssessment> {
     if(this.c.mergePrefixAssessmentEnabled!==true)throw new Rejected('merge_prefix_disabled');
     const target=structuredClone(input);
-    if(this.c.mergePrefixReadSessionEnabled===true)return this.github.withMergePrefixReads(target,reader=>this.assessMergePrefixFacts(target,reader,reservedSQL,expectedRevision));
-    return this.assessMergePrefixFacts(target,{snapshot:()=>this.github.mergePrefixSnapshot(target),resolveLogin:login=>this.github.resolveLogin(login)},reservedSQL,expectedRevision);
+    if(this.c.mergePrefixReadSessionEnabled===true)return this.github.withMergePrefixReads(target,reader=>this.assessMergePrefixFacts(target,reader,reservedSQL,expectedRevision,probe));
+    return this.assessMergePrefixFacts(target,{snapshot:()=>this.github.mergePrefixSnapshot(target),resolveLogin:login=>this.github.resolveLogin(login)},reservedSQL,expectedRevision,probe);
   }
-  private async assessMergePrefixFacts(target:MergePrefixTarget,reader:MergePrefixReader,reservedSQL:number,expectedRevision?:number):Promise<MergePrefixAssessment> {
+  private async assessMergePrefixFacts(target:MergePrefixTarget,reader:MergePrefixReader,reservedSQL:number,expectedRevision?:number,probe?:ExemptProbe):Promise<MergePrefixAssessment> {
     const budget=this.store.budget;
     if(!budget || this.github.budget!==budget)throw new Rejected('invocation_budget_required');
     const revision=expectedRevision ?? await this.store.revision();
     if(!Number.isSafeInteger(revision) || revision<0)throw new Rejected('state_changed');
     const first=await mergePrefixBinding(this.c,reader,target,await reader.snapshot());
+    // The binding already re-resolved every exempt identity it used, so this reads the fully verified contributor ids.
+    // No qualification SQL, second snapshot or confirmation slot is needed to know a group is entirely exempt.
+    if(probe){
+      const ids=new Set(Object.values(this.c.exemptionIds));
+      if(first.binding.contributors.length>0 && first.binding.contributors.every(person=>ids.has(person.id)))throw new GroupExempt();
+      if(probe==='probe')throw new GroupMixed();
+    }
     const now=await this.store.databaseNow(),exempt=new Set(Object.values(this.c.exemptionIds));
     const people=first.binding.contributors.filter(person=>!exempt.has(person.id));
     if(people.length>successCapacity(this.c))throw new Rejected('contributor_capacity_exceeded');
@@ -260,9 +300,9 @@ export class LiveService {
     if(final.revision!==revision || final.now<now || final.now>=expires)throw new Rejected('state_changed');
     return {...first,protocol:'cla-merge-prefix-assessment-v1',eligible,revision,observed_at:final.now,valid_until:expires,publication:'not_attempted'};
   }
-  async evaluateTarget(target:import('../core/types.ts').Target,reservedSQL=0,expectedRevision?:number):Promise<CheckProposal> {
+  async evaluateTarget(target:import('../core/types.ts').Target,reservedSQL=0,expectedRevision?:number,probe?:ExemptProbe):Promise<CheckProposal> {
     if(target.kind==='pr')return this.evaluate(target.number,reservedSQL);
-    const a=await this.assessMergePrefix({headSha:target.headSha,baseSha:target.baseSha,baseRef:'refs/heads/main'},reservedSQL,expectedRevision);
+    const a=await this.assessMergePrefix({headSha:target.headSha,baseSha:target.baseSha,baseRef:'refs/heads/main'},reservedSQL,expectedRevision,probe);
     const proof={...a.binding,protocol:'tavotto-cla-v1' as const,revision:a.revision,issued_at:a.observed_at,expires_at:a.valid_until,
       group:{base_ref:'refs/heads/main' as const,strategy:a.strategy,prefix_sha256:a.prefix_sha256,queue_sha256:a.queue_sha256,trusted_source_sha:a.trusted_source_sha}};
     return {name:this.c.checkName,appId:this.c.appId,appSlug:this.c.appSlug,headSha:target.headSha,conclusion:a.eligible?'success':'failure',proof,

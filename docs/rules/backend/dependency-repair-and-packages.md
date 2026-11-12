@@ -637,7 +637,7 @@ order: 160
   `dependency_scope_conflict`（带冲突项与出路）。老账无归属、同作用域改声明都不算。出路：`scope_policy=switch`（只对受管环境；新一代装本作用域全集、账换掉、`drops` / `changes` 进摘要、
   失败不动 active 与账）/ 子目录当独立项目。
 - **全局显式解释器压着（E05）**：联合准备与单包修复一样不形成计划（`create_joint_plan` 先 `_refuse_if_pinned`）、门放行（`gate` 见 `offer.pinned` 回 None，不先让用户确认一次必败的安装）、
-  offer 的 `impact` 为空并只带 `pinned = {source, variable}`（不带路径）、准备会话的 `dependencies` 检查项 `blocked`/`dependency_interpreter_pinned` 且不给授权动作；租约在手之后再复查一次
+  offer 的 `impact` 为空并只带 `pinned = {source, variable}`（不带路径）、准备会话的 `dependencies` 检查项 `blocked`/`dependency_interpreter_pinned` 且不给授权动作；`dependency_pinned` 要答的事载荷另带被锁解释器里缺的 import 名 `missing`（≤8 个标识符，只在 requirement 里、不进检查项 detail 与诊断）；租约在手之后再复查一次
   （`_GenerationJob.refuse_pinned` / 原地路径 / 单包受管分支），确认窗口里被钉上也一个字节不装。
 - **计划 / 作业 id 带前缀 `dp-`**（`new_plan_id`）：裸 `token_urlsafe` 约 1/32 以 `-` / `_` 开头，而 `taskdiag.ident` 要求首字符字母数字——那些作业的终局快照会悄悄存不进去。
 - **终局进任务诊断**：`taskdiag.KIND_DEPENDENCY`，`deprepair.diagnostic_projection` 白名单（计数 / 闭集 / 稳定码 / 不透明摘要；包名、路径、pip 原文、镜像地址不进）。

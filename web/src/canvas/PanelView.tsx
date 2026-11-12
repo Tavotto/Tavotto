@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperti
 import { createPortal } from 'react-dom'
 import { perfCount, perfRenderPainted } from '@/perf/core'
 import { formatMessage, msg, t as translate } from '@/i18n'
+import { emitActivity } from '@/lib/activity'
 import { listJoin } from '@/i18n/format'
 import { enginePreviewPngSnapshot, EngineError, panelSrc, type Manifest, type ManifestElement } from '@/lib/api'
 import { useDecodedSvg } from '@/lib/useDecodedSvg'
@@ -272,8 +273,12 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 的（自己这版，或 Phase F 的 latest 退路），磁盘原图才是「脚本原值」——
   // 面板有图内修改时拿它当预览，就是用户报的「预览没有使用 override」。
   // `bitmapOnly`（raster / evicted）没有矢量 payload，不在此列。
+  // runtime 面板不在图内编辑时例外（QA-WIN-30）：自己这一版没画过、`render` 退回同文件 `latest` 的另一版
+  // （恢复的草稿、刚关掉的排版）时，那份 SVG 是**别的状态的图**——挂上去既压过按此刻 overrides 取的 cache 预览，
+  // 又让「近似预览」角标不出声。此时让位给 `fileSrc`（取到之前是占位，取到不是这个状态的图时带角标）。
+  const foreignStandby = runtime && !editing && displayView?.kind === 'fallback'
   const engineSvgStandby =
-    needsEngine && !bitmapOnly && !(useEnginePng && enginePng) ? (render?.svg ?? null) : null
+    needsEngine && !bitmapOnly && !foreignStandby && !(useEnginePng && enginePng) ? (render?.svg ?? null) : null
   // 一个可寻址地址都拿不到时**退回这一版的权威 SVG**，绝不留一个空 src。
   // Codex 内嵌画布退出图内编辑后正好落在这一格：会话把文件标成 tracked
   // → `useEnginePng` 为真 → MCP 传输拒掉每一次 `previewPngUrl()`，而它的
@@ -282,9 +287,8 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 没有矢量 payload 的那两档除外：`raster` 刻意没有 SVG，`evicted` 的那份刚被
   // 内存预算清掉——这条兜底都不许把**上一版**的矢量图拿来冒充（前者正是硬闸要
   // 拦的 payload，后者会让画布显示另一个变体的图）。
-  // A saved pair is an image source, never a borrowed same-name editable SVG.
   const inlineSvg = archiveDisplay ? null :
-    svgHtml ?? engineSvgStandby ?? (src || bitmapOnly ? null : (render?.svg ?? null))
+    svgHtml ?? engineSvgStandby ?? (src || bitmapOnly || foreignStandby ? null : (render?.svg ?? null))
   const showSvg = inlineSvg != null
   const loadedPngUrl = useRef<string | null>(null)
   const currentPngUrl = pngIsCurrent ? pngBlob.url : null
@@ -1026,6 +1030,7 @@ function ElementHitLayer({
         if (!hit?.editable.some((f) => f.prop === 'text' && f.type === 'text')) return
         useUiStore.getState().setSelectedGid(hit.gid)
         openQuickEdit({ kind: 'element', panelId: obj.id, gid: hit.gid, focusText: true }, e)
+        emitActivity({ kind: 'figure.text_quick_edit' })
       })}
     >
       {band && (

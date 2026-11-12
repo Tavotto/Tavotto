@@ -24,10 +24,33 @@ order: 80
   （Cursor `~/.cursor/mcp.json`、VS Code 用户目录的 `mcp.json`（`servers`）、TRAE / TRAE CN 用户目录的 `mcp.json`、
   ZCode `~/.zcode` 下 `cli/` 与 `workspace/default/.zcode/` 两处的 `mcp.servers`、WorkBuddy `~/.workbuddy/mcp.json`、
   Claude 桌面版 `claude_desktop_config.json`；Claude Code 用它自己的 `claude mcp add --scope user`；Codex 委托
-  `codexinstall`），条目是这一份 Tavotto 的 `tavotto-cli mcp`（`mcp_launch()`），授权同样只有 `TAVOTTO_MCP_ROOTS`
-  ——用户第一次接入时选的那个文件夹（`hosts.json`，所有宿主共用；根 / HOME / HOME 的上级拒绝）。三条纪律：写之前
+  `codexinstall`），条目是这一份 Tavotto 的 `tavotto-cli mcp`（`mcp_launch()`）。**点一下就接、不选文件夹**（2026-11-04，ADR 0009
+  §1b）：会自己报项目的宿主（`HOSTS_WITH_OWN_WORKSPACE` = Claude Code / VS Code / WorkBuddy）`env` 为空；其余只写
+  `TAVOTTO_MCP_SCOPE=local`（服务端兜底 = 本机任意位置，只拦凭据类文件）；命令行 `--project-root` 仍写
+  `TAVOTTO_MCP_ROOTS`（根 / HOME / HOME 的上级拒绝）。旧按钮写的文件夹在 `hosts list` 时一次性迁移。三条纪律：写之前
   备份、只动 tavotto 一条、读不懂（JSONC 等）就不写并报 `config_unreadable`；断开只删 tavotto；WorkBuddy 额外在
   `mcp-approvals.json` 只信任 tavotto 这一条（用户点「接入」即同意，方案决策）。看护 `tests/test_hosts_connect.py`。
+- **技能随接入一起复制（2026-11-06，`engine/hostskills.py`，纯标准库）**：`hosts connect` 在 MCP 写成之后把桌面版自带的
+  `tavotto-figure`（冻结 = `_MEIPASS/skills/tavotto-figure`，`packaging/tavotto.spec` 整棵收进、缺了拒绝打包；源码树 =
+  `codex-plugin/skills/tavotto-figure`；pip 安装没有 → `skill_source_missing`）复制进宿主**用户级**技能目录，作为 `steps`
+  里的一步 `skill`；`list` 每行带 `skill`（current / stale / modified / missing / builtin）。目录表：Claude Code
+  `~/.claude/skills`、Cursor `~/.cursor/skills`、VS Code `~/.copilot/skills`、ZCode `~/.zcode/skills`、Antigravity
+  `~/.gemini/config/skills`、Trae `~/.trae-cn/skills` 与 `~/.trae/skills`（只写已存在的编辑器目录）、WorkBuddy
+  `~/.workbuddy/skills`（官方未写明，待验）；查证与待验项在 `hosts.md`。写法：先写同级临时目录再换名；目录里放校验记录
+  `.tavotto-skill.json`（schema / version / sha256 / written_by），sha256 覆盖整目录（相对路径 + 字节，排序、`/` 分隔，不含记录与
+  `__pycache__`）。**用户改过的不覆盖**：目标已存在而无记录（不是我们写的）或内容与记录不符 → `modified`，原样保留、
+  `disconnect` 也不删；同内容 → `skipped`；旧版且没被改 → 替换。技能写失败**不回滚 MCP**，整次结果如实 `ok=false`
+  （`skill_write_failed` / `skill_source_missing`），并带 `mcp_connected=true`。Codex 不走这里（技能随插件）；Claude Code
+  已装 Tavotto 插件（`register` 一步 skipped）时不再复制；Claude 桌面版没有技能目录（`builtin`）。没有技能的宿主靠 MCP
+  工具 **`tavotto_guide`**（可选 `section` = `references/` 里真实存在的文件名，白名单、路径穿越回 `guide_section_unknown`，
+  读不到回 `guide_unavailable`）读全文；`initialize` 的 instructions 让它开工前先调。工具名同步在 `server.HANDLERS`、启动器 `NORMAL_TOOLS`；**不进** `usage.TOOLS` 与遥测闭集（ADR 0170：进了要升 CONSENT_VERSION，等维护者），走 `other` 桶。
+  **技能脚本在桌面版里怎么跑**：冻结版的 `sys.executable` 是 `tavotto-cli`，不是解释器，所以 `tavotto_health` 的
+  `server.python` 在冻结时为 null，并给 `skill_script_command: [<tavotto-cli>, "skill-script"]`；`tavotto skill-script
+  <prefs|handoff|update_check> [args…]`（`hostskills.run_script_cli`，闭集名字、不收路径）用 runpy 在进程内跑技能脚本、
+  透传 argv 与退出码。`handoff.py` 冻结时没有默认解释器：要跑用户脚本必须显式 `--python`，否则回 `python_required`。
+  技能目录里的符号链接（文件、目录都算，不跟随）计入 sha256，加了链接即 `modified`。
+  已知未处理：Cursor / VS Code 也读 `~/.claude/skills`，
+  与 Claude Code 同时接入可能看到同名技能两份（待验）。看护 `tests/test_host_skills.py`、`tests/test_hosts_connect.py`。
 - 授权只来自 `--project-root`（写进 `TAVOTTO_MCP_ROOTS`）；根 / HOME / 包目录拒绝。启动器探针与
   `launcher_starts()` 同一把尺（跑 `--health` 要体检 JSON）；引擎只在当前 shell 环境里找得到时才钉
   `TAVOTTO_MCP_PYTHON`，钉完在最小环境里再验。超时唯一出处是 Codex 配置 `codex.mcp.json` 的 `tool_timeout_sec`（启动超时是 `startup_timeout_sec`），按单位换算。

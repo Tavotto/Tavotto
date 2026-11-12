@@ -13,6 +13,9 @@ import os
 import re
 import subprocess
 import sys
+import tarfile
+import venv
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -329,3 +332,152 @@ def test_smoke_reads_the_canvas_section_of_the_health_result(result, available):
     import smoke_app
 
     assert smoke_app.health_canvas(result).get("available") is available
+
+
+# ---------------------------------------------------------------------------
+# pip / pipx / uvx 装的 wheel 自带 tavotto_mcp（用户 2026-11-11 同意；1.0 豁免 §1.8）
+# ---------------------------------------------------------------------------
+
+
+def _pyproject() -> dict:
+    tomllib = pytest.importorskip("tomllib", reason="tomllib 需要 Python 3.11+")
+    return tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+
+def test_pyproject_force_includes_only_the_mcp_server_package_into_the_wheel():
+    """wheel 的 `force-include` 只点名 `tavotto_mcp` 这一个目录，映射成顶层包；全局 exclude 继续挡着插件其余部分。
+
+    sdist 要带同一个目录：`python -m build` 先打 sdist 再从它构建 wheel，wheel 的 force-include 在 sdist 里
+    找不到源目录就整个构建失败。
+    """
+    build = _pyproject()["tool"]["hatch"]["build"]
+    wheel = build["targets"]["wheel"]["force-include"]
+    assert wheel == {"codex-plugin/mcp/tavotto_mcp": "tavotto_mcp"}
+    assert build["targets"]["sdist"]["force-include"] == {
+        "codex-plugin/mcp/tavotto_mcp": "codex-plugin/mcp/tavotto_mcp"
+    }
+    assert "codex-plugin" in build["exclude"] and "codex-plugin/**" in build["exclude"]
+    assert (ROOT / "codex-plugin" / "mcp" / "tavotto_mcp" / "server.py").is_file()
+
+
+def _dist_artifact(pattern: str) -> Path | None:
+    d = (
+        Path(os.environ["TAVOTTO_DIST_DIR"])
+        if os.environ.get("TAVOTTO_DIST_DIR")
+        else ROOT / "dist"
+    )
+    files = sorted(d.glob(pattern), key=lambda p: p.stat().st_mtime) if d.is_dir() else []
+    return files[-1] if files else None
+
+
+WHEEL = _dist_artifact("tavotto-*.whl")
+SDIST = _dist_artifact("tavotto-*.tar.gz")
+_NEED_DIST = "先 python -m build（或设 TAVOTTO_DIST_DIR）——这几条读的是产物不是源码树"
+
+
+@pytest.mark.skipif(WHEEL is None, reason=_NEED_DIST)
+def test_wheel_ships_the_mcp_server_package_and_nothing_else_of_the_plugin():
+    with zipfile.ZipFile(WHEEL) as z:
+        names = z.namelist()
+    top = {n.split("/")[0] for n in names}
+    assert top == {"tavotto", "tavotto_mcp"} | {n for n in top if n.endswith(".dist-info")}, top
+    assert "tavotto_mcp/server.py" in names
+    expected = {
+        f"tavotto_mcp/{p.name}"
+        for p in (ROOT / "codex-plugin" / "mcp" / "tavotto_mcp").glob("*.py")
+    }
+    shipped = {n for n in names if n.startswith("tavotto_mcp/")}
+    assert shipped == expected, {"missing": expected - shipped, "extra": shipped - expected}
+    # 插件的其它东西一律不进 pip 包（技能、启动器、市场清单、画布产物……）
+    for n in names:
+        assert not n.startswith(("codex-plugin/", ".agents/", ".codex-plugin/", "widget/")), n
+        assert "canvas.html" not in n and "__pycache__" not in n, n
+
+
+@pytest.mark.skipif(SDIST is None, reason=_NEED_DIST)
+def test_sdist_carries_only_the_mcp_server_package_of_the_plugin():
+    with tarfile.open(SDIST) as t:
+        names = t.getnames()
+    prefix = names[0].split("/")[0]
+    rel = [n[len(prefix) + 1 :] for n in names if n.startswith(prefix + "/codex-plugin")]
+    assert rel, "sdist 里没有 codex-plugin/mcp/tavotto_mcp：从 sdist 构建 wheel 会失败"
+    assert all(
+        n.startswith("codex-plugin/mcp/tavotto_mcp") for n in rel if "." in n.rsplit("/", 1)[-1]
+    ), rel
+    assert "codex-plugin/mcp/tavotto_mcp/server.py" in rel
+
+
+@pytest.mark.skipif(WHEEL is None, reason=_NEED_DIST)
+def test_installed_wheel_runs_tavotto_mcp_over_clean_stdio_without_the_source_tree(tmp_path):
+    """真装：临时 venv 里 `pip install --no-deps <wheel>`，在**源码树之外**起 `tavotto mcp`，
+    握手 + tools/list；stdout 第一个字节就是 `{`、每行都是 JSON-RPC（stdout 首帧前零字节）。
+
+    不带依赖：握手与列工具只要引擎的纯标准库部分；这同时证明了「没装 `[worker]` 也能起服务」。
+    """
+    env_dir = tmp_path / "venv"
+    venv.create(env_dir, with_pip=True)
+    bindir = env_dir / ("Scripts" if os.name == "nt" else "bin")
+    py = bindir / ("python.exe" if os.name == "nt" else "python")
+    subprocess.run(
+        [str(py), "-m", "pip", "install", "--quiet", "--no-deps", "--no-input", str(WHEEL)],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=300,
+    )
+    # 装好的包就是产物那一份，不是源码树
+    where = subprocess.run(
+        [str(py), "-c", "import tavotto_mcp; print(tavotto_mcp.__file__)"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=str(tmp_path),
+        check=True,
+        env={k: v for k, v in os.environ.items() if k != "PYTHONPATH"},
+    ).stdout.strip()
+    assert "site-packages" in where, where
+    msgs = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": PROTOCOL,
+                "capabilities": {},
+                "clientInfo": {"name": "wheel-smoke", "version": "1"},
+            },
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+    ]
+    env = {
+        k: v for k, v in os.environ.items() if not k.startswith(("TAVOTTO_", "MM_", "PYTHONPATH"))
+    }
+    env.update(
+        TAVOTTO_DATA_DIR=str(tmp_path / "data"),
+        TAVOTTO_CONFIG_DIR=str(tmp_path / "config"),
+        TAVOTTO_NO_TELEMETRY="1",
+        PYTHONIOENCODING="utf-8",
+    )
+    work = tmp_path / "work"
+    work.mkdir()
+    proc = subprocess.run(
+        [str(py), "-m", "tavotto", "mcp"],
+        input="".join(json.dumps(m) + "\n" for m in msgs).encode("utf-8"),
+        capture_output=True,
+        env=env,
+        cwd=str(work),
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert proc.stdout.startswith(b'{"jsonrpc"'), proc.stdout[:80]
+    replies = [
+        json.loads(line) for line in proc.stdout.decode("utf-8").splitlines() if line.strip()
+    ]
+    assert all(m.get("jsonrpc") == "2.0" for m in replies)
+    by_id = {m.get("id"): m for m in replies}
+    assert by_id[1]["result"]["serverInfo"]["name"] == mcp_server.SERVER_NAME
+    assert {t["name"] for t in by_id[2]["result"]["tools"]} == set(mcp_server.HANDLERS)
+    # wheel 里没有画布产物：工具不挂 `_meta.ui`（如实降级，不让宿主对着白框等）
+    assert not any("_meta" in t for t in by_id[2]["result"]["tools"])

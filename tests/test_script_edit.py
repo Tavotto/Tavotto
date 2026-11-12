@@ -1016,9 +1016,11 @@ def app_project(tmp_path):
         m.close_project(pid, wait=True)
 
 
+# 「先 lexists 再读」：Python 的探路也查改指表（ADR 0106 修订 2026-11-09），条目按 `open` 给选择器；改写脚本（ADR 0110）
+# 仍是对话框里经确认的次级出口，这里看护的是改写本身
 EXISTS_SCRIPT = (
     "import os\n"
-    'if not os.path.exists("{old}/data/values.txt"):\n'
+    'if not os.path.lexists("{old}/data/values.txt"):\n'
     '    raise SystemExit("找不到数据")\n'
     "import matplotlib.pyplot as plt\n"
     'value = float(open("{old}/data/values.txt").read())\n'
@@ -1361,6 +1363,8 @@ def test_static_entries_carry_what_the_probe_wants(tmp_path):
         f'Path("{OLD}/frames").iterdir()\n'
         f'os.path.isfile("{OLD}/a.csv")\n'
         f'os.path.exists("{OLD}/b.csv")\n'
+        f'os.path.lexists("{OLD}/d.csv")\n'
+        f'import_file("{OLD}/e.dump")\n'
         'os.listdir("rel_runs")\n'
         f'open("{OLD}/c.csv")\n',
         encoding="utf-8",
@@ -1368,11 +1372,15 @@ def test_static_entries_carry_what_the_probe_wants(tmp_path):
     got = {
         o["path"]: (o["via"], o["probe_kind"]) for o in inputremap.static_missing("fig.py", root)
     }
-    assert got[f"{OLD}/runs.v1"] == (inputremap.VIA_PROBE, inputremap.PROBE_DIR)
-    assert got[f"{OLD}/frames"] == (inputremap.VIA_PROBE, inputremap.PROBE_DIR)
-    assert got[f"{OLD}/a.csv"] == (inputremap.VIA_PROBE, inputremap.PROBE_FILE)
-    assert got[f"{OLD}/b.csv"] == (inputremap.VIA_PROBE, inputremap.PROBE_ANY)
-    assert got["rel_runs"] == (inputremap.VIA_PROBE, inputremap.PROBE_DIR)
+    assert got[f"{OLD}/runs.v1"] == (inputremap.VIA_OPEN, inputremap.PROBE_DIR)
+    assert got[f"{OLD}/frames"] == (inputremap.VIA_OPEN, inputremap.PROBE_DIR)
+    # Python 的探路都查改指表（ADR 0106 修订 2026-11-09）：按 open 算，`probe_kind` 仍说要的是什么；
+    # 只有 C++ 读取器 import_file 照旧是探路
+    assert got[f"{OLD}/a.csv"] == (inputremap.VIA_OPEN, inputremap.PROBE_FILE)
+    assert got[f"{OLD}/b.csv"] == (inputremap.VIA_OPEN, inputremap.PROBE_ANY)
+    assert got[f"{OLD}/d.csv"] == (inputremap.VIA_OPEN, inputremap.PROBE_ANY)
+    assert got[f"{OLD}/e.dump"] == (inputremap.VIA_PROBE, inputremap.PROBE_FILE)
+    assert got["rel_runs"] == (inputremap.VIA_OPEN, inputremap.PROBE_DIR)
     assert got[f"{OLD}/c.csv"] == (inputremap.VIA_OPEN, inputremap.PROBE_ANY)
 
 
@@ -1398,13 +1406,13 @@ def test_http_refuses_a_file_for_a_directory_probe(app_project, tmp_path):
 
 
 def test_http_refuses_a_folder_that_leaves_a_file_probe_pointing_at_a_folder(app_project, tmp_path):
-    """只接受文件的探路（`isfile`）：用户选了一个与它同名的**文件夹**，推出的规则会把常量改成那个文件夹，`isfile()`
+    """只接受文件的探路（ovito `import_file`；`isfile` 已查改指表、不走改写）：用户选了一个与它同名的**文件夹**，推出的规则会把常量改成那个文件夹，`isfile()`
     照样 False、同一个框再弹（Codex 评 #730 P2）。判的是改写之后这一条落到哪里——落到文件才接受；选文件、
     或选里面真有这个文件的上级文件夹都照常。"""
     m, root = app_project
     client = m.app.test_client()
     (root / "fig.py").write_text(
-        f'import os\nif not os.path.isfile("{OLD}/INPUT"):\n    raise SystemExit(1)\n',
+        f'from ovito.io import import_file\nimport_file("{OLD}/INPUT")\n',
         encoding="utf-8",
     )
     decoy = tmp_path / "decoy" / "INPUT"
@@ -1587,7 +1595,7 @@ def test_a_probed_absolute_path_is_rewritten_and_the_figure_reads_the_true_data(
     offer = err.value.missing_input
     assert offer is not None
     assert {o["path"]: o["via"] for o in offer["others"]} == {
-        f"{OLD}/data/values.txt": inputremap.VIA_PROBE
+        f"{OLD}/data/values.txt": inputremap.VIA_OPEN
     }
     chosen = _touch(tmp_path / "moved" / "data" / "values.txt", "3\n")
     body = _preview(

@@ -92,76 +92,81 @@
         "darwin-arm64": {
           "entrypoint": "bin/codex",
           "file_count": 41,
-          "github": {
-            "sha256": "34d12384d90f8e09b0b9abaabf2a0ac02a52093b131504aeaf282107f54a44b2",
-            "size": 136607094
-          },
           "mirror": {
-            "integrity": "sha512-MQ/Z0Xw9v08DHunnzodi9NwA844MI3+RO72IM8o0Lr/UemnlEoBMCxpojstxX6mf5ZQwUrIg0yekDd9cFZ29hg==",
-            "sha256": "a991b0abcb6b6d2ae4d0221b55dd74afe8b87847044483ec68d290908a5a0f97",
-            "size": 141326129
+            "integrity": "sha512-7YtMDZX/jbWH9+fCVQg7BVsov8WvBzu4iuedXJEDlUdZxaTrYX2bEQwHIn3p0gxgSMfm30HGK9+bZm1aGSZaHw==",
+            "sha256": "6989512a93d5fc74cb221dd348c972bf3cd83592e471bfd9557bccb45eb6fffc",
+            "size": 148361216
           },
           "npm": "darwin-arm64",
-          "tree_sha256": "9d392f7a912bf1c405da03311a70d15696b6a07804fdccb1b16e01d3b4d2461e",
+          "npmjs": {
+            "integrity": "sha512-7YtMDZX/jbWH9+fCVQg7BVsov8WvBzu4iuedXJEDlUdZxaTrYX2bEQwHIn3p0gxgSMfm30HGK9+bZm1aGSZaHw==",
+            "sha256": "6989512a93d5fc74cb221dd348c972bf3cd83592e471bfd9557bccb45eb6fffc",
+            "size": 148361216
+          },
+          "tree_sha256": "d36325dc2344798fddab39ce98cabeb718e9f5c16989ae73448d0eebf662ea08",
           "triple": "aarch64-apple-darwin",
-          "unpacked_size": 355991955
+          "unpacked_size": 366268627
         },
         "darwin-x64": {
           "entrypoint": "bin/codex",
           "file_count": 41,
-          "github": {
-            "sha256": "792ecab0596006bd9f286430b2790aa487fd40fca2f351ca313ad85991720226",
-            "size": 147952114
-          },
           "mirror": {
-            "integrity": "sha512-mxMtlntnUq0Xb8rjvHph3Ws045Q82BLbeKRRdkN70Es9mho/D/Blh1ShZvzQOnsoeVw8lbV9fOLjW1vncoufKQ==",
-            "sha256": "311e1eaa38e403e480852d1b48a7abe8fdb30cdbdf60523c363dfdc9dc4da818",
-            "size": 150199720
+            "integrity": "sha512-wKoBiI6SBSg8fqiEYEOJs/NM/ZzKaCgy1cseX9LJbuDq3GCCKkeW9BUGe1ZEkyhhZ5Yfj+HzdUfp698abP2tDA==",
+            "sha256": "5b950f992ec8a2340c4c4c853d665639b27f618b64eede87ddf94b9ab7979360",
+            "size": 158115646
           },
           "npm": "darwin-x64",
-          "tree_sha256": "285b45b64ac7d9b032c1d716dcd9b61e57471bbf0e11ee99b0152dbf94bc7c85",
+          "npmjs": {
+            "integrity": "sha512-wKoBiI6SBSg8fqiEYEOJs/NM/ZzKaCgy1cseX9LJbuDq3GCCKkeW9BUGe1ZEkyhhZ5Yfj+HzdUfp698abP2tDA==",
+            "sha256": "5b950f992ec8a2340c4c4c853d665639b27f618b64eede87ddf94b9ab7979360",
+            "size": 158115646
+          },
+          "tree_sha256": "7c32d0504e8a38de8871a961055f82d8857e5095e1bbf6f6a137746ea7e73177",
           "triple": "x86_64-apple-darwin",
-          "unpacked_size": 379927839
+          "unpacked_size": 390631023
         },
         "linux-x64": {
           "entrypoint": "bin/codex",
           "file_count": 43,
-          "github": {
-            "sha256": "e97c4463d7f146692a955d7b0e1c8cf48f97cd4d616cd45c5dcab2e8d9743316",
-            "size": 163200349
-          },
           "mirror": {
-            "integrity": "sha512-FotDc7bVHwaommtsdDP8PPrH0a5IwC/t8H/LhdEcH4EBqgeYFRCtptiHcuwgvNRCLbTbOyFE/Ur6GzYCljgaSQ==",
-            "sha256": "f997cd6ef5987126e19cd3c82e847a4a6461270f32f97340c5e99a65fb6f9b8a",
-            "size": 166008118
+            "integrity": "sha512-FNc7danfUng9Sp6w+Fh7kofNHHZpA6VMyNKWsWrS3OwHly69gywTWeiuwrUPXpJSho8Df4xqRsHfHRPzj7zYQg==",
+            "sha256": "2dc9aa871abb513c3539d20d025f701faf1974c46ee906bda3a1e1f5026d4434",
+            "size": 173743288
           },
           "npm": "linux-x64",
-          "tree_sha256": "ffb3b884a5cd3c18bfcaec6c8dd2500854aad194b4b5664b634637f3088d8827",
+          "npmjs": {
+            "integrity": "sha512-FNc7danfUng9Sp6w+Fh7kofNHHZpA6VMyNKWsWrS3OwHly69gywTWeiuwrUPXpJSho8Df4xqRsHfHRPzj7zYQg==",
+            "sha256": "2dc9aa871abb513c3539d20d025f701faf1974c46ee906bda3a1e1f5026d4434",
+            "size": 173743288
+          },
+          "tree_sha256": "0d03806f44b3081467d1a559ba93cb390f922ab910927dbc4e46f1cf02613c78",
           "triple": "x86_64-unknown-linux-musl",
-          "unpacked_size": 445943197
+          "unpacked_size": 458589813
         },
         "win32-x64": {
           "entrypoint": "bin/codex.exe",
           "file_count": 45,
-          "github": {
-            "sha256": "2a64beb5856c3170738793e0aa65b44aa3f2d7b8f53221a3f72bdafe6485d119",
-            "size": 167949249
-          },
           "mirror": {
-            "integrity": "sha512-f5LMyugPSnAovnTnR1N+SNHSTfWZ+ym5A4H3zZHz/zhuMGMGZD8IxUdlSUlEbiENYyPXrJ8G3Jh+CLyzTfQB6Q==",
-            "sha256": "53ebec84d5a380bbb654a796e695576a4dbd2c228ec9bc02982f2013f261969d",
-            "size": 173677955
+            "integrity": "sha512-duPCBwflc8qhQdLekbL8fDYF646tW4gj0/l9BDnsVhEzoqm6OwxMAJXDFwSOLUUJPCmjBeM+eHYAx4fP/hwfjg==",
+            "sha256": "075304c882f6618eb73037bdd1164f942516f214108540bdbb9130eff4ab1e08",
+            "size": 181015521
           },
           "npm": "win32-x64",
-          "tree_sha256": "c43c6b558c5f9e6ec2790d16f48bb7d069d63570d3969da4cfc1990d99fc7aad",
+          "npmjs": {
+            "integrity": "sha512-duPCBwflc8qhQdLekbL8fDYF646tW4gj0/l9BDnsVhEzoqm6OwxMAJXDFwSOLUUJPCmjBeM+eHYAx4fP/hwfjg==",
+            "sha256": "075304c882f6618eb73037bdd1164f942516f214108540bdbb9130eff4ab1e08",
+            "size": 181015521
+          },
+          "tree_sha256": "68826b0a75a1d0fc9ce89084c9cd2ff598cf04c26f6cfff537d52096578ae4db",
           "triple": "x86_64-pc-windows-msvc",
-          "unpacked_size": 486491003
+          "unpacked_size": 501479802
         }
       },
       "sources": [
         {
-          "key": "github",
-          "url": "https://github.com/openai/codex/releases/download/rust-v{version}/codex-package-{triple}.tar.gz"
+          "key": "npmjs",
+          "strip": "package/vendor/{triple}/",
+          "url": "https://registry.npmjs.org/@openai/codex/-/codex-{version}-{npm}.tgz"
         },
         {
           "key": "mirror",
@@ -169,7 +174,7 @@
           "url": "https://registry.npmmirror.com/@openai/codex/-/codex-{version}-{npm}.tgz"
         }
       ],
-      "version": "0.165.0"
+      "version": "0.167.0"
     }
   },
   "schema": 1

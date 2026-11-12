@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「渲染引擎核心机制」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_manifest_marker_shape.py`、`test_manifest_geometry.py`、`test_series_shape_geometry.py`、`test_manifest_vector_text_metrics.py`、`test_preview_layout_geometry.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_manifest_marker_shape.py`、`test_manifest_geometry.py`、`test_series_shape_geometry.py`、`test_clip_path_fill_geometry.py`、`test_manifest_vector_text_metrics.py`、`test_preview_layout_geometry.py`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
@@ -109,7 +109,14 @@ order: 90
   形状内部也算墨迹。带字注释的箭头（不出端点的那种）描真实箭杆、只按描边命中
   （`element_geometry(arrow_path=True)`）；注释文字的 bbox 不含箭头、带底框文字的 bbox 含底框
   （`manifest._text_ink_extent`）。
-  前端消费规则见 `web/AGENTS.md`。看护 `tests/test_manifest_geometry.py`、`tests/test_series_shape_geometry.py`。
+  **被 `set_clip_path` 裁成任意形状的填充集合描裁剪路径**（2026-11-03，用户同门的 XPS 分峰图：
+  渐变峰 = 几百条横贯子图的色带 `PolyCollection` + `set_clip_path(PathPatch(峰形))`，按色带出几何时
+  选中框是整条矩形、点 A 峰选中上层的 B 峰，色带还吃光点数预算让后面的子图全部退回 bbox）：
+  `pathgeom._custom_clip_ink` 在墨迹表达得出时发「裁剪路径（fill、不按描边命中）+ `clip`」——色带无缝
+  拼成矩形 R（瓦片须**两两互不重叠**且面积和等于外包盒，否则会有空洞；超过 4096 条放弃）时 `clip` = R ∩ 裁剪框；裁剪路径整个落在填充里时 `clip` = 裁剪框（填充必须是**单条凸闭合多边形**，凹 / 多块的填充只验顶点会漏掉凹口，一律不认）。填充只盖住裁剪路径一部分
+  又不是矩形的，要做多边形布尔运算，**不冒充**，照旧按填充本身出。
+  前端消费规则见 `web/AGENTS.md`。看护 `tests/test_manifest_geometry.py`、`tests/test_series_shape_geometry.py`、
+  `tests/test_clip_path_fill_geometry.py`。
 * **manifest 量文字用矢量输出的那把尺**（2026-09-25，#576，`manifest.vector_text_metrics`）：
   manifest 在文档 dpi（通常 100）的 Agg 渲染器上量，而画布挂的是矢量 SVG（字形经 `TextToPath`
   在 100 pt、不带 hinting 下度量）、导出的是 PDF。Agg 的度量带 hinting、按像素取整，小字差一圈

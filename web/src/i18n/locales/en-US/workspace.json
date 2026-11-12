@@ -78,7 +78,7 @@
     "zoomAlt": "Large preview of {{name}}"
   },
   "autosave": {
-    "diskFailed": "Couldn’t save to disk. Your changes are kept for now. Check your free space and try again.",
+    "diskFailed": "Couldn’t save to disk.",
     "docConflict": "This layout is open in another window. Editing in both overwrites one of them.",
     "staleOtherWindow": "Another window saved a newer version. Your changes are kept here, not on disk."
   },
@@ -106,13 +106,35 @@
     "moveUp": "Move up",
     "moveDown": "Move down"
   },
+  "notebook": {
+    "converted": "Made “{{script}}” from “{{notebook}}” and started running it",
+    "convertedMore_one": "Made “{{script}}” from “{{notebook}}” and started running it; {{count}} other file wasn’t used this time",
+    "convertedMore_other": "Made “{{script}}” from “{{notebook}}” and started running it; {{count}} other files weren’t used this time",
+    "failed": "“{{name}}” couldn’t be turned into a script. {{reason}}"
+  },
   "canvasDrop": {
     "running": "Running “{{name}}”. Its figure will go on this canvas.",
-    "outsideProject": "“{{name}}” isn’t in this project’s folder, so it wasn’t run. To use it, drop it on the home screen.",
-    "cannotRun": "“{{name}}” has spaces at the start or end of its name and can’t be run yet. Rename it and drop it again.",
-    "notScript": "“{{name}}” isn’t a Python script. Drop a .py file.",
+    "runningFirst": "Running “{{name}}”. The other {{count}} scripts weren’t run this time.",
+    "openedAndRunning": "Opened the project “{{name}}” is in, and running it.",
+    "outsideProject": "“{{name}}” isn’t in this project, so it hasn’t been run.",
+    "outsideForeign": "“{{name}}” isn’t in this project.",
+    "openItsProject": "Open its project",
+    "openProjectFailed": "Couldn’t open the project “{{name}}” is in.",
+    "cannotRun": "“{{name}}” has spaces at the start or end of its name and can’t be run directly yet.",
     "noPath": "Choose “{{name}}” again in the next window.",
-    "browser": "Scripts can’t be dropped in the browser. Run “{{name}}” from the script library on the left."
+    "browser": "The browser can’t tell which folder “{{name}}” is in, so it can’t run it directly.",
+    "noProjectFolder": "There’s no project folder here to put it in.",
+    "placedOne": "Added to the canvas: “{{name}}”",
+    "placedMany_one": "Added {{count}} image to the canvas",
+    "placedMany_other": "Added {{count}} images to the canvas",
+    "importFailed": "“{{name}}” couldn’t be added to the canvas. {{reason}}",
+    "importFailedMany_one": "{{count}} file couldn’t be added to the canvas.",
+    "importFailedMany_other": "{{count}} files couldn’t be added to the canvas.",
+    "unsupportedType": "“{{name}}” can’t go on the canvas. Images, scripts and project packages can.",
+    "unsupportedImage": "Images in the format of “{{name}}” can’t go on the canvas yet. PNG, JPG, TIFF, PDF and SVG can.",
+    "packageFailed": "“{{name}}” couldn’t be opened as a project package. {{reason}}",
+    "packageOnly_one": "Opened the project package “{{name}}”. {{count}} other file wasn’t handled this time.",
+    "packageOnly_other": "Opened the project package “{{name}}”. {{count}} other files weren’t handled this time."
   },
   "canvasTools": {
     "fit": "Fit",
@@ -147,6 +169,12 @@
     "layoutCropFull": "At image edge · {{side}} not cropped",
     "layoutCropTight": "Compact · {{side}} fits the content",
     "layoutCropTrim": "Trim whitespace · {{side}} {{mm}} mm",
+    "layoutGrowCropped": "Remove the crop to resize the figure",
+    "layoutGrowHeight": "Resize figure · height {{from}} → {{to}} mm",
+    "layoutGrowUnavailable": "This figure can't be resized right now",
+    "layoutGrowWidth": "Resize figure · width {{from}} → {{to}} mm",
+    "layoutShrinkFitText": "Scale to {{pct}}%",
+    "layoutShrinkTextOverflow": "Text no longer fits. Scale it down?",
     "frameGrow": "Extend canvas · {{side}} +{{mm}} mm",
     "frameAtEdge": "At figure edge · no margin on {{side}}",
     "frameTrim": "Tighten margin · {{side}} −{{mm}} mm",
@@ -164,8 +192,6 @@
     "layoutFollow_one": "{{count}} annotation scales with it",
     "layoutFollow_other": "{{count}} annotations scale with it",
     "layoutFollowNone": "Annotations stay put",
-    "layoutFollowToggle": "With annotations",
-    "layoutFollowToggleTip": "When you scale a figure, the annotations on top of it (text, arrows, shapes) scale by the same ratio",
     "layoutResetCrop": "Reset crop",
     "layoutResetCropTip": "Restore the full figure frame and remove the crop",
     "layoutScale": "Scale {{from}}% → {{to}}%",
@@ -225,8 +251,14 @@
     "retry": "Retry save",
     "saveAs": "Save as…",
     "saveErrorBody": "Your changes are kept for now, not yet on disk.",
-    "tooNewBody": "Tavotto didn’t open it, so the file on disk is unchanged. Upgrade and try again.",
-    "tooNewTitle": "This layout comes from a newer Tavotto (schema {{schema}})",
+    "tooNewBody": "{{product}} didn’t open it, so the file is unchanged. Update and try again.",
+    "tooNewTitle": "This layout comes from a newer {{product}}",
+    "checkUpdate": "Check for updates",
+    "updateReady": "The new version is downloaded. Click “Restart now” in the top bar to open this layout.",
+    "updateFound": "Version {{version}} is available.",
+    "updateInstall": "Download and update",
+    "updateNone": "You’re on the latest version. This layout can open once a newer version is released.",
+    "updateCheckFailed": "Couldn’t check for updates. Check your connection and try again.",
     "moreActions": "More ways to resolve"
   },
   "document": {
@@ -404,7 +436,8 @@
     "unlockObjects": "Unlock {{count}} objects",
     "hideObjects": "Hide {{count}} objects",
     "showObjects": "Show {{count}} objects",
-    "setFramePad": "Change canvas margin"
+    "setFramePad": "Change canvas margin",
+    "journalStyle": "Adjust style “{{name}}” to {{journal}}"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -535,7 +568,9 @@
     "deleteCount": "Delete {{count}} objects",
     "cropRotatedReason": "Rotated figures can’t be cropped yet; reset the rotation first",
     "copy": "Copy",
-    "paste": "Paste"
+    "paste": "Paste",
+    "copyAsAnnotation": "Copy as annotation",
+    "pasteAsAnnotation": "Paste as annotation"
   },
   "rail": {
     "assets": "Assets",
@@ -644,10 +679,12 @@
     "doneProject": "Saved to project: {{file}}",
     "failed": "Save failed. Your changes are safe — check disk space and try again.",
     "projectConflict": "{{file}} in the project was changed elsewhere, so nothing was written. Decide in the dialog.",
+    "projectConflictElsewhere": "{{file}} in the project was changed elsewhere, so nothing was written. Go back to that layout and save again to decide what to do.",
     "projectFailed": "Couldn’t save {{file}} in the project: {{reason}}",
     "projectBindingUnavailable": "The project file link is not confirmed. No named file was written this time. Your changes remain on this computer; retry or reopen the layout.",
     "projectBindingSuperseded": "Wrote {{file}}, but the destination for the next save is not confirmed. Any later destination is preserved. Reopen this layout before saving again.",
     "projectSkipped": "{{file}} in the project wasn’t written: you switched layouts or projects after pressing Save. Go back to that layout and save again.",
+    "reloadFailed": "Couldn’t read the version on disk",
     "skippedSwitched": "You switched layouts or projects after pressing Save, so nothing was written to the project. Go back to that layout and save again."
   },
   "scrim": {
@@ -706,7 +743,10 @@
     "copyPath": "Copy path",
     "pathCopied": "Copied: {{path}}",
     "pathCopyFailed": "Couldn’t write to the clipboard. The script is at: {{path}}",
-    "rowActions": "More actions for {{script}}"
+    "rowActions": "More actions for {{script}}",
+    "group_notebook": "Jupyter notebooks",
+    "notebookRun": "Turn into a script and run",
+    "notebookRunAria": "Turn the notebook {{notebook}} into a script and run it"
   },
   "spineZone": {
     "label": "{{side}} · {{dir}} ticks {{state}} · {{action}}",
@@ -773,6 +813,7 @@
     "copiedBuiltin": "Built-in styles are read-only — copied to “{{name}}” and switched to it",
     "saveFailed": "The style wasn’t saved, so the canvas wasn’t changed: {{reason}}",
     "saveFailedPlain": "The style wasn’t saved, so the canvas wasn’t changed",
+    "retry": "Try again",
     "restoreWaiting": "Some figures are still rendering — restore when they finish",
     "upgradedLegacy": "Style “{{name}}” was saved by an older version — its sizes now count as they appear on the page",
     "detached": "Detached from “{{name}}”",
@@ -786,7 +827,17 @@
     "pendingSizeCancelled": "The font size was not applied because the figure changed or rendering failed. Try again.",
     "bindCancelled": "You switched canvases, so the style you picked wasn’t applied — pick it again on that canvas",
     "bindMissing": "That style is no longer in the library — nothing was changed",
-    "editCancelled": "The style or canvas just changed, so your change wasn’t applied — please make it again"
+    "editCancelled": "The style or canvas just changed, so your change wasn’t applied — please make it again",
+    "journalMismatch": "{{count}} not matching {{journal}}",
+    "journalAdjust": "Adjust to journal",
+    "journalAnnotation": "Canvas text",
+    "journalAdjusted": "Style adjusted to {{journal}}. You can undo this.",
+    "journalRetry": "Try again",
+    "journalProp": {
+      "fontsize": "size",
+      "fontfamily": "font",
+      "linewidth": "line width"
+    }
   },
   "status": {
     "dragSyncCancelled": "The figure could not sync, so the later drag was not applied. Try again.",
@@ -845,6 +896,8 @@
     "nothingToRedo": "Nothing to redo",
     "nothingToUndo": "Nothing to undo",
     "nudgeNotMovable": "The selected element can't be moved",
+    "elementNotCopyable": "{{name}} can't be copied yet",
+    "elementNotCopyableGeneric": "This element can't be copied yet",
     "objectCopied": "Copied {{name}}",
     "objectsCopied": "Copied {{count}} objects",
     "overridesCleared": "Cleared this figure’s edits",
@@ -901,7 +954,6 @@
       "locked": "This group has a locked member; unlock it to move or scale the group",
       "incomplete": "Some members have no position in this render, so the group can't be moved or scaled right now"
     },
-    "errorTitle": "Something didn’t work",
     "copyDetails": "Copy details",
     "copiedDetails": "Copied"
   },
@@ -931,6 +983,12 @@
     "exportPackage": "Export project package",
     "exportTip": "Export PNG / PDF",
     "fitCanvas": "Fit canvas",
+    "foreignOpen": {
+      "body": "This layout belongs to the project \"{{name}}\". Opened here, the script figures it uses can't be found.",
+      "bodyUnnamed": "This layout belongs to another project. Opened here, the script figures it uses can't be found.",
+      "confirm": "Open anyway",
+      "title": "Open another project's layout"
+    },
     "fromOtherProject": "· another project",
     "fromProject": "· in {{name}}",
     "importPackage": "Import project package…",
@@ -984,12 +1042,13 @@
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out",
     "zoomValue": "Zoom {{percent}}%",
-    "issueLastDoc": "Last layout not opened",
+    "issueLastDoc": "Last layout not reached",
     "issueTooNew": "Newer layout",
     "issueAria": "Layout status: {{status}}. Show details",
     "documentRenameHint": "Click for layout actions; double-click or F2 to rename",
     "zoomValueInput": "Zoom (%)",
-    "zoomSelection": "Zoom to selection"
+    "zoomSelection": "Zoom to selection",
+    "journalTitle": "Checked against {{journal}} · open journal spec"
   },
   "tutorialChip": {
     "label": "Tutorial"
@@ -998,6 +1057,11 @@
     "banner": "Tavotto has been updated. Reload to use the new version.",
     "chip": "Reload needed"
   },
+  "updateReady": {
+    "chip": "Update ready",
+    "body": "Version {{version}} is downloaded and installs when you quit.",
+    "restart": "Restart now"
+  },
   "hints": {
     "panel_editable": "Double-click to edit inside the figure.",
     "panel_layout_only": "Lay out this figure; connect its source script to edit its elements.",
@@ -1005,6 +1069,19 @@
     "multi_select": "Use the floating bar by the selection to align and distribute.",
     "problem_found": "“Problems” on the left locates the object and its property field.",
     "layout_page_bounds": "The white page is the size of the exported figure. Single- and double-column widths follow the current spec; adjust them on the Canvas tab on the right.",
+    "fit_canvas": "Double-click empty space to fit",
+    "edge_crop": "Drag an edge to resize; hold {{alt}} to crop",
+    "ruler_guides": "Drag a guide out of the ruler",
+    "shift_axis": "Hold ⇧ while dragging to move along one axis",
+    "no_snap": "Hold {{mod}} while dragging to skip snapping",
+    "arrow_nudge": "Arrow keys nudge; ⇧ for big steps, {{alt}} for fine",
+    "shift_rotate": "Hold ⇧ while rotating to snap to 15°",
+    "dblclick_text": "Double-click text in the figure to edit it",
+    "shift_draw": "Hold ⇧ to draw squares and straight lines",
+    "space_pan": "Hold Space and drag to pan",
+    "shift_multi": "⇧-click several, then change them all",
+    "shortcut_help": "Press ? for all shortcuts",
+    "shortcutHelpOpen": "Open",
     "pageBoundsOpen": "Open Canvas tab"
   },
   "prep": {
@@ -1037,9 +1114,13 @@
       "editReady": "Editing",
       "editOpening": "Opening the editor…",
       "noFigure": "Finished without a figure",
+      "noFigureCopied": "This script only writes out image files and doesn't draw a figure, so you can open the output images directly",
       "notRegistered": "The figure couldn't be registered",
       "cancelled": "Stopped",
       "envLocked": "The Python fixed in Settings is missing components",
+      "envLockedMissing": "The Python fixed in Settings is missing {{names}}",
+      "texCommand": "{{command}} not found. Install TeX, restart Tavotto, then try again.",
+      "texPackage": "Missing LaTeX package {{file}}. Install it, then try again.",
       "envChoice": "Run with the one in this project?",
       "envChoiceOpen": "Choose what to run with first",
       "workdir": "Run in which folder?",
@@ -1059,8 +1140,8 @@
       "fileOpsBlockedSafeOnly": "This project is set to safe mode only; the script changes files, then reads them, so the result would differ and no figure was made",
       "fileOpsBlockedOff": "Running as-is is turned off; the script changes project files, then reads them, so safe mode's result would differ and no figure was made",
       "failedAfterFallback": "Safe mode couldn't run the script as written, and running it as-is failed too",
-      "argsRejected_one": "The script rejected the argument you gave",
-      "argsRejected_other": "The script rejected the {{count}} arguments you gave",
+      "argsRejected_one": "The script could not continue with the argument supplied",
+      "argsRejected_other": "The script could not continue with the {{count}} arguments supplied",
       "inputUnanswered": "The script stopped to ask you something; run it again to answer",
       "inputUnansweredSecret": "The script wants a password; run it again to enter it (it is never remembered)",
       "missingData": "Can't find the data it reads",
@@ -1080,7 +1161,11 @@
       "originUnknown_one": "Can't tell where {{count}} library comes from",
       "originUnknown_other": "Can't tell where {{count}} libraries come from",
       "pythonChange": "Switching to Python {{version}}…",
-      "pythonChangeDownload": "Switching to Python {{version}} (about {{size}} MB to download)…"
+      "pythonChangeDownload": "Switching to Python {{version}} (about {{size}} MB to download)…",
+      "copyAsk": "The script reads data from {{path}}",
+      "copyDenied": "No permission to write to {{dir}}",
+      "copyProtected": "{{dir}} is protected by the system",
+      "copyFailed": "Couldn't copy the data to {{dir}}"
     },
     "btn": {
       "later": "Later",
@@ -1120,9 +1205,15 @@
       "openAssets": "Open library",
       "aiFix": "Fix it with your AI",
       "send": "Send",
+      "sendUs": "Send it to us",
       "revertAiEdit": "Revert the AI's change",
       "cancelScan": "Cancel check",
-      "confirmOrigins": "Confirm packages"
+      "confirmOrigins": "Confirm packages",
+      "copyRun": "Copy it there and run",
+      "otherData": "Use other data",
+      "grantCopy": "Allow, then copy",
+      "openPrivacy": "Open System Settings",
+      "rewritePath": "Change the path in the script"
     },
     "card": {
       "stepOf": "Step {{n}} of {{total}}: {{name}}",
@@ -1207,8 +1298,9 @@
       },
       "errorFull": "Full error output",
       "errorTruncated": "Too long; only the last part is kept.",
-      "noFigureWhy": "It never called savefig and left no Figure open.",
-      "failedFigures": "Figures that failed: {{names}} ({{codes}}). The others can be edited as usual.",
+      "noFigureWhy": "It left no Figure open.",
+      "failedFigures": "Figures that failed: {{names}}. The others can be edited as usual.",
+      "failedFiguresWhy": "Figures that failed: {{names}}. {{why}} The others can be edited as usual.",
       "unlinked": "{{names}}, made earlier with other arguments, is no longer linked. Run again with those arguments to restore it.",
       "history": {
         "title": "Run history",
@@ -1394,13 +1486,50 @@
         "matlab": "This is a MATLAB script; {{product}} can write a separate, directly editable Matplotlib version and leave the original untouched."
       },
       "unverified": "{{product}} didn’t run R / MATLAB. Compare side by side before using it",
+      "outputEvidence": "Capturing a figure cannot prove the original tables, logs, or other outputs were preserved. Check before adopting.",
+      "outputSourceReferences": "Filenames mentioned in the original (may include inputs): {{files}}",
+      "outputWriteAttempts": "Redirected write attempts during validation (not proof of a completed write): {{files}}",
+      "outputNoAttempts": "No redirected write attempts were recorded for this run.",
+      "outputAttemptsUnavailable": "No write record is available for this run.",
+      "outputEvidenceTruncated": "There are too many filenames to show all entries.",
+      "outputEvidenceLimits": "These clues may be incomplete; dynamic paths, temporary files, and external processes may not be recorded.",
+      "files": {
+        "state": {
+          "match": "Same",
+          "differs": "Different",
+          "incomparable": "Can't compare",
+          "missing": "Not written"
+        },
+        "why": {
+          "no_previous": "The project has no earlier result for this file",
+          "stale": "The earlier result is older than the input data and may be out of date",
+          "format": "This format can't be compared",
+          "too_large": "The file was too large to compare",
+          "inputs_unknown": "It's unknown which data was read",
+          "compare_failed": "The comparison ran into a problem"
+        },
+        "btn": {
+          "specify": "Choose a file",
+          "skip": "Not needed",
+          "realign": "Have AI check again"
+        },
+        "chosen": {
+          "specify": "Chosen",
+          "skip": "Not needed"
+        },
+        "askAdopt_one": "{{count}} file isn't handled yet. Adopt anyway?",
+        "askAdopt_other": "{{count}} files aren't handled yet. Adopt anyway?",
+        "adoptAnyway": "Adopt anyway",
+        "adoptAsIs": "Adopt as is"
+      },
       "adoptAdds": "Adopting only adds {{files}}; your original script is not touched",
       "installed": "Installed {{names}} for this project",
       "btn": {
         "start": "Make editable version",
         "adopt": "Use the new version",
         "discard": "Discard",
-        "retry": "Try again"
+        "retry": "Try again",
+        "allowUnsandboxedRetry": "Allow without sandbox and retry"
       },
       "deps": {
         "askOnce": "Install the missing packages into this environment ({{env}})?",
@@ -1479,6 +1608,7 @@
       "confirmOutside": "Allow",
       "commandAria": "Command to run",
       "reasonLabel": "The AI’s reason: {{reason}}",
+      "outsideNoSandbox": "This computer has no sandbox, so this needs your confirmation to continue",
       "outsideBackup": "Your project’s scripts are backed up first, so you can restore them if something goes wrong.",
       "skip": "Skip",
       "useIt": "Use it",
@@ -1579,6 +1709,17 @@
       "scopeUnknown": "The current execution scope is not known.",
       "notScript": "This target is not a script with declarable inputs.",
       "captured": "Input summary recorded by execution: {{revision}}"
+    },
+    "hint": {
+      "copyRun": "Copies the {{source}} you pointed to into {{target}}. The original stays untouched.",
+      "grantCopy": "Shows the system permission prompt, then copies. The original stays untouched.",
+      "openPrivacy": "Turn on {{product}} under Privacy & Security → Full Disk Access, then come back and run again."
+    },
+    "folder": {
+      "desktop": "Desktop",
+      "documents": "Documents",
+      "downloads": "Downloads",
+      "icloud": "iCloud Drive"
     }
   },
   "canvasMenu": {
@@ -1591,11 +1732,13 @@
   },
   "restore": {
     "autoAdopted": "Opened the layout “{{name}}” found on this computer",
-    "blockedWrite": "Your last layout isn’t open yet.",
+    "autoNew": "Couldn’t open your last layout “{{name}}”, so a new one was started.",
+    "autoNewUnnamed": "Couldn’t open your last layout, so a new one was started.",
+    "blockedWrite": "Pick a layout on the canvas first.",
     "choose": "Pick one to open",
-    "continueNew": "Start a new layout",
+    "continueNew": "Use a new layout",
     "entrySuperseded": "The project was switched, so this action wasn’t carried out.",
-    "entryTimeout": "Your last layout still wasn’t handled, so this action wasn’t carried out.",
+    "heldChoose": "Choose on the canvas and your last action will carry on.",
     "indexDegraded": "The record of your last layout couldn’t be read, so a blank layout was opened. Your older layouts are still there — look in “Open layout”.",
     "meta": {
       "pill": "Auto-recovery info not updated",
@@ -1611,7 +1754,7 @@
       "missing": "Last layout not found",
       "prepareFailed": "Example layout didn’t open",
       "tooNew": "Last layout is from a newer version",
-      "unavailable": "Last layout isn’t open yet"
+      "unavailable": "Can’t reach your last layout right now"
     },
     "retry": "Try again",
     "title": {
@@ -1621,7 +1764,7 @@
       "missing": "The last layout “{{name}}” wasn’t found.",
       "prepareFailed": "The example layout didn’t open.",
       "tooNew": "The last layout “{{name}}” is from a newer Tavotto and can’t be opened by this version.",
-      "unavailable": "Your last layout isn’t open yet."
+      "unavailable": "Can’t reach your last layout right now."
     }
   },
   "renderProgress": {

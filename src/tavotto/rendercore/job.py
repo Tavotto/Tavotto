@@ -64,6 +64,12 @@ def produce(
         params = {"id": str(exc.params.get("id", "")), "reason": f"{code}: {exc}"}
         if exc.params.get("why"):
             params["why"] = str(exc.params["why"])  # 源不可读的细分（与写入器同一套词，#517）
+        if exc.params.get("source_code"):
+            params["source_code"] = str(
+                exc.params["source_code"]
+            )  # 前端据它给出口（缺图 → 重新找到这张图），不解析 reason
+        if exc.params.get("figure"):
+            params["figure"] = str(exc.params["figure"])  # 面板指向的那个文件 id（相对项目根）
         raise exportreq.ExportRequestError(
             "export_render_failed", f"{exc.params.get('id', '')} 编译失败: {exc}", params
         ) from exc

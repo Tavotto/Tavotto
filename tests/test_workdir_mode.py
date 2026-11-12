@@ -52,9 +52,9 @@ if found and globbed and listed:
     with open("cache/impact.txt", "w") as f:
         f.write(str(n))
     Path("stale_output.png").unlink()   # 守卫：真实图库里的文件不许删
-    os.remove("stale_output.png")       # 同一条守卫的另外几个入口
-    shutil.rmtree("1")
-    os.rename("stale_output.png", "renamed.png")
+    os.remove("stale2.png")             # 同一条守卫的另外几个入口（暂存覆盖层接住，项目里的文件不动）
+    shutil.rmtree("1")                  # 项目里已有的目录：覆盖层不模拟，仍由守卫跳过
+    os.rename("to_rename.png", "renamed.png")
     fig, ax = plt.subplots()
     ax.plot([1, 2], [3, n])
     fig.savefig("impact_histogram.png")  # 捕获，不落盘
@@ -71,6 +71,8 @@ def figs(tmp_path):
     (root / "1").mkdir()
     (root / "1" / "etch_5-5.lammpstrj").write_text("a b c d", encoding="utf-8")
     (root / "stale_output.png").write_bytes(b"orig")
+    (root / "stale2.png").write_bytes(b"orig2")
+    (root / "to_rename.png").write_bytes(b"orig3")
     yield root
     engine_pool.shutdown_all(str(root), wait=True)
     workdir.set_mode(root, workdir.MODE_SANDBOX)
@@ -208,9 +210,12 @@ def test_project_mode_runs_the_script_where_it_lives(figs):
     assert (figs / "cache" / "impact.txt").read_text(encoding="utf-8") == "4"
     # 守卫一字不动，而且不止 Path.unlink 一个入口：删除 / 删目录树 / 改名全被拦下
     assert (figs / "stale_output.png").read_bytes() == b"orig"
+    assert (figs / "stale2.png").read_bytes() == b"orig2"
+    assert (figs / "to_rename.png").read_bytes() == b"orig3"
     assert (figs / "1" / "etch_5-5.lammpstrj").is_file()
     assert not (figs / "renamed.png").exists()
-    assert tail.count("[guard]") >= 4
+    # 守卫跳过的（目录树）与暂存覆盖层接住的（文件删除 / 改名）都不碰项目
+    assert tail.count("[guard]") >= 1 and tail.count("[overlay]") >= 3
     # savefig 仍是捕获、不落盘
     assert not (figs / "impact_histogram.png").exists()
     # 沙盒目录仍然存在（写入边界的参照），但脚本没往里写任何东西

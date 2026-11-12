@@ -249,8 +249,17 @@ interface ScriptRunStore {
    * 失败态不动：因「找不到数据」失败的由代际订阅重跑（先收集、再作废、再重跑），其余与数据位置无关。
    */
   invalidateCaptured: () => void
+  /**
+   * 记下脚本最近一次成功执行的 `PdfPages` 账本（#1370）：导出窗口的「合并为多页 PDF」只读这里。
+   * 试运行（`run`）成功与准备会话（默认的「准备并运行」）成功共用这一个出口——账本只有这一个权威存放处。
+   * 空表 = 这次没有多页 PDF，清掉旧账本（重跑覆盖）。只动账本两个字段，不碰相位 / 描述符。
+   */
+  recordPdfPages: (script: string, pages: readonly PdfPagesCapture[], runConfig: string) => void
   clear: () => void
 }
+
+// 请求身份独立于可删除的显示行；作废 / reset / clear 后也不复用旧请求的代次。
+let nextRunGeneration = 0
 
 export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
   epoch: 0,
@@ -262,7 +271,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
     const epoch = get().epoch
     const owner = captureProjectEpoch(() => get().epoch)
     const projectAtStart = currentProjectId()
-    const gen = (prev?.gen ?? 0) + 1
+    const gen = ++nextRunGeneration
     set((s) => ({
       byScript: {
         ...s.byScript,
@@ -436,6 +445,18 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
       if (queued) void runSpecsInOrder(name, queued).then((results) => reportResumedFailures(name, results))
       else if (rowSpec) void runSpec(name, rowSpec)
     }
+  },
+
+  recordPdfPages: (script, pages, runConfig) => {
+    set((s) => {
+      const prev = s.byScript[script] ?? { ...IDLE }
+      return {
+        byScript: {
+          ...s.byScript,
+          [script]: { ...prev, pdfPages: pages.length ? [...pages] : undefined, pdfPagesRunConfig: pages.length ? runConfig : undefined },
+        },
+      }
+    })
   },
 
   clear: () => {

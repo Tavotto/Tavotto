@@ -399,6 +399,22 @@ export const SUBSCRIPT_BASE: Readonly<Record<string, string>> = {
 }
 
 /**
+ * 字母式符号展开（2026-11-04，ADR 0060 修订）：批准的正文脸（Liberation 12 张）没有这几个码位，
+ * 导出会落到 cjk 层（无衬线 Noto Sans SC），而浏览器自己回退到系统衬线字体——两边不一致。
+ * 展开成正文脸里本来就有的字（`℃` → `°C`）两边就一致了。
+ *
+ * 与上下标不同，**两档都生效**：展开后导出的文本层仍由 ActualText 还成用户原文，语义不损（NFKC 等价）。
+ * 不在正文脸、且展开后每个字符都在正文脸才展开；否则原样保留。
+ * 闭集，依据与没收的同类字符见 `richtext.py` 同名一节；与 `richtext.LETTERLIKE_EXPANSION` 同源。
+ */
+export const LETTERLIKE_EXPANSION: Readonly<Record<string, string>> = {
+  '℃': '°C', // ℃ → °C
+  '℉': '°F', // ℉ → °F
+  'K': 'K', // K（开尔文符号 U+212A）→ K
+  'Å': 'Å', // Å（埃符号 U+212B）→ Å（U+00C5）
+}
+
+/**
  * 解释档位。**没有 `math` 这一档**：画布文字不经 matplotlib，摆一个不存在
  * 的模式等于一句做不到的承诺（见 `typography.ts` 的 `mathTextModeOf`）。
  */
@@ -454,6 +470,16 @@ export function interpretRuns(runs: TextRun[], opts?: InterpretOptions): TextRun
     const chars = [...run.text]
     let i = 0
     while (i < chars.length) {
+      const expansion = LETTERLIKE_EXPANSION[chars[i]]
+      if (
+        expansion !== undefined &&
+        !isPrimary(chars[i].codePointAt(0) as number) &&
+        [...expansion].every((c) => isPrimary(c.codePointAt(0) as number))
+      ) {
+        emit(expansion, '', run) // 两档都生效：见 LETTERLIKE_EXPANSION
+        i++
+        continue
+      }
       const script = scriptOf(chars[i])
       if (!script) {
         emit(chars[i], '', run)

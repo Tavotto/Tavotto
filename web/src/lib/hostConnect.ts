@@ -16,13 +16,23 @@ export interface HostStep {
   skipped: boolean
   detail?: string
   error_code?: string
+  /** 只有 `skill` 这一步带：written / updated / skipped / modified / removed / builtin / none / failed */
+  skill?: string
 }
+
+/** 技能副本的状态（`hostskills.skill_state`）：current 是最新、stale 是旧版、modified 是用户改过、builtin 不需要复制 */
+export type HostSkillState = 'current' | 'stale' | 'modified' | 'missing' | 'builtin'
 
 export interface HostRow {
   id: string
   label: string
   installed: boolean
   connected: boolean
+  skill: HostSkillState
+  /** Codex：已装插件的版本；其余：技能记录里的版本；读不到就没有 */
+  version?: string
+  /** 只在 Codex 插件落后于这份 Tavotto 时出现 */
+  update?: { latest: string; how: 'codex_plugin' }
 }
 
 /** `tavotto hosts list --json` */
@@ -30,7 +40,6 @@ export interface HostList {
   ok: boolean
   action: 'list'
   server: boolean
-  project_root: string | null
   hosts: HostRow[]
 }
 
@@ -70,6 +79,19 @@ function parseLine(raw: string): Record<string, unknown> {
   return data as Record<string, unknown>
 }
 
+const SKILL_STATES: readonly HostSkillState[] = ['current', 'stale', 'modified', 'missing', 'builtin']
+
+function parseSkillState(v: unknown): HostSkillState {
+  return SKILL_STATES.find((x) => x === v) ?? 'missing'
+}
+
+function parseUpdate(v: unknown): { update?: HostRow['update'] } {
+  const u = v as { latest?: unknown; how?: unknown } | null
+  return u && typeof u.latest === 'string' && u.how === 'codex_plugin'
+    ? { update: { latest: u.latest, how: 'codex_plugin' } }
+    : {}
+}
+
 export function parseHostList(raw: string): HostList {
   const d = parseLine(raw)
   if (d.action !== 'list' || !Array.isArray(d.hosts)) throw new HostShellError('bad_output')
@@ -80,13 +102,15 @@ export function parseHostList(raw: string): HostList {
       label: String(h.label ?? h.id ?? ''),
       installed: h.installed === true,
       connected: h.connected === true,
+      skill: parseSkillState(h.skill),
+      ...(typeof h.version === 'string' && h.version ? { version: h.version } : {}),
+      ...parseUpdate(h.update),
     }))
     .filter((h) => h.id)
   return {
     ok: d.ok === true,
     action: 'list',
     server: d.server === true,
-    project_root: typeof d.project_root === 'string' ? d.project_root : null,
     hosts,
   }
 }
@@ -103,6 +127,11 @@ export function parseHostResult(raw: string): HostResult {
 export function hostStepLabel(step: string): string {
   const own = lookup(`step.${step}`)
   return own ?? codexStepLabel(step)
+}
+
+/** 技能那一步值得多说一句的情形（用户改过的副本没有覆盖 / 没有删）；其余不说 */
+export function hostStepNote(s: HostStep): string | null {
+  return s.step === 'skill' && s.skill === 'modified' ? hc('skillModified') : null
 }
 
 export function hostStepStateText(s: HostStep): string {

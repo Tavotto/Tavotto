@@ -211,6 +211,10 @@ def test_merge_group_fail_fast_step_is_overhead():
     assert CB.classify_step("merge_group 快速失败（取消本 run 的其余 job）") == "overhead"
 
 
+def test_cla_merge_group_collect_step_is_classified_as_test():
+    assert CB.classify_step("收集合并组候选的提交（只读元数据）") == "test"
+
+
 def test_cla_service_contract_step_is_classified_as_test():
     assert CB.classify_step("CLA service contract tests (isolated)") == "test"
     assert CB.classify_step("CLA service contract tests (unregistered)") == "other"

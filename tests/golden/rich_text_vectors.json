@@ -779,6 +779,225 @@
    "glance": "a/ x"
   }
  ],
+ "interpret": {
+  "coverages": {
+   "latin": {
+    "primary": [
+     [
+      32,
+      126
+     ],
+     [
+      160,
+      591
+     ]
+    ],
+    "drawable": [
+     [
+      32,
+      126
+     ],
+     [
+      160,
+      591
+     ],
+     [
+      8311,
+      8311
+     ],
+     [
+      8451,
+      8451
+     ]
+    ]
+   },
+   "no-degree": {
+    "primary": [
+     [
+      32,
+      175
+     ],
+     [
+      177,
+      591
+     ]
+    ],
+    "drawable": [
+     [
+      32,
+      591
+     ],
+     [
+      8451,
+      8451
+     ]
+    ]
+   }
+  },
+  "vectors": [
+   {
+    "name": "celsius-auto",
+    "format": null,
+    "text": "25℃",
+    "coverage": "latin",
+    "mode": "auto",
+    "runs": [
+     {
+      "text": "25°C",
+      "script": ""
+     }
+    ]
+   },
+   {
+    "name": "celsius-scientific",
+    "format": null,
+    "text": "25℃",
+    "coverage": "latin",
+    "mode": "scientific",
+    "runs": [
+     {
+      "text": "25°C",
+      "script": ""
+     }
+    ]
+   },
+   {
+    "name": "fahrenheit",
+    "format": null,
+    "text": "77℉ 与 25℃",
+    "coverage": "latin",
+    "mode": "auto",
+    "runs": [
+     {
+      "text": "77°F 与 25°C",
+      "script": ""
+     }
+    ]
+   },
+   {
+    "name": "kelvin-sign",
+    "format": null,
+    "text": "T/K",
+    "coverage": "latin",
+    "mode": "auto",
+    "runs": [
+     {
+      "text": "T/K",
+      "script": ""
+     }
+    ]
+   },
+   {
+    "name": "angstrom-sign",
+    "format": null,
+    "text": "5 Å",
+    "coverage": "latin",
+    "mode": "scientific",
+    "runs": [
+     {
+      "text": "5 Å",
+      "script": ""
+     }
+    ]
+   },
+   {
+    "name": "celsius-no-degree-kept",
+    "format": null,
+    "text": "25℃",
+    "coverage": "no-degree",
+    "mode": "auto",
+    "runs": [
+     {
+      "text": "25℃",
+      "script": ""
+     }
+    ]
+   },
+   {
+    "name": "celsius-in-sup-run-kept",
+    "format": null,
+    "text": "x^{℃}",
+    "coverage": "latin",
+    "mode": "auto",
+    "runs": [
+     {
+      "text": "x",
+      "script": ""
+     },
+     {
+      "text": "℃",
+      "script": "sup"
+     }
+    ]
+   },
+   {
+    "name": "celsius-in-italic",
+    "format": "latex",
+    "text": "\\textit{25℃} 与 \\textbf{℉}",
+    "coverage": "latin",
+    "mode": "auto",
+    "runs": [
+     {
+      "text": "25°C",
+      "script": "",
+      "italic": true
+     },
+     {
+      "text": " 与 ",
+      "script": ""
+     },
+     {
+      "text": "°F",
+      "script": "",
+      "bold": true
+     }
+    ]
+   },
+   {
+    "name": "fullwidth-c-kept",
+    "format": null,
+    "text": "Ｃ",
+    "coverage": "latin",
+    "mode": "auto",
+    "runs": [
+     {
+      "text": "Ｃ",
+      "script": ""
+     }
+    ]
+   },
+   {
+    "name": "sup-auto-drawable-kept",
+    "format": null,
+    "text": "10⁷",
+    "coverage": "latin",
+    "mode": "auto",
+    "runs": [
+     {
+      "text": "10⁷",
+      "script": ""
+     }
+    ]
+   },
+   {
+    "name": "sup-scientific-folds",
+    "format": null,
+    "text": "10⁷",
+    "coverage": "latin",
+    "mode": "scientific",
+    "runs": [
+     {
+      "text": "10",
+      "script": ""
+     },
+     {
+      "text": "7",
+      "script": "sup"
+     }
+    ]
+   }
+  ]
+ },
  "glance": {
   "symbols": {
    "alpha": "α",

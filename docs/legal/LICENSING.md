@@ -135,7 +135,7 @@ part of Tavotto's application, wheel or desktop closure.** PDF reading, writing 
 rasterising go through the render core (`src/tavotto/rendercore/`): pikepdf
 (MPL-2.0, over qpdf Apache-2.0), fontTools (MIT), uharfbuzz (Apache-2.0, over
 HarfBuzz), pypdfium2 (Apache-2.0 / BSD-3-Clause, over PDFium BSD-3-Clause) and
-Pillow, plus the approved OFL 1.1 fonts (Liberation 2.1.5, Noto Sans SC). The
+Pillow, plus the approved OFL 1.1 fonts (Liberation 2.1.5, Noto Sans SC, Noto Serif SC, Regular and Bold). The
 `pdfbackend/` contract layer that made the swap possible stays: no module above
 `rendercore/` imports a PDF or font library, and `scripts/ci/retirement_scan.py`
 keeps `pymupdf` / `fitz` out of the source set, the declared dependency closure
@@ -154,7 +154,7 @@ changed, the rule did not.
 | [pypdfium2](https://github.com/pypdfium2-team/pypdfium2) (PDFium) | Apache-2.0 / BSD-3-Clause | Rasterising and probing in the render child (render core) |
 | [uharfbuzz](https://github.com/harfbuzz/uharfbuzz) (HarfBuzz) | Apache-2.0 (HarfBuzz MIT-old) | Text shaping (render core) |
 | [fontTools](https://github.com/fonttools/fonttools) | MIT | Font subsetting (render core) |
-| [Liberation Fonts](https://github.com/liberationfonts/liberation-fonts) 2.1.5, [Noto Sans SC](https://github.com/notofonts/noto-cjk) | SIL OFL 1.1 (licence text ships next to the fonts) | Approved canvas-text faces (`rendercore/fonts_allowlist.json`) |
+| [Liberation Fonts](https://github.com/liberationfonts/liberation-fonts) 2.1.5, [Noto Sans SC and Noto Serif SC](https://github.com/notofonts/noto-cjk) | SIL OFL 1.1 (licence text ships next to the fonts) | Approved canvas-text faces (`rendercore/fonts_allowlist.json`) |
 | ~~[PyMuPDF](https://github.com/pymupdf/PyMuPDF)~~ | AGPL-3.0 / Artifex commercial (dual) | **Retired 2026-09-22 (ADR 0072)** — test-only reader via the `legacy-pymupdf` extra |
 | [Flask](https://flask.palletsprojects.com/) | BSD-3-Clause | Local HTTP server |
 | [matplotlib](https://matplotlib.org/) | matplotlib licence (PSF-based) | Rendering worker |

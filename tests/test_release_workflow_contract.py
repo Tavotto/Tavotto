@@ -1869,14 +1869,23 @@ _NO_STDERR = (
 )
 
 
-def _check_pending(tmp_path, body: str | None, write: bool = True):
+def _check_pending(
+    tmp_path, body: str | None, write: bool = True, fragments: dict[str, str] | None = None
+):
     """按发布链的用法跑一次闸：返回 (退出码, stderr)。
 
     `body is None` = 暂存文件根本不存在；`write=False` = 文件已由调用方摆好。
+    `fragments` = 片段目录（`unreleased/`）里的文件；默认摆一个只有 README.md 的空目录。
     """
+    if fragments is None:
+        fragments = {"README.md": "# 说明\n\n## 这里的标题不算\n"}
     pending = tmp_path / "UNRELEASED.md"
     if body is not None and write:
         pending.write_text(body, encoding="utf-8")
+    if fragments is not None:
+        (tmp_path / "unreleased").mkdir(exist_ok=True)
+        for name, text in fragments.items():
+            (tmp_path / "unreleased" / name).write_text(text, encoding="utf-8")
     proc = subprocess.run(
         [
             sys.executable,
@@ -1899,6 +1908,48 @@ def test_the_pending_notes_gate_reds_on_an_unmerged_entry(tmp_path):
     assert code == 1, f"带着未并入的条目却放行了（exit {code}）"
     assert err is not None, _NO_STDERR
     assert "v9.9.9" in err, "错误信息没说该并到哪一版去"
+
+
+def test_the_pending_notes_gate_reds_on_a_leftover_fragment(tmp_path):
+    """片段目录里残留的 `*.md`（README 除外）= 没并入的待发条目。"""
+    code, err = _check_pending(
+        tmp_path,
+        "<!-- 说明 -->\n",
+        fragments={"README.md": "# x\n", "canvas-edge.md": "## Dragging edges\n\nSymptom.\n"},
+    )
+    assert code == 1, f"带着残留片段放行了（exit {code}）"
+    assert err is not None, _NO_STDERR
+    assert "canvas-edge.md" in err and "v9.9.9" in err
+
+
+def test_the_pending_notes_gate_greens_with_only_the_fragment_readme(tmp_path):
+    code, _ = _check_pending(tmp_path, "<!-- 说明 -->\n", fragments={"README.md": "## 不算\n"})
+    assert code == 0
+
+
+def test_the_pending_notes_gate_reds_on_a_fragment_without_heading(tmp_path):
+    code, err = _check_pending(tmp_path, "<!-- 说明 -->\n", fragments={"bad.md": "no heading\n"})
+    assert code == 1 and err is not None
+    assert "bad.md" in err and "## " in err
+
+
+def test_the_pending_notes_gate_reds_when_the_fragment_dir_is_gone(tmp_path):
+    """片段目录不见了 ≠ 没有片段：与暂存文件不见同一条纪律。"""
+    pending = tmp_path / "UNRELEASED.md"
+    pending.write_text("<!-- 说明 -->\n", encoding="utf-8")
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(WF.parents[1] / "scripts" / "check_pending_release_notes.py"),
+            "--pending",
+            str(pending),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert proc.returncode == 1 and proc.stderr is not None
+    assert "找不到片段目录" in proc.stderr and "Traceback" not in proc.stderr
 
 
 def test_the_pending_notes_gate_greens_once_the_entries_are_moved_out(tmp_path):
@@ -1961,6 +2012,7 @@ def test_the_gate_message_survives_a_non_utf8_default_encoding(tmp_path):
     """
     pending = tmp_path / "UNRELEASED.md"
     pending.write_text("<!-- 说明 -->\n\n## Notes\n\n**Rotation.**\n", encoding="utf-8")
+    (tmp_path / "unreleased").mkdir()
     proc = subprocess.run(
         [
             sys.executable,

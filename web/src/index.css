@@ -50,6 +50,8 @@
   --color-paper-ink: #1b1b18;
   /* 纸上的荧光笔（出处卡摘录里命中的数）：浅黄，两套主题同值（纸不反相） */
   --color-paper-highlight: #fff3a3;
+  /* 插画里的荧光笔（遥测询问框 A）：浅色同纸上高亮黄；暗色换压暗的黄，不盖住上面的蓝线 */
+  --color-highlighter: #fff3a3;
   /* 纸上的二 / 三级墨（缩略图里的文字框 / 标注线、纸上的图形记号）：paper-ink 的 80% / 65%，合成到纸白上约等于浅色的
      ink-2 / ink-3。纸上不许用界面的 ink-2 / ink-3——它们在暗色里变浅，落在不变的白纸上只剩 1.8:1 / 2.8:1
      （foundation.test「纸上的东西用纸上的墨」+ tokenContrast.test 守着） */
@@ -553,31 +555,10 @@
   }
 }
 
-/* 进度条（ui/ProgressBar，2026-10-28 铅笔排线）：11px 高、2px 圆角、发丝内描边（1× 是 ink 16% 的 1px，
-   ≥2dppx 是 ink 30% 的 0.5px），纸白底；内缩 2px 画 45° 整像素阶梯斜线（5×5 瓦片、节距 5px，SVG data-URI
-   做 mask，任何缩放都锐利）。底排线 ink 15%，已完成的一段是 ink-3；确定态宽度吸附到整条线
-   （不支持 CSS round() 的内核退回精确百分比）；不确定态整片排线以 2.2s 线性慢速斜向流动，
-   减少动态效果时静止。 */
-.progress-track,
+/* 缩略图占位（手帐线稿）：纸白底 + 发丝框 + 45° 整像素排线瓦片（5×5，SVG data-URI 做 mask），不画图标。
+   尺寸与圆角由使用处给；排线 ink 15% */
 .hatch-box {
-  --progress-hatch: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='5' shape-rendering='crispEdges'%3E%3Crect x='4' y='0' width='1' height='1'/%3E%3Crect x='3' y='1' width='1' height='1'/%3E%3Crect x='2' y='2' width='1' height='1'/%3E%3Crect x='1' y='3' width='1' height='1'/%3E%3Crect x='0' y='4' width='1' height='1'/%3E%3C/svg%3E");
-}
-.progress-track {
-  position: relative;
-  height: 11px;
-  overflow: hidden;
-  border-radius: 2px;
-  background: var(--color-surface);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-ink) 16%, transparent);
-}
-@media (min-resolution: 2dppx) {
-  .progress-track {
-    box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-ink) 30%, transparent);
-  }
-}
-/* 缩略图占位（手帐线稿）：与进度条同一块纸——发丝框 + 同一张 45° 排线瓦片，不画图标。
-   尺寸与圆角由使用处给；排线与进度条的底排线同色（ink 15%） */
-.hatch-box {
+  --hatch-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='5' shape-rendering='crispEdges'%3E%3Crect x='4' y='0' width='1' height='1'/%3E%3Crect x='3' y='1' width='1' height='1'/%3E%3Crect x='2' y='2' width='1' height='1'/%3E%3Crect x='1' y='3' width='1' height='1'/%3E%3Crect x='0' y='4' width='1' height='1'/%3E%3C/svg%3E");
   position: relative;
   display: block;
   overflow: hidden;
@@ -602,8 +583,8 @@
   content: '';
   position: absolute;
   inset: 2px;
-  -webkit-mask: var(--progress-hatch) 0 0 / 5px 5px;
-  mask: var(--progress-hatch) 0 0 / 5px 5px;
+  -webkit-mask: var(--hatch-tile) 0 0 / 5px 5px;
+  mask: var(--hatch-tile) 0 0 / 5px 5px;
   background: color-mix(in srgb, var(--color-ink) 15%, transparent);
 }
 /* 属性栏默认卡的页面预览（Inspector DocumentSummary，redesign-3 B2）：画在**纸**上，纸在暗色里仍是白的，
@@ -633,36 +614,16 @@
   outline: 1px dashed color-mix(in srgb, var(--color-paper-ink) 22%, transparent);
   outline-offset: -1px;
 }
-.progress-track > .progress-base,
-.progress-track > .progress-fill {
-  position: absolute;
-  inset: 2px;
-  -webkit-mask: var(--progress-hatch) 0 0 / 5px 5px;
-  mask: var(--progress-hatch) 0 0 / 5px 5px;
+/* 点阵进度条（ui/ProgressBar，ADR 0168）：canvas 按物理像素画稀点 / 密点，这里只给高度与墨色（canvas 读自己的 color） */
+.progress-dots {
+  position: relative;
+  height: 12px;
+  color: var(--color-ink-2);
 }
-.progress-track > .progress-base {
-  background: color-mix(in srgb, var(--color-ink) 15%, transparent);
-}
-.progress-track > .progress-fill {
-  right: auto;
-  width: var(--progress-w, 0%);
-  background: var(--color-ink-3);
-}
-@supports (width: round(down, 43%, 5px)) {
-  .progress-track > .progress-fill {
-    width: round(down, var(--progress-w, 0%), 5px);
-  }
-}
-.progress-track[data-progress-indeterminate] > .progress-fill {
-  right: 2px;
-  width: auto;
-  background: color-mix(in srgb, var(--color-ink-3) 70%, transparent);
-  animation: progress-slide 2.2s linear infinite;
-}
-@media (prefers-reduced-motion: reduce) {
-  .progress-track[data-progress-indeterminate] > .progress-fill {
-    animation: none;
-  }
+.progress-dots > canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 /* 首页拖放区线稿（ui/Sketch 'drop'）：拖入时文件卡连同三道节拍下落 4px（整数，保持锐利），
    落点虚线换 accent；减少动态效果时直接到位，不做过渡 */
@@ -680,13 +641,6 @@
     transition: none;
   }
 }
-@keyframes progress-slide {
-  to {
-    -webkit-mask-position: 5px 0;
-    mask-position: 5px 0;
-  }
-}
-
 @keyframes sweep {
   0% {
     transform: translateX(-100%);
@@ -1345,6 +1299,7 @@
   --color-dim: #7db6f5;
     --color-danger: #ef6e55;
     --color-warn: #d9a23a;
+    --color-highlighter: #5a5226;
     --color-ok: #4fb37a;
     --color-danger-content: color-mix(in oklab, var(--color-danger) 70%, white);
     --color-warn-content: color-mix(in oklab, var(--color-warn) 70%, white);
@@ -1382,6 +1337,7 @@
   --color-dim: #7db6f5;
   --color-danger: #ef6e55;
   --color-warn: #d9a23a;
+  --color-highlighter: #5a5226;
   --color-ok: #4fb37a;
   --color-danger-content: color-mix(in oklab, var(--color-danger) 70%, white);
   --color-warn-content: color-mix(in oklab, var(--color-warn) 70%, white);

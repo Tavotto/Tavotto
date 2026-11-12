@@ -1,19 +1,20 @@
 /**
- * 多图排版里面板角缩放的「连同标注」（ADR 0161）：与这张面板相交的标注按同一固定点、同一比例缩放
- * 位置 / 尺寸 / 所有页面 pt 量，同一个事务（一条历史）；不相交 / 锁定 / 隐藏的不动；开关关掉、非等比、
- * 单图编辑里都不跟。
+ * 图内标注跟着面板走（ADR 0161 修订 2026-11-04）：多图排版里面板角缩放时，**整个落在**这张面板里的
+ * 标注按同一固定点、同一比例缩放位置 / 尺寸 / 所有页面 pt 量，同一个事务（一条历史）；压在图边、伸到
+ * 图外 / 锁定 / 隐藏的不动；非等比、单图编辑里都不跟。拖动 / 方向键移动面板时同一批标注一起平移。
  *
  * 版面：pa 在 (10,20) 100×75，拖东南角（固定点 = 左上角 (10,20)）。
  */
 import { formatMessage, literal } from '@/i18n'
 import { beforeEach, afterEach, describe, expect, it } from 'vitest'
 
+import { moveLabel } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useProfileStore } from '@/store/profileStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
-import { UI_PREFS_KEY, useUiStore } from '@/store/uiStore'
+import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import {
@@ -24,7 +25,8 @@ import {
   type ShapeObject,
   type TextObject,
 } from '@/types/document'
-import { startResizeDrag } from './interactions'
+import { startMoveDrag, startResizeDrag } from './interactions'
+import { nudgeKeyDown, nudgeKeyUp, finishNudge } from './nudge'
 
 const panel = (): PanelObject =>
   ({
@@ -99,7 +101,7 @@ async function setup(extras: CanvasObject[] = [text(), arrow(), shape()]) {
   localStorage.clear()
   useViewportStore.setState({ zoom: 1, panX: 0, panY: 0, originX: 0, originY: 0, viewW: 900, viewH: 700 })
   // 关吸附：这里只看"跟随"，不让缩放吸附把比例拽走
-  useUiStore.setState({ tool: 'select', snapEnabled: false, scaleWithAnnotations: true })
+  useUiStore.setState({ tool: 'select', snapEnabled: false })
   useSelectionStore.getState().clear()
   useRenderStore.getState().clear()
   useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
@@ -161,7 +163,7 @@ afterEach(() => {
   useInteractionStore.getState().end()
 })
 
-describe('连同标注', () => {
+describe('拖角缩放：图内标注一起缩', () => {
   it('位置、尺寸、pt 量按同一个固定点、同一个比例缩放，一条历史', () => {
     dragCorner([-50, -37.5])
     const p = get<PanelObject>('pa')
@@ -186,11 +188,8 @@ describe('连同标注', () => {
     expect(a.start).toEqual({ rx: 0, ry: 0 }) // 端点是相对框的比例，不变
     expect(a.end).toEqual({ rx: 1, ry: 1 })
 
-    // 与面板只相交一部分的形状也跟着走
-    const sh = get<ShapeObject>('s1')
-    expect(sh.strokePt).toBeCloseTo(2 * s, 9)
-    expect(sh.cornerRadius).toBeCloseTo(3 * s, 9)
-    expect(sh.w).toBeCloseTo(30 * s, 9)
+    // 压在图边上、伸到图外的形状是独立的，不跟
+    expect(get<ShapeObject>('s1')).toMatchObject({ x: 100, y: 85, w: 30, strokePt: 2, cornerRadius: 3 })
 
     // 面板与标注在同一个事务里：整手势一条历史，撤销一步全部回来
     expect(useDocumentStore.getState().past).toHaveLength(1)
@@ -200,15 +199,16 @@ describe('连同标注', () => {
     expect(get<ArrowObject>('a1').strokePt).toBe(1.2)
   })
 
-  it('不相交 / 锁定 / 隐藏的标注不动', async () => {
+  it('图外 / 压边 / 锁定 / 隐藏的标注不动', async () => {
     await setup([
       text({ id: 'far', x: 300, y: 300 }),
+      text({ id: 'edge', x: 90, y: 30 }),
       text({ id: 'locked', locked: true }),
       text({ id: 'hidden', hidden: true }),
       text({ id: 'in' }),
     ])
     dragCorner([-50, -37.5])
-    for (const id of ['far', 'locked', 'hidden']) {
+    for (const id of ['far', 'edge', 'locked', 'hidden']) {
       const o = get<TextObject>(id)
       expect(o.sizePt).toBe(10)
       expect(o.w).toBe(40)
@@ -224,12 +224,23 @@ describe('连同标注', () => {
     expect(get<TextObject>('t1').sizePt).toBeCloseTo(10 * s, 9)
   })
 
-  it('开关关掉：标注不动', () => {
-    useUiStore.setState({ scaleWithAnnotations: false })
+  it('成组的标注要整组都在图里才跟（不把组拆开）', async () => {
+    await setup([
+      text({ id: 'g-in', groupId: 'g1' }),
+      text({ id: 'g-out', x: 300, y: 300, groupId: 'g1' }),
+      text({ id: 'h-1', groupId: 'g2' }),
+      arrow({ id: 'h-2', groupId: 'g2' }),
+    ])
+    dragCorner([-50, -37.5])
+    expect(get<TextObject>('g-in')).toMatchObject({ x: 30, sizePt: 10 })
+    expect(get<TextObject>('h-1').sizePt).toBeLessThan(10)
+    expect(get<ArrowObject>('h-2').strokePt).toBeLessThan(1.2)
+  })
+
+  it('图里没有标注：读数不带后缀', async () => {
+    await setup([text({ id: 'far', x: 300, y: 300 })])
     const readout = dragCorner([-50, -37.5])
-    expect(get<PanelObject>('pa').w).toBeLessThan(100)
-    expect(get<TextObject>('t1')).toMatchObject({ x: 30, y: 30, w: 40, sizePt: 10 })
-    expect(readout).toMatchObject({ detail: '标注不动' })
+    expect(readout!.detail).toBe('')
   })
 
   it('⌥ 反转比例锁定 = 非等比：没有"一个比例"，标注留在原处', () => {
@@ -248,11 +259,47 @@ describe('连同标注', () => {
     useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
   })
 
-  it('开关偏好写进 uiStore 并落本机（默认开）', () => {
-    expect(useUiStore.getState().scaleWithAnnotations).toBe(true)
-    useUiStore.getState().setCanvasPref({ scaleWithAnnotations: false })
-    const saved = JSON.parse(localStorage.getItem(UI_PREFS_KEY) ?? '{}')
-    expect(saved.scaleWithAnnotations).toBe(false)
+})
+
+describe('移动面板：图里的标注一起平移', () => {
+  const select = (...ids: string[]) => useSelectionStore.getState().set(ids)
+
+  it('拖动面板：图里的标注同一位移，图外 / 压边的不动；一条历史、标签按选中的个数说', () => {
+    select('pa')
+    startMoveDrag(down(), 'pa')
+    fire('pointermove', [5, 3])
+    fire('pointermove', [10, 6])
+    fire('pointerup', [10, 6])
+    expect(get<PanelObject>('pa')).toMatchObject({ x: 20, y: 26 })
+    expect(get<TextObject>('t1')).toMatchObject({ x: 40, y: 36, w: 40, sizePt: 10 })
+    expect(get<ArrowObject>('a1')).toMatchObject({ x: 60, y: 56 })
+    expect(get<ShapeObject>('s1')).toMatchObject({ x: 100, y: 85 })
+    const { past } = useDocumentStore.getState()
+    expect(past).toHaveLength(1)
+    expect(formatMessage(past[0].label)).toBe(formatMessage(moveLabel(1)))
+    useDocumentStore.getState().undo()
+    expect(get<TextObject>('t1')).toMatchObject({ x: 30, y: 30 })
+  })
+
+  it('方向键微调面板：同一批标注一起动', () => {
+    select('pa')
+    const key = (k: string) => new KeyboardEvent('keydown', { key: k })
+    expect(nudgeKeyDown(key('ArrowRight'))).toBe(true)
+    nudgeKeyUp(new KeyboardEvent('keyup', { key: 'ArrowRight' }))
+    finishNudge()
+    const p = get<PanelObject>('pa')
+    expect(p.x).toBeGreaterThan(10)
+    expect(get<TextObject>('t1').x).toBeCloseTo(30 + (p.x - 10), 9)
+    expect(get<ShapeObject>('s1').x).toBe(100)
+  })
+
+  it('只拖标注本身：面板不跟', () => {
+    select('t1')
+    startMoveDrag(down(), 't1')
+    fire('pointermove', [10, 6])
+    fire('pointerup', [10, 6])
+    expect(get<TextObject>('t1')).toMatchObject({ x: 40, y: 36 })
+    expect(get<PanelObject>('pa')).toMatchObject({ x: 10, y: 20 })
   })
 })
 
@@ -263,7 +310,7 @@ describe('缩放状态（interaction.dragStatus）', () => {
     const s = p.w / 100
     expect(readout).toMatchObject({
       main: `缩放 100% → ${Math.round(s * 100)}% · 图内最小字号 9.0 → ${(Math.round(9 * s * 10) / 10).toFixed(1)} pt`,
-      detail: '标注 3 个一起缩放',
+      detail: '标注 2 个一起缩放', // 压在图边上的形状不算
     })
     // 胶囊贴着被拖面板此刻的框
     expect(readout!.box.w).toBeCloseTo(p.w, 9)

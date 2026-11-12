@@ -167,6 +167,21 @@ class LoginSpec:
 
 
 @dataclass(frozen=True)
+class ConvertMcp:
+    """转换会话里由 Tavotto 代写目标文件的 MCP 服务（`tavotto fix-mcp --convert-id`，`convertwrite.py`）。与 `FixRunContext` 同一条纪律：
+    **这里没有令牌**，只有环境变量**名**；值由调用方放进子进程环境，绝不进 argv。"""
+
+    #: 服务启动命令（可执行文件 + 参数，不含令牌）
+    command: list[str]
+    #: 服务在 CLI 配置里的名字
+    name: str
+    #: 令牌所在的环境变量名
+    token_env: str
+    #: 单次工具调用上限秒数
+    tool_timeout_s: int = 120
+
+
+@dataclass(frozen=True)
 class RunContext:
     """构造一次任务命令所需的全部输入。"""
 
@@ -187,6 +202,15 @@ class RunContext:
     checks_used: int = 0
     #: 内置执行器：`check` 经 stdout/stdin 回调父进程（改图任务只在有 TAF 候选时才给；转换任务恒给）
     check_ipc: bool = False
+    #: 转换任务：由 Tavotto 代写目标文件的 MCP 服务（只有 `AgentDefinition.convert_write_tool` 的适配器会用；其余忽略）
+    convert_mcp: ConvertMcp | None = None
+    #: 这是不是一次转换会话（R / MATLAB / Python 转可编辑版），与用户设置 `ai.convert_unsandboxed_windows` 的值——**由桥显式传入**，
+    #: 适配器不读全局配置。仅 Codex 用：(Windows ∧ 转换 ∧ 设置为真) 才以 `danger-full-access` 起（方案 B，`codex_sandbox_mode`）
+    convert_task: bool = False
+    convert_unsandboxed: bool = False
+    #: 额外放行**只读**的目录（用户附的参考图在数据目录里，不在 cwd 之内，ADR 0175）。只有 Claude 需要（`--add-dir`）；
+    #: Codex 的 workspace-write 沙盒本来就能读 cwd 之外，内置执行器的图在候选里，都忽略它
+    read_dirs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -453,6 +477,21 @@ def probe_version(argv: list[str]) -> str | None:
     return probe_version_detailed(argv)[0]
 
 
+_VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+
+
+def version_key(text: str | None) -> tuple[int, int, int] | None:
+    """版本串里第一个 `主.次.修订` → 可比较的三元组（`codex-cli 0.166.0` → (0, 166, 0)）；没有 → None（不猜）。"""
+    m = _VERSION_RE.search(text or "")
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+
+
+def older_than(current: str | None, other: str | None) -> bool:
+    """`current` 明确比 `other` 旧（两个都解析得出才判；判不出 = False，不提示）。"""
+    a, b = version_key(current), version_key(other)
+    return a is not None and b is not None and a < b
+
+
 def _run_probe(argv: list[str], timeout: int = READINESS_TIMEOUT_S) -> tuple[int, str] | None:
     """跑一条**无副作用**的本地状态命令；→ (返回码, 合并输出) 或 None。
 
@@ -511,6 +550,9 @@ CLI_ITEM_TYPES = frozenset(
 )
 #: 这次会话用的接口：官方登录 / 第三方中转（不带标签、不带地址）。
 ENDPOINT_KINDS = frozenset({"official", "relay"})
+#: Codex 这次会话实际的沙盒级别（诊断闭集事实 `sandbox_mode`，由实际 argv 反推，见 `sandbox_mode_of`）：
+#: `workspace_write` = Codex 默认；`unelevated` = Windows 的受限令牌覆盖；`unsandboxed` = 方案 B 的 `danger-full-access`
+SANDBOX_MODES = frozenset({"workspace_write", "unelevated", "unsandboxed"})
 _ITEM_ALIASES = {"local_shell_call": "command_execution", "patch_apply": "file_change"}
 _WIN_LONG_PREFIX = "\\\\?\\"
 
@@ -542,6 +584,10 @@ class CliRunFacts:
         self.files_inside = 0
         self.files_outside = 0
         self.target_touched = False
+        #: Tavotto 代写目标的 MCP 工具是否成功写过（权威事实在 `convertwrite`，由桥在进程结束前填；None = 这次会话没有该工具）
+        self.target_tool_ok: bool | None = None
+        #: 这次进程实际的沙盒级别（`SANDBOX_MODES`；由桥按实际 argv 填，None = 未知）
+        self.sandbox_mode: str | None = None
         self.reasoning = 0
         self.messages = 0
         self.errors = 0
@@ -696,6 +742,8 @@ class CliRunFacts:
             "target_touched": self.target_touched,
             "target_on_disk": on_disk,
             "target_bytes": size,
+            "target_tool_ok": self.target_tool_ok,
+            "sandbox_mode": self.sandbox_mode,
             "reasoning": self.reasoning,
             "messages": self.messages,
             "errors": self.errors,
@@ -733,6 +781,8 @@ def merge_run_facts(runs: list[dict]) -> dict | None:
     last = runs[-1]
     out: dict = {k: sum(int(r.get(k) or 0) for r in runs) for k in _SUM_FACTS}
     out["target_touched"] = any(bool(r.get("target_touched")) for r in runs)
+    tool = [r["target_tool_ok"] for r in runs if r.get("target_tool_ok") is not None]
+    out["target_tool_ok"] = any(tool) if tool else None  # 只有转换会话的 Codex 进程有这一项
     out["max_gap_ms"] = max(int(r.get("max_gap_ms") or 0) for r in runs)
     out["first_event_ms"] = runs[0].get("first_event_ms")
     for k in (
@@ -743,6 +793,7 @@ def merge_run_facts(runs: list[dict]) -> dict | None:
         "endpoint",
         "target_on_disk",
         "target_bytes",
+        "sandbox_mode",
     ):
         out[k] = last.get(k)
     return out
@@ -777,6 +828,9 @@ class AgentDefinition:
     #: 内部执行器（Tavotto 自己的进程，没有可探测的 CLI）：不进 `AGENT_REGISTRY`、不出现在 capabilities 的 `agents[]`，
     #: 只经 `get_agent` 被改图执行路径找到（ADR 0147 第二阶段）
     internal: bool = False
+    #: 转换任务里支持“Tavotto 经 MCP 代写目标文件”（TVD-BCZ0 方案 A）。Codex 是（Windows 沙盒里它自带的写文件工具一律失败）；
+    #: Claude Code 自带的 Write 不受该沙盒影响，内置执行器本来就由 Tavotto 写，都不开
+    convert_write_tool: bool = False
 
     # -- 探测 --------------------------------------------------------------
     def extra_search_locations(self) -> list[SearchLocation]:
@@ -798,6 +852,14 @@ class AgentDefinition:
     # -- 能力 --------------------------------------------------------------
     def model_capabilities(self) -> ModelCapabilities:
         return ModelCapabilities()
+
+    def catalog_client_version(self) -> str | None:
+        """写下本机模型目录缓存的那个 CLI 的版本（`model_capabilities` 列出的型号来自它）。
+
+        同一个家族的 CLI 共用一份目录缓存（桌面版、IDE 插件、命令行都写它）：缓存比 Tavotto 实际启动的那份
+        CLI 新，列表里就可能有这份 CLI 还不认识的型号（选中后服务端 404）。**默认 None = 不知道**，不提示。
+        """
+        return None
 
     # -- 就绪 --------------------------------------------------------------
     def readiness(self, argv: list[str]) -> ReadinessResult:
@@ -843,6 +905,24 @@ class AgentDefinition:
 CODEX_WINDOWS_SANDBOX_ARGS = ["-c", 'windows.sandbox="unelevated"']
 
 
+def codex_sandbox_policy(ctx: "RunContext") -> str:
+    """`--sandbox` 的取值。**只有 (Windows ∧ 转换会话 ∧ 用户打开了「转换时允许 AI 不受沙盒限制」)** 是 `danger-full-access`，
+    其余（改图 / 修复会话、非 Windows、开关关着）一律 `workspace-write`，与方案 A 的 argv 逐字一致。"""
+    if os.name == "nt" and ctx.convert_task and ctx.convert_unsandboxed:
+        return "danger-full-access"
+    return "workspace-write"
+
+
+def sandbox_mode_of(argv: list[str]) -> str:
+    """从实际 argv 反推沙盒级别（诊断用，不信任何旁路状态）。"""
+    for i, a in enumerate(argv[:-1]):
+        if a == "--sandbox" and argv[i + 1] == "danger-full-access":
+            return "unsandboxed"
+    if any("windows.sandbox" in a and "unelevated" in a for a in argv):
+        return "unelevated"
+    return "workspace_write"
+
+
 def _codex_windows_sandbox_args(endpoint_args: list[str]) -> list[str]:
     """Windows 才追加；`endpoint_args` 里已显式给了 `windows.sandbox` 就不重复、不覆盖。"""
     if os.name != "nt" or any("windows.sandbox" in a for a in endpoint_args):
@@ -850,8 +930,31 @@ def _codex_windows_sandbox_args(endpoint_args: list[str]) -> list[str]:
     return list(CODEX_WINDOWS_SANDBOX_ARGS)
 
 
+def _codex_convert_mcp_args(mcp: ConvertMcp | None) -> list[str]:
+    """转换会话的代写 MCP 服务：本次调用级 `-c mcp_servers.<名>.…`（TOML 值，不写 `~/.codex/config.toml`），令牌只列环境变量名；
+    工具免 Codex 自己的审批（exec 模式没人点，不放行就一直挂着——与修复会话同一条，10-24 真机核实）。**所有平台**都注入。"""
+    if mcp is None:
+        return []
+    pre = f"mcp_servers.{mcp.name}"
+    return [
+        "-c",
+        f"{pre}.command={toml_value(mcp.command[0])}",
+        "-c",
+        f"{pre}.args={toml_value(list(mcp.command[1:]))}",
+        "-c",
+        f"{pre}.env_vars={toml_value([mcp.token_env])}",
+        "-c",
+        f"{pre}.tool_timeout_sec={int(mcp.tool_timeout_s)}",
+        "-c",
+        f"{pre}.startup_timeout_sec=60",
+        "-c",
+        f'{pre}.default_tools_approval_mode="approve"',
+    ]
+
+
 class CodexAgent(AgentDefinition):
     id = "codex"
+    convert_write_tool = True
     display_name = "Codex"
     icon_key = "codex"
     command_names = ("codex",)
@@ -995,6 +1098,16 @@ class CodexAgent(AgentDefinition):
         rows.sort(key=lambda r: (r[0], r[1]))
         return [r[2] for r in rows]
 
+    @classmethod
+    def catalog_client_version(cls) -> str | None:
+        """`models_cache.json` 顶层的 `client_version`（写这份缓存的 codex 版本，真机 0.166.0 抓到）。读不到 / 不是版本串 → None。"""
+        try:
+            data = json.loads((cls._home() / "models_cache.json").read_text(encoding="utf-8"))
+            ver = data.get("client_version") if isinstance(data, dict) else None
+        except (OSError, ValueError):
+            return None
+        return ver if isinstance(ver, str) and version_key(ver) is not None else None
+
     def model_capabilities(self) -> ModelCapabilities:
         cfg = self._config()
         catalog = self._catalog()
@@ -1038,6 +1151,7 @@ class CodexAgent(AgentDefinition):
         return ReadinessResult("unknown", "unrecognised_output")
 
     def build_command(self, ctx: RunContext) -> SpawnSpec:
+        policy = codex_sandbox_policy(ctx)
         cmd = [
             *ctx.argv,
             "exec",
@@ -1045,10 +1159,12 @@ class CodexAgent(AgentDefinition):
             ctx.cwd,
             "--json",
             "--sandbox",
-            "workspace-write",
+            policy,
             "--skip-git-repo-check",
         ]
-        cmd += _codex_windows_sandbox_args(ctx.endpoint_args)
+        if policy != "danger-full-access":  # 不受限时再带 windows.sandbox 覆盖没有意义
+            cmd += _codex_windows_sandbox_args(ctx.endpoint_args)
+        cmd += _codex_convert_mcp_args(ctx.convert_mcp)
         cmd += ctx.endpoint_args
         if ctx.model:
             cmd += ["-m", ctx.model]
@@ -1161,7 +1277,9 @@ class CodexAgent(AgentDefinition):
             return [("action", "✎ 修改文件")]
         if etype in ("error", "turn.failed"):
             if etype == "turn.failed" and (cls := codex_failure_class(ev)):
-                state["runner_error"] = cls
+                # 404 只在走 CLI 自己的登录时才是「这份 CLI 不认识这个型号」；第三方接口的 404 多半是地址填错，不归这一类
+                if not (cls == "agent_model_unavailable" and state.get("endpoint_backed")):
+                    state["runner_error"] = cls
             return [("message", str(ev.get("error") or ev.get("message") or "出错"))]
         return []
 
@@ -1210,7 +1328,12 @@ def codex_failure_class(ev: dict) -> str | None:
     err = ev.get("error")
     msg = err.get("message") if isinstance(err, dict) else None
     m = _CODEX_STATUS_RE.match(msg) if isinstance(msg, str) else None
-    return _CLI_STATUS_CLASS.get(int(m.group(1))) if m else None
+    if not m:
+        return None
+    code = int(m.group(1))
+    # 404 只在 Codex 侧归类：旧版 codex 被选了一个它不认识的新型号时服务端回 404（2026-11-04 用户反馈）。
+    # 第三方接口时调用方（classify_event）不采纳这一类
+    return "agent_model_unavailable" if code == 404 else _CLI_STATUS_CLASS.get(code)
 
 
 def claude_failure_class(ev: dict) -> str | None:
@@ -1418,6 +1541,9 @@ class ClaudeAgent(AgentDefinition):
         # 目录明确给了所选型号的档位时，请求的档位必须在其中；明确无档位就不传
         if ctx.effort and not (ctx.endpoint_args or ctx.endpoint_env) and self._effort_ok(ctx):
             cmd += ["--effort", ctx.effort]
+        if ctx.read_dirs:
+            # 放最后：`--add-dir` 接一串目录，后面不能再跟位置参数（提示词已在 `-p` 之后）
+            cmd += ["--add-dir", *ctx.read_dirs]
         return SpawnSpec(cmd, dict(ctx.endpoint_env))
 
     #: 修复会话里允许 Claude 自带命令行跑的只读命令（`Bash(<命令>)` 与 `Bash(<命令> *)` 各一条）。**故意不含 cat / head / tail / grep**：
@@ -1617,6 +1743,14 @@ RUNNER_ERRORS = frozenset(
         "no_done_event",
     }
 )
+
+#: 只有 CLI 适配器（Codex / Claude）会写的 `runner_error`（内置执行器不产出，不进上面那张与 `DONE_REASONS` 对齐的表）：
+#: `agent_model_unavailable` = 旧版 codex 不认识所选的新型号（404，2026-11-04 用户反馈）
+CLI_RUNNER_ERRORS = frozenset({"agent_model_unavailable"})
+
+#: 只有 CLI 适配器（Codex / Claude）会写的 `runner_error`（内置执行器不产出，不进上面那张与 `DONE_REASONS` 对齐的表）：
+#: `agent_model_unavailable` = 旧版 codex 不认识所选的新型号（404，2026-11-04 用户反馈）
+CLI_RUNNER_ERRORS = frozenset({"agent_model_unavailable"})
 
 #: 内置执行器的密钥环境变量名（与 `agent_runner.runner_cli.ENV_API_KEY` 同值，`tests/test_ai_connections.py` 钉死）
 BUILTIN_KEY_ENV = "TAVOTTO_AGENT_API_KEY"

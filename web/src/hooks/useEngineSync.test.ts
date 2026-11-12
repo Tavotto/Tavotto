@@ -1035,32 +1035,21 @@ describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是�
       // 以前：收尾修正与「事务结束」分两次落地，自动重排两次都跳过 → nb 停在 45，压在面板上
       expect(gapAfter()).toBeCloseTo(5, 6)
       const done = [box(current()), box(nb())]
+      // 重排并进了这次缩放那一条历史（QA-WIN-38）：一次撤销同时退掉缩放与重排，
+      // 图幅同步随即 silent 补回新图幅。这次不进历史的尺寸写入不许排出一条
+      // 「自动重排」把 future 清空；重做一次回到松手那一刻
+      const depth = useDocumentStore.getState().past.length
       await act(async () => {
         useDocumentStore.getState().undo()
       })
       await settle()
-      // 撤掉自动重排：面板仍是松手后的样子
-      expect(box(current())).toEqual(done[0])
+      expect(nb().x).toBeCloseTo(45, 6)
+      expect(useDocumentStore.getState().past).toHaveLength(depth - 1)
+      expect(useDocumentStore.getState().future).toHaveLength(1)
       await act(async () => {
         useDocumentStore.getState().redo()
       })
       await settle()
-      expect([box(current()), box(nb())]).toEqual(done)
-      // 连续撤销两次：第二次回到手势前的旧图幅，图幅同步随即 silent 补回新图幅。
-      // 这次不进历史的尺寸写入不许排出一条「自动重排」把 future 清空
-      for (let i = 0; i < 2; i++) {
-        await act(async () => {
-          useDocumentStore.getState().undo()
-        })
-        await settle()
-      }
-      expect(useDocumentStore.getState().future).toHaveLength(2)
-      for (let i = 0; i < 2; i++) {
-        await act(async () => {
-          useDocumentStore.getState().redo()
-        })
-        await settle()
-      }
       expect([box(current()), box(nb())]).toEqual(done)
       expect(dims(current())).toEqual([50, 26, 50, 30])
       stop()
@@ -1099,12 +1088,19 @@ describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是�
       const labels = () => useDocumentStore.getState().past.map((e) => e.label.key)
       expect(current().w).toBeCloseTo(50, 6)
       expect(nb().x).toBeCloseTo(55, 6)
-      expect(labels().slice(-2)).toEqual(['history.resizeObjects', 'history.autoReflow'])
-      // 撤销一次只撤掉重排：nb 回到 45，面板仍是 50 宽
+      // 重排并进缩放那一条：没有单独的 autoReflow 条目
+      expect(labels().at(-1)).toBe('history.resizeObjects')
+      expect(labels()).not.toContain('history.autoReflow')
+      // 一次撤销同时退回缩放与重排：面板回 40 宽、nb 回 45
       await act(async () => {
         useDocumentStore.getState().undo()
       })
       expect(nb().x).toBeCloseTo(45, 6)
+      expect(current().w).toBeCloseTo(40, 6)
+      await act(async () => {
+        useDocumentStore.getState().redo()
+      })
+      expect(nb().x).toBeCloseTo(55, 6)
       expect(current().w).toBeCloseTo(50, 6)
       stop()
     })

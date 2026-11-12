@@ -53,7 +53,9 @@ OUT_EXTS = figcapture.ARTIFACT_EXTS
 # 测试与工具脚本）；「列给用户挑」的清单（probe.script_inventory）仍然列出
 # 它们，只是标注 reason=infrastructure——用户主动试运行任何项目内 .py 都是
 # 允许的，判据见 is_infrastructure_name()。
-SKIP_PREFIXES = ("paper_style", "_", "test_", "conftest", "setup")
+#: `tavotto_plot_`：数据出图 v2 的内容寻址公共模块（`ai_data_template.runtime_module`，ADR 0178）——被同目录生成的脚本
+#: import，自己不是一张图
+SKIP_PREFIXES = ("paper_style", "_", "test_", "conftest", "setup", "tavotto_plot_")
 SKIP_SUFFIXES = ("_test.py",)
 # 存图调用名。paper_style.save(fig, stem) 这类图库方言与 matplotlib 原生
 # savefig 一起认；参数位置不假设，所有实参都试着求值。
@@ -149,6 +151,52 @@ PRUNE_DIRS = {
 }  # 项目内的 Tavotto 数据收纳目录，里面没有图表脚本
 MAX_DEPTH = 4  # 图库目录层级：panels/、subfigs/ 这种一两层，给到四层
 MAX_CALL_DEPTH = 6  # 跨函数传播的递归上限（防互递归与深调用链爆栈）
+
+
+def walk_files(
+    root: str | Path, suffixes: tuple[str, ...], *, scan_max: int
+) -> tuple[list[tuple[str, int]], bool]:
+    """项目内某类后缀的普通文件清单：`([(root 相对 POSIX 路径, 字节数)], truncated)`，**不排序**（调用方按需排）。
+
+    数据文件列表（`/api/ai/data-files`）与数据文件夹摘要（`ai_data_figure.profile_folder`）共用这一份规则：隐藏目录与
+    `PRUNE_DIRS` 整棵剪掉；不跟随链接（链接目录不进、链接文件不列）；隐藏文件与非普通文件（FIFO / 设备）不列；后缀按
+    小写比（`suffixes` 须是小写、带点）。手写栈 + scandir 逐项迭代，每看一项计一次数，超过 `scan_max` 立刻停下并
+    `truncated=True`（`os.walk` 会先把整个目录枚举完才让我们数）；已收集的保留。"""
+    base = Path(root)
+    found: list[tuple[str, int]] = []
+    seen = 0
+    truncated = False
+    stack = [str(base)]
+    while stack and not truncated:
+        cur = stack.pop()
+        try:
+            it = os.scandir(cur)
+        except OSError:
+            continue
+        with it:
+            for entry in it:
+                seen += 1
+                if seen > scan_max:
+                    truncated = True
+                    break
+                name = entry.name
+                try:
+                    if entry.is_symlink():
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        if not name.startswith(".") and name not in PRUNE_DIRS:
+                            stack.append(entry.path)
+                        continue
+                    if name.startswith(".") or not name.lower().endswith(suffixes):
+                        continue
+                    if not entry.is_file(follow_symlinks=False):
+                        continue
+                    size = entry.stat(follow_symlinks=False).st_size
+                except OSError:
+                    continue
+                found.append((Path(entry.path).relative_to(base).as_posix(), size))
+    return found, truncated
+
 
 UNKNOWN = "*"
 
@@ -1091,6 +1139,16 @@ def iter_foreign_scripts(figures_dir: Path) -> list[Path]:
     walk 规则就是 `_iter_py` 那一个实现（PRUNE_DIRS / MAX_DEPTH / 隐藏项），只是后缀换了；
     这些文件**不是** `iter_scripts` / `iter_all_scripts` 的成员——不进静态起草、注册表、运行环境探测。"""
     return _iter_py(Path(figures_dir), include_infrastructure=True, suffixes=FOREIGN_SUFFIXES)
+
+
+#: Jupyter 笔记本后缀（区分大小写；↔ `notebookscript.SUFFIX`）
+NOTEBOOK_SUFFIXES = (".ipynb",)
+
+
+def iter_notebooks(figures_dir: Path) -> list[Path]:
+    """项目内 `.ipynb`（ADR 0179）：walk 规则仍是 `_iter_py` 那一个实现（隐藏目录——含 `.ipynb_checkpoints`——、
+    虚拟环境、缓存都不下探）。它们**不是** `iter_scripts` / `iter_all_scripts` 的成员，不进静态起草 / 注册表 / 探测。"""
+    return _iter_py(Path(figures_dir), include_infrastructure=True, suffixes=NOTEBOOK_SUFFIXES)
 
 
 def iter_all_scripts(

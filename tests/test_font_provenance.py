@@ -81,13 +81,41 @@ def test_no_web_font_is_fetched_or_embedded():
     assert bad == [], f"这些文件在引入外部/内嵌字体：{bad}"
 
 
+def test_font_bytes_are_loaded_only_from_the_local_source_font_endpoint():
+    """ADR 0164 修订「前端不下载远程字体」的**主语**：不是「前端永远不 `new FontFace`」，而是
+    「前端加载字体字节的代码只有一处，且字节只来自本机服务的 `/api/source-fonts/…`（会话认证之内）」。
+
+    上一条判据（`@font-face` / 字体 CDN / woff）一字不动，仍然挡着 CSS 里的 web 字体与远程字体；本条挡的是
+    JS 里用 `FontFace` API 偷偷绕开它的写法：构造点唯一、源码里没有任何 http(s) / data URI 字节来源、取字节的
+    函数只拼 `/api/source-fonts/` 路径。"""
+    users = []
+    for rel in _tracked_files():
+        if not rel.startswith("web/src/") or not rel.endswith((".ts", ".tsx")) or ".test." in rel:
+            continue
+        if re.search(
+            r"new\s+FontFace\s*\(|document\.fonts\.add|FontFaceSet",
+            (ROOT / rel).read_text(encoding="utf-8"),
+        ):
+            users.append(rel)
+    assert users == ["web/src/lib/sourceFontCache.ts"], users
+    cache = (ROOT / "web/src/lib/sourceFontCache.ts").read_text(encoding="utf-8")
+    code = re.sub(r"/\*.*?\*/|//[^\n]*", "", cache, flags=re.S)
+    assert not re.search(r"https?://|data:", code), (
+        "预览字体只能来自本机服务，不许有网络 / 内嵌来源"
+    )
+    api = (ROOT / "web/src/lib/api.ts").read_text(encoding="utf-8")
+    fetcher = re.search(r"export const fetchSourceFontBytes = .*?\n}\n", api, re.S).group(0)
+    assert "/api/source-fonts/" in fetcher and "apiUrl(" in fetcher
+    assert not re.search(r"https?://", fetcher)
+
+
 def test_packaged_fonts_are_exactly_the_allowlist():
     """第四档的闭集判据：`resources/fonts/` 里（若已取过）每个字体文件的 sha256 都在 allowlist 里，
     且 allowlist 里每张脸都在。目录不存在时只核 allowlist 自身（那是没跑 fetch_fonts 的机器，不是缺陷）。"""
     from tavotto.rendercore import fonts
 
     allow = fonts.load_allowlist()
-    assert len(allow.faces) == 13 and {f.license for f in allow.faces.values()} == {"OFL-1.1"}
+    assert len(allow.faces) == 16 and {f.license for f in allow.faces.values()} == {"OFL-1.1"}
     root = fonts.fonts_dir()
     if not root.is_dir():
         return
@@ -118,7 +146,9 @@ def test_canvas_faces_all_come_from_the_allowlist_registry():
     pkg = ROOT / "src" / "tavotto" / "rendercore"
     offenders = []
     for path in sorted(pkg.glob("*.py")):
-        if path.name == "fonts.py":
+        # `userfonts.py`（ADR 0164，修订 ADR 0060）：文档里 `source_font` 点名的**本机用户字体**，按 sha256 认、
+        # 不按名字猜；它是唯一被允许写出系统字体目录与字体后缀的另一个模块，入口的唯一性由下一条用例钉住
+        if path.name in ("fonts.py", "userfonts.py"):
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
@@ -131,6 +161,44 @@ def test_canvas_faces_all_come_from_the_allowlist_registry():
                 ):
                     offenders.append(f"{path.name}:{node.lineno} {node.value!r}")
     assert not offenders, offenders
+
+
+def test_user_fonts_enter_rendercore_only_through_a_source_font_object():
+    """上一条用例给 `userfonts.py` 开的口子有多大：判据按 AST，主语是**调用点**。
+
+    * 把一张本机用户脸请进排版只有一个入口：`HbFaceProvider.user_face`，而 rendercore 里唯一的调用方是
+      `plan._admit`——它只在对象带 `source_font` 时才走（`_user_faces`）。没有 `source_font` 的文档，
+      行为与 ADR 0060 逐字相同（这条在 `test_rendercore_userfonts.py::test_the_same_text_without_source_font…` 钉）。
+    * `userfonts.admit` 只被 `hbshaper.user_face` 调用：许可 / 大小 / 格式的检查不会被绕过。"""
+    import ast
+
+    pkg = ROOT / "src" / "tavotto" / "rendercore"
+    callers: dict[str, set[str]] = {"user_face": set(), "admit": set()}
+    for path in sorted(pkg.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                name = (
+                    node.func.attr
+                    if isinstance(node.func, ast.Attribute)
+                    else getattr(node.func, "id", "")
+                )
+                if name == "admit" and (
+                    isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "userfonts"
+                ):
+                    callers["admit"].add(path.name)
+            if isinstance(node, ast.Attribute) and node.attr == "user_face":
+                callers["user_face"].add(path.name)
+            if (
+                isinstance(node, ast.Constant)
+                and node.value == "user_face"
+                and path.name == "plan.py"
+            ):
+                callers["user_face"].add(path.name)
+    assert callers["admit"] == {"hbshaper.py"}, callers
+    assert callers["user_face"] <= {"hbshaper.py", "plan.py"}, callers
 
 
 def test_declared_dependencies_bring_no_font_package():

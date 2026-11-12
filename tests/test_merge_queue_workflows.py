@@ -309,12 +309,13 @@ class TestConcurrency:
                 f"{name} 的组名没把 merge_group 候选彼此分开"
             )
 
-    def test_cancel_in_progress_only_for_pull_request(self):
-        """写成全局 true 的那天：队列候选被取消、main 的唯一验证记录被取消。"""
-        for name, (_, cancel) in self._groups().items():
-            assert cancel.strip() == "${{ github.event_name == 'pull_request' }}", (
-                f"{name} 的 cancel-in-progress 不再只对 PR 开：{cancel}"
-            )
+    def test_cancel_in_progress_policy(self):
+        """ci.yml：恒 false（同 SHA 互相取消会把 Gate 的 FAILURE 永久留在该 SHA 上）；
+        codeql.yml：仍只对 PR 开（它的 types 是默认三个，同 SHA 不会有第二个 PR 事件）。
+        任何一个写成全局 true 的那天：队列候选被取消、main 的唯一验证记录被取消。"""
+        groups = self._groups()
+        assert groups["ci.yml"][1].strip() == "false"
+        assert groups["codeql.yml"][1].strip() == "${{ github.event_name == 'pull_request' }}"
 
     def test_ci_and_codeql_use_distinct_namespaces(self):
         """两个 workflow 的组名都带 github.workflow——名字不同，天然不同组。"""
@@ -545,7 +546,14 @@ class TestPullRequestEventTypes:
         assert m, "ci-integration-gate 里读不出「聚合判定」的 run: | 块"
         return "\n".join(ln[10:] for ln in m.group(1).splitlines()) + "\n"
 
-    def _gate_verdict(self, github: dict, heavy_results: dict[str, str], tmp_path: Path) -> dict:
+    def _gate_verdict(
+        self,
+        github: dict,
+        heavy_results: dict[str, str],
+        tmp_path: Path,
+        *,
+        e2e_specs_changed: str = "",
+    ) -> dict:
         """把 ci-integration-gate 那一步**原样**跑一遍：env 由 ci.yml 里真实的表达式渲染，
         `run:` 是那一步的 Bash 原文，判定器是 `scripts/ci/aggregate_gate.py` 的副本（放在
         `$RUNNER_TEMP/trusted-gate/`，与那一步「取默认分支上的可信判定器」落的位置相同）。
@@ -576,11 +584,15 @@ class TestPullRequestEventTypes:
                 {
                     **{j: {"result": r} for j, r in heavy_results.items()},
                     # 普通 run 上分类 job 成功、docs_only=false（与 ci.yml 的 needs 形状一致）
-                    "docs-scope": {"result": "success", "outputs": {"docs_only": "false"}},
+                    "docs-scope": {
+                        "result": "success",
+                        "outputs": {"docs_only": "false", "e2e_specs_changed": e2e_specs_changed},
+                    },
                 }
             ),
             "DOCS_ONLY": "false",
             "DOCS_SCOPE_RESULT": "success",
+            "E2E_SPECS_CHANGED": e2e_specs_changed,
             "GATE_EVENT": G.render("${{ github.event_name }}", github),
             "GATE_FULL_CI": G.render(_gate_full_ci_expression(), github),
         }
@@ -656,6 +668,84 @@ class TestPullRequestEventTypes:
                 f"{gate} 在 push main 上不该跑"
             )
 
+    #: PR 上改到 e2e 用例时必须在 PR 上跑的两条腿；其余三条重型仍只在 merge_group / full-ci 上跑。
+    E2E_LEGS = ("windows-exe-smoke", "posix-e2e")
+
+    @staticmethod
+    def _needs_e2e(flag: str) -> dict:
+        return {
+            "docs-scope": {
+                "result": "success",
+                "outputs": {"docs_only": "false", "e2e_specs_changed": flag},
+            }
+        }
+
+    def _runs(self, job_id: str, github: dict, flag: str) -> bool:
+        return G.truthy(G.evaluate(_folded_if(job_id), github, self._needs_e2e(flag)))
+
+    def test_e2e_spec_changes_run_the_two_e2e_legs_on_a_plain_pull_request(self):
+        """改到 web/e2e/** 的 PR（不管 risk 档、没有 full-ci）：两条 e2e 腿跑，其余三条重型照旧跳过。
+        反向：没改 e2e（输出为 false / 空）→ 五条都跳；merge_group 五条都跑，不看输出。"""
+        for github in (
+            self._pr("opened", ()),
+            self._pr("synchronize", ("risk:low",)),
+            self._pr("ready_for_review", ()),
+        ):
+            for job in self.HEAVY:
+                want = job in self.E2E_LEGS
+                assert self._runs(job, github, "true") is want, (job, "改了 e2e 用例", github)
+                assert self._runs(job, github, "false") is False, (job, "没改 e2e")
+                assert self._runs(job, github, "") is False, (job, "分类输出缺失 = 不加跑")
+        for job in self.HEAVY:
+            for flag in ("true", "false", ""):
+                assert self._runs(job, self._merge_group(), flag) is True, job
+        # push main 永远不跑重型（输出在 push 上本就不存在，这里即使伪造 true 也不跑）
+        for job in self.HEAVY:
+            assert self._runs(job, self._push_main(), "true") is False, job
+
+    def test_docs_only_still_skips_everything_even_with_the_e2e_flag(self):
+        needs = {
+            "docs-scope": {
+                "result": "success",
+                "outputs": {"docs_only": "true", "e2e_specs_changed": "true"},
+            }
+        }
+        for job in self.HEAVY:
+            assert not G.truthy(G.evaluate(_folded_if(job), self._pr("opened", ()), needs))
+
+    def test_gate_requires_the_e2e_legs_when_specs_changed(self, tmp_path):
+        """ci.yml 的 `if:` 与 Gate 对拍：Gate 那一步原样执行（真 bash + 真判定器）。
+        e2e 腿 success + 其余 skipped → success；e2e 腿红 / skipped → 失败（不是 deferred）；
+        没改 e2e → 照旧 deferred；full-ci 走 --require-heavy，不受 e2e 输出影响。"""
+        gh = self._pr("synchronize", ("risk:low",))
+        required = sorted(_required_of(_job(CI, "ci-integration-gate")))
+
+        def res(legs: str, rest: str = "skipped", **over: str) -> dict[str, str]:
+            r = {j: (legs if j in self.E2E_LEGS else rest) for j in required}
+            r.update(over)
+            return r
+
+        ok = self._gate_verdict(gh, res("success"), tmp_path, e2e_specs_changed="true")
+        assert ok["status"] == "success" and ok["reason"] == "e2e_legs_only", ok
+        for bad in ("failure", "cancelled", "skipped"):
+            got = self._gate_verdict(
+                gh, res("success", **{"posix-e2e": bad}), tmp_path, e2e_specs_changed="true"
+            )
+            assert got["status"] == "failure", (bad, got)
+        # 没改 e2e：两条腿也 skipped → deferred；若 e2e 腿跑了而输出是 false → 半跑半跳判红
+        plain = self._gate_verdict(gh, res("skipped"), tmp_path, e2e_specs_changed="false")
+        assert plain["status"] == "deferred", plain
+        half = self._gate_verdict(gh, res("success"), tmp_path, e2e_specs_changed="false")
+        assert half["status"] == "failure", half
+        # full-ci：整套必须真跑；只有 e2e 腿 success 不够
+        full = self._pr("synchronize", ("full-ci",))
+        got = self._gate_verdict(full, res("success"), tmp_path, e2e_specs_changed="true")
+        assert got["status"] == "failure", got
+        all_ok = self._gate_verdict(
+            full, res("success", "success"), tmp_path, e2e_specs_changed="true"
+        )
+        assert all_ok["status"] == "success", all_ok
+
     def test_removing_the_full_ci_label_is_judged_as_full_ci_not_as_a_plain_pr(self, tmp_path):
         """§4 ① 的核心：`unlabeled(full-ci)` 那个 run 同一 head SHA 上不许产出 deferred（绿）的
         integration gate 去盖掉此前那个真实结论。
@@ -679,29 +769,58 @@ class TestPullRequestEventTypes:
         before = AG.decide("integration", "pull_request", required, skipped, allow_deferred=True)
         assert before["status"] == "deferred", before
 
-    def test_label_events_share_the_pull_request_concurrency_slot(self):
-        """§4 ① 接受的那一半，写成合同：任意标签事件与同 PR 的 synchronize 同一个组、
-        cancel-in-progress 为 true——加一个 docs 标签会取消同 PR 运行中的 run。
-        这是「GitHub 不支持按标签名过滤事件」之下三种修法都不可接受时的既定代价，
-        哪天改了它（比如换 (a)(b)(c) 之一），先回 CI01 §4 ① 把代价重新算一遍。"""
+    def test_same_sha_events_queue_and_never_cancel_each_other(self):
+        """同一 head SHA 上的任意两个 PR 事件（推后补标签、opened + labeled、连打两个标签）
+        同一个组、cancel-in-progress 恒为 false：先起的 run 跑完，后来的排队。
+        反例（旧写法：按 PR 号分组 + cancel-in-progress=true）会让后者取消前者，
+        前者的 Gate 以 FAILURE / CANCELLED 留在该 SHA 上，PR 永久 BLOCKED
+        （#1664 #1714 #1745 #1748 #1751）。不同 SHA 必须不同组：新 push 不排在旧 SHA 后面。"""
         m = re.search(
             r"(?m)^concurrency:\n(?:\s*#.*\n)*\s+group: (.+)\n(?:\s*#.*\n)*\s+cancel-in-progress: (.+)$",
             CI,
         )
         assert m, "ci.yml 顶层 concurrency 解析不出来"
         group, cancel = m.group(1), m.group(2)
-        sync = self._pr("synchronize", ("docs",))
-        docs = self._pr("labeled", ("docs",), "docs")
-        unlabeled_full_ci = self._pr("unlabeled", (), "full-ci")
-        assert G.render(group, sync) == G.render(group, docs) == G.render(group, unlabeled_full_ci)
-        assert G.render(group, sync) == "ci-CI-pull_request-381"
-        for github in (sync, docs, unlabeled_full_ci):
-            assert G.render(cancel, github) == "true"
+
+        def at(github, sha):
+            github["event"]["pull_request"]["head"] = {"sha": sha}
+            return github
+
+        opened = at(self._pr("opened", ()), "ea19c1f")
+        labeled_a = at(self._pr("labeled", ("a",), "a"), "ea19c1f")
+        labeled_b = at(self._pr("labeled", ("a", "b"), "b"), "ea19c1f")
+        full_ci = at(self._pr("labeled", ("full-ci",), "full-ci"), "ea19c1f")
+        unlabeled = at(self._pr("unlabeled", (), "full-ci"), "ea19c1f")
+        same = {G.render(group, g) for g in (opened, labeled_a, labeled_b, full_ci, unlabeled)}
+        assert same == {"ci-CI-pull_request-ea19c1f"}, same
+        pushed = at(self._pr("synchronize", ()), "72b52b2")
+        assert G.render(group, pushed) != G.render(group, opened)
+        for github in (opened, labeled_a, full_ci, unlabeled, pushed):
+            assert G.render(cancel, github) == "false", "同 SHA 的 run 不许 cancel-in-progress"
+        # 反例：旧写法确实会把同 SHA 的事件放进一个会取消的组
+        old_group = "ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}"
+        old_cancel = "${{ github.event_name == 'pull_request' }}"
+        assert G.render(old_group, opened) == G.render(old_group, full_ci)
+        assert G.render(old_cancel, full_ci) == "true"
+
         # merge_group / push 各自一组、不取消
         assert G.render(group, self._merge_group()) == "ci-CI-merge_group-abc123"
         assert G.render(cancel, self._merge_group()) == "false"
         assert G.render(group, self._push_main()) == "ci-CI-push-refs/heads/main"
         assert G.render(cancel, self._push_main()) == "false"
+
+    def test_superseded_runs_are_cancelled_by_a_job_not_by_concurrency(self):
+        """cancel-in-progress 关掉之后，旧 SHA 的 run 靠 `cancel-superseded` job 取消：
+        只对 pull_request、同仓库 PR；只取消 head_sha 不同且比自己早的；不进任何 Gate 的 needs。"""
+        job = _job(CI, "cancel-superseded")
+        code = _code(job)
+        assert "github.event_name == 'pull_request'" in code
+        assert "head_sha != " in code, "必须只取消 head_sha 不同的 run"
+        assert ".id < $RUN_ID" in code, "必须只取消比自己早的 run，否则晚起跑的旧 run 会取消新提交"
+        assert "RUN_ID: ${{ github.run_id }}" in code
+        assert "continue-on-error: true" in code
+        for gate in ("ci-fast-gate", "ci-integration-gate"):
+            assert "cancel-superseded" not in _code(_job(CI, gate)), f"{gate} 不该依赖取消 job"
 
 
 # ============================================================ PR 的 base 过滤（2026-09-21）
@@ -2886,6 +3005,115 @@ class TestTauriAptCache:
             "命中路径要排在 apt-get update 之前"
         )
 
+    PICK_SCRIPT = ROOT / "scripts" / "ci" / "apt_use_reachable_mirror.sh"
+
+    def test_playwright_with_deps_legs_pick_a_reachable_mirror_first(self):
+        """`--with-deps` 自己 apt-get update，不经上面的脚本；11-11 azure 解析失败时 posix-e2e 三片全红。"""
+        perf = (ROOT / ".github" / "workflows" / "performance-agent.yml").read_text(
+            encoding="utf-8"
+        )
+        for code, cmd in (
+            (_code(_job(CI, "posix-e2e")), "pnpm exec playwright install --with-deps chromium"),
+            (perf, 'pnpm exec playwright install --with-deps "$PERF_BROWSER"'),
+        ):
+            lines = [ln.strip() for ln in code.splitlines()]
+            assert cmd in lines, cmd
+            at = lines.index(cmd)
+            assert lines[at - 1] == "../scripts/ci/apt_use_reachable_mirror.sh", lines[
+                at - 3 : at + 1
+            ]
+        assert os.access(self.PICK_SCRIPT, os.X_OK)
+
+    def test_mirror_picker_rewrites_all_three_source_shapes_only_when_azure_is_down(self, tmp_path):
+        """用桩 curl / sudo 跑真脚本：azure 通 → 一字不改；azure 不通 → .list / .sources / apt-mirrors.txt
+        都换到第一个通的镜像；全不通 → 一字不改、仍退出 0（交给 apt 报错）。"""
+        import shutil
+        import subprocess
+
+        if os.name == "nt":
+            pytest.skip("bash 脚本只在 Linux runner 上跑")
+        bindir = tmp_path / "bin"
+        bindir.mkdir()
+        etc = tmp_path / "apt"
+        etc.mkdir()
+        originals = {
+            "ubuntu.sources": "URIs: mirror+file:/etc/apt/apt-mirrors.txt\n",
+            "apt-mirrors.txt": "http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n"
+            "https://archive.ubuntu.com/ubuntu/\tpriority:2\n",
+            "legacy.list": "deb http://azure.archive.ubuntu.com/ubuntu/ noble main\n",
+            "other.list": "deb https://packages.microsoft.com/ubuntu/24.04/prod noble main\n",
+        }
+
+        def reset() -> None:
+            for name, body in originals.items():
+                (etc / name).write_text(body)
+
+        def stub(name: str, body: str) -> None:
+            f = bindir / name
+            f.write_text("#!/usr/bin/env bash\n" + body)
+            f.chmod(0o755)
+
+        stub(
+            "sudo",
+            'if [ "$1" = find ]; then shift; exec find "$APT_ETC" "${@:2}"; fi\nexec "$@"',
+        )
+        # 最后一个参数是 URL；主机在 DOWN 里就失败
+        stub(
+            "curl",
+            'url="${@: -1}"; h="${url#http://}"; h="${h%%/*}"\n'
+            'case " $DOWN " in *" $h "*) exit 6 ;; esac\nexit 0',
+        )
+        stub(
+            "sed",
+            'if "$REAL_SED" --version >/dev/null 2>&1; then exec "$REAL_SED" "$@"; fi\n'
+            '[ "$1" = -i ] && shift && exec "$REAL_SED" -i "" "$@"\nexec "$REAL_SED" "$@"',
+        )
+
+        def run(down: str) -> subprocess.CompletedProcess:
+            reset()
+            return subprocess.run(
+                ["bash", str(self.PICK_SCRIPT)],
+                env={
+                    **os.environ,
+                    "PATH": f"{bindir}:{os.environ['PATH']}",
+                    "APT_ETC": str(etc),
+                    "DOWN": down,
+                    "REAL_SED": shutil.which("sed") or "sed",
+                },
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+
+        mirror_hosts = {"azure.archive.ubuntu.com", "archive.ubuntu.com", "mirrors.edge.kernel.org"}
+
+        def ubuntu_hosts() -> set[str]:
+            hosts = set()
+            for name in ("apt-mirrors.txt", "legacy.list"):
+                for word in (etc / name).read_text().split():
+                    host = urlsplit(word).hostname if word.startswith("http") else None
+                    if host in mirror_hosts:
+                        hosts.add(host)
+            return hosts
+
+        up = run(down="")
+        assert up.returncode == 0, up.stderr
+        assert {n: (etc / n).read_text() for n in originals} == originals
+
+        azure_down = run(down="azure.archive.ubuntu.com")
+        assert azure_down.returncode == 0, azure_down.stderr
+        assert ubuntu_hosts() == {"archive.ubuntu.com"}
+        assert (etc / "other.list").read_text() == originals["other.list"]
+        assert (etc / "ubuntu.sources").read_text() == originals["ubuntu.sources"]
+
+        two_down = run(down="azure.archive.ubuntu.com archive.ubuntu.com")
+        assert two_down.returncode == 0, two_down.stderr
+        assert ubuntu_hosts() == {"mirrors.edge.kernel.org"}
+
+        all_down = run(down="azure.archive.ubuntu.com archive.ubuntu.com mirrors.edge.kernel.org")
+        assert all_down.returncode == 0, all_down.stderr
+        assert {n: (etc / n).read_text() for n in originals} == originals
+
     def test_script_paths_with_stubbed_apt(self, tmp_path):
         """用桩 sudo / apt-get / timeout 跑真脚本：命中走本地不 update；未命中第一镜像超时后换镜像成功；
         全部超时则非零退出；剪枝只留版本 == 已装版本的 .deb。"""
@@ -2899,7 +3127,13 @@ class TestTauriAptCache:
         log = tmp_path / "calls.log"
         etc = tmp_path / "apt-sources"
         etc.mkdir()
-        (etc / "ubuntu.sources").write_text("URIs: http://azure.archive.ubuntu.com/ubuntu/\n")
+        (etc / "ubuntu.sources").write_text("URIs: mirror+file:/etc/apt/apt-mirrors.txt\n")
+        # runner 镜像 20261101 起真正的主机名在 apt-mirrors.txt（11-11 只改 .sources 等于没换）
+        (etc / "apt-mirrors.txt").write_text(
+            "http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n"
+            "https://archive.ubuntu.com/ubuntu/\tpriority:2\n"
+        )
+        (etc / "legacy.list").write_text("deb http://azure.archive.ubuntu.com/ubuntu/ noble main\n")
 
         def stub(name: str, body: str) -> None:
             f = bindir / name
@@ -2972,10 +3206,14 @@ class TestTauriAptCache:
             == 3
         )
         hosts = {
+            urlsplit(ln.split()[0]).hostname
+            for ln in (etc / "apt-mirrors.txt").read_text().splitlines()
+            if ln.strip()
+        } | {
             urlsplit(word).hostname
-            for ln in (etc / "ubuntu.sources").read_text().splitlines()
-            if ln.startswith("URIs:")
-            for word in ln.split()[1:]
+            for ln in (etc / "legacy.list").read_text().splitlines()
+            for word in ln.split()
+            if word.startswith("http")
         }
         assert hosts == {"mirrors.edge.kernel.org"}
 
@@ -3669,7 +3907,7 @@ class TestMergeGroupFailFast:
         for job_id in ("ci-fast-gate", "ci-integration-gate"):
             assert "gh run cancel" not in _job(CI, job_id), f"{job_id} 不该取消 run"
 
-    def test_actions_write_is_granted_to_exactly_the_five_legs(self):
+    def test_actions_write_is_granted_to_exactly_the_five_legs_and_the_superseded_canceller(self):
         assert re.search(r"(?ms)^permissions:\n  contents: read\n(?=\S|\n)", CI), "顶层应保持只读"
         holders = {
             m.group(1)
@@ -3678,8 +3916,9 @@ class TestMergeGroupFailFast:
                 CI,
             )
         }
-        assert holders == set(self.HEAVY), holders
-        assert _code(CI).count("actions: write") == len(self.HEAVY)
+        # 第六个持有者是 `cancel-superseded`（取消同 PR 旧 SHA 的 run，只在 pull_request 上跑）
+        assert holders == set(self.HEAVY) | {"cancel-superseded"}, holders
+        assert _code(CI).count("actions: write") == len(self.HEAVY) + 1
 
     @pytest.mark.parametrize("job_id", HEAVY)
     def test_cancel_comes_after_every_failure_artifact_upload(self, job_id):
@@ -3717,7 +3956,10 @@ class TestMergeGroupFailFast:
         assert "--run-jobs" not in g
 
     def test_cancel_in_progress_is_still_pull_request_only(self):
-        assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in CI
+        # ci.yml 自 2026-11-04 起恒为 false（同 SHA 互相取消会把 Gate FAILURE 留在 SHA 上）；
+        # 快速失败靠重腿自己 `gh run cancel`，与 concurrency 无关。codeql.yml 仍只对 PR 开。
+        assert "cancel-in-progress: false" in CI
+        assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in CODEQL
 
 
 class TestEvidenceUploadsNeverFailTheJob:

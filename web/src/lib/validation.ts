@@ -160,6 +160,8 @@ const RULES: Record<
   'glyph-substituted': { category: 'text', context: 'document', fix: 'none' },
   // 公式排不出来：能修的动作是改公式本身（只有用户说得出写什么），所以 `fix: 'none'`；点击定位到那条文字
   'math-unrenderable': { category: 'text', context: 'document', fix: 'none' },
+  // 原图字体在这台电脑上用不了（ADR 0164）：名字保留、导出按回退族画；修法是装回字体或自己改族，没有安全的自动修
+  'source-font-unavailable': { category: 'text', context: 'document', fix: 'none' },
   // 修法是外边距重排（ADR 0051 的 `adapt_margins`）：挪子图、不挪那条文字，有位移预算，
   // 改完真实渲染裁决；放不下就如实说「放不下」、一个字不改（ADR 0080）
   'element-outside-figure': { category: 'layout', context: 'document', fix: 'safe_auto' },

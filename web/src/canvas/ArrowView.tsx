@@ -1,13 +1,19 @@
 import { MM_PER_PT } from '@/lib/units'
-import { dashArray, hitStrokeWidth } from '@/lib/shapeGeometry'
+import {
+  arrowGeometry,
+  hitStrokeWidth,
+  isFilledHead,
+  strokeOpacityOf,
+  svgStroke,
+  type ArrowHeadShape,
+} from '@/lib/shapeGeometry'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { ArrowObject } from '@/types/document'
-import { arrowHeads } from '@/types/document'
 
 /**
- * 箭头：两端点存比例坐标；端型独立（triangle 实心 / open 开口 / bar 短线）。
- * 几何与后端 _draw_arrow 一一对应：帽长 4×线宽、帽半宽 1.7×线宽、
- * 仅 triangle 端回缩 0.75×帽长、圆线帽 + 开口端圆接角（后端 lineCap/lineJoin=1）。
+ * 箭头：两端点存比例坐标；端型独立（triangle / stealth / diamond / dot 实心，open 开口，bar 短线）。
+ * 几何与后端 `geometry.arrow_paths` 一一对应（`lib/shapeGeometry.arrowGeometry` 是前端唯一出处）：
+ * 帽长 4×线宽、帽半宽 1.7×线宽（再乘端型大小档位）、实心端回缩；线端 / 拐角缺省圆头 + 圆角。
  *
  * `hit` 由 ObjectView 决定：包围盒不再承担命中，命中交给下面那条沿线段的透明线。
  */
@@ -17,57 +23,25 @@ export function ArrowView({ obj, hit = 'none' }: { obj: ArrowObject; hit?: 'stro
   const h = Math.max(mmToWorld(obj.h), 0.001)
   const sw = Math.max(mmToWorld(obj.strokePt * MM_PER_PT), 0.05)
 
-  const a = { x: obj.start.rx * w, y: obj.start.ry * h }
-  const b = { x: obj.end.rx * w, y: obj.end.ry * h }
-  const dx = b.x - a.x
-  const dy = b.y - a.y
-  const len = Math.hypot(dx, dy) || 1
-  const ux = dx / len
-  const uy = dy / len
-  const nx = -uy
-  const ny = ux
+  const { a, b, p1, p2, headHalf, startHead, endHead } = arrowGeometry(obj, w, h, sw)
 
-  const headLen = sw * 4
-  const headHalf = sw * 1.7
-  const heads = arrowHeads(obj)
-
-  const trianglePts = (tip: { x: number; y: number }, sign: 1 | -1) => {
-    const bx = tip.x - sign * ux * headLen
-    const by = tip.y - sign * uy * headLen
-    return `${tip.x},${tip.y} ${bx + nx * headHalf},${by + ny * headHalf} ${bx - nx * headHalf},${by - ny * headHalf}`
-  }
-  const openPath = (tip: { x: number; y: number }, sign: 1 | -1) => {
-    const bx = tip.x - sign * ux * headLen
-    const by = tip.y - sign * uy * headLen
-    return `M ${bx + nx * headHalf},${by + ny * headHalf} L ${tip.x},${tip.y} L ${bx - nx * headHalf},${by - ny * headHalf}`
-  }
-  const barPath = (tip: { x: number; y: number }) =>
-    `M ${tip.x + nx * headHalf},${tip.y + ny * headHalf} L ${tip.x - nx * headHalf},${tip.y - ny * headHalf}`
-
-  // 仅实心三角端回缩线段（其余端型线到尖）
-  const trim = headLen * 0.75
-  const p1 = {
-    x: a.x + (heads.start === 'triangle' ? ux * trim : 0),
-    y: a.y + (heads.start === 'triangle' ? uy * trim : 0),
-  }
-  const p2 = {
-    x: b.x - (heads.end === 'triangle' ? ux * trim : 0),
-    y: b.y - (heads.end === 'triangle' ? uy * trim : 0),
-  }
-
-  // strokeLinejoin 必须显式给 round：后端 open 端型是 lineJoin=1，
-  // SVG 缺省却是 miter，尖角对不上（同一条箭头两边画出来不一样）
-  const stroke = {
-    stroke: obj.color,
-    strokeWidth: sw,
-    strokeLinecap: 'round' as const,
-    strokeLinejoin: 'round' as const,
-  }
-  const renderHead = (kind: string, tip: { x: number; y: number }, sign: 1 | -1) => {
-    if (kind === 'triangle') return <polygon points={trianglePts(tip, sign)} fill={obj.color} />
-    if (kind === 'open') return <path d={openPath(tip, sign)} fill="none" {...stroke} />
-    if (kind === 'bar') return <path d={barPath(tip)} fill="none" {...stroke} />
-    return null
+  // 描边属性只此一处（lib/shapeGeometry.svgStroke）：线端 / 拐角缺省圆头 + 圆角——后端 open 端型是
+  // lineJoin=1，SVG 缺省却是 miter，尖角对不上；斜接上限也要写成与 PDF 同一个数
+  // 不透明度作用于整支箭头（杆 + 两端端型）：用外层 <g opacity>，各图元自己不带 alpha，
+  // 杆伸进端型的重叠处才不会叠深；PDF / SVG 导出同一做法（`geometry.arrow_opacity` → `Group.opacity`）
+  const bare = { ...obj, strokeOpacity: undefined }
+  const stroke = svgStroke(bare, sw, 'round')
+  const headStroke = svgStroke(bare, sw, 'round', false)
+  const opacity = strokeOpacityOf(obj.strokeOpacity)
+  const renderHead = (head: ArrowHeadShape | null) => {
+    if (!head) return null
+    if (head.kind === 'dot') {
+      return <circle cx={head.cx} cy={head.cy} r={head.r} fill={obj.color} />
+    }
+    if (isFilledHead(head)) {
+      return <polygon points={head.points} fill={obj.color} />
+    }
+    return <path d={head.d} fill="none" {...headStroke} />
   }
 
   return (
@@ -97,16 +71,17 @@ export function ArrowView({ obj, hit = 'none' }: { obj: ArrowObject; hit?: 'stro
         strokeLinecap="round"
         style={{ pointerEvents: hit }}
       />
+      <g opacity={opacity}>
       <line
         x1={p1.x}
         y1={p1.y}
         x2={p2.x}
         y2={p2.y}
-        strokeDasharray={dashArray(obj.dash, sw)}
         {...stroke}
       />
-      {renderHead(heads.end, b, 1)}
-      {renderHead(heads.start, a, -1)}
+      {renderHead(endHead)}
+      {renderHead(startHead)}
+      </g>
     </svg>
   )
 }

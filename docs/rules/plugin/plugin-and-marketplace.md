@@ -29,10 +29,20 @@ order: 30
   每 24 小时一次（失败 1 小时后可重试）、1.5 秒超时、缓存落
   `config_dir()/codex-plugin-update.json`（**绝不往插件目录写**——那儿归 Codex
   管、可能只读、升级时整个被换掉）。四条底线：不阻塞出图、**不污染 stdout**
-  （调用方读的是最后一行 JSON）、不自动下载执行、**插件版本 ≠ Tavotto 版本**
+  （调用方读的是最后一行 JSON）、插件和 MCP 进程绝不自动下载或执行（桌面版在用户开着后台自动下载时可以更新已接入的插件，ADR 0170 裁决 6；关闭：后台自动下载开关或 `TAVOTTO_DISABLE_UPDATE_CHECK=1`）、**插件版本 ≠ Tavotto 版本**
   （当前版本只从 plugin.json 读，`min_tavotto_version` 比的是 `tavotto open`
   回报的那个版本）。清单由 `scripts/make_plugin_manifest.py` 在 **release.yml**
-  生成——**不能挪进 desktop-tauri.yml 的 updater-manifest**，那个 job 没配
+  生成。**MCP 服务端也复用它**（`tavotto_mcp/updatenotice.py`）：`tavotto_health` 的结果带 `update`，
+  `tavotto_export` 成功结果每个进程最多带一次；调用线程只读缓存（`check(allow_network=False)`，
+  不写缓存），到期由 daemon 线程刷新，下次调用才看到；版本用 MCP 进程自己的
+  `_version()`（桌面版 `tavotto-cli mcp` 里没有 plugin.json）；`how` = `desktop`（frozen）/
+  `codex_plugin`（有 `.codex-plugin/plugin.json`）/ 判不出不给命令。桌面包把整个
+  `skills/tavotto-figure` 收进 `<_MEIPASS>/skills/tavotto-figure`（`packaging/tavotto.spec`），找不到
+  `update_check.py` 就静默不提示。默认地址在 GitHub Release；后台线程问不到时读国内镜像的 `index.json`
+  （`fetch_with_mirror`，读法照 tavotto-infra 的 consumer-contract §2），靠「发版时插件与 Tavotto 同号」拿版本，只提醒不下载。
+  交接路径同步跑在出图路上，继续用 `fetch`，1.5 秒不翻倍；用户配了 `TAVOTTO_UPDATE_URL` 不回退。用户关了检查
+  （`TAVOTTO_NO_UPDATE_CHECK`、`TAVOTTO_DISABLE_UPDATE_CHECK`、设置里的 `auto_check`）就不起后台线程，只读已有缓存。
+  清单——**不能挪进 desktop-tauri.yml 的 updater-manifest**，那个 job 没配
   minisign 私钥就整个跳过，插件的更新通道会跟着悄悄停而且全绿。
 - **技能的第一条硬约定：脚本与产物同目录、且必须先落成文件**（禁 `python -c` 出图）
   ——「stem ↔ 产出它的脚本」是图能不能双击进去改的全部依据。自检不靠祈祷：

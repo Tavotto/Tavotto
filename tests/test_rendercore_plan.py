@@ -360,7 +360,7 @@ def test_missing_fonts_surface_as_a_structured_plan_error(project: Path):
         def face_for(self, family, bold, italic):
             raise Unavailable("no fonts here")
 
-        def cjk_face(self):
+        def cjk_face(self, family, bold=False):
             return None
 
     with pytest.raises(plan.PlanError) as ei:

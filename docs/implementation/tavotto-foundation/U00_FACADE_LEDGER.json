@@ -166,7 +166,7 @@
         },
         {
           "stage": "U06",
-          "test": "tests/test_rendercore_fonts.py::test_allowlist_is_the_thirteen_ofl_faces_with_sha256_identity"
+          "test": "tests/test_rendercore_fonts.py::test_allowlist_is_the_fourteen_ofl_faces_with_sha256_identity"
         },
         {
           "stage": "U08",
@@ -950,8 +950,8 @@
       "callers": [
         {
           "file": "src/tavotto/app.py",
-          "symbol": "_asset_original_spec",
-          "role": "/api/panels：素材原始尺寸 → originalspec.asset_spec（native_*_mm 与 original_spec 同一次计算；由 scan_panels 调用）"
+          "symbol": "_asset_probe",
+          "role": "/api/panels（scan_panels 经它）与素材导入的落盘前验证（ADR 0176）共用的探针：素材原始尺寸 → originalspec.asset_spec（native_*_mm 与 original_spec 同一次计算）"
         },
         {
           "file": "src/tavotto/app.py",

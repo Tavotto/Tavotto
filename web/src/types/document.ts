@@ -31,11 +31,32 @@ export interface ObjectBase {
   rotationDeg?: number
 }
 
-/** 虚线样式：显示与导出共用同一枚举（间距按线宽比例换算） */
-export type DashStyle = 'solid' | 'dashed' | 'dotted'
+/**
+ * 线型：显示与导出共用同一枚举（间距按线宽比例换算，比例表在 `lib/shapeGeometry.DASH_RATIOS`，
+ * 与后端 `rendercore/geometry.DASH_RATIOS` 同源，ADR 0174）。
+ * 后四种是 ADR 0174 加的：旧版本读到不认识的值按实线画，不会报错。
+ */
+export type DashStyle = 'solid' | 'dashed' | 'dotted' | 'longdash' | 'dashdot' | 'longdashdot'
 
-/** 箭头端型：实心三角 / 开口 V / 垂直短线（尺寸线用） */
-export type ArrowHeadType = 'none' | 'triangle' | 'open' | 'bar'
+/**
+ * 箭头端型：实心三角 / 开口 V / 垂直短线（尺寸线用）；ADR 0174 加：圆点 / 菱形 / 燕尾。
+ * 旧版本读到不认识的端型画不出端型（只剩一条线到端点）。
+ */
+export type ArrowHeadType =
+  | 'none'
+  | 'triangle'
+  | 'open'
+  | 'bar'
+  | 'dot'
+  | 'diamond'
+  | 'stealth'
+
+/** 端型大小三档；缺省 = `medium` = 加档位之前的尺寸，`medium` 不落盘 */
+export type HeadSize = 'small' | 'medium' | 'large'
+
+/** 线端 / 拐角（SVG 与 PDF 的同名取值）；缺省见 `lib/shapeGeometry.DEFAULT_LINE_CAP` / `defaultLineJoin` */
+export type LineCap = 'butt' | 'round' | 'square'
+export type LineJoin = 'miter' | 'round' | 'bevel'
 
 /**
  * 结构化布局组：在轻量成组（groupId）之上叠加的可选排布约束。
@@ -254,6 +275,47 @@ export interface PanelObject extends ObjectBase {
   figureFrame?: 1
 }
 
+/**
+ * 一张字体脸的**身份**（ADR 0164）：文件 sha256 + 面序号，名字只用于显示。
+ * 文档里不存字体文件、不存路径。
+ */
+export interface SourceFace {
+  family: string
+  /** 字体文件字节的 sha256（小写十六进制，64 位）；认脸只看它 */
+  sha256: string
+  /** 字体集（.ttc）里的第几张脸；单脸文件为 0 */
+  face: number
+  /**
+   * 同族的其它粗斜（ADR 0169 修订），最多三张。行内 `\\textbf{}` / `\\textit{}` 与中文加粗按它换脸。
+   * 归属来自字体清单；缺席 = 这张脸是单个文件（复制自图内文字），行内粗斜用 `fontFamily` 的批准脸。
+   */
+  siblings?: SiblingFace[]
+}
+
+/** 同族里另一张脸：只有身份和它自己的粗斜，名字跟随所在的 `SourceFace`。 */
+export interface SiblingFace {
+  sha256: string
+  face: number
+  bold?: boolean
+  italic?: boolean
+}
+
+/**
+ * 画布文字「用原图那个字体」（ADR 0164，修订 ADR 0060）。**可选：老文档没有它 = 现状逐字不变**，
+ * 磁盘格式不升版；导出载荷缺席时也不多字段。`fontFamily` 继续当回退族：本机找不到这张脸 /
+ * 许可不让嵌入 / 在浏览器 playground 里，都按 `fontFamily` 的批准脸画，名字原样保留、给提示，
+ * **绝不换掉再改文档**。用户在属性页改字体族 / 粗细 / 斜体就清掉它。
+ *
+ * 值的唯一产生者是 `lib/sourceFont.sourceFontFromElement`（图内文字的 manifest 身份 → 这里）。
+ */
+export interface SourceFont extends SourceFace {
+  /** 这张脸自己的粗斜（来自原图），不是对象的粗斜开关 */
+  bold?: boolean
+  italic?: boolean
+  /** 原图里中日韩字符实际由哪张脸画；缺席 = 批准的 CJK 脸（随族：衬线 Noto Serif SC，其余 Noto Sans SC） */
+  cjk?: SourceFace
+}
+
 export interface TextObject extends ObjectBase {
   type: 'text'
   text: string
@@ -267,6 +329,17 @@ export interface TextObject extends ObjectBase {
    * matplotlib 的 Flask 进程里，画得出来的就是批准字体集合里的 Liberation 三族。
    */
   fontFamily?: 'serif' | 'sans-serif' | 'monospace'
+  /** 字体的身份：原图字体（ADR 0164）或用户选的本机字体（ADR 0169）；见 `SourceFont`。可选，缺席 = 用 `fontFamily` 对应的批准族。 */
+  sourceFont?: SourceFont
+  /**
+   * 排向（ADR 0163「横排 / 竖排」）。**可选：老文档没有它 = 横排**，磁盘格式不升版，导出载荷也不多字段；
+   * 回到横排时**删字段**。`'vertical'` = 从上到下、列从右往左（CSS `vertical-rl`）：中日韩字头朝上，
+   * 拉丁与数字侧躺，全角标点用竖排字形；可与 `rotationDeg` 叠加（先竖排排版、再整体旋转）。
+   *
+   * 框语义：`x/y/w/h` 仍是未旋转的框。竖排里 `h` 是「行长」（列按它折行），`w` 由列数撑开
+   * （画布上的 `TextView` 量出来写回，右边缘不动）；`align` 左 / 中 / 右 = 列内的 上 / 中 / 下。
+   */
+  writingMode?: 'vertical'
   /**
    * 科学文本解释档位。**可选：老文档没有它 = auto**（与升级前逐字符同样的
    * 渲染），磁盘格式不升版。
@@ -319,7 +392,15 @@ export interface ArrowObject extends ObjectBase {
   head: 'none' | 'end' | 'both'
   headStart?: ArrowHeadType
   headEnd?: ArrowHeadType
+  /** 两端端型大小；缺省 = 中（不写字段，ADR 0174） */
+  headSizeStart?: HeadSize
+  headSizeEnd?: HeadSize
   dash?: DashStyle
+  /** 描边不透明度 0–1；缺省 1（不写字段）。作用于杆与端型 */
+  strokeOpacity?: number
+  /** 线端 / 拐角；缺省 = 圆头 / 圆角（现在的画法），不写字段 */
+  lineCap?: LineCap
+  lineJoin?: LineJoin
 }
 
 export type ShapeKind =
@@ -352,6 +433,16 @@ export interface ShapeObject extends ObjectBase {
   /** 填充透明度 0–1；缺省 1 */
   fillOpacity?: number
   dash?: DashStyle
+  /**
+   * 描边开关：**只有 `false` 会落盘**（= 无边框）；缺省 / `true` = 有描边。
+   * 只对封闭形状有意义，直线与大括号只有描边、一律有。读取走 `shapeStrokeOn()`。
+   */
+  stroke?: boolean
+  /** 描边不透明度 0–1；缺省 1（不写字段） */
+  strokeOpacity?: number
+  /** 线端 / 拐角；缺省见 `lib/shapeGeometry`，等于缺省就不写字段 */
+  lineCap?: LineCap
+  lineJoin?: LineJoin
 }
 
 /**
@@ -387,6 +478,10 @@ export function arrowHeads(o: ArrowObject): { start: ArrowHeadType; end: ArrowHe
  * 不维护的话一支「起点开口 V、终点无」的箭头在老版本里会变回默认的实心三角。
  * 规则只有这一份：属性栏改端型（`StrokeSection`）与直线切换成箭头
  * （`lib/shapeSwitch`）读的是同一个函数。
+ *
+ * ADR 0174 的新端型（dot / diamond / stealth）也只算「这一端有端型」：旧构建读到
+ * 一份带新端型的文档时优先认 `headStart` / `headEnd`，不认识的端型画不出端型（线到端点），
+ * 不会崩；`head` 只在两个新字段都缺席时才被读（那是旧文档），所以这里不需要为新端型选一个「近似的旧值」。
  */
 export function legacyHead(heads: {
   start: ArrowHeadType
@@ -394,6 +489,11 @@ export function legacyHead(heads: {
 }): ArrowObject['head'] {
   const { start, end } = heads
   return start !== 'none' && end !== 'none' ? 'both' : end !== 'none' ? 'end' : 'none'
+}
+
+/** 形状此刻有没有描边。直线 / 大括号只有描边，不看 `stroke` 字段（画布、缩略图、导出同用这一处） */
+export function shapeStrokeOn(o: Pick<ShapeObject, 'shape' | 'stroke'>): boolean {
+  return o.shape === 'line' || o.shape === 'brace' || o.stroke !== false
 }
 
 /** 直线形状（端点语义只对这一种 shape 生效） */

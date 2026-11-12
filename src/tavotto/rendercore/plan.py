@@ -32,11 +32,12 @@ import math
 from dataclasses import dataclass, field
 
 from ..engine import exportreq
-from . import geometry, typography
+from . import geometry, typography, vertical
 from .ir import (
     IDENTITY,
     RGB,
     FileResource,
+    Glyph,
     GlyphRun,
     Group,
     Image,
@@ -57,8 +58,9 @@ from .ir import (
     unsupported_for,
     validate,
 )
+from .sourcefont import UserFontUnavailable, parse_source_font
 from .sources import FrozenSource, SourceError, SourceResolver
-from .typography import FaceProvider, FaceSet, faces_for
+from .typography import FaceProvider, FaceSet, faces_for, synthesized
 
 PLAN_ERROR_CODES = (
     "scope_not_compiled",  # scope=original 本切片不编译
@@ -224,6 +226,90 @@ def _math_segments(box: dict, x: float, baseline_up: float, size: float) -> tupl
     return tuple(out)
 
 
+def _vertical_nodes(
+    block: typography.TextBlock,
+    page_h: float,
+    color: Paint,
+    oid: str,
+    resources: dict[str, Resource],
+    children: list[Node],
+    underlines: list[Path],
+) -> None:
+    """竖排（ADR 0163）：每一列的落笔。直立字一字一个单字形 `ShapedText`（笔位 = 列中线 x / 字格顶边 y，
+    加上 HarfBuzz 已折好的竖排原点偏移）；侧躺段与公式放进 `Group(rotate_about(-90°, 起点))`——y 向上空间里
+    −90° 是顺时针，起点处的横排基线转成向下的竖线，字头朝右。几何全是现成的 IR 节点，写入器不认识「竖排」。"""
+    for col in block.columns:
+        for item in col.items:
+            pen = col.top + item.pos  # 页面 y 向下空间
+            if item.kind == "upright":
+                face = item.face
+                key = f"font:{face.resource.face_id}"
+                resources.setdefault(key, face.resource)
+                k = item.size / face.resource.units_per_em
+                for g in item.glyphs:
+                    one = Glyph(g.gid, g.text, face.advance(g.gid))
+                    run = GlyphRun(font=key, size=item.size, glyphs=(one,), **_synth_of(face))
+                    children.append(
+                        ShapedText(
+                            col.cx + g.x_offset * k,
+                            page_h - pen + g.y_offset * k,
+                            (run,),
+                            color,
+                            oid,
+                        )
+                    )
+                    pen += g.y_advance * k
+                continue
+            ox, oy = col.side_x, page_h - pen
+            inner: list[Node] = []
+            if item.kind == "side":
+                piece = item.piece
+                key = f"font:{piece.face.resource.face_id}"
+                resources.setdefault(key, piece.face.resource)
+                run = GlyphRun(
+                    font=key,
+                    size=piece.size,
+                    glyphs=tuple(piece.glyphs),
+                    rise=piece.rise,
+                    actual_text=piece.actual_text,
+                    invisible=piece.invisible,
+                    **_synth_of(piece.face),
+                )
+                inner.append(ShapedText(ox, oy, (run,), color, oid))
+            else:  # math
+                box, _src = item.math
+                segs = _math_segments(box, ox, oy, block.size)
+                if segs:
+                    inner.append(Path(segs, fill=color, object_id=oid))
+                mp = item.piece
+                if mp is not None:
+                    key = f"font:{mp.face.resource.face_id}"
+                    resources.setdefault(key, mp.face.resource)
+                    run = GlyphRun(
+                        font=key,
+                        size=mp.size,
+                        glyphs=tuple(mp.glyphs),
+                        actual_text=mp.actual_text,
+                        invisible=True,
+                    )
+                    inner.append(ShapedText(ox, oy, (run,), color, oid))
+            if inner:
+                children.append(
+                    Group(tuple(inner), transform=rotate_about(-90.0, ox, oy), object_id=oid)
+                )
+        if block.underline and col.items:
+            # 竖排的下划线：与横排同一条公式——画在（侧躺段的）基线「下面」0.11 字号；基线顺时针转了 90°，
+            # 「下面」就是左边（浏览器的 vertical-rl 下划线也在列的左侧）
+            ux = col.side_x - block.size * 0.11
+            underlines.append(
+                Path(
+                    (("M", ux, page_h - col.top), ("L", ux, page_h - (col.top + col.length))),
+                    stroke=Stroke(color, max(block.size * 0.06, 0.3)),
+                    object_id=oid,
+                )
+            )
+
+
 def _text_node(
     t: dict,
     page_h: float,
@@ -233,7 +319,13 @@ def _text_node(
     math: dict | None = None,
 ) -> Node | None:
     bx, by, bw, bh = _box_pt(t)  # 先校验框（缺字段 / 非有限数在这里就拒），再排版
-    block = typography.layout_text(t, faces, math)
+    # 排向分派只在这里（ADR 0163）：typography 只排横排、不依赖 vertical，避免 import 环
+    lay = (
+        vertical.layout_text
+        if t.get("writing_mode") == typography.WRITING_VERTICAL
+        else typography.layout_text
+    )
+    block = lay(t, faces, math)
     if block is None:
         return None
     oid = str(t.get("id", ""))
@@ -253,6 +345,8 @@ def _text_node(
         )
     color = Paint(hex2rgb(block.color))
     underlines: list[Path] = []
+    if block.columns:
+        _vertical_nodes(block, page_h, color, oid, resources, children, underlines)
     for line in block.lines:
         # 一段 ShapedText 里的字形按 advance 首尾相接；公式在中间占了宽度时（`piece_x` 不再首尾相接）
         # 在那里断开、另起一段，从公式右边落笔
@@ -276,6 +370,7 @@ def _text_node(
                     rise=piece.rise,
                     actual_text=piece.actual_text,
                     invisible=piece.invisible,
+                    **_synth_of(piece.face),
                 )
             )
             end_x = px + piece.width
@@ -314,14 +409,98 @@ def _text_node(
     return Group(tuple(children), transform=transform, object_id=oid)
 
 
-def _shape_node(o: dict, page_h: float) -> Node:
+def _shape_node(o: dict, page_h: float) -> Node | None:
     _x, _y, w, h = _box_pt(o, allow_zero=True)
     paths = (
         geometry.arrow_paths(o, w, h) if o.get("type") == "arrow" else geometry.shape_paths(o, w, h)
     )
+    if not paths:
+        return None  # 无边框又无填充的形状：什么都不画（ADR 0174）
+    # 箭头的不透明度是整支箭头的透明组（杆与端型重叠处不叠深）；形状的描边不透明度在描边 Paint 上
+    opacity = geometry.arrow_opacity(o) if o.get("type") == "arrow" else 1.0
     return Group(
-        tuple(paths), transform=_object_transform(o, page_h), object_id=str(o.get("id", ""))
+        tuple(paths),
+        transform=_object_transform(o, page_h),
+        opacity=opacity,
+        object_id=str(o.get("id", "")),
     )
+
+
+def _synth_of(face) -> dict[str, bool]:
+    """这张脸要模拟的粗斜 → `GlyphRun` 的字段。"""
+    return {
+        "synth_bold": getattr(face, "synth_bold", False),
+        "synth_italic": getattr(face, "synth_italic", False),
+    }
+
+
+def _user_faces(o: dict, provider: FaceProvider, problems: list[dict]):
+    """对象带 `source_font`（ADR 0164）时给两个取脸函数 (取正文脸, 取 CJK 脸)，都是 `(粗, 斜) → 脸或 None`。
+    用到才入场：不读这个对象用不上的字体文件。
+
+    挑脸（ADR 0169 修订）：先要粗细对、再要斜体对；同族没有的粗斜由写入器模拟（`typography.SynthFace`）。
+    不用更粗 / 更斜的兄弟顶常规；点名的那张脸本身是粗体时（字体族只有这一张）照用。
+
+    **任何一环不过都不是错误**：保留文档里的名字、这一张脸回退，并往 `problems` 记一条
+    `source_font_unavailable`（reason 是 `sourcefont.REASONS` 的闭集，同一张脸只记一条）。绝不改写文档、
+    绝不换一张「名字像」的脸。provider 不认识用户脸（测试替身 / 没有本机字体能力的宿主）时等同 `not_found`。"""
+    raw = o.get("source_font")
+    sf, bad = parse_source_font(raw)
+    oid = str(o.get("id", ""))
+    if bad is not None:
+        problems.append(_source_font_problem(oid, "", bad))
+        return None, None
+    if sf is None:
+        return None, None
+    admitted: dict[tuple[str, int], object] = {}
+
+    def admit(ref):
+        if ref.identity not in admitted:
+            admitted[ref.identity] = _admit(provider, ref, oid, problems)
+        return admitted[ref.identity]
+
+    def pick(base, own_bold: bool, own_italic: bool, bold: bool, italic: bool):
+        candidates = [(base, own_bold, own_italic)] + [
+            (base.sibling(s.bold, s.italic), s.bold, s.italic)
+            for s in base.siblings
+            if (bold or not s.bold) and (italic or not s.italic)
+        ]
+        candidates.sort(key=lambda c: (c[1] != bold, c[2] != italic))
+        for ref, face_bold, face_italic in candidates:
+            face = admit(ref)
+            if face is not None:
+                return synthesized(face, bold and not face_bold, italic and not face_italic)
+        return None
+
+    def primary(bold: bool, italic: bool):
+        return pick(sf.primary, sf.bold, sf.italic, bold, italic)
+
+    def cjk(bold: bool, italic: bool):
+        return pick(sf.cjk, False, False, bold, italic)
+
+    return primary, (cjk if sf.cjk is not None else None)
+
+
+def _admit(provider, ref, oid: str, problems: list[dict]):
+    loader = getattr(provider, "user_face", None)
+    try:
+        if loader is None:
+            raise UserFontUnavailable("not_found")
+        return loader(ref)
+    except UserFontUnavailable as exc:
+        problems.append(_source_font_problem(oid, ref.family, exc.reason))
+        return None
+
+
+def _source_font_problem(oid: str, family: str, reason: str) -> dict:
+    shown = f"{family} ({reason})" if family else reason
+    return {
+        "code": "source_font_unavailable",
+        "object_id": oid,
+        "reason": reason,
+        "font": family,
+        "chars": [shown],
+    }
 
 
 def compile_page(
@@ -356,8 +535,14 @@ def compile_page(
             node = _panel_node(o, page_h, sources, resources, frozen)
         elif kind == "text":
             try:
+                user_face, user_cjk = _user_faces(o, faces, problems)
                 fs = faces_for(
-                    faces, o.get("font_family"), o.get("bold", False), o.get("italic", False)
+                    faces,
+                    o.get("font_family"),
+                    o.get("bold", False),
+                    o.get("italic", False),
+                    user_face=user_face,
+                    user_cjk=user_cjk,
                 )
             except Exception as exc:  # noqa: BLE001 —— FontsUnavailable 之类要带 code 出去
                 raise PlanError(

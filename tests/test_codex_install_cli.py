@@ -876,7 +876,9 @@ def test_real_codex_cli_install_then_doctor(tmp_path):
 
     if shutil.which("codex") is None:
         pytest.skip("这台机器上没有 codex CLI")
-    env = {"CODEX_HOME": str(tmp_path / "codexhome")}
+    codex_home = tmp_path / "codexhome"
+    codex_home.mkdir()
+    env = {"CODEX_HOME": str(codex_home)}
     rc, out, err = _run(["codex", "install", "--json"], env)
     assert rc == 0, out + err
     rc, out, err = _run(["codex", "doctor", "--json"], env)

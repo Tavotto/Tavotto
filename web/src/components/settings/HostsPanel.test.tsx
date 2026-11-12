@@ -3,7 +3,7 @@
  *
  * 主语是**界面上真的出现了什么、按钮真的调了什么**：
  * - 没装的宿主只有「未检测到」，没有按钮；装了的一个「接入」；接好的「已接入」。
- * - 第一次接入先选文件夹，选的路径原样交给 `runHostIntegration('connect', host, 路径)`；取消选择就什么都不调。
+ * - 点「接入」就接，不弹选文件夹（用户 2026-11-04，ADR 0009 §1b）：只调 `runHostIntegration('connect', host)`。
  * - 失败显示翻译过的一句原因，**不是** `config_unreadable` 这串下划线英文。
  * - 浏览器模式整组不显示（不画按不动的按钮）。
  */
@@ -14,10 +14,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/lib/desktop', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/desktop')>()),
   runHostIntegration: vi.fn(),
+  runCodexIntegration: vi.fn(),
   pickDirectory: vi.fn(),
 }))
 
-import { pickDirectory, runHostIntegration } from '@/lib/desktop'
+import { pickDirectory, runCodexIntegration, runHostIntegration } from '@/lib/desktop'
 import { t } from '@/i18n'
 import { HostsPanel } from './HostsPanel'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -30,6 +31,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 const runMock = vi.mocked(runHostIntegration)
 const pickMock = vi.mocked(pickDirectory)
+const codexMock = vi.mocked(runCodexIntegration)
 const tx = (key: string, values?: Record<string, unknown>) =>
   t(`settings.hosts.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
@@ -38,7 +40,6 @@ const LIST = (overrides: Record<string, unknown> = {}) =>
     ok: true,
     action: 'list',
     server: true,
-    project_root: null,
     hosts: [
       { id: 'codex', label: 'Codex', installed: true, connected: true },
       { id: 'cursor', label: 'Cursor', installed: true, connected: false },
@@ -73,6 +74,7 @@ describe('HostsPanel', () => {
     ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}
     runMock.mockReset()
     pickMock.mockReset()
+    codexMock.mockReset()
   })
   afterEach(async () => {
     await act(async () => root?.unmount())
@@ -97,42 +99,21 @@ describe('HostsPanel', () => {
     expect(connectButton('antigravity')?.textContent).toBe(tx('connect'))
   })
 
-  it('asks for the folder on the first connect and passes it through unchanged', async () => {
+  it('connects with one click: no folder dialog, nothing but the host goes to the shell', async () => {
     runMock.mockResolvedValueOnce(LIST())
-    pickMock.mockResolvedValue('/Users/me/论文/figs')
     runMock.mockResolvedValueOnce(
       JSON.stringify({ ok: true, host: 'cursor', action: 'connect', state: 'needs_new_session', steps: [] }),
     )
-    runMock.mockResolvedValue(LIST({ project_root: '/Users/me/论文/figs' }))
-    await mount()
-    await act(async () => connectButton('cursor')!.click())
-    expect(pickMock).toHaveBeenCalledTimes(1)
-    expect(runMock).toHaveBeenCalledWith('connect', 'cursor', '/Users/me/论文/figs')
-    expect(row('cursor')?.textContent).toContain(tx('doneNewSession', { host: 'Cursor' }))
-  })
-
-  it('does nothing when the folder dialog is cancelled', async () => {
     runMock.mockResolvedValue(LIST())
-    pickMock.mockResolvedValue(null)
-    await mount()
-    await act(async () => connectButton('cursor')!.click())
-    expect(runMock).toHaveBeenCalledTimes(1) // 只有最初那次 list
-  })
-
-  it('does not ask again once a folder is remembered', async () => {
-    runMock.mockResolvedValueOnce(LIST({ project_root: '/p' }))
-    runMock.mockResolvedValueOnce(
-      JSON.stringify({ ok: true, host: 'cursor', action: 'connect', state: 'connected', steps: [] }),
-    )
-    runMock.mockResolvedValue(LIST({ project_root: '/p' }))
     await mount()
     await act(async () => connectButton('cursor')!.click())
     expect(pickMock).not.toHaveBeenCalled()
-    expect(runMock).toHaveBeenCalledWith('connect', 'cursor', undefined)
+    expect(runMock).toHaveBeenCalledWith('connect', 'cursor')
+    expect(row('cursor')?.textContent).toContain(tx('doneNewSession', { host: 'Cursor' }))
   })
 
   it('shows a translated reason, never the raw code', async () => {
-    runMock.mockResolvedValueOnce(LIST({ project_root: '/p' }))
+    runMock.mockResolvedValueOnce(LIST())
     runMock.mockResolvedValueOnce(
       JSON.stringify({
         ok: false,
@@ -143,7 +124,7 @@ describe('HostsPanel', () => {
         steps: [{ step: 'config', ok: false, skipped: false, error_code: 'config_unreadable', detail: '/x/mcp.json' }],
       }),
     )
-    runMock.mockResolvedValue(LIST({ project_root: '/p' }))
+    runMock.mockResolvedValue(LIST())
     await mount()
     await act(async () => connectButton('cursor')!.click())
     const reason = tx('error.config_unreadable', { host: 'Cursor' })
@@ -154,37 +135,62 @@ describe('HostsPanel', () => {
     expect(connectButton('cursor')?.textContent).toBe(tx('retry'))
   })
 
-  it('lets the user pick another folder when the remembered one is rejected', async () => {
-    runMock.mockResolvedValueOnce(LIST({ project_root: '/gone' }))
-    runMock.mockResolvedValueOnce(
-      JSON.stringify({
-        ok: false,
-        host: 'cursor',
-        action: 'connect',
-        state: 'failed',
-        error_code: 'project_root_rejected',
-        steps: [{ step: 'project_root', ok: false, skipped: false, error_code: 'project_root_rejected' }],
-      }),
-    )
-    runMock.mockResolvedValueOnce(LIST({ project_root: '/gone' }))
-    pickMock.mockResolvedValue('/new/figs')
-    runMock.mockResolvedValueOnce(
-      JSON.stringify({ ok: true, host: 'cursor', action: 'connect', state: 'needs_new_session', steps: [] }),
-    )
-    runMock.mockResolvedValue(LIST({ project_root: '/new/figs' }))
-    await mount()
-    await act(async () => connectButton('cursor')!.click()) // 第一次：用记住的那个，被拒
-    expect(pickMock).not.toHaveBeenCalled()
-    expect(connectButton('cursor')?.textContent).toBe(tx('chooseFolder'))
-    await act(async () => connectButton('cursor')!.click()) // 第二次：先换文件夹
-    expect(pickMock).toHaveBeenCalledTimes(1)
-    expect(runMock).toHaveBeenCalledWith('connect', 'cursor', '/new/figs')
-  })
-
   it('renders nothing in the browser', async () => {
     delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__
     await mount()
     expect(document.querySelector('[data-hosts-section]')).toBeNull()
     expect(runMock).not.toHaveBeenCalled()
+  })
+
+  const stateList = (hosts: Record<string, unknown>[]) =>
+    JSON.stringify({ ok: true, action: 'list', server: true, hosts })
+  const stateOf = (id: string) => row(id)?.querySelector('[data-host-connected]')?.getAttribute('data-host-state')
+
+  it('shows skill version, built-in notes, outdated plugin and kept skill', async () => {
+    runMock.mockResolvedValue(
+      stateList([
+        { id: 'codex', label: 'Codex', installed: true, connected: true, skill: 'builtin', version: '0.21.0', update: { latest: '0.22.0', how: 'codex_plugin' } },
+        { id: 'cursor', label: 'Cursor', installed: true, connected: true, skill: 'current', version: '0.22.0' },
+        { id: 'claude-desktop', label: 'Claude', installed: true, connected: true, skill: 'builtin' },
+        { id: 'vscode', label: 'VS Code', installed: true, connected: true, skill: 'modified', version: '0.21.0' },
+      ]),
+    )
+    await mount()
+    expect(stateOf('codex')).toBe('plugin-outdated')
+    expect(row('codex')?.textContent).toContain(tx('pluginOutdated', { version: '0.21.0' }))
+    expect(row('codex')?.querySelector('[data-host-update="codex"]')).not.toBeNull()
+    expect(stateOf('cursor')).toBe('skill')
+    expect(row('cursor')?.textContent).toContain(tx('connectedSkill', { version: '0.22.0' }))
+    expect(row('cursor')?.querySelector('[data-host-update],[data-host-overwrite]')).toBeNull()
+    expect(stateOf('claude-desktop')).toBe('builtin')
+    expect(row('claude-desktop')?.textContent).toContain(tx('connectedBuiltin'))
+    expect(stateOf('vscode')).toBe('skill-modified')
+    expect(row('vscode')?.textContent).toContain(tx('skillKept'))
+    // 改过 / 有新版不算一切正常：不给绿色对勾
+    expect(row('vscode')?.querySelector('[data-host-connected] svg')).toBeNull()
+    expect(row('vscode')?.querySelector('[data-host-overwrite="vscode"]')).not.toBeNull()
+  })
+
+  it('update button runs the codex upgrade channel and refreshes', async () => {
+    runMock.mockResolvedValue(
+      stateList([{ id: 'codex', label: 'Codex', installed: true, connected: true, skill: 'builtin', version: '0.21.0', update: { latest: '0.22.0', how: 'codex_plugin' } }]),
+    )
+    codexMock.mockResolvedValue(JSON.stringify({ ok: true, action: 'upgrade', steps: [] }))
+    await mount()
+    await act(async () => (row('codex')!.querySelector('[data-host-update="codex"]') as HTMLButtonElement).click())
+    expect(codexMock).toHaveBeenCalledWith('upgrade')
+    expect(runMock.mock.calls.filter((c) => c[0] === 'list').length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('overwrite asks once, and only the confirm sends connect_force_skill', async () => {
+    runMock.mockResolvedValue(
+      stateList([{ id: 'vscode', label: 'VS Code', installed: true, connected: true, skill: 'modified', version: '0.21.0' }]),
+    )
+    await mount()
+    await act(async () => (row('vscode')!.querySelector('[data-host-overwrite="vscode"]') as HTMLButtonElement).click())
+    expect(runMock).not.toHaveBeenCalledWith('connect_force_skill', 'vscode')
+    runMock.mockResolvedValueOnce(JSON.stringify({ ok: true, host: 'vscode', action: 'connect', state: 'connected', steps: [] }))
+    await act(async () => (document.querySelector('[data-host-overwrite-confirm]') as HTMLButtonElement).click())
+    expect(runMock).toHaveBeenCalledWith('connect_force_skill', 'vscode')
   })
 })

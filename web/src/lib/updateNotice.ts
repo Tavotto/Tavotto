@@ -70,6 +70,8 @@ export interface UpdateNoticeInputs {
     releases_url?: string
   } | null
   dismissedVersion: string | null
+  /** 桌面「后台自动下载」开着：新版由后台下载 + 顶栏胶囊提示，不再弹询问框 */
+  desktopAutoDownload?: boolean
 }
 
 /** 该弹的那条提示；null = 没新版 / 这一版已经说过稍后 */
@@ -83,6 +85,7 @@ export function pendingUpdateNotice(s: UpdateNoticeInputs): UpdateNotice | null 
 function rawNotice(s: UpdateNoticeInputs): UpdateNotice | null {
   const current = s.status?.current || null
   if (s.desktopUpdate?.version) {
+    if (s.desktopAutoDownload) return null
     return {
       kind: 'desktop',
       version: s.desktopUpdate.version,

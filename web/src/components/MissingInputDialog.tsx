@@ -42,6 +42,8 @@ export function MissingInputDialog() {
   const skipped = useEnvStore((s) => s.rewriteSkipped)
   const rewriteError = useEnvStore((s) => s.rewriteError)
   const [busy, setBusy] = useState(false)
+  // 只在等改写**预览**时为真：预览不改任何文件，可以随时放弃（「稍后」/ Esc），不像确认改写那样不可中断
+  const [previewing, setPreviewing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [typed, setTyped] = useState('')
   // 第 2 步（确认改写）的本地状态：换一份预览就从头来
@@ -80,10 +82,12 @@ export function MissingInputDialog() {
   const submit = async (chosen: string | null, kind: 'file' | 'dir' | 'auto') => {
     if (!chosen) return // 取消选择器不是错误
     setBusy(true)
+    setPreviewing(rewritable)
     const err = rewritable
       ? await previewRewrite(primary.path, chosen, kind)
       : await pointAtData(primary.path, chosen, kind)
     setBusy(false)
+    setPreviewing(false)
     setError(err)
   }
   const pickFile = () =>
@@ -105,7 +109,7 @@ export function MissingInputDialog() {
       </span>
     ) : null
   const later = (
-    <Button variant="secondary" size="lg" disabled={busy} onClick={dismiss}>
+    <Button variant="secondary" size="lg" disabled={busy && !previewing} onClick={dismiss}>
       {t('engine.missingInputLater')}
     </Button>
   )
@@ -160,9 +164,9 @@ export function MissingInputDialog() {
     <Dialog
       open={open}
       onOpenChange={(v) => {
-        if (!v && !busy) dismiss()
+        if (!v && (!busy || previewing)) dismiss()
       }}
-      onEscape={busy ? undefined : dismiss}
+      onEscape={busy && !previewing ? undefined : dismiss}
       title={
         <>
           {t('engine.missingInputTitle')}
@@ -171,7 +175,7 @@ export function MissingInputDialog() {
       }
       description={t(pickable ? 'engine.missingInputSentence' : 'engine.missingInputSentenceProbe', { name, product: PRODUCT_NAME })}
       size="md"
-      busy={busy}
+      busy={busy && !previewing}
       anchor="missing-input"
       footer={{
         secondary: later,

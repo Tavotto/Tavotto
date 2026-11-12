@@ -256,7 +256,7 @@ opacity + ≤4px 位移 + scale 0.97~1；没有缩放炫技、漂浮。`prefers-
 实现只有一份：`ui/slidingIndicator.useSlidingIndicator`（Tabs / Segmented 共用）与 `ui/Field.Reveal`
 （Disclosure；原生 `<details>` 用 `::details-content` 在支持 `interpolate-size` 的引擎里同样长高）。
 
-**加载只有四种写法**（2026-10-07，第二十六节）：不定进度 = `animate-sweep`（`ui/ProgressBar`，轨道 border 色）；骨架 = 静态
+**加载只有四种写法**（2026-10-07，第二十六节）：进度条 = `ui/ProgressBar`（点阵：未完成稀点、已完成密点，不定进度是一段密点来回扫，ADR 0168；画布冷启动叠在图上的那条仍是 `animate-sweep`）；骨架 = 静态
 `bg-surface-hover` + 65% 不透明，不动；「进行中」的字 = `text-shimmer`；按钮 / 行内 = `LoaderCircle animate-spin`。Tailwind 的
 呼吸动画（pulse）被 `foundation.test` 禁掉。唯一例外是改图助手的思考小球（`ui/ThinkingOrb`，ADR 0165）：过程组组首、等第一个字的那一格与空白面板，结束后也慢速在动；它不是通用加载件，别处照旧这四种。一次性的「看这里」（问题定位高亮）是 `animate-attention`，有限三次。
 

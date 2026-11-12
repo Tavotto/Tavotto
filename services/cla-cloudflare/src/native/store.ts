@@ -11,11 +11,23 @@ import { BudgetDeferred, FREE_BUDGET, InvocationBudget, meterDatabase } from './
 
 export const PREFIX = 'cla_native_v2_';
 const objects = ['slot_policy','slot_policy_insert','slot_policy_update','slot_policy_delete','publication_slot_insert','publication_slot_enroll','publication_slot_release','publication_slot_update','publication_slot_delete','outbox_slot_delete','agreement_activations','activation_order','activations_update','activations_delete','head_requests','head_deliveries','head_deliveries_update','head_deliveries_delete','head_request_identity','head_revision','oauth_expiry','packets_subject_digest','authority','agreements','state','sessions','oauth_states','packets','intents','signatures',
-  'eligibility_blocks','audit','targets','outbox','outbox_due','deliveries','published_checks','_guards',
+  'eligibility_blocks','eligibility_releases','audit','targets','outbox','outbox_due','deliveries','published_checks','_guards',
   'revision_outbox','delivery_outbox','agreements_update','agreements_delete','packets_update','packets_delete',
-  'signatures_update','signatures_delete','blocks_update','blocks_delete','audit_update','audit_delete',
+  'signatures_update','signatures_delete','blocks_update','blocks_delete','releases_update','releases_delete','audit_update','audit_delete',
   'publication_attempts','publication_unresolved','reconciliation_progress','refresh_requests','agreement_documents','documents_update','documents_delete','authority_update','authority_delete',
   'delegated_grants','delegated_controls','delegated_receipts','delegated_grants_update','delegated_grants_delete','delegated_controls_update','delegated_controls_delete','delegated_receipts_update','delegated_receipts_delete','delegated_control_order'];
+export const RETENTION_SECONDS=86400,RETENTION_BATCH=20;
+// A target nothing references: no delivery, outbox, journal, published check, refresh request or progress cursor.
+const unreferencedTargetSQL=(key:string)=>['deliveries','outbox','publication_attempts','published_checks','refresh_requests','reconciliation_progress']
+  .map(table=>`NOT EXISTS(SELECT 1 FROM ${table} x WHERE x.target_key=${key})`).join(' AND ');
+// Admission caps measure live work, not lifetime history: a target is live while a publication is unresolved or it
+// is queued for its first evaluation. Targets whose every attempt is resolved are audit history and do not count.
+export const LIVE_TARGETS_SQL=`SELECT 1 FROM targets t WHERE EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=t.target_key AND p.phase!='resolved')
+  OR (EXISTS(SELECT 1 FROM outbox o WHERE o.target_key=t.target_key) AND NOT EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=t.target_key)) LIMIT 100`;
+// A hold counts against packet `created` of the same subject unless the holder released it AND the packet is
+// strictly newer than the release. Old packets and the held packet itself therefore stay ineligible forever.
+export const blockedSQL=(subject:string,created:string)=>`EXISTS(SELECT 1 FROM eligibility_blocks b JOIN packets old ON old.id=b.packet
+  LEFT JOIN eligibility_releases r ON r.packet=b.packet WHERE old.subject=${subject} AND (r.packet IS NULL OR ${created}<=r.created))`;
 // Only trusted source SQL is passed here; identifiers cannot come from a request.
 export const nativeSQL = (sql: string) => sql.replace(/\b[A-Za-z_][A-Za-z_0-9]*\b/g,
   word => objects.includes(word) ? PREFIX+word : word);
@@ -440,6 +452,45 @@ export class LiveStore extends Store {
         ON CONFLICT(target_key) DO UPDATE SET wanted_revision=excluded.wanted_revision,due=0,attempts=0`,id),
     ]);
   }
+  // Bounded retention of finished operational rows (README "Bounded retention"). Each admission transaction
+  // sheds at most RETENTION_BATCH rows per statement, so a caller pays a fixed, small cost. Only these may go:
+  // terminal head requests older than a day and their delivery rows; merge-group delivery rows older than a day
+  // whose target has no outbox work and no unresolved publication; and `merge:` targets that nothing references.
+  // Signatures, packets, intents, agreements, audit, eligibility_*, publication_attempts, published_checks,
+  // slot_policy and refresh_requests are never touched.
+  pruneHeadHistory():D1Statement[] {
+    const old=`r.status IN ('done','dispatched','manual') AND r.created<${DB_NOW}-${RETENTION_SECONDS}`;
+    return [
+      this.stmt(`DELETE FROM head_deliveries WHERE id IN (SELECT d.id FROM head_deliveries d JOIN head_requests r ON r.request_key=d.request_key
+        WHERE ${old} ORDER BY d.created,d.id LIMIT ${RETENTION_BATCH})`),
+      this.stmt(`DELETE FROM head_requests WHERE request_key IN (SELECT r.request_key FROM head_requests r WHERE ${old}
+        AND NOT EXISTS(SELECT 1 FROM head_deliveries d WHERE d.request_key=r.request_key) ORDER BY r.created,r.request_key LIMIT ${RETENTION_BATCH})`),
+    ];
+  }
+  pruneGroupHistory():D1Statement[] {
+    return [
+      this.stmt(`DELETE FROM deliveries WHERE id IN (SELECT d.id FROM deliveries d WHERE d.created<${DB_NOW}-${RETENTION_SECONDS}
+        AND NOT EXISTS(SELECT 1 FROM outbox o WHERE o.target_key=d.target_key)
+        AND NOT EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=d.target_key AND p.phase!='resolved')
+        ORDER BY d.created,d.id LIMIT ${RETENTION_BATCH})`),
+      this.stmt(`DELETE FROM targets WHERE target_key IN (SELECT t.target_key FROM targets t WHERE t.target_key LIKE 'merge:%'
+        AND ${unreferencedTargetSQL('t.target_key')} ORDER BY t.target_key LIMIT ${RETENTION_BATCH})`),
+    ];
+  }
+  // An all-exempt merge group publishes nothing, so its target has no further work. The lease/generation guard
+  // means a newer delivery (which bumps the generation) can never be swallowed; a target that already has any
+  // journal row is refused instead of deleted. Deliveries go first because they reference the target.
+  async settleExemptGroup(job:Job):Promise<void> {
+    await this.batch([
+      ...this.guard(`EXISTS(SELECT 1 FROM outbox WHERE target_key=? AND lease=? AND lease_until>${DB_NOW} AND generation=?)
+        AND NOT EXISTS(SELECT 1 FROM publication_attempts WHERE target_key=?) AND NOT EXISTS(SELECT 1 FROM published_checks WHERE target_key=?)
+        AND NOT EXISTS(SELECT 1 FROM refresh_requests WHERE target_key=?)`,job.target_key,job.lease,job.generation,job.target_key,job.target_key,job.target_key),
+      this.stmt('DELETE FROM outbox WHERE target_key=? AND lease=? AND generation=?',job.target_key,job.lease,job.generation),
+      this.stmt('DELETE FROM reconciliation_progress WHERE target_key=?',job.target_key),
+      this.stmt('DELETE FROM deliveries WHERE target_key=?',job.target_key),
+      this.stmt(`DELETE FROM targets WHERE target_key=? AND target_key LIKE 'merge:%' AND ${unreferencedTargetSQL('targets.target_key')}`,job.target_key),
+    ]);
+  }
   override async addOAuth(hash:string,browser:string,cipher:string,_expires:number):Promise<void> {
     // A global rolling burst bound, independent of the edge's per-location limit.
     // Consumed rows retain their slot until expiry; callback success cannot reset it.
@@ -464,7 +515,13 @@ export class LiveStore extends Store {
   override async createPacket(_p:Packet):Promise<Packet> {throw new Rejected('authenticated_lifecycle_required');}
   override async qualifiedUntil(_subject:number,_digest:string,_now:number):Promise<number|null> {throw new Rejected('verified_lifecycle_required');}
   async subjectBlocked(subject:number):Promise<boolean> {
-    return !!await this.stmt('SELECT 1 AS blocked FROM eligibility_blocks b JOIN packets p ON p.id=b.packet WHERE p.subject=? LIMIT 1',subject).first();
+    return !!await this.stmt('SELECT 1 AS blocked FROM eligibility_blocks b JOIN packets p ON p.id=b.packet LEFT JOIN eligibility_releases r ON r.packet=b.packet WHERE p.subject=? AND r.packet IS NULL LIMIT 1',subject).first();
+  }
+  // Is this packet itself ineligible because of a hold? (released holds still block every packet created up to the release.)
+  async packetBlock(p:Packet):Promise<{packet:string;held_at:number;released_at:number|null}|null> {
+    return this.stmt(`SELECT b.packet,b.created held_at,r.created released_at FROM eligibility_blocks b JOIN packets old ON old.id=b.packet
+      LEFT JOIN eligibility_releases r ON r.packet=b.packet WHERE old.subject=? AND (r.packet IS NULL OR ?<=r.created)
+      ORDER BY r.packet IS NULL DESC,b.created DESC,b.packet DESC LIMIT 1`,p.subject,p.created).first();
   }
   async completed(id:string):Promise<boolean> {
     return !!await this.stmt(`SELECT 1 AS complete FROM packets p
@@ -476,7 +533,8 @@ export class LiveStore extends Store {
     const rows=(await this.stmt(`SELECT p.* FROM packets p WHERE subject=? AND digest=? AND
       (p.valid_until>${DB_NOW} OR EXISTS(SELECT 1 FROM signatures c JOIN signatures h ON h.packet=c.packet
         WHERE c.packet=p.id AND c.role='contributor' AND c.actor=p.subject AND h.role='holder'
-        AND h.actor=(SELECT holder FROM authority WHERE id=1) AND h.actor!=p.subject)) LIMIT 2`,subject,digest).all<Packet>()).results;
+        AND h.actor=(SELECT holder FROM authority WHERE id=1) AND h.actor!=p.subject))
+      AND NOT ${blockedSQL('p.subject','p.created')} LIMIT 2`,subject,digest).all<Packet>()).results;
     if(rows.length>1)throw new Rejected('packet_ineligible');return rows[0] ?? null;
   }
   async createAuthenticatedPacket(s:Session,p:Packet):Promise<Packet> {
@@ -485,11 +543,11 @@ export class LiveStore extends Store {
     // active/completed row; no signature or prior packet is copied or extended.
     const usable=`(p.valid_until>${DB_NOW} OR EXISTS(SELECT 1 FROM signatures c JOIN signatures h ON h.packet=c.packet
       WHERE c.packet=p.id AND c.role='contributor' AND c.actor=p.subject AND h.role='holder'
-      AND h.actor=(SELECT holder FROM authority WHERE id=1) AND h.actor!=p.subject))`;
+      AND h.actor=(SELECT holder FROM authority WHERE id=1) AND h.actor!=p.subject)) AND NOT ${blockedSQL('p.subject','p.created')}`;
     await this.batch([
       ...this.guard(`EXISTS(SELECT 1 FROM sessions WHERE token_hash=? AND actor=? AND csrf_hash=? AND expires>${DB_NOW}) AND ?=?
-        AND NOT EXISTS(SELECT 1 FROM eligibility_blocks b JOIN packets old ON old.id=b.packet WHERE old.subject=?)
-        AND (${ready.sql}) AND ?=1`,s.token_hash,s.actor,s.csrf_hash,s.actor,p.subject,p.subject,...ready.values,matches?1:0),
+        AND NOT ${blockedSQL('?','?')}
+        AND (${ready.sql}) AND ?=1`,s.token_hash,s.actor,s.csrf_hash,s.actor,p.subject,p.subject,p.created,...ready.values,matches?1:0),
       this.stmt(`INSERT INTO packets SELECT ?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM packets p WHERE subject=? AND digest=? AND ${usable})`,p.id,p.subject,p.kind,p.version,p.digest,p.created,p.valid_until,p.subject,p.digest),
       ...this.guard(`(SELECT count(*) FROM packets p WHERE subject=? AND digest=? AND ${usable})=1`,p.subject,p.digest),
     ]);
@@ -501,7 +559,7 @@ export class LiveStore extends Store {
     await this.batch([
       ...this.guard(`EXISTS(SELECT 1 FROM sessions s JOIN packets p ON p.id=? WHERE (${ready.sql}) AND (?='hold' OR (${tuple.sql})) AND s.token_hash=? AND s.actor=?
         AND s.csrf_hash=? AND s.expires>${DB_NOW} AND (?='hold' OR p.valid_until>${DB_NOW}) AND p.digest=?
-        AND NOT EXISTS(SELECT 1 FROM eligibility_blocks b JOIN packets old ON old.id=b.packet WHERE old.subject=p.subject)
+        AND NOT ${blockedSQL('p.subject','p.created')}
         AND ((?='contributor' AND s.actor=p.subject) OR (?='holder' AND s.actor=(SELECT holder FROM authority WHERE id=1)
           AND s.actor!=p.subject AND EXISTS(SELECT 1 FROM signatures WHERE packet=p.id AND role='contributor' AND actor=p.subject))
           OR (?='hold' AND (s.actor=p.subject OR s.actor=(SELECT holder FROM authority WHERE id=1)))))`,
@@ -518,7 +576,7 @@ export class LiveStore extends Store {
         WHERE (${ready.sql}) AND (${tuple.sql}) AND i.token_hash=? AND s.token_hash=? AND p.id=? AND i.used=0 AND i.expires>${DB_NOW}
         AND s.expires>${DB_NOW} AND p.valid_until>${DB_NOW} AND i.digest=p.digest AND p.digest=?
         AND p.kind=? AND p.version=? AND i.role=? AND s.actor=? AND s.login=? AND s.csrf_hash=?
-        AND NOT EXISTS(SELECT 1 FROM eligibility_blocks b JOIN packets old ON old.id=b.packet WHERE old.subject=p.subject)
+        AND NOT ${blockedSQL('p.subject','p.created')}
         AND NOT EXISTS(SELECT 1 FROM signatures g WHERE g.packet=p.id AND g.role=i.role)
         AND ((i.role='contributor' AND s.actor=p.subject) OR (i.role='holder' AND s.actor=(SELECT holder FROM authority WHERE id=1)
           AND s.actor!=p.subject AND EXISTS(SELECT 1 FROM signatures g WHERE g.packet=p.id AND g.role='contributor' AND g.actor=p.subject))))`,
@@ -536,10 +594,22 @@ export class LiveStore extends Store {
         WHERE i.token_hash=? AND i.session_hash=? AND p.id=? AND i.role='hold' AND i.used=0 AND i.expires>${DB_NOW}
         AND s.expires>${DB_NOW} AND s.actor=? AND s.csrf_hash=? AND i.digest=p.digest AND p.digest=?
         AND (s.actor=p.subject OR s.actor=(SELECT holder FROM authority WHERE id=1))
-        AND NOT EXISTS(SELECT 1 FROM eligibility_blocks b JOIN packets old ON old.id=b.packet WHERE old.subject=p.subject))`,intent,s.token_hash,p.id,s.actor,s.csrf_hash,p.digest),
+        AND NOT ${blockedSQL('p.subject','p.created')})`,intent,s.token_hash,p.id,s.actor,s.csrf_hash,p.digest),
       this.stmt('INSERT INTO eligibility_blocks VALUES(?,?,?,?)',p.id,s.actor,created,'party_requested_review'),
       this.stmt('UPDATE intents SET used=1 WHERE token_hash=?',intent),
       this.stmt('INSERT INTO audit(packet,actor,event,created) VALUES(?,?,?,?)',p.id,s.actor,'hold',created),
+    ]); return revision+1;
+  }
+  async holdState(packet:string):Promise<{held_at:number;released_at:number|null}|null> {
+    return this.stmt('SELECT b.created held_at,r.created released_at FROM eligibility_blocks b LEFT JOIN eligibility_releases r ON r.packet=b.packet WHERE b.packet=?',packet).first();
+  }
+  // Holder-only, append-only. The block and signatures are untouched; only packets created after `created` stop being blocked by it.
+  async releaseAtomic(s:Session,p:Packet,revision:number,created:number):Promise<number> {
+    await this.batch([
+      ...this.cas(revision),
+      ...this.guard(`EXISTS(SELECT 1 FROM sessions WHERE token_hash=? AND actor=? AND csrf_hash=? AND expires>${DB_NOW} AND actor=(SELECT holder FROM authority WHERE id=1))
+        AND EXISTS(SELECT 1 FROM eligibility_blocks WHERE packet=?) AND NOT EXISTS(SELECT 1 FROM eligibility_releases WHERE packet=?)`,s.token_hash,s.actor,s.csrf_hash,p.id,p.id),
+      this.stmt('INSERT INTO eligibility_releases VALUES(?,?,?)',p.id,s.actor,created),
     ]); return revision+1;
   }
   async signatures(packet:string):Promise<SignatureRow[]> {
@@ -548,7 +618,7 @@ export class LiveStore extends Store {
   async delegatedPacket(subject:number,digest:string,grant:string):Promise<Packet|null> {
     return this.stmt(`SELECT p.* FROM packets p JOIN signatures c ON c.packet=p.id AND c.role='contributor' AND c.actor=p.subject
       WHERE p.subject=? AND p.digest=? AND EXISTS(SELECT 1 FROM delegated_receipts WHERE packet=p.id AND grant_id=?)
-      AND NOT EXISTS(SELECT 1 FROM eligibility_blocks b JOIN packets old ON old.id=b.packet WHERE old.subject=p.subject)
+      AND NOT ${blockedSQL('p.subject','p.created')}
       ORDER BY p.created DESC,p.id DESC LIMIT 1`,subject,digest,grant).first<Packet>();
   }
   async delegatedCandidate(subject:number,digest:string,grant:string):Promise<{packet:Packet;rows:SignatureRow[]}|null> {
@@ -559,7 +629,7 @@ export class LiveStore extends Store {
       AND EXISTS(SELECT 1 FROM signatures WHERE packet=p.id AND role='contributor' AND actor=p.subject)
       AND (EXISTS(SELECT 1 FROM signatures WHERE packet=p.id AND role='holder' AND actor=(SELECT holder FROM authority WHERE id=1) AND actor!=p.subject)
         OR EXISTS(SELECT 1 FROM delegated_receipts WHERE packet=p.id AND grant_id=?))
-      AND NOT EXISTS(SELECT 1 FROM eligibility_blocks b JOIN packets old ON old.id=b.packet WHERE old.subject=p.subject)
+      AND NOT ${blockedSQL('p.subject','p.created')}
       ORDER BY EXISTS(SELECT 1 FROM signatures WHERE packet=p.id AND role='holder') DESC,p.created DESC,p.id DESC LIMIT 1`,subject,digest,grant).first<Packet & {signature_rows:string}>();
     if(!row)return null;
     const {signature_rows,...packet}=row;return {packet,rows:JSON.parse(signature_rows)};
@@ -568,6 +638,6 @@ export class LiveStore extends Store {
     return this.stmt(`SELECT p.* FROM packets p JOIN signatures c ON c.packet=p.id AND c.role='contributor'
       JOIN signatures h ON h.packet=p.id AND h.role='holder' WHERE p.subject=? AND p.digest=?
       AND c.actor=p.subject AND h.actor=(SELECT holder FROM authority WHERE id=1) AND h.actor!=c.actor
-      AND NOT EXISTS(SELECT 1 FROM eligibility_blocks b JOIN packets old ON old.id=b.packet WHERE old.subject=p.subject)`,subject,digest).first<Packet>();
+      AND NOT ${blockedSQL('p.subject','p.created')}`,subject,digest).first<Packet>();
   }
 }

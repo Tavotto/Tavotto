@@ -17,8 +17,9 @@ package / smoke 加合并队列（v0.19.2 两个，约 3 小时）。这个脚�
 「docs-only」的范围（只此一条，别扩到整个 docs/）：
 
 * 路径在 `docs/release-notes/` 之下、是 `.md`、规范化后没有 `..` / 反斜杠 / 绝对路径；
-* **不含 `UNRELEASED.md`**：`tests/test_claude_plugin.py` / `test_dsh_bundle.py` 会读它
-  断言「待发说明里有安装那一行」，改它可能让 backend 的测试红，不能跳过那些测试；
+* **不含 `UNRELEASED.md` 与 `unreleased/` 片段目录**：`tests/test_claude_plugin.py` /
+  `test_dsh_bundle.py` / `test_install_commands_from_brand.py` 会读它们断言「待发说明里有
+  安装那一行」，改它们可能让 backend 的测试红，不能跳过那些测试；
 * 改名 / 移动：旧路径与新路径**都**要在范围内（把别处的文件挪进来也是改动）；
 * 一个文件都没有 → 不是 docs-only（空 diff 不该拿到快车道）。
 队列里多个 PR 组合成的候选：`base_sha..head_sha` 里**任一**文件在范围外就不是 docs-only。
@@ -29,6 +30,14 @@ fail-closed：
 * git diff 失败 / base 或 head 缺失 → 退出 2。
 退出 2 让 `docs-scope` job 红，两个 Gate 随之红（分类器自己坏了不能算通过）。
 "不是 docs-only" 是正常结论，退出 0、`docs_only=false`，走完整 CI。
+
+第二个输出 `e2e_specs_changed=true|false`（与 docs-only 无关的另一个问题）：这次改动有没有碰
+**e2e 腿（windows-exe-smoke / posix-e2e）的输入**——`web/e2e/` 下任何文件、`web/playwright.config.ts`、
+`web/tsconfig.e2e.json`（改名取新旧两条路径，删除也算）。为什么存在：重型腿平时在 PR 上整体
+skipped、只在合并组里第一次跑；一个「只改 e2e 用例」的 risk:low PR 于是在 PR 阶段一次都没被
+它自己改的那条腿验过（#1736，merge group run 41817554523 在 Windows webkit 上红了被踢）。
+为 true 时 ci.yml 让这两条腿在 PR 上也跑，integration gate 据此把它们当必需（见 aggregate_gate.py
+的 `--e2e-legs`）。与 docs_only 互不相交（发行说明不在 e2e 路径里）。
 
 纯标准库。stdout 恒输出一行 JSON。
 """
@@ -50,7 +59,14 @@ for _stream in (sys.stdout, sys.stderr):
 SCOPE_PREFIX = "docs/release-notes/"
 #: 范围内但被测试读取的文件：改它必须跑完整 CI。
 EXCLUDED = frozenset({"docs/release-notes/UNRELEASED.md"})
+#: 同上：待发片段目录（每个 PR 一个文件），与 UNRELEASED.md 同等对待。
+EXCLUDED_PREFIXES = ("docs/release-notes/unreleased/",)
 KNOWN_EVENTS = ("pull_request", "merge_group")
+
+#: e2e 腿的输入：目录前缀与单文件。`web/playwright.perf.config.ts` 不在内——它只驱动 nightly 的
+#: perf 用例，不进这两条腿（`web/playwright.config.ts` 的 testIgnore 把 perf 用例排除了）。
+E2E_PREFIXES = ("web/e2e/",)
+E2E_FILES = frozenset({"web/playwright.config.ts", "web/tsconfig.e2e.json"})
 
 
 class ConfigError(Exception):
@@ -65,17 +81,34 @@ def in_scope(path: str) -> bool:
         return False
     if not path.startswith(SCOPE_PREFIX) or not path.endswith(".md"):
         return False
-    return path not in EXCLUDED
+    return path not in EXCLUDED and not path.startswith(EXCLUDED_PREFIXES)
+
+
+def is_e2e_input(path: str) -> bool:
+    """单个路径是否是 e2e 腿的输入（`web/e2e/` 下任何文件，或登记的两个配置文件）。"""
+    # 不做 in_scope 那种规范化拒绝：这里判错的代价方向相反（漏判 = e2e 腿又在 PR 上白白跳过），宁可多跑。
+    return path in E2E_FILES or path.startswith(E2E_PREFIXES)
+
+
+def e2e_inputs(paths: list[str]) -> list[str]:
+    return sorted({p for p in paths if is_e2e_input(p)})
 
 
 def decide(paths: list[str]) -> dict:
     """paths = 本次改动涉及的全部路径（含改名前的旧路径）。纯函数。"""
+    e2e = e2e_inputs(paths)
+    extra = {"e2e_specs_changed": bool(e2e), "e2e_paths": e2e[:20]}
     if not paths:
-        return {"docs_only": False, "reason": "no_changes", "outside": []}
+        return {"docs_only": False, "reason": "no_changes", "outside": [], **extra}
     outside = sorted({p for p in paths if not in_scope(p)})
     if outside:
-        return {"docs_only": False, "reason": "touches_outside_scope", "outside": outside[:20]}
-    return {"docs_only": True, "reason": "release_notes_only", "outside": []}
+        return {
+            "docs_only": False,
+            "reason": "touches_outside_scope",
+            "outside": outside[:20],
+            **extra,
+        }
+    return {"docs_only": True, "reason": "release_notes_only", "outside": [], **extra}
 
 
 def paths_from_pr_files(files: list[dict]) -> list[str]:
@@ -172,12 +205,17 @@ def main(argv: list[str] | None = None) -> int:
     if out and code == 0:
         with open(out, "a", encoding="utf-8") as fh:
             fh.write(f"docs_only={'true' if result['docs_only'] else 'false'}\n")
+            fh.write(f"e2e_specs_changed={'true' if result['e2e_specs_changed'] else 'false'}\n")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as fh:
             fh.write(f"### docs-only 分类：{result['reason']}（docs_only={result['docs_only']}）\n")
             for p in result.get("outside", []):
                 fh.write(f"- 范围外：`{p}`\n")
+            if "e2e_specs_changed" in result:  # 配置错误的结果里没有（也不写 output）
+                fh.write(f"### e2e 腿输入：e2e_specs_changed={result['e2e_specs_changed']}\n")
+                for p in result.get("e2e_paths", []):
+                    fh.write(f"- `{p}`\n")
     if code:
         print(f"::error::{result['error']}", file=sys.stderr)
     return code

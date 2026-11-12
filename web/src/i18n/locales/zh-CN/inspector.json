@@ -593,10 +593,12 @@
   "hideElementTip": "隐藏元素",
   "history": {
     "addFill": "添加填充",
+    "addStroke": "添加描边",
     "addTextBg": "添加文字背景",
     "addTextBorder": "添加文字描边",
     "annotationsWrittenBack_other": "写回 {{count}} 条标注",
     "clearFill": "清除填充",
+    "clearStroke": "清除描边",
     "clearTextBg": "清除文字背景",
     "clearTextBorder": "清除文字描边",
     "editText": "编辑文字",
@@ -617,10 +619,14 @@
     "setFontFamily": "修改字体",
     "setFontSize": "修改字号",
     "setHeadEnd": "修改终点端型",
+    "setHeadSizeEnd": "修改终点端型大小",
+    "setHeadSizeStart": "修改起点端型大小",
     "setHeadStart": "修改起点端型",
     "setHeight": "修改高度",
     "setInterpretation": "科学文本解释",
+    "setLineCap": "修改线端",
     "setLineHeight": "修改行距",
+    "setLineJoin": "修改拐角",
     "setPadding": "修改内边距",
     "setPageBackground": "修改页面背景",
     "setPageBgColor": "修改页面背景色",
@@ -630,6 +636,7 @@
     "setPanelScale": "修改图的缩放",
     "setSides": "修改边数",
     "setStrokeColor": "修改描边颜色",
+    "setStrokeOpacity": "修改描边不透明度",
     "setStrokeWidth": "修改线宽",
     "setSubscript": "设为下标",
     "setSuperscript": "设为上标",
@@ -637,6 +644,7 @@
     "setTextBorder": "修改文字描边",
     "setTextColor": "修改文字颜色",
     "setWidth": "修改宽度",
+    "setWritingMode": "修改排向",
     "setX": "修改 X",
     "setY": "修改 Y",
     "toggleBold": "切换加粗",
@@ -726,6 +734,8 @@
     "source": "源文件",
     "sourceAdvanced": "源文件",
     "staleScript": "脚本已更新，进入编辑会自动重建",
+    "staleSourceMissing": "找不到脚本 {{script}}",
+    "staleSourceMissingNoName": "找不到源脚本",
     "unknown": "未知",
     "restore": "恢复",
     "replaceAction": "选择…",
@@ -779,6 +789,7 @@
     "frame_rounded": "圆角边框",
     "framealpha": "边框不透明度",
     "frameon": "边框",
+    "gradient": "渐变",
     "gradient_color": "渐变基色",
     "grid_alpha": "网格不透明度",
     "grid_color": "网格颜色",
@@ -931,29 +942,59 @@
   "show": "显示",
   "stroke": {
     "addFill": "添加填充",
+    "addStroke": "添加描边",
     "appearance": "外观",
+    "cap": {
+      "butt": "平头",
+      "round": "圆头",
+      "square": "方头"
+    },
+    "capDotted": "点线靠圆头画点，线端固定为圆头",
+    "capRow": "线端",
     "color": "颜色",
     "cornerRadius": "圆角",
     "dash": "线型",
     "dashStyle": {
+      "dashdot": "点划线",
       "dashed": "虚线",
       "dotted": "点线",
+      "longdash": "长虚线",
+      "longdashdot": "长点划线",
       "solid": "实线"
     },
     "end": "终点",
+    "endSize": "终点大小",
     "fill": "填充",
     "fillOpacity": "不透明度",
     "head": {
       "bar": "短线",
+      "diamond": "菱形",
+      "dot": "圆点",
       "none": "无",
       "open": "开口",
+      "stealth": "燕尾",
       "triangle": "三角"
     },
+    "join": {
+      "bevel": "斜角",
+      "miter": "尖角",
+      "round": "圆角"
+    },
+    "joinRow": "拐角",
     "lineWidth": "线宽",
+    "more": "更多",
+    "moreCount": "{{n}} 项",
     "reverse": "反转方向",
     "sides": "边数",
+    "size": {
+      "large": "大",
+      "medium": "中",
+      "small": "小"
+    },
     "start": "起点",
-    "strokeColor": "描边"
+    "startSize": "起点大小",
+    "strokeColor": "描边",
+    "strokeOpacity": "描边不透明度"
   },
   "summaryMarks": "{{count}} 标注",
   "summaryPanels": "{{count}} 张图",
@@ -1075,13 +1116,20 @@
     "styleItalic": "斜体",
     "styleNormal": "正体",
     "weightBold": "加粗",
-    "weightNormal": "常规"
+    "weightNormal": "常规",
+    "writingHorizontal": "横排",
+    "writingHorizontalTip": "横排：从左到右，逐行从上往下",
+    "writingMode": "排向",
+    "writingVertical": "竖排",
+    "writingVerticalTip": "竖排：从上到下，逐列从右往左；中文字头朝上，英文与数字侧躺"
   },
   "textControls": {
     "align": "对齐",
     "color": "颜色",
     "font": "字体",
     "fontFromGeneric": "来自脚本里的「{{generic}}」字体设置",
+    "fontNoMatch": "没有匹配的字体",
+    "fontSearch": "搜索字体",
     "fontMissingHint": "这台电脑没装这个字体，图上用的是别的字体。",
     "fontMissingTag": "（未安装）",
     "size": "字号"
@@ -1121,6 +1169,7 @@
     "rotation": "旋转",
     "summary": "X {{x}} · Y {{y}} mm",
     "textHeightAuto": "文字高度随内容",
+    "textWidthAuto": "竖排的宽度随列数",
     "title": "位置与尺寸"
   },
   "unlock": "解锁",
@@ -1152,7 +1201,7 @@
     "rewriting": "正在重写…",
     "trigger": "写回记录",
     "versionDescription": "{{count}} 项修改 · {{ts}}",
-    "warnBody": "将用此版本的修改重写原图文件。备份自动存到 cache/original_backups。",
+    "warnBody": "将用此版本的修改重写原图文件。备份自动存到 {{dir}}。",
     "warnForward": "这次恢复会追加为新记录，随时可以再恢复回去。"
   },
   "writeBack": {
@@ -1163,7 +1212,7 @@
     "buttonLabel": "写回原始文件",
     "confirm": "写回原始文件",
     "copyBackupDir": "复制备份目录",
-    "divergenceBody": "：当前编辑状态与「重开项目后重放一遍」的结果不一致，原文件未改动。请把下面的信息报告给开发者。",
+    "divergenceBody": "：现在的修改和重新打开后的样子对不上，原文件没有动。",
     "divergenceTitle": "写回已阻断",
     "done": "完成",
     "failed": "无法写回 {{stem}}：{{error}}",
@@ -1177,8 +1226,9 @@
     "readOnlyTitle": "项目已关闭「允许写回原始文件」，可在项目设置里打开。",
     "restoreBody": "恢复：在「写回记录」里回到任一版本，或从备份目录拷回。生成图的脚本不会改动。",
     "rewriting": "正在重新渲染…",
-    "scriptChanged": "生成脚本 {{script}} 已改动，当前仍是旧代码。请重新渲染这张图，确认后再写回。",
-    "sizeMismatch": "写回后的页面尺寸与重放结果对不上。文件已替换，原件在备份目录，请取回并报告给开发者。",
+    "scriptChanged": "生成脚本 {{script}} 已改动，现在看到的还是旧图。",
+    "rerender": "重新渲染",
+    "sizeMismatch": "写回后的页面尺寸和预期对不上。文件已替换，原件在上面的备份目录里。",
     "sourceChanged": "素材 {{file}} 已在外部改动。重新加载图库后再写回。",
     "statusPlain": "已写回原始文件：{{files}}（备份在 {{dir}}）",
     "statusWithAnnotations_other": "已写回原始文件：{{files}}（含 {{count}} 条标注，备份在 {{dir}}）",
@@ -1253,5 +1303,16 @@
     "formatBar": "文字格式",
     "preview": "公式预览",
     "previewNoRuntime": "没有可用的排版环境"
+  },
+  "gradientStops": {
+    "top": "上端",
+    "bottom": "下端",
+    "left": "左端",
+    "right": "右端",
+    "stopLabel": "{{field}} · {{end}}颜色",
+    "legend": "图例色块",
+    "legendAria": "{{field}} · 跟着改的图例色块",
+    "swatchN": "色块 {{n}}",
+    "followSwatch": "让「{{name}}」的图例色块跟着改"
   }
 }

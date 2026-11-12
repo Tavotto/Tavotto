@@ -45,7 +45,6 @@ import { useTranslation } from "react-i18next";
 import { flushSync } from "react-dom";
 import {
   Check,
-  CircleCheck,
   Download,
   FileExclamationPoint,
   ImageOff,
@@ -56,15 +55,19 @@ import {
 import { ICON_SIZE, IconSlot } from "@/components/ui/Icon";
 import { CanvasThumb } from "./CanvasThumb";
 import { ExportZoomStage } from "./ExportZoomStage";
-import { ExportLocationRow } from "./ExportLocationRow";
+import { ExportLocationRow, useExportLocationPicker } from "./ExportLocationRow";
+import { RASTER_TOO_LARGE, isLocationFailure, largestDpiWithinLimit, missingSourceFigure } from "@/lib/exportRecovery";
+import { requestRelinkSource, useClipboardStore } from "@/lib/clipboard";
 import { useProjectSettingsPending } from "@/lib/projectSettingsPatch";
 import { Checkbox } from "./ui/Checkbox";
+import { Tip } from "./ui/Tooltip";
 import { Segmented } from "./ui/Segmented";
 import {
   engineErrorMsg,
   type AssetOriginalSpec,
   type ExportJob,
   type ExportOutput,
+  type ExportScriptReport,
   type PanelInfo,
 } from "@/lib/api";
 import { formatMessage, literal, msg, t as translate, type UiMessage } from "@/i18n";
@@ -100,6 +103,7 @@ import { buildProofPayload } from "@/lib/preflight";
 import {
   defaultScope,
   epsAvailability,
+  scriptAvailability,
   runtimeRegistration,
   pixelPreview,
   PPI_DEFAULT,
@@ -119,6 +123,7 @@ import { DEFAULT_PROFILE_ID, type PublicationProfile } from "@/lib/profile";
 import { profileName } from "@/lib/profileText";
 import { useLocale } from "@/i18n/react";
 import { journalCatalogUi } from "@/lib/journalUi";
+import { applyJournalExport, journalExportAdvice } from "@/lib/journalExport";
 import {
   bindingFor,
   journalCarry,
@@ -129,6 +134,7 @@ import { apiUrl, currentProjectId } from "@/lib/session";
 import { boundedCount, captureTelemetry } from "@/lib/telemetry";
 import { cn } from "@/lib/utils";
 import { canRevealInFileManager, isDesktop, revealExportedFile } from "@/lib/desktop";
+import { useEpsOpacityGate } from "./EpsOpacityPrompt";
 import { annotationsBelow, annotationsOf, singleAnnotatedDocument } from "@/lib/singleExportDoc";
 import { useOriginalAvailability } from "@/hooks/useOriginalSpec";
 import { useRuntimePreview } from "@/hooks/useRuntimePreview";
@@ -137,13 +143,14 @@ import { useVariantPng } from "@/hooks/useVariantPng";
 import { figureSnapshotPreviewArgs, hasFigureSnapshotPreview } from "@/lib/figureSnapshotPreview";
 import { isJustBakedBaseline } from "@/store/actions";
 import { useAssetStore } from "@/store/assetStore";
-import { previewRenderForProject, useExactPanelManifest, usePanelRender, useRenderStore } from "@/store/renderStore";
+import { previewRenderForProject, renderKeyOf, useExactPanelManifest, usePanelRender, useRenderStore } from "@/store/renderStore";
 import { useRuntimeAssetStore } from "@/store/runtimeAssetStore";
 import { useSelectionStore } from "@/store/selectionStore";
 import {
   beginExportBatch,
   recordBatchFrozen,
   cancelCurrentExport,
+  dropFinishedBatch,
   recordBatchJob,
   recordBatchStartFailure,
   refreshExportStatus,
@@ -158,9 +165,9 @@ import { useProfileStore } from "@/store/profileStore";
 import { useProjectStore } from "@/store/projectStore";
 import { captureDocumentPreviewOwner, useDocumentStore } from "@/store/documentStore";
 import { useDocumentPreviewOwner } from "@/hooks/useDocumentPreviewOwner";
-import { dialogCovered, EXPORT_DONE_DISMISS_MS, useUiStore } from "@/store/uiStore";
+import { askConfirm, dialogCovered, EXPORT_DONE_DISMISS_MS, useUiStore } from "@/store/uiStore";
 import { useWorkspaceStore } from "@/store/workspace";
-import { isRuntimePanel, type CanvasObject, type FigureDocument, type PanelObject, type TextObject } from "@/types/document";
+import { isRuntimePanel, type ArrowObject, type CanvasObject, type FigureDocument, type PanelObject, type ShapeObject, type TextObject } from "@/types/document";
 import type { ThumbObject } from "@/types/thumb";
 import { cropToVisibleContent, croppedDocument } from "@/lib/exportCrop";
 import { frameCanvasOf, isZeroPad } from "@/lib/framePad";
@@ -281,6 +288,7 @@ interface ParkedState {
   filename: string;
   filenameTouched: boolean;
   withReport: boolean;
+  withScript: boolean;
   transparent: boolean;
   strict: boolean;
 }
@@ -330,6 +338,11 @@ export function ExportDialog() {
     () => readExportDefaults().formats,
   );
   const [ppi, setPpi] = useState(() => readExportDefaults().dpi);
+  /**
+   * 按期刊检查时导出初值跟着期刊走（`lib/journalExport`）：每个「文档 + 期刊」只套一次——之后用户在对话框里改的
+   * 格式 / 分辨率照常留着，不在每次打开时被期刊再冲掉一遍
+   */
+  const journalApplied = useRef<string | null>(null);
   const [filename, setFilename] = useState(doc.name);
   /** 用户亲手改过文件名（之后切范围不再替他换默认名） */
   const [filenameTouched, setFilenameTouched] = useState(false);
@@ -346,6 +359,8 @@ export function ExportDialog() {
     () => readExportDefaults().withProof,
   );
   const [transparent, setTransparent] = useState(false);
+  // 修改后的 .py（ADR 0171）：每次都要重跑一遍脚本，所以不记进导出默认值
+  const [withScript, setWithScript] = useState(false);
   /** 严格核验产物（ADR 0068 的 `strict` 政策）：必需项失败或无法核验的那一项不发布 */
   const [strict, setStrict] = useState(
     () => readExportDefaults().strictInspection,
@@ -596,6 +611,10 @@ export function ExportDialog() {
   /** 这次生效的那套规范的 id：规范下拉的显示值、严格核验的 `profile_id` 都认它 */
   const checkProfileId =
     resolved.profileId ?? (checkOnActive ? profileId : DEFAULT_PROFILE_ID);
+  /** 这次检查的那张画布是不是按期刊选的（规范下拉据此多出期刊那一项） */
+  const checkJournal =
+    journalCatalogUi() &&
+    !!(checkOnActive ? doc.profile : canvases.find((c) => c.id === checkCanvasId)?.profile)?.journalRef;
   /** 这次按哪套规范查的（检查结论里说出来）；取名与问题面板的证据句同一做法 */
   const locale = useLocale();
   const checkSpecName = useMemo(() => {
@@ -648,6 +667,10 @@ export function ExportDialog() {
     setRevealError(null);
     setPickedFigureId(null);
     setProfileId(snap.profile?.id ?? readExportDefaults().profileId);
+    const advice = journalCatalogUi() ? journalExportAdvice(snap.profile) : null;
+    const journalKey = advice
+      ? `${useDocumentStore.getState().documentId}\u0000${snap.profile?.journalRef?.id ?? ""}`
+      : null;
     // 从「定位」/「查看问题」回来：把用户填过的东西原样还回去。换了文档不还
     const restore = parked.current;
     parked.current = null;
@@ -661,9 +684,17 @@ export function ExportDialog() {
       setFilename(restore.filename);
       setFilenameTouched(restore.filenameTouched);
       setWithReport(restore.withReport);
+      setWithScript(restore.withScript);
       setTransparent(restore.transparent);
       setStrict(restore.strict);
       return;
+    }
+    if (journalKey && journalApplied.current !== journalKey) {
+      journalApplied.current = journalKey;
+      const d = readExportDefaults();
+      const next = applyJournalExport({ formats: d.formats, dpi: d.dpi }, advice);
+      setFormats(next.formats);
+      setPpi(next.dpi);
     }
     // scope 默认跟着当前工作流走，**但原图不可用时不静默改成画布**：
     // 那样用户会拿到一张他没要的图。可用性由下面那一行说出来
@@ -692,6 +723,8 @@ export function ExportDialog() {
     const d = readExportDefaults();
     setFormats(d.formats);
     setPpi(d.dpi);
+    // 后端那份默认值盖回来了：下次打开时期刊再套一次
+    journalApplied.current = null;
     setWithReport(d.withProof);
     setStrict(d.strictInspection);
   }, []);
@@ -717,6 +750,29 @@ export function ExportDialog() {
 
   /* -------------------------------- 检查 --------------------------------- */
   const raster = hasRaster(formats);
+  /** 期刊对导出的要求（气泡与分辨率选项用；初值在打开时已经套过） */
+  const journalAdvice = useMemo(
+    () => (journalCatalogUi() ? journalExportAdvice(doc.profile) : null),
+    [doc.profile],
+  );
+  /** 期刊列了接受的格式、却没列这一种：照样能勾，气泡里说一句 */
+  const unlisted = (f: ExportFormat) => !!journalAdvice?.listed && !journalAdvice.listed.has(f);
+  const withJournalNote = (f: ExportFormat, hint: string) =>
+    unlisted(f)
+      ? `${hint}\n${ex("journalUnlisted", { journal: journalAdvice!.journal, format: f.toUpperCase() })}`
+      : hint;
+  const ppiOptions = useMemo(() => {
+    const extra = journalAdvice?.dpi != null ? String(journalAdvice.dpi) : null;
+    const values: string[] = [...PPI_VALUES];
+    for (const v of [extra, ppi]) if (v && !values.includes(v)) values.push(v);
+    return values.sort((a, b) => Number(a) - Number(b));
+  }, [journalAdvice, ppi]);
+  const journalDpiNote = journalAdvice?.dpi != null
+    ? ex("journalDpi", {
+        journal: journalAdvice.journal,
+        detail: journalAdvice.dpiParts.map(([k, v]) => (k ? `${k} ${v}` : String(v))).join("\n"),
+      })
+    : null;
   // 只出 PDF 时这条规则自己就不出场（`exportContextRaw()` 先看格式里有没有
   // 位图）——**不在这里再判一次**：阈值与适用范围都归求值器，组件里加一层
   // "顺手的"守卫，就是两处判据分叉的起点
@@ -878,6 +934,15 @@ export function ExportDialog() {
    * 没有它；原图读后端同来源offer，缺offer才走旧脚本退路。**不隐藏选项**：禁用并
    * 说原因；勾过它的用户切到画布时，请求里自动不带它（`buildExportRequest`）。
    */
+  // 「每张图单独导出」没有单一的 figureId：没有脚本的那张由后端逐项说原因
+  const script = useMemo(
+    () =>
+      !single && scope === "original"
+        ? { ok: true, reason: "none" as const }
+        : scriptAvailability(scope, figureId, route),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [single, scope, figureId, assets, runtimeAssets, route],
+  );
   const unreachable = useMemo(
     () => (scope === "canvas"
       ? [...new Set(unavailablePanels(route, formats))].filter((id) => {
@@ -904,6 +969,7 @@ export function ExportDialog() {
       ppi: Number(ppi) || PPI_DEFAULT,
       background: transparent && transparentApplies ? "transparent" : "white",
       includeReport: reportOn,
+      includeScript: withScript && script.ok,
       strictInspection: strict,
       profileId: checkProfileId,
       // 后端的 `acknowledged` 策略 = 「这些阻断项导出时仍未处理」：自动带上，不再靠勾选
@@ -975,7 +1041,8 @@ export function ExportDialog() {
   );
   const [mergePdfChoice, setMergePdfChoice] = useState(true);
   const mergeOn = mergePlan !== null && mergePdfChoice;
-  const canStartBatch = batchMode && canvasFigures.length > 0 && formats.length > 0 && !busy && !locationUpdating;
+  const canStartBatch =
+    batchMode && canvasFigures.length > 0 && (formats.length > 0 || withScript) && !busy && !locationUpdating;
   /**
    * 「每张图单独导出」的**冻结**：点「导出」之后分两步，且两步之间没有任何交错——
    * ① 先 await 拿齐每张图的 export route（只取后端的回答，不读文档、不生成请求输入；用户这几秒里改了什么，
@@ -993,7 +1060,7 @@ export function ExportDialog() {
     // 合成多页 PDF：每张图的单页 PDF 不再单独出（并进那一个文件），其余格式照旧逐张导；只勾了 PDF 时批里只剩那一项
     const merge = mergeOn ? mergePlan : null;
     const otherFormats = merge ? formats.filter((f) => f !== "pdf") : [...formats];
-    const perFigure = otherFormats.length > 0 ? figs : [];
+    const perFigure = otherFormats.length > 0 || withScript ? figs : [];
     const jobIds = [...perFigure.map((f) => f.figureId), ...(merge ? [MERGED_PDF_ID] : [])];
     const jobNames = [...perFigure.map((f) => f.name), ...(merge ? [`${merge.name}.pdf`] : [])];
     if (!beginExportBatch(jobIds, jobNames)) return;
@@ -1003,6 +1070,7 @@ export function ExportDialog() {
       transparent,
       strict,
       withReport,
+      withScript,
       profileId,
       catalog,
     };
@@ -1080,9 +1148,20 @@ export function ExportDialog() {
   };
 
   /* -------------------------------- 动作 --------------------------------- */
-  const applyProfile = (id: string) => {
+  const applyProfile = async (id: string) => {
     // 规范绑定写在当前画布上；检查按的是别的画布时下拉是灰的，这里再挡一道
     if (!checkOnActive) return;
+    const entry0 = catalog.find((e) => e.id === id);
+    // 从期刊换走 = 期刊绑定整套放下（`journalCarry`）：与设置页同一句确认，不静默发生
+    const journalRef = journalCatalogUi() ? doc.profile?.journalRef : undefined;
+    if (journalRef && entry0) {
+      const ok = await askConfirm({
+        title: msg("profiles.leaveJournalTitle", { journal: journalRef.label }, "dialogs"),
+        body: msg("profiles.leaveJournalBody", { name: entry0.display_name }, "dialogs"),
+        confirmLabel: msg("profiles.leaveJournalConfirm", undefined, "dialogs"),
+      });
+      if (!ok) return;
+    }
     setProfileId(id);
     writeExportDefaults({ profileId: id });
     const entry = catalog.find((e) => e.id === id);
@@ -1186,6 +1265,7 @@ export function ExportDialog() {
   const currentSourceScope = useRef(sourceScope);
   currentSourceScope.current = sourceScope;
   const latestStart = useRef<(overwrite: OverwritePolicy, sourcesPrepared: boolean) => Promise<void>>(async () => {});
+  const epsGate = useEpsOpacityGate(setFormats);
   const start = useCallback(
     async (overwrite: OverwritePolicy, sourcesPrepared = false) => {
       /*
@@ -1221,13 +1301,17 @@ export function ExportDialog() {
       // 这一回在对话框里起的作业：它跑完就该给完成态脚部（不论 job_id 是否与上一回重号）
       setSettledJobId(null);
       setRevealError(null);
+      dropFinishedBatch();
       writeExportDefaults({
         formats,
         dpi: String(ppi),
         withProof: withReport,
         strictInspection: strict,
       });
-      await runExport(buildRequestInput(overwrite));
+      const input = buildRequestInput(overwrite);
+      // EPS 画不出标注里的半透明：先问用户（逻辑在 EpsOpacityPrompt，命中就不在这里发）
+      if (epsGate.intercept(input, runExport)) return;
+      await runExport(input);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
@@ -1243,6 +1327,8 @@ export function ExportDialog() {
       hasUnhandled,
       reportOn,
       withReport,
+      withScript,
+      script.ok,
       scope,
       transparent,
       strict,
@@ -1264,6 +1350,22 @@ export function ExportDialog() {
   /** 主按钮 / 再次导出 / 重试的同一个入口：一批或单张 */
   const startExport = () => (batchMode ? startBatch() : void start("ask"));
 
+  /**
+   * 位图太大之后的「改用 N dpi 导出」：先把分辨率设成 N，等它落进表单再走同一个入口重新导出
+   * （`start()` 读的是渲染时的 `ppi`，同一个事件处理里直接调会还是旧值）。
+   */
+  const [rerunAtPpi, setRerunAtPpi] = useState<string | null>(null);
+  const lowerDpiAndExport = (dpi: number) => {
+    setPpi(String(dpi));
+    setRerunAtPpi(String(dpi));
+  };
+  useEffect(() => {
+    if (rerunAtPpi === null || String(ppi) !== rerunAtPpi) return;
+    setRerunAtPpi(null);
+    startExport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rerunAtPpi, ppi]);
+
   /** 起作业本身失败的原因（store 里的 `startError`） */
   const sendFailureReason = (): string => {
     const st = useExportStore.getState().startError;
@@ -1272,7 +1374,7 @@ export function ExportDialog() {
   };
 
   /* ------------------------ 一批作业的驱动（先冻结、再依次发） ------------------------ */
-  const launched = useRef<{ ids: string[] | null; index: number }>({ ids: null, index: -1 });
+  const launched = useRef<{ ids: string[] | null; index: number; prior?: unknown }>({ ids: null, index: -1 });
   const lastRecorded = useRef<unknown>(null);
   // 发（send）：只按冻结的输入依次发
   useEffect(() => {
@@ -1280,7 +1382,9 @@ export function ExportDialog() {
     if (launched.current.ids === batch.ids && launched.current.index === batch.index) return; // 已发出：等终局或撞名决定
     const cur = batch.prepared[batch.index];
     if (!cur) return;
-    launched.current = { ids: batch.ids, index: batch.index };
+    // 发之前 store 里留着的是**上一回**的终局：收尾 effect 在同一次提交里读到的还是它，
+    // 不记下来就会把它当成这一张的结果记进汇总（QA-WIN-24：回执混入上次文件、这一张被顶掉）
+    launched.current = { ids: batch.ids, index: batch.index, prior: storeJob };
     setSettledJobId(null);
     setRevealError(null);
     void runExport(cur.input);
@@ -1302,6 +1406,7 @@ export function ExportDialog() {
       return;
     }
     // 认快照对象而不是 job_id：同一个终局只记一次，不依赖 id 在两张之间一定不同
+    if (storeJob === launched.current.prior) return; // 发出这一张之前就在 store 里的旧终局
     if (storeJob.status === "conflict" || storeJob === lastRecorded.current) return;
     lastRecorded.current = storeJob;
     recordBatchJob(storeJob);
@@ -1355,6 +1460,7 @@ export function ExportDialog() {
       filename,
       filenameTouched,
       withReport,
+      withScript,
       transparent,
       strict,
     };
@@ -1480,8 +1586,12 @@ export function ExportDialog() {
               },
             }
           : undefined;
+      // 有修改没写进脚本：胶囊就说这一句（ADR 0171），不为它开结果块
+      const skipped = done.reduce((n, o) => n + (o.script_report?.skipped.length ?? 0), 0);
       ui.setStatus(
-        msg("export.exported", { files: done.map((o) => o.name).join("、") }, "dialogs"),
+        skipped > 0
+          ? msg("export.resultScriptSkipped", { count: skipped }, "dialogs")
+          : msg("export.exported", { files: done.map((o) => o.name).join("、") }, "dialogs"),
         "done",
         { owner: EXPORT_STATUS_OWNER, action: reveal, dismissMs: reveal ? EXPORT_DONE_DISMISS_MS : undefined },
       );
@@ -1638,6 +1748,8 @@ export function ExportDialog() {
           edited={editedDuringExport}
           onRetry={startExport}
           onReveal={revealTarget ? revealDone : undefined}
+          currentPpi={Number(ppi)}
+          onLowerDpi={lowerDpiAndExport}
         />
       )}
     </div>
@@ -1891,29 +2003,32 @@ export function ExportDialog() {
 
         <FormSection title={ex("groupFormat")} data-export-group="format">
           <FieldGroup>
-            {/* 格式 —— 五颗复选框均分一行（balanced），顺序与 `FORMATS` 同源 */}
+            {/* 格式 —— 复选框均分一行（balanced），前五颗顺序与 `FORMATS` 同源；PY 是修改后的脚本（ADR 0171） */}
             <section className="flex flex-col gap-1.5">
               <fieldset aria-label={ex("formatLabel")} className="m-0 min-w-0 border-0 p-0">
                 <FormRow label={ex("formatLabel")}>
-                  <div className="grid flex-1 grid-cols-5 items-center gap-2" data-export-formats>
+                  <div className="grid flex-1 grid-cols-6 items-center gap-2" data-export-formats>
                     <FormatCheck
                       checked={formats.includes("pdf")}
                       onChange={() => toggleFormat("pdf")}
                       format="pdf"
-                      hint={ex("pdfHint")}
+                      hint={withJournalNote("pdf", ex("pdfHint"))}
+                      flagged={unlisted("pdf")}
                     />
                     <FormatCheck
                       checked={formats.includes("png")}
                       onChange={() => toggleFormat("png")}
                       format="png"
-                      hint={ex("pngHint")}
+                      hint={withJournalNote("png", ex("pngHint"))}
+                      flagged={unlisted("png")}
                     />
                     {/* EPS只读后端offer；画布始终不可用，旧无offer按脚本退路。 */}
                     <FormatCheck
                       checked={formats.includes("eps") && eps.ok}
                       onChange={() => toggleFormat("eps")}
                       format="eps"
-                      hint={eps.ok ? ex("epsHint") : ex(`epsUnavailable.${eps.reason}`)}
+                      hint={eps.ok ? withJournalNote("eps", ex("epsHint")) : ex(`epsUnavailable.${eps.reason}`)}
+                      flagged={eps.ok && unlisted("eps")}
                       disabled={!eps.ok}
                       describedBy={formats.includes("eps") && !eps.ok ? "export-eps-reason" : undefined}
                     />
@@ -1921,13 +2036,22 @@ export function ExportDialog() {
                       checked={formats.includes("tiff")}
                       onChange={() => toggleFormat("tiff")}
                       format="tiff"
-                      hint={ex("tiffHint")}
+                      hint={withJournalNote("tiff", ex("tiffHint"))}
+                      flagged={unlisted("tiff")}
                     />
                     <FormatCheck
                       checked={formats.includes("svg")}
                       onChange={() => toggleFormat("svg")}
                       format="svg"
-                      hint={ex("svgHint")}
+                      hint={withJournalNote("svg", ex("svgHint"))}
+                      flagged={unlisted("svg")}
+                    />
+                    <FormatCheck
+                      checked={withScript && script.ok}
+                      onChange={() => setWithScript((v) => !v)}
+                      format="py"
+                      hint={script.ok ? ex("scriptHint") : ex(`scriptUnavailable.${script.reason}`)}
+                      disabled={!script.ok}
                     />
                   </div>
                 </FormRow>
@@ -1966,13 +2090,20 @@ export function ExportDialog() {
                 <Select
                   value={String(ppi)}
                   onChange={setPpi}
-                  options={PPI_VALUES.map((v) => ({
+                  options={ppiOptions.map((v) => ({
                     value: v,
                     label: translate("measure.ppi", { value: v }),
                   }))}
                   ariaLabel={ex("ppiSelectLabel")}
                   className="w-56"
                 />
+                {journalDpiNote && (
+                  <Tip label={journalDpiNote} side="top" tone="light">
+                    <button type="button" data-export-journal-dpi aria-label={journalDpiNote} className="inline-flex shrink-0 text-ink-3">
+                      <Info size={ICON_SIZE.xs} aria-hidden />
+                    </button>
+                  </Tip>
+                )}
                 {pixels && (
                   <span id="export-pixel-preview" className="type-meta min-w-0 truncate tabular-nums">
                     {pixels}
@@ -2016,10 +2147,16 @@ export function ExportDialog() {
                   value={checkProfileId}
                   onChange={applyProfile}
                   disabled={!checkOnActive}
-                  options={catalog.map((p) => ({
-                    value: p.id,
-                    label: p.display_name,
-                  }))}
+                  options={[
+                    // 按期刊检查：期刊底不在规范清单里（ADR 0155 §2），没有这一项下拉就是空白的
+                    ...(checkJournal && !catalog.some((p) => p.id === checkProfileId)
+                      ? [{ value: checkProfileId, label: checkSpecName }]
+                      : []),
+                    ...catalog.map((p) => ({
+                      value: p.id,
+                      label: p.display_name,
+                    })),
+                  ]}
                   ariaLabel={ex("profileAria")}
                   /* 同一张表单里的下拉只有一种宽（全面打磨 D40） */
                   className="w-56"
@@ -2109,6 +2246,7 @@ export function ExportDialog() {
         </FormSection>
       </fieldset>
       </div>
+      {epsGate.prompt}
     </Dialog>
   );
 
@@ -2155,7 +2293,10 @@ function useFigureThumbSource(
   const tracked = useRenderStore((s) => !!s.tracked[figure.figureId]);
   const needsEngine =
     !!panel && (showsEdits(panel) || tracked || figure.kind === "runtime");
-  const svg = active && needsEngine ? (render?.svg ?? null) : null;
+  // runtime 图只认**自己这一版**的 SVG（QA-WIN-30）：`usePanelRender` 在自己这版没画过时退回同文件 `latest`
+  // 的另一版（恢复的草稿、刚关掉的排版），那是别的状态的图——预览不许拿它冒充；没有就走下面按状态取的 cache 预览
+  const ownSvg = useRenderStore((s) => (panel ? (s.byKey[renderKeyOf(panel)]?.svg ?? null) : null));
+  const svg = active && needsEngine ? (figure.kind === "runtime" ? ownSvg : (render?.svg ?? null)) : null;
   // 同一份字符串复用同一个 `{__html}`：缩略格随对话框重渲时不必把整张 SVG 重新解析一遍
   const svgMarkup = useHtmlMarkup(svg);
   // 引擎 SVG 不在手边（位图档没有矢量 payload、或被字节预算清掉了）：按 overrides 现出一张位图，
@@ -2211,13 +2352,21 @@ function showsEdits(panel: PanelObject): boolean {
 /** 整版预览里的一个对象若是带图内修改的面板，返回它（喂给 `CanvasThumb` 的 `editedPanel`） */
 function editedPanelOf(o: ThumbObject): PanelObject | null {
   const obj = o as CanvasObject;
-  return obj.type === "panel" && showsEdits(obj) ? obj : null;
+  // runtime 面板即使没有图内修改也走这条：它没有磁盘原图，后端 GET 版给的是「最近一次渲染」（可能是别的排版 /
+  // 草稿的状态，QA-WIN-30），按此刻的 overrides（含空）取才是「这个状态的图」
+  return obj.type === "panel" && (showsEdits(obj) || (obj.fileKind === "runtime" && !engineTransport())) ? obj : null;
 }
 
 /** 整版预览里的文字按导出出来的样子画：字体、字号、粗细都取对象自己的（喂给 `CanvasThumb` 的 `exportedText`） */
 function exportedTextOf(o: ThumbObject): TextObject | null {
   const obj = o as CanvasObject;
   return obj.type === "text" ? obj : null;
+}
+
+/** 整版预览里的箭头 / 形状按导出出来的样子画：端点、填色、线型、旋转都取对象自己的（喂给 `CanvasThumb` 的 `exportedShape`） */
+function exportedShapeOf(o: ThumbObject): ArrowObject | ShapeObject | null {
+  const obj = o as CanvasObject;
+  return obj.type === "arrow" || obj.type === "shape" ? obj : null;
 }
 
 /**
@@ -2362,6 +2511,7 @@ function ExportPreviewPane({
                 flush
                 editedPanel={editedPanelOf}
                 exportedText={exportedTextOf}
+                exportedShape={exportedShapeOf}
               />
             </PreviewTab>
             {figures.map((f) => (
@@ -2405,6 +2555,7 @@ function ExportPreviewPane({
                   pxWidth={px || undefined}
                   editedPanel={editedPanelOf}
                   exportedText={exportedTextOf}
+                  exportedShape={exportedShapeOf}
                 />
               )}
             </ExportZoomStage>
@@ -2872,14 +3023,93 @@ export function ResultBlock({
   edited,
   onRetry,
   onReveal,
+  currentPpi,
+  onLowerDpi,
 }: {
   job: ExportJob;
   edited: boolean;
   onRetry: () => void;
+  /** 对话框此刻的分辨率（作业请求里没带 ppi 时的退路） */
+  currentPpi?: number;
+  /** 「改用 N dpi 导出」：把对话框分辨率设成 N 并重新导出 */
+  onLowerDpi?: (dpi: number) => void;
   /** 在系统文件管理器中显示第一件写出的文件（只在能显示时给）；摘要行上的唯一动作 */
   onReveal?: () => void;
 }) {
   useTranslation(["dialogs", "errors"]);
+  // 「换个位置导出」：选完新文件夹直接重新导出（同目录重试必败，所以这类失败不给「重试」）
+  const picker = useExportLocationPicker(onRetry);
+  // 「重新找到这张图」：开重链接对话框；链上了（文档里不再有面板指着那个旧 id）就直接重新导出，
+  // 取消 / 保持缺失就什么都不做（再导一次必败）
+  const [relinking, setRelinking] = useState<string | null>(null);
+  const relinkPending = useClipboardStore((s) => s.pending);
+  const relinkOpened = useRef(false);
+  useEffect(() => {
+    if (!relinking) return;
+    if (relinkPending) {
+      relinkOpened.current = true;
+      return;
+    }
+    if (!relinkOpened.current) return;
+    relinkOpened.current = false;
+    const still = useDocumentStore
+      .getState()
+      .doc.objects.some((o) => o.type === "panel" && o.fileId === relinking);
+    setRelinking(null);
+    if (!still) onRetry();
+  }, [relinking, relinkPending, onRetry]);
+  const missingFigure = (job.status === "failed" && !job.outputs.length)
+    ? missingSourceFigure(job.error?.code, job.error?.params)
+    : null;
+  /**
+   * 失败的出口（三种结局之二、之三）：位置写不了 → 换个位置；位图太大 → 改用不超上限的最大一档 dpi，
+   * 算不出就发送问题反馈；null = 没有专属出口，调用方沿用原来的动作。
+   */
+  const failureAction = (
+    code: string | null | undefined,
+    params: Record<string, unknown> | undefined,
+  ): ReactNode | null => {
+    const missing = missingSourceFigure(code, params);
+    if (missing) {
+      const panelThere = useDocumentStore
+        .getState()
+        .doc.objects.some((o) => o.type === "panel" && o.fileId === missing);
+      return panelThere ? (
+        <Button
+          size="sm"
+          variant="primary"
+          data-export-find-source
+          onClick={() => {
+            if (requestRelinkSource(missing)) setRelinking(missing);
+          }}
+        >
+          {ex("findMissingSource")}
+        </Button>
+      ) : (
+        <SendReportButton variant="primary" />
+      );
+    }
+    if (isLocationFailure(code)) {
+      return (
+        <Button size="sm" variant="primary" data-export-change-location onClick={() => void picker.change()}>
+          {ex("changeLocationExport")}
+        </Button>
+      );
+    }
+    if (code === RASTER_TOO_LARGE) {
+      const reqPpi = Number((job.request as { ppi?: unknown } | undefined)?.ppi);
+      const now = Number.isFinite(reqPpi) && reqPpi > 0 ? reqPpi : (currentPpi ?? NaN);
+      const dpi = onLowerDpi ? largestDpiWithinLimit(params, now, PPI_VALUES.map(Number)) : null;
+      return dpi !== null ? (
+        <Button size="sm" variant="primary" data-export-lower-dpi={dpi} onClick={() => onLowerDpi!(dpi)}>
+          {ex("lowerDpiExport", { dpi })}
+        </Button>
+      ) : (
+        <SendReportButton variant="primary" />
+      );
+    }
+    return null;
+  };
   if (job.status === "cancelled") {
     return <Notice tone="neutral">{ex("cancelledNote")}</Notice>;
   }
@@ -2901,31 +3131,43 @@ export function ResultBlock({
     );
   }
   if (job.status === "failed" && !job.outputs.length) {
+    const special = failureAction(job.error?.code, job.error?.params);
     return (
+      <>
       <Notice
         tone="danger"
         data-export-failed
         action={
-          job.error?.recoverable !== false ? (
+          special ??
+          (job.error?.recoverable !== false ? (
             <Button size="sm" onClick={onRetry}>
               {ex("retry")}
             </Button>
           ) : (
             // 没有可执行的修复动作：发送问题反馈就是这张卡的主按钮（开关关着时不渲染）
             <SendReportButton variant="primary" />
-          )
+          ))
         }
       >
-        {translate(`backend.${job.error?.code ?? "export_failed"}`, {
-          ns: "errors",
-          ...(job.error?.params ?? {}),
-          defaultValue: ex("operationFailed", {
-            error: job.error?.code ?? "",
-          }),
-        })}
+        {missingFigure
+          ? ex("missingSourceNote", { name: missingFigure.split(/[\\/]/).pop() ?? missingFigure })
+          : translate(`backend.${job.error?.code ?? "export_failed"}`, {
+              ns: "errors",
+              ...(job.error?.params ?? {}),
+              defaultValue: ex("operationFailed", {
+                error: job.error?.code ?? "",
+              }),
+            })}
         {/* 那一次的诊断（T04）：折叠，主按钮仍是重试；key 绑作业，重试出新作业就是新的一份 */}
         {job.job_id && <TaskDiagnostic key={job.job_id} kind="export" refId={job.job_id} />}
+        {picker.error && (
+          <p data-export-location-error className="mt-1 text-sm text-danger-content">
+            {picker.error}
+          </p>
+        )}
       </Notice>
+      {picker.dialog}
+      </>
     );
   }
   const savedCount = job.outputs.filter(outputSaved).length;
@@ -2936,19 +3178,24 @@ export function ResultBlock({
     (o) => outputSaved(o) && inspectionState(o.manifest).tone === "failed",
   ).length;
   const warningCount = job.warnings?.length ?? 0;
+  // 脚本少了几处修改：拿去运行之前得知道，和核验未通过一样上到摘要行
+  const scriptSkippedCount = job.outputs.reduce((n, o) => n + (o.script_report?.skipped.length ?? 0), 0);
   // 一件都没写出来：原因就在摘要行里（用户要的是「为什么」，不该再点开才知道）；有成功的才把失败原因折进详情
   const firstFailure = savedCount === 0 ? job.outputs.find((o) => !outputSaved(o)) : undefined
-  // 几件事同时成立时都要说（一句话里合并），不让优先级链吃掉任何一个：核验未通过 / 警告 / 导出期间又被编辑过
+  // 几件事同时成立时都要说（一句话里合并），不让优先级链吃掉任何一个：核验未通过 / 警告 / SVG 文字转了轮廓 / 导出期间又被编辑过
   const noteParts = [
     firstFailure ? outputFailureReason(firstFailure) : null,
     inspectionFailedCount > 0 ? ex("resultInspectionFailed", { count: inspectionFailedCount }) : null,
     warningCount > 0 ? ex("resultWarnings", { count: warningCount }) : null,
+    scriptSkippedCount > 0 ? ex("resultScriptSkipped", { count: scriptSkippedCount }) : null,
+    job.outputs.some((o) => outputSaved(o) && svgTextOutlined(o)) ? ex("svgTextOutlined") : null,
     edited ? ex("editedDuringExport") : null,
   ].filter((x): x is string => x !== null);
   const note = noteParts.length ? noteParts.join("；") : undefined;
   const clean = failedCount === 0 && !note;
   // 摘要一句话 + 至多一个动作；逐个文件、核验、警告、诊断都在默认折叠的「详情」里（卡片一句话读懂）
   return (
+    <>
     <Notice
       tone={failedCount > 0 ? (savedCount > 0 ? "warn" : "danger") : clean ? "ok" : "warn"}
       data-export-result
@@ -2967,6 +3214,9 @@ export function ResultBlock({
           <Button size="sm" data-export-reveal onClick={onReveal}>
             {ex("showInFolder")}
           </Button>
+        ) : firstFailure ? (
+          // 一件都没写出来：失败原因就是摘要，出口也在摘要行上
+          failureAction(firstFailure.error?.code, firstFailure.error?.params)
         ) : undefined
       }
       detail={
@@ -3008,6 +3258,13 @@ export function ResultBlock({
     >
       {note}
     </Notice>
+    {picker.error && (
+      <p data-export-location-error className="text-sm text-danger-content">
+        {picker.error}
+      </p>
+    )}
+    {picker.dialog}
+    </>
   );
 }
 
@@ -3022,6 +3279,10 @@ const outputFailureReason = (o: ExportOutput) =>
 /** 这一件产物已被后端确认写出（`OutputRow` 画成功行的同一条判据） */
 const outputSaved = (o: ExportOutput) => o.status !== "failed" && !!o.name;
 
+/** 这一件 SVG 里的文字确实被画成了轮廓（QA-WIN-08）：后端明确报了才算，没报 = 文字还是文字 */
+const svgTextOutlined = (o: ExportOutput) =>
+  o.format === "svg" && o.manifest?.text_outlined === true;
+
 /**
  * 这次导出是不是**干净地全部成功**（没有失败的产物、没有核验未通过 / 警告 / 导出期间被编辑过）。
  * 干净时结果不插进对话框（对话框不位移），由浮在它上面的胶囊说一声；任何一条不干净，结果块照旧留在对话框里
@@ -3035,6 +3296,8 @@ export function exportResultClean(job: ExportJob, edited: boolean): boolean {
   const saved = job.outputs.filter(outputSaved);
   if (saved.length === 0 || saved.length !== job.outputs.length) return false;
   if ((job.warnings?.length ?? 0) > 0) return false;
+  // 文字转成了轮廓要在回执里说一句（`ResultBlock` 摘要行），所以这种结果不能只剩一个胶囊
+  if (saved.some(svgTextOutlined)) return false;
   return !saved.some((o) => inspectionState(o.manifest).tone === "failed");
 }
 
@@ -3049,7 +3312,7 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
         </IconSlot>
         {ex("outputFailed", {
           // 一批里根本没起来的那张没有格式，点名用图名
-          format: out.format ? out.format.toUpperCase() : (out.name ?? ""),
+          format: out.format === "script" ? ".py" : out.format ? out.format.toUpperCase() : (out.name ?? ""),
           reason: outputFailureReason(out),
         })}
       </p>
@@ -3101,64 +3364,49 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
           </a>
         )}
         <span className="shrink-0 text-xs tabular-nums text-ink-3">{dims}</span>
-        {out.replaced && (
-          <span className="shrink-0 text-xs text-ink-3">{ex("replaced")}</span>
-        )}
       </div>
-      <InspectionLine manifest={out.manifest} />
+      {out.script_report ? (
+        <ScriptSkipped report={out.script_report} />
+      ) : (
+        <InspectionLine manifest={out.manifest} />
+      )}
       {revealError && <p className="text-sm text-danger-content">{revealError}</p>}
     </div>
   );
 }
 
+/** 修改后的 .py 里少了哪几处（ADR 0171）。全写进去了什么都不说 */
+function ScriptSkipped({ report }: { report: ExportScriptReport }) {
+  useTranslation("dialogs");
+  if (report.skipped.length === 0) return null;
+  const names = [...new Set(report.skipped.map((s) => s.label || s.gid))];
+  return (
+    <p data-export-script-report className="type-caption">
+      {ex("scriptSkipped", { items: names.slice(0, 6).join("、") })}
+    </p>
+  );
+}
+
 /**
- * 这一件产物核验得怎么样（ADR 0068）。解读只有 `lib/artifactInspection.inspectionState()`
- * 一份：**只有全部可判项都核过才画绿**；有未核验项就按「未核验」说、不画勾；有失败项
- * 红着列出（standard 政策下文件照样交付了，用户投出去之前得知道）；`not_applicable` 不画。
- * 没有 manifest（老服务端 / 检查器没跑）= 未核验。
+ * 这一件产物核验没过（ADR 0068）：standard 政策下文件照样交付了，用户投出去之前得知道。
+ * 解读只有 `lib/artifactInspection.inspectionState()` 一份。核验过、没核验都不画：用户不需要理解这些，
+ * 「未核验不显示绿」照样成立（2026-11-06 用户：用户不需要理解的东西不用放上去）。
  */
-function InspectionLine({
-  manifest,
-}: {
-  manifest: ExportOutput["manifest"];
-}) {
+function InspectionLine({ manifest }: { manifest: ExportOutput["manifest"] }) {
   useTranslation("dialogs");
   const state = inspectionState(manifest);
-  const label = (k: string) =>
-    ex(`inspection.check.${k}`, { defaultValue: k });
-  if (state.tone === "verified") {
-    return (
-      <p
-        data-inspection="verified"
-        className="flex items-center gap-1 text-sm text-ok-content"
-      >
-        <CircleCheck playIn size={ICON_SIZE.xs} className="shrink-0" aria-hidden />
-        {ex("inspection.verified")}
-      </p>
-    );
-  }
-  if (state.tone === "failed") {
-    return (
-      <p
-        data-inspection="failed"
-        className="flex items-start gap-1 text-sm text-danger-content"
-      >
-        <IconSlot>
-          <TriangleAlert size={ICON_SIZE.xs} aria-hidden />
-        </IconSlot>
-        {ex("inspection.failedItems", {
-          items: state.failed.map(label).join("、"),
-        })}
-      </p>
-    );
-  }
+  if (state.tone !== "failed") return null;
   return (
-    <p data-inspection="unknown" className="text-sm text-ink-3">
-      {state.unknown.length
-        ? ex("inspection.unknownItems", {
-            items: state.unknown.map(label).join("、"),
-          })
-        : ex("inspection.unknown")}
+    <p
+      data-inspection="failed"
+      className="flex items-start gap-1 text-sm text-danger-content"
+    >
+      <IconSlot>
+        <TriangleAlert size={ICON_SIZE.xs} aria-hidden />
+      </IconSlot>
+      {ex("inspection.failedItems", {
+        items: state.failed.map((k) => ex(`inspection.check.${k}`, { defaultValue: k })).join("、"),
+      })}
     </p>
   );
 }
@@ -3179,32 +3427,50 @@ function FormatCheck({
   hint,
   disabled = false,
   describedBy,
+  flagged = false,
 }: {
   checked: boolean;
   onChange: () => void;
-  format: ExportFormat;
+  format: ExportFormat | "py";
   hint: string;
   disabled?: boolean;
   /** 禁用原因那段可见文字的 id */
   describedBy?: string;
+  /** 期刊没列出这种格式：名字右上角一个小圆点，原因在气泡里（不禁用） */
+  flagged?: boolean;
 }) {
+  // 说明走应用自己的气泡（`Tip`），不用原生 `title`：灰掉的 `<input>` 不派发指针事件，停在复选框上原生提示永远不出，
+  // 而「为什么灰」恰恰是灰掉时最要紧的那句。禁用时复选框不吃指针，悬停落到整行 label 上
   return (
-    <label
-      data-export-format={format}
-      title={hint}
-      aria-disabled={disabled || undefined}
-      className={cn(
-        "flex min-h-7 items-center gap-2 font-medium",
-        disabled ? "cursor-not-allowed text-ink-faint" : "text-ink",
-      )}
-    >
-      <Checkbox
-        checked={checked}
-        onChange={onChange}
-        disabled={disabled}
-        aria-describedby={describedBy}
-      />
-      <span>{format.toUpperCase()}</span>
-    </label>
+    <Tip label={hint} side="top" tone="light">
+      <label
+        data-export-format={format}
+        data-export-format-hint={hint}
+        aria-disabled={disabled || undefined}
+        className={cn(
+          "flex min-h-7 items-center gap-2 font-medium",
+          disabled ? "cursor-not-allowed text-ink-faint" : "text-ink",
+        )}
+      >
+        <Checkbox
+          checked={checked}
+          onChange={onChange}
+          disabled={disabled}
+          aria-describedby={describedBy}
+          className={disabled ? "pointer-events-none" : undefined}
+        />
+        {/* 期刊没列出：名字右上角一个小圆点（六格均分一行，放不下一枚图标），原因在气泡里 */}
+        <span className="relative">
+          {format.toUpperCase()}
+          {flagged && (
+            <span
+              data-export-format-journal-unlisted
+              aria-hidden
+              className="absolute -right-1.5 top-0.5 size-1 rounded-full bg-ink-3"
+            />
+          )}
+        </span>
+      </label>
+    </Tip>
   );
 }

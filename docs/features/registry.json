@@ -205,11 +205,17 @@
         {
           "spec": "missing-input.spec.ts",
           "title": "数据找不到：弹框指认数据所在文件夹 → 记住 → 重跑按那份数据出图"
+        },
+        {
+          "spec": "missing-input.spec.ts",
+          "title": "先检查再自己报找不到：弹框指认数据所在文件夹 → 重跑按那份数据出图"
         }
       ],
       "desktop_manual": [
         "把一个读 data/values.txt 的脚本单独复制到新文件夹、数据留在别处，拖进 Tavotto：弹出「找不到脚本要读的数据」",
         "点「找到这个文件…」在系统选择器里选中那份数据：框关闭、自动重跑、图画出来",
+        "脚本按 Path(__file__).resolve().parent 拼数据路径、先 exists() 再自己 raise FileNotFoundError，数据放在上一级文件夹：同样弹框，选中那份数据后自动重跑出图，脚本不变",
+        "脚本 glob(\"<某文件夹>/*.csv\") 读一批数据、把那个文件夹整个挪走：弹框只给「选择文件夹」，选中新位置后自动重跑出图",
         "设置 →「环境诊断」里看到这条数据位置，点「删除」后重跑又弹框"
       ]
     },
@@ -218,21 +224,46 @@
       "status": "active",
       "platform": "both",
       "summary": {
-        "zh-CN": "改指救不回的数据路径（exists / glob / C++ 读取器）：预览逐行改动、勾选确认后改写脚本里的那串，先备份、可复原",
-        "en-US": "For data paths a read remap can't fix (exists / glob / C++ readers): preview the line changes, confirm, and rewrite that string in the script — backed up first and restorable"
+        "zh-CN": "改指救不回的数据路径（C++ 读取器、os.open 这类底层读取）：预览逐行改动、勾选确认后改写脚本里的那串，先备份、可复原",
+        "en-US": "For data paths a read remap can't fix (C++ readers, low-level reads such as os.open): preview the line changes, confirm, and rewrite that string in the script — backed up first and restorable"
       },
-      "entry": "「找不到脚本要读的数据」对话框里 exists / glob / C++ 读取器的条目：选择数据位置 →「预览要改的地方」；设置 →「环境诊断」里的改写备份与复原",
+      "entry": "「找不到脚本要读的数据」对话框里 C++ 读取器 / 底层读取的条目：选择数据位置 →「预览要改的地方」；设置 →「环境诊断」里的改写备份与复原",
       "e2e": [
         {
           "spec": "missing-input-rewrite.spec.ts",
-          "title": "探路找不到数据：预览逐行改动 → 勾选确认 → 改写脚本、留备份 → 重跑按那份数据出图"
+          "title": "改指救不回的数据：预览逐行改动 → 勾选确认 → 改写脚本、留备份 → 重跑按那份数据出图"
         }
       ],
       "desktop_manual": [
-        "写一个先 os.path.exists(\"/某个不存在的绝对路径/x.csv\") 判空再 sys.exit 的脚本，拖进 Tavotto：弹出「找不到脚本要读的数据」，只有改写的出口",
+        "写一个用 os.fdopen(os.open(\"/某个不存在的绝对路径/x.csv\", os.O_RDONLY)) 读数据的脚本，拖进 Tavotto：弹出「找不到脚本要读的数据」，只有改写的出口",
         "点「找到这个文件…」选中数据：出现「确认修改脚本」，写着完整路径与逐行改动；不勾选「我已查看」时「修改脚本」是灰的",
         "勾选后点「修改脚本」：框关闭、自动重跑、图画出来；项目 tavottofile/script-backups/ 里有原脚本",
         "设置 →「环境诊断」里点「恢复原脚本」：脚本逐字节回到改写前"
+      ]
+    },
+    {
+      "id": "assets.missing-input-copy",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "脚本直接运行时读不到已指认过的数据：经确认把那份数据复制到脚本要读的原路径再重跑；没权限时授权后复制，macOS 受保护文件夹引导去系统设置，仍不行就改脚本里的路径",
+        "en-US": "When a script run directly can't read data you already pointed to: copy it to the path the script expects after confirmation and rerun; ask for permission if the folder isn't writable, point to System Settings for macOS protected folders, or fall back to changing the path in the script"
+      },
+      "entry": "运行脚本时右下引导卡「脚本要从 … 读数据」：〔复制过去再运行〕；没权限时〔授权后复制〕，macOS 受保护文件夹〔打开系统设置〕，复制不成时〔改脚本里的路径〕",
+      "e2e": [
+        {
+          "spec": "missing-input-copy.spec.ts",
+          "title": "缺数据 · 复制：native 读不到原路径 → 复制过去再运行 → 文件出现在原路径、重跑出图"
+        },
+        {
+          "spec": "missing-input-copy.spec.ts",
+          "title": "缺数据 · 复制：目标目录写不进去 → 「授权后复制」，且「改脚本里的路径」点得到"
+        }
+      ],
+      "desktop_manual": [
+        "Windows：把脚本读的绝对路径所在目录设成普通用户不可写（如 C:\\Program Files 下的子目录），数据此前已指认过；运行后点「复制过去再运行」出现「没有权限写到 …」，点「授权后复制」弹出 UAC，同意后文件出现在原路径并自动重跑出图；在 UAC 里点取消：卡片变成「没能把数据复制到 …」，只剩「改脚本里的路径」与「让 AI 修复」",
+        "macOS：同样的目录需要管理员权限（如 /Library 下的子目录）时点「授权后复制」，系统弹出管理员授权窗口，同意后文件出现在原路径并重跑；取消授权：卡片变成「没能把数据复制到 …」",
+        "macOS：脚本读的路径在「桌面」下一个本应用没有权限的位置时，卡片是「桌面 受系统保护，写不进去」，点「打开系统设置」会打开「隐私与安全性 → 完全磁盘访问」，勾上本应用、重新运行后复制成功"
       ]
     },
     {
@@ -300,18 +331,54 @@
       ]
     },
     {
+      "id": "onboarding.hint-cards",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "情景提示动画卡：看到用户在用笨办法时，窗口右下角出一张会动的小卡教藏起来的手势（画布跑偏 → 双击空白回正；拖边改图幅 → 按住 ⌥ 裁剪；反复挪对象 → 从标尺拖出对齐线；拖直线 → 按住 ⇧ 锁向；跟吸附较劲 → 按住 ⌘ / Ctrl；一点点挪 → 方向键微移；旋转差一点 → 按住 ⇧ 按 15° 转；去右栏改图里的文字 → 双击直接改；画得差一点就规整 → 按住 ⇧；滚轮一格格挪 → 空格拖动；挨个改同一属性 → ⇧ 多选；学会五条 → 按 ? 看全部快捷键）；自己用过就不再提，设置里可关",
+        "en-US": "Contextual hint cards: when the user is doing something the slow way, a small animated card in the window's bottom-right corner teaches the hidden gesture (canvas drifted away → double-click empty space; edge-resize → hold Alt to crop; repeated moves → drag a guide out of the ruler; a straight drag → hold Shift to lock the axis; fighting the snap → hold Cmd / Ctrl; tiny drags → arrow-key nudge; a near-miss rotation → hold Shift to snap to 15°; editing in-figure text from the sidebar → double-click it; an almost-square shape → hold Shift; notch-by-notch wheel panning → Space-drag; changing the same property one element at a time → Shift-click multi-select; five gestures learned → press ? for all shortcuts); never shown again once the user has done it, and can be turned off in Settings"
+      },
+      "entry": "多图排版 → 拖图边 / 把画布拖出窗口 / 连续挪几次对象",
+      "e2e": [
+        {
+          "spec": "hint-cards.spec.ts",
+          "title": "拖边改了图幅出「按住 ⌥ 裁剪」卡，按住 ⌥ 裁剪一次就收起；画布拖出窗口出「双击空白」卡，点「适应画布」回正"
+        },
+        {
+          "spec": "hint-cards.spec.ts",
+          "title": "连续挪三次对象出「从标尺拖出对齐线」卡；点 × 之后不再出"
+        },
+        {
+          "spec": "hint-cards.spec.ts",
+          "title": "手拖了一条直线出「按住 ⇧」卡，按住 ⇧ 拖一次就收起；一点一点挪出「方向键微移」或「暂时不吸附」卡"
+        },
+        {
+          "spec": "hint-cards.spec.ts",
+          "title": "学会第五条手势的那一刻出「按 ? 看全部快捷键」卡，点「打开」进快捷键帮助，之后不再出"
+        }
+      ]
+    },
+    {
       "id": "canvas.layout-panel-corner-edge",
       "status": "active",
       "platform": "both",
       "summary": {
-        "zh-CN": "多图排版里拖面板的角 = 整张图等比缩放（可连同叠在图上的标注一起缩，胶囊实时显示缩放比与图内字号）；拖边 = 裁剪，停在图边 / 内容边缘，按住 ⌥ 才裁进内容",
-        "en-US": "In a multi-figure layout, drag a figure's corner to scale it proportionally (optionally with the annotations on it, with the scale and in-figure text size shown live); drag an edge to crop, stopping at the figure edge and the content edge unless you hold ⌥"
+        "zh-CN": "多图排版里拖面板的角 = 整张图等比缩放（整个在图里的标注一起缩、拖动 / 方向键移动时一起走，胶囊实时显示缩放比与图内字号）；没裁剪过的图拖边（往外往里）= 改图幅，文字大小不变，缩到文字放不下时提示等比缩小文字；按住 ⌥ 拖边 = 裁剪",
+        "en-US": "In a multi-figure layout, drag a figure's corner to scale it proportionally (annotations entirely inside it scale with it and also move with it when the figure is dragged or nudged; the scale and in-figure text size are shown live); drag an uncropped figure's edge outward or inward to resize the figure, keeping text size, with an offer to scale text down when it no longer fits; hold ⌥ while dragging an edge to crop"
       },
       "entry": "多图排版 → 选中一张图 → 拖四个角 / 四条边",
       "e2e": [
         {
           "spec": "layout-panel-edge-crop.spec.ts",
           "title": "排版里拖面板的角：等比缩小，拖动中胶囊说缩放比与图内字号；撤销一步回到原样"
+        },
+        {
+          "spec": "layout-panel-edge-crop.spec.ts",
+          "title": "排版里拖面板的右边往外：改图幅重新出图，高度与左边不动；撤销一步回到原样"
+        },
+        {
+          "spec": "layout-panel-edge-crop.spec.ts",
+          "title": "排版里拖面板的右边往里：改图幅缩小重新出图，文字 pt 不变；按住 ⌥ 才是裁剪"
         }
       ]
     },
@@ -914,6 +981,22 @@
       ]
     },
     {
+      "id": "export.eps-opacity-prompt",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "导 EPS 前提醒：标注里有半透明时，选改导出 PDF 或 EPS 按不透明导出",
+        "en-US": "Before exporting EPS with semi-transparent annotations, choose PDF instead or an opaque EPS"
+      },
+      "entry": "单图编辑加半透明标注 → ⌘E → 勾 EPS → 开始导出",
+      "e2e": [
+        {
+          "spec": "export-eps-opacity.spec.ts",
+          "title": "选了 EPS 且标注半透明：点导出先问；选「EPS 按不透明导出」后 EPS 落盘"
+        }
+      ]
+    },
+    {
       "id": "export.preview-zoom",
       "status": "active",
       "platform": "both",
@@ -1058,6 +1141,26 @@
         {
           "spec": "journal-picker.spec.ts",
           "title": "选期刊：页宽跟到该期刊的一栏、一次撤销全回去；出处卡给出原网页快照与链接；「不按期刊」退回之前的规范与页宽"
+        },
+        {
+          "spec": "journal-picker.spec.ts",
+          "title": "期刊下拉在设置对话框里能用滚轮滚（弹层挂在对话框外，不能被对话框的滚动锁吃掉）"
+        }
+      ]
+    },
+    {
+      "id": "style.journal-adjust",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "按期刊调整样式：项目按期刊检查时，左栏样式面板列出不合期刊的字号 / 字体 / 线宽，一键调到期刊要求（一次撤销全回去）",
+        "en-US": "Adjust style to journal: when a project is checked against a journal, the Style panel lists font sizes, fonts and line widths that do not match and adjusts them in one undoable step"
+      },
+      "entry": "左栏 → 样式 → 跟随样式 → 按期刊调整",
+      "e2e": [
+        {
+          "spec": "journal-style.spec.ts",
+          "title": "按期刊调整样式：不合期刊的字号一键调到期刊范围，一次撤销全回去"
         }
       ]
     },
@@ -1361,6 +1464,102 @@
         {
           "spec": "features.spec.ts",
           "title": "功能：文字标注自由旋转——选中后拖旋转柄，文字在画面上真的转了；⇧ 吸 15°；属性页角度同步；撤销回到 0°"
+        }
+      ]
+    },
+    {
+      "id": "canvas.text-local-fonts",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "文字标注的字体下拉除内置三类外列出这台电脑能嵌入的字体，英文、中文可分开选，导出嵌入同一张字体",
+        "en-US": "The text annotation font menu lists the fonts this computer can embed alongside the three built-in families; English and Chinese can use different fonts, and export embeds the same faces"
+      },
+      "entry": "选中文字标注，属性页「字体」一行",
+      "e2e": [
+        {
+          "spec": "canvas-local-fonts.spec.ts",
+          "title": "标注选本机字体：下拉里有 DejaVu Serif，选中后导出带身份，加粗换成同族粗体文件"
+        }
+      ]
+    },
+    {
+      "id": "canvas.copy-figure-text-as-annotation",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "图内编辑里选中图中的文字，⌘C / 右键「复制为标注」，⌘V 在原文字右下得到同字号同字体的文字标注",
+        "en-US": "In figure editing, select text inside the figure, press Cmd/Ctrl+C or right-click Copy as annotation, then paste to get a text annotation matching size and font, offset to the lower right of the original"
+      },
+      "entry": "图内编辑：选中图里的文字后 ⌘C / 右键「复制为标注」，⌘V 粘贴",
+      "e2e": [
+        {
+          "spec": "copy-figure-text.spec.ts",
+          "title": "图内文字复制为标注：选中标题 ⌘C ⌘V → 多一个同字的文字标注，在原文字右下"
+        }
+      ]
+    },
+    {
+      "id": "canvas.text-vertical",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "画布文字标注可切横排 / 竖排：竖排从上到下、列从右往左，中文字头朝上、英文数字侧躺，可再旋转",
+        "en-US": "Switch a canvas text label between horizontal and vertical: top to bottom, columns right to left, Chinese upright and Latin letters on their side; can also be rotated"
+      },
+      "entry": "文字标注属性 → 排向；选中标注时的浮动文字工具条",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：画布文字标注切到竖排——标注的屏幕外接框由宽变高、字段落盘，切回横排字段消失（ADR 0163）"
+        }
+      ]
+    },
+    {
+      "id": "convert.output-checklist",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "生成可编辑版本（R / MATLAB 来源）采用前列出来源脚本写出的表格和日志：逐个标出没写出 / 与项目旧结果一致 / 不同 / 没法比；缺的文件行内「我来指定」或「不需要」后可采用；有不同时可「让 AI 再对一次」",
+        "en-US": "Before adopting an editable version of an R / MATLAB script, list the tables and logs the source writes, marking each as not written, same as the project's earlier result, different or can't compare; missing files can be pointed at or skipped before adopting, and differences can be sent back to the AI once"
+      },
+      "entry": "生成可编辑版本的对照卡（采用前）",
+      "e2e": [
+        {
+          "spec": "convert-output-checklist.spec.ts",
+          "title": "转换输出清单：状态词、缺的文件行内处理后可采用、让 AI 再对一次后清单更新"
+        }
+      ]
+    },
+    {
+      "id": "ai.attachments",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "改图助手输入框可附文件：回形针 / 粘贴 / 拖入，任意格式（图片给模型看、CSV 等数据文件给 AI 读），最多 6 个；输入框上方的预览卡相邻微重叠、悬停那张提到最上层并可点 ×；发送只带暂存 id；对话里文字与附件是两个气泡，附件堆叠、点击展开",
+        "en-US": "Attach files in the assistant's input box: paperclip, paste or drop, any format (images are shown to the model, data files like CSV are read by the AI), up to 6; preview cards above the box overlap slightly and the hovered one comes to the front with a clickable ×; sending carries staged ids only; the conversation shows the text and the attachments as two bubbles, the attachments stacked and expandable on click"
+      },
+      "entry": "改图助手输入框的回形针 / 粘贴 / 拖入",
+      "e2e": [
+        {
+          "spec": "ai-attachments.spec.ts",
+          "title": "改图助手附文件：回形针 / 预览卡重叠且悬停那张在最上层可点 × / 发送只带暂存 id / 对话里两个气泡可展开"
+        }
+      ]
+    },
+    {
+      "id": "canvas.shape-stroke-options",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "画布形状可关掉描边（填充铺满）、箭头与形状可设描边不透明度、更多线型、线端与拐角，箭头可选圆点 / 菱形 / 燕尾端型和大小；低频项在属性栏「更多」里",
+        "en-US": "Canvas shapes can drop their outline (the fill then covers the whole box); shapes and arrows get stroke opacity, more dash styles, line cap and corner options, and arrows get dot / diamond / stealth heads in three sizes; the less common ones sit under \"More\" in the Appearance panel"
+      },
+      "entry": "画布 → 选中矩形 / 箭头 → 右栏「外观」（描边开关、「更多」）",
+      "e2e": [
+        {
+          "spec": "shape-stroke.spec.ts",
+          "title": "功能：矩形可关掉描边（填充铺满框）、「更多」里改线端；箭头可换燕尾端型"
         }
       ]
     }

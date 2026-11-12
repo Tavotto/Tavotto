@@ -162,6 +162,8 @@ def prewarm() -> threading.Thread:
             with native:
                 if cancel.is_set():
                     return
+                # 默认族是 serif，它的 CJK 脸是 Noto Serif SC（CJK 脸随族）；Noto Sans SC 在第一次
+                # 用 sans-serif / monospace 写中文时才载
                 typography.text_width("图 Aa", 10.0, _faces("serif", False, False))
         except Exception as exc:  # noqa: BLE001 —— 预热不是权威路径，真用到时同一个错误会再抛
             import logging
@@ -234,7 +236,10 @@ def coverage_ranges() -> dict:
 
     `primary` 是**12 张 Liberation 脸 cmap 的交集**（3 族 × 常规 / 粗 / 斜 / 粗斜）：前端读的是一张与族、
     字重无关的表，它说「画得出」就得任何一张脸都画得出——旧后端的 base-14 各脸同一字符集，这条不用算；
-    Liberation 各脸差 16 个码位（U06 evidence 实测），交集才是那句能力承诺。`cjk` 只有一张脸；
+    Liberation 各脸差 16 个码位（U06 evidence 实测），交集才是那句能力承诺。`cjk` 同理取
+    **各族实际用的 CJK 脸的交集**（serif → Noto Serif SC，sans-serif / monospace → Noto Sans SC，
+    ADR 0060 2026-11-04 修订）：表说「画得出」，哪个族的导出都画得出，不会出现判据说能画、衬线脸画出方框；
+    代价是两张脸各自独有的少数码位（Sans 独有 16、Serif 独有 21，多为兼容汉字）对前端偏保守。
     `fallback` 恒空是能力边界不是漏写（ADR 0060 §1）。
     """
     from .. import glyphplan
@@ -246,11 +251,13 @@ def coverage_ranges() -> dict:
         for bold in (False, True)
         for italic in (False, True)
     ]
-    serif = _faces("serif", False, False)
+    cjk_covers = [
+        typography.coverage(_faces(family, False, False)).cjk for family in CANVAS_TEXT_FAMILIES
+    ]
     lo, hi = 0x20, COVERAGE_MAX_CP
     return {
         "primary": glyphplan.ranges_of(lambda cp: all(f.covers(cp) for f in faces), lo, hi),
-        "cjk": glyphplan.ranges_of(typography.coverage(serif).cjk, lo, hi),
+        "cjk": glyphplan.ranges_of(lambda cp: all(c(cp) for c in cjk_covers), lo, hi),
         "fallback": [],
     }
 

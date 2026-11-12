@@ -1,0 +1,74 @@
+[
+  {
+    "name": "exempt author skipped at admission",
+    "file": "src/native/automatic.ts",
+    "before": "if(validId(pr?.user?.id) && Object.values(s.c.exemptionIds).includes(pr.user.id))return 'exempt_author_skipped';",
+    "after": "// mutation: admit exempt authors",
+    "pattern": "exempt-author PR webhook inserts nothing",
+    "testFile": "tests/exempt-skip.test.mjs"
+  },
+  {
+    "name": "exempt group needs every contributor exempt",
+    "file": "src/native/service.ts",
+    "before": "first.binding.contributors.every(person=>ids.has(person.id))",
+    "after": "first.binding.contributors.some(person=>ids.has(person.id))",
+    "pattern": "mixed merge group still publishes exactly as before",
+    "testFile": "tests/exempt-skip.test.mjs"
+  },
+  {
+    "name": "exempt group bypasses a busy slot",
+    "file": "src/native/group.ts",
+    "before": "catch(probe){if(probe instanceof GroupExempt)throw probe;}",
+    "after": "catch(probe){}",
+    "pattern": "all-exempt merge group does not wait for a busy confirmation slot",
+    "testFile": "tests/exempt-skip.test.mjs"
+  },
+  {
+    "name": "exempt settle refuses journal rows",
+    "file": "src/native/store.ts",
+    "before": "AND NOT EXISTS(SELECT 1 FROM publication_attempts WHERE target_key=?) AND NOT EXISTS(SELECT 1 FROM published_checks WHERE target_key=?)\n        AND NOT EXISTS(SELECT 1 FROM refresh_requests WHERE target_key=?)`,job.target_key,job.lease,job.generation,job.target_key,job.target_key,job.target_key)",
+    "after": "`,job.target_key,job.lease,job.generation)",
+    "pattern": "settling an exempt group is refused",
+    "testFile": "tests/exempt-skip.test.mjs"
+  },
+  {
+    "name": "head retention only terminal rows",
+    "file": "src/native/store.ts",
+    "before": "const old=`r.status IN ('done','dispatched','manual') AND r.created<${DB_NOW}-${RETENTION_SECONDS}`;",
+    "after": "const old=`r.created<${DB_NOW}-${RETENTION_SECONDS}`;",
+    "pattern": "retention never prunes live, recent or running head rows",
+    "testFile": "tests/exempt-skip.test.mjs"
+  },
+  {
+    "name": "head delivery delete trigger keeps recent rows",
+    "file": "src/native/schema.sql",
+    "before": "AND r.created<CAST(strftime('%s','now') AS INTEGER)-86400) BEGIN",
+    "after": ") BEGIN",
+    "pattern": "head delivery rows stay immutable",
+    "testFile": "tests/exempt-skip.test.mjs"
+  },
+  {
+    "name": "target cap counts live targets only",
+    "file": "src/native/automatic.ts",
+    "before": "(SELECT count(*) FROM (${LIVE_TARGETS_SQL}))<100",
+    "after": "(SELECT count(*) FROM (SELECT 1 FROM targets LIMIT 100))<100",
+    "pattern": "retention: resolved group history never counts",
+    "testFile": "tests/exempt-skip.test.mjs"
+  },
+  {
+    "name": "target pruning keeps referenced targets",
+    "file": "src/native/store.ts",
+    "before": "'published_checks','refresh_requests','reconciliation_progress']",
+    "after": "'published_checks','reconciliation_progress']",
+    "pattern": "retention: only unreferenced merge targets are deleted",
+    "testFile": "tests/exempt-skip.test.mjs"
+  },
+  {
+    "name": "group retention spares unresolved work",
+    "file": "src/native/store.ts",
+    "before": "AND NOT EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=d.target_key AND p.phase!='resolved')\n        ORDER BY d.created,d.id",
+    "after": "\n        ORDER BY d.created,d.id",
+    "pattern": "retention: live targets",
+    "testFile": "tests/exempt-skip.test.mjs"
+  }
+]

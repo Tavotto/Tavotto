@@ -82,7 +82,9 @@ order: 270
   pointermove；预览平面不 commit，因此天然不产生事件。`edit_kind` 由**历史
   标签的 key**（开发者写死的稳定标识）经闭表映射，查不到落 `other`——
   标签**文案**绝不能用，它被翻译过、还插值了用户的文件名与属性名。
-- **CONSENT_VERSION 现在是 3**（2026-10-16，ADR 0134：导出终态事件 `export_result` + MCP 工具调用 `mcp_tool_call`
+- **CONSENT_VERSION 现在是 4**（2026-11-04，ADR 0155 §11：`mcp_tool_call` 的工具名闭集加 `tavotto_list_journals`，
+  两侧 `EVENTS` + 代理 `contract.py` + 插件 `usage.TOOLS` 一起登记；`reconsentDelta` 只写这一项新增）。以下是 3 的来历：
+  **CONSENT_VERSION 3**（2026-10-16，ADR 0134：导出终态事件 `export_result` + MCP 工具调用 `mcp_tool_call`
   + 诊断报告的可选错误摘要，**三个范围一次升版**；2 是 2026-09-02 Session 22 加的九条：刷新 / 接入状态 /
   教程三条 / 多选栏 / 保存 / 恢复 / 包操作）。升版三条保证各有用例：旧同意不再授权任何发送（含
   `export_result`）；重新同意不换 `install_id`；说过「不」的人不被再问、`unset` 仍 `unset` 且无 id、

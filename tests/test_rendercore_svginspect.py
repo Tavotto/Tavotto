@@ -440,3 +440,22 @@ def test_check_svg_still_reports_outlines_as_unverifiable(tmp_path):
     path.write_bytes(svg('<path d="M0 0L1 1"/>'))
     result = artifactcheck.check_svg(path, expect_mm=None, font_family="Arial")
     assert result["has_text"] is False and result["font_ok"] is None and result["font_note"]
+
+
+def test_check_svg_flags_matplotlib_outlined_text_but_not_plain_graphics(tmp_path):
+    """QA-WIN-08：`text_outlined` 只在文字确实被画成轮廓时为真；纯图形的 SVG 不能说「文字已转成路径」。"""
+    outlined = tmp_path / "o.svg"
+    outlined.write_bytes(
+        svg('<g id="text_1"><g transform="translate(1 2)"><path d="M0 0L1 1"/></g></g>')
+    )
+    assert (
+        artifactcheck.check_svg(outlined, expect_mm=None, font_family=None)["text_outlined"] is True
+    )
+    plain = tmp_path / "p.svg"
+    plain.write_bytes(svg('<path d="M0 0L1 1"/>'))
+    assert (
+        artifactcheck.check_svg(plain, expect_mm=None, font_family=None)["text_outlined"] is False
+    )
+    live = tmp_path / "t.svg"
+    live.write_bytes(svg('<g id="text_1"><text>x</text></g>'))
+    assert artifactcheck.check_svg(live, expect_mm=None, font_family=None)["text_outlined"] is False

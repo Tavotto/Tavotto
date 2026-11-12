@@ -1,4 +1,5 @@
 import { Dialog } from '../ui/Dialog'
+import { GradientStopsField, gradientPayload, readGradientWithFact } from './controls/GradientStopsField'
 import { EmptyState } from '../ui/EmptyState'
 import { artifactBackgroundOriginal } from '@/lib/artifactValidation'
 import { Fragment, useCallback, useRef, useState, type ReactNode } from 'react'
@@ -73,7 +74,7 @@ import { previewStyle } from '@/store/svgPreviewStore'
 import { pagePtLens } from '@/lib/stylePresets'
 import { canPreviewStyle } from '@/lib/svgStyle'
 import { useSelectionStore } from '@/store/selectionStore'
-import { renderKeyOf, useExactPanelManifest, usePanelRender } from '@/store/renderStore'
+import { renderKeyOf, useExactPanelManifest, usePanelInspectorManifest, usePanelRender } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import { DependencyRepairCard } from '@/components/DependencyRepairCard'
 import {
@@ -234,7 +235,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
   const render = usePanelRender(panel)
   const selectedGids = useUiStore((s) => s.selectedGids)
   // 显示用：列元素、认 role、画角标。可能来自上一版（画布也正显示那一版）
-  const manifest = render?.manifest
+  const manifest = usePanelInspectorManifest(panel) ?? undefined
   /**
    * 几何权威：只有它能喂给对齐、成组缩放、孤儿判定这些**写几何**的地方。
    * null = 这一版还没画出来（改完字号的那 600ms、脚本刚变过），此时那些
@@ -1632,7 +1633,7 @@ const FOLD_LABEL: Record<string, string> = {
  * （几何走上面的对齐工具条，批量写同一个 bbox 会把元素叠在一起）。
  */
 const BATCH_SKIP = new Set(['text', 'label', 'position', 'pos_frac', 'size_mm', 'size_frac'])
-const BATCH_TYPES = new Set(['number', 'color', 'bool', 'enum'])
+const BATCH_TYPES = new Set(['number', 'color', 'bool', 'enum', 'gradient'])
 
 /** 选中元素都有、且类型与选项一致的字段——以第一个元素的顺序和分组为准 */
 function commonFields(els: ManifestElement[]): EditableField[] {
@@ -1831,7 +1832,7 @@ function BatchFieldRow({
   const label = propLabel(field.prop, elements[0].role)
   const gesture = useFieldGesture(panel, el('batchEdit', { label }))
   // 只有色图的「脚本原样」要看别的元素（谁是谁的色条）；显示用，上一版也行
-  const batchManifest = usePanelRender(panel)?.manifest
+  const batchManifest = usePanelInspectorManifest(panel) ?? undefined
   // 多选里每个成员各自判断能不能预览：同时选中曲线和刻度组时，曲线照样
   // 抢先显示，刻度组安静地等后端——**不能因为有一个不支持就整批放弃**
   const previewables = elements.filter((el) => canPreviewStyle(el.role, field.prop))
@@ -1957,6 +1958,33 @@ function BatchFieldRow({
             onGestureEnd={gesture.end}
           />
         )
+      case 'gradient': {
+        // 多选的渐变峰：两端颜色写给全部成员；方向 / screen_start 是各成员自己的引擎事实
+        // （正向与反向 y 轴的两条渐变一起选时不能互相覆盖），逐成员各取各的
+        const grad = readGradientWithFact(first, field.value)
+        if (!grad) return null
+        return (
+          <GradientStopsField
+            value={grad}
+            label={label}
+            mixed={mixed}
+            onChange={(stops) => {
+              setOverrides(
+                panel.id,
+                elMsg('batchEdit', { label }),
+                elements.map((item) => {
+                  const own = item.editable.find((f) => f.prop === field.prop) ?? field
+                  const g = readGradientWithFact(currentValue(panel, item.gid, own), own.value) ?? grad
+                  return { gid: item.gid, prop: field.prop, value: gradientPayload(stops, g) }
+                }),
+                true,
+              )
+              gesture.touch()
+            }}
+            onGestureEnd={gesture.end}
+          />
+        )
+      }
       case 'bool':
         // 不一致时开关是第三态（滑块居中 + 短横、aria-checked="mixed"），点一下全部设为开
         return <Toggle aria-label={label} mixed={mixed} checked={!mixed && !!first} onChange={writeOnce} />
@@ -2115,6 +2143,13 @@ function BatchFieldRow({
 }
 
 /** 当前值：优先取尚未渲染回来的 override，保证输入即时反馈 */
+/** xlim / ylim 所在的轴此刻是不是对数刻度（对数轴没有 ≤0 的范围端点） */
+function isLogRange(prop: string, element: ManifestElement, panel: PanelObject): boolean {
+  const scaleProp = prop === 'xlim' ? 'xscale' : prop === 'ylim' ? 'yscale' : null
+  const f = scaleProp ? element.editable.find((x) => x.prop === scaleProp) : undefined
+  return !!f && currentValue(panel, element.gid, f) === 'log'
+}
+
 function currentValue(panel: PanelObject, gid: string, field: EditableField): unknown {
   const ov = effectiveOverride(panel.overrides, gid, field.prop)
   return ov ? (field.prop === 'fontfamily' ? figurePrimaryValue(ov.value, field.value) : ov.value) : field.value
@@ -2168,7 +2203,7 @@ function FieldRow({
   /** 同一个元素上 `cmap` 字段的只读事实：白名单之外的色图，小色条预览靠它上色 */
   const siblingCmapFacts = () => element.editable.find((x) => x.prop === 'cmap')?.cmap_current
   // 只有图例项的绑定控件要看别的元素（源对象的名字）；显示用，上一版也行
-  const rowManifest = usePanelRender(panel)?.manifest
+  const rowManifest = usePanelInspectorManifest(panel) ?? undefined
   const backgroundOriginal = artifactBackgroundOriginal(panel, useExactPanelManifest(panel))
   const gidRef = useRef<string>('')
   const autoFocus = useCallback(
@@ -2241,6 +2276,8 @@ function FieldRow({
   const labelBody = labeledWithState(label, overridden)
   const labelNode = hint ? <Tip label={hint} side="left">{labelBody}</Tip> : labelBody
   const gesture = useFieldGesture(panel, el('editProp', { label }))
+  // 对数轴上被拒的非正范围：框里的字要退回当前值，靠换 key 重挂
+  const [rejectTick, setRejectTick] = useState(0)
   const previewable = canPreviewStyle(element.role, field.prop)
 
   /**
@@ -2609,6 +2646,21 @@ function FieldRow({
         </>
       )
 
+    case 'gradient': {
+      // 渐变色带的两端颜色：两个色块 + 渐变条，取色同「填充颜色」是连续动作（事务由 gesture 收口）
+      const grad = readGradientWithFact(value, field.value)
+      if (!grad) return null
+      return wrap(
+        <GradientStopsField
+          value={grad}
+          label={label}
+          onChange={(stops) => write(gradientPayload(stops, grad), true)}
+          // 换图例色块是一次离散的选择：一条历史，不开取色那种连续事务
+          onLink={(ref) => writeOnce(gradientPayload(grad.stops, grad, ref))}
+          onGestureEnd={gesture.end}
+        />,
+      )
+    }
     case 'color':
       if (hasFollowEdge(field)) {
         const read = hatchColorReading(value, field, overridden)
@@ -2776,7 +2828,7 @@ function FieldRow({
           <div className={cn('grid flex-1 gap-1', pair ? 'grid-cols-2' : 'grid-cols-4')}>
             {arr.map((v, i) => (
               <NumberField
-                key={i}
+                key={`${i}:${rejectTick}`}
                 // 几何网格那一档：框撑满自己的格子（打磨 L3 / E1）——此前框是 6ch 定宽、
                 // 在 117px 的格里左靠，右缘与下一行的下拉对不上（「X 范围」两个框 zh-11）
                 fill
@@ -2788,6 +2840,12 @@ function FieldRow({
                 step={step}
                 precision={pair ? 2 : 3}
                 onChange={(nv) => {
+                  // 对数轴没有 ≤0 的位置：不存成引擎会悄悄改写的值（QA-WIN-37），
+                  // 框退回原数
+                  if (nv <= 0 && isLogRange(field.prop, element, panel)) {
+                    setRejectTick((n) => n + 1)
+                    return
+                  }
                   const next = [...arr]
                   next[i] = nv
                   write(next)

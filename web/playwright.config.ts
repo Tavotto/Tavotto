@@ -113,6 +113,8 @@ export default defineConfig({
         'exec-trace.spec.ts',
         // 执行器与模型两级选择器：家族 / 型号显示名是后端给的，其余文案中英两套，定位走 data-*
         'ai-model-picker.spec.ts',
+        // CLI 比模型清单旧：「更新 Codex」与失败卡的文案中英两套，英文更长；定位走 data-*
+        'ai-cli-update.spec.ts',
         'a11y.spec.ts',
         // 拖页面边（渐进式画布改版 裁决 5）：标注是中英两套文案（宽 / W），定位走 data-*，两种语言各走一遍
         'page-edge-resize.spec.ts',

@@ -315,6 +315,9 @@ def test_prepare_session_with_an_empty_dynamic_glob_points_at_the_script_dir(tmp
     (proj / "data" / "run_1.txt").write_text("1 2 3", encoding="utf-8")
     (proj / "fig.py").write_text(GLOB_SCRIPT, encoding="utf-8")
     with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+        # 用户在渲染环境里选过沙盒（一次决定）：不自动换目录，失败卡带「在脚本目录里运行」入口
+        status, _ = app.call("/api/engine/workdir", {"mode": "sandbox"}, method="PATCH", timeout=30)
+        assert status == 200
         final = _run_session(app)
         # 脚本跑完了、没有图：错误码仍是既有的 no_figures_captured*，只多一项不阻塞的需求
         assert final["facts"]["figure_captured"] is False, final
@@ -344,7 +347,56 @@ def test_prepare_session_with_pyarrow_reading_a_cwd_relative_parquet_gets_the_hi
     pq.write_table(pa.table({"y": [1, 2, 3]}), str(proj / "cg_data.parquet"))
     (proj / "fig.py").write_text(PARQUET_SCRIPT, encoding="utf-8")
     with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+        status, _ = app.call("/api/engine/workdir", {"mode": "sandbox"}, method="PATCH", timeout=30)
+        assert status == 200
         final = _run_session(app)
         assert final["outcome"]["code"] == "script_error", final["outcome"]
         req = _hint_of(final)
         assert req is not None and req["payload"]["probes"] == ["cg_data.parquet"]
+
+
+@needs_worker
+def test_an_undecided_project_gets_its_figures_without_a_click(tmp_path):
+    """ADR 0047 修订（2026-11-11）：没决定过工作目录、沙盒里 glob 回空 / C++ 读取器读不到而数据在脚本目录里——
+    第一次运行就静默改在脚本目录里重跑，会话直接 completed，不出引导；授权是派生的（没有点头时刻）。"""
+    proj = tmp_path / "proj"
+    (proj / "data").mkdir(parents=True)
+    (proj / "data" / "run_1.txt").write_text("1 2 3", encoding="utf-8")
+    (proj / "fig.py").write_text(GLOB_SCRIPT, encoding="utf-8")
+    with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+        final = _run_session(app)
+        assert final["phase"] == "completed" and final["facts"]["figure_captured"] is True, final
+        assert _hint_of(final) is None
+        _, env = app.call("/api/engine/environment", timeout=30)
+        state = env["project"]["workdir"]
+        assert state["mode"] == "project" and state["decided"] is False
+        assert state["implied_by"] == "runtime_evidence"
+
+
+CHECK_THEN_PRINT_SCRIPT = """\
+import os
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+if os.path.exists("data/values.txt"):
+    plt.plot([1, 2, 3])
+else:
+    print("找不到数据")
+"""
+
+
+@needs_worker
+def test_prepare_session_with_no_figure_and_a_missing_input_carries_the_relink_offer(tmp_path):
+    """脚本先判空、数据不在就什么也不画：0 张图（`no_figures_captured*`）时报告里也要带 `input_location`
+    （与 `missing_data` 同一份指认载荷），卡片才有「指认数据」入口，不是只剩一句「没有出图」。"""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(CHECK_THEN_PRINT_SCRIPT, encoding="utf-8")
+    with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+        final = _run_session(app)
+        assert final["phase"] == "partial", final
+        assert final["outcome"]["code"].startswith("no_figures_captured"), final["outcome"]
+        (req,) = [r for r in final["requirements"] if r["kind"] == "input_location"]
+        assert req["blocking"] is False
+        assert [o["path"] for o in req["payload"]["others"]] == ["data/values.txt"]

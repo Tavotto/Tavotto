@@ -60,7 +60,7 @@
 ## 开工三问细则（技能正文只留摘要）
 
 先读已记录的偏好（脚本路径相对本技能目录；解释器用能跑起来的那个——Windows 上 `python3`
-可能是商店别名，用 `tavotto_health` 回报的 `server.python`）：
+可能是商店别名，用 `tavotto_health` 回报的 `server.python`；有 `skill_script_command` 时换成 `<命令> prefs …`）：
 
 ```
 python3 scripts/prefs.py --json
@@ -93,5 +93,25 @@ python3 scripts/prefs.py --set font="Times New Roman" --set legend_frame=off --j
 用户改主意时用 `--set` 覆盖或 `--unset` 退回「下次再问」。偏好写不进去
 （`saved: false`）不算错误——下次重新问就是了。
 
-期刊有自己的尺寸就带 `journal`，只覆盖点名的键：
-`{"journal": {"widths_mm": {"double": 178}}}`。
+## 按期刊
+
+Tavotto 内置了期刊标准库（每条数值都带原文出处）。用户说「投 Nature」「按 ACS 的要求」时：
+
+1. `tavotto_list_journals { "query": "nature" }` 按名字 / 别名 / 出版社查，拿到 `id`。查到多本就把候选念给用户选，**不要猜**。
+2. 之后 `tavotto_open_figure` / `tavotto_preflight` / `tavotto_export` / `tavotto_normalize_figure` 都带
+   `"journal_id": "<id>"`。它等于「中性底规范 + 这本期刊的覆盖」：期刊写了的项才判，没写的不判，也不套课题组规范。
+   结果里的 `journal_ref`（id / 目录版本 / 出处日期）照实告诉用户这是按哪本期刊、哪一版判的。
+3. `journal_id` **不能**和 `profile_id` / `journal` 同时给（`journal_id_conflict`）。开工三问的「图例加框」在这里不用带：
+   期刊规范不判图例框。
+4. `journal_unknown`：库里没有这本（关了期刊同步、本机又没有缓存时，种子以外的刊也会这样报）。告诉用户，请用户给期刊的
+   作图要求原文（栏宽、最小字号、dpi），再按下面手写 `journal` 覆盖——并说明这次是按用户给的数值判的，不是期刊库。
+   **不要凭记忆编期刊规范。**
+5. 列表里带 `downloaded: false` 的刊，标准还在服务端：第一次带它的 `journal_id` 时才下载（之后就在本机，不再下载）。
+   下不来时会明确报错，不会悄悄换成别的数据：
+   - `journal_quota_exceeded`：下载额度用完了。照 `error` 里的时间告诉用户「约 N 分钟后再试」（`retry_after_s` 是秒数），
+     期间别重试，也别想办法换设备令牌。
+   - `journal_offline`：这本还没下载到本机，又联不上网。请用户联网后再试，或换一本 `downloaded` 为真 / 内置的刊。
+   - `journal_verification_failed`：这份数据没通过校验，已整份弃用。不要用它的任何数值，也不要自己补。
+   这三种都**不要**改成手写 `journal` 继续判，除非用户给了期刊要求原文（按第 4 步）。
+
+手写覆盖只写点名的键：`{"journal": {"widths_mm": {"double": 178}}}`。

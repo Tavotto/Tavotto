@@ -57,6 +57,9 @@ const isTest = (path: string) => /\.test\.tsx?$/.test(path)
 const SVG_ALLOWLIST: Record<string, number> = {
   '/src/components/ui/icons/createIcon.tsx': 1, // 图标集本体：142 个图标都从这一个 <svg> 出来
   '/src/canvas/ShapeView.tsx': 1, // 画布形状本体
+  '/src/components/hints/scenes.tsx': 2, // 提示动画里的迷你样本图（坐标轴 + 曲线，演的是「一张 matplotlib 图」被拖 / 被裁；另一张两条曲线的，演图内多选，ADR 0177）
+  '/src/vendor/stageshow/cursor.tsx': 1, // 提示动画里的光标（圆点 / 箭头样式；vendored，ADR 0177）
+  '/src/vendor/stageshow/cursors.tsx': 8, // 提示动画里的 macOS 光标图形（箭头 / 手 / 抓 / 四向缩放等 8 种；演的是鼠标本身，vendored）
   '/src/canvas/ArrowView.tsx': 1, // 画布箭头本体
   '/src/canvas/OverlaySvg.tsx': 1, // 选框 / 手柄 / 参考线覆盖层
   '/src/canvas/PageEdgeResize.tsx': 1, // 拖页面边的尺寸标注（引出线 + 双箭头，画布叠加层）
@@ -84,6 +87,7 @@ const SVG_ALLOWLIST: Record<string, number> = {
   '/src/components/inspector/controls/ViewAngleDiagram.tsx': 1, // 三维三轴方向示意（按当前角度重画）
   '/src/components/settings/AgentIcon.tsx': 2, // Claude / OpenAI 两个品牌标
   '/src/components/settings/VendorIcon.tsx': 1, // 厂商标（lobe-icons 的 path 数据，单色 currentColor）
+  '/src/components/telemetry/ConsentArt.tsx': 3, // 首启询问框顶部的三幅插画（桌面 / 点阵 / 纸飞机），不是图标
   '/src/components/settings/CompanionDiagram.tsx': 1, // 「一同移动关联对象」的前后空间关系
   '/src/components/settings/StyleSamplePreview.tsx': 1, // 样式示例图（viewBox 单位就是 pt）
   // 图例位置：子图容器边界 + 图例此刻落在哪（跟着 loc / bbox_to_anchor 走）+ 六个

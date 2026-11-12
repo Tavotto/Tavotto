@@ -1,16 +1,21 @@
 import { create } from 'zustand'
-import { msg, type UiMessage } from '@/i18n'
+import { msg, t as translate, type UiMessage } from '@/i18n'
+import { intakePastedImages, pastedAssetFiles } from '@/lib/canvasFileIntake'
 import { newId } from '@/lib/id'
 import { migrateFigureFrames } from '@/lib/figureFrameMigration'
+import { figureTextToAnnotation } from '@/lib/figureTextCopy'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
+import { exactPanelManifest, structuralPanelManifest, useRenderStore } from '@/store/renderStore'
 import { deferUserEntry } from '@/store/documentRestore'
 import { runDiscreteAction } from '@/store/gestureCoordinator'
 import { useSelectionStore } from '@/store/selectionStore'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useUiStore } from '@/store/uiStore'
 import type { CanvasObject, LayoutGroup, PanelObject } from '@/types/document'
-import { objectLabel } from '@/types/document'
+import { isRuntimePanel, objectLabel } from '@/types/document'
 import { modKey } from '@/lib/utils'
+import { DUPLICATE_OFFSET_MM } from '@/lib/units'
 
 /**
  * 对象剪贴板：⌘C/⌘V，走系统剪贴板（JSON + 魔数）。
@@ -67,6 +72,94 @@ function buildClipPayload(): ClipPayload | null {
   }
 }
 
+/**
+ * 图内编辑里选中的元素 → 剪贴板负载（ADR 0163「图内文字复制为标注」）。负载里放的是**已经换算好的文字标注**
+ * （与原文字在页面上重合，见 `lib/figureTextCopy`），所以跨标签页 / 跨排版 / 菜单与 ⌘V 走的是同一条对象粘贴路径，
+ * 没有第二种负载。
+ *
+ * `payload` 为 null 时 `refusedName` 说是哪个元素「还不能复制」（曲线 / 色块 / 刻度组……，或权威 manifest 此刻还没就位——
+ * 读 bbox 之后要写文档，旧清单不作数，ADR 0017）；两者都是 null = 选中的东西已经不在清单里，什么都不做。
+ */
+export function buildElementClipPayload(
+  panelId: string,
+  gids: readonly string[],
+): { payload: ClipPayload | null; refusedName: string | null } {
+  const { doc, documentId, activeCanvasId } = useDocumentStore.getState()
+  const panel = doc.objects.find((o): o is PanelObject => o.id === panelId && o.type === 'panel')
+  if (!panel) return { payload: null, refusedName: null }
+  const render = useRenderStore.getState()
+  const exact = exactPanelManifest(render, panel)
+  const shown = exact ?? structuralPanelManifest(render, panel)
+  const els = gids.flatMap((g) => shown?.elements.find((e) => e.gid === g) ?? [])
+  if (!els.length) return { payload: null, refusedName: null }
+  const objects = exact
+    ? els.flatMap((el) => {
+        const o = figureTextToAnnotation(panel, el)
+        return o ? [o] : []
+      })
+    : []
+  if (!objects.length) {
+    const first = els.find((e) => !e.text_block) ?? els[0]
+    // 只说元素类别（元素树里已有的类别词）；类别不认识时空串 = 「这个元素还不能复制」
+    return { payload: null, refusedName: translate(`role.${first.role}`, { ns: 'inspector', defaultValue: '' }) }
+  }
+  return {
+    payload: {
+      magic: MAGIC,
+      sourceDocId: documentId,
+      sourceCanvasId: activeCanvasId,
+      objects,
+      layoutGroups: [],
+    },
+    refusedName: null,
+  }
+}
+
+/** 现在是不是在图内编辑里选着元素：⌘C 复制的是元素（文字 → 标注），不是整张图 */
+function selectedElements(): { panelId: string; gids: string[] } | null {
+  const ui = useUiStore.getState()
+  return ui.elementPanelId && ui.selectedGids.length
+    ? { panelId: ui.elementPanelId, gids: [...ui.selectedGids] }
+    : null
+}
+
+/**
+ * 这个节点在一个**没有焦点**的输入控件 / 可编辑文本里（焦点不在它里面）。属性页的文字框在选中带文字的元素那一刻抢焦点并全选、
+ * 随后焦点还给页面，框里留着一段残留的选区——这时按 ⌘C，浏览器把 copy 事件派给那个文字框（事件目标是选区所在的可编辑节点，
+ * 不是焦点元素），ProseMirror 也会自己接走。那不是用户在复制的东西：图内编辑里选着元素时，复制的是元素。
+ */
+function inIdleEditor(node: Node | null): boolean {
+  const at = node instanceof Element ? node : node?.parentElement
+  const editor = at?.closest('[contenteditable], input, textarea')
+  return !!editor && !editor.contains(document.activeElement)
+}
+
+/** 顶栏胶囊：这个元素还不能复制（只用状态胶囊，不挤页面） */
+function announceNotCopyable(name: string | null): void {
+  if (name == null) return
+  useUiStore.getState().setStatus(name ? note('elementNotCopyable', { name }) : note('elementNotCopyableGeneric'), 'info')
+}
+
+/**
+ * 右键弹层的「复制为标注」：复制 `gids` 里的文字元素（点击是用户手势，`writeText` 各浏览器都放行）。
+ * 不能复制的元素只出胶囊、不动剪贴板。
+ */
+export async function copyElementsAsAnnotations(panelId: string, gids: readonly string[]): Promise<boolean> {
+  const { payload, refusedName } = buildElementClipPayload(panelId, gids)
+  if (!payload) {
+    announceNotCopyable(refusedName)
+    return false
+  }
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(payload))
+  } catch {
+    useUiStore.getState().setStatus(note('clipboardWriteDenied'), 'error')
+    return false
+  }
+  announceCopied(payload)
+  return true
+}
+
 /** 剪贴板的历史标签与提示都在 workspace 命名空间 */
 const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
   msg(`history.${key}`, values, 'workspace')
@@ -104,15 +197,34 @@ export async function copySelectedObjects(): Promise<boolean> {
  * 会被拒，正是「复制的素材无法跨标签页粘贴」的根源。返回 true = 消费了本次复制。
  */
 export function handleCopyEvent(e: ClipboardEvent): boolean {
-  // 页面上有真实文字选区（比如在报错 toast 里选了段文字）时让位给原生文本复制
+  // 页面上有真实文字选区（比如在报错 toast 里选了段文字）时让位给原生文本复制。
+  // 例外：图内编辑里选着元素时，属性页的文字框会在选中那一刻抢焦点并全选、随后焦点还给页面——框里留着一段**没有焦点**的
+  // 残留选区（选中标题后立刻按 ⌘C 就撞上它）。那不是用户在复制的东西：用户复制的是选中的元素
   const sel = document.getSelection?.()
-  if (sel && !sel.isCollapsed) return false
+  // （源码模式的文字框是 textarea：它里面的选区在 document 选区里只露出外层容器，所以事件目标也要看一眼）
+  const idleEditor = selectedElements() !== null && (inIdleEditor(sel?.anchorNode ?? null) || inIdleEditor(e.target as Node | null))
+  if (sel && !sel.isCollapsed && !idleEditor) return false
   const data = e.clipboardData
   if (!data) return false
   // 离散动作闸门（输入框 / 对话框里让位、不收手势）：不让位时先落定开着的连续编辑，
   // 复制到的是画面上看到的那一版（方向键微调那一段只动了预览、还没写进文档）
+  const picked = selectedElements()
   return (
-    runDiscreteAction('canvas', e.target, () => {
+    // 残留在没有焦点的文字框里的选区不算「焦点在输入框里」：按页面本身走（见 `inIdleEditor`）
+    runDiscreteAction('canvas', picked && inIdleEditor(e.target as Node | null) ? document.body : e.target, () => {
+      // 图内编辑里选着元素：复制的是元素（文字 → 标注）。不能复制的（曲线、色块……）也要消费这次复制——
+      // 放过去的话选区里那张整图会被复制走，与用户选中的东西不是一回事
+      if (picked) {
+        const { payload: fromElements, refusedName } = buildElementClipPayload(picked.panelId, picked.gids)
+        e.preventDefault()
+        if (fromElements) {
+          // 文字框（ProseMirror）可能已经先把自己的 text/html 写进来了：清掉，只留我们的负载
+          data.clearData?.()
+          data.setData('text/plain', JSON.stringify(fromElements))
+          announceCopied(fromElements)
+        } else announceNotCopyable(refusedName)
+        return true
+      }
       const payload = buildClipPayload()
       if (!payload) return false
       e.preventDefault()
@@ -130,15 +242,33 @@ export function handleCopyEvent(e: ClipboardEvent): boolean {
 export function handlePasteEvent(e: ClipboardEvent): boolean {
   const text = e.clipboardData?.getData('text/plain') ?? ''
   const payload = parsePayload(text)
-  if (!payload) return false
+  if (!payload) return pasteImageFiles(e, text)
   // 桌面壳「编辑 → 粘贴」与预置 ⌘V 加速键直达这里，不经 keydown：先过离散动作闸门——
   // 输入框 / 对话框里让位（不收手势），否则先落定开着的连续编辑，粘贴不并进方向键
   // 微调那条撤销（Codex #671）
   return (
     runDiscreteAction('canvas', e.target, () => {
-      // 快速编辑里不落（`consumePayload` 判）：不拦事件，也没有别的东西可粘
       if (!consumePayload(payload)) return false
       e.preventDefault()
+      return true
+    }) ?? false
+  )
+}
+
+/**
+ * 剪贴板里不是本工具的对象负载、而是图片文件（截图、从文件管理器复制的 PNG / PDF / SVG…）：放进画布（ADR 0176）。
+ * 与拖入同一条导入路径（`canvasFileIntake`：复制进项目文件夹成为素材 → `addPanelToCanvas`）。
+ * **有文字就不拦**：电子表格 / 网页的复制常带一张预览图，那是在粘文字，外部文字粘贴不在这里管；
+ * 输入框 / 对话框里让位（与对象粘贴同一个 `runDiscreteAction` 判据），浏览器照常处理。
+ */
+function pasteImageFiles(e: ClipboardEvent, text: string): boolean {
+  if (text.trim()) return false
+  const files = pastedAssetFiles(e.clipboardData)
+  if (!files.length) return false
+  return (
+    runDiscreteAction('canvas', e.target, () => {
+      e.preventDefault()
+      void intakePastedImages(files)
       return true
     }) ?? false
   )
@@ -174,7 +304,11 @@ interface ClipboardState {
    */
   pending:
     | { mode: 'paste'; payload: ClipPayload; missing: MissingAsset[] }
-    | { mode: 'relink'; missing: MissingAsset[] }
+    /**
+     * `relocate`：导出时发现图挪了位置、来重新找它（「重新找到这张图」）——是**同一张图换了地址**，
+     * 面板上的图内修改原样保留；不带 = 项目包导入后的素材替换，修改换成新素材自己的基线（原行为）。
+     */
+    | { mode: 'relink'; missing: MissingAsset[]; relocate?: boolean }
     | null
   setPending: (p: ClipboardState['pending']) => void
 }
@@ -184,13 +318,29 @@ export const useClipboardStore = create<ClipboardState>((set) => ({
   setPending: (pending) => set({ pending }),
 }))
 
+/**
+ * 面板引用的素材在当前项目里找得到吗。静态素材看 assetStore；运行时图（`runtime:` fileId）不在
+ * assetStore 里，身份在 runtimeAssetStore 的清单（后端注册表）。三态：清单里有 = 在；清单已取回
+ * 而没有 = 缺失；清单为 null（未知）按缺失处理，保守走重链接，同时后台取一次清单（不等它），
+ * 下一次判据就准了。这里绝不异步等：等待期间用户可能切了项目 / 文档或开始了别的手势。
+ */
+function panelSourceKnown(p: PanelObject): boolean {
+  if (useAssetStore.getState().byId[p.fileId]) return true
+  if (!isRuntimePanel(p)) return false
+  const store = useRuntimeAssetStore.getState()
+  if (store.assets === null) {
+    void store.loadAssets()
+    return false
+  }
+  return store.assets.some((a) => a.id === p.fileId)
+}
+
 /** 项目包导入后：把当前文档里缺失素材的面板交给重链接对话框处理 */
 export function requestRelinkMissing(): number {
   const { doc } = useDocumentStore.getState()
-  const assets = useAssetStore.getState().byId
   const missingMap = new Map<string, MissingAsset>()
   for (const o of doc.objects) {
-    if (o.type !== 'panel' || needsFigureArchiveSource(o) || assets[o.fileId]) continue
+    if (o.type !== 'panel' || needsFigureArchiveSource(o) || panelSourceKnown(o)) continue
     const cur = missingMap.get(o.fileId)
     if (cur) cur.count += 1
     else {
@@ -207,8 +357,29 @@ export function requestRelinkMissing(): number {
   return missingMap.size
 }
 
-/** 就地重链接：把文档里引用缺失素材的面板换到所选素材（一条历史）。 */
-export function materializeRelink(resolved: MissingAsset[]): void {
+/**
+ * 导出时发现某张图不在了：只把引用这一张的面板交给重链接对话框（同名素材自动配上）。
+ * 文档里没有面板引用它 = false，不弹框。
+ */
+export function requestRelinkSource(fileId: string): boolean {
+  const { doc } = useDocumentStore.getState()
+  let missing: MissingAsset | null = null
+  for (const o of doc.objects) {
+    if (o.type !== 'panel' || o.fileId !== fileId) continue
+    if (missing) missing.count += 1
+    else missing = { fileId, name: o.name ?? fileId.split(/[\\/]/).pop() ?? fileId, count: 1 }
+  }
+  if (!missing) return false
+  useClipboardStore.getState().setPending({ mode: 'relink', missing: [missing], relocate: true })
+  return true
+}
+
+/**
+ * 就地重链接：把文档里引用缺失素材的面板换到所选素材（一条历史）。
+ * `keepEdits`：同一张图换了地址（导出时「重新找到这张图」）——面板上用户的图内修改不动，
+ * 不拿新素材的基线盖掉，否则紧接着的自动重新导出会把没写回的修改悄悄丢掉。
+ */
+export function materializeRelink(resolved: MissingAsset[], { keepEdits = false }: { keepEdits?: boolean } = {}): void {
   const assets = useAssetStore.getState().byId
   const relink = resolved.filter((m) => m.relinkTo && assets[m.relinkTo])
   if (!relink.length) {
@@ -233,7 +404,7 @@ export function materializeRelink(resolved: MissingAsset[]): void {
       o.script = info.script ?? null
       o.cost = info.cost
       o.name = info.name
-      o.overrides = info.baked_overrides ? structuredClone(info.baked_overrides) : []
+      if (!keepEdits) o.overrides = info.baked_overrides ? structuredClone(info.baked_overrides) : []
     }
     // 新素材的写回基线原样放进来（身份不按旧素材的 manifest 重抄，ADR 0083）
   }, { overrides: 'restored' })
@@ -253,6 +424,21 @@ export function canPasteFromMenu(nav: Navigator | undefined = typeof navigator !
   const ua = nav.userAgent ?? ''
   const webkit = /AppleWebKit\//.test(ua) && !/(Chrome|Chromium|Edg)\//.test(ua)
   return !webkit
+}
+
+/**
+ * 剪贴板里现在有没有本工具的对象——**只在不会弹权限窗时**回答（已授予读权限）；
+ * 不知道（没有权限接口 / 还没授予 / 读不了）= null，调用方当作可点。右键弹层的「粘贴为标注」据此置灰。
+ */
+export async function peekClipboardHasObjects(): Promise<boolean | null> {
+  try {
+    if (!canPasteFromMenu()) return null
+    const perm = await navigator.permissions?.query({ name: 'clipboard-read' as PermissionName })
+    if (perm?.state !== 'granted') return null
+    return parsePayload(await navigator.clipboard.readText()) !== null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -301,13 +487,11 @@ export async function pasteObjects(): Promise<boolean> {
 function consumePayload(payload: ClipPayload): boolean {
   // 上次的排版还在恢复：这次粘贴排队到文档就绪再落（一次）；需要用户先处理恢复问题时拒掉并说一句。都算消费了这次粘贴
   if (deferUserEntry(() => void consumePayload(payload)) !== 'run') return true
-  const assets = useAssetStore.getState().byId
   const missingMap = new Map<string, MissingAsset>()
   for (const o of payload.objects) {
     if (o.type !== 'panel') continue
     const p = o as PanelObject
-    // Preserve explicit historical inputs; destination archive verification reports any missing attachment.
-    if (needsFigureArchiveSource(p) || assets[p.fileId]) continue
+    if (needsFigureArchiveSource(p) || panelSourceKnown(p)) continue
     const cur = missingMap.get(p.fileId)
     if (cur) cur.count += 1
     else {
@@ -389,8 +573,8 @@ export function materializePaste(payload: ClipPayload, resolved: MissingAsset[])
       }
     }
     if (sameDoc) {
-      copy.x += 4
-      copy.y += 4
+      copy.x += DUPLICATE_OFFSET_MM
+      copy.y += DUPLICATE_OFFSET_MM
     } else {
       // 跨文档：保持原坐标，越界的钳回页面内
       copy.x = Math.min(Math.max(copy.x, -copy.w * 0.9), doc.page.w - copy.w * 0.1)
@@ -418,6 +602,9 @@ export function materializePaste(payload: ClipPayload, resolved: MissingAsset[])
       d.layoutGroups = [...(d.layoutGroups ?? []), ...carriedGroups]
     }
   })
+  // 在图内编辑里粘贴：新对象成了选区，回到画布层工作（与点中别的对象同一件事，`ObjectView.onPointerDown`）——
+  // 编辑态不退的话属性页仍指着图内元素，看不到刚粘出来的标注
+  if (useUiStore.getState().elementPanelId) useUiStore.getState().setElementPanel(null)
   useSelectionStore.getState().set(clones.map((o) => o.id))
   useUiStore
     .getState()

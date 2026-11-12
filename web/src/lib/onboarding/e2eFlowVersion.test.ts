@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ONBOARDING_FLOW_VERSION } from '@/store/onboardingStore'
+import { CARD_HINTS } from './hints'
 
 /**
  * e2e 预置的 onboarding 状态必须跟着当前教程纪元走：低于它的 blob 会被迁回新手态，
@@ -28,5 +29,15 @@ describe('e2e 的 onboarding flowVersion', () => {
       })
     }
     expect(offenders).toEqual([])
+  })
+})
+
+describe('e2e 默认把动画卡提示记成学会了（ADR 0177）', () => {
+  it('fixtures.ts 的 CARD_HINTS 等于应用源头的那一份——新增一张卡要同步，否则它会在别的用例里冒出来', () => {
+    const src = readFileSync(path.join(E2E_DIR, 'fixtures.ts'), 'utf-8')
+    const m = /export const CARD_HINTS = \[([^\]]*)\] as const/.exec(src)
+    expect(m, 'fixtures.ts 缺 CARD_HINTS').not.toBeNull()
+    const listed = [...m![1].matchAll(/'([a-z_]+)'/g)].map((x) => x[1])
+    expect(listed.sort()).toEqual([...CARD_HINTS].sort())
   })
 })

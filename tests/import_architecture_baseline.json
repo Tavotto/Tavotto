@@ -44,6 +44,12 @@
     },
     {
       "from": "tavotto/engine/bridge_runner.py",
+      "to": "tavotto/engine/cmddiag.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(_HERE, _PHASE1)"
+    },
+    {
+      "from": "tavotto/engine/bridge_runner.py",
       "to": "tavotto/engine/executionfact.py",
       "scope": "module",
       "via": "bridgeboot.load_engine_modules(_HERE, _PHASE1)"
@@ -267,6 +273,12 @@
     {
       "from": "tavotto/engine/worker.py",
       "to": "tavotto/engine/texdiag.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
+      "to": "tavotto/engine/cmddiag.py",
       "scope": "module",
       "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
     },

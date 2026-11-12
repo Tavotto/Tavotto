@@ -122,7 +122,8 @@ def test_disabled_means_capability_false_and_everything_else_404(client, monkeyp
 def test_capability_has_limits_and_no_endpoint(on, client):
     cap = client.get("/api/contact").get_json()
     assert cap["enabled"] is True and cap["recipient"] == "feedback@tavotto.com"
-    assert (cap["max_attachments"], cap["max_total_bytes"]) == (5, 20 * 1024 * 1024)
+    assert (cap["max_attachments"], cap["max_total_bytes"]) == (5, 50 * 1024 * 1024)
+    assert "extensions" not in cap  # 不限格式：没有扩展名表
     assert (cap["subject_max"], cap["body_max"]) == (120, 5000)
     assert cap["unread"] == 0
     assert "127.0.0.1" not in json.dumps(cap) and "tavotto.cn" not in json.dumps(cap)
@@ -159,8 +160,8 @@ def test_validation_errors_are_stable_codes_with_no_network(on, client):
     assert resp.status_code == 422 and resp.get_json()["code"] == "contact_body_required"
     resp = _send(client, {"reply_email": "nope"})
     assert resp.get_json()["code"] == "contact_email_invalid"
-    resp = _send(client, files=[("evil.exe", PNG)])
-    assert resp.get_json()["code"] == "contact_attachment_type"
+    resp = _send(client, files=[("fake.png", b"not a png")])
+    assert resp.get_json()["code"] == "contact_attachment_mismatch"
     resp = client.post(
         "/api/contact/send", data={"meta": "{not json"}, content_type="multipart/form-data"
     )

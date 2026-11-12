@@ -124,7 +124,7 @@ datas = [
 # 两份清单由 tests/test_runtime_build.py 从**源码的 import 闭包**反推校验，
 # 不靠人记得回来改这一行。
 for name in ("worker.py", "executionfact.py", "inputdeclaration.py", "manifest.py", "overrides.py", "patchspec.py",
-             "pathgeom.py", "axestraversal.py", "spinemodel.py", "tickmodel.py", "colorbarmodel.py", "legendmodel.py", "figcapture.py", "teedraw.py", "figsession.py", "wireproto.py", "scriptinput.py", "runtime.py", "writetripwire.py", "texdiag.py",
+             "pathgeom.py", "axestraversal.py", "spinemodel.py", "tickmodel.py", "colorbarmodel.py", "legendmodel.py", "figcapture.py", "teedraw.py", "figsession.py", "wireproto.py", "scriptinput.py", "runtime.py", "writetripwire.py", "texdiag.py", "cmddiag.py",
              "previewbudget.py", "preview_complexity.py", "preview_hybrid.py",
              "bridge_runner.py", "bridgeboot.py", "mathtext_child.py"):
     datas.append((str(PKG / "engine" / name), "tavotto/engine"))
@@ -255,6 +255,29 @@ if "truststore" not in TRUSTSTORE_MODULES:
         "干净 Windows 上私有 Python 下载会因缺根证书失败")
 print(f"[tavotto.spec] truststore 子模块: {', '.join(TRUSTSTORE_MODULES)}")
 
+# 远程期刊目录索引的 Ed25519 验签（engine/journalremote.py，用户 2026-11-05 拍板用成熟库、不手写加密；PyNaCl 1.6.2，
+# 不用 cryptography：Intel Mac 轮子与告警，见 pyproject）：同样在函数里**延后** import；PyNaCl 是 cffi 绑定 libsodium 的
+# 原生轮子（`nacl._sodium` 扩展），静态分析看不到函数内的 import。这里把 `nacl` 整包子模块（含 `nacl.bindings`、
+# `nacl.signing`、`nacl.exceptions`）与 `nacl._sodium` 扩展点名收进，打包环境里没装它就在这里失败——漏了的表现是冻结产物里
+# 验签一律失败、远程目录永远退回内置种子，而源码模式一切正常。
+# `_sodium` 是 CFFI 扩展，它从原生代码动态导入顶层 `_cffi_backend`，
+# collect_submodules("nacl") 不会收这个包外依赖。缺了它同样让 VerifyKey 导入失败。
+import _cffi_backend  # noqa: E402, F401 — 构建环境缺依赖时立即失败
+
+NACL_MODULES = [
+    "_cffi_backend",
+    "nacl",
+    "nacl._sodium",
+    *collect_submodules("nacl"),
+]
+NACL_MODULES = sorted(set(NACL_MODULES))
+if not {"nacl.signing", "nacl.bindings", "nacl.exceptions"} <= set(NACL_MODULES):
+    raise SystemExit(
+        "打包环境里没有 pynacl（pip install -r requirements.txt）——冻结产物的远程期刊目录验签会一律失败，"
+        "期刊目录永远停在内置种子"
+    )
+print(f"[tavotto.spec] nacl 子模块: {len(NACL_MODULES)} 个")
+
 # 「接入 AI 编辑器」（用户 2026-10-27）：`tavotto-cli mcp` 在进程内跑插件那一份 MCP 服务端（engine/mcpserve.py），
 # 宿主配置写这条命令，只装桌面版的用户不必再装 Python。服务端包在 `codex-plugin/mcp/tavotto_mcp/`（不在 src/ 下，
 # wheel 也不带它）；mcpserve 只在运行时按名字 import 它，静态分析看不见这条边——整包子模块点名收进 PYZ，
@@ -278,6 +301,16 @@ if not MCP_WIDGET.is_file() or current_fingerprint(MCP_WIDGET) != source_fingerp
         f"画布产物缺失或与源码不一致：{MCP_WIDGET}（先跑 python scripts/build_mcp_widget.py）")
 datas.append((str(MCP_WIDGET), "widget"))
 
+# 技能（`codex-plugin/skills/tavotto-figure`）：`tavotto hosts connect` 把它复制进各 AI 编辑器的技能目录
+# （engine/hostskills.py，冻结后从 _MEIPASS/skills/tavotto-figure 读），MCP 工具 tavotto_guide 也读它。整棵收进
+# `skills/tavotto-figure`；缺了就拒绝打包（与字体、画布同一种拦法）——漏了的表现是接入后宿主没有技能、guide 报
+# guide_unavailable。
+SKILL_SRC = ROOT / "codex-plugin" / "skills" / "tavotto-figure"
+if not (SKILL_SRC / "SKILL.md").is_file():
+    raise SystemExit(f"技能目录缺失：{SKILL_SRC / 'SKILL.md'}")
+for _skill_file in sorted(p for p in SKILL_SRC.rglob("*") if p.is_file() and "__pycache__" not in p.parts):
+    datas.append((str(_skill_file), str(Path("skills") / "tavotto-figure" / _skill_file.parent.relative_to(SKILL_SRC))))
+
 a = Analysis(
     [str(ROOT / "packaging" / "entry.py")],
     pathex=[str(ROOT / "src"), str(ROOT / "codex-plugin" / "mcp")],
@@ -286,6 +319,8 @@ a = Analysis(
     hiddenimports=[
         # Flask 的这几个依赖是运行时按名字取的，静态分析看不见
         "jinja2", "markupsafe", "itsdangerous", "click", "werkzeug",
+        # `tavotto-cli skill-script`（engine/hostskills.run_script_cli）在进程内 runpy 跑技能脚本，脚本只用这几个标准库
+        "runpy", "platform", "urllib.request", "urllib.error",
         # render child 在冻结产物里由同一个 exe 以 `--render-child` 自起（packaging/entry.py 分派），
         # child_main 里才 import pypdfium2——入口没有静态 import 它，点名收进 PYZ
         "tavotto.rendercore.renderchild", "tavotto.rendercore.renderhost", "pypdfium2",
@@ -294,6 +329,8 @@ a = Analysis(
         *_pk_hidden,
         # 平台原生证书校验（见上；tlstrust 延后 import）
         *TRUSTSTORE_MODULES,
+        # 远程期刊目录索引验签（见上；journalremote 延后 import）
+        *NACL_MODULES,
         # `tavotto-cli mcp` 的服务端（见上；mcpserve 运行时才 import）
         *MCP_SERVER_MODULES,
     ],

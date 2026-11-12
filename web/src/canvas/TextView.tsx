@@ -19,10 +19,14 @@ import { RichTextField } from '@/components/ui/RichTextField'
 import { MM_PER_PT } from '@/lib/units'
 import { canvasSelectionFor, groundInkFor, type CanvasSelection, type SelectionInk } from '@/lib/canvasSelection'
 import { useDocumentStore } from '@/store/documentStore'
+import { writeMeasured } from './measuredWriteback'
 import { registerGesture } from '@/store/gestureCoordinator'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, worldToMm } from '@/store/viewportStore'
-import { canvasFontStack, effectiveCanvasFamily } from '@/lib/typography'
+import { isSourceFont } from '@/lib/sourceFont'
+import { useSourceFonts } from '@/lib/sourceFontCache'
+import { approvedCjkBoldFor, previewStackOf } from '@/lib/sourceFontPreview'
+import { canvasFontStack, effectiveCanvasFamily, WRITING_MODE_VERTICAL } from '@/lib/typography'
 import type { TextObject } from '@/types/document'
 
 /**
@@ -42,7 +46,8 @@ const PLACEHOLDER_CLASS: Record<SelectionInk, string> = {
 /**
  * 文字对象：字体族由对象自己选（`CANVAS_TEXT_FAMILIES` 三选一），没设过就是
  * 文档默认族（衬线 = `--font-doc`），与 UI 字体分离。
- * 高度由内容撑开后回写到文档，但不进 undo —— 它是渲染派生值。
+ * 高度（竖排是宽度）由内容撑开后回写到文档：并进触发它的那条历史，没有触发者才静默——
+ * 全路径一套规则见 `measuredWriteback.ts`（ADR 0163）。
  */
 export function TextView({
   obj,
@@ -62,7 +67,12 @@ export function TextView({
   const ref = useRef<HTMLDivElement>(null)
   const heightRef = useRef(obj.h)
   heightRef.current = obj.h
+  const widthRef = useRef(obj.w)
+  widthRef.current = obj.w
   const sizePx = mmToWorld(obj.sizePt * MM_PER_PT)
+  // 竖排（ADR 0163）：框高是行长（用户定），框宽由列数撑开——与横排「宽用户定、高由内容撑」对称
+  const vertical = obj.writingMode === WRITING_MODE_VERTICAL
+  const columnPx = sizePx * (obj.lineHeight ?? 1.25)
 
   useLayoutEffect(() => {
     // 缩略图的 ID 由 buildPreset 临时生成，不在用户文档中。
@@ -72,11 +82,22 @@ export function TextView({
     const el = ref.current
     if (!el) return
     const measure = () => {
+      if (vertical) {
+        // 列数撑出来的宽度。右边缘不动（第一列贴右边，往左长）：x 随 w 一起挪，字不跳。
+        // 至少一列宽：空文字不让框缩成一条线
+        const wMm = worldToMm(Math.max(el.offsetWidth, columnPx))
+        if (wMm > 0 && Math.abs(wMm - widthRef.current) > 0.05) {
+          writeMeasured(obj.id, (o) => {
+            o.x += o.w - wMm
+            o.w = wMm
+          })
+        }
+        return
+      }
       const hMm = worldToMm(el.offsetHeight)
       if (hMm > 0 && Math.abs(hMm - heightRef.current) > 0.05) {
-        useDocumentStore.getState().silent((d) => {
-          const o = d.objects.find((x) => x.id === obj.id)
-          if (o) o.h = hMm
+        writeMeasured(obj.id, (o) => {
+          o.h = hMm
         })
       }
     }
@@ -85,7 +106,7 @@ export function TextView({
     ro.observe(el)
     return () => ro.disconnect()
     // editing 在依赖里：div 带着 key 随编辑态重建（见下），必须重新 observe 新节点
-  }, [obj.id, editing, preview])
+  }, [obj.id, editing, preview, vertical, columnPx])
 
   /**
    * 就地编辑（ADR 0152）：所见即所得文字框，Enter / Esc 提交，⌥/⌘/Ctrl+Enter 换行。
@@ -124,6 +145,14 @@ export function TextView({
     })
   }, [editing, preview])
 
+  // 原图字体（ADR 0164）：本机服务供了字节、浏览器收下之后，预览用同一张脸；否则用 `fontFamily` 的批准族栈
+  useSourceFonts()
+  const stack = canvasFontStack(effectiveCanvasFamily(obj))
+  const source = isSourceFont(obj.sourceFont) ? obj.sourceFont : undefined
+  const own = { bold: obj.bold === true, italic: obj.italic === true }
+  const boldCjk = approvedCjkBoldFor(effectiveCanvasFamily(obj), obj.text)
+  const previewStack = previewStackOf(source, stack, own, undefined, boldCjk)
+
   return (
     <div
       // key 随编辑态变：编辑器与静态渲染各自从空 DOM 开始，ResizeObserver 也随之重挂
@@ -142,7 +171,7 @@ export function TextView({
         editing && placeholderClass,
       )}
       style={{
-        fontFamily: canvasFontStack(effectiveCanvasFamily(obj)),
+        fontFamily: previewStack,
         fontSize: sizePx,
         lineHeight: obj.lineHeight ?? 1.25,
         fontWeight: obj.bold ? 700 : 400,
@@ -152,6 +181,21 @@ export function TextView({
         textAlign: obj.align,
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',
+        // 竖排（ADR 0163）= CSS `vertical-rl` + `mixed`：中文直立、拉丁与数字侧躺；`align` 左 / 中 / 右 = 列内 上 / 中 / 下。
+        // 框高（= 行长）由对象定，宽度由列数撑开、贴框右边（覆盖上面横排的 left-0 / w-full）。
+        // `text-spacing-trim: space-all`：Chrome 默认会把相邻全角标点收成半宽（`，「`），导出的 RenderCore 不收——
+        // 竖排的预览关掉它，两边才逐格一致（横排的既有差异不在本次范围）
+        ...(vertical
+          ? ({
+              writingMode: 'vertical-rl',
+              textOrientation: 'mixed',
+              textSpacingTrim: 'space-all',
+              left: 'auto',
+              right: 0,
+              width: 'auto',
+              height: '100%',
+            } as CSSProperties)
+          : null),
         cursor: editing ? 'text' : 'inherit',
         // 插入点是界面的东西，不是正文的颜色：accent（与所有可编辑框同一条规矩，宪法第二十六节）
         caretColor: editing ? 'var(--color-accent)' : undefined,
@@ -189,6 +233,8 @@ export function TextView({
           interpretation={obj.interpretation}
           format={obj.textFormat}
           family={effectiveCanvasFamily(obj)}
+          runStack={source || boldCjk ? (run) => previewStackOf(source, stack, own, run, boldCjk) : undefined}
+          vertical={vertical ? { columnPx, stack: previewStack } : undefined}
         />
       )}
     </div>
@@ -212,12 +258,18 @@ function RenderedText({
   interpretation,
   format,
   family,
+  runStack,
+  vertical,
 }: {
   text: string
   sizePx: number
   interpretation?: TextInterpretation
   format?: TextFormat
   family: string
+  /** 带行内粗斜的片段用哪个字体栈（本机字体按片段换脸，ADR 0169 修订）；缺席 = 继承外层 */
+  runStack?: (run: { bold: boolean; italic: boolean }) => string
+  /** 竖排：公式整块侧躺（`MathFormula` 的竖排形态） */
+  vertical?: { columnPx: number; stack: string }
 }) {
   // 与导出读同一份判据：`layerOf` 的覆盖表就是 PDF 后端那三张脸的能力。
   // **浏览器自己的字体栈不参与这个判断**——它画得出 `⁵` 不代表导出画得出，
@@ -232,11 +284,12 @@ function RenderedText({
   return (
     <>
       {runs.map((r, i) => {
-        if (r.math) return <MathFormula key={i} src={r.text} family={family} sizePx={sizePx} />
+        if (r.math) return <MathFormula key={i} src={r.text} family={family} sizePx={sizePx} vertical={vertical} />
         // 行内样式只在**打开**时写：对象自己是粗 / 斜体时，片段不写 normal 去覆盖它（与导出的「或」一致）
         const style: CSSProperties = {}
         if (r.italic) style.fontStyle = 'italic'
         if (r.bold) style.fontWeight = 700
+        if (runStack && (r.bold || r.italic)) style.fontFamily = runStack({ bold: !!r.bold, italic: !!r.italic })
         if (r.script !== '') {
           style.fontSize = sizePx * SCRIPT_SIZE
           // 正 = 抬高；vertical-align 的正值就是往上，故下标取负

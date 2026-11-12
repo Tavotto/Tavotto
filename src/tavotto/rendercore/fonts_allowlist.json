@@ -221,6 +221,54 @@
     "sha256": "faa6c9df652116dde789d351359f3d7e5d2285a2b2a1f04a2d7244df706d5ea9"
    },
    "notice": "Noto Sans CJK (Sans2.004) © Google LLC / Adobe; SIL OFL 1.1 with Reserved Font Name 'Noto'."
+  },
+  "NotoSerifSC-Regular": {
+   "file": "noto/NotoSerifSC-Regular.otf",
+   "sha256": "c9f8dd8c035e22ea31607e5efbb2dabdf94836a92f5868267dd2b1a85eb0cd3b",
+   "family": "cjk-serif",
+   "bold": false,
+   "italic": false,
+   "format": "cff-cid",
+   "license": "OFL-1.1",
+   "license_file": "noto/LICENSE",
+   "source": {
+    "kind": "file",
+    "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/523d033d6cb47f4a80c58a35753646f5c3608a78/Serif/SubsetOTF/SC/NotoSerifSC-Regular.otf",
+    "sha256": "c9f8dd8c035e22ea31607e5efbb2dabdf94836a92f5868267dd2b1a85eb0cd3b"
+   },
+   "notice": "Noto Serif CJK (Serif2.001) © Google LLC / Adobe; SIL OFL 1.1 with Reserved Font Name 'Noto'."
+  },
+  "NotoSansSC-Bold": {
+   "file": "noto/NotoSansSC-Bold.otf",
+   "sha256": "c6cb5a93abaa9edc8ee7463b7ebb7f42d618d40e6ed2f7a5371c97b0b64767c0",
+   "family": "cjk",
+   "bold": true,
+   "italic": false,
+   "format": "cff-cid",
+   "license": "OFL-1.1",
+   "license_file": "noto/LICENSE",
+   "source": {
+    "kind": "file",
+    "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/523d033d6cb47f4a80c58a35753646f5c3608a78/Sans/SubsetOTF/SC/NotoSansSC-Bold.otf",
+    "sha256": "c6cb5a93abaa9edc8ee7463b7ebb7f42d618d40e6ed2f7a5371c97b0b64767c0"
+   },
+   "notice": "Noto Sans CJK (Sans2.004) © Google LLC / Adobe; SIL OFL 1.1 with Reserved Font Name 'Noto'."
+  },
+  "NotoSerifSC-Bold": {
+   "file": "noto/NotoSerifSC-Bold.otf",
+   "sha256": "c44a5be9342f435b01ac7c20e8b144692334a3454be49d8fb3d26a641f9908ee",
+   "family": "cjk-serif",
+   "bold": true,
+   "italic": false,
+   "format": "cff-cid",
+   "license": "OFL-1.1",
+   "license_file": "noto/LICENSE",
+   "source": {
+    "kind": "file",
+    "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/523d033d6cb47f4a80c58a35753646f5c3608a78/Serif/SubsetOTF/SC/NotoSerifSC-Bold.otf",
+    "sha256": "c44a5be9342f435b01ac7c20e8b144692334a3454be49d8fb3d26a641f9908ee"
+   },
+   "notice": "Noto Serif CJK (Serif2.001) © Google LLC / Adobe; SIL OFL 1.1 with Reserved Font Name 'Noto'."
   }
  },
  "license_files": {

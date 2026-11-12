@@ -22,6 +22,7 @@ import { useAssetStore } from './assetStore'
 import { useDocumentStore } from './documentStore'
 import { syncPanelSourceMetadata, type PanelSyncResult } from './panelSourceSync'
 import { useProjectReadinessStore } from './projectReadinessStore'
+import { useProjectScanStore } from './projectScanStore'
 import { useProjectStore } from './projectStore'
 import { useRenderStore } from './renderStore'
 import { useRuntimeAssetStore } from './runtimeAssetStore'
@@ -160,6 +161,12 @@ export async function refreshProjectNow(): Promise<void> {
     } finally {
       // 后端失败时也取清单；换项目后不再替旧刷新向新项目发请求。
       if (owner.still()) await refreshAssetsAndSync({ force: true })
+    }
+    // 导入即扫描的快照也要跟着磁盘走：脚本在外面改名 / 恢复原名之后，旧快照里「待准备」的路径已经不存在，
+    // 不重扫它会一直挂着（零执行、有界、后端单飞，QA-WIN-44）。不 await：卡片晚一拍更新没关系
+    // 这个项目没有扫描（教程项目不扫）就不替它开一轮
+    if (owner.still() && useProjectScanStore.getState().scan) {
+      void useProjectScanStore.getState().start({ force: true, reason: 'refresh' })
     }
   } finally {
     release()

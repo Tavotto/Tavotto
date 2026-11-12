@@ -90,6 +90,7 @@ def tavotto_observe(project: Path, script: str, deep: dict | None = None) -> dic
                     error={
                         "code": err.get("code") or "no_stems",
                         "message": str(err.get("message", ""))[:300],
+                        "workdir_hint": isinstance(err.get("workdir_hint"), dict),
                     },
                 )
                 return obs
@@ -104,13 +105,21 @@ def tavotto_observe(project: Path, script: str, deep: dict | None = None) -> dic
                 obs["stems"][stem] = {"titles": _titles(manifest)}
             obs["savefig_calls"] = _savefig_calls(worker)
             obs["pdf_pages"] = _pdf_pages(worker)
+            obs["dropped_figures"] = int(built.get("dropped_figures") or 0)
+            # the "run in the script directory" hint the product offers on a successful build whose glob came back empty
+            obs["workdir_hint"] = pool.workdir_hint_of_build(worker) is not None
             if deep:
                 _observe_deep(obs, worker, manifests, deep, project, script, entry)
         finally:
             pool.discard(worker)
     except Exception as exc:  # noqa: BLE001 - product failure is an observation, recorded
         code = getattr(exc, "code", None) or type(exc).__name__
-        obs["error"] = {"code": str(code), "message": str(exc)[:300]}
+        obs["error"] = {
+            "code": str(code),
+            "message": str(exc)[:300],
+            # whether the error the user sees carries the one-click "run in the script directory" entry (#1299)
+            "workdir_hint": isinstance(getattr(exc, "workdir_hint", None), dict),
+        }
     return obs
 
 
@@ -280,6 +289,24 @@ def _path_owner_matches(path: str, stems: dict, calls: dict | None, native_title
     return any(stems[name]["titles"] == native_titles for name in owners if name in stems)
 
 
+def capped_figures(nat: dict, tavotto: dict) -> int:
+    """产品按兜底上限如实少收的张数；不是这种情况就返回 0。
+
+    上限内外的张数要正好对上，脚本写出的每个路径都还在，也没有图 show 给用户看过，才算：
+    这时少掉的只是被覆盖或从未交给用户的中间图。对不上时照常报差异，真丢图不会被盖掉。
+    """
+    dropped = int(tavotto.get("dropped_figures") or 0)
+    stems = tavotto.get("stems") or {}
+    if (
+        dropped > 0
+        and len(stems) + dropped == nat["figure_count"]
+        and not nat["figures_shown"]
+        and all(Path(path).stem in stems for path in nat["last_writer"])
+    ):
+        return dropped
+    return 0
+
+
 def compare(
     candidate_class: str,
     native: dict,
@@ -315,6 +342,7 @@ def compare(
             }
     diffs = []
     n, stems = nat["figure_count"], tavotto.get("stems") or {}
+    capped = capped_figures(nat, tavotto)
     if tavotto.get("error") and not stems:
         if n:
             code = tavotto["error"]["code"]
@@ -327,7 +355,7 @@ def compare(
                 )
             )
     else:
-        if 0 < len(stems) < n:
+        if 0 < len(stems) < n and not capped:
             diffs.append(
                 _diff(
                     "fewer_figures",
@@ -381,7 +409,7 @@ def compare(
                 )
         seen = [v["titles"] for v in stems.values()]
         for title in nat["titles"]:
-            if title and stems and not any(title in titles for titles in seen):
+            if title and stems and not capped and not any(title in titles for titles in seen):
                 diffs.append(
                     _diff(
                         "title_missing",
@@ -400,7 +428,10 @@ def compare(
             "differences": [],
             "note": f"Tavotto error after partial observation: {tavotto['error'].get('code')}",
         }
-    return {"outcome": "difference_found" if diffs else "no_difference", "differences": diffs}
+    verdict = {"outcome": "difference_found" if diffs else "no_difference", "differences": diffs}
+    if capped:
+        verdict["note"] = f"{capped} figure(s) beyond the capture limit, reported by the product"
+    return verdict
 
 
 def _diff(kind: str, summary: str, category: str, evidence: dict) -> dict:
@@ -485,8 +516,13 @@ def oracle_layers(
     parent_snapshot: dict | None,
     evidence: Path,
     native_note: str | None,
+    unjudged: dict[str, str] | None = None,
+    saved_stems: dict[str, list[str]] | None = None,
 ) -> dict:
-    """Judge the CG-06 layers of one executed candidate: `{"stages", "differences"}`."""
+    """Judge the CG-06 layers of one executed candidate: `{"stages", "differences"}`.
+
+    `unjudged` / `saved_stems`: see `OR.pixel_judgment` (declared pixel-unjudgeable figures).
+    """
     stages = OR.blank_stages("not_run", "Tavotto observed nothing to judge")
     diffs: list[dict] = []
     if not tavotto.get("stems") and not native_shots:
@@ -505,10 +541,14 @@ def oracle_layers(
             native_shots,
             tavotto["shots"],
             evidence,
+            unjudged,
+            saved_stems,
         )
         stages["fidelity"] = OR.stage("fidelity", pix["status"], pix.get("note"))
         if pix.get("unmatched"):
             stages["fidelity"]["unmatched"] = pix["unmatched"]
+        if pix.get("declared_unjudged"):
+            stages["fidelity"]["declared_unjudged"] = pix["declared_unjudged"]
         diffs += pix["differences"]
     for stem, err in sorted(tavotto.get("shot_errors", {}).items()):
         stages["fidelity"] = OR.stage("fidelity", "failed", err)
@@ -641,6 +681,8 @@ def execute_request(request: dict) -> dict:
             request.get("parent_snapshot") if not request.get("reduction") else None,
             evidence,
             native_note,
+            OR.declared_unjudged(parent),
+            pixels.get("saved_stems") or {},
         )
     else:
         result["tavotto"] = {"stems": {}, "error": None, "skipped": "native reference failed"}
@@ -1073,6 +1115,7 @@ def explore(args) -> int:
             "suite": manifest["parent"]["suite"],
             "chain": [s["name"] for s in manifest["chain"]],
             "axis_vector": manifest["axis_vector"],
+            "data_source": data_source_of(manifest),
             "class": manifest["class"],
             "seed": manifest["seed"],
             "ast_signature": manifest["ast_signature"],
@@ -1178,8 +1221,24 @@ def evidence_summary(record: dict) -> dict | None:
             "route": (tavotto or {}).get("route"),
             "error": (tavotto or {}).get("error"),
             "stems": {k: v["titles"] for k, v in ((tavotto or {}).get("stems") or {}).items()},
+            "dropped_figures": int((tavotto or {}).get("dropped_figures") or 0),
+            "workdir_hint": bool((tavotto or {}).get("workdir_hint")),
         },
     }
+
+
+def data_source_of(manifest: dict) -> dict | None:
+    """`{transform, path_style}` of the candidate's data-source step, or None when the chain reads no data.
+
+    Triage links a finding to a known family by this axis too: the same cwd-relative reader wrapped in a
+    loop or moved to another parent changes the call site but not the cause."""
+    for step in manifest.get("chain") or []:
+        if step.get("axis") == "data_source":
+            return {
+                "transform": step["name"],
+                "path_style": (step.get("params") or {}).get("path_style"),
+            }
+    return None
 
 
 def confirm_differences(

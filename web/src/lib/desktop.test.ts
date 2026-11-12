@@ -15,6 +15,8 @@ import {
   fileManagerKind,
   hasDesktopShell,
   installDesktopUpdate,
+  downloadDesktopUpdate,
+  makeProgressHandler,
   isDesktop,
   isRemoteEngineWindow,
   onDesktopMenu,
@@ -39,6 +41,9 @@ import {
   FULLSCREEN_EVENT,
   getFullscreen,
   onFullscreenChange,
+  SCREEN_PPI_EVENT,
+  getScreenPpi,
+  onScreenPpiChange,
 } from './desktop'
 
 // 远程实例窗口那一组用：壳在，但本机文件类能力一条都不许碰
@@ -438,7 +443,8 @@ describe('应用内更新·经壳的自有命令（ADR 0121）', () => {
       return 'mirror'
     })
     await installDesktopUpdate((f) => seen.push(f))
-    expect(seen).toEqual([null, null])
+    // 总长度未知时进度恒为 null：只在 Started 发一次，之后每个 chunk 都不再重复发同一个 null
+    expect(seen).toEqual([null])
   })
 
   it('安装失败：逐来源记录带出来，句子是「下载或安装失败」；失败后句柄还在，可以再按一次', async () => {
@@ -607,6 +613,58 @@ describe('全屏状态（macOS overlay 窗框）：订阅与回读', () => {
   })
 })
 
+describe('屏幕物理 ppi（ADR 0168 第二节）', () => {
+  const w = window as unknown as Record<string, unknown>
+  afterEach(() => {
+    delete w.__TAURI_INTERNALS__
+    delete w.__TAVOTTO_REMOTE_ENGINE__
+    tauri.invoke.mockReset()
+    tauri.listen.mockReset()
+    tauri.listen.mockImplementation(async () => () => {})
+  })
+
+  it('浏览器与远程实例窗口：不碰壳，一律 null / 空取消函数', async () => {
+    expect(await getScreenPpi()).toBeNull()
+    expect(typeof (await onScreenPpiChange(() => {}))).toBe('function')
+    w.__TAURI_INTERNALS__ = {}
+    w.__TAVOTTO_REMOTE_ENGINE__ = true
+    expect(await getScreenPpi()).toBeNull()
+    await onScreenPpiChange(() => {})
+    expect(tauri.invoke).not.toHaveBeenCalled()
+    expect(tauri.listen).not.toHaveBeenCalled()
+  })
+
+  it('主窗口：回读走 screen_ppi；不合理的数与出错都当 null', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    tauri.invoke.mockResolvedValueOnce(141)
+    expect(await getScreenPpi()).toBe(141)
+    expect(tauri.invoke).toHaveBeenCalledWith('screen_ppi')
+    tauri.invoke.mockResolvedValueOnce(0)
+    expect(await getScreenPpi()).toBeNull()
+    tauri.invoke.mockResolvedValueOnce('254')
+    expect(await getScreenPpi()).toBeNull()
+    tauri.invoke.mockRejectedValueOnce(new Error('denied'))
+    expect(await getScreenPpi()).toBeNull()
+  })
+
+  it('主窗口：订阅同名事件，载荷按同一范围过滤', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    let handler: ((e: { payload: unknown }) => void) | undefined
+    tauri.listen.mockImplementationOnce(((name: string, cb: (e: { payload: unknown }) => void) => {
+      expect(name).toBe(SCREEN_PPI_EVENT)
+      handler = cb
+      return Promise.resolve(() => {})
+    }) as unknown as typeof tauri.listen)
+    const seen: (number | null)[] = []
+    await onScreenPpiChange((v) => seen.push(v))
+    handler!({ payload: { ppi: 163 } })
+    handler!({ payload: { ppi: null } })
+    handler!({ payload: { ppi: 5000 } })
+    handler!({ payload: null })
+    expect(seen).toEqual([163, null, null, null])
+  })
+})
+
 describe('joinProjectPath', () => {
   it('POSIX 根按 / 拼，去掉根尾部分隔符', () => {
     expect(joinProjectPath('/p/', 'figs/a.pdf')).toBe('/p/figs/a.pdf')
@@ -633,5 +691,95 @@ describe('revealProjectFile：图 id 两种分隔符都认（Windows 后端给�
     w.__TAURI_INTERNALS__ = {}
     expect(await revealProjectFile(root, rel)).toBe(true)
     expect(tauri.invoke).toHaveBeenCalledWith('reveal_export', { dir, name })
+  })
+})
+
+describe('后台下载与进度节流', () => {
+  const w = window as unknown as Record<string, unknown>
+  const found = { version: '9.9.9', notes: 'n', date: 'd', source: 'mirror' }
+  afterEach(() => {
+    delete w.__TAURI_INTERNALS__
+    __resetDesktopUpdate()
+    vi.clearAllMocks()
+  })
+
+  it('downloadDesktopUpdate 调 desktop_update_download（不是 install），返回壳回的版本与来源；不清句柄', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    tauri.invoke.mockResolvedValueOnce(found)
+    await checkDesktopUpdate()
+    tauri.invoke.mockImplementationOnce(async (cmd: unknown, args: unknown) => {
+      expect(cmd).toBe('desktop_update_download')
+      expect((args as { onEvent: unknown }).onEvent).toBe(channels.last)
+      return { version: '9.9.9', source: 'github' }
+    })
+    await expect(downloadDesktopUpdate()).resolves.toEqual({ version: '9.9.9', source: 'github' })
+    // 句柄还在：后面「现在重启」走 install，壳用已下好的包
+    tauri.invoke.mockResolvedValueOnce('github')
+    await expect(installDesktopUpdate()).resolves.toBe('github')
+  })
+
+  it('没有句柄就不下载，也不偷偷补一次 check', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    await expect(downloadDesktopUpdate()).rejects.toThrow('请先检查更新')
+    expect(tauri.invoke).not.toHaveBeenCalled()
+  })
+
+  it('下载失败：稳定码翻成一句话，原始字符串不外泄；逐来源记录带出来', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    tauri.invoke.mockResolvedValueOnce(found)
+    await checkDesktopUpdate()
+    const attempts = [{ source: 'mirror', stage: 'download', kind: 'stalled' }]
+    tauri.invoke.mockRejectedValueOnce({ code: 'all_sources_failed', attempts })
+    const err = await downloadDesktopUpdate().catch((e) => e)
+    expect(err.code).toBe('all_sources_failed')
+    expect(err.attempts).toEqual(attempts)
+  })
+
+  it('节流：一个 190 MB 的包上万个 chunk，往上只发有限几次；Started / Finished 必发，终值必到 1', () => {
+    let clock = 0
+    const seen: Array<number | null> = []
+    const h = makeProgressHandler((f) => seen.push(f), () => clock)
+    const total = 190_000_000
+    const chunk = 16_384
+    h({ event: 'Started', data: { contentLength: total } })
+    const n = Math.ceil(total / chunk)
+    for (let i = 0; i < n; i++) {
+      clock += 0.01 // 每个 chunk 0.01 ms：整个下载 ~116 ms 内灌完，只剩比例这条判据在起作用
+      h({ event: 'Progress', data: { chunkLength: Math.min(chunk, total - i * chunk) } })
+    }
+    h({ event: 'Finished' })
+    expect(n).toBeGreaterThan(10_000)
+    expect(seen.length).toBeLessThanOrEqual(220) // ≤ 1/0.5% + Started + Finished + 时间条件的零头
+    expect(seen[0]).toBe(0)
+    expect(seen.at(-1)).toBe(1)
+    // 单调不降
+    for (let i = 1; i < seen.length; i++) expect(seen[i]!).toBeGreaterThanOrEqual(seen[i - 1]!)
+  })
+
+  it('节流：比例没动够 0.5% 但已过 100 ms，照发（慢速下载进度不冻住）', () => {
+    let clock = 0
+    const seen: Array<number | null> = []
+    const h = makeProgressHandler((f) => seen.push(f), () => clock)
+    h({ event: 'Started', data: { contentLength: 1_000_000 } })
+    h({ event: 'Progress', data: { chunkLength: 10 } }) // 0.001%，刚发过 Started：不发
+    expect(seen).toEqual([0])
+    clock = 99
+    h({ event: 'Progress', data: { chunkLength: 10 } })
+    expect(seen).toEqual([0])
+    clock = 100
+    h({ event: 'Progress', data: { chunkLength: 10 } })
+    expect(seen).toHaveLength(2)
+    expect(seen[1]).toBeCloseTo(0.00003, 6)
+  })
+
+  it('节流：换来源重下的 Started 立即把进度归零，并重新计量', () => {
+    let clock = 0
+    const seen: Array<number | null> = []
+    const h = makeProgressHandler((f) => seen.push(f), () => clock)
+    h({ event: 'Started', data: { contentLength: 100 } })
+    h({ event: 'Progress', data: { chunkLength: 60 } })
+    h({ event: 'Started', data: { contentLength: 100 } })
+    h({ event: 'Progress', data: { chunkLength: 10 } })
+    expect(seen).toEqual([0, 0.6, 0, 0.1])
   })
 })

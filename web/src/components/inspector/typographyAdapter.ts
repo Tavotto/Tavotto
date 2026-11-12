@@ -18,13 +18,28 @@ import {
   readCanvasText,
   supportsTypography,
   withMachineFamilies,
+  resetCanvasText,
   writeCanvasText,
   type TypographyKind,
   type TypographyProp,
   type TypographyValue,
   type UnsupportedReason,
 } from '@/lib/typography'
-import type { PanelObject, TextObject } from '@/types/document'
+import { isSourceFont, sameFace, sourceFacesOf, type SourceFontState } from '@/lib/sourceFont'
+import { sourceFontState, useSourceFonts } from '@/lib/sourceFontCache'
+import {
+  catalogLabels,
+  stableNames,
+  isBuiltinFace,
+  resetLocalFamily,
+  restyleLocalFace,
+  setBuiltinFamily,
+  setLocalCjkFamily,
+  setLocalFamily,
+  useFontCatalog,
+  type FontCatalog,
+} from '@/lib/fontCatalog'
+import type { PanelObject, SourceFace, TextObject } from '@/types/document'
 // 「一轮」有多长**只有一个数**（原生取色对话框不保证发 blur，只能靠
 // 「安静了这么久」判定一轮结束）。抄第二份的话，同一个动作在属性页与
 // 画布标注上的撤销粒度会不一样，而两处都「看起来对」。
@@ -122,6 +137,8 @@ const FIGURE_PROP: Record<TypographyProp, string | null> = {
   valign: 'va',
   lineHeight: null,
   rotationDeg: 'rotation',
+  // 竖排只属于画布文字（图内文字没有这条 prop）
+  writingMode: null,
   // 图内文字的上下标是 matplotlib 的 `$…$`（`mathTextModeOf` 的另一档），
   // 不是我们自己的合成管线——引擎不认这条 prop，所以是 null 而不是某个名字。
   interpretation: null,
@@ -343,6 +360,7 @@ const hist = (key: string): UiMessage => msg(`history.${key}`, undefined, 'inspe
  */
 const CANVAS_INHERITABLE = new Set<TypographyProp>([
   'fontFamily',
+  'fontFallback',
   'style',
   'lineHeight',
   'rotationDeg',
@@ -362,6 +380,7 @@ const CANVAS_HISTORY: Record<TypographyProp, string> = {
   lineHeight: 'setLineHeight',
   rotationDeg: 'rotateObject',
   interpretation: 'setInterpretation',
+  writingMode: 'setWritingMode',
 }
 
 /**
@@ -373,6 +392,8 @@ const CANVAS_HISTORY: Record<TypographyProp, string> = {
  */
 export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
   const gesture = useObjectGesture()
+  useSourceFonts() // 原图字体的本机状态到达时重渲染（ADR 0164）
+  const catalog = useFontCatalog()
   const ids = useMemo(() => objs.map((o) => o.id), [objs])
   const count = objs.length
 
@@ -385,12 +406,18 @@ export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
         reason: supportsTypography('canvasText', prop) ? 'not_in_manifest' : 'kind_unsupported',
       }
     }
-    const raw = objs.map((o) => readCanvasText(o, prop))
+    // 原图字体（ADR 0164）：字体行显示它自己的名字（本机缺失时名字照留，旁边有 warning）
+    const raw = objs.map((o) => {
+      if (prop === 'fontFallback') return isSourceFont(o.sourceFont) ? o.sourceFont.cjk?.family : undefined
+      return prop === 'fontFamily' && hasOwnPrimary(o, catalog) ? o.sourceFont!.family : readCanvasText(o, prop)
+    })
     const eff = raw.map((v, i) =>
       v === undefined
         ? prop === 'fontFamily'
           ? effectiveCanvasFamily(objs[i])
-          : inheritedCanvasValue(prop)
+          : prop === 'fontFallback'
+            ? ''
+            : inheritedCanvasValue(prop)
         : v,
     )
     const first = JSON.stringify(eff[0] ?? null)
@@ -400,14 +427,36 @@ export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
     return { kind: 'uniform', value: eff[0] }
   }
 
+  const applyFont = (prop: TypographyProp, value: unknown): boolean => {
+    if (prop === 'fontFallback') {
+      updateObjects(ids, hist('setFontFamily'), (o) => {
+        if (o.type === 'text') setLocalCjkFamily(o, catalog, typeof value === 'string' && value ? value : null)
+      })
+      return true
+    }
+    if (prop !== 'fontFamily' || typeof value !== 'string') return false
+    if (catalog.families.some((f) => f.name === value)) {
+      updateObjects(ids, hist('setFontFamily'), (o) => {
+        if (o.type === 'text') setLocalFamily(o, catalog, value)
+      })
+      return true
+    }
+    return false
+  }
+
   const apply = (prop: TypographyProp, value: unknown, keepOpen: boolean) => {
     if (!supported.has(prop) || !count) return
+    if (applyFont(prop, value)) return
     // **invalid 输入一个字都不写**：不开事务、不 commit、不进历史
     const ok = coerceTypography(prop, value, canvasFieldOf(prop))
     if (!ok.ok) return
     if (keepOpen && !gesture.isOpen()) gesture.start(hist(CANVAS_HISTORY[prop]))
     updateObjects(ids, hist(CANVAS_HISTORY[prop]), (o) => {
-      if (o.type === 'text') writeCanvasText(o, prop, ok.value)
+      if (o.type !== 'text') return
+      if (prop === 'fontFamily' && setBuiltinFamily(o, catalog, String(ok.value))) return
+      if (prop === 'weight' && restyleLocalFace(o, catalog, ok.value === 'bold', o.italic === true)) return
+      if (prop === 'style' && restyleLocalFace(o, catalog, o.bold === true, ok.value === 'italic')) return
+      writeCanvasText(o, prop, ok.value)
     })
     if (keepOpen) gesture.touch()
   }
@@ -415,8 +464,28 @@ export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
   return {
     count,
     kinds: ['canvasText'],
+    fontFallbackShadowed: objs.length > 0 && objs.every((o) => primaryHasCjk(o, catalog)),
+    resetFonts: () => {
+      gesture.end()
+      updateObjects(ids, hist('resetTextProp'), (o) => {
+        if (o.type === 'text') resetCanvasText(o, 'fontFamily')
+      })
+    },
     fieldOf: (prop) => {
       if (!supported.has(prop)) return undefined
+      if (prop === 'fontFallback') {
+        const own = objs.flatMap((o) => (isSourceFont(o.sourceFont) && o.sourceFont.cjk ? [o.sourceFont.cjk.family] : []))
+        // 已经选过中文脸、但这台机器清单里没有：格子留着，当前名字在选项里，用户看得见也恢复得了
+        const options = stableNames(catalog, 'cjk', [...new Set([...own, ...catalog.families.filter((f) => f.cjk).map((f) => f.name)])])
+        if (!options.length) return undefined
+        return {
+          prop: 'sourceFont.cjk',
+          type: 'enum',
+          value: null,
+          options,
+          option_labels: catalogLabels(catalog),
+        }
+      }
       const base = canvasFieldOf(prop)
       if (!base) return undefined
       // `value` 是**第一个目标此刻的值**（与图内那侧同一口径：那边的合并字段
@@ -424,6 +493,18 @@ export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
       // 不带的话会退回一个谁都不是的硬编码黑，而控件里的注释说的是
       // 「取第一个目标的真实颜色」。
       const first = objs.length ? readCanvasText(objs[0], prop) : undefined
+      if (prop === 'fontFamily') {
+        // 原图字体放在选项最前：名字是它自己的，选中它 = 保持（写入层认得）；后面是内置三类，再后面是这台机器的字体
+        const names = sourceFamilyNames(objs, catalog)
+        const local = catalog.families.map((f) => f.name)
+        const own = objs[0] && hasOwnPrimary(objs[0], catalog) ? objs[0].sourceFont!.family : undefined
+        return {
+          ...base,
+          options: stableNames(catalog, 'family', [...new Set([...names, ...(base.options ?? []), ...local])]),
+          option_labels: catalogLabels(catalog),
+          value: own ?? first ?? inheritedCanvasValue(prop) ?? null,
+        }
+      }
       return { ...base, value: first ?? inheritedCanvasValue(prop) ?? null }
     },
     valueOf,
@@ -439,7 +520,11 @@ export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
       // `TextObject` 的必填字段，磁盘上永远有值——拿「有没有值」当判据的话
       // 每一条都会永远挂着「已修改」的点和一颗按了没反应的恢复按钮。
       if (!CANVAS_INHERITABLE.has(prop)) return 'none'
-      const set = objs.filter((o) => readCanvasText(o, prop) !== undefined)
+      const set = objs.filter((o) =>
+        prop === 'fontFallback'
+          ? !!o.sourceFont?.cjk
+          : readCanvasText(o, prop) !== undefined || (prop === 'fontFamily' && hasOwnPrimary(o, catalog)),
+      )
       if (!set.length) return 'none'
       return set.length === count ? 'all' : 'some'
     },
@@ -448,12 +533,10 @@ export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
       gesture.end()
       updateObjects(ids, hist('resetTextProp'), (o) => {
         if (o.type !== 'text') return
-        // 「恢复」= 删掉这个字段回到继承。写一个等于默认值的显式值会让
-        // 「没设过」变成「设过、正好一样」——下一次默认值改了它就不跟了。
-        if (prop === 'fontFamily') delete o.fontFamily
-        else if (prop === 'style') delete o.italic
-        else if (prop === 'lineHeight') delete o.lineHeight
-        else if (prop === 'rotationDeg') delete o.rotationDeg
+        // 「恢复」= 删掉这个字段回到继承，规则（含原图字体的失效）在 `resetCanvasText`，与写入同一处
+        if (prop === 'fontFallback') setLocalCjkFamily(o, catalog, null)
+        else if (prop === 'fontFamily' && resetLocalFamily(o, catalog)) return
+        else resetCanvasText(o, prop)
       })
     },
     pathOf: (prop) => propertyPathOf('canvasText', prop),
@@ -463,6 +546,47 @@ export function useCanvasTypography(objs: TextObject[]): TypographyAdapter {
         : supportsTypography('canvasText', prop)
           ? 'not_in_manifest'
           : 'kind_unsupported',
-    unavailableOptions: () => EMPTY,
+    unavailableOptions: (prop) => {
+      if (prop === 'fontFallback') {
+        // 中文脸在本机用不了：名字保留 + 「字体缺失」（只看 cjk 那张脸）
+        return [
+          ...new Set(
+            objs.flatMap((o) =>
+              isSourceFont(o.sourceFont) && o.sourceFont.cjk && isBroken(sourceFontState(o.sourceFont.cjk))
+                ? [o.sourceFont.cjk.family]
+                : [],
+            ),
+          ),
+        ]
+      }
+      if (prop !== 'fontFamily') return EMPTY
+      // 本机用不了的原图字体：名字保留 + 现成的「字体缺失」warning（ADR 0164）
+      const bad = sourceFacesOf(objs).filter((f) => isBroken(sourceFontState(f)))
+      if (!bad.length) return EMPTY
+      const names = new Set(
+        objs.flatMap((o) =>
+          isSourceFont(o.sourceFont) && bad.some((b) => sameFace(b, o.sourceFont as SourceFace))
+            ? [o.sourceFont.family]
+            : [],
+        ),
+      )
+      return [...names]
+    },
   }
 }
+
+/** 原图字体在本机用不了（`ok` / 还没问到 都不算）。 */
+const isBroken = (s: SourceFontState): boolean => s !== 'ok' && s !== 'unknown'
+
+/** 选中对象里出现的原图字体名（去重、保顺序）。 */
+const sourceFamilyNames = (objs: readonly TextObject[], c: FontCatalog): string[] => [
+  ...new Set(objs.flatMap((o) => (hasOwnPrimary(o, c) ? [o.sourceFont!.family] : []))),
+]
+
+/** 英文那一格显示的是 `sourceFont` 自己的名字；正文脸是批准字体时（只选了中文）仍显示内置族。 */
+const hasOwnPrimary = (o: TextObject, c: FontCatalog): boolean =>
+  isSourceFont(o.sourceFont) && !isBuiltinFace(c, o.sourceFont)
+
+/** 英文字体自带中文字形：中文那格没有意义。 */
+const primaryHasCjk = (o: TextObject, c: FontCatalog): boolean =>
+  isSourceFont(o.sourceFont) && !!c.families.find((f) => f.name === o.sourceFont?.family)?.cjk

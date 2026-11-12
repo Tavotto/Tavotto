@@ -1,0 +1,12 @@
+{
+  "_comment": "合并进 tavotto.com 网站项目的 vercel.json（把 rewrites 并进现有数组；functions 同理）。不要整份覆盖。",
+  "functions": {
+    "api/journal_catalog.py": { "maxDuration": 15 }
+  },
+  "rewrites": [
+    {
+      "source": "/v1/journal-catalog/:path*",
+      "destination": "/api/journal_catalog?p=:path*"
+    }
+  ]
+}

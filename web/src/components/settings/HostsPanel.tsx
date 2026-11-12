@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CircleCheck, CircleMinus, CircleX, Ellipsis, FolderOpen, Unplug } from '@/components/ui/icons'
+import { cn } from '@/lib/utils'
+import { CircleCheck, CircleMinus, CircleX, Ellipsis, Unplug } from '@/components/ui/icons'
 import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import {
   HostShellError,
@@ -10,29 +11,30 @@ import {
   parseHostList,
   parseHostResult,
   type HostList,
+  type HostRow,
   type HostResult,
   type HostStep,
 } from '@/lib/hostConnect'
-import { isDesktop, pickDirectory, runHostIntegration } from '@/lib/desktop'
+import { isDesktop, runCodexIntegration, runHostIntegration } from '@/lib/desktop'
+import { parseCodexResult } from '@/lib/codexInstall'
 import { BrandLogo } from './BrandLogo'
 import { Button, IconButton } from '../ui/Button'
 import { FieldGroup, FormSection } from '../ui/FormSection'
+import { Dialog } from '../ui/Dialog'
 import { Menu, MenuItem } from '../ui/Menu'
 import { DiagnosticDisclosure, GroupNotice, SettingRow } from './SettingRow'
 
 /**
  * 设置 →「接入 AI 编辑器」（用户 2026-10-27，与「连接 AI」并列的独立一组）。
  *
- * 每个宿主一行：没装的只写「未检测到」，不画按钮；装了的一个「接入」；接好的「✓ 已接入」+ ⋯（更改文件夹 · 断开）。
- * 第一次接入先选项目文件夹（所有宿主共用，主目录 / 磁盘根由引擎拒绝）。
+ * 每个宿主一行：没装的只写「未检测到」，不画按钮；装了的一个「接入」；接好的「✓ 已接入」+ ⋯（断开）。
+ * **点一下就接好，不选文件夹**（用户 2026-11-04，ADR 0009 §1b）：范围由 MCP 服务端定——宿主报的项目目录优先，
+ * 不报的宿主是本机任意位置，只拦凭据类文件（.env、私钥、凭据目录、浏览器登录数据）。
  *
  * **按钮背后是那条命令，不是第二套安装器**：`tavotto-cli hosts … --json`（`engine/hostconnect.py`），这里只渲染
  * 它那一行 JSON。失败显示翻译过的一句原因，逐步结论折叠在下面（与 Codex 那一行同一形状）。浏览器模式没有壳，
  * 整组不显示——**不画一个按不动的按钮**。
  */
-/** 失败原因是文件夹本身时，下一次点按钮先弹选择框 */
-const FOLDER_ERRORS = ['project_root_rejected', 'project_root_missing']
-
 export function HostsPanel() {
   const { t } = useTranslation('dialogs')
   const tx = useCallback(
@@ -46,6 +48,7 @@ export function HostsPanel() {
   const [result, setResult] = useState<HostResult | null>(null)
   const [shellCode, setShellCode] = useState<{ host: string; code: string } | null>(null)
   const [announce, setAnnounce] = useState('')
+  const [overwriteHost, setOverwriteHost] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -64,18 +67,54 @@ export function HostsPanel() {
 
   const label = (id: string) => list?.hosts.find((h) => h.id === id)?.label ?? id
 
-  const run = async (action: 'connect' | 'disconnect', host: string, askFolder = false) => {
-    let root: string | undefined
-    if (action === 'connect' && (askFolder || !list?.project_root)) {
-      const picked = await pickDirectory(tx('pickFolderTitle', { host: label(host) }))
-      if (!picked) return
-      root = picked
-    }
+  const run = async (action: 'connect' | 'disconnect', host: string) => {
     setBusy(host)
     setResult(null)
     setShellCode(null)
     try {
-      const r = parseHostResult(await runHostIntegration(action, host, root))
+      const r = parseHostResult(await runHostIntegration(action, host))
+      setResult(r)
+      setAnnounce(r.ok ? tx('announce.ok') : tx('announce.failed'))
+    } catch (e) {
+      setShellCode({ host, code: e instanceof HostShellError ? e.code : 'spawn_failed' })
+      setAnnounce(tx('announce.failed'))
+    } finally {
+      setBusy(null)
+      void refresh()
+    }
+  }
+
+  /** 「更新」：Codex 插件落后时，走 `tavotto codex upgrade`（与终端同一条通道）。失败显示翻译过的一句 */
+  const upgradeCodex = async () => {
+    setBusy('codex')
+    setResult(null)
+    setShellCode(null)
+    try {
+      const r = parseCodexResult(await runCodexIntegration('upgrade'))
+      if (r.ok) {
+        setAnnounce(tx('announce.ok'))
+      } else {
+        const code = r.error_code ?? r.steps.find((x) => !x.ok && x.error_code)?.error_code ?? 'other'
+        setShellCode({ host: 'codex', code })
+        setAnnounce(tx('announce.failed'))
+      }
+    } catch (e) {
+      setShellCode({ host: 'codex', code: e instanceof Error ? e.message : 'spawn_failed' })
+      setAnnounce(tx('announce.failed'))
+    } finally {
+      setBusy(null)
+      void refresh()
+    }
+  }
+
+  /** 「覆盖」：用户在确认框里点过才带 `--force-skill` */
+  const overwriteSkill = async (host: string) => {
+    setOverwriteHost(null)
+    setBusy(host)
+    setResult(null)
+    setShellCode(null)
+    try {
+      const r = parseHostResult(await runHostIntegration('connect_force_skill', host))
       setResult(r)
       setAnnounce(r.ok ? tx('announce.ok') : tx('announce.failed'))
     } catch (e) {
@@ -95,6 +134,42 @@ export function HostsPanel() {
       : tx('connected')
   }
 
+  /** 已接入行的状态（稳定 `data-host-state`）：skill-modified / plugin-outdated / plugin / skill / builtin / connected */
+  const hostState = (h: HostRow): string =>
+    h.update
+      ? 'plugin-outdated'
+      : h.id === 'codex'
+        ? h.version
+          ? 'plugin'
+          : 'connected'
+        : h.skill === 'modified'
+          ? 'skill-modified'
+          : h.skill === 'builtin'
+            ? 'builtin'
+            : h.version
+              ? 'skill'
+              : 'connected'
+
+  /** 有新版、技能改过：仍是已接入，但不算一切正常，不给绿色对勾 */
+  const needsAttention = (h: HostRow): boolean => ['plugin-outdated', 'skill-modified'].includes(hostState(h))
+
+  const connectedText = (h: HostRow): string => {
+    switch (hostState(h)) {
+      case 'plugin-outdated':
+        return tx('pluginOutdated', { version: h.version })
+      case 'plugin':
+        return tx('connectedPlugin', { version: h.version })
+      case 'skill-modified':
+        return tx('skillKept')
+      case 'builtin':
+        return tx('connectedBuiltin')
+      case 'skill':
+        return tx('connectedSkill', { version: h.version })
+      default:
+        return tx('connected')
+    }
+  }
+
   return (
     <FormSection title={tx('title')}>
       <FieldGroup data-hosts-section>
@@ -110,12 +185,6 @@ export function HostsPanel() {
                 ? hostErrorText(result.error_code, h.label)
                 : null
           const steps = result?.host === h.id ? result.steps : []
-          // 记住的文件夹失效（被移走 / 删掉 / 含分隔符被拒）：重试先让用户换一个文件夹，否则会一直提交那个坏的
-          // （Codex #1456 P2）
-          const folderProblem =
-            result?.host === h.id &&
-            !result.ok &&
-            FOLDER_ERRORS.includes(result.error_code ?? '')
           return (
             <div key={h.id} className="flex min-h-12 flex-col gap-2 [&>[data-setting-row]]:min-h-0" data-host-row={h.id}>
               <SettingRow
@@ -128,10 +197,39 @@ export function HostsPanel() {
                   </span>
                 ) : h.connected ? (
                   <>
-                    <span className="flex items-center gap-1 text-sm text-ok" data-host-connected>
-                      <CircleCheck size={ICON_SIZE.sm} aria-hidden />
-                      {tx('connected')}
+                    <span
+                      className={cn(
+                        'flex items-center gap-1 text-sm',
+                        needsAttention(h) ? 'text-ink-2' : 'text-ok',
+                      )}
+                      data-host-connected
+                      data-host-state={hostState(h)}
+                      data-host-version={h.version}>
+                      {!needsAttention(h) && <CircleCheck size={ICON_SIZE.sm} aria-hidden />}
+                      {connectedText(h)}
                     </span>
+                    {h.update && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        loading={busy === h.id}
+                        disabled={busy !== null}
+                        data-host-update={h.id}
+                        onClick={() => void upgradeCodex()}>
+                        {busy === h.id ? tx('updating') : tx('update')}
+                      </Button>
+                    )}
+                    {!h.update && h.skill === 'modified' && h.id !== 'codex' && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        loading={busy === h.id}
+                        disabled={busy !== null}
+                        data-host-overwrite={h.id}
+                        onClick={() => setOverwriteHost(h.id)}>
+                        {tx('overwrite')}
+                      </Button>
+                    )}
                     <Menu
                       align="end"
                       width={220}
@@ -141,13 +239,6 @@ export function HostsPanel() {
                         </IconButton>
                       }
                     >
-                      <MenuItem
-                        icon={FolderOpen}
-                        disabled={busy !== null}
-                        onSelect={() => void run('connect', h.id, true)}
-                      >
-                        {tx('changeFolder')}
-                      </MenuItem>
                       <MenuItem
                         icon={Unplug}
                         disabled={busy !== null}
@@ -164,15 +255,9 @@ export function HostsPanel() {
                     loading={busy === h.id}
                     disabled={busy !== null}
                     data-host-connect={h.id}
-                    onClick={() => void run('connect', h.id, folderProblem)}
+                    onClick={() => void run('connect', h.id)}
                   >
-                    {busy === h.id
-                      ? tx('running')
-                      : folderProblem
-                        ? tx('chooseFolder')
-                        : failure
-                          ? tx('retry')
-                          : tx('connect')}
+                    {busy === h.id ? tx('running') : failure ? tx('retry') : tx('connect')}
                   </Button>
                 )}
               </SettingRow>
@@ -186,6 +271,31 @@ export function HostsPanel() {
           )
         })}
       </FieldGroup>
+      <Dialog
+        open={overwriteHost !== null}
+        onOpenChange={(v) => !v && setOverwriteHost(null)}
+        title={tx('overwriteTitle', { host: label(overwriteHost ?? '') })}
+        size="sm"
+        footer={{
+          secondary: (
+            <Button variant="secondary" size="lg" onClick={() => setOverwriteHost(null)} data-host-overwrite-cancel>
+              {tx('cancel')}
+            </Button>
+          ),
+          primary: (
+            <Button
+              variant="primary"
+              size="lg"
+              data-host-overwrite-confirm
+              onClick={() => {
+                if (overwriteHost) void overwriteSkill(overwriteHost)
+              }}>
+              {tx('overwrite')}
+            </Button>
+          ),
+        }}>
+        <p className="text-sm text-ink-2">{tx('overwriteBody')}</p>
+      </Dialog>
     </FormSection>
   )
 }

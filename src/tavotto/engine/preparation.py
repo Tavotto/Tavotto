@@ -68,6 +68,7 @@ from . import (
     execpolicy,
     execspec,
     exectrace,
+    executionfact,
     figcapture,
     inputbroker,
     inputremap,
@@ -728,12 +729,17 @@ def implied_grant_absorbable(project_root: str, old: dict, new: dict) -> bool:
         return False
     if workdir.decided(project_root):
         return False
-    derived = {
-        "cwd_write": {"granted": True, "granted_at": None, "mode": workdir.MODE_PROJECT},
-        "decided": False,
-        "implied_by": workdir.IMPLIED_BY_USER_INTERPRETER,
-    }
-    return new == derived and workdir.grant_for(project_root) == derived
+    # 派生理由两种（`workdir.IMPLIED_BY`）：自动采用了用户自己的 Python，或沙盒里那一次的运行时证据说数据只在脚本
+    # 目录里（ADR 0047 修订，`pool._adopt_script_dir`）——两者授予的范围一字不差
+    for reason in workdir.IMPLIED_BY:
+        derived = {
+            "cwd_write": {"granted": True, "granted_at": None, "mode": workdir.MODE_PROJECT},
+            "decided": False,
+            "implied_by": reason,
+        }
+        if new == derived and workdir.grant_for(project_root) == derived:
+            return True
+    return False
 
 
 def _binding_sans_mode(binding: dict | None) -> dict | None:
@@ -801,7 +807,15 @@ def _captured_of(worker, build_resp) -> dict | None:
         return None
     descriptors = build_resp.get("descriptors") if isinstance(build_resp, dict) else None
     failed = build_resp.get("failed_figures") if isinstance(build_resp, dict) else None
+    pdf_pages = build_resp.get("pdf_pages") if isinstance(build_resp, dict) else None
     return {
+        # 写进多页 PDF 而被逐页认领的图的账（`figcapture.PdfPagesLedger.summary`，项目相对路径；与试运行响应同一份，#1370）。
+        # 没有时不出现
+        **(
+            {"pdf_pages": [dict(p) for p in pdf_pages if isinstance(p, dict)]}
+            if isinstance(pdf_pages, list) and pdf_pages
+            else {}
+        ),
         **(
             {"failed_figures": [dict(f) for f in failed if isinstance(f, dict)], "partial": True}
             if isinstance(failed, list) and failed
@@ -878,6 +892,9 @@ class PreparationResult:
     #: 这次执行里每一问 input 的去向（T08，`inputbroker.InputFacts.payload()`）：只有计数与闭集理由，只给
     #: 诊断快照的白名单投影。**不进 `to_payload()`**。
     input_facts: dict | None = None
+    #: Closed-set observations from this failed attempt, never exception text or paths.
+    failure_fidelity: dict | None = None
+    failure_exception_category: str | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -1045,7 +1062,7 @@ class PreparationService:
             # 审计：这次运行吸收了一次派生授权（不是用户点头的授权）。facts 只收标量，随 `trace` 进回执旁的诊断
             entry.result.trace.mark(
                 "check",
-                grant_absorbed=workdir.IMPLIED_BY_USER_INTERPRETER,
+                grant_absorbed=fresh.grant.get("implied_by") or "",
                 grant_mode=(fresh.grant.get("cwd_write") or {}).get("mode"),
             )
         return fresh
@@ -1251,6 +1268,17 @@ class PreparationService:
                 )
                 return
             error = {"code": getattr(exc, "code", "") or "worker_error", "message": str(exc)}
+            extra = getattr(exc, "extra", None)
+            if isinstance(extra, dict):
+                if error["code"] == pool.FILE_OPERATION_BLOCKED_CODE:
+                    result.failure_fidelity = receipt.project_fidelity(extra.get("fidelity"))
+                if (
+                    plan.execution == execspec.PROFILE_NATIVE
+                    and error["code"] == pool.SCRIPT_ERROR_CODE
+                ):
+                    result.failure_exception_category = executionfact.valid_exception_category(
+                        extra.get("exception_category")
+                    )
             _attach_local_detail(
                 error, exc, sensitive=bool(plan.run is not None and plan.run.sensitive)
             )
@@ -1279,6 +1307,7 @@ class PreparationService:
             deprepair.note_missing_dependency_of(
                 plan.project_root, exc, script=plan.script or "", offer=repair_offer
             )
+            deprepair.note_missing_command_of(plan.project_root, exc)
             module = getattr(exc, "module", "")
             if module:
                 error["module"] = module
@@ -1391,6 +1420,10 @@ class PreparationService:
         hint = getattr(err, "workdir_hint", None)
         if isinstance(hint, dict):
             entry.result.workdir_hint = dict(hint)
+        # 先判空、数据不在就什么也不画（0 张图）：静态指认载荷与渲染入口同一份，准备会话也要带，卡片才有「指认数据」入口
+        offer = getattr(err, "missing_input", None)
+        if isinstance(offer, dict):
+            entry.result.missing_input = dict(offer)
         self._finish(entry, STATUS_ERROR, note="脚本跑完了，但这张面板没有被捕获")
         return True
 
@@ -1501,6 +1534,8 @@ class PreparationService:
         return {
             "descriptors": list(getattr(existing, "last_build_descriptors", None) or []),
             "runtime": getattr(existing, "last_build_runtime", None),
+            # 热会话那次 build 里脚本用 PdfPages 写的多页 PDF 账（#1370）：复用也要带上，导出的「合并为多页 PDF」靠它
+            "pdf_pages": list(getattr(existing, "last_build_pdf_pages", None) or []),
         }
 
     def _finish(self, entry: _Entry, status: str, *, note: str = "") -> None:
@@ -1954,6 +1989,10 @@ def diagnostic_projection(plan: PreparationPlan, result: PreparationResult) -> d
                     "code": taskdiag.code(err.get("code")),
                     "reason": taskdiag.closed(err.get("reason"), STALE_REASONS),
                     "executed": taskdiag.flag(err.get("executed")),
+                    "fidelity": receipt.project_fidelity(result.failure_fidelity),
+                    "exception_category": taskdiag.closed(
+                        result.failure_exception_category, executionfact.EXCEPTION_CATEGORIES
+                    ),
                 }
                 if err
                 else None

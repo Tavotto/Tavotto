@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import type { Locator, Page } from '@playwright/test'
+import type { CDPSession, Locator, Page } from '@playwright/test'
 import { addSecondFigure, expect, test, waitForDocumentReady } from './fixtures'
 
 /**
@@ -72,6 +72,14 @@ function save(output: string, value: object) {
   }
 }
 
+/** Chromium 的累计布局 / 样式重算次数。其它浏览器没有这个接口，返回 null。只在测量循环前后各读一次，不进计时窗口。 */
+async function renderCounters(session: CDPSession | null) {
+  if (!session) return null
+  const { metrics } = await session.send('Performance.getMetrics')
+  const value = (name: string) => metrics.find((m) => m.name === name)?.value ?? null
+  return { layout: value('LayoutCount'), recalc_style: value('RecalcStyleCount') }
+}
+
 test('agent: 自动重复符号插入与预设 UI 交互', async ({ app, page, browser }) => {
   const iterations = Number(process.env.TAVOTTO_PERF_AGENT_REPEATS ?? 16)
   const out = process.env.TAVOTTO_PERF_AGENT_OUTPUT
@@ -93,6 +101,11 @@ test('agent: 自动重复符号插入与预设 UI 交互', async ({ app, page, b
   await page.evaluate(() => new Promise<void>((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
   ))
+
+  const session =
+    browser.browserType().name() === 'chromium' ? await page.context().newCDPSession(page) : null
+  await session?.send('Performance.enable')
+  const countersBefore = await renderCounters(session)
 
   const cases = [
     { key: 'symbol.alpha', symbol: 'α' },
@@ -120,6 +133,8 @@ test('agent: 自动重复符号插入与预设 UI 交互', async ({ app, page, b
     await expect(page.locator('[data-dialog="presets"]')).toBeHidden()
   }
 
+  const countersAfter = await renderCounters(session)
+
   // dialog 的采样每轮 4 次，按相同数量记录成该场景的 4*iterations。
   const report = {
     schema: 'tavotto-perf-agent/1',
@@ -145,6 +160,13 @@ test('agent: 自动重复符号插入与预设 UI 交互', async ({ app, page, b
       total_mem_gib: Math.round(os.totalmem() / 1024 ** 3),
     },
     scenarios: keys.map((id) => ({ id, two_raf_ms: results[id] })),
+    render_counters:
+      countersBefore && countersAfter
+        ? {
+            layout: Number(countersAfter.layout) - Number(countersBefore.layout),
+            recalc_style: Number(countersAfter.recalc_style) - Number(countersBefore.recalc_style),
+          }
+        : null,
   }
   save(out!, report)
   expect(results['symbol.alpha']).toHaveLength(iterations)

@@ -10,6 +10,7 @@ import type { CropRect } from '@/types/document'
  * 一条边用「深度」说话：这条边从图边往里走了多少（分数）。
  *   l: crop.x · r: 1 − (x + w) · t: crop.y · b: 1 − (y + h)
  * 往外最多回到深度 0（未裁剪）；往里依次是 图边(0) → 内容边缘(inkDepth) → 越过内容边缘。
+ * 没裁剪过的图拖边（不按 ⌥）是改图幅，不是裁剪：见 `planEdgeGrow`；按住 ⌥ 才走这里的裁剪。
  */
 
 export type CropSide = 'l' | 'r' | 't' | 'b'
@@ -96,6 +97,58 @@ export function planEdgeDepth(i: EdgePlanInput): EdgePlan {
   }
   if (toEdge <= toInk) return { depth: 0, state: 'full' }
   return { depth: ink as number, state: 'tight' }
+}
+
+/** 排版里拖一条图边 = 改图幅：松手时写什么、拖动中预览框画在哪（ADR 0161 修订 2026-11-06 / 2026-11-09） */
+export interface EdgeGrowPlan {
+  /** 新图幅（脚本 mm） */
+  sizeMm: [number, number]
+  /** 面板新的左上角：拖左 / 上边时对边不动，这里先挪好（渲染回来按左上角校正 w / h） */
+  pos: { x: number; y: number }
+  /** 新图在页面上的框（mm） */
+  box: { x: number; y: number; w: number; h: number }
+}
+
+/**
+ * 没裁剪过的图，边在图边上，指针往外（`outMm` > 0）或往里（`outMm` < 0，页面 mm）→ 这条边对应的那一维图幅
+ * 加长 / 缩短，缩放比不变，所以图内文字在页面上的 pt 不变。吸附半径内仍算停在图边上（null），擦到边不会误改图幅；
+ * 钳到引擎上 / 下限后没有实际变化时也回 null，调用方照图边处理。往里缩到文字放不下时由 `lib/edgeShrinkFit` 事后提示。
+ */
+export function planEdgeGrow(i: {
+  side: CropSide
+  box0: { x: number; y: number; w: number; h: number }
+  sizeMm: readonly [number, number]
+  /** 引擎给 `size_mm` 的上界；缺席 = 不限 */
+  maxMm?: number
+  /** 引擎给 `size_mm` 的下界；缺席 = 只保证 > 0 */
+  minMm?: number
+  outMm: number
+  /** 吸附半径（页面 mm） */
+  tolMm: number
+}): EdgeGrowPlan | null {
+  const { side, box0, sizeMm, maxMm, minMm, outMm, tolMm } = i
+  if (!(Math.abs(outMm) > tolMm)) return null
+  const horizontal = side === 'l' || side === 'r'
+  const axis = horizontal ? 0 : 1
+  // 按两轴各自的缩放比换算：老项目里被拉伸过的面板宽高比 ≠ 图幅，共用一个比例会让预览框与落定的框差一截
+  const k = (horizontal ? box0.w : box0.h) / sizeMm[axis]
+  const round2 = (v: number) => Math.round(v * 100) / 100
+  // 下限缺席时至少留 1 mm：图幅 0 / 负数引擎会拒
+  const floor = Math.max(minMm ?? 0, 1)
+  const dim = Math.max(floor, Math.min(maxMm ?? Infinity, round2(sizeMm[axis] + outMm / k)))
+  if (Math.abs(dim - sizeMm[axis]) < 0.005) return null
+  const grown = (dim - sizeMm[axis]) * k
+  const box = {
+    x: side === 'l' ? box0.x - grown : box0.x,
+    y: side === 't' ? box0.y - grown : box0.y,
+    w: box0.w + (horizontal ? grown : 0),
+    h: box0.h + (horizontal ? 0 : grown),
+  }
+  return {
+    sizeMm: horizontal ? [dim, sizeMm[1]] : [sizeMm[0], dim],
+    pos: { x: box.x, y: box.y },
+    box,
+  }
 }
 
 /** 把一条边设到某个深度，其余三边保持起手时的样子 */

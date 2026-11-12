@@ -8,6 +8,7 @@ import {
   GLANCE_SYMBOLS,
   GLANCE_UNWRAP,
   glanceText,
+  interpretRuns,
   legacyToLatex,
   parseRuns,
   plainText,
@@ -50,4 +51,22 @@ describe('小缩略图的读法两侧同表', () => {
     expect(GLANCE_SPACES).toEqual(vectors.glance.spaces)
     expect(GLANCE_DROP).toEqual(vectors.glance.drop)
   })
+})
+
+describe('受控科学文本解释两侧一致（上下标折叠 + 字母式符号展开）', () => {
+  const inRanges = (ranges: number[][]) => (cp: number) => ranges.some(([lo, hi]) => cp >= lo && cp <= hi)
+  for (const vec of vectors.interpret.vectors) {
+    const format = (vec.format ?? undefined) as TextFormat | undefined
+    it(vec.name, () => {
+      const cov = (vectors.interpret.coverages as Record<string, { primary: number[][]; drawable: number[][] }>)[
+        vec.coverage
+      ]
+      const got = interpretRuns(parseRuns(vec.text, format), {
+        isPrimary: inRanges(cov.primary),
+        isDrawable: inRanges(cov.drawable),
+        mode: vec.mode as 'auto' | 'scientific',
+      })
+      expect(got).toEqual(vec.runs)
+    })
+  }
 })

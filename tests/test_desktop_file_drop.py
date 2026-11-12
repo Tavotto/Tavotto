@@ -69,7 +69,7 @@ def test_the_event_name_is_one_string_on_both_sides():
 
 def test_the_payload_kinds_are_the_same_closed_set_on_both_sides():
     rust, ts = _rust_kinds(), _ts_kinds()
-    assert rust == {"script", "foreign_script", "folder", "unsupported"}, rust
+    assert rust == {"script", "notebook", "foreign_script", "folder", "unsupported"}, rust
     assert ts == rust
 
 
@@ -103,3 +103,31 @@ def test_the_tauri_drag_drop_handler_stays_disabled():
         assert "build" in methods, f"建造链没有 build()：{methods}"
         assert methods.index("disable_drag_drop_handler") < methods.index("build"), methods
         assert_unconditionally_in(code, sites[label], outer)
+
+
+WIN_DROP_RS = TAURI / "src" / "native_drop_win.rs"
+
+
+def test_the_windows_forward_message_is_one_tag_on_both_sides():
+    """Windows 上页面经 `postMessageWithAdditionalObjects` 把放下的 File 转给壳（ADR 0092 修订 2026-11-03）。
+
+    消息标记壳写一份（`MESSAGE_KIND`，壳按 `{"tavotto": MESSAGE_KIND}` 认）、前端写一份（`DROP_MESSAGE`）。
+    漂了之后两侧单测各自绿，真机上表现为 Windows 拖入照旧弹选择器。"""
+    m = re.search(
+        r'pub const MESSAGE_KIND: &str = "([^"]+)";', WIN_DROP_RS.read_text(encoding="utf-8")
+    )
+    assert m, "native_drop_win.rs 里找不到 MESSAGE_KIND 常量"
+    ts = re.search(
+        r"export const DROP_MESSAGE = \{ tavotto: '([^']+)' \} as const",
+        DESKTOP_TS.read_text(encoding="utf-8"),
+    )
+    assert ts, "desktop.ts 里找不到 DROP_MESSAGE"
+    assert ts.group(1) == m.group(1)
+
+
+def test_native_file_drop_reports_the_windows_listener():
+    """`native_file_drop` 在 Windows 上回的是旁听装没装上，不是写死的 false——否则前端照旧先降级。"""
+    code = rust_code(MAIN_RS.read_text(encoding="utf-8"))
+    body = code.split("fn native_file_drop() -> bool {", 1)[1].split("\n}\n", 1)[0]
+    assert "native_drop_win::installed()" in body
+    assert "native_drop_win::install(pw.controller()" in code

@@ -355,6 +355,11 @@ class _WindowsJob:
             self._k.CloseHandle(self._h)
 
 
+def _windows_job_for(proc: subprocess.Popen, *, kernel32=None) -> _WindowsJob | None:
+    """给一个刚起的进程配 Job Object（`KILL_ON_JOB_CLOSE`）；建不起来回 None（调用方自行退化）。"""
+    return _WindowsJob.create(kernel32 or _win_kernel32(), int(proc._handle))  # noqa: SLF001
+
+
 def _scope_for(proc: subprocess.Popen, *, nt: bool | None = None, kernel32=None):
     """spawn 之后立刻给这个进程配它的纳管范围。`nt` / `kernel32` 只给用例注入替身。"""
     if os.name == "nt" if nt is None else nt:

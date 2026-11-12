@@ -1,5 +1,6 @@
 import type { CanvasObject, TextObject } from '@/types/document'
 import { MM_PER_PT } from '@/lib/units'
+import { WRITING_MODE_VERTICAL } from '@/lib/typography'
 import { useViewportStore, worldToMm } from '@/store/viewportStore'
 
 /**
@@ -23,35 +24,53 @@ export const FIT_MARGIN_RATIO_PERCENT = 4
 export const FIT_MARGIN_EM = FIT_MARGIN_EM_PERCENT / 100
 export const FIT_MARGIN_RATIO = FIT_MARGIN_RATIO_PERCENT / 100
 
-export function fitSingleLineBox(o: TextObject): { x: number; w: number } | null {
+/**
+ * 贴字宽的框宽 = 字宽 × (1 + 4 %) + 0.5 em（余量的理由见上）。**收框公式只有这一处**：旋转前收框（`fitSingleLineBox`）
+ * 与「图内文字复制为标注」（`lib/figureTextCopy`，字宽取自 matplotlib 排出来的块）都走它。
+ */
+export const fitWidthMm = (naturalMm: number, sizePt: number): number =>
+  naturalMm * (1 + FIT_MARGIN_RATIO) + FIT_MARGIN_EM * sizePt * MM_PER_PT
+
+/** 收框的结果：横排收的是 x / w（行长是宽），竖排收的是 y / h（行长是高）——只含被改的那一对 */
+export type FitBox = { x: number; w: number } | { y: number; h: number }
+
+/**
+ * 单行文字的贴字框。横排量宽、收 x / w；竖排（ADR 0163）量**高**（行长是高）、收 y / h，
+ * 同一个公式与余量（预览量长 × (1 + 4 %) + 0.5 em），按 `align` 锚点：左 / 中 / 右 = 上 / 中 / 下。
+ */
+export function fitSingleLineBox(o: TextObject): FitBox | null {
   if (o.text.includes('\n')) return null
   const el = document.querySelector<HTMLElement>(
     `[data-object-id="${CSS.escape(o.id)}"] [data-text-body]`,
   )
   if (!el) return null
-  // 取小数宽（getBoundingClientRect 回屏幕 px，除缩放换回世界 px）：offsetWidth 是整数，向下取整会让收后的框
+  const vertical = o.writingMode === WRITING_MODE_VERTICAL
+  // 取小数长度（getBoundingClientRect 回屏幕 px，除缩放换回世界 px）：offsetWidth 是整数，向下取整会让收后的框
   // 比字窄一丁点而折行
   const zoom = useViewportStore.getState().zoom || 1
-  const cur = el.getBoundingClientRect().width / zoom
-  const prev = { width: el.style.width, whiteSpace: el.style.whiteSpace }
-  el.style.width = 'max-content'
+  const length = () => (vertical ? el.getBoundingClientRect().height : el.getBoundingClientRect().width) / zoom
+  const cur = length()
+  const prop = vertical ? 'height' : 'width'
+  const prev = { size: el.style[prop], whiteSpace: el.style.whiteSpace }
+  el.style[prop] = 'max-content'
   el.style.whiteSpace = 'pre'
-  const natural = el.getBoundingClientRect().width / zoom
-  el.style.width = prev.width
+  const natural = length()
+  el.style[prop] = prev.size
   el.style.whiteSpace = prev.whiteSpace
   if (!(natural > 0) || natural > cur + 0.5) return null
   // 余量 0.5 em：预览按浏览器 CSS 字体栈排，导出按 RenderCore 的 Liberation / Noto 排——Times New Roman / Arial
   // 与 Liberation 度量兼容，但机器上落到别的脸（Linux 无 TNR、中文落到 PingFang / Songti、标点宽度不同）时
   // 窄一点就会让导出折成两行。宁可框略宽，绝不让导出折行（看护：tests/test_compose_annotations.py 的收框用例）
-  const w = worldToMm(natural) * (1 + FIT_MARGIN_RATIO) + FIT_MARGIN_EM * o.sizePt * MM_PER_PT
-  if (!(w > 0) || w >= o.w - 0.01) return null
-  const x =
-    o.align === 'left' ? o.x : o.align === 'right' ? o.x + o.w - w : o.x + (o.w - w) / 2
-  return { x, w }
+  const len = fitWidthMm(worldToMm(natural), o.sizePt)
+  const box = vertical ? o.h : o.w
+  if (!(len > 0) || len >= box - 0.01) return null
+  const at = (origin: number) =>
+    o.align === 'left' ? origin : o.align === 'right' ? origin + box - len : origin + (box - len) / 2
+  return vertical ? { y: at(o.y), h: len } : { x: at(o.x), w: len }
 }
 
 /** 旋转前要不要收框：只在文字、此刻没转（0 → 非 0 那一次）时才算 */
-export function fitBeforeRotate(o: CanvasObject): { x: number; w: number } | null {
+export function fitBeforeRotate(o: CanvasObject): FitBox | null {
   if (o.type !== 'text' || (o.rotationDeg ?? 0) !== 0) return null
   return fitSingleLineBox(o)
 }

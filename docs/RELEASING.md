@@ -225,8 +225,21 @@ pip install --index-url https://test.pypi.org/simple/ \
    这一步此前只写了 `__version__` 一处，照着做在 v0.13.0 上会红五条。漏一处的
    表现是「装完显示的版本和发布页对不上」，而发布链没有任何一步会失败。
 
-2. 写 `docs/release-notes/vX.Y.Z.md`（体例见下）：**先把
-   `docs/release-notes/UNRELEASED.md` 里的待发条目搬进来并从那边删掉**
+2. 把应用内一键安装的 Codex（`src/tavotto/resources/managed_cli_lock.json`）升到 npm 上的最新版。
+   落后了它会给出要跑的命令：
+
+   ```sh
+   python scripts/managed_cli_lock.py --latest
+   # 落后时：python scripts/managed_cli_lock.py --update <版本> --cli codex
+   #         python scripts/managed_cli_lock.py --check --online && python -m pytest tests/test_managed_cli.py
+   ```
+
+   为什么每版都要追（#1716）：Codex 桌面版先升级会把新型号写进共用的型号清单，锁住的旧 codex
+   一选就 404，改图助手只能让用户自己去更新。升版走 PR（锁文件不手改），合进 main 再打 tag。
+
+3. 写 `docs/release-notes/vX.Y.Z.md`（体例见下）：**先把
+   `docs/release-notes/unreleased/*.md` 片段（以及 `UNRELEASED.md` 里残留的 `## ` 段落）
+   里的待发条目搬进来并删掉片段文件**
    ——那里放的是已经合进 main、但还没有任何一版告诉用户的行为变更与迁移提示
    （说明注释留在原处，搬走的只是 `## ` 段落）。搬完跑一次，还没并入它会
    逐条点名：
@@ -238,7 +251,7 @@ pip install --index-url https://test.pypi.org/simple/ \
    带着没搬走的段落打 tag，`release.yml` 的「拼 release body」会当场红——
    这道闸就是这个脚本。
 
-3. 提交、打 tag、推送：
+4. 提交、打 tag、推送：
 
    ```sh
    git commit -am "0.2.0"
@@ -246,7 +259,7 @@ pip install --index-url https://test.pypi.org/simple/ \
    git push origin main v0.2.0
    ```
 
-4. 发布链绿了之后同步网站 `/try`（在 `Tavotto_website` 仓库）：
+5. 发布链绿了之后同步网站 `/try`（在 `Tavotto_website` 仓库）：
 
    ```sh
    # web/dist-playground/ 不进版本库（.gitignore），发布树必须先自己建一份
@@ -368,16 +381,19 @@ manifest 一致，指纹又是从建它的那棵脏树重算的，两边自然�
 
 `docs/release-notes/v0.1.1.md` 是范例。
 
-**行为变更与存量数据的迁移提示写进 `UNRELEASED.md`，不要只写在 PR 正文
-里。** 发行说明是发版那天写的，写的人不会回头翻每一个 PR 的「遗留」段：
+**行为变更与存量数据的迁移提示写进待发片段（`docs/release-notes/unreleased/<主题>.md`，
+每个 PR 一个文件），不要只写在 PR 正文里。** 发行说明是发版那天写的，写的人不会回头翻每一个 PR 的「遗留」段：
 #215 修好标注旋转的导出方向后，存量文档里手工补偿过角度的用户需要一句
 提示，那句话只留在 PR 正文里，于是一版都没有发出去（issue #244）。
 
 **发行说明闸（`release-note-gate`，经 `CI fast gate` 参与合并资格）。** 改了
 用户可见路径（`src/tavotto/`、`web/src/`、`src-tauri/src/`、
 `src-tauri/tauri.conf.json`、`codex-plugin/`，测试文件与 `AGENTS.md` 不算）的 PR，
-必须在 `UNRELEASED.md` 里**新增至少一个 `## ` 段落**，否则这一格红——只改顶部
-注释、只删段落、只改正已有标题都不算。纯内部改动（重构、CI、仅内部文档、测试辅助）给 PR 打
+必须**新增一个片段文件** `docs/release-notes/unreleased/<短横线主题>.md`（以 `## ` 标题开头；
+每个 PR 一个文件，所以并行 PR 永不冲突），否则这一格红。过渡期旧写法仍被接受：往
+`UNRELEASED.md` 新增 `## ` 段落——只改顶部注释、只删段落、只改正已有标题都不算。
+发布闸（`scripts/check_pending_release_notes.py`）同时检查片段目录与 `UNRELEASED.md`：
+带着没并入的片段打 tag 当场红；片段里没有 `## ` 标题、目录被删也红。纯内部改动（重构、CI、仅内部文档、测试辅助）给 PR 打
 **`no-release-note`** 标签豁免；dependabot 的 PR 默认豁免；发版 PR 自己（新增了
 `docs/release-notes/vX.Y.Z.md`）也直接通过。清单与规则的唯一出处是
 `scripts/ci/release_note_gate.py`，别在这里再抄一份。拿不准算不算用户可见，就写
@@ -386,10 +402,10 @@ manifest 一致，指纹又是从建它的那棵脏树重算的，两边自然�
 **发版截止点。** 发版指令要定一个截止点（某个 main 提交）：它之前合入的 PR 归本
 版，**之后合入的 PR 一律归下一版**，发行说明不再追补。发版当天发现漏写条目，
 不开补条目的 PR 去赶本版（v0.19.2 补两个纯文档 PR，每个跑满整条 CI 加合并队列，
-约 3 小时）；该条目随下一版的 `UNRELEASED.md` 走。
+约 3 小时）；该条目随下一版的待发片段走。
 
 **docs-only 快车道。** 只改 `docs/release-notes/` 下 `vX.Y.Z.md` 这类已发出的发行说明
-（**不含** `UNRELEASED.md`——有测试读它）的 PR，CI 只跑 python-lint / cla-check / 发行说明闸 /
+（**不含** `UNRELEASED.md` 与 `unreleased/` 片段——有测试读它们）的 PR，CI 只跑 python-lint / cla-check / 发行说明闸 /
 `docs-scope` 分类（含发行说明相对链接检查），backend / frontend / 打包 / 冒烟都 skipped，
 PR 与合并队列两个阶段都生效；队列里同组有别的 PR 改了别的文件就不算。判据与理由见
 `scripts/ci/docs_scope.py` 和 `docs/rules/ci/ci-lanes.md`。这不改变上面的截止点约定。

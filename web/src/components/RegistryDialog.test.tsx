@@ -11,6 +11,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 
 // 「在 Finder 中显示」走桌面壳的 IPC；只有那组用例把 `__TAURI_INTERNALS__` 装上
 const tauriInvoke = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => undefined as unknown))
@@ -260,6 +261,25 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount())
   document.body.innerHTML = ''
+})
+
+describe('只有运行时捕获的图（QA-WIN-11）', () => {
+  it('磁盘清单为空、但有运行时图：不说「项目里还没有图」，也不建议再运行脚本', async () => {
+    useRuntimeAssetStore.setState({ assets: [{ id: 'rt1' }, { id: 'rt2' }] } as never)
+    await open(reportOf([]))
+    const text = document.body.textContent ?? ''
+    expect(text).not.toContain('项目里还没有图')
+    expect(text).not.toContain('运行一个绘图脚本')
+    expect(text).toContain('2 张图来自脚本运行')
+    useRuntimeAssetStore.setState({ assets: null } as never)
+  })
+
+  it('磁盘和运行时都没有：保持原来的空状态', async () => {
+    useRuntimeAssetStore.setState({ assets: [] } as never)
+    await open(reportOf([]))
+    expect(document.body.textContent).toContain('项目里还没有图')
+    useRuntimeAssetStore.setState({ assets: null } as never)
+  })
 })
 
 describe('六个状态', () => {

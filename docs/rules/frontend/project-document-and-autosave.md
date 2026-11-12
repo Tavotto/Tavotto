@@ -164,6 +164,7 @@ order: 200
 - **保存关联与明确冲突恢复**：`projectFileSession`每个活跃编辑器用独立内存actor；只有真实用户编辑推进轴，派生回执不推进。初次打开先在hydrate屏障捕获无编辑基线/票据，等候期间的用户编辑仍保dirty；named正文成功但元信息未确认只补confirm，不重写旧正文。绑定代次和`loadSeq`参与上下文，A→B→A或同ID重装挡旧回包；冷恢复不读取新的named revision洗白外改。后端wire唯一合同见[文档落盘规则](../backend/layout-versions-and-documents.md)。
   只有用户明确覆盖/重载才创建新branch，并把观察到的实际AS修订与完整会话视图固定到同一个`DiskSaveContext`，排入原writer；普通队列或重试不能刷新这份证明。读取、确认和落账守项目/格式/workingId/loadSeq/绑定及操作意图。重载安装前把**最新内存稿**写入原本机副本并提升原恢复槽；任一步失败停止安装、保留内存与磁盘，此不变量也适用于404兼容路径。看护`lib/projectFileSession.test.ts`、`lib/projectFileApi.test.ts`、`lib/autosave/diskWriter.projectFileRecovery.test.ts`、`store/projectFilePersistence.test.ts`和`components/documentBanner.test.tsx`。
 - **实际工作副本回执**：`waitForWorkingDocumentSave`只等待原writer并回读实际AS修订/正文，核项目/格式/workingId/loadSeq与已成功capture；它和named保存共用同一回执读取器，不预留named票据。非空安装稿不补写第二次PUT；只有明确`persistEmpty:true`才为本安装尚无成功记录的空稿排一次原writer写入，普通空稿保存语义不变。`openDocumentAs`成功或空稿`wrote:true`均不能代替真实落盘回执；失败/旧记录/外改/元信息未确认不能报告安装完成。看护`store/workingDocumentReceipt.test.ts`；该叶子不表示项目包安装入口已接通。
+  **重开同一个项目文件沿用 documentId**（QA-WIN-46，ADR 0096 修订 2026-11-04）：`openLayoutDocument` 带项目文件绑定时，`findDocumentsForProjectFile` 按最近绑定排序，取第一个没在别的窗口开着（`isDocHeldElsewhere`）、且不 `dirty` 的 documentId 沿用（版本时间线按 documentId 分存，新建身份会让命名节点看不到），并 `adoptSlotBaseline` 记下旧槽位的磁盘基线免得首次自动保存误报外部修改；`dirty` 的旧绑定不沿用（槽位里有项目文件没有的编辑）；另存为把当前排版改绑新文件，原文件不再有绑定，副本不继承历史。看护 `store/openProjectFileIdentity.test.ts`。
 - **显式运行完成与恢复门（SVG 快照）**：`figureSnapshotInvalidation` 只接收入口已按项目代际接受的成功执行事实；
   尚未接纳的旧回包仍由原入口拒绝。恢复中 / 待用户处理、以及尚未真正初始化的 `initial-ready` 窗口内，
   只保留匹配来源所需的最小字段，按稳定项目 id + source / runtime asset id 覆盖去重，不保留报告或参数。
@@ -175,7 +176,7 @@ order: 200
   native 图放置的旧回调仍守其原项目代际，不能因保留执行事实而在另一个项目插图；执行事实只登记一次。
 - **启动恢复判决（2026-10-11，ADR 0120，替代下面 2026-09-26 那条的前两道判断）**：「项目 ready」与「文档 ready」分开。
   documentStore 的恢复门（`restoring` / `needs_user` / `ready`，带 `gen` + `pj` 令牌）是**唯一**的「文档准备好了没有」：
-  - 门关着时内存里是**占位文档**：`commit` / 事务 / 撤销重做 / 画布与标签增删改 / `renameProject` / `applyDerivedUpdate` 一律拒（状态条节流说一句），
+  - 门关着时内存里是**占位文档**：`commit` / 事务 / 撤销重做 / 画布与标签增删改 / `renameProject` / `applyDerivedUpdate` 一律拒，
     `flushAutosave` 回 `'skipped'`，`switchDocument(…, { placeholder: true })` 不写 currentDoc / docIndex / 归属；remember-last 订阅、
     时间线自动节点与关键时刻都看门。**新增一个文档写入口必须同时看门**（看护 `store/restoreGate.test.ts` 的入口遍历）。
   - **离开旧文档的冲刷在设门之前**（`resetForNewProject` 第一步），DiskWriter 已排的旧文档写入不清。
@@ -189,7 +190,12 @@ order: 200
     坏（`invalid`）≠ 太新；暂态先有界重试原目标，首选明确失败 → `needs_user`，只列只读验证过的其他候选，**不悄悄换旧稿**；
     纯打开意图（没有后端 durable 记录）没有正文 → 退回 durable 那份，不算故障。**读不到不自动退回本机**：会话端点重试后仍不可用、或正文读失败（非 404）→ `needs_user`，本机线索 / 本机副本只作用户明确选择的候选；只有确认的 404 才自动按本机恢复。每条安装路径都经 `installChecked`：读到的正文 revision 与指针 / 扫描 / 提供候选时记下的不同，或指针曾明确缺席而正文出现 → 先问 `/owner`，只有 owners+verified 且 revision 对得上才装；备选探测不能用新 revision 抹掉缺席证据。C1 校正的本机归属须在安排本机副本首次写盘之前完成。判决表全文在 `documentRestore.ts` 文件头与 ADR 0120 §二。
     恢复期间排队的用户加图 / 粘贴操作跨同项目的「重试」保留，直到成功落定执行一次；显式新建、打开其他文档与切项目仍取代它。加图返回 `null` 时 UI 不报「已添加」、不关闭接入中心。
-  - `needs_user` 的出口在顶栏文档状态芯片（`restore` issue，`components/RestoreIssueBody.tsx`）：一句话 + 一个主按钮（重试 / 打开另一份 /
+  - **用户的动作不丢（ADR 0120 修订 2026-11-10）**：用户级入口（加图 / 拖放 / 粘贴 / 进入编辑）一律先过 `deferUserEntry`，门关着就记住、
+    文档定下来之后执行一次，只回 `run` / `deferred`——**不许新增「拒掉并说一句」的入口**。`needs_user` 期间用户动了手（含底层写入被拒）走
+    `resolveHeldIssue`：没有别的排版可接 → 静默继续新建并说一句；暂时读不到 → 自动再试一次；其余等用户选。绝不替用户挑旧稿。
+    外部交接落图前等 `whenDocumentSettledForEntry`（同一套），不直接等 `whenDocumentReady`。
+  - `needs_user` 的出口在**空画布正中的恢复卡**（`CanvasStage` 的 `data-canvas-restore-issue`，此时不摆「添加图」/ 选图卡）与顶栏文档状态芯片
+    （`restore` issue），两处同一个 `components/RestoreIssueBody.tsx`：一句话 + 一个主按钮（重试 / 打开另一份 /
     继续新建），其余折叠；`lastDocumentIssue` 只是 `restoreIssue.ref` 的薄适配。保存成功（`saved → clean`）不清恢复问题；保存元数据
     失败（autosave 回 `metadata:"failed"`）是另一件事 `restoreMetaIssue`，与 `saveState` 正交。
   - 外部交接：`queueNative()` 不等文档；落图 / Figure 选择器先 `whenDocumentReady(pj)`，被取代 → 不落、超时 120 s → `deferred`。

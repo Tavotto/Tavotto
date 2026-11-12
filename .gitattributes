@@ -78,6 +78,29 @@ docs/implementation/tavotto-foundation/evidence/u07/**/*.png binary
 # `tests/test_rendercore_evidence.py` 按 `read_bytes()` 逐字节核——不是生成物，是人写的 JSON，但同样
 # 「字节必须确定」。u06-rendercore.yml 的 Windows 腿红过一次：CRLF 检出后哈希 abd2b64e… 变成 ab9a94c8…。
 src/tavotto/rendercore/fonts_allowlist.json text eol=lf
+# 运行时锁：研究语料的 cohort 记它的 sha256（`research-cohort.json` 的 `runtime_lock_sha256`），
+# `scripts/ci/compat_guardian_research.py` 的 load_cohort() 逐字节核——人写的 JSON，同一类「字节必须确定」。
+# #1682 windows 片 4 红过一次：CRLF 检出后报「runtime lock differs from frozen cohort commitment」。
+packaging/runtime-lock.json text eol=lf
+# 研究语料的科学环境配方：research-manifest.json 记每份的 sha256，load_cohort() / check_project_contract()
+# 逐字节核（「scientific environment recipe differs from frozen input」，#1682 windows 片 4 第二处）。
+# 逐个列出不写 glob：看护用例按精确路径匹配，并且会把这个目录里的每一份都拿来对表——新增 case 必须来这里加一行。
+tests/compat/research-environments/research_aec_calibration.txt text eol=lf
+tests/compat/research-environments/research_astro_celerite_sho.txt text eol=lf
+tests/compat/research-environments/research_astro_gala_draco.txt text eol=lf
+tests/compat/research-environments/research_astro_ztf_m31.txt text eol=lf
+tests/compat/research-environments/research_bio_brian_hindmarsh.txt text eol=lf
+tests/compat/research-environments/research_bio_pysb_tyson.txt text eol=lf
+tests/compat/research-environments/research_bio_vitay_timing.txt text eol=lf
+tests/compat/research-environments/research_burnman_seismic.txt text eol=lf
+tests/compat/research-environments/research_cantera_sofc.txt text eol=lf
+tests/compat/research-environments/research_engineering_cruise_control.txt text eol=lf
+tests/compat/research-environments/research_engineering_leaf_hppc.txt text eol=lf
+tests/compat/research-environments/research_infiltration_theory.txt text eol=lf
+tests/compat/research-environments/research_monogenic_signal.txt text eol=lf
+tests/compat/research-environments/research_qudit_tomography.txt text eol=lf
+tests/compat/research-environments/research_sgwbprobe.txt text eol=lf
+tests/compat/research-environments/research_steel_dilatometry.txt text eol=lf
 # Codex 插件的启动器（#266）：`mcp/launch` 是 POSIX 半边，第一行必须是 `#!/bin/sh\n`——CRLF 检出后
 # sh 会把 `\r` 读进 shebang 与 `python3`，整个启动器失效；`mcp/launch.cmd` 是 Windows 半边，钉 LF 是为了
 # 发行件逐字节稳定（它不用标签，LF 下 cmd 照常执行——真 Windows 11 + Codex Desktop 实测）。

@@ -5,7 +5,7 @@
   "affected_script_shapes": [
     "a script that renders into an in-memory io.BytesIO buffer with savefig(buf, format=...) and then closes the figure (typically to embed or post-process the bytes)"
   ],
-  "root_cause": "The Safe worker captures a figure only through savefig to a file path (and show); a savefig to a file-like object writes no artifact on disk and the figure is closed right after, so nothing is registered and the probe ends with script_no_figure although `python script.py` rendered a figure (issue #749, split out of #739). Known product gap, not fixed: no fix_pr.",
+  "root_cause": "The Safe worker captures a figure only through savefig to a file path (and show); a savefig to a file-like object writes no artifact on disk and the figure is closed right after, so nothing is registered and the probe ends with script_no_figure although `python script.py` rendered a figure (issue #749, split out of #739). Fixed by #749: the figure is kept in figcapture.BufferSaves and comes back through the pyplot fallback, carrying the buffer savefig arguments.",
   "category": "figure_capture",
   "signature": {
     "behavior_kind": "zero_figures",
@@ -50,8 +50,9 @@
     "runs": 45
   },
   "key_regression_tests": [
-    "tests/test_compat_guardian_families.py::RealRepro::test_g6_minimal_repro_still_captures_zero_figures_known_gap",
-    "tests/test_compat_explore_shapes.py::RealExecution::test_bytesio_close_is_the_known_gap_749"
+    "tests/test_compat_guardian_families.py::RealRepro::test_g6_minimal_repro_is_fixed",
+    "tests/test_compat_explore_shapes.py::RealExecution::test_bytesio_close_is_captured_like_native_749",
+    "tests/test_buffer_only_capture.py"
   ],
   "environments": {
     "verified": [
@@ -73,7 +74,7 @@
   },
   "recurrence": "1 of the 5 output_call candidates in a local explore (seed 7, parent shape_oo_savefig); also every bytesio_close candidate in the CG-08 RealExecution test (shape_oo_savefig, shape_entry_main)",
   "in_corpus": false,
-  "fix_pr": null,
+  "fix_pr": 749,
   "promoted": false,
   "issues": [
     749

@@ -34,6 +34,14 @@ SKILL_DESCRIPTION_MAX = 500
 STAGING_ONLY = {"plugin-build.json", "LICENSE"}
 
 
+def _pending_notes_text() -> str:
+    """待发说明全文：UNRELEASED.md + unreleased/ 片段（2026-11-03 起新条目写成片段）。"""
+    rn = ROOT / "docs" / "release-notes"
+    parts = [(rn / "UNRELEASED.md").read_text(encoding="utf-8")]
+    parts += [p.read_text(encoding="utf-8") for p in sorted((rn / "unreleased").glob("*.md"))]
+    return "\n\n".join(parts)
+
+
 def _package() -> dict:
     return json.loads(PACKAGE.read_text(encoding="utf-8"))
 
@@ -307,7 +315,7 @@ def test_install_line_is_published_where_the_matrix_says():
         assert found == [expected]
     else:
         assert found == []
-        pending = (ROOT / "docs" / "release-notes" / "UNRELEASED.md").read_text(encoding="utf-8")
+        pending = _pending_notes_text()
         assert f"`{expected}`" in pending, "待发说明里没有安装那行：发版时 README 拿什么加回去"
         # 技能随插件发给所有宿主的 agent，也不许先教装法（#694 评审）
         tracked = subprocess.run(

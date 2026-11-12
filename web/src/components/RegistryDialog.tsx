@@ -34,6 +34,7 @@ import { formatMessage, msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { addPanelToCanvas, addRuntimePanelToCanvas } from '@/store/workspace'
 import { useAssetStore } from '@/store/assetStore'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { refreshAssetsAndSync } from '@/store/liveSync'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
@@ -170,6 +171,11 @@ function ReadinessBody() {
   const loading = useProjectReadinessStore((s) => s.loading)
   const loadError = useProjectReadinessStore((s) => s.error)
   const focusId = useProjectReadinessStore((s) => s.focusId)
+  // 运行时捕获的图不在磁盘清单（readiness.summary.total）里：只有它们时不能说「项目里还没有图」（QA-WIN-11）
+  const runtimeCount = useRuntimeAssetStore((s) => s.assets?.length ?? 0)
+  useEffect(() => {
+    if (useRuntimeAssetStore.getState().assets === null) void useRuntimeAssetStore.getState().loadAssets()
+  }, [])
 
   /** 注册表全视图：只为「入口函数」与高级段（全部脚本）服务，不参与状态判定 */
   const [view, setView] = useState<RegistryView | null>(null)
@@ -337,7 +343,11 @@ function ReadinessBody() {
       </NoticeReveal>
 
       {report.summary.total === 0 ? (
-        <EmptyState art="select" title={rd('emptyTitle')} hint={rd('emptyHint')} />
+        runtimeCount > 0 ? (
+          <EmptyState art="select" title={rd('emptyRuntimeTitle', { count: runtimeCount })} />
+        ) : (
+          <EmptyState art="select" title={rd('emptyTitle')} hint={rd('emptyHint')} />
+        )
       ) : (
         groups.map(
           ({ key, panels }) =>

@@ -19,7 +19,7 @@ web/AGENTS.md                   前端速查表：同上
 codex-plugin/AGENTS.md          插件 / 技能 / MCP server 速查表：同上（2026-09-25 纳入，#608）
 packaging/AGENTS.md             打包 / 内置 runtime / 签名速查表：同上（2026-10-24 纳入）
 src-tauri/AGENTS.md             Tauri 桌面壳速查表：同上（2026-10-24 纳入）
-docs/rules/repo/                跨仓库：同源对总表、判据的主语、第三路径审查、错题本（lessons.md）
+docs/rules/repo/                跨仓库：同源对总表、判据的主语、第三路径审查、错题本（lessons/，每层一份）
 docs/rules/backend/<主题>.md    后端各主题的全文（33 份，各 1–34 KB）
 docs/rules/frontend/<主题>.md   前端各主题的全文（30 份，各 2–14 KB）
 docs/rules/ci/<主题>.md         CI / 发布 / 验证链各主题的全文（13 份，各 1–7 KB）

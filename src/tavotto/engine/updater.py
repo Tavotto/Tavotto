@@ -124,6 +124,9 @@ def settings() -> dict:
     cfg = config.load().get("updates") or {}
     return {
         "auto_check": bool(cfg.get("auto_check", True)),
+        # 桌面版：查到新版后台静默下载（默认开）。只桌面壳用它；存在这里（config.json，跟用户走）
+        # 而不是 localStorage——桌面端口可能变，localStorage 按 origin 分，关掉的选择会悄悄复位
+        "auto_download": bool(cfg.get("auto_download", True)),
         "last_check_ms": int(cfg.get("last_check_ms") or 0),
         "last_result": cfg.get("last_result") or None,
     }

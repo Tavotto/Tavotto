@@ -227,20 +227,32 @@ def load_families() -> list[dict]:
 
 
 def known_family(signature: dict, families: list[dict]) -> str | None:
+    # `diff:<kind>` is the stable code of a finding with no Tavotto error. A recorded
+    # `tavotto_error: null` means exactly "no error", not "any error": a candidate that also
+    # carries a new error code is a different cluster identity and must stay NEW.
+    stable = signature["stable_code"]
+    observed_error = None if stable.startswith("diff:") else stable
     for fam in families:
         want = fam["signature"]
         same_shape = (
             want["behavior_kind"] == signature["behavior_kind"]
             and want["call_site"] == signature["call_site"]
         )
-        # `diff:<kind>` is the stable code of a finding with no Tavotto error. A recorded
-        # `tavotto_error: null` means exactly "no error", not "any error": a candidate that also
-        # carries a new error code is a different cluster identity and must stay NEW.
-        stable = signature["stable_code"]
-        observed_error = None if stable.startswith("diff:") else stable
         same_code = want["tavotto_error"] == observed_error
         if same_shape and same_code:
             return fam["id"]
+    # Second door: the family's cause is a data-source axis (a cwd-relative reader / glob). The same
+    # cause behind another parent or inside a loop has a different call site; every field still has to
+    # match exactly (transform, path style, behavior kind, error code), so a new error stays NEW.
+    for fam in families:
+        for want in fam.get("data_source_signatures") or []:
+            if (
+                signature.get("data_source") == want["data_source"]
+                and signature.get("path_style") == want["path_style"]
+                and signature["behavior_kind"] in want["behavior_kinds"]
+                and observed_error in want["tavotto_errors"]
+            ):
+                return fam["id"]
     return None
 
 
@@ -346,6 +358,10 @@ def classify(f: dict, rules: list[dict]) -> tuple[dict, dict, dict]:
     attr = attribute(facts, f["kind"] if f["kind"] == "explore" else "row", rules)
     sig = behavior_signature(f, attr)
     sig["call_site"] = call_site_signature(f["source"]) if f["source"] else ["unavailable"]
+    # family linking only (never part of `cluster_key`): which data-source transform, with which path style
+    data = (f["row"].get("data_source") or {}) if f["kind"] == "explore" else {}
+    sig["data_source"] = data.get("transform")
+    sig["path_style"] = data.get("path_style")
     return facts, attr, sig
 
 
@@ -484,7 +500,7 @@ def cluster(attributions: list[dict], families: list[dict]) -> list[dict]:
                     "relation": key[6],
                     "call_site": list(key[7]),
                 },
-                "known_family": known_family({**first["signature"]}, families),
+                "known_family": _members_family(members, families),
                 "size": len(members),
                 "members": sorted(m["finding_id"] for m in members),
                 "axes": sorted({a for m in members for a in m.get("axes", [])}),
@@ -495,6 +511,16 @@ def cluster(attributions: list[dict], families: list[dict]) -> list[dict]:
             }
         )
     return out
+
+
+def _members_family(members: list[dict], families: list[dict]) -> str | None:
+    """Known only when **every** member links to a family: one unlinked member keeps the cluster NEW (a new
+    cause must not hide behind an old one). The data-source door can link members of one cluster to
+    different families (a cwd-relative parquet read and a cwd-relative glob behind the same loop): name all."""
+    linked = {known_family(m["signature"], families) for m in members}
+    if None in linked:
+        return None
+    return " + ".join(sorted(linked))
 
 
 def _reproducible(members: list[dict]) -> bool | None:

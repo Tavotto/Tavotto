@@ -12,8 +12,15 @@
       "custom_domain": true
     }
   ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
   "triggers": {
-    "crons": []
+    "crons": [
+      "*/2 * * * *",
+      "7-59/15 * * * *"
+    ]
   },
   "vars": {
     "CLA_GITHUB_ENABLED": "false",
@@ -28,7 +35,7 @@
     "CLA_AUTOMATIC_PUBLISHING_ENABLED": "false",
     "CLA_AGREEMENT_ACTIVATION_ENABLED": "false",
     "CLA_CONFIRMATION_SLOT_ENABLED": "false",
-    "CLA_CONFIG": "{\"origin\":\"https://cla-staging.tavotto.com\",\"repository\":\"erwanjun/cla-e2e-sandbox-20261026\",\"repositoryId\":1434279607,\"referenceSha\":\"6c8e96cec1d3bf81bdf10da4362a571586474ce1\",\"holderId\":88193520,\"holderName\":\"Jiaqi Wan (staging)\",\"appId\":5480322,\"appSlug\":\"erwanjun-cla-e2e-20261026\",\"installationId\":175465132,\"clientId\":\"Iv23liIfB3rp9SGapg1u\",\"checkName\":\"Tavotto CLA (staging)\",\"exemptionIds\":{\"erwanjun\":88193520},\"policy\":{\"agreements\":{\"individual\":{\"path\":\"docs/legal/CLA_INDIVIDUAL.md\",\"version\":\"1.0\",\"sha256\":\"544e127b677cd1b7dc30e9c9cc6e9f42c8fc72ddc25633ddad75323f8e404847\"},\"corporate\":{\"path\":\"docs/legal/CLA_CORPORATE.md\",\"version\":\"1.0\",\"sha256\":\"4fa4720b6a875941543ad7b3d25b720e277f9ea903a1bba22ef1bd2dfb2ef315\"}},\"exemptions\":[{\"login\":\"erwanjun\",\"kind\":\"rights_holder\",\"reason\":\"Sandbox owner (GitHub account id 88193520, pinned in .github/cla-e2e-fixture.json). An exempt verdict is not a signed verdict.\"}],\"provider\":{\"configured\":true,\"protocol\":\"tavotto-cla-v1\",\"name\":\"Tavotto CLA staging\",\"app_id\":5480322,\"app_slug\":\"erwanjun-cla-e2e-20261026\",\"check_name\":\"Tavotto CLA (staging)\",\"note\":\"STAGING ONLY. Points at the staging service https://cla-staging.tavotto.com. Staging signatures have no legal effect.\"}},\"syntheticSigning\":false,\"mockCheckPublishing\":false,\"autoHolder\":false}"
+    "CLA_CONFIG": "{\"origin\":\"https://cla-staging.tavotto.com\",\"repository\":\"tavotto-cla-sandbox/cla-mq-sandbox\",\"repositoryId\":1445721664,\"referenceSha\":\"ebc70cc0829fb2287d0735325095f8e4edff058b\",\"holderId\":88193520,\"holderName\":\"Jiaqi Wan\",\"appId\":5480322,\"appSlug\":\"erwanjun-cla-e2e-20261026\",\"installationId\":178570638,\"clientId\":\"Iv23liIfB3rp9SGapg1u\",\"checkName\":\"Tavotto CLA (staging)\",\"exemptionIds\":{\"erwanjun\":88193520},\"policy\":{\"agreements\":{\"individual\":{\"path\":\"docs/legal/CLA_INDIVIDUAL.md\",\"version\":\"1.0\",\"sha256\":\"0720ad78d09d11138d63f0bb439ece63d1076b643c4117fbc0bfaf6f345f6890\"},\"corporate\":{\"path\":\"docs/legal/CLA_CORPORATE.md\",\"version\":\"1.0\",\"sha256\":\"4fa4720b6a875941543ad7b3d25b720e277f9ea903a1bba22ef1bd2dfb2ef315\"}},\"exemptions\":[{\"login\":\"erwanjun\",\"kind\":\"rights_holder\",\"reason\":\"Sandbox owner (GitHub account id 88193520, pinned in .github/cla-e2e-fixture.json). An exempt verdict is not a signed verdict.\",\"github_id\":88193520}],\"provider\":{\"configured\":true,\"protocol\":\"tavotto-cla-v1\",\"name\":\"Tavotto CLA staging\",\"app_id\":5480322,\"app_slug\":\"erwanjun-cla-e2e-20261026\",\"check_name\":\"Tavotto CLA (staging)\",\"note\":\"STAGING ONLY. Points at the staging service https://cla-staging.tavotto.com. Staging signatures have no legal effect.\"}},\"syntheticSigning\":false,\"mockCheckPublishing\":false,\"autoHolder\":false}"
   },
   "d1_databases": [
     {

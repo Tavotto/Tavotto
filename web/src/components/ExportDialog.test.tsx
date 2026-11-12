@@ -22,6 +22,11 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchExportDefaultsRemote: vi.fn(() => Promise.resolve(undefined)),
   // 预览里「带图内修改的那一版」按 overrides 出图（`useVariantPng`）
   enginePreviewPng: vi.fn(() => Promise.resolve(new Blob(['png']))),
+  // 准备会话（默认的「准备并运行」）：多页 PDF 合并项的集成用例从它的完成回报出发
+  createPreparationSession: vi.fn(),
+  fetchRuntimeAssets: vi.fn(),
+  // runtime 图按此刻的 overrides 取 cache 预览（QA-WIN-21 / 30）；默认「没有」
+  fetchRuntimePreviewForState: vi.fn(() => Promise.resolve(null)),
 }))
 
 // 「在文件夹中显示」走桌面壳的 IPC；只有个别用例把 `__TAURI_INTERNALS__` 装上
@@ -38,7 +43,8 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: tauriInvoke }))
 import { ExportDialog, diskSizeDiffSignificant } from '@/components/ExportDialog'
 import { pixelPreview } from '@/lib/exportRequest'
 import { hydrateExportDefaults, readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
-import { enginePreviewPng, fetchExportDefaultsRemote, postTelemetryEvent } from '@/lib/api'
+import { createPreparationSession, enginePreviewPng, fetchRuntimeAssets, fetchRuntimePreviewForState, fetchExportDefaultsRemote, postTelemetryEvent, type PreparationReport } from '@/lib/api'
+import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { clearVariantPngCache } from '@/hooks/useVariantPng'
 import { setTelemetryEnabled } from '@/lib/telemetry'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -53,14 +59,17 @@ import { bindingFor } from '@/lib/specBinding'
 import { DEFAULT_PROFILE_ID } from '@/lib/profile'
 import { profileName } from '@/lib/profileText'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
-import { applyExportJob, cancelCurrentExport, refreshExportStatus, resetExportState, runExport, useExportStore } from '@/store/exportStore'
+import { aggregateBatch, applyExportJob, cancelCurrentExport, refreshExportStatus, resetExportState, runExport, useExportStore } from '@/store/exportStore'
 import { currentFigureOf } from '@/lib/problemContext'
 import { effectiveScope, issuesInScope } from '@/lib/problemList'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
-import { emptyProject, type CanvasObject, type PanelObject } from '@/types/document'
+import { emptyProject, type ArrowObject, type CanvasObject, type PanelObject } from '@/types/document'
+import { arrowGeometry, dashArray } from '@/lib/shapeGeometry'
+import { buildPreset } from '@/lib/presets'
+import { MM_PER_PT } from '@/lib/units'
 import { seedExactRender } from '@/test/renderFixtures'
 import chartVectors from '../../../tests/golden/chart_model_vectors.json'
 import type { PanelChartState } from '@/types/document'
@@ -562,8 +571,8 @@ describe('输出范围', () => {
     // 没有范围选择的单图档里，EPS 灰着的原因不能指向不存在的「每张图单独导出」
     const epsBox = formatBox('EPS')
     expect(epsBox.disabled).toBe(true)
-    expect(epsBox.closest('label')!.title).toContain('没有可重新运行的脚本')
-    expect(epsBox.closest('label')!.title).not.toContain('每张图单独导出')
+    expect(epsBox.closest('label')!.getAttribute('data-export-format-hint')).toContain('没有可重新运行的脚本')
+    expect(epsBox.closest('label')!.getAttribute('data-export-format-hint')).not.toContain('每张图单独导出')
     expect(text()).not.toContain('先选中一张图')
     expect(document.body.querySelector('[data-export-preview-stage] [data-canvas-thumb]'), '预览显示页面').toBeTruthy()
     expect(document.body.querySelector('[data-export-preview-size]')?.textContent).toContain('80 × 60 mm')
@@ -894,7 +903,7 @@ describe('SVG 导出（X03）', () => {
 
   it('SVG follows the existing formats and sends no PPI', async () => {
     await setup(9)
-    expect([...document.body.querySelectorAll('[data-export-formats] [data-export-format]')].map((el) => el.getAttribute('data-export-format'))).toEqual(['pdf', 'png', 'eps', 'tiff', 'svg'])
+    expect([...document.body.querySelectorAll('[data-export-formats] [data-export-format]:not([data-export-format="py"])')].map((el) => el.getAttribute('data-export-format'))).toEqual(['pdf', 'png', 'eps', 'tiff', 'svg'])
     expect(formatBox('SVG').checked).toBe(false)
     await click(formatBox('SVG'))
     await click(formatBox('PDF'))
@@ -1470,6 +1479,39 @@ describe('来源读后端 route（#1209）', () => {
     expect(exportBodies.at(-1)?.original).toHaveProperty('chart')
   })
 
+  describe('修改后的 .py（ADR 0171）', () => {
+    const row = () => document.body.querySelector('[data-export-format="py"]')
+    const box = () => row()?.querySelector('input') as HTMLInputElement | null
+
+    it('可不可用读 route.offers.script，不看前端素材表', async () => {
+      routeOf = (req) => ({
+        scope: req.scope,
+        formats: req.formats,
+        panels: { 'r1.png': panelRoute({ offers: { script: { how: 'redraw' } } }) },
+      })
+      await setupRaster([])
+      expect(row()?.getAttribute('aria-disabled'), '还没拿到 route：退路看素材表').toBe('true')
+      await settle()
+      expect(row()?.getAttribute('aria-disabled'), 'route 说有').toBeNull()
+    })
+
+    it('没有脚本：禁用并说原因，选项不藏', async () => {
+      routeOf = (req) => ({
+        scope: req.scope,
+        formats: req.formats,
+        panels: {
+          'r1.png': panelRoute({
+            offers: { script: { how: 'unavailable', reason: 'script_export_no_script' } },
+          }),
+        },
+      })
+      await setupRaster([])
+      await settle()
+      expect(box()?.disabled).toBe(true)
+      expect(row()?.getAttribute('data-export-format-hint')).toBe(i18n.t('dialogs:export.scriptUnavailable.no_script'))
+    })
+  })
+
   it('画布范围：route 说某个带编辑的图画不出来，点导出之前就说', async () => {
     routeOf = (req) => ({
       scope: req.scope,
@@ -1573,37 +1615,31 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     jobWarnings = ['预览与画布略有出入']
   })
 
-  it('回执里没有 manifest（老服务端 / 检查器没跑）：画「未核验」，没有绿勾', async () => {
+  it('回执里没有 manifest（老服务端 / 检查器没跑）：详情里什么都不画，更没有绿勾', async () => {
     await setup(9)
     await click(button('开始导出')!)
     await openResultDetail()
-    expect(badge()?.dataset.inspection).toBe('unknown')
-    expect(badge()?.textContent).toBe('未核验')
-    expect(document.body.querySelector('[data-inspection="verified"]')).toBeNull()
+    expect(badge()).toBeNull()
   })
 
-  it('全部可判项 verified 才画绿；not_applicable 不算', async () => {
+  it('全部核验过：不画，用户不需要理解这一层', async () => {
     jobOutputs = [
       output(manifest({ integrity: 'verified', size: 'verified', text_layer: 'not_applicable' })),
     ]
     await setup(9)
     await click(button('开始导出')!)
     await openResultDetail()
-    expect(badge()?.dataset.inspection).toBe('verified')
-    expect(badge()?.textContent).toContain('已核验')
-    expect(badge()?.className).toContain('text-ok')
+    expect(badge()).toBeNull()
   })
 
-  it('有一项 unknown 就不画绿，按名字列出未核验的项', async () => {
+  it('有一项 unknown：不画，也不画绿', async () => {
     jobOutputs = [
       output(manifest({ integrity: 'verified', size: 'verified', clipping: 'unknown' })),
     ]
     await setup(9)
     await click(button('开始导出')!)
     await openResultDetail()
-    expect(badge()?.dataset.inspection).toBe('unknown')
-    expect(badge()?.textContent).toBe('未核验：裁切')
-    expect(badge()?.className).not.toContain('text-ok')
+    expect(badge()).toBeNull()
   })
 
   it('可选项 failed：文件已交付，但红着说出是哪一项', async () => {
@@ -1616,6 +1652,31 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     expect(badge()?.dataset.inspection).toBe('failed')
     expect(badge()?.textContent).toBe('核验未通过：分辨率标签')
     expect(badge()?.className).toContain('text-danger')
+  })
+
+  it('SVG 的文字转成了轮廓（text_outlined）：回执摘要里说一句不能再当文字编辑；没转就不出现', async () => {
+    const svg = (extra: Record<string, unknown>) => ({
+      ...output(manifest({ integrity: 'verified', size: 'verified' })),
+      format: 'svg',
+      name: 'a.svg',
+      manifest: { ...manifest({ integrity: 'verified', size: 'verified' }), format: 'svg', ...extra },
+    })
+    jobWarnings = []
+    jobOutputs = [svg({ text_outlined: true })]
+    await setup(9)
+    await click(button('开始导出')!)
+    expect(document.body.querySelector('[data-export-result]')?.textContent).toContain(
+      'SVG 里的文字已转成路径，不能再当文字编辑。',
+    )
+  })
+
+  it('SVG 文字仍是文字（text_outlined 为 false / 缺席）：回执里没有那一句', async () => {
+    jobWarnings = ['预览与画布略有出入']
+    jobOutputs = [{ ...output(manifest({ integrity: 'verified', size: 'verified' })), format: 'svg', name: 'a.svg' }]
+    await setup(9)
+    await click(button('开始导出')!)
+    expect(document.body.querySelector('[data-export-result]')).not.toBeNull()
+    expect(document.body.querySelector('[data-export-result]')?.textContent).not.toContain('已转成路径')
   })
 
   it('严格核验默认不勾（请求里没有 inspection 键）；勾上后带 strict 与当前规范', async () => {
@@ -2144,6 +2205,30 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
     expect(label!.getAttribute('style')).toContain('var(--font-doc)')
   })
 
+  it('整版预览里的箭头按导出出来的样子画（主预览 ExportZoomStage）：端点取对象自己的、带箭头帽、虚线带 dasharray', async () => {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) }, page: { w: 150, h: 112.5 } })
+    const arrow = buildPreset('callout', { x: 75, y: 50 })[0] as ArrowObject // 左下→右上斜向
+    arrow.headEnd = 'open'
+    arrow.dash = 'dashed'
+    useDocumentStore.getState().commit(literal('箭头'), (d) => {
+      d.objects.push(arrow as CanvasObject)
+    })
+    await mountDialogs()
+    await openDialog()
+    const g = document.body.querySelector('[data-export-preview-stage] [data-canvas-thumb] [data-thumb-shape]')
+    expect(g, '主预览里的箭头走导出画法').toBeTruthy()
+    const sw = arrow.strokePt * MM_PER_PT
+    const geo = arrowGeometry(arrow, arrow.w, arrow.h, sw)
+    const line = g!.querySelector('line')!
+    expect(Number(line.getAttribute('x1'))).toBeCloseTo(geo.p1.x, 9)
+    expect(Number(line.getAttribute('y1'))).toBeCloseTo(geo.p1.y, 9)
+    expect(Number(line.getAttribute('x2'))).toBeCloseTo(geo.p2.x, 9)
+    expect(Number(line.getAttribute('y2'))).toBeCloseTo(geo.p2.y, 9)
+    expect(Number(line.getAttribute('y2')), '斜率向上').toBeLessThan(Number(line.getAttribute('y1')))
+    expect(line.getAttribute('stroke-dasharray')).toBe(dashArray('dashed', sw))
+    expect(g!.querySelector('path'), '箭头帽').toBeTruthy()
+  })
+
   it('runtime 面板带图内修改：重跑脚本（previewNonce 变）后整版预览按新版本重新出图，不停在上一次运行的图', async () => {
     clearVariantPngCache()
     vi.mocked(enginePreviewPng).mockClear()
@@ -2213,6 +2298,74 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
       w.mockRestore()
       h.mockRestore()
     }
+  })
+
+  it('整版预览里没有图内修改的 runtime 面板也按此刻的 overrides 取 cache 预览，不挂「最近一次渲染」（QA-WIN-30）', async () => {
+    clearVariantPngCache()
+    URL.createObjectURL = vi.fn(() => 'blob:state-rt')
+    URL.revokeObjectURL = vi.fn()
+    vi.mocked(fetchRuntimePreviewForState).mockResolvedValue({ blob: new Blob(['<svg/>']), exact: true } as never)
+    const RT = 'runtime:fig.py#F'
+    // 已存排版里的面板是零 overrides；后端 GET 版的「最近一次」此刻是恢复的草稿画的那一版
+    const saved: PanelObject = { ...panel, fileId: RT, fileKind: 'runtime', overrides: [] } as PanelObject
+    await stage({ panels: [saved], renders: { [RT]: manifestWithTicks(1, 9) } })
+    useRuntimeAssetStore.setState({
+      byId: { [RT]: { status: 'fresh', cached: true, registered: true, profile: 'safe', checked: true } },
+    } as never)
+    await mountDialogs()
+    await openDialog()
+    await act(async () => {
+      await new Promise<void>((r) => setTimeout(r, 30))
+    })
+    const imgs = [...document.body.querySelectorAll(`[data-canvas-thumb] [data-thumb-panel="${RT}"]`)]
+    expect(imgs.length).toBeGreaterThan(0)
+    for (const n of imgs) expect(n.getAttribute('href')).toBe('blob:state-rt')
+    expect(vi.mocked(fetchRuntimePreviewForState)).toHaveBeenCalledWith(RT, [], expect.anything(), null)
+  })
+})
+
+describe('整版预览里的画布文字按富文本画（QA-WIN-16）', () => {
+  const TEXT = {
+    id: 't1',
+    type: 'text',
+    x: 5,
+    y: 5,
+    w: 40,
+    h: 8,
+    sizePt: 9,
+    color: '#000000',
+    text: '',
+  }
+
+  async function openWith(texts: Record<string, unknown>[]) {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) } })
+    useDocumentStore.getState().commit(literal('加文字'), (d) => {
+      d.objects.push(...(texts as never[]))
+    })
+    await mountDialogs()
+    await openDialog()
+  }
+  const stageText = () =>
+    [...document.body.querySelectorAll('[data-export-preview-stage] [data-thumb-text]')].map((n) => n.innerHTML).join('|')
+
+  it('旧标记：上标 m^{2} 画成抬高的小号 2，记号不画出来；下标同理', async () => {
+    await openWith([
+      { ...TEXT, text: 'Area m^{2}' },
+      { ...TEXT, id: 't2', y: 20, text: 'H_{2}O' },
+    ])
+    const stageEl = document.body.querySelector('[data-export-preview-stage]')!
+    const raised = [...stageEl.querySelectorAll('[data-thumb-text] tspan tspan')]
+    expect(raised.map((n) => n.textContent)).toEqual(['2', '2'])
+    expect(Number(raised[0].getAttribute('baseline-shift'))).toBeGreaterThan(0)
+    expect(Number(raised[1].getAttribute('baseline-shift'))).toBeLessThan(0)
+    expect(stageText()).not.toMatch(/\^\{|_\{/)
+  })
+
+  it('LaTeX 写法：上标与加粗同样不露出源码', async () => {
+    await openWith([{ ...TEXT, textFormat: 'latex', text: 'Area m^{2} \\textbf{bold}' }])
+    const stageEl = document.body.querySelector('[data-export-preview-stage]')!
+    expect(stageEl.textContent).toContain('Area m')
+    expect(stageText()).not.toMatch(/\^\{|\\textbf/)
   })
 })
 
@@ -2925,7 +3078,7 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
     expect(ppiSelect()).toBeNull()
     const eps = formatBox('EPS')
     expect(eps.disabled).toBe(true)
-    expect(eps.closest('label')!.title).toContain('EPS 只支持导出单张图')
+    expect(eps.closest('label')!.getAttribute('data-export-format-hint')).toContain('EPS 只支持导出单张图')
     await click(formatBox('TIFF'))
     expect(ppiSelect(), 'TIFF 是位图，分辨率那一行要出现').toBeTruthy()
     // 「这次会写哪几个文件」的预览行已按工作台批次去掉；发出去的格式清单在请求体里判
@@ -2959,7 +3112,7 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
     await setup(9)
     const eps = formatBox('EPS')
     expect(eps.disabled).toBe(true)
-    expect(eps.closest('label')!.title).toContain('没有可重新运行的脚本')
+    expect(eps.closest('label')!.getAttribute('data-export-format-hint')).toContain('没有可重新运行的脚本')
   })
 
   it('勾着 EPS 切回画布：请求里自动不带它，界面把原因摆出来；只勾 EPS 时按钮变灰', async () => {
@@ -3014,6 +3167,47 @@ describe('每张图单独导出：依次发多个作业（后端协议不变）'
     expect(useExportStore.getState().batch?.aggregate?.status).toBe('done')
     expect(document.body.querySelector('[data-export-again]')).toBeTruthy()
     expect(document.body.querySelector('[data-export-finish]')).toBeTruthy()
+  })
+
+  it('QA-WIN-24：store 里留着上一回（整版）的终局，逐张导出的汇总只含本批实际写出的文件，且每张都发出去', async () => {
+    const oldDone = { format: 'pdf', name: 'old.pdf', url: '/exports/old.pdf', bytes: 1, dimensions: { px: null, mm: null }, vector: true, status: 'done', replaced: false, error: null }
+    useExportStore.setState({
+      job: { job_id: 'old', status: 'done', outputs: [oldDone], warnings: [], conflicts: [], export_dir: '/old', error: null } as never,
+      running: false,
+    })
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    await start()
+    await batchDone()
+    expect(bodiesFigureIds()).toEqual(['Fig1.pdf', 'Fig2.pdf'])
+    const agg = useExportStore.getState().batch!.aggregate!
+    expect(agg.outputs.map((o) => o.name)).not.toContain('old.pdf')
+    expect(agg.outputs).toHaveLength(2)
+    expect(agg.export_dir).toBe('/out')
+  })
+
+  it('QA-WIN-24：批收尾后再单张导出，结果块不再读上一批的汇总', async () => {
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    await start()
+    await batchDone()
+    expect(useExportStore.getState().batch?.done).toBe(true)
+    await click(button('再次导出')!)
+    await batchDone()
+    // 再次导出走批：汇总是新的一批（2 件），而不是两批叠加
+    expect(useExportStore.getState().batch!.aggregate!.outputs).toHaveLength(2)
+  })
+
+  it('QA-WIN-24：没有任何错误详情的失败行不露出 {{error}} 占位符', () => {
+    const agg = aggregateBatch({
+      results: [{ job_id: 'x', status: 'failed', outputs: [], warnings: [], conflicts: [], error: null } as never],
+      resultNames: ['Fig1'],
+      failedStarts: [],
+      cancelRequested: false,
+    })
+    const err = agg.outputs[0]!.error!
+    expect(JSON.stringify(err.params)).not.toBe('{}')
+    expect(String(err.params.error ?? err.params.message ?? '')).not.toBe('')
   })
 
   it('每张各自按它自己的原图口径检查与留档：两份请求的 original 各是各的图', async () => {
@@ -3738,6 +3932,34 @@ describe('预览信息完善（PR3）：结果块', () => {
     }
   })
 
+  it('修改后的 .py 有修改没写进去（桌面壳）：还是胶囊，不开结果块，胶囊说条数', async () => {
+    reveal.can = true
+    jobOutputs = [
+      {
+        format: 'script',
+        name: 'Fig1_edited.py',
+        url: '/exports/Fig1_edited.py',
+        bytes: 1,
+        dimensions: { px: null, mm: null },
+        vector: false,
+        status: 'done',
+        replaced: false,
+        error: null,
+        manifest: null,
+        script_report: { written: 1, skipped: [{ gid: 'axes_0', prop: 'aspect', label: '子图 1' }] },
+      },
+    ]
+    try {
+      await setup(9)
+      await click(q('[data-export-start]')!)
+      expect(q('[data-export-result]')).toBeNull()
+      expect(JSON.stringify(useUiStore.getState().status)).toContain('resultScriptSkipped')
+    } finally {
+      reveal.can = null
+      jobOutputs = null
+    }
+  })
+
   it('浏览器里干净地全部成功：结果块照旧在对话框里——产物的打开 / 下载链接只在那里（Codex #1466 P1）', async () => {
     reveal.can = false
     try {
@@ -4049,6 +4271,51 @@ describe('合成一个多页 PDF（#1370，PdfPages 导出）', () => {
     expect(mergeRow()).toBeNull()
   })
 
+  it('默认「准备并运行」完成后（不预先往 byScript 注入）：出现合并勾选；重跑成没有多页 PDF 则消失（QA-MAC-02）', async () => {
+    await setupMerge({ pdfPages: [] }) // 注入一份空账本：此刻没有合并项
+    useScriptRunStore.setState({ byScript: {} } as never)
+    expect(mergeRow()).toBeNull()
+    const report = (over: Record<string, unknown>) =>
+      ({
+        session_version: 1, session_id: 'ps-1', project_id: 'pj', config_revision: 1, observation_seq: 1,
+        target: { kind: 'script', script: 's.py', entry: 'main', asset_id: null, stem: null },
+        phase: 'completed', outcome: { kind: 'succeeded' },
+        facts: { execution_finished: true, figure_captured: true },
+        checks: [], requirements: [], actions: [],
+        provider: { plan_id: 'pp', attempt_id: 'a1', attempts: 1, dependency: null },
+        runtime_input: null, result: null,
+        captured: [{ asset_id: 'Fig1.pdf', stem: 'a' }, { asset_id: 'Fig2.pdf', stem: 'b' }],
+        ...over,
+      }) as unknown as PreparationReport
+    const { setCurrentProjectId } = await import('@/lib/session')
+    setCurrentProjectId('pj')
+    // 完成回调会重取素材清单（真实行为）：回两张属于 s.py 的图
+    vi.mocked(fetchRuntimeAssets).mockResolvedValue({ assets: [RT('Fig1.pdf', 'a'), RT('Fig2.pdf', 'b')] } as never)
+    vi.mocked(createPreparationSession).mockResolvedValueOnce(report({ pdf_pages: [pages()] }))
+    await act(async () => {
+      await useProjectPreparationStore.getState().open(scriptTarget('s.py'))
+    })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 100)) // onCompleted 里的动态 import 与账本写入
+    })
+    expect(mergeRow()).toBeTruthy()
+    expect(mergeRow()!.textContent).toContain('all_samples.pdf')
+    // 重跑覆盖：同一脚本再准备一次，这次没有多页 PDF
+    vi.mocked(createPreparationSession).mockResolvedValueOnce(
+      report({ observation_seq: 2, provider: { plan_id: 'pp', attempt_id: 'a2', attempts: 2, dependency: null } }),
+    )
+    await act(async () => {
+      useProjectPreparationStore.getState().clear()
+      await useProjectPreparationStore.getState().open(scriptTarget('s.py'))
+    })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 100)) // onCompleted 里的动态 import 与账本写入
+    })
+    expect(mergeRow()).toBeNull()
+    useProjectPreparationStore.getState().clear()
+    setCurrentProjectId(null)
+  })
+
   it('取消 PDF 格式：勾选消失（SVG / PNG 没有多页）', async () => {
     await setupMerge()
     await click(formatBox('PDF'))
@@ -4344,5 +4611,105 @@ describe('P3 source evidence before report freeze', () => {
       await new Promise(r => setTimeout(r, 0))
     })
     expect(exportBodies).toEqual([])
+  })
+})
+
+describe('位图太大：改用不超上限的最大一档 dpi 重新导出（对话框里）', () => {
+  afterEach(() => { resetExportState(); initI18n('zh-CN') })
+  const jsonResponse = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  const TOO_BIG = {
+    job_id: 'big', status: 'failed', request: { ppi: 600 }, outputs: [], warnings: [], conflicts: [],
+    error: { code: 'export_raster_too_large', params: { width: 20000, height: 20000, max_pixels: 100_000_000 }, recoverable: true },
+  }
+
+  it('点「改用 300 dpi 导出」：分辨率变成 300，并以 ppi 300 重新发起导出', async () => {
+    writeExportDefaults({ formats: ['png'], dpi: '600', withProof: false, strictInspection: false })
+    await setup(9)
+    const bodies: Array<Record<string, unknown>> = []
+    let first = true
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (/\/api\/export\/start(\?|$)/.test(String(url)) && init?.method === 'POST') {
+        bodies.push(JSON.parse(String(init.body)))
+        if (first) { first = false; return jsonResponse({ ...TOO_BIG, status: 'running', error: null }) }
+        return jsonResponse({ job_id: 'j2', status: 'running', outputs: [], warnings: [], conflicts: [], error: null })
+      }
+      return jsonResponse({})
+    }) as typeof fetch
+    await act(async () => { await runExport({ scope: 'canvas', formats: ['png'], filename: 'Keep name', ppi: 600, documentId: 'd_export', doc: useDocumentStore.getState().doc }) })
+    await act(async () => { applyExportJob(TOO_BIG as never) })
+    const btn = document.querySelector<HTMLButtonElement>('[data-export-lower-dpi]')!
+    expect(btn).not.toBeNull()
+    expect(bodies[0].ppi).toBe(600)
+    await act(async () => { btn.click() })
+    await act(async () => {})
+    expect(bodies.length).toBe(2)
+    expect(bodies[1].ppi).toBe(300)
+    expect(readExportDefaults().dpi).toBe('300')
+  })
+})
+
+describe('按期刊检查时导出初值跟着期刊走（2026-11-11）', () => {
+  const bindActa = async () => {
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('按期刊'), (d) => {
+        d.profile = {
+          id: 'journal-base-v1',
+          journalRef: { id: 'acta-materialia', catalogRev: 1, retrieved: '2026-11-01', label: 'Acta Materialia' },
+          journalSources: {
+            'info.dpi_by_kind': { value: { halftone: 300, 'combination art': 500, 'line art': 1000 }, unset: false },
+            'info.formats_raw': { value: { preferred: ['EPS', 'PDF', 'TIFF', 'JPEG'], accepted: [] }, unset: false },
+          } as never,
+        }
+      })
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+  }
+
+  it('PDF + PNG → PDF + TIFF，分辨率取期刊最高档 1000；PNG 仍能勾，名字后有标记、气泡说期刊没列出', async () => {
+    await setup(9)
+    await bindActa()
+    expect(formatBox('PDF').checked).toBe(true)
+    expect(formatBox('PNG').checked).toBe(false)
+    expect(formatBox('TIFF').checked).toBe(true)
+    expect(formatBox('PNG').disabled).toBe(false)
+    const png = document.body.querySelector('[data-export-formats] [data-export-format="png"]')!
+    expect(png.querySelector('[data-export-format-journal-unlisted]')).not.toBeNull()
+    expect(png.getAttribute('data-export-format-hint')).toContain('Acta Materialia 未列出 PNG')
+    expect(document.body.querySelector('[data-export-format="pdf"] [data-export-format-journal-unlisted]')).toBeNull()
+    expect(document.body.querySelector('[data-export-journal-dpi]')?.getAttribute('aria-label')).toContain('line art 1000')
+    await click(button('开始导出')!)
+    expect(exportBodies.at(-1)!.ppi).toBe(1000)
+  })
+
+  it('同一文档同一期刊只套一次：用户改回 PNG 后再打开不被冲掉', async () => {
+    await setup(9)
+    await bindActa()
+    await click(formatBox('PNG'))
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+    expect(formatBox('PNG').checked).toBe(true)
+  })
+
+  it('「规范」下拉显示期刊名（期刊底不在清单里，此前是空白）', async () => {
+    await setup(9)
+    await bindActa()
+    const trigger = document.body.querySelector('[role="combobox"][aria-label="出版规范"]')
+    expect(trigger?.textContent).toContain('Acta Materialia')
+  })
+
+  it('没按期刊检查：初值与标记照旧', async () => {
+    await setup(9)
+    expect(formatBox('PNG').checked).toBe(true)
+    expect(document.body.querySelector('[data-export-format-journal-unlisted]')).toBeNull()
+    expect(document.body.querySelector('[data-export-journal-dpi]')).toBeNull()
   })
 })

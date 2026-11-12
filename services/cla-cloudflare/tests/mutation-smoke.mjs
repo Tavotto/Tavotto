@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {cpSync,mkdtempSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
+import {cpSync,mkdtempSync,readFileSync,rmSync,symlinkSync,writeFileSync} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
@@ -30,6 +30,10 @@ const cases=[
  ...JSON.parse(readFileSync(new URL('./independent-review-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./inflight-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./ci-wait-mutation-cases.json',import.meta.url),'utf8')),
+ ...JSON.parse(readFileSync(new URL('./signed-pdf-mutation-cases.json',import.meta.url),'utf8')),
+ ...JSON.parse(readFileSync(new URL('./release-mutation-cases.json',import.meta.url),'utf8')),
+ ...JSON.parse(readFileSync(new URL('./exempt-skip-mutation-cases.json',import.meta.url),'utf8')),
+ ...JSON.parse(readFileSync(new URL('./eligibility-mutation-cases.json',import.meta.url),'utf8')),
  {name:'head admission capacity',file:'src/native/automatic.ts',before:'FROM head_requests LIMIT 100))<100',after:'FROM head_requests LIMIT 100))<101',pattern:'head request admission rejects the 101st distinct head',testFile:'tests/automatic.test.mjs'},
  {name:'delivery admission capacity',file:'src/native/automatic.ts',before:'FROM head_deliveries LIMIT 1000))<1000',after:'FROM head_deliveries LIMIT 1000))<1001',pattern:'delivery admission rejects the 1001st record while exact duplicate remains idempotent',testFile:'tests/automatic.test.mjs'},
  {name:'delegated disabled direct operation',file:'src/native/delegation.ts',before:"if(this.s.c.delegatedCountersigningEnabled!==true || !this.s.c.signingEnabled)throw new Rejected('delegated_countersigning_disabled');",after:'// mutation: skip delegation capability guard',pattern:'disabled delegated operation cannot use an existing personally signed packet',testFile:'tests/delegation.test.mjs'},
@@ -62,6 +66,7 @@ const cases=[
 ];
 for(const c of cases){const tmp=mkdtempSync(path.join(os.tmpdir(),'cla-mutation-'));try{
  for(const p of ['src','tests','scripts','migrations','deployment','package.json'])cpSync(path.join(root,p),path.join(tmp,p),{recursive:true});
+ symlinkSync(path.join(root,'node_modules'),path.join(tmp,'node_modules'),'dir');
  const file=path.join(tmp,c.file),before=readFileSync(file,'utf8');assert.equal(before.split(c.before).length-1,1,c.name+' mutation location');
  const changed=before.replace(c.before,c.after);assert.notEqual(changed,before);writeFileSync(file,changed);assert.ok(readFileSync(file,'utf8').includes(c.after));
  const r=c.runner==='python'?spawnSync('python3',[c.testFile,'Migration.'+c.pattern,'-v'],{cwd:tmp,encoding:'utf8'}):

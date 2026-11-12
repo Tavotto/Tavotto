@@ -20,6 +20,13 @@ test('OAuth callback rejects missing and duplicate query fields',async()=>{await
 test('OAuth callback rejects malformed state even when enabled',async()=>{await rejected('/oauth/callback?state=bad&code=x&iss=https%3A%2F%2Fgithub.com%2Flogin%2Foauth','oauth_rejected',{}, {CLA_GITHUB_ENABLED:'true',CLA_OAUTH_ENABLED:'true'});});
 test('OAuth start rejects wrong content type and cross-origin',async()=>{await rejected('/oauth/start','form_rejected',{method:'POST',headers:{origin:c.origin},body:'{}'});await rejected('/oauth/start','origin_rejected',{method:'POST',headers:{'content-type':'application/json',origin:'https://wrong.invalid'},body:'{}'});});
 test('Signing rejects malformed intent before authentication or DB',async()=>{await rejected('/sign','intent_rejected',{method:'POST',headers:{'content-type':'application/json',origin:c.origin},body:JSON.stringify({packet:'x',intent:'bad',role:'holder',evidence:{}})}, {CLA_SIGNING_ENABLED:'true'});});
+test('Release accepts exactly a JSON {packet} and checks the session before DB',async()=>{
+  const post=(body,headers={})=>({method:'POST',headers:{'content-type':'application/json',origin:c.origin,...headers},body});
+  await rejected('/release','form_rejected',post('{}'),{CLA_SIGNING_ENABLED:'true'});await rejected('/release','form_rejected',post('{"packet":"x","intent":"y"}'),{CLA_SIGNING_ENABLED:'true'});
+  await rejected('/release','form_rejected',post('{"packet":"x"}',{'content-type':'text/plain'}),{CLA_SIGNING_ENABLED:'true'});
+  await rejected('/release','signing_disabled',post('{"packet":"x"}'));
+  await rejected('/release','origin_rejected',post('{"packet":"x"}',{origin:'https://wrong.invalid'}),{CLA_SIGNING_ENABLED:'true'});
+});
 test('CI disabled and malformed locators reject without reading sources',async()=>{let reads=0;const read=async()=>{reads++;throw Error('READ_FORBIDDEN');};await assert.rejects(verifyCI({enabled:false},{},read),e=>e.code==='ci_provider_disabled');const cc={...c,enabled:true};await assert.rejects(verifyCI(cc,{repositoryId:707,pr:1,head:'bad'},read),e=>e.code==='ci_locator_invalid');assert.equal(reads,0);});
 
 test('independent HTTP boundaries no outbound or DB calls',()=>{assert.equal(outbound,0);assert.equal(dbCalls,0);});

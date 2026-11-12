@@ -35,11 +35,13 @@ import {
   type HomeVariant,
 } from '@/lib/onboarding/tutorial'
 import { foreignLanguageOf, type ForeignLanguage } from '@/lib/foreignScript'
+import { runNotebook } from '@/lib/notebookRun'
 import {
   createDropArbiter,
   dragHasFiles,
   dropTargetOf,
   folderForPath,
+  isNotebookName,
   scriptForPath,
   type DropTarget,
 } from '@/lib/scriptImport'
@@ -205,9 +207,12 @@ type Importer = ReturnType<typeof useScriptImport>
  * 多张由卡片让用户挑。只开目录不跑的话，同一文件夹里拖进不同脚本打开的都是同一个项目，画布上恢复的是
  * 上次的排版，用户看到的永远是第一张图（2026-10-21 诊断包）。只给目录的入口（目录浏览器、拖文件夹）不运行任何脚本。
  *
- * 拖放（ADR 0092）：macOS 桌面壳旁听系统拖放、交来 canonicalize 过的真实路径
+ * Jupyter 笔记本（`.ipynb`，ADR 0179）与 `.py` 同一条路：打开它所在的文件夹，然后抽成同名 `.py` 再运行
+ * （`runNotebook`，原笔记本不动）；拿不到路径时与 R / MATLAB 一样退回选择器，选中它所在的文件夹。
+ *
+ * 拖放（ADR 0092）：macOS / Windows 桌面壳旁听系统拖放、交来 canonicalize 过的真实路径
  * （`onNativeFileDrop`），`.py` 打开它所在的文件夹、`.R` / `.r` / `.m` 打开所在文件夹并提议“生成可编辑版本”、文件夹直接当项目、别的说不收，
- * 多拖了几个说一句只开了哪个。拿不到路径的宿主（浏览器、其它平台）退回选择器并说清是
+ * 多拖了几个说一句只开了哪个。拿不到路径的宿主（浏览器、Linux、旧 WebView2）退回选择器并说清是
  * 哪个文件。同一次放下两条路都会到，谁先谁后不定，由 `createDropArbiter` 仲裁。
  */
 function useScriptImport(openPath: (path: string) => Promise<boolean>) {
@@ -217,7 +222,7 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
    * 浏览器拖入 R / MATLAB 脚本拿不到路径：记下文件名与语言，等用户在目录浏览器里选好文件夹后走 `openForeign`。
    * 只在这一次选择内有效——取消 / 换别的入口 / 选完（成功或不对）都清掉；`problem` = 选错了文件夹的那句话。
    */
-  const [pendingForeign, setPendingForeign] = useState<{ name: string; language: ForeignLanguage } | null>(null)
+  const [pendingForeign, setPendingForeign] = useState<{ name: string; language: ForeignLanguage | 'notebook' } | null>(null)
   const [pickProblem, setPickProblem] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ tone: 'info' | 'error'; text: string } | null>(null)
   /**
@@ -250,6 +255,14 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
       return ok
     })
 
+  /** 笔记本（ADR 0179）：打开所在文件夹，再抽成同名 .py 运行；`skipped` = 同一次放下里没处理的个数 */
+  const openNotebook = (folder: string, name: string, skipped = 0): Promise<boolean> =>
+    openPath(folder).then((ok) => {
+      // 项目已经打开：后面的话（已生成 / 没成的原因 + 反馈按钮）走通知轨，由 runNotebook 自己说
+      if (ok) void runNotebook({ path: name }, { skipped })
+      return ok
+    })
+
   const openDropped = (drop: NativeFileDrop) => {
     // 壳的事件不经过页面的 onDrop，切换中的闸要在这里再挡一次（与主页其它入口的 disabled 同一个判据）
     if (useProjectStore.getState().switching) return
@@ -258,6 +271,11 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
     if (useOnboardingStore.getState().surface !== 'none') return
     if (drop.kind === 'unsupported') {
       setNotice({ tone: 'error', text: t('home.import.dropNotScript', { name: drop.name }) })
+      return
+    }
+    if (drop.kind === 'notebook') {
+      setNotice(null)
+      void openNotebook(drop.folder, drop.name, drop.ignored)
       return
     }
     if (drop.kind === 'foreign_script') {
@@ -309,7 +327,7 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const choose = (pending: { name: string; language: ForeignLanguage } | null = null) => {
+  const choose = (pending: { name: string; language: ForeignLanguage | 'notebook' } | null = null) => {
     setPendingForeign(pending)
     setPickProblem(null)
     if (isDesktop()) {
@@ -317,7 +335,8 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
         if (path) {
           setNotice(null)
           const foreign = foreignLanguageOf(path)
-          if (foreign) void openForeign(folderForPath(path), path.replace(/^.*[\\/]/, ''), foreign)
+          if (isNotebookName(path)) void openNotebook(folderForPath(path), path.replace(/^.*[\\/]/, ''))
+          else if (foreign) void openForeign(folderForPath(path), path.replace(/^.*[\\/]/, ''), foreign)
           else void openFolder(folderForPath(path), scriptForPath(path))
         }
       })
@@ -342,10 +361,21 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
         setNotice(null)
         void openForeign(target.folder, target.script, target.language)
         return
+      case 'notebook-path':
+        setNotice(null)
+        void openNotebook(target.folder, target.notebook)
+        return
       case 'no-path':
       case 'foreign-no-path':
+      case 'notebook-no-path':
         setNotice({ tone: 'info', text: t('home.import.dropNoPath', { name: target.name, product: PRODUCT_NAME }) })
-        choose(target.kind === 'foreign-no-path' ? { name: target.name, language: target.language } : null)
+        choose(
+          target.kind === 'foreign-no-path'
+            ? { name: target.name, language: target.language }
+            : target.kind === 'notebook-no-path'
+              ? { name: target.name, language: 'notebook' }
+              : null,
+        )
         return
       case 'not-script':
         setNotice({ tone: 'error', text: t('home.import.dropNotScript', { name: target.name }) })
@@ -359,7 +389,7 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
     const target = dropTargetOf(dt)
     if (target.kind === 'none') return
     // 宿主自己给了 file:// 路径就直接用；能拿真实路径的壳里先等它的事件
-    if (native === false || target.kind === 'path') degrade(target)
+    if (native === false || target.kind === 'path' || target.kind === 'notebook-path') degrade(target)
     else arbiter.current!.dom(() => degrade(target))
   }
 
@@ -405,7 +435,8 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
             setPendingForeign(null)
             setPickProblem(null)
             setNotice(null)
-            void openForeign(path, pending.name, pending.language)
+            if (pending.language === 'notebook') void openNotebook(path, pending.name)
+            else void openForeign(path, pending.name, pending.language)
           },
           (e) => setPickProblem(backendErrorText(e)),
         )

@@ -115,13 +115,15 @@ class FakeProvider:
             )
         return self._cache[key]
 
-    def cjk_face(self) -> FakeFace | None:
+    def cjk_face(self, family: str, bold: bool = False) -> FakeFace | None:
+        """CJK 脸随族（ADR 0060 2026-11-04 修订）：serif 与其余族是两张不同的脸（不同身份）。"""
         if not self._cjk:
             return None
-        key = ("cjk", False, False)
+        cjk_family = "cjk-serif" if family == "serif" else "cjk"
+        key = (cjk_family, False, False)
         if key not in self._cache:
             self._cache[key] = FakeFace(
-                _resource("cjk-Regular", "cjk", False, False, kind="cff-cid"),
+                _resource(f"{cjk_family}-Regular", cjk_family, False, False, kind="cff-cid"),
                 dict(_CJK),
                 ascender=0.88,
                 descender=-0.12,

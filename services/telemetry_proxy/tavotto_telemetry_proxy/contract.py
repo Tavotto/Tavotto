@@ -123,6 +123,7 @@ EVENTS: dict[str, dict[str, dict]] = {
             "tavotto_refresh_project",
             "tavotto_session_state",
             "tavotto_close_session",
+            "tavotto_list_journals",
             "other",
         ),
         "outcome": enum("ok", "tool_error", "protocol_error", "internal_error"),

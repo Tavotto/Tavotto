@@ -1,7 +1,7 @@
 """在装好的 Tavotto 桌面版里真点「接入 AI 编辑器」那一行的按钮（交互会话一侧；规则 docs/rules/ci/windows-lab.md「AI 宿主分层」）。
 
     python connect_driver.py --exe <Tavotto.exe> --root <安装目录> --open <给 Tavotto 打开的项目> --host <hostconnect 的宿主 id>
-        --action connect|disconnect --folder <要授权给宿主的项目文件夹> --out-dir <证据目录> --label <名字>
+        --action connect|disconnect --out-dir <证据目录> --label <名字>
 
 由 `gui_host.py` 在 tavotto-lab 的交互会话里拉起（`agent.run_in_gui`），环境（宿主的用户目录、Tavotto 的数据 / 配置目录）
 由 agent 定好。只做界面上的事，**不下结论**（配置文件写对没有、宿主能不能用，由 agent 读文件、跑宿主来判）：
@@ -9,8 +9,7 @@
 1. 起 `Tavotto.exe --open <项目>`，等它的主窗口；WebView2 的调试端口由 HKLM 策略常开在 127.0.0.1:9222
    （与 desktop-window 同一条），连上 sidecar 源上的那个页面；
 2. 真实鼠标事件依次点：左栏「设置」→「AI」分区 → 这个宿主那一行的「接入」（connect）或「⋯」→「断开」（disconnect）；
-3. connect 时第一次接入会弹系统的「选择文件夹」框：把 `--folder` 写进去、按「选择文件夹」（与 WorkBuddy 选工作区同一个
-   `fill_folder_dialog`）；
+3. 点一下就接，不弹选文件夹框（用户 2026-11-04，ADR 0009 §1b）；
 4. 等那一行落定（已接入 / 失败提示 / 接入按钮回来），存证（截图 + 这一组的文字），按 Job 结束整棵进程树。
 
 每一步先写进 `<label>-progress.jsonl` 再做；结果写 `<label>.json`。
@@ -193,12 +192,6 @@ def operate(cdp: D.CDP, sid: str, ns: argparse.Namespace, out_dir: Path, prog) -
                 D._key(cdp, sid, typ, "Enter", "Enter", 13)
             res["disconnect_via"] = "enter"
     prog.step("clicked", action=ns.action)
-    # 第一次接入：按钮先弹系统的选文件夹框（Tauri 的 dialog 插件）；它在不在都要看一眼——已记住文件夹时不弹
-    if ns.action == "connect":
-        diag: dict = {}
-        res["folder_dialog"] = D.fill_folder_dialog(ns.folder, timeout=8, diag=diag)
-        res["folder_dialog_diag"] = diag
-        prog.step("folder_dialog", outcome=res["folder_dialog"], title=diag.get("title"))
     end = time.monotonic() + ns.settle_timeout
     state = row_state(cdp, sid, ns.host)
     time.sleep(1)  # 点下去到按钮变「正在接入…」之间有一帧：别把点之前的样子当成落定
@@ -328,7 +321,6 @@ def main(argv: list[str]) -> int:
     p.add_argument("--open", required=True)
     p.add_argument("--host", required=True)
     p.add_argument("--action", choices=("connect", "disconnect"), required=True)
-    p.add_argument("--folder", required=True)
     p.add_argument("--out-dir", required=True)
     p.add_argument("--label", required=True)
     #: Tavotto 自己的数据 / 配置目录放在这下面（run 的 work）

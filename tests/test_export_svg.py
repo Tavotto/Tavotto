@@ -944,6 +944,19 @@ def test_old_worker_without_the_new_fields_falls_back_to_outlines(project, monke
     assert_svg(body, outputs["svg"], text=False)
 
 
+def test_receipt_says_text_was_outlined_only_when_it_was(project, monkeypatch):
+    """QA-WIN-08：缺文字版（旧 worker / 已存快照）退回轮廓时，回执要带 `text_outlined`；留成 <text> 的不带。"""
+    client, _ = project
+    source = run_script(client)
+    body, outputs = output(client, spec(source, scope="original", strict=True))
+    assert_svg(body, outputs["svg"], text=True)
+    assert outputs["svg"]["manifest"]["text_outlined"] is False
+    monkeypatch.setattr(m, "_supported_export_kwargs", lambda worker, **wanted: {})
+    body, outputs = output(client, spec(source, scope="original", strict=True))
+    assert_svg(body, outputs["svg"], text=False)
+    assert outputs["svg"]["manifest"]["text_outlined"] is True
+
+
 def test_supported_export_kwargs_only_passes_what_the_worker_signature_has():
     class Old:
         def export(self, stem, patches, path, fmt="pdf", dpi=600, *, svg_path=None): ...

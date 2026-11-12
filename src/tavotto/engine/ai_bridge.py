@@ -35,12 +35,14 @@ from pathlib import Path
 
 from . import (
     ai_agents,
+    ai_attachments,
     ai_connections,
     ai_history,
     ai_oauth,
     ai_providers,
     cli_failure,
     config,
+    convertwrite,
     exectrace,
     logsafe,
     managedcli,
@@ -150,6 +152,10 @@ def _finish_session(
     ):  # 被意图取消的由执行入口记 `ok`（两者会竞态）；这里只收"意图到得太晚"的
         ai_history.record_cancel_result(sess["id"], "finished")  # 结果与终态一致，不悬挂
     # 结束时刻：详情的 `ended_ms`（#1098 单独合入时前端靠它判 cancelled 快照是不是终态；这里与 `final` 同时置位）
+    convertwrite.close(str(sess.get("id") or ""))  # 代写工具的令牌随会话终态失效
+    ai_attachments.remove_session(
+        str(sess.get("id") or "")
+    )  # 旧路径的参考图随会话收尾删（候选里的随候选清理）
     sess["ended_ms"] = int(time.time() * 1000)
     sess["final"] = True
     _trace_settle_session(sess, task_result)
@@ -165,6 +171,7 @@ exectrace.register_vocabulary("refresh", ("pending", "ok", "failed", "skipped", 
 exectrace.register_vocabulary("cli_event", ai_agents.CLI_EVENT_TYPES)
 exectrace.register_vocabulary("cli_item", ai_agents.CLI_ITEM_TYPES)
 exectrace.register_vocabulary("endpoint_kind", ai_agents.ENDPOINT_KINDS)
+exectrace.register_vocabulary("sandbox_mode", ai_agents.SANDBOX_MODES)
 
 #: `CliRunFacts.snapshot()` 的键 → `agent_run` span 的 attributes 键（登记在 `exectrace.ATTRIBUTES`）
 _CLI_FACT_ATTRS = {
@@ -187,6 +194,7 @@ _CLI_FACT_ATTRS = {
             "target_touched",
             "target_on_disk",
             "target_bytes",
+            "target_tool_ok",
             "first_event_ms",
             "max_gap_ms",
             "idle_end_ms",
@@ -195,6 +203,7 @@ _CLI_FACT_ATTRS = {
         )
     },
     "endpoint": "endpoint_kind",
+    "sandbox_mode": "cli_sandbox_mode",
 }
 
 
@@ -340,13 +349,13 @@ def _run_facts(agent: str, cwd: str, cand, script: str):
 
 
 def _cli_log_facts(sess: dict) -> tuple:
-    """「AI 会话结束」日志里 CLI 运行事实的部分，**逐项**返回（与模板里 `cli_events=` … `endpoint=` 一一对应，共 19 项）。
+    """「AI 会话结束」日志里 CLI 运行事实的部分，**逐项**返回（与模板里 `cli_events=` … `endpoint=` 一一对应，共 21 项）。
     数字 / 布尔 / None 本来就明文；两个事件类别与接口类别经 `logsafe.known` 对 `ai_agents.CLI_*` 常量集合放行。
     没有事实（内置执行器 / 没起 CLI）→ 数字槽位是 None、码槽位是 `-`。"""
     f = ai_agents.merge_run_facts(sess.get("cli_runs") or [])
     if f is None:
         dash = _code("", _NO_FACT)
-        return (None,) * 13 + (dash, dash, None, None, None, dash)
+        return (None,) * 13 + (dash, dash, None, None, None, dash, None, dash)
     return (
         f["events"],
         f["commands"],
@@ -367,6 +376,8 @@ def _cli_log_facts(sess: dict) -> tuple:
         f["max_gap_ms"],
         f["idle_end_ms"],
         _code(f["endpoint"], ai_agents.ENDPOINT_KINDS),
+        f.get("target_tool_ok"),  # 仅转换会话的 Codex 有；其余 None
+        _code(f.get("sandbox_mode"), ai_agents.SANDBOX_MODES),
     )
 
 
@@ -430,6 +441,8 @@ def _trace_settle_session(sess: dict, task_result: dict | None) -> None:
 
 def _drop_attempt_files(sid: str, snap: Path, cand=None) -> None:
     """这次尝试没有真正起任务（被拒绝）：清掉为它备好的快照 / sidecar / 日志（TAF：连同候选目录），不留半成品。"""
+    convertwrite.close(sid)
+    ai_attachments.remove_session(sid)
     for leftover in (snap, SNAP_DIR / f"{sid}.json", SNAP_DIR / f"{sid}.stderr.log"):
         try:
             leftover.unlink()
@@ -621,6 +634,8 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict, npm_available: bo
         "detection_source": res.source,
         "models": models,
         "default_model": default_model,
+        # 加字段（ADR 0175）：确定只吃文字、看不了参考图的型号；没有就不出这个键，判不出的不列
+        **({"no_vision": nv} if (nv := ai_attachments.text_only_models(models)) else {}),
         # 加字段：与 models 并行的型号详情（显示名 / 说明 / 每型号自己的强度档位）
         "model_details": [
             {
@@ -637,6 +652,12 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict, npm_available: bo
         "efforts": list(caps.efforts) if effort_ok else [],
         "default_effort": caps.default_effort if effort_ok else None,
         "endpoint": ai_providers.public(endpoint) if endpoint else None,
+        # 加字段：模型清单来自比这份 CLI 新的版本（新型号可能用不了）时给出怎么更新；否则 None
+        "cli_update": (
+            None
+            if not installed or endpoint_backed or models_overridden
+            else cli_update_plan(agent, res)
+        ),
         "active_endpoint_id": (ai_providers.active_id(agent.id) if agent.endpoint_family else None),
         "features": {
             "third_party_endpoints": bool(agent.endpoint_family),
@@ -796,6 +817,88 @@ def set_agent_enabled(agent_id: str, enabled: bool) -> dict:
     config.set_ai_agent_settings(agent_id, {"enabled": bool(enabled)})
     invalidate_capabilities()
     return capabilities(refresh=True)
+
+
+# ---------------------------------------------------------------------------
+# CLI 比模型清单旧（2026-11-04 用户反馈：Codex 桌面版先升级、刷新了共用的 models_cache.json，
+# Tavotto 启动的那份旧 CLI 选到新型号就 404）
+# ---------------------------------------------------------------------------
+#: 怎么更新的闭集：switch = 本机已有一份够新的同名 CLI，改用它；install = 应用内托管安装的锁版本够新，装一份；
+#: manual = 两样都没有，只能用户自己更新（前端按 `source` 给一句怎么做）
+CLI_UPDATE_ACTIONS = ("switch", "install", "manual")
+
+
+def _newer_candidate(
+    agent: ai_agents.AgentDefinition, res: ai_agents.Resolution, wanted: str
+) -> str | None:
+    """候选里第一个版本不低于 `wanted`、且不是当前那份的可执行文件。只在已经判出「旧了」时才跑（多几次 `--version`）。"""
+    for cand in ai_agents.candidates(agent):
+        if cand.path == res.path or (res.argv and cand.path in res.argv):
+            continue
+        argv = ai_agents.resolve_shim(cand.path) or [cand.path]
+        if argv[-1] == res.path:
+            continue
+        got = ai_agents.probe_version(argv)
+        if got is not None and not ai_agents.older_than(got, wanted):
+            return cand.path
+    return None
+
+
+def _managed_lock_version(agent_id: str) -> str | None:
+    try:
+        cli = managedcli.cli_for(agent_id)
+    except (OSError, ValueError, KeyError):
+        return None
+    return cli.version if cli else None
+
+
+def _cli_update_target(
+    agent: ai_agents.AgentDefinition, res: ai_agents.Resolution
+) -> tuple[dict, str | None] | None:
+    """→ (公开的计划, switch 时要改用的路径)。CLI 不比模型清单旧 / 判不出 → None。"""
+    seen = agent.catalog_client_version()
+    if not ai_agents.older_than(res.version, seen):
+        return None
+    cur = ai_agents.version_key(res.version)
+    assert seen is not None and cur is not None
+    plan = {"current": ".".join(map(str, cur)), "seen": seen, "source": res.source}
+    # 用户自己指定了路径（custom）：那是他选的那份，不替他换成别的文件；候选里 custom 排在托管安装前面，
+    # 装托管版也顶不掉它，下一次还是 404——所以只给 manual
+    if res.source == "custom":
+        return {**plan, "action": "manual"}, None
+    newer = _newer_candidate(agent, res, seen)
+    if newer:
+        return {**plan, "action": "switch"}, newer
+    lock = _managed_lock_version(agent.id)
+    # 锁版本要追得上模型清单：装一份比清单还旧的，新型号照样用不了
+    if agent.install_spec and lock and not ai_agents.older_than(lock, seen):
+        return {**plan, "action": "install"}, None
+    return {**plan, "action": "manual"}, None
+
+
+def cli_update_plan(agent: ai_agents.AgentDefinition, res: ai_agents.Resolution) -> dict | None:
+    """capabilities 的 `cli_update`：`{current, seen, source, action}`（action ∈ `CLI_UPDATE_ACTIONS`），不旧 → None。
+    路径不公开——`start_cli_update` 自己再算一遍。"""
+    got = _cli_update_target(agent, res)
+    return got[0] if got else None
+
+
+def start_cli_update(agent_id: str) -> dict:
+    """「更新 Codex」：按 `cli_update_plan` 的结论做。switch = 设自定义路径（与设置页同一个入口、同一套验证）后回
+    `{"status": "done"}`；install = 应用内托管安装（回安装进度，前端轮询 `GET …/install`）；manual / 已经不旧 = 409。
+    请求体里不接受任何路径或包名。"""
+    agent = require_agent(agent_id)
+    res = ai_agents.resolve(agent)
+    got = _cli_update_target(agent, res) if res.argv else None
+    if got is None:
+        raise AgentError("ai_cli_update_unavailable", {"agent": agent_id})
+    plan, newer = got
+    if plan["action"] == "switch" and newer:
+        set_agent_path_override(agent_id, newer)
+        return {"status": "done", "via": "switch"}
+    if plan["action"] == "install":
+        return start_install(agent_id)
+    raise AgentError("ai_cli_update_unavailable", {"agent": agent_id})
 
 
 def set_agent_path_override(agent_id: str, path: str | None) -> dict:
@@ -1418,6 +1521,10 @@ def _cmd(
     resume_output_sha256: str = "",
     checks_used: int = 0,
     check_ipc: bool = False,
+    convert_mcp: ai_agents.ConvertMcp | None = None,
+    convert_task: bool = False,
+    convert_unsandboxed: bool = False,
+    read_dirs: tuple[str, ...] = (),
 ) -> tuple[list[str], dict[str, str]]:
     """→ (命令行, 需要追加到环境的变量)。第三方接口全部走这两样注入，
     绝不改写用户自己的 ~/.claude 或 ~/.codex 配置。
@@ -1461,9 +1568,44 @@ def _cmd(
             effort=effort,
             endpoint_args=list(extra_args),
             endpoint_env=dict(extra_env),
+            convert_mcp=convert_mcp,
+            convert_task=convert_task,
+            convert_unsandboxed=convert_unsandboxed,
+            read_dirs=read_dirs,
         )
     )
     return list(spec.argv), dict(spec.env)
+
+
+def _convert_write_grant(agent: str, sid: str, cand):
+    """转换会话里由 Tavotto 代写目标文件（`convertwrite`）：适配器声明支持（`convert_write_tool`）才开。
+    → (`ConvertMcp` 或 None, 令牌或 "")。令牌只放进子进程环境（调用方），不进 argv、不进日志。"""
+    adapter = ai_agents.get_agent(agent)
+    if adapter is None or not adapter.convert_write_tool or cand is None:
+        return None, ""
+    if not hasattr(cand, "target") or not hasattr(cand, "extras"):
+        return None, ""
+    grant = convertwrite.open_grant(sid, cand.target, cand.extras)
+    mcp = ai_agents.ConvertMcp(
+        command=[
+            *ai_agents.tavotto_launcher(),
+            "fix-mcp",
+            "--url",
+            convertwrite.callback_url(),
+            "--convert-id",
+            sid,
+        ],
+        name=convertwrite.CONVERT_SERVER_NAME,
+        token_env=convertwrite.CONVERT_TOKEN_ENV,
+        tool_timeout_s=120,
+    )
+    return mcp, grant.token
+
+
+def _mark_write_tool(agent: str, cand) -> None:
+    """提示词要不要讲 Tavotto 的代写工具：由适配器声明（`prompt_for` 读 `cand.extras["write_tool"]`）。"""
+    adapter = ai_agents.get_agent(agent)
+    cand.extras["write_tool"] = bool(adapter is not None and adapter.convert_write_tool)
 
 
 def fix_cli_agent() -> str | None:
@@ -1594,6 +1736,34 @@ def _endpoint_backed(agent_id: str, endpoint_id: str | None) -> bool:
     return bool(args or env)
 
 
+def _attach_attachments(sid: str, cand, ids) -> tuple[str, tuple[str, ...], int]:
+    """把用户附的文件放进这次任务的工作目录 → (提示词里追加的一段, CLI 需要额外放行读取的目录, 文件数)。
+
+    有候选工作区（TAF / 内置执行器）：文件在 `<候选>/_attachments/`，提示词给相对路径（Agent 的 cwd 就是候选）；
+    没有（外部 CLI 原地改）：文件在数据目录的会话目录里，提示词给绝对路径、Claude 另加 `--add-dir`。**两条都不写用户项目目录。**
+    暂存里找不到的文件静默跳过，一个都没有就等于没附。"""
+    if not ids:
+        return "", (), 0
+    from . import ai_prompt_pack
+
+    if cand is not None:
+        dest = Path(cand.dir) / ai_attachments.ATTACHMENTS_DIRNAME
+        placed = ai_attachments.materialize(ids, dest)
+        shown = [f"{ai_attachments.ATTACHMENTS_DIRNAME}/{x['name']}" for x in placed]
+        dirs: tuple[str, ...] = ()
+    else:
+        ai_attachments.prune_sessions()
+        dest = ai_attachments.session_dir(sid)
+        placed = ai_attachments.materialize(ids, dest)
+        shown = [str(dest / x["name"]) for x in placed]
+        dirs = (str(dest),) if placed else ()
+    if not placed:
+        return "", (), 0
+    images = [p for p, x in zip(shown, placed) if x["kind"] == "image"]
+    files = [p for p, x in zip(shown, placed) if x["kind"] != "image"]
+    return ai_prompt_pack.attachments_note(images, files), dirs, len(placed)
+
+
 def run(
     agent: str,
     script: str,
@@ -1608,6 +1778,7 @@ def run(
     client_request_id: str | None = None,
     task_hooks: dict | None = None,
     convert: dict | None = None,
+    attachments: list[str] | None = None,
 ) -> str:
     """启动一次 AI 修改任务，返回 session id。事件经 on_event(name, data) 回调。
 
@@ -1626,6 +1797,10 @@ def run(
     `convert_to_editable` 任务：Agent 在候选工作区里**新建**一份 Matplotlib 版脚本，`script` 只读（字节不动）；过了检查的
     候选留存待采用（`ai_convert.adopt`），本函数从不写项目文件。此时 `task_hooks` 只用 `runner`（校验运行）。**不看** TAF
     实验开关（该任务默认开，逃生口是 `ai_convert.enabled()`）。
+
+    `attachments`（ADR 0175）：用户在输入框里附的文件的暂存 id（`ai_attachments.stage` 给的）。给了就把文件移进这次任务的工作目录
+    （候选里的 `_attachments/`，旧路径是数据目录里的会话目录——绝不进用户项目），提示词末尾追加一段说明；不给时一切逐字节不变。
+    只对改图任务有效，转换任务忽略。
 
     `client_request_id`：前端点发送时生成的 UUID。同 (项目, id) 已登记过就抛 `DuplicateRequest`、
     **不 spawn**——「任何操作都不得让同一条 AI 修改被无意执行两次」。去重先于忙检查：
@@ -1737,6 +1912,7 @@ def run(
             try:
                 ai_convert.ensure_registered()
                 cand = resumed["cand"]
+                _mark_write_tool(agent, cand)
                 convert_prompt = ai_convert.prompt_for(cand) + "\n\n" + resumed["note"]
                 envelope = ai_convert.envelope_for(
                     agent=agent,
@@ -1784,6 +1960,7 @@ def run(
                     "effort": effort,
                     "endpoint_id": endpoint_id,
                 }
+                _mark_write_tool(agent, cand)
                 convert_prompt = ai_convert.prompt_for(cand)
                 envelope = ai_convert.envelope_for(
                     agent=agent,
@@ -1845,6 +2022,12 @@ def run(
             )
             if cand is not None:
                 prompt += "\n\n" + ai_figure_edit.prompt_note(cand)
+        # 用户附的参考图（ADR 0175）：不附图时这一段一行都不执行
+        ref_note, ref_dirs, attachment_count = _attach_attachments(
+            sid, cand if convert is None else None, attachments
+        )
+        if ref_note:
+            prompt += "\n\n" + ref_note
         stderr_log = open(SNAP_DIR / f"{sid}.stderr.log", "wb", buffering=0)
         endpoint = ai_providers.resolve(agent, endpoint_id)
         builtin = agent == ai_agents.BUILTIN_ID
@@ -1877,6 +2060,18 @@ def run(
             return json.dumps({"prompt": text}) + "\n" if builtin_ipc else text
 
         stdin_text = stdin_for(prompt)
+        # 转换会话：目标文件由 Tavotto 经 MCP 工具代写（Codex，所有平台；`convertwrite.py`）。令牌只进子进程环境
+        convert_mcp, convert_token = (
+            _convert_write_grant(agent, sid, cand) if convert is not None else (None, "")
+        )
+        if convert_mcp is not None:
+            cmd_kw["convert_mcp"] = convert_mcp
+        if convert is not None:
+            # 是否转换任务与设置值**显式**传给适配器（它不读全局配置）；是否真生效（仅 Windows）由适配器判
+            cmd_kw["convert_task"] = True
+            cmd_kw["convert_unsandboxed"] = config.convert_unsandboxed_windows()
+        if ref_dirs:
+            cmd_kw["read_dirs"] = ref_dirs
         cmd, extra_env = _cmd(
             agent, prompt, agent_cwd, model=model, effort=effort, endpoint=endpoint, **cmd_kw
         )
@@ -1890,6 +2085,8 @@ def run(
         )
         # cmd[0] 是 CLI 可执行（或 node），末尾是提示词——PATH 增强按 cmd[0] 算
         env = _spawn_env(cmd[0], extra_env)
+        if convert_token:
+            env[convertwrite.CONVERT_TOKEN_ENV] = convert_token
         # **先把幂等记录写进库、再启动进程**：写库失败（SQLite 被锁 / 满 / 损坏）就根本不 spawn，
         # 调用方拿到的是「明确没执行」。反过来先 spawn 再写库，写库一抛，CLI 已经在改脚本、前端却当它
         # 被拒绝而换新 id 重试——同一条修改执行两次（Codex #1098）。
@@ -1912,6 +2109,7 @@ def run(
                     "prompt": user_prompt,
                     "snapshot_path": str(snap),
                     "client_request_id": client_request_id,
+                    "attachment_count": attachment_count,
                     **(
                         {
                             "task_type": envelope.task_type,
@@ -2007,6 +2205,10 @@ def run(
         }
         if convert is not None:
             sess["kind"] = "convert"
+        if attachment_count:
+            sess["attachment_count"] = (
+                attachment_count  # 对外只给张数（`SESSION_DTO_KEYS`）；图片本身不进会话 / 历史
+            )
         if task_run is not None:
             #: 对外：任务类型与结局摘要（收尾时补全）；对内：候选与 Task Core 的运行对象（`SESSION_INTERNAL_KEYS`）
             sess["task"] = {"task_type": envelope.task_type, "outcome": None}
@@ -2060,7 +2262,12 @@ def run(
     agent_runs = [0]
 
     def _consume():
-        st: dict = {}
+        # `endpoint_backed`：这次是不是真的走第三方接口（判据问注入方自己，与 `_agent_caps` 同一条）——适配器据此决定
+        # 某些失败码算不算数（Codex 的 404：官方登录下是「CLI 太旧不认识型号」，第三方接口下多半是地址错）
+        st: dict = {
+            "endpoint_backed": bool(endpoint)
+            and any(ai_providers.spawn_overrides(agent, endpoint, model))
+        }
         sess.pop("runner_error", None)
         sess.pop("runner_detail", None)
         sess.pop("failure_category", None)
@@ -2138,6 +2345,11 @@ def run(
             if run_facts is not None:
                 try:
                     snapshot = run_facts.snapshot(_is_relay(endpoint))
+                    if (
+                        convert_mcp is not None
+                    ):  # Tavotto 代写目标的工具是否成功写过（权威事实在 `convertwrite`，不看事件）
+                        snapshot["target_tool_ok"] = convertwrite.ok(sid)
+                    snapshot["sandbox_mode"] = ai_agents.sandbox_mode_of(cmd)
                     sess.setdefault("cli_runs", []).append(snapshot)
                     if cand is not None and hasattr(cand, "extras"):
                         # 写入被拒的失败码要读它（`ai_convert.write_denied`）：提交前检查在进程结束之后才跑
@@ -2184,7 +2396,10 @@ def run(
             sess["proc"] = _popen(
                 cmd2,
                 agent_cwd,
-                _spawn_env(cmd2[0], extra2),
+                {
+                    **_spawn_env(cmd2[0], extra2),
+                    **({convertwrite.CONVERT_TOKEN_ENV: convert_token} if convert_token else {}),
+                },
                 log_state["log"],
                 stdin_for(again),
                 builtin_ipc,
@@ -2239,6 +2454,14 @@ def run(
                 _settle_task(sess, task)
             elif sess["status"] == "running":
                 sess["status"] = "done" if proc.returncode == 0 else "failed"
+                # 没走 TAF 时失败码也要随终态出去（适配器从结构化字段归出来的 `runner_error`）：否则 CLI 的
+                # 凭据失效 / 额度 / 型号用不了到了失败卡上只剩一个「失败」，主按钮也对不上
+                if (
+                    sess["status"] == "failed"
+                    and sess.get("runner_error")
+                    and not sess.get("error")
+                ):
+                    sess["error"] = sess["runner_error"]
             # 文件变了就接统一刷新——**不看 status**：CLI 超时 / 非零退出但文件
             # 已经改了，磁盘上的事实就是改了，watcher 迟早也会看到它。刷新在
             # `ai.done` 之前做完，前端收到那条事件时后端的注册表已经是新的。
@@ -2253,7 +2476,7 @@ def run(
                 "cli_events=%s cli_cmds=%s cli_cmds_failed=%s cli_cmds_declined=%s cli_cmds_open=%s "
                 "cli_file_changes=%s cli_files_in=%s cli_files_out=%s cli_target_touched=%s cli_target_on_disk=%s cli_target_bytes=%s "
                 "cli_errors=%s cli_turns_failed=%s cli_last_event=%s cli_last_item=%s "
-                "cli_first_event_ms=%s cli_max_gap_ms=%s cli_idle_end_ms=%s endpoint=%s",
+                "cli_first_event_ms=%s cli_max_gap_ms=%s cli_idle_end_ms=%s endpoint=%s cli_target_tool_ok=%s sandbox_mode=%s",
                 agent,
                 script,
                 sess["status"],
@@ -3002,6 +3225,7 @@ SESSION_DTO_KEYS: tuple[str, ...] = (
     "task",
     "cancel_requested",
     "rev",
+    "attachment_count",
 )
 #: **终态字段清单**：会话结束时一起确定、落进历史库的那一组。服务重启后「sidecar 合并历史」的路径用它整体覆盖 sidecar，
 #: 不再逐个字段抄（漏抄一个就会出现「final 为 true 但 error 是空」这类分叉）。新增终态字段时只改这里。

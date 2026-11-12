@@ -406,6 +406,23 @@ def gui_dialogs(plan: preparation.PreparationPlan) -> dict | None:
     return found if found["status"] == "found" else None
 
 
+#: 固定解释器卡上最多列几个缺的模块名（其余只在计划里）
+_PINNED_MISSING_LIMIT = 8
+
+
+def _pinned_missing(plan: preparation.PreparationPlan) -> dict:
+    """被固定的解释器里此刻缺的 import 名（QA-WIN-12）：计划的 `missing` 是按**会跑脚本的那个解释器**量的
+    （`deprepair._facts_for`），固定时就是被固定的那个。只给 import 名（闭为合法标识符、有上限），放在要用户答的
+    requirement 载荷里（本地报告），**不进检查项的 detail**——诊断投影不带包名。没有就不出这个键。"""
+    rows = (((plan.dependency_preparation or {}).get("plan") or {}).get("missing")) or ()
+    names: list[str] = []
+    for row in rows:
+        name = str((row or {}).get("import_name") or "")
+        if name.isidentifier() and name not in names:
+            names.append(name)
+    return {"missing": names[:_PINNED_MISSING_LIMIT]} if names else {}
+
+
 def requirements_of(
     plan: preparation.PreparationPlan,
     checks: list[dict],
@@ -488,7 +505,10 @@ def requirements_of(
                 "id": "dependencies",
                 "kind": "dependency_pinned",
                 "code": _PINNED_CODE,
-                "payload": dict((deps.get("detail") or {}).get("pinned") or {}),
+                "payload": {
+                    **dict((deps.get("detail") or {}).get("pinned") or {}),
+                    **_pinned_missing(plan),
+                },
             }
         )
     if runtime_missing is not None:
@@ -3036,6 +3056,15 @@ class SessionService:
                     if result is not None and derived["outcome"]["kind"] == OUTCOME_SUCCEEDED
                     else []
                 ),
+                # 脚本用 `PdfPages` 写进多页 PDF 的图的账（与 `/api/registry/probe` 的 `pdf_pages` 同一份、同一口径，#1370）：
+                # 导出窗口据此提供「合并为多页 PDF」。只在成功时给、没有时不出现（一个字节都不多）
+                **(
+                    {"pdf_pages": [dict(p) for p in (result.captured or {}).get("pdf_pages") or ()]}
+                    if result is not None
+                    and derived["outcome"]["kind"] == OUTCOME_SUCCEEDED
+                    and (result.captured or {}).get("pdf_pages")
+                    else {}
+                ),
                 # T09b：这次（无参数）运行把哪些此前登记在这个脚本名下的图名替换掉了（T03 已知缺口：注册表按脚本整条替换）。
                 # 只是图名（与 `captured[].stem` 同一口径，项目相对的公开名字），不含参数；界面据此给「用原参数再运行」的提示
                 "unlinked_stems": (
@@ -3177,6 +3206,9 @@ class SessionService:
         ):
             return None
         if derived["phase"] in (PHASE_RUNNING, PHASE_AWAITING_RUNTIME_INPUT):
+            return None
+        if (no_figure_hint or {}).get("kind") == rasterhint.KIND_COPIED:
+            # 只复制现成图片的脚本：本来就不画图，没有可修的（AI / 转写都白跑一轮），卡片只指向输出的图片（TVD-537W）
             return None
         code = str(
             outcome.get("code") or ((result.error or {}).get("code") if result else "") or ""

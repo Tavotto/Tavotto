@@ -49,6 +49,25 @@ from tavotto.engine import (
 )
 
 
+def test_windows_file_drop_reads_the_string_message_without_json_double_encoding():
+    """0.21.0 拖 .py 仍弹选择器：发送端必须能经过 wry 的字符串消息读取。
+
+    前端行为由 desktopDropForwarder.test.ts 验；这里看护 COM 接收边界：
+    WebMessageAsJson 会给字符串再包一层 JSON 引号，导致合法标记被当成非拖放消息。
+    真窗口路径与选择器结果仍由 desktop_windows/test_home_drop.py 验，不把此结构检查当真机证据。
+    """
+    from tests.support.rustsrc import rust_code
+
+    root = Path(__file__).resolve().parents[1]
+    source = root / "src-tauri" / "src" / "native_drop_win.rs"
+    code = rust_code(source.read_text(encoding="utf-8"))
+    readers = re.findall(r"\bargs\s*\.\s*(TryGetWebMessageAsString|WebMessageAsJson)\s*\(", code)
+    assert readers == ["TryGetWebMessageAsString"], (
+        "页面发 JSON 字符串以通过 wry；原生旁听必须读原字符串，不能再次 JSON 编码",
+        readers,
+    )
+
+
 @pytest.fixture
 def client():
     m.app.config["TESTING"] = True
@@ -2514,6 +2533,16 @@ def _byte_compared_generated_files() -> list[str]:
         # U06 的批准字体 allowlist：report.json 记它的 sha256、evidence 用例逐字节核。人写的 JSON，
         # 与 CLA 正文同一类——u06-rendercore.yml windows 腿 CRLF 检出后哈希对不上红过一次。
         "src/tavotto/rendercore/fonts_allowlist.json",
+        # 运行时锁：research cohort 记它的 sha256、load_cohort() 逐字节核（#1682 windows 片 4）
+        "packaging/runtime-lock.json",
+        # 研究语料的科学环境配方：research-manifest 记 sha256、check_project_contract() 逐字节核。
+        # 按目录现读而不是手抄：新增一个 S0 case 时，没在 .gitattributes 登记就在这里红（#1682 windows 片 4）
+        *sorted(
+            p.relative_to(Path(__file__).resolve().parent.parent).as_posix()
+            for p in (Path(__file__).resolve().parent / "compat" / "research-environments").glob(
+                "*.txt"
+            )
+        ),
         # Codex 插件的启动器对（#266）：POSIX 半边的 shebang 遇 CRLF 即失效；Windows 半边逐字节稳定
         "codex-plugin/mcp/launch",
         "codex-plugin/mcp/launch.cmd",
@@ -4065,6 +4094,67 @@ def test_codex_on_windows_runs_with_unelevated_sandbox(monkeypatch):
         assert 'windows.sandbox="unelevated"' in argv
 
 
+def test_codex_convert_on_windows_has_unelevated_sandbox_and_tavotto_write_tool(monkeypatch):
+    """TVD-BCZ0（Lab run 20261102T055146Z-8fc66e）：unelevated 沙盒里 Codex 自带的写文件工具一律 `Failed to write file`，
+    所以 Windows 上的转换 argv 必须同时带 `windows.sandbox="unelevated"`（命令能跑）与 Tavotto 代写目标的 MCP 注入
+    （目标文件由沙盒外的 Tavotto 写）；令牌只以环境变量名出现。"""
+    from tavotto.engine import ai_agents, convertwrite
+
+    monkeypatch.setattr(ai_agents.os, "name", "nt")
+    mcp = ai_agents.ConvertMcp(
+        command=[
+            "C:\\T\\tavotto-cli.exe",
+            "fix-mcp",
+            "--url",
+            "http://127.0.0.1:5089",
+            "--convert-id",
+            "s1",
+        ],
+        name=convertwrite.CONVERT_SERVER_NAME,
+        token_env=convertwrite.CONVERT_TOKEN_ENV,
+    )
+    argv = (
+        ai_agents.CodexAgent()
+        .build_command(
+            ai_agents.RunContext(argv=["codex"], prompt="p", cwd="C:\\w", convert_mcp=mcp)
+        )
+        .argv
+    )
+    assert 'windows.sandbox="unelevated"' in argv
+    assert any(a.startswith("mcp_servers.tavotto_convert.command=") for a in argv)
+    assert 'mcp_servers.tavotto_convert.env_vars=["TAVOTTO_CONVERT_TOKEN"]' in argv
+    assert 'mcp_servers.tavotto_convert.default_tools_approval_mode="approve"' in argv
+
+
+def test_codex_windows_convert_switch_picks_danger_full_access_or_unelevated(monkeypatch):
+    """TVD-BCZ0 方案 B：设置里的「转换时允许 AI 不受沙盒限制」打开时，Windows 转换 argv 是 `--sandbox danger-full-access`
+    （不再带 `windows.sandbox` 覆盖）；关闭（默认）时仍是 workspace-write + unelevated。改图 / 修复会话不受开关影响。"""
+    from tavotto.engine import ai_agents
+
+    monkeypatch.setattr(ai_agents.os, "name", "nt")
+
+    def argv(on):
+        return (
+            ai_agents.CodexAgent()
+            .build_command(
+                ai_agents.RunContext(
+                    argv=["codex"],
+                    prompt="p",
+                    cwd="C:\\w",
+                    convert_task=True,
+                    convert_unsandboxed=on,
+                )
+            )
+            .argv
+        )
+
+    on, off = argv(True), argv(False)
+    assert on[on.index("--sandbox") + 1] == "danger-full-access"
+    assert not any("windows.sandbox" in a for a in on)
+    assert off[off.index("--sandbox") + 1] == "workspace-write"
+    assert 'windows.sandbox="unelevated"' in off
+
+
 def _pip_says(env, target):
     """真起一个 pip 进程，让它在输出里报出带中文的路径；按 Tavotto 的口径（UTF-8、坏字节替换）解码。"""
     argv = [sys.executable, "-m", "pip", "install", "--no-index", "--no-deps", str(target)]
@@ -4128,3 +4218,261 @@ def test_convert_candidate_workspace_survives_paths_over_260_chars(tmp_path, mon
     finally:
         ai_convert.remove_dir(cand.dir)
         assert not os.path.exists(longpath.extended(cand.dir))
+
+
+# --- AI 修复 run_command：Windows 没有沙盒，默认调用直接走第②档的卡（TVD-V7R4，ADR 0149 §七 修订 2026-11-06）
+# 判据的主语：真 Windows 上**命令留下的标记文件**，不看工具返回值；卡片由替身 asker 点「是」。
+def _windows_fix_ctx(tmp_path, monkeypatch):
+    from tests.test_fixtools_change import change_ctx
+
+    home = tmp_path / "home"
+    proj = home / "proj"
+    proj.mkdir(parents=True)
+    cfg, data = tmp_path / "cfg", tmp_path / "data"
+    cfg.mkdir()
+    data.mkdir()
+    for name, value in (
+        ("USERPROFILE", home),
+        ("HOME", home),
+        ("TAVOTTO_CONFIG_DIR", cfg),
+        ("TAVOTTO_DATA_DIR", data),
+    ):
+        monkeypatch.setenv(name, str(value))
+    (cfg / "config.json").write_bytes(b'{"ai": {"providers": []}}')
+    box = type("Box", (), {"home": home, "proj": proj, "cfg": cfg, "data": data, "tmp": tmp_path})
+    return change_ctx(box)
+
+
+def _run_command(ctx, argv):
+    from tests.test_fixtools import call
+
+    return call(ctx, "run_command", {"argv": argv, "timeout_s": 60})
+
+
+@pytest.mark.skipif(os.name != "nt", reason="真 Windows 才有 Job Object 与 .bat 语义")
+def test_ai_command_runs_after_the_card_and_its_background_child_cannot_outlive_it(
+    tmp_path, monkeypatch
+):
+    ctx = _windows_fix_ctx(tmp_path, monkeypatch)
+    ran, late = tmp_path / "ran.txt", tmp_path / "late.txt"
+    child = f"import time; time.sleep(6); open({str(late)!r}, 'w').write('x')"
+    code = (
+        "import subprocess, sys\n"
+        f"subprocess.Popen([sys.executable, '-c', {child!r}])\n"
+        f"open({str(ran)!r}, 'w').write('x')\n"
+    )
+    r = _run_command(ctx, [sys.executable, "-c", code])
+    assert not r.is_error, r.content
+    assert ran.exists() and ctx.asker.cards[0]["danger"] is True
+    assert "processes_left" not in r.content
+    time.sleep(8)
+    assert not late.exists()  # 后台孙进程被 Job Object 收掉，绕不过核对与放锁
+
+
+@pytest.mark.skipif(os.name != "nt", reason="真 Windows 才有 .bat 语义")
+@pytest.mark.parametrize("spelling", ["full_path", "bare_name_on_path"])
+def test_ai_command_starts_a_conda_style_batch_file(tmp_path, monkeypatch, spelling):
+    """Anaconda 的 condabin 里只有 conda.bat，模型写 `conda install …` 时要真能起来。"""
+    ctx = _windows_fix_ctx(tmp_path, monkeypatch)
+    tools = tmp_path / "cond abin"  # 路径带空格：批处理走 cmd.exe，引号要对
+    tools.mkdir()
+    out = tmp_path / "bat-ran.txt"
+    (tools / "fakeconda.bat").write_text(f'@echo off\r\necho %1> "{out}"\r\n', encoding="ascii")
+    monkeypatch.setenv("PATH", str(tools) + os.pathsep + os.environ["PATH"])
+    program = str(tools / "fakeconda.bat") if spelling == "full_path" else "fakeconda"
+    r = _run_command(ctx, [program, "install"])
+    assert not r.is_error, r.content
+    assert out.read_text(encoding="ascii").strip() == "install"
+    assert "fakeconda.bat" in ctx.asker.cards[0]["command"].lower()  # 卡上是实际执行的全路径
+
+
+@pytest.mark.skipif(os.name != "nt", reason="解析只在 Windows 上做")
+@pytest.mark.parametrize("named", [False, True], ids=["base", "named"])
+def test_ai_command_bare_conda_uses_the_install_that_owns_the_environment(
+    tmp_path, monkeypatch, named
+):
+    """TVD-V7R4：未枚举环境，PATH 没有 conda；从应用真实上下文定位所属安装并真正执行。"""
+    from types import SimpleNamespace
+
+    from tavotto import app as appmod
+    from tavotto.engine.fixtools import command
+
+    ctx = _windows_fix_ctx(tmp_path, monkeypatch)
+    ctx.environments.clear()
+    root = ctx.home / "miniconda3"
+    prefix = root / "envs" / "research" if named else root
+    prefix.mkdir(parents=True)
+    (prefix / "python.exe").touch()  # 环境解释器只用来分类；命令与 freeze 各有执行器
+    (prefix / "conda-meta").mkdir()
+    (root / "conda-meta").mkdir(exist_ok=True)
+    conda = root / "Scripts" / "conda.exe"
+    conda.parent.mkdir()
+    # 用真实 Python 充当 conda 可执行文件；保留其原标准库与 DLL 来源，不装 Conda、不联网。
+    base = Path(sys.base_prefix)
+    shutil.copy2(base / "python.exe", conda)
+    for dll in base.glob("python*.dll"):
+        shutil.copy2(dll, conda.parent / dll.name)
+    monkeypatch.setenv("PYTHONHOME", str(base))
+    monkeypatch.setenv("PATH", str(Path(os.environ["SystemRoot"]) / "System32"))
+    monkeypatch.delenv("CONDA_EXE", raising=False)
+    facts = appmod._fix_session_env(
+        SimpleNamespace(
+            plan=SimpleNamespace(
+                interpreter=str(prefix / "python.exe"), environment={"source": "conda"}
+            )
+        )
+    )
+    ctx.env_prefixes = facts["env_prefixes"]
+    ctx.current_environment = facts["current_environment"]
+    assert ctx.environments == {}
+    out = tmp_path / "conda-ran.txt"
+    code = f"open({str(out)!r}, 'w').write('x')"
+    r = _run_command(ctx, ["conda", "-c", code])
+    assert not r.is_error, r.content
+    assert out.exists()
+    assert ctx.asker.cards[0]["command"] == command.scrub(command._shown([str(conda), "-c", code]))
+    assert command.writable_envs(ctx) == [(os.path.realpath(prefix), str(prefix / "python.exe"))]
+    assert any(py == str(prefix / "python.exe") for py in ctx.environments.values())
+
+
+def test_environment_diagnostics_retries_sharing_conflict_with_newest_cache(tmp_path, monkeypatch):
+    """A Windows sharing violation cannot silently retain an expired package row."""
+    import json
+
+    from tavotto.engine import atomicio, envdiag
+
+    monkeypatch.setattr(envdiag.config, "data_dir", lambda: tmp_path / "data")
+    key = envdiag._key(tmp_path / "project")
+    path = envdiag._path(key)
+    path.parent.mkdir(parents=True)
+    path.write_text('[{"requested": ["expired-package"]}]', encoding="utf-8")
+    envdiag._cache[key] = [{"requested": ["old-snapshot"]}]
+    replace = atomicio.os.replace
+    calls = []
+
+    def sharing_once(src, dst):
+        if str(dst) == str(path):
+            calls.append(str(dst))
+            if len(calls) == 1:
+                # Another observation arrived while the first atomic write failed.
+                with envdiag._lock:
+                    envdiag._cache[key] = [{"requested": ["newest"]}]
+                exc = PermissionError(13, "simulated Windows sharing violation")
+                exc.winerror = 32
+                raise exc
+        return replace(src, dst)
+
+    monkeypatch.setattr(atomicio.os, "replace", sharing_once)
+    try:
+        envdiag._save(key, path)
+        assert len(calls) == 2
+        assert json.loads(path.read_text(encoding="utf-8")) == [{"requested": ["newest"]}]
+    finally:
+        envdiag._cache.pop(key, None)
+
+
+def test_environment_diagnostics_does_not_retry_other_replace_errors(tmp_path, monkeypatch):
+    from tavotto.engine import atomicio, envdiag
+
+    monkeypatch.setattr(envdiag.config, "data_dir", lambda: tmp_path / "data")
+    key = envdiag._key(tmp_path / "project")
+    path = envdiag._path(key)
+    path.parent.mkdir(parents=True)
+    path.write_text("[]", encoding="utf-8")
+    envdiag._cache[key] = [{"requested": ["newest"]}]
+    replace = atomicio.os.replace
+    calls = []
+
+    def disk_full(src, dst):
+        if str(dst) == str(path):
+            calls.append(str(dst))
+            raise OSError(errno.ENOSPC, "simulated full disk")
+        return replace(src, dst)
+
+    monkeypatch.setattr(atomicio.os, "replace", disk_full)
+    try:
+        envdiag._save(key, path)
+        assert len(calls) == 1
+        assert path.read_text(encoding="utf-8") == "[]"
+        assert list(path.parent.glob("*.tmp")) == []
+    finally:
+        envdiag._cache.pop(key, None)
+
+
+def test_environment_diagnostics_retries_again_on_access_after_a_long_lock(tmp_path, monkeypatch):
+    from tavotto.engine import atomicio, envdiag
+
+    monkeypatch.setattr(envdiag.config, "data_dir", lambda: tmp_path / "data")
+    monkeypatch.setattr(envdiag, "_SHARING_RETRY_DELAYS_S", (0, 0))
+    project = tmp_path / "project"
+    key = envdiag._key(project)
+    path = envdiag._path(key)
+    path.parent.mkdir(parents=True)
+    path.write_text('[{"requested": ["expired-package"]}]', encoding="utf-8")
+    retained = [{"requested": ["newest"], "finished_at": time.time()}]
+    envdiag._cache[key] = retained
+    replace = atomicio.os.replace
+    blocked = True
+    written = threading.Event()
+
+    def sharing_then_release(src, dst):
+        if str(dst) == str(path):
+            if blocked:
+                exc = PermissionError(13, "simulated Windows sharing violation")
+                exc.winerror = 32
+                raise exc
+            result = replace(src, dst)
+            written.set()
+            return result
+        return replace(src, dst)
+
+    monkeypatch.setattr(atomicio.os, "replace", sharing_then_release)
+    try:
+        envdiag._save(key, path)
+        assert key in envdiag._pending_writes
+        assert "expired-package" in path.read_text(encoding="utf-8")
+        blocked = False
+        assert [row["requested"] for row in envdiag.recent(project)] == [["newest"]]
+        assert written.wait(5), "the next access did not schedule another write"
+        with envdiag._write_lock:
+            assert json.loads(path.read_text(encoding="utf-8")) == retained
+        assert key not in envdiag._pending_writes
+    finally:
+        envdiag._cache.pop(key, None)
+        envdiag._pending_writes.discard(key)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires real Windows file sharing")
+def test_environment_diagnostics_recovers_after_windows_reader_closes(tmp_path, monkeypatch):
+    """Hold the destination open to exercise the real Windows replace failure."""
+    from tavotto.engine import atomicio, envdiag
+
+    monkeypatch.setattr(envdiag.config, "data_dir", lambda: tmp_path / "data")
+    key = envdiag._key(tmp_path / "project")
+    path = envdiag._path(key)
+    path.parent.mkdir(parents=True)
+    path.write_text('[{"requested": ["expired-package"]}]', encoding="utf-8")
+    envdiag._cache[key] = [{"requested": ["retained-package"]}]
+    replace = atomicio.os.replace
+    sharing_failure = threading.Event()
+
+    def observe_replace(src, dst):
+        try:
+            return replace(src, dst)
+        except OSError as exc:
+            if str(dst) == str(path) and getattr(exc, "winerror", None) in (5, 32, 33):
+                sharing_failure.set()
+            raise
+
+    monkeypatch.setattr(atomicio.os, "replace", observe_replace)
+    thread = threading.Thread(target=envdiag._save, args=(key, path))
+    try:
+        with path.open("rb"):
+            thread.start()
+            assert sharing_failure.wait(5), "the Windows replace did not encounter a sharing error"
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+        assert json.loads(path.read_text(encoding="utf-8")) == [{"requested": ["retained-package"]}]
+    finally:
+        thread.join(timeout=5)
+        envdiag._cache.pop(key, None)

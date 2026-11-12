@@ -2,8 +2,8 @@
 
 * **第①档（默认）：加固沙盒内执行**（`cmdsandbox.py`）。可写只有命令自己的临时目录、目标 Python 环境前缀、pip / conda 用户缓存；项目与其余一切只读，
   凭据位置连读都拒；允许联网（装包要用）；宿主代理（D-Bus / Apple Events / launchd / 各种本机服务套接字）堵死。每条命令弹 approve 卡，卡上是完整命令。
-  没有可用沙盒（Windows、没有 bwrap 的 Linux）→ 不执行，返回 `sandbox_unavailable` 并说明只能走第②档。
-* **第②档：沙盒外执行（用户单独点头）**。模型显式 `outside_sandbox: true` + 一句理由才进；第①档因沙盒拒写失败时只在结果里**提示**可以改用，**不自动升级**。
+  没有可用沙盒（Windows、没有 bwrap 的 Linux）→ 这台机器只有第②档，默认调用直接弹第②档的卡，点了才跑（不靠模型记得重试）。
+* **第②档：沙盒外执行（用户单独点头）**。有沙盒的机器上，模型显式 `outside_sandbox: true` + 一句理由才进；第①档因沙盒拒写失败时只在结果里**提示**可以改用，**不自动升级**。
   弹一张单独、醒目的卡（`danger: true`）：完整命令 + 风险一句话 + 理由；只对这一条命令有效。执行前备份项目内全部用户脚本
   （按后缀保守纳入、读原始字节，1000 个 / 32 MiB 封顶，超限直接拒绝第②档），**持这些脚本的锁**跑完命令，事后核对，被改 / 被删的经 `scriptlock` 恢复原字节并报 `scripts_restored`。
   这一层是**尽力而为**，不是绝对保证（见 `docs/rules/backend/ai-agent-bridge.md`「run_command」的已知盲区）。
@@ -18,6 +18,7 @@ import hashlib
 import os
 import re
 import shlex
+import shutil
 import signal
 import stat
 import subprocess
@@ -243,6 +244,26 @@ def _command_argv(args: dict) -> list[str] | ToolResult:
         or any(len(t) > COMMAND_TOKEN_CHARS or "\x00" in t for t in argv)
     ):
         return err("bad_arguments", "The command is empty, too long, or contains a NUL character.")
+    return argv
+
+
+def _windows_program(ctx: FixContext, argv: list[str]) -> list[str]:
+    """Windows：不经 shell 时 CreateProcess 只补 `.exe`，`conda`（`condabin` 里只有 `conda.bat`，桌面版的 PATH 上常常连它都没有）起不来。
+
+    在审批**之前**换成真实路径，卡上显示的就是实际执行的。只动不带路径的程序名：`conda` 先按环境前缀找所属安装的
+    `Scripts\\conda.exe`（口径同 `launcher.find_conda_exe`），其余只把 PATH 上的 `.bat` / `.cmd` 换成全路径，`.exe` 照旧交给 CreateProcess。"""
+    from .. import launcher
+
+    name = argv[0]
+    if os.name != "nt" or "/" in name or "\\" in name:
+        return argv
+    if name.lower() in ("conda", "conda.exe", "conda.bat"):
+        for prefix in _writable_env_prefixes(ctx):
+            if found := launcher.find_conda_exe(prefix):
+                return [found, *argv[1:]]
+    hit = shutil.which(name)
+    if hit and hit.lower().endswith((".bat", ".cmd")):
+        return [os.path.abspath(hit), *argv[1:]]
     return argv
 
 
@@ -494,14 +515,6 @@ _OUTSIDE_HINT = (
     "pip/conda caches. If it really must write somewhere else, call run_command again with "
     "`outside_sandbox: true` and a one-sentence `reason`: the user is then asked separately. "
     "Nothing was run outside the sandbox."
-)
-
-_NEEDS_OUTSIDE = (
-    "A protective sandbox is not available on this computer (it needs macOS sandbox-exec or Linux bwrap), so "
-    "the command was not run. If it is really needed, call run_command again with `outside_sandbox: true` and "
-    "a one-sentence `reason`: the user is then asked separately and must agree to run it outside any sandbox. "
-    "Otherwise use a dedicated tool (install_packages, select_environment, switch_execution, change_python, "
-    "convert_script)."
 )
 
 
@@ -763,7 +776,7 @@ def run_command(ctx: FixContext, args: dict) -> ToolResult:
         return argv
     # Read tools display home-relative paths. Resolve the same spelling before
     # policy checks, approval and spawn; shell=False does not expand it for us.
-    argv = [_expand(ctx, token) for token in argv]
+    argv = _windows_program(ctx, [_expand(ctx, token) for token in argv])
     outside = args.get("outside_sandbox")
     if outside is not None and not isinstance(outside, bool):
         return err("bad_arguments", "`outside_sandbox` must be true or false.")
@@ -802,14 +815,19 @@ def run_command(ctx: FixContext, args: dict) -> ToolResult:
     timeout = _timeout_of(args)
     if outside:
         return _run_outside(ctx, argv, reason.strip(), cwd_mode, timeout, project)
-    return _run_hardened(ctx, argv, timeout, project)
+    found = cmdsandbox.sandbox_kind()
+    if found is None:
+        # 这台机器没有第①档，第②档就是唯一的路：直接弹卡，不把「记得重试」留给模型（ADR 0149 §七 修订 2026-11-06）。
+        # 卡照旧单独问、只管这一条，没点头什么都不跑。没给 reason 时卡上的兜底句由前端按语言显示
+        given = reason.strip() if isinstance(reason, str) else ""
+        return _run_outside(ctx, argv, given or None, "scratch", timeout, project)
+    return _run_hardened(ctx, argv, found, timeout, project)
 
 
 # ----- 第①档
-def _run_hardened(ctx: FixContext, argv: list[str], timeout: float, project: str) -> ToolResult:
-    found = cmdsandbox.sandbox_kind()
-    if found is None:
-        return err("sandbox_unavailable", _NEEDS_OUTSIDE)
+def _run_hardened(
+    ctx: FixContext, argv: list[str], found: tuple[str, str], timeout: float, project: str
+) -> ToolResult:
     writable = command_writable_dirs(ctx)
     real_project = os.path.realpath(project)
     if any(_contains(w, real_project) for w in writable):
@@ -876,7 +894,12 @@ def _make_work(ctx: FixContext) -> Path | ToolResult:
 
 # ----- 第②档
 def _run_outside(
-    ctx: FixContext, argv: list[str], reason: str, cwd_mode: str, timeout: float, project: str
+    ctx: FixContext,
+    argv: list[str],
+    reason: str | None,
+    cwd_mode: str,
+    timeout: float,
+    project: str,
 ) -> ToolResult:
     scripts = list_scripts(ctx)  # 审批前先做规模预检：超限不问用户，只拒
     if scripts is None:
@@ -884,7 +907,8 @@ def _run_outside(
             "scripts_too_large",
             f"This project has too many scripts to back up (more than {SCRIPTS_MAX_FILES} files or "
             f"{SCRIPTS_MAX_BYTES // (1024 * 1024)} MiB), and running outside the sandbox is only offered "
-            "when they can all be backed up. Nothing was run. Use the sandboxed mode or a dedicated tool.",
+            "when they can all be backed up. Nothing was run. Use a dedicated tool, or the sandboxed mode if this "
+            "computer has one.",
         )
     shown = _shown(argv)
     where = (
@@ -904,7 +928,7 @@ def _run_outside(
         "This command will run OUTSIDE the safety sandbox and can change files on your computer.",
         danger=True,
         command=scrub(shown),
-        reason=scrub(reason),
+        **({"reason": scrub(reason)} if reason else {}),
         cwd=cwd_mode,
         scripts=len(scripts),
         sandbox="outside",
@@ -977,14 +1001,15 @@ COMMAND_TOOLS: tuple[FixTool, ...] = (
         "environment of this project and pip/conda caches; it has network access (pip/conda/R installs work) but "
         "cannot reach desktop services, Apple Events, launchd or other local services. The project path is in "
         "$TAVOTTO_PROJECT; use absolute paths to read project files. If no sandbox exists on this computer (Windows, "
-        "Linux without bwrap) the answer is `sandbox_unavailable` and nothing runs. If a protected run fails because "
+        "Linux without bwrap) the default mode does not exist, so the call goes straight to the second mode's card and "
+        "runs only if the user agrees; give a `reason` for them. If a protected run fails because "
         "a write was refused, the result says so; you may then ask for the second mode, never automatically. SECOND "
         "MODE (`outside_sandbox: true` + a one-sentence `reason`): runs with no sandbox and can change files on the "
         "user's computer; the user gets a separate, prominent card and must agree to this one command; Tavotto backs "
         "up the project's scripts and puts back any the command changed, as a best-effort safeguard. Ask for it only "
         "when the command must write outside the environment, and say why. `cwd: project` is only for the second "
         "mode. Give `argv` (a list) or `command` (split into words; no shell: no pipes, redirects, `&&`, "
-        "substitutions). Leading ~/ in a whole argument resolves to the user's home before approval and execution; "
+        "substitutions). On Windows a bare `conda` resolves to the conda that owns this project's environment. Leading ~/ in a whole argument resolves to the user's home before approval and execution; "
         "other shell expansion is not performed. Never runs sudo, shells, disk tools, desktop/launchd/service tools, piping into a shell or "
         "recursive deletes of the root or home folder; secret-looking environment variables are removed; output is "
         "cut and masked; there is a time limit. A command longer than 8000 characters is refused with "
@@ -1003,7 +1028,7 @@ COMMAND_TOOLS: tuple[FixTool, ...] = (
                 },
                 "reason": {
                     "type": "string",
-                    "description": "One plain sentence for the user: why the command must run outside the sandbox.",
+                    "description": "One plain sentence for the user: why this command is needed outside the sandbox.",
                 },
                 "cwd": {
                     "type": "string",

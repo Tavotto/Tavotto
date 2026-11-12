@@ -24,10 +24,13 @@ import { InputDeclarationControls, type InputDeclarationDraftCheckpoint } from '
 import {
   backendCodeMsg,
   backendErrorText,
+  copyInputData,
   fetchDependencyOffer,
   isNativeTerminal,
   ignoreImportFolder,
+  openFullDiskAccessSettings,
   repairImportFolder,
+  type MissingInputOffer,
   type GuiDialogPayload,
   type PreparationAttempt,
   type PreparationReport,
@@ -35,25 +38,27 @@ import {
   type WorkdirConfirmation,
   type WorkdirMode,
 } from '@/lib/api'
-import { formatMessage, t as translate } from '@/i18n'
+import { formatMessage, i18n, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { envNotUsedSentence, visibleNotUsed } from '@/lib/envRejectionText'
 import { markAutoShown, wasAutoShown } from '@/lib/guideCardSeen'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { originFactsOf, originViewOfCard } from '@/lib/importOrigin'
 import type { RemedyEnv } from '@/lib/fixRemedy'
-import { dialogKinds, finishedWithFigures, nativeFallbackNote, prepRowKey, prepView, runAttempts, targetName, withAiUnavailable, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
+import { copyOverrideKey, dialogKinds, finishedWithFigures, nativeFallbackNote, prepRowKey, prepView, runAttempts, targetName, withAiUnavailable, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
 import { dependenciesLine, issueLine, roleLabel, scanCard, scanLine, type ScanCardKind } from '@/lib/projectScanText'
 import { missingRequirements, readTokens, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
 import { cn } from '@/lib/utils'
 import { useCanvasToolbarVisible } from '@/components/CanvasToolbar'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
-import { aiRevert, convertOriginalUrl, convertPreviewUrl } from '@/lib/api'
+import { isDesktop, pickAnyFile } from '@/lib/desktop'
+import { aiRevert, type ConvertOutputFile, convertOriginalUrl, convertPreviewUrl, effectiveAgent, setConvertUnsandboxedWindows } from '@/lib/api'
 import { parseRenames } from '@/lib/overrideIdentity'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
+import { useInputCopyStore } from '@/store/inputCopyStore'
 import { useExitNoticeStore } from '@/store/exitNoticeStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectScanStore } from '@/store/projectScanStore'
@@ -165,6 +170,8 @@ export function PreparationCard() {
   const editReady = useEditReady(entry?.editRenders ?? {})
   // 壳确认引擎退出了：断线那一句不再说「正在重连」（没人在重连），见 PrepContext.engineExited
   const engineExited = useExitNoticeStore((s) => s.engineExit !== null)
+  const copyOverrides = useInputCopyStore((s) => s.overrides)
+  const canSendReport = useDiagSendStore((s) => s.capability !== null)
   const scanned = !entry && !hidden ? scanCard(scan, { slow, forced, lost }) : null
 
   let view: PrepView | null = null
@@ -183,6 +190,8 @@ export function PreparationCard() {
       editReady,
       missingArgs,
       engineExited,
+      copyOverrides,
+      canSendReport,
     })
   }
 
@@ -253,7 +262,7 @@ const TONE_ICON: Record<Exclude<PrepTone, null>, ReactNode> = {
 function toneIcon(tone: PrepTone, state: string): ReactNode {
   if (!tone) return null
   // 几个状态有自己更具体的记号（设计稿 v2）
-  if (state === 'no_figure' || state === 'no_figure_raster') return <ImageOff size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
+  if (state === 'no_figure' || state === 'no_figure_raster' || state === 'no_figure_copied') return <ImageOff size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
   if (state === 'offline') return <Unplug playIn size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
   if (state === 'restarted') return <RotateCcw size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
   if (state === 'input_secret') return <KeyRound size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
@@ -620,6 +629,7 @@ const ARGS_FOLDED = new Set([
   'failed',
   'no_figure',
   'no_figure_raster',
+  'no_figure_copied',
   'completed',
   'completed_unlinked',
   'completed_partial',
@@ -654,6 +664,16 @@ function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
       return workdir ? pt(`btn.workdir.${workdir}`) : pt('btn.workdir.none')
     case 'missing_input':
       return pt('btn.pointAtData')
+    case 'copy_run':
+      return pt('btn.copyRun')
+    case 'grant_copy':
+      return pt('btn.grantCopy')
+    case 'open_privacy':
+      return pt('btn.openPrivacy')
+    case 'rewrite_path':
+      return pt('btn.rewritePath')
+    case 'other_data':
+      return pt('btn.otherData')
     case 'enter_edit':
       return p.count > 1 ? pt('btn.viewFigures', { count: p.count }) : pt('btn.enterEdit')
     case 'reopen':
@@ -677,7 +697,7 @@ function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
     case 'ai_fix':
       return pt('btn.aiFix')
     case 'feedback':
-      return pt('btn.send')
+      return p.label === 'sendUs' ? pt('btn.sendUs') : pt('btn.send')
     case 'repair_folder':
       return pt('btn.repairFolder')
     case 'skip_folder':
@@ -805,14 +825,71 @@ async function folderDecisionAndRerun(entry: PrepEntry, decide: () => Promise<un
   } catch (e) {
     return guard.still() ? backendErrorText(e) : null
   }
+  if (!guard.still()) return null
+  await rerunEntry(entry)
+  return null
+}
+
+/** 重跑这张卡对应的脚本：报告里有「运行」类动作就认领它，没有就按目标重新打开并运行 */
+async function rerunEntry(entry: PrepEntry): Promise<void> {
   const report = entry.report
-  if (!guard.still() || !report) return null
+  if (!report) return
   const store = useProjectPreparationStore.getState()
   const can = (kind: 'run_when_ready' | 'run') => report.actions.some((a) => a.kind === kind)
   const rerun = can('run_when_ready') ? 'run_when_ready' : can('run') ? 'run' : null
   if (rerun) await store.act(entry.key, rerun)
   else await store.open(entry.target, { run: true, placeIn: entry.placeIn })
+}
+
+/**
+ * 「复制过去再运行」/「授权后复制」（ADR 0173）：后端按改指表现场推出源、复制、回终态。
+ * 成功（含目标已经在）就重跑；被拒落到 c2 / c3 / c4（只换这张卡的档，报告不动）。绝不停在报错上：每种结果都有一张卡。
+ */
+async function copyDataAndRerun(entry: PrepEntry, payload: MissingInputOffer, elevate: boolean): Promise<string | null> {
+  const guard = captureProjectEpoch()
+  const requested = payload.requested
+  const token = payload.copy?.token
+  if (!requested || !token) return null
+  let result: Awaited<ReturnType<typeof copyInputData>>
+  try {
+    result = await copyInputData(token, elevate)
+  } catch (e) {
+    return guard.still() ? backendErrorText(e) : null
+  }
+  if (!guard.still()) return null
+  if (result.state === 'done' || result.state === 'exists') {
+    await rerunEntry(entry)
+    return null
+  }
+  useInputCopyStore.getState().set(copyOverrideKey(entry.report?.provider.attempt_id, requested), {
+    state: result.state as 'denied' | 'macos_protected' | 'auth_failed',
+    protected_kind: result.protected_kind,
+  })
   return null
+}
+
+/** 「改脚本里的路径」：数据已经指认过，直接请后端出逐行预览（ADR 0110），不再弹选择器；预览失败就落回指认框并说原因 */
+async function rewritePathDirect(entry: PrepEntry, payload: MissingInputOffer): Promise<string | null> {
+  const env = useEnvStore.getState()
+  env.requestMissingInput(payload, entry.pj)
+  if (!payload.requested || !payload.copy?.source) return null
+  const err = await useEnvStore.getState().previewRewrite(payload.requested, payload.copy.source, 'file')
+  if (err) useEnvStore.setState({ rewriteError: err })
+  return null
+}
+
+/** 悬停说明：解释放 title，不堆在卡面上 */
+function primaryTitle(p: PrepPrimary): string | undefined {
+  switch (p.kind) {
+    case 'copy_run':
+      return p.payload.copy ? pt('hint.copyRun', { source: p.payload.copy.source, target: p.payload.copy.target }) : undefined
+    case 'grant_copy':
+      return pt('hint.grantCopy')
+    case 'open_privacy':
+      return pt('hint.openPrivacy', { product: PRODUCT_NAME })
+    default:
+      return undefined
+  }
 }
 
 /** 主按钮做的事（与 T09 面板同一组真实动作；卡片只换了呈现） */
@@ -837,8 +914,20 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         if (!workdir) return null
         return useEnvStore.getState().setWorkdirMode(workdir, { confirmed: true })
       case 'missing_input':
+      case 'other_data':
         useEnvStore.getState().requestMissingInput(p.payload, entry.pj)
         return null
+      case 'copy_run':
+        return copyDataAndRerun(entry, p.payload, false)
+      case 'grant_copy':
+        return copyDataAndRerun(entry, p.payload, true)
+      case 'rewrite_path':
+        return rewritePathDirect(entry, p.payload)
+      case 'open_privacy': {
+        const res = await openFullDiskAccessSettings().catch(() => null)
+        // 没能自己打开：把该去哪儿勾说出来（同一句悬停说明）
+        return res?.opened ? null : pt('hint.openPrivacy', { product: PRODUCT_NAME })
+      }
       case 'enter_edit': {
         const figures = report?.captured ?? []
         if (figures.length !== 1) {
@@ -933,11 +1022,81 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
   }
 }
 
+/** 清单上「没写出」的那几行用户选了什么（本地状态；采用前先问也读它）。`specify` 带着选中的文件名（只登记，文件不动） */
+type FileChoice = { kind: 'specify'; file: string } | { kind: 'skip' }
+interface FileChoices {
+  choices: Record<string, FileChoice>
+  choose: (name: string, v: FileChoice) => void
+  /** 点过「采用」而还有没处理的行：卡片那一句换成问句、主按钮换成「仍然采用」 */
+  asked: boolean
+  ask: () => void
+}
+
+/** 「指定」：桌面版走系统文件选择框；没有桌面壳的浏览器模式退回输入一个文件名。取消 = null */
+async function chooseSpecifiedFile(name: string): Promise<string | null> {
+  const picked = isDesktop() ? await pickAnyFile(name) : window.prompt(name)
+  const base = picked?.replace(/\\/g, '/').split('/').pop()?.trim()
+  return base ? base : null
+}
+
+/** 清单：来源脚本里能确定的写出逐个一行；状态词与缺的文件的两个小按钮都在这一行里，不新开块 */
+function ConvertFiles({ files, ui }: { files: ConvertOutputFile[]; ui: FileChoices | undefined }) {
+  return (
+    <ul data-convert-files className="m-0 flex list-none flex-col divide-y divide-border overflow-hidden rounded-xs border border-border p-0 text-sm">
+      {files.map((f) => {
+        const choice = ui?.choices[f.name]
+        return (
+          <li key={f.name} data-convert-file={f.name} className="flex h-8 items-center gap-2 px-2.5">
+            <span className="min-w-0 flex-1 truncate text-ink" title={f.name}>{f.name}</span>
+            {f.state !== 'missing' ? (
+              <span
+                data-convert-file-state={f.state}
+                title={f.state === 'incomparable' ? pt(`convert.files.why.${f.reason ?? 'compare_failed'}`) : undefined}
+                className={cn(
+                  'shrink-0',
+                  f.state === 'differs' ? 'font-medium text-ink' : 'text-ink-3',
+                  f.state === 'incomparable' && 'cursor-help underline decoration-dotted underline-offset-2',
+                )}
+              >
+                {pt(`convert.files.state.${f.state}`)}
+              </span>
+            ) : choice ? (
+              <span data-convert-file-state={choice.kind} title={choice.kind === 'specify' ? choice.file : undefined} className="shrink-0 text-ink-3">
+                {pt(`convert.files.chosen.${choice.kind}`)}
+              </span>
+            ) : (
+              <span className="-mr-1.5 flex shrink-0 items-center gap-0.5">
+                <span className="mr-1 text-ink-3">{pt('convert.files.state.missing')}</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-convert-file-specify
+                  className="text-accent"
+                  onClick={async () => {
+                    const file = await chooseSpecifiedFile(f.name)
+                    if (file) ui?.choose(f.name, { kind: 'specify', file })
+                  }}
+                >
+                  {pt('convert.files.btn.specify')}
+                </Button>
+                <Button variant="ghost" size="sm" data-convert-file-skip className="text-ink-2" onClick={() => ui?.choose(f.name, { kind: 'skip' })}>
+                  {pt('convert.files.btn.skip')}
+                </Button>
+              </span>
+            )}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
 /** 对照视图：左原图、右新版（SVG 预览）；版式数据（宽高比差）只当提示，不替用户判 */
-function ConvertCompare({ entry }: { entry: NonNullable<ReturnType<typeof useConvertStore.getState>['entries'][string]> }) {
+function ConvertCompare({ entry, files }: { entry: NonNullable<ReturnType<typeof useConvertStore.getState>['entries'][string]>; files?: FileChoices }) {
   const st = entry.status
   const cmp = st?.comparison
   const orig = cmp?.original?.path
+  const outputEvidence = cmp?.output_evidence
   return (
     <div data-convert-compare className="flex flex-col gap-2">
       <div className="grid grid-cols-2 gap-2">
@@ -969,6 +1128,31 @@ function ConvertCompare({ entry }: { entry: NonNullable<ReturnType<typeof useCon
           {pt('convert.unverified', { product: PRODUCT_NAME })}
         </p>
       ) : null}
+      {outputEvidence?.files && outputEvidence.files.length > 0 ? (
+        <div data-convert-output-evidence title={pt('convert.outputEvidence')}>
+          <ConvertFiles files={outputEvidence.files} ui={files} />
+        </div>
+      ) : outputEvidence ? (
+        <div data-convert-output-evidence className="flex flex-col gap-1 text-sm text-ink-2">
+          <p>{pt('convert.outputEvidence')}</p>
+          {outputEvidence.source_references.length > 0 ? (
+            <p>{pt('convert.outputSourceReferences', { files: listJoin(outputEvidence.source_references) })}</p>
+          ) : null}
+          {outputEvidence.write_attempts === null ? (
+            <p>{pt('convert.outputAttemptsUnavailable')}</p>
+          ) : outputEvidence.write_attempts.length > 0 ? (
+            <p>{pt('convert.outputWriteAttempts', { files: listJoin(outputEvidence.write_attempts) })}</p>
+          ) : (
+            <p>{pt('convert.outputNoAttempts')}</p>
+          )}
+          {outputEvidence.source_truncated || outputEvidence.attempts_truncated ? (
+            <p>{pt('convert.outputEvidenceTruncated')}</p>
+          ) : null}
+          <p>{pt('convert.outputEvidenceLimits')}</p>
+        </div>
+      ) : st?.source_language && st.source_language !== 'python' ? (
+        <p data-convert-output-evidence className="text-sm text-ink-2">{pt('convert.outputEvidence')}</p>
+      ) : null}
       {st?.adopt_adds && st.adopt_adds.length > 0 ? (
         <p data-convert-adopt-adds className="text-sm text-ink-3">
           {pt('convert.adoptAdds', { files: listJoin(st.adopt_adds) })}
@@ -993,11 +1177,61 @@ function useConvertTick(active: boolean): void {
   }, [active])
 }
 
+/**
+ * 方案 B 一键入口：先打开「转换时允许 AI 不受沙盒限制」，成功后用与「重试」相同的方式重新发起转换。
+ * PUT 失败 = 卡片不变、按钮恢复可点（不重试、不加横条）。
+ */
+function AllowUnsandboxedRetryButton({ script, onRetry }: { script: string; onRetry: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const alive = useRef(true)
+  // 开关打开后能力刷新会让本按钮被普通「重试」换掉（卸载），所以「还该不该重试」不能看挂载，只看项目 + 这次失败是否还是当前那一次
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+    }
+  }, [])
+  return (
+    <Button
+      variant="primary"
+      size="md"
+      data-convert-allow-unsandboxed
+      data-prep-primary="convert_allow_unsandboxed"
+      loading={busy}
+      disabled={busy}
+      onClick={async () => {
+        const sessionOf = () => {
+          const e = useConvertStore.getState().entries[script]
+          return e?.phase === 'failed' ? e.session : undefined
+        }
+        const guard = captureProjectEpoch(sessionOf) // 发起时的项目：重试按 start() 调用时的当前项目提交，切走后绝不能再发
+        setBusy(true)
+        try {
+          await setConvertUnsandboxedWindows(true)
+        } catch {
+          if (alive.current) setBusy(false)
+          return
+        }
+        if (alive.current) setBusy(false)
+        if (!guard.still()) return
+        await useAiStore.getState().loadCaps(false).catch(() => undefined) // 设置页里的开关随能力刷新显示为开
+        if (!guard.still()) return
+        onRetry()
+      }}
+    >
+      {pt('convert.btn.allowUnsandboxedRetry')}
+    </Button>
+  )
+}
+
 /** 生成可编辑版本进行中 / 有结果时卡片的样子：一句话 + 一个主按钮（+ 一颗次按钮）。采用 = 后端新建兄弟脚本，再走「打开并运行」 */
 function convertFlow(
   c: NonNullable<ReturnType<typeof useConvertStore.getState>['entries'][string]>,
   p: Extract<PrepPrimary, { kind: 'convert' }>,
   entry: PrepEntry | undefined,
+  /** 失败码 agent_write_denied + Windows 能力键在且为 false + 这次助手是 Codex：主按钮换成「允许不受沙盒限制并重试」 */
+  offerUnsandboxed = false,
+  files?: FileChoices,
 ): { title: string; slot?: ReactNode; primary?: ReactNode; ghost?: ReactNode } {
   const store = useConvertStore.getState()
   const retry = () => void store.start(p.script, p.library, p.path, p.language)
@@ -1073,10 +1307,15 @@ function convertFlow(
         ),
       }
     case 'ready':
-    case 'adopting':
+    case 'adopting': {
+      const rows = c.status?.comparison?.output_evidence?.files ?? []
+      const undecided = rows.filter((f) => f.state === 'missing' && !files?.choices[f.name]).length
+      const differs = rows.some((f) => f.state === 'differs')
+      const asking = !!files?.asked && undecided > 0
+      const busy = c.phase === 'adopting' || !!c.realigning
       return {
-        title: pt(c.stoppedLate ? 'convert.stoppedLate' : 'convert.ready'),
-        slot: <ConvertCompare entry={c} />,
+        title: asking ? pt('convert.files.askAdopt', { count: undecided }) : pt(c.stoppedLate ? 'convert.stoppedLate' : 'convert.ready'),
+        slot: <ConvertCompare entry={c} files={files} />,
         primary: (
           <Button
             variant="primary"
@@ -1084,24 +1323,35 @@ function convertFlow(
             data-convert-adopt
             data-prep-primary="convert_adopt"
             loading={c.phase === 'adopting'}
-            disabled={c.phase === 'adopting'}
+            disabled={busy}
             onClick={async () => {
-              const made = await store.adopt(p.script)
+              // 还有缺的文件没处理：第一次点只问一句（可点，不灰），第二次才真采用
+              if (undecided > 0 && !asking) return files?.ask()
+              const specified = Object.entries(files?.choices ?? {}).flatMap(([name, v]) => (v.kind === 'specify' ? [{ name, file: v.file }] : []))
+              const made = await store.adopt(p.script, specified)
               if (!made) return
               // 采用规则（ADR 0139 PR1 同款）：新脚本另起面板，原位图面板不动——用既有的「打开并运行」接进画布
               void useProjectPreparationStore.getState().open(scriptTarget(made), { run: true, rerun: false })
               store.clear(p.script)
             }}
           >
-            {pt('convert.btn.adopt')}
+            {pt(asking ? 'convert.files.adoptAnyway' : differs ? 'convert.files.adoptAsIs' : 'convert.btn.adopt')}
           </Button>
         ),
         ghost: (
-          <Button variant="ghost" size="md" data-convert-discard className="text-ink-2" disabled={c.phase === 'adopting'} onClick={() => void store.discard(p.script)}>
-            {pt('convert.btn.discard')}
-          </Button>
+          <>
+            {differs ? (
+              <Button variant="ghost" size="md" data-convert-realign className="text-accent" loading={!!c.realigning} disabled={busy} onClick={() => void store.realign(p.script)}>
+                {pt('convert.files.btn.realign')}
+              </Button>
+            ) : null}
+            <Button variant="ghost" size="md" data-convert-discard className="text-ink-2" disabled={busy} onClick={() => void store.discard(p.script)}>
+              {pt('convert.btn.discard')}
+            </Button>
+          </>
         ),
       }
+    }
     case 'failed': {
       // Missing evidence needs an explicit reference selection before another attempt.
       const needsInput = c.reason === 'needs_input' || c.reason === 'convert_reference_invalid'
@@ -1119,7 +1369,9 @@ function convertFlow(
             {c.detail}
           </p>
         ) : undefined,
-        primary: dismissOnly ? (
+        primary: offerUnsandboxed && c.reason === 'agent_write_denied' ? (
+          <AllowUnsandboxedRetryButton script={p.script} onRetry={retry} />
+        ) : dismissOnly ? (
           <Button
             variant="primary"
             size="md"
@@ -1137,7 +1389,16 @@ function convertFlow(
             {pt('convert.btn.retry')}
           </Button>
         ),
-        ghost: dismissOnly ? undefined : <SendReportButton variant="ghost" size="md" />,
+        ghost: dismissOnly ? undefined : offerUnsandboxed && c.reason === 'agent_write_denied' ? (
+          <>
+            <Button variant="ghost" size="md" data-convert-retry className="text-ink-2" onClick={retry}>
+              {pt('convert.btn.retry')}
+            </Button>
+            <SendReportButton variant="ghost" size="md" />
+          </>
+        ) : (
+          <SendReportButton variant="ghost" size="md" />
+        ),
       }
     }
     case 'adopted':
@@ -1154,8 +1415,19 @@ function useConvertFlow(
   identity: unknown,
 ): ReturnType<typeof convertFlow> | null {
   const [draft, setDraft] = useState<{ identity: unknown; text: string } | null>(null)
+  // 清单上的选择跟着这一次转换会话走：换了会话（重试 / 放弃）就清空
+  const [picked, setPicked] = useState<{ session: string | null; choices: Record<string, FileChoice>; asked: boolean }>({ session: null, choices: {}, asked: false })
+  const own = picked.session === (c?.session ?? null) ? picked : { session: c?.session ?? null, choices: {}, asked: false }
+  const fileUi: FileChoices = {
+    choices: own.choices,
+    choose: (n, v) => setPicked({ ...own, choices: { ...own.choices, [n]: v } }),
+    asked: own.asked,
+    ask: () => setPicked({ ...own, asked: true }),
+  }
   useConvertTick(c?.phase === 'running')
-  const flow = c && p ? convertFlow(c, p, entry) : null
+  const sandboxOff = useAiStore((s) => s.caps?.convert_unsandboxed_windows === false)
+  const isCodex = useAiStore((s) => effectiveAgent(s.agent, s.caps) === 'codex')
+  const flow = c && p ? convertFlow(c, p, entry, sandboxOff && isCodex, fileUi) : null
   if (!flow || !p || c?.phase !== 'failed' || !['needs_input', 'convert_reference_invalid'].includes(c.reason ?? '')) return flow
   const text = draft && draft.identity === identity ? draft.text : ''
   const files = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
@@ -1314,7 +1586,15 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
     (view.state === 'no_figure_raster'
       ? // 没有落盘文件（动态路径 / 只 show / 文件还没出现）：不说「画成图片」，说「画的、不能直接编辑」（ADR 0143 修订 2026-10-23）
         pt(report?.no_figure_hint?.path ? 'rasterHint.line' : 'rasterHint.lineNoFile', view.sentence.values)
-      : pt(`line.${view.sentence.key}`, view.sentence.values))
+      : view.sentence.key === 'errorText'
+        ? // 失败码 / 阻塞原因自己在 errors.json 里那一句人话（原始报错留在下面的详情里）
+          translate(String(view.sentence.values.textKey), { ns: 'errors', ...view.sentence.values })
+        : view.sentence.key === 'tex'
+        ? // TeX 编译错误 / 原因不明：说 errors:backend.<code> 那句针对性说明（缺命令 / 缺宏包用 prep.line.texCommand / texPackage 短句）
+          translate(`backend.${String(view.sentence.values.code)}`, { ns: 'errors', ...view.sentence.values })
+        : view.sentence.key === 'copyProtected' && typeof view.sentence.values.folderKind === 'string'
+          ? pt('line.copyProtected', { ...view.sentence.values, dir: pt(`folder.${view.sentence.values.folderKind}`) })
+          : pt(`line.${view.sentence.key}`, view.sentence.values))
   const originView = localError ? null : originViewOfCard(view.state)
   const attrs = {
     'data-prep-state': localError ? 'action_failed' : view.state,
@@ -1326,7 +1606,7 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
   const scriptTargetName = 'id' in entry.target ? null : entry.target.script
 
   // 反馈卡的主按钮：复用设置页同一个入口（开关关着时不渲染）；其余主按钮是下面那颗普通 Button
-  const feedbackPrimary = p?.kind === 'feedback' ? <SendReportButton variant="primary" size="md" label={pt('btn.send')} /> : null
+  const feedbackPrimary = p?.kind === 'feedback' ? <SendReportButton variant="primary" size="md" label={primaryLabel(p, null)} /> : null
   const fixBusy = fix?.phase === 'starting'
   const fixAction = async () => {
     setLocalError(null)
@@ -1338,6 +1618,7 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
       variant="primary"
       size="md"
       data-prep-primary={primaryId(p)}
+      title={primaryTitle(p)}
       loading={pending || (p.kind === 'ai_fix' && fixBusy)}
       disabled={pending || disabled}
       onClick={async () => {
@@ -1496,6 +1777,7 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
         variant="ghost"
         size="md"
         data-prep-alt={primaryId(view.secondary)}
+        title={primaryTitle(view.secondary)}
         className="text-ink-2"
         onClick={async () => {
           const err = await runPrimary(view.secondary!, workdir)
@@ -1910,6 +2192,15 @@ function SessionDetails({ entry, view, draftRef }: {
   const dialog = dialogReq?.kind === 'gui_dialog' ? dialogReq.payload : null
   const prepare = report?.actions.find((a) => a.kind === 'prepare_dependencies')
   const error = report?.result?.error
+  // 拒绝码没有文案时不渲染那一行（backendCodeMsg 兜底给空串，原来会摆出一行空白）
+  const rejectionText = entry.rejection
+    ? formatMessage(backendCodeMsg(entry.rejection.code, entry.rejection.params, ''))
+    : ''
+  // 没画出来的图为什么：码有 errors:backend.<code> 的人话就说人话，没有就不说（不摆原始码）
+  const failedFiguresWhy = [...new Set((report?.failed_figures ?? []).map((f) => f.code).filter((c): c is string => !!c))]
+    .filter((c) => i18n.exists(`backend.${c}`, { ns: 'errors' }))
+    .map((c) => translate(`backend.${c}`, { ns: 'errors' }))
+    .join('')
   const attempt = report?.provider.attempt_id
   const dep = report?.provider.dependency
   const originFacts = originFactsOf(report)
@@ -1968,6 +2259,9 @@ function SessionDetails({ entry, view, draftRef }: {
           attr="parse-kind"
         />
       )}
+      {view.state === 'tex_missing' && error?.code && (
+        <p data-prep-tex-why>{translate(`backend.${error.code}`, { ns: 'errors', ...errParams })}</p>
+      )}
       {prompt && <Row k={pt('detail.prompt')} v={<span className="font-mono">{prompt}</span>} attr="input-prompt" />}
       {/* 那一次的诊断（T04）：失败尝试的冻结快照，不含路径和参数 */}
       {attempt && failed && <TaskDiagnostic key={attempt} kind="preparation" refId={attempt} folded={false} />}
@@ -1982,10 +2276,12 @@ function SessionDetails({ entry, view, draftRef }: {
       )}
       {(report?.failed_figures ?? []).length > 0 && report?.phase === 'partial' && (
         <p data-prep-failed-figures>
-          {pt('detail.failedFigures', {
-            names: listJoin((report.failed_figures ?? []).map((f) => f.stem)),
-            codes: listJoin([...new Set((report.failed_figures ?? []).map((f) => f.code).filter((c): c is string => !!c))]),
-          })}
+          {failedFiguresWhy
+            ? pt('detail.failedFiguresWhy', {
+                names: listJoin((report?.failed_figures ?? []).map((f) => f.stem)),
+                why: failedFiguresWhy,
+              })
+            : pt('detail.failedFigures', { names: listJoin((report?.failed_figures ?? []).map((f) => f.stem)) })}
         </p>
       )}
       {(report?.unlinked_stems ?? []).length > 0 && finishedWithFigures(report) && (
@@ -2084,11 +2380,7 @@ function SessionDetails({ entry, view, draftRef }: {
         </p>
       )}
       {report?.facts && <Facts report={report} />}
-      {entry.rejection && (
-        <p data-prep-rejection={entry.rejection.code}>
-          {formatMessage(backendCodeMsg(entry.rejection.code, entry.rejection.params, ''))}
-        </p>
-      )}
+      {rejectionText && <p data-prep-rejection={entry.rejection?.code}>{rejectionText}</p>}
       {entry.failure && (
         <p className="text-danger">
           {formatMessage(backendCodeMsg(entry.failure.code, entry.failure.params, entry.failure.message))}
@@ -2168,6 +2460,12 @@ function EmbeddedInput({ requestId, answer }: { requestId: string; answer: Scrip
         answer.submit()
       }}
     >
+      {/* 读取没有新提示（readline / read）：上面那段是脚本已有的输出，标出来，别让它看着像又问了一遍 */}
+      {!secret && !head.prompt && tail && (
+        <h3 className="type-section" data-script-input-output-label="">
+          {si('outputLabel')}
+        </h3>
+      )}
       {!secret && (head.stdout_tail || head.prompt) && (
         <pre
           data-script-input-output=""

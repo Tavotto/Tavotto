@@ -10,6 +10,7 @@ import {
   exportTargetKey,
   defaultScope,
   epsAvailability,
+  scriptAvailability,
   filenameProblem,
   FORMATS,
   originalAvailability,
@@ -19,6 +20,7 @@ import {
   VECTOR_FORMATS,
   type ExportRequestInput,
 } from './exportRequest'
+import type { ExportRoute } from './exportRoute'
 import { useDocumentStore } from '@/store/documentStore'
 import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
@@ -589,5 +591,29 @@ describe('单图画布留白进 original.pad_mm（ADR 0161）', () => {
   it('画布口径不带留白', () => {
     const r = buildExportRequest(inputOf({ framePad: { l: 5, t: 0, r: 0, b: 0 } })).request
     expect(r.original).toBeUndefined()
+  })
+})
+
+describe('修改后的 .py（ADR 0171）', () => {
+  const route = (script: { how: 'redraw' | 'unavailable'; reason?: string }): ExportRoute => ({
+    scope: 'original',
+    formats: ['pdf'],
+    panels: { 'f.pdf': { source: 'disk', embeds_disk_bitmap: false, formats: {}, offers: { script } } },
+  })
+
+  it('读后端的 offers.script；画布范围恒不可用', () => {
+    expect(scriptAvailability('original', 'f.pdf', route({ how: 'redraw' }))).toEqual({ ok: true, reason: 'none' })
+    expect(
+      scriptAvailability('original', 'f.pdf', route({ how: 'unavailable', reason: 'script_export_no_script' })),
+    ).toEqual({ ok: false, reason: 'no_script' })
+    expect(scriptAvailability('canvas', 'f.pdf', route({ how: 'redraw' }))).toEqual({
+      ok: false,
+      reason: 'canvas_scope',
+    })
+  })
+
+  it('没有 route：runtime 图放行，素材表里没有脚本的不放行', () => {
+    expect(scriptAvailability('original', 'runtime:x').ok).toBe(true)
+    expect(scriptAvailability('original', 'nothing.pdf').ok).toBe(false)
   })
 })

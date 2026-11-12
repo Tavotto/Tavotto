@@ -7,3 +7,8 @@ __pycache__/
 .env*
 .dev.vars*
 .wrangler/
+deployment/staging/assets/cla-pdf.js
+deployment/staging/assets/cla-pdf-font.ttf
+assets-reviewed/cla-pdf-font.ttf
+deployment/staging/assets/cla-sig-*.ttf
+assets-reviewed/cla-sig-*.ttf

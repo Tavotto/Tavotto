@@ -77,6 +77,50 @@ function useScrimOwner(active: boolean): boolean {
   return bottom === null || bottom === id
 }
 
+const TABBABLE =
+  'a[href],button,input:not([type="hidden"]),select,textarea,summary,[tabindex],[contenteditable=""],[contenteditable="true"]'
+
+/** 对话框里 Tab 序列上的控件（Radix FocusScope 同款规则：没禁用、tabindex 不是负数、看得见）。 */
+function tabbablesIn(root: HTMLElement): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(TABBABLE)).filter((el) => {
+    if (el.tabIndex < 0) return false
+    if ((el as HTMLButtonElement).disabled) return false
+    if (el.closest('[hidden],[inert]')) return false
+    for (let n: HTMLElement | null = el; n && n !== root; n = n.parentElement) {
+      const cs = getComputedStyle(n)
+      if (cs.display === 'none' || cs.visibility === 'hidden') return false
+    }
+    return true
+  })
+}
+
+/**
+ * Option/Alt+Tab 的边界循环。Radix 的 FocusScope 只在不带 Alt 的 Tab 上循环；
+ * WebKit（Safari、macOS 桌面版的 WKWebView）遍历全部控件靠 Option+Tab，焦点在最后一个控件上
+ * 按它，原生焦点走出对话框、FocusScope 又把它拽回最后一个——键盘用户卡在关闭钮上。
+ * 只在边界上接手，不在边界就交给浏览器。
+ */
+function wrapAltTab(
+  e: Pick<KeyboardEvent, 'key' | 'altKey' | 'ctrlKey' | 'metaKey' | 'shiftKey' | 'preventDefault'>,
+  content: HTMLElement | null,
+): void {
+  if (e.key !== 'Tab' || !e.altKey || e.ctrlKey || e.metaKey || !content) return
+  const items = tabbablesIn(content)
+  if (items.length === 0) return
+  const active = document.activeElement
+  const first = items[0]!
+  const last = items[items.length - 1]!
+  if (e.shiftKey) {
+    if (active === first || active === content) {
+      e.preventDefault()
+      last.focus()
+    }
+  } else if (active === last) {
+    e.preventDefault()
+    first.focus()
+  }
+}
+
 interface DialogProps {
   open: boolean
   onOpenChange: (v: boolean) => void
@@ -126,6 +170,11 @@ interface DialogProps {
    * 一个右上角 ×。Radix 自己会把它 aria-hidden，焦点圈与 Esc 都归栈顶。
    */
   covered?: boolean
+  /**
+   * 叠在别的对话框上时，在它后面再压暗一点（栈底的遮罩 30% 的一半，同一个 `shadow` 色）。
+   * 默认叠着的那层遮罩透明；只给「小卡盖在大对话框上、要看出层次」的场合用。
+   */
+  dimBehind?: boolean
   /**
    * 稳定锚点：落在 `RD.Content` 上的 `data-dialog="<anchor>"`。e2e 要指代
    * **某一个具体的对话框**时认它——`[role=dialog]` 在这个应用里有五个产出点
@@ -180,6 +229,7 @@ export function Dialog({
   blockDismiss = false,
   onEscape,
   covered = false,
+  dimBehind = false,
   anchor,
   chrome = 'default',
   initialFocusRef,
@@ -316,8 +366,10 @@ export function Dialog({
             // 30%、不模糊：OpenAI 30% / shadcn 50%，两家都不做玻璃（2026-09-15 审计 B13）。
             // 只有栈底的对话框画遮罩，叠着的那层遮罩透明（见 useScrimOwner）。压暗用 shadow 色（不是 ink：
             // ink 在暗色里是浅色，遮罩会变成提亮）
-            'fixed inset-0 z-overlay',
-            ownsScrim ? 'bg-shadow/30' : 'bg-transparent',
+            // dimBehind：要盖到下面那个对话框的内容（z-dialog）上，同层按挂载先后叠：它的内容仍在遮罩之上
+            'fixed inset-0',
+            !ownsScrim && dimBehind ? 'z-dialog' : 'z-overlay',
+            ownsScrim ? 'bg-shadow/30' : dimBehind ? 'bg-shadow/15' : 'bg-transparent',
             'data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out',
             covered && 'invisible',
           )}
@@ -329,7 +381,10 @@ export function Dialog({
           aria-busy={busy || undefined}
           data-dialog={anchor ?? ''}
           data-covered={covered || undefined}
-          onKeyDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            wrapAltTab(e, contentRef.current)
+            e.stopPropagation()
+          }}
           onOpenAutoFocus={(e) => {
             // 从正在退场的命令面板里打开的：记面板的打开者，不记那颗马上消失的输入框
             restoreTo.current = focusOrigin()

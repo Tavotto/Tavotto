@@ -13,6 +13,15 @@
 3. **集合外明示限制。** 找不到某族 / 某样式 → `FontsUnavailable`（结构化 code），
    **不**去摸系统字体、**不**用另一张脸冒充；没有 CJK 脸时 `cjk_face()` 回 None，
    分层把汉字判成 `missing` 进问题系统（RC-037）。
+4. **CJK 脸随族**（2026-11-04 修订）：批准集合有 Noto Serif SC（`cjk-serif`，配 serif）与
+   Noto Sans SC（`cjk`，配 sans-serif / monospace）的常规、粗体各一张（粗体 2026-11-05 加）。
+   `cjk_face(family, bold)` 按画布文字族取，不再「换族不换 CJK」。
+
+## 用户本机字体（ADR 0164）
+
+本模块的 allowlist / 注册表只管批准字体。`read_sfnt(path, face_index)` 现在也读 `.ttc` / `.otc`（字体集里的某一张脸；
+表偏移相对整个文件，其余不变）与 OS/2 `fsType` / `fsSelection` / head `macStyle`，供 `userfonts.py` 给**用户本机字体**
+做入场检查；注册表（`FontRegistry.discover`）自己不因此认任何 allowlist 之外的文件。
 
 ## 字体文件在哪
 
@@ -149,6 +158,16 @@ def load_allowlist(path: Path | None = None) -> Allowlist:
 # ---------------------------------------------------------------------------
 ENV_FONTS_DIR = "TAVOTTO_FONTS_DIR"
 
+#: 画布文字族 → 批准集合里承担中日韩字形的那一族（ADR 0060 2026-11-04 修订）：衬线配 Noto Serif SC
+#: （`cjk-serif`），其余（sans-serif / monospace）配 Noto Sans SC（`cjk`；等宽配黑体是常规做法）。
+#: 画布上衬线标注的中文是宋体，导出必须同样是衬线脸。
+_CJK_FAMILY_OF = {"serif": "cjk-serif"}
+
+
+def cjk_family_of(family: str) -> str:
+    """画布文字族 → allowlist 里的 CJK 族名（`cjk` 或 `cjk-serif`）。认不出的族按黑体。"""
+    return _CJK_FAMILY_OF.get(family, "cjk")
+
 
 def fonts_dir() -> Path:
     """字体目录：环境变量排他覆盖 → 包内 `resources/fonts`。只算路径，不判存在。"""
@@ -185,20 +204,41 @@ class SfntInfo:
     tables: frozenset[str]
     cmap: dict[int, int]  # 码位 → GID（format 12 优先，其次 4）
     num_glyphs: int
+    #: OS/2 `fsType`（嵌入许可位，ADR 0164）；批准字体不看它，用户字体（`userfonts`）靠它判能否嵌入
+    fs_type: int = 0
+    #: OS/2 `fsSelection`（bit0 italic、bit5 bold）与 head `macStyle`（bit0 bold、bit1 italic）：
+    #: 给用户字体的「粗斜」事实；批准字体的粗斜以 allowlist 为准
+    fs_selection: int = 0
+    mac_style: int = 0
 
 
-def _tables(data: bytes) -> dict[bytes, tuple[int, int]]:
+def _tables(data: bytes, face_index: int = 0) -> dict[bytes, tuple[int, int]]:
+    """表目录。`.ttc` / `.otc`（字体集）按 `face_index` 取其中一张脸的目录——表偏移在集合里
+    是**相对整个文件**的，所以下面的读取不用改（ADR 0164：用户字体常在 `.ttc` 里）。"""
     if len(data) < 12:
         raise ValueError("不是 sfnt：不足 12 字节")
+    base = 0
     tag = data[:4]
     if tag == b"ttcf":
-        raise ValueError("TrueType Collection 本轮不支持（RC-037）")
+        if len(data) < 16:
+            raise ValueError("TTC 头截断")
+        count = struct.unpack(">I", data[8:12])[0]
+        if not 0 <= face_index < count:
+            raise ValueError(f"TTC 里没有第 {face_index} 张脸（共 {count} 张）")
+        if 12 + 4 * (face_index + 1) > len(data):
+            raise ValueError("TTC 偏移表截断")
+        base = struct.unpack(">I", data[12 + 4 * face_index : 16 + 4 * face_index])[0]
+        if base + 12 > len(data):
+            raise ValueError("TTC 偏移超出文件")
+        tag = data[base : base + 4]
+    elif face_index != 0:
+        raise ValueError("单脸字体文件没有第 %d 张脸" % face_index)
     if tag not in (b"\x00\x01\x00\x00", b"OTTO", b"true"):
         raise ValueError(f"不是 sfnt：签名 {tag!r}")
-    n = struct.unpack(">H", data[4:6])[0]
+    n = struct.unpack(">H", data[base + 4 : base + 6])[0]
     out: dict[bytes, tuple[int, int]] = {}
     for i in range(n):
-        off = 12 + 16 * i
+        off = base + 12 + 16 * i
         if off + 16 > len(data):
             raise ValueError("表目录截断")
         t, _, toff, tlen = struct.unpack(">4sIII", data[off : off + 16])
@@ -263,11 +303,12 @@ def _cmap_table(data: bytes, coff: int) -> dict[int, int]:
     return best12 or best4
 
 
-def read_sfnt(path: Path) -> SfntInfo:
+def read_sfnt(path: Path, face_index: int = 0, data: bytes | None = None) -> SfntInfo:
     """读注册表需要的那几张表。任何一张缺失 / 截断 → `ValueError`（调用方包成
-    `font_file_invalid`）。"""
-    data = Path(path).read_bytes()
-    tables = _tables(data)
+    `font_file_invalid`）。`face_index` 只对 `.ttc` / `.otc` 有意义（批准字体恒为 0）。"""
+    if data is None:
+        data = Path(path).read_bytes()
+    tables = _tables(data, face_index)
     for need in (b"head", b"OS/2", b"name", b"cmap", b"maxp"):
         if need not in tables:
             raise ValueError(f"缺 {need!r} 表")
@@ -277,6 +318,9 @@ def read_sfnt(path: Path) -> SfntInfo:
         raise ValueError("unitsPerEm 为 0")
     ooff = tables[b"OS/2"][0]
     asc, desc = struct.unpack(">hh", data[ooff + 68 : ooff + 72])
+    fs_type = struct.unpack(">H", data[ooff + 8 : ooff + 10])[0]
+    fs_selection = struct.unpack(">H", data[ooff + 62 : ooff + 64])[0]
+    mac_style = struct.unpack(">H", data[hoff + 44 : hoff + 46])[0]
     names = _name_table(data, tables[b"name"][0])
     num_glyphs = struct.unpack(">H", data[tables[b"maxp"][0] + 4 : tables[b"maxp"][0] + 6])[0]
     return SfntInfo(
@@ -288,6 +332,9 @@ def read_sfnt(path: Path) -> SfntInfo:
         tables=frozenset(t.decode("latin-1") for t in tables),
         cmap=_cmap_table(data, tables[b"cmap"][0]),
         num_glyphs=num_glyphs,
+        fs_type=fs_type,
+        fs_selection=fs_selection,
+        mac_style=mac_style,
     )
 
 
@@ -312,6 +359,9 @@ class FaceRecord:
     path: Path
     info: SfntInfo
     face_index: int = 0
+    #: 用户本机字体（ADR 0164）：入场时读进内存的整份字节，之后排版 / 子集化只用它，**进程不再持有
+    #: 该文件的句柄或映射**（Windows 上否则用户更新 / 卸载字体会报「文件正在使用」）。批准字体为 None
+    data: bytes | None = field(default=None, repr=False, compare=False)
 
     @property
     def identity(self) -> tuple[str, int]:
@@ -420,9 +470,12 @@ class FontRegistry:
             f"（目录 {self.root}；缺 {self.missing}）",
         )
 
-    def cjk_record(self) -> FaceRecord | None:
+    def cjk_record(self, family: str, bold: bool = False) -> FaceRecord | None:
+        """该画布文字族配的 CJK 脸（ADR 0060 2026-11-04 修订：CJK 脸随族，粗体随对象）。批准集合里没有就回 None——
+        **不**拿另一族的 CJK 脸顶（衬线标注的中文落到黑体，就是被修掉的那个画布 ≠ 导出）。"""
+        want = cjk_family_of(family)
         for rec in self.faces.values():
-            if rec.approved.family == "cjk":
+            if rec.approved.family == want and rec.approved.bold == bool(bold):
                 return rec
         return None
 

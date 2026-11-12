@@ -29,3 +29,39 @@ test('independent packet deadline exact boundary replaces pending without extens
 test('independent contributor cannot obtain holder intent',()=>iso(async f=>{const p=await f.create();await f.sign(p,'contributor');await assert.rejects(f.svc.intent(...f.args('contributor'),p.id,'holder'));}));
 
 test('independent two worker threads and separate WAL connections race real create transactions',async()=>{const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cla-independent-'));const file=path.join(dir,'race.sqlite');const f=await fixture(file);try{const session=await f.svc.session(f.args('contributor')[0]),gate=new SharedArrayBuffer(4);let ready=0;const run=()=>new Promise((resolve,reject)=>{const w=new Worker(new URL('./independent-create-worker.mjs',import.meta.url),{workerData:{file,now:f.now(),session,gate,packet:{id:randomToken(),subject:2,kind:'individual',version:'1.0',digest:f.c.policy.agreements.individual.sha256,created:f.now(),valid_until:f.now()+7*DAY}}});w.on('error',reject);w.on('message',m=>{if(m.ready){if(++ready===2){Atomics.store(new Int32Array(gate),0,1);Atomics.notify(new Int32Array(gate),0,2);}}else if(m.error)reject(Error(m.error));else resolve(m.packet);});w.on('exit',code=>{if(code)reject(Error('worker exit '+code));});});const ids=await Promise.all([run(),run()]);assert.equal(ids[0],ids[1]);assert.equal((await f.store.stmt('SELECT count(*) n FROM packets').first()).n,1);}finally{f.close();fs.rmSync(dir,{recursive:true,force:true});}});
+for(const version of ['1','2','3'])test('independent evidence consent wording version '+version+(version==='3'?' is rejected':' stays readable'),()=>iso(async f=>{const p=await f.create();for(const [role,actor]of [['contributor',2],['holder',1]]){const name=role==='holder'?f.c.holderName:'SYNTHETIC CONTRIBUTOR';const stamp=f.now();const raw=canonical({name,address:'SYNTHETIC ADDRESS',signature:name,attestations:Object.fromEntries(attestations(role).map(k=>[k,true])),protocol:'cla-signature-v1',packet:p.id,agreement_kind:p.kind,agreement_version:p.version,agreement_sha256:p.digest,role,github_id:actor,github_login_at_signing:role==='holder'?'erwanjun':'contributor',signed_at_unix:stamp,consent_ui_version:version});const cipher=await seal(f.key,raw,`signature:${p.id}:${role}:${p.digest}`);await f.store.stmt('INSERT INTO signatures VALUES(?,?,?,?,?,?,?)',p.id,role,actor,cipher,await sha256(raw),null,stamp).run();}
+  if(version==='3')await deny(()=>f.svc.evaluate(9));else assert.equal((await f.svc.evaluate(9)).conclusion,'success');}));
+test('independent new signatures record consent wording version 2',()=>iso(async f=>{const p=await f.complete();const [token]=f.args('contributor');const ev=await f.svc.readEvidence(token,p.id,'contributor');assert.equal(ev.consent_ui_version,'2');}));
+test('independent session gives the exact signing name only to the holder, the counterparty name to both',()=>iso(async f=>{const holder=await f.svc.packets(f.args('holder')[0]),contributor=await f.svc.packets(f.args('contributor')[0]);
+  assert.equal(holder.actor.role,'holder');assert.equal(holder.actor.holderName,f.c.holderName);assert.equal(contributor.actor.role,'contributor');assert.equal('holderName' in contributor.actor,false);
+  assert.equal(holder.holderName,f.c.holderName);assert.equal(contributor.holderName,f.c.holderName);}));
+test('independent readEvidence returns the verified record plus its stored fingerprint',()=>iso(async f=>{
+  const p=await f.complete();
+  for(const role of ['contributor','holder']){
+    const row=(await f.store.signatures(p.id)).find(x=>x.role===role),e=await f.svc.readEvidence(f.args(role)[0],p.id,role);
+    assert.equal(e.evidence_sha256,row.evidence_hash);assert.match(e.evidence_sha256,/^[0-9a-f]{64}$/);
+    assert.equal(e.role,role);assert.equal(e.packet,p.id);assert.equal(e.agreement_sha256,p.digest);
+    assert.deepEqual(Object.keys(e.attestations).sort(),attestations(role).sort());
+  }
+}));
+test('independent readEvidence has no fingerprint for a role that has not signed',()=>iso(async f=>{
+  const p=await f.create();await f.sign(p,'contributor');
+  await assert.rejects(f.svc.readEvidence(f.args('contributor')[0],p.id,'holder'),e=>e.code==='evidence_unavailable');
+  await assert.rejects(f.svc.readEvidence(f.args('contributor')[0],p.id,'nobody'),e=>e.code==='role_rejected');
+}));
+const styled=(f,r,style)=>({name:r==='holder'?f.c.holderName:'SYNTHETIC CONTRIBUTOR',signature:r==='holder'?f.c.holderName:'SYNTHETIC CONTRIBUTOR',address:'SYNTHETIC ADDRESS',
+  attestations:Object.fromEntries(attestations(r).map(k=>[k,true])),...(style===undefined?{}:{signature_style:style})});
+for(const style of ['signature','formal','pen','hand'])test('independent signature style '+style+' is stored in the evidence and qualifies',()=>iso(async f=>{
+  const p=await f.create();
+  for(const r of ['contributor','holder'])await f.svc.sign(...f.args(r),p.id,await f.intent(p,r),r,styled(f,r,style));
+  for(const r of ['contributor','holder'])assert.equal((await f.svc.readEvidence(f.args(r)[0],p.id,r)).signature_style,style);
+  assert.equal((await f.svc.evaluate(9)).conclusion,'success');
+}));
+for(const style of ['comic','',5,null,'Formal'])test('independent signature style '+JSON.stringify(style)+' is rejected without recording anything',()=>iso(async f=>{
+  const p=await f.create();
+  await assert.rejects(f.svc.sign(...f.args('contributor'),p.id,await f.intent(p,'contributor'),'contributor',styled(f,'contributor',style)),e=>e.code==='personal_evidence_required');
+  assert.deepEqual(await f.store.signatures(p.id),[]);
+}));
+test('independent evidence without a signature style stays readable and has none',()=>iso(async f=>{
+  const p=await f.complete();assert.equal('signature_style' in await f.svc.readEvidence(f.args('contributor')[0],p.id,'contributor'),false);
+}));

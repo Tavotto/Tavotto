@@ -15,6 +15,18 @@
     ],
     "tavotto_error": "script_error"
   },
+  "data_source_signatures": [
+    {
+      "data_source": "read_parquet",
+      "path_style": "cwd",
+      "behavior_kinds": [
+        "zero_figures"
+      ],
+      "tavotto_errors": [
+        "script_error"
+      ]
+    }
+  ],
   "repro": {
     "script": "tests/compat_guardian/families/G4-cwd-relative-reader-zero-figures/repro.py",
     "sha256": "d8c6be34d9a40c7d3dc8758d64148f7940196af120570fc956829f1100c4f638",

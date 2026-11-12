@@ -60,8 +60,17 @@ fig.savefig(OUT / "Fig1_removal_rate.pdf")
 用户常让你「写个脚本画图」，默认写出来的是独立运行版（弹窗选文件、Pillow 画图、
 `plt.show()`），放进 Tavotto 全跑不起来。按下面写：
 
-* **只用 Matplotlib 画图**。Tavotto 只捕获 Matplotlib figure；Pillow / OpenCV 直接画出的
-  图片只能当位图导入排版，不能逐元素编辑。
+* **新写的脚本只用 Matplotlib 画图**。Tavotto 只捕获 Matplotlib figure；Pillow / OpenCV /
+  plotly / ROOT 画布直接画出的图片只能当位图导入排版，不能逐元素编辑。
+* **用户已有的非 Matplotlib 脚本**（Python 里用 Pillow / OpenCV / plotly / ROOT 画布出图，
+  或 R 的 `.R`、MATLAB 的 `.m` 脚本）：**原脚本一个字都不改**，在它旁边**另建一个新文件**
+  `<原名>_matplotlib.py`（重名就 `_matplotlib_2.py` 依次加序号，不覆盖任何已有文件）。新脚本
+  照本契约写：保留原脚本的数据读取与计算（R / MATLAB 的数据文件照原路径读；ROOT / RooFit
+  拟合仍用 ROOT，只把绘图换成 Matplotlib；Pillow 热图用 `imshow` / `pcolormesh` 复现色标、
+  格子标注、标题与脚注），图幅、字号、配色对齐原图。写完 `tavotto_refresh_project`，再
+  `tavotto_open_figure` 打开新图请用户与原图并排核对。这与 Tavotto 桌面版改图助手的「生成
+  可编辑版本」是同一个约定；用户更想在桌面窗口里做，就请他在 Tavotto 里打开原脚本、点「生成
+  可编辑版本」。
 * **不弹窗、不等输入**：不用 tkinter / Qt 文件对话框、`input()`、argparse 必填参数。数据文件
   放项目里用相对路径（`Path(__file__).resolve().parent / "data" / "x.csv"`），或写成脚本
   顶部的常量；路径别从运行期交互得来。

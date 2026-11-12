@@ -6,6 +6,7 @@ import { ThinkingOrb, type OrbForm } from '@/components/ui/ThinkingOrb'
 import { SwapText } from '@/components/ui/SwapText'
 import { t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
+import { connectionAgent, type AiConnection } from '@/lib/api'
 import { splitNoticeText } from '@/lib/noticeText'
 import { cn } from '@/lib/utils'
 import { DATA_FIGURE_TASK, sessionAgentLabel, useAiStore, type AiSession } from '@/store/aiStore'
@@ -13,6 +14,7 @@ import { requestCheckConnection } from '@/store/connectAiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Reveal } from '../ui/Field'
 import { Notice } from '../ui/Notice'
+import { AttachmentBubble } from './AttachCards'
 import { CopyAction } from './CopyAction'
 import { DiffView } from './DiffView'
 import { EditDependencyNotice } from './EditDependencyNotice'
@@ -20,7 +22,8 @@ import { LegendLabelNotice } from './LegendLabelNotice'
 import { Markdown } from './Markdown'
 import { revertSession } from './revertSession'
 import { TraceDetails } from './TraceDetails'
-import { agentErrorKey, fixedByConnection, formatDuration, groupEntries, spanOf, statusLabel, type Step } from './transcriptModel'
+import { manualHow, startCliUpdate, updatableInApp, useCliUpdateError, useCliUpdateRunning } from './cliUpdate'
+import { agentErrorKey, AGENT_ERROR_ACTION, fixedByConnection, formatDuration, groupEntries, spanOf, statusLabel, type Step } from './transcriptModel'
 
 /**
  * 改图助手的转录（2026-10-07 设计审计 §6.1 / §6.2，宪法第十八节「2026-10-07 重做」）：从「一轮一张卡」改成「一段对话」。
@@ -36,6 +39,57 @@ import { agentErrorKey, fixedByConnection, formatDuration, groupEntries, spanOf,
  */
 
 const ai = (key: string, values?: Record<string, unknown>) => translate(key, { ns: 'ai', ...(values ?? {}) })
+
+/** 这次会话背后那份 CLI 对应的订阅连接（`route = cli:<agent>`）；不是订阅（第三方接口 / 内置）→ undefined */
+const useSubscriptionOf = (agent: string): AiConnection | undefined =>
+  useAiStore((s) => s.caps?.connections?.find((c) => c.route === `cli:${agent}` && connectionAgent(c) === agent))
+
+/**
+ * 「这个型号要新版 Codex」失败卡的唯一主按钮（一句话 + 一个按钮）：能点一下更新就「更新 Codex」（完成后 `cli_update` 消失、
+ * 主按钮回到「重试」）；点不了就「换回默认型号」（当前选的已经是默认型号就不给）；两样都没有才是「重试」。
+ */
+function ModelUnavailableAction({
+  session,
+  onRetry,
+  canRetry,
+}: {
+  session: AiSession
+  onRetry: (s: AiSession) => void
+  canRetry: boolean
+}) {
+  const conn = useSubscriptionOf(session.agent)
+  const current = useAiStore((s) => (conn ? s.models[conn.id] : undefined))
+  const running = useCliUpdateRunning(session.agent)
+  const name = useAiStore((s) => s.caps?.agents.find((a) => a.id === session.agent)?.display_name) ?? session.agentLabel
+  if (updatableInApp(conn?.cli_update) || running) {
+    return (
+      <Button data-ai-cli-update-card size="sm" disabled={running} onClick={() => startCliUpdate(session.agent)}>
+        {ai(running ? 'cliUpdate.running' : 'cliUpdate.action', { agent: name })}
+      </Button>
+    )
+  }
+  const back = conn?.default_model && conn.default_model !== current ? conn.default_model : null
+  if (conn && back) {
+    const label = conn.model_details?.find((d) => d.id === back)?.display_name || back
+    return (
+      <Button
+        data-ai-model-switch-back
+        size="sm"
+        onClick={() => {
+          useAiStore.getState().setConnection(conn.id)
+          useAiStore.getState().setModel(conn.id, back)
+        }}
+      >
+        {ai('cliUpdate.switchBack', { model: label })}
+      </Button>
+    )
+  }
+  return canRetry ? (
+    <Button data-ai-retry size="sm" onClick={() => onRetry(session)}>
+      {ai('panel.retry')}
+    </Button>
+  ) : null
+}
 
 /** 改动是直接落盘的，措辞不能像「待应用的预览」 */
 function statusText(s: AiSession): string {
@@ -134,6 +188,13 @@ export function Turn({
         : null
   // AI 这一侧没跑成（模型 / 连接 / Agent 进程 / 超时）：说具体原因，不落到「没通过写回前检查」——候选根本没写出来；原始码只进「详情」
   const agentError = agentErrorKey(session.error)
+  // 「型号要新版」且只能自己更新：怎么更新放进「详情」（正文只留一句）
+  const cliUpdate = useSubscriptionOf(session.agent)?.cli_update
+  const updateFailed = useCliUpdateError(session.agent)
+  const manualDetail =
+    agentError === 'agent_model_unavailable'
+      ? (updateFailed ?? (cliUpdate?.action === 'manual' ? manualHow(cliUpdate) : null))
+      : null
   const rejected =
     !agentError && session.status === 'failed' && outcome === 'failed' && !session.changed && !dataFigureTurn
   const unmetIds = (session.task?.unmet ?? []).map((u) => u.constraint_id)
@@ -257,7 +318,9 @@ export function Turn({
           title={rejected ? undefined : statusLabel(session.status)}
           // 一句话留在正文；长的 / 多行的整段进「详情」（带复制）
           detail={
-            agentError
+            manualDetail
+              ? manualDetail
+              : agentError
               ? session.error
               : rejected
                 ? [unmetDetail, splitNoticeText(session.error).detail ?? splitNoticeText(session.error).inline]
@@ -266,7 +329,9 @@ export function Turn({
                 : splitNoticeText(session.error).detail
           }
           action={
-            fixedByConnection(agentError) ? (
+            agentError && AGENT_ERROR_ACTION[agentError] === 'update_cli' ? (
+              <ModelUnavailableAction session={session} onRetry={onRetry} canRetry={canRetry} />
+            ) : fixedByConnection(agentError) ? (
               // 凭据无效 / 地址指到了网页 / 额度用完 / 连不上 / 归不了的非零退出：重试只会再失败一次，主按钮去改连接（码表见 AGENT_ERROR_ACTION）
               <Button data-ai-check-connection size="sm" onClick={() => requestCheckConnection()}>
                 {ai('notice.checkConnection')}
@@ -378,6 +443,10 @@ function UserBubble({
           </button>
         )}
       </div>
+      {/* 附件是第二个气泡（ADR 0175）：本页发起的是一叠卡牌，刷新 / 历史里只有个数；没附文件就什么都不画 */}
+      {session.attachments?.length || session.attachmentCount ? (
+        <AttachmentBubble views={session.attachments} count={session.attachmentCount} />
+      ) : null}
       {/* 目标 · 时刻与操作只在 hover / 键盘进入时出现（不占注意力，占位不跳） */}
       <div
         data-ai-user-actions

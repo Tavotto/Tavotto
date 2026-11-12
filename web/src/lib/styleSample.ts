@@ -11,7 +11,7 @@
  */
 
 import { FIGURE_LINE_ROWS, FIGURE_TEXT_ROWS, type FigureLineRowId, type FigureTextRowId } from './stylePanelModel'
-import { styleIsItalic, weightIsBold, weightNumber } from './typography'
+import { styleIsItalic, weightIsBold, weightNumber, type CanvasTextFamily } from './typography'
 import { figureFontChoice } from './figureFontChoice'
 
 /** 示例图默认值（一张 9 pt / 0.5 pt 的典型论文图） */
@@ -94,14 +94,24 @@ const familyOf = (v: unknown): string | null => {
   return typeof first === 'string' && first.trim() ? first.trim() : null
 }
 
+/**
+ * 一个字体族名属于哪个通用族（衬线 / 无衬线 / 等宽）：通用族名自己就是它，具体字体名按名字里的线索认
+ * （认不出的算无衬线）。样式示例的 CSS 回退栈（`cssFamilyOf`）与「图内文字复制为标注」挑最接近的画布
+ * 字体族（`figureTextCopy`）共用这一份——两处各写一份线索表迟早分叉。
+ */
+export function genericFamilyOf(family: string | null | undefined): CanvasTextFamily {
+  const low = (family ?? '').toLowerCase()
+  if (low === 'serif' || low === 'sans-serif' || low === 'monospace') return low
+  if (/times|georgia|garamond|palatino|book|roman|song|宋/.test(low)) return 'serif'
+  if (/mono|courier|consolas|menlo/.test(low)) return 'monospace'
+  return 'sans-serif'
+}
+
 /** matplotlib 的通用族名 → CSS 通用族；具体字体名（Times New Roman）原样交给浏览器 */
 export function cssFamilyOf(family: string | null): string {
   if (!family) return SAMPLE_DEFAULTS.fontFamily
-  const low = family.toLowerCase()
-  if (low === 'serif' || low === 'sans-serif' || low === 'monospace') return low
-  if (/times|georgia|garamond|palatino|book|roman|song|宋/.test(low)) return `"${family}", serif`
-  if (/mono|courier|consolas|menlo/.test(low)) return `"${family}", monospace`
-  return `"${family}", sans-serif`
+  const generic = genericFamilyOf(family)
+  return family.toLowerCase() === generic ? generic : `"${family}", ${generic}`
 }
 
 const textRow = (id: FigureTextRowId) => FIGURE_TEXT_ROWS.find((r) => r.id === id)!

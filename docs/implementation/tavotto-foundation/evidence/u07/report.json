@@ -3,11 +3,11 @@
   "platform": {
     "system": "Darwin",
     "machine": "arm64",
-    "python": "3.13.11"
+    "python": "3.13.16"
   },
   "versions": {
-    "uharfbuzz": "0.56.1",
-    "fonttools": "4.65.0",
+    "uharfbuzz": "0.56.2",
+    "fonttools": "4.66.0",
     "pikepdf": "10.13.0.post1",
     "pypdfium2": "5.13.0",
     "pdfium": "153.0.7999.0",
@@ -22,20 +22,20 @@
       "figs/b.pdf": "2ee2519239422e7af7bce650e3f0d574974bdcd9b309a28983230faa20b5055d",
       "figs/overlap.pdf": "928a9035b3d73f4f37b6b37252ff0c737270b2706c81be2da478182666360dc9"
     },
-    "allowlist_sha256": "abd2b64e71edb2112972b23bf03c3aea34ed5b305e87b123dd867b6cb01e18b2"
+    "allowlist_sha256": "55f616132935d4a3f30607ef7809ea6cfbfa7253376afa8acc695a03cea2c9e1"
   },
   "outputs": {
     "u07.pdf": {
-      "sha256": "6d774e082cbb286b5c032ae838c4e7864f6443f3f8887616e75bfe20704e687f",
-      "bytes": 8158
+      "sha256": "ebeda2a634cb7db1e27ce7da2ebd06388c5ef7d433e17e230db9e61d381c8a08",
+      "bytes": 8239
     },
     "u07_pdfium.png": {
-      "sha256": "4831d0e0cceeab0c740352b91c55e5e9bc41b4d939e18f24cd3bf280ced5c1ab",
-      "bytes": 22930,
+      "sha256": "b62bbd450cf74c670cb957b75c3002cd12eca18985ecf742b9c5fbda4525c6ff",
+      "bytes": 22924,
       "platform_specific": true
     },
     "u07.tiff(not committed)": {
-      "pixel_sha256": "454cd6285e6c6fa61d132297afb0fab8244b1d5fa9eecd34eba93b57274e24e4",
+      "pixel_sha256": "caa7503f199afc90de0340c2ee105935bf7dca7e271b0fd65eee20fe68b8394b",
       "px_w": 945,
       "px_h": 709,
       "channels": 3,
@@ -277,14 +277,14 @@
       },
       {
         "resource": "F2",
-        "face_id": "NotoSansSC-Regular",
-        "sha256": "faa6c9df652116dde789d351359f3d7e5d2285a2b2a1f04a2d7244df706d5ea9",
+        "face_id": "NotoSerifSC-Regular",
+        "sha256": "c9f8dd8c035e22ea31607e5efbb2dabdf94836a92f5868267dd2b1a85eb0cd3b",
         "kind": "cff-cid",
-        "base_font": "GRXLQY+NotoSansSC-Regular",
-        "glyphs_in_source": 31036,
+        "base_font": "VOCQJH+NotoSerifSC-Regular",
+        "glyphs_in_source": 31027,
         "glyphs_in_subset": 3,
         "used_glyphs": 2,
-        "font_program_bytes": 732,
+        "font_program_bytes": 821,
         "tounicode_entries": 2
       }
     ]
@@ -337,7 +337,7 @@
     {
       "name": "pdf.deterministic",
       "ok": true,
-      "sha256": "6d774e082cbb286b5c032ae838c4e7864f6443f3f8887616e75bfe20704e687f"
+      "sha256": "ebeda2a634cb7db1e27ce7da2ebd06388c5ef7d433e17e230db9e61d381c8a08"
     },
     {
       "name": "pdf.imported_pages",
@@ -385,7 +385,7 @@
     {
       "name": "png_tiff.same_pixels",
       "ok": true,
-      "sha256": "454cd6285e6c6fa61d132297afb0fab8244b1d5fa9eecd34eba93b57274e24e4"
+      "sha256": "caa7503f199afc90de0340c2ee105935bf7dca7e271b0fd65eee20fe68b8394b"
     },
     {
       "name": "tiff.tags",

@@ -1,6 +1,6 @@
 {
   "closeGuard": {
-    "body": "This layout has unsaved changes. Save before closing?",
+    "body": "Save before closing? If you don’t, the local draft is kept and can be restored next time.",
     "discard": "Don’t save",
     "save": "Save and close",
     "saveFailed": "Saving failed, so the window stays open. Resolve the problem, or choose “Don’t save” to close anyway.",
@@ -17,13 +17,15 @@
     "attachPick": "Add screenshot / file",
     "attachRemove": "Remove {{name}}",
     "fileError": {
-      "type": "Only images, PDF, Word, Excel and PowerPoint are supported.",
       "empty": "An empty file can't be attached.",
       "count": "Up to {{max}} attachments.",
       "total": "Attachments can't exceed {{size}} in total."
     },
     "diagLabel": "Attach diagnostic info",
     "diagHint": "Logs may contain text your script printed. The bundle also includes managed-environment Python package names and versions, but not your script or data files.",
+    "diagHintExtras": "Logs may contain text your script printed. The bundle also includes managed-environment Python package names and versions, plus what you tick below.",
+    "diagExtrasTitle": "Extra content",
+    "diagExtrasPrompt": "The maker often needs these to track a problem down. Tick them if you can.",
     "diagPreparing": "Preparing the diagnostics bundle...",
     "diagReady": "Diagnostics bundle · {{size}}",
     "diagFailedPrepare": "The diagnostics bundle isn't ready. Untick this or try again later.",
@@ -157,6 +159,13 @@
   "engineEnv": {
     "title": "Rendering environment"
   },
+  "epsOpacity": {
+    "body_one": "This figure has {{count}} semi-transparent annotation.",
+    "body_other": "This figure has {{count}} semi-transparent annotations.",
+    "opaque": "Export EPS opaque",
+    "pdf": "Export PDF instead",
+    "title": "EPS can’t do transparency"
+  },
   "export": {
     "contentLabel": "Export",
     "contentWhole": "Whole page",
@@ -165,6 +174,8 @@
     "exportedCount_other": "Exported {{count}} files",
     "resultInspectionFailed_one": "{{count}} file failed its check; see details",
     "resultInspectionFailed_other": "{{count}} files failed their checks; see details",
+    "resultScriptSkipped_one": "{{count}} edit not in the .py",
+    "resultScriptSkipped_other": "{{count}} edits not in the .py",
     "resultWarnings_one": "{{count}} note; see details",
     "resultWarnings_other": "{{count}} notes; see details",
     "partialSummary": "{{ok}} succeeded, {{failed}} failed",
@@ -173,6 +184,12 @@
     "previewWhole": "Whole page",
     "previewFlagged": "Has items to fix",
     "batchProgress": "Figure {{k}} of {{n}} · {{name}} · {{phase}}",
+    "scriptHint": "Edited copy of the script. The original isn’t touched.",
+    "scriptSkipped": "Not written: {{items}}",
+    "scriptUnavailable": {
+      "canvas_scope": "Can’t export .py for the whole layout. Choose “Each figure separately”.",
+      "no_script": "No script for this figure"
+    },
     "mergePdf": "Combine into one multi-page PDF: {{name}} ({{count}} pages)",
     "batchNames": "Each figure keeps its own name",
     "exportAgain": "Export again",
@@ -257,7 +274,6 @@
     "profileOtherCanvas": "This figure is on the canvas “{{canvas}}” and is checked against that canvas’s profile. Switch to that canvas to change it.",
     "profileSync": "Sync to the new version",
     "profileUpdateAvailable": "A newer version of this spec is available.",
-    "replaced": "replaced",
     "reportTitle": "Also writes a JSON report for your submission records.",
     "reportToggle": "Generate a style check report",
     "retry": "Try again",
@@ -277,6 +293,7 @@
     "sizeUnknownShort": "size unknown",
     "start": "Export",
     "targetNoFigure": "No current figure",
+    "svgTextOutlined": "Text in this SVG was converted to paths and can no longer be edited as text.",
     "svgHint": "Vector · text stays editable by default",
     "tiffHint": "Raster · lossless",
     "title": "Export",
@@ -287,9 +304,6 @@
     "strictToggle": "Strict file check",
     "strictTitle": "Reopens each finished file and checks it against the selected profile. A file that fails or can’t be checked is not saved. EPS is not checked.",
     "inspection": {
-      "verified": "Checked",
-      "unknown": "Not checked",
-      "unknownItems": "Not checked: {{items}}",
       "failedItems": "Check failed: {{items}}",
       "check": {
         "integrity": "integrity",
@@ -319,13 +333,19 @@
     "locationLabel": "Location",
     "locationDefault": "Project export folder",
     "locationChange": "Change…",
+    "findMissingSource": "Find this figure",
+    "missingSourceNote": "One figure can’t be found: {{name}}.",
+    "changeLocationExport": "Export to another folder",
+    "lowerDpiExport": "Export at {{dpi}} dpi",
     "toast": {
       "conflict": "Export is waiting for you to decide what to do with same-name files.",
       "failed": "Export failed. No files were written.",
       "partial": "Export finished only in part. Some files could not be written.",
       "unknown": "Couldn't find this export job. Files may have been written."
     },
-    "viewResult": "View"
+    "viewResult": "View",
+    "journalUnlisted": "{{journal}} does not list {{format}}",
+    "journalDpi": "{{journal}} requires (dpi)\n{{detail}}"
   },
   "layout": {
     "conflict": "A layout named “{{name}}” already exists on disk, written by another window or tool.",
@@ -639,7 +659,7 @@
     "landingTitle": "Pick a figure. Change it yourself.",
     "loadAnother": "Load another script",
     "mobileNote": "Precise editing works best in a desktop browser. The canvas is viewable here; the element tree and inspector need more width.",
-    "noFigureBody": "Nothing called savefig() and no pyplot figure was left open. The script output below may explain why.",
+    "noFigureBody": "No pyplot figure was left open. The script output below may explain why.",
     "noFigureTitle": "The script finished without creating a Matplotlib figure.",
     "overrides_one": "{{count}} override",
     "overrides_other": "{{count}} overrides",
@@ -764,6 +784,7 @@
     "export": "Export to a file",
     "field": {
       "defaultFont": "Body font size",
+      "columns": "Column widths",
       "doubleWidth": "Double column",
       "exportDpi": "Suggested export resolution",
       "floorFont": "Absolute floor",
@@ -803,6 +824,9 @@
     "saved": "Saved “{{name}}”",
     "snapshotHint": "The project keeps a snapshot of the rules as selected. Later edits to the global profile don’t apply unless “Follow updates” is on.",
     "snapshotTitle": "Rules this project actually checks against",
+    "unspecified": "Not specified",
+    "adviceHint": "Suggested: {{pt}} pt",
+    "defaultHint": "Default {{value}} {{unit}}",
     "unset": "Not set",
     "useForProject": "Use this spec for the project",
     "usedForProject": "This project now checks against “{{name}}”",
@@ -845,7 +869,12 @@
         "otherOff": "Italic: the style says “{{value}}”, which doesn’t count as italic — applying writes it as is (click to make italic)"
       }
     },
-    "clearRow": "Clear the whole {{row}} row: every cell goes back to not set"
+    "clearRow": "Clear the whole {{row}} row: every cell goes back to not set",
+    "journalEntry": "{{name}} · Journal",
+    "journalBadge": "Journal requirements · read-only",
+    "leaveJournalTitle": "Stop checking against “{{journal}}”?",
+    "leaveJournalBody": "Switching to “{{name}}” removes the journal requirements and their sources. You can undo this.",
+    "leaveJournalConfirm": "Use this spec"
   },
   "readiness": {
     "addToCanvas": "Add to canvas",
@@ -855,6 +884,8 @@
     "allScriptsTitle": "All scripts",
     "autoLink": "Connect automatically",
     "emptyHint": "Run a plotting script, or drop a PDF or PNG into the figure folder.",
+    "emptyRuntimeTitle_one": "The figure folder is empty; {{count}} figure comes from a script run",
+    "emptyRuntimeTitle_other": "The figure folder is empty; {{count}} figures come from script runs",
     "emptyTitle": "No figures in this project yet",
     "group": {
       "editable": "Editable",
@@ -1364,7 +1395,8 @@
       },
       "viewGuide": "Read the guide",
       "defaultLabel": "Default assistant",
-      "defaultNone": "No assistant available"
+      "defaultNone": "No assistant available",
+      "convertUnsandboxed": "Let the AI run without a sandbox when converting"
     },
     "canvas": {
       "companionsExplain": "Companion elements are hand-placed titles, axis labels, legends, colorbar axes and twinx twins. Without this, they stay behind when the axes move; turn it off to move only the axes.",
@@ -1526,7 +1558,6 @@
           "corrupt_sessions": "Contents of corrupted session copies"
         },
         "extraHint": {
-          "source": "Scripts and dependency files are attached as is; secrets may survive redaction, so do not tick if they hold any.",
           "crash_reports": "A Windows crash dump is a memory snapshot and may hold file contents and paths; it cannot be redacted.",
           "corrupt_sessions": "Only names and sizes by default; tick to attach contents."
         },
@@ -1799,6 +1830,7 @@
       "sourceUsed": "Update source: {{source}}",
       "sourceName": {
         "mirror": "China mirror",
+        "edge": "China mirror",
         "github": "GitHub"
       },
       "attemptsTitle": "Failures per source",
@@ -1825,8 +1857,8 @@
       "lastCheckedUnknown": "Never checked, so the latest version is unknown",
       "title": "Updates",
       "notesTitle": "What’s new",
-      "autoCheckDesktop": "Check at startup",
-      "autoCheckDesktopReason": "The desktop app checks every time it starts; this can’t be turned off yet"
+      "autoDownload": "Download updates in the background",
+      "restartNow": "Restart now"
     },
     "tutorial": {
       "label": "Tutorial",
@@ -1954,21 +1986,19 @@
       "title": "Connect AI editors",
       "connect": "Connect",
       "retry": "Retry",
-      "chooseFolder": "Choose folder",
       "running": "Connecting…",
       "connected": "Connected",
       "notDetected": "Not found",
       "disconnected": "Disconnected",
       "doneNewSession": "Connected. Start a new session in {{host}}.",
       "more": "More actions for {{host}}",
-      "changeFolder": "Change folder",
       "disconnect": "Disconnect",
-      "pickFolderTitle": "Which folder should {{host}} work on with Tavotto?",
       "stepsTitle": "Details",
       "announce": {
         "ok": "Done.",
         "failed": "Not connected."
       },
+      "skillModified": "You edited the usage notes, so Tavotto left them alone.",
       "stepState": {
         "done": "done",
         "skipped": "no change needed",
@@ -1981,6 +2011,7 @@
         "trust": "Trust Tavotto",
         "register": "Register",
         "unregister": "Unregister",
+        "skill": "Usage notes",
         "health": "Start check",
         "server": "MCP server",
         "host": "Editor"
@@ -1988,13 +2019,14 @@
       "error": {
         "host_not_installed": "{{host}} was not found. Install it and open it once, then try again.",
         "mcp_server_not_bundled": "This version of Tavotto has no MCP server. Update the desktop app.",
-        "project_root_missing": "Choose a project folder first.",
         "project_root_rejected": "Choose a specific project folder, not your whole home folder or a drive root.",
         "config_unreadable": "Tavotto could not read the {{host}} config file (it may contain comments), so it left it unchanged. Open Details to see which file.",
         "config_write_failed": "Tavotto could not write the {{host}} config file. Open Details to see which file.",
         "host_cli_failed": "The {{host}} command line did not finish the registration. Open Details for its output.",
         "server_health_failed": "The config is written, but the Tavotto server did not start. Open Details for the reason.",
         "codex_install_failed": "Codex is not connected. Open Details to see which step stopped.",
+        "skill_source_missing": "This version of Tavotto has no usage notes bundled. Update the desktop app.",
+        "skill_write_failed": "Connected, but Tavotto could not write the usage notes into {{host}}. Open Details to see which folder.",
         "unknown_host": "Unknown editor.",
         "cli_not_found": "The Tavotto command line (tavotto-cli) is missing. Reinstall the desktop app.",
         "spawn_failed": "Could not start the Tavotto command line. Try again.",
@@ -2004,7 +2036,18 @@
         "bad_action": "This action is not allowed.",
         "not_desktop": "Available in the desktop app only.",
         "other": "Not connected. Open Details for the command output."
-      }
+      },
+      "connectedSkill": "Connected · skill {{version}}",
+      "connectedBuiltin": "Connected · built-in notes",
+      "connectedPlugin": "Connected · plugin {{version}}",
+      "pluginOutdated": "Plugin {{version}} · update available",
+      "update": "Update",
+      "updating": "Updating…",
+      "skillKept": "Skill edited, not updated",
+      "overwrite": "Overwrite",
+      "overwriteTitle": "Overwrite your edited skill in {{host}}?",
+      "overwriteBody": "Your changes will be replaced with the version that ships with Tavotto.",
+      "cancel": "Cancel"
     }
   },
   "style": {
@@ -2075,24 +2118,30 @@
     }
   },
   "telemetry": {
-    "allow": "Share anonymous usage",
+    "allow": "Share anonymously",
+    "allowReconsent": "Keep sharing anonymously",
     "decline": "Not now",
-    "intro": "Send anonymous usage statistics to show which features get used. Off by default; not tied to an account.",
-    "later": "You can change this any time in Settings.",
-    "reconsentDelta": "Three things were added since you last agreed: how an export ended (including failed or cancelled); which Tavotto tool an AI agent called and whether it succeeded (never its arguments or content); and a content-free error summary attached when you choose to send a problem report.",
-    "neverData": "Scientific data and text inside figures",
-    "neverFigures": "Your figures and project files",
-    "neverPaths": "Filenames and paths",
-    "neverPrompts": "Assistant prompts and replies",
-    "neverScripts": "Scripts and source code",
+    "details": "What exactly is sent",
+    "detailsReconsent": "What's new this time",
+    "fact": "Only anonymous usage records are sent. Your figures, scripts, data and file names are never sent.",
+    "later": "You can change this any time in Settings",
+    "leadA": "We want to know which features get used a lot and what's hard to use, so we can decide what to fix first.",
+    "leadB": "We look at which features people use most and where errors happen most, to plan the next changes.",
+    "leadC": "Not sharing has no effect on how Tavotto works. If you do share, we can find out sooner when something goes wrong.",
+    "neverData": "scientific data and text inside figures",
+    "neverFigures": "your figures and project files",
+    "neverPaths": "filenames and paths",
+    "neverPrompts": "assistant prompts and replies",
+    "neverScripts": "scripts and source code",
     "neverTitle": "What is never sent",
     "policy": "Privacy policy",
-    "sendsFeatures": "Which features you use",
-    "sendsErrorSummary": "When you send a problem report yourself, a content-free error summary is attached",
-    "sendsOutcome": "The result of preflight and export (succeeded, failed or cancelled)",
-    "sendsPlatform": "Operating system family and processor architecture",
+    "reconsentDelta": "One new item since you last agreed: how many times an AI editor looks up the journal list (only that it did, never what it searched for or which journal).",
+    "sendsErrorSummary": "an error summary (no content) when you send feedback yourself",
+    "sendsFeatures": "which features you use",
+    "sendsOutcome": "how preflight and export ended",
+    "sendsPlatform": "operating system family and processor architecture",
     "sendsTitle": "What is sent",
-    "sendsVersion": "The Tavotto version",
+    "sendsVersion": "the Tavotto version",
     "title": "Help improve Tavotto"
   },
   "updateNotice": {
@@ -2449,12 +2498,17 @@
     "current": "Checking against {{name}}",
     "requirements": "Journal requirements",
     "unspecified": "Not specified by the journal",
+    "hasRequirement": "Has a requirement",
     "unset": "Does not apply to this journal",
     "noJournal": "No journal",
     "cleared": "No longer checking against a journal",
+    "quotaLater": "Journal quota is used up for now, try again later",
+    "needsNetwork": "This journal needs a connection to download",
     "yes": "Yes",
     "no": "No",
     "noLimit": "No limit",
+    "formatsPreferred": "Preferred: {{list}}",
+    "formatsAccepted": "Accepted: {{list}}",
     "source": "Source",
     "sourceOf": "Source of {{name}}",
     "picked": "Now checking against {{name}}",

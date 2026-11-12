@@ -50,6 +50,10 @@ const shape = (kind: ShapeKind, over: Partial<ShapeObject> = {}): ShapeObject =>
   color: '#3366CC',
   fill: '#FFEE88',
   dash: 'dashed',
+  // ADR 0174 的共有描边样式：全摆上非默认值（缺省值的样品证明不了「原样保留」）
+  strokeOpacity: 0.6,
+  lineCap: 'butt',
+  lineJoin: 'bevel',
   rotationDeg: 37,
   name: '我起的名字',
   groupId: 'g1',
@@ -68,6 +72,9 @@ const arrow = (over: Partial<ArrowObject> = {}): ArrowObject => ({
   strokePt: 2.25,
   color: '#3366CC',
   dash: 'dashed',
+  strokeOpacity: 0.6,
+  lineCap: 'butt',
+  lineJoin: 'bevel',
   rotationDeg: 37,
   name: '我起的名字',
   groupId: 'g1',
@@ -455,5 +462,31 @@ describe('科研预设：整组按同族判、单个成员照常给', () => {
     const out = switchObject(top, 'line')!
     expect(out.groupId).toBe(top.groupId)
     expect(out.id).toBe(top.id)
+  })
+})
+
+describe('ADR 0174 的新字段在切换里的去留', () => {
+  it('无边框跟着封闭形状走（矩形 → 椭圆保留），切成大括号 / 直线就不带（它们永远有描边）', () => {
+    const noStroke = shape('rect', { stroke: false })
+    expect((switchObject(noStroke, 'ellipse') as ShapeObject).stroke).toBe(false)
+    expect((switchObject(noStroke, 'polygon') as ShapeObject).stroke).toBe(false)
+    expect('stroke' in (switchObject(noStroke, 'brace') as ShapeObject)).toBe(false)
+    // 有描边的矩形切完仍然没有这个字段（不凭空写 stroke:true）
+    expect('stroke' in (switchObject(shape('rect'), 'ellipse') as ShapeObject)).toBe(false)
+  })
+
+  it('端型大小只有箭头读：箭头 → 直线时丢掉，直线 → 箭头时不凭空出现', () => {
+    const a = arrow({ headSizeStart: 'small', headSizeEnd: 'large' })
+    const line = switchObject(a, 'line') as ShapeObject
+    expect('headSizeStart' in line || 'headSizeEnd' in line).toBe(false)
+    const back = switchObject(line, 'arrow') as ArrowObject
+    expect('headSizeStart' in back || 'headSizeEnd' in back).toBe(false)
+  })
+
+  it('描边不透明度 / 线端 / 拐角是共有外观：每一种目标都原样带过去', () => {
+    for (const [from, to] of PAIRS) {
+      const out = switchObject(sample(from), to) as ShapeObject | ArrowObject
+      expect([out.strokeOpacity, out.lineCap, out.lineJoin], `${from} → ${to}`).toEqual([0.6, 'butt', 'bevel'])
+    }
   })
 })

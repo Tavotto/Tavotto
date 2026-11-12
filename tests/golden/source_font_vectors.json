@@ -1,0 +1,288 @@
+{
+  "_comment": "TextObject.sourceFont / 导出载荷 source_font 的形状向量（ADR 0164）。Python 侧 sourcefont.parse_source_font 与前端 lib/sourceFont.isSourceFont 各跑一遍同一批：valid 必须一致。",
+  "cases": [
+    {
+      "name": "minimal",
+      "value": {
+        "family": "DejaVu Sans",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 0
+      },
+      "valid": true
+    },
+    {
+      "name": "flags",
+      "value": {
+        "family": "A",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 0,
+        "bold": true,
+        "italic": true
+      },
+      "valid": true
+    },
+    {
+      "name": "with-cjk",
+      "value": {
+        "family": "A",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 3,
+        "cjk": {
+          "family": "SimSun",
+          "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+          "face": 1
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "family-with-padding",
+      "value": {
+        "family": " Arial ",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 0
+      },
+      "valid": true
+    },
+    {
+      "name": "max-face",
+      "value": {
+        "family": "A",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 1023
+      },
+      "valid": true
+    },
+    {
+      "name": "face-out-of-range",
+      "value": {
+        "family": "A",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 1024
+      },
+      "valid": false
+    },
+    {
+      "name": "negative-face",
+      "value": {
+        "family": "A",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": -1
+      },
+      "valid": false
+    },
+    {
+      "name": "fractional-face",
+      "value": {
+        "family": "A",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 1.5
+      },
+      "valid": false
+    },
+    {
+      "name": "string-face",
+      "value": {
+        "family": "A",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": "0"
+      },
+      "valid": false
+    },
+    {
+      "name": "uppercase-sha",
+      "value": {
+        "family": "A",
+        "sha256": "0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F",
+        "face": 0
+      },
+      "valid": false
+    },
+    {
+      "name": "short-sha",
+      "value": {
+        "family": "A",
+        "sha256": "abcd",
+        "face": 0
+      },
+      "valid": false
+    },
+    {
+      "name": "empty-family",
+      "value": {
+        "family": "",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 0
+      },
+      "valid": false
+    },
+    {
+      "name": "blank-family",
+      "value": {
+        "family": "   ",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 0
+      },
+      "valid": false
+    },
+    {
+      "name": "missing-family",
+      "value": {
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 0
+      },
+      "valid": false
+    },
+    {
+      "name": "bad-cjk",
+      "value": {
+        "family": "A",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 0,
+        "cjk": {
+          "family": "A"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "not-an-object",
+      "value": "DejaVu Sans",
+      "valid": false
+    },
+    {
+      "name": "array",
+      "value": [],
+      "valid": false
+    },
+    {
+      "name": "with-siblings",
+      "value": {
+        "family": "A",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 0,
+        "siblings": [
+          {
+            "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+            "face": 1,
+            "bold": true
+          },
+          {
+            "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+            "face": 2,
+            "italic": true
+          },
+          {
+            "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+            "face": 3,
+            "bold": true,
+            "italic": true
+          }
+        ],
+        "cjk": {
+          "family": "B",
+          "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+          "face": 1,
+          "siblings": [
+            {
+              "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+              "face": 0,
+              "bold": true
+            }
+          ]
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "siblings-not-a-list",
+      "value": {
+        "family": "A",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 0,
+        "siblings": {
+          "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "sibling-bad-sha",
+      "value": {
+        "family": "A",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 0,
+        "siblings": [
+          {
+            "sha256": "nope",
+            "face": 0
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "sibling-bad-bold",
+      "value": {
+        "family": "A",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 0,
+        "siblings": [
+          {
+            "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+            "face": 0,
+            "bold": "yes"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "too-many-siblings",
+      "value": {
+        "family": "A",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 0,
+        "siblings": [
+          {
+            "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+            "face": 0
+          },
+          {
+            "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+            "face": 1
+          },
+          {
+            "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+            "face": 2
+          },
+          {
+            "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+            "face": 3
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "cjk-sibling-bad-face",
+      "value": {
+        "family": "A",
+        "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "face": 0,
+        "cjk": {
+          "family": "B",
+          "sha256": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+          "face": 0,
+          "siblings": [
+            {
+              "sha256": "1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e",
+              "face": -1
+            }
+          ]
+        }
+      },
+      "valid": false
+    }
+  ]
+}

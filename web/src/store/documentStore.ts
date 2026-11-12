@@ -404,15 +404,10 @@ export function releaseRestoreGate(): void {
   setGate({ state: 'ready', gen: ++gateSeq, pj: null, docId: null, reason: 'superseded' })
 }
 
-/** 门关着时被拒的写入：`needs_user` 时由 `documentRestore` 登记的通知器说一句（自带节流） */
+/** 门关着时被拒的写入：`needs_user` 时交给 `documentRestore` 登记的处理（静默开新排版 / 自动再试 / 说一句去哪选） */
 let blockedWriteNotifier: (() => void) | null = null
 export function onBlockedWrite(fn: (() => void) | null): void {
   blockedWriteNotifier = fn
-}
-
-/** 用户动作被拒时说一句（`needs_user`；自带节流，登记在 `documentRestore`）。用户级入口在门前自己拦时用 */
-export function noteBlockedWrite(): void {
-  blockedWriteNotifier?.()
 }
 
 /** 写入口的门：占位文档不许写。`notify` = 用户动作被拒，要说一句；派生写入静默 */
@@ -787,10 +782,35 @@ export const useDocumentStore = create<DocumentState>((rawSet, get) => {
     const [next, patches, inverse] = produceStamped(state.doc, recipe)
     if (!patches.length) return true
     // 撤销按 inverse 的顺序打回：后补的那笔先退，再退原来那条
+    // 补的这笔若也改了面板 w/h（重排的统一宽高会改到别的成员），它们的原生图幅基准要
+    // 一并记进条目，否则撤销 / 重做时这些面板的缩放比没法按条目那一侧换算。
+    // 同一面板两边都有：before 取条目原来的，after 与页面包围盒 after 取补的这笔
+    const extra = sizeBasisOf(state.doc, next, patches)
+    let sizeBasis = entry.sizeBasis
+    if (extra.length) {
+      const list = [...(entry.sizeBasis ?? [])]
+      for (const e of extra) {
+        const i = list.findIndex((b) => b.id === e.id)
+        if (i < 0) {
+          list.push(e)
+          continue
+        }
+        const b = list[i]
+        list[i] = {
+          id: b.id,
+          before: b.before,
+          after: e.after,
+          box: { before: b.box.before, after: e.box.after },
+          dims: { w: b.dims.w || e.dims.w, h: b.dims.h || e.dims.h },
+        }
+      }
+      sizeBasis = list
+    }
     const merged: HistoryEntry = {
       ...entry,
       patches: [...entry.patches, ...patches],
       inverse: [...inverse, ...entry.inverse],
+      ...(sizeBasis ? { sizeBasis } : {}),
     }
     set({ doc: next, past: [...state.past.slice(0, -1), merged] })
     noteCommit(entry.label, state, next, patches, false)
@@ -1722,7 +1742,8 @@ export function hydrateProjectFile(
       if (current.documentId !== address.documentId || current.documentFormat !== address.format
         || current.loadSeq !== loadSeq || currentProjectId() !== activeProjectId
         || (projectOfDoc().id ?? currentProjectId()) !== pj) return view
-      if (projectFileEditor.observe(address, view, expected === 'absent' ? null : expected)) {
+      const observed = projectFileEditor.observe(address, view, expected === 'absent' ? null : expected)
+      if (observed) {
         projectFileReadErrors.delete(key)
         if (view.status === 'ok') {
           const binding = bindingFromProjectFile(address, view)
@@ -1733,12 +1754,17 @@ export function hydrateProjectFile(
       }
       const opened = projectFileOpens.get(key)
       if (opened?.loadSeq === loadSeq && view.status === 'ok' && !opened.ticket) {
-        if (!opened.binding.revision || !view.edit.known || view.edit.autosave_revision !== null || view.edit.axis !== null || view.binding !== null) {
+        // 全新槽位和明确重开同一干净绑定都沿用后端实际观察到的轴与绑定代次。
+        // 重开不能把既存 AS 当成缺席，也不能拿旧本机记录覆盖别处的新编辑。
+        const fresh = view.edit.autosave_revision === null && view.edit.axis === null && view.binding === null
+        const reuse = view.binding?.file === opened.binding.file && !view.binding.dirty
+        if (!observed || !opened.binding.revision || !view.edit.known || (!fresh && !reuse)) {
           opened.error = projectFileUnavailable()
         } else {
           try {
             const reserved = await reserveProjectFile(address.documentId, pj, {
-              name: opened.binding.name, autosave_revision: null, axis: null, expected_binding_sequence: null,
+              name: opened.binding.name, autosave_revision: view.edit.autosave_revision,
+              axis: view.edit.axis, expected_binding_sequence: view.binding?.sequence ?? null,
             }, ...(address.format === 'v4' ? [address.format] : []))
             if (reserved.state !== 'reserved') opened.error = projectFileUnavailable()
             else {
@@ -2384,6 +2410,38 @@ export function acceptProbe(p: ProbeResult, pj: string | null, token?: RestoreTo
   return null
 }
 
+/**
+ * 沿用一份已有槽位的身份去装另一份内容之前：把槽位在磁盘上的现状记成基线，
+ * 否则第一次自动保存会把「从没读过的磁盘文档」当成外部修改弹冲突。
+ * 只记基线，不接收恢复副本（调用方保证这份槽位没有未保存的编辑）。
+ */
+export async function adoptSlotBaseline(id: string, format: DocumentFormat = 'legacy'): Promise<boolean> {
+  const pj = currentProjectId()
+  const p = await (format === 'v4' ? probeAutosave(id, pj, format) : probeAutosave(id, pj))
+  if (currentProjectId() !== pj) return false
+  // 本机旧绑定可能仍是 clean，而另一个窗口已保存未写回命名文件的编辑。
+  // 先核后端绑定与同一份 AS 修订；不能把那份新稿读成可覆盖的基线。
+  if (pj) {
+    const view = await (format === 'v4' ? fetchProjectFile(id, pj, format) : fetchProjectFile(id, pj))
+      .catch(() => ({ status: 'unavailable' } as const))
+    if (currentProjectId() !== pj) return false
+    if (view.status !== 'unsupported' && (view.status !== 'ok' || !view.edit.known || !view.binding || view.binding.dirty
+      || (p.kind !== 'found' && p.kind !== 'missing') || view.edit.autosave_revision !== (p.kind === 'found' ? p.revision : null))) return false
+  }
+  const writer = diskFor(format)
+  if (p.kind === 'found') {
+    writer.rememberRevision(id, { revision: p.revision })
+    if (typeof (p.doc as { updatedAt?: unknown })?.updatedAt === 'number') {
+      writer.setBaseline(id, (p.doc as { updatedAt: number }).updatedAt)
+    }
+  } else if (p.kind === 'missing') {
+    writer.rememberRevision(id, null)
+  } else {
+    writer.forgetRevision(id)
+  }
+  return true
+}
+
 /** 读文档并落账（`probeDocument` + `acceptProbe`）：显式打开最近文档 / 教程装文档用，现有调用方不变 */
 export async function readAutosaveDoc(id: string, format: DocumentFormat = 'legacy'): Promise<LoadedDoc> {
   const pj = currentProjectId()
@@ -2424,11 +2482,13 @@ export function setProjectFile(
   documentId = useDocumentStore.getState().documentId,
   format: DocumentFormat = currentDocumentFormat(),
 ): void {
-  if (binding) { if (format === 'v4') writeProjectFile(documentId, binding, format); else writeProjectFile(documentId, binding) }
-  else if (format === 'v4') forgetProjectFile(documentId, format)
-  else forgetProjectFile(documentId)
+  const stored = binding ? (format === 'v4' ? writeProjectFile(documentId, binding, format) : writeProjectFile(documentId, binding)) : null
+  if (!binding) {
+    if (format === 'v4') forgetProjectFile(documentId, format)
+    else forgetProjectFile(documentId)
+  }
   if (isCurrentDoc(documentId, format)) {
-    useDocumentStore.setState({ projectFile: binding })
+    useDocumentStore.setState({ projectFile: stored })
   }
 }
 

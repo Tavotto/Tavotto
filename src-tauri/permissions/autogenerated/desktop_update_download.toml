@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-update-download"
+description = "Enables the desktop_update_download command without any pre-configured scope."
+commands.allow = ["desktop_update_download"]
+
+[[permission]]
+identifier = "deny-desktop-update-download"
+description = "Denies the desktop_update_download command without any pre-configured scope."
+commands.deny = ["desktop_update_download"]

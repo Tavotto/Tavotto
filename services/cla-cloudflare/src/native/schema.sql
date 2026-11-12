@@ -182,7 +182,11 @@ CREATE TABLE head_requests (
 );
 CREATE TABLE head_deliveries (id TEXT PRIMARY KEY,body_hash TEXT NOT NULL,request_key TEXT NOT NULL REFERENCES head_requests(request_key),created INTEGER NOT NULL);
 CREATE TRIGGER head_deliveries_update BEFORE UPDATE ON head_deliveries BEGIN SELECT RAISE(ABORT,'immutable'); END;
-CREATE TRIGGER head_deliveries_delete BEFORE DELETE ON head_deliveries BEGIN SELECT RAISE(ABORT,'immutable'); END;
+-- Immutable while the request is live or recent. Only a terminal request older than one day may shed its delivery rows
+-- (bounded retention, LiveStore.pruneHeadHistory); a pending/running head and every fresh record stay undeletable.
+CREATE TRIGGER head_deliveries_delete BEFORE DELETE ON head_deliveries WHEN NOT EXISTS(
+ SELECT 1 FROM head_requests r WHERE r.request_key=OLD.request_key AND r.status IN ('done','dispatched','manual')
+  AND r.created<CAST(strftime('%s','now') AS INTEGER)-86400) BEGIN SELECT RAISE(ABORT,'immutable'); END;
 CREATE TRIGGER head_request_identity BEFORE UPDATE ON head_requests WHEN NEW.request_key!=OLD.request_key OR NEW.pr!=OLD.pr OR NEW.head!=OLD.head OR NEW.created!=OLD.created
  BEGIN SELECT RAISE(ABORT,'immutable_identity'); END;
 -- A new signature/hold/control is a new evaluation. Clear prior observations atomically.
@@ -190,3 +194,11 @@ CREATE TRIGGER head_request_identity BEFORE UPDATE ON head_requests WHEN NEW.req
 CREATE TRIGGER head_revision AFTER UPDATE OF revision ON state BEGIN
  UPDATE head_requests SET status='pending',attempt='',lease_until=0,result='' WHERE status IN ('done','running');
 END;
+
+-- Append-only, holder-only release of one hold. The block and every signature stay untouched; a release only
+-- stops that block counting against packets created strictly after it (see blockedSQL in store.ts).
+CREATE TABLE eligibility_releases (
+ packet TEXT PRIMARY KEY REFERENCES eligibility_blocks(packet), actor INTEGER NOT NULL CHECK(actor>0), created INTEGER NOT NULL
+);
+CREATE TRIGGER releases_update BEFORE UPDATE ON eligibility_releases BEGIN SELECT RAISE(ABORT,'immutable'); END;
+CREATE TRIGGER releases_delete BEFORE DELETE ON eligibility_releases BEGIN SELECT RAISE(ABORT,'immutable'); END;

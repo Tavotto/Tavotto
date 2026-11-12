@@ -74,6 +74,19 @@ def load(path: Path) -> dict:
     return data
 
 
+def render_counters(raw) -> dict | None:
+    """测量循环里的布局 / 样式重算次数。只记录、只提示：不进 status、不进回归比较，缺了或不合法就是 None。"""
+    if not isinstance(raw, dict):
+        return None
+    out = {}
+    for key in ("layout", "recalc_style"):
+        value = raw.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            return None
+        out[key] = value
+    return out
+
+
 def summarize(data: dict) -> dict:
     env = data["environment"]
     # 白名单字段，不会把测试机的路径、进程命令、用户名、页面数据写出。
@@ -141,6 +154,7 @@ def summarize(data: dict) -> dict:
         "not_covered": ["native_window_drag", "gpu_compositor", "macos_windowserver"],
         "environment": environment,
         "scenarios": rows,
+        "render_counters": render_counters(data.get("render_counters")),
     }
 
 

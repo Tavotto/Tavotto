@@ -630,3 +630,136 @@ class TestFailFastRootFromRunJobs:
     def test_missing_run_jobs_file_is_not_an_error(self, tmp_path):
         assert AG._read_run_jobs(str(tmp_path / "nope.ndjson")) is None
         assert AG._read_run_jobs("") is None
+
+
+# ============================================================ 改到 e2e 用例的 PR（--e2e-legs）
+E2E_LEGS = ["windows-exe-smoke", "posix-e2e"]
+E2E_REQ = ["backend-platforms", "package", "windows-exe-smoke", "macos-app-smoke", "posix-e2e"]
+E2E_REST = ["backend-platforms", "package", "macos-app-smoke"]
+
+
+def _e2e_results(legs="success", rest="skipped", **over: str) -> dict[str, str]:
+    r = {j: legs for j in E2E_LEGS}
+    r.update({j: rest for j in E2E_REST})
+    r.update(over)
+    r["docs-scope"] = "success"
+    return r
+
+
+def _e2e(results, *, flag="true", event="pull_request", legs=None, **kw):
+    kw.setdefault("allow_deferred", True)
+    return AG.decide(
+        "integration",
+        event,
+        E2E_REQ,
+        results,
+        outputs={"docs-scope": {"docs_only": "false", "e2e_specs_changed": flag}},
+        e2e_classifier="docs-scope",
+        e2e_legs=E2E_LEGS if legs is None else legs,
+        **kw,
+    )
+
+
+class TestE2eLegsOnPullRequest:
+    """PR 改到 web/e2e/** 时 windows-exe-smoke / posix-e2e 在 PR 上跑，Gate 把它们当必需（#1736）。"""
+
+    def test_legs_green_rest_deferred_is_success_not_deferred(self):
+        v = _e2e(_e2e_results())
+        assert v["status"] == "success" and v["reason"] == "e2e_legs_only"
+        assert v["e2e_legs"] == E2E_LEGS
+
+    @pytest.mark.parametrize("bad", ["failure", "cancelled", "skipped"])
+    @pytest.mark.parametrize("leg", E2E_LEGS)
+    def test_an_e2e_leg_that_is_not_success_fails_the_gate(self, leg, bad):
+        """红 / 取消 / 本该跑却 skipped（ci.yml 的 if 与 Gate 脱节）都判红——这是 #1736 要堵的洞。"""
+        v = _e2e(_e2e_results(**{leg: bad}))
+        assert v["status"] == "failure" and v["reason"] == "upstream_not_success"
+        assert any(p.startswith(f"{leg}: {bad}") for p in v["problems"])
+
+    def test_the_other_heavy_legs_may_not_be_half_run(self):
+        v = _e2e(_e2e_results(**{"package": "success"}))
+        assert v["status"] == "failure"
+        assert any("package" in p for p in v["problems"])
+
+    def test_other_heavy_leg_red_fails(self):
+        assert _e2e(_e2e_results(**{"package": "failure"}))["status"] == "failure"
+
+    @pytest.mark.parametrize("flag", ["false", "", "TRUE", "1"])
+    def test_without_the_literal_true_evidence_a_partial_run_is_still_a_failure(self, flag):
+        """证据不成立：参数形同没传——e2e 腿跑了其余 skipped 是「半跑半跳」，照旧判失败（不留缝）。"""
+        v = _e2e(_e2e_results(), flag=flag)
+        assert v["status"] == "failure"
+
+    def test_without_the_flag_all_skipped_is_still_deferred(self):
+        """不改 e2e 的 PR 照旧：重型整体 skipped → deferred。"""
+        v = _e2e(_e2e_results(legs="skipped"), flag="false")
+        assert v["status"] == "deferred"
+
+    def test_evidence_with_everything_skipped_fails(self):
+        """ci.yml 应该跑起来的腿没跑（比如 if 被改坏）：不能拿 deferred 蒙混。"""
+        v = _e2e(_e2e_results(legs="skipped"))
+        assert v["status"] == "failure"
+
+    @pytest.mark.parametrize("cls", ["failure", "skipped", "cancelled"])
+    def test_classifier_that_did_not_succeed_gives_no_evidence(self, cls):
+        r = _e2e_results()
+        r["docs-scope"] = cls
+        v = _e2e(r)
+        assert v["status"] == "failure"
+
+    def test_whole_green_with_evidence_is_success(self):
+        v = _e2e(_e2e_results(rest="success"))
+        assert v["status"] == "success" and v["reason"] == "all_required_success"
+
+    def test_merge_group_and_full_ci_never_take_this_path(self):
+        with pytest.raises(AG.ConfigError):
+            AG.decide(
+                "integration",
+                "merge_group",
+                E2E_REQ,
+                _e2e_results(rest="success"),
+                require_heavy=True,
+                e2e_classifier="docs-scope",
+                e2e_legs=E2E_LEGS,
+            )
+        # merge_group 不带参数：一律 require-heavy，skipped 就是失败，e2e 腿也必须 success
+        v = AG.decide(
+            "integration",
+            "merge_group",
+            E2E_REQ,
+            _e2e_results(rest="success", legs="skipped"),
+            require_heavy=True,
+        )
+        assert v["status"] == "failure"
+
+    def test_config_errors(self):
+        r = _e2e_results()
+        with pytest.raises(AG.ConfigError):  # 只给腿不给分类 job
+            AG.decide(
+                "integration", "pull_request", E2E_REQ, r, allow_deferred=True, e2e_legs=E2E_LEGS
+            )
+        with pytest.raises(AG.ConfigError):  # 腿不在 required
+            _e2e(r, legs=["nope"])
+        with pytest.raises(AG.ConfigError):  # fast 档不接受
+            AG.decide(
+                "fast", "pull_request", E2E_REQ, r, e2e_classifier="docs-scope", e2e_legs=E2E_LEGS
+            )
+
+    def test_cli_round_trip(self, tmp_path, capsys):
+        needs = {
+            **{j: {"result": r} for j, r in _e2e_results().items() if j != "docs-scope"},
+            "docs-scope": {
+                "result": "success",
+                "outputs": {"docs_only": "false", "e2e_specs_changed": "true"},
+            },
+        }
+        argv = [
+            "--mode", "integration", "--event", "pull_request", "--allow-deferred",
+            "--required", ",".join(E2E_REQ), "--needs-json", json.dumps(needs),
+            "--e2e-classifier", "docs-scope", "--e2e-legs", ",".join(E2E_LEGS),
+        ]  # fmt: skip
+        assert AG.main(argv) == 0
+        assert json.loads(capsys.readouterr().out.splitlines()[0])["reason"] == "e2e_legs_only"
+        needs["posix-e2e"]["result"] = "failure"
+        argv[argv.index("--needs-json") + 1] = json.dumps(needs)
+        assert AG.main(argv) == 1

@@ -379,6 +379,10 @@ impl Sidecar {
             Some(crate::app_update::Source::Mirror) => "cn",
             _ => "global",
         };
+        // 提权复制（ADR 0173）要拉起壳自己带固定子命令：引擎不猜路径，只认壳放进来的这一个
+        if let Ok(shell) = std::env::current_exe() {
+            cmd.env("TAVOTTO_SHELL_EXE", shell);
+        }
         cmd.arg("--desktop-sidecar")
             .env("TAVOTTO_DESKTOP_HANDSHAKE", &handshake)
             .env("TAVOTTO_NETWORK_REGION", region)

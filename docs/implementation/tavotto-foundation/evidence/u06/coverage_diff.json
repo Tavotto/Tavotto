@@ -87,9 +87,9 @@
   },
   "cjk": {
    "old": 34012,
-   "new": 30887,
-   "gained": 8376,
-   "lost": 11501,
+   "new": 30874,
+   "gained": 8364,
+   "lost": 11502,
    "gained_sample": [
     "U+00A0",
     "U+00B5",
@@ -227,9 +227,9 @@
  },
  "drawable": {
   "old": 61238,
-  "new": 32595,
-  "lost": 36554,
-  "gained": 7911,
+  "new": 32582,
+  "lost": 36555,
+  "gained": 7899,
   "lost_sample": [
    "U+007F ",
    "U+0080 ",

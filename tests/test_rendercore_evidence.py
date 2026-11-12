@@ -286,7 +286,11 @@ def test_u07_freeze_report_says_the_frozen_child_started_itself():
             checks["child_is_the_same_exe_with_render_child_flag"]
             and checks["pdfium_library_bundled"]
         )
-        assert checks["fonts_bundled_13"] and checks["png_rendered"]
+        # 旧报告的键是 `fonts_bundled_13`（白名单 13 张那时冻结的），新报告是 `fonts_bundled_all`
+        assert (
+            checks.get("fonts_bundled_all", checks.get("fonts_bundled_13"))
+            and checks["png_rendered"]
+        )
         # 报告里记的 argv[0] 就是父进程的 executable（路径规范化后逐字相同）——「自起」不是只看旗标
         res = r["result"]
         norm = lambda x: os.path.normcase(os.path.normpath(x))  # noqa: E731

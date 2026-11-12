@@ -40,7 +40,8 @@ order: 330
 - **文字只有一条路**：`typography` 用同一份 shaped plan 量宽与落笔（RC-030）；分层只剩
   primary / cjk / missing——**没有 fallback 脸**，画不出的字进问题系统（`CompiledPage.problems`
   的 `glyph_missing`），不暗中回退系统脸；合成上下标（`⁵` → 上标 `5`）的用户原文随
-  `GlyphRun.actual_text` 进 IR，PDF 写入器据此包 ActualText（RC-036）；SVG 按同一 shaped plan 写轮廓。
+  `GlyphRun.actual_text` 进 IR，PDF 写入器据此包 ActualText（RC-036）；SVG 按同一 shaped plan 写轮廓；字母式符号展开（`℃` → `°C`，`richtext.LETTERLIKE_EXPANSION`，ADR 0060 修订 2026-11-04）走同一条 ActualText 路、两档都生效，
+  换行单元里用户原文侧补 `typography.ELIDED` 占位保持逐字符对齐（交给 `ShapedPiece.logical` 前 `user_text()` 去掉）。
   换行 / 对齐 / 行高 / 上下标 /
   下划线的用户合同逐句来自旧 `_draw_text`，改这些先改前端 TextView 那一侧的同一语义。
 - **计算原图的EPS准备叶子（ADR0181）**：`originaleps.prepare_scene_ps`消费完整冻结SVG和物理尺寸，经同一SVGIR与批准字体排字，准备有界PS；`epscontainer.pack_prepared_eps`仅在既有Matplotlib worker封EPS，不重新画场景、不排字、不启动外部进程。内部闭式`scene-ps/1`核SVG/PS摘要、尺寸、字节与展开预算；摘要不是任意PS的安全沙盒，不能开放成用户PS执行接口。父层不import Matplotlib，worker不需HarfBuzz/PDFium等native extras；旧live Figure/Type42及画布EPS合同不变。
@@ -61,13 +62,22 @@ order: 330
   （`docs/rules/repo/same-origin-pairs.md`），由共享向量 `tests/golden/shape_geometry_vectors.json` 接住
   （退役前从旧 facade 记下；`tests/test_rendercore_geometry.py` 与 `web/src/lib/shapeGeometry.golden.test.ts`
   各跑一遍），两边都改的时候一起改、重录那份向量。
-- **字体只认 allowlist 里的字节**（ADR 0060）：`rendercore/fonts_allowlist.json` 是唯一真值（13 张 OFL 脸：
-  Liberation 2.1.5 × 12 + Noto Sans SC 子集），身份 = sha256 + face 序号，不是族名；注册表扫目录逐个算 hash，
+  ADR 0174 的描边属性（`stroke: false` 无边框、`stroke_opacity`、四种线型、`line_cap` / `line_join`、三种新端型与 `head_size_*`）同在这一对里，缺省都不写；旧文档的路径由 `tests/golden/shape_legacy_paths.json` 逐字看住。无边框又无填充的形状不出路径（IR 不收空路径）；描边 alpha < 1 的 EPS 与填充 alpha 一样逐项失败。
+- **字体只认 allowlist 里的字节**（ADR 0060）：`rendercore/fonts_allowlist.json` 是唯一真值（16 张 OFL 脸：
+  Liberation 2.1.5 × 12 + Noto Sans SC / Noto Serif SC 子集各一张；**CJK 脸随族**：serif → Noto Serif SC，sans-serif / monospace → Noto Sans SC，`fonts.cjk_family_of` / `FaceProvider.cjk_face(family)`，ADR 0060 2026-11-04 修订；覆盖表 `cjk` 层取两张脸的交集），身份 = sha256 + face 序号，不是族名；注册表扫目录逐个算 hash，
   不在表里的进 `rejected`、绝不当字体用；找不到脸抛 `FontsUnavailable(code)`，**不摸系统字体、不用别的脸冒充**。
   字体文件不进 git：`scripts/fetch_fonts.py` 按 sha256 取到 `src/tavotto/resources/fonts/`（`.gitignore` 挡、wheel
   `artifacts` 收回、PyInstaller `resources/` datas 带走、许可证全文同目录）；`TAVOTTO_FONTS_DIR` 是排他覆盖。
   加一张脸 = 改 allowlist + ADR 0060 §1 的限制表，`tests/test_rendercore_fonts.py` / `test_font_provenance.py`
   第四档看住。集合外的限制（没有 fallback 层、Hangul 不在、`⁻` 靠合成）写在 ADR 0060 §1，是能力边界不是缺陷。
+- **用户本机字体是批准集合旁边的一条受限通道**（ADR 0164，修订 0060）：对象带可选 `source_font`（名字 + 文件 sha256 + 面序号 + 粗斜；
+  `sourcefont.py` 纯模型解析；可带同族 `siblings`，用到才入场；同族没有的粗斜由写入器模拟，`GlyphRun.synth_bold` / `synth_italic`，ADR 0169 修订）时，`plan._user_faces` 经 `HbFaceProvider.user_face` → `userfonts.admit` 请本机那张脸来排版、子集嵌入。
+  **只按 sha256 认**（`FontLocator`：索引在 `data_dir()/font-locator.json`，线索目录 = 解释器路径推出的 matplotlib 字体目录 + 系统字体目录），
+  每次使用前重算 sha256；OS/2 `fsType` 位 1 / 8 / 9 → `embedding_restricted`（不嵌入），变量 / 彩色 / 位图 / 非 CID 的 CFF / cmap 读不出 →
+  `unsupported_format`，> 192 MiB → `too_large`。任何一环不过：这一个对象回退成 `font_family` 的批准脸、`problems` 记
+  `source_font_unavailable`（`reason` 取 `sourcefont.REASONS`）、**不改文档对象、不换名字相近的脸**。路径只在本机索引与内存里，不进
+  problems / 警告 / 端点响应 / 遥测 / 诊断包。没有 `source_font` 的对象走的路径与 0060 逐字相同。看护 `tests/test_rendercore_userfonts.py`、
+  `test_source_font_wire.py`、`test_source_fonts_api.py`、`test_font_provenance.py` 末两条。
 - **native 包只在函数里 import**：pikepdf / fontTools / uharfbuzz / pypdfium2 / Pillow 自 U10 起是 pyproject 的
   `dependencies`（`requirements.txt` 是钉死镜像，`tests/test_rendercore_fonts.py` 看护两边同名同序；U06–U09 时是
   可选 extra `rendercore`），仍只在 native 适配层的函数 / 类里 import——没装时 `import tavotto.rendercore.*` 仍成功，

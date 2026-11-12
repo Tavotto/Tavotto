@@ -143,7 +143,8 @@ macOS sandbox-exec 在「只许写清单内目录」之上 `deny appleevent-send
 **如实写下的盲区**：Linux 上**抽象命名空间 unix 套接字**仍可达（不 `--unshare-net`，要联网装包）。评估过 bwrap 的 `--seccomp`：BPF 读不到 `connect` 的地址（在用户内存里），所以无法「只拦抽象地址」；只能整个禁 `socket(AF_UNIX)`，那会弄坏 asyncio / multiprocessing，`socketpair` 加数据报 `connect` 还能绕——**不做**；要在沙盒外做事走第②档。
 **第②档 = 沙盒外执行（用户单独点头）**：触发只有两种——模型显式 `outside_sandbox: true` 加一句 `reason`，或第①档因沙盒拒写失败后结果里**提示**模型可以这样申请；**从不自动升级**（第①档失败后不会无卡执行第②档）。弹一张单独、红色强调的卡（approve 卡的 `danger: true`）：完整命令 + 「这条命令会在沙盒外运行，可以修改你电脑上的文件」+ 模型的理由；主按钮「在沙盒外运行」、次按钮「不了」；只对这一条命令有效，不记成长期授权。
 执行前备份项目内全部用户脚本（按后缀保守纳入、读原始字节不要求能解码，跟随链接按真实路径去重，**1000 个 / 32 MiB 封顶，超限直接拒绝第②档**），审批之后取基线、**持这些脚本的锁**（`scriptlock.script_guards`，非阻塞抢全、抢不齐退避）跑完命令，事后核对，被改 / 被删的经 `scriptlock` 恢复原字节并报 `scripts_restored`，恢复失败如实报 `scripts_restore_failed`。命令退出后先结束并确认整棵进程树再核对；放不下卡片的命令审批前就拒（用户看到的 = 实际执行的）。**这一层是尽力而为，不是保证**（盲区见规则文件的「run_command」一节）。
-Windows（#1358 无沙盒）与没有 bwrap 的 Linux 只有第②档，第①档返回 `sandbox_unavailable` 并说明。两档共同：不经 shell、cwd 默认临时目录（第②档可选项目目录并在卡上写明）、去掉密钥类环境变量、超时默认 60 s / 上限 300 s、输出有界并脱敏、执行前打快照、审计行多 `sandbox: hardened|outside|none` 与 `command_tier`、看门狗照旧（工具在跑不算卡住）。
+Windows（#1358 无沙盒）与没有 bwrap 的 Linux 只有第②档。两档共同：不经 shell、cwd 默认临时目录（第②档可选项目目录并在卡上写明）、去掉密钥类环境变量、超时默认 60 s / 上限 300 s、输出有界并脱敏、执行前打快照、审计行多 `sandbox: hardened|outside|none` 与 `command_tier`、看门狗照旧（工具在跑不算卡住）。
+**修订（2026-11-06，没沙盒的机器直接弹第②档的卡，TVD-V7R4）**：原设计第①档在这些机器上返回 `sandbox_unavailable`，靠模型自己带 `outside_sandbox: true` 重试；真实用户在 Windows 上批准了修复，模型没有重试，流程就此停住——Windows 上要装非 Python 程序，这是唯一的路。改为：没有第①档时默认调用**直接弹第②档的卡**，`sandbox_unavailable` 这个结果不再存在。这不是「自动升级」：没有被放宽的档位，卡、单条有效、备份脚本、硬拦表一样不少，没点头什么都不跑；有沙盒的机器行为不变，第①档失败依旧只提示。模型没给 `reason` 时卡上不发 `reason`，前端显示兜底句（后端不发翻译好的句子）。#1358 不因此关闭。
 **修订（2026-10-24，convert_script 交接）**：`convert_script` 不再自己转写，改为**交接**给 ADR 0143 已有的「生成可编辑版本」流程。原设计要 `FixContext.script_converter` 同步写出 `<原名>_matplotlib.py`，但生产里从没人注入它，AI 永远拿到 `unavailable`。
 现在：工具只校验（项目内的 `.py`、`library` 取 `rasterhint.LIBRARIES` 或取报告里的位图提示、`ai_convert.enabled()`），在 `ctx.handoff` 记 `{kind, script, library}`，不写文件、不打快照；AI 随后 `finish(outcome="convert")`（`convert` 只有已交接才合法），
 会话公开状态带 `handoff`，前端（`aiFixStore.settle`）清掉修复条目、记下这张准备卡交接给了哪个脚本，并启动 `convertStore.start`，同一张卡接上 ADR 0143 的进度 / 对照 / 「采用」。
@@ -159,6 +160,8 @@ Windows（#1358 无沙盒）与没有 bwrap 的 Linux 只有第②档，第①�
 `requested` 的两处出处都认不出它，AI 找到对的文件也只能 `requested_unknown`。`inputremap.known_requests` 加第三处出处：脚本里原位置找不到、靠现有规则才读得到的常量（分类照静态判据，探路 / glob 照样挡），
 与现有 `file` 规则的 `from`（用户此前亲手确认过的那串；拼出来的路径只剩它记得）；比对按 `remap_parts` 规范化（`inputremap.match_request`）。`read_run_report` 增 `data_links` 事实列出生效的规则，每条带 `link_data_file` 认得的具体 `requested` 串（`prefix` 规则的 `from` 是目录前缀或空串，不是脚本打开的那串，单列为 `applies_to`）。
 `inputremap.link`（弹窗与 AI 共用）在新推出的 `prefix` 规则会被同一串上的旧 `file` 规则盖住时收窄成 `file` 规则、替换旧的那条，否则重新指认白选。确认卡照旧一律弹；不改脚本、不放宽读取范围。
+
+**修订（2026-11-08，重指没有具体文件名的既有前缀，TVD-DSSV）**：动态拼路径的文件可能没有在当前报告中，旧 `prefix` 规则只保存前缀与目标目录；不能凭它猜一个具体文件。`read_run_report` 为每条前缀返回不可猜的 `prefix_id`（进程密钥、项目、规则、改指代次绑定），供 `link_data_file(mode=prefix)` 精确选中该条并改指到用户选择的目录。旧标识失效时重读报告；新目录过原读取范围并且存在，确认卡明确整个前缀的影响与较具体规则的优先级，即使刚选过目录也重新确认。确认后重验目标，在项目锁内核对标识与代次、先快照再替换；竞争、拒绝或权限不符均不改表，可回滚。规则仍只用于安全运行，native 沿用 ADR 0106 不改指；无法据此断言用户当次 native 运行已经修复。
 
 
 实现备注：应用报告的有界投影由 `fixtools/runreport.py` 共用，观察工具与试运行工具各自消费，避免相互导入。

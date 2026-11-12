@@ -1,5 +1,5 @@
 import { refuseArtifactOperation } from '@/lib/artifactValidation'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FileUp, RotateCcwClock, ShieldAlert, TriangleAlert } from '@/components/ui/icons'
 import { Details, Summary } from '../ui/Details'
@@ -17,7 +17,7 @@ import {
 } from '@/lib/writeBackAnnotations'
 import { dirTail } from '@/lib/pathDisplay'
 import { noticeWriteBackMultipage } from '@/lib/writeBackMultipageNotice'
-import { isJustBakedBaseline } from '@/store/actions'
+import { isJustBakedBaseline, rebuildPanel } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
@@ -25,6 +25,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { Button } from '../ui/Button'
+import { SendReportButton } from '../SendReportButton'
 import { Dialog } from '../ui/Dialog'
 import { CopyButton } from '../settings/CopyButton'
 import { Tab, TabList, TabPanel } from '../ui/Tabs'
@@ -141,8 +142,20 @@ async function runWriteBack(
  * 被阻断的写回：按 code 给可执行的下一步。这三条都不是「重试一次就好」的错误，
  * 文案必须说清楚「为什么被拦」和「该做什么」，否则用户只会反复点确认。
  */
-function BlockedNotice({ error }: { error: WriteBackFailure }) {
-  useTranslation('inspector')
+function BlockedNotice({
+  error,
+  panels,
+  onRerendered,
+}: {
+  error: WriteBackFailure
+  panels: PanelObject[]
+  /** 重新渲染做完之后（清掉这条阻断，用户可以直接再点写回） */
+  onRerendered: () => void
+}) {
+  useTranslation(['inspector', 'common'])
+  const [rendering, setRendering] = useState(false)
+  // 重新渲染没有办法做（目标不是可重画的面板）：不再摆一个点了没用的按钮
+  const [rerenderUnavailable, setRerenderUnavailable] = useState(false)
   const body = (error.api?.body ?? {}) as {
     code?: string
     file?: string
@@ -157,6 +170,28 @@ function BlockedNotice({ error }: { error: WriteBackFailure }) {
         ? wb('scriptChanged', { script: body.script ?? '' })
         : null
 
+  /** 脚本改过了：把这一批里用得上它的图重新渲染一遍（与右键「重新构建」同一个动作） */
+  const rerender = async () => {
+    const withScript = panels.filter((p) => p.script)
+    const named = body.script ? withScript.filter((p) => p.script!.endsWith(body.script!)) : []
+    setRendering(true)
+    let ok = true
+    let unavailable = false
+    try {
+      for (const p of named.length ? named : withScript) {
+        // 只有真的重画成功才算数；'skipped' = 没渲染任何东西，不是成功
+        const outcome = await rebuildPanel(p.id, p)
+        if (outcome === 'skipped') unavailable = true
+        if (outcome !== 'rebuilt' && outcome !== 'rerendered') ok = false
+      }
+    } finally {
+      setRendering(false)
+    }
+    if (unavailable) setRerenderUnavailable(true)
+    // 渲染失败 / 没渲染时阻断留着：用户没有一张新图可写
+    if (ok) onRerendered()
+  }
+
   if (body.code === 'replay_divergence') {
     const diffs = body.diffs ?? []
     return (
@@ -168,26 +203,39 @@ function BlockedNotice({ error }: { error: WriteBackFailure }) {
             {wb('divergenceBody')}
           </span>
         </p>
+        {/* 内部字段只在折叠的「详情」里，也随反馈包走；一句话 + 一个主按钮 */}
+        <SendReportButton variant="primary" />
         {diffs.length > 0 && (
-          <ul className="flex flex-col gap-0.5">
-            {diffs.slice(0, 5).map((d, i) => (
-              <li key={`${d.gid}-${d.field}-${i}`} className="font-mono text-xs text-ink-2">
-                {d.gid || 'figure'}.{d.field}
-              </li>
-            ))}
-            {diffs.length > 5 && (
-              <li className="text-xs text-ink-3">{wb('moreDiffs', { count: diffs.length - 5 })}</li>
-            )}
-          </ul>
+          <Details className="text-xs text-ink-3" data-write-back-diffs>
+            <Summary className="cursor-default">{translate('notice.details', { ns: 'common' })}</Summary>
+            <ul className="mt-1 flex flex-col gap-0.5">
+              {diffs.slice(0, 5).map((d, i) => (
+                <li key={`${d.gid}-${d.field}-${i}`} className="font-mono text-xs text-ink-2">
+                  {d.gid || 'figure'}.{d.field}
+                </li>
+              ))}
+              {diffs.length > 5 && (
+                <li className="text-xs text-ink-3">{wb('moreDiffs', { count: diffs.length - 5 })}</li>
+              )}
+            </ul>
+          </Details>
         )}
       </div>
     )
   }
   if (detail) {
     return (
-      <p className="rounded-sm border border-border bg-surface-2 p-2 text-xs leading-relaxed text-ink-2">
-        {detail}
-      </p>
+      <div className="flex flex-col gap-1.5 rounded-sm border border-border bg-surface-2 p-2">
+        <p className="text-xs leading-relaxed text-ink-2">{detail}</p>
+        {body.code === 'script_changed' && rerenderUnavailable && <SendReportButton variant="primary" />}
+        {body.code === 'script_changed' && !rerenderUnavailable && panels.some((p) => p.script) && (
+          <div>
+            <Button size="sm" variant="primary" data-write-back-rerender disabled={rendering} onClick={() => void rerender()}>
+              {wb('rerender')}
+            </Button>
+          </div>
+        )}
+      </div>
     )
   }
   return <p className="text-xs text-danger">{wb('updateFailed', { error: error.message })}</p>
@@ -247,11 +295,27 @@ export function WriteBackDialog({
   const [withAnnotations, setWithAnnotations] = useState(false)
   const backupDir = useProjectStore((s) => s.project?.backup_dir) ?? 'cache/original_backups'
   const objects = useDocumentStore((s) => s.doc.objects)
-  const assets = useAssetStore((s) => s.byId)
   const owner = useDocumentPreviewOwner(panels)
   const stems = panels.map((p) => stemOf(p.fileId))
   const readOnly = useProjectStore((s) => s.project?.settings?.allow_write_back === false)
   const fileIds = [...new Set(panels.map((p) => p.fileId))]
+  // 确认框打开时锁定原图的 mtime 基线：框开着期间素材 store 会刷新（/api/panels），
+  // 提交若取刷新后的值，后端的 source_changed 校验就形同虚设（QA-WIN-50）。
+  // 每个 fileId 只在框开着时第一次见到它的那一刻取一次；框关掉即清空。
+  const baselineRef = useRef(new Map<string, number>())
+  const fileKey = fileIds.join('\n')
+  useEffect(() => {
+    if (!open) {
+      baselineRef.current.clear()
+      return
+    }
+    const byId = useAssetStore.getState().byId
+    for (const f of fileKey.split('\n')) {
+      const m = byId[f]?.mtime
+      if (m && !baselineRef.current.has(f)) baselineRef.current.set(f, m)
+    }
+  }, [open, fileKey])
+  const baselineOf = (fileId: string) => baselineRef.current.get(fileId)
   const recordsByFile = useWriteBackRecords(fileIds, open && !detached, panels)
   const hasRecords = fileIdsWithRecords(panels.map(writeBackRecordKey), recordsByFile).length > 0
   const shownPage = hasRecords ? page : 'write'
@@ -298,7 +362,7 @@ export function WriteBackDialog({
       const res = await runWriteBack(
         panels,
         owner,
-        (fileId) => assets[fileId]?.mtime,
+        baselineOf,
         useAnn ? annMap : undefined,
       )
       setResult(res)
@@ -336,6 +400,14 @@ export function WriteBackDialog({
       void markMoment('writeback', written)
       // 重拉面板列表拿到新 mtime；所有图片 URL 带 m 参数，缩略图与画布面板都会自动重取
       await useAssetStore.getState().load()
+      // 本次写回自己改了这些原图：只把**它们**的基线推进到写回后的新 mtime，否则同一个框里
+      // 接着去「写回记录」恢复会带着打开时的旧值，被后端按 source_changed 误拒。
+      // 本次没写的文件不动——它们之后若被外部改过，恢复时仍要被拒。
+      const after = useAssetStore.getState().byId
+      for (const f of new Set(panels.map((p) => p.fileId))) {
+        const m = after[f]?.mtime
+        if (m) baselineRef.current.set(f, m)
+      }
       onWritten?.({ updated: res.updated })
       useUiStore
         .getState()
@@ -354,6 +426,10 @@ export function WriteBackDialog({
           'done',
         )
     } catch (e) {
+      // 框开着期间原图被换过：后端已拒绝且零改动；把素材列表刷新到最新，用户关掉重开即以新版为基线
+      if (e instanceof WriteBackFailure && e.api?.body?.code === 'source_changed') {
+        void useAssetStore.getState().load()
+      }
       setError(
         e instanceof WriteBackFailure
           ? e
@@ -385,7 +461,10 @@ result ? (
             </p>
           )}
           {result.sizeMismatch && (
-            <p className="text-xs leading-relaxed text-danger">{wb('sizeMismatch')}</p>
+            <div className="flex flex-col items-start gap-1.5">
+              <p className="text-xs leading-relaxed text-danger">{wb('sizeMismatch')}</p>
+              <SendReportButton variant="primary" />
+            </div>
           )}
         </div>
       ) : (
@@ -422,7 +501,7 @@ result ? (
               <p className="text-xs text-ink-3">{wb('annotationsBlocked', { reason: blockedReason })}</p>
             )
           )}
-          {error && <BlockedNotice error={error} />}
+          {error && <BlockedNotice error={error} panels={panels} onRerendered={() => setError(null)} />}
         </div>
       )
   )
@@ -441,7 +520,7 @@ result ? (
       }}
       title={wb('title')}
       description={
-        shownPage === 'records'
+        shownPage === 'records' || result
           ? undefined
           : editCount === 0
             ? wb('noOverridesTitle')
@@ -504,6 +583,7 @@ result ? (
             panels={panels}
             byFile={recordsByFile}
             focusFileId={panels[0]?.fileId}
+            mtimeOf={baselineOf}
             onDone={() => onOpenChange(false)}
           />
         </TabPanel>

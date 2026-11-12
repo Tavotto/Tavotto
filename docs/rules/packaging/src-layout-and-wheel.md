@@ -28,3 +28,13 @@ order: 10
 - 打包卫生：wheel/sdist 不含 `src-tauri/`、`workerd/`、`codex-plugin/`、
   `.agents/`、`services/telemetry_proxy/`、仓库根 `runtime/`（pyproject 的
   exclude 是权威，多处 pytest 看护）。
+  **唯一的口子（2026-11-11，用户「同意打进 wheel」，1.0 豁免见 `docs/1.0-release-readiness.md` §1.8）**：
+  `codex-plugin/mcp/tavotto_mcp/` 这**一个** Python 包，经 wheel 的
+  `[tool.hatch.build.targets.wheel.force-include]` 映射成 wheel 顶层包 `tavotto_mcp`，让 pip / pipx / uvx 装的
+  `tavotto mcp` 直接起服务（`engine/mcpserve.py` 先源码树、后已安装）。用 `force-include` 而不是
+  `packages` / 放宽 exclude：全局 exclude 必须继续挡着 `codex-plugin/**`，`force-include` 只点名一个目录、
+  不会把技能 / 启动器 / `.codex-plugin` / 画布产物 `widget/canvas.html` 带进来。**sdist 必须带同一个目录**
+  （`[tool.hatch.build.targets.sdist.force-include]`）：`python -m build` 先 sdist 再从 sdist 构建 wheel，
+  源目录缺席 wheel 构建直接失败。wheel 里没有画布产物，服务端按 `tavotto_mcp/widget.py` 的缺席语义降级
+  （不挂 `_meta.ui`，工具照常）。看护：`tests/test_desktop_mcp_serve.py`（配置、wheel / sdist 成员、临时 venv 装 wheel 后
+  `tavotto mcp` 握手 + 列工具且 stdout 首帧前零字节；CI `package` job 对刚打的 wheel 跑）。

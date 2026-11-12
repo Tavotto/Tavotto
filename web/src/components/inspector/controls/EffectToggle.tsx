@@ -21,6 +21,7 @@ export function EffectToggle({
   addLabel,
   onAdd,
   onOff,
+  anchor,
 }: {
   on: boolean
   /** 开关的可达名（属性显示名） */
@@ -29,6 +30,8 @@ export function EffectToggle({
   addLabel: string
   onAdd: () => void
   onOff: () => void
+  /** e2e 锚点：落在「添加…」按钮的 `data-effect-add` 上（缺省为空串，与原来一致） */
+  anchor?: string
 }) {
   if (on) {
     return (
@@ -47,7 +50,7 @@ export function EffectToggle({
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5">
       <span className="type-control text-ink-3">{translate('text.effectNone', { ns: 'inspector' })}</span>
-      <Button variant="ghost" size="sm" className="text-ink-2 hover:text-ink" data-effect-add onClick={onAdd}>
+      <Button variant="ghost" size="sm" className="text-ink-2 hover:text-ink" data-effect-add={anchor ?? ''} onClick={onAdd}>
         <Plus size={ICON_SIZE.xs} aria-hidden />
         {addLabel}
       </Button>

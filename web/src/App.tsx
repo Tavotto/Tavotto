@@ -56,6 +56,7 @@ import { subscribePruneSelection } from '@/hooks/usePruneSelection'
 import { ProjectPicker } from '@/components/ProjectPicker'
 import { NativeTutorial } from '@/components/onboarding/NativeTutorial'
 import { startActivityTelemetry } from '@/lib/activityTelemetry'
+import { HintCard } from '@/components/hints/HintCard'
 import { startHintEngine } from '@/lib/onboarding/hints'
 import { useAiStore } from '@/store/aiStore'
 import { useAssetStore } from '@/store/assetStore'
@@ -67,6 +68,7 @@ import { useEnvStore } from '@/store/envStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { checkUpdateOnStartup } from '@/store/updateStore'
+import { syncJournalCatalog } from '@/lib/journalCatalogSync'
 import { restoreSession, startAutosave, useDocumentStore } from '@/store/documentStore'
 import { startLayoutAutoReflow } from '@/store/actions'
 import { startPageSizeFit } from '@/store/pageFit'
@@ -75,13 +77,13 @@ import { installDiagnosticsWiring } from '@/diagnostics/wiring'
 import { installDiagnosticsDevHook } from '@/diagnostics'
 import { useSelectionRouting } from '@/hooks/useSelectionRouting'
 import { isRightOverlay, useUiStore } from '@/store/uiStore'
+import { msg } from '@/i18n'
+import { reportAutosaveFailure } from '@/store/saveFailureActions'
 import { startValidation } from '@/store/validationStore'
 import { startWorkspaceModeSync, useWorkspaceStore } from '@/store/workspace'
 import { dragRegionProps, onDesktopMenu, onDesktopOpen } from '@/lib/desktop'
 import { DURATION, usePresence } from '@/lib/motion'
 import { applyOpenRequest, claimUrlOpenRequest } from '@/lib/openRequest'
-import { msg } from '@/i18n'
-import { saveIssueMessage, type SaveIssue } from '@/lib/autosave/diskWriter'
 import { hydrateExportDefaults } from '@/lib/exportDefaults'
 import { initExitNotices } from '@/lib/exitNotices'
 import { cancelStartupProbe } from '@/lib/startupProbe'
@@ -96,6 +98,8 @@ export function App() {
     // 静默取一次版本状态（有新版本才弹 UpdateNoticeDialog、点顶栏圆点）。
     // 桌面与浏览器是两条互斥的升级通道，由 checkUpdateOnStartup 决定查哪一条
     checkUpdateOnStartup()
+    // 远程期刊索引：静默同步一次（入口关着时什么都不发；失败退回缓存 / 种子，不弹错）
+    void syncJournalCatalog()
     // 渲染环境状态：缺 matplotlib 时属性栏与设置里都要能给出引导
     void useEnvStore.getState().refresh()
     // 匿名用量统计的同意态。**只是读一下**——没同意之前后端一个事件都不发，
@@ -228,20 +232,11 @@ function Workspace() {
     const stopHints = startHintEngine()
     // 活动信号 → 遥测的白名单映射（只有多选栏那一条；经同意态与后端白名单）
     const stopActivityTelemetry = startActivityTelemetry()
-    const onAutosaveError = (ev: Event) => {
-      // stale = 另一个窗口已经存过更新的版本，后端挡下了这次覆盖（见 documentStore）
-      const detail = (ev as CustomEvent<{ reason?: string; issue?: SaveIssue }>).detail
-      const stale = detail?.reason === 'stale'
-      useUiStore
-        .getState()
-        .setStatus(
-          saveIssueMessage(
-            detail?.issue,
-            msg(stale ? 'autosave.staleOtherWindow' : 'autosave.diskFailed', undefined, 'workspace'),
-          ),
-          'error',
-        )
-    }
+    // 失败 / 冲突提示与它们的出口按钮住在 `store/saveFailureActions.ts`（用例直接测那里）
+    const onAutosaveError = (ev: Event) =>
+      reportAutosaveFailure((ev as CustomEvent<Parameters<typeof reportAutosaveFailure>[0]>).detail)
+    // 同一份排版在两个窗口开着：目前没有「分叉成一份新排版」的动作（另存为不换 documentId），
+    // 所以这条先不挂按钮，登记在台账里待做
     const onDocConflict = () =>
       useUiStore
         .getState()
@@ -373,6 +368,8 @@ function Workspace() {
         <ContactHost />
         {/* 意外错误 / 上次没正常退出的反馈卡：贴窗口右下角（不在画布的通知轨里） */}
         <FeedbackCorner />
+        {/* 动画卡提示（ADR 0177）：同一个角、同一个宽度；反馈卡在场时让位 */}
+        <HintCard />
         <UpdateNoticeDialog />
         <CommandPalette />
         <ShortcutHelp />

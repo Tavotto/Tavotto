@@ -237,6 +237,9 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
   `tests/test_compat_guardian_workflow.py` 的判据主语是「所有引用 Guardian 脚本的 workflow」，
   不是一张手写名单。注意这类静态测试量的是 main 上的文件；PR 自带的 workflow 先在 PR 事件上跑一次，
   这一半由 runner group 配置与私有 `ci-infra` 兜底（见 `docs/rules/ci/runner-trust-zones.md`）。
+- 证据机（ADR 0166，`docs/rules/ci/evidence-box.md`）不是 runner、不接任何 workflow：只跑 `origin/main`，
+  执行阶段每次一个断网、非 root 的一次性容器。信任级与 hosted 相同——容器不算下一条所说的「OS 级隔离证明」，
+  非确定性 / 外部来源候选在那里同样只做静态检查。
 - Python 层 Safe 不是沙盒。可执行范围：登记夹具（托管 runner / 本机隔离目录）；由已评审模板对已评审父本做
   确定性变换得到的派生候选（CG-02）视同父本信任级；任何非确定性/外部来源候选只做静态检查，直到有 OS 级
   隔离证明。
@@ -374,7 +377,7 @@ Tavotto 侧走产品自己的发现链（静态注册表，不足时试运行探
 
 | 层 | 适用 | 判据 | 差异 kind（类别） |
 | --- | --- | --- | --- |
-| fidelity | 全部可执行候选 | 原生 PNG 与 Tavotto 零 patch PNG（同一 `FIDELITY_WIDTH`），`pixelcompare.verdict` 用 `FIDELITY_TOLERANCE`——与 CompatBench 同一档，不另设 | `pixel_mismatch`、`render_failed`（export_or_fidelity）；证据含三项指标、control/tavotto/diff PNG 的相对路径与 sha256 |
+| fidelity | 全部可执行候选 | 原生 PNG 与 Tavotto 零 patch PNG（同一 `FIDELITY_WIDTH`），`pixelcompare.verdict` 用 `FIDELITY_TOLERANCE`——与 CompatBench 同一档，不另设；manifest 里与父本**同脚本同入口**、声明 `expected.fidelity=false` 的用例的 stem（CompatBench 也不比它的像素，例如 constrained_layout 在原生里就不收敛）不判，记进阶段的 `declared_unjudged`（stem → 声明理由）；同路径被顶掉、改名成 `<脚本>-N` 的副本按原生驱动报的 `saved_stems`（这张图写过的 savefig stem）认回原名。其余 stem 照常判；全部被豁免时记 `not_covered` | `pixel_mismatch`、`render_failed`（export_or_fidelity）；证据含三项指标、control/tavotto/diff PNG 的相对路径与 sha256 |
 | structure | 仅保型 | 父本在 Tavotto 里的 `{gid.prop: value}` 快照（每次 explore 运行每个父本只算一次）的每个键，候选里必须存在且 `_same_value`；候选多出的键不算；**数据指纹**（manifest 每个数据类元素的只读 `data_fingerprint`，快照键 `gid.__data__.part` → sha256 + shape + finite）逐部件精确比较，不等记 `structure_mismatch`（evidence 带 `aspect: "data"` 与两侧 shape/finite），任一侧 `over_budget` / `unavailable` 则结构层 `not_run`、候选落 unknown；阶段记录里 `data_compared` 是真比过的部件数（0 = 没比数据） | `structure_mismatch`（manifest_semantics） |
 | edit / replay / export | 仅保型 | 继承父本用例已评审的 `mutations` 与 `export_formats`（缺省 pdf、png），在同一 worker 上调 `compat_matrix.stage_edit/stage_replay/stage_export` | `edit_failed`（editing_capability）、`replay_mismatch`（replay_inconsistency）、`export_failed`（export_or_fidelity） |
 
@@ -456,11 +459,14 @@ CG-02 的 27 条真实差异聚成恰好两簇：G1（show 后 close，11 条）
 记录里 `fix_pr` 分别是 1297 / 1299，`RealRepro` 钉的是「差异仍在」；根治（项目级「在脚本目录里运行」默认）落地时那两条会红，届时改成回归用例。
 
 CG-08 的 `bytesio_close` 变换稳定复现的未修缺口登记为 `families/G6-bytesio-close-zero-figures.json`（`savefig(io.BytesIO())` 后 `close` → 原生一张图、
-Tavotto 零张，issue #749，`fix_pr` 为空；`RealRepro` 钉「差异仍在」，修好时那条会红）。同一批的 `same_stem_two_figs` **没有**登记：
+Tavotto 零张，issue #749；已由 #749 修复，`fix_pr` 记 749，`RealRepro` 与 explore 的那条已转成回归用例）。同一批的 `same_stem_two_figs` **没有**登记：
 它的 `same_path_content_mismatch` 是 compare 按 stem 键去比路径的误报（见下），口径修正后原生 / Tavotto 逐文件一致。
 
 最小化过程中暴露并修掉了 explore 比较里的一个误报：无标题的图（原生 `[""]` vs Tavotto `[]`）曾被当作同路径内容差异；
 最小化签名因此新增「原生确有多图写同一路径」这一条，缩减不能漂移到别的原因上。
+
+产品按 `MAX_PYPLOT_FALLBACK` 少收的图不算差异（2026-11-05 维护者批准，簇 cl-ae815f7d15）：`compare` 只在产品报的 `dropped_figures` 与缺口张数正好相等、脚本写出的每个路径都在、
+没有图 show 过时放过 `fewer_figures` / `title_missing`，并在判定的 `note` 里写明张数；张数对不上、路径丢了或最后写入者不对都照常报。
 
 另一个同类误报在 `same_stem_two_figs`：同 stem 不同格式的两张图（`s.pdf` 第一张、`s.png` 第二张），Tavotto 是 `s`（pdf）与 `s-2`（png）（#1250 / #1309 按格式绑定归属），
 `compare` 现在按「写这个路径的格式」找拥有它的 `s` / `s-N` 再比标题（`_path_owner_matches`）；产品没记到格式时退回按 stem 比，G2 的检出不变。
@@ -509,7 +515,8 @@ Tavotto 零张，issue #749，`fix_pr` 为空；`RealRepro` 钉「差异仍在�
 
 **维护者提醒**：只有同时满足「没有家族记录（`tests/compat_guardian/families/`）」「被复跑复现」「不是 invalid_fixture / 环境问题」的 triage 簇
 才发注解（并出现在 step summary 的 “New reproducible families” 里）。已知家族（G1、G2）的差异在 summary 里列出，不再提醒。
-注解的下一步是人工：开 issue、写家族记录、派 `minimize`。
+注解之后由维护者本机的自动修流水线接手：本机只读取 GitHub artifact 与证据机的 `triage.json`，按 `cluster_id` 去重排队，每天最多开 2 个会话去复现、修复、开 PR，门槛满足后自动入队。
+CI 这一侧不变：workflow 仍然没有任何写权限，不开 issue、不开 PR。自动修不许改夹具、期望、基线、比对口径和已有家族记录；比对口径问题只报告，由维护者决定。
 
 **趋势与汇总**（`summarize` 同时吃 run 报告与 explore 报告，`--previous` 指向上一份 summary）。每份汇总带：语料版本（各 suite 的
 `corpus_sha256` 与声明文件摘要）、样本量与分母（失败从不出分母）、平台与依赖环境、不可比项、主要未覆盖场景，以及第 12 节指标：

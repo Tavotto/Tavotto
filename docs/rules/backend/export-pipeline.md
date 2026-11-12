@@ -12,6 +12,7 @@ order: 210
 必守要点: 五端点一服务；文件名严格同源
 -->
 
+- **修改后的 .py（ADR 0171）**：`include_edited_script` → `ExportRequest.include_script`，产物是 `outputs[]` 里 `format: "script"` 的一项（`exportjob.SCRIPT_KEY`，不进 `FORMATS`），名字 `<基名>_edited.py`。**原脚本一字节不动，不写项目目录**。`app._produce_edited_script`：`engine/scriptadjust.build` 生成 → `_verify_edited_script` 用写回同一把尺重放（影子脚本 + 隔离模式）→ 不一致或像素没比成都报 `script_export_diverged`、不交付，图片格式照常；目标与原脚本是同一个文件报 `script_export_same_file`。只对单张图；`WRITES` / `NOT_WRITABLE` 必须覆盖 `overrides.HANDLERS` 全部键。看护 `tests/test_script_adjust.py`。
 - **导出（ADR 0031，2026-08-31 定版）**：`POST /api/export`（同步）/
   `/api/export/start`（后台作业，进度经 SSE `export.progress`）/ `/state` /
   `/cancel` / `/validate` —— **五个端点、一个服务**。「要什么」只有
@@ -62,7 +63,7 @@ order: 210
     worker 的 matplotlib 照旧出原图 EPS，`engine/epsoverlay.compose` 把它按 EPSF 嵌入惯例（保存状态 + `/showpage {} def` + `%%BeginDocument`…`%%EndDocument` 原样嵌入 + 恢复）
     放进外层 EPS（BoundingBox = 图幅），再叠 `rendercore/epswriter.overlay_ps` 把 `plan.compile_page` 为同一组标注编出的 IR 写成的 PostScript 运算符（路径 / 填充 / 描边 / 线型 / 裁剪 / 变换；
     文字是批准字体的字形轮廓路径）。PostScript 没有透明：标注含 alpha<1、透明组、位图、外来页时这一项逐项失败 `eps_annotations_unsupported`（params `operation`），
-    其余格式照常交付，**不静默丢标注**；原图 EPS 本身给不出（没有脚本等）沿用 `eps_needs_script` 等原码。没有标注（缺键 / 空）时走旧分支，请求语义与输出逐字节不变。
+    其余格式照常交付，**不静默丢标注**；用户在导出前选了「EPS 按不透明导出」时请求带 `eps_opaque: true`（`ExportRequest.eps_opaque`，只认严格的 `true`、只对 `scope=original`、缺省不进请求 / 计划身份 / 产物，逐字节不变），`_produce_annotated_eps` 在写 EPS 前用 `epswriter.flatten_alpha` 把这一页 IR 的常量 alpha 与组不透明度压成 1（只压 EPS 这一份，其它格式用的页面不动；位图 / 外来页仍拒绝）；原图 EPS 本身给不出（没有脚本等）沿用 `eps_needs_script` 等原码。没有标注（缺键 / 空）时走旧分支，请求语义与输出逐字节不变。
     **单一来源 / 图层次序 / 横纵密度**（#1551 评审）：要 EPS 且不要 SVG 时（`exportroute.original_rerender`），有脚本的磁盘图在合成路径里也由 worker 现画（`_export_produce_rendercore(rerender_ids=…)`），PDF / PNG / TIFF 与 EPS 内层出自同一次运行，
     与无标注的 `_resolve_panel_source(rerender=True)` 同一判定；`original.objects_below` = `objects` 里前几个画在图下面（z 序保留；EPS 里写在嵌入段之前）；位图源横纵密度不同（逻辑 mm 宽高比 ≠ 像素宽高比）时，
     PNG / TIFF 先按逻辑图幅各向同性合成（ppi 取两轴中较大的密度，文字 / 行距 / 描边不被压扁），再由 `raster.resample_area`（纯标准库面积平均，RGBA 按预乘权重）整张缩到恰好 `px_w × px_h`，pHYs / TIFF 分辨率写源的 x / y 密度（`RasterBuffer.dpi_y`）；等密度位图不重采样；PDF / SVG 仍按逻辑 mm。
@@ -153,6 +154,7 @@ order: 210
     每个封口的临时文件（接线层 `engine/artifactinspect.py`，两个入口共用；检查器 `rendercore/inspector.py`），拒绝的那一项 `artifact_rejected` 不发布（partial 语义不变），合格的
     带 `Output.manifest`（`inspector.summary()` 投影，旧字段一个不动）。请求可带 `inspection: {mode: standard|strict,
     profile_id}`（缺省 standard，老客户端等价）；strict 的阈值只从 `profilestore.resolve_spec` 来。细则在 `rendercore.md`。
+    SVG 的 summary 另带 `text_outlined`（QA-WIN-08）：生产者在计划里报 `text_outlined: true`（没有 `<text>` 且有 matplotlib 的 `<g id="text_N">` 轮廓文字组，`artifactcheck.check_svg`）才为真，回执据此说「文字已转成路径」；没报就是 false。
 
 ## 多页 PDF：把同一份 PdfPages 的几张图合成一个文件（#1370 PR3）
 

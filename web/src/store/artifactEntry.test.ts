@@ -22,9 +22,11 @@ import { useEnvStore } from './envStore'
 import { usePngAdmissionMemory } from './pngAdmissionMemory'
 const render = vi.fn()
 const addRemap = vi.fn()
+const setWorkdir = vi.fn()
 const pendingStyle = vi.fn(()=>false)
 vi.mock('@/lib/api',async original=>({...await original<typeof import('@/lib/api')>(),engineRender:(...args:unknown[])=>render(...args),fetchScriptBackedEnabled:async()=>false, // 实验开关默认关：PR1 行为
-  addInputRemap:(...args:unknown[])=>addRemap(...args)}))
+  addInputRemap:(...args:unknown[])=>addRemap(...args),
+  setProjectWorkdir:(...args:unknown[])=>setWorkdir(...args)}))
 vi.mock('./styleWork',()=>({hasPendingStyleWork:(...args:unknown[])=>pendingStyle(...args as [])}))
 const FRAME={gid:'figure',prop:'frame',value:'figsize'}
 const guard={version:1 as const,requiredFrame:'figsize' as const,sourceId:'plot.png',bytesSha256:'a'.repeat(64),sizeBytes:10}
@@ -73,6 +75,20 @@ const entryGates = [
 const gatedError = (gate = entryGates[0]) => new EngineError('needs an answer','',gate.code,'',undefined,undefined,gate.extra)
 
 describe('selected PNG environment gates', () => {
+ it('selecting a different workdir resumes the waiting PNG source validation across render invalidation', async () => {
+  useEnvStore.setState({ env: { ok: true, project: { open: true, workdir: { mode: 'sandbox' } } } as never })
+  setWorkdir.mockResolvedValueOnce({ ok: true, project: { open: true, workdir: { mode: 'project_root' } } })
+  render.mockRejectedValueOnce(new EngineError('choose directory', '', workdir.code, '', undefined, undefined, { confirmation: workdir }))
+  const before = structuredClone(P())
+  expect(await enterElementEdit('p')).toBe(false)
+  expect(useEnvStore.getState().workdirConfirmation).toBe(workdir)
+  expect(await useEnvStore.getState().setWorkdirMode('project_root', { confirmed: true })).toBeNull()
+  await vi.waitFor(() => expect(useUiStore.getState().elementPanelId).toBe('p'))
+  expect(P().artifactValidation).toEqual(guard)
+  expect(P().overrides).toEqual([FRAME])
+  expect(visual(P())).toEqual(visual(before))
+  expect(exactPanelRender(useRenderStore.getState(), P())).not.toBeNull()
+ })
  it.each(entryGates)('$code opens its existing dialog and resumes source validation after the answer', async gate => {
   render.mockRejectedValueOnce(new EngineError('needs an answer','',gate.code,'',undefined,undefined,gate.extra))
   const before = structuredClone(P())
@@ -475,6 +491,17 @@ describe('first-adoption refusals: one sentence, one way out, remembered (ADR 01
   expect(ui().status).toEqual(text(key));expect(ui().statusTone).toBe('info');expect(ui().statusOwner).toBe('png.admit:p')
   expect(ui().statusAction?.label).toEqual(text('artifact.rebuildEditable'))
   expect(useRenderStore.getState().tracked['plot.png']).toBeUndefined()
+ })
+ it.each(['destination_unresolved','unsupported_render_state'])('QA-WIN-53: %s refused while the document moved on (cold reopen) still shows the card the second click would',async reason=>{
+  let reject!:(e:unknown)=>void;render.mockImplementationOnce(()=>new Promise((_,r)=>{reject=r}))
+  const entering=enterElementEdit('p');await vi.waitFor(()=>expect(render).toHaveBeenCalledTimes(1))
+  S().commit(literal('unrelated'),d=>{d.name='other'}) // reopen-time doc churn that does not touch the panel
+  reject(refused(reason));expect(await entering).toBe(false)
+  expect(ui().statusOwner).toBe('png.admit:p');expect(ui().statusTone).toBe('info')
+  expect(ui().statusAction?.label).toEqual(text('artifact.rebuildEditable'))
+  const shown=ui().status;ui().setStatus(null)
+  expect(await enterElementEdit('p')).toBe(false) // second click: same card
+  expect(ui().status).toEqual(shown);expect(ui().statusAction?.label).toEqual(text('artifact.rebuildEditable'))
  })
  it('a permanent refusal is remembered: the second click re-shows it without running the script again',async()=>{
   render.mockRejectedValueOnce(refused('unsupported_render_state'))

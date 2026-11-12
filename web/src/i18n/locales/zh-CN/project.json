@@ -48,7 +48,7 @@
     "openFailed": "打不开项目：{{error}}",
     "panelMissing": "没找到图 {{stem}}——脚本可能还没产出，或它在别的图库里",
     "projectOpened": "已打开项目 {{name}}",
-    "restoreTimeout": "这次交接的图没有放进排版：上次的排版还没打开，图在素材库里。",
+    "restoreTimeout": "这次交接的图在素材库里：先在画布上选一份排版，再把它加进来。",
     "runtimeNeedsRun": "{{stem}} 已登记为运行时图，但还没有预览——到素材库的「脚本」区运行一次。",
     "superseded": "项目已切换，这次交接没有放入。"
   },
@@ -92,7 +92,7 @@
     "browseMore": "浏览更多项目",
     "import": {
       "dropNoPath": "系统没有告诉 {{product}}「{{name}}」在哪个文件夹，请在接下来的窗口里选中它。",
-      "dropNotScript": "「{{name}}」不是 Python 脚本。请拖入 .py 文件。",
+      "dropNotScript": "「{{name}}」打不开。主页可以拖入脚本（.py、.R、.m）、笔记本（.ipynb）或项目文件夹。",
       "droppedMany": "拖入了 {{total}} 项，只用了「{{name}}」打开项目",
       "foreignNotFound": "这个文件夹里没找到「{{name}}」，请选它所在的文件夹。",
       "folderTitle": "选择脚本所在的文件夹",

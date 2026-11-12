@@ -44,6 +44,7 @@ import zlib
 from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from types import SimpleNamespace
 
 from flask import (
     Flask,
@@ -63,6 +64,7 @@ from werkzeug.wsgi import LimitedStream
 
 from . import pdfbackend, richtext, tiffprobe
 from .engine import (
+    ai_attachments as engine_ai_attachments,
     ai_bridge as engine_ai,
     ai_connections as engine_ai_connections,
     ai_convert as engine_ai_convert,
@@ -75,6 +77,7 @@ from .engine import (
     ai_tasks as engine_ai_tasks,
     artifactcontext as engine_artifactcontext,
     artifactinspect as engine_artifactinspect,
+    assetimport as engine_assetimport,
     atomicio as engine_atomicio,
     bakedbaseline as engine_baked,
     bootstrap as engine_bootstrap,
@@ -85,6 +88,7 @@ from .engine import (
     contactinbox as engine_contactinbox,
     contactsend as engine_contactsend,
     convertdeps as engine_convertdeps,
+    convertwrite as engine_convertwrite,
     databinding as engine_databinding,
     depplan as engine_depplan,
     deprepair as engine_deprepair,
@@ -118,8 +122,10 @@ from .engine import (
     handoff as engine_handoff,
     handoffreceipt as engine_handoffreceipt,
     inputbroker as engine_inputbroker,
+    inputcopy as engine_inputcopy,
     inputremap as engine_inputremap,
     inputtranscript as engine_inputtranscript,
+    journalremote as engine_journalremote,
     launchctx as engine_launchctx,
     launcher as engine_launcher,
     layoutsession as engine_layoutsession,
@@ -131,7 +137,7 @@ from .engine import (
     nativehandoff as engine_nativehandoff,
     nativeperm as engine_nativeperm,
     nativesession as engine_nativesession,
-    normalize as engine_normalize,
+    notebookscript as engine_notebookscript,
     originalspec as engine_originalspec,
     originrecord as engine_originrecord,
     patchspec as engine_patchspec,
@@ -157,6 +163,7 @@ from .engine import (
     runconfig as engine_runconfig,
     runtime as engine_runtime,
     runtimeasset as engine_runtimeasset,
+    scriptadjust as engine_scriptadjust,
     scriptanswers as engine_scriptanswers,
     scriptargs as engine_scriptargs,
     scriptbackup as engine_scriptbackup,
@@ -175,6 +182,7 @@ from .engine import (
     updater as engine_updater,
     versionstore as engine_versionstore,
     workdir as engine_workdir,
+    writetripwire as engine_writetripwire,
 )
 
 PKG_ROOT = Path(__file__).resolve().parent  # 只读：包自带资源（前端构建产物）
@@ -623,15 +631,29 @@ def _unsupported_tiff(exc):
     return jsonify({"error": exc.message, "code": exc.code, "params": exc.params}), 422
 
 
-def _asset_original_spec(path: Path, kind: str) -> dict:
-    """同一份磁盘素材事实：清单与精确 id 查询都消费原 probe / originalspec。"""
+def _asset_probe(p: Path, kind: str) -> tuple[dict, dict]:
+    """素材文件 → `(probe, original_spec)`：「这个文件能不能成为素材、有多大」的判据**只有这一份**。
+
+    `scan_panels` 逐个素材用它；`POST /api/assets/import` 在落盘前用它验证上传的字节（ADR 0176），
+    所以「导进来了、素材库里却没有」在结构上不会发生。TIFF 范围另由调用方先过 `tiffprobe.check`。
+    """
     if kind == "svg":
         from . import svgasset
 
-        _, probe = svgasset.read(path)
+        _, probe = svgasset.read(p)
     else:
-        probe = pdfbackend.probe_asset(path, kind)
-    return engine_originalspec.asset_spec(path, kind, probe)
+        probe = pdfbackend.probe_asset(p, kind)
+    # 「这张图有多大」只算一次（`engine/originalspec`，ADR 0028）。
+    # `native_*_mm` 是那份 spec 的投影而不是第二次计算——改造前位图那一
+    # 档在这里现猜一个 ppi（`600 if png else 300`），猜完既不说也没有
+    # 别处能对账；现在密度先按文件自己写的物理密度读，读不到才落到同样
+    # 那两个数，且 `original_spec.dpi_source` 会说出来它是假定的。
+    return probe, engine_originalspec.asset_spec(p, kind, probe)
+
+
+def _asset_original_spec(path: Path, kind: str) -> dict:
+    """精确素材查询与扫描、导入共用同一探针及原始规格。"""
+    return _asset_probe(path, kind)[1]
 
 
 def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
@@ -675,12 +697,7 @@ def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
             "mtime": int(p.stat().st_mtime),
         }
         try:
-            # 「这张图有多大」只算一次（`engine/originalspec`，ADR 0028）。
-            # `native_*_mm` 是那份 spec 的投影而不是第二次计算——改造前位图那一
-            # 档在这里现猜一个 ppi（`600 if png else 300`），猜完既不说也没有
-            # 别处能对账；现在密度先按文件自己写的物理密度读，读不到才落到同样
-            # 那两个数，且 `original_spec.dpi_source` 会说出来它是假定的。
-            spec = _asset_original_spec(p, kind)
+            probe, spec = _asset_probe(p, kind)
             entry.update(
                 kind=kind,
                 native_w_mm=spec["logical_w_mm"],
@@ -818,6 +835,7 @@ def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=
     的环境」这个可执行出口，而不是甩一段 ModuleNotFoundError。
     """
     body = {"error": str(exc), "traceback": exc.traceback_text, "code": exc.code}
+    _note_missing_command(exc)
     if figure_snapshot_invalidation is not None:
         body["figure_snapshot_invalidation"] = figure_snapshot_invalidation
     if stage:
@@ -998,6 +1016,29 @@ def _note_missing_dependency(exc, project_env: dict | None, repair: dict | None)
         )
     except (OSError, ValueError, TypeError) as err:
         LOG.warning("缺依赖现场记录失败: %s", err)
+
+
+def _note_missing_command(exc) -> None:
+    """脚本调外部命令却找不到：把 worker 当场量好的闭集事实记进进程内记录（`deprepair.note_missing_command_of`）。
+    没有打开项目 / 没有这份事实不记；记录失败不许盖掉原始错误。"""
+    if not isinstance(getattr(exc, "extra", None), dict) or "missing_command" not in exc.extra:
+        return
+    try:
+        root = str(require_project())
+    except NoProjectError:
+        return
+    try:
+        engine_deprepair.note_missing_command_of(root, exc)
+    except (OSError, ValueError, TypeError) as err:
+        LOG.warning("找不到外部命令的现场记录失败: %s", err)
+
+
+def _note_native_missing_command(project: str, script_error: dict) -> None:
+    """native 的桥把同一份事实放在 `script_error` 里（TVD-V7R4）：与 safe 同一条进程内记录，记录失败不许盖掉原始错误。"""
+    try:
+        engine_deprepair.note_missing_command_of(project, SimpleNamespace(extra=script_error))
+    except (OSError, ValueError, TypeError) as err:
+        LOG.warning("找不到外部命令的现场记录失败: %s", err)
 
 
 def _project_relative(path: str) -> str:
@@ -1187,6 +1228,221 @@ def api_panels():
     )
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+def _import_error(code: str, status: int, params: dict | None = None):
+    text = engine_assetimport.ERRORS.get(code, code)
+    resp = jsonify({"error": text, "code": code, "params": params or {}})
+    resp.status_code = status
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _import_write_error(exc: BaseException):
+    """落盘失败 → 稳定 code：磁盘满 / 只读或没权限 / 其它（原因只进日志，不进响应）"""
+    cause = exc.__cause__ if isinstance(exc, engine_atomicio.AtomicWriteError) else exc
+    num = getattr(cause, "errno", None)
+    LOG.warning("导入素材落盘失败: %s", type(cause).__name__)
+    if num in (errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC)):
+        return _import_error("asset_import_disk_full", 507)
+    if num in (errno.EACCES, errno.EPERM, errno.EROFS):
+        return _import_error("asset_import_not_writable", 403)
+    return _import_error("asset_import_write_failed", 500)
+
+
+@app.post("/api/assets/import")
+def api_assets_import():
+    """把上传的一个文件作为素材放进**当前项目文件夹**（ADR 0176）。
+
+    请求：`POST /api/assets/import?name=<文件名>`，body 是文件的原始字节（`application/octet-stream`）。
+    `name` 只取 basename 并清洗，客户端不能指定目录；类型按**内容**判，后缀只是名字。
+    响应：`{id, name, file, kind, reused, renamed, bytes}`——`id` 与 `/api/panels` 的素材 id 同一个值，
+    `reused`：已有内容相同的文件、没有写第二份；`renamed`：同名异内容、自动改成了 `名 (2).ext`。
+    会话认证走全局 guard；写盘只在项目根、不覆盖已有文件、先验证后落盘（`engine/assetimport`）。
+    """
+    from . import svgasset
+
+    root = require_project().resolve()
+    limit = engine_assetimport.MAX_BYTES
+    too_large = {"limit_mb": limit // (1024 * 1024)}
+    if request.content_length is not None and request.content_length > limit:
+        return _import_error("asset_import_too_large", 413, too_large)
+    try:
+        data = _read_body_capped(limit)
+    except Exception:  # noqa: BLE001 — 读流失败不该 500：当作没收到
+        return _import_error("asset_import_empty", 400)
+    if len(data) > limit:
+        return _import_error("asset_import_too_large", 413, too_large)
+    if not data:
+        return _import_error("asset_import_empty", 400)
+    content = engine_assetimport.sniff(data)
+    if content is None:
+        return _import_error("asset_import_unsupported_type", 415)
+    stem, given_ext = engine_assetimport.clean_name(request.args.get("name", ""))
+    ext = engine_assetimport.extension_for(content, given_ext)
+    kind = "pdf" if content == "pdf" else "svg" if content == "svg" else "raster"
+    digest = hashlib.sha256(data).hexdigest()
+
+    def visible(path: Path) -> bool:
+        return any(p == path for p, _ in engine_refresh.iter_assets(root, reg=current_registry()))
+
+    with engine_assetimport.LOCK:
+        tmp = engine_assetimport.temp_path(root, ext)
+        try:
+            try:
+                engine_assetimport.write_temp(tmp, data)
+            except (OSError, engine_atomicio.AtomicWriteError) as exc:
+                return _import_write_error(exc)
+            # 落盘前先用素材扫描自己的探针验证：扫不出来的文件一个字节都不留在项目里
+            try:
+                if ext in TIFF_EXT:
+                    tiffprobe.check(tmp)
+                _asset_probe(tmp, kind)
+            except (tiffprobe.UnsupportedTiff, svgasset.UnsupportedSVG) as exc:
+                return _import_error(exc.code, 422, getattr(exc, "params", None))
+            except Exception:  # noqa: BLE001 — 损坏 / 加密 / 解析不了：同一个 code
+                LOG.info("导入素材验证失败（%s）", content, exc_info=True)
+                return _import_error("asset_import_unreadable", 422)
+            for allow_reuse in (True, False):
+                try:
+                    plan = engine_assetimport.choose(
+                        root, stem, ext, digest, len(data), allow_reuse=allow_reuse
+                    )
+                except engine_assetimport.ImportRefused as exc:
+                    return _import_error(exc.code, exc.status, exc.params)
+                if plan.reuse is not None:
+                    if visible(plan.reuse):
+                        return jsonify(_import_result(plan.reuse, kind, reused=True, renamed=False))
+                    continue  # 已有那份被「同 stem 的 PDF」让位藏起来了：改走新名字
+                dest = root / plan.name
+                try:
+                    engine_assetimport.place_exclusive(tmp, dest)
+                except FileExistsError:
+                    return _import_error("asset_import_name_exhausted", 409)
+                except (OSError, engine_atomicio.AtomicWriteError) as exc:
+                    return _import_write_error(exc)
+                if not visible(dest):
+                    engine_assetimport.discard(dest)
+                    return _import_error("asset_import_not_visible", 409)
+                resp = jsonify(_import_result(dest, kind, reused=False, renamed=dest.stem != stem))
+                resp.status_code = 201
+                return resp
+            return _import_error("asset_import_not_visible", 409)
+        finally:
+            engine_assetimport.discard(tmp)
+
+
+def _import_result(path: Path, kind: str, *, reused: bool, renamed: bool) -> dict:
+    root = require_project().resolve()
+    return {
+        "id": str(path.relative_to(root)),
+        "name": path.stem,
+        "file": path.name,
+        "kind": kind,
+        "reused": reused,
+        "renamed": renamed,
+        "bytes": path.stat().st_size,
+    }
+
+
+def _notebook_error(exc: engine_notebookscript.NotebookError):
+    text = engine_notebookscript.ERRORS.get(exc.code, exc.code)
+    resp = jsonify({"error": text, "code": exc.code, "params": exc.params})
+    resp.status_code = exc.status
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _notebook_result(root: Path, placed: engine_notebookscript.Placed, notebook: str):
+    """`script` 是项目相对 POSIX 路径（与 `/api/registry` 的脚本键同一种写法）；`status` 见 `notebookscript.Placed`"""
+    resp = jsonify(
+        {
+            "notebook": notebook,
+            "script": engine_discover.rel_key(placed.path, root),
+            "status": placed.status,
+        }
+    )
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _notebook_failure(exc: BaseException):
+    if isinstance(exc, engine_notebookscript.NotebookError):
+        return _notebook_error(exc)
+    if isinstance(exc, engine_assetimport.ImportRefused):
+        return _import_error(exc.code, exc.status, exc.params)
+    return _import_write_error(exc)
+
+
+@app.post("/api/notebook/extract")
+def api_notebook_extract():
+    """项目里的 `.ipynb` → 它旁边的同名 `.py`（ADR 0179）。请求 `{"notebook": <项目相对路径>}`。
+
+    路径只经 `projectenv.contained_path` 钉回项目内（`..` / 软链接 / 项目外绝对路径都在那一步现形）；
+    只读笔记本、只写它旁边的 `.py`，用户的笔记本与同名脚本一个字节不动。响应 `{notebook, script, status}`。
+    会话认证走全局 guard。
+    """
+    ctx = current_ctx()
+    body = request.get_json(silent=True)
+    raw = str(body.get("notebook", "") if isinstance(body, dict) else "").strip()
+    if not raw:
+        return _notebook_error(engine_notebookscript.NotebookError("notebook_not_found", 404))
+    real = engine_projectenv.contained_path(ctx.path, raw)
+    if real is None:
+        return _notebook_error(
+            engine_notebookscript.NotebookError("notebook_path_outside_project", 400)
+        )
+    target = Path(real)
+    if target.suffix != engine_notebookscript.SUFFIX or target.is_dir():
+        return _notebook_error(
+            engine_notebookscript.NotebookError("notebook_unsupported_type", 400)
+        )
+    if not target.is_file():
+        return _notebook_error(engine_notebookscript.NotebookError("notebook_not_found", 404))
+    root = Path(os.path.realpath(str(ctx.path)))
+    try:
+        placed = engine_notebookscript.convert_file(target)
+    except (
+        engine_notebookscript.NotebookError,
+        engine_assetimport.ImportRefused,
+        OSError,
+        engine_atomicio.AtomicWriteError,
+    ) as exc:
+        return _notebook_failure(exc)
+    return _notebook_result(root, placed, target.relative_to(root).as_posix())
+
+
+@app.post("/api/notebook/import")
+def api_notebook_import():
+    """上传的 `.ipynb` 字节 → 当前项目根里的 `.py`（浏览器拿不到路径时用；笔记本本身不存进项目）。
+
+    `POST /api/notebook/import?name=<文件名>`，body 是笔记本原始字节。上限卡在读取本身（`_read_body_capped`）；
+    `name` 只取 basename 并清洗，客户端不能指定目录。响应同 `/api/notebook/extract`。
+    """
+    root = require_project().resolve()
+    limit = engine_notebookscript.MAX_BYTES
+    too_large = engine_notebookscript.NotebookError(
+        "notebook_too_large", 413, {"limit_mb": limit // (1024 * 1024)}
+    )
+    if request.content_length is not None and request.content_length > limit:
+        return _notebook_error(too_large)
+    try:
+        data = _read_body_capped(limit)
+    except Exception:  # noqa: BLE001 — 读流失败不该 500：当作没收到
+        return _notebook_error(engine_notebookscript.NotebookError("notebook_empty", 400))
+    if len(data) > limit:
+        return _notebook_error(too_large)
+    name = request.args.get("name", "") or "notebook.ipynb"
+    try:
+        placed = engine_notebookscript.convert_bytes(root, name, data)
+    except (
+        engine_notebookscript.NotebookError,
+        engine_assetimport.ImportRefused,
+        OSError,
+        engine_atomicio.AtomicWriteError,
+    ) as exc:
+        return _notebook_failure(exc)
+    return _notebook_result(root, placed, "")
 
 
 @app.get("/api/panel-stem")
@@ -1971,6 +2227,12 @@ def _resolve_panel_source(
         path = safe_resolve(o["id"])
     except tiffprobe.UnsupportedTiff as exc:
         raise _export_tiff_error(exc) from exc
+    except NotFound as exc:
+        # 作业里没有 HTTP 响应可回：`abort(404)` 原样冒出去会变成 export_failed + werkzeug 的英文原话，
+        # 界面只能给必败的「重试」。图不在了 = 结构化 source_missing + figure，界面据此给「重新找到这张图」
+        raise engine_exportreq.ExportRequestError(
+            "source_missing", "这张图的源文件现在不可用", {"figure": rel_id}
+        ) from exc
     if engine_exportroute.wants_execution(runtime=False, overrides=overrides, rerender=rerender):
         rendered = _serialize_figure(
             rel_id,
@@ -3615,6 +3877,8 @@ def _original_svg_result(path, artifact, receipt):
                 # 如实：matplotlib 出的 companion 是 `svg.fonttype='path'`（它同时是 #1185 的等价证人），
                 # 这里只按文件里到底有没有 <text> 记，不预设。
                 "text_policy": "text" if checked["has_text"] else "outlines",
+                # 图里的文字确实被画成了轮廓（QA-WIN-08）：回执据此说一句「不能再当文字编辑」
+                "text_outlined": bool(checked["text_outlined"]),
                 "vector": vector,
                 "page_pt": [w_mm * 72 / 25.4, h_mm * 72 / 25.4],
                 "sources": [artifact.to_payload()],
@@ -3782,7 +4046,7 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
     """带标注的 EPS（自写叠加，ADR 0046 补记）：worker 的 matplotlib 照旧出原图 EPS，再由 `engine/epsoverlay`
     把它原样嵌进外层 EPS，叠上 RenderCore 为**同一组标注**编出的 IR（`rendercore/epswriter` 写成 PostScript 运算符）。
     PostScript 没有透明：标注含 alpha<1 / 位图等 PS 表达不了的东西时，这一项逐项失败（`eps_annotations_unsupported`），
-    其余格式照常交付，不静默丢标注。"""
+    其余格式照常交付，不静默丢标注。`req.eps_opaque`（用户在导出前选了「EPS 按不透明导出」）时，EPS 这一份把常量 alpha 与组不透明度压成 1。"""
     from .rendercore import epswriter, facade as rc_facade, plan as rc_plan
 
     src = req.original
@@ -3807,6 +4071,7 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
         )
     if inner.tmp_path is None or not Path(inner.tmp_path).is_file():
         return inner  # 原图 EPS 本身给不出（没有脚本 / 冷 worker …）：沿用那一档的稳定码
+    _prepare_source_fonts()
     provider = rc_facade.provider()
 
     class _NoPanels:
@@ -3835,7 +4100,12 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
             if msg not in job.warnings:
                 job.warnings.append(msg)
         try:
-            text, _facts = epswriter.overlay_ps(compiled.page, provider, prefix=prefix)
+            text, _facts = epswriter.overlay_ps(
+                # 「EPS 按不透明导出」：只压 EPS 这一份的 IR，其它格式用的页面不受影响
+                epswriter.flatten_alpha(compiled.page) if req.eps_opaque else compiled.page,
+                provider,
+                prefix=prefix,
+            )
         except epswriter.UnsupportedCapability as exc:
             return engine_exportjob.Produced(
                 format=fmt,
@@ -4913,6 +5183,7 @@ def _export_produce_rendercore(
         if canvas is not None
         else {}
     )
+    _prepare_source_fonts()
     return rc_job.produce(
         job,
         tmp_dir,
@@ -5027,11 +5298,162 @@ def _export_produce(job, tmp_dir: Path, *, artifact_sources=None) -> list:
     if job.request.merge_pdf is not None:
         return _export_produce_merged_pdf(job, tmp_dir, artifact_sources=artifact_sources)
     if job.request.scope == engine_exportreq.SCOPE_ORIGINAL:
-        return _export_produce_original(
-            job, tmp_dir, **({"artifact_sources": artifact_sources} if artifact_sources else {})
+        produced = (
+            _export_produce_original(
+                job, tmp_dir, **({"artifact_sources": artifact_sources} if artifact_sources else {})
+            )
+            if job.request.formats
+            else []
         )
+        if job.request.include_script:
+            job.check_cancelled()
+            produced.append(_produce_edited_script(job, tmp_dir))
+        return produced
     return _export_produce_rendercore(
         job, tmp_dir, **({"artifact_sources": artifact_sources} if artifact_sources else {})
+    )
+
+
+def _edited_script_worker(figure_id: str) -> tuple:
+    """这张图的 `(worker, stem)`；没有脚本回 `(None, stem)`。"""
+    if engine_runtimeasset.is_runtime_id(figure_id):
+        return _engine_worker(figure_id)
+    stem, info = _disk_panel(safe_resolve(figure_id))
+    if info is None:
+        return None, stem
+    return _safe_worker(info["script"], info["entry"], stem), stem
+
+
+def _shown_index(worker, stem: str) -> int | None:
+    """这张图没经过 savefig 时，它是第几张这样的图（0 起）；经过 savefig 的回 None。
+
+    序号与 `figcapture.collect_pyplot_figures` 给 stem 的顺序一致：块在 `plt.show` 时按同一个序号认图。
+    """
+    pyplot = [
+        d.get("stem")
+        for d in getattr(worker, "last_build_descriptors", None) or []
+        if d.get("capture_source") == engine_figcapture.SOURCE_PYPLOT
+    ]
+    return pyplot.index(stem) if stem in pyplot else None
+
+
+def _verify_edited_script(worker, stem: str, target: Path, adjusted, hot: dict, tmp_dir: Path):
+    """修改后的脚本 + 没写进去的调整，从零重放一遍，必须等于用户看到的图（ADR 0171）。
+
+    与写回同一把尺：`_compare_manifests`（几何）+ `_replay_pixel_diff`（像素）。脚本字节留在导出的临时目录，
+    经影子脚本（ADR 0143 修订）运行，`__file__` 与 cwd 都是原脚本的；隔离模式顺带让重放碰不到原脚本本身。
+    回分歧清单（空 = 过了）。
+    """
+    script_path = Path(worker.figures_dir) / worker.script_name
+    roots = engine_writetripwire.isolate_entries(tmp_dir / "isolate", [str(script_path)])
+    key = engine_execspec.write_roots_key(roots)
+    with engine_shadowscript.shadow(worker.figures_dir, worker.script_name, target, key):
+        fresh = engine_pool.one_shot(
+            worker.script_name,
+            worker.figures_dir,
+            worker.entry,
+            script_inputs=getattr(worker, "last_build_script_inputs", None) or [],
+            pinned=engine_pool.pin_of_worker(worker),
+            **({"run": worker.run} if getattr(worker, "run", None) is not None else {}),
+            write_roots=roots,
+        )
+        try:
+            resp = fresh.override(stem, adjusted.residual)
+            warnings = [
+                {"gid": "", "field": "warning", "hot": "", "fresh": str(w)}
+                for w in resp.get("warnings") or []
+            ]
+            man_fresh = json.loads(
+                Path(engine_figcapture.usable_preview_path(fresh.out_dir, stem, ".json")).read_text(
+                    encoding="utf-8"
+                )
+            )
+            diffs = _compare_manifests(hot, man_fresh)[0]
+            if not diffs:
+                pixel_diff, state = _replay_pixel_diff(worker, fresh, stem)
+                if pixel_diff is not None:
+                    diffs.append(pixel_diff)
+                elif state != "ok":
+                    # 热会话中途重开：像素没有比过。写回能如实报「没比」，这里没有第二次机会，不交付
+                    diffs.append({"gid": "", "field": "pixels", "hot": state, "fresh": ""})
+            return warnings + diffs
+        finally:
+            engine_pool.discard(fresh)
+
+
+def _produce_edited_script(job, tmp_dir: Path):
+    """导出里的「修改后的 .py」（ADR 0171）：**只产一份新文件，原脚本一个字节不动**。
+
+    这份产物自己的失败只算它自己的（`Produced.error_code`），图片格式照常交付。
+    验证过不了就不交付：一份画出来与界面不一样的脚本比没有更糟。
+    """
+    Produced = engine_exportjob.Produced
+    key = engine_exportjob.SCRIPT_KEY
+
+    def fail(code: str) -> "engine_exportjob.Produced":
+        return Produced(format=key, error_code=code)
+
+    src = job.request.original
+    patches = list(src.overrides or [])
+    try:
+        worker, stem = _edited_script_worker(src.figure_id)
+    except engine_pool.WorkerError as exc:
+        LOG.warning("修改后的脚本：起不了 worker: %s", exc)
+        return fail("script_export_run_failed")
+    if worker is None:
+        return fail("script_export_no_script")
+    if engine_enginesession.is_native(worker):
+        return fail("script_export_native")
+    script_path = Path(worker.figures_dir) / worker.script_name
+    if script_path.suffix.lower() != ".py":
+        return fail("script_export_not_python")
+    # `_edited` 后缀保证不了名字不同：脚本可能本来就叫这个（换回导出版继续改的人），导出目录也可能就是脚本目录。
+    # 判据是同一个文件，不是路径字符串（硬链接、不分大小写的卷、符号链接）
+    dest = job.export_dir / (job.script_name or "")
+    if job.script_name and dest.exists() and os.path.samefile(dest, script_path):
+        return fail("script_export_same_file")
+    try:
+        data = script_path.read_bytes()
+        job.check_cancelled()
+        # 热态必须正是这组 patches，manifest 才是用户看到的那张图
+        worker.override(stem, patches)
+        if getattr(worker, "script_sha1", "") != hashlib.sha1(data).hexdigest():
+            return fail("script_export_script_changed")
+        shown_index = _shown_index(worker, stem)
+        if shown_index is not None and not re.search(rb"\bshow\s*\(", data):
+            # 既不保存也不显示：脚本在终端里什么都不产出，修改没有生效的时机
+            return fail("script_export_no_savefig")
+        hot = _hot_manifest(worker, stem, patches)
+        if hot is None:
+            return fail("script_export_run_failed")
+        adjusted = engine_scriptadjust.build(
+            data,
+            stem,
+            patches,
+            hot,
+            version=engine_updater.current_version(),
+            shown_index=shown_index,
+        )
+        target = tmp_dir / "edited-script.py"
+        target.write_bytes(adjusted.data)
+        job.check_cancelled()
+        if adjusted.written:
+            diffs = _verify_edited_script(worker, stem, target, adjusted, hot, tmp_dir)
+            if diffs:
+                LOG.warning("修改后的脚本没过验证: %s %s", stem, diffs[:REPLAY_DIFF_LIMIT])
+                return fail("script_export_diverged")
+    except engine_scriptadjust.ScriptAdjustError as exc:
+        return fail(exc.code)
+    except engine_pool.WorkerError as exc:
+        LOG.warning("修改后的脚本：重跑失败: %s", exc)
+        return fail("script_export_run_failed")
+    except OSError as exc:
+        LOG.warning("修改后的脚本：读写失败: %s", exc)
+        return fail("script_export_unreadable")
+    return Produced(
+        format=key,
+        tmp_path=target,
+        script_report={"written": adjusted.written, "skipped": adjusted.skipped},
     )
 
 
@@ -5417,6 +5839,109 @@ def api_mathtext():
     return jsonify(
         {"ok": True, "results": [got[engine_mathtypeset.key_of(s_, f)] for s_, f in pairs]}
     )
+
+
+def _prepare_source_fonts() -> None:
+    """让「画布文字用原图字体」（ADR 0164）找得到原图那张脸：把项目解释器 / 内置 runtime 的 matplotlib
+    字体目录登记为定位线索。**只算路径、不起进程、不改任何东西**；线索只影响「去哪找」，认脸仍只按 sha256。"""
+    from .rendercore import userfonts
+
+    pythons: list[str] = []
+    try:
+        project = _mathtext_project()
+        if project is not None:
+            hit = engine_pool.peek_worker_python(project)
+            if hit is not None:
+                pythons.append(hit[0])
+    except Exception:  # noqa: BLE001 —— 项目解释器读不出来只是少一条线索
+        pass
+    bundled = engine_runtime.bundled_python()
+    if bundled:
+        pythons.append(bundled)
+    dirs: list[Path] = []
+    for py in pythons:
+        dirs += userfonts.matplotlib_font_dirs(py)
+    dirs += userfonts.matplotlib_font_dirs(None)
+    # 英文留在内置字体、中文选本机字体时，`source_font` 的正文脸点名的是批准字体（ADR 0169）
+    dirs.append(userfonts.approved_font_dir())
+    userfonts.default_locator().add_hint_dirs(dirs)
+
+
+#: `/api/source-fonts/status` 一次最多问几张脸（一页画布的标注远小于此）
+SOURCE_FONTS_MAX_ITEMS = 64
+
+
+@app.post("/api/source-fonts/status")
+def api_source_fonts_status():
+    """画布文字的 `sourceFont`（ADR 0164）在**这台机器**上能不能用：body `{"fonts": [{"sha256", "face"}]}` →
+    `{"ok": true, "results": [{"sha256", "face", "state"}]}`，`state` 是 `ok` 或 `sourcefont.REASONS` 里的一个。
+
+    判据与导出**同一个函数**（`HbFaceProvider.user_face`），所以预览 / 属性页说「能用」的，导出就嵌得进去。
+    响应里没有路径，也没有字体文件的任何字节。"""
+    from .rendercore import facade as rc_facade, sourcefont
+
+    body = request.get_json(force=True, silent=True) or {}
+    items = body.get("fonts")
+    if not isinstance(items, list) or len(items) > SOURCE_FONTS_MAX_ITEMS:
+        return jsonify({"ok": False, "error": "bad_items"}), 400
+    _prepare_source_fonts()
+    results = []
+    provider = None
+    for it in items:
+        ref, bad = sourcefont.parse_source_font(
+            {**it, "family": it.get("family") or "-"} if isinstance(it, dict) else None
+        )
+        if ref is None:
+            return jsonify({"ok": False, "error": "bad_items"}), 400
+        try:
+            provider = provider or rc_facade.provider()
+            provider.user_face(ref.primary)
+            state = "ok"
+        except sourcefont.UserFontUnavailable as exc:
+            state = exc.reason
+        results.append({"sha256": ref.primary.sha256, "face": ref.primary.face, "state": state})
+    return jsonify({"ok": True, "results": results})
+
+
+@app.get("/api/source-fonts/catalog")
+def api_source_fonts_catalog():
+    """这台机器上画布文字能用的字体（ADR 0169）：`{"ok", "state", "families", "builtin"}`。
+
+    `state` 是 `scanning` 时清单还不全（首次走字体目录在后台，请求不等它），前端过一会儿再问。
+    响应里只有名字与身份，没有路径。"""
+    from .rendercore import fontcatalog
+
+    _prepare_source_fonts()
+    return jsonify({"ok": True, **fontcatalog.default_catalog().snapshot()})
+
+
+@app.get("/api/source-fonts/<sha256>/<int:face>")
+def api_source_fonts_bytes(sha256: str, face: int):
+    """预览用：本机上这张脸的字节（单脸 sfnt）。**只来自本机、只按 sha256 取**，不走网络；禁止嵌入的脸
+    不供（预览与导出同一条许可线）。会话认证与其它端点同一道全局 guard。"""
+    import io
+
+    from .rendercore import facade as rc_facade, sourcefont
+
+    if not sourcefont.HEX64.match(sha256):
+        return jsonify({"ok": False, "error": "bad_sha256"}), 400
+    _prepare_source_fonts()
+    try:
+        record = rc_facade.provider().user_face(sourcefont.FaceRef("-", sha256, face)).record
+    except sourcefont.UserFontUnavailable as exc:
+        return jsonify({"ok": False, "error": exc.reason}), 404
+    if record.path.suffix.lower() in (".ttc", ".otc"):
+        from fontTools.ttLib import TTFont
+
+        buf = io.BytesIO()
+        TTFont(str(record.path), fontNumber=face, lazy=False).save(buf)
+        data = buf.getvalue()
+    else:
+        data = record.path.read_bytes()
+    resp = Response(data, mimetype="application/octet-stream")
+    resp.headers["Cache-Control"] = "private, max-age=31536000, immutable"  # 内容由 sha256 决定
+    resp.headers["ETag"] = f'"{sha256}-{face}"'
+    return resp
 
 
 @app.post("/api/export/validate")
@@ -7468,6 +7993,8 @@ def _diagnostics_project_status() -> dict:
         # 最近几次缺依赖的现场（缺哪个包、当时谁在渲染、体检过哪些系统解释器、修复目标可不可用）。
         # 这里交原值，换形与脱敏在 `diagnostics._project_section`（bundle schema 4）。
         status["missing_dependencies"] = engine_deprepair.recent_missing_dependencies(str(ctx.path))
+        # 脚本拉起外部命令却找不到可执行文件（bundle schema 15）：交原值，换形与脱敏在 `diagnostics._project_section`
+        status["missing_commands"] = engine_deprepair.recent_missing_commands(str(ctx.path))
         status["managed_environment_jobs"] = engine_envdiag.recent(ctx.path)
         # 最近几次脚本运行 / 准备的结果分类（成功 / 失败 / 取消 + 稳定错误码计数）：试运行与准备把失败接在自己里面
         # （200 + `error` / 会话终局），不进 recent_errors，这里补上「失败过、什么类别」（bundle schema 6）。
@@ -8500,6 +9027,9 @@ def api_registry():
             # 加字段（老前端忽略）：项目内认得出语言的 R / MATLAB 脚本（ADR 0143 修订「项目内入口」）。
             # 独立于 `all_scripts`：它们不能“打开并运行”，不进运行环境探测 / 依赖准备 / 可运行脚本判据。
             "foreign_scripts": engine_foreignsource.inventory(Path(ctx.path)),
+            # 加字段（老前端忽略）：项目内还没转成脚本的 Jupyter 笔记本（ADR 0179）。同样独立于 `all_scripts`：
+            # 它们不是脚本，要先抽成同名 `.py`（`POST /api/notebook/extract`）才进脚本库的运行分组
+            "notebook_scripts": engine_notebookscript.inventory(Path(ctx.path)),
         }
     )
 
@@ -11004,182 +11534,9 @@ def _retire_hot_worker(worker) -> bool:
     return True
 
 
-def _specfix_transaction(render, base: list, scale: float, profile: dict, only) -> dict:
-    """`/api/engine/specfix` 的事务本体（拆出来是为了让测试能注入假的渲染）。"""
-    b0_resp = render(base)
-    if b0_resp.get("warnings"):
-        # 基准自己就没能完整重放（热 worker 里上一份 override 恢复不回来，Codex #549 第三轮 P1）：
-        # 候选是对着一份被污染的 B0 验的。基准不干净就不开始，文档一个字不改
-        return {
-            "ok": False,
-            "exit": engine_normalize.EXIT_UNSUPPORTED,
-            "warnings": list(b0_resp["warnings"]),
-            "patches": list(base),
-            "changes": [],
-            "skipped": [],
-            "adjustments": [],
-            "unresolved": [],
-            "blocking": [],
-        }
-    b0 = b0_resp["manifest"]
-    issues = engine_specfix.all_issues(b0, profile, scale)
-    targets = engine_specfix.select(issues, only)
-    layout = [t for t in targets if t[0] in engine_specfix.LAYOUT_RULES]
-    # 点了名、这里却不会去修的（规则不在可修清单里，或 B0 上根本没这条）：逐条说出口。
-    # 不报的话前端会把它当成「修好了」——那是最坏的一种回答
-    missed = [
-        {"rule": str(o.get("rule")), "gid": str(o.get("gid") or ""), "reason": "not_found"}
-        for o in (only or [])
-        if not any(
-            r == o.get("rule") and (g == o.get("gid") or not o.get("gid")) for r, g in targets
-        )
-    ]
-    out: dict = {
-        "ok": False,
-        "patches": list(base),
-        "changes": [],
-        "skipped": list(missed),
-        "adjustments": [],
-        "unresolved": [],
-        "blocking": [],
-    }
-    if not targets:
-        out.update({"ok": not missed, "exit": engine_specfix.EXIT_NOTHING_TO_DO})
-        return out
-
-    font_off: list[tuple[str, str]] = []
-    for _attempt in range(2):
-        live = [t for t in targets if t not in font_off]
-        plan = engine_specfix.plan(b0, profile, scale=scale, targets=live)
-        skipped = (
-            missed
-            + plan["skipped"]
-            + [{"rule": r, "gid": g, "reason": "font_unavailable"} for r, g in font_off]
-        )
-        if not plan["patches"] and not layout:
-            render(base)
-            out.update({"exit": engine_specfix.EXIT_NOTHING_TO_DO, "skipped": skipped})
-            out["ok"] = not skipped
-            return out
-        contract = engine_specfix.build_contract(
-            b0, profile, scale=scale, base_patches=base, planned=plan["patches"]
-        )
-        # 真正要修的是计划落了 patch 的那些；算不出目标值的已经进了 skipped
-        planned_targets = [
-            t
-            for t in live
-            if not any(s["rule"] == t[0] and s["gid"] == t[1] for s in plan["skipped"])
-        ]
-        candidate = engine_normalize.merge_patches(base, plan["patches"])
-        resp = render(candidate)
-        if resp.get("warnings"):
-            # 有一条 override 没写进去 = 修复没有真的落地。不带着 warning 往下验
-            render(base)
-            out.update(
-                {
-                    "exit": engine_normalize.EXIT_UNSUPPORTED,
-                    "warnings": list(resp["warnings"]),
-                    "skipped": skipped,
-                }
-            )
-            return out
-
-        def judge(manifest: dict, patches: list) -> dict:
-            return engine_specfix.verdict(
-                contract, manifest, profile, scale=scale, targets=planned_targets, patches=patches
-            )
-
-        manifest = resp["manifest"]
-        v = judge(manifest, candidate)
-        if v["exit"] == engine_normalize.EXIT_FONT_UNAVAILABLE and not font_off:
-            # 规范要的字体这台机器上没有：字体那几条单独退出，其余再来一遍
-            font_off = [t for t in targets if t[0] == "font-family-substituted"]
-            continue
-        break
-
-    def margin_needs(v: dict, manifest: dict) -> list[dict]:
-        """这一版还需要外边距重排来解决的：新增 / 加重的裁切与压图，加上点名要修、
-        还探在图幅外的那几条（修复前就已经出界的，不在阻断清单里）。"""
-        need = [b for b in v["repairable"] if b["repair"] == "margins"]
-        left = {(u["rule"], u["gid"]) for u in v["unresolved"]}
-        need += [
-            c
-            for c in engine_normalize.per_element_clipping(manifest)
-            if (c["id"], c["gids"][0]) in left
-        ]
-        return need
-
-    adjustments: list[dict] = []
-    rounds = 0
-    while (
-        not v["ok"]
-        and v["exit"]
-        in (engine_normalize.EXIT_CONSTRAINT_CONFLICT, engine_specfix.EXIT_NOT_RESOLVED)
-        and rounds < engine_normalize.MAX_REPAIR_ROUNDS
-    ):
-        need = margin_needs(v, manifest)
-        if not need:
-            break
-        rounds += 1
-        dirs = engine_normalize.repair_directions(need)
-        cand = engine_normalize.adapt_margins(contract, manifest, directions=dirs or None)
-        if "conflict" in cand or not cand["patches"]:
-            break
-        trial = engine_normalize.merge_patches(candidate, cand["patches"])
-        if engine_normalize.authorize(contract, trial):
-            break  # 局部修复越出了约定：不收（按 normalize 的纪律这不该发生）
-        resp2 = render(trial)
-        if resp2.get("warnings"):
-            # 这一轮有 override 没写进去（重放不完整）：与首轮候选同一条纪律，不收。
-            # 退回到上一版已验过、没有 warning 的候选，而不是带着它往下验
-            render(candidate)
-            break
-        m2 = resp2["manifest"]
-        v2 = judge(m2, trial)
-        if not engine_specfix.progressed(v2, v):
-            render(candidate)
-            break
-        candidate, manifest, v = trial, m2, v2
-        adjustments.extend(cand["changed"])
-
-    # 装不下的出界（外边距重排已经到预算 / 冲突）：如实记成「放不下」，**不连累同一批
-    # 里别的修复**——前提是除了它们之外裁决全过（没有变差、没有越权）
-    stuck = [u for u in v["unresolved"] if u["rule"] in engine_specfix.LAYOUT_RULES]
-    if (
-        stuck
-        and v["exit"] == engine_specfix.EXIT_NOT_RESOLVED
-        and len(stuck) == len(v["unresolved"])
-    ):
-        skipped = skipped + [{**u, "reason": "no_fit"} for u in stuck]
-        v["unresolved"] = []
-        v["ok"] = True
-        v["exit"] = engine_normalize.EXIT_DONE
-        if candidate == list(base):
-            # 什么都没改成：这一轮只有放不下的出界
-            render(base)
-            out.update({"exit": engine_specfix.EXIT_NOTHING_TO_DO, "skipped": skipped})
-            return out
-
-    out.update(
-        {
-            "exit": v["exit"],
-            "changes": plan["changes"],
-            "skipped": skipped,
-            "adjustments": adjustments,
-            "unresolved": v["unresolved"],
-            "blocking": [
-                {"id": b.get("id"), "gids": b.get("gids") or [], "bucket": b.get("bucket")}
-                for b in v["blocking"]
-            ],
-            "protected_changes": v["protected_changes"],
-            "font_unresolved": v["font_unresolved"],
-        }
-    )
-    if not v["ok"]:
-        render(base)
-        return out
-    out.update({"ok": True, "patches": candidate})
-    return out
+#: 事务本体在 `engine/specfix.transaction()`（ADR 0180：MCP 与桌面同一份）；
+#: 这个名字留给端点与 `tests/test_specfix_real.py`。
+_specfix_transaction = engine_specfix.transaction
 
 
 @app.post("/api/engine/invalidate")
@@ -11704,14 +12061,19 @@ class FileLockedError(RuntimeError):
         updated: list[str],
         rolled_back: list[str] | None = None,
         rollback_failed: list[str] | None = None,
+        kept_external: list[str] | None = None,
     ):
         self.rolled_back = list(rolled_back or [])
         self.rollback_failed = list(rollback_failed or [])
+        #: 替换之后又被外部改过、因此没有回滚的目标（保留的是外部版本）
+        self.kept_external = list(kept_external or [])
         tail = ""
         if self.rolled_back and not self.rollback_failed:
             tail = f"（已回滚 {'、'.join(self.rolled_back)}，原文件未变）"
         elif self.rollback_failed:
             tail = f"（{'、'.join(self.rollback_failed)} 回滚失败，仍是新内容）"
+        if self.kept_external:
+            tail += f"（{'、'.join(self.kept_external)} 在替换之后又被外部修改，已保留外部版本、未回滚）"
         super().__init__(f"{name} 正被其它程序占用，无法覆盖：{detail}{tail}")
         self.name = name
         #: 仍处于「已被换掉」状态的文件（回滚成功后为空）
@@ -11728,6 +12090,8 @@ class SourceChangedError(RuntimeError):
     def __init__(self, name: str, expected: int, actual: int):
         super().__init__(f"{name} 已被外部修改")
         self.name = name
+        #: 本次已替换、但替换之后又被外部改过因而没有回滚的目标（保留外部版本）
+        self.kept_external: list[str] = []
         self.expected = expected
         self.actual = actual
 
@@ -11990,6 +12354,36 @@ def _write_back_prepare(src: Path, worker, expected_mtime) -> None:
         raise ScriptChangedError(script_name, spawned, now)
 
 
+def _source_fingerprint(paths) -> dict[Path, tuple[int, int, str] | None]:
+    """目标文件的纳秒 mtime、长度及内容身份；读取前后元信息变化时不可核验。"""
+    out = {}
+    for p in paths:
+        try:
+            before = p.stat()
+            digest = _sha1_of(p)
+            after = p.stat()
+            stamp = (before.st_mtime_ns, before.st_size)
+            out[p] = (*stamp, digest) if stamp == (after.st_mtime_ns, after.st_size) else None
+        except OSError:
+            out[p] = None
+    return out
+
+
+def _assert_sources_unchanged(base: dict, paths) -> None:
+    """备份前和每次替换前复核尚未替换的原件，保护验证、备份及两次替换间的外改。"""
+    paths = list(paths)
+    current = _source_fingerprint(paths)
+    for p in paths:
+        want = base.get(p)
+        if want is None:
+            raise WriteBackPersistError(f"无法核验写回原件: {p.name}")
+        now = current[p]
+        if now != want:
+            raise SourceChangedError(
+                p.name, int(want[0] // 1_000_000_000), int((now or (0, 0))[0] // 1_000_000_000)
+            )
+
+
 def _hot_manifest(worker, stem: str, patches: list) -> dict | None:
     """热会话当前的 manifest；拿不到（或热态压根不是这组 patches）回 None。
 
@@ -12017,17 +12411,31 @@ def _hot_manifest(worker, stem: str, patches: list) -> dict | None:
         return None
 
 
-def _rollback(done: list[Path], backup_dir: Path) -> tuple[list[str], list[str]]:
-    """把已经替换掉的目标从本次备份恢复回去，返回 (成功, 失败) 两份文件名。"""
-    rolled, failed = [], []
+def _rollback(
+    done: list[Path],
+    backup_dir: Path,
+    published: dict[Path, tuple[int, int, str] | None] | None = None,
+) -> tuple[list[str], list[str], list[str]]:
+    """把已经替换掉的目标从本次备份恢复回去，返回 (成功, 失败, 外部改过未回滚) 三份文件名。
+
+    恢复前先核目标仍是**我们发布的那一版**（`published` 里记的 `(mtime_ns, size, sha1)`，
+    与 `_source_fingerprint` 同一判据）：替换之后又被外部改过的目标，备份是更早的原件，
+    盖上去就吞掉外部那份新改动——保留外部版本、不回滚、如实报告（Codex #1697 P1）。
+    """
+    rolled, failed, kept = [], [], []
     for target in done:
+        if published is not None and target in published:
+            if _source_fingerprint([target])[target] != published[target]:
+                LOG.warning("写回回滚跳过: %s 在替换之后被外部修改，保留外部版本", target.name)
+                kept.append(target.name)
+                continue
         try:
             shutil.copy2(backup_dir / target.name, target)
             rolled.append(target.name)
         except OSError:
             LOG.error("写回回滚失败: %s（备份在 %s）", target.name, backup_dir, exc_info=True)
             failed.append(target.name)
-    return rolled, failed
+    return rolled, failed, kept
 
 
 def _discard_updating(tmps: list[tuple[Path, Path]]) -> None:
@@ -12044,36 +12452,12 @@ def _discard_updating(tmps: list[tuple[Path, Path]]) -> None:
 
 
 def _write_back_source_versions(targets: list[Path]) -> dict:
-    """冻结待覆盖文件的字节身份；不能读的候选等最终目标收窄后再拒绝。"""
-    versions = {}
-    for target in targets:
-        try:
-            before = target.stat()
-            digest = _sha1_of(target)
-            after = target.stat()
-            stamp = (before.st_mtime_ns, before.st_size)
-            versions[target] = (
-                (stamp, digest) if stamp == (after.st_mtime_ns, after.st_size) else None
-            )
-        except OSError:
-            versions[target] = None
-    return versions
+    """与提交及回滚共用一份文件身份判据。"""
+    return _source_fingerprint(targets)
 
 
 def _check_write_back_sources(tmps: list[tuple[Path, Path]], versions: dict) -> None:
-    """重放和备份期间出现外部新版本时，保留新版本，不覆盖它。"""
-    current = _write_back_source_versions([target for target, _tmp in tmps])
-    for target, _tmp in tmps:
-        expected = versions.get(target)
-        if expected is None:
-            raise WriteBackPersistError(f"无法核验写回原件: {target.name}")
-        actual = current[target]
-        if actual != expected:
-            raise SourceChangedError(
-                target.name,
-                expected[0][0] // 1_000_000_000,
-                actual[0][0] // 1_000_000_000 if actual is not None else 0,
-            )
+    _assert_sources_unchanged(versions, [target for target, _tmp in tmps])
 
 
 def _new_backup_dir(root: Path) -> Path:
@@ -12210,6 +12594,10 @@ def _write_source_files(
         # T03：重放跑的是**热会话自己冻结的那份运行配置**（argv），与热态一致才谈得上"重放 == 热态"；
         # 不读项目此刻的默认配置——之后用户换了参数也不能让这次验证拿另一组参数去比
         **({"run": worker.run} if getattr(worker, "run", None) is not None else {}),
+        # 重放对写回目标（项目里的原件）的写换到一次性 worker 自己目录里的暂存副本：脚本经文件对象
+        # `savefig(handle)` / open("wb") / os.replace 写回这些 PNG 时原件逐字节不动，prepare 时的指纹基线
+        # 因此始终有效，重放窗口里的外部改动不会被吞（QA-WIN-51）
+        isolate_writes=[str(t) for t in targets],
     )
     tmps: list[tuple[Path, Path]] = []
     warnings: list[str] = []
@@ -12286,22 +12674,53 @@ def _write_source_files(
     )
     updated: list[str] = []
     done: list[Path] = []
+    published: dict[
+        Path, tuple[int, int, str] | None
+    ] = {}  # 各目标发布的那一版的身份（暂存文件替换前）
     try:
         with remap_guard:
             if figure_origin_session is not None:
                 figure_origin_session.check()
-            _check_write_back_sources(tmps, source_versions)
+            # 重放可能分钟级：备份之前先确认要被覆盖的仍是用户看到的那一版（零改动 409）
+            try:
+                _check_write_back_sources(tmps, source_versions)
+            except SourceChangedError:
+                _discard_updating(tmps)
+                raise
             backup_dir = _backup_targets(tmps, project_backup_dir(), stem)
-            _check_write_back_sources(tmps, source_versions)
-            for target, tmp in tmps:
+            for i, (target, tmp) in enumerate(tmps):
+                # 备份之后、每次替换之前再核尚未替换的目标：备份必须就是将被覆盖的那一版；
+                # 已替换的目标按事务规矩从备份回滚
+                try:
+                    _check_write_back_sources(tmps[i:], source_versions)
+                except (SourceChangedError, WriteBackPersistError) as exc:
+                    _discard_updating(tmps)
+                    if not done:
+                        shutil.rmtree(
+                            backup_dir, ignore_errors=True
+                        )  # 本次独占，且可能含新版的半截拷贝
+                        raise
+                    rolled, failed, kept = _rollback(done, backup_dir, published)
+                    if failed:
+                        raise FileLockedError(
+                            target.name, str(exc), failed + kept, rolled, failed, kept
+                        ) from exc
+                    exc.kept_external = kept
+                    raise
+                # 发布身份取自 replace **之前**的暂存文件：rename 保留 mtime / size，而 replace 之后再 stat
+                # 目标，中间若有外部写入，记下的就是外部那一版，回滚核对会放行、拿备份盖掉它（Codex #1697 P1）
+                staged = _source_fingerprint([tmp])[tmp]
                 try:
                     tmp.replace(target)
                 except OSError as exc:
                     _discard_updating(tmps)  # 不给图库留下半成品
                     LOG.warning("写回原图失败（文件被占用？）: %s: %s", target.name, exc)
-                    rolled, failed = _rollback(done, backup_dir)
-                    raise FileLockedError(target.name, str(exc), failed, rolled, failed) from exc
+                    rolled, failed, kept = _rollback(done, backup_dir, published)
+                    raise FileLockedError(
+                        target.name, str(exc), failed + kept, rolled, failed, kept
+                    ) from exc
                 done.append(target)
+                published[target] = staged
                 updated.append(target.name)
     except (
         engine_inputremap.RemapChanged,
@@ -12414,16 +12833,22 @@ def _write_back_response(result: dict, **extra) -> dict:
 def _write_back_error_response(exc):
     """写回事务任一环失败（prepare / verify / commit）→ 409 + 专属 code；格式不是写回目标 → 400；不认识的回 None。"""
     if isinstance(exc, SourceChangedError):
-        return jsonify(
-            {
-                "error": f"{exc.name} 已被外部修改（本工具之外），写回已取消，"
-                "原文件未做任何改动。请刷新素材面板后重新确认再写回。",
-                "code": "source_changed",
-                "file": exc.name,
-                "expected": exc.expected,
-                "actual": exc.actual,
-            }
-        ), 409
+        body = {
+            "error": f"{exc.name} 已被外部修改（本工具之外），写回已取消，"
+            "原文件未做任何改动。请刷新素材面板后重新确认再写回。",
+            "code": "source_changed",
+            "file": exc.name,
+            "expected": exc.expected,
+            "actual": exc.actual,
+        }
+        if exc.kept_external:
+            body["error"] = (
+                f"{exc.name} 已被外部修改（本工具之外），写回已取消。"
+                f"{'、'.join(exc.kept_external)} 在本次替换之后也被外部修改过，"
+                "已保留外部那一版、没有用备份覆盖。请刷新素材面板后重新确认再写回。"
+            )
+            body["kept_external"] = exc.kept_external
+        return jsonify(body), 409
     if isinstance(exc, ScriptChangedError):
         return jsonify(
             {
@@ -12463,16 +12888,17 @@ def _write_back_error_response(exc):
     if isinstance(exc, FileLockedError):
         # 可操作的错误：告诉用户是哪个文件、该去关掉谁；回滚结果一并报出来，
         # 免得用户以为「什么都没发生」或者反过来以为「已经写进去了」
-        return jsonify(
-            {
-                "error": f"{exc}。请关闭正在打开它的程序（PDF 阅读器 / 看图工具）后重试。",
-                "code": "file_locked",
-                "file": exc.name,
-                "updated": exc.updated,
-                "rolled_back": exc.rolled_back,
-                "rollback_failed": exc.rollback_failed,
-            }
-        ), 409
+        body = {
+            "error": f"{exc}。请关闭正在打开它的程序（PDF 阅读器 / 看图工具）后重试。",
+            "code": "file_locked",
+            "file": exc.name,
+            "updated": exc.updated,
+            "rolled_back": exc.rolled_back,
+            "rollback_failed": exc.rollback_failed,
+        }
+        if exc.kept_external:
+            body["kept_external"] = exc.kept_external
+        return jsonify(body), 409
     if isinstance(exc, WriteBackMultipagePdfError):
         return jsonify(
             {
@@ -12873,8 +13299,37 @@ def api_ai_capabilities():
             # 「使用你的 AI 来修复」的 AI 环境修复任务能不能真的跑（ADR 0148 / 0149）：有内置执行器能直接用的 API 连接，
             # 或有可用的 Codex / Claude Code（经 MCP 修复模式，D3）时为 true；都没有则按钮照常出现，点击走「这个问题 AI 暂时还不会修」降级
             "ai_fix_available": engine_fixsession.available(),
+            # 「转换时允许 AI 不受沙盒限制」：**只在 Windows 给这一键**（值 = 用户存的开关）；别的平台没有这一键 → 设置里不出现该行
+            **(
+                {"convert_unsandboxed_windows": engine_config.convert_unsandboxed_windows()}
+                if _IS_WINDOWS
+                else {}
+            ),
         }
     )
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+#: 「转换时允许 AI 不受沙盒限制」只在 Windows 存在；做成模块常量，测试不必改全局 `os.name`
+_IS_WINDOWS = os.name == "nt"
+
+
+@app.put("/api/ai/convert-unsandboxed")
+def api_ai_convert_unsandboxed():
+    """Windows 设置里的开关「转换时允许 AI 不受沙盒限制」（默认关）。非 Windows 不接受：该设置在那里永远不生效，也不该被写出来。"""
+    if not _IS_WINDOWS:
+        return jsonify(
+            {
+                "error": "convert_unsandboxed_windows_only",
+                "code": "convert_unsandboxed_windows_only",
+            }
+        ), 400
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("enabled"), bool):
+        abort(400)
+    value = engine_config.set_convert_unsandboxed_windows(body["enabled"])
+    resp = jsonify({"convert_unsandboxed_windows": value})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -12890,7 +13345,7 @@ def _fix_session_env(sess) -> dict:
     # The public environment payload deliberately omits absolute paths.
     py = getattr(sess.plan, "interpreter", None)
     if isinstance(py, str) and py:
-        prefix = Path(py).parent.parent
+        prefix = engine_convertdeps._prefix_of(py)
         if prefix.is_dir():
             out["env_prefixes"] = [prefix]
         # 当前在用的环境（含内置 runtime）要让 `list_environments` 列得出来，否则 AI 只能在外部 Python 里选，
@@ -12900,7 +13355,7 @@ def _fix_session_env(sess) -> dict:
         out["current_environment"] = {
             "python": py,
             "source": source if isinstance(source, str) else "",
-            "label": "Tavotto built-in Python" if bundled else Path(py).parent.parent.name,
+            "label": "Tavotto built-in Python" if bundled else prefix.name,
         }
     return out
 
@@ -13177,6 +13632,25 @@ def api_ai_fix_tool(fix_id):
     return resp
 
 
+# ---- 转换会话的「代写目标文件」回调（TVD-BCZ0 方案 A，`engine/convertwrite.py`）----
+# Codex 拉起的 `tavotto fix-mcp --convert-id` 子进程打回来的一个端点。认证：scoped token（`X-Tavotto-Convert-Token`，
+# 只对该转换会话的这个路径有效，会话结束即失效），见 security.py。路径不由请求给：写的永远是该会话候选里 Tavotto 决定的那一个目标文件。
+@app.post("/api/ai/convert/<sid>/target")
+def api_ai_convert_target(sid):
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        abort(400)
+    try:
+        out = engine_convertwrite.write(
+            sid, request.headers.get(security.CONVERT_TOKEN_HEADER), body.get("content")
+        )
+    except engine_convertwrite.Forbidden:
+        return jsonify({"error": "convert_tool_forbidden", "code": "convert_tool_forbidden"}), 403
+    resp = jsonify(out)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 def _publish_fix_hint(scope: str, fix_id: str) -> None:
     sse_publish("ai.fix", {"pj": scope, "fix_id": fix_id})
 
@@ -13216,6 +13690,18 @@ def api_ai_agent_install(agent_id):
     """
     try:
         return jsonify(engine_ai.start_install(agent_id))
+    except engine_ai.AgentError as exc:
+        return _agent_error(exc)
+
+
+@app.post("/api/ai/agents/<agent_id>/update")
+def api_ai_agent_update(agent_id):
+    """「更新 Codex」：CLI 比它的模型清单旧时，改用本机更新的那份或应用内装一份（`ai_bridge.start_cli_update`）。
+
+    请求体里不接受任何路径或包名：做什么由后端按 capabilities 的 `cli_update` 同一份判据现算。
+    """
+    try:
+        return jsonify(engine_ai.start_cli_update(agent_id))
     except engine_ai.AgentError as exc:
         return _agent_error(exc)
 
@@ -13705,6 +14191,61 @@ def api_engine_input_remap_delete():
     return jsonify({"ok": True, "input_remap": state})
 
 
+@app.post("/api/engine/input-copy")
+def api_engine_input_copy():
+    """用户点了「复制过去再运行」/「授权后复制」（ADR 0173）：把他指认过的那份数据复制到脚本要读的原路径。
+
+    `{token, elevate?}`。`token` 是提议载荷里 `copy.token`：服务端观察到 native 读取落空那一刻存下的不透明令牌，
+    请求里**没有任何路径**——读取路径与脚本都取自服务端自己存的那一份，源取自改指表。端点只认窗口里的会话
+    （与确认改写脚本同一道门，`_script_edit_binding`）。结果 `{state}`：`done` / `exists` 前端直接重跑；
+    `denied` / `macos_protected` / `auth_failed` 就是卡片的 c2 / c3 / c4。不抛：每种结果都有终态。
+    """
+    ctx = current_ctx()
+    body = request.get_json(force=True) or {}
+    try:
+        _script_edit_binding()
+    except engine_scriptbackup.ScriptEditError as exc:
+        return _script_edit_error(exc)
+    result = engine_inputcopy.run(
+        str(ctx.path), body.get("token"), elevate=body.get("elevate") is True
+    )
+    LOG.info("数据复制: %s（%s）", result.get("state"), result.get("reason") or "-")
+    return jsonify({"ok": True, **result})
+
+
+@app.post("/api/engine/input-copy/privacy-settings")
+def api_engine_input_copy_privacy_settings():
+    """c3 的主按钮：打开 macOS「完全磁盘访问」面板（固定地址，不收参数）。只认窗口里的会话。"""
+    try:
+        _script_edit_binding()
+    except engine_scriptbackup.ScriptEditError as exc:
+        return _script_edit_error(exc)
+    return jsonify({"ok": True, "opened": engine_inputcopy.open_full_disk_access()})
+
+
+@app.delete("/api/engine/input-copy")
+def api_engine_input_copy_undo():
+    """撤销一次复制（ADR 0173）：只删「还是当时复制的那份」。"""
+    ctx = current_ctx()
+    body = request.get_json(force=True) or {}
+    target = body.get("target")
+    try:
+        _script_edit_binding()
+    except engine_scriptbackup.ScriptEditError as exc:
+        return _script_edit_error(exc)
+    if not isinstance(target, str):
+        return _input_remap_error(
+            engine_inputremap.RemapError(engine_inputremap.ERROR_REQUESTED_INVALID, "需要 target")
+        )
+    return jsonify({"ok": True, **engine_inputcopy.undo(str(ctx.path), target)})
+
+
+@app.get("/api/engine/input-copy")
+def api_engine_input_copy_records():
+    """本机的复制记录（设置里将来列出来、可撤销）。"""
+    return jsonify({"ok": True, "records": engine_inputcopy.records(str(current_ctx().path))})
+
+
 # --------------------- 经确认改写脚本里的数据路径（ADR 0110）---------------------
 # 改指表救不回的那几档（exists / glob / C++ 读取器）：用户指认数据位置 → 预览逐行 diff → 勾选确认 →
 # 两处备份后原子替换。**只有浏览器 / 桌面界面能提交**：令牌绑定会话 cookie，只凭本机进程凭据
@@ -14135,7 +14676,7 @@ def _native_preparation_runner(pl, before_retry=None):
     ):
         state = session.wait_for_state((engine_nativesession.BARRIER,), 3600.0)
     if state != engine_nativesession.BARRIER:
-        raise _native_run_error(session)
+        raise _native_missing_input_offer(_native_run_error(session), session, pl)
     if session.script_error:
         # 脚本自己炸了：不吞（AC-21）。让进程把退出走完（它在 script_end 屏障上），再按真实异常收场
         error = dict(session.script_error)
@@ -14145,6 +14686,7 @@ def _native_preparation_runner(pl, before_retry=None):
             native_project = str(require_project())
         except NoProjectError:
             native_project = ""
+        _note_native_missing_command(native_project, error)
         foreign = engine_pool.foreign_abi_error(
             str(error.get("message") or "脚本运行出错"),
             str(error.get("traceback") or ""),
@@ -14162,11 +14704,15 @@ def _native_preparation_runner(pl, before_retry=None):
         )
         if unreadable is not None:
             raise unreadable
-        raise engine_pool.WorkerError(
+        failure = engine_pool.WorkerError(
             str(error.get("message") or "脚本运行出错"),
             traceback_text=str(error.get("traceback") or ""),
             code=engine_pool.SCRIPT_ERROR_CODE,
         )
+        category = getattr(session, "exception_category", None)
+        if category:
+            failure.extra["exception_category"] = category
+        raise _native_missing_input_offer(failure, session, pl)
     try:
         resp = session.ensure_built()
     except engine_runcodes.RunError as exc:
@@ -14222,11 +14768,77 @@ def _native_run_error(session):
     owned = session.owned
     if owned is not None:
         tail = owned.stderr.text()
-    return engine_pool.WorkerError(
+    failure = engine_pool.WorkerError(
         f"脚本退出（退出码 {session.exit_code}），没有留下可编辑的图",
         traceback_text=tail,
         code=engine_pool.SCRIPT_ERROR_CODE if session.exit_code else "no_figure_captured",
     )
+    category = getattr(session, "exception_category", None)
+    if failure.code == engine_pool.SCRIPT_ERROR_CODE and category:
+        failure.extra["exception_category"] = category
+    return failure
+
+
+def _native_missing_input_offer(failure, session, plan):
+    """Offer the existing reviewed rewrite only for a proven native read failure.
+
+    It is not a safe-worker link: native reads the original path. Unmatched or
+    relative paths, sensitive runs, writes and unobserved readers remain unknown.
+    """
+    take = getattr(session, "take_missing_read", None)
+    fact = take() if callable(take) else None
+    if (
+        failure.code != engine_pool.SCRIPT_ERROR_CODE
+        or getattr(session, "exception_category", None) != "file_not_found"
+        or not isinstance(fact, dict)
+        or not plan.script
+        or not plan.script_revision
+        or (plan.run is not None and plan.run.sensitive)
+    ):
+        return failure
+    name, cwd = fact.get("requested"), fact.get("cwd")
+    parsed = engine_figcapture.remap_parts(name) if isinstance(name, str) else None
+    if parsed is None or not parsed[0] or not isinstance(cwd, str):
+        return failure
+    try:
+        if (
+            engine_preparation._script_revision(plan.project_root, plan.script)
+            != plan.script_revision
+        ):
+            return failure
+        # Existing safe-only links must not hide a missing native input. Source
+        # literals are only nominations; script-edit still validates the diff.
+        matched = engine_inputremap.native_miss(
+            plan.script, plan.project_root, {"filename": name, "cwd": cwd}, rules=[]
+        )
+        if (
+            engine_preparation._script_revision(plan.project_root, plan.script)
+            != plan.script_revision
+        ):
+            return failure
+        # A path-shaped output literal is not a candidate for an input edit,
+        # even when it prefixes the same observed filename.
+        reads = engine_inputremap.static_missing(
+            plan.script, plan.project_root, [], reads_only=True
+        )
+        if matched is not None and any(row.get("path") == matched["literal"] for row in reads):
+            offer = engine_inputremap.payload_for(
+                plan.script, plan.project_root, matched, via=engine_inputremap.VIA_NATIVE
+            )
+            if (
+                engine_preparation._script_revision(plan.project_root, plan.script)
+                == plan.script_revision
+            ):
+                # ADR 0173：这条路径已有用户确认过的数据身份时，多给一个「复制过去再运行」的提议
+                copy = engine_inputcopy.offer(
+                    plan.project_root, offer.get("requested") or "", plan.script
+                )
+                if copy is not None:
+                    offer["copy"] = copy
+                failure.missing_input = offer
+    except Exception:  # noqa: BLE001 — recovery observation never replaces the original failure
+        pass  # Missing recovery evidence must never replace the original error.
+    return failure
 
 
 def _launch_preparation(ctx: "ProjectCtx", plan, on_done=None) -> None:
@@ -15894,6 +16506,8 @@ def _updater_disabled_in_desktop():
             {
                 "desktop": True,
                 "auto_check": False,
+                # 唯一桌面还认的更新偏好：查到新版是否后台下载（壳侧下载，见 update-channel.md）
+                "auto_download": engine_updater.settings()["auto_download"],
                 "update_available": False,
                 "current": engine_updater.current_version(),
                 "repo_url": engine_brand.REPO_URL,
@@ -15914,10 +16528,13 @@ def api_update_check():
 
 @app.patch("/api/update/settings")
 def api_update_settings():
-    if resp := _updater_disabled_in_desktop():
-        return resp
     body = request.get_json(force=True)
     patch = {}
+    if "auto_download" in body:
+        patch["auto_download"] = bool(body["auto_download"])
+    if app.config.get("TAVOTTO_DESKTOP_MODE"):
+        # 桌面：Python updater 停用，只有 auto_download 这一个偏好还落在这里；auto_check 不收
+        return jsonify(engine_updater.set_settings(patch))
     if "auto_check" in body:
         patch["auto_check"] = bool(body["auto_check"])
     return jsonify(engine_updater.set_settings(patch))
@@ -15940,6 +16557,45 @@ def api_update_apply():
         result["command"],
     )
     return jsonify(result), (200 if result["ok"] else 500)
+
+
+# ------------------------- 远程期刊目录（ADR 0155 §10） -----------------------
+# 拉取 / 验签 / 缓存都在 engine/journalremote.py；这里只是三个薄端点，前端经它们拿「验过签的目录」。
+@app.post("/api/journal-catalog/sync")
+def api_journal_catalog_sync():
+    """同步索引（整份、服务端不计数）。回 `{fetch, code, rev, catalog, loaded}`；永不 5xx、不弹错。"""
+    body = request.get_json(silent=True) or {}
+    have = body.get("have")
+    return jsonify(
+        engine_journalremote.sync(
+            have=have if isinstance(have, int) and not isinstance(have, bool) else 0,
+            force=body.get("force") is True,
+            ui_locale=body.get("locale") if isinstance(body.get("locale"), str) else None,
+        )
+    )
+
+
+@app.post("/api/journal-catalog/journal")
+def api_journal_catalog_journal():
+    """选中某本刊时才下载它的标准（服务端按设备令牌对该刊的首次读取计数）。回 `{state, code, retry_after_s, bundle}`。"""
+    body = request.get_json(silent=True) or {}
+    loc = body.get("locale")
+    return jsonify(
+        engine_journalremote.ensure_journal(
+            body.get("id"), ui_locale=loc if isinstance(loc, str) else None
+        )
+    )
+
+
+@app.get("/api/journal-catalog/assets/<path:file>")
+def api_journal_catalog_asset(file: str):
+    """出处卡的高亮短图。`file` 必须是 `snapshots/<sha256>.webp`（内容寻址）；本地没有就带令牌拉一次。"""
+    path = engine_journalremote.snapshot_path(file)
+    if path is None:
+        return jsonify({"error": "snapshot unavailable", "code": "snapshot_unavailable"}), 404
+    resp = send_file(path, mimetype="image/webp", max_age=31536000)
+    resp.headers["Cache-Control"] = "private, max-age=31536000, immutable"
+    return resp
 
 
 # ------------------------- 卸载后重装 → 新手态（Windows，ADR 0136 修订） -----
@@ -16331,6 +16987,8 @@ def _ai_run_impl():
         "scope": body.get("scope"),
         "target": body.get("target"),
         "canvas": body.get("canvas"),
+        # 项目按期刊检查时前端给的期刊要求摘要；形状由 `ai_prompt_pack.journal_context` 把关，不对就整段不写
+        "journal": body.get("journal"),
     }
     ctx = current_ctx()
     agent, model, endpoint_id, refused = _apply_connection(
@@ -16358,6 +17016,8 @@ def _ai_run_impl():
             # 文件变了就接统一刷新（reason=ai），在 ai.done 之前做完（ADR 0041）
             on_changed=lambda script: _after_ai_change(ctx, script),
             task_hooks=_ai_task_hooks(ctx, info["script"], info["entry"], selection),
+            # 用户附的参考图（ADR 0175）：只是暂存 id，图片本身早已经由 `/api/ai/attachments` 上传；不附图时恒为空
+            attachments=engine_ai_attachments.valid_ids(body.get("attachments")),
         )
     except engine_ai.DuplicateRequest as dup:
         # 同一条请求已经登记过：返回既有会话，不 spawn、不重复记遥测
@@ -16386,6 +17046,31 @@ def _ai_run_impl():
         "ai_assistant_invoked", {"agent": agent if agent in allowed else "other"}
     )
     return jsonify({"session": sid, "script": info["script"]})
+
+
+@app.post("/api/ai/attachments")
+def api_ai_attachment_stage():
+    """暂存一个用户附的文件（ADR 0175，请求体就是文件字节，`?name=` 是原文件名）：→ `{id, kind, mime, bytes, width, height, name}`。
+    图片前端先缩到 ≤ 4 MiB 再传；这里按魔数再核一遍，过大 = 413 带稳定码。过会话认证，同其它 `/api/ai/*`。"""
+    raw = request.get_data(cache=False, as_text=False) or b""
+    if len(raw) > engine_ai_attachments.MAX_FILE_BYTES:
+        return jsonify({"error": "文件过大", "code": "attachment_too_large", "params": {}}), 413
+    try:
+        return jsonify(engine_ai_attachments.stage(raw, request.args.get("name", "")))
+    except engine_ai_attachments.AttachmentError as exc:
+        # 每个 code 字面量写出、带中文原文回退（test_error_codes 逐个核对两种语言都有文案）
+        if exc.code == "attachment_too_large":
+            return jsonify({"error": "文件过大", "code": "attachment_too_large", "params": {}}), 413
+        if exc.code == "attachment_empty":
+            return jsonify({"error": "文件是空的", "code": "attachment_empty", "params": {}}), 400
+        return jsonify({"error": "这个文件附不上", "code": "attachment_invalid", "params": {}}), 400
+
+
+@app.delete("/api/ai/attachments/<rid>")
+def api_ai_attachment_discard(rid):
+    """用户把附的图去掉：删暂存。幂等（已经没了也回 ok）。"""
+    engine_ai_attachments.discard(rid)
+    return jsonify({"ok": True})
 
 
 # --- 「生成可编辑版本」（ADR 0143）：位图库画的图 → 改图助手另写一份 Matplotlib 版**新**脚本，原脚本不动 -------
@@ -16526,6 +17211,13 @@ def _convert_runner(
                 "partial": result.get("partial", False),
                 "failed_figures": result.get("failed_figures") or [],
                 "dropped_figures": result.get("dropped_figures", 0),
+                # Only the conversion runner consumes these project-relative
+                # attempts; an older worker or absent ledger stays unknown.
+                "redirected_write_attempts": getattr(
+                    worker, "last_build_redirected_write_attempts", None
+                ),
+                "sandbox_files": getattr(worker, "last_build_sandbox_files", None),
+                "inputs_read": getattr(worker, "last_build_inputs_read", None),
             }
             if with_manifests and worker is not None:
                 out["source_sha256"] = getattr(worker, "last_build_source_sha256", None)
@@ -16657,6 +17349,7 @@ def api_ai_convert():
     )
     if refused is not None:
         return refused
+    engine_convertwrite.note_port(request.environ.get("SERVER_PORT"))
     try:
         sid = engine_ai.run(
             agent,
@@ -16735,7 +17428,9 @@ def api_ai_convert_adopt(sid):
     """采用新版本：后端把候选脚本**新建**进项目（原脚本同目录，重名加序号，永不覆盖），随后统一刷新。"""
     ctx = current_ctx()
     try:
-        made = engine_ai_convert.adopt(sid, str(ctx.path.resolve()))
+        body = request.get_json(silent=True)
+        specified = body.get("specified_outputs") if isinstance(body, dict) else None
+        made = engine_ai_convert.adopt(sid, str(ctx.path.resolve()), specified)
     except engine_ai_convert.ConvertError as exc:
         return _convert_error(exc)
     refresh = engine_ai.refresh_outcome(
@@ -16797,6 +17492,34 @@ def api_ai_convert_dependencies(sid):
         engine_ai_convert.cancel_registration(sid)
         raise
     return jsonify({"session": sid, "state": engine_ai_convert.STATE_RESUMING}), 202
+
+
+@app.post("/api/ai/convert/<sid>/realign")
+def api_ai_convert_realign(sid):
+    """「让 AI 再对一次」：候选写出的表格 / 日志与项目里的旧结果「不同」时，让原会话的 Agent 在同一个候选上有界地修正一次
+    （提示只有文件名与差异坐标，不含数据），修完重新比。失败一律还原成修正前的候选。前端轮询 `GET /api/ai/convert/<sid>`
+    看 `realigning` 与新的 `comparison`。"""
+    ctx = current_ctx()
+    project = str(ctx.path.resolve())
+    try:
+        cdir, meta, cancel, note = engine_ai_convert.prepare_realign(sid, project)
+    except engine_ai_convert.ConvertError as exc:
+        return _convert_error(exc)
+    try:
+        threading.Thread(
+            target=engine_ai_convert.run_realign,
+            args=(sid, project, cdir, meta, cancel, note),
+            kwargs={
+                "runner": _convert_runner(ctx, str(meta["script_rel"])),
+                "correct": engine_ai.correct_convert,
+            },
+            name="convert-realign",
+            daemon=True,
+        ).start()
+    except RuntimeError:
+        engine_ai_convert.cancel_registration(sid)
+        raise
+    return jsonify({"session": sid, "state": "ready", "realigning": True}), 202
 
 
 @app.get("/api/ai/convert/auto-install-envs")
@@ -16935,38 +17658,8 @@ def api_ai_data_files():
     if not engine_ai_figure_edit.enabled():
         return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
     root = require_project()
-    found: list[tuple[str, int]] = []
-    truncated = False
-    seen = 0
-    stack = [str(root)]
-    # 手写栈 + scandir 逐项迭代：每看一项计一次数，到预算立刻停（`os.walk` 会先把整个目录枚举完才让我们数）；
-    # 已收集的保留。剪枝规则不变：隐藏目录、PRUNE_DIRS、不跟随链接、跳过链接文件
-    while stack and not truncated:
-        cur = stack.pop()
-        try:
-            it = os.scandir(cur)
-        except OSError:
-            continue
-        with it:
-            for entry in it:
-                seen += 1
-                if seen > _DATA_FILES_SCAN_MAX:
-                    truncated = True
-                    break
-                name = entry.name
-                try:
-                    if entry.is_symlink():
-                        continue
-                    if entry.is_dir(follow_symlinks=False):
-                        if not name.startswith(".") and name not in engine_discover.PRUNE_DIRS:
-                            stack.append(entry.path)
-                        continue
-                    if not name.lower().endswith(".csv") or name.startswith("."):
-                        continue
-                    size = entry.stat(follow_symlinks=False).st_size
-                except OSError:
-                    continue
-                found.append((Path(entry.path).relative_to(root).as_posix(), size))
+    # walk 规则（剪枝 / 隐藏 / 不跟随链接 / 扫描预算）与数据文件夹摘要共用 `discover.walk_files` 那一份
+    found, truncated = engine_discover.walk_files(root, (".csv",), scan_max=_DATA_FILES_SCAN_MAX)
     found.sort()
     if len(found) > _DATA_FILES_MAX:
         found, truncated = found[:_DATA_FILES_MAX], True
@@ -18227,7 +18920,7 @@ def _slot_recoverable(path: Path) -> tuple[bool, str | None]:
 
 
 def _slot_signature(path: Path) -> tuple[int, int] | None:
-    """槽位文件的 `(mtime_ns, size)`；不在 / 读不出回 None。只 stat，会话锁里也能用。"""
+    """槽位文件的 `(mtime_ns, size, sha1)`；不在 / 读不出回 None。只 stat，会话锁里也能用。"""
     try:
         st = path.stat()
     except OSError:

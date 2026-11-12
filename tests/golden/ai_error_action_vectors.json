@@ -1,10 +1,11 @@
 {
-  "_comment": "AI 失败卡「错误码 → 主按钮」的前后端同源对。后端 tests/test_ai_cli_error_classes.py 用 Codex / Claude 适配器的 classify_event 逐条复算 cli_vectors，并要求 actions 的键覆盖 RUNNER_ERRORS 里会出现在失败卡上的码；前端 web/src/components/ai/transcriptModel.test.ts 要求 AGENT_ERROR_ACTION 与 actions 逐项相等。actions 的值：check_connection = 主按钮「检查连接」，retry = 主按钮「重试」。cli_vectors 的事件形状取自真 CLI 抓取（Codex 0.163.0 的 turn.failed.error.message 以 `unexpected status <三位码>` 开头；Claude 2.1.316 的 assistant.error / result.api_error_status 在事件顶层），已脱敏，expect 为 null 表示归不了（保持 agent_exit_nonzero）。",
+  "_comment": "AI 失败卡「错误码 → 主按钮」的前后端同源对。后端 tests/test_ai_cli_error_classes.py 用 Codex / Claude 适配器的 classify_event 逐条复算 cli_vectors，并要求 actions 的键覆盖 RUNNER_ERRORS 里会出现在失败卡上的码；前端 web/src/components/ai/transcriptModel.test.ts 要求 AGENT_ERROR_ACTION 与 actions 逐项相等。actions 的值：check_connection = 主按钮「检查连接」，retry = 主按钮「重试」，update_cli = 主按钮「更新 Codex」（点不了时「换回默认型号」）。cli_vectors 的事件形状取自真 CLI 抓取（Codex 0.163.0 的 turn.failed.error.message 以 `unexpected status <三位码>` 开头；Claude 2.1.316 的 assistant.error / result.api_error_status 在事件顶层），已脱敏，expect 为 null 表示归不了（保持 agent_exit_nonzero）。",
   "actions": {
     "agent_auth": "check_connection",
     "agent_html_response": "check_connection",
     "agent_quota": "check_connection",
     "agent_network": "check_connection",
+    "agent_model_unavailable": "update_cli",
     "agent_exit_nonzero": "check_connection",
     "agent_refused": "retry",
     "agent_budget": "retry",
@@ -209,6 +210,17 @@
         "error": "invalid_request"
       },
       "expect": null
+    },
+    {
+      "name": "codex 旧版 CLI 选了新型号：404（2026-11-04 用户反馈）",
+      "agent": "codex",
+      "event": {
+        "type": "turn.failed",
+        "error": {
+          "message": "unexpected status 404 Not Found: x"
+        }
+      },
+      "expect": "agent_model_unavailable"
     }
   ]
 }

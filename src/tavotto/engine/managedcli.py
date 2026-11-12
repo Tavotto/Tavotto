@@ -2,7 +2,9 @@
 
 ## 两个 CLI 的来源（锁里 `clis.<名>.sources` 逐项声明，顺序即尝试顺序）
 
-* `codex`：GitHub release（`.tar.gz`）→ npmmirror 平台子包（`.tgz`，树根前缀 `package/vendor/<triple>/`）。
+* `codex`：npm 官方 registry 平台子包 `@openai/codex@<版本>-<平台>`（`.tgz`，树根前缀 `package/vendor/<triple>/`）→
+  npmmirror 上的同一个 tgz（字节相同）。2026-11-04 起不再用 GitHub release：从 0.166.0 起 GitHub 的
+  `codex-package-<triple>.tar.gz` 比 npm 包多一个 `bin/codex-exec-server`（清单也多一行），两来源解不出同一棵树（#1716）。
 * `claude`：npmmirror 平台子包 `@anthropic-ai/claude-code-<平台>`（`.tgz`，只取里面的原生二进制 `only`）→
   官方 `downloads.claude.ai` 的**裸二进制**（`raw`：下载物本身就是入口文件，不是归档）。
   两个来源落盘必须是同一份字节：npm 包里的 `claude` 与 GCS 上的 `claude` 逐字节相同（`--update` 时核过）。
@@ -24,7 +26,14 @@
 
 ## 来源顺序
 
-GitHub 主 → registry.npmmirror.com 镜像。「慢了换镜像」与私有 Python 同一套判据（ADR 0112）：开始收
+锁里声明的顺序（codex：registry.npmjs.org → registry.npmmirror.com）是海外的顺序；**大陆环境把镜像来源整体挪到前面**
+（`cli_for` 里稳定重排，其余相对顺序不变；#1744）。「大陆环境」不在这里判：唯一出处是壳的 `app_update::source_order`
+（ADR 0121），壳拉起引擎时写进 `TAVOTTO_NETWORK_REGION`，这里只经 `netregion.region_is_cn` 读它——与应用更新、联系作者
+选线路同一个结论。为什么不是只靠「慢了换源」：大陆直连 npmjs 实测约 2 MB/s（Windows Lab 2026-11-04，codex 174 MB
+84.6 s，npmmirror 21.8 s），按 ETA 估剩余约一分钟，够不到 `SLOW_ETA_S`，判据不会触发，每次一键装都白等一分钟；
+首次测速 / 并行探测要多发请求、多一套缓存，而这个结论壳早就算好了。没有壳的安装（pip / 源码）没有这个信号，按锁的顺序。
+
+「慢了换源」与私有 Python 同一套判据（ADR 0112），照旧兜底（镜像在前时它慢就换回官方源）：开始收
 字节后至少量 `SLOW_GRACE_S`，按全程平均速度估的剩余时间超过 `SLOW_ETA_S` 就换下一个来源；被放弃的
 来源排到队尾、不再测速地再试一次。
 
@@ -75,7 +84,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from . import atomicio, brand, config, logsafe, msixmigrate, tlstrust
+from . import atomicio, brand, config, logsafe, msixmigrate, netregion, tlstrust
 from .runtime import CREATE_NO_WINDOW
 
 LOG = logging.getLogger("tavotto.managedcli")
@@ -130,15 +139,17 @@ DISK_MARGIN_BYTES = 64 * 1024 * 1024
 STALE_STAGING_S = 3600
 
 #: 已发行的来源主机（固定常量，不从调用方传进来的 URL 现推——现推的判据恒真）：只有它们进日志时明文。
-SOURCE_HOSTS = frozenset({"github.com", "registry.npmmirror.com", "downloads.claude.ai"})
+SOURCE_HOSTS = frozenset({"registry.npmjs.org", "registry.npmmirror.com", "downloads.claude.ai"})
+#: 国内镜像主机：大陆环境（`netregion.region_is_cn`）下这些来源排到最前（模块头「来源顺序」）。
+MIRROR_HOSTS = frozenset({"registry.npmmirror.com"})
 #: 锁里 URL 模板允许的前缀；`validate_lock` 钉着。
-GITHUB_PREFIX = "https://github.com/openai/codex/releases/download/"
+NPM_PREFIX = "https://registry.npmjs.org/@openai/codex/-/"
 MIRROR_PREFIX = "https://registry.npmmirror.com/@openai/codex/-/"
 CLAUDE_MIRROR_PREFIX = "https://registry.npmmirror.com/@anthropic-ai/claude-code-"
 CLAUDE_GCS_PREFIX = "https://downloads.claude.ai/claude-code-releases/"
 #: 每个受控 CLI 的每个来源键允许的 URL 前缀（`validate_lock` 钉着；锁里出现表外的 CLI / 来源键 = 拒绝）
 SOURCE_PREFIXES: dict[str, dict[str, str]] = {
-    "codex": {"github": GITHUB_PREFIX, "mirror": MIRROR_PREFIX},
+    "codex": {"npmjs": NPM_PREFIX, "mirror": MIRROR_PREFIX},
     "claude": {"mirror": CLAUDE_MIRROR_PREFIX, "gcs": CLAUDE_GCS_PREFIX},
 }
 #: 托管 CLI 子进程要带的环境变量（版本只由我们的锁控制：不许 CLI 自己升级）
@@ -312,10 +323,10 @@ def validate_lock(lock: dict) -> None:
                     raise ValueError(f"{pw}.{key}.sha256 必须是 64 位小写 hex")
                 if not isinstance(s.get("size"), int) or s["size"] <= 0:
                     raise ValueError(f"{pw}.{key}.size 必须是正整数")
-                if key == "mirror" and not _SRI512.fullmatch(str(s.get("integrity", ""))):
-                    raise ValueError(
-                        f"{pw}.mirror.integrity 必须是 npm 的 sha512 SRI（在线核对用）"
-                    )
+                if key in ("npmjs", "mirror") and not _SRI512.fullmatch(
+                    str(s.get("integrity", ""))
+                ):
+                    raise ValueError(f"{pw}.{key}.integrity 必须是 npm 的 sha512 SRI（在线核对用）")
             try:
                 srcs = _sources(name, cli, plat, p)
             except (KeyError, IndexError, ValueError) as exc:
@@ -395,8 +406,15 @@ def cli_for(
         tree_sha256=p["tree_sha256"],
         unpacked_size=p["unpacked_size"],
         file_count=p["file_count"],
-        sources=_sources(name, cli, key, p),
+        sources=_region_order(_sources(name, cli, key, p)),
     )
+
+
+def _region_order(sources: tuple[ArchiveSource, ...]) -> tuple[ArchiveSource, ...]:
+    """大陆环境：镜像来源稳定地挪到最前；否则原样（锁的顺序）。判据只读壳的结论，不在这里另判（模块头）。"""
+    if not netregion.region_is_cn():
+        return sources
+    return tuple(sorted(sources, key=lambda s: s.host not in MIRROR_HOSTS))
 
 
 def offered(name: str) -> bool:
@@ -713,7 +731,7 @@ def _sha256_file(path: Path) -> str:
 
 
 def _download(cli: ManagedCli, job: _Job) -> tuple[Path, ArchiveSource]:
-    """校验过的归档路径与它对应的来源。按顺序试 GitHub → 镜像；换源的理由与私有 Python 同：传输层失败用完
+    """校验过的归档路径与它对应的来源。按 `cli.sources` 的顺序试（锁的顺序，大陆环境镜像在前）；换源的理由与私有 Python 同：传输层失败用完
     `DOWNLOAD_ATTEMPTS`、HTTP 4xx/5xx、太慢。**hash 不符不换源、不重试。**每个来源从零开始下（不续传）。"""
     dl = root_dir(cli.name) / DOWNLOADS_DIRNAME
     queue: list[tuple[ArchiveSource, bool]] = [(s, False) for s in cli.sources]

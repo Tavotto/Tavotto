@@ -18,13 +18,13 @@ order: 20
   `engine/registry.py`、`engine/pool.py`、`engine/ai_bridge.py`、`engine/config.py`、
   `engine/updater.py`、`engine/runtime.py`、`engine/project_refresh.py`、
   `engine/project_watch.py`、`engine/readiness.py`、`engine/sysmem.py`（池上限读可用内存，ctypes / vm_stat / `/proc/meminfo`，读不到回 None）、`engine/workdir.py`、
-  `engine/databinding.py`、`engine/preparation.py` 被 Flask import，
+  `engine/databinding.py`、`engine/preparation.py`、`engine/ai_data_figure.py`、`engine/ai_data_recipe.py`（画法配方与资格判定，ADR 0178：只依赖标准库与 `ai_data_figure`）、`engine/ai_data_template.py`（配方 → 脚本与期望指纹，ADR 0178：只依赖标准库、`ai_data_figure` / `ai_data_recipe` / `xlsxread`；`profiles` 延后 import；matplotlib 只出现在它生成的脚本文本里，本模块不 import）、`engine/xlsxread.py`（XLSX 只读取值：只用 `zipfile` + `xml.etree`，不引入 openpyxl / pandas；拒绝 DOCTYPE / ENTITY 与 zip 炸弹）被 Flask import，
   **必须保持纯标准库**。「纯标准库」挡的是科学栈（matplotlib / numpy 由 worker 解释器提供）；
   `pyproject.toml` 声明的运行时依赖（flask / packaging + RenderCore 的五个包，U10 起；ADR 0072）是父进程自己的
   ——`packaging` 自 U04（ADR 0061）起只在 `engine/depresolve.py` 的 intent 读法里延后 import，别处不许 import 它；
   pikepdf / pypdfium2 / uharfbuzz / fontTools / Pillow 只在 `rendercore/` 的 native 适配层里 import，PDFium 只在
   render child 进程里。`truststore`（出站 HTTPS 的平台原生证书校验，2026-09-28 起）只在 `engine/tlstrust.py` 里
-  延后 import，import 不了退回标准库并记 WARNING（`tests/test_private_python_tls.py` 钉「只有一处」）。PyMuPDF 不在闭包里（`scripts/ci/retirement_scan.py` 看护）。
+  延后 import，import 不了退回标准库并记 WARNING（`tests/test_private_python_tls.py` 钉「只有一处」）。`nacl`（PyNaCl，远程期刊目录索引的 Ed25519 验签，2026-11-05 起；不用 cryptography：Intel Mac 轮子与告警）同样只在 `engine/journalremote._ed25519_verify` 里延后 import，Flask 启动不加载（`tests/test_journal_remote.py` 钉），import 不了当验签失败。PyMuPDF 不在闭包里（`scripts/ci/retirement_scan.py` 看护）。
 - 渲染解释器由 `pool.resolve_worker_python(项目, script=…)` 决定（ADR 0018 / 0044 / 0057）：
   显式（环境变量 / 设置）> 项目记住的 > **项目自带的 venv（首开发现 + 体检，每进程每项目一次）**
   > 内置 / 自身 / 系统。**失效的显式选择不静默替换**：`explicit_python_unusable` /

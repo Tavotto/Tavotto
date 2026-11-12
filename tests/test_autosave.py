@@ -45,11 +45,55 @@ def test_put_rejects_bad_schema(client):
     assert client.put("/api/autosave/d_1", json=[1, 2]).status_code == 400
 
 
-def test_doc_id_sanitized(client, tmp_path):
-    client.put("/api/autosave/..%2Fevil", json=PD)
-    # 槽位文件都落在 _autosave 里，没有路径逃逸
-    files = list((tmp_path / "_autosave").glob("*.json"))
-    assert all(f.parent == tmp_path / "_autosave" for f in files)
+def _snapshot(root, deep):
+    """deep：递归整棵树（tmp_path 自己）；否则只看这一层的文件（上级目录太大，递归会很慢）。"""
+    it = root.rglob("*") if deep else root.iterdir()
+    return {p for p in it if p.is_file()}
+
+
+# 路由层本身不放行斜杠（`..%2Fevil` 被解码成 `../evil` 直接 404），所以 HTTP 只能打到
+# 反斜杠 / 点号 / 空格这类「路由放行但对文件系统有意义」的 id；带斜杠的由下面的
+# 直接调用 `_autosave_path` 覆盖。
+ROUTABLE_EVIL_IDS = ["..%5Cevil", "..%5C..%5Cevil", "a%20b", "..", "x%3A%2A%3F%22%3C%3E%7Cy"]
+
+
+@pytest.mark.parametrize("raw_id", ROUTABLE_EVIL_IDS)
+def test_doc_id_sanitized_over_http(client, tmp_path, raw_id):
+    """路由放行的怪 id：槽位恰好一个、落在 _autosave 里、文件名不含分隔符，目录外无新文件。
+
+    只在 _autosave 里 glob 证明不了防护：写到目录外的文件根本不会被 glob 到。
+    所以对 tmp_path（递归）及其上两级（`../../evil` 能到的位置，本层文件）做前后快照。
+    """
+    scan_roots = [(tmp_path, True), (tmp_path.parent, False), (tmp_path.parent.parent, False)]
+    before = [_snapshot(r, deep) for r, deep in scan_roots]
+
+    resp = client.put(f"/api/autosave/{raw_id}", json=PD)
+    assert resp.status_code == 200, "这些 id 应被清洗后落盘（被路由吞掉的话测试就空转了）"
+
+    slot_dir = tmp_path / "_autosave"
+    inside = list(slot_dir.glob("*.json"))
+    assert len(inside) == 1, inside
+    assert not set(inside[0].name) & set('/\\:*?"<>|'), inside[0].name
+    assert inside[0].parent == slot_dir
+
+    # 目录外（含上两级）没有任何新文件；目录内除这一个槽位外也没有别的
+    for (root, deep), old_files in zip(scan_roots, before):
+        new_files = _snapshot(root, deep) - old_files
+        assert new_files <= set(inside), (
+            f"{root} 下出现了槽位以外的新文件：{new_files - set(inside)}"
+        )
+
+
+@pytest.mark.parametrize(
+    "doc_id",
+    ["../evil", "../../evil", "a/../../evil", "..\\evil", "/abs/evil", "C:\\evil", "x/y"],
+)
+def test_autosave_path_never_leaves_dir(client, tmp_path, doc_id):
+    """带真实分隔符的 id（HTTP 路由到不了）直接问路径函数：必须落在 _autosave 里。"""
+    p = m._autosave_path(doc_id)
+    assert p.parent == tmp_path / "_autosave", p
+    assert not set(p.name[: -len(".json")]) & set("/\\:"), p.name
+    assert (tmp_path / "_autosave").resolve() in p.resolve().parents
 
 
 def test_delete_slot(client, tmp_path):

@@ -6,6 +6,16 @@
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 > 前轮05:10后的91项捕获包资格保留其历史源码窗口；3c现已有实现与新资格，不能再按旧checkpoint重做。不同测试组不相加成最终总数；当前分支实际HEAD/diff优先。
 
+### 2026-11-12 合入上游并解决 PR #1873 冲突
+
+- 同一实施树与分支；合并父节点为功能分支 `bd4050a1` 和上游 `19aa2f72`（上游新增 179 提交），38 个冲突文件逐项合并。保留双方功能、提交历史与 ADR 0166 / 0181；未修改原用户目录，未重建分支、重写历史或合并 PR。
+- 写回保护统一内容 hash、纳秒 mtime 和长度判据，备份前及每次 replace 前复核未提交目标；回滚也按发布前 staging 的完整身份保留外部新版本。保留 SVG Figure 来源校验及全量重放/几何/像素门。
+- 项目重开保留上游的时间线身份复用，同时按 legacy/v4 隔离本机绑定、占用探测和 AS 基线；以实际后端轴/绑定代次预留。后端已有别处未写回的编辑时给新会话，旧 AS 不覆盖。新增格式隔离、占用回音和真实保存协调回归用例。
+- 合并保留上游导出 PY/期刊设置、失败出口、外部拖贴导入、字体与形状改进，同时保留计算 SVG 的来源/请求归属、导出 scope、批次与自包含恢复。worker 的输入捕获元数据与上游沙盒诊断均保留。
+- 后端定向：写回/并发/素材导入/架构/门账/错误码 586 项（580 pass、6 skip）；沙盒转换、输入回执/设置和文档规则 126 pass；输入声明 UI/准备上下文 36 pass；打包 spec 7 pass。原始日志/JUnit 在仓库外 `E:/0 - Project/svg-merge-20261112/`。
+- 初轮发现批准字体缺失，按官方脚本补齐后输入测试复验通过；`test_runtime_build.py` 全文件初跑另有两个 macOS 符号链接夹具在 Windows 因 WinError 1314 失败，相关 spec 用例已独立通过，不宣称该整文件通过。最终前端 17 文件 / 562 项全部通过；正式前端（含类型检查）、playground/widget 重建及指纹校验、i18n/lint、Ruff、85 个 active / 115 条 E2E 登记与文档规则检查通过。构建记录见同目录 `web-final.log`、`frontend-final.log`、`playground-final.log`、`widget-final.log`；未将仓库外日志/字体/构建物加入提交。
+- 远端状态以 PR 实际 head 与 GitHub mergeable 为准；保持当前 Draft 与维护者标签权限现状，不自动请求重复评审、入队、合并或发布。
+
 ### 2026-11-12 提交上游 PR #1873
 
 - 用户明确授权提交 PR，目标核定为 `Tavotto/Tavotto:main`；已创建正式 [PR #1873](https://github.com/Tavotto/Tavotto/pull/1873)。创建时 head 为 `0b722f9e`，上游 main 为 `19aa2f72`，共同祖先 `2bc94f7f`；文档同步提交另计。

@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import gzip
 import hashlib
 import http.server
@@ -475,17 +476,96 @@ def test_shipped_lock_is_valid_pinned_and_urls_derive_from_the_template():
     assert set(cli["platforms"]) == {"darwin-arm64", "darwin-x64", "win32-x64", "linux-x64"}
     for key in cli["platforms"]:
         c = managedcli.cli_for("codex", key, lock)
-        gh, mirror = c.sources
-        assert gh.url == (
-            f"https://github.com/openai/codex/releases/download/rust-v{c.version}/codex-package-{c.triple}.tar.gz"
+        npmjs, mirror = c.sources
+        assert (
+            npmjs.url == f"https://registry.npmjs.org/@openai/codex/-/codex-{c.version}-{key}.tgz"
         )
         assert (
             mirror.url
             == f"https://registry.npmmirror.com/@openai/codex/-/codex-{c.version}-{key}.tgz"
         )
-        assert mirror.strip == f"package/vendor/{c.triple}/" and gh.strip == ""
-        assert gh.sha256 != mirror.sha256  # 两份不同的归档，各锁各的
+        assert mirror.strip == npmjs.strip == f"package/vendor/{c.triple}/"
+        # 镜像 = 同一个 tgz（#1716：GitHub 包从 0.166.0 起多一个文件，不再当来源）
+        assert npmjs.sha256 == mirror.sha256 and npmjs.size == mirror.size
         assert c.id == f"{c.version}-{c.tree_sha256[:12]}"
+
+
+@pytest.fixture(autouse=True)
+def _no_region(monkeypatch):
+    """来源顺序看壳给的地区结论（#1744）；默认按「没有壳」跑，要大陆环境的用例自己设。"""
+    monkeypatch.delenv("TAVOTTO_NETWORK_REGION", raising=False)
+
+
+@pytest.mark.parametrize("region", [None, "global", "cn"])
+def test_mainland_puts_the_mirror_first_and_keeps_the_rest_of_the_order(monkeypatch, region):
+    """#1744：大陆直连 npmjs 约 2 MB/s，慢不到「慢了换源」的门槛，每次白等一分钟——大陆环境镜像在前。
+    地区只读壳的结论（`TAVOTTO_NETWORK_REGION`，ADR 0121），没有壳 / global 按锁的顺序。"""
+    if region:
+        monkeypatch.setenv("TAVOTTO_NETWORK_REGION", region)
+    lock = managedcli.load_lock()
+    for name, cli in lock["clis"].items():
+        declared = [managedcli.SOURCE_PREFIXES[name][d["key"]] for d in cli["sources"]]
+        for key in cli["platforms"]:
+            c = managedcli.cli_for(name, key, lock)
+            hosts = [s.host for s in c.sources]
+            if region == "cn":
+                mirrors = [h for h in hosts if h in managedcli.MIRROR_HOSTS]
+                assert mirrors and hosts[: len(mirrors)] == mirrors, (name, key, hosts)
+                assert c.to_payload()["source_host"] == "registry.npmmirror.com"
+            else:
+                assert [s.url.startswith(pre) for s, pre in zip(c.sources, declared)] == [
+                    True
+                ] * len(declared), (name, key, hosts)
+    if region == "cn":
+        assert (
+            managedcli.cli_for("codex", "win32-x64", lock).sources[1].host == "registry.npmjs.org"
+        )
+
+
+def test_mainland_mirror_that_is_slow_still_switches_back_to_the_official_source(
+    env, monkeypatch, caplog
+):
+    """镜像在前不是只认镜像：它慢就照 ADR 0112 换到下一个来源。"""
+    monkeypatch.setenv("TAVOTTO_NETWORK_REGION", "cn")
+    files = _files(pad=700_000)
+    gh, npm = _archives(files)
+    srv = env({"/gh": gh, "/npm": npm}, throttle={"/npm": 0.15})
+    cli = _cli(files, gh, npm, srv)
+    official, mirror = cli.sources
+    mirror = dataclasses.replace(mirror, url=mirror.url.replace("127.0.0.1", "localhost"))
+    monkeypatch.setattr(managedcli, "MIRROR_HOSTS", frozenset({"localhost"}))
+    cli = dataclasses.replace(cli, sources=managedcli._region_order((official, mirror)))
+    assert cli.sources[0].host == "localhost"  # 镜像先试
+    monkeypatch.setattr(managedcli, "SLOW_GRACE_S", 0.3)
+    monkeypatch.setattr(managedcli, "SLOW_ETA_S", 0.5)
+    assert Path(managedcli.provision("codex", cli=cli)).is_file()
+    assert srv.hits.get("/npm") == 1 and srv.hits.get("/gh") == 1
+    assert "放弃：too_slow" in caplog.text and "改用 127.0.0.1" in caplog.text
+
+
+def test_region_is_read_from_the_shell_not_rejudged_here():
+    """「大陆环境」唯一出处是壳（同源对总表那一行）：本模块不许有第二份时区 / 语言表，只经 `netregion` 读结论。"""
+    import ast
+
+    from tavotto.engine import netregion
+
+    src = Path(managedcli.__file__).read_text(encoding="utf-8")
+    assert "Asia/Shanghai" not in src and "Asia/Chongqing" not in src
+    tree = ast.parse(src)
+    assert not any(
+        isinstance(n, ast.Constant) and n.value == netregion.ENV_REGION for n in ast.walk(tree)
+    )
+    fn = next(
+        n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_region_order"
+    )
+    calls = [
+        (n.func.value.id, n.func.attr)
+        for n in ast.walk(fn)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and isinstance(n.func.value, ast.Name)
+    ]
+    assert ("netregion", "region_is_cn") in calls
 
 
 def test_source_hosts_allowlist_matches_the_shipped_lock():
@@ -514,7 +594,8 @@ def test_validate_lock_rejects_loose_locks():
     mutate(lambda c: c["sources"][0].update(key="gitlab"))
     mutate(lambda c: c["sources"][1].update(strip="/abs/"))
     mutate(lambda c: c["platforms"]["darwin-arm64"].update(tree_sha256="abc"))
-    mutate(lambda c: c["platforms"]["darwin-arm64"]["github"].update(sha256="G" * 64))
+    mutate(lambda c: c["platforms"]["darwin-arm64"]["npmjs"].update(sha256="G" * 64))
+    mutate(lambda c: c["platforms"]["darwin-arm64"]["npmjs"].update(integrity="md5-x"))
     mutate(lambda c: c["platforms"]["darwin-arm64"].update(entrypoint="../x"))
     mutate(lambda c: c["platforms"]["darwin-arm64"]["mirror"].update(integrity="md5-x"))
 
@@ -527,6 +608,22 @@ def test_lock_script_check_passes_on_the_shipped_lock():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     assert mod.main(["--check"]) == 0
+
+
+def test_lock_script_latest_flags_a_lock_behind_npm():
+    """发版清单那一步（#1716）：锁里的 codex 比 npm latest 旧就给出升版命令；一样新 / 判不出不报。"""
+    import importlib.util
+
+    script = Path(__file__).resolve().parent.parent / "scripts" / "managed_cli_lock.py"
+    spec = importlib.util.spec_from_file_location("managed_cli_lock_script", script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    lock = {"clis": {"codex": {"version": "0.165.0"}}}
+    msg = mod.latest_problem(lock, "0.166.0")
+    assert msg and "--update 0.166.0" in msg
+    assert mod.latest_problem(lock, "0.165.0") is None
+    assert mod.latest_problem(lock, "0.164.9") is None
+    assert mod.latest_problem(lock, "0.166.0-alpha.1") is None
     assert gzip  # 保持 import 被使用（归档助手以后可能直接用）
 
 

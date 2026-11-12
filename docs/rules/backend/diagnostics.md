@@ -22,6 +22,9 @@ Python 发行包名、实际观察到的已安装包名与版本、能点名的�
 这段记录保存在应用数据目录的有界缓存（每项目最近 16 次、最多 64 个项目）；每条超过 7 天后不再导出，
 并在下次访问该项目记录时从磁盘清除。应用没有运行或项目未访问时，过期数据会暂留到下一次清理。
 写盘失败不影响安装或渲染；重启前尚未完成的异步写入可能丢失。
+Windows 上诊断缓存原子替换若遇共享冲突（WinError 5 / 32 / 33），后台有界退让并在每次尝试时重取
+该进程的最新缓存；等待不持写锁。长时间占用耗尽重试后记为待写，下次访问该项目记录时再尝试；
+其他写盘错误不重试，进程退出后待写标记不保留。看护 `tests/test_windows_regressions.py` 的诊断缓存用例。
 诊断包 README 和发送前说明必须明确披露包名与版本。此例外由用户在 2026-10-31 明确授权，见 ADR 0016 修订。
 
 - 文本脱敏的唯一实现下沉在 `engine/diagnostictext.py`；`diagnostics.redact_text` 保留公开入口，
@@ -217,7 +220,7 @@ Python 发行包名、实际观察到的已安装包名与版本、能点名的�
 
 - 先脱敏再交出、项目清单只留条数
 - 项目根在所有文本里先于主目录换成 `<project:哈希>`、项目名不出门、云盘账号与邮箱兜底抹掉（`project_roots` / `_project_section`）
-- report.json 换形必升 bundle schema（现 14；14 = 顶层 `render_pool`（渲染池健康摘要，见上，TVM-Y37X）；13 = `system.msix_data_migration`（MSIX 私有区旧数据补回结果，闭集 state + 计数，#1574 善后）；10 = `ai_probe`；11 = 受管环境作业；12 = MSIX 包身份三个 bool 与壳兜底结果 `system.has_package_identity` / `system.msix_breakaway`（闭集字符串）/ `paths.data_dir_under_packages` / `paths.config_dir_under_packages`，#1574，不带用户名与包名；9；5 = 新增 task-diagnostics.json；6 = project 段新增 `recent_runs`；7 = 网址只留 origin，见下；8 = 发送包的 detail 条目；9 = 新增 `exec-traces.json` 执行追踪，ADR 0151 PR4、出门投影在 `engine/exectrace_diag.py`）
+- report.json 换形必升 bundle schema（现 15；15 = `project.missing_commands`（脚本拉起外部命令找不到可执行文件的闭集事实，见下，TVD-1FCJ）；14 = 顶层 `render_pool`（渲染池健康摘要，见上，TVM-Y37X）；13 = `system.msix_data_migration`（MSIX 私有区旧数据补回结果，闭集 state + 计数，#1574 善后）；10 = `ai_probe`；11 = 受管环境作业；12 = MSIX 包身份三个 bool 与壳兜底结果 `system.has_package_identity` / `system.msix_breakaway`（闭集字符串）/ `paths.data_dir_under_packages` / `paths.config_dir_under_packages`，#1574，不带用户名与包名；9；5 = 新增 task-diagnostics.json；6 = project 段新增 `recent_runs`；7 = 网址只留 origin，见下；8 = 发送包的 detail 条目；9 = 新增 `exec-traces.json` 执行追踪，ADR 0151 PR4、出门投影在 `engine/exectrace_diag.py`）
 - 服务端第二道校验刻意与前端判据不同
 - 坏载荷退化成不带前端文件的包、不 400
 - 不写盘不上传不进 telemetry（层级执行追踪 `exectrace` 的本地有界存储是另一条数据、经维护者裁决的登记例外，诊断包今天不带它；要带走 PR4 另做导出投影并升 schema，见 `execution-trace.md` / ADR 0151）
@@ -262,6 +265,10 @@ Python 发行包名、实际观察到的已安装包名与版本、能点名的�
   新来源加字段 = 在它的 `diagnostic_projection` 里加一行并过一个形状守卫；**不许**递归复制 `to_payload()`。
   看护：`test_export_projection_never_reads_the_full_payload`（把 `to_payload` 毒化照样出快照）、各 sentinel 用例
   （原文 + 大小写 + hex + base64 + urlsafe + url 编码 + md5/sha1/sha256 都不出现）。
+- 准备失败的 safe 守卫账本只复用 `receipt.project_fidelity` 的操作类别、计数与盲区闭集；native 未处理异常只收
+  bridge 在异常现场生成的内置类型闭集 `exception_category`。没有运行期事实就不填，`file_not_found` 不区分读与写；
+  不采集异常类名原文、路径、消息或 traceback。看护 `tests/test_fallback_failure_evidence_e2e.py` 与
+  `tests/bridge/test_bridge_failure_category.py`。
 - **重试是新 attempt。** 每次尝试各有 id 与自己的快照；`retry_of` 在**写入新快照时**连到同一主语（同文档 / 同图 / 同脚本）
   最近一次失败，旧快照不被改写；读旧失败时 `later_attempts` 现算（≤ 8 条）。后来的成功不会清掉旧失败的 request / error。
 - **认领。** 登记按 `(项目, 类别, id)`；端点只用请求的项目取。别的项目的 id、没有过的 id 一律 404 + `reason: not_found`，
@@ -407,6 +414,7 @@ Python 发行包名、实际观察到的已安装包名与版本、能点名的�
 - **源码代码区按 tokenize 的结构判定，不靠正则**：`_secret_string_spans` 把 `.py` 的 token 并成逻辑行，字符串字面量（含 b/r/u/f/rb 前缀、f-string 整段、隐式拼接）处在秘密上下文就整段换成 `"<redacted>"`——赋值 / 注解赋值 / 增量赋值 / 关键字参数的目标含秘密名（`api_key = b"…"`、`token: str = "…"`、`config["password"] = "…"`、`self.api_key = …`、`f(api_key=…)`）、dict 字面量里键含秘密名的值、紧跟在秘密名字符串参数后的值（`setdefault("api_key", …)`）。数字 / 非字符串表达式不动（`token = self._next()`）。看护 `TestSecretShapeMatrix` 的 Python 字面量形状（每个键 × 22 种写法）与最终 ZIP 全文搜索。
 - **隐私契约的层次（主控裁决）**：默认收集的内容按秘密形状矩阵**严格**清理，漏形状是 P1；**勾选的源码与崩溃报告是用户逐次确认的原样附件，清理只是尽力而为、不作保证**（确认框如实写明）。以后在源码里新发现的密钥形状按 **P2 补形状**处理（并入矩阵），不再当作隐私契约破口。`_in_secret_call`：被调用名（属性链任意一段）含秘密词的调用，其直接字符串实参（位置与关键字）整段换掉（`set_password("…")`、`client.set_token(…)`、`auth("u", "pw")`）。私钥 armor 块按**标签里的词**判定（含 PRIVATE / SECRET / ENCRYPTED / KEY BLOCK / OPENSSH / PUTTY 且不含 PUBLIC：PEM 私钥、加密私钥、OpenSSH、SSH2、PGP 私钥块，armor 头字段与 CRC 行在块内一起抹；公钥、证书、`PGP PUBLIC KEY BLOCK`、`PGP SIGNATURE` 保留，排查 TLS 有用），PuTTY `.ppk` 按 `Private-Lines: N` 抹其后 N 行（`_redact_ppk`）；块只认与 BEGIN **同一标签**的 END（大小写 / 空白变体算同一个，夹在中间的别的 END 不算收尾），找不到配对的 END 就从 BEGIN 抹到输入末尾（线性，不设窗口）。
 - **渲染池健康摘要 `render_pool`（`report.json` 顶层，bundle schema 14；导出包与发送包同一出口）**：`pool.health_snapshot()` 经 `diagnostics._render_pool_summary()` 进 `build_report`——`max_alive` / `alive` / `pending_retirements` / `lock_busy`（池锁被别的线程占着时 0.5 s 内放弃等待，`alive` 记 null，这本身就是证据：当时有会话正在构造）/ 累计 `sessions_created` 与 `lru_evictions` / 最近 `COLD_START_RING`（8）次冷启动 `{seq, age_s, cause, timings}`。`cause` 是闭集码（`new` / `dead` / `entry_changed` / `interpreter_changed` / `env_generation_changed` / `remap_changed` / `overlay_changed` / `other`），`timings` 的键只会是 `pool.ACQUIRE_SEGMENTS`。**不含脚本名 / 图名 / 路径**（只有序号与耗时），计数器与环形记录只在后端内存里，不写盘、不进 telemetry。没有新增顶层文件，infra 的已知文件名表不用动；schema 升 14 同改 `web/src/diagnostics/types.ts`、`src-tauri/src/shell_report.rs::BUNDLE_SCHEMA`、`tests/golden/diag_shell_report.json`（含 Rust 写手重写的 `zip_base64`）。同一份分段还会进渲染响应与 app.log 那行 `timings=`（`resolve_python_ms` / `launcher_prewarm_ms` / `pool_wait_ms` 每次取会话都有，其余只在新建会话那一次出现）。`ACQUIRE_SEGMENTS` 里 `probe_*_ms` 五段（`probe_matplotlib_ms` / `probe_facts_ms` / `probe_base_python_ms` / `probe_login_shell_ms` / `probe_user_envs_ms`）是 `resolve_python_ms` / `env_decide_ms` **内部**的子段：嵌套、**不可与父段相加**，首次并发探测时彼此重叠；只在真起了那个探测（缓存未命中）时才有键，热路径不出现。用来在 Lab 上拆首开那 1~2 秒花在哪个子进程。并发实现 `pool.run_probes_concurrently`（互不依赖的探测首次并发；结果 / 异常顺序同串行；持池锁、`no_capture`、命中缓存时不起线程），不改任何缓存语义。看护：`tests/test_pool_acquire_timings.py`、`tests/test_probe_concurrency.py`。
+- **脚本找不到外部命令 `project.missing_commands`（bundle schema 15，`engine/cmddiag.py`，TVD-1FCJ）**：用户脚本 `subprocess.run(["rsvg-convert", …])` 在 safe 下只报 `FileNotFoundError`，任务结果只有 `script_error`，包里看不出缺哪个命令、渲染进程 PATH 上有没有、Homebrew keg 是否没 link。**主语**：这个 worker 进程、脚本抛出的那一个 `FileNotFoundError`、失败那一刻的 PATH 与固定目录表。判据：异常链里有 `errno == ENOENT`（Windows `winerror == 2`）、`filename` 是不含路径分隔符的裸名，**且** traceback 里有 `subprocess.py::_execute_child`（或 `os.exec*`）帧——`open("data.csv")` 同样是裸名 `FileNotFoundError`，没有这条帧不判。捕获点：`worker.ensure_built` 的 `script_error` 分支 `_missing_command_fact` → `ProtocolError.extra["missing_command"]`（`cmddiag.collect`，用 worker 实际 env、只读 `which`/`isfile`/`glob`，不执行任何东西；敏感参数运行里不在公开白名单的命令名置空，`missing_command` 在 `diagnostic_response` 的敏感白名单里）。native 同一份事实：`bridge_runner._missing_command_extra` 放进 `script_error`（参数运行按敏感口径），`app._note_native_missing_command` 记录（TVD-V7R4）。父进程三条路（`app._worker_error_payload`、`probe._error_from_worker`、`preparation` 终局）经 `deprepair.note_missing_command_of` 记进进程内记录（上限 8、不写盘、不进 telemetry、只取当前项目），`app` 状态里交原值，出门换形在 `diagnostics._missing_command_for_export`：`command`（`cmddiag.PUBLIC_COMMANDS` 白名单原样，其余 `cmd:<哈希>`，与缺依赖现场同一个 `_digest`）、`on_path`、`path.segments` + `path.has`（PATH 是否含各固定目录，布尔）、`found_in`（命令存在于哪些固定目录，只写 `cmddiag.dir_names()` 的枚举名）、`keg_present` / `keg_unlinked`（Homebrew keg 里有而 `homebrew_bin` / `usr_local_bin` 里没有）。**不出任何路径与用户文字**；加目录要改 `cmddiag` 的目录表（枚举名即出门词汇）。没有新增顶层文件，infra 的已知文件名表不用动；schema 升 15 同改 `web/src/diagnostics/types.ts`、`src-tauri/src/shell_report.rs::BUNDLE_SCHEMA`、`tests/golden/diag_shell_report.json`。看护：`tests/test_cmddiag.py`。
 - **渲染环境探的是项目实际用的解释器**：`pool.resolve_worker_python(figures_dir, discover=False)`（项目级决策唯一出处，不起发现子进程），`detail-render-env.json` 记 `source`（项目 venv / 记住的 / 全局 / 内置）与 `scope`。  焦点面板是 native 执行配置时（`enginesession.profile_of` + `nativesession.REGISTRY.route_for`，只读已有登记）：报那条会话已有的回执 / 脱敏诊断，并对**该会话的解释器**跑同一个只读探针，`inspected: "native_session"`；拿不到会话时如实写 `inspected: "safe_pool"`、`native_interpreter: "unknown"`。`execution_profile` 一并记下。
 - **结构化数据的键也过 `text()`**：`Scrubber.obj` 对每个字符串键先清理再写回（`{"https://alice:REAL@proxy": true}`、`{"api_key=REAL": true}`），是否秘密键用**原始键**判断；清理后撞键追加 `#2`、`#3`，不丢条目。文件名 / 条目名是我们生成或已做家目录替换的，不走这条。看护 `TestSecretsInDictKeys`。
 - **秘密键下的占位符是显式白名单**：`_BORING_VALUE` 只认我们自己产出的记号（`<redacted>` `***` `<user>` `<email>` `<project:十六进制>`、`seg:` `str:` `file:` `mod:` `url:` `acct:` + 十六进制、`~`、`...` `…`）与 true/false/null/none、空值；任意 `<…>`（`password=<REAL_SECRET>`）一律抹。看护 `TestPlaceholderWhitelist`。
@@ -455,7 +463,7 @@ Python 发行包名、实际观察到的已安装包名与版本、能点名的�
 - **选路**：大陆环境先 `tavotto.cn` 后 `api.tavotto.com`，否则反之；传输失败（连不上 / 超时 / 证书）或 5xx 换另一条（init 凭 `client_message_id`、complete 凭 `complete_token` 幂等重放），429 / 4xx 是服务端明确答复、不换线路绕限流。
   **「大陆环境」的判据唯一出处是壳的 `src-tauri/src/app_update.rs::source_order`（ADR 0121）**：壳拉起引擎时把结论写进 `TAVOTTO_NETWORK_REGION=cn|global`（`sidecar.rs`），引擎读它，**不在 Python 里再抄一份时区 / 语言表**
   （`test_region_judgement_is_not_reimplemented_in_python`、`test_the_shell_hands_its_region_verdict_to_the_engine`）；没有壳的安装另认界面语言 `zh-CN`（ADR 0121 判据 3）。
-- **本机输入校验**与服务端同规则（正文 1..5000、主题 ≤120、邮箱一个 @ 无空白 / 逗号 / 尖括号、附件 ≤5 个合计 ≤20 MiB、八种 content_type 按扩展名 + 魔数核对）：错误是稳定 `code`（`contact_*`，HTTP 422）；引擎失败码闭集 `contactsend.FAILURES`（前端 `contact.failure.*` 与之对拍）。错误体只认服务端的实际形状（顶层 `{"ok": false, "code", "error"}`），不兼容别的——两种都认会掩盖契约漂移。已 complete 的信再 init 重放回 200 + 空票据：不重传附件、直接 complete，`state ∈ {new, replied, closed}` 即算已发送；init 遇 409 `session_closed` / `idempotency_conflict` 换新 id 重来一次；上传失败即 cancel 这封，重试换新 id。
+- **本机输入校验**与服务端同规则（正文 1..5000、主题 ≤120、邮箱一个 @ 无空白 / 逗号 / 尖括号、附件 ≤5 个合计 ≤50 MiB；`TYPE_BY_EXT` 九个扩展名（八种 content_type）按扩展名 + 魔数核对，其它扩展名按 `application/octet-stream` 发、不核魔数（ADR 0145 修订 2026-11-04；`_sniff_ok` 对它恒假，回信附图仍只认图片））：错误是稳定 `code`（`contact_*`，HTTP 422）；引擎失败码闭集 `contactsend.FAILURES`（前端 `contact.failure.*` 与之对拍）。错误体只认服务端的实际形状（顶层 `{"ok": false, "code", "error"}`），不兼容别的——两种都认会掩盖契约漂移。已 complete 的信再 init 重放回 200 + 空票据：不重传附件、直接 complete，`state ∈ {new, replied, closed}` 即算已发送；init 遇 409 `session_closed` / `idempotency_conflict` 换新 id 重来一次；上传失败即 cancel 这封，重试换新 id。
 - **回信令牌**：成功（或 complete 已发出）后 `contactinbox` 在 `config.data_dir()/contact_messages.json` 存 (message_id, reply_token, route, sent_at) 与取回的回信，权限 0600（尽力而为）；第二期（ADR 0145 修订）起另存用户写的 `subject` / `body`（≤120 / ≤5000）与附件**文件名**（≤5 个 × 120 字；不存附件内容与回信邮箱），回信存清洗过的 `html`（≤256 KiB）与 `assets` 元数据；附图由 `contactsend._fetch_assets` 按同一套线路 / 白名单 / `_NoRedirect` 下载（类型、魔数、大小与元数据逐项核对，每轮 64 MiB / 80 次预算），存 `contact_assets/<message_id>/<reply_id>/<n>`（0700 / 0600），`forget` / 到期连带删；`GET /api/contact/replies/<mid>/<rid>/doc` 由 `contactinbox.reply_doc` 拼出带 CSP 的文档（`asset:<n>` → `data:` URI），纯本机读盘；365 天后删除；没完成投递的记录只留 2 小时，轮询证实（200）才转正。`/api/contact/*` 全部在会话认证之内（ADR 0008，`test_browser_auth` 从 url_map 枚举）。
 - **联系作者的本机上限（ADR 0145 第二期修订「评审后补的五个上限」）**：附图落盘配额每封 ≤100 MiB / 全部 ≤500 MiB（超了标 `skipped: "quota"`、不再请求）；信纸内联图片合计 ≤24 MiB（超出占位）；回信列表读取上限 `contactsend.REPLIES_MAX_BYTES` 按最坏线缆编码「50 条 ×（2 ×（256 KiB + 80000 B）+ 开销）」推出（依赖服务端每封 ≤50 条回信与去控制字符两条保证），超限 / 坏 JSON 标 `poll_error`（`too_large` / `bad_response`）而不是静默成功；轮次预算按**实际读到**的字节扣、单次读取 ≤ `min(10 MiB, 剩余)+1`；故障转移被换掉的线路的错误体也计入轮次预算（`_failover(…, spent)`）；附图目录删除失败不记队列，由每次加载 ≤20 个的有界扫尾（`_sweep_orphan_assets`）从磁盘重新发现。新增同类上限时别回到 `ignore_errors` / 静默 `return True`。
 - **遥测这次不加事件**（攒齐一次升同意版本）；本模块只借 `telemetry._platform/_arch/_distribution` 三个枚举探测函数，不调 `capture`。硬开关 `TAVOTTO_NO_CONTACT=1` 让入口消失（`GET /api/contact` → `{"enabled": false}`，其余 404）；测试进程由 conftest 硬关，生产主机被会话级探针兜底。
@@ -468,3 +476,13 @@ Python 发行包名、实际观察到的已安装包名与版本、能点名的�
 - **随信附带的诊断包不另开关联来信，回信走那封信**：`diagsend.start(reply=False)`（`POST /api/diagnostics/send/<id>/send` 的 `reply: false`，缺省 true；联系作者窗口那条路径传 false）不带 `want_reply`、不登记、不出现 `reply_inbox`，并计入 `client_request_id` 复用条件（`SendSession.reply_allowed`）。
 - `contactinbox`：记录多 `kind` / `report_id`（`kind=report` 必填 `TVD-…`）；`kind=report` 且无回信 30 天（`REPORT_NO_REPLY_DAYS`）后删，有回信同来信 365 天；没有记录仍一次网络都不发。
 - 看护：`tests/test_diag_report_reply.py`（带 / 不带、旧服务端回退、坏形状、done / 重放 / 对账三路登记、开关关闭、令牌不外泄；模拟端 `diag_fakes.accepts_want_reply`）、`tests/test_contact_inbox_report.py`（kind 迁移、30 天 vs 365 天、字段）。
+- **原图字体的本机路径不进诊断包**（ADR 0164）：`rendercore/userfonts` 的定位索引 `data_dir()/font-locator.json` 只存本机路径，诊断包不收它；
+  manifest / problems / 导出警告 / `/api/source-fonts/*` 响应里只有字体身份（名字 + sha256 + 面序号 + 粗斜），没有路径；`UserFontUnavailable.detail`
+  （含路径）不写日志。新增读这个文件或把 `detail` 写进报告的代码，先改这条。
+
+## 失败路径要写下分得清原因的事实（错题本 L-139 升级，2026-11-05）
+
+加失败码或失败分支时同时问：包里这条记录分得清哪几种原因？带闭集事实（步骤、错误类别、退出码、`winerror`），不带原文
+和路径。为什么：六个 PR 都是读反馈包时才发现缺字段，下一份反馈才看得到。分不出杀软隔离还是安装不完整（#1508），分不出
+spawn 失败是哪一种（#1520），分不出卡在哪个启动阶段（#1550），AI 失败不知道停在哪一步（#1534），13 次失败只有
+`status=failed`（#1571），只有 code、没有底层 `OSError`，根因只能写「推测」（#1633）。

@@ -258,6 +258,20 @@ python3 scripts/winlab/winlab.py reports --id <run_id>
 Lab 在中国大陆，convert-live 只走国内合规的 DeepSeek、只用 `direct` 出口；不提供 Anthropic / OpenAI 官方模型的模式，
 经代理出口调用也不行（见 `docs/rules/ci/windows-lab.md`「地区政策」，授权不改变）。
 
+### 应用内托管安装 Codex（managed-cli）
+
+按 `managed_cli_lock.json` 从指定来源真下载、校验、解包、`--version`，不登录、不调模型（#1739）。调的是仓库里的
+`scripts/verify_managed_cli.py`：每个来源一个一次性数据目录、验完即删；独立复算装好的整棵树摘要与锁比。只走直连
+（Lab 在大陆，`npmjs` 那一格就是国内用户直连 npm 官方源的真实情形）。改了 `agent.py` 要先 `admin deploy-agent`。
+
+```sh
+python3 scripts/winlab/winlab.py test managed-cli --mode all    --ref HEAD   # 锁里的来源依次各装一次
+python3 scripts/winlab/winlab.py test managed-cli --mode npmjs  --ref HEAD   # 只走 registry.npmjs.org
+python3 scripts/winlab/winlab.py test managed-cli --mode mirror --ref HEAD   # 只走 registry.npmmirror.com
+```
+
+升托管锁（`docs/RELEASING.md`「发一个新版本」第 2 步）的 PR 入队前跑一次 `--mode all`。
+
 ### 渲染测量（render-bench，只读）
 
 不起模型、不联网、不装包。起 Tavotto 后端（Lab venv 源码态，`127.0.0.1` 随机端口，一次性数据目录），对仓库内置的 6 张最简 matplotlib 图

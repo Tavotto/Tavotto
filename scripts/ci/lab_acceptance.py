@@ -115,7 +115,7 @@ out["web_index"] = (root / "web" / "index.html").is_file()
 out["worker"] = (root / "engine" / "worker.py").is_file()
 out["patchspec"] = (root / "engine" / "patchspec.py").is_file()
 out["profiles"] = (root / "profiles" / "publication.json").is_file()
-# U10（ADR 0072）：RenderCore 是默认后端——批准字体（allowlist 的 13 张脸，不进 git、随 wheel artifacts 走）
+# U10（ADR 0072）：RenderCore 是默认后端——批准字体（allowlist 的 16 张脸，不进 git、随 wheel artifacts 走）
 # 与画布字形覆盖表要在包里；退役的 PyMuPDF 不许在声明的依赖闭包里
 fonts_dir = root / "resources" / "fonts"
 out["fonts"] = sorted(str(p.relative_to(fonts_dir)) for p in fonts_dir.rglob("*") if p.suffix.lower() in (".ttf", ".otf")) if fonts_dir.is_dir() else []

@@ -176,11 +176,23 @@ def check_svg(
         "viewbox_ok": viewbox_ok,
         "fonts": fonts,
         "has_text": bool(texts),
+        # 文字被画成了轮廓（matplotlib `svg.fonttype=path` 把每段文字包在 `<g id="text_N">` 里）：
+        # 没有 <text> 且有这样的组，才说「文字已转成路径」；纯图形的 SVG 不算
+        "text_outlined": bool(not texts and _has_outlined_text_group(root)),
         "font_ok": font_names_match(font_family, fonts) if texts else None,
         "font_note": None
         if texts
         else "SVG 里文字已转成路径（轮廓 / svg.fonttype=path），字体无法从文件核验",
     }
+
+
+def _has_outlined_text_group(root) -> bool:
+    """matplotlib 以轮廓写文字时，每段文字是一个 `<g id="text_N">`。"""
+    for el in root.iter():
+        ident = el.get("id") or ""
+        if ident.startswith("text_") and ident[5:].isdigit():
+            return True
+    return False
 
 
 def check_raster(

@@ -307,6 +307,42 @@ def test_invert_and_spines(library):
     assert _field(man, "axes_0", "spine_linewidth") == pytest.approx(1.6)
 
 
+def _cap(man, gid, prop):
+    return next(f["max"] for f in _el(man, gid)["editable"] if f["prop"] == prop)
+
+
+def test_line_caps_reach_the_style_page_range_at_any_panel_scale(library):
+    """界面的上限 = 这里的 max × 面板缩放比：图缩到 45% 时 max 3 只剩 1.36 pt（用户反馈）。
+
+    主语是属性页 / 样式面板的数字框收到的 `max`。样式设置页的值域（`StyleProfileFields.NUMBER_SPEC`：
+    线宽 10、刻度长 20）能写进去的值，这里也得调得到；真写一个旧上限之外的值确认引擎吃得下。
+    """
+    man = _render(
+        library,
+        [
+            {"gid": "axes_0", "prop": "spine_linewidth", "value": 8},
+            {"gid": "axes_0", "prop": "spine_left_linewidth", "value": 9},
+        ],
+    )
+    for prop in (
+        "spine_linewidth",
+        "spine_top_linewidth",
+        "spine_right_linewidth",
+        "spine_bottom_linewidth",
+        "spine_left_linewidth",
+        "grid_linewidth",
+    ):
+        assert _cap(man, "axes_0", prop) == 10, prop
+    assert _field(man, "axes_0", "spine_linewidth") == pytest.approx(8)
+    assert _field(man, "axes_0", "spine_left_linewidth") == pytest.approx(9)
+
+    tick_gid = next(e["gid"] for e in man["elements"] if e["role"] == "ticks")
+    assert _cap(man, tick_gid, "width") == 10
+    assert _cap(man, tick_gid, "minor_width") == 10
+    assert _cap(man, tick_gid, "length") == 20
+    assert _cap(man, tick_gid, "minor_length") == 20
+
+
 # ---------------------------------------------------------------------------
 # 刻度线四边开关（issue #92）
 # ---------------------------------------------------------------------------
@@ -839,3 +875,104 @@ def test_new_ticks_become_editable_after_the_locator_changes(library):
         ],
     )
     assert "末" in _el(man2, after[-1])["label"]
+
+
+# ---------------------------------------------------------------------------
+# 对数轴 + 非正范围（QA-WIN-37）：热会话与全量重放必须是同一个范围
+# ---------------------------------------------------------------------------
+def _lims(man, axis):
+    return _field(man, "axes_0", f"{axis}lim")
+
+
+@pytest.mark.parametrize(
+    ("axis", "bad"),
+    [("x", [0.0, 40.0]), ("y", [-1.0, 1.05]), ("x", [-5.0, -1.0])],
+)
+def test_log_axis_nonpositive_limit_hot_equals_replay(library, axis, bad):
+    """对数轴上把下限设成 0 / 负数：matplotlib 会"忽略"这个端点，忽略成什么
+    取决于轴之前停在哪（热会话）还是从脚本原样自动缩放（重放），于是同一份
+    patch 表热、冷两个范围。规范化后两条路径必须一致，且范围必须为正。"""
+    pos = [{"gid": "axes_0", "prop": f"{axis}lim", "value": [1.0, 40.0]}]
+    log = {"gid": "axes_0", "prop": f"{axis}scale", "value": "log"}
+    final = [{"gid": "axes_0", "prop": f"{axis}lim", "value": bad}, log]
+
+    hot = _worker(library)
+    try:
+        hot.override(STEM, pos + [log])
+        hot_man = hot.override(STEM, final)["manifest"]
+    finally:
+        pool.discard(hot)
+    replay_man = _render(library, final)
+
+    assert _lims(hot_man, axis) == pytest.approx(_lims(replay_man, axis))
+    lo, hi = _lims(replay_man, axis)
+    assert lo > 0 and hi > 0
+
+
+DEGENERATE = """\
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def main():
+    fig, ax = plt.subplots(figsize=(4.0, 3.0))
+    ax.plot(np.full(5, 10.0), np.linspace(1.0, 5.0, 5), "o")
+    fig.savefig("AxesFig.pdf")
+"""
+
+
+def test_log_axis_nonpositive_limit_independent_of_installed_tick_locator(tmp_path):
+    """X 数据全是 10（退化范围），先固定主刻度（装上 FixedLocator），再给
+    xlim=[0,40] + log：规范化若问当前定位器，热态与冷重放（刻度档晚于范围档，
+    此时还是 LogLocator）扩出的范围不同。必须只依赖数据与 scale。"""
+    (tmp_path / SCRIPT_NAME).write_text(DEGENERATE, encoding="utf-8")
+    ticks = [
+        {"gid": "axes_0.xticks", "prop": "major_mode", "value": "fixed"},
+        {"gid": "axes_0.xticks", "prop": "major_values", "value": [10.0]},
+    ]
+    final = [
+        {"gid": "axes_0", "prop": "xlim", "value": [0.0, 40.0]},
+        {"gid": "axes_0", "prop": "xscale", "value": "log"},
+        *ticks,
+    ]
+    hot = _worker(tmp_path)
+    try:
+        hot.override(STEM, [final[1], *ticks])  # 先 log + 固定刻度，再补 xlim
+        hot_man = hot.override(STEM, final)["manifest"]
+    finally:
+        pool.discard(hot)
+    replay_man = _render(tmp_path, final)
+    assert _lims(hot_man, "x") == pytest.approx(_lims(replay_man, "x"))
+    assert _lims(replay_man, "x")[0] > 0
+
+
+SHARED = """\
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def main():
+    fig, (top, bottom) = plt.subplots(2, 1, sharex=True, figsize=(4.0, 4.0))
+    top.plot(np.linspace(0.001, 0.01, 5), np.arange(5.0))
+    fig.savefig("AxesFig.pdf")
+"""
+
+
+def test_log_axis_nonpositive_limit_uses_shared_axis_siblings_data(tmp_path):
+    """sharex：下面子图是空的，数据在上面子图（0.001..0.01）。规范化只看自己的
+    dataLim 会把下限换成 1，[1,40] 经共享传到两个子图，数据全被藏掉。"""
+    (tmp_path / SCRIPT_NAME).write_text(SHARED, encoding="utf-8")
+    final = [
+        {"gid": "axes_1", "prop": "xlim", "value": [0.0, 40.0]},
+        {"gid": "axes_1", "prop": "xscale", "value": "log"},
+    ]
+    hot = _worker(tmp_path)
+    try:
+        hot.override(STEM, [final[1]])
+        hot_man = hot.override(STEM, final)["manifest"]
+    finally:
+        pool.discard(hot)
+    replay_man = _render(tmp_path, final)
+    lo = _field(replay_man, "axes_1", "xlim")[0]
+    assert 0 < lo <= 0.001
+    assert _field(hot_man, "axes_1", "xlim") == pytest.approx(_field(replay_man, "axes_1", "xlim"))

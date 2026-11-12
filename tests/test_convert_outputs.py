@@ -102,7 +102,9 @@ def test_adopted_output_does_not_take_original_owner_and_reopens_without_cache(p
     (root / registry.REGISTRY_NAME).write_text(json.dumps({"scripts": {"fig.py": record}}))
     sid = _start(client).get_json()["session"]
     result = _wait_final(client, sid)
-    assert result["task"]["outcome"] == "completed", result
+    assert result["task"]["outcome"] == "completed", json.dumps(
+        result["task"], ensure_ascii=False, default=str
+    )[:4000]
     staged = (ai_convert.CONVERT_DIR / sid / "fig_matplotlib.py").read_bytes()
     adopted = client.post(f"/api/ai/convert/{sid}/adopt").get_json()
     assert (root / adopted["script"]).read_bytes() == staged

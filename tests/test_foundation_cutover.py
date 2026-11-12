@@ -140,7 +140,7 @@ def test_u08_r1_default_export_through_the_public_entry_is_rendercore(client, tm
     assert b"Do" in content and b"TJ" in content
     fonts = pdfread.fonts(objs, head)
     assert fonts and all(f["program"] for f in fonts.values()), fonts
-    assert {f["base"] for f in fonts.values()} >= {"LiberationSerif", "NotoSansSC-Regular"}
+    assert {f["base"] for f in fonts.values()} >= {"LiberationSerif", "NotoSerifSC-Regular"}
     text = pdftext.text(pdf_path)
     assert "Hello 图 ×10⁵" in text, text
     pw, ph, _bpp, _px = pdfread.decode_png_any(png_path.read_bytes())

@@ -8,7 +8,7 @@
 * 错误体是 reports 一族的实际形状：顶层 `{"ok": false, "code", "error"}`（客户端只认这一种）；
 * 所有请求要带 `Tavotto-Diagnostics-Api: 1`，缺了回 400 `missing_api_header`（契约“公共”一节）；
 * 幂等：同一个 `client_message_id` 重放返回同一个 message_id / reply_token；
-* 附件：init 里报的 content_type 必须在白名单、至多 5 个、合计 ≤ 20 MiB；上传走回环开发模式的 `/v1/local-upload`
+* 附件：init 里报的 content_type 必须在白名单（含 octet-stream）、至多 5 个、合计 ≤ 50 MiB；上传走回环开发模式的 `/v1/local-upload`
   （表单字段按授权给的顺序、文件字段在最后）；complete 核对每个附件对象存在、大小一致、魔数与 content_type 相符。
 
 每个请求记在 `calls`（含请求头 / 体），“有没有联网”的判据是这份记录，不是客户端自己说没发。
@@ -38,6 +38,8 @@ TYPES = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": b"PK\x03\x04",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": b"PK\x03\x04",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation": b"PK\x03\x04",
+    # API 1.6.0：不认识的格式按 octet-stream 收、不核魔数（空前缀 = 任何字节都通过）
+    "application/octet-stream": b"",
 }
 INIT_FIELDS = {
     "client_message_id",
@@ -53,7 +55,7 @@ INIT_FIELDS = {
     "report_id",
     "attachments",
 }
-MAX_TOTAL = 20 * 1024 * 1024
+MAX_TOTAL = 50 * 1024 * 1024
 
 
 def _crockford(n: int) -> str:

@@ -133,6 +133,20 @@ def test_sensitive_missing_dependency_keeps_its_classification(worker_factory):
     assert SECRET not in worker.log_path.read_text(encoding="utf-8")
 
 
+def test_sensitive_direct_argv_index_error_keeps_classification_without_values(worker_factory):
+    worker = worker_factory("import sys\nx = sys.argv[3]\n", ["--value", SECRET])
+    with pytest.raises(pool.WorkerError) as caught:
+        worker.ensure_built()
+    error = caught.value
+    assert error.code == "script_needs_arguments"
+    assert error.extra["argv_count"] == 2
+    assert "parse_kind" not in error.extra
+    assert SECRET not in str(error)
+    assert SECRET not in error.traceback_text
+    assert SECRET not in json.dumps(error.extra)
+    assert SECRET not in worker.log_path.read_text(encoding="utf-8")
+
+
 def test_sensitive_missing_dependency_never_carries_an_argv_value_as_the_module_name(
     worker_factory,
 ):

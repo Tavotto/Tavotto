@@ -3181,6 +3181,51 @@ def clear_missing_dependency_evidence() -> None:
     """测试之间清空（用户侧没有入口：进程退出即消失）。"""
     with _lock:
         _missing_evidence.clear()
+        _missing_commands.clear()
+
+
+# 脚本拉起外部命令却找不到可执行文件（bundle schema 15，`cmddiag`）：同一套进程内记录纪律——不写盘、不进 telemetry、
+# 只取当前项目的。事实在 worker 里失败那一刻量好（用 worker 实际的 env），这里只抄进来并校验形状。
+MISSING_COMMAND_EVIDENCE_LIMIT = 8
+_missing_commands: deque[dict] = deque(maxlen=MISSING_COMMAND_EVIDENCE_LIMIT)
+
+
+def note_missing_command_of(project: str | Path, exc: BaseException) -> bool:
+    """`WorkerError.extra["missing_command"]`（`cmddiag.collect` 的产物）→ 进程内记录；没有这份事实 / 没有项目不记。
+    返回是否记下了。记录失败不许盖掉原始错误。"""
+    extra = getattr(exc, "extra", None)
+    fact = extra.get("missing_command") if isinstance(extra, dict) else None
+    if not isinstance(fact, dict) or not project:
+        return False
+    try:
+        has = fact.get("path_has") if isinstance(fact.get("path_has"), dict) else {}
+        record = {
+            "at": time.time(),
+            "project_id": managedenv.project_fingerprint(project),
+            "command": str(fact.get("command") or "")[:128],
+            "on_path": bool(fact.get("on_path")),
+            "path_segments": int(fact.get("path_segments") or 0),
+            "path_has": {str(k): bool(v) for k, v in has.items()},
+            "found_in": [str(k) for k in (fact.get("found_in") or []) if isinstance(k, str)],
+            "keg_present": None if fact.get("keg_present") is None else bool(fact["keg_present"]),
+            "keg_unlinked": None
+            if fact.get("keg_unlinked") is None
+            else bool(fact["keg_unlinked"]),
+        }
+        if fact.get("scan_truncated"):
+            record["scan_truncated"] = True
+    except (OSError, ValueError, TypeError):
+        return False
+    with _lock:
+        _missing_commands.append(record)
+    return True
+
+
+def recent_missing_commands(project: str | Path) -> list[dict]:
+    """这个项目最近的「找不到外部命令」现场（旧 → 新，最多 `MISSING_COMMAND_EVIDENCE_LIMIT` 条）。"""
+    pid = managedenv.project_fingerprint(project)
+    with _lock:
+        return [copy.deepcopy(r) for r in _missing_commands if r["project_id"] == pid]
 
 
 # ---------------------------------------------------------------------------

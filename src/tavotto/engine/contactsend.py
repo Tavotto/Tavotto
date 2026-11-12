@@ -17,7 +17,7 @@
 * **选路**：大陆环境先 `tavotto.cn` 后 `api.tavotto.com`，否则反之；传输失败（连不上 / 超时 / 证书）或 5xx 换另一条，
   init 与 complete 都可安全重放（`client_message_id` / `complete_token` 幂等）。「大陆环境」的判据只有一处——
   桌面壳 `src-tauri/src/app_update.rs::source_order`（ADR 0121）；壳在拉起引擎时把它的结论写进环境变量
-  `TAVOTTO_NETWORK_REGION=cn|global`，这里读它（`region_is_cn`），**不在 Python 里再抄一份时区 / 语言表**。
+  `TAVOTTO_NETWORK_REGION=cn|global`，这里经 `netregion.region_is_cn` 读它，**不在 Python 里再抄一份时区 / 语言表**。
   没有壳的安装（pip / 源码）没有这个信号，界面语言是简体中文（`zh-CN`，ADR 0121 判据 3）也算大陆；其余先走海外线路，
   不通自然换国内线路。
 * **秘密不落地**：`reply_token` / `complete_token` / 上传表单、用户写的主题 / 正文 / 邮箱只活在内存里的会话私有字段
@@ -46,6 +46,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from . import brand, contactinbox, diagsend, logsafe, telemetry
+from .netregion import ENV_REGION, region_is_cn  # noqa: F401 - 判据读法的唯一出处（`netregion`）
 
 LOG = logging.getLogger("tavotto.contactsend")
 
@@ -56,7 +57,6 @@ ENV_HARD_OFF = "TAVOTTO_NO_CONTACT"
 #: 开发 / 验收用：逗号分隔的端点（按顺序当作线路）。必须过 `CONTACT_HOSTS` 或回环开发模式，不合规 = 功能关闭。
 ENV_ENDPOINT = "TAVOTTO_CONTACT_ENDPOINT"
 #: 桌面壳写给引擎的“大陆环境”结论（`app_update::detect_order` 的第一项是不是镜像）。
-ENV_REGION = "TAVOTTO_NETWORK_REGION"
 
 #: 线路 → 主机。**白名单就是这两个主机**（`api.tavotto.com` 是 Cloudflare Worker，只转发到 `tavotto.cn`）。
 ROUTE_HOSTS: dict[str, str] = {"cn": "tavotto.cn", "global": "api.tavotto.com"}
@@ -72,11 +72,13 @@ SUBJECT_MAX = 120
 BODY_MAX = 5000
 EMAIL_MAX = 254
 MAX_ATTACHMENTS = 5
-MAX_TOTAL_BYTES = 20 * 1024 * 1024
+MAX_TOTAL_BYTES = 50 * 1024 * 1024  # 2026-11-04 用户裁决：20 → 50 MiB（附件不限格式后数据文件更大）
 NAME_MAX = 128
 LOCALES = ("zh-CN", "en-US")
 
-#: 扩展名 → 契约白名单里的 content_type；服务端按魔数核对，所以这里同样按魔数核一遍。
+#: 认识的扩展名 → content_type；这几种服务端按魔数核对，所以这里同样按魔数核一遍。
+#: **其它任何扩展名都收**（2026-11-04 用户裁决：用户可能想反馈任意格式的数据），按 `OPAQUE_TYPE` 发、不核魔数——
+#: 附件只经 `diag-admin msg download` 下载，网页 / 邮件里不内联打开（infra API 1.6.0 起服务端接受这个类型）。
 TYPE_BY_EXT: dict[str, str] = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -88,8 +90,9 @@ TYPE_BY_EXT: dict[str, str] = {
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 }
-ALLOWED_TYPES = tuple(dict.fromkeys(TYPE_BY_EXT.values()))
-_OFFICE_TYPES = frozenset(t for t in ALLOWED_TYPES if t.startswith("application/vnd."))
+OPAQUE_TYPE = "application/octet-stream"
+ALLOWED_TYPES = (*dict.fromkeys(TYPE_BY_EXT.values()), OPAQUE_TYPE)
+_OFFICE_TYPES = frozenset(t for t in TYPE_BY_EXT.values() if t.startswith("application/vnd."))
 
 _MESSAGE_ID = re.compile(r"^TVM-[0-9A-HJKMNP-TV-Z]{4}(?:-[0-9A-HJKMNP-TV-Z]{4}){3}$")
 _TOKEN = re.compile(r"^[0-9a-f]{64}$")
@@ -194,14 +197,6 @@ def _flag(name: str) -> bool:
     return os.environ.get(name, "").strip() == "1"
 
 
-def region_is_cn(ui_locale: str | None = None) -> bool:
-    """大陆环境？壳的结论（`TAVOTTO_NETWORK_REGION=cn`）或界面语言是简体中文（ADR 0121 判据 3）。
-    `global` 不否决界面语言：壳算它时还不知道界面语言。"""
-    if os.environ.get(ENV_REGION, "").strip().lower() == "cn":
-        return True
-    return ui_locale == "zh-CN"
-
-
 def route_label(target: diagsend.Target) -> str:
     return "cn" if target.host == ROUTE_HOSTS["cn"] else "global"
 
@@ -249,7 +244,6 @@ def capability() -> dict:
         "email_max": EMAIL_MAX,
         "max_attachments": MAX_ATTACHMENTS,
         "max_total_bytes": MAX_TOTAL_BYTES,
-        "extensions": sorted(TYPE_BY_EXT),
         "unread": contactinbox.unread_count(),
         "retention_days": contactinbox.RETENTION_DAYS,
     }
@@ -276,6 +270,8 @@ class Attachment:
 
 
 def _sniff_ok(content_type: str, data: bytes) -> bool:
+    """魔数核对。`OPAQUE_TYPE` 在这里**恒为假**：回信附图（`_fetch_assets`）同样用它，那边只认图片；
+    发信附件的「不认识的格式不核」在 `clean_attachment` 里单独放行，不经这个函数。"""
     head = data[:16]
     if content_type == "image/png":
         return head.startswith(b"\x89PNG\r\n\x1a\n")
@@ -297,12 +293,10 @@ def clean_attachment(name: object, data: bytes) -> Attachment:
     base = raw.replace("\\", "/").rsplit("/", 1)[-1]
     base = "".join(c for c in base if c.isprintable() and c not in '"<>|:*?').strip()
     ext = os.path.splitext(base)[1].lower()
-    ctype = TYPE_BY_EXT.get(ext)
-    if ctype is None:
-        raise ContactError("attachment_type", 422)
+    ctype = TYPE_BY_EXT.get(ext, OPAQUE_TYPE)
     if not data:
         raise ContactError("attachment_empty", 422)
-    if not _sniff_ok(ctype, data):
+    if ctype != OPAQUE_TYPE and not _sniff_ok(ctype, data):
         raise ContactError("attachment_mismatch", 422)
     if len(base) > NAME_MAX:
         stem = os.path.splitext(base)[0][: NAME_MAX - len(ext)]

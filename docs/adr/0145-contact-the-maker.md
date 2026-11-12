@@ -120,3 +120,12 @@ COS 上传地址复用 `diagsend.validate_upload_url`（同一条 `_COS_HOST` �
 - **界面。** 「我的来信」条目头部对 `kind=report` 显示「问题反馈」/ Report 标签 + 报告编号（代替 `TVM-` 编号），`YourLetter` 显示附言、没写显示「没有附言」。没有新入口、没有新提醒形态。
 - **随信附带的诊断包不另开关联来信**：联系作者窗口里勾「附上诊断信息」时，前端 `startDiagSend` 传 `reply: false`，`diagsend.start(reply=False)` 不带 `want_reply`、不登记、`reply_inbox` 不出现（计入 `client_request_id` 复用条件）；回信走那封信，「我的来信」里只有一条。
 - **隐私。** 发反馈包且联系作者开着时，本机多存一个只能取回作者回信的令牌与附言（0600，尽力而为），30 天没回信即删；`docs/privacy.md` 同步。开关不变：`TAVOTTO_NO_CONTACT=1` 时既不带 `want_reply` 也不登记。
+
+## 修订（2026-11-04）：附件不限格式、合计 50 MiB；附上诊断信息可选三项额外内容
+
+用户裁决（0.20.0 反馈）：用户可能想反馈任意格式的数据；设置里「发送问题反馈」并进本窗口后，源文件等额外内容勾不上。
+
+- **附件不限格式。** `contactsend.TYPE_BY_EXT` 里的九个扩展名照旧按扩展名定类型、本机与服务端两边核魔数；**其它任何扩展名**按 `OPAQUE_TYPE = "application/octet-stream"` 发、不核魔数（`clean_attachment` 单独放行；`_sniff_ok` 对它恒为假，回信附图同用这个函数、那边仍只认图片）。multipart 头里不认识的扩展名不出现（`wire_name == "attachment"`）。能力说明去掉 `extensions`，前端不再按扩展名挡、文件选择框不带 `accept`。附件只经 `diag-admin msg download` 下载，网页 / 邮件里不内联打开。**依赖服务端 API 1.6.0 先部署**（infra：接受 octet-stream、合计 50 MiB）；旧服务端会以 415 拒收不认识的格式（失败码照旧 `attachment_type` 文案）。
+- **合计上限 20 → 50 MiB**，个数仍 5。`MAX_TOTAL_BYTES` 唯一出处不变，`/api/contact/send` 的请求体上限随它走。
+- **附上诊断信息可选三项额外内容**（同 [ADR 0118](0118-diagnostics-send-report.md) 确认框：脚本源码 / 系统崩溃报告 / 会话损坏副本的内容）：勾了诊断信息才展开，一句提示请用户方便时勾上；默认全不勾、取消诊断信息即清零、不跨草稿记忆；勾选变化 = 换包（防抖 300 ms，旧包 discard，备好之前「发送」灰）。崩溃报告 / 损坏会话勾上后照旧出隐私提示；**脚本源码不出提示**（用户裁决；「发送问题反馈」确认框同步去掉这句）；有任一勾选时诊断说明换成「另附下面勾选的内容」，不再说「不含你的脚本」。
+

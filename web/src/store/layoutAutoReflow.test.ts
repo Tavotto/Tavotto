@@ -148,7 +148,7 @@ async function mount(docId: string, project?: ProjectDocument) {
 }
 
 describe('用户编辑引起的尺寸变化照常自动重排、照常进历史', () => {
-  it('缩放 commit：B 跟着挪到 A 的右边，重排是一条独立的历史', async () => {
+  it('缩放 commit：B 跟着挪到 A 的右边，重排并进这条缩放历史（一个撤销步，QA-WIN-38）', async () => {
     await mount('d_reflow_resize')
     const depth = s().past.length
     await commit('缩放', (d) => {
@@ -157,8 +157,8 @@ describe('用户编辑引起的尺寸变化照常自动重排、照常进历史'
       o.h = 22.5
     })
     expect(obj('pb').x).toBeCloseTo(34, 6)
-    expect(s().past.length).toBe(depth + 2)
-    expect(lastLabel()).toBe('history.autoReflow')
+    expect(s().past.length).toBe(depth + 1)
+    expect(lastLabel()).not.toBe('history.autoReflow')
   })
 
   it('拖手柄缩放（事务，松手落历史）：松手之后重排', async () => {
@@ -182,7 +182,7 @@ describe('用户编辑引起的尺寸变化照常自动重排、照常进历史'
     })
     await settle()
     expect(obj('pb').x).toBeCloseTo(34, 6)
-    expect(lastLabel()).toBe('history.autoReflow')
+    expect(lastLabel()).not.toBe('history.autoReflow')
   })
 
   it('改图幅的 override → 渲染回来 → 同步器补图幅 → 自动重排', async () => {
@@ -210,7 +210,7 @@ describe('用户编辑引起的尺寸变化照常自动重排、照常进历史'
       o.h = 22.5
     })
     expect(obj('pb').x).toBeCloseTo(34, 6)
-    expect(lastLabel()).toBe('history.autoReflow')
+    expect(lastLabel()).not.toBe('history.autoReflow')
   })
 })
 
@@ -260,19 +260,16 @@ describe('撤销 / 重做与它们引起的派生同步：不清空 future、不
     await settle()
     expect(obj('pa').w).toBeCloseTo(37.5, 6)
     expect(obj('pb').x).toBeCloseTo(41.5, 6)
-    expect(lastLabel()).toBe('history.autoReflow')
-    // 收尾修正是这次手势的一部分：一条缩放 + 一条重排，没有第三条
-    expect(s().past.length).toBe(depth0 + 2)
+    expect(lastLabel()).not.toBe('history.autoReflow')
+    // 收尾修正与重排都是这次手势的一部分：只有一条缩放
+    expect(s().past.length).toBe(depth0 + 1)
     const edited = snap()
     const depth = s().past.length
 
-    await undo()
     await undo() // 回到事务前的旧图幅；manifest 仍是 50×30，同步器 silent 补回 50（100%）
     expect([obj('pa').nativeW, obj('pa').w]).toEqual([50, 50])
-    expect([s().past.length, s().future.length]).toEqual([depth - 2, 2])
-
-    await redo()
     expect([s().past.length, s().future.length]).toEqual([depth - 1, 1])
+
     await redo()
     expect([s().past.length, s().future.length]).toEqual([depth, 0])
     expect(s().doc).toEqual(edited)
@@ -285,16 +282,13 @@ describe('撤销 / 重做与它们引起的派生同步：不清空 future、不
       o.w = 30
       o.h = 22.5
     })
-    expect(lastLabel()).toBe('history.autoReflow')
+    expect(lastLabel()).not.toBe('history.autoReflow')
     const edited = snap()
     const depth = s().past.length
-    await undo() // 撤重排：B 回 44，A 仍是 30 宽——这一格就是用户当时缩放完的样子
+    await undo() // 缩放与重排是一个撤销步：A 回 40 宽的同时 B 回 44，不会停在重叠的中间态
     expect(obj('pb').x).toBe(44)
-    expect([s().past.length, s().future.length]).toEqual([depth - 1, 1])
-    await undo()
     expect(obj('pa').w).toBe(40)
-    expect([s().past.length, s().future.length]).toEqual([depth - 2, 2])
-    await redo()
+    expect([s().past.length, s().future.length]).toEqual([depth - 1, 1])
     await redo()
     expect([s().past.length, s().future.length]).toEqual([depth, 0])
     expect(s().doc).toEqual(edited)
@@ -307,9 +301,9 @@ describe('撤销 / 重做与它们引起的派生同步：不清空 future、不
       o.w = 30
       o.h = 22.5
     })
-    expect(lastLabel()).toBe('history.autoReflow')
+    expect(lastLabel()).not.toBe('history.autoReflow')
     const depth = s().past.length
-    // 再缩一次，防抖还没到就连撤两步：落在「A 30 宽、B 还在 44」那一格（第一次缩放、重排之前）
+    // 再缩一次，防抖还没到就连撤两步：第一次缩放（连同并进去的重排）与第二次缩放都退掉
     await act(async () => {
       s().commit(literal('缩放'), (d) => {
         const o = d.objects.find((x) => x.id === 'pa') as PanelObject
@@ -475,8 +469,73 @@ describe('撤销 / 重做与它们引起的派生同步：不清空 future、不
       o.h = 22.5
     })
     expect(obj('pb').x).toBeCloseTo(34, 6)
-    expect(lastLabel()).toBe('history.autoReflow')
+    expect(lastLabel()).not.toBe('history.autoReflow')
     expect(s().future.length).toBe(0)
+  })
+})
+
+describe('一次改尺寸与它触发的自动重排是一个撤销步（QA-WIN-38）', () => {
+  const overlap = () => obj('pa').x + obj('pa').w > obj('pb').x + 1e-6
+  const widen = (d: FigureDocument) => {
+    const o = d.objects.find((x) => x.id === 'pa') as PanelObject
+    o.w = 60
+    o.h = 45
+  }
+
+  it('改宽→等重排→一次撤销同时回到原宽与原位置、无重叠；一次重做同时恢复', async () => {
+    await mount('d_reflow_one_step')
+    await commit('缩放', widen)
+    expect(obj('pb').x).toBeCloseTo(64, 6)
+    expect(overlap()).toBe(false)
+    const edited = snap()
+    const depth = s().past.length
+
+    await undo()
+    expect([obj('pa').w, obj('pb').x]).toEqual([40, 44])
+    expect(overlap()).toBe(false)
+    expect([s().past.length, s().future.length]).toEqual([depth - 1, 1])
+
+    await redo()
+    expect(s().doc).toEqual(edited)
+    expect(overlap()).toBe(false)
+    expect([s().past.length, s().future.length]).toEqual([depth, 0])
+  })
+
+  it('防抖窗口里夹了一次无关编辑：重排不并进那条无关编辑，撤销它不会连带退掉尺寸', async () => {
+    await mount('d_reflow_unrelated_between')
+    const depth = s().past.length
+    await act(async () => {
+      s().commit(literal('缩放'), widen)
+      s().commit(literal('改名'), (d) => {
+        d.name = 'renamed'
+      })
+    })
+    await settle()
+    expect(obj('pb').x).toBeCloseTo(64, 6)
+    expect(lastLabel()).toBe('history.autoReflow')
+    expect(s().past.length).toBe(depth + 3)
+    await undo() // 撤重排
+    await undo() // 撤改名
+    expect(s().doc.name).not.toBe('renamed')
+    expect(obj('pa').w).toBe(60)
+  })
+  it('统一宽度的组：重排改到的其他成员也带原生图幅基准，撤销后 B 的原生图幅变了再重做保持 150%（Codex #1733 P2）', async () => {
+    await mount('d_reflow_uniform_basis')
+    await commit('开统一宽度', (d) => {
+      d.layoutGroups![0].uniform = 'width'
+    })
+    await commit('缩放', widen)
+    expect(obj('pb').w).toBeCloseTo(60, 6) // 统一宽度把 B 也拉到 60（150%）
+    const depth = s().past.length
+    await undo()
+    expect([obj('pa').w, obj('pb').w]).toEqual([40, 40])
+    expect(s().past.length).toBe(depth - 1)
+    // 撤销之后 B 的渲染回来是原生 80 宽：按条目记的缩放比换算
+    await seed(obj('pb'), [80, 30])
+    expect(obj('pb').nativeW).toBe(80)
+    const before = obj('pb').w
+    await redo()
+    expect(obj('pb').w).toBeCloseTo(before * 1.5, 6)
   })
 })
 

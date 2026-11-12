@@ -34,6 +34,10 @@ order: 120
   * 判据一律复用产品自己的：重放比对走 `app._compare_manifests`（与写回放行/
     阻断同一把尺），像素比对走 `scripts/ci/pixelcompare.py`（与 golden 视觉
     回归**同一份算法**，从 `visual_regression.py` 提取出来的，不许再写第二份）。
+  * 原生截图不得为取证额外改变第一次保存时的布局：单次保存、无后续修改且原生
+    `TightLayoutEngine` 的图，再存截图时临时停用布局引擎；多次保存、保存后修改、
+    修改观察器被替换或布局引擎及其参数改变时仍按原生重绘。实际保存时的裁切框和像素阈值不变。看护
+    `tests/test_compat_native_fidelity_snapshot.py`（含真实 worker 与故意编辑反例）。
   * artist 普查是**诊断**不是门禁：真正的 pass/fail 一律走生产路径的 worker。
   * 跑法：`--smoke`（PR，2~4 分钟）/ `--all` / `--target bundled|minimum|browser`
     / `--case <id>` / `--gate pr|main|nightly|release`。
@@ -93,7 +97,7 @@ order: 120
 
   | #542 | 内容 | Windows 真窗口 | 盲点（判不出就不判） |
   | --- | --- | --- | --- |
-  | 5 | 系统文件选择器打开 `.py` | `test_file_picker.py`：主页「导入我的脚本」→ 原生 `#32770` 对话框 → 中文 + 空格路径 → 项目打开、后端最近项目即此目录 | **拖入**：真 OLE 拖放要系统指针输入；Windows 壳也不旁听拖放（ADR 0092 §五），拖入后同样落到这个选择器。拖放区的 DOM 降级由 `web/e2e/home.spec.ts` 量 |
+  | 5 | 系统文件选择器打开 `.py` | `test_file_picker.py`：主页「导入我的脚本」→ 原生 `#32770` 对话框 → 中文 + 空格路径 → 项目打开、后端最近项目即此目录 | **拖入**：`test_home_drop.py` 经 CDP `Input.dispatchDragEvent` 投带磁盘文件的拖放（WebView2 → `ICoreWebView2File` → 壳 → 项目打开、不弹选择器，ADR 0092 修订 2026-11-03）；量不到的是 OLE 那一层（真光标的 `DoDragDrop`）。拖放区的 DOM 降级由 `web/e2e/home.spec.ts` 量 |
   | 6 | 中文 / 英文 IME | **不覆盖** | IME 组字（TSF / IMM32 候选窗、上屏）只有真键盘 + 真输入法才有；CDP 的 `imeSetComposition` 是渲染进程里的合成事件，不是输入法，拿它判「IME 能用」是冒充。靠人工清单 |
   | 7 | 剪贴板跨应用 | `test_clipboard.py`：⌃C 后系统剪贴板里是对象载荷、所有者在本实例进程树里；别的应用改写载荷后 ⌃V 粘出改写后的样子；普通文字 ⌃V 不产生对象（没有内存兜底） | 图片 / 富文本格式没有用例（产品只收 `text/plain` 载荷） |
   | 8 | 真 WebView 拖动与 undo/redo | `test_drag_undo.py`：CDP 指针拖动、⌃Z 逐像素回原位、⌃⇧Z 回拖后 | 触控板 / 高 DPI 缩放下的指针换算 |

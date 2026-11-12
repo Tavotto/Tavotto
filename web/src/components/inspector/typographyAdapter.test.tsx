@@ -8,12 +8,22 @@
 import { literal } from '@/i18n'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useDocumentStore } from '@/store/documentStore'
 import { resetGestureCoordinator, finishActiveGesture } from '@/store/gestureCoordinator'
 import { emptyProject, type TextObject } from '@/types/document'
+import { resetFontCatalogForTests } from '@/lib/fontCatalog'
 import { useCanvasTypography, type TypographyAdapter } from './typographyAdapter'
+
+// 原图字体的本机状态由后端说了算（ADR 0164）；这里只控制它回什么
+const sourceFontState = vi.hoisted(() => vi.fn(() => 'unknown'))
+vi.mock('@/lib/sourceFontCache', () => ({
+  sourceFontState,
+  useSourceFonts: () => 0,
+  subscribeSourceFonts: () => () => {},
+  previewFamilyOf: () => undefined,
+}))
 
 /** 自动保存会 PUT 到后端；这里只要不抛就行 */
 globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
@@ -238,5 +248,146 @@ describe('写入：事务与历史', () => {
     expect(adapter.pathOf('sizePt')).toBe('sizePt')
     expect(adapter.pathOf('fontFamily')).toBe('fontFamily')
     expect(adapter.pathOf('valign')).toBeNull()
+  })
+})
+
+describe('原图字体 sourceFont（ADR 0164）', () => {
+  const sf = { family: 'DejaVu Sans', sha256: '0f'.repeat(32), face: 0 }
+
+  it('字体行显示原图字体自己的名字，放在选项最前；算「已修改」', async () => {
+    await mount([textObj({ sourceFont: sf })])
+    expect(adapter.valueOf('fontFamily')).toEqual({ kind: 'uniform', value: 'DejaVu Sans' })
+    expect(adapter.fieldOf('fontFamily')?.options).toEqual(['DejaVu Sans', 'serif', 'sans-serif', 'monospace'])
+    expect(adapter.fieldOf('fontFamily')?.value).toBe('DejaVu Sans')
+    expect(adapter.overrideStateOf('fontFamily')).toBe('all')
+  })
+
+  it('与没有原图字体的对象一起选 → mixed，不谎报其中一个', async () => {
+    await mount([textObj({ id: 't1', sourceFont: sf }), textObj({ id: 't2' })])
+    expect(adapter.valueOf('fontFamily')).toEqual({ kind: 'mixed' })
+  })
+
+  it('本机用不了：名字保留，并交给既有的「字体缺失」标记；能用 / 还没问到不标', async () => {
+    await mount([textObj({ sourceFont: sf })])
+    sourceFontState.mockReturnValue('not_found')
+    expect(adapter.unavailableOptions('fontFamily')).toEqual(['DejaVu Sans'])
+    sourceFontState.mockReturnValue('ok')
+    expect(adapter.unavailableOptions('fontFamily')).toEqual([])
+    sourceFontState.mockReturnValue('unknown')
+    expect(adapter.unavailableOptions('fontFamily')).toEqual([])
+    sourceFontState.mockReturnValue('unsupported')
+    expect(adapter.unavailableOptions('fontFamily')).toEqual(['DejaVu Sans'])
+    sourceFontState.mockReturnValue('unknown')
+  })
+
+  it('改成别的族 = 换脸，身份清掉；选它自己的名字 = 不改（文档里仍是它）', async () => {
+    await mount([textObj({ sourceFont: sf, fontFamily: 'sans-serif' })])
+    act(() => adapter.writeOnce('fontFamily', 'DejaVu Sans'))
+    expect(s().doc.objects[0]).toMatchObject({ sourceFont: sf, fontFamily: 'sans-serif' })
+    act(() => adapter.writeOnce('fontFamily', 'monospace'))
+    const o = s().doc.objects[0] as TextObject
+    expect(o.sourceFont).toBeUndefined()
+    expect(o.fontFamily).toBe('monospace')
+  })
+
+  it('恢复 = 回到继承，身份一并清掉', async () => {
+    await mount([textObj({ sourceFont: sf })])
+    act(() => adapter.reset('fontFamily'))
+    expect((s().doc.objects[0] as TextObject).sourceFont).toBeUndefined()
+  })
+
+  it('恢复斜体：斜体的原图字体一并清掉，不再用着斜体文件（Codex #1671 P2）', async () => {
+    await mount([textObj({ sourceFont: { ...sf, italic: true }, italic: true })])
+    act(() => adapter.reset('style'))
+    const o = s().doc.objects[0] as TextObject
+    expect(o.italic).toBeUndefined()
+    expect(o.sourceFont).toBeUndefined()
+  })
+
+  it('批量恢复斜体：每个对象各自按自己的粗斜判；与字体无关的恢复不碰身份', async () => {
+    await mount([
+      textObj({ id: 't1', sourceFont: { ...sf, italic: true }, italic: true }),
+      textObj({ id: 't2', sourceFont: sf }),
+    ])
+    act(() => adapter.reset('style'))
+    const [a, b] = s().doc.objects as TextObject[]
+    expect(a.sourceFont).toBeUndefined()
+    expect(b.sourceFont).toEqual(sf) // 本来就没斜体，恢复不是换脸
+
+    await mount([textObj({ sourceFont: { ...sf, italic: true }, italic: true, lineHeight: 2 })])
+    act(() => adapter.reset('lineHeight'))
+    expect((s().doc.objects[0] as TextObject).sourceFont).toEqual({ ...sf, italic: true })
+  })
+
+  it('恢复粗细没有这个动作（必填字段）；粗体的原图字体在写入层改回正常时清掉', async () => {
+    await mount([textObj({ sourceFont: { ...sf, bold: true }, bold: true })])
+    act(() => adapter.reset('weight'))
+    expect((s().doc.objects[0] as TextObject).sourceFont).toEqual({ ...sf, bold: true })
+    act(() => adapter.writeOnce('weight', 'normal'))
+    expect((s().doc.objects[0] as TextObject).sourceFont).toBeUndefined()
+  })
+})
+
+describe('本机字体：英文 + 中文两格（ADR 0169）', () => {
+  const sha = (c: string) => c.repeat(64)
+  const f = (c: string) => ({ sha256: sha(c), face: 0, bold: false, italic: false })
+  const catalog = {
+    families: [{ name: 'Times New Roman', zh: null, cjk: false, generic: 'serif', faces: [f('a')] }],
+    builtin: { serif: { name: 'Liberation Serif', faces: [f('1')] } },
+  }
+  const libSerif = { family: 'Liberation Serif', sha256: sha('1'), face: 0 }
+  const simsun = { family: 'SimSun', sha256: sha('e'), face: 0 }
+
+  beforeEach(() => {
+    resetFontCatalogForTests(catalog)
+  })
+  afterEach(() => {
+    resetFontCatalogForTests()
+    sourceFontState.mockReturnValue('unknown')
+  })
+
+  it('单项恢复英文：中文脸保住，正文脸换回默认族的批准字体，fontFamily 回到继承', async () => {
+    await mount([
+      textObj({
+        fontFamily: 'serif',
+        sourceFont: { family: 'Times New Roman', sha256: sha('a'), face: 0, cjk: simsun },
+      }),
+    ])
+    act(() => adapter.reset('fontFamily'))
+    const o = s().doc.objects[0] as TextObject
+    expect(o.sourceFont).toEqual({ ...libSerif, cjk: simsun })
+    expect(o.fontFamily).toBeUndefined()
+  })
+
+  it('「两项都恢复」仍清全部', async () => {
+    await mount([textObj({ sourceFont: { ...libSerif, cjk: simsun }, fontFamily: 'serif' })])
+    act(() => adapter.resetFonts!())
+    const o = s().doc.objects[0] as TextObject
+    expect(o.sourceFont).toBeUndefined()
+    expect(o.fontFamily).toBeUndefined()
+  })
+
+  it('正文脸是批准字体且 fontFamily 没设：英文那格不算「改过」，中文格算', async () => {
+    await mount([textObj({ sourceFont: { ...libSerif, cjk: simsun } })])
+    expect(adapter.overrideStateOf('fontFamily')).toBe('none')
+    expect(adapter.overrideStateOf('fontFallback')).toBe('all')
+  })
+
+  it('文档里有中文脸、清单没有中文字体：中文格仍在，选项带当前名字', async () => {
+    await mount([textObj({ sourceFont: { ...libSerif, cjk: simsun } })])
+    expect(adapter.fieldOf('fontFallback')?.options).toEqual(['SimSun'])
+  })
+
+  it('没有任何对象带中文脸且清单没中文字体：只有一格', async () => {
+    await mount([textObj()])
+    expect(adapter.fieldOf('fontFallback')).toBeUndefined()
+  })
+
+  it('中文脸本机用不了：「字体缺失」标在中文格，不标英文格', async () => {
+    await mount([textObj({ sourceFont: { ...libSerif, cjk: simsun } })])
+    sourceFontState.mockImplementation(((sf: { family: string }) =>
+      sf.family === 'SimSun' ? 'not_found' : 'ok') as never)
+    expect(adapter.unavailableOptions('fontFallback')).toEqual(['SimSun'])
+    expect(adapter.unavailableOptions('fontFamily')).toEqual([])
   })
 })

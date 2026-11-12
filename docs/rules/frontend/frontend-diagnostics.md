@@ -106,7 +106,7 @@ order: 170
 - **detail 里还有**：显示环境（缩放 / 窗口 / 屏幕 / 语言 / 主题）、壳信息（Tauri `getVersion` / `getTauriVersion`、UA 里的 WebView 版本；`lib/desktop.ts` 的 `getUpdateOutcome()` 记本窗口会话内最近一次检查 / 安装的结果：来源 mirror/github、稳定码、attempts，没发生过 = 引擎写 unknown）、正在编辑（没有就取选中）面板的 overrides 热态至多 3 张。
 - **三个复选框**（`DiagnosticsSendDialog`，2026-10-21 起**不折叠**、排在表单最上面紧跟副标题那一句，标题行右侧一枚「全选 / 全不选」切换 `data-diag-send-extras-all`；各框的风险短句留在各自下面；beta 0.19.0b1 反馈：埋在「查看内容」里要滚才看得到）：**默认不勾、不记忆**——每次打开（以及切项目）从全不勾开始；勾选变化 = 内容变了 = 要换一份包，但**点击即时生效、不等后端**（beta 0.19.0b1 反馈：每点一个框卡一下——原先每次勾选都推进 epoch，整个对话框回到「正在准备」、表单全禁用、同步等一次备包往返）：框的状态本地立刻更新，换包走 300 ms 防抖的静默刷新（`scheduleRefresh`：不回「正在准备」、不禁用表单与框、不清已填内容；`refreshSeq` 请求序号只认最新一次，旧响应丢弃并 `discardDiagSend`）；刷新期间只有「发送」「保存」暂不可用。调度刷新即把「已保存」复位（磁盘上只有旧包）；最新一次刷新收到 `diag_stale_prepare` 时重试一次，再 stale 就按失败作废（`prepareFailed`），不得无条件 return 把 `refreshing` 卡死。发送中框 disabled。
   折叠的「查看内容」里仍有「将发送的内容」类别、「包内文件（N 个）」逐项清单（路径 + 大小）与一句「因体积被截短」说明；默认可见 = 副标题一句 + 三个框（含一键全选）+ 说明框 + 问题类型 + 一行附件 + 发送 + 关闭。
-- 文案键 `settings.diagnostics.send.{kind.detail_*, extra.*, extraHint.*, short.*, filesTitle, truncated}`；`short.*` 的键集 = `diagdetail.PRIORITY`，`extra.*` = `OPTION_KEYS`（`DiagnosticsSendDialog.test.tsx` 读 Python 源码对拍）。
+- 文案键 `settings.diagnostics.send.{kind.detail_*, extra.*, extraHint.*, short.*, filesTitle, truncated}`；`short.*` 的键集 = `diagdetail.PRIORITY`，`extra.*` = `OPTION_KEYS`，`extraHint.*` 只有 `crash_reports` / `corrupt_sessions`（脚本源码勾上不出提示，用户 2026-11-04 裁决；发送问题反馈确认框与联系作者窗口一致）（`DiagnosticsSendDialog.test.tsx` 读 Python 源码对拍）。
 - 看护：`diagnostics/detail.test.ts`、`DiagnosticsSendDialog.test.tsx`「诊断包扩充」一组。
 
 
@@ -141,6 +141,7 @@ order: 170
 - **四个状态**：编辑 → 发送中（可取消、上传进度）→ 已发送（`TVM-…` 编号 + 回信去向）/ 失败（草稿保留；「再试一次」「复制内容」「复制地址」）。**没有邮件协议链接**（失败卡里只有复制；全页 HTML 不含该协议字样，`contact.test.tsx` 钉；源码由 `tests/test_contact_no_mailto.py` 扫）。
   状态区住在 `Dialog status` 槽里，不推挤表单；发送中 `blockDismiss`、Esc = 取消。草稿（主题 / 正文 / 邮箱 / 附件 `File` / 勾选）在 store 里，关窗不丢，发送成功后关窗才清空；回信邮箱「上次填写」只记在本机 localStorage（try/catch 包着，可在窗里忘记），不进引擎、诊断、遥测。
 - **附上诊断信息** = 现有诊断发送的 prepare → 预览 → start：勾选即 `prepareDiagSend`（本机、零远程）并在窗里列出内容类别（`kind.*` 沿用诊断发送的译文），点「发送」才 `startDiagSend`，轮询到 `report_id` 后才 `sendContact({report_id})`；诊断包失败则信不发、失败说清是诊断包的事。
+  勾了诊断信息才展开「额外内容」三项（同发送问题反馈确认框，`draft.diagOptions`；默认全不勾、取消诊断信息清零；一句提示请用户勾上；勾选变化防抖 300 ms 换包、旧包 discard；崩溃报告 / 损坏会话勾上出隐私提示，脚本源码不出——用户 2026-11-04 裁决；ADR 0145 修订 2026-11-04）。附件不限格式、合计 50 MiB，前端不按扩展名挡、文件框无 `accept`。
 - **回信提醒只用小圆点 + 通知轨胶囊**（`StatusBar.NotificationRail` 里的 `data-contact-capsule`，最多三条的让位规则里与操作提示同档；× 收起后只有未读数再增加才重现），**不加横条 / BannerStack**。「我的来信」是同一窗里的另一页，列出信与回信，进页即已读（本趟仍标「新」）；未读数每 5 分钟读一次本机记录（引擎自己每 6 小时问服务器）。
 - **信纸（第二期）**：「我的来信」每封信先画用户自己写的主题 / 正文（长正文折前 4 行）/ 附件名（旧记录没有就不画），回信 `has_html` 为真用 `ReplyPaper`（沙盒 iframe `srcDoc`，文档来自 `fetchContactReplyDoc`，**sandbox 不含 `allow-scripts`**、白纸 `bg-paper` 深色模式也是白的），取不到文档退回纯文字；没有 HTML 的回信照旧显示文字（`contact.test.tsx`）。
 - 文案 `dialogs:contact.*`；`contact.failure.*` 的键集 = `contactsend.FAILURES`、`contact.error.*` ⊇ 引擎 `ContactError` 的码（`contact.test.tsx` 读 Python 源码对拍）；`settings.about.privacyContact` 是隐私摘要里的一句（能力开着才出现）。

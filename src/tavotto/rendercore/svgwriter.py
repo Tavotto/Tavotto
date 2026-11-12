@@ -383,12 +383,21 @@ class SvgWriter:
             matrix = (
                 size,
                 0,
-                0,
+                size * ir.SYNTH_ITALIC_SKEW if run.synth_italic else 0,
                 size,
                 pen_x + glyph.x_offset * size,
                 node.y + run.rise + glyph.y_offset * size,
             )
-            _element(group, "use", **{f"{{{XLINK}}}href": "#" + name, "transform": _matrix(matrix)})
+            attrs = {f"{{{XLINK}}}href": "#" + name, "transform": _matrix(matrix)}
+            if run.synth_bold:
+                # 模拟粗体（ADR 0169 修订）：描边在字形坐标里，宽度除以缩放
+                attrs |= {
+                    "stroke": _color(node.paint.rgb),
+                    "stroke-opacity": _num(node.paint.alpha),
+                    "stroke-width": _num(ir.synth_bold_width(run.size) / size),
+                    "stroke-linejoin": "round",
+                }
+            _element(group, "use", **attrs)
             pen_x += glyph.x_advance * size
             self.facts.outlined_glyphs += 1
             self.facts.notdef_codes += int(glyph.gid == 0)
@@ -451,9 +460,10 @@ class SvgWriter:
         }
         if ys is not None:
             attrs["y"] = " ".join(_num(v) for v in ys)
-        if resource.bold:
+        # 模拟的粗斜也这样写：可编辑文字由打开它的软件合成，字体在那边有真粗体时还更好（ADR 0169 修订）
+        if resource.bold or run.synth_bold:
             attrs["font-weight"] = "700"
-        if resource.italic:
+        if resource.italic or run.synth_italic:
             attrs["font-style"] = "italic"
         element = _element(group, "text", **attrs)
         element.text = content

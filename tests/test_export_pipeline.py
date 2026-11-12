@@ -587,7 +587,10 @@ def test_missing_source_is_a_structured_error(env):
     )
     assert status in (200, 500)
     assert body["status"] == "failed"
-    assert body["error"]["code"] in ("source_missing", "export_failed")
+    # 「图不在了」必须是结构化的 source_missing + figure：界面据此给「重新找到这张图」。
+    # 曾经放过 export_failed，结果用户看到的是 werkzeug 的「404 Not Found: The requested URL…」+ 必败的重试
+    assert body["error"]["code"] == "source_missing", body["error"]
+    assert body["error"]["params"]["figure"] == "nope.pdf"
 
 
 def _reencrypt(figs: Path, name: str, *, user_pw: str) -> None:
@@ -861,6 +864,61 @@ def test_the_style_check_report_obeys_the_overwrite_policy(env):
     named = next(o for o in third["outputs"] if o["format"] == "report")
     assert named["name"] == "Fig 1 (2)_style-check.json"
     assert (out / "Fig 1_style-check.json").is_file(), "原报告不该被动"
+
+
+def test_overwriting_without_a_report_drops_the_stale_proof_next_to_it(env):
+    """QA-WIN-19：覆盖导出同名图、本次不出报告时，旁边上一次留下的
+    `<stem>_style-check.json`（kind=tavotto-proof）对不上新图，得删掉。
+
+    只删「本次目标同名 + 内容 kind 为 tavotto-proof」的那一个；别人的 json、
+    同名但 kind 不对的 json、`rename` 编号的新名都不能碰。
+    """
+    client, _ = env
+    spec = _canvas(include_style_check_report=True, style_check_report={"kind": "tavotto-proof"})
+    _, first = _post(client, spec)
+    out = _dir(first)
+    report = out / "Fig 1_style-check.json"
+    assert report.is_file()
+
+    # 覆盖导出、这次不要报告：旧报告撤掉
+    _, again = _post(client, _canvas(overwrite="replace"))
+    assert again["status"] == "done"
+    assert not report.exists()
+
+    # kind 不是 tavotto-proof 的同名文件：不碰
+    report.write_text(json.dumps({"kind": "something-else"}), encoding="utf-8")
+    _post(client, _canvas(overwrite="replace"))
+    assert report.is_file()
+
+    # 读不出来的同名文件：不碰
+    report.write_text("not json", encoding="utf-8")
+    _post(client, _canvas(overwrite="replace"))
+    assert report.is_file()
+
+    # rename：旧图与旧报告都还在，不属于本次，不碰
+    report.write_text(json.dumps({"kind": "tavotto-proof"}), encoding="utf-8")
+    _post(client, _canvas(overwrite="rename"))
+    assert report.is_file()
+
+    # 本次会出报告：照常覆盖成新的
+    _post(client, {**spec, "overwrite": "replace"})
+    assert json.loads(report.read_text(encoding="utf-8"))["version"] == 3
+
+
+def test_a_failed_export_leaves_the_old_proof_alone(env, monkeypatch):
+    client, _ = env
+    spec = _canvas(include_style_check_report=True, style_check_report={"kind": "tavotto-proof"})
+    _, first = _post(client, spec)
+    report = _dir(first) / "Fig 1_style-check.json"
+    assert report.is_file(), first
+
+    def boom(job, tmp_dir):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(m, "_export_produce", boom)
+    _, body = _post(client, _canvas(overwrite="replace"))
+    assert body["status"] == "failed"
+    assert report.is_file(), "图没换成，旧报告仍然对得上旧图"
 
 
 def test_two_concurrent_asks_do_not_silently_clobber_each_other(env, monkeypatch):

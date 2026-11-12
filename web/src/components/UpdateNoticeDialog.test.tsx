@@ -16,6 +16,9 @@ vi.mock('@/lib/desktop', () => ({
   checkDesktopUpdate: vi.fn(),
   installDesktopUpdate: vi.fn(),
   relaunchDesktop: vi.fn(),
+  // 进度条（ui/ProgressBar）按屏幕 ppi 选点径：浏览器里读不到
+  getScreenPpi: async () => null,
+  onScreenPpiChange: async () => () => {},
 }))
 vi.mock('@/lib/telemetry', () => ({ captureTelemetry: vi.fn() }))
 

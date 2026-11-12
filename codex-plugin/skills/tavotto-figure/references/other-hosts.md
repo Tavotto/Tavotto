@@ -11,6 +11,17 @@ Tavotto 在所有宿主里是**同一份完整包、同一个 MCP 服务、同�
 
 按用户**当前所在的宿主**只给那一家的步骤，给完就停，不在旧会话里假装工具可用：
 
+**用户装了 Tavotto 桌面版，先走一键接入**：请他打开桌面版「设置 › 改图助手 › 接入 AI 编辑器」，
+在他用的那一家（Codex、Claude Code、Cursor、VS Code、Trae、ZCode、WorkBuddy、Claude 桌面版、
+Antigravity）那一行点「接入」，选好让 Tavotto 处理哪个文件夹里的图，然后**在那一家里新开一个会话**。
+它只改这一家用户级配置里 tavotto 那一条（改之前先备份），授权的就是选的那个文件夹；行上显示
+「未检测到」说明这台机器上没找到那一家。接入失败或用户没装桌面版，再按下面各家的步骤。
+
+**Google Antigravity**：只有桌面版的一键接入（它写 `~/.gemini/config/mcp_config.json` 与旧版
+`~/.gemini/antigravity/mcp_config.json` 里的 `mcpServers`）；下面的配置生成器还没有 `antigravity` 这一档，
+没装桌面版时请用户对照 Antigravity 的 MCP 文档，把 `--host cursor` 打印出的 `mcpServers` 片段手动合并进去，
+然后重开 Antigravity 的 Agent 会话。Skill 没有已验证的入口，必要时用 `--emit instructions` 放进规则。
+
 **Claude Code（终端 / IDE 扩展 / 桌面 Code 标签页的 Local 或 SSH 会话）优先走插件**。
 [桌面 Code 的 Cloud 会话不继承本地插件，WSL 会话不支持插件](https://code.claude.com/docs/en/desktop#install-plugins)。
 这两种环境请改用 Local Code 会话，不要让用户在本机安装后继续在原环境找工具。
@@ -120,6 +131,9 @@ health 结果里 `recovery` 给的原文**，那里是这台机器上的真实�
 - **没有本机终端或文件写入能力的宿主**（Claude Desktop 聊天）：不能运行 `scripts/*.py`，也
   不能把新脚本保存到本机。这种情况下直接问偏好；已有的本地图照常用 MCP 工具打开和修改；
   新的出图脚本交给用户保存并运行。
+- **桌面版「接入」已经替你复制了技能**（Claude Code、Cursor、VS Code、ZCode、Antigravity、Trae、WorkBuddy 的用户级
+  技能目录，Tavotto 升级后重新点一次「接入」就会刷新；你自己改过的那份不会被覆盖）。没有技能目录的宿主（Claude 桌面版）
+  调 `tavotto_guide` 读这份说明；它的 `section` 可以取 `references/` 里的某一节。
 - **复制出去的技能**里，`scripts/update_check.py` 找不到包的版本信息，更新检查会显示
   「未知」，这不是故障。升级的方法：解压新版完整包，重新生成配置，**并刷新技能**——复制过
   `tavotto-figure/` 的，把新包里的整个目录覆盖复制过去；粘贴过等价说明的，重新运行

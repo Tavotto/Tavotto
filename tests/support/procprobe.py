@@ -55,7 +55,32 @@ def alive(pid: int, born: int | None = None) -> bool:
         return False
     except PermissionError:
         return True
-    return True
+    # 已终止、只等父进程 reap 的僵尸进程，`kill(pid, 0)` 照样成功；容器里 PID 1 不 reap 孤儿时，被杀的孙进程
+    # 会一直以僵尸留着。它已经不在运行了，判「不在」
+    return not _is_zombie(pid)
+
+
+def _is_zombie(pid: int) -> bool:
+    try:
+        with open(f"/proc/{pid}/stat", encoding="ascii", errors="replace") as f:
+            # 第 3 栏是状态；进程名（第 2 栏）在括号里、可能含空格，取最后一个 ')' 之后
+            return f.read().rpartition(")")[2].split()[0] == "Z"
+    except (OSError, IndexError):
+        pass
+    try:  # 没有 /proc（macOS）
+        import subprocess
+
+        out = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+        return out.stdout.strip().startswith("Z")
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def wait_gone(pid: int, born: int | None = None, timeout: float = 2.5) -> bool:

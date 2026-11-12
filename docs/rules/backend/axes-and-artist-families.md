@@ -79,6 +79,12 @@ order: 80
   后 `set_positions`）；arrowstyle / linestyle 两类箭头都可改
   （识别不出的自定义样式报 "custom"，选它=不动）。前端交互语义见
   `docs/rules/frontend/hit-and-selection-geometry.md`「图内箭头交互」。
+  * **改线型只虚杆、头保持实线（2026-11-11，TVD-AVZ0）**：matplotlib 对整条箭头（杆 + 头）
+    一起加虚线，`->` 的头被切碎。`("arrowpatch", "linestyle")` 的 setter 装一个实例级 draw 钩子
+    （`_SolidHeadRenderer`：一次 draw 里第二个起的不同 path 对象用实线画），restore 拆钩子；
+    脚本自己画的虚线箭头不碰。`simple` / `fancy` / `wedge` 只有一条轮廓，照旧整体虚线。
+    这个键在 `scriptadjust.NOT_WRITABLE` 里，导出 .py 时作为剩余调整由引擎重放，与热态同一份代码。
+    看护：`tests/test_arrow_dashed_solid_head.py`。
   * **纯箭头注释同样可拖（2026-09-24，用户的流程图：10 根箭头全是
     `ax.annotate("", xy=…, xytext=…)`，一根都拖不动）**。annotate 的 arrow_patch 每次
     draw 由 `update_positions` 按注释的 `xy` / `xyann` 重定位——**改 patch 下一帧就弹回**，
@@ -157,6 +163,12 @@ order: 80
     PolyCollection 都是 PolyCollection 的子类却永远映射——按类名开放就是
     「界面说改了、画面没动」。反过来 **stroke 对任何 Collection 都开放**：
     此刻没有边不代表加不上边（给 pcolormesh 加网格线是常见需求）。
+  * **渐变色带出 `gradient` 而不出 facecolor**（ADR 0167）：`gradient_detect` 认出「≥ 8 条同向轴对齐、逐条一色、颜色在变」的
+    PolyCollection 时，manifest 发两端颜色（起端 / 止端按屏幕方向）；`_gradient_apply` 按原两端连线上的位置重新配色、从
+    `_mm_gradient_base`（第一次改之前的逐条颜色）算，热态 == 重放；基准与还原值取**源颜色设定**（`_original_facecolor`），不取合成了 Artist alpha 的 `get_facecolor()`。
+    override 值带 `screen_start`（"high"/"low"，manifest 发出），引擎按数据坐标顺序配色、不依赖 setter 运行时的坐标变换（`invert_y` 与它同序）；缺失时才退回当时变换。没认出的填充一个字节不变。
+  * **渐变峰的图例色块跟着改**（ADR 0167 修订）：`gradient_legend_candidates` 在同一子图里找两端原色对得上的色块（`gradient_swatch_groups`，
+    序号只按数据坐标），互相唯一才自动配；`gradient` 的值记 `legend: [集合, 色块] | null`，`_gradient_apply` 先还原上次跟着改的那块再改新的。
   * **gid 一个都没变**：`axes_i.scatter_j` / `axes_i.fill_j` / `axes_i.patches_j`
     的序号取的一直是所属列表（`ax.collections` / `ax.patches`）的下标，不是
     「第几个散点」，所以把从前没登记的那些补登记进来不挪动任何已有名字。

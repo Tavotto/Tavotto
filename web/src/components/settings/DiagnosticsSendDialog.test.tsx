@@ -232,6 +232,8 @@ describe('先看再发', () => {
     expect(extras.querySelectorAll('[data-diag-send-extra-hint]'), '未勾选不显示隐私提示').toHaveLength(0)
     await click(extras.querySelector<HTMLInputElement>('[data-diag-send-extra="crash_reports"]')!)
     expect(q('[data-diag-send-extra-hint="crash_reports"]')!.textContent).toBe(ds('extraHint.crash_reports'))
+    await click(extras.querySelector<HTMLInputElement>('[data-diag-send-extra="source"]')!)
+    expect(q('[data-diag-send-extra-hint="source"]'), '脚本源码不出提示（2026-11-04）').toBeNull()
     expect(extras.querySelectorAll('input[type=checkbox]')).toHaveLength(3)
     expect(q('[data-diag-send-extras-all]')!.textContent).toBe(ds('extrasSelectAll'))
     expect(det.textContent).toContain(ds('bestEffort'))
@@ -1069,10 +1071,9 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     for (const d of [zhDialogs, enDialogs]) {
       const send = (d as any).settings.diagnostics.send
       for (const k of kinds) expect(Object.keys(send.short), k).toContain(k)
-      for (const k of opts) {
-        expect(send.extra[k]).toBeTruthy()
-        expect(send.extraHint[k]).toBeTruthy()
-      }
+      for (const k of opts) expect(send.extra[k]).toBeTruthy()
+      // 脚本源码不出隐私提示（用户 2026-11-04 裁决），其余两项有
+      expect(Object.keys(send.extraHint).sort()).toEqual(['corrupt_sessions', 'crash_reports'])
     }
   })
 })

@@ -9,7 +9,7 @@
  * **打开的办法**：把 `JOURNAL_CATALOG_UI` 改成 `true`（数据就绪那个 PR）。没有任何生产界面能打开它；
  * 单测 / e2e 用开发期 localStorage 键 `tavotto.dev.journalCatalogUi = '1'`（只在测试里设，用户界面不写它）。
  */
-export const JOURNAL_CATALOG_UI = false
+export const JOURNAL_CATALOG_UI = true
 
 /** 测试 / 开发用的覆盖键：值为 `'1'` 才算开 */
 export const JOURNAL_UI_DEV_KEY = 'tavotto.dev.journalCatalogUi'

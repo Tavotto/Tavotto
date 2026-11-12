@@ -9,6 +9,7 @@ colors:
   paper: "#ffffff"
   paper-ink: "#1b1b18"
   paper-highlight: "#fff3a3"
+  highlighter: "#fff3a3"
   field: "#f2f2f0"
   field-hover: "#eeeeec"
   border-control: "#84847c"
@@ -223,6 +224,7 @@ Dialog 页脚三槽——全文在 **宪法第二十六节**。
 | `dim` | `#7db6f5` |
 | `danger` | `#ef6e55` |
 | `warn` | `#d9a23a` |
+| `highlighter` | `#5a5226` |
 | `ok` | `#4fb37a` |
 | `syntax-keyword` | `#e6809f` |
 | `syntax-function` | `#ad9cf0` |

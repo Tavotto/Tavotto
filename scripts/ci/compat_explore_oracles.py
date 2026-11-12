@@ -83,15 +83,57 @@ def unresolved(stages: dict) -> list[str]:
     return out
 
 
-def pixel_judgment(native_shots: dict, tavotto_shots: dict, out_dir: Path) -> dict:
+def declared_unjudged(parent) -> dict[str, str]:
+    """Figures of the parent's script the corpus declares pixel-unjudgeable: stem → reason.
+
+    The pixel stage of CompatBench is skipped for a case with `expected.fidelity=false` (for
+    example constrained_layout, which native matplotlib itself does not reproduce when the same
+    Figure is saved twice). A candidate derived from a *sibling* case that runs the same script and
+    entry still draws that figure, so its pixels are equally without a stable reference. Only the
+    declared stems are exempt; every other figure of the script is judged as before.
+    """
+    spec = getattr(parent, "case_spec", None) or {}
+    if getattr(parent, "suite", None) != "compat_engine" or not spec.get("script"):
+        return {}
+    entry = spec.get("entry", "main")
+    out: dict[str, str] = {}
+    for case in cg.registered("compat_engine").values():
+        if (
+            case.get("script") == spec["script"]
+            and case.get("entry", "main") == entry
+            and (case.get("expected") or {}).get("fidelity") is False
+            and case.get("stem")
+        ):
+            reason = (case.get("expected_false_reasons") or {}).get("fidelity")
+            out[case["stem"]] = f"{case['id']}: expected.fidelity=false" + (
+                f" ({reason})" if reason else ""
+            )
+    return out
+
+
+def pixel_judgment(
+    native_shots: dict,
+    tavotto_shots: dict,
+    out_dir: Path,
+    unjudged: dict[str, str] | None = None,
+    saved_stems: dict[str, list[str]] | None = None,
+) -> dict:
     """Per common stem: native PNG vs Tavotto PNG against CompatBench's tolerance.
 
     Returns `{"status", "differences", "compared", "note"?}`. `status` is `passed`, `failed` or
     `not_run` (in scope but no conclusion: the imaging dependencies are missing, or the two sides
     share no stem) or `not_covered` (structurally no native pixel reference: the native driver
-    renders figures saved with savefig or still open at exit, and this script has neither).
+    renders figures saved with savefig or still open at exit, and this script has neither; or every
+    common stem is declared unjudgeable).
+
+    `unjudged` (`declared_unjudged`) exempts a stem that is, or whose figure natively saved as
+    (`saved_stems`, from the native driver: a same-path copy renamed `<script>-N` keeps the stem it
+    wrote), a declared stem; exempt stems are listed in `declared_unjudged` with the reason, never
+    counted as compared and never as a difference.
     """
     tol = _cm().FIDELITY_TOLERANCE
+    unjudged = unjudged or {}
+    saved_stems = saved_stems or {}
     if not native_shots:
         return {"status": "not_covered", "differences": [], "compared": 0, "note": NO_NATIVE_PIXELS}
     stems = sorted(set(native_shots) & set(tavotto_shots))
@@ -103,8 +145,13 @@ def pixel_judgment(native_shots: dict, tavotto_shots: dict, out_dir: Path) -> di
             "note": f"no common stem: native {sorted(native_shots)} / Tavotto {sorted(tavotto_shots)}",
         }
     diffs = []
+    exempt: dict[str, str] = {}
     out_dir = Path(out_dir)
     for stem in stems:
+        declared = [s for s in (stem, *saved_stems.get(stem, ())) if s in unjudged]
+        if declared:
+            exempt[stem] = unjudged[declared[0]]
+            continue
         name = Path(stem).name
         diff_png = out_dir / "pixel" / f"{name}.diff.png"
         diff_png.parent.mkdir(parents=True, exist_ok=True)
@@ -144,16 +191,22 @@ def pixel_judgment(native_shots: dict, tavotto_shots: dict, out_dir: Path) -> di
             }
         )
     unmatched = sorted(set(native_shots) ^ set(tavotto_shots))
+    compared = len(stems) - len(exempt)
     out = {
-        "status": "failed" if diffs else "passed",
+        "status": "failed" if diffs else ("passed" if compared else "not_covered"),
         "differences": diffs,
-        "compared": len(stems),
+        "compared": compared,
     }
+    if exempt:
+        out["declared_unjudged"] = exempt
+        out["note"] = f"not judged, declared without a stable native reference: {sorted(exempt)}"
     if unmatched:
         # some figure on one side was never compared: with no other difference that is no
         # conclusion; next to a mismatch it is still reported (`unmatched`), never dropped
         out["unmatched"] = unmatched
-        out["note"] = f"stems present on one side only: {unmatched}"
+        out["note"] = "; ".join(
+            n for n in (out.get("note"), f"stems present on one side only: {unmatched}") if n
+        )
         if not diffs:
             out["status"] = "not_run"
     return out

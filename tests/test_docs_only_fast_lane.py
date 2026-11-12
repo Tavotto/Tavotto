@@ -173,6 +173,7 @@ class TestWorkflowShape:
 
         assert docs_scope.SCOPE_PREFIX == "docs/release-notes/"
         assert docs_scope.EXCLUDED == {"docs/release-notes/UNRELEASED.md"}
+        assert docs_scope.EXCLUDED_PREFIXES == ("docs/release-notes/unreleased/",)
 
 
 # ───────────────────────────────────────────── Gate 步骤真跑
@@ -211,6 +212,7 @@ def _run_gate(job_id, judge: Path, needs: dict, *, event="pull_request", full_ci
         "NEEDS_JSON": json.dumps(needs),
         "DOCS_ONLY": cls.get("outputs", {}).get("docs_only", ""),
         "DOCS_SCOPE_RESULT": cls.get("result", ""),
+        "E2E_SPECS_CHANGED": cls.get("outputs", {}).get("e2e_specs_changed", ""),
         "GATE_EVENT": event,
         "GATE_FULL_CI": full_ci,
     }

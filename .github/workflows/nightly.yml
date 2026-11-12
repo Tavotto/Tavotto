@@ -177,6 +177,9 @@ jobs:
       # 报文指向 `axes_0.legend.texts_2` ——离病因十万八千里，连红十一天没人读懂。
       # 直接盯着这条契约的判据是这个文件：修之前它在 3.8.4 上红 12 条，修之后
       # 29 条全绿。
+      #
+      # `test_manifest_text_block.py` 同理（#1672 评审 P1）：`text_block` 起初写了 `get_figure(root=True)`，
+      # 3.8 / 3.9 上 TypeError 把整份 manifest 带崩；该文件含旧签名与失败兜底用例。
       - name: 结构性不变式（本 target 的 matplotlib 版本）
         run: |
           set -euo pipefail
@@ -184,7 +187,8 @@ jobs:
             tests/test_invariants_engine.py \
             tests/test_artist_families.py \
             tests/test_hatch_editing.py \
-            tests/test_legend_binding.py
+            tests/test_legend_binding.py \
+            tests/test_manifest_text_block.py
 
       - name: CompatBench
         run: |
@@ -1114,7 +1118,7 @@ jobs:
           $skipped = @($cases | Where-Object { $_.skipped })
           if ($skipped.Count) { throw "真窗口用例里有 $($skipped.Count) 条被 skip / xfail：$(($skipped | ForEach-Object name) -join ', ')" }
           Write-Host "执行 $($cases.Count) 条"
-          if ($cases.Count -ne 21) { throw "真窗口用例执行了 $($cases.Count) 条，预期 21 条（加减用例时同步这里）" }
+          if ($cases.Count -ne 24) { throw "真窗口用例执行了 $($cases.Count) 条，预期 24 条（加减用例时同步这里）" }
 
       - name: 真窗口用例的取证（失败时）
         if: failure() && matrix.python == 'none'

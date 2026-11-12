@@ -147,6 +147,39 @@ async function enterUnknown(selected: 'legacy' | 'v4' = 'legacy', known = false)
 }
 
 describe('明确用户裁决的编辑轴恢复', () => {
+  it.each(['legacy', 'v4'] as const)('本机旧绑定 clean、后端 %s 槽位已有别处新编辑时，不借新 AS 基线覆盖旧身份', async selected => {
+    format = selected
+    await install()
+    const id = s().documentId
+    const named = structuredClone(body)
+    await s().switchDocument(emptyProject(), 'other-layout')
+    axis = { editor_id: 'another-window', sequence: 6 }
+    body.canvases[0].guides.push({ axis: 'x', pos: 88 })
+    const external = structuredClone(body)
+    requests.length = 0
+    expect(await openLayoutDocument(named, { projectId: 'project-A', name: 'A', file: 'tavottofile/A.json', revision: hex(7), dirty: false })).toBe(true)
+    expect(s().documentId).not.toBe(id)
+    expect(body).toEqual(external)
+    expect(requests.some(request => request.method === 'PUT' && request.url.pathname.endsWith(`/autosave/${id}`))).toBe(false)
+    expect(requests.some(request => request.url.pathname.endsWith(`/project-file/${id}/reserve`))).toBe(false)
+  })
+  it.each(['legacy', 'v4'] as const)('重开同一干净项目文件保留 %s 时间线身份，并以实际 AS/轴/绑定代次预留', async selected => {
+    format = selected
+    await install()
+    const id = s().documentId
+    const named = structuredClone(body)
+    named.project.name = 'Reopened named layout'
+    await s().switchDocument(emptyProject(), 'other-layout')
+    requests.length = 0
+    expect(await openLayoutDocument(named, { projectId: 'project-A', name: 'A', file: 'tavottofile/A.json', revision: hex(7), dirty: false })).toBe(true)
+    expect(s().documentId).toBe(id)
+    expect(s().documentFormat).toBe(selected)
+    const reserve = requests.find(request => request.url.pathname.endsWith('/reserve'))!
+    expect(reserve.body).toMatchObject({ autosave_revision: expect.any(String), axis: serverAxis, expected_binding_sequence: 3 })
+    expect(s().projectFile).toMatchObject({ revision: hex(7), dirty: false })
+    expect(s().restoreMetaIssue).toBeNull()
+    expect(requests.some(request => request.method === 'POST' && /\/layouts\//.test(request.url.pathname))).toBe(false)
+  })
   it.each(['ok', 'latest', 'recovery'] as const)('404旧后端fallback重载等待期间新增编辑：备份=%s，保护失败不采用磁盘稿', async failure => {
     await enterUnknown()
     const originalDisk = structuredClone(body)

@@ -285,7 +285,7 @@ describe('MissingInputDialog', () => {
     await act(async () => byTestId('missing-input-pick-dir')!.click())
     await act(async () => {})
     expect(addMock, '探路救不回来，不许记改指').not.toHaveBeenCalled()
-    expect(previewMock).toHaveBeenCalledWith('fig.py', 'run-*.traj', '/Volumes/B/runs', 'dir')
+    expect(previewMock).toHaveBeenCalledWith('fig.py', 'run-*.traj', '/Volumes/B/runs', 'dir', expect.any(AbortSignal))
     expect(document.querySelector('[data-dialog="missing-input-rewrite"]')).not.toBeNull()
   })
 
@@ -341,7 +341,7 @@ describe('MissingInputDialog', () => {
     expect(text()).toContain(en('missingInputNative'))
     await act(async () => byTestId('missing-input-pick-file')!.click())
     await act(async () => {})
-    expect(previewMock).toHaveBeenCalledWith('fig.py', '/Users/a/proj/run/x.h5', '/Volumes/B/run/x.h5', 'file')
+    expect(previewMock).toHaveBeenCalledWith('fig.py', '/Users/a/proj/run/x.h5', '/Volumes/B/run/x.h5', 'file', expect.any(AbortSignal))
     const confirmPage = document.querySelector('[data-dialog="missing-input-rewrite"]')!
     expect(confirmPage.querySelector('[data-rewrite-warning]')!.textContent).toContain('/Volumes/Work/proj/fig.py')
     const rows = confirmPage.querySelector('[data-rewrite-rows]')!.textContent!
@@ -403,6 +403,77 @@ describe('MissingInputDialog', () => {
     expect(document.querySelector('[data-dialog="missing-input-rewrite"]')).toBeNull()
     expect(dialog()).toBe(first)
     expect(commitMock).not.toHaveBeenCalled()
+  })
+
+  describe('等改写预览时可以放弃（QA-WIN-25）', () => {
+    /** 预览请求挂住，直到 signal 被 abort 才以 AbortError 拒绝（模拟真 fetch） */
+    const hangUntilAborted = () => {
+      let signal: AbortSignal | undefined
+      previewMock.mockImplementation(
+        (_s, _e, _c, _k, sig) =>
+          new Promise((_resolve, reject) => {
+            signal = sig
+            sig?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+          }),
+      )
+      return () => signal
+    }
+    const laterButton = () =>
+      [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === en('missingInputLater'))!
+
+    it('「稍后」在等预览时可点：取消请求、关框，不提交任何改写', async () => {
+      fileMock.mockResolvedValue('/Volumes/B/run/x.h5')
+      const sig = hangUntilAborted()
+      await render(<MissingInputDialog />)
+      await act(async () => useEnvStore.getState().requestMissingInput(native()))
+      await act(async () => byTestId('missing-input-pick-file')!.click())
+      await act(async () => {})
+      expect(sig()).toBeDefined()
+      expect(laterButton().disabled).toBe(false)
+      await act(async () => laterButton().click())
+      await act(async () => {})
+      expect(sig()!.aborted).toBe(true)
+      expect(useEnvStore.getState().missingInput).toBeNull()
+      expect(useEnvStore.getState().rewritePreview).toBeNull()
+      expect(commitMock).not.toHaveBeenCalled()
+    })
+
+    it('Esc 在等预览时同样放弃', async () => {
+      fileMock.mockResolvedValue('/Volumes/B/run/x.h5')
+      const sig = hangUntilAborted()
+      await render(<MissingInputDialog />)
+      await act(async () => useEnvStore.getState().requestMissingInput(native()))
+      await act(async () => byTestId('missing-input-pick-file')!.click())
+      await act(async () => {})
+      await act(async () => {
+        dialog()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      })
+      await act(async () => {})
+      expect(sig()!.aborted).toBe(true)
+      expect(useEnvStore.getState().missingInput).toBeNull()
+      expect(commitMock).not.toHaveBeenCalled()
+    })
+
+    it('超过上限自动放弃：框留着，说一句已停止、脚本没动', async () => {
+      vi.useFakeTimers()
+      try {
+        fileMock.mockResolvedValue('/Volumes/B/run/x.h5')
+        const sig = hangUntilAborted()
+        await render(<MissingInputDialog />)
+        await act(async () => useEnvStore.getState().requestMissingInput(native()))
+        await act(async () => byTestId('missing-input-pick-file')!.click())
+        await act(async () => {})
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(31_000)
+        })
+        expect(sig()!.aborted).toBe(true)
+        expect(useEnvStore.getState().missingInput).not.toBeNull()
+        expect(text()).toContain(en('rewritePreviewTimeout'))
+        expect(commitMock).not.toHaveBeenCalled()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 
   it('一处都改不了：留在框里，逐条说出为什么', async () => {

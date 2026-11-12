@@ -2,13 +2,13 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「编码 Agent 桥」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_ai_agents.py`、`test_ai_login.py`、`test_ai_bridge.py`、`test_ai_capabilities.py`、`test_ai_refresh.py`、`test_ai_history.py`、`test_ai_idempotency.py`、`test_ai_revert_stale.py`、`test_codex_install_cli.py`、`test_managed_cli.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_ai_data_recipe.py`、`tests/test_ai_data_template.py`、`tests/test_ai_agents.py`、`test_ai_login.py`、`test_ai_bridge.py`、`test_ai_capabilities.py`、`test_ai_refresh.py`、`test_ai_history.py`、`test_ai_idempotency.py`、`test_ai_revert_stale.py`、`test_codex_install_cli.py`、`test_managed_cli.py`
 > `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml；revert 只回滚本次 AI 那一版（细则见 `ai-agent-bridge.md`）
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 240
-改到: `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`codexinstall.py`、`managedcli.py`、`resources/managed_cli_lock.json`、`/api/ai/*`
+改到: `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`ai_data_recipe.py`、`ai_data_template.py`、`codexinstall.py`、`managedcli.py`、`resources/managed_cli_lock.json`、`/api/ai/*`
 主题: 编码 Agent 桥 → `ai-agent-bridge.md`
 必守要点: 「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml
 -->
@@ -160,7 +160,7 @@ order: 240
   中英两份），JSON 里不写中文界面串；`oauth` 本期恒为 `null`（预留位，界面不渲染「登录」）。加载失败 import 时抛
   `CatalogError`，不退成空列表。冻结产物靠 `packaging/tavotto.spec` 的 datas 带上这份 JSON。
   **型号以服务商实时列表为准**：`POST /api/ai/endpoints/models`（`ai_providers.live_models`）对接口
-  `GET {base_url}/v1/models`（`x-api-key` + `Bearer` 两个头、`anthropic-version`，5 s 超时、不跟随重定向），
+  `GET {base_url}/v1/models`（`x-api-key` + `Bearer` 两个头、`anthropic-version`、`User-Agent: Tavotto/<版本>`——urllib 默认的 `Python-urllib` 会被 OpenCode Go 的 Cloudflare 403 掉、读成密钥不对，`test_models_probe_identifies_itself_not_as_python_urllib`；5 s 超时、不跟随重定向），
   只在用户点「从服务商获取」时才联网，设置页渲染不碰网络；成功结果按（接口 id, base_url, 密钥 sha256 前缀）
   缓存一天在 `config.data_dir()/ai_models_cache.json`；**密钥只发往已存地址同源（scheme + host + 端口，
   `ai_providers.live_models` 判，改了地址不带旧密钥 → `key_origin_mismatch`）、只走 https（回环 `localhost` /
@@ -311,6 +311,23 @@ order: 240
   规则 `canonical_digest`（形状 + 小端 float64、掩码 = NaN）与基准探针 / 标准库镜像逐字同一份；每张图 `FINGERPRINT_BUDGET`
   个数值，超出的元素记 `over_budget`（不截断、不扣配额）。指纹不进 `editable`、不参与 gid / identity（ADR 0083）、不进文档。
   L3 新版式问题只复用 `interference.detect` + `preflight.run`，只算改后新出现的。看护 `tests/test_figure_verifier.py`。
+- **数据出图 v2 的画法配方（`engine/ai_data_recipe.py`，ADR 0178，实验开关 `ai.taf.enabled` 后面）**：被执行的脚本出自 Tavotto 模板，模型只交一份
+  **闭集配方**（`FigureRecipe.from_dict` 严格：未知键 / 未知取值 / 层数 / `why` 不合格一律拒收，码是 `RecipeError.code`）；纯标准库、不执行、不写文件、
+  不渲染（模板是后续 PR）。**唯一权威是三张表**：`MARK_RULES`（图元、汇总要求、是否露原始点、一句含义）、`REJECTIONS`（每个拒绝条件一个稳定码 + 一句话，
+  `ERROR_CODES` 就是它的键，前端中英文文案与 `test_error_codes.py` 同步）、`FAMILIES`（十二类科学问题：列角色与类型、允许的图元、批次、专属拒绝码、「何时用 / 何时不用」）。
+  `validate_recipe(profile, recipe, confirmed=, values=)`：结构规则只看 `FolderProfile`，取值规则（每组 n、非负、重复 x、dose > 0……）只在给了带行数据的摘要时才判，
+  不给就不判（`eligible()` 把它们列在 `unchecked`，不假装判过）；`unit` / `paired` 只认 `Confirmed`（用户在对话里点选确认过的设计与个体编号列），
+  `DataSummary.id_like` / `repeats` 只是线索、永不当已确认；`enforce_order` 在模型排序之后再强制一遍（柱加误差线不排在含原始点的画法前、不合格剔除带原因、剩不足 2 个如实返回）。
+  `renderable(family)` 的出处是 `ai_data_recipe.RENDERABLE`（现在是批次 1 的四族 comparison、trend、relationship、distribution；`ai_data_template` import 时核它与 `RENDERERS` 逐项一致）。选图准则文字 `ai_prompt_pack.data_figure_guidance()` **由这三张表渲染**，不许另抄第二份规则清单
+  （`tests/test_ai_data_recipe.py` 钉每个码都有句子、准则不出现表里没有的族 / 图元）。阈值全是 `ai_data_recipe` 的具名常量。
+- **数据出图 v2 的模板与期望指纹（`engine/ai_data_template.py`，ADR 0178）**：`render_recipe_script(entry, recipe, data_rel=, stem=, style=)` 只接受通过
+  `validate_recipe` 的配方，不认识的组合抛 `TemplateError`、不画近似。**一份实现两处用**：读表 / 单元格解析 / 汇总 / 抖动 / 箱 / 核密度 / 拟合都是模块里的普通函数
+  （`RUNTIME_FUNCTIONS`），这些函数的源码（`inspect.getsource`）与 `xlsxread` 的源码原文被收进**旁边的公共模块** `tavotto_plot_<sha256 前 8 位>.py`（`runtime_module()`，内容寻址、对所有图逐字节相同、不含数据，
+  落盘只新建、同字节复用、异字节按损坏报错不覆盖——落盘在下一个 PR），脚本只剩 import + 常量 + `main()`（`render_recipe_script` 返回 `Rendered`）；父进程的 `expected_fingerprints` 调用的是同一批函数；
+  列名 / 表名 / 文件名只以 `repr()` 字面量进脚本（来源注释是 ASCII JSON，不含 `why`），脚本 AST 的标识符集合与数据无关。脚本不改 `sys.path`（两条入口都把脚本目录放在 `sys.path[0]`，`tests/bridge/test_bridge_generated_figure_script.py` 钉 native）。每个数据 artist 的 label 在整张图里唯一
+  （`make_label`），验证器按 label 匹配。**可核 = 散点（points / jitter）、Line2D（line / step / hline_summary / fit_line / density / ecdf）、柱组（bar / hist）；不核 = errorbar / band / box / violin**
+  （误差棒容器与 `fill_between` 在 manifest 里没有 label 字段）——`fingerprint_coverage` 如实列出，不折算成 verified；没有任何可核层 = 这张图的数据没法核。
+  relationship / distribution 的规则（Freedman–Diaconis 分箱、Scott 带宽、ECDF 阶梯、在画出来的坐标里拟合的最小二乘线）各只有运行时里一份实现，可画的图元组合由 `validate_recipe` 与模板同口径拒绝（ADR 0178）。样式数字取自 `profiles.load()`（`style_from_profile`，取不到才用具名默认）；分类色是 Okabe–Ito（公开色盲安全色板）。看护 `tests/test_ai_data_template.py`（真 safe worker 对拍）与 `tests/bridge/test_bridge_generated_figure_script.py`。
 - **TAF 改图（`engine/ai_figure_edit.py`，Phase 3a）**：只在 `config.ai_settings()["taf"]["enabled"] is True`（默认关、无界面开关）
   时由 `ai_bridge.run` 走到；开关关着时旧路径逐字不变（cwd 是项目目录、不写任务列、`ADAPTERS` 为空）。开着时：spawn 之前在
   `data_dir()/cache/ai_candidates/<sid>/` **字节复制**目标脚本（+ 项目根的 `paper_style.py`，绝不建链接），拍原项目有界指纹（跳过
@@ -360,6 +377,38 @@ order: 240
 
 转换运行检查与采用后重开共用发现逻辑的首个入口；主入口失败或不出图，不能改跑辅助函数取得部分图后放行。
 真实错误交回既有有界修正流程。看护 `tests/test_ai_convert_app.py`（真 worker 主入口失败、辅助函数可出图、修正后采用）。
+
+**输出完整性线索**：转换检查用 `convertcontext.file_reference_hints` 列原源码的静态文件名字面量，
+再列本次 worker 的改道写入尝试；两份都只保留经 `readscope` 脱敏的 basename、去重、限量并标记截断。
+前者可能是输入，后者可能失败或之后被删除；动态路径、helper、临时目录、C 扩展和外部程序也可能漏记。
+没有 worker 记录是 `null`，不是空列表；完整性始终 `unknown`，不能从出图或名单推断所有输出 / 内容等价。
+线索随 comparison 留存并交给 check 与采用前界面，项目原件仍不受校验写入影响；看护
+`tests/test_convert_output_evidence.py`（真实 worker / 暂存恢复 / 删除反例）。
+
+**缺输出判定（#1809）**：R / MATLAB 来源里**字面量路径、位于顶层普通语句**的写出调用（`convertsrcwrites.certain_writes`：R 的
+`write.csv` / `saveWorkbook` / `write_xlsx` / `saveRDS` / `cat(file=)` 等，MATLAB 的 `writetable` / `xlswrite` / `fopen(..,'w')` 等；
+图形输出与读取不算，变量 / 拼接 / 分支 / 循环 / 函数体 / 绝对路径 / `..` 一律不算）才是「能确定的写出」。每次校验运行前清空改道区，
+运行后以改道区里**最后还在**的文件名为准（写了又删、写失败都算没写出）；有缺项时 `run_validation` 回 `status: "missing_outputs"`
+（其余字段同 ok），不当 ok。`ConvertAdapter._render` 只在「编排器接着真会修正」（`_correction_pending`：`max_corrections` 与
+`corrections` / `agent_runs` 余量）时记 `output.source` / `source_outputs_missing` 失败，进有界修正，提示只含缺的文件名；
+修正之后仍缺**不判失败、不挡采用**，缺项随 `comparison.output_evidence` 带出。该对象新增字段：`source_writes` / `missing_outputs`
+（`null` = 没法判定：非 R / MATLAB、没有能确定的写出、无改道记录、沙盒 cwd 下 worker 没回报或回报被截断；`[]` = 都写出了；否则
+`[{name, line}]`）/ `missing_truncated` / `output_check`（`written` | `missing` | `unknown`）/ `corrected`。`completeness` 仍恒 `unknown`：
+文件名在不证明内容和计算一致。沙盒 cwd 下合并改道区与 worker 回报的 `sandbox_files`（任一里有就算写出）。内置执行器的 `check` 对同一组缺项只报一次，再次出现照常放行。看护 `tests/test_convert_missing_outputs.py`
+（静态抽取正反例 / 真 worker 判定 / 成功、补齐、仍缺、无法确认四种终态）。
+
+**内容核对（#1809 第二层）**：候选写出了的「能确定的写出」，若项目里已有同名旧结果（脚本旁优先、其次项目根），`convertcompare`
+在校验窗口内（候选文件还在改道区；沙盒 cwd 的文件由 worker 先拷进改道区 `.tavotto-sandbox/`，各 ≤ 8 MiB、合计 ≤ 64 MiB）逐个比：
+csv / tsv 按单元格（数值相对 1e-9 / 绝对 1e-12，文本原样，行列数须一致），xlsx 用标准库读（逐表顺序、逐格值、**不信 `<dimension>`**，
+不比样式，不依赖 openpyxl），txt / log 逐行原样；不比原始字节。每个文件 `files[]` 一行：`state` = `missing` | `match` | `differs` |
+`incomparable`；`differs` 带 `diff_count` 与至多 5 处坐标（`{sheet, cell}` / `{row, col}` / `{line}` / `{kind: shape | sheets}`，**没有值**）；
+`incomparable` 带 `reason` ∈ `no_previous` / `stale`（旧结果 mtime 早于候选这次读过的任一输入，输入 mtime 来自 worker 回报的
+`inputs_read`）/ `format` / `too_large`（超大小 / 时间 / 单元格预算）/ `inputs_unknown`（观察记录缺失、截断或为空）/ `compare_failed`
+（比较器自身异常——任何异常都只是 incomparable，不是校验失败）。内容差异**不**自动进修正：「让 AI 再对一次」是用户点的一次有界修正
+（`POST /api/ai/convert/<sid>/realign` → `prepare_realign` / `run_realign`，提示只有文件名、坐标和计数；修正前整份备份，没产出新的
+可采用候选就原样还原，仍 `ready`；用户中途放弃才删）。`status.realigning` 为真时采用 409 `convert_resume_busy`。
+采用 `POST /adopt` 可带 `specified_outputs: [{name, file}]`：只认清单里 `missing` 的名字，`file` 只留 basename，登记进 meta 与采用回执，
+被指定的文件一个字节都不动。看护 `tests/test_convert_output_content.py`。
 
 **R / MATLAB 来源（ADR 0143 修订，2026-10-23）**：`POST /api/ai/convert` 多一个可选 `source_language`（`python` 缺省 | `r` | `matlab`）。
 r / matlab 时 `library` 必须缺省，后端用 `sourcelang.detect`（纯标准库；`.R` / `.r` / `.m` 纯文本、≤ 1 MB、UTF-8；`.m` 带 Objective-C 特征或
@@ -442,6 +491,16 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 非零退出默认写 `agent_exit_nonzero`；适配器的 `classify_event` 只凭**结构化字段**把失败归到 `RUNNER_ERRORS` 里的 `agent_auth` / `agent_quota` / `agent_network`，写进 `state["runner_error"]`（`ai_bridge` 对所有 Agent 取它）。
 Codex 只认 `turn.failed.error` 的 `message` 开头 Codex 自拼的 `unexpected status <三位码>`（真机 0.163.0 无结构化码字段；401/403 auth、429 quota、502/503/504 network）；Claude 只认 `assistant.error`（`authentication_failed` / `rate_limit` / `billing_error`）与 `result.api_error_status`。
 **不匹配任何自由文本、不保留原文**；字段没有或不认识就不判。失败卡「错误码 → 主按钮」的闭集表是前端 `AGENT_ERROR_ACTION`，与 `tests/golden/ai_error_action_vectors.json` 前后端对拍（`tests/test_ai_cli_error_classes.py`、`transcriptModel.test.ts`）。
+Codex 的 **404** 归 `agent_model_unavailable`（只有 CLI 适配器产出的码在 `ai_agents.CLI_RUNNER_ERRORS`，不进与 `DONE_REASONS` 对齐的 `RUNNER_ERRORS`）：旧版 codex 被选了它不认识的新型号。**只在走 CLI 自己的登录时采纳**——桥在 `_consume` 起点把 `endpoint_backed`（`spawn_overrides` 真的产出了注入，与 `_agent_caps` 同一判据）放进分类状态，第三方接口下的 404 多半是地址错，不归这一类。没走 TAF 的会话失败时同样把 `runner_error` 写进会话 `error`（否则失败卡只剩「失败」、主按钮对不上）。失败卡主按钮 `update_cli`：能一键更新 →「更新 Codex」；不能 →「换回默认型号」，怎么更新进「详情」；都没有 →「重试」。
+
+## CLI 比模型清单旧（`cli_update`，2026-11-04 用户反馈）
+
+同一家族的 CLI 共用一份目录缓存（Codex 桌面版 / IDE 插件 / 命令行都写 `models_cache.json`），桌面版先升级会把新型号写进去，Tavotto 启动的旧 CLI 选到就 404。
+判据：适配器 `catalog_client_version()`（Codex = 缓存顶层 `client_version`；默认 None = 不提示）严格新于已解析 CLI 的 `--version`（`ai_agents.older_than`，任一判不出就不提示）；第三方接口接管时不算。
+capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, source, action}`，`action` 闭集 `ai_bridge.CLI_UPDATE_ACTIONS`：
+`switch` = 候选里另有一份版本 ≥ 清单的；`install` = 托管锁版本 ≥ 清单（锁追不上清单就不给，装了也没用）；`manual` = 都没有，前端按 `source` 说怎么更新。
+来源是 `custom`（用户自己指定的路径）一律 `manual`：不替用户换掉他选的那份，托管安装在候选里排在 custom 后面、装了也顶不掉，下次照样 404。
+`POST /api/ai/agents/<id>/update` 现算同一份计划：switch 经 `set_agent_path_override`（同一套 `--version` 验证）、install 走 `start_install`、其余 409 `ai_cli_update_unavailable`；请求体不接受路径或包名。看护 `tests/test_ai_cli_update.py`、`web/e2e/ai-cli-update.spec.ts`。
 
 ## 内置执行器（`engine/agent_runner/`，ADR 0147，第一阶段核心循环 + 第二阶段已接入改图）
 
@@ -450,6 +509,7 @@ Codex 只认 `turn.failed.error` 的 `message` 开头 Codex 自拼的 `unexpecte
 
 - **边界**：纯标准库、3.10 可跑；不 import 科学栈，**不 import `ai_bridge` / `ai_agents` / `ai_tasks`**；内部依赖只有 `tlstrust` 与纯标准库的 `ai_prompt_pack`（convert 提示词的同一份文字）。
   只经 stdout 事件行与父进程说话。入口 `python -m tavotto.engine.agent_runner --cwd <候选目录> --target <相对路径> --wire <名> --base-url <url> --model <名>`。
+- **会话 id**：每个请求（所有协议）都带 `x-opencode-session: <本进程一次生成的随机 32 位十六进制>`——一个 runner 进程 = 一段对话；OpenCode Go 不带就 400 `MissingSessionID`，别家忽略。只是随机数，不含用户信息、不跨进程复用。看护 `test_every_request_carries_one_stable_session_id`。
 - **协议**（`wires.py`）：`anthropic`（`{base}/v1/messages`，`x-api-key` 与 `Authorization: Bearer` 都给，`anthropic-version: 2023-06-01`，
   系统提示与最后一个工具定义带 `cache_control: ephemeral`）、`openai-chat`（`{base}/chat/completions`）、`openai-responses`
   （`{base}/responses`，`store: false`）、`demo`（剧本回放，不联网，端到端测试用）。anthropic 的思考由**调用方声明** `--thinking {adaptive,budget,none}`（默认 `none`，runner 不猜：第三方兼容网关各不相同）：`adaptive` 发 `thinking:{type:adaptive}` + 有 effort 才发 `output_config.effort`（新模型，不发已弃用的 `budget_tokens`）；`budget` 发旧式 `budget_tokens`（必须配 `--effort low|medium|high|max`，`max` 映射到 high 档；缺省 effort 起跑即 `internal/bad_args`、0 次请求，不静默不发 thinking）；`none` 都不发。thinking 块按原样回放，不做 assistant prefill，工具参数一律 `json.loads`。openai-chat 回复里的 `reasoning_content` 存进该轮 `native` 并在回放这一轮 assistant 消息时原样带回（DeepSeek 思考模式必需，报错原文见 wires.py；没有思考内容的轮次不加该键，不加空格占位——会话内始终同一模型）。openai-responses 只在给了 `--effort` 时传 `reasoning.effort`。`--wire openai-responses` 配 `--effort max` 起跑即 `internal/bad_args`、0 次请求（Responses 没有 max 档，不静默不发 reasoning）。
@@ -615,11 +675,11 @@ Codex 只认 `turn.failed.error` 的 `message` 开头 Codex 自拼的 `unexpecte
 
 ### `run_command`：任意命令，两档（`fixtools/command.py` / `fixtools/cmdsandbox.py`，#1374，ADR 0149 §七修订）
 
-`tier=user_env`、`waits_for_user`。看护 `tests/test_fixtools_command.py`。参数：`argv`（列表）或 `command`（字符串，`shlex` 拆，**不经 shell**）二选一；`timeout_s`（默认 60、上限 300）；`outside_sandbox`（布尔，第②档开关，必须配 `reason`）；`reason`（一句给用户看的话，≤300 字）；`cwd`（`scratch` 默认 / `project`，`project` 只给第②档）。
+`tier=user_env`、`waits_for_user`。看护 `tests/test_fixtools_command.py`。参数：`argv`（列表）或 `command`（字符串，`shlex` 拆，**不经 shell**）二选一；`timeout_s`（默认 60、上限 300）；`outside_sandbox`（布尔，第②档开关，必须配 `reason`）；`reason`（一句给用户看的话，≤300 字，没沙盒的机器上可不给）；`cwd`（`scratch` 默认 / `project`，`project` 只给第②档）。
 先过**硬拦表**（`hard_block_reason`，命中**不问用户**直接 `hard_blocked`，审计 `blocked`，两档都适用）：sudo 类、磁盘 / 关机类、起 shell（先剥掉 `env` / `nohup` / `timeout` / `nice` 等包装器再判）、管道进 shell、shell 语法、`dd of=/dev/…`、对根 / 盘符 / 主目录的递归删改权限、
 **宿主代理入口**（`osascript` `launchctl` `open` `systemd-run` `systemctl` `loginctl` `busctl` `gdbus` `dbus-send` `xdg-open` `xdotool` `docker` `podman` `nsenter` `crontab` `at` `schtasks` `reg` `wmic` …）、指向 `ReadScope` 硬拦区的参数。硬拦表是**第一道**，不是安全边界——沙盒才是（`env_contains_project` 之类的结构检查也在问用户之前）。
 
-- **第①档（默认，加固沙盒内）**：`cmdsandbox.sandbox_kind()` 找 sandbox-exec / bwrap 并**探一次**（加固后的沙盒里真能跑 Python 才算可用）；没有 → `sandbox_unavailable`（**不问、不跑**，文字说明只能申请第②档）。可写清单 `command_writable_dirs`：命令自己的临时目录（`data_dir()/cache/fix_commands/<uuid>`，cwd 与 TMPDIR / TEMP / TMP 都是它，用完 `trial._remove_tree` 带重试清理）、
+- **第①档（默认，加固沙盒内）**：`cmdsandbox.sandbox_kind()` 找 sandbox-exec / bwrap 并**探一次**（加固后的沙盒里真能跑 Python 才算可用）；没有 → 这台机器只有第②档，默认调用**直接弹第②档的卡**（见下「Windows / 无沙盒」）。可写清单 `command_writable_dirs`：命令自己的临时目录（`data_dir()/cache/fix_commands/<uuid>`，cwd 与 TMPDIR / TEMP / TMP 都是它，用完 `trial._remove_tree` 带重试清理）、
   目标 Python 环境前缀（`writable_envs`：`ctx.env_prefixes`（取前缀里的解释器）+ 已登记 env id 的解释器前缀，**所有候选统一**按 `convertdeps.describe_env` 判种类，系统自带 / 内置 runtime 一律不放；落在或盖住 Tavotto 安装目录 / 应用包 / 内置 runtime 的前缀、找不到解释器的前缀、浅到只有一两级的路径也不放；**项目内的 `.venv` 只放那个子目录**）、pip / conda 用户缓存（标准位置 `~/.cache/pip`、`~/Library/Caches/pip`、`~/.conda`，不读 pip.conf）。
   **可写前缀若是项目根或其上级 → `env_contains_project`**（问用户之前拒）。**允许联网**。凭据位置（`DENY_HOME_RELATIVE` 里实际存在的）在沙盒里连读都拒（bwrap 目录换空 tmpfs、文件盖 `/dev/null`；macOS `deny file-read*`）。
   环境：`cmdsandbox.clean_env` 去掉密钥类变量（名字带 KEY / TOKEN / SECRET / PASSWORD / AUTH …）与宿主代理入口变量（`DBUS_SESSION_BUS_ADDRESS` `DBUS_SYSTEM_BUS_ADDRESS` `XDG_RUNTIME_DIR` `DISPLAY` `WAYLAND_DISPLAY` `XAUTHORITY` `SSH_AUTH_SOCK` `GPG_AGENT_INFO` `DOCKER_HOST` …），`TMPDIR` 指向临时目录，`TAVOTTO_PROJECT` 给项目路径（项目只读）。
@@ -639,7 +699,8 @@ Codex 只认 `turn.failed.error` 的 `message` 开头 Codex 自拼的 `unexpecte
   参数开头的 `~/`（只读工具脱敏后的主目录路径）在政策检查、审批和执行之前统一展开；不启用 shell，也不展开变量、通配符或命令替换。
 - **进程树**：命令的直接进程退出（或超时被叫停）后，`_reap_tree` 结束并**确认**整棵受管进程树退出，才收输出、才核对 / 放锁。POSIX：命令在自己的新会话 / 进程组里，`killpg(SIGKILL)` 到 `ProcessLookupError`（组里一个不剩）才算干净；Windows：Job Object（`KILL_ON_JOB_CLOSE`）终止并等活动进程归零，起不来退回 `taskkill /T`（Windows 路径未在 Windows 上实测）。确认不了时结果带 `processes_left`。这样后台孙进程既绕不过时限，也不会在第②档核对、放锁之后才去改脚本。盲区：自己 `setsid` 逃出进程组的进程 POSIX 上追不到（Linux 沙盒内有 `--unshare-pid`，随 init 退出全被收掉）。
 - **快照与可写清单同源**：快照覆盖 `writable_envs` 里**每一个**命令获准写入的环境（`change_python` 新建、只靠 `env_prefixes` 进来的都算；没登记 id 的现场登记 `cmd_env_<hash>`），不只会话创建时的前缀。
-- **Windows / 无沙盒**：#1358 之前没有沙盒，第①档直接 `sandbox_unavailable`，只有第②档（备份 + 单独点头照旧）。
+- **Windows / 无沙盒**：#1358 之前没有沙盒，只有第②档（备份 + 单独点头照旧）：不带 `outside_sandbox` 的调用也直接弹第②档的卡，不返回错误让模型重试（TVD-V7R4，模型没重试时用户点了批准却什么都没发生）。没给 `reason` 时卡上没有 `reason` 字段，前端显示 `aiFix.outsideNoSandbox`。这不算自动升级：有沙盒的机器上第①档失败仍只提示。
+- **Windows 的程序名**：不经 shell 时 CreateProcess 只补 `.exe`，所以审批之前由 `_windows_program` 解析不带路径的程序名：`conda` → 环境所属安装的 `Scripts\\conda.exe`（`launcher.find_conda_exe`），PATH 上的 `.bat` / `.cmd` → 全路径；卡上显示解析后的路径。盲区：批处理由 cmd.exe 解释，参数里的 `&` 等不经我们转义（同 `.bat` 全路径，用户在卡上看到完整命令，第②档本来就能跑任意程序）。
 - **审计行**：多 `sandbox ∈ {hardened, outside, none}`（`none` = 没执行：被拒 / 没沙盒 / 未获同意）与 `command_tier ∈ {1, 2}`；命令、理由的文字**不进审计**（只记长度），`outside_sandbox` 布尔照记。执行前打快照（设置 + 目标环境 freeze）。
 - **活动与看门狗**：前端把 `activity.tool=run_command` 映射成「正在运行命令…」；命令在跑是在途工具，不算卡住；等卡片也不算。
 - **已知盲区（如实）**：
@@ -654,13 +715,14 @@ Codex 只认 `turn.failed.error` 的 `message` 开头 Codex 自拼的 `unexpecte
 看护 `tests/test_fixtools_link.py`（含真子进程的整链用例）、`tests/test_missing_input.py::test_the_endpoint_and_ai_repair_share_one_link_function`。
 
 - **一律问**：approve 卡 = 模型给的一句话 `summary` + 折叠 `details`（脚本要的串、完整路径、`evidence`、规则含义）。没有 `ctx.ask` / 非 yes = `needs_approval`，规则与快照都不写。
-- **判据都在弹卡之前**：`requested` 必须在 `inputremap.known_requests`（报告 `missing_input` 载荷 ∪ 脚本里以常量出现且此刻找不到的路径 ∪ 已经接上的：靠现有规则才读得到的常量与现有 `file` 规则的 `from`，TVD-6Z9R）里（按 `match_request` 规范化比对），否则 `requested_unknown`；其 `via` 不是 `open`（探路 / glob / C++ 读取器）→ `link_unreachable`（要改脚本，AI 不改）。
+- **判据都在弹卡之前**：默认 `mode=file` 的 `requested` 必须在 `inputremap.known_requests`（报告 `missing_input` 载荷 ∪ 脚本里以常量出现且此刻找不到的路径 ∪ 已经接上的：靠现有规则才读得到的常量与现有 `file` 规则的 `from`，TVD-6Z9R）里（按 `match_request` 规范化比对），否则 `requested_unknown`；其 `via` 不是 `open`（C++ 读取器：ovito `import_file`、h5py 等）→ `link_unreachable`（要改脚本，AI 不改）。Python 的探路（exists / isfile / isdir / stat / getsize / listdir / glob / os.walk）都查改指表，它们问的路径与「先检查、再自己 raise」认出的路径都按 `open`，接得上；glob 与文件夹条目推文件夹规则（ADR 0106 修订 2026-11-09）。
   `chosen` 过 `ctx.scope.check`（凭据位置 `denied`、范围外 `outside`）、存在、`inputremap.rule_for_choice` 当场推得出规则，才打扰用户。
-- **同一套推导与落盘**：写入只经 `inputremap.link`（= `rule_for_choice` + `add_rule`；`POST /api/engine/input-remap` 调的也是它）。快照先于写入，`settings_keys()` 含 `input_remap`；
+- **同一套推导与落盘**：文件模式写入只经 `inputremap.link`（= `rule_for_choice` + `add_rule`；`POST /api/engine/input-remap` 调的也是它）。快照先于写入，`settings_keys()` 含 `input_remap`；
   回滚经 `inputremap.restore_raw`（项目锁 + 换代），**只在改指表真的变了才动**，别的回滚不让它换代。应用侧通知 `FixContext.on_input_remap_changed(state, "added"|"restored")` 由 `app._fix_remap_notifier` 在 `bound_project` 下做收会话 / 取消试运行 / SSE（工作线程没有请求上下文）。
 - **`try_run` 带规则**：副本里的守卫进程按文件加载 `figcapture`（`TAVOTTO_TRIAL_ENGINE_DIR`，用完摘掉 `sys.path` 与模块）并 `install_input_remap(rules_for(项目))`；规则里落在被复制脚本目录内的绝对 `from` 另加一条换算到副本路径的（`trial_remap_rules`，脚本用 `__file__` 拼路径时才命中）。
   装不上如实报 `input_remap: …could not load…`，不静默当没有。自定义 runner 仅在有规则时多收一个 `input_remap` 关键字。
 - **已知取舍**：同一处的旧 `file` 规则（`remap_target` 里 `file` 优先）会盖住后来的 `prefix` 规则——与弹窗行为一致，没有为此改规则优先级。重新指认已接上的一串时，`inputremap.link` 把会被旧 `file` 规则盖住的新 `prefix` 规则收窄成 `file` 规则（替换旧的），新选择不会白选；`read_run_report` 的 `data_links` 列出生效规则，供 AI 判断「读到的是用户指认的那份」；每条的 `requested` 是 `known_requests` 里经这条规则改道的具体串（`prefix` 规则的 `from` 只放 `applies_to`，拿它当 `requested` 会 `requested_unknown`）。
+- **旧前缀没有具体文件名（TVD-DSSV）**：动态拼出来的文件可能没有留在本轮报告或规则里，不从目录前缀臆造文件。`read_run_report` 给现有 `prefix` 规则返回 `prefix_id`；`mode=prefix` 的 `requested` 只接受该标识，`chosen` 是存在且通过读取范围的目录。标识用本进程密钥绑定项目、完整规则与改指代次；重启 / 变代后必须重读报告。变更影响整条前缀，**即使用户刚选过目录也另弹确认卡**，写明所有匹配路径、较具体规则优先及 native 不应用改指；确认后重验目录、在项目锁内核对规则和代次、打快照并替换，竞争时拒绝。目标相同只报无变化。脚本和数据不改；`try_run` 走安全试运行的规则，不能据此声称 native 已修好。
 
 - **诊断三缺口（覆盖率测量补）**：① 项目内同名包遮蔽——`engine/importshadow.py`（纯函数、只读文件系统）对 `No module named 'a.b'` / `cannot import name … (项目内路径)` 判「父包目录在脚本目录 / 项目根下、缺的子模块不在里面」（脚本目录在 `sys.path[0]`、先于已装的包；项目根被 worker 追加在末尾、排在 site-packages 之后，所以项目根里的同名包要 traceback 里有一帧落在它里面才算，`search_order=after_site`，装同名发行包能修）；`read_run_report` 与应用 `try_run` 共用 `runreport.project_run_report`，以当前错误为准、`project_package_shadow` 放最前，历史失败不覆盖当前判断；诊断副本 `try_run` / `try_import` 按自己的导入范围调用 `base.shadow_note`。`regular` 包装同名包不管用；无 `__init__.py` 或扩展包路径的 namespace 可由安装真包修复，提示词 3f 同此。② 安装失败只按安装器输出分类，并带脱敏后的 `ERROR:` 一两行（`detail`），由 `install_packages` 回给模型；不再另起 `pip index` 探测，以免忽略私有源设置并泄露包名。`dependency_not_found` 不断言包不存在，也可能仅没有当前 Python / 平台的可用版本；取消事件贯穿安装。③ `read_logs(worker)` 按 `diagnostics.owned_worker_logs(项目)` 取当前项目最近一份日志。看护 `tests/test_fixdiagnostics.py` / `tests/test_fixdiagnostics_report.py`。
 
@@ -695,6 +757,29 @@ Codex 只认 `turn.failed.error` 的 `message` 开头 Codex 自拼的 `unexpecte
   不证明可编辑；转写仍另行交接。
   `read_run_report` 保留 nested `result.error` 与实际 launch/workdir。前端收尾复查照旧；诊断包仍只记审计摘要。
   看护 `tests/test_fix_application_verification.py`、`tests/test_fixasks.py`、`tests/test_ai_fix_endpoint.py`。
+
+### 转换目标由 Tavotto 代写（TVD-BCZ0 方案 A，`engine/convertwrite.py`、`fixmcp.py` 转换模式，ADR 0143 修订 2026-11-02）
+
+- **根因**：Windows `windows.sandbox="unelevated"` 之下命令能跑，但 Codex 自带的 file_change / apply_patch **一律 `Failed to write file`**（Lab run `20261102T055146Z-8fc66e`，OpenAI 官方模型，Codex 0.164：读完源码与数据、写目标时 file_change `status=failed`，模型按提示词停下，目标缺失）。DeepSeek 那次成功只因为它恰好用 shell 写文件。
+- **做法**：转换会话里由 Tavotto 在沙盒外写目标文件。复用修复模式的服务进程：`tavotto fix-mcp --url … --convert-id <会话>`（与 `--fix-id` 互斥）换一个工具集——`tools/list` 是 `fixmcp.CONVERT_TOOL` 写死的一条（不回调），
+  `tools/call` → `POST /api/ai/convert/<id>/target {content}` → `convertwrite.write`。服务名 `tavotto_convert`，工具 `write_conversion_target`，参数只有 `content`（整份脚本，UTF-8 文本）；额外参数（如 `path`）在 MCP 层就被丢掉，**目标路径只有 Tavotto 定**（`Grant.target` = `cand.target`）。
+- **鉴权**：每个转换会话一枚随机令牌（`convertwrite.open_grant`，`ai_bridge.run` 在 `_cmd` 之前开），**只经子进程环境变量 `TAVOTTO_CONVERT_TOKEN`**（Codex 的 `env_vars` 只列变量名），不进 argv、不进日志；头 `X-Tavotto-Convert-Token`；
+  `security._session_guard` 只认「`POST /api/ai/convert/<该会话>/target` + 对应令牌」；会话终态（`_finish_session`）/ 被拒绝的尝试（`_drop_attempt_files`）即 `close`，另有 3 小时兜底寿命。令牌错 / 别的会话 / 已结束 = 401（guard）或 403 `convert_tool_forbidden`，不区分原因。
+- **上限与失败码**：`MAX_BYTES` = 2 MiB（超限拒绝，不截断）；闭集失败码 `bad_content | empty | too_large | target_unsafe（目标是符号链接/目录）| write_failed`；写入走 `atomicio.write_bytes`。只记闭集码与字节数（`cand.extras["target_tool"] = {calls, ok, last_code, bytes}`）。
+- **注入**：`CodexAgent.build_command` 在**所有平台**追加 `ai_agents._codex_convert_mcp_args(ctx.convert_mcp)`（本次调用级 `-c mcp_servers.tavotto_convert.{command,args,env_vars,tool_timeout_sec,startup_timeout_sec,default_tools_approval_mode="approve"}`，与修复会话同一写法）；Windows 上与 `windows.sandbox="unelevated"` 并存。
+  适配器声明 `convert_write_tool = True` 才开（只有 Codex）。**Claude Code 不加**：它自带的 Write 不经 Codex 的 Windows 沙盒，没有失败证据，改它会动一条已验证的路径；内置执行器本来就由 Tavotto 写文件。
+- **提示词**：`ai_prompt_pack.convert_prompt(write_tool=True)` 用 `rule_write_tool` 替换 `rule_write_fail`——“写目标文件只能调用 MCP 工具 write_conversion_target（参数 content 是整份脚本，一次写入）；不要用文件编辑工具、apply_patch 或命令写目标文件。如果这个工具返回失败，直接说明它给出的失败原因并停止，不要换别的方式或位置写。”；Windows 的 cmd.exe 一条保留。`prompt_for` 读 `cand.extras["write_tool"]`（桥按适配器声明写）。
+- **判定**：写入之后的校验 / 写回流程不变。`ai_convert.write_denied` 增第三种形状：`target_tool.calls > 0` 且没有一次成功 → 目标缺失时判 `agent_write_denied`（不可修正）。运行事实多一项 `target_tool_ok`（布尔，权威来源是 `convertwrite.ok`，不看事件；`merge_run_facts` 取或，没有该工具的会话是 None），
+  登记进 `exectrace.ATTRIBUTES` 的 `cli_target_tool_ok` 与「AI 会话结束」日志的 `cli_target_tool_ok=`。
+- **看护**：`tests/test_convert_write_tool.py`（工具本体、令牌、HTTP guard、fixmcp 转换模式、argv 各平台、提示词、`agent_write_denied` 新形状、假 Codex 端到端）、`tests/test_windows_regressions.py::test_codex_convert_on_windows_has_unelevated_sandbox_and_tavotto_write_tool`。
+
+### Windows 转换「不受沙盒限制」开关（TVD-BCZ0 方案 B，叠在方案 A 上）
+
+- **语义**：设置里一个开关「转换时允许 AI 不受沙盒限制」（存 `config.json` 的 `ai.convert_unsandboxed_windows`，**默认关**，只认明确的 `True`；入口 `config.convert_unsandboxed_windows()` / `set_…`）。**只在 Windows 上显示与生效**：`/api/ai/capabilities` 只在 Windows 给 `convert_unsandboxed_windows` 这一键（前端据此决定显示），`PUT /api/ai/convert-unsandboxed` 非 Windows 返回 400。界面只有这一行开关，不加说明 / 警告横条（用户硬性要求）。
+- **argv 规则**：`ai_agents.codex_sandbox_policy(ctx)`——只有 (Windows ∧ `ctx.convert_task` ∧ `ctx.convert_unsandboxed`) 才是 `--sandbox danger-full-access` 且**不再带** `windows.sandbox` 覆盖；其余（改图 / 修复会话、非 Windows、开关关）与方案 A 逐字一致。「是否转换」与设置值由 `ai_bridge` 构造转换命令处（`cmd_kw`，含修正轮）**显式**写进 `RunContext`，适配器不读全局配置。方案 A 的代写 MCP 工具照旧注入。
+- **诊断**：闭集事实 `sandbox_mode`（`workspace_write` / `unelevated` / `unsandboxed`，`ai_agents.SANDBOX_MODES`），由**实际 argv** 反推（`sandbox_mode_of`），进「AI 会话结束」日志（`sandbox_mode=`，经 `logsafe.known` 明文）与 exectrace `agent_run` 的 `cli_sandbox_mode`。诊断包里据此看出用户开没开。
+- **看护**：`tests/test_convert_unsandboxed.py`（四种组合 argv、关时与方案 A 逐字一致、配置默认值与读写、诊断事实、API）、`tests/test_windows_regressions.py::test_codex_windows_convert_switch_picks_danger_full_access_or_unelevated`、`web/src/components/settings/ConvertSandboxRow.test.tsx`。
+  **待 Windows Lab 用官方模型验证**：真 Codex 0.164 在 unelevated 沙盒里能否拉起 MCP 子进程（`tavotto-cli.exe`）并调用该工具（修复会话的 MCP 在 Windows 上同样依赖这一点）。
 
 ### D3：CLI 经 MCP 修复模式（`engine/fixmcp.py`、`fixsession.py` 的 CLI 分支、`ai_agents` 的 `build_fix_command`）
 
@@ -771,12 +856,13 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 看护 `test_image_header.py`、`test_agent_runner_media.py`；后者直接断言接收端后续请求仍带源码和图像。
 
 - **应用内托管安装 Codex（`engine/managedcli.py`，锁 `resources/managed_cli_lock.json`，2026-10-29）**：`start_install("codex")` 在锁里有
-  的平台（darwin arm64/x64、win32 x64、linux x64）走托管：GitHub `codex-package-<triple>` 主 → registry.npmmirror.com
-  的 `@openai/codex@<版本>-<平台>` 镜像（两份归档字节不同、**各锁各的 sha256**；解开后整棵树 `tree_sha256` 共用，
-  逐文件相同）；慢了换源（判据同私有 Python，ADR 0112）、hash 不符不重试不换源；装到 `data_dir()/cli/codex/<版本>-<树摘要>/`，
+  的平台（darwin arm64/x64、win32 x64、linux x64）走托管：registry.npmjs.org 的 `@openai/codex@<版本>-<平台>` 主 → registry.npmmirror.com
+  上同一个 tgz（字节相同、同一个 sha256 / integrity；解开后整棵树 `tree_sha256`）。2026-11-04 起不再用 GitHub 的
+  `codex-package-<triple>`：0.166.0 起它比 npm 包多一个 `bin/codex-exec-server`，两来源解不出同一棵树（#1716）；**大陆环境镜像在前**（`cli_for` 稳定重排；地区只读壳写进 `TAVOTTO_NETWORK_REGION` 的结论、经 `netregion.region_is_cn`，ADR 0121 唯一判据；#1744：大陆直连 npmjs 约 2 MB/s，慢不到换源门槛，每次白等约一分钟）；慢了换源（判据同私有 Python，ADR 0112）、hash 不符不重试不换源；装到 `data_dir()/cli/codex/<版本>-<树摘要>/`，
   `current.json` 原子切换；`search_locations` 首位 / `candidates` 在 PATH 之前，source=`managed`。**装好不登录**
   （登录由前端在 done 后调既有 login 接口）。其余平台与其它 Agent 回落 npm。升版本用 `scripts/managed_cli_lock.py`
-  （`--update` / `--check [--online]`）。install 状态 `{status, progress 0–1, phase, via, code}`；错误码见 `managedcli.ERROR_CODES`，
+  （`--update` / `--check [--online]` / `--latest`）；**每次发版都升到 npm latest**（`docs/RELEASING.md`「发一个新版本」第 2 步，
+  用户 2026-11-04 拍板：锁落后于桌面版写进共用型号清单的版本时，`cli_update` 给不出「应用内装」，用户选到新型号只能自己更新）。install 状态 `{status, progress 0–1, phase, via, code}`；错误码见 `managedcli.ERROR_CODES`，
   文案在 `errors.json` 的 `engine.managedCliError.*`。传输层与 privatepython 同判据但独立实现（理由见模块头）。
 - **应用内托管安装 Claude Code（同一套机制，2026-10-29）**：锁里 `clis.claude.sources` 逐项声明来源（`SOURCE_PREFIXES` 登记每个 CLI 允许的
   来源键与 URL 前缀）：registry.npmmirror.com 的 `@anthropic-ai/claude-code-<平台>`（tgz，`only` 只取 `package/<二进制>`，
@@ -792,3 +878,23 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 ### 无输出看门狗（`ai.stalled`）
 
 `ai_bridge._SilenceWatch`：每个 CLI 进程一个，只观察。stdout 静默达 `STALL_AFTER_S`（120）发一次 `ai.stalled{session, stalled: true, idle_s}`，再有输出发 `{stalled: false}` 复位；**不杀进程**（慢慢思考的模型会被误杀），总超时 `TIMEOUT_S` 不变。状态只在看门狗对象里、不进会话字典。前端 `aiStore.setStalled` 把它翻译成状态行「AI 已经 N 秒没有动静」+「取消 / 重试」（重试 = 取消、等收尾、再原样重发）。看护 `tests/test_ai_silence_watch.py`、`assistantStalled.test.tsx`。
+
+### 外部 CLI 的沙盒与写入行为在目标平台真跑（错题本 L-130 升级，2026-11-09）
+
+接外部 CLI 的写入、沙盒，或「失败后指望模型换参数重试」这类行为，目标平台用真 CLI 跑一次；假 CLI 绿只证明我方编排。
+进不了 CI 就在 PR 写明未验，并排进 Windows Lab。按平台分档的能力，先列每个平台默认落在哪一档，再让那一档的完整流程在
+该平台走一遍；恢复路径在工具控制流里接通明确授权，别只靠模型按提示自行重试。为什么：转换链路用例全用不带沙盒的假 Codex，Windows unelevated 沙盒里自带写入工具一律失败（#1604）；
+写大文件时事件流静默、写入被拒后换位置写，都是真模型才复现（#1628）；2026-11-07 一份用户反馈：Windows 没有第①档
+沙盒，命令一律返回 `sandbox_unavailable`，设计指望模型带 `outside_sandbox` 重试，真模型没重试，用户批准修复后什么都没
+发生（#1793）。
+
+## 改图助手的附件（ADR 0175，`engine/ai_attachments.py`）
+
+用户附的文件（图片或任意数据文件）经 `POST /api/ai/attachments?name=`（请求体 = 文件字节）暂存到 `data_dir()/cache/ai_attachments_staged/<id>__<安全文件名>`（1 h 过期、× 即删）。图片按魔数认 PNG / JPEG / GIF / WebP（≤ 4 MiB、≤ 4000 万像素），其余单个 ≤ 25 MiB、一次合计 ≤ 50 MiB、≤ 6 个。`/api/ai/run` 只带 `attachments` id（`valid_ids`）。`ai_bridge.run(attachments=)` 经 `_attach_attachments` 把文件**移**进工作目录（`materialize`，重名加序号，合计超限之后的静默跳过）：
+
+- 有候选（TAF / 内置执行器）：`<候选>/_attachments/<名>`，提示词给相对路径；`ai_figure_edit._tree` 排除候选根下的这个目录（`ATTACHMENTS_DIRNAME` 唯一出处在 `ai_attachments`），所以不算「改了别的文件」，也不会被写回；随候选一起清。
+- 无候选（外部 CLI 原地改）：`data_dir()/cache/ai_attachments/<sid>/`，提示词给绝对路径，Claude 经 `RunContext.read_dirs` 多一个 `--add-dir`（只在附文件时出现）；`_finish_session` / `_drop_attempt_files` 删，24 h 兜底。**绝不写用户项目目录。**
+- 提示词段 `ai_prompt_pack.attachments_note` 不进 `V1` 闭集（同转换提示词一节）：「参考图」与「数据 / 其他附件」分别列路径；不附文件时整段一行都不执行，请求 / 提示词 / 工作区 / 历史行逐字节不变。
+- `sessions.attachment_count` 只存个数；`SESSION_DTO_KEYS` 带 `attachment_count`。文件不进历史、遥测、诊断包。
+- 能力清单的 `no_vision`（执行器与连接上的可选字段）来自 `ai_attachments.known_text_only`：只列**确定**看不了图的型号，判不出的不列、照常发送；前端不镜像名单。
+- 看护：`tests/test_ai_attachments.py`。

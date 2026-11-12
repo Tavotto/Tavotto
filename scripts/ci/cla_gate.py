@@ -29,10 +29,17 @@
 
 判定规则（详见 `decide()`）：
 
-* `--event merge_group`：判 `not_applicable` 并**成功**。资格在 PR 阶段就已经
-  验过，队列候选上没有 PR 上下文可查。**这一格必须是成功而不是 skipped**——
+* `--event merge_group`：provider 未走 tavotto-cla-v1 时判 `not_applicable` 并
+  **成功**（资格在 PR 阶段验过）。服务模式下要么候选的全部提交（`--commits-json`，
+  compare base...head）里出现的每一个人都按不可变 id 命中豁免、本地直接成功，要么
+  要求服务在候选提交上给出新鲜凭证。**这一格必须是成功而不是 skipped**——
   `aggregate_gate.py --mode fast` 把 skipped 一律当失败，这个 job 在
   merge_group 上被跳过会把整个 `CI fast gate` 卡死（tests/ 里有专门的用例钉它）。
+* 服务模式下有外部贡献者时，判定来自服务的实时回答（ADR 0172，`--eligibility-json`）：
+  问不到、超时、回答对不上这次判定，一律不算过。这个脚本自己不联网。
+* 服务模式（provider.protocol = tavotto-cla-v1）下 login 命中豁免**不算**身份证明；
+  只有可信来源给出的账号 id 全部等于豁免条目的 `github_id` 才本地放行
+  （`_id_exempt`），否则一律要服务凭证。服务模式下每条豁免都必须写 `github_id`。
 * `--event pull_request`：PR 里出现的每一个人类贡献者，要么在 policy 的豁免表
   里被**点名**，要么由 provider 判定为已签，要么在 `offline_signatures` 里有
   一条**版本对得上、账号 id 对得上**的双签记录。除此之外没有任何人能被判成
@@ -111,6 +118,12 @@ OFFLINE_SIGNATURE_KEYS = (
 )
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+#: 服务的固定地址（ADR 0172）。只认 https 根地址：不带路径、端口、账号、查询串。
+AUTHORITY_ORIGIN_RE = re.compile(r"^https://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
+SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+#: 服务时钟与 runner 时钟允许的偏差（秒）。
+ELIGIBILITY_SKEW_SECONDS = 5
 
 #: 草案后缀。带它的版本不可签署，因此也不允许把 provider 标成已配置。
 DRAFT_SUFFIX = "-draft"
@@ -219,6 +232,7 @@ def validate_policy(policy: dict) -> None:
     if not isinstance(policy["exemptions"], list):
         raise ConfigError("cla-policy.exemptions 必须是数组")
     seen: set[str] = set()
+    seen_ids: set[int] = set()
     for i, ex in enumerate(policy["exemptions"]):
         if not isinstance(ex, dict):
             raise ConfigError(f"cla-policy.exemptions[{i}] 不是对象")
@@ -238,7 +252,29 @@ def validate_policy(policy: dict) -> None:
                 f"cla-policy.exemptions[{i}].kind=`{ex['kind']}` 认不出"
                 "（只允许 rights_holder / bot）"
             )
+        if "github_id" in ex:
+            gid = ex["github_id"]
+            if type(gid) is not int or gid <= 0:
+                raise ConfigError(f"cla-policy.exemptions[{i}].github_id 必须是正整数")
+            if gid in seen_ids:
+                raise ConfigError(f"cla-policy.exemptions 里账号 id {gid} 重复")
+            seen_ids.add(gid)
     _validate_provider(policy)
+    origin = policy.get("authority_origin")
+    if origin is not None and not (isinstance(origin, str) and AUTHORITY_ORIGIN_RE.match(origin)):
+        raise ConfigError("cla-policy.authority_origin 必须是 https 根地址（不带路径、端口、账号）")
+    if _service_mode(policy):
+        if origin is None:
+            raise ConfigError(
+                "provider 走 tavotto-cla-v1 时必须写 `authority_origin`（服务的固定地址）"
+            )
+        # 服务模式下本地放行只认不可变账号 id（见 _id_exempt），每条豁免都要写明。
+        missing = [ex["login"] for ex in policy["exemptions"] if "github_id" not in ex]
+        if missing:
+            raise ConfigError(
+                "provider 走 tavotto-cla-v1 时每条豁免都必须写 `github_id`（不可变账号 id）："
+                + "、".join(missing)
+            )
     _validate_offline_signatures(policy, seen)
 
 
@@ -382,6 +418,10 @@ def collect_contributors(
             ids = entry.setdefault("ids", [])
             if account_id not in ids:
                 ids.append(account_id)
+        else:
+            # 这一次出现没有可信 id（trailer、noreply 邮箱、或缺 PR 作者 id）。
+            # 服务模式的本地豁免据此拒绝放行（_id_exempt）。
+            entry["unidentified_sources"] = True
 
     add(pr_author, "pr_author", account_id=_account_id(pr_author_id))
     if pr_author and _account_id(pr_author_id) is None:
@@ -436,6 +476,275 @@ def collect_contributors(
     return out, unresolved
 
 
+def _group_members(raw) -> list[dict]:
+    """队列前缀的有序成员，PR 号和该 PR 的原始 head 都必须精确绑定。"""
+    if not isinstance(raw, list) or not 1 <= len(raw) <= 100:
+        raise ConfigError("group members 缺失或不完整")
+    seen = set()
+    for member in raw:
+        if (
+            not isinstance(member, dict)
+            or set(member) != {"pr", "headSha"}
+            or type(member["pr"]) is not int
+            or member["pr"] <= 0
+            or member["pr"] in seen
+            or not isinstance(member["headSha"], str)
+            or not SHA_RE.fullmatch(member["headSha"])
+        ):
+            raise ConfigError("group members 的 PR / head 无效或重复")
+        seen.add(member["pr"])
+    return raw
+
+
+def _service_group_members(raw) -> list[dict]:
+    """服务沿用 proof.ts：严格 snake_case，按 PR 号递增，不接受内部模型别名。"""
+    if not isinstance(raw, list) or not 1 <= len(raw) <= 100:
+        raise ConfigError("service group members 缺失或不完整")
+    previous = 0
+    for member in raw:
+        if (
+            not isinstance(member, dict)
+            or set(member) != {"pr", "head_sha"}
+            or type(member["pr"]) is not int
+            or not previous < member["pr"] <= 2**53 - 1
+            or not isinstance(member["head_sha"], str)
+            or not SHA_RE.fullmatch(member["head_sha"])
+        ):
+            raise ConfigError("service group members 字段、顺序或 PR / head 无效")
+        previous = member["pr"]
+    return raw
+
+
+def _queue_snapshot(pages, repository_id: int) -> list[dict]:
+    """核对 gh graphql --paginate 的原始页，绝不把截断页当完整队列。"""
+    if not isinstance(pages, list) or not 1 <= len(pages) <= 10:
+        raise ConfigError("mergeQueue 页缺失")
+    entries, cursors, total = [], set(), None
+    for index, page in enumerate(pages):
+        try:
+            if page.get("errors") not in (None, []):
+                raise ValueError("GraphQL errors")
+            repo = page["data"]["repository"]
+            if type(repo["databaseId"]) is not int or repo["databaseId"] != repository_id:
+                raise ValueError("repository")
+            connection = repo["mergeQueue"]["entries"]
+            count, nodes, info = (
+                connection["totalCount"],
+                connection["nodes"],
+                connection["pageInfo"],
+            )
+            if (
+                type(count) is not int
+                or not 1 <= count <= 1000
+                or total is not None
+                and count != total
+                or not isinstance(nodes, list)
+                or not 1 <= len(nodes) <= 100
+                or type(info["hasNextPage"]) is not bool
+                or info["hasNextPage"] != (index < len(pages) - 1)
+            ):
+                raise ValueError("pagination")
+            total = count
+            if info["hasNextPage"]:
+                cursor = info["endCursor"]
+                if not isinstance(cursor, str) or not 1 <= len(cursor) <= 1000 or cursor in cursors:
+                    raise ValueError("cursor")
+                cursors.add(cursor)
+            entries.extend(nodes)
+        except (KeyError, TypeError, AttributeError, ValueError) as exc:
+            raise ConfigError("mergeQueue 分页、仓库或响应不完整") from exc
+    if len(entries) != total:
+        raise ConfigError("mergeQueue 枚举条数与 totalCount 不符")
+    ids, prs = set(), set()
+    try:
+        entries.sort(key=lambda e: e["position"])
+        for position, entry in enumerate(entries, 1):
+            pr = entry["pullRequest"]
+            if (
+                not isinstance(entry["id"], str)
+                or not entry["id"]
+                or entry["id"] in ids
+                or type(entry["position"]) is not int
+                or entry["position"] != position
+                or type(pr["number"]) is not int
+                or pr["number"] <= 0
+                or pr["number"] in prs
+                or not isinstance(pr["headRefOid"], str)
+                or not SHA_RE.fullmatch(pr["headRefOid"])
+                or not isinstance(pr["baseRefName"], str)
+                or not pr["baseRefName"]
+            ):
+                raise ValueError("entry")
+            for key in ("baseCommit", "headCommit"):
+                if entry[key] is not None and (
+                    not isinstance(entry[key]["oid"], str)
+                    or not SHA_RE.fullmatch(entry[key]["oid"])
+                ):
+                    raise ValueError("candidate")
+            ids.add(entry["id"])
+            prs.add(pr["number"])
+    except (KeyError, TypeError, AttributeError, ValueError) as exc:
+        raise ConfigError("mergeQueue 位置、成员或候选不完整") from exc
+    return entries
+
+
+def _validate_group_commit_content(commits: list) -> None:
+    """GitHub 原始提交内容必须齐全，不能把丢失的消息 / 身份字段当空字符串。"""
+    if not isinstance(commits, list):
+        raise ConfigError("group 提交列表不是数组")
+    for item in commits:
+        if not isinstance(item, dict):
+            raise ConfigError("group 提交内容不是对象")
+        meta = item.get("commit")
+        if (
+            not isinstance(meta, dict)
+            or not isinstance(meta.get("message"), str)
+            or not isinstance(meta.get("author"), dict)
+            or not isinstance(meta["author"].get("email"), str)
+            or "author" not in item
+        ):
+            raise ConfigError("group 提交缺少有效 message / author.email / author")
+        author = item["author"]
+        if author is not None and (
+            not isinstance(author, dict)
+            or not isinstance(author.get("login"), str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*(?:\[bot\])?", author["login"])
+            or type(author.get("id")) is not int
+            or not 0 < author["id"] <= 2**53 - 1
+        ):
+            raise ConfigError("group 提交的 GitHub author login / id 无效")
+
+
+def collect_group_contributors(raw, context: dict, commits: list) -> tuple[list, list, list]:
+    """独立 GitHub 快照：完整队列前后不变，逐 PR 核作者 id、head 和全部提交。"""
+    try:
+        repo_id, base, head = (context[k] for k in ("repository_id", "base_sha", "head_sha"))
+        if (
+            type(repo_id) is not int
+            or repo_id <= 0
+            or not isinstance(base, str)
+            or not SHA_RE.fullmatch(base)
+            or not isinstance(head, str)
+            or not SHA_RE.fullmatch(head)
+            or not isinstance(raw, dict)
+            or set(raw)
+            != {"repository_id", "base_sha", "head_sha", "queue_before", "queue_after", "prs"}
+            or type(raw["repository_id"]) is not int
+            or raw["repository_id"] != repo_id
+            or raw["base_sha"] != base
+            or raw["head_sha"] != head
+        ):
+            raise ConfigError("group 快照与本次仓库 / base / head 不符")
+        queue = _queue_snapshot(raw["queue_before"], repo_id)
+        if queue != _queue_snapshot(raw["queue_after"], repo_id):
+            raise ConfigError("mergeQueue 在收集期间改变")
+        matches = [
+            e
+            for e in queue
+            if e["baseCommit"] == {"oid": base} and e["headCommit"] == {"oid": head}
+        ]
+        if len(matches) != 1:
+            raise ConfigError("mergeQueue 无法唯一定位这个 base / head 候选")
+        prefix = queue[: matches[0]["position"]]
+        if len(prefix) > 100 or any(e["pullRequest"]["baseRefName"] != "main" for e in prefix):
+            raise ConfigError("mergeQueue 候选前缀不完整")
+        members = _group_members(
+            [
+                {"pr": e["pullRequest"]["number"], "headSha": e["pullRequest"]["headRefOid"]}
+                for e in prefix
+            ]
+        )
+        if not isinstance(raw["prs"], list) or len(raw["prs"]) != len(members):
+            raise ConfigError("group PR 发起人枚举不完整")
+        # 候选 compare 只核完整性与 head 绑定；GitHub 生成的提交可能属于合入者。
+        # 贡献者与服务 binding 一致，只来自完整原始 PR（含发起人、作者、trailer）。
+        _validate_group_commit_content(commits)
+        candidate_shas = [item["sha"] for item in commits]
+        if (
+            not candidate_shas
+            or head not in candidate_shas
+            or any(not isinstance(s, str) or not SHA_RE.fullmatch(s) for s in candidate_shas)
+            or len(set(candidate_shas)) != len(candidate_shas)
+        ):
+            raise ConfigError("group 候选提交 head 缺失或分页重复")
+        all_commits, authors = [], []
+        for member, snapshot in zip(members, raw["prs"], strict=True):
+            before, after = snapshot["before"], snapshot["after"]
+
+            def metadata(pr):
+                return (
+                    pr["number"],
+                    pr["state"],
+                    pr["head"]["sha"],
+                    pr["base"]["sha"],
+                    pr["base"]["ref"],
+                    pr["base"]["repo"]["id"],
+                    pr["commits"],
+                    pr["user"]["login"],
+                    pr["user"]["id"],
+                )
+
+            if metadata(before) != metadata(after) or any(
+                type(a) is not type(b)
+                for a, b in zip(metadata(before), metadata(after), strict=True)
+            ):
+                raise ConfigError("group PR 在收集期间改变")
+            number, state, pr_head, pr_base, ref, pr_repo, count, login, uid = metadata(before)
+            if (
+                type(number) is not int
+                or number != member["pr"]
+                or state != "open"
+                or pr_head != member["headSha"]
+                or ref != "main"
+                or type(pr_repo) is not int
+                or pr_repo != repo_id
+                or not isinstance(pr_base, str)
+                or not SHA_RE.fullmatch(pr_base)
+                or type(count) is not int
+                or not 1 <= count <= 1000
+                or not isinstance(login, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*(?:\[bot\])?", login)
+                or type(uid) is not int
+                or uid <= 0
+            ):
+                raise ConfigError("group PR 的作者 id / head / 状态无效")
+            items = snapshot["commits"]
+            if (
+                not isinstance(items, list)
+                or len(items) != count
+                or type(snapshot["total_commits"]) is not int
+                or snapshot["total_commits"] != count
+                or snapshot["compare_base"] != pr_base
+            ):
+                raise ConfigError("group PR 的提交枚举不完整")
+            _validate_group_commit_content(items)
+            shas = [item["sha"] for item in items]
+            if (
+                any(not isinstance(s, str) or not SHA_RE.fullmatch(s) for s in shas)
+                or len(set(shas)) != count
+                or pr_head not in shas
+            ):
+                raise ConfigError("group PR 的提交 head 缺失或分页重复")
+            all_commits.extend(items)
+            authors.append((login, uid))
+        # 复用同一个贡献者收集器，并把所有 PR 发起人作为可信 API 来源合并进去。
+        contributors, unresolved = collect_contributors(None, all_commits)
+        by_login = {c["login"].lower(): c for c in contributors}
+        for login, uid in authors:
+            rows, _ = collect_contributors(login, [], uid)
+            row = rows[0]
+            old = by_login.get(login.lower())
+            if old is None:
+                by_login[login.lower()] = row
+            else:
+                old["ids"] = sorted(set(old["ids"] + row["ids"]))
+                if "pr_author" not in old["sources"]:
+                    old["sources"].append("pr_author")
+        return sorted(by_login.values(), key=lambda c: c["login"].lower()), unresolved, members
+    except (KeyError, TypeError, AttributeError, ValueError) as exc:
+        raise ConfigError("group GitHub 快照缺失、错误或不完整") from exc
+
+
 def _account_id(raw) -> int | None:
     """可信来源（PR 事件 / API）给的正整数 id。别的形状一律当没看到。"""
     if type(raw) is int and raw > 0:
@@ -453,6 +762,32 @@ def _exemption_for(login: str, policy: dict) -> dict | None:
         if ex["login"].lower() == login.lower():
             return ex
     return None
+
+
+def _service_mode(policy: dict) -> bool:
+    prov = policy.get("provider") or {}
+    return bool(prov.get("configured")) and prov.get("protocol") == "tavotto-cla-v1"
+
+
+def _id_exempt(contributor: dict, policy: dict) -> bool:
+    """按**不可变账号 id** 认豁免，供服务模式在本地直接放行。
+
+    login 能改名、能被别人重新注册，所以服务模式下 login 命中豁免不算数
+    （见 decide 里 service_mode 那段）。这里要求三样同时成立：login 命中一条写了
+    `github_id` 的豁免；这个 login 名下由**可信来源**给出的 id 至少一个（PR 事件
+    的 PR 作者 id、GitHub API 解析的提交作者 id）；且这些 id 全都等于那条豁免的
+    `github_id`。`Co-authored-by` 与 noreply 邮箱只给 login 不给可信 id，因此
+    只经它们出现的人**不会**被本地放行，交给服务按 id 判。
+    """
+    ex = _exemption_for(contributor["login"], policy)
+    # 缺 PR 作者 id 的情形由 unidentified_sources 兜住（collect_contributors 里 add 未带 id）。
+    if ex is None or "github_id" not in ex:
+        return False
+    ids = contributor.get("ids") or []
+    if not ids or any(i != ex["github_id"] for i in ids):
+        return False
+    # 每一次出现都必须带可信 id：只经 trailer / 邮箱出现过一次也不放行。
+    return not contributor.get("unidentified_sources")
 
 
 def _offline_signature_for(login: str, policy: dict) -> dict | None:
@@ -515,6 +850,8 @@ def signed_logins(
     prov = policy["provider"]
     if not prov["configured"]:
         return set(), "provider_not_configured"
+    if context and context.get("eligibility") is not None and _service_mode(policy):
+        return _eligibility_verdict(policy, context)
     if provider_checks is None:
         return set(), "provider_checks_unavailable"
     want, want_slug, want_id = prov["check_name"], prov["app_slug"], prov["app_id"]
@@ -540,6 +877,112 @@ def signed_logins(
     if impostor:
         return set(), "provider_check_wrong_app"
     return set(), "provider_check_missing"
+
+
+def _policy_digest(policy: dict) -> str:
+    trusted = {k: policy[k] for k in ("agreements", "exemptions")}
+    raw = json.dumps(trusted, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _eligibility_verdict(policy: dict, context: dict) -> tuple[set[str], str | None]:
+    """校验服务的实时判定回答（ADR 0172）。
+
+    回答来自网络、由 cla_eligibility_fetch.py 落盘，这里按不可信输入逐字段核对：
+    字段集合恰好相符，仓库、PR 或合并组、head、策略摘要与本次判定一致，nonce 是这次
+    校验生成的（存下来的旧回答不能重放），时间落在这次校验之内，贡献者覆盖这里看到的
+    每一个人。任何一处不符都不算过；`eligible` 只有是 `True` 才算过。
+    """
+    answer, group = context["eligibility"], context.get("kind") == "merge_group"
+    if isinstance(answer, dict) and set(answer) == {"error"}:
+        code = answer["error"]
+        code = code if isinstance(code, str) and re.fullmatch(r"[a-z_]{1,64}", code) else "unknown"
+        return set(), f"provider_eligibility_unavailable:{code}"
+    binding = ("base_sha",) if group else ("pr",)
+    if any(
+        context.get(k) is None
+        for k in binding + ("head_sha", "repository_id", "not_before", "now", "nonce")
+    ):
+        return set(), "provider_verification_context_missing"
+    fields = {
+        "protocol",
+        "repository_id",
+        "kind",
+        "head_sha",
+        "base_sha",
+        "policy_sha256",
+        "contributors",
+        "revision",
+        "observed_at",
+        "nonce",
+        "eligible",
+        "members" if group else "pr",
+    }
+    try:
+        if not isinstance(answer, dict) or set(answer) != fields:
+            raise ValueError("fields")
+        if answer["protocol"] != "cla-eligibility-v1":
+            raise ValueError("protocol")
+        if answer["kind"] != ("merge_group" if group else "pr"):
+            raise ValueError("kind")
+        for key in binding + ("head_sha", "repository_id", "nonce"):
+            if answer[key] != context[key] or type(answer[key]) is not type(context[key]):
+                raise ValueError("binding")
+        if not isinstance(answer["base_sha"], str) or not SHA_RE.match(answer["base_sha"]):
+            raise ValueError("base")
+        if group:
+            try:
+                expected = sorted(
+                    [
+                        {"pr": m["pr"], "head_sha": m["headSha"]}
+                        for m in _group_members(context.get("group_members"))
+                    ],
+                    key=lambda m: m["pr"],
+                )
+                if _service_group_members(answer["members"]) != expected:
+                    raise ValueError("members")
+            except ConfigError as exc:
+                raise ValueError("members") from exc
+        if answer["policy_sha256"] != _policy_digest(policy):
+            raise ValueError("policy")
+        if type(answer["eligible"]) is not bool:
+            raise ValueError("eligible")
+        if type(answer["revision"]) is not int or answer["revision"] < 0:
+            raise ValueError("revision")
+        observed = answer["observed_at"]
+        if (
+            type(observed) is not int
+            or observed < context["not_before"] - ELIGIBILITY_SKEW_SECONDS
+            or observed > context["now"] + ELIGIBILITY_SKEW_SECONDS
+        ):
+            raise ValueError("freshness")
+        people = answer["contributors"]
+        if not isinstance(people, list) or not people:
+            raise ValueError("contributors")
+        ids_by_login: dict[str, int] = {}
+        for person in people:
+            if not isinstance(person, dict) or set(person) != {"id", "login"}:
+                raise ValueError("contributor")
+            if type(person["id"]) is not int or person["id"] <= 0:
+                raise ValueError("contributor")
+            if not isinstance(person["login"], str) or not person["login"]:
+                raise ValueError("contributor")
+            login = person["login"].lower()
+            if login in ids_by_login:
+                raise ValueError("contributor")
+            ids_by_login[login] = person["id"]
+        # 逐人比对：只比两个集合的话，两个人的 id 互换也能过。
+        for seen in context.get("contributors") or []:
+            login = seen["login"].lower()
+            if login not in ids_by_login or any(
+                i != ids_by_login[login] for i in seen.get("ids") or []
+            ):
+                raise ValueError("author")
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return set(), "provider_eligibility_invalid"
+    if answer["eligible"] is not True:
+        return set(), "provider_not_eligible"
+    return {"*"}, None
 
 
 def _service_verdict(checks: list, policy: dict, context: dict | None):
@@ -568,12 +1011,23 @@ def _service_verdict(checks: list, policy: dict, context: dict | None):
     if run.get("status") != "completed" or run.get("conclusion") != "success":
         return set(), "provider_latest_check_not_success"
     try:
-        prefix, raw = run["output"]["text"].split("\n", 1)
+        # Cloudflare 服务把凭证写在 `output.summary`（services/cla-cloudflare 的 github.ts，
+        # src/ci/consumer.ts 读的也是它）；早期 Python 服务写在 `text`，它的 `summary` 是
+        # 给人看的说明。所以按内容认：只取以协议行开头的那个字段，都没有就算无效。
+        output = run["output"]
+        text = next(
+            (
+                v
+                for v in (output.get("summary"), output.get("text"))
+                if isinstance(v, str) and v.startswith("tavotto-cla-v1\n")
+            ),
+            None,
+        )
+        if text is None:
+            raise ValueError("proof")
+        prefix, raw = text.split("\n", 1)
         proof = json.loads(raw)
-        trusted = {k: policy[k] for k in ("agreements", "exemptions")}
-        digest = hashlib.sha256(
-            json.dumps(trusted, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
-        ).hexdigest()
+        digest = _policy_digest(policy)
         if prefix != "tavotto-cla-v1" or proof["protocol"] != prefix:
             raise ValueError("protocol")
         if proof["policy_sha256"] != digest or run["head_sha"] != context["head_sha"]:
@@ -628,9 +1082,57 @@ def _unqualified_detail(reason: str | None, policy: dict) -> str:
             f"签名服务商**（期望 App `{prov.get('app_slug')}` id={prov.get('app_id')}）"
             "——判定只认那个 App 的结论，同名的别家 check 一律不算"
         )
+    if reason == "provider_not_eligible":
+        return (
+            f"CLA 服务判定：这个 PR 里还有人没签。到 {policy.get('authority_origin')} 签署，"
+            "著作权人联署后重跑这个检查，或推一个新提交"
+        )
+    if reason == "provider_eligibility_invalid":
+        return "CLA 服务的回答对不上这次判定（PR、head、作者或时间不符）——判定器不猜，直接红"
+    if reason and reason.startswith("provider_eligibility_unavailable:"):
+        return (
+            f"问不到 CLA 服务的判定（{reason.split(':', 1)[1]}）——服务恢复后重跑这个检查；"
+            "问不到就不算过"
+        )
     if reason == "provider_checks_unavailable":
         return "取不到 provider 的 check 列表（权限或 API 失败）——判定器不猜，直接红"
     return "没有签署记录"
+
+
+def _exempt_by_id_verdict(
+    event: str, policy: dict, contributors: list[dict], unresolved: list[dict]
+) -> dict | None:
+    """服务模式下的本地快速放行：出现的每一个人都按不可变 id 命中豁免。
+
+    主仓库几乎所有 PR 与合并组都只有著作权人和机器人，它们不需要、也不该去
+    排服务的队（服务端对豁免作者的 PR 不登记）。只要有一个人不是按 id 豁免的、
+    或有任何一处认不出账号、或一个人都没收集到，就返回 None，回到原来要求服务
+    凭证的判定——这里只会让本来就该过的放得更早，不会放过别的。
+    """
+    if unresolved or not contributors:
+        return None
+    if not all(_id_exempt(c, policy) for c in contributors):
+        return None
+    rows = []
+    for c in contributors:
+        ex = _exemption_for(c["login"], policy)
+        rows.append(
+            {
+                "login": c["login"],
+                "verdict": "exempt",
+                "detail": f"{ex['kind']}: {ex['reason']}（账号 id {ex['github_id']}）",
+                "sources": c["sources"],
+            }
+        )
+    return {
+        "event": event,
+        "status": "success",
+        "reason": "merge_candidate_exempt_by_id"
+        if event == "merge_group"
+        else "all_contributors_exempt_by_id",
+        "contributors": rows,
+        "problems": [],
+    }
 
 
 def decide(
@@ -643,12 +1145,40 @@ def decide(
 ) -> dict:
     """核心判定。只做纯计算，不碰环境——单测才测得动每一格。"""
     unresolved = unresolved or []
+    if context is not None:
+        context = {**context, "contributors": contributors}
 
-    if (
-        event == "merge_group"
-        and policy["provider"].get("configured")
-        and policy["provider"].get("protocol") == "tavotto-cla-v1"
-    ):
+    if event == "merge_group" and _service_mode(policy):
+        # 必须先独立枚举 PR 发起人，再判断全员豁免；缺快照不能靠提交作者全豁免绕过。
+        try:
+            _group_members((context or {}).get("group_members"))
+        except ConfigError:
+            return {
+                "event": event,
+                "status": "failure",
+                "reason": "group_snapshot_required",
+                "contributors": [],
+                "problems": ["group PR 发起人与成员快照缺失或不完整"],
+            }
+        if unresolved:
+            return {
+                "event": event,
+                "status": "failure",
+                "reason": "unresolved_contributors",
+                "contributors": [],
+                "problems": [
+                    f"unresolved: commit `{u['sha']}` 的 {u['kind']} "
+                    f"`{u['name']} <{u['email']}>` 解析不出 GitHub 账号；请用绑定账号的邮箱重新提交"
+                    for u in unresolved
+                ],
+            }
+
+    if event in KNOWN_EVENTS and _service_mode(policy):
+        exempt = _exempt_by_id_verdict(event, policy, contributors, unresolved)
+        if exempt is not None:
+            return exempt
+
+    if event == "merge_group" and _service_mode(policy):
         signed, why = signed_logins(provider_checks, policy, context)
         valid = "*" in signed and context and context.get("kind") == "merge_group"
         return {
@@ -678,10 +1208,7 @@ def decide(
     detail_for_missing = _unqualified_detail(why, policy)
 
     problems: list[str] = []
-    service_mode = (
-        policy["provider"].get("configured")
-        and policy["provider"].get("protocol") == "tavotto-cla-v1"
-    )
+    service_mode = _service_mode(policy)
     if service_mode and "*" not in signed:
         # A login exemption is not an identity proof. The independent service must
         # verify pinned immutable IDs even when every visible login is exempt.
@@ -894,6 +1421,14 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         help="Trusted workflow/candidate start time; service proof must be issued after it",
     )
+    ap.add_argument(
+        "--eligibility-json",
+        help="cla_eligibility_fetch.py 落盘的服务实时判定（ADR 0172）",
+    )
+    ap.add_argument("--eligibility-nonce", help="这次校验生成的 nonce，回答必须原样带回")
+    ap.add_argument(
+        "--group-snapshot-json", help="CI 独立从 GitHub 取到的完整队列前后页、逐 PR 作者与提交快照"
+    )
     ap.add_argument("--repo-root", default=".", help="核对协议正文哈希时的仓库根")
     ap.add_argument(
         "--refresh-hashes",
@@ -936,9 +1471,26 @@ def main(argv: list[str] | None = None) -> int:
             "repository_id": args.verification_repository_id,
             "not_before": args.verification_not_before,
             "now": int(time.time()),
+            "nonce": args.eligibility_nonce,
+            "eligibility": load_json(Path(args.eligibility_json), "服务实时判定")
+            if args.eligibility_json
+            else None,
         }
         if args.event == "merge_group":
-            verdict = decide(args.event, policy, checks, [], context=context)
+            contributors, unresolved = [], []
+            if _service_mode(policy):
+                if (
+                    not args.group_snapshot_json
+                    or not args.commits_json
+                    or args.expected_commits is None
+                ):
+                    raise ConfigError("服务模式合并组必须独立枚举完整队列、PR 发起人与全部提交")
+                commits = load_commits(Path(args.commits_json), args.expected_commits)
+                contributors, unresolved, members = collect_group_contributors(
+                    load_json(Path(args.group_snapshot_json), "group GitHub 快照"), context, commits
+                )
+                context["group_members"] = members
+            verdict = decide(args.event, policy, checks, contributors, unresolved, context)
         else:
             commits = []
             if args.commits_json:

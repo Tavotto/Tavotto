@@ -4,12 +4,12 @@ import {sameBinding} from '../core/identity.ts';
 import {validId,validSha} from '../core/policy.ts';
 import {Rejected} from '../core/types.ts';
 import type {LiveService} from './service.ts';
-import {DB_NOW} from './store.ts';
+import {DB_NOW,LIVE_TARGETS_SQL} from './store.ts';
 import {BudgetDeferred,CONFIRMATION_FIXED_SQL,FREE_BUDGET,newHeadReservedSQL,qualificationSQL} from './budget.ts';
 interface HeadRequest {request_key:string;pr:number;head:string;status:string;attempt:string;lease_until:number}
 // A separate scheduled invocation keeps both queues' existing per-invocation budgets intact.
 export const AUTOMATIC_CRON='7-59/15 * * * *';
-export async function admitHead(s:LiveService,raw:Uint8Array<ArrayBuffer>,signature:string,delivery:string,event:string,secret:string):Promise<void> {
+export async function admitHead(s:LiveService,raw:Uint8Array<ArrayBuffer>,signature:string,delivery:string,event:string,secret:string):Promise<'admitted'|'exempt_author_skipped'> {
   if(s.c.automaticVerificationEnabled!==true)throw new Rejected('automatic_verification_disabled');
   if(raw.length>262144 || !/^[A-Za-z0-9-]{1,100}$/.test(delivery) || !['pull_request','merge_group'].includes(event) || secret.length<32 || secret.length>256 ||
     !await validWebhook(bytes(secret),raw,signature))throw new Rejected('webhook_rejected');
@@ -20,17 +20,26 @@ export async function admitHead(s:LiveService,raw:Uint8Array<ArrayBuffer>,signat
       data?.installation?.id!==s.c.installationId || g?.base_ref!=='refs/heads/main' || !validSha(g?.head_sha) || !validSha(g?.base_sha))throw new Rejected('webhook_rejected');
     await s.store.assertReady();const target={kind:'merge_group' as const,headSha:g.head_sha,baseSha:g.base_sha},key=s.store.targetKey(s.c.repositoryId,target);
     const hash=await sha256(raw),now=await s.store.databaseNow();
-    await s.store.batch([...s.store.guard(`(EXISTS(SELECT 1 FROM targets WHERE target_key=?) OR (SELECT count(*) FROM (SELECT 1 FROM targets LIMIT 100))<100)
+    // Retention commits on its own, so an admission refused for capacity still makes room for the next one. The cap
+    // counts live targets (LIVE_TARGETS_SQL); resolved history is never counted.
+    await s.store.batch(s.store.pruneGroupHistory());
+    await s.store.batch([...s.store.guard(`(EXISTS(SELECT 1 FROM targets WHERE target_key=?) OR (SELECT count(*) FROM (${LIVE_TARGETS_SQL}))<100)
       AND (EXISTS(SELECT 1 FROM deliveries WHERE id=?) OR (SELECT count(*) FROM (SELECT 1 FROM deliveries LIMIT 1000))<1000)`,key,delivery),
       s.store.stmt('INSERT OR IGNORE INTO targets VALUES(?,?)',key,canonical(target)),
       ...s.store.guard('EXISTS(SELECT 1 FROM targets WHERE target_key=? AND target_json=?) AND NOT EXISTS(SELECT 1 FROM deliveries WHERE id=? AND (body_sha!=? OR target_key!=?))',key,canonical(target),delivery,hash,key),
-      s.store.stmt('INSERT OR IGNORE INTO deliveries VALUES(?,?,?,?)',delivery,hash,key,now)]);return;
+      s.store.stmt('INSERT OR IGNORE INTO deliveries VALUES(?,?,?,?)',delivery,hash,key,now)]);return 'admitted';
   }
   const pr=data?.pull_request,head=pr?.head?.sha;
   if(!['opened','reopened','synchronize'].includes(data?.action) || data?.repository?.id!==s.c.repositoryId || data.repository.full_name!==s.c.repository ||
     data?.installation?.id!==s.c.installationId || !validId(data?.number) || data.number!==pr?.number || pr?.state!=='open' ||
     pr?.base?.repo?.id!==s.c.repositoryId || pr?.base?.ref!=='main' || !validSha(head))throw new Rejected('webhook_rejected');
-  await s.store.assertReady();const bound=await s.freshBinding(data.number);
+  // A PR opened by an exempt author (the rights holder or a pinned bot, matched by immutable GitHub id) needs no
+  // service proof: the trusted CI gate (scripts/ci/cla_gate.py) passes all-exempt PRs locally by the same ids.
+  // Admitting them would only fill the capped head_requests table and starve external contributors in the
+  // one-head-per-run verification queue, so nothing is inserted and GitHub is not called. A PR by an exempt author
+  // with a non-exempt co-author therefore never gets a service proof and the CI gate fails closed (rare, accepted).
+  if(validId(pr?.user?.id) && Object.values(s.c.exemptionIds).includes(pr.user.id))return 'exempt_author_skipped';
+  await s.store.assertReady();await s.store.batch(s.store.pruneHeadHistory());const bound=await s.freshBinding(data.number);
   if(bound.head_sha!==head)throw new Rejected('webhook_head_stale');
   const hash=await sha256(raw),key=`${s.c.repositoryId}:${data.number}:${head}`;
   await s.store.batch([
@@ -40,6 +49,7 @@ export async function admitHead(s:LiveService,raw:Uint8Array<ArrayBuffer>,signat
     s.store.stmt(`INSERT INTO head_requests(request_key,pr,head,status,attempt,lease_until,created,result) VALUES(?,?,?,'pending','',0,${DB_NOW},'') ON CONFLICT(request_key) DO NOTHING`,key,data.number,head),
     s.store.stmt(`INSERT INTO head_deliveries VALUES(?,?,?,${DB_NOW}) ON CONFLICT(id) DO NOTHING`,delivery,hash,key),
   ]);
+  return 'admitted';
 }
 export async function verifyHeadOne(s:LiveService):Promise<string> {
   if(s.c.automaticVerificationEnabled!==true)return 'automatic_verification_disabled';

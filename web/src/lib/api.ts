@@ -10,9 +10,10 @@ import { ArtifactValidationError, FIGSIZE_SOURCE_POLICY, verifiedSource, type Ar
 import { apiUrl, apiUrlFor, currentProjectId, withProject, withProjectFor } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
 import type { ExportRoute } from '@/lib/exportRoute'
+import type { FontCatalog } from '@/lib/fontCatalog'
 import type { Remedy } from '@/lib/fixRemedy'
 import type { FigureExecutionProof } from '@/lib/figureExecutionProof'
-import type { ChartSourceRef, FigureDocument, FigureOrigin, FigureSnapshot, PanelChartState, ProjectDocument } from '@/types/document'
+import type { ChartSourceRef, FigureDocument, FigureOrigin, FigureSnapshot, PanelChartState, ProjectDocument, SourceFont } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
 import type { ComputedRenderFrame } from '@/lib/chartFrame'
 import type { IdentityRename } from '@/lib/overrideIdentity'
@@ -320,7 +321,7 @@ export function backendCodeMsg(
   // parseMissingKeyHandler 会把缺失的 key 原样吐回来（界面上看得见是哪条），
   // 那样 defaultValue 永远轮不到，缺文案时用户看到的就是 `backend.xxx`。
   if (code === 'artifact_source_unavailable') return artifactErrorMsg({ params })
-  // T03：用户给了精确参数、脚本自己的解析器仍然拒绝——同一个稳定码，文案不能再说"没带参数"
+  // T03：用户给了参数但脚本仍因参数停下——同一个稳定码，文案不能再说"没带参数"
   if (code === 'script_needs_arguments' && Number(params?.argv_count) > 0) {
     return msg('backend.script_rejected_arguments', params ?? {}, 'errors')
   }
@@ -2094,6 +2095,10 @@ interface ExportBox {
   h_mm: number
 }
 
+/** 导出载荷里的线型 / 端型（缺省 = 实线 / 无，不发；取值与文档里同名，ADR 0174） */
+type ExportDash = 'dashed' | 'dotted' | 'longdash' | 'dashdot' | 'longdashdot'
+type ExportHeadType = 'none' | 'triangle' | 'open' | 'bar' | 'dot' | 'diamond' | 'stealth'
+
 export type ExportObject =
   | (ExportBox & ArtifactRequestFields & {
       type: 'panel'
@@ -2124,10 +2129,14 @@ export type ExportObject =
       align: string
       /** 三个通用族之一；缺席 = 继承默认（衬线），后端缺省与它一致 */
       font_family?: 'serif' | 'sans-serif' | 'monospace'
+      /** 原图字体的身份（ADR 0164）；缺席 = 用 font_family 的批准族 */
+      source_font?: SourceFont
       /** 科学文本解释；缺席 = auto，后端缺省与它一致 */
       interpretation?: 'auto' | 'scientific'
       /** 文字写法；缺席 = 旧标记，后端缺省与它一致（ADR 0152） */
       text_format?: 'latex'
+      /** 排向；缺席 = 横排，后端缺省与它一致（ADR 0163） */
+      writing_mode?: 'vertical'
       underline?: boolean
       line_height?: number
       padding_mm?: number
@@ -2143,9 +2152,17 @@ export type ExportObject =
       stroke_pt: number
       color: string
       head: 'none' | 'end' | 'both'
-      head_start?: 'none' | 'triangle' | 'open' | 'bar'
-      head_end?: 'none' | 'triangle' | 'open' | 'bar'
-      dash?: 'dashed' | 'dotted'
+      head_start?: ExportHeadType
+      head_end?: ExportHeadType
+      /** 端型大小；缺省 = 中（ADR 0174） */
+      head_size_start?: 'small' | 'large'
+      head_size_end?: 'small' | 'large'
+      dash?: ExportDash
+      /** 描边不透明度 0–1；缺省 1 */
+      stroke_opacity?: number
+      /** 线端 / 拐角；缺省 = 圆头 / 圆角 */
+      line_cap?: 'butt' | 'round' | 'square'
+      line_join?: 'miter' | 'bevel' | 'round'
       rotation_deg?: number
     })
   | (ExportBox & {
@@ -2160,7 +2177,12 @@ export type ExportObject =
       corner_radius_mm?: number
       sides?: number
       fill_opacity?: number
-      dash?: 'dashed' | 'dotted'
+      dash?: ExportDash
+      /** 无边框（只发 `false`；缺省 = 有描边；直线 / 大括号忽略） */
+      stroke?: false
+      stroke_opacity?: number
+      line_cap?: 'butt' | 'round' | 'square'
+      line_join?: 'miter' | 'bevel' | 'round'
       rotation_deg?: number
     })
 
@@ -2213,6 +2235,10 @@ export interface ExportRequest {
   overwrite: 'ask' | 'replace' | 'rename'
   validation?: { policy: 'block_on_error' | 'acknowledged'; acknowledged?: string[] }
   include_style_check_report?: boolean
+  /** 同时导出修改后的 .py（ADR 0171）；不要时不带这个键 */
+  include_edited_script?: boolean
+  /** 「EPS 按不透明导出」：EPS 里的画布标注把半透明压成 100%，其余格式照旧；不选时不带这个键（ADR 0046 / 0174） */
+  eps_opaque?: boolean
   document_id?: string | null
   /** 导出开始那一刻的文档快照指纹；回执原样带回来，用来说"期间又被编辑过" */
   document_revision?: string | null
@@ -2260,6 +2286,8 @@ export interface ArtifactManifestSummary {
   fonts_used?: string[]
   plan_identity?: string | null
   backend?: string | null
+  /** SVG 里的文字确实被画成了轮廓（不能再当文字编辑）；只有后端明确报了才是 true，老服务端没有 */
+  text_outlined?: boolean
   /** 四身份（U09，ADR 0070）：semantic / render / artifact / run 并列，谁也不含谁；旧后端没有 RenderPlan 时前两个是 null */
   identity?: ArtifactIdentity | null
   /** 来源：源产物公开身份、回执公开事实、节点表（U09）；老服务端没有 */
@@ -2350,6 +2378,15 @@ export interface ExportOutput {
    * 界面按「未核验」画，不按通过画；`verified` 之外的任何值都不许画成绿。
    */
   manifest?: ArtifactManifestSummary | null
+  /** 修改后的 .py（`format: 'script'`）写进去了什么；别的产物没有这个键（ADR 0171） */
+  script_report?: ExportScriptReport
+}
+
+export interface ExportScriptReport {
+  /** 写进脚本的调整条数 */
+  written: number
+  /** 没写进去的调整：新脚本跑出来不含它们 */
+  skipped: { gid: string; prop: string; label: string }[]
 }
 
 export type ExportJobStatus =
@@ -2467,6 +2504,30 @@ export interface MathBox {
 /** 一次最多排几条（与后端 `MATHTEXT_MAX_ITEMS` 同值） */
 export const MATHTEXT_MAX_ITEMS = 64
 
+/* ----------------------- 原图字体在本机的状态（ADR 0164） ----------------------- */
+
+/** `state`：`ok` 或 `lib/sourceFont.SOURCE_FONT_REASONS` 里的一个（后端 `sourcefont.REASONS`） */
+export const fetchSourceFontStatus = (fonts: { sha256: string; face: number }[]) =>
+  jsonFetch<{ ok: boolean; results: { sha256: string; face: number; state: string }[] }>(
+    '/api/source-fonts/status',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fonts }),
+    },
+  )
+
+/** 这台机器上画布文字能用的字体（ADR 0169）；`state: 'scanning'` 时清单还不全，过一会儿再问。 */
+export const fetchSourceFontCatalog = () =>
+  jsonFetch<{ ok: boolean; state: 'ready' | 'scanning' } & FontCatalog>('/api/source-fonts/catalog')
+
+/** 本机上这张脸的字节（单脸 sfnt）；只给预览加载用，不供禁止嵌入的脸。失败抛错（调用方退回批准族）。 */
+export const fetchSourceFontBytes = async (sha256: string, face: number): Promise<ArrayBuffer> => {
+  const res = await fetch(apiUrl(`/api/source-fonts/${sha256}/${face}`), withProject())
+  if (!res.ok) throw new Error(`source font HTTP ${res.status}`)
+  return res.arrayBuffer()
+}
+
 export const typesetMath = (items: { src: string; family: string }[]) =>
   jsonFetch<{ ok: boolean; results: MathBox[] }>('/api/mathtext', {
     method: 'POST',
@@ -2522,6 +2583,56 @@ export interface PackageOpenResult {
   missing: string[]
   /** 存在但内容与打包时不一致（sha1 漂移） */
   drifted: string[]
+}
+
+/**
+ * 把一个文件作为素材放进当前项目文件夹（ADR 0176，`POST /api/assets/import`）。
+ * 后端按**内容**判类型、清洗文件名、同名同内容复用 / 异内容改名、不覆盖；`id` 与 `/api/panels` 的素材 id 同一个值。
+ * `pj` = 发起那一刻的项目（切项目的窗口里文件绝不写进别的项目）。
+ */
+export interface ImportedAsset {
+  id: string
+  name: string
+  file: string
+  kind: 'pdf' | 'svg' | 'raster'
+  /** 项目里已有内容相同的文件，没有写第二份 */
+  reused: boolean
+  /** 同名异内容：自动改成了 `名 (2).ext` */
+  renamed: boolean
+  bytes: number
+}
+
+export function importAsset(file: Blob, name: string, pj?: string | null): Promise<ImportedAsset> {
+  return jsonFetch<ImportedAsset>(
+    `/api/assets/import?name=${encodeURIComponent(name)}`,
+    { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file },
+    pj,
+  )
+}
+
+/** `.ipynb` 抽成同名 `.py` 的结果（ADR 0179）：`script` 是项目相对路径；`status` 见后端 `notebookscript.Placed` */
+export interface NotebookScript {
+  notebook: string
+  script: string
+  status: 'created' | 'updated' | 'reused' | 'renamed'
+}
+
+/** 项目里的 `.ipynb`（项目相对路径）→ 它旁边的同名 `.py`；笔记本只读，不覆盖用户自己的同名脚本 */
+export function extractNotebook(notebook: string, pj?: string | null): Promise<NotebookScript> {
+  return jsonFetch<NotebookScript>(
+    '/api/notebook/extract',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notebook }) },
+    pj,
+  )
+}
+
+/** 拿不到路径时：把笔记本内容交给后端，抽成当前项目根里的 `.py`（笔记本本身不存进项目） */
+export function importNotebook(file: Blob, name: string, pj?: string | null): Promise<NotebookScript> {
+  return jsonFetch<NotebookScript>(
+    `/api/notebook/import?name=${encodeURIComponent(name)}`,
+    { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file },
+    pj,
+  )
 }
 
 export function openPackage(file: File): Promise<PackageOpenResult> {
@@ -2672,6 +2783,7 @@ export interface EditableField {
   /**
    * order：可重排列表（图例条目顺序），value 为原始序号排列，options 为显示文字。
    * number_list：一串数（固定刻度位置），value 为 number[]。
+   * gradient：渐变色带的两端颜色，value 为 `{stops: [起端, 止端], direction, screen_start, legend?}`（`overrides.gradient_detect`，ADR 0167）。
    */
   type:
     | 'text'
@@ -2683,6 +2795,7 @@ export interface EditableField {
     | 'rect'
     | 'order'
     | 'number_list'
+    | 'gradient'
   value: unknown
   min?: number
   max?: number
@@ -2849,6 +2962,40 @@ export interface ColormapFacts {
   discrete: boolean
 }
 
+/** manifest 里一张脸的文件级身份（`engine/manifest._face_source`） */
+export interface ManifestFaceSource {
+  family: string
+  sha256: string
+  face: number
+  bold: boolean
+  italic: boolean
+}
+
+/** `ManifestElement.text_block`：文字块的位置、尺寸与样式。见该字段的说明。 */
+export interface ManifestTextBlock {
+  /** 文字块中心（figure 分数，y 向下）；转了的文字也是它自己那个矩形的中心 */
+  center: [number, number]
+  /** 块宽（沿阅读方向，图宽分数）与块高（含最后一行下行，图高分数） */
+  w: number
+  h: number
+  /** 块顶到第一行基线（图高分数） */
+  asc: number
+  /** 多行时相邻基线的平均间距（图高分数）；单行缺席 */
+  step?: number
+  text: string
+  /** 文字里有 mathtext（`$…$`）并且 matplotlib 真会当公式排 */
+  math: boolean
+  /** 脚本 pt（换到页面 pt 走 `pagePtLens`） */
+  size: number
+  color: string
+  /** 字重 / 字形原样（名字或数字）；粗不粗、斜不斜的判据在 `weightIsBold` / `styleIsItalic` */
+  weight: string | number
+  style: string
+  /** 度，逆时针为正 */
+  rotation: number
+  ha: 'left' | 'center' | 'right'
+}
+
 export interface ManifestElement {
   gid: string
   role: string
@@ -2917,6 +3064,21 @@ export interface ManifestElement {
    * 出汉字、或文字里没有汉字时缺席。预检拿它对出版规范的中日韩白名单。
    */
   cjk_family?: string
+  /**
+   * 正文真正由哪张**文件级**的脸画出来（ADR 0164）：名字 + 文件 sha256 + 面序号 + 粗斜，**没有路径**。
+   * 产生者只有 `engine/manifest.face_sources` 一处；「复制为画布文字标注」据此写 `TextObject.sourceFont`
+   * （换算只在 `lib/sourceFont.sourceFontFromElement`）。解析不出 / 读不了文件时缺席。
+   */
+  face_src?: ManifestFaceSource
+  /** 汉字由回退链上哪张文件级脸画的（同上）；正文脸自己画得出汉字 / 没有汉字时缺席。 */
+  cjk_src?: ManifestFaceSource
+  /**
+   * 这段文字排出来的**块**与此刻画出来的样子（ADR 0163「图内文字复制为标注」）。产生者只有
+   * `engine/manifest.text_block` 一处；换算成画布文字标注只在 `lib/figureTextCopy.ts`。
+   * 有它 = 这是一段单独的文字（刻度**组**没有；排不出 / wrap / usetex 的文字缺席 = 不可复制）。
+   * 长度都是 figure 分数：`center` 与 `w` 按图宽、`h` / `asc` / `step` 按图高；`rotation` 逆时针为正（matplotlib 语义）。
+   */
+  text_block?: ManifestTextBlock
   /**
    * 自己没有几何属性、位置由别的元素决定时，指向那个元素的 gid。
    * imshow 位图就是这样贴合宿主 axes 的：拖它等于拖宿主子图。
@@ -3849,6 +4011,11 @@ export interface AiAgentCaps {
   path_override: string | null
   /** 从哪儿找到的：path / homebrew / npm_global / chatgpt_bundle / codex_desktop_bundled …（闭集是后端 ai_agents.SOURCES） */
   detection_source: string | null
+  /**
+   * 模型清单来自比这份 CLI 新的版本（新型号可能用不了）时：怎么更新。没这回事 / 老后端 = 缺省或 null。
+   * `switch` = 本机已有更新的一份、改用它；`install` = 应用内装一份新的；`manual` = 只能自己更新（`source` 决定怎么说）。
+   */
+  cli_update?: AiCliUpdate | null
 
   models: string[]
   default_model: string | null
@@ -3857,6 +4024,8 @@ export interface AiAgentCaps {
    * 加字段协议：旧后端不带（缺省 = 只有 id），第三方接口接管时为空。
    */
   model_details?: AiModelDetail[]
+  /** 确定只吃文字、看不了参考图的型号（后端 `ai_attachments.known_text_only`，ADR 0175）；没有 / 老后端 = 都不知道，照常发送 */
+  no_vision?: string[]
   efforts: string[]
   default_effort: string | null
 
@@ -4010,6 +4179,10 @@ export interface AiCapabilities {
    * （只连了命令行 AI 时也是 false）：按钮照常出现（每次失败都出），点击走「这个问题 AI 暂时还不会修」降级
    */
   ai_fix_available?: boolean
+  /**
+   * 「转换时允许 AI 不受沙盒限制」（Windows 专属开关，默认关）。**只有 Windows 后端才给这一键**：缺省（别的平台 / 老后端）= 设置里不出现该行
+   */
+  convert_unsandboxed_windows?: boolean
   /** 「连接 AI」视图（老后端没有 → 退回 `agents` 的旧界面） */
   vendors?: AiVendor[]
   connections?: AiConnection[]
@@ -4060,6 +4233,13 @@ export interface AiVendor {
 }
 
 /** 已连接 / 需要重新登录的连接（模型选择器的一级）。订阅类 id = `sub:codex` / `sub:claude`；Key / OAuth 类 = provider id */
+export interface AiCliUpdate {
+  current: string
+  seen: string
+  source: string | null
+  action: 'switch' | 'install' | 'manual'
+}
+
 export interface AiConnection {
   id: string
   vendor: string
@@ -4068,6 +4248,8 @@ export interface AiConnection {
   state: 'ready' | 'needs_auth' | 'error'
   models: string[]
   model_details?: AiModelDetail[]
+  /** 同 `AiAgentCaps.no_vision` */
+  no_vision?: string[]
   default_model: string | null
   efforts?: string[]
   default_effort?: string | null
@@ -4081,6 +4263,8 @@ export interface AiConnection {
   error?: string
   /** 只给诊断 / 测试看，界面不显示 */
   route?: 'cli:codex' | 'cli:claude' | 'builtin'
+  /** 订阅类连接：背后那份 CLI 比它的模型清单旧时怎么更新（同 `AiAgentCaps.cli_update`） */
+  cli_update?: AiCliUpdate | null
 }
 
 export interface AiConnectBody {
@@ -4333,6 +4517,14 @@ export const setAiEndpointActive = (agent: AiAgentId, id: string) =>
     body: JSON.stringify({ agent, id }),
   })
 
+/** Windows 设置里的开关「转换时允许 AI 不受沙盒限制」；非 Windows 后端会 400 */
+export const setConvertUnsandboxedWindows = (enabled: boolean) =>
+  jsonFetch<{ convert_unsandboxed_windows: boolean }>('/api/ai/convert-unsandboxed', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  })
+
 export const fetchAiCapabilities = (refresh = false) =>
   jsonFetch<AiCapabilities>(`/api/ai/capabilities${refresh ? '?refresh=1' : ''}`)
 
@@ -4355,6 +4547,12 @@ export const patchAiAgent = (
 /** 一键安装 CLI（后台 `npm install -g`）；包名由后端注册表决定，这里不传 */
 export const startAiInstall = (agent: AiAgentId) =>
   jsonFetch<AiInstallState>(`/api/ai/agents/${encodeURIComponent(agent)}/install`, {
+    method: 'POST',
+  })
+
+/** 「更新 Codex」：改用本机更新的那份（立即 done）或应用内装一份（回安装进度，之后轮询 `fetchAiInstallStatus`） */
+export const startAiCliUpdate = (agent: AiAgentId) =>
+  jsonFetch<AiInstallState>(`/api/ai/agents/${encodeURIComponent(agent)}/update`, {
     method: 'POST',
   })
 
@@ -4403,6 +4601,8 @@ export interface AiHistoryEntry {
   ended_ms: number | null
   pinned: boolean
   revert_available: boolean
+  /** 用户附了几张参考图（只有张数，图片不进历史；没附 / 老记录 = 空） */
+  attachment_count?: number | null
   transcript: { kind: string; text: string }[]
 }
 
@@ -4462,6 +4662,10 @@ export interface AiRunRequest {
   scope?: string
   target?: string
   canvas?: string | null
+  /** 项目按期刊检查时的期刊要求摘要（`lib/journalAi`）；后端写成提示词里的一句。没有 = 不带 */
+  journal?: import('./journalAi').JournalAiContext
+  /** 用户附的参考图：`uploadAiAttachment` 给的暂存 id（最多 4 个）；不附图时不带这个字段（请求逐字节不变） */
+  attachments?: string[]
   /**
    * 点「发送」时生成的请求 id（UUID），与后端 `api_ai_run` 的 `client_request_id` 同名同义：
    * 同 (项目, id) 再 POST 后端返回既有会话、不再 spawn。重发「同一条」必须带同一个 id；
@@ -4494,6 +4698,18 @@ export const aiRun = (req: AiRunRequest, pj: string | null, timeoutMs: number = 
     pj,
   ).finally(() => clearTimeout(timer))
 }
+
+/** 暂存一个用户附的文件（请求体就是文件字节，`name` 是原文件名，ADR 0175）；图片前端先缩到 ≤ 4 MiB 再传 */
+export const uploadAiAttachment = (blob: Blob, name: string, pj: string | null) =>
+  jsonFetch<{ id: string; kind: 'image' | 'file'; mime: string | null; bytes: number; width: number | null; height: number | null; name: string }>(
+    `/api/ai/attachments?name=${encodeURIComponent(name)}`,
+    { method: 'POST', headers: { 'Content-Type': blob.type || 'application/octet-stream' }, body: blob },
+    pj,
+  )
+
+/** 用户把附的文件去掉：删后端的暂存。尽力而为（失败也不影响用户；暂存一小时后自己清） */
+export const discardAiAttachment = (id: string, pj: string | null) =>
+  jsonFetch<{ ok: boolean }>(`/api/ai/attachments/${encodeURIComponent(id)}`, { method: 'DELETE' }, pj)
 
 /** 后端按请求 id 登记的会话摘要（`GET /api/ai/requests/<id>`） */
 export interface AiRequestStatus {
@@ -4766,6 +4982,20 @@ export const discardAiEditDependencies = (sid: string, pj: string | null) =>
 
 /* ----------------- 生成可编辑版本（ADR 0143，`/api/ai/convert*`） ----------------- */
 
+/** 转换清单里的一行：来源脚本里能确定的写出（字面量路径、顶层语句）× 这次校验与项目旧结果的核对；差异只有坐标，没有数据值 */
+export interface ConvertOutputFile {
+  name: string
+  /** 来源脚本里的行号 */
+  line: number
+  /** `missing` = 校验里没有写出；其余是内容与项目旧结果的核对结论 */
+  state: 'missing' | 'match' | 'differs' | 'incomparable'
+  /** `incomparable` 的原因 */
+  reason?: 'no_previous' | 'stale' | 'format' | 'too_large' | 'inputs_unknown' | 'compare_failed'
+  /** `differs`：差异总数与前几处坐标 */
+  diff_count?: number
+  diffs?: Array<{ sheet?: string; cell?: string; row?: number; col?: number; line?: number; kind?: 'shape' | 'sheets' }>
+}
+
 /** 对照数据（`ai_convert.comparison_of`）：不含像素差（`pixel_diff` 恒 null——位图与矢量重画没有可辩护的逐像素差） */
 export interface ConvertComparison {
   original: { path: string; bytes: number; sha256: string; width_px: number | null; height_px: number | null } | null
@@ -4776,6 +5006,20 @@ export interface ConvertComparison {
   reference?: string | null
   /** `unknown` = 未对照验证（没有原图）；`side_by_side` = 并排给人看（不是判定）。老后端没有 */
   verification?: 'unknown' | 'side_by_side'
+  /** Partial evidence, not a declaration that either script produced these files. */
+  output_evidence?: {
+    source_references: string[]
+    source_truncated: boolean
+    write_attempts: string[] | null
+    attempts_truncated: boolean
+    completeness: 'unknown'
+    /** 逐个文件的清单；`[]` / 没有 = 没法判定（动态路径、沙盒回报缺失等），界面退回几行说明。老后端没有 */
+    files?: ConvertOutputFile[]
+    /** `null` = 没法判定；非空 = 校验里没写出的文件 */
+    missing_outputs?: Array<{ name: string; line: number }> | null
+    output_check?: 'written' | 'missing' | 'unknown'
+    corrected?: boolean
+  }
 }
 
 /** 「生成可编辑版本」的来源语言（后端 `sourcelang.LANGUAGES`）：`python` = 位图库出的图；`r` / `matlab` = 转写 */
@@ -4826,6 +5070,8 @@ export interface ConvertStatus {
   adopted_script?: string | null
   /** `state === 'ready'`：采用会在项目里新增的文件（项目相对路径，原脚本不动）；老后端没有 */
   adopt_adds?: string[]
+  /** 「让 AI 再对一次」正在跑：候选在变，采用先禁用 */
+  realigning?: boolean
 }
 
 const jsonPost = (body?: unknown): RequestInit => ({
@@ -4854,8 +5100,17 @@ export const startConvert = (
 export const fetchConvert = (sid: string, pj: string | null) =>
   jsonFetch<ConvertStatus>(`/api/ai/convert/${encodeURIComponent(sid)}`, undefined, pj)
 
-export const adoptConvert = (sid: string, pj: string | null) =>
-  jsonFetch<{ script: string; name: string }>(`/api/ai/convert/${encodeURIComponent(sid)}/adopt`, jsonPost(), pj)
+/** `specified`：用户为清单里没写出的文件指定的本机文件（只登记进这次采用的回执，文件不动；只送文件名，不送目录） */
+export const adoptConvert = (sid: string, pj: string | null, specified?: Array<{ name: string; file: string }>) =>
+  jsonFetch<{ script: string; name: string; specified_outputs?: Array<{ name: string; file: string }> }>(
+    `/api/ai/convert/${encodeURIComponent(sid)}/adopt`,
+    jsonPost(specified && specified.length > 0 ? { specified_outputs: specified } : undefined),
+    pj,
+  )
+
+/** 「让 AI 再对一次」：只对清单里「不同」的文件有界修正一次；前端轮询 `fetchConvert` 看 `realigning` 与新的 `comparison` */
+export const realignConvert = (sid: string, pj: string | null) =>
+  jsonFetch<{ session: string; realigning: boolean }>(`/api/ai/convert/${encodeURIComponent(sid)}/realign`, jsonPost(), pj)
 
 export const discardConvert = (sid: string, pj: string | null) =>
   jsonFetch<{ ok: boolean }>(`/api/ai/convert/${encodeURIComponent(sid)}/discard`, jsonPost(), pj)
@@ -5375,6 +5630,8 @@ export interface UpdateStatus {
   can_self_update?: boolean
   upgrade_command?: string
   auto_check: boolean
+  /** 桌面版：查到新版后台静默下载（默认开）。偏好存在用户配置里（`updates.auto_download`），不在 localStorage */
+  auto_download?: boolean
   /** true = 这次没联网，回的是上次的结果 */
   cached?: boolean
   checked_at_ms?: number
@@ -5397,8 +5654,8 @@ export interface UpdateApplyResult {
 export const checkUpdate = (force = false) =>
   jsonFetch<UpdateStatus>(`/api/update/check${force ? '?force=1' : ''}`)
 
-export const patchUpdateSettings = (patch: { auto_check: boolean }) =>
-  jsonFetch<{ auto_check: boolean }>('/api/update/settings', {
+export const patchUpdateSettings = (patch: { auto_check?: boolean; auto_download?: boolean }) =>
+  jsonFetch<{ auto_check: boolean; auto_download: boolean }>('/api/update/settings', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
@@ -5511,15 +5768,15 @@ export interface WorkdirGrant {
   cwd_write: { granted: boolean; granted_at: number | null; mode: WorkdirMode | null }
   /** 这个项目决定过没有（选沙盒也算决定过，只是没有授权） */
   decided: boolean
-  /** 没决定过而默认不是沙盒时的理由（ADR 0107 §二）：用户自己的 Python → 默认脚本目录 */
-  implied_by?: 'user_interpreter' | null
+  /** 没决定过而默认不是沙盒时的理由：用户自己的 Python（ADR 0107 §二）或运行时证据说数据在脚本目录里（ADR 0047 修订）→ 默认脚本目录 */
+  implied_by?: 'user_interpreter' | 'runtime_evidence' | null
 }
 export interface WorkdirState {
   mode: WorkdirMode
   modes: string[]
   decided?: boolean
   /** 同 `WorkdirGrant.implied_by`：界面据此说「跟随你自己的 Python」 */
-  implied_by?: 'user_interpreter' | null
+  implied_by?: 'user_interpreter' | 'runtime_evidence' | null
   grant?: WorkdirGrant
 }
 
@@ -5986,6 +6243,28 @@ export interface MissingInputOffer {
   probe_kind?: MissingInputProbeKind | string
   /** 脚本里写着、此刻哪儿都找不到的其它路径（这次指认可能顺带修好） */
   others: MissingInputItem[]
+  /**
+   * native 运行读不到这条绝对路径、而用户之前指认过这份数据时，后端给的「复制到脚本要的位置」提议（ADR 0173）。
+   * `source` = 用户指认的那份；`target` = 脚本要读的路径；`dir` = 要写进的目录（`dir_name` 是它的末段）。
+   */
+  copy?: MissingInputCopy
+}
+
+export type MissingInputCopyState = 'ask' | 'denied' | 'macos_protected' | 'auth_failed'
+
+export interface MissingInputCopy {
+  state: MissingInputCopyState
+  /** 服务端存下的不透明令牌：点复制时只回它，请求里没有任何路径（ADR 0173） */
+  token: string
+  source: string
+  target: string
+  dir: string
+  dir_name: string
+  /** macOS 受保护位置的类别（`volume` 另带 `protected_name`）；只给 `macos_protected` 那一档说名字用 */
+  protected_kind?: 'desktop' | 'documents' | 'downloads' | 'icloud' | 'volume'
+  protected_name?: string
+  /** 注定复制不成时的原因（源不是文件 / 父目录不存在）：只用于诊断，卡片不说 */
+  reason?: string
 }
 
 export interface InputRemapRule {
@@ -6097,6 +6376,30 @@ export const addInputRemap = (requested: string, chosen: string, chosenKind: 'fi
     },
   )
 
+export interface InputCopyResult {
+  ok: true
+  state: 'done' | 'exists' | 'denied' | 'macos_protected' | 'auth_failed'
+  target?: string
+  via?: 'normal' | 'elevated'
+  reason?: string
+  protected_kind?: MissingInputCopy['protected_kind']
+}
+
+/**
+ * 把用户指认过的数据复制到脚本要读的原路径（ADR 0173）。路径与源都由后端自己决定，请求里只有提议令牌。
+ * `elevate` 只在用户点了「授权后复制」时为 true；`done` / `exists` 之后前端直接重跑。
+ */
+export const copyInputData = (token: string, elevate = false) =>
+  jsonFetch<InputCopyResult>('/api/engine/input-copy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, elevate }),
+  })
+
+/** c3 的主按钮：打开 macOS「完全磁盘访问」面板（后端按固定地址拉起，页面没有 opener 权限） */
+export const openFullDiskAccessSettings = () =>
+  jsonFetch<{ ok: boolean; opened: boolean }>('/api/engine/input-copy/privacy-settings', { method: 'POST' })
+
 /** 删一条改指规则：删了就回到「找不到就报错」 */
 export const removeInputRemap = (kind: InputRemapRule['kind'], from: string) =>
   jsonFetch<{ ok: boolean; input_remap: InputRemapState }>('/api/engine/input-remap', {
@@ -6174,11 +6477,13 @@ export const previewInputPathEdit = (
   entry: string,
   chosen: string,
   chosenKind: 'file' | 'dir' | 'auto',
+  signal?: AbortSignal,
 ) =>
   jsonFetch<ScriptEditPreview>('/api/script-edit/input-path/preview', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ script, entry, chosen, chosen_kind: chosenKind }),
+    signal,
   })
 
 /** 用户勾选确认之后：两处备份 → 原子替换（令牌只在这个窗口的会话里有效） */
@@ -7096,8 +7401,6 @@ export interface ContactCapability {
   email_max?: number
   max_attachments?: number
   max_total_bytes?: number
-  /** 附件允许的扩展名（带点、小写） */
-  extensions?: string[]
   /** 未读回信数（本机记录，不联网） */
   unread?: number
   retention_days?: number
@@ -7245,6 +7548,13 @@ export interface RegistryView {
   all_scripts: ScriptInventoryEntry[]
   /** 项目内后端认得出语言的 R / MATLAB 脚本（只能“生成可编辑版本”，不能运行；老后端没有） */
   foreign_scripts?: ForeignSource[]
+  /** 项目内还没转成脚本的 Jupyter 笔记本（后端 `notebookscript.inventory`，ADR 0179；老后端没有） */
+  notebook_scripts?: NotebookSource[]
+}
+
+export interface NotebookSource {
+  /** 笔记本（项目相对路径） */
+  notebook: string
 }
 
 export const fetchRegistry = () => jsonFetch<RegistryView>('/api/registry')
@@ -7555,7 +7865,7 @@ export type PreparationRequirement =
       payload: Record<string, unknown> | null
     }
   | { id: 'dependencies'; kind: 'dependency_scope_choice'; code: string; payload: Record<string, unknown> }
-  | { id: 'dependencies'; kind: 'dependency_pinned'; code: string; payload: { source?: string; variable?: string } }
+  | { id: 'dependencies'; kind: 'dependency_pinned'; code: string; payload: { source?: string; variable?: string; missing?: string[] } }
   | { id: 'data'; kind: 'input_location'; code: string; origin: 'last_attempt'; blocking: false; payload: MissingInputOffer }
   /**
    * 沙盒里 glob / listdir / exists / C++ 读取器落空、脚本目录里找得到（#1254）：上一次尝试留下的不阻塞引导，
@@ -7767,16 +8077,22 @@ export interface PreparationReport {
   failed_figures?: { stem: string; code?: string }[]
   /** 这次（无参数）运行替换掉的旧图名（T09b，与 `ProbeResult.unlinked_stems` 同一口径）；老后端没有 */
   unlinked_stems?: string[]
+  /** 脚本用 `PdfPages` 写进多页 PDF 的图的账（与 `ProbeResult.pdf_pages` 同一份；导出的「合并为多页 PDF」靠它，#1370）；没有 / 老后端不出现 */
+  pdf_pages?: PdfPagesCapture[]
   /** 智能修复路由选的唯一修法（ADR 0148，`engine/fixrouter.py`）；没失败 / 还在跑 / 老后端 = null 或缺省。认不出的形状前端当没有（`isRemedy`） */
   remedy?: Remedy | null
   /** 跑完没出图时的原因（`rasterhint`）：脚本自己用位图库把图片写成了文件，不是 Matplotlib 图；只是提示，不改 outcome / facts。老后端没有 */
-  no_figure_hint?: {
-    kind: 'raster_script'
-    library: RasterLibrary
-    in_project?: boolean
-    /** 能确定的输出文件（项目相对路径，素材库定位用）；拿不到 / 在项目外 / 老后端为 null 或缺省 */
-    path?: string | null
-  } | null
+  no_figure_hint?:
+    | {
+        kind: 'raster_script'
+        library: RasterLibrary
+        in_project?: boolean
+        /** 能确定的输出文件（项目相对路径，素材库定位用）；拿不到 / 在项目外 / 老后端为 null 或缺省 */
+        path?: string | null
+      }
+    /** 只复制现成图片的脚本（不画图）：输出的图片在素材库里（`rasterhint.KIND_COPIED`）；这时报告没有 remedy */
+    | { kind: 'copied_images'; in_project?: boolean; path?: string | null }
+    | null
   result: {
     status: string
     error?: PreparationResultError | null
@@ -7811,6 +8127,10 @@ export interface PreparationResultError {
     ignore_token?: string
     /** `interpreter_cache_denied`（TVD-B6MR）：一键「改用自带的 Python」要清哪一层选择；没有 = 失败的就是 Tavotto 自己的解释器，不给按钮 */
     switch?: 'global' | 'project' | 'both' | string
+    /** `tex_*`（TeX 工具链，`texdiag.params_of`）：缺的命令 / 宏包文件名 / LaTeX 报错那一行，有才带 */
+    command?: string
+    file?: string
+    line?: string
   }
   /** 脚本的完整 traceback（保尾部）；敏感运行没有 */
   traceback?: string

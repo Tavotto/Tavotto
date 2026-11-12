@@ -4,7 +4,7 @@ import {Rejected} from '../core/types.ts';
 import type {Packet} from '../core/types.ts';
 import type {LiveService} from './service.ts';
 import type {SignatureRow} from './store.ts';
-import {DB_NOW} from './store.ts';
+import {DB_NOW,blockedSQL} from './store.ts';
 
 export interface SignedAuthorization {body:string;signature:string}
 export interface Grant {
@@ -140,8 +140,8 @@ export class Delegation {
       await this.s.store.batch(this.s.store.guard(`(SELECT revision FROM state WHERE id=1)=? AND ${DB_NOW}<? AND ${DB_NOW}<? AND
         EXISTS(SELECT 1 FROM packets WHERE id=? AND subject=? AND digest=? AND created=? AND valid_until=? AND valid_until>${DB_NOW}) AND
         NOT EXISTS(SELECT 1 FROM signatures WHERE packet=? AND role='holder') AND
-        NOT EXISTS(SELECT 1 FROM eligibility_blocks b JOIN packets old ON old.id=b.packet WHERE old.subject=?) AND
-        (SELECT hash FROM delegated_controls WHERE grant_id=? ORDER BY sequence DESC LIMIT 1)=?`,revision,p.valid_until,a.g.expires_at,p.id,p.subject,p.digest,p.created,p.valid_until,p.id,p.subject,a.g.id,a.controlHash));
+        NOT ${blockedSQL('?','?')} AND
+        (SELECT hash FROM delegated_controls WHERE grant_id=? ORDER BY sequence DESC LIMIT 1)=?`,revision,p.valid_until,a.g.expires_at,p.id,p.subject,p.digest,p.created,p.valid_until,p.id,p.subject,p.created,a.g.id,a.controlHash));
       return revision;
     }
     const raw=canonical(record),hash=await sha256(raw),cipher=await seal(this.key,raw,`delegated:${p.id}:${a.controlHash}`);
@@ -149,9 +149,9 @@ export class Delegation {
       EXISTS(SELECT 1 FROM packets WHERE id=? AND subject=? AND kind='individual' AND version=? AND digest=? AND created=? AND valid_until=? AND valid_until>${DB_NOW}) AND
       EXISTS(SELECT 1 FROM signatures WHERE packet=? AND role='contributor' AND actor=? AND evidence_hash=?) AND
       NOT EXISTS(SELECT 1 FROM signatures WHERE packet=? AND role='holder') AND
-      NOT EXISTS(SELECT 1 FROM eligibility_blocks b JOIN packets old ON old.id=b.packet WHERE old.subject=?) AND
+      NOT ${blockedSQL('?','?')} AND
       (SELECT hash FROM delegated_controls WHERE grant_id=? ORDER BY sequence DESC LIMIT 1)=?`,
-      now,p.valid_until,a.g.expires_at,p.id,p.subject,p.version,p.digest,p.created,p.valid_until,p.id,p.subject,contributor.evidence_hash,p.id,p.subject,a.g.id,a.controlHash),
+      now,p.valid_until,a.g.expires_at,p.id,p.subject,p.version,p.digest,p.created,p.valid_until,p.id,p.subject,contributor.evidence_hash,p.id,p.subject,p.created,a.g.id,a.controlHash),
       this.s.store.stmt('INSERT INTO delegated_receipts VALUES(?,?,?,?,?,?,?,?)',p.id,a.g.id,a.controlHash,contributor.evidence_hash,cipher,hash,now,a.g.expires_at)]);
     return revision+1;
   }

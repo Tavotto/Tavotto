@@ -1125,6 +1125,9 @@ class LiveFigureSession:
         #: stem -> 与 `savefig_calls[stem]` 逐项对齐的 `bbox_extra_artists` **对象**（进不了 JSON，
         #: 只活在这个进程里；算图幅时要把同一批 artist 交回 savefig，ADR 0098 §一）
         self.savefig_extras: dict[str, list] = {}
+        #: 只写进过文件对象（BytesIO 等）、没有 stem 可认领的图和它们缓冲区那几次 savefig 的参数
+        #: （`figcapture.BufferSaves`）：脚本跑完时交给 pyplot 兜底，被脚本关掉的也补得回来
+        self.buffer_saves = figcapture.BufferSaves()
         #: stem -> {files: 目标文件键 -> 最近写它的 Figure（弱引用）, log: 影子日志}，见 `figcapture.note_savefig_writer`
         self.savefig_writers: dict[str, dict] = {}
         #: 补认领的 stem -> 它写文件时用的 stem（`panel-2` -> `panel`），见 `figcapture.adopt_displaced_writers`
@@ -1435,7 +1438,9 @@ class LiveFigureSession:
         `bbox_inches` 为 None → 不挂，一切与以前逐字节相同。算不出 → 不挂，原因挂在图上
         （`pathgeom.frame_unavailable`），manifest 报 `frame_unavailable`。
         """
-        if self.capture_source.get(stem, figcapture.SOURCE_SAVEFIG) != figcapture.SOURCE_SAVEFIG:
+        if not figcapture.defines_frame(
+            self.capture_source.get(stem), self.savefig_calls.get(stem)
+        ):
             return
         artifact = None
         if self.frame_project_root is not None:

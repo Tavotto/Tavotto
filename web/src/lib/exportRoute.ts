@@ -67,7 +67,7 @@ export interface PanelRoute {
   embeds_disk_bitmap: boolean
   formats: Record<string, RouteFormat>
   /** EPS 给不给得出——不论用户勾没勾 */
-  offers?: { eps?: RouteFormat }
+  offers?: { eps?: RouteFormat; script?: RouteFormat }
 }
 
 /** `/api/export/validate` 响应里的 `route`。缺它（旧后端 / 后端算不出 / 校验没回来）= 没有 route，见 `embedsDiskBitmap` 的退路 */
@@ -160,6 +160,19 @@ export function copiesSourceVerbatim(args: {
   if (!args.panel) return true
   if (!args.guardOk) return false
   return embedsDiskBitmap(args.panel, args.assets, 'original', args.formats, args.route)
+}
+
+/** 修改后的 .py 给不给得出（`offers.script`，ADR 0171）。取不到 = null，调用方走 `scriptAvailability` 的退路 */
+export function scriptFromRoute(
+  route: ExportRoute | null | undefined,
+  scope: ExportRouteScope,
+  id: string,
+): { ok: boolean; reason: 'none' | 'canvas_scope' | 'no_script' } | null {
+  if (!route || route.scope !== scope) return null
+  const offer = route.panels[id]?.offers?.script
+  if (!offer) return null
+  if (offer.how !== 'unavailable') return { ok: true, reason: 'none' }
+  return { ok: false, reason: offer.reason === 'script_export_not_for_canvas' ? 'canvas_scope' : 'no_script' }
 }
 
 /** EPS 为什么不可用（与 `exportRequest.EpsBlockReason` 同一个闭集）；后端原因码 → 界面的那一句 */

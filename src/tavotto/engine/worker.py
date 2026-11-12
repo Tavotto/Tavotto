@@ -41,6 +41,7 @@ import ast
 import base64
 import contextlib
 import copy
+import dis
 import errno
 import faulthandler
 import hashlib
@@ -289,6 +290,74 @@ import matplotlib  # noqa: E402 —— safe 档由 Tavotto 挑解释器，backen
 matplotlib.use("Agg")
 import matplotlib.figure as mfigure  # noqa: E402
 
+
+def _repair_incomplete_font_registry() -> bool:
+    """Recover an incomplete Matplotlib font registry without rewriting its cache.
+
+    Matplotlib rebuilds a cache when a selected font file is missing, but not
+    when its default family has no entry at all. Re-scan with Matplotlib's own
+    FontManager, preserve existing entries and references to the manager, and
+    add the newly discovered faces only when the default is actually usable.
+    """
+    from matplotlib import font_manager
+
+    manager = font_manager.fontManager
+    try:
+        default = str(manager.defaultFamily["ttf"]).casefold()
+
+        def usable(entries):
+            return any(
+                str(entry.name).casefold() == default and os.path.isfile(entry.fname)
+                for entry in entries
+            )
+
+        if usable(manager.ttflist):
+            return False
+        fresh = font_manager.FontManager()
+        if not usable(fresh.ttflist):
+            return False
+
+        def key(entry):
+            return tuple(
+                str(getattr(entry, attr, ""))
+                for attr in (
+                    "fname",
+                    "index",
+                    "name",
+                    "style",
+                    "variant",
+                    "weight",
+                    "stretch",
+                    "size",
+                )
+            )
+
+        def merged(old, discovered):
+            # An obsolete entry for the default face would win the matching
+            # tie and make Matplotlib rebuild/write its cache anyway.
+            keep = [
+                entry
+                for entry in old
+                if str(entry.name).casefold() != default or os.path.isfile(entry.fname)
+            ]
+            known = {key(entry) for entry in keep}
+            return keep + [entry for entry in discovered if key(entry) not in known]
+
+        clear_cached = manager._findfont_cached.cache_clear
+        ttf = merged(manager.ttflist, fresh.ttflist)
+        afm = merged(manager.afmlist, fresh.afmlist)
+        manager.ttflist[:] = ttf
+        manager.afmlist[:] = afm
+        clear_cached()
+        return True
+    except Exception as exc:  # noqa: BLE001 — retain original failure if a rescan is unavailable
+        print(
+            f"[fonts] Matplotlib font registry recovery unavailable: {type(exc).__name__}",
+            file=sys.stderr,
+        )
+        return False
+
+
 #: safe worker 要装进私有包的引擎模块——**整条平铺 import 闭包**，一次装完
 #: （safe 档不像 native 那样要分两阶段避开 matplotlib：这里 matplotlib 本来就先 import）。
 _ENGINE_MODULES = (
@@ -314,6 +383,7 @@ _ENGINE_MODULES = (
     "runtime",
     "writetripwire",
     "texdiag",
+    "cmddiag",
 )
 _PKG = bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)
 
@@ -711,6 +781,7 @@ def _patched_savefig(self, fname, *args, **kwargs):
         SESSION.savefig_observations.complete(observation, "intercepted")
         SESSION.note_artifact(observation, stem, self, kwargs.get("bbox_extra_artists"))
     if stem and SESSION is not None:
+        SESSION.buffer_saves.claim(self)  # 有 stem 了：让出缓冲区账里的名额
         SESSION.add_figure(stem, self, figcapture.SOURCE_SAVEFIG)
         SESSION.note_savefig(
             stem,
@@ -725,6 +796,15 @@ def _patched_savefig(self, fname, *args, **kwargs):
         if SESSION is not None:
             SESSION.passthrough_figures.add(id(self))
         result = _REAL_SAVEFIG(self, fname, *args, **kwargs)
+        # 真写成功之后才记账（失败的保存没有这一页，也不该留住一张从没成功存过的图）
+        if SESSION is not None and not stem and not figcapture.is_pdf_pages(fname):
+            # 写进文件对象、没有 stem 可认领的一次（PdfPages 有自己的账；`paper_style.save` 里的有 stem，上面已记）：
+            # 记图和这次的参数，脚本关掉它也补得回来
+            SESSION.buffer_saves.note(
+                self,
+                figcapture.savefig_call(fname, kwargs),
+                kwargs.get("bbox_extra_artists"),
+            )
         # 写进 PdfPages 的一页：真写成功之后才记（失败的保存没有这一页）
         if figcapture.is_pdf_pages(fname):
             _PDF_PAGES.note(fname, self)
@@ -1068,6 +1148,100 @@ def _script_frame_line(exc: BaseException, script) -> int | None:
     """异常回溯里**最内层**属于用户脚本文件的那一帧的行号（退出在脚本哪一行）；找不到是 None。"""
     lines = _script_frame_lines(exc, script)
     return lines[-1] if lines else None
+
+
+def _direct_argv_index_error(
+    exc: BaseException, script, supplied: list[str], expected_argv: list[str]
+) -> bool:
+    """Prove the failing subscription is a direct read of this run's argv list.
+
+    Inspect the actual failing instruction, not a matching source line: another
+    list or a second subscript on the same line can raise the same IndexError.
+    Unknown bytecode, changed argv, dynamic indices and helper frames stay
+    ordinary script errors. Nothing evaluates the user's source or arguments.
+    """
+    try:
+        if (
+            type(exc) is not IndexError
+            or type(sys.argv) is not list
+            or sys.argv is not expected_argv
+        ):
+            return False
+        if not all(type(value) is str for value in sys.argv):
+            return False
+        if sys.argv != [str(script), *supplied]:
+            return False
+        tb = exc.__traceback__
+        if tb is None:
+            return False
+        wanted = os.path.normcase(os.path.realpath(str(script)))
+        reached_script = False
+        while tb.tb_next is not None:
+            # A finally block can change argv and restore it after the failing
+            # instruction, even in a helper called by the script. Reject any
+            # unwound frame after entering the script if it has since executed.
+            reached_script |= (
+                os.path.normcase(os.path.realpath(tb.tb_frame.f_code.co_filename)) == wanted
+            )
+            if reached_script and tb.tb_frame.f_lasti != tb.tb_lasti:
+                return False
+            tb = tb.tb_next
+        frame = tb.tb_frame
+        if (
+            os.path.normcase(os.path.realpath(frame.f_code.co_filename)) != wanted
+            or frame.f_lasti != tb.tb_lasti
+        ):
+            return False
+        instructions = list(dis.get_instructions(frame.f_code))
+        pos = next((i for i, op in enumerate(instructions) if op.offset == tb.tb_lasti), -1)
+        if pos < 2:
+            return False
+        op = instructions[pos]
+        if op.opname != "BINARY_SUBSCR" and not (op.opname == "BINARY_OP" and op.argrepr == "[]"):
+            return False
+        index_op = instructions[pos - 1]
+        if (
+            index_op.opname not in ("LOAD_CONST", "LOAD_SMALL_INT")
+            or type(index_op.argval) is not int
+        ):
+            return False
+        index = index_op.argval
+        if -len(sys.argv) <= index < len(sys.argv):
+            return False
+
+        def binding(load):
+            name = load.argval
+            if not isinstance(name, str):
+                return None
+            if load.opname in (
+                "LOAD_NAME",
+                "LOAD_FAST",
+                "LOAD_FAST_CHECK",
+                "LOAD_FAST_BORROW",
+                "LOAD_DEREF",
+            ):
+                if name in frame.f_locals:
+                    return frame.f_locals[name]
+                if load.opname != "LOAD_NAME":
+                    return None
+            if load.opname in ("LOAD_NAME", "LOAD_GLOBAL"):
+                return frame.f_globals.get(name)
+            return None
+
+        base = instructions[pos - 2]
+        if base.opname == "LOAD_ATTR" and base.argval == "argv" and pos >= 3:
+            # Another branch may jump directly to the attribute, index or
+            # subscription with a different object already on the stack.
+            if any(op.is_jump_target for op in instructions[pos - 2 : pos + 1]):
+                return False
+            return binding(instructions[pos - 3]) is sys
+        # For an imported argv alias, the base load must likewise be executed;
+        # a jump to the index or subscription makes the operand ambiguous.
+        if any(op.is_jump_target for op in instructions[pos - 1 : pos + 1]):
+            return False
+        return binding(base) is sys.argv
+    except Exception:  # noqa: BLE001 — failure to classify must preserve the original error
+        return False
 
 
 def _blocked_operations_error(
@@ -1458,6 +1632,7 @@ class Worker(wireproto.V1Handler):
                     "parse_kind",
                     "missing_module",
                     "missing_dependency",
+                    "missing_command",
                     "execution_id",
                 )
                 if k in err
@@ -1536,12 +1711,44 @@ class Worker(wireproto.V1Handler):
             self._input_capture.entered(self.execution_id)
         executionfact.write(self.out_dir, self._execution_watch, self.execution_id)
 
+    def _overlay_wanted(self) -> bool:
+        """本次运行要不要装暂存覆盖层：常规运行（无授权根）与 MCP 授权根运行都装；校验运行的改道层 / 写回的隔离重放
+        各自有自己的写改道，不叠加。运维开关 `TAVOTTO_SAFE_OVERLAY=0`（同 `TAVOTTO_EXECUTION_FALLBACK` 的写法）整个关掉覆盖层，
+        回到守卫「跳过 + 记账」的老行为（现场出问题时的退路，也是守卫 / 账本老用例的前提）。"""
+        if os.environ.get("TAVOTTO_SAFE_OVERLAY", "").strip().lower() in (
+            "0",
+            "false",
+            "off",
+            "no",
+        ):
+            return False
+        if self.write_roots is None:
+            return True
+        try:
+            _, isolation = writetripwire.split_isolation(self.write_roots)
+            _, redirect = writetripwire.split_roots(self.write_roots)
+        except ValueError:
+            return False
+        return isolation is None and redirect is None
+
     def _install_write_tripwire(self) -> None:
         """装写入根绊线（#898）：白名单 = 命令行给的授权根 + 引擎自己的会话目录 + 基础设施目录。
 
         会话沙盒与会话缓存目录（`out/` 的上一级：out / sandbox / export / worker.log）是引擎自己的；
         matplotlib 的缓存 / 配置目录要在 matplotlib 已 import 之后才知道。其余基础设施目录（临时目录、平台缓存、
         seaborn / sklearn 数据目录）见 `writetripwire.infrastructure_roots`，每一项都带理由。"""
+        try:
+            rest, isolation = writetripwire.split_isolation(self.write_roots)
+        except ValueError as exc:
+            raise SystemExit(f"--write-roots: {exc}") from exc
+        if isolation is not None:
+            # 写回校验的隔离重放：只把写回目标的写换到暂存副本，不装授权根绊线（其它写原样）；不能与授权根混用
+            if rest:
+                raise SystemExit("--write-roots: 隔离重放条目不能与授权根 / 改道条目混用")
+            writetripwire.install_isolation(
+                isolation[0], isolation[1], display_base=str(self.figures_dir)
+            )
+            return
         extra = [self.sandbox, self.out_dir.parent]
         for getter in ("get_cachedir", "get_configdir"):
             try:
@@ -1575,6 +1782,13 @@ class Worker(wireproto.V1Handler):
         self._captured_build = None
         self._captured_input_archive = None
         self._input_capture = None
+        # Font enumeration can be slow on some systems. Do it under the build
+        # watchdog, after the worker handshake but before any user code runs.
+        if _repair_incomplete_font_registry():
+            print(
+                "[fonts] Recovered an incomplete Matplotlib font registry for this worker.",
+                file=sys.stderr,
+            )
         # 快照账绑「这一次脚本执行」：同 worker 重试（instrument / 发布阶段临时失败）也从一份新账开始
         self.session.begin_save_moments()
         self.configure_run({})
@@ -1761,6 +1975,8 @@ class Worker(wireproto.V1Handler):
             self._input_misses,
             str(self.workdir or self.sandbox),
             script_source=script_source,
+            # 沙盒 cwd 下的相对探路落空走 `_probe_misses`（出口是「在脚本目录里运行」），不当缺数据
+            record_relative_probes=self.workdir is not None,
         )
         if self.workdir is None:
             figcapture.install_probe_observer(self._probe_misses, str(self.sandbox))
@@ -1772,15 +1988,40 @@ class Worker(wireproto.V1Handler):
         # 账本的 open / stat 观察装在**最外层**（回退之外）：看到的必须是脚本交出的那条路径。
         # 装在回退之下，沙盒里 `savefig("stage.png")` 记下的 `<沙盒>/stage.png` 永远等不到
         # 被回退改指成 `<项目>/stage.png` 的读，旧图就被静默读走了（#952 Codex P1）。
+        overlay_root = self.out_dir.parent / "overlay"
+        # 每次运行一个新目录：上一次还被脚本句柄占着、没删掉的暂存文件不会被这一次读到（Windows，#1824 Codex P2）
+        overlay_dir = overlay_root / f"run-{os.getpid()}-{time.monotonic_ns()}"
+        use_overlay = self._overlay_wanted()
+        if use_overlay:
+            # 清掉之前留下的（句柄已关的那些）：在账本装上之前做，引擎自己的清理不进账
+            writetripwire.discard_overlay(str(overlay_root))
         ledger.install()
         if self.write_roots is not None:
             self._install_write_tripwire()
+        # 暂存覆盖层（#1813）：装在账本与绊线之后（最外层）——先把脚本对项目内文件的写 / 改名 / 删除与读回换进本次运行的
+        # 暂存区，账本看到的才不是项目里那条路径。覆盖层接不了的操作仍落到上面的守卫（跳过并记账）。
+        if use_overlay:
+
+            def _overlay_handled(op, kind, paths, dests):
+                print(f"[overlay] 暂存层接住 {op}: {paths[0] if paths else ''}", file=sys.stderr)
+                ledger.blocked(op, kind, *paths, dests=dests, overlay=True)
+
+            writetripwire.install_overlay(
+                str(self.figures_dir),
+                str(overlay_dir),
+                on_handled=_overlay_handled,
+                suspended=lambda: ledger._busy,
+            )
+            ledger.quiet_if = writetripwire.in_internal
 
         # 拦截必须发生在 import 脚本之前（多数脚本 from paper_style import save）
         mfigure.Figure.savefig = _patched_savefig
         figcapture.install_colorbar_capture(mfigure)
         _install_show_capture()
         _reset_pdf_pages()
+        # 复用的 worker 重跑：上一轮的缓冲区账不带进这一轮
+        # 与 show 账共用一本「没留强引用」的账：一张图两边都超出只数一次
+        self.session.buffer_saves = figcapture.BufferSaves(book=_SHOWN.book)
 
         # 脚本看到的 argv 必须是它自己的，不是 worker 的。不换的话
         # `sys.argv[1:]` 拿到的是 --script/--out-dir/--entry 这串内部参数，
@@ -1790,7 +2031,8 @@ class Worker(wireproto.V1Handler):
         # 解析参数（评审 #443）。
         # T03：用户给了精确 token 时跟在脚本后面，一个不改（空串 / 空格 / 中文 / `--` 原样）。仍排在
         # paper_style 与 `runpy` 之前——导入期 `parse_args()` 的脚本在第一行用户代码之前就看得到。
-        sys.argv = [str(self.script), *self.script_argv]
+        run_argv = [str(self.script), *self.script_argv]
+        sys.argv = run_argv
 
         # 脚本 import 了却从未用到、又没装的包不挡图（ADR 0061 §二 2026-09-24 修订）：判据与
         # 父进程的联合计划同一份（`figcapture.unused_imports`）——计划没要求装它，这里就得让
@@ -1860,6 +2102,8 @@ class Worker(wireproto.V1Handler):
             _record_write_attempts(True)
             if self.write_roots is not None:
                 writetripwire.arm(True)
+            if use_overlay:
+                writetripwire.arm_overlay(True)
             try:
                 if not self.script_source.is_file():
                     raise ProtocolError(
@@ -1940,6 +2184,21 @@ class Worker(wireproto.V1Handler):
                     raise _blocked_operations_error(
                         ledger.material(), cause=exc, fidelity=ledger.summary()
                     ) from exc
+                if _direct_argv_index_error(exc, self.script, self.script_argv, run_argv):
+                    count = len(self.script_argv)
+                    message = (
+                        f"脚本读取命令行参数时发生下标越界；Tavotto 已按原样传入 {count} 个参数。"
+                        "请检查是否还缺少脚本需要的参数。"
+                        if count
+                        else "脚本读取命令行参数时发生下标越界；这次运行没有提供参数。请在运行参数中填写脚本需要的值。"
+                    )
+                    raise ProtocolError(
+                        SCRIPT_NEEDS_ARGUMENTS,
+                        message,
+                        retryable=False,
+                        traceback_text=traceback.format_exc(),
+                        extra={"argv_count": count} if count else {},
+                    ) from exc
                 raise
             finally:
                 # 脚本跑完了：之后再有谁读 stdin 一律 EOF，绝不再发问（也绝不再碰协议管道）
@@ -1954,6 +2213,12 @@ class Worker(wireproto.V1Handler):
                 else:
                     # 恰好一次加载才可信；零次（入口模块此前已在 sys.modules，如被 paper_style 提前 import）或多次 → None
                     self._source_sha256 = entry_shas[0] if len(entry_shas) == 1 else None
+                if use_overlay:
+                    # 覆盖层只活在脚本运行期间：之后引擎自己的读写看到的是真实的项目；暂存区丢弃
+                    writetripwire.arm_overlay(False)
+                    writetripwire.discard_overlay(
+                        str(overlay_root)
+                    )  # 尽力而为、永不抛：句柄还开着就留到下次开跑前
                 if self.write_roots is not None:
                     writetripwire.arm(False)
                     # 脚本 `except PermissionError` 吞掉、或以别的错误收场，事实都在：越界的写**尝试**发生过，
@@ -1991,9 +2256,16 @@ class Worker(wireproto.V1Handler):
         )
         self.pdf_pages = _PDF_PAGES.summary(self.session.savefig_observations)
         _plt = sys.modules.get("matplotlib.pyplot")
-        if _plt is not None:
+        # 只用 `Figure()` 的脚本从不 import pyplot，但存进缓冲区的图照样要补
+        if _plt is not None or self.session.buffer_saves:
             fallback, dropped = figcapture.collect_pyplot_figures(
-                self.session.capture, self.script.stem, _plt, shown=_SHOWN
+                self.session.capture,
+                self.script.stem,
+                _plt,
+                shown=_SHOWN,
+                buffers=self.session.buffer_saves,
+                savefig_calls=self.session.savefig_calls,
+                savefig_extras=self.session.savefig_extras,
             )
             for stem in fallback:
                 self.session.capture_source[stem] = figcapture.SOURCE_PYPLOT
@@ -2111,10 +2383,91 @@ class Worker(wireproto.V1Handler):
     def _stems_summary(self) -> dict:
         # `source` / `source_sha256` 是加字段，不升协议版本（ADR 0003 §1：两侧容忍未知字段）。
         # `source_sha256` 是**本进程当初执行的版本**：去重回旧会话时二次 build 拿到的也是它，不是磁盘现状。
-        return {
+        result = {
             **self.session.stems_summary(self.dropped_figures, self.pdf_pages),
             "source_sha256": self._source_sha256,
         }
+        # The tripwire ledger records attempts before opening a path; it does
+        # not prove that a file was successfully written or still exists.
+        if self.write_roots and any(
+            str(root).startswith(writetripwire.REDIRECT_PROJECT_PREFIX) for root in self.write_roots
+        ):
+            result["redirected_write_attempts"] = writetripwire.redirected()
+            result["sandbox_files"] = self._sandbox_files()
+            result["inputs_read"] = self._inputs_read()
+        return result
+
+    def _inputs_read(self) -> dict | None:
+        """Project-relative inputs the script opened read-only, with mtimes (conversion validation only).
+
+        Lets the parent tell whether an old output in the project is newer than everything the candidate
+        read. None = no observer report; `truncated` / partial observation is the parent's `inputs_unknown`."""
+        report = self._inputs_report
+        if not isinstance(report, dict):
+            return None
+        files = []
+        for entry in report.get("files") or []:
+            rel = entry.get("path") if isinstance(entry, dict) else None
+            if not isinstance(rel, str):
+                continue
+            try:
+                mtime = os.stat(os.path.join(str(self.figures_dir), rel)).st_mtime_ns
+            except OSError:
+                return None
+            files.append({"path": rel, "mtime_ns": mtime})
+        return {"files": files, "truncated": bool(report.get("truncated"))}
+
+    def _keep_sandbox_outputs(self, names: list[str]) -> None:
+        """Copy the (bounded) sandbox outputs under the redirect area so the parent can compare their
+        content before the sandbox is discarded. Best effort: anything not copied stays name-only."""
+        try:
+            if not getattr(self, "write_roots", None):
+                return
+            _roots, redirect = writetripwire.split_roots(self.write_roots)
+            if redirect is None:
+                return
+            dest_root = Path(redirect[1]) / SANDBOX_KEEP_DIRNAME
+            total = 0
+            for rel in names:
+                src = Path(self.sandbox) / rel
+                size = src.stat().st_size
+                if size > _MAX_KEPT_FILE_BYTES or total + size > _MAX_KEPT_TOTAL_BYTES:
+                    continue
+                total += size
+                dest = dest_root / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(src, dest)
+        except (OSError, ValueError):
+            return
+
+    def _sandbox_files(self) -> dict:
+        """Relative names of the files still in the session sandbox right now (conversion validation only).
+
+        Names only, capped; internal files are filtered. A relative write in sandbox cwd lands here and
+        the sandbox is discarded after validation, so this is the only place it can be seen."""
+        names: list[str] = []
+        truncated = False
+        try:
+            for dirpath, dirs, files in os.walk(self.sandbox):
+                dirs[:] = sorted(d for d in dirs if d not in _SANDBOX_INTERNAL)
+                for name in sorted(files):
+                    if (
+                        name in _SANDBOX_INTERNAL
+                        or name.startswith("_tavotto_")
+                        or name.endswith(".pyc")
+                    ):
+                        continue
+                    if len(names) >= _MAX_SANDBOX_FILES:
+                        truncated = True
+                        break
+                    rel = os.path.relpath(os.path.join(dirpath, name), self.sandbox)
+                    names.append(rel.replace(os.sep, "/"))
+                if truncated:
+                    break
+        except OSError:
+            return {"names": [], "truncated": True}
+        self._keep_sandbox_outputs(names)
+        return {"names": names, "truncated": truncated}
 
     def _render(
         self, stem: str, timings: dict | None = None, preview_dpi: int | None = None
@@ -2158,7 +2511,20 @@ class Worker(wireproto.V1Handler):
             }
         if cmd == "build":
             # legacy 形状一字不变（test_legacy_envelope_keeps_the_old_response_shape）：`source_sha256` 只给 v1 信封
-            return {"ok": True, **{k: v for k, v in self.build().items() if k != "source_sha256"}}
+            return {
+                "ok": True,
+                **{
+                    k: v
+                    for k, v in self.build().items()
+                    if k
+                    not in {
+                        "source_sha256",
+                        "redirected_write_attempts",
+                        "sandbox_files",
+                        "inputs_read",
+                    }
+                },
+            }
         if cmd == "export" and (req.get("require_built") or req.get("snapshot_only")):
             if not self.built or req.get("stem") not in self.session.states:
                 return {
@@ -2303,6 +2669,7 @@ class Worker(wireproto.V1Handler):
             facts.update(self._missing_module_fact(exc))
             facts.update(self._unreadable_folder_fact(exc))
             facts.update(self._foreign_abi_fact(exc))
+            facts.update(self._missing_command_fact(exc))
             raise ProtocolError(
                 "script_error",
                 f"脚本执行失败: {exc}",
@@ -2347,6 +2714,14 @@ class Worker(wireproto.V1Handler):
         except Exception:  # noqa: BLE001 — 绝不盖掉原来的脚本错误
             return {}
         return {"foreign_abi_folder": fact, "foreign_abi_folder_private": private} if fact else {}
+
+    def _missing_command_fact(self, exc: BaseException) -> dict:
+        """脚本拉起外部命令却找不到可执行文件：`{"missing_command": {...}}`（`cmddiag.collect`，用本 worker 的 env）。
+        敏感运行里命令名不在公开白名单就置空；只读检查，任何意外都当没有，绝不盖掉原来的脚本错误。"""
+        try:
+            return _PKG.cmddiag.collect(exc, sensitive=bool(self.sensitive_argv))
+        except Exception:  # noqa: BLE001
+            return {}
 
     def _missing_module_fact(self, exc: BaseException) -> dict:
         """缺依赖的结构化事实：`{"missing_dependency": True, "missing_module": 顶层包名?}`；不是缺依赖回 `{}`。
@@ -2451,6 +2826,13 @@ def _json_default(o):
         return float(o)
     except (TypeError, ValueError):
         return str(o)
+
+
+_MAX_SANDBOX_FILES = 200
+SANDBOX_KEEP_DIRNAME = ".tavotto-sandbox"
+_MAX_KEPT_FILE_BYTES = 8 * 1024 * 1024
+_MAX_KEPT_TOTAL_BYTES = 64 * 1024 * 1024
+_SANDBOX_INTERNAL = frozenset({"__pycache__"})
 
 
 def _parse_write_roots(raw) -> list[str] | None:

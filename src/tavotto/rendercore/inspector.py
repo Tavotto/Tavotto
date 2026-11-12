@@ -1165,6 +1165,8 @@ def summary(manifest: dict) -> dict:
         "fonts_used": [f["name"] for f in manifest["observed"].get("fonts_used", [])],
         "plan_identity": manifest["plan"].get("plan_identity"),
         "backend": manifest["plan"].get("backend"),
+        # SVG 里的文字确实被画成了轮廓（QA-WIN-08）；只有生产者明确报了才为 True
+        "text_outlined": manifest["plan"].get("text_outlined") is True,
         "identity": dict(manifest.get("identity") or {}),
         "provenance": dict(manifest.get("provenance") or {}),
     }

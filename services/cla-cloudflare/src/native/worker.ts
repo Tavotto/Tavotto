@@ -7,7 +7,8 @@ import { GitHub } from './github.ts';
 import { LiveStore } from './store.ts';
 import { LiveService } from './service.ts';
 import { uiHTML, uiCSS, uiScript } from './ui.ts';
-import { reconcileOne } from './background.ts';
+import { reconcileOne, rejectionCode } from './background.ts';
+import { eligibility, ELIGIBILITY_NONCE } from './eligibility.ts';
 import { verification } from './verification.ts';
 import { InvocationBudget } from './budget.ts';
 import { validId, validSha } from '../core/policy.ts';
@@ -80,6 +81,43 @@ async function publicAgreement(env:Env,c:LiveConfig):Promise<Response> {
     return json({digest:a.sha256,kind:'individual',version:a.version,content});
   }catch(error){return json({error:error instanceof Rejected?error.code:'agreement_asset_unavailable'},503);}
 }
+// Static files the browser needs to assemble the signed PDF copy (src/pdf). Each public path maps to ONE fixed
+// asset path in the CLA_PUBLIC_AGREEMENT binding; nothing is derived from the request. The Worker only checks the
+// asset's status and type and streams it through: hashing and assembly happen in the browser, not on this CPU budget.
+const PDF_ASSETS=new Map<string,{asset:string;type:string;upstream:string[];max:number}>([
+  ['/cla-pdf.js',{asset:'/cla-pdf.js',type:'text/javascript; charset=utf-8',upstream:['text/javascript','application/javascript'],max:4194304}],
+  ['/agreement.pdf',{asset:'/CLA_INDIVIDUAL.pdf',type:'application/pdf',upstream:['application/pdf'],max:8388608}],
+  ['/cla-pdf-font.ttf',{asset:'/cla-pdf-font.ttf',type:'font/ttf',upstream:['font/ttf','font/sfnt','application/x-font-ttf'],max:2097152}],
+  ['/cla-pdf-font-OFL.txt',{asset:'/cla-pdf-font-OFL.txt',type:'text/plain; charset=utf-8',upstream:['text/plain'],max:65536}],
+  // The other signature styles (src/pdf/styles.ts): one font and its licence each. The signing page previews with them too.
+  ...(['signature','pen','hand'] as const).flatMap(style=>[
+    [`/cla-sig-${style}.ttf`,{asset:`/cla-sig-${style}.ttf`,type:'font/ttf',upstream:['font/ttf','font/sfnt','application/x-font-ttf'],max:2097152}],
+    [`/cla-sig-${style}-${style==='pen'?'LICENSE':'OFL'}.txt`,{asset:`/cla-sig-${style}-${style==='pen'?'LICENSE':'OFL'}.txt`,type:'text/plain; charset=utf-8',upstream:['text/plain'],max:65536}],
+  ] as Array<[string,{asset:string;type:string;upstream:string[];max:number}]>),
+]);
+async function pdfAssetResponse(env:Env,spec:{asset:string;type:string;upstream:string[];max:number}):Promise<Response> {
+  const response=await env.CLA_PUBLIC_AGREEMENT!.fetch(new Request('https://cla-assets.invalid'+spec.asset,{redirect:'manual'}));
+  const length=Number(response.headers.get('content-length') ?? 0);
+  if(response.status!==200 || response.redirected || !response.body || !spec.upstream.includes(response.headers.get('content-type')?.split(';')[0]?.trim() ?? '') || length>spec.max)
+    throw new Rejected('pdf_asset_unavailable');
+  return response;
+}
+async function pdfAsset(env:Env,pathname:string):Promise<Response> {
+  const spec=PDF_ASSETS.get(pathname);if(!spec)return json({error:'route_unavailable'},404);
+  if(!env.CLA_PUBLIC_AGREEMENT)return json({error:'agreement_configuration_required'},503);
+  try {
+    const response=await pdfAssetResponse(env,spec);
+    return new Response(response.body,{headers:{...headers,'content-type':spec.type}});
+  }catch{return json({error:'pdf_asset_unavailable'},503);}
+}
+// True only when every file the browser needs is really retrievable right now; never a constant.
+async function signedPdfAvailable(env:Env):Promise<boolean> {
+  if(!env.CLA_PUBLIC_AGREEMENT)return false;
+  try {
+    await Promise.all([...PDF_ASSETS.values()].map(async spec=>{await (await pdfAssetResponse(env,spec)).body!.cancel();}));
+    return true;
+  }catch{return false;}
+}
 export function config(env:Env):LiveConfig {
   let c:LiveConfig;try{c=JSON.parse(env.CLA_CONFIG ?? '');}catch{throw new Rejected('configuration_required');}
   // A JSON config cannot silently turn capabilities on. Each binding is explicit and defaults false.
@@ -94,13 +132,24 @@ export async function service(env:Env,budget?:InvocationBudget):Promise<LiveServ
   const key=await importAes(unbase64(secrets.evidenceKey));
   return new LiveService(c,new LiveStore(env.DB,budget,c),new GitHub(c,secrets,undefined,undefined,budget),key);
 }
+// One fixed-vocabulary line per scheduled run (Workers Logs). Only the run name, disposition,
+// budget counters and, on failure, a fixed rejection code are written: never messages,
+// payloads, logins or credentials. A thrown run is logged and then rethrown unchanged.
+export async function loggedRun(run:'verify_head'|'reconcile',work:()=>Promise<string|{disposition:string;reason?:string;budget?:{sql:number;external:number}}>,
+  log:(line:string)=>void=line=>console.log(line)):Promise<void> {
+  let result;
+  try{result=await work();}
+  catch(error){log(JSON.stringify({run,disposition:'thrown',reason:rejectionCode(error)}));throw error;}
+  const {disposition,reason,budget}=typeof result==='string'?{disposition:result,reason:undefined,budget:undefined}:result;
+  log(JSON.stringify({run,disposition,...(budget?{budget:{sql:budget.sql,external:budget.external}}:{}),...(reason===undefined?{}:{reason:/^[a-z_]{1,64}$/.test(reason)?reason:'unexpected'})}));
+}
 export default {async scheduled(controller:{cron?:string},env:Env):Promise<void> {
   if(controller.cron===AUTOMATIC_CRON) {
-    if(env.CLA_AUTOMATIC_VERIFICATION_ENABLED==='true')await verifyHeadOne(await service(env,new InvocationBudget()));
+    if(env.CLA_AUTOMATIC_VERIFICATION_ENABLED==='true')await loggedRun('verify_head',async()=>verifyHeadOne(await service(env,new InvocationBudget())));
     return;
   }
   if(env.CLA_BACKGROUND_ENABLED!=='true')return;
-  await reconcileOne(await service(env,new InvocationBudget()));
+  await loggedRun('reconcile',async()=>reconcileOne(await service(env,new InvocationBudget())));
 },async fetch(req:Request,env:Env):Promise<Response> {
   try {
     const url=new URL(req.url),enabled=[env.CLA_GITHUB_ENABLED,env.CLA_OAUTH_ENABLED,env.CLA_SIGNING_ENABLED,env.CLA_CHECK_PUBLISHING_ENABLED,env.CLA_UI_ENABLED,env.CLA_CI_VERIFICATION_ENABLED].some(v=>v==='true');
@@ -122,11 +171,23 @@ export default {async scheduled(controller:{cron?:string},env:Env):Promise<void>
     if(env.CLA_UI_ENABLED==='true' && req.method==='GET') {
       const assets:Record<string,[string,string]>={'/':[uiHTML,'text/html; charset=utf-8'],'/ui.css':[uiCSS,'text/css; charset=utf-8'],'/ui.js':[uiScript(),'application/javascript; charset=utf-8']};
       const asset=assets[url.pathname];if(asset && (url.pathname==='/' || !url.search))return new Response(asset[0],{headers:{...headers,'content-type':asset[1],
-        'content-security-policy':"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"}});
+        'content-security-policy':"default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"}});
     }
-    if(req.method==='GET' && url.pathname==='/capabilities' && !url.search)return json({oauthEnabled:c.oauthEnabled,signingEnabled:c.signingEnabled,checkPublishingEnabled:c.checkPublishingEnabled});
+    if(req.method==='GET' && url.pathname==='/capabilities' && !url.search)return json({oauthEnabled:c.oauthEnabled,signingEnabled:c.signingEnabled,checkPublishingEnabled:c.checkPublishingEnabled,
+      ...(await signedPdfAvailable(env)?{signedPdf:true}:{})});
     if (req.method==='GET' && url.pathname==='/health' && !url.search)
       return json({runtime:'workers-d1',signingEnabled:c.signingEnabled,checkPublishingEnabled:c.checkPublishingEnabled});
+    if(req.method==='GET' && (url.pathname==='/eligibility/pr' || url.pathname==='/eligibility/group')) {
+      // ADR 0172: public and read-only. It takes no credential, so it must never write or reveal who has not signed.
+      if(env.CLA_CI_VERIFICATION_ENABLED!=='true')throw new Rejected('ci_verification_disabled');
+      const group=url.pathname==='/eligibility/group',head=url.searchParams.get('head') ?? '',nonce=url.searchParams.get('nonce') ?? '',pr=url.searchParams.get('pr') ?? '',base=url.searchParams.get('base') ?? '';
+      if([...url.searchParams.keys()].sort().join(',')!==(group?'base,head,nonce':'head,nonce,pr') || !validSha(head) || !ELIGIBILITY_NONCE.test(nonce) ||
+        (group?!validSha(base):!/^[1-9][0-9]*$/.test(pr) || !validId(Number(pr))))throw new Rejected('eligibility_invalid');
+      if(!env.CLA_VERIFICATION_LIMITER)return json({error:'verification_abuse_control_required'},503);
+      let admitted=false;try{admitted=(await env.CLA_VERIFICATION_LIMITER.limit({key:group?'eligibility-group':'eligibility-pr'})).success===true;}catch{return json({error:'verification_abuse_control_unavailable'},503);}
+      if(!admitted)return json({error:'verification_busy'},429,{'retry-after':'60'});
+      return json(await eligibility(await service(env,new InvocationBudget()),group?{kind:'merge_group',headSha:head,baseSha:base}:{kind:'pr',number:Number(pr)},head,nonce));
+    }
     if(req.method==='GET' && url.pathname==='/verification/group') {
       if(env.CLA_CI_VERIFICATION_ENABLED!=='true')throw new Rejected('ci_verification_disabled');
       if([...url.searchParams.keys()].sort().join(',')!=='attempt,base,head,run' || !/^[1-9][0-9]*$/.test(url.searchParams.get('run') ?? ''))throw new Rejected('verification_invalid');
@@ -151,6 +212,7 @@ export default {async scheduled(controller:{cron?:string},env:Env):Promise<void>
       return json(await verification(await service(env,new InvocationBudget()),pr,head,run,attempt));
     }
     if(req.method==='GET' && url.pathname==='/agreement' && !url.search)return publicAgreement(env,c);
+    if(req.method==='GET' && !url.search && PDF_ASSETS.has(url.pathname))return pdfAsset(env,url.pathname);
     if(req.method==='POST' && url.pathname==='/oauth/start' && !url.search) {
       if(req.headers.get('origin')!==c.origin)throw new Rejected('origin_rejected');
       if(req.headers.get('content-type')?.split(';')[0]!=='application/json')throw new Rejected('form_rejected');
@@ -192,6 +254,7 @@ export default {async scheduled(controller:{cron?:string},env:Env):Promise<void>
       if(url.pathname==='/intents'){const b=await body(req,['packet','role']);return json({intent:await s.intent(token,csrf,origin,b.packet,b.role)});}
       if(url.pathname==='/sign'){const b=await body(req,['packet','intent','role','evidence']);return json(await s.sign(token,csrf,origin,b.packet,b.intent,b.role,b.evidence));}
       if(url.pathname==='/hold'){const b=await body(req,['packet','intent']);return json(await s.hold(token,csrf,origin,b.packet,b.intent));}
+      if(url.pathname==='/release'){const b=await body(req,['packet']);return json(await s.release(token,csrf,origin,b.packet));}
       if(url.pathname==='/checks/pr'){
         await s.authorize(token,csrf,origin);const session=await s.session(token);
         if(session.actor!==c.holderId)throw new Rejected('holder_required');

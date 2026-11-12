@@ -51,6 +51,7 @@ from . import (
     sysmem,
     texdiag,
     workdir,
+    writetripwire,
 )
 
 LOG = logging.getLogger("tavotto.engine")
@@ -1213,7 +1214,7 @@ def _explain_empty_capture(err: "WorkerError", script_name: str, known, log_tail
     tail = log_tail.strip()
     if tail:
         out = WorkerError(
-            f"{script_name} 跑完了，但没有产生任何图：既没有 savefig，也没有留下 "
+            f"{script_name} 跑完了，但没有产生任何图：没有留下 "
             "pyplot Figure。展开下面的输出看它自己说了什么——多半是数据文件没找到，"
             "或分析在画图之前就结束了。",
             tail,
@@ -1222,8 +1223,7 @@ def _explain_empty_capture(err: "WorkerError", script_name: str, known, log_tail
     else:
         # 一个字都没打印：没有可展开的东西，也不造一句占位塞进 traceback 区
         out = WorkerError(
-            f"{script_name} 跑完了，但没有产生任何图，也没有任何输出：既没有 savefig，"
-            "也没有留下 pyplot Figure。",
+            f"{script_name} 跑完了，但没有产生任何图，也没有任何输出：没有留下 pyplot Figure。",
             "",
             code=NO_FIGURES_SILENT_CODE,
         )
@@ -1312,14 +1312,17 @@ def workdir_hint_for(
 SUCCESS_HINT_KINDS = frozenset({figcapture.PROBE_GLOB})
 
 
-def workdir_hint_of_build(worker) -> dict | None:
+def workdir_hint_of_build(worker, *, captured: bool = True) -> dict | None:
     """build 成功之后的引导：脚本在沙盒里 glob 回空却没报错（`ax.plot([])` 画出一条空线），脚本目录里同一个模式
-    有文件 → 同形的 `workdir_hint`（`source = "runtime"`）。出图结果、状态码都不改（#1254）。"""
+    有文件 → 同形的 `workdir_hint`（`source = "runtime"`）。出图结果、状态码都不改（#1254）。
+
+    `captured=False`（成功跑完却一张图都没捕获）：随后的 `missing_stem_error` 会放开全部探路种类，这里同一口径
+    ——`if os.path.exists("data"): plot()` 在沙盒里跳过了画图，同样是数据在脚本目录里的证据（Codex #1846 P2）。"""
     return workdir_hint_for(
         getattr(worker, "script_name", ""),
         getattr(worker, "figures_dir", None),
         getattr(worker, "last_build_probe_misses", None),
-        kinds=SUCCESS_HINT_KINDS,
+        kinds=SUCCESS_HINT_KINDS if captured else None,
     )
 
 
@@ -2836,12 +2839,21 @@ def _input_declaration_payload(worker, command, payload: dict) -> dict:
     return {**payload, **copy.deepcopy(extension)}
 
 
-def _store_build_metadata(worker, response: dict, *, detached: bool = False) -> None:
+def _store_build_metadata(
+    worker, response: dict, *, detached: bool = False, diagnostics: dict | None = None
+) -> None:
     if detached:
         response = copy.deepcopy(response)
     worker.last_build_descriptors = list(response.get("descriptors") or [])
     worker.last_build_pdf_pages = list(response.get("pdf_pages") or [])
     worker.last_build_runtime = _runtime_of(response)
+    diagnostics = response if diagnostics is None else diagnostics
+    attempts = diagnostics.get("redirected_write_attempts")
+    worker.last_build_redirected_write_attempts = attempts if isinstance(attempts, list) else None
+    sandbox_files = diagnostics.get("sandbox_files")
+    worker.last_build_sandbox_files = sandbox_files if isinstance(sandbox_files, dict) else None
+    inputs_read = diagnostics.get("inputs_read")
+    worker.last_build_inputs_read = inputs_read if isinstance(inputs_read, dict) else None
     misses = response.get("probe_misses")
     worker.last_build_probe_misses = misses if isinstance(misses, list) else None
     worker.last_build_execution_id = response.get("execution_id")
@@ -2860,7 +2872,7 @@ def _remember_build_response(worker, response: dict) -> None:
             return
         capsule = worker.last_captured_build
         if capsule is not None and capsule["execution_id"] == worker.execution_id:
-            _store_build_metadata(worker, capsule, detached=True)
+            _store_build_metadata(worker, capsule, detached=True, diagnostics=response)
         else:
             _store_build_metadata(worker, response)
 
@@ -3174,6 +3186,9 @@ class EngineWorker:
         #: 最近一次 build 响应里 worker 自报的运行时事实（`figsession.runtime_report`，
         #: ADR 0053）；老 worker 没带就是 None——回执据此标 partial，不补不猜。
         self.last_build_runtime: dict | None = None
+        self.last_build_redirected_write_attempts: list[str] | None = None
+        self.last_build_sandbox_files: dict | None = None
+        self.last_build_inputs_read: dict | None = None
         self.last_build_execution_id: str | None = None
         self.last_used = time.time()
         # 这一代从日志的哪个字节开始（append 模式，目录跨代复用）
@@ -3720,11 +3735,17 @@ class EngineWorker:
             self.build_failed = True
             _clear_captured_inputs(self)
             self.last_build_source_sha256 = None
+            self.last_build_redirected_write_attempts = None
+            self.last_build_sandbox_files = None
+            self.last_build_inputs_read = None
             raise WorkerError(str(exc), code=exc.code) from exc
         except BaseException:
             _clear_captured_inputs(self)
             self.build_failed = True
             self.last_build_source_sha256 = None
+            self.last_build_redirected_write_attempts = None
+            self.last_build_sandbox_files = None
+            self.last_build_inputs_read = None
             raise
         self.build_failed = False
         self.built = True
@@ -3743,6 +3764,9 @@ class EngineWorker:
             self.last_build_descriptors = []
             self.last_build_pdf_pages = []
             self.last_build_source_sha256 = None
+            self.last_build_redirected_write_attempts = None
+            self.last_build_sandbox_files = None
+            self.last_build_inputs_read = None
             raise
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样
@@ -4216,6 +4240,9 @@ class WorkerdWorker:
         #: 本次 build 里写进 `PdfPages` 的摘要（`figcapture.PdfPagesLedger.summary`；写回守卫用，#1370）
         self.last_build_pdf_pages: list = []
         self.last_build_runtime: dict | None = None
+        self.last_build_redirected_write_attempts: list[str] | None = None
+        self.last_build_sandbox_files: dict | None = None
+        self.last_build_inputs_read: dict | None = None
         self.last_build_execution_id: str | None = None
         self.child_pid: int | None = None
         self.last_used = time.time()
@@ -4550,11 +4577,17 @@ class WorkerdWorker:
             self.build_failed = True
             _clear_captured_inputs(self)
             self.last_build_source_sha256 = None
+            self.last_build_redirected_write_attempts = None
+            self.last_build_sandbox_files = None
+            self.last_build_inputs_read = None
             raise WorkerError(str(exc), code=exc.code) from exc
         except BaseException:
             _clear_captured_inputs(self)
             self.build_failed = True  # 与 EngineWorker 同一个判据
             self.last_build_source_sha256 = None
+            self.last_build_redirected_write_attempts = None
+            self.last_build_sandbox_files = None
+            self.last_build_inputs_read = None
             raise
         self.build_failed = False
         self.built = True
@@ -4573,6 +4606,9 @@ class WorkerdWorker:
             self.last_build_descriptors = []
             self.last_build_pdf_pages = []
             self.last_build_source_sha256 = None
+            self.last_build_redirected_write_attempts = None
+            self.last_build_sandbox_files = None
+            self.last_build_inputs_read = None
             raise
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样
@@ -5109,8 +5145,14 @@ def one_shot(
     run=None,
     pinned: EnvironmentDecision | None = None,
     write_roots=None,
+    isolate_writes=None,
 ):
     """一次性 worker：**不进池、目录独立、用完即毁**。写回前的干净重放用。
+
+    `isolate_writes`（仅写回校验用）：写回目标文件（项目里的原件）的绝对路径们。重放期间脚本对它们的**写**
+    （`open("wb")` / `savefig(handle)` / `os.open` / `os.replace` 到目标 ……）被换到本 worker 目录里的暂存副本，
+    原件在重放期间逐字节不变，所以调用方拿 prepare 时的指纹当基线就不会把重放自己的写误判成外部改动。
+    机制见 `writetripwire.install_isolation`；暂存副本随 `discard()` 删掉整个 worker 目录一起消失。不与 `write_roots` 同用。
 
     热会话是长期活着的：build 之后经历过任意多次 override / 还原，applied 与
     originals 两表就是一份增量历史。写回要保证的是「重开这个项目、按这组
@@ -5149,6 +5191,13 @@ def one_shot(
         if write_roots is not None:
             # #898：冷重放也装同一份绊线（verify_replay / 写回重放跑的是「再跑一遍用户脚本」）
             context["write_roots"] = write_roots
+        if isolate_writes:
+            if write_roots is not None:
+                raise ValueError("isolate_writes 不能与 write_roots 同用")
+            # 暂存区放在一次性 worker 自己的目录里：discard() 删整个 base 时一并清掉
+            context["write_roots"] = writetripwire.isolate_entries(
+                base / "isolate", [str(p) for p in isolate_writes]
+            )
         if pinned is not None and pinned.pinned:
             # 写回重放钉热会话自己的解释器与环境代：项目记录可能已被同项目的另一个脚本换成别的（#820 r4221133372）
             context["pinned"] = pinned
@@ -6125,8 +6174,12 @@ def _build_with(
     allow_project_env: bool,
     before_retry=None,
     before_build=None,
+    adopt_script_dir: bool = True,
 ):
     """`build` / `build_owned` 共用的编排：`take()` 回 `(worker, created)`。
+
+    沙盒里跑完、运行时证据说数据只在脚本目录里（失败 / 没出图带 `workdir_hint`，或成功但 glob 回空；成功却一张图都没出时各种探路落空都算）且项目没决定过
+    工作目录：静默改在脚本目录里重跑一次（ADR 0047 修订，`_adopt_script_dir`），之后的结局就是那一次的结局。
 
     `before_retry()`：自动接手换了项目的解释器决策——连同它派生的工作目录默认（用户自己的 Python →
     脚本目录，ADR 0107 §二）——之后、第二次执行之前调一次。按计划执行的调用方（准备接口）在这里核
@@ -6135,20 +6188,85 @@ def _build_with(
     if before_build is not None:
         before_build(worker)
     try:
-        return worker, worker.ensure_built(), created
+        resp = worker.ensure_built()
     except WorkerError as exc:
+        if adopt_script_dir and _adopt_script_dir(figures_dir, getattr(exc, "workdir_hint", None)):
+            return _rebuild_in_script_dir(
+                take,
+                script_name,
+                figures_dir,
+                created,
+                allow_project_env,
+                before_retry,
+                before_build,
+            )
         if not allow_project_env or not should_try_project_env(exc):
             raise
         outcome = try_project_env(figures_dir, script_name, exc.module)
         if not outcome.get("ok"):
             exc.project_env = outcome
             raise
+    else:
+        # build 成功但沙盒里 glob 回空、脚本目录里有文件：画出来的多半是一张没数据的图（#1254），同样换目录重跑
+        hint = (
+            workdir_hint_of_build(worker, captured=_captured_any(resp))
+            if adopt_script_dir
+            else None
+        )
+        if hint is not None and _adopt_script_dir(figures_dir, hint):
+            return _rebuild_in_script_dir(
+                take,
+                script_name,
+                figures_dir,
+                created,
+                allow_project_env,
+                before_retry,
+                before_build,
+            )
+        return worker, resp, created
     if before_retry is not None:
         before_retry()
     worker, created_again = take()
     if before_build is not None:
         before_build(worker)
     return worker, worker.ensure_built(), created or created_again
+
+
+def _captured_any(resp) -> bool:
+    """build 响应里有没有捕获到图；读不出来按「有」——只在明确一张都没有时才放宽证据种类。"""
+    if not isinstance(resp, dict) or "stems" not in resp:
+        return True
+    return bool(resp.get("stems"))
+
+
+def _adopt_script_dir(figures_dir: str, hint) -> bool:
+    """运行时证据说数据只在脚本目录里（`hint` 是 `workdir.probe_hint` 的载荷）且项目没决定过工作目录 →
+    记下证据、关掉这个项目的会话（cwd 是 spawn 时定的，别的脚本的热会话也端着沙盒，写回重放要与热态同一个 cwd），
+    回 True。护栏全在 `workdir.adopt_runtime_evidence`（ADR 0047 修订）。"""
+    if not workdir.adopt_runtime_evidence(figures_dir, hint):
+        return False
+    LOG.info("运行时证据：数据在脚本目录里，项目改在脚本目录里运行并重跑一次（%s）", figures_dir)
+    shutdown_all(figures_dir)
+    return True
+
+
+def _rebuild_in_script_dir(
+    take, script_name, figures_dir, created, allow_project_env, before_retry, before_build
+):
+    """换到脚本目录之后的那一次重跑：与缺包自动接手同一个顺序（先 `before_retry` 核计划，再取会话）。
+    重跑本身仍可走缺包自动接手；不会再换一次目录（模式已不是沙盒，`probe_hint` 不再给证据，另外显式关掉）。"""
+    if before_retry is not None:
+        before_retry()
+    worker, resp, created_again = _build_with(
+        take,
+        script_name,
+        figures_dir,
+        allow_project_env=allow_project_env,
+        before_retry=before_retry,
+        before_build=before_build,
+        adopt_script_dir=False,
+    )
+    return worker, resp, created or created_again
 
 
 def _remember_retirements(victims) -> None:

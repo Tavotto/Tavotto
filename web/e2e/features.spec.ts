@@ -923,7 +923,7 @@ test(
     // ADR 0144：SVG 默认保留 <text>（可编辑、可检索），不再转轮廓。
     expect(artifact.texts, '画布文字必须保留为 <text>，不能转轮廓、丢字或栅格化').toBeGreaterThan(0)
     expect(artifact.textContent.length, '<text> 里必须有实际字符').toBeGreaterThan(0)
-    expect(artifact.fontFamily, '<text> 的首选族必须是批准脸的真实族名').toMatch(/^\s*(font-family:\s*)?['"]?(Liberation (Serif|Sans|Mono)|Noto Sans SC)/)
+    expect(artifact.fontFamily, '<text> 的首选族必须是批准脸的真实族名').toMatch(/^\s*(font-family:\s*)?['"]?(Liberation (Serif|Sans|Mono)|Noto (Sans|Serif) SC)/)
     const widthPt = request.canvas.page_w_mm * 72 / 25.4
     const heightPt = request.canvas.page_h_mm * 72 / 25.4
     expect(widthPt).toBeGreaterThan(0)
@@ -1458,5 +1458,90 @@ test(
     await expect.poll(angleOnScreen, { message: '撤销属性页那一步回到 45°' }).toBeCloseTo(45, 1)
     await page.keyboard.press('ControlOrMeta+z')
     await expect.poll(angleOnScreen, { message: '再撤销拖柄那一步回到横排' }).toBeCloseTo(0, 1)
+  },
+)
+
+test(
+  '功能：画布文字标注切到竖排——标注的屏幕外接框由宽变高、字段落盘，切回横排字段消失（ADR 0163）',
+  { tag: ['@feature:canvas.text-vertical'] },
+  async ({ app, page }) => {
+    const a = await app()
+    await page.setViewportSize(VIEWPORT)
+    await page.goto(a.baseURL)
+    await page.locator(CARD).dblclick({ timeout: 30_000 })
+    await expect(page.locator('[data-exit-element-edit]')).toBeVisible({ timeout: 60_000 })
+    // 文字工具是排版的事：第二张图进来才是多图排版
+    await addSecondFigure(page)
+    await expect(page.locator('[data-object-id]').first()).toBeVisible()
+
+    await page.locator('[data-tool="text"]').click()
+    await page.locator('[data-canvas-stage]').click({ position: { x: 160, y: 140 } })
+    await page.keyboard.type('弹性段 E = 210 GPa')
+    await page.keyboard.press('Enter') // 提交，标注保持选中
+    const label = page.locator('[data-object-id]').filter({ hasText: '弹性段 E = 210 GPa' })
+    await expect(label).toHaveCount(1)
+    await expectInViewport(page, label, '文字标注')
+    const before = (await label.boundingBox())!
+    expect(before.width, '横排：宽大于高').toBeGreaterThan(before.height)
+
+    // 属性页「排向」：两段，第二段是竖排；点下去之后画面真的变了
+    const seg = page.locator('[data-prop="writingMode"] [role="radio"]')
+    await expect(seg).toHaveCount(2)
+    await expect(seg.nth(0)).toHaveAttribute('aria-checked', 'true')
+    const saved = page.waitForResponse(
+      (r) =>
+        r.request().method() === 'PUT' &&
+        /\/api\/autosave\//.test(r.url()) &&
+        JSON.stringify(r.request().postDataJSON() ?? {}).includes('"writingMode":"vertical"'),
+      { timeout: 30_000 },
+    )
+    await seg.nth(1).click()
+    await expect(seg.nth(1)).toHaveAttribute('aria-checked', 'true')
+    await expect
+      .poll(async () => {
+        const b = (await label.boundingBox())!
+        return b.height > b.width
+      }, { message: '竖排后标注的屏幕外接框应当由宽变高' })
+      .toBe(true)
+    const after = (await label.boundingBox())!
+    expect(after.height, '竖排后比横排时更高').toBeGreaterThan(before.height)
+    expect(await label.locator('[data-text-body]').evaluate((e) => getComputedStyle(e).writingMode)).toBe('vertical-rl')
+    // 落盘：存盘的文档里这个标注带 writingMode: 'vertical'
+    const body = (await saved).request().postDataJSON() as { canvases: { objects: { type: string; writingMode?: string }[] }[] }
+    expect(body.canvases.flatMap((c) => c.objects).some((o) => o.type === 'text' && o.writingMode === 'vertical')).toBe(true)
+
+    // 竖排的缩放柄是北 / 南（改列长），不是东 / 西；拖下边柄，列长真的变长（画面断言）
+    await expect(page.locator('[data-canvas-stage] [data-handle="s"]')).toHaveCount(1)
+    await expect(page.locator('[data-canvas-stage] [data-handle="n"]')).toHaveCount(1)
+    await expect(page.locator('[data-canvas-stage] [data-handle="e"]')).toHaveCount(0)
+    await expect(page.locator('[data-canvas-stage] [data-handle="w"]')).toHaveCount(0)
+    const tall = (await label.boundingBox())!
+    const south = (await page.locator('[data-canvas-stage] [data-handle="s"]').boundingBox())!
+    const sx = south.x + south.width / 2
+    const sy = south.y + south.height / 2
+    await page.mouse.move(sx, sy)
+    await page.mouse.down()
+    await page.mouse.move(sx, sy + 30, { steps: 4 })
+    await page.mouse.move(sx, sy + 60, { steps: 4 })
+    await page.mouse.up()
+    await expect
+      .poll(async () => (await label.boundingBox())!.height, { message: '拖南柄后竖排标注的屏幕高度应当变长' })
+      .toBeGreaterThan(tall.height + 40)
+    // 宽度（列数）不被拖动改写：仍是 TextView 量出来的那一列
+    expect((await label.boundingBox())!.width).toBeCloseTo(tall.width, 0)
+    // 一步撤销就退回拖之前的列长
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect
+      .poll(async () => (await label.boundingBox())!.height, { message: '撤销拖柄回到原列长' })
+      .toBeCloseTo(tall.height, 0)
+
+    // 切回横排：外接框变回宽大于高
+    await seg.nth(0).click()
+    await expect
+      .poll(async () => {
+        const b = (await label.boundingBox())!
+        return b.width > b.height
+      }, { message: '切回横排后外接框应当变回宽大于高' })
+      .toBe(true)
   },
 )

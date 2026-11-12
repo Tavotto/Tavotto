@@ -2,13 +2,13 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「渲染引擎核心机制」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_registry.py`、`test_foreign_source.py`、`test_discover.py`、`test_discover_problems.py`、`test_script_probe.py`、`test_asset_library.py`、`test_project_scan.py`、`test_project_scan_zero_exec.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_registry.py`、`test_foreign_source.py`、`test_discover.py`、`test_discover_problems.py`、`test_script_probe.py`、`test_asset_library.py`、`test_project_scan.py`、`test_project_scan_zero_exec.py`、`test_notebook_script.py`
 > `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：冲突只报告不裁决；probe 失败不写注册表、取得会话后复查取消且只退役当次实例；导入即扫描只读零执行、看不全 = partial 不是「没有」
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 130
-改到: `engine/registry.py`、`discover.py`、`probe.py`、`projscan.py`、`/api/registry/*`、`/api/project/scan*`
+改到: `engine/registry.py`、`discover.py`、`probe.py`、`projscan.py`、`/api/registry/*`、`/api/project/scan*`、`engine/notebookscript.py` / `/api/notebook/*`
 主题: 注册表、静态扫描与试运行探测 → `registry-discovery-and-probe.md`
 必守要点: 冲突只报告不裁决；probe 失败不写注册表；导入即扫描只读零执行、看不全 = partial 不是「没有」
 -->
@@ -21,6 +21,10 @@ order: 130
   `entry` **不限于 main/render/__main__**——worker 就是 `getattr(module, entry)()`，
   任何合法标识符都行；`script` 键是图库**相对路径**（POSIX 分隔符），
   子目录里的脚本照样登记（worker 会把脚本自己所在目录也加进 sys.path）。
+- **修静态扫描漏的写法时枚举整族，判不全要有运行时回路（错题本 L-140 升级，2026-11-06）。**
+  修复前列出同一语义的语法族并补回归，无法静态证明时保留未知、走保守分支，或把运行时事实并回原决定；
+  不为每份反馈只补一个特例。为什么：目录变量已被识别后，`parents[N]` 与分号连写仍漏扫，用户反复反馈，
+  修复轮数耗尽（#1582、#1634）；惰性 import 静态不可见，校验已报缺包却没回到依赖决定（#1494）。
 - **静态扫描（`engine/discover.py`）不再只认字符串字面量**：抽象求值覆盖
   模块级常量、f-string、`Path(...) / "x"`、`.with_suffix()/.with_name()/.joinpath()`、
   `os.path.join()`、`.format()`、`%`、`+` 拼接、`Path(__file__)` 自命名，
@@ -249,3 +253,12 @@ order: 130
 看护 `tests/test_artifact_stem_map.py`（注册表 / register 语义 / 假 worker 端点 / 真 worker 同 stem 夹具登记→解析）。
 - **`/api/registry` 的 `foreign_scripts`（ADR 0143 修订「项目内入口」）**：项目内认得出语言的 `.R` / `.r` / `.m`（`discover.iter_foreign_scripts` = `_iter_py` 换后缀，
   同一套剪枝；`sourcelang.detect_file` 判语言，判不出的不列）。**独立于 `all_scripts`**：它们不进探测、依赖准备、可运行脚本判据，也不被静态起草 / 注册表认领。
+
+- **`.ipynb` 抽成同名 `.py`（ADR 0179，`engine/notebookscript.py`，纯标准库、Flask 父进程一侧）**：`/api/registry` 的 `notebook_scripts` = 项目内**还没转**的笔记本（`discover.iter_notebooks` = `_iter_py` 换后缀，同一套剪枝；
+  只看文件名与文件头、**不解析笔记本**；同目录里有一份标记指名它、且 mtime 不早于它的 `.py` 就是「已转过」，不列）。独立于 `all_scripts`，不进探测 / 依赖准备 / 静态起草。
+  * **抽取是纯函数**（`extract`）：只认 nbformat 4；只取单元 `source`，`# %%` 分隔、Markdown 留 `# ` 注释；IPython 专有语法**让 `ast.parse` 指出哪一行不合法再注释**（不按行首猜，括号里的 `% 3` 续行不会误伤），保留原文 `# [notebook] …`，
+    Python 型单元魔法（`%%time` 等）只注释首行、其余整单元注释；整份 `ast.parse` 核验不过不落盘（`notebook_syntax_error` 只带 `{cell, line}`，不带内容）。
+  * **落盘 `place`**：同目录同基名，候选名 `名.py` / `名 (notebook).py` / `名 (notebook 2).py`…；正文相同复用；**仅当**有标记、标记指这个笔记本、现有正文哈希 == 标记哈希（没被改过）才原子替换；其余一律不碰、看下一个候选（判断不了就当改过）。
+    名字不分大小写比较、符号链接当用户的、基名过 `assetimport.clean_name`、写入先隐藏临时文件再 `place_exclusive` / `publish_file`、`assetimport.LOCK` 串行化。路径只经 `projectenv.contained_path`。
+  * 端点 `POST /api/notebook/extract`（JSON，项目相对路径）与 `/api/notebook/import`（字节，只写项目根）都在会话 guard 之后；错误码 `notebook_*` 在 `notebookscript.ERRORS` 与两份 errors.json 同时出现，写入失败复用 `asset_import_*`。
+  * 看护 `tests/test_notebook_script.py`（含「被改过的生成件不被覆盖」反证）、`tests/test_error_codes.py`。

@@ -137,7 +137,7 @@ def test_summary_is_the_closed_projection_with_a_consent_snapshot(srv):
         "consent": {
             "telemetry_consent": True,
             "no_telemetry_env": False,
-            "scope_version": 3,
+            "scope_version": telemetry.CONSENT_VERSION,
             "purposes": ["error_summary"],
         },
         "facts": {

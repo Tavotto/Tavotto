@@ -1,0 +1,510 @@
+/*
+ * 动画卡提示的小场景（ADR 0177）。只用 index.css 的语义 token，浅 / 深色自动跟；
+ * 纸面与图里的墨色两套主题同值（--color-paper*），和真画布一样。
+ * 舞台本身来自 vendor/stageshow（@layer stageshow），这里的无层规则压在它上面。
+ */
+.hint-stage .ss-stage {
+  background: var(--color-canvas);
+}
+.hint-work {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--color-canvas);
+}
+.hint-page {
+  position: absolute;
+  background: var(--color-paper);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--color-paper-ink) 10%, transparent),
+    0 2px 8px rgb(0 0 0 / 0.06);
+}
+.hint-page[data-glide] {
+  transition: transform 520ms var(--ease-snap);
+}
+
+.hint-plot {
+  display: block;
+  flex: none;
+}
+.hint-plot__axes {
+  fill: none;
+  stroke: var(--color-paper-ink);
+  stroke-width: 1;
+}
+.hint-plot__tick {
+  stroke: var(--color-paper-ink);
+  stroke-width: 1;
+}
+.hint-plot__label {
+  fill: color-mix(in srgb, var(--color-paper-ink) 35%, transparent);
+}
+.hint-plot__curve {
+  fill: none;
+  stroke: #2c73de;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.hint-plot__curve[data-tone='1'] {
+  stroke: #d9603b;
+}
+.hint-plot__tag {
+  font: 600 8px/1 system-ui, sans-serif;
+  fill: var(--color-paper-ink);
+}
+
+.hint-panel {
+  position: absolute;
+}
+.hint-panel[data-ease] {
+  transition: width 320ms var(--ease-snap);
+}
+.hint-panel__clip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.hint-panel[data-selected]::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border: 1.5px solid var(--color-sel);
+  pointer-events: none;
+}
+.hint-handle {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid var(--color-sel);
+  border-radius: 1.5px;
+  background: var(--color-paper);
+}
+.hint-handle[data-side='nw'] {
+  left: -4px;
+  top: -4px;
+}
+.hint-handle[data-side='ne'] {
+  right: -4px;
+  top: -4px;
+}
+.hint-handle[data-side='sw'] {
+  left: -4px;
+  bottom: -4px;
+}
+.hint-handle[data-side='se'] {
+  right: -4px;
+  bottom: -4px;
+}
+.hint-edge {
+  position: absolute;
+  z-index: 3;
+  right: -4px;
+  top: 30px;
+  bottom: 30px;
+  width: 8px;
+}
+.hint-edge::after {
+  content: '';
+  position: absolute;
+  left: 2.5px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--color-sel);
+  opacity: 0;
+  transition: opacity 120ms;
+}
+.hint-edge[data-held]::after,
+.hint-edge[data-hover]::after {
+  opacity: 1;
+}
+
+/* 拖动胶囊：与真画布上的那只同一句话 */
+.hint-capsule {
+  position: absolute;
+  z-index: 4;
+  left: 0;
+  top: calc(100% + 8px);
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 9px;
+  background: var(--color-paper-ink);
+  color: var(--color-paper);
+  font: 500 10px/18px system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 140ms;
+}
+.hint-capsule[data-show] {
+  opacity: 1;
+}
+
+.hint-keys {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity 160ms,
+    transform 160ms var(--ease-snap);
+}
+.hint-keys[data-show] {
+  opacity: 1;
+  transform: none;
+}
+.hint-key {
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font: 500 12px/1 system-ui, sans-serif;
+  box-shadow:
+    0 0 0 1px var(--color-border-strong),
+    0 2px 0 var(--color-border-strong);
+  transition:
+    transform 90ms,
+    box-shadow 90ms,
+    background 90ms,
+    color 90ms;
+}
+.hint-key[data-down] {
+  transform: translateY(2px);
+  background: var(--color-sel);
+  color: #fff;
+  box-shadow: 0 0 0 1px var(--color-sel);
+}
+
+.hint-ruler {
+  position: absolute;
+  z-index: 5;
+  background: var(--color-surface);
+}
+.hint-ruler[data-axis='x'] {
+  left: 12px;
+  right: 0;
+  top: 0;
+  height: 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+.hint-ruler[data-axis='y'] {
+  left: 0;
+  top: 12px;
+  bottom: 0;
+  width: 12px;
+  border-right: 1px solid var(--color-border);
+}
+.hint-ruler i {
+  position: absolute;
+  background: var(--color-ink-faint);
+}
+.hint-ruler[data-axis='x'] i {
+  bottom: 0;
+  width: 1px;
+  height: 3px;
+}
+.hint-ruler[data-axis='x'] i[data-major] {
+  height: 6px;
+}
+.hint-ruler[data-axis='y'] i {
+  right: 0;
+  width: 3px;
+  height: 1px;
+}
+.hint-ruler[data-axis='y'] i[data-major] {
+  width: 6px;
+}
+.hint-ruler-corner {
+  position: absolute;
+  z-index: 6;
+  left: 0;
+  top: 0;
+  box-sizing: border-box;
+  width: 12px;
+  height: 12px;
+  border-right: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+/* 用户参考线：50% 的 sel；吸上去那一刻满色（与 OverlaySvg 同一约定） */
+.hint-guide {
+  position: absolute;
+  z-index: 4;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--color-sel);
+  opacity: 0.5;
+  transition: opacity 120ms;
+}
+.hint-guide[data-snap] {
+  opacity: 1;
+}
+.hint-fade {
+  position: absolute;
+  inset: 0;
+  transition: opacity 280ms;
+}
+.hint-fade[data-hide] {
+  opacity: 0;
+}
+
+/* 第二批：锁向 / 不吸附 / 微移 / 旋转 */
+.hint-panel[data-move-ease] {
+  transition:
+    left 260ms var(--ease-snap),
+    top 260ms var(--ease-snap);
+}
+.hint-axis {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 0;
+  border-top: 1px dashed var(--color-sel);
+  opacity: 0;
+  transition: opacity 140ms;
+}
+.hint-axis[data-show] {
+  opacity: 0.7;
+}
+.hint-snapline {
+  position: absolute;
+  z-index: 4;
+  left: 44px;
+  right: 44px;
+  height: 1px;
+  background: var(--color-sel);
+  opacity: 0;
+}
+.hint-snapline[data-show] {
+  opacity: 1;
+}
+.hint-note {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1.5px solid var(--color-sel);
+  background: var(--color-paper);
+  transform-origin: 50% 50%;
+}
+.hint-note[data-ease] {
+  transition: transform 320ms var(--ease-snap);
+}
+.hint-note__text {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 50%;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--color-paper-ink) 70%, transparent);
+}
+.hint-knob {
+  position: absolute;
+  left: 50%;
+  box-sizing: border-box;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  border: 1.5px solid var(--color-sel);
+  border-radius: 50%;
+  background: var(--color-paper);
+}
+.hint-knob::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  width: 1px;
+  height: 11px;
+  margin-left: -0.5px;
+  background: var(--color-sel);
+}
+
+/* 第三批：双击改字 / ⇧ 画正方 / 空格平移 / ⇧ 多选 / 快捷键帮助 */
+.hint-title {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 12px;
+  text-align: center;
+  font: 600 11px/14px system-ui, sans-serif;
+  color: var(--color-paper-ink);
+  white-space: pre;
+}
+.hint-title [data-picked] {
+  background: var(--color-paper-selection);
+}
+.hint-quick {
+  position: absolute;
+  z-index: 6;
+  padding: 6px;
+  border-radius: 8px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-pop);
+  opacity: 0;
+  transform: translateY(4px) scale(0.97);
+  transform-origin: 0 0;
+  transition:
+    opacity 140ms,
+    transform 160ms var(--ease-snap);
+}
+.hint-quick[data-show] {
+  opacity: 1;
+  transform: none;
+}
+.hint-quick__field {
+  display: flex;
+  align-items: center;
+  min-width: 104px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 5px;
+  box-shadow: 0 0 0 1.5px var(--color-accent);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font: 500 11px/1 system-ui, sans-serif;
+  white-space: pre;
+}
+.hint-caret {
+  width: 1px;
+  height: 13px;
+  margin-left: 1px;
+  background: var(--color-ink);
+  animation: hint-blink 1s steps(2, start) infinite;
+}
+@keyframes hint-blink {
+  to {
+    visibility: hidden;
+  }
+}
+.hint-shape {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1.5px solid var(--color-paper-ink);
+  background: color-mix(in srgb, var(--color-paper-ink) 4%, transparent);
+}
+.hint-shape[data-drawing] {
+  outline: 1px solid var(--color-sel);
+  outline-offset: 1px;
+}
+.hint-curve {
+  transition: stroke 260ms;
+}
+.hint-plot__curve[data-tone='2'] {
+  stroke: #2a9d6f;
+}
+.hint-curve-halo {
+  fill: none;
+  stroke: var(--color-sel);
+  stroke-width: 6;
+  stroke-linecap: round;
+  opacity: 0.28;
+}
+.hint-side {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 72px;
+  box-sizing: border-box;
+  padding: 16px 10px;
+  border-left: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+.hint-side__row {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--color-surface-active);
+}
+.hint-side__row[data-short] {
+  width: 60%;
+}
+.hint-side__swatches {
+  display: flex;
+  gap: 5px;
+}
+.hint-side__swatches i {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+}
+.hint-side__swatches i[data-c='0'] {
+  background: #2c73de;
+}
+.hint-side__swatches i[data-c='1'] {
+  background: #d9603b;
+}
+.hint-side__swatches i[data-c='2'] {
+  background: #2a9d6f;
+}
+.hint-side__swatches i[data-on] {
+  box-shadow:
+    0 0 0 1.5px var(--color-surface),
+    0 0 0 3px var(--color-accent);
+}
+.hint-sheet {
+  position: absolute;
+  z-index: 6;
+  left: 50%;
+  top: 22px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+  width: 232px;
+  margin-left: -116px;
+  box-sizing: border-box;
+  padding: 14px;
+  border-radius: 10px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-pop);
+  opacity: 0;
+  transform: translateY(8px) scale(0.97);
+  transition:
+    opacity 180ms,
+    transform 220ms var(--ease-snap);
+}
+.hint-sheet[data-show] {
+  opacity: 1;
+  transform: none;
+}
+.hint-sheet__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 18px;
+}
+.hint-sheet__row > i {
+  max-width: 46px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--color-surface-active);
+}
+.hint-sheet__row kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 3px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px var(--color-border-strong);
+  color: var(--color-ink-2);
+  font: 500 9px/1 system-ui, sans-serif;
+}

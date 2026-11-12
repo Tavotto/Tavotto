@@ -131,6 +131,7 @@ _STRIPPABLE_EXTS = ("pdf", "png", "svg", "tif", "tiff", "jpg", "jpeg", "eps")
 #: 而看不见的门禁等于没有门禁）。新增一个 code 不加进这里，两种语言的文案
 #: 就不会被要求补齐，英文界面上会冷不丁蹦出一句中文。
 ERROR_CODES = (
+    "script_export_not_for_canvas",
     "bad_request",
     "bad_scope",
     "bad_overwrite",
@@ -383,6 +384,11 @@ class ExportRequest:
     inspection: InspectionPolicy = field(default_factory=InspectionPolicy)
     #: 合成一个多页 PDF（#1370）；`None` = 现有的单图导出。
     merge_pdf: MergePdf | None = None
+    #: 同时导出一份写进了这些调整的脚本（ADR 0171）。只有 `scope=original` 才可能为真。
+    include_script: bool = False
+    #: 「EPS 按不透明导出」：EPS 里的画布标注把半透明压成 100%（颜色不变，不和白色混），其余格式照旧保留。
+    #: 只对 `scope=original` 有意义；缺省 False 时请求、计划身份与产物与从前逐字节相同。
+    eps_opaque: bool = False
 
     @property
     def has_raster(self) -> bool:
@@ -409,6 +415,7 @@ class ExportRequest:
             "figure_id": self.original.figure_id if self.original else None,
             "inspection": self.inspection.to_payload(),
             **({"merge_pdf": self.merge_pdf.to_payload()} if self.merge_pdf is not None else {}),
+            **({"eps_opaque": True} if self.eps_opaque else {}),
             **(
                 {"expected_source": self.original.expected_source}
                 if self.original and self.original.expected_source is not None
@@ -549,6 +556,8 @@ def render_plan_ref(req: ExportRequest, resources: list[dict]) -> dict:
                 else {}
             ),
         }
+    if req.eps_opaque:
+        semantic["eps_opaque"] = True
     if req.merge_pdf is not None:
         semantic["merge_pdf"] = [
             {
@@ -600,7 +609,10 @@ def _one_of(value: Any, allowed: tuple[str, ...], default: str, code: str) -> st
     return text
 
 
-def _formats(raw: Any, allowed: tuple[str, ...]) -> tuple[str, ...]:
+def _formats(raw: Any, allowed: tuple[str, ...], *, allow_empty: bool = False) -> tuple[str, ...]:
+    """`allow_empty`：这次还要一份修改后的脚本（ADR 0171），不选任何图片格式也是一次合法的导出。"""
+    if allow_empty and not raw:
+        return ()
     if raw is None:
         raise ExportRequestError("no_format", "至少要选一种输出格式", {})
     if isinstance(raw, str):
@@ -917,7 +929,14 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
         )
     legacy = "filename" not in spec
     scope = _one_of(spec.get("scope"), SCOPES, SCOPE_CANVAS, "bad_scope")
-    formats = _formats(spec.get("formats"), allowed_formats)
+    # 修改后的脚本（ADR 0171）属于「这一张图」：画布 / 多页 PDF 是版面，不是哪个脚本画出来的。
+    # 旧契约没有这个选项，发了也不认（它的文件名规则里没有这种产物）
+    include_script = bool(spec.get("include_edited_script")) and not legacy
+    if include_script and (scope != SCOPE_ORIGINAL or spec.get("merge_pdf") is not None):
+        raise ExportRequestError("script_export_not_for_canvas", "整版导出不能附带脚本", {})
+    formats = _formats(spec.get("formats"), allowed_formats, allow_empty=include_script)
+    # 「EPS 按不透明导出」：只认严格的 True（不是真值），旧契约与整版导出没有这个选项
+    eps_opaque = spec.get("eps_opaque") is True and not legacy and scope == SCOPE_ORIGINAL
     has_raster = any(f in RASTER_FORMATS for f in formats)
     ppi = _ppi(spec.get("ppi", spec.get("dpi")), has_raster=has_raster)
 
@@ -1011,4 +1030,6 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
         original=original,
         legacy_naming=legacy,
         inspection=inspection,
+        include_script=include_script,
+        eps_opaque=eps_opaque,
     )

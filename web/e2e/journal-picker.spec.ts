@@ -95,6 +95,10 @@ test(
     // 确认是胶囊 toast，不是推挤版面的横条
     await expect(page.locator('[data-toast-layout="pill"][data-status-tone="done"]')).toContainText(String(target), { timeout: 10_000 })
 
+    // 规范库默认看的是期刊本身：列的是本项目实际在用的值（期刊双栏 180 mm），不是默认规范的数
+    await expect(page.locator('[data-profile-journal]')).toContainText('Fixture Beta')
+    await expect(page.locator('[data-journal-field="widths_mm.double"]')).toContainText('180 mm')
+
     // 页宽真的换了；关掉设置回到画布再量
     await closeSettings(page)
     await expect.poll(() => pageWidthMm(page), { message: '页宽没有跟到所选期刊的栏宽' }).toBe(target)
@@ -160,5 +164,33 @@ test(
       'https://www.nature.com/nenergy/submission-guidelines/aip-and-formatting#:~:text=minimum%20resolution%20of%20300%20dpi',
     )
     expect(await open.getAttribute('target')).toBe('_blank')
+  },
+)
+
+test(
+  '期刊下拉在设置对话框里能用滚轮滚（弹层挂在对话框外，不能被对话框的滚动锁吃掉）',
+  { tag: '@feature:settings.journal-picker' },
+  async ({ app, page }) => {
+    const a = await app()
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto(a.baseURL)
+    await page.locator('[data-card="Fig1_kinetics.pdf"]').dblclick({ timeout: 30_000 })
+    await waitForDocumentReady(page)
+
+    await page.locator('[data-rail="settings"]').click()
+    const shell = page.locator('[data-settings-shell]')
+    await expect(shell).toBeVisible()
+    await shell.locator('[data-section="spec"]').click()
+    await page.locator('[data-journal-picker]').click()
+
+    const list = page.locator('[data-journal-scroller]')
+    await expect(page.locator('[data-journal-group]')).not.toHaveCount(0)
+    const fits = await list.evaluate((el) => el.scrollHeight <= el.clientHeight)
+    expect(fits, '列表要真的放不下，否则滚不滚都量不出来').toBe(false)
+
+    const box = (await list.boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.wheel(0, 120)
+    await expect.poll(() => list.evaluate((el) => el.scrollTop), { message: '滚轮在期刊下拉上不起作用' }).toBeGreaterThan(0)
   },
 )

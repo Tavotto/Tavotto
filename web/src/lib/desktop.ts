@@ -175,13 +175,57 @@ export async function onDesktopOpen(
  */
 export type NativeFileDrop =
   | { kind: 'script'; folder: string; script: string; name: string; ignored: number }
+  /** Jupyter 笔记本（`.ipynb`，ADR 0179）：打开 `folder`，由页面把 `notebook`（全路径）抽成同名 `.py` 再运行 */
+  | { kind: 'notebook'; folder: string; notebook: string; name: string; ignored: number }
   /** R / MATLAB 脚本（`.R` / `.r` / `.m`，ADR 0143 修订二）：打开 `folder`，由页面提议「生成可编辑版本」；语言由页面按文件名后缀判 */
   | { kind: 'foreign_script'; folder: string; script: string; name: string; ignored: number }
   | { kind: 'folder'; folder: string; name: string; ignored: number }
   | { kind: 'unsupported'; name: string }
 
 /**
- * 这个壳能不能在拖放时交出真实路径（macOS 上旁听装好了才是 true）。浏览器模式、
+ * 页面转给 Windows 壳的那条消息（与 `src-tauri/src/native_drop_win.rs` 的 `MESSAGE_KIND` 严格同源，
+ * `tests/test_desktop_file_drop.py` 看护）。发送时编码成 JSON 字符串：wry 先读字符串，直接发对象会让
+ * 它的 WebMessageReceived 处理器返回错误，后面的原生旁听收不到。
+ */
+export const DROP_MESSAGE = { tavotto: 'file-drop' } as const
+
+type WebView2Bridge = { postMessageWithAdditionalObjects?: (message: unknown, objects: ArrayLike<unknown>) => void }
+
+let dropForwarder: ((e: DragEvent) => void) | null = null
+
+/**
+ * Windows（WebView2）上把每一次**页面接受了的**系统文件放下转给壳（ADR 0092 修订 2026-11-03）。
+ *
+ * WebView2 不给页面路径，但 `chrome.webview.postMessageWithAdditionalObjects(消息, files)` 交过去的 File
+ * 在宿主那边是 `ICoreWebView2File`、带真实路径；壳读出来按 macOS 同一条分派、发 `tavotto:file-drop`。
+ * 只在 window 的**捕获阶段**听 `drop`：浏览器只在 dragover 被接受时才派发 `drop`，与 macOS 旁听
+ * `performDragOperation:` 同一个语义；页面自己的 drop 处理不受影响。没有这个桥（macOS / 浏览器）就什么都不装。
+ */
+export function ensureDropForwarder(): void {
+  if (dropForwarder || typeof window === 'undefined') return
+  const bridge = (window as unknown as { chrome?: { webview?: WebView2Bridge } }).chrome?.webview
+  const post = bridge?.postMessageWithAdditionalObjects
+  if (typeof post !== 'function') return
+  dropForwarder = (e: DragEvent) => {
+    const files = e.dataTransfer?.files
+    if (!files || files.length === 0) return
+    try {
+      post.call(bridge, JSON.stringify(DROP_MESSAGE), files)
+    } catch {
+      // 运行时太旧（< 1.0.1518）没有这条路：壳收不到，前端等满 grace 照旧降级到选择器
+    }
+  }
+  window.addEventListener('drop', dropForwarder, true)
+}
+
+/** 测试用：撤掉转发监听 */
+export function resetDropForwarderForTests(): void {
+  if (dropForwarder) window.removeEventListener('drop', dropForwarder, true)
+  dropForwarder = null
+}
+
+/**
+ * 这个壳能不能在拖放时交出真实路径（macOS / Windows 上旁听装好了才是 true）。浏览器模式、
  * 其它平台、命令被拒（ACL 漏登记）一律 false——调用方走「提示文件名 + 选择器」的降级。
  */
 export async function nativeFileDropAvailable(): Promise<boolean> {
@@ -203,6 +247,7 @@ export async function onNativeFileDrop(
   handler: (drop: NativeFileDrop) => void,
 ): Promise<() => void> {
   if (!isDesktop()) return () => {}
+  ensureDropForwarder()
   const { listen } = await import('@tauri-apps/api/event')
   return listen<NativeFileDrop>('tavotto:file-drop', (e) => handler(e.payload))
 }
@@ -362,7 +407,7 @@ export async function pickScriptFile(title?: string): Promise<string | null> {
     directory: false,
     multiple: false,
     title,
-    filters: [{ name: 'Python / R / MATLAB', extensions: ['py', 'R', 'r', 'm'] }],
+    filters: [{ name: 'Python / Jupyter / R / MATLAB', extensions: ['py', 'ipynb', 'R', 'r', 'm'] }],
   })
   return typeof picked === 'string' ? picked : null
 }
@@ -627,7 +672,7 @@ export async function onWindowMaximizedChange(cb: (maximized: boolean) => void):
  * 按钮本来就只在桌面模式渲染，真走到这里说明有人绕过了那个判断，
  * 悄悄回一个「成功」会把它藏起来。
  */
-export async function runCodexIntegration(action: 'install' | 'doctor'): Promise<string> {
+export async function runCodexIntegration(action: 'install' | 'doctor' | 'upgrade'): Promise<string> {
   if (!isDesktop()) throw new CodexShellError('not_desktop')
   const { invoke } = await import('@tauri-apps/api/core')
   try {
@@ -643,12 +688,12 @@ export async function runCodexIntegration(action: 'install' | 'doctor'): Promise
 
 /**
  * 「接入 AI 编辑器」（用户 2026-10-27）：壳命令 `host_integration` spawn `tavotto-cli hosts … --json`，原样交回那一行
- * JSON。宿主名与 action 在壳里是闭集；`projectRoot` 只给 `connect`（第一次接入时用户选的文件夹）。
+ * JSON。宿主名与 action 在壳里是闭集（`sync` / `sync_plugins` 是启动同步，不收宿主；`connect_force_skill` 是「覆盖」按钮）；`projectRoot` 只给 `connect`（第一次接入时用户选的文件夹）。
  * 壳回的是稳定 code（cli_not_found / spawn_failed / bad_output / bad_args / bad_host / bad_action），其余一律当
  * spawn_failed——**不把它当句子显示给用户**。
  */
 export async function runHostIntegration(
-  action: 'list' | 'connect' | 'disconnect',
+  action: 'list' | 'connect' | 'disconnect' | 'sync' | 'sync_plugins' | 'connect_force_skill',
   host?: string,
   projectRoot?: string,
 ): Promise<string> {
@@ -683,7 +728,7 @@ export async function runHostIntegration(
  * 更新包的签名由壳里的公钥校验（tauri.conf.json 的 plugins.updater.pubkey），
  * 私钥只在 CI 里；来源不影响信任，校验不过当场失败，装不上去。
  */
-export type UpdateSource = 'mirror' | 'github'
+export type UpdateSource = 'mirror' | 'github' | 'edge'
 
 export interface DesktopUpdateInfo {
   version: string
@@ -751,9 +796,13 @@ export function getUpdateOutcome(): UpdateOutcome | null {
 /**
  * 查有没有新版。没有新版返回 null；**浏览器模式也返回 null**——那条路由
  * Python updater 负责（/api/update/*），两条不能同时插手。
+ *
+ * `readyVersion`：后台已下好、验过签的那一版。查**失败**时若上一次的候选正是它，就保留候选——壳那边同样保留
+ * （`app_update::run_check`），「现在重启」不至于变成只会回 no_pending_update 的空按钮（Codex #1730）。
  */
-export async function checkDesktopUpdate(): Promise<DesktopUpdateInfo | null> {
+export async function checkDesktopUpdate(readyVersion?: string | null): Promise<DesktopUpdateInfo | null> {
   if (!isDesktop()) return null
+  const prev = pendingUpdate
   pendingUpdate = null
   const { invoke } = await import('@tauri-apps/api/core')
   let found: DesktopUpdateInfo | null
@@ -763,6 +812,7 @@ export async function checkDesktopUpdate(): Promise<DesktopUpdateInfo | null> {
   } catch (e) {
     const err = toUpdateError(e, 'update.desktopCheckFailed')
     updateOutcome = { ...updateOutcome, check: { at: Date.now(), ok: false, code: err.code, attempts: err.attempts } }
+    if (readyVersion && prev?.version === readyVersion) pendingUpdate = prev
     throw err
   }
   updateOutcome = { ...updateOutcome, check: { at: Date.now(), ok: true, found: !!found, source: found?.source } }
@@ -776,11 +826,50 @@ export async function checkDesktopUpdate(): Promise<DesktopUpdateInfo | null> {
   return pendingUpdate
 }
 
+/** 进度事件的节流阈值：比例变化不到 0.5% 且距上次不到 100 ms 的 Progress 不往上发（Started / Finished 永远发） */
+export const PROGRESS_MIN_STEP = 0.005
+export const PROGRESS_MIN_GAP_MS = 100
+
+/**
+ * 壳的下载事件 → 0–1 的进度回调（前台安装与后台下载共用）。
+ * 一个 190 MB 的包会来上万个 chunk，逐个 `set` 会把整个界面重渲上万次：这里只在比例变了 ≥0.5%
+ * 或距上次 ≥100 ms 时才往上发。拿不到总长度时进度恒为 null（不确定态），Progress 不再发。
+ * `now` 可注入，给测试用。
+ */
+export function makeProgressHandler(
+  onProgress?: (fraction: number | null) => void,
+  now: () => number = () => Date.now(),
+) {
+  let total = 0
+  let got = 0
+  let lastSent = -1
+  let lastAt = 0
+  const send = (f: number | null) => {
+    lastSent = f ?? -1
+    lastAt = now()
+    onProgress?.(f)
+  }
+  return (e: { event: string; data?: { contentLength?: number | null; chunkLength?: number } }) => {
+    if (e.event === 'Started') {
+      total = e.data?.contentLength ?? 0
+      got = 0
+      send(total ? 0 : null)
+    } else if (e.event === 'Progress') {
+      got += e.data?.chunkLength ?? 0
+      if (!total) return
+      const f = Math.min(1, got / total)
+      if (f - lastSent >= PROGRESS_MIN_STEP || now() - lastAt >= PROGRESS_MIN_GAP_MS) send(f)
+    } else if (e.event === 'Finished') {
+      send(1)
+    }
+  }
+}
+
 /**
  * 下载并安装上一次查到的那一版。onProgress 收到 0–1 的进度；服务端没给
  * Content-Length 时收到 null——进度条该显示成不确定态，而不是假装卡在
  * 某个百分比上。**换来源重下时壳会再发一次 Started，进度随之归零。**
- * 返回实际用的来源。
+ * 后台已经下好同一版本的包时，壳直接用它安装（没有下载事件）。返回实际用的来源。
  *
  * 没有句柄就抛，不在这里偷偷补一次 check：用户看到的版本号与真正装上去的
  * 那一版必须是同一个。
@@ -790,21 +879,8 @@ export async function installDesktopUpdate(
 ): Promise<UpdateSource> {
   if (!pendingUpdate) throw new Error(t('update.noPendingUpdate', { ns: 'errors' }))
   const { invoke, Channel } = await import('@tauri-apps/api/core')
-  let total = 0
-  let got = 0
   const channel = new Channel<{ event: string; data?: { contentLength?: number | null; chunkLength?: number } }>()
-  channel.onmessage = (e) => {
-    if (e.event === 'Started') {
-      total = e.data?.contentLength ?? 0
-      got = 0
-      onProgress?.(total ? 0 : null)
-    } else if (e.event === 'Progress') {
-      got += e.data?.chunkLength ?? 0
-      onProgress?.(total ? Math.min(1, got / total) : null)
-    } else if (e.event === 'Finished') {
-      onProgress?.(1)
-    }
-  }
+  channel.onmessage = makeProgressHandler(onProgress)
   let source: UpdateSource
   try {
     source = await invoke<UpdateSource>('desktop_update_install', { onEvent: channel })
@@ -816,6 +892,25 @@ export async function installDesktopUpdate(
   updateOutcome = { ...updateOutcome, install: { at: Date.now(), ok: true, source } }
   pendingUpdate = null
   return source
+}
+
+/**
+ * 后台下载上一次查到的那一版（「后台自动下载」开着时，启动查到新版后调）：只下载并验签，**不安装**——
+ * 包留在壳里，等用户点「现在重启」（`installDesktopUpdate` 用它）或退出应用时装上。
+ * 进度回调同 `installDesktopUpdate`（同一份节流）。失败抛 `DesktopUpdateError`，调用方决定要不要吭声。
+ */
+export async function downloadDesktopUpdate(
+  onProgress?: (fraction: number | null) => void,
+): Promise<{ version: string; source: UpdateSource }> {
+  if (!pendingUpdate) throw new Error(t('update.noPendingUpdate', { ns: 'errors' }))
+  const { invoke, Channel } = await import('@tauri-apps/api/core')
+  const channel = new Channel<{ event: string; data?: { contentLength?: number | null; chunkLength?: number } }>()
+  channel.onmessage = makeProgressHandler(onProgress)
+  try {
+    return await invoke<{ version: string; source: UpdateSource }>('desktop_update_download', { onEvent: channel })
+  } catch (e) {
+    throw toUpdateError(e, 'update.desktopInstallFailed')
+  }
 }
 
 /** 装完重启到新版本。浏览器模式退化成刷新页面。 */
@@ -832,4 +927,36 @@ export async function relaunchDesktop(): Promise<void> {
 export function __resetDesktopUpdate(): void {
   pendingUpdate = null
   updateOutcome = {}
+}
+
+/**
+ * 壳在主窗口换屏 / 换缩放时发的事件，载荷 `{ppi: number | null}`（`src-tauri/src/screen_ppi.rs` 的
+ * `SCREEN_PPI_EVENT`，两侧严格同源）。点阵进度条按它选点径（ADR 0168 第二节）。
+ */
+export const SCREEN_PPI_EVENT = 'tavotto:screen-ppi'
+
+/** 只认合理的 ppi（与壳的 `screen_ppi::plausible` 同一范围）；别的一律当「读不到」 */
+const asPpi = (v: unknown): number | null =>
+  typeof v === 'number' && Number.isFinite(v) && v >= 50 && v <= 1000 ? v : null
+
+/** 回读主窗口所在屏幕的物理 ppi。浏览器 / 远程实例窗口 / 老壳 / 读不到 / 出错一律 null（按缩放倍数取整）。 */
+export async function getScreenPpi(): Promise<number | null> {
+  if (!isDesktop()) return null
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    return asPpi(await invoke('screen_ppi'))
+  } catch {
+    return null
+  }
+}
+
+/** 订阅主窗口所在屏幕 ppi 的变化。浏览器 / 远程实例窗口返回空的取消函数。 */
+export async function onScreenPpiChange(cb: (ppi: number | null) => void): Promise<() => void> {
+  if (!isDesktop()) return () => {}
+  try {
+    const { listen } = await import('@tauri-apps/api/event')
+    return await listen<{ ppi?: unknown }>(SCREEN_PPI_EVENT, (e) => cb(asPpi(e.payload?.ppi)))
+  } catch {
+    return () => {}
+  }
 }

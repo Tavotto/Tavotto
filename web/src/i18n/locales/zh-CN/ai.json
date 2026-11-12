@@ -21,6 +21,21 @@
     "unifyLineWidth": "统一线宽",
     "unifyTickFormat": "统一刻度格式"
   },
+  "cliUpdate": {
+    "action": "更新 {{agent}}",
+    "running": "正在更新 {{agent}}…",
+    "menuHint": "新型号要新版才能用",
+    "menuManual": "新型号要新版 {{agent}}",
+    "how": {
+      "homebrew": "终端里运行 brew upgrade codex",
+      "npm": "终端里运行 npm i -g @openai/codex",
+      "chatgpt": "更新 ChatGPT 桌面版",
+      "desktop": "更新 Codex 桌面版",
+      "managed": "Tavotto 下个版本会带上",
+      "other": "按官方方式更新"
+    },
+    "switchBack": "换回 {{model}}"
+  },
   "code": {
     "copied": "已复制",
     "copy": "复制代码",
@@ -98,6 +113,7 @@
     "untitled": "未命名"
   },
   "message": {
+    "attachmentCount_other": "附了 {{count}} 个文件",
     "collapse": "收起",
     "copy": "复制消息",
     "expand": "展开",
@@ -107,6 +123,7 @@
     "agent_auth": "模型凭据无效或已过期。",
     "agent_quota": "模型服务额度不足或正在限流，稍后再试。",
     "agent_network": "连不上模型服务。",
+    "agent_model_unavailable": "这个型号要新版 Codex 才能用。",
     "agent_html_response": "连接地址打开的是网页，不是接口。",
     "agent_refused": "模型拒绝了这次修改。",
     "agent_budget": "这次修改用量超出上限，已停止。",
@@ -191,7 +208,14 @@
     "connectAi": "连接 AI",
     "noAi": "还没有连接 AI。",
     "connectMore": "连接更多 AI…",
-    "aiModel": "AI 与模型"
+    "aiModel": "AI 与模型",
+    "attachTip": "附文件 · 最多 6 个，也可粘贴或拖入",
+    "attachRemove": "去掉这个文件",
+    "attachChipAria": "附件 {{name}}",
+    "attachNoVision": "这个模型看不了图，",
+    "attachNoVisionOnly": "这个模型看不了图",
+    "attachSwitch": "换成 {{model}}",
+    "attachAria": "附文件"
   },
   "process": {
     "thought": "已思考 {{duration}}",
@@ -235,6 +259,9 @@
     "aiTaskRejected": "助手的修改没通过检查，项目未改动",
     "aiTaskVerified": "助手已修改脚本，数据核对一致，正在重新渲染…",
     "aiTimeout": "AI 任务超时",
+    "attachOverflow": "最多附 6 个文件，多的没收",
+    "attachTooLarge": "有文件太大了（单个不超过 25 MB），没附上",
+    "attachUploadFailed": "文件没传上，再试一次",
     "cancelled": "已取消",
     "done": "完成",
     "failed": "失败",

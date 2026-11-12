@@ -5,9 +5,8 @@
 `BM_CLICK`——两条消息都只投给这个对话框的控件句柄。路径是中文 + 空格的目录，
 那是 Windows 上路径被拆开的典型位置。
 
-**拖入 `.py` 不在这里**：真实的 OLE 拖放要系统级的指针输入（`DoDragDrop` 的模态循环跟的是
-真光标），注入它就是全局输入；Windows 壳也不旁听拖放（ADR 0092 §五，`native_file_drop`
-回 false），主页拖入之后同样走到这个选择器。盲点写在 `docs/rules/ci/verification-chain.md`。
+**拖入 `.py` 不在这里**：见 `test_home_drop.py`（ADR 0092 修订 2026-11-03：Windows 壳经 WebView2 拿到
+拖入文件的真实路径，直接打开、不弹这个选择器）。
 """
 
 from __future__ import annotations

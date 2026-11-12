@@ -9,7 +9,7 @@
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 50
-改到: `engine/figcapture.py`、`artifactcontext.py`、`execspec.py`、`runconfig.py`、`scriptargs.py`、`workdir.py`、`databinding.py`、`inputremap.py`、`worker.py` 的 savefig 拦截与 sys.argv
+改到: `engine/figcapture.py`、`artifactcontext.py`、`execspec.py`、`runconfig.py`、`scriptargs.py`、`workdir.py`、`databinding.py`、`inputremap.py`、`inputcopy.py`、`worker.py` 的 savefig 拦截与 sys.argv
 主题: Figure 捕获、执行描述与 live-figure 会话 → `figure-capture-and-execution.md`
 必守要点: 捕获三条入口同源；`safe_spec()` / `worker_argv()` 唯一出处、argv 只经 `safe_spec`；表单 schema 是建议不是门槛
 -->
@@ -32,6 +32,16 @@ order: 50
     兜底**：show 时已被 savefig 认领的图（`figcapture.claimed_ids`，与 `collect_pyplot_figures` 去重同一判据）不占名额，
     之后才认领的在下一次 show 腾出名额；溢出且已关闭的图一旦丢了强引用就补不回（只计数），故「show 之后才 savefig 一张
     已溢出的已关闭图」不在保证内。native bridge 在 show 屏障本来就收，浏览器 playground 不传 `shown`。
+  * **只存进文件对象（BytesIO 等）、随后被关掉的图也要捕获（#749，safe worker 与浏览器同源）**：缓冲区那次
+    `savefig` 没有 stem 可认领、透传真写（脚本接着要读它）；图和这次的参数（`savefig_call`，`bbox_inches="tight"`
+    等）记进 `figcapture.BufferSaves`（`SafeSession.buffer_saves` / `BrowserSession.buffer_saves`，每次 build 重建），
+    脚本结束时 `collect_pyplot_figures(..., buffers=, savefig_calls=, savefig_extras=)` 把还开着的按 `get_fignums()`、
+    已关掉的按存盘先后补进来（`plt` 可为 None：只用 `Figure()` 的脚本）。**参数随兜底 stem 走**，图活着、被关掉一样：
+    来源仍是 `pyplot`（缓冲区不是磁盘原件，不可写回），但 `savefig_calls[stem]` 是那几次缓冲区调用，
+    `figcapture.defines_frame` 让它定义图幅（ADR 0098），预览 / 导出与脚本生成的那份一致。有界：强引用 ≤ 上限，
+    其余弱引用（`bbox_extra_artists` 也只存弱引用，免得 artist 拖住图），真丢的并进 `dropped_figures` /
+    `truncated_figures`；被路径认领的让出名额给最早的等待者，先认领后存缓冲区的不回名单；收集前 `gc.collect()` 且期间
+    stdout 改道 stderr。`PdfPages` 与 `paper_style.save` 里的缓冲区保存不进这本账（前者有自己的账，后者有 stem）。
   * **写进 `PdfPages` 的图也要捕获（#1370 PR1，三条入口同源）**：`pdf.savefig(fig)` 最终是
     `fig.savefig(<PdfPages>, format="pdf")`，第一个参数不是路径，stem 取不出来；逐页 `plt.close(fig)` /
     结尾 `plt.close("all")` 的脚本跑完一张不剩（以前 `script_no_figure`）。保存**成功之后**记进有界账本
@@ -127,7 +137,7 @@ order: 50
     （build 响应在有记录时也带 `probe_misses`），`workdir.probe_hint` 拿**首开同一把尺子**（`databinding._probe_hit`，项目外不看、
     glob 有预算）按脚本目录再判，至少一条找得到才在错误上挂 **`workdir_hint`**——载荷与首开确认框同形
     （`reason = script_dir_evidence`、推荐 `project`，多 `source = "runtime"`）。**它不是 `confirmation`**：后者是起会话前要先答的门，
-    所有入口见到都会停下；`workdir_hint` 只诊断，码与消息一字不变，不自动切换。HTTP 错误体与试运行错误（`_attach_workdir_hint`）
+    所有入口见到都会停下；`workdir_hint` 本身只诊断，码与消息一字不变。**没决定过的项目自动切换（ADR 0047 2026-11-11 修订）**：`pool._build_with`（所有真正跑用户脚本的入口都经它）见到失败上的 `workdir_hint`、或成功 build 的 `workdir_hint_of_build`，且 `workdir.adopt_runtime_evidence` 的护栏成立（没决定过、默认是沙盒、载荷 `source = runtime`）→ 记证据、`shutdown_all(root)`、`before_retry` 后在脚本目录里重跑一次（`adopt_script_dir=False`，不再换第二次）。派生默认 `implied_by = runtime_evidence`，准备计划按 `implied_grant_absorbable` 就地吸收。决定过（含选了沙盒）的项目照旧只给入口。HTTP 错误体与试运行错误（`_attach_workdir_hint`）
     各带一份，不新造错误码。**C++ 读取器也算运行时证据**：错误的 `extra.enoent`（`filename`，或 pyarrow 那种整条消息就是路径的 `named`）
 若是相对路径（cwd 之内的绝对路径换回相对），`pool.workdir_hint_for` 把它当一条 `path` 证据并进同一次判定——脚本目录里找得到就出引导；
 **不放宽 ADR 0110 的 `native_miss` 候选**，码与 `missing_input` 不动。前端（`ApiError.workdirHint` / `PanelRender.workdirHint` /
@@ -162,20 +172,36 @@ order: 50
     ③ **改道**：只在**原路径打开抛 `FileNotFoundError` 之后**查表（原路径存在永远读原件、成功的打开零
     开销），只读、目标是文件才改；判据 `figcapture.remap_target` 父进程与 worker 共用一份。改指表进
     `ExecutionSpec.input_remap`（本机路径，**不进** `stable_payload`），`worker_argv` 只在非空时多
-    `--input-remap <json>`，三条 spawn 路径都从 `inputremap.rules_for` 取。**探路调用（exists / glob /
-    listdir）与 C++ 读取器救不回**——载荷里 `via` 标 `probe` / `glob` / `native`，对话框不给选择器；
-    绝对路径常量的 `via` 同样按它所在的调用判（被 `exists()` 问的给了选择器就是「指认 → 重跑 → 又弹」
-    的死循环）。先判空再 `sys.exit` 的（`script_exited`）与「没出图」一样挂静态载荷。**C++ 读取器**
+    `--input-remap <json>`，三条 spawn 路径都从 `inputremap.rules_for` 取。**Python 的探路也查改指表**（2026-11-09 修订，见下文）；**C++ 读取器（ovito `import_file`、h5py 等原生打开）救不回**——
+    载荷里 `via` 标 `probe` / `native`，对话框不给选择器（给了就是「指认 → 重跑 → 又弹」的死循环）。先判空再 `sys.exit` 的（`script_exited`）与「没出图」一样挂静态载荷。**C++ 读取器**
     （ADR 0110 §一）：`missing_input_of` 说不出时 worker 给 `script_error` 多带 `extra.enoent`
     （`figcapture.enoent_fact`：`filename`，或 h5py 那种只在消息里的 `named`——pyarrow 的
     `FileNotFoundError("cg_data.parquet")` 整条消息就是路径，同样取——加 cwd），父进程
     `inputremap.native_miss` 拿静态证据对——整串相等或按路径段是前缀、只认对上的那条，对不上就不判、
     码一字不变；对上了码仍是 `script_error`，只挂 `via = native` 的载荷。这几档的出口是经确认改写脚本
-    （`script-edits.md`）。native 不改指。
+    （`script-edits.md`）。native 不改指。桌面自有的 native bridge 只检查最终冒出的异常自身的 traceback
+    中至多 256 帧，不持有已被脚本捕获的异常；只有 Python 只读打开的**同一个异常对象**最终以
+    `FileNotFoundError` 冒出、最里层观察到的是读且路径与异常自己的 `filename` 一致、绝对路径能与当前脚本中
+    可识别的读取常量对上、脚本修订未变且运行不敏感时，才给同一个经用户预览确认的改写入口。新增的结构化
+    读取事实只走本机会话私有控制面与认证后的恢复载荷，不进 native 会话公开状态或任务诊断；原有本地
+    异常文本 / traceback 仍可能含路径。traceback 截断、读里再发生写失败、异常无文件名、相对路径、
+    找不到对应读取常量的动态路径、子进程和未观察到的读取不猜。
+    看护 `tests/test_native_missing_read_observation.py`、`tests/test_native_input_recovery_e2e.py`。
+    **native 缺读取的第二条出路：复制（ADR 0173，`engine/inputcopy.py`）**：上述确证成立、路径是本机绝对路径、改指表命中它且命中的那份是存在的普通文件时，
+    载荷多一个 `copy` 提议；用户点了才经 `POST /api/engine/input-copy`（只收提议里的不透明令牌，路径服务端自己存）把那份文件**复制**到脚本要读的原路径（源只取自改指表、不覆盖、不建目录、
+    原子写、记本机撤销记录），再重跑。每个结果都落在 `done` / `exists` / `denied` / `macos_protected` / `auth_failed` 之一，卡片 c2–c4 各有出路；
+    提权只做这一次复制（Windows 壳的 `--elevated-copy`、macOS `osascript`），macOS 受保护文件夹不提权。native 仍不改指、不装钩子。
+    看护 `tests/test_input_copy.py`、`tests/test_input_copy_e2e.py`。
     **对账只认和这次异常对得上的落空（#1253）**：异常没有 `filename`、消息里也没有引号括着的路径时，只认
     消息里按路径段点了名的那次落空（`figcapture._named_miss`），**不退到「最近一次落空的」**——被 `try` 吞掉的可选读、
     `importlib.metadata` 对不存在的 `sys.path` 条目（Homebrew 的 `python313.zip`）试 zipfile 打开，都会排在后面，
     以前被指认成「缺的输入」。`sys.path` 条目本身不记账（`_is_sys_path_entry`，也不占 `MAX_INPUT_MISSES` 名额）。
+    **Python 的探路查改指表（ADR 0106 修订 2026-11-09）**：`os.path.exists|lexists|isfile|isdir`、`Path.exists|is_file|is_dir` 原路径
+    不在时按 `remap_target(whole=True)` 查表、目标在且类型对得上就答 True；`os.stat|lstat|listdir|scandir` 落空后对目标再调一次；
+    `Path.glob|rglob` 在目标里 glob、结果换回原前缀（getsize / os.walk / 模块 glob 都经这几层）。静态里探路 / glob 的常量按 `open` 算
+    （`probe_kind` 照旧），只有 `import_file` 问过的仍是 `probe`；`rule_for_choice` 对 glob / 文件夹条目走 `derive_location`。
+    没救回的探路记进 `InputMisses.probes`（绝对路径总记、相对的只在 cwd 不是沙盒时记）；对不上只读打开时，脚本构造的
+    `FileNotFoundError`（无 errno、单个字符串）按路径段点了名某条、且它此刻不在 → `missing_input`，与只读打开同形。
     数据在脚本目录里找得到、只是沙盒 cwd 下 C++ 读取器看不见时，静态证据里它不是「哪儿都找不到」的候选：
     不挂 native 载荷，错误仍是 `script_error` + `extra.enoent`（诊断，行为不变）。
     ④ **代次 + 按项目的一把互斥锁**（ADR 0106 §五，`inputremap.project_mutex`，可重入）：改指表按项目一个代次（跨重启单调）。
@@ -215,7 +241,7 @@ order: 50
     （glob / listdir / exists）只在脚本目录找得到（`script_parent`，ADR 0084）——才抛
     `workdir_confirmation_required`（结构化选项 / 证据 / 怎么回答，四类入口同一个 code）；
     证据说不出话（`none` / `unknown`）或默认够用（`default_ok`）不问。**不猜、不就近替换、
-    不搜同名、不自动切到真实 cwd**；决定项目级、问一次记一次，切回沙盒撤销授权但决定留着。
+    不搜同名、首开不自动切到真实 cwd**（运行之后有运行时证据的自动切换见上文 ADR 0047 修订）；决定项目级、问一次记一次，切回沙盒撤销授权但决定留着。
   * 每张捕获 Figure 的结构化描述（`CapturedFigureDescriptor`）唯一实现在
     `figcapture`：asset id `runtime:<script>#<stem>`（不透明标识，entry
     刻意不进 id）、`source_fingerprint`（只是 stale hint，别声称覆盖数据
@@ -399,6 +425,12 @@ order: 50
   `Exception` / `OSError` 一律不算——同一个 try 里读数据失败不能变成「缺参数」，那会抢掉缺数据指认的出路），
   不读 SystemExit 的文字；没有 `parse_kind`。
   以前它是 `script_exited`（「去掉那句 exit」），界面不给「运行参数」。看护：`tests/test_worker_exit_report.py`。
+- **直接读取缺失参数的未捕获 `IndexError`（TVD-9VNB）**：`worker._direct_argv_index_error` 只认实际失败的入口脚本字节码是
+  对本次运行原始 `sys.argv` 列表的直接常量下标读取、下标确已越界，而且回溯中进入脚本后的帧都没有在异常期间继续执行。
+  列表身份或内容被改、错误来自另一容器 / 二次下标、动态下标、帮助模块抛错、字节码不能识别，或分支汇入加载序列的
+  中途使实际容器不确定，均保留 `script_error`；
+  绝不靠同一行出现 `argv` 推断。确认时复用 `script_needs_arguments` 和既有运行参数入口，不猜 `parse_kind`，
+  敏感参数仍不进入消息、回溯或日志。看护：`tests/test_worker_exit_report.py` / `tests/test_run_argv_privacy.py`。
 - **登记**（`engine/runconfig.py`）：本机 Tavotto 数据目录 `runconfigs/<项目摘要>.json`，不写用户项目（只读项目照样能用）。
   同 (脚本, argv, 敏感标记) 复用引用，改任一 token = 新引用（"编辑 = 新修订"，在途 spec 与旧产物不变）。`sensitive=True` 只活在进程内存，
   文件里只有占位；格式版本高于本读者 → `run_config_unsupported`。错误码：`invalid_argv`(400) / `run_config_missing` /

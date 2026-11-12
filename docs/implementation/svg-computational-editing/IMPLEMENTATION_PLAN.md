@@ -1,6 +1,6 @@
 # SVG 计算图表编辑：分批实施与无人值守验证计划
 
-> 状态：**2026-11-12 已提交上游 [PR #1873](https://github.com/Tavotto/Tavotto/pull/1873)**，当前为审查阶段。历史来源、N5 显示框 F 与 N4 图例归属的实施已提交；正式验证、上游同步与合并资格分别记录。本文保留完整范围和最终产品验收口径；进度见 [PROGRESS.md](PROGRESS.md)，剩余事项见 [NEXT_PHASE.md](NEXT_PHASE.md)。
+> 状态：**2026-11-12 已提交上游 [PR #1873](https://github.com/Tavotto/Tavotto/pull/1873)**，本轮已处理与上游 `19aa2f72` 的 38 个文件冲突，当前为审查阶段。历史来源、N5 显示框 F 与 N4 图例归属的实施已提交；正式验证、上游同步与合并资格分别记录。本文保留完整范围和最终产品验收口径；进度见 [PROGRESS.md](PROGRESS.md)，剩余事项见 [NEXT_PHASE.md](NEXT_PHASE.md)。
 > 初拟日期2026-11-03，当前计划及分支现场同步至2026-11-11（Asia/Shanghai）。当日fetch与后续点名远端heads查询核main仍为`2bc94f7fd9b13276f92d100fcd1b0e7075f49a93`；最新分支/产品提交、远端跟踪及未合入状态见NEXT_PHASE §1.1。恢复前重核实际HEAD/主线，不把本文快照视为永久最新。
 > 当前唯一实施树`E:/0 - Project/Tavotto-svg-r00`，沿用分支`zixu.wang/svg-computational-r00`；原目录`E:/0 - Project/Tavotto`仍保留其main。用户后续明确要求不新建分支，恢复时以实际HEAD/diff为准，不切回初拟计划分支。
 > 用户目标：以计算图表编辑为主扩展SVG输入，保留全部既有能力并交付实际可用产品；无人值守自主实现、修复、验证，在当前同一分支按不同功能分别commit。
@@ -130,7 +130,7 @@ flowchart TD
 
 > 2026-11-06按用户后续要求更新：**只使用已有实施树和当前分支，不新建/切换分支或worktree**。此条取代最初计划中的新建实施分支及代理独立worktree要求。当前执行状态与顺序见PROGRESS/NEXT_PHASE。
 
-1. 重新读取最新根/子目录规则和 `docs/rules/repo/lessons.md` 对应节；记录原工作区状态、当前分支、git 用户名/邮箱。
+1. 重新读取最新根/子目录规则和 `docs/rules/repo/lessons/README.md` 对应节；记录原工作区状态、当前分支、git 用户名/邮箱。
 2. 核对当前HEAD、远端引用及已取得的远端证据；集成前按需要 `git fetch origin`，记录时间和SHA。失败或本轮未fetch时不能把缓存引用称为最新，不因只读远端失败丢弃本地已验证成果。
 3. 沿用 `E:/0 - Project/Tavotto-svg-r00` 的 `zixu.wang/svg-computational-r00`。原目录 `E:/0 - Project/Tavotto` 保持原有main内容，不自动合并、拷回或改分支。已提交成果与未完成差异均须保留；后续实际HEAD可能前进，不能回退到文档快照。
 4. 用户未提交修改留在原工作区，不自动 stash、不 reset、不覆盖。设置绝对 `PYTHONPATH=<实施 worktree>/src` 并探测实际 import 位置，确认测试运行的是该树。
@@ -533,7 +533,7 @@ E2E 使用当前 worktree 的 `TAVOTTO_PYTHON` 和 `TAVOTTO_WORKER_PYTHON` 绝�
 实施时按任务读取以下现行权威，不把本文变成第二份规则：
 
 - [仓库规则](../../../AGENTS.md)、[后端规则](../../../src/tavotto/AGENTS.md)、[前端规则](../../../web/AGENTS.md)、[CI 规则](../../../.github/AGENTS.md)。
-- [同源对](../../rules/repo/same-origin-pairs.md)、[第三路径审查](../../rules/repo/third-path-review.md)、[判据主语](../../rules/repo/predicate-subject.md)、[错题本](../../rules/repo/lessons.md)。
+- [同源对](../../rules/repo/same-origin-pairs.md)、[第三路径审查](../../rules/repo/third-path-review.md)、[判据主语](../../rules/repo/predicate-subject.md)、[错题本](../../rules/repo/lessons/README.md)。
 - [来源捕获](../../rules/backend/figure-capture-and-execution.md)、[执行入口](../../rules/backend/execution-entries.md)、[图元能力](../../rules/backend/axes-and-artist-families.md)、[override 重放](../../rules/backend/override-application-and-replay.md)。
 - [保存与版本](../../rules/backend/layout-versions-and-documents.md)、[导出](../../rules/backend/export-pipeline.md)、[写回事务](../../rules/backend/writeback-transaction.md)、[RenderCore](../../rules/backend/rendercore.md)。
 - [文档与自动保存](../../rules/frontend/project-document-and-autosave.md)、[几何权威](../../rules/frontend/display-fallback-vs-geometry-authority.md)、[文字能力](../../rules/frontend/typography-capability-layer.md)。

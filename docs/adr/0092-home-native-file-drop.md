@@ -57,8 +57,7 @@ HTML5 拖放（素材拖进画布、画布 / 图层 / 工作区列表排序）�
 
 ### 五、其它平台与浏览器
 
-Windows / Linux 暂不旁听（WebView2 需要 `postMessageWithAdditionalObjects` 那条路，另立项），
-`native_file_drop` 回 `false`；浏览器模式同样拿不到路径。这些宿主保留降级：提示文件名、
+Linux 暂不旁听，`native_file_drop` 回 `false`；浏览器模式同样拿不到路径。Windows 见文末修订（2026-11-03）。这些宿主保留降级：提示文件名、
 弹选择器，拖放区的说明如实写「拖入后还要在弹出的窗口里选一次它所在的文件夹」。
 
 ### 六、拖入 / 选中的是 .py：打开之后运行**那个**脚本（2026-10-21 补）
@@ -99,3 +98,27 @@ Windows / Linux 暂不旁听（WebView2 需要 `postMessageWithAdditionalObjects
   桌面壳退回系统选择器，浏览器说清去左栏脚本库运行。
 - 意图记在准备会话条目上（`PrepEntry.placeIn`：画布 id + 页面毫米落点）。卡上「继续」与 AI 修好后的验证重跑是同一个意图的延续，
   原样带过去，所以修好后照样放回这张画布；`enterEdit` 先切回那张画布再放图（期间用户切走了也一样），那张画布已经不在了就按普通「打开」走。
+
+## 修订：Windows 也拿真实路径（2026-11-03）
+
+用户同门在 Windows 上把 `.py` 拖到主页，弹出的是文件选择器、还要再找一次脚本——正是 §五 留下的降级。
+Windows 不能打开 Tauri 的拖放处理器（同 §「问题」：wry 往窗口注册自己的 OLE `IDropTarget`，顶掉 WebView2 的，
+页面 HTML5 拖放整片失效），走 WebView2 官方给的那条路：
+
+- 页面（`web/src/lib/desktop.ts` 的 `ensureDropForwarder`，订阅 `tavotto:file-drop` 时装一次）在 window 的**捕获阶段**
+  听 `drop`，把 `dataTransfer.files` 经 `chrome.webview.postMessageWithAdditionalObjects(JSON.stringify({tavotto: 'file-drop'}), files)` 交给壳。
+  浏览器只在 dragover 被接受时才派发 `drop`，与 macOS 旁听 `performDragOperation:` 同一个语义；页面自己的 drop 处理不变。
+- 壳（`src-tauri/src/native_drop_win.rs`）在主窗口 CoreWebView2 上加一个 `WebMessageReceived` 处理器，只认
+  `{"tavotto":"file-drop"}`，经 `ICoreWebView2WebMessageReceivedEventArgs2::AdditionalObjects` → `ICoreWebView2File::Path()`
+  拿真实路径，交 `drop_paths::classify`、发 `tavotto:file-drop`——之后与 macOS 完全同一条（仲裁、运行那个脚本、画布放下）。
+- 消息使用 JSON **字符串**（2026-11-06 修正）：wry 先注册的 IPC 处理器用 `TryGetWebMessageAsString`，
+  对象消息让它返回 `E_INVALIDARG`，后面的原生旁听无法收到。旁听同样用 `TryGetWebMessageAsString` 取原字符串，
+  再解析标记；不能用 `WebMessageAsJson` 把字符串再次编码。Tauri 会在控制台记录这条非 invoke 消息的解析错误，
+  但处理器正常返回；不为消掉日志伪造 invoke 或改变认证边界。`files` 仍是原 FileList，官方接口接受 ArrayLike。
+- `native_file_drop` 在 Windows 上回「处理器装上了没有」。需要 WebView2 运行时 ≥ 1.0.1518；更旧的运行时页面那边调用失败、
+  壳收不到，前端等满 grace 照旧降级到选择器。
+- 安全边界不变：只有用户拖进来的 File 带磁盘路径（页面 `new File()` 出来的不是 `ICoreWebView2File`，跳过）；打开项目仍走
+  `/api/projects/open`。远程实例窗口不装（同 macOS）。
+- 看护：`tests/test_desktop_file_drop.py`（消息标记两侧同源、命令在 Windows 上回旁听状态）、
+  `web/src/lib/desktopDropForwarder.test.ts`（只转带文件的 drop、只装一次、无桥不装）。真实系统拖放在 CI 里注入不了，合入前在
+  Windows 上真机手测一次。

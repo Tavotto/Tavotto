@@ -92,9 +92,14 @@ export async function verifyCI(c:CIConfig,input:Locator,read:Read,clock=()=>Math
     if(options.anchor?.candidate)throw new Rejected('ci_candidate_changed');
     throw new CIPending('check_missing',{source:branch.sha});
   }
+  // Distinct codes for the three states a reader of the CI log must tell apart:
+  // no CLA check yet, more than one, and a CLA check that did not pass.
+  if(own.length===0)throw new Rejected('ci_check_missing');
   if(own.length!==1)throw new Rejected('ci_check_ambiguous');const run=own[0];
+  if(run.status!=='completed')throw new Rejected('ci_check_pending');
+  if(run.conclusion!=='success')throw new Rejected('ci_check_not_success');
   const proof:Proof=parseProof(run.output?.summary,clock());
-  if(run.status!=='completed' || run.conclusion!=='success' || !validId(run.id) || !/^[A-Za-z0-9_-]{43}$/.test(run.external_id) ||
+  if(!validId(run.id) || !/^[A-Za-z0-9_-]{43}$/.test(run.external_id) ||
     proof.repository_id!==c.repositoryId || proof.kind!==(group?'merge_group':'pr') || (group?proof.group?.trusted_source_sha!==branch.sha:proof.pr!==input.pr) || proof.head_sha!==input.head || proof.base_sha!==before.base.sha || proof.policy_sha256!==digest)
     throw new Rejected('ci_proof_mismatch');
   const proofHash=await sha256(run.output.summary),url=c.origin+(group?'/verification/group?':'/verification/pr?')+new URLSearchParams({...group?{base:input.base!}:{pr:String(input.pr)},head:input.head,run:String(run.id),attempt:run.external_id});

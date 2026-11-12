@@ -2,7 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「UI 视觉纪律」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`components/ui/foundation.test.ts`、`ui/notice.test.tsx`、`e2e/notice-no-push.spec.ts`、`components/settings/themePreference.test.tsx`、`e2e/theme.spec.ts`、`components/ui/summaryRow.test.tsx`、`components/ui/keyboardPrimitives.test.tsx`、`lib/motion.test.tsx`、`components/ui/icons/motion.test.tsx`、`src/tokenContrast.test.ts`、`iconography.test.tsx`、`e2e/contrast.ts`、`components/canvasToolbar.test.tsx`、`e2e/canvas-toolbar.spec.ts`、`e2e/topbar-narrow.spec.ts`、`lib/keymap.test.tsx`、`canvas/overlayGrammar.test.tsx`
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`components/ui/foundation.test.ts`、`ui/notice.test.tsx`、`e2e/notice-no-push.spec.ts`、`components/settings/themePreference.test.tsx`、`e2e/theme.spec.ts`、`components/ui/summaryRow.test.tsx`、`components/ui/keyboardPrimitives.test.tsx`、`lib/motion.test.tsx`、`components/ui/icons/motion.test.tsx`、`src/tokenContrast.test.ts`、`iconography.test.tsx`、`e2e/contrast.ts`、`components/canvasToolbar.test.tsx`、`e2e/canvas-toolbar.spec.ts`、`e2e/topbar-narrow.spec.ts`、`lib/keymap.test.tsx`、`canvas/overlayGrammar.test.tsx`、`src/statusErrorActions.test.ts`
 
 <!-- agents-route
 sheet: web/AGENTS.md
@@ -45,7 +45,7 @@ OptionGrid 与 Segmented 同皮；说明条只有 `Notice`；页签 属性 | 画
 字体角色十个（新增 `type-display` 24 / `type-heading` 17 / `type-reading` 13·1.6；`type-title` 600；`type-caption` 12 / ink-3）；控件高 28 + `lg` 32
 （对话框页脚 / 页面 CTA）；投影全部 `color-mix(var(--color-shadow) N%)`，`shadow-card` **只在 `ui/Card`**；状态色一个锚点派生
 `-surface` / `-border` / `-content`（字用 content），旧 `*-subtle` 是别名；z-index 只用 `z-sticky … z-onboarding` 九档 token；焦点环 offset 2、指针操作之后的程序化 focus 不画环（`lib/inputModality` 给 `<html>` 记 `data-input-modality`，`index.css` 在 `pointer` 时关 `:focus-visible` 的 outline；只有 Tab / 方向键 / Home / End / PageUp / PageDown 算键盘，Enter / Space 不算）、
-插入点 accent；滚动条 6px、只在悬停 / 内含焦点时出现；加载只有 sweep / 静态骨架 / shimmer / 转圈（禁呼吸动画——唯一例外是改图助手的思考小球，ADR 0165；`ui/ProgressBar` 是铅笔排线：11px、发丝框、整像素 5px 斜线 mask，不确定态排线 2.2s 线性流动、确定态宽度吸附整条线）；光标一律箭头（可拖的卡用抓手）。
+插入点 accent；滚动条 6px、只在悬停 / 内含焦点时出现；加载只有 sweep / 静态骨架 / shimmer / 转圈（禁呼吸动画——唯一例外是改图助手的思考小球，ADR 0165；`ui/ProgressBar` 是点阵（ADR 0168）：12px、未完成稀点 / 已完成密点、同色，canvas 按物理像素画，几何只在 `lib/dotProgress.ts`；不确定态一段密点来回扫）；光标一律箭头（可拖的卡用抓手）。
 新原语：`Card`、`Notice`（恢复）、`StatusPill`、`dropZoneClass`（拖放接收态：静态不画、拖入才是 1px accent 虚线 + accent-subtle + 外发光）、`FormSection` + `FieldGroup`（`SettingRow layout="balanced"`）、EmptyState v2、`listRowClass({ size })`
 + `rowMetaClass` + `dropLineClass`、`useRowMenu` + `RowMenu`（⋯ / 右键 / ⇧F10 同一份菜单）；Dialog 宽度 sm 400 / md 480 / lg 560 / xl 760 / shell、
 页脚 `{ start, secondary, primary }` 三槽、浮动毛玻璃页脚、`onEscape`（Esc = 安全答案）、栈底才画遮罩；**每个上下文一颗主按钮**；对话框页脚的破坏性动作是
@@ -77,6 +77,8 @@ cursor-not-allowed`；未选中复选框 / 单选边框与关态开关轨道 `bo
 分组的展开走 `ui/Field.Reveal`（`usePresence` 保活退场那 90ms，所以收起后内容还在 DOM 里一小会儿）；
 没写时长的 `transition-*` 默认就是 `--duration-fast` + `--ease-standard`（`motion.test` 守着）。
 **Card 几何默认不变，`lift` 是登记豁免**（宪法第二十五节「Card `lift`」，用户 2026-10-15 裁决）：`<Card lift>` 在 hover / 键盘聚焦时 translateY(-2px) + scale(`--card-lift-scale`，默认 1.015、上限 1.02) + 阴影升到 `shadow-lift`（含 1px accent/20% 描边，不要外发光；用户 2026-10-16 选定整卡放大 + 描边），按下回落，
+
+第二处登记豁免：改图助手的附件预览卡（`components/ai/AttachCards.tsx`，用户 2026-11-11 裁决，ADR 0175）：静止时略微倾斜（确定性角度序列）、悬停 / 聚焦摆正并 translateY(-2px)、`prefers-reduced-motion` 下不位移；只此一处，门禁按文件登记次数。
 reduced-motion 下只换阴影 / 描边，disabled / selected 不浮起；静止态写恒等变换（`translate-y-0 scale-100`）以免 none↔非 none 引发重排。只许首页项目卡（品牌位置）用，别处不开。
 门禁 `foundation.test`（交互态位移 / 缩放仅 Card.tsx 一处）+ `foundationPrimitives.test`（≤2px 整数、缩放 ≤1.02）。
 **键盘契约在原语里**（2026-09-14 apple-design 审计批次 1）：Dialog 打开后焦点
@@ -198,6 +200,21 @@ ink-3 半速、仍在动）、发出后到第一个字之间状态行前那一�
   「本排版」是一行 Notice（事实用 · 连起来 +「画布设置 ›」，起步提示折进详情）。
 - **时长**：只用现有 motion token（详情展开 `Reveal` 180ms；通知轨入场 180 / 退场 120 = base / fast，规格的 200 / 130 落到最近一档）；位移 ≤ 4px 的
   纪律保留（规格写的 6px 没采，`motion.test` 的 ≤4px 门禁在）；reduced-motion 由 index.css 全局兜底直接切换。
+
+## 失败出口三种结局与红色提示门禁（2026-11-11）
+
+每个失败出口只能是三种结局之一：① 静默做完并说一句；② 一句话 + 一个能直接完成用户原动作的主按钮；
+③ 真做不了 →「发给我们看看」（`feedbackAction()`）。禁止「纯文字报错，用户不知道怎么继续」。
+
+门禁 `web/src/statusErrorActions.test.ts`（扫描器 `web/src/test/statusErrorScan.ts`，TypeScript AST）：
+`setStatus(…, 'error')` 的每个调用点要么第三实参带 `action`，要么登记进台账 `web/src/statusErrorLedger.json`——
+键 = 文件 + 文案 key（不用行号，同键多处用 `count`），`reason` 一句人话说明为什么不需要按钮
+（用户再做一次原动作就行 / 紧跟着弹出带按钮的卡片 / 改选后再点……）。实际集合与台账必须相等：
+新增未登记红，台账里有陈旧条目（提示已加按钮或已删）也红。
+认出的包装助手：`sayDrop`（别名 `say`）、`sayNotebook`、`store/actions.ts` 的 `status`；新的包装只要把 tone 当形参透传给
+`setStatus` 就会被自动认出。tone 是变量 / 调用、opts 是展开的调用点「判不出就别判」，不进红。
+`reason` 以 `TODO(dead-end): ` 开头 = 真死胡同、理由写不出、待修（写明该怎么修）；这类条目数钉在测试的
+`DEAD_END_CAP`，**只许降不许升**——修掉一条（加按钮或改结局）就删台账条目并把上限改小。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

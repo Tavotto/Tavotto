@@ -14,7 +14,7 @@ const pins={
  'migrations/v2-main-77e2cab7/base.sql':'b7c158869acbd1eb43dcbfee72f85ebf1149716082a66f9140989c56a4927e69',
  'migrations/v2-main-77e2cab7/native-schema.sql':'5e2a63a7560aee08253f942c8ee34a2cf0c99e692ef14417014d6081e348392a',
  'src/base.sql':'b7c158869acbd1eb43dcbfee72f85ebf1149716082a66f9140989c56a4927e69',
- 'src/native/schema.sql':'0e4cc1672c78837b219eba0c1f54de89fc86169c87ffd26277085a229dfe3a08',
+ 'src/native/schema.sql':'f8f4c320141c4dfec51b09c1d0d84ec52a26f800cc77e3a15f153fd733061299',
 };
 const hash=value=>createHash('sha256').update(typeof value==='string'?value:canonical(value)).digest('hex');
 const deny=reason=>{throw Error(reason);};
@@ -35,7 +35,7 @@ function models(){
   load(target,['src/base.sql','src/native/schema.sql']);
   const before=schema(source),fresh=schema(target),names=new Set(before.map(r=>r.name));
   const additions=fresh.filter(r=>!names.has(r.name));
-  if(additions.filter(r=>r.type==='table').length!==7 || additions.filter(r=>r.type==='trigger').length!==23 || additions.length!==30)deny('unreviewed_schema_delta');
+  if(additions.filter(r=>r.type==='table').length!==8 || additions.filter(r=>r.type==='trigger').length!==25 || additions.length!==33)deny('unreviewed_schema_delta');
   const originalTables=before.filter(r=>r.type==='table').map(r=>({name:r.name,columns:columns(source,r.name)}));
   for(const row of before){const expected=fresh.find(r=>r.name===row.name);if(!expected || row.name!==PUBLICATIONS && canonical(expected)!==canonical(row))deny('non_additive_schema_delta');}
   const statements=[ADD_SEND_FENCE,...additions.map(r=>r.sql)];

@@ -9,6 +9,7 @@ import {
   inkDepths,
   isContentFit,
   planEdgeDepth,
+  planEdgeGrow,
   withEdgeDepth,
 } from './panelEdgeCrop'
 
@@ -137,5 +138,70 @@ describe('withEdgeDepth / depthOf', () => {
     for (const side of ['l', 'r', 't', 'b'] as const) {
       expect(depthOf(withEdgeDepth(c, side, 0.33), side)).toBeCloseTo(0.33, 12)
     }
+  })
+})
+
+describe('planEdgeGrow：拖图边 = 改图幅，往外往里都是（ADR 0161 修订 2026-11-06 / 2026-11-09）', () => {
+  const box0 = { x: 10, y: 20, w: 50, h: 75 } // 宽按 0.5 倍摆放，高按 1 倍：老项目里被拉伸过的面板
+  const base = { box0, sizeMm: [100, 75] as const, tolMm: 2 }
+
+  it('吸附半径内算停在图边：null', () => {
+    expect(planEdgeGrow({ ...base, side: 'r', outMm: 2 })).toBeNull()
+    expect(planEdgeGrow({ ...base, side: 'r', outMm: -2 })).toBeNull()
+  })
+
+  it('右 / 下：左上角不动，只有被拖的那一维变，页面长度按这一轴的比例换算', () => {
+    expect(planEdgeGrow({ ...base, side: 'r', outMm: 10 })).toEqual({
+      sizeMm: [120, 75],
+      pos: { x: 10, y: 20 },
+      box: { x: 10, y: 20, w: 60, h: 75 },
+    })
+    expect(planEdgeGrow({ ...base, side: 'b', outMm: 10 })).toEqual({
+      sizeMm: [100, 85],
+      pos: { x: 10, y: 20 },
+      box: { x: 10, y: 20, w: 50, h: 85 },
+    })
+  })
+
+  it('左 / 上：对边不动，左上角往外挪', () => {
+    expect(planEdgeGrow({ ...base, side: 'l', outMm: 10 })).toMatchObject({
+      sizeMm: [120, 75],
+      pos: { x: 0, y: 20 },
+      box: { x: 0, w: 60 },
+    })
+    expect(planEdgeGrow({ ...base, side: 't', outMm: 10 })).toMatchObject({
+      sizeMm: [100, 85],
+      pos: { x: 10, y: 10 },
+      box: { y: 10, h: 85 },
+    })
+  })
+
+  it('钳到引擎上限；已在上限 = 没有变化 = null', () => {
+    expect(planEdgeGrow({ ...base, side: 'r', outMm: 100, maxMm: 110 })?.sizeMm).toEqual([110, 75])
+    expect(planEdgeGrow({ ...base, side: 'r', outMm: 100, maxMm: 100 })).toBeNull()
+  })
+
+  it('往里拖：同一条规则缩短那一维，对边不动，文字 pt 不变（缩放比不变）', () => {
+    expect(planEdgeGrow({ ...base, side: 'r', outMm: -10 })).toEqual({
+      sizeMm: [80, 75],
+      pos: { x: 10, y: 20 },
+      box: { x: 10, y: 20, w: 40, h: 75 },
+    })
+    expect(planEdgeGrow({ ...base, side: 'l', outMm: -10 })).toMatchObject({
+      sizeMm: [80, 75],
+      pos: { x: 20, y: 20 },
+      box: { x: 20, w: 40 },
+    })
+    expect(planEdgeGrow({ ...base, side: 't', outMm: -15 })).toMatchObject({
+      sizeMm: [100, 60],
+      pos: { x: 10, y: 35 },
+      box: { y: 35, h: 60 },
+    })
+  })
+
+  it('往里钳到引擎下限；已在下限 = null；下限缺席时至少 1 mm', () => {
+    expect(planEdgeGrow({ ...base, side: 'r', outMm: -100, minMm: 30 })?.sizeMm).toEqual([30, 75])
+    expect(planEdgeGrow({ ...base, sizeMm: [30, 75], side: 'r', outMm: -100, minMm: 30 })).toBeNull()
+    expect(planEdgeGrow({ ...base, side: 'b', outMm: -500 })?.sizeMm).toEqual([100, 1])
   })
 })

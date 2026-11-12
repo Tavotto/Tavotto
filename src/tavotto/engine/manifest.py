@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 import re
 import sys
 import time
@@ -19,7 +20,7 @@ from contextlib import contextmanager
 from functools import lru_cache
 
 import matplotlib as mpl
-from matplotlib import colors as mcolors, font_manager, text as mtext
+from matplotlib import cbook as mcbook, colors as mcolors, font_manager, text as mtext
 from matplotlib.axes import Axes
 from matplotlib.axis import Axis
 from matplotlib.collections import (
@@ -40,7 +41,7 @@ from matplotlib.patches import FancyArrowPatch, Patch
 from matplotlib.path import Path
 from matplotlib.text import Text
 from matplotlib.textpath import text_to_path
-from matplotlib.transforms import Bbox
+from matplotlib.transforms import Bbox, IdentityTransform
 
 import pathgeom
 from axestraversal import axis_drawn, frame_drawn, ordered_axes
@@ -109,11 +110,17 @@ from overrides import (
     color_mapping_is_live,
     colorbar_mapping_is_live,
     entry_face_index,
+    fallback_tail,
     font_display_names,
     font_face_index,
     font_file_key,
     font_installed,
     gradient_base_hex,
+    gradient_detect,
+    gradient_legend_candidates,
+    gradient_legend_linked,
+    gradient_stops,
+    gradient_swatch_groups,
     image_pixels_skipped,
     is_linecoll_family,
     legend_handle_props,
@@ -1333,7 +1340,7 @@ def _ft_font(path: str, face_index: int = 0):
     return hit or None
 
 
-def _resolved_font_paths(families, file=None) -> list[tuple[str, int]]:
+def _resolved_font_paths(families, file=None, props=None) -> list[tuple[str, int]]:
     """这段文字**真正会用到**的 (字体文件, 面索引)，按 matplotlib 自己的回退顺序。
 
     走 matplotlib 的解析链（3.6 起 family 是一条回退链，逐字形回退），所以
@@ -1355,10 +1362,17 @@ def _resolved_font_paths(families, file=None) -> list[tuple[str, int]]:
     matplotlib 画字**只用那一个文件的那一张脸**（路径带的面索引，`overrides.font_face_index`；
     3.10 及以前恒为第 0 张）、族列表整个不看——这里照实只报它。
     按族列表算的话，中文会被说成「回退链画出来了」，而图上是方框。
+
+    `props` 是文字自己的完整 `FontProperties`（粗细 / 斜体 / 字形变体 / 拉伸 / 字号——findfont 看的全部）。
+    给了就按它解析：matplotlib 画 `fontweight='bold'` 的文字用的是 Bold 那个文件，只传族列表会解析到
+    Regular（ADR 0164 的文件级身份据此认脸，错一个就是 sha256 与粗斜标志都错）。不给 = 只按族列表（既有行为）。
     """
     if file is not None:
         return [(str(file), font_face_index(file))]
-    prop = font_manager.FontProperties(family=list(families) or ["sans-serif"])
+    if props is not None:
+        prop = props
+    else:
+        prop = font_manager.FontProperties(family=list(families) or ["sans-serif"])
     try:
         found = font_manager.fontManager._find_fonts_by_props(prop)
     except (AttributeError, TypeError, ValueError, RuntimeError):
@@ -1416,6 +1430,167 @@ def _glyph_scan(text: str, families, file=None) -> tuple[list[str], list[str], l
         elif len(subst) < MAX_MISSING_GLYPHS:
             subst[ch] = None
     return list(gone), list(subst), list(cjk_faces)
+
+
+#: 字体文件（路径 + stat + 面）→ sha256。一次 manifest 过很多个 Text，同一张脸只读一遍；
+#: 键含 mtime / size（`overrides.font_file_key`），文件被原地换掉就是新键。
+_FILE_SHA256: dict[tuple, str | None] = {}
+
+#: 读来算 sha256 的字体文件上限；与 `rendercore.userfonts.MAX_FONT_BYTES` 同值（两个进程各持一份，
+#: worker 侧不能 import rendercore——`tests/test_source_font_wire.py` 看护两份字面相同）。
+FONT_SOURCE_MAX_BYTES = 192 * 1024 * 1024
+
+
+def _font_file_sha256(path: str, face_index: int) -> str | None:
+    key = font_file_key(path, face_index)
+    if key in _FILE_SHA256:
+        return _FILE_SHA256[key]
+    digest: str | None = None
+    try:
+        if os.path.getsize(key[0]) <= FONT_SOURCE_MAX_BYTES:
+            h = hashlib.sha256()
+            with open(key[0], "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+            digest = h.hexdigest()
+    except OSError:
+        digest = None
+    _FILE_SHA256[key] = digest
+    return digest
+
+
+def _face_source(path: str, face_index: int, ft) -> dict | None:
+    """一张脸的**身份**（ADR 0164）：名字 + 文件 sha256 + 面序号 + 粗斜。**不含路径**——路径不进 manifest、
+    不进文档、不进遥测；Flask 侧按 sha256 在本机找文件（`rendercore.userfonts`）。"""
+    digest = _font_file_sha256(path, face_index)
+    if digest is None:
+        return None
+    # FT_STYLE_FLAG_ITALIC=1 / BOLD=2。matplotlib 3.11 起 `style_flags` 是 `StyleFlags`（enum.Flag，不是
+    # IntFlag：`int()` 它会抛 TypeError），旧版是 int——两种都先取 `.value`
+    raw = getattr(ft, "style_flags", 0)
+    flags = int(getattr(raw, "value", raw) or 0)
+    return {
+        "family": str(ft.family_name),
+        "sha256": digest,
+        "face": int(face_index),
+        "bold": bool(flags & 2),
+        "italic": bool(flags & 1),
+    }
+
+
+def face_sources(text: str, families, file=None, props=None) -> dict:
+    """这段文字实际由哪几张**文件级**的脸画：`face_src`（正文脸，族链解析到的第一张）与
+    `cjk_src`（回退链上画了第一个中日韩字符的那张；正文脸自己画得出汉字时没有）。
+
+    与 `font_faces` / `_glyph_scan` 走同一条解析链（`_resolved_font_paths`），所以「报的身份」==
+    「matplotlib 实际画的脸」。给「复制为画布文字标注」当 `sourceFont`：**字体文件**随图 PDF 里的
+    子集嵌入，但文档里只记身份。解析不出 / 文件读不了 → 键缺席（不编造）。
+
+    `props` = 文字的完整 `FontProperties`（带粗细 / 斜体等）：`fontweight='bold'` 的普通文字画的是 Bold 文件，
+    身份必须是它。manifest 里调用方一律传；不传 = 只按族列表。"""
+    resolved = [
+        (p, i, ft)
+        for p, i in _resolved_font_paths(families, file, props)
+        if (ft := _ft_font(p, i)) is not None
+    ]
+    if not resolved:
+        return {}
+    out: dict = {}
+    src = _face_source(*resolved[0])
+    if src is not None:
+        out["face_src"] = src
+    if isinstance(text, str) and text.strip():
+        primary, rest = resolved[0][2], resolved[1:]
+        for ch in _MATH_SPAN.sub("", text):
+            if not _CJK_CHAR.match(ch) or primary.get_char_index(ord(ch)):
+                continue
+            hit = next((r for r in rest if r[2].get_char_index(ord(ch))), None)
+            if hit is not None:
+                cjk = _face_source(*hit)
+                if cjk is not None:
+                    out["cjk_src"] = cjk
+            break
+    return out
+
+
+def text_block(t, renderer, W: float, H: float) -> dict | None:
+    """这段文字排出来的**块**（figure 分数）：「复制为画布文字标注」据此把标注摆到原文字的位置上（ADR 0163）。
+
+    * `center`：文字块（未转时的矩形；转了就是转后外接框——矩形的外接框与它同心）的中心 `[x, y]`，y 向下；
+      只取**文字自己**（Annotation 的 `get_window_extent` 会并上箭头，这里绕过）。
+    * `w`：块宽（图宽分数，沿阅读方向）；`h`：块高（图高分数，含最后一行的下行）；
+    * `asc`：块顶到**第一行基线**的距离（图高分数）——标注的第一行基线要落在同一处，量不出基线靠它；
+    * `step`：多行时相邻基线的平均间距（图高分数）；单行缺席。
+
+    只用 matplotlib 的**公开 API**：用同一份字体属性、行距、数学解析起几个探针 `Text`（转角 0、左 / 基线对齐、
+    原点处），量它们的外接框——`_get_layout` 的返回形状每个 matplotlib 版本都变过（3.11 起不再是
+    `(bbox, info, descent)`），不碰它。排不出（wrap 过的、usetex、缺渲染器、任何异常）= 键缺席，不编造。"""
+    if not isinstance(t, mtext.Text) or t.get_wrap() or t.get_usetex():
+        return None
+    s = t.get_text()
+    if not isinstance(s, str) or not s.strip():
+        return None
+    try:
+        # 不用 3.10 才有的 `get_figure(root=True)`（pyproject 允许 matplotlib>=3.8）：走 pathgeom.root_figure
+        fig = pathgeom.root_figure(t.get_figure())
+        if fig is None:
+            return None
+        # Annotation 的 window extent 并了箭头：先让它把文字位置更新到当前状态，再量 Text 自己的
+        update = getattr(t, "update_positions", None)
+        if callable(update):
+            update(renderer)
+        own = mtext.Text.get_window_extent(t, renderer)
+        cx, cy = (own.x0 + own.x1) / 2, (own.y0 + own.y1) / 2
+
+        # `get_linespacing` 是 3.11 才有的公开读法；3.10 及更早只有私有属性 `_linespacing`（构造参数名两边一样）
+        _ls = getattr(t, "get_linespacing", None)
+        linespacing = _ls() if callable(_ls) else getattr(t, "_linespacing", None)
+
+        def probe(text: str):
+            p = mtext.Text(
+                0,
+                0,
+                text,
+                fontproperties=t.get_fontproperties().copy(),
+                linespacing=linespacing,
+                parse_math=t.get_parse_math(),
+                rotation=0,
+                horizontalalignment="left",
+                verticalalignment="baseline",
+            )
+            p.set_transform(IdentityTransform())
+            p.set_figure(fig)
+            return mtext.Text.get_window_extent(p, renderer)
+
+        lines = s.split("\n")
+        full = probe(s)
+        first = probe(lines[0])
+        out = {
+            "center": [float(cx / W), float(1.0 - cy / H)],
+            "w": float(full.width / W),
+            "h": float(full.height / H),
+            "asc": float(first.y1 / H),  # 第一行基线以上的部分：基线在原点，y1 = 上行
+        }
+        if len(lines) > 1:
+            out["step"] = float((full.height - first.height) / (len(lines) - 1) / H)
+        # 这段字**此刻画出来的样子**（含尚未写回脚本的改动）：刻度标签自己的 `editable` 只有 `text`，
+        # 字号 / 颜色 / 转角在刻度组上——「复制为标注」不去拼两处，直接读画的那个 Text
+        out.update(
+            text=s,
+            math=bool(t.get_parse_math() and mcbook.is_math_text(s)),
+            size=float(t.get_fontsize()),  # 脚本 pt；换到页面 pt 是前端 `pagePtLens` 的事
+            color=to_hex(t.get_color()),
+            # 字重 / 字形原样（名字或数字）：粗不粗、斜不斜的判据只在前端 `weightIsBold` / `styleIsItalic`
+            weight=t.get_fontweight(),
+            style=str(t.get_fontstyle()),
+            rotation=float(t.get_rotation()),  # 逆时针为正（matplotlib 语义），0–360
+            ha=str(t.get_ha()),
+        )
+        if not all(math.isfinite(v) for v in (*out["center"], out["w"], out["h"], out["asc"])):
+            return None
+        return out
+    except Exception:  # noqa: BLE001 —— 附加事实：量不出就少这个键，绝不拖垮 manifest
+        return None
 
 
 #: mathtext 内置字体集 → 它画字用的那张脸的族名。`custom` 不在表里：那一档由
@@ -2162,6 +2337,92 @@ def _line_fields(ln, state: FigState, gid: str) -> list[dict]:
     ]
 
 
+def _screen_ends(coll, rows) -> tuple[int, int]:
+    """一摞色块（数据 y 升序的条带下标）在**屏幕**上的上端、下端那一条（只用于显示）。"""
+    import numpy as np  # noqa: PLC0415
+
+    ends = [int(rows[0]), int(rows[-1])]
+    try:
+        ys = [
+            float(
+                coll.get_transform().transform(
+                    np.asarray(coll.get_paths()[i].vertices).mean(axis=0)
+                )[1]
+            )
+            for i in ends
+        ]
+    except Exception:  # noqa: BLE001
+        return ends[-1], ends[0]
+    return (ends[0], ends[1]) if ys[0] > ys[1] else (ends[1], ends[0])
+
+
+def _swatch_caption(ax, coll, rows) -> str | None:
+    """图例色块旁边那段字（同一个子图里、紧挨在色块右边、竖向与它重叠的文字）：界面拿它说「TiO₂ 的色块」。
+
+    颜色相同的几块只能靠它分清；找不到就不给（界面退回「色块 1 / 2」）。"""
+    import numpy as np  # noqa: PLC0415
+
+    try:
+        verts = np.vstack([coll.get_paths()[int(i)].vertices for i in rows])
+        pts = coll.get_transform().transform(verts)
+    except Exception:  # noqa: BLE001
+        return None
+    x1 = float(pts[:, 0].max())
+    y0, y1 = float(pts[:, 1].min()), float(pts[:, 1].max())
+    width = max(float(pts[:, 0].max() - pts[:, 0].min()), 1.0)
+    best = None
+    for t in ax.texts:
+        txt = t.get_text().strip()
+        if not txt or not t.get_visible():
+            continue
+        try:
+            bb = t.get_window_extent()
+        except Exception:  # noqa: BLE001
+            continue
+        gap = float(bb.x0) - x1
+        if gap < -width or gap > 4 * width or bb.y1 < y0 or bb.y0 > y1:
+            continue
+        if best is None or gap < best[0]:
+            best = (gap, txt)
+    return best[1] if best else None
+
+
+def _gradient_legend_value(coll, gid: str) -> dict:
+    """渐变峰的「图例色块跟着改」事实（ADR 0167 修订）：候选色块（gid + 序号 + 此刻两端颜色）与此刻跟着改的那块。
+
+    没有候选就不发这个键。候选的 gid 与元素表同一个口径：同一个子图前缀 + `fill_<ax.collections 下标>`。"""
+    import numpy as np  # noqa: PLC0415 — worker 侧有科学栈
+
+    info = gradient_legend_candidates(coll)
+    if not info or not info["candidates"]:
+        return {}
+    prefix = gid.rsplit(".", 1)[0]
+    ax = coll.axes
+    cands = []
+    for ci, gi in info["candidates"]:
+        other = ax.collections[ci]
+        rows = gradient_swatch_groups(other)[gi]
+        fc = np.asarray(other.get_facecolor(), dtype=float)
+        top, bottom = _screen_ends(other, rows)
+        entry = {
+            "ref": [ci, gi],
+            "gid": f"{prefix}.fill_{ci}",
+            "stops": [to_hex(fc[top][:3]), to_hex(fc[bottom][:3])],
+        }
+        name = _swatch_caption(ax, other, rows)
+        if name:
+            entry["caption"] = name
+        cands.append(entry)
+    linked = gradient_legend_linked(coll)
+    return {
+        "legend": {
+            "candidates": cands,
+            "linked": list(linked) if linked is not None else None,
+            "auto": list(info["auto"]) if info["auto"] is not None else None,
+        }
+    }
+
+
 def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[dict]:
     """Collection family 的字段表——**由能力探针驱动，不由类名驱动**。
 
@@ -2192,10 +2453,33 @@ def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[
             {"prop": "label", "type": "text", "value": "" if lab.startswith("_") else lab}
         )
     if "fill" in caps:
-        fc = collection_face_rgba(coll)
-        fields.append(
-            {"prop": "facecolor", "type": "color", "value": to_hex(fc[0]) if len(fc) else "#000000"}
-        )
+        # 渐变色带（几十上百条逐条一色的长条）：一个「填充颜色」只说得出第一条、改它就把渐变压成
+        # 纯色——认出来就换成两端颜色一个字段（`overrides.gradient_detect`），不再出 facecolor
+        grad = gradient_detect(coll)
+        ends = gradient_stops(coll, grad) if grad is not None else None
+        if ends is not None:
+            fields.append(
+                {
+                    "prop": "gradient",
+                    "type": "gradient",
+                    "value": {
+                        "stops": list(ends),
+                        "direction": grad["direction"],
+                        "screen_start": grad["screen_start"],
+                        **_gradient_legend_value(coll, gid),
+                    },
+                    "group": "渐变填充",
+                }
+            )
+        else:
+            fc = collection_face_rgba(coll)
+            fields.append(
+                {
+                    "prop": "facecolor",
+                    "type": "color",
+                    "value": to_hex(fc[0]) if len(fc) else "#000000",
+                }
+            )
     if "sizes" in caps:
         sizes = collection_sizes(coll)
         fields.append(
@@ -3138,7 +3422,7 @@ def _colorbar_fields(p, state: FigState, gid: str) -> list[dict]:
             "type": "number",
             "value": round(float(cb.outline.get_linewidth()), 2),
             "min": 0,
-            "max": 3,
+            "max": 10,
             "step": 0.1,
             "unit": "pt",
             "group": "高级",
@@ -3539,7 +3823,7 @@ def _tick_fields(ts: TickSet) -> list[dict]:
             "type": "number",
             "value": round(float(getattr(t0, "_size", 3.5)), 2),
             "min": 0,
-            "max": 12,
+            "max": 20,
             "step": 0.5,
             "unit": "pt",
             "group": "刻度线",
@@ -3551,7 +3835,7 @@ def _tick_fields(ts: TickSet) -> list[dict]:
             "type": "number",
             "value": round(float(t0.tick1line.get_markeredgewidth()), 2) if t0 is not None else 0.8,
             "min": 0.1,
-            "max": 3,
+            "max": 10,
             "step": 0.1,
             "unit": "pt",
             "group": "刻度线",
@@ -3564,7 +3848,7 @@ def _tick_fields(ts: TickSet) -> list[dict]:
             "type": "number",
             "value": round(_minor_tick_prop(ts, "size", "size", 2.0), 2),
             "min": 0,
-            "max": 12,
+            "max": 20,
             "step": 0.5,
             "unit": "pt",
             "group": "刻度线",
@@ -3574,7 +3858,7 @@ def _tick_fields(ts: TickSet) -> list[dict]:
             "type": "number",
             "value": round(_minor_tick_prop(ts, "width", "width", 0.6), 2),
             "min": 0.1,
-            "max": 3,
+            "max": 10,
             "step": 0.1,
             "unit": "pt",
             "group": "刻度线",
@@ -3856,7 +4140,7 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
             "type": "number",
             "value": round(float(_grid_prop(lambda g: g.get_linewidth(), 0.5)(ax)), 2),
             "min": 0.1,
-            "max": 3,
+            "max": 10,
             "step": 0.1,
             "unit": "pt",
             "group": "网格与边框",
@@ -3906,7 +4190,7 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
             "type": "number",
             "value": round(spine_all_width(ax), 2),
             "min": 0.1,
-            "max": 3,
+            "max": 10,
             "step": 0.1,
             "unit": "pt",
             "group": "网格与边框",
@@ -3928,7 +4212,7 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
                     "type": "number",
                     "value": round(spine_side_width(ax, side), 2),
                     "min": 0.1,
-                    "max": 3,
+                    "max": 10,
                     "step": 0.1,
                     "unit": "pt",
                     "group": "边框（逐条）",
@@ -5886,6 +6170,31 @@ def _measure_manifest(
             # 中日韩白名单，界面拿它回答「我的中文是什么字体」。
             if cjk_faces:
                 entry["cjk_family"] = cjk_faces[0]
+            # 文件级身份（ADR 0164）：画布「复制为标注」要用原图同一张脸；加字段协议，老前端原样忽略
+            try:
+                entry.update(
+                    face_sources(
+                        live_text.get_text(),
+                        live_text.get_fontfamily() or [],
+                        font_file,
+                        live_text.get_fontproperties(),
+                    )
+                )
+            except Exception:  # noqa: BLE001 —— 身份是附加事实：采集失败只是少一个键，绝不拖垮 manifest
+                pass
+            # 文字块（ADR 0163）：「复制为画布文字标注」把标注摆在原文字的位置上。刻度组（`ticks`）是一组标签，
+            # 没有「一块文字」可言，不出
+            # 隐藏中的图例项也不出：它的 Text 已不在图例盒里，自己量出的位置是上一次布局的残影
+            # （热态留着旧位置、清空重放是初始位置——「热态 == 重放」不变式据此红过）；本来就没画出来，也无从复制
+            if el["role"] != "ticks" and not (
+                el["role"] == "legend_text" and _entry_is_hidden(artist)
+            ):
+                try:
+                    block = text_block(live_text, renderer, W, H)
+                except Exception:  # noqa: BLE001 —— 附加事实：算不出 = 该元素不出 text_block（不可复制），绝不拖垮 manifest
+                    block = None
+                if block is not None:
+                    entry["text_block"] = block
         elements.append(entry)
 
     if budget.skipped:
@@ -5911,6 +6220,8 @@ def _measure_manifest(
         # 其中有中文名的：{族名: 中文名}，只给下拉显示用（值仍是族名）。
         # 加字段协议：老前端原样忽略，照旧显示族名。
         "font_family_names": dict(installed_font_display_names()),
+        # 本机的字体回退尾巴：修改后的 .py 要拼出与引擎同一条族链（ADR 0171）。加字段协议，同上
+        "font_fallback_tail": list(fallback_tail()),
     }
     frame = pathgeom.frame_report(fig)
     if frame is not None:

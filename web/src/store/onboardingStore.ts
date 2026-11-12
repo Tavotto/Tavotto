@@ -70,7 +70,7 @@ export const ONBOARDING_STATUSES: readonly OnboardingStatus[] = [
 export const isOnboardingStatus = (v: unknown): v is OnboardingStatus =>
   typeof v === 'string' && (ONBOARDING_STATUSES as readonly string[]).includes(v)
 
-/** 一次性情境提示的种类（闭集）；每类只出现一次 */
+/** 情境提示的种类（闭集）。前六条是一句话提示，每类只出现一次；后面是动画卡（ADR 0177），账记在 `hintStats` */
 export const HINT_KINDS = [
   'panel_editable',
   'panel_layout_only',
@@ -78,10 +78,32 @@ export const HINT_KINDS = [
   'multi_select',
   'problem_found',
   'layout_page_bounds',
+  'fit_canvas',
+  'edge_crop',
+  'ruler_guides',
+  'shift_axis',
+  'no_snap',
+  'arrow_nudge',
+  'shift_rotate',
+  'dblclick_text',
+  'shift_draw',
+  'space_pan',
+  'shift_multi',
+  'shortcut_help',
 ] as const
 export type HintKind = (typeof HINT_KINDS)[number]
 export const isHintKind = (v: unknown): v is HintKind =>
   typeof v === 'string' && (HINT_KINDS as readonly string[]).includes(v)
+
+/**
+ * 一张动画卡提示的账（ADR 0177）：出过几次、上次什么时候、还出不出。
+ * `done` = 用户自己用过这个功能（学会了）或点了 ×——两者都是「别再提」，不分开记。
+ */
+export interface HintStat {
+  shows: number
+  lastAt: number
+  done: boolean
+}
 
 export interface OnboardingPersisted {
   schemaVersion: number
@@ -101,6 +123,13 @@ export interface OnboardingPersisted {
   skippedSteps: StepId[]
   /** 看过的提示 → 看到的时间戳 */
   hintSeen: Partial<Record<HintKind, number>>
+  /** 动画卡提示的账（ADR 0177）；没有条目 = 没出过也没学会 */
+  hintStats: Partial<Record<HintKind, HintStat>>
+  /** 用户在设置里关掉了操作提示（一句话的与动画卡的都不出） */
+  hintsOff: boolean
+  /** 用过这个应用的天数（本地日期计）与最近一天：提示分层解锁用，只在本机 */
+  activeDays: number
+  lastActiveDay: string | null
   startedAt: number | null
   completedAt: number | null
   /** 教程副本的项目 id（后端给的短 id）；换项目时据此判「离开了教程」 */
@@ -140,6 +169,10 @@ export const ONBOARDING_DEFAULTS: OnboardingPersisted = {
   completedSteps: [],
   skippedSteps: [],
   hintSeen: {},
+  hintStats: {},
+  hintsOff: false,
+  activeDays: 0,
+  lastActiveDay: null,
   startedAt: null,
   completedAt: null,
   tutorialProjectId: null,
@@ -201,6 +234,10 @@ const PERSISTED_KEYS: (keyof OnboardingPersisted)[] = [
   'completedSteps',
   'skippedSteps',
   'hintSeen',
+  'hintStats',
+  'hintsOff',
+  'activeDays',
+  'lastActiveDay',
   'startedAt',
   'completedAt',
   'tutorialProjectId',
@@ -289,6 +326,24 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
       if (isHintKind(k) && at !== null) hintSeen[k] = at
     }
   }
+  // 动画卡的账与提示开关（ADR 0177）：逐条校验，坏的那条丢掉；旧 blob 没有这几项 = 全新
+  const hintStats: Partial<Record<HintKind, HintStat>> = {}
+  if (v.hintStats && typeof v.hintStats === 'object' && !Array.isArray(v.hintStats)) {
+    for (const [k, val] of Object.entries(v.hintStats as Record<string, unknown>)) {
+      if (!isHintKind(k) || !val || typeof val !== 'object') continue
+      const st = val as Record<string, unknown>
+      const shows = numOrNull(st.shows)
+      const lastAt = numOrNull(st.lastAt)
+      if (shows === null || lastAt === null || shows < 0) continue
+      hintStats[k] = { shows: Math.floor(shows), lastAt, done: st.done === true }
+    }
+  }
+  const hintLedger = {
+    hintStats,
+    hintsOff: v.hintsOff === true,
+    activeDays: Math.max(0, Math.floor(numOrNull(v.activeDays) ?? 0)),
+    lastActiveDay: strOrNull(v.lastActiveDay),
+  }
   const flowVersion = numOrNull(v.flowVersion) ?? 0
   // 升级后让每个人把新教程看一次（2026-10-21 用户裁决，ADR 0136 修订，覆盖「已完成 / 已跳过的不被
   // 重新打扰」）：上一版流程留下的 completed / skipped（也包括 active / paused——它们的步骤 id 在新流程里
@@ -304,6 +359,7 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
     return {
       ...ONBOARDING_DEFAULTS,
       hintSeen,
+      ...hintLedger,
       tutorialProjectId: strOrNull(v.tutorialProjectId),
       tutorialDocumentId: strOrNull(v.tutorialDocumentId),
     }
@@ -343,6 +399,7 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
     completedSteps,
     skippedSteps,
     hintSeen,
+    ...hintLedger,
     startedAt: numOrNull(v.startedAt),
     completedAt: numOrNull(v.completedAt),
     tutorialProjectId: strOrNull(v.tutorialProjectId),
@@ -393,7 +450,14 @@ interface OnboardingState extends OnboardingPersisted {
   /** 记下演示图上的改动（合并） */
   setDemo: (patch: Partial<DemoEdits>) => void
   markHintSeen: (kind: HintKind) => void
-  /** 只清提示记录 */
+  /** 动画卡出了一次（次数 +1、记时间） */
+  recordHintShown: (kind: HintKind) => void
+  /** 这条别再提：用户自己用过这个功能，或点了 × */
+  markHintDone: (kind: HintKind) => void
+  setHintsOff: (off: boolean) => void
+  /** 今天用过：本地日期与上次不同就把天数 +1 */
+  touchActiveDay: (today: string) => void
+  /** 只清提示记录（一句话的与动画卡的都清；开关与天数不动） */
   resetHints: () => void
   /** 整格清掉：状态、进度、提示。教程副本（磁盘）不归这里管 */
   resetOnboarding: () => void
@@ -511,11 +575,36 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
     commitState({ hintSeen: { ...get().hintSeen, [kind]: Date.now() } })
   },
 
-  resetHints: () => commitState({ hintSeen: {} }),
+  recordHintShown: (kind) => {
+    const cur = get().hintStats[kind]
+    commitState({
+      hintStats: { ...get().hintStats, [kind]: { shows: (cur?.shows ?? 0) + 1, lastAt: Date.now(), done: cur?.done ?? false } },
+    })
+  },
+
+  markHintDone: (kind) => {
+    const cur = get().hintStats[kind]
+    if (cur?.done) return
+    commitState({
+      hintStats: { ...get().hintStats, [kind]: { shows: cur?.shows ?? 0, lastAt: cur?.lastAt ?? 0, done: true } },
+    })
+  },
+
+  setHintsOff: (off) => {
+    if (get().hintsOff !== off) commitState({ hintsOff: off })
+  },
+
+  touchActiveDay: (today) => {
+    if (get().lastActiveDay === today) return
+    commitState({ activeDays: get().activeDays + 1, lastActiveDay: today })
+  },
+
+  resetHints: () => commitState({ hintSeen: {}, hintStats: {} }),
 
   resetToNewcomer: () => {
     set({ surface: 'none' })
-    commitState({ ...ONBOARDING_DEFAULTS, hintSeen: { ...get().hintSeen } })
+    const { hintSeen, hintStats, hintsOff, activeDays, lastActiveDay } = get()
+    commitState({ ...ONBOARDING_DEFAULTS, hintSeen: { ...hintSeen }, hintStats: { ...hintStats }, hintsOff, activeDays, lastActiveDay })
   },
 
   resetOnboarding: () => {

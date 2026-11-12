@@ -305,7 +305,12 @@ def display_to_job_id(name: str, workflow_jobs: dict[str, dict]) -> str:
 
 _STEP_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     # merge_group 快速失败收尾（只发一条取消请求）算 job 自身的开销，不是测试 / 构建时间。
-    ("overhead", re.compile(r"^(Set up job|Complete job)$|^merge_group 快速失败|^快速失败归因")),
+    (
+        "overhead",
+        re.compile(
+            r"^(Set up job|Complete job)$|^merge_group 快速失败|^快速失败归因|^取消旧 SHA 的 run"
+        ),
+    ),
     ("post", re.compile(r"^Post ")),
     ("checkout", re.compile(r"^Run actions/checkout@")),
     (
@@ -344,7 +349,7 @@ _STEP_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"^pytest$|^Run pnpm (test|lint|i18n:check)|^Run cargo |^Ruff |^CompatBench|"
             r"^Playwright|^冒烟|^不变式|^结构性不变式|^断言|^校验|^判定$|^聚合判定|"
             r"^依赖真实插件|^核心验收|^解包并验证候选|^发行生成物|^大图预览|^架构核对|"
-            r"^起服务并请求首页|^取默认分支|^收集这个 PR|^落地信息|^workflow YAML|^CI 结构契约|"
+            r"^起服务并请求首页|^取默认分支|^收集这个 PR|^收集合并组候选|^落地信息|^workflow YAML|^CI 结构契约|"
             # U01（ADR 0053）：预期集合 + enforced 用例、闭集校验——都是判定；证据上传在 artifact 那条
             r"^首开 / 输出 harness|"
             # U10（ADR 0072）：退役扫描是对产物的判定

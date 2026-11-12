@@ -67,8 +67,9 @@ order: 240
   （`finishElementEntry`）。`data-tree="layers"` / `data-layer` / `data-el` 钩子不变，画布行是 `data-canvas-row`；选中同步靠它们读写同一份
   `selectionStore`，大纲不记第二份。项目接入状态不占左轨，也不在素材抽屉里放横栏（用户裁定去掉）：入口是「更多 › 文件 › 项目接入状态」与命令面板。
   入口收敛（A2）：时间线只在右栏页签（顶栏时钟钮、排版菜单项删，⇧⌘H 与命令面板不动）；画布设置只在右栏「画布」页签；更多菜单不再放「论文样式…」
-  （命令面板 `styles` 保留；设置 ›「样式」页保留）；导出对话框的规范行不再有「编辑」；设置 › 帮助与诊断的「发送问题反馈」在联系作者开着时打开顶栏
-  同一个对话框（企业微信在那里面）；教程胶囊（`useTutorialChipVisible`）在时更多菜单不放教程项。看护 `components/left/outlineTree.test.tsx`、
+  （命令面板 `styles` 保留；设置 ›「样式」页保留）；导出对话框的规范行不再有「编辑」；设置 › 帮助与诊断的「发送问题反馈」打开它自己的确认框
+  （只有它有源文件 / 崩溃报告 / 损坏会话三个勾选框；2026-11-04 用户反馈改回），诊断发送关着而联系作者开着时才退回顶栏联系作者对话框；
+  联系作者开着时设置里不再单列企业微信行（在那个对话框里）；教程胶囊（`useTutorialChipVisible`）在时更多菜单不放教程项。看护 `components/left/outlineTree.test.tsx`、
   `e2e/narrow-window-layout.spec.ts`。
 - **钉住是三态，属性栏 < 1280 默认是覆盖层**（2026-10 UI 审计 B4 / G1）：`leftPinned` / `rightPinned` 是
   `boolean | null`，`null` = 用户没表过态；判据只有 `uiStore` 的 `isLeftPinned`（仅 wide 成立，未表态 ≥1280 默认固定）/

@@ -76,7 +76,9 @@ def isolated(tmp_path, monkeypatch):
     home.mkdir()
     codex_home.mkdir()
     remote = tmp_path / "remote.git"
-    kit.git("init", "--quiet", "--bare", str(remote))
+    # 写死 HEAD → main：只推 main，若随宿主 init.defaultBranch（Linux 上默认 master）
+    # 则 HEAD 悬空，codex 克隆后 `git checkout HEAD` 失败。macOS 的 Xcode git 恰好默认 main。
+    kit.git("init", "--quiet", "--bare", "--initial-branch=main", str(remote))
     (home / ".gitconfig").write_text(
         f'[url "file://{remote}"]\n\tinsteadOf = {GITHUB_URL}.git\n'
         f'[url "file://{remote}"]\n\tinsteadOf = {GITHUB_URL}\n',

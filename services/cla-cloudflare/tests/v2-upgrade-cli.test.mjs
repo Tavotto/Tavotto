@@ -12,7 +12,7 @@ test('v2 upgrade CLI only emits a disabled synthetic schema plan and creates no 
  const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'cla-v2-plan-'));
  try{const r=spawnSync(process.execPath,[script,'--plan'],{cwd:tmp,encoding:'utf8'});assert.equal(r.status,0,r.stderr);
   const p=JSON.parse(r.stdout);assert.equal(p.execution_enabled,false);assert.equal(p.activation_performed,false);assert.equal(p.production_authorized,false);
-  assert.equal(p.statements.length,31);assert.equal(p.new_tables.length,7);assert.deepEqual(fs.readdirSync(tmp),[]);
+  assert.equal(p.statements.length,34);assert.equal(p.new_tables.length,8);assert.deepEqual(fs.readdirSync(tmp),[]);
  }finally{fs.rmSync(tmp,{recursive:true,force:true});}
 });
 test('v2 upgrade CLI refuses execution flags and database path arguments',()=>{

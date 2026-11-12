@@ -631,8 +631,11 @@ test('问题面板：axe 无违规、行内的「修复」不是「定位」的�
   await page.goto(a.baseURL)
   // 先把一张图放上画布——空画布上问题清单只有页面级那几条，行内动作量不到
   await page.locator('[data-asset-list]').getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
-  await expect(page.locator('[data-canvas-stage] img, [data-canvas-stage] svg').first())
-    .toBeVisible({ timeout: 60_000 })
+  // 等「进图内编辑」收尾（左栏换成元素树），不是等画布上出现一张预览图：双击素材卡 = 编辑原图，进入是异步的，
+  // 收尾（`finishElementEntry`）会把三栏下的左栏切到「图内元素」并把焦点交给那个轨钮。
+  // 只等到预览图就按轨道的话，慢机器（Windows 打包版）上收尾落在 Enter 之后，
+  // 刚开的「问题」抽屉被换成元素树——此前偶发的「找不到 complementary『问题』」就是它
+  await expect(page.locator('[data-rail="elements"]')).toHaveAttribute('aria-expanded', 'true', { timeout: 60_000 })
 
   // 从常驻轨道进（键盘打开——鼠标才能开的入口不算可达）
   const rail = page.locator('[data-rail="problems"]')

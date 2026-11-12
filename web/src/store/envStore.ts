@@ -31,7 +31,7 @@ import { createDismissTimer } from '@/lib/dismissTimer'
 import { retryArtifactEntry } from '@/lib/artifactValidation'
 import { currentProjectId } from '@/lib/session'
 import { askConfirm, useUiStore } from '@/store/uiStore'
-import { msg } from '@/i18n'
+import { formatMessage, msg } from '@/i18n'
 
 /**
  * 渲染环境状态。⚡ 参数化编辑需要一个能 import 用户脚本依赖的 Python；
@@ -208,6 +208,13 @@ export interface AdoptedEnvironment {
  * 的采用、设置页）不必各自再挡一遍，也挡不住（写在它们看得见结果之前就发生了）。
  */
 let projectEpoch = 0
+/** 改写预览（只读，后端不改任何文件）的等待上限；后端 git 探测自己有界，这是兜底（QA-WIN-25） */
+const REWRITE_PREVIEW_TIMEOUT_MS = 30_000
+let previewAbort: AbortController | null = null
+function abortRewritePreview() {
+  previewAbort?.abort()
+  previewAbort = null
+}
 /**
  * 引擎 bootstrap（自助安装渲染环境）的状态：**只有一份** `{ attempt, state }`，来源三路（SSE `engine.bootstrap` /
  * 环境状态 GET / install POST 响应）都经 `applyBootstrap` 这一个入口，规则两条：
@@ -289,7 +296,10 @@ function applyBootstrap(
  *   - scriptRunStore：「运行并发现图」已捕获的结果与在飞的那次作废。
  * 回 false = 等 store 加载期间换了项目（B 的面板与素材一个都不动）。
  */
-async function restaleProjectRenders(epoch: number, retryMissingInput = false): Promise<boolean> {
+async function restaleProjectRenders(
+  epoch: number,
+  { retryMissingInput = false, retryEntry = retryMissingInput }: { retryMissingInput?: boolean; retryEntry?: boolean } = {},
+): Promise<boolean> {
   const [{ useRenderStore, renderEpoch }, { useRuntimeAssetStore }] = await Promise.all([
     import('@/store/renderStore'),
     import('@/store/runtimeAssetStore'),
@@ -313,8 +323,8 @@ async function restaleProjectRenders(epoch: number, retryMissingInput = false): 
   const runtime = useRuntimeAssetStore.getState()
   runtime.invalidate(Object.keys(runtime.byId))
   if (runtime.assets !== null) void runtime.loadAssets()
-  // PNG 准入尚未加入 renderStore，也要在真实改指完成后重新校验源；只放行本次作废。
-  if (retryMissingInput) retryArtifactEntry({ from: previousRenderEpoch, to: nextRenderEpoch })
+  // PNG 准入尚未加入 renderStore；回答数据位置 / 运行目录之后重新校验源，只放行本次作废。
+  if (retryEntry) retryArtifactEntry({ from: previousRenderEpoch, to: nextRenderEpoch })
   return true
 }
 
@@ -347,27 +357,48 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     if (get().missingInput) return
     set({ missingInput: offer })
   },
-  dismissMissingInput: () =>
-    set({ missingInput: null, rewritePreview: null, rewriteSkipped: [], rewriteError: null }),
+  dismissMissingInput: () => {
+    abortRewritePreview() // 预览还在等：连请求一起放弃（预览不改任何文件，放弃是安全的）
+    set({ missingInput: null, rewritePreview: null, rewriteSkipped: [], rewriteError: null })
+  },
   previewRewrite: async (entry, chosen, kind) => {
     const epoch = projectEpoch
     const offer = get().missingInput
     if (!offer) return null
     set({ rewriteSkipped: [], rewriteError: null })
+    abortRewritePreview()
+    const ctl = new AbortController()
+    previewAbort = ctl
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      ctl.abort()
+    }, REWRITE_PREVIEW_TIMEOUT_MS)
     try {
-      const preview = await previewInputPathEdit(offer.script, entry, chosen, kind)
+      const preview = await previewInputPathEdit(offer.script, entry, chosen, kind, ctl.signal)
       if (epoch !== projectEpoch || get().missingInput !== offer) return null
       set({ rewritePreview: preview })
       return null
     } catch (e) {
       if (epoch !== projectEpoch) return null
+      if (ctl.signal.aborted) {
+        // 用户放弃（「稍后」/ Esc）：什么都不说；超时：说一句，脚本没动
+        if (!timedOut || get().missingInput !== offer) return null
+        return formatMessage(msg('engine.rewritePreviewTimeout', undefined, 'errors'))
+      }
       // 一处都改不了：后端逐条说了为什么（f-string 拼的、在字典键里……），对话框列出来
       const skipped = e instanceof ApiError ? (e.body?.params as { skipped?: unknown })?.skipped : null
       if (Array.isArray(skipped)) set({ rewriteSkipped: skipped as ScriptEditSkipped[] })
       return backendErrorText(e)
+    } finally {
+      clearTimeout(timer)
+      if (previewAbort === ctl) previewAbort = null
     }
   },
-  cancelRewrite: () => set({ rewritePreview: null }),
+  cancelRewrite: () => {
+    abortRewritePreview()
+    set({ rewritePreview: null })
+  },
   commitRewrite: async () => {
     const epoch = projectEpoch
     const preview = get().rewritePreview
@@ -474,7 +505,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     const epoch = projectEpoch
     // 删掉：只作废，回到「找不到就报错」；其余（新增 / 换了一处 / 补拉到的不知道是哪种）：因「找不到数据」
     // 失败的脚本也重跑——没有规则救它就再失败一次，不会多错
-    void restaleProjectRenders(epoch, reason !== 'removed')
+    void restaleProjectRenders(epoch, { retryMissingInput: reason !== 'removed' })
     // 设置里的「数据位置」列表：别的窗口改的也要看得见（回来的代次 ≤ 已见，不会再作废一次）
     void get().refresh()
   },
@@ -701,7 +732,9 @@ export const useEnvStore = create<EnvState>((set, get) => ({
       else await get().refresh()
       if (epoch !== projectEpoch) return null
       set({ workdirConfirmation: null })
-      // 后端已经关掉了这个项目的会话；把因「没出图」/「要先选目录」失败的面板重新排上
+      // cwd 改变会影响所有图：成功但缺数据的图也要重建，旧在途响应与捕获结果不能继续当权威。
+      // 只记下「继续当前目录」的决定时不作废成功图，仍由下面的门禁恢复接着跑。
+      if (mode !== current && !(await restaleProjectRenders(epoch, { retryEntry: true }))) return null
       const { useRenderStore } = await import('@/store/renderStore')
       if (epoch !== projectEpoch) return null
       useRenderStore.getState().retryEnvironmentFailures()

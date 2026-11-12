@@ -32,18 +32,18 @@ ALLOWLIST = fonts.load_allowlist()
 # ---------------------------------------------------------------- allowlist（不需要字体文件）
 
 
-def test_allowlist_is_the_thirteen_ofl_faces_with_sha256_identity():
+def test_allowlist_is_the_fourteen_ofl_faces_with_sha256_identity():
     faces = ALLOWLIST.faces
-    assert len(faces) == 13
+    assert len(faces) == 16
     families = {(f.family, f.bold, f.italic) for f in faces.values()}
     for fam in ("serif", "sans-serif", "monospace"):
         for b in (False, True):
             for i in (False, True):
                 assert (fam, b, i) in families, (fam, b, i)
-    assert ("cjk", False, False) in families
+    assert ("cjk", False, False) in families and ("cjk-serif", False, False) in families
     assert {f.license for f in faces.values()} == {"OFL-1.1"}
     assert {f.format for f in faces.values()} == {"truetype", "cff-cid"}
-    assert len({f.sha256 for f in faces.values()}) == 13
+    assert len({f.sha256 for f in faces.values()}) == 16
     for f in faces.values():
         assert f.source["url"].startswith("https://") and f.source["sha256"]
         assert f.notice and f.license_file in ALLOWLIST.license_files
@@ -94,7 +94,7 @@ def test_files_not_in_the_allowlist_are_rejected_before_being_parsed(tmp_path):
     with pytest.raises(fonts.FontsUnavailable) as ei:
         reg.record_for("serif")
     assert ei.value.code == "face_missing"
-    assert reg.cjk_record() is None
+    assert reg.cjk_record("serif") is None and reg.cjk_record("sans-serif") is None
 
 
 def test_a_missing_fonts_dir_is_a_structured_error_not_a_system_font(tmp_path):
@@ -252,7 +252,10 @@ def test_every_approved_face_is_discovered_with_the_expected_identity(registry):
     assert (
         registry.record_for("monospace", True, True).approved.face_id == "LiberationMono-BoldItalic"
     )
-    assert registry.cjk_record().approved.face_id == "NotoSansSC-Regular"
+    # CJK 脸随族（ADR 0060 2026-11-04 修订）：衬线配 Noto Serif SC，其余配 Noto Sans SC
+    assert registry.cjk_record("serif").approved.face_id == "NotoSerifSC-Regular"
+    assert registry.cjk_record("sans-serif").approved.face_id == "NotoSansSC-Regular"
+    assert registry.cjk_record("monospace").approved.face_id == "NotoSansSC-Regular"
     payload = registry.to_payload()
     assert set(payload["faces"]) == set(ALLOWLIST.faces) and payload["missing"] == []
 
@@ -275,13 +278,28 @@ def test_liberation_and_noto_coverage_facts(registry):
     """本轮明示的限制（ADR 0060 §3）：`⁻`（U+207B）哪张脸都没有；`℃` / `∇` 只在 Noto 里；Liberation
     有 Greek / `⁵` / `₂` / `Å` / `μ`。这些不是愿望，是 cmap 里量出来的。"""
     serif = registry.record_for("serif")
-    cjk = registry.cjk_record()
-    assert not serif.covers(0x207B) and not cjk.covers(0x207B)
-    for cp in (0x2103, 0x2207):
-        assert not serif.covers(cp) and cjk.covers(cp)
+    # 两张 CJK 脸（黑体 / 宋体）在这几个码位上事实一致
+    for cjk in (registry.cjk_record("sans-serif"), registry.cjk_record("serif")):
+        assert not serif.covers(0x207B) and not cjk.covers(0x207B)
+        for cp in (0x2103, 0x2207):
+            assert not serif.covers(cp) and cjk.covers(cp)
     for ch in "αβγΔ⁵₂Å μ±≤≥×°":
         assert serif.covers(ord(ch)), ch
-    assert cjk.covers(ord("图")) and not serif.covers(ord("图"))
+    assert all(
+        c.covers(ord("图"))
+        for c in (registry.cjk_record("sans-serif"), registry.cjk_record("serif"))
+    )
+    assert not serif.covers(ord("图"))
+
+
+def test_the_two_cjk_faces_differ_only_in_a_few_rare_codepoints(registry):
+    """覆盖表的 `cjk` 层取两张 CJK 脸的**交集**（`facade.coverage_ranges`）：表说画得出，哪个族都画得出。
+    这条钉住两张脸的差异规模（实测 Sans 独有 16 / Serif 独有 21，全是兼容汉字与新增扩展区字），
+    差异变大（换了字体版本）就该重新审视「交集」这个做法，而不是悄悄让表偏离某个族。"""
+    sans = set(registry.cjk_record("sans-serif").info.cmap)
+    serif = set(registry.cjk_record("serif").info.cmap)
+    assert len(sans - serif) <= 20 and len(serif - sans) <= 25
+    assert sans & serif >= {ord(c) for c in "温度图样品中文标签℃∇━"}
 
 
 def test_a_same_named_copy_with_different_bytes_is_a_different_face(registry, tmp_path):
@@ -313,7 +331,7 @@ def test_fetch_fonts_check_passes_on_the_populated_dir(registry):
         env={**os.environ, "PYTHONUTF8": "1"},
     )
     assert proc.returncode == 0, proc.stderr
-    assert "13 张脸" in proc.stdout
+    assert "16 张脸" in proc.stdout
 
 
 def test_fetch_fonts_check_fails_when_a_face_is_tampered_or_missing(registry, tmp_path):

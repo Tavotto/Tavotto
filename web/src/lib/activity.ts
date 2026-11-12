@@ -62,6 +62,37 @@ export type ActivityDetail =
   | { kind: 'menu.opened'; menu: 'panel' | 'panel-layout-only' | 'text' | 'mark' | 'multi' }
   /** 文档写盘成功 */
   | { kind: 'document.saved' }
+  /** 用户让画布「适应」了一次（双击空白 / 快捷键 / 菜单 / 工具条，同一个 `fitStage`；程序自己的适配不发） */
+  | { kind: 'view.fitted' }
+  /** 多图排版里拖图的一条边并松手成功：`resized` = 改了图幅，`cropped` = 裁剪（按着 ⌥，或这张图只能裁） */
+  | { kind: 'panel.edge_dragged'; outcome: 'resized' | 'cropped' }
+  /**
+   * 画布对象被鼠标拖着挪了一次并松手成功（`startMoveDrag` 一处发）。全是粗粒度的手势形状，没有位置：
+   * `track` = 手走的路几乎是一条横 / 竖线（吸附之前的原始位移算）；`size` = 挪得很小（不到 2 mm）；
+   * `mods` = 松手时按着的修饰键（⇧ 锁向 / ⌘·Ctrl 关吸附）；`snapped` = 最后一帧吸上了什么。
+   */
+  | {
+      kind: 'object.dragged'
+      track: 'straight' | 'free'
+      size: 'tiny' | 'normal'
+      mods: 'none' | 'shift' | 'meta' | 'both'
+      snapped: boolean
+    }
+  /** 用方向键把画布对象微移了一段并落进历史（`finishNudge` 一处发；图内元素的微移不发） */
+  | { kind: 'object.nudged' }
+  /** 标注被拖着转了一次并松手成功：`near` = 停在离 15° 档位不到 3° 但没对上；`snapped` = 按着 ⇧ 按档转的 */
+  | { kind: 'object.rotated'; near: boolean; snapped: boolean }
+  /**
+   * 用绘制工具拖出了一个形状 / 一条线（`startDraw` 松手落对象时一处发；点一下落默认尺寸的不发，文字工具不发）。
+   * `near` = 没按 ⇧ 却画得差一点就是正方 / 正圆、或差一点就是水平 / 竖直；`snapped` = 按着 ⇧ 画的。
+   */
+  | { kind: 'shape.drawn'; near: boolean; snapped: boolean }
+  /** 按住画布拖着平移了一次（空格 + 拖 / 中键拖，`startPan` 一处发） */
+  | { kind: 'view.drag_panned' }
+  /** 放大着的时候连着用鼠标滚轮一格一格地挪画布（`CanvasStage` 的滚轮监听自己数，够数才发一声） */
+  | { kind: 'view.wheel_struggled' }
+  /** 双击图里的文字，打开了快速改字（`PanelView` 双击一处发） */
+  | { kind: 'figure.text_quick_edit' }
 
 export type ActivityKind = ActivityDetail['kind']
 
@@ -89,6 +120,15 @@ export const ACTIVITY_KINDS: readonly ActivityKind[] = [
   'figure.added_to_layout',
   'menu.opened',
   'document.saved',
+  'view.fitted',
+  'panel.edge_dragged',
+  'object.dragged',
+  'object.nudged',
+  'object.rotated',
+  'shape.drawn',
+  'view.drag_panned',
+  'view.wheel_struggled',
+  'figure.text_quick_edit',
 ]
 
 /**
@@ -108,6 +148,11 @@ export const ACTIVITY_PAYLOAD_KEYS: ReadonlySet<string> = new Set([
   'field',
   'scope',
   'menu',
+  'track',
+  'size',
+  'mods',
+  'snapped',
+  'near',
 ])
 
 export function emitActivity(detail: ActivityDetail): void {
