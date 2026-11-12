@@ -196,7 +196,7 @@ function Toast({
   )
 }
 
-/** 错误 toast 的正文（胶囊里的一行）：「这一步没有完成：」+ 原因，截断；全文在 title 与「复制详情」里 */
+/** 错误 toast 的正文（胶囊里的一行）：只有原因那一句，不加前缀（红色图标已经说了「没成」）；放不下才截断，全文在 title 与「复制详情」里 */
 function ErrorBody({ text }: { text: string }) {
   const { t } = useTranslation('workspace')
   const [copied, setCopied] = useState(false)
@@ -207,8 +207,6 @@ function ErrorBody({ text }: { text: string }) {
   }, [copied])
   return (
     <div className="flex min-w-0 flex-1 items-center gap-1.5">
-      <span className="shrink-0 font-medium text-ink">{t('status.errorTitle')}</span>
-      <span aria-hidden className="shrink-0 text-ink-faint">·</span>
       {/* 截断落在里层且是块级：行内的 span 上 overflow / text-overflow 不生效，长路径会穿到按钮底下（Codex #995） */}
       <SwapText className="min-w-0 flex-1" textClassName="block truncate text-ink-2" text={text} title={text} />
       <Button

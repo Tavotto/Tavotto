@@ -40,8 +40,11 @@ export function RelinkDialog() {
     const auto = new Set<string>()
     setChoices(
       current.missing.map((m) => {
+        // 缺的那一项本身可能还留在素材清单里（导出时才发现文件没了、清单还没刷新）：不拿它配它自己
         const match = Object.values(assets).find(
-          (a) => a.name === m.name || a.id.endsWith(`/${m.name}.pdf`) || a.id.endsWith(`/${m.name}.png`),
+          (a) =>
+            a.id !== m.fileId &&
+            (a.name === m.name || a.id.endsWith(`/${m.name}.pdf`) || a.id.endsWith(`/${m.name}.png`)),
         )
         if (match) auto.add(m.fileId)
         return { ...m, relinkTo: match?.id }
@@ -53,13 +56,15 @@ export function RelinkDialog() {
   if (!pending) return null
   const isPaste = pending.mode === 'paste'
 
+  const missingIds = new Set(choices.map((m) => m.fileId))
   const options = Object.values(assets)
+    .filter((a) => !missingIds.has(a.id))
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((a) => ({ value: a.id, label: t('relink.assetOption', { name: a.name, folder: a.folder }) }))
 
   const confirm = () => {
     if (pending.mode === 'paste') materializePaste(pending.payload, choices)
-    else materializeRelink(choices)
+    else materializeRelink(choices, { keepEdits: !!pending.relocate })
     setPending(null)
   }
   const cancel = () => setPending(null)
