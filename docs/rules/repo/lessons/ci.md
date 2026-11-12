@@ -147,3 +147,9 @@
 - Seen: 2026-11-06
 - 为什么: 端口未泄漏的判据在整个序列化 JSON 里搜五位数字，随机 native_id 偶然含相同片段，误红把无关导出 PR 踢出队列。断言公开字段集合与敏感字段缺席；若必须比内容，构造可区分的夹具，别让随机合法值决定结论。
 - 证据: #1790
+
+### L-159 平台故障残局：gate 卡住整轮 rerun，PR 无检查空提交，超时踢出按原 head 重排
+- 类: 照这样
+- Seen: 2026-11-12
+- 为什么: 一次 Actions 故障里，合并组单独 rerun 带 needs 的 gate job 直接 startup_failure；PR 上「no checks reported」是事件被吞，等不来；checks_timed_out 与 runner shutdown signal 踢出的 PR 自身 CI 绿、head 未变，按原 head 重排一次即过，同因再踢才查。照这三步把一批 14 个 PR 一夜合完。
+- 证据: #1857, #1864, #1866
