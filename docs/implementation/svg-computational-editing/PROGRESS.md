@@ -2,9 +2,47 @@
 
 > 本文件是长周期稳定文档：每轮只更新状态表与 checkpoint 追加节，不重写历史。
 > 计划全文：[IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。历史实施证据目录：`/tmp/svgplan-evidence/`（原执行会话记录，本轮未重新取得全部日志）。
-> **2026-11-11 仅完成提PR剩余工作盘点、计划与执行提示词更新，产品开发继续暂停，未启动新一轮实现。最新产品修复为8129b8d6和71ee8c78；完整前端候选仍未启用，总目标未完成。PR必做项、条件范围及线上/发布验收的区别见NEXT_PHASE；仅在用户明确恢复实施后执行。**
+> **2026-11-12 收敛修复轮（本节下方最新 checkpoint）：历史来源 P1（T1a/T1b）与 N5 六步、N4 C1–C5 全部落地并提交；测试红项逐项归因修复；最终冻结验证与文档同步见该 checkpoint。此前 2026-11-11 的暂停口径已被本轮实施取代。**
 > 最新任务顺序和验收条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，可直接执行的接续提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。下方旧 checkpoint 保留为历史，不再作为当前接续指令。
 > 前轮05:10后的91项捕获包资格保留其历史源码窗口；3c现已有实现与新资格，不能再按旧checkpoint重做。不同测试组不相加成最终总数；当前分支实际HEAD/diff优先。
+
+### 2026-11-12 无人值守收敛修复（T0→T5）
+
+- 现场：唯一树 `E:/0 - Project/Tavotto-svg-r00` / 分支 `zixu.wang/svg-computational-r00`，起点
+  `0ad27234`；`origin/main`/merge-base `2bc94f7f`。证据根
+  `E:/0 - Project/svg-review-20261111-verification/`（T0 台账、T1 设计、N4/N5 计划、T4 归因、T5 冻结）。
+- **T0 终局**：e2e-full-isolated 526 项 **470 passed / 18 failed / 29 skipped / 9 did not run**
+  （1.2h，HEAD 0ad27234 + fixtures WIP）；backend-full **82 failed / 27334 passed / 929 skipped /
+  13 errors**（5h13m，actual exit 1）。95 条后端失败逐项归因全部为 Windows 环境类
+  （symlink/junction、venv/pip、MCP/Codex、签名包、pytest9 monkeypatch、fixture 缺失/清理竞态），
+  无一触及 SVG 计算编辑路径。18 项 e2e 失败：0xC0000409×7、mcp-canvas boot×6、
+  首跑冷重放回归×1、playground/ux/updater/drag-sync×4。
+- **T1a `6be0fd89`**：执行退役不再删除持久 `figureOrigin`（只撤 hot 权限；反证：恢复删除→3 新测试全红）。
+- **T1b `41b76328`**：冷进程 origin 沿 runtime 授权链重放归档输入 + SVG digest/像素核验 + 新 receipt
+  采用（`figure_origin_adopted` 回显，前端原事务重指向）；同进程退役仍拒绝；specfix/PNG/导出维持
+  严格、由采用后的活 receipt 恢复。集成门：`first-run-qualification.spec.ts` **1 passed (24.8s)**。
+- **N5（显示框 F）六步**：`30a5f9e3` 合同+镜像（原型补丁零冲突；25 新测试 + 125 旧 /1 看护全绿；
+  10 条双端金向量）→ `bc40e66e` 请求身份（/1 逐字不变断言）→ `35cbe178` 文档事务采用 →
+  `1d0a514b` 唯一 F→S 编辑适配（反证：旁路→2 红）→ `5d6319f4` 导出全 scope（canonical=F、/1 孪生=S；
+  发现并修复 chart 原图 Produced 尺寸仍取 scene 的尺寸门缺口）→ `8d629f55`+`2c93a404` UI 闭环
+  （裁决：成功渲染的自动采用已由 native 保比例 + originPt 同步完成，撤销冗余提示组件；
+  `actions.adoptComputedFrame` 保留为显式入口，单元测试在案）。
+- **N4（声明式图例）C1–C5**：`3de66d03` 绑定合同+前端镜像+12 金向量+同源对登记 → `f199a255`
+  确认链路（chartbind 翻译 series_node→id、Dialog 图例区、i18n 两侧）→ `a85d37d0` 脚手架真 Legend
+  （follow=源 artist、custom=代理、rect 左上角对齐 loc_frac、image follow 契约拒绝）→ `e6cf5eed`
+  组合器按旧区域槽位放置+legacy 硬拒绝（R1 三处防线各反证）→ `374601bb` 重绑所有权（legend 归属入
+  ownership 元组、label/rect 不阻塞迁移）+ 文档往返 + 生产导出 job。
+- **T4 红项**：`a86d978d` 非安全上下文 `crypto.randomUUID` 兜底（mcp-canvas 组 **6 passed**；
+  产物 canvas.html 重构建）→ `2ae52f36` 三处 e2e 判据对齐（playground 文案 **10 passed**、
+  ux 盘符含空格路径 **4 passed**、updater OS 诊断原文 **1 passed**）→ CompatBench 窄复验
+  （独立 compat-venv 按 runtime-lock：4 项 pandas/scipy **product_bug→full_support**，
+  product bugs 0，nightly 门禁通过）→ 0xC0000409 定界（安静单组复现 780/920、无 WER 事件、
+  失败用例 trace 无法落盘；LocalDumps 需管理员，列为外部待办）。
+- 其他：`79c1ae4c` e2e 更新弹窗隔离夹具（526 项全程验证）；`3a4af267` 导出投影单点携带 profile；
+  `1999d74f` 格式修复。
+- **T5 冻结**：Ruff check/format、agents_budget、cargo test/clippy/fmt、playground/widget 产物
+  重建+check、smoke、全量 pytest 6 片并行与全量 Vitest 的终局数字见本轮证据根
+  `t5-final/`；未获远端授权，未 push/PR/merge/release。
 
 ## 环境（2026-11-11 分支现场；旧运行窗口保留）
 

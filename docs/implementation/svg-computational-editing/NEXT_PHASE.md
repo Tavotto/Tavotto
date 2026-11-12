@@ -1,15 +1,15 @@
 # SVG 计算图表编辑：提 PR 前的收敛计划
 
-> 更新：2026-11-11（Asia/Shanghai）。本轮只盘点、更新计划与提示词；产品开发仍暂停，没有开始下面的实施任务，也没有创建远端 PR。
+> 更新：2026-11-12（Asia/Shanghai）。本轮完成 T0 终局归因与 T1/T2/T3/T4 的实施收敛（历史来源 P1、N5 六步、N4 C1–C5、测试红项），T5 冻结验证进行中；未创建远端 PR。
 > 目标：在当前分支准备一份功能范围清楚、实现闭合、可审查且具备合并验证条件的 SVG 计算编辑 PR。完整产品范围仍以 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) / ADR 0166 为准；历史证据按日期保留在 [PROGRESS.md](PROGRESS.md)，执行提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。
 
-## 0. 本轮执行结果（2026-11-11，本地）
+## 0. 本轮执行结果（2026-11-12，本地）
 
-- **已完成并提交**：PR00 基线/范围；PR01 同次执行正证；PR02 全部前端消费者 + 4 个入口修复 + 保存链路回归修复；PR03 INPUT/包/迁移验证与缺脚本源正确报错；PR05 导出/写回复验与写回残余竞争第三路径审查。
-- **验证**：受影响后端组、前端完整套件（13236 pass / 2 项在 origin/main 同样失败）、Ruff、Cargo、正式前端构建、playground/widget check、smoke_app、equivalence/invariants/文档门禁均通过；全仓后端 28357 项按 6 片并行跑完，94 项失败经串行复核后确认为 Windows 环境/并行争用，真实问题已修。
-- **真实 UI**：Chromium 下导出落盘用例通过；WebKit 浏览器未安装；长链用例被真实更新弹窗挡住后随夹具拆除，未完成。
-- **未完成**：PR04 的 N5（显示帧 F / 刻度标题裁切）与 N4（普通 SVG 声明式图例所有权）——N5 只有仓库外原型且未接生产消费者，N4 只有只读评审；本轮不半接协议。普通 PDF→SVG 保持原失败合同。
-- **剩余外部步骤**：线上 `full-ci`/required Gates、macOS/Linux 真产物与安装链、真宿主 MCP/桌面壳；未 push、未创建远端 PR、未合并或发布。
+- **T0 终局归因**：e2e-full-isolated 526 项 **470 passed / 18 failed / 29 skipped / 9 did not run**；backend-full **82 failed / 27334 passed / 929 skipped / 13 errors**（95 条失败逐项归因全部为 Windows 环境类，无一触及 SVG 计算编辑路径）。首跑冷重放回归（`first-run-qualification`）定为分支 P1。
+- **已完成并提交（19 提交，见 PROGRESS 2026-11-12 检查点）**：T1a/T1b 历史来源；N5 显示框 F 六步；N4 声明式图例 C1–C5；T4 红项修复（mcp-canvas crypto 兜底、三处 e2e 判据、前端三红项、CompatBench 环境复验）。
+- **验证**：Ruff check/format、agents_budget、cargo test/clippy/fmt、playground/widget 产物重建+check、smoke、`first-run-qualification`/`mcp-canvas`/`playground`/`ux-consistency`/`updater` e2e、CompatBench 窄复验（4 项 product_bug→full_support、product bugs 0）均通过；全量 pytest 6 片与全量 Vitest 的终局数字见证据根 `t5-final/`。
+- **N5/N4 口径**：六步与 C1–C5 的生产消费者已闭合（含真实 worker 测试与生产导出 job）；/2 的 UI 采用由成功渲染的自动采用完成（native 保比例 + originPt 同事务），显式 `actions.adoptComputedFrame` 保留；`computed-frame.spec.ts` 覆盖真实浏览器全链。
+- **剩余外部步骤**：线上 `full-ci`/required Gates、macOS/Linux 真产物与安装链、真宿主 MCP/桌面壳；0xC0000409（Playwright Node worker 原生退出）根因未定、需管理员 LocalDumps 采集；未 push、未创建远端 PR、未合并或发布。
 
 ## 1. 当前状态与 PR 的完成口径
 

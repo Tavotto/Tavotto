@@ -1,11 +1,11 @@
 # SVG 计算图表编辑：提 PR 收敛执行提示词
 
-更新：2026-11-11。当前产品开发仍暂停；本提示词仅供用户明确恢复实施时复制使用。详细任务、PR范围和退出条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，现状/首红/证据见 [PROGRESS.md](PROGRESS.md)，完整需求见 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。
+更新：2026-11-12。**本轮收敛（T0–T5）已完成实施：历史来源 P1、N5 六步、N4 C1–C5、测试红项修复与文档同步均已提交；当前分支可准备 risk:high 的 PR 草稿，仍未 push/建 PR。** 下方 2026-11-11 的提示词正文保留为历史阶段记录；新的接续提示词见文末「2026-11-12 接续」。详细任务、PR范围和退出条件见 [NEXT_PHASE.md](NEXT_PHASE.md)，现状/首红/证据见 [PROGRESS.md](PROGRESS.md)，完整需求见 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)。
 
-分支现场：`zixu.wang/svg-computational-r00`，目录 `E:/0 - Project/Tavotto-svg-r00`；本次补记前HEAD为`23c18717`（PR计划/提示词），最新产品代码为`71ee8c78`。本次远端查询未发现origin同名功能分支，未配置upstream，尚未合入main。本次记录本身会新增文档提交，恢复以实际HEAD/diff为准，完整现场见NEXT_PHASE §1.1。
+分支现场：`zixu.wang/svg-computational-r00`，目录 `E:/0 - Project/Tavotto-svg-r00`；本轮起点 `0ad27234`，收敛提交见 PROGRESS 2026-11-12 检查点（19 提交）。未配置 upstream，尚未合入 main；远端同名功能分支仍未发现（2026-11-11 查询）。恢复以实际 HEAD/diff 为准。
 
 ~~~text
-恢复 Tavotto 当前 SVG 计算图表编辑的 PR 收敛工作。目标是在不影响现有 Python/旧项目功能和逻辑的基础上，完成 NEXT_PHASE.md 中 PR00–PR07 的必做项，产出与最终源码匹配的测试证据和可审查 PR 标题/正文草稿；不能只写计划或以草稿状态代替功能闭合。最大化复用原功能，使用有独立收益的多子代理并行，按功能分别 commit，常规可逆步骤自主完成，不反复问确认。
+【历史阶段：2026-11-11 提示词，保留不改】恢复 Tavotto 当前 SVG 计算图表编辑的 PR 收敛工作。目标是在不影响现有 Python/旧项目功能和逻辑的基础上，完成 NEXT_PHASE.md 中 PR00–PR07 的必做项，产出与最终源码匹配的测试证据和可审查 PR 标题/正文草稿；不能只写计划或以草稿状态代替功能闭合。最大化复用原功能，使用有独立收益的多子代理并行，按功能分别 commit，常规可逆步骤自主完成，不反复问确认。
 
 唯一实施树 E:/0 - Project/Tavotto-svg-r00，分支 zixu.wang/svg-computational-r00。不新建/切换分支或 worktree，不 reset/stash/git add .、不重写既有提交。原 E:/0 - Project/Tavotto 的 main 与全部用户项目、data/config、INPUT、AS/命名稿必须保留。先读根和受影响层 AGENTS、对应规则/ADR及最新 PROGRESS，核实际 HEAD/diff/身份；重新 fetch 核主线。2026-11-11盘点时HEAD=94ef609f（后续文档提交另计），origin/main与merge-base=2bc94f7f，主线独有0/本分支180提交，412文件；这是历史盘点，不是永久基线。当前单分支已从主线派生，不能因原main工作区落后就切回那里开发。
 
@@ -34,4 +34,25 @@ PR07按 .github/pull_request_template.md 产出risk:high审查包：唯一用户
 每文件一个写入者，主代理协调app.py/共享合同、构建、浏览器和commit；冻结测试时停止写被测树。每60秒内给实质进展，批次结果追加PROGRESS；只回收核明身份的自有PID/句柄。外部平台缺失时记录依赖并推进独立就绪工作，不创建常驻调度器，不把时间耗尽当完成。用户再要求暂停时安全收尾并停止。
 
 本提示词授权本地实现/验证/分功能commit与PR草稿准备，不授权push、创建远端PR/issue、发评论/触发review、合并或发布。线上高风险full-ci、当前required Gate/重腿与维护者审查单列待执行；不能声称PR创建前已有远端绿结果。达到本地PR就绪条件后给出完整交接及剩余外部步骤，不擅自扩大范围。
+~~~
+
+## 2026-11-12 接续（当前阶段）
+
+~~~text
+本轮收敛已完成实施与本地验证（见 PROGRESS 2026-11-12 检查点与证据根
+E:/0 - Project/svg-review-20261111-verification/t5-final/）。剩余工作只有两类：
+
+1) 外部/远端项（需用户明确授权或外部环境，不在本地可完成范围）：
+   - push、创建远端 PR（risk:high）、线上 full-ci / required Gates / 重腿；
+   - macOS/Linux 真产物与安装链、签名/公证；
+   - 真宿主 MCP / 桌面壳手测；
+   - 0xC0000409（Playwright Node test-worker 原生退出）根因：需管理员
+     LocalDumps 或受控 dump 采集；当前证据为「安静单组可复现、无 WER 事件、
+     失败用例 trace 无法落盘」，不得归为产品缺陷。
+2) 可选后续：把 N5 的 /2 坐标合同接入真实用户入口（当前 /2 面板经持久化
+   chartFrame 进入；绑定/导入 UI 默认 /1 未变），以及普通 PDF→SVG（原失败
+   合同保持，不在本 PR）。
+
+纪律不变：唯一实施树/分支、不新建 worktree、不 push/PR/merge/release（未授权）、
+不弱化断言/容差/安全边界、按功能 commit、文档历史按日期保留。
 ~~~
