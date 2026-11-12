@@ -3,7 +3,6 @@ import { Trans, useTranslation } from 'react-i18next'
 import {
   ArrowLeft,
   ChevronRight,
-  Ellipsis,
   FileCodeCorner,
   Folder,
   FolderOpen,
@@ -52,10 +51,12 @@ import { scriptTarget, useProjectPreparationStore } from '@/store/projectPrepara
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { BrandMark } from '../ui/BrandMark'
-import { Button, IconButton } from '../ui/Button'
+import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { dropZoneClass } from '../ui/dropZone'
-import { Menu, MenuItem } from '../ui/Menu'
+import { MenuItem } from '../ui/Menu'
+import { RowMenu } from '../ui/RowMenu'
+import { useRowMenu } from '../ui/useRowMenu'
 import { AppMenuButton } from '../AppMenuButton'
 import { DirBrowser, TailPath } from '../DirBrowser'
 
@@ -792,7 +793,7 @@ function RecentSection({
 
 /**
  * 主页上的一个最近项目：一张 `Card` interactive。主体是一颗「打开」按钮（缩略图格 + 名字 + 路径 / 时间），
- * 右上角 ⋯ 菜单收着「打开 / 从列表移除」；「全部项目」里照旧有行尾的 ×。
+ * 右上角常显的 ⋯（右键卡片也开）收着「打开 / 从列表移除」；「全部项目」里照旧有行尾的 ×。
  * 缩略图格：最近项目列表（`RecentProject`）不带任何画布数据，画不出 `CanvasThumb`——放一块画布灰上的
  * 文件夹图标（项目是目录，不是单个脚本）；后端哪天给了首页画布的缩略数据，换成 `CanvasThumb` 就在这一格。
  * 时间是**上次打开**的时间（`last_opened`，后端 `touch_recent` 记的），不是文件修改时间。
@@ -817,6 +818,7 @@ function RecentItem({
   onRemove: () => void
 }) {
   const { t } = useTranslation('project')
+  const menu = useRowMenu()
   const when = entry.last_opened > 0 ? formatRelativeTime(entry.last_opened) : null
   const sub = entry.tutorial ? (
     <span className="block text-sm text-ink-3">{t('picker.tutorialBadge')}</span>
@@ -827,6 +829,7 @@ function RecentItem({
   ) : null
   return (
     <li
+      {...menu.rowProps}
       data-home-recent={entry.path}
       className={cn(
         'min-w-0 max-w-full w-full sm:w-[calc((100%-0.75rem)/2)]',
@@ -858,30 +861,22 @@ function RecentItem({
           </span>
         </button>
         <div className="absolute right-1.5 top-1.5">
-          <Menu
-            align="end"
+          {/* ⋯ 常显、右键卡片开出同一份菜单（TVM-KJBX：悬停才出现时用户找不到「移除」） */}
+          <RowMenu
+            state={menu}
+            visible="always"
             width={180}
-            trigger={
-              <IconButton
-                iconSize="sm"
-                tip={false}
-                label={t('home.recentMenu', { name: entry.name })}
-                // 平时收起、悬停 / 聚焦 / 菜单开着时出现（坐在缩略图格上，白底才看得清）
-                className={cn(
-                  'bg-surface text-ink-3 opacity-0 transition-[opacity,background-color] hover:bg-surface-hover focus-visible:opacity-100 data-[state=open]:opacity-100',
-                  // 卡置灰（切换项目 / 正在打开）时 hover 不再把它揭出来：置灰的卡不应有任何「活着」的 hover 反应
-                  !(busy || disabled) && 'group-hover:opacity-100',
-                )}
-              >
-                <Ellipsis size={ICON_SIZE.sm} />
-              </IconButton>
-            }
+            label={t('home.recentMenu', { name: entry.name })}
+            // 坐在缩略图格上，白底才看得清；卡置灰时跟着淡下去
+            className={cn('bg-surface', (busy || disabled) && 'opacity-40')}
           >
             <MenuItem icon={FolderOpen} disabled={busy || disabled} onSelect={onOpen}>
               {t('home.menuOpen')}
             </MenuItem>
-            <MenuItem onSelect={onRemove}>{t('picker.removeFromListTitle')}</MenuItem>
-          </Menu>
+            <MenuItem onSelect={onRemove} tip={t('picker.removeFromListTitle')}>
+              {t('picker.removeFromList')}
+            </MenuItem>
+          </RowMenu>
         </div>
       </Card>
     </li>
