@@ -43,8 +43,20 @@ def _length(value: str | None) -> float | None:
 
 def read(path: Path) -> tuple[bytes, dict]:
     """Validate the exact bytes being served, including when a previously valid file changes."""
+    _, data, facts = snapshot(path)
+    return data, facts
+
+
+def snapshot(path: Path) -> tuple[bytes, bytes, dict]:
+    """One bounded read: raw identity, validated representation, physical facts."""
     with Path(path).open("rb") as stream:
-        data = stream.read(_MAX_BYTES + 1)
+        raw = stream.read(_MAX_BYTES + 1)
+    data, facts = inspect_bytes(raw)
+    return raw, data, facts
+
+
+def inspect_bytes(data: bytes) -> tuple[bytes, dict]:
+    """Validate frozen bytes and reuse the static asset physical-size authority."""
     # Remove only the exact inert stock declaration before parsing. Any custom
     # DTD, entity, subset or second declaration still fails the strict parser.
     data = strip_matplotlib_doctype(data)

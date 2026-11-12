@@ -1624,6 +1624,25 @@ def _export_tiff_error(exc: tiffprobe.UnsupportedTiff) -> engine_exportreq.Expor
     return engine_exportreq.ExportRequestError(exc.code, exc.message, exc.params)
 
 
+@app.get("/api/svg/chart/inspect")
+def api_svg_chart_inspect():
+    """计算图表绑定入口的只读盘点（ADR-XXXX）：同一份字节重新校验 + 稳定节点清单。
+
+    与 `/api/file` 同一条 `safe_resolve` 路径约束、同一个 svgcheck 边界；
+    失败 422 带稳定码，原文件零改动，无任何写入与执行。
+    """
+    from . import svgscene
+
+    path = safe_resolve(request.args.get("id", ""))
+    if path.suffix.lower() not in SVG_EXT:
+        return jsonify({"error": "not an SVG file", "code": "svg_scene_invalid"}), 422
+    try:
+        inventory = svgscene.read_scene(path)
+    except svgscene.SceneError as exc:
+        return jsonify({"code": exc.code, "error": exc.detail}), 422
+    return jsonify(inventory)
+
+
 def _serialize_figure(
     rel_id: str,
     overrides: list,

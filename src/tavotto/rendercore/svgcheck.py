@@ -66,6 +66,7 @@ _CSS_PROPERTIES = {
     "stroke-dasharray",
     "stroke-dashoffset",
     "opacity",
+    "overflow",
     "clip-path",
     "clip-rule",
     "mask",
