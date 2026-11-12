@@ -1,4 +1,4 @@
-"""bind/compute 服务端点测试（SG10 / ADR 0166）：真实子进程脚手架 + 组合。"""
+"""bind/compute 服务端点测试（SG10 / ADR 0181）：真实子进程脚手架 + 组合。"""
 
 from __future__ import annotations
 

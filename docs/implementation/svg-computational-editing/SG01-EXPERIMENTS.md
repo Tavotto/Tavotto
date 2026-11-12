@@ -1,6 +1,6 @@
 # SG01：前置实验记录与架构决定
 
-> 状态： experiments done（六个实验有可运行证据）→ 决定见 ADR 0166。
+> 状态： experiments done（六个实验有可运行证据）→ 决定见 ADR 0181。
 > 实验代码与产物在任务隔离目录 `E:\0 - Project\svg-exp\`（仓库外，不进产品树）；
 > 本文档记录可复核的数字与结论。运行环境：实施 venv（matplotlib 3.11.2 / pypdfium2 / playwright+chromium）。
 
@@ -81,9 +81,9 @@ SVG 面板不引入新的并发机制——这一条在 SG10 集成时用既有 
 
 - `external_danger.svg`（DTD+ENTITY、`<script>`、外链 `<a>`/`<image>`）被 `svgcheck.parse_svg` 拒绝（`svg_dtd_forbidden` 等）；
 - 元数据闭式 schema：字段集之外的一切键（含 `transform: "import os; ..."`）被拒绝——**按字段集判，不按值判**；
-  与既有边界一致：导入不执行、本地 hash 只证一致性不证可信（ADR 0166 §安全）。
+  与既有边界一致：导入不执行、本地 hash 只证一致性不证可信（ADR 0181 §安全）。
 
-## 7. 架构决定（详见 ADR 0166）
+## 7. 架构决定（详见 ADR 0181）
 
 **采用 C2 精化形态「片段嫁接」**：
 - 路径 A（可信 Figure 来源）：**复用既有 live-Figure 编辑管线**（零新计算），SVG+回执只是来源身份与预览面；

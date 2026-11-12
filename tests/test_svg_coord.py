@@ -1,4 +1,4 @@
-"""坐标与变换链测试（SG05 / ADR 0166）。
+"""坐标与变换链测试（SG05 / ADR 0181）。
 
 看护：变换累积（嵌套组、use 实例位移与自身 transform）、viewBox→pt 的
 preserveAspectRatio 全语义（none / meet / slice × 九宫对齐）、以及语料上

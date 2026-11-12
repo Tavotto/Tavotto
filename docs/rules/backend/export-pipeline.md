@@ -72,7 +72,7 @@ order: 210
     位图源的有效 ppi 仍按**图幅**（源像素网格与图幅一一对应），横纵密度不同时 `raster_target` 取整个页面的像素数；EPS 经 `epsoverlay.compose(offset_pt=…, clip_page=True)` 把原图 EPS 嵌在 `(l, b)`、整页裁到 BoundingBox。
     非零时 `w_mm` / `h_mm` 必填；四元组不合法或页面 ≤ 0 → `bad_pad`（碰磁盘之前拒绝，`web/src/i18n` errors 中英两份）。看护 `tests/test_export_original_pad.py`。
     「谁来渲染」在导出路上的唯一调用点是 `_serialize_figure()`。
-    **声明式计算原图EPS（ADR0166）**：复用完整冻结场景及RenderCore的`prepare_original_eps`契约，再交既有chart runner固定`pack_eps`动作封装；父进程不加载Matplotlib，worker不排字、不加载HB/PDFium，不调用外部转换器。场景准备/封装边界见`rendercore.md`。标注/留白的EPS取同一次完整合成SVG；未选择SVG也只增加内部中间表示，不增用户输出、不丢缩放/层序/clip。成功声明convert/矢量，失败保实际请求format及真实码；旧Python EPS叠加路径不变。看护`tests/test_native_eps_contract.py`、`tests/test_chart_eps_export.py`。
+    **声明式计算原图EPS（ADR0181）**：复用完整冻结场景及RenderCore的`prepare_original_eps`契约，再交既有chart runner固定`pack_eps`动作封装；父进程不加载Matplotlib，worker不排字、不加载HB/PDFium，不调用外部转换器。场景准备/封装边界见`rendercore.md`。标注/留白的EPS取同一次完整合成SVG；未选择SVG也只增加内部中间表示，不增用户输出、不丢缩放/层序/clip。成功声明convert/矢量，失败保实际请求format及真实码；旧Python EPS叠加路径不变。看护`tests/test_native_eps_contract.py`、`tests/test_chart_eps_export.py`。
   * **SVG（X03，2026-10-15）**：追加为 `FORMATS = (pdf, png, eps, tiff, svg)`，前后端请求闭集同步；
     `original` 与 `canvas` 都走既有作业，不另开发布通道。SVG 是矢量格式，PPI 规则不变，文字**默认保留为 `<text>`**（ADR 0144，取代 X03 起的「一律转轮廓」；
     `scope=original` 的 matplotlib 图走 worker 独立的 `svg.fonttype=none` 一路：export 的 `svg_fonttype` / `svg_text_path` 两个可选字段，

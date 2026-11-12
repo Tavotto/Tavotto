@@ -1,4 +1,4 @@
-# ADR 0166：SVG 计算图表编辑——片段嫁接架构与来源合同
+# ADR 0181：SVG 计算图表编辑——片段嫁接架构与来源合同
 
 日期：2026-11-04 · 状态：**Accepted**（依据 SG01 六个可复核实验；1.0 豁免登记见 `docs/1.0-release-readiness.md` §1.8）
 相关：[0144 SVG 导出保留文字](0144-svg-export-keeps-text-by-default.md)、[0150 同次 draw 配对](0150-pdf-svg-pair-from-one-draw.md)、

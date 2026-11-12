@@ -1,4 +1,4 @@
-"""可信 SVG 来源的采用判定（ADR 0166，SG04）——纯决策，零 I/O。
+"""可信 SVG 来源的采用判定（ADR 0181，SG04）——纯决策，零 I/O。
 
 一份 SVG 进编辑器前要回答「它是谁的图」：
 - 带 `tavotto.svg-source-meta/1` 元数据、且与调用方提供的 svgstore / 执行事实
@@ -154,7 +154,7 @@ def decide_adoption(
     if meta["scene_sha256"] != scene_bytes_digest(scene_bytes):
         return _refused("adopt_source_changed", "metadata scene digest differs from the bytes")
     if native_offline:
-        # native 会话不在线：不猜、不 fallback、不执行用户代码（ADR 0166 §3）
+        # native 会话不在线：不猜、不 fallback、不执行用户代码（ADR 0181 §3）
         return _refused("adopt_native_offline", "the originating native session is not running")
     if snapshot_static_sha256 is None:
         return _refused("adopt_snapshot_missing", "no verified snapshot for this reference")

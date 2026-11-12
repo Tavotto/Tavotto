@@ -1,7 +1,7 @@
 # SVG 计算图表编辑：提 PR 前的收敛计划
 
 > 更新：2026-11-12（Asia/Shanghai）。本轮完成 T0 终局归因与 T1/T2/T3/T4 的实施收敛（历史来源 P1、N5 六步、N4 C1–C5、测试红项），T5 冻结验证进行中；未创建远端 PR。
-> 目标：在当前分支准备一份功能范围清楚、实现闭合、可审查且具备合并验证条件的 SVG 计算编辑 PR。完整产品范围仍以 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) / ADR 0166 为准；历史证据按日期保留在 [PROGRESS.md](PROGRESS.md)，执行提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。
+> 目标：在当前分支准备一份功能范围清楚、实现闭合、可审查且具备合并验证条件的 SVG 计算编辑 PR。完整产品范围仍以 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) / ADR 0181 为准；历史证据按日期保留在 [PROGRESS.md](PROGRESS.md)，执行提示词见 [NEXT_PHASE_PROMPT.md](NEXT_PHASE_PROMPT.md)。
 
 ## 0. 本轮执行结果（2026-11-12，本地）
 

@@ -1,4 +1,4 @@
-"""色阶/网格绑定测试（SG09 / ADR 0166）：网格数据 → imshow 片段 → 组合。"""
+"""色阶/网格绑定测试（SG09 / ADR 0181）：网格数据 → imshow 片段 → 组合。"""
 
 from __future__ import annotations
 

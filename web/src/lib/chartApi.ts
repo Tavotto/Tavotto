@@ -1,4 +1,4 @@
-// SVG 计算图表的服务调用（ADR 0166，SG10）。判据在后端（chartmodel/chartbind/
+// SVG 计算图表的服务调用（ADR 0181，SG10）。判据在后端（chartmodel/chartbind/
 // svgcompose）；这里只做形状化的请求/响应与稳定错误码透传，不做第二份判定。
 import type { ApiError, Manifest } from './api'
 import type { ComputedRenderFrame } from '@/lib/chartFrame'

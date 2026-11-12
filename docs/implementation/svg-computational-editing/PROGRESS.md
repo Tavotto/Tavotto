@@ -65,7 +65,7 @@
 | 批次 | 状态 | commits | 证据 |
 | --- | --- | --- | --- |
 | SG00 | baseline_recorded | a046b799（计划）、9a271f9f | 能力清单和历史基线已有；远端新鲜度及最终候选回归需补证 |
-| SG01 | partial / revalidated_core | ADR 0166、e836a8de、3ed06553、f04d8f63 | 层序、ClipUnion及连续文字实验/ADR已同步；最终全范围复核待补 |
+| SG01 | partial / revalidated_core | ADR 0181、e836a8de、3ed06553、f04d8f63 | 层序、ClipUnion及连续文字实验/ADR已同步；最终全范围复核待补 |
 | SG02 | partial | ac060053 | 基础模型/绑定身份已补修；持久化来源/资源、实际环境与元数据恢复合同未闭合 |
 | SG03 | core_partial | f1406038+fmt | 场景盘点与 inspect 已有；资源生命周期及所有入口未接通 |
 | SG04 | core_partial | d0c0d898 | 采用判定 helper 已有；生产来源采用、语义元数据往返未接通 |
@@ -865,7 +865,7 @@
 
 ### 2026-11-06 14:05 执行效果复核与下一阶段安排
 
-- 在既有分支完成3236307c：物理pt原生场景、实际最终manifest、原场景派生DOM的id/CSS隔离、明确placement与资格限制；即时预览平移/缩放锚点/排队位移/线宽共享目标坐标reader。源派生副本移除伪造标记，原输入字节不改；legacy默认路径不改。详细合同见ADR0166与native-producer-review.md。
+- 在既有分支完成3236307c：物理pt原生场景、实际最终manifest、原场景派生DOM的id/CSS隔离、明确placement与资格限制；即时预览平移/缩放锚点/排队位移/线宽共享目标坐标reader。源派生副本移除伪造标记，原输入字节不改；legacy默认路径不改。详细合同见ADR0181与native-producer-review.md。
 - 生产者此前231项为190通过/41缺Inkscape跳过，exit0；新增marker/scrub后完整native专项27项通过、0跳过，exit0（native-preview-marker.xml）。旧五类默认scaffold/compose和writer隔离有逐字节兼容证据。新增metadata未改legacy分支；不同树版本不混称一次最终回归。
 - 真实native API 16项主流程通过、0跳过，exit0；随后line/axes隐藏恢复2项通过、0跳过，exit0。覆盖双模型及原序overrides身份、PNG像素/manifest/版本配对、非法编辑拒绝、v1实际重放、v2删源恢复和计算中改源409。16项运行早于隐藏与marker补修；测试手工调用真实bundle库构造v2，不代表生产导出UI已携完整edits。
 - 前端共享消费者原18文件639项通过；终态错误撤销exact资格补验4文件143项通过；本次坐标/手势8文件151项通过、0skip，正式build与oxlint exit0。三组互有重叠，且对应不同源码时刻，不求和。错误仍保留可看旧图和已请求身份，避免重试循环；不把旧manifest当当前写操作权威。
@@ -923,7 +923,7 @@
 
 - SVG→IR 的连续 tspan 改为整段 chunk 定位与锚定，复用既有 shaping/字体权威；处理绝对位置边界、相对 dx/dy、空 tspan、XML 空白、跨 paint kerning 及逐字旋转。未新增 IR 或写出器，未扩大为任意 SVG 文本支持。
 - 两个文件最终定向回归157 passed/0 skipped，exit0；其中新增35项，22项Chromium独立参考，9项同时用真实PDFium核对字符基线。各子集存在重叠，不累加。报告 svgir-text-final.xml/log 与 svgir-text-chunks-review.md；旧3ed06553转换器运行新增手算回归在目标坐标断言失败，exit1。
-- 根代理复核文件SHA与代理完成版本一致，重新执行9个完成批次文件的Ruff和format均exit0。连续tspan旧最大基线误差27.79用户单位降至0.021，独立门槛0.06未放宽。ADR0166同步；双向/竖排/textPath及全部baseline资格仍待对应能力验收。
+- 根代理复核文件SHA与代理完成版本一致，重新执行9个完成批次文件的Ruff和format均exit0。连续tspan旧最大基线误差27.79用户单位降至0.021，独立门槛0.06未放宽。ADR0181同步；双向/竖排/textPath及全部baseline资格仍待对应能力验收。
 - 本批只提交svgir、其测试和受影响文档；manifest配对adapter、项目来源资源核心及前端renderStore接线另按功能收敛。M1仍未通过，目标保持active。
 
 ### 2026-11-06 实施：自包含恢复API与真实确认事务
@@ -948,7 +948,7 @@
 ### 2026-11-06 实施：SVG→IR 保真与真实裁剪并集
 
 - svgir/svgcoord 修复相对/重复/平滑/弧路径、局部CTM重复应用、px/pt/非零viewBox/PAR、use/符号视口、CSS继承、文字/图像和组透明；嵌入图像通过显式files接收器进入既有PDF写出资源。unsupported元素仍逐格式明确失败，不静默略去。
-- clip-rule、不同路径填充区的真实并集、符号百分比与继承字号em都有独立反例。ClipUnion在PDF用矢量白路径luminosity mask/隔离Form，SVG保留各成员规则；旧单Path分支逐字节兼容。反向矩形简单拼接会挖空重叠区，实际PDFium像素反证已留存，ADR0166同步该结构决定。
+- clip-rule、不同路径填充区的真实并集、符号百分比与继承字号em都有独立反例。ClipUnion在PDF用矢量白路径luminosity mask/隔离Form，SVG保留各成员规则；旧单Path分支逐字节兼容。反向矩形简单拼接会挖空重叠区，实际PDFium像素反证已留存，ADR0181同步该结构决定。
 - 精确原生declarative SVG例外贯穿IR/写出器；不放宽static FILE_KINDS，不伪造PDF；无crop/全框的同一viewport不再重复裁剪。真实Chrome手写同物理容器参考与nativeSVG、ClipUnion写出全图最大通道差均0，顶层与放置viewport的边缘AA差仅作诊断，不放宽门禁。
 - 最终核心175 passed/0skip，Chrome156 revision1248补验43 passed/0skip，均exit0；两组有2项重叠。旧writer/compose的191 passed+84 skipped中，84的准确分类为41 Chromium（现已补过）、41 Inkscape、1 pdfminer、1 pdftotext；其余43项环境缺口保留，不能把旧skip都记为已通过。报告svgir-final.xml/log、svgir-chromium.xml/log，图像在svgir-chromium-evidence。Ruff/format/diff检查exit0。
 - 仍未验证复杂连续tspan的整段chunk anchor、Inkscape/其他独立文字读取及跨平台完整产品；本提交只收敛转换保真和写出合同，不代表M1或全部SVG能力完成。转换器7文件冻结，根代理按功能单独提交；共享app/sources/plan和恢复UI另批。
@@ -1062,7 +1062,7 @@
   - 持久化：chart 字段经真实保存路径往返、冷重算、来源冲突如实报告。
 - **未完成（按优先级）**：
   1. 图内编辑（选中 SVG 内元素/命中/属性修改）——需要 renderStore manifest 集成。
-  2. PDF/PNG/TIFF 导出——需要 SVG→IR 翻译器（ADR 0166 §2 的独立适配层）。
+  2. PDF/PNG/TIFF 导出——需要 SVG→IR 翻译器（ADR 0181 §2 的独立适配层）。
   3. 真 E2E（浏览器驱动 UI 全流程）。
   4. R08–R13：A 路径采用接线、自包含往返、写回、预检、入口打包。
 
@@ -1276,7 +1276,7 @@
 
 - 状态：SG00 passed、SG01 passed
 - 分支 zixu.wang/svg-computational-editing；基线 2bc94f7f；commits：a046b799（计划）、9a271f9f（SG00）、本次 SG01 提交
-- 架构决定：**C2 精化「片段嫁接」**（ADR 0166，Accepted）——路径 A 复用 live-Figure 管线零新计算；
+- 架构决定：**C2 精化「片段嫁接」**（ADR 0181，Accepted）——路径 A 复用 live-Figure 管线零新计算；
   路径 B worker 脚手架产出坐标对齐 SVG 片段 + 父进程节点级替换（defs 上提契约）；路径 C 自包含包冷重放零执行；
   导出经新增 SVG→IR 翻译器（stdlib+现有依赖，零 PyMuPDF 不变）。C1 否决（重建漂移 7.3mm）、C3 否决（计划禁令+实验二）。
 - 实验证据（`E:\0 - Project\svg-exp\`，仓库外）：exp2 158 断言、exp3 15 断言 + 浏览器 vs PDF 像素

@@ -1,4 +1,4 @@
-// 计算图表的渲染缓存（ADR 0166；NEXT_PHASE R06）。
+// 计算图表的渲染缓存（ADR 0181；NEXT_PHASE R06）。
 // 键 = render_revision（来源+模型完整身份，后端 compute 返回）；同一身份只算一次。
 // 只管取图与状态；判据在后端。项目代际：clear() 由项目切换时的既有代际机制调用。
 import { create } from 'zustand'
