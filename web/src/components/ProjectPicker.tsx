@@ -5,6 +5,7 @@ import {
   BookOpen,
   ChevronRight,
   CornerDownLeft,
+  Download,
   ExternalLink,
   FolderOpen,
   FolderPlus,
@@ -33,6 +34,7 @@ import {
 } from '@/lib/onboarding/tutorial'
 import { disambiguateRecent, looksLikePath, splitRecent, submitTargetFor } from '@/lib/recentProjects'
 import { cn } from '@/lib/utils'
+import { chooseProjectPackage } from '@/lib/projectPackageEntry'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { useProjectStore } from '@/store/projectStore'
 import { DirBrowser, NewProjectNameDialog, TailPath } from './DirBrowser'
@@ -269,6 +271,10 @@ function AllProjects({
                     <span className="max-[559px]:sr-only">{t('picker.create')}</span>
                   </Button>
                   <span aria-hidden className="h-4 w-px bg-border" />
+                  <Button size="md" className="text-ink-2" disabled={switching} data-install-project-package onClick={() => chooseProjectPackage()}>
+                    <Download size={ICON_SIZE.md} aria-hidden />
+                    <span className="max-[559px]:sr-only">{t('packageInstall.entry', { ns: 'dialogs' })}</span>
+                  </Button>
                   <Button size="md" className="text-ink-2" disabled={switching} onClick={entry.startOpen}>
                     <FolderOpen size={ICON_SIZE.md} aria-hidden />
                     <span className="max-[559px]:sr-only">{t('picker.browse')}</span>

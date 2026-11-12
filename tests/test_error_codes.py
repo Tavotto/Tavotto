@@ -266,6 +266,7 @@ USER_VISIBLE_CODES = {
     "package_file_missing": set(),
     "package_invalid": {"reason"},
     "package_schema_unsupported": set(),
+    "package_source_outside_project": set(),
     "figure_snapshot_unavailable": set(),
     "scan_failed": {"reason"},
     "perf_report_rejected": {"reason"},

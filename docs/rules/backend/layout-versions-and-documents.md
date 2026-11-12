@@ -7,7 +7,7 @@
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 200
-改到: `/api/versions`、`/api/styles`、`/api/package`、`tavottofile/`、`atomicio.py`、`documents.loads_document`、自动保存槽位、`engine/layoutsession.py`、`/api/layout-session`
+改到: `/api/versions`、`/api/styles`、`/api/package`、`tavottofile/`、`atomicio.py`、`documents.loads_document`、自动保存槽位、`engine/layoutsession.py`、`engine/packagerelocation.py`、`engine/packageinstall.py`、`/api/layout-session`
 主题: 布局版本、项目文件收纳与文档落盘 → `layout-versions-and-documents.md`
 必守要点: `atomicio` / `project_layout_dir()` 唯一权威（ADR 0120）
 -->
