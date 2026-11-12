@@ -715,6 +715,26 @@
       ]
     },
     {
+      "id": "figure.computational-svg",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "编辑已绑定的计算 SVG，保存和重开时保留计算外框，并按同一状态导出",
+        "en-US": "Edit a bound computational SVG, preserve its computed frame across save and reopen, and export the same state"
+      },
+      "entry": "打开已绑定的计算 SVG 排版 → 图内编辑 → 保存 → 重开 → 导出",
+      "e2e": [
+        {
+          "spec": "computed-frame.spec.ts",
+          "title": "计算图表 /2 生命周期 › 绑定 → 打开 → 自动采用 F → 编辑 → undo/redo → 存进项目"
+        },
+        {
+          "spec": "computed-frame.spec.ts",
+          "title": "计算图表 /2 生命周期 › 同 data/config 冷开 → 重开排版 → 帧与标题都在 → 导出 PDF（页面 = F）"
+        }
+      ]
+    },
+    {
       "id": "style.panel",
       "status": "active",
       "platform": "both",

@@ -116,7 +116,7 @@ test.describe.serial('计算图表 /2 生命周期', () => {
     }
   })
 
-  test('绑定 → 打开 → 自动采用 F → 编辑 → undo/redo → 存进项目', async ({ app, page }) => {
+  test('绑定 → 打开 → 自动采用 F → 编辑 → undo/redo → 存进项目', { tag: '@feature:figure.computational-svg' }, async ({ app, page }) => {
     test.setTimeout(600_000)
     a = await app({ figures: project })
     await page.goto(a.baseURL)
@@ -210,7 +210,7 @@ test.describe.serial('计算图表 /2 生命周期', () => {
     a = undefined
   })
 
-  test('同 data/config 冷开 → 重开排版 → 帧与标题都在 → 导出 PDF（页面 = F）', async ({ page }) => {
+  test('同 data/config 冷开 → 重开排版 → 帧与标题都在 → 导出 PDF（页面 = F）', { tag: '@feature:figure.computational-svg' }, async ({ page }) => {
     test.setTimeout(600_000)
     second = await startApp({
       figures: project,
