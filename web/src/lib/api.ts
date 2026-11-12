@@ -2016,6 +2016,8 @@ export interface ExportRequest {
   include_style_check_report?: boolean
   /** 同时导出修改后的 .py（ADR 0171）；不要时不带这个键 */
   include_edited_script?: boolean
+  /** 「EPS 按不透明导出」：EPS 里的画布标注把半透明压成 100%，其余格式照旧；不选时不带这个键（ADR 0046 / 0174） */
+  eps_opaque?: boolean
   document_id?: string | null
   /** 导出开始那一刻的文档快照指纹；回执原样带回来，用来说"期间又被编辑过" */
   document_revision?: string | null
@@ -3501,6 +3503,8 @@ export interface AiAgentCaps {
    * 加字段协议：旧后端不带（缺省 = 只有 id），第三方接口接管时为空。
    */
   model_details?: AiModelDetail[]
+  /** 确定只吃文字、看不了参考图的型号（后端 `ai_attachments.known_text_only`，ADR 0175）；没有 / 老后端 = 都不知道，照常发送 */
+  no_vision?: string[]
   efforts: string[]
   default_effort: string | null
 
@@ -3723,6 +3727,8 @@ export interface AiConnection {
   state: 'ready' | 'needs_auth' | 'error'
   models: string[]
   model_details?: AiModelDetail[]
+  /** 同 `AiAgentCaps.no_vision` */
+  no_vision?: string[]
   default_model: string | null
   efforts?: string[]
   default_effort?: string | null
@@ -4074,6 +4080,8 @@ export interface AiHistoryEntry {
   ended_ms: number | null
   pinned: boolean
   revert_available: boolean
+  /** 用户附了几张参考图（只有张数，图片不进历史；没附 / 老记录 = 空） */
+  attachment_count?: number | null
   transcript: { kind: string; text: string }[]
 }
 
@@ -4133,6 +4141,10 @@ export interface AiRunRequest {
   scope?: string
   target?: string
   canvas?: string | null
+  /** 项目按期刊检查时的期刊要求摘要（`lib/journalAi`）；后端写成提示词里的一句。没有 = 不带 */
+  journal?: import('./journalAi').JournalAiContext
+  /** 用户附的参考图：`uploadAiAttachment` 给的暂存 id（最多 4 个）；不附图时不带这个字段（请求逐字节不变） */
+  attachments?: string[]
   /**
    * 点「发送」时生成的请求 id（UUID），与后端 `api_ai_run` 的 `client_request_id` 同名同义：
    * 同 (项目, id) 再 POST 后端返回既有会话、不再 spawn。重发「同一条」必须带同一个 id；
@@ -4165,6 +4177,18 @@ export const aiRun = (req: AiRunRequest, pj: string | null, timeoutMs: number = 
     pj,
   ).finally(() => clearTimeout(timer))
 }
+
+/** 暂存一个用户附的文件（请求体就是文件字节，`name` 是原文件名，ADR 0175）；图片前端先缩到 ≤ 4 MiB 再传 */
+export const uploadAiAttachment = (blob: Blob, name: string, pj: string | null) =>
+  jsonFetch<{ id: string; kind: 'image' | 'file'; mime: string | null; bytes: number; width: number | null; height: number | null; name: string }>(
+    `/api/ai/attachments?name=${encodeURIComponent(name)}`,
+    { method: 'POST', headers: { 'Content-Type': blob.type || 'application/octet-stream' }, body: blob },
+    pj,
+  )
+
+/** 用户把附的文件去掉：删后端的暂存。尽力而为（失败也不影响用户；暂存一小时后自己清） */
+export const discardAiAttachment = (id: string, pj: string | null) =>
+  jsonFetch<{ ok: boolean }>(`/api/ai/attachments/${encodeURIComponent(id)}`, { method: 'DELETE' }, pj)
 
 /** 后端按请求 id 登记的会话摘要（`GET /api/ai/requests/<id>`） */
 export interface AiRequestStatus {
@@ -5205,15 +5229,15 @@ export interface WorkdirGrant {
   cwd_write: { granted: boolean; granted_at: number | null; mode: WorkdirMode | null }
   /** 这个项目决定过没有（选沙盒也算决定过，只是没有授权） */
   decided: boolean
-  /** 没决定过而默认不是沙盒时的理由（ADR 0107 §二）：用户自己的 Python → 默认脚本目录 */
-  implied_by?: 'user_interpreter' | null
+  /** 没决定过而默认不是沙盒时的理由：用户自己的 Python（ADR 0107 §二）或运行时证据说数据在脚本目录里（ADR 0047 修订）→ 默认脚本目录 */
+  implied_by?: 'user_interpreter' | 'runtime_evidence' | null
 }
 export interface WorkdirState {
   mode: WorkdirMode
   modes: string[]
   decided?: boolean
   /** 同 `WorkdirGrant.implied_by`：界面据此说「跟随你自己的 Python」 */
-  implied_by?: 'user_interpreter' | null
+  implied_by?: 'user_interpreter' | 'runtime_evidence' | null
   grant?: WorkdirGrant
 }
 

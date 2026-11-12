@@ -97,7 +97,7 @@ pub fn prefer_mirror(m: &Memory, published: Option<i64>, now: i64) -> Option<Rea
     None
 }
 
-/// 这一次后台下载的结论：`won` = 最后包是哪个来源给的（没下成 = `None`），`github_failed` =
+/// 这一次后台下载的结论：`won` = 最后包是哪个来源给的（没下成 = `None`；边缘节点 / 镜像赢都不是 GitHub 赢，同样对待），`github_failed` =
 /// 过程中 GitHub 那一环出过问题（check / 下载失败、停滞、验签不过；**报了别的版本不算**，那是镜像滞后，不是 GitHub 坏）。
 pub fn outcome_of(won: Option<crate::app_update::Source>, github_failed: bool) -> Outcome {
     use crate::app_update::Source;
@@ -308,6 +308,23 @@ mod tests {
             outcome_of(Some(Source::Mirror), false),
             Outcome::Neutral,
             "没走 GitHub，或它只是报了别的版本：不算它坏"
+        );
+    }
+
+    #[test]
+    fn an_edge_win_is_booked_like_a_mirror_win() {
+        // GitHub 先失败、节点兜住：算 GitHub 失败（计数 +1），与镜像兜住完全一样
+        assert_eq!(outcome_of(Some(Source::Edge), true), Outcome::GithubFailed);
+        // 节点优先（改道后）直接赢、没碰 GitHub / GitHub 只是报了别的版本：不加也不清
+        assert_eq!(outcome_of(Some(Source::Edge), false), Outcome::Neutral);
+        let m = mem(2, 2, 0);
+        // 连续失败的判据不被节点破坏：节点兜住的第三次仍把计数推到 3 → 改道（节点优先）
+        let m3 = record(m.clone(), outcome_of(Some(Source::Edge), true)).unwrap();
+        assert_eq!(prefer_mirror(&m3, Some(0), 0), Some(Reason::Failures));
+        // 改道后节点赢（GitHub 没试）不清零、不再加
+        assert_eq!(
+            record(m3.clone(), outcome_of(Some(Source::Edge), false)),
+            Some(m3)
         );
     }
 

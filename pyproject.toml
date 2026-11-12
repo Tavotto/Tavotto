@@ -147,8 +147,19 @@ exclude = ["runtime", "runtime/**", "build/runtime-cache/**", "build/private-pyt
 # 包内数据（profiles/、resources/tutorial_project/）随 packages 自然收进 wheel 与 sdist，
 # 前提是它们不被 .gitignore 挡（hatchling 默认跳过 VCS 忽略的文件）。桌面产物那边
 # PyInstaller **不会**自己收数据文件，见 packaging/tavotto.spec 的 datas。
+#
+# MCP 服务端（`tavotto mcp`，ADR 0009 §1b / 用户 2026-11-11「同意打进 wheel」，1.0 豁免见
+# docs/1.0-release-readiness.md §1.8）：**只**把 `tavotto_mcp` 这一个 Python 包映射成 wheel 顶层包，
+# 让 pip / pipx / uvx 装的 `tavotto mcp` 能直接起服务。**不能**靠 `packages` / `include`：
+# 上面的全局 `exclude` 挡着 `codex-plugin/**`，而它必须继续挡着（技能、`.codex-plugin`、dsh、
+# launch 脚本、integrations 都不该进 pip 包）；`force-include` 只点名这一个目录，是最窄的口子。
+# 画布产物 `widget/canvas.html` 在它的**上一级**（不在这个包里、不进 git），wheel 里没有它，
+# 服务端按 `tavotto_mcp/widget.py` 的缺席语义降级为不挂内嵌画布。
 [tool.hatch.build.targets.wheel]
 packages = ["src/tavotto"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"codex-plugin/mcp/tavotto_mcp" = "tavotto_mcp"
 
 [tool.hatch.build.targets.sdist]
 # 源码包里带上前端构建产物（src/tavotto/web），从 sdist 装也不需要 node。
@@ -162,6 +173,11 @@ include = [
     "LICENSE",
     "pytest.ini",
 ]
+
+# `python -m build` 是「先 sdist、再从 sdist 构建 wheel」：wheel 的 force-include 在 sdist 里找不到
+# `codex-plugin/mcp/tavotto_mcp` 就会构建失败，所以 sdist 也要带上**同一个**目录（只这一个）。
+[tool.hatch.build.targets.sdist.force-include]
+"codex-plugin/mcp/tavotto_mcp" = "codex-plugin/mcp/tavotto_mcp"
 
 # ---------------------------------------------------------------------------
 # Mutation testing（实验室 weekly CI，见 scripts/ci/mutation.py）

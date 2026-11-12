@@ -278,3 +278,61 @@ def test_the_product_default_is_the_frozen_baseline():
     assert ai_prompt_pack.DEFAULT.version == 1 and ai_prompt_pack.DEFAULT.pack_id == "figure_edit"
     src = Path(ai_prompt_pack.__file__).read_text(encoding="utf-8")
     assert src.count("DEFAULT = ") == 1, "默认 Pack 只有这一处赋值"
+
+
+# --------------------------------------------------------------------------- 期刊上下文（2026-11-11「期刊贯通」）
+def test_journal_context_renders_one_line_in_pack_order():
+    line = ai_prompt_pack.journal_context(
+        ai_prompt_pack.DEFAULT,
+        {
+            "label": "Acta Materialia",
+            "min_font_pt": 7,
+            "fonts": ["Arial", "Helvetica"],
+            "min_line_pt": 0.5,
+            "widths_mm": [90, 140, 190],
+            "min_dpi": 300,
+        },
+    )
+    assert line == (
+        "这个项目按期刊「Acta Materialia」的作图要求检查：字号不小于 7 pt；西文字体用 Arial / Helvetica 之一；"
+        "线宽不小于 0.5 pt；图宽取 90 / 140 / 190 mm 之一；位图分辨率不低于 300 dpi。"
+        "用户提到投稿、期刊要求或「按要求改」时以这些为准；用户没要求的部分不要为了凑要求去改。"
+    )
+
+
+def test_journal_context_goes_into_figure_edit_prompt_and_absent_keeps_v1():
+    base = dict(script="fig.py", user_prompt="按投稿要求改", shared_style=False)
+    with_j = ai_prompt_pack.figure_edit_prompt(
+        ai_prompt_pack.DEFAULT,
+        context={"stem": "Fig1", "journal": {"label": "J", "max_font_pt": 7}},
+        **base,
+    )
+    without = ai_prompt_pack.figure_edit_prompt(
+        ai_prompt_pack.DEFAULT, context={"stem": "Fig1"}, **base
+    )
+    assert "这个项目按期刊「J」的作图要求检查：字号不大于 7 pt。" in with_j
+    assert "期刊" not in without
+    # 没有期刊这一段时与冻结的旧实现逐字节相同
+    assert without == _legacy_build_prompt("fig.py", "按投稿要求改", {"stem": "Fig1"})
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        None,
+        "Acta",
+        {"label": ""},
+        {"label": "x" * 201, "min_font_pt": 7},
+        {"label": "J"},  # 一条要求都没有
+        {"label": "J", "min_font_pt": -1},
+        {"label": "J", "min_font_pt": True},
+        {"label": "J", "min_font_pt": float("nan")},
+        {"label": "J", "fonts": "Arial"},
+        {"label": "J", "fonts": [1]},
+        {"label": "J", "fonts": ["A"] * 13},
+        {"label": "J", "widths_mm": [90, "x"]},
+        {"label": "J", "min_dpi": 1e9},
+    ],
+)
+def test_journal_context_bad_shapes_write_nothing(raw):
+    assert ai_prompt_pack.journal_context(ai_prompt_pack.DEFAULT, raw) is None

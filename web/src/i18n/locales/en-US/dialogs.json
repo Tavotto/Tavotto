@@ -159,6 +159,13 @@
   "engineEnv": {
     "title": "Rendering environment"
   },
+  "epsOpacity": {
+    "body_one": "This figure has {{count}} semi-transparent annotation.",
+    "body_other": "This figure has {{count}} semi-transparent annotations.",
+    "opaque": "Export EPS opaque",
+    "pdf": "Export PDF instead",
+    "title": "EPS can’t do transparency"
+  },
   "export": {
     "contentLabel": "Export",
     "contentWhole": "Whole page",
@@ -326,6 +333,8 @@
     "locationLabel": "Location",
     "locationDefault": "Project export folder",
     "locationChange": "Change…",
+    "findMissingSource": "Find this figure",
+    "missingSourceNote": "One figure can’t be found: {{name}}.",
     "changeLocationExport": "Export to another folder",
     "lowerDpiExport": "Export at {{dpi}} dpi",
     "toast": {
@@ -334,7 +343,9 @@
       "partial": "Export finished only in part. Some files could not be written.",
       "unknown": "Couldn't find this export job. Files may have been written."
     },
-    "viewResult": "View"
+    "viewResult": "View",
+    "journalUnlisted": "{{journal}} does not list {{format}}",
+    "journalDpi": "{{journal}} requires (dpi)\n{{detail}}"
   },
   "layout": {
     "conflict": "A layout named “{{name}}” already exists on disk, written by another window or tool.",
@@ -1818,6 +1829,7 @@
       "sourceUsed": "Update source: {{source}}",
       "sourceName": {
         "mirror": "China mirror",
+        "edge": "China mirror",
         "github": "GitHub"
       },
       "attemptsTitle": "Failures per source",

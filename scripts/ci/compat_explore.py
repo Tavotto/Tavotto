@@ -516,8 +516,13 @@ def oracle_layers(
     parent_snapshot: dict | None,
     evidence: Path,
     native_note: str | None,
+    unjudged: dict[str, str] | None = None,
+    saved_stems: dict[str, list[str]] | None = None,
 ) -> dict:
-    """Judge the CG-06 layers of one executed candidate: `{"stages", "differences"}`."""
+    """Judge the CG-06 layers of one executed candidate: `{"stages", "differences"}`.
+
+    `unjudged` / `saved_stems`: see `OR.pixel_judgment` (declared pixel-unjudgeable figures).
+    """
     stages = OR.blank_stages("not_run", "Tavotto observed nothing to judge")
     diffs: list[dict] = []
     if not tavotto.get("stems") and not native_shots:
@@ -536,10 +541,14 @@ def oracle_layers(
             native_shots,
             tavotto["shots"],
             evidence,
+            unjudged,
+            saved_stems,
         )
         stages["fidelity"] = OR.stage("fidelity", pix["status"], pix.get("note"))
         if pix.get("unmatched"):
             stages["fidelity"]["unmatched"] = pix["unmatched"]
+        if pix.get("declared_unjudged"):
+            stages["fidelity"]["declared_unjudged"] = pix["declared_unjudged"]
         diffs += pix["differences"]
     for stem, err in sorted(tavotto.get("shot_errors", {}).items()):
         stages["fidelity"] = OR.stage("fidelity", "failed", err)
@@ -672,6 +681,8 @@ def execute_request(request: dict) -> dict:
             request.get("parent_snapshot") if not request.get("reduction") else None,
             evidence,
             native_note,
+            OR.declared_unjudged(parent),
+            pixels.get("saved_stems") or {},
         )
     else:
         result["tavotto"] = {"stems": {}, "error": None, "skipped": "native reference failed"}

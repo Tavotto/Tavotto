@@ -945,6 +945,22 @@
       ]
     },
     {
+      "id": "export.eps-opacity-prompt",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "导 EPS 前提醒：标注里有半透明时，选改导出 PDF 或 EPS 按不透明导出",
+        "en-US": "Before exporting EPS with semi-transparent annotations, choose PDF instead or an opaque EPS"
+      },
+      "entry": "单图编辑加半透明标注 → ⌘E → 勾 EPS → 开始导出",
+      "e2e": [
+        {
+          "spec": "export-eps-opacity.spec.ts",
+          "title": "选了 EPS 且标注半透明：点导出先问；选「EPS 按不透明导出」后 EPS 落盘"
+        }
+      ]
+    },
+    {
       "id": "export.preview-zoom",
       "status": "active",
       "platform": "both",
@@ -1093,6 +1109,22 @@
         {
           "spec": "journal-picker.spec.ts",
           "title": "期刊下拉在设置对话框里能用滚轮滚（弹层挂在对话框外，不能被对话框的滚动锁吃掉）"
+        }
+      ]
+    },
+    {
+      "id": "style.journal-adjust",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "按期刊调整样式：项目按期刊检查时，左栏样式面板列出不合期刊的字号 / 字体 / 线宽，一键调到期刊要求（一次撤销全回去）",
+        "en-US": "Adjust style to journal: when a project is checked against a journal, the Style panel lists font sizes, fonts and line widths that do not match and adjusts them in one undoable step"
+      },
+      "entry": "左栏 → 样式 → 跟随样式 → 按期刊调整",
+      "e2e": [
+        {
+          "spec": "journal-style.spec.ts",
+          "title": "按期刊调整样式：不合期刊的字号一键调到期刊范围，一次撤销全回去"
         }
       ]
     },
@@ -1460,6 +1492,22 @@
         {
           "spec": "convert-output-checklist.spec.ts",
           "title": "转换输出清单：状态词、缺的文件行内处理后可采用、让 AI 再对一次后清单更新"
+        }
+      ]
+    },
+    {
+      "id": "ai.attachments",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "改图助手输入框可附文件：回形针 / 粘贴 / 拖入，任意格式（图片给模型看、CSV 等数据文件给 AI 读），最多 6 个；输入框上方的预览卡相邻微重叠、悬停那张提到最上层并可点 ×；发送只带暂存 id；对话里文字与附件是两个气泡，附件堆叠、点击展开",
+        "en-US": "Attach files in the assistant's input box: paperclip, paste or drop, any format (images are shown to the model, data files like CSV are read by the AI), up to 6; preview cards above the box overlap slightly and the hovered one comes to the front with a clickable ×; sending carries staged ids only; the conversation shows the text and the attachments as two bubbles, the attachments stacked and expandable on click"
+      },
+      "entry": "改图助手输入框的回形针 / 粘贴 / 拖入",
+      "e2e": [
+        {
+          "spec": "ai-attachments.spec.ts",
+          "title": "改图助手附文件：回形针 / 预览卡重叠且悬停那张在最上层可点 × / 发送只带暂存 id / 对话里两个气泡可展开"
         }
       ]
     },

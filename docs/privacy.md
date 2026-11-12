@@ -94,9 +94,12 @@ when the new version is more than about 3 days old and still not downloaded (the
 app remembers the attempt count and the time it first saw that version in a small
 local file, `update-source.json`, in its settings folder; it contains no path or
 identifier); a download you start yourself gives GitHub about 8 seconds and moves
-to the mirror if GitHub sends nothing by then or would need more than about 2 minutes. Either source sees what any HTTPS request reveals (IP address,
+to the mirror if GitHub sends nothing by then or would need more than about 2 minutes. In mainland China the background download may also be served by a third source, a server operated by the Tavotto maintainers at `up.tavotto.cn` (mainland China), tried after GitHub and before the mirror; it is never used for the update check or for a download you start yourself, and it is switched off on the server side when it is not available. Each source sees what any HTTPS request reveals (IP address,
 time, the updater's user agent) and nothing else: no identifier, no telemetry, no
-project content. Which source the installer came from does not affect trust — the
+project content. The `up.tavotto.cn` server keeps an access log for 30 days so the maintainers can see
+whether it works and how much it carries: time, your IP address with the last part removed (an IPv4 address is
+kept only as `a.b.c.0`), the file requested, the response status and size, the requested byte range and the
+updater's user agent; no query string, cookie or other header. Which source the installer came from does not affect trust — the
 installer's signature is always verified with the public key built into the app, and
 an installer that fails verification is not installed.
 
@@ -199,7 +202,13 @@ AI the user chose, in one of two ways:
   are accepted only on the local machine or a private network.
 
 What is sent is the user's instruction plus whatever the assistant reads from the
-project to do the job, which can include the script and files in the project folder.
+project to do the job, which can include the script and files in the project folder,
+and any files you attach to an instruction (pictures or data files). Attached files are kept
+only in Tavotto's local data folder for the duration of the task (unsent ones are
+deleted within an hour), are never added to your project, to usage statistics or to a
+diagnostics bundle, and go only to the AI you connected.
+When the project is checked against a journal, the request also carries that journal's
+name and figure requirements (font sizes, fonts, line width, figure widths, resolution).
 Tavotto itself does not upload AI prompts, responses or diffs anywhere (see "Data
 Tavotto does not upload"). The AI service, or the command-line tool in the first
 case, has its own network, account and privacy behavior and is not a background

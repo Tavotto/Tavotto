@@ -205,7 +205,9 @@ describe('输入框只有一态（§6.5，2026-10-16）', () => {
     await mount({ withPanel: true })
     const composer = q('[data-ai-composer]')!
     expect(composer.hasAttribute('data-layout')).toBe(false)
-    expect(q('[data-ai-pill="model"]')!.textContent).toContain('Codex')
+    // 提供方用 logo 表示（全名在 title 里），胶囊上只写型号
+    expect(q('[data-ai-pill="model"]')!.getAttribute('title')).toContain('Codex')
+    expect(q('[data-ai-pill="model"]')!.querySelector('[data-brand-logo]')).toBeTruthy()
     expect(q('[data-ai-pill="effort"]')!.textContent).toContain(ai('effortLabel.high'))
     const cls = composer.className
     expect(cls).toContain('min-h-24')

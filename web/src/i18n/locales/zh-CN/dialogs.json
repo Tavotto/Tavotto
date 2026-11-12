@@ -159,6 +159,12 @@
   "engineEnv": {
     "title": "渲染环境"
   },
+  "epsOpacity": {
+    "body_other": "这张图有 {{count}} 个半透明标注。",
+    "opaque": "EPS 按不透明导出",
+    "pdf": "改导出 PDF",
+    "title": "EPS 不支持半透明"
+  },
   "export": {
     "contentLabel": "导出内容",
     "contentWhole": "整版",
@@ -317,6 +323,8 @@
     "locationLabel": "位置",
     "locationDefault": "项目的导出目录",
     "locationChange": "更改…",
+    "findMissingSource": "重新找到这张图",
+    "missingSourceNote": "有一张图找不到了：{{name}}。",
     "changeLocationExport": "换个位置导出",
     "lowerDpiExport": "改用 {{dpi}} dpi 导出",
     "toast": {
@@ -325,7 +333,9 @@
       "partial": "导出只完成了一部分，有文件没能写出。",
       "unknown": "找不到这次导出的作业，文件可能已写出。"
     },
-    "viewResult": "查看"
+    "viewResult": "查看",
+    "journalUnlisted": "{{journal}} 未列出 {{format}}",
+    "journalDpi": "{{journal}} 要求（dpi）\n{{detail}}"
   },
   "layout": {
     "conflict": "磁盘上已存在名为「{{name}}」的排版，由其他窗口或外部工具写入。",
@@ -1798,6 +1808,7 @@
       "sourceUsed": "更新来源：{{source}}",
       "sourceName": {
         "mirror": "国内镜像",
+        "edge": "国内镜像",
         "github": "GitHub"
       },
       "attemptsTitle": "各来源的失败记录",

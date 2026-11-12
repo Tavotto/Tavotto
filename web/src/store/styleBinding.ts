@@ -551,6 +551,9 @@ function withEdit(data: StyleProfileData, edit: StyleEdit): StyleProfileData {
   return next
 }
 
+/** 「样式没存上」那条提示的主人：按钮点下去时收掉它 */
+const STYLE_SAVE_FAILED_OWNER = 'stylePanel.saveFailed'
+
 /**
  * 已绑定时，样式面板里改一个值 = **改这套样式本身**，然后当前画布上的图按新值对齐
  * （一次 commit）。进库写队列：轮到它时才读「绑的是哪一条、库里现在是什么」，存成功、
@@ -560,6 +563,14 @@ function withEdit(data: StyleProfileData, edit: StyleEdit): StyleProfileData {
  * 副本，状态栏说一句；副本建了但改动没存进去，删掉那份副本。
  */
 export function editBoundStyle(edit: StyleEdit): Promise<boolean> {
+  return editBoundStyleAll([edit])
+}
+
+/**
+ * 同上，一次改好几项（「按期刊调整」）：存库一次、画布一次 commit、撤销一步。`label` 换掉历史里的
+ * 「改样式」那句（给出这次是按哪本期刊调的）。
+ */
+export function editBoundStyleAll(edits: StyleEdit[], label?: (name: string) => UiMessage): Promise<boolean> {
   const origin = generation()
   // 发起时绑的是哪一条：排队期间用户改绑了别的，这一笔不能落到那一条上（Codex #547 P1）。
   // 排在前面的、我们自己的任务把内置样式复制成副本并改绑时记了 `redirects`，顺着它走
@@ -576,7 +587,7 @@ export function editBoundStyle(edit: StyleEdit): Promise<boolean> {
       return false
     }
     const before = resolvedStyle(binding)
-    const next = withEdit(before, edit)
+    const next = edits.reduce(withEdit, before)
     const api = useProfileStore.getState()
     const rec = recordOf(binding.id)
     let stored: ProfileRecord | null
@@ -608,6 +619,18 @@ export function editBoundStyle(edit: StyleEdit): Promise<boolean> {
             ? msg('stylePanel.saveFailed', { reason: err.message }, 'workspace')
             : msg('stylePanel.saveFailedPlain', undefined, 'workspace'),
           'error',
+          {
+            owner: STYLE_SAVE_FAILED_OWNER,
+            // 「再试一次」= 用同一个值再改一遍。排队期间换了画布 / 改绑了，这一笔不属于此刻的画布：不重放，
+            // 只收掉提示（重放会把旧值写到别的样式上）
+            action: {
+              label: msg('stylePanel.retry', undefined, 'workspace'),
+              run: () => {
+                useUiStore.getState().clearStatusOwnedBy(STYLE_SAVE_FAILED_OWNER)
+                if (generation() === origin && canvasStyle()?.id === binding.id) void editBoundStyleAll(edits, label)
+              },
+            },
+          },
         )
       return false
     }
@@ -642,7 +665,7 @@ export function editBoundStyle(edit: StyleEdit): Promise<boolean> {
     if (redirectKey) redirects.set(redirectKey, stored.id)
     try {
       commitWith(
-        hist('editStyle', { name }),
+        label ? label(name) : hist('editStyle', { name }),
         (d) => {
           d.style = styleWith(stored.id, stored.data, owned)
           // 写的是**变化量**：标注只改了字号时，不把颜色 / 字体一起重新套一遍（Codex #547 P1）

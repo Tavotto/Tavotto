@@ -896,3 +896,14 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 写大文件时事件流静默、写入被拒后换位置写，都是真模型才复现（#1628）；2026-11-07 一份用户反馈：Windows 没有第①档
 沙盒，命令一律返回 `sandbox_unavailable`，设计指望模型带 `outside_sandbox` 重试，真模型没重试，用户批准修复后什么都没
 发生（#1793）。
+
+## 改图助手的附件（ADR 0175，`engine/ai_attachments.py`）
+
+用户附的文件（图片或任意数据文件）经 `POST /api/ai/attachments?name=`（请求体 = 文件字节）暂存到 `data_dir()/cache/ai_attachments_staged/<id>__<安全文件名>`（1 h 过期、× 即删）。图片按魔数认 PNG / JPEG / GIF / WebP（≤ 4 MiB、≤ 4000 万像素），其余单个 ≤ 25 MiB、一次合计 ≤ 50 MiB、≤ 6 个。`/api/ai/run` 只带 `attachments` id（`valid_ids`）。`ai_bridge.run(attachments=)` 经 `_attach_attachments` 把文件**移**进工作目录（`materialize`，重名加序号，合计超限之后的静默跳过）：
+
+- 有候选（TAF / 内置执行器）：`<候选>/_attachments/<名>`，提示词给相对路径；`ai_figure_edit._tree` 排除候选根下的这个目录（`ATTACHMENTS_DIRNAME` 唯一出处在 `ai_attachments`），所以不算「改了别的文件」，也不会被写回；随候选一起清。
+- 无候选（外部 CLI 原地改）：`data_dir()/cache/ai_attachments/<sid>/`，提示词给绝对路径，Claude 经 `RunContext.read_dirs` 多一个 `--add-dir`（只在附文件时出现）；`_finish_session` / `_drop_attempt_files` 删，24 h 兜底。**绝不写用户项目目录。**
+- 提示词段 `ai_prompt_pack.attachments_note` 不进 `V1` 闭集（同转换提示词一节）：「参考图」与「数据 / 其他附件」分别列路径；不附文件时整段一行都不执行，请求 / 提示词 / 工作区 / 历史行逐字节不变。
+- `sessions.attachment_count` 只存个数；`SESSION_DTO_KEYS` 带 `attachment_count`。文件不进历史、遥测、诊断包。
+- 能力清单的 `no_vision`（执行器与连接上的可选字段）来自 `ai_attachments.known_text_only`：只列**确定**看不了图的型号，判不出的不列、照常发送；前端不镜像名单。
+- 看护：`tests/test_ai_attachments.py`。

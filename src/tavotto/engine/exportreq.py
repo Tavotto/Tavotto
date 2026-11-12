@@ -376,6 +376,9 @@ class ExportRequest:
     merge_pdf: MergePdf | None = None
     #: 同时导出一份写进了这些调整的脚本（ADR 0171）。只有 `scope=original` 才可能为真。
     include_script: bool = False
+    #: 「EPS 按不透明导出」：EPS 里的画布标注把半透明压成 100%（颜色不变，不和白色混），其余格式照旧保留。
+    #: 只对 `scope=original` 有意义；缺省 False 时请求、计划身份与产物与从前逐字节相同。
+    eps_opaque: bool = False
 
     @property
     def has_raster(self) -> bool:
@@ -402,6 +405,7 @@ class ExportRequest:
             "figure_id": self.original.figure_id if self.original else None,
             "inspection": self.inspection.to_payload(),
             **({"merge_pdf": self.merge_pdf.to_payload()} if self.merge_pdf is not None else {}),
+            **({"eps_opaque": True} if self.eps_opaque else {}),
             **(
                 {"expected_source": self.original.expected_source}
                 if self.original and self.original.expected_source is not None
@@ -512,6 +516,8 @@ def render_plan_ref(req: ExportRequest, resources: list[dict]) -> dict:
                 else {}
             ),
         }
+    if req.eps_opaque:
+        semantic["eps_opaque"] = True
     if req.merge_pdf is not None:
         semantic["merge_pdf"] = [
             {"figure_id": p.figure_id, "overrides": p.overrides} for p in req.merge_pdf.pages
@@ -775,6 +781,8 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
     if include_script and (scope != SCOPE_ORIGINAL or spec.get("merge_pdf") is not None):
         raise ExportRequestError("script_export_not_for_canvas", "整版导出不能附带脚本", {})
     formats = _formats(spec.get("formats"), allowed_formats, allow_empty=include_script)
+    # 「EPS 按不透明导出」：只认严格的 True（不是真值），旧契约与整版导出没有这个选项
+    eps_opaque = spec.get("eps_opaque") is True and not legacy and scope == SCOPE_ORIGINAL
     has_raster = any(f in RASTER_FORMATS for f in formats)
     ppi = _ppi(spec.get("ppi", spec.get("dpi")), has_raster=has_raster)
 
@@ -868,4 +876,5 @@ def normalize(spec: dict, *, allowed_formats: tuple[str, ...] = FORMATS) -> Expo
         legacy_naming=legacy,
         inspection=inspection,
         include_script=include_script,
+        eps_opaque=eps_opaque,
     )

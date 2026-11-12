@@ -12,6 +12,22 @@ export const isLocationFailure = (code: string | null | undefined): boolean =>
 
 export const RASTER_TOO_LARGE = 'export_raster_too_large'
 
+/**
+ * 面板指向的图不在了（挪了文件夹 / 改了名）：返回那张图的文件 id，不是这一类 = null。
+ * 画布导出由 RenderCore 报 `export_render_failed` + 结构化 `source_code=source_missing`；
+ * 单图导出直接报 `source_missing`。两条都带 `figure`。同一张图不在，重试必败——出口是重新找到它。
+ */
+export function missingSourceFigure(
+  code: string | null | undefined,
+  params: Record<string, unknown> | null | undefined,
+): string | null {
+  const figure = typeof params?.figure === 'string' && params.figure ? params.figure : null
+  if (!figure) return null
+  if (code === 'source_missing') return figure
+  if (code === 'export_render_failed' && params?.source_code === 'source_missing') return figure
+  return null
+}
+
 const posInt = (v: unknown): number | null =>
   typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : null
 

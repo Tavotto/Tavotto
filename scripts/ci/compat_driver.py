@@ -191,6 +191,9 @@ def run_native(req: dict) -> int:
     calls: dict = {}
     extras: dict = {}
     crops: dict = {}
+    # id(Figure) → 它成功写过的 savefig stem：同一路径被后写者顶掉、改名成 `<脚本>-N` 的图，
+    # 像素层靠这张表认出它原本存的是哪张已登记的图（`expected.fidelity=false` 的声明按 stem 写）
+    saved_as: dict[int, set] = {}
     save_counts: dict[int, int] = {}
     save_watchers: dict[int, tuple[object, _NativeSaveWatcher]] = {}
     save_layouts: dict[int, tuple[object, tuple]] = {}
@@ -208,6 +211,7 @@ def run_native(req: dict) -> int:
         with _observe_native_crop(self) as observed:
             result = real_savefig(self, fname, *args, **kwargs)  # ← 照常写出去
         if stem:  # 成功写盘之后才记账（失败的保存不顶替任何人），与 native bridge 同序
+            saved_as.setdefault(id(self), set()).add(stem)
             figcapture.note_savefig_writer(
                 writers,
                 captured,
@@ -345,6 +349,7 @@ def run_native(req: dict) -> int:
         shots=shots,
         size_mm=sizes,
         fallback_stems=sorted(fallback),
+        saved_stems={s: sorted(saved_as.get(id(f), ())) for s, f in captured.items()},
         log=_tail(log.getvalue()),
     )
 

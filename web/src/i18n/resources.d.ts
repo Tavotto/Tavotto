@@ -249,6 +249,7 @@ export default interface Resources {
       "untitled": "未命名"
     },
     "message": {
+      "attachmentCount_other": "附了 {{count}} 个文件",
       "collapse": "收起",
       "copy": "复制消息",
       "expand": "展开",
@@ -274,6 +275,13 @@ export default interface Resources {
       "agentModel": "执行器与模型",
       "agentNote": "直接修改脚本；每次运行前自动快照，可回滚。",
       "aiModel": "AI 与模型",
+      "attachAria": "附文件",
+      "attachChipAria": "附件 {{name}}",
+      "attachNoVision": "这个模型看不了图，",
+      "attachNoVisionOnly": "这个模型看不了图",
+      "attachRemove": "去掉这个文件",
+      "attachSwitch": "换成 {{model}}",
+      "attachTip": "附文件 · 最多 6 个，也可粘贴或拖入",
       "checkResult": "查询结果",
       "checkUnreachable": "暂时联系不上后端，稍后再查询。",
       "cli": "CLI：{{version}}",
@@ -387,6 +395,9 @@ export default interface Resources {
       "aiTaskRejected": "助手的修改没通过检查，项目未改动",
       "aiTaskVerified": "助手已修改脚本，数据核对一致，正在重新渲染…",
       "aiTimeout": "AI 任务超时",
+      "attachOverflow": "最多附 6 个文件，多的没收",
+      "attachTooLarge": "有文件太大了（单个不超过 25 MB），没附上",
+      "attachUploadFailed": "文件没传上，再试一次",
       "cancelled": "已取消",
       "done": "完成",
       "failed": "失败",
@@ -844,6 +855,12 @@ export default interface Resources {
     "engineEnv": {
       "title": "渲染环境"
     },
+    "epsOpacity": {
+      "body_other": "这张图有 {{count}} 个半透明标注。",
+      "opaque": "EPS 按不透明导出",
+      "pdf": "改导出 PDF",
+      "title": "EPS 不支持半透明"
+    },
     "export": {
       "advancedLabel": "高级",
       "batchNames": "每张图用各自的名字",
@@ -897,6 +914,7 @@ export default interface Resources {
       },
       "filenameLabel": "文件名",
       "filenamePlaceholder": "图 1",
+      "findMissingSource": "重新找到这张图",
       "finish": "完成",
       "formatLabel": "格式",
       "groupChecks": "检查",
@@ -917,6 +935,8 @@ export default interface Resources {
         "failedItems": "核验未通过：{{items}}"
       },
       "jobLost": "找不到这次导出的作业。文件可能已写出，请检查导出目录或重新导出。",
+      "journalDpi": "{{journal}} 要求（dpi）\n{{detail}}",
+      "journalUnlisted": "{{journal}} 未列出 {{format}}",
       "locationChange": "更改…",
       "locationDefault": "项目的导出目录",
       "locationLabel": "位置",
@@ -924,6 +944,7 @@ export default interface Resources {
       "locationUpdating": "正在更新…",
       "lowerDpiExport": "改用 {{dpi}} dpi 导出",
       "mergePdf": "合成一个多页 PDF：{{name}}（{{count}} 页）",
+      "missingSourceNote": "有一张图找不到了：{{name}}。",
       "mmSize": "{{w}} × {{h}} mm",
       "needsRerun": "这张图需要重新运行脚本才能按原图导出。也可以改按画布导出（版面按画布，保真度较低）。",
       "openProblems": "在问题面板中查看",
@@ -2941,6 +2962,7 @@ export default interface Resources {
         "restartStrong": "请重启 Tavotto",
         "signatureNote": "更新包由官方签名，安装前会校验；校验不过不会安装。你的项目、排版与设置都不在应用的安装目录里，升级不受影响。",
         "sourceName": {
+          "edge": "国内镜像",
           "github": "GitHub",
           "mirror": "国内镜像"
         },
@@ -3284,6 +3306,9 @@ export default interface Resources {
       "asset_import_unreadable": "这个文件打不开，可能已损坏，或设了密码。",
       "asset_import_unsupported_type": "这不是能放进画布的图片。能放的有 PNG、JPG、TIFF、PDF、SVG。",
       "asset_import_write_failed": "写入项目文件夹时出错了。",
+      "attachment_empty": "文件是空的。",
+      "attachment_invalid": "这个文件附不上，换一个试试。",
+      "attachment_too_large": "文件太大了，单个附件最多 25 MB。",
       "backend_retired": "环境变量 TAVOTTO_RENDER_BACKEND={{value}} 指向已退役的 PyMuPDF 渲染后端。去掉这个变量即用默认渲染后端。",
       "backend_unavailable": "渲染后端不可用（依赖或字体缺失）：{{reason}}。请重新安装。",
       "backend_unknown": "环境变量 TAVOTTO_RENDER_BACKEND={{value}} 不是可用的渲染后端。去掉这个变量即用默认渲染后端。",
@@ -6008,7 +6033,7 @@ export default interface Resources {
       "zoomAlt": "{{name}} 大图预览"
     },
     "autosave": {
-      "diskFailed": "无法保存到磁盘。改动已暂存，请检查磁盘空间后重试。",
+      "diskFailed": "没能保存到磁盘。",
       "docConflict": "这份排版已在另一个窗口打开，同时编辑会互相覆盖。",
       "staleOtherWindow": "另一窗口保存了更新的版本。改动只保留在这里，未写入磁盘。"
     },
@@ -6311,6 +6336,7 @@ export default interface Resources {
       "insertPreset": "插入{{name}}",
       "insertShape": "插入{{name}}",
       "insertSymbol": "插入符号 {{symbol}}",
+      "journalStyle": "按 {{journal}} 调整样式「{{name}}」",
       "legendDetach": "断开图例项与来源的跟随",
       "legendFollowSource": "图例项重新跟随来源",
       "lineEndpoint": "调整直线端点",
@@ -7214,6 +7240,7 @@ export default interface Resources {
       "projectConflictElsewhere": "项目里的 {{file}} 已在别处改过，这次没有写入。回到那份排版再保存，就能决定怎么处理。",
       "projectFailed": "没能存进项目里的 {{file}}：{{reason}}",
       "projectSkipped": "没有写入项目里的 {{file}}：按下保存之后切换了排版或项目。回到那份排版再保存一次。",
+      "reloadFailed": "没能读到磁盘上的那一版",
       "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。"
     },
     "scan": {
@@ -7377,7 +7404,6 @@ export default interface Resources {
       "elementNotCopyable": "{{name}}还不能复制",
       "elementNotCopyableGeneric": "这个元素还不能复制",
       "elementsHidden_other": "已隐藏 {{count}} 个元素，可在「已隐藏元素」里恢复",
-      "errorTitle": "这一步没有完成",
       "geometrySyncing": "正在同步图形几何，请稍候再试",
       "groupBlocked": {
         "incomplete": "组里有成员这一版拿不到位置，暂时不能整组移动或缩放",
@@ -7453,6 +7479,16 @@ export default interface Resources {
       "groupLines": "线条",
       "groupText": "文字",
       "italicOf": "{{row}}倾斜",
+      "journalAdjust": "按期刊调整",
+      "journalAdjusted": "已按 {{journal}} 调整样式，可撤销",
+      "journalAnnotation": "画布文字",
+      "journalMismatch": "{{count}} 项不合 {{journal}}",
+      "journalProp": {
+        "fontfamily": "字体",
+        "fontsize": "字号",
+        "linewidth": "线宽"
+      },
+      "journalRetry": "再试一次",
       "load": "读取样式",
       "manage": "管理样式…",
       "mismatch_other": "{{count}} 处与样式不一致",
@@ -7465,6 +7501,7 @@ export default interface Resources {
       "previewPending": "图形预览正在同步，画面可能尚未更新。",
       "restoreWaiting": "还有图在渲染，渲染完才能恢复",
       "restore_other": "恢复原样 · {{count}} 项",
+      "retry": "再试一次",
       "row": {
         "annotation": "画布标注",
         "axisLabel": "轴标题",
@@ -7525,6 +7562,7 @@ export default interface Resources {
       "issueAria": "排版状态：{{status}}。查看详情",
       "issueLastDoc": "没接上上次的排版",
       "issueTooNew": "排版版本较新",
+      "journalTitle": "按「{{journal}}」检查 · 点开期刊规范",
       "more": "更多",
       "moreGroup": {
         "file": "文件",

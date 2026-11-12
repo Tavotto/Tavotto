@@ -171,6 +171,11 @@ interface DialogProps {
    */
   covered?: boolean
   /**
+   * 叠在别的对话框上时，在它后面再压暗一点（栈底的遮罩 30% 的一半，同一个 `shadow` 色）。
+   * 默认叠着的那层遮罩透明；只给「小卡盖在大对话框上、要看出层次」的场合用。
+   */
+  dimBehind?: boolean
+  /**
    * 稳定锚点：落在 `RD.Content` 上的 `data-dialog="<anchor>"`。e2e 要指代
    * **某一个具体的对话框**时认它——`[role=dialog]` 在这个应用里有五个产出点
    * （本组件、快速编辑、onboarding coachmark、版本面板、playground），
@@ -224,6 +229,7 @@ export function Dialog({
   blockDismiss = false,
   onEscape,
   covered = false,
+  dimBehind = false,
   anchor,
   chrome = 'default',
   initialFocusRef,
@@ -360,8 +366,10 @@ export function Dialog({
             // 30%、不模糊：OpenAI 30% / shadcn 50%，两家都不做玻璃（2026-09-15 审计 B13）。
             // 只有栈底的对话框画遮罩，叠着的那层遮罩透明（见 useScrimOwner）。压暗用 shadow 色（不是 ink：
             // ink 在暗色里是浅色，遮罩会变成提亮）
-            'fixed inset-0 z-overlay',
-            ownsScrim ? 'bg-shadow/30' : 'bg-transparent',
+            // dimBehind：要盖到下面那个对话框的内容（z-dialog）上，同层按挂载先后叠：它的内容仍在遮罩之上
+            'fixed inset-0',
+            !ownsScrim && dimBehind ? 'z-dialog' : 'z-overlay',
+            ownsScrim ? 'bg-shadow/30' : dimBehind ? 'bg-shadow/15' : 'bg-transparent',
             'data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out',
             covered && 'invisible',
           )}

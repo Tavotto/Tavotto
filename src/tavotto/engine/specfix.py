@@ -568,3 +568,178 @@ def progressed(new: dict, old: dict) -> bool:
     return len(new["blocking"]) <= len(old["blocking"]) and len(new["unresolved"]) < len(
         old["unresolved"]
     )
+
+
+def transaction(render, base: list, scale: float, profile: dict, only) -> dict:
+    """按规范修图的事务本体：`render(patches) -> 响应` 由调用方给（ADR 0080 / 0180）。
+
+    桌面端点 `/api/engine/specfix` 与 MCP 的 `tavotto_fix_to_journal` 共用这一份；
+    拆成回调也让测试能注入直连 worker 的渲染。
+    """
+    b0_resp = render(base)
+    if b0_resp.get("warnings"):
+        # 基准自己就没能完整重放（热 worker 里上一份 override 恢复不回来，Codex #549 第三轮 P1）：
+        # 候选是对着一份被污染的 B0 验的。基准不干净就不开始，文档一个字不改
+        return {
+            "ok": False,
+            "exit": normalize.EXIT_UNSUPPORTED,
+            "warnings": list(b0_resp["warnings"]),
+            "patches": list(base),
+            "changes": [],
+            "skipped": [],
+            "adjustments": [],
+            "unresolved": [],
+            "blocking": [],
+        }
+    b0 = b0_resp["manifest"]
+    issues = all_issues(b0, profile, scale)
+    targets = select(issues, only)
+    layout = [t for t in targets if t[0] in LAYOUT_RULES]
+    # 点了名、这里却不会去修的（规则不在可修清单里，或 B0 上根本没这条）：逐条说出口。
+    # 不报的话前端会把它当成「修好了」——那是最坏的一种回答
+    missed = [
+        {"rule": str(o.get("rule")), "gid": str(o.get("gid") or ""), "reason": "not_found"}
+        for o in (only or [])
+        if not any(
+            r == o.get("rule") and (g == o.get("gid") or not o.get("gid")) for r, g in targets
+        )
+    ]
+    out: dict = {
+        "ok": False,
+        "patches": list(base),
+        "changes": [],
+        "skipped": list(missed),
+        "adjustments": [],
+        "unresolved": [],
+        "blocking": [],
+    }
+    if not targets:
+        out.update({"ok": not missed, "exit": EXIT_NOTHING_TO_DO})
+        return out
+
+    font_off: list[tuple[str, str]] = []
+    for _attempt in range(2):
+        live = [t for t in targets if t not in font_off]
+        fix_plan = plan(b0, profile, scale=scale, targets=live)
+        skipped = (
+            missed
+            + fix_plan["skipped"]
+            + [{"rule": r, "gid": g, "reason": "font_unavailable"} for r, g in font_off]
+        )
+        if not fix_plan["patches"] and not layout:
+            render(base)
+            out.update({"exit": EXIT_NOTHING_TO_DO, "skipped": skipped})
+            out["ok"] = not skipped
+            return out
+        contract = build_contract(
+            b0, profile, scale=scale, base_patches=base, planned=fix_plan["patches"]
+        )
+        # 真正要修的是计划落了 patch 的那些；算不出目标值的已经进了 skipped
+        planned_targets = [
+            t
+            for t in live
+            if not any(s["rule"] == t[0] and s["gid"] == t[1] for s in fix_plan["skipped"])
+        ]
+        candidate = normalize.merge_patches(base, fix_plan["patches"])
+        resp = render(candidate)
+        if resp.get("warnings"):
+            # 有一条 override 没写进去 = 修复没有真的落地。不带着 warning 往下验
+            render(base)
+            out.update(
+                {
+                    "exit": normalize.EXIT_UNSUPPORTED,
+                    "warnings": list(resp["warnings"]),
+                    "skipped": skipped,
+                }
+            )
+            return out
+
+        def judge(manifest: dict, patches: list) -> dict:
+            return verdict(
+                contract, manifest, profile, scale=scale, targets=planned_targets, patches=patches
+            )
+
+        manifest = resp["manifest"]
+        v = judge(manifest, candidate)
+        if v["exit"] == normalize.EXIT_FONT_UNAVAILABLE and not font_off:
+            # 规范要的字体这台机器上没有：字体那几条单独退出，其余再来一遍
+            font_off = [t for t in targets if t[0] == "font-family-substituted"]
+            continue
+        break
+
+    def margin_needs(v: dict, manifest: dict) -> list[dict]:
+        """这一版还需要外边距重排来解决的：新增 / 加重的裁切与压图，加上点名要修、
+        还探在图幅外的那几条（修复前就已经出界的，不在阻断清单里）。"""
+        need = [b for b in v["repairable"] if b["repair"] == "margins"]
+        left = {(u["rule"], u["gid"]) for u in v["unresolved"]}
+        need += [
+            c for c in normalize.per_element_clipping(manifest) if (c["id"], c["gids"][0]) in left
+        ]
+        return need
+
+    adjustments: list[dict] = []
+    rounds = 0
+    while (
+        not v["ok"]
+        and v["exit"] in (normalize.EXIT_CONSTRAINT_CONFLICT, EXIT_NOT_RESOLVED)
+        and rounds < normalize.MAX_REPAIR_ROUNDS
+    ):
+        need = margin_needs(v, manifest)
+        if not need:
+            break
+        rounds += 1
+        dirs = normalize.repair_directions(need)
+        cand = normalize.adapt_margins(contract, manifest, directions=dirs or None)
+        if "conflict" in cand or not cand["patches"]:
+            break
+        trial = normalize.merge_patches(candidate, cand["patches"])
+        if normalize.authorize(contract, trial):
+            break  # 局部修复越出了约定：不收（按 normalize 的纪律这不该发生）
+        resp2 = render(trial)
+        if resp2.get("warnings"):
+            # 这一轮有 override 没写进去（重放不完整）：与首轮候选同一条纪律，不收。
+            # 退回到上一版已验过、没有 warning 的候选，而不是带着它往下验
+            render(candidate)
+            break
+        m2 = resp2["manifest"]
+        v2 = judge(m2, trial)
+        if not progressed(v2, v):
+            render(candidate)
+            break
+        candidate, manifest, v = trial, m2, v2
+        adjustments.extend(cand["changed"])
+
+    # 装不下的出界（外边距重排已经到预算 / 冲突）：如实记成「放不下」，**不连累同一批
+    # 里别的修复**——前提是除了它们之外裁决全过（没有变差、没有越权）
+    stuck = [u for u in v["unresolved"] if u["rule"] in LAYOUT_RULES]
+    if stuck and v["exit"] == EXIT_NOT_RESOLVED and len(stuck) == len(v["unresolved"]):
+        skipped = skipped + [{**u, "reason": "no_fit"} for u in stuck]
+        v["unresolved"] = []
+        v["ok"] = True
+        v["exit"] = normalize.EXIT_DONE
+        if candidate == list(base):
+            # 什么都没改成：这一轮只有放不下的出界
+            render(base)
+            out.update({"exit": EXIT_NOTHING_TO_DO, "skipped": skipped})
+            return out
+
+    out.update(
+        {
+            "exit": v["exit"],
+            "changes": fix_plan["changes"],
+            "skipped": skipped,
+            "adjustments": adjustments,
+            "unresolved": v["unresolved"],
+            "blocking": [
+                {"id": b.get("id"), "gids": b.get("gids") or [], "bucket": b.get("bucket")}
+                for b in v["blocking"]
+            ],
+            "protected_changes": v["protected_changes"],
+            "font_unresolved": v["font_unresolved"],
+        }
+    )
+    if not v["ok"]:
+        render(base)
+        return out
+    out.update({"ok": True, "patches": candidate})
+    return out
