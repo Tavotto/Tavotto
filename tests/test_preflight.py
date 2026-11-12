@@ -238,6 +238,24 @@ def test_exact_and_max_columns_both_count_as_a_pass():
     assert _width_issue(cols, 200.0) is not None  # typical 不参与
 
 
+def test_judged_page_columns_match_the_golden_vectors_and_the_ts_helper():
+    """与前端 `judgedPageColumns` 同口径：按向量里记录的期望（detail.columns 的 id 集合）断言。"""
+    cases = {c["name"]: c for c in json.loads(GOLDEN.read_text(encoding="utf-8"))["cases"]}
+    for name in ("journal-max-over", "journal-exact-and-max-over"):
+        c = cases[name]
+        got = preflight.judged_page_columns(profiles.load(c["profile_id"], c["journal"]))
+        want = next(i for i in c["expected"] if i["id"] == "page-width")["detail"]["columns"]
+        assert [x["id"] for x in got] == [x["id"] for x in want]
+        assert [x["qualifier"] for x in got] == [x.get("qualifier", "exact") for x in want]
+    mixed = preflight.judged_page_columns(
+        profiles.load(
+            cases["journal-exact-and-max-over"]["profile_id"],
+            cases["journal-exact-and-max-over"]["journal"],
+        )
+    )
+    assert [c["id"] for c in mixed] == ["col1", "cap"]  # typical 不进
+
+
 def test_exact_only_columns_keep_the_old_message_and_detail_shape():
     issue = _width_issue([_col("a", 90.0), _col("b", 180.0)], 100.0)
     assert issue["message"]["key"] == "pageWidth"

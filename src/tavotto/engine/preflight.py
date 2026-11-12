@@ -206,6 +206,17 @@ class _Sink:
 
 
 # ------------------------------ 各组检查 ------------------------------------
+def judged_page_columns(profile: dict) -> list[dict]:
+    """页宽判据认的栏位（`page-width` 的合格范围由它们划定）：exact（等于）与 max（上限），
+    有 `width_mm`；typical / range 不参与。每项带 `qualifier`（缺省补 exact）。
+    与前端 `judgedPageColumns` 同一口径；预检与 MCP 的栏位选择都读这一份，不许各写筛选条件。"""
+    return [
+        {**c, "qualifier": c.get("qualifier", "exact")}
+        for c in profiles_mod.derive_page_columns(profile)
+        if _num(c.get("width_mm")) is not None and c.get("qualifier", "exact") in ("exact", "max")
+    ]
+
+
 def _check_page(spec: dict, profile: dict, sink: _Sink) -> None:
     page = spec.get("page") or {}
     w = _num_or(page.get("w_mm"), 0.0)
@@ -215,17 +226,13 @@ def _check_page(spec: dict, profile: dict, sink: _Sink) -> None:
     single, double = _num(widths.get("single")), _num(widths.get("double"))
 
     # 栏位只有一种读法：`page_columns`（期刊自有栏位），没写就由 widths_mm 派生单栏 / 双栏。
-    # 参与判据的栏位：exact（页宽须与之相差 ≤ 容差）与 max（页宽不得超过它 + 容差）；
-    # typical / range 的宽度不是「等于」也不是上限，不参与。
     def _q(c: dict) -> str:
         return c.get("qualifier", "exact")
 
-    all_cols = [
-        c for c in profiles_mod.derive_page_columns(profile) if _num(c.get("width_mm")) is not None
-    ]
+    columns = judged_page_columns(profile)
+    all_cols = columns
     exact = [c for c in all_cols if _q(c) == "exact"]
     maxes = [c for c in all_cols if _q(c) == "max"]
-    columns = [c for c in all_cols if _q(c) in ("exact", "max")]
     matched = any(abs(w - float(c["width_mm"])) <= tol for c in exact) or any(
         w <= float(c["width_mm"]) + tol for c in maxes
     )
