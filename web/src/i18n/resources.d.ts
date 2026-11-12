@@ -6069,6 +6069,14 @@ export default interface Resources {
       "updateNone": "已经是最新版，这份排版要等新版发布才能打开。",
       "updateReady": "新版已经下好，点顶栏的「现在重启」就能打开这份排版。"
     },
+    "docWindow": {
+      "choose": "先在画布上选一下。",
+      "openElsewhere": "这份排版已在另一个窗口打开。",
+      "saveCopy": "存成副本",
+      "takeBack": "拿回来编辑",
+      "takeHere": "在这里编辑",
+      "takenOver": "这份排版正在另一个窗口编辑。"
+    },
     "document": {
       "defaultName": "新排版"
     },
@@ -6138,6 +6146,11 @@ export default interface Resources {
       "figureMissing": "项目里找不到 {{name}}",
       "layoutOnly": "未连接源脚本。可在版面上摆放，不能改图内元素。",
       "removeAdded": "撤销"
+    },
+    "fork": {
+      "copyName": "{{name}} 副本",
+      "done": "已存成“{{name}}”。",
+      "untitled": "未命名排版"
     },
     "frameDrag": {
       "canvasSize": "画布 {{w}} × {{h}} mm",

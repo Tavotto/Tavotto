@@ -249,6 +249,14 @@
     "updateCheckFailed": "没能检查更新，请确认网络后再点一次。",
     "moreActions": "其他处理方式"
   },
+  "docWindow": {
+    "choose": "先在画布上选一下。",
+    "openElsewhere": "这份排版已在另一个窗口打开。",
+    "saveCopy": "存成副本",
+    "takeBack": "拿回来编辑",
+    "takeHere": "在这里编辑",
+    "takenOver": "这份排版正在另一个窗口编辑。"
+  },
   "document": {
     "defaultName": "新排版"
   },
@@ -307,6 +315,11 @@
     "connectSource": "连接源脚本",
     "figureMissing": "项目里找不到 {{name}}",
     "layoutOnly": "未连接源脚本。可在版面上摆放，不能改图内元素。"
+  },
+  "fork": {
+    "copyName": "{{name}} 副本",
+    "done": "已存成“{{name}}”。",
+    "untitled": "未命名排版"
   },
   "history": {
     "addArrow": "添加箭头",

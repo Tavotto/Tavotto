@@ -261,6 +261,14 @@
     "updateCheckFailed": "Couldn’t check for updates. Check your connection and try again.",
     "moreActions": "More ways to resolve"
   },
+  "docWindow": {
+    "choose": "Pick one on the canvas first.",
+    "openElsewhere": "This layout is open in another window.",
+    "saveCopy": "Save a copy",
+    "takeBack": "Take it back",
+    "takeHere": "Edit here",
+    "takenOver": "This layout is being edited in another window."
+  },
   "document": {
     "defaultName": "Untitled"
   },
@@ -321,6 +329,11 @@
     "connectSource": "Link source script",
     "figureMissing": "{{name}} is not in this project",
     "layoutOnly": "No source script linked. Lay it out, but you can’t edit inside."
+  },
+  "fork": {
+    "copyName": "{{name}} copy",
+    "done": "Saved as “{{name}}”.",
+    "untitled": "Untitled layout"
   },
   "history": {
     "addArrow": "Add arrow",
