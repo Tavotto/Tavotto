@@ -1,4 +1,4 @@
-"""系列族扩展测试（SG08 / ADR 0181）：柱/误差/类别轴 + 图例手柄同步。"""
+"""系列族扩展测试（SG08 / ADR-XXXX）：柱/误差/类别轴 + 图例手柄同步。"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""显式建模流程测试（SG06 / ADR 0181）：数据入口 + 校准 + 确认产物。"""
+"""显式建模流程测试（SG06 / ADR-XXXX）：数据入口 + 校准 + 确认产物。"""
 
 from __future__ import annotations
 

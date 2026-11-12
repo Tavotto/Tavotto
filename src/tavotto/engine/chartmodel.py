@@ -1,4 +1,4 @@
-"""SVG 计算图表的模型与身份契约（ADR 0181）——schema、校验、摘要与稳定错误码。
+"""SVG 计算图表的模型与身份契约（ADR-XXXX）——schema、校验、摘要与稳定错误码。
 
 这里只放**判据**：`ChartModel` / `Binding` / `SourceDescriptor` 的形状、闭式
 字段集、非有限数闸与身份摘要。I/O 与产品接线分别在后续批次（SG03 导入、
@@ -6,7 +6,7 @@ SG06 绑定流程、SG11 持久化）。前端的同源镜像在 `web/src/types/
 两侧共同消费 `tests/golden/chart_model_vectors.json`（唯一产生者
 `scripts/gen_chart_model_vectors.py`，手改无效）。
 
-设计要点（ADR 0181 §3）：
+设计要点（ADR-XXXX §3）：
 - **闭式字段集**：模型里没有任何可执行代码的容身之处——未知键直接拒绝，
   数值必须有限（NaN/Infinity 字面量在读入闸就死），字符串字段进闭集。
 - **身份是摘要不是路径**：场景/模型/数据各算 sha256，身份不包含机器路径、

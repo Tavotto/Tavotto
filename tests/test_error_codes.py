@@ -1313,7 +1313,7 @@ def test_every_worker_error_response_carries_a_failure_status():
     # `_write_back_error_response` 的一处 `, 409`（写回 verify 段挂了，原件零改动），11 → 10；
     # ADR 0080 的 /api/engine/specfix 渲染半路死了那一处 `, 500`，10 → 11。
     # #779: paired PNG snapshot adds one explicit HTTP 500 error response, 11 → 12.
-    # ADR 0181: the SVG scene export path adds one explicit failure response, 12 → 13.
+    # ADR-XXXX: the SVG scene export path adds one explicit failure response, 12 → 13.
     assert len(seen) == 13, (
         f"`_worker_error_payload` 的调用点从 13 变成了 {len(seen)}：{seen}\n"
         "  新增出口 → 把这个数改成新的实测值，并确认它带了状态码；\n"

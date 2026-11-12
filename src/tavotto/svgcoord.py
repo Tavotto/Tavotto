@@ -1,4 +1,4 @@
-"""SVG 场景的坐标与变换链（ADR 0181，SG05）——纯函数，零 I/O。
+"""SVG 场景的坐标与变换链（ADR-XXXX，SG05）——纯函数，零 I/O。
 
 `svgscene.scene_inventory` 给出「有什么节点」；本模块给出「节点在哪里」：
 
