@@ -43,7 +43,9 @@ async function restore() {
 /* ---------------- 问题 2：恢复未决期间还有哪些写入口没关 ---------------- */
 
 describe('门关着时的写入口扫描', () => {
-  it('restoring 期间调用每一个改文档的 store 动作：文档、画布、最近文档与后端都没有任何变化', async () => {
+  // 这个用例要真 boot 整套 store 再扫 14 个写入口；默认 5s 在重载机器上不够，
+  // 断言不变，只给足 harness 成本（Windows 冷启动 + 并行测试时 >5s）。
+  it('restoring 期间调用每一个改文档的 store 动作：文档、画布、最近文档与后端都没有任何变化', { timeout: 30_000 }, async () => {
     seedSaved()
     const app = await boot()
     const gate = be.hold(isSessionGet)
