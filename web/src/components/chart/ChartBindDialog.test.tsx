@@ -267,7 +267,7 @@ describe('N4 legend region', () => {
         { index: 1, label: 'note only' },
       ],
     }] })
-    expect(request.legend[0].rect).toEqual([0, 0, 0, 0])
+    expect(request.legend![0].rect).toEqual([0, 0, 0, 0])
   })
 
   it('restores the legend editor from a chart that already carries the contract', async () => {

@@ -317,8 +317,10 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
       page_h_mm: input.doc.page.h,
       // 顺序即 z 序（底 → 顶），隐藏对象不发 —— 与画布预览同一条投影
       objects: toExportObjects(input.doc.objects).map((object): ExportObject =>
+        // chart_render_profile 已由 toExportObjects 投影（单一出处）；
+        // 这里只把 overrides 从文档对象上摘下来
         object.type === 'panel' && object.chart
-          ? { ...object, chart_render_profile: object.chartFrame?.renderProfile ?? 'native-manifest/1', overrides: structuredClone(object.overrides) }
+          ? { ...object, overrides: structuredClone(object.overrides) }
           : object,
       ),
     }
