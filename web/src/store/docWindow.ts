@@ -41,10 +41,12 @@ export function enterContested(docId?: string): void {
 /**
  * 持有方收到接管请求：先把没存的改动存好，再让出（变成「被接管」，只读）。返回改动存成了没有。
  * 存不进去也照样让出——这个窗口里的改动留在内存里，卡上的「存成副本」能把它们存成新排版，不丢。
- * 已经只读的（后开的窗口、或已让出的）没有未存的改动，直接回「存成了」。
+ * 已经只读的窗口不回话（返回 null，见上面）。
  */
-async function yieldToOtherWindow(): Promise<boolean> {
-  if (getWindowHold()) return true
+async function yieldToOtherWindow(): Promise<boolean | null> {
+  // 已经只读的（后开的、已让出的、正在让出的）不是编辑者：不替编辑者回话（三个窗口时，
+  // 请求方若认了它的 ack 就会在真正的编辑者存盘完成之前载入，拿到旧底）
+  if (getWindowHold()) return null
   const docId = useDocumentStore.getState().documentId
   // `yielding`：不再收新编辑，但还要写盘
   setWindowHold({ role: 'yielding', docId })

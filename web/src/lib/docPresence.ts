@@ -65,8 +65,12 @@ const probes = new Map<string, () => void>()
 const takeovers = new Map<string, (flushed: boolean) => void>()
 
 /** 持有方在收到接管请求时要做的事：把没存的改动存好并让出，回「存成了没有」。由文档层登记 */
-let takeoverHandler: (() => Promise<boolean>) | null = null
-export function setTakeoverHandler(fn: (() => Promise<boolean>) | null): void {
+let takeoverHandler: (() => Promise<boolean | null>) | null = null
+/**
+ * 处理方回 `null` = 「我不是在编辑的那个」（后开的只读窗口 / 已让出 / 正在让出）：不发 ack。
+ * 三个窗口时只有真正在编辑的那个能替编辑者回话，否则请求方会在编辑者存盘完成之前就载入、拿到旧底。
+ */
+export function setTakeoverHandler(fn: (() => Promise<boolean | null>) | null): void {
   takeoverHandler = fn
 }
 
@@ -92,9 +96,10 @@ function receive(data: unknown): void {
     const docId = heldDocId
     void handler()
       .catch(() => false)
-      .then((flushed) =>
-        channel?.postMessage({ type: 'takeover-ack', docId, tabId: TAB_ID, reqId: msg.reqId, flushed }),
-      )
+      .then((flushed) => {
+        if (flushed === null) return // 不是编辑者：不回话，请求方只认真正让出的那条 ack，没人回就按限时接管
+        channel?.postMessage({ type: 'takeover-ack', docId, tabId: TAB_ID, reqId: msg.reqId, flushed })
+      })
     return
   }
   if (msg.type === 'takeover-ack') {

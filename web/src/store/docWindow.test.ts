@@ -273,14 +273,56 @@ describe('被接管的窗口（持有方）', () => {
     expect(s().docNotice, '让出时已经存好了，没有要保护的改动').toBeNull()
   })
 
-  it('已经只读的窗口收到接管请求：直接回 ack，不再存盘', async () => {
+  it('已经只读的窗口（后开的 / 已让出的）收到接管请求：不回话、不存盘（它不是编辑者）', async () => {
     enterContested('d_x')
     puts.length = 0
     deliver({ type: 'takeover-request', docId: 'd_x', reqId: 'r4' })
     await flushMicrotasks()
-    expect(sent.find((m) => m.type === 'takeover-ack')).toMatchObject({ reqId: 'r4', flushed: true })
+    expect(sent.some((m) => m.type === 'takeover-ack')).toBe(false)
     expect(puts).toEqual([])
     expect(getWindowHold()?.role).toBe('contested')
+  })
+})
+
+describe('三个窗口：A 在编辑，B、C 只读', () => {
+  it('B 点「在这里编辑」：C 不替 A 回话，B 等到 A 存盘完成的 ack 才载入；只有 C 在场时走超时', async () => {
+    await diskHasTheirs()
+    enterContested('d_x') // 本窗口 = B
+    __setTakeoverTimeoutForTests(400)
+    // C 先来一条（C 是只读的）：本窗口作为「C」收到别人的请求不回话——上面那条用例钉了。
+    // 这里钉请求方：A 的 ack 晚到（A 存盘要时间），B 必须等它，不能被别的东西提前放行
+    let release!: () => void
+    const aSaved = new Promise<void>((r) => (release = r))
+    const origPost = channel.postMessage
+    channel.postMessage = (d) => {
+      origPost(d)
+      const m = d as Msg
+      if (m.type === 'takeover-request') {
+        void aSaved.then(() => {
+          // A 存盘完成：盘上换成 A 的最新版，然后才回 ack
+          const next = emptyProject()
+          next.canvases[0].objects = [text('theirs'), text('fromA')]
+          autosave.set('d_x', JSON.stringify(next))
+          listener?.({ data: { type: 'takeover-ack', docId: m.docId, tabId: 'tab-A', reqId: m.reqId, flushed: true } })
+        })
+      }
+    }
+    const done = takeOverHere()
+    await new Promise((r) => setTimeout(r, 100))
+    expect(getWindowHold()?.role, 'A 还没回：B 仍只读、还没载入').toBe('contested')
+    expect(ids()).toEqual([])
+    release()
+    expect(await done).toBe(true)
+    expect(ids(), '载入的是 A 存盘之后的版本').toEqual(['theirs', 'fromA'])
+    channel.postMessage = origPost
+
+    // 只有只读窗口在场（没人回话）：等满限时再接管
+    await s().switchDocument(emptyProject(), 'd_x')
+    enterContested('d_x')
+    peer = null
+    const t0 = Date.now()
+    expect(await takeOverHere()).toBe(true)
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(350)
   })
 })
 
