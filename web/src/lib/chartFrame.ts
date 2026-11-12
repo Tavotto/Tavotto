@@ -57,6 +57,19 @@ export function sourceFrameValue(value: [number, number], authority: PairedFrame
   return [value[0]*(sw/w)+(-l/w), value[1]*(sh/h)+(-t/h)]
 }
 
+/** True when the exact render's frame is newer than the persisted chartFrame:
+ * the figure's ink moved while the panel still lays out the old outer box.
+ * The judgment reads the exact paired frame only — never a same-name current
+ * file — and tolerates sub-hundredth-pt noise. */
+export function computedFramePending(panel: ComputedPanel, frame: ComputedRenderFrame | undefined): boolean {
+  if (!frame || panel.chartFrame === undefined) return false
+  const [l, t, w, h] = frame.rect_pt
+  const [ol, ot] = panel.chartFrame.originPt
+  const tol = 0.01
+  return Math.abs(l - ol) > tol || Math.abs(t - ot) > tol
+    || Math.abs(w - panel.nativeW / MM_PER_PT) > tol || Math.abs(h - panel.nativeH / MM_PER_PT) > tol
+}
+
 /** Move only the outer frame. Source S patches, data, units and science anchor stay. */
 export function computedFramePatch(panel: ComputedPanel, authority: PairedFrameAuthority, inputIdentity: string) {
   const f=checked(authority,inputIdentity),[l,t,w,h]=f.rect_pt
