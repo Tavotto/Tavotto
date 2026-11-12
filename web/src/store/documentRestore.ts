@@ -915,6 +915,18 @@ function dropWindowEntries(): void {
   useUiStore.getState().setStatus(msg('docWindow.entryDropped', undefined, 'workspace'), 'info')
 }
 
+/**
+ * 只读窗口（ADR 0181）里「会把这个窗口手里的内容送出去」的动作——保存、写回原图 / 脚本、改图助手发任务、
+ * 一键修复——统一走这里：窗口只读时记住这次动作（卡上提示先选，选完接着做）并返回 true，调用方直接 return；
+ * 否则返回 false，照常执行。`run` 必须是重新调用入口本身（编辑权放开后它会走 false 分支）。
+ * 窗口里的内容可能是旧的：此刻写回会把旧 override 写进用户的文件、改图助手会拿旧内容当上下文。
+ */
+export function deferWhileWindowHeld(run: () => void): boolean {
+  if (!getWindowHold()) return false
+  deferUserEntry(run)
+  return true
+}
+
 export function deferUserEntry(run: () => void): EntryGate {
   ensureHooks()
   const g = getRestoreGate()

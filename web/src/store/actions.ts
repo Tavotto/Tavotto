@@ -74,7 +74,6 @@ import { useAssetStore } from './assetStore'
 import { useEnvStore } from './envStore'
 import {
   adoptSlotBaseline,
-  getWindowHold,
   readAutosaveDoc,
   saveNowWithResult,
   setProjectFile,
@@ -84,7 +83,7 @@ import {
 } from './documentStore'
 import { finishActiveGesture, finishFocusedRichText } from './gestureCoordinator'
 import { writeBoundProjectFile } from './projectSave'
-import { deferUserEntry } from './documentRestore'
+import { deferWhileWindowHeld } from './documentRestore'
 import { captureSaveContext, reportSaveSkipped, stillCurrent } from './saveContext'
 import { AUTOSAVE_FAILURE_OWNER, reloadLatestAction, retrySaveAction } from './saveFailureActions'
 import { useInteractionStore } from './interactionStore'
@@ -583,10 +582,7 @@ function afterSwitch(): void {
 export async function runManualSave(): Promise<void> {
   // 同一份排版在另一个窗口开着、这个窗口还没选「在这里编辑 / 存成副本」（ADR 0181）：保存是用户动手——
   // 记住、让卡提示先选，选完再做。不能在只读窗口里把过时的内容写进项目文件还说「写成了」
-  if (getWindowHold()) {
-    deferUserEntry(() => void runManualSave())
-    return
-  }
+  if (deferWhileWindowHeld(() => void runManualSave())) return
   finishFocusedRichText()
   finishActiveGesture()
   const ui = useUiStore.getState()
