@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -17,10 +18,16 @@ from typing import Any
 SCHEMA_FIGURE = 2
 #: 项目文档（`ProjectDocument`，一个项目多张画布）。见 docs/adr/0001。
 SCHEMA_PROJECT = 3
+#: 声明式来源附件的项目格式；只经显式入口读取，旧布局写入端仍只收 2/3。
+SCHEMA_CHART_PROJECT = 4
 #: 能读能写的 schema 版本。**更高的版本一律拒绝**——旧构建对新字段的语义一无所知，
 #: 「尽力打开」等于用旧规则重写用户的新数据。
 SUPPORTED_SCHEMAS = (SCHEMA_FIGURE, SCHEMA_PROJECT)
 SCHEMA_CURRENT = SCHEMA_PROJECT
+
+CHART_SOURCE_SCHEMA = 1
+CHART_SOURCE_KEYS = frozenset({"schema", "sourceId", "bytesSha256", "sizeBytes", "sceneDigest"})
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
 # ---------------------------------------------------------------------------
 # 收纳目录（数据目录 `layouts/` 与项目 `tavottofile/`）里 Tavotto 自己的东西。
@@ -160,4 +167,93 @@ def validate_document(raw: Any) -> dict:
         if not isinstance(canvases, list) or not canvases:
             raise DocumentError("invalid_document", "一份排版至少要有一张画布")
 
+    return raw
+
+
+def validate_chart_source(
+    raw: Any, *, source_id: str | None = None, scene_digest: str | None = None
+) -> dict:
+    """校验不可变 INPUT SVG 引用；路径只由摘要派生，不接受客户端路径。
+
+    ``bytesSha256`` 量的是整份输入字节，自包含包的 ``sceneDigest`` 量的是包内
+    原场景。两者不互相替代；本判据也不授予 Figure 执行来源或实际重放资格。
+    """
+    from tavotto.rendercore.svgcheck import SVGBudget
+
+    def invalid() -> None:
+        raise DocumentError("chart_model_invalid", "无效的计算图表来源引用")
+
+    if not isinstance(raw, dict) or set(raw) != CHART_SOURCE_KEYS:
+        invalid()
+    if type(raw["schema"]) is not int or raw["schema"] != CHART_SOURCE_SCHEMA:
+        invalid()
+    identity = raw["sourceId"]
+    if not isinstance(identity, str) or not identity.strip() or "\x00" in identity:
+        invalid()
+    for key in ("bytesSha256", "sceneDigest"):
+        if not isinstance(raw[key], str) or not _SHA256.fullmatch(raw[key]):
+            invalid()
+    size = raw["sizeBytes"]
+    if type(size) is not int or not 0 < size <= SVGBudget().max_bytes:
+        invalid()
+    if (source_id is not None and identity != source_id) or (
+        scene_digest is not None and raw["sceneDigest"] != scene_digest
+    ):
+        raise DocumentError("chart_source_mismatch", "计算图表来源引用与面板不一致")
+    return dict(raw)
+
+
+def validate_chart_document(raw: Any, *, require_sources: bool = True) -> dict:
+    """显式校验 schema 4；旧 ``validate_document`` 的准入及返回值保持不变。
+
+    捕获附件前可用 ``require_sources=False`` 校验待保存编辑；最终提交必须使用
+    缺省值。这里只有格式与来源身份判据，不碰存储、不计算、不选择保存目录。
+    """
+    from . import chartmodel, svgstore
+
+    if (
+        not isinstance(raw, dict)
+        or type(raw.get("schema")) is not int
+        or raw["schema"] != SCHEMA_CHART_PROJECT
+    ):
+        raise DocumentError("invalid_document", "计算图表项目需要 schema 4")
+    canvases = raw.get("canvases")
+    if not isinstance(canvases, list) or not canvases:
+        raise DocumentError("invalid_document", "一份排版至少要有一张画布")
+    for canvas in canvases:
+        if not isinstance(canvas, dict) or not isinstance(canvas.get("objects", []), list):
+            raise DocumentError("invalid_document", "无效的画布对象列表")
+        for obj in canvas.get("objects", []):
+            if not isinstance(obj, dict):
+                continue
+            if "figureOrigin" in obj:
+                try:
+                    if obj.get("type") != "panel" or not isinstance(obj.get("fileId"), str):
+                        raise ValueError("Figure origin requires a panel source")
+                    svgstore.validate_origin(obj["figureOrigin"], source_id=obj["fileId"])
+                except (ValueError, TypeError, RecursionError) as exc:
+                    raise DocumentError("figure_snapshot_invalid", "无效的图表编辑来源") from exc
+            if "chart" not in obj and "chartSource" not in obj:
+                continue
+            chart = obj.get("chart")
+            if (
+                obj.get("type") != "panel"
+                or obj.get("fileKind") != "svg"
+                or not isinstance(obj.get("fileId"), str)
+                or not isinstance(chart, dict)
+                or set(chart) != {"model", "binding"}
+            ):
+                raise DocumentError("chart_model_invalid", "无效的计算图表面板")
+            try:
+                model = chartmodel.validate_model(chart["model"])
+                chartmodel.validate_binding(chart["binding"], model)
+            except chartmodel.ChartModelError as exc:
+                raise DocumentError(exc.code, exc.detail) from exc
+            if "chartSource" not in obj and not require_sources:
+                continue
+            validate_chart_source(
+                obj.get("chartSource"),
+                source_id=obj["fileId"],
+                scene_digest=model["scene_digest"],
+            )
     return raw
