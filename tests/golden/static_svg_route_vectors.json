@@ -40,6 +40,10 @@
           "eps": {
             "how": "unavailable",
             "reason": "eps_not_for_canvas"
+          },
+          "script": {
+            "how": "unavailable",
+            "reason": "script_export_not_for_canvas"
           }
         }
       }
@@ -76,6 +80,10 @@
           "eps": {
             "how": "unavailable",
             "reason": "eps_needs_script"
+          },
+          "script": {
+            "how": "unavailable",
+            "reason": "script_export_no_script"
           }
         }
       }
@@ -107,6 +115,10 @@
           "eps": {
             "how": "unavailable",
             "reason": "eps_not_for_canvas"
+          },
+          "script": {
+            "how": "unavailable",
+            "reason": "script_export_not_for_canvas"
           }
         }
       }
@@ -144,6 +156,10 @@
           "eps": {
             "how": "unavailable",
             "reason": "eps_not_for_canvas"
+          },
+          "script": {
+            "how": "unavailable",
+            "reason": "script_export_not_for_canvas"
           }
         }
       }
@@ -179,6 +195,10 @@
           "eps": {
             "how": "unavailable",
             "reason": "eps_not_for_canvas"
+          },
+          "script": {
+            "how": "unavailable",
+            "reason": "script_export_not_for_canvas"
           }
         }
       }
@@ -225,6 +245,9 @@
               "svg_asset_binding",
               "live_figure"
             ]
+          },
+          "script": {
+            "how": "redraw"
           }
         }
       }
