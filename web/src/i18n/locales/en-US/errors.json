@@ -1006,6 +1006,7 @@
     },
     "fixOption": {
       "column": "Set to {{name}} width {{mm}} mm",
+      "columnMax": "Set to {{name}} (max {{mm}} mm)",
       "double": "Set to double-column width {{mm}} mm",
       "single": "Set to single-column width {{mm}} mm"
     },

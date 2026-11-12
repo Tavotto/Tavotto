@@ -4141,6 +4141,7 @@ export default interface Resources {
       "fixNativeUnsupported": "用 {{product}} Run 打开的图暂不支持自动修复",
       "fixOption": {
         "column": "改成{{name}}宽 {{mm}} mm",
+        "columnMax": "改成{{name}}（最大 {{mm}} mm）",
         "double": "改成双栏宽 {{mm}} mm",
         "single": "改成单栏宽 {{mm}} mm"
       },

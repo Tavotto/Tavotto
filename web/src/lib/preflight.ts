@@ -327,6 +327,16 @@ class Sink {
 
 /* -------------------------------- 各组检查 --------------------------------- */
 
+/**
+ * 页宽判据认的栏位（`page-width` 的合格范围由它们划定）：exact（等于）与 max（上限）；
+ * typical / range 不参与。预检求值器与「一键修复」的选项都读这一份，不许各写一份筛选条件。
+ */
+export function judgedPageColumns(profile: PublicationProfile) {
+  return derivePageColumns(profile).filter(
+    (c) => num(c.width_mm) != null && ['exact', 'max'].includes(c.qualifier ?? 'exact'),
+  )
+}
+
 function checkPage(spec: PreflightSpec, profile: PublicationProfile, sink: Sink): void {
   const w = num(spec.page.w_mm) ?? 0
   const h = num(spec.page.h_mm) ?? 0
@@ -334,11 +344,10 @@ function checkPage(spec: PreflightSpec, profile: PublicationProfile, sink: Sink)
   // 栏位只有一种读法：`page_columns`（期刊自有栏位），没写就由 widths_mm 派生单栏 / 双栏。
   // 参与判据的栏位：exact（页宽须与之相差 ≤ 容差）与 max（页宽不得超过它 + 容差）；
   // typical / range 的宽度不是「等于」也不是上限，不参与。
-  const allCols = derivePageColumns(profile).filter((c) => num(c.width_mm) != null)
+  const columns = judgedPageColumns(profile)
   const q = (c: { qualifier?: string }) => c.qualifier ?? 'exact'
-  const exact = allCols.filter((c) => q(c) === 'exact')
-  const maxes = allCols.filter((c) => q(c) === 'max')
-  const columns = allCols.filter((c) => q(c) === 'exact' || q(c) === 'max')
+  const exact = columns.filter((c) => q(c) === 'exact')
+  const maxes = columns.filter((c) => q(c) === 'max')
   const matched =
     exact.some((c) => Math.abs(w - c.width_mm) <= tol) ||
     maxes.some((c) => w <= c.width_mm + tol)
