@@ -49,6 +49,14 @@ export function sourceFrameOverride(edit: PanelOverride, authority: PairedFrameA
   return rebaseFrameOverride(edit,{ basis_mm:[w,h], frame_mm:[-l,-t,sw,sh] })
 }
 
+/** The inverse of `sourceFrameOverride` for a drag baseline: a persisted S-space
+ * anchor (an override value) expressed in F-space fractions, so a DOM delta
+ * measured in F can be added before the write-side adapter rebases once. */
+export function sourceFrameValue(value: [number, number], authority: PairedFrameAuthority, inputIdentity: string): [number, number] {
+  const f=checked(authority,inputIdentity),[sw,sh]=f.source_viewport_pt,[l,t,w,h]=f.rect_pt
+  return [value[0]*(sw/w)+(-l/w), value[1]*(sh/h)+(-t/h)]
+}
+
 /** Move only the outer frame. Source S patches, data, units and science anchor stay. */
 export function computedFramePatch(panel: ComputedPanel, authority: PairedFrameAuthority, inputIdentity: string) {
   const f=checked(authority,inputIdentity),[l,t,w,h]=f.rect_pt

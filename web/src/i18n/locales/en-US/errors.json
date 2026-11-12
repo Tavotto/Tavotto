@@ -1071,6 +1071,7 @@
   },
   "render": {
     "failed": "Render failed (HTTP {{status}})",
+    "frameNotReady": "The figure is still rendering; wait for the exact frame before editing it.",
     "previewPngFailed": "Couldn’t fetch the preview bitmap (HTTP {{status}})",
     "projectEnvSwitched": "Now using this project’s Python environment ({{path}})",
     "timeout": "No response after {{minutes}} minutes, so the request was dropped. The service may still be running — try again later."

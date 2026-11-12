@@ -1049,6 +1049,7 @@
   },
   "render": {
     "failed": "渲染失败（HTTP {{status}}）",
+    "frameNotReady": "图还在渲染；等这一版精确帧落定后再编辑。",
     "previewPngFailed": "无法获取预览位图（HTTP {{status}}）",
     "projectEnvSwitched": "已自动使用项目的 Python 环境（{{path}}）",
     "timeout": "渲染超过 {{minutes}} 分钟无响应，已断开请求。服务可能仍在后台运行，可稍后重试。"

@@ -2,7 +2,7 @@ import { formatMessage, literal } from '@/i18n'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { emptyProject } from '@/types/document'
 import type { ArrowObject, PanelChartState, PanelObject, ShapeObject, TextObject } from '@/types/document'
-import { adoptComputedFrame, duplicateSelected, restoreLayoutVersion } from './actions'
+import { adoptComputedFrame, duplicateSelected, restoreLayoutVersion, restorePanelOverrides, setOverride } from './actions'
 import { useWorkspaceStore } from './workspace'
 import { useDocumentStore } from './documentStore'
 import { useSelectionStore } from './selectionStore'
@@ -317,5 +317,44 @@ describe('adoptComputedFrame', () => {
     expect((s().doc.objects[0] as PanelObject).chartFrame).toEqual(two.chartFrame)
     s().undo()
     expect((s().doc.objects[0] as PanelObject).chartFrame).toBeUndefined()
+  })
+
+  /** N5 第 4 步：唯一 F→S 编辑适配（setOverride 写入口）。 */
+  it('setOverride 把 F 空间的分数编辑换回 S 再落 overrides', async () => {
+    s().commit(literal('放入对象'), (d) => { d.objects.push(chartPanel('p')) })
+    const p = panelInDoc()
+    await fireRender(p, chartResponse('r1', FRAME_A))
+    expect(exactPanelRender(useRenderStore.getState(), p)).not.toBeNull()
+    // 显示帧 F = [-21,-1,122,109]pt：F 分数 (0.5,0.5) 的物理点在 S viewport 里是
+    // ((0.5*122-21)/100, (0.5*109-1)/100) = (0.4, 0.535)
+    setOverride('p', 'axes_0.title', 'pos_frac', [0.5, 0.5], true)
+    const written = panelInDoc().overrides.find((o) => o.prop === 'pos_frac')
+    const [wx, wy] = written?.value as [number, number]
+    expect(wx).toBeCloseTo(0.4, 12)
+    expect(wy).toBeCloseTo(0.535, 12)
+  })
+
+  it('缺精确配对帧时 /2 编辑零正文：不写、不进历史', async () => {
+    s().commit(literal('放入对象'), (d) => { d.objects.push(chartPanel('p')) })
+    const before = structuredClone(panelInDoc())
+    const historyBefore = s().past.length
+    // 还没有任何渲染态
+    setOverride('p', 'axes_0.title', 'pos_frac', [0.5, 0.5], true)
+    expect(panelInDoc()).toEqual(before)
+    expect(s().past.length).toBe(historyBefore)
+  })
+
+  it('/1 面板与整份恢复不走适配器：值原样落盘', async () => {
+    s().commit(literal('放入对象'), (d) => { d.objects.push(chartPanel('p', false)) })
+    setOverride('p', 'axes_0.title', 'pos_frac', [0.5, 0.5], true)
+    expect(panelInDoc().overrides.find((o) => o.prop === 'pos_frac')?.value).toEqual([0.5, 0.5])
+
+    // /2 面板整份恢复：列表本来就是 S 原序，不过 adapter
+    s().commit(literal('换成 /2'), (d) => {
+      (d.objects[0] as PanelObject).chartFrame = { version: 1, renderProfile: 'native-manifest/2', originPt: [-21, -1] }
+    })
+    const restored = [{ gid: 'axes_0.title', prop: 'pos_frac', value: [0.4, 0.535] }]
+    restorePanelOverrides('p', literal('恢复修改'), restored)
+    expect(panelInDoc().overrides).toEqual(restored)
   })
 })

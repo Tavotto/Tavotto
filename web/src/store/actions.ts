@@ -98,6 +98,7 @@ import { useInteractionStore } from './interactionStore'
 import { aliasClearPlan } from '@/lib/aliasOverrides'
 import { fitContentCrop, isContentFit } from '@/lib/panelEdgeCrop'
 import { exactPanelManifest, exactPanelRender, rejectArtifactRenders, renderEpoch, renderKeyOf, renderRequestIdentity, structuralPanelManifest, useRenderStore } from './renderStore'
+import { sourceFrameOverride } from '@/lib/chartFrame'
 import { useSelectionStore } from './selectionStore'
 import { askConfirm, isTimelineOpen, useUiStore, type StatusTone } from './uiStore'
 import { useViewportStore } from './viewportStore'
@@ -1038,6 +1039,46 @@ export const optionLabel = (prop: string, value: string): string =>
  * 'none' 是给假实时手势用的：拖动 / scrub / 取色期间画面由 SVG 局部预览
  * 负责，手势结束由 flushRender 定稿。
  */
+/**
+ * N5 第 4 步：唯一 F→S 适配入口。
+ *
+ * /2 面板的图内编辑（拖动、方向键微调、位置/尺寸输入）在显示帧 F 的分数空间里
+ * 产生；落进 overrides 之前必须经 `sourceFrameOverride` 换回源坐标 S。判据与
+ * 换算只有 `lib/figureFrame.rebaseOverride` 那一份 prop 闭集，这里不复制。
+ * 整份恢复（`restorePanelOverrides`）**不走**这里：那份列表本来就是 S 原序。
+ * 缺精确配对帧（还在渲染 / 回包错配）时不写——把 F 分数写进 S overrides 会让
+ * 热态、文件与重放三者分叉（P1）；如实说出原因，零正文变化。
+ */
+function frameSpacePatches(
+  panel: PanelObject | undefined,
+  patches: { gid: string; prop: string; value: unknown }[],
+): { gid: string; prop: string; value: unknown }[] | null {
+  if (!panel || panel.chartFrame === undefined) return patches
+  const authority = exactFrameAuthority(panel)
+  if (authority === undefined) {
+    useUiStore.getState().setStatus(msg('render.frameNotReady', undefined, 'errors'), 'info')
+    return null
+  }
+  return patches.map((patch) => sourceFrameOverride(patch, authority, authority.inputIdentity))
+}
+
+/** The exact paired frame of a /2 panel, or undefined while the render is not exact.
+ * The drag baseline uses the same authority to express a persisted S anchor in F. */
+export function exactFrameAuthority(panel: PanelObject): PairedFrameAuthority | undefined {
+  if (panel.chartFrame === undefined) return undefined
+  const render = exactPanelRender(useRenderStore.getState(), panel)
+  const frame = render?.renderFrame
+  if (!render || !frame || !render.chartRevision) return undefined
+  const identity = renderRequestIdentity(
+    panel.overrides,
+    panel.chart,
+    panel.chartSource,
+    figureOriginFor(panel),
+    panel.chartFrame.renderProfile,
+  )
+  return { inputIdentity: identity, renderRevision: render.chartRevision, frame }
+}
+
 export function setOverride(
   panelId: string,
   gid: string,
@@ -1050,12 +1091,18 @@ export function setOverride(
   // 比的是**生效的那条**：载入的旧文档可能带重复的 (gid, prop)，引擎按 last-wins 取值
   // （engine/patchspec.py），前面的重复条目同值不代表这次写入是 no-op
   const current = findObject(panelId)
+  const adjusted = frameSpacePatches(
+    current?.type === 'panel' ? current : undefined,
+    [{ gid, prop, value }],
+  )
+  if (adjusted === null) return
+  const applied = adjusted[0]
   if (current?.type === 'panel') {
     const i = effectiveOverrideIndex(current.overrides, gid, prop)
     // 同值但另一个地址上还留着旧 override（旧文档里两条并存）时不算 no-op：这次写要把它清掉
     if (
       i >= 0 &&
-      JSON.stringify(current.overrides[i].value) === JSON.stringify(value) &&
+      JSON.stringify(current.overrides[i].value) === JSON.stringify(applied.value) &&
       !pendingAliasClears(current, [{ gid, prop }]).length
     ) {
       return
@@ -1064,7 +1111,7 @@ export function setOverride(
   // 原地 upsert（与批量 setOverrides 同一个 upsertOverrides）：filter + push 会把命中的
   // 那条挪到数组末尾，顺序一变变体键就变
   updateObject<PanelObject>(panelId, hist('setProp', { prop: propLabel(prop) }), (o) => {
-    upsertOverrides(o, [{ gid, prop, value }])
+    upsertOverrides(o, [applied])
   })
   const panel = findObject(panelId)
   if (panel?.type === 'panel') requestRender(panel, immediate)
@@ -1611,8 +1658,11 @@ export function setOverrides(
   render: boolean | RenderPolicy = true,
 ) {
   if (!patches.length) return
+  const current = findObject(panelId)
+  const adjusted = frameSpacePatches(current?.type === 'panel' ? current : undefined, patches)
+  if (adjusted === null) return
   updateObject<PanelObject>(panelId, label, (o) => {
-    upsertOverrides(o, patches)
+    upsertOverrides(o, adjusted)
   })
   const panel = findObject(panelId)
   if (panel?.type === 'panel') requestRender(panel, render)
