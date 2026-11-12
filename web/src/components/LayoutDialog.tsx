@@ -21,8 +21,8 @@ import {
 import { normalizeLayout } from '@/lib/migrate'
 import { cn } from '@/lib/utils'
 import { openLayoutDocument } from '@/store/actions'
-import { captureFigureSnapshotSave, mergeSavedFigureSnapshots, projectFileSnapshot, setProjectFile, suspendAutosaveFor, useDocumentStore } from '@/store/documentStore'
-import { installFork } from '@/store/documentFork'
+import { captureFigureSnapshotSave, mergeSavedFigureSnapshots, projectFileSnapshot, getWindowHold, setProjectFile, suspendAutosaveFor, useDocumentStore } from '@/store/documentStore'
+import { installFork, resumeAutosaveAfterFork } from '@/store/documentFork'
 import { useProjectStore } from '@/store/projectStore'
 import { captureSaveContext, ifStillCurrent, stillCurrent } from '@/store/saveContext'
 import { useUiStore } from '@/store/uiStore'
@@ -153,6 +153,11 @@ export function LayoutDialog() {
     // 回车连按两下：`busy` 要等下一次渲染才进闭包，两次提交会带着同一个基线并发写同一个
     // 文件，后到的那次撞上前一次刚写成的修订号，回一个「被别处改过」——而别处就是自己
     if (inFlight.current) return
+    // 只读窗口（ADR 0181）不把过时的内容存进项目文件：先在画布上选「在这里编辑」或「存成副本」
+    if (toProject && getWindowHold()) {
+      useUiStore.getState().setStatus(msg('docWindow.choose', undefined, 'workspace'), 'info')
+      return
+    }
     inFlight.current = true
     setBusy(true)
     setError(null)
@@ -174,6 +179,8 @@ export function LayoutDialog() {
       const forkTitle = overwrite ? name.trim() || stem : stem
       const pd = fork ? { ...built, project: { ...built.project, name: forkTitle } } : built
       const snapshots = captureFigureSnapshotSave(pd, pj)
+      // 分叉：写文件这段 await 里原排版就摘出自动保存（原排版的本机槽位 / 磁盘一个字节不动）；没成就在 catch 里接回去
+      if (fork) suspendAutosaveFor(ctx.documentId)
       const res = await saveLayout(
         stem,
         pd,
@@ -232,6 +239,7 @@ export function LayoutDialog() {
         )
     } catch (e) {
       if (forkedDone) return
+      if (fork) resumeAutosaveAfterFork(ctx.documentId)
       const revision =
         e instanceof ApiError && e.status === 409 && e.body.code === 'external_change'
           ? e.body.revision

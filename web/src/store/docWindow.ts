@@ -13,7 +13,15 @@ import { requestTakeover, setTakeoverHandler } from '@/lib/docPresence'
 import { useDiagSendStore } from './diagSendStore'
 import { forkCurrentDocument, forkCopyName } from './documentFork'
 import { takeWindowEntries } from './documentRestore'
-import { getWindowHold, reloadFromDisk, saveNow, setWindowHold, useDocumentStore } from './documentStore'
+import { finishActiveGesture, finishFocusedRichText } from './gestureCoordinator'
+import {
+  getWindowHold,
+  holdContentChanged,
+  reloadFromDisk,
+  saveNow,
+  setWindowHold,
+  useDocumentStore,
+} from './documentStore'
 import { useUiStore, type StatusAction } from './uiStore'
 
 /** 卡上的按钮正在忙（接管等对面存盘最长几秒）：防连点、按钮置忙 */
@@ -35,6 +43,9 @@ export function enterContested(docId?: string): void {
   const s = useDocumentStore.getState()
   if (docId && docId !== s.documentId) return
   if (getWindowHold()) return
+  // 进行中的输入 / 拖动先收尾：只读之后事务收尾（`endTxn`）不过写入口的门，不收的话它会在只读期间落进内存
+  finishFocusedRichText()
+  finishActiveGesture()
   setWindowHold({ role: 'contested', docId: s.documentId })
 }
 
@@ -48,6 +59,9 @@ async function yieldToOtherWindow(): Promise<boolean | null> {
   // 请求方若认了它的 ack 就会在真正的编辑者存盘完成之前载入，拿到旧底）
   if (getWindowHold()) return null
   const docId = useDocumentStore.getState().documentId
+  // 进行中的输入 / 拖动先收尾，让它们进这一次存盘（只读之后事务收尾不过门，不收会落进内存而不被存）
+  finishFocusedRichText()
+  finishActiveGesture()
   // `yielding`：不再收新编辑，但还要写盘
   setWindowHold({ role: 'yielding', docId })
   let flushed = false
@@ -84,8 +98,9 @@ export async function takeOverHere(): Promise<boolean> {
     // 等的这几秒里用户换了排版 / 权属变了：不再动此刻的文档
     const now = getWindowHold()
     if (!now || now.docId !== hold.docId || useDocumentStore.getState().documentId !== hold.docId) return false
-    // 这个窗口自己有没存下的改动（刚才让出时存盘失败）才需要保护；只读期间没有新编辑
-    const keepMine = useDocumentStore.getState().dirty
+    // 这个窗口自己有没存下的改动才需要保护：让出时存盘失败（`dirty`），或只读期间内存里被改过
+    // （进行中的事务落地等，`dirty` 不会置位——靠进入只读那一刻的摘要认出来）
+    const keepMine = useDocumentStore.getState().dirty || holdContentChanged()
     const entries = takeWindowEntries()
     const ok = await reloadFromDisk({ keepMine })
     if (!ok) {
@@ -96,8 +111,11 @@ export async function takeOverHere(): Promise<boolean> {
       })
       return false
     }
+    // 等待期间又记住的动作：放开之前再取一次（放开会丢掉没被取走的），按先后顺序一起执行
+    const late = takeWindowEntries()
     setWindowHold(null)
     entries.run()
+    late.run()
     return true
   } finally {
     setBusy(false)
@@ -113,13 +131,28 @@ export async function saveCopyHere(): Promise<boolean> {
   setBusy(true)
   try {
     const entries = takeWindowEntries()
-    const out = await forkCurrentDocument()
+    // 分叉等待期间又记住的动作：在换文档（会清掉只读、丢没取走的）之前再取一次
+    const later: { taken: ReturnType<typeof takeWindowEntries> | null } = { taken: null }
+    const out = await forkCurrentDocument({
+      beforeSwitch: () => {
+        later.taken = takeWindowEntries()
+      },
+    })
     if (out.ok) {
-      // 分叉换了文档，编辑权已随旧排版清掉；记住的动作落进副本
+      // 分叉换了文档，编辑权已随旧排版清掉；记住的动作按先后顺序落进副本
       entries.run()
+      later.taken?.run()
       return true
     }
+    later.taken?.putBack()
     entries.putBack()
+    const retry: StatusAction = {
+      label: msg('docBanner.retry', undefined, 'workspace'),
+      run: () => {
+        useUiStore.getState().clearStatusOwnedBy(OWNER)
+        void saveCopyHere()
+      },
+    }
     if (out.reason === 'write_failed') {
       useUiStore.getState().setStatus(
         msg(
@@ -128,17 +161,16 @@ export async function saveCopyHere(): Promise<boolean> {
           'workspace',
         ),
         'error',
-        {
-          owner: OWNER,
-          action: {
-            label: msg('docBanner.retry', undefined, 'workspace'),
-            run: () => {
-              useUiStore.getState().clearStatusOwnedBy(OWNER)
-              void saveCopyHere()
-            },
-          },
-        },
+        { owner: OWNER, action: retry },
       )
+    } else if (out.reason === 'busy') {
+      // 还没准备好 / 没换成：说一句，给一个能走通的出口
+      useUiStore
+        .getState()
+        .setStatus(msg('fork.failed', undefined, 'workspace'), 'error', { owner: OWNER, action: retry })
+    } else if (out.reason === 'switched') {
+      // 文件已经写进项目了，只是写的途中切走了、此刻开着的是另一份：点名文件，别让人以为没存
+      useUiStore.getState().setStatus(msg('fork.switched', { file: out.file ?? '' }, 'workspace'), 'info')
     }
     return false
   } finally {

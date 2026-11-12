@@ -333,6 +333,8 @@
   "fork": {
     "copyName": "{{name}} copy",
     "done": "Saved as “{{name}}”.",
+    "failed": "Couldn’t save a copy.",
+    "switched": "The copy was saved to {{file}} in the project, but you’re still on the other layout.",
     "untitled": "Untitled layout"
   },
   "history": {

@@ -6150,6 +6150,8 @@ export default interface Resources {
     "fork": {
       "copyName": "{{name}} 副本",
       "done": "已存成“{{name}}”。",
+      "failed": "没能存成副本。",
+      "switched": "副本已存进项目里的 {{file}}，没有换过去。",
       "untitled": "未命名排版"
     },
     "frameDrag": {

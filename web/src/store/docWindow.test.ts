@@ -14,6 +14,11 @@ import {
 import { setCurrentProjectId } from '@/lib/session'
 import { emptyProject, type TextObject } from '@/types/document'
 import { enterContested, saveCopyHere, startDocWindow, takeOverHere } from './docWindow'
+import { runManualSave } from './actions'
+import { registerGesture } from './gestureCoordinator'
+import { beginRestore, resetRestoreGateForTests, holdContentChanged, setProjectFile } from './documentStore'
+import { writeBoundProjectFile } from './projectSave'
+import { captureSaveContext } from './saveContext'
 import { deferUserEntry, resetHeldEntriesForTests } from './documentRestore'
 import { flushAutosave, getWindowHold, startAutosave, useDocumentStore } from './documentStore'
 import { useUiStore } from './uiStore'
@@ -27,6 +32,12 @@ const revisionOf = (body: string) => `r${body.length}-${[...body].reduce((a, c) 
 const autosave = new Map<string, string>()
 const puts: string[] = []
 let putStatus: 200 | 500 = 200
+const posts: string[] = []
+const projectFiles = new Map<string, string>()
+/** 挂住项目文件的写（POST），用例手动放行——模拟写盘期间发生别的事 */
+let layoutGate: Promise<void> | null = null
+/** 挂住读自动保存槽位（载入最新版）的 GET */
+let getGate: Promise<void> | null = null
 
 globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   const u = new URL(String(url), 'http://x')
@@ -40,8 +51,21 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
       return new Response(JSON.stringify({ ok: true, saved_at: 1, revision: revisionOf(String(init.body)) }))
     }
     if (init?.method === 'DELETE') return new Response('{"ok":true}')
+    if (getGate) await getGate
     const v = autosave.get(id)
     return new Response(v ?? '{}', { status: v ? 200 : 404, headers: v ? { 'X-Tavotto-Revision': revisionOf(v) } : {} })
+  }
+  const lay = u.pathname.match(/^\/api\/layouts\/([^/]+)$/)
+  if (lay && init?.method === 'POST') {
+    const name = decodeURIComponent(lay[1])
+    posts.push(name)
+    if (layoutGate) await layoutGate
+    const base = u.searchParams.get('base_revision')
+    if (base === 'absent' && projectFiles.has(name)) {
+      return new Response(JSON.stringify({ code: 'external_change', error: 'x', revision: 'r', summary: null }), { status: 409 })
+    }
+    projectFiles.set(name, String(init.body))
+    return new Response(JSON.stringify({ ok: true, revision: revisionOf(String(init.body)), name, file: `tavottofile/${name}.json` }))
   }
   return new Response('{}', { status: 404 })
 }) as typeof fetch
@@ -81,6 +105,10 @@ beforeEach(async () => {
   localStorage.clear()
   autosave.clear()
   puts.length = 0
+  posts.length = 0
+  projectFiles.clear()
+  layoutGate = null
+  getGate = null
   sent.length = 0
   putStatus = 200
   peer = null
@@ -335,5 +363,173 @@ describe('旧版标签页', () => {
     expect(sent.some((m) => m.type === 'takeover-ack')).toBe(false)
     expect(getWindowHold()).toBeNull()
     stopWindow = startDocWindow()
+  })
+})
+
+const bind = () => {
+  setCurrentProjectId('pjA')
+  setProjectFile({ projectId: 'pjA', name: '排版一', file: 'tavottofile/排版一.json', revision: 'r0', dirty: false })
+  projectFiles.set('排版一', '{"orig":1}')
+}
+
+describe('只读窗口里的保存（⌘S / 菜单 / 命令面板都走 runManualSave）', () => {
+  it('不写项目文件、不说「写成了」；记住，选完（接管）再做', async () => {
+    await diskHasTheirs()
+    bind()
+    enterContested('d_x')
+    await runManualSave()
+    await flushMicrotasks()
+    expect(posts, '只读窗口绝不写项目文件').toEqual([])
+    expect(projectFiles.get('排版一')).toBe('{"orig":1}')
+    // 记住了：选完接着做（接管载入最新版之后保存，写的是最新版）
+    peer = { flushed: true }
+    expect(await takeOverHere()).toBe(true)
+    await flushMicrotasks()
+    expect(posts).toEqual(['排版一'])
+    expect(JSON.parse(projectFiles.get('排版一')!).canvases[0].objects.map((o: TextObject) => o.id)).toEqual(['theirs'])
+  })
+
+  it('硬闸：绕过入口直接写项目文件也不发请求', async () => {
+    bind()
+    enterContested('d_x')
+    expect(await writeBoundProjectFile(captureSaveContext())).toBe(false)
+    expect(posts).toEqual([])
+  })
+})
+
+describe('让出时先收尾进行中的手势；只读期间落进内存的改动一定被保护', () => {
+  it('收到接管请求：先结束进行中的手势，它的改动进这一次存盘', async () => {
+    s().beginTxn(literal('拖动'))
+    s().txnUpdate((d) => { d.objects.push(text('dragged')) })
+    let ended = 0
+    registerGesture(() => {
+      ended += 1
+      s().endTxn()
+    })
+    deliver({ type: 'takeover-request', docId: 'd_x', reqId: 'g1' })
+    await flushMicrotasks()
+    expect(ended, '让出前手势被收尾').toBe(1)
+    expect(diskIds('d_x')).toEqual(['dragged'])
+    expect(sent.find((m) => m.type === 'takeover-ack')).toMatchObject({ flushed: true })
+  })
+
+  it('进入只读时先结束进行中的手势', () => {
+    let finished = 0
+    registerGesture(() => { finished += 1 })
+    enterContested('d_x')
+    expect(finished).toBe(1)
+  })
+
+  it('只读期间事务收尾把改动落进了内存：接管时仍当「自己的改动」保护进恢复副本', async () => {
+    await diskHasTheirs()
+    s().beginTxn(literal('拖动'))
+    s().txnUpdate((d) => { d.objects.push(text('late')) })
+    // 模拟手势没被收尾就进了只读（事务还开着）
+    const { setWindowHold } = await import('./documentStore')
+    setWindowHold({ role: 'contested', docId: 'd_x' })
+    s().endTxn()
+    expect(ids()).toContain('late')
+    peer = { flushed: true }
+    expect(await takeOverHere()).toBe(true)
+    expect(ids()).toEqual(['theirs'])
+    expect(s().docNotice?.kind, '落进内存的改动没有静默消失').toBe('recovery')
+  })
+
+  it('内存被改而 dirty 没置位（绕过门的写入）：接管只认内容摘要也要保护', async () => {
+    await diskHasTheirs()
+    enterContested('d_x')
+    const doc = s().doc
+    useDocumentStore.setState({ doc: { ...doc, objects: [...doc.objects, text('sneaky')] } })
+    expect(s().dirty).toBe(false)
+    expect(holdContentChanged()).toBe(true)
+    peer = { flushed: true }
+    expect(await takeOverHere()).toBe(true)
+    expect(s().docNotice?.kind).toBe('recovery')
+  })
+
+  it('内存没被改：接管不摆「未恢复的编辑」', async () => {
+    await diskHasTheirs()
+    enterContested('d_x')
+    expect(holdContentChanged()).toBe(false)
+    peer = { flushed: true }
+    await takeOverHere()
+    expect(s().docNotice).toBeNull()
+  })
+})
+
+describe('接管 / 分叉等待期间新记住的动作不丢', () => {
+  it('接管：载入最新版的等待期间又动手，放开之后按先后顺序都执行', async () => {
+    await diskHasTheirs()
+    enterContested('d_x')
+    const order: string[] = []
+    deferUserEntry(() => order.push('first'))
+    let release!: () => void
+    getGate = new Promise<void>((r) => (release = r))
+    peer = { flushed: true }
+    const done = takeOverHere()
+    await new Promise((r) => setTimeout(r, 60)) // ack 回来了，正卡在读盘上（first 已被取走）
+    deferUserEntry(() => order.push('second')) // 等待期间进来的
+    release()
+    expect(await done).toBe(true)
+    expect(order).toEqual(['first', 'second'])
+    expect(useUiStore.getState().status?.key ?? '').not.toBe('docWindow.entryDropped')
+  })
+
+  it('存成副本（要写项目文件）：等待期间又动手，换文档之前被取走、落进副本', async () => {
+    bind()
+    enterContested('d_x')
+    let release!: () => void
+    layoutGate = new Promise<void>((r) => (release = r))
+    const ran: string[] = []
+    const done = saveCopyHere()
+    deferUserEntry(() => ran.push(s().documentId))
+    release()
+    expect(await done).toBe(true)
+    expect(ran).toEqual([s().documentId])
+    expect(s().documentId).not.toBe('d_x')
+  })
+})
+
+describe('存成副本没成也要说', () => {
+  it('写的途中切走了（文件已写进项目）：说一句并点名文件', async () => {
+    bind()
+    enterContested('d_x')
+    let release!: () => void
+    layoutGate = new Promise<void>((r) => (release = r))
+    const done = saveCopyHere()
+    await s().switchDocument(emptyProject(), 'd_y')
+    release()
+    expect(await done).toBe(false)
+    const st = useUiStore.getState()
+    expect(st.status?.key).toBe('fork.switched')
+    expect(JSON.stringify(st.status)).toContain('tavottofile/新排版 副本.json')
+  })
+
+  it('还没准备好（busy）：一句话 + 能走通的出口，不静默', async () => {
+    enterContested('d_x')
+    beginRestore(null)
+    expect(await saveCopyHere()).toBe(false)
+    const st = useUiStore.getState()
+    expect(st.statusTone).toBe('error')
+    expect(st.status?.key).toBe('fork.failed')
+    expect(st.statusAction).not.toBeNull()
+    resetRestoreGateForTests()
+  })
+})
+
+describe('分叉期间原排版的本机槽位不被写', () => {
+  it('写项目文件那段 await 里的防抖自动保存不写原 id；写失败后接回自动保存', async () => {
+    bind()
+    edit('mine')
+    let release!: () => void
+    layoutGate = new Promise<void>((r) => (release = r))
+    puts.length = 0
+    const done = saveCopyHere()
+    edit('during') // 写文件的 await 里又改了一笔，防抖计时器会排上
+    await new Promise((r) => setTimeout(r, 1300)) // 过了 1s 防抖
+    expect(puts.filter((id) => id === 'd_x'), '原排版没被自动保存写').toEqual([])
+    expect(localStorage.getItem('tavotto.autosave.d_x')).toBeNull()
+    release()
+    await done
   })
 })

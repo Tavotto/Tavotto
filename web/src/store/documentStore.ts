@@ -426,16 +426,30 @@ let windowHold: WindowHold | null = null
 /** 挂起是不是这里设的（别把教程等别处设的挂起一并放开） */
 let holdSuspended = false
 export const getWindowHold = (): WindowHold | null => windowHold
+/** 进入只读那一刻内存里文档的摘要：只读期间内存被改了（`endTxn` 收尾不过门，进行中的事务可能落地）要认得出来 */
+let holdDigest: string | null = null
+
+/**
+ * 只读期间内存里的文档被改过吗（与进入只读那一刻比）。`dirty` 管不到这条：只读窗口的自动保存被挂起，
+ * 落进内存的改动不会把 `dirty` 置位——接管时载入最新版前要靠它判「有没有自己的改动要保护」。
+ */
+export function holdContentChanged(): boolean {
+  return holdDigest !== null && documentDigest(useDocumentStore.getState().doc) !== holdDigest
+}
 
 export function setWindowHold(next: WindowHold | null): void {
   windowHold = next
   useDocumentStore.setState({ windowHold: next })
   if (next && next.role !== 'yielding') {
+    holdDigest = documentDigest(useDocumentStore.getState().doc)
     suspendAutosaveFor(next.docId)
     holdSuspended = true
-  } else if (!next && holdSuspended) {
-    holdSuspended = false
-    resumeAutosave()
+  } else if (!next) {
+    holdDigest = null
+    if (holdSuspended) {
+      holdSuspended = false
+      resumeAutosave()
+    }
   }
 }
 
@@ -1181,6 +1195,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     autosaveSuspendedFor = null
     // 编辑权属于「那份排版」：换到哪份都清（只读状态不跟着带过去）
     windowHold = null
+    holdDigest = null
     holdSuspended = false
     // 归属在**换进来那一刻**定，不在落盘那一刻现问（见 `docProject`）。
     // 必须排在上面那次 flush 之后：那一次写的是**旧**文档，它属于旧项目。

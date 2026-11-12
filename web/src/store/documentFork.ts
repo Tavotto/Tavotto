@@ -18,7 +18,9 @@ import type { ProjectDocument } from '@/types/document'
 import {
   activeProjectFile,
   captureFigureSnapshotSave,
+  flushAutosave,
   getWindowHold,
+  isAutosaveSuspendedFor,
   mergeSavedFigureSnapshots,
   resumeAutosave,
   setProjectFile,
@@ -32,6 +34,16 @@ import { captureSaveContext, stillCurrent } from './saveContext'
 import { useUiStore } from './uiStore'
 import { fitStageNow } from './zoomToSelection'
 import { currentProjectId } from '@/lib/session'
+
+/**
+ * 分叉没成时把原排版接回自动保存（只在挂起还是这一份的时候；只读窗口的挂起是它自己的，不能放开），
+ * 并补一次冲刷——挂起期间防抖计时器被取消了，不补的话没存的改动要等下一次编辑才会再排队。
+ */
+export function resumeAutosaveAfterFork(docId: string): void {
+  if (!isAutosaveSuspendedFor(docId) || getWindowHold()) return
+  resumeAutosave()
+  flushAutosave()
+}
 
 /** 项目里重名时最多试到「名 N」的 N（再多说明出了别的问题） */
 const MAX_NAME_TRIES = 50
@@ -51,14 +63,16 @@ function afterSwitch(): void {
  * 把 `pd`（带着新名字的那一份内容）装成一份新排版并换过去；原排版不被写。
  * 返回新 documentId；装不进去返回 null（自动保存的挂起放回去）。
  */
-export async function installFork(pd: ProjectDocument): Promise<string | null> {
+export async function installFork(pd: ProjectDocument, beforeSwitch?: () => void): Promise<string | null> {
   const oldId = useDocumentStore.getState().documentId
   const id = newId('d')
   suspendAutosaveFor(oldId)
+  // 紧挨着换文档调用：`switchDocument` 在这条路径上没有 await，换走（清只读、丢没取走的动作）就发生在这一步里
+  beforeSwitch?.()
   const ok = await useDocumentStore.getState().switchDocument(pd, id)
   if (!ok) {
     // 只读窗口（`windowHold`）的挂起是它自己的，不能因为分叉没成就放开
-    if (!getWindowHold()) resumeAutosave()
+    resumeAutosaveAfterFork(oldId)
     return null
   }
   afterSwitch()
@@ -67,7 +81,9 @@ export async function installFork(pd: ProjectDocument): Promise<string | null> {
 
 export type ForkOutcome =
   | { ok: true; id: string; name: string; file: string | null }
-  | { ok: false; reason: 'busy' | 'switched' | 'write_failed'; error?: unknown }
+  | { ok: false; reason: 'busy' | 'write_failed'; error?: unknown }
+  /** 文件已写进项目（`file`），但写的途中切走了：此刻开着的另一份没被换掉 */
+  | { ok: false; reason: 'switched'; file: string | null }
 
 /**
  * 在项目里找一个没被占的名字写下去：`REVISION_ABSENT` = 「这个名字下我没读到过任何内容」，
@@ -95,11 +111,14 @@ async function writeNewProjectFile(
 /**
  * 存成副本（不问名字）。失败不动当前排版、不留半截：项目文件没写成就整件不做，由调用方说一句并给出口。
  */
-export async function forkCurrentDocument(): Promise<ForkOutcome> {
+export async function forkCurrentDocument(opts: { beforeSwitch?: () => void } = {}): Promise<ForkOutcome> {
   if (isDocumentPlaceholder()) return { ok: false, reason: 'busy' }
   finishFocusedRichText()
   finishActiveGesture()
   const ctx = captureSaveContext()
+  // 入口就把原排版摘出自动保存：写项目文件那段 await 里，防抖自动保存不能再写原 id 的本机槽位 / 磁盘
+  // （原排版一个字节不动）。没分叉成就在每个失败出口接回去（`resumeAutosaveAfterFork`）
+  suspendAutosaveFor(ctx.documentId)
   const state = useDocumentStore.getState()
   const stem = forkCopyName(state.projectMeta.name)
   const binding = activeProjectFile()
@@ -113,18 +132,18 @@ export async function forkCurrentDocument(): Promise<ForkOutcome> {
     try {
       written = await writeNewProjectFile(stem, pd)
     } catch (error) {
+      resumeAutosaveAfterFork(ctx.documentId)
       return { ok: false, reason: 'write_failed', error }
     }
     name = written.name
     file = written.res.file ?? null
     // 写的途中切走了：文件已经在项目里了（新名字、没覆盖任何东西），但不把此刻开着的另一份换掉
-    if (!stillCurrent(ctx)) return { ok: false, reason: 'switched' }
-    // 回执里的快照引用合进内存里这份（再带进副本）；原排版此后不再自动保存，这次合并不会把它写回盘
-    suspendAutosaveFor(ctx.documentId)
+    if (!stillCurrent(ctx)) return { ok: false, reason: 'switched', file }
+    // 回执里的快照引用合进内存里这份（再带进副本）；原排版已摘出自动保存，这次合并不会把它写回盘
     mergeSavedFigureSnapshots(snapshots, written.res.figure_snapshots)
   }
   const latest = useDocumentStore.getState().buildProject()
-  const id = await installFork({ ...latest, project: { ...latest.project, name } })
+  const id = await installFork({ ...latest, project: { ...latest.project, name } }, opts.beforeSwitch)
   if (!id) return { ok: false, reason: 'busy' }
   if (written && pj && file) {
     rememberLayoutName(name, written.res.name)

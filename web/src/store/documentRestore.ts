@@ -925,6 +925,7 @@ export function deferUserEntry(run: () => void): EntryGate {
     if (heldWindow.length >= HELD_MAX) heldWindow.shift()?.settle('dropped')
     heldWindow.push({ run, pj: g.pj, queuedGen: null, anyReady: false, settle })
     heldChanged()
+    notifyWindowChoose()
     return 'deferred'
   }
   let settle!: (o: DeferredEntryOutcome) => void

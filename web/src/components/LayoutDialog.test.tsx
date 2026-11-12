@@ -349,6 +349,21 @@ describe('存进项目与绑定', () => {
     expect(formatMessage(useUiStore.getState().status)).toContain('tavottofile/我的排版.json')
   })
 
+  it('只读窗口（ADR 0181）里「存进项目」不写：不发请求，说一句先选', async () => {
+    const { setWindowHold } = await import('@/store/documentStore')
+    setWindowHold({ role: 'contested', docId: 'd_bind' })
+    try {
+      await open([], 'saveToProject')
+      await act(async () => {
+        buttonByText('存进项目')!.click()
+      })
+      expect(mockSave).not.toHaveBeenCalled()
+      expect(useUiStore.getState().status?.key).toBe('docWindow.choose')
+    } finally {
+      setWindowHold(null)
+    }
+  })
+
   it('另存为是真分叉：换成新 documentId，绑定记在新排版名下，原排版保留原绑定、原名不改', async () => {
     setProjectFile({ projectId: 'p1', name: '原文件', file: 'tavottofile/原文件.json', revision: 'r0', dirty: false }, 'd_bind')
     mockSave.mockResolvedValue({ ok: true, revision: 'r', name: '另一份', file: 'tavottofile/另一份.json' })
