@@ -194,7 +194,7 @@ describe('自动保存撞上外部修改（external）→「重新加载」', ()
     edit('mine')
     await saveNow()
     expect(s().saveState).toBe('conflict')
-    expect(statusText()).toContain('外部修改')
+    expect(statusText()).toContain('在别处被改过')
     expect(actionLabel()).toBe('重新加载')
 
     ui().statusAction!.run()
@@ -228,7 +228,7 @@ describe('⌘S 保存', () => {
     autosavePut = 409
     edit('mine')
     await runManualSave()
-    expect(statusText()).toContain('请先处理冲突')
+    expect(statusText()).toContain('这次没存上')
     expect(actionLabel()).toBe('重新加载')
 
     ui().statusAction!.run()

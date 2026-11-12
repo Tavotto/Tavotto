@@ -231,9 +231,8 @@
   },
   "docBanner": {
     "conflictDisk": "On disk: {{canvases}} canvases · {{objects}} objects · changed {{time}}",
-    "conflictDiskUnknown": "Couldn’t read a summary of the copy on disk",
-    "conflictExternal": "This layout was modified on disk outside Tavotto; edits in this window weren’t written, to avoid overwriting it.",
-    "conflictStale": "Another window saved a newer version; edits in this window weren’t written.",
+    "conflictExternal": "This layout was changed elsewhere, so edits in this window aren’t saved yet.",
+    "conflictStale": "Another window saved a newer version.",
     "dismiss": "Got it",
     "keepMain": "Keep main version",
     "lastDocBody": "Opened a blank layout instead. Nothing on disk was changed.",
@@ -247,7 +246,7 @@
     "recover": "Recover",
     "recoveryBody": "{{name}} · {{canvases}} canvases · {{objects}} objects · saved {{time}}",
     "recoveryTitle": "Unrecovered edits",
-    "reload": "Reload from disk",
+    "reload": "Reload",
     "retry": "Retry save",
     "saveAs": "Save as…",
     "saveErrorBody": "Your changes are kept for now, not yet on disk.",
@@ -687,7 +686,7 @@
     }
   },
   "save": {
-    "conflict": "This layout was changed elsewhere. Resolve the conflict first.",
+    "conflict": "This layout was changed elsewhere, so it wasn’t saved.",
     "doneLocal": "Saved on this computer (no project open)",
     "doneProject": "Saved to project: {{file}}",
     "failed": "Save failed. Your changes are safe — check disk space and try again.",
@@ -1022,7 +1021,7 @@
     "redoWith": "Redo {{label}}",
     "refreshProject": "Refresh project",
     "renameDocument": "Rename layout…",
-    "saveConflict": "External conflict",
+    "saveConflict": "Changed elsewhere",
     "saveDirty": "Unsaved changes",
     "saveDocumentAs": "Save layout as…",
     "saveError": "Save failed",

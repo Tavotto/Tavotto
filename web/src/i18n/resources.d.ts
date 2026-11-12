@@ -6040,9 +6040,8 @@ export default interface Resources {
     "docBanner": {
       "checkUpdate": "检查更新",
       "conflictDisk": "磁盘上：{{canvases}} 张画布 · {{objects}} 个对象 · 改动于 {{time}}",
-      "conflictDiskUnknown": "无法读取磁盘上的内容摘要",
-      "conflictExternal": "磁盘上的排版已被外部修改，本窗口的编辑未写入，以免覆盖。",
-      "conflictStale": "另一窗口保存了更新的版本，本窗口的编辑没有写入。",
+      "conflictExternal": "这份排版在别处被改过，这个窗口的改动还没存上。",
+      "conflictStale": "另一个窗口保存了更新的版本。",
       "dismiss": "知道了",
       "keepMain": "保留主版本",
       "lastDocBody": "已打开空白排版，磁盘文件没有改动。",
@@ -6057,7 +6056,7 @@ export default interface Resources {
       "recover": "恢复",
       "recoveryBody": "{{name}} · {{canvases}} 张画布 · {{objects}} 个对象 · 存于 {{time}}",
       "recoveryTitle": "有未恢复的编辑",
-      "reload": "从磁盘重新加载",
+      "reload": "重新加载",
       "retry": "重试保存",
       "saveAs": "另存为…",
       "saveErrorBody": "改动已暂存，尚未写入磁盘。",
@@ -7120,7 +7119,7 @@ export default interface Resources {
       "placeholderHint": "双击即可编辑，会运行 {{script}} 重新生成。"
     },
     "save": {
-      "conflict": "排版已在别处改过，请先处理冲突。",
+      "conflict": "排版已在别处改过，这次没存上。",
       "doneLocal": "已保存在本机（没有打开项目）",
       "doneProject": "已保存到项目：{{file}}",
       "failed": "无法保存。改动仍在，请检查磁盘空间后重试。",
@@ -7472,7 +7471,7 @@ export default interface Resources {
       "redoWith": "重做 {{label}}",
       "refreshProject": "刷新项目",
       "renameDocument": "重命名排版…",
-      "saveConflict": "外部冲突",
+      "saveConflict": "别处有改动",
       "saveDirty": "有未保存修改",
       "saveDocumentAs": "另存为新排版…",
       "saveError": "保存失败",
