@@ -7,7 +7,9 @@ import pytest
 from tavotto.engine import chartbind, chartprofile, svgchart
 
 
-def chart(*, reverse=False, data="x,a,b\n0,0,1\n1,1,0\n", x_max=1, renamed_columns=False, legend=False):
+def chart(
+    *, reverse=False, data="x,a,b\n0,0,1\n1,1,0\n", x_max=1, renamed_columns=False, legend=False
+):
     series = [
         {"node": "curve1", "x_col": "x", "y_col": "a", "kind": "line"},
         {"node": "curve2", "x_col": "x", "y_col": "b", "kind": "line"},
@@ -120,9 +122,7 @@ def test_same_legend_attribution_keeps_edits():
             lambda b: b["legend"][0]["entries"][1].__setitem__("series", "s1"),
             id="entry-follows-another-series",
         ),
-        pytest.param(
-            lambda b: b["legend"][0]["entries"].pop(1), id="entry-removed"
-        ),
+        pytest.param(lambda b: b["legend"][0]["entries"].pop(1), id="entry-removed"),
     ],
 )
 def test_legend_attribution_changes_refuse_old_edits(mutate):
