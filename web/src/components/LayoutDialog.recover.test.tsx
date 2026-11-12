@@ -8,11 +8,19 @@
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const shell = vi.hoisted(() => ({ desktop: false }))
+vi.mock('@/lib/desktop', async (original) => ({
+  ...(await original<typeof import('@/lib/desktop')>()),
+  isDesktop: () => shell.desktop,
+}))
 import { createFakeBackend } from '@/test/fakeSessionBackend'
 import { LayoutDialog } from '@/components/LayoutDialog'
 import { recoveryCopyId } from '@/lib/recoveryCandidates'
 import { setCurrentProjectId } from '@/lib/session'
+import { formatMessage } from '@/i18n'
+import { useDiagSendStore } from '@/store/diagSendStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
@@ -135,6 +143,8 @@ beforeEach(() => {
   useDocumentStore.setState({ documentId: 'd_current' })
   useUiStore.setState({ status: null })
   inFlight = 0
+  shell.desktop = false
+  useDiagSendStore.setState({ capability: { enabled: true } as never, open: false })
 })
 
 afterEach(async () => {
@@ -617,5 +627,45 @@ describe('本项目的本机排版：原 id 打开', () => {
     await flush()
     expect(useDocumentStore.getState().documentId).toBe('d_mine')
     expect(useUiStore.getState().layoutOpen).toBe(false)
+  })
+})
+
+describe('点开一行时读不了：失败出口（失败出口三种结局）', () => {
+  it('这份排版已不在本机：这一行从列表去掉并说一句（info，不是红字），列表重读后也不再出现', async () => {
+    backend.state.candidates.push({ doc_id: 'd_gone', scope: 'project', name: '没了的排版' })
+    await mount()
+    expect(rows('project')).toHaveLength(1)
+    backend.state.calls.length = 0
+    await act(async () => rows('project')[0].click())
+    await flush()
+    expect(useUiStore.getState().status).toMatchObject({ key: 'status.recentMissing' })
+    expect(useUiStore.getState().statusTone).toBe('info')
+    expect(backend.state.calls).toContain('GET candidates project') // 列表重读了
+    expect(rows('project')).toHaveLength(0) // 后端的扫描结果还列着它，界面也不再出现这一行
+    expect(useUiStore.getState().layoutOpen).toBe(true) // 对话框没因此关掉
+  })
+
+  it('来自更新版本、读不了（桌面版）：红字带「检查更新」', async () => {
+    shell.desktop = true
+    backend.putSlot('d_new', runtimeDoc('新版本存的'), PJ)
+    backend.state.candidates.push({ doc_id: 'd_new', scope: 'project', name: '新版本存的' })
+    await mount()
+    backend.putSlot('d_new', runtimeDoc('新版本存的', { schema: 999 }), PJ) // 扫描之后被更新的版本改写了
+    await act(async () => rows('project')[0].click())
+    await flush()
+    expect(useUiStore.getState().status).toMatchObject({ key: 'status.recentTooNew' })
+    expect(useUiStore.getState().statusTone).toBe('error')
+    expect(formatMessage(useUiStore.getState().statusAction?.label ?? null)).toBe('检查更新')
+  })
+
+  it('来自更新版本、读不了（浏览器版没有更新通道）：红字带「发给我们看看」', async () => {
+    backend.putSlot('d_new', runtimeDoc('新版本存的'), PJ)
+    backend.state.candidates.push({ doc_id: 'd_new', scope: 'project', name: '新版本存的' })
+    await mount()
+    backend.putSlot('d_new', runtimeDoc('新版本存的', { schema: 999 }), PJ) // 扫描之后被更新的版本改写了
+    await act(async () => rows('project')[0].click())
+    await flush()
+    expect(useUiStore.getState().status).toMatchObject({ key: 'status.recentTooNew' })
+    expect(formatMessage(useUiStore.getState().statusAction?.label ?? null)).toBe('发送问题反馈')
   })
 })

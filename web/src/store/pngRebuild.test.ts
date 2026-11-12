@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { literal } from '@/i18n'
+import { formatMessage, literal } from '@/i18n'
+import { useDiagSendStore } from './diagSendStore'
 import type { CapturedFigureDescriptor, ProbeResult } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
 import { emptyProject, type PanelObject } from '@/types/document'
@@ -132,6 +133,53 @@ describe('rebuild as editable figure (ADR 0139 PR1)', () => {
     expect(await rebuildEditableFromScript('p')).toBe('failed')
     expect(panels()).toEqual([before])
     expect(useUiStore.getState().status).toEqual({ key: 'artifact.rebuildFailed', ns: 'errors' })
+  })
+  describe('失败出口：脚本没跑出图时挂「再试一次」', () => {
+    const failRun = () => probe.mockResolvedValue({ ...ok([]), error: { code: 'script_error', message: 'boom', params: {} } })
+    const button = () => useUiStore.getState().statusAction
+    const buttonLabel = () => formatMessage(button()?.label ?? null)
+
+    it('提示带「再试一次」，点下去重做同一次重建，成功后新图出现、提示收掉', async () => {
+      failRun()
+      expect(await rebuildEditableFromScript('p')).toBe('failed')
+      expect(buttonLabel()).toBe('再试一次')
+      probe.mockResolvedValue(ok([desc('same')]))
+      button()!.run()
+      await vi.waitFor(() => expect(panels()).toHaveLength(2))
+      expect(probe).toHaveBeenCalledTimes(2)
+      expect(useUiStore.getState().statusAction).toBeNull()
+    })
+
+    it('点的时候那张 PNG 已不在：只收提示，不重跑脚本', async () => {
+      failRun()
+      await rebuildEditableFromScript('p')
+      const retry = button()! // 删图时提示可能被别处收掉；这里要钉的是「点着旧按钮也不重放」
+      S().commit(literal('delete'), (d) => { d.objects = d.objects.filter((o) => o.id !== 'p') })
+      retry.run()
+      await Promise.resolve()
+      expect(probe).toHaveBeenCalledTimes(1)
+      expect(useUiStore.getState().status).toBeNull()
+    })
+
+    it('点的时候换了项目：只收提示，不重跑脚本', async () => {
+      failRun()
+      await rebuildEditableFromScript('p')
+      setCurrentProjectId('B')
+      button()!.run()
+      await Promise.resolve()
+      expect(probe).toHaveBeenCalledTimes(1)
+      expect(useUiStore.getState().status).toBeNull()
+    })
+
+    it('重试又失败：换成「发给我们看看」', async () => {
+      useDiagSendStore.setState({ capability: { enabled: true } as never })
+      failRun()
+      await rebuildEditableFromScript('p')
+      button()!.run()
+      await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(2))
+      await vi.waitFor(() => expect(buttonLabel()).toBe('发送问题反馈'))
+      expect(useUiStore.getState().status).toEqual({ key: 'artifact.rebuildFailed', ns: 'errors' })
+    })
   })
   it('the toast button reaches this implementation through the registered runner', async () => {
     probe.mockResolvedValue(ok([desc('same')]))

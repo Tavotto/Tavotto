@@ -7312,7 +7312,7 @@ export default interface Resources {
       "pasted_other": "已粘贴 {{count}} 个对象（{{undo}} 可撤销）",
       "projectBackgroundError": "后台检查项目文件时出错。已打开的内容不受影响，修好文件后会自动重试。",
       "rebuildFailed": "无法重新构建。{{error}}",
-      "recentMissing": "这份排版在本机的副本已不存在",
+      "recentMissing": "这份排版已不在本机，已从列表里去掉",
       "recentTooNew": "这份排版来自更新的 Tavotto，本版本无法打开。磁盘上的文件没有改动。",
       "redone": "重做：{{label}}",
       "relinkNone": "未重链接任何图；缺失素材的图保持原样",

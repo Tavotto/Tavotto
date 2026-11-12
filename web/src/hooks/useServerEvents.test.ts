@@ -52,7 +52,8 @@ import { renderKey, settleRenderFailureToast, useRenderStore } from '@/store/ren
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { literal } from '@/i18n'
+import { formatMessage, literal } from '@/i18n'
+import { useDiagSendStore } from '@/store/diagSendStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -840,6 +841,55 @@ describe('AI 修改之后（ADR 0041）', () => {
     const reason = (useUiStore.getState().status as { values?: { reason?: string } })?.values?.reason ?? ''
     expect(reason).not.toBe('project_closed')
     expect(reason.length).toBeGreaterThan(0)
+  })
+
+  describe('刷新失败那条提示的出口（失败出口三种结局）', () => {
+    const refreshFailedDone = () =>
+      handleServerEvent(
+        ev({
+          kind: 'ai.done', pj: 'p1', session: 's1', status: 'done', changed: true, diff: '+x',
+          script: 'fig1.py', refresh: { status: 'failed', code: 'project_closed' },
+        }),
+      )
+    const action = () => useUiStore.getState().statusAction
+    const label = () => formatMessage(action()?.label ?? null)
+    const callsBefore = () => mockRefresh.mock.calls.length
+
+    it('带「刷新项目」按钮，点下去走与顶栏同一个刷新，并收掉这条提示', async () => {
+      refreshFailedDone()
+      expect(label()).toBe('刷新项目')
+      const before = callsBefore()
+      action()!.run()
+      await vi.waitFor(() => expect(callsBefore()).toBe(before + 1))
+      expect(useUiStore.getState().status).toBeNull()
+    })
+
+    it('点的时候已换到别的项目：只收提示，不替另一个项目刷新', async () => {
+      refreshFailedDone()
+      const before = callsBefore()
+      const was = project
+      project = 'p-other'
+      try {
+        action()!.run()
+        await Promise.resolve()
+      } finally {
+        project = was
+      }
+      expect(callsBefore()).toBe(before)
+      expect(useUiStore.getState().status).toBeNull()
+    })
+
+    it('重试又失败：换成「发给我们看看」，不再给一个多半还会失败的刷新', async () => {
+      useDiagSendStore.setState({ capability: { enabled: true } as never })
+      refreshFailedDone()
+      mockRefresh.mockRejectedValueOnce(new Error('还是不行'))
+      action()!.run()
+      await vi.waitFor(() => expect(useUiStore.getState().status).not.toBeNull())
+      expect(statusKey()).toBe('status.aiChangedRefreshFailed')
+      expect(label()).toBe('发送问题反馈')
+      action()!.run()
+      expect(useDiagSendStore.getState().open).toBe(true)
+    })
   })
 
   it('刷新失败但文件没变：按普通结局提示（没有可失败的刷新）', () => {

@@ -1753,6 +1753,15 @@ export function dismissDocNotice(): void {
 }
 
 /**
+ * 只把「最近的排版」列表里的这一条去掉（读不到它了）：不碰自动保存槽位 / 恢复副本——
+ * 那些是用户数据，「读不到」可能只是暂时的，删不删不归列表管。
+ */
+export function dropRecentEntry(id: string): void {
+  const kept = writeIndex(readIndex().filter((e) => e.id !== id))
+  useDocumentStore.setState({ recentDocs: kept })
+}
+
+/**
  * 忘掉本机关于某个 documentId 的一切：自动保存槽位、待恢复副本、最近文档
  * 条目。**只动本机、只动这一个 id**——磁盘上的文档不归这里管。
  *
