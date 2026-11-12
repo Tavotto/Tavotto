@@ -3,10 +3,11 @@ import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { Bookmark, ClipboardList, ExternalLink, FolderOpen, FolderPlus, Info } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { backendErrorMsg, type ProjectEntry, type ProjectStatus } from '@/lib/api'
+import type { ProjectEntry, ProjectStatus } from '@/lib/api'
 import { canRevealInFileManager, isDesktop } from '@/lib/desktop'
 import { disambiguateRecent, matchesRecent, splitRecent } from '@/lib/recentProjects'
 import { useProjectStore } from '@/store/projectStore'
+import { reportProjectOpenFailure } from '@/store/projectOpenFailure'
 import { useUiStore } from '@/store/uiStore'
 import { TailPath, useProjectEntry } from '../ProjectPicker'
 import { BookmarkFilled, ProjectRow, RevealItem } from '../ProjectPickerRow'
@@ -57,13 +58,20 @@ export function WorkspaceList() {
     void useProjectStore.getState().refreshRecent()
   }, [])
 
-  const go = async (path: string, create = false, entry?: ProjectEntry) => {
+  const go = async (path: string, create = false, via?: ProjectEntry, attempt = 0) => {
     setBusyPath(path)
     try {
       const store = useProjectStore.getState()
-      await (entry ? store.open(path, create, entry) : store.open(path, create))
+      await (via ? store.open(path, create, via) : store.open(path, create))
     } catch (e) {
-      useUiStore.getState().setStatus(backendErrorMsg(e), 'error')
+      void reportProjectOpenFailure({
+        path,
+        error: e,
+        create,
+        attempt,
+        retry: (next) => go(path, create, via, next),
+        reselect: () => entry.startOpen(),
+      })
     } finally {
       setBusyPath(null)
     }

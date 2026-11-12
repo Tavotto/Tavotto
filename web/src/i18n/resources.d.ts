@@ -5973,7 +5973,7 @@ export default interface Resources {
       "panelMissing": "没找到图 {{stem}}——脚本可能还没产出，或它在别的图库里",
       "projectOpened": "已打开项目 {{name}}",
       "restoreTimeout": "这次交接的图在素材库里：先在画布上选一份排版，再把它加进来。",
-      "runtimeNeedsRun": "{{stem}} 已登记为运行时图，但还没有预览——到素材库的「脚本」区运行一次。",
+      "runtimeNeedsRun": "{{stem}} 需要在运行后预览。",
       "superseded": "项目已切换，这次交接没有放入。"
     },
     "home": {
@@ -6072,6 +6072,7 @@ export default interface Resources {
       "trigger": "当前项目 {{name}}，点击切换"
     },
     "workspace": {
+      "createFailed": "未成功新建「{{name}}」。",
       "current": "当前",
       "currentActions": "当前项目的更多操作",
       "emptyRecent": "打开过的项目会出现在这里",
@@ -6084,8 +6085,10 @@ export default interface Resources {
       "moveUp": "上移",
       "newProject": "新建项目…",
       "noMatch": "没有匹配的项目",
+      "openFailed": "没能打开「{{name}}」。",
       "openFolder": "打开文件夹…",
       "openInNewTab": "在新标签页打开",
+      "openMissing": "无法找到「{{name}}」文件夹。",
       "openedElsewhere": "已打开",
       "pin": "收藏",
       "pinLabel": "收藏 {{name}}",
@@ -6095,6 +6098,7 @@ export default interface Resources {
       "registry": "项目接入状态…",
       "removeFromList": "从最近列表移除",
       "removeMissing_other": "移除 {{count}} 个已不存在的",
+      "reselectFolder": "重新选择文件夹",
       "revealFailed": "无法在文件管理器中打开，项目在：{{path}}",
       "revealInExplorer": "在文件资源管理器中打开",
       "revealInFileManager": "在文件管理器中打开",
@@ -7690,7 +7694,8 @@ export default interface Resources {
       "renderFailedWithError": "无法渲染 {{name}}。{{error}}",
       "scriptChanged_other": "脚本已更新，{{count}} 张图已重新渲染",
       "sourceLinked_other": "已找到源脚本（{{count}} 张）",
-      "sourceLostEditing": "源脚本关系已失效，已返回画布。图片和它在画布上的摆放都保留着。",
+      "sourceLostEditing": "你可能移动了该图脚本，需要重新关联。",
+      "sourceLostRelink": "重新关联脚本",
       "sourceLost_other": "源脚本关系已失效，{{count}} 张图已改为普通图片。图片和它们在画布上的摆放都保留着。",
       "styleCopiedArrow": "已复制箭头样式",
       "styleCopiedPanel": "已复制图的样式",
