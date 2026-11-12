@@ -512,7 +512,8 @@
       "pick_group": "Which column splits the groups?",
       "pick_x": "Which column goes on the x axis?",
       "pick_design": "Is the same subject measured repeatedly in this data?",
-      "pick_unit": "Which column says which subject a row belongs to?"
+      "pick_unit": "Which column says which subject a row belongs to?",
+      "mixed_cells": "{{count}} cells in “{{column}}” aren’t numbers (out of {{rows}} rows with data). What should be done with them?"
     },
     "option": {
       "table": "{{file}}: {{rows}} rows, {{groups}} groups",
@@ -520,7 +521,10 @@
       "column": "{{column}}",
       "design_independent": "Every row is a different subject",
       "design_repeated": "The same subject is measured several times",
-      "unsure": "Not sure"
+      "unsure": "Not sure",
+      "skip": "Ignore those rows",
+      "extract": "Take the number inside",
+      "describe": "Let me explain"
     },
     "candidate": {
       "points_mean": {
@@ -600,13 +604,20 @@
       "target_exists": "A script with that name already exists and was left alone.",
       "register_failed": "The new figure couldn’t be registered, so the files created were removed.",
       "data_changed": "The data file changed after the options were made. Please generate them again.",
-      "rows_not_plotted": "Some rows couldn’t be drawn."
+      "rows_not_plotted": "{{count}} rows aren’t numbers (or lack an x value) and weren’t drawn."
     },
     "result": {
       "verified": "The figure is ready and its data matches the file.",
       "unverifiable": "The figure is ready, but this kind of plot can’t be checked against the data.",
       "mismatch": "The data in the figure doesn’t match the file; you can delete the new script.",
       "unknown": "The figure is ready, but the data check couldn’t finish."
+    },
+    "mixedCells": {
+      "previewRow": "Row {{row}}: {{text}}",
+      "extracted": "Becomes {{value}} after taking the number",
+      "cannotExtract": "No number found; it will be ignored",
+      "more": "{{count}} more rows",
+      "placeholder": "Say how these cells should count, for example “ND counts as 0”"
     }
   }
 }

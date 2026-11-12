@@ -518,26 +518,7 @@ def common_module_state(path: Path, data: bytes) -> str:
     return "conflict"
 
 
-def unplotted_rows(values: ai_data_figure.DataSummary, recipe) -> list[dict]:
-    """配方画不出来的行（行号按文件行，表头是第 1 行）：横轴（trend / relationship）没有值（空 / NaN / 不是数或日期）的行画不到坐标里；
-    数值列里的文字格（`<0.1`）不画。y 列的空 / NaN 是缺失，折线在那里断开，不算没画。"""
-    out: list[dict] = []
-    idx = {c: i for i, c in enumerate(values.columns)}
-    x = recipe.x if recipe.family in ("trend", "relationship") else None
-    for n, row in enumerate(values.rows, start=2):
-        if x is not None:
-            cell = row[idx[x]]
-            if values.per_column[x].kind == "date":
-                ok = ai_data_figure.parse_date(cell) is not None
-            else:
-                ok = ai_data_figure.parse_cell(cell)[0] == "numeric"
-            if not ok:
-                out.append({"row": n, "column": x, "reason": "x_not_a_value"})
-                continue
-        for y in recipe.y:
-            if ai_data_figure.parse_cell(row[idx[y]])[0] == "text":
-                out.append({"row": n, "column": y, "reason": "not_a_number"})
-    return out
+unplotted_rows = ai_data_propose.unplotted_rows
 
 
 @dataclass(frozen=True)
@@ -564,6 +545,7 @@ class PreparedV2:
     expected: list[dict]
     coverage: ai_data_template.Coverage
     not_plotted: list[dict]
+    cell_stats: list[dict] = field(default_factory=list)
 
 
 def prepare_v2(root: Path, sel: Selection) -> PreparedV2:
@@ -594,6 +576,7 @@ def prepare_v2(root: Path, sel: Selection) -> PreparedV2:
         expected=ai_data_template.expected_fingerprints(values, sel.recipe),
         coverage=ai_data_template.fingerprint_coverage(sel.recipe),
         not_plotted=unplotted_rows(values, sel.recipe),
+        cell_stats=ai_data_propose.cell_stats(values, sel.recipe),
     )
 
 

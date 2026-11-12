@@ -11,11 +11,10 @@ Flask 父进程 import；**不调模型**（模型工具集是下一个 PR，复
 另外两半——**候选目录是一个独立的小项目**（脚本、公共模块、被选中那一张数据文件的**字节副本**，都在 `CANDIDATE_ROOT/<session>/` 里，布局与将来
 落盘后相同：`tavotto_figures/<stem>.py` 读 `../<数据相对路径>`），safe worker 以这个小项目为 `figures_dir` 跑，**写入根绊线只开候选目录**
 （`write_roots`）——脚本往任何别处写（含用户文件夹）在写发生的那一刻失败。用户文件夹里**一个字节都不写、不建目录、不改 mtime**；数据文件
-只被读（`profile_folder` / `inspect_data_source`）与复制进候选目录，用户的文件不被改写、移动。取舍：缩略图走「默认链条」解释器（内置
-runtime / 用户全局选择），不是项目自己的 venv——模板只用 matplotlib 与标准库，这样候选渲染不依赖用户项目环境；落盘后的提交后渲染仍走项目自己的路由。
+只被读（`profile_folder` / `inspect_data_source`）与复制进候选目录，用户的文件不被改写、移动。解释器：先用项目渲染本来会用的那个（`pool.peek_worker_python` 纯读、`pool.pinned_interpreter` 钉在候选目录上，safe 档），这样选中的小图与落盘后的图同一环境、同一字体；它起不来 / 缺 matplotlib / 画不出就**静默**回退到默认链条再画一次（不报错、不装依赖，结果里 `interpreter_fallback` 留诊断标记），两条都不行才算这个备选失败。落盘后的核对是对**原件**渲染的（见 `ai_data_task`），不沿用候选的结论。
 
 **候选目录的生命周期**：会话在内存里登记（`_SESSIONS`），目录在 `CANDIDATE_ROOT/<session>/`；存活 `SESSION_TTL_S`（最后一次读 / 提交后重新计时），
-同时至多 `MAX_SESSIONS` 个（超了先删最老的）；提交成功或放弃（`discard`）立刻删；每次出备选 / 提交前 `sweep()` 把过期会话与上一个进程留下的
+同时至多 `MAX_SESSIONS` 个（超了先删最老的）；提交后**不**删（用户可以接着出同一批里的另一个备选），放弃（`discard`）立刻删；同一会话里数据文件只有**一份**副本（所有备选共用，≤ 5 MiB，`data_too_large` 上限），整个会话目录随会话删，磁盘上界 ≈ `MAX_SESSIONS` × （5 MiB + 每张缩略图 ≤ 4 MiB × 4）、常态每会话只有「数据文件 + 几十 KB 的小图」；每次出备选 / 提交前 `sweep()` 把过期会话与上一个进程留下的
 孤儿目录（`mtime` 超过 TTL）一并删。删除一律不用 `ignore_errors=True`：删不掉记日志并留给下一次 sweep，不假装删了。
 
 会话只在内存里：进程重启 = 会话过期（`propose_session_expired`），前端据此重新出备选。会话属于项目：别的项目拿同一个 id 也是过期。
@@ -23,6 +22,7 @@ runtime / 用户全局选择），不是项目自己的 venv——模板只用 m
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import ntpath
@@ -58,6 +58,8 @@ ERROR_CODES = (
     "propose_candidate_unknown",  # 会话里没有这个备选
     "propose_data_changed",  # 数据文件自出备选后变了（sha256 不同）：前端重新出备选
     "propose_input_invalid",  # 请求体的字段类型不对 / 超长
+    "propose_cells_invalid",  # 数值列里夹着的文字格的处理规则不合格（`params.reason` 是拒绝码，`params.key` 点名哪一项）
+    "propose_cells_need_rule",  # 用户只用文字说明了怎么处理（`describe`）：要先由助手整理成规则，不猜
 )
 #: 一个备选没能出现在结果里的原因（`dropped[].reason_code` / `nothing.reasons`；文案在前端 `dataFigure.reason.<码>`）
 DROP_REASONS = (
@@ -78,6 +80,8 @@ MAX_THUMB_BYTES = 4 * 1024 * 1024
 MAX_PARALLEL = 2
 #: 幂等表：同一 `(项目, client_request_id)` 在 TTL 内回同一份响应
 MAX_REQUESTS = 64
+#: 有行没画出来时的稳定码（备选卡 `unplotted.code` 与提交结果；文案 `ai:dataFigureV2.reason.rows_not_plotted`）
+UNPLOTTED_CODE = "rows_not_plotted"
 
 _ID = re.compile(r"[0-9a-f]{12}")
 _SESSION_ID = re.compile(r"[0-9a-f]{24}")
@@ -89,11 +93,12 @@ _ANSWER_MAX = 400
 class ProposeError(ValueError):
     """流水的结构化失败；`code` 在 `ERROR_CODES` 里（构造时校验）。"""
 
-    def __init__(self, code: str, detail: str = ""):
+    def __init__(self, code: str, detail: str = "", params: dict | None = None):
         if code not in ERROR_CODES:
             raise ValueError(f"未登记的 ProposeError 码：{code}")
         super().__init__(f"{code}: {detail}" if detail else code)
         self.code = code
+        self.params = dict(params or {})
 
 
 # =========================================================================== 路径纯函数（不碰磁盘，POSIX 上可测 Windows 口径）
@@ -144,6 +149,8 @@ class Item:
     recipe: recipe_mod.FigureRecipe
     coverage: dict
     thumb: Path | None = None
+    unplotted: int = 0  # 有多少行因为横轴没有值而没画（稳定码 `rows_not_plotted` + 计数）
+    cells: list | None = None  # 处理规则作用的统计（没有规则 = None）
 
 
 @dataclass
@@ -166,7 +173,7 @@ class Session:
 
 _LOCK = threading.RLock()
 _SESSIONS: dict[str, Session] = {}
-_REQUESTS: dict[tuple[str, str], tuple[float, dict, str | None]] = {}
+_REQUESTS: dict[tuple[str, str, str], tuple[float, dict, str | None]] = {}
 
 
 def _rmtree(path: Path) -> bool:
@@ -284,18 +291,45 @@ def _text(value, what: str, limit: int = _ANSWER_MAX) -> str | None:
     return value
 
 
-def parse_answers(answers) -> dict[str, str]:
+def parse_cells(raw) -> dict[str, recipe_mod.CellRule]:
+    """`answers.cells`：`{列名: {"mode": "skip"} | {"mode": "extract"} | {"mode": "map", "map": {原文: 数 | null}, "rest": "skip" | "extract"}}`，
+    声明式、不含代码。`describe`（用户只写了文字说明）**不是可执行方式**：没有 `map` 一并给就 `propose_cells_need_rule`（要先由助手整理成规则，
+    不猜）；带了 `map` 的 `describe` 当 `map` 用。未知方式 / 形状不对 → `propose_cells_invalid`。键值的真假（键是不是真在该列文字格里、
+    值是不是有限数）等读到数据后由 `recipe.cell_rule_problems` 判。"""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or len(raw) > recipe_mod.MAX_Y:
+        raise ProposeError("propose_cells_invalid", params={"reason": "cell_rule_invalid"})
+    out: dict[str, recipe_mod.CellRule] = {}
+    for col, rule in raw.items():
+        if not isinstance(col, str) or not isinstance(rule, dict):
+            raise ProposeError("propose_cells_invalid", params={"reason": "cell_rule_invalid"})
+        body = {k: v for k, v in rule.items() if k != "text"}
+        if body.get("mode") == "describe":
+            if "map" not in body:
+                raise ProposeError("propose_cells_need_rule")
+            body["mode"] = "map"
+        try:
+            out[col] = recipe_mod.CellRule.from_dict({"column": col, **body})
+        except recipe_mod.RecipeError as exc:
+            raise ProposeError("propose_cells_invalid", params={"reason": exc.code}) from None
+    return out
+
+
+def parse_answers(answers) -> dict:
     """对上一轮选择题的回答：只认 `_ANSWER_KEYS`，值是字符串（列名 / 文件名 / `unsure` …）；别的键丢弃（不报错）。"""
     if answers is None:
         return {}
     if not isinstance(answers, dict):
         raise ProposeError("propose_input_invalid", "answers")
-    out: dict[str, str] = {}
+    out: dict = {}
     for key in _ANSWER_KEYS:
         if key in answers:
             val = _text(answers[key], key)
             if val is not None:
                 out[key] = val
+    if "cells" in answers:
+        out["cells"] = parse_cells(answers["cells"])
     return out
 
 
@@ -317,12 +351,44 @@ def confirmed_from(answers: dict[str, str]) -> tuple[recipe_mod.Confirmed, dict]
     return recipe_mod.Confirmed(), picks
 
 
+def unplotted_rows(values: adf.DataSummary, recipe) -> list[dict]:
+    """配方画不出来的行（`row` 是文件里的行号，表头算第 1 行，XLSX 是表内行号）：横轴（trend / relationship）没有值（空 / NaN / 不是数或日期）的行
+    画不到坐标里。y 列的空 / NaN 是缺失，折线在那里断开，不算没画；夹着文字格的数值列用户已选了处理方式（`recipe.cells`），
+    那些格子是用户明确决定过的，不在这里报（统计在 `cell_stats`）。"""
+    out: list[dict] = []
+    idx = {c: i for i, c in enumerate(values.columns)}
+    x = recipe.x if recipe.family in ("trend", "relationship") else None
+    covered = {c.column for c in recipe.cells}
+    for n, row in enumerate(values.rows):
+        if x is not None:
+            cell = row[idx[x]]
+            if values.per_column[x].kind == "date":
+                ok = adf.parse_date(cell) is not None
+            else:
+                ok = adf.parse_cell(cell)[0] == "numeric"
+            if not ok:
+                out.append({"row": values.row_number(n), "column": x, "reason": "x_not_a_value"})
+                continue
+        for y in recipe.y:
+            if y not in covered and adf.parse_cell(row[idx[y]])[0] == "text":
+                out.append({"row": values.row_number(n), "column": y, "reason": "not_a_number"})
+    return out
+
+
+def cell_stats(values: adf.DataSummary, recipe) -> list[dict]:
+    """处理规则实际作用了多少格（`[{column, mode, ignored, extracted, mapped}]`），与图下方说明同一份计数（`adf.apply_cells`）。"""
+    if not recipe.cells:
+        return []
+    return adf.apply_cells(values.columns, values.rows, [c.args() for c in recipe.cells])[2]
+
+
 # =========================================================================== 候选渲染
 @dataclass
 class _Rendered:
     png: Path | None = None
     manifest: dict | None = None
     reason: str | None = None
+    fallback: bool = False  # 项目自己的解释器没画成、回退到默认链条才画成的（诊断用，不给界面文案）
 
 
 def _reason_for_error(err: dict) -> str:
@@ -335,7 +401,30 @@ def _reason_for_error(err: dict) -> str:
     return "candidate_render_failed"
 
 
-def _render_one(sdir: Path, rel: str, stem: str, thumb: Path) -> _Rendered:
+def _project_pin(root: Path):
+    """项目**此刻已经定下来**的解释器（`pool.peek_worker_python`：纯读，不起进程、不体检、不触发依赖流程）；没有 → None（走默认链条）。"""
+    try:
+        got = pool.peek_worker_python(root)
+    except Exception:  # noqa: BLE001 —— 读不出来就当没有
+        return None
+    return pool.EnvironmentDecision(python=got[0], source=got[1]) if got else None
+
+
+def _render_one(sdir: Path, rel: str, stem: str, thumb: Path, pin=None) -> _Rendered:
+    """先用项目渲染本来会用的解释器（`pin`，safe 档）画；起不来 / 缺 matplotlib / 画不出就**静默**回退到默认链条再画一次
+    （不报错、不装依赖）；超时与写入被拦不回退（换解释器救不了）。两条都不行才是这个备选的失败原因。"""
+    if pin is not None:
+        with pool.pinned_interpreter(str(sdir), pin):
+            out = _render_attempt(sdir, rel, stem, thumb)
+        if out.png is not None or out.reason in ("candidate_timeout", "candidate_write_blocked"):
+            return out
+        retry = _render_attempt(sdir, rel, stem, thumb)
+        retry.fallback = retry.png is not None
+        return retry
+    return _render_attempt(sdir, rel, stem, thumb)
+
+
+def _render_attempt(sdir: Path, rel: str, stem: str, thumb: Path) -> _Rendered:
     """在候选目录这个小项目里用 safe worker 真跑一遍 `rel`，取 manifest 与 PNG 缩略图。**必有超时**（探测与 `render_png` 走 worker 池
     的请求超时）；返回前一定退役这条 worker（状态未知的不复用、kill 后 reap 由池负责）。"""
     roots = (str(sdir),)
@@ -392,8 +481,9 @@ def _render_candidates(
     entry: adf.TableEntry,
     values: adf.DataSummary,
     recipes: list[recipe_mod.FigureRecipe],
-) -> list[tuple[recipe_mod.FigureRecipe, dict | None, str | None, dict | None]]:
-    """每个备选 → `(配方, 覆盖情况, 剔除原因 | None, 缩略图信息)`。覆盖情况 = `fingerprint_coverage`；剔除原因在 `DROP_REASONS` 里。"""
+    pin=None,
+) -> list[tuple[recipe_mod.FigureRecipe, dict | None, str | None, Path | None, bool]]:
+    """每个备选 → `(配方, 覆盖情况, 剔除原因 | None, 缩略图, 是否回退过解释器)`。覆盖情况 = `fingerprint_coverage`；剔除原因在 `DROP_REASONS` 里。"""
     figures = sdir / "tavotto_figures"
     figures.mkdir(parents=True, exist_ok=True)
     data_rel = script_data_rel(entry.path)
@@ -413,14 +503,16 @@ def _render_candidates(
     def work(item):
         n, stem, recipe, bad, expected = item
         if bad:
-            return recipe, None, bad, None
-        out = _render_one(sdir, f"tavotto_figures/{stem}.py", stem, sdir / "thumbs" / f"{n}.png")
+            return recipe, None, bad, None, False
+        out = _render_one(
+            sdir, f"tavotto_figures/{stem}.py", stem, sdir / "thumbs" / f"{n}.png", pin
+        )
         reason = out.reason
         if reason is None and out.manifest is not None:
             checks = figureverify.data_matches_expected(out.manifest, expected, stage="precommit")
             if any(c.verdict == "failed" for c in checks):
                 reason = "candidate_fingerprint_mismatch"
-        return recipe, tpl.fingerprint_coverage(recipe).to_dict(), reason, out.png
+        return recipe, tpl.fingerprint_coverage(recipe).to_dict(), reason, out.png, out.fallback
 
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as ex:
         return list(ex.map(work, plan))
@@ -450,6 +542,11 @@ def item_to_dict(sess: Session, item: Item, recommended: bool) -> dict:
         },
         "recommended": recommended,
         "coverage": item.coverage,
+        "cells": item.cells,
+        "unplotted": {
+            "count": item.unplotted,
+            "code": UNPLOTTED_CODE if item.unplotted else None,
+        },
         "thumbnail_url": f"/api/ai/data-figure/thumbnail/{sess.id}/{item.id}",
     }
 
@@ -470,16 +567,26 @@ def propose(
 
     **不往用户文件夹写任何东西**（候选目录在 `data_dir()/cache/`，见模块说明）；幂等：同一 `(项目, client_request_id)` 在 TTL 内回同一份响应。"""
     sweep()
-    if client_request_id is not None:
-        with _LOCK:
-            hit = _REQUESTS.get((project, client_request_id))
-        if hit is not None and (hit[2] is None or hit[2] in _SESSIONS):
-            return hit[1]
     folder = _text(folder, "folder", 1024)
     hint = _text(hint, "hint", _HINT_MAX)
     table = _text(table, "table")
     sheet = _text(sheet, "sheet")
     ans = parse_answers(answers)
+    # 幂等键 = (项目, 请求号, 请求内容的摘要)：同一请求号带了不同的回答（换了处理方式）必须重新出图，不回旧的
+    digest = hashlib.sha256(
+        json.dumps(
+            [folder, table, sheet, hint, _answers_digest(ans)], ensure_ascii=False, sort_keys=True
+        ).encode("utf-8")
+    ).hexdigest()
+    if client_request_id is not None:
+        with _LOCK:
+            hit = _REQUESTS.get((project, client_request_id, digest))
+        if hit is not None and (hit[2] is None or hit[2] in _SESSIONS):
+            return hit[1]
+
+    def remember(response: dict, session_id: str | None = None) -> dict:
+        return _remember(project, client_request_id, response, session_id, digest)
+
     table = table or ans.get("table")
     sheet = sheet or ans.get("sheet")
     try:
@@ -498,15 +605,17 @@ def propose(
     confirmed, picks = confirmed_from(ans)
     chosen = recipe_mod.pick_table(profile, table, sheet, hint)
     if isinstance(chosen, recipe_mod.NeedsChoice):
-        return _remember(project, client_request_id, {"kind": "ask", **chosen.to_dict()}, None)
+        return remember({"kind": "ask", **chosen.to_dict()})
     if isinstance(chosen, str):
-        return _remember(
-            project,
-            client_request_id,
-            {"kind": "nothing", "reasons": [chosen], "dropped": []},
-            None,
-        )
+        return remember({"kind": "nothing", "reasons": [chosen], "dropped": []})
     values = _table_for_values(folder_path, chosen)
+    rules = ans.get("cells") or {}
+    if rules:
+        bad = recipe_mod.check_cell_rules(list(rules.values()), chosen.summary, values)
+        if bad:
+            raise ProposeError(
+                "propose_cells_invalid", params={"reason": bad[0].code, "key": bad[0].detail}
+            )
     res = recipe_mod.default_candidates(
         profile,
         table=chosen.path,
@@ -515,50 +624,57 @@ def propose(
         hint=hint,
         values=values,
         picks=picks,
+        cells=rules,
     )
-    if isinstance(res, recipe_mod.NeedsChoice):
-        return _remember(project, client_request_id, {"kind": "ask", **res.to_dict()}, None)
+    if isinstance(res, (recipe_mod.NeedsChoice, recipe_mod.MixedCells)):
+        return remember({"kind": "ask", **res.to_dict()})
     if not res.items:
-        return _remember(
-            project,
-            client_request_id,
+        return remember(
             {
                 "kind": "nothing",
                 "reasons": list(res.reasons),
                 "dropped": [{"reason_code": p.code} for d in res.dropped for p in d.problems[:1]],
-            },
-            None,
+            }
         )
     sid = secrets.token_hex(12)
     sdir = CANDIDATE_ROOT / sid
     sdir.mkdir(parents=True, exist_ok=False)
     try:
         _stage_table(sdir, folder_path / PurePosixPath(chosen.path), chosen.path)
-        rendered = _render_candidates(sdir, chosen, values, [c.recipe for c in res.items])
+        rendered = _render_candidates(
+            sdir, chosen, values, [c.recipe for c in res.items], _project_pin(root)
+        )
     except BaseException:
         _rmtree(sdir)
         raise
     items: dict[str, Item] = {}
     order: list[str] = []
     dropped: list[dict] = [{"reason_code": p.code} for d in res.dropped for p in d.problems[:1]]
-    for cand, (recipe, coverage, reason, png) in zip(res.items, rendered, strict=True):
+    fallback = False
+    for cand, (recipe, coverage, reason, png, fb) in zip(res.items, rendered, strict=True):
+        fallback = fallback or fb
         if reason is not None or png is None:
             dropped.append({"reason_code": reason or "candidate_render_failed"})
             continue
         iid = secrets.token_hex(6)
-        items[iid] = Item(iid, cand.code, recipe, coverage or {}, png)
+        items[iid] = Item(
+            iid,
+            cand.code,
+            recipe,
+            coverage or {},
+            png,
+            len(unplotted_rows(values, recipe)),
+            cell_stats(values, recipe) or None,
+        )
         order.append(iid)
     if not items:
         _rmtree(sdir)
-        return _remember(
-            project,
-            client_request_id,
+        return remember(
             {
                 "kind": "nothing",
                 "reasons": sorted({d["reason_code"] for d in dropped}) or ["no_renderable_family"],
                 "dropped": dropped,
-            },
-            None,
+            }
         )
     sess = Session(
         id=sid,
@@ -580,14 +696,25 @@ def propose(
         "session": sid,
         "items": [item_to_dict(sess, items[i], k == 0) for k, i in enumerate(order)],
         "dropped": dropped,
+        # 诊断标记：至少有一张小图是项目解释器没画成、回退到默认链条画的
+        "interpreter_fallback": fallback,
     }
-    return _remember(project, client_request_id, out, sid)
+    return remember(out, sid)
 
 
-def _remember(project: str, rid: str | None, response: dict, session_id: str | None) -> dict:
+def _answers_digest(ans: dict) -> dict:
+    return {
+        k: ({c: r.to_dict() for c, r in sorted(v.items())} if k == "cells" else v)
+        for k, v in ans.items()
+    }
+
+
+def _remember(
+    project: str, rid: str | None, response: dict, session_id: str | None, digest: str
+) -> dict:
     if rid is not None:
         with _LOCK:
-            _REQUESTS[(project, rid)] = (time.time(), response, session_id)
+            _REQUESTS[(project, rid, digest)] = (time.time(), response, session_id)
     return response
 
 

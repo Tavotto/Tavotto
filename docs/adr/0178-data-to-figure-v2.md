@@ -83,9 +83,9 @@ distribution 有两种形态：值在横轴（hist / ecdf / density，不带类�
 **候选渲染与候选目录**。每个备选 `render_recipe_script` 出脚本 + 公共模块，写进 `data_dir()/cache/ai_data_candidates/<session>/`（一个**独立的小项目**：`tavotto_figures/<stem>.py`、公共模块、选中那一张数据文件的**字节副本**，
 布局与落盘后相同，脚本读 `../<数据相对路径>`），用 safe worker 以这个小项目为 `figures_dir` 真渲染 PNG 缩略图与 manifest，**写入根绊线只开候选目录**。与 `ai_convert.run_validation` 的先例对照：先例是影子脚本（候选字节在候选目录、
 worker 以项目里的显示路径为 `__file__`），这里不能照搬——模板脚本要 `import tavotto_plot_*`，而显示目录 `<数据文件夹>/tavotto_figures/` 此刻在用户磁盘上不存在，公共模块无处可 import；所以取先例的另两半
-（独立候选目录 + 写入根绊线），用户文件夹里一个字节都不写、不建目录。取舍：缩略图走默认链条解释器，不是项目自己的 venv（模板只用 matplotlib 与标准库）。候选脚本算出的数据指纹与 `expected_fingerprints` 对拍，对不上的剔除并记
+（独立候选目录 + 写入根绊线），用户文件夹里一个字节都不写、不建目录。解释器：先用项目渲染本来会用的那个（只读已定下的结论、不触发检测与依赖流程），起不来 / 缺 matplotlib 就静默回退默认链条再画一次，结果里留 `interpreter_fallback` 标记；两条都不行才算这个备选失败。候选脚本算出的数据指纹与 `expected_fingerprints` 对拍，对不上的剔除并记
 `candidate_fingerprint_mismatch`；单个备选失败（渲染失败 / 超时 / 缩略图取不到 / 被绊线拦下）只少一张卡，全失败返回结构化的 `{kind:"nothing", reasons}`，不是 500。并发 `MAX_PARALLEL = 2`，超时沿用 worker 池的请求超时，
-渲染后一律 `pool.invalidate(force=True)` 退役 worker。生命周期：会话在内存、TTL 30 分钟（读 / 提交重新计时）、至多 6 个、提交成功或 `discard` 即删、每次出备选 / 提交前 `sweep()` 清过期与孤儿目录；删除不用 `ignore_errors`，
+渲染后一律 `pool.invalidate(force=True)` 退役 worker。生命周期：会话在内存、TTL 30 分钟（读 / 提交重新计时）、至多 6 个、`discard` 即删、**提交后不删**（可接着出同一批里的别的备选；同一备选重复提交靠 `client_request_id` 幂等，换请求号 = 新建 `_2`；数据 sha 变了照旧 409）、同一会话里数据副本只有一份（≤ 5 MiB）、每次出备选 / 提交前 `sweep()` 清过期与孤儿目录；删除不用 `ignore_errors`，
 删不掉记日志留给下一次。会话属于项目，进程重启 = 过期（`propose_session_expired`），前端据此重新出备选。
 
 **选中落盘（任务类型 `data_to_figure_v2`，v1 的 CSV 同目录路径与用例逐字不变）**。提交只回传 `{session, id}`——配方在服务端的会话里，不在契约里。落点 `<数据文件夹>/tavotto_figures/<stem>.py`
@@ -93,6 +93,8 @@ worker 以项目里的显示路径为 `__file__`），这里不能照搬——�
 对非脚本的公共模块同样合适，不需要第二套写法）。顺序在项目锁内固定：目录（不存在才建）→ 公共模块（不存在新建 / 字节相同复用 / 字节不同或不是普通文件 → `common_module_conflict`，**什么都不写**）→ 脚本 → `discover.register` →
 锁外统一刷新 → 提交后 safe 渲染 → `figureverify.data_matches_expected`。提交前 L1 已经判过一遍公共模块与目录状态（冲突则任务 `failed`、零写入），锁内再判一遍防竞态。登记失败：删掉刚建的脚本；公共模块与目录若是**本次新建**
 且字节未被动过也一并撤回，复用的不删。数据路径一律 `contained_path`，`tavotto_figures` 是链接则拒绝（`figures_dir_unusable`）。
+
+**数值列里夹着少量文字**（`<0.1`、`n/a`、`12.5*`；2026-11-12 用户拍板：不许静默只画数值行，要先问）：被这次画图用到的数值列里，非数字的非空格子 > 0 且占比 ≤ 20%、数值格子 ≥ 3 个（`numeric_like`）时，propose 返回 `{kind:"ask", question_code:"mixed_cells", columns:[{column, non_numeric, rows, preview, more, options}]}`，**不出图**。`preview` 最多 5 行：文件行号（表头第 1 行；CSV 的空行占行号，XLSX 是表内行号）、格子原文（截 40 字）、同行其它用到的列的值、选「取数字」后会得到的值（取不出 = null）；多个用到的列一次问完。三个选项：`skip`（忽略：该格当缺失，不画、不计 n，折线在那里断开，同空格）、`extract`（取第一个数：`12.5*`→12.5、`<0.5`→0.5、`3.2 mg`→3.2，取不出的忽略）、`describe`（`free_text`，前端显示输入框）。回答写进 `answers.cells`：`{列名: {"mode": "skip"} | {"mode": "extract"} | {"mode": "map", "map": {原文: 数 | null}, "rest": "skip" | "extract"}}`，声明式、不含代码；`describe` 本身不可执行（要先由助手译成 `map`，模型那一段在下一个 PR），只带说明文字的请求回 409 `propose_cells_need_rule`；规则校验（键 ≤ 50、值有限数或 null、键必须真的在该列文字格里、未知 mode / 多余字段 / 列不是用到的夹文字数值列）失败回 400 `propose_cells_invalid`，`params.reason` 是拒绝码、`params.key` 点名哪一项。规则进配方（`FigureRecipe.cells`，不写时 `to_dict` 与旧版逐字相同）：生成的脚本读表后调用运行时函数 `apply_cells(header, rows, CELLS)` 套规则（只改内存副本，用户文件一个字节不动），图下方说明写清做了什么与各几行（英文，如 `value: number taken from 1 text cell, 1 non-numeric cell ignored` / `ND = 0`），父进程的期望指纹、取值类规则（每组 n）、`unplotted_rows`、提交结果里的 `cells` 计数都用**同一份** `ai_data_figure.apply_cells` 源码，所以数据核对按处理后的数据算，而且用户已明确决定的格子不再是 `partial` 的理由（只剩横轴缺值的行仍报告）。没有规则的配方里这样的列仍是 `column_type_mismatch`（`eligible` 结构资格放宽，`validate_recipe` 不放宽）。超过阈值的列不当数值列，整表没有可用列才是 `nothing`（`value_column_mixed`）。幂等键 = (项目, 请求号, 请求内容摘要)：同一请求号换了处理方式必须重新出图。公共模块多了 `apply_cells`，其内容哈希（文件名 `tavotto_plot_<8 位>`）因此变化；老脚本继续 import 它们当时的那一版，新旧并存。提交后的渲染与核对是对**原件**（脚本读 `../<数据>`）做的，不沿用候选副本的结论。
 
 结局口径（沿用 v1 并扩展）：全部可核层对上 → `completed` + `data_check: "verified"`；有行画不出（横轴空 / 非数）→ `partial` 并逐行报告；指纹对不上 → `failed` + `data_check: "mismatch"` + `can_delete_script`（脚本已落盘，由用户决定）；
 **没有任何可核层（只有箱 / 小提琴 / 误差线）→ `data.verifiable` 记 unknown（`data_not_verifiable`），`data_check: "unverifiable"`，结局最高 `partial`，绝不写成 verified**。`ai_tasks.run_task` 只为「确定性执行器只新建文件」放行写入的规则原样保持，没有放宽。

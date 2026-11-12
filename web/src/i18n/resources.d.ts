@@ -116,15 +116,26 @@ export default interface Resources {
           "why": "看每组数值分布的形状，点保留了每个观测。"
         }
       },
+      "mixedCells": {
+        "cannotExtract": "取不出数字，会被忽略",
+        "extracted": "取数字后是 {{value}}",
+        "more": "还有 {{count}} 行",
+        "placeholder": "说说这些格子该怎么算，比如「ND 记为 0」",
+        "previewRow": "第 {{row}} 行：{{text}}"
+      },
       "option": {
         "column": "{{column}}",
+        "describe": "我来说明",
         "design_independent": "每一行是不同的对象",
         "design_repeated": "同一个对象被重复测了好几次",
+        "extract": "取出里面的数字",
+        "skip": "忽略这些行",
         "table": "{{file}}：{{rows}} 行，{{groups}} 组",
         "table_sheet": "{{file}} 的「{{sheet}}」：{{rows}} 行，{{groups}} 组",
         "unsure": "不确定"
       },
       "question": {
+        "mixed_cells": "「{{column}}」里有 {{count}} 个格子不是数字（共 {{rows}} 行有数据），怎么处理？",
         "pick_design": "这些数据是同一个对象被重复测量的吗？",
         "pick_group": "按哪一列分组比较？",
         "pick_table": "用哪张表画？",
@@ -148,7 +159,7 @@ export default interface Resources {
         "no_renderable_family": "这张表暂时没有能画的画法。",
         "no_usable_table": "这个文件夹里没有能画的数据表。",
         "register_failed": "没能把新图登记进项目，新建的文件已撤回。",
-        "rows_not_plotted": "有些行没有画出来。",
+        "rows_not_plotted": "有 {{count}} 行不是数字或缺横轴的值，没有画出来。",
         "stem_taken": "这个图名刚被占用了，请再试一次。",
         "table_not_found": "找不到你选的那张表。",
         "target_exists": "同名脚本已经存在，没有覆盖它。",
@@ -3296,6 +3307,10 @@ export default interface Resources {
       "bar_needs_summary": "柱的每个位置只能对应一个值，有多行数据时要选均值或中位数。",
       "batch_start_failed": "{{message}}",
       "box_violin_n_small": "有的组数据太少（不到 5 个），不画箱线和小提琴。",
+      "cell_map_key_unknown": "映射里写的原文在这一列里找不到。",
+      "cell_map_too_large": "映射规则写得太多了，最多 50 项。",
+      "cell_map_value_invalid": "映射到的值要是一个数，或者写成缺失。",
+      "cell_rule_invalid": "这条处理规则不对：要针对这次画图用到、夹着文字的数值列，每列只写一条。",
       "column_not_found": "这张表里没有这一列。",
       "column_type_mismatch": "这一列的类型不适合画在这个位置，比如把文字当数值用。",
       "composition_negative": "占比图里有负数，不能画。",
@@ -3522,6 +3537,8 @@ export default interface Resources {
       "project_python_unusable": "为这个项目指定的解释器用不了；Tavotto 不会自动换成别的环境。请在渲染环境设置里重新指定，或清除它回到自动选择。",
       "project_scan_not_started": "这个项目还没有开始检查（或应用重启过）。重新检查即可。",
       "propose_candidate_unknown": "找不到你选的这个备选，请重新生成一次。",
+      "propose_cells_invalid": "这条处理规则没法用，请重新选一次。",
+      "propose_cells_need_rule": "这段说明要先交给助手整理成规则，暂时不能直接用。",
       "propose_data_changed": "数据文件在生成备选之后变过了，请重新生成。",
       "propose_input_invalid": "请求内容不对，没有生成备选。",
       "propose_session_expired": "这批备选已经过期了，请重新生成一次。",

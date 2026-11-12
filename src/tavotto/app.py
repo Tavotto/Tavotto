@@ -14991,11 +14991,16 @@ _PROPOSE_STATUS = {
     "propose_candidate_unknown": 404,
     "propose_data_changed": 409,
     "propose_input_invalid": 400,
+    "propose_cells_invalid": 400,
+    "propose_cells_need_rule": 409,
 }
 
 
 def _propose_error(exc: "engine_ai_data_propose.ProposeError"):
-    return jsonify({"error": str(exc), "code": exc.code}), _PROPOSE_STATUS.get(exc.code, 400)
+    body = {"error": str(exc), "code": exc.code}
+    if exc.params:
+        body["params"] = exc.params
+    return jsonify(body), _PROPOSE_STATUS.get(exc.code, 400)
 
 
 @app.post("/api/ai/data-figure/propose")
@@ -15070,7 +15075,7 @@ def api_ai_data_figure_commit():
     新建 `<数据文件夹>/tavotto_figures/<stem>.py`（与同目录内容寻址的公共模块，不存在才建、字节相同复用、字节不同什么都不写）→ 登记 →
     统一刷新 → safe 渲染 → 数据指纹核对。回 `{task, script?, stem?, module?, data_check, reason_code?, can_delete_script?}`：
     `data_check` 是 `verified` / `unverifiable`（这张图没有任何一层能核，不写成 verified）/ `mismatch`（画出来的数据与文件对不上，
-    可删这份新脚本）/ `unknown`。会话过期 404、数据在出备选后变了 409（前端据此重新出备选）。提交成功后候选目录即删。"""
+    可删这份新脚本）/ `unknown`。会话过期 404、数据在出备选后变了 409（前端据此重新出备选）。候选会话留到 TTL（可再提交同一批里的别的备选），`discard` 放弃。"""
     if not engine_ai_figure_edit.enabled():
         return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
     ctx = current_ctx()
@@ -15139,7 +15144,13 @@ def api_ai_data_figure_commit():
         verdict = engine_ai_data_task.data_verdict(engine_ai_history.get(res.get("task_id")))
         out["data_check"] = verdict
         out["can_delete_script"] = verdict == "mismatch"
-        engine_ai_data_propose.discard(project, session_id)
+        # 候选会话留到 TTL：用户可以接着把同一批里的另一个备选也出成图
+        out["cells"] = prepared.cell_stats  # 处理规则实际作用的计数（与图下方说明同一份）
+        out["unplotted"] = {
+            "count": len(prepared.not_plotted),
+            "rows": prepared.not_plotted[:50],
+            "code": engine_ai_data_propose.UNPLOTTED_CODE if prepared.not_plotted else None,
+        }
     else:
         unmet = ((res.get("verification") or {}).get("unmet")) or []
         if unmet:

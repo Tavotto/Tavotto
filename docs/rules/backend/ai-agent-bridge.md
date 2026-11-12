@@ -332,10 +332,10 @@ order: 240
   不调模型的整条流水（模型路径复用它）。`default_candidates(profile, table=, sheet=, confirmed=, hint=, values=, picks=)` → `Candidates | NeedsChoice`：列角色规则只有 `pick_table` / `_resolve_roles` 两处文字定义，
   有歧义问、不猜，每个「不确定」有安全默认；`id_like` 永不当角色、没确认就没有 unit / 配对 / 轨迹；文案只走稳定码（`CANDIDATE_CODES` / `QUESTION_CODES` / `NOTHING_REASONS` / `DROP_REASONS`，前端 `ai:dataFigureV2.*`）。
   `ai_data_propose.propose` 把每个备选的脚本 + 公共模块 + 数据字节副本放进 `data_dir()/cache/ai_data_candidates/<session>/`（独立小项目，safe worker 真渲染，`write_roots` 只开候选目录；**用户文件夹零写入**，
-  不用影子脚本是因为公共模块要在显示目录里 import，见 ADR 0178 对照），候选数据指纹与 `expected_fingerprints` 对拍，单个失败只少一张卡、全失败回 `{kind:"nothing"}`；会话内存里、TTL 30 分钟、≤ 6 个、提交 / 放弃即删、
+  不用影子脚本是因为公共模块要在显示目录里 import，见 ADR 0178 对照；解释器先用项目已定下的（`peek_worker_python` + `pinned_interpreter`），失败静默回退默认链条并留 `interpreter_fallback`），候选数据指纹与 `expected_fingerprints` 对拍，单个失败只少一张卡、全失败回 `{kind:"nothing"}`；会话内存里、TTL 30 分钟、≤ 6 个、放弃即删（提交后保留到 TTL，同一备选重复提交靠 rid 幂等、换请求号建 `_2`）、同会话一份数据副本、
   删除不用 `ignore_errors`；会话属于项目。落盘 = 任务类型 `data_to_figure_v2`（`TemplateExecutorV2`）：只回传 `{session, id}`，项目锁内按「目录 → 公共模块（新建 / 字节相同复用 / 不同则 `common_module_conflict` 什么都不写）→ 脚本」
   **只新建**（`scriptlock.create_script`），再 `discover.register` → 统一刷新 → safe 渲染 → `figureverify.data_matches_expected`；登记失败撤回本次新建的脚本 / 公共模块 / 目录，复用的不删。
-  **没有任何可核层 = `data.verifiable` unknown（`data_check: "unverifiable"`），绝不写成 verified**。端点：`propose` / `thumbnail/<session>/<id>` / `commit` / `discard`，`/api/ai/data-files` 带 xlsx 工作表清单；
+  数值列夹着 ≤ 20% 文字（`numeric_like`）：**先问用户**（`{kind:"ask", question_code:"mixed_cells"}`：预览 ≤ 5 行带文件行号、选项 skip / extract / describe），回答放 `answers.cells`（`skip` / `extract` / `map`，声明式；`describe` 不可执行 → 409 `propose_cells_need_rule`；规则不合格 → 400 `propose_cells_invalid`），规则进 `FigureRecipe.cells`，脚本读表后 `apply_cells` 套规则（内存副本，用户文件不动）、图下方写说明、期望指纹按处理后的数据算，用户已决定的格子不再算 partial 理由；幂等键含请求内容摘要。**没有任何可核层 = `data.verifiable` unknown（`data_check: "unverifiable"`），绝不写成 verified**。端点：`propose` / `thumbnail/<session>/<id>` / `commit` / `discard`，`/api/ai/data-files` 带 xlsx 工作表清单；
   请求路径只经 `ai_data_propose.normalize_rel` + `projectenv.contained_path`。看护 `tests/test_ai_data_propose.py`（真 app + 真 safe worker）。
 - **TAF 改图（`engine/ai_figure_edit.py`，Phase 3a）**：只在 `config.ai_settings()["taf"]["enabled"] is True`（默认关、无界面开关）
   时由 `ai_bridge.run` 走到；开关关着时旧路径逐字不变（cwd 是项目目录、不写任务列、`ADAPTERS` 为空）。开着时：spawn 之前在

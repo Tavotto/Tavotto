@@ -506,7 +506,8 @@
       "pick_group": "按哪一列分组比较？",
       "pick_x": "横轴用哪一列？",
       "pick_design": "这些数据是同一个对象被重复测量的吗？",
-      "pick_unit": "哪一列标出了是哪个对象？"
+      "pick_unit": "哪一列标出了是哪个对象？",
+      "mixed_cells": "「{{column}}」里有 {{count}} 个格子不是数字（共 {{rows}} 行有数据），怎么处理？"
     },
     "option": {
       "table": "{{file}}：{{rows}} 行，{{groups}} 组",
@@ -514,7 +515,10 @@
       "column": "{{column}}",
       "design_independent": "每一行是不同的对象",
       "design_repeated": "同一个对象被重复测了好几次",
-      "unsure": "不确定"
+      "unsure": "不确定",
+      "skip": "忽略这些行",
+      "extract": "取出里面的数字",
+      "describe": "我来说明"
     },
     "candidate": {
       "points_mean": {
@@ -594,13 +598,20 @@
       "target_exists": "同名脚本已经存在，没有覆盖它。",
       "register_failed": "没能把新图登记进项目，新建的文件已撤回。",
       "data_changed": "数据文件在生成备选之后变过了，请重新生成。",
-      "rows_not_plotted": "有些行没有画出来。"
+      "rows_not_plotted": "有 {{count}} 行不是数字或缺横轴的值，没有画出来。"
     },
     "result": {
       "verified": "图画好了，数据和文件逐项对上。",
       "unverifiable": "图画好了，但这类图没法逐项核对数据。",
       "mismatch": "图里的数据和文件对不上；不对的话可以删掉这份新脚本。",
       "unknown": "图画好了，数据核对没能完成。"
+    },
+    "mixedCells": {
+      "previewRow": "第 {{row}} 行：{{text}}",
+      "extracted": "取数字后是 {{value}}",
+      "cannotExtract": "取不出数字，会被忽略",
+      "more": "还有 {{count}} 行",
+      "placeholder": "说说这些格子该怎么算，比如「ND 记为 0」"
     }
   }
 }

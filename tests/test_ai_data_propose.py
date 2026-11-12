@@ -112,7 +112,13 @@ def tree_state(base: Path) -> list[tuple]:
 
 
 def propose(client, folder="data", **body):
-    return client.post("/api/ai/data-figure/propose", json={"folder": folder, **body})
+    return client.post(
+        "/api/ai/data-figure/propose",
+        data=json.dumps(
+            {"folder": folder, **body}, allow_nan=True
+        ),  # 带 NaN / Infinity 的坏规则也要能送到后端
+        content_type="application/json",
+    )
 
 
 def commit(client, session, item, rid=None):
@@ -409,9 +415,8 @@ def test_propose_thumbnail_commit_end_to_end(project, kind):
             not is_dir and rel != "tavotto_registry.json"
         ):  # 提交会登记（注册表）并在目录里新建文件，已有的数据文件不能变
             assert after[rel] == [is_dir, *rest], f"{rel} 被改动"
-    # 提交成功后候选会话即删
-    assert client.get(first["thumbnail_url"]).status_code == 404
-    assert not any(P.CANDIDATE_ROOT.iterdir())
+    # 提交成功后候选会话保留到 TTL（可接着出同一批里的别的备选）
+    assert client.get(first["thumbnail_url"]).status_code == 200
 
 
 @needs_worker
@@ -908,7 +913,7 @@ def test_idempotent_propose_and_commit_by_client_request_id(project):
     again = commit(client, a["session"], a["items"][0]["id"], rid="rid-comm-0001").get_json()
     assert first["task"]["outcome"] == "completed"
     assert again["task"]["deduped"] is True and again["task"]["task_id"] == first["task"]["task_id"]
-    assert again["script"] == first["script"], "会话已随提交删掉，去重仍回首次的脚本"
+    assert again["script"] == first["script"], "同一请求号重发回首次的脚本"
     assert len(list((figs / "data" / "tavotto_figures").glob("g_figure*.py"))) == 1
 
 
@@ -1043,3 +1048,446 @@ def test_unplotted_rows_reports_rows_without_an_x_value(tmp_path):
     rows = ai_data_task.unplotted_rows(values, recipe)
     assert rows == [{"row": len(values.rows) + 1, "column": "dose_mg", "reason": "x_not_a_value"}]
     assert trend_rows() and cmp_rows()  # 夹具可用（防止导入被优化掉）
+
+
+# =========================================================================== 评审后追加：会话保留、解释器回退、夹文字的数值列
+@needs_worker
+def test_the_session_survives_a_commit_and_another_candidate_becomes_a_second_figure(project):
+    m, client, figs, _ = project
+    put(figs, "data/g.csv", simple_rows())
+    body = propose(client).get_json()
+    a = commit(client, body["session"], body["items"][0]["id"], rid="rid-s-0001").get_json()
+    b = commit(client, body["session"], body["items"][1]["id"], rid="rid-s-0002").get_json()
+    c = commit(client, body["session"], body["items"][1]["id"], rid="rid-s-0003").get_json()
+    assert [x["task"]["outcome"] for x in (a, b, c)] == ["completed"] * 3
+    assert [Path(x["script"]).name for x in (a, b, c)] == [
+        "g_figure.py",
+        "g_figure_2.py",
+        "g_figure_3.py",
+    ], "不同请求号再提交同一个备选 = 新建 _2，不覆盖"
+    assert len({x["module"] for x in (a, b, c)}) == 1
+    # 同一请求号重复提交仍靠幂等：不再建
+    again = commit(client, body["session"], body["items"][1]["id"], rid="rid-s-0002").get_json()
+    assert again["task"]["deduped"] is True and again["script"] == b["script"]
+    assert client.get(body["items"][0]["thumbnail_url"]).status_code == 200
+
+
+@needs_worker
+def test_the_commit_check_renders_the_original_not_the_candidate_copy(project):
+    """脚本读 `../<数据>` 的原件；候选目录里的副本被破坏也不影响提交后的核对（它画的是原件）。"""
+    m, client, figs, _ = project
+    put(figs, "data/g.csv", simple_rows())
+    body = propose(client).get_json()
+    sess = P.get_session(str(figs.resolve()), body["session"])
+    (sess.dir / "g.csv").write_text("group,value_mV\nzzz,not,a,table\n", encoding="utf-8")
+    out = commit(client, body["session"], body["items"][0]["id"]).get_json()
+    assert out["task"]["outcome"] == "completed" and out["data_check"] == "verified", out
+    # 反过来：原件在提交前变了 → 拒绝（sha 对不上），不是拿副本凑
+    (figs / "data" / "g.csv").write_text(_csv(simple_rows()) + "ctrl,50\n", encoding="utf-8")
+    r = commit(client, body["session"], body["items"][1]["id"])
+    assert r.status_code == 409 and r.get_json()["code"] == "propose_data_changed"
+
+
+@needs_worker
+def test_one_data_copy_per_session_and_it_dies_with_the_session(project):
+    m, client, figs, _ = project
+    put(figs, "data/g.csv", simple_rows())
+    body = propose(client).get_json()
+    sess = P.get_session(str(figs.resolve()), body["session"])
+    copies = [p for p in sess.dir.rglob("*.csv")]
+    assert len(copies) == 1, "所有备选共用一份数据副本"
+    assert (figs / "data" / "g.csv").read_bytes() == copies[0].read_bytes()
+    P.discard(str(figs.resolve()), body["session"])
+    assert not sess.dir.exists()
+
+
+def test_numeric_like_threshold():
+    def col(num, text, empty=0):
+        c = adf.ColumnSummary("v")
+        c.numeric, c.text_count, c.text, c.empty = num, text, ["x"] * min(text, 3), empty
+        return c
+
+    assert R.numeric_like(col(10, 0))
+    assert R.numeric_like(col(8, 2)), "恰好 20% 仍算"
+    assert not R.numeric_like(col(7, 3)), "超过 20% 不算"
+    assert R.numeric_like(col(2, 0)), "纯数值列不受个数限制"
+    assert not R.numeric_like(col(2, 1)), "数值格子不够 3 个不算"
+    assert not R.numeric_like(col(0, 5))
+
+
+def test_too_many_text_cells_do_not_count_as_numeric(project):
+    m, client, figs, _ = project
+    rows = [["g", "v"]] + [["a", "<0.1"], ["a", "2"], ["b", "3"], ["b", "n/a"], ["b", "x"]]
+    put(figs, "data/lod.csv", rows)
+    body = propose(client).get_json()
+    assert body["kind"] == "nothing" and body["reasons"] == ["value_column_mixed"]
+
+
+@needs_worker
+def test_the_project_interpreter_is_tried_first_and_a_broken_one_falls_back_silently(
+    project, monkeypatch
+):
+    m, client, figs, _ = project
+    put(figs, "data/g.csv", simple_rows())
+    pins = []
+    real_pin = pool.pinned_interpreter
+
+    import contextlib
+
+    @contextlib.contextmanager
+    def spy(figures_dir, decision):
+        if str(figures_dir).startswith(str(P.CANDIDATE_ROOT)):  # 只记候选目录上的钉
+            pins.append(decision.python if decision else None)
+        with real_pin(figures_dir, decision):
+            yield
+
+    monkeypatch.setattr(pool, "pinned_interpreter", spy)
+    # 1) 项目解释器可用：用它画，没有回退标记
+    monkeypatch.setattr(pool, "peek_worker_python", lambda root: (WORKER_PY, "project"))
+    ok = propose(client).get_json()
+    assert ok["kind"] == "candidates" and ok["interpreter_fallback"] is False
+    assert set(pins) == {WORKER_PY}
+    # 2) 项目解释器起不来：静默回退默认链条，仍出图，留诊断标记，不报错
+    pins.clear()
+    monkeypatch.setattr(
+        pool, "peek_worker_python", lambda root: (str(Path(root) / "no-such-python"), "project")
+    )
+    fb = propose(client).get_json()
+    assert fb["kind"] == "candidates" and len(fb["items"]) == len(ok["items"])
+    assert fb["interpreter_fallback"] is True and pins
+    # 3) 没有项目解释器：直接走默认链条，不由我们钉、不标
+    pins.clear()
+    monkeypatch.setattr(pool, "peek_worker_python", lambda root: None)
+    plain = propose(client).get_json()
+    assert plain["interpreter_fallback"] is False and P._project_pin(figs) is None
+
+
+def test_both_interpreters_failing_is_a_structured_failure(project, monkeypatch):
+    m, client, figs, _ = project
+    put(figs, "data/g.csv", simple_rows())
+    monkeypatch.setattr(pool, "peek_worker_python", lambda root: ("/no/such/python", "project"))
+
+    def dead(*a, **k):
+        raise RuntimeError("cannot start")
+
+    monkeypatch.setattr(P.probe, "probe", dead)
+    body = propose(client).get_json()
+    assert body["kind"] == "nothing" and body["reasons"] == ["candidate_render_failed"]
+
+
+# =========================================================================== 夹着文字格的数值列：先问用户，再按规则读表
+def lod_rows(n_text=2):
+    """3 组 × 6 个值（共 18 行），第 3 行与第 10 行（文件行号，表头是第 1 行）的值是文字。"""
+    rows = simple_rows()
+    rows[2][1] = "<0.5"
+    if n_text >= 2:
+        rows[9][1] = "n/a"
+    return rows
+
+
+def ask_cells(client, **extra):
+    body = propose(client, **extra).get_json()
+    assert body["kind"] == "ask" and body["question_code"] == "mixed_cells", body
+    return body
+
+
+def rule(col="value_mV", **r):
+    return {"cells": {col: r}}
+
+
+def test_text_cells_in_a_used_column_ask_first_and_draw_nothing(project):
+    m, client, figs, _ = project
+    put(figs, "data/lod.csv", lod_rows())
+    before = tree_state(figs)
+    body = ask_cells(client)
+    assert "session" not in body and not P._SESSIONS and not P.CANDIDATE_ROOT.exists()
+    (col,) = body["columns"]
+    assert col["column"] == "value_mV" and col["non_numeric"] == 2 and col["rows"] == 18
+    assert [(p["row"], p["text"]) for p in col["preview"]] == [(3, "<0.5"), (10, "n/a")]
+    assert col["preview"][0]["others"] == {"group": "ctrl"}
+    assert col["preview"][0]["extract"] == 0.5 and col["preview"][1]["extract"] is None
+    assert col["more"] == 0
+    assert [o["code"] for o in col["options"]] == ["skip", "extract", "describe"]
+    assert [o.get("free_text", False) for o in col["options"]] == [False, False, True]
+    assert col["options"][0]["answer"] == {"cells": {"value_mV": {"mode": "skip"}}}
+    assert tree_state(figs) == before
+
+
+def test_no_text_cell_means_no_question_and_the_threshold_is_twenty_percent(project):
+    m, client, figs, _ = project
+    # 0 个：不问（直接出备选，无需 worker 也到得了 default_candidates，这里只看是不是 ask）
+    d, prof = (
+        _profile(figs.parent / "z0", {"t.csv": simple_rows()})
+        if (figs.parent / "z0").mkdir() is None
+        else (None, None)
+    )
+    res = R.default_candidates(
+        prof, table="t.csv", confirmed=R.Confirmed(), values=adf.inspect_data_source(d / "t.csv")
+    )
+    assert isinstance(res, R.Candidates)
+
+    # 恰好 20%（10 个数 + 2 个文字 → 2/12 不够，用 8 + 2 = 20%）→ 问；超过 → 当非数值列
+    def table(n_num, n_text):
+        rows = [["g", "v"]]
+        rows += [["a" if i % 2 else "b", str(i)] for i in range(n_num)]
+        rows += [["a" if i % 2 else "b", "<1"] for i in range(n_text)]
+        return rows
+
+    for name, (nn, nt), kind in (("at", (8, 2), "ask"), ("over", (7, 3), "nothing")):
+        put(figs, f"{name}/t.csv", table(nn, nt))
+        body = propose(client, folder=name).get_json()
+        assert body["kind"] == kind, (name, body)
+    assert body["reasons"] == ["value_column_mixed"]
+
+
+def test_preview_is_capped_at_five_rows_and_row_numbers_are_file_rows(project):
+    m, client, figs, _ = project
+    # CSV：第 3 行是空行（空行不是数据行，但行号仍按文件算）
+    lines = [
+        "group,value_mV",
+        "a,1",
+        "",
+        "a,2",
+        "b,<1",
+        "b,3",
+        "a,4",
+        "b,5",
+        "a,6",
+        "b,7",
+        "a,8",
+        "b,9",
+        "b,n/a",
+        "a,x1",
+        "b,x2",
+        "a,x3",
+        "b,x4",
+    ]
+    # 太多文字会超阈值：补足数值行
+    lines += [f"{g},{i}" for i, g in zip(range(10, 70), ["a", "b"] * 30)]
+    (figs / "data").mkdir()
+    (figs / "data" / "t.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    col = ask_cells(client)["columns"][0]
+    assert col["non_numeric"] == 6 and len(col["preview"]) == 5 and col["more"] == 1
+    # 第一个文字格在文件第 5 行（表头 1、a,1 是 2、空行 3、a,2 是 4、b,<1 是 5）
+    assert [p["row"] for p in col["preview"]][:2] == [5, 13]
+
+
+@pytest.mark.parametrize("kind", ["tsv", "xlsx"])
+def test_preview_row_numbers_for_tsv_and_xlsx(project, kind):
+    m, client, figs, _ = project
+    rows = [["group", "value_mV"], ["a", 1], [None, None], ["a", 2], ["b", "<1"]] + [
+        [g, i] for i, g in zip(range(3, 40), ["a", "b"] * 20)
+    ]
+    (figs / "data").mkdir()
+    if kind == "xlsx":
+        make_xlsx(figs / "data" / "t.xlsx", {"S": rows})
+    else:
+        put(figs, "data/t.tsv", [[("" if c is None else c) for c in r] for r in rows], "\t")
+    col = ask_cells(client)["columns"][0]
+    assert [(p["row"], p["text"]) for p in col["preview"]] == [(5, "<1")]
+
+
+def test_only_used_columns_are_asked_and_several_are_listed_in_one_question(project):
+    m, client, figs, _ = project
+    rows = [["time_s", "a_mV", "b_mV"]]
+    for t in range(1, 13):
+        rows.append([t, "<1" if t == 3 else t * 1.5, "n/a" if t == 5 else t * 0.5])
+    path = put(figs, "data/w.csv", rows)
+    # 默认画法一次只用一个测量列：先问用哪列，随后只问**用到的**那一列，没用到的 b_mV 不问
+    assert propose(client).get_json()["question_code"] == "pick_value"
+    body = ask_cells(client, answers={"y": "a_mV", "x": "time_s"})
+    assert [c["column"] for c in body["columns"]] == ["a_mV"]
+    # 多个用到的列（模型给的多 y 配方）一次列全，不一列一列来回问
+    values = adf.inspect_data_source(path)
+    many = R.mixed_cells_question(values, ["a_mV", "b_mV"], ("time_s", "a_mV", "b_mV")).to_dict()
+    assert [c["column"] for c in many["columns"]] == ["a_mV", "b_mV"]
+    assert many["columns"][1]["preview"][0]["row"] == 6 and many["columns"][1]["preview"][0][
+        "others"
+    ] == {
+        "time_s": "5",
+        "a_mV": "7.5",
+    }
+
+
+@needs_worker
+@pytest.mark.parametrize(
+    ("spec", "n_ignored", "n_extracted"),
+    [
+        ({"mode": "skip"}, 2, 0),
+        ({"mode": "extract"}, 1, 1),
+        ({"mode": "map", "map": {"n/a": None, "<0.5": 0}, "rest": "skip"}, 0, 0),
+        ({"mode": "map", "map": {"<0.5": 0.25}, "rest": "extract"}, 1, 0),
+    ],
+)
+def test_each_mode_draws_and_commits_with_the_notes_counts_and_verified_data(
+    project, spec, n_ignored, n_extracted
+):
+    m, client, figs, _ = project
+    path = put(figs, "data/lod.csv", lod_rows())
+    before = path.read_bytes(), path.stat().st_mtime_ns
+    body = propose(client, answers=rule(**spec)).get_json()
+    assert body["kind"] == "candidates", body
+    item = body["items"][0]
+    (stat,) = item["cells"]
+    assert stat["column"] == "value_mV" and stat["mode"] == spec["mode"]
+    if spec["mode"] != "map":
+        assert (stat["ignored"], stat["extracted"]) == (n_ignored, n_extracted)
+    assert item["unplotted"]["count"] == 0
+    out = commit(client, body["session"], item["id"]).get_json()
+    # 用户已明确决定：不再是 partial 的理由；数据核对按处理后的数据算
+    assert out["task"]["outcome"] == "completed", out
+    assert out["data_check"] == "verified" and out["cells"] == item["cells"]
+    assert out["unplotted"]["count"] == 0
+    script = (figs / out["script"]).read_text(encoding="utf-8")
+    assert "CELLS = " in script and "apply_cells(" in script and "cell_notes" in script
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before, "数据文件一个字节、mtime 都不动"
+
+
+@needs_worker
+def test_the_committed_script_runs_on_its_own_and_sees_the_same_data(project, tmp_path):
+    """提交后的脚本脱离 Tavotto 独立重跑：退出 0、出图；规则作用的计数与响应里的一致。"""
+    import subprocess
+
+    m, client, figs, _ = project
+    put(figs, "data/lod.csv", lod_rows())
+    body = propose(client, answers=rule(mode="extract")).get_json()
+    out = commit(client, body["session"], body["items"][0]["id"]).get_json()
+    work = tmp_path / "rerun"
+    import shutil
+
+    shutil.copytree(figs / "data", work / "data")
+    env = {**os.environ, "MPLBACKEND": "Agg", "MPLCONFIGDIR": str(tmp_path / "mpl")}
+    r = subprocess.run(
+        [
+            WORKER_PY,
+            str(work / "data" / "tavotto_figures" / Path(out["script"]).name),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        timeout=120,
+    )
+    assert r.returncode == 0, r.stderr[-500:]
+    pdfs = list((work / "data" / "tavotto_figures").glob("*.pdf"))
+    assert pdfs and pdfs[0].stat().st_size > 1000
+    # 同一份规则、同一份源码：独立算一遍与响应一致
+    mod_dir = work / "data" / "tavotto_figures"
+    probe = subprocess.run(
+        [
+            WORKER_PY,
+            "-c",
+            "import sys, json, glob, importlib\n"
+            f"sys.path.insert(0, {str(mod_dir)!r})\n"
+            "name = glob.glob('tavotto_plot_*.py', root_dir=sys.path[0])[0][:-3]\n"
+            "tp = importlib.import_module(name)\n"
+            f"h, rows = tp.read_delimited({str(work / 'data' / 'lod.csv')!r}, ',')\n"
+            "_, notes, stats = tp.apply_cells(h, rows, [('value_mV', 'extract', {}, 'skip')])\n"
+            "print(json.dumps([notes, stats]))\n",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        timeout=120,
+    )
+    assert probe.returncode == 0, probe.stderr[-500:]
+    notes, stats = json.loads(probe.stdout)
+    assert stats == out["cells"]
+    assert notes == ["value_mV: number taken from 1 text cell, 1 non-numeric cell ignored"]
+
+
+def test_apply_cells_semantics():
+    rows = [["1"], ["<0.5"], ["12.5*"], ["3.2 mg"], ["ND"], ["N/A"], [""], ["nan"], ["-4e1x"]]
+    got, notes, stats = adf.apply_cells(["v"], rows, [("v", "extract", {}, "skip")])
+    assert [r[0] for r in got][:4] == ["1", "0.5", "12.5", "3.2"]
+    assert (
+        got[4][0] == ""
+        and got[5][0] == ""
+        and got[6][0] == ""
+        and got[7][0] == "nan"
+        and got[8][0] == "-40.0"
+    )
+    assert stats[0]["extracted"] == 4 and stats[0]["ignored"] == 2
+    got, notes, stats = adf.apply_cells(
+        ["v"], rows, [("v", "map", {"ND": 0.0, "N/A": None}, "extract")]
+    )
+    assert [r[0] for r in got][4:6] == ["0.0", ""] and stats[0]["mapped"] == {"ND": 1, "N/A": 1}
+    assert notes == ["v: ND = 0, N/A treated as missing, number taken from 4 text cells"]
+    # 原始行不被改（只改副本）
+    assert rows[1] == ["<0.5"]
+
+
+@pytest.mark.parametrize(
+    ("spec", "reason", "key"),
+    [
+        ({"mode": "map", "map": {"nope": 0}}, "cell_map_key_unknown", "nope"),
+        ({"mode": "map", "map": {"n/a": float("inf")}}, "cell_map_value_invalid", "n/a"),
+        ({"mode": "map", "map": {"n/a": float("nan")}}, "cell_map_value_invalid", "n/a"),
+        ({"mode": "map", "map": {f"k{i}": 0 for i in range(51)}}, "cell_map_too_large", None),
+        ({"mode": "frobnicate"}, "recipe_unknown_value", None),
+        ({"mode": "map", "map": {"n/a": True}}, "recipe_malformed", None),
+        ({"mode": "map", "map": {"n/a": "3"}}, "recipe_malformed", None),
+        ({"mode": "skip", "map": {"n/a": 0}}, "recipe_malformed", None),
+        ({"mode": "map", "map": {"n/a": 0}, "rest": "guess"}, "recipe_unknown_value", None),
+        ({"mode": "skip", "evil": 1}, "recipe_unknown_key", None),
+    ],
+)
+def test_every_bad_rule_is_refused_with_the_reason(project, spec, reason, key):
+    m, client, figs, _ = project
+    put(figs, "data/lod.csv", lod_rows())
+    r = propose(client, answers=rule(**spec))
+    assert r.status_code == 400, r.get_json()
+    body = r.get_json()
+    assert body["code"] == "propose_cells_invalid" and body["params"]["reason"] == reason
+    if key is not None:
+        assert body["params"]["key"] == key
+    assert not P._SESSIONS
+
+
+def test_rules_on_the_wrong_column_or_a_clean_column_are_refused(project):
+    m, client, figs, _ = project
+    put(figs, "data/lod.csv", lod_rows())
+    for col in ("group", "nope"):
+        r = propose(client, answers={"cells": {col: {"mode": "skip"}}})
+        assert r.status_code == 400 and r.get_json()["params"]["reason"] == "cell_rule_invalid"
+
+
+def test_describe_alone_needs_an_assistant_and_describe_with_a_map_is_a_map(project):
+    m, client, figs, _ = project
+    put(figs, "data/lod.csv", lod_rows())
+    r = propose(client, answers=rule(mode="describe", text="n/a 记为缺失，<0.5 记为 0"))
+    assert r.status_code == 409 and r.get_json()["code"] == "propose_cells_need_rule"
+    assert not P._SESSIONS
+
+
+@needs_worker
+def test_describe_with_a_translated_map_is_accepted_and_the_cache_key_includes_the_rule(project):
+    m, client, figs, _ = project
+    put(figs, "data/lod.csv", lod_rows())
+    same = {"client_request_id": "rid-cells-001"}
+    a = propose(client, answers=rule(mode="skip"), **same).get_json()
+    again = propose(client, answers=rule(mode="skip"), **same).get_json()
+    assert a == again and len(P._SESSIONS) == 1
+    b = propose(
+        client,
+        answers=rule(mode="describe", map={"<0.5": 0, "n/a": None}, rest="skip"),
+        **same,
+    ).get_json()
+    assert b["kind"] == "candidates" and b["session"] != a["session"], "换了处理方式必须重新出图"
+    assert b["items"][0]["cells"][0]["mode"] == "map"
+    assert len(P._SESSIONS) == 2
+
+
+@needs_worker
+def test_propose_with_rules_leaves_the_user_folder_identical(project):
+    m, client, figs, _ = project
+    put(figs, "data/lod.csv", lod_rows())
+    before = tree_state(figs)
+    ask_cells(client)
+    body = propose(client, answers=rule(mode="extract")).get_json()
+    assert body["kind"] == "candidates"
+    time.sleep(0.05)
+    assert tree_state(figs) == before

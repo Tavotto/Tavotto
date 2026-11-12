@@ -187,6 +187,11 @@ class DataSummary:
     id_like: list[str] = field(default_factory=list)
     repeats: bool | None = None
     row_count: int | None = None
+    #: 与 `rows` 逐项对应的文件行号（人看到的行号，表头算第 1 行；空行被丢掉所以不是下标 + 2）；空 = 不知道，按下标 + 2
+    row_numbers: list[int] = field(default_factory=list)
+
+    def row_number(self, i: int) -> int:
+        return self.row_numbers[i] if i < len(self.row_numbers) else i + 2
 
     def to_dict(self) -> dict:
         """给前端 / 历史库 / 模型看的那份：**不带行数据**，只带列名、类型与计数（`privacy_policy`）。"""
@@ -252,15 +257,23 @@ def inspect_data_source(path: str | Path, sheet: str | int | None = None) -> Dat
         except xlsxread.XlsxError as exc:
             raise _from_xlsx_error(exc) from None
     table, sha, size = _read_delimited(p, "\t" if suffix in TSV_SUFFIXES else ",")
-    return _summarize(table, path_name=p.name, sha256=sha, size=size)
+    return _summarize(
+        table,
+        path_name=p.name,
+        sha256=sha,
+        size=size,
+        row_numbers=list(range(1, len(table) + 1)),
+    )
 
 
 def _summarize_book(
     book: xlsxread.XlsxBook, sheet: str | int | None, *, keep_rows: bool = True
 ) -> DataSummary:
     info = book.resolve(sheet)
+    table = book.read(info.index)
     return _summarize(
-        book.read(info.index),
+        table,
+        row_numbers=list(getattr(book, "row_numbers", [])),
         path_name=book.name,
         sha256=book.raw_sha256,
         size=book.size,
@@ -277,7 +290,17 @@ def _summarize(
     size: int,
     sheet: str | None = None,
     keep_rows: bool = True,
+    row_numbers: list[int] | None = None,
 ) -> DataSummary:
+    numbered = (
+        list(zip(row_numbers, table)) if row_numbers and len(row_numbers) == len(table) else None
+    )
+    if numbered is not None:
+        numbered = [(n, r) for n, r in numbered if any(c.strip() for c in r)]
+        table = [r for _, r in numbered]
+        row_numbers = [n for n, _ in numbered]
+    else:
+        row_numbers = None
     table = [r for r in table if any(c.strip() for c in r)]  # 纯空行不算数据行
     if not table:
         raise DataSourceError("data_empty")
@@ -326,6 +349,7 @@ def _summarize(
         id_like=id_like,
         repeats=repeats,
         row_count=None if keep_rows else len(rows),
+        row_numbers=list(row_numbers[1:]) if row_numbers and keep_rows else [],
     )
 
 
@@ -582,6 +606,67 @@ def profile_folder(root: str | Path) -> FolderProfile:
     if reason is None and scan_truncated:
         reason = "scan"
     return FolderProfile(tuple(tables), tuple(skipped), reason is not None, reason)
+
+
+# --------------------------------------------------------------------------- 数值列里夹着的文字格：读表时套的规则
+def apply_cells(header, rows, rules):
+    """数值列里夹着的文字格（`<0.1`、`n/a`、`12.5*`）按用户选定的规则处理，**只改这次读到的内存里的副本，不碰文件**。
+    **这是运行时函数**：父进程算期望值与生成的脚本调用同一份源码（`inspect.getsource` 内嵌进公共模块）。
+
+    `rules`：`[(列名, 方式, 映射, 其余)]`。方式 `skip`：文字格当缺失（该行这一格不画、不计 n，折线在那里断开，同空格）；
+    `extract`：取格子里**第一个**数（`12.5*` → 12.5、`<0.5` → 0.5、`3.2 mg` → 3.2），取不出就当缺失；`map`：原文（去首尾空白后精确匹配）
+    → 数或 None（缺失），不在映射里的按「其余」（`skip` / `extract`）。非文字格（数、空、NaN）一律原样。
+    返回 `(新行, 说明, 统计)`：说明是图下方写的几句英文（每列一句，没有可说的不写），统计是 `[{列, 方式, 忽略, 取数, 映射}]`。"""
+    idx = {h: i for i, h in enumerate(header)}
+    out = [list(r) for r in rows]
+    notes = []
+    stats = []
+    for col, mode, mapping, rest in rules:
+        i = idx[col]
+        ignored = 0
+        extracted = 0
+        mapped = {}
+        for r in out:
+            if i >= len(r) or parse_cell(r[i])[0] != "text":
+                continue
+            text = r[i].strip()
+            if mode == "map" and text in mapping:
+                v = mapping[text]
+                r[i] = "" if v is None else repr(float(v))
+                mapped[text] = mapped.get(text, 0) + 1
+                continue
+            how = rest if mode == "map" else mode
+            m = (
+                re.search(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?", text)
+                if how == "extract"
+                else None
+            )
+            if m is not None:
+                r[i] = repr(float(m.group(0)))
+                extracted += 1
+            else:
+                r[i] = ""
+                ignored += 1
+        stats.append(
+            {
+                "column": col,
+                "mode": mode,
+                "ignored": ignored,
+                "extracted": extracted,
+                "mapped": mapped,
+            }
+        )
+        parts = []
+        for text, n in mapped.items():
+            v = mapping[text]
+            parts.append(f"{text} = {v:g}" if v is not None else f"{text} treated as missing")
+        if extracted:
+            parts.append(f"number taken from {extracted} text cell{'s' if extracted != 1 else ''}")
+        if ignored:
+            parts.append(f"{ignored} non-numeric cell{'s' if ignored != 1 else ''} ignored")
+        if parts:
+            notes.append(f"{col}: " + ", ".join(parts))
+    return out, notes, stats
 
 
 # --------------------------------------------------------------------------- 列映射

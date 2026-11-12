@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -46,6 +47,15 @@ MAX_COMPOSITION_PARTS = 8
 MAX_TRAJECTORIES = 30
 #: 配方里的列数 / 层数 / 文字长度
 MAX_Y = adf.MAX_COLUMNS  # 配方 y 列数的硬上限 = 摘要的列数上限；各族更严的上限在 FamilySpec.y_max
+#: 数值列里夹着文字时，非数字的非空格子占比上限与数值格子的最少个数（`numeric_like`）
+MAX_TEXT_SHARE = 0.2
+MIN_NUMERIC_CELLS = 3
+#: 夹着文字格的数值列的处理方式（闭集）与 `map` 规则的键个数上限。`describe`（用户用文字说明）不是可执行方式：
+#: 要先由助手翻译成 `map`，直接带它的请求被拒绝（`propose_cells_need_rule`）
+CELL_MODES = ("skip", "extract", "map")
+CELL_REST = ("skip", "extract")
+MAX_MAP_KEYS = 50
+MAX_CELL_TEXT = 200
 MIN_LAYERS = 1
 MAX_LAYERS = 4
 MAX_WHY = 80
@@ -178,6 +188,11 @@ REJECTIONS: dict[str, str] = {
     "interval_bounds_invalid": "区间图要求每一行都是 下限 ≤ 估计值 ≤ 上限。",
     "trajectories_limit_exceeded": f"逐个体轨迹最多 {MAX_TRAJECTORIES} 个个体，多了改画汇总线加误差带。",
     "dose_nonpositive": "剂量反应要求剂量大于 0。",
+    # 夹着文字格的数值列的处理规则（`FigureRecipe.cells`）
+    "cell_rule_invalid": "这条处理规则不对：列不存在、不是这次画图用到的数值列、没有夹着文字、或同一列写了两条。",
+    "cell_map_too_large": f"映射规则最多写 {MAX_MAP_KEYS} 项。",
+    "cell_map_value_invalid": "映射到的值必须是有限的数，或写成缺失（null）。",
+    "cell_map_key_unknown": "映射里写的原文在这一列的文字格里找不到（去掉首尾空白后要逐字相同）。",
     # 配方本身不合格（`from_dict`）
     "recipe_malformed": "配方的结构不对：不是对象，或字段类型不对。",
     "recipe_unknown_key": "配方里出现了不认识的字段。",
@@ -529,7 +544,9 @@ _RECIPE_KEYS = (
     "order",
     "scale",
     "why",
+    "cells",
 )
+_CELL_KEYS = ("column", "mode", "map", "rest")
 _RECIPE_REQUIRED = ("table", "family", "layers", "y", "why")
 _LAYER_KEYS = ("mark", "summary", "role")
 
@@ -559,6 +576,61 @@ def _choice(value, allowed: tuple[str, ...], what: str) -> str:
     return value
 
 
+def _cells_from(raw) -> tuple[CellRule, ...]:
+    if not isinstance(raw, list) or len(raw) > MAX_Y:
+        raise RecipeError("recipe_malformed", "cells")
+    return tuple(CellRule.from_dict(c) for c in raw)
+
+
+@dataclass(frozen=True)
+class CellRule:
+    """一列数值里夹着的文字格怎么处理（声明式，不含代码）。`mode`：`skip` 当缺失 / `extract` 取第一个数 / `map` 原文→数或缺失
+    （`mapping` 是 `((原文, 数 | None), ...)`，`rest` 是不在映射里的按 `skip` 还是 `extract`）。用户的数据文件永不改写——规则只在读表时对内存里的副本生效
+    （`ai_data_figure.apply_cells`，生成的脚本与父进程同一份源码）。"""
+
+    column: str
+    mode: str
+    mapping: tuple[tuple[str, float | None], ...] = ()
+    rest: str = "skip"
+
+    def args(self) -> tuple:
+        """`apply_cells` 要的 `(列, 方式, 映射字典, 其余)`。"""
+        return (self.column, self.mode, dict(self.mapping), self.rest)
+
+    def to_dict(self) -> dict:
+        out: dict = {"column": self.column, "mode": self.mode}
+        if self.mode == "map":
+            out["map"] = {k: v for k, v in self.mapping}
+            out["rest"] = self.rest
+        return out
+
+    @classmethod
+    def from_dict(cls, data) -> CellRule:
+        if not isinstance(data, dict):
+            raise RecipeError("recipe_malformed", "cell rule")
+        bad = [k for k in data if k not in _CELL_KEYS]
+        if bad:
+            raise RecipeError("recipe_unknown_key", "cells." + ",".join(sorted(map(str, bad)))[:60])
+        if "column" not in data or "mode" not in data:
+            raise RecipeError("recipe_malformed", "cell rule")
+        mode = _choice(data["mode"], CELL_MODES, "mode")
+        rest = _choice(data.get("rest", "skip"), CELL_REST, "rest")
+        raw = data.get("map", {})
+        if not isinstance(raw, dict) or (mode != "map" and raw):
+            raise RecipeError("recipe_malformed", "cells.map")
+        pairs = []
+        for k, v in raw.items():
+            if (
+                not isinstance(k, str)
+                or len(k) > MAX_CELL_TEXT
+                or isinstance(v, bool)
+                or not (v is None or isinstance(v, (int, float)))
+            ):
+                raise RecipeError("recipe_malformed", "cells.map")
+            pairs.append((k, None if v is None else float(v)))
+        return cls(_name(data["column"], "cells.column") or "", mode, tuple(pairs), rest)
+
+
 @dataclass(frozen=True)
 class FigureRecipe:
     """模型唯一能交的东西：一份闭集配方。`why` 是给用户看的一句话，只显示，不进脚本。"""
@@ -577,6 +649,7 @@ class FigureRecipe:
     paired: bool = False
     order: str = "as_given"
     scale: str = "linear"
+    cells: tuple[CellRule, ...] = ()
 
     @classmethod
     def from_dict(cls, data) -> FigureRecipe:
@@ -640,6 +713,7 @@ class FigureRecipe:
             paired=paired,
             order=_choice(data.get("order", "as_given"), ORDERS, "order"),
             scale=_choice(data.get("scale", "linear"), SCALES, "scale"),
+            cells=_cells_from(data.get("cells", [])),
         )
 
     def to_dict(self) -> dict:
@@ -658,6 +732,7 @@ class FigureRecipe:
             "order": self.order,
             "scale": self.scale,
             "why": self.why,
+            **({"cells": [c.to_dict() for c in self.cells]} if self.cells else {}),
         }
 
 
@@ -682,10 +757,25 @@ def _find(profile: adf.FolderProfile, table: str, sheet: str | None) -> adf.Tabl
     return None
 
 
-def _type_ok(token: str, s: adf.DataSummary, col: str) -> bool:
+def numeric_like(c: adf.ColumnSummary) -> bool:
+    """这列能当数值列：全是数，或「数里夹着少量文字」——非数字的非空格子占比不超过 `MAX_TEXT_SHARE`、数值格子至少
+    `MIN_NUMERIC_CELLS` 个（`<0.1`、`n/a` 这类检出限 / 缺失标记）。夹着的文字格那一行不画并逐行报告（`unplotted_rows`），
+    不让用户先去整理数据；超过阈值的列不当数值列（多半是文字列）。日期列不算（`kind` 是 `date`）。"""
+    if c.kind == "numeric":
+        return True
+    if c.kind != "mixed":
+        return False
+    return c.numeric >= MIN_NUMERIC_CELLS and c.text_count <= MAX_TEXT_SHARE * (
+        c.numeric + c.text_count
+    )
+
+
+def _type_ok(token: str, s: adf.DataSummary, col: str, mixed_ok: bool = False) -> bool:
+    """`mixed_ok`：数值列里夹着少量文字（`numeric_like`）也算数值——结构资格（`eligible`）与「用户已给了处理规则」的配方校验才开；
+    没有规则的配方里这样的列仍是 `column_type_mismatch`（不静默只画数值行）。"""
     kind = s.per_column[col].kind
     if token == "num":
-        return kind == "numeric"
+        return kind == "numeric" or (mixed_ok and numeric_like(s.per_column[col]))
     if token == "ord":
         return kind in ("numeric", "date")
     if token == "cat":
@@ -695,8 +785,8 @@ def _type_ok(token: str, s: adf.DataSummary, col: str) -> bool:
     raise ValueError(token)
 
 
-def _fits(tokens: tuple[str, ...], s: adf.DataSummary, col: str) -> bool:
-    return any(_type_ok(t, s, col) for t in tokens)
+def _fits(tokens: tuple[str, ...], s: adf.DataSummary, col: str, mixed_ok: bool = False) -> bool:
+    return any(_type_ok(t, s, col, mixed_ok) for t in tokens)
 
 
 def _unit_of(col: str) -> str | None:
@@ -871,6 +961,78 @@ def _value_problems(
     return P
 
 
+# --------------------------------------------------------------------------- 夹着文字格的数值列：规则校验与套用
+def with_cells_applied(values: adf.DataSummary, recipe: FigureRecipe) -> adf.DataSummary:
+    """套上配方的处理规则之后的带行数据摘要（取值规则、期望指纹都按「处理后的数据」算）；没有规则原样返回。"""
+    if not recipe.cells:
+        return values
+    rows, _notes, _stats = adf.apply_cells(
+        values.columns, values.rows, [c.args() for c in recipe.cells]
+    )
+    return replace(values, rows=rows)
+
+
+def mixed_columns(s: adf.DataSummary, used: tuple[str, ...]) -> list[str]:
+    """`used` 里夹着少量文字的数值列（`numeric_like` 且 kind 是 `mixed`），按给定顺序。"""
+    return [
+        c
+        for c in used
+        if c in s.per_column and s.per_column[c].kind == "mixed" and numeric_like(s.per_column[c])
+    ]
+
+
+def non_numeric_cells(values: adf.DataSummary, col: str) -> list[str]:
+    """这一列里的文字格（去首尾空白，按首次出现的顺序去重）。"""
+    i = values.columns.index(col)
+    seen: dict[str, None] = {}
+    for r in values.rows:
+        if adf.parse_cell(r[i])[0] == "text":
+            seen.setdefault(r[i].strip(), None)
+    return list(seen)
+
+
+def check_cell_rules(
+    rules: tuple[CellRule, ...] | list[CellRule],
+    s: adf.DataSummary,
+    values: adf.DataSummary | None,
+    used: tuple[str, ...] | None = None,
+) -> list[Problem]:
+    """处理规则的校验：列必须存在、是夹着文字的数值列（`used` 给了还必须是这次配方用到的），同一列只写一条；`map` 的键个数 ≤ `MAX_MAP_KEYS`、
+    值是有限数或 null、键必须真的出现在该列的文字格里（给了 `values` 才判；`detail` 点名是哪个键）。"""
+    P: list[Problem] = []
+    seen: set[str] = set()
+    for i, rule in enumerate(rules):
+        field_ = f"cells[{i}]"
+        if (
+            rule.column in seen
+            or (used is not None and rule.column not in used)
+            or not mixed_columns(s, (rule.column,))
+        ):
+            P.append(Problem("cell_rule_invalid", field_, rule.column[:40]))
+            continue
+        seen.add(rule.column)
+        if rule.mode == "map":
+            if len(rule.mapping) > MAX_MAP_KEYS:
+                P.append(Problem("cell_map_too_large", field_))
+                continue
+            for k, v in rule.mapping:
+                if v is not None and not math.isfinite(v):
+                    P.append(Problem("cell_map_value_invalid", field_, k[:40]))
+            if values is not None and values.rows:
+                have = set(non_numeric_cells(values, rule.column))
+                for k, _v in rule.mapping:
+                    if k not in have:
+                        P.append(Problem("cell_map_key_unknown", field_, k[:40]))
+    return P
+
+
+def cell_rule_problems(
+    recipe: FigureRecipe, s: adf.DataSummary, values: adf.DataSummary | None
+) -> list[Problem]:
+    used = tuple(recipe.y) + ((recipe.x,) if recipe.x and recipe.family == "relationship" else ())
+    return check_cell_rules(recipe.cells, s, values, used)
+
+
 # --------------------------------------------------------------------------- 校验
 def validate_recipe(
     profile: adf.FolderProfile,
@@ -890,6 +1052,7 @@ def validate_recipe(
     s = entry.summary
     spec = FAMILIES[recipe.family]
     P: list[Problem] = []
+    rule_cols = {c.column for c in recipe.cells}
 
     def need(col: str | None, fieldname: str, tokens: tuple[str, ...]) -> bool:
         if col is None:
@@ -897,7 +1060,7 @@ def validate_recipe(
         if col not in s.per_column:
             P.append(Problem("column_not_found", fieldname))
             return False
-        if not _fits(tokens, s, col):
+        if not _fits(tokens, s, col, col in rule_cols):
             P.append(Problem("column_type_mismatch", fieldname, "/".join(tokens)))
             return False
         return True
@@ -1028,10 +1191,13 @@ def validate_recipe(
         items = s.groups.get(recipe.x) or (s.row_count if s.row_count is not None else len(s.rows))
         if items > MAX_RANKING_ITEMS:
             P.append(Problem("ranking_too_many_items", "x", str(items)))
+    P.extend(cell_rule_problems(recipe, s, values))
     # 取值（只在列都对得上时）
     if values is not None and values.rows and cols_ok:
         if values.columns != s.columns or values.sheet != s.sheet:
             raise ValueError("values 与 profile 里那张表的列 / 工作表对不上")
+        if recipe.cells and not any(p.code.startswith("cell_") for p in P):
+            values = with_cells_applied(values, recipe)
         P.extend(_value_problems(recipe, spec, s, _Values(values), unit_confirmed))
     return P
 
@@ -1074,7 +1240,7 @@ class Eligibility:
 
 
 def _columns_of(s: adf.DataSummary, tokens: tuple[str, ...]) -> list[str]:
-    return [c for c in s.columns if _fits(tokens, s, c)]
+    return [c for c in s.columns if _fits(tokens, s, c, True)]
 
 
 def _structure_reasons(spec: FamilySpec, s: adf.DataSummary, confirmed: Confirmed) -> list[str]:
@@ -1276,7 +1442,15 @@ def enforce_order(
 # --------------------------------------------------------------------------- 确定性备选（不调模型；模型路径的底座）
 #: 选择题的稳定码（前端 `errors` 之外的 `dataFigure.question.<码>`）与备选的标题 / 理由码（`dataFigure.candidate.<码>.title|why`）。
 #: 后端不写界面文案；这两张表就是前端中英文文案要覆盖的闭集（`tests/test_ai_data_propose.py` 对着 locale 核）。
-QUESTION_CODES = ("pick_table", "pick_value", "pick_group", "pick_x", "pick_design", "pick_unit")
+QUESTION_CODES = (
+    "pick_table",
+    "pick_value",
+    "pick_group",
+    "pick_x",
+    "pick_design",
+    "pick_unit",
+    "mixed_cells",
+)
 CANDIDATE_CODES = (
     "points_mean",
     "box_points",
@@ -1296,7 +1470,7 @@ CANDIDATE_CODES = (
 #: 备选为空时的原因码（`Candidates.reasons`；备选被护栏剔除的原因另在 `dropped` 里，用 `REJECTIONS` 的码）
 NOTHING_REASONS = (
     "no_usable_table",
-    "value_column_mixed",  # 数值列里混着文字（`<0.1`、`n/a`）：不猜，请用户先整理
+    "value_column_mixed",  # 每一列要么文字太多、要么数值太少（`numeric_like`），没有能当数值的列
     "table_not_found",
     "no_numeric_column",
     "matrix_unsupported",
@@ -1317,9 +1491,13 @@ class Option:
     code: str
     params: dict
     answer: dict
+    free_text: bool = False  # 前端据此显示输入框（用户用文字说明怎么办）
 
     def to_dict(self) -> dict:
-        return {"code": self.code, "params": dict(self.params), "answer": dict(self.answer)}
+        out = {"code": self.code, "params": dict(self.params), "answer": dict(self.answer)}
+        if self.free_text:
+            out["free_text"] = True
+        return out
 
 
 @dataclass(frozen=True)
@@ -1337,6 +1515,74 @@ class NeedsChoice:
             "options": [o.to_dict() for o in self.options],
             "unsure": self.unsure.to_dict() if self.unsure else None,
         }
+
+
+#: 预览最多几行、单格文字最多显示多少字
+MIXED_PREVIEW_ROWS = 5
+MIXED_TEXT_SHOWN = 40
+
+
+@dataclass(frozen=True)
+class MixedCells:
+    """数值列里夹着少量文字：**先问用户怎么处理**，不静默只画数值行。`columns` 一次列出这次画图用到的所有这样的列：
+    `{column, non_numeric, rows, preview: [{row, text, others, extract}], more, options}`——`row` 是文件里的行号（表头算第 1 行，
+    XLSX 是表内行号），`others` 是同一行其它用到的列的值，`extract` 是选「取数字部分」后这一格会得到的值（取不出 = None）；
+    选项 `skip` / `extract` / `describe`（`free_text`），`answer` 原样并进下一次请求的 `answers.cells`。"""
+
+    columns: tuple[dict, ...]
+    question_code: str = "mixed_cells"
+
+    def to_dict(self) -> dict:
+        return {"question_code": self.question_code, "columns": [dict(c) for c in self.columns]}
+
+
+def _shown(text: str) -> str:
+    t = text.strip()
+    return t if len(t) <= MIXED_TEXT_SHOWN else t[: MIXED_TEXT_SHOWN - 1] + "…"
+
+
+def mixed_cells_question(
+    values: adf.DataSummary, cols: list[str], context: tuple[str, ...]
+) -> MixedCells:
+    """为 `cols` 里每一列做预览（最多 `MIXED_PREVIEW_ROWS` 行，超出写 `more`）。`context`：这次画图用到的其它列（预览里同行带出它们的值）。"""
+    out = []
+    for col in cols:
+        i = values.columns.index(col)
+        c = values.per_column[col]
+        hits = [(n, r) for n, r in enumerate(values.rows) if adf.parse_cell(r[i])[0] == "text"]
+        preview = []
+        for n, r in hits[:MIXED_PREVIEW_ROWS]:
+            got, _, _ = adf.apply_cells(["c"], [[r[i]]], [("c", "extract", {}, "skip")])
+            ext = got[0][0]
+            preview.append(
+                {
+                    "row": values.row_number(n),
+                    "text": _shown(r[i]),
+                    "others": {
+                        o: _shown(r[values.columns.index(o)])
+                        for o in context
+                        if o != col and o in values.columns
+                    },
+                    "extract": float(ext) if ext != "" else None,
+                }
+            )
+        out.append(
+            {
+                "column": col,
+                "non_numeric": len(hits),
+                "rows": c.numeric + c.text_count,
+                "preview": preview,
+                "more": max(0, len(hits) - MIXED_PREVIEW_ROWS),
+                "options": [
+                    Option("skip", {}, {"cells": {col: {"mode": "skip"}}}).to_dict(),
+                    Option("extract", {}, {"cells": {col: {"mode": "extract"}}}).to_dict(),
+                    Option(
+                        "describe", {}, {"cells": {col: {"mode": "describe"}}}, free_text=True
+                    ).to_dict(),
+                ],
+            }
+        )
+    return MixedCells(tuple(out))
 
 
 @dataclass(frozen=True)
@@ -1367,9 +1613,7 @@ def _is_id_like_col(s: adf.DataSummary, col: str) -> bool:
 def _usable_table(t: adf.TableEntry) -> bool:
     s = t.summary
     n = s.row_count if s.row_count is not None else len(s.rows)
-    return n >= 1 and any(
-        s.per_column[c].kind == "numeric" and c not in s.id_like for c in s.columns
-    )
+    return n >= 1 and any(numeric_like(s.per_column[c]) and c not in s.id_like for c in s.columns)
 
 
 def _table_option(t: adf.TableEntry) -> Option:
@@ -1442,7 +1686,7 @@ def _resolve_roles(
 ) -> _Roles | NeedsChoice | str:
     """列角色的挑选规则（**一处文字定义，下面是实现**；保守：能由结构或用户点名唯一确定就确定，有歧义就问，绝不猜）。
 
-    记号：`ids` = `id_like` 列（**永不**当 y / x / 分组，只可能经用户确认成 `unit`）；`nums` = 数值列（kind `numeric`，去掉 ids）；
+    记号：`ids` = `id_like` 列（**永不**当 y / x / 分组，只可能经用户确认成 `unit`）；`nums` = 数值列（`numeric_like`：全是数，或夹着不超过 20% 文字格的，去掉 ids；夹着的文字格那行不画并报告）；
     `dates` = 日期列；`cats` = `groups` 里的列（去掉 ids，列顺序）。`hint` 里按词点名的列（`ai_data_figure._mentioned`，
     不做语义猜测）和选择题的回答 `picks`（键 `y` / `group` / `x`，值是列名或 `unsure`）都算「指定」。
 
@@ -1458,7 +1702,7 @@ def _resolve_roles(
     s = entry.summary
     cols = s.columns
     ids = set(s.id_like)
-    nums = [c for c in cols if s.per_column[c].kind == "numeric" and c not in ids]
+    nums = [c for c in cols if numeric_like(s.per_column[c]) and c not in ids]
     dates = [c for c in cols if s.per_column[c].kind == "date" and c not in ids]
     cats = [c for c in cols if c in s.groups and c not in ids]
     if s.layout == "matrix":
@@ -1497,7 +1741,7 @@ def _resolve_roles(
         else:
             return NeedsChoice("pick_group", _col_options("group", cats, s), _unsure("group"))
     # --- x
-    xs = [c for c in dates + nums if c not in ys]
+    xs = [c for c in dates + nums if c not in ys and s.per_column[c].kind in ("numeric", "date")]
     x_ord: str | None = None
     px = picks.get("x")
     named_x = [c for c in named if c in xs]
@@ -1541,7 +1785,8 @@ def default_candidates(
     hint: str | None = None,
     values: adf.DataSummary | None = None,
     picks: dict | None = None,
-) -> Candidates | NeedsChoice:
+    cells: dict[str, CellRule] | None = None,
+) -> Candidates | NeedsChoice | MixedCells:
     """不调模型的备选：对选定的表给 2–4 个现在**有模板能画**（`RENDERABLE`）的配方，全部经 `validate_recipe` + `enforce_order`。
 
     * 选表、列角色挑选的规则见 `pick_table` / `_resolve_roles`（有歧义 → `NeedsChoice`，不猜）；`hint` 只做「按词点名列 / 文件」的确定性
@@ -1549,6 +1794,8 @@ def default_candidates(
       「同一对象重复测量吗」，`unsure` = 当独立数据画、不带编号；确认「重复测量」且有多个编号列时再问用哪一列）。
     * 每个备选组是「按顺序试、第一个合格的入选」的几个等价画法；组的顺序就是推荐顺序：有序横轴在时趋势 / 关系图在前，随后是分组比较
       （原始点优先）与分布，柱加误差线排最后（`enforce_order` 在此之上再强制一遍）；至多取 4 组。取值类规则（每组 n、非负、重复 x）要 `values`（选中那张表带行数据的摘要）；不给就只判结构。
+    * 用到的数值列夹着少量文字（`numeric_like`，非数字占比 ≤ 20%）且 `cells` 里没有该列的处理规则 → 返回 `MixedCells`（先问用户，不出图）；
+      有规则就把规则带进每个备选的配方（`FigureRecipe.cells`）。
     * 一个都画不了 → `Candidates(items=())`，带 `reasons`；被护栏剔除的备选在 `dropped`。
     """
     picks = dict(picks or {})
@@ -1595,6 +1842,14 @@ def default_candidates(
         )
     unit = eff.unit_col if eff.design == "repeated" else None
     y = roles.ys[0]
+    cells = dict(cells or {})
+    mixed = mixed_columns(s, roles.ys)
+    pending = [c for c in mixed if c not in cells]
+    if pending and values is not None and values.rows:
+        context = tuple(
+            dict.fromkeys([*(roles.cats[:2]), *([roles.x_ord] if roles.x_ord else []), *roles.ys])
+        )
+        return mixed_cells_question(values, pending, context)
     ok_families = {
         e.family
         for e in eligible(entry, eff, values=values)
@@ -1766,10 +2021,15 @@ def default_candidates(
     dropped: list[Dropped] = []
     for gi, alts in enumerate(groups):
         for code, rec in alts:
+            rules = tuple(cells[c] for c in rec.y if c in cells and c in mixed)
+            if rules:
+                rec = replace(rec, cells=rules)
             problems = validate_recipe(profile, rec, confirmed=eff, values=values)
             if len(rec.y) > 1 and any(p.code == "dual_axis_unsupported" for p in problems):
                 # 量纲不同的几列不画同一张图（不做双 y 轴）：退到第一列，不静默丢掉也不报错
-                rec = replace(rec, y=rec.y[:1])
+                rec = replace(
+                    rec, y=rec.y[:1], cells=tuple(r for r in rec.cells if r.column == rec.y[0])
+                )
                 problems = validate_recipe(profile, rec, confirmed=eff, values=values)
             if not problems:
                 picked.append((code, rec))
@@ -1792,11 +2052,14 @@ __all__ = [
     "ASK_FIRST",
     "CANDIDATE_CODES",
     "Candidate",
+    "CellRule",
     "Candidates",
+    "MixedCells",
     "NOTHING_REASONS",
     "NeedsChoice",
     "Option",
     "QUESTION_CODES",
+    "check_cell_rules",
     "default_candidates",
     "pick_table",
     "COMMON_REJECTIONS",
