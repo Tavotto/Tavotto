@@ -401,9 +401,48 @@ export function onBlockedWrite(fn: (() => void) | null): void {
 
 /** 写入口的门：占位文档不许写。`notify` = 用户动作被拒，要说一句；派生写入静默 */
 function writesBlocked(notify = true): boolean {
+  if (windowHold) {
+    if (notify) windowBlockedNotifier?.()
+    return true
+  }
   if (!isDocumentPlaceholder()) return false
   if (notify && gate.state === 'needs_user') blockedWriteNotifier?.()
   return true
+}
+
+/**
+ * 同一份排版在两个窗口开着时，这个窗口的编辑权（ADR 0181）：
+ *  - `contested`：后开的窗口，收到「另一个窗口已端着这份」——选「在这里编辑」/「存成副本」之前只读；
+ *  - `yielding`：正被另一个窗口接管，在把没存的改动存好——此时已不收新编辑，但还要写盘；
+ *  - `yielded`：已被接管——只读，自动保存不写盘（改动留在这个窗口里，可「存成副本」）。
+ * 只读靠两样：写入口的门（`writesBlocked`）+ 自动保存挂起（`suspendAutosaveFor`，换文档即解除）。
+ * `switchDocument` 换到任何文档都清掉它——权属于「这份排版」，不属于窗口。
+ */
+export interface WindowHold {
+  role: 'contested' | 'yielding' | 'yielded'
+  docId: string
+}
+let windowHold: WindowHold | null = null
+/** 挂起是不是这里设的（别把教程等别处设的挂起一并放开） */
+let holdSuspended = false
+export const getWindowHold = (): WindowHold | null => windowHold
+
+export function setWindowHold(next: WindowHold | null): void {
+  windowHold = next
+  useDocumentStore.setState({ windowHold: next })
+  if (next && next.role !== 'yielding') {
+    suspendAutosaveFor(next.docId)
+    holdSuspended = true
+  } else if (!next && holdSuspended) {
+    holdSuspended = false
+    resumeAutosave()
+  }
+}
+
+/** 只读期间用户动手被拒：由 `documentRestore` 登记，说一句先选（与 `onBlockedWrite` 平行） */
+let windowBlockedNotifier: (() => void) | null = null
+export function onWindowBlockedWrite(fn: (() => void) | null): void {
+  windowBlockedNotifier = fn
 }
 
 /** 保存元数据（下次自动恢复用的 last / owner）没写成：与 `saveState` 正交 */
@@ -460,6 +499,8 @@ interface DocumentState {
   docNotice: DocNotice | null
   /** 恢复门的镜像（只读，给界面用；写入口只在本文件的 `setGate`） */
   restoreGate: RestoreGate
+  /** 这个窗口对这份排版的编辑权（同一份排版在两个窗口开着，ADR 0181）；null = 正常 */
+  windowHold: WindowHold | null
   /**
    * 上次的排版没能恢复、等用户处理的那件事（一句话 + 一个主按钮，见顶栏芯片）。与 `saveState` 正交：
    * 一次 `saved → clean` 清不掉它；只有恢复成功 / 用户选了出口才清。
@@ -685,6 +726,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   saveIssue: null,
   docNotice: null,
   restoreGate: gate,
+  windowHold: null,
   restoreIssue: null,
   restoreMetaIssue: null,
   loadSeq: 0,
@@ -1137,6 +1179,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
     // 换文档 = 挂起结束（上面那次 flush 已经按挂起跳过了，旧文档的编辑随它一起放弃）
     autosaveSuspendedFor = null
+    // 编辑权属于「那份排版」：换到哪份都清（只读状态不跟着带过去）
+    windowHold = null
+    holdSuspended = false
     // 归属在**换进来那一刻**定，不在落盘那一刻现问（见 `docProject`）。
     // 必须排在上面那次 flush 之后：那一次写的是**旧**文档，它属于旧项目。
     // 占位文档没有归属：转正（`settleRestore`）或被真文档取代时才定
@@ -1159,6 +1204,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         saveIssue: null,
         docNotice: null,
         restoreMetaIssue: null,
+        windowHold: null,
         loadSeq: get().loadSeq + 1,
         lastPersisted: null,
         projectFile: readProjectFile(nextId),
@@ -1784,15 +1830,20 @@ export function forgetLocalDocument(id: string): void {
  * 没清），把它挪进恢复槽位，加载完立刻以 `recovery_available` 提供出来。
  * 所以"重新加载"不是一个会丢东西的按钮。
  */
-export async function reloadFromDisk(): Promise<boolean> {
+export async function reloadFromDisk(opts: { keepMine?: boolean } = {}): Promise<boolean> {
   const id = useDocumentStore.getState().documentId
-  // 先落一次本机副本：冲突可能发生在防抖窗口之前，副本未必是最新的内存内容
-  try {
-    localStorage.setItem(slotKey(id), JSON.stringify(useDocumentStore.getState().buildProject()))
-  } catch {
-    /* 存不下就用已有的那份副本（可能旧一点，总比没有强） */
+  // `keepMine: false` = 这个窗口没有自己的改动要保护（只读窗口接管时载入最新版）：不把内存里那份旧内容
+  // 写进本机副本再晋升成恢复——槽位是各窗口共用的，那样会把一份过时的内容当成「未恢复的编辑」摆出来
+  const keepMine = opts.keepMine ?? true
+  if (keepMine) {
+    // 先落一次本机副本：冲突可能发生在防抖窗口之前，副本未必是最新的内存内容
+    try {
+      localStorage.setItem(slotKey(id), JSON.stringify(useDocumentStore.getState().buildProject()))
+    } catch {
+      /* 存不下就用已有的那份副本（可能旧一点，总比没有强） */
+    }
   }
-  const backup = promoteToRecovery(id)
+  const backup = keepMine ? promoteToRecovery(id) : null
   let fetched: Awaited<ReturnType<typeof fetchAutosave>>
   try {
     fetched = await fetchAutosave(id)

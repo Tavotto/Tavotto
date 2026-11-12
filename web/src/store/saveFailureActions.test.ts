@@ -22,7 +22,7 @@ const revisionOf = (body: string) => `r${body.length}-${[...body].reduce((a, c) 
 
 const autosave = new Map<string, string>()
 const projectFiles = new Map<string, string>()
-let autosavePut: 200 | 409 | 500 = 200
+let autosavePut: 200 | 409 | 500 | 'external' = 200
 let layoutPost: 200 | 500 = 200
 let layoutPosts = 0
 /** 每次自动保存 PUT 的尝试（不论成败） */
@@ -35,6 +35,7 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
     const id = decodeURIComponent(auto[1])
     if (init?.method === 'PUT') {
       putAttempts.push(id)
+      if (autosavePut === 'external') return new Response(JSON.stringify({ code: 'external_change', error: 'x', revision: 'r-disk' }), { status: 409 })
       if (autosavePut === 409) return new Response(JSON.stringify({ code: 'stale_write', error: 'x' }), { status: 409 })
       if (autosavePut === 500) return new Response('{"error":"disk full"}', { status: 500 })
       autosave.set(id, String(init.body))
@@ -142,17 +143,58 @@ describe('「重试保存」绑定失败的那份排版', () => {
   })
 })
 
-describe('自动保存被另一个窗口的新版挡下 →「重新加载」', () => {
-  it('提示带按钮；点下去取回磁盘那版，本窗口的编辑进恢复槽位，冲突态清掉', async () => {
+describe('自动保存被另一个窗口的新版挡下（stale）→「存成副本」', () => {
+  it('提示一句话 + 主按钮「存成副本」；点下去本窗口的改动存成新排版，原排版一个字节不动', async () => {
     edit('theirs')
     await saveNow()
-    expect(ids(autosave.get('d_fail'))).toEqual(['theirs'])
+    const original = autosave.get('d_fail')
+    expect(ids(original)).toEqual(['theirs'])
 
     autosavePut = 409
     edit('mine')
     await saveNow()
     expect(s().saveState).toBe('conflict')
-    expect(statusText()).toContain('另一窗口保存了更新的版本')
+    expect(statusText()).toContain('另一个窗口保存了更新的版本。')
+    expect(actionLabel()).toBe('存成副本')
+
+    autosavePut = 200
+    ui().statusAction!.run()
+    await new Promise((r) => setTimeout(r, 80))
+    expect(s().documentId).not.toBe('d_fail')
+    expect(s().projectMeta.name).toContain('副本')
+    expect(s().doc.objects.map((o) => o.id)).toEqual(['theirs', 'mine'])
+    expect(s().saveState).not.toBe('conflict')
+    expect(autosave.get('d_fail'), '两边都留：原排版没被碰').toBe(original)
+    expect(ids(autosave.get(s().documentId))).toEqual(['theirs', 'mine'])
+  })
+
+  it('点下去时冲突已被别处裁决：只收掉提示，不分叉、不动文档', async () => {
+    edit('theirs')
+    await saveNow()
+    autosavePut = 409
+    edit('mine')
+    await saveNow()
+    const action = ui().statusAction!
+    useDocumentStore.setState({ saveState: 'dirty', saveIssue: null })
+    action.run()
+    await new Promise((r) => setTimeout(r, 30))
+    expect(s().documentId).toBe('d_fail')
+    expect(s().doc.objects.map((o) => o.id)).toEqual(['theirs', 'mine'])
+    expect(ui().status).toBeNull()
+  })
+})
+
+describe('自动保存撞上外部修改（external）→「重新加载」', () => {
+  it('提示带按钮；点下去取回磁盘那版，本窗口的编辑进恢复槽位，冲突态清掉', async () => {
+    edit('theirs')
+    await saveNow()
+    expect(ids(autosave.get('d_fail'))).toEqual(['theirs'])
+
+    autosavePut = 'external'
+    edit('mine')
+    await saveNow()
+    expect(s().saveState).toBe('conflict')
+    expect(statusText()).toContain('外部修改')
     expect(actionLabel()).toBe('重新加载')
 
     ui().statusAction!.run()
@@ -160,21 +202,6 @@ describe('自动保存被另一个窗口的新版挡下 →「重新加载」', 
     expect(s().saveState).toBe('clean')
     expect(s().doc.objects.map((o) => o.id)).toEqual(['theirs'])
     expect(s().docNotice?.kind, '本窗口的编辑没丢：恢复横幅提供出来').toBe('recovery')
-    expect(ui().status).toBeNull()
-  })
-
-  it('点下去时冲突已被别处裁决：只收掉提示，不动内存里的文档', async () => {
-    edit('theirs')
-    await saveNow()
-    autosavePut = 409
-    edit('mine')
-    await saveNow()
-    const action = ui().statusAction!
-    // 别处先裁决了（这里等价于已不在冲突态）
-    useDocumentStore.setState({ saveState: 'dirty', saveIssue: null })
-    action.run()
-    await new Promise((r) => setTimeout(r, 20))
-    expect(s().doc.objects.map((o) => o.id)).toEqual(['theirs', 'mine'])
     expect(ui().status).toBeNull()
   })
 })

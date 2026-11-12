@@ -5909,7 +5909,7 @@ export default interface Resources {
     "autosave": {
       "diskFailed": "没能保存到磁盘。",
       "docConflict": "这份排版已在另一个窗口打开，同时编辑会互相覆盖。",
-      "staleOtherWindow": "另一窗口保存了更新的版本。改动只保留在这里，未写入磁盘。"
+      "staleOtherWindow": "另一个窗口保存了更新的版本。"
     },
     "boot": {
       "desktopSessionFailed": "无法建立 Tavotto 桌面会话。请关闭窗口后重新打开应用。",
@@ -6071,6 +6071,7 @@ export default interface Resources {
     },
     "docWindow": {
       "choose": "先在画布上选一下。",
+      "entryDropped": "已换了排版，刚才的操作没有执行。",
       "openElsewhere": "这份排版已在另一个窗口打开。",
       "saveCopy": "存成副本",
       "takeBack": "拿回来编辑",

@@ -18,6 +18,7 @@ import type { ProjectDocument } from '@/types/document'
 import {
   activeProjectFile,
   captureFigureSnapshotSave,
+  getWindowHold,
   mergeSavedFigureSnapshots,
   resumeAutosave,
   setProjectFile,
@@ -56,7 +57,8 @@ export async function installFork(pd: ProjectDocument): Promise<string | null> {
   suspendAutosaveFor(oldId)
   const ok = await useDocumentStore.getState().switchDocument(pd, id)
   if (!ok) {
-    resumeAutosave()
+    // 只读窗口（`windowHold`）的挂起是它自己的，不能因为分叉没成就放开
+    if (!getWindowHold()) resumeAutosave()
     return null
   }
   afterSwitch()

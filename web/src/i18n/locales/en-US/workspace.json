@@ -80,7 +80,7 @@
   "autosave": {
     "diskFailed": "Couldn’t save to disk.",
     "docConflict": "This layout is open in another window. Editing in both overwrites one of them.",
-    "staleOtherWindow": "Another window saved a newer version. Your changes are kept here, not on disk."
+    "staleOtherWindow": "Another window saved a newer version."
   },
   "boot": {
     "desktopSessionFailed": "Couldn’t start a Tavotto desktop session. Close this window and reopen the app.",
@@ -263,6 +263,7 @@
   },
   "docWindow": {
     "choose": "Pick one on the canvas first.",
+    "entryDropped": "You switched layouts, so that action didn’t run.",
     "openElsewhere": "This layout is open in another window.",
     "saveCopy": "Save a copy",
     "takeBack": "Take it back",
