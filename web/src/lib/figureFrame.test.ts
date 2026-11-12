@@ -4,8 +4,10 @@
  * 换算的判据是**内容在页面上不动**：同一个图内的点（figsize 里的 mm）在切换前后落在页面上
  * 同一处——旋转、翻转、裁剪、非等比缩放各走一遍。
  */
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Manifest } from '@/lib/api'
+import { createPackage } from '@/lib/api'
+import { validFigureSnapshot } from '@/lib/figureSnapshot'
 import {
   FIGURE_FRAME_VERSION,
   LEGACY_FRAME_OVERRIDE,
@@ -22,6 +24,7 @@ import {
   panelRotation,
   rotateVec,
   type CanvasObject,
+  type FigureSnapshot,
   type PanelObject,
 } from '@/types/document'
 
@@ -128,6 +131,91 @@ describe('迁移：升级前的面板', () => {
     expect(once.overrides.filter((o) => o.prop === 'frame')).toHaveLength(1)
     const again = migrateToProject(JSON.parse(JSON.stringify(pd)))!
     expect((again.canvases[0].objects[0] as PanelObject).overrides.filter((o) => o.prop === 'frame')).toHaveLength(1)
+  })
+})
+
+describe('图幅迁移后的 Figure 配对归属', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  const snapshotFor = (sourceId: string): FigureSnapshot => ({
+    version: 1,
+    sourceId,
+    patchHash: 'sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
+    receiptId: `sha256:${'1'.repeat(64)}`,
+    snapshotId: '2'.repeat(64),
+  })
+  const oldPanel = (kind: 'runtime' | 'pdf', id = 'p1'): PanelObject => {
+    const fileId = kind === 'runtime' ? 'runtime:scripts/figure.py#result~rc_5e1b7ef044e4' : 'Fig1.pdf'
+    const value = panel({
+      id, fileId, fileKind: kind,
+      overrides: kind === 'runtime' ? [] : [{ gid: 'axes_0', prop: 'facecolor', value: '#eee' }],
+      figureSnapshot: snapshotFor(fileId),
+    })
+    delete value.figureFrame
+    return value
+  }
+
+  it.each([2, 3, 4] as const)('schema %i 的读档→项目包正文只撤销实际改过 patches 的配对，覆盖非活动画布', async schema => {
+    const runtime = oldPanel('runtime')
+    const pdf = oldPanel('pdf', 'p2')
+    expect(validFigureSnapshot(runtime.figureSnapshot, runtime.fileId)).toBe(true)
+    expect(validFigureSnapshot(pdf.figureSnapshot, pdf.fileId)).toBe(true)
+    const canvas = (id: string, objects: CanvasObject[]) => ({ id, name: id, page: { w: 100, h: 100 }, objects, guides: [] })
+    const raw = schema === 2
+      ? { schema, name: 'Old', page: { w: 100, h: 100 }, objects: [runtime, pdf], guides: [] }
+      : {
+          schema, project: { id: 'project', name: 'Old' },
+          canvases: [canvas('active', [runtime]), canvas('inactive', [pdf])],
+          activeCanvasId: 'active', createdAt: 1, updatedAt: 2,
+        }
+    const original = structuredClone(raw)
+    const migrated = migrateToProject(raw)!
+    const calls: { url: string; body: unknown }[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown, init?: RequestInit) => {
+      calls.push({ url: String(url), body: JSON.parse(String(init?.body)) })
+      return Response.json({ name: 'Old.tavotto', url: '/download', assets: 0, missing: [], document_format: 'v4', chart_sources: 0 })
+    }))
+    if (schema === 4) await createPackage('Old', migrated, {}, { format: 'v4', pj: 'p_frame_migration' })
+    else await createPackage('Old', migrated, {})
+
+    expect(calls).toHaveLength(1)
+    expect(new URL(calls[0].url, 'http://localhost').pathname).toBe(schema === 4 ? '/api/documents/v4/package' : '/api/package')
+    const sent = (calls[0].body as { doc: typeof migrated }).doc
+    const sentPanels = sent.canvases.flatMap(c => c.objects) as PanelObject[]
+    expect(sentPanels).toEqual([runtime, pdf].map(p => {
+      const { figureSnapshot: _stale, ...rest } = p
+      return { ...rest, figureFrame: FIGURE_FRAME_VERSION, overrides: [...p.overrides, { ...LEGACY_FRAME_OVERRIDE }] }
+    }))
+    for (const p of sentPanels) expect(Object.hasOwn(p, 'figureSnapshot')).toBe(false)
+    expect(raw).toEqual(original)
+    expect(runtime.figureSnapshot).toBeDefined()
+    expect(pdf.figureSnapshot).toBeDefined()
+    expect(migrateToProject(migrated)).toBe(migrated)
+  })
+
+  it.each([
+    ['仅补 marker 的无编辑 PDF', () => oldPanel('pdf'), []],
+    ['runtime 已有 FRAME', () => oldPanel('runtime'), [{ ...LEGACY_FRAME_OVERRIDE }]],
+    ['PDF 已有 FRAME', () => oldPanel('pdf'), [{ gid: 'axes_0', prop: 'facecolor', value: '#eee' }, { ...LEGACY_FRAME_OVERRIDE }]],
+  ] as const)('%s 保留原配对和 overrides 引用', (_label, makePanel, overrides) => {
+    const before = makePanel()
+    before.overrides = [...overrides]
+    const original = structuredClone(before)
+    const [after] = migrateFigureFrames([before]) as PanelObject[]
+    expect(after).not.toBe(before)
+    expect(after.figureFrame).toBe(FIGURE_FRAME_VERSION)
+    expect(after.figureSnapshot).toBe(before.figureSnapshot)
+    expect(after.overrides).toBe(before.overrides)
+    expect(before).toEqual(original)
+  })
+
+  it('已有 marker 的 runtime 不迁移，也不撤销其配对', () => {
+    const before = oldPanel('runtime')
+    before.figureFrame = FIGURE_FRAME_VERSION
+    const objects = [before]
+    expect(migrateFigureFrames(objects)).toBe(objects)
+    expect(before.figureSnapshot).toBeDefined()
+    expect(before.overrides).toEqual([])
   })
 })
 

@@ -9,6 +9,7 @@ import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { CanvasObject } from '@/types/document'
 import { isLinear, objectRotation, panelRotation } from '@/types/document'
 import { PATH_HIT_SHAPES } from '@/lib/shapeGeometry'
+import { canEditPanel } from '@/lib/panelEditability'
 import { startMoveDrag } from './interactions'
 import { openQuickEdit } from './quickEditStore'
 import { ArrowView } from './ArrowView'
@@ -110,7 +111,7 @@ export const ObjectView = memo(function ObjectView({
       if (useUiStore.getState().elementPanelId === obj.id) return
       // 可参数化面板双击进图内编辑，普通面板双击进裁剪
       // （旋转过的面板裁剪框方向会与画布对不上，先不进裁剪态）
-      if (obj.script) enterElementEdit(obj.id)
+      if (canEditPanel(obj)) enterElementEdit(obj.id)
       else if (!panelRotation(obj)) beginCrop(obj.id)
       // 双击什么都没发生时说出为什么（2026-10-07 设计审计 §10.1，与右键菜单里置灰的「裁剪」同一句原因）：
       // 此前旋转过的普通面板双击毫无反应，用户以为没点中

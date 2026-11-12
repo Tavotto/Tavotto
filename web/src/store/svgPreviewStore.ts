@@ -31,9 +31,10 @@ import {
   applyStyleEdit,
   canStyleEditApply,
   restoreStyleEdits,
-  unitsPerPt,
   type StyleEdit,
 } from '@/lib/svgStyle'
+import { svgPreviewCoordinates } from '@/lib/svgPreviewCoordinates'
+import { svgPreviewTargets } from '@/lib/svgPreviewTargets'
 import {
   newTiming,
   traceAuthority,
@@ -74,7 +75,7 @@ export interface PreviewPatch {
 interface PanelPreview {
   panelId: string
   renderKey: string
-  /** gid → 这一版 SVG 里它原本的 transform（null = 本来就没有这个属性） */
+  /** 实际目标 ID → 这一版 SVG 里它原本的 transform（语义 gid 可有多个目标） */
   baseTransforms: Map<string, string | null>
   /**
    * gid → 采 base 时那个 DOM 节点本身。reattach 靠它分辨「React 真的重插了
@@ -82,6 +83,9 @@ interface PanelPreview {
    * 把**已经挪过的位置**当成原位，位移翻倍且再也还原不回去。
    */
   baseNodes: Map<string, Element>
+  /** 语义 gid 的目标快照；不把实际目标再登记成一份预览意图。 */
+  transformTargets: Map<string, Element[]>
+  styleTargets: Map<string, Element[]>
   /** gid → 当前预览位移（figure 分数、y 向下） */
   transforms: Map<string, [number, number]>
   /** gid → 当前预览缩放（倍数 + figure 分数的不动点）；只有图例整体缩放写它 */
@@ -210,6 +214,8 @@ function panelStateFor(
     renderKey,
     baseTransforms: new Map(),
     baseNodes: new Map(),
+    transformTargets: new Map(),
+    styleTargets: new Map(),
     transforms: new Map(),
     scales: new Map(),
     edits: [],
@@ -414,9 +420,9 @@ function restorePanel(panelId: string): void {
   const p = panels.get(panelId)
   if (!p) return
   const svg = findPanelSvg(panelId)
-  for (const [gid, base] of p.baseTransforms) {
-    const node = findGidNode(svg, gid)
-    if (!node) continue
+  for (const [id, base] of p.baseTransforms) {
+    const node = p.baseNodes.get(id)
+    if (!node || !svg?.contains(node)) continue
     if (base == null) node.removeAttribute('transform')
     else node.setAttribute('transform', base)
   }
@@ -466,10 +472,19 @@ export interface QueuedTranslation {
   lastApplied: string | null
   delta: [number, number]
   frame: number | null
+  /** 实际目标账本；上面的单节点字段仅镜像首目标，兼容既有调用方。 */
+  targets: Map<string, QueuedTranslationTarget>
+}
+
+interface QueuedTranslationTarget {
+  node: Element
+  base: string | null
+  committedBase: string | null
+  lastApplied: string | null
 }
 
 export function queuedTranslation(panelId: string, gid: string): QueuedTranslation {
-  return { panelId, gid, node: null, base: null, committedBase: null, lastApplied: null, delta: [0, 0], frame: null }
+  return { panelId, gid, node: null, base: null, committedBase: null, lastApplied: null, delta: [0, 0], frame: null, targets: new Map() }
 }
 
 function restoreTransform(node: Element, base: string | null) {
@@ -477,20 +492,45 @@ function restoreTransform(node: Element, base: string | null) {
   else node.setAttribute('transform', base)
 }
 
+function syncQueuedFirst(q: QueuedTranslation): void {
+  const first = q.targets.values().next().value
+  q.node = first?.node ?? null
+  q.base = first?.base ?? null
+  q.committedBase = first?.committedBase ?? null
+  q.lastApplied = first?.lastApplied ?? null
+}
+
+function resolveQueuedTargets(q: QueuedTranslation) {
+  const svg = findPanelSvg(q.panelId)
+  const targets = svgPreviewTargets(svg, q.gid, 'transform')
+  if (!targets) return null
+  const bases = targets.nodes.map(node => svgPreviewCoordinates(svg, node))
+  if (bases.some(basis => !basis)) return null
+  const next = new Map<string, QueuedTranslationTarget>()
+  for (const node of targets.nodes) {
+    const id = node.getAttribute('id')!
+    const previous = q.targets.get(id)
+    next.set(id, previous?.node === node ? previous : {
+      node, base: node.getAttribute('transform'), committedBase: null, lastApplied: null,
+    })
+  }
+  q.targets = next
+  syncQueuedFirst(q)
+  return { targets: [...next.values()], bases }
+}
+
 export function flushQueuedTranslation(q: QueuedTranslation): void {
   if (q.frame != null) cancelRaf(q.frame)
   q.frame = null
-  const svg = findPanelSvg(q.panelId)
-  const node = findGidNode(svg, q.gid)
-  if (!node || !svg) return
-  if (node !== q.node) {
-    q.node = node
-    q.base = node.getAttribute('transform')
-  }
-  const [w, h] = viewBox(svg)
+  const resolved = resolveQueuedTargets(q)
+  if (!resolved) return
   const [dx, dy] = q.delta
-  q.lastApplied = dx || dy ? `translate(${dx * w},${dy * h})${q.base ? ` ${q.base}` : ''}` : q.base
-  restoreTransform(node, q.lastApplied)
+  for (let i = 0; i < resolved.targets.length; i++) {
+    const target = resolved.targets[i], { width: w, height: h } = resolved.bases[i]!
+    target.lastApplied = dx || dy ? `translate(${dx * w},${dy * h})${target.base ? ` ${target.base}` : ''}` : target.base
+    restoreTransform(target.node, target.lastApplied)
+  }
+  syncQueuedFirst(q)
 }
 
 export function updateQueuedTranslation(q: QueuedTranslation, delta: [number, number]): void {
@@ -501,22 +541,31 @@ export function updateQueuedTranslation(q: QueuedTranslation, delta: [number, nu
 /** 提交前先移去排队位移，再让普通预览账本采权威 SVG 的 base。 */
 export function prepareQueuedTranslationCommit(q: QueuedTranslation): void {
   flushQueuedTranslation(q)
-  if (q.node?.isConnected) restoreTransform(q.node, q.base)
-  q.committedBase = q.node?.getAttribute('transform') ?? null
+  for (const target of q.targets.values()) {
+    if (target.node.isConnected) restoreTransform(target.node, target.base)
+    target.committedBase = target.node.getAttribute('transform')
+  }
+  syncQueuedFirst(q)
 }
 
 export function captureQueuedTranslationCommit(q: QueuedTranslation): void {
-  q.node = findGidNode(findPanelSvg(q.panelId), q.gid)
-  q.base = q.node?.getAttribute('transform') ?? null
-  q.lastApplied = q.base
+  if (!resolveQueuedTargets(q)) return
+  for (const target of q.targets.values()) {
+    target.base = target.node.getAttribute('transform')
+    target.lastApplied = target.base
+  }
+  syncQueuedFirst(q)
 }
 
 export function rebaseQueuedTranslation(q: QueuedTranslation): void {
   if (q.frame != null) cancelRaf(q.frame)
   q.frame = null
-  const node = findGidNode(findPanelSvg(q.panelId), q.gid)
+  const current = svgPreviewTargets(findPanelSvg(q.panelId), q.gid, 'transform')
   // 同一 SVG 字符串可以复用 DOM 节点；先去掉已被权威接管的那次预览。
-  if (node && node === q.node) restoreTransform(node, q.committedBase)
+  for (const target of q.targets.values()) {
+    if (current?.nodes.includes(target.node)) restoreTransform(target.node, target.committedBase)
+  }
+  q.targets.clear()
   q.node = null
 }
 
@@ -524,7 +573,10 @@ export function cancelQueuedTranslation(q: QueuedTranslation): void {
   if (q.frame != null) cancelRaf(q.frame)
   q.frame = null
   // 另一条预览/撤销路径可能已经还原了节点，不能用旧 base 再盖回去。
-  if (q.node?.isConnected && q.node.getAttribute('transform') === q.lastApplied) restoreTransform(q.node, q.base)
+  const svg = findPanelSvg(q.panelId)
+  for (const target of q.targets.values()) {
+    if (svg?.contains(target.node) && target.node.getAttribute('transform') === target.lastApplied) restoreTransform(target.node, target.base)
+  }
 }
 
 function schedule(key: string, op: PendingOp): void {
@@ -565,54 +617,62 @@ function writeTransform(op: Extract<PendingOp, { kind: 'transform' }>): void {
   const p = panels.get(op.panelId)
   if (!p) return
   const svg = findPanelSvg(op.panelId)
-  const node = findGidNode(svg, op.gid)
+  const targets = svgPreviewTargets(svg, op.gid, 'transform')
+  // 不同语义对象可共用实际目标；重放顺序须与最后一次 DOM 写入顺序相同。
+  p.transforms.delete(op.gid)
   p.transforms.set(op.gid, [op.dfx, op.dfy])
   if (op.scale) p.scales.set(op.gid, op.scale)
   else p.scales.delete(op.gid)
-  if (!node) return // gid 在 SVG 里不存在：覆盖层预览接管，这里安静退出
-  if (!p.baseTransforms.has(op.gid)) {
-    p.baseTransforms.set(op.gid, node.getAttribute('transform'))
-    p.baseNodes.set(op.gid, node)
+  if (!targets) return
+  const bases = targets.nodes.map(node => svgPreviewCoordinates(svg, node, p.sizeMm))
+  if (bases.some(basis => !basis)) return // 任一目标坏了，整次操作不写 DOM。
+  p.transformTargets.set(op.gid, targets.nodes)
+  for (let i = 0; i < targets.nodes.length; i++) {
+    const node = targets.nodes[i], id = node.getAttribute('id')!
+    if (!p.baseTransforms.has(id)) {
+      p.baseTransforms.set(id, node.getAttribute('transform'))
+      p.baseNodes.set(id, node)
+    }
+    const base = p.baseTransforms.get(id) ?? null
+    const basis = bases[i]!
+    const vb = [basis.width, basis.height]
+    const tx = op.dfx * vb[0]
+    const ty = op.dfy * vb[1]
+    // **永远从 base 现算**：`translate(…) <原始>` 让平移落在父坐标系里，
+    // matplotlib 自己的 scale/translate（`<image>` 上就有）原样保留。
+    // 带缩放时写成绕不动点的 matrix（同样落在父坐标系、同样前置于原始变换）
+    const own = op.scale
+      ? (() => {
+          const { s: k, ox, oy } = op.scale
+          const e = ((basis.originX ?? 0) + ox * vb[0]) * (1 - k) + tx
+          const f = ((basis.originY ?? 0) + oy * vb[1]) * (1 - k) + ty
+          return `matrix(${k},0,0,${k},${e},${f})`
+        })()
+      : `translate(${tx},${ty})`
+    node.setAttribute('transform', base ? `${own} ${base}` : own)
   }
-  const base = p.baseTransforms.get(op.gid) ?? null
-  const vb = viewBox(svg)
-  const tx = op.dfx * vb[0]
-  const ty = op.dfy * vb[1]
-  // **永远从 base 现算**：`translate(…) <原始>` 让平移落在父坐标系里，
-  // matplotlib 自己的 scale/translate（`<image>` 上就有）原样保留。
-  // 带缩放时写成绕不动点的 matrix（同样落在父坐标系、同样前置于原始变换）
-  const own = op.scale
-    ? (() => {
-        const { s: k, ox, oy } = op.scale
-        const e = ox * vb[0] * (1 - k) + tx
-        const f = oy * vb[1] * (1 - k) + ty
-        return `matrix(${k},0,0,${k},${e},${f})`
-      })()
-    : `translate(${tx},${ty})`
-  node.setAttribute('transform', base ? `${own} ${base}` : own)
 }
 
 function writeStyle(op: Extract<PendingOp, { kind: 'style' }>): void {
   const p = panels.get(op.panelId)
   if (!p) return
-  const kind = adapterFor(op.role, op.prop)
-  if (!kind) return
   const svg = findPanelSvg(op.panelId)
-  const node = findGidNode(svg, op.gid)
-  p.styles.set(`${op.gid}|${op.prop}`, { gid: op.gid, prop: op.prop, value: op.value, role: op.role })
-  if (!node) return
-  const edits = applyStyleEdit(node, kind, op.value, { unitsPerPt: unitsPerPt(svg, p.sizeMm) })
+  const targets = svgPreviewTargets(svg, op.gid, 'style')
+  if (!targets) return
+  const kind = adapterFor(op.role, op.prop, { mapped: targets.mapped, semanticGidPresent: !!findGidNode(svg, op.gid) })
+  if (!kind) return
+  const styleKey = `${op.gid}|${op.prop}`
+  p.styles.delete(styleKey)
+  p.styles.set(styleKey, { gid: op.gid, prop: op.prop, value: op.value, role: op.role })
+  const bases = targets.nodes.map(node => svgPreviewCoordinates(svg, node, p.sizeMm))
+  if (bases.some(basis => !basis)) return
+  p.styleTargets.set(`${op.gid}|${op.prop}`, targets.nodes)
+  const edits = targets.nodes.flatMap((node, i) => applyStyleEdit(node, kind, op.value, bases[i]!))
   // 每个元素的 base（整条 style 原文）只记最早那一次：同一条属性被拖着改
   // 十次，账本里仍然只有 matplotlib 给的那份原文
   for (const e of edits) {
     if (!p.edits.some((x) => x.el === e.el)) p.edits.push(e)
   }
-}
-
-function viewBox(svg: SVGSVGElement | null): [number, number] {
-  const vb = (svg?.getAttribute('viewBox') ?? '').split(/[\s,]+/).map(Number)
-  if (vb.length < 4 || !Number.isFinite(vb[2]) || !Number.isFinite(vb[3])) return [100, 100]
-  return [vb[2], vb[3]]
 }
 
 /* -------------------------------------------------------------------------- */
@@ -647,6 +707,8 @@ export function retargetPreview(
   p.renderKey = baseKey
   p.baseTransforms.clear()
   p.baseNodes.clear()
+  p.transformTargets.clear()
+  p.styleTargets.clear()
   p.transforms = new Map(Object.entries(translate))
   p.scales.clear()
   p.edits = []
@@ -693,10 +755,14 @@ export function previewStyle(gid: string, role: string, prop: string, value: unk
   if (!kind) return false
   if (!session || session.settled) return false
   const svg = findPanelSvg(session.panelId)
-  const node = findGidNode(svg, gid)
-  if (!node) return false
+  const targets = svgPreviewTargets(svg, gid, 'style')
+  if (!targets?.nodes.length) return false
+  const targetKind = adapterFor(role, prop, { mapped: targets.mapped, semanticGidPresent: !!findGidNode(svg, gid) })
+  if (!targetKind) return false
   const sizeMm = panels.get(session.panelId)?.sizeMm
-  if (!canStyleEditApply(node, kind, value, { unitsPerPt: unitsPerPt(svg, sizeMm) })) return false
+  const bases = targets.nodes.map(node => svgPreviewCoordinates(svg, node, sizeMm))
+  if (bases.some(basis => !basis)) return false
+  if (!targets.nodes.some((node, i) => canStyleEditApply(node, targetKind, value, bases[i]!))) return false
   schedule(`s:${gid}|${prop}`, { kind: 'style', panelId: session.panelId, gid, role, prop, value })
   return true
 }
@@ -746,13 +812,21 @@ export function reattachPreview(panelId: string, renderKey: string): void {
   const svg = findPanelSvg(panelId)
   if (!svg) return
   if (domIntact(p, svg)) return
+  // 部分目标重挂时，其余节点仍带着上一帧预览；先恢复这些节点再采 base，
+  // 不把已经移动/刷过样式的 DOM 当作新原稿而重复应用。
+  for (const [id, node] of p.baseNodes) {
+    if (svg.contains(node)) restoreTransform(node, p.baseTransforms.get(id) ?? null)
+  }
+  restoreStyleEdits(p.edits.filter(edit => svg.contains(edit.el)))
   p.baseTransforms.clear()
   p.baseNodes.clear()
+  p.transformTargets.clear()
+  p.styleTargets.clear()
   p.edits = []
-  for (const [gid, [dfx, dfy]] of p.transforms) {
+  for (const [gid, [dfx, dfy]] of [...p.transforms]) {
     writeTransform({ kind: 'transform', panelId, gid, dfx, dfy, scale: p.scales.get(gid) })
   }
-  for (const st of p.styles.values()) {
+  for (const st of [...p.styles.values()]) {
     writeStyle({ kind: 'style', panelId, gid: st.gid, role: st.role, prop: st.prop, value: st.value })
   }
 }
@@ -800,6 +874,15 @@ function domIntact(p: PanelPreview, svg: SVGSVGElement): boolean {
   if (!p.baseNodes.size && !p.edits.length) return false
   for (const [gid, node] of p.baseNodes) {
     if (findGidNode(svg, gid) !== node) return false
+  }
+  for (const [gid, nodes] of p.transformTargets) {
+    const current = svgPreviewTargets(svg, gid, 'transform')?.nodes
+    if (!current || current.length !== nodes.length || current.some((node, i) => node !== nodes[i])) return false
+  }
+  for (const [key, nodes] of p.styleTargets) {
+    const gid = p.styles.get(key)?.gid
+    const current = gid ? svgPreviewTargets(svg, gid, 'style')?.nodes : null
+    if (!current || current.length !== nodes.length || current.some((node, i) => node !== nodes[i])) return false
   }
   for (const e of p.edits) {
     if (!e.el.isConnected) return false
