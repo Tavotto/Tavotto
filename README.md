@@ -1,3 +1,5 @@
+<!-- mcp-name: io.github.Tavotto/tavotto -->
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/hero-window.png" width="100%"
        alt="The Tavotto desktop window on macOS with the layout saved to the project, panel (a) selected, and its position, size and scale in the properties column.">

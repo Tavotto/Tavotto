@@ -305,6 +305,9 @@ _VERSION_SITES = [
     ("codex-plugin/package.json", r'"version":\s*"([^"]+)"'),
     ("workerd/Cargo.lock", r'name = "tavotto-workerd"\nversion = "([^"]+)"'),
     ("src-tauri/Cargo.lock", r'name = "tavotto-desktop"\nversion = "([^"]+)"'),
+    # MCP Registry 的清单：顶层一条、PyPI 包一条，两条都要跟 wheel 同一版（Registry 按它去 PyPI 验包）
+    ("server.json", r'^  "version":\s*"([^"]+)"'),
+    ("server.json", r'"identifier": "tavotto",\s*"version":\s*"([^"]+)"'),
 ]
 
 
