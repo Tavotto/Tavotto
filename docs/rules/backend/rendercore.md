@@ -44,6 +44,10 @@ order: 330
   换行单元里用户原文侧补 `typography.ELIDED` 占位保持逐字符对齐（交给 `ShapedPiece.logical` 前 `user_text()` 去掉）。
   换行 / 对齐 / 行高 / 上下标 /
   下划线的用户合同逐句来自旧 `_draw_text`，改这些先改前端 TextView 那一侧的同一语义。
+- **计算原图的EPS准备叶子（ADR-XXXX）**：`originaleps.prepare_scene_ps`消费完整冻结SVG和物理尺寸，经同一SVGIR与批准字体排字，准备有界PS；`epscontainer.pack_prepared_eps`仅在既有Matplotlib worker封EPS，不重新画场景、不排字、不启动外部进程。内部闭式`scene-ps/1`核SVG/PS摘要、尺寸、字节与展开预算；摘要不是任意PS的安全沙盒，不能开放成用户PS执行接口。父层不import Matplotlib，worker不需HarfBuzz/PDFium等native extras；旧live Figure/Type42及画布EPS合同不变。
+  公共入口只有`pdfbackend.prepare_original_eps`→`facade.prepare_original_eps`，回payload/facts/notes，异常归公开`OriginalEPSError(code,params)`；app不import内部writer。`chartprocess`仅接固定`pack_eps`封闭动作，经原环境lease/owned process/截止时间/输入输出预算，回执核7字段、SVG/PS身份和尺寸。准备payload与动作信封各自仍受现预算，不能把叶子裸payload上限冒称端到端可发送上限；没有新任意PS/argv端点。
+  精确零alpha消去、不透明ClipUnion按原序表达；部分object/group alpha、image/imported-page及SVGIR不支持的表达保留结构化拒绝，不能变不透明、丢装饰或整图栅格化。看护`tests/test_native_scene_eps.py`以独立Ghostscript/PDFium比较真实文字/装饰/几何/像素，覆盖剪裁并集、组alpha和payload边界；叶子资格不代替HTTP/界面/发行资格。
+- **嵌套SVG viewport**：`svgir.svg_to_ir`经同一`svgcoord.viewbox_to_pt`解释根、symbol/use与nested svg，局部百分比/物理单位、非零viewBox、PAR、x/y及自身/祖先transform不得重复应用。overflow的静态/CSS与继承只改变同一viewport裁剪；显式clip-path替代同元素隐式overflow clip，祖先clip仍取交集，clip定义的百分比保留其定义viewport上下文。零viewport不绘制，负值/非法几何与既有字节/展开/深度预算仍拒绝，不通过拆wrapper或删除clip降保真。看护`tests/test_svgir_nested_viewports.py`以手算几何、真实Chrome与独立PDFium/GS验证嵌套百分比、实例、clip holes/union、透明度、标注/留白合成；静态安全检查只增加overflow属性，不放开URL/脚本/外部资源。
 - **源产物冻结一次、核两次**：`sources.StaticSourceResolver` 只认「磁盘原件 + 无 override」，
   不跑脚本（RC-019）；带 override / runtime 素材抛 `source_needs_execution`（U08 接 worker + 回执，
   RC-017：绝不拿 materialized cache 冒充）；`read_frozen()` 在读字节那一刻核 sha256，不符就是
@@ -111,15 +115,24 @@ order: 330
   `text_policy=outlines` 保留为 `write_svg(..., text_policy="outlines")` 的内部退路：字形由批准脸的 fontTools 轮廓按已有
   gid / advance / offset / rise 落笔，不重新 shaping、不找系统字体。两种策略都不伪称字体嵌入（`embedded=false`）。零宽 PDF hairline 无等价 SVG
   表达时结构化拒绝。图片经既有解码与预算，PNG / JPEG 内嵌、TIFF 转 PNG，保原像素网格与 straight alpha。
-  ImportedPage 的 SVG 能力是**按来源有条件成立**：`FileResource.svg_sha256` 必须来自已核验的同 Figure 对，
+  PDF 来源的 ImportedPage 要输出 SVG，能力**按来源有条件成立**：`FileResource.svg_sha256` 必须来自已核验的同 Figure 对，
   写入器再次核 canonical 源与 companion 的字节 hash；只有第一张源页，opaque PDF 明确拒绝、不解析成猜测的路径、
   不自动栅格。导入 SVG 的 viewBox 归一到源可见框后复用 `placement.place()`，crop / rotation / flip 顺序不另写一份。
   每个实例前缀化所有 ID 与内部引用，CSS 选择器限定在该实例内，组 opacity 不分摊给 children。
   导入伴随件里的 `<text>` 在 text 策略下原样保留（`imported_text_elements`），outlines 策略下仍以 `svg_source_text_not_outlined` 拒收。
   配对生成、`require_built` 与持久化约束分别在 `export-pipeline.md` / `layout-versions-and-documents.md`。
+- **普通静态 SVG 是冻结的原生页资源**：`ir.is_native_svg(kind, origin)` 只准入 static / declarative 的 SVG，
+  不扩 `FILE_KINDS` 或位图 Image 闭集，不放行无配对的 execution SVG。static SVG 的 `FrozenSource` 表示是自身，
+  禁止再挂 companion；原始字节摘要仍由 `SourceArtifact` / `read_frozen` / writer 两道核验，不伪造 receipt。
+  `svgasset.snapshot` / `inspect_bytes` 统一有界读取、安全检查与物理 pt；惰性 DOCTYPE 只沿既有精确规则移除，校验表示不替代 raw SHA。
+  PDF 经 SVGIR 与同一 PdfWriter 生成 Form，嵌套 child 共用父文档的 `raster.DOCUMENT_MAX_PIXELS` 累计，不能逐 SVG 重置。
+  放置以固有物理 frame 为源框，非零 viewBox / PAR 仍由源解释；crop / flip / rotation 只经原 placement。
+  static SVG 在 PDF 与组装 SVG 中都保留外层物理框 clip，不能用可被源 CSS 覆盖的 overflow 属性代替；源内部 overflow 不改。
+  SVGIR 的 notes 进入原 warnings；gradient / mask / pattern / marker 等尚不能转换的表达按格式失败，不把静态准入当作全 SVG 支持。
+  看护：`tests/test_static_svg_canvas.py`、`tests/test_static_svg_overflow.py`。
 - **SVG 安全与检查共用一处（X03）**：纯标准库 `svgcheck.parse_svg` 是导入和 `inspector` 的有界 XML / CSS 闸，
   拒绝 DTD / entities / 脚本 / 事件 / 外链 / 远程字体、危险 CSS，以及重复、悬空、循环资源引用；内嵌图片也受预算。
-  只在可信 worker 生成边界、hash 冻结前允许移除精确匹配的 Matplotlib 惰性 DOCTYPE；任意导入文件不借这条放行。
+  可信 worker 生成与 `svgasset` 静态读取只复用 `strip_matplotlib_doctype` 移除精确惰性声明，raw 身份不换；自定义 DTD / entity / subset 仍拒绝，其他导入路径不得自行剥离放行。
   `svgwriter` 封口前再验整份组装结果，`inspector` 重新打开成品读物理尺寸、viewBox、轮廓 / 图片等字节事实。
   轮廓策略不把字体嵌入或文字检索判为 verified，text 策略也不判字体嵌入（只核 `font-family` 的首选族）；这也不等于已通过 Office 插入 / 重开 / 转 PDF 兼容性验证。
   看护：`tests/test_rendercore_svgwriter.py`、`tests/test_rendercore_svginspect.py`、`tests/test_worker_svg_pair.py`。

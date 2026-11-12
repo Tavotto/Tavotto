@@ -190,7 +190,7 @@ def test_opaque_pdf_failure_is_per_format_and_names_source(project):
         assert "external.pdf" in json.dumps(outputs["svg"]["error"])
 
 
-def test_raster_original_has_no_svg_and_does_not_ask_for_a_script_rerun(project):
+def test_raster_original_exports_an_image_svg_without_a_script_rerun(project, monkeypatch):
     import struct
     import zlib
 
@@ -209,10 +209,19 @@ def test_raster_original_has_no_svg_and_does_not_ask_for_a_script_rerun(project)
     (root / "scan.png").write_bytes(png)
     value = spec("scan.png", scope="original", formats=("svg",))
     value["original"]["source_kind"] = "raster"
-    rejected = client.post("/api/export", json=value)
-    # 位图没有脚本可重跑：中性的 svg_source_unsupported，不是 svg_snapshot_missing
-    assert rejected.status_code >= 400, rejected.get_json()
-    assert rejected.get_json()["code"] == "svg_source_unsupported", rejected.get_json()
+
+    def deny(*args, **kwargs):
+        pytest.fail("Static raster SVG must not rerun a script")
+
+    monkeypatch.setattr(m, "_serialize_figure", deny)
+    response = client.post("/api/export", json=value)
+    assert response.status_code == 200, response.get_json()
+    result = response.get_json()
+    item = next(o for o in result["outputs"] if o["format"] == "svg")
+    assert item["status"] == "done"
+    assert item["vector"] is False
+    svg = ET.fromstring((Path(result["export_dir"]) / item["name"]).read_bytes())
+    assert len(svg.findall(".//{http://www.w3.org/2000/svg}image")) == 1
 
 
 def test_svg_companion_safety_failure_preserves_pdf(project, monkeypatch):

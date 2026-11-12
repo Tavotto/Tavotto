@@ -30,6 +30,8 @@ KIND_RASTER, KIND_PDF, KIND_SVG, KIND_RUNTIME = "raster", "pdf", "svg", "runtime
 SOURCE_DISK, SOURCE_REDRAW, SOURCE_UNAVAILABLE = "disk", "redraw", "unavailable"
 #: 面板带保存时的 Figure 快照引用且本来要现画：不跑脚本，加载持久化的快照；引用过期则拒绝导出。
 SOURCE_SNAPSHOT = "snapshot"
+#: 计算图表的完整场景：声明式模型/绑定，不执行用户脚本；具体格式能力由真实 producer 核验。
+SOURCE_DECLARATIVE = "declarative"
 
 #: 一种格式的做法。
 HOW_COPY, HOW_CONVERT, HOW_REDRAW, HOW_UNAVAILABLE = "copy", "convert", "redraw", "unavailable"
@@ -86,6 +88,7 @@ def panel_route(
     overrides: Sequence[Any] | None,
     has_script: bool,
     has_snapshot: bool = False,
+    has_chart: bool = False,
 ) -> dict:
     """一个面板的 route：`{source, embeds_disk_bitmap, formats: {fmt: {how, reason?, conditions?}}}`。
 
@@ -97,9 +100,14 @@ def panel_route(
     rerender = (not canvas) and original_rerender(formats)
     executes = wants_execution(runtime=runtime, overrides=overrides, rerender=rerender)
     can_draw = runtime or has_script
-    edits = wants_execution(runtime=runtime, overrides=overrides)
-    if edits and executes_from_snapshot(has_reference=has_snapshot):
+    if has_chart:
+        source = SOURCE_DECLARATIVE
+    elif executes_from_snapshot(has_reference=has_snapshot):
         source = SOURCE_SNAPSHOT
+    elif svg_asset and not overrides:
+        # Unedited SVG's basis is always its frozen disk bytes. EPS may only
+        # consume an existing byte-bound Figure; it does not rerun this source.
+        source = SOURCE_DISK
     elif not executes:
         source = SOURCE_DISK
     elif can_draw:
@@ -108,7 +116,7 @@ def panel_route(
         source = SOURCE_UNAVAILABLE
     else:
         source = SOURCE_DISK  # 原图范围：没有脚本，退回磁盘文件
-    static_svg_asset = svg_asset and not overrides and (canvas or not has_snapshot)
+    static_svg_asset = svg_asset and not has_chart and not overrides and not has_snapshot
     unedited_svg_asset = static_svg_asset and not canvas
     out: dict[str, dict] = {}
     for fmt in formats:
@@ -133,7 +141,7 @@ def panel_route(
             if COND_FIGURE_SNAPSHOT not in entry["conditions"]:
                 entry["conditions"].insert(0, COND_FIGURE_SNAPSHOT)
     # EPS 能不能给——**不论用户这次勾没勾**：对话框要在勾之前就说清楚这个选项可不可用（禁用并说原因）。
-    # EPS 一项不依赖来源（只看范围 / 有无脚本 / 是否 SVG 素材），所以与 formats 无关
+    # EPS offer 与是否勾选无关；声明式场景可尝试转换，其余沿旧脚本/快照事实。
     offers = {
         "eps": out["eps"]
         if "eps" in out
@@ -179,6 +187,13 @@ def _format_route(
     has_snapshot: bool,
     wants_svg: bool,
 ) -> dict:
+    if source == SOURCE_DECLARATIVE:
+        if fmt == "eps" and canvas:
+            return _unavailable(REASON_EPS_NOT_FOR_CANVAS)
+        # An offer is permission to attempt conversion of the same complete
+        # scene, not proof that PS can express its paints or that a source ref
+        # is valid. Those facts remain owned by the actual producer/resolver.
+        return {"how": HOW_CONVERT}
     if fmt == "eps":
         if canvas:
             return _unavailable(REASON_EPS_NOT_FOR_CANVAS)
@@ -191,9 +206,12 @@ def _format_route(
             }
         # 同一作业还要 svg 时 eps 只取已有的活 Figure（`existing_only`），不启动 worker
         return {"how": HOW_REDRAW, **({"conditions": [COND_LIVE_FIGURE]} if wants_svg else {})}
-    if static_svg_asset and (canvas or fmt != "svg"):
-        # 没有编辑的 SVG 素材：画布合成不接，原图范围只有 svg（逐字复制）与 eps（字节绑定的活 Figure）
-        return _unavailable(REASON_SVG_ASSET_UNSUPPORTED)
+    if static_svg_asset and canvas:
+        # Raw static SVG is its own representation; the producer decides
+        # which paints/layouts it can express, independently per format.
+        return {"how": HOW_CONVERT}
+    if static_svg_asset and fmt != "svg":
+        return {"how": HOW_CONVERT}
     if source == SOURCE_SNAPSHOT:
         # 加载持久化快照，不跑脚本；引用过期（与源或编辑对不上）整次导出被拒
         return {"how": HOW_CONVERT}
@@ -204,8 +222,8 @@ def _format_route(
             return {"how": HOW_COPY}
         if source == SOURCE_REDRAW:
             return {"how": HOW_REDRAW}
-        if file_kind == KIND_RASTER and not canvas:
-            return _unavailable(REASON_SVG_SOURCE_UNSUPPORTED)
+        if file_kind == KIND_RASTER:
+            return {"how": HOW_CONVERT}
         return {"how": HOW_CONVERT, "conditions": [COND_FIGURE_SNAPSHOT]}
     if source == SOURCE_REDRAW:
         return {"how": HOW_REDRAW}
@@ -223,7 +241,7 @@ def build_route(
 ) -> dict:
     """整次导出的 route：`{scope, formats, panels: {panel_id: panel_route}}`。
 
-    `panels` 每项 `{id, file_kind, overrides, has_script, has_snapshot?}`。同 id 的多个实例（画布上同一张图
+    `panels` 每项 `{id, file_kind, overrides, has_script, has_snapshot?, has_chart?}`。同 id 的多个实例（画布上同一张图
     摆了几次）只在它们 route 相同时合并；不同就各自带 `#n` 后缀留下来，不替它们裁决。
     """
     result: dict[str, dict] = {}
@@ -235,6 +253,7 @@ def build_route(
             overrides=panel.get("overrides"),
             has_script=bool(panel.get("has_script")),
             has_snapshot=bool(panel.get("has_snapshot")),
+            **({"has_chart": True} if panel.get("has_chart") else {}),
         )
         key = str(panel["id"])
         n = 1

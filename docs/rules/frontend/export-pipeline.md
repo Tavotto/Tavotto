@@ -36,6 +36,7 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
   `tests/golden/export_route_vectors.json` 看护同源——这是前端里**唯一**还在推算来源的地方，且不比旧行为乐观。
   画布范围的问题面板（`validationStore`，不在对话框里）不带 route，走退路。看护 `lib/exportRoute.test.ts`、
   `store/exportRouteStore.test.ts`、`components/ExportDialog.test.tsx`（「来源读后端 route」）。
+  **格式计划与EPS offer各自按有效事实寻址（ADR-XXXX）**：`routeKeyOf`严格含所选formats；`offerKeyOf`消费同一来源事实提取，去掉formats但保留项目/scope/完整chart/ref/原序overrides。store只缓存后端`offers.eps`的how/reason最小投影，不复用旧完整格式计划；UI勾选及`buildExportRequest`消费同一offer，格式切换不能撤回已获许可的EPS。来源/范围/项目/重开/失败使offer失效，迟到答复按原代际拒收，同ID多实例的歧义不自授权。无chart/ref的旧键和缺省请求形状保持；前端不能凭panel.chart或脚本名复制后端许可判据。
 - **作业活在 `store/exportStore.ts`，不活在对话框里**：关掉弹窗不取消作业。
   进度经 SSE `export.progress`，**外加一条轮询**——SSE 是加速器不是唯一通道
   （浏览器演练场、断线、代理下必须照样拿得到终局）。两条路进同一个
@@ -154,6 +155,8 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
     选覆盖 / 另存重发这一张后继续；取消 = 取消当前这张并停掉剩余，已写出的如实报（汇总为 `partial`）；某张导不出（文件名不合法 / 源文件没了）
     记一笔失败继续；收尾后 `aggregateBatch` 合成一份汇总作业给 `ResultBlock`（部分失败走既有 `partialSummary`）。统一文件名输入在这一档隐藏
     （每张用各自的名字）。route 按每张各取一次，迟迟不来按退路发，不卡住整批。
+    批次准备的异步 continuation 必须仍属于同一批 ids；结算必须读取当前 store 的同批次、同一作业快照，不能用发送前闭包里的上一作业终态推进。
+    runtime 的显示名与来源 id 分离：先取真实 runtime 名称或持久 source.stem；原名未保存时用既有本地化文件名默认值，不反解 opaque id、不改变完整引用。
 - **导出失败的出口**（2026-11-10，`lib/exportRecovery.ts` + `ResultBlock`）：`export_dir_unwritable` / `tmp_dir_failed` 的主按钮是「换个位置导出」（与「位置」行同一个 `useExportLocationPicker`，选完写项目导出文件夹再走同一个 `start()`；同目录「重试」必败，不给）；`export_raster_too_large` 的主按钮是「改用 N dpi 导出」（N = 候选里不超上限的最大一档，当前 dpi 取作业请求的 `ppi`，像素数按 dpi 平方缩、宽高向上取整；对话框把分辨率设成 N 后走同一个 `start()`，载荷仍只由 `buildExportRequest()` 构造），算不出档位退回「发送问题反馈」。作业级失败与「一件都没写出来」的逐项失败两处都带这个出口。看护 `exportFailureActions.test.tsx`、`lib/exportRecovery.test.ts`、`ExportDialog.test.tsx`「位图太大」。
 - **导出永远可点，没有知情确认勾选框**（2026-10-21）：阻断项 / 无法核验项 / 没查成不再拦「开始导出」。检查区只有摘要芯片（计数）与「在问题面板中查看」；**没有逐条阻断清单、没有任何警告句、不变红**（用户 10-21 裁决）。**原来记入 proof report 的确认，改成自动记「导出时未处理的项」**：有未处理项就强制生成样式检查报告
   （`reportRequired`，开关置灰），`forced` / `acknowledged`（阻断与无法核验的规则码）/ `check_failed` / `acknowledged_check_failed`

@@ -36,6 +36,9 @@
   original_tiff(src, out, ppi, transparent, dpi_meta=)
                                     → 按原图出 TIFF（同一套规则；Deflate 无损；
                                        位图源的分辨率标签只写源文件自己声明过的）
+  prepare_original_eps(svg, page_pt)
+                                    → 完整最终 SVG 的可信已排字 PS payload / facts / notes；
+                                       worker 只封 EPS，不在 Flask 父进程加载 Matplotlib
   annotate_asset(pdf, png, objs)    → 把画布标注画进单图文件（写回原图带标注）
   BACKEND_NAME / BACKEND_VERSION    → 后端身份（进渲染缓存键：换实现/换版本
                                        出来的像素可能就不一样了）
@@ -109,7 +112,7 @@ def is_backend_unavailable(exc: BaseException) -> bool:
     每个实现模块自己声明 `UNAVAILABLE_ERRORS`；调用方（`app.py` 的漏斗）只问这一句，不 import 任何实现的
     异常类——否则换 / 加一个后端时，它的不可用错误就绕过这条路成了 `internal_error`（Codex #539）。只看已经
     装载的实现：判错误时不为了判而装载实现（那本身可能就是抛出这个错误的那一步）。与 `selected()` 一样是
-    选择器层的工具，不在 `__all__`（19 项契约名的闭集）。
+    选择器层的工具，不在 `__all__`（21 项契约名的闭集）。
     """
     mods = list(_IMPLS.values())
     if not mods:
@@ -161,7 +164,7 @@ def warm() -> str:
     `main()` 起服务前调一次，第一次请求的延迟回到从前；顺带让「选了一个装不上的后端」在
     启动时就报出来（`BackendSelectionError`：退役 / 不认识；`CandidatePackagesMissing`：依赖不在），
     而不是在用户第一次打开文件时。不静默回退：装不上就抛。与 `selected()` 一样是选择器层的工具，
-    **不在** `__all__`（那是 19 项契约名的闭集）。U10 起装的是 `rendercore/facade.py`（ADR 0072）。
+    **不在** `__all__`（那是 21 项契约名的闭集）。U10 起装的是 `rendercore/facade.py`（ADR 0072）。
 
     实现模块若有 `prewarm()`（RenderCore 有：render child / 字体注册表 / CJK 脸三件冷启动 ~220 ms），在这里交给它
     **后台**去做——不挡服务启动，也不改变「装不上就在这里抛」：import 已经在上一行成功了。
@@ -220,6 +223,27 @@ def compose(page_w_mm, page_h_mm, transparent=False):
 
 def original_pdf(src, out, page_pt=None):
     return _impl().original_pdf(src, out, page_pt)
+
+
+class OriginalEPSError(RuntimeError):
+    """完整原图不能无损表达为本 EPS 场景；code/params 不泄漏后端类型。"""
+
+    def __init__(self, code: str, message: str, params: dict | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.params = params or {}
+
+
+def prepare_original_eps(svg, page_pt):
+    """冻结 SVG bytes + (w,h)pt → {payload:dict, facts:dict, notes:list}。
+
+    这不是客户端提交 PS 的接口；payload 只能进入既有固定 owned worker action。
+    """
+    impl = _impl()
+    try:
+        return impl.prepare_original_eps(svg, page_pt)
+    except impl.OriginalEPSError as exc:
+        raise OriginalEPSError(exc.code, str(exc), exc.params) from exc
 
 
 class PdfConcatError(ValueError):
@@ -283,6 +307,7 @@ __all__ = [
     "original_pdf",
     "original_png",
     "original_tiff",
+    "prepare_original_eps",
     "pdf_fonts",
     "probe_asset",
     "render_preview_png",

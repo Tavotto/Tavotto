@@ -42,6 +42,7 @@ import {
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { flushSync } from "react-dom";
 import {
   Check,
   Download,
@@ -89,7 +90,6 @@ import {
   type ExportableFigure,
 } from "@/lib/exportFigures";
 import { openProblems } from "@/lib/issueFocus";
-import { stemOf } from "@/lib/openRequest";
 import type { Severity } from "@/lib/profile";
 import type { OriginalOutputSpec } from "@/lib/originalSpec";
 import {
@@ -114,7 +114,7 @@ import {
   type ExportRequestInput,
 } from "@/lib/exportRequest";
 import { copiesSourceVerbatim as copiesVerbatimFromRoute, unavailablePanels, type ExportRoute } from "@/lib/exportRoute";
-import { fetchExportRoute, routeKeyOf, useExportRouteStore } from "@/store/exportRouteStore";
+import { fetchExportRoute, offerKeyOf, routeKeyOf, useExportRouteStore } from "@/store/exportRouteStore";
 import { buildBatchInput, buildMergedPdfInput, type BatchShared } from "@/lib/exportBatchInput";
 import { mergePdfPlan } from "@/lib/pdfPagesMerge";
 import { useScriptRunStore } from "@/store/scriptRunStore";
@@ -130,7 +130,7 @@ import {
   resolveDocumentSpec,
   type SpecCatalogEntry,
 } from "@/lib/specBinding";
-import { apiUrl } from "@/lib/session";
+import { apiUrl, currentProjectId } from "@/lib/session";
 import { boundedCount, captureTelemetry } from "@/lib/telemetry";
 import { cn } from "@/lib/utils";
 import { canRevealInFileManager, isDesktop, revealExportedFile } from "@/lib/desktop";
@@ -140,9 +140,10 @@ import { useOriginalAvailability } from "@/hooks/useOriginalSpec";
 import { useRuntimePreview } from "@/hooks/useRuntimePreview";
 import { engineTransport } from "@/lib/engineTransport";
 import { useVariantPng } from "@/hooks/useVariantPng";
+import { figureSnapshotPreviewArgs, hasFigureSnapshotPreview } from "@/lib/figureSnapshotPreview";
 import { isJustBakedBaseline } from "@/store/actions";
 import { useAssetStore } from "@/store/assetStore";
-import { renderKeyOf, useExactPanelManifest, usePanelRender, useRenderStore } from "@/store/renderStore";
+import { previewRenderForProject, renderKeyOf, useExactPanelManifest, usePanelRender, useRenderStore } from "@/store/renderStore";
 import { useRuntimeAssetStore } from "@/store/runtimeAssetStore";
 import { useSelectionStore } from "@/store/selectionStore";
 import {
@@ -162,7 +163,8 @@ import {
 } from "@/store/exportStore";
 import { useProfileStore } from "@/store/profileStore";
 import { useProjectStore } from "@/store/projectStore";
-import { useDocumentStore } from "@/store/documentStore";
+import { captureDocumentPreviewOwner, useDocumentStore } from "@/store/documentStore";
+import { useDocumentPreviewOwner } from "@/hooks/useDocumentPreviewOwner";
 import { askConfirm, dialogCovered, EXPORT_DONE_DISMISS_MS, useUiStore } from "@/store/uiStore";
 import { useWorkspaceStore } from "@/store/workspace";
 import { isRuntimePanel, type ArrowObject, type CanvasObject, type FigureDocument, type PanelObject, type ShapeObject, type TextObject } from "@/types/document";
@@ -175,6 +177,7 @@ import {
   croppedValidationFor,
   rawIssuesFor,
   runValidation,
+  prepareValidationSources,
   useValidationStore,
 } from "@/store/validationStore";
 import { Button, IconButton } from "./ui/Button";
@@ -268,7 +271,7 @@ export function defaultExportName(
   panel: PanelObject | null,
   doc: Pick<FigureDocument, "name">,
 ): string {
-  if (scope === "original" && panel) return panel.name ?? stemOf(panel.fileId);
+  if (scope === "original" && panel) return panel.name ?? figureOfPanel(panel).name;
   return doc.name;
 }
 
@@ -417,6 +420,14 @@ export function ExportDialog() {
    * 隐藏的图也算在画布上（与「隐藏的图也计数」一致）；素材库里还没上画布的图、别的画布上的图都不在其内——
    * 左栏缩略图条、`每张图单独导出` 的批都只认它。
    */
+  useEffect(() => {
+    if (!open) return;
+    const store = useAssetStore.getState();
+    for (const figure of figures) {
+      if (figure.panel?.chart || figure.panel?.figureSnapshot || figure.panel?.figureOrigin) continue;
+      void store.ensureOriginalSource(figure.figureId);
+    }
+  }, [open, figures]);
   const canvasFigures = useMemo(
     () =>
       figures.filter((f) =>
@@ -548,7 +559,9 @@ export function ExportDialog() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, checkedPanelId, checkedFileId]);
   const routeKey = routeKeyOf({ scope, formats, doc, panel, figureId });
+  const offerKey = offerKeyOf({ scope, doc, panel, figureId });
   const route = useExportRouteStore((s) => (s.key === routeKey ? s.route : null));
+  const offers = useExportRouteStore((s) => (s.offerKey === offerKey ? s.offers : null));
   const refreshRoute = useExportRouteStore((s) => s.refresh);
   const invalidateRoute = useExportRouteStore((s) => s.invalidate);
   // 打开的那一刻先把上一次的答案作废：250 ms 防抖 + 往返期间界面走退路（不比现状乐观），
@@ -918,7 +931,7 @@ export function ExportDialog() {
 
   /**
    * EPS 这次给不给得出（ADR 0046）。判据在 `epsAvailability()` 一处：画布范围
-   * 没有它（画布合成没有 PostScript 写入器），没有脚本的图也没有它。**不隐藏选项**：禁用并
+   * 没有它；原图读后端同来源offer，缺offer才走旧脚本退路。**不隐藏选项**：禁用并
    * 说原因；勾过它的用户切到画布时，请求里自动不带它（`buildExportRequest`）。
    */
   // 「每张图单独导出」没有单一的 figureId：没有脚本的那张由后端逐项说原因
@@ -931,13 +944,21 @@ export function ExportDialog() {
     [single, scope, figureId, assets, runtimeAssets, route],
   );
   const unreachable = useMemo(
-    () => (scope === "canvas" ? [...new Set(unavailablePanels(route, formats))] : []),
-    [scope, route, formats],
+    () => (scope === "canvas"
+      ? [...new Set(unavailablePanels(route, formats))].filter((id) => {
+          // The route describes the current same-name source; a historical
+          // input is still drawable from its own execution.
+          const owner = doc.objects.find((o) => o.type === "panel" && o.fileId === id)
+          return !(owner && owner.type === "panel" && owner.figureOrigin !== undefined)
+        })
+      : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [scope, route, formats, doc.objects],
   );
   const eps = useMemo(
-    () => epsAvailability(scope, figureId, route, single),
+    () => offers ? epsAvailability(scope, figureId, route, single, offers, panel) : epsAvailability(scope, figureId, route, single, undefined, panel),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [scope, figureId, assets, runtimeAssets, route, single],
+    [scope, figureId, assets, runtimeAssets, route, offers, single, panel],
   );
 
   function inputOf(over?: Partial<ExportRequestInput>): ExportRequestInput {
@@ -962,6 +983,7 @@ export function ExportDialog() {
       annotationsBelow: annotationsUnder,
       framePad,
       route,
+      offers,
       exportDir: exportDirNow,
       ...over,
     };
@@ -1052,21 +1074,38 @@ export function ExportDialog() {
       profileId,
       catalog,
     };
-    void freezeBatch(perFigure, shared, merge ? { plan: merge, figs } : null);
+    void freezeBatch(jobIds, perFigure, shared, merge ? { plan: merge, figs } : null);
   };
   const freezeBatch = async (
+    batchIds: string[],
     figs: readonly ExportableFigure[],
     shared: BatchShared,
     merge: { plan: { name: string; figureIds: string[] }; figs: readonly ExportableFigure[] } | null,
   ) => {
+    const owner = captureDocumentPreviewOwner();
     const alive = () => {
       const b = useExportStore.getState().batch;
-      return !!b && !b.done && b.phase === "prepare";
+      if (!b || b.ids !== batchIds || b.done || b.phase !== "prepare") return false;
+      if (!owner.still() || owner.pj !== currentProjectId()) {
+        requestBatchCancel();
+        return false;
+      }
+      return true;
     };
+    const prepareCurrentSources = async () => {
+      while (alive()) if (await prepareValidationSources()) return alive();
+      return false;
+    };
+    if (!await prepareCurrentSources()) return;
     // ① 只取 route
     const routes = new Map<string, { route: ExportRoute | null; key: string | null }>();
     for (const f of figs) {
       if (!alive()) return;
+      // 精确事实也是准备阶段的一部分：不让点击快于只读查询时把隐藏素材误判为缺失。
+      if (!f.panel?.chart && !f.panel?.figureSnapshot && !f.panel?.figureOrigin) {
+        await useAssetStore.getState().ensureOriginalSource(f.figureId);
+        if (!alive()) return;
+      }
       const probe = buildBatchInput(f, shared, null);
       let route: ExportRoute | null = null;
       if (probe.ok) {
@@ -1077,7 +1116,7 @@ export function ExportDialog() {
       }
       routes.set(f.figureId, { route, key: probe.ok ? routeKeyOf(probe.input) : null });
     }
-    if (!alive()) return;
+    if (!await prepareCurrentSources()) return;
     const failure = (why: Extract<ReturnType<typeof buildBatchInput>, { ok: false }>["reason"]) =>
       why.kind === "unavailable"
         ? ex(`scopeUnavailable.${why.code}`)
@@ -1215,9 +1254,20 @@ export function ExportDialog() {
     });
   };
 
+  const sourceAttempt = useRef(0);
+  const sourceScope = useMemo(() => ({
+    open, documentId, doc, canvases, scope, figureId, panel, filename, formats, ppi,
+    transparent, strict, withReport, checkProfileId, framePad,
+  }), [
+    open, documentId, doc, canvases, scope, figureId, panel, filename, formats, ppi,
+    transparent, strict, withReport, checkProfileId, framePad,
+  ]);
+  const currentSourceScope = useRef(sourceScope);
+  currentSourceScope.current = sourceScope;
+  const latestStart = useRef<(overwrite: OverwritePolicy, sourcesPrepared: boolean) => Promise<void>>(async () => {});
   const epsGate = useEpsOpacityGate(setFormats);
   const start = useCallback(
-    async (overwrite: OverwritePolicy) => {
+    async (overwrite: OverwritePolicy, sourcesPrepared = false) => {
       /*
        * **阻断闸放在这一个咽喉上，不挂在按钮上。**
        *
@@ -1233,6 +1283,21 @@ export function ExportDialog() {
       // 判断没有被这个咽喉接管，而「覆盖 / 另存 / 重试」走的正是这里
       // 闸与主按钮读**同一个** `canStart`
       if (!canStart) return;
+      if (!sourcesPrepared) {
+        const attempt = ++sourceAttempt.current;
+        const sourcesBefore = useAssetStore.getState();
+        if (!await prepareValidationSources()) return;
+        // 同步订阅渲染后再取报告闭包，不能将取证前的 missing 写入最终样式报告。
+        flushSync(() => {
+          const sourcesNow = useAssetStore.getState();
+          if (sourcesNow.originalSources !== sourcesBefore.originalSources
+            || sourcesNow.figureSnapshots !== sourcesBefore.figureSnapshots
+            || useValidationStore.getState().queued) runValidation();
+        });
+        if (attempt !== sourceAttempt.current || sourceScope !== currentSourceScope.current) return;
+        await latestStart.current(overwrite, true);
+        return;
+      }
       // 这一回在对话框里起的作业：它跑完就该给完成态脚部（不论 job_id 是否与上一回重号）
       setSettledJobId(null);
       setRevealError(null);
@@ -1277,8 +1342,10 @@ export function ExportDialog() {
       original,
       originalWidthMm,
       originalHeightMm,
+      sourceScope,
     ],
   );
+  latestStart.current = start;
 
   /** 主按钮 / 再次导出 / 重试的同一个入口：一批或单张 */
   const startExport = () => (batchMode ? startBatch() : void start("ask"));
@@ -1328,6 +1395,10 @@ export function ExportDialog() {
   // 收尾：这一张落了终局（撞名除外——停在冲突条上等用户选覆盖 / 另存，再发出的是新作业）
   useEffect(() => {
     if (!batch || batch.done || batch.phase !== "send" || running) return;
+    // 上面的发送 effect 可在本次 commit 内同步启动下一张；这里的闭包仍是发送前的回执。
+    // 只结算当前 store 的同批次 / 同一响应，不拿前一作业推进新的一张。
+    const current = useExportStore.getState();
+    if (current.batch !== batch || current.running || current.job !== storeJob || current.startError !== startError) return;
     if (launched.current.ids !== batch.ids || launched.current.index !== batch.index) return;
     // 起作业本身失败了（先校验被拒 / 网络断）：不会有终局，记一笔失败，继续下一张
     if (!storeJob) {
@@ -1951,7 +2022,7 @@ export function ExportDialog() {
                       hint={withJournalNote("png", ex("pngHint"))}
                       flagged={unlisted("png")}
                     />
-                    {/* EPS 只在「原图 + 有脚本」时给得出：不可用就禁用并说原因，不藏 */}
+                    {/* EPS只读后端offer；画布始终不可用，旧无offer按脚本退路。 */}
                     <FormatCheck
                       checked={formats.includes("eps") && eps.ok}
                       onChange={() => toggleFormat("eps")}
@@ -2191,6 +2262,7 @@ export function ExportDialog() {
 
 /** `useFigureThumbSource` 的结果：清单行与对象头共用，取图只有这一处 */
 interface FigureThumbSource {
+  plainSrc: (bucket: number) => string | null;
   svgMarkup: { __html: string } | undefined;
   src: string | null;
   /** 图幅宽高比（读不到时 4:3） */
@@ -2212,19 +2284,24 @@ function useFigureThumbSource(
   figure: ExportableFigure,
   bucket: number,
 ): FigureThumbSource {
-  const render = usePanelRender(figure.panel);
-  const tracked = useRenderStore((s) => !!s.tracked[figure.figureId]);
+  const owner = useDocumentPreviewOwner(figure);
+  const active = owner.still();
   const panel = figure.panel;
+  const archived = !!panel && hasFigureSnapshotPreview(panel);
+  const cachedRender = usePanelRender(panel);
+  const render = archived ? undefined : previewRenderForProject(cachedRender, owner.pj);
+  const tracked = useRenderStore((s) => !!s.tracked[figure.figureId]);
   const needsEngine =
     !!panel && (showsEdits(panel) || tracked || figure.kind === "runtime");
   // runtime 图只认**自己这一版**的 SVG（QA-WIN-30）：`usePanelRender` 在自己这版没画过时退回同文件 `latest`
   // 的另一版（恢复的草稿、刚关掉的排版），那是别的状态的图——预览不许拿它冒充；没有就走下面按状态取的 cache 预览
   const ownSvg = useRenderStore((s) => (panel ? (s.byKey[renderKeyOf(panel)]?.svg ?? null) : null));
-  const svg = needsEngine ? (figure.kind === "runtime" ? ownSvg : (render?.svg ?? null)) : null;
+  const svg = active && needsEngine ? (figure.kind === "runtime" ? ownSvg : (render?.svg ?? null)) : null;
   // 同一份字符串复用同一个 `{__html}`：缩略格随对话框重渲时不必把整张 SVG 重新解析一遍
   const svgMarkup = useHtmlMarkup(svg);
   // 引擎 SVG 不在手边（位图档没有矢量 payload、或被字节预算清掉了）：按 overrides 现出一张位图，
   // 不拿磁盘原图冒充改过的那张（整版预览 `CanvasThumb` 的 `editedPanel` 同一条 `useVariantPng`）
+  const historicalArgs: ReturnType<typeof figureSnapshotPreviewArgs> = panel ? figureSnapshotPreviewArgs(panel) : [];
   const variant = useVariantPng(
     panel?.fileId ?? figure.figureId,
     panel?.overrides ?? NO_OVERRIDES,
@@ -2232,28 +2309,34 @@ function useFigureThumbSource(
     !!panel && !svg && showsEdits(panel),
     figure.stamp ?? 0,
     panel ? adoptionGuardOf(panel) : undefined,
+    panel?.chart, panel?.chartSource,
+    owner,
+    ...historicalArgs,
+    panel?.chartFrame?.renderProfile,
   );
   // runtime 图的退路是 cache 预览：后端 GET 版给的是「最近一次渲染」，撤销回一个前端已画过的变体时它停在
   // 撤销前（QA-WIN-21）。按此刻的 overrides 取，不是这个状态的图就不挂（预览只是示意，空着比旧图诚实）
-  const runtimeByState = figure.kind === "runtime" && !!panel && !!figure.cached && !engineTransport();
+  const runtimeByState = !archived && panel?.figureOrigin === undefined && figure.kind === "runtime" && !!panel && !!figure.cached && !engineTransport();
   const runtimePreview = useRuntimePreview(
     figure.figureId,
     panel?.overrides ?? NO_OVERRIDES,
     runtimeByState,
     figure.stamp ?? 0,
+    owner,
   );
-  const src =
+  const src = !active ? null :
     variant.url ??
     (runtimeByState
       ? runtimePreview.exact === true
         ? runtimePreview.url
         : null
-      : figureThumbSrc(figure, bucket));
-  const plain = !variant.url && !runtimeByState;
+      : archived || panel?.figureOrigin !== undefined || panel?.chart || panel?.chartSource !== undefined ? null : figureThumbSrc(figure, bucket, owner.pj));
+  const plain = active && !archived && panel?.figureOrigin === undefined && !panel?.chart && panel?.chartSource === undefined && !variant.url && !runtimeByState;
   const sizeMm = render?.manifest?.size_mm ?? figure.sizeMm;
   const ratio =
     sizeMm && sizeMm[0] > 0 && sizeMm[1] > 0 ? sizeMm[0] / sizeMm[1] : 4 / 3;
-  return { svgMarkup: svg ? svgMarkup : undefined, src, ratio, plain };
+  return { svgMarkup: svg ? svgMarkup : undefined, src, ratio, plain,
+    plainSrc: px => owner.still() ? figureThumbSrc(figure, px, owner.pj) : null };
 }
 
 const NO_OVERRIDES: PanelObject["overrides"] = [];
@@ -2263,7 +2346,7 @@ const NO_OVERRIDES: PanelObject["overrides"] = [];
  * 单图预览（`useFigureThumbSource`）与整版预览（`CanvasThumb` 的 `editedPanel`）共用这一份。
  */
 function showsEdits(panel: PanelObject): boolean {
-  return panel.overrides.length > 0 && !isJustBakedBaseline(panel);
+  return hasFigureSnapshotPreview(panel) || panel.figureOrigin !== undefined || !!panel.chart || panel.chartSource !== undefined || panel.overrides.length > 0 && !isJustBakedBaseline(panel);
 }
 
 /** 整版预览里的一个对象若是带图内修改的面板，返回它（喂给 `CanvasThumb` 的 `editedPanel`） */
@@ -2577,7 +2660,7 @@ function PreviewStageArt({ figure, ratio }: { figure: ExportableFigure; ratio: n
             />
           );
         }
-        const src = px && source.plain ? figureThumbSrc(figure, px) : source.src;
+        const src = px && source.plain ? source.plainSrc(px) : source.src;
         if (src) {
           return (
             <RetryImg

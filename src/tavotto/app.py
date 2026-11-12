@@ -3888,7 +3888,9 @@ def _original_svg_result(path, artifact, receipt):
     )
 
 
-def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=None) -> list:
+def _export_produce_original_annotated(
+    job, tmp_dir: Path, *, artifact_sources=None, frozen_sources=None
+) -> list:
     """`scope=original` 且带画布标注（QA-WIN-20）：图 + 标注由**整版导出那条 RenderCore 合成路径**画。
 
     构造一份「页面 = 原图图幅、面板在 (0,0)、再叠标注」的画布请求，交给 `_export_produce_rendercore`——标注怎么画
@@ -3904,6 +3906,13 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
     # 单图留白（ADR 0161 §3）：页面 = 图幅 + 留白，面板落在 (l, t)；无留白时 pad = 0，与从前逐字节相同
     pad_l, pad_t, _pad_r, _pad_b = src.pad_mm or (0.0, 0.0, 0.0, 0.0)
     panel = {
+        **({"chart": src.chart} if src.chart is not None else {}),
+        **(
+            {"chart_render_profile": src.chart_render_profile}
+            if src.chart_render_profile is not None
+            else {}
+        ),
+        **({"chart_source": src.chart_source} if src.chart_source is not None else {}),
         "type": "panel",
         "id": src.figure_id,
         "x_mm": pad_l,
@@ -3912,6 +3921,7 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
         "h_mm": src.h_mm,
         **({"overrides": src.overrides} if src.overrides else {}),
         **({"figure_snapshot": src.figure_snapshot} if src.figure_snapshot is not None else {}),
+        **({"figure_origin": src.figure_origin} if src.figure_origin is not None else {}),
         **({"source_policy": src.source_policy} if src.source_policy is not None else {}),
         **({"expected_source": src.expected_source} if src.expected_source is not None else {}),
         **(
@@ -3929,23 +3939,29 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
     wants_eps = engine_exportreq.FORMAT_EPS in req.formats
     formats = tuple(f for f in req.formats if f != engine_exportreq.FORMAT_EPS)
     raster_formats = tuple(f for f in formats if f in engine_exportreq.RASTER_FORMATS)
-    vector_formats = tuple(f for f in formats if f not in raster_formats)
+    internal_svg = (
+        wants_eps and src.chart is not None and engine_exportreq.FORMAT_SVG not in formats
+    )
+    scene_formats = (*formats, engine_exportreq.FORMAT_SVG) if internal_svg else formats
     # 同一张图所有格式出自同一个来源（与无标注的原图导出同一个判定）：要 EPS（且不要 SVG）时，有脚本的磁盘图
     # 也由 worker 现画，PDF / PNG / TIFF 与 EPS 的内层就出自同一次运行；没有脚本的图仍取磁盘文件（EPS 自己报 eps_needs_script）
     rerender_ids = frozenset(
         {src.figure_id}
         if engine_exportroute.original_rerender(req.formats)
+        and src.figure_snapshot is None
+        and src.figure_origin is None
         and Path(src.figure_id).suffix.lower() not in SVG_EXT
         and _has_runnable_script(src.figure_id)
         else ()
     )
     produced: list = []
     dir_arg = {"artifact_sources": artifact_sources} if artifact_sources else {}
+    if frozen_sources:
+        dir_arg["frozen_sources"] = frozen_sources
     if rerender_ids:
         dir_arg["rerender_ids"] = rerender_ids
 
     def run(fmts, objects, w_mm, h_mm, ppi, sub, target=None):
-        # 各自的子目录：两次合成都写 out.pdf，同目录会互相覆盖
         work = tmp_dir / sub
         work.mkdir(parents=True, exist_ok=True)
         canvas = engine_exportreq.CanvasSource(page_w_mm=w_mm, page_h_mm=h_mm, objects=objects)
@@ -3961,13 +3977,9 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
         return _export_produce_rendercore(_PageJob(job, canvas_req), work, **dir_arg, **extra)
 
     w_mm, h_mm = src.page_mm  # 页面尺寸（无留白 = 图幅）
-    if vector_formats:
-        produced += run(
-            vector_formats, stacked(list(src.objects), panel), w_mm, h_mm, req.ppi, "ann_vec"
-        )
+    ppi = req.ppi
+    target = None
     if raster_formats:
-        ppi = req.ppi
-        target = None
         if src.source_kind == "raster" and src.px_w:
             # 密度按**图幅**（面板）算：源的像素网格与图幅一一对应；留白只是在四周多出的页面
             fig_w, fig_h = float(src.w_mm), float(src.h_mm)
@@ -3988,12 +4000,46 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
                         )
                     else:
                         target = (int(src.px_w), int(src.px_h), dpi_x, dpi_y)
+    if scene_formats:
+        # 只编译/冻结一次：PDF/SVG 与栅格消费同一场景及 Canonical PDF。
+        # ppi/target 仍只决定栅格网格，矢量图幅与标注保持逻辑 mm。
         produced += run(
-            raster_formats, stacked(list(src.objects), panel), w_mm, h_mm, ppi, "ann_ras", target
+            scene_formats, stacked(list(src.objects), panel), w_mm, h_mm, ppi, "ann_scene", target
         )
     if wants_eps:
-        produced.append(_produce_annotated_eps(job, req, tmp_dir, artifact_sources))
-    return produced
+        if src.chart is not None:
+            # 完整合成页面承担缩放、标注z序和留白；同一份SVG再交EPS契约，
+            # 不把未缩放的原图EPS嵌到另一尺寸的页面上。
+            scene = next(item for item in produced if item.format == engine_exportreq.FORMAT_SVG)
+            if scene.tmp_path is None:
+                produced.append(dataclasses.replace(scene, format=engine_exportreq.FORMAT_EPS))
+            else:
+                try:
+                    target = _export_scene_eps(
+                        job,
+                        Path(scene.tmp_path).read_bytes(),
+                        (w_mm * 72.0 / 25.4, h_mm * 72.0 / 25.4),
+                        tmp_dir / "out_annotated.eps",
+                    )
+                    produced.append(
+                        engine_exportjob.Produced(
+                            format=engine_exportreq.FORMAT_EPS,
+                            tmp_path=target,
+                            width_mm=w_mm,
+                            height_mm=h_mm,
+                            vector=True,
+                            basis=scene.basis,
+                            manifest=scene.manifest,
+                        )
+                    )
+                except (pdfbackend.OriginalEPSError, engine_pool.WorkerError) as exc:
+                    produced.append(_chart_conversion_failure(exc, engine_exportreq.FORMAT_EPS))
+        else:
+            produced.append(_produce_annotated_eps(job, req, tmp_dir, artifact_sources))
+    # EPS 的内部表示不增加用户未选择的 SVG 产物。
+    return [
+        item for item in produced if not internal_svg or item.format != engine_exportreq.FORMAT_SVG
+    ]
 
 
 def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
@@ -4007,7 +4053,12 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
     fmt = engine_exportreq.FORMAT_EPS
     dpi = req.ppi or engine_exportreq.PPI_DEFAULT
     source_ctx = (artifact_sources or {}).get(src.figure_id)
-    if Path(src.figure_id).suffix.lower() in SVG_EXT and not src.overrides:
+    if (
+        Path(src.figure_id).suffix.lower() in SVG_EXT
+        and not src.overrides
+        and src.figure_snapshot is None
+        and src.figure_origin is None
+    ):
         inner = _produce_svg_asset_eps(job, src, dpi, tmp_dir, artifact_source=source_ctx)
     else:
         inner = _produce_original_eps(
@@ -4103,6 +4154,86 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
     )
 
 
+def _export_job_owner(job):
+    while isinstance(job, _PageJob):
+        job = job._job
+    return job
+
+
+def _export_chart_snapshot(
+    job,
+    file_id: str,
+    chart: dict,
+    *,
+    render_profile: str | None = None,
+    overrides: object = (),
+    chart_source: object = _CHART_SOURCE_UNSET,
+) -> _ChartSnapshot:
+    from .engine import chartmodel, chartprofile
+
+    owner = _export_job_owner(job)
+    cache = getattr(owner, "_chart_snapshots", None)
+    if cache is None:
+        owner._chart_snapshots = cache = {}
+        owner._chart_source_dependencies = {}
+    try:
+        profile = chartprofile.validate_profile(
+            chartprofile.LEGACY_PROFILE if render_profile is None else render_profile
+        )
+        edits = chartprofile.validate_overrides(overrides, render_profile=profile)
+        key = (file_id, chartprofile.identity(chartmodel.digest_of(chart), profile, edits))
+        dependency_key = file_id
+        source_kwargs = {}
+        if chart_source is not _CHART_SOURCE_UNSET:
+            source_key = chartmodel.digest_of(chart_source)
+            key = (*key, source_key)
+            dependency_key = (file_id, source_key)
+            source_kwargs["chart_source"] = chart_source
+    except chartprofile.ChartProfileError as exc:
+        raise engine_exportreq.ExportRequestError(exc.code, exc.detail, {}) from exc
+    if key not in cache:
+        job.check_cancelled()
+        snapshot = (
+            _render_chart_snapshot(file_id, chart, **source_kwargs)
+            if profile == chartprofile.LEGACY_PROFILE
+            else _render_chart_snapshot(
+                file_id, chart, render_profile=profile, overrides=edits, **source_kwargs
+            )
+        )
+        previous = owner._chart_source_dependencies.get(dependency_key)
+        if previous is not None and previous[1] != snapshot.source_sha256:
+            raise engine_exportreq.ExportRequestError(
+                "chart_source_changed", "source changed between chart variants", {}
+            )
+        owner._chart_source_dependencies[dependency_key] = (snapshot.path, snapshot.source_sha256)
+        cache[key] = snapshot
+    return cache[key]
+
+
+def _export_chart_canonical(job, snapshot: _ChartSnapshot, tmp_dir: Path):
+    """同一快照只转换一次；直接SVG不依赖此转换成功。"""
+    owner = _export_job_owner(job)
+    cache = getattr(owner, "_chart_canonical", None)
+    if cache is None:
+        owner._chart_canonical = cache = {}
+    key = (snapshot.file_id, snapshot.render_revision)
+    cached = cache.get(key)
+    if isinstance(cached, Exception):
+        raise cached
+    if cached is not None:
+        return cached
+    try:
+        canonical, notes = _chart_canonical(snapshot, tmp_dir)
+        for note in notes:
+            if note not in job.warnings:
+                job.warnings.append(note)
+        cache[key] = canonical
+        return canonical
+    except Exception as exc:
+        cache[key] = exc
+        raise
+
+
 def _chart_canonical(snapshot: _ChartSnapshot, tmp_dir: Path):
     """预览与导出共用同一冻结场景→RenderCore Canonical配对适配。"""
     from .rendercore import facade as rc_facade, sources as rc_sources
@@ -4140,12 +4271,297 @@ def _chart_canonical(snapshot: _ChartSnapshot, tmp_dir: Path):
     return canonical, notes
 
 
+def _export_scene_eps(job, svg: bytes, page_pt: tuple[float, float], target: Path) -> Path:
+    """完整冻结SVG经公共契约准备PS，由原owned worker固定动作封EPS。"""
+    import base64
+
+    from .engine import chartprocess
+
+    job.check_cancelled()
+    prepared = pdfbackend.prepare_original_eps(svg, page_pt)
+    for note in prepared["notes"]:
+        if note not in job.warnings:
+            job.warnings.append(note)
+    response = chartprocess.run_request(
+        require_project(),
+        {"action": "pack_eps", "prepared": prepared["payload"]},
+        timeout=_CHART_SPAWN_TIMEOUT_S,
+    )
+    if not response["ok"]:
+        raise pdfbackend.OriginalEPSError(
+            response.get("code") or "native_eps_backend",
+            response.get("error") or "EPS container failed",
+            response.get("params"),
+        )
+    job.check_cancelled()
+    target.write_bytes(base64.b64decode(response["eps_b64"], validate=True))
+    return target
+
+
 def _chart_conversion_failure(exc, fmt):
     return engine_exportjob.Produced(
         format=fmt,
         error_code=exc.code,
         error_params={"detail": str(exc), **getattr(exc, "params", {})},
     )
+
+
+def _export_produce_chart_original(job, src, req, tmp_dir: Path):
+    """原图所有格式消费同一计算快照；不可表达的格式逐项失败。"""
+    from . import chartbundle
+    from .engine import chartprofile
+    from .rendercore.pdfwriter import WriterError
+    from .rendercore.renderhost import RenderChildError
+    from .rendercore.svgir import SVGIRError
+
+    try:
+        snapshot = _export_chart_snapshot(
+            job,
+            src.figure_id,
+            src.chart,
+            render_profile=src.chart_render_profile,
+            overrides=src.overrides,
+            **({"chart_source": src.chart_source} if src.chart_source is not None else {}),
+        )
+    except (engine_exportreq.ExportRequestError, engine_pool.WorkerError) as exc:
+        return [
+            engine_exportjob.Produced(
+                format=fmt, error_code=exc.code, error_params={"detail": str(exc)}
+            )
+            for fmt in req.formats
+        ]
+    manifest = {
+        "chart_render_revision": snapshot.render_revision,
+        "scene_digest": snapshot.scene["scene_digest"],
+    }
+    # /2 的产出与页面都是 F（display frame）；scene 仍是 S（科学坐标）。尺寸门
+    # 与 EPS 页面一律按 F 走，/1 与 legacy 保持 scene（N5 第 5 步：各 scope 同一合同）。
+    frame_pt = (
+        tuple(snapshot.render_frame["rect_pt"][2:])
+        if snapshot.render_frame is not None
+        else (snapshot.scene["w_pt"], snapshot.scene["h_pt"])
+    )
+    frame_mm = [value * 25.4 / 72 for value in frame_pt]
+    basis = engine_exportjob.Basis(engine_exportjob.BASIS_CONVERT, snapshot.source_sha256)
+    produced = []
+    for fmt in req.formats:
+        job.check_cancelled()
+        try:
+            if fmt == engine_exportreq.FORMAT_SVG:
+                target = tmp_dir / "original.svg"
+                target.write_bytes(
+                    chartbundle.embed_chart(snapshot.svg, snapshot.source_svg, snapshot.chart)
+                    if snapshot.render_profile == chartprofile.LEGACY_PROFILE
+                    else chartbundle.embed_chart(
+                        snapshot.svg,
+                        snapshot.source_svg,
+                        snapshot.chart,
+                        render_profile=snapshot.render_profile,
+                        overrides=snapshot.overrides,
+                    )
+                )
+            elif fmt in (
+                engine_exportreq.FORMAT_PDF,
+                engine_exportreq.FORMAT_PNG,
+                engine_exportreq.FORMAT_TIFF,
+            ):
+                canonical = _export_chart_canonical(job, snapshot, tmp_dir)
+                if fmt == engine_exportreq.FORMAT_PDF:
+                    target = canonical.path
+                else:
+                    target = tmp_dir / ("original." + fmt)
+                    writer = (
+                        pdfbackend.original_png
+                        if fmt == engine_exportreq.FORMAT_PNG
+                        else pdfbackend.original_tiff
+                    )
+                    writer(
+                        canonical.path,
+                        target,
+                        ppi=req.ppi or engine_exportreq.PPI_DEFAULT,
+                        transparent=req.background == "transparent",
+                    )
+            elif fmt == engine_exportreq.FORMAT_EPS:
+                target = _export_scene_eps(
+                    job,
+                    snapshot.svg,
+                    frame_pt,
+                    tmp_dir / "original.eps",
+                )
+            else:
+                produced.append(
+                    engine_exportjob.Produced(
+                        format=fmt,
+                        error_code="svg_asset_export_unsupported",
+                        error_params={},
+                    )
+                )
+                continue
+            produced.append(
+                engine_exportjob.Produced(
+                    format=fmt,
+                    tmp_path=target,
+                    width_mm=frame_mm[0],
+                    height_mm=frame_mm[1],
+                    vector=engine_artifactinspect.svg_vector(target)
+                    if fmt == engine_exportreq.FORMAT_SVG
+                    else fmt in (engine_exportreq.FORMAT_PDF, engine_exportreq.FORMAT_EPS),
+                    basis=basis,
+                    manifest=manifest,
+                )
+            )
+        except (pdfbackend.OriginalEPSError, engine_pool.WorkerError) as exc:
+            produced.append(_chart_conversion_failure(exc, fmt))
+        except (SVGIRError, chartbundle.ChartBundleError) as exc:
+            produced.append(
+                engine_exportjob.Produced(
+                    format=fmt, error_code=exc.code, error_params={"detail": str(exc)}
+                )
+            )
+        except (RenderChildError, WriterError) as exc:
+            produced.append(
+                engine_exportjob.Produced(
+                    format=fmt,
+                    error_code="format_failed",
+                    error_params={"detail": str(exc), "reason": exc.code},
+                )
+            )
+    return engine_exportjob.enforce_one_basis(produced, snapshot.source_sha256)
+
+
+def _export_produce_static_svg_original(job, tmp_dir: Path, *, artifact_sources=None) -> list:
+    """All original formats consume one frozen raw SVG and intrinsic physical frame."""
+    from . import svgasset
+
+    req, src = job.request, job.request.original
+    raw, data, probe = svgasset.snapshot(safe_resolve(src.figure_id))
+    source_sha = hashlib.sha256(raw).hexdigest()
+    artifact = engine_figcapture.SourceArtifact(
+        source_id=src.figure_id,
+        origin=engine_figcapture.ORIGIN_STATIC,
+        kind="svg",
+        bytes_sha256=source_sha,
+        size_bytes=len(raw),
+    )
+    manifest = {"provenance": {"sources": [artifact.to_payload()]}}
+    convert = engine_exportjob.Basis(engine_exportjob.BASIS_CONVERT, source_sha)
+    canonical = tmp_dir / "canonical.pdf"
+    conversion_error = None
+    if any(fmt in req.formats for fmt in ("pdf", "png", "tiff")):
+        frozen = tmp_dir / "source.svg"
+        frozen.write_bytes(raw)
+        try:
+            job.check_cancelled()
+            facts = pdfbackend.original_pdf(frozen, canonical)
+            for note in facts.get("notes", []):
+                if note not in job.warnings:
+                    job.warnings.append(note)
+        except Exception as exc:  # noqa: BLE001 -- conversion is a per-format result
+            conversion_error = {"error": str(exc)[:200], **getattr(exc, "params", {})}
+    produced = []
+    for fmt in req.formats:
+        job.check_cancelled()
+        target = tmp_dir / f"original.{fmt}"
+        if fmt == engine_exportreq.FORMAT_SVG:
+            target.write_bytes(data)
+            produced.append(
+                engine_exportjob.Produced(
+                    format=fmt,
+                    tmp_path=target,
+                    width_mm=probe["w_pt"] * 25.4 / 72,
+                    height_mm=probe["h_pt"] * 25.4 / 72,
+                    vector=engine_artifactinspect.svg_vector(target),
+                    basis=engine_exportjob.Basis(engine_exportjob.BASIS_COPY, source_sha),
+                    manifest=manifest,
+                )
+            )
+        elif fmt == engine_exportreq.FORMAT_EPS:
+            produced.append(
+                _produce_svg_asset_eps(
+                    job,
+                    src,
+                    req.ppi or engine_exportreq.PPI_DEFAULT,
+                    tmp_dir,
+                    artifact_source=(artifact_sources or {}).get(src.figure_id),
+                )
+            )
+        elif conversion_error is not None:
+            produced.append(
+                engine_exportjob.Produced(
+                    format=fmt, error_code="format_failed", error_params=conversion_error
+                )
+            )
+        else:
+            try:
+                if fmt == engine_exportreq.FORMAT_PDF:
+                    target = canonical
+                    px_w = px_h = None
+                else:
+                    transparent = req.background == engine_exportreq.BACKGROUND_TRANSPARENT
+                    method = (
+                        pdfbackend.original_tiff
+                        if fmt == engine_exportreq.FORMAT_TIFF
+                        else pdfbackend.original_png
+                    )
+                    facts = method(
+                        canonical,
+                        target,
+                        req.ppi or engine_exportreq.PPI_DEFAULT,
+                        transparent=transparent,
+                    )
+                    px_w, px_h = facts["px_w"], facts["px_h"]
+                produced.append(
+                    engine_exportjob.Produced(
+                        format=fmt,
+                        tmp_path=target,
+                        width_px=px_w,
+                        height_px=px_h,
+                        width_mm=probe["w_pt"] * 25.4 / 72,
+                        height_mm=probe["h_pt"] * 25.4 / 72,
+                        vector=fmt == engine_exportreq.FORMAT_PDF,
+                        basis=convert,
+                        manifest=manifest,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 -- other formats remain deliverable
+                produced.append(
+                    engine_exportjob.Produced(
+                        format=fmt,
+                        error_code="format_failed",
+                        error_params={"error": str(exc)[:200], **getattr(exc, "params", {})},
+                    )
+                )
+    return engine_exportjob.enforce_one_basis(produced, source_sha)
+
+
+def _freeze_original_raster(source_path: Path, source_id: str, tmp_dir: Path):
+    """Freeze one static raster for original copies and its Image SVG representation."""
+    from .rendercore import job as rc_job, sources as rc_sources
+
+    try:
+        frozen = rc_sources.FrozenSource(
+            rc_sources.static_artifact(source_path, source_id), source_path
+        )
+        # Same sum+max read peak as the scene consumer, before read_frozen allocates.
+        peak = 2 * frozen.artifact.size_bytes
+        if peak > rc_job.SOURCE_BYTES_BUDGET:
+            raise engine_exportreq.ExportRequestError(
+                "export_render_failed",
+                "Frozen raster source exceeds the scene source budget",
+                {
+                    "id": source_id,
+                    "reason": "source_budget_exceeded",
+                    "peak_bytes": peak,
+                    "budget": rc_job.SOURCE_BYTES_BUDGET,
+                },
+            )
+        target = tmp_dir / ("source-raster" + source_path.suffix.lower())
+        target.write_bytes(rc_sources.read_frozen(frozen))
+        return dataclasses.replace(frozen, path=target)
+    except rc_sources.SourceError as exc:
+        raise engine_exportreq.ExportRequestError(
+            "export_render_failed", str(exc), {"id": source_id, "reason": exc.code}
+        ) from exc
 
 
 def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> list:
@@ -4162,51 +4578,20 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     src = req.original
     if src.objects or src.pad_mm:
         return _export_produce_original_annotated(job, tmp_dir, artifact_sources=artifact_sources)
+    # SVG 计算图表（ADR-XXXX）：panel.chart 存在 → SVG 格式交付组合后的编辑版
+    # （服务端从不可变来源快照重算，与 compute 端点同一合同）；其余格式按 svg_asset
+    # 现有规则交付或拒绝（SVG→IR 翻译器落地前 PDF/PNG/TIFF 不可用，如实报）。
+    if src.chart is not None:
+        produced = _export_produce_chart_original(job, src, req, tmp_dir)
+        if produced is not None:
+            return produced
+
     if (
         Path(src.figure_id).suffix.lower() in SVG_EXT
         and not src.overrides
         and src.figure_snapshot is None
     ):
-        from . import svgasset
-
-        data, probe = svgasset.read(safe_resolve(src.figure_id))
-        # 一张图一个基准（#1185 / #1209）：SVG 素材的基准就是这份文件的字节。svg = 这份字节；
-        # eps 只有「活 Figure 被证明出自这份字节」才给（`_produce_svg_asset_eps`），否则逐项失败，
-        # **绝不**为 eps 重新执行脚本换一个来源。最后由 `enforce_one_basis` 对作业结果再断言一遍。
-        source_sha = engine_figcapture.hash_file(safe_resolve(src.figure_id))[0]
-        produced = []
-        for fmt in req.formats:
-            job.check_cancelled()
-            if fmt == engine_exportreq.FORMAT_SVG:
-                target = tmp_dir / "original.svg"
-                target.write_bytes(data)
-                produced.append(
-                    engine_exportjob.Produced(
-                        format=fmt,
-                        tmp_path=target,
-                        width_mm=probe["w_pt"] * 25.4 / 72,
-                        height_mm=probe["h_pt"] * 25.4 / 72,
-                        vector=engine_artifactinspect.svg_vector(target),
-                        basis=engine_exportjob.Basis(engine_exportjob.BASIS_COPY, source_sha),
-                    )
-                )
-            elif fmt == engine_exportreq.FORMAT_EPS:
-                produced.append(
-                    _produce_svg_asset_eps(
-                        job,
-                        src,
-                        req.ppi or engine_exportreq.PPI_DEFAULT,
-                        tmp_dir,
-                        artifact_source=(artifact_sources or {}).get(src.figure_id),
-                    )
-                )
-            else:
-                produced.append(
-                    engine_exportjob.Produced(
-                        format=fmt, error_code="svg_asset_export_unsupported", error_params={}
-                    )
-                )
-        return engine_exportjob.enforce_one_basis(produced, source_sha)
+        return _export_produce_static_svg_original(job, tmp_dir, artifact_sources=artifact_sources)
     dpi = req.ppi or engine_exportreq.PPI_DEFAULT
     job.check_cancelled()
     if (
@@ -4215,6 +4600,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
         and (
             engine_runtimeasset.is_runtime_id(src.figure_id)
             or src.overrides
+            or src.figure_origin is not None
             or (artifact_sources or {}).get(src.figure_id) is not None
         )
     ):
@@ -4232,8 +4618,13 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                 existing_only=True,
                 svg_text=True,
                 **_artifact_kwargs((artifact_sources or {}).get(src.figure_id)),
+                **({"figure_origin": src.figure_origin} if src.figure_origin is not None else {}),
             )
         except engine_pool.WorkerError as exc:
+            if src.figure_origin is not None:
+                raise engine_exportreq.ExportRequestError(
+                    exc.code, str(exc), {"id": src.figure_id}
+                ) from exc
             if getattr(exc, "code", None) != "svg_source_unavailable":
                 raise
             rendered = None
@@ -4253,20 +4644,25 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     svg_text_source = None
     wants_svg = engine_exportreq.FORMAT_SVG in req.formats
     wants_snapshot = wants_svg or src.figure_snapshot is not None
-    execution_source = engine_exportroute.wants_execution(
+    execution_source = src.figure_origin is not None or engine_exportroute.wants_execution(
         runtime=engine_runtimeasset.is_runtime_id(src.figure_id), overrides=src.overrides
     )
-    if wants_snapshot and execution_source:
+    if (
+        src.figure_origin is not None
+        or src.figure_snapshot is not None
+        or (wants_snapshot and execution_source)
+    ):
         frozen = _execution_source(
             {
                 "id": src.figure_id,
                 "overrides": src.overrides,
                 "figure_snapshot": src.figure_snapshot,
+                **({"figure_origin": src.figure_origin} if src.figure_origin is not None else {}),
             },
             dpi,
             job.warnings,
             tmp_dir,
-            include_svg=True,
+            include_svg=wants_svg or src.figure_snapshot is not None,
             with_text_svg=True,
             **_artifact_kwargs((artifact_sources or {}).get(src.figure_id)),
         )
@@ -4312,9 +4708,18 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                 "Saved Figure snapshot no longer matches the static source",
                 {"id": src.figure_id},
             )
+    raster_frozen = None
+    if wants_svg and source_path.suffix.lower() in IMG_EXT:
+        raster_frozen = _freeze_original_raster(source_path, src.figure_id, tmp_dir)
+        source_path = raster_frozen.path
     raster_source = source_path.suffix.lower() != ".pdf"
     page_pt = _original_page_pt(source_path, src) if raster_source else None
-    disk_source = _original_disk_source_manifest(src, source_path)
+    disk_source = (
+        {"provenance": {"sources": [raster_frozen.artifact.to_payload()]}}
+        if raster_frozen is not None
+        else _original_disk_source_manifest(src, source_path)
+    )
+    vector_size_mm = None
     produced: list = []
     for fmt in req.formats:
         job.check_cancelled()
@@ -4332,7 +4737,24 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                     )
                 )
             elif fmt == engine_exportreq.FORMAT_SVG:
-                if svg_source is None:
+                if raster_frozen is not None:
+                    # A raster's SVG is the same Image IR used by annotated/padded
+                    # originals. It keeps the native pixel grid and source alpha;
+                    # an original's disabled background option must not flatten it.
+                    svg_req = dataclasses.replace(
+                        req,
+                        formats=(engine_exportreq.FORMAT_SVG,),
+                        background=engine_exportreq.BACKGROUND_TRANSPARENT,
+                        original=dataclasses.replace(
+                            src, w_mm=page_pt[0] * MM_PER_PT, h_mm=page_pt[1] * MM_PER_PT
+                        ),
+                    )
+                    produced += _export_produce_original_annotated(
+                        _PageJob(job, svg_req),
+                        tmp_dir / "original_svg",
+                        frozen_sources={src.figure_id: raster_frozen},
+                    )
+                elif svg_source is None:
                     produced.append(
                         engine_exportjob.Produced(
                             format=fmt,
@@ -4380,14 +4802,19 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                     )
                 else:
                     facts = pdfbackend.original_png(source_path, tmp, dpi, transparent=transparent)
+                if not raster_source and vector_size_mm is None:
+                    # PDF 原图保其物理页面；请求里的旧 native 不是产物的测量值。
+                    measured = _asset_original_spec(source_path, "pdf")
+                    vector_size_mm = (measured["logical_w_mm"], measured["logical_h_mm"])
+                width_mm, height_mm = vector_size_mm or (src.w_mm, src.h_mm)
                 produced.append(
                     engine_exportjob.Produced(
                         format=fmt,
                         tmp_path=tmp,
                         width_px=facts["px_w"],
                         height_px=facts["px_h"],
-                        width_mm=src.w_mm,
-                        height_mm=src.h_mm,
+                        width_mm=width_mm,
+                        height_mm=height_mm,
                         vector=False,
                         manifest=disk_source,
                     )
@@ -4401,6 +4828,17 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                     format=fmt, error_code="format_failed", error_params={"error": str(exc)[:200]}
                 )
             )
+    if raster_frozen is not None:
+        for item in produced:
+            if item.tmp_path is not None and item.format != engine_exportreq.FORMAT_EPS:
+                how = (
+                    engine_exportjob.BASIS_COPY
+                    if item.format == engine_exportreq.FORMAT_PNG
+                    and raster_frozen.artifact.kind == "png"
+                    else engine_exportjob.BASIS_CONVERT
+                )
+                item.basis = engine_exportjob.Basis(how, raster_frozen.artifact.bytes_sha256)
+                item.manifest = {**(item.manifest or {}), **disk_source}
     return _keep_disk_source_only_if_unchanged(produced, src, source_path, disk_source)
 
 
@@ -4504,6 +4942,9 @@ def _produce_original_eps(
     交付。尺寸事实从 EPS 自己的 `%%BoundingBox` 读（`engine/epsfile`），不拿
     请求里的 mm 数冒充测量值。
     """
+    if src.figure_snapshot is not None:
+        existing_only = True
+        expect_receipt_id = src.figure_snapshot["receiptId"]
     path = _serialize_figure(
         src.figure_id,
         src.overrides,
@@ -4514,6 +4955,12 @@ def _produce_original_eps(
         **_artifact_kwargs(artifact_source),
         **({"existing_only": True} if existing_only else {}),
         **({"expect_receipt_id": expect_receipt_id} if expect_receipt_id else {}),
+        **({"figure_origin": src.figure_origin} if src.figure_origin is not None else {}),
+        **(
+            {"source_path_required": False}
+            if src.figure_snapshot is not None and artifact_source is None
+            else {}
+        ),
     )
     if path is None or not path.is_file():
         # `existing_only` 下 `None` 有两种成因：没有脚本，或脚本在但没有活 Figure（冷 worker）。
@@ -4605,7 +5052,13 @@ def _produce_svg_asset_eps(job, src, dpi: int, tmp_dir: Path, *, artifact_source
 
 
 def _export_produce_rendercore(
-    job, tmp_dir: Path, *, artifact_sources=None, rerender_ids=frozenset(), raster_target=None
+    job,
+    tmp_dir: Path,
+    *,
+    artifact_sources=None,
+    rerender_ids=frozenset(),
+    raster_target=None,
+    frozen_sources=None,
 ) -> list:
     """`scope=canvas` 的 `produce`：RenderPlan → Canonical PDF → child 栅格（U08 候选、U10 起默认，ADR 0067 / 0072）。
 
@@ -4626,14 +5079,15 @@ def _export_produce_rendercore(
         项目——与旧路 `safe_resolve` 只在碰面板时才要项目同一语义。"""
 
         def resolve(self, obj: dict):
-            if Path(str(obj.get("id", ""))).suffix.lower() in SVG_EXT:
-                safe_resolve(obj["id"])
-                raise engine_exportreq.ExportRequestError(
-                    "svg_asset_export_unsupported",
-                    "Static SVG canvas conversion is not available",
-                    {},
+            fs = (frozen_sources or {}).get(obj["id"])
+            if fs is None:
+                fs = rc_sources.StaticSourceResolver(require_project()).resolve(obj)
+            elif fs.artifact.source_id != obj["id"]:
+                raise rc_sources.SourceError(
+                    "source_changed",
+                    "Frozen source does not match the placed object",
+                    {"figure": obj["id"]},
                 )
-            fs = rc_sources.StaticSourceResolver(require_project()).resolve(obj)
             # 这条路不经 `safe_resolve`（它自己做包含检查与存在性），TIFF 的支持范围得在这里补上：
             # 漏掉它，范围之外的 TIFF 在候选后端下会被画成一张错图交付（issue #534）。先让解析器把
             # 路径核进项目根，再读它的头
@@ -4664,6 +5118,34 @@ def _export_produce_rendercore(
         与 `_resolve_panel_source(rerender=True)` 同一判定）。"""
 
         def resolve(self, obj: dict):
+            if obj.get("chart") is not None:
+                from .rendercore.svgir import SVGIRError
+
+                snapshot = _export_chart_snapshot(
+                    job,
+                    str(obj["id"]),
+                    obj["chart"],
+                    render_profile=_document_panel_render_profile(obj),
+                    overrides=obj.get("overrides", ()),
+                    **({"chart_source": obj["chart_source"]} if "chart_source" in obj else {}),
+                )
+                try:
+                    return _export_chart_canonical(job, snapshot, tmp_dir)
+                except SVGIRError as exc:
+                    # SVG 原生仍可完整交付。PDF 消费者会针对这份真实 SVG 资源
+                    # 明确拒绝；不制造空白PDF冒充 canonical，也不影响SVG格式。
+                    note = f"{obj['id']}: {exc.code}"
+                    if note not in job.warnings:
+                        job.warnings.append(note)
+                    svg_path = tmp_dir / ("chart-native-" + snapshot.render_revision + ".svg")
+                    svg_path.write_bytes(snapshot.svg)
+                    artifact = engine_figcapture.source_artifact_from_file(
+                        svg_path,
+                        source_id=snapshot.file_id,
+                        origin=engine_figcapture.ORIGIN_DECLARATIVE,
+                        render_revision=snapshot.render_revision,
+                    )
+                    return rc_sources.FrozenSource(artifact=artifact, path=svg_path)
             if str(obj.get("id", "")) in rerender_ids:
                 fs = self.execute(obj)
                 if fs.artifact.origin != engine_figcapture.ORIGIN_EXECUTION:
@@ -4673,6 +5155,8 @@ def _export_produce_rendercore(
                         {"figure": str(obj.get("id", ""))},
                     )
                 return fs
+            if obj.get("figure_snapshot") is not None or obj.get("figure_origin") is not None:
+                return self.execute(obj)
             return super().resolve(obj)
 
     resolver = _Resolver(
@@ -4749,16 +5233,16 @@ def _export_produce_merged_pdf(job, tmp_dir: Path, *, artifact_sources=None) -> 
     page_products: list = []
     for i, src in enumerate(pages):
         job.check_cancelled()
-        key = json.dumps(
-            [src.figure_id, src.overrides, src.figure_snapshot], sort_keys=True, default=str
+        sub = dataclasses.replace(
+            req, formats=(engine_exportreq.FORMAT_PDF,), original=src, merge_pdf=None
         )
+        # 每页的完整渲染语义只由ExportRequest判定，不能借同名图的已出页
+        # 跳过另一INPUT附件的验证，或忽略profile、标注、留白与图幅。
+        key = engine_exportreq.render_plan_ref(sub, [])["plan_identity"]
         path = done.get(key)
         if path is None:
             page_dir = tmp_dir / f"page-{i + 1}"
             page_dir.mkdir()
-            sub = dataclasses.replace(
-                req, formats=(engine_exportreq.FORMAT_PDF,), original=src, merge_pdf=None
-            )
             produced = _export_produce_original(
                 _PageJob(job, sub), page_dir, artifact_sources=artifact_sources
             )
@@ -5091,6 +5575,8 @@ def _legacy_export_response(job) -> tuple:
 def _classify_export_error(exc: BaseException):
     """导出作业里冒出的「渲染后端此刻不可用」→ 稳定码 `backend_unavailable`，不再笼统地记 `export_failed`
     （Codex #539）。判据归契约层（`pdfbackend.is_backend_unavailable`），这里只翻译。"""
+    if isinstance(exc, _FigureOriginError):
+        return exc.code, {}
     if isinstance(exc, engine_artifactcontext.ArtifactContextError):
         return exc.code, {**exc.params, "retryable": exc.retryable}
     if pdfbackend.is_backend_unavailable(exc):
@@ -5102,6 +5588,8 @@ def _classify_export_error(exc: BaseException):
 
 
 def _artifact_object(src) -> dict:
+    if src.figure_origin is not None:
+        return {"id": src.figure_id, "overrides": src.overrides, "figure_origin": src.figure_origin}
     return {
         "id": src.figure_id,
         "source_policy": src.source_policy,
@@ -5143,7 +5631,7 @@ def _export_artifact_sources(req):
     return contexts
 
 
-def _export_commit_guard(root, artifact_sources=None):
+def _export_commit_guard(root, artifact_sources=None, *, job=None):
     """Carry project/remap and selected byte identities through final publication."""
     start = engine_inputremap.generation(root) if root else None
     sources = [(_artifact_path(key), value) for key, value in (artifact_sources or {}).items()]
@@ -5153,9 +5641,11 @@ def _export_commit_guard(root, artifact_sources=None):
         with engine_inputremap.landing(root, start) if root else contextlib.nullcontext():
             for path, context in sources:
                 engine_artifactcontext.assert_current(path, context)
+            for path, expected in getattr(job, "_chart_source_dependencies", {}).values():
+                _assert_chart_source(path, expected)
             yield
 
-    return guard if root or sources else None
+    return guard if root or sources or job is not None else None
 
 
 def _prepare_export_job(spec: dict):
@@ -5209,7 +5699,9 @@ def api_export():
         report=_style_check_report(spec),
         inspect=_export_inspect,
         classify_error=_classify_export_error,
-        commit_guard=_export_commit_guard(getattr(_request_ctx(), "path", None), artifact_sources),
+        commit_guard=_export_commit_guard(
+            getattr(_request_ctx(), "path", None), artifact_sources, job=job
+        ),
     )
     LOG.info(
         "导出[%s]: %s（scope=%s, %s, %.0fms，%d 条警告）",
@@ -5272,7 +5764,7 @@ def api_export_start():
         report=report,
         inspect=inspect,
         classify_error=_classify_export_error,
-        commit_guard=_export_commit_guard(ctx.path, artifact_sources),
+        commit_guard=_export_commit_guard(ctx.path, artifact_sources, job=job),
     )
     return jsonify(job.to_payload())
 
@@ -5506,6 +5998,7 @@ def _export_route(req) -> dict:
                 "id": req.original.figure_id,
                 "overrides": req.original.overrides,
                 "has_snapshot": req.original.figure_snapshot is not None,
+                **({"has_chart": True} if req.original.chart is not None else {}),
             }
         ]
     else:
@@ -5514,6 +6007,7 @@ def _export_route(req) -> dict:
                 "id": str(o.get("id", "")),
                 "overrides": o.get("overrides"),
                 "has_snapshot": o.get("figure_snapshot") is not None,
+                **({"has_chart": True} if o.get("chart") is not None else {}),
             }
             for o in (req.canvas.objects if req.canvas is not None else [])
             if o.get("type") == "panel" and not o.get("hidden")

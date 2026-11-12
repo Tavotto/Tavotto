@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「布局层（R18）」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_versions.py`、`test_layout_timeline.py`、`test_document_persistence.py`、`test_package.py`、`test_ai_revert_atomic.py`、`test_project_layout_save.py`、`test_layout_session.py`、`test_layout_recovery_backend.py`、`test_layout_recovery_acceptance.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_versions.py`、`test_layout_timeline.py`、`test_document_persistence.py`、`test_package.py`、`test_ai_revert_atomic.py`、`test_project_layout_save.py`、`test_layout_session.py`、`test_layout_recovery_backend.py`、`test_layout_recovery_acceptance.py`；SVG格式隔离与共同打开顺序：`tests/test_chart_documents_v4.py`、`tests/test_layout_session_open_intent.py`、`tests/test_layout_open_intent_http.py`。
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
@@ -78,6 +78,58 @@ order: 200
   override / 标注属性一次 commit 应用，绝不写回源文件。
 - **项目包**：`POST /api/package` 打 zip（layout+素材+脚本+sha1 清单）；
   `POST /api/package/open` 检视（缺失/sha1 漂移），素材永不自动写入图库。
+- **有界项目包容器**：`documentpackage`是ZIP路径/别名/成员/目录/展开/压缩预算和CRC的唯一权威，六项`PackageBudget`由调用者明确提供；不任意extract。`staged_package`立即流入临时helper资源，任何add异常锁定整包失败，关闭并验证后经atomicio原子发布；不能因调用者捕获add异常而发布半包。新文件发布用`publish_file_if_absent`，同名并发不覆盖；允许替换须显式overwrite。严格v4 reader核现品牌/版本/format信封，普通旧包不自动套用新低容量上限。看护`tests/test_document_package.py`。
+- **输出预算与旧包文件名**：`packagebudget.output_budget`从调用者完整资源plan的实际成员名/字节量推导DEFLATE/ZIP64上界，不新增旧合法项目的容量政策；reader块大小只取`documentpackage.ARCHIVE_CHUNK_BYTES`。写入提供已知file_size，让stdlib决定ZIP64，默认小包字节不变。只有旧只读包输出显式`legacy_names=True`保当前平台合法文件名的精确区别；默认writer及所有公开reader仍按portable/NFC-casefold校验，不从上传manifest自动选择兼容模式。两模式均拒绝跳径、特殊文件、完全重复和文件目录冲突；caller仍负责canonical源授权。看护`tests/test_package_budget.py`及上述容器测试。
+- **旧项目包HTTP原子输出**：`api_package`先保留经过containment校验的canonical资源路径与原逻辑ID，由caller持有data_dir自有快照暂存至整个输出结束，沿ZipFile原规范化组完整plan后推导预算；最终ZIP仅验证封口后发布，不覆盖同名旧包。文件名增加随机后缀，保原成功响应键与layout/manifest语义。快照准备失败沿旧整组warning；真实ZIP add/close/publish故障必须失败，不能吞成成功半包。检视仍只读，不把这条当v4混合安装完成；看护`tests/test_package_atomic_http.py`。
+- **显式Figure配对预览**：`POST /api/documents/v4/figure-preview`与原`preview_png`的显式`figure_snapshot`分支沿原`svgstore.load_document_snapshot`与配对物化口，按完整ref、来源、有序patch与本项目归档核验，不起worker、不借当前同名文件或脚本。SVG响应回显已核完整ref与`preview_source`，图幅由PDF契约层独立测量；PNG回显完整ref header，两者no-store。坏配对明确失败，不回退别的历史；同owner新执行不删除旧归档显示资格，原`_load_svg_snapshot`的current/导出撤旧门仍完整保留。归档字节没有原可编辑manifest，不提供伪清单，PNG归档分支拒绝`with_manifest`及混用计算/采用上下文；无ref旧路径保持。前端显示、缓存、几何权威与明确编辑来源须分别接入，不能由本端点成功推断已恢复编辑能力。看护`tests/test_figure_snapshot_preview.py`。
+- **v4项目包导出**：`POST /api/documents/v4/package`显式进入同一v4格式/会话域与认证，冻结全部画布的完整计算INPUT，沿chartpackage唯一manifest与预算工厂写包；不执行用户脚本。普通素材/登记脚本只读containment返回的canonical路径；已有Figure配对沿svgstore核验，显式坏引用拒绝，去重资源仍逐个回填每个面板引用。原SVG缺席但计算附件有效不算缺件，普通素材/脚本/未具配对的执行图则显式missing，允许备份但不声称完整搬迁。成功保旧name/url/assets/missing并加document_format='v4'与去重INPUT数chart_sources；assets为普通file资源数。旧默认导出与只读open不变。registry/数据/运行配置闭包及生产安装另行验收，不把包导出称作已安装。看护`tests/test_chart_package_http.py`。
+- **包内执行事实**：可选`execution`的闭式v1由`packageexecution`唯一校验，documentpackage清单和chartpackage资源核验都消费它；登记/argv/cwd/改指沿原权威。导出收集器携带已知数据/helper与非敏感原配置ID，不搬机器授权，不执行脚本；静态绑定或成功输入观察均不证明任意Python依赖完整，无完整声明时准确`coverage=incomplete`，响应`execution_coverage`供界面展示。已知缺资源仍只进missing；file资源计数含数据。无脚本包省略该字段，旧包不变。看护`tests/test_package_execution.py`、`tests/test_package_execution_export.py`、`tests/test_package_execution_http.py`；完整声明/外部输入及安装仍须后续验收。
+- **显式捕获资源包**：有正式捕获附件时，`execution`选择闭式v2：原字段加非空`captures`，
+  每行只有完整`snapshot_ref`与`revision`，按snapshotId唯一；同图不同patch/历史输入保独立ref。
+  `VERSION=1`仍是缺省，旧v1闭集/字节/输出容量不变。graph与原字节继续原`figure_snapshot`资源树，
+  不将大graph复制进manifest，不新增资源store。`packageexecution`沿svgstore原引用权威核完整ref，
+  经metadata.input_archive→原canonical graph→每SHA/size blob核关联；v2全部带附件档案的输入并集须精确闭包，
+  原render孤儿仍按旧合同。writer封口及Prepared reader与正式HTTP检视共用同一语义消费者，验证先于发布。
+  按实际面板ref分离历史捕获和当前contexts；同script未捕获面板仍需当前资源，不借历史blob消除缺件。
+  reader从正文重新核未捕获面板的实际脚本使用，发送者遗漏contexts也不能消除该脚本缺件。
+  原rc_ID的现有非敏感argv可作可携建议，缺失/敏感/不可读分别报缺口；公开receipt不证明参数原文，
+  不从default/新声明/当前文件补历史。声明文件集齐备不证明未知IO通道，v2总体coverage仍incomplete。
+  新检视`captured_inputs`逐ref报告已核scope与文件/prefix数，通道及配置缺口按snapshotId区分。
+  图中旧绝对请求只作来源事实，检视不resolve/open。`remap:<sha256>`保opaque域，prefix允许根空目录；
+  可恢复逻辑成员沿`packagemembers.project_member_key`核路径、别名、父目录和文件/目录冲突，
+  跨capture不混合同名不同字节；已有shadow `script_source`角色与数据file角色保持分域。
+  native公开spec的cwd_mode恒sandbox，不能据此拒其实际project/project_root捕获scope。
+  显式v2输出用`packagebudget.portable_output_budget`把精确输出边界与原输入政策求交集；
+  整包资源加metadata超额拒绝、原输出不变，不把单声明额度当整包额度，也不给旧输出新增低cap。
+  看护`tests/test_package_execution_captures.py`、`tests/test_package_execution_captures_export.py`、
+  `tests/test_package_portable_budget.py`、`tests/test_svg_input_package_e2e.py`、
+  `tests/test_package_execution_capture_reader.py`。这不授新根安装、冷重执行或写回资格。
+- **计算来源包叶子**：`chartpackage`沿上述容器与`documentassets`唯一字节权威验证schema4完整INPUT；内容寻址chart行从正文引用派生，额外资源使用闭式chart_source/figure_snapshot/file/script变体，不接受caller覆盖派生chart行。检视只写data_dir自有暂存，Prepared正文/清单每次给副本，退出后拒用；verify回调必传，前后重核附件/资源，失败不发布目标。`install_chart_sources`只发布不可变chart附件并明确返回未安装的remaining_resources，不能宣称普通文件/脚本已安装；普通资源及正文事务由调用者完成，已发布的不可变附件不回删。writer临时封口后严格inspect再原子发布最终名。看护`tests/test_chart_package.py`。
+  输出调用者可显式传`budget`或`budget_factory`，恰一；后者只收本模块最终唯一layout/manifest UTF-8字节、完整INPUT及各资源真实尺寸的只读census，一次返回六预算。类型/回调错误在创建输出前拒绝；factory后仍沿原装载、严格inspect与发布链核实际摘要，不能靠清单声明尺寸或静态预算绕过验证。静态预算旧调用/字节保持；不复制manifest结构给app。
+- **项目包资源目标投影**：`PreparedChartPackage.plan_project_resources`在活跃上下文内先复核全部资源与manifest，再将assets/scripts映到同一项目相对根；原模块级函数保类型拒绝后委托。上层检视首尾消费同一对象方法，类型引用不产生反向运行时依赖；writer/reader仍用同一语义检视。原拼写且同SHA/长度可复用；跨namespace异字节、case/NFC文件或祖先目录别名、文件/目录冲突均在零目标写入时拒绝。比较键只由`documentpackage.project_member_key`调用原严格成员规则派生，不复制portable策略或允许legacy开关。返回计划不等于安装成功，调用方发布前仍须核生命周期/来源并安全发布。看护`tests/test_chart_package_targets.py`及`tests/test_import_architecture.py`。
+  成员路径判据、元数据成员名与`PackageError`的实现唯一位于纯标准库`packagemembers`，`documentpackage`保原API同对象导出；执行清单及可携运行配置直接依赖该叶子，避免容器→执行清单→配置→容器的环。strict/legacy路径判据、异常字段与ZIP输出保持原合同，搬移不扩大任何名字或提取权限。看护`tests/test_package_member_authority.py`及原import架构门禁。
+- **v4只读产品检视**：`POST /api/documents/v4/package/inspect`只收一个multipart `package`文件，沿同一认证/格式域；实际请求流、表单内存和包的六项预算均有界，临时文件只在data_dir并随请求回收。`packagebudget.input_budget`集中输入政策，不从不可信清单反推预算，也不改变旧open/输出预算。普通资源沿`DocumentPackage.copy_required`的同一CRC/解压计数器流式暂存和摘要核对，不整份读大型数据。`packageinspection`复用活跃Prepared/目标计划，返回完整正文/原清单、全部资源目标、重新计算的缺件和明确缺口。已声明missing及runtime脚本仅作候选，与实际plan核缺席；已携文件清除旧缺件，完整INPUT的chart-only原件不算缺件。非portable/opaque声明保原清单并报未核缺口，不作本机路径或运行授权。Figure树按svgstore全量核档案/marker/条目/blob，再用共享SVG安全解析器与pdfbackend核全部图像内容；正文显式ref须与source/patch完全相符。历史owner不等于当前登记/授权，合法旧v4/无execution/依赖不完整备份仍可检视；原coverage是发送者声明，完整输入声明未验证时另给缺口。检视不安装、不写项目/正文/本机配置、不运行用户脚本，也不授予冷重放或写回资格。看护`tests/test_package_streaming.py`、`tests/test_chart_package_inspect_http.py`。
+- **v4资源安全安装**：`POST /api/documents/v4/package/install`沿检视的同一有界上传、格式域和认证，
+  额外只接受一个闭式JSON `options`（绝对新目录`destination`与可选本机批准`remap_rules`）。
+  `packageinstall`消费活跃Prepared和原迁移结果；原受检流复制到同父私有stage，保普通资源原字节，
+  registry沿原权威生成，普通资源同名时只允许语义一致且保原bytes。声明式图表沿原renderer核完整
+  INPUT与原序overrides；上传stage只提供资源，解释器根只取可信caller或自有空engine根，不能选择
+  上传项目的.venv，不执行包内用户脚本。检视仍只接受原单文件合同。
+  发布前`verify_publication_copy`沿原资源摘要权威与同一闭合成员清点核实际副本，允许明确生成的
+  registry元信息但不覆盖包内成员；callback不得改正文。每文件/子目录同步后再核目录身份和副本，
+  经原atomicio排他发布；目标存在（含并发/链接）零覆盖，只清未发布且身份未变的本attempt stage。
+  发布后才沿原runconfig导入非敏感建议、原inputremap写本机批准规则并核唯一实际指纹；
+  不搬默认配置、cwd授权、执行成功记录、current marker或发送者机器信任。
+  既有本机元信息在发布/import和项目锁之前从原default_selection/get.public/workdir.state只读投影，
+  保原配置并返回`needs_review`，不额外公开argv，也不把旧默认视为新包执行事实。
+  已知缺件拒绝完整安装，unknown coverage仍如实incomplete。资源发布、配置导入和后续正文writer
+  是独立阶段：`resources_installed`不表示正文落盘，始终`document_saved=false`；
+  配置区分`pending/needs_review/ready`。发布后的durability、Prepared出口或上传清理失败不得回删目录
+  或丢回执，返回实际`path`及`publication_unconfirmed/installation_unconfirmed`（清理另标
+  `upload_cleanup=pending`），HTTP503不能被消费者解读成目标未创建。只有资源及配置均确认才201。
+  不调用open_project、touch_recent或自动保存；界面采用与完整迁移资格另验。
+  看护`tests/test_package_install.py`、`tests/test_chart_package_install_http.py`、
+  `tests/test_atomicio_directory.py`、`tests/test_package_install_e2e.py`。
 - **文档显式引用全质量 Figure 配对（X03，2026-10-15）**：面板 `figureSnapshot` 是版本 1 的闭集
   `{version, sourceId, patchHash, receiptId, snapshotId}`，可选 `executionOwner={script, run_config}`；
   owner 只从已验归档派生、纳入内容 ID，不信客户端自报。导出 wire 字段为 `figure_snapshot`。
@@ -117,6 +169,44 @@ order: 200
   看护：`tests/test_svgstore.py`、`tests/test_export_svg.py`、`tests/test_export_request.py`、
   `web/src/store/figureSnapshot.test.ts`、`web/src/store/figureSnapshotInvalidation.test.ts`、
   `web/src/store/projectSave.test.ts`、`web/src/lib/autosave/diskWriter.test.ts`。
+- **Figure捕获输入的正式冷存**：`svgstore.save`的私有`captured_input_archive`仅用于项目`storage_root`，
+  不塞入公开receipt。有附件才写metadata v2及`input_archive={version:1,revision,graph_size_bytes}`，
+  并将完整descriptor绑定snapshot ID；引用和marker仍v1，无附件旧公式/字节保持，不给旧archive补签。
+  `svgstore_inputs`只管理同一store内`inputs/graphs/<revisionhex>.json`与
+  `inputs/blobs/<sha[:2]>/<sha[2:]>`，复用原guard和atomicio无覆盖发布；不是第二个store或锁。
+  图的canonical bytes、逻辑成员预算、资源闭包及受检读取只消费`inputdeclaration`；复制时同流核SHA/size及
+  regular/no-follow/起止身份，零字节合法，不先verify再无核copy。receipt revision与显式script/run_config须一致，
+  opaque sourceId不推归属。图内原请求字符串不产生本机读权。
+  `svgstore.input_store_budget()`是默认累计输入政策入口：单声明沿projectcopy的50,000成员/2GiB，
+  累计去重blob另限50,000份/2GiB，单graph与累计graph均64MiB，graph数沿MAX_SNAPSHOTS；
+  这是新增输入维度，不改原render 512MiB、metadata 1MiB及旧目录4,096项，也不扩大整包上限。
+  准入先核既有typed树全部成员及最终去重预算，输入全部发布后才进入原metadata/current流程。
+  输入阶段失败清本attempt成员，旧marker不动；后续immutable archive已提交而entry失败时，必须保其输入，
+  不把原多文件store夸成整库ACID。GC从所有archive及仍current entries追引用，不凭marker单独删历史输入。
+  输入暂存名消费atomicio原`<目标名>.<pid>.<序号>.tmp`权威。持原guard的mutation在准入前只回收typed目录内
+  合法目标对应、regular/no-reparse且身份未变的中断tmp，再按实际已提交记录清理完整无引用孤儿；
+  不需第二锁、PID租约或时间阈值。只读检视不忽略、不删除半成品；未知名字和链接继续拒绝。
+  `load_input_archive`按完整历史ref只读，其他load/inspect在有附件时核全闭包；full inspect也核孤儿成员，
+  输入总量单列`inputs.total_bytes`，不喂入PDF/SVG解析器。无TTL、无原源回读、不授执行权，返Path仍非租约。
+  app的执行源、明确运行后自动捕获与静态PDF/SVG绑定，在实际ExecutionReceipt仍在手时以私有keyword
+  将附件交给同一`_save_svg_snapshot`；FrozenSource继续只携公开receipt，不把Path/graph塞进渲染wire。
+  同receipt的旧v1缓存不能阻挡本次实际附件生成独立v2引用，旧archive不覆；已有同graph附件或没有新附件才沿原早退。
+  `_package_svg_assets`从正式load或文档显式引用reader取得已核附件并完整转交staging save，复制时再核实际流，
+  不回读当前原文件、不重跑脚本。无附件不新增下游keyword或响应字段，原best-effort保存/严格显式引用边界保持。
+  应用接线与资源包核验不等于声明UI、引用搬迁或安装已完成。看护：
+  `tests/test_inputdeclaration_resources.py`、`tests/test_svgstore_inputs.py`、`tests/test_svgstore_input_archive.py`。
+  应用接线看护：`tests/test_svg_input_capture_handoff.py`、`tests/test_svg_input_cold_staging.py`、`tests/test_svg_input_save_e2e.py`。
+- **迁移只归档，不授当前执行权**：`svgstore.save(archive_only=True)`只用于显式项目store，
+  与activate互斥；沿原锁、预算及发布链写不可变档案，不写entry/marker，缺省行为不变。
+  `packagerelocation.prepare_relocation`消费活跃Prepared与原核验权威，仅在data_dir自有暂存准备
+  完整oldRef→newRef和全部正文位置；保原序patch、receipt、配对字节及捕获图。新根整份规则
+  只经`inputremap.fingerprint_rules`生成一个指纹，调用者安装时须与实际设置核对。多个旧ref
+  可收敛为一个新ref，映射不丢行，captures集合从新store重算。历史输入按选中ref惰性物化，
+  同时至多一份，经原freezer在进入/正常退出核同一事实；script影子与项目数据角色分开。
+  publication_files是核闭合成员后的受检流计划，排除锁及临时view；再次复制仍核实际字节。
+  不写最终目录、正文、registry、默认运行配置或机器授权，不把历史view当当前运行输入。
+  看护：`tests/test_svgstore_archive_only.py`、`tests/test_package_relocation.py`、
+  `tests/test_package_relocation_e2e.py`、`tests/test_svg_document_snapshot_sources.py`。
 - **项目文件统一收纳在项目内的 `tavottofile/`（2026-08-17 定版）**：命名画布
   布局直接放 `tavottofile/`，导出默认 `tavottofile/export/`（settings.export_dir
   可覆盖；建不出来退回数据目录，测试读响应里的 export_dir 而不是猜路径），
@@ -321,6 +411,12 @@ order: 200
     固定目标 id 走正常 `switchDocument` + 自动保存，源槽位与源归属不动。
   - 看护 `tests/test_layout_session.py`（模块与旧端点）与 `tests/test_layout_recovery_backend.py`（读取四档、last/pending 晋升、owner 同序、
     清理保护、候选发现、跨进程）。
+- **显式计算图表格式（ADR-XXXX）**：v4端点复用上述view/锁/认证/原子写，目录和namespace由documentformat唯一派生，不给旧端点发现schema4，也不借旧版本目录。v4布局清单的document_dir是后端派生的实际命名保存目录，前端不拼路径；legacy清单形状不变。
+  同一会话文件的document_open_intents在每项目保存共享sequence/latest/witness，只有明确打开分新序，普通保存不能让旧意图变新。witness只覆盖该项目两个namespace实际last/pending；旧程序混写导致不一致时stale，普通写不洗白。view_for默认旧四键，只有显式include_open_intent=True（HTTP query=1）增加open_intent；ok含共同snapshot及latest，untracked/stale无猜测latest，unavailable无猜测snapshot。客户端两GET快照一致才自动采用共同latest，不能比较两组at/mtime。自动repair只确认当前同地址意图或晋升，不能创建新序；被取代回superseded、缺证据回unconfirmed且零写，future/非法账本仍拒写。明确请求跨格式共用发送顺序；保存队列/revision仍按格式隔离。完整开关、线格式和旧客户端边界见ADR-XXXX，专项看护见本页头部。
+- **命名文件关联（ADR0096/0108）**：`layoutsession`在既有会话文件/锁/atomicio里以(project,namespace,working docId)保存版本化`document_project_files`；不进schema3/4，不以标题/mtime/portable project.id猜目标。`read_project_file`核实际AS revision，外改/旧客户端混写使轴unknown/dirty且保原named revision；未知future只读unavailable、修改503，不洗白。用户轴为每editor实例身份+序数，只比较同actor顺序或精确base_axis，派生回执不推进轴、不同actor不能取max。
+  显式GET `/api/layout-session/project-file/<doc_id>`无缓存；reserve捕获规范name/file、真实已刷AS revision/axis及绑定代次，只有pending intent变，不提前绑定；named POST可选`working_doc_id`/`binding_intent`，正文成功后按完整服务器票据CAS关联；显式confirm在实际named锁内核读到的revision；cancel仅清匹配当前seq的pending。旧请求缺省URL/body/实参数量/响应不增字段；v4别名共用view/认证/namespace。
+  AS可选`project_file_edit`是闭式axis/base_axis/base_revision，调用公共`validate_project_file_edit`，同文档锁内以实际旧revision prepare→原子写正文→同证据commit_slot。拒绝轴/未知谱系409 stale_write且正文零改；坏输入400。锁序始终document→session，禁止嵌套两个不可重入document stripe锁。正文成功而元信息失败如实回revision并单列project_file unavailable/metadata failed，不能报正文失败诱导覆盖；失效pj仍沿原保正文合同但不记未知归属。显式打开应在首次AS之前捕获安装基线票据，不能用等待期间已编辑的轴冒充named同步基线。看护`tests/test_layout_project_file_binding.py`、`tests/test_layout_project_file_http.py`。
+  既有“重新加载/明确覆盖”的用户裁决可显式追加`project_file_recovery={revision,expected}`：revision为此次实际观察的AS正文（真实缺席为null），expected为原样完整GET view，含旧tracked revision/unknown。同AS锁内以实际正文重算同一view，规范JSON严格型别CAS防bool/int/float混同及绑定ABA；新轴必须是不同于current/named synced的非null显式分支。只有本次正文成功后才能提交新轴，保named目标/revision/synced，仍dirty；自动重试不得重捕proof或清掉query。写前拒绝409且零正文，后写元信息/目标竞态失配仍200+failed并保真实body revision；正常同址pending晋升继续沿commit_slot，不分新打开序。无edit/无有效项目的proof400，future503，缺省旧路径不变。看护`tests/test_layout_project_file_recovery_http.py`。
 - 前端文档模型的对应字段（lockedGids / layoutGroups 等）见 `web/AGENTS.md`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）

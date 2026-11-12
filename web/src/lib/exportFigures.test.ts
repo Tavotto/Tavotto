@@ -159,3 +159,33 @@ describe('上下文里那张图', () => {
     expect(contextFigureId(listExportableFigures())).toBeNull()
   })
 })
+
+
+describe('P3 runtime filename identity', () => {
+  it('uses the actual registry display name for an archived runtime pdf, keeps opaque id intact', () => {
+    const id = 'runtime:plot.py#History~rc_opaque'
+    useRuntimeAssetStore.setState({ assets: [{ id, stem: 'History@plot', display_name: 'History', cached: true, size_mm: [80, 60] }] } as never)
+    s().commit(literal('place archive'), d => { d.objects = [panel('p-history', id)] })
+    const figure = listExportableFigures().find(f => f.figureId === id)!
+    expect(figure.name).toBe('History')
+    expect(figure.figureId).toBe(id)
+  })
+  it('uses persistent source stem when registry has not loaded, without parsing runtime id', () => {
+    const id = 'runtime:opaque-id-without-a-name'
+    s().commit(literal('place source'), d => {
+      d.objects = [panel('p-source', id, { source: { script: 'plot.py', entry: '__main__', stem: 'Known figure', captureSource: 'savefig', fingerprint: 'x', sizeMm: [80, 60] } })]
+    })
+    expect(listExportableFigures().find(f => f.figureId === id)?.name).toBe('Known figure')
+  })
+})
+
+
+describe('P3 explicit output names remain user choices', () => {
+  it.each(['Custom name', 'user:chosen', '  user title  ', ''])('keeps an explicit panel name %j even when it needs filename correction', name => {
+    const id = 'runtime:opaque'
+    s().commit(literal('user title'), d => { d.objects = [panel('p-explicit', id, { name })] })
+    const figure = listExportableFigures().find(f => f.figureId === id)!
+    expect(figure.name).toBe(name)
+    expect(figure.figureId).toBe(id)
+  })
+})
