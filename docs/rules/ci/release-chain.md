@@ -58,3 +58,10 @@ order: 140
   由 `files` 的 `assets/alias/*` 额外挂上。**带版本号的原件、清单、updater 资产不动**；别名**不进
   `dist/`、不进 `artifact-manifest.json`**，只把哈希行追加进 `SHA256SUMS.txt`。看护：
   `tests/test_release_workflow_contract.py` 里 `*unversioned_aliases*` 与 `*alias_step_copies*`。
+
+- **MCP Registry（2026-11-12 起）**：仓库根 `server.json` 是 Registry 的清单（`io.github.Tavotto/tavotto`，
+  PyPI 包 `tavotto` + 子命令 `mcp`，stdio）；README 顶上的 `<!-- mcp-name: … -->` 是 Registry 在 PyPI 项目描述里
+  认领所有权的那一行。两处版本号随发版 PR 一起改（`test_source_hygiene` 的版本清单看着）。**PyPI 发布成功之后**
+  由维护者本人在仓库根 `mcp-publisher login github` → `mcp-publisher publish`；Registry 会去 PyPI 核这一版存在、
+  README 里有这个名字，PyPI 没发出去就推会被拒。0.21.1 及更早的 wheel 不带 `tavotto_mcp`（#1862），不要为它们补推。
+  看护：`tests/test_mcp_registry.py`。

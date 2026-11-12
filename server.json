@@ -1,0 +1,28 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Tavotto/tavotto",
+  "title": "Tavotto",
+  "description": "Edit, journal-check and export scientific matplotlib figures from your AI agent.",
+  "websiteUrl": "https://www.tavotto.com",
+  "repository": {
+    "url": "https://github.com/Tavotto/Tavotto",
+    "source": "github"
+  },
+  "version": "0.21.1",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "tavotto",
+      "version": "0.21.1",
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ],
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
