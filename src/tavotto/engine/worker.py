@@ -40,6 +40,7 @@ import argparse
 import ast
 import base64
 import contextlib
+import copy
 import dis
 import errno
 import faulthandler
@@ -361,6 +362,7 @@ def _repair_incomplete_font_registry() -> bool:
 #: （safe 档不像 native 那样要分两阶段避开 matplotlib：这里 matplotlib 本来就先 import）。
 _ENGINE_MODULES = (
     "executionfact",
+    "inputdeclaration",
     "figcapture",
     "patchspec",
     "pathgeom",
@@ -402,6 +404,7 @@ scriptinput = _PKG.scriptinput
 # Windows 平台判断与 CREATE_NO_WINDOW 的唯一出处（只依赖标准库，装进私有包不拖闭包）
 runtime = _PKG.runtime
 executionfact = _PKG.executionfact
+inputdeclaration = _PKG.inputdeclaration
 # 写入根绊线（#898，ADR 0141）：只有命令行给了 `--write-roots`（MCP 来源）才装；纯标准库，不拖闭包
 writetripwire = _PKG.writetripwire
 
@@ -859,6 +862,9 @@ SCRIPT_EXITED = "script_exited"
 #: 登记的入口函数在脚本里已经不存在（脚本被改写、注册表里的 `entry` 没跟上），且入口没有在运行前被纠正过
 #: （`engine/entryfresh` 才是纠正的唯一出处）。与脚本自己的 `AttributeError` 分开：这不是脚本的错。
 SCRIPT_ENTRY_MISSING = "script_entry_missing"
+#: 脚本文件本身不在了（被移动 / 删除，例如在一个只装了文档包的新目录里显式运行）。
+#: 不能落成 `missing_dependency`：那会让界面让用户去「安装名为 plot 的包」。
+SCRIPT_SOURCE_MISSING = "script_source_missing"
 #: safe 档的守卫拦下了脚本的关键文件操作（删除 / 改名 / 写入真实图库，或被拦截不落盘的 savefig），
 #: 脚本随后又观察了受影响的路径（P01a，ADR 0003）。结果可能与直接 Python 不同：不是完整成功。
 FILE_OPERATION_BLOCKED = "safe_file_operation_blocked"
@@ -1498,6 +1504,11 @@ class Worker(wireproto.V1Handler):
         self.built = False
         self.execution_id: str | None = None
         self._execution_watch: str | None = None
+        self._requested_input_declaration = None
+        self._input_capture = None
+        self._captured_inputs = None
+        self._captured_build = None
+        self._captured_input_archive = None
         #: 本进程 build 时实际读到并执行的脚本字节的 sha256（读失败 None）；build 前 None。
         self._source_sha256: str | None = None
         #: pyplot 兜底因上限丢掉的张数（0 = 一张没丢）。build 响应带出去。
@@ -1641,6 +1652,10 @@ class Worker(wireproto.V1Handler):
         }
 
     def handle_v1(self, req: dict) -> dict:
+        payload = req.get("payload")
+        self._requested_input_declaration = (
+            copy.deepcopy(payload.get("input_declaration")) if isinstance(payload, dict) else None
+        )
         try:
             result = super().handle_v1(req)
         except ProtocolError as exc:
@@ -1654,7 +1669,25 @@ class Worker(wireproto.V1Handler):
                 traceback_text=traceback.format_exc(),
                 extra={"execution_id": self.execution_id},
             ) from exc
-        return {**result, "execution_id": self.execution_id}
+        captured = (
+            {
+                "captured_inputs": copy.deepcopy(self._captured_inputs),
+                "captured_build": copy.deepcopy(self._captured_build),
+            }
+            if self._captured_inputs is not None
+            else {}
+        )
+        if captured and self._captured_input_archive is not None:
+            captured["captured_input_archive"] = copy.deepcopy(self._captured_input_archive)
+        return {**result, "execution_id": self.execution_id, **captured}
+
+    def require_existing_execution(self, expected) -> None:
+        if not executionfact.valid_id(expected):
+            raise ProtocolError("bad_request", "expected_execution_id must be an execution fact.")
+        if expected != self.execution_id:
+            raise ProtocolError(
+                "svg_source_unavailable", "The existing execution no longer matches."
+            )
 
     def select_artifact(self, context):
         try:
@@ -1674,6 +1707,8 @@ class Worker(wireproto.V1Handler):
     # ---------------- build ----------------
     def _execution_entered(self) -> None:
         self.execution_id = executionfact.new_id()
+        if self._input_capture is not None:
+            self._input_capture.entered(self.execution_id)
         executionfact.write(self.out_dir, self._execution_watch, self.execution_id)
 
     def _overlay_wanted(self) -> bool:
@@ -1743,6 +1778,10 @@ class Worker(wireproto.V1Handler):
         t_build = time.perf_counter()
         if self.built:
             return self._stems_summary()
+        self._captured_inputs = None
+        self._captured_build = None
+        self._captured_input_archive = None
+        self._input_capture = None
         # Font enumeration can be slow on some systems. Do it under the build
         # watchdog, after the worker handshake but before any user code runs.
         if _repair_incomplete_font_registry():
@@ -1758,6 +1797,31 @@ class Worker(wireproto.V1Handler):
         # cwd：默认沙盒（写入边界）；项目级开关打开时是脚本自己所在的目录——
         # 脚本用相对路径找数据（exists / glob / C++ 读取器）的唯一成立形态。
         os.chdir(self.workdir or self.sandbox)
+        candidate = self._requested_input_declaration
+        if candidate is not None:
+            scope = candidate.get("scope") if isinstance(candidate, dict) else None
+            mode = scope.get("cwd_mode") if isinstance(scope, dict) else None
+            try:
+                script_id = self.script.relative_to(self.figures_dir).as_posix()
+            except ValueError:
+                script_id = self.script.as_posix()
+            paused = (
+                self._input_observer.paused()
+                if self._input_observer is not None
+                else contextlib.nullcontext()
+            )
+            with paused:
+                self._input_capture = inputdeclaration.begin(
+                    candidate,
+                    script=script_id,
+                    script_path=str(self.script_source),
+                    cwd_mode=mode,
+                    run_config=self.run_config or None,
+                    remap_rules=self.input_remap,
+                    actual_cwd=str(self.workdir or self.sandbox),
+                    project_root=str(self.figures_dir),
+                    sandbox=str(self.sandbox),
+                )
         # 与 `python 脚本.py` 同一个顺序：脚本自己所在目录在 `sys.path[0]`（面板脚本放 panels/ 子目录时，
         # 只加图库根会让 import_module(stem) 直接 ModuleNotFoundError）；项目根（图库根）**追加到末尾**，排在
         # site-packages 之后——脚本 import 项目根下的 paper_style / 数据模块照样找得到，但项目根里恰好有同名
@@ -2041,6 +2105,12 @@ class Worker(wireproto.V1Handler):
             if use_overlay:
                 writetripwire.arm_overlay(True)
             try:
+                if not self.script_source.is_file():
+                    raise ProtocolError(
+                        SCRIPT_SOURCE_MISSING,
+                        f"脚本文件不存在: {self.script.name}（可能被移动或删除）",
+                        extra={"script": self.script.name, "missing_source": True},
+                    )
                 # paper_style 是某些图库的私有方言，不是引擎的依赖：没有就跳过，
                 # 靠 _patched_savefig 这条通用兜底捕获。曾经这里是无保护的 import，
                 # 任何不带 paper_style.py 的图库都会以 ModuleNotFoundError 开局。
@@ -2243,6 +2313,32 @@ class Worker(wireproto.V1Handler):
                 str(self.figures_dir), sys.modules, exclude_dir=str(Path(__file__).resolve().parent)
             )
         )
+        if self._input_capture is not None:
+            with self._input_observer.paused():
+                captured = self._input_capture.finish(
+                    self._source_sha256,
+                    archive_root=self.out_dir / inputdeclaration.ARCHIVE_DIRNAME,
+                )
+            if captured is not None:
+                self._captured_input_archive = self._input_capture.archive_descriptor()
+                build = self.build_result({})
+                self._captured_inputs = captured
+                self._captured_build = {
+                    "execution_id": self.execution_id,
+                    **{
+                        key: copy.deepcopy(build[key])
+                        for key in (
+                            "runtime",
+                            "descriptors",
+                            "source_sha256",
+                            "pdf_pages",
+                            "probe_misses",
+                            "artifact_probe",
+                            "script_inputs",
+                        )
+                        if key in build
+                    },
+                }
         self.built = True
         if timings is not None:
             timings["script_exec_ms"] = script_ms
@@ -2382,6 +2478,7 @@ class Worker(wireproto.V1Handler):
     # ---------------- legacy 信封（无 protocol_version） ----------------
     def handle(self, req: dict) -> dict:
         """老的扁平协议。**响应形状一字不改**——手工调试与旧调用方靠它。"""
+        self._requested_input_declaration = None
         cmd = req.get("cmd")
         if cmd == "ping":
             return {"ok": True}

@@ -43,7 +43,17 @@ import os
 import time
 from pathlib import Path
 
-from . import databinding, figcapture, launcher, projectenv, runconfig, scriptargs, workdir
+from . import (
+    databinding,
+    declaredinputs,
+    figcapture,
+    inputdeclaration,
+    launcher,
+    projectenv,
+    runconfig,
+    scriptargs,
+    workdir,
+)
 
 #: v2（V2 PR2，ADR 0133）：记录多了 `profile`（这次成功用的执行语义 `safe` | `native`）。v1 记录照常可读，按 `safe` 算——
 #: 它们只可能来自 safe 回执。
@@ -60,6 +70,7 @@ FACET_SOURCE = "source"
 FACET_CWD = "cwd"
 FACET_RUN_CONFIG = "run_config"
 FACET_BINDING = "binding"
+FACET_CAPTURED_INPUTS = "captured_inputs"
 FACETS_ALL = (
     FACET_INTERPRETER,
     FACET_ENVIRONMENT,
@@ -67,6 +78,7 @@ FACETS_ALL = (
     FACET_CWD,
     FACET_RUN_CONFIG,
     FACET_BINDING,
+    FACET_CAPTURED_INPUTS,
 )
 
 #: `verify` 的失败原因（闭集；给日志 / 测试，不进用户文案）
@@ -80,6 +92,7 @@ REASON_HELPER = "helper_changed"
 REASON_CWD = "cwd_mode_changed"
 REASON_RUN_CONFIG = "run_config_unavailable"
 REASON_BINDING = "binding_changed"
+REASON_CAPTURED_INPUTS = "captured_inputs_changed"
 
 #: 记 helper 依据的数量上限（与回执的观察上限同量级，防登记膨胀）
 MAX_BASIS = 200
@@ -167,7 +180,7 @@ def build_record(project_root: str | Path, script: str, rcpt, *, run=None) -> di
     basis = _basis_of(rcpt)
     if basis is None:
         return None
-    return {
+    record = {
         "version": RECORD_VERSION,
         "profile": PROFILE_SAFE,
         "recorded_at": time.time(),
@@ -187,6 +200,13 @@ def build_record(project_root: str | Path, script: str, rcpt, *, run=None) -> di
         "source": {"script_sha1": rcpt.source_revision, "basis": basis},
         "binding_revision": binding.get("revision") or "",
     }
+    captured = getattr(rcpt, "captured_inputs", None)
+    if captured is not None:
+        captured = inputdeclaration.validate_public_fact(captured)
+        if captured is None:
+            return None
+        record["captured_inputs"] = captured
+    return record
 
 
 def profile_of(record: dict | None) -> str | None:
@@ -200,7 +220,13 @@ def profile_of(record: dict | None) -> str | None:
 
 
 def build_native_record(
-    project_root: str | Path, script: str, plan, *, run=None, inputs: dict | None = None
+    project_root: str | Path,
+    script: str,
+    plan,
+    *,
+    run=None,
+    inputs: dict | None = None,
+    captured_inputs: dict | None = None,
 ) -> dict | None:
     """桌面 native 成功（V2 PR2）→ 启动上下文记录。解释器 / 环境代 / 运行目录档 / 数据绑定取**计划那一刻**的快照，脚本字节要与
     计划的 `script_revision` 仍一致（执行期间被改了就不记）。
@@ -230,7 +256,7 @@ def build_native_record(
     decision = plan.workdir_decision if isinstance(plan.workdir_decision, dict) else {}
     binding = plan.binding if isinstance(plan.binding, dict) else {}
     basis = _basis_from_inputs(inputs)
-    return {
+    record = {
         "version": RECORD_VERSION,
         "profile": PROFILE_NATIVE,
         "recorded_at": time.time(),
@@ -253,6 +279,12 @@ def build_native_record(
         },
         "binding_revision": binding.get("revision") or "",
     }
+    if captured_inputs is not None:
+        captured = inputdeclaration.validate_public_fact(captured_inputs)
+        if captured is None:
+            return None
+        record["captured_inputs"] = captured
+    return record
 
 
 def observe_native_basis(project_root: str | Path, launch_id: str, inputs: dict | None) -> bool:
@@ -288,6 +320,8 @@ class NativeBasis:
     plan: object
     #: `NativeSession.observed_inputs`：脚本跑完之后的 build 才有；None = 还没跑完 / 没观察（#1047）
     inputs: dict | None = None
+    #: 同一次实际 native receipt 的公开捕获摘要；不从计划或当前设置补签。
+    captured_inputs: dict | None = None
 
 
 def basis_of(result, plan, partial: bool, *, native_inputs: dict | None = None):
@@ -295,7 +329,17 @@ def basis_of(result, plan, partial: bool, *, native_inputs: dict | None = None):
     if partial:
         return None
     if getattr(plan, "execution", None) == PROFILE_NATIVE:
-        return NativeBasis(plan, native_inputs)
+        actual = getattr(result, "receipt", None)
+        captured = (
+            getattr(actual, "captured_inputs", None)
+            if getattr(actual, "profile", None) == PROFILE_NATIVE
+            else None
+        )
+        return (
+            NativeBasis(plan, native_inputs, dict(captured))
+            if captured is not None
+            else NativeBasis(plan, native_inputs)
+        )
     return getattr(result, "receipt", None)
 
 
@@ -342,7 +386,18 @@ def record_success(
     依据不全（`build_record` 回 None）也要提交：它**清掉**旧记录，不让上一次成功的 A 在这次成功的 B 之后继续冒充
     「最近成功」。`update_default=True` 时磁盘面板默认配置同一事务里一起更新（`run` 的引用；无参数 = 清掉）。"""
     if isinstance(rcpt, NativeBasis):
-        record = build_native_record(project_root, script, rcpt.plan, run=run, inputs=rcpt.inputs)
+        record = build_native_record(
+            project_root,
+            script,
+            rcpt.plan,
+            run=run,
+            inputs=rcpt.inputs,
+            **(
+                {"captured_inputs": rcpt.captured_inputs}
+                if rcpt.captured_inputs is not None
+                else {}
+            ),
+        )
     else:
         record = build_record(project_root, script, rcpt, run=run)
     try:
@@ -438,4 +493,23 @@ def verify(
             return REASON_BINDING
         if now != (record.get("binding_revision") or ""):
             return REASON_BINDING
+    if FACET_CAPTURED_INPUTS in facets and "captured_inputs" in record:
+        captured = inputdeclaration.validate_public_fact(record["captured_inputs"])
+        if captured is None or record.get("run_sensitive"):
+            return REASON_CAPTURED_INPUTS
+        try:
+            cid = record.get("run_config")
+            run = runconfig.selection(project_root, cid, script=script) if cid is not None else None
+            matches = declaredinputs.matches_current_public(
+                project_root,
+                script=script,
+                cwd_mode=record["cwd_mode"],
+                run=run,
+                captured_inputs=captured,
+                execution=profile_of(record) or PROFILE_SAFE,
+            )
+        except (runconfig.RunConfigError, ValueError, OSError):
+            return REASON_CAPTURED_INPUTS
+        if not matches:
+            return REASON_CAPTURED_INPUTS
     return None
