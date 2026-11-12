@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import base64
 import contextlib
 import dis
 import errno
@@ -2386,6 +2387,24 @@ class Worker(wireproto.V1Handler):
             return {"ok": True}
         if cmd == "shutdown":
             raise SystemExit(0)
+        if cmd == "svg_scaffold":
+            # 会话无关：不 import 用户脚本、不建 Figure 会话（ADR-XXXX 的脚手架）
+            from . import svgchart
+
+            try:
+                result = svgchart.scaffold_fragment(
+                    req.get("model", {}),
+                    req.get("frame", {}),
+                    salt=str(req.get("salt", "tavotto")),
+                )
+            except (ValueError, KeyError) as exc:
+                code = getattr(exc, "code", None)
+                return {"ok": False, "code": code or "svg_scaffold_invalid", "error": str(exc)}
+            return {
+                "ok": True,
+                "fragment_b64": base64.b64encode(result["fragment"]).decode("ascii"),
+                "facts": result["facts"],
+            }
         if req.get("artifact_source") is not None or self.session.artifact_source is not None:
             return {
                 "ok": False,
