@@ -181,6 +181,16 @@ def validate_rebound_edit_ownership(previous: object, current: dict, overrides: 
             [(axis["id"], axis.get("kind", "numeric")) for axis in model["axes"]],
             series,
             sorted((entry["object"], entry["node"]) for entry in binding["entries"]),
+            # N4 legend 归属：图例区域、区域节点或条目→系列指认变了 = 所有权变了
+            # = 旧 edits 不迁移（handle_* override 套到新图例归属上是数据事故）。
+            sorted(
+                (
+                    item["id"],
+                    item["node"],
+                    tuple((e["index"], e.get("series")) for e in item["entries"]),
+                )
+                for item in binding.get("legend", [])
+            ),
         )
 
     if ownership(previous) != ownership(current):

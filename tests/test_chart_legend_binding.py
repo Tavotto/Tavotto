@@ -478,3 +478,91 @@ def test_app_replay_refuses_legacy_profile_with_legend_contract(tmp_path, monkey
     finally:
         m.reset_projects()
         project_watch.stop()
+
+
+def _legend_app(tmp_path, monkeypatch):
+    """真实 app + 真实语料（含 legend_1 区域）：绑定 → 返回 (client, model, binding)。"""
+    from tavotto import app as m
+    from tavotto.engine import pool
+
+    m.reset_projects()
+    root = tmp_path / "project"
+    root.mkdir()
+    corpus = Path(__file__).resolve().parents[1] / "tests" / "support" / "svg_corpus"
+    (root / "chart.svg").write_bytes((corpus / "line_two_series.svg").read_bytes())
+    m.open_project(str(root))
+    monkeypatch.setenv(
+        "TAVOTTO_WORKER_PYTHON",
+        str(Path(__file__).resolve().parents[1] / ".venv" / "Scripts" / "python.exe"),
+    )
+    monkeypatch.setattr(
+        pool, "get", lambda *a, **k: pytest.fail("chart compute built a script session")
+    )
+    client = m.app.test_client()
+    bound = client.post(
+        "/api/svg/chart/bind",
+        json={
+            "file": "chart.svg",
+            "axes_id": "ax1",
+            "rect": [51.5, 26.1, 297.6, 183.7],
+            "x": {
+                "p1_user": 0.0,
+                "p1_value": 0.0,
+                "p2_user": 1.0,
+                "p2_value": 10.0,
+                "scale": "linear",
+            },
+            "y": {
+                "p1_user": 0.0,
+                "p1_value": 0.0,
+                "p2_user": 1.0,
+                "p2_value": 100.0,
+                "scale": "linear",
+            },
+            "series": [{"node": "line2d_13", "x_col": "x", "y_col": "y1"}],
+            "dataset_text": "x,y1\n0,0.0\n5,25.0\n10,100.0\n",
+            "completeness": "self-contained",
+            "legend": [
+                {
+                    "id": "leg1",
+                    "node": "legend_1",
+                    "rect": [300.0, 40.0, 60.0, 40.0],
+                    "entries": [{"index": 0, "label": "series one", "series_node": "line2d_13"}],
+                }
+            ],
+        },
+    )
+    assert bound.status_code == 200, bound.json
+    return client, bound.json["model"], bound.json["binding"]
+
+
+def test_legend_contract_survives_the_original_export(tmp_path, monkeypatch):
+    """C5 导出用例：带 legend 的声明式图表经生产导出 job，SVG 含组合后的图例。"""
+    from tavotto import app as m
+    from tavotto.engine import project_watch
+
+    try:
+        client, model, binding = _legend_app(tmp_path, monkeypatch)
+        payload = {
+            "scope": "original",
+            "formats": ["svg"],
+            "filename": "legend-export",
+            "overwrite": "replace",
+            "original": {
+                "figure_id": "chart.svg",
+                "source_kind": "vector",
+                "chart": {"model": model, "binding": binding},
+                "chart_render_profile": "native-manifest/1",
+                "overrides": [],
+            },
+        }
+        response = client.post("/api/export", json=payload)
+        assert response.status_code == 200, response.get_json()
+        body = response.get_json()
+        assert body["status"] == "done", body
+        outputs = {item["format"]: item for item in body["outputs"]}
+        svg = (Path(body["export_dir"]) / outputs["svg"]["name"]).read_bytes()
+        assert b"axes_0.legend" in svg
+    finally:
+        m.reset_projects()
+        project_watch.stop()

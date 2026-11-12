@@ -99,6 +99,40 @@ def test_document_roundtrip_preserves_chart_field(project):
     doc = _project_doc(client, chart)
     saved = client.post(f"/api/layouts/{DOC_NAME}?target=project", json=doc)
     assert saved.status_code == 200, saved.json
+
+
+LEGEND_BIND_REQUEST = {
+    **BIND_REQUEST,
+    "legend": [
+        {
+            "id": "leg1",
+            "node": "legend_1",
+            "rect": [300.0, 40.0, 60.0, 40.0],
+            "entries": [{"index": 0, "label": "series one", "series_node": "line2d_13"}],
+        }
+    ],
+}
+
+
+def test_document_roundtrip_preserves_legend_attribution(project):
+    """N4 T7：legend 归属随文档真实保存/读取往返；载入后仍过合同校验。"""
+    from tavotto.engine import chartmodel
+
+    client, root = project
+    bound = client.post("/api/svg/chart/bind", json={**LEGEND_BIND_REQUEST, "file": "chart.svg"})
+    assert bound.status_code == 200, bound.json
+    chart = bound.json
+    legend = chart["binding"]["legend"][0]
+    assert legend["entries"][0]["series"] == chart["model"]["series"][0]["id"]
+    doc = _project_doc(client, chart)
+    saved = client.post(f"/api/layouts/{DOC_NAME}?target=project", json=doc)
+    assert saved.status_code == 200, saved.json
+    loaded = client.get(f"/api/layouts/{DOC_NAME}")
+    assert loaded.status_code == 200
+    roundtrip = loaded.json["canvases"][0]["objects"][0]["chart"]
+    assert roundtrip == chart
+    chartmodel.validate_model(roundtrip["model"])
+    chartmodel.validate_binding(roundtrip["binding"], roundtrip["model"])
     on_disk = json.loads((root / "tavottofile" / f"{DOC_NAME}.json").read_text(encoding="utf-8"))
     panel = on_disk["canvases"][0]["objects"][0]
     assert panel["chart"] == chart, "chart 字段在真实落盘文件里被剥离"
