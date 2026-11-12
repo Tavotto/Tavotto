@@ -30,9 +30,11 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-CORPUS = HERE / "corpus"
+#: 语料：agent 写的脚本原样存成字符串（不落成 .py 进仓库——它们是数据，不该被 ruff 改写）
+CORPUS_JSON = HERE / "corpus.json"
 RESULTS = HERE / "results"
 RUNS = Path(os.environ.get("EVAL_RUNS", "/tmp/tavotto-eval-runs"))
+CORPUS = RUNS / "_corpus"  # 运行时从 corpus.json 写出来
 MODEL = os.environ.get("EVAL_MODEL", "opencode-go/deepseek-v4-pro")
 JOURNALS = ["nature", "journal-of-the-american-chemical-society", "jmst"]
 
@@ -299,14 +301,24 @@ def _written_paths(text: str) -> list[str]:
 # ---------------------------------------------------------------- 子命令
 
 
+def materialize() -> None:
+    """corpus.json → RUNS/_corpus/<id>/fig.py。"""
+    data = json.loads(CORPUS_JSON.read_text()) if CORPUS_JSON.exists() else {}
+    for item, src in data.items():
+        (CORPUS / item).mkdir(parents=True, exist_ok=True)
+        (CORPUS / item / "fig.py").write_text(src)
+
+
 def cmd_corpus(args) -> None:
     briefs = json.loads((HERE / "briefs.json").read_text())
     if args.only:
         briefs = [b for b in briefs if b["id"] in args.only]
 
     def one(b):
-        dest = CORPUS / b["id"]
-        if (dest / "fig.py").exists() and not args.force:
+        if (
+            b["id"] in json.loads(CORPUS_JSON.read_text() if CORPUS_JSON.exists() else "{}")
+            and not args.force
+        ):
             return b["id"], "exists"
         work = RUNS / "corpus" / b["id"]
         shutil.rmtree(work, ignore_errors=True)
@@ -320,13 +332,17 @@ def cmd_corpus(args) -> None:
         meta = opencode(work, prompt)
         if not (work / "fig.py").exists():
             return b["id"], f"no fig.py ({meta['agent_errors']})"
-        dest.mkdir(parents=True, exist_ok=True)
-        shutil.copy(work / "fig.py", dest / "fig.py")
-        return b["id"], "ok"
+        return b["id"], (work / "fig.py").read_text()
 
+    data = json.loads(CORPUS_JSON.read_text()) if CORPUS_JSON.exists() else {}
     with cf.ThreadPoolExecutor(args.jobs) as ex:
         for bid, st in ex.map(one, briefs):
+            if st != "exists" and not st.startswith("no fig.py"):
+                data[bid], st = st, "ok"
             print(bid, st, flush=True)
+    CORPUS_JSON.write_text(
+        json.dumps(dict(sorted(data.items())), ensure_ascii=False, indent=1) + "\n"
+    )
 
 
 def cmd_judge(args) -> None:
@@ -351,6 +367,7 @@ figures. Reply DONE when finished."""
 
 
 def cmd_run(args) -> None:
+    materialize()
     items = sorted(p.name for p in CORPUS.iterdir() if (p / "fig.py").exists())
     if args.only:
         items = [i for i in items if i in args.only]
@@ -403,6 +420,7 @@ def cmd_run(args) -> None:
 
 def cmd_rejudge(args) -> None:
     """判分条件变了（不重跑 agent）：按运行目录里现有的 fig.py 重判 results/<cond>.jsonl 的 after。"""
+    materialize()
     path = RESULTS / f"{args.cond}.jsonl"
     recs = [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
 
@@ -412,7 +430,7 @@ def cmd_rejudge(args) -> None:
         if args.cond == "baseline":
             r["before"] = r["after"]
         else:
-            orig = RUNS / "_orig" / r["item"]
+            orig = RUNS / "_orig" / f"{r['item']}__{r['journal']}"
             orig.mkdir(parents=True, exist_ok=True)
             shutil.copy(CORPUS / r["item"] / "fig.py", orig / "fig.py")
             r["before"] = judge(orig, r["journal"])
