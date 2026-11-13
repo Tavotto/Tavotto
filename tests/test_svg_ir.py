@@ -577,7 +577,7 @@ def test_clip_union_validation_and_eps_overlay_reject_structurally(tmp_path, pro
 
 def test_svg_page_resource_is_limited_to_self_contained_static_or_declarative_sources():
     assert "svg" not in ir.FILE_KINDS
-    # A static/declarative SVG is a self-contained page (ADR-XXXX), never an
+    # A static/declarative SVG is a self-contained page (ADR 0182), never an
     # unpaired execution representation.
     for origin in ("static", "declarative"):
         resource = ir.FileResource("chart.svg", "svg", "a" * 64, origin, "chart")
