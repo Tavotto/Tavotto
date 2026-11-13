@@ -421,6 +421,12 @@ function writesBlocked(notify = true): boolean {
 export interface WindowHold {
   role: 'contested' | 'yielding' | 'yielded'
   docId: string
+  /**
+   * 让出时那次存盘没确认成功（`yielded` 才有意义）：此刻内存里的内容不一定在盘上。
+   * `dirty` 不能当「已落盘」的证据——`flushAutosaveNow` 排队写盘时就把它清了，写盘失败才在后面把
+   * `saveState` 推成 `save_error` / `conflict`；进入只读时记下的内容摘要又已经含着这些改动。
+   */
+  unsaved?: boolean
 }
 let windowHold: WindowHold | null = null
 /** 挂起是不是这里设的（别把教程等别处设的挂起一并放开） */
@@ -435,6 +441,21 @@ let holdDigest: string | null = null
  */
 export function holdContentChanged(): boolean {
   return holdDigest !== null && documentDigest(useDocumentStore.getState().doc) !== holdDigest
+}
+
+/**
+ * 这个窗口手里有没有「不确定已经落盘」的内容：让出时存盘没成功、保存状态卡在失败 / 冲突、`dirty`、
+ * 或只读期间内存被改过。接管载入最新版之前问它——是就必须把内存里这份保护进恢复槽位。
+ */
+export function holdHasUnconfirmedContent(): boolean {
+  const s = useDocumentStore.getState()
+  return (
+    windowHold?.unsaved === true ||
+    s.dirty ||
+    s.saveState === 'save_error' ||
+    s.saveState === 'conflict' ||
+    holdContentChanged()
+  )
 }
 
 export function setWindowHold(next: WindowHold | null): void {
@@ -1847,6 +1868,14 @@ export function forgetLocalDocument(id: string): void {
  */
 export async function reloadFromDisk(opts: { keepMine?: boolean } = {}): Promise<boolean> {
   const id = useDocumentStore.getState().documentId
+  // 发请求那一刻的上下文：读盘期间用户切了排版 / 重新载入过 / 切了项目，响应不属于现在开着的这份，
+  // 绝不装进去（A 项目的响应不得落进 B）。请求也按这一刻的项目发，不按回来时的
+  const loadSeq0 = useDocumentStore.getState().loadSeq
+  const pj0 = currentProjectId()
+  const stillHere = () => {
+    const cur = useDocumentStore.getState()
+    return cur.documentId === id && cur.loadSeq === loadSeq0 && currentProjectId() === pj0
+  }
   // `keepMine: false` = 这个窗口没有自己的改动要保护（只读窗口接管时载入最新版）：不把内存里那份旧内容
   // 写进本机副本再晋升成恢复——槽位是各窗口共用的，那样会把一份过时的内容当成「未恢复的编辑」摆出来
   const keepMine = opts.keepMine ?? true
@@ -1861,10 +1890,11 @@ export async function reloadFromDisk(opts: { keepMine?: boolean } = {}): Promise
   const backup = keepMine ? promoteToRecovery(id) : null
   let fetched: Awaited<ReturnType<typeof fetchAutosave>>
   try {
-    fetched = await fetchAutosave(id)
+    fetched = await fetchAutosave(id, pj0)
   } catch {
     return false // 读不回来就别动内存里那份
   }
+  if (!stillHere()) return false // 上下文已被取代：丢弃响应
   const pd = fetched ? migrateToProject(fetched.doc) : null
   if (!pd) return false
   disk.rememberRevision(id, fetched)

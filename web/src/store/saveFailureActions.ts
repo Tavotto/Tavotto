@@ -52,6 +52,11 @@ export function reloadLatestAction(docId: string, owner: string = AUTOSAVE_FAILU
           clearOwn(owner)
           return
         }
+        // 读盘期间换了排版 / 项目：响应已被丢弃，那条提示说的不是现在开着的这份——只收掉，不说「读不回来」
+        if (useDocumentStore.getState().documentId !== docId) {
+          clearOwn(owner)
+          return
+        }
         useUiStore
           .getState()
           .setStatus(msg('save.reloadFailed', undefined, 'workspace'), 'error', {

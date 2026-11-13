@@ -533,3 +533,79 @@ describe('分叉期间原排版的本机槽位不被写', () => {
     await done
   })
 })
+
+describe('让出时存盘失败：拿回来编辑不丢改动（Codex #1870 P1-a）', () => {
+  it('持有方存盘失败后被接管，再「拿回来编辑」：没存下的改动进恢复槽位、能找回', async () => {
+    await diskHasTheirs()
+    edit('mine')
+    putStatus = 500
+    deliver({ type: 'takeover-request', docId: 'd_x', reqId: 'p1' })
+    await flushMicrotasks()
+    expect(sent.find((m) => m.type === 'takeover-ack')).toMatchObject({ flushed: false })
+    expect(getWindowHold()).toMatchObject({ role: 'yielded', unsaved: true })
+    // `dirty` 在排队写盘时就被清了：它不是「已落盘」的证据
+    expect(s().dirty).toBe(false)
+
+    putStatus = 200
+    peer = { flushed: true }
+    expect(await takeOverHere()).toBe(true)
+    expect(ids()).toEqual(['theirs'])
+    const notice = s().docNotice
+    expect(notice?.kind, '没存下的改动不能被载入最新版静默换掉').toBe('recovery')
+    expect(notice && notice.kind === 'recovery' ? notice.summary.objects : -1).toBe(1)
+  })
+
+  it('保存状态卡在冲突：接管同样保护内存里这份', async () => {
+    await diskHasTheirs()
+    edit('mine')
+    enterContested('d_x')
+    useDocumentStore.setState({ saveState: 'conflict' })
+    peer = { flushed: true }
+    expect(await takeOverHere()).toBe(true)
+    expect(s().docNotice?.kind).toBe('recovery')
+  })
+})
+
+describe('读盘期间切了排版 / 项目：响应不装进新上下文（Codex #1870 P1-b）', () => {
+  it('切了排版：新排版不被覆盖，记住的动作没执行，不清别人的编辑权', async () => {
+    await diskHasTheirs()
+    enterContested('d_x')
+    let ran = 0
+    deferUserEntry(() => { ran += 1 })
+    let release!: () => void
+    getGate = new Promise<void>((r) => (release = r))
+    peer = { flushed: true }
+    const done = takeOverHere()
+    await new Promise((r) => setTimeout(r, 60)) // ack 已回，卡在读盘上
+    const other = emptyProject()
+    other.canvases[0].objects = [text('otherDoc')]
+    await s().switchDocument(other, 'd_y')
+    release()
+    expect(await done).toBe(false)
+    expect(s().documentId).toBe('d_y')
+    expect(ids(), '新排版没被旧响应覆盖').toEqual(['otherDoc'])
+    expect(ran, '对旧排版说的动作没执行').toBe(0)
+    expect(getWindowHold()).toBeNull()
+    expect(useUiStore.getState().statusTone).not.toBe('error')
+  })
+
+  it('切了项目：响应不落进去，动作丢掉，不报「读不回来」', async () => {
+    await diskHasTheirs()
+    setCurrentProjectId('pjA')
+    enterContested('d_x')
+    let ran = 0
+    deferUserEntry(() => { ran += 1 })
+    let release!: () => void
+    getGate = new Promise<void>((r) => (release = r))
+    peer = { flushed: true }
+    const done = takeOverHere()
+    await new Promise((r) => setTimeout(r, 60))
+    setCurrentProjectId('pjB')
+    release()
+    expect(await done).toBe(false)
+    expect(ids(), '旧项目的响应没装进来').toEqual([])
+    expect(ran).toBe(0)
+    expect(useUiStore.getState().statusTone).not.toBe('error')
+    setCurrentProjectId(null)
+  })
+})

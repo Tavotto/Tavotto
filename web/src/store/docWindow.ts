@@ -9,6 +9,7 @@
 import { create } from 'zustand'
 import { msg } from '@/i18n'
 import { backendErrorText } from '@/lib/api'
+import { currentProjectId } from '@/lib/session'
 import { requestTakeover, setTakeoverHandler } from '@/lib/docPresence'
 import { useDiagSendStore } from './diagSendStore'
 import { forkCurrentDocument, forkCopyName } from './documentFork'
@@ -16,7 +17,7 @@ import { takeWindowEntries } from './documentRestore'
 import { finishActiveGesture, finishFocusedRichText } from './gestureCoordinator'
 import {
   getWindowHold,
-  holdContentChanged,
+  holdHasUnconfirmedContent,
   reloadFromDisk,
   saveNow,
   setWindowHold,
@@ -73,7 +74,8 @@ async function yieldToOtherWindow(): Promise<boolean | null> {
   }
   // 存盘期间用户换了排版：编辑权随旧排版走了，不替新排版设只读
   if (getWindowHold()?.docId === docId && useDocumentStore.getState().documentId === docId) {
-    setWindowHold({ role: 'yielded', docId })
+    // 存盘没确认成功：记在编辑权上，接管 / 拿回来时据此把内存里这份保护起来（见 `holdHasUnconfirmedContent`）
+    setWindowHold({ role: 'yielded', docId, ...(flushed ? {} : { unsaved: true }) })
   }
   return flushed
 }
@@ -92,18 +94,30 @@ export function startDocWindow(): () => void {
 export async function takeOverHere(): Promise<boolean> {
   const hold = getWindowHold()
   if (!hold || hold.role === 'yielding' || useDocWindowStore.getState().busy) return false
+  const pj0 = currentProjectId()
   setBusy(true)
   try {
     await requestTakeover()
     // 等的这几秒里用户换了排版 / 权属变了：不再动此刻的文档
     const now = getWindowHold()
     if (!now || now.docId !== hold.docId || useDocumentStore.getState().documentId !== hold.docId) return false
-    // 这个窗口自己有没存下的改动才需要保护：让出时存盘失败（`dirty`），或只读期间内存里被改过
-    // （进行中的事务落地等，`dirty` 不会置位——靠进入只读那一刻的摘要认出来）
-    const keepMine = useDocumentStore.getState().dirty || holdContentChanged()
+    // 这个窗口手里有没有「不确定已落盘」的内容：让出时存盘没成功、保存状态卡在失败 / 冲突、`dirty`、
+    // 只读期间内存被改过——任何一个都不能当成已落盘，必须进恢复槽位（`dirty === false` 不是落盘的证据）
+    const keepMine = holdHasUnconfirmedContent()
     const entries = takeWindowEntries()
     const ok = await reloadFromDisk({ keepMine })
     if (!ok) {
+      // 读盘期间用户换了排版 / 项目（响应已被丢弃）：不是读盘失败，不吓人；记住的动作是对旧排版说的，丢掉
+      const again = getWindowHold()
+      if (
+        !again ||
+        again.docId !== hold.docId ||
+        useDocumentStore.getState().documentId !== hold.docId ||
+        currentProjectId() !== pj0
+      ) {
+        entries.drop()
+        return false
+      }
       entries.putBack()
       useUiStore.getState().setStatus(msg('save.reloadFailed', undefined, 'workspace'), 'error', {
         owner: OWNER,

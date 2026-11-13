@@ -881,7 +881,7 @@ function onGateChanged(): void {
  * 取走此刻记住的、等这个窗口拿到编辑权的动作，返回「执行它们 / 放回去」两个函数。选择方在**放开编辑权之前**取走，
  * 放开之后（分叉换了文档、接管载入了最新版）再调返回的函数——放开那一刻会清掉没被取走的（见 `ensureHooks`）。
  */
-export function takeWindowEntries(): { run: () => void; putBack: () => void } {
+export function takeWindowEntries(): { run: () => void; putBack: () => void; drop: () => void } {
   const batch = heldWindow.splice(0)
   if (batch.length > 0) heldChanged()
   return {
@@ -895,6 +895,10 @@ export function takeWindowEntries(): { run: () => void; putBack: () => void } {
         e.run()
         e.settle('ran')
       }
+    },
+    /** 上下文已被取代（读盘期间换了排版 / 项目）：这些动作是对旧排版说的，丢掉 */
+    drop: () => {
+      for (const e of batch) e.settle('dropped')
     },
     /** 选择没做成（分叉失败 / 接管没载入）：动作放回去，仍等用户再选 */
     putBack: () => {
