@@ -30,6 +30,10 @@ import tempfile
 import time
 from pathlib import Path
 
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 HERE = Path(__file__).resolve().parent
 #: 语料：agent 写的脚本原样存成字符串（不落成 .py 进仓库——它们是数据，不该被 ruff 改写）
 CORPUS_JSON = HERE / "corpus.json"
