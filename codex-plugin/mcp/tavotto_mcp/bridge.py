@@ -997,6 +997,9 @@ class Session:
     run: object | None = None
     #: 回包用的公开投影（`_run_projection`：引用 / 个数 / 来源）。
     run_info: dict | None = None
+    #: 最近一次导出出了文件时那一版的 `patch_hash`；None = 还没导出过。关会话时据此说出
+    #: 「改过还没导出」——修改只活在会话里，关掉就没了（评测里 agent 改好就关、文件没出）。
+    exported_hash: str | None = None
 
     def patch_hash(self) -> str:
         return patchspec.patch_hash(self.patches)
@@ -1490,6 +1493,7 @@ def _persist(session: Session) -> None:
         "normalized": session.normalized,
         "cost": session.cost,
         "created": session.created,
+        "exported_hash": session.exported_hash,
     }
     if session.run_config_id is not None:
         # 只存不透明引用（参数原文在本机运行配置登记里，敏感值从不落盘）；带配置的记录用新版本号：
@@ -1582,6 +1586,8 @@ def _restore_session(session_id: str) -> Session | None:
     )
     if isinstance(record.get("created"), (int, float)):
         session.created = float(record["created"])
+    if isinstance(record.get("exported_hash"), str):
+        session.exported_hash = record["exported_hash"]
     # 先渲染成功，再登记（与 open 同一条纪律）；渲染失败时记录留着，下次还能再试
     _render(session, list(record["patches"]), preview_dpi=None)
     session.restored = True
@@ -1631,6 +1637,18 @@ def get_session(session_id: str) -> Session:
     return s
 
 
+def unexported_changes(session: Session) -> bool:
+    """会话改过（patches 非空）而这一版还没导出过文件。"""
+    return bool(session.patches) and session.exported_hash != session.patch_hash()
+
+
+#: 关掉一个改过却没导出的会话时的提醒（`close_session` 的 note；`fix_to_journal` 成功文字同一个意思）
+UNEXPORTED_NOTE = (
+    "注意：这个会话里的修改还没导出，已随会话一起丢掉，用户的文件没变。"
+    "要保留修改，请重新打开这张图、改好后先 tavotto_export 再关。"
+)
+
+
 def close_session(session_id: str) -> dict:
     s = _SESSIONS.pop(session_id, None)
     # 关闭是明确的释放：落盘记录一起删，别的进程里也不能再把它恢复出来
@@ -1644,13 +1662,17 @@ def close_session(session_id: str) -> dict:
     s.apply_receipt = None
     # worker 归 pool 管（同一个脚本可能还有别的用户）：这里只丢引用与会话账本。
     # 用户的项目数据一个字节都不动。
-    return {
+    out = {
         "ok": True,
         "closed": True,
         "session_id": session_id,
         "project": s.project,
         "stem": s.stem,
     }
+    if unexported_changes(s):
+        out["unexported_changes"] = True
+        out["note"] = UNEXPORTED_NOTE
+    return out
 
 
 def _evict_if_needed() -> list[str]:
@@ -3191,6 +3213,9 @@ def export(
             entry["manifest"] = o.manifest
         files.append(entry)
 
+    if any(f["status"] == engine_exportjob.STATUS_DONE for f in files):
+        session.exported_hash = session.patch_hash()
+        _persist(session)
     result = {
         "ok": job.status == engine_exportjob.STATUS_DONE,
         # `partial` 是**独立一档**：并进 `done` 或 `failed` 都会说谎，
