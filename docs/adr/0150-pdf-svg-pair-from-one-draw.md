@@ -83,9 +83,13 @@ Figure 的 PDF / SVG 配对原来是「同一命令里 PDF 画一遍、SVG 再�
 （`[A-Za-z_][A-Za-z0-9_.:-]*`、不许重复）整份拒收，于是导出级 SVG 快照永远拿不到，导出退回重跑脚本，重跑一失败
 PDF / PNG / SVG 一起挂。
 
-决定：`artifactinspect.normalize_worker_svg`（只处理可信 worker 产物、hash 已核过）遇到 `svg_invalid_id` 时调
-`svgcheck.repair_worker_ids`：语法外的 id 换成 `tvid<n>`，`href="#…"` / `url(#…)` / 样式表里的引用同步改；重复 id
-的后来者换新名、引用仍指向第一个（渲染器本来就解析到第一个）。改完的字节**仍过完整的 `parse_svg`**，DTD / 脚本 /
-外链照旧拒；不需要改名时字节一个不动。任意导入文件（`svgasset`、画布导入）不走这条，严格语法不放松。
-看护：`tests/test_rendercore_svginspect.py`（改名与引用、改完仍过闸、导入边界照旧拒、真 matplotlib `set_gid`）、
+决定：`artifactinspect.normalize_worker_svg`（只处理可信 worker 产物、hash 已核过）被闸拒收时试一次
+`svgcheck.repair_worker_ids`（不按错误码分流：闸按文档顺序报第一处问题，引用 / 样式表在定义前面时先报的是
+`svg_external_resource` / `svg_unsafe_css`）。语法外的 id 换成 `tvid<n>`，引用只在**结构位置**跟着改：精确的
+`href="#…"`、属性与声明里的 `url(#…)`、样式表选择器里的 id 记号——自由文本（`stroke:#000000`）一律不碰，
+数字 gid `"000000"` 不会把黑色描边改成悬空引用。重复 id 的后来者换新名、引用仍指向第一个（渲染器本来就解析到
+第一个）；但样式表选择器点名了重复 id 时（`#p` 会选中每一份），改名保不住语义，原样不改、照旧拒收。
+没东西可改就原样抛原错误；改了的字节**仍过完整的 `parse_svg`**，DTD / 脚本 / 外链照旧拒。
+任意导入文件（`svgasset`、画布导入）不走这条，严格语法不放松。
+看护：`tests/test_rendercore_svginspect.py`（改名与引用、十六进制颜色不动、选择器里的 id 记号、重复 id 被选择器点名时不改、引用在定义之前、改完仍过闸、导入边界照旧拒、真 matplotlib `set_gid`）、
 `tests/test_export_svg.py::test_canvas_svg_of_a_script_figure_with_user_gid_exports`。

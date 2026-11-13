@@ -151,12 +151,17 @@ def repair_worker_ids(data: bytes, *, budget: SVGBudget | None = None) -> bytes:
     """Rename ids the safe grammar rejects in **trusted worker output**; anything else unchanged.
 
     Matplotlib writes a user `set_gid("面板 A")` verbatim as `id="面板 A"`; that is legal output
-    but outside `_ID`. An invalid id gets a fresh name and every local reference to it
-    (`href="#…"`, `url(#…)`, stylesheet tokens) follows. A later duplicate gets a fresh name and
-    references keep pointing at the first definition — the element every renderer resolves.
-    Returns `data` byte-for-byte when nothing needs renaming or the input does not parse; the
-    caller must run `parse_svg` on the result, so this never admits otherwise unsafe content.
-    Arbitrary imported files never go through here (they are rejected as before).
+    but outside `_ID`. An invalid id gets a fresh name and its local references follow — only in
+    structural positions: an exact `href="#…"`, `url(#…)` in attributes / declarations, and ID
+    tokens of stylesheet selectors. Free text such as `stroke:#000000` is never touched (a gid
+    `"000000"` must not turn black strokes into a dangling reference). A later duplicate gets a
+    fresh name and references keep pointing at the first definition — the element every renderer
+    resolves. A stylesheet selector naming a duplicated id matches *every* copy, which a rename
+    cannot preserve, so such input is returned unchanged (and stays rejected).
+
+    Returns `data` byte-for-byte when nothing needs renaming, the input does not parse, or the
+    repair cannot keep the same meaning; the caller must run `parse_svg` on the result, so this
+    never admits otherwise unsafe content. Arbitrary imported files never go through here.
     """
     budget = budget or SVGBudget()
     try:
@@ -172,6 +177,7 @@ def repair_worker_ids(data: bytes, *, budget: SVGBudget | None = None) -> bytes:
     present = {v for n in root.iter() if (v := n.get("id")) is not None}
     claimed: set[str] = set()
     renamed: dict[str, str] = {}
+    duplicated: set[str] = set()
     counter = 0
 
     def fresh() -> str:
@@ -195,26 +201,59 @@ def repair_worker_ids(data: bytes, *, budget: SVGBudget | None = None) -> bytes:
             node.set("id", renamed[value])
             changed = True
         else:
+            duplicated.add(value)
             node.set("id", fresh())
             changed = True
     if not changed:
         return data
-    if renamed:
-        names = "|".join(re.escape(k) for k in sorted(renamed, key=len, reverse=True))
-        ref = re.compile(rf"#({names})(?=[\"')\s,;{{]|\Z)")
 
-        def rewrite(value: str) -> str:
-            return ref.sub(lambda m: "#" + renamed[m.group(1)], value)
+    def url(value: str) -> str:
+        return _REPAIR_URL.sub(
+            lambda m: f"url({m.group(1)}#{renamed.get(m.group(2), m.group(2))}{m.group(1)})", value
+        )
 
-        for node in root.iter():
-            for key, value in list(node.attrib.items()):
-                if key != "id" and "#" in value:
-                    node.set(key, rewrite(value))
-            if _name(node.tag)[1] == "style" and node.text and "#" in node.text:
-                node.text = rewrite(node.text)
+    def selectors(css: str) -> str | None:
+        def token(m: re.Match) -> str:
+            name = m.group(1)
+            if name in duplicated:
+                raise LookupError(name)
+            return "#" + renamed.get(name, name)
+
+        out = []
+        last = 0
+        try:
+            for rule in _RULE.finditer(css):
+                head = _REPAIR_SELECTOR_ID.sub(token, rule.group(1))
+                out.append(css[last : rule.start()] + head + "{" + url(rule.group(2)) + "}")
+                last = rule.end()
+        except LookupError:
+            return None
+        out.append(css[last:])
+        return "".join(out)
+
+    for node in root.iter():
+        for key, value in list(node.attrib.items()):
+            if key == "id":
+                continue
+            if _name(key)[1] == "href":
+                if value.startswith("#") and value[1:] in renamed:
+                    node.set(key, "#" + renamed[value[1:]])
+            elif "url(" in value.lower():
+                node.set(key, url(value))
+        if _name(node.tag)[1] == "style" and node.text and "#" in node.text:
+            repaired = selectors(node.text)
+            if repaired is None:
+                return data
+            node.text = repaired
     for prefix, uri in (("", SVG_NS), ("xlink", XLINK_NS)):
         ET.register_namespace(prefix, uri)
     return ET.tostring(root, encoding="utf-8")
+
+
+#: `url(#…)` with an arbitrary (possibly non-ASCII / spaced) fragment, for the worker id repair only
+_REPAIR_URL = re.compile(r"url\(\s*(['\"]?)#([^'\")]+?)\1\s*\)", re.I)
+#: an ID token inside a selector: ends at a combinator, class / pseudo / attribute, list or rule
+_REPAIR_SELECTOR_ID = re.compile(r"#([^\s,>+~.#:\[\]*{}()]+)")
 
 
 class _BoundedBuilder(ET.TreeBuilder):

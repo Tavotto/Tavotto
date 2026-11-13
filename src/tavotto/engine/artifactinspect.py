@@ -46,12 +46,14 @@ def normalize_worker_svg(path: Path, expected: dict | None = None) -> None:
     normalized = svgcheck.strip_matplotlib_doctype(data)
     try:
         svgcheck.parse_svg(normalized, budget=budget)
-    except svgcheck.SVGError as exc:
-        # 用户 `set_gid("面板 A")` 是合法的 matplotlib 输出，只是不在安全 id 语法里：只在可信 worker
-        # 边界改名（引用同步），改完仍过整道闸；任意导入文件不走这条（svgcheck.repair_worker_ids）
-        if exc.code != "svg_invalid_id":
-            raise
+    except svgcheck.SVGError:
+        # 用户 `set_gid("面板 A")` 是合法的 matplotlib 输出，只是不在安全 id 语法里。闸按文档顺序报第一处
+        # 问题：引用 / 样式表写在定义前面时先报的是 svg_external_resource / svg_unsafe_css，所以不按错误码
+        # 分流——只在可信 worker 边界试一次改名（引用同步）；没东西可改就原样抛，改了就让结果重新过整道闸。
+        # 任意导入文件不走这条（svgcheck.repair_worker_ids）
         repaired = svgcheck.repair_worker_ids(normalized, budget=budget)
+        if repaired == normalized:
+            raise
         svgcheck.parse_svg(repaired, budget=budget)
         normalized = repaired
     if normalized != data:
