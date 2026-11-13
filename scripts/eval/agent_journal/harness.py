@@ -54,10 +54,11 @@ def mcp_cmd() -> list[str]:
 
 
 class Mcp:
-    def __init__(self, cwd: Path):
+    def __init__(self, cwd: Path, env: dict | None = None):
         self.p = subprocess.Popen(
             mcp_cmd(),
             cwd=cwd,
+            env={**os.environ, **(env or {})},
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -115,14 +116,37 @@ def _roles(manifest: dict) -> dict[str, int]:
     return out
 
 
-def judge(run_dir: Path, journal_id: str) -> dict:
-    """对 run_dir/fig.py 现在画出来的图按 journal_id 判分。"""
-    m = Mcp(run_dir)
+def latest_session(data_dir: Path | None) -> str | None:
+    """B 组：agent 那个 MCP 最后落盘的会话（Tavotto 的修改只在会话里，不写回 fig.py；ADR 0078 落盘记录）。"""
+    if data_dir is None:
+        return None
+    best = None
+    for f in (data_dir / "mcp-sessions").glob("s-*.json"):
+        try:
+            rec = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        if best is None or rec.get("saved_at", 0) > best[0]:
+            best = (rec.get("saved_at", 0), rec.get("id"))
+    return best[1] if best else None
+
+
+def judge(run_dir: Path, journal_id: str, data_dir: Path | None = None) -> dict:
+    """对 run_dir/fig.py 现在画出来的图按 journal_id 判分。
+
+    给了 `data_dir`（B 组）且 agent 在 Tavotto 里留下过会话：按落盘记录恢复**最后那个会话**判分——
+    脚本现状 + 会话里的修改，就是用户在 Tavotto 里导出会得到的图；没有会话就照常只跑 fig.py。"""
+    m = Mcp(run_dir, {"TAVOTTO_DATA_DIR": str(data_dir)} if data_dir else None)
     try:
-        opened = m.tool("tavotto_open_figure", script_path=str(run_dir / "fig.py"))
+        sid = latest_session(data_dir)
+        via = "session"
+        opened = m.tool("tavotto_session_state", session_id=sid) if sid else {"ok": False}
+        if not opened.get("ok"):
+            via = "script"
+            opened = m.tool("tavotto_open_figure", script_path=str(run_dir / "fig.py"))
         if not opened.get("ok"):
             return {"opened": False, "error": str(opened)[:600]}
-        sid = opened["session_id"]
+        sid = opened.get("session_id") or sid
         pf = m.tool("tavotto_preflight", session_id=sid, journal_id=journal_id)
         # 对照：同一张图在**中性底规范**（期刊未规定的项一律不判）下的问题。期刊带来的问题 =
         # 期刊下有、底规范下没有的那些。通用质量提示（文字重叠、柱子没误差棒……）期刊原文里没写，
@@ -150,6 +174,7 @@ def judge(run_dir: Path, journal_id: str) -> dict:
             "error_rules": rules("errors"),
             "warn_rules": rules("warnings"),
             "roles": _roles(opened.get("manifest") or {}),
+            "via": via,
         }
     finally:
         m.close()
@@ -202,10 +227,12 @@ PERMISSION = {
 }
 
 
-def write_config(cwd: Path, mcp: list[str] | None = None) -> None:
+def write_config(cwd: Path, mcp: list[str] | None = None, mcp_env: dict | None = None) -> None:
     cfg: dict = {"$schema": "https://opencode.ai/config.json", "permission": PERMISSION}
     if mcp:
         cfg["mcp"] = {"tavotto": {"type": "local", "command": mcp, "enabled": True}}
+        if mcp_env:
+            cfg["mcp"]["tavotto"]["environment"] = mcp_env
     (cwd / "opencode.json").write_text(json.dumps(cfg, indent=1))
 
 
@@ -396,15 +423,25 @@ def cmd_run(args) -> None:
             return rec
         if args.cond == "A":
             prompt = PROMPT_A.format(label=label, rules=rules)
+            data_dir = None
         else:
-            write_config(work, mcp_cmd())
+            # 每次运行一份独立的 Tavotto 数据目录（放在运行目录外，agent 的文件工具够不着）
+            data_dir = RUNS / args.cond / "_data" / f"{item}__{jid}"
+            shutil.rmtree(data_dir, ignore_errors=True)
+            data_dir.mkdir(parents=True)
+            write_config(work, mcp_cmd(), {"TAVOTTO_DATA_DIR": str(data_dir)})
             prompt = PROMPT_B.format(label=label, jid=jid, rules=rules)
         rec["agent"] = opencode(work, prompt)
-        rec["after"] = judge(work, jid)
+        rec["after"] = judge(work, jid, data_dir)
         return rec
 
     with cf.ThreadPoolExecutor(args.jobs) as ex, out_path.open("a") as fh:
         for rec in ex.map(one, todo):
+            errs = (rec.get("agent") or {}).get("agent_errors") or []
+            if any("go-limit" in e or "usage limit" in e for e in errs):
+                # 模型额度用完：这一组 agent 一步没走，不记结果（下次 `run` 会补跑）
+                print(rec["item"], rec["journal"], "SKIP 模型额度用完", flush=True)
+                continue
             fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
             fh.flush()
             a = rec["after"]
@@ -426,7 +463,8 @@ def cmd_rejudge(args) -> None:
 
     def one(r):
         work = RUNS / args.cond / f"{r['item']}__{r['journal']}"
-        r["after"] = judge(work, r["journal"])
+        data_dir = RUNS / args.cond / "_data" / f"{r['item']}__{r['journal']}"
+        r["after"] = judge(work, r["journal"], data_dir if args.cond == "B" else None)
         if args.cond == "baseline":
             r["before"] = r["after"]
         else:
@@ -476,6 +514,15 @@ def cmd_report(args) -> None:
             for rule in r["after"].get("journal_issues", []):
                 left[rule] = left.get(rule, 0) + 1
         print("   剩下的期刊问题:", dict(sorted(left.items(), key=lambda kv: -kv[1])))
+        via = [r["after"].get("via") for r in recs if r["after"].get("via")]
+        if any(v == "session" for v in via):
+            print("   判分来源:", {v: via.count(v) for v in sorted(set(via))})
+        tools: dict[str, int] = {}
+        for a in ag:
+            for t in a.get("tools") or []:
+                tools[t] = tools.get(t, 0) + 1
+        if tools:
+            print("   工具调用:", dict(sorted(tools.items(), key=lambda kv: -kv[1])))
 
 
 def main() -> None:
