@@ -436,7 +436,7 @@
     "hideObjects": "Hide {{count}} objects",
     "showObjects": "Show {{count}} objects",
     "setFramePad": "Change canvas margin",
-    "journalStyle": "Adjust style “{{name}}” to {{journal}}"
+    "journalStyle": "Adjust style “{{name}}” using the {{journal}} record"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -825,10 +825,10 @@
     "bindCancelled": "You switched canvases, so the style you picked wasn’t applied — pick it again on that canvas",
     "bindMissing": "That style is no longer in the library — nothing was changed",
     "editCancelled": "The style or canvas just changed, so your change wasn’t applied — please make it again",
-    "journalMismatch": "{{count}} not matching {{journal}}",
-    "journalAdjust": "Adjust to journal",
+    "journalMismatch": "Adjustments based on the {{journal}} record: {{count}}",
+    "journalAdjust": "Adjust using record",
     "journalAnnotation": "Canvas text",
-    "journalAdjusted": "Style adjusted to {{journal}}. You can undo this.",
+    "journalAdjusted": "Style adjusted using the {{journal}} record. You can undo this.",
     "journalRetry": "Try again",
     "journalProp": {
       "fontsize": "size",
