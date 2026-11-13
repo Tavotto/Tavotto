@@ -1,4 +1,4 @@
-// ChartModel / Binding 契约的前端镜像（ADR-XXXX；与 src/tavotto/engine/chartmodel.py
+// ChartModel / Binding 契约的前端镜像（ADR 0182；与 src/tavotto/engine/chartmodel.py
 // 严格同源）。判据的唯一出处是引擎侧；这里只镜像闭集与校验，供 UI 判定
 // 「这份模型能做什么」，不承担第二份权威。两侧共同消费
 // tests/golden/chart_model_vectors.json（唯一产生者 scripts/gen_chart_model_vectors.py）。

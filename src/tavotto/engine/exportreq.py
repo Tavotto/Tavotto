@@ -301,7 +301,7 @@ class OriginalSource:
     #: 且只含可见对象；图幅之外的部分由页面裁掉。为空 = 纯原图导出（请求与输出与从前逐字节相同）。
     #: 不带 x/y/w/h 之外的版面字段——页面就是图幅（`w_mm` × `h_mm`，非空时必填）。
     objects: tuple[dict, ...] = ()
-    #: SVG 计算图表状态（ADR-XXXX，仅 fileKind === 'svg'）：模型 + 绑定。
+    #: SVG 计算图表状态（ADR 0182，仅 fileKind === 'svg'）：模型 + 绑定。
     #: 存在时 original 导出的 SVG 格式交付**组合后的**编辑版（服务端从不可变来源
     #: 快照重算），其余格式按 svg_asset 现有规则交付或拒绝。
     chart: dict | None = None
