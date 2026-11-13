@@ -26,6 +26,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -54,16 +55,24 @@ def mcp_cmd() -> list[str]:
 
 
 class Mcp:
+    """stdio 上的最小 MCP 客户端。服务端 stdout 落临时文件、这边跟着读（仓库规则：scripts/ 的子进程不开输出管道）。"""
+
     def __init__(self, cwd: Path, env: dict | None = None):
+        self._tmp = tempfile.TemporaryDirectory(prefix="tavotto-eval-mcp-")
+        out = Path(self._tmp.name) / "stdout.jsonl"
+        self._w = out.open("w", encoding="utf-8")
         self.p = subprocess.Popen(
             mcp_cmd(),
             cwd=cwd,
             env={**os.environ, **(env or {})},
             stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
+            stdout=self._w,
             stderr=subprocess.DEVNULL,
             text=True,
+            encoding="utf-8",
         )
+        self._r = out.open("r", encoding="utf-8")
+        self._buf = ""
         self.i = 0
         self.call_raw(
             "initialize",
@@ -83,14 +92,28 @@ class Mcp:
     def call_raw(self, method: str, params: dict) -> dict:
         self.i += 1
         self._send({"jsonrpc": "2.0", "id": self.i, "method": method, "params": params})
-        assert self.p.stdout
         while True:
-            line = self.p.stdout.readline()
-            if not line:
-                raise RuntimeError("MCP 服务端退出了")
+            line = self._readline()
             r = json.loads(line)
             if r.get("id") == self.i:
                 return r
+
+    def _readline(self) -> str:
+        """读到一整行为止；文件里暂时没有新行就等一下，服务端退出了还没有就报错。"""
+        exited = False
+        while True:
+            chunk = self._r.readline()
+            self._buf += chunk
+            if self._buf.endswith("\n"):
+                line, self._buf = self._buf, ""
+                return line
+            if not chunk:
+                if exited:
+                    raise RuntimeError("MCP 服务端退出了")
+                # 先记下退出，再读一轮：退出前写下的最后一行不会漏掉
+                exited = self.p.poll() is not None
+                if not exited:
+                    time.sleep(0.02)
 
     def tool(self, name: str, **args) -> dict:
         r = self.call_raw("tools/call", {"name": name, "arguments": args})
@@ -107,6 +130,10 @@ class Mcp:
             self.p.wait(timeout=30)
         except subprocess.TimeoutExpired:
             self.p.kill()
+            self.p.wait()
+        self._r.close()
+        self._w.close()
+        self._tmp.cleanup()
 
 
 def _roles(manifest: dict) -> dict[str, int]:
@@ -390,7 +417,9 @@ PROMPT_B = """fig.py in the current directory makes a figure that will be submit
 
 Make the figure comply with these requirements. Keep the data and the scientific content of the figure
 unchanged. The Tavotto MCP tools are available for opening, checking, fixing and exporting matplotlib
-figures. Reply DONE when finished."""
+figures. Leave the Tavotto session open when you finish. Reply DONE when finished."""
+#: B 组提示词的版本：2 = 加了「做完别关 Tavotto 会话」（首批 32 组是 1，关会话会丢掉没导出的修改）
+PROMPT_B_REV = 2
 
 
 def cmd_run(args) -> None:
@@ -431,6 +460,7 @@ def cmd_run(args) -> None:
             data_dir.mkdir(parents=True)
             write_config(work, mcp_cmd(), {"TAVOTTO_DATA_DIR": str(data_dir)})
             prompt = PROMPT_B.format(label=label, jid=jid, rules=rules)
+            rec["prompt_rev"] = PROMPT_B_REV
         rec["agent"] = opencode(work, prompt)
         rec["after"] = judge(work, jid, data_dir)
         return rec
