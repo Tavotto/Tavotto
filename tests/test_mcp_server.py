@@ -1160,6 +1160,20 @@ def test_closing_a_session_with_unexported_changes_says_they_are_gone(project, f
     assert "tavotto_export" in res["content"][0]["text"]
 
 
+def test_closing_after_a_process_switch_still_reports_unexported_changes(project, fake_pool):
+    """进程换过、会话只在落盘记录里时关：照样要说修改丢了（Codex #1903 P2）。"""
+    sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
+    patches = [{"gid": "axes_0.xticks", "prop": "fontsize", "value": 9.0}]
+    _call("tavotto_apply_overrides", {"session_id": sid, "patches": patches})
+    bridge.sessions().pop(sid)  # 模拟 server 换了进程：内存里没有，只剩记录
+    res = _call("tavotto_close_session", {"session_id": sid})
+    body = _body(res)
+    assert body["closed"] is True and body["unexported_changes"] is True
+    assert "tavotto_export" in res["content"][0]["text"]
+    assert bridge.sessionjournal.load(bridge._journal_dir(), sid) is None  # 记录照样删了
+    assert _body(_call("tavotto_close_session", {"session_id": sid}))["closed"] is False
+
+
 def test_fix_report_tells_the_agent_to_export_before_closing():
     out = {"ok": True, "exit": "fixed", "size": {}, "issues": {}}
     assert any("tavotto_export" in line for line in server.fix_report_lines(out))

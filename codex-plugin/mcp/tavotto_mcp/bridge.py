@@ -1642,6 +1642,26 @@ def unexported_changes(session: Session) -> bool:
     return bool(session.patches) and session.exported_hash != session.patch_hash()
 
 
+def _record_unexported(record: dict) -> bool:
+    """落盘记录（只在记录里、不在本进程内存里的会话）是否改过却没导出。"""
+    patches = record.get("patches") or []
+    return bool(patches) and record.get("exported_hash") != patchspec.patch_hash(list(patches))
+
+
+def _settle_export_mark(session: Session, prev: str | None, *, committed: bool) -> None:
+    """事务收尾时对导出标记做与 patches 同样的「提交或回 B0」：没提交、或会话已不在导出的那一版，
+    就撤回到事务开始前的标记（回退时文件也已撤回，那一版不算导出过）。"""
+    if not committed or session.exported_hash != session.patch_hash():
+        session.exported_hash = prev
+
+
+def commit_export(session_id: str) -> None:
+    """单独一次 `tavotto_export` 出了文件：这是提交点，把导出标记落盘（进程接力后关会话照样说得准）。"""
+    s = _SESSIONS.get(session_id)
+    if s is not None and s.exported_hash == s.patch_hash():
+        _persist(s)
+
+
 #: 关掉一个改过却没导出的会话时的提醒（`close_session` 的 note；`fix_to_journal` 成功文字同一个意思）
 UNEXPORTED_NOTE = (
     "注意：这个会话里的修改还没导出，已随会话一起丢掉，用户的文件没变。"
@@ -1651,8 +1671,21 @@ UNEXPORTED_NOTE = (
 
 def close_session(session_id: str) -> dict:
     s = _SESSIONS.pop(session_id, None)
+    # 进程换过时会话只在落盘记录里：删之前先看一眼，丢掉的修改照样要说出来
+    record = None
+    if s is None and sessionjournal.valid_id(session_id):
+        try:
+            record = sessionjournal.load(_journal_dir(), session_id)
+        except Exception:  # noqa: BLE001 — 读不出来就按「不在了」处理，关闭本身不失败
+            record = None
     # 关闭是明确的释放：落盘记录一起删，别的进程里也不能再把它恢复出来
     _forget(session_id)
+    if s is None and record is not None:
+        out = {"ok": True, "closed": True, "session_id": session_id, "stem": record.get("stem")}
+        if _record_unexported(record):
+            out["unexported_changes"] = True
+            out["note"] = UNEXPORTED_NOTE
+        return out
     if s is None:
         return {
             "ok": True,
@@ -3214,8 +3247,9 @@ def export(
         files.append(entry)
 
     if any(f["status"] == engine_exportjob.STATUS_DONE for f in files):
+        # 只记在内存：export 也是事务（规范化 / 改到合规）里的一步，候选状态不许在提交前落盘。
+        # 单独的 `tavotto_export` 由 `commit_export` 落盘；事务回退时由 `_settle_export_mark` 撤回
         session.exported_hash = session.patch_hash()
-        _persist(session)
     result = {
         "ok": job.status == engine_exportjob.STATUS_DONE,
         # `partial` 是**独立一档**：并进 `done` 或 `failed` 都会说谎，
@@ -3418,11 +3452,17 @@ def _better(new: dict, old: dict) -> bool:
 def normalize_figure(session_id: str, **kwargs) -> dict:
     """`_normalize_figure` 的提交点：无论提交、回退还是异常回退，事务收尾后会话
     **此刻**的状态（patches + 合同）落盘一次（ADR 0078）。事务中途的候选状态不落盘。"""
+    before = _SESSIONS.get(session_id)
+    prev = before.exported_hash if before is not None else None
+    result: dict | None = None
     try:
-        return _normalize_figure(session_id, **kwargs)
+        result = _normalize_figure(session_id, **kwargs)
+        return result
     finally:
         session = _SESSIONS.get(session_id)
         if session is not None:
+            if session is before:
+                _settle_export_mark(session, prev, committed=bool(result and result.get("ok")))
             _persist(session)
 
 
@@ -4160,6 +4200,7 @@ def fix_to_journal(
 
     base = list(session.patches)
     base_hash = session.patch_hash()
+    base_exported = session.exported_hash
     base_contract, base_normalized = session.contract, session.normalized
     b0_manifest = session.manifest
     state = {"clean": True}
@@ -4206,10 +4247,12 @@ def fix_to_journal(
         )
     except BaseException:
         _fix_settle(session, base, state, restore=True, result=None)
+        session.exported_hash = base_exported
         raise
     touched = session.patch_hash() != base_hash
     restore = ((not commit) or dry_run) and (touched or not state["clean"])
     _fix_settle(session, base, state, restore=restore, result=result)
+    _settle_export_mark(session, base_exported, committed=bool(commit) and not dry_run)
     if restore:
         result["rolled_back"] = touched
     elif commit and touched:
@@ -4220,6 +4263,8 @@ def fix_to_journal(
             session.normalized = None
             result["contract_released"] = True
         _persist(session)
+    elif commit and session.exported_hash != base_exported:
+        _persist(session)  # 图没变、只是这次导出了：导出标记也是提交的一部分
     if previews_out:
         result["_previews"] = previews_out
     return result

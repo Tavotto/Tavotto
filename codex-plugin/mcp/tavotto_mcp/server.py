@@ -1397,6 +1397,7 @@ def _call_export(args: dict) -> dict:
         explicit_confirm=bool(args.get("explicit_confirm")),
         proof=args.get("proof") is not False,
     )
+    bridge.commit_export(str(args.get("session_id") or ""))
     # 成功的与失败的**分开说**：把 `partial` 说成"已导出"，模型会把一次半成的
     # 导出转述成完成（ADR 0031 §4：`partial` 是独立一档）
     ok = [f for f in out["files"] if f["status"] == "done"]
