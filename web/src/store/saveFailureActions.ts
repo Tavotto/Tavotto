@@ -11,6 +11,7 @@
  */
 import { msg } from '@/i18n'
 import { currentProjectId } from '@/lib/session'
+import { saveCopyHere } from './docWindow'
 import { reloadFromDisk, saveNow, useDocumentStore } from './documentStore'
 import { feedbackStatusAction } from './failureExit'
 import { useUiStore, type StatusAction } from './uiStore'
@@ -39,6 +40,11 @@ export function reloadLatestAction(docId: string, owner: string = AUTOSAVE_FAILU
           clearOwn(owner)
           return
         }
+        // 读盘期间换了排版 / 项目：响应已被丢弃，那条提示说的不是现在开着的这份——只收掉，不说「读不回来」
+        if (useDocumentStore.getState().documentId !== docId) {
+          clearOwn(owner)
+          return
+        }
         useUiStore
           .getState()
           .setStatus(msg('save.reloadFailed', undefined, 'workspace'), 'error', {
@@ -46,6 +52,23 @@ export function reloadLatestAction(docId: string, owner: string = AUTOSAVE_FAILU
             action: feedbackStatusAction(),
           })
       })
+    },
+  }
+}
+
+/**
+ * 「存成副本」：另一个窗口保存了更新的版本（`stale`）时，这个窗口的改动存成一份新排版，两边都留（ADR 0181 终态表第三行）。
+ * 点下去时已不在冲突态 / 换了排版（被别处裁决了）就只收掉提示。真分叉在 `documentFork`，失败时那边自己说一句并给出口。
+ * 次出口「重新加载」不在这条提示上（一个 toast 只有一个按钮槽）：它在顶栏文档状态芯片的冲突说明块里（同一个 `reloadFromDisk`）。
+ */
+export function saveCopyAction(docId: string, owner: string = AUTOSAVE_FAILURE_OWNER): StatusAction {
+  return {
+    label: msg('docWindow.saveCopy', undefined, 'workspace'),
+    run: () => {
+      const s = useDocumentStore.getState()
+      clearOwn(owner)
+      if (s.documentId !== docId || s.saveState !== 'conflict') return
+      void saveCopyHere()
     },
   }
 }
@@ -79,7 +102,7 @@ export function retryAutosaveAction(docId: string = useDocumentStore.getState().
 /**
  * 自动保存失败 / 被挡下（`tavotto:autosave-error` 的 detail）：stale = 另一个窗口已经存过更新的版本，
  * external = 磁盘上那份被外部改过——后端都挡下了这次覆盖；io = 写盘本身没成。
- * 出口：冲突 →「重新加载」，写盘失败 →「重试保存」。
+ * 出口：stale →「存成副本」（两边都留），external →「重新加载」，写盘失败 →「重试保存」。
  */
 export function reportAutosaveFailure(detail: { id?: string; reason?: string } | undefined): void {
   const reason = detail?.reason
@@ -98,7 +121,12 @@ export function reportAutosaveFailure(detail: { id?: string; reason?: string } |
     'error',
     {
       owner: AUTOSAVE_FAILURE_OWNER,
-      action: conflict ? reloadLatestAction(docId) : retryAutosaveAction(docId),
+      action:
+        reason === 'stale'
+          ? saveCopyAction(docId)
+          : conflict
+            ? reloadLatestAction(docId)
+            : retryAutosaveAction(docId),
     },
   )
 }

@@ -16,18 +16,22 @@ import type { DiskDocumentSummary } from '@/lib/api'
  * 也进了顶栏状态芯片 `BuildMismatchChip`）。
  */
 
+/** 读到了磁盘上那份的摘要才有这一行；读不到就不摆（不拿一句「读不到」占地方） */
+export function hasDiskSummary(disk: DiskDocumentSummary | null | undefined): disk is DiskDocumentSummary {
+  return !!disk && typeof disk.objects === 'number'
+}
+
 /** 磁盘上那份的一句摘要（顶栏芯片的说明块用） */
 export function ConflictDetail({ disk }: { disk: DiskDocumentSummary | null | undefined }) {
   const { t } = useTranslation('workspace')
   return (
     <>
-      {disk && typeof disk.objects === 'number'
-        ? t('docBanner.conflictDisk', {
-            canvases: disk.canvases,
-            objects: disk.objects,
-            time: formatTime(disk.mtime ?? disk.updatedAt ?? Date.now()),
-          })
-        : t('docBanner.conflictDiskUnknown')}
+      {hasDiskSummary(disk) &&
+        t('docBanner.conflictDisk', {
+          canvases: disk.canvases,
+          objects: disk.objects,
+          time: formatTime(disk.mtime ?? disk.updatedAt ?? Date.now()),
+        })}
     </>
   )
 }

@@ -16,6 +16,7 @@ import { dirTail } from '@/lib/pathDisplay'
 import { noticeWriteBackMultipage } from '@/lib/writeBackMultipageNotice'
 import { isJustBakedBaseline, rebuildPanel } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
+import { deferWhileWindowHeld } from '@/store/documentRestore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -343,6 +344,8 @@ export function WriteBackDialog({
   }, [detached, panels, objects])
 
   const run = async () => {
+    // 只读窗口里的内容可能是旧的：写回会把旧 override 写进原图。记住、先选，选完再做（ADR 0181）
+    if (deferWhileWindowHeld(() => void run())) return
     // 写回完成时可能已经换了排版、或接着改了：「写回」点只打给这一份、拍的是发起时的内容
     const moment = captureMoment()
     setBusy(true)
@@ -606,7 +609,9 @@ export function UpdateSourceButton({ panel }: { panel: PanelObject }) {
         )}
         data-write-back="open"
         data-write-back-entry="inspector"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          if (!deferWhileWindowHeld(() => setOpen(true))) setOpen(true)
+        }}
       >
         <FileUp size={ICON_SIZE.sm} />
         {wb('buttonLabel')}
@@ -702,7 +707,9 @@ export function useWriteBackMenuEntry() {
       disabled={disabled}
       tip={readOnly ? wb('topBarReadOnly') : !targets.length ? wb('noOverridesTitle') : undefined}
       shortcut={targets.length > 1 ? String(targets.length) : undefined}
-      onSelect={() => setOpen(true)}
+      onSelect={() => {
+        if (!deferWhileWindowHeld(() => setOpen(true))) setOpen(true)
+      }}
     >
       {wb('menuItem')}
     </MenuItem>

@@ -63,7 +63,7 @@ import { BuildMismatchChip } from './BuildMismatchChip'
 import { DesktopUpdateChip } from './DesktopUpdateChip'
 import { TutorialChip, useTutorialChipVisible } from './onboarding/TutorialChip'
 import { ContactButton } from './contact/ContactButton'
-import { ConflictActions, ConflictDetail } from './DocumentBanner'
+import { ConflictActions, ConflictDetail, hasDiskSummary } from './DocumentBanner'
 import { RestoreIssueBody, RestoreMetaBody } from './RestoreIssueBody'
 import { useWindowFullscreen } from '@/hooks/useWindowChrome'
 import { MOD, cn } from '@/lib/utils'
@@ -563,7 +563,7 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
       <>
         {head(
           t(saveIssue?.kind === 'stale' ? 'docBanner.conflictStale' : 'docBanner.conflictExternal'),
-          <ConflictDetail disk={saveIssue?.disk} />,
+          hasDiskSummary(saveIssue?.disk) ? <ConflictDetail disk={saveIssue?.disk} /> : undefined,
         )}
         {row(<ConflictActions onAction={close} />)}
       </>
