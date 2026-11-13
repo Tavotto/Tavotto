@@ -16,8 +16,9 @@
 * `app.api_script_backups_restore`：锁内复判 `script_busy` → 算复原字节 → `scriptbackup.replace`。
 * `ai_figure_edit.commit`（TAF 改图，ADR 0138 Phase 3）：锁内核项目里的脚本仍是起跑时那一版 → `write_script` 写回
   候选；会话此刻仍是 `running`，别的改写 / 复原照旧按 `script_busy` 让路。
-* `ai_data_task.commit`（TAF 数据出图，ADR 0138 Phase 5b）：项目锁内核 stem 未被占用 → `create_script` **新建**模板脚本
-  （已存在就失败，永不覆盖）→ 登记。
+* `ai_data_task.commit`（TAF 数据出图，ADR 0138 Phase 5b / ADR 0178 v2）：项目锁内核 stem 未被占用 → `create_script` **新建**模板脚本
+  （已存在就失败，永不覆盖）→ 登记。v2 的 `TemplateExecutorV2.commit` 同名同规矩：另持**公共模块**的锁、`create_script` 新建
+  （字节相同则复用、不同则什么都不写），锁序固定为公共模块在外、脚本在内。
 * `ai_convert.adopt`（同上）：持**原脚本**的锁，锁内调 `_adopt_locked`——先核原脚本字节仍是起跑基线，再 `create_script`
   **新建**兄弟脚本；锁序固定：原脚本在外、目标兄弟脚本在内，两步之间别处的编辑被锁挡住。
 * `ai_convert._adopt_locked`（`adopt` 的锁内部分）：逐个候选名持**目标兄弟脚本**的锁 `create_script`

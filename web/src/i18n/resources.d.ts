@@ -57,6 +57,121 @@ export default interface Resources {
       "truncated": "文件太多，只列出前一部分",
       "unconfirmedHint": "上一次的结果还没确认，请先在对话里查询结果。"
     },
+    "dataFigureV2": {
+      "candidate": {
+        "bar_error": {
+          "title": "柱 + 误差线",
+          "why": "各组均值一目了然，误差线是标准差；个别点会藏在柱里。"
+        },
+        "box_points": {
+          "title": "箱线 + 原始点",
+          "why": "看每组的中位数和分布范围，点保留了每个观测。"
+        },
+        "box_points_single": {
+          "title": "箱线 + 原始点",
+          "why": "看中位数和分布范围，点保留了每个观测。"
+        },
+        "density": {
+          "title": "密度曲线",
+          "why": "平滑地看分布的形状。"
+        },
+        "ecdf": {
+          "title": "累积分布",
+          "why": "不分箱地看整个分布。"
+        },
+        "ecdf_groups": {
+          "title": "累积分布",
+          "why": "不分箱地比较各组的整体分布。"
+        },
+        "hist": {
+          "title": "直方图",
+          "why": "看这个量集中在哪、散得多开。"
+        },
+        "line_band": {
+          "title": "均值线 + 误差带",
+          "why": "每个横轴位置取均值，带是标准差，看总体趋势和波动。"
+        },
+        "line_points": {
+          "title": "点 + 折线",
+          "why": "按顺序连起来，看量怎么随横轴变化。"
+        },
+        "line_units": {
+          "title": "每个对象一条线",
+          "why": "同一对象的重复测量连成线，看每个对象各自怎么变。"
+        },
+        "points_mean": {
+          "title": "原始点 + 均值",
+          "why": "每个点都画出来，再标出各组均值，能同时看到差别和离散程度。"
+        },
+        "scatter": {
+          "title": "散点",
+          "why": "每个点是一个观测，看两个量的关系。"
+        },
+        "scatter_fit": {
+          "title": "散点 + 拟合线",
+          "why": "看两个量有没有关联；虚线是最小二乘直线，只描述、不下结论。"
+        },
+        "violin_points": {
+          "title": "小提琴 + 原始点",
+          "why": "看每组数值分布的形状，点保留了每个观测。"
+        }
+      },
+      "mixedCells": {
+        "cannotExtract": "取不出数字，会被忽略",
+        "extracted": "取数字后是 {{value}}",
+        "more": "还有 {{count}} 行",
+        "placeholder": "说说这些格子该怎么算，比如「ND 记为 0」",
+        "previewRow": "第 {{row}} 行：{{text}}"
+      },
+      "option": {
+        "column": "{{column}}",
+        "describe": "我来说明",
+        "design_independent": "每一行是不同的对象",
+        "design_repeated": "同一个对象被重复测了好几次",
+        "extract": "取出里面的数字",
+        "skip": "忽略这些行",
+        "table": "{{file}}：{{rows}} 行，{{groups}} 组",
+        "table_sheet": "{{file}} 的「{{sheet}}」：{{rows}} 行，{{groups}} 组",
+        "unsure": "不确定"
+      },
+      "question": {
+        "mixed_cells": "「{{column}}」里有 {{count}} 个格子不是数字（共 {{rows}} 行有数据），怎么处理？",
+        "pick_design": "这些数据是同一个对象被重复测量的吗？",
+        "pick_group": "按哪一列分组比较？",
+        "pick_table": "用哪张表画？",
+        "pick_unit": "哪一列标出了是哪个对象？",
+        "pick_value": "要画的是哪一列的数值？",
+        "pick_x": "横轴用哪一列？"
+      },
+      "reason": {
+        "all_candidates_rejected": "备选都没通过检查。",
+        "candidate_fingerprint_mismatch": "画出来的数据和文件对不上，这个备选已去掉。",
+        "candidate_render_failed": "这个备选没能画出来。",
+        "candidate_template_unsupported": "这种画法暂时画不出来。",
+        "candidate_thumbnail_failed": "这个备选的小图没生成出来。",
+        "candidate_timeout": "这个备选画得太久，已放弃。",
+        "candidate_write_blocked": "这个备选想写到别处，已拦下。",
+        "common_module_conflict": "同目录里那份公共文件被改过；为了不覆盖你的文件，这次没有生成。",
+        "data_changed": "数据文件在生成备选之后变过了，请重新生成。",
+        "figures_dir_unusable": "tavotto_figures 不是普通文件夹，没有生成。",
+        "matrix_unsupported": "这种方阵形式的表暂时画不了。",
+        "no_numeric_column": "这张表里没有数值列。",
+        "no_renderable_family": "这张表暂时没有能画的画法。",
+        "no_usable_table": "这个文件夹里没有能画的数据表。",
+        "register_failed": "没能把新图登记进项目，新建的文件已撤回。",
+        "rows_not_plotted": "有 {{count}} 行不是数字或缺横轴的值，没有画出来。",
+        "stem_taken": "这个图名刚被占用了，请再试一次。",
+        "table_not_found": "找不到你选的那张表。",
+        "target_exists": "同名脚本已经存在，没有覆盖它。",
+        "value_column_mixed": "数值列里混着文字（比如「<0.1」），先整理一下再画。"
+      },
+      "result": {
+        "mismatch": "图里的数据和文件对不上；不对的话可以删掉这份新脚本。",
+        "unknown": "图画好了，数据核对没能完成。",
+        "unverifiable": "图画好了，但这类图没法逐项核对数据。",
+        "verified": "图画好了，数据和文件逐项对上。"
+      }
+    },
     "dependency": {
       "installing": "正在准备依赖，完成后会重新检查…",
       "missing": "校验时缺少 {{names}}；安装后会重新检查并应用修改。",
@@ -3217,6 +3332,10 @@ export default interface Resources {
       "bar_needs_summary": "柱的每个位置只能对应一个值，有多行数据时要选均值或中位数。",
       "batch_start_failed": "{{message}}",
       "box_violin_n_small": "有的组数据太少（不到 5 个），不画箱线和小提琴。",
+      "cell_map_key_unknown": "映射里写的原文在这一列里找不到。",
+      "cell_map_too_large": "映射规则写得太多了，最多 50 项。",
+      "cell_map_value_invalid": "映射到的值要是一个数，或者写成缺失。",
+      "cell_rule_invalid": "这条处理规则不对：要针对这次画图用到、夹着文字的数值列，每列只写一条。",
       "column_not_found": "这张表里没有这一列。",
       "column_type_mismatch": "这一列的类型不适合画在这个位置，比如把文字当数值用。",
       "composition_negative": "占比图里有负数，不能画。",
@@ -3249,6 +3368,7 @@ export default interface Resources {
       "data_empty": "这份数据是空的。",
       "data_excel_unsupported": "不支持旧版 Excel 文件（.xls / .xlsm / .xlsb），请在 Excel 里另存为 .xlsx 或 CSV。",
       "data_figure_input_missing": "请选一份数据文件，并说明想画什么。",
+      "data_figure_recipe_invalid": "这个备选和现在的数据对不上了，请重新生成。",
       "data_format_unsupported": "只能读取 CSV、TSV 和 XLSX 数据文件。",
       "data_header_invalid": "数据的表头有空列名或重复列名。",
       "data_malformed": "这份 CSV 格式有误，读不出来。",
@@ -3441,6 +3561,12 @@ export default interface Resources {
       "project_env_worker_import_failed": "项目环境能导入 matplotlib，但 Tavotto 的渲染代码在它里面起不来。",
       "project_python_unusable": "为这个项目指定的解释器用不了；Tavotto 不会自动换成别的环境。请在渲染环境设置里重新指定，或清除它回到自动选择。",
       "project_scan_not_started": "这个项目还没有开始检查（或应用重启过）。重新检查即可。",
+      "propose_candidate_unknown": "找不到你选的这个备选，请重新生成一次。",
+      "propose_cells_invalid": "这条处理规则没法用，请重新选一次。",
+      "propose_cells_need_rule": "这段说明要先交给助手整理成规则，暂时不能直接用。",
+      "propose_data_changed": "数据文件在生成备选之后变过了，请重新生成。",
+      "propose_input_invalid": "请求内容不对，没有生成备选。",
+      "propose_session_expired": "这批备选已经过期了，请重新生成一次。",
       "protocol_mismatch": "渲染出了点问题，已经自动重启。再操作一次就行。",
       "publish_failed": "文件已写入，但无法移入导出目录：{{error}}。",
       "python_missing": "本机没有可用的 Python。请安装 Python 3.10 或更高版本后重试。",
