@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from support.dependency_repair import build_wheel, needs_worker, real_venv, wait_for
+from support.venvfixture import verify as verify_venv
 from tavotto.engine import (
     depplan,
     deprepair,
@@ -658,7 +659,7 @@ def house(tmp_path, monkeypatch) -> Path:
     build_wheel(dest, name=OTHER[0], import_name=OTHER[1], version="1.0")
     build_wheel(dest, name=WRAP[0], import_name=WRAP[1], version="1.0", requires=(LAB[0],))
     build_wheel(dest, name=ALPHA[0], import_name=ALPHA[1], version="1.0")
-    monkeypatch.setenv("PIP_FIND_LINKS", str(dest))
+    monkeypatch.setenv("PIP_FIND_LINKS", dest.as_uri())
     monkeypatch.setenv("PIP_NO_INDEX", "1")
     return dest
 
@@ -703,6 +704,20 @@ def _adopt(project: Path) -> None:
     )
 
 
+def _in_place_venv(project: Path) -> None:
+    # 仍复用公共夹具的宿主科学栈与 Tavotto 遮蔽，但不处理机器基站的任意 .pth。
+    # 本组量的是明确缺失的表外名；基站的未建模钩子会正确阻止该安装前提成立。
+    venv = real_venv(project)
+    config = venv / "pyvenv.cfg"
+    original = config.read_text(encoding="utf-8")
+    inherited = "include-system-site-packages = true"
+    assert inherited in original
+    config.write_text(
+        original.replace(inherited, "include-system-site-packages = false"), encoding="utf-8"
+    )
+    verify_venv(venv, engine_pool.find_worker_python())
+
+
 @needs_worker
 class TestEndToEndManaged:
     def test_the_prefill_alone_installs_nothing(self, tmp_path, house, offline_managed_env):
@@ -740,8 +755,10 @@ class TestEndToEndManaged:
         assert any(r.startswith(LAB[0]) for r in managedenv.installed_requirements(project))
 
     def test_a_wrong_name_fails_and_the_previous_generation_survives(
-        self, tmp_path, house, offline_managed_env
+        self, tmp_path, house, offline_managed_env, monkeypatch
     ):
+        # 离线夹具固定的基础 Python 可能经目录链接进入；不把该链接安装根当名字层。
+        monkeypatch.setattr(deprepair, "_base_python", str(Path(deprepair.base_python()).resolve()))
         project = _project(tmp_path, ALPHA[1], requirements=f"{ALPHA[0]}\n")
         assert _run(deprepair.create_joint_plan(project, "figure.py"))["state"] == "done"
         gen = managedenv.active_generation(project)
@@ -909,7 +926,7 @@ class TestEndToEndProjectVenv:
         self, tmp_path, house
     ):
         project = _project(tmp_path, LAB[1])
-        real_venv(project)
+        _in_place_venv(project)
         _adopt(project)
         python, source = engine_pool.resolve_worker_python(str(project), script="figure.py")
         assert source == engine_pool.SOURCE_PROJECT_VENV
@@ -927,7 +944,7 @@ class TestEndToEndProjectVenv:
         self, tmp_path, house
     ):
         project = _project(tmp_path, LAB[1])
-        real_venv(project)
+        _in_place_venv(project)
         _adopt(project)
         python, _source = engine_pool.resolve_worker_python(str(project), script="figure.py")
         plan = deprepair.create_joint_plan(project, "figure.py", user_specified={LAB[1]: WRAP[0]})

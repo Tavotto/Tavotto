@@ -1107,6 +1107,49 @@ def _fingerprint(plan: preparation.PreparationPlan) -> str:
     return json.dumps(_fingerprint_parts(plan), sort_keys=True, default=str)
 
 
+def _input_declaration_context(plan: preparation.PreparationPlan, found) -> dict:
+    """Project frozen selection and its actual sealed result without resource IO."""
+    from . import inputdeclaration, receipt
+
+    selection = plan.input_declaration_state
+    scope = selection.get("scope") if isinstance(selection, dict) else None
+    if not plan.script:
+        reason = "not_script"
+    elif getattr(plan.run, "sensitive", False):
+        reason = "sensitive_run"
+    elif scope is None:
+        reason = "scope_unknown"
+    else:
+        reason = None
+    context = {
+        "version": 1,
+        "scope": dict(scope) if reason is None else None,
+        "selection_revision": selection["revision"] if reason is None else None,
+        "input_remap_generation": plan.input_remap_generation,
+        "unavailable_reason": reason,
+        "captured_inputs": None,
+    }
+    if reason is not None or context["selection_revision"] is None or found is None:
+        return context
+    attempt_plan, result = found
+    rcpt = result.receipt
+    if (
+        result.status == preparation.STATUS_READY
+        and attempt_plan.input_declaration_state == selection
+        and type(plan.input_remap_generation) is int
+        and attempt_plan.input_remap_generation == plan.input_remap_generation
+        and isinstance(rcpt, receipt.ExecutionReceipt)
+        and isinstance(rcpt.captured_input_archive, inputdeclaration.InputArchive)
+    ):
+        # Selection and remap approval are independently versioned: a retained
+        # ready attempt must match both frozen observations of the current plan.
+        # ExecutionReceipt already binds its immutable archive graph to this
+        # public revision. Polling must not parse/hash that potentially large
+        # graph or reopen the capture's source files.
+        context["captured_inputs"] = inputdeclaration.validate_public_fact(rcpt.captured_inputs)
+    return context
+
+
 def _fingerprint_parts(plan: preparation.PreparationPlan) -> dict:
     """语义修订的判据（私有，含解释器路径，**不**对外）：目标、解释器、工作目录档、授权、数据绑定、
     门的结论变了才算「执行意图变了」。进度 / 文案 / 时间戳不在里面——它们只动 `observation_seq`。
@@ -1152,6 +1195,9 @@ def _fingerprint_parts(plan: preparation.PreparationPlan) -> dict:
             "impact_digest"
         ),
     }
+    selection = plan.input_declaration_state
+    if selection is not None and selection.get("revision") is not None:
+        payload["input_declaration"] = selection["revision"]
     return payload
 
 
@@ -2896,6 +2942,7 @@ class SessionService:
         awaiting_input: bool = False,
         runtime_input: dict | None = None,
         expose_confirm: bool = False,
+        include_input_declaration: bool = False,
     ) -> dict:
         """会话的投影：目标 / 修订 / 观察序号 / phase / outcome / checks / requirements / actions / provider
         引用。读它会补齐当前该有的动作，并在可观察状态变了时推进 `observation_seq`。"""
@@ -3053,6 +3100,11 @@ class SessionService:
                 ),
                 "plan": sess.plan.to_payload(),
                 "result": result.to_payload() if result else None,
+                **(
+                    {"input_declaration": _input_declaration_context(sess.plan, found)}
+                    if include_input_declaration
+                    else {}
+                ),
             }
 
     def _observe_locked(self, sess: Session, *, awaiting_input: bool = False) -> "_Observation":

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120"
+     viewBox="0 0 200 120">
+  <defs>
+    <rect id="chip" x="0" y="0" width="40" height="20" fill="#dde"/>
+  </defs>
+  <g id="outer" transform="translate(10,10)">
+    <g id="inner" transform="translate(20,30)">
+      <use href="#chip"/>
+      <use href="#chip" x="60" y="40" transform="rotate(15)"/>
+    </g>
+    <rect x="100" y="10" width="30" height="30" fill="orange"/>
+  </g>
+</svg>
