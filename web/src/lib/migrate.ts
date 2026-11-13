@@ -71,10 +71,13 @@ export function normalizeLayout(
   payload: unknown,
   name: string,
 ): FigureDocument | ProjectDocument {
-  if (payload && typeof payload === 'object' && (payload as { schema?: number }).schema === 3) {
+  const schema = payload && typeof payload === 'object' ? (payload as { schema?: unknown }).schema : undefined
+  if (schema === 3 || schema === 4) {
     const pd = migrateToProject(payload)
     if (pd) return pd
+    throw new Error('invalid_document')
   }
+  if (typeof schema === 'number' && schema > 3) throw new Error('schema_too_new')
   const doc = emptyDocument()
   doc.name = name
   if (!payload || typeof payload !== 'object') return doc

@@ -283,7 +283,8 @@ def test_the_candidate_never_falls_back_to_pymupdf_when_its_fonts_are_missing(
 
 
 def test_the_contract_names_in_all_are_the_ledger_names():
-    assert len(pdfbackend.__all__) == 20
+    assert len(pdfbackend.__all__) == 21
+    assert "prepare_original_eps" in pdfbackend.__all__
     from tavotto.rendercore import facade
 
     for name in pdfbackend.__all__:

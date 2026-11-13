@@ -17,13 +17,19 @@ import { rememberLayoutRevision } from '@/lib/layoutRevision'
 import { readProjectFile } from '@/lib/projectFile'
 import {
   activeProjectFile,
+  captureChartSourceSave,
+  mergeSavedChartSources,
   captureFigureSnapshotSave,
   mergeSavedFigureSnapshots,
   projectFileSnapshot,
   setProjectFile,
+  prepareProjectFileSave,
+  finishProjectFileSave,
+  cancelPreparedProjectFile,
+  retryProjectFileConfirmation,
   useDocumentStore,
 } from './documentStore'
-import { reportSaveSkipped, stillCurrent, type SaveContext } from './saveContext'
+import { captureSaveContext, reportSaveSkipped, stillCurrent, type SaveContext } from './saveContext'
 import { AUTOSAVE_FAILURE_OWNER, retrySaveAction } from './saveFailureActions'
 import { useUiStore } from './uiStore'
 import { emitLayoutSaved } from '@/lib/layoutSaved'
@@ -40,7 +46,8 @@ const lastByContext = new Map<string, QueuedWrite>()
 /** 队列里还没落定的项数：0 = 空闲，这次当场开始（同步读绑定与内容，不等一个微任务） */
 let pending = 0
 
-const keyOf = (ctx: SaveContext) => JSON.stringify([ctx.documentId, ctx.loadSeq, ctx.pj, ctx.file])
+const keyOf = (ctx: SaveContext) => JSON.stringify([ctx.documentId, ctx.loadSeq, ctx.pj, ctx.file,
+  ...(ctx.format === 'v4' ? [ctx.format] : []), ...(ctx.bindingSequence !== undefined ? [ctx.bindingSequence] : [])])
 
 /**
  * 写回 `ctx` 那一刻绑定的项目文件。返回是否写成；**没写成时一定已经把话说完**（状态条 /
@@ -94,30 +101,56 @@ async function writeOnce(ctx: SaveContext): Promise<boolean> {
   // 现读：排队期间前一次写成推进了修订号（同一个上下文 = 同一个文件）
   const ui = useUiStore.getState()
   const edited = projectFileSnapshot()
-  const pd = useDocumentStore.getState().buildProject()
-  const snapshots = captureFigureSnapshotSave(pd, ctx.pj)
   // 写出去的就是这一份：「保存」点拍它（排队期间又改过的话，入口那份已经不是写出去的内容）
   const moment = captureMoment()
+  let prepared: Awaited<ReturnType<typeof prepareProjectFileSave>> = null
   try {
-    const res = await saveLayout(binding.name, pd, binding.revision ?? REVISION_ABSENT, {
+    const retry = await retryProjectFileConfirmation(binding.name, ctx)
+    if (retry.state === 'confirmed') {
+      const next = captureSaveContext()
+      if (next.documentId !== ctx.documentId || next.format !== ctx.format || next.loadSeq !== ctx.loadSeq
+        || next.pj !== ctx.pj || next.file !== ctx.file || next.bindingSequence !== retry.sequence) {
+        reportSaveSkipped(ctx); return false
+      }
+      if (retry.dirty) return writeOnce(next)
+      ui.setStatus(msg('save.doneProject', { file: retry.file }, 'workspace'), 'done')
+      return true
+    }
+    if (retry.state !== 'none') {
+      ui.setStatus(msg('save.projectBindingSuperseded', { file: binding.file }, 'workspace'), 'error')
+      return false
+    }
+    prepared = await prepareProjectFileSave(binding.name, ctx)
+    if (!stillCurrent(ctx)) { reportSaveSkipped(ctx); return false }
+    const pd = prepared?.document ?? useDocumentStore.getState().buildProject()
+    const sources = ctx.format === 'v4' ? captureChartSourceSave(pd, ctx.pj) : null
+    const sent = sources?.document ?? pd
+    const snapshots = captureFigureSnapshotSave(sent, ctx.pj)
+    const res = await saveLayout(binding.name, sent, binding.revision ?? REVISION_ABSENT, {
       target: 'project',
+      ...(ctx.format === 'v4' ? { format: ctx.format, pj: ctx.pj } : {}),
+      ...(prepared ? { workingDocId: ctx.documentId, bindingIntent: prepared.ticket.sequence } : {}),
     })
     mergeSavedFigureSnapshots(snapshots, res.figure_snapshots)
+    if (sources) mergeSavedChartSources(sources, res.chart_sources)
     // 写成了：立刻说「排版写成了」，时间线打「保存」点（ADR 0101 §7）——在后面任何一步之前，
     // 与它们的成败无关；点拍的是写出去的那一份（`moment`），不管此刻开着的是谁
-    emitLayoutSaved('project_file', { moment })
+    emitLayoutSaved('project_file', { moment: prepared?.moment ?? moment })
     // ③ 写成了是事实：修订号与那份排版的绑定记在 ctx 名下，不管此刻开着的是谁
     const name = res.name ?? binding.name
     const file = res.file ?? binding.file
-    rememberLayoutRevision(name, res.revision, ctx.pj)
+    if (ctx.format === 'v4') rememberLayoutRevision(name, res.revision, ctx.pj, ctx.format)
+    else rememberLayoutRevision(name, res.revision, ctx.pj)
     // 写的途中这份排版被另存为改绑到了别的文件：新绑定是用户更晚的决定，这次的回执
     // 只属于旧文件——整份写回去的话，之后的 ⌘S 会静默地又写回旧文件（#674 评审 P2）
-    const now = readProjectFile(ctx.documentId)
-    if (now && now.projectId === ctx.pj && now.file === binding.file) {
+    const now = ctx.format === 'v4' ? readProjectFile(ctx.documentId, ctx.format) : readProjectFile(ctx.documentId)
+    const associated = prepared ? finishProjectFileSave(prepared, res.project_file, res.revision) : true
+    if (!prepared && now && now.projectId === ctx.pj && now.file === binding.file) {
       // 写的途中又改过：项目里这份已经落后了，圆点不能灭
-      setProjectFile({ ...now, name, file, revision: res.revision, dirty: edited() }, ctx.documentId)
+      setProjectFile({ ...now, name, file, revision: res.revision, dirty: edited() }, ctx.documentId, ...(ctx.format === 'v4' ? [ctx.format] : []))
     }
-    ui.setStatus(msg('save.doneProject', { file }, 'workspace'), 'done')
+    ui.setStatus(associated ? msg('save.doneProject', { file }, 'workspace')
+      : msg('save.projectBindingSuperseded', { file }, 'workspace'), associated ? 'done' : 'error')
     return true
   } catch (e) {
     const revision =
@@ -148,5 +181,7 @@ async function writeOnce(ctx: SaveContext): Promise<boolean> {
       )
     }
     return false
+  } finally {
+    if (prepared) await cancelPreparedProjectFile(prepared)
   }
 }

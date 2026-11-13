@@ -90,8 +90,12 @@ export function fixRoute(issue: ValidationIssue, doc: FigureDocument): FixRoute 
     ? doc.objects.find((o) => o.id === issue.objectRef.objectId)
     : undefined
   if (obj?.type === 'text') return 'canvas'
-  if (obj?.type === 'panel' && obj.script && issue.objectRef.gid && ENGINE_FIX_RULES.includes(issue.ruleCode)) {
-    return 'engine'
+  if (obj?.type === 'panel' && issue.objectRef.gid && ENGINE_FIX_RULES.includes(issue.ruleCode)) {
+    // A historical source has no current `script`, but its verified owner is
+    // still the execution that must apply the fix. Never require the current
+    // same-name file to supply one.
+    const owner = obj.script || obj.figureOrigin?.snapshot.executionOwner?.script
+    if (owner) return 'engine'
   }
   return null
 }

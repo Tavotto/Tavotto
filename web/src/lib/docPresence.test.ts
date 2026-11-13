@@ -3,6 +3,7 @@ import {
   __setPresenceChannelFactory,
   __tabId,
   announceDocOpen,
+  isDocHeldElsewhere,
   type PresenceChannel,
 } from './docPresence'
 
@@ -115,5 +116,20 @@ describe('跨标签页文档占用提示', () => {
     expect(conflicts).toEqual([])
     last!.deliver({ type: 'doc-held', docId: 'd_2', tabId: 'tab_x' })
     expect(conflicts).toEqual(['d_2'])
+  })
+
+  it('v4 占用探测只接受相同格式和文档的回音，即使本窗口端着另一份文档', async () => {
+    __setPresenceChannelFactory(() => (last = new FakeChannel()))
+    announceDocOpen('other')
+    const pending = isDocHeldElsewhere('shared', 150, 'v4')
+    const probe = last!.sent.at(-1) as { reqId: string; format: string }
+    expect(probe.format).toBe('v4')
+    last!.deliver({ type: 'doc-probe-ack', docId: 'shared', tabId: 'tab_x', reqId: probe.reqId })
+    let settled = false
+    void pending.then(() => { settled = true })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    last!.deliver({ type: 'doc-probe-ack', docId: 'shared', format: 'v4', tabId: 'tab_x', reqId: probe.reqId })
+    expect(await pending).toBe(true)
   })
 })

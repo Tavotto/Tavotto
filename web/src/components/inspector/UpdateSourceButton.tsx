@@ -4,7 +4,10 @@ import { useTranslation } from 'react-i18next'
 import { FileUp, RotateCcwClock, ShieldAlert, TriangleAlert } from '@/components/ui/icons'
 import { Details, Summary } from '../ui/Details'
 import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
-import { ApiError, backendErrorMsg, updateSourceFiles, type WriteBackDiff } from '@/lib/api'
+import { figureOriginFields, figureOriginFor } from '@/lib/figureSnapshot'
+import { useDocumentPreviewOwner } from '@/hooks/useDocumentPreviewOwner'
+import type { PreviewOwner } from '@/lib/previewOwner'
+import { ApiError, EngineError, backendErrorMsg, updateSourceFiles, type WriteBackDiff } from '@/lib/api'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import {
@@ -29,7 +32,7 @@ import { Tab, TabList, TabPanel } from '../ui/Tabs'
 import { Toggle } from '../ui/Toggle'
 import { MenuItem } from '../ui/Menu'
 import { captureMoment, markMoment, momentWithDoc } from '@/lib/timelineCheckpoint'
-import { fileIdsWithRecords, useWriteBackRecords, WriteBackRecordsPage } from './WriteBackRecords'
+import { fileIdsWithRecords, writeBackRecordKey, useWriteBackRecords, WriteBackRecordsPage } from './WriteBackRecords'
 
 const stemOf = (fileId: string) => fileId.split('/').pop()?.replace(/\.[^.]+$/, '') ?? fileId
 
@@ -77,6 +80,7 @@ class WriteBackFailure extends Error {
 /** 多面板顺序写回；单条失败即停，把已完成的部分与失败原因都讲清楚 */
 async function runWriteBack(
   panels: PanelObject[],
+  owner: PreviewOwner,
   mtimeOf: (fileId: string) => number | undefined,
   annotations?: Map<string, PanelAnnotations>,
 ): Promise<WriteBackResult> {
@@ -84,14 +88,19 @@ async function runWriteBack(
   let backupDir = ''
   let verified: number | null = 0
   let sizeMismatch = false
+  const pj = owner.pj
   for (const p of panels) {
     try {
-      refuseArtifactOperation(p)
+      if (figureOriginFor(p) !== undefined && !owner.still()) throw new EngineError('The historical document is no longer active.', '', 'svg_source_unavailable')
+      if (figureOriginFor(p) === undefined) refuseArtifactOperation(p)
+      const sourceArgs: [source?: ReturnType<typeof figureOriginFields>, pj?: string | null] =
+        figureOriginFor(p) === undefined ? [] : [figureOriginFields(p), pj]
       const res = await updateSourceFiles(
         p.fileId,
         p.overrides,
         annotations?.get(p.id)?.objects,
         mtimeOf(p.fileId),
+        ...sourceArgs,
       )
       updated.push(...res.updated)
       backupDir = res.backup_dir
@@ -286,6 +295,7 @@ export function WriteBackDialog({
   const [withAnnotations, setWithAnnotations] = useState(false)
   const backupDir = useProjectStore((s) => s.project?.backup_dir) ?? 'cache/original_backups'
   const objects = useDocumentStore((s) => s.doc.objects)
+  const owner = useDocumentPreviewOwner(panels)
   const stems = panels.map((p) => stemOf(p.fileId))
   const readOnly = useProjectStore((s) => s.project?.settings?.allow_write_back === false)
   const fileIds = [...new Set(panels.map((p) => p.fileId))]
@@ -306,8 +316,8 @@ export function WriteBackDialog({
     }
   }, [open, fileKey])
   const baselineOf = (fileId: string) => baselineRef.current.get(fileId)
-  const recordsByFile = useWriteBackRecords(fileIds, open && !detached)
-  const hasRecords = fileIdsWithRecords(fileIds, recordsByFile).length > 0
+  const recordsByFile = useWriteBackRecords(fileIds, open && !detached, panels)
+  const hasRecords = fileIdsWithRecords(panels.map(writeBackRecordKey), recordsByFile).length > 0
   const shownPage = hasRecords ? page : 'write'
   // 短摘要的两个数字（审计 T34）：改了多少项、写进几张图。
   // **数的是图不是磁盘文件**——后端只覆盖 `<stem>.pdf` / `<stem>.png` 里
@@ -351,11 +361,17 @@ export function WriteBackDialog({
       const useAnn = withAnnotations && annCount > 0
       const res = await runWriteBack(
         panels,
+        owner,
         baselineOf,
         useAnn ? annMap : undefined,
       )
       setResult(res)
       let written = moment
+      const historical = panels.some(p => figureOriginFor(p) !== undefined)
+      if (historical && !owner.still()) {
+        void markMoment('writeback', written)
+        return
+      }
       if (useAnn) {
         // 标注已经烙进原图：画布上的原件移除（可撤销），否则成图里会出现两份
         const ids = [...annMap.values()].flatMap((a) => a.objectIds)
@@ -623,8 +639,8 @@ export function UpdateSourceButton({ panel }: { panel: PanelObject }) {
 export function WriteBackRecordsButton({ panel }: { panel: PanelObject }) {
   useTranslation('inspector')
   const [open, setOpen] = useState(false)
-  const records = useWriteBackRecords([panel.fileId], panel.fileKind !== 'runtime')
-  if (panel.fileKind === 'runtime' || !fileIdsWithRecords([panel.fileId], records).length) {
+  const records = useWriteBackRecords([panel.fileId], panel.fileKind !== 'runtime', [panel])
+  if (panel.fileKind === 'runtime' || !fileIdsWithRecords([writeBackRecordKey(panel)], records).length) {
     return null
   }
   return (

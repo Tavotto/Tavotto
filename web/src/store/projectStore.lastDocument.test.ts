@@ -29,6 +29,8 @@ let diskInFlight = 0
 const PROJECT_IDS: Record<string, string> = { '/figs/a': 'p_a', '/figs/b': 'p_b' }
 globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   const u = String(url)
+  // 旧后端对显式新namespace返回404；未知URL的通用200空对象不代表支持v4。
+  if (u.includes('/api/documents/v4/')) return new Response('{}', { status: 404 })
   const m = u.match(/\/api\/autosave\/([^/?]+)/)
   if (m) {
     diskInFlight += 1

@@ -272,3 +272,44 @@ describe('目标图不在画布上：同步并写回走标准写回窗口', () =
     expect(text()).toContain('没有可同步的项')
   })
 })
+
+
+describe('历史来源的同步', () => {
+  const addOrigin = (p: PanelObject, receipt: string) => {
+    p.figureOrigin = { version: 1, snapshot: { version: 1, sourceId: p.fileId, patchHash: 'P', receiptId: receipt, snapshotId: receipt }, patches: [{ gid: 'line', prop: 'linewidth', value: 2 }] }
+  }
+  it('目标的当前 Q 与基准 P 分开发送；合并保留目标来源', async () => {
+    const destination = panel('p3', 'Fig3.pdf', [{ gid: 'line', prop: 'linewidth', value: 9 }])
+    addOrigin(destination, 'target-A')
+    await start([destination])
+    await act(async () => useDocumentStore.getState().commit(literal('历史来源'), d => {
+      addOrigin(d.objects[0] as PanelObject, 'source-A')
+    }))
+    await click(target('Fig3.pdf'))
+    const source = useDocumentStore.getState().doc.objects[0] as PanelObject
+    expect(syncOverrides).toHaveBeenCalledWith('Fig1.pdf', 'Fig3.pdf', source.overrides, {
+      source_figure_origin: source.figureOrigin, target_figure_origin: destination.figureOrigin,
+      target_patches: destination.overrides,
+    }, null)
+    await click(document.body.querySelector('[data-sync="merge"]'))
+    const current = useDocumentStore.getState().doc.objects.find(p => p.id === 'p3') as PanelObject
+    expect(current.figureOrigin).toEqual(destination.figureOrigin)
+    expect(current.overrides).toContainEqual(MAPPED[0])
+  })
+
+  it('同文件目标换成另一个历史，旧映射迟到不能合并到新目标', async () => {
+    let finish!: (value: Awaited<ReturnType<typeof syncOverrides>>) => void
+    vi.mocked(syncOverrides).mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+    const destination = panel('p3', 'Fig3.pdf')
+    addOrigin(destination, 'target-A')
+    await start([destination])
+    await click(target('Fig3.pdf'))
+    await act(async () => useDocumentStore.getState().commit(literal('换历史'), d => {
+      const target = d.objects.find(p => p.id === 'p3') as PanelObject
+      addOrigin(target, 'target-B')
+    }, { figureSources: 'restored' }))
+    await act(async () => finish({ mapped: MAPPED, skipped: [], unmatched: [] }))
+    expect((document.body.querySelector('[data-sync="merge"]') as HTMLButtonElement).disabled).toBe(true)
+    expect((useDocumentStore.getState().doc.objects.find(p => p.id === 'p3') as PanelObject).overrides).toEqual([])
+  })
+})

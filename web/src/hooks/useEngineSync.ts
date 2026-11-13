@@ -15,7 +15,7 @@ import {
   useDocumentStore,
   type TxnAnchor,
 } from '@/store/documentStore'
-import { panelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { exactPanelRender, panelRender, renderKeyOf, renderRequestIdentity, renderSourceKey, useRenderStore } from '@/store/renderStore'
 import { requestRender } from '@/store/renderScheduler'
 import { sampleDisplayState } from '@/diagnostics'
 import { useUiStore } from '@/store/uiStore'
@@ -23,6 +23,8 @@ import { currentVisibleRectMm } from '@/store/viewportStore'
 import { useWorkspaceStore, type WorkspaceMode } from '@/store/workspaceStore'
 import { panelRotation } from '@/types/document'
 import { syncPanelNativeSize } from '@/lib/panelNativeSize'
+import { hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
+import { figureOriginFor } from '@/lib/figureSnapshot'
 import { stampOverrideIdentities } from '@/lib/overrideIdentity'
 import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
 import type { RenderPurpose } from '@/lib/renderPurpose'
@@ -63,7 +65,9 @@ export function renderTargets(
   const seen = new Set<string>()
   const targets: PanelObject[] = []
   for (const o of objects) {
-    if (o.type !== 'panel' || !o.script) continue
+    if (o.type !== 'panel' || (!o.script && !o.chart && figureOriginFor(o) === undefined)) continue
+    // Saved pixels and explicit entry into editing have separate lifetimes.
+    if (hasFigureSnapshotPreview(o) && o.id !== editingId) continue
     // runtime 面板（ADR 0013 lazy rehydrate）：**重开文档绝不自动执行脚本**。
     // 只有「正在编辑」或「本会话已经跑过一次（latest 里有它）」才进同步——
     // 带着 overrides 重开的文档先显示 cache 占位，进入编辑 / 显式重跑那一刻
@@ -75,20 +79,20 @@ export function renderTargets(
     // 绑定画布上 admitPngEntry 因「挂着样式 / 有样式债」拒绝进入，采用请求永远发不出；而样式债只有
     // 这张图拿到 manifest 才能由 `alignNewFigures` 结清——这次渲染是它唯一的 manifest 来源。后端对缺
     // policy 的 PNG 渲染只标 `source_unverified`、不拒绝（旧请求语义不变），所以这条路本来合法。
-    const unadopted = !isAdoptedPanel(o) && isUnadoptedPngSource(o)
+    const unadopted = figureOriginFor(o) === undefined && !isAdoptedPanel(o) && isUnadoptedPngSource(o)
     // 来源驱动采用且零编辑（ADR 0139 §五.1）：显示的是磁盘原像素，重开文档 / 脚本变更 / 邻居补渲染都不去跑脚本；
     // 只有正在编辑它（需要几何权威）才渲染。有真实编辑的面板照常渲染（与别的带 override 的面板一致）。
-    if (isSourceBackedZeroEdit(o) && o.id !== editingId && !styleBound) continue
-    const wants =
+    if (figureOriginFor(o) === undefined && isSourceBackedZeroEdit(o) && o.id !== editingId && !styleBound) continue
+    const wants = o.figureOrigin !== undefined || !!o.chart || (
       o.fileKind === 'runtime'
-        ? o.id === editingId || latest[o.fileId] != null
+        ? o.id === editingId || latest[renderSourceKey(o)] != null
         : // 编辑中 / 有图内修改 / 脚本已领先磁盘文件（AI 改过）。
           // 「只带基线、还没动过」的面板不渲染：磁盘文件本身就是那个样子，
           // 白跑一次引擎（heavy 脚本要几分钟）没有意义。
           o.id === editingId ||
           styleBound ||
           (!unadopted && (neighbours.has(o.id) || !!tracked[o.fileId])) ||
-          (o.overrides.length > 0 && !isJustBakedBaselineOf(o.overrides, assets[o.fileId]))
+          (o.overrides.length > 0 && !isJustBakedBaselineOf(o.overrides, assets[o.fileId])))
     if (!wants) continue
     const key = renderKeyOf(o)
     if (seen.has(key)) continue
@@ -114,11 +118,12 @@ export function crossFigureNeighbours(
   const ids = new Set<string>()
   if (!editingId || mode === 'fast_edit') return ids
   for (const o of objects) {
-    if (o.type !== 'panel' || o.id === editingId || o.hidden || !o.script) continue
+    if (o.type !== 'panel' || o.id === editingId || o.hidden || (!o.script && !o.chart)) continue
+    if (hasFigureSnapshotPreview(o)) continue
     if (o.fileKind === 'runtime' || o.cost === 'heavy') continue
     // 未采用的 PNG 源图没有权威 manifest 可补：补渲染只能发无策略的 patches=[]，让脚本重跑出一张
     // 没对过字节的图，还会和它自己的采用请求抢同一份首渲染。要先走 admitPngEntry（带 source_policy）。
-    if (!isAdoptedPanel(o) && isUnadoptedPngSource(o)) continue
+    if (figureOriginFor(o) === undefined && !isAdoptedPanel(o) && isUnadoptedPngSource(o)) continue
     if (panelRotation(o) || o.flipH || o.flipV) continue
     if (
       visible &&
@@ -162,6 +167,8 @@ function hasForegroundReason(
   assets: Record<string, BakedBaselineFacts | undefined>,
 ): boolean {
   return (
+    !!panel.chart ||
+    panel.figureOrigin !== undefined ||
     panel.id === editingId ||
     styleBound ||
     !!tracked[panel.fileId] ||
@@ -233,7 +240,7 @@ export function syncEngine(objects: readonly CanvasObject[], editingId: string |
     styleBound,
     neighbours,
   )) {
-    const want = JSON.stringify(panel.overrides)
+    const want = renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource, figureOriginFor(panel), panel.chartFrame?.renderProfile)
     const state = store.byKey[renderKeyOf(panel)]
     // `svgEvicted` 打断这条跳过：这一版确实画出来过（lastPatches 对得上、
     // manifest 与几何权威都在），但它的 SVG payload 被内存预算清掉了。撤销
@@ -376,6 +383,13 @@ type NativeSizeFix = {
   hMm: number
   /** 换算时在页面上不动的点；不给 = 包围盒左上角（x/y 不变） */
   anchor?: TxnAnchor
+  /**
+   * /2 计算框：这份 exact 渲染 `render_frame` 的外框原点（源 viewport pt）。
+   * 与面板持久化的 `chartFrame.originPt` 不一致时随尺寸修一并写——**必须同一条
+   * 收尾**（见 applyNativeSizeFixes），缺席 = 这版渲染没有 /2 外框声明（/1、老后端），
+   * 已持久化的落位原样保留（那是文档的坐标合同，不因一次回退删掉）。
+   */
+  originPt?: readonly [number, number]
 }
 
 /**
@@ -388,13 +402,24 @@ function nativeSizeFixes(
 ): NativeSizeFix[] {
   const fixes: NativeSizeFix[] = []
   for (const o of objects) {
-    if (o.type !== 'panel' || artifactValidationIssue(o) || artifactEntryPending(o.id)) continue
-    if (!o.overrides.length && o.fileKind === 'raster' && /\.png$/i.test(o.fileId) && useUiStore.getState().elementPanelId !== o.id && !useRenderStore.getState().tracked[o.fileId]) continue
-    const size = byKey[renderKeyOf(o)]?.manifest?.size_mm
+    if (o.type !== 'panel' || (figureOriginFor(o) === undefined && (artifactValidationIssue(o) || artifactEntryPending(o.id)))) continue
+    // A same-name live manifest is not geometry evidence for this archived pair.
+    if (hasFigureSnapshotPreview(o) && useUiStore.getState().elementPanelId !== o.id) continue
+    if (!o.overrides.length && figureOriginFor(o) === undefined && o.fileKind === 'raster' && /\.png$/i.test(o.fileId) && useUiStore.getState().elementPanelId !== o.id && !useRenderStore.getState().tracked[o.fileId]) continue
+    const render = figureOriginFor(o) === undefined ? byKey[renderKeyOf(o)] : exactPanelRender({ byKey }, o)
+    const size = render?.manifest?.size_mm
     if (!size) continue
     const [wMm, hMm] = size
-    if (Math.abs(o.nativeW - wMm) <= 0.05 && Math.abs(o.nativeH - hMm) <= 0.05) continue
-    fixes.push({ id: o.id, wMm, hMm })
+    // /2 外框原点跟**同一份**渲染走：manifest.size_mm（=F 尺寸）与 render_frame
+    // 的 left/top 是同一次 draw 的两端，拆开对版本就会让 computedFramePatch 的
+    // oldL/oldT 与 nativeW/H 失配（useEngineSync 顶部注释的老坑在这里的形状）
+    let originPt: readonly [number, number] | undefined
+    if (o.chartFrame && render.renderFrame) {
+      const [left, top] = render.renderFrame.rect_pt
+      originPt = o.chartFrame.originPt[0] === left && o.chartFrame.originPt[1] === top ? undefined : [left, top]
+    }
+    if (Math.abs(o.nativeW - wMm) <= 0.05 && Math.abs(o.nativeH - hMm) <= 0.05 && originPt === undefined) continue
+    fixes.push({ id: o.id, wMm, hMm, ...(originPt !== undefined ? { originPt } : {}) })
   }
   return fixes
 }
@@ -402,8 +427,16 @@ function nativeSizeFixes(
 function applyNativeSizeFixes(d: FigureDocument, fixes: readonly NativeSizeFix[]) {
   for (const fix of fixes) {
     const o = d.objects.find((x) => x.id === fix.id)
+    if (o?.type !== 'panel') continue
     // 换算（缩放比不变、旋转时宽高互换、按锚点反推 x/y）只在 `lib/panelNativeSize`
     // 一处：撤销 / 重做落地时的换基走的也是它
-    if (o?.type === 'panel') syncPanelNativeSize(o, fix.wMm, fix.hMm, { anchor: fix.anchor })
+    syncPanelNativeSize(o, fix.wMm, fix.hMm, { anchor: fix.anchor })
+    // nativeW/H 与 chartFrame.originPt **同一条收尾写入**：分两次写 = 两者来自
+    // 不同版本的渲染，缩放比与外框落位各漂各的（341-346 注释的老坑），撤销 /
+    // 重做也会把这两个字段拆到两条历史里。补进的是 immer 草稿，与上面的尺寸
+    // 修正并进同一条历史。
+    if (fix.originPt && o.chartFrame) {
+      o.chartFrame = { ...o.chartFrame, version: 1, renderProfile: 'native-manifest/2', originPt: [fix.originPt[0], fix.originPt[1]] }
+    }
   }
 }

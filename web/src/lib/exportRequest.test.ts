@@ -7,6 +7,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   buildExportRequest,
+  exportTargetKey,
   defaultScope,
   epsAvailability,
   scriptAvailability,
@@ -26,6 +27,9 @@ import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { renderKey, useRenderStore } from '@/store/renderStore'
 import { emptyProject, type FigureDocument, type PanelObject } from '@/types/document'
 import { literal } from '@/i18n'
+import chartVectors from '../../../tests/golden/chart_model_vectors.json'
+import type { PanelChartState } from '@/types/document'
+import { exportOffersOf } from './exportRoute'
 
 const panel: PanelObject = {
   id: 'p1',
@@ -61,6 +65,137 @@ beforeEach(async () => {
     d.objects = [{ ...panel }]
   })
   useAssetStore.setState({ byId: { 'Fig1.pdf': { id: 'Fig1.pdf', mtime: 1 } } } as never)
+})
+
+describe('计算图表导出快照', () => {
+  function chartPanel(): PanelObject {
+    const v = chartVectors.vectors.find(v => v.expect === 'ok')!
+    const chart = structuredClone({ model: v.model, binding: v.binding }) as unknown as PanelChartState
+    return { ...panel, fileId: 'chart.svg', fileKind: 'svg', chart }
+  }
+
+  it('后端 EPS convert offer 保留真实计算场景请求、文件名和覆盖目标身份', () => {
+    const p = chartPanel()
+    const route = { scope: 'original' as const, formats: ['eps', 'svg'], panels: {
+      [p.fileId]: { source: 'declarative' as const, embeds_disk_bitmap: false,
+        formats: { eps: { how: 'convert' as const }, svg: { how: 'convert' as const } },
+        offers: { eps: { how: 'convert' as const } } },
+    } }
+    const input = inputOf({ scope: 'original', figureId: p.fileId, panel: p, formats: ['eps', 'svg'] })
+    expect(buildExportRequest(input).request.formats).toEqual(['svg'])
+    const built = buildExportRequest({ ...input, route })
+    expect(built.request.formats).toEqual(['eps', 'svg'])
+    expect(built.names).toEqual(['Fig 1.eps', 'Fig 1.svg'])
+    expect(built.request.original?.chart).toEqual(p.chart)
+    expect(built.request.original?.chart_render_profile).toBe('native-manifest/1')
+    expect(built.request.ppi).toBeNull()
+    expect(exportTargetKey({ ...input, route })).not.toBe(exportTargetKey(input))
+    expect(buildExportRequest({ ...input, scope: 'canvas', route }).request.formats).toEqual(['svg'])
+    const offers = exportOffersOf(route)
+    const duringRefresh = buildExportRequest({ ...input, route: null, offers })
+    expect(duringRefresh).toEqual(built)
+    expect(exportTargetKey({ ...input, offers })).toBe(exportTargetKey({ ...input, route }))
+    expect(duringRefresh.request).not.toHaveProperty('offers')
+    expect(buildExportRequest({ ...input, offers: undefined })).toEqual(buildExportRequest(input))
+    expect(buildExportRequest({ ...input, scope: 'canvas', offers }).request.formats).toEqual(['svg'])
+    expect(epsAvailability('original', 'another.svg', null, false, offers).ok).toBe(false)
+  })
+
+  it.each(['original', 'canvas', 'merge', 'annotations'] as const)('%s 深拷贝INPUT引用，来源改变必然改变导出身份', (kind) => {
+    const p = chartPanel()
+    p.chartSource = { schema: 1, sourceId: p.fileId, bytesSha256: 'a'.repeat(64), sizeBytes: 100,
+      sceneDigest: p.chart!.model.scene_digest }
+    const doc = { ...useDocumentStore.getState().doc, objects: [p] }
+    const input = inputOf({ scope: kind === 'canvas' ? 'canvas' : 'original', figureId: p.fileId, panel: p, doc,
+      ...(kind === 'merge' ? { mergePages: [{ figureId: p.fileId, panel: p, spec: null }] } : {}),
+      ...(kind === 'annotations' ? { annotations: [{ id: 'ann', type: 'text', text: 'annotation', sizePt: 9,
+        bold: false, color: '#000', align: 'left', x: 0, y: 0, w: 10, h: 5 }] } : {}),
+    })
+    const built = buildExportRequest(input)
+    const source = kind === 'canvas' ? built.request.canvas?.objects[0]
+      : kind === 'merge' ? built.request.merge_pdf?.pages[0] : built.request.original
+    expect(source).toHaveProperty('chart_source', p.chartSource)
+    expect((source as { chart_source: unknown }).chart_source).not.toBe(p.chartSource)
+    const original = JSON.stringify(built.request)
+    p.chartSource.bytesSha256 = 'b'.repeat(64)
+    expect(JSON.stringify(built.request)).toBe(original)
+    expect(buildExportRequest(input).revision).not.toBe(built.revision)
+  })
+
+  it('删原SVG但有附件的chart可以进入真实后端预检；无ref旧行为仍拒绝', () => {
+    const p = chartPanel()
+    useAssetStore.setState({ byId: {} })
+    expect(originalAvailability(p.fileId, { panel: p }).ok).toBe(false)
+    p.chartSource = { schema: 1, sourceId: p.fileId, bytesSha256: 'a'.repeat(64), sizeBytes: 100,
+      sceneDigest: p.chart!.model.scene_digest }
+    expect(originalAvailability(p.fileId, { panel: p }).ok).toBe(true)
+    p.chartSource = null as unknown as NonNullable<PanelObject['chartSource']>
+    expect(buildExportRequest(inputOf({ scope: 'original', figureId: p.fileId, panel: p })).request.original)
+      .toHaveProperty('chart_source', null)
+  })
+
+  it.each(['original', 'canvas'] as const)('%s 保留模型/绑定，且后续编辑不改变已构造快照', (scope) => {
+    const p = chartPanel()
+    const doc = { ...useDocumentStore.getState().doc, objects: [p] }
+    const input = inputOf({ scope, figureId: p.fileId, panel: p, doc })
+    const built = buildExportRequest(input)
+    const item = built.request.canvas?.objects[0]
+    const state = scope === 'original' ? built.request.original?.chart : item?.type === 'panel' ? item.chart : undefined
+    expect(state).toEqual(p.chart)
+    expect(state).not.toBe(p.chart)
+    const source = scope === 'original' ? built.request.original : item
+    expect(source).toHaveProperty('chart_render_profile', 'native-manifest/1')
+    const before = JSON.stringify(built.request)
+    p.chart!.model.axes[0].xlim[1] += 10
+    expect(buildExportRequest(input).revision).not.toBe(built.revision)
+    expect(JSON.stringify(built.request)).toBe(before)
+  })
+
+  it('多页同文件的不同计算版本分别携带，且进入导出指纹', () => {
+    const a = chartPanel()
+    const b = chartPanel()
+    b.chart!.model.axes[0].ylim[1] += 1
+    const pages = [a, b].map(p => ({ figureId: p.fileId, panel: p, spec: null }))
+    const input = inputOf({ scope: 'original', formats: ['pdf'], mergePages: pages })
+    const built = buildExportRequest(input)
+    expect(built.request.merge_pdf!.pages.map(p => p.chart)).toEqual([a.chart, b.chart])
+    expect(built.request.merge_pdf!.pages.map(p => p.chart_render_profile)).toEqual(['native-manifest/1', 'native-manifest/1'])
+    expect(buildExportRequest({ ...input, mergePages: [...pages].reverse() }).revision).not.toBe(built.revision)
+  })
+
+  it('缺省和不匹配面板不添加 chart 字段', () => {
+    const ordinary = buildExportRequest(inputOf()).request.canvas!.objects[0]
+    expect(ordinary).not.toHaveProperty('chart')
+    expect(ordinary).not.toHaveProperty('chart_render_profile')
+    const p = chartPanel()
+    const other = buildExportRequest(inputOf({ scope: 'original', panel: p, figureId: 'other.svg' }))
+    expect(other.request.original).not.toHaveProperty('chart')
+    expect(other.request.original).not.toHaveProperty('chart_render_profile')
+  })
+
+  it.each(['original', 'canvas', 'merge'] as const)('%s 冻结原序完整edits及identity，指纹不合并不同顺序', (scope) => {
+    const p = chartPanel()
+    p.overrides = [
+      { gid: 'axes_0.lines_0', prop: 'color', value: 'red', identity: 'l1:0123456789abcdef' },
+      { gid: 'axes_0.lines_0', prop: 'linewidth', value: 5 },
+      { gid: 'axes_0.lines_0', prop: 'color', value: 'blue' },
+    ]
+    const before = structuredClone(p.overrides)
+    const doc = { ...useDocumentStore.getState().doc, objects: [p] }
+    const input = inputOf({ scope: scope === 'canvas' ? 'canvas' : 'original', formats: ['pdf'], figureId: p.fileId, panel: p, doc,
+      ...(scope === 'merge' ? { mergePages: [{ figureId: p.fileId, panel: p, spec: null }] } : {}) })
+    const built = buildExportRequest(input)
+    const source = scope === 'canvas' ? built.request.canvas!.objects[0] : scope === 'merge' ? built.request.merge_pdf!.pages[0] : built.request.original!
+    expect(source).toHaveProperty('overrides', before)
+    expect(source).toHaveProperty('chart_render_profile', 'native-manifest/1')
+    p.overrides[0].value = 'green'
+    expect(source).toHaveProperty('overrides', before)
+    expect(buildExportRequest(input).revision).not.toBe(built.revision)
+    p.overrides = before.slice(0, 2)
+    const first = buildExportRequest(input).revision
+    p.overrides = [...p.overrides].reverse()
+    expect(buildExportRequest(input).revision).not.toBe(first)
+  })
 })
 
 describe('scope', () => {

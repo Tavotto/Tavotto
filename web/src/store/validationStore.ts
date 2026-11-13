@@ -15,6 +15,8 @@
  */
 import { create } from 'zustand'
 import { subscribeMath } from '@/lib/mathtext'
+import { currentProjectId } from '@/lib/session'
+import { needsFigureArchiveSource } from '@/lib/panelSourceEvidence'
 import { subscribeSourceFonts } from '@/lib/sourceFontCache'
 import { resolveDocumentSpec } from '@/lib/specBinding'
 import {
@@ -30,8 +32,8 @@ import {
   type ValidationSummary,
 } from '@/lib/validation'
 import { canvasToDoc, type FigureDocument } from '@/types/document'
-import { useAssetStore } from './assetStore'
-import { useDocumentStore } from './documentStore'
+import { captureSourceEvidenceScope, panelSourceEvidence, useAssetStore } from './assetStore'
+import { captureDocumentPreviewOwner, useDocumentStore } from './documentStore'
 import { useProfileStore } from './profileStore'
 import { useRenderStore } from './renderStore'
 
@@ -97,6 +99,37 @@ export function collectCanvases(): CanvasInput[] {
   })
 }
 
+function sourceOwnerCurrent(): boolean {
+  const owner = captureDocumentPreviewOwner()
+  return owner.pj === currentProjectId() && owner.still()
+}
+
+/** 异步只读取证由编排层驱动；纯求值器不发请求，也不认领转场中的旧正文。 */
+function ensureSources(): Promise<unknown>[] {
+  if (!sourceOwnerCurrent()) return []
+  const assets = useAssetStore.getState()
+  const pending: Promise<unknown>[] = []
+  for (const canvas of collectCanvases()) for (const panel of canvas.doc.objects) {
+    if (panel.type !== 'panel' || panel.chart !== undefined || panel.chartSource !== undefined) continue
+    if (needsFigureArchiveSource(panel)) pending.push(assets.ensureFigureSnapshotSource(panel))
+    else if (panel.fileKind !== 'runtime' && !assets.byId[panel.fileId]) pending.push(assets.ensureOriginalSource(panel.fileId))
+  }
+  return pending
+}
+
+const currentSourceEvidence = () => sourceOwnerCurrent() ? panelSourceEvidence() : undefined
+
+/** 报告冻结前等同一正文的来源事实；完成不等于可用，失败仍交原求值器报缺失。 */
+export async function prepareValidationSources(): Promise<boolean> {
+  const owner = captureDocumentPreviewOwner()
+  const sourceCurrent = captureSourceEvidenceScope()
+  const state = useDocumentStore.getState()
+  if (owner.pj !== currentProjectId() || !owner.still()) return false
+  await Promise.all(ensureSources())
+  const now = useDocumentStore.getState()
+  return sourceCurrent() && owner.still() && owner.pj === currentProjectId() && now.doc === state.doc && now.canvases === state.canvases
+}
+
 /* -------------------------------- 跑一遍 ---------------------------------- */
 
 /**
@@ -126,7 +159,7 @@ export function runValidation(only?: Set<string>): void {
       return validateCanvas(input, s.documentId, assets, {
         byKey: render.byKey,
         latest: render.latest,
-      })
+      }, currentSourceEvidence())
     })
     if (useValidationStore.getState().generation !== gen) {
       useValidationStore.setState({ running: false, queued: timer != null })
@@ -163,6 +196,7 @@ let pendingAll = false
  * 那一轮回来时会被丢掉**。
  */
 export function schedule(canvasId?: string): void {
+  ensureSources()
   if (canvasId == null) pendingAll = true
   else (pending ??= new Set()).add(canvasId)
   useValidationStore.setState((s) => ({ generation: s.generation + 1, queued: true }))
@@ -213,10 +247,15 @@ export function startValidation(): () => void {
   let activeCanvasId = doc.activeCanvasId
   let docRef: unknown = doc.doc
   let canvasesRef: unknown = doc.canvases
+  let gateRef: unknown = doc.restoreGate
 
   schedule()
 
   const stopDoc = useDocumentStore.subscribe((s) => {
+    if (s.restoreGate !== gateRef) {
+      gateRef = s.restoreGate
+      schedule()
+    }
     if (s.documentId !== documentId) {
       documentId = s.documentId
       activeCanvasId = s.activeCanvasId
@@ -250,9 +289,13 @@ export function startValidation(): () => void {
   })
 
   let assetsRef: unknown = useAssetStore.getState().byId
+  let sourcesRef: unknown = useAssetStore.getState().originalSources
+  let archivesRef: unknown = useAssetStore.getState().figureSnapshots
   const stopAssets = useAssetStore.subscribe((s) => {
-    if (s.byId === assetsRef) return
+    if (s.byId === assetsRef && s.originalSources === sourcesRef && s.figureSnapshots === archivesRef) return
     assetsRef = s.byId
+    sourcesRef = s.originalSources
+    archivesRef = s.figureSnapshots
     schedule()
   })
 
@@ -339,6 +382,7 @@ export function originalValidationFor(
       useAssetStore.getState().byId,
       { byKey: render.byKey, latest: render.latest },
       target,
+      currentSourceEvidence(),
     )
     return { result, failed: false }
   } catch {
@@ -364,6 +408,7 @@ export function croppedValidationFor(
       useDocumentStore.getState().documentId,
       useAssetStore.getState().byId,
       { byKey: render.byKey, latest: render.latest },
+      currentSourceEvidence(),
     )
     return { result, failed: false }
   } catch {

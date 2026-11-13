@@ -117,6 +117,11 @@ def _num(v: float) -> str:
     return s if s not in ("", "-0") else "0"
 
 
+def glyph_width_1000(face, gid: int) -> float:
+    """The exact width written in a CIDFont /W array (not a text advance)."""
+    return round(face.advance(gid) * 1000.0 / face.upem, 3)
+
+
 def _rgb(p: ir.RGB) -> str:
     return " ".join(_num(c) for c in p)
 
@@ -185,6 +190,8 @@ class PdfWriter:
         page: ir.Page,
         provider: HbFaceProvider,
         files: Mapping[str, bytes] | None = None,
+        *,
+        _raster_usage: list[int] | None = None,
     ) -> None:
         require("pikepdf", "fontTools", "uharfbuzz")
         import pikepdf
@@ -207,7 +214,8 @@ class PdfWriter:
         #: 资源 key → 已写好的 Image XObject（+ 它的事实）
         self._image_objs: dict[str, tuple[Any, dict]] = {}
         #: 本文档已解码 / 已嵌入的位图像素总数（去重后按资源计），对 `raster.DOCUMENT_MAX_PIXELS` 判
-        self._raster_pixels = 0
+        self._raster_usage = [0] if _raster_usage is None else _raster_usage
+        self._native_svg_facts: dict[tuple[str, int], dict] = {}
 
     # -- 资源 -------------------------------------------------------------
     def _name(self, prefix: str) -> str:
@@ -304,20 +312,23 @@ class PdfWriter:
         form = self._foreign_forms.get(key)
         if form is not None:
             return form
-        try:
-            src = pikepdf.open(io.BytesIO(data))
-        except pikepdf.PasswordError as exc:
-            raise WriterError(
-                "source_unreadable",
-                f"{res.source_id}: 源 PDF 加密，本轮不打开加密文件（RC-046）",
-                {"figure": res.source_id, "object_id": node.object_id, "why": "encrypted"},
-            ) from exc
-        except (pikepdf.PdfError, ValueError, OSError) as exc:
-            raise WriterError(
-                "source_unreadable",
-                f"{res.source_id}: 源 PDF 打不开: {exc}",
-                {"figure": res.source_id, "object_id": node.object_id, "why": "broken"},
-            ) from exc
+        if ir.is_native_svg(res.kind, res.origin) and res.origin == "static":
+            src = self._native_svg_document(node, res, data)
+        else:
+            try:
+                src = pikepdf.open(io.BytesIO(data))
+            except pikepdf.PasswordError as exc:
+                raise WriterError(
+                    "source_unreadable",
+                    f"{res.source_id}: 源 PDF 加密，本轮不打开加密文件（RC-046）",
+                    {"figure": res.source_id, "object_id": node.object_id, "why": "encrypted"},
+                ) from exc
+            except (pikepdf.PdfError, ValueError, OSError) as exc:
+                raise WriterError(
+                    "source_unreadable",
+                    f"{res.source_id}: 源 PDF 打不开: {exc}",
+                    {"figure": res.source_id, "object_id": node.object_id, "why": "broken"},
+                ) from exc
         self._foreign_docs.append(src)
         # 只有 owner 密码（user 密码为空）的 PDF 走到这里就是打开了，按普通 PDF 导入（#516 裁决 B，ADR 0065 RC-046）：
         # 任何阅读器都无密码打开它，期刊 / 出版社发的 PDF 常见这种权限限制；qpdf 读时透明解密，搬进来的内容流与资源
@@ -342,7 +353,54 @@ class PdfWriter:
         self._foreign_forms[key] = form
         return form
 
+    def _native_svg_document(self, node: ir.ImportedPage, res: ir.FileResource, data: bytes):
+        """Adapt one already hash-checked static SVG through the existing IR writer."""
+        from .. import svgasset
+        from . import svgir
+        from .svgcheck import SVGError
+
+        try:
+            checked, size = svgasset.inspect_bytes(data)
+            image_files: dict[str, bytes] = {}
+            page, notes = svgir.svg_to_ir(
+                checked, size["w_pt"], size["h_pt"], self.provider, files=image_files
+            )
+        except (svgasset.UnsupportedSVG, SVGError, svgir.SVGIRError) as exc:
+            raise UnsupportedCapability(
+                "imported_page", getattr(exc, "code", "svg_invalid"), node.object_id
+            ) from exc
+        child = PdfWriter(page, self.provider, image_files, _raster_usage=self._raster_usage)
+        try:
+            child._build_document()
+        except BaseException:
+            for document in child._foreign_docs:
+                document.close()
+            child.pdf.close()
+            raise
+        self._foreign_docs.extend(child._foreign_docs)
+        self.facts.notdef_codes += child.facts.notdef_codes
+        self._native_svg_facts[(node.resource, node.page_index)] = {
+            "source_sha256": res.sha256,
+            "physical_pt": [size["w_pt"], size["h_pt"]],
+            "notes": notes,
+            "fonts": child.facts.fonts,
+            "text_objects": child.facts.text_objects,
+            "images": child.facts.images,
+        }
+        return child.pdf
+
     def _imported_page(self, node: ir.ImportedPage, rec: _Recorder, ctm: ir.Matrix) -> None:
+        resource = self.page.resources[node.resource]
+        if (
+            isinstance(resource, ir.FileResource)
+            and resource.kind == "svg"
+            and resource.origin == "declarative"
+        ):
+            raise UnsupportedCapability(
+                "imported_page",
+                "Native SVG source has no canonical PDF representation",
+                node.object_id,
+            )
         res, data = self._source_bytes(node)
         form = self._foreign_form(node, res, data)
         bbox = tuple(float(v) for v in form.BBox)
@@ -392,6 +450,9 @@ class PdfWriter:
             "opacity": node.opacity,
             "transparency_group": node.opacity < 1.0,
         }
+        svg_facts = self._native_svg_facts.get((node.resource, node.page_index))
+        if svg_facts is not None:
+            fact["native_svg"] = svg_facts
         if node.opacity < 1.0:
             # 整页包成透明组：组内 alpha 从 1 起算，源页内部重叠不被二次压暗（RC-041）；仍是矢量
             wrap = _Recorder()
@@ -412,20 +473,20 @@ class PdfWriter:
         """文档级像素预算：每个**不同**的位图资源在嵌入前记一次账，累计超过就拒——单张各判一次
         挡不住「很多张各自刚好在线下」的那种耗尽（Codex #463 第二轮 P2）。"""
         pixels = int(width) * int(height)
-        if self._raster_pixels + pixels > raster.DOCUMENT_MAX_PIXELS:
+        if self._raster_usage[0] + pixels > raster.DOCUMENT_MAX_PIXELS:
             raise WriterError(
                 "source_unreadable",
-                f"{res.source_id}: 本文档位图像素累计 {self._raster_pixels + pixels} > 预算 "
+                f"{res.source_id}: 本文档位图像素累计 {self._raster_usage[0] + pixels} > 预算 "
                 f"{raster.DOCUMENT_MAX_PIXELS}（已嵌 {len(self._image_objs)} 张）",
                 {
                     "figure": res.source_id,
                     "object_id": node.object_id,
                     "why": "raster_budget_exceeded",
-                    "pixels_used": self._raster_pixels,
+                    "pixels_used": self._raster_usage[0],
                     "pixels_wanted": pixels,
                 },
             )
-        self._raster_pixels += pixels
+        self._raster_usage[0] += pixels
 
     def _image_xobject(self, node: ir.Image, res: ir.FileResource, data: bytes):
         import pikepdf
@@ -525,13 +586,14 @@ class PdfWriter:
         parts = ["q"]
         if node.opacity < 1.0:
             parts.append(f"/{self._gs(rec, node.opacity, node.opacity)} gs")
-        cx, cy, cw, ch = pl.clip
-        parts += [
-            " ".join(_num(v) for v in pl.matrix) + " cm",
-            f"{_num(cx)} {_num(cy)} {_num(cw)} {_num(ch)} re W n",
-            f"/{name} Do",
-            "Q",
-        ]
+        parts.append(" ".join(_num(v) for v in pl.matrix) + " cm")
+        # An Image XObject already owns its unit-square boundary. Repeating it
+        # as a clip multiplies edge coverage after shear/rotation (and SMask).
+        # A genuine crop still needs its independently chosen clip.
+        if node.crop not in (None, (0, 0, 1, 1)):
+            cx, cy, cw, ch = pl.clip
+            parts.append(f"{_num(cx)} {_num(cy)} {_num(cw)} {_num(ch)} re W n")
+        parts += [f"/{name} Do", "Q"]
         rec.ops.append(" ".join(parts))
         self.facts.images.append(
             {
@@ -550,6 +612,9 @@ class PdfWriter:
 
     def _group(self, node: ir.Group, rec: _Recorder, ctm: ir.Matrix, depth: int) -> None:
         self.facts.groups += 1
+        if isinstance(node.clip, ir.ClipUnion):
+            self._union_clip_group(node, rec, ctm, depth)
+            return
         inner = ["q"]
         if node.transform != ir.IDENTITY:
             inner.append(" ".join(_num(v) for v in node.transform) + " cm")
@@ -578,6 +643,58 @@ class PdfWriter:
         for child in node.children:
             self._emit(child, rec, local, depth + 1)
         rec.ops.append("Q")
+
+    def _union_clip_group(self, node: ir.Group, rec: _Recorder, ctm: ir.Matrix, depth: int) -> None:
+        """True vector union, retaining each member's winding rule and curves.
+
+        Opaque white paths paint an isolated luminosity mask: white over white
+        remains white. Content is rendered once into its own isolated Form,
+        then masked once with the group's alpha. Nested unions consequently
+        intersect at Form compositing instead of replacing an ancestor SMask.
+        The ordinary single-Path W/W* branch is unchanged.
+        """
+        import pikepdf
+
+        assert isinstance(node.clip, ir.ClipUnion)
+        local = ir.compose(node.transform, ctm)
+        bbox = _page_bbox_in(ctm, self.page)
+        transform = " ".join(_num(v) for v in node.transform) + " cm"
+        content = _Recorder(ops=["q", transform])
+        for child in node.children:
+            self._emit(child, content, local, depth + 1)
+        content.ops.append("Q")
+        self._forms_pending.append((content, bbox))
+        name = self._name("ClipContent")
+        rec.xobjects[name] = content
+
+        mask_ops = ["q", transform, "1 g"]
+        for path in node.clip.paths:
+            mask_ops.append(
+                _path_segments(path.segments) + (" f*" if path.fill_rule == "evenodd" else " f")
+            )
+        mask_ops.append("Q")
+        mask = pikepdf.Stream(self.pdf, ("\n".join(mask_ops) + "\n").encode("ascii"))
+        mask["/Type"] = pikepdf.Name.XObject
+        mask["/Subtype"] = pikepdf.Name.Form
+        mask["/BBox"] = pikepdf.Array([float(v) for v in bbox])
+        mask["/Resources"] = pikepdf.Dictionary()
+        mask["/Group"] = pikepdf.Dictionary(
+            S=pikepdf.Name.Transparency, CS=pikepdf.Name.DeviceGray, I=True, K=False
+        )
+        state = self.pdf.make_indirect(
+            pikepdf.Dictionary(
+                Type=pikepdf.Name.ExtGState,
+                ca=float(node.opacity),
+                CA=float(node.opacity),
+                SMask=pikepdf.Dictionary(
+                    S=pikepdf.Name.Luminosity, G=self.pdf.make_indirect(mask), BC=pikepdf.Array([0])
+                ),
+            )
+        )
+        gs_name = self._name("ClipMask")
+        rec.extgstates[gs_name] = state
+        rec.ops.append(f"q /{gs_name} gs /{name} Do Q")
+        self.facts.transparency_groups += 2
 
     def _path_ops(self, node: ir.Path, rec: _Recorder) -> str:
         parts = ["q"]
@@ -764,10 +881,10 @@ class PdfWriter:
                     pikepdf.Stream(self.pdf, data, Subtype=pikepdf.Name.CIDFontType0C)
                 )
             descriptor = self.pdf.make_indirect(pikepdf.Dictionary(desc))
-            widths = {use.code(g): face.advance(g) * 1000.0 / face.upem for g in use.used}
+            widths = {use.code(g): glyph_width_1000(face, g) for g in use.used}
             w_array: list = []
             for code in sorted(widths):
-                w_array += [code, [round(widths[code], 3)]]
+                w_array += [code, [widths[code]]]
             cid: dict = {
                 "/Type": pikepdf.Name.Font,
                 "/BaseFont": pikepdf.Name("/" + base),
@@ -851,7 +968,7 @@ class PdfWriter:
         )
         return self.pdf.make_indirect(stream)
 
-    def write(self, out: Path) -> WriteFacts:
+    def _build_document(self) -> None:
         import pikepdf
 
         rec = _Recorder()
@@ -870,6 +987,11 @@ class PdfWriter:
             Contents=self.pdf.make_indirect(pikepdf.Stream(self.pdf, content)),
         )
         self.pdf.pages.append(pikepdf.Page(page))
+
+    def write(self, out: Path) -> WriteFacts:
+        import pikepdf
+
+        self._build_document()
         out = Path(out)
         _compress_unfiltered(self.pdf)
         # compress_streams=False：qpdf 的 compress_streams 会把源里带 predictor 的 Flate 图片流解码再重压

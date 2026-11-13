@@ -1,3 +1,4 @@
+import { parseDocumentFormat, type DocumentFormat } from './documentFormat'
 /**
  * 跨标签页的「这份文档已经在别的窗口开着」提示。
  *
@@ -22,10 +23,10 @@ const CHANNEL_NAME = `${PRODUCT_NAME.toLowerCase()}:doc-presence`
 const TAB_ID = newId('tab')
 
 type PresenceMessage =
-  | { type: 'doc-open'; docId: string; tabId: string }
-  | { type: 'doc-held'; docId: string; tabId: string }
-  | { type: 'doc-probe'; docId: string; tabId: string; reqId: string }
-  | { type: 'doc-probe-ack'; docId: string; tabId: string; reqId: string }
+  | { type: 'doc-open'; docId: string; tabId: string; format?: DocumentFormat }
+  | { type: 'doc-held'; docId: string; tabId: string; format?: DocumentFormat }
+  | { type: 'doc-probe'; docId: string; tabId: string; reqId: string; format?: DocumentFormat }
+  | { type: 'doc-probe-ack'; docId: string; tabId: string; reqId: string; format?: DocumentFormat }
 
 /** BroadcastChannel 里我们真正用到的那几个方法（测试可注入替身） */
 export interface PresenceChannel {
@@ -41,6 +42,7 @@ let makeChannel: ChannelFactory | null =
 let channel: PresenceChannel | null = null
 /** 本标签页当前端着的文档；null = 还没打开任何文档 */
 let heldDocId: string | null = null
+let heldFormat: DocumentFormat = 'legacy'
 
 function ensureChannel(): PresenceChannel | null {
   if (channel || !makeChannel) return channel
@@ -54,23 +56,24 @@ function ensureChannel(): PresenceChannel | null {
   return channel
 }
 
-const probes = new Map<string, () => void>()
+const probes = new Map<string, { docId: string; format: DocumentFormat; answer: () => void }>()
 
 function receive(data: unknown): void {
   const msg = data as PresenceMessage | null
   if (!msg || typeof msg !== 'object' || msg.tabId === TAB_ID) return
   if (msg.type === 'doc-probe-ack') {
-    probes.get(msg.reqId)?.()
+    const probe = probes.get(msg.reqId)
+    if (probe?.docId === msg.docId && probe.format === parseDocumentFormat(msg.format)) probe.answer()
     return
   }
-  if (!heldDocId || msg.docId !== heldDocId) return // 别人开的是另一份，与我无关
+  if (parseDocumentFormat(msg.format) !== heldFormat || !heldDocId || msg.docId !== heldDocId) return
   if (msg.type === 'doc-probe') {
-    channel?.postMessage({ type: 'doc-probe-ack', docId: heldDocId, tabId: TAB_ID, reqId: msg.reqId })
+    channel?.postMessage({ type: 'doc-probe-ack', docId: heldDocId, tabId: TAB_ID, reqId: msg.reqId, ...(heldFormat === 'v4' ? { format: heldFormat } : {}) })
     return
   }
   if (msg.type === 'doc-open') {
     // 我先端着这份：回一声，让后来者弹提示
-    channel?.postMessage({ type: 'doc-held', docId: heldDocId, tabId: TAB_ID })
+    channel?.postMessage({ type: 'doc-held', docId: heldDocId, tabId: TAB_ID, ...(heldFormat === 'v4' ? { format: heldFormat } : {}) })
   } else if (msg.type === 'doc-held') {
     window.dispatchEvent(
       new CustomEvent('tavotto:doc-conflict', { detail: { id: heldDocId } }),
@@ -79,9 +82,10 @@ function receive(data: unknown): void {
 }
 
 /** 打开/切换到某文档时广播一次；有别的标签页端着同一份就会收到回音。 */
-export function announceDocOpen(docId: string): void {
+export function announceDocOpen(docId: string, format: DocumentFormat = 'legacy'): void {
   heldDocId = docId
-  ensureChannel()?.postMessage({ type: 'doc-open', docId, tabId: TAB_ID })
+  heldFormat = format
+  ensureChannel()?.postMessage({ type: 'doc-open', docId, tabId: TAB_ID, ...(format === 'v4' ? { format } : {}) })
 }
 
 /** 本标签页的身份，仅供测试构造「另一个标签页」的消息时区分用 */
@@ -101,7 +105,7 @@ export function __setPresenceChannelFactory(factory: ChannelFactory | null): voi
  * 此刻有没有**别的**标签页端着这份文档（只问不占：不改自己端着的、不弹提示）。
  * 同样是尽力而为：频道不存在 / 没人回音 = false。用于重开项目文件时判断旧身份能不能沿用。
  */
-export function isDocHeldElsewhere(docId: string, waitMs = 150): Promise<boolean> {
+export function isDocHeldElsewhere(docId: string, waitMs = 150, format: DocumentFormat = 'legacy'): Promise<boolean> {
   const ch = ensureChannel()
   if (!ch) return Promise.resolve(false)
   return new Promise((resolve) => {
@@ -112,7 +116,7 @@ export function isDocHeldElsewhere(docId: string, waitMs = 150): Promise<boolean
       resolve(held)
     }
     const timer = setTimeout(() => done(false), waitMs)
-    probes.set(reqId, () => done(true))
-    ch.postMessage({ type: 'doc-probe', docId, tabId: TAB_ID, reqId })
+    probes.set(reqId, { docId, format, answer: () => done(true) })
+    ch.postMessage({ type: 'doc-probe', docId, tabId: TAB_ID, reqId, ...(format === 'v4' ? { format } : {}) })
   })
 }

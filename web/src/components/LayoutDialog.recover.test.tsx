@@ -13,7 +13,7 @@ import { createFakeBackend } from '@/test/fakeSessionBackend'
 import { LayoutDialog } from '@/components/LayoutDialog'
 import { recoveryCopyId } from '@/lib/recoveryCandidates'
 import { setCurrentProjectId } from '@/lib/session'
-import { useDocumentStore } from '@/store/documentStore'
+import { beginRestore, resetRestoreGateForTests, settleRestore, useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { emptyProject } from '@/types/document'
@@ -145,6 +145,39 @@ afterEach(async () => {
 })
 
 describe('找回入口的可发现性与只读', () => {
+  it('恢复门未开时，本项目已核归属候选仍显示媒体；未知归属同名素材只显示结构草图', async () => {
+    const sketch = { page: { w: 100, h: 80 }, objects: [
+      { type: 'panel', fileId: 'same.png', fileKind: 'raster', x: 1, y: 2, w: 40, h: 30 },
+      { type: 'shape', shape: 'rect', x: 2, y: 3, w: 10, h: 10 },
+    ] }
+    backend.putSlot('d_known_sketch', runtimeDoc('已确认'), PJ)
+    backend.putSlot('d_unknown_sketch', runtimeDoc('待确认'))
+    backend.state.candidates.push(
+      { doc_id: 'd_known_sketch', scope: 'project', name: '已确认', sketch },
+      { doc_id: 'd_unknown_sketch', scope: 'unknown', name: '待确认', sketch },
+    )
+    const token = beginRestore(PJ)
+    settleRestore(token, { state: 'needs_user', issue: { pj: PJ, gen: token.gen, kind: 'unavailable', ref: null, alternatives: [] } })
+    try {
+      await mount()
+      const known = rows('project')[0]
+      const href = known.querySelector('[data-thumb-panel]')?.getAttribute('href')
+      expect(new URL(href ?? '', 'http://localhost').searchParams.get('pj')).toBe(PJ)
+      await expandOther()
+      expect(rows('unknown')[0].querySelector('[data-thumb-panel]')).toBeNull()
+      expect(rows('unknown')[0].querySelector('[data-canvas-thumb] rect')).not.toBeNull()
+      expect(backend.state.calls.filter(call => call.includes('engine') || call.startsWith('GET autosave'))).toEqual([])
+      expect(backend.writes()).toEqual([])
+      await act(async () => {
+        setCurrentProjectId('p_b')
+        useDocumentStore.setState({ documentId: 'other-placeholder' })
+      })
+      expect(rows('project')[0]?.querySelector('[data-thumb-panel]')).toBeNull()
+    } finally {
+      resetRestoreGateForTests()
+    }
+  })
+
   it('归属索引退化且项目列表为空时显示重试，恢复后不用重开对话框就能找回', async () => {
     backend.putSlot('d_mine', runtimeDoc('我的排版'), PJ)
     backend.state.candidates.push({ doc_id: 'd_mine', scope: 'project', name: '我的排版' })
