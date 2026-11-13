@@ -17,7 +17,8 @@ import { usePackageStore } from '@/store/packageStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useEnvStore } from '@/store/envStore'
 import { applyExportJob } from '@/store/exportStore'
-import { recoverAfterReconnect, refreshAssetsAndSync } from '@/store/liveSync'
+import { recoverAfterReconnect, refreshAssetsAndSync, refreshProjectNow } from '@/store/liveSync'
+import { retryOrFeedback } from '@/store/failureExit'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectScanStore } from '@/store/projectScanStore'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
@@ -366,6 +367,33 @@ export function handleServerEvent(ev: ServerEvent) {
 }
 
 
+/** 「AI 已改脚本、项目没刷新」那条提示的主人：点「刷新项目」先收掉自己那一条 */
+const AI_REFRESH_FAILED_OWNER = 'ai.changedRefreshFailed'
+
+/**
+ * 代码改成了、项目没刷新：红字 +「刷新项目」（走与顶栏同一个 `refreshProjectNow`）。
+ * 点的时候已换到别的项目就只收提示——别替另一个项目刷新；这次刷新又失败，换成「发给我们看看」。
+ */
+function reportAiRefreshFailed(reason: string, attempt: number): void {
+  const projectId = currentProjectId()
+  useUiStore.getState().setStatus(msg('status.aiChangedRefreshFailed', { reason }, 'ai'), 'error', {
+    owner: AI_REFRESH_FAILED_OWNER,
+    action: retryOrFeedback({
+      owner: AI_REFRESH_FAILED_OWNER,
+      attempt,
+      label: msg('topbar.refreshProject', undefined, 'workspace'),
+      run: async (next) => {
+        if (currentProjectId() !== projectId) return
+        try {
+          await refreshProjectNow()
+        } catch (e) {
+          if (currentProjectId() === projectId) reportAiRefreshFailed(e instanceof Error ? e.message : String(e), next)
+        }
+      },
+    }),
+  })
+}
+
 /**
  * 一次 AI 会话收尾时对用户说的话（状态栏）。直达路径（`ai.done` 到的时候会话已经在）和
  * 「事件先于 `aiRun` 响应、会话建好后才回放」的路径共用这一份。
@@ -387,7 +415,7 @@ function announceAiDone(ev: DonePayload) {
     const reason = i18n.exists(`backend.${code}`, { ns: 'errors' })
       ? translateBackend(code)
       : code
-    setStatus(msg('status.aiChangedRefreshFailed', { reason }, 'ai'), 'error')
+    reportAiRefreshFailed(reason, 0)
     return
   }
   // 任务结局（TAF）：只翻译 `task.outcome`；刷新失败那条优先级最高，在上面已经返回。

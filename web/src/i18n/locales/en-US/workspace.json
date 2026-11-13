@@ -911,7 +911,7 @@
     "pasted_one": "Pasted {{count}} object. {{undo}} to undo.",
     "pasted_other": "Pasted {{count}} objects ({{undo}} to undo)",
     "projectBackgroundError": "Couldn’t check the project files in the background. What you have open is unaffected; Tavotto retries once the file is fixed.",
-    "recentMissing": "The copy of this layout on this computer no longer exists",
+    "recentMissing": "This layout is no longer on this computer, so it was removed from the list",
     "recentTooNew": "That layout is from a newer Tavotto and this build can’t open it. The file on disk is untouched.",
     "redone": "Redone: {{label}}",
     "relinkNone": "No figures were relinked; figures with missing assets are unchanged",

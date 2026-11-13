@@ -23,8 +23,6 @@ import {
   setDocumentName,
 } from '@/store/actions'
 import { runUndoRedo } from '@/hooks/useKeyboard'
-import { createPackage } from '@/lib/api'
-import { openPackageFile } from '@/lib/packageImport'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { dragRegionProps, isDesktop, TRAFFIC_LIGHTS_INSET, WINDOW_CONTROLS_INSET, windowChrome } from '@/lib/desktop'
 import { keyOf } from '@/lib/keymap'
@@ -49,8 +47,10 @@ import {
 } from '@/store/documentStore'
 import { runManualSave } from '@/store/actions'
 import { useOnboardingStore } from '@/store/onboardingStore'
+import { checkNewerBuild } from '@/store/failureExit'
+import { exportPackage, openPackageWithRetry } from '@/store/packageActions'
 import { useUiStore } from '@/store/uiStore'
-import { fetchNewerDesktopBuild, useUpdateStore } from '@/store/updateStore'
+import { useUpdateStore } from '@/store/updateStore'
 import { BrandMark } from './ui/BrandMark'
 import { Button } from './ui/Button'
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from './ui/Menu'
@@ -68,7 +68,7 @@ import { RestoreIssueBody, RestoreMetaBody } from './RestoreIssueBody'
 import { useWindowFullscreen } from '@/hooks/useWindowChrome'
 import { MOD, cn } from '@/lib/utils'
 import { journalCatalogUi } from '@/lib/journalUi'
-import { msg, t as translate } from '@/i18n'
+import { t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
 import { useFormatMessage } from '@/i18n/react'
 
@@ -142,31 +142,6 @@ export function TopBar() {
 }
 
 /**
- * 导出可复现项目包（.tavotto）：布局 + 引用素材 + 源脚本 + 清单。
- *
- * **它从导出对话框搬到了这里**（Prompt 12 §五）：打包出的是一个"项目"，
- * 不是一张图，和「导出这张图」放在同一个弹窗里让两件事互相冒充。搬走
- * 不等于砍掉——导入就在下面一行，一进一出终于在同一个菜单里。
- */
-async function exportPackage() {
-  const ui = useUiStore.getState()
-  const doc = useDocumentStore.getState()
-  try {
-    const res = await createPackage(doc.projectMeta.name || doc.doc.name, doc.buildProject(), {})
-    ui.setStatus(msg('status.packaged', { name: res.name, count: res.assets }, 'workspace'), 'done')
-  } catch (e) {
-    ui.setStatus(
-      msg(
-        'status.packageFailed',
-        { error: e instanceof Error ? e.message : String(e) },
-        'workspace',
-      ),
-      'error',
-    )
-  }
-}
-
-/**
  * 导入可复现项目包：选 zip → 后端检视（不写入图库）→ 作为新文档打开；
  * 有缺失素材时接到统一的重新链接对话框，绝不静默出空面板。
  */
@@ -179,22 +154,9 @@ function importPackage() {
   // 本来就打得开，只有这个文件选择器会把它滤掉——所以列进来。写出永远是
   // .tavotto，这不是运行时兼容层回潮。
   input.accept = '.tavotto,.magplot,.zip,application/zip'
-  input.onchange = async () => {
+  input.onchange = () => {
     const file = input.files?.[0]
-    if (!file) return
-    const ui = useUiStore.getState()
-    try {
-      await openPackageFile(file)
-    } catch (e) {
-      ui.setStatus(
-        msg(
-          'status.packageOpenFailed',
-          { error: e instanceof Error ? e.message : String(e) },
-          'workspace',
-        ),
-        'error',
-      )
-    }
+    if (file) void openPackageWithRetry(file, 0)
   }
   input.click()
 }
@@ -694,27 +656,6 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
     )
   }
   return null
-}
-
-/** 「检查更新」之后用一条 toast 说结果；有新版但没下好时，toast 上的动作直接下载并更新 */
-async function checkNewerBuild(): Promise<void> {
-  const ui = useUiStore.getState()
-  const outcome = await fetchNewerDesktopBuild()
-  if (outcome === 'ready') {
-    ui.setStatus(msg('docBanner.updateReady', undefined, 'workspace'), 'info')
-  } else if (outcome === 'found') {
-    const version = useUpdateStore.getState().desktopUpdate?.version ?? ''
-    ui.setStatus(msg('docBanner.updateFound', { version }, 'workspace'), 'info', {
-      action: {
-        label: msg('docBanner.updateInstall', undefined, 'workspace'),
-        run: () => void useUpdateStore.getState().installDesktop(),
-      },
-    })
-  } else if (outcome === 'none') {
-    ui.setStatus(msg('docBanner.updateNone', undefined, 'workspace'), 'info')
-  } else {
-    ui.setStatus(msg('docBanner.updateCheckFailed', undefined, 'workspace'), 'error')
-  }
 }
 
 export function DocumentMenu() {
