@@ -459,3 +459,77 @@ def test_check_svg_flags_matplotlib_outlined_text_but_not_plain_graphics(tmp_pat
     live = tmp_path / "t.svg"
     live.write_bytes(svg('<g id="text_1"><text>x</text></g>'))
     assert artifactcheck.check_svg(live, expect_mm=None, font_family=None)["text_outlined"] is False
+
+
+def _ids_and_refs(root):
+    ids = [n.get("id") for n in root.iter() if n.get("id")]
+    hrefs = [v for n in root.iter() for k, v in n.attrib.items() if k.endswith("href")]
+    return ids, hrefs
+
+
+def test_worker_normalization_repairs_ids_the_safe_grammar_rejects(tmp_path):
+    """A user `set_gid("面板 A")` is legal Matplotlib output; only the trusted worker boundary renames it.
+
+    The rename is consistent: `href="#…"`, `url(#…)` and later duplicates follow the first definition,
+    the same element every SVG renderer would pick.
+    """
+    from tavotto.engine.artifactinspect import normalize_worker_svg
+
+    body = (
+        '<defs><clipPath id="面板 A"><rect width="1" height="1"/></clipPath>'
+        '<path id="p1" d="M0 0L1 1"/></defs>'
+        '<g clip-path="url(#面板 A)"><use xlink:href="#面板 A"/></g>'
+        '<g id="p1"><use xlink:href="#p1"/></g>'
+    )
+    original = svg(body)
+    with pytest.raises(SVGError, match="svg_invalid_id"):
+        parse_svg(original)
+    path = tmp_path / "worker.svg"
+    path.write_bytes(original)
+    normalize_worker_svg(path)
+    root = parse_svg(path.read_bytes())
+    ids, hrefs = _ids_and_refs(root)
+    assert len(ids) == len(set(ids)) == 3
+    clip = next(n for n in root.iter() if n.tag.endswith("clipPath")).get("id")
+    first_path = next(n for n in root.iter() if n.tag.endswith("path")).get("id")
+    assert first_path == "p1"
+    assert hrefs == [f"#{clip}", "#p1"]
+    group = [n for n in root.iter() if n.tag.endswith("}g")][0]
+    assert group.get("clip-path") == f"url(#{clip})"
+
+
+def test_worker_id_repair_still_runs_the_full_gate(tmp_path):
+    from tavotto.engine.artifactinspect import normalize_worker_svg
+
+    path = tmp_path / "worker.svg"
+    original = svg('<g id="面板"/><script>alert(1)</script>')
+    path.write_bytes(original)
+    with pytest.raises(SVGError):
+        normalize_worker_svg(path)
+    assert path.read_bytes() == original
+
+
+def test_import_boundary_keeps_rejecting_bad_ids():
+    """Arbitrary files never borrow the worker repair: parse_svg itself stays strict."""
+    with pytest.raises(SVGError, match="svg_invalid_id"):
+        parse_svg(svg('<g id="面板"/>'))
+    with pytest.raises(SVGError, match="svg_invalid_id"):
+        parse_svg(svg('<g id="a"/><g id="a"/>'))
+
+
+def test_worker_normalization_accepts_matplotlib_user_gid(tmp_path):
+    mpl = pytest.importorskip("matplotlib")
+    mpl.use("agg")
+    import matplotlib.pyplot as plt
+
+    from tavotto.engine.artifactinspect import normalize_worker_svg
+
+    fig, ax = plt.subplots(figsize=(2, 2))
+    ax.plot([0, 1], [0, 1]).pop().set_gid("曲线 1")
+    path = tmp_path / "worker.svg"
+    try:
+        fig.savefig(path, format="svg")
+    finally:
+        plt.close(fig)
+    normalize_worker_svg(path)
+    parse_svg(path.read_bytes())

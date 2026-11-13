@@ -2,9 +2,11 @@
 
 Only UTF-8 XML, static SVG and inert Matplotlib RDF metadata are accepted. This is
 validation, not a lossy sanitizer: rejected input never becomes a partial figure.
-The sole normalization helper removes the exact inert Matplotlib DTD declaration;
-worker callers use it before hashing. Static image import may also remove this
-exact declaration, then validate the complete remaining bytes before serving.
+Two normalization helpers exist. `strip_matplotlib_doctype` removes the exact inert
+Matplotlib DTD declaration; worker callers use it before hashing, and static image import
+may also use it before validating the complete remaining bytes. `repair_worker_ids`
+renames ids the safe grammar rejects (non-ASCII / spaces from a user `set_gid`, duplicates);
+only the trusted worker boundary calls it, and its output must still pass `parse_svg`.
 """
 
 from __future__ import annotations
@@ -143,6 +145,76 @@ def strip_matplotlib_doctype(data: bytes) -> bytes:
     if found:
         return data[:start] + data[found.end() :]
     return data
+
+
+def repair_worker_ids(data: bytes, *, budget: SVGBudget | None = None) -> bytes:
+    """Rename ids the safe grammar rejects in **trusted worker output**; anything else unchanged.
+
+    Matplotlib writes a user `set_gid("面板 A")` verbatim as `id="面板 A"`; that is legal output
+    but outside `_ID`. An invalid id gets a fresh name and every local reference to it
+    (`href="#…"`, `url(#…)`, stylesheet tokens) follows. A later duplicate gets a fresh name and
+    references keep pointing at the first definition — the element every renderer resolves.
+    Returns `data` byte-for-byte when nothing needs renaming or the input does not parse; the
+    caller must run `parse_svg` on the result, so this never admits otherwise unsafe content.
+    Arbitrary imported files never go through here (they are rejected as before).
+    """
+    budget = budget or SVGBudget()
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data
+    if len(data) > budget.max_bytes or re.search(r"<!\s*(?:DOCTYPE|ENTITY)\b", text, re.I):
+        return data
+    try:
+        root = ET.fromstring(text, parser=ET.XMLParser(target=_BoundedBuilder(budget)))
+    except (ET.ParseError, LookupError, SVGError):
+        return data
+    present = {v for n in root.iter() if (v := n.get("id")) is not None}
+    claimed: set[str] = set()
+    renamed: dict[str, str] = {}
+    counter = 0
+
+    def fresh() -> str:
+        nonlocal counter
+        while True:
+            counter += 1
+            name = f"tvid{counter}"
+            if name not in present and name not in claimed:
+                claimed.add(name)
+                return name
+
+    changed = False
+    for node in root.iter():
+        value = node.get("id")
+        if value is None:
+            continue
+        if _ID.fullmatch(value) and value not in claimed:
+            claimed.add(value)
+        elif value not in renamed and not _ID.fullmatch(value):
+            renamed[value] = fresh()
+            node.set("id", renamed[value])
+            changed = True
+        else:
+            node.set("id", fresh())
+            changed = True
+    if not changed:
+        return data
+    if renamed:
+        names = "|".join(re.escape(k) for k in sorted(renamed, key=len, reverse=True))
+        ref = re.compile(rf"#({names})(?=[\"')\s,;{{]|\Z)")
+
+        def rewrite(value: str) -> str:
+            return ref.sub(lambda m: "#" + renamed[m.group(1)], value)
+
+        for node in root.iter():
+            for key, value in list(node.attrib.items()):
+                if key != "id" and "#" in value:
+                    node.set(key, rewrite(value))
+            if _name(node.tag)[1] == "style" and node.text and "#" in node.text:
+                node.text = rewrite(node.text)
+    for prefix, uri in (("", SVG_NS), ("xlink", XLINK_NS)):
+        ET.register_namespace(prefix, uri)
+    return ET.tostring(root, encoding="utf-8")
 
 
 class _BoundedBuilder(ET.TreeBuilder):
