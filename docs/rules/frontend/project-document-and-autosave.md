@@ -139,7 +139,8 @@ order: 200
   绑定以本会话内存为准（`lib/projectFile.ts` 的会话层），localStorage 只是刷新后还认得的尽力而为副本——
   保存链不许只读持久副本；await 之后的落账（修订号缓存、绑定、冲突岔口）一律记在
   **发请求那一刻**的 pj 名下（`rememberLayoutRevision(name, rev, pj)`），切走之后不开冲突岔口。
-  **重开同一个项目文件沿用 documentId**（QA-WIN-46，ADR 0096 修订 2026-11-04）：`openLayoutDocument` 带项目文件绑定时，`findDocumentsForProjectFile` 按最近绑定排序，取第一个没在别的窗口开着（`isDocHeldElsewhere`）、且不 `dirty` 的 documentId 沿用（版本时间线按 documentId 分存，新建身份会让命名节点看不到），并 `adoptSlotBaseline` 记下旧槽位的磁盘基线免得首次自动保存误报外部修改；`dirty` 的旧绑定不沿用（槽位里有项目文件没有的编辑）；另存为把当前排版改绑新文件，原文件不再有绑定，副本不继承历史。看护 `store/openProjectFileIdentity.test.ts`。
+  **重开同一个项目文件沿用 documentId**（QA-WIN-46，ADR 0096 修订 2026-11-04）：`openLayoutDocument` 带项目文件绑定时，`findDocumentsForProjectFile` 按最近绑定排序，取第一个没在别的窗口开着（`isDocHeldElsewhere`）、且不 `dirty` 的 documentId 沿用（版本时间线按 documentId 分存，新建身份会让命名节点看不到），并 `adoptSlotBaseline` 记下旧槽位的磁盘基线免得首次自动保存误报外部修改；`dirty` 的旧绑定不沿用（槽位里有项目文件没有的编辑）；另存为是**真分叉**（ADR 0181）：写好命名文件后换成一份新排版（新 documentId，`store/documentFork.ts` 的 `installFork`），绑定记在新排版名下，原排版与它的绑定、自动保存槽位一个字节不动，历史不继承。看护 `store/openProjectFileIdentity.test.ts`、`store/documentFork.test.ts`。
+  **同一份排版在两个窗口开着**（ADR 0181，`store/docWindow.ts` + `lib/docPresence.ts`）：后开的窗口只读（`documentStore.windowHold`：写入口的门 + `suspendAutosaveFor`，换文档即清），画布中间的 `DocWindowCard` 选「在这里编辑」（接管：持有方存好并让出，这边 `reloadFromDisk({ keepMine })` 载入最新版）或「存成副本」；用户动了手的入口经 `deferUserEntry` 记在 `heldWindow`，选完执行，选择方必须在放开编辑权**之前** `takeWindowEntries()`（放开时没被取走的会被丢掉）。presence 协议加消息兼容旧标签页（不认识就不回、请求方按超时接管）。看护 `store/docWindow.test.ts`。
 - **显式运行完成与恢复门（SVG 快照）**：`figureSnapshotInvalidation` 只接收入口已按项目代际接受的成功执行事实；
   尚未接纳的旧回包仍由原入口拒绝。恢复中 / 待用户处理、以及尚未真正初始化的 `initial-ready` 窗口内，
   只保留匹配来源所需的最小字段，按稳定项目 id + source / runtime asset id 覆盖去重，不保留报告或参数。

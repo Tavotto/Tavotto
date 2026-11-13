@@ -1,0 +1,3 @@
+## One layout, one window at a time
+
+If you open the same layout in a second window, that window now shows a card in the middle of the canvas instead of letting both windows overwrite each other: “Edit here” takes over (the other window saves first and steps aside), or “Save a copy” makes a separate layout. The window that was taken over shows the same card with “Take it back”. Anything you tried to do before choosing is remembered and carried out afterwards. “Save as…” now really makes a new layout too, leaving the original untouched, and when a save finds that another window saved a newer version, the message offers “Save a copy” so neither version is lost.
