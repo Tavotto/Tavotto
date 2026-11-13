@@ -501,6 +501,8 @@ def _pin_put_native(a, native) -> None:
         native = getattr(a, "_mm_size_native", None)
         if native is not None:
             a.set_bounds(*native)
+    elif isinstance(a, Line2D):
+        a.set_transform(_patch_base_transform(a))
     elif isinstance(a, _AxesBase):
         # 子图的「原样」：参与排版，色条轴还有被解开的长宽比。constrained 按网格算位置、
         # 按装饰物的大小算边距，与它此刻摆在哪无关——两样放回去，排出来的就与「没拖过」
@@ -521,6 +523,8 @@ def _pin_place(a, value) -> None:
         _place_arrow(a, value)
     elif isinstance(a, Patch):
         _place_patch(a, value)
+    elif isinstance(a, Line2D):
+        _place_line(a, value)
     elif isinstance(a, _AxesBase):
         a.set_position(list(value))
         # 色条轴：排版前放回的长宽比、`reposition_colorbar` 按 `_colorbar_info['aspect']`
@@ -1950,6 +1954,40 @@ def _restore_patch_pos(p, orig) -> None:
     # 基准记号一并清掉：下一次拖动从实况重新采（脚本原样不会变，清不清结果
     # 相同；清掉是为了不让一个「我们挪过」的记号留在还原后的 artist 上）
     p.__dict__.pop("_mm_pos_base", None)
+
+
+def _set_line_pos_frac(ln, value) -> None:
+    """拖动挂在整张图（或 SubFigure）上的线：分隔线、跨子图的连线（`fig.add_artist(Line2D(...,
+    transform=fig.transFigure))`）。子图里的曲线位置是数据，不宣称可拖（manifest 只给图级的线
+    `draggable`）。
+
+    与形状同一套：值是包围盒左下角的 figure 分数（top-origin），平移以英寸叠在 artist 级
+    transform 上（导出换 dpi 不变），基准 transform 记在 `_mm_pos_base`，每次先回基准再量，
+    重放 / 二次拖动幂等；原样 = 基准 transform。"""
+    value = _drag_value(value, 2)
+    _place_line(ln, value)
+    _text_pins(ln.get_figure())[ln] = (tuple(value), None)
+    _ensure_text_pin_hook(ln.get_figure())
+
+
+def _place_line(ln, value) -> None:
+    fig = pathgeom.root_figure(ln.get_figure())  # SubFigure 里也按根 Figure 的分数算
+    base = _patch_base_transform(ln)
+    ln.set_transform(base)  # 先回到基准再量：幂等
+    bb = ln.get_window_extent()
+    tx, ty = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
+    dpi = float(fig.dpi)
+    ln.set_transform(
+        base + ScaledTranslation((tx - bb.x0) / dpi, (ty - bb.y0) / dpi, fig.dpi_scale_trans)
+    )
+
+
+def _restore_line_pos(ln, orig) -> None:
+    fig = ln.get_figure()
+    if fig is not None:
+        _text_pins(fig).pop(ln, None)
+    ln.set_transform(orig)
+    ln.__dict__.pop("_mm_pos_base", None)
 
 
 # ---------------------------------------------------------------------------
@@ -5076,6 +5114,7 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     # transform 上（一份实现盖住整个 Patch family），原样是基准 transform。
     # **不给 `bar`**：柱是数据，位置由 x 与宽度决定，挪一根柱等于改数据。
     ("patch", "pos_frac"): (_get_patch_pos, _set_patch_pos_frac),
+    ("line", "pos_frac"): (_get_patch_pos, _set_line_pos_frac),
     ("patch", "size_frac"): (_get_patch_size, _set_patch_size_frac),
     # 锚定框 / 插框（ADR 0100）：cls_key 仍是 `artist`，setter 自己认类型，认不出来就抛
     ("artist", "pos_frac"): (_get_offsetbox_pos, _set_offsetbox_pos_frac),
@@ -5421,6 +5460,7 @@ _RESTORE: dict[tuple[str, str], object] = {
     ("collection", "marker"): _restore_scatter_marker,
     ("arrowpatch", "endpoints_frac"): _restore_arrow_endpoints,
     ("patch", "pos_frac"): _restore_patch_pos,
+    ("line", "pos_frac"): _restore_line_pos,
     ("patch", "size_frac"): _restore_patch_size,
     ("artist", "pos_frac"): _restore_offsetbox_pos,
     ("arrowpatch", "arrowstyle"): lambda a, orig: a.set_arrowstyle(orig),
