@@ -1508,15 +1508,26 @@ def _call_health(args: dict) -> dict:
     # 分层结论：**服务器只能回答它自己知道的那几层**。宿主 UI 有没有真的把画布显示出来、
     # 当前智能体有没有启用这些工具，server 无从得知——如实写 unknown_to_server，
     # 不从「资源在」推断「画布已显示」。
+    by_design = not out["canvas"]["available"] and widget.absent_by_design()
+    if by_design:
+        out["canvas"]["expected_absent"] = True
+    # pip / pipx / uvx 装的 wheel 本来就没有插件清单与画布：这两项「不适用」，不是故障
+    wheel = out["server"]["install"] == "wheel"
     out["checks"] = {
-        "package": {
-            "ok": out["server"]["plugin_version"] is not None,
-            "release_build": out["server"]["release_build"],
-        },
+        "package": (
+            {"ok": True, "applicable": False, "install": "wheel"}
+            if wheel
+            else {
+                "ok": out["server"]["plugin_version"] is not None,
+                "release_build": out["server"]["release_build"],
+            }
+        ),
         "engine": {"ok": True},
         "tools_listed": {"ok": True, "count": len(_tools())},
         "workspace_authorized": {"ok": bool(out["roots"]), "source": root_info["source"]},
-        "canvas_resource": {"ok": out["canvas"]["available"]},
+        "canvas_resource": (
+            {"ok": True, "applicable": False} if by_design else {"ok": out["canvas"]["available"]}
+        ),
         "host_ui_rendered": {"status": "unknown_to_server"},
     }
     if args.get("probe_worker"):
@@ -1535,7 +1546,7 @@ def _call_health(args: dict) -> dict:
         f"引擎就绪（tavotto {out['engine']['version']}）",
         "画布资源就绪"
         if out["canvas"]["available"]
-        else "! 画布资源缺失：" + out["canvas"].get("reason", ""),
+        else ("画布：" if by_design else "! 画布资源缺失：") + out["canvas"].get("reason", ""),
         "允许的项目根: " + (os.pathsep.join(out["roots"]) or "（未配置）"),
         "根来源: " + root_info["source"],
     ]
@@ -1561,6 +1572,7 @@ def _package_identity() -> dict:
         "package_dir": plugin_dir,
         "plugin_version": version,
         "release_build": os.path.isfile(os.path.join(plugin_dir, "plugin-build.json")),
+        "install": widget.install_form(),
         "python": sys.executable,
     }
     if getattr(sys, "frozen", False):
@@ -1781,10 +1793,10 @@ def call_tool(name: str, args: dict) -> dict:
             reason = widget.missing_reason()
             result["structuredContent"]["canvas_ui"] = {
                 "available": False,
-                "code": "widget_missing",
+                "code": "widget_not_in_install" if widget.absent_by_design() else "widget_missing",
                 "reason": reason,
             }
-            note = f"! 内嵌画布不可用：{reason}"
+            note = ("内嵌画布：" if widget.absent_by_design() else "! 内嵌画布不可用：") + reason
             content = result.get("content") or []
             if content and content[0].get("type") == "text":
                 content[0]["text"] += "\n" + note
