@@ -132,7 +132,12 @@ def sid(tmp_path) -> str:
         encoding="utf-8",
     )
     proc = subprocess.run(
-        [WORKER_PY, str(figures / "fig.py")], capture_output=True, text=True, cwd=str(figures)
+        [WORKER_PY, str(figures / "fig.py")],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(figures),
     )
     assert proc.returncode == 0, proc.stderr
     return bridge.open_figure(str(figures), stem="Kin")["session_id"]
@@ -264,6 +269,46 @@ def test_no_column_within_tolerance_also_asks(sid):
     assert res["exit"] == "column_choice_required"
 
 
+def _max_journal(max_mm: float) -> dict:
+    """单栏是「最大 `max_mm`」（JACS 式上限）、双栏 183 exact、typical 栏不参与判据。"""
+    j = _journal()
+    j["page_columns"] = [
+        {
+            "id": "single",
+            "label": {"zh": "单栏", "en": "Single"},
+            "width_mm": max_mm,
+            "qualifier": "max",
+        },
+        {"id": "double", "label": {"zh": "双栏", "en": "Double"}, "width_mm": 183.0},
+        {
+            "id": "wide",
+            "label": {"zh": "常见", "en": "Typical"},
+            "width_mm": 121.0,
+            "qualifier": "typical",
+        },
+    ]
+    j["widths_mm"] = {"single": None, "double": None, "tolerance_mm": 0.5}
+    return j
+
+
+def test_max_column_over_the_limit_is_auto_picked_and_pressed_to_the_limit(sid):
+    j = _max_journal(110.0)  # 120 mm 超了单栏上限 110（9%）；typical 121 不当目标
+    res = _fix(sid, journal=j)
+    assert res["ok"] and res["size"]["column"] == "single" and res["size"]["auto_picked"] is True
+    assert res["size"]["to_mm"][0] == pytest.approx(110.0, abs=0.01)
+    assert "page-width" not in _ids(sid, j)
+
+
+def test_max_column_already_within_the_limit_keeps_the_width(sid):
+    j = _max_journal(130.0)  # 120 mm 本来就在上限内：page-width 不报，点名这一栏也不放大
+    assert "page-width" not in _ids(sid, j)
+    res = _fix(sid, journal=j, column="single")
+    assert res["ok"] and res["size"]["to_mm"][0] == pytest.approx(120.0, abs=0.01)
+    with pytest.raises(bridge.BridgeError) as exc:
+        bridge.fix_to_journal(sid, journal=j, column="wide")
+    assert exc.value.code == "unknown_column"  # typical 栏不是判据，不能当目标
+
+
 def test_width_mm_and_unknown_column(sid):
     res = _fix(sid, journal=_journal(), width_mm=110)
     assert res["ok"] and res["size"]["to_mm"][0] == pytest.approx(110.0, abs=0.01)
@@ -353,6 +398,8 @@ def test_rejected_artifact_withdraws_published_files_and_rolls_back(sid, tmp_pat
     before = _state(sid)
     leftover = tmp_path / "published.pdf"
     leftover.write_bytes(b"%PDF-1.4 fake")
+    proof = tmp_path / "published.proof.json"
+    proof.write_text("{}", encoding="utf-8")
 
     def fake_export(session_id, **kwargs):
         assert kwargs["explicit_confirm"] is False  # 与 tavotto_export 同一条预检门，不绕
@@ -362,6 +409,7 @@ def test_rejected_artifact_withdraws_published_files_and_rolls_back(sid, tmp_pat
                 {"status": "partial", "format": "png", "error": {"code": "artifact_rejected"}},
             ],
             "export_dir": str(tmp_path),
+            "proof_path": str(proof),
         }
 
     monkeypatch.setattr(bridge, "export", fake_export)
@@ -369,6 +417,7 @@ def test_rejected_artifact_withdraws_published_files_and_rolls_back(sid, tmp_pat
     assert res["ok"] is False and res["exit"] == "acceptance_failed"
     assert res["reason"] == "artifact_rejected" and res["failed_files"][0]["format"] == "png"
     assert not leftover.exists()  # 同一作业里已发布的其它格式也撤回
+    assert not proof.exists()  # 留档一并撤回
     assert _state(sid) == before
 
 

@@ -3897,16 +3897,22 @@ def fix_to_journal_available() -> bool:
 
 
 def _fix_columns(profile: dict) -> list[dict]:
-    """规范里能当目标的栏位：只收 `exact` 且宽度是数的（与预检 `page-width` 判据同一口径）。
-
-    取栏位的**唯一入口**：待 `preflight.judged_page_columns`（exact + max）合入后改读它，不在这里另写判据。"""
+    """规范里能当目标的栏位：预检 `page-width` 判据认的那些（exact = 等于，max = 不超过），
+    唯一出处 `preflight.judged_page_columns`，这里不另写筛选条件。旧引擎没有它时只认 exact。"""
+    judged = getattr(engine_preflight, "judged_page_columns", None)
+    if judged is not None:
+        cols = judged(profile)
+    else:
+        cols = [
+            c
+            for c in engine_profiles.derive_page_columns(profile)
+            if c.get("qualifier", "exact") == "exact"
+        ]
     out = []
-    for col in engine_profiles.derive_page_columns(profile):
+    for col in cols:
         try:
             width = float(col.get("width_mm"))
         except (TypeError, ValueError):
-            continue
-        if col.get("qualifier", "exact") != "exact":
             continue
         label = col.get("label")
         out.append(
@@ -3914,9 +3920,17 @@ def _fix_columns(profile: dict) -> list[dict]:
                 "id": str(col.get("id")),
                 "label": (label.get("zh") or label.get("en")) if isinstance(label, dict) else label,
                 "width_mm": width,
+                "qualifier": col.get("qualifier", "exact"),
             }
         )
     return out
+
+
+def _column_target(col: dict, w0: float) -> float:
+    """按栏位取目标宽度：exact 就是它；max 是上限——本来不超就不动，超了才压到上限。"""
+    if col.get("qualifier") == "max":
+        return min(w0, col["width_mm"])
+    return col["width_mm"]
 
 
 def issue_fix(issue: dict, columns: list[dict] | None = None) -> dict:
@@ -4278,7 +4292,7 @@ def _fix_run(
                 code="unknown_column",
                 columns=columns,
             )
-        target_w, picked = col["width_mm"], col["id"]
+        target_w, picked = _column_target(col, w0), col["id"]
     elif width_mm is not None:
         target_w = width_mm
     elif eligible("page-width"):
@@ -4292,7 +4306,7 @@ def _fix_run(
                     for c in columns
                 ],
             )
-        target_w, picked, auto = near[0]["width_mm"], near[0]["id"], True
+        target_w, picked, auto = _column_target(near[0], w0), near[0]["id"], True
     if target_w is not None and abs(target_w - w0) > 1e-6:
         targets["width_mm"] = target_w
     w_final = targets.get("width_mm", w0)

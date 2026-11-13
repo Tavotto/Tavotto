@@ -35,7 +35,7 @@ ADR，再动手。看护用例在细则头部。下表是生成的：改细则�
 | `.codex-plugin/plugin.json`、`.agents/plugins/marketplace.json`、路径镜像、`update_check.py`、`scripts/handoff.py` | 插件本体与市场 → `plugin-and-marketplace.md` | 插件版本 == `tavotto.__version__`；路径规则镜像 `engine/locate.py`、一个 pathlib 都不用；脚本与产物同目录 |
 | `tavotto_refresh_project`、`bridge.refresh_project()` | 改过脚本之后的显式刷新 → `refresh-project.md` | 两条路都不复制 discover、不 probe、不跑脚本；项目只来自授权；结果里没有绝对路径；用例绝不真的探 5089 |
 | `tavotto_normalize_figure`、`bridge.normalize_figure()`、`engine/normalize.py` | 已有图的保留式规范化 → `normalize-figure.md` | 桥只翻译；任何异常都回退；提交之后会话挂合同；用户目标直接决定的规则不挡事务 |
-| `tavotto_fix_to_journal`、`bridge.fix_to_journal()`、`bridge.issue_fix()` / `annotate_preflight_fix()`（preflight 结果的 `fix`） | Agent 一步改到期刊合规 → `fix-to-journal.md` | 桥只拼两段现成算子（normalize 改图幅 + `specfix.transaction`），不写第二份判据；整体要么提交要么回到 B0；`fix` 只加在 MCP 整形层，`auto` 集合读 `specfix.FIXABLE_RULES` |
+| `tavotto_fix_to_journal`、`bridge.fix_to_journal()`、`bridge.issue_fix()` / `annotate_preflight_fix()`（preflight 结果的 `fix`） | Agent 一步改到期刊合规 → `fix-to-journal.md` | 只拼 normalize + `specfix.transaction`，不写第二份判据；整体提交或回 B0；`fix` 只在 MCP 整形层 |
 | 工具结果体积、`CANVAS_INLINE_BUDGET_BYTES`、`APPLY_SUMMARY_BUDGET_BYTES`、`tavotto_session_state`、`web/src/mcp/boot.ts` | 工具结果的体积预算与画布取件 → `result-budget-and-session-state.md` | 单图 open 与显式 apply 摘要量紧凑 UTF-8；旧 apply 默认完整；取件只读不重渲染；画布启动三路都不自己发起 open |
 | `tavotto_mcp/sessionjournal.py`、`_restore_session` | 会话跨进程恢复 → `session-journal.md` | 记录不能自证权限、越界拒在渲染之前；明确释放的不复活；落盘失败不让工具调用失败 |
 | `integrations/configure.py`、`HOSTS` 表、`RELOAD_HINT` / `RESTART_HOST`、`.claude-plugin/plugin.json` 与仓库根 `.claude-plugin/marketplace.json`、`package.json` 与 `dsh/`（DSH bundle） | 非 Codex 宿主 → `non-codex-hosts.md` | 同一份包 / 启动器 / Skill；不写任何文件；授权只来自 `--project-root`；不放别家自动读的 MCP 配置 |

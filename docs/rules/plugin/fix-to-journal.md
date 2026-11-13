@@ -9,7 +9,7 @@ sheet: codex-plugin/AGENTS.md
 order: 55
 改到: `tavotto_fix_to_journal`、`bridge.fix_to_journal()`、`bridge.issue_fix()` / `annotate_preflight_fix()`（preflight 结果的 `fix`）
 主题: Agent 一步改到期刊合规 → `fix-to-journal.md`
-必守要点: 桥只拼两段现成算子（normalize 改图幅 + `specfix.transaction`），不写第二份判据；整体要么提交要么回到 B0；`fix` 只加在 MCP 整形层，`auto` 集合读 `specfix.FIXABLE_RULES`
+必守要点: 只拼 normalize + `specfix.transaction`，不写第二份判据；整体提交或回 B0；`fix` 只在 MCP 整形层
 -->
 
 - **跟期刊库总开关走**：关着时 `tavotto_fix_to_journal` 不进 `tools/list`、调用回 `journal_catalog_disabled`、`tavotto_preflight`
@@ -25,6 +25,9 @@ order: 55
   `_spawn_worker` 取 worker 时同一份，否则对不上键、作废落空），在新 worker 上把 B0 重放回来；结果 `worker_retired: true`。
   回滚本身也失败时把会话从账本摘掉，下一次调用按落盘记录（只在提交点写）重建。
 - **栏位自动选**：只有**一个**栏位与现宽相差 ≤ 15% 才自动取；否则（含「没有一个接近」）`column_choice_required`、什么都不改。
+  候选栏位就是预检 `page-width` 判据认的那些，唯一出处 `preflight.judged_page_columns`（exact + max；typical / range 不参与，
+  也不能用 `column` 点名）。exact 栏目标宽度就是它；**max 栏是上限**：现宽超了才压到上限，本来不超就不动（点名也不放大）。
+  `fix.columns` 与 `column_choice_required` 的候选都带 `qualifier`。
 - **预览图**走 MCP `image` 内容块（长边 1000 px，改前 / 改后各一张），**不进 `structuredContent`**；bridge 返回里的 `_previews`
   由 server 层摘出来。`previews:false` 不渲染。
 - **`fix` 只在 MCP 整形层加**（`annotate_preflight_fix`，返回副本、不污染会话缓存），**不改 `preflight.run()` 的输出**——它与前端求值器
