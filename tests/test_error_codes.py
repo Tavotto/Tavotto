@@ -82,6 +82,8 @@ _CODE_REGISTRIES = (
     "tavotto.engine.xlsxread",
     # 数据出图 v2 的画法配方（ADR 0178）：`RecipeError(code)` / `Problem(code)`，码表 `ERROR_CODES` = 拒绝条件表，构造时校验
     "tavotto.engine.ai_data_recipe",
+    # 数据出图 v2 的出备选 / 落盘流水（ADR 0178）：`ProposeError(code)` 由 app 的 `_propose_error` 漏斗转成 JSON
+    "tavotto.engine.ai_data_propose",
     # ADR 0110：改写脚本里的数据路径与共享的备份底座——`ScriptEditError(code)` 由 app 的 409 漏斗转出
     "tavotto.engine.scriptbackup",
     "tavotto.engine.scriptedit",
@@ -370,6 +372,14 @@ USER_VISIBLE_CODES = {
     # TAF 数据出图（ADR 0138 Phase 5b）：开关关着 / 缺输入 / 数据读不成受控摘要（`ai_data_figure.DataSourceError`）
     "taf_disabled": set(),
     "data_figure_input_missing": set(),
+    # 数据出图 v2（ADR 0178）：候选会话过期 / 备选不存在 / 数据在出备选后变了 / 请求字段不对；提交时配方与数据不再相容
+    "propose_session_expired": set(),
+    "propose_candidate_unknown": set(),
+    "propose_data_changed": set(),
+    "propose_input_invalid": set(),
+    "propose_cells_invalid": set(),
+    "propose_cells_need_rule": set(),
+    "data_figure_recipe_invalid": set(),
     "data_path_outside_project": set(),
     "data_not_found": set(),
     "data_not_csv": set(),
@@ -433,6 +443,10 @@ USER_VISIBLE_CODES = {
     "recipe_unknown_value": set(),
     "recipe_layer_count": set(),
     "recipe_why_invalid": set(),
+    "cell_rule_invalid": set(),
+    "cell_map_too_large": set(),
+    "cell_map_value_invalid": set(),
+    "cell_map_key_unknown": set(),
     "figure_name_exhausted": set(),
     # 拒绝之后清待确认行也失败了：状态不确定（503），客户端保持同一个 rid
     "ai_request_unresolved": set(),

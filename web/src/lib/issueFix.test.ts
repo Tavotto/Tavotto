@@ -14,6 +14,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
 import type { SpecFixResponse } from './api'
 import { setEngineTransport } from './engineTransport'
+import goldenVectors from '../../../tests/golden/preflight_vectors.json'
+import { runSpec, type PreflightSpec } from './preflight'
 import { loadProfile } from './profile'
 import { fixOptions, fixRoute, planFix } from './issueFix'
 import { validateCanvas, type ValidationIssue } from './validation'
@@ -670,13 +672,15 @@ describe('页宽修复读栏位表（page_columns）', () => {
     ],
   } as typeof profile
 
-  it('选项是期刊栏位里判据认的（exact）那几档，带它自己的栏名；max / typical 的栏位不给', () => {
+  it('选项是期刊栏位里判据认的（exact 与 max）那几档，带它自己的栏名；typical 的栏位不给', () => {
     const opts = fixOptions(issue, journalProfile)
     expect(opts.map((o) => [o.choice, o.params?.mm])).toEqual([
       ['single-column', 90],
       ['1-5-column', 140],
       ['double-column', 190],
+      ['upper', 230],
     ])
+    expect(opts[3].labelKey).toBe('columnMax')
     expect(opts[1].labelKey).toBe('column')
     expect(opts[1].params?.name).toBe('1.5 栏')
   })
@@ -684,8 +688,19 @@ describe('页宽修复读栏位表（page_columns）', () => {
   it('选哪一栏就改成哪一栏的宽；不在表里的 choice 算不出计划', () => {
     const doc = useDocumentStore.getState().doc
     expect(planFix(issue, journalProfile, doc, '1-5-column')).toEqual({ kind: 'pageWidth', widthMm: 140 })
-    expect(planFix(issue, journalProfile, doc, 'upper')).toBeNull()
+    expect(planFix(issue, journalProfile, doc, 'upper')).toEqual({ kind: 'pageWidth', widthMm: 230 })
     expect(planFix(issue, journalProfile, doc, 'nope')).toBeNull()
+  })
+
+  it('typical / range 的栏位不给选项', () => {
+    const p = {
+      ...journalProfile,
+      page_columns: [
+        { id: 't', label: { zh: '常用', en: 'Typical' }, width_mm: 100, qualifier: 'typical' },
+        { id: 'r', label: { zh: '区间', en: 'Range' }, width_mm: 120, qualifier: 'range' },
+      ],
+    } as typeof profile
+    expect(fixOptions(issue, p)).toEqual([])
   })
 
   it('没写 page_columns 的规范仍是单栏 / 双栏两档（旧措辞）', () => {
@@ -694,6 +709,37 @@ describe('页宽修复读栏位表（page_columns）', () => {
       ['single', 'single'],
       ['double', 'double'],
     ])
+  })
+})
+
+describe('只有 max 栏位的期刊（JACS 式）页宽修复', () => {
+  const maxProfile = {
+    ...profile,
+    widths_mm: { ...profile.widths_mm, single: 84.7, double: 177.8 },
+    page_columns: [
+      { id: 'single', label: { zh: '单栏', en: 'single-column' }, width_mm: 84.7, qualifier: 'max' },
+      { id: 'double', label: { zh: '双栏', en: 'double-column' }, width_mm: 177.8, qualifier: 'max' },
+    ],
+  } as typeof profile
+
+  it('选项非空且说明是上限；选了就改到那个最大宽度，改完 page-width 不再报', async () => {
+    await seed([panel({ w: 77, h: 60 })])
+    useDocumentStore.getState().commit(literal('改页宽'), (d) => {
+      d.page = { w: 228.6, h: 60 }
+    })
+    const issue = { ruleCode: 'page-width' } as ValidationIssue
+    const opts = fixOptions(issue, maxProfile)
+    expect(opts.map((o) => [o.choice, o.labelKey, o.params?.mm])).toEqual([
+      ['single', 'columnMax', 84.7],
+      ['double', 'columnMax', 177.8],
+    ])
+    const plan = planFix(issue, maxProfile, useDocumentStore.getState().doc, 'double')
+    expect(plan).toEqual({ kind: 'pageWidth', widthMm: 177.8 })
+    // 改完之后的页宽交给预检求值器：超宽时报、改到计划里的宽度就不报
+    const base = goldenVectors.cases.find((c) => c.name === 'journal-max-over')!.spec as unknown as PreflightSpec
+    const at = (w: number) => runSpec({ ...base, page: { ...base.page, w_mm: w } }, maxProfile).map((i) => i.id)
+    expect(at(228.6)).toContain('page-width')
+    expect(at((plan as { widthMm: number }).widthMm)).not.toContain('page-width')
   })
 })
 

@@ -19,7 +19,7 @@ import { useSelectionStore } from './selectionStore'
 import { useWorkspaceStore } from './workspace'
 import { useMountedPngStore } from './mountedPngStore'
 import { useEnvStore } from './envStore'
-import { usePngAdmissionMemory } from './pngAdmissionMemory'
+import { pngAdmitOwner, usePngAdmissionMemory } from './pngAdmissionMemory'
 const render = vi.fn()
 const addRemap = vi.fn()
 const setWorkdir = vi.fn()
@@ -539,10 +539,10 @@ describe('first-adoption refusals: one sentence, one way out, remembered (ADR 01
   await enterElementEdit('p')
   expect(ui().statusAction?.label).not.toEqual(text('artifact.retryAdmission'))
  })
- it('script failures keep the plain error toast, are not remembered, and are retried next time',async()=>{
+ it('script failures keep the plain error sentence plus one Try again, are not remembered, and are retried next time',async()=>{
   render.mockRejectedValueOnce(new EngineError('boom','Traceback\nValueError: boom','script_error',''))
   await enterElementEdit('p')
-  expect(ui().statusTone).toBe('error');expect(ui().statusAction).toBeNull();expect(ui().statusOwner).toBeNull()
+  expect(ui().statusTone).toBe('error');expect(ui().statusAction?.label).toEqual(text('artifact.retryAdmission'));expect(ui().statusOwner).toBe(pngAdmitOwner('p'))
   render.mockResolvedValueOnce(response())
   expect(await enterElementEdit('p')).toBe(true)
   expect(admissions()).toBe(2)

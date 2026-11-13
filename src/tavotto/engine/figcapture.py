@@ -302,6 +302,57 @@ def install_colorbar_capture(mfigure) -> None:
     mfigure.FigureBase.colorbar = colorbar
 
 
+def _is_ft_glyph_load_error(exc: BaseException) -> bool:
+    """FreeType 载入字形失败（ft2font 抛的 RuntimeError）：`failed to load glyph` / `FT_Load_Glyph ... failed`。"""
+    if type(exc) is not RuntimeError:
+        return False
+    text = str(exc)
+    return "failed to load glyph" in text or "FT_Load_Glyph" in text
+
+
+def install_agg_unhinted_glyph_fallback(backend_agg) -> None:
+    """Agg 量 / 画文字时 FreeType 载不进字形，只对**那一次调用**按无 hinting 重试。
+
+    macOS 系统 Helvetica（`Helvetica.ttc`）在像素尺寸很小（约 < 7–8 px：Nature 要求的 5–7 pt 配
+    72–100 dpi）、带 hinting 时 FreeType 报 `division by zero`，整张图起不来。用户直接 `python fig.py`
+    用的是 macosx 后端（Retina 上 figure dpi 200，像素够大，不触发）；worker 固定 Agg、dpi 100。
+    所以不改脚本、不改 dpi，只在 Agg 的文字入口碰到这类错误时放开 hinting 重试一次：
+
+    * 只认 ft2font 的这一类 RuntimeError；重试仍失败就原样抛出（不吞别的错）。
+    * `rcParams["text.hinting"]` 只在这次重试里临时改、`finally` 还原——不是全局改 hinting，
+      其它字号 / 字体的度量与像素仍是 matplotlib 自己的 hinting 值（写回的像素门与几何比对不变）。
+    * 度量与绘制两个入口一致地回退，同一字号不会「量得过、画不了」。
+    """
+    from functools import wraps
+
+    renderer_cls = backend_agg.RendererAgg
+    rc = backend_agg.mpl.rcParams
+
+    def retry_unhinted(original):
+        if getattr(original, "_tavotto_unhinted_fallback", False):
+            return original
+
+        @wraps(original)
+        def wrapper(self, *args, **kwargs):
+            try:
+                return original(self, *args, **kwargs)
+            except RuntimeError as exc:
+                if not _is_ft_glyph_load_error(exc):
+                    raise
+            saved = rc["text.hinting"]
+            rc["text.hinting"] = "no_hinting"
+            try:
+                return original(self, *args, **kwargs)
+            finally:
+                rc["text.hinting"] = saved
+
+        wrapper._tavotto_unhinted_fallback = True  # noqa: SLF001
+        return wrapper
+
+    for name in ("get_text_width_height_descent", "draw_text"):
+        setattr(renderer_cls, name, retry_unhinted(getattr(renderer_cls, name)))
+
+
 #: 每次执行的观察预算，独立于旧的逐 stem 调用表。超限必须说历史不完整，
 #: 不能把「最后一条留下的记录」当成「磁盘上最后一次保存」。不保留 Figure 强引用。
 MAX_SAVEFIG_OBSERVATIONS = 128
