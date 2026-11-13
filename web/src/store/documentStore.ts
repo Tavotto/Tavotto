@@ -1893,6 +1893,8 @@ function localRecoveryKind(local: LocalSnapshot | null, diskDoc: ProjectDocument
 export interface LoadedDoc {
   doc: ProjectDocument | null
   notice: DocNotice | null
+  /** 没有 doc 时为什么：`missing`（确认过不在了）/ `unavailable`（暂时读不到，文件多半还在）/ `invalid`（读到了但坏）/ `too_new` */
+  kind: ProbeResult['kind']
 }
 
 /** `migrateToProject` 认不出的载荷里，是不是一份"来自更新的 Tavotto"？ */
@@ -2054,7 +2056,7 @@ export async function readAutosaveDoc(id: string): Promise<LoadedDoc> {
     probe = { ...probe, kind: 'found', doc: probe.local, from: 'local' }
   }
   const notice = acceptProbe(probe, pj)
-  return { doc: probe.doc, notice }
+  return { doc: probe.doc, notice, kind: probe.kind }
 }
 
 /**

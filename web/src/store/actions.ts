@@ -778,18 +778,40 @@ export async function openDocumentAs(
   return true
 }
 
+/** 「最近的排版」读不到那条提示的主人：点「再试一次」先收掉自己那一条 */
+const RECENT_OPEN_OWNER = 'recent.openFailure'
+
 /** 切回本机自动保存过的文档；沿用它原来的身份，槽位因此不会分叉 */
-export async function openRecentDocument(id: string): Promise<void> {
-  const { doc: pd, notice } = await readAutosaveDoc(id)
+export async function openRecentDocument(id: string, attempt = 0): Promise<void> {
+  const pj = currentProjectId()
+  const { doc: pd, notice, kind } = await readAutosaveDoc(id)
   if (!pd) {
-    // schema 太新是「读不了」而不是「不见了」：文件好好的，说清楚是哪一种
+    // 「读不了」与「不见了」分开说：只有确认过不在（missing）才把这一行去掉
     if (notice?.kind === 'schema_too_new') {
       // 桌面版「检查更新」，浏览器版「发给我们看看」
       status(note('recentTooNew'), 'error', { action: tooNewAction() })
-    } else {
+    } else if (kind === 'missing') {
       // 副本已不在：把这一行从最近列表去掉并说一句（不动本机槽位里的数据）
       dropRecentEntry(id)
       status(note('recentMissing'), 'info')
+    } else {
+      // 暂时读不到（文件多半还在）→「再试一次」；读到了但坏 → 重试没用，直接「发给我们看看」。都保留这一行
+      const name = useDocumentStore.getState().recentDocs.find((e) => e.id === id)?.name
+      const invalid = kind === 'invalid' && !!name
+      status(
+        invalid ? msg('layout.recoverFailInvalid', { name }, 'dialogs') : msg('layout.recoverFailUnavailable', undefined, 'dialogs'),
+        'error',
+        {
+          owner: RECENT_OPEN_OWNER,
+          action: retryOrFeedback({
+            owner: RECENT_OPEN_OWNER,
+            attempt,
+            retryable: !invalid,
+            // 点的时候已换了项目：只收提示，不在别的项目里再去开它
+            run: (next) => (currentProjectId() === pj ? openRecentDocument(id, next) : undefined),
+          }),
+        },
+      )
     }
     return
   }

@@ -21,9 +21,13 @@ import { useUiStore } from './uiStore'
 import { useUpdateStore } from './updateStore'
 
 let serverDoc: unknown = null
+let serverStatus: number | null = null
+let autosaveGets = 0
 globalThis.fetch = (async (url: unknown) => {
   const u = new URL(String(url), 'http://x')
   if (/^\/api\/autosave\/[^/]+$/.test(u.pathname)) {
+    autosaveGets += 1
+    if (serverStatus !== null) return new Response('{"error":"boom"}', { status: serverStatus })
     return serverDoc === null
       ? new Response('{}', { status: 404 })
       : new Response(JSON.stringify(serverDoc), { status: 200, headers: { 'X-Tavotto-Revision': 'r1' } })
@@ -38,6 +42,8 @@ const recentIds = () => useDocumentStore.getState().recentDocs.map((e) => e.id)
 beforeEach(() => {
   localStorage.clear()
   serverDoc = null
+  serverStatus = null
+  autosaveGets = 0
   shell.desktop = false
   setCurrentProjectId(null)
   useUiStore.setState({ status: null, statusAction: null, statusOwner: null })
@@ -85,5 +91,49 @@ describe('来自更新版本、读不了', () => {
     expect(label()).toBe('发送问题反馈')
     ui().statusAction!.run()
     expect(useDiagSendStore.getState().open).toBe(true)
+  })
+})
+
+describe('暂时读不到 / 读到了但坏：保留这一行，不说「已去掉」', () => {
+  it('后端 5xx（unavailable）：红字 +「再试一次」，条目还在；点下去重读，读到了就打开', async () => {
+    serverStatus = 503
+    await openRecentDocument('d_old')
+    expect(ui().status).toMatchObject({ key: 'layout.recoverFailUnavailable' })
+    expect(ui().statusTone).toBe('error')
+    expect(label()).toBe('再试一次')
+    expect(recentIds()).toEqual(['d_old', 'd_keep'])
+    serverStatus = null
+    serverDoc = { ...emptyProject(), project: { id: 'x', name: '旧排版' } }
+    ui().statusAction!.run()
+    await vi.waitFor(() => expect(useDocumentStore.getState().documentId).toBe('d_old'))
+    expect(autosaveGets).toBe(2)
+  })
+
+  it('重试仍失败：换成「发给我们看看」，条目仍在', async () => {
+    serverStatus = 503
+    await openRecentDocument('d_old')
+    ui().statusAction!.run()
+    await vi.waitFor(() => expect(autosaveGets).toBe(2))
+    await vi.waitFor(() => expect(label()).toBe('发送问题反馈'))
+    expect(recentIds()).toEqual(['d_old', 'd_keep'])
+  })
+
+  it('点的时候已换了项目：只收提示，不重读', async () => {
+    serverStatus = 503
+    await openRecentDocument('d_old')
+    const retry = ui().statusAction!
+    setCurrentProjectId('B')
+    retry.run()
+    await Promise.resolve()
+    expect(autosaveGets).toBe(1)
+    expect(ui().status).toBeNull()
+  })
+
+  it('读到了但坏（invalid）：重试没用，直接「发给我们看看」，条目仍在', async () => {
+    serverDoc = { not: 'a layout' }
+    await openRecentDocument('d_old')
+    expect(ui().status).toMatchObject({ key: 'layout.recoverFailInvalid' })
+    expect(label()).toBe('发送问题反馈')
+    expect(recentIds()).toEqual(['d_old', 'd_keep'])
   })
 })

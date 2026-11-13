@@ -66,6 +66,8 @@ const runtimeDoc = (name: string, extra: Record<string, unknown> = {}) => {
 
 let root: Root
 let degradeProjectCandidates = false
+/** 非 null：点开一行读正文（GET autosave）回这个状态码——造「暂时读不到」 */
+let autosaveGetStatus: number | null = null
 /** 在途的 fetch 数：`flush` 靠它知道「请求都落地了」，不靠固定时长的 sleep（负载高时固定时长不够） */
 let inFlight = 0
 
@@ -77,6 +79,9 @@ async function mount(intent: 'load' | 'save' = 'load', settle = true) {
         return new Response(JSON.stringify({ layouts: [], modified: {} }), { status: 200 })
       }
       const u = new URL(String(url), 'http://x')
+      if (autosaveGetStatus !== null && /^\/api\/autosave\/[^/]+$/.test(u.pathname) && (init?.method ?? 'GET') === 'GET') {
+        return new Response('{"error":"boom"}', { status: autosaveGetStatus })
+      }
       if (degradeProjectCandidates && u.pathname === '/api/layout-session/candidates' && u.searchParams.get('scope') === 'project') {
         const res = await backend.fetch(url as RequestInfo, init)
         const payload = await res.json()
@@ -137,6 +142,7 @@ async function expandOther() {
 beforeEach(() => {
   backend.reset()
   degradeProjectCandidates = false
+  autosaveGetStatus = null
   localStorage.clear()
   setCurrentProjectId(PJ)
   useProjectStore.setState({ project: { open: true, id: PJ, document_dir: '/figs/a/tavottofile' } })
@@ -643,6 +649,24 @@ describe('点开一行时读不了：失败出口（失败出口三种结局）'
     expect(backend.state.calls).toContain('GET candidates project') // 列表重读了
     expect(rows('project')).toHaveLength(0) // 后端的扫描结果还列着它，界面也不再出现这一行
     expect(useUiStore.getState().layoutOpen).toBe(true) // 对话框没因此关掉
+  })
+
+  it('暂时读不到（5xx）：这一行保留、不记进 gone，红字带「再试一次」；重试读到了就打开并关掉对话框', async () => {
+    backend.putSlot('d_flaky', runtimeDoc('偶尔读不到'), PJ)
+    backend.state.candidates.push({ doc_id: 'd_flaky', scope: 'project', name: '偶尔读不到' })
+    await mount()
+    autosaveGetStatus = 503
+    await act(async () => rows('project')[0].click())
+    await flush()
+    expect(useUiStore.getState().status).toMatchObject({ key: 'layout.recoverFailUnavailable' })
+    expect(useUiStore.getState().statusTone).toBe('error')
+    expect(formatMessage(useUiStore.getState().statusAction?.label ?? null)).toBe('再试一次')
+    expect(rows('project')).toHaveLength(1)
+    autosaveGetStatus = null
+    await act(async () => useUiStore.getState().statusAction!.run())
+    await flush()
+    expect(useDocumentStore.getState().documentId).toBe('d_flaky')
+    expect(useUiStore.getState().layoutOpen).toBe(false)
   })
 
   it('来自更新版本、读不了（桌面版）：红字带「检查更新」', async () => {
