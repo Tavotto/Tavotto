@@ -189,6 +189,5 @@ on the group head. Repointing to a new sandbox repository changes
 `repositoryId`, so rebuild the database (`--rebuild`) first. In the sandbox:
 a ruleset on `main` with the merge queue and the required check
 `Tavotto CLA (staging)` restricted to the App; the workflow also runs on
-`merge_group` (`--event "${{ github.event_name }}"`). Production cut-over is a separate approval: production resources,
-moving the paper signature in `offline_signatures` into the service in the
-same PR that sets `provider.configured=true`, then `ci.yml` wiring (risk:high).
+`merge_group` (`--event "${{ github.event_name }}"`). Production cut-over: [`../production/README.md`](../production/README.md) (ADR 0183 keeps the paper signature as a
+`countersigned_paper` exemption instead of moving it into the service).
