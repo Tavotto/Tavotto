@@ -34,7 +34,7 @@ import { documentDigest, recordDiagnosticEvent } from '@/diagnostics'
 import { patchRefs } from '@/diagnostics/patches'
 import { defaultCanvasName, type CanvasData, type FigureDocument, type FigureExecutionOwner, type FigureSnapshot, type PanelObject, type ProjectDocument } from '@/types/document'
 import {
-  SCHEMA_CURRENT,
+  futureSchemaOf,
   canvasToDoc,
   docToCanvas,
   emptyProject,
@@ -1884,14 +1884,6 @@ function localRecoveryKind(local: LocalSnapshot | null, diskDoc: ProjectDocument
 export interface LoadedDoc {
   doc: ProjectDocument | null
   notice: DocNotice | null
-}
-
-/** `migrateToProject` 认不出的载荷里，是不是一份"来自更新的 Tavotto"？ */
-function futureSchemaOf(raw: unknown): number | null {
-  const d = raw as { schema?: unknown } | null
-  if (!d || typeof d !== 'object') return null
-  const schema = d.schema
-  return typeof schema === 'number' && schema > SCHEMA_CURRENT ? schema : null
 }
 
 /**

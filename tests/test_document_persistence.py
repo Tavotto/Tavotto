@@ -1092,3 +1092,106 @@ def test_layout_listing_skips_entries_that_cannot_be_stat_ed(client, tmp_path, m
     body = resp.get_json()
     assert body["layouts"] == ["好的"]
     assert set(body["modified"]) == {"好的"}
+
+
+def test_named_layout_future_schema_rejected_before_read_and_preserves_bytes(client, tmp_path):
+    payload = {**PD, "schema": documents.SCHEMA_CURRENT + 1, "runtime_unverified": ["fixture"]}
+    path = tmp_path / "future.json"
+    original = json.dumps(payload).encode()
+    path.write_bytes(original)
+    response = client.get("/api/layouts/future")
+    assert response.status_code == 400
+    assert response.get_json()["code"] == "schema_too_new"
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"schema": 1, "objs": [{"type": "text"}]},
+        {"schema": 2, "objects": []},
+        PD,
+    ],
+)
+def test_named_layout_legacy_and_current_remain_readable(client, tmp_path, raw):
+    (tmp_path / "compatible.json").write_text(json.dumps(raw), encoding="utf-8")
+    response = client.get("/api/layouts/compatible")
+    assert response.status_code == 200
+    assert response.get_json() == raw
+
+
+def test_autosave_future_schema_remains_visible_for_restore_gate(client, tmp_path):
+    folder = tmp_path / documents.AUTOSAVE_DIRNAME
+    folder.mkdir(exist_ok=True)
+    payload = {**PD, "schema": documents.SCHEMA_CURRENT + 1}
+    (folder / "future.json").write_text(json.dumps(payload), encoding="utf-8")
+    response = client.get("/api/autosave/future")
+    assert response.status_code == 200
+    assert response.get_json() == payload
+
+
+@pytest.mark.parametrize(
+    ("schema", "code"),
+    [
+        (4.0, "schema_too_new"),
+        (4.5, "schema_too_new"),
+        (3.5, "schema_too_new"),
+        (1.5, "invalid_document"),
+        ("4", "invalid_document"),
+        ({}, "invalid_document"),
+        (True, "invalid_document"),
+        (None, "invalid_document"),
+        (-1, "invalid_document"),
+        (0, "invalid_document"),
+    ],
+)
+def test_named_layout_explicit_unknown_version_fails_closed(client, tmp_path, schema, code):
+    path = tmp_path / "odd.json"
+    payload = json.dumps({"schema": schema, "objs": []}).encode()
+    path.write_bytes(payload)
+    response = client.get("/api/layouts/odd")
+    assert response.status_code == 400
+    assert response.get_json()["code"] == code
+    assert path.read_bytes() == payload
+
+
+def test_named_layout_missing_schema_legacy_still_readable(client, tmp_path):
+    payload = {"objs": [{"type": "text"}]}
+    (tmp_path / "old.json").write_text(json.dumps(payload), encoding="utf-8")
+    assert client.get("/api/layouts/old").get_json() == payload
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [{"type": "text", "text": "DO-NOT-LOSE"}],
+        None,
+        {"schema": 3, "canvases": [], "future": "DO-NOT-LOSE"},
+        {"schema": 2, "objects": {"first": "DO-NOT-LOSE"}},
+        {"project": {"name": "DO-NOT-LOSE"}, "canvases": [], "activeCanvasId": "c"},
+        {"objects": [{"type": "text", "text": "DO-NOT-LOSE"}]},
+        {"objs": {"first": "DO-NOT-LOSE"}},
+        {"schema": 2, "objects": [{"type": "text", "text": "kept"}, {"text": "DO-NOT-LOSE"}]},
+        {"objs": [{"type": "text", "text": "kept"}, {"type": "unknown", "text": "DO-NOT-LOSE"}]},
+    ],
+)
+def test_named_layout_malformed_shape_rejected_without_revision_or_mutation(
+    client, tmp_path, payload
+):
+    path = tmp_path / "broken.json"
+    raw = json.dumps(payload).encode()
+    path.write_bytes(raw)
+    response = client.get("/api/layouts/broken")
+    assert response.status_code == 400
+    assert response.get_json()["code"] == "invalid_document"
+    assert "X-Tavotto-Revision" not in response.headers
+    assert path.read_bytes() == raw
+
+
+def test_sparse_schema2_and_unversioned_v1_are_readable(client, tmp_path):
+    sparse = {"schema": 2, "name": "sparse", "style": {"id": "s", "snapshot": {}}}
+    assert client.post("/api/layouts/sparse", json=sparse).status_code == 200
+    assert client.get("/api/layouts/sparse").get_json() == sparse
+    legacy = {"objs": [{"type": "text", "text": "kept"}]}
+    (tmp_path / "legacy.json").write_text(json.dumps(legacy), encoding="utf-8")
+    assert client.get("/api/layouts/legacy").get_json() == legacy

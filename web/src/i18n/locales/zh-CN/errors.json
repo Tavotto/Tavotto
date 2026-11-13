@@ -1153,5 +1153,6 @@
     "flipped": "图已翻转，无法映射标注坐标",
     "rasterOnly": "素材只有位图，没有矢量 PDF",
     "rotated": "图已旋转，无法映射标注坐标"
-  }
+  },
+  "layoutSchemaInvalid": "排版版本无效，未打开文件；请检查文件或升级 {{product}}。"
 }

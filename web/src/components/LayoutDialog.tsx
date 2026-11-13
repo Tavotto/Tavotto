@@ -249,6 +249,8 @@ export function LayoutDialog() {
     const pj = ctx.pj
     try {
       const { doc, revision, file } = await fetchLayout(target)
+      // Reject an unsupported version before accepting any revision or binding.
+      const normalized = normalizeLayout(doc, target)
       // 读到了就记下基线：之后覆盖这个名字不必再打扰用户一次（事实，记在 ctx 名下）
       rememberLayoutRevision(target, revision, pj)
       // 切走了就不打开、不碰此刻的对话框，在状态条上说出来
@@ -258,7 +260,7 @@ export function LayoutDialog() {
       }
       // 从项目里打开的排版绑定那个文件：之后 ⌘S 写回它，基线是这次读到的那一份
       await openLayoutDocument(
-        normalizeLayout(doc, target),
+        normalized,
         pj && file ? { projectId: pj, name: target, file, revision, dirty: false } : undefined,
       )
       setOpen(false)
