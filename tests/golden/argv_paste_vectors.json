@@ -331,5 +331,215 @@
    "script": "plot.py",
    "error": "different_script"
   }
- ]
+ ],
+ "windows": {
+  "note": "Windows 粘贴：按 Windows 命令行规则（MSVCRT / CommandLineToArgvW）分词——反斜杠原样，只有引号前的反斜杠成对折半、奇数个则引号为字面量。accepted 的真值由 tests/test_script_args.py 里的参照实现算（Windows 机器上再与 CommandLineToArgvW 对拍）；single_quote 是 Tavotto 的扩展（词首的单引号成对当引号，词中间的撇号是普通字符），不属于 Windows 规则。",
+  "accepted": [
+   {
+    "text": "python plot.py --input F:\\data\\t1\\a.xlsx",
+    "script": "plot.py",
+    "words": [
+     "python",
+     "plot.py",
+     "--input",
+     "F:\\data\\t1\\a.xlsx"
+    ],
+    "argv": [
+     "--input",
+     "F:\\data\\t1\\a.xlsx"
+    ]
+   },
+   {
+    "text": "python plot.py --input \"F:\\data\\t1\\a.xlsx\"",
+    "script": "plot.py",
+    "words": [
+     "python",
+     "plot.py",
+     "--input",
+     "F:\\data\\t1\\a.xlsx"
+    ],
+    "argv": [
+     "--input",
+     "F:\\data\\t1\\a.xlsx"
+    ]
+   },
+   {
+    "text": "python plot.py --input \"C:\\my data\\a.xlsx\"",
+    "script": "plot.py",
+    "words": [
+     "python",
+     "plot.py",
+     "--input",
+     "C:\\my data\\a.xlsx"
+    ],
+    "argv": [
+     "--input",
+     "C:\\my data\\a.xlsx"
+    ]
+   },
+   {
+    "text": "python plot.py --dir \"C:\\dir\\\\\"",
+    "script": "plot.py",
+    "words": [
+     "python",
+     "plot.py",
+     "--dir",
+     "C:\\dir\\"
+    ],
+    "argv": [
+     "--dir",
+     "C:\\dir\\"
+    ]
+   },
+   {
+    "text": "python plot.py --msg \"say \\\"hi\\\"\"",
+    "script": "plot.py",
+    "words": [
+     "python",
+     "plot.py",
+     "--msg",
+     "say \"hi\""
+    ],
+    "argv": [
+     "--msg",
+     "say \"hi\""
+    ]
+   },
+   {
+    "text": "python plot.py \"C:\\a\\\\\\\"b\"",
+    "script": "plot.py",
+    "words": [
+     "python",
+     "plot.py",
+     "C:\\a\\\"b"
+    ],
+    "argv": [
+     "C:\\a\\\"b"
+    ]
+   },
+   {
+    "text": "python plot.py \\\\server\\share\\a.xlsx",
+    "script": "plot.py",
+    "words": [
+     "python",
+     "plot.py",
+     "\\\\server\\share\\a.xlsx"
+    ],
+    "argv": [
+     "\\\\server\\share\\a.xlsx"
+    ]
+   },
+   {
+    "text": "python.exe C:\\proj\\plot.py --x 1",
+    "script": "plot.py",
+    "words": [
+     "python.exe",
+     "C:\\proj\\plot.py",
+     "--x",
+     "1"
+    ],
+    "argv": [
+     "--x",
+     "1"
+    ]
+   },
+   {
+    "text": "python plot.py --e \"\"",
+    "script": "plot.py",
+    "words": [
+     "python",
+     "plot.py",
+     "--e",
+     ""
+    ],
+    "argv": [
+     "--e",
+     ""
+    ]
+   },
+   {
+    "text": "python plot.py a\"b c\"d",
+    "script": "plot.py",
+    "words": [
+     "python",
+     "plot.py",
+     "ab cd"
+    ],
+    "argv": [
+     "ab cd"
+    ]
+   },
+   {
+    "text": "python plot.py --input C:\\Users\\O'Brien\\a.xlsx",
+    "script": "plot.py",
+    "words": [
+     "python",
+     "plot.py",
+     "--input",
+     "C:\\Users\\O'Brien\\a.xlsx"
+    ],
+    "argv": [
+     "--input",
+     "C:\\Users\\O'Brien\\a.xlsx"
+    ]
+   }
+  ],
+  "single_quote": [
+   {
+    "text": "python plot.py --tag 'a b'",
+    "script": "plot.py",
+    "words": [
+     "python",
+     "plot.py",
+     "--tag",
+     "a b"
+    ],
+    "argv": [
+     "--tag",
+     "a b"
+    ]
+   },
+   {
+    "text": "python plot.py --input 'C:\\my data\\a.xlsx'",
+    "script": "plot.py",
+    "words": [
+     "python",
+     "plot.py",
+     "--input",
+     "C:\\my data\\a.xlsx"
+    ],
+    "argv": [
+     "--input",
+     "C:\\my data\\a.xlsx"
+    ]
+   }
+  ],
+  "rejected": [
+   {
+    "text": "python plot.py --dir \"C:\\my dir\\\"",
+    "script": "plot.py",
+    "error": "unbalanced_quote"
+   },
+   {
+    "text": "python plot.py --a 'x y",
+    "script": "plot.py",
+    "error": "unbalanced_quote"
+   },
+   {
+    "text": "python plot.py --a C:\\x|y",
+    "script": "plot.py",
+    "error": "unsupported_syntax"
+   },
+   {
+    "text": "python plot.py C:\\data\\*.xlsx",
+    "script": "plot.py",
+    "error": "unsupported_syntax"
+   },
+   {
+    "text": "python other.py --a C:\\x",
+    "script": "plot.py",
+    "error": "different_script"
+   }
+  ]
+ }
 }

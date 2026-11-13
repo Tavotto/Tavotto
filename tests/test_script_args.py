@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -396,6 +397,97 @@ def test_the_analyzer_never_evaluates_nodes(monkeypatch):
 def test_accepted_paste_vectors_split_exactly_like_shlex(vec):
     assert shlex.split(vec["text"]) == vec["words"]
     assert vec["words"][len(vec["words"]) - len(vec["argv"]) :] == vec["argv"]
+
+
+def _msvcrt_split(text: str, *, single_quote_at_word_start: bool) -> list[str]:
+    """Windows 命令行分词的参照实现（CommandLineToArgvW 规则，与 TS 侧写法刻意不同：先按「反斜杠串 + 下一字符」
+    切片）。`single_quote_at_word_start` 是 Tavotto 的扩展，不属于 Windows 规则。"""
+    out: list[str] = []
+    cur: list[str] = []
+    in_word = in_quote = False
+    k = 0
+    while k < len(text):
+        m = re.compile(r"\\*").match(text, k)
+        n = m.end() - k
+        nxt = text[k + n] if k + n < len(text) else ""
+        if n and nxt == '"':
+            cur.append("\\" * (n // 2))
+            in_word = True
+            if n % 2:
+                cur.append('"')
+            else:
+                in_quote = not in_quote
+            k += n + 1
+            continue
+        if n:
+            cur.append("\\" * n)
+            in_word = True
+            k += n
+            continue
+        ch = text[k]
+        if ch in " \t" and not in_quote:
+            if in_word:
+                out.append("".join(cur))
+                cur, in_word = [], False
+        elif ch == '"':
+            in_quote, in_word = not in_quote, True
+        elif ch == "'" and single_quote_at_word_start and not in_word and not in_quote:
+            end = text.index("'", k + 1)
+            cur.append(text[k + 1 : end])
+            in_word = True
+            k = end
+        else:
+            cur.append(ch)
+            in_word = True
+        k += 1
+    if in_word:
+        out.append("".join(cur))
+    return out
+
+
+WIN_PLAIN = PASTE["windows"]["accepted"]
+WIN_SQ = PASTE["windows"]["single_quote"]
+
+
+def test_windows_vectors_are_actually_present():
+    # 判据不许空转：Windows 段为空时下面的参数化会变成零个用例而绿
+    assert len(WIN_PLAIN) >= 10 and len(WIN_SQ) >= 2
+    assert any("\\" in v["text"] for v in WIN_PLAIN)
+
+
+@pytest.mark.parametrize("vec", WIN_PLAIN, ids=lambda v: v["text"][:40])
+def test_windows_accepted_vectors_follow_the_windows_command_line_rules(vec):
+    assert _msvcrt_split(vec["text"], single_quote_at_word_start=False) == vec["words"]
+    assert vec["words"][len(vec["words"]) - len(vec["argv"]) :] == vec["argv"]
+    # 参照实现自身的往返：list2cmdline 是 CPython 里 Windows 引号规则的另一份实现
+    assert (
+        _msvcrt_split(subprocess.list2cmdline(vec["words"]), single_quote_at_word_start=False)
+        == vec["words"]
+    )
+
+
+@pytest.mark.parametrize("vec", WIN_SQ, ids=lambda v: v["text"][:40])
+def test_windows_single_quote_extension_vectors(vec):
+    assert _msvcrt_split(vec["text"], single_quote_at_word_start=True) == vec["words"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="CommandLineToArgvW 只在 Windows 上有")
+@pytest.mark.parametrize("vec", WIN_PLAIN, ids=lambda v: v["text"][:40])
+def test_windows_accepted_vectors_match_the_real_commandlinetoargvw(vec):
+    import ctypes
+    from ctypes import wintypes
+
+    fn = ctypes.windll.shell32.CommandLineToArgvW
+    fn.restype = ctypes.POINTER(wintypes.LPWSTR)
+    n = ctypes.c_int()
+    arr = fn(vec["text"], ctypes.byref(n))
+    assert [arr[i] for i in range(n.value)] == vec["words"]
+
+
+def test_windows_rejected_vectors_use_the_closed_error_set():
+    codes = {"unsupported_syntax", "unbalanced_quote", "different_script"}
+    assert PASTE["windows"]["rejected"]
+    assert {v["error"] for v in PASTE["windows"]["rejected"]} <= codes
 
 
 def test_rejected_paste_vectors_use_the_closed_error_set():
