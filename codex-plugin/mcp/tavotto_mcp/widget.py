@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 #: MCP Apps 的资源 MIME（`@modelcontextprotocol/ext-apps` 的 RESOURCE_MIME_TYPE）
@@ -32,6 +33,29 @@ OPENAI_TEMPLATE_KEY = "openai/outputTemplate"
 #: 构建产物位置（可用环境变量指到别处，方便边改边试）
 WIDGET_ENV = "TAVOTTO_MCP_WIDGET"
 _DEFAULT = Path(__file__).resolve().parent.parent / "widget" / "canvas.html"
+
+
+#: 插件包根目录（`<包>/mcp/tavotto_mcp/widget.py` 往上三层）；pip 装的 wheel 里它只是 site-packages 一类的目录
+_PLUGIN_DIR = Path(__file__).resolve().parent.parent.parent
+
+
+def install_form() -> str:
+    """这个 server 进程是从哪种装法起来的——**唯一出处**（`tavotto_health` 的包 / 画布结论都读它）。
+
+    * `desktop`：桌面版冻结产物；
+    * `plugin`：插件包 / 源码树（有 `.codex-plugin/plugin.json`）；
+    * `wheel`：pip / pipx / uvx 装的 wheel（只有 `tavotto_mcp` 这一个包，没有插件清单，也没有画布产物）。
+    """
+    if getattr(sys, "frozen", False):
+        return "desktop"
+    if (_PLUGIN_DIR / ".codex-plugin" / "plugin.json").is_file():
+        return "plugin"
+    return "wheel"
+
+
+def absent_by_design() -> bool:
+    """画布产物缺席是这种装法的预期（wheel 不带画布）：不是故障、不必重装。用户用环境变量指过路径的不算。"""
+    return install_form() == "wheel" and not (os.environ.get(WIDGET_ENV) or "").strip()
 
 
 def widget_path() -> Path:
@@ -48,6 +72,11 @@ def available() -> bool:
 
 def missing_reason() -> str:
     """产物为什么不可用——给 host / 用户一句能行动的话，不是一个白框。"""
+    if absent_by_design():
+        return (
+            "这种装法（pip / pipx / uvx）没有内嵌画布，属预期；"
+            "要在画布里改图请用桌面版或 Codex 插件。工具本身照常可用。"
+        )
     path = widget_path()
     override = (os.environ.get(WIDGET_ENV) or "").strip()
     where = f"{WIDGET_ENV} 指向的 {path}" if override else str(path)
