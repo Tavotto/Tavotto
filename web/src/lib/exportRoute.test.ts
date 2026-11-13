@@ -11,7 +11,9 @@ import { originalArtifactOverrides } from './artifactValidation'
 import {
   copiesSourceVerbatim,
   embedsDiskBitmap,
+  epsFromOffers,
   epsFromRoute,
+  exportOffersOf,
   panelRouteOf,
   unavailablePanels,
   type ExportRoute,
@@ -162,5 +164,33 @@ describe('EPS 可用性读 route.offers', () => {
     expect(epsAvailability('original', 'f.pdf').ok).toBe(false)
     expect(epsAvailability('original', 'f.pdf', withEps({ eps: { how: 'redraw' } })).ok).toBe(true)
     expect(epsAvailability('canvas', 'f.pdf', withEps({ eps: { how: 'redraw' } }))).toEqual({ ok: false, reason: 'canvas_scope' })
+  })
+  it('声明式场景只消费后端 convert offer，不从无脚本或透明度推算表达能力', () => {
+    const converted = routeOf('original', ['pdf'], {
+      'chart.svg': pr({ source: 'declarative', embeds_disk_bitmap: false, offers: { eps: { how: 'convert' } } }),
+    })
+    expect(epsAvailability('original', 'chart.svg')).toEqual({ ok: false, reason: 'no_script' })
+    expect(epsAvailability('original', 'chart.svg', converted)).toEqual({ ok: true, reason: 'none' })
+    expect(epsAvailability('canvas', 'chart.svg', converted)).toEqual({ ok: false, reason: 'canvas_scope' })
+  })
+  it('相同文件的多个不同实例没有唯一 EPS offer，不以第一份代替全部', () => {
+    const ambiguous = routeOf('original', ['pdf'], {
+      'chart.svg': pr({ source: 'declarative', offers: { eps: { how: 'convert' } } }),
+      'chart.svg#2': pr({ offers: { eps: { how: 'unavailable', reason: 'eps_needs_script' } } }),
+    })
+    expect(epsFromRoute(ambiguous, 'original', 'chart.svg')).toBeNull()
+    expect(epsAvailability('original', 'chart.svg', ambiguous)).toEqual({ ok: false, reason: 'no_script' })
+  })
+  it('独立offer只投影后端how/reason，不携格式来源计划与conditions', () => {
+    const route = routeOf('original', ['pdf'], { 'chart.svg': pr({ source: 'declarative',
+      formats: { pdf: { how: 'convert', conditions: ['specific-format'] } },
+      offers: { eps: { how: 'convert', conditions: ['specific-format'] } } }) })
+    const offers = exportOffersOf(route)
+    expect(offers).toEqual({ scope: 'original', eps: { 'chart.svg': { how: 'convert' } } })
+    expect(epsFromOffers(offers, 'original', 'chart.svg')).toEqual({ ok: true, reason: 'none' })
+    expect(epsFromOffers(offers, 'canvas', 'chart.svg')).toBeNull()
+    expect(epsFromOffers(offers, 'original', 'another.svg')).toBeNull()
+    const ambiguous = { ...offers, eps: { ...offers.eps, 'chart.svg#2': undefined } }
+    expect(epsFromOffers(ambiguous, 'original', 'chart.svg')).toBeNull()
   })
 })

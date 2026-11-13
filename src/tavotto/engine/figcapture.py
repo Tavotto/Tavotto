@@ -234,6 +234,7 @@ __all__ = [
     "SOURCE_ARTIFACT_VERSION",
     "ORIGIN_EXECUTION",
     "ORIGIN_STATIC",
+    "ORIGIN_DECLARATIVE",
     "SourceArtifact",
     "hash_file",
     "source_artifact_from_file",
@@ -1224,7 +1225,8 @@ def descriptor_from_payload(data: dict) -> CapturedFigureDescriptor:
 SOURCE_ARTIFACT_VERSION = 1
 ORIGIN_EXECUTION = "execution"
 ORIGIN_STATIC = "static"
-_ORIGINS = (ORIGIN_EXECUTION, ORIGIN_STATIC)
+ORIGIN_DECLARATIVE = "declarative"
+_ORIGINS = (ORIGIN_EXECUTION, ORIGIN_STATIC, ORIGIN_DECLARATIVE)
 SELECTED_ARTIFACT_POLICY = "selected-artifact-v1"
 SELECTED_FIGSIZE_POLICY = "selected-figsize-v1"
 #: 来源驱动采用（ADR 0139）：编辑档安全条件 + 准入结论（exact / needs_confirmation），与上面两条永不共享 worker / 缓存 / witness。
@@ -1355,10 +1357,12 @@ class SourceArtifact:
     `receipt_id` / `receipt_identity` / `generation` / `patch_hash` 对 static 来源恒为
     `None`：没有执行就没有执行身份，**不许**拿「最近一次会话」去冒充。execution 来源
     两个都要：`receipt_id`（实例）与 `receipt_identity`（公开语义）。
+    declarative 来源由已校验模型重算，不冒充 Figure 执行：四个执行身份字段
+    同样恒为 None，版本只由 `render_revision` 表达。
     """
 
     source_id: str
-    origin: str  # ORIGIN_EXECUTION | ORIGIN_STATIC
+    origin: str  # ORIGIN_EXECUTION | ORIGIN_STATIC | ORIGIN_DECLARATIVE
     kind: str  # 文件类型（扩展名去点、小写）
     bytes_sha256: str
     size_bytes: int
@@ -1366,6 +1370,7 @@ class SourceArtifact:
     generation: int | None = None
     patch_hash: str | None = None
     receipt_identity: str | None = None  # 回执的 public_identity()（语义身份的坐标）
+    render_revision: str | None = None  # declarative 的来源 / 模型 / 绑定 / 计算环境身份
 
     def __post_init__(self) -> None:
         if not isinstance(self.source_id, str) or not self.source_id:
@@ -1394,9 +1399,28 @@ class SourceArtifact:
             raise ValueError("execution 来源必须带产出它的 receipt_id")
         if self.origin == ORIGIN_EXECUTION and not self.receipt_identity:
             raise ValueError("execution 来源必须带回执的 receipt_identity（公开身份）")
+        if self.origin == ORIGIN_DECLARATIVE:
+            if not isinstance(self.render_revision, str) or not re.fullmatch(
+                r"[0-9a-f]{64}", self.render_revision
+            ):
+                raise ValueError("declarative 来源必须带 64 位十六进制 render_revision")
+            if any(
+                value is not None
+                for value in (
+                    self.receipt_id,
+                    self.receipt_identity,
+                    self.generation,
+                    self.patch_hash,
+                )
+            ):
+                raise ValueError("declarative 来源没有 Figure 执行身份")
+        elif self.render_revision is not None:
+            raise ValueError("render_revision 只属于 declarative 来源")
 
     def to_payload(self) -> dict:
         out = dataclasses.asdict(self)
+        if self.render_revision is None:
+            del out["render_revision"]
         out["source_artifact_version"] = SOURCE_ARTIFACT_VERSION
         return out
 
@@ -1411,6 +1435,8 @@ class SourceArtifact:
             "receipt_identity": self.receipt_identity,
             "patch_hash": self.patch_hash,
         }
+        if self.origin == ORIGIN_DECLARATIVE:
+            payload["render_revision"] = self.render_revision
         canon = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return "sha256:" + hashlib.sha256(canon.encode("utf-8")).hexdigest()
 
@@ -1424,6 +1450,7 @@ def source_artifact_from_file(
     generation: int | None = None,
     patch_hash: str | None = None,
     receipt_identity: str | None = None,
+    render_revision: str | None = None,
 ) -> SourceArtifact:
     """磁盘文件 → SourceArtifact（当场读字节算 hash；类型按扩展名）。"""
     sha, size = hash_file(path)
@@ -1438,6 +1465,7 @@ def source_artifact_from_file(
         generation=generation,
         patch_hash=patch_hash,
         receipt_identity=receipt_identity,
+        render_revision=render_revision,
     )
 
 

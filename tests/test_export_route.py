@@ -94,15 +94,14 @@ def test_svg_asset_basis_is_the_file_bytes():
         "how": "redraw",
         "conditions": [er.COND_SVG_ASSET_BINDING, er.COND_LIVE_FIGURE],
     }
-    assert r["formats"]["pdf"]["reason"] == "svg_asset_export_unsupported"
-    assert route("canvas", ["svg"], er.KIND_SVG)["formats"]["svg"]["reason"] == (
-        "svg_asset_export_unsupported"
-    )
+    assert r["formats"]["pdf"] == {"how": "convert"}
+    assert route("canvas", ["svg"], er.KIND_SVG)["formats"]["svg"] == {"how": "convert"}
 
 
-def test_raster_without_execution_has_no_svg():
+def test_raster_without_execution_converts_to_an_svg_image_without_a_figure_snapshot():
     r = route("original", ["svg"], er.KIND_RASTER)
-    assert r["formats"]["svg"]["reason"] == "svg_source_unsupported"
+    assert r["formats"]["svg"] == {"how": "convert"}
+    assert route("canvas", ["svg"], er.KIND_RASTER)["formats"]["svg"] == {"how": "convert"}
     assert route("original", ["svg"], er.KIND_RASTER, overrides=[{"x": 1}])["formats"]["svg"] == {
         "how": "redraw"
     }
@@ -205,9 +204,10 @@ def test_edited_panel_with_a_snapshot_reference_loads_the_snapshot(scope, script
     assert r["source"] == er.SOURCE_SNAPSHOT and r["embeds_disk_bitmap"] is False
     for fmt in ("pdf", "svg"):
         assert r["formats"][fmt] == {"how": "convert", "conditions": [er.COND_FIGURE_SNAPSHOT]}
-    # 静态 PDF 带引用：磁盘来源，但同样要核引用
+    # 明确引用选择同一历史配对；同名磁盘原件可以已有更新。
     r = route(scope, ["pdf"], er.KIND_PDF, snapshot=True)
-    assert r["source"] == er.SOURCE_DISK
+    assert r["source"] == er.SOURCE_SNAPSHOT
+    assert r["formats"]["pdf"]["how"] == "convert"
     assert er.COND_FIGURE_SNAPSHOT in r["formats"]["pdf"]["conditions"]
 
 
@@ -251,3 +251,76 @@ def test_offers_say_whether_eps_is_available_without_it_being_requested():
     # 勾了 eps 时 offers 与 formats 里那一项是同一个答案
     r = route("original", ["eps", "svg"], er.KIND_PDF)
     assert r["offers"]["eps"] == r["formats"]["eps"]
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas"])
+@pytest.mark.parametrize("script", [False, True])
+@pytest.mark.parametrize(
+    "formats", [["pdf"], ["eps"], ["eps", "svg"], ["pdf", "png", "eps", "tiff", "svg"]]
+)
+def test_declarative_scene_uses_conversion_without_script_or_live_figure(scope, script, formats):
+    result = er.panel_route(
+        scope=scope,
+        formats=formats,
+        file_kind=er.KIND_SVG,
+        overrides=[{"gid": "axes_0.lines_0", "prop": "color", "value": "red"}],
+        has_script=script,
+        has_snapshot=True,
+        has_chart=True,
+    )
+    assert result["source"] == er.SOURCE_DECLARATIVE
+    assert result["embeds_disk_bitmap"] is False
+    eps = (
+        {"how": "unavailable", "reason": "eps_not_for_canvas"}
+        if scope == "canvas"
+        else {"how": "convert"}
+    )
+    assert result["offers"]["eps"] == eps
+    assert result["formats"] == {
+        fmt: eps if fmt == "eps" else {"how": "convert"} for fmt in formats
+    }
+    # No figure snapshot, source-ref verification or paint support is invented.
+    assert all("conditions" not in entry for entry in result["formats"].values())
+
+
+@pytest.mark.parametrize("scope", ["original", "canvas"])
+def test_chart_fact_does_not_change_legacy_false_default_or_input(scope):
+    inputs = dict(
+        scope=scope,
+        formats=["eps", "svg", "pdf"],
+        file_kind=er.KIND_SVG,
+        overrides=[],
+        has_script=False,
+        has_snapshot=False,
+    )
+    assert er.panel_route(**inputs) == er.panel_route(**inputs, has_chart=False)
+    assert inputs["overrides"] == []
+
+
+def test_build_route_keeps_legacy_call_shape_and_only_passes_true_chart_fact(monkeypatch):
+    called = []
+    real = er.panel_route
+
+    def capture(**kw):
+        called.append(kw)
+        return real(**kw)
+
+    monkeypatch.setattr(er, "panel_route", capture)
+    base = {"id": "scene.svg", "file_kind": "svg", "overrides": [], "has_script": False}
+    result = er.build_route(
+        scope="original",
+        formats=["pdf"],
+        panels=[base, {**base, "has_chart": False}, {**base, "has_chart": True}],
+    )
+    expected = dict(
+        scope="original",
+        formats=["pdf"],
+        file_kind="svg",
+        overrides=[],
+        has_script=False,
+        has_snapshot=False,
+    )
+    assert called == [expected, expected, {**expected, "has_chart": True}]
+    assert set(result["panels"]) == {"scene.svg", "scene.svg#2"}
+    assert result["panels"]["scene.svg"]["offers"]["eps"]["reason"] == "eps_needs_script"
+    assert result["panels"]["scene.svg#2"]["offers"]["eps"] == {"how": "convert"}

@@ -1,5 +1,5 @@
 import type { PanelInfo } from './api'
-import { panelRender, type PanelRender } from '@/store/renderStore'
+import { exactPanelRender, panelRender, renderRequestIdentity, type PanelRender } from '@/store/renderStore'
 import { formatMessage, msg, type UiMessage } from '@/i18n'
 import { PROOF_KIND } from './brand'
 import {
@@ -21,6 +21,8 @@ import { embedsDiskBitmap, type ExportRoute, type ExportRouteScope } from './exp
 import type { CanvasObject, FigureDocument, FramePad, PanelObject, TextObject } from '@/types/document'
 import { panelFullSize } from '@/types/document'
 import type { Manifest, ManifestElement } from './api'
+import { figureOriginFor } from './figureSnapshot'
+import { needsFigureArchiveSource, figureSnapshotSourceKey, type PanelSourceEvidence } from './panelSourceEvidence'
 
 /**
  * 出版规范预检 —— **规则全部来自 profile，一条都不在这里硬编码**。
@@ -1254,8 +1256,16 @@ function panelSpec(
   scope: ExportRouteScope,
   formats: readonly string[],
   route?: ExportRoute | null,
+  sources?: PanelSourceEvidence,
 ): PreflightPanelSpec {
   const r = panelRender(render, o)
+  // 附件不是磁盘素材表的一员。只有后端已经成功画过当前完整 chart/ref 请求，
+  // 才是该来源可用的正证；字段存在、旧 latest 或另一变体都不能授予资格。
+  const verifiedChartSource = o.chart && o.chartSource !== undefined && exactPanelRender(render, o)
+  const archived = needsFigureArchiveSource(o)
+  const archiveKey = archived ? figureSnapshotSourceKey(o) : null
+  const verifiedArchive = archiveKey !== null && sources?.figureSnapshots[archiveKey] === true
+  const verifiedDisk = !o.chart && o.chartSource === undefined && sources?.originalSources[o.fileId]?.id === o.fileId
   return {
     id: o.id,
     name: o.name ?? o.fileId,
@@ -1269,14 +1279,15 @@ function panelSpec(
     px_w: o.pxW ?? null,
     // runtime 素材不在磁盘素材表里，这不是「缺失」——它的可用性由
     // stale/rerun 那套状态表达
-    missing: o.fileKind === 'runtime' ? false : !assets[o.fileId],
+    missing: archived ? !verifiedArchive
+      : o.fileKind === 'runtime' ? false : !assets[o.fileId] && !verifiedChartSource && !verifiedDisk,
     stale: !!r?.stale,
     render_error: o.overrides.length > 0 && r?.status === 'error'
       ? (formatMessage(r.error) || 'error')
       : null,
     // 有 override 但引擎那边还没画出这一版：成图会与画布不一致
     unapplied_overrides:
-      o.overrides.length > 0 && r?.lastPatches !== JSON.stringify(o.overrides)
+      o.overrides.length > 0 && r?.lastPatches !== renderRequestIdentity(o.overrides, o.chart, o.chartSource, figureOriginFor(o), o.chartFrame?.renderProfile)
         ? o.overrides.length
         : 0,
     hidden: !!o.hidden,
@@ -1339,6 +1350,7 @@ export function buildSpec(
   doc: FigureDocument,
   assets: Record<string, PanelInfo>,
   render: { byKey: Record<string, PanelRender>; latest: Record<string, string> },
+  sources?: PanelSourceEvidence,
 ): PreflightSpec {
   /**
    * 对象在页面上**真正占的**轴对齐包围盒。
@@ -1362,7 +1374,7 @@ export function buildSpec(
   }
   const panels: PreflightPanelSpec[] = doc.objects
     .filter((o): o is PanelObject => o.type === 'panel')
-    .map((o) => panelSpec(o, assets, render, rect(o), panelScale(o), 'canvas', []))
+    .map((o) => panelSpec(o, assets, render, rect(o), panelScale(o), 'canvas', [], undefined, sources))
   return {
     page: { w_mm: doc.page.w, h_mm: doc.page.h, margin_mm: doc.page.margin ?? 0 },
     panels,
@@ -1414,12 +1426,13 @@ export function buildOriginalSpec(
   route?: ExportRoute | null,
   /** 单图画布留白（ADR 0161，导出 mm）：页面 = 图幅 + 留白、图落在 (左, 上)——栏宽等页面规则按导出的页面判 */
   pad?: FramePad | null,
+  sources?: PanelSourceEvidence,
 ): PreflightSpec {
   const p = pad ?? { l: 0, t: 0, r: 0, b: 0 }
   const rect_mm: [number, number, number, number] = [p.l, p.t, size.widthMm, size.heightMm]
   return {
     page: { w_mm: size.widthMm + p.l + p.r, h_mm: size.heightMm + p.t + p.b, margin_mm: 0 },
-    panels: [panelSpec(panel, assets, render, rect_mm, 1, 'original', formats, route)],
+    panels: [panelSpec(panel, assets, render, rect_mm, 1, 'original', formats, route, sources)],
     texts: [],
     objects: [{ id: panel.id, type: panel.type, rect_mm, hidden: !!panel.hidden }],
   }

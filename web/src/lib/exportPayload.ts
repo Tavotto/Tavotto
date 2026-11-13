@@ -1,4 +1,5 @@
-import { figureSnapshotFor } from './figureSnapshot'
+import { chartSourceFields } from './chartSource'
+import { figureOriginFields, figureOriginFor, figureSnapshotFor } from './figureSnapshot'
 import { artifactRequestFields } from './artifactValidation'
 import type { ExportObject } from './api'
 import type { CanvasObject } from '@/types/document'
@@ -27,8 +28,17 @@ function toExportObject(o: CanvasObject): ExportObject {
       return {
         ...box,
         type: 'panel',
-        ...artifactRequestFields(o),
+        ...(figureOriginFor(o) === undefined ? artifactRequestFields(o) : {}),
         id: o.fileId,
+        ...(o.chart
+          ? {
+              chart: structuredClone(o.chart),
+              // 坐标合同随面板走（/2 的 chartFrame）；/1 面板发既有字面量
+              chart_render_profile: o.chartFrame?.renderProfile ?? 'native-manifest/1',
+            }
+          : {}),
+        ...chartSourceFields(o.chartSource),
+        ...figureOriginFields(o),
         ...(figureSnapshotFor(o) ? { figure_snapshot: figureSnapshotFor(o) } : {}),
         overrides: o.overrides.length ? o.overrides : undefined,
         crop: o.crop,

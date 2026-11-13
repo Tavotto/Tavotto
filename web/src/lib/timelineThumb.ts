@@ -1,8 +1,9 @@
-import { panelSrc } from '@/lib/api'
 import { contentBox, type ThumbBox } from '@/lib/versionThumbBox'
 import { applyPanelTransform, panelContentTransform } from '@/lib/panelTransform'
-import { useAssetStore } from '@/store/assetStore'
-import { panelRender, useRenderStore } from '@/store/renderStore'
+import { captureThumbSources } from '@/store/renderStore'
+import { TIMELINE_THUMB_PX, type PanelSource, type ThumbSources } from './momentCapture'
+export { captureThumbSources } from '@/store/renderStore'
+export { TIMELINE_THUMB_PX, type ThumbSources } from './momentCapture'
 import { strokeOpacityOf } from '@/lib/shapeGeometry'
 import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
 import { shapeStrokeOn } from '@/types/document'
@@ -23,11 +24,6 @@ import { shapeStrokeOn } from '@/types/document'
  * 的节点在列表里退回草图，拍节点这件事本身绝不因为缩略图失败。
  */
 
-/**
- * 缩略图的长边（px）。只拍页面上有内容的那块（`contentBox`）——单图编辑没有「页面」，
- * 整页拍的话图常常只占一角；竖线条浮卡按 2× 屏约 400 px 显示，所以比列表行要的大。
- */
-export const TIMELINE_THUMB_PX = 360
 /** 为了裁出内容区域先按整页画的那张画布，长边不超过它（内容极小、页面极大时降分辨率） */
 const TIMELINE_THUMB_PAGE_MAX_PX = 4096
 /** 后端单张上限（`VERSION_THUMB_MAX_BYTES` 256 KiB）留点余量：超了就缩一档再编 */
@@ -91,28 +87,6 @@ function loadImage(src: string): Promise<HTMLImageElement | null> {
 }
 
 /**
- * 一个面板**此刻**从哪儿取图：renderStore 里带 overrides 的 SVG，没有就退回素材图。
- *
- * **同步取、一次取完**（在任何 await 之前）：关项目 / 切项目那一刻打的节点，
- * 合成还没画完 renderStore 就被清空、`apiUrl` 就换成了下一个项目——晚一步取，
- * 画进去的是另一个项目的同名素材，或者什么都没有。
- */
-/**
- * 两路图源**都取**：SVG 在前（带 overrides，用户看到的就是它），素材图兜底。只取一路的话，
- * SVG 解码失败或画成空白（Windows 的 WebKit 上量到过：同一份排版前一个节点有面板、下一个
- * 节点只剩文字，CI run 36510136403）时这一格就空着——而素材图明明就在。
- */
-type PanelSource = { svg?: string; url?: string } | null
-
-function panelSource(o: PanelObject): PanelSource {
-  const render = panelRender(useRenderStore.getState(), o)
-  const mtime = useAssetStore.getState().byId[o.fileId]?.mtime
-  const url = panelSrc(o.fileId, o.fileKind, 400, mtime) || undefined
-  if (!render?.svg && !url) return null
-  return { svg: render?.svg ?? undefined, url }
-}
-
-/**
  * e2e 的诊断（只在 e2e 注入了 `__TAVOTTO_THUMB_TRACE__` 数组时记）：每个面板走了哪条路、
  * 结果如何。缩略图画不出面板时，用例把它带进失败信息——量不到的维度先让它说出口。
  */
@@ -137,8 +111,9 @@ async function loadFrom(
     URL.revokeObjectURL(url)
     return null
   }
-  if (!source.url) return null
-  const img = await loadImage(retry ? `${source.url}${source.url.includes('?') ? '&' : '?'}thumbRetry=1` : source.url)
+  const url = source.png ? await source.png : source.url
+  if (!url) return null
+  const img = await loadImage(retry && !source.png ? `${url}${url.includes('?') ? '&' : '?'}thumbRetry=1` : url)
   return img ? { img } : null
 }
 
@@ -324,24 +299,6 @@ function encode(canvas: HTMLCanvasElement): Promise<TimelineThumb | null> {
       resolve(null)
     }
   })
-}
-
-/** 一份文档此刻的各面板图源（`panelSource` 的结果）；取不出来 = `null`（没有缩略图） */
-export type ThumbSources = ReadonlyMap<string, PanelSource> | null
-
-/**
- * 取各面板**此刻**的图源——只读 renderStore，同步、便宜。关键时刻在操作**发起**那一刻取
- * （`captureMoment`），完成时再合成：那时用户可能已经改了面板，现取的话缩略图画的是
- * 之后的样子，与节点里那份文档对不上（Codex #679）。
- */
-export function captureThumbSources(doc: FigureDocument): ThumbSources {
-  const sources = new Map<string, PanelSource>()
-  try {
-    for (const o of doc.objects) if (o.type === 'panel' && !o.hidden) sources.set(o.id, panelSource(o))
-  } catch {
-    return null
-  }
-  return sources
 }
 
 /**
