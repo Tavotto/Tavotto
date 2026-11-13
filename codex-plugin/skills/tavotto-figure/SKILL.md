@@ -122,6 +122,11 @@ tavotto_open_figure { "project_path": "/absolute/path/to/figures", "stem": "Fig1
 * **收尾** `tavotto_close_session { session_id }`。
 用户说要投某本期刊：先 `tavotto_list_journals { "query": "期刊名" }` 查 id，之后 open / preflight /
 export / normalize 都带 `journal_id`，别再手写尺寸；查不到才手写 `journal`（见 `references/publication-style.md`「按期刊」）。
+**要把图改到合规时先 `tavotto_fix_to_journal { session_id, journal_id }`**（不要读 preflight 再自己拼 apply）：
+它一步改图幅 + 字号 / 字体 / 线宽 / 刻度 / 图例 / 边框，真实渲染裁决，不通过就整体回到修改前。
+`exit=column_choice_required`（栏位不唯一，什么都没改）就把 `columns` 念给用户问单栏还是双栏，再带 `column` 重调；
+`remaining` 里 `fix.kind=manual` 的才需要改脚本（`tavotto_preflight` 每条问题也带 `fix`）。
+想先看会改什么就 `dry_run: true`；`skipped` 与 `introduced` 如实告诉用户，不要说成「已合规」。
 
 **这些工具不会动用户的 .py 源码。** 数据、坐标范围、加删曲线/子图、colorbar
 方向仍然只能回代码改（清单见 `references/compatibility.md`）。
