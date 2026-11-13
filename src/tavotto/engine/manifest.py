@@ -1166,6 +1166,18 @@ _LEGEND_SOURCE_ROLES = frozenset(
 )
 
 
+def _within(ax, fig) -> bool:
+    """`ax` 是否画在 `fig`（Figure 或 SubFigure）里——沿 SubFigure 链往上找。"""
+    owner = ax.get_figure()
+    while owner is not None:
+        if owner is fig:
+            return True
+        if not isinstance(owner, SubFigure):
+            return False
+        owner = owner.figure if owner.figure is not owner else None
+    return False
+
+
 def _bind_legends(state: FigState) -> None:
     """给每个图例的每一项找源对象（判据在 `overrides.bind_legend_entries`）。"""
     axes_gid_of = {
@@ -1204,10 +1216,15 @@ def _bind_legends(state: FigState) -> None:
             except Exception:  # noqa: BLE001 — 拿不到就没有位置线索
                 auto = []
         else:
-            cands = [(g, a) for _o, g, a in sources]
-            map_cands = [(g, a) for _o, g, a in maps]
+            # `sf.legend()` 只收它自己（含嵌套）SubFigure 里的子图；候选按整张图找的话，
+            # 并排的 SubFigure 各画一条同样长相的线（各自的色环都从 C0 起）就并列、一条都绑不上
+            owned = [ax for ax in ordered_axes(state.fig)[0] if _within(ax, parent)]
+            owners = {axes_gid_of.get(id(ax)) for ax in owned}
+            scoped = parent is not state.fig
+            cands = [(g, a) for o, g, a in sources if not scoped or o in owners]
+            map_cands = [(g, a) for o, g, a in maps if not scoped or o in owners]
             auto = []
-            for ax in ordered_axes(state.fig)[0]:
+            for ax in owned:
                 try:
                     auto.extend(ax.get_legend_handles_labels()[0])
                 except Exception:  # noqa: BLE001

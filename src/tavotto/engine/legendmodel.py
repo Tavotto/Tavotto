@@ -997,10 +997,19 @@ def _legend_replace_handle(leg: Legend, k: int, orig, copy_of=None) -> bool:
     return True
 
 
-def _all_legends(fig) -> list[Legend]:
-    """figure 上全部图例：figure 级的 + 每个 axes 的（含插图 / 次坐标轴——
-    `fig.axes` 里没有它们，遍历权威只有 `axestraversal.ordered_axes` 一处）。"""
+def figure_level_legends(fig) -> list[Legend]:
+    """`fig.legend()` 与每个 SubFigure（含嵌套）的 `sf.legend()`——与 `manifest._register_figure_level`
+    登记的是同一批：登记了却不在这里，跟随源对象之类的派生就漏掉它们（#1887 评审）。"""
     out = list(getattr(fig, "legends", []) or [])
+    for sub in getattr(fig, "subfigs", []) or []:
+        out += figure_level_legends(sub)
+    return out
+
+
+def _all_legends(fig) -> list[Legend]:
+    """figure 上全部图例：figure / SubFigure 级的 + 每个 axes 的（含插图 / 次坐标轴——
+    `fig.axes` 里没有它们，遍历权威只有 `axestraversal.ordered_axes` 一处）。"""
+    out = figure_level_legends(fig)
     for ax in ordered_axes(fig)[0]:
         leg = ax.get_legend()
         if leg is not None:
@@ -1067,7 +1076,7 @@ def legend_proxy_names(fig) -> dict[int, str]:
         if isinstance(art, Line2D | PathCollection)
     ]
     legends = [ax.get_legend() for ax in axes if ax.get_legend() is not None]
-    legends += list(getattr(fig, "legends", []))
+    legends += figure_level_legends(fig)
     named: dict[int, set[str]] = {}
     for leg in legends:
         for sid, text in _names_from_legend(leg, series).items():

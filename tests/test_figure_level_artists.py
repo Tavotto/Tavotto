@@ -249,3 +249,28 @@ def test_fresh_replay_matches_the_hot_session(hot, figs):
                 assert replay[g]["bbox"] == pytest.approx(got[g]["bbox"], abs=tol), f"{stem} {g}"
     finally:
         pool.discard(fresh)
+
+
+def test_subfigure_legend_entries_follow_their_source(hot):
+    """SubFigure 的图例项与子图里的一样跟随源对象：改源的颜色示意线跟着变；撤掉示意线的改动就
+    立刻派生回源此刻的样子。修前两处漏：并排 SubFigure 各有一条同样长相的线，按整张图找源并列、
+    一条都绑不上；`sync_legends` 不走 SubFigure（#1887 Codex 评审）。"""
+    entry = "fig.subfigs_0.legend_0.texts_0"
+    man = _man(hot, "Sub")
+    src = man[entry]["legend_entry"]["source_gid"]
+    assert _field(man[entry], "binding") == "follow_source"
+    recolor = {"gid": src, "prop": "color", "value": "#00ff00"}
+    got = _man(hot, "Sub", [recolor])
+    assert _field(got[entry], "handle_color") == "#00ff00"
+    custom = {"gid": entry, "prop": "handle_color", "value": "#123456"}
+    got = _man(hot, "Sub", [recolor, custom])
+    assert _field(got[entry], "handle_color") == "#123456", "改过示意线 = 脱开"
+    # 撤掉示意线那条 = 回到跟随，立刻派生成源此刻的样子
+    got = _man(hot, "Sub", [recolor])
+    assert _field(got[entry], "binding") == "follow_source"
+    assert _field(got[entry], "handle_color") == "#00ff00"
+    follow = {"gid": entry, "prop": "binding", "value": "follow_source"}
+    got = _man(hot, "Sub", [follow, recolor])
+    assert _field(got[entry], "handle_color") == "#00ff00"
+    back = _man(hot, "Sub")
+    assert _field(back[entry], "handle_color") == _field(man[entry], "handle_color")
