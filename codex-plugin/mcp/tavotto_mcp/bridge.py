@@ -4310,7 +4310,8 @@ def _fix_run(
     if target_w is not None and abs(target_w - w0) > 1e-6:
         targets["width_mm"] = target_w
     w_final = targets.get("width_mm", w0)
-    if column is None and width_mm is None and eligible("page-aspect"):
+    # 点名了栏位 / 宽度也照样修长宽比（Codex 评审 P2）：第二段改不了页面几何，这里不修就修不了
+    if eligible("page-aspect"):
         h_target = _aspect_height(profile, w0, h0, w_final)
         if h_target is not None and abs(h_target - h0 * w_final / w0) > 0.01:
             targets["height_mm"] = h_target

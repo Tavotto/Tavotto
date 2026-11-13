@@ -309,6 +309,16 @@ def test_max_column_already_within_the_limit_keeps_the_width(sid):
     assert exc.value.code == "unknown_column"  # typical 栏不是判据，不能当目标
 
 
+def test_explicit_column_still_repairs_the_aspect_ratio(sid):
+    j = _journal(allowed_aspect_ratios=[{"w": 1, "h": 1}])  # 只许方图；120×80 超限
+    assert "page-aspect" in _ids(sid, j)
+    res = _fix(sid, journal=j, column="single")
+    assert res["ok"], json.dumps(res, ensure_ascii=False)[:2000]
+    assert res["size"]["to_mm"][0] == pytest.approx(110.0, abs=0.01)
+    assert res["size"]["to_mm"][1] == pytest.approx(110.0, abs=0.01)
+    assert "page-aspect" not in _ids(sid, j)
+
+
 def test_width_mm_and_unknown_column(sid):
     res = _fix(sid, journal=_journal(), width_mm=110)
     assert res["ok"] and res["size"]["to_mm"][0] == pytest.approx(110.0, abs=0.01)
