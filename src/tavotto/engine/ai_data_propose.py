@@ -524,35 +524,22 @@ def with_explicit_table(
     profile: adf.FolderProfile, folder: Path, table: str | None, sheet: str | None
 ) -> adf.FolderProfile:
     """用户**显式选中**的表（含指定工作表）不受发现预算（`MAX_PROFILE_TABLES`）限制：不在截断后的 profile 里就单独读一份摘要并补进去。
-    路径仍钉死在所选数据文件夹内（字符串层 `normalize_rel` + realpath 前缀判；链接不跟随）、只读；后缀必须是表格后缀。
+    只认发现遍历实际列得出的文件（所选数据文件夹内、链接不跟随、隐藏项与剪枝目录不读、表格后缀）、只读。
     不满足就原样返回（随后 `pick_table` 报 `table_not_found`）；文件本身读不了抛 `DataSourceError`（稳定码）。"""
     if not table:
         return profile
     if any(t.path == table and (sheet is None or t.sheet == sheet) for t in profile.tables):
         return profile
-    try:
-        rel = normalize_rel(table)
-    except ValueError:
+    # 不拿请求里的字符串拼路径：用发现时的同一次遍历（`discover.walk_files`：隐藏 / `PRUNE_DIRS` 剪枝、不进链接目录、
+    # 不列链接文件）把文件夹里的表列出来，只认其中**逐字相等**的那一项，路径取自遍历结果。于是规则与发现天然一致，
+    # 文件夹外、链接、隐藏项、非表格后缀都落不进来。
+    found, _ = discover.walk_files(folder, adf.TABLE_SUFFIXES, scan_max=adf.PROFILE_SCAN_MAX)
+    rel = next(
+        (f[0] for f in found if f[0] == table and not Path(f[0]).name.startswith("~$")), None
+    )
+    if rel is None:
         return profile
-    if not rel or table != rel:
-        return profile
-    parts = PurePosixPath(rel).parts
-    # 与发现规则（`discover.walk_files`）一致：隐藏项、`PRUNE_DIRS` 里的目录不读
-    if any(p.startswith(".") for p in parts) or any(p in discover.PRUNE_DIRS for p in parts[:-1]):
-        return profile
-    path = folder / PurePosixPath(rel)
-    base = os.path.realpath(folder)
-    real = os.path.realpath(path)
-    if (
-        path.is_symlink()
-        or real != os.path.join(base, *parts)  # 途中任何一级是链接都不认（发现时也不进链接目录）
-        or not real.startswith(base + os.sep)
-        or not path.is_file()
-        or path.suffix.lower() not in adf.TABLE_SUFFIXES
-        or path.name.startswith("~$")
-    ):
-        return profile
-    values = adf.inspect_data_source(path, sheet)
+    values = adf.inspect_data_source(folder / PurePosixPath(rel), sheet)
     summary = replace(values, rows=[], row_numbers=[], row_count=len(values.rows))
     entry = adf.TableEntry(rel, values.sheet, False, summary)
     return adf.FolderProfile(
