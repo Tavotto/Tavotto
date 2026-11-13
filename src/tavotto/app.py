@@ -14821,17 +14821,21 @@ _DATA_FILES_SHEETS_MAX = 100
 
 @app.get("/api/ai/data-files")
 def api_ai_data_files():
-    """TAF 数据出图的数据文件列表（**实验开关后面**，只读）：当前项目内的 `.csv` / `.tsv` / `.tab` / `.xlsx`（后缀大小写不敏感）。
+    """TAF 数据出图的数据文件列表（**实验开关后面**，只读）：**默认只列 `.csv`**（v1 表单走 `/api/ai/data-figure`，只认 CSV）；
+    带 `?formats=all` 才列 `.csv` / `.tsv` / `.tab` / `.xlsx`（v2 出备选用），后缀大小写不敏感。
 
     walk 剪枝与隐藏目录规则同 `discover.PRUNE_DIRS`；不跟随链接；最多 500 个，按项目相对 POSIX 路径排序；最多看
-    `_DATA_FILES_SCAN_MAX` 个目录项，超了停下并标 `truncated`。XLSX 带 `sheets: [{name, hidden}]`（读不了 / 超过
+    `_DATA_FILES_SCAN_MAX` 个目录项，超了停下并标 `truncated`。`formats=all` 时 XLSX 带 `sheets: [{name, hidden}]`（读不了 / 超过
     `_DATA_FILES_SHEETS_MAX` 个之后是 null）。"""
     if not engine_ai_figure_edit.enabled():
         return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
     root = require_project()
     # walk 规则（剪枝 / 隐藏 / 不跟随链接 / 扫描预算）与数据文件夹摘要共用 `discover.walk_files` 那一份
+    every = request.args.get("formats") == "all"
     found, truncated = engine_discover.walk_files(
-        root, engine_ai_data_figure.TABLE_SUFFIXES, scan_max=_DATA_FILES_SCAN_MAX
+        root,
+        engine_ai_data_figure.TABLE_SUFFIXES if every else engine_ai_data_figure.CSV_SUFFIXES,
+        scan_max=_DATA_FILES_SCAN_MAX,
     )
     found = sorted(f for f in found if not Path(f[0]).name.startswith("~$"))
     if len(found) > _DATA_FILES_MAX:

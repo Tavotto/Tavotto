@@ -976,7 +976,10 @@ def test_data_files_lists_all_table_formats_with_xlsx_sheets(project):
     (figs / "d" / "old.xls").write_bytes(b"x")
     (figs / "d" / "n.txt").write_text("x", encoding="utf-8")
     (figs / "d" / "bad.xlsx").write_bytes(b"nope")
-    body = client.get("/api/ai/data-files").get_json()
+    default = client.get("/api/ai/data-files").get_json()
+    assert [f["path"] for f in default["files"]] == ["d/a.csv"], "默认只列 CSV（v1 表单只认 CSV）"
+    assert all("sheets" not in f for f in default["files"])
+    body = client.get("/api/ai/data-files?formats=all").get_json()
     rows = {f["path"]: f for f in body["files"]}
     assert set(rows) == {"d/a.csv", "d/b.tsv", "d/c.TAB", "d/x.xlsx", "d/bad.xlsx"}
     assert rows["d/x.xlsx"]["sheets"] == [
@@ -1491,3 +1494,90 @@ def test_propose_with_rules_leaves_the_user_folder_identical(project):
     assert body["kind"] == "candidates"
     time.sleep(0.05)
     assert tree_state(figs) == before
+
+
+# =========================================================================== 显式选的表不受发现预算（20 张）限制
+def test_an_explicitly_chosen_table_beyond_the_profile_budget_is_resolved(project):
+    m, client, figs, _ = project
+    for i in range(1, 22):
+        put(figs, f"data/{i:02d}.csv", simple_rows())
+    # 发现预算只看前 20 张（按路径排序）：21.csv 不在摘要里，但显式选它必须成功
+    assert adf.profile_folder(figs / "data").truncated is True
+    ask = propose(client).get_json()
+    assert ask["kind"] == "ask" and ask["question_code"] == "pick_table"
+    prof = P.with_explicit_table(adf.profile_folder(figs / "data"), figs / "data", "21.csv", None)
+    assert [t.path for t in prof.tables].count("21.csv") == 1 and prof.tables[-1].summary.rows == []
+    assert R.pick_table(prof, "21.csv", None, None).path == "21.csv"
+    # 已在预算内的表不重复读
+    again = P.with_explicit_table(prof, figs / "data", "21.csv", None)
+    assert again is prof
+
+
+@needs_worker
+def test_the_21st_csv_draws_a_figure(project):
+    m, client, figs, _ = project
+    for i in range(1, 22):
+        put(figs, f"data/{i:02d}.csv", simple_rows())
+    body = propose(client, table="21.csv").get_json()
+    assert body["kind"] == "candidates" and body["items"][0]["values"]["table"] == "21.csv"
+
+
+def test_a_later_sheet_of_a_big_workbook_can_be_chosen(project):
+    m, client, figs, _ = project
+    (figs / "data").mkdir()
+    sheets = {f"S{i:02d}": simple_rows() for i in range(1, 23)}
+    make_xlsx(figs / "data" / "big.xlsx", sheets)
+    assert adf.profile_folder(figs / "data").truncated is True
+    prof = P.with_explicit_table(
+        adf.profile_folder(figs / "data"), figs / "data", "big.xlsx", "S22"
+    )
+    got = R.pick_table(prof, "big.xlsx", "S22", None)
+    assert got.path == "big.xlsx" and got.sheet == "S22"
+    # 不存在的工作表：稳定的 400，不是 500
+    r = propose(client, table="big.xlsx", sheet="NOPE")
+    assert r.status_code == 400 and r.get_json()["code"] == "data_sheet_not_found"
+
+
+@pytest.mark.parametrize(
+    "table",
+    ["../outside.csv", "/etc/hosts", "C:\\x.csv", "sub/../../outside.csv", "notes.txt", "nope.csv"],
+)
+def test_explicit_tables_outside_the_folder_or_not_tables_are_still_refused(project, table):
+    m, client, figs, _ = project
+    put(figs, "data/a.csv", simple_rows())
+    (figs / "data" / "notes.txt").write_text("x", encoding="utf-8")
+    (figs / "outside.csv").write_text(_csv(simple_rows()), encoding="utf-8")
+    body = propose(client, table=table).get_json()
+    assert body["kind"] == "nothing" and body["reasons"] == ["table_not_found"]
+
+
+def test_an_explicit_symlinked_table_is_not_followed(project):
+    m, client, figs, _ = project
+    put(figs, "data/a.csv", simple_rows())
+    outside = figs.parent / "secret.csv"
+    outside.write_text(_csv(simple_rows()), encoding="utf-8")
+    try:
+        (figs / "data" / "l.csv").symlink_to(outside)
+    except OSError:
+        pytest.skip("not_run：此平台不能建符号链接")
+    body = propose(client, table="l.csv").get_json()
+    assert body["kind"] == "nothing" and body["reasons"] == ["table_not_found"]
+
+
+def test_an_explicit_table_under_a_hidden_pruned_or_linked_folder_is_refused_like_discovery(
+    project,
+):
+    m, client, figs, _ = project
+    put(figs, "data/a.csv", simple_rows())
+    put(figs, "data/.hidden/h.csv", simple_rows())
+    put(figs, "data/node_modules/n.csv", simple_rows())
+    put(figs, "data/real/r.csv", simple_rows())
+    for table in (".hidden/h.csv", "node_modules/n.csv"):
+        body = propose(client, table=table).get_json()
+        assert body["kind"] == "nothing" and body["reasons"] == ["table_not_found"], table
+    try:
+        (figs / "data" / "link").symlink_to(figs / "data" / "real", target_is_directory=True)
+    except OSError:
+        pytest.skip("not_run：此平台不能建符号链接")
+    body = propose(client, table="link/r.csv").get_json()
+    assert body["kind"] == "nothing" and body["reasons"] == ["table_not_found"]
