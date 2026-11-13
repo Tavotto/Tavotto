@@ -1,4 +1,4 @@
-"""计算图表 SVG 场景盘点（SG03 / ADR-XXXX）：清单、摘要、安全拒绝与端点。"""
+"""计算图表 SVG 场景盘点（SG03 / ADR 0182）：清单、摘要、安全拒绝与端点。"""
 
 from __future__ import annotations
 
