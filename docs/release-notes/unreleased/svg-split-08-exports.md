@@ -1,4 +1,4 @@
-# SVG and computational chart exports use one frozen source revision
+## SVG and computational chart exports use one frozen source revision
 
 PDF, PNG, TIFF, SVG and EPS consumers share the frozen model, binding, data, source, profile and ordered edits for an export revision. Static SVG, raster and original-size exports retain their source geometry and report unsupported format capabilities explicitly. PDF continues through the existing PDF backend and RenderCore.
 
@@ -14,4 +14,4 @@ Starting a batch after another export no longer lets the previous result skip fi
 
 A PNG already placed on a layout remains available for original-size export when the asset list prefers its same-name PDF. Exports preserve the image's pixels and declared density. Raster exports of a static PDF report its actual original page size instead of an outdated document size.
 
-This is part of the #1873 split. Architecture and release approval remain pending in [Issue #1877](https://github.com/Tavotto/Tavotto/issues/1877) and ADR-XXXX.
+This is part of the #1873 split. Architecture and release approval remain pending in [Issue #1877](https://github.com/Tavotto/Tavotto/issues/1877) and ADR 0182.
