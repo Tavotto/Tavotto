@@ -504,7 +504,7 @@ describe('老手版', () => {
       more.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     })
     const items = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
-    expect(items.map((i) => i.textContent)).toEqual(['打开', '从列表移除，不删文件'])
+    expect(items.map((i) => i.textContent)).toEqual(['打开', '从列表移除'])
     await click(items[1])
     expect(remove).toHaveBeenCalledWith('/Users/me/Desktop/poster')
   })
@@ -852,14 +852,36 @@ describe('2026-10-07 设计审计 §4.2：叙事句 / 卡片网格 / 拖放接�
     for (const c of cards()) expect(c.dataset.disabled).toBeUndefined()
   })
 
-  it('置灰的卡不靠 hover 揭出 ⋯ 菜单钮（group-hover:opacity-100 只在可用时有）；聚焦仍能出现', async () => {
+  it('⋯ 常显（不靠悬停揭出）；置灰的卡里 ⋯ 跟着淡下去', async () => {
     await mount()
-    const trigger = () => host.querySelector<HTMLElement>('[data-home-recent] [aria-haspopup="menu"]')!
-    expect(trigger().className).toContain('group-hover:opacity-100')
+    const trigger = () => host.querySelector<HTMLElement>('[data-home-recent] [data-row-menu-trigger]')!
+    expect(trigger().className).not.toMatch(/(^|\s)opacity-0(\s|$)/)
+    expect(trigger().className).not.toMatch(/(^|\s)opacity-40(\s|$)/)
     await act(async () => useProjectStore.setState({ switching: true }))
-    expect(trigger().className).not.toContain('group-hover:opacity-100')
-    expect(trigger().className).toContain('focus-visible:opacity-100')
+    expect(trigger().className).toMatch(/(^|\s)opacity-40(\s|$)/)
     await act(async () => useProjectStore.setState({ switching: false }))
+  })
+
+  it('右键最近项目卡开出同一份菜单，「从列表移除」移的是这一条', async () => {
+    const remove = vi.fn(async () => {})
+    useProjectStore.setState({ remove })
+    await mount()
+    const li = host.querySelector<HTMLElement>('[data-home-recent]')!
+    await act(async () => {
+      li.querySelector('button')!.dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }),
+      )
+    })
+    const menu = document.querySelector<HTMLElement>('[data-row-point-menu]')
+    expect(menu).not.toBeNull()
+    const item = [...menu!.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (el) => el.textContent === '从列表移除',
+    )!
+    expect(item.getAttribute('title')).toBe('从列表移除，不删文件')
+    await act(async () => {
+      item.click()
+    })
+    expect(remove).toHaveBeenCalledWith(li.dataset.homeRecent)
   })
 
   it('拖放区静态时没有虚线；带文件拖进页面才是接收态（accent 虚线 + 浅底）', async () => {

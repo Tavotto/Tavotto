@@ -286,6 +286,7 @@ bridgeboot.install_unreadable_import_skipper(_log_import_skip)
 import matplotlib  # noqa: E402 —— safe 档由 Tavotto 挑解释器，backend 在装引擎之前钉死
 
 matplotlib.use("Agg")
+import matplotlib.backends.backend_agg as backend_agg  # noqa: E402
 import matplotlib.figure as mfigure  # noqa: E402
 
 
@@ -1952,6 +1953,7 @@ class Worker(wireproto.V1Handler):
         # 拦截必须发生在 import 脚本之前（多数脚本 from paper_style import save）
         mfigure.Figure.savefig = _patched_savefig
         figcapture.install_colorbar_capture(mfigure)
+        figcapture.install_agg_unhinted_glyph_fallback(backend_agg)
         _install_show_capture()
         _reset_pdf_pages()
         # 复用的 worker 重跑：上一轮的缓冲区账不带进这一轮

@@ -11,25 +11,13 @@
  */
 import { msg } from '@/i18n'
 import { currentProjectId } from '@/lib/session'
-import { useDiagSendStore } from './diagSendStore'
 import { saveCopyHere } from './docWindow'
 import { reloadFromDisk, saveNow, useDocumentStore } from './documentStore'
+import { feedbackStatusAction } from './failureExit'
 import { useUiStore, type StatusAction } from './uiStore'
 
 /** 这类 toast 的主人：换项目时不清，但按钮点下去能认出「是不是自己那一条」 */
 export const AUTOSAVE_FAILURE_OWNER = 'save.failure'
-
-/**
- * 「发送问题反馈」按钮——与 `lib/canvasFileIntake.feedbackAction` 同一份行为（引擎说入口关着就不给）。
- * 不直接引它：那个文件经 workspace 回到 actions，会让保存链成环。
- */
-function feedbackStatusAction(): StatusAction | undefined {
-  if (useDiagSendStore.getState().capability === null) return undefined
-  return {
-    label: msg('settings.diagnostics.send.cardButton', undefined, 'dialogs'),
-    run: () => useDiagSendStore.getState().setOpen(true),
-  }
-}
 
 const clearOwn = (owner: string) => useUiStore.getState().clearStatusOwnedBy(owner)
 

@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EngineError } from '@/lib/api'
+import { formatMessage } from '@/i18n'
+import { useDiagSendStore } from './diagSendStore'
 import { literal } from '@/i18n'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { useDocumentStore } from './documentStore'
@@ -359,5 +361,131 @@ describe('re-confirming targets the instance that is really stale', () => {
     rejectArtifactRenders('plot.png', old.sourceBackedFigure!, new ArtifactValidationError('reconstruction_changed'))
     expect(useRenderStore.getState().byKey[renderKeyOf(old)].status).toBe('error')
     expect(useRenderStore.getState().byKey[renderKeyOf(fresh)].status).toBe('ready')
+  })
+})
+
+describe('失败出口：红色提示带按钮（失败出口三种结局）', () => {
+  const label = () => formatMessage(ui().statusAction?.label ?? null)
+  beforeEach(() => { useDiagSendStore.setState({ capability: { enabled: true } as never, open: false }) })
+
+  describe('对照图没取到（artifact.rebuildFailed，「重新对照确认」那条路）', () => {
+    /** 采用过、带了编辑，之后重画摘要变了：提示上的「重新对照确认」按钮点下去就走进对照 */
+    async function stale() {
+      world.status = 'exact'
+      expect(await enterElementEdit('p')).toBe(true)
+      S().commit(literal('edit'), (d) => { (d.objects[0] as PanelObject).overrides.push({ ...TITLE }) })
+      world.sha = SHA2; world.status = 'needs_confirmation'
+      await useRenderStore.getState().render('plot.png', P().overrides, undefined, undefined, undefined, adoptionGuardOf(P()))
+      expect(label()).toBe('重新对照确认')
+    }
+    const reviewButton = () => ui().statusAction!
+    /** 点「重新对照确认」，对照图取不到 → 红色提示 */
+    async function previewFails() {
+      preview.mockRejectedValueOnce(new Error('preview down'))
+      reviewButton().run()
+      await vi.waitFor(() => expect(ui().status).toEqual({ key: 'artifact.rebuildFailed', ns: 'errors' }))
+    }
+
+    it('提示带「再试一次」，点下去重新进同一个核对，对照打开、确认后更新', async () => {
+      await stale()
+      await previewFails()
+      expect(ui().statusTone).toBe('error')
+      expect(label()).toBe('再试一次')
+      ui().statusAction!.run()
+      await vi.waitFor(() => expect(review().request).not.toBeNull())
+      expect(review().request!.mode).toBe('changed')
+      review().answer(true)
+      await vi.waitFor(() => expect(P().sourceBackedFigure!.reconstructionSha256).toBe(SHA2))
+    })
+
+    it('点的时候那张图已被改过：只收提示，不重放', async () => {
+      await stale()
+      await previewFails()
+      const retry = ui().statusAction!
+      const before = preview.mock.calls.length
+      S().commit(literal('move'), (d) => { (d.objects[0] as PanelObject).x += 5 })
+      retry.run()
+      await Promise.resolve()
+      expect(preview.mock.calls.length).toBe(before)
+      expect(review().request).toBeNull()
+    })
+
+    it('点的时候换了项目：只收提示，不重放', async () => {
+      await stale()
+      await previewFails()
+      const retry = ui().statusAction!
+      const before = preview.mock.calls.length
+      setCurrentProjectId('B')
+      retry.run()
+      await Promise.resolve()
+      expect(preview.mock.calls.length).toBe(before)
+    })
+
+    it('重试又失败：换成「发给我们看看」', async () => {
+      await stale()
+      preview.mockRejectedValue(new Error('preview down'))
+      reviewButton().run()
+      await vi.waitFor(() => expect(label()).toBe('再试一次'))
+      ui().statusAction!.run()
+      await vi.waitFor(() => expect(label()).toBe('发送问题反馈'))
+      ui().statusAction!.run()
+      expect(useDiagSendStore.getState().open).toBe(true)
+    })
+  })
+
+  describe('进图内编辑时脚本 / 渲染没成（非「采用被拒」的那一类）', () => {
+    const scriptFailure = (retryable?: boolean) =>
+      new EngineError('boom', 'Traceback\nValueError: x', 'script_error', '', undefined, undefined, { retryable })
+
+    it('带「再试一次」，点下去重做同一次进入，成功后进图内编辑', async () => {
+      render.mockRejectedValueOnce(scriptFailure())
+      expect(await enterElementEdit('p')).toBe(false)
+      expect(ui().statusTone).toBe('error')
+      expect(label()).toBe('再试一次')
+      world.status = 'exact'
+      ui().statusAction!.run()
+      await vi.waitFor(() => expect(ui().elementPanelId).toBe('p'))
+    })
+
+    it('后端明说重试没用（retryable=false）：直接「发给我们看看」', async () => {
+      render.mockRejectedValueOnce(scriptFailure(false))
+      await enterElementEdit('p')
+      expect(label()).toBe('发送问题反馈')
+    })
+
+    it('点的时候那张图已被改过：只收提示，不再渲染', async () => {
+      render.mockRejectedValueOnce(scriptFailure())
+      await enterElementEdit('p')
+      const retry = ui().statusAction!
+      const rendersBefore = render.mock.calls.length
+      S().commit(literal('move'), (d) => { (d.objects[0] as PanelObject).x += 5 })
+      retry.run()
+      await Promise.resolve()
+      expect(render.mock.calls.length).toBe(rendersBefore)
+      expect(ui().elementPanelId).toBeNull()
+    })
+
+    it('重试又失败：换成「发给我们看看」', async () => {
+      render.mockRejectedValue(scriptFailure())
+      await enterElementEdit('p')
+      ui().statusAction!.run()
+      await vi.waitFor(() => expect(label()).toBe('发送问题反馈'))
+    })
+  })
+
+  it('采用记录对不上（重试必然还是同一句）：进编辑给「发给我们看看」', async () => {
+    await seed({ ...panel(), overrides: [FRAME], artifactValidation: { version: 1, requiredFrame: 'figsize', sourceId: 'other.png', bytesSha256: BYTES, sizeBytes: 10 } })
+    expect(await enterElementEdit('p')).toBe(false)
+    expect(ui().statusTone).toBe('error')
+    expect(label()).toBe('发送问题反馈')
+  })
+
+  it('已采用的图点「重新构建」被拒（不写原件）：给「发给我们看看」，不给重试', async () => {
+    world.status = 'exact'
+    expect(await enterElementEdit('p')).toBe(true)
+    ui().setStatus(null)
+    expect(await rebuildPanel('p')).toBe('failed')
+    expect(ui().statusTone).toBe('error')
+    expect(label()).toBe('发送问题反馈')
   })
 })

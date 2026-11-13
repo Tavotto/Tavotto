@@ -4,6 +4,7 @@ import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
+import { retryOrFeedback } from '@/store/failureExit'
 import { enterEdit } from '@/store/prepEnterEdit'
 import { pngAdmitOwner, registerPngRebuildRunner } from '@/store/pngAdmissionMemory'
 import { useEnvStore } from '@/store/envStore'
@@ -27,7 +28,7 @@ export type RebuildOutcome = 'rebuilt' | 'picker' | 'not_entered' | 'failed' | '
  * `rebuildPanel`（带 guard 会被拒；无 guard 会触发 #1145 要杜绝的无 policy 渲染）。
  * 多 Figure 时不默认取第一张：同脚本 + 同 stem 找不到**唯一**一张，就交给现有 Figure 选择器。
  */
-export async function rebuildEditableFromScript(panelId: string): Promise<RebuildOutcome> {
+export async function rebuildEditableFromScript(panelId: string, attempt = 0): Promise<RebuildOutcome> {
   const ui = useUiStore.getState()
   const owner = pngAdmitOwner(panelId)
   const panel = findPanel(panelId)
@@ -65,7 +66,20 @@ export async function rebuildEditableFromScript(panelId: string): Promise<Rebuil
       useUiStore.getState().clearStatusOwnedBy(owner)
       return 'failed'
     }
-    useUiStore.getState().setStatus(msg('artifact.rebuildFailed', undefined, 'errors'), 'error', { owner })
+    // 脚本这次没跑出图：「再试一次」重做同一次重建；点的时候项目 / 排版 / 那张 PNG 已不是当时的，就只收提示不重放。
+    // 第二次还失败换成「发给我们看看」
+    useUiStore.getState().setStatus(msg('artifact.rebuildFailed', undefined, 'errors'), 'error', {
+      owner,
+      action: retryOrFeedback({
+        owner,
+        attempt,
+        label: msg('artifact.retryAdmission', undefined, 'errors'),
+        run: (next) => {
+          if (!guard.still() || !origin.still()) return
+          return rebuildEditableFromScript(panelId, next)
+        },
+      }),
+    })
     return 'failed'
   }
   // 这张 PNG 属于哪张图：由后端按 fileId 用 `Registry.artifact_stem` 给出权威值（#1251）。不从素材清单取——它可能

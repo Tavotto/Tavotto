@@ -11,8 +11,8 @@ import { msg } from '@/i18n'
 import { backendErrorText } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
 import { requestTakeover, setTakeoverHandler } from '@/lib/docPresence'
-import { useDiagSendStore } from './diagSendStore'
 import { forkCurrentDocument, forkCopyName } from './documentFork'
+import { feedbackStatusAction } from './failureExit'
 import { takeWindowEntries } from './documentRestore'
 import { finishActiveGesture, finishFocusedRichText } from './gestureCoordinator'
 import {
@@ -30,14 +30,6 @@ export const useDocWindowStore = create<{ busy: boolean }>(() => ({ busy: false 
 const setBusy = (busy: boolean) => useDocWindowStore.setState({ busy })
 
 const OWNER = 'docWindow'
-
-function feedbackAction(): StatusAction | undefined {
-  if (useDiagSendStore.getState().capability === null) return undefined
-  return {
-    label: msg('settings.diagnostics.send.cardButton', undefined, 'dialogs'),
-    run: () => useDiagSendStore.getState().setOpen(true),
-  }
-}
 
 /** 收到「另一个窗口已端着这份」（`tavotto:doc-conflict`）：这个后开的窗口先只读，等用户选 */
 export function enterContested(docId?: string): void {
@@ -121,7 +113,7 @@ export async function takeOverHere(): Promise<boolean> {
       entries.putBack()
       useUiStore.getState().setStatus(msg('save.reloadFailed', undefined, 'workspace'), 'error', {
         owner: OWNER,
-        action: feedbackAction(),
+        action: feedbackStatusAction(),
       })
       return false
     }

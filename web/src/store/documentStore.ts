@@ -1835,6 +1835,15 @@ export function dismissDocNotice(): void {
 }
 
 /**
+ * 只把「最近的排版」列表里的这一条去掉（读不到它了）：不碰自动保存槽位 / 恢复副本——
+ * 那些是用户数据，「读不到」可能只是暂时的，删不删不归列表管。
+ */
+export function dropRecentEntry(id: string): void {
+  const kept = writeIndex(readIndex().filter((e) => e.id !== id))
+  useDocumentStore.setState({ recentDocs: kept })
+}
+
+/**
  * 忘掉本机关于某个 documentId 的一切：自动保存槽位、待恢复副本、最近文档
  * 条目。**只动本机、只动这一个 id**——磁盘上的文档不归这里管。
  *
@@ -1980,6 +1989,8 @@ function localRecoveryKind(local: LocalSnapshot | null, diskDoc: ProjectDocument
 export interface LoadedDoc {
   doc: ProjectDocument | null
   notice: DocNotice | null
+  /** 没有 doc 时为什么：`missing`（确认过不在了）/ `unavailable`（暂时读不到，文件多半还在）/ `invalid`（读到了但坏）/ `too_new` */
+  kind: ProbeResult['kind']
 }
 
 /** `migrateToProject` 认不出的载荷里，是不是一份"来自更新的 Tavotto"？ */
@@ -2141,7 +2152,7 @@ export async function readAutosaveDoc(id: string): Promise<LoadedDoc> {
     probe = { ...probe, kind: 'found', doc: probe.local, from: 'local' }
   }
   const notice = acceptProbe(probe, pj)
-  return { doc: probe.doc, notice }
+  return { doc: probe.doc, notice, kind: probe.kind }
 }
 
 /**

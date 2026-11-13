@@ -3,6 +3,7 @@ import { Check, ChevronRight } from './icons'
 import { ICON_SIZE } from './Icon'
 import { ShortcutText } from './Kbd'
 import { useRef, useState, type ButtonHTMLAttributes, type ComponentType, type ReactElement, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { cn } from '@/lib/utils'
 
 /** 浮层外壳样式：菜单本体与子菜单共用一份，别各抄一遍 */
@@ -151,13 +152,18 @@ export function PointMenu({
   const [before] = useState(() => (typeof document !== 'undefined' ? document.activeElement : null))
   return (
     <DM.Root open={open} onOpenChange={onOpenChange} modal={false}>
-      <DM.Trigger asChild>
-        <span
-          aria-hidden
-          tabIndex={-1}
-          style={{ position: 'fixed', left: at.x, top: at.y, width: 0, height: 0, pointerEvents: 'none' }}
-        />
-      </DM.Trigger>
+      {/* 锚挂到 body：宿主里有 transform 的祖先（主页卡片悬停上浮）会让 fixed 以那个祖先为基准，
+          菜单被推出屏幕（TVM-KJBX 修主页卡片右键时实测） */}
+      {createPortal(
+        <DM.Trigger asChild>
+          <span
+            aria-hidden
+            tabIndex={-1}
+            style={{ position: 'fixed', left: at.x, top: at.y, width: 0, height: 0, pointerEvents: 'none' }}
+          />
+        </DM.Trigger>,
+        document.body,
+      )}
       <DM.Portal>
         <DM.Content
           {...rest}
