@@ -9547,11 +9547,13 @@ class WriteBackVerifyError(RuntimeError):
 
 
 class WriteBackPersistError(RuntimeError):
-    """commit 的落盘准备（拷备份 + fsync 备份与 staging）没过，一个目标都还没替换。
+    """commit 的落盘准备（拷备份 + fsync 备份与 staging）或原件核验没过，一个目标都还没替换。
 
     与 `FileLockedError` 分成两类是刻意的（issue #252）：这一类发生在任何
     `replace` **之前**，不存在回滚，原文件一字未动；「replace 之后目录项落盘
     失败」则根本不走异常，只记日志——文件已换，再报失败只会让人误以为没写进去。
+    prepare 时读不到原件、或读取前后元信息变化时也没有可核验的基准：不跳过，
+    同样落进这一类。
     """
 
     def __init__(self, reason: str):
@@ -9759,29 +9761,30 @@ def _write_back_prepare(src: Path, worker, expected_mtime) -> None:
         raise ScriptChangedError(script_name, spawned, now)
 
 
-def _source_fingerprint(paths) -> dict[Path, tuple[int, int] | None]:
-    """目标文件此刻的身份：`(mtime_ns, size)`；读不到（被删 / 被占）记 None。"""
-    out: dict[Path, tuple[int, int] | None] = {}
+def _source_fingerprint(paths) -> dict[Path, tuple[int, int, str] | None]:
+    """目标文件的纳秒 mtime、长度及内容身份；读取前后元信息变化时不可核验。"""
+    out = {}
     for p in paths:
         try:
-            st = p.stat()
-            out[p] = (st.st_mtime_ns, st.st_size)
+            before = p.stat()
+            digest = _sha1_of(p)
+            after = p.stat()
+            stamp = (before.st_mtime_ns, before.st_size)
+            out[p] = (*stamp, digest) if stamp == (after.st_mtime_ns, after.st_size) else None
         except OSError:
             out[p] = None
     return out
 
 
 def _assert_sources_unchanged(base: dict, paths) -> None:
-    """复核：`paths` 里每个目标仍是 prepare 时看到的那一版，否则 `SourceChangedError`（409）。
-
-    prepare 只在请求入口比一次；之后的全量重放 / 导出可能分钟级，备份与替换之前
-    必须再问一遍，否则会先备份别人刚写的新版、再把它盖掉（QA-WIN-51）。
-    """
+    """备份前和每次替换前复核尚未替换的原件，保护验证、备份及两次替换间的外改。"""
+    paths = list(paths)
+    current = _source_fingerprint(paths)
     for p in paths:
         want = base.get(p)
         if want is None:
-            continue  # prepare 时就不存在 / 读不到：没有可比的基准
-        now = _source_fingerprint([p])[p]
+            raise WriteBackPersistError(f"无法核验写回原件: {p.name}")
+        now = current[p]
         if now != want:
             raise SourceChangedError(
                 p.name, int(want[0] // 1_000_000_000), int((now or (0, 0))[0] // 1_000_000_000)
@@ -9818,11 +9821,11 @@ def _hot_manifest(worker, stem: str, patches: list) -> dict | None:
 def _rollback(
     done: list[Path],
     backup_dir: Path,
-    published: dict[Path, tuple[int, int] | None] | None = None,
+    published: dict[Path, tuple[int, int, str] | None] | None = None,
 ) -> tuple[list[str], list[str], list[str]]:
     """把已经替换掉的目标从本次备份恢复回去，返回 (成功, 失败, 外部改过未回滚) 三份文件名。
 
-    恢复前先核目标仍是**我们发布的那一版**（`published` 里记的 `(mtime_ns, size)`，
+    恢复前先核目标仍是**我们发布的那一版**（`published` 里记的 `(mtime_ns, size, sha1)`，
     与 `_source_fingerprint` 同一判据）：替换之后又被外部改过的目标，备份是更早的原件，
     盖上去就吞掉外部那份新改动——保留外部版本、不回滚、如实报告（Codex #1697 P1）。
     """
@@ -9853,6 +9856,15 @@ def _discard_updating(tmps: list[tuple[Path, Path]]) -> None:
             leftover.unlink(missing_ok=True)
         except OSError:
             LOG.warning("写回失败后清理临时文件失败: %s", leftover, exc_info=True)
+
+
+def _write_back_source_versions(targets: list[Path]) -> dict:
+    """与提交及回滚共用一份文件身份判据。"""
+    return _source_fingerprint(targets)
+
+
+def _check_write_back_sources(tmps: list[tuple[Path, Path]], versions: dict) -> None:
+    _assert_sources_unchanged(versions, [target for target, _tmp in tmps])
 
 
 def _new_backup_dir(root: Path) -> Path:
@@ -9964,8 +9976,7 @@ def _write_source_files(
     _refuse_pdf_pages_source(worker, src)
 
     targets = [p for p in (src.with_suffix(ext) for ext in WRITE_BACK_EXT) if p.exists()]
-    # 与 prepare 同一刻的身份基线：重放结束后、备份与每次替换之前拿它复核（QA-WIN-51）
-    source_base = _source_fingerprint(targets)
+    source_versions = _write_back_source_versions(targets)
     man_hot = _hot_manifest(worker, stem, patches)
 
     # ---- verify：全新 worker 全量重放，staging 也从它出 ----------------------
@@ -10065,8 +10076,8 @@ def _write_source_files(
         with remap_guard:
             # 重放可能分钟级：备份之前先确认要被覆盖的仍是用户看到的那一版（零改动 409）
             try:
-                _assert_sources_unchanged(source_base, [t for t, _ in tmps])
-            except SourceChangedError:
+                _check_write_back_sources(tmps, source_versions)
+            except (SourceChangedError, WriteBackPersistError):
                 _discard_updating(tmps)
                 raise
             backup_dir = _backup_targets(tmps, project_backup_dir(), stem)
@@ -10074,8 +10085,8 @@ def _write_source_files(
                 # 备份之后、每次替换之前再核尚未替换的目标：备份必须就是将被覆盖的那一版；
                 # 已替换的目标按事务规矩从备份回滚
                 try:
-                    _assert_sources_unchanged(source_base, [t for t, _ in tmps[i:]])
-                except SourceChangedError as exc:
+                    _check_write_back_sources(tmps[i:], source_versions)
+                except (SourceChangedError, WriteBackPersistError) as exc:
                     _discard_updating(tmps)
                     if not done:
                         shutil.rmtree(
@@ -10085,7 +10096,12 @@ def _write_source_files(
                     rolled, failed, kept = _rollback(done, backup_dir, published)
                     if failed:
                         raise FileLockedError(
-                            exc.name, str(exc), failed + kept, rolled, failed, kept
+                            getattr(exc, "name", target.name),
+                            str(exc),
+                            failed + kept,
+                            rolled,
+                            failed,
+                            kept,
                         ) from exc
                     exc.kept_external = kept
                     raise
@@ -10256,8 +10272,8 @@ def _write_back_error_response(exc):
     if isinstance(exc, WriteBackPersistError):
         return jsonify(
             {
-                "error": f"写回前的落盘准备失败（备份或临时文件没能写入磁盘）：{exc.reason}。"
-                "写回已取消，原文件未做任何改动。请检查磁盘空间与目录权限后重试。",
+                "error": f"写回前的准备失败：{exc.reason}。"
+                "写回已取消，原文件未做任何改动。请检查文件是否可读、磁盘空间与目录权限后重试。",
                 "code": "write_back_persist_failed",
                 "params": {"reason": exc.reason},
             }

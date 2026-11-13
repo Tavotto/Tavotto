@@ -3716,7 +3716,7 @@ export default interface Resources {
       "write_back_foreign_file": "{{file}} 是这个脚本里另一张图保存的，写回不会覆盖它，原文件没有改动。",
       "write_back_format_unsupported": "写回只支持 PDF 和 PNG 素材，这张是 {{format}}。",
       "write_back_multipage_pdf": "{{file}} 是脚本用 PdfPages 写的 PDF，写回不会覆盖它，原文件没有改动。要拿到编辑后的结果，请用导出。",
-      "write_back_persist_failed": "无法写回：备份或新文件没能写入磁盘（{{reason}}）。原文件未做任何改动，请检查磁盘空间与目录权限后重试。",
+      "write_back_persist_failed": "无法写回：写回前的准备失败（{{reason}}）。原文件未做任何改动，请检查文件是否可读、磁盘空间与目录权限后重试。",
       "write_back_warnings": "无法写回：重放时出现了警告。",
       "write_failed": "无法写入磁盘。本机副本仍在，可重试：{{reason}}",
       "write_outside_roots": "脚本想写已授权工作区之外的位置，所以这次没有运行完。请改成写到项目内，或在 Tavotto 窗口里自己运行这个脚本。"
