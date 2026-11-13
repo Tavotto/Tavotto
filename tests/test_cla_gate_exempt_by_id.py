@@ -33,6 +33,19 @@ def gate():
     return _load_gate()
 
 
+def _disabled_policy(p: dict) -> dict:
+    """仓库 policy 已启用服务（ADR 0183 切换）；造一份「服务未启用」的样本。"""
+    p = json.loads(json.dumps(p))
+    p["provider"] = {
+        "configured": False,
+        "name": None,
+        "check_name": None,
+        "note": "test: disabled",
+    }
+    p.pop("authority_origin", None)
+    return p
+
+
 def _service_policy(*, ids: bool = True) -> dict:
     p = json.loads((ROOT / ".github" / "cla-policy.json").read_text(encoding="utf-8"))
     p = copy.deepcopy(p)
@@ -46,13 +59,17 @@ def _service_policy(*, ids: bool = True) -> dict:
         "app_slug": "tavotto-cla",
         "app_id": 1234567,
     }
-    if ids:
-        for ex in p["exemptions"]:
-            ex["github_id"] = {
-                "erwanjun": HOLDER_ID,
-                "dependabot[bot]": DEPENDABOT_ID,
-                "github-actions[bot]": 41898282,
-            }[ex["login"]]
+    for ex in p["exemptions"]:
+        if ex["kind"] == "countersigned_paper":
+            continue  # 纸面签署条目本身就带 github_id（ADR 0183）
+        if not ids:
+            ex.pop("github_id", None)
+            continue
+        ex["github_id"] = {
+            "erwanjun": HOLDER_ID,
+            "dependabot[bot]": DEPENDABOT_ID,
+            "github-actions[bot]": 41898282,
+        }[ex["login"]]
     return p
 
 
@@ -180,13 +197,17 @@ def test_merge_group_empty_commit_list_is_not_exempt(gate):
 
 
 def test_non_service_merge_group_still_not_applicable(gate):
-    p = json.loads((ROOT / ".github" / "cla-policy.json").read_text(encoding="utf-8"))
+    p = _disabled_policy(
+        json.loads((ROOT / ".github" / "cla-policy.json").read_text(encoding="utf-8"))
+    )
     v = _decide(gate, p, "merge_group", [_commit("b", "someone", 5)])
     assert v["status"] == "not_applicable"
 
 
 def test_non_service_pr_exemption_by_login_unchanged(gate):
-    p = json.loads((ROOT / ".github" / "cla-policy.json").read_text(encoding="utf-8"))
+    p = _disabled_policy(
+        json.loads((ROOT / ".github" / "cla-policy.json").read_text(encoding="utf-8"))
+    )
     v = _decide(gate, p, "pull_request", [_commit("a", "erwanjun", None)], "erwanjun", None)
     assert v["status"] == "success" and v["reason"] == "all_contributors_qualified"
 
@@ -236,3 +257,100 @@ def test_cli_merge_group_with_only_commits_json_refuses(gate, tmp_path):
         ]
     )
     assert rc == 2
+
+
+# ─────────────────────────────────────────────── 纸面双签（countersigned_paper，ADR 0183）
+
+PAPER_ID = 455140  # mvanhorn，仓库 policy 里唯一的纸面签署条目
+
+
+def _stale(p: dict) -> dict:
+    """协议升版：纸面签的 1.0 不再覆盖当前版本。"""
+    p["agreements"]["individual"]["version"] = "2.0"
+    return p
+
+
+def _group(gate, policy, commits, checks=None):
+    contributors, unresolved = gate.collect_contributors(None, commits, None)
+    ctx = {"kind": "merge_group", "group_members": [{"pr": 42, "headSha": "c" * 40}]}
+    return gate.decide("merge_group", policy, checks, contributors, unresolved, context=ctx)
+
+
+@pytest.fixture
+def service_says_eligible(gate, monkeypatch):
+    """服务按 id 集合豁免、不看版本：模拟它对整组回答 eligible=true。"""
+    monkeypatch.setattr(gate, "signed_logins", lambda *a, **k: ({"*"}, None))
+
+
+def test_repository_policy_carries_the_paper_signer(gate):
+    p = _service_policy()
+    gate.validate_policy(p)
+    (ex,) = [e for e in p["exemptions"] if e["kind"] == "countersigned_paper"]
+    assert (ex["login"], ex["github_id"], ex["version"]) == ("mvanhorn", PAPER_ID, "1.0")
+
+
+def test_paper_signer_pr_passes_locally_by_id(gate):
+    v = _decide(
+        gate,
+        _service_policy(),
+        "pull_request",
+        [_commit("a", "mvanhorn", PAPER_ID)],
+        "mvanhorn",
+        PAPER_ID,
+    )
+    assert v["status"] == "success" and v["reason"] == "all_contributors_exempt_by_id", v
+
+
+def test_paper_signer_with_another_account_id_is_not_local(gate):
+    v = _decide(
+        gate, _service_policy(), "pull_request", [_commit("a", "mvanhorn", 9)], "mvanhorn", 9
+    )
+    assert v["status"] == "failure" and v["reason"] != "all_contributors_exempt_by_id"
+
+
+def test_stale_paper_pr_is_red_even_when_the_service_says_eligible(gate, service_says_eligible):
+    v = _decide(
+        gate,
+        _stale(_service_policy()),
+        "pull_request",
+        [_commit("a", "mvanhorn", PAPER_ID)],
+        "mvanhorn",
+        PAPER_ID,
+    )
+    assert v["status"] == "failure", v
+    assert "2.0" in " ".join(v["problems"])
+
+
+def test_mixed_pr_with_valid_paper_signer_follows_the_service(gate, service_says_eligible):
+    commits = [_commit("a", "mvanhorn", PAPER_ID), _commit("b", "someone", 5)]
+    v = _decide(gate, _service_policy(), "pull_request", commits, "someone", 5)
+    assert v["status"] == "success", v
+    verdicts = {r["login"]: r["verdict"] for r in v["contributors"]}
+    assert verdicts == {"mvanhorn": "exempt", "someone": "signed"}
+
+
+def test_mixed_group_with_valid_paper_signer_follows_the_service(gate, service_says_eligible):
+    commits = [_commit("a", "mvanhorn", PAPER_ID), _commit("b", "someone", 5)]
+    v = _group(gate, _service_policy(), commits)
+    assert v["status"] == "success" and v["reason"] == "fresh_merge_candidate_qualified", v
+
+
+def test_group_with_stale_paper_is_red_even_when_the_service_says_eligible(
+    gate, service_says_eligible
+):
+    commits = [_commit("a", "mvanhorn", PAPER_ID), _commit("b", "someone", 5)]
+    v = _group(gate, _stale(_service_policy()), commits)
+    assert v["status"] == "failure" and v["reason"] == "countersigned_paper_not_qualified", v
+
+
+def test_all_paper_and_holder_group_passes_locally(gate):
+    commits = [_commit("a", "mvanhorn", PAPER_ID), _commit("b", "erwanjun", HOLDER_ID)]
+    v = _group(gate, _service_policy(), commits)
+    assert v["status"] == "success" and v["reason"] == "merge_candidate_exempt_by_id", v
+
+
+def test_offline_signatures_section_is_retired(gate):
+    p = _service_policy()
+    p["offline_signatures"] = [{"login": "x"}]
+    with pytest.raises(gate.ConfigError, match="ADR 0183"):
+        gate.validate_policy(p)

@@ -102,31 +102,38 @@ What the version and hash in `.github/cla-policy.json` are *for*, then, is to
 pin **which text** the provider is collecting signatures against. The provider
 answers "did this person sign?"; the repository answers "sign what, exactly?".
 
-### Before a provider exists: countersigned paper agreements
+### Countersigned paper agreements signed before the service existed
 
-While no provider is configured — which is the current state, deliberately —
-the only way to sign is the one the agreement itself names: the contributor
-signs the agreement text, sends it privately to <contact@tavotto.com>, and the rights
-holder countersigns. **The executed copy (both signatures) is then the
-authoritative record**, held privately by the rights holder. It carries the
-contributor's postal address, so it never enters this repository.
+Before the signing service was enabled, the only way to sign was the one the
+agreement itself names: the contributor signed the agreement text, sent it
+privately to <contact@tavotto.com>, and the rights holder countersigned. **The
+executed copy (both signatures) is the authoritative record** for that
+contributor, held privately by the rights holder. It carries the contributor's
+postal address, so it never enters this repository.
 
-`.github/cla-policy.json` → `offline_signatures` is only an **index** pointing at
-those executed copies: login, immutable GitHub account id, agreement, version,
-the two signing dates and a one-line note on where the record is kept — no
-name, address or email (the gate rejects any extra field). The gate qualifies a
-contributor from it only when the version still equals the current agreement
-version and every account id that GitHub itself reports for that login in the
-pull request (the PR author's id, the `author.id` of their commits) equals the
-recorded `github_id`.
+These records stay valid after the service is enabled
+([ADR 0183](../adr/0183-cla-paper-signatures-as-exemptions.md)); the contributor
+does not sign again. `.github/cla-policy.json` lists each one under `exemptions`
+with `kind: countersigned_paper`, as an **index** only: login, immutable GitHub
+account id, agreement, version, the two signing dates and a one-line note on
+where the record is kept — no name, address or email (the gate rejects any extra
+field). The gate qualifies a contributor from it only when the version still
+equals the current agreement version and every account id that GitHub itself
+reports for that login in the pull request (the PR author's id, the `author.id`
+of their commits) equals the recorded `github_id`. The service treats the same
+account id as exempt, so a pull request or merge group that mixes this
+contributor with online signers is judged on the online signers alone.
 
-This does not reintroduce two authorities, because the two never coexist: the
-gate refuses a policy in which `provider.configured` is `true` and
-`offline_signatures` is non-empty. Activating a provider therefore includes
-moving the offline signers into it and emptying the index in the same change.
+**One authority per person.** A contributor listed as `countersigned_paper` is
+judged by the paper record only; everyone else is judged by the service only.
+Once the service is enabled, new contributors sign online and no new
+`countersigned_paper` entries are added. When the agreement version changes,
+the entry stops qualifying; the contributor signs the new version online and
+the maintainer then removes the entry. The former `offline_signatures` section
+is retired and rejected if present.
 
-Everyone else is still blocked **with an explanation**: an unconfigured service
-is not consent, and silence is not a signature.
+Everyone else is still blocked **with an explanation** until they sign: an
+unreachable service is not consent, and silence is not a signature.
 
 ## Rights transfer, if the holder ever changes
 

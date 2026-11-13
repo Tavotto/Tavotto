@@ -74,6 +74,7 @@ import { useAssetStore } from './assetStore'
 import { useEnvStore } from './envStore'
 import {
   adoptSlotBaseline,
+  dropRecentEntry,
   readAutosaveDoc,
   saveNowWithResult,
   setProjectFile,
@@ -83,6 +84,7 @@ import {
 } from './documentStore'
 import { finishActiveGesture, finishFocusedRichText } from './gestureCoordinator'
 import { writeBoundProjectFile } from './projectSave'
+import { deferWhileWindowHeld } from './documentRestore'
 import { captureSaveContext, reportSaveSkipped, stillCurrent } from './saveContext'
 import { AUTOSAVE_FAILURE_OWNER, reloadLatestAction, retrySaveAction } from './saveFailureActions'
 import { useInteractionStore } from './interactionStore'
@@ -90,7 +92,8 @@ import { aliasClearPlan } from '@/lib/aliasOverrides'
 import { fitContentCrop, isContentFit } from '@/lib/panelEdgeCrop'
 import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, structuralPanelManifest, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
-import { askConfirm, isTimelineOpen, useUiStore, type StatusTone } from './uiStore'
+import { askConfirm, isTimelineOpen, useUiStore, type StatusAction, type StatusTone } from './uiStore'
+import { feedbackStatusAction, retryOrFeedback, tooNewAction } from './failureExit'
 import { useViewportStore } from './viewportStore'
 import { alignOneVisual, visualBounds, type Rect } from '@/lib/geometry'
 import type { CropRect, PanelRotation } from '@/types/document'
@@ -126,8 +129,52 @@ const commit = (label: UiMessage, recipe: (d: FigureDocument) => void, opts?: Co
   useDocumentStore.getState().commit(label, recipe, opts)
 const select = (ids: string[]) => useSelectionStore.getState().set(ids)
 /** 语气必填（Codex #821 P1）：可选会让包装层把 undefined 透传下去，静默落回 info */
-const status = (message: UiMessage, tone: StatusTone) =>
-  useUiStore.getState().setStatus(message, tone)
+const status = (message: UiMessage, tone: StatusTone, opts?: { owner?: string; action?: StatusAction }) =>
+  useUiStore.getState().setStatus(message, tone, opts)
+
+/** 失败提示上「再试一次」的次数（按动作 + 对象记）：重放途中又失败时，下一条提示据此换成「发给我们看看」；重放一结束就忘 */
+const exitAttempts = new Map<string, number>()
+
+/**
+ * 「再试一次」重做同一个原动作：点的时候对象已变（`same()` 不再成立）就只收提示、不重放；
+ * 第二次失败（`exitAttempts` 记着这一次是重试）换成「发给我们看看」。
+ */
+function replayOrFeedback(o: {
+  key: string
+  owner: string
+  label?: UiMessage
+  retryable?: boolean
+  same: () => boolean
+  replay: () => unknown
+}): StatusAction | undefined {
+  return retryOrFeedback({
+    owner: o.owner,
+    label: o.label,
+    retryable: o.retryable,
+    attempt: exitAttempts.get(o.key) ?? 0,
+    run: async (next) => {
+      if (!o.same()) return
+      exitAttempts.set(o.key, next)
+      try {
+        await o.replay()
+      } finally {
+        exitAttempts.delete(o.key)
+      }
+    },
+  })
+}
+
+/** 失败那一刻的「对象」：同一个项目、同一份排版（身份 + 载入代次 + 画布）、那张图一字未变 */
+function sameTarget(panel: PanelObject): () => boolean {
+  const s0 = useDocumentStore.getState()
+  const pj = currentProjectId()
+  const snapshot = JSON.stringify(panel)
+  return () => {
+    const s = useDocumentStore.getState()
+    return currentProjectId() === pj && s.documentId === s0.documentId && s.loadSeq === s0.loadSeq &&
+      s.activeCanvasId === s0.activeCanvasId && JSON.stringify(findObject(panel.id)) === snapshot
+  }
+}
 
 export const findObject = (id: string): CanvasObject | undefined =>
   doc().objects.find((o) => o.id === id)
@@ -579,6 +626,9 @@ function afterSwitch(): void {
  * 事务开着、值还没落定的中间态（与 runUndoRedo 同一条理由，issue #131）。
  */
 export async function runManualSave(): Promise<void> {
+  // 同一份排版在另一个窗口开着、这个窗口还没选「在这里编辑 / 存成副本」（ADR 0181）：保存是用户动手——
+  // 记住、让卡提示先选，选完再做。不能在只读窗口里把过时的内容写进项目文件还说「写成了」
+  if (deferWhileWindowHeld(() => void runManualSave())) return
   finishFocusedRichText()
   finishActiveGesture()
   const ui = useUiStore.getState()
@@ -732,12 +782,41 @@ export async function openDocumentAs(
   return true
 }
 
+/** 「最近的排版」读不到那条提示的主人：点「再试一次」先收掉自己那一条 */
+const RECENT_OPEN_OWNER = 'recent.openFailure'
+
 /** 切回本机自动保存过的文档；沿用它原来的身份，槽位因此不会分叉 */
-export async function openRecentDocument(id: string): Promise<void> {
-  const { doc: pd, notice } = await readAutosaveDoc(id)
+export async function openRecentDocument(id: string, attempt = 0): Promise<void> {
+  const pj = currentProjectId()
+  const { doc: pd, notice, kind } = await readAutosaveDoc(id)
   if (!pd) {
-    // schema 太新是「读不了」而不是「不见了」：文件好好的，说清楚是哪一种
-    status(note(notice?.kind === 'schema_too_new' ? 'recentTooNew' : 'recentMissing'), 'error')
+    // 「读不了」与「不见了」分开说：只有确认过不在（missing）才把这一行去掉
+    if (notice?.kind === 'schema_too_new') {
+      // 桌面版「检查更新」，浏览器版「发给我们看看」
+      status(note('recentTooNew'), 'error', { action: tooNewAction() })
+    } else if (kind === 'missing') {
+      // 副本已不在：把这一行从最近列表去掉并说一句（不动本机槽位里的数据）
+      dropRecentEntry(id)
+      status(note('recentMissing'), 'info')
+    } else {
+      // 暂时读不到（文件多半还在）→「再试一次」；读到了但坏 → 重试没用，直接「发给我们看看」。都保留这一行
+      const name = useDocumentStore.getState().recentDocs.find((e) => e.id === id)?.name
+      const invalid = kind === 'invalid' && !!name
+      status(
+        invalid ? msg('layout.recoverFailInvalid', { name }, 'dialogs') : msg('layout.recoverFailUnavailable', undefined, 'dialogs'),
+        'error',
+        {
+          owner: RECENT_OPEN_OWNER,
+          action: retryOrFeedback({
+            owner: RECENT_OPEN_OWNER,
+            attempt,
+            retryable: !invalid,
+            // 点的时候已换了项目：只收提示，不在别的项目里再去开它
+            run: (next) => (currentProjectId() === pj ? openRecentDocument(id, next) : undefined),
+          }),
+        },
+      )
+    }
     return
   }
   if (!(await useDocumentStore.getState().switchDocument(pd, id, confirmLoss))) return
@@ -1531,7 +1610,11 @@ export async function rebuildPanel(panelId: string, detached?: PanelObject): Pro
   const stand = detached && detached.id === panelId ? detached : undefined
   const panel = findObject(panelId) ?? stand
   if (panel?.type !== 'panel' || !panel.script) return 'skipped'
-  try { refuseArtifactOperation(panel) } catch (e) { status(engineErrorMsg(e), 'error'); return 'failed' }
+  try { refuseArtifactOperation(panel) } catch (e) {
+    // 这张图的采用记录 / 图幅标记对不上，或这类图不支持重新构建：重试必然还是同一句，真做不了 →「发给我们看看」
+    status(engineErrorMsg(e), 'error', { action: feedbackStatusAction() })
+    return 'failed'
+  }
   // 字号还在安静计时里时点「重新构建」：先把那次编辑收进历史，重画的才是定稿的 overrides
   finishActiveGesture()
   const fileId = panel.fileId
@@ -1807,7 +1890,20 @@ const isArtifactFailure = (error: unknown): boolean =>
  */
 function reportAdmissionFailure(panel: PanelObject, error: unknown): void {
   if (!isArtifactFailure(error)) {
-    status(engineErrorMsg(error), 'error')
+    // 脚本 / 渲染这一次没成：「再试一次」重做同一次进入编辑；后端明说重试没用（`retryable === false`）直接「发给我们看看」。
+    // 点的时候那张图 / 排版 / 项目已不是当时的，就只收提示不重放
+    const owner = pngAdmitOwner(panel.id)
+    status(engineErrorMsg(error), 'error', {
+      owner,
+      action: replayOrFeedback({
+        key: `admit:${panel.id}`,
+        owner,
+        label: msg('artifact.retryAdmission', undefined, 'errors'),
+        retryable: !(error instanceof EngineError && error.retryable === false),
+        same: sameTarget(panel),
+        replay: () => enterElementEdit(panel.id),
+      }),
+    })
     return
   }
   showAdmissionFailure(panel, classifyArtifactFailure(error))
@@ -2065,7 +2161,21 @@ async function reviewReconstruction(a: ReviewArgs): Promise<{ confirmed: boolean
     // 确认绑定的是**显示给用户的这一份**：摘要 / 状态 / 度量都取这次响应的，不沿用第一次 render 的
     shown = verdictFromResponse(snap.sourceBacked)
   } catch {
-    if (a.still()) status(msg('artifact.rebuildFailed', undefined, 'errors'), 'error')
+    if (a.still()) {
+      // 对照图没取到：「再试一次」重新进同一个核对（采用 = 重新进图内编辑；换基 = 重新对照确认）。
+      // 点的时候这张图 / 排版已不是当时的就只收提示；重试又失败换成「发给我们看看」
+      const owner = a.mode === 'adopt' ? pngAdmitOwner(a.panel.id) : sourceReviewOwner(a.panel.id)
+      status(msg('artifact.rebuildFailed', undefined, 'errors'), 'error', {
+        owner,
+        action: replayOrFeedback({
+          key: `review:${a.mode}:${a.panel.id}`,
+          owner,
+          label: msg('artifact.retryAdmission', undefined, 'errors'),
+          same: sameTarget(a.panel),
+          replay: () => (a.mode === 'adopt' ? enterElementEdit(a.panel.id) : reviewSourceBackedPanel(a.panel.id)),
+        }),
+      })
+    }
     return no
   }
   if (!a.still()) return no
@@ -2201,7 +2311,8 @@ export function enterElementEdit(
   if (panel?.type !== 'panel') return false
   const issue = artifactValidationIssue(panel)
   if (issue) {
-    status(engineErrorMsg(new ArtifactValidationError(issue)), 'error')
+    // 采用记录 / 图幅标记对不上：重试必然还是同一句，真做不了 →「发给我们看看」
+    status(engineErrorMsg(new ArtifactValidationError(issue)), 'error', { action: feedbackStatusAction() })
     return false
   }
   // Existing edited/baked PNG panels keep their established legacy semantics.

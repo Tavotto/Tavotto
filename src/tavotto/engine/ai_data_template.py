@@ -38,7 +38,7 @@ import re
 from dataclasses import dataclass
 
 from . import ai_data_figure as adf, ai_data_recipe as recipe_mod, xlsxread
-from .ai_data_figure import date_number, parse_cell, parse_date
+from .ai_data_figure import apply_cells, date_number, parse_cell, parse_date
 
 # --------------------------------------------------------------------------- 错误
 TEMPLATE_ERROR_CODES = (
@@ -619,6 +619,7 @@ RUNTIME_FUNCTIONS = (
     date_number,
     read_delimited,
     read_xlsx,
+    apply_cells,
     distinct,
     make_label,
     mean_of,
@@ -889,10 +890,18 @@ def _footer(recipe, style, n_lines: list[str], n_text_expr: str | None) -> list[
     """图下方的一行说明：汇总定义 + 非汇总图元的规则名 + n（`n_text_expr` 是运行时求值的表达式，None = 不写 n）。
     没有任何内容要写就只做 `tight_layout()`。说明会换行：按字数估行数给它留出高度。"""
     static = "; ".join([s for s in [_summary_text(recipe), *_layer_notes(recipe)] if s])
-    if not static and n_text_expr is None:
+    if not static and n_text_expr is None and not recipe.cells:
         return ["    fig.tight_layout()"]
     out = list(n_lines)
-    if n_text_expr is None:
+    if recipe.cells:  # 处理规则的说明（做了什么、各几行）运行时才知道，和 n 一起写进图下方
+        parts = [repr(static)]
+        if n_text_expr is not None:
+            out.append(f"    n_text = {n_text_expr}")
+            parts.append("n_text")
+        parts.append("'; '.join(cell_notes)")
+        out.append(f"    note = '; '.join(s for s in ({', '.join(parts)}) if s)")
+        static = static + "x" * (60 * len(recipe.cells))  # 只用来估说明占几行
+    elif n_text_expr is None:
         out.append(f"    note = {static!r}")
     else:
         out += [
@@ -988,8 +997,17 @@ def runtime_module() -> tuple[str, bytes]:
     return f"{RUNTIME_PREFIX}{hashlib.sha256(data).hexdigest()[:8]}.py", data
 
 
+def _read_lines(recipe, reader: str) -> list[str]:
+    """`main()` 里读表那几行。配方带了「夹着文字格的数值列」的处理规则时，读完紧接着套规则（内存里的副本；文件不改），说明写进图下方。"""
+    out = [f"    header, rows = {reader}"]
+    if recipe.cells:
+        out.append("    rows, cell_notes, _cell_stats = apply_cells(header, rows, CELLS)")
+    return out
+
+
 def _header(entry, recipe, data_rel, title, is_xlsx):
     name = runtime_module()[0][: -len(".py")]
+    cells = [f"CELLS = {[c.args() for c in recipe.cells]!r}"] if recipe.cells else []
     return [
         f'"""由 Tavotto 根据数据生成的图（data_to_figure v2：{title}）。之后就是一份普通的绘图脚本，可以随意修改。\n\n'
         f'读表、汇总、布局的函数在同目录的 {name}.py 里（Tavotto 生成，别改它；它不含数据）。"""',
@@ -1004,6 +1022,7 @@ def _header(entry, recipe, data_rel, title, is_xlsx):
         f"import {name} as {RUNTIME_ALIAS}",
         "",
         f"DATA = Path(__file__).resolve().parent / {data_rel!r}",
+        *cells,
     ]
 
 
@@ -1145,7 +1164,7 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
         reader = f"read_delimited(DATA, {delim})"
     L += ["", "", "def main():"]
     main_at = len(L)
-    L.append(f"    header, rows = {reader}")
+    L += _read_lines(recipe, reader)
     L += [
         "    d = comparison_data(header, rows, X, Y, GROUP, FACET, ORDER)",
         "    cats, groups, panels = d['cats'], d['groups'], d['panels']",
@@ -1306,7 +1325,7 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
         reader = f"read_delimited(DATA, {delim})"
     L += ["", "", "def main():"]
     main_at = len(L)
-    L.append(f"    header, rows = {reader}")
+    L += _read_lines(recipe, reader)
     if x_is_date:
         L += [
             "    import matplotlib.dates",
@@ -1418,7 +1437,7 @@ def _render_relationship(entry, recipe, data_rel, stem, style) -> str:
     reader = _reader_expr(entry, is_xlsx)
     L += ["", "", "def main():"]
     main_at = len(L)
-    L.append(f"    header, rows = {reader}")
+    L += _read_lines(recipe, reader)
     L += [
         "    d = relationship_data(header, rows, X, Y, GROUP, FACET)",
         "    groups, panels = d['groups'], d['panels']",
@@ -1494,7 +1513,7 @@ def _render_distribution(entry, recipe, data_rel, stem, style) -> str:
     reader = _reader_expr(entry, is_xlsx)
     L += ["", "", "def main():"]
     main_at = len(L)
-    L.append(f"    header, rows = {reader}")
+    L += _read_lines(recipe, reader)
     L += [
         "    d = comparison_data(header, rows, None, Y, GROUP, FACET, 'as_given')",
         "    groups, panels = d['groups'], d['panels']",
@@ -1686,6 +1705,9 @@ def expected_fingerprints(values: adf.DataSummary, recipe: recipe_mod.FigureReci
     `fingerprint_coverage`）。`values` 是带行数据的摘要（对配方指的那张表 `inspect_data_source`）；与脚本调用同一批函数。"""
     if recipe.family not in RENDERERS:
         raise TemplateError("template_family_unsupported", recipe.family)
+    values = recipe_mod.with_cells_applied(
+        values, recipe
+    )  # 与脚本读表后套的是同一份规则、同一份源码
     if recipe.family in ("comparison", "distribution"):
         marks = {layer.mark for layer in recipe.layers}
         if marks & VALUE_ON_X:

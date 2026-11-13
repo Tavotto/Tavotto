@@ -122,6 +122,7 @@ tavotto_open_figure { "project_path": "/absolute/path/to/figures", "stem": "Fig1
 * **收尾** `tavotto_close_session { session_id }`。
 用户说要投某本期刊：先 `tavotto_list_journals { "query": "期刊名" }` 查 id，之后 open / preflight /
 export / normalize 都带 `journal_id`，别再手写尺寸；查不到才手写 `journal`（见 `references/publication-style.md`「按期刊」）。
+**改到合规先 `tavotto_fix_to_journal`**：`column_choice_required` 就问用户栏位，`fix.kind=manual` 才改脚本。
 
 **这些工具不会动用户的 .py 源码。** 数据、坐标范围、加删曲线/子图、colorbar
 方向仍然只能回代码改（清单见 `references/compatibility.md`）。

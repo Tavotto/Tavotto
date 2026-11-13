@@ -57,6 +57,121 @@ export default interface Resources {
       "truncated": "文件太多，只列出前一部分",
       "unconfirmedHint": "上一次的结果还没确认，请先在对话里查询结果。"
     },
+    "dataFigureV2": {
+      "candidate": {
+        "bar_error": {
+          "title": "柱 + 误差线",
+          "why": "各组均值一目了然，误差线是标准差；个别点会藏在柱里。"
+        },
+        "box_points": {
+          "title": "箱线 + 原始点",
+          "why": "看每组的中位数和分布范围，点保留了每个观测。"
+        },
+        "box_points_single": {
+          "title": "箱线 + 原始点",
+          "why": "看中位数和分布范围，点保留了每个观测。"
+        },
+        "density": {
+          "title": "密度曲线",
+          "why": "平滑地看分布的形状。"
+        },
+        "ecdf": {
+          "title": "累积分布",
+          "why": "不分箱地看整个分布。"
+        },
+        "ecdf_groups": {
+          "title": "累积分布",
+          "why": "不分箱地比较各组的整体分布。"
+        },
+        "hist": {
+          "title": "直方图",
+          "why": "看这个量集中在哪、散得多开。"
+        },
+        "line_band": {
+          "title": "均值线 + 误差带",
+          "why": "每个横轴位置取均值，带是标准差，看总体趋势和波动。"
+        },
+        "line_points": {
+          "title": "点 + 折线",
+          "why": "按顺序连起来，看量怎么随横轴变化。"
+        },
+        "line_units": {
+          "title": "每个对象一条线",
+          "why": "同一对象的重复测量连成线，看每个对象各自怎么变。"
+        },
+        "points_mean": {
+          "title": "原始点 + 均值",
+          "why": "每个点都画出来，再标出各组均值，能同时看到差别和离散程度。"
+        },
+        "scatter": {
+          "title": "散点",
+          "why": "每个点是一个观测，看两个量的关系。"
+        },
+        "scatter_fit": {
+          "title": "散点 + 拟合线",
+          "why": "看两个量有没有关联；虚线是最小二乘直线，只描述、不下结论。"
+        },
+        "violin_points": {
+          "title": "小提琴 + 原始点",
+          "why": "看每组数值分布的形状，点保留了每个观测。"
+        }
+      },
+      "mixedCells": {
+        "cannotExtract": "取不出数字，会被忽略",
+        "extracted": "取数字后是 {{value}}",
+        "more": "还有 {{count}} 行",
+        "placeholder": "说说这些格子该怎么算，比如「ND 记为 0」",
+        "previewRow": "第 {{row}} 行：{{text}}"
+      },
+      "option": {
+        "column": "{{column}}",
+        "describe": "我来说明",
+        "design_independent": "每一行是不同的对象",
+        "design_repeated": "同一个对象被重复测了好几次",
+        "extract": "取出里面的数字",
+        "skip": "忽略这些行",
+        "table": "{{file}}：{{rows}} 行，{{groups}} 组",
+        "table_sheet": "{{file}} 的「{{sheet}}」：{{rows}} 行，{{groups}} 组",
+        "unsure": "不确定"
+      },
+      "question": {
+        "mixed_cells": "「{{column}}」里有 {{count}} 个格子不是数字（共 {{rows}} 行有数据），怎么处理？",
+        "pick_design": "这些数据是同一个对象被重复测量的吗？",
+        "pick_group": "按哪一列分组比较？",
+        "pick_table": "用哪张表画？",
+        "pick_unit": "哪一列标出了是哪个对象？",
+        "pick_value": "要画的是哪一列的数值？",
+        "pick_x": "横轴用哪一列？"
+      },
+      "reason": {
+        "all_candidates_rejected": "备选都没通过检查。",
+        "candidate_fingerprint_mismatch": "画出来的数据和文件对不上，这个备选已去掉。",
+        "candidate_render_failed": "这个备选没能画出来。",
+        "candidate_template_unsupported": "这种画法暂时画不出来。",
+        "candidate_thumbnail_failed": "这个备选的小图没生成出来。",
+        "candidate_timeout": "这个备选画得太久，已放弃。",
+        "candidate_write_blocked": "这个备选想写到别处，已拦下。",
+        "common_module_conflict": "同目录里那份公共文件被改过；为了不覆盖你的文件，这次没有生成。",
+        "data_changed": "数据文件在生成备选之后变过了，请重新生成。",
+        "figures_dir_unusable": "tavotto_figures 不是普通文件夹，没有生成。",
+        "matrix_unsupported": "这种方阵形式的表暂时画不了。",
+        "no_numeric_column": "这张表里没有数值列。",
+        "no_renderable_family": "这张表暂时没有能画的画法。",
+        "no_usable_table": "这个文件夹里没有能画的数据表。",
+        "register_failed": "没能把新图登记进项目，新建的文件已撤回。",
+        "rows_not_plotted": "有 {{count}} 行不是数字或缺横轴的值，没有画出来。",
+        "stem_taken": "这个图名刚被占用了，请再试一次。",
+        "table_not_found": "找不到你选的那张表。",
+        "target_exists": "同名脚本已经存在，没有覆盖它。",
+        "value_column_mixed": "数值列里混着文字（比如「<0.1」），先整理一下再画。"
+      },
+      "result": {
+        "mismatch": "图里的数据和文件对不上；不对的话可以删掉这份新脚本。",
+        "unknown": "图画好了，数据核对没能完成。",
+        "unverifiable": "图画好了，但这类图没法逐项核对数据。",
+        "verified": "图画好了，数据和文件逐项对上。"
+      }
+    },
     "dependency": {
       "installing": "正在准备依赖，完成后会重新检查…",
       "missing": "校验时缺少 {{names}}；安装后会重新检查并应用修改。",
@@ -3217,6 +3332,10 @@ export default interface Resources {
       "bar_needs_summary": "柱的每个位置只能对应一个值，有多行数据时要选均值或中位数。",
       "batch_start_failed": "{{message}}",
       "box_violin_n_small": "有的组数据太少（不到 5 个），不画箱线和小提琴。",
+      "cell_map_key_unknown": "映射里写的原文在这一列里找不到。",
+      "cell_map_too_large": "映射规则写得太多了，最多 50 项。",
+      "cell_map_value_invalid": "映射到的值要是一个数，或者写成缺失。",
+      "cell_rule_invalid": "这条处理规则不对：要针对这次画图用到、夹着文字的数值列，每列只写一条。",
       "column_not_found": "这张表里没有这一列。",
       "column_type_mismatch": "这一列的类型不适合画在这个位置，比如把文字当数值用。",
       "composition_negative": "占比图里有负数，不能画。",
@@ -3249,6 +3368,7 @@ export default interface Resources {
       "data_empty": "这份数据是空的。",
       "data_excel_unsupported": "不支持旧版 Excel 文件（.xls / .xlsm / .xlsb），请在 Excel 里另存为 .xlsx 或 CSV。",
       "data_figure_input_missing": "请选一份数据文件，并说明想画什么。",
+      "data_figure_recipe_invalid": "这个备选和现在的数据对不上了，请重新生成。",
       "data_format_unsupported": "只能读取 CSV、TSV 和 XLSX 数据文件。",
       "data_header_invalid": "数据的表头有空列名或重复列名。",
       "data_malformed": "这份 CSV 格式有误，读不出来。",
@@ -3441,6 +3561,12 @@ export default interface Resources {
       "project_env_worker_import_failed": "项目环境能导入 matplotlib，但 Tavotto 的渲染代码在它里面起不来。",
       "project_python_unusable": "为这个项目指定的解释器用不了；Tavotto 不会自动换成别的环境。请在渲染环境设置里重新指定，或清除它回到自动选择。",
       "project_scan_not_started": "这个项目还没有开始检查（或应用重启过）。重新检查即可。",
+      "propose_candidate_unknown": "找不到你选的这个备选，请重新生成一次。",
+      "propose_cells_invalid": "这条处理规则没法用，请重新选一次。",
+      "propose_cells_need_rule": "这段说明要先交给助手整理成规则，暂时不能直接用。",
+      "propose_data_changed": "数据文件在生成备选之后变过了，请重新生成。",
+      "propose_input_invalid": "请求内容不对，没有生成备选。",
+      "propose_session_expired": "这批备选已经过期了，请重新生成一次。",
       "protocol_mismatch": "渲染出了点问题，已经自动重启。再操作一次就行。",
       "publish_failed": "文件已写入，但无法移入导出目录：{{error}}。",
       "python_missing": "本机没有可用的 Python。请安装 Python 3.10 或更高版本后重试。",
@@ -3726,6 +3852,7 @@ export default interface Resources {
       "projectEnvWhySystemAuto": "内置环境没有 {{module}}，已自动改用这台机器上装着它的 Python。",
       "projectEnvWorkerImport": "项目环境 {{venv}} 里的 matplotlib 能用，但渲染在这个环境里启动不了，多半是包的版本不匹配。详情见诊断。",
       "repairAdvanced": "详情",
+      "repairAiSandboxPrompt": "这个脚本用了 {{name}}，它只在你的网页环境里有，我电脑上装不了。请去掉 {{name}} 和所有用到它的代码，只用 matplotlib 等常见库画图并保存成文件，给我完整的新脚本。",
       "repairAlternatives": "其他方式（备选）",
       "repairBack": "返回",
       "repairBody": "当前渲染环境缺少这个包。",
@@ -3738,6 +3865,8 @@ export default interface Resources {
       "repairConfirmProject": "安装到项目现有的 Python 环境（{{path}}）。",
       "repairConfirmTitle": "将安装 {{module}}",
       "repairContinue": "继续",
+      "repairCopiedForAi": "已复制，粘贴给 AI",
+      "repairCopyForAi": "复制给 AI 的话",
       "repairCreatingEnv": "正在准备 Python 环境…",
       "repairDetails": "详情",
       "repairDone": "已安装 {{module}}，正在重新运行。",
@@ -3873,6 +4002,7 @@ export default interface Resources {
       "repairNetUserSource": "你配置的下载源连不上，检查它或网络后点重试。",
       "repairNotFoundNamed": "软件源里找不到 {{name}}。",
       "repairNotFoundNamedFrom": "软件源里找不到 {{name}}（来自 {{source}}）。",
+      "repairNotPipAiSandbox": "{{name}} 只在 ChatGPT 网页里有、本机装不了，请让 AI 去掉它重新生成脚本。",
       "repairNotPipInstallable": "{{name}} 不能用 pip 安装，要在装有它的 Python 环境里运行。",
       "repairPackageAria": "要安装的包名",
       "repairPackagePlaceholder": "例如 my-lab-tools 或 my-lab-tools>=2.1",
@@ -4056,6 +4186,7 @@ export default interface Resources {
       "overlap": "图互相重叠，确认是有意的压盖再导出",
       "pageAspect": "页面比例 {{ratio}}（{{w}} × {{h}} mm）不在规范允许的 {{allowed}} 之内",
       "pageWidth": "页面宽 {{actual}} mm 不是规范里的栏宽（{{columns}} mm）",
+      "pageWidthMax": "页面宽 {{actual}} mm 超过规范允许的最大宽度 {{max}} mm",
       "paletteLineMarkers": "{{count}} 条曲线均无标记，黑白打印或色觉障碍读者难以区分。可添加标记或使用不同线型。",
       "paletteSemantic": "色谱 {{cmap}} 不在推荐色系里（按 sequential / diverging / categorical 语义选：{{url}}）。",
       "panelTextNotVerifiable": "这张矢量图还没有引擎 manifest（未渲染或非脚本产物），图内文字字号与字体无法自动核验。",
@@ -4140,6 +4271,7 @@ export default interface Resources {
       "fixNativeUnsupported": "用 {{product}} Run 打开的图暂不支持自动修复",
       "fixOption": {
         "column": "改成{{name}}宽 {{mm}} mm",
+        "columnMax": "改成{{name}}（最大 {{mm}} mm）",
         "double": "改成双栏宽 {{mm}} mm",
         "single": "改成单栏宽 {{mm}} mm"
       },
@@ -5909,7 +6041,7 @@ export default interface Resources {
     "autosave": {
       "diskFailed": "没能保存到磁盘。",
       "docConflict": "这份排版已在另一个窗口打开，同时编辑会互相覆盖。",
-      "staleOtherWindow": "另一窗口保存了更新的版本。改动只保留在这里，未写入磁盘。"
+      "staleOtherWindow": "另一个窗口保存了更新的版本。"
     },
     "boot": {
       "desktopSessionFailed": "无法建立 Tavotto 桌面会话。请关闭窗口后重新打开应用。",
@@ -6040,9 +6172,8 @@ export default interface Resources {
     "docBanner": {
       "checkUpdate": "检查更新",
       "conflictDisk": "磁盘上：{{canvases}} 张画布 · {{objects}} 个对象 · 改动于 {{time}}",
-      "conflictDiskUnknown": "无法读取磁盘上的内容摘要",
-      "conflictExternal": "磁盘上的排版已被外部修改，本窗口的编辑未写入，以免覆盖。",
-      "conflictStale": "另一窗口保存了更新的版本，本窗口的编辑没有写入。",
+      "conflictExternal": "这份排版在别处被改过，这个窗口的改动还没存上。",
+      "conflictStale": "另一个窗口保存了更新的版本。",
       "dismiss": "知道了",
       "keepMain": "保留主版本",
       "lastDocBody": "已打开空白排版，磁盘文件没有改动。",
@@ -6057,7 +6188,7 @@ export default interface Resources {
       "recover": "恢复",
       "recoveryBody": "{{name}} · {{canvases}} 张画布 · {{objects}} 个对象 · 存于 {{time}}",
       "recoveryTitle": "有未恢复的编辑",
-      "reload": "从磁盘重新加载",
+      "reload": "重新加载",
       "retry": "重试保存",
       "saveAs": "另存为…",
       "saveErrorBody": "改动已暂存，尚未写入磁盘。",
@@ -6068,6 +6199,15 @@ export default interface Resources {
       "updateInstall": "下载并更新",
       "updateNone": "已经是最新版，这份排版要等新版发布才能打开。",
       "updateReady": "新版已经下好，点顶栏的「现在重启」就能打开这份排版。"
+    },
+    "docWindow": {
+      "choose": "先在画布上选一下。",
+      "entryDropped": "已换了排版，刚才的操作没有执行。",
+      "openElsewhere": "这份排版已在另一个窗口打开。",
+      "saveCopy": "存成副本",
+      "takeBack": "拿回来编辑",
+      "takeHere": "在这里编辑",
+      "takenOver": "这份排版正在另一个窗口编辑。"
     },
     "document": {
       "defaultName": "新排版"
@@ -6138,6 +6278,13 @@ export default interface Resources {
       "figureMissing": "项目里找不到 {{name}}",
       "layoutOnly": "未连接源脚本。可在版面上摆放，不能改图内元素。",
       "removeAdded": "撤销"
+    },
+    "fork": {
+      "copyName": "{{name}} 副本",
+      "done": "已存成“{{name}}”。",
+      "failed": "没能存成副本。",
+      "switched": "副本已存进项目里的 {{file}}，没有换过去。",
+      "untitled": "未命名排版"
     },
     "frameDrag": {
       "canvasSize": "画布 {{w}} × {{h}} mm",
@@ -6875,6 +7022,7 @@ export default interface Resources {
           "listIntro": "这些库的来源还没法确定，Tavotto 不会替你装：",
           "localMissing": "找不到本地模块 {{name}}（脚本把 {{dirs}} 加进了搜索路径，请确认这个文件夹在）。",
           "notPip": "这个脚本需要 {{name}}，内置 Python 装不了，请用装有它的环境。",
+          "notPipAiSandbox": "这个脚本需要 {{name}}，它只在 ChatGPT 网页里有，本机装不了。",
           "trustNote": "你填的包名不算可信来源：Tavotto 没法核实它们，所以装之前会让你再确认一次。",
           "userSpecifiedBadge": "用户指定，未经核实"
         },
@@ -7106,7 +7254,7 @@ export default interface Resources {
       "placeholderHint": "双击即可编辑，会运行 {{script}} 重新生成。"
     },
     "save": {
-      "conflict": "排版已在别处改过，请先处理冲突。",
+      "conflict": "排版已在别处改过，这次没存上。",
       "doneLocal": "已保存在本机（没有打开项目）",
       "doneProject": "已保存到项目：{{file}}",
       "failed": "无法保存。改动仍在，请检查磁盘空间后重试。",
@@ -7312,7 +7460,7 @@ export default interface Resources {
       "pasted_other": "已粘贴 {{count}} 个对象（{{undo}} 可撤销）",
       "projectBackgroundError": "后台检查项目文件时出错。已打开的内容不受影响，修好文件后会自动重试。",
       "rebuildFailed": "无法重新构建。{{error}}",
-      "recentMissing": "这份排版在本机的副本已不存在",
+      "recentMissing": "这份排版已不在本机，已从列表里去掉",
       "recentTooNew": "这份排版来自更新的 Tavotto，本版本无法打开。磁盘上的文件没有改动。",
       "redone": "重做：{{label}}",
       "relinkNone": "未重链接任何图；缺失素材的图保持原样",
@@ -7458,7 +7606,7 @@ export default interface Resources {
       "redoWith": "重做 {{label}}",
       "refreshProject": "刷新项目",
       "renameDocument": "重命名排版…",
-      "saveConflict": "外部冲突",
+      "saveConflict": "别处有改动",
       "saveDirty": "有未保存修改",
       "saveDocumentAs": "另存为新排版…",
       "saveError": "保存失败",

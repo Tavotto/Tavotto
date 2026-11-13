@@ -67,6 +67,7 @@ from .engine import (
     ai_connections as engine_ai_connections,
     ai_convert as engine_ai_convert,
     ai_data_figure as engine_ai_data_figure,
+    ai_data_propose as engine_ai_data_propose,
     ai_data_task as engine_ai_data_task,
     ai_figure_edit as engine_ai_figure_edit,
     ai_history as engine_ai_history,
@@ -133,7 +134,6 @@ from .engine import (
     nativehandoff as engine_nativehandoff,
     nativeperm as engine_nativeperm,
     nativesession as engine_nativesession,
-    normalize as engine_normalize,
     notebookscript as engine_notebookscript,
     originalspec as engine_originalspec,
     originrecord as engine_originrecord,
@@ -9093,182 +9093,9 @@ def _retire_hot_worker(worker) -> bool:
     return True
 
 
-def _specfix_transaction(render, base: list, scale: float, profile: dict, only) -> dict:
-    """`/api/engine/specfix` 的事务本体（拆出来是为了让测试能注入假的渲染）。"""
-    b0_resp = render(base)
-    if b0_resp.get("warnings"):
-        # 基准自己就没能完整重放（热 worker 里上一份 override 恢复不回来，Codex #549 第三轮 P1）：
-        # 候选是对着一份被污染的 B0 验的。基准不干净就不开始，文档一个字不改
-        return {
-            "ok": False,
-            "exit": engine_normalize.EXIT_UNSUPPORTED,
-            "warnings": list(b0_resp["warnings"]),
-            "patches": list(base),
-            "changes": [],
-            "skipped": [],
-            "adjustments": [],
-            "unresolved": [],
-            "blocking": [],
-        }
-    b0 = b0_resp["manifest"]
-    issues = engine_specfix.all_issues(b0, profile, scale)
-    targets = engine_specfix.select(issues, only)
-    layout = [t for t in targets if t[0] in engine_specfix.LAYOUT_RULES]
-    # 点了名、这里却不会去修的（规则不在可修清单里，或 B0 上根本没这条）：逐条说出口。
-    # 不报的话前端会把它当成「修好了」——那是最坏的一种回答
-    missed = [
-        {"rule": str(o.get("rule")), "gid": str(o.get("gid") or ""), "reason": "not_found"}
-        for o in (only or [])
-        if not any(
-            r == o.get("rule") and (g == o.get("gid") or not o.get("gid")) for r, g in targets
-        )
-    ]
-    out: dict = {
-        "ok": False,
-        "patches": list(base),
-        "changes": [],
-        "skipped": list(missed),
-        "adjustments": [],
-        "unresolved": [],
-        "blocking": [],
-    }
-    if not targets:
-        out.update({"ok": not missed, "exit": engine_specfix.EXIT_NOTHING_TO_DO})
-        return out
-
-    font_off: list[tuple[str, str]] = []
-    for _attempt in range(2):
-        live = [t for t in targets if t not in font_off]
-        plan = engine_specfix.plan(b0, profile, scale=scale, targets=live)
-        skipped = (
-            missed
-            + plan["skipped"]
-            + [{"rule": r, "gid": g, "reason": "font_unavailable"} for r, g in font_off]
-        )
-        if not plan["patches"] and not layout:
-            render(base)
-            out.update({"exit": engine_specfix.EXIT_NOTHING_TO_DO, "skipped": skipped})
-            out["ok"] = not skipped
-            return out
-        contract = engine_specfix.build_contract(
-            b0, profile, scale=scale, base_patches=base, planned=plan["patches"]
-        )
-        # 真正要修的是计划落了 patch 的那些；算不出目标值的已经进了 skipped
-        planned_targets = [
-            t
-            for t in live
-            if not any(s["rule"] == t[0] and s["gid"] == t[1] for s in plan["skipped"])
-        ]
-        candidate = engine_normalize.merge_patches(base, plan["patches"])
-        resp = render(candidate)
-        if resp.get("warnings"):
-            # 有一条 override 没写进去 = 修复没有真的落地。不带着 warning 往下验
-            render(base)
-            out.update(
-                {
-                    "exit": engine_normalize.EXIT_UNSUPPORTED,
-                    "warnings": list(resp["warnings"]),
-                    "skipped": skipped,
-                }
-            )
-            return out
-
-        def judge(manifest: dict, patches: list) -> dict:
-            return engine_specfix.verdict(
-                contract, manifest, profile, scale=scale, targets=planned_targets, patches=patches
-            )
-
-        manifest = resp["manifest"]
-        v = judge(manifest, candidate)
-        if v["exit"] == engine_normalize.EXIT_FONT_UNAVAILABLE and not font_off:
-            # 规范要的字体这台机器上没有：字体那几条单独退出，其余再来一遍
-            font_off = [t for t in targets if t[0] == "font-family-substituted"]
-            continue
-        break
-
-    def margin_needs(v: dict, manifest: dict) -> list[dict]:
-        """这一版还需要外边距重排来解决的：新增 / 加重的裁切与压图，加上点名要修、
-        还探在图幅外的那几条（修复前就已经出界的，不在阻断清单里）。"""
-        need = [b for b in v["repairable"] if b["repair"] == "margins"]
-        left = {(u["rule"], u["gid"]) for u in v["unresolved"]}
-        need += [
-            c
-            for c in engine_normalize.per_element_clipping(manifest)
-            if (c["id"], c["gids"][0]) in left
-        ]
-        return need
-
-    adjustments: list[dict] = []
-    rounds = 0
-    while (
-        not v["ok"]
-        and v["exit"]
-        in (engine_normalize.EXIT_CONSTRAINT_CONFLICT, engine_specfix.EXIT_NOT_RESOLVED)
-        and rounds < engine_normalize.MAX_REPAIR_ROUNDS
-    ):
-        need = margin_needs(v, manifest)
-        if not need:
-            break
-        rounds += 1
-        dirs = engine_normalize.repair_directions(need)
-        cand = engine_normalize.adapt_margins(contract, manifest, directions=dirs or None)
-        if "conflict" in cand or not cand["patches"]:
-            break
-        trial = engine_normalize.merge_patches(candidate, cand["patches"])
-        if engine_normalize.authorize(contract, trial):
-            break  # 局部修复越出了约定：不收（按 normalize 的纪律这不该发生）
-        resp2 = render(trial)
-        if resp2.get("warnings"):
-            # 这一轮有 override 没写进去（重放不完整）：与首轮候选同一条纪律，不收。
-            # 退回到上一版已验过、没有 warning 的候选，而不是带着它往下验
-            render(candidate)
-            break
-        m2 = resp2["manifest"]
-        v2 = judge(m2, trial)
-        if not engine_specfix.progressed(v2, v):
-            render(candidate)
-            break
-        candidate, manifest, v = trial, m2, v2
-        adjustments.extend(cand["changed"])
-
-    # 装不下的出界（外边距重排已经到预算 / 冲突）：如实记成「放不下」，**不连累同一批
-    # 里别的修复**——前提是除了它们之外裁决全过（没有变差、没有越权）
-    stuck = [u for u in v["unresolved"] if u["rule"] in engine_specfix.LAYOUT_RULES]
-    if (
-        stuck
-        and v["exit"] == engine_specfix.EXIT_NOT_RESOLVED
-        and len(stuck) == len(v["unresolved"])
-    ):
-        skipped = skipped + [{**u, "reason": "no_fit"} for u in stuck]
-        v["unresolved"] = []
-        v["ok"] = True
-        v["exit"] = engine_normalize.EXIT_DONE
-        if candidate == list(base):
-            # 什么都没改成：这一轮只有放不下的出界
-            render(base)
-            out.update({"exit": engine_specfix.EXIT_NOTHING_TO_DO, "skipped": skipped})
-            return out
-
-    out.update(
-        {
-            "exit": v["exit"],
-            "changes": plan["changes"],
-            "skipped": skipped,
-            "adjustments": adjustments,
-            "unresolved": v["unresolved"],
-            "blocking": [
-                {"id": b.get("id"), "gids": b.get("gids") or [], "bucket": b.get("bucket")}
-                for b in v["blocking"]
-            ],
-            "protected_changes": v["protected_changes"],
-            "font_unresolved": v["font_unresolved"],
-        }
-    )
-    if not v["ok"]:
-        render(base)
-        return out
-    out.update({"ok": True, "patches": candidate})
-    return out
+#: 事务本体在 `engine/specfix.transaction()`（ADR 0180：MCP 与桌面同一份）；
+#: 这个名字留给端点与 `tests/test_specfix_real.py`。
+_specfix_transaction = engine_specfix.transaction
 
 
 @app.post("/api/engine/invalidate")
@@ -14988,25 +14815,218 @@ def _deduped_data_script(root: Path, task_id) -> tuple[str, str] | None:
 _DATA_FILES_MAX = 500
 #: 列表接口最多看多少个目录项（大项目里一次点击不至于无界遍历；超了就 truncated，不假装列全了）
 _DATA_FILES_SCAN_MAX = 50_000
+#: 最多给多少个 XLSX 读工作表清单（每个要开一次 zip；超出的不带清单）
+_DATA_FILES_SHEETS_MAX = 100
 
 
 @app.get("/api/ai/data-files")
 def api_ai_data_files():
-    """TAF 数据出图的数据文件列表（**实验开关后面**，只读）：当前项目内的 `.csv`（后缀大小写不敏感）。
+    """TAF 数据出图的数据文件列表（**实验开关后面**，只读）：**默认只列 `.csv`**（v1 表单走 `/api/ai/data-figure`，只认 CSV）；
+    带 `?formats=all` 才列 `.csv` / `.tsv` / `.tab` / `.xlsx`（v2 出备选用），后缀大小写不敏感。
 
     walk 剪枝与隐藏目录规则同 `discover.PRUNE_DIRS`；不跟随链接；最多 500 个，按项目相对 POSIX 路径排序；最多看
-    `_DATA_FILES_SCAN_MAX` 个目录项，超了停下并标 `truncated`。"""
+    `_DATA_FILES_SCAN_MAX` 个目录项，超了停下并标 `truncated`。`formats=all` 时 XLSX 带 `sheets: [{name, hidden}]`（读不了 / 超过
+    `_DATA_FILES_SHEETS_MAX` 个之后是 null）。"""
     if not engine_ai_figure_edit.enabled():
         return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
     root = require_project()
     # walk 规则（剪枝 / 隐藏 / 不跟随链接 / 扫描预算）与数据文件夹摘要共用 `discover.walk_files` 那一份
-    found, truncated = engine_discover.walk_files(root, (".csv",), scan_max=_DATA_FILES_SCAN_MAX)
-    found.sort()
+    every = request.args.get("formats") == "all"
+    found, truncated = engine_discover.walk_files(
+        root,
+        engine_ai_data_figure.TABLE_SUFFIXES if every else engine_ai_data_figure.CSV_SUFFIXES,
+        scan_max=_DATA_FILES_SCAN_MAX,
+    )
+    found = sorted(f for f in found if not Path(f[0]).name.startswith("~$"))
     if len(found) > _DATA_FILES_MAX:
         found, truncated = found[:_DATA_FILES_MAX], True
-    resp = jsonify({"files": [{"path": p, "size": n} for p, n in found], "truncated": truncated})
+    files = []
+    sheets_read = 0
+    for rel, size in found:
+        row = {"path": rel, "size": size}
+        if rel.lower().endswith(engine_ai_data_figure.XLSX_SUFFIXES):
+            if sheets_read < _DATA_FILES_SHEETS_MAX:
+                sheets_read += 1
+                row["sheets"] = engine_ai_data_figure.xlsx_sheets(root / rel)
+            else:
+                row["sheets"] = None
+        files.append(row)
+    resp = jsonify({"files": files, "truncated": truncated})
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+# --- 数据出图 v2（ADR 0178）：出备选 → 缩略图 → 选中落盘。全部在实验开关后面、过会话认证 guard ---------------------
+_PROPOSE_STATUS = {
+    "propose_session_expired": 404,
+    "propose_candidate_unknown": 404,
+    "propose_data_changed": 409,
+    "propose_input_invalid": 400,
+    "propose_cells_invalid": 400,
+    "propose_cells_need_rule": 409,
+}
+
+
+def _propose_error(exc: "engine_ai_data_propose.ProposeError"):
+    body = {"error": str(exc), "code": exc.code}
+    if exc.params:
+        body["params"] = exc.params
+    return jsonify(body), _PROPOSE_STATUS.get(exc.code, 400)
+
+
+@app.post("/api/ai/data-figure/propose")
+def api_ai_data_figure_propose():
+    """出备选（不调模型）。body：`{folder?, table?, sheet?, hint?, answers?, client_request_id?}`（`folder` 项目相对、缺省项目根）。
+
+    回三选一：`{kind: "ask", question_code, options, unsure}`（决定科学含义的事只能用户定；选项里的 `answer` 原样并进下一次的
+    `answers`）/ `{kind: "candidates", session, items: [{id, title_code, why_code, values, recommended, coverage, thumbnail_url}],
+    dropped}` / `{kind: "nothing", reasons, dropped}`。**用户文件夹里不写任何东西**（候选在 `data_dir()/cache/`）；数据问题 400 + 稳定码。
+    提示与回答里的文字不进日志、不发遥测。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    ctx = current_ctx()
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict):
+        abort(400)
+    rid = body.get("client_request_id")
+    if rid is not None and not _valid_client_request_id(rid):
+        abort(400)
+    try:
+        out = engine_ai_data_propose.propose(
+            ctx.path,
+            project=str(ctx.path.resolve()),
+            folder=body.get("folder"),
+            table=body.get("table"),
+            sheet=body.get("sheet"),
+            hint=body.get("hint"),
+            answers=body.get("answers"),
+            client_request_id=rid,
+        )
+    except engine_ai_data_propose.ProposeError as exc:
+        return _propose_error(exc)
+    except engine_ai_data_figure.DataSourceError as exc:
+        return jsonify({"error": str(exc), "code": exc.code}), 400
+    resp = jsonify(out)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/ai/data-figure/thumbnail/<session>/<item>")
+def api_ai_data_figure_thumbnail(session, item):
+    """候选缩略图（只读缓存里我们自己写的那份 PNG）。`session` / `item` 是服务端登记的不透明 id，路径不由请求拼出来。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    ctx = current_ctx()
+    try:
+        path = engine_ai_data_propose.thumbnail_path(str(ctx.path.resolve()), session, item)
+    except engine_ai_data_propose.ProposeError as exc:
+        return _propose_error(exc)
+    resp = send_file(path, mimetype="image/png", conditional=False)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/ai/data-figure/discard")
+def api_ai_data_figure_discard():
+    """放弃一个候选会话（删候选目录）。幂等：会话已不在也回 200。body：`{session}`。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    ctx = current_ctx()
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("session"), str):
+        abort(400)
+    engine_ai_data_propose.discard(str(ctx.path.resolve()), body["session"])
+    return jsonify({"ok": True})
+
+
+@app.post("/api/ai/data-figure/commit")
+def api_ai_data_figure_commit():
+    """选中一个备选，只**新建**脚本落盘：`{session, id, client_request_id?}`——只回传 id，配方在服务端的候选会话里。
+
+    新建 `<数据文件夹>/tavotto_figures/<stem>.py`（与同目录内容寻址的公共模块，不存在才建、字节相同复用、字节不同什么都不写）→ 登记 →
+    统一刷新 → safe 渲染 → 数据指纹核对。回 `{task, script?, stem?, module?, data_check, reason_code?, can_delete_script?}`：
+    `data_check` 是 `verified` / `unverifiable`（这张图没有任何一层能核，不写成 verified）/ `mismatch`（画出来的数据与文件对不上，
+    可删这份新脚本）/ `unknown`。会话过期 404、数据在出备选后变了 409（前端据此重新出备选）。候选会话留到 TTL（可再提交同一批里的别的备选），`discard` 放弃。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    ctx = current_ctx()
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict):
+        abort(400)
+    session_id, item_id = body.get("session"), body.get("id")
+    rid = body.get("client_request_id")
+    if not isinstance(session_id, str) or not isinstance(item_id, str):
+        abort(400)
+    if rid is not None and not _valid_client_request_id(rid):
+        abort(400)
+    project = str(ctx.path.resolve())
+    if rid:
+        # 先去重、后取会话（同 v1）：首次请求已提交、响应丢了（或会话已过期 / 被放弃），同 id 重发只回既有任务的结局，不再取会话
+        known = engine_ai.find_request(str(ctx.path.resolve()), rid)
+        if known is not None and known["status"] == engine_ai.REQUEST_SUPERSEDED:
+            return _agent_error(engine_ai.AgentError("ai_request_superseded"))
+        if known is not None:
+            sid = known["session"]
+            found = engine_ai_tasks.load(sid) or {"task_id": sid, "outcome": None, "final": None}
+            out = {"task": {**found, "deduped": True}}
+            recorded = _deduped_data_script(ctx.path, found.get("task_id"))
+            if recorded is not None:
+                out.update(script=recorded[0], stem=recorded[1])
+            return jsonify(out)
+    try:
+        sess, item = engine_ai_data_propose.get_item(project, session_id, item_id)
+        sel = engine_ai_data_task.Selection(
+            folder_rel=sess.folder_rel,
+            table=sess.table,
+            sheet=sess.sheet,
+            data_sha256=sess.data_sha256,
+            confirmed=sess.confirmed,
+            recipe=item.recipe,
+            title_code=item.code,
+        )
+        prepared = engine_ai_data_task.prepare_v2(ctx.path, sel)
+        env = engine_ai_data_task.envelope_for_v2(project_key=project, prepared=prepared, rid=rid)
+    except engine_ai_data_propose.ProposeError as exc:
+        return _propose_error(exc)
+    except engine_ai_data_figure.DataSourceError as exc:
+        return jsonify({"error": str(exc), "code": exc.code}), 400
+    except engine_ai_tasks.TaskError as exc:
+        return jsonify({"error": str(exc), "code": "data_figure_recipe_invalid"}), 409
+    engine_ai_data_task.ensure_registered_v2()
+    pl = prepared.placement
+    executor = engine_ai_data_task.TemplateExecutorV2(
+        ctx.path,
+        sel,
+        refresh=lambda script: engine_ai.refresh_outcome(
+            lambda s: _after_ai_change(ctx, s), script, True
+        ),
+        render=lambda sha: _ai_task_hooks(ctx, pl.script_rel, "main")["after"](sha),
+    )
+    res = engine_ai_tasks.run_task(env, executor)
+    cand = executor.candidate
+    out = {"task": res}
+    committed = bool(cand is not None and cand.committed)
+    if res.get("deduped"):
+        recorded = _deduped_data_script(ctx.path, res.get("task_id"))
+        if recorded is not None:
+            out.update(script=recorded[0], stem=recorded[1])
+    elif committed:
+        out.update(script=pl.script_rel, stem=pl.stem, module=pl.module_rel)
+        verdict = engine_ai_data_task.data_verdict(engine_ai_history.get(res.get("task_id")))
+        out["data_check"] = verdict
+        out["can_delete_script"] = verdict == "mismatch"
+        # 候选会话留到 TTL：用户可以接着把同一批里的另一个备选也出成图
+        out["cells"] = prepared.cell_stats  # 处理规则实际作用的计数（与图下方说明同一份）
+        out["unplotted"] = {
+            "count": len(prepared.not_plotted),
+            "rows": prepared.not_plotted[:50],
+            "code": engine_ai_data_propose.UNPLOTTED_CODE if prepared.not_plotted else None,
+        }
+    else:
+        unmet = ((res.get("verification") or {}).get("unmet")) or []
+        if unmet:
+            out["reason_code"] = unmet[0].get("reason_code")
+    return jsonify(out)
 
 
 # --- 助手草稿与待确认账本（ADR 0132）：存后端（data_dir 的 ai_history 库），不存浏览器 -----------------

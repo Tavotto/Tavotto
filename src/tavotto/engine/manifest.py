@@ -33,11 +33,12 @@ from matplotlib.collections import (
 )
 from matplotlib.container import BarContainer, ErrorbarContainer, StemContainer
 from matplotlib.contour import ContourSet
-from matplotlib.image import AxesImage
+from matplotlib.figure import SubFigure
+from matplotlib.image import AxesImage, FigureImage
 from matplotlib.lines import Line2D
 from matplotlib.markers import MarkerStyle
 from matplotlib.offsetbox import AnchoredOffsetbox, AnnotationBbox, OffsetBox, TextArea
-from matplotlib.patches import FancyArrowPatch, Patch
+from matplotlib.patches import ConnectionPatch, FancyArrowPatch, Patch
 from matplotlib.path import Path
 from matplotlib.text import Text
 from matplotlib.textpath import text_to_path
@@ -241,6 +242,105 @@ def _register_offsetbox_texts(state: FigState, parent_gid: str, art) -> None:
         # 记下外框：既当「这是框里的文字」的标记，也让 build_manifest 在外框隐藏时跳过它
         t._mm_offsetbox_box = art  # noqa: SLF001
         _register(state, f"{parent_gid}.texts_{k}", t, "text", f"文字 “{_snippet(t.get_text())}”")
+
+
+def _register_figure_level(state: FigState, owner, prefix: str, counts: dict[str, int]) -> None:
+    """登记直接挂在整张图（或 SubFigure）上的元素：`fig.texts` / `fig.legends` /
+    `fig.artists` / `fig.patches` / `fig.lines` / `fig.images`，再递归进 `owner.subfigs`。
+
+    从前只登记根图的文字、图例与锚定框，`fig.add_artist(Polygon(..., transform=fig.transFigure))`
+    这类跨子图的连接梯形 / 分隔线 / 框，以及 SubFigure 里的 suptitle、文字、图例、形状**全部点不中**
+    （普查只报一个「SubFigure × 2」）。图级元素与子图里的同族元素**同一套角色与 setter**：
+    形状 `pos_frac` 按 transform 平移（`overrides._set_patch_pos_frac`，SubFigure 里也按根图分数算）、
+    独立箭头 `endpoints_frac`、文字 `pos_frac`、线 / 线组 / 位图的样式字段，没有新机制。
+
+    gid：根图沿用已发出的 `fig.texts_i` / `fig.legend_i` / `fig.artists_j`，新增
+    `fig.patches_j` / `fig.lines_j` / `fig.images_j`；SubFigure 是 `fig.subfigs_k.<同上>`
+    （k 是 `owner.subfigs` 下标，嵌套就再接一段）。序号都是所属列表的下标，补登记不挪已有名字。
+    `counts` 是整张图共用的标签计数（「形状 3」不因换了个 SubFigure 又从 1 数起）。
+    """
+    known = state.index_ids()
+    # 直接 `fig.patches.append(...)` / `fig.lines.append(...)`（没走 `add_artist`、构造时也没传
+    # `figure=fig`）的那些 `get_figure()` 是 None：照样画得出来，但拖动要按所在的图换算。补上
+    # `add_artist` 本来就会做的那一步（只设归属，不改样式与几何）
+    for lst in ("patches", "lines", "images", "artists", "texts"):
+        for art in getattr(owner, lst, []) or []:
+            if getattr(art, "get_figure", None) is not None and art.get_figure() is None:
+                art.set_figure(owner)
+
+    def nth(kind: str) -> int:
+        counts[kind] = counts.get(kind, 0) + 1
+        return counts[kind]
+
+    def register_text(gid: str, t) -> None:
+        if t.get_text():
+            _register(state, gid, t, "text", f"文字 “{_snippet(t.get_text())}”", draggable=True)
+
+    def register_patch(gid: str, pt) -> None:
+        if isinstance(pt, FancyArrowPatch):
+            # 图级独立箭头（含 `ConnectionPatch`）：端点契约与 `ax.add_patch` 的同一份
+            pt._mm_arrow_standalone = True  # noqa: SLF001
+            _register(state, gid, pt, "arrow_patch", f"箭头 {nth('arrow')}")
+        else:
+            _register(state, gid, pt, "patch", f"形状 {nth('shape')}", draggable=True)
+
+    def register_line(gid: str, ln) -> None:
+        lab = str(ln.get_label())
+        nice = f"曲线 “{_snippet(lab)}”" if lab and not lab.startswith("_") else None
+        # 图级的线是排版（分隔线、跨子图的连线），位置不是数据：与形状一样可拖
+        _register(state, gid, ln, "line", nice or f"曲线 {nth('line')}", draggable=True)
+
+    for i, t in enumerate(owner.texts):
+        if id(t) not in known:
+            register_text(f"{prefix}.texts_{i}", t)
+    for i, leg in enumerate(getattr(owner, "legends", []) or []):
+        if id(leg) not in known:
+            _register_legend(state, f"{prefix}.legend_{i}", leg)
+    for j, pt in enumerate(getattr(owner, "patches", []) or []):
+        if id(pt) not in known:
+            register_patch(f"{prefix}.patches_{j}", pt)
+    for j, ln in enumerate(getattr(owner, "lines", []) or []):
+        if id(ln) not in known:
+            register_line(f"{prefix}.lines_{j}", ln)
+    for j, im in enumerate(getattr(owner, "images", []) or []):
+        if id(im) not in known:
+            _register(state, f"{prefix}.images_{j}", im, "image", f"图像 {nth('image')}")
+    # `fig.add_artist(...)` 不按类型改道（Axes 会把 Patch / Line2D 分进 patches / lines，Figure
+    # 不会），所以这里什么都可能有：按族分派到与子图里同一套角色
+    for j, art in enumerate(getattr(owner, "artists", []) or []):
+        if id(art) in known:
+            continue
+        gid = f"{prefix}.artists_{j}"
+        if isinstance(art, (AnchoredOffsetbox, AnnotationBbox)):
+            if isinstance(art, AnchoredOffsetbox):
+                _svg_group(art)
+            _register(
+                state,
+                gid,
+                art,
+                "artist",
+                f"{type(art).__name__} {j + 1}",
+                draggable=offsetbox_draggable(art),
+            )
+            _register_offsetbox_texts(state, gid, art)
+        elif isinstance(art, Text):
+            register_text(gid, art)
+        elif isinstance(art, Patch):
+            register_patch(gid, art)
+        elif isinstance(art, Line2D):
+            register_line(gid, art)
+        elif isinstance(art, Collection):
+            if is_linecoll_family(art):
+                _register(state, gid, art, "linecoll", f"线组 {nth('linecoll')}")
+            else:
+                _register(state, gid, art, "collection", _coll_label(art, j))
+        elif isinstance(art, (AxesImage, FigureImage)):
+            _register(state, gid, art, "image", f"图像 {nth('image')}")
+        else:
+            # 认不出来的 Artist：与 `ax.artists` 同一口径，只开 visible / zorder
+            _register(state, gid, art, "artist", f"{type(art).__name__} {j + 1}")
+    for k, sub in enumerate(getattr(owner, "subfigs", []) or []):
+        _register_figure_level(state, sub, f"{prefix}.subfigs_{k}", counts)
 
 
 def _snippet(text: str, n: int = 18) -> str:
@@ -611,35 +711,9 @@ def instrument(state: FigState) -> None:
         {"gid": "figure", "artist": fig, "role": "figure", "label": "整张图", "draggable": False}
     )
 
-    for i, t in enumerate(fig.texts):
-        if t.get_text():
-            _register(
-                state,
-                f"fig.texts_{i}",
-                t,
-                "text",
-                f"文字 “{_snippet(t.get_text())}”",
-                draggable=True,
-            )
-    for i, leg in enumerate(getattr(fig, "legends", []) or []):
-        _register_legend(state, f"fig.legend_{i}", leg)
-    # `fig.add_artist(...)` 贴在整张图上的锚定框 / 插框：与 `ax.artists` 里的同一套（外框按
-    # `offsetbox_draggable` 可拖，setter 本就按 figure 分数算；框里的文字可编辑）。图级的其他
-    # artist（`fig.add_artist(Rectangle)` …）不在本条范围内，仍不登记
-    for j, art in enumerate(getattr(fig, "artists", []) or []):
-        if not isinstance(art, (AnchoredOffsetbox, AnnotationBbox)):
-            continue
-        if isinstance(art, AnchoredOffsetbox):
-            _svg_group(art)
-        _register(
-            state,
-            f"fig.artists_{j}",
-            art,
-            "artist",
-            f"{type(art).__name__} {j + 1}",
-            draggable=offsetbox_draggable(art),
-        )
-        _register_offsetbox_texts(state, f"fig.artists_{j}", art)
+    # 整张图 / SubFigure 上直接挂的元素（文字、图例、`fig.add_artist` 的形状 / 线 / 箭头、
+    # `figimage` …）：一处登记、递归进 SubFigure，见 `_register_figure_level`
+    _register_figure_level(state, fig, "fig", {})
 
     # 色条反查：mappable.colorbar → 宿主轴（与色条方向事务共用同一份实现）
     # **传 `axestraversal.ordered_axes` 的结果**：插图（`ax.inset_axes()`）只在 `child_axes`
@@ -1092,6 +1166,21 @@ _LEGEND_SOURCE_ROLES = frozenset(
 )
 
 
+def _within(ax, fig) -> bool:
+    """`ax` 是否画在 `fig`（Figure 或 SubFigure）里——沿**直接父容器**往上找。
+
+    `SubFigure.figure` 在 3.10+ 指向根 Figure、3.8 指向父级，不能拿它走链：嵌套时会从内层
+    直接跳到根、跳过外层（#1887 评审）。直接父容器是 `_parent`（3.4 起就有）。"""
+    owner = ax.get_figure()
+    for _ in range(64):  # 嵌套深度的保险丝，防循环引用
+        if owner is fig:
+            return True
+        if not isinstance(owner, SubFigure):
+            return False
+        owner = getattr(owner, "_parent", None) or owner.figure
+    return False
+
+
 def _bind_legends(state: FigState) -> None:
     """给每个图例的每一项找源对象（判据在 `overrides.bind_legend_entries`）。"""
     axes_gid_of = {
@@ -1130,10 +1219,15 @@ def _bind_legends(state: FigState) -> None:
             except Exception:  # noqa: BLE001 — 拿不到就没有位置线索
                 auto = []
         else:
-            cands = [(g, a) for _o, g, a in sources]
-            map_cands = [(g, a) for _o, g, a in maps]
+            # `sf.legend()` 只收它自己（含嵌套）SubFigure 里的子图；候选按整张图找的话，
+            # 并排的 SubFigure 各画一条同样长相的线（各自的色环都从 C0 起）就并列、一条都绑不上
+            owned = [ax for ax in ordered_axes(state.fig)[0] if _within(ax, parent)]
+            owners = {axes_gid_of.get(id(ax)) for ax in owned}
+            scoped = parent is not state.fig
+            cands = [(g, a) for o, g, a in sources if not scoped or o in owners]
+            map_cands = [(g, a) for o, g, a in maps if not scoped or o in owners]
             auto = []
-            for ax in ordered_axes(state.fig)[0]:
+            for ax in owned:
                 try:
                     auto.extend(ax.get_legend_handles_labels()[0])
                 except Exception:  # noqa: BLE001
@@ -1162,6 +1256,12 @@ def _internal_ids(fig, colorbar_axes=()) -> set[int]:
     喊狼来了，真正的缺口就没人看了」。这条与 `census` 的遍历必须同源。
     """
     ids = {id(fig.patch)}
+    # SubFigure 的背景 patch 同理：由 SubFigure 自己代表（与根图的 `fig.patch` 一样不登记成形状）
+    stack = list(getattr(fig, "subfigs", []) or [])
+    while stack:
+        sub = stack.pop()
+        ids.add(id(sub.patch))
+        stack.extend(getattr(sub, "subfigs", []) or [])
     ordered, _child_ids, _parasite_ids = ordered_axes(fig)
     for ax in ordered:
         ids.add(id(ax))
@@ -1212,13 +1312,23 @@ def census(fig, state: FigState) -> list[dict]:
     # 「没漏」。一个报平安的普查比没有普查更坏，而它正是「不许静默消失」
     # 那条不变式的诊断面。编号也必须同源，否则 `where` 指向另一个 axes。
     ordered, _child_ids, _parasite_ids = ordered_axes(fig)
-    for gid, owner in [("figure", fig)] + [(f"axes_{i}", ax) for i, ax in enumerate(ordered)]:
+    # SubFigure 是结构件不是漏网之鱼：走进去数它自己的孩子（`where` 与登记同一个前缀），
+    # 否则 SubFigure 里漏掉的东西在普查里只剩一行「SubFigure × N」
+    owners: list[tuple[str, object]] = []
+
+    def walk(prefix: str, where: str, owner) -> None:
+        owners.append((where, owner))
+        for k, sub in enumerate(getattr(owner, "subfigs", []) or []):
+            walk(f"{prefix}.subfigs_{k}", f"{prefix}.subfigs_{k}", sub)
+
+    walk("fig", "figure", fig)
+    for gid, owner in owners + [(f"axes_{i}", ax) for i, ax in enumerate(ordered)]:
         try:
             children = list(owner.get_children())
         except Exception:  # noqa: BLE001 — 普查失败绝不能拖垮渲染
             continue
         for child in children:
-            if id(child) in known or isinstance(child, (Axes, Axis)):
+            if id(child) in known or isinstance(child, (Axes, Axis, SubFigure)):
                 continue
             if isinstance(child, Text) and not child.get_text():
                 continue
@@ -4842,10 +4952,16 @@ def _collection_datalim(artist):
     if not isinstance(artist, Collection):
         return None
     ax = getattr(artist, "axes", None)
-    if ax is None:
-        return None
     try:
-        bb = ax.transData.transform_bbox(artist.get_datalim(ax.transData))
+        if ax is None:
+            # 挂在整张图上的集合（`fig.add_artist(LineCollection(..., transform=fig.transFigure))`）：
+            # 没有 transData：拿它自己的 transform 当「数据坐标系」问同一个函数，再换回显示坐标
+            if artist.get_figure() is None:
+                return None
+            own = artist.get_transform()
+            bb = own.transform_bbox(artist.get_datalim(own))
+        else:
+            bb = ax.transData.transform_bbox(artist.get_datalim(ax.transData))
     except Exception:  # noqa: BLE001
         return None
     if not _finite_box(bb) or (bb.width <= 0 and bb.height <= 0):
@@ -5929,7 +6045,13 @@ def _measure_manifest(
             entry["bbox"] = _padded_bbox(bb, W, H, min_hit)
         else:
             try:
-                bb = artist.get_window_extent(renderer)
+                if isinstance(artist, FigureImage):
+                    # `fig.figimage(...)`：贴在图幅像素上，基类 `get_window_extent` 回空框；
+                    # 它画在哪由 `get_extent()`（显示像素）说了算
+                    x0, x1, y0, y1 = artist.get_extent()
+                    bb = Bbox.from_extents(x0, y0, x1, y1)
+                else:
+                    bb = artist.get_window_extent(renderer)
                 if isinstance(artist, Text):
                     bb = _text_ink_extent(artist, bb, renderer)
                 if not _finite_box(bb) or (bb.width <= 0 and bb.height <= 0):
@@ -6028,7 +6150,12 @@ def _measure_manifest(
             try:
                 if ann is not None:
                     disp = annotation_arrow_display(ann)
-                elif getattr(artist, "_mm_arrow_standalone", False):
+                elif getattr(artist, "_mm_arrow_standalone", False) and not isinstance(
+                    artist, ConnectionPatch
+                ):
+                    # `ConnectionPatch` 的两端由 xyA / xyB + 各自坐标系决定，`_posA_posB` 是构造时的
+                    # 占位 (0,0)→(1,1)：从它算端点会把手柄画到图幅对角，拖了也一个像素不动。
+                    # 不出端点，走下面那支描真实箭杆（可选中、改样式）
                     pts = getattr(artist, "_posA_posB", None)
                     if pts is not None:
                         conv = getattr(artist, "_convert_xy_units", lambda p: p)
@@ -6114,6 +6241,11 @@ def _measure_manifest(
                     # 锚定框 / 插框：锚点 = 框的左下角，与 setter 同一把尺（`offsetbox_frame`：
                     # AnnotationBbox 不含箭头）
                     bb = offsetbox_frame(artist, renderer)
+                    dx, dy = bb.x0, bb.y0
+                    drag_prop = "pos_frac"
+                elif isinstance(artist, Line2D):
+                    # 图级的线（只有它们宣称可拖）：包围盒左下角，与 `overrides._place_line` 同一把尺
+                    bb = artist.get_window_extent()
                     dx, dy = bb.x0, bb.y0
                     drag_prop = "pos_frac"
                 elif isinstance(artist, Patch):

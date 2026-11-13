@@ -401,6 +401,58 @@ def cases() -> list[dict]:
         }
     )
 
+    # 9h2. 只写了最大宽度（max）的期刊（JACS 式：单栏 max 84.7、双栏 max 177.8）：页宽不得超过最大的那档 + 容差；
+    #      exact 与 max 并存时两种都算合格；typical / range 仍不参与。
+    maxj = {
+        "page_columns": [
+            _col("single", "单栏", "Single column", 84.7, "max"),
+            _col("double", "双栏", "Double column", 177.8, "max"),
+        ],
+        "widths_mm": {"single": 84.7, "double": 177.8},
+    }
+    for name, width in (
+        ("journal-max-over", 228.6),
+        ("journal-max-at-limit", 177.8),
+        ("journal-max-within-tolerance", 178.3),
+        ("journal-max-just-over-tolerance", 178.4),
+        ("journal-max-narrow-ok", 60.0),
+    ):
+        out.append(
+            {
+                "name": name,
+                "profile_id": "journal-base-v1",
+                "journal": maxj,
+                "spec": _spec(
+                    [_panel("p1", manifest=_clean_manifest(), rect_mm=[0, 0, width, 80.0])],
+                    page=(width, 80.0),
+                ),
+            }
+        )
+    mixed = {
+        "page_columns": [
+            _col("col1", "1 栏", "1 column", 90.0),
+            _col("cap", "最大", "Maximum", 140.0, "max"),
+            _col("typ", "常用", "Typical", 200.0, "typical"),
+        ],
+        "widths_mm": {"single": 90.0, "double": None},
+    }
+    for name, width in (
+        ("journal-exact-and-max-exact-hit", 90.0),
+        ("journal-exact-and-max-under-max", 120.0),
+        ("journal-exact-and-max-over", 150.0),
+    ):
+        out.append(
+            {
+                "name": name,
+                "profile_id": "journal-base-v1",
+                "journal": mixed,
+                "spec": _spec(
+                    [_panel("p1", manifest=_clean_manifest(), rect_mm=[0, 0, width, 80.0])],
+                    page=(width, 80.0),
+                ),
+            }
+        )
+
     # 9i. 期刊「说明」的字号建议 -> suggestion（带期刊名与原话），不是判据；底的字号下限为 0
     def _adv(role: str, value: float, quote: str) -> dict:
         return {

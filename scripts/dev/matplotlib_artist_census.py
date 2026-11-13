@@ -46,7 +46,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.axes import Axes  # noqa: E402
 from matplotlib.axis import Axis  # noqa: E402
-from matplotlib.figure import Figure  # noqa: E402
+from matplotlib.figure import Figure, SubFigure  # noqa: E402
 from matplotlib.text import Text  # noqa: E402
 
 import axestraversal as axestraversal_mod  # noqa: E402
@@ -115,9 +115,15 @@ def census(fig) -> dict:
     # artist 在报告里不出现、`n_axes` 也少数——**一份报平安的普查比没有普查
     # 更坏**，而普查存在的唯一理由就是回答「有没有东西被我们悄悄漏掉了」。
     _census_axes, _child_ids, _parasite_ids = axestraversal_mod.ordered_axes(fig)
-    for owner in [fig] + list(_census_axes):
+    # SubFigure 是结构件：走进去数它自己的孩子（与 `manifest.census` 同一口径）
+    _fig_owners, _stack = [], [fig]
+    while _stack:
+        _f = _stack.pop(0)
+        _fig_owners.append(_f)
+        _stack.extend(getattr(_f, "subfigs", []) or [])
+    for owner in _fig_owners + list(_census_axes):
         for child in owner.get_children():
-            if isinstance(child, (Axes, Axis)):
+            if isinstance(child, (Axes, Axis, SubFigure)):
                 continue
             if isinstance(child, Text) and not child.get_text():
                 continue
@@ -205,6 +211,25 @@ def from_script(path: str, entry: str | None) -> list[tuple[str, Figure]]:
 # 代表性 API 表（§41–43）。上层库**不该**需要专有 handler：它们最终仍然产出
 # matplotlib 的 artist，普查就是这条判断的证据。
 # ---------------------------------------------------------------------------
+def _fig_add(ax, kind: str):
+    from matplotlib.collections import LineCollection
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import ConnectionPatch, Polygon
+
+    fig = ax.get_figure()
+    tf = fig.transFigure
+    art = {
+        "polygon": lambda: Polygon([(0.1, 0.1), (0.4, 0.1), (0.3, 0.4)], transform=tf, alpha=0.3),
+        "line": lambda: Line2D([0.05, 0.95], [0.5, 0.5], transform=tf),
+        "text": lambda: Text(0.5, 0.02, "figure note", transform=tf),
+        "linecoll": lambda: LineCollection([[(0.1, 0.9), (0.4, 0.9)]], transform=tf),
+        "connection": lambda: ConnectionPatch(
+            (0.2, 0.2), (0.8, 0.8), "axes fraction", axesA=ax, axesB=ax
+        ),
+    }[kind]()
+    return fig.add_artist(art)
+
+
 def api_specimens(with_seaborn: bool) -> list[tuple[str, object]]:
     import numpy as np
 
@@ -243,6 +268,14 @@ def api_specimens(with_seaborn: bool) -> list[tuple[str, object]]:
             "annotate",
             lambda ax: ax.annotate("hi", (1, 0), (2, 0.5), arrowprops=dict(arrowstyle="->")),
         ),
+        # 整张图上直接挂的元素（跨子图的连接梯形、分隔线、图级文字 / 位图 / 连线）
+        ("fig.add_artist(Polygon)", lambda ax: _fig_add(ax, "polygon")),
+        ("fig.add_artist(Line2D)", lambda ax: _fig_add(ax, "line")),
+        ("fig.add_artist(Text)", lambda ax: _fig_add(ax, "text")),
+        ("fig.add_artist(LineColl)", lambda ax: _fig_add(ax, "linecoll")),
+        ("fig ConnectionPatch", lambda ax: _fig_add(ax, "connection")),
+        ("fig.figimage", lambda ax: ax.get_figure().figimage(Z, 5, 5)),
+        ("fig.legend", lambda ax: (ax.plot(x, x, label="a"), ax.get_figure().legend())),
     ]
     if with_seaborn:
         import pandas as pd
