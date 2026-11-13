@@ -1626,7 +1626,7 @@ def _export_tiff_error(exc: tiffprobe.UnsupportedTiff) -> engine_exportreq.Expor
 
 @app.get("/api/svg/chart/inspect")
 def api_svg_chart_inspect():
-    """计算图表绑定入口的只读盘点（ADR-XXXX）：同一份字节重新校验 + 稳定节点清单。
+    """计算图表绑定入口的只读盘点（ADR 0182）：同一份字节重新校验 + 稳定节点清单。
 
     与 `/api/file` 同一条 `safe_resolve` 路径约束、同一个 svgcheck 边界；
     失败 422 带稳定码，原文件零改动，无任何写入与执行。
