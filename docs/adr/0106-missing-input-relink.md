@@ -260,6 +260,26 @@ AI 修复成功率的也一并加上。
 一次出图、glob 读的文件夹整个挪走指认新文件夹出图、沙盒相对不改判、静态口径）、`tests/test_fixtools_link.py`（AI 接得上动态
 路径、只被 exists 问过的常量、glob 文件夹；`import_file` 仍 `link_unreachable`）、`tests/test_script_edit.py`（改写通道继续看护）。
 
+## 修订（2026-11-14）：脚本自己 `parser.error("找不到 …")` 也认成缺数据
+
+一份用户反馈：两份脚本的 `--input` / `--data-dir` 都有默认值，`parse_args()` 之后按 `__file__` 拼出默认数据路径、
+`exists()` 答没有，就 `parser.error("找不到输入表格，请用 --input 指定 xxx.xlsx 的位置。")` 退出（exit 2 + usage）。
+`SystemExit` 是 argparse 抛的，于是判成 `script_needs_arguments`，界面引去「运行参数」；用户填了参数仍失败——缺的是数据。
+维护者（2026-11-14）选「判据扩展、直接弹选择数据文件」。
+
+1. **主语是调 `ArgumentParser.error` 的那一帧**（`worker._script_parser_error_message`）：调用者不在 `argparse` 模块里
+   （用户代码在 `parse_args()` 之后自己调）才拿它的 `message`；argparse 解析时自己报的（缺必填、未知参数、`type=` 回调抛
+   `ArgumentTypeError`）调用者是 argparse，照旧 `script_needs_arguments`。只看栈帧，不看句式，翻译过的 argparse 一样判。
+2. **点名与在不在与 2026-11-09 修订同一套**（`figcapture.parser_error_missing_input`）：消息按 `_named_miss` 的边界点了名
+   某条没救回的探路，或只写了文件名（`_named_by_basename`：只认带扩展名的文件名；左边界只排除 ASCII 路径字符，
+   中文消息里紧挨着汉字也算；几条对得上取最长的文件名），且那条此刻确实不在 → `missing_input`，事实与只读打开同形。
+3. 顺序在被拦下操作的归因之后、`_script_exit_error` 之前；对不上一律照旧（`script_needs_arguments` / `script_exited`）。
+
+代价：只写文件名的点名比整路径松——中文消息里 `物.xlsx` 与 `不同污染物.xlsx` 两条都探过且都不在时取较长的；
+仍要求「这次运行真问过、没找到、此刻不在」三条。普通 `sys.exit("找不到 …")` 不在本修订范围。
+看护：`tests/test_missing_input.py`（文件名 / 整路径点名、边界反例、此刻在不判；真 worker：中文消息 + 指认一次出图；
+缺必填、无关的 `parser.error`、`type=` 回调报错仍是 `script_needs_arguments`）。
+
 ## 不做的事
 
 * 不按文件名在磁盘上搜索、不猜候选（FO08 的「旁边有同名不同值」）。
