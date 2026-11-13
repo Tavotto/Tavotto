@@ -516,5 +516,120 @@
     "waiting": "Waiting for your dependency decision",
     "missing": "Validation needs {{names}}. After installation, the edit will be checked again and applied.",
     "installing": "Preparing dependencies, then checking the edit again…"
+  },
+  "dataFigureV2": {
+    "question": {
+      "pick_table": "Which table should be plotted?",
+      "pick_value": "Which column holds the values to plot?",
+      "pick_group": "Which column splits the groups?",
+      "pick_x": "Which column goes on the x axis?",
+      "pick_design": "Is the same subject measured repeatedly in this data?",
+      "pick_unit": "Which column says which subject a row belongs to?",
+      "mixed_cells": "{{count}} cells in “{{column}}” aren’t numbers (out of {{rows}} rows with data). What should be done with them?"
+    },
+    "option": {
+      "table": "{{file}}: {{rows}} rows, {{groups}} groups",
+      "table_sheet": "{{file}}, sheet “{{sheet}}”: {{rows}} rows, {{groups}} groups",
+      "column": "{{column}}",
+      "design_independent": "Every row is a different subject",
+      "design_repeated": "The same subject is measured several times",
+      "unsure": "Not sure",
+      "skip": "Ignore those rows",
+      "extract": "Take the number inside",
+      "describe": "Let me explain"
+    },
+    "candidate": {
+      "points_mean": {
+        "title": "Points + mean",
+        "why": "Every point is shown with each group’s mean, so you see both the difference and the spread."
+      },
+      "box_points": {
+        "title": "Box + points",
+        "why": "Shows each group’s median and range, with every observation kept as a point."
+      },
+      "violin_points": {
+        "title": "Violin + points",
+        "why": "Shows the shape of each group’s distribution, with every observation kept as a point."
+      },
+      "ecdf_groups": {
+        "title": "Cumulative distribution",
+        "why": "Compares whole distributions across groups without binning."
+      },
+      "bar_error": {
+        "title": "Bars + error bars",
+        "why": "Group means at a glance, error bars are the SD; individual points are hidden inside the bars."
+      },
+      "line_points": {
+        "title": "Points + line",
+        "why": "Joined in order to show how the value changes along the x axis."
+      },
+      "line_band": {
+        "title": "Mean line + band",
+        "why": "The mean at each x position with an SD band, for the overall trend and its spread."
+      },
+      "line_units": {
+        "title": "One line per subject",
+        "why": "Repeated measures of the same subject are joined, so you see how each one changes."
+      },
+      "scatter_fit": {
+        "title": "Scatter + fit line",
+        "why": "Shows whether two quantities go together; the dashed line is a least-squares fit, descriptive only."
+      },
+      "scatter": {
+        "title": "Scatter",
+        "why": "One point per observation, to see how two quantities relate."
+      },
+      "hist": {
+        "title": "Histogram",
+        "why": "Shows where the values cluster and how widely they spread."
+      },
+      "ecdf": {
+        "title": "Cumulative distribution",
+        "why": "The whole distribution, without binning."
+      },
+      "density": {
+        "title": "Density curve",
+        "why": "The shape of the distribution, smoothed."
+      },
+      "box_points_single": {
+        "title": "Box + points",
+        "why": "Shows the median and range, with every observation kept as a point."
+      }
+    },
+    "reason": {
+      "no_usable_table": "There is no table in this folder that can be plotted.",
+      "value_column_mixed": "A value column mixes in text (like “<0.1”). Tidy it up first, then try again.",
+      "table_not_found": "The table you chose can’t be found.",
+      "no_numeric_column": "This table has no numeric column.",
+      "matrix_unsupported": "Square matrix tables can’t be plotted yet.",
+      "no_renderable_family": "There is no way to plot this table yet.",
+      "all_candidates_rejected": "None of the options passed the checks.",
+      "candidate_template_unsupported": "This kind of plot can’t be drawn yet.",
+      "candidate_render_failed": "This option couldn’t be drawn.",
+      "candidate_timeout": "This option took too long and was dropped.",
+      "candidate_thumbnail_failed": "The preview for this option couldn’t be made.",
+      "candidate_fingerprint_mismatch": "The plotted data didn’t match the file, so this option was removed.",
+      "candidate_write_blocked": "This option tried to write somewhere else and was stopped.",
+      "common_module_conflict": "The shared helper file next to the script was edited. To avoid overwriting your file, nothing was created.",
+      "stem_taken": "That figure name was just taken. Please try again.",
+      "figures_dir_unusable": "tavotto_figures isn’t a regular folder, so nothing was created.",
+      "target_exists": "A script with that name already exists and was left alone.",
+      "register_failed": "The new figure couldn’t be registered, so the files created were removed.",
+      "data_changed": "The data file changed after the options were made. Please generate them again.",
+      "rows_not_plotted": "{{count}} rows aren’t numbers (or lack an x value) and weren’t drawn."
+    },
+    "result": {
+      "verified": "The figure is ready and its data matches the file.",
+      "unverifiable": "The figure is ready, but this kind of plot can’t be checked against the data.",
+      "mismatch": "The data in the figure doesn’t match the file; you can delete the new script.",
+      "unknown": "The figure is ready, but the data check couldn’t finish."
+    },
+    "mixedCells": {
+      "previewRow": "Row {{row}}: {{text}}",
+      "extracted": "Becomes {{value}} after taking the number",
+      "cannotExtract": "No number found; it will be ignored",
+      "more": "{{count}} more rows",
+      "placeholder": "Say how these cells should count, for example “ND counts as 0”"
+    }
   }
 }

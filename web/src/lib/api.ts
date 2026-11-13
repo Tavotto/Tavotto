@@ -2016,6 +2016,8 @@ export interface ExportRequest {
   include_style_check_report?: boolean
   /** 同时导出修改后的 .py（ADR 0171）；不要时不带这个键 */
   include_edited_script?: boolean
+  /** 「EPS 按不透明导出」：EPS 里的画布标注把半透明压成 100%，其余格式照旧；不选时不带这个键（ADR 0046 / 0174） */
+  eps_opaque?: boolean
   document_id?: string | null
   /** 导出开始那一刻的文档快照指纹；回执原样带回来，用来说"期间又被编辑过" */
   document_revision?: string | null
@@ -4139,6 +4141,8 @@ export interface AiRunRequest {
   scope?: string
   target?: string
   canvas?: string | null
+  /** 项目按期刊检查时的期刊要求摘要（`lib/journalAi`）；后端写成提示词里的一句。没有 = 不带 */
+  journal?: import('./journalAi').JournalAiContext
   /** 用户附的参考图：`uploadAiAttachment` 给的暂存 id（最多 4 个）；不附图时不带这个字段（请求逐字节不变） */
   attachments?: string[]
   /**

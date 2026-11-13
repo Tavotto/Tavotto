@@ -14,7 +14,7 @@
 - **缺失 / 损坏报专用 code**（`bundled_runtime_missing` / `_invalid`），提示重装；绝不按 ModuleNotFoundError 自动 pip install。
 - **macOS 签名与验收只走 `scripts/codesign_macos.py`**；构建链三道闸、冒烟真启动真渲染一道都不许漏、不许「借一个解释器」。
 - **冻结产物的内容要显式声明**：按名字 / 延后装载的模块进 hiddenimports，包内数据与原生库进 `tavotto.spec`；字体不进 git、构建机先 `fetch_fonts.py`。
-- **wheel / sdist 卫生**：不含 `src-tauri/`、`workerd/`、`codex-plugin/`、`runtime/`（pyproject exclude 是权威）；前端产物靠 artifacts 收回。
+- **wheel / sdist 卫生**：不含 `src-tauri/`、`workerd/`、`codex-plugin/`、`runtime/`（pyproject exclude 是权威），**唯一例外**是 `force-include` 点名的 `tavotto_mcp` 包（`tavotto mcp` 服务端）；前端产物靠 artifacts 收回。
 
 <!-- BEGIN GENERATED: agents-routes -->
 | 改到 | 主题（细则在 `docs/rules/packaging/`） | 必守要点 |

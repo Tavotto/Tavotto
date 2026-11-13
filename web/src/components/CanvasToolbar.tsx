@@ -204,7 +204,7 @@ function Bar() {
         <MenuSeparator />
         <MenuLabel>{t('workspace:topbar.insertShape')}</MenuLabel>
         {INSERT_SHAPES.map((kind) => (
-          <MenuItem key={kind} onSelect={() => insertShape(kind)}>
+          <MenuItem key={kind} data-insert-shape={kind} onSelect={() => insertShape(kind)}>
             {t(`common:shape.${kind}`)}
           </MenuItem>
         ))}

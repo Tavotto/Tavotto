@@ -13,7 +13,7 @@ PostScript 没有透明：常量 alpha < 1、透明组、位图、外来页一�
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Mapping
 
 from . import ir
@@ -26,6 +26,37 @@ UNSUPPORTED = {
     "image": "embedded bitmaps are not written into the EPS overlay",
     "imported_page": "imported pages are not written into the EPS overlay",
 }
+
+
+def flatten_alpha(page: ir.Page) -> ir.Page:
+    """把 IR 里的常量 alpha 与整组不透明度都压成 1（「EPS 按不透明导出」，只对 EPS 这一份）。
+
+    颜色不动、不和白色混；位图 / 外来页的 opacity 也一并压成 1，但它们本身仍会被 `UnsupportedCapability`
+    拒绝（不在这次范围），所以这里不碰它们。返回新页面，原页面（给其它格式用的那份）不改。
+    """
+
+    def paint(p: ir.Paint | None) -> ir.Paint | None:
+        return p if p is None or p.alpha >= 1.0 else replace(p, alpha=1.0)
+
+    def node(n: ir.Node) -> ir.Node:
+        if isinstance(n, ir.Path):
+            stroke = n.stroke
+            if stroke is not None and stroke.paint.alpha < 1.0:
+                stroke = replace(stroke, paint=replace(stroke.paint, alpha=1.0))
+            return replace(n, fill=paint(n.fill), stroke=stroke)
+        if isinstance(n, ir.ShapedText):
+            return replace(n, paint=paint(n.paint))
+        if isinstance(n, ir.Group):
+            clip = node(n.clip) if n.clip is not None else None
+            return replace(
+                n,
+                children=tuple(node(c) for c in n.children),
+                clip=clip,
+                opacity=1.0,
+            )
+        return n
+
+    return replace(page, children=tuple(node(c) for c in page.children))
 
 
 class OverlayError(RuntimeError):

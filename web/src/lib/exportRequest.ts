@@ -237,6 +237,11 @@ export interface ExportRequestInput {
   includeReport?: boolean
   /** 同时导出修改后的 .py（ADR 0171）。只对单张图有意义；调用方已按 `scriptAvailability` 收窄 */
   includeScript?: boolean
+  /**
+   * 「EPS 按不透明导出」（导出前提醒的第二个选择，`lib/epsOpacity`）：只在这次真会发 EPS、且单图带标注时才进请求
+   * （`eps_opaque: true`），否则请求与从前逐字节相同。
+   */
+  epsOpaque?: boolean
   acknowledged?: readonly string[]
   documentId: string | null
   doc: FigureDocument
@@ -359,6 +364,10 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
         request.original.pad_mm = [r2(pad.l), r2(pad.t), r2(pad.r), r2(pad.b)]
       }
     }
+  }
+  // 「EPS 按不透明导出」：这次真会发 EPS 且单图带标注才带；不带时请求与从前逐字节相同
+  if (input.epsOpaque && formats.includes('eps') && request.original?.objects?.length) {
+    request.eps_opaque = true
   }
   if (input.report) request.style_check_report = input.report
   // 只在勾了严格时才带 `inspection`：不勾时载荷与从前逐字节相同（老服务端不认这个键也无妨）

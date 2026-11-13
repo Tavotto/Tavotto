@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  BookOpen,
   Check,
   ChevronDown,
   CircleAlert,
@@ -22,8 +23,6 @@ import {
   setDocumentName,
 } from '@/store/actions'
 import { runUndoRedo } from '@/hooks/useKeyboard'
-import { createPackage } from '@/lib/api'
-import { openPackageFile } from '@/lib/packageImport'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { dragRegionProps, isDesktop, TRAFFIC_LIGHTS_INSET, WINDOW_CONTROLS_INSET, windowChrome } from '@/lib/desktop'
 import { keyOf } from '@/lib/keymap'
@@ -48,8 +47,10 @@ import {
 } from '@/store/documentStore'
 import { runManualSave } from '@/store/actions'
 import { useOnboardingStore } from '@/store/onboardingStore'
+import { checkNewerBuild } from '@/store/failureExit'
+import { exportPackage, openPackageWithRetry } from '@/store/packageActions'
 import { useUiStore } from '@/store/uiStore'
-import { fetchNewerDesktopBuild, useUpdateStore } from '@/store/updateStore'
+import { useUpdateStore } from '@/store/updateStore'
 import { BrandMark } from './ui/BrandMark'
 import { Button } from './ui/Button'
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from './ui/Menu'
@@ -66,7 +67,8 @@ import { ConflictActions, ConflictDetail } from './DocumentBanner'
 import { RestoreIssueBody, RestoreMetaBody } from './RestoreIssueBody'
 import { useWindowFullscreen } from '@/hooks/useWindowChrome'
 import { MOD, cn } from '@/lib/utils'
-import { msg, t as translate } from '@/i18n'
+import { journalCatalogUi } from '@/lib/journalUi'
+import { t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
 import { useFormatMessage } from '@/i18n/react'
 
@@ -117,6 +119,7 @@ export function TopBar() {
         </span>
         <DocumentMenu />
         <SaveStateLabel />
+        <JournalChip />
       </div>
 
       {/* 撤销 / 重做挨着导出（2026-10-07 设计审计 §10.1 P2）：此前孤零零在顶栏正中，离它撤的东西（左边的文档）
@@ -139,31 +142,6 @@ export function TopBar() {
 }
 
 /**
- * 导出可复现项目包（.tavotto）：布局 + 引用素材 + 源脚本 + 清单。
- *
- * **它从导出对话框搬到了这里**（Prompt 12 §五）：打包出的是一个"项目"，
- * 不是一张图，和「导出这张图」放在同一个弹窗里让两件事互相冒充。搬走
- * 不等于砍掉——导入就在下面一行，一进一出终于在同一个菜单里。
- */
-async function exportPackage() {
-  const ui = useUiStore.getState()
-  const doc = useDocumentStore.getState()
-  try {
-    const res = await createPackage(doc.projectMeta.name || doc.doc.name, doc.buildProject(), {})
-    ui.setStatus(msg('status.packaged', { name: res.name, count: res.assets }, 'workspace'), 'done')
-  } catch (e) {
-    ui.setStatus(
-      msg(
-        'status.packageFailed',
-        { error: e instanceof Error ? e.message : String(e) },
-        'workspace',
-      ),
-      'error',
-    )
-  }
-}
-
-/**
  * 导入可复现项目包：选 zip → 后端检视（不写入图库）→ 作为新文档打开；
  * 有缺失素材时接到统一的重新链接对话框，绝不静默出空面板。
  */
@@ -176,22 +154,9 @@ function importPackage() {
   // 本来就打得开，只有这个文件选择器会把它滤掉——所以列进来。写出永远是
   // .tavotto，这不是运行时兼容层回潮。
   input.accept = '.tavotto,.magplot,.zip,application/zip'
-  input.onchange = async () => {
+  input.onchange = () => {
     const file = input.files?.[0]
-    if (!file) return
-    const ui = useUiStore.getState()
-    try {
-      await openPackageFile(file)
-    } catch (e) {
-      ui.setStatus(
-        msg(
-          'status.packageOpenFailed',
-          { error: e instanceof Error ? e.message : String(e) },
-          'workspace',
-        ),
-        'error',
-      )
-    }
+    if (file) void openPackageWithRetry(file, 0)
   }
   input.click()
 }
@@ -266,7 +231,37 @@ const PILL_TONE: Record<StatusTone, string> = {
   info: 'bg-info-surface text-info-content inset-ring inset-ring-info-border',
   ok: 'bg-ok-surface text-ok-content inset-ring inset-ring-ok-border',
   warn: 'bg-warn-surface text-warn-content inset-ring inset-ring-warn-border',
-  danger: 'bg-danger-surface text-danger-content inset-ring inset-ring-danger-border',
+  // 只描红框、不铺红底（2026-11-11 用户裁定：红色填充太重）
+  danger: 'text-danger-content inset-ring inset-ring-danger-border hover:bg-surface-hover',
+}
+
+/**
+ * 这份排版按哪本期刊检查（2026-11-11「期刊贯通」）：期刊名贴在文档名后面，点它去设置 › 期刊规范。
+ * 没按期刊 / 期刊入口关着时不渲染；窄于 900 只留图标（名字给读屏与气泡）。只读文档绑定，不另判什么。
+ */
+function JournalChip() {
+  const { t } = useTranslation('workspace')
+  const label = useDocumentStore((s) => (journalCatalogUi() ? s.doc.profile?.journalRef?.label : undefined))
+  if (!label) return null
+  const title = t('topbar.journalTitle', { journal: label })
+  return (
+    <Tip label={title} side="bottom" tone="light">
+      <button
+        type="button"
+        data-topbar-journal
+        aria-label={title}
+        onClick={() => useUiStore.getState().setSettingsOpen(true, 'spec')}
+        className={cn(
+          'inline-flex h-6 min-w-0 max-w-48 shrink items-center gap-1 rounded-full px-2 text-xs font-medium outline-none',
+          'focus-visible:focus-ring',
+          PILL_TONE.neutral,
+        )}
+      >
+        <BookOpen size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
+        <span className="truncate max-[899px]:sr-only">{label}</span>
+      </button>
+    </Tip>
+  )
 }
 
 function useDocIssue(): DocIssue | null {
@@ -661,27 +656,6 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
     )
   }
   return null
-}
-
-/** 「检查更新」之后用一条 toast 说结果；有新版但没下好时，toast 上的动作直接下载并更新 */
-async function checkNewerBuild(): Promise<void> {
-  const ui = useUiStore.getState()
-  const outcome = await fetchNewerDesktopBuild()
-  if (outcome === 'ready') {
-    ui.setStatus(msg('docBanner.updateReady', undefined, 'workspace'), 'info')
-  } else if (outcome === 'found') {
-    const version = useUpdateStore.getState().desktopUpdate?.version ?? ''
-    ui.setStatus(msg('docBanner.updateFound', { version }, 'workspace'), 'info', {
-      action: {
-        label: msg('docBanner.updateInstall', undefined, 'workspace'),
-        run: () => void useUpdateStore.getState().installDesktop(),
-      },
-    })
-  } else if (outcome === 'none') {
-    ui.setStatus(msg('docBanner.updateNone', undefined, 'workspace'), 'info')
-  } else {
-    ui.setStatus(msg('docBanner.updateCheckFailed', undefined, 'workspace'), 'error')
-  }
 }
 
 export function DocumentMenu() {

@@ -44,6 +44,7 @@ import {
 import { ONBOARDING_FLOW_VERSION, type OnboardingStatus, useOnboardingStore } from '@/store/onboardingStore'
 import type { StepId } from './stepIds'
 import { useProjectStore, type ProjectState } from '@/store/projectStore'
+import { retryOrFeedback } from '@/store/failureExit'
 import { useUiStore, askConfirm } from '@/store/uiStore'
 import { migrateToProject } from '@/types/document'
 
@@ -468,10 +469,29 @@ export function leaveFromWelcome(): void {
   ob.markWelcomeSeen()
 }
 
-/** 主页老手版「使用示例脚本试试看」：打开示例项目，不带引导、不改 onboarding 状态 */
-export async function openSampleProject(): Promise<TutorialOutcome> {
+/** 打开示例项目失败那条提示的主人：点「再试一次」先收掉自己那一条 */
+const SAMPLE_OPEN_FAILURE_OWNER = 'tutorial.sampleOpenFailure'
+
+/** 这两类失败重试有意义（别的打开占着手 / 文件被占用）；资源缺失、画布读不出来重试多半还是同一个结果 */
+const RETRYABLE_OPEN_FAILURES: ReadonlySet<TutorialFailure> = new Set(['open_failed', 'locked'])
+
+/**
+ * 主页老手版「使用示例脚本试试看」：打开示例项目，不带引导、不改 onboarding 状态。
+ * 失败：可重试的给「再试一次」（重做同一次打开，第二次还失败就换成「发给我们看看」），其余直接「发给我们看看」。
+ */
+export async function openSampleProject(attempt = 0): Promise<TutorialOutcome> {
   const out = await openSample()
-  if (!out.ok) useUiStore.getState().setStatus(out.message, 'error')
+  if (!out.ok) {
+    useUiStore.getState().setStatus(out.message, 'error', {
+      owner: SAMPLE_OPEN_FAILURE_OWNER,
+      action: retryOrFeedback({
+        owner: SAMPLE_OPEN_FAILURE_OWNER,
+        attempt,
+        retryable: RETRYABLE_OPEN_FAILURES.has(out.reason),
+        run: (next) => openSampleProject(next),
+      }),
+    })
+  }
   return out
 }
 

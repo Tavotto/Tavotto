@@ -159,6 +159,13 @@
   "engineEnv": {
     "title": "Rendering environment"
   },
+  "epsOpacity": {
+    "body_one": "This figure has {{count}} semi-transparent annotation.",
+    "body_other": "This figure has {{count}} semi-transparent annotations.",
+    "opaque": "Export EPS opaque",
+    "pdf": "Export PDF instead",
+    "title": "EPS can’t do transparency"
+  },
   "export": {
     "contentLabel": "Export",
     "contentWhole": "Whole page",
@@ -326,6 +333,8 @@
     "locationLabel": "Location",
     "locationDefault": "Project export folder",
     "locationChange": "Change…",
+    "findMissingSource": "Find this figure",
+    "missingSourceNote": "One figure can’t be found: {{name}}.",
     "changeLocationExport": "Export to another folder",
     "lowerDpiExport": "Export at {{dpi}} dpi",
     "toast": {

@@ -213,6 +213,8 @@ and any files you attach to an instruction (pictures or data files). Attached fi
 only in Tavotto's local data folder for the duration of the task (unsent ones are
 deleted within an hour), are never added to your project, to usage statistics or to a
 diagnostics bundle, and go only to the AI you connected.
+When the project is checked against a journal, the request also carries that journal's
+name and figure requirements (font sizes, fonts, line width, figure widths, resolution).
 Tavotto itself does not upload AI prompts, responses or diffs anywhere (see "Data
 Tavotto does not upload"). The AI service, or the command-line tool in the first
 case, has its own network, account and privacy behavior and is not a background

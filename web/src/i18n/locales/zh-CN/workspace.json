@@ -75,7 +75,7 @@
     "zoomAlt": "{{name}} 大图预览"
   },
   "autosave": {
-    "diskFailed": "无法保存到磁盘。改动已暂存，请检查磁盘空间后重试。",
+    "diskFailed": "没能保存到磁盘。",
     "docConflict": "这份排版已在另一个窗口打开，同时编辑会互相覆盖。",
     "staleOtherWindow": "另一窗口保存了更新的版本。改动只保留在这里，未写入磁盘。"
   },
@@ -653,6 +653,7 @@
     "projectConflictElsewhere": "项目里的 {{file}} 已在别处改过，这次没有写入。回到那份排版再保存，就能决定怎么处理。",
     "projectFailed": "没能存进项目里的 {{file}}：{{reason}}",
     "projectSkipped": "没有写入项目里的 {{file}}：按下保存之后切换了排版或项目。回到那份排版再保存一次。",
+    "reloadFailed": "没能读到磁盘上的那一版",
     "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。"
   },
   "scrim": {
@@ -776,6 +777,7 @@
     "copiedBuiltin": "内置样式不能改，已复制为「{{name}}」并改用它",
     "saveFailed": "样式没存上，画布没有改：{{reason}}",
     "saveFailedPlain": "样式没存上，画布没有改",
+    "retry": "再试一次",
     "restoreWaiting": "还有图在渲染，渲染完才能恢复",
     "upgradedLegacy": "样式「{{name}}」是旧版本存的，已改为按页面上的实际大小计",
     "detached": "已脱离「{{name}}」",
@@ -863,7 +865,7 @@
     "pastedWithSkips_other": "已粘贴 {{count}} 个对象，跳过 {{skipped}} 张缺失素材的图。{{undo}} 可撤销。",
     "pasted_other": "已粘贴 {{count}} 个对象（{{undo}} 可撤销）",
     "projectBackgroundError": "后台检查项目文件时出错。已打开的内容不受影响，修好文件后会自动重试。",
-    "recentMissing": "这份排版在本机的副本已不存在",
+    "recentMissing": "这份排版已不在本机，已从列表里去掉",
     "recentTooNew": "这份排版来自更新的 Tavotto，本版本无法打开。磁盘上的文件没有改动。",
     "redone": "重做：{{label}}",
     "relinkNone": "未重链接任何图；缺失素材的图保持原样",
@@ -892,7 +894,6 @@
       "locked": "组里有锁定的成员，先解锁才能整组移动或缩放",
       "incomplete": "组里有成员这一版拿不到位置，暂时不能整组移动或缩放"
     },
-    "errorTitle": "这一步没有完成",
     "copyDetails": "复制详情",
     "copiedDetails": "已复制"
   },
@@ -984,7 +985,8 @@
     "issueAria": "排版状态：{{status}}。查看详情",
     "documentRenameHint": "单击打开排版菜单；双击或按 F2 重命名",
     "zoomValueInput": "缩放比例（%）",
-    "zoomSelection": "缩放到选中对象"
+    "zoomSelection": "缩放到选中对象",
+    "journalTitle": "按「{{journal}}」检查 · 点开期刊规范"
   },
   "tutorialChip": {
     "label": "新手教程"

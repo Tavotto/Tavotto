@@ -159,6 +159,12 @@
   "engineEnv": {
     "title": "渲染环境"
   },
+  "epsOpacity": {
+    "body_other": "这张图有 {{count}} 个半透明标注。",
+    "opaque": "EPS 按不透明导出",
+    "pdf": "改导出 PDF",
+    "title": "EPS 不支持半透明"
+  },
   "export": {
     "contentLabel": "导出内容",
     "contentWhole": "整版",
@@ -317,6 +323,8 @@
     "locationLabel": "位置",
     "locationDefault": "项目的导出目录",
     "locationChange": "更改…",
+    "findMissingSource": "重新找到这张图",
+    "missingSourceNote": "有一张图找不到了：{{name}}。",
     "changeLocationExport": "换个位置导出",
     "lowerDpiExport": "改用 {{dpi}} dpi 导出",
     "toast": {

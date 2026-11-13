@@ -1,0 +1,5 @@
+## More failure messages now have a button
+
+Several red messages used to stop at one sentence. They now come with a button that does the thing you were trying to do. A failed project package export or open, an AI edit whose project refresh did not go through, an example project that would not open, and a PNG that could not be redrawn from its script each offer “Try again” (or “Refresh project”). If the second attempt fails too, the button becomes “Send problem report” instead of offering the same retry again. If you have moved to another project or layout in the meantime, the button just dismisses the message and does not redo anything there.
+
+When a layout in the recent list was made by a newer version, the desktop app offers “Check for updates” (the browser version offers “Send problem report”). When its copy is gone from this computer, the row is now removed from the list and the message says so, instead of showing a red error. A few errors that cannot be fixed by retrying (a saved figure marker that no longer matches, or rebuilding a figure that is not allowed to be written back) now offer “Send problem report”.

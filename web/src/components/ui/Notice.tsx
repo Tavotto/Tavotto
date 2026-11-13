@@ -111,7 +111,7 @@ export function Notice({
         {hasDetail && (
           <Button
             size="sm"
-            className="-my-1 shrink-0 text-ink-2"
+            className="-my-1 shrink-0 self-center text-ink-2"
             aria-expanded={open}
             data-notice-detail-toggle
             onClick={() => setOpen((v) => !v)}
@@ -124,7 +124,8 @@ export function Notice({
             />
           </Button>
         )}
-        {action != null && <div className="-my-1 flex shrink-0 items-center gap-1">{action}</div>}
+        {/* 图标对齐第一行（items-start），动作按整条说明条竖直居中：正文两行（主句 + 诊断折叠）时按钮不贴顶 */}
+        {action != null && <div className="-my-1 flex shrink-0 items-center gap-1 self-center">{action}</div>}
       </div>
       {hasDetail && (
         <Reveal open={open}>
