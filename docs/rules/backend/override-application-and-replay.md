@@ -127,6 +127,11 @@ order: 70
   否则带位图的子图上拖出去的图例差 4 mm）。constrained 的子图「原样」= 参与排版 + 色条轴
   被解开的长宽比——`set_position` 会把轴踢出排版，不放回的话拖 A、B 跳 7.8 mm，拖色条则
   `reposition_colorbar` 把长宽比按成 0、整张图画不出来。撤销各自摘掉登记。
+- **`axes.position` 一律是根图幅（frame）的分数（ADR 0100 修订 2026-11-13）**：SubFigure 里
+  `ax.get_position()` 是子图幅的分数，进出都只经 `pathgeom.axes_rect_to_frame` /
+  `axes_rect_to_figsize` 换算，别处不许直接拿 `get_position()` 和 patch 值比。constrained 的 pin
+  表存写下的根图幅值、`_pin_place` 排完再换算（SubFigure 的框也是排出来的）。看护
+  `tests/test_subfigure_axes_position.py`。
 - **落位靠定位器的轴（ADR 0100）**：`_set_axes_position` 把 axes locator 摘下来
   （`_release_axes_locator`；色条轴摘的是 `_ColorbarAxesLocator._orig_locator`），原定位器与
   `set_position` 顺手改掉的 `in_layout` 记在 artist 上，撤销（`_restore_axes_position`）放回。
