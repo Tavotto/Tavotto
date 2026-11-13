@@ -1,3 +1,5 @@
+import { svgPreviewCoordinates } from '@/lib/svgPreviewCoordinates'
+
 /**
  * SVG 局部样式预览的**能力表与适配器**（假实时的第二条腿）。
  *
@@ -124,7 +126,14 @@ export function canPreviewStyle(role: string, prop: string): boolean {
   return !!STYLE_ADAPTERS[role]?.[prop]
 }
 
-export function adapterFor(role: string, prop: string): AdapterKind | null {
+export function adapterFor(
+  role: string,
+  prop: string,
+  targets?: { mapped: boolean; semanticGidPresent: boolean },
+): AdapterKind | null {
+  // DOM 归属不会扩展适配器语义：误差棒 caps 的 linewidth 与主线不同，
+  // 原先没有真实 gid 的 proxy 也不能因为现在有 members 就冒充可本地预览。
+  if (targets?.mapped && (role === 'errorbar' || !targets.semanticGidPresent)) return null
   return STYLE_ADAPTERS[role]?.[prop] ?? null
 }
 
@@ -246,7 +255,7 @@ function styleTargets(
 
   if (kind === 'strokeWidth') {
     const n = numberOf(value)
-    if (n == null) return []
+    if (n == null || !Number.isFinite(ctx.unitsPerPt) || ctx.unitsPerPt <= 0) return []
     const w = String(n * ctx.unitsPerPt)
     // 线宽只对「真的描着边」的叶子有意义。matplotlib 在线宽等于默认值时
     // 不输出 stroke-width，所以判据是 stroke 而不是 stroke-width——
@@ -305,14 +314,15 @@ export function restoreStyleEdits(edits: readonly StyleEdit[]): void {
  * 成 1**：图幅可以被 size_mm override 改掉，比值由 viewBox 与 manifest 的
  * size_mm 现算，matplotlib 哪天换了单位这里也不会悄悄画错。
  * 算不出来时回 1（退化成今天的实测值，不至于让预览整个失效）。
+ * native wrapper 内的目标以物理 pt 绘制，比值为 1；坏 wrapper 标记返回 NaN，
+ * strokeWidth 适配器拒绝写入，不能借普通 root 的换算冒充合法 native 坐标。
  */
-export function unitsPerPt(svg: SVGSVGElement | null, sizeMm?: readonly number[]): number {
-  if (!svg || !sizeMm || !sizeMm.length) return 1
-  const vb = (svg.getAttribute('viewBox') ?? '').split(/[\s,]+/).map(Number)
-  if (vb.length < 4 || !Number.isFinite(vb[2]) || vb[2] <= 0) return 1
-  const widthPt = (Number(sizeMm[0]) / 25.4) * 72
-  if (!Number.isFinite(widthPt) || widthPt <= 0) return 1
-  return vb[2] / widthPt
+export function unitsPerPt(
+  svg: SVGSVGElement | null,
+  sizeMm?: readonly number[],
+  target: Element | null = svg,
+): number {
+  return svgPreviewCoordinates(svg, target, sizeMm)?.unitsPerPt ?? NaN
 }
 
 /* -------------------------------------------------------------------------- */

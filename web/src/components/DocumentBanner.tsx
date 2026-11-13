@@ -5,6 +5,7 @@ import { formatTime } from '@/i18n/format'
 import { overwriteDisk, reloadFromDisk, useDocumentStore } from '@/store/documentStore'
 import { msg } from '@/i18n'
 import { askConfirm, useUiStore } from '@/store/uiStore'
+import { captureSaveContext, stillCurrent } from '@/store/saveContext'
 import { Button } from './ui/Button'
 import { Menu, MenuItem } from './ui/Menu'
 import type { DiskDocumentSummary } from '@/lib/api'
@@ -94,7 +95,7 @@ export function ConflictActions({ onAction }: { onAction?: () => void }) {
  * 还是同一份文档**才覆盖，否则什么都不做。
  */
 async function confirmOverwriteDisk(stale: boolean): Promise<boolean> {
-  const before = useDocumentStore.getState().documentId
+  const before = captureSaveContext()
   const ok = await askConfirm({
     title: msg('docBanner.overwriteConfirmTitle', undefined, 'workspace'),
     body: msg(
@@ -107,7 +108,7 @@ async function confirmOverwriteDisk(stale: boolean): Promise<boolean> {
   })
   if (!ok) return false
   const now = useDocumentStore.getState()
-  if (now.saveState !== 'conflict' || now.documentId !== before) return false
+  if (now.saveState !== 'conflict' || !stillCurrent(before)) return false
   await overwriteDisk()
   return true
 }

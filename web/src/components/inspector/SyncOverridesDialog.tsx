@@ -1,3 +1,6 @@
+import { useDocumentPreviewOwner } from '@/hooks/useDocumentPreviewOwner'
+import { figureOriginFor } from '@/lib/figureSnapshot'
+import type { PreviewOwner } from '@/lib/previewOwner'
 import { refuseArtifactOperation } from '@/lib/artifactValidation'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -14,7 +17,7 @@ import {
 import { setOverrides } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
-import { useRenderStore } from '@/store/renderStore'
+import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSyncOverrides } from '@/store/syncOverridesStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
@@ -86,7 +89,7 @@ function SyncOverridesDialog({ panel, onClose }: { panel: PanelObject; onClose: 
   useTranslation('inspector')
   const [target, setTarget] = useState<PanelInfo | null>(null)
   // 映射结果连同它是替哪张目标图算的一起存：用的时候核对身份，对不上就当没有
-  const [resultOf, setResultOf] = useState<{ id: string; data: SyncResult } | null>(null)
+  const [resultOf, setResultOf] = useState<{ id: string; sourceKey: string; targetKey: string | null; owner: PreviewOwner; data: SyncResult } | null>(null)
   // 请求序号：返回 / 换目标会作废在途请求，慢回来的旧响应不许记到新目标名下
   const reqSeq = useRef(0)
   const [busy, setBusy] = useState(false)
@@ -101,7 +104,11 @@ function SyncOverridesDialog({ panel, onClose }: { panel: PanelObject; onClose: 
     s.doc.objects.find((o) => o.type === 'panel' && o.fileId === target?.id),
   ) as PanelObject | undefined
 
-  const result = target && resultOf?.id === target.id ? resultOf.data : null
+  const owner = useDocumentPreviewOwner(panel)
+  const sourceKey = renderKeyOf(panel)
+  const targetKey = onCanvas ? renderKeyOf(onCanvas) : null
+  const result = target && resultOf?.id === target.id && resultOf.owner.still()
+    && resultOf.sourceKey === sourceKey && resultOf.targetKey === targetKey ? resultOf.data : null
   const mapped = result?.mapped ?? []
   const clamped = mapped.filter((p) => p.clamped).length
 
@@ -112,12 +119,22 @@ function SyncOverridesDialog({ panel, onClose }: { panel: PanelObject; onClose: 
     setError(null)
     setBusy(true)
     try {
-      refuseArtifactOperation(panel)
-      for (const targetPanel of useDocumentStore.getState().doc.objects) {
-        if (targetPanel.type === 'panel' && targetPanel.fileId === info.id) refuseArtifactOperation(targetPanel)
-      }
-      const data = await syncOverrides(panel.fileId, info.id, panel.overrides)
-      if (seq === reqSeq.current) setResultOf({ id: info.id, data })
+      if (!owner.still()) return
+      const sourceOrigin = figureOriginFor(panel)
+      if (sourceOrigin === undefined) refuseArtifactOperation(panel)
+      const targetPanel = useDocumentStore.getState().doc.objects.find(
+        (p): p is PanelObject => p.type === 'panel' && p.fileId === info.id,
+      )
+      const targetOrigin = targetPanel && figureOriginFor(targetPanel)
+      if (targetPanel && targetOrigin === undefined) refuseArtifactOperation(targetPanel)
+      const targetKey = targetPanel ? renderKeyOf(targetPanel) : null
+      const data = sourceOrigin === undefined && targetOrigin === undefined
+        ? await syncOverrides(panel.fileId, info.id, panel.overrides)
+        : await syncOverrides(panel.fileId, info.id, panel.overrides, {
+            ...(sourceOrigin === undefined ? {} : { source_figure_origin: sourceOrigin }),
+            ...(targetOrigin === undefined ? {} : { target_figure_origin: targetOrigin, target_patches: targetPanel!.overrides }),
+          }, owner.pj)
+      if (seq === reqSeq.current && owner.still()) setResultOf({ id: info.id, sourceKey, targetKey, owner, data })
     } catch (e) {
       if (seq === reqSeq.current) setError(backendErrorText(e))
     } finally {
@@ -134,8 +151,11 @@ function SyncOverridesDialog({ panel, onClose }: { panel: PanelObject; onClose: 
   }
 
   const applyToCanvas = () => {
-    if (!onCanvas) return
-    try { refuseArtifactOperation(panel); refuseArtifactOperation(onCanvas) }
+    if (!onCanvas || !result) return
+    try {
+      if (figureOriginFor(panel) === undefined) refuseArtifactOperation(panel)
+      if (figureOriginFor(onCanvas) === undefined) refuseArtifactOperation(onCanvas)
+    }
     catch (e) { setError(backendErrorText(e)); return }
     setOverrides(
       onCanvas.id,

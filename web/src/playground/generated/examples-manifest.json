@@ -1,17 +1,17 @@
 {
   "calibration": {
     "height": 572,
-    "sourceSha256": "25b7b783740fa3582250335a644088837d6b9c442cfd2b4b38d999d832bd8730",
+    "sourceSha256": "e5118ac9e272c13edec2e8e11287694f3ae5c5f3e3940e5483c73fd4a6d630b4",
     "width": 748
   },
   "kinetics": {
     "height": 550,
-    "sourceSha256": "e9e2d4ab86b8df642f7fa805a6da110d1b14753246d3f8deba685b09cdae9a21",
+    "sourceSha256": "b8024b9213135cf9726458174ac090c70a464bfa2679e3eccf77125d796ddd91",
     "width": 748
   },
   "spectrum": {
     "height": 550,
-    "sourceSha256": "61cf19587e6356a0a48edd3f47c11f112bad66a6879cbc204fdf17d7bfd848eb",
+    "sourceSha256": "c1cc7367a04b63673ae774bf40767f5ef1b773572ce6be410258e6c0446c5742",
     "width": 792
   }
 }

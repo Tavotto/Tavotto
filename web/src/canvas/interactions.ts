@@ -37,6 +37,7 @@ import {
   type Rect4,
 } from '@/lib/axesLayout'
 import { contentToPageVec, pageToContentVec, panelContentTransform } from '@/lib/panelTransform'
+import { effectiveOverride } from '@/lib/effectiveOverride'
 import {
   anchorOf,
   arrowEndpointsOf,
@@ -101,6 +102,7 @@ import { drawnMinFontPt, panelScale, scaledFontPt } from '@/lib/preflight'
 import { resolveDocumentSpec } from '@/lib/specBinding'
 import { FONT_FLOOR_TOL_PT } from '@/lib/profile'
 import { clamp } from '@/lib/units'
+import { svgPreviewTargets } from '@/lib/svgPreviewTargets'
 import { setTxnAnchor, useDocumentStore } from '@/store/documentStore'
 import { hasActiveGesture, hasActivePointerGesture, registerPointerCancel, subscribeGestureCoordinator } from '@/store/gestureCoordinator'
 import { useInteractionStore, type SnapFeedback } from '@/store/interactionStore'
@@ -119,10 +121,11 @@ import {
   snapTolMm,
   useViewportStore,
 } from '@/store/viewportStore'
-import { setOverride, setOverrides } from '@/store/actions'
+import { exactFrameAuthority, setOverride, setOverrides } from '@/store/actions'
+import { sourceFrameValue } from '@/lib/chartFrame'
 import { resizePatch } from '@/store/patchResizeAction'
 import {
-  cancelQueuedTranslation, captureQueuedTranslationCommit, findGidNode, findPanelSvg,
+  cancelQueuedTranslation, captureQueuedTranslationCommit, findPanelSvg,
   flushPreviewFrame, flushQueuedTranslation, markPreviewMove, prepareQueuedTranslationCommit,
   previewLine, previewScale, previewSession, previewTransform, queuedTranslation,
   rebaseQueuedTranslation, updateQueuedTranslation, type QueuedTranslation,
@@ -2076,10 +2079,15 @@ export function startDeferredInFigureDrag(
   let d = deferredMove
   const move = prior?.move
   const gid = d?.panelId === panel.id ? d.gid : move?.gid
-  const node = gid ? findGidNode(findPanelSvg(panel.id), gid) : null
-  const rect = node?.getBoundingClientRect()
-  if (!gid || !rect || e.clientX < rect.left || e.clientX > rect.right ||
-      e.clientY < rect.top || e.clientY > rect.bottom || ui.selectedGids.length !== 1 || ui.selectedGids[0] !== gid) return false
+  const targets = gid ? svgPreviewTargets(findPanelSvg(panel.id), gid, 'transform') : null
+  // 这里只识别已选元素的可见目标以暂存意图；正式几何仍等 displayedExactManifest。
+  // 分散目标之间的空白不属于该元素，不能用它们的 union bbox 接管未绑定装饰。
+  const hit = targets?.nodes.some((node) => {
+    const rect = node.getBoundingClientRect()
+    return e.clientX >= rect.left && e.clientX <= rect.right &&
+      e.clientY >= rect.top && e.clientY <= rect.bottom
+  })
+  if (!gid || !hit || ui.selectedGids.length !== 1 || ui.selectedGids[0] !== gid) return false
   if (!d) {
     if (!move || !prior?.pendingCommit?.some((p) => p.gid === gid && p.prop === move.dragProp) ||
         prior.awaitKey !== renderKeyOf(panel)) return false
@@ -2142,12 +2150,28 @@ export function startDeferredInFigureDrag(
   return true
 }
 
+/** N5 第 4 步：/2 面板的拖动基准。
+ *
+ * override 里存的是源坐标 S；手势位移（dfx/dfy、方向键步长）在显示帧 F 的
+ * 分数空间。起手锚点若来自 override，先经唯一适配器换到 F，再叠加位移——
+ * 写入侧 `setOverride/setOverrides` 会把它换回 S 一次。缺精确配对帧时保持
+ * 原值：提交侧会拒绝写入（零正文 + 可见提示），不会把 F 分数落进 S。
+ */
+function frameBaseline(panel: PanelObject, value: [number, number]): [number, number] {
+  const authority = panel.chartFrame === undefined ? undefined : exactFrameAuthority(panel)
+  return authority === undefined ? value : sourceFrameValue(value, authority, authority.inputIdentity)
+}
+
 /** 可拖的图内文字 / 图例 / 形状：挪锚点（`drag_prop`，pos_frac / loc_frac …） */
 export function elementMove(panel: PanelObject, element: ManifestElement): InFigureMove | null {
   if (!element.anchor || !element.drag_prop) return null
   const dragProp = element.drag_prop
-  // 基准走 anchorOf：它优先取文档里已写下的 override（见那边的说明）
-  const anchor = anchorOf(panel, element) ?? element.anchor
+  // 基准走 anchorOf：它优先取文档里已写下的 override（见那边的说明）。
+  // /2 面板的 override 锚点在 S 空间，先换到 F 再加手势位移。
+  const stored = anchorOf(panel, element) ?? element.anchor
+  const anchor = effectiveOverride(panel.overrides, element.gid, dragProp) !== undefined
+    ? frameBaseline(panel, stored)
+    : stored
   // 形状带着装在里面的字 / 形状 / 箭头端点一起走（`patchContents`）——读的是几何，
   // 只认权威那一份 manifest
   const manifest =
@@ -2219,8 +2243,12 @@ export function startElementDrag(
 
 /** 图内独立箭头（FancyArrowPatch）的整体平移：两个端点同走一个位移，写 endpoints_frac */
 export function arrowMove(panel: PanelObject, element: ManifestElement): InFigureMove | null {
-  const pts = arrowEndpointsOf(panel, element)
-  if (!pts) return null
+  const storedPts = arrowEndpointsOf(panel, element)
+  if (!storedPts) return null
+  // /2 面板的 override 端点在 S 空间；先换到 F 再加手势位移
+  const pts = effectiveOverride(panel.overrides, element.gid, 'endpoints_frac') !== undefined
+    ? [frameBaseline(panel, storedPts[0]), frameBaseline(panel, storedPts[1])]
+    : storedPts
   beginElementPreview(panel)
   const at = (dfx: number, dfy: number) => [
     pts[0][0] + dfx,
@@ -2901,7 +2929,10 @@ export function startLegendScale(
 ) {
   const bases = legendScaleBases(panel, element)
   const box0 = elementBoxOf(panel, element)
-  const anchor = anchorOf(panel, element)
+  const storedAnchor = anchorOf(panel, element)
+  const anchor = storedAnchor && effectiveOverride(panel.overrides, element.gid, 'loc_frac') !== undefined
+    ? frameBaseline(panel, storedAnchor)
+    : storedAnchor
   if (!bases.length || !box0 || !anchor || element.drag_prop !== 'loc_frac') return
   e.stopPropagation()
   interaction().begin('element')
