@@ -97,6 +97,7 @@ def resolve(
     artifact_source=None,
     run=None,
     existing_only: bool = False,
+    existing_worker=None,
 ):
     """按 profile 给出一个 **Worker-like** 的东西。
 
@@ -105,6 +106,8 @@ def resolve(
     的前提。前提要成立，那份清单就得能被跑一遍，而不是只写在这段话里。
     """
     del registry  # 预留：将来按注册表校验归属；现在解析已经在调用方做完了
+    if existing_worker is not None and not existing_only:
+        raise pool.WorkerError("An explicit worker requires existing_only.", code="bad_request")
     if execution_profile == PROFILE_NATIVE:
         if artifact_source is not None:
             raise pool.WorkerError(
@@ -112,6 +115,21 @@ def resolve(
                 code="artifact_source_unavailable",
             )
         session = nativesession.REGISTRY.route_for(project_root, script, stem)
+        if existing_worker is not None:
+            if (
+                not isinstance(existing_worker, nativesession.NativeSession)
+                or session is not existing_worker
+                or pool._norm_dir(session.project_root) != pool._norm_dir(project_root)
+                or session.execution_script != script
+                or not session.built
+            ):
+                return None
+            if run is not None and (
+                session.spec is None
+                or session.spec.run_config != run.config_id
+                or session.spec.argv != run.argv
+            ):
+                return None
         if session is None and existing_only:
             return None
         if session is None:
@@ -122,6 +140,30 @@ def resolve(
         return session
     # safe 侧：**即使**这个 (script, stem) 上正好挂着一条 native route 也不切
     # 过去。profile 是面板的属性，不是"现在哪条路通"。
+    if existing_worker is not None:
+        candidate = existing_worker
+        if (
+            execution_profile != PROFILE_SAFE
+            or not isinstance(candidate, (pool.EngineWorker, pool.WorkerdWorker))
+            or pool._norm_dir(candidate.figures_dir) != pool._norm_dir(project_root)
+            or candidate.script_name != script
+            or candidate.entry != entry
+            or not candidate.built
+            or getattr(candidate, "_dead", False)
+            or getattr(candidate, "_evicted", False)
+            or not candidate.alive()
+            or (run is not None and run != candidate.run)
+            or (artifact_source is not None and artifact_source != candidate.artifact_source)
+        ):
+            return None
+        worker = pool.peek(
+            script,
+            str(project_root),
+            run=candidate.run,
+            artifact_source=candidate.artifact_source,
+            **({"write_roots": candidate.write_roots} if candidate.write_roots is not None else {}),
+        )
+        return worker if worker is candidate else None
     context = {"artifact_source": artifact_source} if artifact_source is not None else {}
     if run is not None:
         # T03：产物绑定的运行配置（`execspec.RunSelection`）；没有 = 旧调用形状，一个字节不变

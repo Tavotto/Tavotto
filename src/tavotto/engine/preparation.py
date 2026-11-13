@@ -61,6 +61,7 @@ from pathlib import Path
 
 from . import (
     databinding,
+    declaredinputs,
     deprepair,
     depresolve,
     envadvice,
@@ -132,12 +133,20 @@ STALE_GRANT = "grant_changed"
 STALE_ENVIRONMENT = "environment_changed"
 STALE_DATA_BINDING = "data_binding_changed"
 STALE_SOURCE = "script_changed"
-STALE_REASONS = (STALE_GRANT, STALE_ENVIRONMENT, STALE_DATA_BINDING, STALE_SOURCE)
+STALE_INPUT_DECLARATION = "input_declaration_changed"
+STALE_REASONS = (
+    STALE_GRANT,
+    STALE_ENVIRONMENT,
+    STALE_DATA_BINDING,
+    STALE_SOURCE,
+    STALE_INPUT_DECLARATION,
+)
 _STALE_MESSAGES = {
     STALE_GRANT: "工作目录的授权在计划之后变了，这份计划作废；请重新准备",
     STALE_ENVIRONMENT: "这个项目选中的解释器在计划之后变了，这份计划作废；请重新准备",
     STALE_DATA_BINDING: "脚本要读的数据在预检之后变了，这份计划作废；请重新准备",
     STALE_SOURCE: "脚本在检查之后被改了（参数声明 / 输出文件可能不同），这份计划作废；请重新检查",
+    STALE_INPUT_DECLARATION: "输入声明在检查之后变了，这份计划作废；请重新检查",
 }
 
 
@@ -249,6 +258,9 @@ class PreparationPlan:
     #: 登记序号（私有，仅桌面拥有的 native 计划；`PreparationService.register` 盖章，单调递增）。启动的票据与会话都带着它：
     #: 同脚本重跑只取消序号**更小**（更早登记）的启动，序号是唯一的先后依据——和准备层的取消同一个顺序
     launch_order: int | None = None
+    #: 本计划观察到的精确声明选择（私有 metadata，不是执行捕获事实）。None 为旧计划
+    #: 未观察；dict 的 revision=None 是已观察到没有声明，能发现之后新增声明。
+    input_declaration_state: dict | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -303,6 +315,7 @@ def _last_success_profile(
         launchctx.FACET_ENVIRONMENT,
         launchctx.FACET_SOURCE,
         launchctx.FACET_CWD,
+        launchctx.FACET_CAPTURED_INPUTS,
     )
     reason = launchctx.verify(
         record, project_root=root, script=script, python=python, python_source=source, facets=facets
@@ -636,6 +649,17 @@ def plan_for(
                 ).to_payload()
         except (OSError, ValueError):
             static = None
+    input_declaration_state = (
+        _declaration_selection(
+            root,
+            script,
+            (decision or {}).get("mode") or workdir.mode_for(root),
+            run=run,
+            execution=execution,
+        )
+        if script is not None
+        else None
+    )
     return PreparationPlan(
         plan_id=f"prep-{uuid.uuid4().hex}",
         project_id=project_id,
@@ -670,6 +694,7 @@ def plan_for(
         native_spec=native_spec,
         environment_state=environment_state,
         environment_overlay=environment_overlay,
+        input_declaration_state=input_declaration_state,
     )
 
 
@@ -722,6 +747,37 @@ def _binding_sans_mode(binding: dict | None) -> dict | None:
     if binding is None:
         return None
     return {k: v for k, v in binding.items() if k not in ("mode", "revision")}
+
+
+def _declaration_selection(root, script, cwd_mode, *, run=None, execution="safe"):
+    """只消费唯一 metadata 选择器；不扫描、hash 或自行推导声明身份。"""
+    selection = declaredinputs.scope_selection(
+        root, script=script, cwd_mode=cwd_mode, run=run, execution=execution
+    )
+    return execspec.FrozenDict(
+        {
+            **selection,
+            "scope": (
+                execspec.FrozenDict(selection["scope"]) if selection["scope"] is not None else None
+            ),
+        }
+    )
+
+
+def _declaration_changed(plan: PreparationPlan) -> bool:
+    if plan.input_declaration_state is None:
+        return False
+    try:
+        now = _declaration_selection(
+            plan.project_root,
+            plan.script,
+            (plan.workdir_decision or {}).get("mode") or workdir.mode_for(plan.project_root),
+            run=plan.run,
+            execution=plan.execution,
+        )
+    except (ValueError, OSError):
+        return True
+    return now != plan.input_declaration_state
 
 
 def _script_revision(root: str, script: str | None) -> str | None:
@@ -989,6 +1045,8 @@ class PreparationService:
         if (
             fresh.script_revision != plan.script_revision
             or fresh.input_remap_generation != plan.input_remap_generation
+            or (fresh.input_declaration_state or {}).get("revision")
+            != (plan.input_declaration_state or {}).get("revision")
         ):
             return None
         fresh = dataclasses.replace(
@@ -1323,6 +1381,20 @@ class PreparationService:
             tr.cancel("receipt")
             self._finish(entry, STATUS_CANCELLED, note=note)
             return
+        if _declaration_changed(plan):
+            tr.fail("receipt", ERROR_PLAN_STALE, reason=STALE_INPUT_DECLARATION)
+            result.error = {
+                "code": ERROR_PLAN_STALE,
+                "reason": STALE_INPUT_DECLARATION,
+                "executed": True,
+                "message": _STALE_MESSAGES[STALE_INPUT_DECLARATION],
+            }
+            self._finish(
+                entry,
+                STATUS_ERROR,
+                note="执行期间输入声明变了；保留实际 runtime 与回执，请重新准备",
+            )
+            return
         if self._binding_mismatch(entry, rcpt, executed=True):
             return
         if self._stem_missing(entry, worker, _captured_stems(resp)):
@@ -1412,6 +1484,8 @@ class PreparationService:
                     k for k in set(before) | set(after) if before.get(k) != after.get(k)
                 )
                 return STALE_DATA_BINDING, {"changed": changed}
+        if _declaration_changed(plan):
+            return STALE_INPUT_DECLARATION, {}
         return None
 
     def _binding_mismatch(

@@ -51,6 +51,16 @@ describe('写不进本机存储时本会话照常', () => {
 })
 
 describe('findDocumentsForProjectFile 读最新的持久绑定（Codex #1734 P1）', () => {
+  it('同名工作副本的 legacy 与 v4 绑定独立查找、独立判断 dirty', () => {
+    forgetProjectFilesInSession()
+    writeProjectFile('shared', B)
+    writeProjectFile('shared', B, 'v4')
+    expect(findDocumentsForProjectFile(B.projectId, B.file, 'v4')).toEqual(['shared'])
+    writeProjectFile('shared', { ...B, dirty: true }, 'v4')
+    expect(findDocumentsForProjectFile(B.projectId, B.file, 'v4')).toEqual([])
+    expect(findDocumentsForProjectFile(B.projectId, B.file)).toEqual(['shared'])
+    forgetProjectFilesInSession()
+  })
   it('别的窗口把它置 dirty 之后，本窗口缓存里的干净旧绑定不能让它被放行', () => {
     writeProjectFile('d1', B)
     const raw = JSON.parse(localStorage.getItem('tavotto.projectFile.d1')!)

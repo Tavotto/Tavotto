@@ -29,6 +29,7 @@ import { DUPLICATE_OFFSET_MM } from '@/lib/units'
  */
 
 import { CLIPBOARD_FORMAT } from '@/lib/brand'
+import { needsFigureArchiveSource } from './panelSourceEvidence'
 import { clearAdoption } from '@/lib/artifactValidation'
 
 /**
@@ -339,7 +340,7 @@ export function requestRelinkMissing(): number {
   const { doc } = useDocumentStore.getState()
   const missingMap = new Map<string, MissingAsset>()
   for (const o of doc.objects) {
-    if (o.type !== 'panel' || panelSourceKnown(o)) continue
+    if (o.type !== 'panel' || needsFigureArchiveSource(o) || panelSourceKnown(o)) continue
     const cur = missingMap.get(o.fileId)
     if (cur) cur.count += 1
     else {
@@ -392,6 +393,8 @@ export function materializeRelink(resolved: MissingAsset[], { keepEdits = false 
       const info = byFileId.get(o.fileId)
       if (!info) continue
       clearAdoption(o)
+      delete o.figureOrigin
+      delete o.figureSnapshot
       o.fileId = info.id
       o.fileKind = info.kind
       o.nativeW = info.native_w_mm
@@ -488,7 +491,7 @@ function consumePayload(payload: ClipPayload): boolean {
   for (const o of payload.objects) {
     if (o.type !== 'panel') continue
     const p = o as PanelObject
-    if (panelSourceKnown(p)) continue
+    if (needsFigureArchiveSource(p) || panelSourceKnown(p)) continue
     const cur = missingMap.get(p.fileId)
     if (cur) cur.count += 1
     else {
@@ -553,6 +556,8 @@ export function materializePaste(payload: ClipPayload, resolved: MissingAsset[])
         const info = assets[target]
         if (info) {
           clearAdoption(copy)
+          delete copy.figureOrigin
+          delete copy.figureSnapshot
           copy.fileId = info.id
           copy.fileKind = info.kind
           copy.nativeW = info.native_w_mm

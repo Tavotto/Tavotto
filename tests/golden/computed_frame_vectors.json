@@ -1,0 +1,118 @@
+{
+  "_comment": "计算渲染框 F（native-manifest/2 的 render_frame）的闭式形状判据：后端 engine/chartframe.validate_frame 与前端 web/src/lib/chartFrame.ts validComputedFrame 的同源对（PLAN.md 第 1 步对 1）。两侧各读这份，不读对方源码：后端那一侧 tests/test_chart_frame_contract.py，前端那一侧 web/src/lib/chartFrame.test.ts 的金向量 describe。判据（主语是「这一次 /2 实际 SVG draw 的外框声明」）：键闭集 {version, source, source_viewport_pt, rect_pt, edit_basis}；version === 1（bool 不算 int）；source === 'computed-svg'（savefig 出处不得冒充计算框）；edit_basis === 'source-viewport-pt'；两个数值数组长度 2/4 且全部是有限 number（Python 侧显式拒 bool，因为 bool 是 int 子类）；min(sw,sh,w,h) > 0；left <= 0 且 top <= 0（框只能向外扩，不能缩进 source viewport）；left+width >= sw 且 top+height >= sh（必须完整包含 source viewport）。reject 的 reason 只写首要违反项；非有限数 JSON 表达不了，由两端测试单列（NaN/Infinity）。落地位置：tests/golden/computed_frame_vectors.json（本文件为移植前的同名副本）。",
+  "accept": [
+    {
+      "id": "accept-exact-viewport",
+      "reason": "left/top=0 且恰好包住 source viewport：墨迹没出 viewport 时 /2 的最小形状",
+      "frame": {
+        "version": 1,
+        "source": "computed-svg",
+        "source_viewport_pt": [100, 100],
+        "rect_pt": [0, 0, 100, 100],
+        "edit_basis": "source-viewport-pt"
+      }
+    },
+    {
+      "id": "accept-outward-margins",
+      "reason": "真实 /2 形状（chartframe.from_ink 的输出）：负边距向外扩、整 pt、含 +1pt 安全边",
+      "frame": {
+        "version": 1,
+        "source": "computed-svg",
+        "source_viewport_pt": [100, 100],
+        "rect_pt": [-21, -1, 122, 109],
+        "edit_basis": "source-viewport-pt"
+      }
+    }
+  ],
+  "reject": [
+    {
+      "id": "reject-extra-key",
+      "reason": "键闭集：多一个 provenance 字段就拒（缺键走同一条 set(raw) != KEYS 判据）",
+      "frame": {
+        "version": 1,
+        "source": "computed-svg",
+        "source_viewport_pt": [100, 100],
+        "rect_pt": [0, 0, 100, 100],
+        "edit_basis": "source-viewport-pt",
+        "provenance": "savefig"
+      }
+    },
+    {
+      "id": "reject-version-bool",
+      "reason": "version 必须 type is int；true/True 不是（Python 侧 type(True) is bool）",
+      "frame": {
+        "version": true,
+        "source": "computed-svg",
+        "source_viewport_pt": [100, 100],
+        "rect_pt": [0, 0, 100, 100],
+        "edit_basis": "source-viewport-pt"
+      }
+    },
+    {
+      "id": "reject-source-savefig",
+      "reason": "savefig 出处不得冒充 computed-svg 计算框（/2 不是 savefig provenance）",
+      "frame": {
+        "version": 1,
+        "source": "savefig",
+        "source_viewport_pt": [100, 100],
+        "rect_pt": [0, 0, 100, 100],
+        "edit_basis": "source-viewport-pt"
+      }
+    },
+    {
+      "id": "reject-edit-basis",
+      "reason": "edit_basis 固定 source-viewport-pt：换算基准不是别的 pt 基",
+      "frame": {
+        "version": 1,
+        "source": "computed-svg",
+        "source_viewport_pt": [100, 100],
+        "rect_pt": [0, 0, 100, 100],
+        "edit_basis": "figure-pt"
+      }
+    },
+    {
+      "id": "reject-bool-in-rect",
+      "reason": "数值数组混入 bool：Python 的 bool 是 int 子类，两端都显式拒",
+      "frame": {
+        "version": 1,
+        "source": "computed-svg",
+        "source_viewport_pt": [100, 100],
+        "rect_pt": [false, 0, 100, 100],
+        "edit_basis": "source-viewport-pt"
+      }
+    },
+    {
+      "id": "reject-nonpositive-extent",
+      "reason": "min(sw,sh,w,h) > 0：零尺寸 viewport 不是框",
+      "frame": {
+        "version": 1,
+        "source": "computed-svg",
+        "source_viewport_pt": [0, 100],
+        "rect_pt": [0, 0, 100, 100],
+        "edit_basis": "source-viewport-pt"
+      }
+    },
+    {
+      "id": "reject-positive-left",
+      "reason": "left <= 0（top 同理）：框缩进 source viewport 里就不是 /2 外框",
+      "frame": {
+        "version": 1,
+        "source": "computed-svg",
+        "source_viewport_pt": [100, 100],
+        "rect_pt": [1, 0, 100, 100],
+        "edit_basis": "source-viewport-pt"
+      }
+    },
+    {
+      "id": "reject-viewport-not-contained",
+      "reason": "left+width >= sw（top+height >= sh 同理）：截掉 source viewport 不得通过",
+      "frame": {
+        "version": 1,
+        "source": "computed-svg",
+        "source_viewport_pt": [100, 100],
+        "rect_pt": [0, 0, 90, 90],
+        "edit_basis": "source-viewport-pt"
+      }
+    }
+  ]
+}

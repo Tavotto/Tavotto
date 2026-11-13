@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { fetchRuntimePreviewForState } from '@/lib/api'
+import type { PreviewOwner } from '@/lib/previewOwner'
 
 /**
  * runtime 面板「还没有引擎图」时挂的预览：**按面板此刻的 overrides** 取（QA-WIN-21）。
@@ -27,29 +28,34 @@ export function useRuntimePreview(
   overrides: readonly unknown[],
   enabled: boolean,
   nonce = 0,
+  owner?: PreviewOwner,
 ): RuntimePreview {
   // 变体串（文件 + overrides 内容），与 `renderKeyOf` 同口径：runtime 面板没有来源驱动的 guard 后缀
-  const variant = `${fileId} ${JSON.stringify(overrides)}`
+  const variant = `${owner?.key ?? ''} ${fileId} ${JSON.stringify(overrides)}`
+  const active = !owner || owner.still()
   const [state, setState] = useState<RuntimePreview & { key: string | null }>({ ...IDLE, key: null })
   const urlRef = useRef<string | null>(null)
 
   useEffect(() => {
-    if (!enabled) return
+    if (!enabled || !active) return
     const ctrl = new AbortController()
-    void fetchRuntimePreviewForState(fileId, overrides as unknown[], ctrl.signal)
+    const pending = owner
+      ? fetchRuntimePreviewForState(fileId, overrides as unknown[], ctrl.signal, owner.pj)
+      : fetchRuntimePreviewForState(fileId, overrides as unknown[], ctrl.signal)
+    void pending
       .then((got) => {
-        if (ctrl.signal.aborted) return
+        if (ctrl.signal.aborted || (owner && !owner.still())) return
         if (urlRef.current) URL.revokeObjectURL(urlRef.current)
         urlRef.current = got ? URL.createObjectURL(got.blob) : null
         setState({ key: variant, url: urlRef.current, exact: got ? got.exact : null, failed: false })
       })
       .catch(() => {
-        if (!ctrl.signal.aborted) setState({ key: variant, url: null, exact: null, failed: true })
+        if (!ctrl.signal.aborted && (!owner || owner.still())) setState({ key: variant, url: null, exact: null, failed: true })
       })
     return () => ctrl.abort()
     // overrides 的内容变化由 variant 表达（数组引用每次 commit 都变）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, fileId, variant, nonce])
+  }, [enabled, active, fileId, variant, nonce])
 
   // 卸载时把最后一张还回去
   useEffect(() => () => {
@@ -57,6 +63,6 @@ export function useRuntimePreview(
   }, [])
 
   // 别的状态的图不冒充当前状态：key 对不上就当还没取到
-  if (!enabled || state.key !== variant) return IDLE
+  if (!enabled || !active || state.key !== variant) return IDLE
   return state
 }

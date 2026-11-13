@@ -19,6 +19,10 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   createPreparationSession: vi.fn(),
   fetchPreparationSession: vi.fn(),
+  fetchPreparationInputDeclarationContext: vi.fn(),
+  fetchDeclaredInputs: vi.fn(),
+  fetchInputRemap: vi.fn(),
+  declareInputs: vi.fn(),
   actOnPreparationSession: vi.fn(),
   probeScript: vi.fn(),
   fetchEngineEnvironment: vi.fn().mockResolvedValue({}),
@@ -72,6 +76,10 @@ import {
   createPreparationSession,
   fetchDependencyOffer,
   fetchPreparationSession,
+  fetchPreparationInputDeclarationContext,
+  fetchDeclaredInputs,
+  fetchInputRemap,
+  declareInputs,
   fetchPanels,
   refreshProject,
   probeScript,
@@ -554,6 +562,10 @@ function putPanel(fileId: string): PanelObject {
 beforeEach(() => {
   mockCreate.mockReset()
   mockAct.mockReset()
+  vi.mocked(fetchPreparationInputDeclarationContext).mockReset()
+  vi.mocked(fetchDeclaredInputs).mockReset()
+  vi.mocked(fetchInputRemap).mockReset()
+  vi.mocked(declareInputs).mockReset()
   vi.mocked(addRuntimePanelToCanvas).mockReset()
   vi.mocked(openFastEdit).mockClear()
   vi.mocked(refreshProjectNow).mockClear()
@@ -622,6 +634,103 @@ describe('页眉：只写当前阶段 + 三小段进度（精致感审计第二�
 const toggleDetails = () =>
   act(async () => (panel().querySelector('[data-prep-details-toggle]') as HTMLButtonElement).click())
 const details = () => panel().querySelector('[data-prep-details]') as HTMLElement | null
+
+describe('输入声明接原准备流程', () => {
+  const scope = { script: 'plot.py', cwd_mode: 'project_root' as const, run_config: null }
+  const declaration = { version: 1 as const, revision: null, declarations: [] }
+
+  const showInputs = async () => {
+    await toggleDetails()
+    const node = details()!.querySelector('[data-input-declaration]') as HTMLDetailsElement
+    await act(async () => {
+      node.open = true
+      node.dispatchEvent(new Event('toggle'))
+    })
+    return node
+  }
+
+  it('默认折叠零声明请求；保存仅认领原 recheck，原文档与执行入口不变', async () => {
+    vi.mocked(fetchDeclaredInputs).mockResolvedValue(declaration)
+    vi.mocked(fetchInputRemap).mockResolvedValue({ generation: 7, rules: [] })
+    vi.mocked(fetchPreparationInputDeclarationContext).mockImplementation(async () => ({
+      ...useProjectPreparationStore.getState().entries['script:plot.py'].report!,
+      input_declaration: { version: 1, scope, selection_revision: null, input_remap_generation: 7, unavailable_reason: null, captured_inputs: null },
+    }))
+    vi.mocked(declareInputs).mockResolvedValue({
+      version: 1, revision: 'a'.repeat(32), declarations: [{ scope, files: [], remaps: [] }],
+    })
+    mockAct.mockResolvedValue({ claimed: true, report: report({ config_revision: 2, observation_seq: 2 }) })
+    await mount()
+    await openWith(report())
+    expect(fetchPreparationInputDeclarationContext).not.toHaveBeenCalled()
+    expect(fetchDeclaredInputs).not.toHaveBeenCalled()
+    const before = useDocumentStore.getState().doc
+    const inputs = await showInputs()
+    await act(async () => (inputs.querySelector('[data-input-declaration-save]') as HTMLButtonElement).click())
+    expect(declareInputs).toHaveBeenCalledWith({ ...scope, files: [], remaps: [], expected_revision: null, expected_remap_generation: 7 }, 'pj-a', expect.any(AbortSignal))
+    expect(mockAct).toHaveBeenCalledTimes(1)
+    expect(mockAct.mock.calls[0][1].action_id).toBe('act-recheck')
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+    expect(probeScript).not.toHaveBeenCalled()
+    expect(useDocumentStore.getState().doc).toBe(before)
+  })
+
+  it('参数草稿变化令旧声明失去保存资格，不在前端猜新运行范围', async () => {
+    vi.mocked(fetchDeclaredInputs).mockResolvedValue(declaration)
+    vi.mocked(fetchInputRemap).mockResolvedValue({ generation: 7, rules: [] })
+    vi.mocked(fetchPreparationInputDeclarationContext).mockResolvedValue(report({
+      input_declaration: { version: 1, scope, selection_revision: null, input_remap_generation: 7, unavailable_reason: null, captured_inputs: null },
+    }))
+    await mount()
+    await openWith(report())
+    const inputs = await showInputs()
+    await act(async () => useScriptArgvStore.getState().setTokens('plot.py', ['--changed']))
+    expect(inputs.querySelector('[data-input-declaration-changed]')).not.toBeNull()
+    expect((inputs.querySelector('[data-input-declaration-save]') as HTMLButtonElement).disabled).toBe(true)
+    expect(declareInputs).not.toHaveBeenCalled()
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+    expect(mockAct).not.toHaveBeenCalled()
+  })
+
+  it('原继续动作的 report=null 等待期卸载后仍保未保存选择，新 scope 不能自动采用', async () => {
+    const oldState = {
+      version: 1 as const, revision: 'a'.repeat(32),
+      declarations: [{ scope, files: ['remove.csv', 'keep.csv'], remaps: [] }],
+    }
+    vi.mocked(fetchDeclaredInputs).mockResolvedValue(oldState)
+    vi.mocked(fetchInputRemap).mockResolvedValue({ generation: 7, rules: [] })
+    vi.mocked(fetchPreparationInputDeclarationContext).mockImplementation(async () => ({
+      ...useProjectPreparationStore.getState().entries['script:plot.py'].report!,
+      input_declaration: { version: 1, scope, selection_revision: null, input_remap_generation: 7, unavailable_reason: null, captured_inputs: null },
+    }))
+    await mount()
+    await openWith(report())
+    const inputs = await showInputs()
+    await act(async () => (inputs.querySelector('[data-input-declaration-file="remove.csv"] [data-input-declaration-remove-file]') as HTMLButtonElement).click())
+    await act(async () => useScriptArgvStore.getState().setTokens('plot.py', ['--next']))
+    let checked!: (value: PreparationReport) => void
+    mockCreate.mockImplementationOnce(() => new Promise((resolve) => { checked = resolve }))
+    await act(async () => primary()!.click())
+    expect(useProjectPreparationStore.getState().entries['script:plot.py'].report).toBeNull()
+    expect(panel().querySelector('[data-input-declaration]')).toBeNull()
+    const newScope = { ...scope, run_config: 'rc_new' }
+    vi.mocked(fetchDeclaredInputs).mockResolvedValue({
+      version: 1, revision: 'b'.repeat(32), declarations: [{ scope: newScope, files: ['new.csv'], remaps: [] }],
+    })
+    vi.mocked(fetchPreparationInputDeclarationContext).mockResolvedValue(report({
+      session_id: 'psess-2',
+      input_declaration: { version: 1, scope: newScope, selection_revision: null, input_remap_generation: 7, unavailable_reason: null, captured_inputs: null },
+    }))
+    await act(async () => checked(report({ session_id: 'psess-2' })))
+    if (!details()) await toggleDetails()
+    const restored = details()!.querySelector('[data-input-declaration]')!
+    expect([...restored.querySelectorAll('[data-input-declaration-file]')].map((n) => n.getAttribute('data-input-declaration-file'))).toEqual(['keep.csv'])
+    expect(restored.querySelector('[data-input-declaration-changed]')).not.toBeNull()
+    expect((restored.querySelector('[data-input-declaration-save]') as HTMLButtonElement).disabled).toBe(true)
+    expect(declareInputs).not.toHaveBeenCalled()
+    expect(mockAct).not.toHaveBeenCalled()
+  })
+})
 
 describe('safe → native 回退成功：默认句子不变，详情里补一行', () => {
   const note = () => details()?.querySelector('[data-prep-native-fallback]') ?? null

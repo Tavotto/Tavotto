@@ -24,6 +24,7 @@ import {
 } from '@/store/actions'
 import { runUndoRedo } from '@/hooks/useKeyboard'
 import { createPackage } from '@/lib/api'
+import { chooseProjectPackage } from '@/lib/projectPackageEntry'
 import { openPackageFile } from '@/lib/packageImport'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { dragRegionProps, isDesktop, TRAFFIC_LIGHTS_INSET, WINDOW_CONTROLS_INSET, windowChrome } from '@/lib/desktop'
@@ -148,13 +149,35 @@ export function TopBar() {
  * 不是一张图，和「导出这张图」放在同一个弹窗里让两件事互相冒充。搬走
  * 不等于砍掉——导入就在下面一行，一进一出终于在同一个菜单里。
  */
+let packageExportSequence = 0
+
 async function exportPackage() {
   const ui = useUiStore.getState()
   const doc = useDocumentStore.getState()
+  const sequence = ++packageExportSequence
+  const pj = currentProjectId()
+  const current = () => {
+    const state = useDocumentStore.getState()
+    return sequence === packageExportSequence && pj === currentProjectId()
+      && state.documentFormat === doc.documentFormat && state.documentId === doc.documentId
+      && state.loadSeq === doc.loadSeq
+  }
   try {
-    const res = await createPackage(doc.projectMeta.name || doc.doc.name, doc.buildProject(), {})
-    ui.setStatus(msg('status.packaged', { name: res.name, count: res.assets }, 'workspace'), 'done')
+    const document = structuredClone(doc.buildProject())
+    const stem = doc.projectMeta.name || doc.doc.name
+    const res = doc.documentFormat === 'v4'
+      ? await createPackage(stem, document, {}, { format: 'v4', pj })
+      : await createPackage(stem, document, {})
+    if (!current()) return
+    const executionIncomplete = doc.documentFormat === 'v4' && res.execution_coverage?.state === 'incomplete'
+    const message = doc.documentFormat === 'v4' && res.missing.length > 0
+      ? msg(executionIncomplete ? 'status.packagedIncompleteWithExecution' : 'status.packagedIncomplete', { name: res.name, count: res.missing.length }, 'workspace')
+      : executionIncomplete
+        ? msg('status.packagedExecutionIncomplete', { name: res.name }, 'workspace')
+        : msg('status.packaged', { name: res.name, count: res.assets }, 'workspace')
+    ui.setStatus(message, 'done')
   } catch (e) {
+    if (!current()) return
     ui.setStatus(
       msg(
         'status.packageFailed',
@@ -721,6 +744,7 @@ export function DocumentMenu() {
   const { t } = useTranslation('workspace')
   const name = useDocumentStore((s) => s.projectMeta.name)
   const documentId = useDocumentStore((s) => s.documentId)
+  const format = useDocumentStore((s) => s.documentFormat)
   const recentDocs = useDocumentStore((s) => s.recentDocs)
   const projectFile = useActiveProjectFile()
   const [editing, setEditing] = useState(false)
@@ -732,8 +756,8 @@ export function DocumentMenu() {
   useEffect(() => setDraft(name), [name])
 
   const recent = useMemo(
-    () => recentDocs.filter((r) => r.id !== documentId),
-    [recentDocs, documentId],
+    () => recentDocs.filter((r) => r.id !== documentId || (r.format ?? 'legacy') !== format),
+    [recentDocs, documentId, format],
   )
 
   if (editing) {
@@ -816,8 +840,9 @@ export function DocumentMenu() {
       <MenuItem onSelect={() => useUiStore.getState().setLayoutOpen(true, 'load')}>
         {t('topbar.openDocument')}
       </MenuItem>
-      <MenuItem onSelect={() => void exportPackage()}>{t('topbar.exportPackage')}</MenuItem>
+      <MenuItem data-export-package onSelect={() => void exportPackage()}>{t('topbar.exportPackage')}</MenuItem>
       <MenuItem onSelect={importPackage}>{t('topbar.importPackage')}</MenuItem>
+      <MenuItem data-install-project-package onSelect={() => chooseProjectPackage()}>{t('packageInstall.entry', { ns: 'dialogs' })}</MenuItem>
 
       <MenuSeparator />
       <MenuLabel>{t('topbar.recentDocuments')}</MenuLabel>
@@ -826,7 +851,7 @@ export function DocumentMenu() {
       ) : (
         recent.map((r) => (
           <MenuItem
-            key={r.id}
+            key={JSON.stringify([r.format ?? 'legacy', r.id])}
             onSelect={() => void openRecentEntry(r)}
             shortcut={formatTime(r.savedAt)}
           >

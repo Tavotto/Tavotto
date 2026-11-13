@@ -58,6 +58,19 @@ tools/*/target/
 .gstack/
 .DS_Store
 
+# 本机代理配置与验收产物：源码、golden 数据和正式文档仍正常跟踪。
+/.zcode/
+/svgplan-evidence/
+/svg-review-*/
+/artifacts/
+/test-artifacts/
+/coverage/
+/web/coverage/
+/junit*.xml
+/web/junit*.xml
+/web/test-results*.xml
+*.dmp
+
 # 开发期界面验证截图：含真实研究图，不进公开仓
 /docs/verify/
 

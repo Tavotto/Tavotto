@@ -1,11 +1,16 @@
+import { containsChartState, documentAddressKey, documentFormatForSchema, documentNamespaceKey, type DocumentFormat } from '@/lib/documentFormat'
+import { captureChartSourceSave as captureSourceContext, planSavedChartSources, type ChartSourceReceipt, type ChartSourceSaveContext } from '@/lib/chartSourceReceipts'
 import { create } from 'zustand'
-import { sameFigureInputs, validFigureSnapshot, type FigureSnapshotSaveContext } from '@/lib/figureSnapshot'
+import { figureOriginFor, figureOriginIdentity, sameFigureInputs, sameFigureOrigin, sameFigureSource, validFigureOrigin, validFigureSnapshot, verifiedFigureOrigin, type FigureSnapshotSaveContext } from '@/lib/figureSnapshot'
 import { figureExecutionOwnerKey } from '@/lib/capturedFigureSources'
 import { perfSpan } from '@/perf/core'
 import { enablePatches, produceWithPatches, type Patch } from 'immer'
 import * as history from '@/lib/history'
 import { rebaseToCurrentNative, sizeBasisOf, type SizeBasis } from '@/lib/panelNativeSize'
-import { fetchAutosave, fetchAutosaveSummary, probeAutosave, putAutosave, type AutosaveProbe } from '@/lib/api'
+import { ApiError, fetchAutosave, fetchAutosaveSummary, probeAutosave, putAutosave, fetchProjectFile, reserveProjectFile, confirmProjectFile, cancelProjectFile, type AutosaveProbe } from '@/lib/api'
+import { projectFileEditor, bindingFromProjectFile, type ProjectFileAddress, type ProjectFileCapture, type ProjectFileRead, type ProjectFileRecovery, type ProjectFileResult, type ProjectFileTicket } from '@/lib/projectFileSession'
+import { captureDocumentMoment, type MomentSnapshot } from '@/lib/momentCapture'
+import { useTimelineStore } from '@/store/timelineStore'
 import { DOC_INDEX_KEY, isForeignDocument, recordedProjectOf } from '@/lib/docOwnership'
 import type { RestoreIssue } from '@/store/documentRestore'
 import {
@@ -14,6 +19,8 @@ import {
   hasUnsavedWork,
   type SaveIssue,
   type SaveState,
+  type WrittenInfo,
+  type DiskSaveContext,
 } from '@/lib/autosave/diskWriter'
 import { emitActivity } from '@/lib/activity'
 import { announceDocOpen } from '@/lib/docPresence'
@@ -26,13 +33,16 @@ import {
   type ProjectFileBinding,
 } from '@/lib/projectFile'
 import { currentProjectId } from '@/lib/session'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
+import type { PreviewOwner } from '@/lib/previewOwner'
+import { clearChangedChartSources } from '@/lib/chartSource'
 import { sameRules } from '@/lib/specBinding'
 import { msg, t, type UiMessage } from '@/i18n'
 import { newId } from '@/lib/id'
 import { boundedCount, captureTelemetry, classifyEditKind } from '@/lib/telemetry'
 import { documentDigest, recordDiagnosticEvent } from '@/diagnostics'
 import { patchRefs } from '@/diagnostics/patches'
-import { defaultCanvasName, type CanvasData, type FigureDocument, type FigureExecutionOwner, type FigureSnapshot, type PanelObject, type ProjectDocument } from '@/types/document'
+import { defaultCanvasName, type CanvasData, type FigureDocument, type FigureExecutionOwner, type FigureOrigin, type FigureSnapshot, type PanelObject, type ProjectDocument } from '@/types/document'
 import {
   SCHEMA_CURRENT,
   canvasToDoc,
@@ -46,6 +56,7 @@ enablePatches()
 
 /** 「最近文档」条目：只存列表要显示的字段 */
 export interface RecentDoc {
+  format?: DocumentFormat
   id: string
   name: string
   savedAt: number
@@ -139,7 +150,7 @@ export function registerOverrideStamper(fn: OverrideStamper): () => void {
  *   ——最常见的恢复——看起来和「原地改值」一模一样，推断不出来）。整次提交不抄，
  *   存的是什么就是什么，没带身份的也照旧不带（按位置，与引入身份之前一致）。
  */
-export type CommitOptions = { overrides?: 'edit' | 'restored'; undoAlso?: Recipe }
+export type CommitOptions = { overrides?: 'edit' | 'restored'; figureSources?: 'restored'; undoAlso?: Recipe }
 
 /** `produceWithPatches` + 身份抄写：两段补丁按时序拼成一份（反向补丁倒序）。 */
 function produceStamped(
@@ -152,7 +163,7 @@ function produceStamped(
   const stamp = opts?.overrides === 'restored' ? null : overrideStamper
   const [stamped, more, moreInverse] = produceWithPatches(next, (d) => {
     stamp?.(d, base, next)
-    clearChangedFigureSnapshots(d, base)
+    clearChangedFigureSnapshots(d, base, opts?.figureSources === 'restored')
   })
   return [stamped, [...patches, ...more], [...moreInverse, ...inverse]]
 }
@@ -412,7 +423,7 @@ export interface RestoreMetaIssue {
   pj: string | null
 }
 
-type PersistedListener = (docId: string, pj: string | null, metadata: PersistedMetadata) => void
+type PersistedListener = (docId: string, pj: string | null, metadata: PersistedMetadata, format?: DocumentFormat) => void
 export type PersistedMetadata = 'ok' | 'failed' | 'owner_unknown' | undefined
 const persistedListeners = new Set<PersistedListener>()
 
@@ -428,6 +439,7 @@ export function onDocumentPersisted(fn: PersistedListener): () => void {
 }
 
 interface DocumentState {
+  documentFormat: DocumentFormat
   /** 当前激活画布的活跃编辑态（schema 2 形状；画布编辑代码只认它） */
   doc: FigureDocument
   /** 本次编辑会话的项目文档身份；自动保存槽位、最近文档、版本都按它索引 */
@@ -592,6 +604,9 @@ interface DocumentState {
  * `reason` 只在「普通」取代一次未落定的恢复时用（默认 `explicit`）。
  */
 export interface SwitchOptions {
+  /** 仅显式命名打开：首次AS前取得安装基线票据，不从标题推断目标。 */
+  projectFileOpen?: ProjectFileBinding
+  format?: DocumentFormat
   placeholder?: boolean
   restoreToken?: RestoreToken
   reason?: Exclude<RestoreReason, 'initial'>
@@ -666,9 +681,44 @@ function noteUndoRedo(
   })
 }
 
+function projectFromState(s: DocumentState): ProjectDocument {
+    // 载入与切换均以首个 find 安装活动画布；旧文档可能有重复或缺失 id。
+    // 只把该位置换成活文档，不能按同名 id 覆盖其他仍需原样保存的画布。
+    const activeIndex = s.canvases.findIndex((c) => c.id === s.activeCanvasId)
+    return {
+      schema: s.documentFormat === 'v4' ? 4 : 3,
+      project: { id: s.projectMeta.id, name: s.projectMeta.name },
+      canvases: s.canvases.map((c, index) =>
+        index === activeIndex ? docToCanvas(s.doc, c.id) : c,
+      ),
+      activeCanvasId: s.activeCanvasId,
+      createdAt: s.projectMeta.createdAt,
+      updatedAt: Date.now(),
+    }
+}
+
 const INITIAL = emptyProject()
 
-export const useDocumentStore = create<DocumentState>((set, get) => ({
+export const useDocumentStore = create<DocumentState>((rawSet, get) => {
+  // 所有既有用户写入口共用这一次 set：升级不是重载，不清历史/画布会话或递增loadSeq。
+  const set = (update: Partial<DocumentState> | ((state: DocumentState) => Partial<DocumentState>)) => {
+    const before = get()
+    let patch = typeof update === 'function' ? update(before) : update
+    const candidate = { ...before, ...patch }
+    const upgrade = candidate.documentFormat === 'legacy' && !candidate.txn
+      && candidate.documentId === before.documentId && candidate.loadSeq === before.loadSeq
+      && containsChartState(projectFromState(candidate))
+    if (upgrade) patch = { ...patch, documentFormat: 'v4', documentId: newId('d'), projectFile: null,
+      dirty: true, saveState: 'dirty', saveIssue: null, lastPersisted: null }
+    rawSet(patch)
+    if (upgrade) {
+      writeCurrentId(get().documentId, 'v4')
+      persistTabs()
+      announceDocOpen(get().documentId, 'v4')
+    }
+  }
+  return ({
+  documentFormat: 'legacy',
   doc: canvasToDoc(INITIAL.canvases[0]),
   documentId: newId('d'),
   projectMeta: {
@@ -824,7 +874,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (opts?.discard || !txn.patches.length) {
       // 丢弃：把反向补丁打回去，恢复到事务开始前
       const rolledBack = history.rollback(doc, txn)
-      const [clean] = produceWithPatches(rolledBack, (d) => clearChangedFigureSnapshots(d, doc))
+      const [clean] = produceWithPatches(rolledBack, (d) => clearChangedFigureSnapshots(d, doc, true))
       set({ doc: clean, txn: null })
       recordDiagnosticEvent({
         type: 'transaction.cancel',
@@ -880,7 +930,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // 栈空时什么都不写：空撤销不该换掉 past / future 的引用去惊动订阅者
     // 打回来的 w/h 按条目之前的原生图幅量；图幅在历史之外变过的话换算到此刻的图幅
     const candidate = step.ok ? rebaseToCurrentNative(step.doc, step.entry?.sizeBasis, 'before') : step.doc
-    const [doc] = produceWithPatches(candidate, (d) => clearChangedFigureSnapshots(d, get().doc))
+    const [doc] = produceWithPatches(candidate, (d) => clearChangedFigureSnapshots(d, get().doc, true))
     if (step.ok || step.entry) set({ doc, past: step.past, future: step.future })
     noteUndoRedo('undo.complete', step.ok, step.entry?.label ?? null, before, get())
     return step.ok && step.entry ? step.entry.label : null
@@ -899,7 +949,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const step = history.redoStep(state.doc, state.past, state.future)
     if (!step.ok && step.entry) console.error('重做补丁应用失败，该条历史已丢弃')
     const candidate = step.ok ? rebaseToCurrentNative(step.doc, step.entry?.sizeBasis, 'after') : step.doc
-    const [doc] = produceWithPatches(candidate, (d) => clearChangedFigureSnapshots(d, state.doc))
+    const [doc] = produceWithPatches(candidate, (d) => clearChangedFigureSnapshots(d, state.doc, true))
     if (step.ok || step.entry) set({ doc, past: step.past, future: step.future })
     noteUndoRedo('redo.complete', step.ok, step.entry?.label ?? null, before, get())
     return step.ok && step.entry ? step.entry.label : null
@@ -918,19 +968,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   /* ---------------- 画布（Canvas）操作 ---------------- */
 
-  buildProject: () => {
-    const s = get()
-    return {
-      schema: 3,
-      project: { id: s.projectMeta.id, name: s.projectMeta.name },
-      canvases: s.canvases.map((c) =>
-        c.id === s.activeCanvasId ? docToCanvas(s.doc, c.id) : c,
-      ),
-      activeCanvasId: s.activeCanvasId,
-      createdAt: s.projectMeta.createdAt,
-      updatedAt: Date.now(),
-    }
-  },
+  buildProject: () => projectFromState(get()),
 
   switchCanvas: (id) => {
     if (writesBlocked()) return
@@ -1120,12 +1158,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const token = opts?.restoreToken
     if (!placeholder) {
       const hadContent = hasContent(get().buildProject())
-      if (flushAutosave() === 'error' && hadContent && confirmLoss && !(await confirmLoss())) {
+      if (flushAutosave({ leaving: true }) === 'error' && hadContent && confirmLoss && !(await confirmLoss())) {
         return false
       }
     }
     const pd = migrateToProject(next)
     if (!pd) return false
+    const upgrade = pd.schema !== 4 && containsChartState(pd)
+    const format: DocumentFormat = upgrade ? 'v4' : opts?.format ?? documentFormatForSchema(pd.schema) ?? 'legacy'
+    if ((format === 'v4') !== (pd.schema === 4) && !upgrade) return false
+    const installId = upgrade ? newId('d') : nextId
     if (token) {
       // 恢复协调自己的安装：令牌过期（被显式意图 / 新一轮恢复取代）就不装——旧恢复回来没有提交权。
       // 确认框（上面）是 await：它期间门可能已经换代，所以提交权在这里、同步地判
@@ -1140,18 +1182,27 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // 归属在**换进来那一刻**定，不在落盘那一刻现问（见 `docProject`）。
     // 必须排在上面那次 flush 之后：那一次写的是**旧**文档，它属于旧项目。
     // 占位文档没有归属：转正（`settleRestore`）或被真文档取代时才定
-    if (!placeholder) adoptDocumentOwner(nextId)
+    if (!placeholder) adoptDocumentOwner(installId, format)
     const active = pd.canvases.find((c) => c.id === pd.activeCanvasId) ?? pd.canvases[0]
     if (token) installingUnderToken = true
     try {
+      const owner = projectOfDoc().id ?? currentProjectId()
+      if (!placeholder && owner) {
+        const address = projectFileAddress(installId, format, owner)
+        projectFileEditor.beginInstall(address)
+        if (opts?.projectFileOpen && !upgrade && opts.projectFileOpen.projectId === owner) {
+          projectFileOpens.set(projectFileKey(address), { address, loadSeq: get().loadSeq + 1, binding: opts.projectFileOpen })
+        }
+      }
       set({
         doc: canvasToDoc(active),
-        documentId: nextId,
+        documentId: installId,
+        documentFormat: format,
         projectMeta: { id: pd.project.id, name: pd.project.name, createdAt: pd.createdAt },
         canvases: pd.canvases,
         activeCanvasId: active.id,
         canvasSessions: {},
-        openTabs: restoreTabs(nextId, pd.canvases, active.id),
+        openTabs: restoreTabs(installId, pd.canvases, active.id, format),
         dirty: false,
         // 换了文档，上一份的待裁决事项跟着走：冲突是**那一份**的冲突，
         // 挂在新文档头上会让用户对着一份根本没冲突的文档点「重新加载」。
@@ -1161,23 +1212,31 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         restoreMetaIssue: null,
         loadSeq: get().loadSeq + 1,
         lastPersisted: null,
-        projectFile: readProjectFile(nextId),
+        projectFile: upgrade ? null : (format === 'v4' ? readProjectFile(installId, format) : readProjectFile(installId)),
         past: [],
         future: [],
         txn: null,
       })
       if (placeholder) return true
-      writeCurrentId(nextId)
+      writeCurrentId(installId, format)
       // 广播「我端着这份了」：别的标签页也开着同一个 documentId 时会回音报警
-      announceDocOpen(nextId)
-      // 新文档立刻落一次快照，这样它马上出现在「最近文档」里
-      flushAutosave()
+      if (format === 'v4') announceDocOpen(installId, format)
+      else announceDocOpen(installId)
+      installingUnderToken = false
+      const installedLoadSeq = get().loadSeq
+      // 初次保存和 hydration 期间到期的防抖共用这一次 deferred，捕获完成时的最新正文。
+      if (owner) deferredProjectFileFlushes.set(projectFileKey(projectFileAddress(installId, format, owner)), installedLoadSeq)
+      await hydrateProjectFile(undefined, true)
+      if (get().documentId !== installId || get().documentFormat !== format || get().loadSeq !== installedLoadSeq) return false
+      // 没有项目就没有 hydration，保留原立即保存路径。
+      if (!owner) flushAutosave()
     } finally {
       installingUnderToken = false
     }
     return true
   },
-}))
+})
+})
 
 let canvasSeq = 0
 
@@ -1201,6 +1260,8 @@ function nextCanvasName(canvases: CanvasData[]): string {
  * 注意：本机自动保存与「布局文件」是两件事——前者是浏览器里的工作副本，
  * 后者是写到服务器 layouts 的命名文件。保存布局文件不会改变文档身份。
  */
+const currentDocumentFormat = (): DocumentFormat => useDocumentStore.getState().documentFormat ?? 'legacy'
+const namespaced = (key: string, format: DocumentFormat = currentDocumentFormat()) => documentNamespaceKey(key, format)
 const SLOT_PREFIX = 'tavotto.autosave.'
 const INDEX_KEY = DOC_INDEX_KEY
 const CURRENT_KEY = 'tavotto.currentDoc'
@@ -1234,6 +1295,29 @@ let docProject: { id: string | null; name: string | null } | null = null
  */
 const projectOfDoc = () => docProject ?? { id: currentProjectId(), name: currentProjectLabel() }
 
+/** 只读捕获：预览正文沿原文档归属取源，不能把转场时的新 current pj 当成正文的项目。 */
+export function captureDocumentPreviewOwner(): PreviewOwner {
+  const state = useDocumentStore.getState()
+  const pj = projectOfDoc().id
+  const project = captureProjectEpoch()
+  const sameDocument = () => {
+    const now = useDocumentStore.getState()
+    return project.still() && projectOfDoc().id === pj && now.documentId === state.documentId
+      && now.documentFormat === state.documentFormat && now.loadSeq === state.loadSeq
+  }
+  const atGate = (restoreGen: number): PreviewOwner => {
+    const owner: PreviewOwner = {
+      pj,
+      key: JSON.stringify([pj, project.generation, state.documentId, state.documentFormat, state.loadSeq, restoreGen]),
+      still: () => sameDocument() && gate.gen === restoreGen && !isDocumentPlaceholder(),
+      refresh: () => sameDocument() && !isDocumentPlaceholder() && gate.gen !== restoreGen
+        ? atGate(gate.gen) : owner,
+    }
+    return owner
+  }
+  return atGate(gate.gen)
+}
+
 /**
  * 从「最近文档」显式打开的**别的项目**的排版：打开时归属**不变**，用户在这个项目里真改了一笔
  * 才转到这里（#715 验收 P1 / #773 Codex P2）。`null` = 没有待转的归属。
@@ -1246,17 +1330,17 @@ const projectOfDoc = () => docProject ?? { id: currentProjectId(), name: current
 let pendingClaim: { id: string | null; name: string | null } | null = null
 
 /** 换进一份排版时定它的归属：确知属于别的项目就保留那个项目，等真改了才转（见 `pendingClaim`） */
-function adoptDocumentOwner(docId: string): void {
+function adoptDocumentOwner(docId: string, format: DocumentFormat = currentDocumentFormat()): void {
   const here = { id: currentProjectId(), name: currentProjectLabel() }
-  const entry = isForeignDocument(docId, here.id) ? readIndex().find((e) => e.id === docId) : undefined
+  const entry = (format === 'v4' ? isForeignDocument(docId, here.id, format) : isForeignDocument(docId, here.id)) ? readIndex(format).find((e) => e.id === docId) : undefined
   docProject = entry?.projectId ? { id: entry.projectId, name: entry.projectName ?? null } : here
   pendingClaim = entry?.projectId ? here : null
 }
 
 /** 还没换进来的排版（读盘那一刻）该记在哪个项目名下：确知属于别的项目就是那个项目，否则是当前项目 */
-function ownerProjectForWrite(docId: string): string | null {
-  const owner = recordedProjectOf(docId)
-  return typeof owner === 'string' ? owner : currentProjectId()
+function ownerProjectForWrite(docId: string, format: DocumentFormat = currentDocumentFormat(), fallback: string | null = currentProjectId()): string | null {
+  const owner = format === 'v4' ? recordedProjectOf(docId, format) : recordedProjectOf(docId)
+  return typeof owner === 'string' ? owner : fallback
 }
 
 /** 用户真改了一笔：显式打开的别的项目的排版，从这一刻起属于打开它的那个项目 */
@@ -1271,14 +1355,14 @@ function claimDocumentOnEdit(): void {
   const index = readIndex()
   if (claim.id && index.some((e) => e.id === id)) {
     const owner = claim.id
-    const kept = writeIndex(
+    writeIndex(
       index.map((e): RecentDoc => {
         if (e.id !== id) return e
         const { projectName: _previous, ...rest } = e
         return { ...rest, projectId: owner, ...(claim.name ? { projectName: claim.name } : {}) }
       }),
     )
-    useDocumentStore.setState({ recentDocs: kept })
+    useDocumentStore.setState({ recentDocs: readRecentIndexes() })
   }
   claimListener?.()
 }
@@ -1301,7 +1385,7 @@ export function pinDocumentOwner(): void {
   docProject ??= { id: currentProjectId(), name: currentProjectLabel() }
 }
 
-const slotKey = (id: string) => SLOT_PREFIX + id
+const slotKey = (id: string, format: DocumentFormat = currentDocumentFormat()) => namespaced(SLOT_PREFIX + id, format)
 const TABS_PREFIX = 'tavotto.tabs.'
 
 /** 打开标签的本机持久化：{ open: canvasId[], active }，按 documentId 一档 */
@@ -1309,7 +1393,7 @@ function persistTabs(): void {
   const s = useDocumentStore.getState()
   try {
     localStorage.setItem(
-      TABS_PREFIX + s.documentId,
+      namespaced(TABS_PREFIX + s.documentId),
       JSON.stringify({ open: s.openTabs, active: s.activeCanvasId }),
     )
   } catch {
@@ -1322,9 +1406,10 @@ function restoreTabs(
   documentId: string,
   canvases: CanvasData[],
   activeId: string,
+  format: DocumentFormat = currentDocumentFormat(),
 ): string[] {
   try {
-    const raw = localStorage.getItem(TABS_PREFIX + documentId)
+    const raw = localStorage.getItem(namespaced(TABS_PREFIX + documentId, format))
     if (raw) {
       const parsed = JSON.parse(raw) as { open?: string[] }
       const ids = new Set(canvases.map((c) => c.id))
@@ -1344,25 +1429,25 @@ const hasContent = (pd: ProjectDocument) =>
 const countObjects = (pd: ProjectDocument) =>
   pd.canvases.reduce((n, c) => n + c.objects.length, 0)
 
-function readCurrentId(): string | null {
+function readCurrentId(format: DocumentFormat = 'legacy'): string | null {
   try {
-    return localStorage.getItem(CURRENT_KEY)
+    return localStorage.getItem(namespaced(CURRENT_KEY, format))
   } catch {
     return null
   }
 }
 
-function writeCurrentId(id: string): void {
+function writeCurrentId(id: string, format: DocumentFormat = currentDocumentFormat()): void {
   try {
-    localStorage.setItem(CURRENT_KEY, id)
+    localStorage.setItem(namespaced(CURRENT_KEY, format), id)
   } catch {
     /* 存储不可用时只影响「刷新后恢复」，不影响正常编辑 */
   }
 }
 
-function readIndex(): RecentDoc[] {
+function readIndex(format: DocumentFormat = currentDocumentFormat()): RecentDoc[] {
   try {
-    const raw = localStorage.getItem(INDEX_KEY)
+    const raw = localStorage.getItem(namespaced(INDEX_KEY, format))
     const arr = raw ? JSON.parse(raw) : null
     if (!Array.isArray(arr)) return []
     return arr.filter(
@@ -1374,16 +1459,21 @@ function readIndex(): RecentDoc[] {
   }
 }
 
+function readRecentIndexes(): RecentDoc[] {
+  return [...readIndex('legacy'), ...readIndex('v4').map(entry => ({ ...entry, format: 'v4' as const }))]
+    .sort((a, b) => b.savedAt - a.savedAt)
+}
+
 /** 索引里没有的槽位一并清掉，避免 localStorage 无限增长；返回实际保留的条目 */
-function writeIndex(next: RecentDoc[]): RecentDoc[] {
+function writeIndex(next: RecentDoc[], format: DocumentFormat = currentDocumentFormat()): RecentDoc[] {
   const kept = next.slice(0, MAX_SLOTS)
   const keptIds = new Set(kept.map((e) => e.id))
   try {
-    localStorage.setItem(INDEX_KEY, JSON.stringify(kept))
+    localStorage.setItem(namespaced(INDEX_KEY, format), JSON.stringify(kept))
     const stale: string[] = []
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i)
-      if (key?.startsWith(SLOT_PREFIX) && !keptIds.has(key.slice(SLOT_PREFIX.length))) {
+      if (key?.startsWith(namespaced(SLOT_PREFIX, format)) && !keptIds.has(key.slice(namespaced(SLOT_PREFIX, format).length))) {
         stale.push(key)
       }
     }
@@ -1442,9 +1532,10 @@ function setSaveState(next: SaveState, issue: SaveIssue | null = null): void {
   window.clearTimeout(savedTimer)
   useDocumentStore.setState({ saveState: next, saveIssue: issue })
   if (next !== 'saved') return
+  const saved = useDocumentStore.getState()
   savedTimer = window.setTimeout(() => {
     // 反馈期内又开始编辑或又存了一次，状态已经不是 saved 了：别拽回 clean
-    if (useDocumentStore.getState().saveState === 'saved') {
+    if (useDocumentStore.getState().saveState === 'saved' && useDocumentStore.getState().documentId === saved.documentId && useDocumentStore.getState().documentFormat === saved.documentFormat && useDocumentStore.getState().loadSeq === saved.loadSeq) {
       useDocumentStore.setState({ saveState: 'clean' })
     }
   }, SAVED_FEEDBACK_MS)
@@ -1463,7 +1554,8 @@ function setDocNotice(notice: DocNotice | null): void {
  * 里（它不认识 store），这里只把 store 的读写包成回调递进去。 */
 
 /** 迟到的写入结果不该去改**别的文档**的状态（切文档、恢复都会换 id） */
-const isCurrentDoc = (id: string) => useDocumentStore.getState().documentId === id
+const isCurrentDoc = (id: string, format: DocumentFormat = currentDocumentFormat()) =>
+  useDocumentStore.getState().documentId === id && currentDocumentFormat() === format
 
 /**
  * 每份文档本会话**成功落盘**的次数（不看是不是当前文档）。手动保存据此回答「这次写成了
@@ -1483,19 +1575,45 @@ const diskWrites = new Map<string, number>()
 function afterWriteOk(
   id: string,
   savedAt: number,
-  meta?: { pj?: string | null; metadata?: PersistedMetadata; figureSnapshots?: Record<string, FigureSnapshot>; snapshotContext?: FigureSnapshotSaveContext },
+  meta?: WrittenInfo,
+  format: DocumentFormat = 'legacy',
 ): void {
-  if (meta?.snapshotContext) mergeSavedFigureSnapshots(meta.snapshotContext, meta.figureSnapshots)
-  diskWrites.set(id, (diskWrites.get(id) ?? 0) + 1)
+  const bindingMetadataFailed = meta?.projectFileContext
+    && projectFileEditor.support(meta.projectFileContext.address) !== 'unsupported'
+    && meta.projectFile?.state !== 'accepted' && meta.projectFile?.state !== 'bound'
+  if (meta?.projectFileContext && meta.writtenDocument && meta.revision !== undefined) {
+    const captured = meta.projectFileContext
+    const address = captured.address
+    const sameInstall = isCurrentDoc(id, format) && useDocumentStore.getState().loadSeq === meta.snapshotContext?.loadSeq
+      && (projectOfDoc().id ?? currentProjectId()) === address.projectId
+    if (sameInstall) {
+      projectFileWrites.set(projectFileKey(address), {
+        document: structuredClone(meta.writtenDocument), capture: captured,
+        revision: meta.revision, loadSeq: useDocumentStore.getState().loadSeq, moment: meta.moment,
+      })
+      if (meta.projectFile && projectFileEditor.accepted(captured, meta.projectFile)) {
+        if (meta.projectFile.state === 'accepted' || meta.projectFile.state === 'bound') {
+          const binding = bindingFromProjectFile(address, meta.projectFile)
+          if (binding && JSON.stringify(projectFileEditor.capture(address).axis) !== JSON.stringify(meta.projectFile.edit.axis)) binding.dirty = true
+          if (binding || (meta.projectFile.intent_sequence > 0 && !hasUnconfirmedOpenedProjectFile(address, useDocumentStore.getState().loadSeq))) setProjectFile(binding, id, format)
+        }
+      }
+    }
+  }
+  if (meta?.snapshotContext && currentDocumentFormat() === format) mergeSavedFigureSnapshots(meta.snapshotContext, meta.figureSnapshots)
+  if (meta?.chartContext) mergeSavedChartSources(meta.chartContext, meta.chartSources)
+  const key = documentAddressKey(id, format)
+  diskWrites.set(key, (diskWrites.get(key) ?? 0) + 1)
   const pj = meta?.pj ?? null
   for (const fn of [...persistedListeners]) {
     try {
-      fn(id, pj, meta?.metadata)
+      if (format === 'v4') fn(id, pj, meta?.metadata, format)
+      else fn(id, pj, meta?.metadata)
     } catch {
       /* 监听方的失败不能让保存的收尾半途而废 */
     }
   }
-  if (!isCurrentDoc(id)) return
+  if (!isCurrentDoc(id, format) || (meta?.projectFileContext && meta.snapshotContext?.loadSeq !== useDocumentStore.getState().loadSeq)) return
   // 元数据没落成 ≠ 正文没存下：另开一根轴，不碰 saveState；下次这份保存成功时清掉
   // 回包的 pj 是排队那一刻的：A 项目的排队保存在界面切到 B（恰好同一个 documentId）之后才完成时，
   // 它的元数据结局不属于现在开着的这份——只按 id 判会把 A 的失败挂到 B 头上。比的是这份排版**现在**的归属项目
@@ -1503,7 +1621,7 @@ function afterWriteOk(
   if (pj === (projectOfDoc().id ?? currentProjectId())) {
     const prevMeta = useDocumentStore.getState().restoreMetaIssue
     // `owner_unknown`（正文写下了、归属 / 晋升没记：项目在后端已经没了）与 `failed` 一样是「下次自动恢复信息没更新」
-    if (meta?.metadata === 'failed' || meta?.metadata === 'owner_unknown') {
+    if (meta?.metadata === 'failed' || meta?.metadata === 'owner_unknown' || bindingMetadataFailed) {
       useDocumentStore.setState({ restoreMetaIssue: { docId: id, pj } })
     } else if (prevMeta && prevMeta.docId === id && meta?.metadata !== undefined) {
       useDocumentStore.setState({ restoreMetaIssue: null })
@@ -1514,36 +1632,52 @@ function afterWriteOk(
   emitActivity({ kind: 'document.saved' })
 }
 
-const disk = createDiskWriter({
+function createDocumentDisk(format: DocumentFormat) {
+  return createDiskWriter({
   // 经箭头函数转发而不是直接递函数值：几份用例对 `@/lib/api` 做的是**部分** mock
   // （没有 putAutosave），模块加载那一刻去取它就会撞上 vitest 的「export 未定义」——
   // 搬出去之前这些名字只在调用那一刻才被读到，这里保持同样的懒。
   api: {
-    put: (id, pd, baseline, revision, pj) => putAutosave(id, pd, baseline, revision, pj),
-    fetch: (id, pj) => fetchAutosave(id, pj),
-    fetchSummary: (id, pj) => fetchAutosaveSummary(id, pj),
+    put: (id, pd, baseline, revision, pj, opts) => {
+      const address = pj ? projectFileAddress(id, format, pj) : null
+      // Only a save that actually captured the binding is gated by the
+      // metadata contract. A plain save (old backend, leave flush) must never
+      // be blocked by an unavailable binding it never used.
+      if (opts?.projectFileEdit && address && projectFileEditor.support(address) !== 'unsupported') {
+        if (projectFileEditor.support(address) === 'unavailable') {
+          throw projectFileReadErrors.get(projectFileKey(address)) ?? new ApiError(t('save.projectBindingUnavailable', { ns: 'workspace' }), 503, { code: 'session_unavailable' })
+        }
+        return putAutosave(id, pd, baseline, revision, pj, format === 'v4' ? format : undefined, opts)
+      }
+      return format === 'v4' ? putAutosave(id, pd, baseline, revision, pj, format) : putAutosave(id, pd, baseline, revision, pj)
+    },
+    fetch: (id, pj) => format === 'v4' ? fetchAutosave(id, pj, format) : fetchAutosave(id, pj),
+    fetchSummary: (id, pj) => format === 'v4' ? fetchAutosaveSummary(id, pj, format) : fetchAutosaveSummary(id, pj),
   },
-  isCurrent: isCurrentDoc,
+  isCurrent: (id) => isCurrentDoc(id, format),
   onSaving: (id) => {
-    if (isCurrentDoc(id)) setSaveState('saving')
+    if (isCurrentDoc(id, format)) setSaveState('saving')
   },
-  onWritten: afterWriteOk,
-  onFailed: (id, conflict) => {
-    if (isCurrentDoc(id)) {
-      setSaveState(conflict ? 'conflict' : 'save_error', conflict ?? { kind: 'io', docId: id })
+  onWritten: (id, savedAt, info) => afterWriteOk(id, savedAt, info, format),
+  onFailed: (id, issue, recoveryContext) => {
+    if (recoveryContext && (recoveryContext.loadSeq !== useDocumentStore.getState().loadSeq
+      || recoveryContext.pj !== (projectOfDoc().id ?? currentProjectId()))) return
+    const conflict = issue?.kind === 'stale' || issue?.kind === 'external'
+    if (isCurrentDoc(id, format)) {
+      setSaveState(conflict ? 'conflict' : 'save_error', issue ?? { kind: 'io', docId: id })
     }
     // 事件保留：老的监听方（App.tsx 的状态条）与用例都还在用它。
     // 它是**通知**，不是状态——状态在 store 里。
     window.dispatchEvent(
       new CustomEvent('tavotto:autosave-error', {
-        detail: { id, reason: conflict ? conflict.kind : 'io' },
+        detail: { id, reason: conflict ? issue.kind : 'io', ...(issue?.kind === 'backend' ? { issue } : {}) },
       }),
     )
   },
   writeBlocked: () => blocksDiskWrite(useDocumentStore.getState().saveState),
   dropLocalCopy: (id, written) => {
     try {
-      const key = slotKey(id)
+      const key = slotKey(id, format)
       // 比的是刚落盘的整份快照，不只比 Date.now()：同毫秒编辑或时钟回拨
       // 仍可能产生内容更新、updatedAt 却相同或更小的恢复副本（#646）。
       if (localStorage.getItem(key) === JSON.stringify(written)) localStorage.removeItem(key)
@@ -1555,21 +1689,134 @@ const disk = createDiskWriter({
    * 三种结局，没有文档名、路径、修订号。 */
   outcome: (trigger, outcome) => captureTelemetry('document_saved', { trigger, outcome }),
 })
-
-/** 立刻把当前项目文档写入自动保存（本机副本同步 + 磁盘异步）。 */
-export function flushAutosave(): FlushResult {
-  // 性能探针（ADR 0075）：同步那一段在主线程上，落在拖动途中就是一次卡顿
-  return perfSpan('autosave.flush', flushAutosaveNow)
 }
 
-function flushAutosaveNow(): FlushResult {
+// 协调算法仍只有createDiskWriter；每个显式namespace有独立队列和修订基线。
+const documentDisks = { legacy: createDocumentDisk('legacy'), v4: createDocumentDisk('v4') }
+const diskFor = (format: DocumentFormat = currentDocumentFormat()) => documentDisks[format]
+
+const projectFileAddress = (documentId: string, format: DocumentFormat, pj: string): ProjectFileAddress =>
+  ({ projectId: pj, format, documentId })
+const projectFileKey = (address: ProjectFileAddress) => JSON.stringify([address.projectId, address.format, address.documentId])
+const projectFileHydrations = new Map<string, { loadSeq: number; promise: Promise<ProjectFileRead> }>()
+const projectFileReadErrors = new Map<string, unknown>()
+const deferredProjectFileFlushes = new Map<string, number>()
+const projectFileWrites = new Map<string, { document: ProjectDocument; capture: ProjectFileCapture; revision: string | null; loadSeq: number; moment?: MomentSnapshot }>()
+const pendingProjectFileConfirmations = new Map<string, PreparedProjectFileSave>()
+const projectFileOpens = new Map<string, {
+  address: ProjectFileAddress; loadSeq: number; binding: ProjectFileBinding; ticket?: ProjectFileTicket; error?: unknown
+}>()
+let projectFileRecoverySequence = 0
+const projectFileRecoveryBarriers = new Map<string, { token: number; loadSeq: number; promise: Promise<void> }>()
+function hasUnconfirmedOpenedProjectFile(address: ProjectFileAddress, loadSeq: number): boolean {
+  const key = projectFileKey(address)
+  const opened = projectFileOpens.get(key)
+  if (opened?.loadSeq === loadSeq && opened.ticket && projectFileEditor.isLatest(address, opened.ticket.sequence)) return true
+  const pending = pendingProjectFileConfirmations.get(key)
+  return pending?.loadSeq === loadSeq && pending.opened === true && projectFileEditor.isLatest(address, pending.ticket.sequence)
+}
+
+/** 只补工作副本元信息；迟到读取不装到另一项目、格式、文档或载入代次。 */
+export function hydrateProjectFile(
+  expectedRevision?: string | null,
+  force = false,
+): Promise<ProjectFileRead | null> {
+  const state = useDocumentStore.getState()
+  const pj = projectOfDoc().id ?? currentProjectId()
+  if (!pj || isDocumentPlaceholder()) return Promise.resolve(null)
+  const address = projectFileAddress(state.documentId, state.documentFormat, pj)
+  const key = projectFileKey(address)
+  const pending = projectFileHydrations.get(key)
+  if (pending?.loadSeq === state.loadSeq) return pending.promise
+  const support = projectFileEditor.support(address)
+  if (!force && (support === 'supported' || support === 'unsupported')) return Promise.resolve(projectFileEditor.view(address))
+  const loadSeq = state.loadSeq
+  const activeProjectId = currentProjectId()
+  const expected = expectedRevision ?? diskFor(address.format).revisionOf(address.documentId)
+  const read = (address.format === 'v4' ? fetchProjectFile(address.documentId, pj, address.format)
+    : fetchProjectFile(address.documentId, pj)).catch(error => {
+      projectFileReadErrors.set(key, error)
+      return { version: 1, status: 'unavailable' } as const
+    }).then(async view => {
+      const current = useDocumentStore.getState()
+      if (current.documentId !== address.documentId || current.documentFormat !== address.format
+        || current.loadSeq !== loadSeq || currentProjectId() !== activeProjectId
+        || (projectOfDoc().id ?? currentProjectId()) !== pj) return view
+      const observed = projectFileEditor.observe(address, view, expected === 'absent' ? null : expected)
+      if (observed) {
+        projectFileReadErrors.delete(key)
+        if (view.status === 'ok') {
+          const binding = bindingFromProjectFile(address, view)
+          // 明确旧本机目标是迁移证据；从不从标题猜一个文件。后端已有清除代次不复活旧目标。
+          if (binding && JSON.stringify(projectFileEditor.capture(address).axis) !== JSON.stringify(view.edit.axis)) binding.dirty = true
+          if (binding || (view.intent_sequence > 0 && !hasUnconfirmedOpenedProjectFile(address, loadSeq))) setProjectFile(binding, address.documentId, address.format)
+        }
+      }
+      const opened = projectFileOpens.get(key)
+      if (opened?.loadSeq === loadSeq && view.status === 'ok' && !opened.ticket) {
+        // 全新槽位和明确重开同一干净绑定都沿用后端实际观察到的轴与绑定代次。
+        // 重开不能把既存 AS 当成缺席，也不能拿旧本机记录覆盖别处的新编辑。
+        const fresh = view.edit.autosave_revision === null && view.edit.axis === null && view.binding === null
+        const reuse = view.binding?.file === opened.binding.file && !view.binding.dirty
+        if (!observed || !opened.binding.revision || !view.edit.known || (!fresh && !reuse)) {
+          opened.error = projectFileUnavailable()
+        } else {
+          try {
+            const reserved = await reserveProjectFile(address.documentId, pj, {
+              name: opened.binding.name, autosave_revision: view.edit.autosave_revision,
+              axis: view.edit.axis, expected_binding_sequence: view.binding?.sequence ?? null,
+            }, ...(address.format === 'v4' ? [address.format] : []))
+            if (reserved.state !== 'reserved') opened.error = projectFileUnavailable()
+            else {
+              opened.ticket = reserved.ticket
+              projectFileEditor.reserved(address, reserved.ticket)
+              if (!projectFileOperationCurrent({ documentId: address.documentId, format: address.format, loadSeq, pj })) {
+                void cancelProjectFile(address.documentId, pj, reserved.ticket.sequence, ...(address.format === 'v4' ? [address.format] : [])).catch(() => {})
+              }
+            }
+          } catch (error) { opened.error = error }
+        }
+      }
+      return view
+    }).finally(() => {
+      if (projectFileHydrations.get(key)?.promise !== read) return
+      projectFileHydrations.delete(key)
+      const deferred = deferredProjectFileFlushes.get(key)
+      deferredProjectFileFlushes.delete(key)
+      const current = useDocumentStore.getState()
+      if (deferred === loadSeq && current.documentId === address.documentId && current.documentFormat === address.format
+        && current.loadSeq === loadSeq && currentProjectId() === activeProjectId
+        && (projectOfDoc().id ?? currentProjectId()) === pj) flushAutosave()
+    })
+  projectFileHydrations.set(key, { loadSeq, promise: read })
+  return read
+}
+
+/** 立刻把当前项目文档写入自动保存（本机副本同步 + 磁盘异步）。
+ *
+ * `leaving`：文档/项目就要被换掉（切文档、切项目、关页）。这种冲刷不能被
+ * 「项目文件元信息还在读」推迟——推迟之后文档已换，排队的正文就没人写了，
+ * 用户在离开前最后一笔编辑会丢。 */
+export function flushAutosave(options?: { leaving?: boolean }): FlushResult {
+  // 性能探针（ADR 0075）：同步那一段在主线程上，落在拖动途中就是一次卡顿
+  return perfSpan('autosave.flush', () => flushAutosaveNow(options))
+}
+
+function flushAutosaveNow(options?: { leaving?: boolean }): FlushResult {
+  const leaving = options?.leaving === true
   // 占位文档（恢复还没落定）一个字节都不写：它不是用户的文档，写了 last / 最近文档 / 本机副本就是假的
   if (isDocumentPlaceholder()) return 'skipped'
   const state = useDocumentStore.getState()
   // 挂起中的文档一个字节都不写（见 `suspendAutosaveFor`）：内存里的编辑还在，
   // 换文档时它们随旧文档一起被放弃——这正是「重新开始」要的
-  if (autosaveSuspendedFor !== null && autosaveSuspendedFor === state.documentId) return 'skipped'
-  const pd = state.buildProject()
+  if (autosaveSuspendedFor !== null && autosaveSuspendedFor === documentAddressKey(state.documentId, state.documentFormat)) return 'skipped'
+  // 当前同步捕获覆盖已有防抖；不能等异步写盘结束才清，否则会吞掉后来的编辑。
+  cancelPendingAutosave()
+  const raw = state.buildProject()
+  const owner = projectOfDoc().id ?? currentProjectId()
+  const chartContext = state.documentFormat === 'v4' ? captureChartSourceSave(raw, owner) : undefined
+  const pd = chartContext?.document ?? raw
+  if (state.documentFormat === 'legacy' && state.txn && containsChartState(pd)) return 'skipped'
   if (!hasContent(pd)) {
     useDocumentStore.setState({ dirty: false, lastPersisted: null })
     return 'empty'
@@ -1582,6 +1829,9 @@ function flushAutosaveNow(): FlushResult {
     // 本机副本写不进去也照样走磁盘；只有两个都不可用才真会丢
     localOk = false
   }
+  if (owner && projectFileRecoveryBarriers.get(projectFileKey(projectFileAddress(state.documentId, state.documentFormat, owner)))?.loadSeq === state.loadSeq) {
+    return localOk ? 'saved' : 'error'
+  }
   // 冲突未决时**只写本机副本**：再往磁盘上撞只会继续 409，而每撞一次就把
   // 用户的编辑又晾在一次失败上。内容一个字节都没丢——它在本机副本里
   // 等着用户裁决。
@@ -1591,12 +1841,27 @@ function flushAutosaveNow(): FlushResult {
   }
   // 写盘记在**这份排版所属的项目**名下（后端按它记槽位归属）：切项目时离开那一下的冲刷发生在认领
   // 新项目之后，现问 `currentProjectId()` 会把旧项目的排版记成新项目的（#715 验收 P1）
-  const owner = projectOfDoc().id ?? currentProjectId()
-  disk.schedule(state.documentId, pd, owner, captureFigureSnapshotSave(pd, owner))
+  const snapshots: DiskSaveContext = { ...captureFigureSnapshotSave(pd, owner), ...(chartContext ? { chartContext } : {}) }
+  if (owner) {
+    const address = projectFileAddress(state.documentId, state.documentFormat, owner)
+    const support = projectFileEditor.support(address)
+    if (!leaving && (support === 'unknown' || projectFileHydrations.has(projectFileKey(address)))) {
+      deferredProjectFileFlushes.set(projectFileKey(address), state.loadSeq)
+      void hydrateProjectFile()
+      return localOk ? 'saved' : 'error'
+    }
+    // A leave flush writes the body plainly: there is no time to wait for the
+    // binding, and dropping the write would lose the user's last edit. Normal
+    // saves keep the captured context so an unreadable binding fails closed.
+    if (!leaving) snapshots.projectFileContext = projectFileEditor.capture(address)
+    snapshots.moment = captureDocumentMoment(useDocumentStore.getState(), owner, useTimelineStore.getState().gen)
+  }
+  diskFor(state.documentFormat).schedule(state.documentId, pd, owner, snapshots)
   if (!localOk) return 'error'
   const pj = projectOfDoc()
   const entry: RecentDoc = {
     id: state.documentId,
+    ...(state.documentFormat === 'v4' ? { format: state.documentFormat } : {}),
     name: pd.project.name,
     savedAt,
     objects: countObjects(pd),
@@ -1606,13 +1871,13 @@ function flushAutosaveNow(): FlushResult {
     ...(pj.id && pj.name ? { projectName: pj.name } : {}),
   }
   const before = readIndex()
-  const kept = writeIndex([entry, ...before.filter((e) => e.id !== state.documentId)])
+  writeIndex([entry, ...before.filter((e) => e.id !== state.documentId)])
   // 被本机索引挤掉的文档**不再**发 DELETE 删它的磁盘槽位（#715 PR-B）：索引只是本机
   // 「最近文档」列表放不下了，不是用户不要了；换了 origin 的索引还是空的，按它删会删错。
   // 磁盘槽位的清理只由后端做（`app._prune_autosave_slots`，按槽位归属）。
   // 项目文件绑定（`projectFile`）因此也留着：槽位还在，它仍有工作副本可指。
   writeCurrentId(state.documentId)
-  useDocumentStore.setState({ dirty: false, recentDocs: kept })
+  useDocumentStore.setState({ dirty: false, recentDocs: readRecentIndexes() })
   return 'saved'
 }
 
@@ -1643,8 +1908,22 @@ export async function saveNowWithResult(): Promise<{ state: SaveState; wrote: bo
   }
   // 手动保存是用户的动作：显式打开的别的项目的排版，存一下就归到这个项目（与真改一笔同一档）
   claimDocumentOnEdit()
+  const opening = useDocumentStore.getState()
+  const owner = projectOfDoc().id ?? currentProjectId()
+  if (owner) await projectFileRecoveryBarriers.get(projectFileKey(projectFileAddress(opening.documentId, opening.documentFormat, owner)))?.promise
+  if (useDocumentStore.getState().documentId !== opening.documentId || currentDocumentFormat() !== opening.documentFormat || useDocumentStore.getState().loadSeq !== opening.loadSeq) {
+    return { state: useDocumentStore.getState().saveState, wrote: false }
+  }
+  await hydrateProjectFile()
+  const hydrated = useDocumentStore.getState()
+  if (hydrated.documentId !== opening.documentId || hydrated.documentFormat !== opening.documentFormat || hydrated.loadSeq !== opening.loadSeq) {
+    return { state: hydrated.saveState, wrote: false }
+  }
   const id = useDocumentStore.getState().documentId
-  const before = diskWrites.get(id) ?? 0
+  const format = currentDocumentFormat()
+  const key = documentAddressKey(id, format)
+  const disk = diskFor(format)
+  const before = diskWrites.get(key) ?? 0
   cancelPendingAutosave()
   disk.markManual()
   const result = flushAutosave()
@@ -1656,7 +1935,7 @@ export async function saveNowWithResult(): Promise<{ state: SaveState; wrote: bo
   await disk.whenIdle()
   return {
     state: useDocumentStore.getState().saveState,
-    wrote: (diskWrites.get(id) ?? 0) > before,
+    wrote: (diskWrites.get(key) ?? 0) > before,
   }
 }
 
@@ -1672,7 +1951,7 @@ export async function saveNowWithResult(): Promise<{ state: SaveState; wrote: bo
 /* -------------------------------------------------------------------------- */
 
 const RECOVERY_PREFIX = 'tavotto.recovery.'
-const recoveryKey = (id: string) => RECOVERY_PREFIX + id
+const recoveryKey = (id: string, format: DocumentFormat = currentDocumentFormat()) => namespaced(RECOVERY_PREFIX + id, format)
 
 function summarizeRecovery(pd: ProjectDocument): RecoverySummary {
   return {
@@ -1689,30 +1968,33 @@ function summarizeRecovery(pd: ProjectDocument): RecoverySummary {
  * 留在原槽位不行：那个键是"在途的兜底副本"，下一次 flush 就会把它按当前
  * 内存内容覆盖掉——用户还没做决定，待恢复的那份就没了。
  */
-function promoteToRecovery(id: string): ProjectDocument | null {
-  const pd = readLocalSlot(id)
+function promoteToRecovery(id: string, format: DocumentFormat = currentDocumentFormat()): ProjectDocument | null {
+  const pd = readLocalSlot(id, format)
   if (!pd) return null
   try {
-    localStorage.setItem(recoveryKey(id), JSON.stringify(pd))
-    localStorage.removeItem(slotKey(id))
+    localStorage.setItem(recoveryKey(id, format), JSON.stringify(pd))
+    localStorage.removeItem(slotKey(id, format))
   } catch {
     return null // 存不下就当没有：不能把唯一一份挪丢了
   }
   return pd
 }
 
-function readRecovery(id: string): ProjectDocument | null {
+function readRecovery(id: string, format: DocumentFormat = currentDocumentFormat()): ProjectDocument | null {
   try {
-    const raw = localStorage.getItem(recoveryKey(id))
-    return raw ? migrateToProject(JSON.parse(raw)) : null
+    const raw = localStorage.getItem(recoveryKey(id, format))
+    if (!raw) return null
+    const parsed: unknown = JSON.parse(raw)
+    if (futureSchemaOf(parsed, format) !== null || (format === 'v4' && (parsed as { schema?: unknown })?.schema !== 4)) return null
+    return migrateToProject(parsed)
   } catch {
     return null
   }
 }
 
-function dropRecovery(id: string): void {
+function dropRecovery(id: string, format: DocumentFormat = currentDocumentFormat()): void {
   try {
-    localStorage.removeItem(recoveryKey(id))
+    localStorage.removeItem(recoveryKey(id, format))
   } catch {
     /* 删不掉只影响下次还会再问一遍 */
   }
@@ -1760,17 +2042,18 @@ export function dismissDocNotice(): void {
  * `readAutosaveDoc` 会把它当成"磁盘上没有、本机这份就是文档本身"推回磁盘，
  * 刚重置的教程当场被旧进度盖回去。
  */
-export function forgetLocalDocument(id: string): void {
+export function forgetLocalDocument(id: string, format: DocumentFormat = 'legacy'): void {
   try {
-    localStorage.removeItem(slotKey(id))
-    localStorage.removeItem(recoveryKey(id))
-    localStorage.removeItem(TABS_PREFIX + id)
+    localStorage.removeItem(slotKey(id, format))
+    localStorage.removeItem(recoveryKey(id, format))
+    localStorage.removeItem(namespaced(TABS_PREFIX, format) + id)
   } catch {
     /* 删不掉只是留几个垃圾键 */
   }
-  forgetProjectFile(id)
-  const kept = writeIndex(readIndex().filter((e) => e.id !== id))
-  useDocumentStore.setState({ recentDocs: kept })
+  if (format === 'v4') forgetProjectFile(id, format)
+  else forgetProjectFile(id)
+  writeIndex(readIndex(format).filter((e) => e.id !== id), format)
+  useDocumentStore.setState({ recentDocs: readRecentIndexes() })
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1785,30 +2068,44 @@ export function forgetLocalDocument(id: string): void {
  * 所以"重新加载"不是一个会丢东西的按钮。
  */
 export async function reloadFromDisk(): Promise<boolean> {
-  const id = useDocumentStore.getState().documentId
+  const opening = useDocumentStore.getState(), openingProject = currentProjectId()
+  const modern = await recoverProjectFileConflict('reload')
+  if (modern !== null) return modern
+  if (useDocumentStore.getState().documentId !== opening.documentId || currentDocumentFormat() !== opening.documentFormat
+    || useDocumentStore.getState().loadSeq !== opening.loadSeq || currentProjectId() !== openingProject) return false
+  const before = useDocumentStore.getState()
+  const id = before.documentId
+  const format = before.documentFormat
+  const pj = currentProjectId()
   // 先落一次本机副本：冲突可能发生在防抖窗口之前，副本未必是最新的内存内容
   try {
-    localStorage.setItem(slotKey(id), JSON.stringify(useDocumentStore.getState().buildProject()))
+    localStorage.setItem(slotKey(id, format), JSON.stringify(useDocumentStore.getState().buildProject()))
   } catch {
     /* 存不下就用已有的那份副本（可能旧一点，总比没有强） */
   }
-  const backup = promoteToRecovery(id)
+  promoteToRecovery(id, format)
   let fetched: Awaited<ReturnType<typeof fetchAutosave>>
   try {
-    fetched = await fetchAutosave(id)
+    fetched = await (format === 'v4' ? fetchAutosave(id, pj, format) : fetchAutosave(id))
   } catch {
     return false // 读不回来就别动内存里那份
   }
+  const now = useDocumentStore.getState()
+  if (now.documentId !== id || now.documentFormat !== format || now.loadSeq !== before.loadSeq || currentProjectId() !== pj) return false
   const pd = fetched ? migrateToProject(fetched.doc) : null
   if (!pd) return false
-  disk.rememberRevision(id, fetched)
-  disk.setBaseline(id, pd.updatedAt)
-  applyProject(pd, id, { dirty: false })
+  // 读盘期间仍能编辑：安装前再备份最新本机稿，沿原恢复槽提供。
+  try { localStorage.setItem(slotKey(id, format), JSON.stringify(now.buildProject())) } catch { return false }
+  const latestBackup = promoteToRecovery(id, format)
+  if (!latestBackup) return false
+  diskFor(format).rememberRevision(id, fetched)
+  diskFor(format).setBaseline(id, pd.updatedAt)
+  applyProject(pd, id, { dirty: false, format })
   setSaveState('clean')
   // 刚才那份内存版本没有丢：它进了恢复槽位，横幅立刻把它提供出来。
   // 「重新加载」因此不是一个会丢东西的按钮。
   setDocNotice(
-    backup ? { kind: 'recovery', docId: id, summary: summarizeRecovery(backup) } : null,
+    { kind: 'recovery', docId: id, summary: summarizeRecovery(latestBackup) },
   )
   return true
 }
@@ -1828,18 +2125,106 @@ export async function reloadFromDisk(): Promise<boolean> {
  * 一个猜出来的基线去盖。
  */
 export async function overwriteDisk(): Promise<SaveState> {
-  const { documentId, saveIssue } = useDocumentStore.getState()
+  const opening = useDocumentStore.getState(), openingProject = currentProjectId()
+  const modern = await recoverProjectFileConflict('overwrite')
+  if (modern !== null) return useDocumentStore.getState().saveState
+  if (useDocumentStore.getState().documentId !== opening.documentId || currentDocumentFormat() !== opening.documentFormat
+    || useDocumentStore.getState().loadSeq !== opening.loadSeq || currentProjectId() !== openingProject) return useDocumentStore.getState().saveState
+  const { documentId, documentFormat: format, loadSeq, saveIssue } = useDocumentStore.getState()
+  const pj = currentProjectId()
   let revision = saveIssue?.disk?.revision
   if (!revision) {
     // `fetchAutosaveSummary` 自己把失败吞成 null（摘要读不出来 = 磁盘上没有
     // 可比较的东西），所以这里不用再包一层 catch。
-    revision = (await fetchAutosaveSummary(documentId, currentProjectId()))?.revision ?? undefined
+    revision = (await (format === 'v4' ? fetchAutosaveSummary(documentId, pj, format) : fetchAutosaveSummary(documentId, pj)))?.revision ?? undefined
   }
-  if (revision) disk.setRevision(documentId, revision)
-  else disk.forgetRevision(documentId)
-  disk.forgetBaseline(documentId)
+  const now = useDocumentStore.getState()
+  if (now.documentId !== documentId || now.documentFormat !== format || now.loadSeq !== loadSeq || currentProjectId() !== pj) return now.saveState
+  if (revision) diskFor(format).setRevision(documentId, revision)
+  else diskFor(format).forgetRevision(documentId)
+  diskFor(format).forgetBaseline(documentId)
   setSaveState('dirty')
   return saveNow()
+}
+
+/** 用户裁决才创建证明；等待期间只保本机，仍由同一个writer提交一次正文。null仅明确旧后端。 */
+async function recoverProjectFileConflict(choice: 'reload' | 'overwrite'): Promise<boolean | null> {
+  const state = useDocumentStore.getState()
+  const pj = currentProjectId()
+  if (!pj) return null
+  const address = projectFileAddress(state.documentId, state.documentFormat, pj)
+  const key = projectFileKey(address), token = ++projectFileRecoverySequence
+  let loadSeq = state.loadSeq
+  const disk = diskFor(address.format)
+  let release!: () => void
+  const barrier = { token, loadSeq, promise: new Promise<void>(resolve => { release = resolve }) }
+  const before = { documentId: state.documentId, format: state.documentFormat, loadSeq, pj }
+  const current = () => projectFileRecoveryBarriers.get(key)?.token === token
+    && projectFileOperationCurrent({ ...before, loadSeq })
+  const binding = activeProjectFile()
+  const sameSelection = () => (activeProjectFile()?.file ?? null) === (binding?.file ?? null)
+    && activeProjectFile()?.sequence === binding?.sequence
+  projectFileRecoveryBarriers.set(key, barrier)
+  cancelPendingAutosave()
+  let wrote = false
+  try {
+    // 当前冲突稿先保本机；旧在途写排空后再观察，不让普通queue洗恢复证明。
+    flushAutosave()
+    await disk.whenIdle()
+    await projectFileHydrations.get(key)?.promise
+    if (!current() || !sameSelection()) return false
+    const view = await (address.format === 'v4' ? fetchProjectFile(address.documentId, pj, address.format) : fetchProjectFile(address.documentId, pj))
+    if (!current() || !sameSelection()) return false
+    if (view.status === 'unsupported') return null
+    if (view.status !== 'ok') return false
+    const fetched = await (address.format === 'v4' ? fetchAutosave(address.documentId, pj, address.format) : fetchAutosave(address.documentId, pj))
+    if (!current() || !sameSelection() || (fetched && !fetched.revision)) return false
+    const document = fetched ? migrateToProject(fetched.doc) : null
+    if (choice === 'reload' && (!document || (document.schema === 4) !== (address.format === 'v4'))) return false
+    const proof: ProjectFileRecovery = structuredClone({ revision: fetched?.revision ?? null, expected: view })
+    if (choice === 'reload') {
+      try { localStorage.setItem(slotKey(address.documentId, address.format), JSON.stringify(useDocumentStore.getState().buildProject())) } catch { return false }
+      const backup = promoteToRecovery(address.documentId, address.format)
+      if (!backup) return false
+      // applyProject会换loadSeq并发普通hydrate；这里的view已捕获，禁止那次读取插入恢复写。
+      applyProject(document!, address.documentId, { dirty: false, format: address.format, projectFileHydrate: false })
+      loadSeq = useDocumentStore.getState().loadSeq
+      barrier.loadSeq = loadSeq
+      setDocNotice({ kind: 'recovery', docId: address.documentId, summary: summarizeRecovery(backup) })
+    }
+    if (!current()) return false
+    projectFileEditor.observe(address, view)
+    projectFileEditor.newRecoveryBranch(address)
+    markProjectFileDirty()
+    const raw = useDocumentStore.getState().buildProject()
+    const chartContext = address.format === 'v4' ? captureChartSourceSave(raw, pj) : undefined
+    const body = chartContext?.document ?? raw
+    const context: DiskSaveContext = {
+      ...captureFigureSnapshotSave(body, pj), ...(chartContext ? { chartContext } : {}),
+      projectFileContext: projectFileEditor.capture(address), projectFileRecovery: proof, moment: captureDocumentMoment(useDocumentStore.getState(), address.projectId, useTimelineStore.getState().gen),
+    }
+    disk.rememberRevision(address.documentId, fetched)
+    disk.forgetBaseline(address.documentId)
+    const priorWrites = diskWrites.get(documentAddressKey(address.documentId, address.format)) ?? 0
+    useDocumentStore.setState({ dirty: false })
+    setSaveState('dirty')
+    disk.markManual()
+    disk.schedule(address.documentId, body, pj, context)
+    await disk.whenIdle()
+    if (!current()) return false
+    wrote = (diskWrites.get(documentAddressKey(address.documentId, address.format)) ?? 0) > priorWrites
+    return wrote
+  } catch {
+    // 读取/证据失败不替用户选旧wire，也不清现冲突及本机稿。
+    return false
+  } finally {
+    if (projectFileRecoveryBarriers.get(key)?.token === token) {
+      projectFileRecoveryBarriers.delete(key)
+      if (wrote && projectFileOperationCurrent({ ...before, loadSeq }) && useDocumentStore.getState().dirty
+        && !useDocumentStore.getState().restoreMetaIssue) flushAutosave()
+    }
+    release()
+  }
 }
 
 interface LocalSnapshot {
@@ -1848,11 +2233,12 @@ interface LocalSnapshot {
 }
 
 /** 原始快照与可打开的文档一起读取；旧格式迁移生成的身份不能用于判断原稿是否相同。 */
-function readLocalSnapshot(id: string): LocalSnapshot | null {
+function readLocalSnapshot(id: string, format: DocumentFormat = currentDocumentFormat()): LocalSnapshot | null {
   try {
-    const raw = localStorage.getItem(slotKey(id))
+    const raw = localStorage.getItem(slotKey(id, format))
     if (!raw) return null
     const parsed: unknown = JSON.parse(raw)
+    if (futureSchemaOf(parsed, format) !== null || (format === 'v4' && (parsed as { schema?: unknown })?.schema !== 4)) return null
     const doc = migrateToProject(parsed)
     return doc ? { raw: parsed, doc } : null
   } catch {
@@ -1861,8 +2247,8 @@ function readLocalSnapshot(id: string): LocalSnapshot | null {
 }
 
 /** 本机兜底副本（若有）；schema 2 旧槽位自动迁移 */
-function readLocalSlot(id: string): ProjectDocument | null {
-  return readLocalSnapshot(id)?.doc ?? null
+function readLocalSlot(id: string, format: DocumentFormat = currentDocumentFormat()): ProjectDocument | null {
+  return readLocalSnapshot(id, format)?.doc ?? null
 }
 
 type LocalRecoveryKind = 'local_newer' | 'local_distinct'
@@ -1887,11 +2273,11 @@ export interface LoadedDoc {
 }
 
 /** `migrateToProject` 认不出的载荷里，是不是一份"来自更新的 Tavotto"？ */
-function futureSchemaOf(raw: unknown): number | null {
+function futureSchemaOf(raw: unknown, format: DocumentFormat = 'legacy'): number | null {
   const d = raw as { schema?: unknown } | null
   if (!d || typeof d !== 'object') return null
   const schema = d.schema
-  return typeof schema === 'number' && schema > SCHEMA_CURRENT ? schema : null
+  return typeof schema === 'number' && schema > (format === 'v4' ? 4 : SCHEMA_CURRENT) ? schema : null
 }
 
 /**
@@ -1899,6 +2285,7 @@ function futureSchemaOf(raw: unknown): number | null {
  * 选中并且仍有提交权的那一份再交给 `acceptProbe` 落账。
  */
 export interface ProbeResult {
+  format?: DocumentFormat
   id: string
   kind: 'found' | 'missing' | 'unavailable' | 'invalid' | 'too_new'
   /** 磁盘那一侧的探测原样 */
@@ -1930,15 +2317,16 @@ export interface ProbeResult {
  *
  * 探测不碰任何东西，所以恢复协调可以逐个候选地探：没被选中的候选不会产生写入、不会迁移恢复副本。
  */
-export async function probeDocument(id: string, pj: string | null): Promise<ProbeResult> {
-  const disk = await probeAutosave(id, pj)
-  const localSnapshot = readLocalSnapshot(id)
+export async function probeDocument(id: string, pj: string | null, format: DocumentFormat = 'legacy'): Promise<ProbeResult> {
+  const finish = (probe: ProbeResult): ProbeResult => format === 'v4' ? { ...probe, format } : probe
+  const disk = await (format === 'v4' ? probeAutosave(id, pj, format) : probeAutosave(id, pj))
+  const localSnapshot = readLocalSnapshot(id, format)
   const local = localSnapshot?.doc ?? null
-  const pending = readRecovery(id)
+  const pending = readRecovery(id, format)
   if (disk.kind === 'found') {
-    const future = futureSchemaOf(disk.doc)
+    const future = futureSchemaOf(disk.doc, format)
     if (future !== null) {
-      return { id, kind: 'too_new', disk, doc: null, from: null, pendingRecovery: null, schema: future, local: null }
+      return finish({ id, kind: 'too_new', disk, doc: null, from: null, pendingRecovery: null, schema: future, local: null })
     }
     let diskDoc: ProjectDocument | null = null
     try {
@@ -1946,12 +2334,13 @@ export async function probeDocument(id: string, pj: string | null): Promise<Prob
     } catch {
       diskDoc = null // 坏正文：当成读不了（下面退本机副本或回 invalid）
     }
+    if (format === 'v4' && diskDoc?.schema !== 4) diskDoc = null
     if (diskDoc) {
       // 上一轮没裁决完的恢复副本优先：它一直有效，直到用户处置它
       const pendingRecovery = pending
         ? 'recovery_slot'
         : localRecoveryKind(localSnapshot, diskDoc, disk.doc)
-      return { id, kind: 'found', disk, doc: diskDoc, from: 'disk', pendingRecovery, local: local ?? pending }
+      return finish({ id, kind: 'found', disk, doc: diskDoc, from: 'disk', pendingRecovery, local: local ?? pending })
     }
     // 磁盘上有字节但本构建认不出：当成读不了，有本机副本就用它（与旧 `fetchAutosave` 抛错同一条路）
   }
@@ -1959,10 +2348,10 @@ export async function probeDocument(id: string, pj: string | null): Promise<Prob
   const fallback = local ?? pending
   // 只有确认过 404 才自动把本机副本当文档本身；读失败（不可用 / 坏）保持磁盘的结局，副本另放
   if (fallback && disk.kind === 'missing') {
-    return { id, kind: 'found', disk, doc: fallback, from: 'local', pendingRecovery: null, local: fallback }
+    return finish({ id, kind: 'found', disk, doc: fallback, from: 'local', pendingRecovery: null, local: fallback })
   }
   const kind = disk.kind === 'found' ? 'invalid' : disk.kind
-  return { id, kind, disk, doc: null, from: null, pendingRecovery: null, local: fallback }
+  return finish({ id, kind, disk, doc: null, from: null, pendingRecovery: null, local: fallback })
 }
 
 /**
@@ -1970,49 +2359,53 @@ export async function probeDocument(id: string, pj: string | null): Promise<Prob
  * 本机副本推回磁盘都在这里。`token` 给了就要求它仍是当前恢复代次，过期什么都不做、回 null。
  * 返回读盘带回来的待裁决事项（调用方在文档换进来**之后**挂上）。
  */
-export function acceptProbe(p: ProbeResult, _pj: string | null, token?: RestoreToken | null): DocNotice | null {
+export function acceptProbe(p: ProbeResult, pj: string | null, token?: RestoreToken | null): DocNotice | null {
   if (token && !isRestoreTokenCurrent(token)) return null
   const id = p.id
+  const format = p.format ?? 'legacy'
+  const writer = diskFor(format)
   if (p.kind === 'too_new') {
     return { kind: 'schema_too_new', docId: id, schema: p.schema ?? 0 }
   }
   if (p.kind !== 'found' || !p.doc) return null
-  const localSnapshot = readLocalSnapshot(id)
+  const localSnapshot = readLocalSnapshot(id, format)
   const local = localSnapshot?.doc ?? null
-  const pending = readRecovery(id)
+  const pending = readRecovery(id, format)
   if (p.from === 'disk' && p.disk.kind === 'found') {
     const diskDoc = p.doc
-    disk.rememberRevision(id, { revision: p.disk.revision })
+    writer.rememberRevision(id, { revision: p.disk.revision })
     // 读到什么就以什么为基线：之后本标签页的写盘都从这一版往前推进
-    if (typeof diskDoc.updatedAt === 'number') disk.setBaseline(id, diskDoc.updatedAt)
+    if (typeof diskDoc.updatedAt === 'number') writer.setBaseline(id, diskDoc.updatedAt)
     const localKind = localRecoveryKind(localSnapshot, diskDoc, p.disk.doc)
     const candidate = pending ?? (localKind ? local : null)
     if (local && !pending && !localKind) {
       // 内容已经在磁盘中；仅 updatedAt 或 JSON 键序不同，没有要恢复的编辑。
       try {
-        localStorage.removeItem(slotKey(id))
+        localStorage.removeItem(slotKey(id, format))
       } catch {
         /* 删不掉只是留个垃圾键，下次索引清理还会再试 */
       }
     }
     if (!candidate) return null
-    const kept = pending ?? promoteToRecovery(id)
+    const kept = pending ?? promoteToRecovery(id, format)
     if (!kept) return null
     return { kind: 'recovery', docId: id, summary: summarizeRecovery(kept) }
   }
   // 磁盘上没有 / 读不到：本机那份就是文档本身
-  if (!local) dropRecovery(id) // 恢复槽位转正，别再问一遍
-  if (p.disk.kind === 'missing') {
+  if (!local) dropRecovery(id, format) // 恢复槽位转正，别再问一遍
+  if (p.disk.kind === 'missing' && !(format === 'legacy' && containsChartState(p.doc))) {
     // 确认过磁盘上真的没有（404）：记成「缺席」档，并把本机那份推上去。记在这份排版**原本**属于的项目名下：
     // 只是打开（显式从「最近文档」打开别的项目的）不算带进当前项目
-    disk.rememberRevision(id, null)
-    const owner = ownerProjectForWrite(id)
-    disk.schedule(id, p.doc, owner, { ...captureFigureSnapshotSave(p.doc, owner), documentId: id })
+    writer.rememberRevision(id, null)
+    const owner = ownerProjectForWrite(id, format, pj)
+    const chartContext = format === 'v4' ? captureSourceContext(p.doc, { format, pj: owner, documentId: id, loadSeq: useDocumentStore.getState().loadSeq }) : undefined
+    const document = chartContext?.document ?? p.doc
+    writer.schedule(id, document, owner, { ...captureFigureSnapshotSave(document, owner), documentId: id, ...(chartContext ? { chartContext } : {}) })
   } else {
     // 读盘失败（不可达 / 5xx / 磁盘上的字节坏了）：**不推**，也不伪造「缺席」——那时我们不知道磁盘上有什么，
     // 一次整份 PUT 就可能盖掉一份从没读过的文档。删掉条目 = 这份文档的磁盘状况我还没确认过，
     // 写之前 ensureDiskKnown 会去确认一次
-    disk.forgetRevision(id)
+    writer.forgetRevision(id)
   }
   return null
 }
@@ -2022,24 +2415,37 @@ export function acceptProbe(p: ProbeResult, _pj: string | null, token?: RestoreT
  * 否则第一次自动保存会把「从没读过的磁盘文档」当成外部修改弹冲突。
  * 只记基线，不接收恢复副本（调用方保证这份槽位没有未保存的编辑）。
  */
-export async function adoptSlotBaseline(id: string): Promise<void> {
-  const p = await probeAutosave(id, currentProjectId())
+export async function adoptSlotBaseline(id: string, format: DocumentFormat = 'legacy'): Promise<boolean> {
+  const pj = currentProjectId()
+  const p = await (format === 'v4' ? probeAutosave(id, pj, format) : probeAutosave(id, pj))
+  if (currentProjectId() !== pj) return false
+  // 本机旧绑定可能仍是 clean，而另一个窗口已保存未写回命名文件的编辑。
+  // 先核后端绑定与同一份 AS 修订；不能把那份新稿读成可覆盖的基线。
+  if (pj) {
+    const view = await (format === 'v4' ? fetchProjectFile(id, pj, format) : fetchProjectFile(id, pj))
+      .catch(() => ({ status: 'unavailable' } as const))
+    if (currentProjectId() !== pj) return false
+    if (view.status !== 'unsupported' && (view.status !== 'ok' || !view.edit.known || !view.binding || view.binding.dirty
+      || (p.kind !== 'found' && p.kind !== 'missing') || view.edit.autosave_revision !== (p.kind === 'found' ? p.revision : null))) return false
+  }
+  const writer = diskFor(format)
   if (p.kind === 'found') {
-    disk.rememberRevision(id, { revision: p.revision })
+    writer.rememberRevision(id, { revision: p.revision })
     if (typeof (p.doc as { updatedAt?: unknown })?.updatedAt === 'number') {
-      disk.setBaseline(id, (p.doc as { updatedAt: number }).updatedAt)
+      writer.setBaseline(id, (p.doc as { updatedAt: number }).updatedAt)
     }
   } else if (p.kind === 'missing') {
-    disk.rememberRevision(id, null)
+    writer.rememberRevision(id, null)
   } else {
-    disk.forgetRevision(id)
+    writer.forgetRevision(id)
   }
+  return true
 }
 
 /** 读文档并落账（`probeDocument` + `acceptProbe`）：显式打开最近文档 / 教程装文档用，现有调用方不变 */
-export async function readAutosaveDoc(id: string): Promise<LoadedDoc> {
+export async function readAutosaveDoc(id: string, format: DocumentFormat = 'legacy'): Promise<LoadedDoc> {
   const pj = currentProjectId()
-  let probe = await probeDocument(id, pj)
+  let probe = await (format === 'v4' ? probeDocument(id, pj, format) : probeDocument(id, pj))
   // 显式打开最近文档：读盘失败时本机副本就是能给用户的那份（老行为）；恢复协调不走这里
   if (!probe.doc && probe.local && (probe.kind === 'unavailable' || probe.kind === 'invalid')) {
     probe = { ...probe, kind: 'found', doc: probe.local, from: 'local' }
@@ -2055,7 +2461,7 @@ export async function readAutosaveDoc(id: string): Promise<LoadedDoc> {
  * **`buildProject` 多读一片，这里就要多加一片**（看护：documentStore.test 里重命名项目 / 挪非激活画布那两条）。
  */
 const persistedIdentity = (s: DocumentState) =>
-  [s.documentId, s.loadSeq, s.doc, s.canvases, s.activeCanvasId, s.projectMeta] as const
+  [s.documentId, s.loadSeq, s.doc, s.canvases, s.activeCanvasId, s.projectMeta, s.documentFormat] as const
 
 /* -------------------------------------------------------------------------- */
 /*  项目文件绑定（ADR 0096）                                                     */
@@ -2074,10 +2480,14 @@ export function activeProjectFile(): ProjectFileBinding | null {
 export function setProjectFile(
   binding: ProjectFileBinding | null,
   documentId = useDocumentStore.getState().documentId,
+  format: DocumentFormat = currentDocumentFormat(),
 ): void {
-  const stored = binding ? writeProjectFile(documentId, binding) : null
-  if (!binding) forgetProjectFile(documentId)
-  if (useDocumentStore.getState().documentId === documentId) {
+  const stored = binding ? (format === 'v4' ? writeProjectFile(documentId, binding, format) : writeProjectFile(documentId, binding)) : null
+  if (!binding) {
+    if (format === 'v4') forgetProjectFile(documentId, format)
+    else forgetProjectFile(documentId)
+  }
+  if (isCurrentDoc(documentId, format)) {
     useDocumentStore.setState({ projectFile: stored })
   }
 }
@@ -2092,7 +2502,7 @@ export function setProjectFile(
  * 算的话写的途中来一次元数据同步，圆点就亮了、要求一次多余的保存（评审第 6 轮）。
  */
 const editGeneration = new Map<string, number>()
-const editGenerationOf = (documentId: string) => editGeneration.get(documentId) ?? 0
+const editGenerationOf = (documentId: string, format: DocumentFormat = currentDocumentFormat()) => editGeneration.get(documentAddressKey(documentId, format)) ?? 0
 
 /**
  * 用户编辑之后：项目里那份落后了。编辑代次一律前进；绑定没有 / 已经是 dirty 就不再写。
@@ -2100,7 +2510,9 @@ const editGenerationOf = (documentId: string) => editGeneration.get(documentId) 
  */
 function markProjectFileDirty(): void {
   const s = useDocumentStore.getState()
-  editGeneration.set(s.documentId, editGenerationOf(s.documentId) + 1)
+  editGeneration.set(documentAddressKey(s.documentId, s.documentFormat), editGenerationOf(s.documentId) + 1)
+  const owner = pendingClaim?.id ?? projectOfDoc().id ?? currentProjectId()
+  if (owner) projectFileEditor.markUserEdit(projectFileAddress(s.documentId, s.documentFormat, owner))
   const b = s.projectFile
   if (b && !b.dirty) setProjectFile({ ...b, dirty: true })
 }
@@ -2110,10 +2522,225 @@ function markProjectFileDirty(): void {
  * 写成之后问一下——**这份**排版在写的途中又改过的话，项目里那份仍然落后，圆点不能灭；
  * 途中切到别的排版不算改过。
  */
-export function projectFileSnapshot(): () => boolean {
-  const documentId = useDocumentStore.getState().documentId
-  const before = editGenerationOf(documentId)
-  return () => editGenerationOf(documentId) !== before
+export function projectFileSnapshot(
+  documentId = useDocumentStore.getState().documentId,
+  format = currentDocumentFormat(),
+): () => boolean {
+  const before = editGenerationOf(documentId, format)
+  return () => editGenerationOf(documentId, format) !== before
+}
+
+export interface PreparedProjectFileSave {
+  document: ProjectDocument
+  address: ProjectFileAddress
+  capture: ProjectFileCapture
+  ticket: ProjectFileTicket
+  loadSeq: number
+  moment?: MomentSnapshot
+  namedRevision?: string
+  opened?: boolean
+}
+
+function projectFileOperationCurrent(scope: { documentId: string; format: DocumentFormat; loadSeq: number; pj: string | null }): boolean {
+  const current = useDocumentStore.getState()
+  return current.documentId === scope.documentId && current.documentFormat === scope.format
+    && current.loadSeq === scope.loadSeq && currentProjectId() === scope.pj
+}
+
+const projectFileUnavailable = () => new ApiError(t('save.projectBindingUnavailable', { ns: 'workspace' }), 503, { code: 'session_unavailable' })
+
+export interface WorkingDocumentSaveScope {
+  pj: string
+  format: DocumentFormat
+  documentId: string
+  loadSeq: number
+}
+
+export interface WorkingDocumentSaveReceipt {
+  address: ProjectFileAddress
+  document: ProjectDocument
+  revision: string
+  loadSeq: number
+  capture: ProjectFileCapture
+  moment?: MomentSnapshot
+}
+
+/** 读取同一次实际writer成功与磁盘正文；不预留named票据、不重新构建发送正文。 */
+async function readWorkingDocumentSaveReceipt(scope: WorkingDocumentSaveScope): Promise<WorkingDocumentSaveReceipt> {
+  if (!projectFileOperationCurrent(scope)) throw projectFileUnavailable()
+  const address = projectFileAddress(scope.documentId, scope.format, scope.pj)
+  const written = projectFileWrites.get(projectFileKey(address))
+  if (!written || written.loadSeq !== scope.loadSeq || !written.revision) throw projectFileUnavailable()
+  const fetched = scope.format === 'v4' ? await fetchAutosave(scope.documentId, scope.pj, scope.format)
+    : await fetchAutosave(scope.documentId, scope.pj)
+  if (!projectFileOperationCurrent(scope) || !fetched || fetched.revision !== written.revision) throw projectFileUnavailable()
+  const document = migrateToProject(fetched.doc)
+  if (!document || (document.schema === 4) !== (scope.format === 'v4')) throw projectFileUnavailable()
+  // moment持有原时刻只读图源（可能含PNG Promise），沿既有保存合同保留，不做structuredClone。
+  return { address, document, revision: written.revision, loadSeq: scope.loadSeq, capture: structuredClone(written.capture), moment: written.moment }
+}
+
+/** 等待现有安装写入；只有明确persistEmpty才为普通保存会跳过的空排版创建真实槽位。 */
+export async function waitForWorkingDocumentSave(
+  scope: WorkingDocumentSaveScope,
+  opts: { persistEmpty?: boolean } = {},
+): Promise<WorkingDocumentSaveReceipt> {
+  scope = { ...scope }
+  const persistEmpty = opts.persistEmpty === true
+  const address = projectFileAddress(scope.documentId, scope.format, scope.pj)
+  const requireSupported = () => {
+    if (!scope.pj || !projectFileOperationCurrent(scope) || projectFileEditor.support(address) !== 'supported') {
+      throw projectFileReadErrors.get(projectFileKey(address)) ?? projectFileUnavailable()
+    }
+  }
+  requireSupported()
+  const disk = diskFor(scope.format)
+  await disk.whenIdle()
+  requireSupported()
+  if (useDocumentStore.getState().saveState === 'save_error' || useDocumentStore.getState().saveState === 'conflict') throw projectFileUnavailable()
+  if (persistEmpty && !hasContent(useDocumentStore.getState().buildProject())) {
+    // 两个消费者可同时等待；复用已经在同writer执行的第一次显式空稿写入。
+    while (disk.busy || disk.queued) {
+      await disk.whenIdle()
+      requireSupported()
+    }
+    const written = projectFileWrites.get(projectFileKey(address))
+    const document = useDocumentStore.getState().buildProject()
+    if (!hasContent(document) && (written?.loadSeq !== scope.loadSeq || hasContent(written.document))) {
+      const snapshots: DiskSaveContext = {
+        ...captureFigureSnapshotSave(document, scope.pj), projectFileContext: projectFileEditor.capture(address), moment: captureDocumentMoment(useDocumentStore.getState(), scope.pj, useTimelineStore.getState().gen),
+      }
+      disk.schedule(scope.documentId, document, scope.pj, snapshots)
+      await disk.whenIdle()
+    }
+  }
+  requireSupported()
+  if (useDocumentStore.getState().saveState === 'save_error' || useDocumentStore.getState().saveState === 'conflict') throw projectFileUnavailable()
+  const receipt = await readWorkingDocumentSaveReceipt(scope)
+  requireSupported()
+  const view = projectFileEditor.view(address)
+  if (!view?.edit.known || view.edit.autosave_revision !== receipt.revision) throw projectFileUnavailable()
+  return receipt
+}
+
+/** null 仅表示明确 404 的旧后端；未知关联不能静默走旧保存路径。 */
+export async function prepareProjectFileSave(name: string, scope: {
+  documentId: string; format: DocumentFormat; loadSeq: number; pj: string | null
+}): Promise<PreparedProjectFileSave | null> {
+  if (!scope.pj || !projectFileOperationCurrent(scope)) throw projectFileUnavailable()
+  await hydrateProjectFile()
+  if (!projectFileOperationCurrent(scope)) throw projectFileUnavailable()
+  const address = projectFileAddress(scope.documentId, scope.format, scope.pj)
+  const support = projectFileEditor.support(address)
+  if (support === 'unsupported') return null
+  if (support !== 'supported') throw projectFileReadErrors.get(projectFileKey(address)) ?? projectFileUnavailable()
+  // 同一 writer 真正写完的那份正文才可取得命名保存票据，不能 await 后重新 build 新正文。
+  if (hasContent(useDocumentStore.getState().buildProject())) {
+    const result = await saveNowWithResult()
+    if (result.state === 'save_error' || result.state === 'conflict') throw projectFileUnavailable()
+  } else {
+    const document = useDocumentStore.getState().buildProject()
+    const snapshots: DiskSaveContext = {
+      ...captureFigureSnapshotSave(document, scope.pj), projectFileContext: projectFileEditor.capture(address), moment: captureDocumentMoment(useDocumentStore.getState(), scope.pj, useTimelineStore.getState().gen),
+    }
+    diskFor(scope.format).schedule(scope.documentId, document, scope.pj, snapshots)
+    await diskFor(scope.format).whenIdle()
+  }
+  const written = await readWorkingDocumentSaveReceipt({ ...scope, pj: scope.pj })
+  const { document } = written
+  const view = projectFileEditor.view(address)
+  const reserved = await reserveProjectFile(scope.documentId, scope.pj, {
+    name, autosave_revision: written.revision, axis: written.capture.axis,
+    expected_binding_sequence: view?.binding?.sequence ?? null,
+  }, ...(scope.format === 'v4' ? [scope.format] : []))
+  if (reserved.state !== 'reserved') throw projectFileUnavailable()
+  projectFileEditor.reserved(address, reserved.ticket)
+  if (!projectFileOperationCurrent(scope)) {
+    void cancelProjectFile(scope.documentId, scope.pj, reserved.ticket.sequence, ...(scope.format === 'v4' ? [scope.format] : [])).catch(() => {})
+    throw projectFileUnavailable()
+  }
+  return { address, document, capture: written.capture, ticket: reserved.ticket, loadSeq: scope.loadSeq, moment: written.moment }
+}
+
+/** 已发生的命名写入与关联元信息分开落账；较晚另存意图不能被旧回执覆盖。 */
+export function finishProjectFileSave(prepared: PreparedProjectFileSave, result?: ProjectFileResult, namedRevision?: string | null): boolean {
+  if (namedRevision) prepared.namedRevision = namedRevision
+  const { address, capture, ticket } = prepared
+  const scope = { documentId: address.documentId, format: address.format, loadSeq: prepared.loadSeq, pj: address.projectId }
+  if (!projectFileOperationCurrent(scope) || !projectFileEditor.isLatest(address, ticket.sequence)) return false
+  if (result?.state !== 'bound' || result.binding?.sequence !== ticket.sequence || !projectFileEditor.accepted(capture, result)) {
+    if (prepared.namedRevision && result?.state !== 'superseded') pendingProjectFileConfirmations.set(projectFileKey(address), prepared)
+    useDocumentStore.setState({ restoreMetaIssue: { docId: address.documentId, pj: address.projectId } })
+    return false
+  }
+  pendingProjectFileConfirmations.delete(projectFileKey(address))
+  const binding = bindingFromProjectFile(address, result)
+  if (binding && JSON.stringify(projectFileEditor.capture(address).axis) !== JSON.stringify(result.edit.axis)) binding.dirty = true
+  setProjectFile(binding, address.documentId, address.format)
+  return true
+}
+
+export async function retryProjectFileConfirmation(name: string, scope: {
+  documentId: string; format: DocumentFormat; loadSeq: number; pj: string | null
+}): Promise<{ state: 'none' | 'unconfirmed' | 'superseded' } | { state: 'confirmed'; sequence: number; dirty: boolean; file: string }> {
+  if (!scope.pj) return { state: 'none' }
+  const address = projectFileAddress(scope.documentId, scope.format, scope.pj)
+  const key = projectFileKey(address)
+  const pending = pendingProjectFileConfirmations.get(key)
+  if (!pending || pending.ticket.name !== name) return { state: 'none' }
+  if (pending.loadSeq !== scope.loadSeq || !projectFileOperationCurrent(scope)
+    || !projectFileEditor.isLatest(address, pending.ticket.sequence)) return { state: 'superseded' }
+  const result = await confirmProjectFile(scope.documentId, scope.pj, {
+    name, intent_sequence: pending.ticket.sequence, revision: pending.namedRevision!,
+  }, ...(scope.format === 'v4' ? [scope.format] : []))
+  if (!projectFileOperationCurrent(scope) || !projectFileEditor.isLatest(address, pending.ticket.sequence)) return { state: 'superseded' }
+  if (result.state === 'superseded') {
+    pendingProjectFileConfirmations.delete(key)
+    return { state: 'superseded' }
+  }
+  if (!finishProjectFileSave(pending, result, pending.namedRevision)) return { state: 'unconfirmed' }
+  const binding = activeProjectFile()
+  return binding?.sequence === pending.ticket.sequence
+    ? { state: 'confirmed', sequence: binding.sequence, dirty: binding.dirty, file: binding.file }
+    : { state: 'superseded' }
+}
+
+export async function cancelPreparedProjectFile(prepared: PreparedProjectFileSave): Promise<void> {
+  const { address, ticket } = prepared
+  if (prepared.namedRevision && projectFileEditor.isLatest(address, ticket.sequence)) return
+  await cancelProjectFile(address.documentId, address.projectId, ticket.sequence,
+    ...(address.format === 'v4' ? [address.format] : [])).catch(() => {})
+}
+
+export async function associateOpenedProjectFile(binding: ProjectFileBinding, scope: {
+  documentId: string; format: DocumentFormat; loadSeq: number; pj: string | null
+}): Promise<void> {
+  if (!scope.pj || !projectFileOperationCurrent(scope)) return
+  const address = projectFileAddress(scope.documentId, scope.format, scope.pj)
+  const key = projectFileKey(address)
+  const opened = projectFileOpens.get(key)
+  if (projectFileEditor.support(address) === 'unsupported') { projectFileOpens.delete(key); return }
+  if (!binding.revision || !opened?.ticket || opened.loadSeq !== scope.loadSeq || opened.error) throw opened?.error ?? projectFileUnavailable()
+  const prepared: PreparedProjectFileSave = {
+    address, ticket: opened.ticket, document: useDocumentStore.getState().buildProject(), loadSeq: scope.loadSeq,
+    capture: { address, generation: 0, axis: opened.ticket.axis, base_axis: opened.ticket.axis },
+    opened: true,
+  }
+  try {
+    const saved = await saveNowWithResult()
+    if (!projectFileOperationCurrent(scope)) return
+    if (saved.state === 'save_error' || saved.state === 'conflict') throw projectFileUnavailable()
+    const result = await confirmProjectFile(scope.documentId, binding.projectId, {
+      name: binding.name, intent_sequence: prepared.ticket.sequence, revision: binding.revision,
+    }, ...(scope.format === 'v4' ? [scope.format] : [])).catch(error => {
+      finishProjectFileSave(prepared, undefined, binding.revision)
+      throw error
+    })
+    finishProjectFileSave(prepared, result, binding.revision)
+  } finally {
+    projectFileOpens.delete(key)
+    await cancelPreparedProjectFile(prepared)
+  }
 }
 
 /**
@@ -2124,10 +2751,12 @@ export function projectFileSnapshot(): () => boolean {
  */
 export async function loadAutosavedDocument(
   id: string,
+  format: DocumentFormat = 'legacy',
 ): Promise<{ loaded: boolean; notice: DocNotice | null }> {
-  const { doc, notice } = await readAutosaveDoc(id)
+  const { doc, notice } = await (format === 'v4' ? readAutosaveDoc(id, format) : readAutosaveDoc(id))
   if (!doc) return { loaded: false, notice }
-  const loaded = await useDocumentStore.getState().switchDocument(doc, id)
+  const loaded = await (format === 'v4' ? useDocumentStore.getState().switchDocument(doc, id, undefined, { format })
+    : useDocumentStore.getState().switchDocument(doc, id))
   if (loaded && notice) setDocNotice(notice)
   return { loaded, notice }
 }
@@ -2140,23 +2769,30 @@ export async function loadAutosavedDocument(
  * 加载、启动恢复都走它。恢复路径**必须**不写本机副本：那个槽位正是待恢复的
  * 那份，写一次就没了。
  */
-function applyProject(pd: ProjectDocument, id: string, opts: { dirty: boolean }): void {
+function applyProject(pd: ProjectDocument, id: string, opts: { dirty: boolean; format?: DocumentFormat; projectFileHydrate?: boolean }): void {
+  const upgrade = pd.schema !== 4 && containsChartState(pd)
+  const format = upgrade ? 'v4' : opts.format ?? documentFormatForSchema(pd.schema) ?? 'legacy'
+  if (upgrade) id = newId('d')
   const active = pd.canvases.find((c) => c.id === pd.activeCanvasId) ?? pd.canvases[0]
   useDocumentStore.setState({
     doc: canvasToDoc(active),
     documentId: id,
+    documentFormat: format,
     projectMeta: { id: pd.project.id, name: pd.project.name, createdAt: pd.createdAt },
     canvases: pd.canvases,
     activeCanvasId: active.id,
     canvasSessions: {},
-    openTabs: restoreTabs(id, pd.canvases, active.id),
-    dirty: opts.dirty,
-    projectFile: readProjectFile(id),
+    openTabs: restoreTabs(id, pd.canvases, active.id, format),
+    dirty: upgrade || opts.dirty,
+    projectFile: upgrade ? null : format === 'v4' ? readProjectFile(id, format) : readProjectFile(id),
     loadSeq: useDocumentStore.getState().loadSeq + 1,
     past: [],
     future: [],
     txn: null,
   })
+  const owner = projectOfDoc().id ?? currentProjectId()
+  if (owner) projectFileEditor.beginInstall(projectFileAddress(id, format, owner))
+  if (opts.projectFileHydrate !== false && getRestoreGate().state === 'ready') void hydrateProjectFile(undefined, true)
 }
 
 /** Source-run generations are runtime facts, scoped by project; never inferred from a render refresh. */
@@ -2189,18 +2825,69 @@ const snapshotReceiptInvalidated = (ref: FigureSnapshot) => {
 }
 
 /** Editing source/patches invalidates the association; page geometry and exact copies preserve it. */
-function clearChangedFigureSnapshots(next: FigureDocument, before: FigureDocument): void {
-  if (!next.objects.some((o) => o.type === 'panel' && o.figureSnapshot)) return
+function clearChangedFigureSnapshots(next: FigureDocument, before: FigureDocument, restoredSources = false): void {
+  clearChangedChartSources(next, before)
   const previous = new Map(before.objects.filter((o) => o.type === 'panel').map((o) => [o.id, o]))
   for (const panel of next.objects) {
-    if (panel.type !== 'panel' || !panel.figureSnapshot) continue
+    if (panel.type !== 'panel') continue
     const old = previous.get(panel.id)
+    if (restoredSources) {
+      // Whole-history restoration owns its own P; never borrow the currently installed source.
+      const origin = figureOriginFor(panel)
+      if (validFigureOrigin(origin, panel.fileId)) panel.figureOrigin = JSON.parse(JSON.stringify(origin))
+    } else if (old && !sameFigureSource(old, panel)) {
+      // Replacement cannot carry the old source's lineage; an explicit new matching origin may.
+      if (!validFigureOrigin(panel.figureOrigin, panel.fileId) || sameFigureOrigin(panel.figureOrigin, old.figureOrigin)) delete panel.figureOrigin
+    } else if (old && panel.chart === undefined && panel.chartSource === undefined &&
+               old.figureOrigin === undefined &&
+               JSON.stringify(old.overrides) !== JSON.stringify(panel.overrides)) {
+      // Freeze the pre-edit baseline P only when the backend proved this exact
+      // render produced the snapshot. A bare output snapshot is not a
+      // historical input and must not silently become one.
+      const origin = verifiedFigureOrigin(old, currentProjectId())
+      if (origin !== undefined) panel.figureOrigin = origin
+    }
+    if (!panel.figureSnapshot) continue
+    // A snapshot-only association may be attached/replaced without changing its inputs.
+    // Once P is explicit, the output must still belong to that same origin and Q.
+    const changedInputs = old && (old.figureOrigin !== undefined || panel.figureOrigin !== undefined
+      ? !sameFigureInputs(old, panel)
+      : !sameFigureSource(old, panel) || JSON.stringify(old.overrides) !== JSON.stringify(panel.overrides))
     if (!validFigureSnapshot(panel.figureSnapshot, panel.fileId) ||
-        (old && !sameFigureInputs(old, panel)) ||
+        (changedInputs && !restoredSources) ||
         snapshotReceiptInvalidated(panel.figureSnapshot)) {
       delete panel.figureSnapshot
     }
   }
+}
+
+export function captureChartSourceSave(document: ProjectDocument, pj: string | null = currentProjectId()): ChartSourceSaveContext {
+  const state = useDocumentStore.getState()
+  return captureSourceContext(document, { format: state.documentFormat, pj, documentId: state.documentId, loadSeq: state.loadSeq })
+}
+
+export function mergeSavedChartSources(context: ChartSourceSaveContext, refs: ChartSourceReceipt[] | undefined): void {
+  if (refs === undefined || writesBlocked(false)) return
+  const state = useDocumentStore.getState()
+  const plan = planSavedChartSources(context, state.buildProject(), {
+    format: state.documentFormat, pj: currentProjectId(), documentId: state.documentId, loadSeq: state.loadSeq,
+  }, refs)
+  if (plan.status !== 'ready' || !plan.updates.length || (projectOfDoc().id ?? currentProjectId()) !== context.pj) return
+  const activeIndex = state.canvases.findIndex(canvas => canvas.id === state.activeCanvasId)
+  const [doc, docPatches] = produceWithPatches(state.doc, draft => {
+    for (const update of plan.updates) if (update.canvasIndex === activeIndex) {
+      const panel = draft.objects[update.objectIndex]
+      if (panel.type === 'panel') panel.chartSource = update.source
+    }
+  })
+  const [canvases, canvasPatches] = produceWithPatches(state.canvases, draft => {
+    for (const update of plan.updates) if (update.canvasIndex !== activeIndex) {
+      const panel = draft[update.canvasIndex].objects[update.objectIndex]
+      if (panel.type === 'panel') panel.chartSource = update.source
+    }
+    if (docPatches.length && activeIndex >= 0) draft[activeIndex] = docToCanvas(doc, draft[activeIndex].id)
+  })
+  if (docPatches.length || canvasPatches.length) useDocumentStore.setState({ doc, canvases, snapshotSeq: state.snapshotSeq + 1 })
 }
 
 export function captureFigureSnapshotSave(
@@ -2238,6 +2925,10 @@ export function mergeSavedFigureSnapshots(
           figureRunGeneration(context.pj, panel.fileId) !== context.sourceGenerations.get(panel.fileId)) continue
       const ref = refs[panel.id]
       if (validFigureSnapshot(ref, panel.fileId)) {
+        const origin = previous.figureOrigin
+        if (origin !== undefined && (!validFigureOrigin(origin, panel.fileId) ||
+            ref.receiptId !== origin.snapshot.receiptId ||
+            !sameFigureOrigin(ref.executionOwner, origin.snapshot.executionOwner))) continue
         if (ref.executionOwner) {
           const key = figureOwnerRunKey(context.pj, ref.executionOwner)
           if ((figureOwnerGenerations.get(key) ?? 0) !== (context.ownerGenerations?.get(key) ?? 0)) {
@@ -2313,11 +3004,18 @@ export function invalidateFigureSnapshots(
   const clear = (objects: FigureDocument['objects']) => {
     for (let i = 0; i < objects.length; i++) {
       const panel = objects[i]
-      if (panel.type !== 'panel' || (!matchesSource(panel.fileId, panel.figureSnapshot) &&
-          !(panel.figureSnapshot && receipts.has(panel.figureSnapshot.receiptId)))) continue
+      if (panel.type !== 'panel') continue
+      const snapshotRetired = matchesSource(panel.fileId, panel.figureSnapshot) ||
+        !!(panel.figureSnapshot && receipts.has(panel.figureSnapshot.receiptId))
+      if (!snapshotRetired) continue
       // Even without a live ref, an in-flight save may have captured the preceding run.
       // Publish a persistent change so a corrective save follows that stale write.
       objects[i] = { ...panel }
+      // Retirement revokes the retired execution's hot-edit permission only. The
+      // explicit figureOrigin is the panel's persisted historical input: it stays
+      // until the user explicitly adopts a source through the panel's own
+      // transaction — never on a broadcast whose run may still fail, be
+      // cancelled or arrive late.
       delete (objects[i] as PanelObject).figureSnapshot
     }
   }
@@ -2330,6 +3028,43 @@ export function invalidateFigureSnapshots(
     // including the bound project file, but execution itself adds no undo entry.
     // Only already-persisted save responses may bypass this via snapshotSeq.
     useDocumentStore.setState({ doc, canvases })
+  }
+}
+
+/**
+ * A backend-verified cold replay re-pointed the historical input to the
+ * replayed receipt (PR03: 新执行用新 receipt，通过原来源采用事务落正文).
+ * Panels carrying the exact sent origin adopt together; anything else is
+ * untouched. A persisted backend fact takes no undo entry — the same
+ * discipline as mergeSavedFigureSnapshots — and normal dirty/save scheduling
+ * applies through the snapshot tick.
+ */
+export function adoptReplayedFigureOrigin(
+  sent: FigureOrigin,
+  adopted: FigureOrigin,
+  pj: string | null = currentProjectId(),
+): void {
+  if (pj !== currentProjectId() || writesBlocked(false)) return
+  if (!validFigureOrigin(adopted, adopted.snapshot.sourceId)) return
+  if (adopted.snapshot.sourceId !== sent.snapshot.sourceId ||
+      adopted.snapshot.patchHash !== sent.snapshot.patchHash ||
+      !sameFigureOrigin(adopted.snapshot.executionOwner, sent.snapshot.executionOwner) ||
+      figureOriginIdentity(adopted.patches) !== figureOriginIdentity(sent.patches) ||
+      sameFigureOrigin(sent, adopted)) return
+  const state = useDocumentStore.getState()
+  const replace = (objects: FigureDocument['objects']) => {
+    for (let i = 0; i < objects.length; i++) {
+      const panel = objects[i]
+      if (panel.type !== 'panel' || !sameFigureOrigin(panel.figureOrigin, sent)) continue
+      objects[i] = { ...panel, figureOrigin: JSON.parse(JSON.stringify(adopted)) as FigureOrigin }
+    }
+  }
+  const [doc, docPatches] = produceWithPatches(state.doc, (d) => replace(d.objects))
+  const [canvases, canvasPatches] = produceWithPatches(state.canvases, (cs) => {
+    for (const canvas of cs) replace(canvas.objects)
+  })
+  if (docPatches.length || canvasPatches.length) {
+    useDocumentStore.setState({ doc, canvases, snapshotSeq: state.snapshotSeq + 1 })
   }
 }
 
@@ -2417,7 +3152,7 @@ export const readCurrentDocId = readCurrentId
 
 /** 本机「最近文档」索引刷进 store（启动恢复一开始就做，列表不等文档恢复） */
 export function refreshRecentDocsFromIndex(): void {
-  useDocumentStore.setState({ recentDocs: readIndex() })
+  useDocumentStore.setState({ recentDocs: readRecentIndexes() })
 }
 
 /**
@@ -2432,26 +3167,36 @@ export function installRestoredDocument(
   notice: DocNotice | null,
 ): boolean {
   if (!canCommitRestore(token)) return false
+  let upgradedId: string | null = null
   installingUnderToken = true
   try {
     applyProject(pd, id, { dirty: false })
+    const installedId = useDocumentStore.getState().documentId
+    if (installedId !== id) upgradedId = installedId
     // 恢复出来的只会是这个项目自己的排版（候选已按归属验过）：归属钉在这个项目上，本机索引里不知道归属的
     // 那条（升级前的）当场补上（#773）
     docProject = { id: token.pj, name: currentProjectLabel() }
     pendingClaim = null
-    if (token.pj) backfillIndexOwner(id, pd, token.pj)
-    writeCurrentId(id)
+    if (token.pj) backfillIndexOwner(installedId, pd, token.pj)
+    writeCurrentId(installedId)
     useDocumentStore.setState({
-      recentDocs: readIndex(),
-      lastPersisted: readIndex().find((e) => e.id === id)?.savedAt ?? null,
-      saveState: 'clean',
+      recentDocs: readRecentIndexes(),
+      lastPersisted: readIndex().find((e) => e.id === installedId)?.savedAt ?? null,
+      saveState: installedId === id ? 'clean' : 'dirty',
       saveIssue: null,
       docNotice: notice,
       restoreMetaIssue: null,
     })
-    announceDocOpen(id)
+    if (currentDocumentFormat() === 'v4') announceDocOpen(installedId, 'v4')
+    else announceDocOpen(installedId)
   } finally {
     installingUnderToken = false
+  }
+  if (upgradedId) {
+    const installedId = upgradedId
+    queueMicrotask(() => {
+      if (useDocumentStore.getState().documentId === installedId && currentDocumentFormat() === 'v4' && getRestoreGate().state === 'ready') flushAutosave()
+    })
   }
   return true
 }
@@ -2469,8 +3214,8 @@ function backfillIndexOwner(docId: string, pd: ProjectDocument, pj: string): voi
     projectId: pj,
     ...(name ? { projectName: name } : {}),
   }
-  const kept = writeIndex(hit ? index.map((e) => (e.id === docId ? entry : e)) : [entry, ...index])
-  useDocumentStore.setState({ recentDocs: kept })
+  writeIndex(hit ? index.map((e) => (e.id === docId ? entry : e)) : [entry, ...index])
+  useDocumentStore.setState({ recentDocs: readRecentIndexes() })
 }
 
 /** 防抖中的那次自动保存（手动保存要先把它取消，否则会多写一遍） */
@@ -2496,11 +3241,11 @@ let autosaveSuspendedFor: string | null = null
 
 /** 把这份文档从自动保存链路上摘下来，直到下一次 `switchDocument`。 */
 export function suspendAutosaveFor(id: string): void {
-  autosaveSuspendedFor = id
+  autosaveSuspendedFor = documentAddressKey(id, currentDocumentFormat())
   cancelPendingAutosave()
 }
 
-export const isAutosaveSuspendedFor = (id: string): boolean => autosaveSuspendedFor === id
+export const isAutosaveSuspendedFor = (id: string): boolean => autosaveSuspendedFor === documentAddressKey(id, currentDocumentFormat())
 
 /** 重置 / 打开没做成（锁住 / 失败）、或落地后没换文档时，把文档接回自动保存链路。 */
 export function resumeAutosave(): void {
@@ -2516,7 +3261,7 @@ export function startAutosave(): () => void {
     const unsaved = hasUnsavedWork(useDocumentStore.getState().saveState)
     // 拦不拦都要冲刷：防抖窗口内的最后一次改动不能丢
     cancelPendingAutosave()
-    flushAutosave()
+    flushAutosave({ leaving: true })
     // 文案由浏览器决定（自定义文案早已被各家忽略），这里只表态要不要拦。
     if (unsaved) {
       e.preventDefault()
@@ -2534,10 +3279,11 @@ export function startAutosave(): () => void {
     // 载入 / 切项目那条自己已经显式 flush 过一次了（为了立刻进「最近文档」），
     // 再排一次防抖写只会多一个新的 updatedAt 去和别的标签页抢。
     if (state.loadSeq !== prev.loadSeq || state.snapshotSeq !== prev.snapshotSeq) return
-    if (state.doc === prev.doc && state.canvases === prev.canvases) return
+    if (state.doc === prev.doc && state.canvases === prev.canvases
+      && state.documentFormat === prev.documentFormat && state.documentId === prev.documentId) return
     // 占位文档的变化不是编辑：写入口都看门，这里再守一道（绕过门的写入也不排队落盘）
     if (isDocumentPlaceholder()) return
-    if (autosaveSuspendedFor !== null && autosaveSuspendedFor === state.documentId) return
+    if (autosaveSuspendedFor !== null && autosaveSuspendedFor === documentAddressKey(state.documentId, state.documentFormat)) return
     // 外部派生元数据同步（`applyDerivedUpdate`）：内容确实变了、必须落盘，
     // 但它不是用户的编辑。**只有 `saveState` 这一档不推**——`dirty` 照置
     // （字面含义就是"有改动还没写进自动保存"），落盘照排队，写盘失败照报。
