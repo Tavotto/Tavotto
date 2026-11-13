@@ -18,8 +18,9 @@
  * **本文件是纯计算**：文档 + 规范 + 这条问题进，计划出——不碰 store、不写磁盘、
  * 不发后端，于是 `lib/validation.ts` 判 `fixKind` 时可以直接调它。
  */
-import { FALLBACK_MIN_FONT_SIZE_PT, derivePageColumns, type PublicationProfile } from './profile'
+import { FALLBACK_MIN_FONT_SIZE_PT, type PublicationProfile } from './profile'
 import { currentLocale } from '@/i18n'
+import { judgedPageColumns } from './preflight'
 import type { ValidationIssue } from './validation'
 import type { FigureDocument } from '@/types/document'
 
@@ -106,25 +107,21 @@ export interface FixOption {
 }
 
 /**
- * 栏位表里**判据认的**那几档（`qualifier` 为 exact；限定词是 max / typical 等的栏位页宽预检不认，
- * 改到那个宽度也不会让 `page-width` 通过）。读 `derivePageColumns`——期刊自有的 `page_columns`
- * 优先（Science 的「2 栏 / 3 栏」、Elsevier 的 1.5 栏），没写就由 `widths_mm` 派生单栏 / 双栏。
- */
-function exactColumns(profile: PublicationProfile) {
-  return derivePageColumns(profile).filter(
-    (c) => (c.qualifier ?? 'exact') === 'exact' && num(c.width_mm) != null && c.width_mm > 0,
-  )
-}
-
-/**
  * 这条问题的可选修复。只有 `page-width` 这一条：改成哪一栏是**用户的排版决定**，
- * 几个答案同样合理，工具不许替他挑。选项就是规范里判据认的栏位（单栏 / 双栏沿用原来的措辞，
- * 期刊自有的栏用它自己的栏名）。
+ * 几个答案同样合理，工具不许替他挑。选项就是规范里判据认的栏位（`judgedPageColumns`：exact 与 max，
+ * 与预检同一个出处；max 栏位的选项说明是上限，选它就改到那个最大宽度）。单栏 / 双栏（exact）沿用原来的措辞，
+ * 期刊自有的栏用它自己的栏名。
  */
 export function fixOptions(issue: ValidationIssue, profile: PublicationProfile): FixOption[] {
   if (issue.ruleCode !== 'page-width') return []
-  return exactColumns(profile).map((c) =>
-    c.id === 'single' || c.id === 'double'
+  return judgedPageColumns(profile).map((c) =>
+    (c.qualifier ?? 'exact') === 'max'
+      ? {
+          choice: c.id,
+          labelKey: 'columnMax',
+          params: { name: currentLocale() === 'en-US' ? c.label.en : c.label.zh, mm: c.width_mm },
+        }
+      : c.id === 'single' || c.id === 'double'
       ? { choice: c.id, labelKey: c.id, params: { mm: c.width_mm } }
       : {
           choice: c.id,
@@ -209,6 +206,6 @@ function writeFontSize(
 
 function planPageWidth(profile: PublicationProfile, choice?: FixChoice): FixPlan | null {
   if (choice == null) return null
-  const col = exactColumns(profile).find((c) => c.id === choice)
+  const col = judgedPageColumns(profile).find((c) => c.id === choice)
   return col ? { kind: 'pageWidth', widthMm: col.width_mm } : null
 }

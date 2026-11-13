@@ -935,6 +935,7 @@
     "overlap": "Figures overlap each other. Confirm this is intentional before exporting.",
     "pageAspect": "The page aspect {{ratio}} ({{w}} × {{h}} mm) isn't one of the allowed ratios ({{allowed}}).",
     "pageWidth": "The page width {{actual}} mm isn't one of the profile's column widths ({{columns}} mm).",
+    "pageWidthMax": "The page width {{actual}} mm is over the profile's maximum width ({{max}} mm).",
     "paletteLineMarkers": "None of the {{count}} lines has a marker, so they’re hard to tell apart in black-and-white print or for colorblind readers. Add markers or use distinct line styles.",
     "paletteSemantic": "The colormap {{cmap}} isn't one of the recommended scientific palettes (pick by sequential / diverging / categorical meaning: {{url}}).",
     "panelTextNotVerifiable": "This vector figure has no engine manifest yet (not rendered or not from a script), so its text size and font can't be checked automatically.",
@@ -1005,6 +1006,7 @@
     },
     "fixOption": {
       "column": "Set to {{name}} width {{mm}} mm",
+      "columnMax": "Set to {{name}} (max {{mm}} mm)",
       "double": "Set to double-column width {{mm}} mm",
       "single": "Set to single-column width {{mm}} mm"
     },
