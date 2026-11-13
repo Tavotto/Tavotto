@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"
+     viewBox="0 0 400 300">
+  <rect x="0" y="0" width="400" height="300" fill="white"/>
+  <!-- axis frame: plot area is (60,40)-(360,260); data x in [0,10] ->
+       60+30x px, y in [0,100] -> 260-2.2y px (known binding for tests) -->
+  <rect x="60" y="40" width="300" height="220" fill="none" stroke="black"/>
+  <circle cx="120" cy="216" r="3" fill="#1f77b4"/>
+  <circle cx="180" cy="172" r="3" fill="#1f77b4"/>
+  <circle cx="240" cy="106" r="3" fill="#1f77b4"/>
+  <path d="M 60 260 L 360 260" stroke="black" stroke-width="1"/>
+  <path d="M 60 260 L 60 40" stroke="black" stroke-width="1"/>
+  <text x="200" y="290" font-family="sans-serif" font-size="12"
+        text-anchor="middle">time (s)</text>
+  <text x="20" y="150" font-family="sans-serif" font-size="12"
+        transform="rotate(-90 20 150)">signal (a.u.)</text>
+</svg>
