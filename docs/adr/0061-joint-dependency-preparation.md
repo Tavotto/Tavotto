@@ -392,6 +392,9 @@ pdf-minus-bin1-m … pdf-plus-bin8-r` 一并送进一次 pip，`dependency_not_f
 3. **不可 pip 安装表**（`depresolve.NOT_PIP_INSTALLABLE`，首条 `ROOT`）：计划阶段点名（`origins[].not_pip_installable`；声明里出现
    的同名发行包进 `JointPlan.not_pip_installable`，带来源声明文件与 import），**不预填、不进 `requirements`**；以后加 Geant4 之类
    只加一行。界面一句话：「这个脚本需要 ROOT，内置 Python 装不了，请用装有它的环境」。
+   **修订（2026-11-13，TVD-NH7S）**：表项的 `hint` 多一类 `ai_sandbox`——只存在于 AI 聊天网页沙箱里的模块（ChatGPT 代码解释器自带的
+   `artifact_tool` / `ace_tools` / `caas_jupyter_tools`；PyPI 上要么没有、要么是空占位包）。哪个环境都没有，所以修复卡不给「选环境」，
+   一句话说明白、主按钮「复制给 AI 的话」（请 AI 去掉它重新生成脚本）；用户脚本照旧不改。
 4. **找不到的包点名**（`deprepair.not_found_detail`）：pip 报 `dependency_not_found` 时，从输出解析分发名，对着
    `declared_intents` 找出处，终态进度带 `not_found: {name, import_name, source}`；界面「软件源里找不到 X（来自 Y）」。
 
