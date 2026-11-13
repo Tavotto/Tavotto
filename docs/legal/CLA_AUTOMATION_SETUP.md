@@ -423,3 +423,5 @@ python3 scripts/ci/cla_gate.py --event pull_request --pr-author outsider \
 
 .venv/bin/python -m pytest tests/test_legal_contribution_policy.py
 ```
+
+<!-- CLA live check test PR (2026-11-13); not to be merged. -->
