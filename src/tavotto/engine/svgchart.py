@@ -1,4 +1,4 @@
-"""SVG 计算图表的 worker 侧脚手架（ADR-XXXX，SG07）。
+"""SVG 计算图表的 worker 侧脚手架（ADR 0182，SG07）。
 
 **只在 worker 进程跑**（import matplotlib——父进程闭包里没有它）。输入是
 经 `chartmodel.validate_model` 的模型 + 场景框事实（viewBox/物理 pt/

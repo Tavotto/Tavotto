@@ -1557,7 +1557,7 @@ def api_file():
 
 @app.get("/api/svg/chart/inspect")
 def api_svg_chart_inspect():
-    """计算图表绑定入口的只读盘点（ADR-XXXX）：同一份字节重新校验 + 稳定节点清单。
+    """计算图表绑定入口的只读盘点（ADR 0182）：同一份字节重新校验 + 稳定节点清单。
 
     与 `/api/file` 同一条 `safe_resolve` 路径约束、同一个 svgcheck 边界；
     普通 SVG 零执行；自包含计算包仅重放声明式模型，核对可见内容后提供恢复草稿。
@@ -1663,7 +1663,7 @@ def _chart_engine_identity() -> dict:
 
 @app.post("/api/svg/chart/bind")
 def api_svg_chart_bind():
-    """显式建模确认（ADR-XXXX，SG06/10）：校准证据 + 系列选择 → 模型 + 绑定。
+    """显式建模确认（ADR 0182，SG06/10）：校准证据 + 系列选择 → 模型 + 绑定。
 
     只做判据与产物，不落盘、不执行用户脚本；自包含包先核对声明式冷重放。
     """
@@ -1999,7 +1999,7 @@ def _render_chart_snapshot(
 
 @app.post("/api/svg/chart/compute")
 def api_svg_chart_compute():
-    """按模型重算绑定区域（ADR-XXXX，SG07/10）：场景核对 → 脚手架 → 组合。
+    """按模型重算绑定区域（ADR 0182，SG07/10）：场景核对 → 脚手架 → 组合。
 
     场景字节变了（`chart_source_mismatch`/`chart_node_missing`）一律拒绝；
     引擎身份与模型合同不符报 `chart_engine_mismatch`；原文件零改动。

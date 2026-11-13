@@ -1,4 +1,4 @@
-# Figure edits retain declared inputs and the execution they came from
+## Figure edits retain declared inputs and the execution they came from
 
 Declared inputs are captured through the existing preparation and worker boundaries, preserving the bytes actually read and the receipt for that execution. Historical source records stay distinct from current execution authority. Missing or altered archived inputs are rejected rather than replaced with a same-name file. Python and Rust control-plane consumers use the same contract.
 
@@ -10,4 +10,4 @@ When you edit a figure produced by a script, Tavotto now remembers the exact run
 
 Running a figure whose script file has been moved or deleted used to report that a package named after the script was missing, which sent you looking for something to install. It now says the script file itself is missing and asks you to put it back. Tavotto never substitutes another file with the same name.
 
-This is part of the #1873 split. Architecture and release approval remain pending in [Issue #1877](https://github.com/Tavotto/Tavotto/issues/1877) and ADR-XXXX.
+This is part of the #1873 split. Architecture and release approval remain pending in [Issue #1877](https://github.com/Tavotto/Tavotto/issues/1877) and ADR 0182.
