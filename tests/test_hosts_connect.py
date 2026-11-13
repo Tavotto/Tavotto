@@ -472,6 +472,18 @@ def test_skill_failure_is_reported_honestly_but_mcp_stays_connected(home, monkey
     assert "health" in _steps(res)  # MCP 仍然体检
 
 
+def test_connecting_from_a_wheel_install_succeeds_without_skill_files(home, monkeypatch):
+    """pip / pipx / uvx 装法：MCP 接上就算接上，技能一步是 builtin，整次不判失败（Codex #1897 P2）。"""
+    (home / ".cursor").mkdir()
+    monkeypatch.setattr(H.hostskills, "skill_source", lambda: None)
+    monkeypatch.setattr(H.hostskills, "wheel_install", lambda: True)
+    res = H.connect("cursor")
+    assert res["ok"] and res["state"] == "needs_new_session", res
+    st = _steps(res)["skill"]
+    assert st["ok"] and st["skipped"] and st["skill"] == "builtin"
+    assert not (home / ".cursor" / "skills" / "tavotto-figure").exists()
+
+
 def test_claude_desktop_has_no_skill_dir_and_reports_builtin(home):
     (home / "AppData" / "Roaming" / "Claude").mkdir(parents=True)
     (home / "Library" / "Application Support" / "Claude").mkdir(parents=True)

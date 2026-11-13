@@ -208,6 +208,21 @@ def test_missing_source_is_reported(home, monkeypatch):
     assert not _dest(home).exists()
 
 
+def test_a_wheel_install_has_no_skill_files_by_design_and_reports_builtin(home, monkeypatch):
+    """pip / pipx / uvx 装的 wheel 不带技能：算 builtin（AI 用 tavotto_guide），不报 skill_source_missing。"""
+    monkeypatch.setattr(K, "skill_source", lambda: None)
+    monkeypatch.setattr(K, "wheel_install", lambda: True)
+    res = K.install_skill("cursor")
+    assert res["ok"] and res["skipped"] and res["state"] == "builtin" and "error_code" not in res
+    assert "tavotto_guide" in res["detail"]
+    assert K.skill_state("cursor") == "builtin"
+    assert not _dest(home).exists()
+
+
+def test_the_source_tree_is_not_mistaken_for_a_wheel():
+    assert K.wheel_install() is False
+
+
 def test_write_failure_is_reported_and_leaves_no_half_written_dir(home, monkeypatch):
     def boom(*a, **k):
         raise OSError("磁盘满了")
