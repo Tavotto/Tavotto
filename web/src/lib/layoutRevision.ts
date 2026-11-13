@@ -1,3 +1,4 @@
+import type { DocumentFormat } from './documentFormat'
 import { currentProjectId } from '@/lib/session'
 
 /**
@@ -33,22 +34,27 @@ const revisions = new Map<string, string>()
  * 不同源）：只记后端亲口回过的对应。净化是确定性的，这张表不会过期，也不分项目。
  */
 const aliases = new Map<string, string>()
+const chartAliases = new Map<string, string>()
+const chartRevisions = new Map<string, string>()
+const aliasesFor = (format?: DocumentFormat) => format === 'v4' ? chartAliases : aliases
+const revisionsFor = (format?: DocumentFormat) => format === 'v4' ? chartRevisions : revisions
 
 /** 这个名字落盘时叫什么（没见过就按原样） */
-export const canonicalLayoutName = (name: string): string => aliases.get(name) ?? name
+export const canonicalLayoutName = (name: string, format?: DocumentFormat): string => aliasesFor(format).get(name) ?? name
 
 /** 记下后端回的规范名；`canonical` 缺席（老后端）就什么都不记 */
-export function rememberLayoutName(submitted: string, canonical: string | undefined): void {
-  if (canonical && canonical !== submitted) aliases.set(submitted, canonical)
+export function rememberLayoutName(submitted: string, canonical: string | undefined, format?: DocumentFormat): void {
+  if (canonical && canonical !== submitted) aliasesFor(format).set(submitted, canonical)
 }
 
 /** `pj::规范名`。`null` 项目（未打开项目时退回数据目录 layouts/）也是一档。 */
-const keyOf = (name: string, pj: string | null) => `${pj ?? ''}::${canonicalLayoutName(name)}`
+const keyOf = (name: string, pj: string | null, format?: DocumentFormat) => `${pj ?? ''}::${canonicalLayoutName(name, format)}`
 
 export const knownLayoutRevision = (
   name: string,
   pj: string | null = currentProjectId(),
-): string | undefined => revisions.get(keyOf(name, pj))
+  format?: DocumentFormat,
+): string | undefined => revisionsFor(format).get(keyOf(name, pj, format))
 
 /**
  * 记下一份读到 / 写成的修订号。**请求之后才记的调用方必须传 `pj`**——发请求那一刻的
@@ -60,13 +66,16 @@ export function rememberLayoutRevision(
   name: string,
   revision: string | null,
   pj: string | null = currentProjectId(),
+  format?: DocumentFormat,
 ): void {
-  if (revision) revisions.set(keyOf(name, pj), revision)
-  else revisions.delete(keyOf(name, pj))
+  if (revision) revisionsFor(format).set(keyOf(name, pj, format), revision)
+  else revisionsFor(format).delete(keyOf(name, pj, format))
 }
 
 /** 仅供用例：模块级 Map 会跨用例活下来 */
 export const forgetLayoutRevisions = (): void => {
   revisions.clear()
   aliases.clear()
+  chartAliases.clear()
+  chartRevisions.clear()
 }

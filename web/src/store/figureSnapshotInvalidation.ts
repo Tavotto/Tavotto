@@ -1,8 +1,8 @@
 import type { FigureSnapshotInvalidation } from '@/lib/api'
 import { capturedFigureSources, executedFigureSources, figureExecutionOwnerKey } from '@/lib/capturedFigureSources'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
-import { registerFigureExecutionConsumer } from '@/lib/figureExecutionEvents'
-import { getRestoreGate, invalidateFigureSnapshots, useDocumentStore } from '@/store/documentStore'
+import { registerFigureExecutionConsumer, registerFigureOriginAdoptionConsumer } from '@/lib/figureExecutionEvents'
+import { adoptReplayedFigureOrigin, getRestoreGate, invalidateFigureSnapshots, useDocumentStore } from '@/store/documentStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import type { CanvasObject } from '@/types/document'
 
@@ -152,3 +152,4 @@ function applyFacts(facts: readonly SourceFact[], pj: string | null): void {
 }
 
 registerFigureExecutionConsumer(invalidateFigureExecution)
+registerFigureOriginAdoptionConsumer(adoptReplayedFigureOrigin)

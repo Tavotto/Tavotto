@@ -13,6 +13,7 @@ import ast
 import collections
 import contextlib
 import contextvars
+import copy
 import functools
 import hashlib
 import json
@@ -1235,6 +1236,8 @@ def _explain_empty_capture(err: "WorkerError", script_name: str, known, log_tail
 MISSING_INPUT_CODE = "missing_input"
 #: worker 侧 `worker.SCRIPT_ENTRY_MISSING` 的镜像：登记的入口函数在脚本里已经不存在（TVD-CHR5）。
 SCRIPT_ENTRY_MISSING_CODE = "script_entry_missing"
+#: worker 侧 `worker.SCRIPT_SOURCE_MISSING` 的镜像：脚本文件本身不在了（不是缺依赖包）。
+SCRIPT_SOURCE_MISSING_CODE = "script_source_missing"
 #: worker 侧 `worker.SCRIPT_EXITED` 的镜像：脚本自己 `sys.exit(...)`——最常见的是先 `exists()` 判空
 #: 再退出（「找不到数据」），与「跑完没出图」一样只挂静态那部分（ADR 0106 §一.3）。
 SCRIPT_EXITED_CODE = "script_exited"
@@ -2357,6 +2360,7 @@ INTERPRETER_CACHE_DENIED_CODE = "interpreter_cache_denied"
 #: 给 `tests/test_error_codes.py` 门禁读的注册表（它按字面量扫源码，常量式的 code 看不见）。
 ERROR_CODES = (
     SCRIPT_ENTRY_MISSING_CODE,
+    SCRIPT_SOURCE_MISSING_CODE,
     OUTPUT_FOLDER_READ_ONLY_CODE,
     INTERPRETER_CACHE_DENIED_CODE,
     EXPLICIT_UNUSABLE_CODE,
@@ -2806,12 +2810,130 @@ def _record_execution(worker, execution_id: str) -> None:
         worker.execution_id = execution_id
         worker.execution_started_ns = started
         worker.execution_observation_unknown = worker.execution_unknown_started_ns > started
+        _clear_captured_inputs(worker)
     callback = _execution_observer
     if callback is not None:
         try:
             callback(worker, execution_id)
         except Exception:  # noqa: BLE001 — bookkeeping cannot block user code
             LOG.warning("Execution observer failed", exc_info=True)
+
+
+def _clear_captured_inputs(worker) -> None:
+    worker.last_captured_inputs = None
+    worker.last_captured_build = None
+    worker.last_captured_input_archive = None
+
+
+def _input_declaration_payload(worker, command, payload: dict) -> dict:
+    if command not in _EXECUTING_COMMANDS:
+        return payload
+    from . import declaredinputs
+
+    try:
+        extension = declaredinputs.payload_for(worker)
+    except declaredinputs.DeclaredInputsError:
+        worker.last_input_declaration_issue = "unavailable"
+        return payload
+    worker.last_input_declaration_issue = None
+    return {**payload, **copy.deepcopy(extension)}
+
+
+def _store_build_metadata(
+    worker, response: dict, *, detached: bool = False, diagnostics: dict | None = None
+) -> None:
+    if detached:
+        response = copy.deepcopy(response)
+    worker.last_build_descriptors = list(response.get("descriptors") or [])
+    worker.last_build_pdf_pages = list(response.get("pdf_pages") or [])
+    worker.last_build_runtime = _runtime_of(response)
+    diagnostics = response if diagnostics is None else diagnostics
+    attempts = diagnostics.get("redirected_write_attempts")
+    worker.last_build_redirected_write_attempts = attempts if isinstance(attempts, list) else None
+    sandbox_files = diagnostics.get("sandbox_files")
+    worker.last_build_sandbox_files = sandbox_files if isinstance(sandbox_files, dict) else None
+    inputs_read = diagnostics.get("inputs_read")
+    worker.last_build_inputs_read = inputs_read if isinstance(inputs_read, dict) else None
+    misses = response.get("probe_misses")
+    worker.last_build_probe_misses = misses if isinstance(misses, list) else None
+    worker.last_build_execution_id = response.get("execution_id")
+    worker.last_build_artifact_probe = response.get("artifact_probe")
+    worker.last_build_script_inputs = _script_inputs_of(response)
+    sha = response.get("source_sha256")
+    worker.last_build_source_sha256 = sha if isinstance(sha, str) else None
+
+
+def _remember_build_response(worker, response: dict) -> None:
+    if "captured_inputs" not in response:
+        _store_build_metadata(worker, response)
+        return
+    with worker._execution_lock:
+        if response.get("execution_id") != worker.execution_id:
+            return
+        capsule = worker.last_captured_build
+        if capsule is not None and capsule["execution_id"] == worker.execution_id:
+            _store_build_metadata(worker, capsule, detached=True, diagnostics=response)
+        else:
+            _store_build_metadata(worker, response)
+
+
+def _accept_captured_inputs(worker, response: dict) -> None:
+    """Accept a capture and its frozen build capsule only for the winning execution."""
+    execution_id = response.get("execution_id")
+    if not executionfact.valid_id(execution_id):
+        return
+    if "captured_inputs" not in response:
+        with worker._execution_lock:
+            if execution_id == worker.execution_id:
+                _clear_captured_inputs(worker)
+        return
+    from . import inputdeclaration
+
+    fact = inputdeclaration.validate_fact(
+        response.get("captured_inputs"), execution_id=execution_id
+    )
+    archive = (
+        inputdeclaration.validate_archive_descriptor(
+            response.get("captured_input_archive"), fact=fact
+        )
+        if fact is not None
+        else None
+    )
+    capsule = response.get("captured_build")
+    required = {"execution_id", "runtime", "descriptors", "source_sha256"}
+    optional = {"pdf_pages", "probe_misses", "artifact_probe", "script_inputs"}
+    valid = (
+        fact is not None
+        and isinstance(capsule, dict)
+        and required <= capsule.keys() <= required | optional
+        and capsule["execution_id"] == execution_id
+        and isinstance(capsule["runtime"], dict)
+        and isinstance(capsule["descriptors"], list)
+        and isinstance(capsule["source_sha256"], str)
+        and re.fullmatch(r"[0-9a-f]{64}", capsule["source_sha256"]) is not None
+        and capsule["source_sha256"] == fact["declaration"]["script"]["sha256"]
+        and all(
+            key not in capsule or isinstance(capsule[key], list)
+            for key in ("pdf_pages", "probe_misses", "script_inputs")
+        )
+        and ("artifact_probe" not in capsule or isinstance(capsule["artifact_probe"], dict))
+    )
+    with worker._execution_lock:
+        if execution_id != worker.execution_id:
+            return
+        if not valid:
+            _clear_captured_inputs(worker)
+            return
+        pid = response.get("supervisor_child_pid")
+        if isinstance(worker, WorkerdWorker) and type(pid) is int and pid > 0:
+            worker.child_pid = pid
+        capsule = copy.deepcopy(capsule)
+        worker.last_captured_inputs = fact
+        worker.last_captured_build = capsule
+        worker.last_captured_input_archive = archive
+        _store_build_metadata(worker, capsule, detached=True)
+        worker.built = True
+        worker.build_failed = False
 
 
 def refresh_execution(worker) -> str | None:
@@ -2964,6 +3086,32 @@ class _ExecutionWatch:
                 executionfact.marker_path(self.worker.out_dir, self.key).unlink(missing_ok=True)
             except OSError:
                 pass  # Disposable IPC; normal cache pruning owns eventual cleanup.
+
+
+def _require_existing_execution(worker, expected) -> None:
+    """Check observed parent state; the child repeats the authoritative check."""
+    if not executionfact.valid_id(expected):
+        raise WorkerError("expected_execution_id must be an execution fact.", code="bad_request")
+    _execution_state(worker)
+    with worker._execution_lock:
+        if (
+            not worker.built
+            or getattr(worker, "_dead", False)
+            or getattr(worker, "_evicted", False)
+            or worker.execution_observation_unknown
+            or worker.execution_id != expected
+        ):
+            raise WorkerError(
+                "The existing Figure execution is unavailable.", code="svg_source_unavailable"
+            )
+
+
+def _check_existing_reply(worker, expected, response) -> None:
+    _require_existing_execution(worker, expected)
+    if response.get("execution_id") != expected:
+        raise WorkerError(
+            "The reply does not prove the requested execution.", code="svg_source_unavailable"
+        )
 
 
 class EngineWorker:
@@ -3163,6 +3311,10 @@ class EngineWorker:
     #: 最近一次成功 build **实际读到并执行**的脚本字节的 sha256（worker 自报，build 响应的 `source_sha256`）；
     #: 没 build / build 失败 / 老 worker 没带 = None。TAF 改图验证比的是它，不是 spawn 时采样的 `script_sha1`。
     last_build_source_sha256: str | None = None
+    last_captured_inputs: dict | None = None
+    last_captured_build: dict | None = None
+    last_captured_input_archive: dict | None = None
+    last_input_declaration_issue: str | None = None
     #: 最近一次 build 每一问的去向计数（`inputbroker.InputFacts`）与它绑定的执行转录（只有 id 与计数）。
     last_input_facts: dict | None = None
     #: 最近一次 build 响应里沙盒落空的探路调用（#1254）：build 成功但图可能是空的时，渲染 / 试运行据此挂 `workdir_hint`
@@ -3443,6 +3595,7 @@ class EngineWorker:
         obj = {**obj, **_run_payload(getattr(self, "run", None))}
         if getattr(self, "artifact_source", None) is not None:
             obj = {**obj, "artifact_source": self.artifact_source}
+        obj = _input_declaration_payload(self, obj.get("cmd"), obj)
         # None → 取模块常量的**当前**值（默认参数会在 def 时定死，测试改不动）
         timeout = REQUEST_TIMEOUT if timeout is None else timeout
         _note_dispatch(self)
@@ -3453,6 +3606,14 @@ class EngineWorker:
         rid = env["request_id"]
         t_req = time.perf_counter()
         with self.lock:
+            existing = obj.get("cmd") in {
+                "render_existing",
+                "export_existing",
+                "preview_png_existing",
+            }
+            if existing:
+                _require_existing_execution(self, obj.get("expected_execution_id"))
+                dispatch_process, dispatch_generation = self.proc, self.generation
             # 拿到锁的那一刻 = 这条请求真正开始被处理。Python 池没有队列，
             # 「排队」全表现为在这把锁上等——所以它就是 queue_wait 的量法。
             t_lock = time.perf_counter()
@@ -3512,6 +3673,12 @@ class EngineWorker:
                 # 「脚本 sys.exit」「Python 致命错误」「access violation」的唯一凭据，
                 # EOF 那一刻直接 kill 会把它盖成 TerminateProcess 的那一个。
                 exit_info = exit_report(self.proc)
+            if existing and line:
+                _require_existing_execution(self, obj.get("expected_execution_id"))
+                if self.proc is not dispatch_process or self.generation != dispatch_generation:
+                    raise WorkerError(
+                        "The dispatch instance changed.", code="svg_source_unavailable"
+                    )
         if not line:
             # （EOF 的判死已在锁内完成，见上。）
             #
@@ -3550,6 +3717,9 @@ class EngineWorker:
             )
         if not resp.get("ok"):
             raise self._error_of(resp)
+        if existing:
+            _check_existing_reply(self, obj.get("expected_execution_id"), resp)
+        _accept_captured_inputs(self, resp)
         return _merge_timings(
             resp, (t_lock - t_req) * 1000.0, (time.perf_counter() - t_req) * 1000.0
         )
@@ -3563,12 +3733,14 @@ class EngineWorker:
                 resp = self.request({"cmd": "build"}, BUILD_HARD_TIMEOUT)
         except inputbroker.TranscriptUnavailable as exc:
             self.build_failed = True
+            _clear_captured_inputs(self)
             self.last_build_source_sha256 = None
             self.last_build_redirected_write_attempts = None
             self.last_build_sandbox_files = None
             self.last_build_inputs_read = None
             raise WorkerError(str(exc), code=exc.code) from exc
         except BaseException:
+            _clear_captured_inputs(self)
             self.build_failed = True
             self.last_build_source_sha256 = None
             self.last_build_redirected_write_attempts = None
@@ -3581,28 +3753,14 @@ class EngineWorker:
             getattr(self, "out_dir", None) is not None
         ):  # 只造了一半的 worker（测试替身）没有产物目录
             figcapture.clear_preview_poison(self.out_dir)
-        self.last_build_descriptors = list(resp.get("descriptors") or [])
-        self.last_build_pdf_pages = list(resp.get("pdf_pages") or [])
-        self.last_build_runtime = _runtime_of(resp)
-        attempts = resp.get("redirected_write_attempts")
-        self.last_build_redirected_write_attempts = attempts if isinstance(attempts, list) else None
-        sandbox_files = resp.get("sandbox_files")
-        self.last_build_sandbox_files = sandbox_files if isinstance(sandbox_files, dict) else None
-        inputs_read = resp.get("inputs_read")
-        self.last_build_inputs_read = inputs_read if isinstance(inputs_read, dict) else None
-        misses = resp.get("probe_misses")
-        self.last_build_probe_misses = misses if isinstance(misses, list) else None
-        self.last_build_execution_id = resp.get("execution_id")
-        self.last_build_artifact_probe = resp.get("artifact_probe")
-        self.last_build_script_inputs = _script_inputs_of(resp)
-        sha = resp.get("source_sha256")
-        self.last_build_source_sha256 = sha if isinstance(sha, str) else None
+        _remember_build_response(self, resp)
         try:
             inputbroker.finished(self, self.last_build_script_inputs)  # 执行转录（T08）
         except BaseException:
             # 转录没绑上：这份热结果不能被后续渲染 / 导出复用——回到「没 build」，下次走 ensure_built
             self.built = False
             self.build_failed = True
+            _clear_captured_inputs(self)
             self.last_build_descriptors = []
             self.last_build_pdf_pages = []
             self.last_build_source_sha256 = None
@@ -3615,10 +3773,22 @@ class EngineWorker:
         return resp
 
     def override(
-        self, stem: str, patches: list, preview_dpi: int | None = None, inline_svg: bool = False
+        self,
+        stem: str,
+        patches: list,
+        preview_dpi: int | None = None,
+        inline_svg: bool = False,
+        *,
+        expected_execution_id: str | None = None,
     ) -> dict:
-        build = self.ensure_built().get("timings") if not self.built else None
+        if expected_execution_id is not None:
+            _require_existing_execution(self, expected_execution_id)
+            build = None
+        else:
+            build = self.ensure_built().get("timings") if not self.built else None
         payload = {"cmd": "override", "stem": stem, "patches": patches}
+        if expected_execution_id is not None:
+            payload.update(cmd="render_existing", expected_execution_id=expected_execution_id)
         # 不给就**一个字段都不加**：信封形状对既有调用方一字不变
         if preview_dpi:
             payload["preview_dpi"] = int(preview_dpi)
@@ -3638,23 +3808,33 @@ class EngineWorker:
         fmt: str = "pdf",
         dpi: int = 600,
         *,
+        expected_execution_id: str | None = None,
         svg_path: str | None = None,
         require_built: bool = False,
         snapshot_only: bool = False,
         svg_fonttype: str | None = None,
         svg_text_path: str | None = None,
     ) -> dict:
-        if (require_built or snapshot_only) and not self.built:
-            raise WorkerError(
-                "An already built Figure session is required for SVG capture.",
-                code="svg_source_unavailable",
-            )
-        build = self.ensure_built().get("timings") if not self.built else None
+        if expected_execution_id is not None:
+            _require_existing_execution(self, expected_execution_id)
+            build = None
+        else:
+            if (require_built or snapshot_only) and not self.built:
+                raise WorkerError(
+                    "An already built Figure session is required for SVG capture.",
+                    code="svg_source_unavailable",
+                )
+            build = self.ensure_built().get("timings") if not self.built else None
         resp = self.request(
             {
-                "cmd": "export",
+                "cmd": "export_existing" if expected_execution_id is not None else "export",
                 "stem": stem,
                 "patches": patches,
+                **(
+                    {"expected_execution_id": expected_execution_id}
+                    if expected_execution_id is not None
+                    else {}
+                ),
                 "path": path,
                 "format": fmt,
                 "dpi": dpi,
@@ -3677,24 +3857,58 @@ class EngineWorker:
         resp = self.request({"cmd": "render_png", "stem": stem, "width": width_px}, REQUEST_TIMEOUT)
         return Path(resp["path"])
 
-    def preview_png(self, stem: str, patches: list, width_px: int, tag: str) -> Path:
-        if not self.built:
+    def preview_png(
+        self,
+        stem: str,
+        patches: list,
+        width_px: int,
+        tag: str,
+        *,
+        expected_execution_id: str | None = None,
+    ) -> Path:
+        if expected_execution_id is not None:
+            _require_existing_execution(self, expected_execution_id)
+        elif not self.built:
             self.ensure_built()
         resp = self.request(
-            {"cmd": "preview_png", "stem": stem, "patches": patches, "width": width_px, "tag": tag},
+            {
+                "cmd": "preview_png_existing"
+                if expected_execution_id is not None
+                else "preview_png",
+                "stem": stem,
+                "patches": patches,
+                **(
+                    {"expected_execution_id": expected_execution_id}
+                    if expected_execution_id is not None
+                    else {}
+                ),
+                "width": width_px,
+                "tag": tag,
+            },
             REQUEST_TIMEOUT,
         )
         return Path(resp["path"])
 
-    def preview_png_snapshot(self, stem: str, patches: list, width_px: int) -> dict:
+    def preview_png_snapshot(
+        self, stem: str, patches: list, width_px: int, *, expected_execution_id: str | None = None
+    ) -> dict:
         """PNG pixels and geometry from the same draw, without a mutable file handoff."""
-        if not self.built:
+        if expected_execution_id is not None:
+            _require_existing_execution(self, expected_execution_id)
+        elif not self.built:
             self.ensure_built()
         return self.request(
             {
-                "cmd": "preview_png",
+                "cmd": "preview_png_existing"
+                if expected_execution_id is not None
+                else "preview_png",
                 "stem": stem,
                 "patches": patches,
+                **(
+                    {"expected_execution_id": expected_execution_id}
+                    if expected_execution_id is not None
+                    else {}
+                ),
                 "width": width_px,
                 "with_manifest": True,
             },
@@ -3956,6 +4170,10 @@ class WorkerdWorker:
     #: 最近一次成功 build **实际读到并执行**的脚本字节的 sha256（worker 自报，build 响应的 `source_sha256`）；
     #: 没 build / build 失败 / 老 worker 没带 = None。TAF 改图验证比的是它，不是 spawn 时采样的 `script_sha1`。
     last_build_source_sha256: str | None = None
+    last_captured_inputs: dict | None = None
+    last_captured_build: dict | None = None
+    last_captured_input_archive: dict | None = None
+    last_input_declaration_issue: str | None = None
     last_input_facts: dict | None = None
     #: 最近一次 build 响应里沙盒落空的探路调用（#1254）：build 成功但图可能是空的时，渲染 / 试运行据此挂 `workdir_hint`
     last_build_probe_misses: list | None = None
@@ -4215,9 +4433,14 @@ class WorkerdWorker:
         payload = {**(payload or {}), **_run_payload(getattr(self, "run", None))}
         if getattr(self, "artifact_source", None) is not None:
             payload = {**(payload or {}), "artifact_source": self.artifact_source}
+        payload = _input_declaration_payload(self, op, payload)
         _note_dispatch(self)
         self._touch()
         t_req = time.perf_counter()
+        existing = op in {"render_existing", "export_existing", "preview_png_existing"}
+        if existing:
+            _require_existing_execution(self, payload.get("expected_execution_id"))
+            dispatch_session = self._session_id
         for attempt in (0, 1):
             t_call = time.perf_counter()
             try:
@@ -4225,7 +4448,7 @@ class WorkerdWorker:
                 watch.sent_ns = time.monotonic_ns()
                 resp = self._client.call(
                     op,
-                    session_id=self._session_id,
+                    session_id=dispatch_session if existing else self._session_id,
                     stem=stem,
                     payload=payload or {},
                     timeout=timeout,
@@ -4240,7 +4463,7 @@ class WorkerdWorker:
                     # an ambiguous user-code execution either.
                     watch.sent = False
                 if exc.code == "unknown_session" and (
-                    payload.get("require_built") or payload.get("snapshot_only")
+                    existing or payload.get("require_built") or payload.get("snapshot_only")
                 ):
                     self._dead = True
                     raise WorkerError(
@@ -4269,6 +4492,16 @@ class WorkerdWorker:
                     continue
                 raise self._to_worker_error(exc, is_build=op == "build") from exc
             watch.acknowledge(resp)
+            if existing:
+                if (
+                    self._session_id != dispatch_session
+                    or resp.get("session_id") != dispatch_session
+                ):
+                    raise WorkerError(
+                        "The dispatch session changed.", code="svg_source_unavailable"
+                    )
+                _check_existing_reply(self, payload.get("expected_execution_id"), resp)
+            _accept_captured_inputs(self, resp)
             if resp.get("hash_mismatch"):
                 # 本次结果照常可用（worker 执行了），但两侧的规范化实现已经分叉
                 LOG.warning(
@@ -4342,12 +4575,14 @@ class WorkerdWorker:
                     resp = self._call("build", BUILD_HARD_TIMEOUT, idle_timeout=BUILD_IDLE_TIMEOUT)
         except inputbroker.TranscriptUnavailable as exc:
             self.build_failed = True
+            _clear_captured_inputs(self)
             self.last_build_source_sha256 = None
             self.last_build_redirected_write_attempts = None
             self.last_build_sandbox_files = None
             self.last_build_inputs_read = None
             raise WorkerError(str(exc), code=exc.code) from exc
         except BaseException:
+            _clear_captured_inputs(self)
             self.build_failed = True  # 与 EngineWorker 同一个判据
             self.last_build_source_sha256 = None
             self.last_build_redirected_write_attempts = None
@@ -4360,28 +4595,14 @@ class WorkerdWorker:
             getattr(self, "out_dir", None) is not None
         ):  # 只造了一半的 worker（测试替身）没有产物目录
             figcapture.clear_preview_poison(self.out_dir)
-        self.last_build_descriptors = list(resp.get("descriptors") or [])
-        self.last_build_pdf_pages = list(resp.get("pdf_pages") or [])
-        self.last_build_runtime = _runtime_of(resp)
-        attempts = resp.get("redirected_write_attempts")
-        self.last_build_redirected_write_attempts = attempts if isinstance(attempts, list) else None
-        sandbox_files = resp.get("sandbox_files")
-        self.last_build_sandbox_files = sandbox_files if isinstance(sandbox_files, dict) else None
-        inputs_read = resp.get("inputs_read")
-        self.last_build_inputs_read = inputs_read if isinstance(inputs_read, dict) else None
-        misses = resp.get("probe_misses")
-        self.last_build_probe_misses = misses if isinstance(misses, list) else None
-        self.last_build_execution_id = resp.get("execution_id")
-        self.last_build_artifact_probe = resp.get("artifact_probe")
-        self.last_build_script_inputs = _script_inputs_of(resp)
-        sha = resp.get("source_sha256")
-        self.last_build_source_sha256 = sha if isinstance(sha, str) else None
+        _remember_build_response(self, resp)
         try:
             inputbroker.finished(self, self.last_build_script_inputs)  # 执行转录（T08）
         except BaseException:
             # 转录没绑上：这份热结果不能被后续渲染 / 导出复用——回到「没 build」，下次走 ensure_built
             self.built = False
             self.build_failed = True
+            _clear_captured_inputs(self)
             self.last_build_descriptors = []
             self.last_build_pdf_pages = []
             self.last_build_source_sha256 = None
@@ -4394,15 +4615,29 @@ class WorkerdWorker:
         return resp
 
     def override(
-        self, stem: str, patches: list, preview_dpi: int | None = None, inline_svg: bool = False
+        self,
+        stem: str,
+        patches: list,
+        preview_dpi: int | None = None,
+        inline_svg: bool = False,
+        *,
+        expected_execution_id: str | None = None,
     ) -> dict:
-        build = self.ensure_built().get("timings") if not self.built else None
+        if expected_execution_id is not None:
+            _require_existing_execution(self, expected_execution_id)
+            build = None
+        else:
+            build = self.ensure_built().get("timings") if not self.built else None
         payload: dict = {"patches": patches}
         if preview_dpi:
             payload["preview_dpi"] = int(preview_dpi)
         if inline_svg:
             payload["inline_svg"] = True
-        resp = self._call("render", REQUEST_TIMEOUT, stem=stem, payload=payload)
+        op = "render"
+        if expected_execution_id is not None:
+            op = "render_existing"
+            payload["expected_execution_id"] = expected_execution_id
+        resp = self._call(op, REQUEST_TIMEOUT, stem=stem, payload=payload)
         self.rev += 1
         self.last_patch_hash = patchspec.patch_hash(patches)
         self.last_patch_hash_by_stem[stem] = self.last_patch_hash
@@ -4416,24 +4651,34 @@ class WorkerdWorker:
         fmt: str = "pdf",
         dpi: int = 600,
         *,
+        expected_execution_id: str | None = None,
         svg_path: str | None = None,
         require_built: bool = False,
         snapshot_only: bool = False,
         svg_fonttype: str | None = None,
         svg_text_path: str | None = None,
     ) -> dict:
-        if (require_built or snapshot_only) and not self.built:
-            raise WorkerError(
-                "An already built Figure session is required for SVG capture.",
-                code="svg_source_unavailable",
-            )
-        build = self.ensure_built().get("timings") if not self.built else None
+        if expected_execution_id is not None:
+            _require_existing_execution(self, expected_execution_id)
+            build = None
+        else:
+            if (require_built or snapshot_only) and not self.built:
+                raise WorkerError(
+                    "An already built Figure session is required for SVG capture.",
+                    code="svg_source_unavailable",
+                )
+            build = self.ensure_built().get("timings") if not self.built else None
         resp = self._call(
-            "export",
+            "export_existing" if expected_execution_id is not None else "export",
             EXPORT_TIMEOUT,
             stem=stem,
             payload={
                 "patches": patches,
+                **(
+                    {"expected_execution_id": expected_execution_id}
+                    if expected_execution_id is not None
+                    else {}
+                ),
                 "path": path,
                 "format": fmt,
                 "dpi": dpi,
@@ -4455,25 +4700,57 @@ class WorkerdWorker:
         resp = self._call("render_png", REQUEST_TIMEOUT, stem=stem, payload={"width": width_px})
         return Path(resp["path"])
 
-    def preview_png(self, stem: str, patches: list, width_px: int, tag: str) -> Path:
-        if not self.built:
+    def preview_png(
+        self,
+        stem: str,
+        patches: list,
+        width_px: int,
+        tag: str,
+        *,
+        expected_execution_id: str | None = None,
+    ) -> Path:
+        if expected_execution_id is not None:
+            _require_existing_execution(self, expected_execution_id)
+        elif not self.built:
             self.ensure_built()
         resp = self._call(
-            "preview_png",
+            "preview_png_existing" if expected_execution_id is not None else "preview_png",
             REQUEST_TIMEOUT,
             stem=stem,
-            payload={"patches": patches, "width": width_px, "tag": tag},
+            payload={
+                "patches": patches,
+                **(
+                    {"expected_execution_id": expected_execution_id}
+                    if expected_execution_id is not None
+                    else {}
+                ),
+                "width": width_px,
+                "tag": tag,
+            },
         )
         return Path(resp["path"])
 
-    def preview_png_snapshot(self, stem: str, patches: list, width_px: int) -> dict:
-        if not self.built:
+    def preview_png_snapshot(
+        self, stem: str, patches: list, width_px: int, *, expected_execution_id: str | None = None
+    ) -> dict:
+        if expected_execution_id is not None:
+            _require_existing_execution(self, expected_execution_id)
+        elif not self.built:
             self.ensure_built()
         return self._call(
-            "preview_png",
+            "preview_png_existing" if expected_execution_id is not None else "preview_png",
             REQUEST_TIMEOUT,
             stem=stem,
-            payload={"patches": patches, "width": width_px, "with_manifest": True},
+            payload={
+                "patches": patches,
+                **(
+                    {"expected_execution_id": expected_execution_id}
+                    if expected_execution_id is not None
+                    else {}
+                ),
+                "width": width_px,
+                "with_manifest": True,
+            },
         )
 
     def shutdown(self) -> bool:

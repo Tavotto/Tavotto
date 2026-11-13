@@ -50,7 +50,7 @@ import { startNamedNode } from '@/store/actions'
 import { NamedNodeQuickBox } from '@/components/NamedNodeQuickBox'
 import { THUMB_OBJECT_LIMIT, THUMB_TEXT_CHARS } from '@/components/CanvasThumb'
 import { TooltipProvider } from '@/components/ui/Tooltip'
-import { useDocumentStore } from '@/store/documentStore'
+import { pinDocumentOwner, useDocumentStore } from '@/store/documentStore'
 import { useTimelineStore } from '@/store/timelineStore'
 import { setCurrentProjectId } from '@/lib/session'
 import { isTimelineOpen, useUiStore } from '@/store/uiStore'
@@ -1745,6 +1745,18 @@ describe('行：单击选中、「预览」钮开预览、双击或「改名」�
     expect($('[data-timeline-rename]')).not.toBeNull()
   })
 
+  it('旧 A 时间线仍可见而 current 已 B 时，历史读取仍用正文 A 的显式归属', async () => {
+    setCurrentProjectId('timeline-A')
+    await useDocumentStore.getState().switchDocument(snapshot(), 'owned-history')
+    await mount([meta({ id: 'owned-node' })])
+    pinDocumentOwner()
+    setCurrentProjectId('timeline-B')
+    await openCard('owned-node')
+    expect(mockDoc).toHaveBeenCalledWith('owned-history', 'owned-node', undefined, 'timeline-A')
+    expect($('[data-timeline-card-frame="moment"]')?.textContent).toContain('版本里的那一段')
+    setCurrentProjectId(null)
+  })
+
   it('一行的动作只有一颗 ⋯（改名 / 复制 / 删除）；点行弹出对比卡片，悬停不再冒按钮', async () => {
     await mount([meta({ id: 'a1' })])
     const row = node('a1')
@@ -1772,7 +1784,7 @@ describe('行：单击选中、「预览」钮开预览、双击或「改名」�
     expect($('[data-timeline-card="a1"]')).not.toBeNull()
     expect($('[data-timeline-card-frame="moment"]')).not.toBeNull()
     expect($('[data-timeline-card-frame="current"]')).not.toBeNull()
-    expect(mockDoc).toHaveBeenCalledWith('d_versions', 'a1')
+    expect(mockDoc).toHaveBeenCalledWith('d_versions', 'a1', undefined, null)
     // 只读：打开卡片不开模态、不占预览槽
     expect(useTimelineStore.getState().preview).toBeNull()
     // Esc 收起卡片

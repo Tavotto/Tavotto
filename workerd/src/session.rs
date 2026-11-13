@@ -445,7 +445,24 @@ fn execute(
     events_rx: &Receiver<WorkerEvent>,
     job: Job,
 ) -> Result<Value, ProtoError> {
-    ensure_worker(inner, events_tx, events_rx)?;
+    if matches!(
+        &job.kind,
+        JobKind::Worker {
+            cmd: "render_existing" | "export_existing" | "preview_png_existing",
+            ..
+        }
+    ) {
+        let guard = inner.proc.lock().unwrap();
+        if !guard.as_ref().map(|proc| proc.is_alive()).unwrap_or(false) {
+            return Err(ProtoError::new(
+                "svg_source_unavailable",
+                false,
+                "The existing Figure process is unavailable.",
+            ));
+        }
+    } else {
+        ensure_worker(inner, events_tx, events_rx)?;
+    }
     match job.kind {
         // 握手已经在 ensure_worker 里做过了，这里只是把结果报回去
         JobKind::Open => Ok(json!({
@@ -464,7 +481,7 @@ fn execute(
                 job.timeout,
                 job.idle,
             )?;
-            if cmd == "render" {
+            if matches!(cmd, "render" | "render_existing") {
                 inner.revision.fetch_add(1, Ordering::SeqCst);
             }
             Ok(result)
@@ -551,14 +568,15 @@ fn request(
     let revision = inner.revision.load(Ordering::SeqCst);
     let request_id = new_request_id();
     let (line, patch_hash) = envelope(cmd, generation, revision, &request_id, stem, payload);
-    {
+    let child_pid = {
         let guard = inner.proc.lock().unwrap();
         let proc = guard.as_ref().ok_or_else(|| {
             ProtoError::new(CODE_SESSION_DEAD, true, "渲染进程已退出，会话需要重建")
         })?;
         // 写只是往写线程的 channel 里塞一条——**永不阻塞**。
         proc.send_line(line);
-    }
+        proc.pid
+    };
     let response = await_response(inner, events_rx, generation, &request_id, timeout, idle)?;
 
     let mut result = serde_json::Map::new();
@@ -577,7 +595,17 @@ fn request(
     if let Some(hash) = patch_hash {
         result.insert("canonical_patch_hash".into(), json!(hash));
     }
+    attach_capture_pid(&mut result, child_pid);
     Ok(Value::Object(result))
+}
+
+fn attach_capture_pid(result: &mut serde_json::Map<String, Value>, child_pid: u32) {
+    // This name is reserved for the supervisor. A worker body cannot authorize
+    // its own PID, including by sending this field without a capture.
+    result.remove("supervisor_child_pid");
+    if result.contains_key("captured_inputs") {
+        result.insert("supervisor_child_pid".into(), json!(child_pid));
+    }
 }
 
 /// 看门狗多久看一眼日志。与 Python 池的 `_PROGRESS_POLL` 同一个数。
@@ -1204,5 +1232,88 @@ mod tests {
         // missing_dependency 的识别仍在 Python 侧（按 traceback 正则），
         // 这里只负责一个字节都不改地把 traceback 交出去
         assert_eq!(err.to_json()["traceback"], "tb");
+    }
+
+    #[test]
+    fn capture_pid_is_the_dispatched_child_not_the_worker_claim() {
+        let mut result = json!({
+            "captured_inputs": {"version": 1},
+            "runtime": {"pid": 999},
+            "supervisor_child_pid": 777,
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+        attach_capture_pid(&mut result, 42);
+        assert_eq!(result["supervisor_child_pid"], json!(42));
+        assert_eq!(result["runtime"]["pid"], json!(999));
+    }
+
+    #[test]
+    fn ordinary_replies_keep_the_old_shape_and_cannot_forge_control_metadata() {
+        let original = json!({"manifest": {}, "execution_id": "original"});
+        let mut result = original.as_object().unwrap().clone();
+        attach_capture_pid(&mut result, 42);
+        assert_eq!(Value::Object(result.clone()), original);
+        result.insert("supervisor_child_pid".into(), json!(777));
+        attach_capture_pid(&mut result, 42);
+        assert_eq!(Value::Object(result), original);
+    }
+
+    #[test]
+    fn existing_render_missing_child_never_attempts_spawn() {
+        for cmd in ["render_existing", "export_existing", "preview_png_existing"] {
+            let (mut inner, _responses) = test_inner(7);
+            let nonexistent = concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/guard-never-created-program.exe"
+            );
+            assert!(!std::path::Path::new(nonexistent).exists());
+            Arc::get_mut(&mut inner).unwrap().spec.argv = vec![nonexistent.into()];
+            let (tx, rx) = channel();
+            let job = Job {
+                client_request_id: "guarded".into(),
+                kind: JobKind::Worker {
+                    cmd,
+                    merge_key: None,
+                },
+                stem: Some("History".into()),
+                payload: json!({}),
+                timeout: Duration::from_millis(20),
+                idle: None,
+            };
+            let error = execute(&inner, &tx, &rx, job).unwrap_err();
+            assert_eq!(error.code, "svg_source_unavailable");
+            assert_eq!(inner.generation.load(Ordering::SeqCst), 7);
+            assert!(inner.proc.lock().unwrap().is_none());
+        }
+    }
+
+    #[test]
+    fn existing_render_does_not_change_ordinary_spawn_policy() {
+        let (mut inner, _responses) = test_inner(7);
+        let nonexistent = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/guard-never-created-program.exe"
+        );
+        assert!(!std::path::Path::new(nonexistent).exists());
+        Arc::get_mut(&mut inner).unwrap().spec.argv = vec![nonexistent.into()];
+        let (tx, rx) = channel();
+        let job = Job {
+            client_request_id: "ordinary".into(),
+            kind: JobKind::Worker {
+                cmd: "render",
+                merge_key: None,
+            },
+            stem: Some("History".into()),
+            payload: json!({}),
+            timeout: Duration::from_millis(20),
+            idle: None,
+        };
+        let error = execute(&inner, &tx, &rx, job).unwrap_err();
+        // An explicitly absent executable prevents a real process; this is the original
+        // mechanism's attempted-spawn outcome, unlike the guarded early return.
+        assert_eq!(error.code, CODE_SPAWN_FAILED);
+        assert_eq!(inner.generation.load(Ordering::SeqCst), 8);
     }
 }

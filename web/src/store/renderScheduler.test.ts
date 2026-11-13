@@ -12,11 +12,77 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import type { PanelObject } from '@/types/document'
+import type { PanelChartState } from '@/types/document'
+import chartVectors from '../../../tests/golden/chart_model_vectors.json'
+import { renderRequestIdentity } from './renderStore'
 import { cancelScheduledRender, hasScheduledRender, requestRender } from './renderScheduler'
 
 const schedulerSource = Object.values(
   import.meta.glob('/src/store/renderScheduler.ts', { query: '?raw', import: 'default', eager: true }),
 )[0] as string
+
+describe('chart调度仍使用唯一renderStore', () => {
+  const send = vi.fn<ReturnType<typeof useRenderStore.getState>['render']>(async () => {})
+  beforeEach(() => {
+    vi.useFakeTimers()
+    send.mockClear()
+    useRenderStore.getState().clear()
+    useRenderStore.setState({ render: send })
+  })
+  afterEach(() => { vi.useRealTimers() })
+
+  function chartPanel() {
+    const v = chartVectors.vectors.find(v => v.expect === 'ok')!
+    const chart = structuredClone({ model: v.model, binding: v.binding }) as unknown as PanelChartState
+    return { ...panel('chart', 'chart.svg'), script: null, fileKind: 'svg' as const, chart }
+  }
+
+  it('普通前台调用仍只有原来六个实参', () => {
+    requestRender(panel('plain', 'plot.pdf'), 'immediate')
+    expect(send.mock.calls[0]).toHaveLength(6)
+  })
+
+  it('chart none完整占位；取消/防抖保留同一完整chart身份', () => {
+    const p = chartPanel()
+    requestRender(p, 'none')
+    expect(send).not.toHaveBeenCalled()
+    expect(useRenderStore.getState().get(renderKeyOf(p)).wantPatches).toBe(renderRequestIdentity(p.overrides, p.chart))
+    requestRender(p, 'defer')
+    cancelScheduledRender(p.id)
+    vi.advanceTimersByTime(1000)
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('防抖定时器携带排期时完整chart快照而非后续可变引用', () => {
+    const p = chartPanel(), original = structuredClone(p)
+    requestRender(p, 'defer')
+    p.chart.model.axes[0].xlim[1] += 10
+    vi.advanceTimersByTime(300)
+    expect(send).toHaveBeenCalledOnce()
+    expect(send.mock.calls[0][0]).toBe('chart.svg')
+    expect(send.mock.calls[0][1]).toEqual(original.overrides)
+    expect(send.mock.calls[0][7]).toEqual(original.chart)
+  })
+
+  it('来源附件参与none占位并在防抖时深拷贝，第九参只在ref存在时发送；/1 面板第11参不带profile', () => {
+    const p: PanelObject = chartPanel()
+    p.chartSource = { schema: 1, sourceId: p.fileId, bytesSha256: 'a'.repeat(64), sizeBytes: 100,
+      sceneDigest: p.chart!.model.scene_digest }
+    const original = structuredClone(p)
+    requestRender(p, 'none')
+    expect(useRenderStore.getState().get(renderKeyOf(p)).wantPatches)
+      .toBe(renderRequestIdentity(p.overrides, p.chart, p.chartSource))
+    requestRender(p, 'defer')
+    p.chartSource.bytesSha256 = 'b'.repeat(64)
+    vi.advanceTimersByTime(300)
+    expect(send.mock.calls[0]).toHaveLength(11)
+    expect(send.mock.calls[0][8]).toEqual(original.chartSource)
+    expect(send.mock.calls[0][8]).not.toBe(p.chartSource)
+    // 第 10/11 参（figureOrigin / renderProfile）：无 origin 的 /1 面板都缺席
+    expect(send.mock.calls[0][9]).toBeUndefined()
+    expect(send.mock.calls[0][10]).toBeUndefined()
+  })
+})
 
 const hookSource = Object.values(
   import.meta.glob('/src/hooks/useEngineSync.ts', { query: '?raw', import: 'default', eager: true }),

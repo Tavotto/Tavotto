@@ -23,7 +23,6 @@ import base64
 import copy
 import hashlib
 import math
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping
@@ -128,11 +127,6 @@ def _text_safe(cp: int) -> bool:
     return not (0xE000 <= cp <= 0xF8FF or 0xF0000 <= cp <= 0x10FFFF or 0xFDD0 <= cp <= 0xFDEF)
 
 
-_URL_REF = re.compile(r"url\(\s*(['\"]?)#([^\s)'\"]+)\1\s*\)", re.I)
-_CSS_RULE = re.compile(r"([^{}]+)\{([^{}]*)\}")
-_CSS_ID = re.compile(r"#([A-Za-z_][A-Za-z0-9_-]*)")
-
-
 def _isolate(root: ET.Element, prefix: str, scope: str) -> None:
     """Rewrite only validated local references; CSS selectors are scoped per instance.
 
@@ -140,28 +134,9 @@ def _isolate(root: ET.Element, prefix: str, scope: str) -> None:
     does not attempt to parse arbitrary CSS. In particular colors in declarations
     are never mistaken for ID selectors.
     """
-    ids = {node.get("id"): prefix + node.get("id") for node in root.iter() if node.get("id")}
+    from tavotto.svgisolation import isolate_svg
 
-    def urls(value: str) -> str:
-        return _URL_REF.sub(lambda m: f"url(#{ids[m.group(2)]})", value)
-
-    for node in root.iter():
-        for key, value in list(node.attrib.items()):
-            if key == "id":
-                node.set(key, ids[value])
-            elif key in ("href", f"{{{XLINK}}}href") and value.startswith("#"):
-                node.set(key, "#" + ids[value[1:]])
-            else:
-                node.set(key, urls(value))
-        if node.tag == f"{{{SVG}}}style" and node.text:
-            rules = []
-            for match in _CSS_RULE.finditer(node.text):
-                selectors = _CSS_ID.sub(
-                    lambda m: "#" + ids.get(m.group(1), prefix + m.group(1)), match.group(1)
-                )
-                scoped = ",".join(f"#{scope} {s.strip()}" for s in selectors.split(","))
-                rules.append(scoped + "{" + urls(match.group(2)) + "}")
-            node.text = "\n".join(rules)
+    isolate_svg(root, prefix=prefix, scope=scope)
 
 
 class SvgWriter:
@@ -193,6 +168,7 @@ class SvgWriter:
         self._glyphs: dict[tuple[str, int], str] = {}
         self._images: dict[str, tuple[str, dict]] = {}
         self._sources: dict[str, ET.Element] = {}
+        self._static_svg_sizes: dict[str, tuple[float, float]] = {}
         self._raster_pixels = 0
         self.root = ET.Element(
             f"{{{SVG}}}svg",
@@ -230,10 +206,15 @@ class SvgWriter:
             flip_v=node.flip_v,
         )
         group = _element(parent, "g", transform=_matrix(pl.matrix), opacity=_num(node.opacity))
-        x, y, w, h = pl.clip
-        self._clip(
-            group, (("M", x, y), ("L", x + w, y), ("L", x + w, y + h), ("L", x, y + h), ("Z",))
-        )
+        # The image itself supplies this exact boundary. A coincident clip
+        # would apply antialias coverage twice; retain only a genuine crop.
+        # ImportedPage clipping remains independent of this image-only rule.
+        if not isinstance(node, ir.Image) or node.crop not in (None, (0, 0, 1, 1)):
+            x, y, w, h = pl.clip
+            self._clip(
+                group,
+                (("M", x, y), ("L", x + w, y), ("L", x + w, y + h), ("L", x, y + h), ("Z",)),
+            )
         return group, pl
 
     def _source_bytes(self, node) -> tuple[ir.FileResource, bytes]:
@@ -265,7 +246,16 @@ class SvgWriter:
                 parent, "g", transform=_matrix(node.transform), opacity=_num(node.opacity)
             )
             if node.clip is not None:
-                self._clip(group, node.clip.segments, node.clip.fill_rule)
+                if isinstance(node.clip, ir.ClipUnion):
+                    name = self._name("clip")
+                    clip = _element(self.defs, "clipPath", id=name, clipPathUnits="userSpaceOnUse")
+                    for path in node.clip.paths:
+                        _element(
+                            clip, "path", d=_path(path.segments), **{"clip-rule": path.fill_rule}
+                        )
+                    group.set("clip-path", f"url(#{name})")
+                else:
+                    self._clip(group, node.clip.segments, node.clip.fill_rule)
             for child in node.children:
                 self._emit(child, group)
         elif isinstance(node, ir.ShapedText):
@@ -556,12 +546,21 @@ class SvgWriter:
             try:
                 root = None
                 text_data = self.imported_text_svgs.get(node.resource)
-                if text_data is not None and self.text_policy == TEXT_POLICY_TEXT:
+                if (
+                    text_data is not None
+                    and self.text_policy == TEXT_POLICY_TEXT
+                    and res.kind != "svg"
+                ):
                     try:
                         root = parse_svg(text_data)
                     except (SVGError, ValueError):
                         root = None
                 if root is None:
+                    if res.kind == "svg" and res.origin == "static":
+                        from .. import svgasset
+
+                        data, size = svgasset.inspect_bytes(data)
+                        self._static_svg_sizes[node.resource] = (size["w_pt"], size["h_pt"])
                     root = parse_svg(data)
                 for element in root.iter():
                     if not element.tag.startswith("{"):
@@ -573,6 +572,19 @@ class SvgWriter:
                     )
                 self.facts.imported_text_elements += texts
                 values = [float(v) for v in root.get("viewBox", "").replace(",", " ").split()]
+                if ir.is_native_svg(res.kind, res.origin):
+                    # Native SVG may establish its user coordinate system from
+                    # CSS-pixel intrinsic lengths without an explicit viewBox.
+                    from ..svgscene import _physical_size
+
+                    if res.origin == "static":
+                        w_pt, h_pt = self._static_svg_sizes[node.resource]
+                        view_box = root.get("viewBox")
+                    else:
+                        w_pt, h_pt, view_box = _physical_size(root)
+                    if view_box is None:
+                        root.set("viewBox", f"0 0 {_num(w_pt * 96 / 72)} {_num(h_pt * 96 / 72)}")
+                        values = [0, 0, w_pt * 96 / 72, h_pt * 96 / 72]
                 if (
                     len(values) != 4
                     or not all(math.isfinite(v) for v in values)
@@ -591,8 +603,31 @@ class SvgWriter:
                     },
                 ) from exc
         root = copy.deepcopy(self._sources[node.resource])
-        _, _, width, height = (float(v) for v in root.get("viewBox").replace(",", " ").split())
-        group, pl = self._placed(parent, node, (0, 0, width, height))
+        native_svg = ir.is_native_svg(res.kind, res.origin)
+        if native_svg:
+            from ..svgscene import _physical_size
+
+            if res.origin == "static":
+                width, height = self._static_svg_sizes[node.resource]
+            else:
+                width, height, _ = _physical_size(root)
+        else:
+            _, _, width, height = (float(v) for v in root.get("viewBox").replace(",", " ").split())
+        if native_svg and res.origin == "declarative" and node.crop in (None, (0, 0, 1, 1)):
+            # The nested SVG viewport already clips its physical source frame.
+            # A second coincident Path clip multiplies edge coverage (visible
+            # at fractional CSS pixels), although no crop was requested.
+            pl = placement.place(
+                (0, 0, width, height),
+                node.rect,
+                rotate_cw_deg=node.rotate_cw_deg,
+                flip_h=node.flip_h,
+                flip_v=node.flip_v,
+            )
+            group = _element(parent, "g", transform=_matrix(pl.matrix), opacity=_num(node.opacity))
+            root.set("overflow", "hidden")
+        else:
+            group, pl = self._placed(parent, node, (0, 0, width, height))
         scope = self._name("source")
         wrapper = _element(group, "g", id=scope, transform=f"matrix(1 0 0 -1 0 {_num(height)})")
         _isolate(root, scope + "-", scope)
@@ -600,7 +635,8 @@ class SvgWriter:
         root.set("y", "0")
         root.set("width", _num(width))
         root.set("height", _num(height))
-        root.set("preserveAspectRatio", "none")
+        if not native_svg:
+            root.set("preserveAspectRatio", "none")
         wrapper.append(root)
         self.facts.transparency_groups += int(node.opacity < 1)
         self.facts.imported_pages.append(

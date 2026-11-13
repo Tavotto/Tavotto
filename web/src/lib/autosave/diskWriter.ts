@@ -18,8 +18,12 @@
  *   * **收到 409 基线一个都不推进**：推进等于承认对方那版是我的起点，下一次写就会
  *     把它盖掉。
  */
-import { ApiError, REVISION_ABSENT, type DiskDocumentSummary } from '@/lib/api'
+import { ApiError, REVISION_ABSENT, backendCodeMsg, type DiskDocumentSummary } from '@/lib/api'
+import type { UiMessage } from '@/i18n'
+import type { ProjectFileCapture, ProjectFileEdit, ProjectFileRecovery, ProjectFileResult } from '@/lib/projectFileSession'
+import type { MomentSnapshot } from '@/lib/timelineCheckpoint'
 import type { FigureSnapshotSaveContext } from '@/lib/figureSnapshot'
+import type { ChartSourceReceipt, ChartSourceSaveContext } from '@/lib/chartSourceReceipts'
 import type { FigureSnapshot, ProjectDocument } from '@/types/document'
 
 /**
@@ -49,11 +53,37 @@ export interface SaveIssue {
    * - `io`：写盘本身失败（磁盘满、权限、后端不可达）
    * - `stale`：另一个标签页存了更新的版本（后端 `stale_write`）
    * - `external`：磁盘上那份不是我上次读到/写出的那份（后端 `external_change`）
+   * - `backend`：后端明确拒绝了保存，保留具体 code/params，不能假称磁盘空间不足
    */
-  kind: 'io' | 'stale' | 'external'
+  kind: 'io' | 'stale' | 'external' | 'backend'
   docId: string
   /** 磁盘上那份的摘要（`external` / `stale`）；拿不到时为 null */
   disk?: DiskDocumentSummary | null
+  /** 只留本机通知要用的错误描述；不持久化、不发进遥测，不携整个响应体。 */
+  backend?: { status: number; code: string; params: Record<string, unknown>; fallback: string }
+}
+
+/** 保存状态与通知共用后端的唯一翻译器；无结构 I/O 沿用调用方的通用提示。 */
+export function saveIssueMessage(issue: SaveIssue | null | undefined, fallback: UiMessage): UiMessage {
+  const error = issue?.kind === 'backend' ? issue.backend : undefined
+  return error ? backendCodeMsg(error.code, error.params, error.fallback) : fallback
+}
+
+function backendIssue(id: string, error: unknown): SaveIssue | null {
+  if (!(error instanceof ApiError) || typeof error.body.code !== 'string' || !error.body.code) return null
+  const params = error.body.params
+  return {
+    kind: 'backend',
+    docId: id,
+    backend: {
+      status: error.status,
+      code: error.body.code,
+      params: params && typeof params === 'object' && !Array.isArray(params)
+        ? structuredClone(params) as Record<string, unknown>
+        : {},
+      fallback: error.message,
+    },
+  }
 }
 
 /**
@@ -92,6 +122,20 @@ export interface WrittenInfo {
   metadata: WrittenMetadata
   figureSnapshots?: Record<string, FigureSnapshot>
   snapshotContext?: FigureSnapshotSaveContext
+  chartSources?: ChartSourceReceipt[]
+  chartContext?: ChartSourceSaveContext
+  projectFile?: ProjectFileResult
+  projectFileContext?: ProjectFileCapture
+  moment?: MomentSnapshot
+  writtenDocument?: ProjectDocument
+  revision?: string | null
+}
+
+export type DiskSaveContext = FigureSnapshotSaveContext & {
+  chartContext?: ChartSourceSaveContext
+  projectFileContext?: ProjectFileCapture
+  projectFileRecovery?: ProjectFileRecovery
+  moment?: MomentSnapshot
 }
 
 /** 协调器要用到的那几条磁盘 API（形状与 `@/lib/api` 同名函数一致，便于直接递真的进来）。 */
@@ -102,7 +146,8 @@ export interface DiskApi {
     baseline: number | undefined,
     revision: string | undefined,
     pj: string | null,
-  ) => Promise<{ saved_at?: number; revision?: string | null; metadata?: WrittenMetadata; figure_snapshots?: Record<string, FigureSnapshot> }>
+    opts?: { projectFileEdit: ProjectFileEdit; projectFileRecovery?: ProjectFileRecovery },
+  ) => Promise<{ saved_at?: number; revision?: string | null; metadata?: WrittenMetadata; figure_snapshots?: Record<string, FigureSnapshot>; document_format?: 'v4'; chart_sources?: ChartSourceReceipt[]; project_file?: ProjectFileResult }>
   fetch: (id: string, pj: string | null) => Promise<{ revision: string | null } | null>
   fetchSummary: (id: string, pj: string | null) => Promise<DiskDocumentSummary | null>
 }
@@ -124,8 +169,8 @@ export interface DiskWriterPorts {
    * 正文 revision 照常推进（不能因元数据失败当正文失败重试）。
    */
   onWritten: (id: string, savedAt: number, info: WrittenInfo) => void
-  /** 写盘失败或被 409 挡下；`issue` 为 null = io 失败 */
-  onFailed: (id: string, issue: SaveIssue | null) => void
+  /** 写盘失败或被 409 挡下；`issue` 为 null = 无结构 I/O 失败 */
+  onFailed: (id: string, issue: SaveIssue | null, recoveryContext?: DiskSaveContext) => void
   /** 冲突未决：队列里排着的那份不能继续往磁盘上撞（读的是**此刻**的保存状态） */
   writeBlocked: () => boolean
   /** 写盘成功后仅清掉与落盘快照相同的本机兜底副本（期间可能已换成更新的一版） */
@@ -158,7 +203,7 @@ export function conflictIssue(id: string, err: unknown): SaveIssue {
 
 export interface DiskWriter {
   /** 把这一份排进队列（或立刻开始写） */
-  schedule: (id: string, pd: ProjectDocument, pj: string | null, snapshotContext?: FigureSnapshotSaveContext) => void
+  schedule: (id: string, pd: ProjectDocument, pj: string | null, snapshotContext?: DiskSaveContext) => void
   /** 队列排空（含在途那一次）后 resolve。已经空了就立刻 resolve。 */
   whenIdle: () => Promise<void>
   /** 下一次真正开始的写盘算作手动保存（遥测的 trigger） */
@@ -169,6 +214,7 @@ export interface DiskWriter {
   rememberRevision: (id: string, fetched: { revision: string | null } | null) => void
   /** 本会话确认过这份文档的磁盘状况吗（写前要不要先探一次） */
   knowsRevision: (id: string) => boolean
+  revisionOf: (id: string) => string | null | undefined
   setRevision: (id: string, revision: string | null) => void
   forgetRevision: (id: string) => void
   setBaseline: (id: string, updatedAt: number) => void
@@ -181,7 +227,7 @@ export interface DiskWriter {
 export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
   let diskBusy = false
   /** 按 documentId 排队：同一个 id 天然合并成最新一份，不同 id 依次串行 PUT。 */
-  const diskQueue = new Map<string, { pd: ProjectDocument; pj: string | null; snapshotContext?: FigureSnapshotSaveContext }>()
+  const diskQueue = new Map<string, { pd: ProjectDocument; pj: string | null; snapshotContext?: DiskSaveContext }>()
 
   /**
    * 乐观并发基线：本标签页最后一次**成功落盘**时那份文档的 updatedAt。
@@ -274,7 +320,7 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
     }
   }
 
-  function schedule(id: string, pd: ProjectDocument, pj: string | null, snapshotContext?: FigureSnapshotSaveContext): void {
+  function schedule(id: string, pd: ProjectDocument, pj: string | null, snapshotContext?: DiskSaveContext): void {
     if (diskBusy) {
       diskQueue.set(id, { pd, pj, snapshotContext })
       return
@@ -288,7 +334,16 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
         if (issue) throw new PendingConflict(issue)
         // `null`（确认过但拿不到 hash）与「缺席」在这里都变成 undefined = 不带，
         // 但两者在 `ensureDiskKnown` 那里是两回事：前者不再探，后者要探。
-        return ports.api.put(id, pd, diskBaseline.get(id), diskRevision.get(id) ?? undefined, pj)
+        const capture = snapshotContext?.projectFileContext
+        const recovery = snapshotContext?.projectFileRecovery
+        const revision = recovery ? recovery.revision ?? REVISION_ABSENT : diskRevision.get(id) ?? undefined
+        const args = [id, pd, diskBaseline.get(id), revision, pj] as const
+        if (!capture) return ports.api.put(...args)
+        const previous = diskRevision.get(id)
+        return ports.api.put(...args, { projectFileEdit: {
+          axis: capture.axis, base_axis: capture.base_axis,
+          base_revision: recovery ? recovery.revision : previous === REVISION_ABSENT || previous === undefined ? null : previous,
+        }, ...(recovery ? { projectFileRecovery: recovery } : {}) })
       })
       .then((res) => {
         diskBaseline.set(id, pd.updatedAt)
@@ -298,6 +353,16 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
           pj,
           metadata: res.metadata,
           ...(res.figure_snapshots !== undefined ? { figureSnapshots: res.figure_snapshots, snapshotContext } : {}),
+          ...(res.document_format === 'v4' && res.chart_sources !== undefined
+            ? { chartSources: res.chart_sources, chartContext: snapshotContext?.chartContext } : {}),
+          ...(snapshotContext?.projectFileContext ? {
+            snapshotContext,
+            projectFile: res.project_file,
+            projectFileContext: snapshotContext.projectFileContext,
+            writtenDocument: pd,
+            revision: res.revision,
+            moment: snapshotContext.moment,
+          } : {}),
         })
         ports.outcome(trigger, 'ok')
       })
@@ -312,7 +377,9 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
               ? conflictIssue(id, err)
               : null
         ports.outcome(trigger, conflict ? 'conflict' : 'failed')
-        ports.onFailed(id, conflict)
+        const issue = conflict ?? backendIssue(id, err)
+        if (snapshotContext?.projectFileRecovery) ports.onFailed(id, issue, snapshotContext)
+        else ports.onFailed(id, issue)
       })
       .finally(() => {
         diskBusy = false
@@ -341,6 +408,7 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
     },
     rememberRevision,
     knowsRevision: (id) => diskRevision.has(id),
+    revisionOf: (id) => diskRevision.get(id),
     setRevision: (id, revision) => {
       diskRevision.set(id, revision)
     },
