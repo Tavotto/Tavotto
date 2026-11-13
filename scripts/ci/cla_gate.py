@@ -20,12 +20,12 @@
   `docs/legal/cla-signatures.json` 里手工维护一份，那会和服务商的数据库
   变成两个权威，分叉之后没有任何机制说得清哪一份算数，因此已经删掉。
   「在 PR 里回一句 I agree 然后 grep 评论」那种东西不在这里，也不该有。
-* **唯一的例外是「服务商还不存在」的那段时间。** provider 未配置时，签署事实的
-  权威是著作权人私下保存的**双签纸面协议**（双方签字的执行副本）；
-  policy 的 `offline_signatures` 只是指向它的索引（账号、不可变账号 id、
-  协议与版本、两个签署日期），不含任何个人信息。**任何时刻只有一个权威**：
-  provider 一旦标成已配置，`offline_signatures` 必须为空（validate_policy
-  结构性地拒绝两者并存）——启用服务商时，线下签署人要先迁进服务商。
+* **唯一的例外是服务启用前已经双签的纸面协议**（ADR 0183）。这些人签的是
+  著作权人私下保存的**双签纸面协议**（双方签字的执行副本）；policy 在豁免表里
+  用 `kind: countersigned_paper` 记一条索引（账号、不可变账号 id、协议与版本、
+  两个签署日期），不含任何个人信息。服务启用后照样有效，不迁进服务。
+  **每个人只有一个权威**：这些账号只认纸面记录，其余的人只认服务。
+  旧的 `offline_signatures` 一节已废弃，非空即配置错误。
 
 判定规则（详见 `decide()`）：
 
@@ -41,8 +41,8 @@
   只有可信来源给出的账号 id 全部等于豁免条目的 `github_id` 才本地放行
   （`_id_exempt`），否则一律要服务凭证。服务模式下每条豁免都必须写 `github_id`。
 * `--event pull_request`：PR 里出现的每一个人类贡献者，要么在 policy 的豁免表
-  里被**点名**，要么由 provider 判定为已签，要么在 `offline_signatures` 里有
-  一条**版本对得上、账号 id 对得上**的双签记录。除此之外没有任何人能被判成
+  里被**点名**，要么由 provider 判定为已签，要么在豁免表里有一条
+  `countersigned_paper` 记录，且**版本对得上、账号 id 对得上**。除此之外没有任何人能被判成
   已签——非豁免的人类一律阻断，并给出明确指引。绝不因为「服务还没接上」
   就把外部贡献者当成签过。
 * 其他事件：配置错误 → 失败。没设计过的上下文不许静默变绿。
@@ -51,13 +51,13 @@ fail-closed 的几处（每一处都是「宁可红」）：
 
 * 认不出 GitHub 账号的 co-author（邮箱不是 GitHub noreply 形态）→ 失败，
   让人来认领，而不是猜一个 login 或者当它不存在；
-* 线下签署按 login 找到条目后，还要**按不可变的 GitHub 账号 id 核身份**：
+* 纸面签署按 login 找到条目后，还要**按不可变的 GitHub 账号 id 核身份**：
   这个 PR 里该 login 名下**由可信来源**给出的每一个账号 id 都必须等于条目里的
   `github_id`，且至少有一个——login 可以改名、被别人注册，id 不会。可信来源
   只有两个：PR 事件里 PR 作者的 id（`CLA_PR_AUTHOR_ID` / `--pr-author-id`）与
   GitHub API 对提交作者解析出的 `author.id`。`Co-authored-by` 与 noreply 邮箱里
   的数字是贡献者自己写的字符串，**不算身份证明**（Codex 评审 #1630）；
-  PR 作者是线下签署人却拿不到 PR 作者 id → 不算；
+  PR 作者是纸面签署人却拿不到 PR 作者 id → 不算；
   签的版本 ≠ 当前协议版本 → 不算（新版本要新同意，见 CLA_VERSIONING.md）；
 * 豁免只按 login 精确匹配显式名单，**没有「名字像机器人就放行」这种规则**——
   `dependabot[bot]` 能过是因为它在表里写着，不是因为它带个 `[bot]` 后缀；
@@ -105,16 +105,19 @@ NOREPLY_RE = re.compile(
     r"(?i)^(?:(?P<id>\d+)\+)?(?P<login>[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)@users\.noreply\.github\.com$"
 )
 
-#: `offline_signatures` 每一条必须有、且只能有的字段。**故意不收地址、姓名、
+#: 已双签纸面协议的豁免类型（ADR 0183）。
+PAPER_KIND = "countersigned_paper"
+#: `countersigned_paper` 豁免每一条必须有、且只能有的字段。**故意不收地址、姓名、
 #: 邮箱**：那些只在执行副本上，公开仓库里一个字都不放。
-OFFLINE_SIGNATURE_KEYS = (
+PAPER_EXEMPTION_KEYS = (
     "login",
+    "kind",
     "github_id",
     "agreement",
     "version",
     "contributor_signed_on",
     "countersigned_on",
-    "record",
+    "reason",
 )
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -247,11 +250,13 @@ def validate_policy(policy: dict) -> None:
         if login in seen:
             raise ConfigError(f"cla-policy.exemptions 里 `{ex['login']}` 重复")
         seen.add(login)
-        if ex["kind"] not in ("rights_holder", "bot"):
+        if ex["kind"] not in ("rights_holder", "bot", PAPER_KIND):
             raise ConfigError(
                 f"cla-policy.exemptions[{i}].kind=`{ex['kind']}` 认不出"
-                "（只允许 rights_holder / bot）"
+                f"（只允许 rights_holder / bot / {PAPER_KIND}）"
             )
+        if ex["kind"] == PAPER_KIND:
+            _validate_paper_exemption(ex, f"cla-policy.exemptions[{i}]", policy)
         if "github_id" in ex:
             gid = ex["github_id"]
             if type(gid) is not int or gid <= 0:
@@ -275,56 +280,38 @@ def validate_policy(policy: dict) -> None:
                 "provider 走 tavotto-cla-v1 时每条豁免都必须写 `github_id`（不可变账号 id）："
                 + "、".join(missing)
             )
-    _validate_offline_signatures(policy, seen)
-
-
-def _validate_offline_signatures(policy: dict, exempt_logins: set[str]) -> None:
-    """`offline_signatures`：服务商还不存在时，双签纸面协议的索引。
-
-    缺省等于空表。形状严格：字段闭集（多一个也不行——防有人顺手把姓名 /
-    地址补进公开仓库）、id 是正整数、日期是 ISO、协议键存在、联署不早于
-    贡献者签署、login 不与豁免重复。**provider 已配置时它必须为空**：
-    两份签署记录同时有效就是两个法律权威，这正是本仓库拒绝 signer 名单的理由。
-    """
-    entries = policy.get("offline_signatures", [])
-    if not isinstance(entries, list):
-        raise ConfigError("cla-policy.offline_signatures 必须是数组")
-    if entries and policy["provider"]["configured"]:
+    if policy.get("offline_signatures"):
         raise ConfigError(
-            "provider 已配置时 offline_signatures 必须为空——任何时刻签署事实只能有"
-            "一个权威。启用服务商前先把线下签署人迁进服务商，再清空这一节"
-            "（见 docs/legal/CLA_AUTOMATION_SETUP.md）"
+            "cla-policy.offline_signatures 已废弃（ADR 0183）——已双签纸面协议的人改记在"
+            f"exemptions 里，kind=`{PAPER_KIND}`，字段见 docs/legal/CLA_VERSIONING.md"
         )
-    seen: set[str] = set()
-    for i, sig in enumerate(entries):
-        where = f"cla-policy.offline_signatures[{i}]"
-        if not isinstance(sig, dict):
-            raise ConfigError(f"{where} 不是对象")
-        if set(sig) != set(OFFLINE_SIGNATURE_KEYS):
-            raise ConfigError(
-                f"{where} 的字段必须恰好是 {', '.join(OFFLINE_SIGNATURE_KEYS)}"
-                f"（多了 {sorted(set(sig) - set(OFFLINE_SIGNATURE_KEYS))}，"
-                f"缺了 {sorted(set(OFFLINE_SIGNATURE_KEYS) - set(sig))}）——"
-                "姓名、地址、邮箱只在执行副本上，不进公开仓库"
-            )
-        for key in ("login", "agreement", "version", "record"):
-            if not isinstance(sig[key], str) or not sig[key].strip():
-                raise ConfigError(f"{where}.{key} 必须是非空字符串")
-        if type(sig["github_id"]) is not int or sig["github_id"] <= 0:
-            raise ConfigError(f"{where}.github_id 必须是正整数（GitHub 不可变账号 id）")
-        if sig["agreement"] not in policy["agreements"]:
-            raise ConfigError(f"{where}.agreement=`{sig['agreement']}` 不是 agreements 里的协议")
-        for key in ("contributor_signed_on", "countersigned_on"):
-            if not isinstance(sig[key], str) or not DATE_RE.match(sig[key]):
-                raise ConfigError(f"{where}.{key} 必须是 YYYY-MM-DD")
-        if sig["countersigned_on"] < sig["contributor_signed_on"]:
-            raise ConfigError(f"{where}：联署日期早于贡献者签署日期")
-        login = sig["login"].lower()
-        if login in exempt_logins:
-            raise ConfigError(f"{where}：`{sig['login']}` 已在豁免表里，不能同时是线下签署人")
-        if login in seen:
-            raise ConfigError(f"cla-policy.offline_signatures 里 `{sig['login']}` 重复")
-        seen.add(login)
+
+
+def _validate_paper_exemption(ex: dict, where: str, policy: dict) -> None:
+    """`countersigned_paper`：已与著作权人双签纸面协议的人（ADR 0183）。
+
+    形状严格：字段闭集（多一个也不行——防有人顺手把姓名 / 地址补进公开仓库）、
+    `github_id` 必填且是正整数、日期是 ISO、协议键存在、联署不早于贡献者签署。
+    """
+    if set(ex) != set(PAPER_EXEMPTION_KEYS):
+        raise ConfigError(
+            f"{where} 的字段必须恰好是 {', '.join(PAPER_EXEMPTION_KEYS)}"
+            f"（多了 {sorted(set(ex) - set(PAPER_EXEMPTION_KEYS))}，"
+            f"缺了 {sorted(set(PAPER_EXEMPTION_KEYS) - set(ex))}）——"
+            "姓名、地址、邮箱只在执行副本上，不进公开仓库"
+        )
+    for key in ("agreement", "version"):
+        if not isinstance(ex[key], str) or not ex[key].strip():
+            raise ConfigError(f"{where}.{key} 必须是非空字符串")
+    if type(ex["github_id"]) is not int or ex["github_id"] <= 0:
+        raise ConfigError(f"{where}.github_id 必须是正整数（GitHub 不可变账号 id）")
+    if ex["agreement"] not in policy["agreements"]:
+        raise ConfigError(f"{where}.agreement=`{ex['agreement']}` 不是 agreements 里的协议")
+    for key in ("contributor_signed_on", "countersigned_on"):
+        if not isinstance(ex[key], str) or not DATE_RE.match(ex[key]):
+            raise ConfigError(f"{where}.{key} 必须是 YYYY-MM-DD")
+    if ex["countersigned_on"] < ex["contributor_signed_on"]:
+        raise ConfigError(f"{where}：联署日期早于贡献者签署日期")
 
 
 def _validate_provider(policy: dict) -> None:
@@ -412,7 +399,7 @@ def collect_contributors(
             entry["sources"].append(source)
         if detail and detail not in entry.get("details", []):
             entry.setdefault("details", []).append(detail)
-        # 账号 id 是这个 login 名下**实际出现过**的不可变身份。线下签署按它核人：
+        # 账号 id 是这个 login 名下**实际出现过**的不可变身份。纸面签署按它核人：
         # login 能改名、能被别人重新注册，id 不会。
         if account_id is not None:
             ids = entry.setdefault("ids", [])
@@ -425,7 +412,7 @@ def collect_contributors(
 
     add(pr_author, "pr_author", account_id=_account_id(pr_author_id))
     if pr_author and _account_id(pr_author_id) is None:
-        # PR 作者的 id 没传进来：线下签署不能只凭 login 认 PR 作者。
+        # PR 作者的 id 没传进来：纸面签署不能只凭 login 认 PR 作者。
         found[pr_author.lower()]["pr_author_id_missing"] = True
 
     if not isinstance(commits, list):
@@ -786,42 +773,41 @@ def _id_exempt(contributor: dict, policy: dict) -> bool:
     ids = contributor.get("ids") or []
     if not ids or any(i != ex["github_id"] for i in ids):
         return False
+    if ex["kind"] == PAPER_KIND and _paper_verdict(ex, contributor, policy) is not None:
+        return False
     # 每一次出现都必须带可信 id：只经 trailer / 邮箱出现过一次也不放行。
     return not contributor.get("unidentified_sources")
 
 
-def _offline_signature_for(login: str, policy: dict) -> dict | None:
-    for sig in policy.get("offline_signatures", []):
-        if sig["login"].lower() == login.lower():
-            return sig
-    return None
+def _paper_verdict(sig: dict, contributor: dict, policy: dict) -> str | None:
+    """纸面双签（`countersigned_paper` 豁免）能不能让这个人通过。
 
-
-def _offline_verdict(sig: dict, contributor: dict, policy: dict) -> str | None:
-    """线下双签能不能让这个人通过。返回 None = 通过，否则是不通过的原因。"""
+    返回 None = 通过，否则是不通过的原因。服务按 id 集合豁免、不看版本，
+    所以这里在**每一种**情形下都要核（ADR 0183）。
+    """
     current = policy["agreements"][sig["agreement"]]["version"]
     if sig["version"] != current:
         return (
-            f"`{sig['login']}` 线下签的是 {sig['agreement']} CLA {sig['version']}，"
+            f"`{sig['login']}` 纸面签的是 {sig['agreement']} CLA {sig['version']}，"
             f"当前版本是 {current}——新版本要新同意（docs/legal/CLA_VERSIONING.md），"
-            "请本人签当前版本后由维护者更新 offline_signatures"
+            "请本人在线签署当前版本，之后由维护者删掉这条纸面豁免"
         )
     if contributor.get("pr_author_id_missing"):
         return (
-            f"`{sig['login']}` 是 PR 作者且有线下签署记录，但判定器没拿到 PR 作者的"
+            f"`{sig['login']}` 是 PR 作者且有纸面签署记录，但判定器没拿到 PR 作者的"
             "账号 id（CLA_PR_AUTHOR_ID），无法确认是同一个账号——不凭 login 放行"
         )
     ids = contributor.get("ids") or []
     if not ids:
         return (
-            f"`{sig['login']}` 有线下签署记录，但这个 PR 里没有可信来源给出它的 GitHub 账号 id"
+            f"`{sig['login']}` 有纸面签署记录，但这个 PR 里没有可信来源给出它的 GitHub 账号 id"
             "（Co-authored-by / noreply 邮箱里的数字不算），无法确认是同一个账号——"
             "需要它是 PR 作者，或有 GitHub 认得出的、由该账号署名的提交"
         )
     stray = [i for i in ids if i != sig["github_id"]]
     if stray:
         return (
-            f"`{sig['login']}` 名下出现了账号 id {stray}，与线下签署记录的 "
+            f"`{sig['login']}` 名下出现了账号 id {stray}，与纸面签署记录的 "
             f"{sig['github_id']} 不符——同名不同人（改名或被重新注册），不算已签"
         )
     return None
@@ -1062,8 +1048,8 @@ def _unqualified_detail(reason: str | None, policy: dict) -> str:
     if reason == "provider_not_configured":
         return (
             f"CLA 签名服务尚未启用（{prov.get('note') or 'provider.configured=false'}）"
-            "——目前只有 .github/cla-policy.json 里点名豁免的账号、以及"
-            "已与著作权人双签纸面协议（offline_signatures）的账号能通过。"
+            "——目前只有 .github/cla-policy.json 里点名豁免的账号（含已与著作权人"
+            f"双签纸面协议的 `{PAPER_KIND}`）能通过。"
             "想贡献请先开一个 issue 或写信 contact@tavotto.com，维护者会走人工流程；"
             "启用步骤见 docs/legal/CLA_AUTOMATION_SETUP.md"
         )
@@ -1097,6 +1083,18 @@ def _unqualified_detail(reason: str | None, policy: dict) -> str:
     if reason == "provider_checks_unavailable":
         return "取不到 provider 的 check 列表（权限或 API 失败）——判定器不猜，直接红"
     return "没有签署记录"
+
+
+def _paper_problems(policy: dict, contributors: list[dict]) -> list[str]:
+    """贡献者里不合格的 `countersigned_paper` 记录（版本过期、id 对不上……）。"""
+    out = []
+    for c in contributors:
+        ex = _exemption_for(c["login"], policy)
+        if ex is not None and ex["kind"] == PAPER_KIND:
+            problem = _paper_verdict(ex, c, policy)
+            if problem is not None:
+                out.append(f"missing: `{c['login']}` — {problem}")
+    return out
 
 
 def _exempt_by_id_verdict(
@@ -1178,7 +1176,18 @@ def decide(
         if exempt is not None:
             return exempt
 
+    paper_problems = _paper_problems(policy, contributors)
+
     if event == "merge_group" and _service_mode(policy):
+        if paper_problems:
+            # 服务按 id 集合豁免、不看版本：纸面记录不合格时不能拿服务的 eligible 盖过去。
+            return {
+                "event": event,
+                "status": "failure",
+                "reason": "countersigned_paper_not_qualified",
+                "contributors": [],
+                "problems": paper_problems,
+            }
         signed, why = signed_logins(provider_checks, policy, context)
         valid = "*" in signed and context and context.get("kind") == "merge_group"
         return {
@@ -1231,28 +1240,17 @@ def decide(
     for c in contributors:
         login = c["login"]
         ex = _exemption_for(login, policy)
-        if ex is not None:
-            rows.append(
-                {
-                    "login": login,
-                    "verdict": "exempt",
-                    "detail": f"{ex['kind']}: {ex['reason']}",
-                    "sources": c["sources"],
-                }
-            )
-            continue
-        sig = _offline_signature_for(login, policy)
-        if sig is not None:
-            offline_problem = _offline_verdict(sig, c, policy)
-            if offline_problem is None:
+        if ex is not None and ex["kind"] == PAPER_KIND:
+            paper_problem = _paper_verdict(ex, c, policy)
+            if paper_problem is None:
                 rows.append(
                     {
                         "login": login,
-                        "verdict": "signed",
+                        "verdict": "exempt",
                         "detail": (
-                            f"线下双签 {sig['agreement']} CLA {sig['version']}"
-                            f"（贡献者 {sig['contributor_signed_on']}，"
-                            f"联署 {sig['countersigned_on']}；账号 id {sig['github_id']}）"
+                            f"已双签纸面协议 {ex['agreement']} CLA {ex['version']}"
+                            f"（贡献者 {ex['contributor_signed_on']}，"
+                            f"联署 {ex['countersigned_on']}；账号 id {ex['github_id']}）"
                         ),
                         "sources": c["sources"],
                     }
@@ -1262,11 +1260,21 @@ def decide(
                 {
                     "login": login,
                     "verdict": "missing",
-                    "detail": offline_problem,
+                    "detail": paper_problem,
                     "sources": c["sources"],
                 }
             )
-            problems.append(f"missing: `{login}` — {offline_problem}")
+            problems.append(f"missing: `{login}` — {paper_problem}")
+            continue
+        if ex is not None:
+            rows.append(
+                {
+                    "login": login,
+                    "verdict": "exempt",
+                    "detail": f"{ex['kind']}: {ex['reason']}",
+                    "sources": c["sources"],
+                }
+            )
             continue
         if "*" in signed:
             rows.append(

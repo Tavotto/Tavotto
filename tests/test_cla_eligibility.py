@@ -42,6 +42,19 @@ def fetcher():
     return _load("cla_eligibility_fetch")
 
 
+def _disabled_policy(p: dict) -> dict:
+    """仓库 policy 已启用服务（ADR 0183 切换）；造一份「服务未启用」的样本。"""
+    p = json.loads(json.dumps(p))
+    p["provider"] = {
+        "configured": False,
+        "name": None,
+        "check_name": None,
+        "note": "test: disabled",
+    }
+    p.pop("authority_origin", None)
+    return p
+
+
 @pytest.fixture
 def policy():
     p = json.loads((ROOT / ".github" / "cla-policy.json").read_text(encoding="utf-8"))
@@ -57,7 +70,8 @@ def policy():
     }
     ids = {"erwanjun": HOLDER, "dependabot[bot]": 49699333, "github-actions[bot]": 41898282}
     for ex in p["exemptions"]:
-        ex["github_id"] = ids[ex["login"]]
+        if ex["kind"] != "countersigned_paper":
+            ex["github_id"] = ids[ex["login"]]
     return p
 
 
@@ -223,7 +237,9 @@ def test_missing_context_never_passes(gate, policy):
 
 
 def test_a_receipt_is_ignored_outside_service_mode(gate):
-    p = json.loads((ROOT / ".github" / "cla-policy.json").read_text(encoding="utf-8"))
+    p = _disabled_policy(
+        json.loads((ROOT / ".github" / "cla-policy.json").read_text(encoding="utf-8"))
+    )
     assert gate.signed_logins(None, p, {"eligibility": {"eligible": True}}) == (
         set(),
         "provider_not_configured",
