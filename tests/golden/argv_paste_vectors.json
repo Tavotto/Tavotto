@@ -512,6 +512,32 @@
      "--input",
      "C:\\my data\\a.xlsx"
     ]
+   },
+   {
+    "text": "python plot.py --input='C:\\my data\\a.xlsx'",
+    "script": "plot.py",
+    "words": [
+     "python",
+     "plot.py",
+     "--input=C:\\my data\\a.xlsx"
+    ],
+    "argv": [
+     "--input=C:\\my data\\a.xlsx"
+    ]
+   },
+   {
+    "text": "python plot.py --input C:\\Users\\O'Brien\\a.xlsx",
+    "script": "plot.py",
+    "words": [
+     "python",
+     "plot.py",
+     "--input",
+     "C:\\Users\\O'Brien\\a.xlsx"
+    ],
+    "argv": [
+     "--input",
+     "C:\\Users\\O'Brien\\a.xlsx"
+    ]
    }
   ],
   "rejected": [

@@ -401,7 +401,7 @@ def test_accepted_paste_vectors_split_exactly_like_shlex(vec):
 
 def _msvcrt_split(text: str, *, single_quote_at_word_start: bool) -> list[str]:
     """Windows 命令行分词的参照实现（CommandLineToArgvW 规则，与 TS 侧写法刻意不同：先按「反斜杠串 + 下一字符」
-    切片）。`single_quote_at_word_start` 是 Tavotto 的扩展，不属于 Windows 规则。"""
+    切片）。`single_quote_at_word_start` 是 Tavotto 的扩展（词首或紧跟 `=` 的 `'` 开引号），不属于 Windows 规则。"""
     out: list[str] = []
     cur: list[str] = []
     in_word = in_quote = False
@@ -431,7 +431,12 @@ def _msvcrt_split(text: str, *, single_quote_at_word_start: bool) -> list[str]:
                 cur, in_word = [], False
         elif ch == '"':
             in_quote, in_word = not in_quote, True
-        elif ch == "'" and single_quote_at_word_start and not in_word and not in_quote:
+        elif (
+            ch == "'"
+            and single_quote_at_word_start
+            and not in_quote
+            and (not in_word or (k > 0 and text[k - 1] == "="))
+        ):
             end = text.index("'", k + 1)
             cur.append(text[k + 1 : end])
             in_word = True

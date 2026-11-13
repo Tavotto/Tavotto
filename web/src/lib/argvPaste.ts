@@ -54,6 +54,7 @@ type SplitResult = { ok: true; words: string[] } | { ok: false; error: PasteErro
  * 单引号：Windows 命令行里它不是引号，但用户常从 PowerShell 复制 `--tag 'a b'`；当普通字符会静默切成 `'a` `b'`
  * 两个词，比拒绝更糟。折中：**词首**的 `'` 当引号（必须闭合，内容原样，没闭合报 unbalanced_quote），词中间的
  * `'`（`C:\Users\O'Brien\a.xlsx`）是普通字符——两种复制来源都不会静默出错。
+ * 紧跟 `=` 的 `'` 同样开引号（`--input='C:\my data\a.xlsx'` 是一个参数，不切成两半）。
  */
 const splitWordsWindows = (trimmed: string): SplitResult => {
   const words: string[] = []
@@ -107,7 +108,8 @@ const splitWordsWindows = (trimmed: string): SplitResult => {
     }
     if (!inWord && WORD_START_META.has(c)) return { ok: false, error: 'unsupported_syntax' }
     if (UNQUOTED_META.has(c)) return { ok: false, error: 'unsupported_syntax' }
-    if (c === "'" && !inWord) {
+    // 词首或紧跟 `=` 的 `'` 开引号（`--input='C:\my data\a.xlsx'`，Codex #1900）；词中其余位置的 `'` 是普通字符
+    if (c === "'" && (!inWord || trimmed[i - 1] === '=')) {
       const end = trimmed.indexOf("'", i + 1)
       if (end < 0) return { ok: false, error: 'unbalanced_quote' }
       cur += trimmed.slice(i + 1, end)
