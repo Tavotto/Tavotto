@@ -2485,7 +2485,7 @@ class Worker(wireproto.V1Handler):
         if cmd == "shutdown":
             raise SystemExit(0)
         if cmd == "svg_scaffold":
-            # 会话无关：不 import 用户脚本、不建 Figure 会话（ADR-XXXX 的脚手架）
+            # 会话无关：不 import 用户脚本、不建 Figure 会话（ADR 0182 的脚手架）
             from . import svgchart
 
             try:
