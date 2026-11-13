@@ -1,1 +1,3 @@
+## pip / uvx installs no longer report a broken canvas
+
 When Tavotto is installed with pip, pipx or uvx, the health check no longer reports the missing canvas or plugin package as a fault or tells you to reinstall the plugin. It now says this install has no canvas by design, and "Connect to AI editors" also works from that install.
