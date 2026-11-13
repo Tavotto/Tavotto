@@ -526,7 +526,8 @@ def _pin_place(a, value) -> None:
     elif isinstance(a, Line2D):
         _place_line(a, value)
     elif isinstance(a, _AxesBase):
-        a.set_position(list(value))
+        # pin 里是根图幅（frame）的分数；SubFigure 此刻已排好，按它换算回子图幅
+        a.set_position(pathgeom.axes_rect_to_figsize(a.get_figure(), value))
         # 色条轴：排版前放回的长宽比、`reposition_colorbar` 按 `_colorbar_info['aspect']`
         # 装回去的长宽比，都要再解开一次（位置归用户，厚度也归用户）
         colorbarmodel._cb_release_aspect(a)
@@ -3565,7 +3566,8 @@ def _set_axes_position(a, v) -> None:
     # 值是图幅（frame，ADR 0098）里的分数——manifest 报的、前端写的都是它；落到 matplotlib
     # 之前换成 figsize 的分数（没有 frame 时原样）。还原走 `_restore_axes_position`，那边
     # 拿的是 getter 记下的 figsize 原值，不经这道换算。
-    bounds = pathgeom.axes_rect_to_figsize(a.get_figure(), _drag_value(v, 4))
+    frame_rect = _drag_value(v, 4)
+    bounds = pathgeom.axes_rect_to_figsize(a.get_figure(), frame_rect)
     # **顺序是这条函数的不变式**：可能失败的那一步（`set_position` 会对长度不是 4 的
     # bounds 抛 TypeError）必须排在**不可逆**的几步（换引擎、落 pin、解开色条轴的
     # 长宽比）之前。
@@ -3598,7 +3600,9 @@ def _set_axes_position(a, v) -> None:
         # 重排——拖 A、B 跳（ADR 0100 排查实测 7.8 mm）；色条轴则被 `reposition_colorbar`
         # 按网格拽回去、长宽比按成 0 当场抛。与持久 tight 的 `PinnedTightLayoutEngine`
         # 同一个思路：排版时放回布局、排完再钉回写下的位置（挂在文字那张 pin 表上）
-        _text_pins(fig)[a] = (tuple(bounds), None)
+        # pin 记的是**根图幅**里的值，排完再换算：SubFigure 的框也是 constrained 排出来的，
+        # 按排版之前的子图幅换算的 bounds 落下去会跟着子图幅一起偏（ADR 0100 修订 2026-11-13）
+        _text_pins(fig)[a] = (tuple(frame_rect), None)
         _ensure_text_pin_hook(fig)
 
 
