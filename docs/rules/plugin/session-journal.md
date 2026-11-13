@@ -21,5 +21,7 @@ order: 70
   且**拒在渲染之前**；脚本 / 入口不存、从注册表重读，stem 不在了 `session_restore_failed`。
 - **明确释放的不复活**：`close_session` 与 `_evict_if_needed` 连记录一起删。结果里的
   `restored: true` 只报一次（`_take_restored`），文字带 `server.RESTORED_NOTE`。
+- **关掉就丢的要说出来**：导出出了文件时记下那一版的 `exported_hash`（也落盘）；关掉改过却没导出的会话
+  照关不拦，但结果带 `unexported_changes: true` 与 `UNEXPORTED_NOTE`，说清修改已丢、用户文件没变。
 - 落盘失败不让工具调用失败，但写 stderr。`sessionjournal` 只用标准库——不动 `_BRIDGE_IMPORT` 三处同源。
 - 看护：`tests/test_mcp_session_journal.py`、`tests/test_mcp_roundtrip.py` 的两进程接力。

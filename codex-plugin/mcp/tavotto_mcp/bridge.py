@@ -1478,7 +1478,7 @@ def _journal_dir() -> Path:
 
 
 def _persist(session: Session) -> None:
-    """把会话**已提交**的状态落盘（ADR 0078）。只在提交点调：open / apply / 规范化收尾。
+    """把会话**已提交**的状态落盘（ADR 0078）。只在提交点调：open / apply / 规范化收尾 / 导出出了文件。
 
     落盘失败不让这次工具调用失败——图已经改好了；但要说出来（stderr 归日志，stdout
     归协议），因为后果是「server 进程换了之后这个会话恢复不了」。
