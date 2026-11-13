@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { deferWhileWindowHeld } from '@/store/documentRestore'
 import { useTranslation } from 'react-i18next'
 import { aiDataFiles, type AiDataFile } from '@/lib/api'
 import { t as translate } from '@/i18n'
@@ -46,6 +47,11 @@ export function DataFigureForm({ onClose }: { onClose: () => void }) {
   const canSubmit = !!file && !!instruction.trim() && !pending
   const submit = () => {
     if (!canSubmit) return
+    // 只读窗口（ADR 0181）：生成的图要放进文档，此刻放不进去——记住，选完再做
+    if (deferWhileWindowHeld(() => void submit())) {
+      onClose()
+      return
+    }
     void useAiStore.getState().startDataFigure(file, instruction.trim())
     onClose()
   }

@@ -335,6 +335,11 @@ class TestClaCollectStepRunsForReal:
         ):
             (trusted / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(ROOT / rel, trusted / rel)
+        # 这里测的是提交枚举，不是服务判定：用「服务未启用」的 policy（仓库 policy 已切到服务）。
+        pol = json.loads(POLICY_PATH.read_text(encoding="utf-8"))
+        pol["provider"] = {"configured": False, "name": None, "check_name": None, "note": "test"}
+        pol.pop("authority_origin", None)
+        (trusted / ".github/cla-policy.json").write_text(json.dumps(pol), encoding="utf-8")
         script = _step_script("判定").replace("${{ github.event_name }}", "pull_request")
         assert "${{" not in script, "判定那一步多了新的表达式，这里要同步渲染"
         env = {**env, **exported, "TRUSTED": str(trusted), "PR_AUTHOR": "erwanjun"}

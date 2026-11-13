@@ -1151,7 +1151,11 @@ def create_plan(
     if not_pip is not None:
         raise RepairError(
             ERROR_UNRESOLVED,
-            f"{not_pip['label']} 不在 PyPI 上，需要有它的自己的环境",
+            (
+                f"{not_pip['label']} 只在 AI 聊天的网页沙箱里有，要让 AI 去掉它重新生成脚本"
+                if not_pip["hint"] == depresolve.NOT_PIP_HINT_AI_SANDBOX
+                else f"{not_pip['label']} 不在 PyPI 上，需要有它的自己的环境"
+            ),
             not_pip_installable=not_pip,
         )
     if not requirement.installable:

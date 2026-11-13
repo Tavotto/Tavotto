@@ -328,6 +328,32 @@ describe('过程：环境行（§6.2）', () => {
   })
 })
 
+describe('只读窗口（ADR 0181）', () => {
+  it('发送不发起（窗口里的 override 可能是旧的，会成为改图助手的上下文）：记住，编辑权放开后才发', async () => {
+    const { setWindowHold, useDocumentStore } = await import('@/store/documentStore')
+    const { heldEntryCount, takeWindowEntries } = await import('@/store/documentRestore')
+    await mount([])
+    const box = q<HTMLTextAreaElement>('[data-ai-input]')!
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(box, '加粗线条')
+      box.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    setWindowHold({ role: 'yielded', docId: useDocumentStore.getState().documentId })
+    try {
+      await act(async () => q<HTMLButtonElement>('[data-ai-send]')!.click())
+      expect(start).not.toHaveBeenCalled()
+      expect(heldEntryCount()).toBe(1)
+      const entries = takeWindowEntries()
+      setWindowHold(null)
+      await act(async () => entries.run())
+      expect(start).toHaveBeenCalledTimes(1)
+    } finally {
+      setWindowHold(null)
+    }
+  })
+})
+
 describe('发送失败（§6.7）', () => {
   it('是 danger Notice，带「重试」；重试按原话再发', async () => {
     start.mockImplementationOnce(async () => {

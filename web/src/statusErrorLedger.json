@@ -2,12 +2,6 @@
   "_说明": "红色状态提示（setStatus(…, 'error')）不带 action 按钮的调用点台账；规则见 docs/rules/frontend/ui-visual-discipline.md「失败出口三种结局」，门禁是 web/src/statusErrorActions.test.ts。键 = file + 文案 key（不用行号），同键多处用 count。reason 以 TODO(dead-end): 开头 = 真死胡同、待修，数量上限钉在测试里只许降不许升。",
   "entries": [
     {
-      "file": "App.tsx",
-      "key": "autosave.docConflict",
-      "count": 1,
-      "reason": "TODO(dead-end): 同一排版在另一个窗口也开着，只给一句话；真出口是把这个窗口分叉成一份新排版（新 documentId、新自动保存槽位、改绑项目文件、更新 presence），现在「另存为」只写命名文件、不换 documentId，两个窗口仍写同一槽位，需另开 PR 做分叉。"
-    },
-    {
       "file": "canvas/IssueOverlay.tsx",
       "key": "focusFailureMessage()",
       "count": 1,

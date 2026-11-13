@@ -80,7 +80,7 @@
   "autosave": {
     "diskFailed": "Couldn’t save to disk.",
     "docConflict": "This layout is open in another window. Editing in both overwrites one of them.",
-    "staleOtherWindow": "Another window saved a newer version. Your changes are kept here, not on disk."
+    "staleOtherWindow": "Another window saved a newer version."
   },
   "boot": {
     "desktopSessionFailed": "Couldn’t start a Tavotto desktop session. Close this window and reopen the app.",
@@ -231,9 +231,8 @@
   },
   "docBanner": {
     "conflictDisk": "On disk: {{canvases}} canvases · {{objects}} objects · changed {{time}}",
-    "conflictDiskUnknown": "Couldn’t read a summary of the copy on disk",
-    "conflictExternal": "This layout was modified on disk outside Tavotto; edits in this window weren’t written, to avoid overwriting it.",
-    "conflictStale": "Another window saved a newer version; edits in this window weren’t written.",
+    "conflictExternal": "This layout was changed elsewhere, so edits in this window aren’t saved yet.",
+    "conflictStale": "Another window saved a newer version.",
     "dismiss": "Got it",
     "keepMain": "Keep main version",
     "lastDocBody": "Opened a blank layout instead. Nothing on disk was changed.",
@@ -247,7 +246,7 @@
     "recover": "Recover",
     "recoveryBody": "{{name}} · {{canvases}} canvases · {{objects}} objects · saved {{time}}",
     "recoveryTitle": "Unrecovered edits",
-    "reload": "Reload from disk",
+    "reload": "Reload",
     "retry": "Retry save",
     "saveAs": "Save as…",
     "saveErrorBody": "Your changes are kept for now, not yet on disk.",
@@ -260,6 +259,15 @@
     "updateNone": "You’re on the latest version. This layout can open once a newer version is released.",
     "updateCheckFailed": "Couldn’t check for updates. Check your connection and try again.",
     "moreActions": "More ways to resolve"
+  },
+  "docWindow": {
+    "choose": "Pick one on the canvas first.",
+    "entryDropped": "You switched layouts, so that action didn’t run.",
+    "openElsewhere": "This layout is open in another window.",
+    "saveCopy": "Save a copy",
+    "takeBack": "Take it back",
+    "takeHere": "Edit here",
+    "takenOver": "This layout is being edited in another window."
   },
   "document": {
     "defaultName": "Untitled"
@@ -321,6 +329,13 @@
     "connectSource": "Link source script",
     "figureMissing": "{{name}} is not in this project",
     "layoutOnly": "No source script linked. Lay it out, but you can’t edit inside."
+  },
+  "fork": {
+    "copyName": "{{name}} copy",
+    "done": "Saved as “{{name}}”.",
+    "failed": "Couldn’t save a copy.",
+    "switched": "The copy was saved to {{file}} in the project, but you’re still on the other layout.",
+    "untitled": "Untitled layout"
   },
   "history": {
     "addArrow": "Add arrow",
@@ -673,7 +688,7 @@
     }
   },
   "save": {
-    "conflict": "This layout was changed elsewhere. Resolve the conflict first.",
+    "conflict": "This layout was changed elsewhere, so it wasn’t saved.",
     "doneLocal": "Saved on this computer (no project open)",
     "doneProject": "Saved to project: {{file}}",
     "failed": "Save failed. Your changes are safe — check disk space and try again.",
@@ -1008,7 +1023,7 @@
     "redoWith": "Redo {{label}}",
     "refreshProject": "Refresh project",
     "renameDocument": "Rename layout…",
-    "saveConflict": "External conflict",
+    "saveConflict": "Changed elsewhere",
     "saveDirty": "Unsaved changes",
     "saveDocumentAs": "Save layout as…",
     "saveError": "Save failed",
@@ -1375,6 +1390,7 @@
       "detail": {
         "listIntro": "Tavotto can't tell where these come from, so it won't install them for you:",
         "notPip": "This script needs {{name}}, which the built-in Python can’t install; use an environment that has it.",
+        "notPipAiSandbox": "This script needs {{name}}, which only exists inside ChatGPT on the web and can’t be installed here.",
         "localMissing": "Can’t find local module {{name}} (the script added {{dirs}} to the search path; check that folder is there).",
         "userSpecifiedBadge": "Named by you, not verified",
         "trustNote": "A name you type isn't a trusted source: Tavotto can't verify it, so it asks you once more before installing.",

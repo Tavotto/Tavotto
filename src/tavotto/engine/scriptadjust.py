@@ -176,7 +176,7 @@ NOT_WRITABLE: dict[str, str] = {
     "linestyle",
     "patch": "pos_frac size_frac hatch_linewidth hatchcolor fill",
     "artist": "pos_frac visible zorder",
-    "line": "label",
+    "line": "label pos_frac",
     "legend": "loc_anchor title title_fontsize entry_order ncol borderpad labelspacing "
     "handlelength handletextpad columnspacing frame_rounded",
     "axes": "visible position aspect grid_color grid_linestyle grid_linewidth grid_alpha "

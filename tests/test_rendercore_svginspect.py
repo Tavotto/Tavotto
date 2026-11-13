@@ -459,3 +459,146 @@ def test_check_svg_flags_matplotlib_outlined_text_but_not_plain_graphics(tmp_pat
     live = tmp_path / "t.svg"
     live.write_bytes(svg('<g id="text_1"><text>x</text></g>'))
     assert artifactcheck.check_svg(live, expect_mm=None, font_family=None)["text_outlined"] is False
+
+
+def _ids_and_refs(root):
+    ids = [n.get("id") for n in root.iter() if n.get("id")]
+    hrefs = [v for n in root.iter() for k, v in n.attrib.items() if k.endswith("href")]
+    return ids, hrefs
+
+
+def test_worker_normalization_repairs_ids_the_safe_grammar_rejects(tmp_path):
+    """A user `set_gid("面板 A")` is legal Matplotlib output; only the trusted worker boundary renames it.
+
+    The rename is consistent: `href="#…"`, `url(#…)` and later duplicates follow the first definition,
+    the same element every SVG renderer would pick.
+    """
+    from tavotto.engine.artifactinspect import normalize_worker_svg
+
+    body = (
+        '<defs><clipPath id="面板 A"><rect width="1" height="1"/></clipPath>'
+        '<path id="p1" d="M0 0L1 1"/></defs>'
+        '<g clip-path="url(#面板 A)"><use xlink:href="#面板 A"/></g>'
+        '<g id="p1"><use xlink:href="#p1"/></g>'
+    )
+    original = svg(body)
+    with pytest.raises(SVGError, match="svg_invalid_id"):
+        parse_svg(original)
+    path = tmp_path / "worker.svg"
+    path.write_bytes(original)
+    normalize_worker_svg(path)
+    root = parse_svg(path.read_bytes())
+    ids, hrefs = _ids_and_refs(root)
+    assert len(ids) == len(set(ids)) == 3
+    clip = next(n for n in root.iter() if n.tag.endswith("clipPath")).get("id")
+    first_path = next(n for n in root.iter() if n.tag.endswith("path")).get("id")
+    assert first_path == "p1"
+    assert hrefs == [f"#{clip}", "#p1"]
+    group = [n for n in root.iter() if n.tag.endswith("}g")][0]
+    assert group.get("clip-path") == f"url(#{clip})"
+
+
+def test_worker_id_repair_still_runs_the_full_gate(tmp_path):
+    from tavotto.engine.artifactinspect import normalize_worker_svg
+
+    path = tmp_path / "worker.svg"
+    original = svg('<g id="面板"/><script>alert(1)</script>')
+    path.write_bytes(original)
+    with pytest.raises(SVGError):
+        normalize_worker_svg(path)
+    assert path.read_bytes() == original
+
+
+def test_import_boundary_keeps_rejecting_bad_ids():
+    """Arbitrary files never borrow the worker repair: parse_svg itself stays strict."""
+    with pytest.raises(SVGError, match="svg_invalid_id"):
+        parse_svg(svg('<g id="面板"/>'))
+    with pytest.raises(SVGError, match="svg_invalid_id"):
+        parse_svg(svg('<g id="a"/><g id="a"/>'))
+
+
+def test_worker_normalization_accepts_matplotlib_user_gid(tmp_path):
+    mpl = pytest.importorskip("matplotlib")
+    mpl.use("agg")
+    import matplotlib.pyplot as plt
+
+    from tavotto.engine.artifactinspect import normalize_worker_svg
+
+    fig, ax = plt.subplots(figsize=(2, 2))
+    ax.plot([0, 1], [0, 1]).pop().set_gid("曲线 1")
+    path = tmp_path / "worker.svg"
+    try:
+        fig.savefig(path, format="svg")
+    finally:
+        plt.close(fig)
+    normalize_worker_svg(path)
+    parse_svg(path.read_bytes())
+
+
+def test_worker_id_repair_leaves_hex_colors_alone(tmp_path):
+    """Codex #1893 P1: a numeric gid `"000000"` must not rewrite `stroke:#000000` into a dangling ref."""
+    from tavotto.engine.artifactinspect import normalize_worker_svg
+
+    path = tmp_path / "worker.svg"
+    path.write_bytes(
+        svg(
+            '<defs><clipPath id="000000"><rect width="1" height="1"/></clipPath></defs>'
+            '<path d="M0 0L1 1" style="fill:none;stroke:#000000" clip-path="url(#000000)"/>'
+            '<path d="M0 1L1 0" stroke="#000000"/>'
+        )
+    )
+    normalize_worker_svg(path)
+    root = parse_svg(path.read_bytes())
+    clip = next(n for n in root.iter() if n.tag.endswith("clipPath")).get("id")
+    first, second = [n for n in root.iter() if n.tag.endswith("path")]
+    assert first.get("style") == "fill:none;stroke:#000000"
+    assert first.get("clip-path") == f"url(#{clip})"
+    assert second.get("stroke") == "#000000"
+
+
+def test_worker_id_repair_refuses_when_a_selector_names_a_duplicate(tmp_path):
+    """Codex #1893 P1: `#p {…}` styles every copy; a rename cannot keep that, so the input stays rejected."""
+    from tavotto.engine.artifactinspect import normalize_worker_svg
+
+    path = tmp_path / "worker.svg"
+    original = svg('<style>#p {fill:red}</style><path id="p" d="M0 0"/><path id="p" d="M1 1"/>')
+    path.write_bytes(original)
+    with pytest.raises(SVGError, match="svg_invalid_id"):
+        normalize_worker_svg(path)
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    "selector", ["#面板&gt;path", "#面板.hl", "#面板 path", "#面板:first-child"]
+)
+def test_worker_id_repair_rewrites_selector_id_tokens(tmp_path, selector):
+    """Codex #1893 P2: the renamed id follows into compound / combinator selectors."""
+    from tavotto.engine.artifactinspect import normalize_worker_svg
+
+    path = tmp_path / "worker.svg"
+    path.write_bytes(
+        svg(f'<style>{selector} {{fill:red}}</style><g id="面板"><path d="M0 0"/></g>')
+    )
+    try:
+        normalize_worker_svg(path)
+    except SVGError as exc:  # `:` is outside svgcheck's selector whitelist and stays refused
+        assert selector.endswith(":first-child") and exc.code == "svg_unsafe_css"
+        return
+    assert not selector.endswith(":first-child")
+    root = parse_svg(path.read_bytes())
+    gid = next(n for n in root.iter() if n.tag.endswith("}g")).get("id")
+    css = next(n for n in root.iter() if n.tag.endswith("style")).text
+    assert "面板" not in css and f"#{gid}" in css
+
+
+def test_worker_id_repair_handles_references_before_the_definition(tmp_path):
+    """The gate reports the first problem in document order: a `<use>` before its def says external_resource."""
+    from tavotto.engine.artifactinspect import normalize_worker_svg
+
+    path = tmp_path / "worker.svg"
+    path.write_bytes(svg('<use xlink:href="#面板 A"/><defs><path id="面板 A" d="M0 0"/></defs>'))
+    normalize_worker_svg(path)
+    root = parse_svg(path.read_bytes())
+    _ids, hrefs = _ids_and_refs(root)
+    target = next(n for n in root.iter() if n.tag.endswith("path")).get("id")
+    assert hrefs == [f"#{target}"]

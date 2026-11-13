@@ -1631,10 +1631,25 @@ def suggest_distribution(import_name: str) -> str:
 # 以后加 Geant4 之类，只加一行。
 # ---------------------------------------------------------------------------
 NOT_PIP_HINT_OWN_ENV = "own_env"  # 需要用户自己的（conda）环境
+# 只存在于 AI 聊天网页沙箱里的模块（ChatGPT 的代码解释器自带，不对外发布）：哪个环境都没有，出路是让 AI 去掉它重新生成脚本
+# （TVD-NH7S，2026-11-13：`artifact-tool` 送进 pip 装不上，整批依赖一起失败）
+NOT_PIP_HINT_AI_SANDBOX = "ai_sandbox"
 
 NOT_PIP_INSTALLABLE: dict[str, dict] = {
     # CERN ROOT：conda-forge 的 `root` 包；PyPI 上没有可用的同名发行包
     "ROOT": {"label": "ROOT", "dists": ("root",), "hint": NOT_PIP_HINT_OWN_ENV},
+    # ChatGPT 沙箱：PyPI 上没有 artifact-tool / caas-jupyter-tools；ace-tools 只是一个防抢注的空占位包，装上也 import 不到
+    "artifact_tool": {
+        "label": "artifact_tool",
+        "dists": ("artifact-tool",),
+        "hint": NOT_PIP_HINT_AI_SANDBOX,
+    },
+    "ace_tools": {"label": "ace_tools", "dists": ("ace-tools",), "hint": NOT_PIP_HINT_AI_SANDBOX},
+    "caas_jupyter_tools": {
+        "label": "caas_jupyter_tools",
+        "dists": ("caas-jupyter-tools",),
+        "hint": NOT_PIP_HINT_AI_SANDBOX,
+    },
 }
 
 

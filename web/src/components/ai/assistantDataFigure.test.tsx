@@ -154,6 +154,28 @@ describe('小表单', () => {
     await vi.waitFor(() => expect(q('[data-ai-data-figure-form]')).toBeNull())
   })
 
+  it('只读窗口（ADR 0181）里提交不发起：记住，编辑权放开后才做', async () => {
+    const { setWindowHold, useDocumentStore } = await import('@/store/documentStore')
+    const { heldEntryCount, takeWindowEntries } = await import('@/store/documentRestore')
+    try {
+      await mount(true)
+      await act(async () => q('[data-ai-data-figure-open]')!.click())
+      await flush()
+      setWindowHold({ role: 'contested', docId: useDocumentStore.getState().documentId })
+      await setValue(q<HTMLSelectElement>('[data-ai-data-figure-file] select')!, 'data/b.csv')
+      await setValue(q<HTMLTextAreaElement>('[data-ai-data-figure-instruction]')!, '画图')
+      await act(async () => q<HTMLButtonElement>('[data-ai-data-figure-submit]')!.click())
+      expect(startDataFigure).not.toHaveBeenCalled()
+      expect(heldEntryCount()).toBe(1)
+      const entries = takeWindowEntries()
+      setWindowHold(null)
+      await act(async () => entries.run())
+      expect(startDataFigure).toHaveBeenCalledWith('data/b.csv', '画图')
+    } finally {
+      setWindowHold(null)
+    }
+  })
+
   it('空列表：一句话，没有生成钮', async () => {
     files.mockResolvedValue({ files: [], truncated: false })
     await mount(true)
