@@ -83,7 +83,19 @@ def _subfigs(stem):
     plt.close(fig)
 
 
+def _nested(stem):
+    fig = plt.figure(figsize=(6, 4))
+    outer = fig.subfigures(1, 1)
+    inner = outer.subfigures(1, 2)
+    lines = [sf.add_subplot().plot([0, 1], [k, 1 - k], label=f"s{k}")[0]
+             for k, sf in enumerate(inner)]
+    outer.legend(handles=lines)                                          # subfigs_0.legend_0
+    fig.savefig(stem + ".pdf")
+    plt.close(fig)
+
+
 def main():
+    _nested("Nest")
     _root("Root")
     _root("RootC", layout="constrained")
     _subfigs("Sub")
@@ -274,3 +286,15 @@ def test_subfigure_legend_entries_follow_their_source(hot):
     assert _field(got[entry], "handle_color") == "#00ff00"
     back = _man(hot, "Sub")
     assert _field(back[entry], "handle_color") == _field(man[entry], "handle_color")
+
+
+def test_outer_subfigure_legend_binds_sources_in_nested_subfigures(hot):
+    """外层 SubFigure 的图例引用内层 SubFigure 里的曲线：照样绑上源、跟着源变（#1887 评审：
+    `SubFigure.figure` 在 3.10+ 指向根，沿它走链会跳过外层，源被排除在候选之外）。"""
+    man = _man(hot, "Nest")
+    for j in (0, 1):
+        entry = f"fig.subfigs_0.legend_0.texts_{j}"
+        src = man[entry]["legend_entry"]["source_gid"]
+        got = _man(hot, "Nest", [{"gid": src, "prop": "color", "value": "#00ff00"}])
+        assert _field(got[entry], "handle_color") == "#00ff00", entry
+    _man(hot, "Nest")

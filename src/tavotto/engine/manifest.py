@@ -1167,14 +1167,17 @@ _LEGEND_SOURCE_ROLES = frozenset(
 
 
 def _within(ax, fig) -> bool:
-    """`ax` 是否画在 `fig`（Figure 或 SubFigure）里——沿 SubFigure 链往上找。"""
+    """`ax` 是否画在 `fig`（Figure 或 SubFigure）里——沿**直接父容器**往上找。
+
+    `SubFigure.figure` 在 3.10+ 指向根 Figure、3.8 指向父级，不能拿它走链：嵌套时会从内层
+    直接跳到根、跳过外层（#1887 评审）。直接父容器是 `_parent`（3.4 起就有）。"""
     owner = ax.get_figure()
-    while owner is not None:
+    for _ in range(64):  # 嵌套深度的保险丝，防循环引用
         if owner is fig:
             return True
         if not isinstance(owner, SubFigure):
             return False
-        owner = owner.figure if owner.figure is not owner else None
+        owner = getattr(owner, "_parent", None) or owner.figure
     return False
 
 
