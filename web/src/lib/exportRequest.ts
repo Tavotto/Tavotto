@@ -32,7 +32,7 @@ import { getOriginalOutputSpec, type OriginalOutputSpec } from './originalSpec'
 import { isZeroPad } from './framePad'
 import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
-import { toExportObjects } from './exportPayload'
+import { newerObjectCount, toExportObjects } from './exportPayload'
 import type { CanvasObject, FigureDocument, FramePad, PanelObject } from '@/types/document'
 import type { WorkspaceMode } from '@/store/workspace'
 
@@ -284,6 +284,8 @@ export interface BuiltRequest {
   /** 这次会写出哪几个文件名（不含样式检查报告），供界面预览 */
   names: string[]
   revision: string
+  /** 这次导出范围里本构建画不出来的对象个数（`newerObjectCount`）；非 0 时界面不许开始 */
+  newerObjects: number
 }
 
 /** 文件名不合法的原因；合法回 `null`。输入时就地调它（§六） */
@@ -378,7 +380,10 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
   request.document_revision = revision
   const names = formats.map((f) => `${filename}.${f}`)
   if (request.include_edited_script) names.push(`${filename}_edited.py`) // 后端 `exportjob.SCRIPT_SUFFIX`
-  return { request, names, revision }
+  const newerObjects = input.scope === 'canvas'
+    ? newerObjectCount(input.doc.objects)
+    : input.mergePages?.length ? 0 : newerObjectCount(input.annotations ?? [])
+  return { request, names, revision, newerObjects }
 }
 
 /**
