@@ -11259,6 +11259,99 @@ def api_engine_input_remap_get():
     return jsonify({"ok": True, "input_remap": engine_inputremap.state(root)})
 
 
+@app.route("/api/engine/input-declarations", methods=["GET", "POST", "DELETE"])
+def api_engine_input_declarations():
+    """Select explicitly approved inputs; this endpoint never executes a script."""
+    from .engine import declaredinputs
+
+    ctx = current_ctx()
+    try:
+        if request.method == "GET":
+            state = declaredinputs.state(
+                ctx.path,
+                **(
+                    {"include_selection_revisions": True}
+                    if request.args.get("include_selection_revisions") == "1"
+                    else {}
+                ),
+            )
+        else:
+            body = request.get_json(silent=True)
+            required = {"script", "cwd_mode", "expected_revision"}
+            optional = {"run_config"} | (
+                {"files", "remaps", "expected_remap_generation"}
+                if request.method == "POST"
+                else set()
+            )
+            if (
+                not isinstance(body, dict)
+                or not required <= set(body)
+                or set(body) - required - optional
+                or (request.method == "POST" and "files" not in body)
+                or not isinstance(body["script"], str)
+            ):
+                raise declaredinputs.DeclaredInputsError("Invalid input declaration request")
+            script = body["script"]
+            if request.method == "POST":
+                script, rejected = _resolve_project_script(ctx, script)
+                if rejected is not None:
+                    return rejected
+            common = {
+                "script": script,
+                "cwd_mode": body["cwd_mode"],
+                "run_config": body.get("run_config"),
+                "expected_revision": body["expected_revision"],
+            }
+            if request.method == "POST":
+                state = declaredinputs.declare(
+                    ctx.path,
+                    files=body["files"],
+                    remaps=body.get("remaps", []),
+                    **common,
+                    **(
+                        {"expected_remap_generation": body["expected_remap_generation"]}
+                        if "expected_remap_generation" in body
+                        else {}
+                    ),
+                )
+            else:
+                state = declaredinputs.remove(ctx.path, **common)
+        payload = {"ok": True, "input_declarations": state}
+        if request.method == "GET" and "project_file" in request.args:
+            payload["project_file"] = declaredinputs.resolve_project_file(
+                ctx.path, request.args["project_file"]
+            )
+        return jsonify(payload)
+    except declaredinputs.DeclaredInputsConflict:
+        return jsonify(
+            {
+                "error": "输入声明已更新，请重新读取后再保存",
+                "code": "input_declaration_conflict",
+                "params": {},
+            }
+        ), 409
+    except declaredinputs.DeclaredInputsUnavailable:
+        return jsonify(
+            {
+                "error": "暂时无法读取或保存输入声明",
+                "code": "input_declaration_unavailable",
+                "params": {},
+            }
+        ), 503
+    except declaredinputs.DeclaredInputsError:
+        return jsonify(
+            {"error": "输入声明或批准资源不可用", "code": "input_declaration_invalid", "params": {}}
+        ), 400
+    except OSError:
+        return jsonify(
+            {
+                "error": "暂时无法读取或保存输入声明",
+                "code": "input_declaration_unavailable",
+                "params": {},
+            }
+        ), 503
+
+
 @app.get("/api/engine/script-arguments")
 def api_engine_script_arguments():
     """脚本参数的静态 schema（T07，`engine/scriptargs.py`）：只读源码，不执行、不 import、不调 `--help`。
