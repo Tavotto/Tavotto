@@ -11,7 +11,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { CanvasHud } from '@/components/StatusBar'
+import { CanvasHud, HUD_NOTICE_GAP, hudLift } from '@/components/StatusBar'
 import { setLocale } from '@/i18n'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
@@ -75,5 +75,20 @@ describe('CanvasHud：只有工具提示', () => {
   it('非交互 + 选择工具：什么都不渲染', () => {
     mount()
     expect(container.innerHTML).toBe('')
+  })
+})
+
+describe('hudLift：底部通知轨有通知时，工具提示抬到通知上方', () => {
+  it('没有通知 / 量不到容器：不抬（按工具条位置的缺省落）', () => {
+    expect(hudLift(null, 800)).toBeNull()
+    expect(hudLift(700, null)).toBeNull()
+  })
+
+  it('有通知：bottom = 容器底边 − 通知顶边 + 缝（提示的底边正好在通知顶边之上）', () => {
+    expect(hudLift(790, 892)).toBe(892 - 790 + HUD_NOTICE_GAP)
+  })
+
+  it('通知顶边在容器底边之下（量的时机错开）：不给负数', () => {
+    expect(hudLift(900, 892)).toBe(0)
   })
 })
