@@ -71,6 +71,16 @@ describe('视图范围（ADR 0184 §三）', () => {
     expect(visibleFigureCards(panels, scripts).map((x) => x.id)).toEqual(['fig1.pdf'])
   })
 
+  it('R / MATLAB 画的图（source_script）与 Python 的一样进范围', () => {
+    const foreign = [
+      p('fig2.pdf', { figure_key: 'foreign:plot.R|fig2', primary: true, source_script: 'plot.R' }),
+      p('png/fig2.png', { figure_key: 'foreign:plot.R|fig2', primary: false, source_script: 'plot.R' }),
+      p('fig3.pdf', { figure_key: 'foreign:fig3.m|fig3', primary: true, source_script: 'fig3.m' }),
+    ]
+    const rScope = { mode: 'scripts' as const, scripts: ['plot.R'] }
+    expect(visibleFigureCards(foreign, rScope).map((x) => x.id)).toEqual(['fig2.pdf'])
+  })
+
   it('用着的绝不藏：排版里用到任一份文件就显示', () => {
     expect(visibleFigureCards(panels, scripts, new Set(['raw/b.png'])).map((x) => x.id)).toEqual(['fig1.pdf', 'raw/b.png'])
     // 老排版里放的是 PNG：主文件那张卡照样算「用着」

@@ -28,7 +28,7 @@ import {
   type UnsupportedAsset,
 } from '@/lib/api'
 import { runtimeSiblingOf } from '@/lib/assetSibling'
-import { figureMembers, inViewScope, isFigureCard, visibleFigureCards } from '@/lib/figureGroup'
+import { figureMembers, inViewScope, isFigureCard, sourceScriptOf, visibleFigureCards } from '@/lib/figureGroup'
 import { formatCm } from '@/lib/units'
 import { formatOf, nameTail } from '@/lib/assetCardText'
 import { cn } from '@/lib/utils'
@@ -279,7 +279,7 @@ export function AssetBrowser() {
     let list = panels.filter((p) => {
       if (!isFigureCard(p)) return false
       const members = groups.get(p.figure_key ?? `id:${p.id}`) ?? [p]
-      if (!inViewScope(p.script, viewScope, members.some((m) => usage.has(m.id)))) return false
+      if (!inViewScope(sourceScriptOf(p), viewScope, members.some((m) => usage.has(m.id)))) return false
       return members.some(matches)
     })
     list = [...list]

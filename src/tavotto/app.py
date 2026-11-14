@@ -116,6 +116,7 @@ from .engine import (
     figuregroup as engine_figuregroup,
     fixsession as engine_fixsession,
     folderrepair as engine_folderrepair,
+    foreignoutputs as engine_foreignoutputs,
     foreignsource as engine_foreignsource,
     handoff as engine_handoff,
     handoffreceipt as engine_handoffreceipt,
@@ -733,8 +734,19 @@ def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
             LOG.warning("素材扫描跳过 %s（probe 失败）", p, exc_info=True)
             continue
         panels.append(entry)
-    # 同一张图的几份文件（ADR 0184 §一）：图键 / 主文件 / 全部格式，唯一出处 `engine/figuregroup`
-    engine_figuregroup.annotate(panels, current_registry())
+    # 同一张图的几份文件（ADR 0184 §一）：图键 / 主文件 / 全部格式 / 画它的脚本，唯一出处 `engine/figuregroup`。
+    # R / MATLAB 与 Python 一样认作来源（修订）：源码里写死的输出 + 同目录同名脚本，只读、不运行
+    dir_cache = engine_foreignsource.DirCache(root)
+
+    def _sibling(rel: str) -> str | None:
+        found = engine_foreignsource.sibling_of(root, dir_cache, rel)
+        return found["script"] if found else None
+
+    try:
+        foreign = engine_foreignoutputs.output_map(root)
+    except OSError:
+        foreign = {}
+    engine_figuregroup.annotate(panels, current_registry(), foreign, _sibling)
     return panels
 
 

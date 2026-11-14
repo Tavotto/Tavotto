@@ -42,6 +42,10 @@ export function inViewScope(script: string | null | undefined, scope: ViewScope,
   return used || (!!script && scope.scripts.includes(script))
 }
 
+/** 画这张图的脚本：任何语言（`source_script`），老后端只有 Python 的 `script` */
+export const sourceScriptOf = (p: Pick<PanelInfo, 'source_script' | 'script'>): string | undefined =>
+  p.source_script ?? p.script ?? undefined
+
 /** 素材区里看得见的图卡（主文件）：一张图一张、按范围过滤；`usedIds` = 排版里用到的文件 id */
 export function visibleFigureCards(
   panels: readonly PanelInfo[],
@@ -51,7 +55,7 @@ export function visibleFigureCards(
   return panels.filter(
     (p) =>
       isFigureCard(p) &&
-      inViewScope(p.script, scope, (p.formats ?? [p.id]).some((id) => usedIds.has(id))),
+      inViewScope(sourceScriptOf(p), scope, (p.formats ?? [p.id]).some((id) => usedIds.has(id))),
   )
 }
 

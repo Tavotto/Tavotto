@@ -82,6 +82,11 @@ export interface PanelInfo {
   figure_key?: string
   primary?: boolean
   formats?: string[]
+  /**
+   * 画这张图的脚本（项目相对路径）：Python 注册表、R / MATLAB 源码里写死的输出、或同目录同名的 R / MATLAB 脚本
+   * （ADR 0184 修订）。只用于「这张图归哪个脚本」（范围、归组）；能不能进图内编辑仍只看 `script` / `capability`。
+   */
+  source_script?: string
 }
 
 /**
