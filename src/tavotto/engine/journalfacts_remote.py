@@ -475,6 +475,7 @@ def get_facts(
     limit: int = 20,
     ui_locale: str | None = None,
     expected_catalog_rev: int | None = None,
+    response_fits: Callable[[dict], bool] | None = None,
 ) -> dict:
     """Page facts and scoped coverage together, with all referenced sources."""
     _validate_page(offset, limit)
@@ -536,7 +537,8 @@ def get_facts(
         )
         for sid in refs:
             out["sources"][sid] = bundle["sources"][sid]
-        if not _page_fits(out):
+        out["next_offset"] = offset + count + 1 if offset + count + 1 < total else None
+        if not _page_fits(out) or (response_fits is not None and not response_fits(out)):
             out[kind].pop()
             source_ids = {f["source"] for f in out["facts"]}
             source_ids.update(item["source"] for f in out["facts"] for item in f.get("context", []))
@@ -544,9 +546,9 @@ def get_facts(
             out["sources"] = {sid: bundle["sources"][sid] for sid in sorted(source_ids)}
             if not count:
                 raise FactsError("result_too_large")
+            out["next_offset"] = offset + count
             break
         count += 1
-    out["next_offset"] = offset + count if offset + count < total else None
     return out
 
 

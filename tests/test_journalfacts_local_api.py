@@ -1,5 +1,6 @@
 """Local Flask v2 facts use the signed client and never mutate project rules."""
 
+import copy
 import json
 
 import pytest
@@ -260,6 +261,199 @@ def test_signed_search_rejects_one_record_too_large_for_actual_http_json(
     response = client.post("/api/journal-facts/search", json={"limit": 1}, headers=headers)
     assert response.status_code == 413 and response.json["code"] == "result_too_large"
     assert "journals" not in response.json
+
+
+@pytest.mark.parametrize("with_inspection", [False, True])
+def test_signed_journal_http_pages_split_large_context_facts(
+    http_client, isolated, monkeypatch, with_inspection
+):
+    client, headers = http_client
+    key, _ = isolated
+    bundle = fact_bundle()
+    bundle["facts"][0]["context"] = [{"source": "s", "quote": "界" * 2000} for _ in range(16)]
+    second = copy.deepcopy(bundle["facts"][0])
+    second["id"] = "second"
+    bundle["facts"].append(second)
+    raw = json.dumps(bundle).encode()
+    envelope = signed(key, index_for(raw))
+    monkeypatch.setattr(
+        facts,
+        "_request",
+        lambda method, url, cap, headers: (
+            200,
+            envelope if url.endswith("index.signed.json") else raw,
+        ),
+    )
+    body = {"journal_id": "fx-journal", "limit": 2}
+    if with_inspection:
+        body["inspection"] = {"object_label": "Figure 1", "figure_kind": "line_art"}
+    first = client.post("/api/journal-facts/journal", json=body, headers=headers)
+    assert first.status_code == 200 and len(first.data) <= facts.MAX_PAGE_BYTES
+    assert first.json["facts"] == bundle["facts"][:1] and first.json["next_offset"] == 1
+    second = client.post(
+        "/api/journal-facts/journal",
+        json={**body, "offset": 1, "expected_catalog_rev": 1},
+        headers=headers,
+    )
+    assert second.status_code == 200 and len(second.data) <= facts.MAX_PAGE_BYTES
+    assert second.json["facts"] == bundle["facts"][1:] and second.json["next_offset"] is None
+    assert first.json["sources"] == second.json["sources"] == bundle["sources"]
+    if with_inspection:
+        assert [item["id"] for item in first.json["inspection"]["facts"]] == ["line"]
+        assert [item["id"] for item in second.json["inspection"]["facts"]] == ["second"]
+
+
+@pytest.mark.parametrize("with_inspection", [False, True])
+def test_signed_journal_http_pages_include_context_coverage_and_inspection(
+    http_client, isolated, monkeypatch, with_inspection
+):
+    client, headers = http_client
+    key, _ = isolated
+    bundle = fact_bundle()
+    bundle["sources"]["context"] = {
+        "url": "https://example.invalid/context",
+        "kind": "html",
+        "retrieved": "2026-11-11",
+    }
+    bundle["sources"]["coverage"] = {
+        "url": "https://example.invalid/coverage",
+        "kind": "html",
+        "retrieved": "2026-11-11",
+    }
+    bundle["facts"][0]["context"] = [{"source": "context", "quote": "界" * 2000} for _ in range(16)]
+    bundle["coverage"] = [
+        {
+            "id": f"coverage-{i}",
+            "subject": "font_size",
+            "result": "not_stated",
+            "scope": "界" * 1000,
+            "sources": ["coverage"],
+            "review": {"status": "verified", "reviewed": "2026-11-11", "method": "fixture"},
+        }
+        for i in range(19)
+    ]
+    raw = json.dumps(bundle).encode()
+    envelope = signed(key, index_for(raw))
+    monkeypatch.setattr(
+        facts,
+        "_request",
+        lambda method, url, cap, headers: (
+            200,
+            envelope if url.endswith("index.signed.json") else raw,
+        ),
+    )
+    body = {"journal_id": "fx-journal", "limit": 20}
+    if with_inspection:
+        body["inspection"] = {
+            "object_label": "Figure 1",
+            "figure_kind": "line_art",
+            "stage": "production",
+        }
+
+    offset, pages, seen_facts, seen_coverage = 0, 0, [], []
+    while offset is not None:
+        response = client.post(
+            "/api/journal-facts/journal",
+            json={**body, "offset": offset, "expected_catalog_rev": 1},
+            headers=headers,
+        )
+        assert response.status_code == 200 and len(response.data) <= facts.MAX_PAGE_BYTES
+        page = response.json
+        pages += 1
+        seen_facts.extend(page["facts"])
+        seen_coverage.extend(page["coverage"])
+        referenced = {record["source"] for record in page["facts"]}
+        referenced.update(
+            ctx["source"] for record in page["facts"] for ctx in record.get("context", [])
+        )
+        referenced.update(src for record in page["coverage"] for src in record["sources"])
+        assert page["sources"] == {src: bundle["sources"][src] for src in referenced}
+        if with_inspection:
+            assert [item["id"] for item in page["inspection"]["facts"]] == [
+                item["id"] for item in page["facts"]
+            ]
+        next_offset = page["next_offset"]
+        assert next_offset is None or next_offset > offset
+        offset = next_offset
+    assert pages >= 2 and seen_facts == bundle["facts"] and seen_coverage == bundle["coverage"]
+    changed = client.post(
+        "/api/journal-facts/journal",
+        json={**body, "offset": 1, "expected_catalog_rev": 2},
+        headers=headers,
+    )
+    assert changed.status_code == 409 and changed.json["code"] == "catalog_changed"
+    empty = client.post(
+        "/api/journal-facts/journal",
+        json={**body, "offset": 20, "expected_catalog_rev": 1},
+        headers=headers,
+    )
+    assert empty.status_code == 200 and empty.json["facts"] == [] and empty.json["coverage"] == []
+    assert empty.json["next_offset"] is None
+
+
+def test_signed_journal_single_fact_that_cannot_fit_http_returns_413(
+    http_client, isolated, monkeypatch
+):
+    client, headers = http_client
+    key, _ = isolated
+    bundle = fact_bundle()
+    fact = bundle["facts"][0]
+    fact["relation"] = "in"
+    fact.pop("unit")
+    fact["value"] = ["界" * 200 + str(i) for i in range(256)]
+    raw = json.dumps(bundle).encode()
+    envelope = signed(key, index_for(raw))
+    monkeypatch.setattr(
+        facts,
+        "_request",
+        lambda method, url, cap, headers: (
+            200,
+            envelope if url.endswith("index.signed.json") else raw,
+        ),
+    )
+    response = client.post(
+        "/api/journal-facts/journal", json={"journal_id": "fx-journal", "limit": 1}, headers=headers
+    )
+    assert response.status_code == 413 and response.json["code"] == "result_too_large"
+    assert "facts" not in response.json
+
+
+def test_signed_journal_budget_includes_actual_inspection_before_paging(
+    http_client, isolated, monkeypatch
+):
+    client, headers = http_client
+    key, _ = isolated
+    bundle = fact_bundle()
+    second = copy.deepcopy(bundle["facts"][0])
+    second["id"] = "second"
+    bundle["facts"].append(second)
+    raw = json.dumps(bundle).encode()
+    envelope = signed(key, index_for(raw))
+    monkeypatch.setattr(
+        facts,
+        "_request",
+        lambda method, url, cap, headers: (
+            200,
+            envelope if url.endswith("index.signed.json") else raw,
+        ),
+    )
+    body = {"journal_id": "fx-journal", "limit": 2}
+    client.post("/api/journal-facts/journal", json=body, headers=headers)  # warm cache
+    plain = client.post("/api/journal-facts/journal", json=body, headers=headers)
+    inspection = {"object_label": "Figure 1", "figure_kind": "line_art"}
+    inspected = client.post(
+        "/api/journal-facts/journal", json={**body, "inspection": inspection}, headers=headers
+    )
+    assert plain.status_code == inspected.status_code == 200
+    assert len(plain.data) < len(inspected.data)
+    monkeypatch.setattr(facts, "MAX_PAGE_BYTES", len(plain.data))
+    bounded = client.post(
+        "/api/journal-facts/journal", json={**body, "inspection": inspection}, headers=headers
+    )
+    assert bounded.status_code == 200 and len(bounded.data) <= len(plain.data)
+    assert [fact["id"] for fact in bounded.json["facts"]] == ["line"]
+    assert [fact["id"] for fact in bounded.json["inspection"]["facts"]] == ["line"]
+    assert bounded.json["next_offset"] == 1
 
 
 def test_remote_oversized_facts_error_has_fallback(http_client, monkeypatch):

@@ -13773,7 +13773,7 @@ def _journal_facts_payload(payload: dict) -> dict:
     return {**payload, "semantic_review": "not_authenticated", "catalog_completeness": "unknown"}
 
 
-def _journal_facts_search_page_fits(payload: dict) -> bool:
+def _journal_facts_page_fits(payload: dict) -> bool:
     # Use Flask's actual configured serializer, including the fields added to
     # every successful HTTP response and its trailing newline.
     response = jsonify(_journal_facts_payload(payload))
@@ -13851,13 +13851,21 @@ def _journal_facts_request(kind: str):
         }
         if kind == "search":
             result = engine_journalfacts_remote.search(
-                body.get("query", ""), response_fits=_journal_facts_search_page_fits, **options
+                body.get("query", ""), response_fits=_journal_facts_page_fits, **options
             )
         else:
             selection = body.get("inspection")
             if "inspection" in body:
                 engine_journalfacts_remote.inspect_facts_page({"facts": []}, selection)
-            result = engine_journalfacts_remote.get_facts(body.get("journal_id"), **options)
+
+            def page_fits(page):
+                if "inspection" in body:
+                    page = engine_journalfacts_remote.inspect_facts_page(page, selection)
+                return _journal_facts_page_fits(page)
+
+            result = engine_journalfacts_remote.get_facts(
+                body.get("journal_id"), response_fits=page_fits, **options
+            )
             if "inspection" in body:
                 result = engine_journalfacts_remote.inspect_facts_page(result, selection)
         return _journal_facts_response(_journal_facts_payload(result))
