@@ -139,6 +139,19 @@ def _commit(sha: str, login: str | None, uid: int | None, message="c") -> dict:
     }
 
 
+def _disabled_policy(p: dict) -> dict:
+    """仓库 policy 已启用服务（ADR 0183 切换）；造一份「服务未启用」的样本。"""
+    p = json.loads(json.dumps(p))
+    p["provider"] = {
+        "configured": False,
+        "name": None,
+        "check_name": None,
+        "note": "test: disabled",
+    }
+    p.pop("authority_origin", None)
+    return p
+
+
 def _policy(*, service=True) -> dict:
     p = json.loads((ROOT / ".github" / "cla-policy.json").read_text(encoding="utf-8"))
     if service:
@@ -154,7 +167,10 @@ def _policy(*, service=True) -> dict:
         }
         ids = {"erwanjun": HOLDER, "dependabot[bot]": DEPENDABOT, "github-actions[bot]": ACTIONS}
         for ex in p["exemptions"]:
-            ex["github_id"] = ids[ex["login"]]
+            if ex["kind"] != "countersigned_paper":
+                ex["github_id"] = ids[ex["login"]]
+    else:
+        p = _disabled_policy(p)
     return p
 
 

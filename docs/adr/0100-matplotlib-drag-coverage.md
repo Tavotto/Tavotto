@@ -50,9 +50,9 @@
 | constrained 图上的形状 / 独立箭头 | 0.06–0.11 mm（预览与 manifest 两次排版之间漂） | 0.000–0.001 mm |
 | 文字 / 标题 / 轴标签 / sup* / 注释（非像素坐标）/ 纯箭头 / 图例 / Patch 全族 / 子图（各种布局）/ twinx / 极坐标 / 3D 子图 / 色条 / 等比子图 | 已可拖、误差 ≤ 0.008 mm | 不变 |
 | 数据系列、标注箭头、图例项、刻度、3D 轴标题、次坐标轴 / 寄生轴、像素坐标的注释 | 按设计不拖，**拖了什么都不说** | 仍不拖；拖起来 toast 说为什么（见下） |
-| SubFigure 里的子图 | 落点只走一半（2.3 mm） | **未修**（见「不做」） |
+| SubFigure 里的子图 | 落点只走一半（2.3 mm） | 已修（见「修订（2026-11-13）」）：误差 ≤ 1e-6 图幅分数 |
 | `ax.table` | 不宣称可拖 | **未修**：拖起来说「暂不支持」 |
-| `fig.add_artist(...)` 加在图幅上的框 | 不登记（点不中） | **未修** |
+| `fig.add_artist(...)` 加在图幅上的框 | 不登记（点不中） | **已修（2026-11-12 修订，见文末）** |
 
 ## 裁决
 
@@ -122,14 +122,10 @@ tight 布局下子图仍由 `PinnedTightLayoutEngine`（ADR 0042）钉住，不�
 
 ## 不做
 
-- **SubFigure 里的子图**：`position` 字段与 setter 用的是子图幅坐标，前端按根图幅分数算位移，落点
-  只走一半。修法是 manifest 的 `position` 换成根图幅分数、setter 反算回子图幅；但这个字段同时喂
-  对齐、成组缩放、属性页的 mm 读数，要单独改、单独验。SubFigure 里的文字 / 形状 / 箭头早已按根图幅
-  算（`pathgeom.root_figure`），不受影响。
+- ~~**SubFigure 里的子图**~~：已修，见「修订（2026-11-13）」。
 - **`ax.table`**：落位是 `loc` + `bbox`（轴分数），可以照锚定框的办法写一个 `pos_frac`；用户报告里没有
   出现，先说「暂不支持」。
-- **`fig.add_artist(...)` 加在图幅上的框 / 图片**：`instrument` 不登记 `fig.artists` / `fig.patches`，
-  点不中（属于命中登记，ADR 0086 那一侧）。登记之后 Patch 的 `pos_frac` setter 按 transFigure 就能用。
+- ~~**`fig.add_artist(...)` 加在图幅上的框 / 图片**~~：2026-11-12 已修，见文末修订。
 - **mpl_toolkits 插图跟着宿主拖时的预览**：它不是 child_axes，SVG 里与宿主平级；没挪过的它由定位器
   带着宿主走（落点对），但拖宿主时预览里它不动、松手成图才跟上。
 - **constrained 色条撤销的残差**（≤ 0.06 mm，修前 11 mm）：色条摆放读上一帧的装饰物包围盒，要多画
@@ -154,3 +150,58 @@ tight 布局下子图仍由 `PinnedTightLayoutEngine`（ADR 0042）钉住，不�
 - 已有的 `test_text_drag_anchor.py`、`test_layout_engine_pinning.py`、`test_colorbar_resize.py`、
   `test_worker_roundtrip.py`、`test_figure_recognition.py` 里「插图不宣称 position」的三条断言随本 ADR
   改成正向断言（插图钉得住、代理宣称）。
+
+## 修订（2026-11-12）：整张图 / SubFigure 上的元素全部登记
+
+用户来图（假肢抓取实验组图）：`fig.add_artist(Polygon(..., transform=fig.transFigure))` 画的连接梯形
+（把 B 的高亮窗口连到 D 的帧序列）选不中、改不了。排查时 artist 普查（`scripts/dev/matplotlib_artist_census.py
+--api`，新增图级样本）在 main 上报出整张图这一层**全部**漏网：`Polygon` / `Rectangle` / `Line2D` /
+`fig.add_artist(Text)` / 图级 `LineCollection` / `ConnectionPatch` / `fig.figimage` 的 `FigureImage`；SubFigure
+里的 suptitle、文字、图例、形状同样一个都没登记，普查只报一行「SubFigure × N」。
+
+裁决：
+
+- **一处登记、递归进 SubFigure**（`manifest._register_figure_level`）：`texts` / `legends` / `patches` /
+  `lines` / `images` / `artists`，`artists` 按族分派到与子图里同一套角色（Text → `text`、Patch → `patch`、
+  FancyArrowPatch → `arrow_patch`、Line2D → `line`、Collection → `linecoll` / `collection`、位图 → `image`、
+  锚定框照旧、认不出来的 → `artist`）。gid：根图沿用已发出的 `fig.texts_i` / `fig.legend_i` /
+  `fig.artists_j`，新增 `fig.patches_j` / `fig.lines_j` / `fig.images_j`；SubFigure 是
+  `fig.subfigs_k.<同上>`。序号是所属列表下标，存量 gid 一个不动。
+- **图级的形状、线、文字可拖**：形状照旧 `pos_frac`（transform 平移）；图级 `Line2D` 新增
+  `("line", "pos_frac")`，同一套平移（`overrides._set_line_pos_frac`，基准 transform、英寸平移、pin 表）。
+  子图里的曲线仍不宣称可拖（位置是数据）。
+- **量框**：图级集合没有 transData，`_collection_datalim` 改用它自己的 transform 量；`FigureImage` 按
+  `get_extent()`（显示像素）量。量不出的照旧进 `unsupported`。
+- **`ConnectionPatch` 不出端点**（子图里与图级都是）：它的两端由 xyA / xyB 决定，`_posA_posB` 是构造时的
+  占位，从前端点手柄画在图幅对角、拖了不动。改为描真实箭杆（可选中、改样式），不宣称可拖。
+- **SubFigure 里的图例拖动只走一半**：`legendmodel._legend_parent_transform` 对 SubFigure 返回了根图的
+  `transFigure`，而图例的默认锚框是 SubFigure 自己的框；改用 `transSubfigure`（根图上两者相同）。
+- 普查（产品 `manifest.census` 与开发工具）把 SubFigure 当结构件、走进去数它的孩子；SubFigure 的背景
+  patch 与根图的 `fig.patch` 一样算结构件。
+
+当时没做：**SubFigure 里子图的 `position`**（落点只走一半）——改口径会让存量文档挪位，属于既有项目
+兼容的取舍，已单独修，见下「修订（2026-11-13）」。仍不做：`FigureImage` 只开 visible / zorder（`figimage` 的落位是像素偏移，
+没有可重放的分数写法）。
+
+看护：`tests/test_figure_level_artists.py`（登记、拖动落点 / 不漂 / 撤销、constrained、SubFigure、
+样式改动、一次性 worker 全量重放）。
+
+## 修订（2026-11-13）：SubFigure 里的子图按根图幅报、按根图幅落
+
+用户拍板单独修（接 #1887）。修前 `axes.position` 直接取 `ax.get_position()`，SubFigure 里那是
+**子图幅**的分数，而前端的位移、对齐、成组缩放、属性页的 mm 读数都按根图幅算：1×2 子图幅里的
+子图拖 4.6 mm 只走 2.3 mm，右半边那格连起点都对不上。
+
+- **一处换算**：`pathgeom.axes_rect_to_frame` / `axes_rect_to_figsize` 认 SubFigure，经
+  `transSubfigure` ↔ 根 `transFigure` 换到显示坐标再换回来（嵌套 SubFigure、`bbox_inches` 的
+  图幅平移都在这一来一回里抵消）。manifest 两处（2D / 3D 子图）、setter、色条翻转读 pending
+  的宿主矩形都已经走这两个函数，所以口径一处改齐。
+- **constrained 的 pin 记根图幅的值**：SubFigure 的框也是 constrained 排出来的，按排版之前的子图幅
+  换算出来的 bounds 落下去会跟着子图幅偏，热态（上一帧已排好）与全量重放（还没排）分岔。pin 表里
+  存写下的根图幅值，`_pin_place` 在排完之后再换算。
+- **兼容代价（用户已接受）**：存量文档里拖过的 SubFigure 子图，存的是旧口径的值，重开后按新口径
+  落，会整体挪位。override 没有语义版本号可以区分新旧值，不做迁移。普通子图（不在 SubFigure 里）
+  两个函数逐位不变。
+- 看护：`tests/test_subfigure_axes_position.py`（普通 / constrained / `bbox_inches="tight"` / 嵌套
+  四种 SubFigure：`position` 与 `bbox` 同一矩形、拖到写下的位置、再画不漂、撤销回基线、全量重放
+  == 热态）。修前 8 条红。

@@ -48,9 +48,22 @@ def _server(client_name: str | None = "codex-mcp-client") -> srv.Server:
 
 def test_tool_names_mirror_handlers_and_engine_enum():
     # 例外：tavotto_guide（ADR 0170）暂不进遥测闭集——进了要升 CONSENT_VERSION，等维护者决定；现在走 `other` 桶
-    assert set(usage.TOOLS) == set(srv.HANDLERS) - {"tavotto_guide", "tavotto_get_journal_facts"}
+    # 例外同上：tavotto_fix_to_journal（ADR 0180）同样暂不进闭集，走 `other` 桶
+    assert set(usage.TOOLS) == set(srv.HANDLERS) - {
+        "tavotto_guide",
+        "tavotto_fix_to_journal",
+        "tavotto_get_journal_facts",
+    }
     assert set(tel.EVENTS["mcp_tool_call"]["tool"]["values"]) == set(usage.TOOLS) | {"other"}
     assert usage.properties("tavotto_guide", "ok", seconds=0.1, client_name=None)["tool"] == "other"
+    assert (
+        usage.properties("tavotto_get_journal_facts", "ok", seconds=0.1, client_name=None)["tool"]
+        == "other"
+    )
+    assert (
+        usage.properties("tavotto_fix_to_journal", "ok", seconds=0.1, client_name=None)["tool"]
+        == "other"
+    )
 
 
 def test_ok_call_emits_closed_set_only(monkeypatch, captured):

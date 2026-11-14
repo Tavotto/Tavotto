@@ -15,6 +15,7 @@
     "test:mutation": "node tests/mutation-smoke.mjs",
     "build:pdf-client": "node scripts/fetch-pdf-font.mjs && node scripts/build-pdf-client.mjs",
     "render:agreement-pdf": "node scripts/render-agreement-pdf.mjs deployment/staging/assets/CLA_INDIVIDUAL.md deployment/staging/assets/CLA_INDIVIDUAL.pdf --title \"Tavotto Individual Contributor License Agreement (staging copy)\" --banner \"STAGING COPY - NO LEGAL EFFECT - cla-staging.tavotto.com\" --published-url https://github.com/tavotto-cla-sandbox/cla-mq-sandbox/blob/main/docs/legal/CLA_INDIVIDUAL.md",
+    "render:agreement-pdf:production": "node scripts/render-agreement-pdf.mjs deployment/production/assets/CLA_INDIVIDUAL.md deployment/production/assets/CLA_INDIVIDUAL.pdf --title \"Tavotto Individual Contributor License Agreement\" --published-url https://github.com/Tavotto/Tavotto/blob/main/docs/legal/CLA_INDIVIDUAL.md",
     "fetch:pdf-font": "node scripts/fetch-pdf-font.mjs"
   },
   "devDependencies": {

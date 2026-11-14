@@ -2,9 +2,11 @@
 
 Only UTF-8 XML, static SVG and inert Matplotlib RDF metadata are accepted. This is
 validation, not a lossy sanitizer: rejected input never becomes a partial figure.
-The sole normalization helper removes the exact inert Matplotlib DTD declaration;
-worker callers use it before hashing. Static image import may also remove this
-exact declaration, then validate the complete remaining bytes before serving.
+Two normalization helpers exist. `strip_matplotlib_doctype` removes the exact inert
+Matplotlib DTD declaration; worker callers use it before hashing, and static image import
+may also use it before validating the complete remaining bytes. `repair_worker_ids`
+renames ids the safe grammar rejects (non-ASCII / spaces from a user `set_gid`, duplicates);
+only the trusted worker boundary calls it, and its output must still pass `parse_svg`.
 """
 
 from __future__ import annotations
@@ -143,6 +145,115 @@ def strip_matplotlib_doctype(data: bytes) -> bytes:
     if found:
         return data[:start] + data[found.end() :]
     return data
+
+
+def repair_worker_ids(data: bytes, *, budget: SVGBudget | None = None) -> bytes:
+    """Rename ids the safe grammar rejects in **trusted worker output**; anything else unchanged.
+
+    Matplotlib writes a user `set_gid("面板 A")` verbatim as `id="面板 A"`; that is legal output
+    but outside `_ID`. An invalid id gets a fresh name and its local references follow — only in
+    structural positions: an exact `href="#…"`, `url(#…)` in attributes / declarations, and ID
+    tokens of stylesheet selectors. Free text such as `stroke:#000000` is never touched (a gid
+    `"000000"` must not turn black strokes into a dangling reference). A later duplicate gets a
+    fresh name and references keep pointing at the first definition — the element every renderer
+    resolves. A stylesheet selector naming a duplicated id matches *every* copy, which a rename
+    cannot preserve, so such input is returned unchanged (and stays rejected).
+
+    Returns `data` byte-for-byte when nothing needs renaming, the input does not parse, or the
+    repair cannot keep the same meaning; the caller must run `parse_svg` on the result, so this
+    never admits otherwise unsafe content. Arbitrary imported files never go through here.
+    """
+    budget = budget or SVGBudget()
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data
+    if len(data) > budget.max_bytes or re.search(r"<!\s*(?:DOCTYPE|ENTITY)\b", text, re.I):
+        return data
+    try:
+        root = ET.fromstring(text, parser=ET.XMLParser(target=_BoundedBuilder(budget)))
+    except (ET.ParseError, LookupError, SVGError):
+        return data
+    present = {v for n in root.iter() if (v := n.get("id")) is not None}
+    claimed: set[str] = set()
+    renamed: dict[str, str] = {}
+    duplicated: set[str] = set()
+    counter = 0
+
+    def fresh() -> str:
+        nonlocal counter
+        while True:
+            counter += 1
+            name = f"tvid{counter}"
+            if name not in present and name not in claimed:
+                claimed.add(name)
+                return name
+
+    changed = False
+    for node in root.iter():
+        value = node.get("id")
+        if value is None:
+            continue
+        if _ID.fullmatch(value) and value not in claimed:
+            claimed.add(value)
+        elif value not in renamed and not _ID.fullmatch(value):
+            renamed[value] = fresh()
+            node.set("id", renamed[value])
+            changed = True
+        else:
+            duplicated.add(value)
+            node.set("id", fresh())
+            changed = True
+    if not changed:
+        return data
+
+    def url(value: str) -> str:
+        return _REPAIR_URL.sub(
+            lambda m: f"url({m.group(1)}#{renamed.get(m.group(2), m.group(2))}{m.group(1)})", value
+        )
+
+    def selectors(css: str) -> str | None:
+        def token(m: re.Match) -> str:
+            name = m.group(1)
+            if name in duplicated:
+                raise LookupError(name)
+            return "#" + renamed.get(name, name)
+
+        out = []
+        last = 0
+        try:
+            for rule in _RULE.finditer(css):
+                head = _REPAIR_SELECTOR_ID.sub(token, rule.group(1))
+                out.append(css[last : rule.start()] + head + "{" + url(rule.group(2)) + "}")
+                last = rule.end()
+        except LookupError:
+            return None
+        out.append(css[last:])
+        return "".join(out)
+
+    for node in root.iter():
+        for key, value in list(node.attrib.items()):
+            if key == "id":
+                continue
+            if _name(key)[1] == "href":
+                if value.startswith("#") and value[1:] in renamed:
+                    node.set(key, "#" + renamed[value[1:]])
+            elif "url(" in value.lower():
+                node.set(key, url(value))
+        if _name(node.tag)[1] == "style" and node.text and "#" in node.text:
+            repaired = selectors(node.text)
+            if repaired is None:
+                return data
+            node.text = repaired
+    for prefix, uri in (("", SVG_NS), ("xlink", XLINK_NS)):
+        ET.register_namespace(prefix, uri)
+    return ET.tostring(root, encoding="utf-8")
+
+
+#: `url(#…)` with an arbitrary (possibly non-ASCII / spaced) fragment, for the worker id repair only
+_REPAIR_URL = re.compile(r"url\(\s*(['\"]?)#([^'\")]+?)\1\s*\)", re.I)
+#: an ID token inside a selector: ends at a combinator, class / pseudo / attribute, list or rule
+_REPAIR_SELECTOR_ID = re.compile(r"#([^\s,>+~.#:\[\]*{}()]+)")
 
 
 class _BoundedBuilder(ET.TreeBuilder):

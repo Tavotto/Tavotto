@@ -3934,6 +3934,7 @@ export default interface Resources {
       "projectEnvWhySystemAuto": "内置环境没有 {{module}}，已自动改用这台机器上装着它的 Python。",
       "projectEnvWorkerImport": "项目环境 {{venv}} 里的 matplotlib 能用，但渲染在这个环境里启动不了，多半是包的版本不匹配。详情见诊断。",
       "repairAdvanced": "详情",
+      "repairAiSandboxPrompt": "这个脚本用了 {{name}}，它只在你的网页环境里有，我电脑上装不了。请去掉 {{name}} 和所有用到它的代码，只用 matplotlib 等常见库画图并保存成文件，给我完整的新脚本。",
       "repairAlternatives": "其他方式（备选）",
       "repairBack": "返回",
       "repairBody": "当前渲染环境缺少这个包。",
@@ -3946,6 +3947,8 @@ export default interface Resources {
       "repairConfirmProject": "安装到项目现有的 Python 环境（{{path}}）。",
       "repairConfirmTitle": "将安装 {{module}}",
       "repairContinue": "继续",
+      "repairCopiedForAi": "已复制，粘贴给 AI",
+      "repairCopyForAi": "复制给 AI 的话",
       "repairCreatingEnv": "正在准备 Python 环境…",
       "repairDetails": "详情",
       "repairDone": "已安装 {{module}}，正在重新运行。",
@@ -4081,6 +4084,7 @@ export default interface Resources {
       "repairNetUserSource": "你配置的下载源连不上，检查它或网络后点重试。",
       "repairNotFoundNamed": "软件源里找不到 {{name}}。",
       "repairNotFoundNamedFrom": "软件源里找不到 {{name}}（来自 {{source}}）。",
+      "repairNotPipAiSandbox": "{{name}} 只在 ChatGPT 网页里有、本机装不了，请让 AI 去掉它重新生成脚本。",
       "repairNotPipInstallable": "{{name}} 不能用 pip 安装，要在装有它的 Python 环境里运行。",
       "repairPackageAria": "要安装的包名",
       "repairPackagePlaceholder": "例如 my-lab-tools 或 my-lab-tools>=2.1",
@@ -6121,7 +6125,7 @@ export default interface Resources {
     "autosave": {
       "diskFailed": "没能保存到磁盘。",
       "docConflict": "这份排版已在另一个窗口打开，同时编辑会互相覆盖。",
-      "staleOtherWindow": "另一窗口保存了更新的版本。改动只保留在这里，未写入磁盘。"
+      "staleOtherWindow": "另一个窗口保存了更新的版本。"
     },
     "boot": {
       "desktopSessionFailed": "无法建立 Tavotto 桌面会话。请关闭窗口后重新打开应用。",
@@ -6252,9 +6256,8 @@ export default interface Resources {
     "docBanner": {
       "checkUpdate": "检查更新",
       "conflictDisk": "磁盘上：{{canvases}} 张画布 · {{objects}} 个对象 · 改动于 {{time}}",
-      "conflictDiskUnknown": "无法读取磁盘上的内容摘要",
-      "conflictExternal": "磁盘上的排版已被外部修改，本窗口的编辑未写入，以免覆盖。",
-      "conflictStale": "另一窗口保存了更新的版本，本窗口的编辑没有写入。",
+      "conflictExternal": "这份排版在别处被改过，这个窗口的改动还没存上。",
+      "conflictStale": "另一个窗口保存了更新的版本。",
       "dismiss": "知道了",
       "keepMain": "保留主版本",
       "lastDocBody": "已打开空白排版，磁盘文件没有改动。",
@@ -6269,7 +6272,7 @@ export default interface Resources {
       "recover": "恢复",
       "recoveryBody": "{{name}} · {{canvases}} 张画布 · {{objects}} 个对象 · 存于 {{time}}",
       "recoveryTitle": "有未恢复的编辑",
-      "reload": "从磁盘重新加载",
+      "reload": "重新加载",
       "retry": "重试保存",
       "saveAs": "另存为…",
       "saveErrorBody": "改动已暂存，尚未写入磁盘。",
@@ -6280,6 +6283,15 @@ export default interface Resources {
       "updateInstall": "下载并更新",
       "updateNone": "已经是最新版，这份排版要等新版发布才能打开。",
       "updateReady": "新版已经下好，点顶栏的「现在重启」就能打开这份排版。"
+    },
+    "docWindow": {
+      "choose": "先在画布上选一下。",
+      "entryDropped": "已换了排版，刚才的操作没有执行。",
+      "openElsewhere": "这份排版已在另一个窗口打开。",
+      "saveCopy": "存成副本",
+      "takeBack": "拿回来编辑",
+      "takeHere": "在这里编辑",
+      "takenOver": "这份排版正在另一个窗口编辑。"
     },
     "document": {
       "defaultName": "新排版"
@@ -6350,6 +6362,13 @@ export default interface Resources {
       "figureMissing": "项目里找不到 {{name}}",
       "layoutOnly": "未连接源脚本。可在版面上摆放，不能改图内元素。",
       "removeAdded": "撤销"
+    },
+    "fork": {
+      "copyName": "{{name}} 副本",
+      "done": "已存成“{{name}}”。",
+      "failed": "没能存成副本。",
+      "switched": "副本已存进项目里的 {{file}}，没有换过去。",
+      "untitled": "未命名排版"
     },
     "frameDrag": {
       "canvasSize": "画布 {{w}} × {{h}} mm",
@@ -7087,6 +7106,7 @@ export default interface Resources {
           "listIntro": "这些库的来源还没法确定，Tavotto 不会替你装：",
           "localMissing": "找不到本地模块 {{name}}（脚本把 {{dirs}} 加进了搜索路径，请确认这个文件夹在）。",
           "notPip": "这个脚本需要 {{name}}，内置 Python 装不了，请用装有它的环境。",
+          "notPipAiSandbox": "这个脚本需要 {{name}}，它只在 ChatGPT 网页里有，本机装不了。",
           "trustNote": "你填的包名不算可信来源：Tavotto 没法核实它们，所以装之前会让你再确认一次。",
           "userSpecifiedBadge": "用户指定，未经核实"
         },
@@ -7318,7 +7338,7 @@ export default interface Resources {
       "placeholderHint": "双击即可编辑，会运行 {{script}} 重新生成。"
     },
     "save": {
-      "conflict": "排版已在别处改过，请先处理冲突。",
+      "conflict": "排版已在别处改过，这次没存上。",
       "doneLocal": "已保存在本机（没有打开项目）",
       "doneProject": "已保存到项目：{{file}}",
       "failed": "无法保存。改动仍在，请检查磁盘空间后重试。",
@@ -7670,7 +7690,7 @@ export default interface Resources {
       "redoWith": "重做 {{label}}",
       "refreshProject": "刷新项目",
       "renameDocument": "重命名排版…",
-      "saveConflict": "外部冲突",
+      "saveConflict": "别处有改动",
       "saveDirty": "有未保存修改",
       "saveDocumentAs": "另存为新排版…",
       "saveError": "保存失败",

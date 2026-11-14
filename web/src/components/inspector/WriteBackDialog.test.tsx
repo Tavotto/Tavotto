@@ -26,7 +26,8 @@ import { writeBackMultipageOwner } from '@/lib/writeBackMultipageNotice'
 import { useUiStore } from '@/store/uiStore'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
-import { useDocumentStore } from '@/store/documentStore'
+import { heldEntryCount, takeWindowEntries } from '@/store/documentRestore'
+import { setWindowHold, useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
 import { emptyProject, type PanelObject, type TextObject } from '@/types/document'
 import { currentTimelineCtx } from '@/lib/timelineContext'
@@ -100,6 +101,7 @@ beforeEach(async () => {
 })
 
 afterEach(() => {
+  setWindowHold(null)
   act(() => root.unmount())
   container.remove()
   vi.restoreAllMocks()
@@ -132,6 +134,24 @@ const confirm = async (label = '写回原始文件') => {
     await new Promise<void>((r) => setTimeout(r, 0))
   })
 }
+
+describe('只读窗口（ADR 0181）', () => {
+  it('确认写回不发请求（窗口里的内容可能是旧的）：记住，编辑权放开后才写', async () => {
+    const calls = stubFetch(200, OK_BODY)
+    setWindowHold({ role: 'contested', docId: useDocumentStore.getState().documentId })
+    render()
+    await confirm()
+    expect(calls.some((u) => u.includes('/api/engine/update_source'))).toBe(false)
+    expect(heldEntryCount()).toBe(1)
+    const entries = takeWindowEntries()
+    setWindowHold(null)
+    await act(async () => entries.run())
+    await act(async () => {
+      await new Promise<void>((r) => setTimeout(r, 0))
+    })
+    expect(calls.some((u) => u.includes('/api/engine/update_source'))).toBe(true)
+  })
+})
 
 describe('写回被阻断时的文案', () => {
   it('source_changed：告诉用户去重新加载图库，不是「重试」', async () => {

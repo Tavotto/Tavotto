@@ -1,3 +1,0 @@
-## More animated hint cards: axis lock, skip snapping, arrow-key nudge, 15° rotation
-
-After a couple of days of use, the animated hint cards now also cover four modifier gestures. Dragging an object in an almost perfectly straight line suggests holding ⇧ to lock the axis; making a tiny correction right after an object snapped suggests holding ⌘ (Ctrl) to skip snapping for that drag; three tiny drags in a row suggest the arrow keys (⇧ for big steps, ⌥/Alt for fine ones); and stopping a rotation just short of a 15° step suggests holding ⇧ to snap. As before, a card never comes back once you have used the gesture yourself.

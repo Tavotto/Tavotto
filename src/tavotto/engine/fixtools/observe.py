@@ -538,6 +538,11 @@ def lookup_package(ctx: FixContext, args: dict) -> ToolResult:
     not_pip = depresolve.not_pip_installable(name)
     if not_pip is not None:
         info["not_pip_installable"] = True
+        if not_pip["hint"] == depresolve.NOT_PIP_HINT_AI_SANDBOX:
+            info["note"] = (
+                "This module only exists inside an AI chat's web sandbox (e.g. ChatGPT); no environment can "
+                "install it. The script needs to be regenerated without it."
+            )
     return ok(json.dumps(info, ensure_ascii=False, indent=1), "package lookup")
 
 

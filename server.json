@@ -8,12 +8,12 @@
     "url": "https://github.com/Tavotto/Tavotto",
     "source": "github"
   },
-  "version": "0.21.1",
+  "version": "0.21.2",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "tavotto",
-      "version": "0.21.1",
+      "version": "0.21.2",
       "packageArguments": [
         {
           "type": "positional",
