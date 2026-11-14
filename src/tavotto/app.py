@@ -508,7 +508,7 @@ def current_registry() -> engine_registry.Registry:
     return current_ctx().registry
 
 
-def safe_resolve(rel_id: str) -> Path:
+def safe_resolve(rel_id: str, *, require_file: bool = True) -> Path:
     """把面板 id（相对路径）解析回 figures 目录内的真实文件，禁止越权访问。
 
     TIFF 还要过支持范围（`tiffprobe.check`，issue #534）：缩略图、原文件、画布合成、原图导出、
@@ -520,11 +520,11 @@ def safe_resolve(rel_id: str) -> Path:
     p = (root / rel_id).resolve()
     if not p.is_relative_to(root.resolve()):
         abort(403)
-    if not p.is_file():
+    if require_file and not p.is_file():
         abort(404)
     if p.suffix.lower() not in PDF_EXT | IMG_EXT | SVG_EXT:
         abort(403)
-    if p.suffix.lower() in TIFF_EXT:
+    if p.suffix.lower() in TIFF_EXT and (require_file or p.is_file()):
         tiffprobe.check(p)
     return p
 
@@ -1554,6 +1554,614 @@ def api_file():
     return resp
 
 
+@app.get("/api/svg/chart/inspect")
+def api_svg_chart_inspect():
+    """计算图表绑定入口的只读盘点（ADR 0182）：同一份字节重新校验 + 稳定节点清单。
+
+    与 `/api/file` 同一条 `safe_resolve` 路径约束、同一个 svgcheck 边界；
+    普通 SVG 零执行；自包含计算包仅重放声明式模型，核对可见内容后提供恢复草稿。
+    原文件零改动，不执行用户脚本。
+    """
+    file_id = request.args.get("id", "")
+    path = None if "chart_source" in request.args else safe_resolve(file_id)
+    if path is not None and path.suffix.lower() not in SVG_EXT:
+        return jsonify({"code": "svg_scene_invalid", "error": "not an SVG file"}), 422
+    try:
+        source_options = {}
+        if "chart_source" in request.args:
+            try:
+                source_options["chart_source"] = json.loads(request.args["chart_source"])
+            except ValueError as exc:
+                raise engine_exportreq.ExportRequestError(
+                    "chart_model_invalid", "invalid chart source reference", {}
+                ) from exc
+        inventory, restored = _inspect_chart_source(file_id, path, **source_options)
+    except engine_exportreq.ExportRequestError as exc:
+        status = 409 if exc.code in ("chart_source_changed", "chart_engine_mismatch") else 422
+        return jsonify({"code": exc.code, "error": exc.message}), status
+    except engine_pool.WorkerError as exc:
+        return jsonify({"code": exc.code, "error": str(exc)}), 503
+    if restored is not None:
+        inventory = {**inventory, "restored_chart": restored}
+    return jsonify(inventory)
+
+
+_CHART_SPAWN_TIMEOUT_S = 90
+_CHART_SOURCE_UNSET = object()
+
+
+def _chart_scaffold_via_worker(
+    model: dict,
+    frame: dict,
+    *,
+    render_profile: str | None = None,
+    patches: list | None = None,
+    legend: list | None = None,
+) -> dict:
+    """用项目 worker 解释器跑一次脚手架子进程（无脚本、无会话、用完即弃）。
+
+    解释器解析走 `pool.resolve_worker_python` 的既有优先级（项目环境决定论）；
+    matplotlib 缺失/坏环境时错误以稳定码上抛，不静默换内置 runtime。
+    ``legend``（N4）：绑定合同的 legend 块，非空时透传给 worker——worker 端
+    用同一个 validate_legend_spec 再核一遍，不信任父进程。
+    """
+    import base64
+
+    from .engine import chartprocess
+
+    root = require_project()
+    req = {"model": model, "frame": frame, "salt": "tavotto"}
+    if render_profile is not None:
+        req.update(render_profile=render_profile, patches=patches or [])
+    if legend:
+        req["legend"] = legend
+    payload = chartprocess.run_request(root, req, timeout=_CHART_SPAWN_TIMEOUT_S)
+    if not payload.get("ok"):
+        raise engine_pool.WorkerError(
+            payload.get("error", ""), code=payload.get("code") or "svg_scaffold_invalid"
+        )
+    result = {
+        "fragment": base64.b64decode(payload["fragment_b64"]),
+        "facts": payload.get("facts", {}),
+        "engine": payload.get("engine", {}),
+    }
+    for key in (
+        "manifest",
+        "roles",
+        "gid_roles",
+        "coordinates",
+        "svg_members",
+        "paint_order_overrides",
+        "warnings",
+        "unrestored",
+        "render_frame",
+    ):
+        if key in payload:
+            result[key] = payload[key]
+    return result
+
+
+def _chart_engine_identity() -> dict:
+    """worker 解释器里的计算环境身份（probe 子进程，零渲染）。"""
+    from .engine import chartprocess
+
+    try:
+        payload = chartprocess.run_request(
+            require_project(), {"probe": True}, timeout=_CHART_SPAWN_TIMEOUT_S
+        )
+    except engine_pool.WorkerError as exc:
+        if exc.code == "svg_scaffold_invalid":
+            raise engine_pool.WorkerError(str(exc), code="chart_engine_unavailable") from exc
+        raise
+    if not payload.get("ok"):
+        raise engine_pool.WorkerError(
+            payload.get("error", ""), code=payload.get("code") or "chart_engine_unavailable"
+        )
+    return payload["engine"]
+
+
+@app.post("/api/svg/chart/bind")
+def api_svg_chart_bind():
+    """显式建模确认（ADR 0182，SG06/10）：校准证据 + 系列选择 → 模型 + 绑定。
+
+    只做判据与产物，不落盘、不执行用户脚本；自包含包先核对声明式冷重放。
+    """
+
+    from .engine import chartbind, chartmodel
+
+    body = request.get_json(silent=True) or {}
+    file_id = body.get("file", "")
+    if not isinstance(file_id, str) or not file_id:
+        return jsonify({"code": "svg_scene_invalid", "error": "file is required"}), 422
+    path = None if "chart_source" in body else safe_resolve(file_id)
+    if path is not None and path.suffix.lower() not in SVG_EXT:
+        return jsonify({"code": "svg_scene_invalid", "error": "not an SVG file"}), 422
+    try:
+        scene, _restored = _inspect_chart_source(
+            file_id,
+            path,
+            **({"chart_source": body["chart_source"]} if "chart_source" in body else {}),
+        )
+    except engine_exportreq.ExportRequestError as exc:
+        status = 409 if exc.code in ("chart_source_changed", "chart_engine_mismatch") else 422
+        return jsonify({"code": exc.code, "error": exc.message}), status
+    except engine_pool.WorkerError as exc:
+        return jsonify({"code": exc.code, "error": str(exc)}), 503
+    try:
+        engine = _chart_engine_identity()
+        result = chartbind.build_model_and_binding(
+            {
+                **{k: v for k, v in body.items() if k not in {"file", "chart_source"}},
+                "scene_digest": scene["scene_digest"],
+                "nodes": scene["nodes"],
+            },
+            engine_identity=engine,
+        )
+    except engine_pool.WorkerError as exc:
+        return jsonify({"code": exc.code, "error": str(exc)}), 503
+    except chartbind.BindError as exc:
+        return jsonify({"code": exc.code, "error": exc.detail}), 422
+    except chartmodel.ChartModelError as exc:
+        # legend 合同等绑定级判据在 chartmodel.validate_binding 里拒绝（闭集/
+        # 唯一性/值域）；给 422 的稳定码，不落成 500。
+        return jsonify({"code": exc.code, "error": exc.detail}), 422
+    return jsonify(result)
+
+
+@dataclasses.dataclass(frozen=True)
+class _ChartSnapshot:
+    file_id: str
+    path: Path
+    source_sha256: str
+    source_svg: bytes
+    input_svg: bytes
+    chart: dict
+    scene: dict
+    svg: bytes
+    facts: dict
+    engine: dict
+    render_revision: str
+    render_profile: str
+    overrides: list = dataclasses.field(default_factory=list)
+    manifest: dict | None = None
+    composition: dict | None = None
+    render_frame: dict | None = None
+
+
+def _read_chart_source(path: Path) -> bytes:
+    from .rendercore.svgcheck import SVGBudget
+
+    limit = SVGBudget().max_bytes
+    with path.open("rb") as stream:
+        data = stream.read(limit + 1)
+    if len(data) > limit:
+        raise engine_exportreq.ExportRequestError(
+            "svg_resource_limit", "SVG byte budget exceeded", {}
+        )
+    return data
+
+
+def _read_chart_input(
+    file_id: str,
+    path: Path | None = None,
+    *,
+    chart_source: object = _CHART_SOURCE_UNSET,
+    scene_digest: str | None = None,
+    source_storage: Path | None = None,
+) -> tuple[Path, bytes]:
+    """明确附件引用不借原文件补缺；所有消费者读取同一份精确INPUT。"""
+    if chart_source is _CHART_SOURCE_UNSET:
+        path = path if path is not None else safe_resolve(file_id)
+        if path.suffix.lower() not in SVG_EXT:
+            raise engine_exportreq.ExportRequestError("svg_scene_invalid", "not an SVG file", {})
+        return path, _read_chart_source(path)
+    from .engine import documentassets
+
+    try:
+        saved = documentassets.load_source(
+            source_storage if source_storage is not None else project_layout_dir(current_ctx()),
+            chart_source,
+            source_id=file_id,
+            scene_digest=scene_digest,
+        )
+    except documentassets.DocumentAssetError as exc:
+        raise engine_exportreq.ExportRequestError(exc.code, exc.detail, {}) from exc
+    return saved.path, saved.input_svg
+
+
+def _assert_chart_source(path: Path, expected: str) -> None:
+    try:
+        current = hashlib.sha256(_read_chart_source(path)).hexdigest()
+    except (OSError, engine_exportreq.ExportRequestError) as exc:
+        raise engine_exportreq.ExportRequestError(
+            "chart_source_changed", "chart source became unavailable", {}
+        ) from exc
+    if current != expected:
+        raise engine_exportreq.ExportRequestError(
+            "chart_source_changed", "chart source changed", {}
+        )
+
+
+def _inspect_chart_source(
+    file_id: str, path: Path | None, *, chart_source: object = _CHART_SOURCE_UNSET
+) -> tuple[dict, dict | None]:
+    """绑定与恢复使用原场景身份；自包含包必须先通过实际重放。"""
+    from . import chartbundle, svgscene
+    from .engine import chartprofile
+
+    path, source = _read_chart_input(file_id, path, chart_source=chart_source)
+    try:
+        bundle = chartbundle.extract_chart(source)
+        if bundle is None:
+            return svgscene.scene_inventory(source), None
+    except (chartbundle.ChartBundleError, svgscene.SceneError) as exc:
+        raise engine_exportreq.ExportRequestError(exc.code, exc.detail, {}) from exc
+    if bundle.render_profile == chartprofile.LEGACY_PROFILE:
+        snapshot = _render_chart_snapshot(
+            file_id,
+            bundle.chart,
+            **({"chart_source": chart_source} if chart_source is not _CHART_SOURCE_UNSET else {}),
+        )
+    else:
+        snapshot = _render_chart_snapshot(
+            file_id,
+            bundle.chart,
+            render_profile=bundle.render_profile,
+            overrides=bundle.overrides,
+            **({"chart_source": chart_source} if chart_source is not _CHART_SOURCE_UNSET else {}),
+        )
+    if snapshot.source_sha256 != hashlib.sha256(source).hexdigest():
+        raise engine_exportreq.ExportRequestError(
+            "chart_source_changed", "chart source changed during inspection", {}
+        )
+    inventory = snapshot.scene
+    if bundle.render_profile != chartprofile.LEGACY_PROFILE:
+        inventory = {
+            **inventory,
+            "restored_render": {
+                "render_profile": snapshot.render_profile,
+                "overrides": snapshot.overrides,
+            },
+        }
+    return inventory, snapshot.chart
+
+
+def _render_chart_snapshot(
+    file_id: str,
+    chart: dict,
+    *,
+    render_profile: str | None = None,
+    overrides: object = (),
+    chart_source: object = _CHART_SOURCE_UNSET,
+    source_storage: Path | None = None,
+) -> _ChartSnapshot:
+    """预览/导出唯一计算入口：源字节、模型、绑定、环境与组合属于同一版本。"""
+    from . import chartbundle, svgcompose, svgscene
+    from .engine import chartmodel, chartprofile
+    from .rendercore.svgcheck import parse_svg, strip_matplotlib_doctype
+
+    try:
+        profile = chartprofile.validate_profile(
+            chartprofile.LEGACY_PROFILE if render_profile is None else render_profile
+        )
+        edits = chartprofile.validate_overrides(overrides, render_profile=profile)
+        if not isinstance(chart, dict) or set(chart) != {"model", "binding"}:
+            raise chartprofile.ChartProfileError("chart_model_invalid", "invalid chart field set")
+    except chartprofile.ChartProfileError as exc:
+        raise engine_exportreq.ExportRequestError(exc.code, exc.detail, {}) from exc
+    if chart_source is not _CHART_SOURCE_UNSET:
+        try:
+            chartmodel.validate_model(chart["model"])
+            chartmodel.validate_binding(chart["binding"], chart["model"])
+        except chartmodel.ChartModelError as exc:
+            raise engine_exportreq.ExportRequestError(exc.code, exc.detail, {}) from exc
+    path, original = _read_chart_input(
+        file_id,
+        chart_source=chart_source,
+        scene_digest=chart["model"].get("scene_digest")
+        if isinstance(chart["model"], dict)
+        else None,
+        **({"source_storage": source_storage} if source_storage is not None else {}),
+    )
+    source_sha = hashlib.sha256(original).hexdigest()
+    try:
+        bundle = chartbundle.extract_chart(original)
+        source = bundle.source_svg if bundle is not None else original
+        scene = svgscene.scene_inventory(source)
+        chartmodel.validate_model(chart["model"])
+        chartmodel.validate_binding(chart["binding"], chart["model"])
+        root = parse_svg(strip_matplotlib_doctype(source))
+        view_box = scene["view_box"] or [0.0, 0.0, scene["w_pt"] * 96 / 72, scene["h_pt"] * 96 / 72]
+        frame = {
+            "view_box": view_box,
+            "w_pt": scene["w_pt"],
+            "h_pt": scene["h_pt"],
+            "preserve": root.get("preserveAspectRatio"),
+        }
+
+        def state_identity(state, requested_profile, requested_edits):
+            base = chartmodel.panel_identity(
+                chartmodel.SOURCE_DECLARATIVE,
+                scene["scene_digest"],
+                state["model"],
+                state["binding"],
+            )
+            revision = chartprofile.identity(base, requested_profile, requested_edits)
+            if chart_source is not _CHART_SOURCE_UNSET:
+                revision = chartmodel.digest_of(
+                    {"chart_revision": revision, "input_sha256": source_sha}
+                )
+            return revision
+
+        def replay(state: dict, requested_profile, requested_edits):
+            model, binding = state["model"], state["binding"]
+            chartmodel.validate_model(model)
+            chartmodel.validate_binding(binding, model)
+            chartmodel.verify_scene(
+                binding, scene["scene_digest"], {n["id"] for n in scene["nodes"]}
+            )
+            if requested_profile == chartprofile.LEGACY_PROFILE:
+                if binding.get("legend"):
+                    # legacy 组合器没有真图例能力（不创建 Legend、不放置 legend
+                    # role）：带着 legend 合同静默忽略它 = 图例凭空消失的半接，
+                    # 不许发生。native 组合的半接由下面的 composed 闸兜住。
+                    raise engine_exportreq.ExportRequestError(
+                        "chart_render_unsupported",
+                        "the legacy render profile cannot honor a legend binding",
+                        {},
+                    )
+                # 保留既有两参调用及历史renderer：v1可见图摘要依赖其精确输出。
+                result = _chart_scaffold_via_worker(model, frame)
+            else:
+                result = _chart_scaffold_via_worker(
+                    model,
+                    frame,
+                    render_profile=requested_profile,
+                    patches=requested_edits,
+                    # N4：legend 合同随 binding 走——脚手架据此创建真图例。
+                    **({"legend": binding["legend"]} if binding.get("legend") else {}),
+                )
+            actual = result.get("engine") or {}
+            for key in ("matplotlib", "numpy"):
+                if model["engine"].get(key) and actual.get(key) != model["engine"][key]:
+                    raise engine_exportreq.ExportRequestError(
+                        "chart_engine_mismatch", f"engine {key} does not match the model", {}
+                    )
+            _assert_chart_source(path, source_sha)
+            if requested_profile in chartprofile.NATIVE_PROFILES:
+                combined = svgcompose.compose_native_scene(source, binding, result, model)
+                composition = combined.get("composition") or {}
+                if (
+                    composition.get("composed") is not True
+                    or not isinstance(combined.get("manifest"), dict)
+                    or result.get("warnings")
+                    or result.get("unrestored")
+                    or combined.get("warnings")
+                    or combined.get("unrestored")
+                ):
+                    raise engine_exportreq.ExportRequestError(
+                        "chart_render_unsupported",
+                        "chart scene has no verified final editable representation",
+                        {},
+                    )
+                svg = combined["svg"]
+                result = {**result, "manifest": combined["manifest"], "composition": composition}
+            else:
+                svg = svgcompose.compose_scene(
+                    source, binding, result["fragment"], model, origin=(view_box[0], view_box[1])
+                )
+            return svg, result
+
+        # 包里的 hash 只证明一致性。实际重放包内模型，才能让可见图获得计算恢复资格。
+        if bundle is not None:
+            verified_svg, verified_result = replay(
+                bundle.chart, bundle.render_profile, bundle.overrides
+            )
+            chartbundle.verify_replay(bundle, verified_svg)
+            if state_identity(chart, profile, edits) == state_identity(
+                bundle.chart, bundle.render_profile, bundle.overrides
+            ):
+                composed, scaffold = verified_svg, verified_result
+            else:
+                composed, scaffold = replay(chart, profile, edits)
+        else:
+            composed, scaffold = replay(chart, profile, edits)
+    except (
+        chartbundle.ChartBundleError,
+        svgscene.SceneError,
+        chartmodel.ChartModelError,
+        chartprofile.ChartProfileError,
+        svgcompose.ComposeError,
+    ) as exc:
+        raise engine_exportreq.ExportRequestError(exc.code, exc.detail, {}) from exc
+    _assert_chart_source(path, source_sha)
+    revision = state_identity(chart, profile, edits)
+    return _ChartSnapshot(
+        file_id,
+        path,
+        source_sha,
+        source,
+        original,
+        chart,
+        scene,
+        composed,
+        scaffold["facts"],
+        scaffold.get("engine") or {},
+        revision,
+        profile,
+        edits,
+        scaffold.get("manifest"),
+        scaffold.get("composition"),
+        scaffold.get("render_frame"),
+    )
+
+
+@app.post("/api/svg/chart/compute")
+def api_svg_chart_compute():
+    """按模型重算绑定区域（ADR 0182，SG07/10）：场景核对 → 脚手架 → 组合。
+
+    场景字节变了（`chart_source_mismatch`/`chart_node_missing`）一律拒绝；
+    引擎身份与模型合同不符报 `chart_engine_mismatch`；原文件零改动。
+    """
+    from .engine import chartmodel
+
+    body = request.get_json(silent=True) or {}
+    file_id = body.get("file", "")
+    model, binding = body.get("model"), body.get("binding")
+    if (
+        not isinstance(file_id, str)
+        or not file_id
+        or not isinstance(model, dict)
+        or not isinstance(binding, dict)
+    ):
+        return jsonify(
+            {"code": "svg_scene_invalid", "error": "file/model/binding are required"}
+        ), 422
+    try:
+        if "previous_chart" in body:
+            from .engine import chartprofile
+
+            try:
+                edits = chartprofile.validate_overrides(
+                    body.get("overrides", ()),
+                    render_profile=body.get("render_profile", chartprofile.LEGACY_PROFILE),
+                )
+                chartprofile.validate_rebound_edit_ownership(
+                    body["previous_chart"], {"model": model, "binding": binding}, edits
+                )
+            except chartprofile.ChartProfileError as exc:
+                raise engine_exportreq.ExportRequestError(exc.code, exc.detail, {}) from exc
+        snapshot = _render_chart_snapshot(
+            file_id,
+            {"model": model, "binding": binding},
+            render_profile=body.get("render_profile"),
+            overrides=body.get("overrides", ()),
+            **({"chart_source": body["chart_source"]} if "chart_source" in body else {}),
+        )
+    except engine_exportreq.ExportRequestError as exc:
+        status = 409 if exc.code in ("chart_source_changed", "chart_engine_mismatch") else 422
+        return jsonify({"code": exc.code, "error": exc.message}), status
+    except engine_pool.WorkerError as exc:
+        return jsonify({"code": exc.code, "error": str(exc)}), 503
+    return jsonify(
+        {
+            "svg": snapshot.svg.decode("utf-8"),
+            "facts": snapshot.facts,
+            "scene_digest": snapshot.scene["scene_digest"],
+            "render_revision": snapshot.render_revision,
+            "model_digest": chartmodel.digest_of(model),
+            "binding_digest": chartmodel.digest_of(binding),
+            "engine": snapshot.engine,
+            "render_frame": snapshot.render_frame,
+            **({"manifest": snapshot.manifest} if snapshot.manifest is not None else {}),
+        }
+    )
+
+
+def _api_chart_render_body(body, *, png: bool = False):
+    """声明式图表消费现有渲染响应合同，不选择或执行任何用户脚本。"""
+    import base64
+
+    from .engine import chartprofile, previewbudget
+    from .rendercore.pdfwriter import WriterError
+    from .rendercore.renderhost import RenderChildError
+    from .rendercore.svgir import SVGIRError
+
+    rel_id = body.get("id")
+    if not isinstance(rel_id, str) or not rel_id:
+        return jsonify({"code": "chart_model_invalid", "error": "id is required"}), 422
+    # A的来源驱动重建与B的显式声明式计算不能在一次请求里互相冒充。
+    _refuse_artifact_policy(body.get("source_policy"), body.get("expected_source"))
+    if (
+        not isinstance(body.get("render_profile", chartprofile.NATIVE_PROFILE), str)
+        or body.get("render_profile", chartprofile.NATIVE_PROFILE)
+        not in chartprofile.NATIVE_PROFILES
+    ):
+        return jsonify({"code": "chart_model_unsupported", "error": "native profile required"}), 422
+    width = None
+    with_manifest = body.get("with_manifest", False)
+    if png:
+        if not isinstance(with_manifest, bool):
+            return jsonify(
+                {"code": "invalid_preview_options", "error": "invalid with_manifest"}
+            ), 400
+        try:
+            want_w = int(body.get("w", 800))
+        except (TypeError, ValueError):
+            return jsonify({"code": "invalid_width", "error": "w must be an integer"}), 400
+        width = next((b for b in RENDER_BUCKETS if b >= want_w), RENDER_BUCKETS[-1])
+    else:
+        raw_dpi = body.get("preview_dpi")
+        try:
+            preview_dpi = int(raw_dpi) if raw_dpi is not None else None
+        except (TypeError, ValueError):
+            return jsonify({"code": "invalid_preview_dpi", "error": "invalid preview_dpi"}), 400
+        if preview_dpi is not None and preview_dpi <= 0:
+            return jsonify({"code": "invalid_preview_dpi", "error": "invalid preview_dpi"}), 400
+    started = time.perf_counter()
+    try:
+        snapshot = _render_chart_snapshot(
+            rel_id,
+            body.get("chart"),
+            render_profile=body.get("render_profile", chartprofile.NATIVE_PROFILE),
+            overrides=body.get("patches", []),
+            **({"chart_source": body["chart_source"]} if "chart_source" in body else {}),
+        )
+        if png:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix="chart-preview-", dir=CACHE_DIR) as temp:
+                directory = Path(temp)
+                canonical, notes = _chart_canonical(snapshot, directory)
+                target = directory / "preview.png"
+                pdfbackend.render_preview_png(canonical.path, width, target)
+                pixels = target.read_bytes()
+            _assert_chart_source(snapshot.path, snapshot.source_sha256)
+            response = (
+                jsonify(
+                    png=base64.b64encode(pixels).decode("ascii"),
+                    manifest=snapshot.manifest,
+                    chart_revision=snapshot.render_revision,
+                    **({"warnings": notes} if notes else {}),
+                )
+                if with_manifest
+                else Response(pixels, mimetype="image/png")
+            )
+        else:
+            count = (snapshot.composition or {}).get("svg_elements")
+            mode, reason = previewbudget.resolve_mode(
+                svg_bytes=len(snapshot.svg),
+                plan_demands_raster=(
+                    isinstance(count, int) and count > previewbudget.TOTAL_VECTOR_NODE_BUDGET
+                ),
+            )
+            payload = {
+                "rev": int(snapshot.render_revision[:12], 16),
+                "chart_revision": snapshot.render_revision,
+                "manifest": snapshot.manifest,
+                "warnings": [],
+                "unrestored": 0,
+                "render_frame": snapshot.render_frame,
+                "preview": previewbudget.metadata(
+                    svg_bytes=len(snapshot.svg), mode=mode, reason=reason, estimated_nodes=count
+                ),
+                "timings": {"total_ms": round((time.perf_counter() - started) * 1000, 3)},
+            }
+            if body.get("inline_svg") and mode != previewbudget.MODE_RASTER:
+                payload["svg"] = snapshot.svg.decode("utf-8")
+            _assert_chart_source(snapshot.path, snapshot.source_sha256)
+            response = jsonify(payload)
+    except engine_exportreq.ExportRequestError as exc:
+        status = 409 if exc.code in ("chart_source_changed", "chart_engine_mismatch") else 422
+        return jsonify({"code": exc.code, "error": exc.message}), status
+    except engine_pool.WorkerError as exc:
+        status = 422 if exc.code.startswith("chart_manifest_") else 503
+        return jsonify({"code": exc.code, "error": str(exc)}), status
+    except (SVGIRError, WriterError, RenderChildError) as exc:
+        return jsonify({"code": exc.code, "error": str(exc)}), 422
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 def _original_rerender(formats) -> bool:
     """原图范围：所选格式要不要让 `_resolve_panel_source` 有脚本就重渲染（哪怕没有 override）。
 
@@ -1640,25 +2248,6 @@ def _resolve_panel_source(
 def _export_tiff_error(exc: tiffprobe.UnsupportedTiff) -> engine_exportreq.ExportRequestError:
     """导出作业里没有 HTTP 响应可回：范围之外的 TIFF 换成作业自己的结构化失败，code 原样带过去。"""
     return engine_exportreq.ExportRequestError(exc.code, exc.message, exc.params)
-
-
-@app.get("/api/svg/chart/inspect")
-def api_svg_chart_inspect():
-    """计算图表绑定入口的只读盘点（ADR 0182）：同一份字节重新校验 + 稳定节点清单。
-
-    与 `/api/file` 同一条 `safe_resolve` 路径约束、同一个 svgcheck 边界；
-    失败 422 带稳定码，原文件零改动，无任何写入与执行。
-    """
-    from . import svgscene
-
-    path = safe_resolve(request.args.get("id", ""))
-    if path.suffix.lower() not in SVG_EXT:
-        return jsonify({"error": "not an SVG file", "code": "svg_scene_invalid"}), 422
-    try:
-        inventory = svgscene.read_scene(path)
-    except svgscene.SceneError as exc:
-        return jsonify({"code": exc.code, "error": exc.detail}), 422
-    return jsonify(inventory)
 
 
 def _serialize_figure(
@@ -3411,6 +4000,43 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
         height_mm=round(bbox[1] * 25.4 / 72.0, 3) if bbox else None,
         vector=True,
     )
+
+
+def _chart_canonical(snapshot: _ChartSnapshot, tmp_dir: Path):
+    """预览与导出共用同一冻结场景→RenderCore Canonical配对适配。"""
+    from .rendercore import facade as rc_facade, sources as rc_sources
+    from .rendercore.pdfwriter import write_pdf
+    from .rendercore.svgir import svg_to_ir
+
+    provider = rc_facade.provider()
+    files = {}
+    page, notes = svg_to_ir(
+        snapshot.svg,
+        *(
+            snapshot.render_frame["rect_pt"][2:]
+            if snapshot.render_frame is not None
+            else (snapshot.scene["w_pt"], snapshot.scene["h_pt"])
+        ),
+        provider,
+        files=files,
+    )
+    stem = "chart-" + snapshot.render_revision
+    pdf_path, svg_path = tmp_dir / (stem + ".pdf"), tmp_dir / (stem + ".svg")
+    write_pdf(page, pdf_path, provider, files=files)
+    svg_path.write_bytes(snapshot.svg)
+
+    def frozen(path):
+        artifact = engine_figcapture.source_artifact_from_file(
+            path,
+            source_id=snapshot.file_id,
+            origin=engine_figcapture.ORIGIN_DECLARATIVE,
+            render_revision=snapshot.render_revision,
+        )
+        return rc_sources.FrozenSource(artifact=artifact, path=path)
+
+    canonical = dataclasses.replace(frozen(pdf_path), svg=frozen(svg_path))
+    canonical.svg_representation()
+    return canonical, notes
 
 
 def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> list:
@@ -9313,6 +9939,11 @@ def api_engine_render():
 
 def _api_engine_render_body(body, *, include_figure_execution=False):
     origin = _figure_origin_request(body)
+    if "chart" in body:
+        # 声明式图表按 model/data 计算，没有用户代码执行可签；不加正证字段。
+        return _api_chart_render_body(body)
+    if "chart_source" in body:
+        return jsonify({"code": "chart_model_invalid", "error": "chart source requires chart"}), 422
     rel_id = body.get("id", "")
     try:
         artifact_source = (
@@ -9953,6 +10584,10 @@ def api_engine_preview_png():
         return _figure_origin_png_preview(body, origin)
     if "figure_snapshot" in body:
         return _figure_snapshot_png_preview(body)
+    if "chart" in body:
+        return _api_chart_render_body(body, png=True)
+    if "chart_source" in body:
+        return jsonify({"code": "chart_model_invalid", "error": "chart source requires chart"}), 422
     if body.get("source_policy") is not None and body.get("with_manifest") is not True:
         _refuse_artifact_policy(body.get("source_policy"), body.get("expected_source"))
     if body.get("source_policy") is None:
@@ -16761,6 +17396,7 @@ def api_autosave_put(doc_id):
 
 
 _OWNER_UNKNOWN = object()
+_PROJECT_FILE_UNSET = object()
 
 
 def _layout_session_owner():

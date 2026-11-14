@@ -13,14 +13,13 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import re
+from functools import cache
 from pathlib import Path
 
 import pytest
-
-from tavotto import tiffprobe
-from tavotto.engine import folderrepair, pathignore
 
 ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / "src" / "tavotto" / "app.py"
@@ -62,44 +61,24 @@ _SOURCE_FILES = (
 _CODE_REGISTRIES = (
     "tavotto.engine.exportreq",
     "tavotto.engine.exportjob",
-    # safe 档工作目录模式（ADR 0047）：端点用 `workdir.ERROR_MODE_INVALID` 常量
     "tavotto.engine.workdir",
-    # U03（ADR 0057）：显式解释器失效 / 计划过期——都是常量式的 code
     "tavotto.engine.pool",
     "tavotto.engine.preparation",
-    # U04（ADR 0061）：跑前的依赖门——常量式 code，落到确认框与 MCP 的 recovery 上
     "tavotto.engine.deprepair",
-    # T10（ADR 0117）：环境建议的采用（HTTP 与 MCP 同一个 `adopt_candidate`）——常量式 code，经 app 的
-    # `_adoption_refused` 漏斗带 error 原文转成 JSON
     "tavotto.engine.envadvice",
-    # U10（ADR 0072）：`TAVOTTO_RENDER_BACKEND` 指着退役 / 不认识的后端——`BackendSelectionError.code`
-    "tavotto.pdfbackend",
-    # ADR 0106：数据改指的端点——`RemapError(code)` 由 app 的 400 漏斗转出
     "tavotto.engine.inputremap",
-    # TAF 数据出图（ADR 0138 Phase 5）：`DataSourceError(code)` 由 app 的 400 漏斗转出；码表 `ERROR_CODES`，构造时校验
     "tavotto.engine.ai_data_figure",
-    # 数据出图 v2：XLSX 读取的稳定码（`XlsxError(code)` 由 `ai_data_figure` 转成 `DataSourceError`，码表并进上面那份）
     "tavotto.engine.xlsxread",
-    # 数据出图 v2 的画法配方（ADR 0178）：`RecipeError(code)` / `Problem(code)`，码表 `ERROR_CODES` = 拒绝条件表，构造时校验
     "tavotto.engine.ai_data_recipe",
-    # ADR 0110：改写脚本里的数据路径与共享的备份底座——`ScriptEditError(code)` 由 app 的 409 漏斗转出
     "tavotto.engine.scriptbackup",
     "tavotto.engine.scriptedit",
-    # T03：用户给的精确 argv 的运行配置——`RunConfigError.code` 由 app 的 errorhandler 转出
     "tavotto.engine.runconfig",
-    # issue #534：TIFF 素材的支持范围（`UnsupportedTiff(code)` 由 app 的 422 漏斗 / 导出作业转出）
     "tavotto.tiffprobe",
-    # TeX 工具链失败（`texdiag`）：pool 的错误收口按 matplotlib 的模板把 script_error 换成这四个码
     "tavotto.engine.texdiag",
-    # 没有写入权限的项目另存一份（`projectcopy.CopyError`，由 app 的 `/api/project/save-as` 转出）
     "tavotto.engine.projectcopy",
-    # 「修复权限」（ADR 0153 修订 2026-10-30）：`RepairError.code` 由 `/api/engine/folder-repair` 转成 JSON
     "tavotto.engine.folderrepair",
-    # 「跳过这个文件夹」（ADR 0154）：`IgnoreError.code` 由 `/api/engine/path-ignore` 转成 JSON
     "tavotto.engine.pathignore",
-    # 拖 / 粘贴文件进画布（ADR 0176）：`POST /api/assets/import` 的 code 经 `_import_error` 漏斗转成 JSON（带中文 error 原文）
     "tavotto.engine.assetimport",
-    # `.ipynb` 抽成同名 `.py`（ADR 0179）：`NotebookError(code)` 由 app 的 `_notebook_error` 漏斗转成 JSON
     "tavotto.engine.notebookscript",
 )
 
@@ -120,43 +99,137 @@ def _registry_codes() -> set[str]:
     return out
 
 
-#: 源码里「声明了一个 code」的两种写法：字面量响应，或带 code 的异常。
-_CODE_PATTERNS = (
-    r'"code":\s*"([a-z0-9_]+)"',
-    r'AgentError\(\s*"([a-z0-9_]+)"',
-    r'ConnectionRefused\(\s*"([a-z0-9_]+)"',
-    r'RefreshError\(\s*"([a-z0-9_]+)"',
-    r'AtomicWriteError\(\s*"([a-z0-9_]+)"',
-    r'ConvertError\(\s*"([a-z0-9_]+)"',
-    # ProfileStoreError 既有 `Cls("code", …)` 也有子类里的
-    # `ProfileStoreError.__init__(self, "code", …)`（**刻意不用 super()**：
-    # 那种写法这条门禁看不见，见 profilestore.RevisionConflict 的注释）
-    r'ProfileStoreError(?:\.__init__)?\(\s*(?:self,\s*)?"([a-z0-9_]+)"',
-    # 导出管线（ADR 0031）：请求层的结构化异常 + 作业层的逐项失败
-    r'ExportRequestError\(\s*"([a-z0-9_]+)"',
-    r'error_code\s*=\s*"([a-z0-9_]+)"',
-    r'_fail\(\s*job,\s*"([a-z0-9_]+)"',
-    r'TutorialError\(\s*"([a-z0-9_]+)"',
+#: 沿既有异常漏斗识别构造调用；码仍从实际字面量取，不手工列新增码。
+_ERROR_CLASSES = frozenset(
+    {
+        "AgentError",
+        "ConnectionRefused",
+        "RefreshError",
+        "AtomicWriteError",
+        "ConvertError",
+        "ProfileStoreError",
+        "ExportRequestError",
+        "TutorialError",
+        "DocumentError",
+    }
 )
 
 
-def _declared_codes(text: str) -> set[str]:
-    out: set[str] = set()
-    for pat in _CODE_PATTERNS:
-        out.update(re.findall(pat, text))
+@cache
+def _source_tree(text: str) -> ast.Module:
+    return ast.parse(text)
+
+
+def _name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def _literal_code(node: ast.AST | None) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value if re.fullmatch(r"[a-z0-9_]+", node.value) else None
+    return None
+
+
+def _dict_fields(node: ast.Dict) -> dict[str, ast.AST]:
+    return {
+        key.value: value
+        for key, value in zip(node.keys, node.values, strict=True)
+        if isinstance(key, ast.Constant) and isinstance(key.value, str)
+    }
+
+
+def _raised_codes(tree: ast.Module) -> set[str]:
+    out = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name, index = _name(node.func), 0
+        if name == "__init__" and isinstance(node.func, ast.Attribute):
+            name, index = _name(node.func.value), 1
+        if name in _ERROR_CLASSES:
+            argument = (
+                node.args[index]
+                if len(node.args) > index
+                else next(
+                    (keyword.value for keyword in node.keywords if keyword.arg == "code"), None
+                )
+            )
+        elif name == "_fail" and len(node.args) > 1:
+            argument = node.args[1]
+        else:
+            continue
+        if code := _literal_code(argument):
+            out.add(code)
     return out
+
+
+@cache
+def _declared_codes(text: str) -> set[str]:
+    tree = _source_tree(text)
+    out = _raised_codes(tree)
+    for node in ast.walk(tree):
+        value = None
+        if isinstance(node, ast.Dict):
+            value = _dict_fields(node).get("code")
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(_name(target) == "error_code" for target in targets):
+                value = node.value
+        elif isinstance(node, ast.Call):
+            # Job results carry the code as a keyword (`Produced(error_code=...)`),
+            # not as a response dict; it is still an emitted code.
+            for keyword in node.keywords:
+                if keyword.arg in {"error_code", "code"} and (code := _literal_code(keyword.value)):
+                    out.add(code)
+        if code := _literal_code(value):
+            out.add(code)
+    return out
+
+
+def test_declared_codes_are_actual_ast_nodes_not_comments_or_strings():
+    source = '''
+# jsonify({"code": "comment_code"})
+# raise DocumentError("comment_exception", "not executed")
+example = 'AgentError("string_exception")'
+description = """{"code": "string_code"}"""
+raise engine_documents.DocumentError("actual_code", "fallback")
+'''
+    assert _declared_codes(source) == {"actual_code"}
+
+
+@pytest.mark.parametrize("exception", sorted(_ERROR_CLASSES))
+def test_declared_codes_preserve_each_exception_funnel(exception):
+    assert _declared_codes(f'raise engine.{exception}("actual_code", "fallback")') == {
+        "actual_code"
+    }
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ('ProfileStoreError.__init__(self, "profile_code", "fallback")', "profile_code"),
+        ('DocumentError(code="document_code", message="fallback")', "document_code"),
+        ('job.error_code = "assigned_code"', "assigned_code"),
+        ('error_code: str = "annotated_code"', "annotated_code"),
+        ('_fail(job, "job_code", "fallback")', "job_code"),
+        ("jsonify({'code': 'response_code', 'error': 'fallback'})", "response_code"),
+    ],
+)
+def test_declared_codes_keep_literal_response_and_legacy_assignment_shapes(source, expected):
+    assert _declared_codes(source) == {expected}
 
 
 # code → 后端会塞进 params 的键（2026-08-21 起覆盖 app.py 的**全部**字面量
 # code——审计 P1-02：错误尾部不许泄漏中文，所以每个 code 都要有两种语言的
 # 文案，且占位符与 params 对得上）
 USER_VISIBLE_CODES = {
-    "svg_scene_invalid": set(),
-    # --- ADR 0175：改图助手附文件（`POST /api/ai/attachments`）；固定文案 ---
     "attachment_too_large": set(),
     "attachment_empty": set(),
     "attachment_invalid": set(),
-    # --- ADR 0176：拖 / 粘贴文件进画布（`POST /api/assets/import`）；只有大小上限带参数，其余固定文案 ---
     "asset_import_too_large": {"limit_mb"},
     "asset_import_unsupported_type": set(),
     "asset_import_unreadable": set(),
@@ -168,63 +241,61 @@ USER_VISIBLE_CODES = {
     "asset_import_name_exhausted": set(),
     "svg_asset_unsupported": set(),
     "svg_asset_export_unsupported": set(),
+    "chart_engine_mismatch": set(),
+    "chart_engine_unavailable": set(),
+    "chart_model_invalid": set(),
+    "chart_model_unsupported": set(),
+    "chart_render_unsupported": set(),
+    "chart_source_changed": set(),
+    "svg_resource_limit": set(),
+    "svg_scene_invalid": set(),
     "no_project": set(),
     "missing_path": set(),
     "mkdir_failed": {"reason"},
-    # 评审 #299-2：create=true 的路径里出现 `.` / `..`，或末位分量不是合法目录名
     "unsafe_project_name": {"name"},
     "open_project_failed": {"reason"},
     "invalid_path": set(),
     "dir_missing": {"path"},
-    # 左栏工作区抽屉：收藏满 PINNED_KEEP 条还要 add（Codex #550 之后的自查）
     "pinned_full": {"max"},
     "permission_denied": {"path"},
     "read_failed": {"reason"},
-    # --- 2026-08-21 全量补 code 的那批 ---
     "internal_error": {"reason"},
-    # U10（ADR 0072）：退役 / 不认识的渲染后端名，params 带原始取值
-    "backend_retired": {"value"},
-    "backend_unknown": {"value"},
     "backend_unavailable": {"reason"},
     "export_render_failed": {"id", "reason"},
     "invalid_document": set(),
     "package_file_missing": set(),
     "package_invalid": {"reason"},
     "package_schema_unsupported": set(),
+    "figure_snapshot_unavailable": set(),
     "scan_failed": {"reason"},
-    # ADR 0075 性能探针：报告形状不对 / 太大（reason = too_large / malformed / schema），落盘失败
     "perf_report_rejected": {"reason"},
     "perf_report_write_failed": set(),
-    # ADR 0079：依赖弹窗交回的用户环境 id 在本机的发现结果里找不到了
     "user_environment_gone": set(),
-    # 环境建议 / 检查 / 采用（T05，ADR 0114）
     "environment_changed": set(),
     "environment_generation_required": set(),
     "environment_candidate_gone": set(),
     "environment_save_failed": set(),
     "environment_locked": set(),
     "environment_check_running": set(),
-    # 交回的环境按此刻的计划复核仍缺包（Codex #522 P2）
     "user_environment_incomplete": {"packages"},
-    # 复核时联合计划算不出来：不知道脚本要什么，不拿空集合判「装齐」（Codex #562 P2）
     "user_environment_unverifiable": set(),
-    # --- Compatibility Bridge Session 3：试运行路径校验的三种拒绝 ---
-    # #961：Tavotto 自己的引擎文件缺了（不是缺依赖）；缺的模块名走响应的 engine_module，不进文案
     "engine_files_incomplete": set(),
-    # #898：MCP 来源的运行里脚本想写授权根之外（写入根绊线）。路径相对化后只进 MCP 的结构化载荷，不进文案
     "write_outside_roots": set(),
-    # ADR 0153：脚本加进 sys.path 的项目外文件夹读不了、跳过之后仍失败；参数来自 `pool.recovery_params`（只有目录名）
     "import_folder_unreadable": {"folder"},
-    # ADR 0154：私有依赖目录里的编译扩展是为别的 Python 小版本编的；参数来自 `pool.recovery_params`（显示名 + 两个版本）
-    "import_folder_abi_mismatch": {"folder", "abi", "current"},
-    # 「跳过这个文件夹」（ADR 0154，`engine/pathignore`）：固定文案、不带参数——路径不进响应
-    **{code: set() for code in pathignore.ERROR_CODES},
-    # 「修复权限」（ADR 0153 修订 2026-10-30，`engine/folderrepair`）：全是固定文案、不带参数——路径不进响应
-    **{code: set() for code in folderrepair.ERROR_CODES},
-    # worker 直出位图超像素预算（`figcapture.check_export_raster`）；参数来自 `pool.recovery_params`
-    "export_raster_too_large": {"width", "height", "max_pixels"},
-    # TeX 工具链（`texdiag`）：参数来自错误转换合同 `pool.recovery_params`；`tex_failed` 的 `{{error}}`
-    # 与 `script_error` 同一来源（traceback 末行，前端 `engineErrorMsg` 填）
+    "import_folder_abi_mismatch": {"abi", "current", "folder"},
+    "path_ignore_token_invalid": set(),
+    "path_ignore_rejected": set(),
+    "repair_unsupported": set(),
+    "repair_token_invalid": set(),
+    "repair_target_rejected": set(),
+    "repair_in_progress": set(),
+    "repair_not_confirmed": set(),
+    "repair_cancelled": set(),
+    "repair_not_elevated": set(),
+    "repair_failed": set(),
+    "repair_has_links": set(),
+    "repair_too_large": set(),
+    "export_raster_too_large": {"height", "max_pixels", "width"},
     "tex_command_missing": {"command"},
     "tex_package_missing": {"file"},
     "tex_compile_failed": {"line"},
@@ -232,27 +303,20 @@ USER_VISIBLE_CODES = {
     "script_not_found": {"script"},
     "script_path_outside_project": {"script"},
     "unsupported_script_type": {"script"},
-    # --- Compatibility Bridge Session 4：RuntimeFigureAsset（ADR 0013）。
-    # runtime_source_writeback_unsupported 刻意不在这里：v1 没有任何改写脚本
-    # 源码的端点（裁决出处 runtimeasset.writeback_rejection），码表 + 双语
-    # 文案先行、producer 后补的对拍在 tests/test_runtime_asset.py ---
     "runtime_asset_unknown": {"id"},
     "runtime_asset_has_no_original_artifact": set(),
     "runtime_cache_missing": set(),
     "runtime_asset_source_present": set(),
     "runtime_asset_in_use": set(),
-    # --- Compatibility Bridge Session 5：素材库普通入口 ---
     "probe_in_progress": {"script"},
     "script_name_missing": set(),
     "invalid_entry": {"entry"},
     "registry_update_failed": {"reason"},
     "settings_dir_unusable": {"key", "reason"},
     "invalid_preview_dpi": {"value"},
-    # ADR 0080：/api/engine/specfix 的入参校验
     "invalid_scale": {"value"},
     "invalid_profile": set(),
     "invalid_only": set(),
-    # native 图（tavotto run）暂不支持自动修复：在任何渲染之前拒绝；产品名走 brand 常量
     "specfix_native_unsupported": {"product"},
     "invalid_patches": set(),
     "invalid_purpose": {"value"},
@@ -262,17 +326,15 @@ USER_VISIBLE_CODES = {
     "sync_different_scripts": set(),
     "python_missing": set(),
     "interpreter_not_found": {"path"},
-    # safe 档工作目录模式（ADR 0047）
     "workdir_mode_invalid": {"mode"},
-    # ADR 0106：数据改指的端点（`inputremap.RemapError`）
     "input_remap_chosen_invalid": {"path"},
     "input_remap_not_found_in_dir": {"name", "path"},
     "input_remap_requested_invalid": set(),
     "input_remap_rule_unknown": {"source"},
     "input_remap_changed": set(),
-    # ADR 0110：经确认改写脚本里的数据路径（`scriptbackup` / `scriptedit` 的 `ScriptEditError(code)`
-    # 由 app 的 409 漏斗转出）。`script_edit_nothing_to_change` 另带结构化的 `skipped`（对话框逐条列），
-    # 不作占位符
+    "input_declaration_conflict": set(),
+    "input_declaration_invalid": set(),
+    "input_declaration_unavailable": set(),
     "script_is_symlink": {"script"},
     "script_hardlinked": {"script"},
     "script_readonly": {"script"},
@@ -290,60 +352,44 @@ USER_VISIBLE_CODES = {
     "script_edit_needs_ui": set(),
     "script_restore_conflict": set(),
     "script_restore_stale": {"script"},
-    # --- U03（ADR 0057）：首开的「需要输入」与失效的显式选择。params 空：细节在结构化字段
-    # （confirmation / explicit）里，文案不插值 ---
     "workdir_confirmation_required": set(),
     "explicit_python_unusable": set(),
     "project_python_unusable": set(),
     "preparation_plan_stale": set(),
-    # --- T01：脚本目标会话执行完但没捕获到图（登记那一步的结局码；文案早已在 errors.json） ---
     "no_figures_captured": set(),
-    # --- T03：精确 argv。文案不插值（`reason` 是顶层短码，不含参数值） ---
     "invalid_argv": set(),
     "run_config_missing": set(),
     "run_config_secret_missing": set(),
     "run_config_unsupported": set(),
     "run_config_unreadable": set(),
-    # --- T02：导入即扫描。重启后 GET / 取消一个没开始过的扫描；客户端据此重新 POST 开始 ---
     "project_scan_not_started": set(),
-    # --- U04（ADR 0061）：跑前的依赖门 ---
     "dependency_preparation_required": set(),
-    # 异步准备（统一实施包 U01，ADR 0053）：plan_id 不存在或属于别的项目
     "preparation_not_found": {"id"},
     "interpreter_no_matplotlib": {"path"},
-    # --- #435：全局「渲染环境」与项目路径同一份体检，三种新结论各一码 ---
     "interpreter_unsupported_python": {"path", "python_version"},
-    "interpreter_worker_import_failed": {"path", "detail"},
-    "interpreter_unusable": {"path", "detail"},
+    "interpreter_worker_import_failed": {"detail", "path"},
+    "interpreter_unusable": {"detail", "path"},
     "invalid_consent": set(),
     "name_missing": set(),
     "endpoint_save_failed": {"reason"},
     "endpoint_invalid": {"reason"},
     "ai_endpoint_incompatible": {"endpoint"},
-    # 账号登录（设备码 OAuth，ADR 0146）
     "ai_endpoint_needs_login": {"endpoint"},
     "oauth_unavailable": set(),
     "oauth_start_failed": set(),
     "oauth_flow_not_found": set(),
-    # 「连接 AI」（ai_connections）：连接 id 不存在 / 订阅类不能在这里删
     "connection_not_found": set(),
     "connection_not_deletable": set(),
     "ai_start_failed": {"reason"},
     "ai_revert_failed": {"reason"},
-    # QA STATE-09：脚本在这次 AI 修改之后又变过，回滚被拒（409，AgentError 漏斗）
     "ai_revert_conflict": {"script"},
-    # PR4：同一脚本上已有 AI 任务在跑（后端并发保护）/ 前端按请求 id 查询时后端没登记过
     "ai_script_busy": {"script"},
     "ai_candidate_changed": set(),
     "ai_candidate_unavailable": set(),
     "ai_request_not_found": set(),
-    # 转换会话从不改原脚本：没有可回滚的东西（ADR 0143）
     "ai_revert_not_applicable": set(),
-    # 「生成可编辑版本」（ADR 0143）：总开关关着 / 采用与丢弃的稳定码
     "convert_disabled": set(),
-    # 转换代写工具（#1628）回调被拒：只给 MCP 子进程看，模型把它转述给用户（"Tavotto could not run this tool"）
     "convert_tool_forbidden": set(),
-    # 「转换时允许 AI 不受沙盒限制」（#1631）只在 Windows 存在；别的系统 PUT 被拒
     "convert_unsandboxed_windows_only": set(),
     "convert_not_found": set(),
     "convert_not_ready": set(),
@@ -357,18 +403,14 @@ USER_VISIBLE_CODES = {
     "convert_write_failed": set(),
     "convert_name_exhausted": set(),
     "convert_no_preview": set(),
-    # R / MATLAB 来源（ADR 0143 修订）：声明的语言与文件内容对不上（.m 可能是 Objective-C；判不出就拒绝，不猜）
     "convert_source_language_mismatch": {"script"},
     "convert_not_awaiting_dependencies": set(),
     "convert_resume_busy": set(),
     "convert_nothing_to_realign": set(),
     "convert_realigning": set(),
-    # 这个请求 id 已被新指令取代（改写后再发），不会再执行 / 取代时发现旧请求其实已经开始
     "ai_request_superseded": set(),
     "ai_supersede_conflict": set(),
-    # 同面板 / 同脚本上还有没落定的待确认提交，这次又没显式取代它（409，后端在写账本的事务里判）
     "ai_pending_unresolved": set(),
-    # TAF 数据出图（ADR 0138 Phase 5b）：开关关着 / 缺输入 / 数据读不成受控摘要（`ai_data_figure.DataSourceError`）
     "taf_disabled": set(),
     "data_figure_input_missing": set(),
     "data_path_outside_project": set(),
@@ -383,14 +425,12 @@ USER_VISIBLE_CODES = {
     "data_empty": set(),
     "data_header_invalid": set(),
     "data_ragged": set(),
-    # 数据出图 v2（数据文件夹 / TSV / XLSX，`xlsxread`）
     "data_format_unsupported": set(),
     "data_excel_unsupported": set(),
     "data_xlsx_invalid": set(),
     "data_xlsx_too_large": set(),
     "data_xlsx_unsafe": set(),
     "data_sheet_not_found": set(),
-    # 数据出图 v2 的画法配方与资格判定（`ai_data_recipe`）：拒绝条件的稳定码，一码一句话
     "table_not_found": set(),
     "column_not_found": set(),
     "column_type_mismatch": set(),
@@ -435,32 +475,22 @@ USER_VISIBLE_CODES = {
     "recipe_layer_count": set(),
     "recipe_why_invalid": set(),
     "figure_name_exhausted": set(),
-    # 拒绝之后清待确认行也失败了：状态不确定（503），客户端保持同一个 rid
     "ai_request_unresolved": set(),
-    # 改图请求里那张图的文件不在项目里了（前端给「刷新项目」）
     "ai_panel_file_missing": set(),
-    # ADR 0132：助手草稿单稿超过 20 KB（413，不截断）
     "ai_draft_too_large": {"limit_kb"},
-    # 同一面板未解决的待确认提交已满（409，拒绝新的、不淘汰旧的）
     "ai_pending_limit": {"count"},
-    # --- 编码 Agent 注册表（ADR 0013）：全部经 AgentError 抛出、
-    #     由 app.py 的 _agent_error 一个漏斗转成 JSON ---
     "ai_agent_unknown": {"agent"},
     "ai_agent_disabled": {"agent"},
     "ai_agent_not_installed": {"agent"},
     "ai_agent_needs_auth": {"agent"},
     "ai_agent_not_usable": {"agent"},
     "ai_agent_install_unsupported": {"agent"},
-    # 「更新 Codex」：CLI 已经不比模型清单旧，或本机没有能一键换上的新版
     "ai_cli_update_unavailable": {"agent"},
-    # 官方登录按钮：该 Agent 没有官方登录命令 / 命令没能启动（终端没打开、spawn 失败）
     "ai_agent_login_unsupported": {"agent"},
     "ai_agent_login_failed": {"agent"},
     "ai_agent_executable_invalid": {"path"},
     "ai_agent_probe_timeout": {"path"},
-    # --- #24（ADR 0008 会话认证）带来的用户可见 code ---
     "session_auth_required": set(),
-    # --- 早已有 code、这次补上文案的存量 ---
     "annotations_need_pdf": set(),
     "desktop_updater_disabled": set(),
     "file_locked": set(),
@@ -469,32 +499,19 @@ USER_VISIBLE_CODES = {
     "script_changed": set(),
     "source_changed": set(),
     "stale_write": set(),
-    # --- Prompt 03（R-08）：磁盘上那份被 Tavotto 之外的改动覆盖过 ---
     "external_change": set(),
-    # ⌘S 写回项目里的排版（ADR 0096）：符号链接逃逸 / 只读的项目文件夹
     "layout_outside_project": set(),
     "layout_read_only": set(),
-    # 目标在、读不出修订号：拒写（`atomicio.existing_revision`），不当成「被删了」放行
     "revision_unreadable": set(),
-    # --- Prompt 04：统一项目刷新（engine/project_refresh.py）---
     "registry_reload_failed": {"reason"},
-    # AI 改完脚本、统一刷新之前项目已被关闭（`app._after_ai_change`）：进
-    # `ai.done.refresh.code`，前端按 errors:backend.* 显示
     "project_closed": set(),
-    # --- 原子写（engine/atomicio.py，ADR 0023）：一直会落到界面上，
-    #     直到 2026-08-29 才进扫描范围 ---
     "non_finite_number": {"reason"},
     "write_failed": {"reason"},
     "replace_failed": {"reason"},
     "dir_fsync_failed": {"reason"},
     "write_back_disabled": set(),
     "write_back_warnings": set(),
-    # issue #252 / QA 2026-09-24 SCI-05-B1：commit 的落盘准备（备份 + fsync）没过，
-    # 任何 replace 之前，原件零改动
     "write_back_persist_failed": {"reason"},
-    # --- Prompt 10（ADR 0029）：全局 Style / Spec 清单（engine/profilestore.py）。
-    #     全部经 app._profiles_error 一个漏斗转成 JSON；`name_missing` 复用上面
-    #     那条（同一件事只该有一个 code）---
     "profile_bad_kind": set(),
     "profile_bad_payload": set(),
     "profile_bad_data": set(),
@@ -512,9 +529,6 @@ USER_VISIBLE_CODES = {
     "profile_revision_missing": set(),
     "profile_revision_conflict": set(),
     "profile_store_unsupported_schema": set(),
-    # --- Prompt 12（ADR 0031）：统一导出管线。请求层 `engine/exportreq.py`
-    #     与作业层 `engine/exportjob.py` 各自导出 ERROR_CODES，门禁读那个
-    #     元组而不是正则扫源码（`_one_of()` 的 code 是变量，正则看不见）---
     "bad_request": set(),
     "bad_scope": {"value"},
     "bad_overwrite": {"value"},
@@ -524,7 +538,7 @@ USER_VISIBLE_CODES = {
     "no_format": set(),
     "unsupported_format": {"format"},
     "bad_ppi": {"value"},
-    "ppi_out_of_range": {"value", "min", "max"},
+    "ppi_out_of_range": {"max", "min", "value"},
     "bad_geometry": {"field"},
     "bad_filename": {"reason"},
     "bad_validation": set(),
@@ -545,8 +559,6 @@ USER_VISIBLE_CODES = {
     "report_write_failed": {"error"},
     "report_missing_payload": set(),
     "source_missing": {"figure"},
-    # --- ADR 0046（EPS / TIFF）：EPS 只有 worker 的 matplotlib 写得出，画布合成
-    #     与没有脚本的图各报一条，其余格式照常交付（`partial`）---
     "eps_not_for_canvas": set(),
     "script_export_diverged": set(),
     "script_export_native": set(),
@@ -566,49 +578,36 @@ USER_VISIBLE_CODES = {
     "svg_source_unsupported": {"id"},
     "svg_figure_unavailable": {"figure"},
     "svg_snapshot_missing": {"id"},
-    # --- Prompt 20（ADR 0039）：离线教程资源 / 副本。全部经 app._tutorial_error
-    #     一个漏斗转成 JSON，`reason` 是异常里的原文 ---
     "tutorial_resources_missing": {"reason"},
     "tutorial_resources_invalid": {"reason"},
     "tutorial_copy_failed": {"reason"},
     "tutorial_locked": {"reason"},
-    # 重置时新副本已就位、但旧教程排版因会话状态被另一个进程占着没清掉（500）：文案固定、不带参数
     "tutorial_reset_incomplete": set(),
-    # 重置确认之后示例副本里的另存排版变了 / 清点不了（409）：文案固定、不带参数，重置未执行
     "tutorial_layouts_changed": set(),
-    # --- #264：版本时间线读不出来时拒绝整份写回（写入侧那道闸）---
     "versions_unreadable": set(),
-    # --- ADR 0101：排版时间线。命名节点超出字节上限时拒绝再命名（已有的一条不删）；
-    #     关键时刻是闭集；缩略图只收小的 webp / png ---
-    "named_budget_exceeded": {"used", "limit"},
+    "named_budget_exceeded": {"limit", "used"},
     "version_name_too_long": {"max"},
     "version_moment_invalid": {"moment"},
     "version_thumb_invalid": set(),
-    # 只拍内容区域的缩略图：图写上了、裁切框写不上 → 撤掉这张图（500，文案固定）
     "version_thumb_write_failed": set(),
-    # --- issue #534：TIFF 素材。范围之外的 TIFF 在 `/api/panels` 的 `unsupported`、`safe_resolve`
-    #     的 422 与导出作业里都报同一个 code，params 只有文件名 ---
-    **{code: {"file"} for code in tiffprobe.ERROR_CODES},
-    # --- 只读项目另存一份（`engine/projectcopy`）：体量护栏 / 目标不可用 / 复制中途失败 ---
+    "tiff_unreadable": {"file"},
+    "tiff_bigtiff": {"file"},
+    "tiff_compression": {"file"},
+    "tiff_color_space": {"file"},
+    "tiff_bit_depth": {"file"},
+    "tiff_sample_format": {"file"},
+    "tiff_planar": {"file"},
     "project_copy_too_large": {"limit_mb"},
     "project_copy_dest_invalid": set(),
     "project_copy_dest_unwritable": set(),
     "project_copy_failed": {"reason"},
-    # --- 只读项目里脚本写不出输出文件（worker 把 EACCES/EROFS 的写失败归成这个码；文案只有 {{product}} 一个占位，由前端填，不带路径）---
     "output_folder_read_only": {"product"},
-    # --- 解释器在 Tavotto 自己的会话缓存里建不了目录（TVD-B6MR）：用户代码之前就失败，文案只有 {{product}} 一个占位 ---
     "interpreter_cache_denied": {"product"},
-    # 写回只重写 .pdf / .png：画布上是 JPEG / TIFF 时如实拒绝
     "write_back_format_unsupported": {"format"},
-    # 同一 stem 下另一张图写的文件（`app.WriteBackForeignFileError`）：写回拒绝覆盖
     "write_back_foreign_file": {"file"},
-    # 脚本用 `PdfPages` 写的 PDF（`app.WriteBackMultipagePdfError`，#1370）：多页 PDF 不是任何图的原件，写回一律拒绝、引导去导出
     "write_back_multipage_pdf": {"file"},
-    # --- U08（ADR 0068）：有限产物验证。`artifact_rejected` 是逐项失败（partial 那一档），
-    #     `bad_inspection` 是请求里的检查政策不合法 / 指向的规范不可用 ---
     "artifact_rejected": {"failed", "policy"},
     "bad_inspection": {"value"},
-    # --- ADR 0099：脚本 input() 的作答与答案管理 ---
     "script_input_not_pending": set(),
     "script_input_not_found": set(),
     "script_input_invalid": set(),
@@ -660,34 +659,8 @@ def test_error_field_is_still_there_as_the_fallback():
     `error` 里的中文原文是回退，不能因为有了 code 就删掉：装着旧前端的用户、
     以及 curl 调试的人只看得到它。
     """
-    src = _all_error_sources()
-    for code in USER_VISIBLE_CODES:
-        needle = f'"code": "{code}"'
-        if needle not in src:
-            # 经 AgentError / RefreshError 抛出的那批：原文由 app.py 的唯一
-            # 漏斗补上，这里直接看那个漏斗（漏斗少了 error 原文，整批一起红）
-            raised = any(
-                re.search(rf'{name}(?:\.__init__)?\(\s*(?:self,\s*)?"{code}"', src)
-                for name in (
-                    "AgentError",
-                    "ConnectionRefused",
-                    "RefreshError",
-                    "AtomicWriteError",
-                    "ProfileStoreError",
-                    "ExportRequestError",
-                    "TutorialError",
-                    "ConvertError",
-                )
-            )
-            # 导出作业的逐项失败经 `_legacy_export_response()` 这个唯一漏斗
-            # 转成 JSON，它自己带 error 原文（下面那条用例盯着）
-            raised = raised or code in _registry_codes()
-            assert raised, f"{code} 既没有响应也没有异常"
-            continue
-        idx = src.index(needle)
-        # code 与 error 在同一个 jsonify 里：往前找最近的 jsonify( 起点
-        start = src.rindex("jsonify({", 0, idx)
-        assert '"error"' in src[start:idx], f"{code} 所在的响应里没有 error 原文"
+    failures = _fallback_failures(_all_error_sources(), USER_VISIBLE_CODES, _registry_codes())
+    assert not failures, "\n".join(failures)
 
 
 def test_the_export_funnel_still_carries_the_original_text():
@@ -721,6 +694,35 @@ def test_the_atomic_write_funnel_still_carries_the_original_text():
     block = atomicio[start : start + 300]
     for key in ('"error"', '"code"'):
         assert key in block, f"AtomicWriteError.as_payload() 少了 {key}"
+
+
+def test_the_document_error_funnel_still_carries_the_original_text():
+    from tavotto.engine.documents import DocumentError
+
+    handler = next(
+        node
+        for node in _source_tree(APP.read_text(encoding="utf-8")).body
+        if isinstance(node, ast.FunctionDef) and node.name == "_document_error"
+    )
+    returned_payloads = (
+        node.value.elts[0]
+        for node in ast.walk(handler)
+        if isinstance(node, ast.Return)
+        and isinstance(node.value, ast.Tuple)
+        and len(node.value.elts) == 2
+    )
+    assert any(
+        isinstance(node, ast.Call)
+        and _name(node.func) == "jsonify"
+        and node.args
+        and isinstance(node.args[0], ast.Call)
+        and isinstance(node.args[0].func, ast.Attribute)
+        and node.args[0].func.attr == "as_payload"
+        and _name(node.args[0].func.value) == "exc"
+        for node in returned_payloads
+    ), "DocumentError 漏斗没有交付异常的完整 payload"
+    payload = DocumentError("document_test", "original fallback").as_payload()
+    assert payload == {"error": "original fallback", "code": "document_test"}
 
 
 def test_the_refresh_error_funnel_still_carries_the_original_text():
@@ -787,6 +789,12 @@ NON_UI_CODES = {
     "bad_handoff_query",
     # `POST /api/handoff/display-ack`（重复交接的显示确认）的参数错误：调用方是前端自己的静默 fire-and-forget，不展示（ADR 0131）
     "bad_handoff_ack",
+    # `POST /api/engine/render` 的 `include_figure_execution` 必须是真布尔：前端只发 true，
+    # 写错是调用方/协议错误，界面不会展示（响应仍带 `error` 原文）。
+    "invalid_include_figure_execution",
+    # 导出作业 / 图表子进程的**状态**字面量，不是错误响应码。
+    "cancelled",
+    "timeout",
     # `GET /api/journal-catalog/assets/<file>`：出处卡的 `<img src>`，失败时前端只显示无图占位、不读 code（ADR 0155 §10）
     "snapshot_unavailable",
     # 一键安装的**进度**状态码，不是错误响应：它们的文案在
@@ -816,6 +824,60 @@ NON_UI_CODES = {
 DATA_ONLY_PARAMS = {"ai_script_busy": {"session"}, "eps_annotations_unsupported": {"operation"}}
 
 
+def _response_dicts(text: str):
+    """直接响应 dict 或同词法作用域唯一前置 dict 赋值；复杂数据流不冒充已判。"""
+    tree = _source_tree(text)
+    nodes = list(ast.walk(tree))
+    parents = {child: node for node in nodes for child in ast.iter_child_nodes(node)}
+
+    def scope(node):
+        while node in parents:
+            node = parents[node]
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+                return node
+        return tree
+
+    assignments = {}
+    for node in nodes:
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    assignments.setdefault((scope(node), target.id), []).append(node)
+    for node in nodes:
+        if not isinstance(node, ast.Call) or _name(node.func) != "jsonify" or not node.args:
+            continue
+        payload = node.args[0]
+        if isinstance(payload, ast.Name):
+            preceding = [
+                assignment
+                for assignment in assignments.get((scope(node), payload.id), ())
+                if assignment.lineno < node.lineno
+            ]
+            if len(preceding) != 1:
+                continue
+            payload = preceding[0].value
+        if isinstance(payload, ast.Dict):
+            yield node.lineno, _dict_fields(payload)
+
+
+def _fallback_failures(text: str, codes, registry_codes) -> list[str]:
+    responses: dict[str, list[tuple[int, dict]]] = {}
+    for line, fields in _response_dicts(text):
+        if code := _literal_code(fields.get("code")):
+            responses.setdefault(code, []).append((line, fields))
+    declared = _declared_codes(text)
+    failures = []
+    for code in codes:
+        if code in responses:
+            for line, fields in responses[code]:
+                if "error" not in fields:
+                    failures.append(f"{code} 第 {line} 行的响应里没有 error 原文")
+        elif code not in declared and code not in registry_codes:
+            failures.append(f"{code} 既没有响应也没有异常")
+    return failures
+
+
 def _error_blocks(text: str):
     """每个 `jsonify({"error": ...})` 调用的文本块（到第一个 `})` 为止——
     本仓库的错误响应都是字面量 dict，这个粗粒度够用且改坏会立刻可见。"""
@@ -823,6 +885,95 @@ def _error_blocks(text: str):
         window = text[m.start() : m.start() + 600]
         end = window.find("})")
         yield text[: m.start()].count("\n") + 1, window[: end if end != -1 else 600]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        '{"code": "sample_code", "error": "fallback"}',
+        '{"error": "fallback", "code": "sample_code"}',
+        '{"params": {"nested": {"value": "})"}}, "code": "sample_code", "error": "fallback"}',
+    ],
+)
+def test_fallback_accepts_either_field_order_in_the_same_actual_response(payload):
+    assert _fallback_failures(f"jsonify(\n{payload}\n)", {"sample_code"}, set()) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'jsonify({"code": "sample_code"}); other = {"code": "sample_code", "error": "elsewhere"}',
+        'jsonify({"code": "sample_code"}); jsonify({"code": "sample_code", "error": "elsewhere"})',
+        'jsonify({"code": "sample_code", "params": {"error": "nested"}})',
+        '# jsonify({"code": "sample_code", "error": "comment"})\njsonify({"code": "sample_code"})',
+    ],
+)
+def test_fallback_cannot_borrow_an_error_from_another_dict_or_comment(source):
+    failures = _fallback_failures(source, {"sample_code"}, {"sample_code"})
+    assert len(failures) == 1 and "sample_code" in failures[0]
+
+
+def test_fallback_keeps_exception_and_registry_paths_without_literal_responses():
+    source = 'raise documents.DocumentError("document_code", "fallback")'
+    assert _fallback_failures(source, {"document_code", "registry_code"}, {"registry_code"}) == []
+    assert _fallback_failures('# DocumentError("missing_code", "comment")', {"missing_code"}, set())
+
+
+def test_response_dict_scanner_uses_actual_dict_fields_in_any_order():
+    source = """
+# jsonify({"error": "comment"})
+description = 'jsonify({"error": "string"})'
+jsonify({"code": "sample_code", "error": "fallback"})
+jsonify({"params": {"error": "nested"}})
+jsonify({"error": "missing stable code"})
+"""
+    blocks = list(_response_dicts(source))
+    assert len(blocks) == 3
+    assert set(blocks[0][1]) == {"code", "error"}
+    assert set(blocks[1][1]) == {"params"}
+    assert set(blocks[2][1]) == {"error"}
+
+
+def test_fallback_resolves_the_same_function_unique_preceding_payload_dict():
+    source = """
+def response():
+    body = {"code": "sample_code", "error": "fallback"}
+    return jsonify(body)
+"""
+    assert _fallback_failures(source, {"sample_code"}, set()) == []
+    assert len(list(_response_dicts(source))) == 1
+
+
+def test_fallback_does_not_borrow_a_payload_assignment_from_another_function():
+    source = """
+def other():
+    body = {"code": "sample_code", "error": "elsewhere"}
+def response():
+    body = {"code": "sample_code"}
+    return jsonify(body)
+"""
+    assert len(_fallback_failures(source, {"sample_code"}, set())) == 1
+
+
+def test_response_scanner_does_not_claim_to_resolve_ambiguous_assignments():
+    source = """
+def response(choice):
+    body = {"code": "sample_code", "error": "first"}
+    if choice:
+        body = {"code": "sample_code"}
+    return jsonify(body)
+"""
+    assert list(_response_dicts(source)) == []
+
+
+def test_nested_capability_and_registered_status_codes_do_not_imply_http_errors():
+    source = """
+capabilities.append({"id": "figure.svg", "code": "capability_code"})
+def registration():
+    return {"registered": False, "code": "registration_code"}
+"""
+    assert _declared_codes(source) == {"capability_code", "registration_code"}
+    assert list(_response_dicts(source)) == []
 
 
 def test_every_error_response_carries_a_stable_code():
@@ -966,6 +1117,41 @@ def test_run_error_payload_carries_params_for_the_frontend():
 # --------------------------------------------------------------------------
 # worker 错误必须带状态码
 # --------------------------------------------------------------------------
+def _worker_error_call_sites(src: str) -> list[str]:
+    return [
+        f"app.py:{index}"
+        for index, line in enumerate(src.splitlines(), start=1)
+        if "_worker_error_payload(" in line and not line.lstrip().startswith(("#", "*", "def "))
+    ]
+
+
+def _worker_error_status_failures(src: str) -> list[str]:
+    """Calls which would return a worker error body without a failure status.
+
+    The status may be a literal 4xx/5xx, or an `http_status` expression
+    (`exc.http_status` / `getattr(exc, "http_status", 500)`) which the worker
+    error contract defines as 4xx/5xx. Wrapped `return` statements are read as
+    one window; the predicate measures the status expression, not formatting.
+    """
+    lines = src.splitlines()
+    bad: list[str] = []
+    for index, line in enumerate(lines):
+        if "_worker_error_payload(" not in line:
+            continue
+        if line.lstrip().startswith(("#", "*", "def ")):
+            continue  # 定义处与注释不算调用
+        window = "\n".join(lines[index : index + 3])
+        tail = window[window.index("_worker_error_payload(") :]
+        if re.search(
+            r",\s*(?:[45]\d\d\b|getattr\([^\n]*[\"']http_status[\"'][^\n]*\)"
+            r"|[A-Za-z_][\w.]*\.http_status\b)",
+            tail,
+        ):
+            continue
+        bad.append(f"app.py:{index + 1}: {line.strip()}")
+    return bad
+
+
 def test_every_worker_error_response_carries_a_failure_status():
     """`_worker_error_payload()` 回的是**裸 dict**——Flask 会把它序列化成
     **HTTP 200**。
@@ -985,17 +1171,8 @@ def test_every_worker_error_response_carries_a_failure_status():
     看不见的（它们断言的是 body 里的 code，200 与 500 都读得到）。
     """
     src = APP.read_text(encoding="utf-8")
-    seen: list[str] = []
-    bad: list[str] = []
-    for i, line in enumerate(src.splitlines(), start=1):
-        if "_worker_error_payload(" not in line:
-            continue
-        if line.lstrip().startswith(("#", "*", "def ")):
-            continue  # 定义处与注释不算调用
-        seen.append(f"app.py:{i}")
-        if re.search(r"jsonify\(_worker_error_payload\([^)]*\)\)\s*,\s*[45]\d\d", line):
-            continue
-        bad.append(f"app.py:{i}: {line.strip()}")
+    seen = _worker_error_call_sites(src)
+    bad = _worker_error_status_failures(src)
     assert not bad, (
         "这些 worker 错误响应没带失败状态码，会以 HTTP 200 发出去：\n  "
         + "\n  ".join(bad)
@@ -1024,8 +1201,33 @@ def test_every_worker_error_response_carries_a_failure_status():
     # `_write_back_error_response` 的一处 `, 409`（写回 verify 段挂了，原件零改动），11 → 10；
     # ADR 0080 的 /api/engine/specfix 渲染半路死了那一处 `, 500`，10 → 11。
     # #779: paired PNG snapshot adds one explicit HTTP 500 error response, 11 → 12.
-    assert len(seen) == 12, (
-        f"`_worker_error_payload` 的调用点从 12 变成了 {len(seen)}：{seen}\n"
+    # ADR 0181: the SVG scene export path adds one explicit failure response, 12 → 13.
+    assert len(seen) == 13, (
+        f"`_worker_error_payload` 的调用点从 13 变成了 {len(seen)}：{seen}\n"
         "  新增出口 → 把这个数改成新的实测值，并确认它带了状态码；\n"
         "  变少了 → 确认那处是真的删了，而不是搬到了别的文件里。"
     )
+
+
+def test_worker_error_status_gate_rejects_a_missing_or_success_status():
+    assert _worker_error_status_failures("return jsonify(_worker_error_payload(exc)), 409") == []
+    assert (
+        _worker_error_status_failures("return jsonify(_worker_error_payload(exc)), exc.http_status")
+        == []
+    )
+    assert (
+        _worker_error_status_failures(
+            'return jsonify(_worker_error_payload(exc)), getattr(exc, "http_status", 500)'
+        )
+        == []
+    )
+    # A wrapped return still counts: the status is on the next line.
+    assert (
+        _worker_error_status_failures(
+            "return jsonify(_worker_error_payload(exc, x=fact)), getattr(\n"
+            '    exc, "http_status", 500\n)'
+        )
+        == []
+    )
+    assert _worker_error_status_failures("return jsonify(_worker_error_payload(exc))") != []
+    assert _worker_error_status_failures("return jsonify(_worker_error_payload(exc)), 200") != []
