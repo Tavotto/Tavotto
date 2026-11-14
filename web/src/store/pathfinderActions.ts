@@ -9,6 +9,7 @@ import {
   releaseCompound,
   reversePath,
   runPathfinder,
+  simplifyPaths,
   type PathfinderOp,
   type PathfinderPlan,
 } from '@/lib/pathfinder'
@@ -151,6 +152,19 @@ export function reverseSelectedPaths(): void {
   })
 }
 
+/** 简化选中的路径（容差 `SIMPLIFY_TOLERANCE_PT`）：同 id 原位替换，一次 commit；一个锚点都省不掉 = 说一句 */
+export function simplifySelected(): Promise<void> {
+  const ids = [...selectedIds()]
+  return withKernel((k) => {
+    const made = simplifyPaths(k, objects(), ids)
+    if (!made) return say('simplifyNothing')
+    const byId = new Map(made.map((p) => [p.id, p]))
+    useDocumentStore.getState().commit(hist('simplifyPath'), (d) => {
+      d.objects = d.objects.map((o) => byId.get(o.id) ?? o)
+    })
+  })
+}
+
 export interface PathfinderCommand {
   id:
     | 'pathfinder-unite'
@@ -158,11 +172,13 @@ export interface PathfinderCommand {
     | 'pathfinder-intersect'
     | 'pathfinder-exclude'
     | 'pathfinder-divide'
+    | 'pathfinder-trim'
     | 'make-compound'
     | 'release-compound'
     | 'offset-path'
     | 'outline-stroke'
     | 'reverse-path'
+    | 'simplify-path'
   key?: KeyId
   /** 要不要 WASM 内核（要的话内核加载不了时灰掉） */
   kernel: boolean
@@ -185,6 +201,7 @@ export const PATHFINDER_COMMANDS: readonly PathfinderCommand[] = [
   op('pathfinder-intersect', 'intersect'),
   op('pathfinder-exclude', 'exclude'),
   op('pathfinder-divide', 'divide'),
+  op('pathfinder-trim', 'trim'),
   { id: 'make-compound', key: 'makeCompound', kernel: false, available: twoOrMore, run: makeCompoundPath },
   { id: 'release-compound', key: 'releaseCompound', kernel: false, available: () => !!singleCompound(), run: releaseCompoundPath },
   { id: 'offset-path', kernel: true, available: anyOperand, run: () => void offsetSelected() },
@@ -198,6 +215,12 @@ export const PATHFINDER_COMMANDS: readonly PathfinderCommand[] = [
       return picked.length > 0 && picked.length === ids.size && picked.every(canOutlineStroke)
     },
     run: () => void outlineSelected(),
+  },
+  {
+    id: 'simplify-path',
+    kernel: true,
+    available: () => selectedPaths().length > 0 && selectedPaths().length === selectedIds().length,
+    run: () => void simplifySelected(),
   },
   { id: 'reverse-path', kernel: false, available: () => selectedPaths().length > 0 && selectedPaths().length === selectedIds().length, run: reverseSelectedPaths },
 ]

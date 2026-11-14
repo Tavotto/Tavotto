@@ -7,7 +7,9 @@ import {
   PathExclude,
   PathIntersect,
   PathMinusFront,
+  PathTrim,
   PathUnite,
+  SimplifyPath,
   Ungroup,
 } from '@/components/ui/icons'
 import type { PathfinderCommand } from '@/store/pathfinderActions'
@@ -19,9 +21,11 @@ export const PATHFINDER_COMMAND_ICONS: Record<PathfinderCommand['id'], typeof Pa
   'pathfinder-intersect': PathIntersect,
   'pathfinder-exclude': PathExclude,
   'pathfinder-divide': PathDivide,
+  'pathfinder-trim': PathTrim,
   'make-compound': CompoundPath,
   'release-compound': Ungroup,
   'offset-path': OffsetPath,
   'outline-stroke': OutlineStroke,
   'reverse-path': ArrowLeftRight,
+  'simplify-path': SimplifyPath,
 }

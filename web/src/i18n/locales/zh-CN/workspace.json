@@ -471,7 +471,8 @@
     "releaseCompound": "释放复合路径",
     "offsetPath": "偏移路径",
     "outlineStroke": "轮廓化描边",
-    "reversePath": "反转路径方向"
+    "reversePath": "反转路径方向",
+    "simplifyPath": "简化路径"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -966,7 +967,8 @@
     "eyedropperNothing": "这里没有能吸的颜色",
     "eyedropperNoTarget": "先选中要上色的形状、路径或箭头",
     "pathfinderUnavailable": "这里用不了路径查找器",
-    "pathfinderEmpty": "算出来是空的，没有改动"
+    "pathfinderEmpty": "算出来是空的，没有改动",
+    "simplifyNothing": "已经很简单了，没有可删的锚点"
   },
   "tabs": {
     "allCanvases": "全部画布",

@@ -20,7 +20,7 @@ import { PATHFINDER_COMMAND_ICONS } from '@/components/pathfinderCommandIcons'
 
 /**
  * 属性栏里的路径查找器（ADR 0185 M2）：排列区一行摘要「路径查找器」，点开是两排图标——
- * 合并 / 减去顶层 / 相交 / 排除重叠 / 分割 / 复合路径（选着两个以上能参与的对象时），
+ * 合并 / 减去顶层 / 相交 / 排除重叠 / 分割 / 修边 / 复合路径（选着两个以上能参与的对象时），
  * 偏移路径（带距离格）/ 轮廓化描边 / 反转方向 / 释放复合路径（各自适用时）。
  * 哪几个出现只看命令表 `PATHFINDER_COMMANDS` 的 `available()`（与右键菜单、命令面板同一份）；
  * 内核加载不了时按钮灰掉，停上去说原因。摘要行一出现就预取内核，点下去不用等下载。
@@ -32,9 +32,10 @@ const SHAPE_MODES: readonly PathfinderCommand['id'][] = [
   'pathfinder-intersect',
   'pathfinder-exclude',
   'pathfinder-divide',
+  'pathfinder-trim',
   'make-compound',
 ]
-const PATH_OPS: readonly PathfinderCommand['id'][] = ['outline-stroke', 'reverse-path', 'release-compound']
+const PATH_OPS: readonly PathfinderCommand['id'][] = ['outline-stroke', 'simplify-path', 'reverse-path', 'release-compound']
 
 const label = (id: PathfinderCommand['id']) => translate(`palette.commands.${id}.label`, { ns: 'dialogs' })
 

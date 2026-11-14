@@ -1651,6 +1651,10 @@ export default interface Resources {
           "keywords": "minus front subtract jqdc 减去 顶层 路径查找器",
           "label": "减去顶层"
         },
+        "pathfinder-trim": {
+          "keywords": "trim hide xb 修边 去掉被盖住的 路径查找器",
+          "label": "修边"
+        },
         "pathfinder-unite": {
           "keywords": "unite union merge combine hb 合并 联集 路径查找器",
           "label": "合并"
@@ -1702,6 +1706,10 @@ export default interface Resources {
         "shortcut-help": {
           "keywords": "shortcut help kjj kuaijiejian",
           "label": "快捷键帮助"
+        },
+        "simplify-path": {
+          "keywords": "simplify smooth reduce anchors jhlj 简化 删锚点 平滑",
+          "label": "简化路径"
         },
         "styles": {
           "keywords": "style token preset ys lwys yangshi",
@@ -6956,6 +6964,7 @@ export default interface Resources {
       "setPublicationProfile": "设置出版规范",
       "showObject": "显示对象",
       "showObjects": "显示 {{count}} 个对象",
+      "simplifyPath": "简化路径",
       "spacingX": "设置水平间距",
       "spacingY": "设置垂直间距",
       "swapFillStroke": "互换填色和描边",
@@ -8084,6 +8093,7 @@ export default interface Resources {
       "renderFailed": "无法渲染 {{name}}",
       "renderFailedWithError": "无法渲染 {{name}}。{{error}}",
       "scriptChanged_other": "脚本已更新，{{count}} 张图已重新渲染",
+      "simplifyNothing": "已经很简单了，没有可删的锚点",
       "sourceLinked_other": "已找到源脚本（{{count}} 张）",
       "sourceLostEditing": "你可能移动了该图脚本，需要重新关联。",
       "sourceLostRelink": "重新关联脚本",

@@ -673,6 +673,10 @@
         "keywords": "divide split pathfinder",
         "label": "Divide"
       },
+      "pathfinder-trim": {
+        "keywords": "trim hidden pathfinder",
+        "label": "Trim"
+      },
       "make-compound": {
         "keywords": "compound path hole",
         "label": "Make compound path"
@@ -688,6 +692,10 @@
       "outline-stroke": {
         "keywords": "outline stroke expand",
         "label": "Outline stroke"
+      },
+      "simplify-path": {
+        "keywords": "simplify smooth reduce anchors",
+        "label": "Simplify path"
       },
       "reverse-path": {
         "keywords": "reverse path direction flip arrow",

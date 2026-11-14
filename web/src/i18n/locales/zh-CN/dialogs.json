@@ -661,6 +661,10 @@
         "keywords": "divide split fg 分割 切开 路径查找器",
         "label": "分割"
       },
+      "pathfinder-trim": {
+        "keywords": "trim hide xb 修边 去掉被盖住的 路径查找器",
+        "label": "修边"
+      },
       "make-compound": {
         "keywords": "compound path hole jlfhlj 复合路径 挖洞",
         "label": "建立复合路径"
@@ -676,6 +680,10 @@
       "outline-stroke": {
         "keywords": "outline stroke expand lkhmb 轮廓化 描边 扩展",
         "label": "轮廓化描边"
+      },
+      "simplify-path": {
+        "keywords": "simplify smooth reduce anchors jhlj 简化 删锚点 平滑",
+        "label": "简化路径"
       },
       "reverse-path": {
         "keywords": "reverse path direction flip arrow fzlj 反转 方向 箭头",

@@ -488,7 +488,8 @@
     "releaseCompound": "Release compound path",
     "offsetPath": "Offset path",
     "outlineStroke": "Outline stroke",
-    "reversePath": "Reverse path direction"
+    "reversePath": "Reverse path direction",
+    "simplifyPath": "Simplify path"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -1020,7 +1021,8 @@
     "eyedropperNothing": "No color to pick here",
     "eyedropperNoTarget": "Select a shape, path or arrow to color first",
     "pathfinderUnavailable": "Pathfinder isn’t available here",
-    "pathfinderEmpty": "The result is empty, so nothing changed"
+    "pathfinderEmpty": "The result is empty, so nothing changed",
+    "simplifyNothing": "Nothing to simplify"
   },
   "tabs": {
     "allCanvases": "All canvases",

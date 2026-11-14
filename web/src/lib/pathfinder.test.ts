@@ -21,6 +21,7 @@ import {
   pathfinderSelected,
   releaseCompoundPath,
   reverseSelectedPaths,
+  simplifySelected,
 } from '@/store/pathfinderActions'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -118,7 +119,7 @@ afterEach(() => setVecopsSource(null))
 
 /* ------------------------------ 面积 ------------------------------------- */
 
-describe('两圆：五种形状模式的面积对得上解析解', () => {
+describe('两圆：六种形状模式的面积对得上解析解', () => {
   const r = 10
   const d = 12
   const disk = Math.PI * r * r
@@ -129,6 +130,8 @@ describe('两圆：五种形状模式的面积对得上解析解', () => {
     ['intersect', 1, ov],
     ['exclude', 1, 2 * (disk - ov)],
     ['divide', 3, 2 * disk - ov],
+    // 修边：后方被盖住的那块删掉、前方整个留着——两个对象
+    ['trim', 2, 2 * disk - ov],
   ]
   for (const [op, count, want] of cases) {
     it(op, async () => {
@@ -315,6 +318,49 @@ describe('轮廓化描边', () => {
   it('虚线不能轮廓化（内核不画虚线，转出来会和画面不一样）：命令不出现', async () => {
     await seed([rect('r', 10, 10, 20, 10, { dash: 'dashed' })], ['r'])
     expect(pathfinderCommand('outline-stroke').available()).toBe(false)
+  })
+})
+
+describe('简化路径', () => {
+  // 一个方框，每条边上多插了 4 个共线的锚点：简化后只剩 4 个角
+  const dense: PathObject = {
+    id: 'd',
+    type: 'path',
+    x: 10,
+    y: 10,
+    w: 40,
+    h: 20,
+    rotationDeg: 30,
+    strokePt: 1,
+    color: '#000',
+    fill: '#ccc',
+    subpaths: [
+      {
+        closed: true,
+        nodes: [
+          ...[0, 0.2, 0.4, 0.6, 0.8].map((t) => ({ p: [t, 0] as [number, number] })),
+          ...[0, 0.2, 0.4, 0.6, 0.8].map((t) => ({ p: [1, t] as [number, number] })),
+          ...[1, 0.8, 0.6, 0.4, 0.2].map((t) => ({ p: [t, 1] as [number, number] })),
+          ...[1, 0.8, 0.6, 0.4, 0.2].map((t) => ({ p: [0, t] as [number, number] })),
+        ],
+      },
+    ],
+  }
+  it('共线的锚点删掉，同 id、旋转与框不变，一次 commit', async () => {
+    await seed([dense], ['d'])
+    await simplifySelected()
+    const p = objs()[0] as PathObject
+    expect(p.id).toBe('d')
+    expect(p.rotationDeg).toBe(30)
+    expect(p.subpaths[0].nodes.length).toBe(4)
+    near(p.w, 40, 1e-6)
+    near(p.h, 20, 1e-6)
+    expect(useDocumentStore.getState().past).toHaveLength(1)
+  })
+  it('已经最简：不进历史、说一句', async () => {
+    await seed([{ ...dense, subpaths: [{ closed: true, nodes: [{ p: [0, 0] }, { p: [1, 0] }, { p: [1, 1] }, { p: [0, 1] }] }] }], ['d'])
+    await simplifySelected()
+    expect(useDocumentStore.getState().past).toHaveLength(0)
   })
 })
 

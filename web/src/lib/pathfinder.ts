@@ -1,6 +1,7 @@
 import { newId } from '@/lib/id'
 import { canConvertToPath, toPathObject } from '@/lib/convertToPath'
 import { pathFromMm, pathToMm, rotatePoint, type MmSubpath, type XY } from '@/lib/pathEdit'
+import { pathStrokeAlign } from '@/lib/pathGeom'
 import { MM_PER_PT } from '@/lib/units'
 import type { VecopsKernel } from '@/lib/vecops/kernel'
 import { isStrokeOnlyShape, type CanvasObject, type PathObject } from '@/types/document'
@@ -41,8 +42,8 @@ const OP_CODE: Record<PathfinderOp, number> = {
   minusBack: 8,
 }
 
-/** 界面上露出来的五个（面板一行图标的顺序）；其余几个内核支持，暂不进界面 */
-export const PATHFINDER_UI_OPS: readonly PathfinderOp[] = ['unite', 'minusFront', 'intersect', 'exclude', 'divide']
+/** 界面上露出来的六个（面板一行图标的顺序）；合并同色 / 裁剪 / 减去后方内核支持，暂不进界面 */
+export const PATHFINDER_UI_OPS: readonly PathfinderOp[] = ['unite', 'minusFront', 'intersect', 'exclude', 'divide', 'trim']
 
 /** 能参与路径查找器 / 复合路径的对象（锁定、隐藏的不算） */
 export function isPathfinderOperand(o: CanvasObject): boolean {
@@ -258,7 +259,7 @@ export function offsetPaths(
   return out.length ? out : null
 }
 
-/** 能轮廓化描边的：有描边、没有自定义 / 预设虚线、没有端型（虚线与箭头头内核不画，转出来会和画面不一样） */
+/** 能轮廓化描边的：有描边、没有自定义 / 预设虚线、没有端型、路径没设内外对齐（这几样内核不画，转出来会和画面不一样） */
 export function canOutlineStroke(o: CanvasObject): boolean {
   if (o.locked || o.hidden) return false
   if (o.type !== 'path' && !(o.type === 'shape' && canConvertToPath(o))) return false
@@ -266,6 +267,8 @@ export function canOutlineStroke(o: CanvasObject): boolean {
   if (p.stroke === false || !(p.strokePt > 0)) return false
   if ((p.dash && p.dash !== 'solid') || p.dashPattern?.length) return false
   if (o.type === 'path' && ((o.headStart && o.headStart !== 'none') || (o.headEnd && o.headEnd !== 'none'))) return false
+  // 路径的内侧 / 外侧对齐是裁出来的半条两倍宽描边，内核按居中描；形状的对齐已经进了「转为路径」的几何，不受影响
+  if (o.type === 'path' && pathStrokeAlign(o)) return false
   return true
 }
 
@@ -326,6 +329,31 @@ export function outlineStrokes(
     } else {
       out.push({ replace: { ...made, id: p.id, ...(p.name != null ? { name: p.name } : {}) }, extra: null })
     }
+  }
+  return out.length ? out : null
+}
+
+/** 简化的容差（pt）：曲线偏离原来不超过它。Illustrator 简化面板的中档是 1 pt；科研图小，取一半 */
+export const SIMPLIFY_TOLERANCE_PT = 0.5
+
+/**
+ * 简化：在容差内删掉多余的锚点（钢笔、轮廓化、偏移之后常有一串挤在一起的点）。在对象自己的未旋转空间里算，
+ * id、旋转、样式都不变；锚点一个都没少的不算改动（不进结果）。
+ */
+export function simplifyPaths(kernel: VecopsKernel, objects: readonly CanvasObject[], ids: readonly string[]): PathObject[] | null {
+  const want = new Set(ids)
+  const out: PathObject[] = []
+  for (const o of objects) {
+    if (!want.has(o.id) || o.type !== 'path' || o.locked || o.hidden) continue
+    const subs = pathToMm(o)
+    const r = kernel.simplify(encodeSubpaths(subs), SIMPLIFY_TOLERANCE_PT)
+    const d = r && decodeSubpaths(r)
+    if (!d) continue
+    const before = subs.reduce((n, sp) => n + sp.nodes.length, 0)
+    const after = d.subs.reduce((n, sp) => n + sp.nodes.length, 0)
+    if (after >= before) continue
+    const made = pathFromMm(o, d.subs)
+    if (made) out.push(made)
   }
   return out.length ? out : null
 }
