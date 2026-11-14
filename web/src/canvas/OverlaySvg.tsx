@@ -156,6 +156,8 @@ export function OverlaySvg() {
   const editingTextId = useUiStore((s) => s.editingTextId)
   const elementPanelId = useUiStore((s) => s.elementPanelId)
   const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
+  // 钢笔工具下不画缩放手柄：刚画完的路径还选着，它的框角正好落在路径端点上，会把「点端点续画」截成缩放
+  const tool = useUiStore((s) => s.tool)
   const activePanelId = useWorkspaceStore((s) => s.activePanelId)
   const issueHighlight = useUiStore((s) => s.issueHighlight)
   // 预览线按「持有预览账本的面板」画，不按图内编辑态（见 PreviewLines）
@@ -326,7 +328,7 @@ export function OverlaySvg() {
       )}
 
       {/* 缩放手柄 + 线状对象端点（箭头 / 直线）：整组绕包围盒中心转到对象朝向 */}
-      {single && !single.locked && !fastEditFigure && single.id !== anchorEditId && (
+      {single && !single.locked && !fastEditFigure && single.id !== anchorEditId && tool !== 'pen' && (
         <g
           transform={spinOf(single, toScreen(single, t))}
           // 手柄 / 命中带 / 端点不在 `[data-object-id]` 底下：右键它们要开**这个对象**的菜单，

@@ -629,3 +629,14 @@ describe('剪刀 / 连接 / 平均（命令表）', () => {
     expect(past()).toBe(0)
   })
 })
+
+describe('钢笔工具下不画选中路径的缩放手柄', () => {
+  it('刚画完的路径还选着：框角落在端点上，钢笔下不能被缩放手柄截走「点端点续画」', async () => {
+    const { OverlaySvg } = await import('./OverlaySvg')
+    await seedPath()
+    await act(async () => root.render(<OverlaySvg />))
+    expect(host.querySelectorAll('[data-handle]').length).toBeGreaterThan(0)
+    await act(async () => useUiStore.setState({ tool: 'pen' }))
+    expect(host.querySelectorAll('[data-handle]')).toHaveLength(0)
+  })
+})
