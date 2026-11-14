@@ -158,6 +158,7 @@ describe('出处卡', () => {
     await click(q('[data-journal-source]'))
     expect(q('[data-journal-meta]')?.textContent).toBe('example.invalid · 2000-01-01 · PDF')
     expect(q('[data-journal-meta]')?.textContent).not.toContain('Selected Journal')
+    expect(q('[data-journal-coverage]')?.textContent).toBe('此来源的范围标记：出版社通用。标记可能是默认值或已过时，是否适用于本刊未核实。')
     expect((q('[data-journal-open]') as HTMLAnchorElement).href).toBe(generic[0][1].link)
   })
 
@@ -174,6 +175,7 @@ describe('出处卡', () => {
     await mount(<JournalRequirements />)
     await click(q('[data-journal-row="min_raster_dpi"] [data-journal-source]'))
     expect(q('[data-journal-meta]')?.textContent).toBe('www.nature.com · 2026-10-31')
+    expect(q('[data-journal-coverage]')?.textContent).toBe('来源范围和适用性未核实。')
     expect((q('[data-journal-open]') as HTMLAnchorElement).href).toBe(source.link)
     expect(useDocumentStore.getState().doc.profile).toEqual(before)
   })
@@ -243,8 +245,8 @@ describe('出处卡', () => {
 
   it('多条证据分别显示来源、日期、链接与存档，不把首条归到其他条', async () => {
     const src = journalSources('fx-adv', loadCatalog(vectors.catalog))
-    const body = { ...src.min_effective_font_size_pt, url: 'https://first.invalid/guide', link: 'https://first.invalid/guide#:~:text=body', retrieved: '2025-01-01', kind: 'html' as const, archive_url: 'https://archive.invalid/first' }
-    const script = { ...src.min_script_font_size_pt, url: 'https://second.invalid/guide.pdf', link: 'https://second.invalid/guide.pdf#page=4', retrieved: '2026-02-03', kind: 'pdf' as const, archive_url: 'https://archive.invalid/second' }
+    const body = { ...src.min_effective_font_size_pt, coverage: 'publisher_general' as const, url: 'https://first.invalid/guide', link: 'https://first.invalid/guide#:~:text=body', retrieved: '2025-01-01', kind: 'html' as const, archive_url: 'https://archive.invalid/first' }
+    const script = { ...src.min_script_font_size_pt, coverage: 'single_journal_sample' as const, url: 'https://second.invalid/guide.pdf', link: 'https://second.invalid/guide.pdf#page=4', retrieved: '2026-02-03', kind: 'pdf' as const, archive_url: 'https://archive.invalid/second' }
     await mount(<SourceButton journal="Selected Journal" name="字号" entries={[
       ['min_effective_font_size_pt', body], ['min_script_font_size_pt', script],
     ]} />)
@@ -253,6 +255,9 @@ describe('出处卡', () => {
     const second = q('[data-journal-entry="min_script_font_size_pt"]')!
     expect(first.querySelector('[data-journal-meta]')?.textContent).toBe('first.invalid · 2025-01-01')
     expect(second.querySelector('[data-journal-meta]')?.textContent).toBe('second.invalid · 2026-02-03 · PDF')
+    expect(first.querySelector('[data-journal-coverage]')?.textContent).toContain('出版社通用')
+    expect(second.querySelector('[data-journal-coverage]')?.textContent).toContain('单刊样本')
+    expect(second.querySelector('[data-journal-coverage]')?.textContent).toContain('是否适用于本刊未核实')
     expect(first.querySelector('[data-journal-open]')?.getAttribute('href')).toBe(body.link)
     expect(second.querySelector('[data-journal-open]')?.getAttribute('href')).toBe(script.link)
     expect(first.querySelector('[data-journal-archive]')?.getAttribute('href')).toBe(body.archive_url)

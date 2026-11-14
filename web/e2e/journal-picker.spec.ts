@@ -158,7 +158,8 @@ test(
     await expect(card.locator('[data-journal-quote]')).toHaveCount(0)
     await expect(card).not.toContainText('->')
     // 打开原网页 / 来源域名与采集日期
-    await expect(card.locator('[data-journal-meta]')).toHaveText('Fixture Beta · www.nature.com · 2026-10-31')
+    await expect(card.locator('[data-journal-meta]')).toHaveText('www.nature.com · 2026-10-31')
+    await expect(card.locator('[data-journal-coverage]')).toContainText('是否适用于本刊未核实')
     const open = card.locator('[data-journal-open]')
     expect(await open.getAttribute('href')).toBe(
       'https://www.nature.com/nenergy/submission-guidelines/aip-and-formatting#:~:text=minimum%20resolution%20of%20300%20dpi',

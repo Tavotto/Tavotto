@@ -2597,6 +2597,12 @@
       "adviceBoth": "Text size records: see source text",
       "adviceBody": "Text size records: see source text",
       "adviceScript": "Text size records: see source text",
+      "coverage": {
+        "publisher": "Source scope label: publisher-level source. The label may be a default or outdated; applicability to this journal is unverified.",
+        "journal": "Source scope label: journal-specific. The label may be a default or outdated; applicability to this journal is unverified.",
+        "sample": "Source scope label: single-journal sample. The label may be a default or outdated; applicability to this journal is unverified.",
+        "unknown": "Source scope and applicability are unverified."
+      },
       "open": "Open original page",
       "archive": "Archive",
       "aria": "Source"

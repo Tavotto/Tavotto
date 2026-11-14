@@ -85,6 +85,15 @@ function SourceMeta({ source }: { source: JournalFieldSource }) {
   )
 }
 
+/** 来源范围可能来自目录默认值；它不能证明该期刊采用了这条指南。 */
+function SourceCoverage({ source }: { source: JournalFieldSource }) {
+  const coverage = source.coverage
+  const key = coverage === 'publisher_general' ? 'publisher'
+    : coverage === 'journal_specific' ? 'journal'
+      : coverage === 'single_journal_sample' ? 'sample' : 'unknown'
+  return <p data-journal-coverage className="type-caption">{jt(`card.coverage.${key}`)}</p>
+}
+
 /** 多条证据时给每个链接一个带来源序号的可访问名。 */
 function SourceLinks({ source, name }: { source: JournalFieldSource; name?: string }) {
   return (
@@ -137,6 +146,7 @@ export function SourceCardBody({
               <div className="flex min-w-0 flex-col gap-0.5">
                 <p className="type-caption">{jt('card.aria')} {index + 1}/{entries.length}</p>
                 <SourceMeta source={source} />
+                <SourceCoverage source={source} />
               </div>
               <SourceLinks source={source} name={`${jt('card.aria')} ${index + 1}/${entries.length}`} />
             </div>
@@ -147,6 +157,7 @@ export function SourceCardBody({
         <div className="flex min-w-0 flex-col gap-0.5">
           <p data-journal-sentence className="type-title">{conclusion}</p>
           {!multi && <SourceMeta source={entries[0][1]} />}
+          {!multi && <SourceCoverage source={entries[0][1]} />}
         </div>
         {!multi && <SourceLinks source={entries[0][1]} />}
       </div>
