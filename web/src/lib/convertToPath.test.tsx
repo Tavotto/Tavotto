@@ -297,15 +297,16 @@ async function seed(items: CanvasObject[]) {
 const objs = () => useDocumentStore.getState().doc.objects
 
 describe('convertToPath：一次 commit、不换 id、数组位置不动', () => {
-  it('转中间那个：顺序、id、其它对象一个字不动；一条历史；撤销逐字段回去', async () => {
+  it('就地替换：顺序、id、其它对象一个字不动；一条历史；撤销逐字段回去', async () => {
     const t: TextObject = { id: 't', type: 'text', text: 'x', x: 0, y: 0, w: 10, h: 5, sizePt: 8, bold: false, color: '#000', align: 'left' }
     const s = shape('ellipse', { id: 'e' })
     const a = arrow()
-    await seed([t, s, a])
+    // 文字夹在中间：转换的对象要留在原位（push 到末尾会把它们提到文字上面）
+    await seed([s, t, a])
     const before = JSON.parse(JSON.stringify(objs()))
     convertToPath(['e', 'a1', 't'])
-    expect(objs().map((o) => `${o.id}:${o.type}`)).toEqual(['t:text', 'e:path', 'a1:path'])
-    expect(objs()[0]).toEqual(before[0])
+    expect(objs().map((o) => `${o.id}:${o.type}`)).toEqual(['e:path', 't:text', 'a1:path'])
+    expect(objs()[1]).toEqual(before[1])
     expect(useDocumentStore.getState().past).toHaveLength(1)
     useDocumentStore.getState().undo()
     expect(JSON.parse(JSON.stringify(objs()))).toEqual(before)
