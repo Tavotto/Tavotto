@@ -131,4 +131,31 @@ describe('penReduce', () => {
     penReduce(s, { type: 'down', at: [3, 3] }, OPTS)
     expect(JSON.stringify(s)).toBe(snap)
   })
+
+  it('⇧ 按下：新点相对上一个点锁在 45° 倍数上；⇧ 拖手柄：方向锁 45°；⇧ 悬停：橡皮筋也锁', () => {
+    const s0 = run(click(0, 0)).s
+    const s1 = penReduce(s0, { type: 'down', at: [10, 1], shift: true }, OPTS).state
+    expect(s1.kind === 'drawing' && s1.nodes[1].p).toEqual([10, 0])
+    const s2 = penReduce(s1, { type: 'move', at: [13, 0.5], shift: true }, OPTS).state
+    expect(s2.kind === 'drawing' && s2.nodes[1].out).toEqual([13, 0])
+    const s3 = penReduce(penReduce(s2, { type: 'up', at: [13, 0] }, OPTS).state, { type: 'move', at: [15, 14], shift: true }, OPTS).state
+    if (s3.kind !== 'drawing') throw new Error('没在画')
+    expect(s3.cursor).toEqual([10, 14])
+  })
+
+  it('续画（resume）：从给的点接着画，按着的是最后那个端点；拖它只拉出手柄、不动原来那一侧', () => {
+    const nodes = [
+      { p: [0, 0] as [number, number], in: [0, 0] as [number, number], out: [0, 0] as [number, number], smooth: false },
+      { p: [10, 0] as [number, number], in: [7, 3] as [number, number], out: [10, 0] as [number, number], smooth: false },
+    ]
+    const s = penReduce(PEN_IDLE, { type: 'resume', nodes }, OPTS).state
+    expect(s.kind === 'drawing' && s.press).toMatchObject({ index: 1, resume: true })
+    const s2 = penReduce(s, { type: 'move', at: [14, 0] }, OPTS).state
+    if (s2.kind !== 'drawing') throw new Error('没在画')
+    expect(s2.nodes[1].in).toEqual([7, 3])
+    expect(s2.nodes[1].out).toEqual([14, 0])
+    // 正在画的时候来 resume：忽略
+    expect(penReduce(s2, { type: 'resume', nodes }, OPTS).state).toBe(s2)
+  })
 })
+
