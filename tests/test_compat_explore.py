@@ -374,8 +374,7 @@ class Judgment(unittest.TestCase):
         kinds = [
             d["kind"] for d in ex.compare("axis_changing", self.LOOPED, tav, None)["differences"]
         ]
-        self.assertIn("fewer_figures", kinds)
-        self.assertIn("title_missing", kinds)
+        self.assertEqual(kinds, ["fewer_figures"])
 
     def test_a_surviving_title_that_tavotto_lost_is_still_reported(self):
         tav = self.stems(line=["cg_pass_0"], bar=["cg_pass_1"], scatter=["cg_pass_1"])
