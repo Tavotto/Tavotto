@@ -88,7 +88,9 @@ order: 210
   `activePathEdit()`）：拖锚点 / 手柄 / 框选锚点在 `canvas/pathEditDrag`，走 `beginTxn / endTxn`，每帧从按下那一刻的对象现算
   （`lib/pathEdit`，纯函数、无界面——将来 MCP 也调它），包围盒同一次更新里重算、旋转中心的挪动整体补回。加 / 删 / 转换锚点与钢笔、
   编辑锚点注册在 `store/pathActions.PATH_COMMANDS` 一张表：命令面板、右键菜单、快捷键（P、+ / −、⇧C；Delete 在锚点编辑里删锚点）都读它的
-  `available()`。直接选择没有 A 键（A 是箭头工具）。看护 `lib/penTool.test.ts`、`lib/pathEdit.test.ts`、`canvas/penAndAnchors.test.tsx`。
+  `available()`。直接选择没有 A 键（A 是箭头工具）。锚点框选的框是 `interaction.anchorMarquee`（细虚线、不铺底，与对象框选分开），
+  拖着时锚点实时变实心、松手框即消失。工具条（2026-11-14 用户拍板）：钢笔单独一格；标注菜单是**一张**形状列表（八种都拖画、单击落默认尺寸 `DEFAULT_DRAW`），
+  预设在分隔线下，没有「插入形状」那一段。看护 `lib/penTool.test.ts`、`lib/pathEdit.test.ts`、`canvas/penAndAnchors.test.tsx`。
 - **不认识的对象类型原样保留（2026-11-14，ADR 0185 的前置）**：更新的构建会往文档里写本构建没有的 `type`
   （第一例是自由路径 `path`）。判据只有 `types/document.isKnownObject`（`KNOWN_OBJECT_TYPES` 闭集）。读盘、保存、
   换画布、复制画布都不碰它（文档层本来就不按类型过滤，别加）；画布上 `ObjectView` 只画虚线占位框
