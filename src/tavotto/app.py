@@ -9768,7 +9768,7 @@ def api_engine_update_source():
     annotations = [
         a
         for a in (body.get("annotations") or [])
-        if isinstance(a, dict) and a.get("type") in ("text", "arrow", "shape")
+        if isinstance(a, dict) and a.get("type") in engine_exportreq.ORIGINAL_OBJECT_TYPES
     ]
     if engine_runtimeasset.is_runtime_id(rel_id):
         # runtime 素材没有可写回的原件——后端**硬拒绝**，不是藏按钮
@@ -17999,6 +17999,47 @@ def _version_meta(v: dict) -> dict:
 #: 全部对象一次发出去，与「画几个」无关。
 VERSION_SKETCH_MAX_OBJECTS = 200
 VERSION_SKETCH_MAX_TEXT = 200
+#: 自由路径（ADR 0185）在草图里最多带多少个锚点；超了只带外框（缩略图退回画矩形）
+VERSION_SKETCH_MAX_PATH_NODES = 64
+
+
+def _sketch_subpaths(raw: object) -> list | None:
+    """自由路径的草图：只留锚点与手柄（比例坐标，四位小数），坏的锚点整个丢；锚点总数超过
+    `VERSION_SKETCH_MAX_PATH_NODES` 时整个不带（`None`）——缩略图回答「哪一版」，付不起一条几千个锚点的路径。"""
+    if not isinstance(raw, list):
+        return None
+
+    def pair(v: object) -> list[float] | None:
+        if (
+            isinstance(v, list)
+            and len(v) == 2
+            and all(isinstance(c, (int, float)) and not isinstance(c, bool) for c in v)
+            and all(math.isfinite(c) for c in v)
+        ):
+            return [round(float(v[0]), 4), round(float(v[1]), 4)]
+        return None
+
+    out: list = []
+    count = 0
+    for sp in raw:
+        if not isinstance(sp, dict) or not isinstance(sp.get("nodes"), list):
+            continue
+        nodes = []
+        for n in sp["nodes"]:
+            p = pair(n.get("p")) if isinstance(n, dict) else None
+            if p is None:
+                continue
+            count += 1
+            if count > VERSION_SKETCH_MAX_PATH_NODES:
+                return None
+            node: dict = {"p": p}
+            for k in ("in", "out"):
+                q = pair(n.get(k))
+                if q is not None:
+                    node[k] = q
+            nodes.append(node)
+        out.append({"closed": sp.get("closed") is True, "nodes": nodes})
+    return out
 
 
 def _sketch_num(value: object) -> float:
@@ -18105,6 +18146,10 @@ def _version_sketch(v: dict, max_objects: int, max_text: int) -> dict | None:
             item["text"] = text[:max_text]
         elif kind == "shape" and isinstance(o.get("shape"), str):
             item["shape"] = o["shape"]
+        elif kind == "path":
+            subpaths = _sketch_subpaths(o.get("subpaths"))
+            if subpaths is not None:
+                item["subpaths"] = subpaths
         objects.append(item)
     return {"page": page, "objects": objects}
 
