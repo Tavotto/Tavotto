@@ -5,7 +5,7 @@
   "affected_script_shapes": [
     "a script that reads data next to itself through a cwd-relative path handed to a C++ reader (pyarrow.parquet.read_table('x.parquet'), pandas.read_parquet and the like) and then plots it"
   ],
-  "root_cause": "The script is run in a sandbox cwd, and the read-only fallback only covers the four open entry points (open / io.open / Path.open / os.open), not C++ readers, glob or exists (ADR 0047 / 0084). The reader cannot see the file next to the script, the script dies with script_error and Tavotto has zero figures while `python script.py` in the script directory draws one (issue #1253). The behavior is kept on purpose; the root cure is the project-level 'run in the script directory' switch. What was fixed is the diagnosis: #1297 makes missing_input_of accept only what the message names as missing and routes enoent to native_miss, and #1299 attaches workdir_hint ('run in the script directory') to the error.",
+  "root_cause": "The script is run in a sandbox cwd, and the read-only fallback only covers the four open entry points (open / io.open / Path.open / os.open), not C++ readers, glob or exists (ADR 0047 / 0084). The reader cannot see the file next to the script, the script dies with script_error and Tavotto has zero figures while `python script.py` in the script directory draws one (issue #1253). The behavior is kept on purpose; the root cure is the project-level 'run in the script directory' switch. What was fixed is the diagnosis: #1297 makes missing_input_of accept only what the message names as missing and routes enoent to native_miss, and #1299 attaches workdir_hint ('run in the script directory') to the error. Update (#1846, ADR 0047 revision): a project that never decided its working directory is now silently re-run in the script directory when the run shows the data lives there, so the first run draws; Guardian's tavotto_observe goes through pool.build and observes that path by default. The record stays as the pin for the tier where the user chose the sandbox (a decision the evidence never overrides), where the diagnosis fixed by #1297 / #1299 is what the user gets.",
   "category": "cwd_or_data_path",
   "signature": {
     "behavior_kind": "zero_figures",
@@ -64,7 +64,9 @@
     "runs": 42
   },
   "key_regression_tests": [
-    "tests/test_compat_guardian_families.py::RealRepro::test_g4_minimal_repro_still_differs_by_design",
+    "tests/test_compat_guardian_families.py::RealRepro::test_g4_minimal_repro_draws_on_the_product_path",
+    "tests/test_compat_guardian_families.py::RealRepro::test_g4_with_the_sandbox_chosen_still_differs_by_design",
+    "tests/test_compat_guardian_families.py::RealRepro::test_g4_data_that_is_really_missing_is_still_reported",
     "tests/test_runtime_probe_hint.py::test_pyarrow_reading_a_cwd_relative_parquet_points_at_the_script_dir",
     "tests/test_runtime_probe_hint.py::test_an_enoent_relative_path_found_in_the_script_dir_is_runtime_evidence"
   ],

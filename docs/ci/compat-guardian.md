@@ -456,7 +456,10 @@ CG-02 的 27 条真实差异聚成恰好两簇：G1（show 后 close，11 条）
 周扫（run 39758109474，seed 202643）新发现的两族已登记，**行为按 ADR 0047 / 0084 有意保留、修的是诊断**，所以 explore 里仍是差异：
 `families/G4-cwd-relative-reader-zero-figures.json`（沙盒 cwd 下经 C++ 读取器读 cwd 相对数据 → 零图，issue #1253，诊断修复 #1297）与
 `families/G5-sandbox-empty-glob-empty-figure.json`（沙盒里 cwd 相对 `glob` 扫空 → 空图 / 下游报错，issue #1254，诊断修复 #1299）。
-记录里 `fix_pr` 分别是 1297 / 1299，`RealRepro` 钉的是「差异仍在」；根治（项目级「在脚本目录里运行」默认）落地时那两条会红，届时改成回归用例。
+记录里 `fix_pr` 分别是 1297 / 1299。其后 #1846（ADR 0047 修订）让没决定过工作目录的项目在沙盒里看到数据只在脚本目录时静默改在脚本目录里重跑，
+`tavotto_observe` 因此改走产品的 `pool.build`（用户真实走到的路径，默认档 = 未决定），`RealRepro` 钉的是「默认档出图、无差异」，
+并另有「用户选了沙盒」的显式可选档（`workdir_mode="sandbox"`，仍是差异 + 引导）与「数据真缺仍如实报错」的反证；不两档都默认跑，免得夜跑时长翻倍。
+两条家族记录没有删，改为这两个钉的出处。
 
 CG-08 的 `bytesio_close` 变换稳定复现的未修缺口登记为 `families/G6-bytesio-close-zero-figures.json`（`savefig(io.BytesIO())` 后 `close` → 原生一张图、
 Tavotto 零张，issue #749；已由 #749 修复，`fix_pr` 记 749，`RealRepro` 与 explore 的那条已转成回归用例）。同一批的 `same_stem_two_figs` **没有**登记：

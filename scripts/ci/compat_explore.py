@@ -66,16 +66,31 @@ def _titles(manifest: dict) -> list[str]:
     return out
 
 
-def tavotto_observe(project: Path, script: str, deep: dict | None = None) -> dict:
+def tavotto_observe(
+    project: Path, script: str, deep: dict | None = None, *, workdir_mode: str | None = None
+) -> dict:
     """What the product's own discovery + worker path produces for this project.
+
+    The worker is taken through `pool.build`, the one entry every user-facing run goes through, so
+    what is observed includes the product's own retries: a project that never decided its working
+    directory is silently re-run in the script directory when the sandbox run shows the data lives
+    there (ADR 0047 revision, #1846). That undecided default is what a user opening the script for
+    the first time gets, so it is the default tier here. `workdir_mode="sandbox"` instead records
+    the user's explicit choice of the sandbox before the run (no re-run: the user decided), which
+    is the tier where "run in the script directory" stays a hint (#1299). It is an explicit option,
+    not a second default: running both tiers would double the nightly time.
 
     `deep` (CG-06) additionally takes, on the same worker, a manifest snapshot and a zero-patch
     PNG per stem, and runs the parent's reviewed edit / replay / export when `deep["case"]` is set.
     """
-    from tavotto.engine import discover, pool, probe
+    from tavotto.engine import discover, pool, probe, workdir
 
+    if workdir_mode not in (None, "undecided", workdir.MODE_SANDBOX):
+        raise ValueError(f"workdir_mode must be None, 'undecided' or 'sandbox': {workdir_mode!r}")
     obs: dict = {"stems": {}, "error": None, "entry": None, "route": None}
     try:
+        if workdir_mode == workdir.MODE_SANDBOX:
+            workdir.set_mode(project, workdir.MODE_SANDBOX)
         cfg, report, _changes = discover.merge(project)
         discover.write_config(project, cfg)
         info = report["scripts"].get(script) or {}
@@ -95,9 +110,8 @@ def tavotto_observe(project: Path, script: str, deep: dict | None = None) -> dic
                 )
                 return obs
         obs.update(route=route, entry=entry)
-        worker = pool.one_shot(script, str(project), entry)
         try:
-            built = worker.ensure_built()
+            worker, built = pool.build(script, str(project), entry)
             manifests = {}
             for stem in built.get("stems") or {}:
                 manifest = worker.override(stem, [])["manifest"]
@@ -111,7 +125,7 @@ def tavotto_observe(project: Path, script: str, deep: dict | None = None) -> dic
             if deep:
                 _observe_deep(obs, worker, manifests, deep, project, script, entry)
         finally:
-            pool.discard(worker)
+            pool.shutdown_all(str(project), wait=True)
     except Exception as exc:  # noqa: BLE001 - product failure is an observation, recorded
         code = getattr(exc, "code", None) or type(exc).__name__
         obs["error"] = {
