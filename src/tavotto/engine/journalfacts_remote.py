@@ -13,6 +13,7 @@ import re
 import sqlite3
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import quote
 
@@ -266,6 +267,7 @@ def search(
     limit: int = 20,
     ui_locale: str | None = None,
     expected_catalog_rev: int | None = None,
+    response_fits: Callable[[dict], bool] | None = None,
 ) -> dict:
     """Search signed v2 index only. If unavailable, say so without substituting v1."""
     if not isinstance(query, str) or len(query) > 512:
@@ -309,7 +311,7 @@ def search(
         out["journals"].append(entry)
         count = len(out["journals"])
         out["next_offset"] = offset + count if offset + count < total else None
-        if not _page_fits(out):
+        if not _page_fits(out) or (response_fits is not None and not response_fits(out)):
             out["journals"].pop()
             if not out["journals"]:
                 raise FactsError("result_too_large")

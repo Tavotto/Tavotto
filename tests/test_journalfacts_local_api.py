@@ -199,6 +199,69 @@ def test_signed_search_pagination_counts_five_digit_cursor_and_utf8(
     assert oversized.status_code == 413 and oversized.json["code"] == "result_too_large"
 
 
+def test_signed_search_paginates_actual_http_json_with_multibyte_aliases(
+    http_client, isolated, monkeypatch
+):
+    client, headers = http_client
+    key, _ = isolated
+    idx = index_for(json.dumps(fact_bundle()).encode())
+    template = next(iter(idx["journals"].values()))
+    idx["journals"] = {f"j{i:05d}": {**template, "aliases": ["界" * 170] * 170} for i in range(2)}
+    envelope = signed(key, idx)
+    monkeypatch.setattr(facts, "_request", lambda *args: (200, envelope))
+
+    # The engine's compact UTF-8 representation fits, while Flask's default
+    # escaped representation of both records exceeds the same byte budget.
+    engine_page = facts.search(limit=2)
+    engine_bytes = len(json.dumps(engine_page, ensure_ascii=False, separators=(",", ":")).encode())
+    assert engine_bytes < facts.MAX_PAGE_BYTES
+    first = client.post("/api/journal-facts/search", json={"limit": 2}, headers=headers)
+    assert first.status_code == 200 and len(first.data) <= facts.MAX_PAGE_BYTES
+    assert [item["id"] for item in first.json["journals"]] == ["j00000"]
+    assert first.json["next_offset"] == 1
+    second = client.post(
+        "/api/journal-facts/search",
+        json={"limit": 2, "offset": first.json["next_offset"], "expected_catalog_rev": 1},
+        headers=headers,
+    )
+    assert second.status_code == 200 and len(second.data) <= facts.MAX_PAGE_BYTES
+    assert [item["id"] for item in second.json["journals"]] == ["j00001"]
+    assert second.json["next_offset"] is None
+
+    # Respect the app's configured encoder, and include the added response
+    # fields when the page is near its budget even without ASCII escaping.
+    monkeypatch.setattr(appmod.app.json, "ensure_ascii", False)
+    together = client.post("/api/journal-facts/search", json={"limit": 2}, headers=headers)
+    assert together.status_code == 200 and len(together.json["journals"]) == 2
+    full = facts.search(limit=2)
+    with appmod.app.app_context():
+        size_without_status = len(appmod.jsonify(full).get_data())
+        size_with_status = len(appmod.jsonify(appmod._journal_facts_payload(full)).get_data())
+    assert size_without_status < size_with_status
+    monkeypatch.setattr(facts, "MAX_PAGE_BYTES", size_without_status)
+    bounded = client.post("/api/journal-facts/search", json={"limit": 2}, headers=headers)
+    assert bounded.status_code == 200 and len(bounded.data) <= size_without_status
+    assert [item["id"] for item in bounded.json["journals"]] == ["j00000"]
+    assert bounded.json["next_offset"] == 1
+
+
+def test_signed_search_rejects_one_record_too_large_for_actual_http_json(
+    http_client, isolated, monkeypatch
+):
+    client, headers = http_client
+    key, _ = isolated
+    idx = index_for(json.dumps(fact_bundle()).encode())
+    idx["journals"]["fx-journal"]["aliases"] = ["界" * 200] * 256
+    monkeypatch.setattr(facts, "_request", lambda *args: (200, signed(key, idx)))
+    page = facts.search(limit=1)
+    assert len(json.dumps(page, ensure_ascii=False, separators=(",", ":")).encode()) < (
+        facts.MAX_PAGE_BYTES
+    )
+    response = client.post("/api/journal-facts/search", json={"limit": 1}, headers=headers)
+    assert response.status_code == 413 and response.json["code"] == "result_too_large"
+    assert "journals" not in response.json
+
+
 def test_remote_oversized_facts_error_has_fallback(http_client, monkeypatch):
     client, headers = http_client
 

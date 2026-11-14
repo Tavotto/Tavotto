@@ -13769,6 +13769,17 @@ def api_journal_catalog_asset(file: str):
 
 
 # v2 source facts are separate from publication profiles and never feed preflight.
+def _journal_facts_payload(payload: dict) -> dict:
+    return {**payload, "semantic_review": "not_authenticated", "catalog_completeness": "unknown"}
+
+
+def _journal_facts_search_page_fits(payload: dict) -> bool:
+    # Use Flask's actual configured serializer, including the fields added to
+    # every successful HTTP response and its trailing newline.
+    response = jsonify(_journal_facts_payload(payload))
+    return len(response.get_data()) <= engine_journalfacts_remote.MAX_PAGE_BYTES
+
+
 def _journal_facts_response(payload: dict, status: int = 200):
     response = jsonify(payload)
     response.status_code = status
@@ -13839,7 +13850,9 @@ def _journal_facts_request(kind: str):
             "expected_catalog_rev": revision,
         }
         if kind == "search":
-            result = engine_journalfacts_remote.search(body.get("query", ""), **options)
+            result = engine_journalfacts_remote.search(
+                body.get("query", ""), response_fits=_journal_facts_search_page_fits, **options
+            )
         else:
             selection = body.get("inspection")
             if "inspection" in body:
@@ -13847,9 +13860,7 @@ def _journal_facts_request(kind: str):
             result = engine_journalfacts_remote.get_facts(body.get("journal_id"), **options)
             if "inspection" in body:
                 result = engine_journalfacts_remote.inspect_facts_page(result, selection)
-        result["semantic_review"] = "not_authenticated"
-        result["catalog_completeness"] = "unknown"
-        return _journal_facts_response(result)
+        return _journal_facts_response(_journal_facts_payload(result))
     except engine_journalfacts_remote.FactsError as exc:
         return _journal_facts_error(exc)
 
