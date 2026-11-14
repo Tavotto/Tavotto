@@ -27,6 +27,15 @@
     "refreshReconstruction": "更新重画对照"
   },
   "backend": {
+    "chart_engine_unavailable": "计算图表的渲染引擎正忙，请稍后重试。",
+    "chart_engine_mismatch": "当前绘图环境与计算图表要求不一致。请使用匹配的绘图环境后重试。",
+    "chart_model_invalid": "计算图表的模型或来源引用无效，无法应用本次操作。",
+    "chart_model_unsupported": "当前不支持这份计算图表的模型或编辑方式。",
+    "chart_render_unsupported": "当前无法完整渲染这张计算图表。",
+    "chart_source_changed": "计算图表的源文件已变化，本次操作未应用。请恢复匹配的源文件或重新导入。",
+    "svg_resource_limit": "SVG 或计算图表超过资源预算，无法完成本次操作。",
+    "svg_scene_invalid": "无法读取这份 SVG 的图形内容。请检查文件是否为有效的独立 SVG。",
+    "chart_render_pair_missing": "计算图表没有返回同一版的图像与几何，暂未应用本次渲染。",
     "artifact_source_unavailable": "当前操作无法使用所选源图模式，未应用本次修改。请保留原图显示。",
     "ai_agent_disabled": "{{agent}} 已在设置中关闭。在「改图助手」里打开后再试。",
     "ai_agent_executable_invalid": "无法用作该 Agent 的可执行文件：{{path}}。原设置不变。",
@@ -192,6 +201,8 @@
     "package_file_missing": "缺少上传文件",
     "package_invalid": "不是有效的项目包：{{reason}}",
     "package_schema_unsupported": "项目包里的排版既不是 schema 2 也不是 schema 3",
+    "package_source_outside_project": "项目包引用了项目目录以外的资源，未生成项目包。请先将资源移入项目。",
+    "figure_snapshot_unavailable": "项目包引用的 Figure 配对或原件无法核验，未生成项目包。请恢复缺失资源或重新生成这张图。",
     "permission_denied": "无权限读取：{{path}}",
     "ppi_out_of_range": "分辨率 {{value}} 超出范围，应在 {{min}} 到 {{max}} 之间。",
     "preparation_not_found": "没有这个准备任务（或它属于别的项目）：{{id}}",
@@ -262,6 +273,7 @@
     "tex_failed": "LaTeX 排版（text.usetex）这一步失败了，原因无法从输出中判断：{{error}}",
     "script_exited": "脚本调用 sys.exit() 提前结束了（{{error}}）。Tavotto 要的是脚本跑完后留在内存里的图：去掉那句 exit，或只在出错时 exit。",
     "script_entry_missing": "这个脚本被改写过，登记的入口函数已经不在了。",
+    "script_source_missing": "找不到这个脚本的文件（{{script}}）：它可能被移动或删除了。请把脚本放回项目里再运行；Tavotto 不会用同名的其它文件代替它。",
     "safe_file_operation_blocked": "脚本改了项目里的文件或读了刚存的图，而安全运行不会真改文件、读到的会和直接运行不同，所以这次没有出图；这类脚本需要按真实文件运行（终端里的「tavotto run」就是这样跑的）。",
     "script_needs_arguments": "脚本需要命令行参数，这次不带任何参数。请检查脚本说明，在运行参数中填写后重试；也可以在终端里用「tavotto run -- python 脚本.py 参数…」运行。展开输出查看具体错误。",
     "script_rejected_arguments": "已向脚本传入 {{argv_count}} 个参数，但它仍无法继续。请检查参数是否完整并符合脚本的要求（Tavotto 按你填的内容原样传入）。展开输出查看具体错误。",
@@ -353,6 +365,9 @@
     "input_remap_not_found_in_dir": "文件夹 {{path}} 里没有 {{name}}。请选它所在的那个文件夹，或直接选这个文件。",
     "input_remap_requested_invalid": "说不清脚本要的是哪个路径，无法记住这个位置。",
     "input_remap_changed": "数据位置刚刚改过，这次结果按旧位置产出，已丢弃。请重试。",
+    "input_declaration_conflict": "输入声明已在另一处更新，请重新读取后再保存。",
+    "input_declaration_invalid": "输入声明或已选择的资源不可用，请检查文件、运行配置和数据位置。",
+    "input_declaration_unavailable": "暂时无法读取或保存输入声明，请稍后重试。",
     "input_remap_rule_unknown": "这条数据位置已经不在记录里了：{{source}}",
     "script_is_symlink": "脚本经过符号链接（{{script}}），为了不改到别处的文件，Tavotto 不改它。",
     "script_hardlinked": "脚本有另一个硬链接名字（{{script}}），替换会把两者断开，Tavotto 不改它。",
@@ -469,9 +484,7 @@
     "convert_nothing_to_realign": "没有需要再对一次的文件。",
     "convert_realigning": "正在让 AI 重新对照，稍等",
     "convert_reference_invalid": "参考文件不可用。请使用当前项目内可读取的普通文件；不接受凭据、链接或超出大小限制的文件。",
-    "workspace_path_too_long": "项目里有文件路径太长，转换没能开始。",
-    "svg_resource_limit": "SVG 或计算图表超过资源预算，无法完成本次操作。",
-    "svg_scene_invalid": "无法读取这份 SVG 的图形内容。请检查文件是否为有效的独立 SVG。"
+    "workspace_path_too_long": "项目里有文件路径太长，转换没能开始。"
   },
   "engine": {
     "apply": "应用",
@@ -1137,6 +1150,7 @@
   },
   "render": {
     "failed": "渲染失败（HTTP {{status}}）",
+    "frameNotReady": "图还在渲染；等这一版精确帧落定后再编辑。",
     "previewPngFailed": "无法获取预览位图（HTTP {{status}}）",
     "projectEnvSwitched": "已自动使用项目的 Python 环境（{{path}}）",
     "timeout": "渲染超过 {{minutes}} 分钟无响应，已断开请求。服务可能仍在后台运行，可稍后重试。"
