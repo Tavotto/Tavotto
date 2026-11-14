@@ -66,6 +66,10 @@ def test_arc_is_stroke_only_and_ignores_stroke_false_and_fill():
     assert p.fill is None and p.stroke is not None
     assert [s[0] for s in p.segments] == ["M", "C"]
     assert p.stroke.join == "miter"  # 只有描边的形状缺省尖角（与直线 / 大括号同一条）
+    # 「无边框」对弧线不生效：几何与有描边时逐字相同（仍按半个线宽内缩，外沿贴框）
+    [q] = geometry.shape_paths({**BASE, "shape": "arc", "fill": None}, 85.0, 60.0)
+    assert p.segments == q.segments
+    assert p.segments == geometry.arc_segments(85.0, 60.0, 1.0)
 
 
 def test_plan_compiles_star_and_arc():
