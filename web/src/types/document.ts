@@ -359,6 +359,18 @@ export type ShapeKind =
   | 'diamond'
   | 'polygon'
   | 'brace'
+  /** 星形（ADR 0185 M1）：`sides` = 角数（缺省 5），`starRatio` = 内径比（缺省 `DEFAULT_STAR_RATIO`） */
+  | 'star'
+  /** 弧线（ADR 0185 M1）：框的左下角到右上角的四分之一椭圆弧，只有描边 */
+  | 'arc'
+
+/** 星形的缺省角数与内径比（正五角星的内外径比 ≈ 0.382）；与后端 `geometry.DEFAULT_STAR_POINTS / DEFAULT_STAR_RATIO` 同源 */
+export const DEFAULT_STAR_POINTS = 5
+export const DEFAULT_STAR_RATIO = 0.382
+
+/** 只有描边、没有填充也没有描边开关的形状（直线 / 大括号 / 弧线）；判据只有这一处，后端 `geometry.STROKE_ONLY_SHAPES` 同一张表 */
+export const STROKE_ONLY_SHAPES: ReadonlySet<string> = new Set(['line', 'brace', 'arc'])
+export const isStrokeOnlyShape = (shape: string): boolean => STROKE_ONLY_SHAPES.has(shape)
 
 export interface ShapeObject extends ObjectBase {
   type: 'shape'
@@ -376,8 +388,10 @@ export interface ShapeObject extends ObjectBase {
   end?: EndPoint
   /** 圆角半径 mm（rect 专用） */
   cornerRadius?: number
-  /** 正多边形边数（polygon 专用，3–12） */
+  /** 正多边形边数（polygon 专用，3–12）；星形的角数（star，3–12，缺省 5） */
   sides?: number
+  /** 星形内径比（star 专用，0.05–0.95；缺省 `DEFAULT_STAR_RATIO`，等于缺省不写字段） */
+  starRatio?: number
   /** 填充透明度 0–1；缺省 1 */
   fillOpacity?: number
   dash?: DashStyle
@@ -513,7 +527,7 @@ export function legacyHead(heads: {
 
 /** 形状此刻有没有描边。直线 / 大括号只有描边，不看 `stroke` 字段（画布、缩略图、导出同用这一处） */
 export function shapeStrokeOn(o: Pick<ShapeObject, 'shape' | 'stroke'>): boolean {
-  return o.shape === 'line' || o.shape === 'brace' || o.stroke !== false
+  return isStrokeOnlyShape(o.shape) || o.stroke !== false
 }
 
 /** 直线形状（端点语义只对这一种 shape 生效） */

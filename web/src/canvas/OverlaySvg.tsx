@@ -3,7 +3,7 @@ import { perfCount } from '@/perf/core'
 import type { ElementGeometry, ManifestElement } from '@/lib/api'
 import type { Rect4 } from '@/lib/axesLayout'
 import { geomPathD, pathOutline, translateGeom } from '@/lib/pathGeom'
-import { PATH_HIT_SHAPES, shapeInset, shapeOutline } from '@/lib/shapeGeometry'
+import { outlineOf, PATH_HIT_SHAPES, shapeInset } from '@/lib/shapeGeometry'
 import { MM_PER_PT } from '@/lib/units'
 import { arrowEndpointsOf, geomTarget, linePointsOf, panelFullRect, resolveGroup } from '@/lib/elementGeom'
 import { patchBoundsOf } from '@/lib/patchResize'
@@ -537,13 +537,7 @@ function ObjectOutline({
     obj.type === 'path'
       ? pathOutline(obj, box.w, box.h, Math.max(mmToPx(obj.strokePt * MM_PER_PT, t), 0.05))
       : obj.type === 'shape' && PATH_HIT_SHAPES.has(obj.shape)
-      ? shapeOutline(
-          obj.shape,
-          box.w,
-          box.h,
-          shapeInset(obj, Math.max(mmToPx(obj.strokePt * MM_PER_PT, t), 0.05)),
-          obj.sides,
-        )
+      ? outlineOf(obj, box.w, box.h, shapeInset(obj, Math.max(mmToPx(obj.strokePt * MM_PER_PT, t), 0.05)))
       : null
   if (!outline) {
     return (

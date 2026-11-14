@@ -82,9 +82,44 @@ def stroke_cap(cap: object, dash: object) -> str:
     return cap if cap in ("butt", "round", "square") else DEFAULT_LINE_CAP  # type: ignore[return-value]
 
 
+#: 只有描边、没有填充也没有描边开关的形状；与前端 `types/document.STROKE_ONLY_SHAPES` 同一张表。
+STROKE_ONLY_SHAPES = ("line", "brace", "arc")
+
+#: 星形的缺省角数与内径比；与前端 `types/document.DEFAULT_STAR_POINTS / DEFAULT_STAR_RATIO` 同源。
+DEFAULT_STAR_POINTS = 5
+DEFAULT_STAR_RATIO = 0.382
+
+
 def default_line_join(shape: object) -> str:
-    """缺省拐角：封闭形状 / 箭头圆角；直线与大括号尖角。与前端 `shapeGeometry.defaultLineJoin` 同源。"""
-    return "miter" if shape in ("line", "brace") else "round"
+    """缺省拐角：封闭形状 / 箭头圆角；只有描边的形状（直线 / 大括号 / 弧线）尖角。与前端 `shapeGeometry.defaultLineJoin` 同源。"""
+    return "miter" if shape in STROKE_ONLY_SHAPES else "round"
+
+
+def star_points(
+    points: int, w: float, h: float, inset: float, ratio: float
+) -> list[tuple[float, float]]:
+    """星形顶点：外顶点内切包围盒，内顶点在外径 × 内径比上，从正上方起外 / 内交替；角数夹到 3–12、内径比夹到
+    0.05–0.95。与前端 `shapeGeometry.starPoints` 同一公式（共享向量 `tests/golden/star_arc_vectors.json`）。"""
+    n = max(3, min(12, int(round(points))))
+    k = max(0.05, min(0.95, ratio))
+    rx, ry = max(w / 2 - inset, 0.001), max(h / 2 - inset, 0.001)
+    out = []
+    for i in range(2 * n):
+        a = -math.pi / 2 + i * math.pi / n
+        f = k if i % 2 else 1.0
+        out.append((w / 2 + rx * f * math.cos(a), h / 2 + ry * f * math.sin(a)))
+    return out
+
+
+def arc_segments(w: float, h: float, inset: float) -> tuple[Segment, ...]:
+    """弧线：框的左下角到右上角、圆心在右下角的四分之一椭圆弧（一段三次贝塞尔，κ 近似）。与前端
+    `shapeGeometry.arcPoints` 同一构造。"""
+    cx, cy = w - inset, h - inset
+    rx, ry = max(w - 2 * inset, 0.001), max(h - 2 * inset, 0.001)
+    return (
+        ("M", cx - rx, cy),
+        ("C", cx - rx, cy - KAPPA * ry, cx - KAPPA * rx, cy - ry, cx, cy - ry),
+    )
 
 
 def _line_join(o: dict, default: str) -> str:
@@ -215,10 +250,10 @@ def shape_paths(o: dict, w: float, h: float) -> list[Path]:
     oid = str(o.get("id", ""))
     # 无边框（`stroke: false`，只对封闭形状）：不描边、填充铺满整个框（不再内缩半个线宽）；
     # 直线与大括号只有描边，不看这个字段
-    stroke_on = kind in ("line", "brace") or o.get("stroke") is not False
+    stroke_on = kind in STROKE_ONLY_SHAPES or o.get("stroke") is not False
     inset = sw / 2 if stroke_on else 0.0
     filled_stroke = _stroke(o, sw, join=default_line_join(kind)) if stroke_on else None
-    if filled_stroke is None and fill is None and kind not in ("line", "brace"):
+    if filled_stroke is None and fill is None and kind not in STROKE_ONLY_SHAPES:
         return []  # 既无填充也无边框：什么都不画（IR 不收「既不填也不描」的路径）
 
     if kind == "rect":
@@ -245,6 +280,19 @@ def shape_paths(o: dict, w: float, h: float) -> list[Path]:
     if kind == "polygon":
         pts = polygon_points(int(o.get("sides") or 6), w, h, inset)
         return [Path(polyline_segments(pts, True), fill=fill, stroke=filled_stroke, object_id=oid)]
+    if kind == "star":
+        ratio = o.get("star_ratio")
+        ratio = (
+            float(ratio)
+            if isinstance(ratio, (int, float))
+            and not isinstance(ratio, bool)
+            and math.isfinite(ratio)
+            else DEFAULT_STAR_RATIO
+        )
+        pts = star_points(int(o.get("sides") or DEFAULT_STAR_POINTS), w, h, inset, ratio)
+        return [Path(polyline_segments(pts, True), fill=fill, stroke=filled_stroke, object_id=oid)]
+    if kind == "arc":
+        return [Path(arc_segments(w, h, inset), stroke=_stroke(o, sw, join="miter"), object_id=oid)]
     if kind == "brace":
         cx = w / 2
         tip_gap = min(h * 0.06, h / 2 - inset)

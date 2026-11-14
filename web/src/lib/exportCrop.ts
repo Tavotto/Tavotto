@@ -1,6 +1,6 @@
 import type { CanvasObject, DashStyle, FigureDocument, LineCap } from '@/types/document'
-import { objectRotation, readPath, shapeStrokeOn } from '@/types/document'
-import { headSizeFactor, shapeInset, shapeOutline, STROKE_MITER_LIMIT, strokeCap } from './shapeGeometry'
+import { isStrokeOnlyShape, objectRotation, readPath, shapeStrokeOn } from '@/types/document'
+import { headSizeFactor, outlineOf, shapeInset, STROKE_MITER_LIMIT, strokeCap } from './shapeGeometry'
 import { ptToMm } from './units'
 
 /**
@@ -39,10 +39,10 @@ function capHalf(cap: LineCap | undefined, dash: DashStyle | undefined): number 
  * （斜角与圆角都在顶点半线宽的圆里）。矩形的直角尖正好落在框角上，不越框。
  */
 function miterOverflow(o: Extract<CanvasObject, { type: 'shape' }>): number {
-  if (o.lineJoin !== 'miter' || !shapeStrokeOn(o) || !['triangle', 'diamond', 'polygon'].includes(o.shape)) return 0
+  if (o.lineJoin !== 'miter' || !shapeStrokeOn(o) || !['triangle', 'diamond', 'polygon', 'star'].includes(o.shape)) return 0
   const half = ptToMm(Math.max(o.strokePt, 0.05)) / 2
   if (!(half > 0)) return 0
-  const outline = shapeOutline(o.shape, o.w, o.h, shapeInset(o, half * 2), o.sides)
+  const outline = outlineOf(o, o.w, o.h, shapeInset(o, half * 2))
   if (outline?.kind !== 'poly') return 0
   const pts = outline.points
   let over = 0
@@ -85,7 +85,7 @@ function strokeOutset(o: CanvasObject): number {
     case 'text':
       return o.borderColor ? ptToMm(Math.max(o.borderPt ?? 0.75, 0.05) / 2) : 0
     case 'shape':
-      return o.shape === 'line' || o.shape === 'brace'
+      return isStrokeOnlyShape(o.shape)
         ? ptToMm(Math.max(o.strokePt, 0.05) * capHalf(o.lineCap, o.dash))
         : miterOverflow(o)
     case 'arrow': {

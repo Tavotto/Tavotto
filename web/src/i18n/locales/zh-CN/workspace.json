@@ -946,6 +946,7 @@
     "unopened": "未打开"
   },
   "toolHint": {
+    "arc": "拖动画出弧线；Esc 取消",
     "arrow": "拖动画出箭头，Shift 吸附 15° 角；Esc 取消",
     "brace": "拖动画出大括号；Esc 取消",
     "diamond": "拖动画出菱形；Esc 取消",
@@ -954,6 +955,7 @@
     "pen": "点一下加尖角点，按住拖拉出平滑点；点起点闭合，Enter / Esc 结束",
     "polygon": "拖动画出多边形；Esc 取消",
     "rect": "拖动绘制矩形；Esc 取消",
+    "star": "拖动画出星形；Esc 取消",
     "text": "拖动绘制文字框，或单击按默认大小放置；Esc 取消",
     "triangle": "拖动画出三角形；Esc 取消"
   },

@@ -16,6 +16,8 @@ import {
   Tags,
   Triangle,
   Type,
+  Star,
+  Arc,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { addSubLabels } from '@/store/actions'
@@ -54,7 +56,7 @@ export function useCanvasToolbarVisible(): boolean {
  * 名字走 common:objectType / common:shape，这里只留图标与快捷键（有键位的才有）。
  * 钢笔不在这里：它画的是自由路径（多次点击的状态机），与形状不是一种东西，工具条上单独一格。
  */
-type MarkTool = 'arrow' | 'line' | 'rect' | 'ellipse' | 'triangle' | 'diamond' | 'polygon' | 'brace'
+type MarkTool = 'arrow' | 'line' | 'rect' | 'ellipse' | 'triangle' | 'diamond' | 'polygon' | 'star' | 'brace' | 'arc'
 
 const MARK_TOOLS: { tool: MarkTool; icon: typeof Type; key?: KeyId }[] = [
   { tool: 'arrow', icon: ArrowUpRight, key: 'toolArrow' },
@@ -64,7 +66,9 @@ const MARK_TOOLS: { tool: MarkTool; icon: typeof Type; key?: KeyId }[] = [
   { tool: 'triangle', icon: Triangle },
   { tool: 'diamond', icon: Diamond },
   { tool: 'polygon', icon: Hexagon },
+  { tool: 'star', icon: Star },
   { tool: 'brace', icon: Braces },
+  { tool: 'arc', icon: Arc },
 ]
 
 /**

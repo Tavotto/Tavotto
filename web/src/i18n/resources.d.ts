@@ -769,12 +769,14 @@ export default interface Resources {
       "group": "分组"
     },
     "shape": {
+      "arc": "弧线",
       "brace": "大括号",
       "diamond": "菱形",
       "ellipse": "椭圆",
       "line": "直线",
       "polygon": "多边形",
       "rect": "矩形",
+      "star": "星形",
       "triangle": "三角形"
     }
   },
@@ -5353,6 +5355,7 @@ export default interface Resources {
       "setPageW": "修改画布宽度",
       "setPanelScale": "修改图的缩放",
       "setSides": "修改边数",
+      "setStarRatio": "修改内径比",
       "setStrokeColor": "修改描边颜色",
       "setStrokeOpacity": "修改描边不透明度",
       "setStrokeWidth": "修改线宽",
@@ -5757,6 +5760,7 @@ export default interface Resources {
       "lineWidth": "线宽",
       "more": "更多",
       "moreCount": "{{n}} 项",
+      "points": "角数",
       "reverse": "反转方向",
       "sides": "边数",
       "size": {
@@ -5764,6 +5768,8 @@ export default interface Resources {
         "medium": "中",
         "small": "小"
       },
+      "starRatio": "内径比",
+      "starRatioTip": "内顶点到中心的距离占外顶点的比例",
       "start": "起点",
       "startSize": "起点大小",
       "strokeColor": "描边",
@@ -7894,6 +7900,7 @@ export default interface Resources {
       "unopened": "未打开"
     },
     "toolHint": {
+      "arc": "拖动画出弧线；Esc 取消",
       "arrow": "拖动画出箭头，Shift 吸附 15° 角；Esc 取消",
       "brace": "拖动画出大括号；Esc 取消",
       "diamond": "拖动画出菱形；Esc 取消",
@@ -7902,6 +7909,7 @@ export default interface Resources {
       "pen": "点一下加尖角点，按住拖拉出平滑点；点起点闭合，Enter / Esc 结束",
       "polygon": "拖动画出多边形；Esc 取消",
       "rect": "拖动绘制矩形；Esc 取消",
+      "star": "拖动画出星形；Esc 取消",
       "text": "拖动绘制文字框，或单击按默认大小放置；Esc 取消",
       "triangle": "拖动画出三角形；Esc 取消"
     },

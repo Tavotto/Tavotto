@@ -27,6 +27,8 @@ export type Tool =
   | 'diamond'
   | 'polygon'
   | 'brace'
+  | 'star'
+  | 'arc'
   | 'pen'
 /** 工作区断点：≥1440 可双栏钉住 / 1024–1439 左右互斥 / <1024 覆盖式抽屉 */
 export type WorkspaceLayout = 'wide' | 'medium' | 'narrow'

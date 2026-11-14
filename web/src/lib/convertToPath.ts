@@ -7,9 +7,9 @@ import type {
   PathSubpath,
   ShapeObject,
 } from '@/types/document'
-import { arrowHeads, lineEndpoints, objectRotation, shapeStrokeOn } from '@/types/document'
+import { arrowHeads, isStrokeOnlyShape, lineEndpoints, objectRotation, shapeStrokeOn } from '@/types/document'
 import { fitPathBox, PATH_DEFAULT_JOIN } from './pathGeom'
-import { braceParts, cornerRadius, defaultLineJoin, shapeInset, shapeOutline } from './shapeGeometry'
+import { arcPoints, braceParts, cornerRadius, defaultLineJoin, KAPPA, outlineOf, shapeInset, shapeOutline } from './shapeGeometry'
 import { MM_PER_PT } from './units'
 
 /**
@@ -27,8 +27,6 @@ import { MM_PER_PT } from './units'
  * 直线与大括号原来的缺省是尖角，所以给它们写明 `lineJoin: 'miter'`）。
  */
 
-/** 三次贝塞尔近似四分之一圆弧的控制点系数；与后端 `rendercore/geometry.KAPPA` 同一个数 */
-export const KAPPA = 0.5522847498
 
 /** 这个对象能不能转为路径：形状（全部七种）与箭头 */
 export function canConvertToPath(o: CanvasObject): o is ShapeObject | ArrowObject {
@@ -106,8 +104,9 @@ function localSubpaths(o: ShapeObject | ArrowObject, sw: number): PathSubpath[] 
     }
     case 'triangle':
     case 'diamond':
-    case 'polygon': {
-      const out = shapeOutline(o.shape, w, h, inset, o.sides)
+    case 'polygon':
+    case 'star': {
+      const out = outlineOf(o, w, h, inset)
       return out?.kind === 'poly' ? [{ closed: true, nodes: out.points.map((p) => node(p)) }] : []
     }
     case 'brace': {
@@ -125,6 +124,10 @@ function localSubpaths(o: ShapeObject | ArrowObject, sw: number): PathSubpath[] 
         }
       }
       return [{ closed: false, nodes }]
+    }
+    case 'arc': {
+      const [p0, c1, c2, p3] = arcPoints(w, h, inset)
+      return [{ closed: false, nodes: [node(p0, undefined, c1), node(p3, c2)] }]
     }
     default:
       return []
@@ -152,7 +155,7 @@ export function toPathObject(o: ShapeObject | ArrowObject): PathObject | null {
   const box = fitPathBox(page, deg, [o.x + o.w / 2, o.y + o.h / 2])
   if (!box) return null
 
-  const lineLike = o.type === 'arrow' || o.shape === 'line' || o.shape === 'brace'
+  const lineLike = o.type === 'arrow' || isStrokeOnlyShape(o.shape)
   const closedShape = o.type === 'shape' && !lineLike
   // 路径的缺省拐角是圆角；原来的实际拐角不是圆角时写明（直线 / 大括号的缺省是尖角）
   const join = o.lineJoin ?? (o.type === 'arrow' ? 'round' : defaultLineJoin(o.shape))

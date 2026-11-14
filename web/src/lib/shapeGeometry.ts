@@ -7,7 +7,7 @@ import type {
   ShapeKind,
   ShapeObject,
 } from '@/types/document'
-import { arrowHeads, shapeStrokeOn } from '@/types/document'
+import { arrowHeads, DEFAULT_STAR_POINTS, DEFAULT_STAR_RATIO, isStrokeOnlyShape, shapeStrokeOn } from '@/types/document'
 
 /** 正 N 边形顶点（内切于包围盒，顶点朝上）；与后端 _polygon_points 同一公式 */
 export function polygonPoints(
@@ -25,6 +25,55 @@ export function polygonPoints(
     pts.push([w / 2 + rx * Math.cos(a), h / 2 + ry * Math.sin(a)])
   }
   return pts
+}
+
+/**
+ * 星形顶点（ADR 0185 M1）：外顶点内切于包围盒（同多边形），内顶点在外径 × 内径比上，从正上方起外 / 内交替。
+ * 角数夹到 3–12、内径比夹到 0.05–0.95。与后端 `geometry.star_points` 同一公式（共享向量 `tests/golden/star_arc_vectors.json`）。
+ */
+export function starPoints(
+  points: number,
+  w: number,
+  h: number,
+  inset: number,
+  ratio: number,
+): [number, number][] {
+  const n = Math.max(3, Math.min(12, Math.round(points)))
+  const k = Math.max(0.05, Math.min(0.95, ratio))
+  const rx = Math.max(w / 2 - inset, 0.001)
+  const ry = Math.max(h / 2 - inset, 0.001)
+  const pts: [number, number][] = []
+  for (let i = 0; i < 2 * n; i++) {
+    const a = -Math.PI / 2 + (i * Math.PI) / n
+    const f = i % 2 ? k : 1
+    pts.push([w / 2 + rx * f * Math.cos(a), h / 2 + ry * f * Math.sin(a)])
+  }
+  return pts
+}
+
+/** 三次贝塞尔近似四分之一圆弧的控制点系数；与后端 `rendercore/geometry.KAPPA` 同一个数 */
+export const KAPPA = 0.5522847498
+
+/**
+ * 弧线（ADR 0185 M1）：从框的左下角到右上角、圆心在右下角的四分之一椭圆弧（一段三次贝塞尔，κ 近似）；
+ * 其它方向靠旋转 / 翻转。回 [起点, 控制点 1, 控制点 2, 终点]，与后端 `geometry.arc_segments` 同一构造。
+ */
+export function arcPoints(w: number, h: number, inset: number): [number, number][] {
+  const cx = w - inset
+  const cy = h - inset
+  const rx = Math.max(w - 2 * inset, 0.001)
+  const ry = Math.max(h - 2 * inset, 0.001)
+  return [
+    [cx - rx, cy],
+    [cx - rx, cy - KAPPA * ry],
+    [cx - KAPPA * rx, cy - ry],
+    [cx, cy - ry],
+  ]
+}
+
+export function arcPath(w: number, h: number, inset: number): string {
+  const [p0, c1, c2, p3] = arcPoints(w, h, inset)
+  return `M ${p0[0]},${p0[1]} C ${c1[0]},${c1[1]} ${c2[0]},${c2[1]} ${p3[0]},${p3[1]}`
 }
 
 /** 大括号的构造：起点 + 依次的直线段 / 二次贝塞尔段（`bracePath` 与「转为路径」共用这一份） */
@@ -79,6 +128,7 @@ export function shapeOutline(
   h: number,
   inset: number,
   sides?: number,
+  starRatio?: number,
 ): ShapeOutline {
   switch (shape) {
     case 'ellipse':
@@ -112,6 +162,10 @@ export function shapeOutline(
       return { kind: 'poly', points: polygonPoints(sides ?? 6, w, h, inset) }
     case 'brace':
       return { kind: 'path', d: bracePath(w, h, inset) }
+    case 'star':
+      return { kind: 'poly', points: starPoints(sides ?? DEFAULT_STAR_POINTS, w, h, inset, starRatio ?? DEFAULT_STAR_RATIO) }
+    case 'arc':
+      return { kind: 'path', d: arcPath(w, h, inset) }
     default:
       return null
   }
@@ -127,7 +181,17 @@ export const PATH_HIT_SHAPES: ReadonlySet<ShapeKind> = new Set<ShapeKind>([
   'diamond',
   'polygon',
   'brace',
+  'star',
+  'arc',
 ])
+
+/** 一个形状对象的真实轮廓（`shapeOutline` 的对象版：边数 / 内径比从对象上读，调用点不用各自记得传） */
+export const outlineOf = (
+  o: Pick<ShapeObject, 'shape' | 'sides' | 'starRatio'>,
+  w: number,
+  h: number,
+  inset: number,
+): ShapeOutline => shapeOutline(o.shape, w, h, inset, o.sides, o.starRatio)
 
 /**
  * 线型的段长表（线宽的倍数，「画 / 空 / 画 / 空…」）；与后端 `rendercore/geometry.DASH_RATIOS` 严格同源
@@ -166,7 +230,7 @@ export function strokeCap(cap: LineCap | undefined, dash: DashStyle | undefined)
  * 画布以前写 round——它们没有可见的拐角，两种写法画出来一样，这里把画布对齐到后端）。
  */
 export function defaultLineJoin(shape?: ShapeKind): LineJoin {
-  return shape === 'line' || shape === 'brace' ? 'miter' : 'round'
+  return shape && isStrokeOnlyShape(shape) ? 'miter' : 'round'
 }
 
 /** 尖角的斜接上限：PDF 的缺省是 10，SVG 的缺省是 4——不写死的话很尖的三角在画布上被削成斜角、导出却是尖的 */

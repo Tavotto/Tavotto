@@ -665,7 +665,8 @@
     "toggleBold": "Toggle bold",
     "toggleItalic": "Toggle italic",
     "toggleUnderline": "Toggle underline",
-    "transformCase": "Change letter case"
+    "transformCase": "Change letter case",
+    "setStarRatio": "Change inner radius"
   },
   "lock": "Lock",
   "locked": "Locked",
@@ -1012,7 +1013,10 @@
     "start": "Start",
     "startSize": "Start size",
     "strokeColor": "Stroke",
-    "strokeOpacity": "Stroke opacity"
+    "strokeOpacity": "Stroke opacity",
+    "points": "Points",
+    "starRatio": "Inner radius",
+    "starRatioTip": "Distance of the inner points from the center, as a share of the outer points"
   },
   "summaryMarks": "{{count}} annotations",
   "summaryPanels": "{{count}} figures",

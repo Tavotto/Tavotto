@@ -205,3 +205,26 @@ describe('格式刷：形状 ↔ 路径互刷填充描边', () => {
     expect('headEnd' in s).toBe(false)
   })
 })
+
+describe('星形（ADR 0185 M1）：属性栏的角数与内径比', () => {
+  it('选星形：边数那一行叫「角数」，多一行「内径比」；改内径比写 starRatio，等于缺省就删字段', async () => {
+    await seed([rect({ id: 'st', shape: 'star' })], ['st'])
+    await mount()
+    expect(host.querySelector('input[aria-label="角数"]')).not.toBeNull()
+    expect(host.querySelector('input[aria-label="边数"]')).toBeNull()
+    await typeNumber('内径比', '60')
+    expect(byId<ShapeObject>('st').starRatio).toBeCloseTo(0.6, 9)
+    expect(past()).toBe(1)
+    await typeNumber('内径比', '38.2')
+    expect('starRatio' in byId<ShapeObject>('st')).toBe(false) // 改回缺省 0.382：字段删掉
+    await typeNumber('角数', '7')
+    expect(byId<ShapeObject>('st').sides).toBe(7)
+  })
+
+  it('矩形 / 多边形没有「内径比」那一行（不撑大别的形状的卡片）', async () => {
+    await seed([rect({ id: 'r1' }), rect({ id: 'pg', shape: 'polygon' })], ['pg'])
+    await mount()
+    expect(host.querySelector('input[aria-label="内径比"]')).toBeNull()
+    expect(host.querySelector('input[aria-label="边数"]')).not.toBeNull()
+  })
+})

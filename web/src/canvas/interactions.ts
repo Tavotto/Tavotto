@@ -143,6 +143,7 @@ import {
   recordDiagnosticEvent,
 } from '@/diagnostics'
 import {
+  DEFAULT_STAR_POINTS,
   isLinear,
   lineEndpoints,
   isKnownObject,
@@ -871,6 +872,8 @@ const DEFAULT_DRAW: Record<string, { w: number; h: number }> = {
   diamond: { w: 20, h: 16 },
   polygon: { w: 20, h: 16 },
   brace: { w: 6, h: 24 },
+  star: { w: 20, h: 20 },
+  arc: { w: 20, h: 16 },
 }
 
 /**
@@ -1017,6 +1020,7 @@ export function startDraw(e: ReactPointerEvent, tool: DrawTool) {
           color: DRAW_COLOR,
           fill: null,
           ...(tool === 'polygon' ? { sides: 6 } : {}),
+          ...(tool === 'star' ? { sides: DEFAULT_STAR_POINTS } : {}),
         }
         created = shape
       }

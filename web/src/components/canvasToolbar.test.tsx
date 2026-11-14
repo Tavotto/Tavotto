@@ -292,11 +292,11 @@ describe('标注菜单：一张形状列表 + 预设；钢笔单独一格', () =
     return document.body.querySelector<HTMLElement>('[role="menu"]')!
   }
 
-  it('八种形状同一组单选（都是拖画工具），有键位的带键位；没有「插入形状」那一段；预设在分隔线下面', async () => {
+  it('十种形状同一组单选（都是拖画工具），有键位的带键位；没有「插入形状」那一段；预设在分隔线下面', async () => {
     const menu = await openMenu()
     const radios = [...menu.querySelectorAll<HTMLElement>('[role="menuitemradio"]')]
     expect(radios.map((r) => r.dataset.markTool)).toEqual([
-      'arrow', 'line', 'rect', 'ellipse', 'triangle', 'diamond', 'polygon', 'brace',
+      'arrow', 'line', 'rect', 'ellipse', 'triangle', 'diamond', 'polygon', 'star', 'brace', 'arc',
     ])
     expect(new Set(radios.map((r) => r.closest('[role="group"]')))).toHaveProperty('size', 1)
     expect(radios.find((r) => r.dataset.markTool === 'rect')!.textContent).toContain('R')

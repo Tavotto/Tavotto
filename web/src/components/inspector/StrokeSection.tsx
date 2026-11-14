@@ -9,7 +9,7 @@ import type {
   LineCap,
   LineJoin,
 } from '@/types/document'
-import { arrowHeads } from '@/types/document'
+import { arrowHeads, DEFAULT_STAR_POINTS, DEFAULT_STAR_RATIO, type ShapeObject } from '@/types/document'
 import { DEFAULT_LINE_CAP } from '@/lib/shapeGeometry'
 import {
   isFillStrokeMark,
@@ -21,6 +21,7 @@ import {
   markHeadCapable,
   markHeads,
   markSidesCapable,
+  markStarCapable,
   markStrokeOn,
   markStrokeToggle,
   setMarkHead,
@@ -543,6 +544,7 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
   const hasFillable = objs.some(markFillable)
   const allRect = objs.every(markCornerRadiusCapable)
   const allPolygon = objs.every(markSidesCapable)
+  const allStar = objs.every(markStarCapable)
   const headed = headedOf(objs)
   const fill = shared(objs, (o) => (o as FillStrokeMark).fill)
   // 全都有填充、只是颜色不同：填充是开着的，色块画「多个值」（之前 shared 给 undefined，
@@ -681,17 +683,45 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
           </Row>
         )}
         {allPolygon && (
-          <Row label={sk('sides')} labelWidth={INSPECTOR_LABEL_W}>
+          // 多边形是边数、星形是角数（同一个字段 `sides`）；只有星形的选区叫「角数」
+          <Row label={sk(allStar ? 'points' : 'sides')} labelWidth={INSPECTOR_LABEL_W}>
             <NumberField
               half
-              ariaLabel={sk('sides')}
-              value={shared(objs, (o) => (o as FillStrokeMark & { sides?: number }).sides ?? 6) ?? 6}
+              ariaLabel={sk(allStar ? 'points' : 'sides')}
+              value={
+                shared(objs, (o) => (o as ShapeObject).sides ?? ((o as ShapeObject).shape === 'star' ? DEFAULT_STAR_POINTS : 6)) ??
+                (allStar ? DEFAULT_STAR_POINTS : 6)
+              }
               step={1}
               min={3}
               max={12}
               onChange={(v) =>
                 patch(hist('setSides'), (o) => {
                   if (markSidesCapable(o)) o.sides = Math.round(v)
+                })
+              }
+            />
+          </Row>
+        )}
+        {allStar && (
+          // 星形的内径比（ADR 0185 M1）：百分数，等于缺省就不写字段
+          <Row label={<span title={sk('starRatioTip')}>{sk('starRatio')}</span>} labelWidth={INSPECTOR_LABEL_W}>
+            <NumberField
+              half
+              ariaLabel={sk('starRatio')}
+              value={Math.round((shared(objs, (o) => (o as ShapeObject).starRatio ?? DEFAULT_STAR_RATIO) ?? DEFAULT_STAR_RATIO) * 100)}
+              mixed={shared(objs, (o) => (o as ShapeObject).starRatio ?? DEFAULT_STAR_RATIO) === undefined}
+              step={1}
+              min={5}
+              max={95}
+              precision={0}
+              unit="%"
+              onChange={(v) =>
+                patch(hist('setStarRatio'), (o) => {
+                  if (!markStarCapable(o)) return
+                  const r = Math.max(0.05, Math.min(0.95, v / 100))
+                  if (Math.abs(r - DEFAULT_STAR_RATIO) < 1e-9) delete o.starRatio
+                  else o.starRatio = r
                 })
               }
             />

@@ -37,7 +37,7 @@ import { visibleContentBounds } from './exportCrop'
 import { isEpsTranslucent } from './epsOpacity'
 import { toExportObjects } from './exportPayload'
 import { pathGeometry, pathHitTest, rotateAbout, type PathSeg } from './pathGeom'
-import { arrowGeometry, braceParts, cornerRadius, shapeInset, shapeOutline, type ArrowHeadShape } from './shapeGeometry'
+import { arcPoints, arrowGeometry, braceParts, cornerRadius, shapeInset, shapeOutline, type ArrowHeadShape } from './shapeGeometry'
 import { MM_PER_PT } from './units'
 
 declare global {
@@ -160,8 +160,22 @@ function sourceSamples(o: ShapeObject | ArrowObject): XY[] {
       }
       return toPage(o, out)
     }
+    case 'arc': {
+      // 弧线本来就是一段三次贝塞尔：按参数方程采样（与 SVG 的 C 同一条曲线）
+      const [p0, c1, c2, p3] = arcPoints(w, h, inset)
+      const out: XY[] = []
+      for (let i = 0; i <= 200; i++) {
+        const t = i / 200
+        const u = 1 - t
+        out.push([
+          u * u * u * p0[0] + 3 * u * u * t * c1[0] + 3 * u * t * t * c2[0] + t * t * t * p3[0],
+          u * u * u * p0[1] + 3 * u * u * t * c1[1] + 3 * u * t * t * c2[1] + t * t * t * p3[1],
+        ])
+      }
+      return toPage(o, out)
+    }
     default: {
-      const ol = shapeOutline(o.shape, w, h, inset, o.sides)
+      const ol = shapeOutline(o.shape, w, h, inset, o.sides, o.starRatio)
       if (ol?.kind !== 'poly') throw new Error('不是多边形')
       return toPage(o, polyline(ol.points, true))
     }
@@ -229,6 +243,10 @@ const CASES: [string, ShapeObject | ArrowObject][] = [
   ['三角形', shape('triangle')],
   ['菱形', shape('diamond')],
   ['七边形', shape('polygon', { sides: 7 })],
+  ['星形（缺省五角）', shape('star')],
+  ['七角星、内径比 0.6、旋转 20°', shape('star', { sides: 7, starRatio: 0.6, rotationDeg: 20 })],
+  ['弧线', shape('arc', { fill: null })],
+  ['旋转 -45° 的弧线', shape('arc', { fill: null, rotationDeg: -45 })],
   ['大括号', shape('brace', { fill: null })],
   ['斜直线', shape('line', { start: { rx: 0, ry: 0 }, end: { rx: 1, ry: 1 } })],
   ['旧直线（无端点字段）', shape('line', { h: 0.01 })],

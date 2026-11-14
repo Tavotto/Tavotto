@@ -281,6 +281,8 @@ const READS: Record<SwitchKind, readonly string[]> = {
   diamond: ['shape', 'fill', 'fillOpacity'],
   polygon: ['shape', 'fill', 'fillOpacity', 'sides'],
   brace: ['shape', 'fill', 'fillOpacity'],
+  star: ['shape', 'fill', 'fillOpacity', 'sides', 'starRatio'],
+  arc: ['shape', 'fill', 'fillOpacity'],
   line: ['shape', 'fill', 'fillOpacity', 'start', 'end'],
   arrow: ['start', 'end', 'head', 'headStart', 'headEnd'],
 }

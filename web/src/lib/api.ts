@@ -2003,6 +2003,8 @@ export type ExportObject =
       fill: string | null
       corner_radius_mm?: number
       sides?: number
+      /** 星形内径比；缺省 0.382 */
+      star_ratio?: number
       fill_opacity?: number
       dash?: ExportDash
       /** 无边框（只发 `false`；缺省 = 有描边；直线 / 大括号忽略） */

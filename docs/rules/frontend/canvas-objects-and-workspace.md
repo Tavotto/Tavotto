@@ -2,7 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「项目系统与多画布（前端侧）」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`shapeSwitch.golden.test.ts` + `tests/test_compose_switched_shapes.py`、`canvas/shapeOutline.test.tsx`、`store/workspace.test.ts`、`store/pageFit.test.ts`、`store/addPanelFraming.test.ts`、`store/addPanelEntry.test.ts`、`store/addPanelAvoid.test.ts`、`lib/panelPlacement.test.ts`、`canvas/pageOutsideMask.test.tsx`、`lib/pathGeom.golden.test.ts` + `tests/test_path_object.py`、`lib/convertToPath.test.tsx`、`lib/penTool.test.ts`、`lib/pathEdit.test.ts`、`canvas/penAndAnchors.test.tsx`、`e2e/cross-tab-paste.spec.ts`、`e2e/nav-audit.spec.ts`
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`shapeSwitch.golden.test.ts` + `tests/test_compose_switched_shapes.py`、`canvas/shapeOutline.test.tsx`、`store/workspace.test.ts`、`store/pageFit.test.ts`、`store/addPanelFraming.test.ts`、`store/addPanelEntry.test.ts`、`store/addPanelAvoid.test.ts`、`lib/panelPlacement.test.ts`、`canvas/pageOutsideMask.test.tsx`、`lib/pathGeom.golden.test.ts` + `tests/test_path_object.py`、`lib/convertToPath.test.tsx`、`lib/penTool.test.ts`、`lib/pathEdit.test.ts`、`canvas/penAndAnchors.test.tsx`、`canvas/shapeTools.test.tsx`、`lib/starArc.golden.test.ts` + `tests/test_star_arc.py`、`e2e/cross-tab-paste.spec.ts`、`e2e/nav-audit.spec.ts`
 > `web/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：剪贴板主路径是原生 ClipboardEvent；类型切换一次 commit 不换 id；「适应画布」是模式；加图分层链 `addFigureToLayout` → `addPanelToCanvas` → `actions.addPanel`，权威在该细则
 
 <!-- agents-route
@@ -90,7 +90,13 @@ order: 210
   编辑锚点注册在 `store/pathActions.PATH_COMMANDS` 一张表：命令面板、右键菜单、快捷键（P、+ / −、⇧C；Delete 在锚点编辑里删锚点）都读它的
   `available()`。直接选择没有 A 键（A 是箭头工具）。锚点框选的框是 `interaction.anchorMarquee`（细虚线、不铺底，与对象框选分开），
   拖着时锚点实时变实心、松手框即消失。工具条（2026-11-14 用户拍板）：钢笔单独一格；标注菜单是**一张**形状列表（八种都拖画、单击落默认尺寸 `DEFAULT_DRAW`），
-  预设在分隔线下，没有「插入形状」那一段。看护 `lib/penTool.test.ts`、`lib/pathEdit.test.ts`、`canvas/penAndAnchors.test.tsx`。
+  预设在分隔线下，没有「插入形状」那一段。
+  续画：钢笔点在开放路径的端点上就从那里接着画（同一个对象、一次 commit，从起点接时落盘倒回原方向）；钢笔与拖锚点按 ⇧ 锁 45°，
+  不按时吸到画布那套候选（`interactions.candidatesFor`：页面、对象、参考线、网格、图内元素中心线）与同一条路径的锚点（`pathEdit.anchorSnapLines`）。
+  剪刀 / 连接 ⌘J / 平均 ⌥⌘J 进 `PATH_COMMANDS`（几何 `pathEdit.cutAtAnchors` / `joinSubpaths` / `closeSubpath` / `averageAnchors`）；
+  剪刀断出来的第一段留在原对象、其余成新对象。锚点编辑时不出单选浮动栏（`ContextBar` 认 `useActivePathEdit`）。
+  星形 / 弧线是两种新形状（`ShapeKind`）：星形 `sides` = 角数（缺省 5）、`starRatio` 内径比（缺省 0.382，等于缺省不写）；
+  弧线只有描边（「只有描边的形状」判据唯一出处 `types/document.STROKE_ONLY_SHAPES`，后端 `geometry.STROKE_ONLY_SHAPES` 同表）。看护 `lib/penTool.test.ts`、`lib/pathEdit.test.ts`、`canvas/penAndAnchors.test.tsx`。
 - **不认识的对象类型原样保留（2026-11-14，ADR 0185 的前置）**：更新的构建会往文档里写本构建没有的 `type`
   （第一例是自由路径 `path`）。判据只有 `types/document.isKnownObject`（`KNOWN_OBJECT_TYPES` 闭集）。读盘、保存、
   换画布、复制画布都不碰它（文档层本来就不按类型过滤，别加）；画布上 `ObjectView` 只画虚线占位框

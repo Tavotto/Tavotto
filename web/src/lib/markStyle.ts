@@ -7,7 +7,7 @@ import type {
   PathObject,
   ShapeObject,
 } from '@/types/document'
-import { arrowHeads, legacyHead, readPath, shapeStrokeOn } from '@/types/document'
+import { arrowHeads, isStrokeOnlyShape, legacyHead, readPath, shapeStrokeOn } from '@/types/document'
 import { PATH_DEFAULT_JOIN } from './pathGeom'
 import { defaultLineJoin } from './shapeGeometry'
 
@@ -32,7 +32,7 @@ export const isStrokedMark = (o: CanvasObject): o is StrokedMark => isFillStroke
 
 /** 能不能填充：直线 / 大括号只有描边；路径都能（开放子路径按隐式闭合填，与 SVG / PDF 同一语义） */
 export const markFillable = (o: FillStrokeMark): boolean =>
-  o.type === 'path' || (o.shape !== 'line' && o.shape !== 'brace')
+  o.type === 'path' || !isStrokeOnlyShape(o.shape)
 
 /** 有没有「描边开关」（能关成无边框）：与能不能填充同一批对象 */
 export const markStrokeToggle = markFillable
@@ -51,11 +51,14 @@ export const markDefaultJoin = (o: FillStrokeMark): LineJoin =>
   o.type === 'path' ? PATH_DEFAULT_JOIN : defaultLineJoin(o.shape)
 
 /** 只有一段、没有拐角可言（拐角行不出现）：直线 */
-export const markHasNoJoin = (o: FillStrokeMark): boolean => o.type === 'shape' && o.shape === 'line'
+export const markHasNoJoin = (o: FillStrokeMark): boolean => o.type === 'shape' && (o.shape === 'line' || o.shape === 'arc')
 
 /** 形状自己的参数（圆角 / 边数）只属于对应的那一种形状 */
 export const markCornerRadiusCapable = (o: FillStrokeMark): o is ShapeObject => o.type === 'shape' && o.shape === 'rect'
-export const markSidesCapable = (o: FillStrokeMark): o is ShapeObject => o.type === 'shape' && o.shape === 'polygon'
+export const markSidesCapable = (o: FillStrokeMark): o is ShapeObject =>
+  o.type === 'shape' && (o.shape === 'polygon' || o.shape === 'star')
+/** 星形的内径比 */
+export const markStarCapable = (o: FillStrokeMark): o is ShapeObject => o.type === 'shape' && o.shape === 'star'
 
 /** 端型能不能起作用：箭头恒能；路径要有开放子路径（ADR 0185：端型只对开放子路径生效） */
 export function markHeadCapable(o: CanvasObject): o is HeadedMark {

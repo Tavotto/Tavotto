@@ -2,7 +2,7 @@ import { figureSnapshotFor } from './figureSnapshot'
 import { artifactRequestFields } from './artifactValidation'
 import type { ExportObject } from './api'
 import type { CanvasObject } from '@/types/document'
-import { isKnownObject, panelRotation, readPath, shapeStrokeOn } from '@/types/document'
+import { DEFAULT_STAR_POINTS, DEFAULT_STAR_RATIO, isKnownObject, panelRotation, readPath, shapeStrokeOn } from '@/types/document'
 import { DEFAULT_LINE_CAP, defaultLineJoin, strokeOpacityOf } from './shapeGeometry'
 import { PATH_DEFAULT_JOIN } from './pathGeom'
 
@@ -109,7 +109,9 @@ function toExportObject(o: CanvasObject): ExportObject {
         color: o.color,
         fill: o.fill,
         corner_radius_mm: o.cornerRadius || undefined,
-        sides: o.shape === 'polygon' ? (o.sides ?? 6) : undefined,
+        sides: o.shape === 'polygon' ? (o.sides ?? 6) : o.shape === 'star' ? (o.sides ?? DEFAULT_STAR_POINTS) : undefined,
+        // 星形内径比：缺省不发（后端按同一个缺省补）
+        star_ratio: o.shape === 'star' && o.starRatio != null && o.starRatio !== DEFAULT_STAR_RATIO ? o.starRatio : undefined,
         fill_opacity: o.fill && o.fillOpacity != null && o.fillOpacity < 1 ? o.fillOpacity : undefined,
         dash: o.dash && o.dash !== 'solid' ? o.dash : undefined,
         // 无边框只对封闭形状发（直线 / 大括号只有描边）；无边框时描边相关的其余字段都不发

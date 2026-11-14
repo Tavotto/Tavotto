@@ -648,7 +648,8 @@
     "toggleBold": "切换加粗",
     "toggleItalic": "切换斜体",
     "toggleUnderline": "切换下划线",
-    "transformCase": "转换大小写"
+    "transformCase": "转换大小写",
+    "setStarRatio": "修改内径比"
   },
   "lock": "锁定",
   "locked": "已锁定",
@@ -992,7 +993,10 @@
     "start": "起点",
     "startSize": "起点大小",
     "strokeColor": "描边",
-    "strokeOpacity": "描边不透明度"
+    "strokeOpacity": "描边不透明度",
+    "points": "角数",
+    "starRatio": "内径比",
+    "starRatioTip": "内顶点到中心的距离占外顶点的比例"
   },
   "summaryMarks": "{{count}} 标注",
   "summaryPanels": "{{count}} 张图",
