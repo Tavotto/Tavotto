@@ -784,8 +784,9 @@ def test_every_app_launcher_adopts_credentials():
         adopts = _launch_reaches(src, "adopt_session_credentials")
         bypass = _sets_env(src, "TAVOTTO_INSECURE_NO_AUTH")
         desktop = "/api/desktop/bootstrap" in src or "TAVOTTO_DESKTOP_HANDSHAKE" in src
-        assert adopts or bypass or desktop, (
-            f"{name} 起了实例却既不取凭据、也没显式旁路、也不是桌面握手——"
+        stdio = _stdio_mcp_only(src)
+        assert adopts or bypass or desktop or stdio, (
+            f"{name} 起了实例却既不取凭据、也没显式旁路、也不是桌面握手、也不是只走 stdio 的 MCP——"
             "ADR 0008 之后它的每个 API 调用都会 401，而症状会出现在很远的地方"
         )
 
@@ -883,6 +884,29 @@ def _sets_env(src: str, key: str) -> bool:
             for kw in node.keywords:
                 if kw.arg == key:
                     return True
+    return False
+
+
+def _stdio_mcp_only(src: str) -> bool:
+    """起的是 `tavotto mcp`（stdio 上的 JSON-RPC，没有 HTTP API、也就没有会话凭据），且整个文件不碰本机 HTTP。
+
+    `scripts/eval/agent_journal/harness.py` 给 MCP 设 `TAVOTTO_DATA_DIR` 只为隔离会话记录，
+    不打 `/api/`。判据按 AST：命令里有相邻的 `"tavotto"`、`"mcp"` 两个字符串常量，而且文件里
+    没有 `http://` 开头、也没有含 `/api/` 的字符串常量（本机实例的 URL 必然是这两种之一）。
+    """
+    import ast
+
+    tree = ast.parse(src)
+    consts = [
+        n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    ]
+    if any(c.startswith("http://") or "/api/" in c for c in consts):
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.List):
+            vals = [e.value if isinstance(e, ast.Constant) else None for e in node.elts]
+            if any(a == "tavotto" and b == "mcp" for a, b in zip(vals, vals[1:])):
+                return True
     return False
 
 

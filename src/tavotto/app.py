@@ -113,8 +113,10 @@ from .engine import (
     exportroute as engine_exportroute,
     exporttelemetry as engine_exporttelemetry,
     figcapture as engine_figcapture,
+    figuregroup as engine_figuregroup,
     fixsession as engine_fixsession,
     folderrepair as engine_folderrepair,
+    foreignoutputs as engine_foreignoutputs,
     foreignsource as engine_foreignsource,
     handoff as engine_handoff,
     handoffreceipt as engine_handoffreceipt,
@@ -732,6 +734,19 @@ def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
             LOG.warning("素材扫描跳过 %s（probe 失败）", p, exc_info=True)
             continue
         panels.append(entry)
+    # 同一张图的几份文件（ADR 0184 §一）：图键 / 主文件 / 全部格式 / 画它的脚本，唯一出处 `engine/figuregroup`。
+    # R / MATLAB 与 Python 一样认作来源（修订）：源码里写死的输出 + 同目录同名脚本，只读、不运行
+    dir_cache = engine_foreignsource.DirCache(root)
+
+    def _sibling(rel: str) -> str | None:
+        found = engine_foreignsource.sibling_of(root, dir_cache, rel)
+        return found["script"] if found else None
+
+    try:
+        foreign = engine_foreignoutputs.output_map(root)
+    except OSError:
+        foreign = {}
+    engine_figuregroup.annotate(panels, current_registry(), foreign, _sibling)
     return panels
 
 
@@ -1215,8 +1230,15 @@ def api_experiments():
 def api_panels():
     unsupported: list[dict] = []
     panels = scan_panels(unsupported)
+    root = require_project()
     resp = jsonify(
-        {"figures_dir": str(require_project()), "panels": panels, "unsupported": unsupported}
+        {
+            "figures_dir": str(root),
+            "panels": panels,
+            "unsupported": unsupported,
+            # 素材区的显示范围（ADR 0184 §三）：只影响显示与计数，清单本身不按它裁
+            "view_scope": engine_config.view_scope(str(root)),
+        }
     )
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -6249,11 +6271,61 @@ def api_projects_open():
                 }
             ), 400
     try:
-        return jsonify(open_project(str(p), make_default=body.get("default", True)))
+        status = open_project(str(p), make_default=body.get("default", True))
+        _apply_entry_scope(status, body)
+        return jsonify(status)
     except (RuntimeError, OSError) as exc:
         return jsonify(
             {"error": str(exc), "code": "open_project_failed", "params": {"reason": str(exc)}}
         ), 400
+
+
+#: 进入方式（ADR 0184 §三）：`script` = 带着一个脚本进来（只看脚本的图）；`folder` = 明确打开整个文件夹。
+#: 缺省（最近 / 收藏重开、旧前端）= 沿用上次记的范围。
+_ENTRY_KINDS = ("script", "folder")
+_SCOPE_SCRIPT_MAX = 512
+
+
+def _scope_script_name(raw) -> str | None:
+    """范围里的脚本名：项目相对路径（`/` 分隔），首尾无空白、不越出项目、不超长；不合格 = None（不进范围）。"""
+    if not isinstance(raw, str) or not raw or raw != raw.strip() or len(raw) > _SCOPE_SCRIPT_MAX:
+        return None
+    rel = raw.replace("\\", "/")
+    parts = rel.split("/")
+    if rel.startswith("/") or ":" in parts[0] or any(x in ("", ".", "..") for x in parts):
+        return None
+    return rel
+
+
+def _apply_entry_scope(status: dict, body: dict) -> None:
+    """打开成功之后按进入方式改视图范围，并把改后的设置放回响应（`settings.view_scope`）。只是显示范围，失败不拖垮打开。"""
+    entry = body.get("entry")
+    if entry not in _ENTRY_KINDS or not status.get("open"):
+        return
+    path = status["figures_dir"]
+    try:
+        if entry == "folder":
+            engine_config.set_view_scope(path, mode="folder")
+        else:
+            script = _scope_script_name(body.get("script"))
+            if script is None:
+                return
+            engine_config.set_view_scope(path, mode="scripts", add_script=script)
+        status["settings"] = engine_config.project_settings(path)
+    except OSError:
+        LOG.warning("视图范围没能记下（不影响打开项目）", exc_info=True)
+
+
+@app.post("/api/project/view_scope")
+def api_project_view_scope():
+    """运行了一个脚本：范围是「只看脚本的图」时把它加进去（ADR 0184 §三）；整个文件夹时不改。回此刻的范围。"""
+    body = request.get_json(force=True, silent=True)
+    body = body if isinstance(body, dict) else {}
+    script = _scope_script_name(body.get("add_script"))
+    if script is None:
+        return jsonify({"error": "脚本名不合法", "code": "invalid_script_name"}), 400
+    root = require_project()
+    return jsonify({"view_scope": engine_config.add_view_scope_script(str(root), script)})
 
 
 @app.post("/api/projects/close")
@@ -9547,11 +9619,13 @@ class WriteBackVerifyError(RuntimeError):
 
 
 class WriteBackPersistError(RuntimeError):
-    """commit 的落盘准备（拷备份 + fsync 备份与 staging）没过，一个目标都还没替换。
+    """commit 的落盘准备（拷备份 + fsync 备份与 staging）或原件核验没过，一个目标都还没替换。
 
     与 `FileLockedError` 分成两类是刻意的（issue #252）：这一类发生在任何
     `replace` **之前**，不存在回滚，原文件一字未动；「replace 之后目录项落盘
     失败」则根本不走异常，只记日志——文件已换，再报失败只会让人误以为没写进去。
+    prepare 时读不到原件、或读取前后元信息变化时也没有可核验的基准：不跳过，
+    同样落进这一类。
     """
 
     def __init__(self, reason: str):
@@ -9759,29 +9833,30 @@ def _write_back_prepare(src: Path, worker, expected_mtime) -> None:
         raise ScriptChangedError(script_name, spawned, now)
 
 
-def _source_fingerprint(paths) -> dict[Path, tuple[int, int] | None]:
-    """目标文件此刻的身份：`(mtime_ns, size)`；读不到（被删 / 被占）记 None。"""
-    out: dict[Path, tuple[int, int] | None] = {}
+def _source_fingerprint(paths) -> dict[Path, tuple[int, int, str] | None]:
+    """目标文件的纳秒 mtime、长度及内容身份；读取前后元信息变化时不可核验。"""
+    out = {}
     for p in paths:
         try:
-            st = p.stat()
-            out[p] = (st.st_mtime_ns, st.st_size)
+            before = p.stat()
+            digest = _sha1_of(p)
+            after = p.stat()
+            stamp = (before.st_mtime_ns, before.st_size)
+            out[p] = (*stamp, digest) if stamp == (after.st_mtime_ns, after.st_size) else None
         except OSError:
             out[p] = None
     return out
 
 
 def _assert_sources_unchanged(base: dict, paths) -> None:
-    """复核：`paths` 里每个目标仍是 prepare 时看到的那一版，否则 `SourceChangedError`（409）。
-
-    prepare 只在请求入口比一次；之后的全量重放 / 导出可能分钟级，备份与替换之前
-    必须再问一遍，否则会先备份别人刚写的新版、再把它盖掉（QA-WIN-51）。
-    """
+    """备份前和每次替换前复核尚未替换的原件，保护验证、备份及两次替换间的外改。"""
+    paths = list(paths)
+    current = _source_fingerprint(paths)
     for p in paths:
         want = base.get(p)
         if want is None:
-            continue  # prepare 时就不存在 / 读不到：没有可比的基准
-        now = _source_fingerprint([p])[p]
+            raise WriteBackPersistError(f"无法核验写回原件: {p.name}")
+        now = current[p]
         if now != want:
             raise SourceChangedError(
                 p.name, int(want[0] // 1_000_000_000), int((now or (0, 0))[0] // 1_000_000_000)
@@ -9818,11 +9893,11 @@ def _hot_manifest(worker, stem: str, patches: list) -> dict | None:
 def _rollback(
     done: list[Path],
     backup_dir: Path,
-    published: dict[Path, tuple[int, int] | None] | None = None,
+    published: dict[Path, tuple[int, int, str] | None] | None = None,
 ) -> tuple[list[str], list[str], list[str]]:
     """把已经替换掉的目标从本次备份恢复回去，返回 (成功, 失败, 外部改过未回滚) 三份文件名。
 
-    恢复前先核目标仍是**我们发布的那一版**（`published` 里记的 `(mtime_ns, size)`，
+    恢复前先核目标仍是**我们发布的那一版**（`published` 里记的 `(mtime_ns, size, sha1)`，
     与 `_source_fingerprint` 同一判据）：替换之后又被外部改过的目标，备份是更早的原件，
     盖上去就吞掉外部那份新改动——保留外部版本、不回滚、如实报告（Codex #1697 P1）。
     """
@@ -9853,6 +9928,15 @@ def _discard_updating(tmps: list[tuple[Path, Path]]) -> None:
             leftover.unlink(missing_ok=True)
         except OSError:
             LOG.warning("写回失败后清理临时文件失败: %s", leftover, exc_info=True)
+
+
+def _write_back_source_versions(targets: list[Path]) -> dict:
+    """与提交及回滚共用一份文件身份判据。"""
+    return _source_fingerprint(targets)
+
+
+def _check_write_back_sources(tmps: list[tuple[Path, Path]], versions: dict) -> None:
+    _assert_sources_unchanged(versions, [target for target, _tmp in tmps])
 
 
 def _new_backup_dir(root: Path) -> Path:
@@ -9964,8 +10048,7 @@ def _write_source_files(
     _refuse_pdf_pages_source(worker, src)
 
     targets = [p for p in (src.with_suffix(ext) for ext in WRITE_BACK_EXT) if p.exists()]
-    # 与 prepare 同一刻的身份基线：重放结束后、备份与每次替换之前拿它复核（QA-WIN-51）
-    source_base = _source_fingerprint(targets)
+    source_versions = _write_back_source_versions(targets)
     man_hot = _hot_manifest(worker, stem, patches)
 
     # ---- verify：全新 worker 全量重放，staging 也从它出 ----------------------
@@ -10065,8 +10148,8 @@ def _write_source_files(
         with remap_guard:
             # 重放可能分钟级：备份之前先确认要被覆盖的仍是用户看到的那一版（零改动 409）
             try:
-                _assert_sources_unchanged(source_base, [t for t, _ in tmps])
-            except SourceChangedError:
+                _check_write_back_sources(tmps, source_versions)
+            except (SourceChangedError, WriteBackPersistError):
                 _discard_updating(tmps)
                 raise
             backup_dir = _backup_targets(tmps, project_backup_dir(), stem)
@@ -10074,8 +10157,8 @@ def _write_source_files(
                 # 备份之后、每次替换之前再核尚未替换的目标：备份必须就是将被覆盖的那一版；
                 # 已替换的目标按事务规矩从备份回滚
                 try:
-                    _assert_sources_unchanged(source_base, [t for t, _ in tmps[i:]])
-                except SourceChangedError as exc:
+                    _check_write_back_sources(tmps[i:], source_versions)
+                except (SourceChangedError, WriteBackPersistError) as exc:
                     _discard_updating(tmps)
                     if not done:
                         shutil.rmtree(
@@ -10085,7 +10168,12 @@ def _write_source_files(
                     rolled, failed, kept = _rollback(done, backup_dir, published)
                     if failed:
                         raise FileLockedError(
-                            exc.name, str(exc), failed + kept, rolled, failed, kept
+                            getattr(exc, "name", target.name),
+                            str(exc),
+                            failed + kept,
+                            rolled,
+                            failed,
+                            kept,
                         ) from exc
                     exc.kept_external = kept
                     raise
@@ -10256,8 +10344,8 @@ def _write_back_error_response(exc):
     if isinstance(exc, WriteBackPersistError):
         return jsonify(
             {
-                "error": f"写回前的落盘准备失败（备份或临时文件没能写入磁盘）：{exc.reason}。"
-                "写回已取消，原文件未做任何改动。请检查磁盘空间与目录权限后重试。",
+                "error": f"写回前的准备失败：{exc.reason}。"
+                "写回已取消，原文件未做任何改动。请检查文件是否可读、磁盘空间与目录权限后重试。",
                 "code": "write_back_persist_failed",
                 "params": {"reason": exc.reason},
             }

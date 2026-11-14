@@ -202,6 +202,9 @@ order: 50
     （`probe_kind` 照旧），只有 `import_file` 问过的仍是 `probe`；`rule_for_choice` 对 glob / 文件夹条目走 `derive_location`。
     没救回的探路记进 `InputMisses.probes`（绝对路径总记、相对的只在 cwd 不是沙盒时记）；对不上只读打开时，脚本构造的
     `FileNotFoundError`（无 errno、单个字符串）按路径段点了名某条、且它此刻不在 → `missing_input`，与只读打开同形。
+    脚本自己调 `parser.error(...)`（调 `ArgumentParser.error` 的那一帧不在 argparse 里，`worker._script_parser_error_message`）
+    且消息点了名某条没救回的探路（整路径或只写文件名，`figcapture.parser_error_missing_input`）、它此刻不在 → 同样
+    `missing_input`，不再是 `script_needs_arguments`（ADR 0106 修订 2026-11-14）；argparse 解析时自己报的照旧。
     数据在脚本目录里找得到、只是沙盒 cwd 下 C++ 读取器看不见时，静态证据里它不是「哪儿都找不到」的候选：
     不挂 native 载荷，错误仍是 `script_error` + `extra.enoent`（诊断，行为不变）。
     ④ **代次 + 按项目的一把互斥锁**（ADR 0106 §五，`inputremap.project_mutex`，可重入）：改指表按项目一个代次（跨重启单调）。

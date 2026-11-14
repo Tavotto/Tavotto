@@ -594,6 +594,9 @@ class CliRunFacts:
         self.turns_failed = 0
         self.last_event = "none"
         self.last_item = "none"
+        #: 最近一次 `error` / `turn.failed` 里 Codex 自己拼的 HTTP 状态码（`codex_http_status`）；None = 没有失败或认不出。
+        #: 只是一个三位数，原文不留——第三方中转回 400 / 404 这类不在失败分类表里的状态时，诊断包靠它定根因
+        self.fail_status: int | None = None
         self.first_event_ms: int | None = None
         self.max_gap_ms = 0
 
@@ -656,8 +659,11 @@ class CliRunFacts:
         self.last_event = etype if known else "other"
         if self.last_event == "error":
             self.errors += 1
+            self._note_fail_status(ev.get("message"))
         elif self.last_event == "turn.failed":
             self.turns_failed += 1
+            err = ev.get("error")
+            self._note_fail_status(err.get("message") if isinstance(err, dict) else None)
         item = ev.get("item")
         if not isinstance(item, dict):
             return
@@ -691,6 +697,11 @@ class CliRunFacts:
             self.messages += 1
         elif itype == "error" and done:
             self.errors += 1
+
+    def _note_fail_status(self, message: object) -> None:
+        code = codex_http_status(message)
+        if code is not None:
+            self.fail_status = code
 
     def generating_silent(self, idle_ms: int) -> bool:
         """模型在生成 / 写一个大文件、事件流已静默 ≥ `idle_ms`？
@@ -753,6 +764,7 @@ class CliRunFacts:
             "first_event_ms": self.first_event_ms,
             "max_gap_ms": self.max_gap_ms,
             "idle_end_ms": idle,
+            "fail_status": self.fail_status,
             "endpoint": "relay" if relay else "official",
         }
 
@@ -785,6 +797,9 @@ def merge_run_facts(runs: list[dict]) -> dict | None:
     out["target_tool_ok"] = any(tool) if tool else None  # 只有转换会话的 Codex 进程有这一项
     out["max_gap_ms"] = max(int(r.get("max_gap_ms") or 0) for r in runs)
     out["first_event_ms"] = runs[0].get("first_event_ms")
+    # 修正轮成功了也留着首轮的失败状态：要的是「被拒过什么」，不是最后一轮的结局
+    seen = [r["fail_status"] for r in runs if r.get("fail_status") is not None]
+    out["fail_status"] = seen[-1] if seen else None
     for k in (
         "last_event",
         "last_item",
@@ -1319,6 +1334,20 @@ def _cli_class_from_fields(*values: object) -> str | None:
 
 #: Codex 自己拼的错误前缀（CLI 的错误格式化，真机 0.163.0 抓到：`unexpected status 401 Unauthorized: …`），只取状态码
 _CODEX_STATUS_RE = re.compile(r"^unexpected status (\d{3})\b")
+#: Codex 重试用完时自己拼的格式（`exceeded retry limit, last status: 429 Too Many Requests`）
+_CODEX_RETRY_STATUS_RE = re.compile(r"^exceeded retry limit, last status: (\d{3})\b")
+
+
+def codex_http_status(message: object) -> int | None:
+    """Codex 错误信息开头它自己拼的 HTTP 状态码（100–599），认不出 → None。只认两个 Codex 自有前缀，
+    不在别处找数字（模型 / 中转回来的自由文本里出现的「401」不算）。"""
+    if not isinstance(message, str):
+        return None
+    m = _CODEX_STATUS_RE.match(message) or _CODEX_RETRY_STATUS_RE.match(message)
+    if not m:
+        return None
+    code = int(m.group(1))
+    return code if 100 <= code <= 599 else None
 
 
 def codex_failure_class(ev: dict) -> str | None:

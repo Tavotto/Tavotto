@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import { visibleFigureCards } from '@/lib/figureGroup'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { Card } from '@/components/ui/Card'
@@ -9,6 +10,7 @@ import { statusLabel } from '@/lib/readinessText'
 import { formatCm } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import { addFigureToLayout } from '@/store/workspace'
+import { useAssetStore } from '@/store/assetStore'
 
 /** 空画布上最多摆几张 */
 export const PICK_LIMIT = 4
@@ -47,7 +49,10 @@ export function pickColumns(paperW: number, count: number): number {
  * 卡片尺寸不变，下方那行说明换成「只能整体移动、缩放、裁剪」。素材在放上画布之前没有元素清单（manifest 要渲染之后才有），
  * 所以这里**不画**「能改哪些元素」的框——没有真实数据就不画假框。
  */
-export function EmptyPickCards({ panels, paperW, paperH }: { panels: PanelInfo[]; paperW: number; paperH: number }) {
+export function EmptyPickCards({ panels: files, paperW, paperH }: { panels: PanelInfo[]; paperW: number; paperH: number }) {
+  // 一张卡 = 一张图（ADR 0184）：同一张图的几份文件只出主文件那一张；从脚本进来只出范围里脚本的图
+  const viewScope = useAssetStore((s) => s.viewScope)
+  const panels = useMemo(() => visibleFigureCards(files, viewScope), [files, viewScope])
   useTranslation('workspace')
   const [placed, setPlaced] = useState<ReadonlySet<string>>(new Set())
   const [layoutOnlyHover, setLayoutOnlyHover] = useState(false)

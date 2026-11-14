@@ -1,3 +1,4 @@
+import type { ProjectEntry } from '@/lib/api'
 import { useEffect, useRef, useState, type DragEvent } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 import {
@@ -95,7 +96,7 @@ export function HomeView({
   error: string | null
   busyPath: string | null
   /** 打开一个项目目录；成功回 true（失败的话错误已经摆在这一屏上） */
-  openPath: (path: string) => Promise<boolean>
+  openPath: (path: string, entry?: ProjectEntry) => Promise<boolean>
   onShowAll: () => void
 }) {
   const { t } = useTranslation('project')
@@ -216,7 +217,7 @@ type Importer = ReturnType<typeof useScriptImport>
  * 多拖了几个说一句只开了哪个。拿不到路径的宿主（浏览器、Linux、旧 WebView2）退回选择器并说清是
  * 哪个文件。同一次放下两条路都会到，谁先谁后不定，由 `createDropArbiter` 仲裁。
  */
-function useScriptImport(openPath: (path: string) => Promise<boolean>) {
+function useScriptImport(openPath: (path: string, entry?: ProjectEntry) => Promise<boolean>) {
   const { t } = useTranslation('project')
   const [browsing, setBrowsing] = useState(false)
   /**
@@ -240,8 +241,9 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
    * 文件名带首尾空白（` plot.py`）不运行：后端各脚本端点按约定 `strip()` 脚本名，会找不到它、
    * 或在同目录还有 `plot.py` 时静默跑错脚本（Codex #1267）——只开项目，后端统一支持之后（#1278）再放开
    */
+  // 进入方式决定素材区的范围（ADR 0184 §三）：带脚本 = 只看脚本的图；只给文件夹 = 整个文件夹
   const openFolder = (folder: string, script: string | null): Promise<boolean> =>
-    openPath(folder).then((ok) => {
+    openPath(folder, script && script === script.trim() ? { entry: 'script', script } : { entry: 'folder' }).then((ok) => {
       if (ok && script && script === script.trim()) void useProjectPreparationStore.getState().open(scriptTarget(script, { reuse: true }), { run: true })
       return ok
     })
@@ -251,14 +253,14 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
    * 然后由画布右下的入口卡提议「生成可编辑版本」（原脚本不动）。后缀只是粗判，内容由后端复核。
    */
   const openForeign = (folder: string, script: string, language: ForeignLanguage): Promise<boolean> =>
-    openPath(folder).then((ok) => {
+    openPath(folder, { entry: 'script', script }).then((ok) => {
       if (ok && script === script.trim()) useForeignScriptStore.getState().setOffer({ script, language })
       return ok
     })
 
   /** 笔记本（ADR 0179）：打开所在文件夹，再抽成同名 .py 运行；`skipped` = 同一次放下里没处理的个数 */
   const openNotebook = (folder: string, name: string, skipped = 0): Promise<boolean> =>
-    openPath(folder).then((ok) => {
+    openPath(folder, { entry: 'script', script: name }).then((ok) => {
       // 项目已经打开：后面的话（已生成 / 没成的原因 + 反馈按钮）走通知轨，由 runNotebook 自己说
       if (ok) void runNotebook({ path: name }, { skipped })
       return ok
@@ -422,7 +424,7 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
         if (!pending) {
           setBrowsing(false)
           setNotice(null)
-          void openPath(path)
+          void openPath(path, { entry: 'folder' })
           return
         }
         // 先核「这个文件夹里确有这个文件」再开项目：选错了不动当前状态、对话框不关，换个文件夹再选
@@ -588,7 +590,7 @@ function Returning({
 }: {
   importer: Importer
   dragging: boolean
-  openPath: (path: string) => Promise<boolean>
+  openPath: (path: string, entry?: ProjectEntry) => Promise<boolean>
 }) {
   const { t } = useTranslation('project')
   const sample = useSampleAvailability()
@@ -649,7 +651,7 @@ function Wordmark({ size = 'md' }: { size?: 'sm' | 'md' }) {
  * 最近项目 chip 直接打开**最近打开的那一个**（更多的在下面的卡片网格里，不再套一层下拉）；
  * 没有可打开的最近项目时句子只剩脚本那一半。句式整句进翻译（`Trans`），语序各语言自己定。
  */
-function Narrative({ importer, openPath }: { importer: Importer; openPath: (path: string) => Promise<boolean> }) {
+function Narrative({ importer, openPath }: { importer: Importer; openPath: (path: string, entry?: ProjectEntry) => Promise<boolean> }) {
   const { t } = useTranslation('project')
   const recent = useProjectStore((s) => s.recent.find((r) => r.exists))
   const switching = useProjectStore((s) => s.switching)
@@ -723,7 +725,7 @@ function RecentSection({
 }: {
   variant: HomeVariant
   busyPath: string | null
-  openPath: (path: string) => Promise<boolean>
+  openPath: (path: string, entry?: ProjectEntry) => Promise<boolean>
   onShowAll: () => void
 }) {
   const { t } = useTranslation('project')
