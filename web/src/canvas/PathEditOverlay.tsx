@@ -28,8 +28,8 @@ export function PenDraft({ t }: { t: ViewTransform }) {
   if (!d || !d.nodes.length) return null
   const v = toView(t)
   const sw = Math.max(mmToPx(MM_PER_PT, t), 0.5) // 新路径默认 1 pt
-  const last = d.nodes[d.nodes.length - 1]
-  const lastHasHandles = last.out[0] !== last.p[0] || last.out[1] !== last.p[1]
+  // 画过的平滑点都把手柄亮出来（不只最后一个）：拉完第二个点再去点第三个时，还看得出第二个点的切线方向
+  const withHandles = d.nodes.filter((n) => n.out[0] !== n.p[0] || n.out[1] !== n.p[1] || n.in[0] !== n.p[0] || n.in[1] !== n.p[1])
   return (
     <g data-pen-draft style={{ pointerEvents: 'none' }}>
       <path d={subpathD(d, v)} fill="none" stroke={DRAW_COLOR} strokeWidth={sw} strokeLinejoin="round" strokeLinecap="round" />
@@ -44,16 +44,18 @@ export function PenDraft({ t }: { t: ViewTransform }) {
           strokeWidth={1}
         />
       )}
-      {lastHasHandles && (
-        <g data-pen-handles>
-          {(['in', 'out'] as const).map((w) => (
-            <g key={w}>
-              <line x1={v(last.p)[0]} y1={v(last.p)[1]} x2={v(last[w])[0]} y2={v(last[w])[1]} stroke={SEL} strokeWidth={1} />
-              <circle cx={v(last[w])[0]} cy={v(last[w])[1]} r={HANDLE_R} fill={SEL} />
-            </g>
-          ))}
+      {withHandles.map((n, k) => (
+        <g key={k} data-pen-handles>
+          {(['in', 'out'] as const).map((w) =>
+            n[w][0] === n.p[0] && n[w][1] === n.p[1] ? null : (
+              <g key={w}>
+                <line x1={v(n.p)[0]} y1={v(n.p)[1]} x2={v(n[w])[0]} y2={v(n[w])[1]} stroke={SEL} strokeWidth={1} />
+                <circle cx={v(n[w])[0]} cy={v(n[w])[1]} r={HANDLE_R} fill={SEL} />
+              </g>
+            ),
+          )}
         </g>
-      )}
+      ))}
       {d.nodes.map((n, i) => (
         <rect
           key={i}
