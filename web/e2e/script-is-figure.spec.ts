@@ -65,11 +65,17 @@ const TINY_PDF = Buffer.from(
 const TINY_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" width="72pt" height="54pt" viewBox="0 0 72 54"><rect width="72" height="54" fill="#fff"/></svg>\n'
 
-/** 素材抽屉默认就开着：没开才点左栏「素材」（再点一下会把它关上） */
+/**
+ * 打开素材抽屉（幂等）：按左栏按钮的 `aria-expanded` 判断开没开——抽屉有开合动画，`isVisible` 会在
+ * 合上的过程中仍为真，按它决定点不点会把抽屉点关（Windows CI 上实际发生过）。
+ */
 async function showAssets(page: Page) {
-  const list = page.locator('[data-asset-list]')
-  if (!(await list.isVisible())) await page.locator('[data-rail="assets"]').click()
-  await expect(list).toBeVisible({ timeout: 30_000 })
+  const rail = page.locator('[data-rail="assets"]')
+  await expect(async () => {
+    if ((await rail.getAttribute('aria-expanded')) !== 'true') await rail.click()
+    await expect(rail).toHaveAttribute('aria-expanded', 'true', { timeout: 2_000 })
+    await expect(page.locator('[data-asset-list]')).toBeVisible({ timeout: 2_000 })
+  }).toPass({ timeout: 30_000 })
 }
 
 /** 素材区里真实渲染出来的图卡的文件 id（只取卡本身：`role="option"`） */
@@ -178,6 +184,8 @@ test(
       await page.goto(a.baseURL)
 
       await dropFile(page, path.join(project, 'plot.R'), 'text/plain')
+      // 先等「生成可编辑版本」卡出现：打开项目后的这一阵界面还在变，之后再看素材区
+      await expect(page.locator('[data-foreign-card="r"]')).toBeVisible({ timeout: 60_000 })
       await showAssets(page)
       await expect.poll(() => cardIds(page), { timeout: 60_000 }).toEqual(['fig2.pdf'])
       await expect(page.locator('[data-asset-list] [data-card="fig2.pdf"]')).toBeInViewport()
