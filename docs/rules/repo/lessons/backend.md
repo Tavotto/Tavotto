@@ -2,6 +2,12 @@
 
 > 格式与规矩见 `docs/rules/repo/lessons/README.md`。写入只走每日复盘，别直接改。
 
+### L-028 开发脚本造假项目前先 setdefault TAVOTTO_DATA_DIR
+- 类: 别这样
+- Seen: 2026-09-22
+- 为什么: 用 mkdtemp 建假项目后直接 open_project 的脚本没设数据目录，每跑一次往用户真实最近列表塞一条，还会让 worker.python 指向别会话的路径。pytest 本身有 conftest 隔离，脚本没有。
+- 证据: #497
+
 ### L-048 用例的预期路径也要问解释器，不用 sysconfig 自算
 - 类: 别这样
 - Seen: 2026-09-22
@@ -121,6 +127,12 @@
 - Seen: 2026-11-02
 - 为什么: 启动时迁移旧数据的 8 秒预算只在步骤之间查剩余，SQLite backup 遇源库独占锁会一直等，应用打不开；预算耗尽跳过的历史库随后被启动流程新建成空库，下次迁移见目标已存在就跳过，旧数据永久丢失。评审连报两条 P1。
 - 证据: #1603
+
+### L-126 新 worktree 先补齐 gitignore 的内置字体，大片同类红先单跑看 stderr
+- 类: 别这样
+- Seen: 2026-11-03
+- 为什么: git worktree add 不带被忽略的 src/tavotto/resources/fonts，约 170 条导出、公式、字体用例假红（backend_unavailable、child_failed），看着像改坏了。先跑 scripts/fetch_fonts.py 或从主工作区拷。
+- 证据: （会话记录，无编号）
 
 ### L-128 带锁的不变式用确定性交错反证，多线程跑几轮没红不算证据
 - 类: 别这样
