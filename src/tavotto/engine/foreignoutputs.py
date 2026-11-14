@@ -249,7 +249,8 @@ def _ggsave_dir(filename: str, args: list[list], positional: list[list]) -> str 
             path_arg = value
     if path_arg is None and len(positional) > 3:
         path_arg = positional[3]
-    if path_arg is None:
+    # `path = NULL` 是 ggsave 的缺省值：文件名原样（Codex #1906 复核）
+    if path_arg is None or path_arg == [("id", "NULL")]:
         return filename
     base = _literal(path_arg, _R_JOINERS)
     if not base:

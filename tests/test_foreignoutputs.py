@@ -32,6 +32,9 @@ M = sourcelang.MATLAB
         ('ggsave("fig.pdf", p, "pdf", "plots")', ["plots/fig.pdf"]),
         ('ggsave(filename = "fig.png", path = file.path("out", "png"))', ["out/png/fig.png"]),
         ('ggsave("fig.pdf", path = out_dir)', []),
+        # path = NULL 是 ggsave 的缺省值：文件名原样（Codex #1906 复核）
+        ('ggsave("fig.pdf", path = NULL)', ["fig.pdf"]),
+        ('ggsave("fig.pdf", p, "pdf", NULL)', ["fig.pdf"]),
         # file.path 的第一段是根：保留，不变成相对路径（Codex #1906）
         ('ggsave(file.path("/tmp", "fig.pdf"))', ["/tmp/fig.pdf"]),
         ('ggsave(file.path("/", "fig.pdf"))', ["/fig.pdf"]),
