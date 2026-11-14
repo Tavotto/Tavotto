@@ -530,3 +530,44 @@ describe('远程目录里还没下载的刊：选中时的胶囊提示', () => {
     expect(useDocumentStore.getState().doc.profile?.journalRef).toBeUndefined()
   })
 })
+
+describe('historical panel width display', () => {
+  it.each(['nature-chemistry', 'nature-materials', 'nature-physics'])('shows historical panel advice from the saved binding for %s', async (id) => {
+    useJournalCatalogStore.setState({ catalog: loadCatalog() })
+    act(() => selectJournal(id))
+    const before = structuredClone(useDocumentStore.getState().doc.profile)
+    await mount(<JournalRequirements />)
+    const row = q('[data-journal-row="info.width_double_mm"]')!
+    expect(row.textContent).toContain('图版最大宽（历史 AIP 建议）')
+    expect(row.textContent).toContain('≤ 180 mm')
+    expect(row.textContent).not.toContain('双栏')
+    expect(row.querySelector('[data-journal-panel-history]')?.textContent).toContain('现行要求未知')
+    await click(row.querySelector('[data-journal-source]'))
+    expect(q('[data-journal-sentence]')?.textContent).toBe('图版最大宽（历史 AIP 建议） ≤ 180 mm')
+    expect(q('[data-journal-open]')?.getAttribute('href')).toContain('nature.com/')
+    expect(q('[data-journal-coverage]')).not.toBeNull()
+    expect(useDocumentStore.getState().doc.profile).toEqual(before)
+  })
+
+  it('does not reclassify evidence with a submission stage', async () => {
+    useJournalCatalogStore.setState({ catalog: loadCatalog() })
+    act(() => selectJournal('nature-chemistry'))
+    const profile = structuredClone(useDocumentStore.getState().doc.profile!)
+    profile.journalSources!['info.width_double_mm'].stage = 'submission'
+    act(() => useDocumentStore.setState((s) => ({ doc: { ...s.doc, profile } })))
+    await mount(<JournalRequirements />)
+    const row = q('[data-journal-row="info.width_double_mm"]')!
+    expect(row.textContent).toContain('双栏宽')
+    expect(row.querySelector('[data-journal-panel-history]')).toBeNull()
+  })
+
+  it('explains the historical-source limitation in English', async () => {
+    useJournalCatalogStore.setState({ catalog: loadCatalog() })
+    act(() => selectJournal('nature-chemistry'))
+    await setLocale('en-US')
+    await mount(<JournalRequirements />)
+    const row = q('[data-journal-row="info.width_double_mm"]')!
+    expect(row.textContent).toContain('Panel max (historical AIP advice)')
+    expect(row.querySelector('[data-journal-panel-history]')?.textContent).toContain('Current requirements are unverified')
+  })
+})
