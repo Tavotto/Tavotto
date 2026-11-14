@@ -449,7 +449,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 命令数 / 失败 / 被拒（`status=declined`）/ 起了没结束、文件改动数与工作区内外（`-C` 目录，只给计数，不给路径）、是否改到目标文件名、
 `error` / `turn.failed` 次数、最后事件与最后 item 类型（`CLI_EVENT_TYPES` / `CLI_ITEM_TYPES`，集合外归 `other`）、首个事件延迟 /
 最长无事件间隔 / 末尾空闲（毫秒）、接口是 `official` 还是 `relay`（只看 base_url 有没有，不带地址与标签）。判据只用事件里**结构化**字段，
-不匹配自由文本（Codex 的 error 没有结构化 code，所以只计数）。写入两处：`agent_run` span 的 `cli_*` / `endpoint_kind` attributes
+不匹配自由文本（Codex 的 error 没有结构化 code，所以只计数）；唯一例外是 `fail_status`：最近一次 `error` / `turn.failed` 的 message **开头**是 Codex 自己拼的 `unexpected status <三位数>` 或 `exceeded retry limit, last status: <三位数>` 时只取那个 100–599 的数字（`codex_http_status`，原文不留；`merge_run_facts` 取最后一个非空的），进 `cli_fail_status`——第三方中转回 400 / 404 这类不在失败分类表里的状态时，诊断包靠它分清「协议不认」与「密钥 / 额度」（2026-11-14 一份用户反馈：中转每次几秒就失败、包里定不了根因）。写入两处：`agent_run` span 的 `cli_*` / `endpoint_kind` attributes
 （登记在 `exectrace.ATTRIBUTES`，词表由 `ai_bridge` 用上述常量登记），与「AI 会话结束」日志（`_cli_log_facts`，多次进程用
 `merge_run_facts` 合并；码类经 `logsafe.known` 放行）。新增事实先加常量集合 / ATTRIBUTES，再由 `tests/test_codex_run_facts.py` 钉住。
 会话里的 `cli_runs` 是 `SESSION_INTERNAL_KEYS`，不进任何响应。
