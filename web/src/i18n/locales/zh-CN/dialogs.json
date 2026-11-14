@@ -2466,6 +2466,8 @@
     "nanophotonicsUnknownWarning": "此期刊的分辨率来源未记录或无法识别；请核对当前指南和本项目实际生效设置。",
     "nanophotonicsLegacyWarning": "保存的 Nanophotonics De Gruyter 分辨率来源可能已过时；该刊现由 Wiley 出版。请核对当前指南、图类条件及项目实际生效设置；此提示不归因具体问题。",
     "nanophotonicsGuide": "查看 Wiley 作者指南",
+    "leukosScopeWarning": "此排版保存的历史来源针对终稿并区分图类；当前预检未区分投稿阶段和图类，现行要求未知，请核对期刊指南。",
+    "leukosProblemScopeWarning": "所列画布保存的历史来源针对终稿并区分图类；预检未区分投稿阶段和图类，现行要求未知。此提示不能确认任何问题或阈值来自该来源。",
     "jperStageWarning": "此排版保存的来源对应历史录用稿最终版指南；当前预检未区分投稿阶段。当前要求尚未核实，请核对期刊指南。",
     "jperProblemGeneralWarning": "所列画布保存的历史来源针对录用后最终稿；预检未区分投稿阶段，当前指南尚未核实。此提示不能确认任何问题或阈值来自该来源。",
     "sourceIdentityWarning": "此排版保存的一个出处关联的历史采集文本页眉为 Adult，所选期刊为 Child；来源身份待核，请核对作者指南。现有预检规则未改变。",

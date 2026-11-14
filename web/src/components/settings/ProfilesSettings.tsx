@@ -35,6 +35,7 @@ import { JournalPicker } from '../journal/JournalPicker'
 import { JournalRequirements } from '../journal/JournalRequirements'
 import { JournalSourceIdentityWarning } from '../journal/JournalSourceIdentityWarning'
 import { JournalJperStageWarning } from '../journal/JournalJperStageWarning'
+import { JournalLeukosScopeWarning } from '../journal/JournalLeukosScopeWarning'
 import { JournalNanophotonicsWarning } from '../journal/JournalNanophotonicsWarning'
 import { JournalFactsView } from '../journal/JournalFactsView'
 import { useDocumentStore } from '@/store/documentStore'
@@ -634,6 +635,7 @@ export function ProfilesSettings({
             )}
             {journalOn && doc.profile?.journalRef && <JournalSourceIdentityWarning />}
             {journalOn && doc.profile?.journalRef && <JournalJperStageWarning />}
+            {journalOn && doc.profile?.journalRef && <JournalLeukosScopeWarning />}
             {journalOn && doc.profile?.journalRef && <JournalNanophotonicsWarning />}
             {journalOn && doc.profile?.journalRef && (
               <DiagnosticDisclosure variant="row" data-journal-disclosure title={translate('journal.requirements', { ns: 'dialogs' })}>

@@ -67,6 +67,7 @@ import { ProblemTreeContext, type ProblemTreeCtx } from './problemTree'
 import { GroupNode } from './ProblemTreeRows'
 import { useScopedProblems } from './useProblemScope'
 import { JperProblemStageNotice } from './JperProblemStageNotice'
+import { LeukosProblemScopeNotice } from './LeukosProblemScopeNotice'
 import { NanophotonicsProblemNotice } from './NanophotonicsProblemNotice'
 
 
@@ -462,6 +463,7 @@ export function ProblemPanel() {
       ) : shown.length === 0 ? (
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           <JperProblemStageNotice issues={shown} emptyScope={scope === 'document' ? 'document' : 'active'} />
+          <LeukosProblemScopeNotice issues={shown} emptyScope={scope === 'document' ? 'document' : 'active'} />
           <NanophotonicsProblemNotice scope={scope === 'document' ? 'document' : 'active'} />
         {all.length === 0 ? (
           /* 空态给证据：按哪套规范、查了几张图、什么时候——「没问题」得说得出凭什么 */
@@ -498,6 +500,7 @@ export function ProblemPanel() {
             className="min-h-0 flex-1 overflow-y-auto pb-2"
           >
             <JperProblemStageNotice issues={shown} />
+            <LeukosProblemScopeNotice issues={shown} />
             <NanophotonicsProblemNotice scope={scope === 'document' ? 'document' : 'active'} inTree />
             {single ? (
               <li data-problem-tier="actionable">

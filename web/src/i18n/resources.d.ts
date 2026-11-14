@@ -1178,6 +1178,8 @@ export default interface Resources {
       "hasRequirement": "有要求",
       "jperProblemGeneralWarning": "所列画布保存的历史来源针对录用后最终稿；预检未区分投稿阶段，当前指南尚未核实。此提示不能确认任何问题或阈值来自该来源。",
       "jperStageWarning": "此排版保存的来源对应历史录用稿最终版指南；当前预检未区分投稿阶段。当前要求尚未核实，请核对期刊指南。",
+      "leukosProblemScopeWarning": "所列画布保存的历史来源针对终稿并区分图类；预检未区分投稿阶段和图类，现行要求未知。此提示不能确认任何问题或阈值来自该来源。",
+      "leukosScopeWarning": "此排版保存的历史来源针对终稿并区分图类；当前预检未区分投稿阶段和图类，现行要求未知，请核对期刊指南。",
       "listAria": "期刊列表",
       "nanophotonicsGuide": "查看 Wiley 作者指南",
       "nanophotonicsLegacyWarning": "保存的 Nanophotonics De Gruyter 分辨率来源可能已过时；该刊现由 Wiley 出版。请核对当前指南、图类条件及项目实际生效设置；此提示不归因具体问题。",

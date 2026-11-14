@@ -25,6 +25,7 @@ import { useUiStore } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { runValidation, useValidationStore } from '@/store/validationStore'
 import { seedExactRender } from '@/test/renderFixtures'
+import { leukosSourceFixture } from '@/test/leukosSource.fixture'
 import { emptyProject, type PanelObject } from '@/types/document'
 
 /**
@@ -2172,5 +2173,80 @@ describe('Nanophotonics 来源未知提示', () => {
     await act(async () => useUiStore.setState({ problemScope: 'canvas' }))
     expect(container.querySelector('[data-nanophotonics-problem-notice="unknown"]')?.textContent).toContain('未记来源')
     expect(container.querySelector('[data-nanophotonics-problem-notice="legacy"]')).toBeNull()
+  })
+})
+
+describe('LEUKOS saved scope notice', () => {
+  const source = leukosSourceFixture()
+  const binding = (id = 'leukos', value = source) => ({
+    id: 'journal-base-v1', journalRef: { id, label: 'LEUKOS', catalogRev: 6, retrieved: '2026-11-03' },
+    journalSources: { min_raster_dpi: value }, journal: { min_raster_dpi: 300 },
+  })
+
+  it('retains scoped saved-source context with no findings, only after a completed check', async () => {
+    await seed()
+    const state = useDocumentStore.getState()
+    const active = state.canvases.find((c) => c.id === state.activeCanvasId)!
+    useDocumentStore.setState({
+      doc: { ...state.doc, name: '当前画布', profile: { id: 'free-form-v1' } },
+      canvases: [active, { ...active, id: 'leukos-b', name: '历史画布', profile: binding() as never }],
+    })
+    useValidationStore.setState({ issues: [], results: [], ready: true, failed: false, queued: false, running: false })
+    useUiStore.setState({ problemScope: 'document' })
+    const before = structuredClone(useDocumentStore.getState().doc)
+    await mount(<ProblemPanel />)
+    const notice = () => container.querySelector('[data-leukos-problem-scope-notice]')
+    expect(notice()?.textContent).toContain('历史画布')
+    expect(notice()?.textContent).toContain('预检未区分投稿阶段和图类')
+    expect(notice()?.textContent).toContain('现行要求未知')
+    expect(notice()?.textContent).toContain('不能确认任何问题或阈值来自该来源')
+    expect(container.querySelector('[data-problem-evidence]')).not.toBeNull()
+    expect(useDocumentStore.getState().doc).toEqual(before)
+    await act(async () => useUiStore.setState({ problemScope: 'canvas' }))
+    expect(notice()).toBeNull()
+    await act(async () => useDocumentStore.setState((s) => ({ doc: { ...s.doc, profile: binding() as never } })))
+    expect(notice()?.textContent).toContain('当前画布')
+    expect(notice()?.textContent).not.toContain('历史画布')
+    await act(async () => useValidationStore.setState({ ready: false }))
+    expect(notice()).toBeNull()
+  })
+
+  it('uses each issue canvas binding and preserves uncertainty in both languages', async () => {
+    await seed()
+    const state = useDocumentStore.getState(); const a = state.activeCanvasId
+    const active = state.canvases.find((c) => c.id === a)!
+    const base = useValidationStore.getState().issues[0]
+    expect(base).toBeTruthy()
+    const issue = (canvasId: string) => ({ ...base, issueId: `issue-${canvasId}`, objectRef: { ...base.objectRef, canvasId } })
+    useDocumentStore.setState({
+      doc: { ...state.doc, name: '实时画布', profile: binding() as never },
+      canvases: [
+        { ...active, name: '陈旧名称', profile: binding('other') as never },
+        { ...active, id: 'leukos-b', name: '历史画布', profile: binding() as never },
+        { ...active, id: 'other-c', name: '无关画布', profile: binding('other') as never },
+      ],
+    })
+    const issues = [issue(a), issue('leukos-b'), issue('other-c')]
+    useValidationStore.setState({ issues, ready: true, failed: false, queued: false, running: false })
+    useUiStore.setState({ problemScope: 'document' })
+    const before = structuredClone(useDocumentStore.getState().doc)
+    await mount(<ProblemPanel />)
+    const notice = () => container.querySelector('[data-leukos-problem-scope-notice]')
+    expect(notice()?.textContent).toContain('实时画布 · 1')
+    expect(notice()?.textContent).toContain('历史画布 · 2')
+    expect(notice()?.textContent).not.toContain('无关画布')
+    expect(notice()?.textContent).toContain('不能确认任何问题或阈值来自该来源')
+    expect(notice()?.textContent).not.toContain('300')
+    expect(useDocumentStore.getState().doc).toEqual(before)
+    expect(useValidationStore.getState().issues).toEqual(issues)
+    await act(async () => { await setLocale('en-US') })
+    expect(notice()?.textContent).toContain('does not distinguish submission stages or figure types')
+    expect(notice()?.textContent).toContain('current requirements are unverified')
+    expect(notice()?.textContent).toContain('does not attribute any finding or threshold')
+    await act(async () => useUiStore.setState({ problemScope: 'canvas' }))
+    expect(notice()?.textContent).toContain('实时画布')
+    expect(notice()?.textContent).not.toContain('历史画布')
+    await act(async () => useDocumentStore.setState((s) => ({ doc: { ...s.doc, profile: binding('other') as never } })))
+    expect(notice()).toBeNull()
   })
 })
