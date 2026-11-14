@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { literal } from '@/i18n'
 import { useKeyboard } from '@/hooks/useKeyboard'
 import { copySelectionStyle, pasteSelectionStyle } from '@/store/actions'
-import { APPEARANCE_COMMANDS, applyEyedropper } from '@/store/appearanceActions'
+import { applyEyedropper } from '@/store/appearanceActions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -65,7 +65,6 @@ async function seed(list: CanvasObject[], sel: string[]) {
   useDocumentStore.setState({ past: [], future: [] })
   useSelectionStore.getState().set(sel)
 }
-const run = (id: string) => act(() => APPEARANCE_COMMANDS.find((c) => c.id === id)!.run())
 
 function Host() {
   useKeyboard()
