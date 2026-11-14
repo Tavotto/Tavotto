@@ -20,6 +20,7 @@ import type {
   ArrowObject,
   CanvasObject,
   PanelObject,
+  PathObject,
   ShapeObject,
   TextObject,
 } from '@/types/document'
@@ -167,8 +168,8 @@ type Annotation = ReturnType<typeof annotationsIn>[number]
 /** 图内编辑态里 Shift 加选进来的画布标注（与 ElementInspector 同一个筛法） */
 export function annotationsIn(objects: readonly CanvasObject[], selIds: readonly string[]) {
   return objects.filter(
-    (o): o is TextObject | ArrowObject | ShapeObject =>
-      selIds.includes(o.id) && (o.type === 'text' || o.type === 'arrow' || o.type === 'shape'),
+    (o): o is TextObject | ArrowObject | ShapeObject | PathObject =>
+      selIds.includes(o.id) && (o.type === 'text' || o.type === 'arrow' || o.type === 'shape' || o.type === 'path'),
   )
 }
 

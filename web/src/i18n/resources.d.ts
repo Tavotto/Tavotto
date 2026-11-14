@@ -759,6 +759,7 @@ export default interface Resources {
       "arrow": "箭头",
       "emptyText": "空文字",
       "panel": "图",
+      "path": "路径",
       "shape": "形状",
       "text": "文字",
       "unknown": "新版对象"
@@ -1473,6 +1474,10 @@ export default interface Resources {
         "canvas-settings": {
           "keywords": "canvas page settings hbsz huabu",
           "label": "画布设置"
+        },
+        "convert-to-path": {
+          "keywords": "convert path zwlj 路径 钢笔",
+          "label": "转为路径"
         },
         "cycle-overlap": {
           "keywords": "cycle overlap twin axis lh lunhuan cd chongdie sszx shuangzongzhou",
@@ -6598,6 +6603,8 @@ export default interface Resources {
       "clearGuides": "清除参考线",
       "clearJournal": "取消按期刊检查",
       "clearProp": "恢复{{prop}}",
+      "convertToPath": "转为路径",
+      "convertToPathCount": "把 {{count}} 个对象转为路径",
       "createLayoutGroup": "创建{{kind}}",
       "deleteGuide": "删除参考线",
       "deleteObject": "删除 {{name}}",
@@ -7394,6 +7401,7 @@ export default interface Resources {
       "arrangeRef": "参照：{{ref}}",
       "changeKind": "更改为",
       "connectSource": "连接源脚本",
+      "convertToPath": "转为路径",
       "copy": "复制",
       "copyAsAnnotation": "复制为标注",
       "cropRotatedReason": "旋转过的图暂不能裁剪，先取消旋转",

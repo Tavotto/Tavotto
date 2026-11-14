@@ -23,6 +23,7 @@ import {
   RefreshCw,
   RotateCcw,
   Shapes,
+  Spline,
   SlidersHorizontal,
   Trash2,
   Ungroup,
@@ -65,6 +66,7 @@ import {
   setObjectsHidden,
   setObjectsLocked,
   switchObjectKind,
+  convertToPath,
   toggleHidden,
   toggleLocked,
   triStateOf,
@@ -85,6 +87,7 @@ import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { openArrangeInInspector } from './context-bar/openArrange'
+import { canConvertToPath } from '@/lib/convertToPath'
 import type { CanvasObject, PanelObject } from '@/types/document'
 import { objectLabel, panelRotation } from '@/types/document'
 import { isAdoptedPanel } from '@/lib/artifactValidation'
@@ -98,6 +101,7 @@ import { isAdoptedPanel } from '@/lib/artifactValidation'
  * 这里不算几何、不判就绪度、不碰 override 数组：
  *
  *   排列 / 成组   alignSelectedTo / groupSelected / ungroupSelected（ADR 0036，T-91）
+ *   转为路径      convertToPath（形状 / 箭头 → 自由路径，ADR 0185；判据 `lib/convertToPath`）
  *   重新构建      rebuildPanel（作废热会话 + 按当前 overrides 重画；不进历史）
  *   恢复图内修改  resetOverridesConfirmed（同属性页「重置到脚本原始」；先问一句）
  *   同步修改      openSyncOverrides（打开 `SyncOverridesHost` 那扇窗；有修改且有同脚本兄弟图才摆）
@@ -215,6 +219,7 @@ export function ObjectContextMenu({
       {kind === 'multi' && <MultiItems selected={selected} run={run} />}
 
       {kind === 'mark' && <ChangeKindSub objs={[obj]} run={run} />}
+      {kind === 'mark' && <ConvertToPathItem objs={[obj]} run={run} />}
 
       {kind !== 'multi' && <OpenInspectorItem run={run} />}
 
@@ -394,6 +399,7 @@ function MultiItems({
         </MenuItem>
       )}
       <ChangeKindSub objs={selected} run={run} />
+      <ConvertToPathItem objs={selected} run={run} />
       <MenuItem
         icon={SlidersHorizontal}
         data-quick-item="open-arrange"
@@ -445,6 +451,26 @@ function ChangeKindSub({
         ))}
       </MenuRadioGroup>
     </MenuSub>
+  )
+}
+
+/**
+ * 「转为路径」（ADR 0185）：选中的形状 / 箭头换成同 id 的自由路径，画面不动。判据只有
+ * `lib/convertToPath.canConvertToPath`（选区里每个都能转才摆），写入只有 `convertToPath`——这里只发意图。
+ */
+function ConvertToPathItem({
+  objs,
+  run,
+}: {
+  objs: CanvasObject[]
+  run: (fn: () => void) => () => void
+}) {
+  if (!objs.length || !objs.every(canConvertToPath)) return null
+  const ids = objs.map((o) => o.id)
+  return (
+    <MenuItem icon={Spline} data-quick-item="convert-to-path" onSelect={run(() => convertToPath(ids))}>
+      {qe('convertToPath')}
+    </MenuItem>
   )
 }
 

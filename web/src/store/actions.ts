@@ -111,6 +111,7 @@ import { applyV2, pickV2OnlyJournal, type V2IndexEntry, type V2Patch } from '@/l
 import { useJournalV2Store } from './journalV2Store'
 import { useTimelineStore } from './timelineStore'
 import { hasPendingStyleWork } from './styleWork'
+import { canConvertToPath, toPathObject } from '@/lib/convertToPath'
 import { fitStageNow } from '@/store/zoomToSelection'
 
 /** 本文件的历史标签与状态提示都在 workspace 命名空间下 */
@@ -1165,6 +1166,32 @@ export function switchObjectKind(ids: string[], target: SwitchKind) {
     d.objects.forEach((o, i) => {
       const switched = next.get(o.id)
       if (switched) d.objects[i] = switched
+    })
+  })
+}
+
+/**
+ * 「转为路径」（ADR 0185 §二）：形状 / 箭头 → 自由路径 `path`。**一条 commit、一条历史**。
+ *
+ * 与 `switchObjectKind` 同三条纪律：不换 id、就地替换（数组位置 = z 序不动）、在 draft 外面算
+ * （`lib/convertToPath.toPathObject` 是纯函数，画面逐点不动）。选区里不能转的对象（文字 / 面板 / 已经是路径）
+ * 原样不动、能转的照转；一个都转不了就什么都不做（不进历史、不打断手势）。单向——撤销负责回去。
+ */
+export function convertToPath(ids: string[]) {
+  const next = new Map<string, CanvasObject>()
+  for (const o of doc().objects) {
+    if (!ids.includes(o.id) || !canConvertToPath(o)) continue
+    const converted = toPathObject(o)
+    if (converted) next.set(o.id, converted)
+  }
+  if (!next.size) return
+  finishActiveGesture()
+  const label =
+    next.size === 1 ? hist('convertToPath') : hist('convertToPathCount', { count: next.size })
+  commit(label, (d) => {
+    d.objects.forEach((o, i) => {
+      const converted = next.get(o.id)
+      if (converted) d.objects[i] = converted
     })
   })
 }
