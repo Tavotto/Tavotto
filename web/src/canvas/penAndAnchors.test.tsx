@@ -225,6 +225,9 @@ describe('直接选择（锚点编辑）', () => {
       expect(after[i][0]).toBeCloseTo(before[i][0], 9)
       expect(after[i][1]).toBeCloseTo(before[i][1], 9)
     }
+    // 拖的那个在页面上跟着指针走（旋转过的也一样：位移先转回对象的未旋转空间再用）
+    expect(after[1][0]).toBeCloseTo(before[1][0], 9)
+    expect(after[1][1]).toBeCloseTo(before[1][1] - 15, 9)
     expect(onlyPath().h).toBeGreaterThan(base.h)
     useDocumentStore.getState().undo()
     expect(onlyPath()).toEqual(base)
