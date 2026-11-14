@@ -640,6 +640,46 @@
       "eyedropper-tool": {
         "keywords": "eyedropper pick color xg 吸管 取色",
         "label": "吸管"
+      },
+      "pathfinder-unite": {
+        "keywords": "unite union merge combine hb 合并 联集 路径查找器",
+        "label": "合并"
+      },
+      "pathfinder-minus-front": {
+        "keywords": "minus front subtract jqdc 减去 顶层 路径查找器",
+        "label": "减去顶层"
+      },
+      "pathfinder-intersect": {
+        "keywords": "intersect overlap xj 相交 交集 路径查找器",
+        "label": "相交"
+      },
+      "pathfinder-exclude": {
+        "keywords": "exclude xor pccd 排除 重叠 路径查找器",
+        "label": "排除重叠"
+      },
+      "pathfinder-divide": {
+        "keywords": "divide split fg 分割 切开 路径查找器",
+        "label": "分割"
+      },
+      "make-compound": {
+        "keywords": "compound path hole jlfhlj 复合路径 挖洞",
+        "label": "建立复合路径"
+      },
+      "release-compound": {
+        "keywords": "release compound sffhlj 释放 复合路径",
+        "label": "释放复合路径"
+      },
+      "offset-path": {
+        "keywords": "offset path expand inset pylj 偏移 外扩 内缩",
+        "label": "偏移路径"
+      },
+      "outline-stroke": {
+        "keywords": "outline stroke expand lkhmb 轮廓化 描边 扩展",
+        "label": "轮廓化描边"
+      },
+      "reverse-path": {
+        "keywords": "reverse path direction flip arrow fzlj 反转 方向 箭头",
+        "label": "反转路径方向"
       }
     },
     "listLabel": "命令",

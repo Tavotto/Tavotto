@@ -77,7 +77,8 @@
     "zDown": "Send backward",
     "zTop": "Bring to front",
     "zUp": "Bring forward",
-    "zorderLabel": "Layer"
+    "zorderLabel": "Layer",
+    "pathfinderLabel": "Pathfinder"
   },
   "assistantRunningTip": "Assistant is running",
   "autoHideAria": "Right panel auto-hides; click to pin it",
@@ -1366,5 +1367,11 @@
     "legendAria": "{{field}} – legend swatch that follows",
     "swatchN": "Swatch {{n}}",
     "followSwatch": "Recolour the “{{name}}” legend swatch too"
+  },
+  "pathfinder": {
+    "modes": "Shape modes",
+    "ops": "Path",
+    "offsetDistance": "Offset distance",
+    "offsetDistanceTip": "Positive grows outward, negative shrinks inward"
   }
 }
