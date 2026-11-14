@@ -543,6 +543,10 @@ describe('historical panel width display', () => {
     expect(row.textContent).not.toContain('双栏')
     expect(row.querySelector('[data-journal-panel-history]')?.textContent).toContain('现行要求未知')
     await click(row.querySelector('[data-journal-source]'))
+    const img = q('[data-journal-card] img') as HTMLImageElement
+    expect(img.alt).toBe('Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.')
+    act(() => img.dispatchEvent(new Event('error')))
+    expect(q('[data-journal-quote]')?.textContent).toContain('Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.')
     expect(q('[data-journal-sentence]')?.textContent).toBe('图版最大宽（历史 AIP 建议） ≤ 180 mm')
     expect(q('[data-journal-open]')?.getAttribute('href')).toContain('nature.com/')
     expect(q('[data-journal-coverage]')).not.toBeNull()

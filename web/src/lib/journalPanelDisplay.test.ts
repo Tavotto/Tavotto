@@ -16,6 +16,18 @@ describe('panelDisplayPath', () => {
     expect(panelDisplayPath(journal, oldPath, current)).toBe(correctPath)
     expect(current).toEqual(before)
   })
+  it.each(['nature-chemistry', 'nature-energy', 'nature-materials', 'nature-medicine', 'nature-methods', 'nature-nanotechnology', 'nature-photonics', 'nature-physics'])('rejects altered scope and evidence for %s', (journal) => {
+    const current = journalSources(journal, loadCatalog())[oldPath]
+    for (const patch of [
+      { source_scope: 'publisher' }, { rule_scope: 'publisher' }, { affects: 'preflight' },
+      { stage: 'submission' }, { stage: undefined }, { value: '180' }, { qualifier: 'min' },
+      { url: 'https://example.invalid' }, { quote: 'different' }, { unset: true },
+    ]) {
+      expect(panelDisplayPath(journal, oldPath, { ...current, ...patch } as JournalFieldSource)).toBe(oldPath)
+    }
+    expect(panelDisplayPath('nature', oldPath, current)).toBe(oldPath)
+    expect(panelDisplayPath(journal, 'widths_mm.double', current)).toBe('widths_mm.double')
+  })
   it.each([
     ['other journal', 'other-journal', oldPath, source],
     ['other path', 'nature-chemistry', 'widths_mm.double', source],
