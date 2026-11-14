@@ -87,7 +87,8 @@ export function startHandleDrag(e: ReactPointerEvent, path: PathObject, ref: Anc
 }
 
 /**
- * 锚点编辑里在空白处按下：框选锚点（⇧ 加选）。没拖就是「点空白」——退出锚点编辑并清掉选区（与平时点空白同一个结果）。
+ * 锚点编辑里在空白处按下：框选锚点（⇧ 加选）。框只画细线、不铺底（`AnchorMarquee`），拖的过程中被框住的锚点当场变实心，
+ * 松手框就没了（`interaction().end()` 清掉它），只剩选中的锚点与手柄。没拖就是「点空白」——退出锚点编辑并清掉选区（与平时点空白同一个结果）。
  * 框是页面上的矩形；旋转过的路径按锚点在页面上的位置判。
  */
 export function startAnchorMarquee(e: ReactPointerEvent): void {
@@ -103,7 +104,7 @@ export function startAnchorMarquee(e: ReactPointerEvent): void {
     onMove: (ev) => {
       const cur = clientToMm(ev.clientX, ev.clientY)
       const r = { x: Math.min(start.x, cur.x), y: Math.min(start.y, cur.y), w: Math.abs(cur.x - start.x), h: Math.abs(cur.y - start.y) }
-      interaction().setMarquee(r)
+      interaction().setAnchorMarquee(r)
       const hit: string[] = []
       subs.forEach((sp, si) =>
         sp.nodes.forEach((n, i) => {

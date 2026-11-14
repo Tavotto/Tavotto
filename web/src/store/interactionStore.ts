@@ -65,6 +65,11 @@ interface InteractionState {
   /** 框选矩形（mm） */
   marquee: Rect | null
   /**
+   * 锚点编辑里框选锚点的矩形（mm，ADR 0185 M1）。与对象框选分开：它只画一道细线框、不铺底（Illustrator 的样子），
+   * 被框住的锚点当场变实心；松手（`end()`）就没了
+   */
+  anchorMarquee: Rect | null
+  /**
    * 正在绘制的新对象预览（mm）。箭头 / 直线额外带真实端点：预览画的是
    * 最终那条线（含箭头帽），不是包围盒虚线框；松手落对象也用同一对端点，
    * 保证「预览什么就得到什么」（吸附 / shift 角度锁都已折算在内）。
@@ -128,6 +133,7 @@ interface InteractionState {
   begin: (kind: DragKind) => void
   end: () => void
   setMarquee: (r: Rect | null) => void
+  setAnchorMarquee: (r: Rect | null) => void
   setDraft: (d: DraftPreview | null) => void
   setSnap: (xs: number[], ys: number[], feedback?: SnapFeedback[]) => void
   setHover: (id: string | null) => void
@@ -148,6 +154,7 @@ interface InteractionState {
 export const useInteractionStore = create<InteractionState>((set) => ({
   kind: 'none',
   marquee: null,
+  anchorMarquee: null,
   draft: null,
   snapXs: [],
   snapYs: [],
@@ -176,6 +183,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
     set({
       kind: 'none',
       marquee: null,
+      anchorMarquee: null,
       draft: null,
       snapXs: [],
       snapYs: [],
@@ -191,6 +199,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
     })
   },
   setMarquee: (marquee) => set({ marquee }),
+  setAnchorMarquee: (anchorMarquee) => set({ anchorMarquee }),
   setDraft: (draft) => set({ draft }),
   setSnap: (snapXs, snapYs, snapFeedback = NO_FEEDBACK) =>
     set((s) =>

@@ -1,6 +1,7 @@
 import { anchorKey, pathToMm } from '@/lib/pathEdit'
 import { subpathD } from '@/lib/pathGeom'
 import { MM_PER_PT } from '@/lib/units'
+import { useInteractionStore } from '@/store/interactionStore'
 import { useActivePathEdit } from '@/store/pathEditStore'
 import { usePreviewPathDraft } from '@/store/svgPreviewStore'
 import { mmToPx, mmToViewX, mmToViewY, type ViewTransform } from '@/store/viewportStore'
@@ -149,5 +150,28 @@ export function AnchorEdit({ t }: { t: ViewTransform }) {
         }),
       )}
     </g>
+  )
+}
+
+/**
+ * 锚点框选的框（Illustrator 的样子）：1px 选区色虚线、不铺底——与画布上对象框选（实线 + 淡底）分开，
+ * 一眼看得出这一下圈的是锚点、不是对象。松手就没了。
+ */
+export function AnchorMarquee({ t }: { t: ViewTransform }) {
+  const r = useInteractionStore((s) => s.anchorMarquee)
+  if (!r) return null
+  return (
+    <rect
+      data-anchor-marquee
+      x={mmToViewX(r.x, t)}
+      y={mmToViewY(r.y, t)}
+      width={mmToPx(r.w, t)}
+      height={mmToPx(r.h, t)}
+      fill="none"
+      stroke={SEL}
+      strokeWidth={1}
+      strokeDasharray="3 3"
+      style={{ pointerEvents: 'none', shapeRendering: 'crispEdges' }}
+    />
   )
 }

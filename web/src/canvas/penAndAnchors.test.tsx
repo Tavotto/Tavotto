@@ -368,3 +368,48 @@ describe('右键菜单：与命令表同一份', () => {
     expect(onlyPath().subpaths[0].nodes).toHaveLength(2)
   })
 })
+
+describe('锚点框选（Illustrator 的样子）', () => {
+  it('拖着：细线框、不铺底，锚点跟着框实时变实心；松手：框立刻没了，只剩选中的锚点', async () => {
+    const { AnchorEdit, AnchorMarquee } = await import('./PathEditOverlay')
+    const { startAnchorMarquee } = await import('./pathEditDrag')
+    const { useInteractionStore } = await import('@/store/interactionStore')
+    await seedPath()
+    editAnchors('p1')
+    const t = { zoom: 1, panX: 0, panY: 0, originX: 0, originY: 0 }
+    await act(async () =>
+      root.render(
+        <svg>
+          <AnchorEdit t={t} />
+          <AnchorMarquee t={t} />
+        </svg>,
+      ),
+    )
+    const selected = () => [...host.querySelectorAll<SVGElement>('[data-path-anchor][data-selected]')].map((e) => e.dataset.pathAnchor)
+    const box = () => host.querySelector('[data-anchor-marquee]')
+    // 锚点在页面上：(10,50) (30,20) (50,50)
+    await act(async () => {
+      startAnchorMarquee(down(5, 10))
+      fire('pointermove', 35, 30)
+    })
+    expect(box()).not.toBeNull()
+    expect(box()!.getAttribute('fill')).toBe('none')
+    expect(box()!.getAttribute('stroke-width')).toBe('1')
+    expect(useInteractionStore.getState().marquee).toBeNull() // 不是对象框选那一个（带淡底）
+    expect(selected()).toEqual(['0:1'])
+    await act(async () => {
+      fire('pointermove', 55, 55)
+    })
+    expect(selected()).toEqual(['0:0', '0:1', '0:2'])
+    await act(async () => {
+      fire('pointermove', 35, 30) // 框缩回来：刚才框进来的又变回空心
+    })
+    expect(selected()).toEqual(['0:1'])
+    await act(async () => {
+      fire('pointerup', 35, 30)
+    })
+    expect(box()).toBeNull()
+    expect(selected()).toEqual(['0:1'])
+    expect(activePathEdit()?.anchors).toEqual(['0:1'])
+  })
+})

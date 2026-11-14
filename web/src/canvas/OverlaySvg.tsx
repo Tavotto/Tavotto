@@ -50,7 +50,7 @@ import { contentDirOnPage, elementOverlayTransform } from './elementGeometry'
 import { openQuickEdit } from './quickEditStore'
 import { IssueElementHighlight, IssueOverlay } from './IssueOverlay'
 import { ReviewOverlay } from './ReviewOverlay'
-import { AnchorEdit, PenDraft } from './PathEditOverlay'
+import { AnchorEdit, AnchorMarquee, PenDraft } from './PathEditOverlay'
 import { useActivePathEdit } from '@/store/pathEditStore'
 
 /**
@@ -410,6 +410,7 @@ export function OverlaySvg() {
 
       {/* 自由路径：锚点编辑的锚点与手柄、钢笔画到一半的草稿（预览平面） */}
       <AnchorEdit t={t} />
+      <AnchorMarquee t={t} />
       <PenDraft t={t} />
 
       {cropTarget && cropTarget.type === 'panel' && <CropFrame obj={cropTarget} t={t} />}
