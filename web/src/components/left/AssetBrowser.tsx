@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { formatMessage, t as translate } from '@/i18n'
 import {
@@ -28,6 +28,7 @@ import {
   type UnsupportedAsset,
 } from '@/lib/api'
 import { runtimeSiblingOf } from '@/lib/assetSibling'
+import { figureMembers, inViewScope, isFigureCard, visibleFigureCards } from '@/lib/figureGroup'
 import { formatCm } from '@/lib/units'
 import { formatOf, nameTail } from '@/lib/assetCardText'
 import { cn } from '@/lib/utils'
@@ -142,6 +143,7 @@ const editabilityLabel = (v: AssetEditabilityFilter) =>
 
 export function AssetBrowser() {
   const panels = useAssetStore((s) => s.panels)
+  const viewScope = useAssetStore((s) => s.viewScope)
   const unsupported = useAssetStore((s) => s.unsupported)
   const loading = useAssetStore((s) => s.loading)
   const loaded = useAssetStore((s) => s.loaded)
@@ -239,7 +241,8 @@ export function AssetBrowser() {
   const unsupportedShown = useMemo(() => {
     const q = query.trim().toLowerCase()
     const { source: src, type: ty, usedOnly: used, editability: ed } = filters
-    // 用不了的文件连排版都进不去，不属于「能不能编辑」的任何一组
+    // 用不了的文件连排版都进不去，不属于「能不能编辑」的任何一组；从脚本进来时它们是范围外的散图（ADR 0184）
+    if (viewScope.mode === 'scripts') return []
     if (used || ed !== 'all' || (ty !== 'all' && ty !== 'raster' && ty !== 'svg')) return []
     return unsupported.filter(
       (u) =>
@@ -247,12 +250,18 @@ export function AssetBrowser() {
         (src === 'all' || u.folder === src) &&
         (!q || u.id.toLowerCase().includes(q) || u.name.toLowerCase().includes(q)),
     )
-  }, [unsupported, query, filters])
+  }, [unsupported, query, filters, viewScope])
 
+  // 一张图的用量 = 它每份文件在排版里的用量之和（老排版里放的可能是 PNG，卡显示的是 PDF；ADR 0184）
+  const figureUsage = useCallback(
+    (p: PanelInfo) =>
+      (p.formats ?? [p.id]).reduce((n, id) => n + (usage.get(id) ?? 0), 0),
+    [usage],
+  )
   const { source, type, sort, usedOnly, editability } = filters
   const items = useMemo<LibraryItem[]>(() => {
     const q = query.trim().toLowerCase()
-    let list = panels.filter((p) => {
+    const matches = (p: PanelInfo) => {
       if (q && !p.id.toLowerCase().includes(q) && !p.name.toLowerCase().includes(q)) return false
       if (usedOnly && !usage.has(p.id)) return false
       if (source !== 'all' && p.folder !== source) return false
@@ -263,6 +272,15 @@ export function AssetBrowser() {
       if (editability !== 'all' && editabilityOf({ kind: 'file', panel: p }) !== editability)
         return false
       return true
+    }
+    // 一张卡 = 一张图（ADR 0184）：卡显示主文件；这张图的任一份文件过了筛选，卡就在
+    // 范围（ADR 0184 §三）：从脚本进来只看范围里脚本的图，排版里用着的照样在
+    const groups = figureMembers(panels)
+    let list = panels.filter((p) => {
+      if (!isFigureCard(p)) return false
+      const members = groups.get(p.figure_key ?? `id:${p.id}`) ?? [p]
+      if (!inViewScope(p.script, viewScope, members.some((m) => usage.has(m.id)))) return false
+      return members.some(matches)
     })
     list = [...list]
     // 默认（按名称）排序把可参数化面板排在前面：它们才能进图内编辑，是这个
@@ -279,6 +297,7 @@ export function AssetBrowser() {
 
     // 运行时图排在文件之后（它们没有 folder，被来源筛选与格式筛选排除）
     let rt = (runtimeAssets ?? []).filter((a) => {
+      if (!inViewScope(a.script, viewScope, usage.has(a.id))) return false
       if (q && !a.stem.toLowerCase().includes(q) && !a.script.toLowerCase().includes(q))
         return false
       if (usedOnly && !usage.has(a.id)) return false
@@ -312,7 +331,7 @@ export function AssetBrowser() {
       if (!placed.has(asset.id)) out.push({ kind: 'runtime', asset })
     }
     return out
-  }, [panels, runtimeAssets, query, source, type, sort, usedOnly, editability, usage, recentlyUsed])
+  }, [panels, runtimeAssets, query, source, type, sort, usedOnly, editability, usage, recentlyUsed, viewScope])
 
   // 「待连接」那一档只在项目里真有这样的图时出现（多数项目没有，常驻一个恒空的选项是噪音）；
   // 正选着它时不收——否则连好最后一张，选中的那一档凭空消失、清单却还是空的
@@ -387,7 +406,10 @@ export function AssetBrowser() {
   const scriptsShown = scriptsOpen || searching
   // 区头上的计数：未筛选时就是全部素材数；筛选中写成「3 / 7」——此前这个比值单独占
   // 一行「文件夹信息 … 3」页脚，与「图 3」是同一个数说两遍（左栏审计 L04）
-  const total = panels.length + (runtimeAssets?.length ?? 0)
+  // 按「图」计数（ADR 0184）：同一张图的几份文件只算一张；范围外的不算
+  const total =
+    visibleFigureCards(panels, viewScope, new Set(usage.keys())).length +
+    (runtimeAssets ?? []).filter((a) => inViewScope(a.script, viewScope, usage.has(a.id))).length
   // 项目里一张图都没有时不写「图 0」：下面那句空态就是「项目里还没有图」，一行之隔说两遍
   // （同 L04）。筛到 0 条是另一回事——「0 / 7」告诉你还有 7 张只是没匹配上，那是有信息的
   const figuresCount =
@@ -593,7 +615,7 @@ export function AssetBrowser() {
                   <AssetCard
                     key={it.panel.id}
                     panel={it.panel}
-                    used={usage.get(it.panel.id) ?? 0}
+                    used={figureUsage(it.panel)}
                     selected={activeId === it.panel.id}
                     tabbable={focusId === it.panel.id}
                     onSelect={() => setActiveId(it.panel.id)}

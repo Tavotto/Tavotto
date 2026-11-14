@@ -12,6 +12,7 @@ import {
   removeRecentProject,
   setNoProjectHandler,
   type PinnedOp,
+  type ProjectEntry,
   type ProjectStatus,
   type RecentProject,
 } from '@/lib/api'
@@ -116,7 +117,7 @@ export interface ProjectState {
   init: () => Promise<void>
   refreshRecent: () => Promise<void>
   /** 打开/切换项目：后端切换成功后冲刷并重置前端会话状态 */
-  open: (path: string, create?: boolean) => Promise<ProjectStatus>
+  open: (path: string, create?: boolean, entry?: ProjectEntry) => Promise<ProjectStatus>
   /**
    * 后端**已经**打开了一个项目（`/api/projects/open` 之外的入口，比如教程的
    * `/api/tutorial/open`）：认领它并做与 `open` 完全相同的前端换代。
@@ -578,8 +579,8 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     }
   },
 
-  open: (path, create = false) =>
-    runSwitch(async () => adoptNow(await openProjectApi(path, create))),
+  open: (path, create = false, entry) =>
+    runSwitch(async () => adoptNow(await openProjectApi(path, create, entry))),
 
   adoptOpenedProject: (status, opts) => runSwitch(() => adoptNow(status, opts)),
 

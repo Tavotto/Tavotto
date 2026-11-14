@@ -1,0 +1,5 @@
+## Dropping a script shows that script's figures, and one figure is one card
+
+- Dragging a `.py` (or a notebook / R / MATLAB script) onto Tavotto used to fill the asset panel with every image in the script's folder, often reported as "100 figures to connect". The asset panel now shows only the figures that script (and any script you run afterwards) produces; images in the folder that no script draws are not listed or counted. Figures already used in the layout always stay visible. Opening the folder itself (folder drop, folder picker, new project) still shows everything, and reopening from the recent list keeps whichever view you had.
+- The same figure saved as PDF, SVG and PNG (also in `pdf/`, `png/`, `svg/` subfolders) is now a single card; the canvas uses the vector file (PDF, then SVG, then the largest bitmap).
+- Whether a figure can be edited no longer depends on which format you placed: an untouched PNG of a script-made figure that also has a PDF/SVG now enters element editing through that vector file instead of failing the pixel-exact PNG check.
