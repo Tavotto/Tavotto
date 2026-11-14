@@ -204,6 +204,7 @@ _CLI_FACT_ATTRS = {
     },
     "endpoint": "endpoint_kind",
     "sandbox_mode": "cli_sandbox_mode",
+    "fail_status": "cli_fail_status",
 }
 
 
@@ -349,13 +350,13 @@ def _run_facts(agent: str, cwd: str, cand, script: str):
 
 
 def _cli_log_facts(sess: dict) -> tuple:
-    """「AI 会话结束」日志里 CLI 运行事实的部分，**逐项**返回（与模板里 `cli_events=` … `endpoint=` 一一对应，共 21 项）。
+    """「AI 会话结束」日志里 CLI 运行事实的部分，**逐项**返回（与模板里 `cli_events=` … `endpoint=` 一一对应，共 22 项）。
     数字 / 布尔 / None 本来就明文；两个事件类别与接口类别经 `logsafe.known` 对 `ai_agents.CLI_*` 常量集合放行。
     没有事实（内置执行器 / 没起 CLI）→ 数字槽位是 None、码槽位是 `-`。"""
     f = ai_agents.merge_run_facts(sess.get("cli_runs") or [])
     if f is None:
         dash = _code("", _NO_FACT)
-        return (None,) * 13 + (dash, dash, None, None, None, dash, None, dash)
+        return (None,) * 13 + (dash, dash, None, None, None, dash, None, dash, None)
     return (
         f["events"],
         f["commands"],
@@ -378,6 +379,7 @@ def _cli_log_facts(sess: dict) -> tuple:
         _code(f["endpoint"], ai_agents.ENDPOINT_KINDS),
         f.get("target_tool_ok"),  # 仅转换会话的 Codex 有；其余 None
         _code(f.get("sandbox_mode"), ai_agents.SANDBOX_MODES),
+        f.get("fail_status"),  # 三位 HTTP 状态码（Codex 自拼前缀里取的数字），没有就 None
     )
 
 
@@ -2476,7 +2478,7 @@ def run(
                 "cli_events=%s cli_cmds=%s cli_cmds_failed=%s cli_cmds_declined=%s cli_cmds_open=%s "
                 "cli_file_changes=%s cli_files_in=%s cli_files_out=%s cli_target_touched=%s cli_target_on_disk=%s cli_target_bytes=%s "
                 "cli_errors=%s cli_turns_failed=%s cli_last_event=%s cli_last_item=%s "
-                "cli_first_event_ms=%s cli_max_gap_ms=%s cli_idle_end_ms=%s endpoint=%s cli_target_tool_ok=%s sandbox_mode=%s",
+                "cli_first_event_ms=%s cli_max_gap_ms=%s cli_idle_end_ms=%s endpoint=%s cli_target_tool_ok=%s sandbox_mode=%s cli_fail_status=%s",
                 agent,
                 script,
                 sess["status"],

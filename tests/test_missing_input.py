@@ -790,6 +790,45 @@ def test_a_sandboxed_relative_stat_miss_is_not_tagged(remapped):
     assert figcapture.missing_input_of(caught.value, misses) is None
 
 
+def test_a_parser_error_that_names_a_missed_probe_is_missing_input(remapped, tmp_path):
+    """`parser.error(...)` 的消息（worker 已证明是用户代码调的）点了名一次没救回的探路 → `missing_input`；
+    整条路径照 `_named_miss` 的边界，只写了文件名时按文件名认（左边是汉字也算），取最长的文件名。"""
+    misses = remapped([])
+    data = tmp_path / "proj" / "不同污染物.xlsx"
+    short = tmp_path / "proj" / "物.xlsx"
+    folder = tmp_path / "proj" / "data"
+    for p in (data, short, folder):
+        assert p.exists() is False
+    fact = figcapture.parser_error_missing_input(
+        "找不到输入表格，请用 --input 指定不同污染物.xlsx 的位置。", misses
+    )
+    assert fact is not None and fact["requested"] == str(data) and fact["absolute"] is True
+    full = figcapture.parser_error_missing_input(f"missing {short}", misses)
+    assert full is not None and full["requested"] == str(short)
+    # 没点名 / 只点了文件夹名 / 文件名只是更长名字的一段 / 别的文件夹里的同名：不判
+    for text in (
+        "请用 --input 指定数据文件",
+        "找不到 data，请指定",
+        "找不到 my不同污染物.xlsx.bak",
+        "找不到 other/不同污染物.xlsx",
+        "找不到 x不同污染物.xlsx",
+    ):
+        got = figcapture.parser_error_missing_input(text, misses)
+        assert got is None or got["requested"] != str(data), text
+    # 只写了文件名的那条若是另一个文件夹里的同名，整条路径不同：不认成 data
+    assert figcapture.parser_error_missing_input(
+        "找不到 /elsewhere/不同污染物.xlsx", misses
+    ) is None or (
+        figcapture.parser_error_missing_input("找不到 /elsewhere/不同污染物.xlsx", misses)[
+            "requested"
+        ]
+        != str(data)
+    )
+    # 此刻已经在了：不是缺数据
+    _touch(data)
+    assert figcapture.parser_error_missing_input("请指定不同污染物.xlsx", misses) is None
+
+
 def test_the_script_directory_still_wins_over_a_rule_when_probes_are_remapped(remapped, tmp_path):
     """Codex #1821 P1：顺序永远是 原路径 → 脚本目录（只读回退）→ 用户规则。回退判「沙盒里有没有」问的是真实
     文件系统；改指层让 stat 按规则作答之后，回退若经它问，规则目标会冒充「沙盒里已经有」，脚本旁边的原件被跳过。"""
@@ -1044,6 +1083,83 @@ def test_a_script_that_checks_then_raises_is_missing_input_and_one_pick_fixes_it
     worker, resp = engine_pool.build("fig.py", str(figs), "__main__")
     assert sorted(resp.get("stems") or {}) == ["values"]
     assert "[loaded] [4.0, 5.0, 6.0]" in worker._log_tail()
+
+
+ARGPARSE_ERROR_ON_MISSING = """
+import argparse
+from pathlib import Path
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+BASE_DIR = Path(__file__).resolve().parent
+parser = argparse.ArgumentParser()
+parser.add_argument("--input", default=None)
+args = parser.parse_args()
+path = Path(args.input) if args.input else BASE_DIR / "不同数据.csv"
+if not path.exists():
+    parser.error("找不到输入表格，请用 --input 指定不同数据.csv 的位置。")
+values = [float(v) for v in path.read_text(encoding="utf-8").split()]
+print("[loaded]", values)
+plt.plot(values)
+plt.savefig("values.png")
+"""
+
+
+@needs_worker
+def test_a_script_that_reports_missing_data_through_parser_error_is_missing_input(figs, tmp_path):
+    """一份用户反馈：参数都有默认值，脚本 `parse_args()` 之后自己查数据、找不到就 `parser.error("找不到 …")`
+    （exit 2 + usage）。以前判成 `script_needs_arguments`、引去「运行参数」——死胡同；缺的是数据。
+    消息只写了文件名、前面紧挨着汉字也认（ADR 0106 修订 2026-11-14）；指认一次，重跑出图。"""
+    (figs / "fig.py").write_text(ARGPARSE_ERROR_ON_MISSING, encoding="utf-8")
+    workdir.set_mode(figs, workdir.MODE_SANDBOX)
+    with pytest.raises(engine_pool.WorkerError) as err:
+        engine_pool.build("fig.py", str(figs), "__main__")
+    assert err.value.code == engine_pool.MISSING_INPUT_CODE
+    offer = err.value.missing_input
+    assert offer is not None and offer["via"] == inputremap.VIA_OPEN and offer["absolute"] is True
+    assert Path(offer["requested"]).name == "不同数据.csv"
+    chosen = _touch(tmp_path / "elsewhere" / "不同数据.csv", "4 5 6")
+    inputremap.link(figs, offer["requested"], str(chosen), "file")
+    engine_pool.shutdown_all(str(figs), wait=True)
+    worker, resp = engine_pool.build("fig.py", str(figs), "__main__")
+    assert sorted(resp.get("stems") or {}) == ["values"]
+    assert "[loaded] [4.0, 5.0, 6.0]" in worker._log_tail()
+
+
+@needs_worker
+def test_argparse_own_errors_and_unrelated_parser_errors_still_ask_for_arguments(figs):
+    """反面：argparse 解析时自己报的（缺必填）、脚本自己 `parser.error` 但没点名任何落空的探路，都仍是
+    `script_needs_arguments`——只有「点了名一次没找到的数据」才改判。"""
+    (figs / "req.py").write_text(
+        "import argparse\np = argparse.ArgumentParser()\np.add_argument('--input', required=True)\n"
+        "p.parse_args()\n",
+        encoding="utf-8",
+    )
+    (figs / "own.py").write_text(
+        "import argparse, os\np = argparse.ArgumentParser()\np.add_argument('--n', type=int, default=0)\n"
+        "a = p.parse_args()\nos.path.exists(os.path.abspath(__file__) + '.missing.csv')\n"
+        "if a.n < 1:\n    p.error('--n 必须大于 0')\n",
+        encoding="utf-8",
+    )
+    # argparse 自己在解析时报的（`type=` 回调探路落空、抛 ArgumentTypeError 点名文件）：调 `error` 的是 argparse，
+    # 是「你给的参数不对」，不改判
+    (figs / "typed.py").write_text(
+        "import argparse, os\n"
+        "def existing(v):\n"
+        "    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), v)\n"
+        "    if not os.path.exists(p):\n"
+        "        raise argparse.ArgumentTypeError('找不到 ' + v)\n"
+        "    return p\n"
+        "ap = argparse.ArgumentParser()\nap.add_argument('--input', type=existing, default='typed.csv')\n"
+        "ap.parse_args()\n",
+        encoding="utf-8",
+    )
+    workdir.set_mode(figs, workdir.MODE_SANDBOX)
+    for script in ("req.py", "own.py", "typed.py"):
+        with pytest.raises(engine_pool.WorkerError) as err:
+            engine_pool.build(script, str(figs), "__main__")
+        assert err.value.code == "script_needs_arguments", script
 
 
 GLOB_FOLDER = """

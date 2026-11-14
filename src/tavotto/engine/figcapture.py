@@ -6990,6 +6990,49 @@ def _probe_miss_of(fnf: BaseException, misses: InputMisses) -> dict | None:
         requested = _named_miss(fnf, misses, misses.probes)
     if requested is None:
         return None
+    return _absent_probe_fact(requested, misses)
+
+
+def _named_by_basename(text: str, items: list[dict]) -> str | None:
+    """消息里只写了**文件名**（`找不到 data.xlsx，请用 --input 指定`）时点了名的那次探路；对不上回 None。
+
+    只认带扩展名的文件名（`data` / `input` 这种文件夹名太常见，不认）；左边界只排除 ASCII 的
+    路径字符——中文消息里文件名前紧挨着汉字（`指定不同污染物.xlsx`）也算点名；右边界与 `_named_miss` 同一把尺子。
+    几条都对得上时取文件名最长的（`a.csv` 不抢 `data.csv`），同名取最近一次。"""
+    text = text.replace("\\", "/")
+    best: tuple[int, str] | None = None
+    for item in reversed(items):
+        base = item["requested"].replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+        stem, dot, ext = base.rpartition(".")
+        if not (stem and dot and ext):
+            continue
+        if not re.search(rf"(?<![A-Za-z0-9_.\-/]){re.escape(base)}(?![\w\-/]|\.\w)", text):
+            continue
+        if best is None or len(base) > best[0]:
+            best = (len(base), item["requested"])
+    return best[1] if best else None
+
+
+def parser_error_missing_input(message: str, misses: InputMisses) -> dict | None:
+    """脚本**自己**调 `parser.error("找不到 …")`（先探路、答没有、再用参数解析器报错退出）→ `missing_input`
+    的事实；对不上回 None（ADR 0106 修订 2026-11-14）。
+
+    调用方（worker）已证明这次 `SystemExit` 是用户代码调的 `ArgumentParser.error`，不是 argparse 解析时自己报的。
+    这里只认：消息点了名某次没救回的探路（整条路径按 `_named_miss` 的边界，或只写了文件名，`_named_by_basename`），
+    且那条此刻确实不在。事实与 `_probe_miss_of` 同形——对话框给选择器，指认后经改指表重跑。"""
+    if not misses.probes or not isinstance(message, str) or not message or len(message) > 4096:
+        return None
+    holder = FileNotFoundError(message.replace("\n", " "))
+    requested = _named_miss(holder, misses, misses.probes) or _named_by_basename(
+        message, misses.probes
+    )
+    if requested is None:
+        return None
+    return _absent_probe_fact(requested, misses)
+
+
+def _absent_probe_fact(requested: str, misses: InputMisses) -> dict | None:
+    """点了名的那条探路此刻确实不在 → `missing_input` 事实；此刻在（被回退 / 别处救回来）或判不了回 None。"""
     entry = next((m for m in reversed(misses.probes) if m["requested"] == requested), None)
     if entry is None:
         return None
