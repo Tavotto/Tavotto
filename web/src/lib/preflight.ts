@@ -524,8 +524,8 @@ function* fontElements(
 }
 
 /**
- * 有效字号低于期刊「说明」的最小字号时给 suggestion：带期刊名与原话。上下标求值器分不出，
- * 所以按正文建议值（没有就按上下标值）统一提示。同源对：`preflight.py` 的 `_advise_font`。
+ * 有效字号低于参考记录的比较值时给 suggestion，并保留原话。该比较值由旧字段派生，
+ * 不证明原文规定了下限；上下标求值器也无法区分。同源对：`preflight.py` 的 `_advise_font`。
  */
 function adviseFont(
   profile: PublicationProfile,

@@ -438,8 +438,10 @@ def _font_advice(profile: dict) -> tuple[dict | None, dict | None]:
 
 
 def _advise_font(profile: dict, eff: float, sink: _Sink, ids: dict, detail_eff: float) -> None:
-    """有效字号低于期刊「说明」的最小字号时给 suggestion：带期刊名与原话。上下标求值器分不出，
-    所以按正文建议值（没有就按上下标值）统一提示。"""
+    """有效字号低于参考记录的比较值时给 suggestion，并保留原话。
+
+    该比较值由旧字段派生，不证明原文规定了下限；上下标求值器也无法区分。
+    """
     body, script = _font_advice(profile)
     lead = body or script
     if lead is None:
@@ -452,15 +454,22 @@ def _advise_font(profile: dict, eff: float, sink: _Sink, ids: dict, detail_eff: 
     if body and script:
         key = "fontSizeAdvisedBoth"
         text = (
-            f"{journal} 说明 {body['value_pt']:g} pt 为正文最小字号，"
-            f"{script['value_pt']:g} pt 为上下标最小字号"
+            f"{journal} 的参考记录列出 {body['value_pt']:g} pt（正文）、"
+            f"{script['value_pt']:g} pt（上下标）；这些数值不一定是期刊规定的下限，"
+            "预检以正文数值比较，未区分文字类型"
         )
     elif body:
         key = "fontSizeAdvisedBody"
-        text = f"{journal} 说明 {body['value_pt']:g} pt 为正文最小字号"
+        text = (
+            f"{journal} 的参考记录以 {body['value_pt']:g} pt 作为正文比较值；"
+            "该数值不一定是期刊规定的下限，预检未区分文字类型"
+        )
     else:
         key = "fontSizeAdvisedScript"
-        text = f"{journal} 说明 {script['value_pt']:g} pt 为上下标最小字号"
+        text = (
+            f"{journal} 的参考记录以 {script['value_pt']:g} pt 作为上下标比较值；"
+            "该数值不一定是期刊规定的下限，预检未区分文字类型"
+        )
     params = {
         "journal": journal,
         "body": f"{body['value_pt']:g}" if body else "",
