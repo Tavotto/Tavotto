@@ -113,8 +113,10 @@ from .engine import (
     exportroute as engine_exportroute,
     exporttelemetry as engine_exporttelemetry,
     figcapture as engine_figcapture,
+    figuregroup as engine_figuregroup,
     fixsession as engine_fixsession,
     folderrepair as engine_folderrepair,
+    foreignoutputs as engine_foreignoutputs,
     foreignsource as engine_foreignsource,
     handoff as engine_handoff,
     handoffreceipt as engine_handoffreceipt,
@@ -732,6 +734,19 @@ def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
             LOG.warning("素材扫描跳过 %s（probe 失败）", p, exc_info=True)
             continue
         panels.append(entry)
+    # 同一张图的几份文件（ADR 0184 §一）：图键 / 主文件 / 全部格式 / 画它的脚本，唯一出处 `engine/figuregroup`。
+    # R / MATLAB 与 Python 一样认作来源（修订）：源码里写死的输出 + 同目录同名脚本，只读、不运行
+    dir_cache = engine_foreignsource.DirCache(root)
+
+    def _sibling(rel: str) -> str | None:
+        found = engine_foreignsource.sibling_of(root, dir_cache, rel)
+        return found["script"] if found else None
+
+    try:
+        foreign = engine_foreignoutputs.output_map(root)
+    except OSError:
+        foreign = {}
+    engine_figuregroup.annotate(panels, current_registry(), foreign, _sibling)
     return panels
 
 
@@ -1215,8 +1230,15 @@ def api_experiments():
 def api_panels():
     unsupported: list[dict] = []
     panels = scan_panels(unsupported)
+    root = require_project()
     resp = jsonify(
-        {"figures_dir": str(require_project()), "panels": panels, "unsupported": unsupported}
+        {
+            "figures_dir": str(root),
+            "panels": panels,
+            "unsupported": unsupported,
+            # 素材区的显示范围（ADR 0184 §三）：只影响显示与计数，清单本身不按它裁
+            "view_scope": engine_config.view_scope(str(root)),
+        }
     )
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -6249,11 +6271,61 @@ def api_projects_open():
                 }
             ), 400
     try:
-        return jsonify(open_project(str(p), make_default=body.get("default", True)))
+        status = open_project(str(p), make_default=body.get("default", True))
+        _apply_entry_scope(status, body)
+        return jsonify(status)
     except (RuntimeError, OSError) as exc:
         return jsonify(
             {"error": str(exc), "code": "open_project_failed", "params": {"reason": str(exc)}}
         ), 400
+
+
+#: 进入方式（ADR 0184 §三）：`script` = 带着一个脚本进来（只看脚本的图）；`folder` = 明确打开整个文件夹。
+#: 缺省（最近 / 收藏重开、旧前端）= 沿用上次记的范围。
+_ENTRY_KINDS = ("script", "folder")
+_SCOPE_SCRIPT_MAX = 512
+
+
+def _scope_script_name(raw) -> str | None:
+    """范围里的脚本名：项目相对路径（`/` 分隔），首尾无空白、不越出项目、不超长；不合格 = None（不进范围）。"""
+    if not isinstance(raw, str) or not raw or raw != raw.strip() or len(raw) > _SCOPE_SCRIPT_MAX:
+        return None
+    rel = raw.replace("\\", "/")
+    parts = rel.split("/")
+    if rel.startswith("/") or ":" in parts[0] or any(x in ("", ".", "..") for x in parts):
+        return None
+    return rel
+
+
+def _apply_entry_scope(status: dict, body: dict) -> None:
+    """打开成功之后按进入方式改视图范围，并把改后的设置放回响应（`settings.view_scope`）。只是显示范围，失败不拖垮打开。"""
+    entry = body.get("entry")
+    if entry not in _ENTRY_KINDS or not status.get("open"):
+        return
+    path = status["figures_dir"]
+    try:
+        if entry == "folder":
+            engine_config.set_view_scope(path, mode="folder")
+        else:
+            script = _scope_script_name(body.get("script"))
+            if script is None:
+                return
+            engine_config.set_view_scope(path, mode="scripts", add_script=script)
+        status["settings"] = engine_config.project_settings(path)
+    except OSError:
+        LOG.warning("视图范围没能记下（不影响打开项目）", exc_info=True)
+
+
+@app.post("/api/project/view_scope")
+def api_project_view_scope():
+    """运行了一个脚本：范围是「只看脚本的图」时把它加进去（ADR 0184 §三）；整个文件夹时不改。回此刻的范围。"""
+    body = request.get_json(force=True, silent=True)
+    body = body if isinstance(body, dict) else {}
+    script = _scope_script_name(body.get("add_script"))
+    if script is None:
+        return jsonify({"error": "脚本名不合法", "code": "invalid_script_name"}), 400
+    root = require_project()
+    return jsonify({"view_scope": engine_config.add_view_scope_script(str(root), script)})
 
 
 @app.post("/api/projects/close")

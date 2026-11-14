@@ -6422,6 +6422,7 @@ export default interface Resources {
       "unlockObjects": "解锁 {{count}} 个对象",
       "unpinLayout": "跟随布局约束",
       "updateLayoutGroup": "调整布局组",
+      "useVectorPrimary": "改用 {{name}} 的矢量原图",
       "zBottom": "置于底层",
       "zDown": "下移一层",
       "zTop": "置于顶层",

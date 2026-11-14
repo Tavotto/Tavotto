@@ -226,7 +226,7 @@ describe('整次放下', () => {
       status().statusAction!.run()
       await new Promise((r) => setTimeout(r, 0))
     })
-    expect(openProject).toHaveBeenCalledExactlyOnceWith('/Users/me/other')
+    expect(openProject).toHaveBeenCalledExactlyOnceWith('/Users/me/other', false, { entry: 'script', script: 'fig.py' })
     expect(open).toHaveBeenCalledExactlyOnceWith({ script: 'fig.py', reuse_last_success: true }, { run: true })
   })
 
@@ -289,7 +289,7 @@ describe('整次放下', () => {
       status().statusAction!.run()
       await new Promise((r) => setTimeout(r, 0))
     })
-    expect(openProject).toHaveBeenCalledWith('/Users/me/other')
+    expect(openProject).toHaveBeenCalledWith('/Users/me/other', false, { entry: 'script', script: 'plot.m' })
     expect(useForeignScriptStore.getState().offer).toEqual({ script: 'plot.m', language: 'matlab' })
   })
 
@@ -314,7 +314,7 @@ describe('整次放下', () => {
       status().statusAction!.run()
       await new Promise((r) => setTimeout(r, 0))
     })
-    expect(openProject).toHaveBeenCalledExactlyOnceWith('/Users/me/other')
+    expect(openProject).toHaveBeenCalledExactlyOnceWith('/Users/me/other', false, { entry: 'script', script: 'plot.m' })
   })
 
   it('原生事件里的 .py 路径同样直接用 `script`（项目根下的 .py 照常运行）', async () => {
@@ -383,7 +383,7 @@ describe('笔记本拖进画布', () => {
       status().statusAction!.run()
       await new Promise((r) => setTimeout(r, 0))
     })
-    expect(openProject).toHaveBeenCalledExactlyOnceWith('/Users/me/other')
+    expect(openProject).toHaveBeenCalledExactlyOnceWith('/Users/me/other', false, { entry: 'script', script: 'fig.ipynb' })
     expect(mocks.extractNotebook).toHaveBeenCalledExactlyOnceWith('fig.ipynb', 'pj_a')
     expect(open).toHaveBeenCalledExactlyOnceWith({ script: 'fig.py', reuse_last_success: true }, { run: true })
   })

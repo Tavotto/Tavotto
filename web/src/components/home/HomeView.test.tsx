@@ -211,7 +211,7 @@ describe('新手版', () => {
     await mount()
     await click(host.querySelector<HTMLButtonElement>('[data-home-import]')!)
     expect(desktop.pickScriptFile).toHaveBeenCalledTimes(1)
-    expect(open).toHaveBeenCalledWith('/Users/me/paper', false)
+    expect(open).toHaveBeenCalledWith('/Users/me/paper', false, { entry: 'script', script: 'plot.py' })
     // 选的是哪个脚本就运行哪个：同一文件夹里换个脚本导入，不能只恢复上次的排版
     expect(prepOpen.mock.calls).toEqual([ranScript('plot.py')])
   })
@@ -255,7 +255,7 @@ describe('老手版', () => {
     const zone = host.querySelector<HTMLButtonElement>('[data-home-dropzone]')!
     expect(zone.tagName).toBe('BUTTON')
     await click(zone)
-    expect(open).toHaveBeenCalledWith('/Users/me/paper', false)
+    expect(open).toHaveBeenCalledWith('/Users/me/paper', false, { entry: 'script', script: 'plot.py' })
   })
 
   const dropOn = async (el: HTMLElement, data: { uris?: string; files?: string[] }) => {
@@ -278,7 +278,7 @@ describe('老手版', () => {
     await mount()
     const ev = await dropOn(host.querySelector('[data-home-dropzone]')!, { uris: 'file:///Users/me/fig/plot.py', files: ['plot.py'] })
     expect(ev.defaultPrevented).toBe(true)
-    expect(open).toHaveBeenCalledWith('/Users/me/fig', false)
+    expect(open).toHaveBeenCalledWith('/Users/me/fig', false, { entry: 'script', script: 'plot.py' })
     expect(desktop.pickScriptFile).not.toHaveBeenCalled()
     expect(prepOpen.mock.calls).toEqual([ranScript('plot.py')])
   })
@@ -296,7 +296,7 @@ describe('老手版', () => {
     expect(open).not.toHaveBeenCalled()
     // 选中了：打开它所在的目录，说明收起
     await dropOn(main(), { files: ['figure.py'] })
-    expect(open).toHaveBeenCalledWith('/Users/me/paper', false)
+    expect(open).toHaveBeenCalledWith('/Users/me/paper', false, { entry: 'script', script: 'plot.py' })
     expect(host.textContent).not.toContain('「figure.py」')
   })
 
@@ -313,7 +313,7 @@ describe('老手版', () => {
       await mount()
       const ev = await dropOn(host.querySelector('[data-home-dropzone]')!, { uris: 'file:///Users/me/fig/论文 图.ipynb', files: ['论文 图.ipynb'] })
       expect(ev.defaultPrevented).toBe(true)
-      expect(open).toHaveBeenCalledWith('/Users/me/fig', false)
+      expect(open).toHaveBeenCalledWith('/Users/me/fig', false, { entry: 'script', script: '论文 图.ipynb' })
       expect(notebook.runNotebook.mock.calls).toEqual([[{ path: '论文 图.ipynb' }, { skipped: 0 }]])
       expect(prepOpen).not.toHaveBeenCalled()
       expect(host.querySelector('[role="alert"]')).toBeNull()
@@ -330,7 +330,7 @@ describe('老手版', () => {
       desktop.pickScriptFile.mockResolvedValueOnce('/Users/me/paper/a.ipynb')
       await mount()
       await click(host.querySelector<HTMLButtonElement>('[data-home-dropzone]')!)
-      expect(open).toHaveBeenCalledWith('/Users/me/paper', false)
+      expect(open).toHaveBeenCalledWith('/Users/me/paper', false, { entry: 'script', script: 'a.ipynb' })
       expect(notebook.runNotebook.mock.calls).toEqual([[{ path: 'a.ipynb' }, { skipped: 0 }]])
     })
 
@@ -362,7 +362,7 @@ describe('老手版', () => {
         await dropOn(host.querySelector('[data-home-dropzone]')!, { files: ['fig.ipynb'] })
         await pickFolder()
         expect(browseCalls.some((u) => u.includes('has_file=fig.ipynb'))).toBe(true)
-        expect(open).toHaveBeenCalledWith('/srv', false)
+        expect(open).toHaveBeenCalledWith('/srv', false, { entry: 'script', script: 'fig.ipynb' })
         expect(notebook.runNotebook.mock.calls).toEqual([[{ path: 'fig.ipynb' }, { skipped: 0 }]])
       })
 
@@ -386,7 +386,7 @@ describe('老手版', () => {
       await mount()
       const ev = await dropOn(host.querySelector('[data-home-dropzone]')!, { uris: `file://${uri}`, files: [name] })
       expect(ev.defaultPrevented).toBe(true)
-      expect(open).toHaveBeenCalledWith('/Users/me/fig', false)
+      expect(open).toHaveBeenCalledWith('/Users/me/fig', false, { entry: 'script', script: name })
       expect(prepOpen).not.toHaveBeenCalled() // 不是可运行的 Python 脚本：不走“打开并运行”
       expect(useForeignScriptStore.getState().offer).toEqual({ script: name, language })
       expect(host.querySelector('[role="alert"]')).toBeNull()
@@ -396,7 +396,7 @@ describe('老手版', () => {
       desktop.pickScriptFile.mockResolvedValueOnce('/Users/me/paper/fig.R')
       await mount()
       await click(host.querySelector<HTMLButtonElement>('[data-home-dropzone]')!)
-      expect(open).toHaveBeenCalledWith('/Users/me/paper', false)
+      expect(open).toHaveBeenCalledWith('/Users/me/paper', false, { entry: 'script', script: 'fig.R' })
       expect(prepOpen).not.toHaveBeenCalled()
       expect(useForeignScriptStore.getState().offer).toEqual({ script: 'fig.R', language: 'r' })
     })
@@ -420,7 +420,7 @@ describe('老手版', () => {
         expect(document.querySelector('[role="dialog"]')).not.toBeNull()
         await pickFolder()
         expect(browseCalls.some((u) => u.includes('has_file=fig.R'))).toBe(true)
-        expect(open).toHaveBeenCalledWith('/srv', false)
+        expect(open).toHaveBeenCalledWith('/srv', false, { entry: 'script', script: 'fig.R' })
         expect(useForeignScriptStore.getState().offer).toEqual({ script: 'fig.R', language: 'r' })
         expect(prepOpen).not.toHaveBeenCalled()
         expect(document.querySelector('[role="dialog"]')).toBeNull()
@@ -435,7 +435,7 @@ describe('老手版', () => {
         expect(useForeignScriptStore.getState().offer).toBeNull()
         browseHasFile = true
         await pickFolder()
-        expect(open).toHaveBeenCalledWith('/srv', false)
+        expect(open).toHaveBeenCalledWith('/srv', false, { entry: 'script', script: 'fig.R' })
         expect(useForeignScriptStore.getState().offer).toEqual({ script: 'fig.R', language: 'r' })
       })
 
@@ -451,7 +451,7 @@ describe('老手版', () => {
         browseHasFile = true
         await click(host.querySelector<HTMLButtonElement>('[data-home-dropzone]')!)
         await pickFolder()
-        expect(open).toHaveBeenCalledWith('/srv', false)
+        expect(open).toHaveBeenCalledWith('/srv', false, { entry: 'folder' })
         expect(useForeignScriptStore.getState().offer).toBeNull()
       })
     })
@@ -476,7 +476,7 @@ describe('老手版', () => {
       desktop.nativeFileDropAvailable.mockResolvedValue(true)
       await mount()
       await act(async () => desktop.state.handler?.({ kind: 'foreign_script', folder: '/Users/me/fig', script: '/Users/me/fig/fig.R', name: 'fig.R', ignored: 0 }))
-      expect(open).toHaveBeenCalledWith('/Users/me/fig', false)
+      expect(open).toHaveBeenCalledWith('/Users/me/fig', false, { entry: 'script', script: 'fig.R' })
       expect(useForeignScriptStore.getState().offer).toEqual({ script: 'fig.R', language: 'r' })
       await act(async () => desktop.state.handler?.({ kind: 'unsupported', name: 'fig.pdf' }))
       expect(host.querySelector('[role="alert"]')!.textContent).toContain('fig.pdf')
@@ -525,7 +525,7 @@ describe('系统拖放（桌面壳交来真实路径，ADR 0092）', () => {
   it('.py：直接打开它所在的文件夹，不弹选择器；通知说出是哪个脚本', async () => {
     await mount()
     await fire({ kind: 'script', folder: '/Users/me/fig', script: '/Users/me/fig/plot.py', name: 'plot.py', ignored: 0 })
-    expect(open).toHaveBeenCalledWith('/Users/me/fig', false)
+    expect(open).toHaveBeenCalledWith('/Users/me/fig', false, { entry: 'script', script: 'plot.py' })
     expect(desktop.pickScriptFile).not.toHaveBeenCalled()
     expect(JSON.stringify(status())).toContain('home.import.openedScript')
     expect(JSON.stringify(status())).toContain('plot.py')
@@ -537,8 +537,8 @@ describe('系统拖放（桌面壳交来真实路径，ADR 0092）', () => {
     await fire({ kind: 'script', folder: '/Users/me/fig', script: '/Users/me/fig/a.py', name: 'a.py', ignored: 0 })
     await fire({ kind: 'script', folder: '/Users/me/fig', script: '/Users/me/fig/b.py', name: 'b.py', ignored: 0 })
     expect(open.mock.calls).toEqual([
-      ['/Users/me/fig', false],
-      ['/Users/me/fig', false],
+      ['/Users/me/fig', false, { entry: 'script', script: 'a.py' }],
+      ['/Users/me/fig', false, { entry: 'script', script: 'b.py' }],
     ])
     expect(prepOpen.mock.calls).toEqual([ranScript('a.py'), ranScript('b.py')])
   })
@@ -546,7 +546,7 @@ describe('系统拖放（桌面壳交来真实路径，ADR 0092）', () => {
   it('文件名以空白开头：只开项目、不运行（后端会 strip 脚本名，可能跑错同目录的另一个脚本，Codex #1267）', async () => {
     await mount()
     await fire({ kind: 'script', folder: '/Users/me/fig', script: '/Users/me/fig/ plot.py', name: ' plot.py', ignored: 0 })
-    expect(open).toHaveBeenCalledWith('/Users/me/fig', false)
+    expect(open).toHaveBeenCalledWith('/Users/me/fig', false, { entry: 'folder' })
     expect(prepOpen).not.toHaveBeenCalled()
   })
 
@@ -561,7 +561,7 @@ describe('系统拖放（桌面壳交来真实路径，ADR 0092）', () => {
   it('文件夹直接当项目；多拖了几个说只用了哪个', async () => {
     await mount()
     await fire({ kind: 'folder', folder: '/Users/me/paper', name: 'paper', ignored: 0 })
-    expect(open).toHaveBeenCalledWith('/Users/me/paper', false)
+    expect(open).toHaveBeenCalledWith('/Users/me/paper', false, { entry: 'folder' })
     // 拖进来的是文件夹：只开项目，不替用户挑脚本运行
     expect(prepOpen).not.toHaveBeenCalled()
     expect(JSON.stringify(status())).toContain('home.import.openedFolder')
@@ -579,7 +579,7 @@ describe('系统拖放（桌面壳交来真实路径，ADR 0092）', () => {
     expect(host.querySelector('[role="alert"]')).toBeNull()
     act(() => useProjectStore.setState({ switching: false }))
     await fire({ kind: 'script', folder: '/Users/me/fig', script: '/Users/me/fig/plot.py', name: 'plot.py', ignored: 0 })
-    expect(open).toHaveBeenCalledWith('/Users/me/fig', false)
+    expect(open).toHaveBeenCalledWith('/Users/me/fig', false, { entry: 'script', script: 'plot.py' })
   })
 
   it.each([
@@ -589,7 +589,7 @@ describe('系统拖放（桌面壳交来真实路径，ADR 0092）', () => {
   ])('壳交来外语脚本 %s：打开所在文件夹、出外语脚本卡（与选择器同一入口），不运行、不提示“请重新选择”', async (name, language) => {
     await mount()
     await fire({ kind: 'foreign_script', folder: '/Users/me/fig', script: `/Users/me/fig/${name}`, name, ignored: 0 })
-    expect(open).toHaveBeenCalledWith('/Users/me/fig', false)
+    expect(open).toHaveBeenCalledWith('/Users/me/fig', false, { entry: 'script', script: name })
     expect(useForeignScriptStore.getState().offer).toEqual({ script: name, language })
     expect(prepOpen).not.toHaveBeenCalled()
     expect(desktop.pickScriptFile).not.toHaveBeenCalled()
@@ -610,7 +610,7 @@ describe('系统拖放（桌面壳交来真实路径，ADR 0092）', () => {
   it('壳交来笔记本（notebook）：开所在文件夹、转成脚本运行；多拖了几个把没处理的个数交给它说', async () => {
     await mount()
     await fire({ kind: 'notebook', folder: '/Users/me/fig', notebook: '/Users/me/fig/a.ipynb', name: 'a.ipynb', ignored: 0 })
-    expect(open).toHaveBeenCalledWith('/Users/me/fig', false)
+    expect(open).toHaveBeenCalledWith('/Users/me/fig', false, { entry: 'script', script: 'a.ipynb' })
     expect(notebook.runNotebook.mock.calls).toEqual([[{ path: 'a.ipynb' }, { skipped: 0 }]])
     expect(prepOpen).not.toHaveBeenCalled()
     await fire({ kind: 'notebook', folder: '/Users/me/fig', notebook: '/Users/me/fig/b.ipynb', name: 'b.ipynb', ignored: 2 })
@@ -813,7 +813,7 @@ describe('2026-10-07 设计审计 §4.2：叙事句 / 卡片网格 / 拖放接�
     open.mockClear()
     await click(chip('script')!)
     expect(desktop.pickScriptFile).toHaveBeenCalledTimes(1)
-    expect(open).toHaveBeenCalledWith('/Users/me/paper', false)
+    expect(open).toHaveBeenCalledWith('/Users/me/paper', false, { entry: 'script', script: 'plot.py' })
   })
 
   it('没有可打开的最近项目：句子只剩脚本那一半', async () => {
