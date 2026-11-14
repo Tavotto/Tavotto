@@ -246,9 +246,13 @@ def validate_bundle(bundle: object, *, require_verified: bool = False) -> dict:
             or f["stage"] not in _STAGE
         ):
             _fail("fact", "invalid strength or stage")
-        if f["origin"] not in ("publisher", "journal"):
+        if type(f["origin"]) is not str or f["origin"] not in ("publisher", "journal", "unknown"):
             _fail("fact.origin", "invalid origin")
         _review(f["review"], require_verified)
+        # An unresolved source scope belongs in a draft, not a signed v2
+        # bundle: existing v2 clients only understand publisher and journal.
+        if f["origin"] == "unknown" and f["review"]["status"] == "verified":
+            _fail("fact.origin", "unknown origin cannot be verified for v2 publication")
         if not isinstance(f["source"], str) or f["source"] not in sources:
             _fail("fact.source", "unknown source")
         _str(f["quote"], "fact.quote", 2000)
