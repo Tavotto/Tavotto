@@ -2,7 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「项目系统与多画布（前端侧）」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`shapeSwitch.golden.test.ts` + `tests/test_compose_switched_shapes.py`、`canvas/shapeOutline.test.tsx`、`store/workspace.test.ts`、`store/pageFit.test.ts`、`store/addPanelFraming.test.ts`、`store/addPanelEntry.test.ts`、`store/addPanelAvoid.test.ts`、`lib/panelPlacement.test.ts`、`canvas/pageOutsideMask.test.tsx`、`lib/pathGeom.golden.test.ts` + `tests/test_path_object.py`、`lib/convertToPath.test.tsx`、`e2e/cross-tab-paste.spec.ts`、`e2e/nav-audit.spec.ts`
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`shapeSwitch.golden.test.ts` + `tests/test_compose_switched_shapes.py`、`canvas/shapeOutline.test.tsx`、`store/workspace.test.ts`、`store/pageFit.test.ts`、`store/addPanelFraming.test.ts`、`store/addPanelEntry.test.ts`、`store/addPanelAvoid.test.ts`、`lib/panelPlacement.test.ts`、`canvas/pageOutsideMask.test.tsx`、`lib/pathGeom.golden.test.ts` + `tests/test_path_object.py`、`lib/convertToPath.test.tsx`、`lib/penTool.test.ts`、`lib/pathEdit.test.ts`、`canvas/penAndAnchors.test.tsx`、`e2e/cross-tab-paste.spec.ts`、`e2e/nav-audit.spec.ts`
 > `web/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：剪贴板主路径是原生 ClipboardEvent；类型切换一次 commit 不换 id；「适应画布」是模式；加图分层链 `addFigureToLayout` → `addPanelToCanvas` → `actions.addPanel`，权威在该细则
 
 <!-- agents-route
@@ -81,6 +81,14 @@ order: 210
   哪一行出现、写哪个字段只问能力层 `lib/markStyle`（组件里不按类型分支）。看护 `components/inspector/pathInspector.test.tsx`。
   已知差异（既有的画布 ≠ 导出）：大括号的导出一直是后端 `curve_segment` 的 κ 近似、画布是二次贝塞尔，40×25 mm 的大括号两者最远差约 0.5 mm；
   转为路径后导出跟画布一致（精确升阶），所以这一种转完**导出**会挪这一点，画布不动。
+- **钢笔与直接选择（2026-11-14，ADR 0185 M1）**：钢笔是纯状态机 `lib/penTool.penReduce`（指针 / 按键进，状态 + 预览 + 命令出），
+  画布一侧 `canvas/penController` 只换算坐标、把草稿交给预览平面（`svgPreviewStore.previewPathDraft`，覆盖层 `PathEditOverlay.PenDraft` 画）、
+  完成时**一次** commit 落成 `path`（`fitPathBox`，包围盒按曲线范围）。画到一半登记成进行中的手势：Enter / Esc / 换工具 / 任何离散动作
+  先按开放路径落定。直接选择 = 锚点编辑（双击路径 / Enter / 右键「编辑锚点」进，Esc 退；界面态 `store/pathEditStore`，生效只看
+  `activePathEdit()`）：拖锚点 / 手柄 / 框选锚点在 `canvas/pathEditDrag`，走 `beginTxn / endTxn`，每帧从按下那一刻的对象现算
+  （`lib/pathEdit`，纯函数、无界面——将来 MCP 也调它），包围盒同一次更新里重算、旋转中心的挪动整体补回。加 / 删 / 转换锚点与钢笔、
+  编辑锚点注册在 `store/pathActions.PATH_COMMANDS` 一张表：命令面板、右键菜单、快捷键（P、+ / −、⇧C；Delete 在锚点编辑里删锚点）都读它的
+  `available()`。直接选择没有 A 键（A 是箭头工具）。看护 `lib/penTool.test.ts`、`lib/pathEdit.test.ts`、`canvas/penAndAnchors.test.tsx`。
 - **不认识的对象类型原样保留（2026-11-14，ADR 0185 的前置）**：更新的构建会往文档里写本构建没有的 `type`
   （第一例是自由路径 `path`）。判据只有 `types/document.isKnownObject`（`KNOWN_OBJECT_TYPES` 闭集）。读盘、保存、
   换画布、复制画布都不碰它（文档层本来就不按类型过滤，别加）；画布上 `ObjectView` 只画虚线占位框
