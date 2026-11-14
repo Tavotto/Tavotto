@@ -307,13 +307,14 @@ def search(
     }
     for entry in entries[offset : offset + limit]:
         out["journals"].append(entry)
+        count = len(out["journals"])
+        out["next_offset"] = offset + count if offset + count < total else None
         if not _page_fits(out):
             out["journals"].pop()
             if not out["journals"]:
                 raise FactsError("result_too_large")
+            out["next_offset"] = offset + len(out["journals"])
             break
-    count = len(out["journals"])
-    out["next_offset"] = offset + count if offset + count < total else None
     return out
 
 

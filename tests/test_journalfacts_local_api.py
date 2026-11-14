@@ -137,6 +137,68 @@ def test_actual_flask_encoded_response_is_bounded(http_client, monkeypatch):
     assert "facts" not in result.json and result.headers["Cache-Control"] == "no-store"
 
 
+def test_signed_search_pagination_counts_five_digit_cursor_and_utf8(
+    http_client, isolated, monkeypatch
+):
+    client, headers = http_client
+    key, _ = isolated
+    idx = index_for(json.dumps(fact_bundle()).encode(), 1)
+    template = next(iter(idx["journals"].values()))
+    idx["journals"] = {f"j{i:05d}": dict(template) for i in range(10001)}
+    for i in (9997, 9998):
+        idx["journals"][f"j{i:05d}"]["aliases"] = ["界" * 170] + ["A" * 512] * 255
+    aliases = idx["journals"]["j09999"]["aliases"] = []
+
+    # Construct a valid signed index whose third record makes the final engine
+    # response exactly one UTF-8 byte over the real 300 KiB budget.  The old
+    # paginator measured a null placeholder instead of the 10000 cursor.
+    with monkeypatch.context() as m:
+        m.setattr(facts, "sync", lambda _: {"index": idx, "state": "updated", "code": None})
+        m.setattr(facts, "MAX_PAGE_BYTES", 10_000_000)
+
+        def page_size():
+            page = facts.search(offset=9997, limit=3)
+            return len(json.dumps(page, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+        target = (300 << 10) + 1
+        while target - page_size() > 515:
+            aliases.append("A" * 512)
+        remaining = target - page_size()
+        assert 3 <= remaining <= 515
+        aliases.append("A" * (remaining - 3))
+        assert page_size() == target
+
+    envelope = signed(key, idx)
+    assert len(envelope) < facts.MAX_INDEX_BYTES
+    monkeypatch.setattr(facts, "_request", lambda *args: (200, envelope))
+
+    def search(offset, limit):
+        return client.post(
+            "/api/journal-facts/search",
+            json={"offset": offset, "limit": limit, "expected_catalog_rev": 1},
+            headers=headers,
+        )
+
+    first = search(9997, 3)
+    assert first.status_code == 200 and len(first.data) <= facts.MAX_PAGE_BYTES
+    assert [item["id"] for item in first.json["journals"]] == ["j09997", "j09998"]
+    assert first.json["next_offset"] == 9999
+    second = search(first.json["next_offset"], 1)
+    assert second.status_code == 200 and len(second.data) <= facts.MAX_PAGE_BYTES
+    assert [item["id"] for item in second.json["journals"]] == ["j09999"]
+    assert second.json["next_offset"] == 10000
+    last = search(second.json["next_offset"], 1)
+    assert last.status_code == 200 and [item["id"] for item in last.json["journals"]] == ["j10000"]
+    assert last.json["next_offset"] is None
+    empty = search(10001, 1)
+    assert empty.status_code == 200 and empty.json["journals"] == []
+    assert empty.json["next_offset"] is None
+
+    monkeypatch.setattr(facts, "MAX_PAGE_BYTES", 256)
+    oversized = search(9997, 1)
+    assert oversized.status_code == 413 and oversized.json["code"] == "result_too_large"
+
+
 def test_remote_oversized_facts_error_has_fallback(http_client, monkeypatch):
     client, headers = http_client
 
