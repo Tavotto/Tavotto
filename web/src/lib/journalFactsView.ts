@@ -1,7 +1,7 @@
 /** Read one v2 source page. It never changes a publication profile. */
 export type FigureKind = 'unknown' | 'line_art' | 'halftone' | 'combination'
 export type SubmissionStage = 'unknown' | 'submission' | 'revision' | 'accepted' | 'production'
-export interface FactSource { url: string; retrieved: string; kind?: 'html' | 'pdf'; page?: number }
+export interface FactSource { url: string; retrieved: string; kind?: 'html' | 'pdf'; page?: number; pageExactUnavailable?: boolean }
 export interface FactRecord {
   id: string; subject: string; relation: string; value: unknown; unit?: string
   strength: string; stage: string; origin: string; source: string; quote: string
@@ -32,12 +32,20 @@ function validAnchor(value: unknown): boolean {
   })
 }
 
-function validPageContents(page: FactsPage): boolean {
+function validPageContents(page: FactsPage, pageLiterals: WeakMap<object, string | null>): boolean {
   if (!record(page.sources)) return false
   for (const source of Object.values(page.sources)) {
     if (!record(source) || typeof source.url !== 'string' || typeof source.retrieved !== 'string') return false
     if (source.kind !== undefined && source.kind !== 'html' && source.kind !== 'pdf') return false
-    if (source.page !== undefined && (source.kind !== 'pdf' || typeof source.page !== 'number' || !Number.isSafeInteger(source.page) || source.page <= 0)) return false
+    if (source.page !== undefined) {
+      if (source.kind !== 'pdf' || typeof source.page !== 'number' || !(source.page > 0) || (Number.isFinite(source.page) && !Number.isInteger(source.page))) return false
+      const literal = pageLiterals.get(source)
+      // The backend emits positive Python integers as decimal digits. Use the
+      // parser's token, not the rounded JS value, to reject fractions/exponents.
+      // Older runtimes lack reviver context: retain safe pages but fail closed
+      // for inexact values whose original token cannot be verified.
+      if (literal == null ? !Number.isSafeInteger(source.page) : !/^[1-9][0-9]*$/.test(literal)) return false
+    }
   }
   for (const fact of page.facts) {
     if (!record(fact) || ['id', 'subject', 'relation', 'strength', 'stage', 'origin', 'source', 'quote'].some((key) => typeof fact[key] !== 'string') || !(fact.source in page.sources)) return false
@@ -67,7 +75,13 @@ export async function readJournalFacts(
     const response = await fetch('/api/journal-facts/journal', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal,
     })
-    const data: unknown = await response.json()
+    const pageLiterals = new WeakMap<object, string | null>()
+    type SourceReviver = (this: object, key: string, value: unknown, context?: { source?: string }) => unknown
+    const parse = JSON.parse as (text: string, reviver: SourceReviver) => unknown
+    const data = parse(await response.text(), function (key, value, context) {
+      if (key === 'page') pageLiterals.set(this, typeof context?.source === 'string' ? context.source : null)
+      return value
+    })
     if (!response.ok) {
       const error = data as { code?: unknown } | null
       return { ok: false, code: typeof error?.code === 'string' ? error.code : 'unknown' }
@@ -83,10 +97,21 @@ export async function readJournalFacts(
       page.catalog_completeness !== 'unknown' || page.semantic_review !== 'not_authenticated' ||
       (selection && (!page.inspection || page.inspection.status !== 'not_verifiable' || !Array.isArray(page.inspection.facts))) ||
       (!selection && page.inspection !== undefined) ||
-      !validPageContents(page)) {
+      !validPageContents(page, pageLiterals)) {
       return { ok: false, code: 'invalid_response' }
     }
-    return { ok: true, page }
+    // JSON.parse may already have rounded an integer (or converted a very long
+    // integer to Infinity). Remove it rather than expose a false page number.
+    const sources = Object.fromEntries(Object.entries(page.sources).map(([id, original]) => {
+      const source = { ...original }
+      delete source.pageExactUnavailable
+      if (source.page !== undefined && !Number.isSafeInteger(source.page)) {
+        delete source.page
+        source.pageExactUnavailable = true
+      }
+      return [id, source]
+    }))
+    return { ok: true, page: { ...page, sources } }
   } catch {
     return { ok: false, code: 'network' }
   }

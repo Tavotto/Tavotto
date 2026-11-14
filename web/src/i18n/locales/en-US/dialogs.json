@@ -2526,6 +2526,7 @@
       "syncOther": "Sync status unknown; source currency cannot be inferred",
       "source": "Source",
       "retrieved": "Retrieved: {{date}}",
+      "pageExactUnavailable": "The PDF page number cannot be displayed accurately; open the original source.",
       "quote": "Original text",
       "context": "Source context",
       "conditions": "Structured conditions",

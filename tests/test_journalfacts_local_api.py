@@ -78,6 +78,37 @@ def test_real_signed_reader_preserves_sources_inspection_and_revision(
     assert "facts" not in changed.json
 
 
+@pytest.mark.parametrize("page", [7, 9007199254740991, 9007199254740993, 10**310])
+def test_signed_pdf_source_preserves_integer_in_http_bytes(
+    http_client, isolated, monkeypatch, page
+):
+    client, headers = http_client
+    key, _ = isolated
+    bundle = fact_bundle()
+    bundle["sources"]["s"] = {
+        "url": "https://example.invalid/guide.pdf",
+        "kind": "pdf",
+        "page": page,
+        "retrieved": "2026-11-11",
+    }
+    raw = json.dumps(bundle).encode()
+    envelope = signed(key, index_for(raw))
+    monkeypatch.setattr(
+        facts,
+        "_request",
+        lambda method, url, cap, headers: (
+            200,
+            envelope if url.endswith("index.signed.json") else raw,
+        ),
+    )
+    response = client.post(
+        "/api/journal-facts/journal", json={"journal_id": "fx-journal"}, headers=headers
+    )
+    assert response.status_code == 200
+    assert response.json["sources"]["s"]["page"] == page
+    assert f'"page":{page}'.encode() in response.data
+
+
 def test_signed_sources_keep_anchor_and_pdf_page(http_client, isolated, monkeypatch):
     client, headers = http_client
     key, _ = isolated

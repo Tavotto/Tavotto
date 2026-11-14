@@ -54,6 +54,45 @@ beforeEach(async () => {
 afterEach(async () => { await act(async () => root.unmount()); setCurrentProjectId(null); host.remove(); vi.restoreAllMocks() })
 
 describe('source facts viewer', () => {
+  it.each(['9007199254740993', `1${'0'.repeat(310)}`])('does not show an inexact PDF page (%s)', async (token) => {
+    const item = { ...page().facts[0], source: 'pdf', anchor: '#:~:text=Original', context: undefined }
+    const sources = { pdf: { url: 'https://example.invalid/guide.pdf', kind: 'pdf', page: 1, retrieved: '2026-01-01' } }
+    const raw = JSON.stringify(page({ facts: [item], sources })).replace('"page":1', `"page":${token}`)
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(raw, { status: 200 }))
+    await click(buttonWith('View source facts'))
+    await click(buttonWith('Read sources'))
+    expect(host.querySelector('[data-fact-id="f1"]')).not.toBeNull()
+    expect(host.textContent).toContain('PDF page number cannot be displayed accurately')
+    expect(host.textContent).not.toContain('9007199254740992')
+    expect(host.textContent).not.toContain('Infinity')
+    expect(host.querySelector('[data-fact-id="f1"] a')?.getAttribute('href')).toBe('https://example.invalid/guide.pdf')
+  })
+
+  it('keeps context and coverage usable across revision-bound pages with an inexact page', async () => {
+    const sources = {
+      s: { url: 'https://example.invalid/guide', kind: 'html', retrieved: '2026-01-01' },
+      pdf: { url: 'https://example.invalid/guide.pdf', kind: 'pdf', page: 1, retrieved: '2026-01-01' },
+    }
+    const item = { ...page().facts[0], context: [{ source: 'pdf', quote: 'Source heading' }] }
+    const coverage = [{ id: 'scope', subject: 'font_size', result: 'not_stated', scope: 'Captured section', sources: ['pdf'] }]
+    const makeRaw = (data: object) => JSON.stringify(page(data)).replace('"page":1', '"page":9007199254740993')
+    const first = makeRaw({ facts: [item], sources, next_offset: 1 })
+    const second = makeRaw({ facts: [], sources, coverage, next_offset: null })
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(first, { status: 200 })).mockResolvedValueOnce(new Response(second, { status: 200 }))
+    await click(buttonWith('View source facts'))
+    await click(buttonWith('Read sources'))
+    expect(host.textContent).toContain('Source heading')
+    expect(host.textContent).toContain('PDF page number cannot be displayed accurately')
+    expect([...host.querySelectorAll('[data-fact-id="f1"] a')].map((a) => a.getAttribute('href'))).toContain('https://example.invalid/guide.pdf')
+    await click(buttonWith('Next page'))
+    expect(host.textContent).toContain('Captured section')
+    expect(host.textContent).toContain('PDF page number cannot be displayed accurately')
+    expect(host.querySelector('[data-facts-page] a')?.getAttribute('href')).toBe('https://example.invalid/guide.pdf')
+    const request = JSON.parse(fetcher.mock.calls[1][1]!.body as string)
+    expect(request.offset).toBe(1)
+    expect(request.expected_catalog_rev).toBe(4)
+  })
+
   it('opens an HTML fact at its text anchor while preserving the context PDF page', async () => {
     const item = { ...page().facts[0], anchor: '#:~:text=Original%20quote', context: [{ source: 'pdf', quote: 'Context on page seven' }] }
     const sources = { s: { url: 'https://example.invalid/guide', kind: 'html', retrieved: '2026-01-01' }, pdf: { url: 'https://example.invalid/guide.pdf', kind: 'pdf', page: 7, retrieved: '2026-01-01' } }

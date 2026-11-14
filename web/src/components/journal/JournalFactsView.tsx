@@ -137,10 +137,10 @@ function JournalFactsSession({ journalId, journalLabel }: { journalId: string; j
         url.hash = ''
         href = url.href
         if (record.kind === 'pdf' && record.page) href += `#page=${record.page}`
-        else if (anchor) href += anchor
+        else if (!record.pageExactUnavailable && anchor) href += anchor
       }
     } catch { /* invalid URL is not a link */ }
-    return <div className="break-all text-xs text-ink-2">{text('source')}: {href ? <a href={href} target="_blank" rel="noreferrer">{record.url}</a> : record.url} · {t('journal.factView.retrieved', { date: record.retrieved })}{record.page ? ` · p. ${record.page}` : ''}</div>
+    return <div className="break-all text-xs text-ink-2">{text('source')}: {href ? <a href={href} target="_blank" rel="noreferrer">{record.url}</a> : record.url} · {t('journal.factView.retrieved', { date: record.retrieved })}{record.page ? ` · p. ${record.page}` : ''}{record.pageExactUnavailable ? ` · ${text('pageExactUnavailable')}` : ''}</div>
   }
   return <div data-journal-facts-view className="mt-3 flex flex-col gap-2">
     <Button size="sm" variant="secondary" aria-expanded={open} onClick={() => { if (open) reset(); setOpen(!open) }}>{text(open ? 'close' : 'open')}</Button>
