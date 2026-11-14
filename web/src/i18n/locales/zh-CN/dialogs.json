@@ -2503,7 +2503,7 @@
       "syncOther": "同步状态未知，不能推断来源现行性",
       "source": "来源",
       "retrieved": "采集日期：{{date}}",
-      "pageExactUnavailable": "PDF 页码无法精确显示，请查看原始文档。",
+      "pageExactUnavailable": "PDF 页码无法精确显示，请查看原始 PDF。",
       "quote": "原文",
       "context": "来源上下文",
       "conditions": "结构化条件",

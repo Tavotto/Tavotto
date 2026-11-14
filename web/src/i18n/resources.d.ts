@@ -1099,7 +1099,7 @@ export default interface Resources {
         "originJournal": "期刊条目",
         "originPublisher": "出版社条目",
         "page": "目录版本 {{rev}}，从第 {{offset}} 条开始",
-        "pageExactUnavailable": "PDF 页码无法精确显示，请查看原始文档。",
+        "pageExactUnavailable": "PDF 页码无法精确显示，请查看原始 PDF。",
         "permitted": "允许",
         "preferred": "首选",
         "production": "制作阶段",
