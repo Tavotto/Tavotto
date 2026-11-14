@@ -67,7 +67,7 @@ import type {
   ShapeObject,
   TextObject,
 } from '@/types/document'
-import { emptyProject, objectLabel, type ProjectDocument } from '@/types/document'
+import { emptyProject, isKnownObject, objectLabel, type ProjectDocument } from '@/types/document'
 import { findDocumentsForProjectFile, bindingForReuse, type ProjectFileBinding } from '@/lib/projectFile'
 import { isDocHeldElsewhere } from '@/lib/docPresence'
 import { useAssetStore } from './assetStore'
@@ -576,7 +576,7 @@ export function revealObjects(ids: string[]) {
 }
 
 /** 「全选」收进来的对象：看得见、没锁。判据只有这一份——`selectAll` 与画布菜单「全选」可不可用都读它 */
-export const isSelectAllTarget = (o: CanvasObject): boolean => !o.hidden && !o.locked
+export const isSelectAllTarget = (o: CanvasObject): boolean => !o.hidden && !o.locked && isKnownObject(o)
 
 /**
  * 「全选」此刻收进来的 id：这张画布上看得见、没锁的对象（单图编辑与排版同一口径，2026-10-21 取消「快编只收那张图」）。⌘A、命令面板 `select-all`、任何菜单的「全选」都经 `selectAll`

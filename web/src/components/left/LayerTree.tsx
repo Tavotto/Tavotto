@@ -16,6 +16,7 @@ import {
   Lock,
   LockOpen,
   Pencil,
+  Shapes,
   Slash,
   Square,
   Triangle,
@@ -57,8 +58,9 @@ const ICONS = {
 } as const
 
 function iconFor(o: CanvasObject) {
-  if (o.type === 'shape') return ICONS[o.shape]
-  return ICONS[o.type]
+  // 不认识的类型 / 形状（更新的构建写进来的）落到通用图标：`ICONS[x]` 为 undefined 时 `<Icon/>` 会让整棵图层树崩掉
+  const icon = o.type === 'shape' ? ICONS[o.shape] : ICONS[o.type as keyof typeof ICONS]
+  return icon ?? Shapes
 }
 
 /** 本组文案在 workspace:layerTree.* 下；布局徽标与 actions 的布局名同源 */

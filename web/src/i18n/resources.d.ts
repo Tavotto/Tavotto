@@ -678,7 +678,8 @@ export default interface Resources {
       "emptyText": "空文字",
       "panel": "图",
       "shape": "形状",
-      "text": "文字"
+      "text": "文字",
+      "unknown": "新版对象"
     },
     "presetText": {
       "annotation": "标注",
@@ -947,6 +948,7 @@ export default interface Resources {
       "missingSourceNote": "有一张图找不到了：{{name}}。",
       "mmSize": "{{w}} × {{h}} mm",
       "needsRerun": "这张图需要重新运行脚本才能按原图导出。也可以改按画布导出（版面按画布，保真度较低）。",
+      "newerObjects_other": "有 {{count}} 个对象来自更新的版本，更新后才能导出",
       "openProblems": "在问题面板中查看",
       "operationFailed": "无法完成：{{error}}",
       "outputFailed": "无法导出 {{format}}：{{reason}}",

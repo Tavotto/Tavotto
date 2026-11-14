@@ -7,7 +7,7 @@ import { beginCrop, enterElementEdit, groupMates } from '@/store/actions'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { CanvasObject } from '@/types/document'
-import { isLinear, objectRotation, panelRotation } from '@/types/document'
+import { isKnownObject, isLinear, objectRotation, panelRotation } from '@/types/document'
 import { PATH_HIT_SHAPES } from '@/lib/shapeGeometry'
 import { startMoveDrag } from './interactions'
 import { openQuickEdit } from './quickEditStore'
@@ -45,6 +45,8 @@ export const ObjectView = memo(function ObjectView({
   // 空白角也吃点击（还挡住底下的面板）。与细长线状对象同一个修法：外层 div
   // 整个让位，命中交给 ShapeView 里沿真实轮廓的透明层
   const pathHitShape = obj.type === 'shape' && PATH_HIT_SHAPES.has(obj.shape)
+  // 更新的构建写进来的对象：只画占位框，不接指针（不能选中 / 拖动 / 删除），文档里原样保留（`isKnownObject`）
+  const known = isKnownObject(obj)
   const hit = obj.locked || drawing || spaceDown ? 'none' : 'stroke'
 
   const onPointerDown = (e: React.PointerEvent) => {
@@ -150,7 +152,7 @@ export const ObjectView = memo(function ObjectView({
           : objectRotation(obj) ? `rotate(${objectRotation(obj)}deg)` : undefined,
         // 不写 'auto'：绘制工具激活时世界层整体设为 none，靠继承让对象一起失去命中。
         // 细长线状对象让位给自己的命中线（事件仍会从命中线冒泡到这里的 handler）
-        pointerEvents: obj.locked || isThinLinear || pathHitShape ? 'none' : undefined,
+        pointerEvents: obj.locked || !known || isThinLinear || pathHitShape ? 'none' : undefined,
         cursor: editing ? 'text' : 'default',
       }}
     >
@@ -158,6 +160,7 @@ export const ObjectView = memo(function ObjectView({
       {obj.type === 'text' && <TextView obj={obj} preview={preview} />}
       {obj.type === 'arrow' && <ArrowView obj={obj} hit={hit} />}
       {obj.type === 'shape' && <ShapeView obj={obj} hit={hit} />}
+      {!known && <div data-unknown-object className="absolute inset-0 border border-dashed border-ink-3" />}
     </div>
   )
 })

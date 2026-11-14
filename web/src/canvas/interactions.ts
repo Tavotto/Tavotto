@@ -143,6 +143,7 @@ import {
 import {
   isLinear,
   lineEndpoints,
+  isKnownObject,
   objectRotation,
   panelAspectLocked,
   panelRotation,
@@ -819,7 +820,7 @@ export function startMarquee(e: ReactPointerEvent) {
       }
       interaction().setMarquee(rect)
       const hit = doc()
-        .objects.filter((o) => !o.hidden && rectsIntersect(o, rect))
+        .objects.filter((o) => !o.hidden && isKnownObject(o) && rectsIntersect(o, rect))
         .map((o) => o.id)
       useSelectionStore.getState().set(expandGroups([...new Set([...base, ...hit])]))
     },

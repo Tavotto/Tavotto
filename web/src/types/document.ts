@@ -474,6 +474,16 @@ export const objectRotation = (o: CanvasObject): number =>
   o.type === 'panel' ? 0 : (o.rotationDeg ?? 0)
 
 export type CanvasObject = PanelObject | TextObject | ArrowObject | ShapeObject
+
+/**
+ * 这个构建认得的对象类型（闭集）。更新的构建可能往文档里写进新类型（例如自由路径 `path`，ADR 0185）；
+ * 本构建读到不认识的类型时**原样保留**（读盘、保存、换画布都不碰它），只画一个占位框，
+ * 不让它被选中、移动、删除，也不让它在导出里静默消失（导出前拦下）。判据只有这一处。
+ */
+export const KNOWN_OBJECT_TYPES: ReadonlySet<string> = new Set(['panel', 'text', 'arrow', 'shape'])
+
+/** 本构建认得这个对象（否则是更新的构建写进来的，见 `KNOWN_OBJECT_TYPES`） */
+export const isKnownObject = (o: { type: string }): boolean => KNOWN_OBJECT_TYPES.has(o.type)
 export type ObjectType = CanvasObject['type']
 
 export interface Guide {
@@ -833,5 +843,8 @@ export function objectLabel(o: CanvasObject): string {
       return t('objectType.arrow')
     case 'shape':
       return t(`shape.${o.shape}`)
+    default:
+      // 更新的构建写进来的类型（`isKnownObject`）：不许回 undefined（图层树、版本差异会显示成空）
+      return t('objectType.unknown')
   }
 }

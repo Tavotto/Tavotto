@@ -48,7 +48,8 @@
     "emptyText": "空文字",
     "panel": "图",
     "shape": "形状",
-    "text": "文字"
+    "text": "文字",
+    "unknown": "新版对象"
   },
   "presetText": {
     "annotation": "标注",

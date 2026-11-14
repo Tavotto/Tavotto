@@ -60,6 +60,14 @@ order: 210
   `tests/golden/shape_geometry_vectors.json` 两侧各跑一遍），改一边必须同步另一边，
   pytest 从合成的 PDF 内容流抽坐标做几何级看护（`tests/test_compose_arrow.py`）。
   科研预设在 `lib/presets.ts`（纯既有对象组合）。
+- **不认识的对象类型原样保留（2026-11-14，ADR 0185 的前置）**：更新的构建会往文档里写本构建没有的 `type`
+  （第一例是自由路径 `path`）。判据只有 `types/document.isKnownObject`（`KNOWN_OBJECT_TYPES` 闭集）。读盘、保存、
+  换画布、复制画布都不碰它（文档层本来就不按类型过滤，别加）；画布上 `ObjectView` 只画虚线占位框
+  （`data-unknown-object`）、不接指针；全选（`isSelectAllTarget`）与框选不收它——所以拖不动、删不掉、复制不了；
+  图层树退到通用图标，`objectLabel` 回「新版对象」。导出载荷（`toExportObjects`）不带它，`buildExportRequest`
+  回 `newerObjects` 个数，非 0 时导出对话框不许开始（一行说明，`data-export-newer-objects`）——**不许静默少画**。
+  写回原图只认 `ANNOTATION_TYPES` 白名单，天然不碰它。**新对象类型要比它第一次写进文档早至少一个正式版发出这条兜底**。
+  看护 `lib/unknownObjects.test.tsx`。
 - **画布标注的类型切换（2026-09-07，cap-shape-switch）**：矩形 ↔ 椭圆 ↔ 其它形状、
   直线 ↔ 箭头。「能不能切 / 能切成什么 / 切完长什么样」的唯一出处是
   `lib/shapeSwitch.ts`（纯函数），写入是 `store/actions.switchObjectKind`
