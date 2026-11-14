@@ -4,7 +4,12 @@ import type { JournalFieldSource } from './journals'
 // Correct only the matching stored evidence; never rewrite the project snapshot.
 const urls: Record<string, string> = {
   'nature-chemistry': 'https://www.nature.com/nchem/submission-guidelines/aip-and-formatting',
+  'nature-energy': 'https://www.nature.com/nenergy/submission-guidelines/aip-and-formatting',
   'nature-materials': 'https://www.nature.com/nmat/submission-guidelines/aip-and-formatting',
+  'nature-medicine': 'https://www.nature.com/nm/submission-guidelines/aip-and-formatting',
+  'nature-methods': 'https://www.nature.com/nmeth/submission-guidelines/aip-and-formatting',
+  'nature-nanotechnology': 'https://www.nature.com/nnano/submission-guidelines/aip-and-formatting',
+  'nature-photonics': 'https://www.nature.com/nphoton/submission-guidelines/aip-and-formatting',
   'nature-physics': 'https://www.nature.com/nphys/submission-guidelines/aip-and-formatting',
 }
 const quote = 'Figure panels should be prepared at a minimum resolution of 300 dpi and saved at a maximum width of 180 mm.'

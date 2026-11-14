@@ -532,7 +532,7 @@ describe('远程目录里还没下载的刊：选中时的胶囊提示', () => {
 })
 
 describe('historical panel width display', () => {
-  it.each(['nature-chemistry', 'nature-materials', 'nature-physics'])('shows historical panel advice from the saved binding for %s', async (id) => {
+  it.each(['nature-chemistry', 'nature-energy', 'nature-materials', 'nature-medicine', 'nature-methods', 'nature-nanotechnology', 'nature-photonics', 'nature-physics'])('shows historical panel advice from the saved binding for %s', async (id) => {
     useJournalCatalogStore.setState({ catalog: loadCatalog() })
     act(() => selectJournal(id))
     const before = structuredClone(useDocumentStore.getState().doc.profile)

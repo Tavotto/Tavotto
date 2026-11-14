@@ -9,7 +9,7 @@ const withoutStage = structuredClone(source)
 Reflect.deleteProperty(withoutStage, 'stage')
 
 describe('panelDisplayPath', () => {
-  it.each(['nature-chemistry', 'nature-materials', 'nature-physics'])('recognizes production evidence for %s without changing it', (journal) => {
+  it.each(['nature-chemistry', 'nature-energy', 'nature-materials', 'nature-medicine', 'nature-methods', 'nature-nanotechnology', 'nature-photonics', 'nature-physics'])('recognizes production evidence for %s without changing it', (journal) => {
     const current = journalSources(journal, loadCatalog())[oldPath]
     const before = structuredClone(current)
     expect(current.stage).toBe('production')
