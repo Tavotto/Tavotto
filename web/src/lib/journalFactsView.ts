@@ -1,11 +1,11 @@
 /** Read one v2 source page. It never changes a publication profile. */
 export type FigureKind = 'unknown' | 'line_art' | 'halftone' | 'combination'
 export type SubmissionStage = 'unknown' | 'submission' | 'revision' | 'accepted' | 'production'
-export interface FactSource { url: string; retrieved: string; page?: number }
+export interface FactSource { url: string; retrieved: string; kind?: 'html' | 'pdf'; page?: number }
 export interface FactRecord {
   id: string; subject: string; relation: string; value: unknown; unit?: string
   strength: string; stage: string; origin: string; source: string; quote: string
-  conditions?: Record<string, unknown>; condition_text?: string; derivation?: string
+  conditions?: Record<string, unknown>; condition_text?: string; derivation?: string; anchor?: string
   context?: { source: string; quote: string }[]
 }
 export interface CoverageRecord { id: string; subject: string; result: 'not_stated'; scope: string; sources: string[] }
@@ -22,10 +22,22 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
+function validAnchor(value: unknown): boolean {
+  const prefix = '#:~:text='
+  if (typeof value !== 'string' || !value.startsWith(prefix) || [...value].length > 4096) return false
+  const text = value.slice(prefix.length)
+  return !!text && [...text].every((char) => {
+    const code = char.codePointAt(0)!
+    return code > 32 && code !== 127 && !(code >= 0xd800 && code <= 0xdfff)
+  })
+}
+
 function validPageContents(page: FactsPage): boolean {
   if (!record(page.sources)) return false
   for (const source of Object.values(page.sources)) {
     if (!record(source) || typeof source.url !== 'string' || typeof source.retrieved !== 'string') return false
+    if (source.kind !== undefined && source.kind !== 'html' && source.kind !== 'pdf') return false
+    if (source.page !== undefined && (source.kind !== 'pdf' || typeof source.page !== 'number' || !Number.isSafeInteger(source.page) || source.page <= 0)) return false
   }
   for (const fact of page.facts) {
     if (!record(fact) || ['id', 'subject', 'relation', 'strength', 'stage', 'origin', 'source', 'quote'].some((key) => typeof fact[key] !== 'string') || !(fact.source in page.sources)) return false
@@ -33,6 +45,7 @@ function validPageContents(page: FactsPage): boolean {
     if (fact.conditions !== undefined && !record(fact.conditions)) return false
     if (fact.condition_text !== undefined && typeof fact.condition_text !== 'string') return false
     if (fact.derivation !== undefined && typeof fact.derivation !== 'string') return false
+    if (fact.anchor !== undefined && !validAnchor(fact.anchor)) return false
     if (fact.unit !== undefined && typeof fact.unit !== 'string') return false
   }
   for (const coverage of page.coverage) {

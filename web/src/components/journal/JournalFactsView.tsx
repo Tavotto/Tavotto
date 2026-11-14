@@ -127,10 +127,19 @@ function JournalFactsSession({ journalId, journalLabel }: { journalId: string; j
         ['signature_invalid', 'index_invalid', 'key_unknown', 'rev_rollback', 'index_conflict', 'bundle_invalid', 'cache_invalid', 'invalid_json'].includes(code) ? 'errorIntegrity' :
           ['offline', 'disabled', 'network', 'server_error'].includes(code) ? 'errorOffline' : 'errorOther',
   )
-  const source = (record: FactSource | undefined) => {
+  const source = (record: FactSource | undefined, anchor?: string) => {
     if (!record) return null
     let href: string | null = null
-    try { const url = new URL(record.url); if (url.protocol === 'https:') href = url.href } catch { /* invalid URL is not a link */ }
+    try {
+      const url = new URL(record.url)
+      if (url.protocol === 'https:' && !url.username && !url.password && !url.hash) {
+        // A legal source URL may end in an empty '#'; remove it before adding a locator.
+        url.hash = ''
+        href = url.href
+        if (record.kind === 'pdf' && record.page) href += `#page=${record.page}`
+        else if (anchor) href += anchor
+      }
+    } catch { /* invalid URL is not a link */ }
     return <div className="break-all text-xs text-ink-2">{text('source')}: {href ? <a href={href} target="_blank" rel="noreferrer">{record.url}</a> : record.url} · {t('journal.factView.retrieved', { date: record.retrieved })}{record.page ? ` · p. ${record.page}` : ''}</div>
   }
   return <div data-journal-facts-view className="mt-3 flex flex-col gap-2">
@@ -171,7 +180,7 @@ function JournalFactsSession({ journalId, journalLabel }: { journalId: string; j
             {fact.condition_text && <p>{text('conditionText')}: {fact.condition_text}</p>}
             {fact.derivation && <p>{text('derivation')}: {fact.derivation}</p>}
             <p>{text('quote')}: {fact.quote}</p>
-            {source(page.sources[fact.source])}
+            {source(page.sources[fact.source], fact.anchor)}
             {fact.context?.map((context, i) => <div key={i}><p>{text('context')}: {context.quote}</p>{source(page.sources[context.source])}</div>)}
             {comparison && <p>{text('comparison')}: {text(comparison === 'match' ? 'match' : comparison === 'mismatch' ? 'mismatch' : 'unresolved')}</p>}
             <p className="text-ink-2">{text('notVerified')}</p>

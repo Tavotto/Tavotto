@@ -54,6 +54,79 @@ beforeEach(async () => {
 afterEach(async () => { await act(async () => root.unmount()); setCurrentProjectId(null); host.remove(); vi.restoreAllMocks() })
 
 describe('source facts viewer', () => {
+  it('opens an HTML fact at its text anchor while preserving the context PDF page', async () => {
+    const item = { ...page().facts[0], anchor: '#:~:text=Original%20quote', context: [{ source: 'pdf', quote: 'Context on page seven' }] }
+    const sources = { s: { url: 'https://example.invalid/guide', kind: 'html', retrieved: '2026-01-01' }, pdf: { url: 'https://example.invalid/guide.pdf', kind: 'pdf', page: 7, retrieved: '2026-01-01' } }
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(page({ facts: [item], sources })), { status: 200 }))
+    await click(buttonWith('View source facts'))
+    await click(buttonWith('Read sources'))
+    const links = [...host.querySelectorAll('[data-fact-id="f1"] a')].map((link) => link.getAttribute('href'))
+    expect(links).toEqual(['https://example.invalid/guide#:~:text=Original%20quote', 'https://example.invalid/guide.pdf#page=7'])
+  })
+
+  it('opens scoped-coverage PDFs at their recorded page', async () => {
+    const coverage = [{ id: 'c', subject: 'font_size', result: 'not_stated', scope: 'Captured section', sources: ['pdf'] }]
+    const sources = { pdf: { url: 'https://example.invalid/guide.pdf', kind: 'pdf', page: 7, retrieved: '2026-01-01' } }
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(page({ facts: [], coverage, sources })), { status: 200 }))
+    await click(buttonWith('View source facts'))
+    await click(buttonWith('Read sources'))
+    expect(host.querySelector('[data-facts-page] a')?.getAttribute('href')).toBe('https://example.invalid/guide.pdf#page=7')
+  })
+
+  it('uses the PDF page for a PDF fact even if it also contains a text anchor', async () => {
+    const item = { ...page().facts[0], source: 'pdf', anchor: '#:~:text=Original', context: undefined }
+    const sources = { pdf: { url: 'https://example.invalid/guide.pdf', kind: 'pdf', page: 7, retrieved: '2026-01-01' } }
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(page({ facts: [item], sources })), { status: 200 }))
+    await click(buttonWith('View source facts'))
+    await click(buttonWith('Read sources'))
+    expect(host.querySelector('[data-fact-id="f1"] a')?.getAttribute('href')).toBe('https://example.invalid/guide.pdf#page=7')
+  })
+
+  it('does not reuse the fact anchor for separate context or duplicate an empty fragment', async () => {
+    const item = { ...page().facts[0], anchor: '#:~:text=Original', context: [{ source: 's', quote: 'Other paragraph' }] }
+    const sources = { s: { url: 'https://example.invalid/guide#', kind: 'html', retrieved: '2026-01-01' } }
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(page({ facts: [item], sources })), { status: 200 }))
+    await click(buttonWith('View source facts'))
+    await click(buttonWith('Read sources'))
+    const links = [...host.querySelectorAll('[data-fact-id="f1"] a')].map((link) => link.getAttribute('href'))
+    expect(links).toEqual(['https://example.invalid/guide#:~:text=Original', 'https://example.invalid/guide'])
+  })
+
+  it('keeps a valid text anchor on a PDF when no page is available', async () => {
+    const item = { ...page().facts[0], source: 'pdf', anchor: '#:~:text=Original', context: undefined }
+    const sources = { pdf: { url: 'https://example.invalid/guide.pdf', kind: 'pdf', retrieved: '2026-01-01' } }
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(page({ facts: [item], sources })), { status: 200 }))
+    await click(buttonWith('View source facts'))
+    await click(buttonWith('Read sources'))
+    expect(host.querySelector('[data-fact-id="f1"] a')?.getAttribute('href')).toBe('https://example.invalid/guide.pdf#:~:text=Original')
+  })
+
+  it.each(['javascript:alert(1)', '#other', '#:~:text=bad\nfragment', '#:~:text=\ud800'])('rejects invalid fact anchor %s', async (anchor) => {
+    const item = { ...page().facts[0], anchor }
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(page({ facts: [item] })), { status: 200 }))
+    await click(buttonWith('View source facts'))
+    await click(buttonWith('Read sources'))
+    expect(host.querySelector('[data-facts-page]')).toBeNull()
+  })
+
+  it('accepts valid supplementary characters using the same character limit as the server', async () => {
+    const anchor = '#:~:text=' + '🧪'.repeat(4087)
+    const item = { ...page().facts[0], anchor, context: undefined }
+    const sources = { s: { url: 'https://example.invalid/guide', kind: 'html', retrieved: '2026-01-01' } }
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(page({ facts: [item], sources })), { status: 200 }))
+    await click(buttonWith('View source facts'))
+    await click(buttonWith('Read sources'))
+    expect(host.querySelector('[data-facts-page] a')?.getAttribute('href')).toBe(`https://example.invalid/guide${anchor}`)
+  })
+
+  it.each(['http://example.invalid/guide', 'https://user:pass@example.invalid/guide', 'https://example.invalid/guide#other'])('does not link unsafe source URL %s', async (url) => {
+    const sources = { s: { url, kind: 'html', retrieved: '2026-01-01' } }
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(page({ sources })), { status: 200 }))
+    await click(buttonWith('View source facts'))
+    await click(buttonWith('Read sources'))
+    expect(host.querySelector('[data-facts-page] a')).toBeNull()
+  })
+
   it('loads only on demand, shows source and unknown review without changing the document', async () => {
     const snapshot = JSON.stringify(useDocumentStore.getState().doc)
     const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(page()), { status: 200 }))

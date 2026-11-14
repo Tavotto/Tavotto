@@ -78,6 +78,37 @@ def test_real_signed_reader_preserves_sources_inspection_and_revision(
     assert "facts" not in changed.json
 
 
+def test_signed_sources_keep_anchor_and_pdf_page(http_client, isolated, monkeypatch):
+    client, headers = http_client
+    key, _ = isolated
+    bundle = fact_bundle()
+    bundle["sources"]["pdf"] = {
+        "url": "https://example.invalid/guide.pdf",
+        "kind": "pdf",
+        "page": 7,
+        "retrieved": "2026-11-11",
+    }
+    bundle["facts"][0]["anchor"] = "#:~:text=Line%20art"
+    bundle["facts"][0]["context"] = [{"source": "pdf", "quote": "Context on page seven"}]
+    raw = json.dumps(bundle).encode()
+    envelope = signed(key, index_for(raw))
+    monkeypatch.setattr(
+        facts,
+        "_request",
+        lambda method, url, cap, headers: (
+            200,
+            envelope if url.endswith("index.signed.json") else raw,
+        ),
+    )
+    response = client.post(
+        "/api/journal-facts/journal", json={"journal_id": "fx-journal"}, headers=headers
+    )
+    assert response.status_code == 200
+    assert response.json["facts"][0]["anchor"] == "#:~:text=Line%20art"
+    assert response.json["sources"]["pdf"]["page"] == 7
+    assert response.json["facts"][0]["context"][0]["source"] == "pdf"
+
+
 def test_bad_signature_or_bundle_hash_never_returns_facts(http_client, isolated, monkeypatch):
     client, headers = http_client
     key, _ = isolated
