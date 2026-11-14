@@ -124,13 +124,24 @@ def declared_unjudged_roles(parent) -> list[tuple[list[str], str]]:
         return []
     entry = spec.get("entry", "main")
     out: list[tuple[list[str], str]] = []
-    for case in cg.registered("compat_engine").values():
+    siblings = [
+        case
+        for case in cg.registered("compat_engine").values()
+        if case.get("script") == spec["script"] and case.get("entry", "main") == entry
+    ]
+    judged = [
+        set((c.get("semantic_expectations") or {}).get("roles_present") or ())
+        for c in siblings
+        if (c.get("expected") or {}).get("fidelity") is not False
+    ]
+    for case in siblings:
         roles = (case.get("semantic_expectations") or {}).get("roles_present") or []
+        # 同脚本里有别的、仍要判像素的用例角色也包含这些（sci_cjk 与 sci_mathtext）：角色认不出
+        # 是哪一张，宁可照判也不免判
         if (
             roles
-            and case.get("script") == spec["script"]
-            and case.get("entry", "main") == entry
             and (case.get("expected") or {}).get("fidelity") is False
+            and not any(set(roles) <= other for other in judged)
         ):
             reason = (case.get("expected_false_reasons") or {}).get("fidelity")
             out.append(
@@ -188,7 +199,8 @@ def pixel_judgment(
         if declared:
             exempt[stem] = unjudged[declared[0]]
             continue
-        have = set((roles_by_stem or {}).get(stem) or ())
+        # 只对没存过盘的图按角色认：存过盘的图 stem 已经说明了它是哪一张
+        have = set() if saved_stems.get(stem) else set((roles_by_stem or {}).get(stem) or ())
         by_roles = [why for roles, why in (unjudged_roles or ()) if roles and set(roles) <= have]
         if by_roles:
             exempt[stem] = by_roles[0]

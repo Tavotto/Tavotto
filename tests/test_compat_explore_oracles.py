@@ -162,6 +162,19 @@ class PixelJudgment(unittest.TestCase):
             1,
         )
 
+    def test_a_saved_figure_is_never_exempted_by_roles(self):
+        """Codex #1916 P1：存过盘的图 stem 已定身份，角色匹配不得把它免判。"""
+        a, b = png(self.tmp / "a.png"), png(self.tmp / "b.png", dots=64)
+        roles = [(["axes", "line"], "declared")]
+        have = {"m": ["axes", "line", "title"]}
+        got = OR.pixel_judgment({"m": a}, {"m": b}, self.out, None, {"m": ["m"]}, roles, have)
+        self.assertEqual(len(got["differences"]), 1)
+
+    def test_roles_shared_with_a_judged_sibling_do_not_declare_anything(self):
+        """Codex #1916 P1：sci_cjk 与 sci_mathtext 角色相同，认不出是哪张，不免判。"""
+        got = OR.declared_unjudged_roles(xt.load_parent("compat_engine", "sci_mathtext"))
+        self.assertEqual(got, [])
+
     def test_role_declarations_come_from_the_same_script_siblings(self):
         got = OR.declared_unjudged_roles(xt.load_parent("compat_engine", "ax_aspect_equal"))
         self.assertEqual(len(got), 1)
