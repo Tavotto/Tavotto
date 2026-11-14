@@ -3001,7 +3001,7 @@ class TestTauriAptCache:
             "remaining=",
         ):
             assert needle in text, needle
-        assert text.index("APT_CACHE_HIT") < text.index('apt-get "${apt_opts[@]}" update'), (
+        assert text.index("APT_CACHE_HIT") < text.index('apt-get "${attempt_opts[@]}" update'), (
             "命中路径要排在 apt-get update 之前"
         )
 
@@ -3127,13 +3127,15 @@ class TestTauriAptCache:
         log = tmp_path / "calls.log"
         etc = tmp_path / "apt-sources"
         etc.mkdir()
-        (etc / "ubuntu.sources").write_text("URIs: mirror+file:/etc/apt/apt-mirrors.txt\n")
-        # runner 镜像 20261101 起真正的主机名在 apt-mirrors.txt（11-11 只改 .sources 等于没换）
-        (etc / "apt-mirrors.txt").write_text(
-            "http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n"
-            "https://archive.ubuntu.com/ubuntu/\tpriority:2\n"
+        (etc / "sources.list.d").mkdir()
+        original_source = (
+            "Types: deb\nURIs: mirror+file:/etc/apt/apt-mirrors.txt "
+            "http://azure.archive.ubuntu.com/ubuntu/\n"
+            "Suites: noble noble-updates\nComponents: main\n"
+            "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"
         )
-        (etc / "legacy.list").write_text("deb http://azure.archive.ubuntu.com/ubuntu/ noble main\n")
+        (etc / "sources.list.d/ubuntu.sources").write_text(original_source)
+        (etc / "apt-mirrors.txt").write_text("http://azure.archive.ubuntu.com/ubuntu/\n")
 
         def stub(name: str, body: str) -> None:
             f = bindir / name
@@ -3143,13 +3145,24 @@ class TestTauriAptCache:
         stub(
             "sudo",
             'echo "sudo $*" >> "$LOG"\n'
-            'if [ "$1" = find ]; then shift; exec find "$APT_ETC" "${@:2}"; fi\nexec "$@"',
+            'if [ "$1" = find ] && [ "$2" = /etc/apt ]; then shift; exec find "$APT_ETC" "${@:2}"; fi\n'
+            'if [ "$1" = cp ]; then shift; [ "$1" = -a ] && shift; src="$1"; '
+            r'src="${src/#\/etc\/apt/$APT_ETC}"; exec cp -a "$src" "$2"; fi' + "\n"
+            'if [ "$1" = test ] && [ "$2" = -f ] && [ "$3" = /etc/apt/sources.list ]; then '
+            'test -f "$APT_ETC/sources.list"; exit $?; fi\nexec "$@"',
         )
         stub("timeout", 'echo "timeout $1" >> "$LOG"; shift; exec "$@"')
         stub(
             "apt-get",
             'echo "apt-get $*" >> "$LOG"\n'
-            'case "$*" in *" update"*) sleep "${UPDATE_SLEEP:-0}"; [ "${FAIL_UPDATE:-0}" = 1 ] && exit 100 ;; esac\n'
+            'case "$*" in *" update"*) '
+            'parts="$APT_ETC/sources.list.d"; for a in "$@"; do '
+            'case "$a" in Dir::Etc::sourceparts=*) parts="${a#*=}" ;; esac; done; '
+            'echo "effective $(cat "$parts/ubuntu.sources" | tr "\\n" "|")" >> "$LOG"; '
+            'sleep "${UPDATE_SLEEP:-0}"; [ "${FAIL_UPDATE:-0}" = 1 ] && exit 100; '
+            'if [ "${SIGNATURE_FAIL:-0}" = 1 ]; then echo "NO_PUBKEY fixture" >&2; exit 100; fi; '
+            'if [ "${FAIL_FIRST:-0}" = 1 ] && [ ! -e "$APT_ETC/failed_once" ]; then '
+            'touch "$APT_ETC/failed_once"; exit 100; fi ;; esac\n'
             'case "$*" in *--download-only*) touch "$DEB_DIR/new_1_amd64.deb" ;; esac\n'
             "exit ${APT_RC:-0}",
         )
@@ -3195,7 +3208,7 @@ class TestTauriAptCache:
             ln for ln in calls.splitlines() if ln.endswith(" update")
         ]
 
-        # 未命中：update 一直失败 → 三个镜像各试一次，最后非零；源文件被改写到最后一个镜像
+        # 未命中：三个镜像各试一次并验证实际输入，全部失败必须非零；源配置不变。
         bad = run(APT_CACHE_HIT="false", FAIL_UPDATE="1")
         assert bad.returncode != 0
         assert (
@@ -3205,17 +3218,52 @@ class TestTauriAptCache:
             )
             == 3
         )
-        hosts = {
-            urlsplit(ln.split()[0]).hostname
-            for ln in (etc / "apt-mirrors.txt").read_text().splitlines()
-            if ln.strip()
-        } | {
-            urlsplit(word).hostname
-            for ln in (etc / "legacy.list").read_text().splitlines()
-            for word in ln.split()
-            if word.startswith("http")
-        }
-        assert hosts == {"mirrors.edge.kernel.org"}
+        effective = [line for line in log.read_text().splitlines() if line.startswith("effective ")]
+        assert len(effective) == 3, effective
+        assert "mirror+file:/etc/apt/apt-mirrors.txt" in effective[0]
+        assert effective[1].count("http://archive.ubuntu.com/ubuntu/") == 2
+        assert effective[2].count("http://mirrors.edge.kernel.org/ubuntu/") == 2
+        assert all("azure.archive.ubuntu.com" not in line for line in effective[1:])
+        assert all(
+            "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg" in line
+            for line in effective
+        )
+        assert (etc / "sources.list.d/ubuntu.sources").read_text() == original_source
+        assert (etc / "apt-mirrors.txt").read_text() == "http://azure.archive.ubuntu.com/ubuntu/\n"
+
+        # apt 报签名失败时不放行或关闭签名验证。
+        untrusted = run(APT_CACHE_HIT="false", SIGNATURE_FAIL="1")
+        assert untrusted.returncode != 0 and "NO_PUBKEY fixture" in untrusted.stderr
+        assert "--allow-unauthenticated" not in log.read_text()
+        assert "AllowInsecure" not in log.read_text()
+
+        # 默认源失败、第二镜像成功；安装和下载使用同一份已签名来源配置。
+        fallback = run(APT_CACHE_HIT="false", FAIL_FIRST="1")
+        assert fallback.returncode == 0, fallback.stderr
+        fallback_calls = log.read_text().splitlines()
+        assert sum(line.startswith("effective ") for line in fallback_calls) == 2
+        assert "http://archive.ubuntu.com/ubuntu/" in next(
+            line
+            for line in fallback_calls
+            if line.startswith("effective ") and "http://archive.ubuntu.com/ubuntu/" in line
+        )
+        installs = [
+            line for line in fallback_calls if line.startswith("apt-get ") and " install " in line
+        ]
+        assert len(installs) == 2 and all("Dir::Etc::sourceparts=" in line for line in installs)
+        assert all(
+            "--allow-unauthenticated" not in line and "AllowInsecure" not in line
+            for line in fallback_calls
+        )
+        (etc / "failed_once").unlink()
+
+        # 不跟随源配置符号链接修改真实系统；不能可靠隔离时当场失败。
+        (etc / "sources.list.d/link.sources").symlink_to(etc / "sources.list.d/ubuntu.sources")
+        unsafe = run(APT_CACHE_HIT="false", FAIL_FIRST="1")
+        assert unsafe.returncode != 0 and "符号链接" in unsafe.stderr
+        (etc / "sources.list.d/link.sources").unlink()
+        (etc / "failed_once").unlink()
+        assert (etc / "sources.list.d/ubuntu.sources").read_text() == original_source
 
         # 预算共享：update 吃掉大半预算，download 的 timeout 只拿剩余
         slow = run(APT_CACHE_HIT="false", UPDATE_SLEEP="2", TAURI_APT_ATTEMPT_SECONDS="4")

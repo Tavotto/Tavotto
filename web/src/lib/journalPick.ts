@@ -6,7 +6,7 @@
  *   搜索     `searchJournals`：名称 / 缩写（aliases）/ ISSN；`groupByPublisher` 按出版社分组
  *   出处卡   `fieldLabel` / `valueText` / `cardSentence` / `highlightQuote`：一句话 + 原文摘录里命中的数加 `<mark>`
  *
- * 期刊没写的项一律说「该期刊未规定」，**不拿任何别的规范补**；`typical` / `recommended` / `range` 的值显示原话，
+ * 快照缺失的项一律说「当前快照未记录」，**不拿任何别的规范补**；`typical` / `recommended` / `range` 的值显示原话，
  * 不显示成一个像判据的数。
  */
 import { currentLocale, t as translate } from '@/i18n'
@@ -202,16 +202,16 @@ export function cardConclusion(path: string, s: JournalFieldSource): string {
   return [field, valueText(path, s)].filter(Boolean).join(' ')
 }
 
-/** Elsevier 一类的建议性字号：「X 说明 7 pt 为正文最小字号，6 pt 为上下标最小字号」。 */
-export function adviceSentence(journal: string, entries: Record<string, JournalFieldSource>): string | null {
+/** Elsevier 一类的建议性字号：说明仅供参考，不推断原文语气或把来源归因给所选期刊。 */
+export function adviceSentence(_journal: string, entries: Record<string, JournalFieldSource>): string | null {
   const num = (s?: JournalFieldSource) => (typeof s?.value === 'number' ? fmt(s.value) : '')
   const body = entries.min_effective_font_size_pt
   const script = entries.min_script_font_size_pt
   const b = body?.affects === 'advice' ? num(body) : ''
   const sc = script?.affects === 'advice' ? num(script) : ''
-  if (b && sc) return jt('card.adviceBoth', { journal, body: b, script: sc })
-  if (b) return jt('card.adviceBody', { journal, body: b })
-  if (sc) return jt('card.adviceScript', { journal, script: sc })
+  if (b && sc) return jt('card.adviceBoth')
+  if (b) return jt('card.adviceBody')
+  if (sc) return jt('card.adviceScript')
   return null
 }
 
@@ -266,6 +266,14 @@ export function pathsForCheck(checkId: string): string[] {
     .map(([path]) => path)
 }
 
+/** DPI 问题只引用快照中标为参与预检且数值匹配的来源；这不证明其语义或适用条件正确。 */
+export function dpiSourceMatches(source: JournalFieldSource | undefined, threshold: unknown): boolean {
+  if (!source || source.unset || source.affects !== 'preflight' || typeof source.value !== 'number') return false
+  if (typeof threshold !== 'number' && typeof threshold !== 'string') return false
+  const actual = Number(threshold)
+  return Number.isFinite(actual) && Number.isFinite(source.value) && source.value === actual
+}
+
 /** 某检查在这本期刊上有出处的那几条（advice 只收 affects=advice 的）。 */
 export function sourcesForCheck(
   checkId: string,
@@ -280,7 +288,7 @@ export function sourcesForCheck(
 
 /* --------------------------- 「期刊要求」清单的行 --------------------------- */
 
-/** 期刊「要紧的几项」：没有出处就明说「该期刊未规定」，不补。 */
+/** 期刊「要紧的几项」：没有出处就明说「当前快照未记录」，不补。 */
 export const KEY_PATH_GROUPS: string[][] = [
   ['page_columns', 'widths_mm.single', 'widths_mm.double'],
   ['min_effective_font_size_pt', 'min_script_font_size_pt'],

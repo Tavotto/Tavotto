@@ -434,7 +434,7 @@
     "hideObjects": "隐藏 {{count}} 个对象",
     "showObjects": "显示 {{count}} 个对象",
     "setFramePad": "修改画布留白",
-    "journalStyle": "按 {{journal}} 调整样式「{{name}}」"
+    "journalStyle": "参考 {{journal}} 的记录调整样式「{{name}}」"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -806,10 +806,10 @@
     "bindCancelled": "切换了画布，刚才选的样式没有绑上，请在那张画布上再选一次",
     "bindMissing": "要绑定的那套样式已经不在样式库里了，没有改动",
     "editCancelled": "样式或画布刚换过，刚才的改动没有生效，请再改一次",
-    "journalMismatch": "{{count}} 项不合 {{journal}}",
-    "journalAdjust": "按期刊调整",
+    "journalMismatch": "可根据 {{journal}} 的记录调整 {{count}} 项",
+    "journalAdjust": "参考记录调整",
     "journalAnnotation": "画布文字",
-    "journalAdjusted": "已按 {{journal}} 调整样式，可撤销",
+    "journalAdjusted": "已参考 {{journal}} 的记录调整样式，可撤销",
     "journalRetry": "再试一次",
     "journalProp": {
       "fontsize": "字号",

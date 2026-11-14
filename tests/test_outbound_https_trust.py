@@ -279,6 +279,7 @@ OUTBOUND = {
     "engine/codexinstall.py": "_fetch",
     "engine/diagsend.py": "_opener",
     "engine/journalremote.py": "_http",
+    "engine/journalfacts_remote.py": "_http",
     "engine/managedcli.py": "_fetch",
     "engine/privatepython.py": "_fetch",
     "engine/telemetry.py": "_post",
@@ -351,10 +352,18 @@ def _is_no_proxy_handler(node: ast.AST) -> bool:
     )
 
 
-def _opener_shape_ok(call: ast.Call, fn: ast.AST) -> bool:
-    """`build_opener(tlstrust.https_handler(ctx))`，且 `ctx` 在同一个函数里取自 `tlstrust.client_context()`
-    （或直接内联那一次调用）。唯一允许的第二个参数是关掉代理的 `ProxyHandler({})`。"""
-    extra_ok = len(call.args) == 2 and _is_no_proxy_handler(call.args[1])
+def _opener_shape_ok(call: ast.Call, fn: ast.AST, rel: str) -> bool:
+    """验证同一 opener 的平台信任处理器；只允许已知的禁代理或禁重定向处理器。"""
+    extra = call.args[1] if len(call.args) == 2 else None
+    no_redirect = (
+        rel == "engine/journalfacts_remote.py"
+        and isinstance(extra, ast.Call)
+        and isinstance(extra.func, ast.Name)
+        and extra.func.id == "_NoRedirect"
+        and not extra.args
+        and not extra.keywords
+    )
+    extra_ok = len(call.args) == 2 and (_is_no_proxy_handler(extra) or no_redirect)
     if (
         (len(call.args) != 1 and not extra_ok)
         or call.keywords
@@ -392,7 +401,7 @@ def _outbound_violations(rel: str, tree: ast.AST) -> tuple[list[str], dict[str, 
         name = _callee(call)
         where = f"{rel}:{call.lineno}"
         if name == "build_opener":
-            if not _opener_shape_ok(call, fns.get(owner, tree)):
+            if not _opener_shape_ok(call, fns.get(owner, tree), rel):
                 bad.append(
                     f"{where} build_opener 没用 tlstrust.https_handler(tlstrust.client_context())"
                 )
@@ -542,6 +551,23 @@ class TestStructure:
                 "    ).open(req)\n"
             )
             assert _outbound_violations("engine/x.py", ast.parse(bad_src))[0], extra
+
+    def test_facts_opener_keeps_tls_and_refuses_unrecognized_handlers(self):
+        rel = "engine/journalfacts_remote.py"
+        good = (
+            "def f(req):\n    urllib.request.build_opener(\n"
+            "        tlstrust.https_handler(tlstrust.client_context()), _NoRedirect()\n"
+            "    ).open(req)\n"
+        )
+        assert _outbound_violations(rel, ast.parse(good))[0] == []
+        assert _outbound_violations("engine/other.py", ast.parse(good))[0]
+        for bad in (
+            good.replace("tlstrust.https_handler(tlstrust.client_context()), ", ""),
+            good.replace("tlstrust.client_context()", "ssl.create_default_context()"),
+            good.replace("_NoRedirect()", "urllib.request.HTTPSHandler()"),
+            good.replace("_NoRedirect()", "_NoRedirect('unsafe')"),
+        ):
+            assert _outbound_violations(rel, ast.parse(bad))[0], bad
 
     def test_the_tlstrust_inventory_names_the_same_call_sites(self):
         """`tlstrust` 模块头的清单与 `OUTBOUND` 同一份事实：每一处的函数名都写在那里。"""

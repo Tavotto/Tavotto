@@ -58,24 +58,54 @@ mirrors=("" archive.ubuntu.com mirrors.edge.kernel.org)
 # 每个镜像一份总预算（update + download 合计）。3 × 180 = 540 s，加上本地安装与剪枝的余量，
 # 必须小于 ci.yml 安装步的 timeout-minutes: 12（720 s），否则第三个镜像还没试完 step 就被砍。
 attempt_seconds="${TAURI_APT_ATTEMPT_SECONDS:-180}"
+sources_tmp=""
+# shellcheck disable=SC2329 # Called by the EXIT trap.
+cleanup() {
+  local status=$?
+  trap - EXIT
+  if [ -n "$sources_tmp" ]; then sudo rm -rf "$sources_tmp" || status=1; fi
+  exit "$status"
+}
+trap cleanup EXIT
 
 for mirror in "${mirrors[@]}"; do
+  attempt_opts=("${apt_opts[@]}")
   if [ -n "$mirror" ]; then
     echo "::warning::换镜像到 $mirror 再试"
-    # runner 镜像 20261101 起 ubuntu.sources 写的是 `mirror+file:/etc/apt/apt-mirrors.txt`，真正的主机名
-    # 在 apt-mirrors.txt 里——只改 .list / .sources 等于没换（11-11 azure 解析失败时三次尝试全打 azure）。
-    sudo find /etc/apt -type f \( -name '*.list' -o -name '*.sources' -o -name 'apt-mirrors.txt' \) -exec \
-      sed -i -E "s#//(azure\.archive\.ubuntu\.com|archive\.ubuntu\.com|mirrors\.edge\.kernel\.org)/#//$mirror/#g" {} +
+    if [ -z "$sources_tmp" ]; then
+      sources_tmp="$(mktemp -d)"
+      sudo cp -a /etc/apt/sources.list.d "$sources_tmp/sources.list.d"
+      if sudo test -f /etc/apt/sources.list; then
+        sudo cp -a /etc/apt/sources.list "$sources_tmp/sources.list"
+      else
+        touch "$sources_tmp/sources.list"
+      fi
+    fi
+    if sudo find "$sources_tmp" -type l -print -quit | grep -q .; then
+      echo "::error::apt 源配置含符号链接，无法安全隔离镜像回退" >&2
+      exit 1
+    fi
+    # Hosted runners can use a mirror+file URI: replacing hostnames in
+    # .sources alone leaves apt reading the original Azure mirror list.
+    # Rewrite a private copy only; leave global configuration and Signed-By intact.
+    sudo find "$sources_tmp" -type f \( -name '*.list' -o -name '*.sources' \) -exec \
+      sed -i -E \
+        -e "s#mirror\+file:/etc/apt/apt-mirrors\.txt#http://$mirror/ubuntu/#g" \
+        -e "s#//(azure\.archive\.ubuntu\.com|archive\.ubuntu\.com|mirrors\.edge\.kernel\.org)/#//$mirror/#g" {} +
+    attempt_opts+=(
+      -o "Dir::Etc::sourcelist=$sources_tmp/sources.list"
+      -o "Dir::Etc::sourceparts=$sources_tmp/sources.list.d"
+    )
   fi
   # update 与下载共用这个镜像的预算：下载只拿 update 用剩的时间；超时是 timeout 的退出码 124，
   # 一并当作本次尝试失败。
   start=$SECONDS
-  if sudo timeout "$attempt_seconds" apt-get "${apt_opts[@]}" update \
+  if sudo timeout "$attempt_seconds" apt-get "${attempt_opts[@]}" update \
     && remaining=$((attempt_seconds - (SECONDS - start))) && ((remaining > 0)) \
-    && sudo timeout "$remaining" apt-get "${apt_opts[@]}" install -y \
+    && sudo timeout "$remaining" apt-get "${attempt_opts[@]}" install -y \
       --no-install-recommends --download-only "${pkgs[@]}"; then
     # 此刻 .deb 全在 $deb_dir 里，安装不再需要网络。
-    sudo apt-get "${apt_opts[@]}" install -y --no-install-recommends --no-download "${pkgs[@]}"
+    sudo apt-get "${attempt_opts[@]}" install -y --no-install-recommends --no-download "${pkgs[@]}"
     prune_stale_debs
     exit 0
   fi

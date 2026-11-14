@@ -866,3 +866,13 @@ describe('元素超出图幅（审计 T14）：接成可定位的阻断问题', 
     expect(fires(m)).toBe(true)
   })
 })
+
+
+it('new proof uses a neutral journal base stamp without changing the saved profile', () => {
+  const journal = loadProfile('journal-base-v1')
+  const oldLabel = journal.label
+  const report = buildProofPayload(docWith([panel()]), assets, [], { dpi: 300, formats: ['png'], stem: 'Fig1' }, journal)
+  expect(oldLabel).toContain('期刊未规定的项一律不判')
+  expect(report.profile.label).toBe('期刊检查基础')
+  expect(journal.label).toBe(oldLabel)
+})

@@ -70,12 +70,62 @@ function Evidence({ source }: { source: JournalFieldSource }) {
   return <Quote source={source} />
 }
 
-/**
- * 出处卡（变体 C）：上面是原文证据（快照图或摘录，白纸出血到边），下面一条底栏——
- * 左两行：结论（15 semibold）与「期刊 · 域名 · 采集日期[ · PDF]」（12 灰）；右：「打开原网页 ↗」强调色文字链接，有存档再加灰色「存档」。
- * 链接交给浏览器（桌面壳里是系统浏览器）；`link` 已带 text fragment / `#page=N`。
- * 建议性字号（Elsevier 一类）的结论用 `adviceSentence`；多条出处（单栏 + 双栏、正文 + 上下标）上面各出一块证据，底栏取第一条的来源。
- */
+/** 一条来源的域名、采集日期与类型，不暗示期刊归属。 */
+function SourceMeta({ source }: { source: JournalFieldSource }) {
+  const parts = [sourceHost(source.url), source.retrieved, source.kind === 'pdf' ? 'PDF' : ''].filter(Boolean)
+  return (
+    <p data-journal-meta className="type-caption flex flex-wrap gap-x-1">
+      {parts.map((part, i) => (
+        <Fragment key={i}>
+          {i > 0 && ' '}
+          <span className="whitespace-nowrap">{part}{i < parts.length - 1 && ' ·'}</span>
+        </Fragment>
+      ))}
+    </p>
+  )
+}
+
+/** 来源范围可能来自目录默认值；它不能证明该期刊采用了这条指南。 */
+function SourceCoverage({ source }: { source: JournalFieldSource }) {
+  const coverage = source.coverage
+  const key = coverage === 'publisher_general' ? 'publisher'
+    : coverage === 'journal_specific' ? 'journal'
+      : coverage === 'single_journal_sample' ? 'sample' : 'unknown'
+  return <p data-journal-coverage className="type-caption">{jt(`card.coverage.${key}`)}</p>
+}
+
+/** 多条证据时给每个链接一个带来源序号的可访问名。 */
+function SourceLinks({ source, name }: { source: JournalFieldSource; name?: string }) {
+  return (
+    <div className="flex shrink-0 items-center gap-3 pb-0.5 text-sm">
+      <a
+        href={source.link}
+        target="_blank"
+        rel="noreferrer"
+        data-journal-open
+        aria-label={name ? `${name} — ${jt('card.open')}` : undefined}
+        className="inline-flex items-center gap-0.5 font-medium text-info-content hover:underline"
+      >
+        {jt('card.open')}
+        <ArrowUpRight size={ICON_SIZE.sm} aria-hidden />
+      </a>
+      {source.archive_url && (
+        <a
+          href={source.archive_url}
+          target="_blank"
+          rel="noreferrer"
+          data-journal-archive
+          aria-label={name ? `${name} — ${jt('card.archive')}` : undefined}
+          className="text-ink-3 hover:text-ink-2 hover:underline"
+        >
+          {jt('card.archive')}
+        </a>
+      )}
+    </div>
+  )
+}
+
+/** 单条保持原布局；多条证据分别标出对应来源和链接。 */
 export function SourceCardBody({
   journal,
   entries,
@@ -85,56 +135,31 @@ export function SourceCardBody({
 }) {
   const advice = adviceSentence(journal, Object.fromEntries(entries))
   const conclusion = advice ?? entries.map(([path, s]) => cardConclusion(path, s)).join('；')
-  const lead = entries[0][1]
-  const metaParts = [journal, sourceHost(lead.url), lead.retrieved, lead.kind === 'pdf' ? 'PDF' : ''].filter(Boolean)
+  const multi = entries.length > 1
   return (
     <div data-journal-card className="flex flex-col">
-      {entries.map(([path, s]) => (
+      {entries.map(([path, source], index) => (
         <div key={path} data-journal-entry={path}>
-          <Evidence source={s} />
+          <Evidence source={source} />
+          {multi && (
+            <div className="flex items-end justify-between gap-3 px-3.5 py-2">
+              <div className="flex min-w-0 flex-col gap-0.5">
+                <p className="type-caption">{jt('card.aria')} {index + 1}/{entries.length}</p>
+                <SourceMeta source={source} />
+                <SourceCoverage source={source} />
+              </div>
+              <SourceLinks source={source} name={`${jt('card.aria')} ${index + 1}/${entries.length}`} />
+            </div>
+          )}
         </div>
       ))}
       <div className="flex items-end justify-between gap-3 border-t border-border px-3.5 py-3">
         <div className="flex min-w-0 flex-col gap-0.5">
-          <p data-journal-sentence className="type-title">
-            {conclusion}
-          </p>
-          {/* 窄了只在「 · 」处换行（圆点留在行尾），日期 / 域名不被拦腰截断；读屏与测试看到的仍是一整句 */}
-          <p data-journal-meta className="type-caption flex flex-wrap gap-x-1">
-            {metaParts.map((part, i) => (
-              <Fragment key={i}>
-                {i > 0 && ' '}
-                <span className="whitespace-nowrap">
-                  {part}
-                  {i < metaParts.length - 1 && ' ·'}
-                </span>
-              </Fragment>
-            ))}
-          </p>
+          <p data-journal-sentence className="type-title">{conclusion}</p>
+          {!multi && <SourceMeta source={entries[0][1]} />}
+          {!multi && <SourceCoverage source={entries[0][1]} />}
         </div>
-        <div className="flex shrink-0 items-center gap-3 pb-0.5 text-sm">
-          <a
-            href={lead.link}
-            target="_blank"
-            rel="noreferrer"
-            data-journal-open
-            className="inline-flex items-center gap-0.5 font-medium text-info-content hover:underline"
-          >
-            {jt('card.open')}
-            <ArrowUpRight size={ICON_SIZE.sm} aria-hidden />
-          </a>
-          {lead.archive_url && (
-            <a
-              href={lead.archive_url}
-              target="_blank"
-              rel="noreferrer"
-              data-journal-archive
-              className="text-ink-3 hover:text-ink-2 hover:underline"
-            >
-              {jt('card.archive')}
-            </a>
-          )}
-        </div>
+        {!multi && <SourceLinks source={entries[0][1]} />}
       </div>
     </div>
   )

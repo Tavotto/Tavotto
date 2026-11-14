@@ -19,10 +19,12 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from urllib.parse import parse_qs
 
+from .facts import FactValidationError, decode_bundle
 from .store import RULE_NAMES, Limits, Store
 
 RULES_TTL_S = 10  # 规则表读缓存：改了规则最多这么久生效
 PREFIX = "/v1/journal-catalog"
+PREFIX_V2 = "/v2/journal-catalog"
 DEVICE_HEADER = "x-tavotto-device"
 JOURNAL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,95}$")
 REV_RE = re.compile(r"^[1-9][0-9]{0,9}$")
@@ -260,9 +262,13 @@ class Service:
         headers: Mapping[str, str | None],
         remote_addr: str | None,
     ) -> Response:
-        if not (path == PREFIX or path.startswith(PREFIX + "/")):
+        if path == PREFIX or path.startswith(PREFIX + "/"):
+            prefix, data_dir, facts_v2 = PREFIX, self.config.data_dir, False
+        elif path == PREFIX_V2 or path.startswith(PREFIX_V2 + "/"):
+            prefix, data_dir, facts_v2 = PREFIX_V2, self.config.data_dir / "v2", True
+        else:
             return _err(404, "not_found")
-        route = path[len(PREFIX) :]
+        route = path[len(prefix) :]
         h = {k.lower(): v for k, v in headers.items()}
         now = int(self.clock())
 
@@ -270,7 +276,7 @@ class Service:
             if method != "GET":
                 return _err(405, "method_not_allowed")
             return self._file(
-                self.config.data_dir / "index.signed.json",
+                data_dir / "index.signed.json",
                 "application/json",
                 "public, max-age=300",
                 missing=(503, "index_unavailable"),
@@ -295,11 +301,13 @@ class Service:
         if route.startswith("/journals/"):
             if method != "GET":
                 return _err(405, "method_not_allowed")
-            return self._journal(route[len("/journals/") :], query, h, remote_addr, now)
+            return self._journal(
+                route[len("/journals/") :], query, h, remote_addr, now, data_dir, facts_v2
+            )
         if route.startswith("/snapshots/"):
             if method != "GET":
                 return _err(405, "method_not_allowed")
-            return self._snapshot(route[len("/snapshots/") :], h)
+            return self._snapshot(route[len("/snapshots/") :], h, data_dir, facts_v2)
         return _err(404, "not_found")
 
     def _device_ok(self, h: Mapping[str, str | None]) -> str | None:
@@ -309,14 +317,16 @@ class Service:
         th = _hash_token(token)
         return th if self.store.has_device(th) else None
 
-    def _journal(self, jid: str, query: str, h, remote_addr, now: int) -> Response:
+    def _journal(
+        self, jid: str, query: str, h, remote_addr, now: int, data_dir: Path, facts_v2: bool
+    ) -> Response:
         revs = parse_qs(query, keep_blank_values=True).get("rev", [])
         if not JOURNAL_ID_RE.fullmatch(jid) or len(revs) != 1 or not REV_RE.fullmatch(revs[0]):
             return _err(400, "bad_request")
         th = self._device_ok(h)
         if th is None:
             return _err(401, "device_unknown")
-        rev_dir = self._inside_data(self.config.data_dir / f"r{int(revs[0])}" / "journals")
+        rev_dir = self._inside_data(data_dir / f"r{int(revs[0])}" / "journals")
         if rev_dir is None or not rev_dir.is_dir():
             return _err(404, "stale_rev")
         target = self._inside_data(rev_dir / f"{jid}.json")
@@ -326,6 +336,13 @@ class Service:
             body = target.read_bytes()
         except OSError:
             return _err(404, "no_such_journal")
+        if facts_v2:
+            try:
+                fact_bundle = decode_bundle(body, require_verified=True)
+                if fact_bundle["journal_id"] != jid:
+                    return _err(503, "catalog_invalid")
+            except FactValidationError:
+                return _err(503, "catalog_invalid")
         plain = self.client_ip(remote_addr, h)
         key = ip_key(self.config.ip_secret, plain)
         result, retry = self.store.first_read(
@@ -347,17 +364,20 @@ class Service:
             body,
         )
 
-    def _snapshot(self, name: str, h) -> Response:
+    def _snapshot(self, name: str, h, data_dir: Path, facts_v2: bool) -> Response:
         if not name.endswith(".webp") or not SHA_RE.fullmatch(name[: -len(".webp")]):
             return _err(400, "bad_request")
         if self._device_ok(h) is None:
             return _err(401, "device_unknown")
-        return self._file(
-            self.config.data_dir / "snapshots" / name,
+        response = self._file(
+            data_dir / "snapshots" / name,
             "image/webp",
             "public, max-age=31536000, immutable",
             missing=(404, "no_such_snapshot"),
         )
+        if facts_v2 and response[0] == 200 and hashlib.sha256(response[2]).hexdigest() != name[:-5]:
+            return _err(503, "catalog_invalid")
+        return response
 
     def _file(self, path: Path, ctype: str, cache: str, missing: tuple[int, str]) -> Response:
         real = self._inside_data(path)

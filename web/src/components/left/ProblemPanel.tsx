@@ -15,7 +15,7 @@ import { formatRelativeTime, listJoin } from '@/i18n/format'
 import { t as translate } from '@/i18n'
 import { focusFailureMessage, focusIssue } from '@/lib/issueFocus'
 import { problemContextNow } from '@/lib/problemContext'
-import { profileName } from '@/lib/profileText'
+import { profileOutputName } from '@/lib/profileText'
 import {
   bucketsByCategory,
   bucketsByFigure,
@@ -66,6 +66,9 @@ import { CategoryCards, FigureCards, UnverifiableEntry } from './ProblemCards'
 import { ProblemTreeContext, type ProblemTreeCtx } from './problemTree'
 import { GroupNode } from './ProblemTreeRows'
 import { useScopedProblems } from './useProblemScope'
+import { JperProblemStageNotice } from './JperProblemStageNotice'
+import { LeukosProblemScopeNotice } from './LeukosProblemScopeNotice'
+import { NanophotonicsProblemNotice } from './NanophotonicsProblemNotice'
 
 
 /** 本组文案在 errors:problems.* 下（问题的措辞与检查项同一个命名空间） */
@@ -458,7 +461,11 @@ export function ProblemPanel() {
            根本还没查过（T-54，PR #214 第六轮评审）。首检是静态骨架（加载四种写法之一）。 */
         <TreeSkeleton />
       ) : shown.length === 0 ? (
-        all.length === 0 ? (
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          <JperProblemStageNotice issues={shown} emptyScope={scope === 'document' ? 'document' : 'active'} />
+          <LeukosProblemScopeNotice issues={shown} emptyScope={scope === 'document' ? 'document' : 'active'} />
+          <NanophotonicsProblemNotice scope={scope === 'document' ? 'document' : 'active'} />
+        {all.length === 0 ? (
           /* 空态给证据：按哪套规范、查了几张图、什么时候——「没问题」得说得出凭什么 */
           <NoneEvidence />
         ) : issues.length === 0 ? (
@@ -480,7 +487,8 @@ export function ProblemPanel() {
             title={pr('noneInFilter')}
             action={{ label: pr('clearFilter'), onClick: () => useUiStore.getState().setProblemFilter(null) }}
           />
-        )
+        )}
+        </div>
       ) : (
         <ProblemTreeContext.Provider value={tree}>
           <ul
@@ -491,6 +499,9 @@ export function ProblemPanel() {
             aria-label={pr('listLabel')}
             className="min-h-0 flex-1 overflow-y-auto pb-2"
           >
+            <JperProblemStageNotice issues={shown} />
+            <LeukosProblemScopeNotice issues={shown} />
+            <NanophotonicsProblemNotice scope={scope === 'document' ? 'document' : 'active'} inTree />
             {single ? (
               <li data-problem-tier="actionable">
                 <ul>{tree.body(single, 0)}</ul>
@@ -801,7 +812,7 @@ function NoneEvidence() {
     const nameOf = (binding: typeof activeBinding) => {
       const resolved = resolveDocumentSpec(binding, catalog)
       const record = resolved.profileId ? specs.find((r) => r.id === resolved.profileId) : undefined
-      return record ? profileName(record) : resolved.profile.label
+      return profileOutputName(resolved.profile, record)
     }
     let figures = 0
     const used: string[] = []

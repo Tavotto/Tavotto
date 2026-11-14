@@ -120,7 +120,7 @@ import { mergePdfPlan } from "@/lib/pdfPagesMerge";
 import { useScriptRunStore } from "@/store/scriptRunStore";
 import type { OverwritePolicy } from "@/lib/exportRequest";
 import { DEFAULT_PROFILE_ID, type PublicationProfile } from "@/lib/profile";
-import { profileName } from "@/lib/profileText";
+import { profileName, profileOutputName } from "@/lib/profileText";
 import { useLocale } from "@/i18n/react";
 import { journalCatalogUi } from "@/lib/journalUi";
 import { applyJournalExport, journalExportAdvice } from "@/lib/journalExport";
@@ -612,7 +612,7 @@ export function ExportDialog() {
     const record = resolved.profileId
       ? specRecords.find((r) => r.id === resolved.profileId)
       : undefined;
-    return record ? profileName(record) : resolved.profile.label;
+    return profileOutputName(resolved.profile, record);
     // 内置规范的名字（`profileName`）在调用时按当前语言成文：换语言要重算，否则结论行换了语言、
     // 规范名还是旧的（#1194 评审 P2；问题面板 NoneEvidence 同一条，Codex #832）
     // eslint-disable-next-line react-hooks/exhaustive-deps

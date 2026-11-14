@@ -129,6 +129,12 @@ releases until its data is ready). It works in two steps:
   kept on your computer afterwards. Reading a journal you already downloaded sends
   nothing.
 
+The separate v2 source-facts API is requested only when an assistant searches or
+reads those facts. It uses the same device token and quota as v1, but a separate
+local `journal-catalog-v2/` cache. The `tavotto_get_journal_facts` tool does not
+emit an anonymous usage event. An unavailable v2 catalog is not replaced with
+v1 facts.
+
 What the server receives: the journal id, a random anonymous **device token**
 issued by the server the first time it is needed, the catalog version number, a
 client type (`app`, or `agent-<name>` when an AI coding assistant's plugin on your

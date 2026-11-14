@@ -153,6 +153,8 @@ def _declared_codes(text: str) -> set[str]:
 # code——审计 P1-02：错误尾部不许泄漏中文，所以每个 code 都要有两种语言的
 # 文案，且占位符与 params 对得上）
 USER_VISIBLE_CODES = {
+    # Journal facts inspection may return a bounded result error.
+    "result_too_large": set(),
     # --- ADR 0175：改图助手附文件（`POST /api/ai/attachments`）；固定文案 ---
     "attachment_too_large": set(),
     "attachment_empty": set(),

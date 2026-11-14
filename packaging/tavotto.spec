@@ -331,6 +331,8 @@ a = Analysis(
         *TRUSTSTORE_MODULES,
         # 远程期刊目录索引验签（见上；journalremote 延后 import）
         *NACL_MODULES,
+        # v2 期刊事实客户端经 MCP 可选 import 动态加载，冻结分析看不到。
+        "tavotto.engine.journalfacts_remote", "tavotto.engine.journalfacts_contract",
         # `tavotto-cli mcp` 的服务端（见上；mcpserve 运行时才 import）
         *MCP_SERVER_MODULES,
     ],

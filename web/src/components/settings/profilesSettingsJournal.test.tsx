@@ -18,6 +18,7 @@ import { useJournalCatalogStore } from '@/store/journalCatalogStore'
 import { useProfileStore } from '@/store/profileStore'
 import { useUiStore } from '@/store/uiStore'
 import { emptyProject } from '@/types/document'
+import { leukosSourceFixture } from '@/test/leukosSource.fixture'
 import { ProfilesSettings, withColumnWidth } from './ProfilesSettings'
 
 declare global {
@@ -117,6 +118,24 @@ describe('规范库里的「按期刊」条目', () => {
     expect(document.body.textContent).not.toContain('本项目实际检查的规则')
   })
 
+  it('JPER 已保存历史 PDF 来源时，在项目规范页显示阶段提示', async () => {
+    selectJournal('fx-beta')
+    act(() => useDocumentStore.setState((st) => {
+      const profile = st.doc.profile!
+      const entry = profile.journalSources!.min_raster_dpi
+      return { doc: { ...st.doc, profile: {
+        ...profile,
+        journalRef: { ...profile.journalRef!, id: 'journal-of-planning-education-and-research' },
+        journalSources: { ...profile.journalSources, min_raster_dpi: {
+          ...entry, url: 'https://journals.sagepub.com/pb-assets/JPER-Guidelines-for-Submission-of-Accepted-Manuscripts-2019.pdf',
+        } },
+      } } }
+    }))
+    await mount()
+    expect(q('[data-journal-jper-stage-warning]')?.textContent).toContain('历史录用稿最终版')
+    expect(q('[data-journal-jper-stage-warning]')?.textContent).toContain('预检未区分投稿阶段')
+  })
+
   it('期刊有自己的栏位表：单 / 双栏两行并成一行「栏宽」，列出全部栏位', async () => {
     selectJournal('fx-cols')
     await mount()
@@ -144,6 +163,26 @@ describe('规范库里的「按期刊」条目', () => {
     expect(data).not.toHaveProperty('listed')
     expect((data as { widths_mm: { double: number } }).widths_mm.double).toBe(180)
   })
+})
+
+it('flags an affected saved Child source above the collapsed requirements without changing the binding', async () => {
+  selectJournal('fx-beta')
+  await act(async () => useDocumentStore.setState((s) => {
+    const profile = s.doc.profile!
+    const source = profile.journalSources!.min_raster_dpi
+    const url = 'https://www.tandfonline.com/action/authorSubmission?show=instructions&journalCode=hapn21'
+    return { doc: { ...s.doc, profile: { ...profile,
+      journalRef: { ...profile.journalRef!, id: 'applied-neuropsychology-child' },
+      journalSources: { ...profile.journalSources, min_raster_dpi: { ...source, url, link: url } },
+    } } }
+  }))
+  const before = JSON.stringify(useDocumentStore.getState().doc.profile)
+  await mount()
+  const warning = q('[data-journal-source-identity-warning]')
+  expect(warning?.textContent).toContain('来源身份待核')
+  expect(warning?.closest('[data-spec-binding]')).not.toBeNull()
+  expect(warning?.closest('[data-journal-disclosure]')).toBeNull()
+  expect(JSON.stringify(useDocumentStore.getState().doc.profile)).toBe(before)
 })
 
 describe('从期刊换到库里的另一份', () => {
@@ -215,4 +254,24 @@ describe('期刊条目下的写盘失败', () => {
     })
     expect(document.body.textContent).toContain('自定义配置最多 50 条')
   })
+})
+
+
+it('shows a saved-source LEUKOS scope warning in the spec settings without changing binding', async () => {
+  selectJournal('fx-beta')
+  act(() => useDocumentStore.setState((st) => {
+    const profile = st.doc.profile!
+    return { doc: { ...st.doc, profile: {
+      ...profile,
+      journalRef: { ...profile.journalRef!, id: 'leukos', label: 'LEUKOS' },
+      journalSources: { ...profile.journalSources, min_raster_dpi: leukosSourceFixture() },
+    } } }
+  }))
+  const before = structuredClone(useDocumentStore.getState().doc.profile)
+  await mount()
+  const warning = q('[data-leukos-scope-warning]')
+  expect(warning?.textContent).toContain('历史来源针对终稿并区分图类')
+  expect(warning?.textContent).toContain('预检未区分投稿阶段和图类')
+  expect(warning?.textContent).toContain('现行要求未知')
+  expect(useDocumentStore.getState().doc.profile).toEqual(before)
 })

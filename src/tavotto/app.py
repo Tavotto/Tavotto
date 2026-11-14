@@ -122,6 +122,7 @@ from .engine import (
     inputcopy as engine_inputcopy,
     inputremap as engine_inputremap,
     inputtranscript as engine_inputtranscript,
+    journalfacts_remote as engine_journalfacts_remote,
     journalremote as engine_journalremote,
     launchctx as engine_launchctx,
     launcher as engine_launcher,
@@ -13758,12 +13759,128 @@ def api_journal_catalog_journal():
 @app.get("/api/journal-catalog/assets/<path:file>")
 def api_journal_catalog_asset(file: str):
     """出处卡的高亮短图。`file` 必须是 `snapshots/<sha256>.webp`（内容寻址）；本地没有就带令牌拉一次。"""
-    path = engine_journalremote.snapshot_path(file)
-    if path is None:
+    data = engine_journalremote.snapshot_bytes(file)
+    if data is None:
         return jsonify({"error": "snapshot unavailable", "code": "snapshot_unavailable"}), 404
-    resp = send_file(path, mimetype="image/webp", max_age=31536000)
+    digest = file[len("snapshots/") : -len(".webp")]
+    resp = send_file(io.BytesIO(data), mimetype="image/webp", max_age=31536000, etag=digest)
     resp.headers["Cache-Control"] = "private, max-age=31536000, immutable"
     return resp
+
+
+# v2 source facts are separate from publication profiles and never feed preflight.
+def _journal_facts_payload(payload: dict) -> dict:
+    return {**payload, "semantic_review": "not_authenticated", "catalog_completeness": "unknown"}
+
+
+def _journal_facts_page_fits(payload: dict) -> bool:
+    # Use Flask's actual configured serializer, including the fields added to
+    # every successful HTTP response and its trailing newline.
+    response = jsonify(_journal_facts_payload(payload))
+    return len(response.get_data()) <= engine_journalfacts_remote.MAX_PAGE_BYTES
+
+
+def _journal_facts_response(payload: dict, status: int = 200):
+    response = jsonify(payload)
+    response.status_code = status
+    response.headers["Cache-Control"] = "no-store"
+    # Flask's actual JSON encoding may differ from the engine's compact encoding.
+    if status == 200 and len(response.get_data()) > engine_journalfacts_remote.MAX_PAGE_BYTES:
+        return _journal_facts_response(
+            {
+                "code": "result_too_large",
+                "error": "期刊事实结果过大，请减小 limit 并从同一 offset 重试；单条超限时无法读取。",
+            },
+            413,
+        )
+    return response
+
+
+def _journal_facts_error(exc: engine_journalfacts_remote.FactsError):
+    statuses = {
+        "bad_request": 400,
+        "unknown_journal": 404,
+        "catalog_changed": 409,
+        "result_too_large": 413,
+        "quota_hour": 429,
+        "quota_day": 429,
+        "ip_day": 429,
+        "ip_tokens": 429,
+    }
+    status = statuses.get(exc.code, 503)
+    body = {"code": exc.code, "error": "期刊事实不可用；请检查错误状态后重试。"}
+    for name in (
+        "sync_state",
+        "sync_code",
+        "retry_after_s",
+        "expected_catalog_rev",
+        "current_catalog_rev",
+    ):
+        value = getattr(exc, name, None)
+        if value is not None:
+            body[name] = value
+    return _journal_facts_response(body, status)
+
+
+def _journal_facts_request(kind: str):
+    body = request.get_json(silent=True)
+    common = {"offset", "limit", "locale", "expected_catalog_rev"}
+    extra = {"query"} if kind == "search" else {"journal_id", "inspection"}
+    if not isinstance(body, dict) or set(body) - common - extra:
+        return _journal_facts_error(engine_journalfacts_remote.FactsError("bad_request"))
+    offset = body.get("offset", 0)
+    limit = body.get("limit", 20)
+    revision = body.get("expected_catalog_rev")
+    locale = body.get("locale")
+    if (
+        type(offset) is not int
+        or offset < 0
+        or type(limit) is not int
+        or not 1 <= limit <= 20
+        or (revision is not None and (type(revision) is not int or not 1 <= revision <= 9999999999))
+        or (offset > 0 and revision is None)
+        or (locale is not None and (not isinstance(locale, str) or len(locale) > 64))
+    ):
+        return _journal_facts_error(engine_journalfacts_remote.FactsError("bad_request"))
+    try:
+        options = {
+            "offset": offset,
+            "limit": limit,
+            "ui_locale": locale,
+            "expected_catalog_rev": revision,
+        }
+        if kind == "search":
+            result = engine_journalfacts_remote.search(
+                body.get("query", ""), response_fits=_journal_facts_page_fits, **options
+            )
+        else:
+            selection = body.get("inspection")
+            if "inspection" in body:
+                engine_journalfacts_remote.inspect_facts_page({"facts": []}, selection)
+
+            def page_fits(page):
+                if "inspection" in body:
+                    page = engine_journalfacts_remote.inspect_facts_page(page, selection)
+                return _journal_facts_page_fits(page)
+
+            result = engine_journalfacts_remote.get_facts(
+                body.get("journal_id"), response_fits=page_fits, **options
+            )
+            if "inspection" in body:
+                result = engine_journalfacts_remote.inspect_facts_page(result, selection)
+        return _journal_facts_response(_journal_facts_payload(result))
+    except engine_journalfacts_remote.FactsError as exc:
+        return _journal_facts_error(exc)
+
+
+@app.post("/api/journal-facts/search")
+def api_journal_facts_search():
+    return _journal_facts_request("search")
+
+
+@app.post("/api/journal-facts/journal")
+def api_journal_facts_journal():
+    return _journal_facts_request("journal")
 
 
 # ------------------------- 卸载后重装 → 新手态（Windows，ADR 0136 修订） -----

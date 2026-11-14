@@ -12,6 +12,7 @@
  */
 import { t } from '@/i18n'
 import type { ProfileRecord } from './api'
+import { profileDisplayLabel, type PublicationProfile } from './profile'
 
 /** 名字。内置查 i18n（查不到退回后端给的那个），用户的原样返回。 */
 export function profileName(record: {
@@ -21,6 +22,13 @@ export function profileName(record: {
   const key = record.name_key
   if (key) return t(`profiles.${key}`, { ns: 'dialogs', defaultValue: record.display_name })
   return record.display_name
+}
+
+/** Current UI name; a historical built-in label is translated, while custom names stay intact. */
+export function profileOutputName(profile: Pick<PublicationProfile, 'profile_id' | 'label'>, record?: { name_key?: string; display_name: string }): string {
+  const label = profileDisplayLabel(profile)
+  if (label !== profile.label) return t('profiles.journalBaseOutputName', { ns: 'dialogs' })
+  return record ? profileName(record) : label
 }
 
 /**

@@ -156,6 +156,7 @@ OPTIONAL_ENGINE_MODULES = (
     "execspec",
     "fixtools.readscope",
     "journalremote",
+    "journalfacts_remote",
     "journals",
     "runconfig",
     "scriptargs",
@@ -204,6 +205,115 @@ def _remember_mcp_client_name(client_info) -> None:
     if isinstance(name, str):
         slug = _AGENT_HOST_RE.sub("-", name.strip().lower()).strip("-")[:31].strip("-")
         _MCP_CLIENT_NAME = slug or None
+
+
+def journal_facts_enabled() -> bool:
+    """v2 facts require the journal switch and a compatible engine; older engines stay usable."""
+    module = _optional_engine("journalfacts_remote")
+    return (
+        journal_catalog_enabled()
+        and module is not None
+        and callable(getattr(module, "search", None))
+        and callable(getattr(module, "get_facts", None))
+        and isinstance(getattr(module, "FactsError", None), type)
+    )
+
+
+def journal_facts(
+    query: str,
+    journal_id: str | None,
+    offset: int,
+    limit: int,
+    expected_catalog_rev: int | None = None,
+    inspection: dict | None = None,
+) -> dict:
+    """Only translates the engine's read-only v2 facts; never produces a v1 override."""
+    if not journal_catalog_enabled():
+        raise BridgeError("期刊目录入口当前不可用。", code="journal_catalog_disabled")
+    if not journal_facts_enabled():
+        raise BridgeError(
+            "当前引擎还不能读取期刊事实，请升级 Tavotto。", code="engine_capability_missing"
+        )
+    module = _optional_engine("journalfacts_remote")
+    _journal_remote()  # report agent client type through the existing shared channel
+    try:
+        method = module.get_facts if journal_id is not None else module.search
+        options = {"offset": offset, "limit": limit}
+        if expected_catalog_rev is not None:
+            if "expected_catalog_rev" not in inspect.signature(method).parameters:
+                raise BridgeError(
+                    "当前引擎不支持安全分页，请升级 Tavotto。", code="engine_capability_missing"
+                )
+            options["expected_catalog_rev"] = expected_catalog_rev
+        if inspection is not None:
+            inspector = getattr(module, "inspect_facts_page", None)
+            if journal_id is None or not callable(inspector):
+                raise BridgeError(
+                    "当前引擎不能检查这组来源事实，请升级 Tavotto。",
+                    code="engine_capability_missing",
+                )
+            # Validate user selection before any network request.
+            inspector({"facts": []}, inspection)
+        result = method(journal_id if journal_id is not None else query, **options)
+        return inspector(result, inspection) if inspection is not None else result
+    except module.FactsError as exc:
+        if exc.code == "result_too_large" and inspection is not None:
+            raise BridgeError(
+                "期刊事实单条记录超出安全大小，当前无法通过查看入口读取。",
+                code="journal_facts_page_too_large",
+            ) from exc
+        if exc.code in ("quota_hour", "quota_day", "ip_day", "ip_tokens"):
+            raise BridgeError(
+                "期刊目录下载额度已用完，请稍后再试；不要更换设备令牌绕过额度。",
+                code="journal_quota_exceeded",
+                retry_after_s=exc.retry_after_s,
+            ) from exc
+        if exc.code in ("offline", "disabled", "network", "server_error"):
+            raise BridgeError(
+                "v2 期刊事实当前不可用；已有 v1 规范不能冒充 v2 事实。",
+                code="journal_offline",
+                sync_state=getattr(exc, "sync_state", None),
+                sync_code=getattr(exc, "sync_code", None),
+            ) from exc
+        if exc.code in (
+            "index_invalid",
+            "signature_invalid",
+            "key_unknown",
+            "rev_rollback",
+            "index_conflict",
+            "bundle_invalid",
+            "cache_invalid",
+            "invalid_json",
+        ):
+            raise BridgeError(
+                "期刊事实未通过签名或完整性校验，不能使用。",
+                code="journal_verification_failed",
+                sync_state=getattr(exc, "sync_state", None),
+                sync_code=getattr(exc, "sync_code", None),
+            ) from exc
+        if exc.code == "catalog_changed":
+            raise BridgeError(
+                "期刊目录版本与上一页不一致，请从第一页重新读取。",
+                code="journal_catalog_changed",
+                expected_catalog_rev=exc.expected_catalog_rev,
+                current_catalog_rev=exc.current_catalog_rev,
+            ) from exc
+        if exc.code == "unknown_journal":
+            raise BridgeError("期刊事实目录中没有这本刊。", code="journal_unknown") from exc
+        if exc.code == "bad_request":
+            raise BridgeError("查询、期刊 ID 或分页参数不正确。", code="bad_request") from exc
+        raise BridgeError(
+            "期刊事实暂不可用；请稍后重试。", code="journal_facts_unavailable"
+        ) from exc
+
+
+def journal_facts_inspection_budget() -> int:
+    """Use the v2 client's page budget; don't guess for an older engine."""
+    module = _optional_engine("journalfacts_remote")
+    budget = getattr(module, "MAX_PAGE_BYTES", None)
+    if type(budget) is not int or budget <= 0:
+        raise BridgeError("当前引擎不支持安全的期刊事实查看。", code="engine_capability_missing")
+    return budget
 
 
 def _journal_remote():
@@ -277,6 +387,21 @@ def _journal_module():
             code="journal_catalog_disabled",
         )
     return journals
+
+
+def _profile_stamp(profile: dict) -> dict:
+    """Use the engine stamp, correcting the exact legacy label even with an older engine.
+
+    The copy avoids mutating engine-owned state. The vectors shared with both
+    profile implementations guard the compatibility mapping.
+    """
+    stamp = dict(engine_profiles.stamp(profile))
+    if (
+        stamp.get("profile_id") == "journal-base-v1"
+        and stamp.get("label") == "期刊底（期刊未规定的项一律不判）"
+    ):
+        stamp["label"] = "期刊检查基础"
+    return stamp
 
 
 def journal_selection(
@@ -1941,7 +2066,7 @@ def open_figure(
             "dynamic_names": reg_info.get("dynamic_names", []),
             "stems": _all_stems(registry),
         },
-        "profile": engine_profiles.stamp(profile),
+        "profile": _profile_stamp(profile),
         **render,
     }
     if profile.get("journal_ref"):
@@ -2609,7 +2734,7 @@ def session_state(session_id: str) -> dict:
         "script": session.script,
         "entry": session.entry,
         "cost": session.cost,
-        "profile": engine_profiles.stamp(session.profile),
+        "profile": _profile_stamp(session.profile),
         "patches": list(session.patches),
         "patch_hash": session.patch_hash(),
         "render_revision": session.rev,
@@ -2733,6 +2858,18 @@ def run_preflight(
     # 分开是因为它量的是「画出来撞没撞上」，不是「该长什么样」；形状同一份，
     # 进同一份报告（ADR 0051）。
     issues += engine_interference.detect(session.manifest, profile, panel_id=session.stem)
+    if profile.get("journal_ref"):
+        for issue in issues:
+            if issue.get("id") != "raster-dpi":
+                continue
+            # The session stores a profile and journal reference, not a bound
+            # per-rule source record. Do not claim that this threshold is a
+            # journal requirement, even when the catalog has changed since open.
+            issue["text"] = issue["text"].replace("低于规范的", "低于当前检查阈值 ", 1)
+            issue["text"] += "；此回执未核验该阈值的期刊出处"
+            message = issue.get("message")
+            if isinstance(message, dict) and message.get("key") in {"rasterDpi", "exportRasterDpi"}:
+                message["key"] += "JournalSourceUnverified"
     summary = engine_preflight.summarize(issues)
     # 匿名用量统计：**结果算完之后**记一次，且只记四个计数 + 一个布尔。
     # 检查项的文案、字体名、gid、对象 id、stem 一个都不发（白名单里没有这些
@@ -2753,7 +2890,7 @@ def run_preflight(
         "ok": True,
         "session_id": session.id,
         "stem": session.stem,
-        "profile": engine_profiles.stamp(profile),
+        "profile": _profile_stamp(profile),
         "size_mm": session.manifest.get("size_mm"),
         "patch_hash": session.patch_hash(),
         "errors": summary["errors"],
@@ -2792,7 +2929,7 @@ def cached_preflight(session: Session) -> dict | None:
         return None
     if cached.get("patch_hash") != session.patch_hash():
         return None
-    if cached.get("profile") != engine_profiles.stamp(session.profile):
+    if cached.get("profile") != _profile_stamp(session.profile):
         return None
     return cached
 
@@ -2800,7 +2937,8 @@ def cached_preflight(session: Session) -> dict | None:
 def format_preflight(session: Session, profile: dict, issues: list[dict], summary: dict) -> str:
     """人类可读的那一份（Codex 会把它念给用户听）。"""
     head = (
-        f"《{profile.get('label', profile['profile_id'])}》 v{profile['version']} · {session.stem}"
+        f"《{_profile_stamp(profile).get('label') or profile['profile_id']}》 "
+        f"v{profile['version']} · {session.stem}"
     )
     size = session.manifest.get("size_mm") if session.manifest else None
     lines = [head]
@@ -3469,7 +3607,7 @@ def _normalize_figure(
             "patch_hash": b0_hash,
             "worker_generation": getattr(session, "rev", None),
             "original_artifact": original,
-            "profile": engine_profiles.stamp(profile),
+            "profile": _profile_stamp(profile),
         },
     )
     plan = engine_normalize.plan_patches(contract, b0_manifest)

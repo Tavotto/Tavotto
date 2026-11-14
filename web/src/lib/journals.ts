@@ -8,7 +8,7 @@
  *
  * 两类规则共用一层外壳：键是 `journal-base-v1` 字段路径的折成 `JournalOverride` 进预检；
  * 键是 `info.<id>` 的只是展示项（同样强制 src / quote），不折进 override。
- * 期刊没写的项不补（界面标「该期刊未规定」）。
+ * 期刊没写的项不补（界面标「当前快照未记录」）。
  */
 import catalogDoc from '@journals'
 import {

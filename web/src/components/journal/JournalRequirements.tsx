@@ -1,7 +1,8 @@
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import { requirementRows, sourcesForCheck, valueText } from '@/lib/journalPick'
+import { fieldLabel, requirementRows, sourcesForCheck, valueText } from '@/lib/journalPick'
+import { panelDisplayPath } from '@/lib/journalPanelDisplay'
 import { useDocumentStore } from '@/store/documentStore'
 import { SourceButton } from './SourceButton'
 
@@ -9,7 +10,7 @@ const jt = (key: string, values?: Record<string, unknown>) =>
   translate(`journal.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
 /**
- * 本项目按哪本期刊检查时，该期刊的要求清单：每个值旁一颗「出处」，期刊没写的要紧项明说「该期刊未规定」（不补）。
+ * 本项目按哪本期刊检查时，该期刊的要求清单：每个值旁一颗「出处」，期刊没写的要紧项明说「当前快照未记录」（不补）。
  * 读的是绑定里存的精简出处（`journalSources`，选期刊那一刻的样子），离线、库后来更新都不变。
  * 没按期刊选过就不渲染。
  */
@@ -21,19 +22,22 @@ export function JournalRequirements() {
   if (!ref || !sources) return null
   return (
     <dl data-journal-requirements className="flex flex-col">
-      {rows.map((r) => (
-        <div
+      {rows.map((r) => {
+        const displayPath = r.source ? panelDisplayPath(ref.id, r.path, r.source) : r.path
+        const historicalPanel = displayPath !== r.path
+        const label = historicalPanel ? fieldLabel(displayPath) : r.label
+        return (<div
           key={r.path}
           data-journal-row={r.path}
-          className="flex min-h-7 items-center gap-2 text-sm"
+          className={`flex min-h-7 items-center gap-2 text-sm ${historicalPanel ? 'flex-wrap' : ''}`}
         >
-          <dt className="w-32 shrink-0 truncate text-ink-2">{r.label}</dt>
+          <dt className={`shrink-0 text-ink-2 ${historicalPanel ? 'w-48 whitespace-normal break-words' : 'w-32 truncate'}`}>{label}</dt>
           <dd
             data-journal-value
             className="min-w-0 flex-1 truncate tabular-nums text-ink"
-            title={r.source ? valueText(r.path, r.source) : undefined}
+            title={r.source ? valueText(displayPath, r.source) : undefined}
           >
-            {r.source ? valueText(r.path, r.source) : <span className="text-ink-3">{jt('unspecified')}</span>}
+            {r.source ? valueText(displayPath, r.source) : <span className="text-ink-3">{jt('unspecified')}</span>}
           </dd>
           {r.source && (
             <SourceButton
@@ -42,13 +46,14 @@ export function JournalRequirements() {
               entries={
                 r.source.affects === 'advice'
                   ? sourcesForCheck('font-size-recommended', sources)
-                  : [[r.path, r.source]]
+                  : [[displayPath, r.source]]
               }
-              name={r.label}
+              name={label}
             />
           )}
-        </div>
-      ))}
+          {historicalPanel && <dd data-journal-panel-history className="basis-full text-sm text-ink-2">{jt('panelHistoricalNotice')}</dd>}
+        </div>)
+      })}
     </dl>
   )
 }

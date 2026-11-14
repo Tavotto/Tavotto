@@ -7,7 +7,7 @@
 import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
-import { literal, setLocale } from '@/i18n'
+import { literal, msg, setLocale } from '@/i18n'
 import { RENDER_RETRY_DELAYS_MS } from '@/lib/imgRetry'
 import { problemContextNow } from '@/lib/problemContext'
 import { drillKey } from '@/lib/problemList'
@@ -25,6 +25,7 @@ import { useUiStore } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { runValidation, useValidationStore } from '@/store/validationStore'
 import { seedExactRender } from '@/test/renderFixtures'
+import { leukosSourceFixture } from '@/test/leukosSource.fixture'
 import { emptyProject, type PanelObject } from '@/types/document'
 
 /**
@@ -381,6 +382,17 @@ describe('空态、筛选与「查不了」', () => {
     useValidationStore.setState({ ready: true, failed: false, issues: [], results: [], checkedAt: Date.now() })
   }
   const evidence = () => container.querySelector('[data-problem-evidence]')?.textContent ?? ''
+
+  it('旧期刊底快照的检查证据显示中性名称，不改项目绑定', async () => {
+    await seedTwoCanvases('journal-base-v1' as never, 'journal-base-v1' as never, 'free-form-v1')
+    const before = structuredClone(useDocumentStore.getState().doc.profile)
+    await mount(<ProblemPanel />)
+    expect(evidence()).toContain('期刊检查基础')
+    expect(evidence()).not.toContain('期刊未规定的项一律不判')
+    await act(async () => setLocale('en-US'))
+    expect(evidence()).toContain('Journal check base')
+    expect(useDocumentStore.getState().doc.profile).toEqual(before)
+  })
 
   it('几张画布绑了不同的规范、整份没问题：证据把实际用过的几套都说出来，不只报当前画布那一套', async () => {
     await seedTwoCanvases('free-form-v1', 'lab-publication-v1', 'free-form-v1')
@@ -1930,5 +1942,311 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     await reachC()
     expect(useUiStore.getState().problemScope).toBe('figure')
     expect(rows().find((r) => r.getAttribute('aria-current') === 'true')).toBeTruthy()
+  })
+})
+
+describe('JPER 问题面板的画布级来源提示', () => {
+  it('没有显示的问题时仍提示当前范围内保存的历史来源，不把无问题当作阶段已核验', async () => {
+    await seed()
+    const sourceUrl = 'https://journals.sagepub.com/pb-assets/JPER-Guidelines-for-Submission-of-Accepted-Manuscripts-2019.pdf'
+    const journal = {
+      id: 'journal-base-v1',
+      journalRef: { id: 'journal-of-planning-education-and-research', label: 'JPER', catalogRev: 6, retrieved: '2026-11-03' },
+      journalSources: { max_font_size_pt: { url: sourceUrl } },
+    }
+    const state = useDocumentStore.getState()
+    const active = state.canvases.find((c) => c.id === state.activeCanvasId)!
+    useDocumentStore.setState({
+      doc: { ...state.doc, name: '当前画布', profile: { id: 'free-form-v1' } },
+      canvases: [active, { ...active, id: 'jper-canvas', name: '历史画布', profile: journal as never }],
+    })
+    useValidationStore.setState({ issues: [], results: [], ready: true, failed: false, queued: false, running: false })
+    useUiStore.setState({ problemScope: 'document' })
+    await mount(<ProblemPanel />)
+    const notice = () => container.querySelector('[data-jper-problem-stage-notice]')
+    expect(notice()?.textContent).toContain('历史画布')
+    expect(notice()?.textContent).toContain('当前指南尚未核实')
+    expect(notice()?.textContent).toContain('不能确认任何问题或阈值来自该来源')
+    expect(container.querySelector('[data-problem-evidence]')).not.toBeNull()
+    expect(notice()?.closest('.overflow-y-auto')).not.toBeNull()
+    await act(async () => useUiStore.setState({ problemScope: 'canvas' }))
+    expect(notice()).toBeNull()
+    expect(container.querySelector('[data-jper-empty-stage-context]')).toBeNull()
+    await act(async () => useDocumentStore.setState((s) => ({ doc: { ...s.doc, profile: journal as never } })))
+    expect(notice()?.textContent).toContain('当前画布')
+    expect(notice()?.textContent).not.toContain('历史画布')
+    await act(async () => useValidationStore.setState({ ready: false }))
+    expect(notice()).toBeNull()
+  })
+
+  it('合并相关画布，使用实时名称和可滚动结构，不将问题或阈值归因于该来源', async () => {
+    await seed()
+    const sourceUrl = 'https://journals.sagepub.com/pb-assets/JPER-Guidelines-for-Submission-of-Accepted-Manuscripts-2019.pdf'
+    const source = { value: 300, url: sourceUrl, link: sourceUrl, affects: 'preflight', unset: false }
+    const journalId = 'journal-of-planning-education-and-research'
+    const binding = (id: string, url = sourceUrl) => ({
+      id: 'journal-base-v1', journalRef: { id, label: 'JPER', catalogRev: 6, retrieved: '2026-11-03' },
+      journalSources: { min_raster_dpi: { ...source, url } }, journal: { min_raster_dpi: 300 },
+    })
+    const state = useDocumentStore.getState()
+    const a = state.activeCanvasId
+    const canvasA = state.canvases.find((c) => c.id === a)!
+    useDocumentStore.setState({
+      doc: { ...state.doc, name: '相同画布', profile: binding(journalId) as never },
+      canvases: [
+        { ...canvasA, name: '陈旧名称', profile: binding('other') as never },
+        { ...canvasA, id: 'canvas-b', name: '相同画布', profile: binding(journalId) as never },
+        { ...canvasA, id: 'canvas-c', name: '无关画布', profile: binding('other') as never },
+      ],
+    })
+    const base = useValidationStore.getState().issues[0]
+    expect(base).toBeTruthy()
+    const row = (canvasId: string, ruleCode = 'raster-dpi', min: unknown = '600') => ({
+      ...base, issueId: `${canvasId}-${ruleCode}`, ruleCode, objectRef: { ...base.objectRef, canvasId },
+      message: msg('preflight.rasterDpi', { dpi: '100', min }, 'errors'),
+    })
+    const issues = [row(a), row('canvas-b'), row('canvas-c')]
+    useValidationStore.setState({ issues, ready: true, failed: false, queued: false, running: false })
+    const before = structuredClone(useDocumentStore.getState().doc)
+    await mount(<ProblemPanel />)
+    const notice = () => container.querySelector('[data-jper-problem-stage-notice]')
+    expect(container.querySelectorAll('[data-jper-problem-stage-notice]')).toHaveLength(1)
+    expect(notice()?.textContent).toContain('相同画布 · 1')
+    expect(notice()?.textContent).toContain('相同画布 · 2')
+    expect(notice()?.textContent).not.toContain('无关画布')
+    expect(notice()?.textContent).toContain('录用后最终稿')
+    expect(notice()?.textContent).toContain('预检未区分投稿阶段')
+    expect(notice()?.textContent).toContain('当前指南尚未核实')
+    expect(notice()?.textContent).toContain('不能确认任何问题或阈值来自该来源')
+    expect(notice()?.textContent).not.toContain('300')
+    expect(notice()?.textContent).not.toContain('600')
+    expect(notice()?.querySelector('[role="status"]')).not.toBeNull()
+    const tree = container.querySelector('[data-problem-tree]')!
+    container.style.height = '80px'
+    expect(tree.classList.contains('overflow-y-auto')).toBe(true)
+    expect(tree.classList.contains('min-h-0')).toBe(true)
+    expect(notice()?.tagName).toBe('LI')
+    expect(notice()?.closest('[data-problem-tree]')).toBe(tree)
+    expect(notice()?.classList.contains('shrink-0')).toBe(false)
+    expect(useDocumentStore.getState().doc).toEqual(before)
+    expect(useValidationStore.getState().issues).toEqual(issues)
+    await act(async () => useDocumentStore.setState((s) => ({ doc: { ...s.doc, name: '实时改名' } })))
+    expect(notice()?.textContent).toContain('实时改名 · 1')
+    expect(notice()?.textContent).toContain('相同画布 · 2')
+    expect(useDocumentStore.getState().canvases[0].name).toBe('陈旧名称')
+    await act(async () => useUiStore.setState({ problemScope: 'canvas' }))
+    expect(notice()?.textContent).toContain('实时改名 · 1')
+    expect(notice()?.textContent).not.toContain('相同画布 · 2')
+    await act(async () => useUiStore.setState({ problemScope: 'document' }))
+    expect(notice()?.textContent).toContain('相同画布 · 2')
+    for (const min of ['300', '600', '', null]) {
+      await act(async () => useValidationStore.setState({ issues: [row(a, 'raster-dpi', min)] }))
+      expect(notice()?.textContent).toContain('不能确认任何问题或阈值来自该来源')
+      expect(notice()?.textContent).not.toContain('300')
+      expect(notice()?.textContent).not.toContain('600')
+    }
+    const fontBinding = {
+      ...binding(journalId),
+      journalSources: { 'font_family.latin_accepted': { ...source, value: ['Gill Sans'] } },
+      journal: { font_family: { latin_accepted: ['Gill Sans'] } },
+    }
+    const font = { ...row(a, 'font-family-substituted'), message: msg('preflight.fontFamilySubstituted', { family: 'Arial', want: '' }, 'errors') }
+    await act(async () => useDocumentStore.setState((s) => ({ doc: { ...s.doc, profile: fontBinding as never } })))
+    await act(async () => useValidationStore.setState({ issues: [font] }))
+    expect(notice()?.textContent).toContain('不能确认任何问题或阈值来自该来源')
+    await act(async () => useValidationStore.setState({ issues: [row(a, 'tick-direction')] }))
+    expect(notice()?.textContent).toContain('不能确认任何问题或阈值来自该来源')
+    for (const bad of [
+      `${sourceUrl}?download=1`, `${sourceUrl}#page=1`, sourceUrl.toLowerCase(),
+      sourceUrl.replace('journals.sagepub.com', 'journals.sagepub.com.evil.invalid'),
+    ]) {
+      await act(async () => useDocumentStore.setState((s) => ({ doc: { ...s.doc, profile: binding(journalId, bad) as never } })))
+      expect(notice()).toBeNull()
+    }
+    await act(async () => useDocumentStore.setState((s) => ({ doc: { ...s.doc, profile: binding('other') as never } })))
+    expect(notice()).toBeNull()
+    await act(async () => useDocumentStore.setState((s) => ({ doc: { ...s.doc, profile: { ...binding(journalId), journalSources: undefined } as never } })))
+    expect(notice()).toBeNull()
+    await act(async () => useDocumentStore.setState((s) => ({ doc: { ...s.doc, profile: binding(journalId) as never } })))
+    await act(async () => { await setLocale('en-US') })
+    expect(notice()?.textContent).toContain('final version of accepted manuscripts')
+    expect(notice()?.textContent).toContain('does not distinguish submission stages')
+    expect(notice()?.textContent).toContain('current guidelines have not been verified')
+    expect(notice()?.textContent).toContain('does not establish that any issue or threshold comes from that source')
+  })
+})
+
+describe('Nanophotonics 历史来源提示', () => {
+  it('按范围显示保存旧来源的画布，不修改项目', async () => {
+    await seed()
+    const url = 'https://www.degruyterbrill.com/journal/key/nanoph/html'
+    const binding = (jid: string, sourceUrl = url) => ({
+      id: 'journal-base-v1', journalRef: { id: jid, label: 'Nanophotonics', catalogRev: 6, retrieved: '2026-11-03' },
+      journalSources: { min_raster_dpi: { url: sourceUrl } }, snapshot: { min_raster_dpi: 600 },
+    })
+    const state = useDocumentStore.getState()
+    const active = state.canvases.find((c) => c.id === state.activeCanvasId)!
+    useDocumentStore.setState({
+      doc: { ...state.doc, name: '当前画布', profile: binding('other') as never },
+      canvases: [active, { ...active, id: 'old-canvas', name: '历史画布', profile: binding('nanophotonics') as never }],
+    })
+    useValidationStore.setState({ issues: [], results: [], ready: true, failed: false, queued: false, running: false })
+    useUiStore.setState({ problemScope: 'document' })
+    const before = structuredClone(useDocumentStore.getState().doc)
+    await mount(<ProblemPanel />)
+    const notice = () => container.querySelector('[data-nanophotonics-problem-notice]')
+    expect(notice()?.textContent).toContain('历史画布')
+    expect(notice()?.textContent).toContain('实际生效设置')
+    expect(notice()?.textContent).toContain('不归因具体问题')
+    expect(notice()?.querySelector('a')?.getAttribute('href')).toBe('https://onlinelibrary.wiley.com/page/journal/21928614/homepage/author-guidelines')
+    expect(useDocumentStore.getState().doc).toEqual(before)
+    await act(async () => useUiStore.setState({ problemScope: 'canvas' }))
+    expect(notice()).toBeNull()
+    await act(async () => useDocumentStore.setState((s) => ({ doc: { ...s.doc, profile: binding('nanophotonics') as never } })))
+    expect(notice()?.textContent).toContain('当前画布')
+    await act(async () => useDocumentStore.setState((s) => ({ doc: { ...s.doc, profile: binding('nanophotonics', 'https://example.invalid') as never } })))
+    expect(notice()).toBeNull()
+  })
+})
+
+describe('Nanophotonics 有问题时的来源上下文', () => {
+  it('整份排版显示受影响画布，即使现有问题属于另一画布', async () => {
+    await seed()
+    const url = 'https://www.degruyterbrill.com/journal/key/nanoph/html'
+    const binding = {
+      id: 'journal-base-v1', journalRef: { id: 'nanophotonics', label: 'Nanophotonics', catalogRev: 6, retrieved: '2026-11-03' },
+      journalSources: { min_raster_dpi: { url } }, snapshot: { min_raster_dpi: 600 },
+    }
+    const state = useDocumentStore.getState()
+    const active = state.canvases.find((c) => c.id === state.activeCanvasId)!
+    const issue = useValidationStore.getState().issues[0]
+    expect(issue).toBeTruthy()
+    useDocumentStore.setState({
+      doc: { ...state.doc, name: '有其他问题', profile: { id: 'free-form-v1' } },
+      canvases: [active, { ...active, id: 'legacy-no-issue', name: '历史但无问题', profile: binding as never }],
+    })
+    useValidationStore.setState({ issues: [issue], ready: true, failed: false, queued: false, running: false })
+    useUiStore.setState({ problemScope: 'document' })
+    await mount(<ProblemPanel />)
+    const notice = container.querySelector('[data-nanophotonics-problem-notice]')
+    expect(notice?.textContent).toContain('历史但无问题')
+    expect(notice?.closest('[data-problem-tree]')).not.toBeNull()
+    expect(notice?.textContent).not.toContain('600')
+    await act(async () => useUiStore.setState({ problemScope: 'canvas' }))
+    expect(container.querySelector('[data-nanophotonics-problem-notice]')).toBeNull()
+  })
+})
+
+describe('Nanophotonics 来源未知提示', () => {
+  it('来源未知和历史旧源分开标注，未知不推断旧源；其他期刊不显示', async () => {
+    await seed()
+    const url = 'https://www.degruyterbrill.com/journal/key/nanoph/html'
+    const profile = (jid: string, source?: unknown) => ({
+      id: 'journal-base-v1', journalRef: { id: jid, label: 'Nanophotonics', catalogRev: 6, retrieved: '2026-11-03' },
+      ...(source === undefined ? {} : { journalSources: source }),
+    })
+    const state = useDocumentStore.getState()
+    const active = state.canvases.find((c) => c.id === state.activeCanvasId)!
+    useDocumentStore.setState({
+      doc: { ...state.doc, name: '未记来源', profile: profile('nanophotonics') as never },
+      canvases: [active,
+        { ...active, id: 'old-source', name: '旧来源', profile: profile('nanophotonics', { min_raster_dpi: { url } }) as never },
+        { ...active, id: 'other', name: '其他期刊', profile: profile('other') as never },
+        { ...active, id: 'different', name: '不同来源', profile: profile('nanophotonics', { min_raster_dpi: { url: 'https://example.invalid' } }) as never },
+      ],
+    })
+    useValidationStore.setState({ issues: [], results: [], ready: true, failed: false, queued: false, running: false })
+    useUiStore.setState({ problemScope: 'document' })
+    const before = structuredClone(useDocumentStore.getState().doc)
+    await mount(<ProblemPanel />)
+    const unknown = container.querySelector('[data-nanophotonics-problem-notice="unknown"]')
+    const legacy = container.querySelector('[data-nanophotonics-problem-notice="legacy"]')
+    expect(unknown?.textContent).toContain('未记来源')
+    expect(unknown?.textContent).toContain('未记录或无法识别')
+    expect(unknown?.textContent).not.toContain('De Gruyter')
+    expect(legacy?.textContent).toContain('旧来源')
+    expect(legacy?.textContent).toContain('可能已过时')
+    expect(legacy?.textContent).not.toContain('未记来源')
+    expect(container.textContent).not.toContain('其他期刊')
+    expect(container.textContent).not.toContain('不同来源')
+    expect(useDocumentStore.getState().doc).toEqual(before)
+    await act(async () => useUiStore.setState({ problemScope: 'canvas' }))
+    expect(container.querySelector('[data-nanophotonics-problem-notice="unknown"]')?.textContent).toContain('未记来源')
+    expect(container.querySelector('[data-nanophotonics-problem-notice="legacy"]')).toBeNull()
+  })
+})
+
+describe('LEUKOS saved scope notice', () => {
+  const source = leukosSourceFixture()
+  const binding = (id = 'leukos', value = source) => ({
+    id: 'journal-base-v1', journalRef: { id, label: 'LEUKOS', catalogRev: 6, retrieved: '2026-11-03' },
+    journalSources: { min_raster_dpi: value }, journal: { min_raster_dpi: 300 },
+  })
+
+  it('retains scoped saved-source context with no findings, only after a completed check', async () => {
+    await seed()
+    const state = useDocumentStore.getState()
+    const active = state.canvases.find((c) => c.id === state.activeCanvasId)!
+    useDocumentStore.setState({
+      doc: { ...state.doc, name: '当前画布', profile: { id: 'free-form-v1' } },
+      canvases: [active, { ...active, id: 'leukos-b', name: '历史画布', profile: binding() as never }],
+    })
+    useValidationStore.setState({ issues: [], results: [], ready: true, failed: false, queued: false, running: false })
+    useUiStore.setState({ problemScope: 'document' })
+    const before = structuredClone(useDocumentStore.getState().doc)
+    await mount(<ProblemPanel />)
+    const notice = () => container.querySelector('[data-leukos-problem-scope-notice]')
+    expect(notice()?.textContent).toContain('历史画布')
+    expect(notice()?.textContent).toContain('预检未区分投稿阶段和图类')
+    expect(notice()?.textContent).toContain('现行要求未知')
+    expect(notice()?.textContent).toContain('不能确认任何问题或阈值来自该来源')
+    expect(container.querySelector('[data-problem-evidence]')).not.toBeNull()
+    expect(useDocumentStore.getState().doc).toEqual(before)
+    await act(async () => useUiStore.setState({ problemScope: 'canvas' }))
+    expect(notice()).toBeNull()
+    await act(async () => useDocumentStore.setState((s) => ({ doc: { ...s.doc, profile: binding() as never } })))
+    expect(notice()?.textContent).toContain('当前画布')
+    expect(notice()?.textContent).not.toContain('历史画布')
+    await act(async () => useValidationStore.setState({ ready: false }))
+    expect(notice()).toBeNull()
+  })
+
+  it('uses each issue canvas binding and preserves uncertainty in both languages', async () => {
+    await seed()
+    const state = useDocumentStore.getState(); const a = state.activeCanvasId
+    const active = state.canvases.find((c) => c.id === a)!
+    const base = useValidationStore.getState().issues[0]
+    expect(base).toBeTruthy()
+    const issue = (canvasId: string) => ({ ...base, issueId: `issue-${canvasId}`, objectRef: { ...base.objectRef, canvasId } })
+    useDocumentStore.setState({
+      doc: { ...state.doc, name: '实时画布', profile: binding() as never },
+      canvases: [
+        { ...active, name: '陈旧名称', profile: binding('other') as never },
+        { ...active, id: 'leukos-b', name: '历史画布', profile: binding() as never },
+        { ...active, id: 'other-c', name: '无关画布', profile: binding('other') as never },
+      ],
+    })
+    const issues = [issue(a), issue('leukos-b'), issue('other-c')]
+    useValidationStore.setState({ issues, ready: true, failed: false, queued: false, running: false })
+    useUiStore.setState({ problemScope: 'document' })
+    const before = structuredClone(useDocumentStore.getState().doc)
+    await mount(<ProblemPanel />)
+    const notice = () => container.querySelector('[data-leukos-problem-scope-notice]')
+    expect(notice()?.textContent).toContain('实时画布 · 1')
+    expect(notice()?.textContent).toContain('历史画布 · 2')
+    expect(notice()?.textContent).not.toContain('无关画布')
+    expect(notice()?.textContent).toContain('不能确认任何问题或阈值来自该来源')
+    expect(notice()?.textContent).not.toContain('300')
+    expect(useDocumentStore.getState().doc).toEqual(before)
+    expect(useValidationStore.getState().issues).toEqual(issues)
+    await act(async () => { await setLocale('en-US') })
+    expect(notice()?.textContent).toContain('does not distinguish submission stages or figure types')
+    expect(notice()?.textContent).toContain('current requirements are unverified')
+    expect(notice()?.textContent).toContain('does not attribute any finding or threshold')
+    await act(async () => useUiStore.setState({ problemScope: 'canvas' }))
+    expect(notice()?.textContent).toContain('实时画布')
+    expect(notice()?.textContent).not.toContain('历史画布')
+    await act(async () => useDocumentStore.setState((s) => ({ doc: { ...s.doc, profile: binding('other') as never } })))
+    expect(notice()).toBeNull()
   })
 })
