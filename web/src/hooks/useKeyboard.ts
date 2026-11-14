@@ -303,7 +303,17 @@ export function useKeyboard() {
         return
       }
 
-      if (mod) return
+      // 路径命令的 ⌘ 组合（连接 ⌘J、平均 ⌥⌘J，ADR 0185 M1）：命令表说了算，此刻不可用的不消费。
+      // Windows 上 AltGr 报成 Ctrl+Alt：那是在打字，不认
+      if (mod) {
+        const bound = e.getModifierState?.('AltGraph') ? null : bindingFor(e)
+        const cmd = bound ? PATH_COMMANDS.find((c) => c.key === bound) : undefined
+        if (cmd?.available()) {
+          e.preventDefault()
+          cmd.run()
+        }
+        return
+      }
 
       // ⇧2 = 缩放到选区（`lib/keymap` 的 zoomSelection）。按 code 认：⇧ 把 key 改成 @ / " 因布局而异；
       // ⌥ 组合是在打字，不认

@@ -403,6 +403,7 @@ function MultiItems({
       )}
       <ChangeKindSub objs={selected} run={run} />
       <ConvertToPathItem objs={selected} run={run} />
+      <PathCommandItems run={run} />
       <MenuItem
         icon={SlidersHorizontal}
         data-quick-item="open-arrange"

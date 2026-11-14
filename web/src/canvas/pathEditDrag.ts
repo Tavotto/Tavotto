@@ -2,23 +2,27 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import { msg, type UiMessage } from '@/i18n'
 import {
   anchorKey,
+  anchorSnapLines,
+  lock45,
   moveAnchors,
   moveHandle,
   parseAnchorKey,
   pathFromMm,
   pathToMm,
   rotatePoint,
+  snapXY,
   unrotateDelta,
   type AnchorRef,
   type MmSubpath,
+  type XY,
 } from '@/lib/pathEdit'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { activePathEdit, usePathEditStore } from '@/store/pathEditStore'
 import { useSelectionStore } from '@/store/selectionStore'
-import { clientToMm, getTransform, pxToMm } from '@/store/viewportStore'
+import { clientToMm, getTransform, pxToMm, snapTolMm } from '@/store/viewportStore'
 import type { PathObject } from '@/types/document'
-import { trackPointer } from './interactions'
+import { candidatesFor, trackPointer } from './interactions'
 
 /**
  * 直接选择（锚点编辑）的指针手势（ADR 0185 M1）：拖锚点、拖手柄、框选锚点。
@@ -35,7 +39,8 @@ function dragEdit(
   e: ReactPointerEvent,
   base: PathObject,
   label: UiMessage,
-  edit: (subs: MmSubpath[], d: [number, number], ev: PointerEvent) => MmSubpath[],
+  /** `page` = 指针在页面上走了多少（mm，未换到对象的未旋转空间）；回编辑后的子路径 */
+  edit: (subs: MmSubpath[], page: XY, ev: PointerEvent) => MmSubpath[],
 ): void {
   const store = useDocumentStore.getState()
   const baseMm = pathToMm(base)
@@ -44,8 +49,7 @@ function dragEdit(
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
       const t = getTransform()
-      const d = unrotateDelta(base, [pxToMm(dxPx, t), pxToMm(dyPx, t)])
-      const next = pathFromMm(base, edit(baseMm, d, ev))
+      const next = pathFromMm(base, edit(baseMm, [pxToMm(dxPx, t), pxToMm(dyPx, t)], ev))
       if (!next) return
       store.txnUpdate((doc) => {
         const i = doc.objects.findIndex((o) => o.id === base.id)
@@ -53,7 +57,7 @@ function dragEdit(
       })
     },
     onEnd: (moved, _ev, end) => {
-      interaction().end()
+      interaction().end() // 连同吸附线一起收掉
       store.endTxn({ discard: !moved || end.cancelled })
     },
   })
@@ -72,7 +76,24 @@ export function startAnchorDrag(e: ReactPointerEvent, path: PathObject, ref: Anc
   const keys = pe.anchors.includes(key) ? pe.anchors : [key]
   pe.setAnchors(keys)
   const refs = keys.map(parseAnchorKey).filter((a): a is AnchorRef => a != null)
-  dragEdit(e, path, hist('moveAnchors'), (subs, d) => moveAnchors(subs, refs, d))
+  // 按住的那个锚点在页面上的起点：⇧ 锁 45° 与吸附都按它算，其余选中的锚点跟着同一段位移走
+  const p0 = rotatePoint(path, pathToMm(path)[ref.sp].nodes[ref.i].p)
+  // 吸附候选：画布那一套（排除这条路径自己——它的框正在变）+ 这条路径上没在拖的锚点
+  const cands = candidatesFor(new Set([path.id]))
+  const own = anchorSnapLines(path, new Set(keys))
+  const lines = cands ? { xs: [...cands.xs, ...own.xs], ys: [...cands.ys, ...own.ys] } : null
+  dragEdit(e, path, hist('moveAnchors'), (subs, page, ev) => {
+    let target: XY = [p0[0] + page[0], p0[1] + page[1]]
+    if (ev.shiftKey) {
+      target = lock45(p0, target)
+      interaction().setSnap([], [])
+    } else {
+      const s = snapXY(target, lines, snapTolMm(getTransform()))
+      target = s.p
+      interaction().setSnap(s.xs, s.ys)
+    }
+    return moveAnchors(subs, refs, unrotateDelta(path, [target[0] - p0[0], target[1] - p0[1]]))
+  })
 }
 
 /** 按在手柄上：拖它；平滑点另一侧保持共线，按着 ⌥ 拆开（变尖角） */
@@ -81,9 +102,15 @@ export function startHandleDrag(e: ReactPointerEvent, path: PathObject, ref: Anc
   if (e.button !== 0) return
   const start = pathToMm(path)[ref.sp]?.nodes[ref.i]?.[which]
   if (!start) return
-  dragEdit(e, path, hist('moveHandle'), (subs, d, ev) =>
-    moveHandle(subs, ref, which, [start[0] + d[0], start[1] + d[1]], ev.altKey),
-  )
+  // ⇧：手柄方向相对锚点锁在 45° 的倍数上（在页面上锁，再换回对象的未旋转空间）
+  const anchorPage = rotatePoint(path, pathToMm(path)[ref.sp].nodes[ref.i].p)
+  const h0 = rotatePoint(path, start)
+  dragEdit(e, path, hist('moveHandle'), (subs, page, ev) => {
+    let target: XY = [h0[0] + page[0], h0[1] + page[1]]
+    if (ev.shiftKey) target = lock45(anchorPage, target)
+    const d = unrotateDelta(path, [target[0] - h0[0], target[1] - h0[1]])
+    return moveHandle(subs, ref, which, [start[0] + d[0], start[1] + d[1]], ev.altKey)
+  })
 }
 
 /**

@@ -484,6 +484,18 @@
         "keywords": "convert anchor smooth corner zhmd 平滑 尖角",
         "label": "转换锚点"
       },
+      "cut-path": {
+        "keywords": "cut scissors jd 剪刀 断开",
+        "label": "在锚点处断开"
+      },
+      "join-paths": {
+        "keywords": "join connect lj 连接 闭合",
+        "label": "连接"
+      },
+      "average-anchors": {
+        "keywords": "average align pjmd 平均 对齐",
+        "label": "平均锚点"
+      },
       "cycle-overlap": {
         "keywords": "cycle overlap twin axis lh lunhuan cd chongdie sszx shuangzongzhou",
         "label": "在重叠的图内元素之间轮换选中"

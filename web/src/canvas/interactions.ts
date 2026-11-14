@@ -269,7 +269,7 @@ function snapPrefs() {
   }
 }
 
-const candidatesFor = (exclude: Set<string>) => {
+export const candidatesFor = (exclude: Set<string>) => {
   const prefs = snapPrefs()
   if (!prefs) return null
   const cands = snapCandidates(doc().objects, exclude, doc().page, doc().guides, prefs)

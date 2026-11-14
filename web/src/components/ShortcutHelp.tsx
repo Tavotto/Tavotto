@@ -96,6 +96,7 @@ export const GROUPS: { id: string; rows: Row[] }[] = [
       row('tools', 'toolSelect', 'toolText', 'toolArrow', 'toolRect', 'toolEllipse', 'toolLine'),
       row('pen', 'toolPen'),
       row('anchors', 'addAnchor', 'deleteAnchor', 'convertAnchor'),
+      row('pathJoin', 'joinPaths', 'averageAnchors'),
       { comboKey: 'altDrag', comboValues: { alt: ALT }, desc: 'freeResize' },
       row('tabs', 'tabRename', 'tabClose', 'tabReorder'),
       row('tutorialPause', 'escape'),

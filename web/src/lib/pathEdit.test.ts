@@ -6,8 +6,15 @@ import { describe, expect, it } from 'vitest'
 import type { PathObject } from '@/types/document'
 import {
   addAnchors,
+  anchorSnapLines,
   anchorsInRect,
+  averageAnchors,
+  closeSubpath,
   convertAnchors,
+  cutAtAnchors,
+  joinSubpaths,
+  lock45,
+  snapXY,
   deleteAnchors,
   insertAnchor,
   moveAnchors,
@@ -192,5 +199,95 @@ describe('加 / 删 / 转换锚点', () => {
   it('框选锚点：编辑空间里落在框里的', () => {
     const subs = pathToMm(path())
     expect(anchorsInRect(subs, { x: 25, y: 15, w: 10, h: 10 })).toEqual([{ sp: 0, i: 1 }])
+  })
+})
+
+describe('⇧ 锁 45° 与吸附', () => {
+  it('lock45：投影到最近的 45° 倍数方向，轴向分量逐位归零', () => {
+    expect(lock45([0, 0], [10, 1])).toEqual([10, 0])
+    expect(lock45([0, 0], [1, 10])).toEqual([0, 10])
+    const d = lock45([0, 0], [10, 9])
+    expect(d[0]).toBeCloseTo(9.5, 9)
+    expect(d[1]).toBeCloseTo(9.5, 9)
+  })
+
+  it('snapXY：x、y 各自吸到容差内最近的线', () => {
+    const r = snapXY([10.3, 20.6], { xs: [0, 10, 11], ys: [20, 21] }, 0.5)
+    expect(r.p).toEqual([10, 21])
+    expect(r.xs).toEqual([10])
+    expect(snapXY([10.3, 20.6], { xs: [12], ys: [25] }, 0.5).p).toEqual([10.3, 20.6])
+  })
+
+  it('anchorSnapLines：锚点在页面上的位置（已旋转），正在拖的不算', () => {
+    const o = path()
+    expect(anchorSnapLines(o, new Set(['0:1']))).toEqual({ xs: [10, 50], ys: [50, 50] })
+  })
+})
+
+const nodesOf = (pts: XY[]): MmSubpath['nodes'] => pts.map((p) => ({ p, in: p, out: p, smooth: false }))
+
+describe('剪刀', () => {
+  it('开放子路径中间的锚点：断成两段，锚点一分为二', () => {
+    const subs: MmSubpath[] = [{ closed: false, nodes: nodesOf([[0, 0], [1, 0], [2, 0], [3, 0]]) }]
+    const [pieces] = cutAtAnchors(subs, [{ sp: 0, i: 1 }])
+    expect(pieces.map((p) => p.nodes.map((n) => n.p))).toEqual([[[0, 0], [1, 0]], [[1, 0], [2, 0], [3, 0]]])
+  })
+
+  it('端点上剪：等于没剪', () => {
+    const subs: MmSubpath[] = [{ closed: false, nodes: nodesOf([[0, 0], [1, 0], [2, 0]]) }]
+    expect(cutAtAnchors(subs, [{ sp: 0, i: 0 }])[0]).toHaveLength(1)
+  })
+
+  it('相邻两个锚点都选了：剪掉它们之间那一段', () => {
+    const subs: MmSubpath[] = [{ closed: false, nodes: nodesOf([[0, 0], [1, 0], [2, 0], [3, 0]]) }]
+    const [pieces] = cutAtAnchors(subs, [{ sp: 0, i: 1 }, { sp: 0, i: 2 }])
+    expect(pieces.map((p) => p.nodes.map((n) => n.p))).toEqual([[[0, 0], [1, 0]], [[2, 0], [3, 0]]])
+  })
+
+  it('闭合子路径剪一刀：从那个锚点起、到那个锚点止的开放路径，一段都不少', () => {
+    const subs: MmSubpath[] = [{ closed: true, nodes: nodesOf([[0, 0], [1, 0], [1, 1], [0, 1]]) }]
+    const [pieces] = cutAtAnchors(subs, [{ sp: 0, i: 2 }])
+    expect(pieces).toHaveLength(1)
+    expect(pieces[0].closed).toBe(false)
+    expect(pieces[0].nodes.map((n) => n.p)).toEqual([[1, 1], [0, 1], [0, 0], [1, 0], [1, 1]])
+  })
+
+  it('闭合子路径剪掉一段：剩下的那几段连成一条', () => {
+    const subs: MmSubpath[] = [{ closed: true, nodes: nodesOf([[0, 0], [1, 0], [1, 1], [0, 1]]) }]
+    const [pieces] = cutAtAnchors(subs, [{ sp: 0, i: 0 }, { sp: 0, i: 1 }])
+    expect(pieces.map((p) => p.nodes.map((n) => n.p))).toEqual([[[1, 0], [1, 1], [0, 1], [0, 0]]])
+  })
+})
+
+describe('连接 / 平均', () => {
+  const a: MmSubpath = { closed: false, nodes: nodesOf([[0, 0], [1, 0]]) }
+  const b: MmSubpath = { closed: false, nodes: nodesOf([[3, 0], [2, 0]]) }
+
+  it('两条开放子路径：端点没重合补一段直线；方向随 a', () => {
+    expect(joinSubpaths(a, 'end', b, 'end').nodes.map((n) => n.p)).toEqual([[0, 0], [1, 0], [2, 0], [3, 0]])
+    expect(joinSubpaths(a, 'start', b, 'start').nodes.map((n) => n.p)).toEqual([[1, 0], [0, 0], [3, 0], [2, 0]])
+  })
+
+  it('端点重合：合成一个锚点', () => {
+    const c: MmSubpath = { closed: false, nodes: nodesOf([[1, 0], [1, 1]]) }
+    expect(joinSubpaths(a, 'end', c, 'start').nodes.map((n) => n.p)).toEqual([[0, 0], [1, 0], [1, 1]])
+  })
+
+  it('同一条的两端：闭合；首尾重合就合成一个锚点', () => {
+    const open: MmSubpath = { closed: false, nodes: nodesOf([[0, 0], [1, 0], [1, 1], [0, 0]]) }
+    const c = closeSubpath(open)
+    expect(c.closed).toBe(true)
+    expect(c.nodes).toHaveLength(3)
+  })
+
+  it('平均：选中的锚点挪到平均位置，手柄跟着走', () => {
+    const subs: MmSubpath[] = [
+      { closed: false, nodes: [{ p: [0, 0], in: [0, 0], out: [1, 1], smooth: false }, ...nodesOf([[4, 2], [9, 9]])] },
+    ]
+    const out = averageAnchors(subs, [{ sp: 0, i: 0 }, { sp: 0, i: 1 }])
+    expect(out[0].nodes[0].p).toEqual([2, 1])
+    expect(out[0].nodes[0].out).toEqual([3, 2])
+    expect(out[0].nodes[1].p).toEqual([2, 1])
+    expect(out[0].nodes[2].p).toEqual([9, 9])
   })
 })

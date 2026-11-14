@@ -1475,6 +1475,10 @@ export default interface Resources {
           "keywords": "text add tjwz wenzi",
           "label": "添加文字"
         },
+        "average-anchors": {
+          "keywords": "average align pjmd 平均 对齐",
+          "label": "平均锚点"
+        },
         "canvas-settings": {
           "keywords": "canvas page settings hbsz huabu",
           "label": "画布设置"
@@ -1486,6 +1490,10 @@ export default interface Resources {
         "convert-to-path": {
           "keywords": "convert path zwlj 路径 钢笔",
           "label": "转为路径"
+        },
+        "cut-path": {
+          "keywords": "cut scissors jd 剪刀 断开",
+          "label": "在锚点处断开"
         },
         "cycle-overlap": {
           "keywords": "cycle overlap twin axis lh lunhuan cd chongdie sszx shuangzongzhou",
@@ -1522,6 +1530,10 @@ export default interface Resources {
         "hints-reset": {
           "keywords": "hints tips reset ts tishi 提示 新手",
           "label": "重新显示操作提示"
+        },
+        "join-paths": {
+          "keywords": "join connect lj 连接 闭合",
+          "label": "连接"
         },
         "layout-col": {
           "keywords": "col layout lbj liebuju",
@@ -6226,6 +6238,7 @@ export default interface Resources {
       "nudge": "微移选中对象或图内元素：0.5 mm / 5 mm / 0.1 mm（页面上的距离）；连按算一步撤销",
       "palette": "命令面板",
       "pan": "平移画布",
+      "pathJoin": "连接路径 / 平均锚点",
       "pen": "钢笔",
       "quickEdit": "按对象打开快捷编辑菜单",
       "saveDocument": "保存排版",
@@ -6625,15 +6638,18 @@ export default interface Resources {
       "applyStyle": "应用样式「{{name}}」",
       "arrowEndpoint": "调整箭头端点",
       "autoReflow": "自动重排布局组",
+      "averageAnchors": "平均锚点",
       "bindStyle": "给当前画布套用样式「{{name}}」",
       "cancelCrop": "取消裁剪",
       "clearGuides": "清除参考线",
       "clearJournal": "取消按期刊检查",
       "clearProp": "恢复{{prop}}",
+      "continuePath": "续画路径",
       "convertAnchors": "转换锚点",
       "convertToPath": "转为路径",
       "convertToPathCount": "把 {{count}} 个对象转为路径",
       "createLayoutGroup": "创建{{kind}}",
+      "cutPath": "在锚点处断开",
       "deleteAnchors": "删除 {{count}} 个锚点",
       "deleteGuide": "删除参考线",
       "deleteObject": "删除 {{name}}",
@@ -6657,6 +6673,7 @@ export default interface Resources {
       "insertPreset": "插入{{name}}",
       "insertShape": "插入{{name}}",
       "insertSymbol": "插入符号 {{symbol}}",
+      "joinPaths": "连接路径",
       "journalStyle": "参考 {{journal}} 的记录调整样式「{{name}}」",
       "legendDetach": "断开图例项与来源的跟随",
       "legendFollowSource": "图例项重新跟随来源",

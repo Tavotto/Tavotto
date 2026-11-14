@@ -496,6 +496,18 @@
         "keywords": "convert anchor smooth corner",
         "label": "Convert Anchor Point"
       },
+      "cut-path": {
+        "keywords": "cut scissors split break",
+        "label": "Cut Path at Anchor Points"
+      },
+      "join-paths": {
+        "keywords": "join connect close",
+        "label": "Join"
+      },
+      "average-anchors": {
+        "keywords": "average align anchors",
+        "label": "Average Anchor Points"
+      },
       "cycle-overlap": {
         "keywords": "cycle overlap overlapping twin axis behind stack",
         "label": "Cycle through overlapping figure elements"

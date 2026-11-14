@@ -315,7 +315,9 @@ describe('直接选择（锚点编辑）', () => {
     editAnchors('p1')
     expect(avail()).toEqual(['pen-tool', 'add-anchor'])
     usePathEditStore.getState().setAnchors(['0:1'])
-    expect(avail()).toEqual(['pen-tool', 'add-anchor', 'delete-anchor', 'convert-anchor'])
+    expect(avail()).toEqual(['pen-tool', 'add-anchor', 'delete-anchor', 'convert-anchor', 'cut-path'])
+    usePathEditStore.getState().setAnchors(['0:0', '0:2'])
+    expect(avail()).toEqual(['pen-tool', 'add-anchor', 'delete-anchor', 'convert-anchor', 'cut-path', 'join-paths', 'average-anchors'])
   })
 })
 
@@ -411,5 +413,219 @@ describe('锚点框选（Illustrator 的样子）', () => {
     expect(box()).toBeNull()
     expect(selected()).toEqual(['0:1'])
     expect(activePathEdit()?.anchors).toEqual(['0:1'])
+  })
+})
+
+describe('锚点编辑时隐藏单选浮动栏', () => {
+  it('选中路径有浮动栏；进锚点编辑就没了；退出编辑又回来', async () => {
+    const { ContextBar } = await import('./context-bar/ContextBar')
+    const { TooltipProvider } = await import('@/components/ui/Tooltip')
+    await seedPath()
+    const anchor = document.createElement('div')
+    anchor.setAttribute('data-object-id', 'p1')
+    document.body.appendChild(anchor)
+    await act(async () =>
+      root.render(
+        <TooltipProvider>
+          <Host />
+          <ContextBar />
+        </TooltipProvider>,
+      ),
+    )
+    const bar = () => document.querySelector('[data-context-bar]')
+    expect(bar()).not.toBeNull()
+    await act(async () => editAnchors('p1'))
+    expect(bar()).toBeNull()
+    await key('Escape')
+    expect(activePathEdit()).toBeNull()
+    expect(bar()).not.toBeNull()
+    anchor.remove()
+  })
+})
+
+describe('续画', () => {
+  beforeEach(() => useUiStore.setState({ tool: 'pen' }))
+
+  it('点在开放路径的终点上：从那里接着画——同一个对象、同一个 id，一次 commit', async () => {
+    const base = await seedPath()
+    const before = pagePoints(base)
+    await penClick(50, 50) // 终点
+    expect(objects()).toHaveLength(1)
+    expect(past()).toBe(0)
+    await penClick(70, 40)
+    await key('Enter')
+    expect(objects()).toHaveLength(1)
+    expect(onlyPath().id).toBe('p1')
+    expect(past()).toBe(1)
+    const after = pagePoints(onlyPath())
+    expect(after).toHaveLength(4)
+    for (let i = 0; i < 3; i++) {
+      expect(after[i][0]).toBeCloseTo(before[i][0], 9)
+      expect(after[i][1]).toBeCloseTo(before[i][1], 9)
+    }
+    expect(after[3][0]).toBeCloseTo(70, 9)
+    useDocumentStore.getState().undo()
+    expect(onlyPath()).toEqual(base)
+  })
+
+  it('点在起点上：接在起点前面，原来的方向不变（端型不换端）', async () => {
+    await seedPath({ headEnd: 'triangle' })
+    await penClick(10, 50) // 起点
+    await penClick(0, 60)
+    await key('Enter')
+    const pts = pagePoints(onlyPath())
+    expect(pts[0][0]).toBeCloseTo(0, 9)
+    expect(pts[1][0]).toBeCloseTo(10, 9)
+    expect(pts[3][0]).toBeCloseTo(50, 9)
+    expect(onlyPath().headEnd).toBe('triangle')
+  })
+
+  it('点了端点就结束（什么都没加）：不进历史', async () => {
+    await seedPath()
+    await penClick(50, 50)
+    await key('Enter')
+    expect(past()).toBe(0)
+  })
+
+  it('续画时点回这条子路径的起点：闭合它', async () => {
+    await seedPath()
+    await penClick(50, 50)
+    await penClick(10, 50)
+    expect(onlyPath().subpaths[0].closed).toBe(true)
+    expect(onlyPath().id).toBe('p1')
+  })
+})
+
+describe('⇧ 锁 45° 与吸附（画布接线）', () => {
+  it('钢笔按 ⇧ 点下一个点：相对上一个点锁在 45° 的倍数上', async () => {
+    useUiStore.setState({ tool: 'pen' })
+    await penClick(10, 10)
+    await act(() => {
+      penPointerDown(down(30, 12, { shiftKey: true }))
+      fire('pointerup', 30, 12, { shiftKey: true })
+    })
+    await key('Enter')
+    const pts = pagePoints(onlyPath())
+    expect(pts[1][1]).toBeCloseTo(10, 9)
+  })
+
+  it('拖锚点按 ⇧：位移锁在 45° 的倍数上', async () => {
+    const base = await seedPath()
+    editAnchors('p1')
+    await act(() => {
+      startAnchorDrag(down(30, 20), base, { sp: 0, i: 1 })
+      fire('pointermove', 40, 21, { shiftKey: true })
+      fire('pointerup', 40, 21, { shiftKey: true })
+    })
+    const [, mid] = pagePoints(onlyPath())
+    expect(mid[1]).toBeCloseTo(20, 9)
+    expect(mid[0]).toBeCloseTo(40, 9)
+  })
+
+  it('拖锚点吸到同一条路径的别的锚点（吸附开着）', async () => {
+    useUiStore.setState({ snapEnabled: true, snapToObjects: false, snapToGuides: false, snapToGrid: false })
+    const base = await seedPath()
+    editAnchors('p1')
+    await act(() => {
+      startAnchorDrag(down(30, 20), base, { sp: 0, i: 1 })
+      fire('pointermove', 49.8, 49.7)
+      fire('pointerup', 49.8, 49.7)
+    })
+    const [, mid] = pagePoints(onlyPath())
+    expect(mid[0]).toBeCloseTo(50, 9)
+    expect(mid[1]).toBeCloseTo(50, 9)
+  })
+
+  it('拖锚点吸到网格', async () => {
+    useUiStore.setState({ snapEnabled: true, snapToObjects: false, snapToGuides: false, snapToGrid: true, gridSize: 10 })
+    const base = await seedPath()
+    editAnchors('p1')
+    await act(() => {
+      startAnchorDrag(down(30, 20), base, { sp: 0, i: 1 })
+      fire('pointermove', 34.6, 25.3)
+      fire('pointerup', 34.6, 25.3)
+    })
+    const [, mid] = pagePoints(onlyPath())
+    // 网格 10mm，容差 6 屏幕像素（zoom 1 ≈ 1.6 mm）：34.6 不在容差内不吸，25.3 也不吸；挪到 39.2 就吸到 40
+    expect(mid[0]).toBeCloseTo(34.6, 6)
+    await act(() => {
+      startAnchorDrag(down(34.6, 25.3), onlyPath(), { sp: 0, i: 1 })
+      fire('pointermove', 39.2, 29.5)
+      fire('pointerup', 39.2, 29.5)
+    })
+    const [, m2] = pagePoints(onlyPath())
+    expect(m2[0]).toBeCloseTo(40, 9)
+    expect(m2[1]).toBeCloseTo(30, 9)
+  })
+})
+
+describe('剪刀 / 连接 / 平均（命令表）', () => {
+  it('剪刀：在中间锚点处断开 → 第一段留在原对象（同 id），另一段成新对象、样式照搬，一次 commit', async () => {
+    await seedPath({ color: '#ff0000' })
+    editAnchors('p1')
+    usePathEditStore.getState().setAnchors(['0:1'])
+    act(() => PATH_COMMANDS.find((c) => c.id === 'cut-path')!.run())
+    expect(objects()).toHaveLength(2)
+    expect(objects()[0].id).toBe('p1')
+    expect(past()).toBe(1)
+    const [a, b] = objects() as PathObject[]
+    expect(b.color).toBe('#ff0000')
+    expect(pagePoints(a)).toHaveLength(2)
+    expect(pagePoints(b)).toHaveLength(2)
+    expect(pagePoints(a)[1][0]).toBeCloseTo(pagePoints(b)[0][0], 9)
+  })
+
+  it('⌘J：选着两条路径 → 最近的端点连起来，合成主选那个对象，另一个删掉', async () => {
+    await seedPath()
+    const other: PathObject = {
+      id: 'p2',
+      type: 'path',
+      x: 60,
+      y: 50,
+      w: 20,
+      h: 10,
+      strokePt: 1,
+      color: '#000',
+      fill: null,
+      subpaths: [{ closed: false, nodes: [{ p: [0, 0] }, { p: [1, 1] }] }],
+    }
+    useDocumentStore.getState().commit(literal('再放一条'), (d) => {
+      d.objects.push(other)
+    })
+    useDocumentStore.setState({ past: [], future: [] })
+    useSelectionStore.getState().set(['p2', 'p1'])
+    await key('j', { ctrlKey: true, code: 'KeyJ' } as KeyboardEventInit)
+    expect(objects().map((o) => o.id)).toEqual(['p1'])
+    expect(past()).toBe(1)
+    const pts = pagePoints(onlyPath()).map((q) => [Math.round(q[0] * 1e6) / 1e6, Math.round(q[1] * 1e6) / 1e6])
+    expect(pts).toEqual([[10, 50], [30, 20], [50, 50], [60, 50], [80, 60]])
+  })
+
+  it('⌘J：锚点编辑里选着同一条的两端 → 闭合', async () => {
+    await seedPath()
+    editAnchors('p1')
+    usePathEditStore.getState().setAnchors(['0:0', '0:2'])
+    await key('j', { ctrlKey: true, code: 'KeyJ' } as KeyboardEventInit)
+    expect(onlyPath().subpaths[0].closed).toBe(true)
+  })
+
+  it('⌥⌘J：平均选中的锚点', async () => {
+    await seedPath()
+    editAnchors('p1')
+    usePathEditStore.getState().setAnchors(['0:0', '0:2'])
+    await key('∆', { ctrlKey: true, altKey: true, code: 'KeyJ' } as KeyboardEventInit)
+    const pts = pagePoints(onlyPath())
+    expect(pts[0][0]).toBeCloseTo(30, 9)
+    expect(pts[2][0]).toBeCloseTo(30, 9)
+  })
+
+  it('不该消费的时候不消费：没选两条路径 / 没在编辑时 ⌘J ⌥⌘J 不动', async () => {
+    await seedPath()
+    const ev = new KeyboardEvent('keydown', { key: 'j', code: 'KeyJ', ctrlKey: true, bubbles: true, cancelable: true })
+    act(() => {
+      window.dispatchEvent(ev)
+    })
+    expect(ev.defaultPrevented).toBe(false)
+    expect(past()).toBe(0)
   })
 })

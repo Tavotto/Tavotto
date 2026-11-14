@@ -266,3 +266,188 @@ export function unrotateDelta(o: PathObject, d: XY): XY {
   return rotate(d, [0, 0], -objectRotation(o))
 }
 const rotate = (p: XY, c: XY, deg: number): XY => rotateAbout(p, c, deg)
+
+/**
+ * ⇧ 方向锁：`p` 投影到从 `origin` 出发、最近的 45° 倍数方向上（Illustrator 的钢笔 / 直接选择同一手感）。
+ * 轴向分量逐位归零（cos(π/2) 是 6e-17 不是 0），锁水平 / 垂直时不留极小漂移。与 `canvas/interactions.axisLock` 同一条投影。
+ */
+export function lock45(origin: XY, p: XY): XY {
+  const dx = p[0] - origin[0]
+  const dy = p[1] - origin[1]
+  if (!dx && !dy) return p
+  const ang = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4)
+  const ux = Math.abs(Math.cos(ang)) < 1e-9 ? 0 : Math.cos(ang)
+  const uy = Math.abs(Math.sin(ang)) < 1e-9 ? 0 : Math.sin(ang)
+  const proj = dx * ux + dy * uy
+  return [origin[0] + ux * proj, origin[1] + uy * proj]
+}
+
+/**
+ * 把一个点吸到候选线上（x、y 各自独立吸，容差内取最近；页面 mm）。回吸后的点与吸上的线（给覆盖层画吸附线）。
+ * 候选 = 画布那一套（页面边与中线、别的对象、参考线、网格、图内元素中心线：`interactions.candidatesFor`）
+ * 再加同一条路径别的锚点（`anchorSnapLines`）。
+ */
+export function snapXY(
+  p: XY,
+  cands: { xs: readonly number[]; ys: readonly number[] } | null,
+  tol: number,
+): { p: XY; xs: number[]; ys: number[] } {
+  if (!cands) return { p, xs: [], ys: [] }
+  const near = (v: number, list: readonly number[]) => {
+    let best: number | null = null
+    let bd = tol
+    for (const c of list) {
+      const d = Math.abs(v - c)
+      if (d < bd) {
+        bd = d
+        best = c
+      }
+    }
+    return best
+  }
+  const x = near(p[0], cands.xs)
+  const y = near(p[1], cands.ys)
+  return { p: [x ?? p[0], y ?? p[1]], xs: x != null ? [x] : [], ys: y != null ? [y] : [] }
+}
+
+/** 一条路径上锚点在页面上的位置（已旋转）作为吸附线；`skip` 里的锚点（正在拖的那些）不算 */
+export function anchorSnapLines(o: PathObject, skip: ReadonlySet<string> = new Set()): { xs: number[]; ys: number[] } {
+  const xs: number[] = []
+  const ys: number[] = []
+  pathToMm(o).forEach((sp, si) =>
+    sp.nodes.forEach((n, i) => {
+      if (skip.has(anchorKey({ sp: si, i }))) return
+      const [x, y] = rotatePoint(o, n.p)
+      xs.push(x)
+      ys.push(y)
+    }),
+  )
+  return { xs, ys }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  剪刀 / 连接 / 平均（ADR 0185 M1）                                          */
+/* -------------------------------------------------------------------------- */
+
+const isEnd = (sp: MmSubpath, i: number) => !sp.closed && (i === 0 || i === sp.nodes.length - 1)
+
+/**
+ * 剪刀：在选中的锚点处把路径断开。
+ * - 同一条子路径上**相邻**的两个锚点都选了 = 剪掉它们之间那一段（「在线段上断开」）；
+ * - 其余选中的锚点 = 在这个锚点处断开（锚点一分为二，两段各留一个；开放子路径的端点上断开等于没断）。
+ * 闭合子路径断一刀变成从那个锚点起、到那个锚点止的开放子路径；再断才分成几段。
+ * 回的是每条原子路径断出来的**几段**（按顺序）；没动的子路径原样一段。
+ */
+export function cutAtAnchors(subs: readonly MmSubpath[], refs: readonly AnchorRef[]): MmSubpath[][] {
+  const keys = new Set(refs.map(anchorKey))
+  return clone(subs).map((sp, si) => {
+    const n = sp.nodes.length
+    const on = (i: number) => keys.has(anchorKey({ sp: si, i }))
+    // 要剪掉的段（段 k = 锚点 k → 下一个）与要断开的锚点
+    const cutSeg = new Set<number>()
+    for (let k = 0; k < n; k++) {
+      const next = k + 1 < n ? k + 1 : sp.closed ? 0 : -1
+      if (next >= 0 && on(k) && on(next)) cutSeg.add(k)
+    }
+    const inCutSeg = (i: number) => cutSeg.has(i) || cutSeg.has((i - 1 + n) % n)
+    const splitAt = [...Array(n).keys()].filter((i) => on(i) && !inCutSeg(i) && !isEnd(sp, i))
+    if (!cutSeg.size && !splitAt.length) return [sp]
+    // 走一圈：在「剪掉的段」处断开，在「断开的锚点」处复制一份锚点再断开
+    const breaksAfter = new Set<number>([...cutSeg]) // 段 k 之后断开（不画这段）
+    const splitNodes = new Set(splitAt) // 锚点 i 处断开（这段收在 i、下一段从 i 起）
+    const start = sp.closed ? (cutSeg.size ? ([...cutSeg][0] + 1) % n : splitAt[0]) : 0
+    const order = sp.closed ? [...Array(n).keys()].map((k) => (start + k) % n) : [...Array(n).keys()]
+    const pieces: MmNode[][] = []
+    let cur: MmNode[] = []
+    order.forEach((i, k) => {
+      const node = sp.nodes[i]
+      cur.push({ ...node, p: [...node.p], in: [...node.in], out: [...node.out] })
+      const last = k === order.length - 1
+      if (splitNodes.has(i) && k > 0) {
+        pieces.push(cur)
+        cur = [{ ...node, p: [...node.p], in: [...node.in], out: [...node.out] }]
+      }
+      if (breaksAfter.has(i) && !last) {
+        pieces.push(cur)
+        cur = []
+      }
+    })
+    if (sp.closed) {
+      // 闭合的回到起点：在起点断开时，最后一段要收在起点那个锚点上
+      if (!cutSeg.size) cur.push({ ...sp.nodes[start], p: [...sp.nodes[start].p], in: [...sp.nodes[start].in], out: [...sp.nodes[start].out] })
+    }
+    if (cur.length) pieces.push(cur)
+    return pieces
+      .filter((nodes) => nodes.length >= 2)
+      .map((nodes) => {
+        // 断口处的手柄：断开的那一侧没有曲线了，收回锚点
+        const a = nodes[0]
+        const b = nodes[nodes.length - 1]
+        a.in = [...a.p]
+        b.out = [...b.p]
+        return { closed: false, nodes }
+      })
+  })
+}
+
+/** 两个端点在编辑空间里重合（< 1e-6 mm）就合成一个锚点，否则用一段直线连上 */
+const SAME_POINT_MM = 1e-6
+
+/**
+ * 连接：把 `a` 的 `aEnd` 端与 `b` 的 `bEnd` 端连起来，得到一条开放子路径（a 在前、b 在后，方向随 a）。
+ * 两端重合就合成一个锚点（入手柄取 a 的、出手柄取 b 的），否则在它们之间加一段直线。
+ */
+export function joinSubpaths(a: MmSubpath, aEnd: 'start' | 'end', b: MmSubpath, bEnd: 'start' | 'end'): MmSubpath {
+  const rev = (sp: MmSubpath): MmNode[] =>
+    sp.nodes
+      .slice()
+      .reverse()
+      .map((m) => ({ ...m, in: [...m.out] as XY, out: [...m.in] as XY }))
+  const head = aEnd === 'end' ? clone([a])[0].nodes : rev(a)
+  const tail = bEnd === 'start' ? clone([b])[0].nodes : rev(b)
+  const x = head[head.length - 1]
+  const y = tail[0]
+  if (Math.hypot(x.p[0] - y.p[0], x.p[1] - y.p[1]) < SAME_POINT_MM) {
+    head[head.length - 1] = { p: x.p, in: x.in, out: y.out, smooth: false }
+    return { closed: false, nodes: [...head, ...tail.slice(1)] }
+  }
+  return { closed: false, nodes: [...head, ...tail] }
+}
+
+/** 闭合一条开放子路径（连接它自己的两端）：首尾重合就合成一个锚点 */
+export function closeSubpath(sp: MmSubpath): MmSubpath {
+  const nodes = clone([sp])[0].nodes
+  const a = nodes[0]
+  const z = nodes[nodes.length - 1]
+  if (nodes.length > 2 && Math.hypot(a.p[0] - z.p[0], a.p[1] - z.p[1]) < SAME_POINT_MM) {
+    nodes[0] = { p: a.p, in: z.in, out: a.out, smooth: false }
+    nodes.pop()
+  }
+  return { closed: true, nodes }
+}
+
+/** 一个锚点是不是开放子路径的端点；是的话在哪一端 */
+export function endOf(subs: readonly MmSubpath[], a: AnchorRef): 'start' | 'end' | null {
+  const sp = subs[a.sp]
+  if (!sp || sp.closed || sp.nodes.length < 2) return null
+  return a.i === 0 ? 'start' : a.i === sp.nodes.length - 1 ? 'end' : null
+}
+
+/** 平均：选中的锚点挪到它们的平均位置（两侧手柄跟着走），横竖两个方向都平均 */
+export function averageAnchors(subs: readonly MmSubpath[], refs: readonly AnchorRef[]): MmSubpath[] {
+  const live = refs.filter((a) => valid(subs, a))
+  if (live.length < 2) return clone(subs)
+  let sx = 0
+  let sy = 0
+  for (const a of live) {
+    sx += subs[a.sp].nodes[a.i].p[0]
+    sy += subs[a.sp].nodes[a.i].p[1]
+  }
+  const c: XY = [sx / live.length, sy / live.length]
+  let out = clone(subs)
+  for (const a of live) {
+    const p = out[a.sp].nodes[a.i].p
+    out = moveAnchors(out, [a], [c[0] - p[0], c[1] - p[1]])
+  }
+  return out
+}

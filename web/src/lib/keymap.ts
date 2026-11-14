@@ -97,6 +97,9 @@ export const KEYMAP = {
   addAnchor: k('+', { key: '+' }, { key: '=', shift: false }),
   deleteAnchor: k('−', { key: '-', shift: false }),
   convertAnchor: k('⇧C', { key: 'c', shift: true }),
+  // 连接 ⌘J、平均 ⌥⌘J（Illustrator 的键位）：选着两个端点 / 两条开放路径、选着几个锚点时才消费。⌥ 会改写 key，按 code 认
+  joinPaths: k(`${MOD}J`, { code: 'KeyJ', mod: true, shift: false, alt: false }),
+  averageAnchors: k(`${ALT}${MOD}J`, { code: 'KeyJ', mod: true, shift: false, alt: true }),
   // 画布标签（焦点在标签上时；`CanvasTabs` 自己处理，不经全局 keydown）
   tabRename: native('F2'),
   tabClose: native(`${MOD}W`),

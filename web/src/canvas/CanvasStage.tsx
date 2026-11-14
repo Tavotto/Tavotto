@@ -220,7 +220,7 @@ export function CanvasStage() {
   const rafRef = useRef(0)
   const onPointerMove = (e: React.PointerEvent) => {
     const { clientX, clientY } = e
-    if (tool === 'pen') penHover(clientX, clientY)
+    if (tool === 'pen') penHover(clientX, clientY, e.shiftKey)
     if (rafRef.current) return
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = 0
