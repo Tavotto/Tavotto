@@ -2074,3 +2074,103 @@ describe('JPER 问题面板的画布级来源提示', () => {
     expect(notice()?.textContent).toContain('does not establish that any issue or threshold comes from that source')
   })
 })
+
+describe('Nanophotonics 历史来源提示', () => {
+  it('按范围显示保存旧来源的画布，不修改项目', async () => {
+    await seed()
+    const url = 'https://www.degruyterbrill.com/journal/key/nanoph/html'
+    const binding = (jid: string, sourceUrl = url) => ({
+      id: 'journal-base-v1', journalRef: { id: jid, label: 'Nanophotonics', catalogRev: 6, retrieved: '2026-11-03' },
+      journalSources: { min_raster_dpi: { url: sourceUrl } }, snapshot: { min_raster_dpi: 600 },
+    })
+    const state = useDocumentStore.getState()
+    const active = state.canvases.find((c) => c.id === state.activeCanvasId)!
+    useDocumentStore.setState({
+      doc: { ...state.doc, name: '当前画布', profile: binding('other') as never },
+      canvases: [active, { ...active, id: 'old-canvas', name: '历史画布', profile: binding('nanophotonics') as never }],
+    })
+    useValidationStore.setState({ issues: [], results: [], ready: true, failed: false, queued: false, running: false })
+    useUiStore.setState({ problemScope: 'document' })
+    const before = structuredClone(useDocumentStore.getState().doc)
+    await mount(<ProblemPanel />)
+    const notice = () => container.querySelector('[data-nanophotonics-problem-notice]')
+    expect(notice()?.textContent).toContain('历史画布')
+    expect(notice()?.textContent).toContain('实际生效设置')
+    expect(notice()?.textContent).toContain('不归因具体问题')
+    expect(notice()?.querySelector('a')?.getAttribute('href')).toBe('https://onlinelibrary.wiley.com/page/journal/21928614/homepage/author-guidelines')
+    expect(useDocumentStore.getState().doc).toEqual(before)
+    await act(async () => useUiStore.setState({ problemScope: 'canvas' }))
+    expect(notice()).toBeNull()
+    await act(async () => useDocumentStore.setState((s) => ({ doc: { ...s.doc, profile: binding('nanophotonics') as never } })))
+    expect(notice()?.textContent).toContain('当前画布')
+    await act(async () => useDocumentStore.setState((s) => ({ doc: { ...s.doc, profile: binding('nanophotonics', 'https://example.invalid') as never } })))
+    expect(notice()).toBeNull()
+  })
+})
+
+describe('Nanophotonics 有问题时的来源上下文', () => {
+  it('整份排版显示受影响画布，即使现有问题属于另一画布', async () => {
+    await seed()
+    const url = 'https://www.degruyterbrill.com/journal/key/nanoph/html'
+    const binding = {
+      id: 'journal-base-v1', journalRef: { id: 'nanophotonics', label: 'Nanophotonics', catalogRev: 6, retrieved: '2026-11-03' },
+      journalSources: { min_raster_dpi: { url } }, snapshot: { min_raster_dpi: 600 },
+    }
+    const state = useDocumentStore.getState()
+    const active = state.canvases.find((c) => c.id === state.activeCanvasId)!
+    const issue = useValidationStore.getState().issues[0]
+    expect(issue).toBeTruthy()
+    useDocumentStore.setState({
+      doc: { ...state.doc, name: '有其他问题', profile: { id: 'free-form-v1' } },
+      canvases: [active, { ...active, id: 'legacy-no-issue', name: '历史但无问题', profile: binding as never }],
+    })
+    useValidationStore.setState({ issues: [issue], ready: true, failed: false, queued: false, running: false })
+    useUiStore.setState({ problemScope: 'document' })
+    await mount(<ProblemPanel />)
+    const notice = container.querySelector('[data-nanophotonics-problem-notice]')
+    expect(notice?.textContent).toContain('历史但无问题')
+    expect(notice?.closest('[data-problem-tree]')).not.toBeNull()
+    expect(notice?.textContent).not.toContain('600')
+    await act(async () => useUiStore.setState({ problemScope: 'canvas' }))
+    expect(container.querySelector('[data-nanophotonics-problem-notice]')).toBeNull()
+  })
+})
+
+describe('Nanophotonics 来源未知提示', () => {
+  it('来源未知和历史旧源分开标注，未知不推断旧源；其他期刊不显示', async () => {
+    await seed()
+    const url = 'https://www.degruyterbrill.com/journal/key/nanoph/html'
+    const profile = (jid: string, source?: unknown) => ({
+      id: 'journal-base-v1', journalRef: { id: jid, label: 'Nanophotonics', catalogRev: 6, retrieved: '2026-11-03' },
+      ...(source === undefined ? {} : { journalSources: source }),
+    })
+    const state = useDocumentStore.getState()
+    const active = state.canvases.find((c) => c.id === state.activeCanvasId)!
+    useDocumentStore.setState({
+      doc: { ...state.doc, name: '未记来源', profile: profile('nanophotonics') as never },
+      canvases: [active,
+        { ...active, id: 'old-source', name: '旧来源', profile: profile('nanophotonics', { min_raster_dpi: { url } }) as never },
+        { ...active, id: 'other', name: '其他期刊', profile: profile('other') as never },
+        { ...active, id: 'different', name: '不同来源', profile: profile('nanophotonics', { min_raster_dpi: { url: 'https://example.invalid' } }) as never },
+      ],
+    })
+    useValidationStore.setState({ issues: [], results: [], ready: true, failed: false, queued: false, running: false })
+    useUiStore.setState({ problemScope: 'document' })
+    const before = structuredClone(useDocumentStore.getState().doc)
+    await mount(<ProblemPanel />)
+    const unknown = container.querySelector('[data-nanophotonics-problem-notice="unknown"]')
+    const legacy = container.querySelector('[data-nanophotonics-problem-notice="legacy"]')
+    expect(unknown?.textContent).toContain('未记来源')
+    expect(unknown?.textContent).toContain('未记录或无法识别')
+    expect(unknown?.textContent).not.toContain('De Gruyter')
+    expect(legacy?.textContent).toContain('旧来源')
+    expect(legacy?.textContent).toContain('可能已过时')
+    expect(legacy?.textContent).not.toContain('未记来源')
+    expect(container.textContent).not.toContain('其他期刊')
+    expect(container.textContent).not.toContain('不同来源')
+    expect(useDocumentStore.getState().doc).toEqual(before)
+    await act(async () => useUiStore.setState({ problemScope: 'canvas' }))
+    expect(container.querySelector('[data-nanophotonics-problem-notice="unknown"]')?.textContent).toContain('未记来源')
+    expect(container.querySelector('[data-nanophotonics-problem-notice="legacy"]')).toBeNull()
+  })
+})
