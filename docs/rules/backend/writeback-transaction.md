@@ -41,7 +41,7 @@ order: 300
     （`open` 写模式 / `savefig(handle)` / `os.open` / `Path.write_*` / `os.replace|rename|shutil.move|copy*` 到目标）被
     `writetripwire.install_isolation` 换到该一次性 worker 目录里的暂存副本（随 `discard()` 一起删），脚本读回仍看到自己写的；
     只认这几个精确路径，别的写与授权根绊线都不装。不能忠实模拟的写（`os.truncate|symlink|link`、目录级改动）在审计事件里
-    失败（写回整体失败，原件不动）。所以复核基线永远是 prepare 时的 `(mtime_ns, size)`，**不 rebase、不豁免**：重放窗口里的
+    失败（写回整体失败，原件不动）。所以复核基线永远是 prepare 时的 `(mtime_ns, size, sha1)`，**不 rebase、不豁免**：重放窗口里的
     外部改动一律 409 `source_changed`。已知盲区（同绊线）：C 层写 / 外部进程 / 硬链接别名。
     同一次写回只 build 一次（override + PDF + PNG 共用）。
     热会话最后应用的正是这组 patches 时（`worker.last_patch_hash`），把两份
@@ -76,6 +76,16 @@ order: 300
     （`_new_backup_dir`：`<月日_时分秒>`，同秒已占用接 `-2`、`-3`，
     `mkdir(exist_ok=False)` 即占有）——按秒共用时，同一 stem 一秒内写回两次，
     第二次会覆盖掉第一次写回前的原件备份、失败清理还会删掉它（Codex #595 P2）。
+    prepare 冻结候选原件的纳秒 mtime、长度和内容 hash；目标按本次重放的归属收窄后，
+    在备份前以及备份完成、首个 replace 之前复核所有实际目标。验证或备份期间出现外部
+    新版本回 409 `source_changed`，保外部新字节、清本次 staging、不追加写回历史；
+    长度与 mtime 完全相同也要量内容。prepare 时读不到、或读取前后元信息变化的原件
+    没有可核验的基准：**不跳过**，回 409 `write_back_persist_failed`（`params.reason`
+    写明哪个文件），原件不动。被归属规则排除的文件不作为提交判据。
+    这两次复核保护已观测的长验证/备份窗口，不把项目锁称为针对外部程序的原子 CAS；
+    最终检查与 OS replace 之间仍存在外部写入窗口。代价：每次复核都把原件完整读一遍
+    （分块 sha1），大文件写回因此变慢——正确性优先的自觉取舍，不许为省时间退回只比
+    stat。看护：`tests/test_writeback_concurrent_source.py`。
     **落盘**（ADR 0023 §3.1，issue #252）分两半、处置相反：任何 replace **之前**
     先拷齐备份，并 fsync 备份、staging、备份目录与新建目录的父目录——任一步失败
     （建目录 / 磁盘满 / 权限 / fsync）一个原件都还没动：删掉本次的备份（含半截的）

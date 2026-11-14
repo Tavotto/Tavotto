@@ -30,6 +30,7 @@ import { foreignProjectLabel } from '@/lib/projectLabel'
 import { currentProjectId } from '@/lib/session'
 import { bindingForProject } from '@/lib/projectFile'
 import { useProjectStore } from '@/store/projectStore'
+import { useAssetStore } from '@/store/assetStore'
 import { AppMenuButton } from './AppMenuButton'
 import { HomeButton, ProjectSwitcher } from './ProjectSwitcher'
 import { useWriteBackMenuEntry } from './inspector/UpdateSourceButton'
@@ -37,7 +38,8 @@ import { usePalette } from '@/components/CommandPalette'
 import { runTutorialEntry, tutorialEntry } from '@/lib/onboarding/tutorial'
 import { refreshProjectNow } from '@/store/liveSync'
 import { bannerReport, useProjectReadinessStore } from '@/store/projectReadinessStore'
-import { pendingCount } from '@/lib/readinessText'
+import { allEditable, pendingCount } from '@/lib/readinessText'
+import { scopeReadiness } from '@/lib/figureGroup'
 import {
   discardLocalCopy,
   dismissDocNotice,
@@ -955,10 +957,17 @@ export function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
  */
 export function ProjectStatusPill() {
   const { t } = useTranslation(['workspace', 'common'])
-  const report = useProjectReadinessStore(bannerReport)
+  const fullReport = useProjectReadinessStore(bannerReport)
+  const assetPanels = useAssetStore((s) => s.panels)
+  const viewScope = useAssetStore((s) => s.viewScope)
   const centerOpen = useUiStore((s) => s.registryOpen)
   const [open, setOpen] = useState(false)
-  if (!report || centerOpen) return null
+  // 按看得见的图计数（ADR 0184）：同一张图的几份文件算一张；从脚本进来时范围外的散图不算、也不出胶囊
+  const report = useMemo(
+    () => (fullReport ? scopeReadiness(fullReport, assetPanels, viewScope) : null),
+    [fullReport, assetPanels, viewScope],
+  )
+  if (!report || centerOpen || report.summary.total <= 0 || allEditable(report.summary)) return null
   const { total, editable, layout_only: layoutOnly } = report.summary
   const pending = pendingCount(report.summary)
   const tone: StatusTone = pending > 0 ? 'warn' : 'neutral'

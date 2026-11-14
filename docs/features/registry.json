@@ -1526,6 +1526,26 @@
           "title": "功能：矩形可关掉描边（填充铺满框）、「更多」里改线端；箭头可换燕尾端型"
         }
       ]
+    },
+    {
+      "id": "assets.script-is-figure",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "拖入脚本（Python / R / MATLAB）后素材区只显示这个脚本（及之后运行的脚本）的图，同文件夹没有脚本画的图不列出；同一张图的 PDF / SVG / PNG 合成一张卡，画布用矢量那份",
+        "en-US": "After dropping a script (Python, R or MATLAB), the asset panel lists only figures from that script (and scripts run afterwards), not every image in its folder; the PDF / SVG / PNG of one figure are a single card and the canvas uses the vector file"
+      },
+      "entry": "主页拖入 .py → 左栏「素材」",
+      "e2e": [
+        {
+          "spec": "script-is-figure.spec.ts",
+          "title": "功能：拖入脚本后素材区只显示这个脚本的图，同一张图的 PDF / PNG / SVG 是一张卡"
+        },
+        {
+          "spec": "script-is-figure.spec.ts",
+          "title": "功能：拖入 R 脚本，素材区同样只显示它存的图，PDF 与 PNG 是一张卡"
+        }
+      ]
     }
   ]
 }

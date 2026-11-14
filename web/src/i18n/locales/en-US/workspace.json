@@ -341,6 +341,7 @@
     "addArrow": "Add arrow",
     "addGuide": "Add guide",
     "addPanel": "Add figure {{name}}",
+    "useVectorPrimary": "Use the vector file of {{name}}",
     "addShape": "Add {{shape}}",
     "addSubLabels": "Add panel labels",
     "addText": "Add text",

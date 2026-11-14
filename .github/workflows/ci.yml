@@ -519,40 +519,56 @@ jobs:
           }
           before="$RUNNER_TEMP/group-queue-before.json"
           after="$RUNNER_TEMP/group-queue-after.json"
-          queue > "$before"
-          # 这里只选取要读的 PR；完整分页、唯一候选、连续位置由可信 gate 最终核验。
           numbers="$RUNNER_TEMP/group-pr-numbers.txt"
-          jq -s -r --arg base "$GROUP_BASE" --arg head "$GROUP_HEAD" '
-            [.[].data.repository.mergeQueue.entries.nodes[]] | sort_by(.position) as $q |
-            [$q[] | select(.baseCommit.oid == $base and .headCommit.oid == $head)] as $matches |
-            if ($matches | length) != 1 then error("candidate absent or ambiguous")
-            else $q[] | select(.position <= $matches[0].position) | .pullRequest.number end' \
-            "$before" > "$numbers"
           records="$RUNNER_TEMP/group-pr-records.json"
-          : > "$records"
-          while IFS= read -r n; do
-            [[ "$n" =~ ^[1-9][0-9]*$ ]] || { echo "::error::队列 PR 号无效"; exit 1; }
-            pr_before="$RUNNER_TEMP/group-pr-$n-before.json"
-            pr_after="$RUNNER_TEMP/group-pr-$n-after.json"
-            pr_commits="$RUNNER_TEMP/group-pr-$n-commits.json"
-            gh api "repos/$REPO/pulls/$n" > "$pr_before"
-            read -r pr_base pr_head <<< "$(jq -r '"\(.base.sha) \(.head.sha)"' "$pr_before")"
-            [[ "$pr_base" =~ ^[0-9a-f]{40}$ && "$pr_head" =~ ^[0-9a-f]{40}$ ]] \
-              || { echo "::error::队列 PR base/head 无效"; exit 1; }
-            pr_cmp="repos/$REPO/compare/$pr_base...$pr_head"
-            gh api --paginate "$pr_cmp?per_page=100" --jq '.commits' > "$pr_commits"
-            read -r compare_base pr_total <<< "$(gh api "$pr_cmp?per_page=1" \
-              --jq '"\(.base_commit.sha) \(.total_commits)"')"
-            [[ "$compare_base" =~ ^[0-9a-f]{40}$ && "$pr_total" =~ ^[1-9][0-9]*$ ]] \
-              || { echo "::error::队列 PR compare 无效"; exit 1; }
-            gh api "repos/$REPO/pulls/$n" > "$pr_after"
-            jq -n --slurpfile before "$pr_before" --slurpfile after "$pr_after" \
-              --slurpfile commits "$pr_commits" --arg compare_base "$compare_base" \
-              --argjson total "$pr_total" \
-              '{before:$before[0],after:$after[0],commits:($commits | add),compare_base:$compare_base,total_commits:$total}' \
-              >> "$records"
-          done < "$numbers"
-          queue > "$after"
+          # 队列前后两次快照之间，排在前面的组合入、后面有新 PR 入队都会让队列变化；
+          # 可信 gate 要求两次完全相同（不放宽）。这里只在变化时整轮重采，最多 5 轮。
+          same_queue() {
+            local norm='[.[].data.repository.mergeQueue.entries.nodes[]] | sort_by(.position)'
+            [ "$(jq -S -s "$norm" "$before")" = "$(jq -S -s "$norm" "$after")" ]
+          }
+          collect_snapshot() {
+            queue > "$before"
+            # 这里只选取要读的 PR；完整分页、唯一候选、连续位置由可信 gate 最终核验。
+            jq -s -r --arg base "$GROUP_BASE" --arg head "$GROUP_HEAD" '
+              [.[].data.repository.mergeQueue.entries.nodes[]] | sort_by(.position) as $q |
+              [$q[] | select(.baseCommit.oid == $base and .headCommit.oid == $head)] as $matches |
+              if ($matches | length) != 1 then error("candidate absent or ambiguous")
+              else $q[] | select(.position <= $matches[0].position) | .pullRequest.number end' \
+              "$before" > "$numbers"
+            : > "$records"
+            while IFS= read -r n; do
+              [[ "$n" =~ ^[1-9][0-9]*$ ]] || { echo "::error::队列 PR 号无效"; exit 1; }
+              pr_before="$RUNNER_TEMP/group-pr-$n-before.json"
+              pr_after="$RUNNER_TEMP/group-pr-$n-after.json"
+              pr_commits="$RUNNER_TEMP/group-pr-$n-commits.json"
+              gh api "repos/$REPO/pulls/$n" > "$pr_before"
+              read -r pr_base pr_head <<< "$(jq -r '"\(.base.sha) \(.head.sha)"' "$pr_before")"
+              [[ "$pr_base" =~ ^[0-9a-f]{40}$ && "$pr_head" =~ ^[0-9a-f]{40}$ ]] \
+                || { echo "::error::队列 PR base/head 无效"; exit 1; }
+              pr_cmp="repos/$REPO/compare/$pr_base...$pr_head"
+              gh api --paginate "$pr_cmp?per_page=100" --jq '.commits' > "$pr_commits"
+              read -r compare_base pr_total <<< "$(gh api "$pr_cmp?per_page=1" \
+                --jq '"\(.base_commit.sha) \(.total_commits)"')"
+              [[ "$compare_base" =~ ^[0-9a-f]{40}$ && "$pr_total" =~ ^[1-9][0-9]*$ ]] \
+                || { echo "::error::队列 PR compare 无效"; exit 1; }
+              gh api "repos/$REPO/pulls/$n" > "$pr_after"
+              jq -n --slurpfile before "$pr_before" --slurpfile after "$pr_after" \
+                --slurpfile commits "$pr_commits" --arg compare_base "$compare_base" \
+                --argjson total "$pr_total" \
+                '{before:$before[0],after:$after[0],commits:($commits | add),compare_base:$compare_base,total_commits:$total}' \
+                >> "$records"
+            done < "$numbers"
+            queue > "$after"
+          }
+          for attempt in 1 2 3 4 5; do
+            collect_snapshot
+            if same_queue; then break; fi
+            if [ "$attempt" -lt 5 ]; then
+              echo "::notice::mergeQueue 在收集期间变化（第 $attempt 轮），稍后整轮重采。"
+              sleep "${CLA_GROUP_SNAPSHOT_RETRY_DELAY:-15}"
+            fi
+          done
           jq -n --argjson repository_id "$REPOSITORY_ID" --arg base "$GROUP_BASE" --arg head "$GROUP_HEAD" \
             --slurpfile before "$before" --slurpfile after "$after" --slurpfile prs "$records" \
             '{repository_id:$repository_id,base_sha:$base,head_sha:$head,queue_before:$before,queue_after:$after,prs:$prs}' \

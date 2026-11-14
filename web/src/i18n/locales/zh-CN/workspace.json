@@ -327,6 +327,7 @@
     "addArrow": "添加箭头",
     "addGuide": "添加参考线",
     "addPanel": "加入图 {{name}}",
+    "useVectorPrimary": "改用 {{name}} 的矢量原图",
     "addShape": "添加{{shape}}",
     "addSubLabels": "添加序号标签",
     "addText": "添加文字",

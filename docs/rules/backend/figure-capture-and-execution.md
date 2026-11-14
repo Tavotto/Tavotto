@@ -205,6 +205,9 @@ order: 50
     脚本自己调 `parser.error(...)`（调 `ArgumentParser.error` 的那一帧不在 argparse 里，`worker._script_parser_error_message`）
     且消息点了名某条没救回的探路（整路径或只写文件名，`figcapture.parser_error_missing_input`）、它此刻不在 → 同样
     `missing_input`，不再是 `script_needs_arguments`（ADR 0106 修订 2026-11-14）；argparse 解析时自己报的照旧。
+    会抛的探路（`os.stat|lstat|listdir|scandir`、`Path.stat|lstat`，getsize / getmtime 经它们）没救回时给**那一个**系统
+    ENOENT 打标（`_tavotto_probe_miss`），它到了终局（含被包一层的异常链）同样 → `missing_input`（ADR 0106 修订 2026-11-14）；
+    认的是异常对象上的标、不按路径比——同一路径随后写进不存在的目录抛的 ENOENT 没有标，不认领。
     数据在脚本目录里找得到、只是沙盒 cwd 下 C++ 读取器看不见时，静态证据里它不是「哪儿都找不到」的候选：
     不挂 native 载荷，错误仍是 `script_error` + `extra.enoent`（诊断，行为不变）。
     ④ **代次 + 按项目的一把互斥锁**（ADR 0106 §五，`inputremap.project_mutex`，可重入）：改指表按项目一个代次（跨重启单调）。
