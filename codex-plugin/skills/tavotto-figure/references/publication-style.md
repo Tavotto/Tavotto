@@ -106,7 +106,12 @@ Tavotto 内置了期刊标准库（每条数值都带原文出处）。用户说
 4. `journal_unknown`：库里没有这本（关了期刊同步、本机又没有缓存时，种子以外的刊也会这样报）。告诉用户，请用户给期刊的
    作图要求原文（栏宽、最小字号、dpi），再按下面手写 `journal` 覆盖——并说明这次是按用户给的数值判的，不是期刊库。
    **不要凭记忆编期刊规范。**
-5. 列表里带 `downloaded: false` 的刊，标准还在服务端：第一次带它的 `journal_id` 时才下载（之后就在本机，不再下载）。
+5. 要把图改到这本期刊合规：`tavotto_fix_to_journal { session_id, journal_id }`（ADR 0180）——图幅、字号、字体、线宽、
+   刻度朝向、图例边框、封闭轴一步改完，每步在真实渲染上裁决，修复引入新的 error / warn 就整体回到修改前。
+   `column_choice_required`：现宽与几个栏位都接近（或都不接近），什么都没改——念出 `columns` 问用户单栏还是双栏，再带 `column`。
+   结果 `remaining` 每条带 `fix`：`manual`（配色、数据、子图结构……）才回脚本改；`verify` 要用户确认；`skipped`
+   里的 `font_unavailable` 说明这台机器没有规范要的字体（`want`），不要自己换相近字体。给了 `formats` 才导出，被预检挡也会整体回到修改前。
+6. 列表里带 `downloaded: false` 的刊，标准还在服务端：第一次带它的 `journal_id` 时才下载（之后就在本机，不再下载）。
    下不来时会明确报错，不会悄悄换成别的数据：
    - `journal_quota_exceeded`：下载额度用完了。照 `error` 里的时间告诉用户「约 N 分钟后再试」（`retry_after_s` 是秒数），
      期间别重试，也别想办法换设备令牌。
