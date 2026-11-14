@@ -36,6 +36,9 @@ import {
   Tags,
   Type,
   Spline,
+  ArrowLeftRight,
+  Ban,
+  Pipette,
   Ungroup,
 } from '@/components/ui/icons'
 import type { ComponentType } from 'react'
@@ -49,6 +52,7 @@ import { canZoomToSelectionNow, fitStage, zoomToSelection } from '@/store/zoomTo
 import { objectLabel } from '@/types/document'
 import { canConvertToPath } from '@/lib/convertToPath'
 import { PATH_COMMANDS } from '@/store/pathActions'
+import { APPEARANCE_COMMANDS } from '@/store/appearanceActions'
 import { PATH_COMMAND_ICONS } from './pathCommandIcons'
 import { rankCommands, type PaletteSection } from '@/lib/commandRanking'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -189,6 +193,8 @@ const COMMANDS: Command[] = [
   { id: 'group', needsSelection: true, run: groupSelected },
   { id: 'ungroup', needsSelection: true, run: ungroupSelected },
   // 路径编辑（ADR 0185 M1）：钢笔 / 编辑锚点 / 加删转换锚点——整张表来自 `PATH_COMMANDS`，右键菜单与快捷键读同一份
+  // 外观（ADR 0185 第二批）：D / ⇧X / / / I，表在 `APPEARANCE_COMMANDS`，快捷键读同一份
+  ...APPEARANCE_COMMANDS.map((c) => ({ id: c.id, shortcut: keyOf(c.key), available: c.available, run: c.run })),
   ...PATH_COMMANDS.map((c) => ({
     id: c.id,
     shortcut: c.key ? keyOf(c.key) : undefined,
@@ -283,6 +289,10 @@ const COMMAND_ICONS: Record<string, ComponentType<{ size?: number; className?: s
   ungroup: Ungroup,
   'convert-to-path': Spline,
   ...PATH_COMMAND_ICONS,
+  'default-appearance': RotateCcw,
+  'swap-fill-stroke': ArrowLeftRight,
+  'clear-fill': Ban,
+  'eyedropper-tool': Pipette,
   'layout-row': AlignHorizontalDistributeCenter,
   'layout-col': AlignVerticalDistributeCenter,
   'layout-grid': LayoutGrid,

@@ -63,6 +63,27 @@ DASH_RATIOS: dict[str, tuple[float, ...]] = {
 }
 
 
+def valid_dash_pattern(p: object) -> tuple[float, ...] | None:
+    """自定义虚线（线段 / 间隙交替，pt 绝对值）读得成数就回它：1–12 个、每个有限且 ≥ 0、总长 > 0；否则 None
+    （照预设线型画）。与前端 `shapeGeometry.validDashPattern` 同一条判据。"""
+    if not isinstance(p, (list, tuple)) or not 1 <= len(p) <= 12:
+        return None
+    vals = []
+    for v in p:
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0:
+            return None
+        vals.append(float(v))
+    return tuple(vals) if sum(vals) > 0 else None
+
+
+def miter_limit(v: object) -> float:
+    """斜接上限：缺省 / 非有限数 / < 1 = 10（PDF 的缺省，也是画布的 `STROKE_MITER_LIMIT`）；与前端
+    `shapeGeometry.miterLimitOf` 同一条。"""
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 1:
+        return 10.0
+    return float(v)
+
+
 def dash_pattern(dash: object, sw: float) -> tuple[float, ...]:
     """虚线间距按线宽比例换算；与前端 shapeGeometry.dashArray 同一比例。空元组 = 实线。"""
     if dash == "dotted":
@@ -221,14 +242,31 @@ def arrow_opacity(o: dict) -> float:
 def _stroke(o: dict, sw: float, *, join: str, dash: bool = True, opaque: bool = False) -> Stroke:
     """对象的一条描边。线端 / 拐角 / 不透明度 / 线型都从对象上读（缺省 = 旧画法）；
     `dash=False` 给箭头端型（端型不画虚线，也不受点线强制圆头影响）。"""
-    d = o.get("dash") if dash else None
+    # 自定义虚线（pt 绝对值）优先于预设线型；它不是点线，线端照用户选的
+    custom = valid_dash_pattern(o.get("dash_pattern")) if dash else None
+    d = (None if custom else o.get("dash")) if dash else None
     return Stroke(
         paint=Paint(hex2rgb(o.get("color", "#000000")), 1.0 if opaque else _alpha(o)),
         width=sw,
         cap=stroke_cap(o.get("line_cap"), d),
         join=_line_join(o, join),
-        dash=dash_pattern(d, sw) if dash else (),
+        dash=(tuple(round(v, 3) for v in custom) if custom else dash_pattern(d, sw))
+        if dash
+        else (),
+        miter_limit=miter_limit(o.get("miter_limit")),
     )
+
+
+def shape_inset(o: dict, sw: float) -> float:
+    """形状的描边内缩量：有描边时缺省内侧（外沿贴框，`sw / 2`），`stroke_align` = center → 0、outside → `-sw / 2`；
+    只有描边的形状不看对齐；无边框 0。与前端 `shapeGeometry.shapeInset` 同一条。"""
+    kind = o.get("shape")
+    if kind in STROKE_ONLY_SHAPES:
+        return sw / 2
+    if o.get("stroke") is False:
+        return 0.0
+    align = o.get("stroke_align")
+    return 0.0 if align == "center" else -sw / 2 if align == "outside" else sw / 2
 
 
 def shape_paths(o: dict, w: float, h: float) -> list[Path]:
@@ -251,7 +289,7 @@ def shape_paths(o: dict, w: float, h: float) -> list[Path]:
     # 无边框（`stroke: false`，只对封闭形状）：不描边、填充铺满整个框（不再内缩半个线宽）；
     # 直线与大括号只有描边，不看这个字段
     stroke_on = kind in STROKE_ONLY_SHAPES or o.get("stroke") is not False
-    inset = sw / 2 if stroke_on else 0.0
+    inset = shape_inset(o, sw)
     filled_stroke = _stroke(o, sw, join=default_line_join(kind)) if stroke_on else None
     if filled_stroke is None and fill is None and kind not in STROKE_ONLY_SHAPES:
         return []  # 既无填充也无边框：什么都不画（IR 不收「既不填也不描」的路径）

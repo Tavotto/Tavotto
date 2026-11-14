@@ -111,6 +111,7 @@ import { displayedExactManifest } from '@/store/mountedSvgStore'
 import { exactPanelManifest, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
+import { DRAW_COLOR_DEFAULT } from '@/lib/drawDefaults'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import {
@@ -176,7 +177,7 @@ const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
  * 而且换不回来（原始 tool 已经没了）。
  */
 /** 拖一下就落一个对象的工具（钢笔是多次点击的状态机，另走 `canvas/penController`） */
-export type DrawTool = Exclude<Tool, 'select' | 'pen'>
+export type DrawTool = Exclude<Tool, 'select' | 'pen' | 'eyedropper'>
 
 const drawnToolMsg = (tool: DrawTool): UiMessage =>
   tool === 'text' || tool === 'arrow'
@@ -859,7 +860,7 @@ export function startPan(e: ReactPointerEvent) {
  * 新画出来的标注的默认颜色：**文档数据**（落进对象的 `color`），不是界面色——所以它不是 token。
  * 覆盖层的草稿预览（`OverlaySvg.DraftLinePreview`）读同一个常量：预览即成品。
  */
-export const DRAW_COLOR = '#1B1B18'
+export const DRAW_COLOR = DRAW_COLOR_DEFAULT
 
 const DEFAULT_DRAW: Record<string, { w: number; h: number }> = {
   text: { w: 40, h: 5 },

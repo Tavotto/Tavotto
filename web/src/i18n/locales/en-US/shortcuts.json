@@ -51,7 +51,9 @@
     "tabs": "On a focused canvas tab: rename / close / move left or right",
     "pen": "Pen",
     "anchors": "While editing anchors: add / delete / convert",
-    "pathJoin": "Join paths / average anchor points"
+    "pathJoin": "Join paths / average anchor points",
+    "appearance": "Default fill and stroke / swap fill and stroke / no fill",
+    "eyedropper": "Eyedropper"
   },
   "or": "or",
   "title": "Keyboard shortcuts",

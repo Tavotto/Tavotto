@@ -2,7 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「项目系统与多画布（前端侧）」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`shapeSwitch.golden.test.ts` + `tests/test_compose_switched_shapes.py`、`canvas/shapeOutline.test.tsx`、`store/workspace.test.ts`、`store/pageFit.test.ts`、`store/addPanelFraming.test.ts`、`store/addPanelEntry.test.ts`、`store/addPanelAvoid.test.ts`、`lib/panelPlacement.test.ts`、`canvas/pageOutsideMask.test.tsx`、`lib/pathGeom.golden.test.ts` + `tests/test_path_object.py`、`lib/convertToPath.test.tsx`、`lib/penTool.test.ts`、`lib/pathEdit.test.ts`、`canvas/penAndAnchors.test.tsx`、`canvas/shapeTools.test.tsx`、`lib/starArc.golden.test.ts` + `tests/test_star_arc.py`、`e2e/cross-tab-paste.spec.ts`、`e2e/nav-audit.spec.ts`
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`shapeSwitch.golden.test.ts` + `tests/test_compose_switched_shapes.py`、`canvas/shapeOutline.test.tsx`、`store/workspace.test.ts`、`store/pageFit.test.ts`、`store/addPanelFraming.test.ts`、`store/addPanelEntry.test.ts`、`store/addPanelAvoid.test.ts`、`lib/panelPlacement.test.ts`、`canvas/pageOutsideMask.test.tsx`、`lib/pathGeom.golden.test.ts` + `tests/test_path_object.py`、`lib/convertToPath.test.tsx`、`lib/penTool.test.ts`、`lib/pathEdit.test.ts`、`canvas/penAndAnchors.test.tsx`、`canvas/shapeTools.test.tsx`、`lib/starArc.golden.test.ts` + `tests/test_star_arc.py`、`lib/appearance.test.tsx`、`lib/appearance.golden.test.ts` + `tests/test_appearance.py`、`e2e/cross-tab-paste.spec.ts`、`e2e/nav-audit.spec.ts`
 > `web/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：剪贴板主路径是原生 ClipboardEvent；类型切换一次 commit 不换 id；「适应画布」是模式；加图分层链 `addFigureToLayout` → `addPanelToCanvas` → `actions.addPanel`，权威在该细则
 
 <!-- agents-route
@@ -96,7 +96,13 @@ order: 210
   剪刀 / 连接 ⌘J / 平均 ⌥⌘J 进 `PATH_COMMANDS`（几何 `pathEdit.cutAtAnchors` / `joinSubpaths` / `closeSubpath` / `averageAnchors`）；
   剪刀断出来的第一段留在原对象、其余成新对象。锚点编辑时不出单选浮动栏（`ContextBar` 认 `useActivePathEdit`）。
   星形 / 弧线是两种新形状（`ShapeKind`）：星形 `sides` = 角数（缺省 5）、`starRatio` 内径比（缺省 0.382，等于缺省不写）；
-  弧线只有描边（「只有描边的形状」判据唯一出处 `types/document.STROKE_ONLY_SHAPES`，后端 `geometry.STROKE_ONLY_SHAPES` 同表）。看护 `lib/penTool.test.ts`、`lib/pathEdit.test.ts`、`canvas/penAndAnchors.test.tsx`。
+  弧线只有描边（「只有描边的形状」判据唯一出处 `types/document.STROKE_ONLY_SHAPES`，后端 `geometry.STROKE_ONLY_SHAPES` 同表）。
+- **填充与描边补齐（2026-11-14，ADR 0185 第二批）**：形状 / 路径 / 箭头加 `miterLimit`（缺省 10）、`dashPattern`（pt 绝对值，有它就不看 `dash`，
+  也不算点线）；封闭形状加 `strokeAlign`（缺省内侧 = 外沿贴框，`center` / `outside`，内缩量只在 `shapeInset` ↔ `geometry.shape_inset`）；
+  路径的 `fillRule` 有了开关。新字段缺省一律不写、导出不发；属性栏都在「更多」里（斜接上限只在尖角时出现、对齐只给封闭形状、填充规则只给有填充的路径）。
+  外观命令表 `store/appearanceActions.APPEARANCE_COMMANDS`：D 默认填色描边（= 新画对象的样子）、⇧X 互换填色和描边、/ 无填充、I 吸管（工具 `eyedropper`，
+  `canvas/eyedropper.sampleAt` 读点到的东西**画出来的**颜色，图内元素也行；上色规则在纯函数 `lib/appearance.applyColorSample`）。
+  格式刷带上描边的全部外观。色板（本文档用过的颜色 + 最近用过）在属性栏取色面板里本来就有（`ColorPanel`）。看护 `lib/penTool.test.ts`、`lib/pathEdit.test.ts`、`canvas/penAndAnchors.test.tsx`。
 - **不认识的对象类型原样保留（2026-11-14，ADR 0185 的前置）**：更新的构建会往文档里写本构建没有的 `type`
   （第一例是自由路径 `path`）。判据只有 `types/document.isKnownObject`（`KNOWN_OBJECT_TYPES` 闭集）。读盘、保存、
   换画布、复制画布都不碰它（文档层本来就不按类型过滤，别加）；画布上 `ObjectView` 只画虚线占位框

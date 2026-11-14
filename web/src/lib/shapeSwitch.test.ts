@@ -275,13 +275,13 @@ describe.each(PAIRS)('%s → %s', (from, to) => {
  * 「哪一种类型读哪几个」。两边都从实现里取的话就是自己验自己。
  */
 const READS: Record<SwitchKind, readonly string[]> = {
-  rect: ['shape', 'fill', 'fillOpacity', 'cornerRadius'],
-  ellipse: ['shape', 'fill', 'fillOpacity'],
-  triangle: ['shape', 'fill', 'fillOpacity'],
-  diamond: ['shape', 'fill', 'fillOpacity'],
-  polygon: ['shape', 'fill', 'fillOpacity', 'sides'],
+  rect: ['shape', 'fill', 'fillOpacity', 'cornerRadius', 'strokeAlign'],
+  ellipse: ['shape', 'fill', 'fillOpacity', 'strokeAlign'],
+  triangle: ['shape', 'fill', 'fillOpacity', 'strokeAlign'],
+  diamond: ['shape', 'fill', 'fillOpacity', 'strokeAlign'],
+  polygon: ['shape', 'fill', 'fillOpacity', 'sides', 'strokeAlign'],
   brace: ['shape', 'fill', 'fillOpacity'],
-  star: ['shape', 'fill', 'fillOpacity', 'sides', 'starRatio'],
+  star: ['shape', 'fill', 'fillOpacity', 'sides', 'starRatio', 'strokeAlign'],
   arc: ['shape', 'fill', 'fillOpacity'],
   line: ['shape', 'fill', 'fillOpacity', 'start', 'end'],
   arrow: ['start', 'end', 'head', 'headStart', 'headEnd'],

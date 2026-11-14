@@ -635,6 +635,22 @@
       "zoom-selection": {
         "label": "Zoom to selection",
         "keywords": "zoom selection focus frame view fit selected"
+      },
+      "default-appearance": {
+        "keywords": "default fill stroke reset",
+        "label": "Default Fill and Stroke"
+      },
+      "swap-fill-stroke": {
+        "keywords": "swap fill stroke",
+        "label": "Swap Fill and Stroke"
+      },
+      "clear-fill": {
+        "keywords": "no fill none clear",
+        "label": "No Fill"
+      },
+      "eyedropper-tool": {
+        "keywords": "eyedropper pick color sample",
+        "label": "Eyedropper"
       }
     },
     "listLabel": "Commands",

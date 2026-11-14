@@ -2,8 +2,8 @@ import { figureSnapshotFor } from './figureSnapshot'
 import { artifactRequestFields } from './artifactValidation'
 import type { ExportObject } from './api'
 import type { CanvasObject } from '@/types/document'
-import { DEFAULT_STAR_POINTS, DEFAULT_STAR_RATIO, isKnownObject, panelRotation, readPath, shapeStrokeOn } from '@/types/document'
-import { DEFAULT_LINE_CAP, defaultLineJoin, strokeOpacityOf } from './shapeGeometry'
+import { DEFAULT_STAR_POINTS, DEFAULT_STAR_RATIO, isKnownObject, isStrokeOnlyShape, panelRotation, readPath, shapeStrokeOn } from '@/types/document'
+import { DEFAULT_LINE_CAP, defaultLineJoin, miterLimitOf, STROKE_MITER_LIMIT, strokeOpacityOf, validDashPattern } from './shapeGeometry'
 import { PATH_DEFAULT_JOIN } from './pathGeom'
 
 /**
@@ -22,6 +22,27 @@ export function toExportObjects(objects: CanvasObject[]): ExportObject[] {
 /** 会进这次导出、但本构建画不出来的对象个数（看得见且类型不认识，`isKnownObject`）。非 0 时导出不许开始 */
 export function newerObjectCount(objects: readonly CanvasObject[]): number {
   return objects.filter((o) => !o.hidden && !isKnownObject(o)).length
+}
+
+/**
+ * 描边的附加外观（斜接上限、自定义虚线；形状再加描边对齐）：缺省一律不发——老后端拿到的载荷与加属性之前逐字节一致。
+ * 读法与画布同一组函数（`miterLimitOf` / `validDashPattern`），后端 `geometry.miter_limit` / `valid_dash_pattern` 同一条判据。
+ */
+function appearanceExtras(o: {
+  miterLimit?: number
+  dashPattern?: number[]
+  strokeAlign?: 'center' | 'outside'
+  type: string
+  shape?: string
+}): { miter_limit?: number; dash_pattern?: number[]; stroke_align?: 'center' | 'outside' } {
+  const ml = miterLimitOf(o.miterLimit)
+  const dp = validDashPattern(o.dashPattern)
+  const align = o.type === 'shape' && o.shape && !isStrokeOnlyShape(o.shape) ? o.strokeAlign : undefined
+  return {
+    ...(ml !== STROKE_MITER_LIMIT ? { miter_limit: ml } : {}),
+    ...(dp ? { dash_pattern: dp } : {}),
+    ...(align === 'center' || align === 'outside' ? { stroke_align: align } : {}),
+  }
 }
 
 function toExportObject(o: CanvasObject): ExportObject {
@@ -95,6 +116,7 @@ function toExportObject(o: CanvasObject): ExportObject {
         stroke_opacity: strokeOpacityOf(o.strokeOpacity),
         line_cap: o.lineCap && o.lineCap !== DEFAULT_LINE_CAP ? o.lineCap : undefined,
         line_join: o.lineJoin && o.lineJoin !== 'round' ? o.lineJoin : undefined,
+        ...appearanceExtras(o),
         rotation_deg: o.rotationDeg || undefined,
       }
     case 'shape':
@@ -119,6 +141,7 @@ function toExportObject(o: CanvasObject): ExportObject {
         stroke_opacity: shapeStrokeOn(o) ? strokeOpacityOf(o.strokeOpacity) : undefined,
         line_cap: o.lineCap && o.lineCap !== DEFAULT_LINE_CAP ? o.lineCap : undefined,
         line_join: o.lineJoin && o.lineJoin !== defaultLineJoin(o.shape) ? o.lineJoin : undefined,
+        ...appearanceExtras(o),
         rotation_deg: o.rotationDeg || undefined,
       }
     case 'path': {
@@ -146,6 +169,7 @@ function toExportObject(o: CanvasObject): ExportObject {
         stroke_opacity: strokeOn ? strokeOpacityOf(o.strokeOpacity) : undefined,
         line_cap: o.lineCap && o.lineCap !== DEFAULT_LINE_CAP ? o.lineCap : undefined,
         line_join: o.lineJoin && o.lineJoin !== PATH_DEFAULT_JOIN ? o.lineJoin : undefined,
+        ...appearanceExtras(o),
         head_start: o.headStart && o.headStart !== 'none' ? o.headStart : undefined,
         head_end: o.headEnd && o.headEnd !== 'none' ? o.headEnd : undefined,
         head_size_start: o.headSizeStart && o.headSizeStart !== 'medium' ? o.headSizeStart : undefined,

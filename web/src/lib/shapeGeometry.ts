@@ -206,7 +206,28 @@ export const DASH_RATIOS: Readonly<Record<string, readonly number[]>> = {
 }
 
 /** 虚线间距按线宽比例换算；与后端 dash_pattern 同一比例 */
-export function dashArray(dash: DashStyle | undefined, sw: number): string | undefined {
+/**
+ * 自定义虚线（线段 / 间隙交替，pt 绝对值）读得成数就回它，否则 null（照预设线型画）：1–12 个、每个有限且 ≥ 0、
+ * 总长 > 0。与后端 `geometry.valid_dash_pattern` 同一条判据（共享向量 `tests/golden/appearance_vectors.json`）。
+ */
+export function validDashPattern(p: unknown): number[] | null {
+  if (!Array.isArray(p) || p.length < 1 || p.length > 12) return null
+  if (!p.every((v) => typeof v === 'number' && Number.isFinite(v) && v >= 0)) return null
+  return (p as number[]).reduce((a, b) => a + b, 0) > 0 ? (p as number[]) : null
+}
+
+/**
+ * 实际生效的虚线（SVG `stroke-dasharray` 串）。自定义虚线优先：pt 换到这一处的单位要乘 `ptUnit`（= 这一处 1 pt 有多长；
+ * 画布传世界 px / pt、导出预览传 mm / pt）；没有就按预设线型、按线宽比例换算。
+ */
+export function dashArray(
+  dash: DashStyle | undefined,
+  sw: number,
+  pattern?: readonly number[] | null,
+  ptUnit?: number,
+): string | undefined {
+  const custom = validDashPattern(pattern)
+  if (custom && ptUnit != null) return custom.map((v) => v * ptUnit).join(' ')
   if (dash === 'dotted') return `${sw * 0.01} ${sw * 2}`
   const ratios = dash ? DASH_RATIOS[dash] : undefined
   return ratios ? ratios.map((r) => sw * r).join(' ') : undefined
@@ -246,8 +267,16 @@ export function strokeOpacityOf(v: number | undefined): number | undefined {
  * 形状的描边内缩量：描边居中，内缩半个线宽让外沿正好贴合包围盒；**无边框时不内缩**，
  * 填充铺满整个包围盒（与后端 `shape_paths` 同一条）。直线 / 大括号永远有描边。
  */
-export function shapeInset(o: Pick<ShapeObject, 'shape' | 'stroke'>, sw: number): number {
-  return shapeStrokeOn(o) ? sw / 2 : 0
+export function shapeInset(o: Pick<ShapeObject, 'shape' | 'stroke' | 'strokeAlign'>, sw: number): number {
+  if (!shapeStrokeOn(o)) return 0
+  // 描边对齐（只对封闭形状）：缺省内侧 = 外沿贴框；居中 = 框边是线的中线；外侧 = 整个在框外
+  if (isStrokeOnlyShape(o.shape)) return sw / 2
+  return o.strokeAlign === 'center' ? 0 : o.strokeAlign === 'outside' ? -sw / 2 : sw / 2
+}
+
+/** 斜接上限：缺省 / 非有限数 / < 1 = `STROKE_MITER_LIMIT`；与后端 `geometry.miter_limit` 同一条 */
+export function miterLimitOf(v: number | undefined): number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 1 ? v : STROKE_MITER_LIMIT
 }
 
 /**
@@ -261,18 +290,26 @@ export function svgStroke(
     strokeOpacity?: number
     lineCap?: LineCap
     lineJoin?: LineJoin
+    miterLimit?: number
+    dashPattern?: number[]
+    strokePt?: number
   },
   sw: number,
   join: LineJoin,
   withDash = true,
 ) {
+  // 自定义虚线是 pt 绝对值：这一处 1 pt 的长度 = 线宽 / 线宽 pt
+  const custom = validDashPattern(o.dashPattern)
+  const ptUnit = custom && o.strokePt ? sw / Math.max(o.strokePt, 0.05) : undefined
+  // 自定义虚线不是点线：线端照用户选的（点线强制圆头只认预设的 dotted）
+  const effDash = custom ? undefined : o.dash
   return {
     stroke: o.color,
     strokeWidth: sw,
-    strokeDasharray: withDash ? dashArray(o.dash, sw) : undefined,
-    strokeLinecap: withDash ? strokeCap(o.lineCap, o.dash) : strokeCap(o.lineCap, undefined),
+    strokeDasharray: withDash ? dashArray(o.dash, sw, custom, ptUnit) : undefined,
+    strokeLinecap: withDash ? strokeCap(o.lineCap, effDash) : strokeCap(o.lineCap, undefined),
     strokeLinejoin: o.lineJoin ?? join,
-    strokeMiterlimit: STROKE_MITER_LIMIT,
+    strokeMiterlimit: miterLimitOf(o.miterLimit),
     strokeOpacity: strokeOpacityOf(o.strokeOpacity),
   }
 }

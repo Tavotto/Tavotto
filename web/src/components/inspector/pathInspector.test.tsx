@@ -228,3 +228,77 @@ describe('星形（ADR 0185 M1）：属性栏的角数与内径比', () => {
     expect(host.querySelector('input[aria-label="边数"]')).not.toBeNull()
   })
 })
+
+describe('「更多」里的描边附加项（ADR 0185 第二批）', () => {
+  const openMore = async () => {
+    const btn = host.querySelector<HTMLButtonElement>('[data-fold="stroke-more"] button')
+    expect(btn, '更多不在').toBeTruthy()
+    await act(async () => btn!.click())
+  }
+  const radio = (group: string, label: string) =>
+    [...host.querySelectorAll<HTMLElement>(`[role=radiogroup][aria-label="${group}"] [role=radio]`)].find((r) => r.textContent === label)!
+  async function typeText(label: string, value: string) {
+    const input = host.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)
+    expect(input, `${label} 不在`).toBeTruthy()
+    await act(async () => {
+      input!.focus()
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value)
+      input!.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      input!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    })
+  }
+
+  it('斜接上限只在尖角时出现；改了写 miterLimit，一次 commit', async () => {
+    await seed([rect()], ['s1'])
+    await mount()
+    await openMore()
+    expect(host.querySelector('input[aria-label="斜接上限"]')).toBeNull()
+    await act(async () => radio('拐角', '尖角').click())
+    expect(host.querySelector('input[aria-label="斜接上限"]')).not.toBeNull()
+    await typeNumber('斜接上限', '3')
+    expect(byId<ShapeObject>('s1').miterLimit).toBe(3)
+    expect(past()).toBe(2)
+  })
+
+  it('自定义虚线：写「4 2」→ dashPattern；读不成数不写；清空删字段', async () => {
+    await seed([rect()], ['s1'])
+    await mount()
+    await openMore()
+    await typeText('自定义虚线', '4 2')
+    expect(byId<ShapeObject>('s1').dashPattern).toEqual([4, 2])
+    await typeText('自定义虚线', '4 x')
+    expect(byId<ShapeObject>('s1').dashPattern).toEqual([4, 2])
+    expect(host.querySelector('input[aria-label="自定义虚线"]')!.getAttribute('aria-invalid')).toBe('true')
+    await typeText('自定义虚线', '')
+    expect('dashPattern' in byId<ShapeObject>('s1')).toBe(false)
+  })
+
+  it('描边对齐：封闭形状有这一行，选「外侧」写 strokeAlign，选回「内侧」删字段；直线没有这一行', async () => {
+    await seed([rect()], ['s1'])
+    await mount()
+    await openMore()
+    await act(async () => radio('描边对齐', '外侧').click())
+    expect(byId<ShapeObject>('s1').strokeAlign).toBe('outside')
+    await act(async () => radio('描边对齐', '内侧').click())
+    expect('strokeAlign' in byId<ShapeObject>('s1')).toBe(false)
+  })
+
+  it('直线：没有描边对齐', async () => {
+    await seed([rect({ shape: 'line', fill: null })], ['s1'])
+    await mount()
+    await openMore()
+    expect(host.querySelector('[role=radiogroup][aria-label="描边对齐"]')).toBeNull()
+  })
+
+  it('有填充的路径：填充规则 非零 / 奇偶；没描边也能改', async () => {
+    await seed([closedPath({ stroke: false })], ['p2'])
+    await mount()
+    await openMore()
+    await act(async () => radio('填充规则', '奇偶').click())
+    expect(byId<PathObject>('p2').fillRule).toBe('evenodd')
+    await act(async () => radio('填充规则', '非零').click())
+    expect('fillRule' in byId<PathObject>('p2')).toBe(false)
+  })
+})

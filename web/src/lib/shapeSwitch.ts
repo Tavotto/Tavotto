@@ -182,6 +182,8 @@ export function switchObject(o: CanvasObject, target: SwitchKind): CanvasObject 
     ...(o.type === 'shape' && o.stroke === false && !isStrokeOnlyShape(target)
       ? { stroke: false }
       : {}),
+    // 描边对齐同理：只有封闭形状读
+    ...(o.type === 'shape' && o.strokeAlign && !isStrokeOnlyShape(target) ? { strokeAlign: o.strokeAlign } : {}),
     ...(target === 'line' ? { start: ends.start, end: ends.end } : {}),
     ...(target === 'polygon' ? { sides: DEFAULT_SIDES } : {}),
     ...(target === 'star' ? { sides: DEFAULT_STAR_POINTS } : {}),
@@ -215,6 +217,7 @@ const KIND_FIELDS = [
   'headSizeStart',
   'headSizeEnd',
   'stroke',
+  'strokeAlign',
 ] as const
 
 type KindKey = (typeof KIND_FIELDS)[number]
@@ -234,6 +237,8 @@ export const SHARED_STYLE_FIELDS = [
   'strokeOpacity',
   'lineCap',
   'lineJoin',
+  'miterLimit',
+  'dashPattern',
 ] as const
 type SharedStyleKey = (typeof SHARED_STYLE_FIELDS)[number]
 

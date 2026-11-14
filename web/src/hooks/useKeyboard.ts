@@ -21,6 +21,7 @@ import { finishNudge, nudgeKeyDown, nudgeKeyUp } from '@/canvas/nudge'
 import { penFinish } from '@/canvas/penController'
 import { deleteAnchorPoints, editAnchors, exitAnchorEdit, PATH_COMMANDS } from '@/store/pathActions'
 import { activePathEdit } from '@/store/pathEditStore'
+import { APPEARANCE_COMMANDS } from '@/store/appearanceActions'
 import { bindingFor } from '@/lib/keymap'
 import { useDocumentStore } from '@/store/documentStore'
 import {
@@ -410,7 +411,9 @@ export function useKeyboard() {
 
       // 路径命令的单键（+ / − / ⇧C；P 在下面的工具键里）：命令表 `PATH_COMMANDS` 说了算，此刻不可用的不消费
       const bound = bindingFor(e)
-      const cmd = bound ? PATH_COMMANDS.find((c) => c.key === bound && c.id !== 'pen-tool') : undefined
+      const cmd = bound
+        ? (PATH_COMMANDS.find((c) => c.key === bound && c.id !== 'pen-tool') ?? APPEARANCE_COMMANDS.find((c) => c.key === bound))
+        : undefined
       if (cmd) {
         if (cmd.available()) {
           e.preventDefault()

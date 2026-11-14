@@ -467,7 +467,11 @@
     "hideObjects": "Hide {{count}} objects",
     "showObjects": "Show {{count}} objects",
     "setFramePad": "Change canvas margin",
-    "journalStyle": "Adjust style “{{name}}” using the {{journal}} record"
+    "journalStyle": "Adjust style “{{name}}” using the {{journal}} record",
+    "defaultAppearance": "Default fill and stroke",
+    "swapFillStroke": "Swap fill and stroke",
+    "clearFill": "No fill",
+    "eyedropper": "Eyedropper"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -987,7 +991,9 @@
       "incomplete": "Some members have no position in this render, so the group can't be moved or scaled right now"
     },
     "copyDetails": "Copy details",
-    "copiedDetails": "Copied"
+    "copiedDetails": "Copied",
+    "eyedropperNothing": "No color to pick here",
+    "eyedropperNoTarget": "Select a shape, path or arrow to color first"
   },
   "tabs": {
     "allCanvases": "All canvases",
@@ -1003,6 +1009,7 @@
     "brace": "Drag to draw a brace; Esc to cancel",
     "diamond": "Drag to draw a diamond; Esc to cancel",
     "ellipse": "Drag to draw an ellipse. Esc to cancel.",
+    "eyedropper": "Click anything on the canvas to give its colors to the selection; Esc to exit",
     "line": "Drag to draw a line. Esc to cancel.",
     "pen": "Click to add a corner point, drag for a smooth point; click the start point to close, Enter or Esc to finish",
     "polygon": "Drag to draw a polygon; Esc to cancel",

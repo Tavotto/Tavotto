@@ -57,6 +57,10 @@ export const markHasNoJoin = (o: FillStrokeMark): boolean => o.type === 'shape' 
 export const markCornerRadiusCapable = (o: FillStrokeMark): o is ShapeObject => o.type === 'shape' && o.shape === 'rect'
 export const markSidesCapable = (o: FillStrokeMark): o is ShapeObject =>
   o.type === 'shape' && (o.shape === 'polygon' || o.shape === 'star')
+/** 描边对齐：封闭形状（有描边开关的形状；路径的对齐要做偏移，留给 M2） */
+export const markStrokeAlignCapable = (o: FillStrokeMark): o is ShapeObject => o.type === 'shape' && !isStrokeOnlyShape(o.shape)
+/** 填充规则：有填充的路径（形状只有一条轮廓，规则不起作用） */
+export const markFillRuleCapable = (o: FillStrokeMark): o is PathObject => o.type === 'path' && !!o.fill
 /** 星形的内径比 */
 export const markStarCapable = (o: FillStrokeMark): o is ShapeObject => o.type === 'shape' && o.shape === 'star'
 

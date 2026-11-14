@@ -1990,6 +1990,12 @@ export type ExportObject =
       /** 线端 / 拐角；缺省 = 圆头 / 圆角 */
       line_cap?: 'butt' | 'round' | 'square'
       line_join?: 'miter' | 'bevel' | 'round'
+      /** 斜接上限；缺省 10 */
+      miter_limit?: number
+      /** 自定义虚线（pt）；有它就不看 dash */
+      dash_pattern?: number[]
+      /** 描边对齐（只对封闭形状）；缺省内侧 */
+      stroke_align?: 'center' | 'outside'
       rotation_deg?: number
     })
   | (ExportBox & {
@@ -2012,6 +2018,12 @@ export type ExportObject =
       stroke_opacity?: number
       line_cap?: 'butt' | 'round' | 'square'
       line_join?: 'miter' | 'bevel' | 'round'
+      /** 斜接上限；缺省 10 */
+      miter_limit?: number
+      /** 自定义虚线（pt）；有它就不看 dash */
+      dash_pattern?: number[]
+      /** 描边对齐（只对封闭形状）；缺省内侧 */
+      stroke_align?: 'center' | 'outside'
       rotation_deg?: number
     })
   | (ExportBox & {
@@ -2030,6 +2042,12 @@ export type ExportObject =
       stroke_opacity?: number
       line_cap?: 'butt' | 'round' | 'square'
       line_join?: 'miter' | 'bevel' | 'round'
+      /** 斜接上限；缺省 10 */
+      miter_limit?: number
+      /** 自定义虚线（pt）；有它就不看 dash */
+      dash_pattern?: number[]
+      /** 描边对齐（只对封闭形状）；缺省内侧 */
+      stroke_align?: 'center' | 'outside'
       /** 端型只对开放子路径生效；缺省 = 无 */
       head_start?: ExportHeadType
       head_end?: ExportHeadType

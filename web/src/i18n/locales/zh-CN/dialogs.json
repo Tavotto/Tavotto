@@ -623,6 +623,22 @@
       "zoom-selection": {
         "label": "缩放到选中对象",
         "keywords": "zoom selection sfxz suofang xuanzhong"
+      },
+      "default-appearance": {
+        "keywords": "default fill stroke mrtsms 默认 填色 描边",
+        "label": "默认填色描边"
+      },
+      "swap-fill-stroke": {
+        "keywords": "swap fill stroke hhtsms 互换",
+        "label": "互换填色和描边"
+      },
+      "clear-fill": {
+        "keywords": "no fill none wtc 无填充",
+        "label": "无填充"
+      },
+      "eyedropper-tool": {
+        "keywords": "eyedropper pick color xg 吸管 取色",
+        "label": "吸管"
       }
     },
     "listLabel": "命令",

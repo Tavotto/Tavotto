@@ -1,6 +1,6 @@
 import type { CanvasObject, DashStyle, FigureDocument, LineCap } from '@/types/document'
 import { isStrokeOnlyShape, objectRotation, readPath, shapeStrokeOn } from '@/types/document'
-import { headSizeFactor, outlineOf, shapeInset, STROKE_MITER_LIMIT, strokeCap } from './shapeGeometry'
+import { headSizeFactor, miterLimitOf, outlineOf, shapeInset, strokeCap } from './shapeGeometry'
 import { ptToMm } from './units'
 
 /**
@@ -63,7 +63,7 @@ function miterOverflow(o: Extract<CanvasObject, { type: 'shape' }>): number {
     let reach = half
     let tx = vx
     let ty = vy
-    if (sinHalf > 0 && 1 / sinHalf <= STROKE_MITER_LIMIT) {
+    if (sinHalf > 0 && 1 / sinHalf <= miterLimitOf(o.miterLimit)) {
       // 外角平分线 = 两条邻边单位向量之和的反方向
       const ux = -(ax / la + bx / lb)
       const uy = -(ay / la + by / lb)
@@ -85,9 +85,13 @@ function strokeOutset(o: CanvasObject): number {
     case 'text':
       return o.borderColor ? ptToMm(Math.max(o.borderPt ?? 0.75, 0.05) / 2) : 0
     case 'shape':
-      return isStrokeOnlyShape(o.shape)
-        ? ptToMm(Math.max(o.strokePt, 0.05) * capHalf(o.lineCap, o.dash))
-        : miterOverflow(o)
+      if (isStrokeOnlyShape(o.shape)) return ptToMm(Math.max(o.strokePt, 0.05) * capHalf(o.lineCap, o.dash))
+      // 描边对齐：缺省内侧不越框；居中越出半个线宽；外侧越出一整个线宽（尖角另算，取大的）
+      return Math.max(
+        shapeStrokeOn(o) && o.strokeAlign === 'center' ? ptToMm(Math.max(o.strokePt, 0.05)) / 2 : 0,
+        shapeStrokeOn(o) && o.strokeAlign === 'outside' ? ptToMm(Math.max(o.strokePt, 0.05)) : 0,
+        miterOverflow(o),
+      )
     case 'arrow': {
       const sw = Math.max(o.strokePt, 0.05)
       // 哪一端有端型：与 `geometry.arrow_heads` 同一判据（新字段任一在就只看新字段，否则看旧 head，缺省 end）
@@ -122,7 +126,7 @@ function strokeOutset(o: CanvasObject): number {
           )
         : 0
       const base = f ? 1.7 * f + 0.5 : capHalf(o.lineCap, o.dash)
-      const miter = o.lineJoin === 'miter' ? STROKE_MITER_LIMIT / 2 : 0
+      const miter = o.lineJoin === 'miter' ? miterLimitOf(o.miterLimit) / 2 : 0
       return ptToMm(sw * Math.max(base, miter))
     }
     default:

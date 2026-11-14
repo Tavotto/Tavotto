@@ -649,7 +649,11 @@
     "toggleItalic": "切换斜体",
     "toggleUnderline": "切换下划线",
     "transformCase": "转换大小写",
-    "setStarRatio": "修改内径比"
+    "setStarRatio": "修改内径比",
+    "setMiterLimit": "修改斜接上限",
+    "setDashPattern": "修改自定义虚线",
+    "setStrokeAlign": "修改描边对齐",
+    "setFillRule": "修改填充规则"
   },
   "lock": "锁定",
   "locked": "已锁定",
@@ -996,7 +1000,22 @@
     "strokeOpacity": "描边不透明度",
     "points": "角数",
     "starRatio": "内径比",
-    "starRatioTip": "内顶点到中心的距离占外顶点的比例"
+    "starRatioTip": "内顶点到中心的距离占外顶点的比例",
+    "miterLimit": "斜接上限",
+    "dashPattern": "自定义虚线",
+    "dashPatternTip": "线段和间隙的长度（pt），用空格隔开，如「4 2」；清空就回到上面的线型",
+    "dashPatternPlaceholder": "如 4 2",
+    "alignRow": "描边对齐",
+    "align": {
+      "inside": "内侧",
+      "center": "居中",
+      "outside": "外侧"
+    },
+    "fillRuleRow": "填充规则",
+    "fillRule": {
+      "nonzero": "非零",
+      "evenodd": "奇偶"
+    }
   },
   "summaryMarks": "{{count}} 标注",
   "summaryPanels": "{{count}} 张图",

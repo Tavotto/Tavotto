@@ -30,6 +30,8 @@ export type Tool =
   | 'star'
   | 'arc'
   | 'pen'
+  /** 吸管（ADR 0185 第二批）：点画布上的东西，把它的填充 / 描边色给选区 */
+  | 'eyedropper'
 /** 工作区断点：≥1440 可双栏钉住 / 1024–1439 左右互斥 / <1024 覆盖式抽屉 */
 export type WorkspaceLayout = 'wide' | 'medium' | 'narrow'
 

@@ -349,6 +349,10 @@ export interface ArrowObject extends ObjectBase {
   /** 线端 / 拐角；缺省 = 圆头 / 圆角（现在的画法），不写字段 */
   lineCap?: LineCap
   lineJoin?: LineJoin
+  /** 尖角的斜接上限（≥ 1）；缺省 = `shapeGeometry.STROKE_MITER_LIMIT`（10），等于缺省不写 */
+  miterLimit?: number
+  /** 自定义虚线：线段 / 间隙交替的长度（pt，绝对值）；有它就不看 `dash`。缺省 / 空 = 不用 */
+  dashPattern?: number[]
 }
 
 export type ShapeKind =
@@ -405,6 +409,15 @@ export interface ShapeObject extends ObjectBase {
   /** 线端 / 拐角；缺省见 `lib/shapeGeometry`，等于缺省就不写字段 */
   lineCap?: LineCap
   lineJoin?: LineJoin
+  /** 尖角的斜接上限（≥ 1）；缺省 = `shapeGeometry.STROKE_MITER_LIMIT`（10），等于缺省不写 */
+  miterLimit?: number
+  /** 自定义虚线：线段 / 间隙交替的长度（pt，绝对值）；有它就不看 `dash`。缺省 / 空 = 不用 */
+  dashPattern?: number[]
+  /**
+   * 描边对齐（只对封闭形状）：缺省 = 内侧（描边整个在框里、外沿贴框，加属性之前就是这样）；
+   * `center` = 骑在轮廓上（框边就是线的中线）；`outside` = 整个在框外。等于缺省不写
+   */
+  strokeAlign?: 'center' | 'outside'
 }
 
 /** 路径上的一个点：包围盒比例坐标 [rx, ry]（与 `EndPoint` 同一套，可以落在 [0,1] 之外） */
@@ -444,6 +457,10 @@ export interface PathObject extends ObjectBase {
   dash?: DashStyle
   lineCap?: LineCap
   lineJoin?: LineJoin
+  /** 尖角的斜接上限（≥ 1）；缺省 = `shapeGeometry.STROKE_MITER_LIMIT`（10），等于缺省不写 */
+  miterLimit?: number
+  /** 自定义虚线：线段 / 间隙交替的长度（pt，绝对值）；有它就不看 `dash`。缺省 / 空 = 不用 */
+  dashPattern?: number[]
   headStart?: ArrowHeadType
   headEnd?: ArrowHeadType
   headSizeStart?: HeadSize

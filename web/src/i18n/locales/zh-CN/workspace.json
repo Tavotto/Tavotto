@@ -450,7 +450,11 @@
     "hideObjects": "隐藏 {{count}} 个对象",
     "showObjects": "显示 {{count}} 个对象",
     "setFramePad": "修改画布留白",
-    "journalStyle": "参考 {{journal}} 的记录调整样式「{{name}}」"
+    "journalStyle": "参考 {{journal}} 的记录调整样式「{{name}}」",
+    "defaultAppearance": "默认填色描边",
+    "swapFillStroke": "互换填色和描边",
+    "clearFill": "无填充",
+    "eyedropper": "吸管上色"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -935,7 +939,9 @@
       "incomplete": "组里有成员这一版拿不到位置，暂时不能整组移动或缩放"
     },
     "copyDetails": "复制详情",
-    "copiedDetails": "已复制"
+    "copiedDetails": "已复制",
+    "eyedropperNothing": "这里没有能吸的颜色",
+    "eyedropperNoTarget": "先选中要上色的形状、路径或箭头"
   },
   "tabs": {
     "allCanvases": "全部画布",
@@ -951,6 +957,7 @@
     "brace": "拖动画出大括号；Esc 取消",
     "diamond": "拖动画出菱形；Esc 取消",
     "ellipse": "拖动画出椭圆；Esc 取消",
+    "eyedropper": "点画布上的东西，把它的颜色给选中的对象；Esc 退出",
     "line": "拖动画出直线；Esc 取消",
     "pen": "点一下加尖角点，按住拖拉出平滑点；点起点闭合，Enter / Esc 结束",
     "polygon": "拖动画出多边形；Esc 取消",

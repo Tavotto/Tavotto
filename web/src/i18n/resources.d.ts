@@ -1485,6 +1485,10 @@ export default interface Resources {
           "keywords": "canvas page settings hbsz huabu",
           "label": "画布设置"
         },
+        "clear-fill": {
+          "keywords": "no fill none wtc 无填充",
+          "label": "无填充"
+        },
         "convert-anchor": {
           "keywords": "convert anchor smooth corner zhmd 平滑 尖角",
           "label": "转换锚点"
@@ -1501,6 +1505,10 @@ export default interface Resources {
           "keywords": "cycle overlap twin axis lh lunhuan cd chongdie sszx shuangzongzhou",
           "label": "在重叠的图内元素之间轮换选中"
         },
+        "default-appearance": {
+          "keywords": "default fill stroke mrtsms 默认 填色 描边",
+          "label": "默认填色描边"
+        },
         "delete-anchor": {
           "keywords": "delete anchor scmd 删点",
           "label": "删除锚点"
@@ -1516,6 +1524,10 @@ export default interface Resources {
         "export": {
           "keywords": "export pdf png dc daochu",
           "label": "导出 PDF / PNG…"
+        },
+        "eyedropper-tool": {
+          "keywords": "eyedropper pick color xg 吸管 取色",
+          "label": "吸管"
         },
         "fit": {
           "keywords": "fit zoom syhb shiying",
@@ -1616,6 +1628,10 @@ export default interface Resources {
         "sub-labels": {
           "keywords": "label abc xhbq xuhao",
           "label": "添加序号 (a)(b)(c)"
+        },
+        "swap-fill-stroke": {
+          "keywords": "swap fill stroke hhtsms 互换",
+          "label": "互换填色和描边"
         },
         "tutorial-reset": {
           "keywords": "tutorial sample reset restart jc jiaocheng shili 示例 重置",
@@ -5334,8 +5350,10 @@ export default interface Resources {
       "setArrowColor": "修改箭头颜色",
       "setCornerRadius": "修改圆角",
       "setDash": "修改线型",
+      "setDashPattern": "修改自定义虚线",
       "setFill": "修改填充",
       "setFillOpacity": "修改填充不透明度",
+      "setFillRule": "修改填充规则",
       "setFontFamily": "修改字体",
       "setFontSize": "修改字号",
       "setHeadEnd": "修改终点端型",
@@ -5347,6 +5365,7 @@ export default interface Resources {
       "setLineCap": "修改线端",
       "setLineHeight": "修改行距",
       "setLineJoin": "修改拐角",
+      "setMiterLimit": "修改斜接上限",
       "setPadding": "修改内边距",
       "setPageBackground": "修改页面背景",
       "setPageBgColor": "修改页面背景色",
@@ -5356,6 +5375,7 @@ export default interface Resources {
       "setPanelScale": "修改图的缩放",
       "setSides": "修改边数",
       "setStarRatio": "修改内径比",
+      "setStrokeAlign": "修改描边对齐",
       "setStrokeColor": "修改描边颜色",
       "setStrokeOpacity": "修改描边不透明度",
       "setStrokeWidth": "修改线宽",
@@ -5719,6 +5739,12 @@ export default interface Resources {
     "stroke": {
       "addFill": "添加填充",
       "addStroke": "添加描边",
+      "align": {
+        "center": "居中",
+        "inside": "内侧",
+        "outside": "外侧"
+      },
+      "alignRow": "描边对齐",
       "appearance": "外观",
       "cap": {
         "butt": "平头",
@@ -5730,6 +5756,9 @@ export default interface Resources {
       "color": "颜色",
       "cornerRadius": "圆角",
       "dash": "线型",
+      "dashPattern": "自定义虚线",
+      "dashPatternPlaceholder": "如 4 2",
+      "dashPatternTip": "线段和间隙的长度（pt），用空格隔开，如「4 2」；清空就回到上面的线型",
       "dashStyle": {
         "dashdot": "点划线",
         "dashed": "虚线",
@@ -5742,6 +5771,11 @@ export default interface Resources {
       "endSize": "终点大小",
       "fill": "填充",
       "fillOpacity": "不透明度",
+      "fillRule": {
+        "evenodd": "奇偶",
+        "nonzero": "非零"
+      },
+      "fillRuleRow": "填充规则",
       "head": {
         "bar": "短线",
         "diamond": "菱形",
@@ -5758,6 +5792,7 @@ export default interface Resources {
       },
       "joinRow": "拐角",
       "lineWidth": "线宽",
+      "miterLimit": "斜接上限",
       "more": "更多",
       "moreCount": "{{n}} 项",
       "points": "角数",
@@ -6230,6 +6265,7 @@ export default interface Resources {
     },
     "key": {
       "anchors": "锚点编辑里：添加 / 删除 / 转换锚点",
+      "appearance": "默认填色描边 / 互换填色和描边 / 无填充",
       "copyPaste": "复制 / 粘贴对象，可跨排版",
       "cycleOverlap": "在重叠的图内元素之间轮换选中",
       "delete": "删除对象；图内编辑时改为隐藏，可恢复。",
@@ -6237,6 +6273,7 @@ export default interface Resources {
       "enter": "编辑所选：文字进入编辑，可编辑的图进入图内编辑",
       "escape": "逐层退出：文字编辑 → 图内元素 → 图内编辑 → 取消选择",
       "export": "导出",
+      "eyedropper": "吸管",
       "freeResize": "自由缩放（不锁定宽高比）",
       "help": "本帮助",
       "multiSelect": "加选 / 减选对象或图内元素",
@@ -6647,6 +6684,7 @@ export default interface Resources {
       "averageAnchors": "平均锚点",
       "bindStyle": "给当前画布套用样式「{{name}}」",
       "cancelCrop": "取消裁剪",
+      "clearFill": "无填充",
       "clearGuides": "清除参考线",
       "clearJournal": "取消按期刊检查",
       "clearProp": "恢复{{prop}}",
@@ -6656,6 +6694,7 @@ export default interface Resources {
       "convertToPathCount": "把 {{count}} 个对象转为路径",
       "createLayoutGroup": "创建{{kind}}",
       "cutPath": "在锚点处断开",
+      "defaultAppearance": "默认填色描边",
       "deleteAnchors": "删除 {{count}} 个锚点",
       "deleteGuide": "删除参考线",
       "deleteObject": "删除 {{name}}",
@@ -6666,6 +6705,7 @@ export default interface Resources {
       "duplicateObjects": "复制对象",
       "editStyle": "修改样式「{{name}}」",
       "editText": "编辑文字",
+      "eyedropper": "吸管上色",
       "fillPanel": "填满当前框",
       "fitContentCrop": "贴合内容",
       "fitPanel": "完整放入框内",
@@ -6732,6 +6772,7 @@ export default interface Resources {
       "showObjects": "显示 {{count}} 个对象",
       "spacingX": "设置水平间距",
       "spacingY": "设置垂直间距",
+      "swapFillStroke": "互换填色和描边",
       "switchKind": "改为{{name}}",
       "switchKindCount": "把 {{count}} 个对象改为{{name}}",
       "syncPublicationProfile": "同步规范到新版",
@@ -7770,6 +7811,8 @@ export default interface Resources {
       "elementNotCopyable": "{{name}}还不能复制",
       "elementNotCopyableGeneric": "这个元素还不能复制",
       "elementsHidden_other": "已隐藏 {{count}} 个元素，可在「已隐藏元素」里恢复",
+      "eyedropperNoTarget": "先选中要上色的形状、路径或箭头",
+      "eyedropperNothing": "这里没有能吸的颜色",
       "geometrySyncing": "正在同步图形几何，请稍候再试",
       "groupBlocked": {
         "incomplete": "组里有成员这一版拿不到位置，暂时不能整组移动或缩放",
@@ -7905,6 +7948,7 @@ export default interface Resources {
       "brace": "拖动画出大括号；Esc 取消",
       "diamond": "拖动画出菱形；Esc 取消",
       "ellipse": "拖动画出椭圆；Esc 取消",
+      "eyedropper": "点画布上的东西，把它的颜色给选中的对象；Esc 退出",
       "line": "拖动画出直线；Esc 取消",
       "pen": "点一下加尖角点，按住拖拉出平滑点；点起点闭合，Enter / Esc 结束",
       "polygon": "拖动画出多边形；Esc 取消",
