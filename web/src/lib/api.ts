@@ -1,3 +1,10 @@
+import { PRODUCT_NAME } from './brand'
+import { documentApiPath, documentResponseFormat, type DocumentFormat } from './documentFormat'
+import type { ComputedRenderFrame } from './chartFrame'
+import type { FigureExecutionProof } from './figureExecutionProof'
+import { figureOriginIdentity, sameFigureOrigin, validFigureOrigin, validFigureSnapshot } from './figureSnapshot'
+import { figureSnapshotPreviewIdentity, sameFigureSnapshotReference } from './figureSnapshotPreview'
+import type { ChartSourceRef, FigureOrigin, PanelChartState } from '@/types/document'
 import { classifyArtifactFailure } from '@/lib/artifactReason'
 import type { RenderPurpose } from '@/lib/renderPurpose'
 import { ArtifactValidationError, FIGSIZE_SOURCE_POLICY, verifiedSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
@@ -397,7 +404,7 @@ const errorBody = (res: Response): Promise<Record<string, unknown>> =>
  * `pj` 显式给出时用它，不用全局当前项目：见 `session.apiUrlFor` 的说明——
  * 排队稍后才发出的写入，属于**排队那一刻**的项目。`undefined` = 用全局的。
  */
-async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null): Promise<T> {
+async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null, documentFormat?: DocumentFormat): Promise<T> {
   const res =
     pj === undefined
       ? await fetch(apiUrl(url), withProject(init))
@@ -415,6 +422,7 @@ async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null)
     noteEngine500(res.status, body, init?.method, url)
     throw new ApiError(detail, res.status, body, res.headers?.get('X-Tavotto-Diagnostic-Ref') || null)
   }
+  if (documentFormat === 'v4' && (!init?.method || init.method === 'GET')) requireDocumentResponseFormat(res, documentFormat)
   return res.json() as Promise<T>
 }
 
@@ -423,6 +431,17 @@ export const fetchPanels = () => jsonFetch<PanelsResponse>('/api/panels')
 /** 磁盘素材文件 id → 注册表认的 stem（后端 `Registry.artifact_stem`，#1251）：权威值，清单里没有这个文件也答得出。 */
 export const fetchPanelStem = (id: string) =>
   jsonFetch<{ id: string; stem: string }>(`/api/panel-stem?id=${encodeURIComponent(id)}`)
+
+/** 精确磁盘 id 的只读事实；不授予执行、几何编辑或发布资格。 */
+export interface PanelSourceFacts {
+  id: string
+  stem: string
+  kind: PanelInfo['kind']
+  original_spec: AssetOriginalSpec
+}
+
+export const fetchPanelSourceFacts = (id: string, pj?: string | null) =>
+  jsonFetch<PanelSourceFacts>(`/api/panel-stem?id=${encodeURIComponent(id)}&original_spec=1`, undefined, pj)
 
 /**
  * 项目接入就绪度。**只读诊断**：后端不跑用户脚本、不 probe、不写盘、不发事件。
@@ -827,17 +846,17 @@ export const saveProjectAs = (parent: string, pj?: string | null) =>
  */
 const stamp = (mtime?: number) => (mtime ? `&m=${mtime}` : '')
 
-export const renderUrl = (id: string, bucket: number, mtime?: number) =>
-  apiUrl(`/api/render?id=${encodeURIComponent(id)}&w=${bucket}${stamp(mtime)}`)
+export const renderUrl = (id: string, bucket: number, mtime?: number, pj: string | null = currentProjectId()) =>
+  apiUrlFor(`/api/render?id=${encodeURIComponent(id)}&w=${bucket}${stamp(mtime)}`, pj)
 
-export const fileUrl = (id: string, mtime?: number) =>
-  apiUrl(`/api/file?id=${encodeURIComponent(id)}${stamp(mtime)}`)
+export const fileUrl = (id: string, mtime?: number, pj: string | null = currentProjectId()) =>
+  apiUrlFor(`/api/file?id=${encodeURIComponent(id)}${stamp(mtime)}`, pj)
 
 /** materialized cache 里的预览 SVG（runtime 面板重开时的首帧占位）。
  * `nonce` 是重跑后的换代计数（runtimeAssetStore.previewNonce）：同一 URL
  * 的 <img> 不会自己重取，重新运行刷新了 cache 之后靠它换 src。 */
-export const runtimePreviewUrl = (id: string, nonce?: number) =>
-  apiUrl(`/api/runtime/preview?id=${encodeURIComponent(id)}${nonce ? `&t=${nonce}` : ''}`)
+export const runtimePreviewUrl = (id: string, nonce?: number, pj: string | null = currentProjectId()) =>
+  apiUrlFor(`/api/runtime/preview?id=${encodeURIComponent(id)}${nonce ? `&t=${nonce}` : ''}`, pj)
 
 /**
  * **这个文档状态**的 runtime 预览（QA-WIN-21）。`runtimePreviewUrl` 给的是后端「最近一次渲染」的
@@ -850,13 +869,14 @@ export async function fetchRuntimePreviewForState(
   id: string,
   patches: unknown[],
   signal?: AbortSignal,
+  pj: string | null = currentProjectId(),
 ): Promise<{ blob: Blob; exact: boolean } | null> {
-  const res = await fetch(apiUrl('/api/runtime/preview'), withProject({
+  const res = await fetch(apiUrlFor('/api/runtime/preview', pj), withProjectFor({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, patches }),
     signal,
-  }))
+  }, pj))
   if (res.status === 404) return null
   if (!res.ok) throw new Error(`runtime preview ${res.status}`)
   return { blob: await res.blob(), exact: res.headers.get('X-Tavotto-Preview-Exact') === '1' }
@@ -890,28 +910,41 @@ export const panelSrc = (
   kind: string,
   bucket: number,
   mtime?: number,
+  pj: string | null = currentProjectId(),
 ): string | null => {
   if (kind === 'raster')
-    return BROWSER_RASTER_EXTS.has(extOf(id)) ? fileUrl(id, mtime) : renderUrl(id, bucket, mtime)
-  if (kind === 'svg') return fileUrl(id, mtime)
-  if (kind === 'pdf') return renderUrl(id, bucket, mtime)
-  if (kind === 'runtime') return runtimePreviewUrl(id, mtime)
+    return BROWSER_RASTER_EXTS.has(extOf(id)) ? fileUrl(id, mtime, pj) : renderUrl(id, bucket, mtime, pj)
+  if (kind === 'svg') return fileUrl(id, mtime, pj)
+  if (kind === 'pdf') return renderUrl(id, bucket, mtime, pj)
+  if (kind === 'runtime') return runtimePreviewUrl(id, mtime, pj)
   return null
+}
+
+function documentJsonFetch(format?: DocumentFormat) {
+  return <T>(path: string, init?: RequestInit, pj?: string | null): Promise<T> =>
+    format === 'v4' ? jsonFetch<T>(documentApiPath(path, format), init, pj, format) : jsonFetch<T>(path, init, pj)
+}
+
+function requireDocumentResponseFormat(res: Response, format?: DocumentFormat): void {
+  if (!documentResponseFormat(res.headers.get('X-Tavotto-Document-Format'), format)) {
+    throw new ApiError('Unexpected document format.', 400, { code: 'invalid_document' })
+  }
 }
 
 /* ----------------------------- 布局存取 ----------------------------------- */
 
-export const fetchLayoutNames = () =>
-  jsonFetch<{ layouts: string[] }>('/api/layouts').then((r) => r.layouts)
+export const fetchLayoutNames = (format?: DocumentFormat) =>
+  documentJsonFetch(format)<{ layouts: string[] }>('/api/layouts').then((r) => r.layouts)
 
 /**
  * 同一份清单 + 每份的修改时间（epoch 秒；后端加字段，老后端没有 = 空表、界面不写日期）。
  * 只给「打开」列表的元信息用；顺序仍是 `layouts` 的（新的在前）。
  */
-export const fetchLayoutList = () =>
-  jsonFetch<{ layouts: string[]; modified?: Record<string, number> }>('/api/layouts').then((r) => ({
+export const fetchLayoutList = (format?: DocumentFormat) =>
+  documentJsonFetch(format)<{ layouts: string[]; modified?: Record<string, number>; document_dir?: unknown }>('/api/layouts').then((r) => ({
     names: r.layouts,
     modified: r.modified ?? {},
+    ...(typeof r.document_dir === 'string' ? { documentDir: r.document_dir } : {}),
   }))
 
 /** 读到的一份画布文件：`revision` 来自响应头，是后续覆盖它的基线 */
@@ -1890,8 +1923,12 @@ export type ExportObject =
   | (ExportBox & ArtifactRequestFields & {
       type: 'panel'
       figure_snapshot?: FigureSnapshot
+      figure_origin?: FigureOrigin
+      chart?: PanelChartState
+  chart_source?: ChartSourceRef
+      chart_render_profile?: 'legacy-scaffold/1' | 'native-manifest/1' | 'native-manifest/2'
       id: string
-      overrides?: { gid: string; prop: string; value: unknown }[]
+      overrides?: { gid: string; prop: string; value: unknown; identity?: string }[]
       /** 0–1 归一化、top-origin，与 PanelObject.crop 同构，原样直传 */
       crop?: { x: number; y: number; w: number; h: number }
       /** 0/90/180/270；x/y/w/h 已是旋转后的落位，后端只负责把内容转进去 */
@@ -1980,7 +2017,11 @@ export type ExportObject =
 export type ExportOriginalSource = ArtifactRequestFields & {
   figure_id: string
   figure_snapshot?: FigureSnapshot
-  overrides?: { gid: string; prop: string; value: unknown }[]
+  figure_origin?: FigureOrigin
+  chart?: PanelChartState
+  chart_source?: ChartSourceRef
+  chart_render_profile?: 'legacy-scaffold/1' | 'native-manifest/1' | 'native-manifest/2'
+  overrides?: { gid: string; prop: string; value: unknown; identity?: string }[]
   w_mm?: number | null
   h_mm?: number | null
   px_w?: number | null
@@ -2084,11 +2125,12 @@ export interface ArtifactIdentity {
 export interface ArtifactProvenance {
   sources: {
     source_id: string
-    origin: 'execution' | 'static'
+    origin: 'execution' | 'static' | 'declarative'
     kind: string
     bytes_sha256: string
     receipt_identity: string | null
     patch_hash: string | null
+    render_revision?: string
   }[]
   execution_receipts: string[]
   receipts: ArtifactReceiptFacts[]
@@ -2100,6 +2142,8 @@ export interface ArtifactProvenance {
 export interface ArtifactReceiptFacts {
   receipt_identity: string
   receipt_id: string
+  /** Explicit file evidence captured during this execution; not whole-input coverage. */
+  captured_inputs?: { version: 1; revision: string }
   completeness: 'complete' | 'partial'
   runtime_rejected: string | null
   pid_check: string | null
@@ -2934,9 +2978,22 @@ export interface Manifest {
   save_moment?: 'restored'
   /** 快照没用上的原因（闭集，`figcapture.SAVE_MOMENT_REASONS`）；只用来区分文案之外的诊断，界面照旧说「与存盘文件不同」。 */
   save_moment_unavailable?: string
+  /**
+   * native-manifest/2（计算图表）才有：这次实际 SVG draw 的外框声明（闭式形状
+   * 判据的唯一出处是引擎 `engine/chartframe.py`，前端消费方 `lib/chartFrame.ts`）。
+   * /1 与老引擎不发它。
+   */
+  render_frame?: ComputedRenderFrame
 }
 
 export interface EngineRenderResponse {
+  figure_origin?: FigureOrigin
+  /** 冷重放核验通过后采用了新 receipt：`figure_origin` 回显的是重指向后的引用。 */
+  figure_origin_adopted?: boolean
+  /** 本次渲染所属执行的正面证据（`include_figure_execution` 请求时才可能出现）。 */
+  figure_execution?: FigureExecutionProof
+  /** 计算图表最终 SVG + manifest + 完整 patches 的后端渲染身份。 */
+  chart_revision?: string
   /** build 成功、但沙盒里 glob 回空而脚本目录里有文件（图可能缺数据，#1254）；出图结果与状态码不变 */
   workdir_hint?: WorkdirConfirmation
   figure_snapshot_invalidation?: FigureSnapshotInvalidation
@@ -3085,6 +3142,15 @@ export const ENVIRONMENT_CODES = [
 ] as const
 
 export interface EngineRenderOptions extends ArtifactRequestFields {
+  figure_origin?: FigureOrigin
+  /** 显式计算图表状态；与完整 patches 一起走同一次配对渲染。 */
+  chart?: PanelChartState
+  chart_source?: ChartSourceRef
+  /**
+   * 计算图表的坐标合同（`panel.chartFrame?.renderProfile`，仅 /2 面板携带）。
+   * 同一 chart 不同坐标语义不能共用渲染身份；/1 面板不传，请求形状逐字不变。
+   */
+  render_profile?: 'native-manifest/1' | 'native-manifest/2'
   signal?: AbortSignal
   /**
    * 这一次预览 SVG 里**嵌入位图**的 dpi（不给 = worker 的默认）。
@@ -3098,6 +3164,11 @@ export interface EngineRenderOptions extends ArtifactRequestFields {
    * `background_render_deferred`（见 `lib/renderPurpose`），**不是失败**。
    */
   purpose?: RenderPurpose
+  /**
+   * 请求后端在成功响应里附带**本次**执行的正面证据（`figure_execution`）。
+   * 只增加证据：缺证据时字段省略，普通成功不受影响。
+   */
+  includeFigureExecution?: boolean
 }
 
 /**
@@ -3144,6 +3215,7 @@ export async function engineRender(
   patches: unknown[],
   opts: EngineRenderOptions = {},
 ): Promise<EngineRenderResponse> {
+  const origin = checkedFigureOrigin(id, opts.figure_origin, opts)
   const res = await fetch(apiUrl('/api/engine/render'), withProject({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -3152,11 +3224,16 @@ export async function engineRender(
       id,
       patches,
       inline_svg: true,
+      ...(origin !== undefined ? { figure_origin: origin } : {}),
+      ...(opts.chart ? { chart: structuredClone(opts.chart) } : {}),
+      ...(opts.chart_source !== undefined ? { chart_source: structuredClone(opts.chart_source) } : {}),
+      ...(opts.chart && opts.render_profile !== undefined ? { render_profile: opts.render_profile } : {}),
       source_policy: opts.source_policy,
       expected_source: opts.expected_source,
       ...(opts.confirmed_reconstruction_sha256 ? { confirmed_reconstruction_sha256: opts.confirmed_reconstruction_sha256 } : {}),
       ...(opts.previewDpi ? { preview_dpi: opts.previewDpi } : {}),
       ...(opts.purpose && opts.purpose !== 'foreground' ? { purpose: opts.purpose } : {}),
+      ...(opts.includeFigureExecution ? { include_figure_execution: true } : {}),
     }),
     signal: opts.signal,
   }))
@@ -3189,7 +3266,60 @@ export async function engineRender(
     const g = verifiedSource(body.artifact_source, id, opts.source_policy)
     if (opts.expected_source && (g.bytesSha256 !== opts.expected_source.bytes_sha256 || g.sizeBytes !== opts.expected_source.size_bytes)) throw new ArtifactValidationError('source_changed')
   }
+  verifyFigureOriginRender(origin, body)
   return body as EngineRenderResponse
+}
+
+function checkedFigureOrigin(id: string, origin: FigureOrigin | undefined, input?: EngineRenderOptions): FigureOrigin | undefined {
+  if (origin === undefined) return undefined
+  if (!validFigureOrigin(origin, id)) throw new EngineError('Invalid historical Figure input.', '', 'svg_source_unavailable')
+  if (input && [input.chart, input.chart_source, input.source_policy, input.expected_source, input.confirmed_reconstruction_sha256].some(value => value !== undefined)) {
+    throw new EngineError('Historical Figure inputs cannot be combined with a current source selection.', '', 'svg_source_unavailable')
+  }
+  return structuredClone(origin)
+}
+
+/** Echo identifies the captured input; it does not grant geometry without a paired draw. */
+function verifyFigureOriginEcho(origin: FigureOrigin | undefined, response: unknown): void {
+  if (origin === undefined) return
+  const actual = response && typeof response === 'object' ? (response as { figure_origin?: unknown }).figure_origin : undefined
+  if (!validFigureOrigin(actual, origin.snapshot.sourceId) || !sameFigureOrigin(origin, actual)) {
+    throw new EngineError('The historical Figure input could not be verified.', '', 'svg_source_unavailable')
+  }
+}
+
+/**
+ * A verified cold-replay adoption: the same input P and owner re-pointed to the
+ * replayed receipt's reference. Anything else about the echo stays a mismatch.
+ */
+function replayAdoptionOf(sent: FigureOrigin, adopted: unknown): FigureOrigin | undefined {
+  if (adopted === undefined || !validFigureOrigin(adopted, sent.snapshot.sourceId)) return undefined
+  const next = adopted as FigureOrigin
+  if (sameFigureOrigin(sent, next)) return undefined
+  if (next.snapshot.sourceId !== sent.snapshot.sourceId ||
+      next.snapshot.patchHash !== sent.snapshot.patchHash ||
+      !sameFigureOrigin(next.snapshot.executionOwner, sent.snapshot.executionOwner) ||
+      figureOriginIdentity(next.patches) !== figureOriginIdentity(sent.patches)) return undefined
+  return next
+}
+
+export function verifyFigureOriginRender(origin: FigureOrigin | undefined, response: EngineRenderResponse): FigureOrigin | undefined {
+  if (origin !== undefined && response.figure_origin_adopted === true) {
+    const adopted = replayAdoptionOf(origin, response.figure_origin)
+    if (adopted !== undefined) {
+      if (!response || !response.manifest ||
+          (response.preview?.mode !== 'raster' && (typeof response.svg !== 'string' || !response.svg))) {
+        throw new EngineError('The historical Figure response has no matching pixels and geometry.', '', 'svg_source_unavailable')
+      }
+      return adopted
+    }
+  }
+  verifyFigureOriginEcho(origin, response)
+  if (origin !== undefined && (!response || !response.manifest ||
+      (response.preview?.mode !== 'raster' && (typeof response.svg !== 'string' || !response.svg)))) {
+    throw new EngineError('The historical Figure response has no matching pixels and geometry.', '', 'svg_source_unavailable')
+  }
+  return undefined
 }
 
 /**
@@ -3200,6 +3330,7 @@ export async function engineRender(
  * 调用方一个字不改。`only` 点名要修的 `(规则, gid)`；不给 = 全部（建议档不在内）。
  */
 export interface SpecFixResponse {
+  figure_origin?: FigureOrigin
   ok: boolean
   /** `done` / `nothing_to_do` / `font_unavailable` / `constraint_conflict` / `protected_changed` / `not_resolved` / `unsupported` / `budget_exceeded` */
   exit: string
@@ -3249,12 +3380,15 @@ export async function engineSpecfix(
   scale: number,
   profile: unknown,
   only?: { rule: string; gid: string }[],
+  source: Pick<EngineRenderOptions, 'figure_origin'> = {},
+  pj: string | null = currentProjectId(),
 ): Promise<SpecFixResponse> {
-  const res = await fetch(apiUrl('/api/engine/specfix'), withProject({
+  const origin = checkedFigureOrigin(id, source.figure_origin, source)
+  const res = await fetch(apiUrlFor('/api/engine/specfix', pj), withProjectFor({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id, patches, scale, profile, ...(only ? { only } : {}) }),
-  }))
+    body: JSON.stringify({ id, patches, scale, profile, ...(only ? { only } : {}), ...(origin === undefined ? {} : { figure_origin: origin }) }),
+  }, pj))
   const body = await res.json().catch(() => ({}) as Record<string, unknown>)
   if (!res.ok) {
     noteProjectGone(res.status, body)
@@ -3272,6 +3406,7 @@ export async function engineSpecfix(
   if (!isSpecFixResponse(body)) {
     throw new EngineError(t('render.failed', { ns: 'errors', status: res.status }), '', 'bad_shape', '')
   }
+  verifyFigureOriginEcho(origin, body)
   return body as unknown as SpecFixResponse
 }
 
@@ -3312,32 +3447,103 @@ export async function enginePreviewPng(
   patches: unknown[],
   bucket: number,
   signal?: AbortSignal,
+  source: EnginePngOptions = {},
+  pj: string | null = currentProjectId(),
 ): Promise<Blob> {
-  return (await previewPngResponse(id, patches, bucket, signal)).blob()
+  const archived = source.figure_snapshot !== undefined
+  if (source.chart) {
+    const snapshot = await enginePreviewPngSnapshot(id, patches, bucket, signal, source, pj)
+    const png = snapshot.url.slice(snapshot.url.indexOf(',') + 1)
+    return new Blob([Uint8Array.from(atob(png), c => c.charCodeAt(0))], { type: 'image/png' })
+  }
+  const blob = await (await previewPngResponse(id, patches, bucket, signal, false, source, pj)).blob()
+  if ((archived || source.figure_origin !== undefined) && !blob.size) throw invalidFigureSnapshotPreview()
+  return blob
+}
+
+export interface EnginePngOptions extends ArtifactRequestFields {
+  figure_origin?: FigureOrigin
+  chart?: PanelChartState
+  chart_source?: ChartSourceRef
+  /** 计算图表的坐标合同（仅 /2 面板携带；见 EngineRenderOptions.render_profile）。 */
+  render_profile?: 'native-manifest/1' | 'native-manifest/2'
+  /** Immutable archived pixels only; never a live editable manifest. */
+  figure_snapshot?: FigureSnapshot
+}
+
+export interface FigureSnapshotPreview {
+  preview_source: 'figure_snapshot'
+  figure_snapshot: FigureSnapshot
+  svg: string
+  size_mm: [number, number]
+}
+
+const invalidFigureSnapshotPreview = () => new EngineError('The archived Figure preview could not be verified.', '', 'figure_snapshot_preview_invalid')
+
+export async function fetchFigureSnapshotPreview(
+  id: string, patches: unknown[], reference: FigureSnapshot, signal?: AbortSignal,
+  pj: string | null = currentProjectId(),
+): Promise<FigureSnapshotPreview> {
+  if (!validFigureSnapshot(reference, id) || figureSnapshotPreviewIdentity(reference) === null) throw invalidFigureSnapshotPreview()
+  const frozen = structuredClone(reference)
+  const res = await fetch(apiUrlFor('/api/documents/v4/figure-preview', pj), withProjectFor({
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, patches, figure_snapshot: frozen }), signal,
+  }, pj))
+  if (!res.ok) {
+    const body = await errorBody(res)
+    noteProjectGone(res.status, body)
+    throw new EngineError((body.error as string) || t('render.previewPngFailed', { ns: 'errors', status: res.status }),
+      (body.traceback as string) || '', (body.code as string) || '', (body.module as string) || '',
+      body.project_env as ProjectEnvFailure | undefined, body.dependency_repair as DependencyRepairOffer | undefined,
+      { params: body.params as Record<string, unknown> | undefined })
+  }
+  const value = await res.json().catch(() => null) as FigureSnapshotPreview | null
+  if (!value || value.preview_source !== 'figure_snapshot' || typeof value.svg !== 'string' || !value.svg.trim()
+    || !Array.isArray(value.size_mm) || value.size_mm.length !== 2
+    || !value.size_mm.every(size => typeof size === 'number' && Number.isFinite(size) && size > 0)
+    || !sameFigureSnapshotReference(frozen, value.figure_snapshot)) throw invalidFigureSnapshotPreview()
+  return value
 }
 
 export async function enginePreviewPngSnapshot(
-  id: string, patches: unknown[], bucket: number, signal?: AbortSignal, source: ArtifactRequestFields = {},
-): Promise<{ url: string; manifest: Manifest; sourceBacked?: unknown }> {
-  const res = await previewPngResponse(id, patches, bucket, signal, true, source)
-  const frame = await res.json() as { png: string; manifest: Manifest; artifact_source?: unknown; source_backed?: unknown }
+  id: string, patches: unknown[], bucket: number, signal?: AbortSignal, source: EnginePngOptions = {},
+  pj: string | null = currentProjectId(),
+): Promise<{ url: string; manifest: Manifest; sourceBacked?: unknown; chartRevision?: string; figureOrigin?: FigureOrigin }> {
+  const origin = checkedFigureOrigin(id, source.figure_origin, source)
+  const res = await previewPngResponse(id, patches, bucket, signal, true, source, pj)
+  const frame = await res.json() as { png: string; manifest: Manifest; artifact_source?: unknown; source_backed?: unknown; chart_revision?: string; figure_origin?: FigureOrigin }
+  if (origin !== undefined && (!frame || !sameFigureOrigin(origin, frame.figure_origin) || !frame.manifest || !frame.png)) {
+    throw new EngineError('The historical Figure response has no matching pixels and geometry.', '', 'svg_source_unavailable')
+  }
+  if (source.chart && (typeof frame.chart_revision !== 'string' || !frame.chart_revision || !frame.manifest || !frame.png)) {
+    throw new EngineError('The chart response has no paired pixels and geometry.', '', 'chart_render_pair_missing')
+  }
   if (source.source_policy) {
     const g = verifiedSource(frame.artifact_source, id, source.source_policy)
     if (!source.expected_source || g.bytesSha256 !== source.expected_source.bytes_sha256 || g.sizeBytes !== source.expected_source.size_bytes) throw new ArtifactValidationError('source_changed')
   }
   // 来源驱动策略：这次响应自己的准入结论（对照确认绑定的是**显示给用户的这一份**，不是更早那次 render 的）
-  return { url: `data:image/png;base64,${frame.png}`, manifest: frame.manifest, sourceBacked: frame.source_backed }
+  return { url: `data:image/png;base64,${frame.png}`, manifest: frame.manifest, sourceBacked: frame.source_backed,
+    ...(origin !== undefined ? { figureOrigin: frame.figure_origin } : {}),
+    ...(source.chart ? { chartRevision: frame.chart_revision } : {}) }
 }
 
 async function previewPngResponse(
-  id: string, patches: unknown[], bucket: number, signal?: AbortSignal, withManifest = false, source: ArtifactRequestFields = {},
+  id: string, patches: unknown[], bucket: number, signal?: AbortSignal, withManifest = false, source: EnginePngOptions = {},
+  pj: string | null = currentProjectId(),
 ): Promise<Response> {
-  const res = await fetch(apiUrl('/api/engine/preview_png'), withProject({
+  const origin = checkedFigureOrigin(id, source.figure_origin, source)
+  const archived = source.figure_snapshot !== undefined
+  const reference = archived ? structuredClone(source.figure_snapshot) : undefined
+  if (archived && (withManifest || source.chart !== undefined || source.chart_source !== undefined
+    || !validFigureSnapshot(reference, id) || figureSnapshotPreviewIdentity(reference) === null)) throw invalidFigureSnapshotPreview()
+  const res = await fetch(apiUrlFor('/api/engine/preview_png', pj), withProjectFor({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id, patches, w: bucket, ...source, ...(withManifest ? { with_manifest: true } : {}) }),
+    body: JSON.stringify({ id, patches, w: bucket, ...source, ...(origin === undefined ? {} : { figure_origin: origin }), ...(withManifest ? { with_manifest: true } : {}) }),
     signal,
-  }))
+  }, pj))
   if (!res.ok) {
     const body = await errorBody(res)
     noteProjectGone(res.status, body)
@@ -3351,6 +3557,21 @@ async function previewPngResponse(
       { params: body.params as Record<string, unknown> | undefined, retryable: body.retryable as boolean | undefined, installRoute: body.install_route as string | undefined },
     )
   }
+  if (archived) {
+    let echoed: unknown
+    try { echoed = JSON.parse(res.headers.get('X-Tavotto-Figure-Snapshot') ?? '') }
+    catch { throw invalidFigureSnapshotPreview() }
+    if (res.headers.get('Content-Type')?.split(';')[0].trim() !== 'image/png'
+      || !sameFigureSnapshotReference(reference, echoed)) throw invalidFigureSnapshotPreview()
+  }
+  if (origin !== undefined && !withManifest) {
+    let echoed: unknown
+    try { echoed = JSON.parse(res.headers.get(`X-${PRODUCT_NAME}-Figure-Origin`) ?? '') }
+    catch { throw new EngineError('Missing historical Figure identity.', '', 'svg_source_unavailable') }
+    if (res.headers.get('Content-Type')?.split(';')[0].trim() !== 'image/png' || !sameFigureOrigin(origin, echoed)) {
+      throw new EngineError('Mismatched historical Figure identity.', '', 'svg_source_unavailable')
+    }
+  }
   return res
 }
 
@@ -3363,6 +3584,7 @@ async function previewPngResponse(
  * 任一环不过一律 409 且原文件零改动，所以成功路径上 `warnings` 恒为空。
  */
 export interface WriteBackResponse {
+  figure_origin?: FigureOrigin
   updated: string[]
   backup_dir: string
   warnings: string[]
@@ -3405,22 +3627,28 @@ export interface WriteBackDiff {
  *  annotations 非空 = 顺带把画布标注烙进原图（坐标已换算成该图自身的 mm）。
  *  expectedMtime = 前端手里这份素材的 mtime，与磁盘对不上后端回 409
  *  source_changed（素材被工具之外改过，按旧状态覆盖会吃掉别人的改动）。 */
-export const updateSourceFiles = (
+export const updateSourceFiles = async (
   id: string,
   patches: unknown[],
   annotations?: ExportObject[],
   expectedMtime?: number,
-) =>
-  jsonFetch<WriteBackResponse & { baked: boolean }>('/api/engine/update_source', {
+  source: Pick<EngineRenderOptions, 'figure_origin'> = {},
+  pj?: string | null,
+) => {
+  const origin = checkedFigureOrigin(id, source.figure_origin, source)
+  const response = await jsonFetch<WriteBackResponse & { baked: boolean }>('/api/engine/update_source', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      id,
-      patches,
+      id, patches,
       ...(annotations?.length ? { annotations } : {}),
       ...(expectedMtime ? { expected_mtime: expectedMtime } : {}),
+      ...(origin === undefined ? {} : { figure_origin: origin }),
     }),
-  })
+  }, pj)
+  verifyFigureOriginEcho(origin, response)
+  return response
+}
 
 /* -------------------------------- AI 桥 ----------------------------------- */
 
@@ -4996,28 +5224,34 @@ export interface HistoryVersion {
   patches: { gid: string; prop: string; value: unknown }[]
 }
 
-export const fetchHistory = (id: string) =>
-  jsonFetch<{ versions: HistoryVersion[] }>(
-    `/api/engine/history?id=${encodeURIComponent(id)}`,
-  )
+export const fetchHistory = async (id: string, source: Pick<EngineRenderOptions, 'figure_origin'> = {}, pj?: string | null) => {
+  const origin = checkedFigureOrigin(id, source.figure_origin, source)
+  const response = origin === undefined
+    ? await jsonFetch<{ versions: HistoryVersion[] }>(`/api/engine/history?id=${encodeURIComponent(id)}`, undefined, pj)
+    : await jsonFetch<{ versions: HistoryVersion[]; figure_origin?: FigureOrigin }>('/api/engine/history', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, figure_origin: origin }),
+    }, pj)
+  verifyFigureOriginEcho(origin, response)
+  return response
+}
 
 /** n = -1 表示脚本原始状态，永远可用作时间线起点 */
 export const historyPreviewUrl = (id: string, n: number, w = 400) =>
   apiUrl(`/api/engine/history/preview?id=${encodeURIComponent(id)}&n=${n}&w=${w}`)
 
-export const restoreHistory = (id: string, n: number, expectedMtime?: number) =>
-  jsonFetch<
-    // identity：那一版写下时记着的目标身份（ADR 0083），恢复时原样放回
-    WriteBackResponse & { patches: { gid: string; prop: string; value: unknown; identity?: string }[] }
-  >('/api/engine/history/restore', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      id,
-      n,
-      ...(expectedMtime ? { expected_mtime: expectedMtime } : {}),
-    }),
-  })
+export const restoreHistory = async (id: string, n: number, expectedMtime?: number,
+  source: Pick<EngineRenderOptions, 'figure_origin'> = {}, pj?: string | null) => {
+  const origin = checkedFigureOrigin(id, source.figure_origin, source)
+  const response = await jsonFetch<WriteBackResponse & { patches: { gid: string; prop: string; value: unknown; identity?: string }[] }>(
+    '/api/engine/history/restore', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, n, ...(expectedMtime ? { expected_mtime: expectedMtime } : {}),
+        ...(origin === undefined ? {} : { figure_origin: origin }) }),
+    }, pj)
+  verifyFigureOriginEcho(origin, response)
+  return response
+}
 
 /* ------------------------------ 构建版本 ---------------------------------- */
 
@@ -5058,6 +5292,8 @@ export interface SyncPatch {
 }
 
 export interface SyncResult {
+  source_figure_origin?: FigureOrigin
+  target_figure_origin?: FigureOrigin
   mapped: SyncPatch[]
   /** 版面几何类（axes position / size_mm），不可跨图搬运 */
   skipped: SyncPatch[]
@@ -5065,12 +5301,22 @@ export interface SyncResult {
   unmatched: SyncPatch[]
 }
 
-export const syncOverrides = (fromId: string, toId: string, patches: unknown[]) =>
-  jsonFetch<SyncResult>('/api/engine/sync_overrides', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from_id: fromId, to_id: toId, patches }),
-  })
+export const syncOverrides = async (fromId: string, toId: string, patches: unknown[],
+  source: { source_figure_origin?: FigureOrigin; target_figure_origin?: FigureOrigin; target_patches?: unknown[] } = {},
+  pj?: string | null) => {
+  const from = checkedFigureOrigin(fromId, source.source_figure_origin)
+  const to = checkedFigureOrigin(toId, source.target_figure_origin)
+  const response = await jsonFetch<SyncResult>('/api/engine/sync_overrides', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from_id: fromId, to_id: toId, patches,
+      ...(from === undefined ? {} : { source_figure_origin: from }),
+      ...(to === undefined ? {} : { target_figure_origin: to, ...(source.target_patches === undefined ? {} : { target_patches: source.target_patches }) }),
+    }),
+  }, pj)
+  verifyFigureOriginEcho(from, { figure_origin: response?.source_figure_origin })
+  verifyFigureOriginEcho(to, { figure_origin: response?.target_figure_origin })
+  return response
+}
 
 // ---------------------------------------------------------------------------
 // 检查更新

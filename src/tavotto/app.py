@@ -107,6 +107,7 @@ from .engine import (
     execspec as engine_execspec,
     exectrace as engine_exectrace,
     exectrace_diag as engine_exectrace_diag,
+    executionfact as engine_executionfact,
     exportjob as engine_exportjob,
     exportreq as engine_exportreq,
     exportroute as engine_exportroute,
@@ -645,6 +646,11 @@ def _asset_probe(p: Path, kind: str) -> tuple[dict, dict]:
     # 别处能对账；现在密度先按文件自己写的物理密度读，读不到才落到同样
     # 那两个数，且 `original_spec.dpi_source` 会说出来它是假定的。
     return probe, engine_originalspec.asset_spec(p, kind, probe)
+
+
+def _asset_original_spec(path: Path, kind: str) -> dict:
+    """精确素材查询与扫描、导入共用同一探针及原始规格。"""
+    return _asset_probe(path, kind)[1]
 
 
 def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
@@ -1444,8 +1450,20 @@ def api_panel_stem():
     （比如被同一张图的 PDF 让位隐藏的 PNG，或清单正在刷新）时，前端不许退回文件名 stem 去猜。
     """
     rel_id = request.args.get("id", "")
-    safe_resolve(rel_id)  # 在项目根之内、是文件；不是就按老规矩 4xx（带稳定 code）
-    resp = jsonify({"id": rel_id, "stem": _disk_panel_rel(rel_id.replace("\\", "/"))[0]})
+    path = safe_resolve(rel_id)  # 原安全入口，精确 id 不受清单里同 stem PDF 的让位影响。
+    payload = {"id": rel_id, "stem": _disk_panel_rel(rel_id.replace("\\", "/"))[0]}
+    if request.args.get("original_spec") == "1":
+        from . import svgasset
+
+        kind = engine_refresh.asset_kind(path.name, pdf_twin=False)
+        if kind is None:
+            abort(403)
+        try:
+            spec = _asset_original_spec(path, kind)
+        except svgasset.UnsupportedSVG as exc:
+            return jsonify({"code": exc.code, "error": str(exc), "params": exc.params}), 422
+        payload.update(kind=kind, original_spec=spec)
+    resp = jsonify(payload)
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -1654,6 +1672,8 @@ def _serialize_figure(
     artifact_source=None,
     existing_only: bool = False,
     expect_receipt_id: str | None = None,
+    source_path_required: bool = True,
+    figure_origin=None,
 ) -> Path | None:
     """让引擎按 `fmt` **直接序列化**一张图（matplotlib `savefig`，worker 侧）。
 
@@ -1677,12 +1697,397 @@ def _serialize_figure(
         **_artifact_kwargs(artifact_source),
         **({"existing_only": True} if existing_only else {}),
         **({"expect_receipt_id": expect_receipt_id} if expect_receipt_id else {}),
+        **({"source_path_required": False} if not source_path_required else {}),
+        **({"figure_origin": figure_origin} if figure_origin is not None else {}),
     )
     return rendered[0] if rendered is not None else None
 
 
 class FigureIdentityChanged(Exception):
     """导出要用的活 Figure 已经不是调用方核过的那一次执行（期间重跑了脚本）：不交出去，不换 Figure 凑数。"""
+
+
+class _FigureOriginError(engine_pool.WorkerError):
+    """A historical input is invalid or has no admitted live execution."""
+
+    def __init__(self, message, *, invalid=False):
+        super().__init__(message, code="bad_request" if invalid else "svg_source_unavailable")
+        self.http_status = 400 if invalid else 409
+
+
+@app.errorhandler(_FigureOriginError)
+def _figure_origin_error(exc):
+    return jsonify(_worker_error_payload(exc)), exc.http_status
+
+
+def _figure_origin_request(body):
+    """Validate the input contract before current-file selection or worker lookup."""
+    if "figure_origin" not in body:
+        return None
+    if not isinstance(body.get("id"), str) or not body["id"]:
+        raise _FigureOriginError("A historical Figure source id is required.", invalid=True)
+    if any(
+        key in body
+        for key in (
+            "chart",
+            "chart_source",
+            "source_policy",
+            "expected_source",
+            "confirmed_reconstruction_sha256",
+        )
+    ):
+        raise _FigureOriginError("Historical and current source selections conflict.", invalid=True)
+    from .engine import svgstore
+
+    try:
+        return svgstore.validate_origin(body["figure_origin"], source_id=body.get("id"))
+    except (ValueError, TypeError, RecursionError) as exc:
+        raise _FigureOriginError("Invalid historical Figure input.", invalid=True) from exc
+
+
+@dataclasses.dataclass(frozen=True)
+class _FigureOriginSession:
+    """A request-local proof; all selection remains in the original resolver."""
+
+    origin: dict
+    ctx: object
+    state: dict
+    worker: object
+    script: str
+    entry: str
+    stem: str
+    receipt: object
+    execution_id: str
+    snapshot_epoch: int | None
+    adopted: bool = False
+
+    def check(self):
+        ledger = self.ctx.svg_executions
+        with ledger.lock:
+            state = ledger.get(self.state["owner"])
+            if (
+                current_ctx() is not self.ctx
+                or state is not self.state
+                or state["unknown"]
+                or state["worker"] is not self.worker
+                or state["execution_id"] != self.execution_id
+                or self.receipt.receipt_id not in state["receipts"]
+            ):
+                raise _FigureOriginError("The historical Figure execution is no longer current.")
+        candidate = engine_enginesession.resolve(
+            project_root=str(self.ctx.path),
+            script=self.script,
+            entry=self.entry,
+            stem=self.stem,
+            execution_profile=self.receipt.profile,
+            existing_only=True,
+            existing_worker=self.worker,
+        )
+        if candidate is not self.worker or _svg_worker_ctx(candidate) is not self.ctx:
+            raise _FigureOriginError("The historical Figure instance is unavailable.")
+        guard = (
+            self.worker._figure_lock
+            if engine_enginesession.is_native(self.worker)
+            else contextlib.nullcontext()
+        )
+        with guard:
+            actual_id = (
+                self.worker.execution_id
+                if engine_enginesession.is_native(self.worker)
+                else self.worker.last_build_execution_id
+            )
+            if (
+                actual_id != self.execution_id
+                or (
+                    self.snapshot_epoch is not None
+                    and self.worker.snapshot_epoch != self.snapshot_epoch
+                )
+                or _execution_receipt(self.worker, self.script).receipt_id
+                != self.receipt.receipt_id
+            ):
+                raise _FigureOriginError("The historical Figure execution changed.")
+
+    def call(self, method, *args, **kwargs):
+        self.check()
+        kwargs["expected_execution_id"] = self.execution_id
+        if self.snapshot_epoch is not None:
+            kwargs["expected_snapshot_epoch"] = self.snapshot_epoch
+        try:
+            result = getattr(self.worker, method)(self.stem, *args, **kwargs)
+        except engine_pool.WorkerError as exc:
+            if exc.code == "svg_source_unavailable":
+                raise _FigureOriginError(str(exc)) from exc
+            raise
+        self.check()
+        return result
+
+
+def _document_panel_render_profile(obj: dict) -> str | None:
+    """The persisted coordinate contract of a document panel.
+
+    前端把 `chartFrame`（renderProfile + originPt）存进文档面板；导出请求
+    用扁平的 `chart_render_profile`。两处都认：显式值优先，缺字段 = 旧文档
+    维持 /1（由调用方决定缺省）。
+    """
+    flat = obj.get("chart_render_profile")
+    if flat is not None:
+        return str(flat)
+    frame = obj.get("chartFrame")
+    if isinstance(frame, dict) and frame.get("renderProfile") is not None:
+        return str(frame["renderProfile"])
+    return None
+
+
+def _figure_origin_record(rel_id, origin):
+    """Shared origin validation and archived-pair load for every origin consumer."""
+    from .engine import svgstore
+
+    try:
+        origin = svgstore.validate_origin(origin, source_id=rel_id)
+    except (ValueError, TypeError, RecursionError) as exc:
+        raise _FigureOriginError("Invalid historical Figure input.", invalid=True) from exc
+    if not engine_runtimeasset.is_runtime_id(rel_id):
+        safe_resolve(rel_id, require_file=False)
+    ctx = current_ctx()
+    record = svgstore.load_document_snapshot(
+        ctx.path,
+        origin["snapshot"],
+        source_id=rel_id,
+        patch_hash=engine_patchspec.patch_hash(origin["patches"]),
+        remap_fingerprint=engine_inputremap.fingerprint(ctx.path),
+        storage_root=_svg_storage_root(ctx.path),
+    )
+    if record is None:
+        raise _FigureOriginError("The historical Figure input cannot be verified.")
+    return origin, ctx, record
+
+
+def _figure_origin_sessions(origin, ctx, record, rel_id, states, *, adopted=False):
+    """Unique live worker sessions owning this exact archived pair, per state."""
+    matches = []
+    for state in states:
+        worker = state["worker"]
+        script = state["owner"]["script"]
+        if engine_projectenv.contained_path(ctx.path, script) is None:
+            continue
+        if (
+            _svg_worker_ctx(worker) is not ctx
+            or _svg_worker_owner(worker, script) != state["owner"]
+        ):
+            continue
+        native = engine_enginesession.is_native(worker)
+        guard = worker._figure_lock if native else contextlib.nullcontext()
+        with guard:
+            rcpt = _execution_receipt(worker, script)
+            if (
+                rcpt.receipt_id != record["receipt"]["receipt_id"]
+                or rcpt.public_identity() != record["receipt"]["receipt_identity"]
+                or rcpt.generation != record["receipt"]["generation"]
+            ):
+                continue
+            descriptors = [
+                desc
+                for desc in rcpt.descriptors
+                if desc.get("script") == script
+                and desc.get("execution_profile") == rcpt.profile
+                and (
+                    desc.get("asset_id") == rel_id
+                    or desc.get("original_artifact") == rel_id
+                    or rel_id in (desc.get("artifacts") or [])
+                )
+            ]
+            identities = {(d.get("stem"), d.get("entry")) for d in descriptors}
+            if len(identities) != 1:
+                continue
+            stem, entry = next(iter(identities))
+            if not isinstance(stem, str) or not stem or not isinstance(entry, str) or not entry:
+                continue
+            matches.append(
+                _FigureOriginSession(
+                    origin,
+                    ctx,
+                    state,
+                    worker,
+                    script,
+                    entry,
+                    stem,
+                    rcpt,
+                    state["execution_id"],
+                    worker.snapshot_epoch if native else None,
+                    adopted,
+                )
+            )
+    return matches
+
+
+def _admit_figure_origin(rel_id, origin):
+    """Exact immutable input P plus the actual live receipt authorize applying Q."""
+    origin, ctx, record = _figure_origin_record(rel_id, origin)
+    owner = record.get("execution_owner")
+    ledger = ctx.svg_executions
+    with ledger.lock:
+        # Legacy references have no owner field. Only a unique actual receipt
+        # and its observed descriptors may establish that missing provenance.
+        states = [ledger.get(owner)] if owner is not None else list(ledger.owners.values())
+        states = [
+            state
+            for state in states
+            if state is not None
+            and not state["unknown"]
+            and record["receipt"]["receipt_id"] in state["receipts"]
+        ]
+    matches = _figure_origin_sessions(origin, ctx, record, rel_id, states)
+    if len(matches) != 1:
+        raise _FigureOriginError("No unique live execution owns the historical Figure input.")
+    selected = matches[0]
+    selected.check()
+    return selected
+
+
+def _verify_replayed_figure_pair(frozen, record):
+    """The replay must reproduce the archived pair: canonical SVG digest first,
+    then the write-back pixel gate. A drifted script never adopts (PR03:
+    先重放 P 并核几何/像素/文字；核不上整体拒绝、零正文)."""
+    from .rendercore import svgcheck
+
+    companion = frozen.svg
+    archived_svg = record.get("svg")
+    if companion is not None and archived_svg is not None:
+        try:
+            fresh_svg = Path(companion.path).read_bytes()
+        except OSError:
+            fresh_svg = b""
+        if fresh_svg and (
+            svgcheck.canonical_digest(fresh_svg) == svgcheck.canonical_digest(archived_svg)
+        ):
+            return
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="figure-origin-verify-", dir=CACHE_DIR) as temporary:
+        directory = Path(temporary)
+        archived_pdf = directory / "archived.pdf"
+        archived_pdf.write_bytes(record["pdf"])
+        archived_png = directory / "archived.png"
+        pdfbackend.render_preview_png(archived_pdf, REPLAY_PIXEL_WIDTH, archived_png)
+        replay_png = directory / "replay.png"
+        pdfbackend.render_preview_png(Path(frozen.path), REPLAY_PIXEL_WIDTH, replay_png)
+        if archived_png.read_bytes() == replay_png.read_bytes():
+            return
+        metrics = pdfbackend.compare_png(archived_png, replay_png)
+        exceeded = {
+            key: metrics.get(key)
+            for key, tol in REPLAY_PIXEL_TOL.items()
+            if _f(metrics.get(key)) is not None and _f(metrics.get(key)) > tol
+        }
+        if metrics.get("ok", False) and not exceeded:
+            return
+        LOG.warning(
+            "Figure origin cold replay diverged from its archived pair: %s（阈值 %s）",
+            metrics,
+            REPLAY_PIXEL_TOL,
+        )
+        raise _FigureOriginError("The historical Figure input no longer matches its archived pair.")
+
+
+def _replay_figure_origin(rel_id, origin, record, ctx):
+    """Cold start only: re-execute the archived input along the same
+    authorization chain as an ordinary runtime render (the user's explicit
+    render request), verify the replay reproduces the archived pair, then adopt
+    the new receipt for this session. The old receipt is never faked; the
+    response echoes the adopted origin so the frontend can re-point its
+    persisted input through its own transaction."""
+    owner = record.get("execution_owner")
+    if owner is None:
+        # Legacy references carry no execution identity: nothing to replay.
+        raise _FigureOriginError("No unique live execution owns the historical Figure input.")
+    sink = []
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="figure-origin-replay-", dir=CACHE_DIR) as temporary:
+        # Start AND build the worker first: the export-grade serializer only
+        # accepts an existing built session (existing_only refuses cold
+        # workers), and building is exactly the ordinary runtime authorization
+        # chain executing the user code once.
+        replay_worker, _replay_stem = _engine_worker(rel_id)
+        replay_worker.ensure_built()
+        frozen = _execution_source(
+            {"id": rel_id, "overrides": origin["patches"]},
+            engine_exportreq.PPI_DEFAULT,
+            sink,
+            Path(temporary),
+            include_svg=True,
+        )
+        if frozen is None:
+            raise _FigureOriginError("The historical Figure input cannot be replayed.")
+        _verify_replayed_figure_pair(frozen, record)
+        # Activate the replayed pair so the adopted reference resolves for every
+        # later consumer of (source, patch hash); the save returns its ref.
+        saved = _save_svg_snapshot(
+            frozen,
+            project_root=ctx.path,
+            execution_owner=owner,
+            activate=True,
+        )
+    if saved is None or not saved.get("snapshot_ref"):
+        raise _FigureOriginError("The historical Figure input cannot be verified.")
+    adopted = {
+        "version": 1,
+        "snapshot": saved["snapshot_ref"],
+        "patches": origin["patches"],
+    }
+    ledger = ctx.svg_executions
+    with ledger.lock:
+        state = ledger.get(owner)
+    if state is None or state["unknown"]:
+        raise _FigureOriginError("No unique live execution owns the historical Figure input.")
+    worker = state["worker"]
+    script = state["owner"]["script"]
+    if engine_enginesession.is_native(worker):
+        execution_id = getattr(worker, "execution_id", None)
+    else:
+        execution_id = _execution_receipt(worker, script).instance
+    if not ledger.admit(owner, worker, execution_id, frozen.receipt["receipt_id"]):
+        raise _FigureOriginError("No unique live execution owns the historical Figure input.")
+    record_view = {"receipt": frozen.receipt, "execution_owner": owner}
+    matches = _figure_origin_sessions(adopted, ctx, record_view, rel_id, [state], adopted=True)
+    if len(matches) != 1:
+        raise _FigureOriginError("No unique live execution owns the historical Figure input.")
+    selected = matches[0]
+    selected.check()
+    return selected
+
+
+def _figure_origin_render_session(rel_id, origin, *, artifact_source):
+    """Render-endpoint origin admission with the cold-replay adoption path.
+
+    A live unique session admits exactly as everywhere else. A cold process
+    (the owner has never executed here) replays the archived input through the
+    ordinary render authorization chain and adopts the replayed receipt after
+    verification. A ledger state that exists without this receipt is a
+    retirement: rejected, no replay, no adoption.
+    """
+    origin, ctx, record = _figure_origin_record(rel_id, origin)
+    owner = record.get("execution_owner")
+    ledger = ctx.svg_executions
+    with ledger.lock:
+        owner_state = ledger.get(owner) if owner is not None else None
+        candidates = [owner_state] if owner is not None else list(ledger.owners.values())
+        states = [
+            state
+            for state in candidates
+            if state is not None
+            and not state["unknown"]
+            and record["receipt"]["receipt_id"] in state["receipts"]
+        ]
+    matches = _figure_origin_sessions(origin, ctx, record, rel_id, states)
+    if len(matches) == 1:
+        selected = matches[0]
+        selected.check()
+        return selected
+    if owner_state is not None or owner is None:
+        # The owner executed here and this pair's receipt is no longer current
+        # (or the reference carries no execution identity): a retirement, not a
+        # cold start.
+        raise _FigureOriginError("No unique live execution owns the historical Figure input.")
+    return _replay_figure_origin(rel_id, origin, record, ctx)
 
 
 class _FigureSerialization(tuple):
@@ -1708,12 +2113,26 @@ def _serialize_figure_with_worker(
     existing_only: bool = False,
     expect_receipt_id: str | None = None,
     svg_text: bool = False,
+    source_path_required: bool = True,
+    figure_origin=None,
 ) -> tuple[Path, object, str] | None:
     """`_serialize_figure` 的本体：多回 `(路径, worker-like, 脚本)`——候选后端的执行侧源解析器要拿
     worker 装配回执（`engine/receipt`），旧调用方只取路径。"""
-    if include_svg or existing_only:
+    origin_session = (
+        _admit_figure_origin(rel_id, figure_origin) if figure_origin is not None else None
+    )
+    if origin_session is not None:
+        if artifact_source is not None:
+            raise _FigureOriginError(
+                "Historical and current source selections conflict.", invalid=True
+            )
+        worker, stem, script = origin_session.worker, origin_session.stem, origin_session.script
+    elif include_svg or existing_only:
         worker, stem = _engine_worker(
-            rel_id, existing_only=True, **_artifact_kwargs(artifact_source)
+            rel_id,
+            existing_only=True,
+            **_artifact_kwargs(artifact_source),
+            **({"source_path_required": False} if not source_path_required else {}),
         )
         if worker is None:
             return None
@@ -1774,9 +2193,15 @@ def _serialize_figure_with_worker(
         elif text_svg is not None:
             companion_args.update(_supported_export_kwargs(worker, svg_text_path=str(text_svg)))
     native_receipt = (
-        _execution_receipt(worker, script) if engine_enginesession.is_native(worker) else None
+        origin_session.receipt
+        if origin_session is not None
+        else (
+            _execution_receipt(worker, script) if engine_enginesession.is_native(worker) else None
+        )
     )
-    if artifact_source is None or include_svg or existing_only:
+    if origin_session is not None:
+        resp = origin_session.call("export", overrides, str(tmp), fmt, dpi, **companion_args)
+    elif artifact_source is None or include_svg or existing_only:
         resp = worker.export(stem, overrides, str(tmp), fmt, dpi, **companion_args)
     else:
         worker, stem, resp = _engine_attempt(
@@ -1936,6 +2361,7 @@ def _execution_source(
     rel_id = str(obj.get("id", ""))
     overrides = obj.get("overrides") or []
     reference = obj.get("figure_snapshot")
+    origin = _figure_origin_request(obj)
     if engine_exportroute.executes_from_snapshot(has_reference=reference is not None):
         saved = _load_svg_snapshot(rel_id, overrides, out_dir, reference=reference)
         if saved is None:
@@ -1956,9 +2382,16 @@ def _execution_source(
             **_artifact_kwargs(artifact_source),
             **({"include_svg": True, "snapshot_only": snapshot_only} if include_svg else {}),
             **({"svg_text": True} if include_svg and with_text_svg else {}),
+            **({"figure_origin": origin} if origin is not None else {}),
         )
     except engine_pool.WorkerError as exc:
-        if include_svg and getattr(exc, "code", None) == "svg_source_unavailable":
+        if origin is not None:
+            raise engine_exportreq.ExportRequestError(exc.code, str(exc), {"id": rel_id}) from exc
+        if (
+            origin is None
+            and include_svg
+            and getattr(exc, "code", None) == "svg_source_unavailable"
+        ):
             saved = _load_svg_snapshot(rel_id, overrides, out_dir)
             if saved is not None:
                 return saved
@@ -1968,7 +2401,7 @@ def _execution_source(
             f"{rel_id} 重渲染失败: {exc}",
             {"id": rel_id, "reason": str(exc)},
         ) from exc
-    if rendered is None and include_svg:
+    if rendered is None and include_svg and origin is None:
         saved = _load_svg_snapshot(rel_id, overrides, out_dir)
         if saved is not None:
             return saved
@@ -2022,7 +2455,11 @@ def _execution_source(
     )
     if companion is not None:
         try:
-            _save_svg_snapshot(frozen, execution_owner=_svg_worker_owner(worker, script))
+            _save_svg_snapshot(
+                frozen,
+                execution_owner=_svg_worker_owner(worker, script),
+                **_svg_input_archive_kwargs(getattr(rcpt, "captured_input_archive", None)),
+            )
         except (ValueError, OSError):
             LOG.info("Cannot persist export-grade SVG snapshot", exc_info=True)
     return frozen
@@ -2030,15 +2467,30 @@ def _execution_source(
 
 def _svg_storage_root(project_root) -> Path:
     """Export-grade project assets follow the existing project store convention."""
+    from .engine import svgstore
+
     root = Path(project_root).resolve()
     store = engine_config.project_store_dir(root)
-    target = store / "figure_snapshots"
+    target = store / svgstore.STORE_DIRNAME
     if store.is_symlink() or target.is_symlink() or not target.resolve().is_relative_to(root):
         raise ValueError("unsafe project Figure snapshot directory")
     return target
 
 
-def _save_svg_snapshot(frozen, *, static_sha256=None, project_root=None, execution_owner=None):
+def _svg_input_archive_kwargs(archive):
+    """Forward a private checked attachment without changing default call shapes."""
+    return {} if archive is None else {"captured_input_archive": archive}
+
+
+def _save_svg_snapshot(
+    frozen,
+    *,
+    static_sha256=None,
+    project_root=None,
+    execution_owner=None,
+    captured_input_archive=None,
+    activate: bool = False,
+):
     """Persist a full-quality, verified pair separately from preview caches."""
     from .engine import svgstore
     from .rendercore.sources import read_frozen
@@ -2059,6 +2511,9 @@ def _save_svg_snapshot(frozen, *, static_sha256=None, project_root=None, executi
         execution_owner=execution_owner,
         remap_fingerprint=engine_inputremap.fingerprint(root),
         storage_root=_svg_storage_root(root),
+        # 缺省调用形状逐字不变（看护：test_svg_input_capture_handoff 的精确 kwargs）
+        **({"activate": True} if activate else {}),
+        **_svg_input_archive_kwargs(captured_input_archive),
     )
 
 
@@ -2171,6 +2626,69 @@ def _svg_execution_result(worker):
     return {"figure_snapshot_invalidation": fact} if fact is not None else {}
 
 
+def _figure_execution_evidence(
+    worker, *, source_id, script, patches, resp, dispatch_worker, generation, native_epoch
+):
+    """本次响应所属执行的正面证据；任何一项不成立就返回 `None`。
+
+    只回答「哪个执行、按哪份**原序** P 画出了这次响应」。不替代完整来源校验，
+    也不把 ledger 里别的 receipt 借给这次响应：缺证据就是缺证据，调用方只省略字段。
+    """
+    if dispatch_worker is not worker:
+        return None
+    if not isinstance(resp, dict):
+        return None
+    execution_id = resp.get("execution_id")
+    if not engine_executionfact.valid_id(execution_id):
+        return None
+    if not isinstance(source_id, str) or not source_id:
+        return None
+    identity = _svg_worker_owner(worker, script)
+    ctx = _svg_worker_ctx(worker)
+    if identity is None or ctx is None:
+        return None
+    native = engine_enginesession.is_native(worker)
+    if native:
+        # 同一屏障代次：continue / 迟到 / 新 barrier 都不能借当前代次签旧响应。
+        if (
+            native_epoch is None
+            or worker.execution_id != execution_id
+            or worker.snapshot_epoch != native_epoch
+            or worker.state != engine_nativesession.BARRIER
+        ):
+            return None
+    elif (
+        generation is None
+        or worker.generation != generation
+        or getattr(worker, "last_build_execution_id", None) != execution_id
+        or getattr(worker, "execution_observation_unknown", False)
+    ):
+        return None
+    receipt = _execution_receipt(worker, script)
+    if not receipt.receipt_id or receipt.runtime_rejected:
+        return None
+    # safe/Workerd 的 instance 就是执行事实；native 是 `session_id:epoch`，两套身份
+    # 各按各的原口径比较，不混成一个 eid 公式。
+    expected_instance = f"{worker.session_id}:{native_epoch}" if native else execution_id
+    if receipt.instance != expected_instance:
+        return None
+    state = ctx.svg_executions.get(identity)
+    if (
+        state is None
+        or state["unknown"]
+        or state["worker"] is not worker
+        or state["execution_id"] != execution_id
+    ):
+        return None
+    return {
+        "version": 1,
+        "sourceId": source_id,
+        "receiptId": receipt.receipt_id,
+        "executionOwner": {"script": identity["script"], "run_config": identity["run_config"]},
+        "patchHash": engine_patchspec.patch_hash(patches),
+    }
+
+
 def _svg_expected_receipt(root, source_id):
     ctx = _request_ctx()
     # Persisted preview metadata can be stale after a failed new capture too.
@@ -2251,7 +2769,6 @@ def _svg_snapshot_matches_current(
 
 def _load_svg_snapshot(rel_id, overrides, out_dir, *, static_source=None, reference=None):
     from .engine import svgstore
-    from .rendercore import sources as rc_sources
 
     root = require_project()
     kwargs = dict(
@@ -2260,12 +2777,13 @@ def _load_svg_snapshot(rel_id, overrides, out_dir, *, static_source=None, refere
         storage_root=_svg_storage_root(root),
     )
     if reference is not None:
-        record = svgstore.load_snapshot(
+        record = svgstore.load_document_snapshot(
             root,
             reference,
             source_id=rel_id,
             patch_hash=engine_patchspec.patch_hash(overrides),
-            **kwargs,
+            remap_fingerprint=kwargs["remap_fingerprint"],
+            storage_root=kwargs["storage_root"],
         )
     else:
         record = svgstore.load(root, rel_id, engine_patchspec.patch_hash(overrides), **kwargs)
@@ -2280,6 +2798,13 @@ def _load_svg_snapshot(rel_id, overrides, out_dir, *, static_source=None, refere
         and not engine_runtimeasset.is_runtime_id(rel_id),
     ):
         return None
+    return _svg_snapshot_source(record, out_dir, static_source=static_source, reference=reference)
+
+
+def _svg_snapshot_source(record, out_dir, *, static_source=None, reference=None):
+    """Materialize an already validated pair without granting current eligibility."""
+    from .rendercore import sources as rc_sources
+
     target = Path(out_dir)
     target.mkdir(parents=True, exist_ok=True)
     prefix = "snapshot-" + uuid.uuid4().hex
@@ -2293,7 +2818,7 @@ def _load_svg_snapshot(rel_id, overrides, out_dir, *, static_source=None, refere
         )
 
     companion = rc_sources.FrozenSource(artifact(record["svg_artifact"]), svg, record["receipt"])
-    if static_source is not None:
+    if static_source is not None and reference is None:
         return rc_sources.FrozenSource(
             static_source.artifact,
             static_source.path,
@@ -2332,6 +2857,7 @@ def _capture_svg_snapshot_best_effort(worker, desc) -> None:
     if root is None:
         return
     rcpt = _execution_receipt(worker, str(desc.get("script", "")))
+    captured_input_archive = getattr(rcpt, "captured_input_archive", None)
     original = desc.get("original_artifact")
     identity = _svg_worker_owner(worker, str(desc.get("script", "")))
     ctx = _request_ctx()
@@ -2366,7 +2892,18 @@ def _capture_svg_snapshot_best_effort(worker, desc) -> None:
         remap_fingerprint=engine_inputremap.fingerprint(root),
         storage_root=_svg_storage_root(root),
     )
-    if saved is not None and saved["receipt"].get("receipt_id") == rcpt.receipt_id:
+    if (
+        saved is not None
+        and saved["receipt"].get("receipt_id") == rcpt.receipt_id
+        and (
+            captured_input_archive is None
+            or (
+                saved.get("captured_input_archive") is not None
+                and saved["captured_input_archive"].graph_bytes
+                == captured_input_archive.graph_bytes
+            )
+        )
+    ):
         return
     for sid in (source_id, original):
         if sid:
@@ -2419,7 +2956,12 @@ def _capture_svg_snapshot_best_effort(worker, desc) -> None:
                     ),
                 )
 
-            _save_svg_snapshot(freeze(source_id), project_root=root, execution_owner=identity)
+            _save_svg_snapshot(
+                freeze(source_id),
+                project_root=root,
+                execution_owner=identity,
+                **_svg_input_archive_kwargs(captured_input_archive),
+            )
             original = desc.get("original_artifact")
             if original and str(original).lower().endswith(".pdf"):
                 path = safe_resolve(original)
@@ -2430,6 +2972,7 @@ def _capture_svg_snapshot_best_effort(worker, desc) -> None:
                     static_sha256=context["bytes_sha256"],
                     project_root=root,
                     execution_owner=identity,
+                    **_svg_input_archive_kwargs(captured_input_archive),
                 )
             # #1185 的等价证人必须是**独立** savefig 出的 SVG（脚本自己存下的 `<stem>.svg` 也是这样来的）：
             # PDF/SVG 配对现在出自单次绘制（ADR 0150），文字坐标按 PDF 的度量排，与独立保存有亚点级差，
@@ -2451,14 +2994,23 @@ def _capture_svg_snapshot_best_effort(worker, desc) -> None:
                     == rcpt.receipt_id
                 ):
                     _normalize_worker_svg(witness)
-                    _bind_svg_asset(freeze, root, stem, witness, identity)
+                    _bind_svg_asset(
+                        freeze,
+                        root,
+                        stem,
+                        witness,
+                        identity,
+                        **_svg_input_archive_kwargs(captured_input_archive),
+                    )
         except Exception:
             # An unsupported SVG or a non-matching static artifact does not
             # invalidate a successful explicit script run. Export reports the gap.
             LOG.info("Export-grade SVG snapshot unavailable for captured Figure", exc_info=True)
 
 
-def _bind_svg_asset(freeze, root, stem, candidate_svg: Path, identity) -> None:
+def _bind_svg_asset(
+    freeze, root, stem, candidate_svg: Path, identity, *, captured_input_archive=None
+) -> None:
     """SVG 素材 `<stem>.svg` 与活 Figure 的字节绑定（#1185，PDF 路径 `static_sha256` 的同一机制）。
 
     只在**内容**证明「活 Figure 此刻的序列化就是这份文件」时才写：候选 SVG（刚由这张活 Figure 导出）与磁盘
@@ -2482,6 +3034,7 @@ def _bind_svg_asset(freeze, root, stem, candidate_svg: Path, identity) -> None:
         static_sha256=hashlib.sha256(raw).hexdigest(),
         project_root=root,
         execution_owner=identity,
+        **_svg_input_archive_kwargs(captured_input_archive),
     )
 
 
@@ -8728,8 +9281,21 @@ def api_engine_render():
     `inline_svg` 却没有 `svg`** 不是错误——`preview.mode == "raster"` 时
     worker 按硬闸决定不把那份 SVG 读进内存，manifest / warnings / timings /
     rev 一样不少。老 worker 不返回它时字段整个不出现。
+
+    可选 `include_figure_execution`（严格布尔）：请求在成功响应里附带**本次**执行的
+    正证 `figure_execution`。它只增加证据，不改渲染命令、冷 build、依赖重试与错误
+    语义；任何一项事实不成立时只省略该字段，绝不把原本成功的渲染改成 409。
     """
     body = request.get_json(force=True)
+    include_figure_execution = body.get("include_figure_execution", False)
+    if not isinstance(include_figure_execution, bool):
+        return jsonify(
+            {
+                "error": f"include_figure_execution 必须是布尔值: {include_figure_execution!r}",
+                "code": "invalid_include_figure_execution",
+                "params": {"value": repr(include_figure_execution)},
+            }
+        ), 400
     # 可选 `purpose`（闭集）：`foreground`（缺省 = 老前端）/ `neighbour`（跨图对齐的顺手补渲染，ADR 0159）。
     # neighbour 不刷新池的 LRU 时间；需要冷启动而池已满时不做（409 + `background_render_deferred`，前端保留旧画面）。
     purpose = body.get("purpose", engine_pool.PURPOSE_FOREGROUND)
@@ -8742,18 +9308,23 @@ def api_engine_render():
             }
         ), 400
     with engine_pool.acquire_purpose(purpose):
-        return _api_engine_render_body(body)
+        return _api_engine_render_body(body, include_figure_execution=include_figure_execution)
 
 
-def _api_engine_render_body(body):
+def _api_engine_render_body(body, *, include_figure_execution=False):
+    origin = _figure_origin_request(body)
     rel_id = body.get("id", "")
     try:
-        artifact_source = _artifact_source(
-            rel_id,
-            body.get("source_policy"),
-            body.get("expected_source"),
-            body.get("patches"),
-            body.get("confirmed_reconstruction_sha256"),
+        artifact_source = (
+            None
+            if origin is not None
+            else _artifact_source(
+                rel_id,
+                body.get("source_policy"),
+                body.get("expected_source"),
+                body.get("patches"),
+                body.get("confirmed_reconstruction_sha256"),
+            )
         )
     except engine_artifactcontext.ArtifactContextError as exc:
         # 原件在进渲染之前就核对不上（期望字节过期、读不了、已有编辑基线）：同样是这次渲染的终局
@@ -8794,12 +9365,27 @@ def _api_engine_render_body(body):
     try:
         # 前台取会话期间后台预热让路（不开新的；已在飞的在池锁上与这一路合并成同一条会话）
         with engine_prewarm.PREWARM.foreground():
-            worker, stem = _engine_worker(rel_id, **_artifact_kwargs(artifact_source))
+            # 渲染端点独有冷重放：活会话照常准入；冷进程沿 runtime 渲染同一授权链
+            # 重放归档输入并核验后采用新 receipt（PR03）。specfix/PNG/导出等其余
+            # origin 消费者维持严格准入，由采用后的活 receipt 自然恢复。
+            origin_session = (
+                _figure_origin_render_session(rel_id, origin, artifact_source=artifact_source)
+                if origin is not None
+                else None
+            )
+            if origin_session is not None:
+                worker, stem = origin_session.worker, origin_session.stem
+            else:
+                worker, stem = _engine_worker(rel_id, **_artifact_kwargs(artifact_source))
         # 取会话的时间不在 worker 的 timings/build 里，单独保留原有计时。
         get_ms = round((time.perf_counter() - t_get) * 1000, 3)
         # `worker_get_ms` 的分段（池 acquire 里量的；没经过池的原生会话为空）
         acquire_segments = engine_pool.acquire_timings(acquire_mark, worker)
-        info = current_registry().for_stem(stem) or {}
+        info = (
+            {"script": origin_session.script, "entry": origin_session.entry}
+            if origin_session is not None
+            else current_registry().for_stem(stem) or {}
+        )
         cold = not worker.built
     except Exception as exc:
         if isinstance(exc, engine_pool.WorkerError) and exc.code == engine_pool.BACKGROUND_DEFERRED:
@@ -8829,17 +9415,44 @@ def _api_engine_render_body(body):
                 getattr(wk, "python_generation", ""),
             )
 
-        worker, stem, resp = _engine_attempt(
-            rel_id,
-            worker,
-            stem,
-            lambda wk, st: wk.override(
-                st, body.get("patches", []), preview_dpi, inline_svg=inline_svg
-            ),
-            artifact_source=artifact_source,
-            progress_pj=pj,
-            observe_worker=observe_render_worker,
-        )
+        # 正证必须绑到**这一次实际分派**：依赖重试换了 worker 时，旧代次的事实
+        # 不能拿来签新响应。分派前冻结，响应后逐项复核。
+        dispatch_facts = {}
+
+        def freeze_dispatch(wk):
+            native = engine_enginesession.is_native(wk)
+            dispatch_facts.update(
+                worker=wk,
+                generation=getattr(wk, "generation", None),
+                native_epoch=getattr(wk, "snapshot_epoch", None) if native else None,
+            )
+            return {"include_figure_execution": True} if include_figure_execution and native else {}
+
+        if origin_session is not None:
+            resp = origin_session.call(
+                "override",
+                body.get("patches", []),
+                preview_dpi,
+                inline_svg=inline_svg,
+                **freeze_dispatch(origin_session.worker),
+            )
+        else:
+
+            def render_override(wk, st):
+                extra = freeze_dispatch(wk)
+                return wk.override(
+                    st, body.get("patches", []), preview_dpi, inline_svg=inline_svg, **extra
+                )
+
+            worker, stem, resp = _engine_attempt(
+                rel_id,
+                worker,
+                stem,
+                render_override,
+                artifact_source=artifact_source,
+                progress_pj=pj,
+                observe_worker=observe_render_worker,
+            )
     except engine_pool.WorkerError as exc:
         if exc.code == engine_pool.BACKGROUND_DEFERRED:
             # 被淘汰后的那次重取撞上「池已满」：这次补渲染作罢。render.started 已发过，补一个中性终局收掉「构建中」
@@ -8865,7 +9478,9 @@ def _api_engine_render_body(body):
         fact = exc.extra.get(
             "figure_snapshot_invalidation", evidence.get("figure_snapshot_invalidation")
         )
-        return jsonify(_worker_error_payload(exc, figure_snapshot_invalidation=fact)), 500
+        return jsonify(_worker_error_payload(exc, figure_snapshot_invalidation=fact)), getattr(
+            exc, "http_status", 500
+        )
     except engine_artifactcontext.ArtifactContextError as exc:
         _note_handoff_failure(stem, exc)
         sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
@@ -8911,7 +9526,8 @@ def _api_engine_render_body(body):
         registry_match=bool(info),
         manifest_elements=len((resp.get("manifest") or {}).get("elements") or []),
     )
-    _resync_registration(current_ctx(), worker)
+    if origin_session is None:
+        _resync_registration(current_ctx(), worker)
     if engine_runtimeasset.is_runtime_id(rel_id):
         # 重开文档时的首帧占位从这里来：刷新 materialized cache 的预览与
         # metadata（描述符取自本会话 build 响应，只复制文件、不二次执行）。
@@ -8923,6 +9539,7 @@ def _api_engine_render_body(body):
             run=getattr(worker, "run", None),
             # 这张 SVG 是按请求里的 patches 画的：按它的内容记一份变体（读端按状态取，不取「最近一次」）
             patches_by_stem={stem: body.get("patches", [])},
+            **({"origin_session": origin_session} if origin_session is not None else {}),
         )
     out = {
         "rev": worker.rev,
@@ -8931,6 +9548,25 @@ def _api_engine_render_body(body):
         "timings": timings,
         **_svg_execution_result(worker),
     }
+    if include_figure_execution:
+        evidence = _figure_execution_evidence(
+            worker,
+            source_id=rel_id,
+            script=origin_session.script if origin_session is not None else info.get("script", ""),
+            patches=body.get("patches", []),
+            resp=resp,
+            dispatch_worker=dispatch_facts.get("worker"),
+            generation=dispatch_facts.get("generation"),
+            native_epoch=dispatch_facts.get("native_epoch"),
+        )
+        # 缺正证只省略字段：普通成功不因证据不足改判。
+        if evidence is not None:
+            out["figure_execution"] = evidence
+    if origin_session is not None:
+        origin_session.check()
+        out["figure_origin"] = origin_session.origin
+        if origin_session.adopted:
+            out["figure_origin_adopted"] = True
     # build 成功、但沙盒里 glob 回空而脚本目录里有文件（图可能是空的，#1254）：同形的引导随成功响应走，
     # 出图结果与状态码不变；没有就不加这个字段
     hint = engine_pool.workdir_hint_of_build(worker)
@@ -8993,8 +9629,10 @@ def api_engine_specfix():
     的回滚干净与否只有作废这一条兜底——native 的完整保证另在叠栈 PR 里做（ADR 0080）。
     """
     body = request.get_json(force=True) or {}
-    _refuse_artifact_policy(body.get("source_policy"), body.get("expected_source"))
-    _refuse_adopted_source(body.get("id", ""))
+    origin = _figure_origin_request(body)
+    if origin is None:
+        _refuse_artifact_policy(body.get("source_policy"), body.get("expected_source"))
+        _refuse_adopted_source(body.get("id", ""))
     rel_id = body.get("id", "")
     base = body.get("patches")
     if not isinstance(base, list):
@@ -9025,11 +9663,20 @@ def api_engine_specfix():
     # 按钮，这里是后端自己的那道闸（界面之外的调用方、界面判据漏掉的那一刻）。**先按存下的
     # 档案判，再去解析会话**（Codex #549 r4106101158）：会话已结束的 native 图解析会抛
     # `native_session_offline`，前端就分不出「不支持」与「出错了」
-    if _specfix_profile(rel_id) == engine_enginesession.PROFILE_NATIVE:
+    origin_session = _admit_figure_origin(rel_id, origin) if origin is not None else None
+    if (
+        engine_enginesession.is_native(origin_session.worker)
+        if origin_session is not None
+        else _specfix_profile(rel_id) == engine_enginesession.PROFILE_NATIVE
+    ):
         return _specfix_native_unsupported()
     # 事务里**每一处**解析 worker 都只要 safe（入口这里 + 下面依赖重试里的那一处）
     try:
-        worker, stem = _engine_worker(rel_id, safe_only=True)
+        worker, stem = (
+            (origin_session.worker, origin_session.stem)
+            if origin_session is not None
+            else _engine_worker(rel_id, safe_only=True)
+        )
     except NativeWorkerRefused:
         return _specfix_native_unsupported()
     # `clean`：这次事务里的每一次渲染都没有 warning、没有抛——只有这样，事务结束时
@@ -9041,15 +9688,20 @@ def api_engine_specfix():
         # 事务要渲染好几次、要好几秒：这期间另一个 `tavotto run` 会话可能到了屏障、把这张图
         # 的描述符换成 native（Codex #549 r4106101147）。每次渲染之前再问一次，变了就中止——
         # 不再渲染、不提交，safe worker 作废，那张 live 图不碰
-        _require_route_unchanged(rel_id)
+        if origin_session is None:
+            _require_route_unchanged(rel_id)
         try:
-            wk, st, resp = _engine_attempt(
-                rel_id,
-                state["worker"],
-                state["stem"],
-                lambda w, s: w.override(s, patches, None),
-                safe_only=True,
-            )
+            if origin_session is not None:
+                wk, st = origin_session.worker, origin_session.stem
+                resp = origin_session.call("override", patches, None)
+            else:
+                wk, st, resp = _engine_attempt(
+                    rel_id,
+                    state["worker"],
+                    state["stem"],
+                    lambda w, s: w.override(s, patches, None),
+                    safe_only=True,
+                )
         except BaseException:
             state["clean"] = False
             raise
@@ -9061,7 +9713,10 @@ def api_engine_specfix():
     try:
         out = _specfix_transaction(render, base, scale, profile, only)
         # 提交之前最后问一次：最后一次渲染之后变的，同样不把列表交给前端去写
-        _require_route_unchanged(rel_id)
+        if origin_session is not None:
+            origin_session.check()
+        else:
+            _require_route_unchanged(rel_id)
     except (_SpecfixRouteChanged, NativeWorkerRefused):
         # 档案变了（渲染前 / 提交前的检查），或依赖重试重新解析拿到了 native 会话：
         # 中止、不提交，作废的是事务一直在用的那个 safe worker，native 那张图没碰过
@@ -9072,7 +9727,7 @@ def api_engine_specfix():
         LOG.error("按规范修图失败: %s: %s", stem, exc)
         # 渲染半路死了（含回滚那一次）：热态未知，作废，下一次请求重新起、按全量列表重放
         _retire_hot_worker(state["worker"])
-        return jsonify(_worker_error_payload(exc)), 500
+        return jsonify(_worker_error_payload(exc)), getattr(exc, "http_status", 500)
     except BaseException:
         # 事务本体自己出错时 worker 可能正停在候选上：同样不可信
         _retire_hot_worker(state["worker"])
@@ -9081,6 +9736,8 @@ def api_engine_specfix():
     # （`replay_required`；`apply()` 把还原失败的键留在账上，重放时也会重试）
     out["worker_retired"] = not state["clean"] and _retire_hot_worker(state["worker"])
     out["replay_required"] = not state["clean"]
+    if origin_session is not None:
+        out["figure_origin"] = origin_session.origin
     return jsonify(out)
 
 
@@ -9181,6 +9838,101 @@ def api_engine_invalidate():
     return jsonify({"invalidated": True})
 
 
+def _figure_preview_source(body, directory, *, png=False):
+    """Read one explicit archived pair; never resolve a worker or an original file."""
+    from .engine import svgstore
+
+    allowed = {"id", "patches", "figure_snapshot"}
+    if png:
+        allowed |= {"w", "with_manifest"}
+    if (
+        not isinstance(body, dict)
+        or not {"id", "patches", "figure_snapshot"} <= body.keys()
+        or not body.keys() <= allowed
+        or (png and body.get("with_manifest", False) is not False)
+    ):
+        raise engine_documents.DocumentError(
+            "invalid_preview_options", "归档预览不提供可编辑清单或重建来源", 400
+        )
+    rel_id, patches = body["id"], body["patches"]
+    if not isinstance(rel_id, str) or not rel_id or not isinstance(patches, list):
+        raise engine_documents.DocumentError(
+            "invalid_preview_options", "归档预览需要明确来源和有序编辑列表", 400
+        )
+    _canonical, dropped = engine_patchspec.canonicalize_with_diagnostics(patches)
+    if dropped:
+        raise engine_documents.DocumentError(
+            "invalid_preview_options", "归档预览的编辑列表含无效条目", 400
+        )
+    if not engine_runtimeasset.is_runtime_id(rel_id):
+        safe_resolve(rel_id, require_file=False)
+    try:
+        reference = svgstore.validate_reference(body["figure_snapshot"])
+        root = require_project()
+        record = svgstore.load_document_snapshot(
+            root,
+            reference,
+            source_id=rel_id,
+            patch_hash=engine_patchspec.patch_hash(patches),
+            remap_fingerprint=engine_inputremap.fingerprint(root),
+            storage_root=_svg_storage_root(root),
+        )
+        if record is None:
+            raise ValueError("Archived Figure pair is unavailable")
+        source = _svg_snapshot_source(record, directory)
+        facts = pdfbackend.probe_asset(source.path, "pdf", include_pages=True)
+        if facts["pages"] != 1:
+            raise ValueError("Archived Figure must be a single PDF page")
+        return source, reference, [facts["w_pt"] * MM_PER_PT, facts["h_pt"] * MM_PER_PT]
+    except (OSError, ValueError) as exc:
+        raise engine_documents.DocumentError(
+            "figure_snapshot_unavailable", "保存的 Figure 配对不可核验", 422
+        ) from exc
+
+
+@app.post("/api/documents/v4/figure-preview")
+def api_figure_snapshot_preview():
+    """Display exact archived artwork without claiming an editable manifest."""
+    body = request.get_json(force=True)
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="figure-preview-", dir=CACHE_DIR) as temporary:
+        source, reference, size_mm = _figure_preview_source(body, Path(temporary))
+        representation = source.svg_representation()
+        svg = representation.path.read_text(encoding="utf-8")
+    response = jsonify(
+        preview_source="figure_snapshot", figure_snapshot=reference, svg=svg, size_mm=size_mm
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def _figure_snapshot_png_preview(body):
+    try:
+        want_w = int(body.get("w", 800))
+    except (TypeError, ValueError):
+        return jsonify(
+            {
+                "error": f"w 必须是整数: {body.get('w')!r}",
+                "code": "invalid_width",
+                "params": {"value": repr(body.get("w"))},
+            }
+        ), 400
+    width = next((value for value in RENDER_BUCKETS if value >= want_w), RENDER_BUCKETS[-1])
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="figure-preview-", dir=CACHE_DIR) as temporary:
+        directory = Path(temporary)
+        source, reference, _size_mm = _figure_preview_source(body, directory, png=True)
+        path = directory / "preview.png"
+        pdfbackend.render_preview_png(source.path, width, path)
+        png_bytes = path.read_bytes()
+    response = Response(png_bytes, mimetype="image/png")
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Tavotto-Figure-Snapshot"] = json.dumps(
+        reference, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+    )
+    return response
+
+
 @app.post("/api/engine/preview_png")
 def api_engine_preview_png():
     """**按给定 patches** 出高清位图（bucket 宽度），不依赖热会话当前是哪个变体。
@@ -9196,6 +9948,11 @@ def api_engine_preview_png():
     冒号在 Windows 上不是合法文件名字符。
     """
     body = request.get_json(force=True)
+    origin = _figure_origin_request(body)
+    if origin is not None:
+        return _figure_origin_png_preview(body, origin)
+    if "figure_snapshot" in body:
+        return _figure_snapshot_png_preview(body)
     if body.get("source_policy") is not None and body.get("with_manifest") is not True:
         _refuse_artifact_policy(body.get("source_policy"), body.get("expected_source"))
     if body.get("source_policy") is None:
@@ -9265,6 +10022,42 @@ def api_engine_preview_png():
     return resp
 
 
+def _figure_origin_png_preview(body, origin):
+    patches = body.get("patches", [])
+    if not isinstance(patches, list):
+        return jsonify({"error": "patches 必须是数组", "code": "invalid_patches"}), 400
+    try:
+        width = int(body.get("w", 800))
+    except (TypeError, ValueError) as exc:
+        raise _FigureOriginError("Invalid PNG width.", invalid=True) from exc
+    width = next((b for b in RENDER_BUCKETS if b >= width), RENDER_BUCKETS[-1])
+    with_manifest = body.get("with_manifest", False)
+    if not isinstance(with_manifest, bool):
+        raise _FigureOriginError("Invalid PNG preview options.", invalid=True)
+    admitted = _admit_figure_origin(body["id"], origin)
+    if with_manifest:
+        snapshot = admitted.call("preview_png_snapshot", patches, width)
+        response = jsonify(
+            png=snapshot["png"], manifest=snapshot["manifest"], figure_origin=admitted.origin
+        )
+    else:
+        # The request owns this temporary name. Read its accepted bytes before
+        # releasing them to Flask, then remove only that one cache product.
+        tag = "origin" + uuid.uuid4().hex
+        path = admitted.call("preview_png", patches, width, tag=tag)
+        try:
+            pixels = Path(path).read_bytes()
+            admitted.check()
+        finally:
+            Path(path).unlink(missing_ok=True)
+        response = send_file(io.BytesIO(pixels), mimetype="image/png")
+        response.headers[f"X-{engine_brand.PRODUCT_NAME}-Figure-Origin"] = json.dumps(
+            admitted.origin, ensure_ascii=True, separators=(",", ":")
+        )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.get("/api/engine/png")
 def api_engine_png():
     """当前 override 状态下的高清位图（bucket 宽度）——含 imshow 的面板显示不糊。
@@ -9299,10 +10092,12 @@ def api_engine_update_source():
     仍是文档里的真相（工具内渲染始终走脚本 + overrides）。
     """
     body = request.get_json(force=True)
-    _refuse_artifact_policy(
-        body.get("source_policy"), body.get("expected_source"), reason="writeback_not_supported"
-    )
-    _refuse_adopted_source(body.get("id", ""), reason="writeback_not_supported")
+    origin = _figure_origin_request(body)
+    if origin is None:
+        _refuse_artifact_policy(
+            body.get("source_policy"), body.get("expected_source"), reason="writeback_not_supported"
+        )
+        _refuse_adopted_source(body.get("id", ""), reason="writeback_not_supported")
     if err := _write_back_forbidden():
         return err
     rel_id = body.get("id", "")
@@ -9335,15 +10130,20 @@ def api_engine_update_source():
             }
         ), 400
     # 打开的是 `panel.pdf` 而它是同脚本里另一张图（`panel-2`）写的：编辑、基线都归那张图，写回只写它自己的文件
-    stem, info = _disk_panel(src)
-    if info is None:
+    admitted = _admit_figure_origin(rel_id, origin) if origin is not None else None
+    stem, info = (admitted.stem, None) if admitted is not None else _disk_panel(src)
+    if info is None and admitted is None:
         return jsonify(
             {"error": "该面板不可参数化（没有对应脚本）", "code": "not_parameterizable"}
         ), 404
     if fmt_err := _write_back_format_error(src):
         # 起 worker 之前就拒（判据与 `_write_source_files` 里那道是同一个函数）
         return _write_back_error_response(fmt_err)
-    worker = _safe_worker(info["script"], info["entry"], stem)
+    worker = (
+        admitted.worker
+        if admitted is not None
+        else _safe_worker(info["script"], info["entry"], stem)
+    )
     try:
         result = _write_source_files(
             src,
@@ -9352,6 +10152,7 @@ def api_engine_update_source():
             annotations=annotations,
             expected_mtime=body.get("expected_mtime"),
             stem=stem,
+            **({"figure_origin_session": admitted} if admitted is not None else {}),
         )
     except (
         SourceChangedError,
@@ -9368,7 +10169,13 @@ def api_engine_update_source():
     # 新拖入的同名面板自动继承，双击进编辑态能接着改。
     # 带上 commit 后的文件身份——外部重写产物后基线要能被判失效
     append_baked(stem, patches, files=result["file_identity"])
-    return jsonify(_write_back_response(result, baked=bool(patches)))
+    return jsonify(
+        _write_back_response(
+            result,
+            baked=bool(patches),
+            **({"figure_origin": admitted.origin} if admitted is not None else {}),
+        )
+    )
 
 
 def _write_back_forbidden():
@@ -9983,6 +10790,8 @@ def _write_source_files(
     annotations: list | None = None,
     expected_mtime=None,
     stem: str | None = None,
+    *,
+    figure_origin_session=None,
 ) -> dict:
     """写回事务：prepare → verify → commit，任一环不过就保持原文件零改动。
 
@@ -10008,6 +10817,14 @@ def _write_source_files(
     """
     # `stem` 是被写回的那张图（`_disk_panel` 解出来的）；缺省 = 文件名 stem（老调用方 / 注册表不认得时）
     stem = stem or src.stem
+    if figure_origin_session is not None:
+        figure_origin_session.check()
+        if figure_origin_session.worker is not worker or figure_origin_session.stem != stem:
+            raise _FigureOriginError("The writeback Figure differs from its historical input.")
+        if engine_enginesession.is_native(worker):
+            raise _FigureOriginError(
+                "The native Figure requires native replay verification for writeback."
+            )
     if fmt_err := _write_back_format_error(src):
         # 唯一的扼流点：调用方忘了早检，也绝不「零个目标、报成功、记基线」
         raise fmt_err
@@ -10110,9 +10927,13 @@ def _write_source_files(
     )
     updated: list[str] = []
     done: list[Path] = []
-    published: dict[Path, tuple[int, int] | None] = {}  # 各目标发布的那一版的身份（暂存文件替换前）
+    published: dict[
+        Path, tuple[int, int, str] | None
+    ] = {}  # 各目标发布的那一版的身份（暂存文件替换前）
     try:
         with remap_guard:
+            if figure_origin_session is not None:
+                figure_origin_session.check()
             # 重放可能分钟级：备份之前先确认要被覆盖的仍是用户看到的那一版（零改动 409）
             try:
                 _check_write_back_sources(tmps, source_versions)
@@ -10135,7 +10956,7 @@ def _write_source_files(
                     rolled, failed, kept = _rollback(done, backup_dir, published)
                     if failed:
                         raise FileLockedError(
-                            exc.name, str(exc), failed + kept, rolled, failed, kept
+                            target.name, str(exc), failed + kept, rolled, failed, kept
                         ) from exc
                     exc.kept_external = kept
                     raise
@@ -10154,7 +10975,12 @@ def _write_source_files(
                 done.append(target)
                 published[target] = staged
                 updated.append(target.name)
-    except engine_inputremap.RemapChanged:
+    except (
+        engine_inputremap.RemapChanged,
+        _FigureOriginError,
+        SourceChangedError,
+        WriteBackPersistError,
+    ):
         _discard_updating(tmps)
         raise
     # 目录项落盘放在整个替换循环**之后**、且只尽力而为：此刻各 replace 都已
@@ -10427,23 +11253,73 @@ def api_engine_sync_overrides():
     + unmatched（目标图没有对应元素）。不落任何状态，由前端决定怎么用。
     """
     body = request.get_json(force=True)
-    _refuse_artifact_policy(body.get("source_policy"), body.get("expected_source"))
-    _refuse_adopted_source(body.get("from_id", ""), body.get("to_id", ""))
-    src_path = safe_resolve(body.get("from_id", ""))
-    dst_path = safe_resolve(body.get("to_id", ""))
+    selections = []
+    for key, source in (("source_figure_origin", "from_id"), ("target_figure_origin", "to_id")):
+        selections.append(
+            _figure_origin_request({**body, "id": body.get(source), "figure_origin": body[key]})
+            if key in body
+            else None
+        )
+    source_origin, target_origin = selections
     patches = body.get("patches", [])
-    stem_s, info_s = _disk_panel(src_path)
-    stem_d, info_d = _disk_panel(dst_path)
+    if not isinstance(patches, list):
+        return jsonify({"error": "patches 必须是列表", "code": "invalid_patches"}), 400
+    if source_origin is None and target_origin is None:
+        _refuse_artifact_policy(body.get("source_policy"), body.get("expected_source"))
+        _refuse_adopted_source(body.get("from_id", ""), body.get("to_id", ""))
+    admitted = []
+    for source, origin in (("from_id", source_origin), ("to_id", target_origin)):
+        if origin is not None:
+            selection = _admit_figure_origin(body[source], origin)
+            admitted.append(selection)
+        else:
+            _refuse_adopted_source(body.get(source, ""))
+            admitted.append(None)
+    src_path = safe_resolve(body.get("from_id", "")) if source_origin is None else None
+    dst_path = safe_resolve(body.get("to_id", "")) if target_origin is None else None
+    stem_s, info_s = (
+        (admitted[0].stem, {"script": admitted[0].script, "entry": admitted[0].entry})
+        if admitted[0] is not None
+        else _disk_panel(src_path)
+    )
+    stem_d, info_d = (
+        (admitted[1].stem, {"script": admitted[1].script, "entry": admitted[1].entry})
+        if admitted[1] is not None
+        else _disk_panel(dst_path)
+    )
     if info_s is None or info_d is None or info_s["script"] != info_d["script"]:
         return jsonify(
             {"error": "两张图不属于同一个脚本，无法同步", "code": "sync_different_scripts"}
         ), 400
-    worker = _safe_worker(info_s["script"], info_s["entry"], stem_s)
     try:
-        man_s = _manifest_of(worker, stem_s)
-        man_d = _manifest_of(worker, stem_d)
+        if admitted[0] is None and admitted[1] is None:
+            worker = _safe_worker(info_s["script"], info_s["entry"], stem_s)
+            man_s = _manifest_of(worker, stem_s)
+            man_d = _manifest_of(worker, stem_d)
+        else:
+            manifests = []
+            for selection, stem, info, edits in (
+                (admitted[0], stem_s, info_s, patches),
+                (
+                    admitted[1],
+                    stem_d,
+                    info_d,
+                    body.get("target_patches", target_origin["patches"] if target_origin else []),
+                ),
+            ):
+                if selection is not None:
+                    if not isinstance(edits, list):
+                        raise _FigureOriginError("Invalid target patches.", invalid=True)
+                    manifests.append(selection.call("preview_png_snapshot", edits, 200)["manifest"])
+                else:
+                    worker = _safe_worker(info["script"], info["entry"], stem)
+                    manifests.append(_manifest_of(worker, stem))
+            man_s, man_d = manifests
+            for selection in admitted:
+                if selection is not None:
+                    selection.check()
     except engine_pool.WorkerError as exc:
-        return jsonify(_worker_error_payload(exc)), 500
+        return jsonify(_worker_error_payload(exc)), getattr(exc, "http_status", 500)
 
     ax_s, ax_d = _axes_info(man_s), _axes_info(man_d)
     if len(ax_s) >= len(ax_d):  # 组 → 子：源 axes 区间 [o, o+K) → 目标 0..K
@@ -10486,7 +11362,15 @@ def api_engine_sync_overrides():
                 if was_clamped:
                     np_["clamped"] = True  # 越界钳回画布，提示用户可能需微调
         mapped.append(np_)
-    return jsonify({"mapped": mapped, "skipped": skipped, "unmatched": unmatched})
+    return jsonify(
+        {
+            "mapped": mapped,
+            "skipped": skipped,
+            "unmatched": unmatched,
+            **({"source_figure_origin": source_origin} if source_origin is not None else {}),
+            **({"target_figure_origin": target_origin} if target_origin is not None else {}),
+        }
+    )
 
 
 @app.get("/api/engine/history")
@@ -10503,6 +11387,24 @@ def api_engine_history():
                 for i, v in enumerate(versions)
             ]
         }
+    )
+
+
+@app.post("/api/engine/history")
+def api_engine_origin_history():
+    body = request.get_json(force=True)
+    origin = _figure_origin_request(body)
+    if origin is None:
+        raise _FigureOriginError("A historical Figure input is required.", invalid=True)
+    admitted = _admit_figure_origin(body["id"], origin)
+    versions = load_baked().get(admitted.stem, {}).get("versions") or []
+    admitted.check()
+    return jsonify(
+        versions=[
+            {"n": i, "ts": v.get("ts", ""), "count": len(v["patches"]), "patches": v["patches"]}
+            for i, v in enumerate(versions)
+        ],
+        figure_origin=origin,
     )
 
 
@@ -10532,10 +11434,12 @@ def api_engine_history_restore():
     """一键恢复到某个历史版本：重放该版本的 patches 重出文件，
     并把它追加为最新版本（历史不回卷、只前进）。n=-1 恢复脚本原始。"""
     body = request.get_json(force=True)
-    _refuse_artifact_policy(
-        body.get("source_policy"), body.get("expected_source"), reason="writeback_not_supported"
-    )
-    _refuse_adopted_source(body.get("id", ""), reason="writeback_not_supported")
+    origin = _figure_origin_request(body)
+    if origin is None:
+        _refuse_artifact_policy(
+            body.get("source_policy"), body.get("expected_source"), reason="writeback_not_supported"
+        )
+        _refuse_adopted_source(body.get("id", ""), reason="writeback_not_supported")
     if err := _write_back_forbidden():
         return err
     if engine_runtimeasset.is_runtime_id(str(body.get("id", ""))):
@@ -10552,13 +11456,23 @@ def api_engine_history_restore():
         # 历史版本可能来自这张图还是 PDF / PNG 的时候；现在它是 JPEG / TIFF，恢复同样一个字节
         # 都写不进去——起 worker 之前拒，与 update_source 同一个 code（Codex #561）
         return _write_back_error_response(fmt_err)
-    worker, stem = _engine_worker(body.get("id", ""))
+    admitted = _admit_figure_origin(body["id"], origin) if origin is not None else None
+    worker, stem = (
+        (admitted.worker, admitted.stem)
+        if admitted is not None
+        else _engine_worker(body.get("id", ""))
+    )
     n = int(body.get("n", -1))
     versions = load_baked().get(stem, {}).get("versions") or []
     patches = [] if n < 0 or n >= len(versions) else versions[n]["patches"]
     try:
         result = _write_source_files(
-            src, patches, worker, expected_mtime=body.get("expected_mtime"), stem=stem
+            src,
+            patches,
+            worker,
+            expected_mtime=body.get("expected_mtime"),
+            stem=stem,
+            **({"figure_origin_session": admitted} if admitted is not None else {}),
         )
     except (
         SourceChangedError,
@@ -10572,7 +11486,13 @@ def api_engine_history_restore():
     ) as exc:
         return _write_back_error_response(exc)
     append_baked(stem, patches, files=result["file_identity"])
-    return jsonify(_write_back_response(result, patches=patches))
+    return jsonify(
+        _write_back_response(
+            result,
+            patches=patches,
+            **({"figure_origin": admitted.origin} if admitted is not None else {}),
+        )
+    )
 
 
 @app.get("/api/engine/svg")
