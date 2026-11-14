@@ -1,3 +1,4 @@
+import { documentAddressKey, documentNamespaceKey, type DocumentFormat } from './documentFormat'
 /**
  * 「这份排版绑定了项目里的哪个文件」——⌘S 写回的目标（ADR 0096）。
  *
@@ -22,6 +23,8 @@
 const PREFIX = 'tavotto.projectFile.'
 
 export interface ProjectFileBinding {
+  /** 后端关联的单调代次；旧本机记录没有，不能据文件名相等绕过 ABA。 */
+  sequence?: number
   /** 绑定时开着的项目（`currentProjectId()`，项目路径的稳定 hash） */
   projectId: string
   /** 文件名去掉 `.json`（后端净化之后落盘的那个） */
@@ -44,6 +47,7 @@ function isBinding(v: unknown): v is ProjectFileBinding {
     typeof b.name === 'string' &&
     !!b.name &&
     typeof b.file === 'string' &&
+    (b.sequence === undefined || Number.isSafeInteger(b.sequence) && (b.sequence as number) > 0) &&
     (b.revision === null || typeof b.revision === 'string') &&
     (b.at === undefined || typeof b.at === 'number') &&
     typeof b.dirty === 'boolean'
@@ -58,10 +62,10 @@ function isBinding(v: unknown): v is ProjectFileBinding {
  */
 const inSession = new Map<string, ProjectFileBinding | null>()
 
-export function readProjectFile(documentId: string): ProjectFileBinding | null {
-  if (inSession.has(documentId)) return inSession.get(documentId) ?? null
+export function readProjectFile(documentId: string, format?: DocumentFormat): ProjectFileBinding | null {
+  if (inSession.has(documentAddressKey(documentId, format))) return inSession.get(documentAddressKey(documentId, format)) ?? null
   try {
-    const raw = localStorage.getItem(PREFIX + documentId)
+    const raw = localStorage.getItem(documentNamespaceKey(PREFIX + documentId, format))
     if (!raw) return null
     const v: unknown = JSON.parse(raw)
     return isBinding(v) ? v : null
@@ -76,13 +80,13 @@ export function readProjectFile(documentId: string): ProjectFileBinding | null {
  * 持久副本写失败（配额满，持久副本停在干净旧值）——两种都得放弃沿用（Codex #1734 P1）。
  * 本会话明确解绑过（缓存里是 null）= 解绑。返回 null = 不可沿用。
  */
-export function bindingForReuse(documentId: string, projectId: string, file: string): ProjectFileBinding | null {
-  if (inSession.has(documentId) && inSession.get(documentId) === null) return null
+export function bindingForReuse(documentId: string, projectId: string, file: string, format: DocumentFormat = 'legacy'): ProjectFileBinding | null {
+  if (inSession.has(documentAddressKey(documentId, format)) && inSession.get(documentAddressKey(documentId, format)) === null) return null
   const seen: ProjectFileBinding[] = []
-  const cached = inSession.get(documentId)
+  const cached = inSession.get(documentAddressKey(documentId, format))
   if (cached) seen.push(cached)
   try {
-    const raw = localStorage.getItem(PREFIX + documentId)
+    const raw = localStorage.getItem(documentNamespaceKey(PREFIX + documentId, format))
     if (raw) {
       const v: unknown = JSON.parse(raw)
       if (isBinding(v)) seen.push(v)
@@ -96,22 +100,22 @@ export function bindingForReuse(documentId: string, projectId: string, file: str
   return seen.reduce((x, y) => ((y.at ?? 0) > (x.at ?? 0) ? y : x))
 }
 
-export function writeProjectFile(documentId: string, binding: ProjectFileBinding): ProjectFileBinding {
+export function writeProjectFile(documentId: string, binding: ProjectFileBinding, format?: DocumentFormat): ProjectFileBinding {
   const stamped = { ...binding, at: Date.now() }
-  inSession.set(documentId, stamped)
+  inSession.set(documentAddressKey(documentId, format), stamped)
   try {
-    localStorage.setItem(PREFIX + documentId, JSON.stringify(stamped))
+    localStorage.setItem(documentNamespaceKey(PREFIX + documentId, format), JSON.stringify(stamped))
   } catch {
     /* 存不下只影响刷新之后 ⌘S 还认不认得这个文件（认不得就按第一次保存问一次名字） */
   }
   return stamped
 }
 
-export function forgetProjectFile(documentId: string): void {
+export function forgetProjectFile(documentId: string, format?: DocumentFormat): void {
   // 记成「已解绑」而不是删掉：删掉的话 removeItem 也失败时会读回那份旧的持久副本
-  inSession.set(documentId, null)
+  inSession.set(documentAddressKey(documentId, format), null)
   try {
-    localStorage.removeItem(PREFIX + documentId)
+    localStorage.removeItem(documentNamespaceKey(PREFIX + documentId, format))
   } catch {
     /* 同上 */
   }
@@ -130,20 +134,30 @@ export const forgetProjectFilesInSession = (): void => inSession.clear()
  * 调用方再逐个问「是不是在别的窗口开着」，开着的跳过（ADR 0096 的「打开两次是两个会话」不变）。
  * 另存为不受影响：它把当前排版改绑新文件，旧文件不再有绑定，副本不会继承别的文件的历史。
  */
-export function findDocumentsForProjectFile(projectId: string, file: string): string[] {
+export function findDocumentsForProjectFile(projectId: string, file: string, format: DocumentFormat = 'legacy'): string[] {
   const ids = new Set<string>()
+  const prefix = documentNamespaceKey(PREFIX, format)
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i)
-      if (k?.startsWith(PREFIX)) ids.add(k.slice(PREFIX.length))
+      if (k?.startsWith(prefix)) ids.add(k.slice(prefix.length))
     }
   } catch {
     /* 读不了持久副本就只看本会话 */
   }
-  for (const id of inSession.keys()) ids.add(id)
+  for (const key of inSession.keys()) {
+    if (format === 'legacy') {
+      if (!key.startsWith('[')) ids.add(key)
+    } else {
+      try {
+        const address: unknown = JSON.parse(key)
+        if (Array.isArray(address) && address.length === 2 && address[0] === format && typeof address[1] === 'string') ids.add(address[1])
+      } catch { /* legacy key */ }
+    }
+  }
   const hits: { id: string; at: number }[] = []
   for (const id of ids) {
-    const b = bindingForReuse(id, projectId, file)
+    const b = bindingForReuse(id, projectId, file, format)
     if (!b) continue
     hits.push({ id, at: b.at ?? 0 })
   }

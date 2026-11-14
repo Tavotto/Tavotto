@@ -1,3 +1,4 @@
+import { figureOriginFor } from './figureSnapshot'
 /**
  * 「原图规格」——**全产品唯一的一份**（ADR 0028）。
  *
@@ -35,7 +36,7 @@
 import type { PanelInfo, AssetOriginalSpec } from '@/lib/api'
 import type { PanelObject } from '@/types/document'
 import { isVectorFileKind, panelFullSize } from '@/types/document'
-import { useAssetStore } from '@/store/assetStore'
+import { originalSourceFacts, useAssetStore } from '@/store/assetStore'
 import { useRenderStore, renderKeyOf, exactPanelRender } from '@/store/renderStore'
 import { artifactValidationIssue, isAdoptedPanel, originalArtifactOverrides } from './artifactValidation'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
@@ -152,7 +153,8 @@ function pickSize(i: Required<SpecInputs>): Omit<OriginalOutputSpec, 'ignored'> 
 
   // ② 文档里那份（= 上一次同步到的图幅；源文件没了它也还在）
   if (panel && panel.nativeW > 0 && panel.nativeH > 0) {
-    const px = panel.pxW && panel.pxH ? ([panel.pxW, panel.pxH] as const) : null
+    const px = panel.pxW && panel.pxH ? ([panel.pxW, panel.pxH] as const)
+      : asset?.px_w && asset?.px_h ? ([asset.px_w, asset.px_h] as const) : null
     return {
       figureId,
       sourceKind: kind,
@@ -281,19 +283,21 @@ export function getOriginalOutputSpec(
   panel: PanelObject | null = findFigurePanel(figureId)?.panel ?? null,
 ): OriginalOutputSpec | null {
   const info: PanelInfo | undefined = useAssetStore.getState().byId[figureId]
+  const exactSource = originalSourceFacts(figureId)
   const runtime = isRuntime(figureId)
     ? (useRuntimeAssetStore.getState().assets ?? []).find((a) => a.id === figureId)
     : undefined
-  if (!panel && !info && !runtime) return null
+  if (!panel && !info && !runtime && !exactSource) return null
 
   const renders = useRenderStore.getState()
   // Guarded metadata must belong to this exact, still-valid variant. FRAME alone
   // still exports the original PNG, whose pixel grid and density remain authoritative.
-  const guarded = panel != null && isAdoptedPanel(panel)
+  const historical = panel != null && figureOriginFor(panel) !== undefined
+  const guarded = !historical && panel != null && isAdoptedPanel(panel)
   const originalPng = guarded && !artifactValidationIssue(panel) &&
     originalArtifactOverrides(panel).length === 0
   const render = panel && !originalPng
-    ? (guarded ? exactPanelRender(renders, panel) : renders.byKey[renderKeyOf(panel)])
+    ? (guarded || historical ? exactPanelRender(renders, panel) : renders.byKey[renderKeyOf(panel)])
     : null
   const renderSizeMm = render?.manifest?.size_mm ?? null
   // runtime 素材从来不在 `/api/panels` 里；它的图幅在清单里，描述符是兜底
@@ -303,8 +307,8 @@ export function getOriginalOutputSpec(
   return resolveOriginalSpec({
     figureId,
     panel,
-    renderSizeMm: renderSizeMm ?? runtimeSize,
-    asset: info?.original_spec ?? null,
-    assetPresent: info != null || runtime != null,
+    renderSizeMm: renderSizeMm ?? (historical ? null : runtimeSize),
+    asset: historical ? null : info?.original_spec ?? exactSource?.original_spec ?? null,
+    assetPresent: !historical && (info != null || exactSource != null || runtime != null),
   })
 }

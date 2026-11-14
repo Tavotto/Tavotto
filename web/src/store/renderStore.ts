@@ -1,3 +1,8 @@
+import { installMomentSources, TIMELINE_THUMB_PX, type PanelSource, type ThumbSources } from '@/lib/momentCapture'
+import { validComputedFrame, type ComputedRenderFrame } from '@/lib/chartFrame'
+import { chartRequestIdentity, chartSourceFields, type ChartRenderProfile } from '@/lib/chartSource'
+import { hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
+import { figureOriginFor, figureOriginIdentity, sameFigureOrigin, validFigureOrigin } from '@/lib/figureSnapshot'
 import { artifactKeySuffix, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, verifiedSource, policyOfGuard, retryArtifactEntry, subjectOf, type AdoptionGuard, isAdoptedPanel, adoptionGuardOf } from '@/lib/artifactValidation'
 import { useMemo } from 'react'
 import { perfRenderApplied, perfRenderBegin, perfRenderResponse } from '@/perf/core'
@@ -10,6 +15,10 @@ import {
   EngineError,
   engineErrorMsg,
   engineRender,
+  verifyFigureOriginRender,
+  enginePreviewPngSnapshot,
+  enginePreviewPng,
+  panelSrc,
   type DependencyPreparationOffer,
   type DependencyRepairOffer,
   type Manifest,
@@ -25,12 +34,13 @@ import { pngManifestOf, useMountedPngStore } from '@/store/mountedPngStore'
 import { currentProjectId } from '@/lib/session'
 import { noticeWorkdirHint, workdirHintOwner, type WorkdirHintNoticeDeps } from '@/lib/workdirHintNotice'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
-import { observeFigureExecution } from '@/lib/figureExecutionEvents'
+import { observeFigureExecution, observeFigureOriginAdoption } from '@/lib/figureExecutionEvents'
+import { recordFigureExecutionProof } from '@/lib/figureExecutionProof'
 import { resolvePreview, VECTOR_PREVIEW, type PreviewMetadata } from '@/lib/previewBudget'
 import { useAssetStore } from '@/store/assetStore'
 import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
-import type { PanelObject } from '@/types/document'
+import type { ChartSourceRef, FigureDocument, FigureOrigin, PanelChartState, PanelObject } from '@/types/document'
 import { fileHash, recordDiagnosticEvent, variantHash } from '@/diagnostics'
 import { notifyReconstructionReview } from '@/store/sourceBackedReview'
 import { classifyArtifactFailure } from '@/lib/artifactReason'
@@ -46,11 +56,26 @@ export interface BuildingInfo {
 }
 
 export interface PanelRender {
+  figureOrigin?: FigureOrigin
+  /** 真正产生这份 SVG/manifest 的请求项目；旧宿主种子缺省时只在当前项目内使用。 */
+  projectId?: string | null
+  /** 只有显式 chart 请求才出现；用于拒绝同文件另一张计算图表的显示退路。 */
+  chartRequest?: string
+  /** 后端同一次 SVG/manifest draw 的完整计算图表渲染身份。 */
+  chartRevision?: string
   /** 这份渲染态属于哪个素材文件（文件级操作靠它反查，见 markStale / reset） */
   fileId: string
   artifactValidation?: AdoptionGuard
   rev: number
   manifest: Manifest | null
+  /**
+   * native-manifest/2 计算框：这次实际 SVG draw 的外框声明（闭式形状判据的唯一
+   * 出处是引擎 `engine/chartframe.py`，前端消费方 `lib/chartFrame.ts`）。从响应
+   * 顶层 `render_frame`（稳定出口）或 `manifest.render_frame` 读，经
+   * `validComputedFrame` 收下；/1、老后端、畸形声明都没有它（undefined）。
+   * 采用进文档的唯一入口是 `actions.adoptComputedFrame`。
+   */
+  renderFrame?: ComputedRenderFrame
   /** 已处理好的 SVG 文本（去掉 width/height，铺满容器） */
   svg: string | null
   /**
@@ -198,17 +223,35 @@ const EMPTY: PanelRender = {
  * 赢家的图。现在各存各的，worker 里那份 live figure 轮流全量重放即可
  * （patch_apply≈0ms、热画 17–28ms，见 docs/perf-baseline.md）。
  *
- * 分隔符用空格是安全的：变体串是 `JSON.stringify(数组)`，必然以 `[` 开头，
+ * 分隔符用空格是安全的：变体串是 JSON 数组或显式 chart 请求对象，以 `[` / `{` 开头，
  * 拼出来的键不可能与另一个「文件名里带空格」的组合撞上。
  */
-export function renderKey(fileId: string, patches: unknown[], guard?: unknown): string {
-  return `${fileId} ${JSON.stringify(patches)}${artifactKeySuffix(guard)}`
+export function renderRequestIdentity(patches: unknown[], chart?: PanelChartState, chartSource?: ChartSourceRef, origin?: FigureOrigin, renderProfile?: ChartRenderProfile): string {
+  if (origin !== undefined) return JSON.stringify({ patches, chart, chart_source: chartSource, figure_origin: JSON.parse(figureOriginIdentity(origin)) })
+  if (chartSource !== undefined) return JSON.stringify({ patches, chart, chart_source: chartSource, ...(renderProfile !== undefined ? { render_profile: renderProfile } : {}) })
+  return chart ? JSON.stringify({ patches, chart, ...(renderProfile !== undefined ? { render_profile: renderProfile } : {}) }) : JSON.stringify(patches)
+}
+
+export function renderKey(fileId: string, patches: unknown[], guard?: unknown, chart?: PanelChartState, chartSource?: ChartSourceRef, origin?: FigureOrigin, renderProfile?: ChartRenderProfile): string {
+  return `${fileId} ${renderRequestIdentity(patches, chart, chartSource, origin, renderProfile)}${artifactKeySuffix(guard)}`
 }
 
 /** 面板 → 它自己那份渲染态的键（唯一出处，消费方一律用它取状态） */
 export function renderKeyOf(panel: PanelObject): string {
-  return renderKey(panel.fileId, panel.overrides, adoptionGuardOf(panel))
+  const origin = figureOriginFor(panel)
+  return renderKey(panel.fileId, panel.overrides, origin === undefined ? adoptionGuardOf(panel) : undefined, panel.chart, panel.chartSource, origin, panel.chartFrame?.renderProfile)
 }
+
+/** Display history is confined to one historical input; ordinary Python keeps its original index. */
+export function renderSourceKey(panel: PanelObject): string {
+  return sourceKey(panel.fileId, figureOriginFor(panel))
+}
+
+function sourceKey(fileId: string, origin?: FigureOrigin): string {
+  return origin === undefined ? fileId : JSON.stringify([fileId, figureOriginIdentity(origin)])
+}
+
+function renderSourceOf(render: PanelRender): string { return sourceKey(render.fileId, render.figureOrigin) }
 
 /**
  * matplotlib 的 SVG 自带 pt 单位的 width/height，去掉后配合
@@ -338,6 +381,11 @@ interface RenderState {
     artifactValidation?: AdoptionGuard | null,
     /** 缺省 foreground；`neighbour` 见 `lib/renderPurpose`（调度只住 `renderScheduler`，别处不要传）。 */
     purpose?: RenderPurpose,
+    chart?: PanelChartState,
+    chartSource?: ChartSourceRef,
+    figureOrigin?: FigureOrigin,
+    /** 计算图表的坐标合同（`panel.chartFrame?.renderProfile`）；/1 面板不传。 */
+    renderProfile?: ChartRenderProfile,
   ) => Promise<void>
   /** 脚本变更：转入引擎跟踪并清掉该文件**全部变体**的 lastPatches */
   markStale: (fileIds: string[]) => void
@@ -500,7 +548,7 @@ function pinned(
 ): boolean {
   return (
     liveKeys.has(key) ||
-    latest[v.fileId] === key ||
+    latest[renderSourceOf(v)] === key ||
     v.status === 'rendering' ||
     inflight.get(key)?.busy === true
   )
@@ -518,7 +566,7 @@ function pinned(
  * 不是 `recent` 的下标，是因为全局预算要跨文件排序，而下标在文件之间不可比。
  */
 function evictionRank(key: string, v: PanelRender, recent: Record<string, string[]>): number {
-  return recent[v.fileId]?.includes(key) ? 1 : 0
+  return recent[renderSourceOf(v)]?.includes(key) ? 1 : 0
 }
 
 /** 可驱逐的条目，按「先丢谁」排好序 */
@@ -677,11 +725,20 @@ export const useRenderStore = create<RenderState>((set, get) => ({
       } } }
     }),
 
-  render: async (fileId, patches, previewDpi, policy, epoch, artifactValidation, purpose = 'foreground') => {
+  render: async (fileId, patches, previewDpi, policy, epoch, artifactValidation, purpose = 'foreground', chart, chartSource, figureOrigin, renderProfile) => {
     // 排渲染时的项目已经不是当前项目：连请求都不发（发出去 pj 是新项目的，
     // 渲染的却是旧项目的 fileId 与 patches）
     if (epoch !== undefined && epoch !== projectEpoch) return
-    const key = renderKey(fileId, patches, artifactValidation)
+    // 完整 JSON 请求身份在入队时冻结；调用方后续换模型不能改写在途请求。
+    if (chart || chartSource !== undefined || figureOrigin !== undefined) {
+      const snapshot = JSON.parse(renderRequestIdentity(patches, chart, chartSource, figureOrigin, renderProfile)) as { patches: unknown[]; chart?: PanelChartState; chart_source?: ChartSourceRef; figure_origin?: FigureOrigin }
+      patches = snapshot.patches
+      chart = snapshot.chart
+      chartSource = snapshot.chart_source
+      figureOrigin = snapshot.figure_origin
+    }
+    const key = renderKey(fileId, patches, artifactValidation, chart, chartSource, figureOrigin, renderProfile)
+    const family = sourceKey(fileId, figureOrigin)
     // 序号在**请求进来的那一刻**取，不是发出的那一刻：忙时排队的那次要带着
     // 自己的序号走完全程，否则一个早就该被覆盖的旧变体会因为「重试发得晚」
     // 而显得最新，把 latest 拽回去（撤销之后画面弹回对齐后的样子）。
@@ -715,7 +772,9 @@ export const useRenderStore = create<RenderState>((set, get) => ({
       for (;;) {
         patch(key, {
           fileId,
+          ...(figureOrigin !== undefined ? { figureOrigin } : {}),
           artifactValidation: artifactValidation ?? undefined,
+          ...(chart ? { chartRequest: chartRequestIdentity(chart, chartSource, renderProfile) } : {}),
           status: 'rendering',
           error: null,
           traceback: '',
@@ -743,20 +802,43 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           // 否则还是原来那条 HTTP。两侧最终落到同一个 worker.override，
           // 这里以下的逻辑一行都不分叉
           const source = artifactValidation === undefined ? {} : artifactRequestFields(subjectOf(fileId, current as PanelObject['overrides'], artifactValidation))
-          const opts = { signal: ctrl.signal, previewDpi: dpi, ...(currentPurpose === 'neighbour' ? { purpose: currentPurpose } : {}), ...source }
+          // 只有「当前来源的普通渲染」才要正证：历史来源自己就是身份，声明式图表没有用户代码执行。
+          const wantProof = figureOrigin === undefined && chart === undefined && chartSource === undefined && artifactValidation === undefined
+          const opts = { signal: ctrl.signal, previewDpi: dpi, ...(currentPurpose === 'neighbour' ? { purpose: currentPurpose } : {}), ...source, ...(chart ? { chart } : {}), ...chartSourceFields(chartSource), ...(figureOrigin !== undefined ? { figure_origin: figureOrigin } : {}), ...(chart && renderProfile !== undefined ? { render_profile: renderProfile } : {}), ...(wantProof ? { includeFigureExecution: true } : {}) }
           const transport = engineTransport()
+          if (figureOrigin !== undefined && !validFigureOrigin(figureOrigin, fileId)) throw new EngineError('Invalid historical Figure input.', '', 'svg_source_unavailable')
+          if (figureOrigin !== undefined && (chart !== undefined || chartSource !== undefined || artifactValidation != null)) throw new EngineError('Historical Figure inputs cannot be combined with a current source selection.', '', 'svg_source_unavailable')
+          if (figureOrigin !== undefined && transport && !transport.supportsFigureOriginRender) throw new EngineError('This host does not support historical Figure inputs.', '', 'svg_source_unavailable')
           if (artifactValidation && transport) throw new ArtifactValidationError('unsupported_render_state')
+          if (transport && ((chart && !transport.supportsChartRender) || (chartSource !== undefined && !transport.supportsChartSourceRender))) {
+            throw new EngineError('This host does not support computational chart rendering.', '', 'chart_render_unsupported')
+          }
           // 性能探针（ADR 0075）：松手 → 图落定那段时间的第一个时刻
           perfHandle = perfRenderBegin(key, current.length)
           const res = transport
             ? await transport.render(fileId, current, opts)
             : await engineRender(fileId, current, opts)
+          const sentOrigin = figureOrigin
+          const adoptedOrigin = sentOrigin !== undefined ? verifyFigureOriginRender(sentOrigin, res) : undefined
+          if (chart && (typeof res.chart_revision !== 'string' || !res.chart_revision || !res.manifest ||
+            (res.preview?.mode !== 'raster' && !res.svg))) {
+            throw new EngineError('The chart response has no paired SVG and geometry.', '', 'chart_render_pair_missing')
+          }
           if (artifactValidation) verifiedSource(res.artifact_source, fileId, policyOfGuard(artifactValidation), artifactValidation)
           perfRenderResponse(perfHandle, true, res.timings, res.svg?.length)
           // 在途期间换过项目：这份图属于旧项目，一个字都不落进当前项目（STATE-06）。
           // 性能探针照记「回包到了」，`applied` 留空——它确实没上屏
           if (epochAtStart !== projectEpoch || ctrl.signal.aborted) return
           if (executionOwner.still()) observeFigureExecution(res.figure_snapshot_invalidation, projectAtStart)
+          if (adoptedOrigin !== undefined && sentOrigin !== undefined && executionOwner.still()) {
+            // The cold replay adopted the replayed receipt: re-point the
+            // persisted input through the document coordinator's transaction.
+            observeFigureOriginAdoption(sentOrigin, adoptedOrigin, projectAtStart)
+          }
+          // 正证只对「这次请求的这份 P」有效；它是首次编辑冻结基准 P 的唯一凭据。
+          if (wantProof && executionOwner.still()) {
+            recordFigureExecutionProof(res.figure_execution, { pj: projectAtStart, fileId, overrides: current })
+          }
           if (res.environment_switched) {
             // 内置环境缺包，Tavotto 自己找到并换用了项目的 .venv（ADR 0018）。
             // 一条轻量 toast 就够——**不弹阻断式对话框**：用户点的是「渲染」，
@@ -767,11 +849,21 @@ export const useRenderStore = create<RenderState>((set, get) => ({
                   { path: res.environment_switched.python }, 'errors'), 'info')
             void useEnvStore.getState().refresh()
           }
+          // /2 计算框（N5 第 3 步）：manifest 内嵌出口优先、响应顶层稳定出口兜底，
+          // 经闭式形状判据收下；/1、老后端、畸形声明都没有它——显式写 undefined，
+          // 不让同键条目上上一版的声明跨变体残留（patch 是浅合并）。
+          const embeddedFrame = (res.manifest as { render_frame?: unknown } | null)?.render_frame
+          const frameRaw = embeddedFrame ?? (res as { render_frame?: unknown }).render_frame
+          const renderFrame = validComputedFrame(frameRaw) ? (frameRaw as ComputedRenderFrame) : undefined
           const next: Partial<PanelRender> = {
             fileId,
+            ...(figureOrigin !== undefined ? { figureOrigin } : {}),
+            projectId: projectAtStart,
             artifactValidation: artifactValidation ?? undefined,
+            ...(chart ? { chartRequest: chartRequestIdentity(chart, chartSource, renderProfile), chartRevision: res.chart_revision } : {}),
             rev: res.rev,
             manifest: res.manifest,
+            renderFrame,
             status: 'ready',
             error: null,
             projectEnv: null,
@@ -784,7 +876,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             warnings: res.warnings ?? [],
             timings: res.timings ?? {},
             stale: false,
-            lastPatches: JSON.stringify(current),
+            lastPatches: renderRequestIdentity(current, chart, chartSource, figureOrigin, renderProfile),
             deferredPatches: null,
             previewDpi: dpi ?? null,
           }
@@ -824,16 +916,16 @@ export const useRenderStore = create<RenderState>((set, get) => ({
                 ...(suffix && next.manifest ? { adoptedManifest: { ...s.adoptedManifest, [`${fileId}${suffix}`]: next.manifest } } : {}),
               }
             }
-            const fresher = seq >= (s.latestSeq[fileId] ?? 0)
+            const fresher = seq >= (s.latestSeq[family] ?? 0)
             const recent = [
               key,
-              ...(s.recent[fileId] ?? []).filter((k) => k !== key),
+              ...(s.recent[family] ?? []).filter((k) => k !== key),
             ].slice(0, RECENT_VARIANTS)
             return {
               byKey: { ...s.byKey, [key]: { ...(s.byKey[key] ?? EMPTY), ...next } },
-              latest: fresher ? { ...s.latest, [fileId]: key } : s.latest,
-              latestSeq: fresher ? { ...s.latestSeq, [fileId]: seq } : s.latestSeq,
-              recent: { ...s.recent, [fileId]: recent },
+              latest: fresher ? { ...s.latest, [family]: key } : s.latest,
+              latestSeq: fresher ? { ...s.latestSeq, [family]: seq } : s.latestSeq,
+              recent: { ...s.recent, [family]: recent },
               // 按响应到达的顺序记：会话对一张图串行执行，最后回来的就是它此刻的账
               inconsistent: { ...s.inconsistent, [fileId]: (res.unrestored ?? 0) > 0 },
             }
@@ -903,7 +995,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
               error: null,
               code: '',
               wantPatches: null,
-              deferredPatches: JSON.stringify(current),
+              deferredPatches: renderRequestIdentity(current, chart, chartSource, figureOrigin, renderProfile),
             })
             return
           }
@@ -940,6 +1032,9 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           patch(key, {
             fileId,
             status: 'error',
+            // 计算图的来源/配对可能已失效；终态失败后旧图只能显示。
+            // 保留 lastPatches，避免同步器把这次失败当作尚未请求而自动重试。
+            ...(chart || figureOrigin !== undefined ? { stale: true } : {}),
             ...(artifactValidation ? { stale: true, manifest: null, svg: null, svgBytes: 0, svgSeq: 0 } : {}),
             code: err instanceof EngineError || err instanceof ArtifactValidationError ? err.code : '',
             module: err instanceof EngineError ? err.module : '',
@@ -1031,6 +1126,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
         let touched = 0
         for (const [k, v] of Object.entries(byKey)) {
           if (v.fileId !== id) continue
+          delete recent[renderSourceOf(v)]
           byKey[k] = { ...v, stale: true, lastPatches: null, wantPatches: null, deferredPatches: null,
             ...(v.artifactValidation ? { manifest: null, svg: null, svgBytes: 0, svgSeq: 0 } : {}) }
           touched++
@@ -1056,6 +1152,12 @@ export const useRenderStore = create<RenderState>((set, get) => ({
       const latest = { ...s.latest }
       const latestSeq = { ...s.latestSeq }
       const recent = { ...s.recent }
+      for (const render of Object.values(s.byKey)) if (render.fileId === fileId) {
+        const family = renderSourceOf(render)
+        delete latest[family]
+        delete latestSeq[family]
+        delete recent[family]
+      }
       delete tracked[fileId]
       delete latest[fileId]
       delete latestSeq[fileId]
@@ -1074,9 +1176,9 @@ export const useRenderStore = create<RenderState>((set, get) => ({
     const s = get()
     const keep = (key: string, v: PanelRender) =>
       live.has(key) ||
-      s.latest[v.fileId] === key ||
+      s.latest[renderSourceOf(v)] === key ||
       // 撤销的落点：最近几档精确变体留着，回退时当场换回精确图与 manifest
-      s.recent[v.fileId]?.includes(key) === true ||
+      s.recent[renderSourceOf(v)]?.includes(key) === true ||
       v.status === 'rendering' ||
       inflight.get(key)?.busy === true
     const drop = Object.entries(s.byKey).filter(([k, v]) => !keep(k, v))
@@ -1224,12 +1326,18 @@ export function panelRender(
   panel: PanelObject,
 ): PanelRender | undefined {
   const own = state.byKey[renderKeyOf(panel)]
-  const issue = artifactValidationIssue(panel)
+  const issue = figureOriginFor(panel) === undefined ? artifactValidationIssue(panel) : null
   if (issue) return invalidArtifactRender(issue, own)
-  if (isAdoptedPanel(panel)) return own
+  if (figureOriginFor(panel) === undefined && isAdoptedPanel(panel)) return own
   if (own?.manifest) return own
-  const prev = state.byKey[state.latest[panel.fileId] ?? '']
+  const latest = state.byKey[state.latest[renderSourceKey(panel)] ?? '']
+  const prev = compatibleChartRender(latest, panel) ? latest : undefined
   return mergeRender(own, prev)
+}
+
+function compatibleChartRender(render: Pick<PanelRender, 'chartRequest' | 'figureOrigin'> | undefined, panel: PanelObject): boolean {
+  return render?.chartRequest === chartRequestIdentity(panel.chart, panel.chartSource, panel.chartFrame?.renderProfile) &&
+    sameFigureOrigin(render?.figureOrigin, figureOriginFor(panel))
 }
 
 function mergeRender(
@@ -1242,7 +1350,11 @@ function mergeRender(
   return {
     ...own,
     manifest: own.manifest ?? prev.manifest,
+    ...(prev.chartRequest && !own.manifest ? {
+      chartRequest: prev.chartRequest, chartRevision: prev.chartRevision, stale: own.stale || prev.stale,
+    } : {}),
     svg,
+    projectId: own.svg ? own.projectId : prev.projectId,
     rev: own.rev || prev.rev,
     // **表示法跟着 SVG 走**：退回来的是上一版那张图，那么「该怎么显示它」
     // 也得是上一版的答案。拿自己那份（还没画出来 = 默认 vector）去解读别人
@@ -1262,8 +1374,8 @@ function mergeRender(
  *
  * **刻意不要求 `status === 'ready'`**：同一个键重发一次（松手补定稿 dpi）
  * 会把状态打回 'rendering'，而键相同 = overrides 相同 = 几何不变，那份 manifest
- * 依旧对得上；渲染失败时同理，条目里留着的是**这一版**最后一次成功的结果。
- * 真正会让几何失效的是「换了变体」和「脚本变了」，上面两条已经盖住。
+ * 依旧对得上；普通 Python 渲染失败时同理，条目里留着的是**这一版**最后一次成功的结果。
+ * 计算图的终态失败另置 stale：来源或配对已无法确认，成功重试后才恢复几何资格。
  */
 export function exactPanelRender(
   state: Pick<RenderState, 'byKey'>,
@@ -1273,8 +1385,10 @@ export function exactPanelRender(
 }
 
 function exactOf(own: PanelRender | undefined, panel: PanelObject): PanelRender | null {
-  if (artifactValidationIssue(panel) || !own?.manifest || own.stale) return null
-  if (own.lastPatches !== JSON.stringify(panel.overrides)) return null
+  if ((figureOriginFor(panel) === undefined && artifactValidationIssue(panel)) || !own?.manifest || own.stale) return null
+  if (own.lastPatches !== renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource, figureOriginFor(panel), panel.chartFrame?.renderProfile)) return null
+  if (!sameFigureOrigin(own.figureOrigin, figureOriginFor(panel))) return null
+  if (panel.chart && (!own.chartRevision || !compatibleChartRender(own, panel))) return null
   return own
 }
 
@@ -1300,13 +1414,14 @@ export function exactPanelManifest(
  * （`display-fallback-vs-geometry-authority.md`）。拿不到（还没渲染过）= `null`，调用方退化为不处理。
  */
 export function structuralPanelManifest(
-  state: Pick<RenderState, 'byKey' | 'latest'>,
+  state: { byKey: Record<string, Partial<Pick<PanelRender, 'manifest' | 'chartRequest' | 'figureOrigin'>> | undefined>; latest: Record<string, string> },
   panel: PanelObject,
 ): Manifest | null {
   const own = state.byKey[renderKeyOf(panel)]?.manifest
   if (own) return own
-  const key = state.latest[panel.fileId]
-  return (key && state.byKey[key]?.manifest) || null
+  const key = state.latest[renderSourceKey(panel)]
+  const prev = key ? state.byKey[key] : undefined
+  return (compatibleChartRender(prev, panel) && prev?.manifest) || null
 }
 
 /**
@@ -1419,10 +1534,10 @@ export function panelDisplayView(
       render: exact,
     }
   }
-  if (isAdoptedPanel(panel)) return { kind: 'empty', currentKey, sourceKey: null, svg: null, render: own }
-  const sourceKey = own?.svg ? currentKey : (state.latest[panel.fileId] ?? '')
+  if (figureOriginFor(panel) === undefined && isAdoptedPanel(panel)) return { kind: 'empty', currentKey, sourceKey: null, svg: null, render: own }
+  const sourceKey = own?.svg ? currentKey : (state.latest[renderSourceKey(panel)] ?? '')
   const prev = state.byKey[sourceKey]
-  if (prev?.svg) {
+  if (prev?.svg && compatibleChartRender(prev, panel)) {
     return { kind: 'fallback', currentKey, sourceKey, svg: prev.svg, render: own ?? prev }
   }
   return { kind: 'empty', currentKey, sourceKey: null, svg: null, render: own }
@@ -1448,9 +1563,10 @@ export function activeRenderKey(
 export function usePanelRender(panel: PanelObject | null | undefined): PanelRender | undefined {
   const own = useRenderStore((s) => (panel ? s.byKey[renderKeyOf(panel)] : undefined))
   const prev = useRenderStore((s) =>
-    panel && !isAdoptedPanel(panel) ? s.byKey[s.latest[panel.fileId] ?? ''] : undefined,
+    panel && (figureOriginFor(panel) !== undefined || !isAdoptedPanel(panel)) && compatibleChartRender(s.byKey[s.latest[renderSourceKey(panel)] ?? ''], panel)
+      ? s.byKey[s.latest[renderSourceKey(panel)] ?? ''] : undefined,
   )
-  const issue = panel ? artifactValidationIssue(panel) : null
+  const issue = panel && figureOriginFor(panel) === undefined ? artifactValidationIssue(panel) : null
   return useMemo(() => issue ? invalidArtifactRender(issue, own) : (own?.manifest ? own : mergeRender(own, prev)), [own, prev, issue])
 }
 
@@ -1529,3 +1645,109 @@ export function useExactPanelManifest(panel: PanelObject | null | undefined): Ma
     renderKeyOf(panel), render.rev, render.manifest, png,
   )
 }
+
+/** 预览只消费实际响应所属项目的 SVG；嵌入宿主旧种子只在当前项目沿用。 */
+export function previewRenderForProject(render: PanelRender | null | undefined, pj: string | null): PanelRender | undefined {
+  return render && (render.projectId === pj || (render.projectId === undefined && pj === currentProjectId()))
+    ? render : undefined
+}
+
+/** Freeze real renderer sources synchronously; the compositor consumes the same references. */
+function panelSource(o: PanelObject, pj: string | null): PanelSource {
+  if (hasFigureSnapshotPreview(o)) {
+    // This is an explicit leaving moment, not the current editable renderer.
+    // Freeze ref/project/ordered patches now; an unrelated cached SVG is no proof.
+    const input = structuredClone({ id: o.fileId, patches: o.overrides, reference: o.figureSnapshot })
+    const png = engineTransport() ? Promise.resolve(null)
+      : enginePreviewPng(input.id, input.patches, TIMELINE_THUMB_PX, undefined,
+        { figure_snapshot: input.reference }, pj).then(blob => new Promise<string | null>(resolve => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
+        reader.onerror = () => resolve(null)
+        reader.readAsDataURL(blob)
+      })).catch(() => null)
+    return { png }
+  }
+  if (o.figureOrigin !== undefined) {
+    const input = structuredClone({ id: o.fileId, patches: o.overrides, origin: o.figureOrigin })
+    const render = previewRenderForProject(exactPanelRender(useRenderStore.getState(), o), pj)
+    const transport = engineTransport()
+    const pending = !validFigureOrigin(input.origin, input.id) || o.chart !== undefined || o.chartSource !== undefined
+      ? Promise.reject(new EngineError('Invalid historical Figure input.', '', 'svg_source_unavailable'))
+      : transport
+      ? !transport.supportsFigureOriginRender || !transport.previewPngSnapshot
+        ? Promise.reject(new EngineError('This host does not support historical Figure inputs.', '', 'svg_source_unavailable'))
+        : transport.previewPngSnapshot(input.id, input.patches, TIMELINE_THUMB_PX, undefined, undefined, undefined, input.origin)
+      : enginePreviewPngSnapshot(input.id, input.patches, TIMELINE_THUMB_PX, undefined, { figure_origin: input.origin }, pj)
+    const png = pending.then(async frame => {
+      if (!frame.manifest || !sameFigureOrigin(input.origin, frame.figureOrigin)) {
+        if (frame.url.startsWith('blob:')) URL.revokeObjectURL(frame.url)
+        return null
+      }
+      if (!frame.url.startsWith('blob:')) return frame.url
+      try {
+        const blob = await (await fetch(frame.url)).blob()
+        return await new Promise<string | null>(resolve => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
+          reader.onerror = () => resolve(null)
+          reader.readAsDataURL(blob)
+        })
+      } finally { URL.revokeObjectURL(frame.url) }
+    }).catch(() => null)
+    return { svg: render?.svg ?? undefined, png }
+  }
+  // current 已换但 clear 之前仍握有旧项目的真实 SVG；认响应归属，不认此刻全局 pj。
+  const here = pj === currentProjectId()
+  const candidate = o.chartSource !== undefined
+    ? exactPanelRender(useRenderStore.getState(), o) : panelRender(useRenderStore.getState(), o)
+  const render = previewRenderForProject(candidate, pj)
+  if (o.chartSource !== undefined) {
+    // 发起时冻结整份请求和项目；不能等别的图片解码完后再拿新项目里的同名文件。
+    const input = structuredClone({ id: o.fileId, chart: o.chart, patches: o.overrides, source: o.chartSource })
+    const transport = engineTransport()
+    const pending = !input.chart
+      ? Promise.reject(new EngineError('A chart source requires a chart.', '', 'chart_model_invalid'))
+      : transport
+      ? !transport.supportsChartRender || !transport.supportsChartSourceRender || !transport.previewPngSnapshot
+        ? Promise.reject(new EngineError('This host does not support chart sources.', '', 'chart_render_unsupported'))
+        : transport.previewPngSnapshot(input.id, input.patches, TIMELINE_THUMB_PX, undefined, input.chart, input.source)
+      : enginePreviewPngSnapshot(input.id, input.patches, TIMELINE_THUMB_PX, undefined,
+        { chart: input.chart, ...chartSourceFields(input.source) }, pj)
+    const png = pending.then(async frame => {
+      if (!frame.manifest || !frame.chartRevision) {
+        if (frame.url.startsWith('blob:')) URL.revokeObjectURL(frame.url)
+        return null
+      }
+      if (!frame.url.startsWith('blob:')) return frame.url
+      // 保留可重复消费的冻结图源，释放宿主 blob，即使 SVG 先成功也不会泄漏。
+      try {
+        const blob = await (await fetch(frame.url)).blob()
+        return await new Promise<string | null>((resolve) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
+          reader.onerror = () => resolve(null)
+          reader.readAsDataURL(blob)
+        })
+      } finally { URL.revokeObjectURL(frame.url) }
+    }).catch(() => null)
+    return { svg: render?.svg ?? undefined, png }
+  }
+  const mtime = here ? useAssetStore.getState().byId[o.fileId]?.mtime : undefined
+  const url = panelSrc(o.fileId, o.fileKind, 400, mtime, pj) || undefined
+  if (!render?.svg && !url) return null
+  return { svg: render?.svg ?? undefined, url }
+}
+
+export function captureThumbSources(doc: FigureDocument, pj: string | null = currentProjectId()): ThumbSources {
+  const sources = new Map<string, PanelSource>()
+  try {
+    for (const o of doc.objects) if (o.type === 'panel' && !o.hidden) sources.set(o.id, panelSource(o, pj))
+  } catch {
+    return null
+  }
+  return sources
+}
+
+// Store only the function here; no document/render state is read during module initialization.
+installMomentSources(captureThumbSources)

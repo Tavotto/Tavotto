@@ -1,3 +1,4 @@
+import { documentNamespaceKey, type DocumentFormat } from './documentFormat'
 /**
  * 「这份排版属于哪个项目」的前端判据——**唯一出处**（#715 验收 P1）。
  *
@@ -25,9 +26,9 @@
 export const DOC_INDEX_KEY = 'tavotto.docIndex'
 
 /** 本机索引里这份文档记在哪个项目名下（三档见模块注释）。 */
-export function recordedProjectOf(docId: string): string | null | undefined {
+export function recordedProjectOf(docId: string, format?: DocumentFormat): string | null | undefined {
   try {
-    const raw = localStorage.getItem(DOC_INDEX_KEY)
+    const raw = localStorage.getItem(documentNamespaceKey(DOC_INDEX_KEY, format))
     const arr = raw ? (JSON.parse(raw) as unknown) : null
     if (!Array.isArray(arr)) return undefined
     for (const e of arr) {
@@ -45,8 +46,8 @@ export function recordedProjectOf(docId: string): string | null | undefined {
  * 这份排版**确知**属于别的项目（`pj` 为空 = 没开项目：记着任何项目都算别的）。
  * 恢复、绑定「上次开着的」、迁移本机缓存之前都要过这一道。
  */
-export function isForeignDocument(docId: string, pj: string | null): boolean {
-  const owner = recordedProjectOf(docId)
+export function isForeignDocument(docId: string, pj: string | null, format?: DocumentFormat): boolean {
+  const owner = format === 'v4' ? recordedProjectOf(docId, format) : recordedProjectOf(docId)
   return typeof owner === 'string' && owner !== pj
 }
 
@@ -59,11 +60,11 @@ export const LOCAL_SLOT_PREFIX = 'tavotto.autosave.'
 export const LOCAL_RECOVERY_PREFIX = 'tavotto.recovery.'
 
 /** 本机有这份文档的正文副本吗（崩溃兜底副本或未决的恢复副本）。只看键在不在、非空，**不解析**。 */
-export function hasLocalBody(docId: string): boolean {
+export function hasLocalBody(docId: string, format?: DocumentFormat): boolean {
   try {
     return (
-      !!localStorage.getItem(LOCAL_SLOT_PREFIX + docId) ||
-      !!localStorage.getItem(LOCAL_RECOVERY_PREFIX + docId)
+      !!localStorage.getItem(documentNamespaceKey(LOCAL_SLOT_PREFIX + docId, format)) ||
+      !!localStorage.getItem(documentNamespaceKey(LOCAL_RECOVERY_PREFIX + docId, format))
     )
   } catch {
     return false
@@ -76,9 +77,9 @@ export function hasLocalBody(docId: string): boolean {
  * 没有这条就什么都不做（补一条新条目是 `documentStore.backfillIndexOwner` 的事）。返回有没有改。
  * **只在候选已被接受之后调**（`projectDocs.confirmRestored`）：未选中的候选不许改本机记录。
  */
-export function correctRecordedProject(docId: string, pj: string): boolean {
+export function correctRecordedProject(docId: string, pj: string, format?: DocumentFormat): boolean {
   try {
-    const raw = localStorage.getItem(DOC_INDEX_KEY)
+    const raw = localStorage.getItem(documentNamespaceKey(DOC_INDEX_KEY, format))
     const arr = raw ? (JSON.parse(raw) as unknown) : null
     if (!Array.isArray(arr)) return false
     let changed = false
@@ -89,7 +90,7 @@ export function correctRecordedProject(docId: string, pj: string): boolean {
       const { projectName: _stale, ...rest } = e as Record<string, unknown>
       return { ...rest, projectId: pj }
     })
-    if (changed) localStorage.setItem(DOC_INDEX_KEY, JSON.stringify(next))
+    if (changed) localStorage.setItem(documentNamespaceKey(DOC_INDEX_KEY, format), JSON.stringify(next))
     return changed
   } catch {
     return false

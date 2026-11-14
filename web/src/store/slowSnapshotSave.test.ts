@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
 import type { PanelObject, ProjectDocument } from '@/types/document'
 import { be, boot, newOrigin, resetAll, seedSaved, settle, shapeOf, type Req } from './recovery.harness'
@@ -111,8 +111,20 @@ it('a delayed stale PUT cannot report the queued latest edit saved; 409 keeps it
     p.overrides = [{ gid: 'axes_0.title', prop: 'fontsize', value: 13 }]
   })
   const expected = shapeOf(app.doc.useDocumentStore.getState().buildProject())
+  // saveNow awaits metadata before its synchronous local capture. Observe that
+  // exact new capture while the original PUT is still held, not its completion.
+  const setItem = Storage.prototype.setItem
+  let captured!: () => void
+  const capture = new Promise<void>((resolve) => { captured = resolve })
+  const storageWrite = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+    setItem.call(this, key, value)
+    if (this === localStorage && key === 'tavotto.autosave.d_saved') captured()
+  })
+  cleanups.push(() => storageWrite.mockRestore())
   let done = false
   const saved = app.doc.saveNowWithResult().then((v) => { done = true; return v })
+  await capture
+  storageWrite.mockRestore()
   expect(done).toBe(false)
   expect(localCopy()).toEqual(expected)
   gate.release()

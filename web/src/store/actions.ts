@@ -1,8 +1,12 @@
+import type { DocumentFormat } from '@/lib/documentFormat'
+import { saveIssueMessage } from '@/lib/autosave/diskWriter'
 import { adoptionGuardOf, adoptionOf, clearAdoption, isAdoptedPanel, SCRIPT_BACKED_SOURCE_POLICY, sourceBackedGuard, verdictFromResponse, verifiedSource, type AdoptionGuard, type SourceBackedFigure, type SourceBackedVerdict, artifactBackgroundOriginal, artifactRequestFields, isUnadoptedPngSource, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
 import { currentProjectId } from '@/lib/session'
 import '@/store/figureSnapshotInvalidation'
+import { figureOriginFor } from '@/lib/figureSnapshot'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { requestRender, type RenderPolicy } from '@/store/renderScheduler'
+import { canEditPanel } from '@/lib/panelEditability'
 import { isJustBakedBaselineOf } from '@/lib/bakedBaseline'
 import { engineTransport } from '@/lib/engineTransport'
 import { msg, t, type UiMessage } from '@/i18n'
@@ -30,6 +34,12 @@ import {
   LEGACY_FRAME_OVERRIDE,
   migrateFigureFrames,
 } from '@/lib/figureFrame'
+import {
+  applyComputedFrameDraft,
+  computedFramePatch,
+  validComputedFrame,
+  type PairedFrameAuthority,
+} from '@/lib/chartFrame'
 import { modKey } from '@/lib/utils'
 import { captureTelemetry } from '@/lib/telemetry'
 import {
@@ -77,6 +87,8 @@ import {
   readAutosaveDoc,
   saveNowWithResult,
   setProjectFile,
+  associateOpenedProjectFile,
+  projectFileSnapshot,
   useDocumentStore,
   type CommitOptions,
   type HistoryEntry,
@@ -88,7 +100,8 @@ import { AUTOSAVE_FAILURE_OWNER, reloadLatestAction, retrySaveAction } from './s
 import { useInteractionStore } from './interactionStore'
 import { aliasClearPlan } from '@/lib/aliasOverrides'
 import { fitContentCrop, isContentFit } from '@/lib/panelEdgeCrop'
-import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, structuralPanelManifest, useRenderStore } from './renderStore'
+import { exactPanelManifest, exactPanelRender, rejectArtifactRenders, renderEpoch, renderKeyOf, renderRequestIdentity, structuralPanelManifest, useRenderStore } from './renderStore'
+import { sourceFrameOverride } from '@/lib/chartFrame'
 import { useSelectionStore } from './selectionStore'
 import { askConfirm, isTimelineOpen, useUiStore, type StatusTone } from './uiStore'
 import { useViewportStore } from './viewportStore'
@@ -373,7 +386,7 @@ export function updateObject<T extends CanvasObject>(
 /** 写回历史恢复：面板的 overrides 整份换成那一版存下的（身份原样）。 */
 export function restorePanelOverrides(panelId: string, label: UiMessage, patches: readonly PanelOverride[]) {
   const panel = findObject(panelId)
-  if (panel?.type === 'panel') refuseArtifactOperation(panel)
+  if (panel?.type === 'panel' && figureOriginFor(panel) === undefined) refuseArtifactOperation(panel)
   updateObject<PanelObject>(
     panelId,
     label,
@@ -399,7 +412,7 @@ export function restoreLayoutVersion(label: UiMessage, version: FigureDocument) 
       if (version.layoutGroups?.length) d.layoutGroups = structuredClone(version.layoutGroups)
       else delete d.layoutGroups
     },
-    { overrides: 'restored' },
+    { overrides: 'restored', figureSources: 'restored' },
   )
 }
 
@@ -615,7 +628,8 @@ export async function runManualSave(): Promise<void> {
     })
   } else if (state === 'save_error') {
     // 再按一次 ⌘S 的全部动作（本机 + 写项目），不是只重写本机
-    ui.setStatus(msg('save.failed', undefined, 'workspace'), 'error', {
+    const issue = stillCurrent(ctx) ? useDocumentStore.getState().saveIssue : null
+    ui.setStatus(saveIssueMessage(issue, msg('save.failed', undefined, 'workspace')), 'error', {
       owner: AUTOSAVE_FAILURE_OWNER,
       // 切走了就不对此刻开着的那份排版重跑 ⌘S：说「切换了排版，回到那份再保存」
       action: retrySaveAction(() => (stillCurrent(ctx) ? runManualSave() : reportSaveSkipped(ctx))),
@@ -676,12 +690,13 @@ export async function openLayoutDocument(
     return false
   }
   // 重开同一个项目文件沿用上次的身份：时间线按 documentId 分存，新建身份会看不到命名节点（QA-WIN-46）
+  const format: DocumentFormat = doc.schema === 4 ? 'v4' : 'legacy'
   let reuse: string | null = null
   if (projectFile) {
     const cur = useDocumentStore.getState().documentId
-    for (const id of findDocumentsForProjectFile(projectFile.projectId, projectFile.file)) {
+    for (const id of findDocumentsForProjectFile(projectFile.projectId, projectFile.file, format)) {
       // 在别的窗口 / 标签开着的不沿用：同一个文件开两次仍是两个会话（ADR 0096）
-      if (id === cur || !(await isDocHeldElsewhere(id))) {
+      if (id === cur && ctx.format === format || !(await (format === 'v4' ? isDocHeldElsewhere(id, 150, format) : isDocHeldElsewhere(id)))) {
         reuse = id
         break
       }
@@ -690,24 +705,35 @@ export async function openLayoutDocument(
   }
   if (reuse) {
     // 复核：探测期间别的窗口可能又改过这份（绑定被置 dirty），那就不盖它的槽位、给新身份
-    if (bindingForReuse(reuse, projectFile!.projectId, projectFile!.file) === null) reuse = null
+    if (bindingForReuse(reuse, projectFile!.projectId, projectFile!.file, format) === null) reuse = null
     else {
-      await adoptSlotBaseline(reuse)
+      const safe = await (format === 'v4' ? adoptSlotBaseline(reuse, format) : adoptSlotBaseline(reuse))
       if (!stillCurrent(ctx)) return skipped()
-      if (bindingForReuse(reuse, projectFile!.projectId, projectFile!.file) === null) reuse = null
+      if (!safe || bindingForReuse(reuse, projectFile!.projectId, projectFile!.file, format) === null) reuse = null
     }
   }
   let aborted = false
   const beforeInstall = async (): Promise<boolean> => {
-    if (stillCurrent(ctx)) return true
+    if (stillCurrent(ctx) && (!reuse || bindingForReuse(reuse, projectFile!.projectId, projectFile!.file, format) !== null)) return true
     aborted = true
     return false
   }
+  const openingId = reuse ?? newId('d')
+  const edited = projectFileSnapshot(openingId, format)
   const installed = await useDocumentStore
     .getState()
-    .switchDocument(doc, reuse ?? newId('d'), confirmLoss, { beforeInstall })
+    .switchDocument(doc, openingId, confirmLoss, { beforeInstall, ...(projectFile ? { projectFileOpen: projectFile } : {}) })
   if (!installed) return aborted ? skipped() : false
-  if (projectFile) setProjectFile(projectFile)
+  if (projectFile && ((doc.schema === 4) === (useDocumentStore.getState().documentFormat === 'v4'))) {
+    setProjectFile({ ...projectFile, dirty: projectFile.dirty || edited() })
+    const scope = captureSaveContext()
+    try {
+      await associateOpenedProjectFile(projectFile, scope)
+    } catch {
+      if (stillCurrent(scope)) useDocumentStore.setState({ restoreMetaIssue: { docId: scope.documentId, pj: scope.pj } })
+    }
+    if (!stillCurrent({ ...scope, bindingSequence: undefined })) return true
+  }
   afterSwitch()
   const s = useDocumentStore.getState()
   status(note('documentLoaded', { name: s.projectMeta.name, count: s.canvases.length }), 'done')
@@ -721,26 +747,26 @@ export async function openLayoutDocument(
 export async function openDocumentAs(
   pd: ProjectDocument,
   id: string,
-  opts: { stillCurrent?: () => boolean; beforeInstall?: () => Promise<boolean> } = {},
+  opts: { stillCurrent?: () => boolean; beforeInstall?: () => Promise<boolean>; format?: DocumentFormat } = {},
 ): Promise<boolean> {
   // 丢失确认与安装前归属复核都可能等待：调用方入口取的上下文要在等待之后再核，
   // 不再是同一个项目 / 排版就不装（Codex #936：A 的排版装进 B 并按 B 的名义自动保存）。
   const guardedConfirm = async () => (await confirmLoss()) && (opts.stillCurrent?.() ?? true)
-  if (!(await useDocumentStore.getState().switchDocument(pd, id, guardedConfirm, { beforeInstall: opts.beforeInstall }))) return false
+  if (!(await useDocumentStore.getState().switchDocument(pd, id, guardedConfirm, { beforeInstall: opts.beforeInstall, ...(opts.format === 'v4' ? { format: opts.format } : {}) }))) return false
   afterSwitch()
   status(note('documentReopened', { name: pd.project.name, count: pd.canvases.length }), 'done')
   return true
 }
 
 /** 切回本机自动保存过的文档；沿用它原来的身份，槽位因此不会分叉 */
-export async function openRecentDocument(id: string): Promise<void> {
-  const { doc: pd, notice } = await readAutosaveDoc(id)
+export async function openRecentDocument(id: string, format: DocumentFormat = 'legacy'): Promise<void> {
+  const { doc: pd, notice } = await (format === 'v4' ? readAutosaveDoc(id, format) : readAutosaveDoc(id))
   if (!pd) {
     // schema 太新是「读不了」而不是「不见了」：文件好好的，说清楚是哪一种
     status(note(notice?.kind === 'schema_too_new' ? 'recentTooNew' : 'recentMissing'), 'error')
     return
   }
-  if (!(await useDocumentStore.getState().switchDocument(pd, id, confirmLoss))) return
+  if (!(await useDocumentStore.getState().switchDocument(pd, id, confirmLoss, ...(format === 'v4' ? [{ format }] : [])))) return
   afterSwitch()
   // 未决的恢复副本跟着这份文档走：switchDocument 刚把待裁决事项清空了
   if (notice) useDocumentStore.setState({ docNotice: notice })
@@ -754,6 +780,7 @@ export async function openRecentDocument(id: string): Promise<void> {
  */
 export async function openRecentEntry(entry: {
   id: string
+  format?: DocumentFormat
   projectId?: string
   projectName?: string
 }): Promise<void> {
@@ -767,7 +794,7 @@ export async function openRecentEntry(entry: {
     })
     if (!ok) return
   }
-  await openRecentDocument(entry.id)
+  await openRecentDocument(entry.id, ...(entry.format === 'v4' ? [entry.format] : []))
 }
 
 /* --------------------------------- 页面 ----------------------------------- */
@@ -1092,6 +1119,46 @@ export const optionLabel = (prop: string, value: string): string => {
  * 'none' 是给假实时手势用的：拖动 / scrub / 取色期间画面由 SVG 局部预览
  * 负责，手势结束由 flushRender 定稿。
  */
+/**
+ * N5 第 4 步：唯一 F→S 适配入口。
+ *
+ * /2 面板的图内编辑（拖动、方向键微调、位置/尺寸输入）在显示帧 F 的分数空间里
+ * 产生；落进 overrides 之前必须经 `sourceFrameOverride` 换回源坐标 S。判据与
+ * 换算只有 `lib/figureFrame.rebaseOverride` 那一份 prop 闭集，这里不复制。
+ * 整份恢复（`restorePanelOverrides`）**不走**这里：那份列表本来就是 S 原序。
+ * 缺精确配对帧（还在渲染 / 回包错配）时不写——把 F 分数写进 S overrides 会让
+ * 热态、文件与重放三者分叉（P1）；如实说出原因，零正文变化。
+ */
+function frameSpacePatches(
+  panel: PanelObject | undefined,
+  patches: { gid: string; prop: string; value: unknown }[],
+): { gid: string; prop: string; value: unknown }[] | null {
+  if (!panel || panel.chartFrame === undefined) return patches
+  const authority = exactFrameAuthority(panel)
+  if (authority === undefined) {
+    useUiStore.getState().setStatus(msg('render.frameNotReady', undefined, 'errors'), 'info')
+    return null
+  }
+  return patches.map((patch) => sourceFrameOverride(patch, authority, authority.inputIdentity))
+}
+
+/** The exact paired frame of a /2 panel, or undefined while the render is not exact.
+ * The drag baseline uses the same authority to express a persisted S anchor in F. */
+export function exactFrameAuthority(panel: PanelObject): PairedFrameAuthority | undefined {
+  if (panel.chartFrame === undefined) return undefined
+  const render = exactPanelRender(useRenderStore.getState(), panel)
+  const frame = render?.renderFrame
+  if (!render || !frame || !render.chartRevision) return undefined
+  const identity = renderRequestIdentity(
+    panel.overrides,
+    panel.chart,
+    panel.chartSource,
+    figureOriginFor(panel),
+    panel.chartFrame.renderProfile,
+  )
+  return { inputIdentity: identity, renderRevision: render.chartRevision, frame }
+}
+
 export function setOverride(
   panelId: string,
   gid: string,
@@ -1104,12 +1171,18 @@ export function setOverride(
   // 比的是**生效的那条**：载入的旧文档可能带重复的 (gid, prop)，引擎按 last-wins 取值
   // （engine/patchspec.py），前面的重复条目同值不代表这次写入是 no-op
   const current = findObject(panelId)
+  const adjusted = frameSpacePatches(
+    current?.type === 'panel' ? current : undefined,
+    [{ gid, prop, value }],
+  )
+  if (adjusted === null) return
+  const applied = adjusted[0]
   if (current?.type === 'panel') {
     const i = effectiveOverrideIndex(current.overrides, gid, prop)
     // 同值但另一个地址上还留着旧 override（旧文档里两条并存）时不算 no-op：这次写要把它清掉
     if (
       i >= 0 &&
-      JSON.stringify(current.overrides[i].value) === JSON.stringify(value) &&
+      JSON.stringify(current.overrides[i].value) === JSON.stringify(applied.value) &&
       !pendingAliasClears(current, [{ gid, prop }]).length
     ) {
       return
@@ -1118,7 +1191,7 @@ export function setOverride(
   // 原地 upsert（与批量 setOverrides 同一个 upsertOverrides）：filter + push 会把命中的
   // 那条挪到数组末尾，顺序一变变体键就变
   updateObject<PanelObject>(panelId, hist('setProp', { prop: propLabel(prop) }), (o) => {
-    upsertOverrides(o, [{ gid, prop, value }])
+    upsertOverrides(o, [applied])
   })
   const panel = findObject(panelId)
   if (panel?.type === 'panel') requestRender(panel, immediate)
@@ -1530,14 +1603,14 @@ export async function rebuildPanel(panelId: string, detached?: PanelObject): Pro
   // `detached`：目标图不在文档里（「同步并写回」的临时面板，id 形如 `sync:…`）——按它自己的文件 / 脚本身份重画
   const stand = detached && detached.id === panelId ? detached : undefined
   const panel = findObject(panelId) ?? stand
-  if (panel?.type !== 'panel' || !panel.script) return 'skipped'
-  try { refuseArtifactOperation(panel) } catch (e) { status(engineErrorMsg(e), 'error'); return 'failed' }
+  if (panel?.type !== 'panel' || (!panel.script && !panel.chart && figureOriginFor(panel) === undefined)) return 'skipped'
+  try { if (figureOriginFor(panel) === undefined) refuseArtifactOperation(panel) } catch (e) { status(engineErrorMsg(e), 'error'); return 'failed' }
   // 字号还在安静计时里时点「重新构建」：先把那次编辑收进历史，重画的才是定稿的 overrides
   finishActiveGesture()
   const fileId = panel.fileId
   const owner = captureProjectEpoch(() => useDocumentStore.getState().documentId)
   let invalidated = false
-  if (!engineTransport()) {
+  if (figureOriginFor(panel) === undefined && !panel.chart && !engineTransport()) {
     try {
       invalidated = (await engineInvalidate(fileId)).invalidated
     } catch (err) {
@@ -1558,7 +1631,10 @@ export async function rebuildPanel(panelId: string, detached?: PanelObject): Pro
   // 登记 wantPatches、清掉挂着的防抖计时器；真正的发送在下一行，要等它的结果
   requestRender(fresh, 'none')
   const key = renderKeyOf(fresh)
-  await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh))
+  if (figureOriginFor(fresh) !== undefined) await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, undefined, 'foreground', undefined, undefined, figureOriginFor(fresh))
+  else if (fresh.chartSource !== undefined) await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh), 'foreground', fresh.chart, fresh.chartSource, undefined, fresh.chartFrame?.renderProfile)
+  else if (fresh.chart) await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh), 'foreground', fresh.chart, undefined, undefined, fresh.chartFrame?.renderProfile)
+  else await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh))
   await settledRender(key)
   const succeeded = useRenderStore.getState().get(key).status === 'ready'
   // renderStore consumes trusted execution evidence even for failed/zero-output runs.
@@ -1691,8 +1767,11 @@ export function setOverrides(
   render: boolean | RenderPolicy = true,
 ) {
   if (!patches.length) return
+  const current = findObject(panelId)
+  const adjusted = frameSpacePatches(current?.type === 'panel' ? current : undefined, patches)
+  if (adjusted === null) return
   updateObject<PanelObject>(panelId, label, (o) => {
-    upsertOverrides(o, patches)
+    upsertOverrides(o, adjusted)
   })
   const panel = findObject(panelId)
   if (panel?.type === 'panel') requestRender(panel, render)
@@ -1768,6 +1847,10 @@ export function applyMixedAlign(
  * /api/render、写回候选熄灭）全部经由那一份判据，别在消费点各补一刀。
  */
 export function isJustBakedBaseline(panel: PanelObject): boolean {
+  // A historical input is never "just the current baked baseline": the baked
+  // facts belong to whatever execution the asset name currently resolves to,
+  // which may be a different figure entirely. Its own P/Q decide.
+  if (panel.figureOrigin !== undefined) return false
   // 判据本体在 lib/bakedBaseline.isJustBakedBaselineOf（纯函数）；这里只负责去素材表取事实
   return isJustBakedBaselineOf(panel.overrides, useAssetStore.getState().byId[panel.fileId])
 }
@@ -2199,6 +2282,8 @@ export function enterElementEdit(
   finishActiveGesture()
   const panel = findObject(panelId)
   if (panel?.type !== 'panel') return false
+  if (panel.chart && !canEditPanel(panel)) return false
+  if (figureOriginFor(panel) !== undefined) return finishElementEntry(panelId, leftTab)
   const issue = artifactValidationIssue(panel)
   if (issue) {
     status(engineErrorMsg(new ArtifactValidationError(issue)), 'error')
@@ -2225,10 +2310,11 @@ export function enterElementEdit(
 function finishElementEntry(panelId: string, leftTab: 'elements' | 'keep'): boolean {
   const panel = findObject(panelId)
   if (panel?.type !== 'panel') return false
-  const seeded = isAdoptedPanel(panel) ? 0 : seedBakedOverrides(panelId)
+  const seeded = figureOriginFor(panel) !== undefined || isAdoptedPanel(panel) || panel.chart ? 0 : seedBakedOverrides(panelId)
   const ui = useUiStore.getState()
   ui.setElementPanel(panelId)
-  if (isAdoptedPanel(panel)) {
+  if (figureOriginFor(panel) !== undefined) requestRender(panel, true)
+  else if (isAdoptedPanel(panel)) {
     const owner = useDocumentStore.getState()
     const epoch = renderEpoch()
     const pj = currentProjectId()
@@ -3153,6 +3239,42 @@ export function restorePanelNativeSize(ids: string[]) {
   updatePanels(ids, hist('restoreNativeSize'), (o) => {
     setContentSize(o, o.nativeW * (o.crop?.w ?? 1), o.nativeH * (o.crop?.h ?? 1))
   })
+}
+
+/**
+ * 采用 native-manifest/2 计算框（N5 第 3 步）：把这张面板**精确配对**那一版渲染的
+ * `render_frame` 写进文档——外框落位与尺寸换成 F（缩放比不变、图内分数类 override
+ * 与数据不动），`chartFrame.originPt` 与 nativeW/H **同一条历史**。判据与换算只在
+ * `lib/chartFrame` 一处；缺权威（还在渲染、迟到旧变体、声明畸形、新框与裁剪
+ * 不相交）不采用、不弹错——界面上按钮的可用性判据也是同一出处。
+ *
+ * 持久化字段 `chartFrame` 的**唯一写入入口**（`useEngineSync` 只在同一份 exact
+ * 渲染落地时同步已采用面板的 originPt，不创建）。
+ */
+export function adoptComputedFrame(panelId: string): boolean {
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel') return false
+  const render = exactPanelRender(useRenderStore.getState(), panel)
+  if (!render?.renderFrame || !render.chartRevision || !validComputedFrame(render.renderFrame)) return false
+  const inputIdentity = renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource, figureOriginFor(panel), panel.chartFrame?.renderProfile)
+  const authority: PairedFrameAuthority = {
+    inputIdentity,
+    renderRevision: render.chartRevision,
+    frame: render.renderFrame,
+  }
+  // 预演一遍（纯函数）：新框与裁剪不相交时就地不采用，不让 commit 的 recipe
+  // 半路抛错——与 adoptScriptFrame 的 frameSwitchPatch 预检同一取舍
+  try {
+    computedFramePatch(panel, authority, inputIdentity)
+  } catch {
+    return false
+  }
+  commit(hist('adoptComputedFrame'), (d) => {
+    const index = d.objects.findIndex((x) => x.id === panelId)
+    if (index < 0) return
+    applyComputedFrameDraft(d, index, panelId, authority, inputIdentity)
+  })
+  return true
 }
 
 /**

@@ -38,18 +38,21 @@
  * 另存为成功后原先还有一次 `fetchLayoutNames()` 刷新名单（0.1.0 起）——对话框紧接着就关了，
  * 下次打开会重取，这次刷新没人看得见，连同它的 await 点一起删掉。
  */
+import type { DocumentFormat } from '@/lib/documentFormat'
 import { msg } from '@/i18n'
 import { currentProjectId } from '@/lib/session'
 import { captureMoment, type MomentSnapshot } from '@/lib/timelineCheckpoint'
 import { activeProjectFile, useDocumentStore } from './documentStore'
-import { useUiStore } from './uiStore'
+import { useUiStore, type StatusAction } from './uiStore'
 
 export interface SaveContext {
+  readonly format: DocumentFormat
   readonly documentId: string
   readonly loadSeq: number
   readonly pj: string | null
   /** 入口那一刻绑定的项目文件（相对项目根）；没绑定 = `null` */
   readonly file: string | null
+  readonly bindingSequence?: number
   /**
    * 同一刻的**排版时间线快照**（`captureMoment()`：时间线上下文 + 这份文档 + 面板图源）。
    * 写成之后发「排版写成了」时带它：「保存」点只打给被存的那一份、拍的是写出去的那份内容
@@ -67,10 +70,12 @@ export interface SaveContext {
 export function captureSaveContext(): SaveContext {
   const s = useDocumentStore.getState()
   return {
+    format: s.documentFormat,
     documentId: s.documentId,
     loadSeq: s.loadSeq,
     pj: currentProjectId(),
     file: activeProjectFile()?.file ?? null,
+    ...(activeProjectFile()?.sequence !== undefined ? { bindingSequence: activeProjectFile()!.sequence } : {}),
     moment: captureMoment(),
   }
 }
@@ -79,9 +84,12 @@ export function captureSaveContext(): SaveContext {
 export function stillCurrent(ctx: SaveContext): boolean {
   const s = useDocumentStore.getState()
   return (
+    s.documentId === ctx.documentId &&
+    s.documentFormat === ctx.format &&
     s.loadSeq === ctx.loadSeq &&
     currentProjectId() === ctx.pj &&
     (activeProjectFile()?.file ?? null) === ctx.file
+    && (ctx.bindingSequence === undefined || activeProjectFile()?.sequence === ctx.bindingSequence)
   )
 }
 
@@ -105,4 +113,20 @@ export function reportSaveSkipped(ctx: SaveContext): void {
         : msg('save.skippedSwitched', undefined, 'workspace'),
       'error',
     )
+}
+
+/** 绑定确认被较晚选择取代：打开现有载入流程，由用户选已写成的文档；不重放旧写入。 */
+export function openSavedDocumentAction(ctx: SaveContext): StatusAction {
+  return {
+    label: msg('layout.openTitle', undefined, 'dialogs'),
+    run: () => {
+      const s = useDocumentStore.getState()
+      if (s.documentId !== ctx.documentId || s.documentFormat !== ctx.format
+        || s.loadSeq !== ctx.loadSeq || currentProjectId() !== ctx.pj) {
+        reportSaveSkipped(ctx)
+        return
+      }
+      useUiStore.getState().setLayoutOpen(true, 'load')
+    },
+  }
 }
