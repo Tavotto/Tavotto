@@ -1124,8 +1124,64 @@ def test_open_apply_preflight_export_close_without_any_ui(project, fake_pool, tm
 
     closed = _body(_call("tavotto_close_session", {"session_id": sid}))
     assert closed["closed"] is True
+    assert "unexported_changes" not in closed  # 这一版已经导出过
     # 重复关闭不算错（Codex 可能重试）
     assert _body(_call("tavotto_close_session", {"session_id": sid}))["closed"] is False
+
+
+def test_closing_a_session_with_unexported_changes_says_they_are_gone(project, fake_pool, tmp_path):
+    """改过没导出就关：照关（不卡住），但结果与文字都要说修改丢了、用户文件没变。"""
+    sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
+    plain = _body(_call("tavotto_close_session", {"session_id": sid}))
+    assert plain["closed"] is True and "unexported_changes" not in plain  # 没改过不提醒
+
+    sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
+    first = [{"gid": "axes_0.xticks", "prop": "fontsize", "value": 9.0}]
+    _call("tavotto_apply_overrides", {"session_id": sid, "patches": first})
+    out_dir = tmp_path / "out"
+    done = _body(
+        _call(
+            "tavotto_export",
+            {
+                "session_id": sid,
+                "formats": ["pdf"],
+                "out_dir": str(out_dir),
+                "explicit_confirm": True,
+            },
+        )
+    )
+    assert done["files"]
+    # 导出之后又改了一版：这一版没导出
+    second = [{"gid": "axes_0.xticks", "prop": "fontsize", "value": 10.0}]
+    _call("tavotto_apply_overrides", {"session_id": sid, "patches": second})
+    res = _call("tavotto_close_session", {"session_id": sid})
+    body = _body(res)
+    assert body["closed"] is True and body["unexported_changes"] is True
+    assert "tavotto_export" in res["content"][0]["text"]
+
+
+def test_closing_after_a_process_switch_still_reports_unexported_changes(project, fake_pool):
+    """进程换过、会话只在落盘记录里时关：照样要说修改丢了（Codex #1903 P2）。"""
+    sid = _body(_call("tavotto_open_figure", {"project_path": str(project)}))["session_id"]
+    patches = [{"gid": "axes_0.xticks", "prop": "fontsize", "value": 9.0}]
+    _call("tavotto_apply_overrides", {"session_id": sid, "patches": patches})
+    bridge.sessions().pop(sid)  # 模拟 server 换了进程：内存里没有，只剩记录
+    res = _call("tavotto_close_session", {"session_id": sid})
+    body = _body(res)
+    assert body["closed"] is True and body["unexported_changes"] is True
+    assert "tavotto_export" in res["content"][0]["text"]
+    assert bridge.sessionjournal.load(bridge._journal_dir(), sid) is None  # 记录照样删了
+    assert _body(_call("tavotto_close_session", {"session_id": sid}))["closed"] is False
+
+
+def test_fix_report_tells_the_agent_to_export_before_closing():
+    out = {"ok": True, "exit": "fixed", "size": {}, "issues": {}}
+    assert any("tavotto_export" in line for line in server.fix_report_lines(out))
+    exported = dict(out, exported=[{"path": "/x/Fig1.pdf"}])
+    assert not any("tavotto_export" in line for line in server.fix_report_lines(exported))
+    assert not any(
+        "tavotto_export" in line for line in server.fix_report_lines(dict(out, dry_run=True))
+    )
 
 
 def test_unknown_session_says_which_ones_exist(project, fake_pool):

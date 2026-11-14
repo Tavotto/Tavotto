@@ -590,7 +590,10 @@ def _tools() -> list[dict]:
         {
             "name": "tavotto_close_session",
             "title": "关闭会话",
-            "description": "释放引擎会话。用户的项目数据一个字节都不动。",
+            "description": (
+                "释放引擎会话。用户的项目数据一个字节都不动。"
+                "会话里改过却没导出的修改关掉就没了：要文件先 tavotto_export 再关。"
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {"session_id": {"type": "string"}},
@@ -1366,6 +1369,11 @@ def fix_report_lines(out: dict) -> list[str]:
         lines.append(f"没修：{s.get('rule')} {s.get('gid') or ''}（{s.get('reason')}{want}）")
     if out.get("exported"):
         lines.append("已导出：" + "、".join(str(f.get("path")) for f in out["exported"]))
+    elif out.get("ok") and not out.get("dry_run") and exit_code != "nothing_to_do":
+        lines.append(
+            "修改只在 Tavotto 会话里，用户的文件还没变：要拿到文件请调 tavotto_export，"
+            "导出前别关会话（关掉修改就没了）。"
+        )
     if out.get("worker_retired"):
         lines.append("注意：渲染进程途中状态不可信，已作废重起；会话按全量列表重放，结果不受影响。")
     if out.get("previews_error"):
@@ -1389,6 +1397,7 @@ def _call_export(args: dict) -> dict:
         explicit_confirm=bool(args.get("explicit_confirm")),
         proof=args.get("proof") is not False,
     )
+    bridge.commit_export(str(args.get("session_id") or ""))
     # 成功的与失败的**分开说**：把 `partial` 说成"已导出"，模型会把一次半成的
     # 导出转述成完成（ADR 0031 §4：`partial` 是独立一档）
     ok = [f for f in out["files"] if f["status"] == "done"]
