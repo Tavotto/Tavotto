@@ -183,8 +183,24 @@ def _literal(arg: list, joiners: frozenset[str]) -> str | None:
             if len(part) != 1 or part[0][0] != "str":
                 return None
             values.append(part[0][1])
-        return "/".join(v.strip("/\\") for v in values if v)
+        return _join(values)
     return None
+
+
+def _join(values: list[str]) -> str:
+    """`file.path` / `fullfile` 的拼接：只去掉段与段之间的分隔符，**保留第一段的根**（`/tmp`、`C:\\`、`\\\\srv`），
+    否则绝对路径会变成相对路径、被按脚本目录误解析（Codex #1906）。"""
+    parts = [v for v in values if v]
+    if not parts:
+        return ""
+    head = parts[0]
+    stripped = head.rstrip("/\\")
+    head = stripped if stripped and not re.fullmatch(r"[A-Za-z]:", stripped) else head
+    rest = [v.strip("/\\") for v in parts[1:]]
+    if not rest:
+        return head
+    sep = "" if head.endswith(("/", "\\")) else "/"
+    return head + sep + "/".join(r for r in rest if r)
 
 
 def _keyword(arg: list) -> tuple[str | None, list]:
@@ -216,9 +232,29 @@ def _r_outputs(tokens) -> list[str]:
                 found = _literal(value, _R_JOINERS)
         if found is None and len(positional) > index:
             found = _literal(positional[index], _R_JOINERS)
+        if found and name == "ggsave":
+            found = _ggsave_dir(found, args, positional)
         if found:
             out.append(found)
     return out
+
+
+def _ggsave_dir(filename: str, args: list[list], positional: list[list]) -> str | None:
+    """`ggsave(filename, plot, device, path, ...)`：给了 `path`（关键字或第 4 个位置参数）就拼在前面（Codex #1906）。
+    `path` 不是字面量 → 判不出真实位置，整条不认（None），免得把项目根下同名的另一个文件认成它的输出。"""
+    path_arg = None
+    for arg in args:
+        key, value = _keyword(arg)
+        if key == "path":
+            path_arg = value
+    if path_arg is None and len(positional) > 3:
+        path_arg = positional[3]
+    if path_arg is None:
+        return filename
+    base = _literal(path_arg, _R_JOINERS)
+    if not base:
+        return None
+    return _join([base, filename])
 
 
 def _m_outputs(tokens, text: str) -> list[str]:

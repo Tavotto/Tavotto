@@ -77,7 +77,7 @@ export interface PanelInfo {
   original_spec?: AssetOriginalSpec
   /**
    * 同一张图的几份文件（ADR 0184 §一，后端 `engine/figuregroup` 是唯一出处）：图键、是不是这张图的主文件
-   * （PDF > SVG > 最大位图）、这张图的全部文件 id。老后端不发：`undefined` = 一份文件一张图（旧行为）。
+   * （PDF > 最大位图 > SVG）、这张图的全部文件 id。老后端不发：`undefined` = 一份文件一张图（旧行为）。
    */
   figure_key?: string
   primary?: boolean

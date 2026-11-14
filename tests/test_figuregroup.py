@@ -56,14 +56,16 @@ def test_registry_failure_falls_back_to_dir_key():
     assert figuregroup.figure_key("x/fig1.pdf", Broken()) == "dir:x/fig1"
 
 
-def test_primary_prefers_vector_then_largest_raster():
+def test_primary_prefers_pdf_then_largest_raster_then_svg():
     e = [
         {"id": "f/png/a.png", "kind": "raster", "px_w": 100, "px_h": 100},
         {"id": "f/a.svg", "kind": "svg"},
         {"id": "f/a.pdf", "kind": "pdf"},
     ]
     assert figuregroup.pick_primary(e) == "f/a.pdf"
-    assert figuregroup.pick_primary(e[:2]) == "f/a.svg"
+    # 没有 PDF 时挑位图，不挑 SVG：没编辑过的 SVG 素材进不了画布合成导出（Codex #1906）
+    assert figuregroup.pick_primary(e[:2]) == "f/png/a.png"
+    assert figuregroup.pick_primary(e[1:2]) == "f/a.svg"
     rasters = [
         {"id": "a.jpg", "kind": "raster", "px_w": 10, "px_h": 10},
         {"id": "png/a.png", "kind": "raster", "px_w": 300, "px_h": 200},
@@ -80,7 +82,7 @@ def test_annotate_adds_fields_without_touching_others():
     ]
     figuregroup.annotate(panels)
     by = {p["id"]: p for p in panels}
-    assert by["f/a.svg"]["primary"] is True and by["f/a.png"]["primary"] is False
+    assert by["f/a.png"]["primary"] is True and by["f/a.svg"]["primary"] is False
     assert by["f/a.png"]["formats"] == ["f/a.png", "f/a.svg"]
     assert by["g/a.pdf"]["primary"] is True and by["g/a.pdf"]["formats"] == ["g/a.pdf"]
     assert by["f/a.png"]["name"] == "a"  # 已有字段不动

@@ -27,6 +27,14 @@ M = sourcelang.MATLAB
         ('cairo_pdf("a.pdf"); svg(file = "a.svg")', ["a.pdf", "a.svg"]),
         ('dev.copy(pdf, "copy.pdf")', ["copy.pdf"]),
         ('dev.print(png, file = "p.png", width = 600)', ["p.png"]),
+        # ggsave 的 path（关键字 / 第 4 个位置参数）拼在前面；path 不是字面量就整条不认（Codex #1906）
+        ('ggsave("fig.pdf", path = "plots")', ["plots/fig.pdf"]),
+        ('ggsave("fig.pdf", p, "pdf", "plots")', ["plots/fig.pdf"]),
+        ('ggsave(filename = "fig.png", path = file.path("out", "png"))', ["out/png/fig.png"]),
+        ('ggsave("fig.pdf", path = out_dir)', []),
+        # file.path 的第一段是根：保留，不变成相对路径（Codex #1906）
+        ('ggsave(file.path("/tmp", "fig.pdf"))', ["/tmp/fig.pdf"]),
+        ('ggsave(file.path("/", "fig.pdf"))', ["/fig.pdf"]),
         # 不认：拼出来的 / 变量 / 不是素材格式 / 注释里的
         ('ggsave(paste0("fig", i, ".pdf"))', []),
         ("ggsave(out_path)", []),
@@ -47,6 +55,8 @@ def test_r_outputs(src, want):
         ("exportgraphics(ax, \"figs/fig1.pdf\", 'ContentType', 'vector')", ["figs/fig1.pdf"]),
         ("print(gcf, '-dpng', '-r300', 'fig2')", ["fig2.png"]),
         ("print('-dsvg', fullfile('figs', 'svg', 'fig2.svg'))", ["figs/svg/fig2.svg"]),
+        ("exportgraphics(gcf, fullfile('/data/out', 'f.pdf'))", ["/data/out/f.pdf"]),
+        ("exportgraphics(gcf, fullfile('C:\\', 'f.pdf'))", ["C:\\f.pdf"]),
         ("print -dpdf fig3.pdf", ["fig3.pdf"]),
         ("print -depsc fig4", []),
         # 转置不是字符串开头；注释不算
@@ -91,6 +101,23 @@ def test_output_claimed_by_two_scripts_is_nobodys(tmp_path: Path):
     (tmp_path / "a.R").write_text('library(ggplot2)\nggsave("same.pdf")\n', encoding="utf-8")
     (tmp_path / "b.R").write_text('library(ggplot2)\nggsave("same.pdf")\n', encoding="utf-8")
     assert "same.pdf" not in foreignoutputs.output_map(tmp_path)
+
+
+def test_absolute_join_outside_project_never_claims_a_local_file(tmp_path: Path):
+    # file.path("/tmp", "fig.pdf") 写到项目外：不许被当成脚本旁边的 tmp/fig.pdf（Codex #1906）
+    (tmp_path / "tmp").mkdir()
+    (tmp_path / "a.R").write_text(
+        'library(ggplot2)\nggsave(file.path("/tmp", "fig.pdf"))\n', encoding="utf-8"
+    )
+    assert "tmp/fig.pdf" not in foreignoutputs.output_map(tmp_path)
+
+
+def test_absolute_join_inside_project_is_claimed(tmp_path: Path):
+    out = (tmp_path / "plots").as_posix()
+    (tmp_path / "a.R").write_text(
+        f'library(ggplot2)\nggsave(file.path("{out}", "fig.pdf"))\n', encoding="utf-8"
+    )
+    assert foreignoutputs.output_map(tmp_path) == {"plots/fig.pdf": "a.R"}
 
 
 def test_paths_leaving_the_project_are_dropped(tmp_path: Path):

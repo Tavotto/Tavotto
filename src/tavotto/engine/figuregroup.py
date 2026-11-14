@@ -23,8 +23,10 @@ SCRIPT_PREFIX = "script:"
 FOREIGN_PREFIX = "foreign:"
 DIR_PREFIX = "dir:"
 
-#: 主文件的格式次序：矢量优先（用户 2026-11-14 拍板「自动挑矢量」）。
-_KIND_RANK = {"pdf": 0, "svg": 1, "raster": 2}
+#: 主文件的格式次序：PDF 优先（用户 2026-11-14 拍板「自动挑矢量」），然后位图，SVG 最后。
+#: SVG 排在位图之后是导出的硬约束（Codex #1906）：没编辑过的 SVG 素材不进画布合成导出
+#: （`exportroute` 的 `static_svg_asset`，`svg_asset_export_unsupported`），把它挑成主文件会让排版导不出去。
+_KIND_RANK = {"pdf": 0, "raster": 1, "svg": 2}
 
 
 def _norm(rel: str) -> PurePosixPath:
@@ -92,7 +94,7 @@ def _primary_rank(entry: Mapping) -> tuple:
 def pick_primary(entries: Iterable[Mapping]) -> str | None:
     """一张图的几份文件（`/api/panels` 条目：`id` / `kind` / `px_w` / `px_h`）→ 主文件的 id。
 
-    PDF > SVG > 位图；位图之间像素面积大者优先；再按路径，结果确定。空 → None。
+    PDF > 位图 > SVG（见 `_KIND_RANK`）；位图之间像素面积大者优先；再按路径，结果确定。空 → None。
     """
     ranked = sorted(entries, key=_primary_rank)
     return str(ranked[0]["id"]) if ranked else None

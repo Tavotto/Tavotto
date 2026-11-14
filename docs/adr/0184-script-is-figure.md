@@ -30,7 +30,9 @@
   `tif` `tiff`，大小写不敏感）则取它的上一级。同目录同名合并，格式名子目录里的同名文件也合并，**不跨普通目录**
   （`a/fig1.png` 与 `b/fig1.png` 可能是两张不同的图，不合并）。
 
-一张图的几份文件里选一份 **主文件**（`primary`）：PDF > SVG > 位图（像素面积大者优先，再按路径）。素材卡只显示主文件，详情里列出全部格式。
+一张图的几份文件里选一份 **主文件**（`primary`）：PDF > 位图（像素面积大者优先）> SVG，再按路径。SVG 排在位图之后是导出的硬约束：
+没编辑过的 SVG 素材不进画布合成导出（`exportroute` 的 `static_svg_asset` → `svg_asset_export_unsupported`），挑它当主文件会让排版导不出去
+（Codex #1906）；只有 SVG 一份时才用它，与本 ADR 之前相同。素材卡只显示主文件，详情里列出全部格式。
 放到画布上的是主文件；导出格式照旧在导出时选，与主文件无关。
 
 现行的「同目录 PDF 盖位图」（`iter_assets`）保留不动：被它盖住的位图本来就不在 `/api/panels` 里，也就不进 `formats`；
@@ -68,10 +70,10 @@
 
 Python 的「这个文件是谁画的」有注册表；R / MATLAB Tavotto 不运行，所以**只读源码**（`engine/foreignoutputs.py`）：
 
-- R：`ggsave` / `pdf` / `png` / `svg` / `jpeg` / `tiff` / `bmp` / `cairo_pdf` / `svglite` / `save_plot` 的文件参数，
+- R：`ggsave`（含 `path` 参数，非字面量的 `path` 整条不认）/ `pdf` / `png` / `svg` / `jpeg` / `tiff` / `bmp` / `cairo_pdf` / `svglite` / `save_plot` 的文件参数，
   `dev.copy` / `dev.print`；路径是字面量，或全字面量参数的 `file.path(...)` / `here(...)`；
 - MATLAB：`saveas`（含第三个参数给格式）、`exportgraphics`、`print`（函数式与命令式，`-dpng` 补后缀）；路径是字面量或全字面量的 `fullfile(...)`；
-- 拼出来的（`paste0`、变量、`num2str`）一律不认，注释与字符串里的不算；相对路径按脚本所在目录解析，出了项目的丢掉；
+- 全字面量拼接保留第一段的根（`file.path("/tmp", …)` 仍是绝对路径）；拼出来的（`paste0`、变量、`num2str`）一律不认，注释与字符串里的不算；相对路径按脚本所在目录解析，出了项目的丢掉；
   同一输出被两个脚本声称 → 不归任何一个（不猜）；
 - 另认**同目录同名**的 R / MATLAB 脚本（`foreignsource.sibling_of`，已有判据）。
 
