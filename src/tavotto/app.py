@@ -7945,6 +7945,7 @@ def _materialize_runtime(
     run=None,
     pinned=None,
     patches_by_stem: dict | None = None,
+    origin_session=None,
 ) -> None:
     """把一次成功 build 捕获的每张图物化进 runtime cache（失败只记日志）。
 
@@ -7965,7 +7966,10 @@ def _materialize_runtime(
     # 取会话在锁外：取不到现成的会起一条新的、跑脚本——持锁执行脚本会把改指堵在一次 build 后面
     # `run`（T03）：产出这批图的那份运行配置——取的必须是同一条热会话，否则会为别的参数另起一次执行
     try:
-        if pinned is not None:
+        if origin_session is not None:
+            origin_session.check()
+            worker = origin_session.worker
+        elif pinned is not None:
             # 准备的一次运行：只物化**跑出这批图的那条热会话**。项目记录在运行之后被换了，也不为物化另起一条会话、
             # 在别的解释器里把脚本再跑一遍（Codex #820 r4234067402）
             worker = engine_pool.peek(script, root, run=run)
@@ -7987,7 +7991,8 @@ def _materialize_runtime(
                     continue
                 # The capture helper is generation-aware: even an edit's first
                 # build freezes the base once; subsequent gestures never recapture.
-                _capture_svg_snapshot(worker, desc)
+                if origin_session is None:
+                    _capture_svg_snapshot(worker, desc)
                 state = [] if patches_by_stem is None else patches_by_stem.get(stem)
                 engine_runtimeasset.materialize(
                     root,
@@ -7997,6 +8002,8 @@ def _materialize_runtime(
                     # 没有 patches_by_stem = 一次 build（显式运行 / 准备）：新的执行，旧变体作废
                     fresh_execution=patches_by_stem is None,
                 )
+            if origin_session is not None:
+                origin_session.check()
     except engine_inputremap.RemapChanged as exc:
         LOG.info("runtime 物化作废（%s）: %s", exc, script)
 
@@ -8476,7 +8483,12 @@ class NativeWorkerRefused(Exception):
 
 
 def _engine_worker(
-    rel_id: str, *, safe_only: bool = False, artifact_source=None, existing_only: bool = False
+    rel_id: str,
+    *,
+    safe_only: bool = False,
+    artifact_source=None,
+    existing_only: bool = False,
+    source_path_required: bool = True,
 ):
     """面板 id → (worker-like, stem)；非脚本面板 404。
 
@@ -8499,15 +8511,24 @@ def _engine_worker(
         rel_id,
         **_artifact_kwargs(artifact_source),
         **({"existing_only": True} if existing_only else {}),
+        **({"source_path_required": False} if not source_path_required else {}),
     )
     if safe_only and engine_enginesession.is_native(worker):
         raise NativeWorkerRefused(rel_id)
     return worker, stem
 
 
-def _resolve_engine_worker(rel_id: str, *, artifact_source=None, existing_only: bool = False):
+def _resolve_engine_worker(
+    rel_id: str,
+    *,
+    artifact_source=None,
+    existing_only: bool = False,
+    source_path_required: bool = True,
+):
     """`_engine_worker` 的本体（「谁来渲染」按档案解析，不设闸）。"""
     _assert_artifact_current(artifact_source)
+    if not source_path_required and (not existing_only or artifact_source is not None):
+        raise ValueError("Only an existing historical Figure may omit its disk original")
     root = str(require_project())
     if artifact_source is not None and engine_runtimeasset.is_runtime_id(rel_id):
         _refuse_artifact_policy(artifact_source["render_policy"])
@@ -8529,13 +8550,15 @@ def _resolve_engine_worker(rel_id: str, *, artifact_source=None, existing_only: 
             ),
             info["stem"],
         )
-    path = safe_resolve(rel_id)
+    path = safe_resolve(rel_id, **({"require_file": False} if not source_path_required else {}))
     disk_stem, info = _disk_panel(path)
     if info is None:
         if artifact_source is not None:
             raise engine_artifactcontext.ArtifactContextError(
                 "destination_unresolved", "Source script unavailable."
             )
+        if not source_path_required:
+            return None, disk_stem
         abort(404)
     # 磁盘面板永远是 safe：它有自己的原始产物，那是 safe worker 产出的世界。
     disk_run = _disk_panel_run(info["script"])
@@ -11943,6 +11966,8 @@ def _native_preparation_runner(pl, before_retry=None):
     `input()` 由界面经 `/api/native/sessions/<id>/input` 作答，这里不看）→ build 一次 → 绑活图路由。
     不重试、不换环境（`before_retry` 不用）：原环境的缺包 / 激活问题是上层准备的输入，适配器不猜包。
     """
+    from .engine import declaredinputs
+
     spec = getattr(pl, "native_spec", None)
     if spec is None:
         raise engine_pool.WorkerError(
@@ -11964,8 +11989,17 @@ def _native_preparation_runner(pl, before_retry=None):
                 project_epoch=pl.project_epoch,
                 launch_order=pl.launch_order,
                 cancelled=lambda: engine_preparation.SERVICE.launch_blocked(pl.plan_id),
+                **(
+                    {"input_declaration_state": pl.input_declaration_state}
+                    if getattr(pl, "input_declaration_state", None) is not None
+                    else {}
+                ),
             )
         )
+    except declaredinputs.DeclaredInputsConflict as exc:
+        raise engine_pool.WorkerError(
+            "输入声明已变化，请刷新准备计划", code="preparation_plan_stale"
+        ) from exc
     except engine_runcodes.RunError as exc:
         raise engine_pool.WorkerError(str(exc), code=exc.code) from exc
     engine_preparation.SERVICE.note_owner(pl.plan_id, session, True)
@@ -12464,7 +12498,7 @@ def _preparation_execution_result(ctx: "ProjectCtx", sess) -> dict:
         return {}
 
 
-def _session_report(ctx: "ProjectCtx", sess) -> dict:
+def _session_report(ctx: "ProjectCtx", sess, *, include_input_declaration: bool = False) -> dict:
     waiting = _session_runtime_input(ctx, sess)
     # Keep the report and its run-scoped evidence on the same explicit run.
     with sess.lock:
@@ -12474,6 +12508,7 @@ def _session_report(ctx: "ProjectCtx", sess) -> dict:
             runtime_input=waiting,
             # 「允许并运行」的一次性 token 只交给页面 cookie 认证的读者（本机凭据头 / MCP / 无请求上下文一律拿不到）
             expose_confirm=has_request_context() and _page_authenticated(),
+            **({"include_input_declaration": True} if include_input_declaration else {}),
         )
         payload.update(_preparation_execution_result(ctx, sess))
         return payload
@@ -12695,7 +12730,17 @@ def api_engine_preparation_session_state(session_id: str):
         sess = engine_prepsession.SESSIONS.session(session_id, ctx.id)
     except engine_prepsession.SessionError as exc:
         return _session_error(exc)
-    resp = jsonify(_session_report(ctx, sess))
+    resp = jsonify(
+        _session_report(
+            ctx,
+            sess,
+            **(
+                {"include_input_declaration": True}
+                if request.args.get("include_input_declaration") == "1"
+                else {}
+            ),
+        )
+    )
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

@@ -61,6 +61,7 @@ import time
 from . import (
     bridge,
     config,
+    declaredinputs,
     execspec,
     figcapture,
     handoff,
@@ -182,8 +183,16 @@ def _run(request: runspec.RunRequest, args) -> int:
         relay.wait_for_desktop(args.x_attach_timeout, watch=_cancel_watch(native_id))
 
         # ---- 用户确认之后才 spawn（ADR 0021 §7）----
+        try:
+            input_payload = declaredinputs.payload_for_native(_native_spec_for(request))
+        except declaredinputs.DeclaredInputsError:
+            input_payload = {}  # Optional evidence does not change native execution semantics.
         proc = _spawn_user_python(request, relay, out_dir)
-        relay.wait_for_child(args.x_child_timeout, watch=_child_watch(proc))
+        relay.wait_for_child(
+            args.x_child_timeout,
+            watch=_child_watch(proc),
+            **({"ack_extra": input_payload} if input_payload else {}),
+        )
         relay.start_pump()
         code = _wait_for_child_process(proc, relay, quiet=quiet)
     except RunError as exc:
@@ -234,6 +243,17 @@ def _wake_desktop(app: str, request: runspec.RunRequest, native_id: str) -> None
         raise RunError(runcodes.NATIVE_DESKTOP_REQUIRED) from exc
 
 
+def _native_spec_for(request):
+    return execspec.native_spec(
+        request.raw_target,
+        interpreter=request.interpreter,
+        cwd=request.cwd,
+        project_root=request.project_root,
+        target_kind=request.target_kind,
+        argv=request.user_argv,
+    )
+
+
 def _spawn_user_python(
     request: runspec.RunRequest, relay: nativerelay.NativeRelay, out_dir: str
 ) -> subprocess.Popen:
@@ -251,14 +271,7 @@ def _spawn_user_python(
        用户的三条流是他程序的语义。
     3. **env 原样 + 一个 token**，而 runner 一起来就把它摘掉。
     """
-    spec = execspec.native_spec(
-        request.raw_target,
-        interpreter=request.interpreter,
-        cwd=request.cwd,
-        project_root=request.project_root,
-        target_kind=request.target_kind,
-        argv=request.user_argv,
-    )
+    spec = _native_spec_for(request)
     argv = execspec.bridge_argv(
         spec,
         runner_py=bridge.RUNNER_PY,

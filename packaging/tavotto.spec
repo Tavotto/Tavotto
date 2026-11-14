@@ -123,7 +123,7 @@ datas = [
 #   公式排版         —— mathtext_child.py（内置 runtime 按绝对路径起它，ADR 0152 PR 4）。
 # 两份清单由 tests/test_runtime_build.py 从**源码的 import 闭包**反推校验，
 # 不靠人记得回来改这一行。
-for name in ("worker.py", "executionfact.py", "manifest.py", "overrides.py", "patchspec.py",
+for name in ("worker.py", "executionfact.py", "inputdeclaration.py", "manifest.py", "overrides.py", "patchspec.py",
              "pathgeom.py", "axestraversal.py", "spinemodel.py", "tickmodel.py", "colorbarmodel.py", "legendmodel.py", "figcapture.py", "teedraw.py", "figsession.py", "wireproto.py", "scriptinput.py", "runtime.py", "writetripwire.py", "texdiag.py", "cmddiag.py",
              "previewbudget.py", "preview_complexity.py", "preview_hybrid.py",
              "bridge_runner.py", "bridgeboot.py", "mathtext_child.py"):
