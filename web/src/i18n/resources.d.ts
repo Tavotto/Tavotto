@@ -7878,11 +7878,15 @@ export default interface Resources {
     },
     "toolHint": {
       "arrow": "拖动画出箭头，Shift 吸附 15° 角；Esc 取消",
+      "brace": "拖动画出大括号；Esc 取消",
+      "diamond": "拖动画出菱形；Esc 取消",
       "ellipse": "拖动画出椭圆；Esc 取消",
       "line": "拖动画出直线；Esc 取消",
       "pen": "点一下加尖角点，按住拖拉出平滑点；点起点闭合，Enter / Esc 结束",
+      "polygon": "拖动画出多边形；Esc 取消",
       "rect": "拖动绘制矩形；Esc 取消",
-      "text": "拖动绘制文字框，或单击按默认大小放置；Esc 取消"
+      "text": "拖动绘制文字框，或单击按默认大小放置；Esc 取消",
+      "triangle": "拖动画出三角形；Esc 取消"
     },
     "topbar": {
       "addSubLabels": "添加序号标签",
@@ -7905,7 +7909,6 @@ export default interface Resources {
       "fromOtherProject": "· 其他项目",
       "fromProject": "· 项目 {{name}}",
       "importPackage": "导入项目包…",
-      "insertShape": "插入形状",
       "issueAria": "排版状态：{{status}}。查看详情",
       "issueLastDoc": "没接上上次的排版",
       "issueTooNew": "排版版本较新",

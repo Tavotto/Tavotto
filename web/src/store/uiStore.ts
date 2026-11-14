@@ -16,7 +16,18 @@ export type LeftTab = 'workspace' | 'assets' | 'data' | 'outline' | 'elements' |
 const LEGACY_OUTLINE_TABS: readonly string[] = ['canvases', 'layers']
 /** 右栏三模式：属性 / 改图助手 / 画布设置 */
 export type RightTab = 'properties' | 'assistant' | 'canvas' | 'timeline' | 'review'
-export type Tool = 'select' | 'text' | 'arrow' | 'rect' | 'ellipse' | 'line' | 'pen'
+export type Tool =
+  | 'select'
+  | 'text'
+  | 'arrow'
+  | 'rect'
+  | 'ellipse'
+  | 'line'
+  | 'triangle'
+  | 'diamond'
+  | 'polygon'
+  | 'brace'
+  | 'pen'
 /** 工作区断点：≥1440 可双栏钉住 / 1024–1439 左右互斥 / <1024 覆盖式抽屉 */
 export type WorkspaceLayout = 'wide' | 'medium' | 'narrow'
 

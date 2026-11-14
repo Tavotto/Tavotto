@@ -866,6 +866,11 @@ const DEFAULT_DRAW: Record<string, { w: number; h: number }> = {
   rect: { w: 30, h: 20 },
   ellipse: { w: 30, h: 20 },
   line: { w: 30, h: 0.01 },
+  // 三角形 / 菱形 / 多边形 / 大括号（2026-11-14 起也是拖画工具）：单击不拖时落的默认尺寸与原来「插入形状」相同
+  triangle: { w: 20, h: 16 },
+  diamond: { w: 20, h: 16 },
+  polygon: { w: 20, h: 16 },
+  brace: { w: 6, h: 24 },
 }
 
 /**
@@ -905,7 +910,7 @@ export function startDraw(e: ReactPointerEvent, tool: DrawTool) {
           cur = { x: hx ?? cur.x, y: hy ?? cur.y }
           interaction().setSnap(hx != null ? [hx] : [], hy != null ? [hy] : [])
         }
-        if (ev.shiftKey && (tool === 'rect' || tool === 'ellipse')) {
+        if (ev.shiftKey && tool !== 'text') {
           const dx = cur.x - start.x
           const dy = cur.y - start.y
           const side = Math.max(Math.abs(dx), Math.abs(dy))
@@ -1011,6 +1016,7 @@ export function startDraw(e: ReactPointerEvent, tool: DrawTool) {
           strokePt: 1,
           color: DRAW_COLOR,
           fill: null,
+          ...(tool === 'polygon' ? { sides: 6 } : {}),
         }
         created = shape
       }

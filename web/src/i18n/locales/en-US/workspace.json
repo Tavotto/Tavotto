@@ -995,11 +995,15 @@
   },
   "toolHint": {
     "arrow": "Drag to draw an arrow; hold Shift to snap to 15°. Esc to cancel.",
+    "brace": "Drag to draw a brace; Esc to cancel",
+    "diamond": "Drag to draw a diamond; Esc to cancel",
     "ellipse": "Drag to draw an ellipse. Esc to cancel.",
     "line": "Drag to draw a line. Esc to cancel.",
     "pen": "Click to add a corner point, drag for a smooth point; click the start point to close, Enter or Esc to finish",
+    "polygon": "Drag to draw a polygon; Esc to cancel",
     "rect": "Drag to draw a rectangle. Esc to cancel.",
-    "text": "Drag to draw a text box, or click for the default size. Esc to cancel."
+    "text": "Drag to draw a text box, or click for the default size. Esc to cancel.",
+    "triangle": "Drag to draw a triangle; Esc to cancel"
   },
   "topbar": {
     "addSubLabels": "Add panel labels",
@@ -1021,7 +1025,6 @@
     "fromOtherProject": "· another project",
     "fromProject": "· in {{name}}",
     "importPackage": "Import project package…",
-    "insertShape": "Insert shape",
     "more": "More",
     "moreGroup": {
       "file": "File",
