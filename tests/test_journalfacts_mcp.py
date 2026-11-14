@@ -155,6 +155,58 @@ def test_mcp_paging_rejects_revision_changes_and_gives_recovery(isolated, monkey
     assert "第一页重新读取" in out["error"] and "facts" not in out
 
 
+@pytest.mark.parametrize("mode", ["search", "journal"])
+def test_mcp_followup_requires_signed_catalog_revision_and_rejects_changes(
+    isolated, monkeypatch, mode
+):
+    from tavotto_mcp.rpc import RpcError
+
+    key, _ = isolated
+    monkeypatch.setattr(journals, "JOURNAL_CATALOG_AGENTS", True)
+    monkeypatch.setattr(journalremote, "set_client_type", lambda _name: None)
+    bundle = fact_bundle()
+    bundle["facts"].append(dict(bundle["facts"][0], id="second"))
+    raw = json.dumps(bundle).encode()
+    idx1, idx2 = index_for(raw, 1), index_for(raw, 2)
+    if mode == "search":
+        template = idx1["journals"]["fx-journal"]
+        idx1["journals"] = {"j1": dict(template), "j2": dict(template)}
+        idx2["journals"] = {"j0": dict(template), **idx1["journals"]}
+    current = {"index": idx1, "requests": 0}
+
+    def request(method, url, cap, headers):
+        current["requests"] += 1
+        return (
+            (200, signed(key, current["index"]))
+            if url.endswith("index.signed.json")
+            else (200, raw)
+        )
+
+    monkeypatch.setattr(facts, "_request", request)
+    args = {"limit": 1, **({"journal_id": "fx-journal"} if mode == "journal" else {})}
+    first = server.call_tool("tavotto_get_journal_facts", args)["structuredContent"]
+    items = "facts" if mode == "journal" else "journals"
+    assert first["catalog_rev"] == 1 and first["next_offset"] == 1
+    assert first[items][0]["id"] == ("line" if mode == "journal" else "j1")
+
+    requests = current["requests"]
+    with pytest.raises(RpcError, match="catalog_rev"):
+        server.call_tool("tavotto_get_journal_facts", {**args, "offset": 1})
+    assert current["requests"] == requests
+    same = server.call_tool(
+        "tavotto_get_journal_facts", {**args, "offset": 1, "expected_catalog_rev": 1}
+    )["structuredContent"]
+    assert same[items][0]["id"] == ("second" if mode == "journal" else "j2")
+
+    current["index"] = idx2
+    changed = server.call_tool(
+        "tavotto_get_journal_facts", {**args, "offset": 1, "expected_catalog_rev": 1}
+    )
+    assert changed["isError"] and changed["structuredContent"]["code"] == "journal_catalog_changed"
+    assert changed["structuredContent"]["current_catalog_rev"] == 2
+    assert items not in changed["structuredContent"]
+
+
 def test_guarded_paging_requires_engine_support_but_legacy_calls_still_work(monkeypatch):
     from types import SimpleNamespace
 

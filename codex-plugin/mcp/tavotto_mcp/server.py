@@ -698,13 +698,17 @@ def _add_journal_catalog_tools(tools: list[dict], by_name: dict) -> None:
                             "type": "string",
                             "description": "读取指定期刊的事实，与 query 二选一",
                         },
-                        "offset": {"type": "integer", "minimum": 0},
+                        "offset": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "大于 0 时必须同时传 expected_catalog_rev。",
+                        },
                         "limit": {"type": "integer", "minimum": 1, "maximum": 20},
                         "expected_catalog_rev": {
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 9999999999,
-                            "description": "后续页传第一页 catalog_rev；目录变化时须重读。",
+                            "description": "后续页必须传第一页 catalog_rev；目录变化时须重读。",
                         },
                         "inspection": {
                             "type": "object",
@@ -1383,13 +1387,15 @@ def _call_journal_facts(args: dict) -> dict:
             expected_rev is not None
             and (type(expected_rev) is not int or not 1 <= expected_rev <= 9999999999)
         )
-        or (
-            inspection is not None and (journal_id is None or (offset > 0 and expected_rev is None))
-        )
+        or (inspection is not None and journal_id is None)
         or set(args)
         - {"query", "journal_id", "offset", "limit", "expected_catalog_rev", "inspection"}
     ):
         raise RpcError(INVALID_PARAMS, "查询、期刊 ID 或分页参数不正确")
+    if offset > 0 and expected_rev is None:
+        raise RpcError(
+            INVALID_PARAMS, "读取后续页须传入第一页的 catalog_rev 作为 expected_catalog_rev"
+        )
     if inspection is None:
         out = bridge.journal_facts(query, journal_id, offset, limit, expected_rev)
     else:
