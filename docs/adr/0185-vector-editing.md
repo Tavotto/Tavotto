@@ -79,7 +79,7 @@ interface PathNode {
   一次 commit；直接选择拖锚点走 `beginTxn/endTxn`；离散动作先 `finishActiveGesture()`。每个动作注册成命令，命令面板、右键菜单、
   快捷键与 MCP 用同一份——AI 也能画。快捷键按 Illustrator 习惯，开工前对一遍与现有快捷键的冲突。
 - **M2 路径查找器**：§三。
-- **M3 渐变**：要扩 IR 闭集（`ir.Paint` 加线性 / 径向渐变 → PDF Shading Pattern、SVG `<linearGradient>`、EPS `shfill`），另开 ADR。
+- **M3 渐变**：见 [ADR 0186](0186-gradients.md)（扩 `ir.Paint` 闭集：PDF Shading Pattern、SVG `<linearGradient>`、EPS `shfill`）。
 - **M4 剪切蒙版与嵌套组**：现在的 `groupId` 是平铺一层；文档级加 `groups: { id, parentId?, clipBy? }[]`，导出映射到 `ir.Group(clip=…)`。
   必须与 `LayoutGroup`（行 / 列 / 网格排版组）分开，不许变成第二套组模型。另开 ADR。
 - **M5 SVG 互通**：粘贴 / 拖入 SVG 落成可编辑对象，复制为 SVG。
