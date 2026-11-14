@@ -11,8 +11,10 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { CanvasHud, HUD_NOTICE_GAP, hudLift } from '@/components/StatusBar'
-import { setLocale } from '@/i18n'
+import { CanvasHud, HUD_NOTICE_GAP, hudLift, NotificationRail } from '@/components/StatusBar'
+import { TooltipProvider } from '@/components/ui/Tooltip'
+import { literal, setLocale } from '@/i18n'
+import { useNoticeRailStore } from '@/store/noticeRailStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -90,5 +92,30 @@ describe('hudLift：底部通知轨有通知时，工具提示抬到通知上方
 
   it('通知顶边在容器底边之下（量的时机错开）：不给负数', () => {
     expect(hudLift(900, 892)).toBe(0)
+  })
+})
+
+describe('通知轨的顶边：窗口尺寸变了要重量（读它的浮动胶囊才不会按旧位置避让）', () => {
+  it('窗口变矮、通知没重渲染：resize 后共用的顶边跟着换', () => {
+    let top = 600
+    const orig = Element.prototype.getBoundingClientRect
+    Element.prototype.getBoundingClientRect = function (this: Element) {
+      const r = orig.call(this)
+      return this.hasAttribute('data-toast-layout') ? ({ ...r.toJSON?.(), top, bottom: top + 40 } as DOMRect) : r
+    }
+    try {
+      container = document.createElement('div')
+      document.body.appendChild(container)
+      root = createRoot(container)
+      act(() => useUiStore.getState().setStatus(literal('渲染完成')))
+      act(() => root.render(<TooltipProvider><NotificationRail /></TooltipProvider>))
+      expect(useNoticeRailStore.getState().top).toBe(600)
+      top = 420 // 窗口变矮：通知跟着底边锚上移，但没有新的渲染
+      act(() => window.dispatchEvent(new Event('resize')))
+      expect(useNoticeRailStore.getState().top).toBe(420)
+    } finally {
+      Element.prototype.getBoundingClientRect = orig
+      act(() => useUiStore.setState({ status: null }))
+    }
   })
 })

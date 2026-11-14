@@ -317,12 +317,22 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   // 压上去的只有对话框自己动作的结果（状态 / 引擎退出 / 带一次性出口的环境与答案提示）；背景性的几条
   // （加入说明、操作提示、作者回信胶囊）在模态期间不画——它们与对话框里的事无关，浮在遮罩上只会打岔，关掉对话框后照常回来
   const overModal = useDialogLayerStore((s) => s.open > 0)
-  useEffect(() => {
+  const measureRailTop = () => {
     const tops = [...(overModal ? [] : (railRef.current?.querySelectorAll('[data-toast-layout][data-state="open"]') ?? []))].map((e) =>
       Math.round(e.getBoundingClientRect().top),
     )
     useNoticeRailStore.getState().setTop(tops.length ? Math.min(...tops) : null)
-  })
+  }
+  useEffect(measureRailTop)
+  // 顶边是窗口坐标：窗口变高 / 变矮时通知跟着 CSS 底边锚走，渲染却不一定重来——只在渲染后量会留下旧值，
+  // 读它的浮动胶囊（工具提示、上下文栏、拖动读数、提示卡）就按旧位置避让、又叠上去。尺寸一变就重量
+  const measureRef = useRef(measureRailTop)
+  measureRef.current = measureRailTop
+  useEffect(() => {
+    const onResize = () => measureRef.current()
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
   useEffect(() => () => useNoticeRailStore.getState().setTop(null), [])
   const { t } = useTranslation('workspace')
   const fmt = useFormatMessage()
