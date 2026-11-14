@@ -1587,6 +1587,18 @@ jobs:
       # supervisor_behaviour.rs 起的是真二进制 + tests/fake_worker.py，
       # 靠 runner 自带的 python3（`PYTHON` 可覆盖）
       - run: cargo test
+      # 画布路径查找器的内核（ADR 0185 §五 M2）：vecops/ 是另一个独立的 crate，同在这个 job 里验，不另开 job。
+      # vecops/rust-toolchain.toml 钉死 1.95.0 + wasm32 目标，rustup 进目录时自动装；提交进仓库的
+      # web/src/lib/vecops/vecops.wasm 必须与源码逐字节一致（build.sh --check），改了 Rust 没重建就红。
+      - name: vecops 格式 / clippy / 用例
+        working-directory: vecops
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets --no-deps -- -D warnings
+          cargo test --locked
+      - name: vecops.wasm 与源码逐字节一致
+        working-directory: ${{ github.workspace }}
+        run: vecops/build.sh --check
       # skip 矩阵 #1（docs/ci/skip-evidence-matrix.md）：`test_equivalence_matrix` / `test_worker_roundtrip`
       # 里 workerd 那 12 条（三路等价 ×N、inline svg 逐字节、preview_png 状态中立）在没有
       # `tavotto-workerd` 产物的机器上 skip，而 CI 里唯一有 `target/debug/tavotto-workerd` 的地方就是
