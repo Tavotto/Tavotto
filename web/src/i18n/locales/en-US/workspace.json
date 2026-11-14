@@ -958,6 +958,7 @@
     "styleCopiedArrow": "Copied arrow style",
     "styleCopiedPanel": "Copied figure style",
     "styleCopiedShape": "Copied shape style",
+    "styleCopiedPath": "Copied path style",
     "styleCopiedText": "Copied text style",
     "styleCopyNeedSelection": "Select an object to copy its style.",
     "stylePasteNoTarget": "Nothing in the selection can take a {{kind}} style",

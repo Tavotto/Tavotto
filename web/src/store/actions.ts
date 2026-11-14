@@ -65,6 +65,7 @@ import type {
   LayoutGroup,
   PanelObject,
   PanelOverride,
+  PathObject,
   ShapeObject,
   TextObject,
 } from '@/types/document'
@@ -112,6 +113,7 @@ import { useJournalV2Store } from './journalV2Store'
 import { useTimelineStore } from './timelineStore'
 import { hasPendingStyleWork } from './styleWork'
 import { canConvertToPath, toPathObject } from '@/lib/convertToPath'
+import { isFillStrokeMark, styleFamilyOf } from '@/lib/markStyle'
 import { fitStageNow } from '@/store/zoomToSelection'
 
 /** 本文件的历史标签与状态提示都在 workspace 命名空间下 */
@@ -3073,6 +3075,7 @@ type StyleClip =
   | ({ kind: 'text' } & Partial<TextObject>)
   | ({ kind: 'arrow' } & Partial<ArrowObject>)
   | ({ kind: 'shape' } & Partial<ShapeObject>)
+  | ({ kind: 'path' } & Partial<PathObject>)
 
 /** 每类对象参与样式复制的键（几何 x/y/w/h 与内容永不复制） */
 const TEXT_STYLE_KEYS = ['sizePt', 'bold', 'italic', 'underline', 'color', 'align',
@@ -3081,6 +3084,23 @@ const ARROW_STYLE_KEYS = ['strokePt', 'color', 'head', 'headStart', 'headEnd',
   'dash', 'rotationDeg'] as const
 const SHAPE_STYLE_KEYS = ['strokePt', 'color', 'fill', 'cornerRadius',
   'fillOpacity', 'dash', 'rotationDeg'] as const
+/**
+ * 自由路径（ADR 0185）：填充 / 描边字段与形状同名同义，端型与箭头同名同义。形状 ↔ 路径同族互刷
+ * （`markStyle.styleFamilyOf`），写的是两边**都有**的那几个键（`styleKeysOf` 取交集）——圆角不刷到路径上、端型不刷到形状上。
+ */
+const PATH_STYLE_KEYS = ['strokePt', 'color', 'fill', 'fillOpacity', 'dash', 'stroke',
+  'strokeOpacity', 'lineCap', 'lineJoin', 'headStart', 'headEnd', 'headSizeStart',
+  'headSizeEnd', 'rotationDeg'] as const
+const STYLE_KEYS: Record<StyleClip['kind'], readonly string[]> = {
+  panel: [],
+  text: TEXT_STYLE_KEYS,
+  arrow: ARROW_STYLE_KEYS,
+  shape: SHAPE_STYLE_KEYS,
+  path: PATH_STYLE_KEYS,
+}
+/** 从 `from` 类型刷到 `to` 类型时写哪些键：两边都参与样式复制的键 */
+const styleKeysOf = (from: StyleClip['kind'], to: StyleClip['kind']): string[] =>
+  STYLE_KEYS[from].filter((k) => STYLE_KEYS[to].includes(k))
 
 function pickKeys(src: object, keys: readonly string[]): Record<string, unknown> {
   const from = src as Record<string, unknown>
@@ -3120,6 +3140,9 @@ export function copySelectionStyle() {
   } else if (src?.type === 'shape') {
     styleClip = { kind: 'shape', ...pickKeys(src, SHAPE_STYLE_KEYS) }
     status(note('styleCopiedShape'), 'done')
+  } else if (src?.type === 'path') {
+    styleClip = { kind: 'path', ...pickKeys(src, PATH_STYLE_KEYS) }
+    status(note('styleCopiedPath'), 'done')
   } else {
     status(note('styleCopyNeedSelection'), 'error')
   }
@@ -3128,8 +3151,9 @@ export function copySelectionStyle() {
 export function pasteSelectionStyle() {
   const clip = styleClip
   if (!clip) return
+  // 同族就能刷（形状 ↔ 自由路径是一族，`markStyle.styleFamilyOf`）
   const ids = selectedObjects()
-    .filter((o) => o.type === clip.kind)
+    .filter((o) => styleFamilyOf(o.type) === styleFamilyOf(clip.kind))
     .map((o) => o.id)
   if (!ids.length) {
     status(note('stylePasteNoTarget', { kind: t(`objectType.${clip.kind}`) }), 'error')
@@ -3144,8 +3168,8 @@ export function pasteSelectionStyle() {
       assignKeys(o, clip, TEXT_STYLE_KEYS)
     } else if (clip.kind === 'arrow' && o.type === 'arrow') {
       assignKeys(o, clip, ARROW_STYLE_KEYS)
-    } else if (clip.kind === 'shape' && o.type === 'shape') {
-      assignKeys(o, clip, SHAPE_STYLE_KEYS)
+    } else if (styleFamilyOf(clip.kind) === 'fillStroke' && isFillStrokeMark(o)) {
+      assignKeys(o, clip, styleKeysOf(clip.kind, o.type))
     }
   })
   status(note('stylePasted', { count: ids.length }), 'done')

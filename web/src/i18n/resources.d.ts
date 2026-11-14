@@ -7765,6 +7765,7 @@ export default interface Resources {
       "sourceLost_other": "源脚本关系已失效，{{count}} 张图已改为普通图片。图片和它们在画布上的摆放都保留着。",
       "styleCopiedArrow": "已复制箭头样式",
       "styleCopiedPanel": "已复制图的样式",
+      "styleCopiedPath": "已复制路径样式",
       "styleCopiedShape": "已复制形状样式",
       "styleCopiedText": "已复制文字样式",
       "styleCopyNeedSelection": "先选中要复制样式的对象",
