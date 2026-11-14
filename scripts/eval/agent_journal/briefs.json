@@ -1,0 +1,22 @@
+[
+  {"id": "01-line-timeseries", "brief": "Line plot of three noisy sensor time series (temperature in °C over 24 h) with a legend and axis labels."},
+  {"id": "02-bar-errorbars", "brief": "Grouped bar chart comparing four catalysts across three conditions, with standard-deviation error bars and a legend."},
+  {"id": "03-scatter-fit", "brief": "Scatter plot of measured vs predicted values with a linear fit line, the R² value written on the plot, and a y = x reference line."},
+  {"id": "04-heatmap", "brief": "Heatmap of a 12×12 correlation matrix with a colorbar and tick labels for each variable."},
+  {"id": "05-2x2-panels", "brief": "A 2×2 figure with panels labelled (a)–(d): a line plot, a histogram, a scatter plot and a bar chart of synthetic experiment data."},
+  {"id": "06-histogram-kde", "brief": "Histogram of particle sizes (nm) with a smoothed density curve overlaid and the mean marked by a vertical dashed line."},
+  {"id": "07-boxplot", "brief": "Box plot of cell viability (%) for five treatment groups, with individual data points jittered on top."},
+  {"id": "08-xrd-stacked", "brief": "Stacked XRD patterns (2θ from 10° to 80°) for four samples, offset vertically, with sample names next to each curve."},
+  {"id": "09-dual-axis", "brief": "Plot with two y-axes: voltage (V) on the left and current (mA) on the right, both against time (s)."},
+  {"id": "10-loglog", "brief": "Log-log plot of power spectral density vs frequency for three samples, with a power-law guide line labelled with its slope."},
+  {"id": "11-contour", "brief": "Filled contour plot of a 2D potential energy surface with contour lines, a colorbar and axis labels in Å."},
+  {"id": "12-cv-curves", "brief": "Cyclic voltammetry curves (current density vs potential vs RHE) at five scan rates, coloured by scan rate with a legend."},
+  {"id": "13-1x3-panels", "brief": "A 1×3 row of panels sharing the y-axis showing dose–response curves for three cell lines, each with fitted sigmoid curves."},
+  {"id": "14-errorbar-line", "brief": "Mean ± SEM line plot of tumour volume over 30 days for control and two treatment groups, with markers and caps on error bars."},
+  {"id": "15-stacked-area", "brief": "Stacked area chart of energy mix shares (coal, gas, nuclear, wind, solar) from 2000 to 2025, with a legend outside the plot."},
+  {"id": "16-polar", "brief": "Polar plot of the angular emission intensity of an antenna at three frequencies, with a legend."},
+  {"id": "17-violin", "brief": "Violin plot of gene expression levels for four genotypes with medians marked and significance asterisks between pairs."},
+  {"id": "18-inset", "brief": "Main line plot of a stress–strain curve with an inset zooming into the elastic region near the origin."},
+  {"id": "19-image-grid", "brief": "A 2×3 grid of synthetic microscopy images (random noise fields) shown with a grey colormap, each with a title and a scale bar."},
+  {"id": "20-horizontal-bar", "brief": "Horizontal bar chart ranking feature importances of 15 features from a model, sorted, with values written at the end of each bar."}
+]
