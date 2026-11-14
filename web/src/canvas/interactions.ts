@@ -174,7 +174,10 @@ const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
  * 当场翻好塞进去，切到英文后历史面板只重翻外层模板，显示成「Add 矩形」，
  * 而且换不回来（原始 tool 已经没了）。
  */
-const drawnToolMsg = (tool: Exclude<Tool, 'select'>): UiMessage =>
+/** 拖一下就落一个对象的工具（钢笔是多次点击的状态机，另走 `canvas/penController`） */
+export type DrawTool = Exclude<Tool, 'select' | 'pen'>
+
+const drawnToolMsg = (tool: DrawTool): UiMessage =>
   tool === 'text' || tool === 'arrow'
     ? msg(`objectType.${tool}`)
     : msg(`shape.${tool}`)
@@ -341,7 +344,7 @@ const NEAR_AXIS_DEG = 4
 
 /** 一次绘制的粗粒度形状（纯函数）：`vec` = 起点到终点，`box` = 落下来的包围盒 */
 export function drawShape(
-  tool: Exclude<Tool, 'select'>,
+  tool: DrawTool,
   vec: { x: number; y: number },
   box: { w: number; h: number },
   shift: boolean,
@@ -875,7 +878,7 @@ const DEFAULT_DRAW: Record<string, { w: number; h: number }> = {
  * shift（Illustrator 语义）：矩形 / 椭圆锁成正方形 / 正圆（锚在起点），
  * 箭头 / 直线锁 15° 角（与端点拖拽同一档）。
  */
-export function startDraw(e: ReactPointerEvent, tool: Exclude<Tool, 'select'>) {
+export function startDraw(e: ReactPointerEvent, tool: DrawTool) {
   const store = useDocumentStore.getState()
   const start = clientToMm(e.clientX, e.clientY)
   const cands = candidatesFor(new Set())

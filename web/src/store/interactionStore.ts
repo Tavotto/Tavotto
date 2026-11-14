@@ -7,7 +7,7 @@ import type { UiMessage } from '@/i18n'
 export type DragKind =
   | 'none' | 'move' | 'resize' | 'marquee' | 'pan'
   | 'guide' | 'draw' | 'crop' | 'endpoint' | 'element' | 'pageedge' | 'figureedge' | 'framepad'
-  | 'rotate'
+  | 'rotate' | 'anchor'
 
 export type DraftPreview = Rect & {
   tool: string

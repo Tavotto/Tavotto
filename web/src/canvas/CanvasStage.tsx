@@ -43,6 +43,9 @@ import { Rulers, RULER_SIZE } from './Rulers'
 import { CanvasContextMenu } from './CanvasContextMenu'
 import { placePanelInPage } from '@/lib/panelPlacement'
 import { startDraw, startMarquee, startPan } from './interactions'
+import { penHover, penPointerDown } from './penController'
+import { startAnchorMarquee } from './pathEditDrag'
+import { activePathEdit } from '@/store/pathEditStore'
 import { groundInkFor } from '@/lib/canvasSelection'
 import { cn } from '@/lib/utils'
 
@@ -196,8 +199,18 @@ export function CanvasStage() {
       useUiStore.getState().setCropTarget(null)
       return
     }
+    // 钢笔（ADR 0185 M1）：加点 / 拉手柄 / 点起点闭合，状态机在 `lib/penTool`
+    if (tool === 'pen') {
+      penPointerDown(e)
+      return
+    }
     if (tool !== 'select') {
       startDraw(e, tool)
+      return
+    }
+    // 锚点编辑里点空白：框选锚点（没拖 = 退出锚点编辑、清选区）
+    if (activePathEdit()) {
+      startAnchorMarquee(e)
       return
     }
     startMarquee(e)
@@ -207,6 +220,7 @@ export function CanvasStage() {
   const rafRef = useRef(0)
   const onPointerMove = (e: React.PointerEvent) => {
     const { clientX, clientY } = e
+    if (tool === 'pen') penHover(clientX, clientY)
     if (rafRef.current) return
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = 0

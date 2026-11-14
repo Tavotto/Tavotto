@@ -464,6 +464,26 @@
         "keywords": "convert path zwlj 路径 钢笔",
         "label": "转为路径"
       },
+      "pen-tool": {
+        "keywords": "pen gb 路径 贝塞尔",
+        "label": "钢笔"
+      },
+      "edit-anchors": {
+        "keywords": "anchor direct bjmd 直接选择 锚点",
+        "label": "编辑锚点"
+      },
+      "add-anchor": {
+        "keywords": "add anchor tjmd 加点",
+        "label": "添加锚点"
+      },
+      "delete-anchor": {
+        "keywords": "delete anchor scmd 删点",
+        "label": "删除锚点"
+      },
+      "convert-anchor": {
+        "keywords": "convert anchor smooth corner zhmd 平滑 尖角",
+        "label": "转换锚点"
+      },
       "cycle-overlap": {
         "keywords": "cycle overlap twin axis lh lunhuan cd chongdie sszx shuangzongzhou",
         "label": "在重叠的图内元素之间轮换选中"

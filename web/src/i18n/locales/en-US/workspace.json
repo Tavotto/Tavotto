@@ -140,6 +140,7 @@
   "canvasTools": {
     "fit": "Fit",
     "label": "Canvas tools",
+    "pen": "Pen",
     "select": "Select",
     "subLabels": "Labels"
   },
@@ -403,6 +404,12 @@
     "switchKindCount": "Change {{count}} objects to {{name}}",
     "convertToPath": "Convert to Path",
     "convertToPathCount": "Convert {{count}} objects to paths",
+    "drawPath": "Draw path",
+    "moveAnchors": "Move anchors",
+    "moveHandle": "Adjust handle",
+    "addAnchors": "Add anchor points",
+    "deleteAnchors": "Delete {{count}} anchor points",
+    "convertAnchors": "Convert anchor points",
     "resizeAxes": "Resize {{count}} axes",
     "resizePatch": "Resize box",
     "scaleLegend": "Scale legend",

@@ -1467,6 +1467,10 @@ export default interface Resources {
     },
     "palette": {
       "commands": {
+        "add-anchor": {
+          "keywords": "add anchor tjmd 加点",
+          "label": "添加锚点"
+        },
         "add-text": {
           "keywords": "text add tjwz wenzi",
           "label": "添加文字"
@@ -1475,6 +1479,10 @@ export default interface Resources {
           "keywords": "canvas page settings hbsz huabu",
           "label": "画布设置"
         },
+        "convert-anchor": {
+          "keywords": "convert anchor smooth corner zhmd 平滑 尖角",
+          "label": "转换锚点"
+        },
         "convert-to-path": {
           "keywords": "convert path zwlj 路径 钢笔",
           "label": "转为路径"
@@ -1482,6 +1490,14 @@ export default interface Resources {
         "cycle-overlap": {
           "keywords": "cycle overlap twin axis lh lunhuan cd chongdie sszx shuangzongzhou",
           "label": "在重叠的图内元素之间轮换选中"
+        },
+        "delete-anchor": {
+          "keywords": "delete anchor scmd 删点",
+          "label": "删除锚点"
+        },
+        "edit-anchors": {
+          "keywords": "anchor direct bjmd 直接选择 锚点",
+          "label": "编辑锚点"
         },
         "edit-elements": {
           "keywords": "edit element tnys tuneiyuansu",
@@ -1538,6 +1554,10 @@ export default interface Resources {
         "new-doc": {
           "keywords": "new blank xj xinjian pb paiban",
           "label": "新建空白排版"
+        },
+        "pen-tool": {
+          "keywords": "pen gb 路径 贝塞尔",
+          "label": "钢笔"
         },
         "project-scan": {
           "keywords": "scan check structure jc jiancha 检查 扫描 脚本 目标",
@@ -6191,6 +6211,7 @@ export default interface Resources {
       "view": "视图"
     },
     "key": {
+      "anchors": "锚点编辑里：添加 / 删除 / 转换锚点",
       "copyPaste": "复制 / 粘贴对象，可跨排版",
       "cycleOverlap": "在重叠的图内元素之间轮换选中",
       "delete": "删除对象；图内编辑时改为隐藏，可恢复。",
@@ -6205,6 +6226,7 @@ export default interface Resources {
       "nudge": "微移选中对象或图内元素：0.5 mm / 5 mm / 0.1 mm（页面上的距离）；连按算一步撤销",
       "palette": "命令面板",
       "pan": "平移画布",
+      "pen": "钢笔",
       "quickEdit": "按对象打开快捷编辑菜单",
       "saveDocument": "保存排版",
       "saveLayout": "另存为新排版",
@@ -6366,6 +6388,7 @@ export default interface Resources {
     "canvasTools": {
       "fit": "适应",
       "label": "画布工具",
+      "pen": "钢笔",
       "select": "选择",
       "subLabels": "序号"
     },
@@ -6586,6 +6609,7 @@ export default interface Resources {
       "space_pan": "按住空格拖动，平移画布"
     },
     "history": {
+      "addAnchors": "添加锚点",
       "addArrow": "添加箭头",
       "addGuide": "添加参考线",
       "addPanel": "加入图 {{name}}",
@@ -6606,13 +6630,16 @@ export default interface Resources {
       "clearGuides": "清除参考线",
       "clearJournal": "取消按期刊检查",
       "clearProp": "恢复{{prop}}",
+      "convertAnchors": "转换锚点",
       "convertToPath": "转为路径",
       "convertToPathCount": "把 {{count}} 个对象转为路径",
       "createLayoutGroup": "创建{{kind}}",
+      "deleteAnchors": "删除 {{count}} 个锚点",
       "deleteGuide": "删除参考线",
       "deleteObject": "删除 {{name}}",
       "deleteObjects": "删除 {{count}} 个对象",
       "dissolveLayoutGroup": "解散布局组",
+      "drawPath": "画路径",
       "duplicateCanvasSuffix": "{{name}} 副本",
       "duplicateObjects": "复制对象",
       "editStyle": "修改样式「{{name}}」",
@@ -6639,9 +6666,11 @@ export default interface Resources {
       "lockObject": "锁定对象",
       "lockObjects": "锁定 {{count}} 个对象",
       "mcpOpenFigure": "打开图",
+      "moveAnchors": "移动锚点",
       "moveElement": "移动{{label}}",
       "moveElements": "移动 {{count}} 个图内元素",
       "moveGuide": "移动参考线",
+      "moveHandle": "调整手柄",
       "moveObject": "移动对象",
       "moveObjects": "移动 {{count}} 个对象",
       "pasteObjects_other": "粘贴 {{count}} 个对象",

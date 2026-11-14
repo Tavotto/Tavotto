@@ -8,6 +8,7 @@ import {
   MousePointerClick,
   Shapes,
   Slash,
+  Spline,
   Square,
   Tags,
   Type,
@@ -47,13 +48,15 @@ export function useCanvasToolbarVisible(): boolean {
  * 标注形状收进一个菜单：名字走 common:objectType / common:shape，这里只留图标与快捷键。
  * 「文字」有自己的按钮，不在这张表里。
  */
-type MarkTool = 'arrow' | 'rect' | 'ellipse' | 'line'
+type MarkTool = 'arrow' | 'rect' | 'ellipse' | 'line' | 'pen'
 
 const MARK_TOOLS: { tool: MarkTool; icon: typeof Type; key: KeyId }[] = [
   { tool: 'arrow', icon: ArrowUpRight, key: 'toolArrow' },
   { tool: 'rect', icon: Square, key: 'toolRect' },
   { tool: 'ellipse', icon: Circle, key: 'toolEllipse' },
   { tool: 'line', icon: Slash, key: 'toolLine' },
+  // 钢笔（ADR 0185 M1）：多次点击画自由路径，收在同一个菜单里，不另占工具条的格
+  { tool: 'pen', icon: Spline, key: 'toolPen' },
 ]
 
 /**
@@ -64,7 +67,7 @@ const MARK_TOOLS: { tool: MarkTool; icon: typeof Type; key: KeyId }[] = [
  * `objectType.rect` 这类不存在的条目。
  */
 const markToolKey = (tool: MarkTool): string =>
-  tool === 'arrow' ? objectTypeKey(tool) : shapeKey(tool)
+  tool === 'arrow' ? objectTypeKey(tool) : tool === 'pen' ? 'workspace:canvasTools.pen' : shapeKey(tool)
 
 const objectTypeKey = (tool: 'arrow') => `common:objectType.${tool}`
 const shapeKey = (tool: 'rect' | 'ellipse' | 'line') => `common:shape.${tool}`

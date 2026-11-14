@@ -18,6 +18,10 @@ import {
   closeTimeline,
 } from '@/store/actions'
 import { finishNudge, nudgeKeyDown, nudgeKeyUp } from '@/canvas/nudge'
+import { penFinish } from '@/canvas/penController'
+import { deleteAnchorPoints, editAnchors, exitAnchorEdit, PATH_COMMANDS } from '@/store/pathActions'
+import { activePathEdit } from '@/store/pathEditStore'
+import { bindingFor } from '@/lib/keymap'
 import { useDocumentStore } from '@/store/documentStore'
 import {
   cancelActivePointerGesture,
@@ -42,6 +46,7 @@ const TOOL_KEYS: Record<string, Tool> = {
   r: 'rect',
   o: 'ellipse',
   l: 'line',
+  p: 'pen',
 }
 
 /**
@@ -76,6 +81,11 @@ const inEditableTarget = (e: KeyboardEvent) => yieldsCanvasShortcuts(e.target)
  */
 export function deleteSelection() {
   if (isCanvasCovered()) return // 画布被「数据」临时标签盖住：不改看不见的文档（顶栏 / 命令面板 / 菜单 / 键盘共用这个入口）
+  // 锚点编辑里选着锚点：删的是锚点，不是整条路径（ADR 0185 M1）
+  if (activePathEdit()?.anchors.length) {
+    deleteAnchorPoints()
+    return
+  }
   const ui = useUiStore.getState()
   if (ui.elementPanelId && ui.selectedGids.length) {
     hideSelectedElements(ui.elementPanelId, ui.selectedGids)
@@ -310,6 +320,8 @@ export function useKeyboard() {
       }
       if (e.key === 'Escape') {
         e.preventDefault()
+        // 钢笔画到一半：Esc 结束成开放路径（Illustrator 习惯），这一下不做别的
+        if (penFinish()) return
         // 最上层浮层优先：时间线在预览就先退预览，再关抽屉
         if (isTimelineOpen(ui) && useTimelineStore.getState().preview) {
           useTimelineStore.getState().setPreview(null)
@@ -327,6 +339,7 @@ export function useKeyboard() {
             useSelectionStore.getState().set([pid])
           }
         } else if (ui.cropTargetId) cancelCrop()
+        else if (activePathEdit()) exitAnchorEdit()
         else if (ui.tool !== 'select') ui.setTool('select')
         else useSelectionStore.getState().clear()
         return
@@ -337,6 +350,11 @@ export function useKeyboard() {
         // 又触发「进入图内编辑」——键盘用户一步被瞬移进编辑态）。
         // 处理过 Enter 的 widget（素材卡/图层树/元素树）都 preventDefault。
         if (e.defaultPrevented) return
+        // 钢笔画到一半：Enter 结束成开放路径
+        if (penFinish()) {
+          e.preventDefault()
+          return
+        }
         // 焦点在按钮/链接/菜单项上时 Enter 的意思是「激活它」，不是画布捷径。
         // 抢走（preventDefault）的话浏览器不再合成 click——键盘用户选中一个
         // 面板后，顶栏的每一颗按钮都按不动了（审计 P1-09 实测撞见：焦点在
@@ -358,6 +376,10 @@ export function useKeyboard() {
             e.preventDefault()
             if (obj.script) enterElementEdit(obj.id)
             else beginCrop(obj.id)
+          } else if (obj?.type === 'path' && !activePathEdit()) {
+            // 路径：Enter 进锚点编辑（直接选择），与文字 Enter 改字、面板 Enter 进图内编辑同一个手势
+            e.preventDefault()
+            editAnchors(obj.id)
           }
         }
         return
@@ -373,6 +395,17 @@ export function useKeyboard() {
       if (e.key === '?') {
         e.preventDefault()
         ui.setShortcutHelpOpen(true)
+        return
+      }
+
+      // 路径命令的单键（+ / − / ⇧C；P 在下面的工具键里）：命令表 `PATH_COMMANDS` 说了算，此刻不可用的不消费
+      const bound = bindingFor(e)
+      const cmd = bound ? PATH_COMMANDS.find((c) => c.key === bound && c.id !== 'pen-tool') : undefined
+      if (cmd) {
+        if (cmd.available()) {
+          e.preventDefault()
+          cmd.run()
+        }
         return
       }
 

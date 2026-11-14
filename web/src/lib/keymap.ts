@@ -91,6 +91,12 @@ export const KEYMAP = {
   toolRect: k('R', { key: 'r' }),
   toolEllipse: k('O', { key: 'o' }),
   toolLine: k('L', { key: 'l' }),
+  // 自由路径（ADR 0185 M1，Illustrator 习惯）：P 钢笔；锚点编辑里 + / − 加删锚点、⇧C 转换锚点。
+  // 直接选择 A 与既有的箭头工具 A 冲突，没有单键（双击路径 / Enter / 右键「编辑锚点」进入）
+  toolPen: k('P', { key: 'p' }),
+  addAnchor: k('+', { key: '+' }, { key: '=', shift: false }),
+  deleteAnchor: k('−', { key: '-', shift: false }),
+  convertAnchor: k('⇧C', { key: 'c', shift: true }),
   // 画布标签（焦点在标签上时；`CanvasTabs` 自己处理，不经全局 keydown）
   tabRename: native('F2'),
   tabClose: native(`${MOD}W`),

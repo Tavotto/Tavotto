@@ -48,6 +48,8 @@ import { useWorkspaceStore } from '@/store/workspace'
 import { canZoomToSelectionNow, fitStage, zoomToSelection } from '@/store/zoomToSelection'
 import { objectLabel } from '@/types/document'
 import { canConvertToPath } from '@/lib/convertToPath'
+import { PATH_COMMANDS } from '@/store/pathActions'
+import { PATH_COMMAND_ICONS } from './pathCommandIcons'
 import { rankCommands, type PaletteSection } from '@/lib/commandRanking'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { cn } from '@/lib/utils'
@@ -186,6 +188,13 @@ const COMMANDS: Command[] = [
   { id: 'select-all', shortcut: keyOf('selectAll'), run: selectAll },
   { id: 'group', needsSelection: true, run: groupSelected },
   { id: 'ungroup', needsSelection: true, run: ungroupSelected },
+  // 路径编辑（ADR 0185 M1）：钢笔 / 编辑锚点 / 加删转换锚点——整张表来自 `PATH_COMMANDS`，右键菜单与快捷键读同一份
+  ...PATH_COMMANDS.map((c) => ({
+    id: c.id,
+    shortcut: c.key ? keyOf(c.key) : undefined,
+    available: c.available,
+    run: c.run,
+  })),
   // 转为路径（ADR 0185）：判据与右键菜单同一个（`canConvertToPath`，选区里每个都能转才出现），写入只有 `convertToPath`
   {
     id: 'convert-to-path',
@@ -273,6 +282,7 @@ const COMMAND_ICONS: Record<string, ComponentType<{ size?: number; className?: s
   group: Group,
   ungroup: Ungroup,
   'convert-to-path': Spline,
+  ...PATH_COMMAND_ICONS,
   'layout-row': AlignHorizontalDistributeCenter,
   'layout-col': AlignVerticalDistributeCenter,
   'layout-grid': LayoutGrid,
