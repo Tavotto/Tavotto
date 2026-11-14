@@ -351,6 +351,46 @@ class Judgment(unittest.TestCase):
         self.assertEqual(got["outcome"], "no_difference", got)
         self.assertIn("2 figure(s) beyond the capture limit", got["note"])
 
+    # 同路径循环 + 每轮 close：第 0 轮三张图被第 1 轮同路径覆盖，从未交给用户（cl-ccc717ccec / cl-1dbfe42328）
+    LOOPED = native_result(
+        figure_count=6,
+        superseded_figures=[0, 1, 2],
+        semantics={f"figure{i}": {"titles": [f"cg_pass_{i // 3}"]} for i in range(6)},
+        savefig_last_writer={
+            "line.pdf": {"figure": 3, "titles": ["cg_pass_1"]},
+            "bar.pdf": {"figure": 4, "titles": ["cg_pass_1"]},
+            "scatter.pdf": {"figure": 5, "titles": ["cg_pass_1"]},
+        },
+    )
+
+    def test_figures_overwritten_on_disk_and_closed_are_not_expected(self):
+        tav = self.stems(line=["cg_pass_1"], bar=["cg_pass_1"], scatter=["cg_pass_1"])
+        got = ex.compare("axis_changing", self.LOOPED, tav, None)
+        self.assertEqual(got["outcome"], "no_difference", got)
+
+    def test_a_missing_surviving_figure_is_still_reported_with_overwritten_ones(self):
+        """反证：被覆盖的图不算，但最后落盘的那几张少了一张照样报。"""
+        tav = self.stems(line=["cg_pass_1"], bar=["cg_pass_1"])
+        kinds = [
+            d["kind"] for d in ex.compare("axis_changing", self.LOOPED, tav, None)["differences"]
+        ]
+        self.assertIn("fewer_figures", kinds)
+        self.assertIn("title_missing", kinds)
+
+    def test_a_surviving_title_that_tavotto_lost_is_still_reported(self):
+        tav = self.stems(line=["cg_pass_0"], bar=["cg_pass_1"], scatter=["cg_pass_1"])
+        kinds = [
+            d["kind"] for d in ex.compare("axis_changing", self.LOOPED, tav, None)["differences"]
+        ]
+        self.assertIn("same_path_content_mismatch", kinds)
+
+    def test_without_superseded_figures_the_old_expectation_stands(self):
+        """反证：驱动没有认出被覆盖的图（比如 show 过 / 仍开着）时，6 对 3 照常报。"""
+        native = {**self.LOOPED, "superseded_figures": []}
+        tav = self.stems(line=["cg_pass_1"], bar=["cg_pass_1"], scatter=["cg_pass_1"])
+        kinds = [d["kind"] for d in ex.compare("axis_changing", native, tav, None)["differences"]]
+        self.assertIn("fewer_figures", kinds)
+
     def test_without_the_reported_count_it_is_still_a_difference(self):
         got = ex.compare("axis_changing", self.CAPPED, self.stems(o=["t2"]), None)
         self.assertEqual(

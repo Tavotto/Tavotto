@@ -103,6 +103,11 @@ def tavotto_observe(project: Path, script: str, deep: dict | None = None) -> dic
                 manifest = worker.override(stem, [])["manifest"]
                 manifests[stem] = manifest
                 obs["stems"][stem] = {"titles": _titles(manifest)}
+            # 每张图的元素角色：像素判定靠它认出「没存过盘、没法按 stem 对上声明」的同一张不稳定图
+            obs["roles"] = {
+                stem: sorted({el["role"] for el in m.get("elements", []) if el.get("role")})
+                for stem, m in manifests.items()
+            }
             obs["savefig_calls"] = _savefig_calls(worker)
             obs["pdf_pages"] = _pdf_pages(worker)
             obs["dropped_figures"] = int(built.get("dropped_figures") or 0)
@@ -189,12 +194,25 @@ def _observe_deep(obs, worker, manifests, deep, project, script, entry) -> None:
 
 
 def native_facts(result: dict) -> dict:
+    """What the native run left for the user; figures overwritten on disk and closed do not count.
+
+    `superseded_figures` (driver): figures whose every saved path was later rewritten by another
+    figure, never shown, closed at exit. Their files and titles never reached the user, so the
+    product is not expected to produce them (same-path last-writer wins, G2).
+    """
+    superseded = {f"figure{i}" for i in result.get("superseded_figures") or ()}
+    count = result.get("figure_count")
     return {
         "ok": result.get("ok") is True and result.get("exit_status") == 0,
         "exit_status": result.get("exit_status"),
-        "figure_count": result.get("figure_count"),
+        "figure_count": count - len(superseded) if isinstance(count, int) else count,
         "figures_shown": result.get("figures_shown"),
-        "titles": [t for v in (result.get("semantics") or {}).values() for t in v["titles"]],
+        "titles": [
+            t
+            for name, v in (result.get("semantics") or {}).items()
+            if name not in superseded
+            for t in v["titles"]
+        ],
         "last_writer": result.get("savefig_last_writer") or {},
         "artifacts": sorted(a["path"] for a in result.get("artifacts", [])),
         "formats": _formats_by_stem(result.get("artifacts", [])),
@@ -518,6 +536,7 @@ def oracle_layers(
     native_note: str | None,
     unjudged: dict[str, str] | None = None,
     saved_stems: dict[str, list[str]] | None = None,
+    unjudged_roles: list[tuple[list[str], str]] | None = None,
 ) -> dict:
     """Judge the CG-06 layers of one executed candidate: `{"stages", "differences"}`.
 
@@ -543,6 +562,8 @@ def oracle_layers(
             evidence,
             unjudged,
             saved_stems,
+            unjudged_roles,
+            tavotto.get("roles"),
         )
         stages["fidelity"] = OR.stage("fidelity", pix["status"], pix.get("note"))
         if pix.get("unmatched"):
@@ -683,6 +704,7 @@ def execute_request(request: dict) -> dict:
             native_note,
             OR.declared_unjudged(parent),
             pixels.get("saved_stems") or {},
+            OR.declared_unjudged_roles(parent),
         )
     else:
         result["tavotto"] = {"stems": {}, "error": None, "skipped": "native reference failed"}

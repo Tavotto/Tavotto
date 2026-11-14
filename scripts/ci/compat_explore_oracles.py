@@ -111,12 +111,47 @@ def declared_unjudged(parent) -> dict[str, str]:
     return out
 
 
+def declared_unjudged_roles(parent) -> list[tuple[list[str], str]]:
+    """Declared pixel-unjudgeable figures identified by content: `[(roles_present, reason)]`.
+
+    A figure that was never savefig'd (`plt.show()`, a BytesIO save, ...) has no saved stem to
+    match against `declared_unjudged`, yet it is still the same unstable figure. The declaring
+    case's `semantic_expectations.roles_present` identify it: a figure of that script showing all
+    of those roles is the declared one. Same scope as `declared_unjudged` (same script and entry).
+    """
+    spec = getattr(parent, "case_spec", None) or {}
+    if getattr(parent, "suite", None) != "compat_engine" or not spec.get("script"):
+        return []
+    entry = spec.get("entry", "main")
+    out: list[tuple[list[str], str]] = []
+    for case in cg.registered("compat_engine").values():
+        roles = (case.get("semantic_expectations") or {}).get("roles_present") or []
+        if (
+            roles
+            and case.get("script") == spec["script"]
+            and case.get("entry", "main") == entry
+            and (case.get("expected") or {}).get("fidelity") is False
+        ):
+            reason = (case.get("expected_false_reasons") or {}).get("fidelity")
+            out.append(
+                (
+                    sorted(roles),
+                    f"{case['id']}: expected.fidelity=false"
+                    + (f" ({reason})" if reason else "")
+                    + " (identified by figure roles)",
+                )
+            )
+    return out
+
+
 def pixel_judgment(
     native_shots: dict,
     tavotto_shots: dict,
     out_dir: Path,
     unjudged: dict[str, str] | None = None,
     saved_stems: dict[str, list[str]] | None = None,
+    unjudged_roles: list[tuple[list[str], str]] | None = None,
+    roles_by_stem: dict[str, list[str]] | None = None,
 ) -> dict:
     """Per common stem: native PNG vs Tavotto PNG against CompatBench's tolerance.
 
@@ -128,7 +163,8 @@ def pixel_judgment(
 
     `unjudged` (`declared_unjudged`) exempts a stem that is, or whose figure natively saved as
     (`saved_stems`, from the native driver: a same-path copy renamed `<script>-N` keeps the stem it
-    wrote), a declared stem; exempt stems are listed in `declared_unjudged` with the reason, never
+    wrote), a declared stem, or whose Tavotto figure shows every role of a declared case
+    (`unjudged_roles` / `roles_by_stem`, for figures that were never saved); exempt stems are listed in `declared_unjudged` with the reason, never
     counted as compared and never as a difference.
     """
     tol = _cm().FIDELITY_TOLERANCE
@@ -151,6 +187,11 @@ def pixel_judgment(
         declared = [s for s in (stem, *saved_stems.get(stem, ())) if s in unjudged]
         if declared:
             exempt[stem] = unjudged[declared[0]]
+            continue
+        have = set((roles_by_stem or {}).get(stem) or ())
+        by_roles = [why for roles, why in (unjudged_roles or ()) if roles and set(roles) <= have]
+        if by_roles:
+            exempt[stem] = by_roles[0]
             continue
         name = Path(stem).name
         diff_png = out_dir / "pixel" / f"{name}.diff.png"
