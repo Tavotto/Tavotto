@@ -343,7 +343,15 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
+      # 桌面发行构建固定 Rust 版本，不跟 stable 漂：1.100.0（2026-11-09）起 cargo 改了
+      # target/<profile> 下中间产物的目录布局，tauri-build 按 OUT_DIR 往上三层推算
+      # target_dir，把 bundle.resources（sidecar/Tavotto、LICENSE）拷错了地方，
+      # target/release/ 下没有 sidecar/，下面「Windows 桌面壳探针」直接跑
+      # target/release/Tavotto.exe 时找不到 sidecar（0.21.2 演练 run 43552993069 连红三次；
+      # 固定 1.99.1 的对照 run 43562896986 通过）。升级前先确认 tauri-build 已适配新布局。
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: 1.99.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           # 两个 crate 都要缓存：src-tauri 是壳，workerd 是随 sidecar 一起发出去的
