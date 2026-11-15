@@ -282,8 +282,7 @@ def test_compute_default_contract_stays_legacy_and_native_returns_measured_manif
     client, root = project
     chart = _bind(client)
     legacy = _compute(client, chart)
-    # 本步起 /compute 响应统一带顶层 render_frame（稳定出口）；legacy 与 /1
-    # 都没有计算框，值恒为 None——闭集扩一项、同时钉住 /1 不冒充 /2。
+    # #1919：/2 的 render_frame 只在 manifest 内；响应顶层不再有稳定出口。
     assert set(legacy) == {
         "svg",
         "facts",
@@ -292,14 +291,14 @@ def test_compute_default_contract_stays_legacy_and_native_returns_measured_manif
         "model_digest",
         "binding_digest",
         "engine",
-        "render_frame",
     }
-    assert legacy["render_frame"] is None
+    assert "render_frame" not in legacy
     native = _compute(
         client, chart, profile=chartprofile.NATIVE_PROFILE, patches=[_color("#ff0000")]
     )
     _assert_line(native, y=0.25, color="#ff0000")
-    assert native["render_frame"] is None
+    assert "render_frame" not in native
+    assert native["manifest"].get("render_frame") is None
     assert native["render_revision"] != legacy["render_revision"]
     rendered = _render(client, chart, [_color("#ff0000")])
     assert native["render_revision"] == rendered["chart_revision"]
