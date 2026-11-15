@@ -165,7 +165,7 @@ rc 0，`attempts: 2`；之后 `ps` 里没有任何 `-m tavotto` 残留。这一�
 | 桩 | 行为 | 脚本 | 用例 |
 |---|---|---|---|
 | `bind-busy`（第一次） | 同一进程把端口 bind 两遍，把平台真实的 EADDRINUSE 原话打到 stderr 后退 1 | `lease_lost` → 换号 → rc 0，`attempts == 2`，第一次 `elapsed < 15` | `…lost_lease…[bind-busy]` |
-| `fallback`（第一次） | 打「* 端口 P 被占用，改用 P+1」并真的在 P+1 上服务 | 同上，且顺延那个活着的实例在重试前被终止 | `…[fallback]`、`test_the_fallback_instance_is_terminated_before_the_retry` |
+| `fallback`（第一次） | 打「* 端口 P 被占用，改用 Q」并真的在 Q 上服务——Q 是从 P+1 起第一个现在真能 bind 的端口（与产品 `resolve_port` 一样先探再 bind；盲取 P+1 会在它被别的进程占着时让桩 bind 失败先退 1） | 同上，且顺延那个活着的实例在重试前被终止 | `…[fallback]`、`test_the_fallback_instance_is_terminated_before_the_retry`、`test_the_fallback_port_probe_steps_over_a_port_someone_else_is_holding` |
 | `bind-busy`（每次） | 没有 state-file，次次占 | `--attempts 2` → 两次 `lease_lost` → rc 1，「已连丢 2 次租约」 | `…failure_not_an_endless_loop` |
 | `never-ready` | `/api/version` 永远 503 | `--timeout 3` → `timeout` rc 1，stderr 带日志尾与「/api/version → 503」 | `test_never_ready_…` |
 | `no-credentials` | 答 200 但不写凭据文件 | 不算就绪 → rc 1，理由带「凭据文件」 | `test_a_public_200_from_a_stranger_…` |
