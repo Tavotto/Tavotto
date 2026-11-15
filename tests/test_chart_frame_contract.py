@@ -40,6 +40,19 @@ def test_computed_frame_reject_is_the_golden_pair(vector):
         chartframe.validate_frame(vector["frame"])
 
 
+def test_frame_outer_pt_is_the_golden_contract_constant():
+    """/2 外扩边距是唯一合同常量；金向量钉住它，改常量必须同步改向量。"""
+    assert chartframe.FRAME_OUTER_PT == FRAME_GOLDEN["outer_pt"]
+
+
+@pytest.mark.parametrize("vector", FRAME_GOLDEN["from_ink"], ids=lambda v: v["id"])
+def test_from_ink_matches_the_golden_pair(vector):
+    """from_ink 的 1pt 行为由向量固定；前端消费 F，不重算 from_ink。"""
+    frame = chartframe.from_ink(vector["source_viewport_pt"], vector["ink"])
+    assert frame["rect_pt"] == vector["rect_pt"]
+    assert frame["source_viewport_pt"] == vector["source_viewport_pt"]
+
+
 def test_computed_frame_returns_a_defensive_copy():
     """validate_frame 返回深拷贝：进 manifest 的 F 不与调用方共享可变内档。"""
     frame = FRAME_GOLDEN["accept"][0]["frame"]

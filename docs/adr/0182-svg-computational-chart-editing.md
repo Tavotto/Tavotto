@@ -43,7 +43,23 @@
 请求、缓存、exact、PNG、历史和导出共同消费 profile 身份。新的几何写操作只通过统一 F→S 适配。
 显示框原点、原生尺寸和面板几何在同一文档事务中采用；legacy 与 `/1` 的缺省语义保持。
 
-**维护者已确认，待独立落实**（[#1919](https://github.com/Tavotto/Tavotto/issues/1919)）：1pt 外扩为唯一合同常量，`render_frame` 保持闭集且只保留在 manifest 内；补齐旧版回退表现。本轮仅同步 worker，不实施这些格式调整。
+**维护者已确认（[#1919](https://github.com/Tavotto/Tavotto/issues/1919)，2026-11-15），按三点落实：**
+
+1. 1pt 外扩是唯一合同常量 `FRAME_OUTER_PT`，只在 `engine/chartframe.py` 定义一处；
+   `tests/golden/computed_frame_vectors.json` 的 `outer_pt` 与 `from_ink` 向量固定它。
+2. `render_frame` 键集合保持闭集；以后加字段一律升 `native-manifest/3`，不在 `/2` 同版本加可选键。
+3. 只保留 `manifest.render_frame` 一份，删除产物顶层那份。没有消费方只能读顶层：
+   前端先读 manifest，内部快照与导出链读进程内快照，不读产物顶层键。
+
+**回退表现**：旧版（不认识 `native-manifest/2` 的构建）在 profile 准入处把 `/2` 当集合外值拒绝，
+返回 `chart_model_unsupported`（HTTP 422）；界面落在该面板的「渲染失败」角标，保留上一版画面，
+不进入计算图表编辑；文档本身仍可打开、保存，不自动降级或改写。更早、连 profile 字段都不认识的
+构建会把产物当静态 SVG 打开，同样不进入计算编辑，也不改写文档；若文档 schema 本身已高于旧版支持，
+则先在文档准入处报 `schema_too_new`，界面显示「这份排版来自更新的 Tavotto」，文件零改动。
+
+实现落点：`chartframe.py` / `chartmanifest.py` 在 3/9（[#1880](https://github.com/Tavotto/Tavotto/pull/1880)）；
+HTTP 响应与 TS 镜像在 4e（[#1927](https://github.com/Tavotto/Tavotto/pull/1927)）；
+`renderStore` 读取在 6b（[#1928](https://github.com/Tavotto/Tavotto/pull/1928)）。
 
 ### 3. schema 4、附件与保存
 
