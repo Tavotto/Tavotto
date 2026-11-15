@@ -2566,5 +2566,88 @@
       "info_text_height_mm": "Text height",
       "info_panel_label": "Panel label"
     }
+  },
+  "review": {
+    "button": "Share for review",
+    "buttonUnread": "Share for review (new comments)",
+    "title": "Share for review",
+    "privacyFigure": "Only the picture of this figure is uploaded; scripts and data stay on this computer",
+    "privacyLayout": "Only the picture of this layout is uploaded; scripts and data stay on this computer",
+    "noteLabel": "Note for reviewers (optional)",
+    "create": "Create link",
+    "cancel": "Cancel",
+    "close": "Close",
+    "quotaNew": "{{n}} new link(s) left today",
+    "quotaUpdate": "{{n}} update(s) left today for this link",
+    "copy": "Copy",
+    "linkCopied": "Link copied",
+    "sharedMeta": "V{{v}} · {{when}}",
+    "update": "Update the same link",
+    "stop": "Stop sharing",
+    "stopConfirm": "Click again to stop now",
+    "linkLabel": "Review link",
+    "stage": {
+      "rendering": "Preparing the picture…",
+      "uploading": "Uploading…"
+    },
+    "failure": {
+      "quota_new_exhausted": "You have used today's new links.",
+      "quota_update_exhausted": "This link has used today's updates.",
+      "share_gone": "This link is no longer valid; the comments are kept on this computer.",
+      "too_large": "The picture is too large. Make the figure smaller and try again.",
+      "rate_limited": "Too many requests. Try again in a moment.",
+      "network": "Can't reach the review service. Check your network and retry.",
+      "server": "The review service had a problem. Try again later.",
+      "client_error": "That didn't work. Try again.",
+      "render_failed": "The picture couldn't be generated. Try again."
+    },
+    "retry": "Retry",
+    "picker": {
+      "newTitle": "You've already created a link today",
+      "updateTitle": "This link can't be updated again today",
+      "updateExisting": "Update an existing link",
+      "updateExistingDesc": "Swap in this figure's picture; the link stays the same",
+      "pickOne": "Which link",
+      "exportPng": "Export PNG",
+      "exportPngDesc": "Save an image and send it yourself",
+      "laterNew": "Share tomorrow",
+      "laterNewDesc": "New links reset at midnight Beijing time",
+      "laterUpdate": "Update tomorrow",
+      "laterUpdateDesc": "Resets at midnight Beijing time"
+    },
+    "tab": {
+      "label": "Review",
+      "live": "V{{v}} · link expires {{date}}",
+      "revoked": "Sharing stopped; comments stay on this computer",
+      "expired": "Link expired; the comments from then are kept here",
+      "copyLink": "Copy link",
+      "deleteRecord": "Delete this record",
+      "filterLabel": "Filter comments",
+      "all": "All",
+      "open": "Open {{n}}",
+      "empty": "No comments yet",
+      "emptyOpen": "No open comments"
+    },
+    "comment": {
+      "reply": "Reply",
+      "replyPlaceholder": "Reply…",
+      "send": "Send",
+      "resolve": "Mark resolved",
+      "reopen": "Reopen",
+      "done": "Resolved",
+      "owner": "Author",
+      "overall": "Overall",
+      "region": "Region",
+      "moved": "Original position has changed",
+      "version": "V{{v}}",
+      "pin": "Comment {{n}}"
+    },
+    "capsuleOpen": "View",
+    "capsuleClose": "Dismiss",
+    "notFound": "This figure isn't in the current project",
+    "capsule_one": "{{author}} left {{count}} comment",
+    "capsule_other": "{{author}} left {{count}} comments",
+    "sharedStats_one": "{{count}} comment, {{open}} open · expires {{date}}",
+    "sharedStats_other": "{{count}} comments, {{open}} open · expires {{date}}"
   }
 }

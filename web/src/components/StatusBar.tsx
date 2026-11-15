@@ -31,6 +31,9 @@ import { useNoticeRailStore } from '@/store/noticeRailStore'
 import { useDialogLayerStore } from '@/store/dialogLayerStore'
 import { restartEngineFromCard } from '@/lib/exitNotices'
 import { useContactStore } from '@/store/contactStore'
+import { useReviewStore } from '@/store/reviewStore'
+import { openReviewShare } from '@/store/reviewNav'
+import { reviewCapsuleShown } from '@/lib/reviewPlacement'
 
 /**
  * 底部不再有常驻状态栏。这里是两块按需出现的浮层：
@@ -464,9 +467,31 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const lastContactUnread = useRef(0)
   if (contactUnread > 0) lastContactUnread.current = contactUnread
 
+  // 「审阅者留了意见」胶囊（ADR 0187）：同一套规则——有未读、没被 × 掉过更大的数、分享弹窗没开着、轨上有位置才出现；
+  // 点「查看」切到那张图 / 排版并打开「审阅」页签；× 之后只有未读总数再增加才重现
+  const reviewEnabled = useReviewStore((s) => s.enabled)
+  const reviewUnread = useReviewStore((s) => s.unread)
+  const reviewDismissedAt = useReviewStore((s) => s.capsuleDismissedAt)
+  const reviewDialogOpen = useReviewStore((s) => s.dialogOpen)
+  const reviewSlots =
+    [!!engineExit, justAdded, !!adopted || !!autofilled, !!status, !!hint, contactPresence.mounted].filter(Boolean).length < RAIL_MAX
+  const reviewPresence = usePresence(
+    reviewCapsuleShown({
+      enabled: reviewEnabled,
+      total: reviewUnread.total,
+      dismissedAt: reviewDismissedAt,
+      dialogOpen: reviewDialogOpen,
+      slotsFree: reviewSlots && !!reviewUnread.latest,
+    }),
+    DURATION.fast,
+  )
+  const lastReviewUnread = useRef<NonNullable<typeof reviewUnread.latest> & { total: number } | null>(null)
+  if (reviewUnread.latest) lastReviewUnread.current = { ...reviewUnread.latest, total: reviewUnread.total }
+
   // 出现的先后：最新的一条最靠近底边（见 useArrivalOrder）
   const arrival = useArrivalOrder()
   const contactOrder = arrival('contact', contactPresence.mounted && lastContactUnread.current)
+  const reviewOrder = arrival('review', reviewPresence.mounted && lastReviewUnread.current?.total)
   const addedOrder = arrival('added', addedPresence.mounted && `added:${addedDepth}`)
   const adoptedOrder = arrival('adopted', adoptedPresence.mounted && adoptedShown?.token)
   const autofillOrder = arrival('autofill', autofillPresence.mounted && autofillShown?.token)
@@ -549,6 +574,29 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
           }}
           onClose={() => useContactStore.getState().dismissCapsule()}
           closeLabel={translate('contact.capsuleClose', { ns: 'dialogs' })}
+        />
+      )}
+      {!overModal && reviewPresence.mounted && lastReviewUnread.current && (
+        <Toast
+          order={reviewOrder}
+          tone="info"
+          state={reviewPresence.state}
+          data-review-capsule={String(lastReviewUnread.current.total)}
+          icon={<Info size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />}
+          text={translate('review.capsule', {
+            ns: 'dialogs',
+            author: lastReviewUnread.current.author,
+            count: lastReviewUnread.current.count,
+          })}
+          action={{
+            label: translate('review.capsuleOpen', { ns: 'dialogs' }),
+            onClick: () => {
+              const id = lastReviewUnread.current?.share_id
+              if (id) void openReviewShare(id)
+            },
+          }}
+          onClose={() => useReviewStore.getState().dismissCapsule()}
+          closeLabel={translate('review.capsuleClose', { ns: 'dialogs' })}
         />
       )}
       {!overModal && hintPresence.mounted && hint && (

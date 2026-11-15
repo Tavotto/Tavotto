@@ -18,6 +18,9 @@ import { assistantTabLabel, AssistantPanel } from '../ai/AiPanel'
 import { IconButton } from '../ui/Button'
 import { ColorFieldContext } from '../ui/colorPalette'
 import { Tab, TabList, TabPanel } from '../ui/Tabs'
+import { ReviewPanel } from '../review/ReviewPanel'
+import { reviewTabVisible } from '@/lib/reviewPlacement'
+import { useReviewStore } from '@/store/reviewStore'
 import { Tip } from '../ui/Tooltip'
 import { ArrangeSection } from './ArrangeSection'
 import { CanvasPage } from './CanvasPage'
@@ -42,16 +45,23 @@ import { useSelectedObjects } from './common'
  * 在 aiStore 里切走不丢；运行状态点留在助手页签上。
  */
 const TABS: RightTab[] = ['properties', 'canvas', 'timeline', 'assistant']
+/** 「审阅」页签（ADR 0187）：只有这张图 / 排版创建过分享才排在最后 */
+const REVIEW_TABS: RightTab[] = [...TABS, 'review']
 /** 内容区 id（`TabPanel`）：`<id>-tab` 是对应页签的 id */
 const PANEL_ID: Record<RightTab, string> = {
   properties: 'inspector-panel-properties',
   assistant: 'inspector-panel-assistant',
   canvas: 'inspector-panel-canvas',
   timeline: 'inspector-panel-timeline',
+  review: 'inspector-panel-review',
 }
 
 const tabLabel = (id: RightTab): string =>
-  id === 'assistant' ? assistantTabLabel() : translate(`tab.${id}`, { ns: 'inspector' })
+  id === 'assistant'
+    ? assistantTabLabel()
+    : id === 'review'
+      ? translate('review.tab.label', { ns: 'dialogs' })
+      : translate(`tab.${id}`, { ns: 'inspector' })
 
 export function Inspector({
   overlay = false,
@@ -63,7 +73,11 @@ export function Inspector({
 }) {
   perfCount('render.Inspector')
   const { t } = useTranslation('inspector')
-  const tab = useUiStore((s) => s.rightTab)
+  const rawTab = useUiStore((s) => s.rightTab)
+  // 「审阅」页签只在这张图 / 排版有分享记录时存在；记录没了（删除 / 换了图）而页签还停在它上面，就落回属性页
+  const reviewShare = useReviewStore((s) => reviewTabVisible(s.enabled, s.share) ? s.share : null)
+  const tab: RightTab = rawTab === 'review' && !reviewShare ? 'properties' : rawTab
+  const tabs = reviewShare ? REVIEW_TABS : TABS
   const setTab = useUiStore((s) => s.setRightTab)
   const width = useUiStore((s) => s.rightWidth)
   const pinned = useUiStore(isRightPinned)
@@ -102,7 +116,7 @@ export function Inspector({
             英文（Linux 的 DejaVu Sans 更宽）放不下的字在格内省略号截断，绝不撑开槽；整格可点，title 给全名。
             图钉另在 < 350px 让位 */}
         <TabList variant="segmented" label={t('tabsLabel')} className="min-w-0 flex-1">
-          {TABS.map((id) => (
+          {tabs.map((id) => (
             <Tab
               key={id}
               variant="segmented"
@@ -117,6 +131,11 @@ export function Inspector({
               title={id === 'assistant' && runningAi ? t('assistantRunningTip') : tabLabel(id)}
             >
               {tabLabel(id)}
+              {id === 'review' && reviewShare && reviewShare.open_count > 0 && (
+                <span className="ml-1 tabular-nums text-ink-3" data-review-tab-count>
+                  {reviewShare.open_count}
+                </span>
+              )}
               {id === 'assistant' && runningAi && (
                 <span
                   aria-hidden
@@ -175,6 +194,10 @@ export function Inspector({
       {tab === 'assistant' ? (
         <TabPanel id={PANEL_ID.assistant} className="flex min-h-0 flex-1 flex-col">
           <AssistantPanel />
+        </TabPanel>
+      ) : tab === 'review' ? (
+        <TabPanel id={PANEL_ID.review} className="flex min-h-0 flex-1 flex-col">
+          <ReviewPanel />
         </TabPanel>
       ) : tab === 'timeline' ? (
         // 排版时间线（ADR 0101 2026-10-21 修订）：右栏的一个页签，不再是盖在画布上的浮卡

@@ -8128,3 +8128,142 @@ export const forgetNativePermission = (permissionKey: string, projectRoot?: stri
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ permission_key: permissionKey, project_root: projectRoot }),
   })
+
+/* ------------------- 外部审阅（ADR 0187） -------------------
+ * 作者把当前这张图 / 这份排版的画面分享成一个链接，别人在网页上批；这里只是**本机引擎**的遥控器
+ * （WebView 不碰远程，`/api/review/*` 契约见 ADR 0187 §七）。会引出远程请求的只有 `shareReview` / `updateReview`
+ * （用户点「生成链接」/「更新到同一链接」）、`revokeReview`（「停止分享」）、`refreshReview` 与回复 / 标记已处理；
+ * 其余都是读本机记录。 */
+
+export type ReviewTarget = { kind: 'figure' | 'layout'; id: string }
+
+/** 失败码闭集（与引擎 / 服务端一致；界面按 `review.failure.*` 一码一句） */
+export type ReviewFailureCode =
+  | 'quota_new_exhausted'
+  | 'quota_update_exhausted'
+  | 'share_gone'
+  | 'too_large'
+  | 'rate_limited'
+  | 'network'
+  | 'server'
+  | 'client_error'
+  | 'render_failed'
+
+export type ReviewBox = [number, number, number, number]
+
+export interface ReviewShareSummary {
+  share_id: string
+  review_url: string
+  kind: 'figure' | 'layout'
+  target_id: string
+  title: string
+  note: string
+  latest_version: number
+  created_at: string
+  updated_at: string
+  expires_at: string
+  revoked: boolean
+  expired: boolean
+  comment_count: number
+  open_count: number
+  unread: number
+}
+
+export type ReviewAnchor =
+  | { kind: 'element'; gid: string; box: ReviewBox }
+  | { kind: 'region'; box: ReviewBox }
+  | { kind: 'overall' }
+
+export interface ReviewReply {
+  id: string
+  from: 'reviewer' | 'owner'
+  author: string
+  text: string
+  created_at: string
+}
+
+export interface ReviewComment {
+  id: string
+  v: number
+  anchor: ReviewAnchor
+  author: string
+  text: string
+  resolved: boolean
+  created_at: string
+  replies: ReviewReply[]
+}
+
+export interface ReviewShareDetail extends ReviewShareSummary {
+  versions: {
+    v: number
+    created_at: string
+    elements: { gid: string; label: string; bbox: ReviewBox }[]
+  }[]
+  comments: ReviewComment[]
+  verdicts: { v: number; decision: 'approved' | 'changes'; note: string; author: string; at: string }[]
+}
+
+export type ReviewStage = 'idle' | 'rendering' | 'uploading' | 'done' | 'failed'
+export interface ReviewStatus {
+  stage: ReviewStage
+  failure: ReviewFailureCode | null
+  retryable: boolean
+  share: ReviewShareSummary | null
+}
+
+export interface ReviewQuota {
+  new_left: number | null
+  update_left: number | null
+}
+
+export interface ReviewUnread {
+  total: number
+  latest: { share_id: string; author: string; count: number } | null
+}
+
+const reviewPost = (body?: unknown): RequestInit => ({
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body ?? {}),
+})
+const rv = (id: string) => `/api/review/shares/${encodeURIComponent(id)}`
+
+export const fetchReviewCapability = () => jsonFetch<{ enabled: boolean }>('/api/review/capability')
+export const fetchReviewQuota = (shareId?: string) =>
+  jsonFetch<ReviewQuota>(`/api/review/quota${shareId ? `?share_id=${encodeURIComponent(shareId)}` : ''}`)
+export const fetchReviewFor = (t: ReviewTarget) =>
+  jsonFetch<{ share: ReviewShareSummary | null }>(
+    `/api/review/for?kind=${t.kind}&id=${encodeURIComponent(t.id)}`,
+  )
+export const shareReview = (target: ReviewTarget, title: string, note: string) =>
+  jsonFetch<{ ok: boolean }>('/api/review/share', reviewPost({ target, title, note }))
+/** `target` 只在「额度用满 → 把这张图的画面更新到别的链接上」时给；缺省 = 更新那个链接自己的画面 */
+export const updateReview = (shareId: string, note?: string, target?: ReviewTarget) =>
+  jsonFetch<{ ok: boolean }>(
+    '/api/review/update',
+    reviewPost({ share_id: shareId, ...(note ? { note } : {}), ...(target ? { target } : {}) }),
+  )
+/** 本机所有分享记录（额度用满选择卡列「更新已有的链接」用；local-api.md 之外的补充端点） */
+export const fetchReviewShares = () => jsonFetch<{ shares: ReviewShareSummary[] }>('/api/review/shares')
+export const fetchReviewStatus = () => jsonFetch<ReviewStatus>('/api/review/status')
+export const dismissReview = () => jsonFetch<unknown>('/api/review/dismiss', reviewPost())
+export const revokeReview = (shareId: string) =>
+  jsonFetch<{ ok: boolean; failure?: ReviewFailureCode }>('/api/review/revoke', reviewPost({ share_id: shareId }))
+export const deleteReviewRecord = (shareId: string) => jsonFetch<unknown>(rv(shareId), { method: 'DELETE' })
+export const fetchReviewShare = (shareId: string) => jsonFetch<ReviewShareDetail>(rv(shareId))
+export const refreshReview = (shareId?: string) =>
+  jsonFetch<{ ok: boolean; unread: number }>('/api/review/refresh', reviewPost(shareId ? { share_id: shareId } : {}))
+export const replyReviewComment = (shareId: string, commentId: string, text: string) =>
+  jsonFetch<{ ok: boolean; comment: ReviewComment }>(
+    `${rv(shareId)}/comments/${encodeURIComponent(commentId)}/reply`,
+    reviewPost({ text }),
+  )
+export const resolveReviewComment = (shareId: string, commentId: string, resolved: boolean) =>
+  jsonFetch<{ ok: boolean; comment: ReviewComment }>(
+    `${rv(shareId)}/comments/${encodeURIComponent(commentId)}/resolve`,
+    reviewPost({ resolved }),
+  )
+export const markReviewRead = (shareId: string) => jsonFetch<unknown>(`${rv(shareId)}/read`, reviewPost())
+export const reviewSnapshotUrl = (shareId: string, v: number) =>
+  apiUrl(`${rv(shareId)}/versions/${v}/snapshot.png`)
+export const fetchReviewUnread = () => jsonFetch<ReviewUnread>('/api/review/unread')

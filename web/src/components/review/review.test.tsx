@@ -1,0 +1,464 @@
+/**
+ * 外部审阅（ADR 0187）前端：三态弹窗与失败码文案、额度用满选择卡、「审阅」页签出现条件、意见圆点只在页签打开时画、
+ * 顶栏按钮与未读圆点、通知轨胶囊的收起 / 重现、中英键对齐。判据的主语是**哪些本机 API 被调用**与**DOM 里有什么**；选择器只认 data-*。
+ */
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api')>()),
+  fetchReviewCapability: vi.fn(),
+  fetchReviewQuota: vi.fn(),
+  fetchReviewFor: vi.fn(),
+  fetchReviewShares: vi.fn(),
+  shareReview: vi.fn(),
+  updateReview: vi.fn(),
+  fetchReviewStatus: vi.fn(),
+  dismissReview: vi.fn(),
+  revokeReview: vi.fn(),
+  deleteReviewRecord: vi.fn(),
+  fetchReviewShare: vi.fn(),
+  refreshReview: vi.fn(),
+  replyReviewComment: vi.fn(),
+  resolveReviewComment: vi.fn(),
+  markReviewRead: vi.fn(),
+  fetchReviewUnread: vi.fn(),
+  fetchPanels: vi.fn().mockResolvedValue({ figures_dir: '', panels: [] }),
+  fetchReadiness: vi.fn().mockResolvedValue(null),
+}))
+
+import {
+  dismissReview,
+  fetchReviewShare,
+  fetchReviewStatus,
+  markReviewRead,
+  refreshReview,
+  replyReviewComment,
+  shareReview,
+  updateReview,
+  type ReviewComment,
+  type ReviewShareDetail,
+  type ReviewShareSummary,
+} from '@/lib/api'
+import enDialogs from '@/i18n/locales/en-US/dialogs.json'
+import zhDialogs from '@/i18n/locales/zh-CN/dialogs.json'
+import { ReviewOverlay } from '@/canvas/ReviewOverlay'
+import { Inspector } from '@/components/inspector/Inspector'
+import { NotificationRail } from '@/components/StatusBar'
+import { ReviewButton } from '@/components/review/ReviewButton'
+import { ReviewDialog } from '@/components/review/ReviewDialog'
+import { ReviewPanel } from '@/components/review/ReviewPanel'
+import { TooltipProvider } from '@/components/ui/Tooltip'
+import { useDocumentStore } from '@/store/documentStore'
+import { useReviewStore } from '@/store/reviewStore'
+import { useUiStore } from '@/store/uiStore'
+import { useWorkspaceStore } from '@/store/workspaceStore'
+import { emptyProject } from '@/types/document'
+
+declare global {
+  // eslint-disable-next-line no-var
+  var IS_REACT_ACT_ENVIRONMENT: boolean
+}
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+globalThis.fetch = (async () => new Response('{}', { status: 404 })) as typeof fetch
+Element.prototype.scrollIntoView ??= function scrollIntoView() {}
+Element.prototype.hasPointerCapture ??= () => false
+globalThis.ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+} as never
+
+const SHARE: ReviewShareSummary = {
+  share_id: 'sh_1',
+  review_url: 'https://review.tavotto.cn/r/k7QmAAAA3fA',
+  kind: 'figure',
+  target_id: 'fig3',
+  title: 'Figure 3',
+  note: '',
+  latest_version: 2,
+  created_at: '2026-11-14T06:20:00Z',
+  updated_at: '2026-11-15T06:20:00Z',
+  expires_at: '2026-12-15T06:20:00Z',
+  revoked: false,
+  expired: false,
+  comment_count: 3,
+  open_count: 2,
+  unread: 2,
+}
+const cm = (id: string, over: Partial<ReviewComment> = {}): ReviewComment => ({
+  id,
+  v: 2,
+  anchor: { kind: 'region', box: [0.2, 0.2, 0.1, 0.1] },
+  author: '林老师',
+  text: `意见 ${id}`,
+  resolved: false,
+  created_at: '2026-11-15T06:32:00Z',
+  replies: [],
+  ...over,
+})
+const DETAIL = (comments: ReviewComment[], over: Partial<ReviewShareDetail> = {}): ReviewShareDetail => ({
+  ...SHARE,
+  versions: [{ v: 2, created_at: SHARE.updated_at, elements: [{ gid: 'legend', label: '图例', bbox: [0, 0, 0.1, 0.1] }] }],
+  comments,
+  verdicts: [],
+  ...over,
+})
+
+let host: HTMLDivElement
+let root: Root
+async function render(node: React.ReactNode) {
+  host = document.createElement('div')
+  document.body.appendChild(host)
+  root = createRoot(host)
+  await act(async () => {
+    root.render(<TooltipProvider>{node}</TooltipProvider>)
+  })
+}
+const q = <T extends Element = HTMLElement>(sel: string) => document.body.querySelector<T>(sel)
+const qa = (sel: string) => [...document.body.querySelectorAll<HTMLElement>(sel)]
+const click = async (el: Element | null) => {
+  expect(el).not.toBeNull()
+  // SVG 元素没有 .click()：统一派发一个冒泡的 click
+  await act(async () => {
+    el!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+  })
+}
+const settle = async (ms = 800) => {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms)
+  })
+}
+
+function resetStore(over: Partial<ReturnType<typeof useReviewStore.getState>> = {}) {
+  useReviewStore.setState({
+    enabled: true,
+    target: { kind: 'figure', id: 'fig3' },
+    share: null,
+    detail: null,
+    dialogOpen: false,
+    stage: 'idle',
+    failure: null,
+    picker: null,
+    quota: { new_left: 1, update_left: 4 },
+    others: [],
+    unread: { total: 0, latest: null },
+    capsuleDismissedAt: 0,
+    selectedId: null,
+    lastOp: null,
+    ...over,
+  })
+}
+
+beforeEach(async () => {
+  vi.useFakeTimers()
+  localStorage.clear()
+  vi.mocked(dismissReview).mockResolvedValue({})
+  vi.mocked(markReviewRead).mockResolvedValue({})
+  vi.mocked(refreshReview).mockResolvedValue({ ok: true, unread: 0 })
+  useUiStore.setState({ rightTab: 'properties', rightOpen: true, status: null })
+  resetStore()
+  await useDocumentStore.getState().switchDocument(emptyProject(), 'd_review')
+})
+afterEach(async () => {
+  await act(async () => root?.unmount())
+  host?.remove()
+  document.body.innerHTML = ''
+  vi.clearAllMocks()
+  vi.useRealTimers()
+})
+
+describe('顶栏按钮', () => {
+  it('功能关着完全不渲染', async () => {
+    resetStore({ enabled: false })
+    await render(<ReviewButton />)
+    expect(q('[data-review-button]')).toBeNull()
+  })
+  it('有未读时带小圆点，点了只是开弹窗（不联网）', async () => {
+    resetStore({ unread: { total: 2, latest: { share_id: 'sh_1', author: '林老师', count: 2 } } })
+    await render(<ReviewButton />)
+    expect(q('[data-review-dot]')).not.toBeNull()
+    await click(q('[data-review-button]'))
+    expect(useReviewStore.getState().dialogOpen).toBe(true)
+    expect(shareReview).not.toHaveBeenCalled()
+  })
+})
+
+describe('分享弹窗三态', () => {
+  it('首次：一句隐私说明 + 生成链接，页脚小字写今天还能新建几个；点了才调 shareReview', async () => {
+    resetStore({ dialogOpen: true })
+    vi.mocked(shareReview).mockResolvedValue({ ok: true })
+    vi.mocked(fetchReviewStatus).mockResolvedValue({ stage: 'done', failure: null, retryable: false, share: SHARE })
+    await render(<ReviewDialog />)
+    expect(document.body.textContent).toContain('脚本和数据不出本机')
+    expect(q('[data-review-quota]')?.textContent).toBe('今天还能新建 1 个')
+    expect(shareReview).not.toHaveBeenCalled()
+    await click(q('[data-review-create]'))
+    expect(shareReview).toHaveBeenCalledTimes(1)
+  })
+  it('次数未知（联网不通）：页脚不写剩余次数', async () => {
+    resetStore({ dialogOpen: true, quota: { new_left: null, update_left: null } })
+    await render(<ReviewDialog />)
+    expect(q('[data-review-quota]')).toBeNull()
+  })
+  it('已分享：链接 + 版本 · 意见数 · 失效，主按钮「更新到同一链接」，停止分享要点两次', async () => {
+    resetStore({ dialogOpen: true, share: SHARE })
+    const { revokeReview } = await import('@/lib/api')
+    vi.mocked(revokeReview).mockResolvedValue({ ok: true })
+    await render(<ReviewDialog />)
+    expect(q('[data-review-link]')?.textContent).toContain('review.tavotto.cn/r/k7QmAAAA3fA')
+    expect(q('[data-review-stats]')?.textContent).toMatch(/3 条意见，2 条未处理/)
+    expect(q('[data-review-quota]')?.textContent).toBe('今天这个链接还能更新 4 次')
+    await click(q('[data-review-stop]'))
+    expect(revokeReview).not.toHaveBeenCalled()
+    await click(q('[data-review-stop]'))
+    expect(revokeReview).toHaveBeenCalledWith('sh_1')
+  })
+  it('更新：调 updateReview，做完自动复制链接并在通知轨说一句', async () => {
+    resetStore({ dialogOpen: true, share: SHARE })
+    vi.mocked(updateReview).mockResolvedValue({ ok: true })
+    vi.mocked(fetchReviewStatus).mockResolvedValue({ stage: 'done', failure: null, retryable: false, share: SHARE })
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    await render(<ReviewDialog />)
+    await click(q('[data-review-update]'))
+    await settle()
+    expect(updateReview).toHaveBeenCalledWith('sh_1', undefined)
+    expect(writeText).toHaveBeenCalledWith(SHARE.review_url)
+    expect(JSON.stringify(useUiStore.getState().status)).toContain('review.linkCopied')
+  })
+  it('进行中：点阵进度、不能随手关', async () => {
+    resetStore({ dialogOpen: true, stage: 'uploading' })
+    await render(<ReviewDialog />)
+    expect(q('[data-review-status="working"]')).not.toBeNull()
+    useReviewStore.getState().closeDialog()
+    expect(useReviewStore.getState().dialogOpen).toBe(true)
+  })
+})
+
+describe('失败码：一句话 + 可重试', () => {
+  const codes = ['share_gone', 'too_large', 'rate_limited', 'network', 'server', 'client_error', 'render_failed'] as const
+  for (const code of codes) {
+    it(`${code} 有自己的一句话`, async () => {
+      resetStore({ dialogOpen: true, stage: 'failed', failure: { code, retryable: true } })
+      await render(<ReviewDialog />)
+      const text = q(`[data-review-failure="${code}"]`)?.textContent ?? ''
+      expect(text.length).toBeGreaterThan(4)
+      expect(text).not.toContain('review.failure')
+      expect(q('[data-review-retry]')).not.toBeNull()
+    })
+  }
+  it('不可重试就没有重试钮；重试 = 再发一次同样的请求', async () => {
+    resetStore({ dialogOpen: true, stage: 'failed', failure: { code: 'too_large', retryable: false } })
+    await render(<ReviewDialog />)
+    expect(q('[data-review-retry]')).toBeNull()
+  })
+  it('重试走同一个操作', async () => {
+    resetStore({
+      dialogOpen: true,
+      stage: 'failed',
+      failure: { code: 'network', retryable: true },
+      lastOp: { kind: 'new', title: 'Figure 3', note: 'n' },
+    })
+    vi.mocked(shareReview).mockResolvedValue({ ok: true })
+    vi.mocked(fetchReviewStatus).mockResolvedValue({ stage: 'uploading', failure: null, retryable: false, share: null })
+    await render(<ReviewDialog />)
+    await click(q('[data-review-retry]'))
+    expect(shareReview).toHaveBeenCalledWith({ kind: 'figure', id: 'fig3' }, 'Figure 3', 'n')
+  })
+  it('服务端说额度用满：不报错，换成选择卡', async () => {
+    resetStore({ dialogOpen: true })
+    vi.mocked(shareReview).mockResolvedValue({ ok: true })
+    vi.mocked(fetchReviewStatus).mockResolvedValue({ stage: 'failed', failure: 'quota_new_exhausted', retryable: false, share: null })
+    await render(<ReviewDialog />)
+    await click(q('[data-review-create]'))
+    await settle()
+    expect(useReviewStore.getState().picker).toBe('new')
+    expect(q('[data-review-picker="new"]')).not.toBeNull()
+    expect(q('[data-review-status]')).toBeNull()
+  })
+})
+
+describe('额度用满选择卡', () => {
+  it('新建用满：更新已有（本机有未到期分享才列）/ 导出 PNG / 明天再分享', async () => {
+    resetStore({ dialogOpen: true, picker: 'new', others: [{ ...SHARE, share_id: 'sh_9', title: 'Figure 2' }] })
+    vi.mocked(updateReview).mockResolvedValue({ ok: true })
+    vi.mocked(fetchReviewStatus).mockResolvedValue({ stage: 'uploading', failure: null, retryable: false, share: null })
+    await render(<ReviewDialog />)
+    expect(qa('[data-review-pick]').map((e) => e.dataset.reviewPick)).toEqual(['update-existing', 'export-png', 'later'])
+    await click(q('[data-review-pick="update-existing"]'))
+    await click(q('[data-review-pick-share="sh_9"]'))
+    // 把这张图的画面更新到别的链接：带上 target
+    expect(updateReview).toHaveBeenCalledWith('sh_9', undefined, { kind: 'figure', id: 'fig3' })
+  })
+  it('没有别的分享记录就没有「更新已有的链接」；导出 PNG 打开导出窗；明天再分享只是关窗', async () => {
+    resetStore({ dialogOpen: true, picker: 'new', others: [] })
+    await render(<ReviewDialog />)
+    expect(q('[data-review-pick="update-existing"]')).toBeNull()
+    await click(q('[data-review-pick="export-png"]'))
+    expect(useUiStore.getState().exportOpen).toBe(true)
+    expect(useReviewStore.getState().dialogOpen).toBe(false)
+  })
+  it('更新用满：只有导出 PNG / 明天再更新', async () => {
+    resetStore({ dialogOpen: true, share: SHARE, picker: 'update', others: [SHARE] })
+    await render(<ReviewDialog />)
+    expect(qa('[data-review-pick]').map((e) => e.dataset.reviewPick)).toEqual(['export-png', 'later'])
+  })
+})
+
+describe('「审阅」页签出现条件', () => {
+  it('没分享过：没有审阅页签；分享过：出现并带未处理数', async () => {
+    await render(<Inspector />)
+    expect(q('[data-inspector-tab="review"]')).toBeNull()
+    await act(async () => useReviewStore.setState({ share: SHARE }))
+    expect(q('[data-inspector-tab="review"]')).not.toBeNull()
+    expect(q('[data-review-tab-count]')?.textContent).toBe('2')
+  })
+  it('功能关着不出现；页签停在审阅而记录没了，落回属性页', async () => {
+    resetStore({ enabled: false, share: SHARE })
+    await render(<Inspector />)
+    expect(q('[data-inspector-tab="review"]')).toBeNull()
+    await act(async () => {
+      useReviewStore.setState({ enabled: true, share: SHARE })
+      useUiStore.setState({ rightTab: 'review' })
+    })
+    expect(q('[data-review-panel]')).not.toBeNull()
+    await act(async () => useReviewStore.setState({ share: null }))
+    expect(q('[data-review-panel]')).toBeNull()
+    expect(q('[data-inspector-tab="properties"][aria-selected="true"]')).not.toBeNull()
+  })
+})
+
+describe('「审阅」页签内容', () => {
+  const seed = (comments: ReviewComment[], share = SHARE) => {
+    vi.mocked(fetchReviewShare).mockResolvedValue(DETAIL(comments, share))
+    resetStore({ share, detail: DETAIL(comments, share) })
+  }
+  it('顶部一行灰字 + 复制链接；没有结论条；打开时读一遍并清未读，每 60 秒拉一次', async () => {
+    seed([cm('c1')])
+    await render(<ReviewPanel />)
+    await settle(10)
+    expect(markReviewRead).toHaveBeenCalledWith('sh_1')
+    expect(refreshReview).toHaveBeenCalledTimes(1)
+    expect(q('[data-review-note-line]')?.textContent).toMatch(/^V2 · 链接 .+失效$/)
+    expect(q('[data-review-verdict]')).toBeNull()
+    await settle(60_000)
+    expect(refreshReview).toHaveBeenCalledTimes(2)
+  })
+  it('分段「全部 / 未处理 N」按已处理过滤', async () => {
+    seed([cm('c1'), cm('c2', { resolved: true })])
+    await render(<ReviewPanel />)
+    expect(qa('[data-review-comment]')).toHaveLength(2)
+    const seg = [...document.body.querySelectorAll('[role="radio"],[role="tab"],button')].find((e) => e.textContent === '未处理 1')
+    await click(seg ?? null)
+    expect(qa('[data-review-comment]').map((e) => e.dataset.reviewComment)).toEqual(['c1'])
+  })
+  it('点意见 = 选中；回复走 replyReviewComment；已停止的记录只剩「删除这份记录」', async () => {
+    seed([cm('c1')])
+    vi.mocked(replyReviewComment).mockResolvedValue({ ok: true, comment: cm('c1', { replies: [{ id: 'r1', from: 'owner', author: '我', text: '好的', created_at: '2026-11-15T07:00:00Z' }] }) })
+    await render(<ReviewPanel />)
+    await click(q('[data-review-comment="c1"]'))
+    expect(useReviewStore.getState().selectedId).toBe('c1')
+    await click(q('[data-review-reply-open]'))
+    const input = q<HTMLInputElement>('[data-review-reply-input]')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '好的')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      input.form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    })
+    expect(replyReviewComment).toHaveBeenCalledWith('sh_1', 'c1', '好的')
+    expect(q('[data-review-reply="owner"]')).not.toBeNull()
+  })
+  it('已停止：一行灰字说明、没有回复 / 复制，可删除记录', async () => {
+    seed([cm('c1')], { ...SHARE, revoked: true })
+    await render(<ReviewPanel />)
+    expect(q('[data-review-note-line]')?.textContent).toContain('已停止分享')
+    expect(q('[data-review-delete]')).not.toBeNull()
+    expect(q('[data-review-reply-open]')).toBeNull()
+    expect(refreshReview).not.toHaveBeenCalled()
+  })
+  it('原位置已变化：旧版本的区域意见标灰字并带快照缩略图；最新版的不标', async () => {
+    seed([cm('old', { v: 1 }), cm('new', { v: 2 })])
+    await render(<ReviewPanel />)
+    expect(q('[data-review-comment="old"] [data-review-moved]')?.textContent).toContain('原位置已变化')
+    expect(q('[data-review-comment="old"] [data-review-moved] img')?.getAttribute('src')).toContain('/versions/1/snapshot.png')
+    expect(q('[data-review-comment="new"] [data-review-moved]')).toBeNull()
+  })
+})
+
+describe('画布圆点只在审阅页签打开时渲染', () => {
+  const T = { zoom: 1, panX: 0, panY: 0, originX: 0, originY: 0 }
+  const overlay = () => (
+    <svg>
+      <ReviewOverlay objects={[]} t={T} />
+    </svg>
+  )
+  beforeEach(() => {
+    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
+  })
+  it('属性页：没有圆点；审阅页：区域意见有圆点；关了右栏：没有', async () => {
+    resetStore({ share: SHARE, detail: DETAIL([cm('c1'), cm('c2', { v: 1 })]) })
+    await render(overlay())
+    expect(q('[data-review-pins]')).toBeNull()
+    await act(async () => useUiStore.setState({ rightTab: 'review' }))
+    // 最新版的区域意见画圆点；旧版本的区域意见不画（列表里标原位置已变化）
+    expect(qa('[data-review-pin]').map((e) => e.dataset.reviewPin)).toEqual(['c1'])
+    await act(async () => useUiStore.setState({ rightOpen: false }))
+    expect(q('[data-review-pins]')).toBeNull()
+  })
+  it('点圆点 = 选中那条意见并描边', async () => {
+    resetStore({ share: SHARE, detail: DETAIL([cm('c1')]) })
+    useUiStore.setState({ rightTab: 'review' })
+    await render(overlay())
+    await click(q('[data-review-pin="c1"] [role="button"]'))
+    expect(useReviewStore.getState().selectedId).toBe('c1')
+    expect(q('[data-review-outline="c1"]')).not.toBeNull()
+  })
+  it('整体意见没有圆点', async () => {
+    resetStore({ share: SHARE, detail: DETAIL([cm('o', { anchor: { kind: 'overall' } })]) })
+    useUiStore.setState({ rightTab: 'review' })
+    await render(overlay())
+    expect(q('[data-review-pin]')).toBeNull()
+  })
+})
+
+describe('通知轨胶囊', () => {
+  const latest = { share_id: 'sh_1', author: '林老师', count: 2 }
+  it('「林老师留了 2 条意见」；× 之后同样的未读数不再出现，未读增加才重现', async () => {
+    resetStore({ unread: { total: 2, latest } })
+    await render(<NotificationRail />)
+    await settle(300)
+    expect(q('[data-review-capsule]')?.textContent).toContain('林老师留了 2 条意见')
+    await act(async () => useReviewStore.getState().dismissCapsule())
+    await settle(600)
+    expect(q('[data-review-capsule]')).toBeNull()
+    await act(async () => useReviewStore.setState({ unread: { total: 3, latest: { ...latest, count: 3 } } }))
+    await settle(300)
+    expect(q('[data-review-capsule]')).not.toBeNull()
+  })
+  it('分享弹窗开着时不出现', async () => {
+    resetStore({ unread: { total: 2, latest }, dialogOpen: true })
+    await render(<NotificationRail />)
+    await settle(300)
+    expect(q('[data-review-capsule]')).toBeNull()
+  })
+})
+
+describe('中英键对齐', () => {
+  const flat = (o: unknown, p = ''): string[] =>
+    Object.entries(o as Record<string, unknown>).flatMap(([k, v]) =>
+      typeof v === 'object' && v ? flat(v, `${p}${k}.`) : [`${p}${k.replace(/_(one|other)$/, '')}`],
+    )
+  it('review 键组两种语言的键一致', () => {
+    const zh = new Set(flat((zhDialogs as Record<string, unknown>).review))
+    const en = new Set(flat((enDialogs as Record<string, unknown>).review))
+    expect([...zh].filter((k) => !en.has(k))).toEqual([])
+    expect([...en].filter((k) => !zh.has(k))).toEqual([])
+    // 失败码闭集全有文案
+    for (const c of ['quota_new_exhausted', 'quota_update_exhausted', 'share_gone', 'too_large', 'rate_limited', 'network', 'server', 'client_error', 'render_failed'])
+      expect(zh.has(`failure.${c}`)).toBe(true)
+  })
+})

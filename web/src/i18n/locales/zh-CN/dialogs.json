@@ -2540,5 +2540,86 @@
       "info_text_height_mm": "文字高度",
       "info_panel_label": "子图标签"
     }
+  },
+  "review": {
+    "button": "分享审阅",
+    "buttonUnread": "分享审阅（有新意见）",
+    "title": "分享审阅",
+    "privacyFigure": "只上传这张图的画面，脚本和数据不出本机",
+    "privacyLayout": "只上传这份排版的画面，脚本和数据不出本机",
+    "noteLabel": "给审阅者的话（可不填）",
+    "create": "生成链接",
+    "cancel": "取消",
+    "close": "关闭",
+    "quotaNew": "今天还能新建 {{n}} 个",
+    "quotaUpdate": "今天这个链接还能更新 {{n}} 次",
+    "copy": "复制",
+    "linkCopied": "链接已复制",
+    "sharedMeta": "V{{v}} · {{when}}",
+    "update": "更新到同一链接",
+    "stop": "停止分享",
+    "stopConfirm": "再点一次，立刻停止",
+    "linkLabel": "审阅链接",
+    "stage": {
+      "rendering": "正在生成画面…",
+      "uploading": "正在上传…"
+    },
+    "failure": {
+      "quota_new_exhausted": "今天新建的次数用完了。",
+      "quota_update_exhausted": "这个链接今天更新的次数用完了。",
+      "share_gone": "这个链接已经失效了，本机留着当时的意见。",
+      "too_large": "画面太大了，缩小图幅后再试。",
+      "rate_limited": "请求太频繁，过一会儿再试。",
+      "network": "连不上审阅服务，检查网络后重试。",
+      "server": "审阅服务暂时出错了，稍后再试。",
+      "client_error": "没有成功，再试一次。",
+      "render_failed": "画面没生成出来，再试一次。"
+    },
+    "retry": "重试",
+    "picker": {
+      "newTitle": "今天已经新建过分享链接",
+      "updateTitle": "这个链接今天不能再更新了",
+      "updateExisting": "更新已有的链接",
+      "updateExistingDesc": "换成这张图的画面，链接不变",
+      "pickOne": "换到哪个链接上",
+      "exportPng": "导出 PNG",
+      "exportPngDesc": "存成图片，发给对方",
+      "laterNew": "明天再分享",
+      "laterNewDesc": "北京时间 0 点后可以新建",
+      "laterUpdate": "明天再更新",
+      "laterUpdateDesc": "北京时间 0 点后恢复"
+    },
+    "tab": {
+      "label": "审阅",
+      "live": "V{{v}} · 链接 {{date}}失效",
+      "revoked": "已停止分享，意见留在本机",
+      "expired": "链接已过期，当时的意见留在这里",
+      "copyLink": "复制链接",
+      "deleteRecord": "删除这份记录",
+      "filterLabel": "筛选意见",
+      "all": "全部",
+      "open": "未处理 {{n}}",
+      "empty": "还没有意见",
+      "emptyOpen": "没有未处理的意见"
+    },
+    "comment": {
+      "reply": "回复",
+      "replyPlaceholder": "回复…",
+      "send": "发送",
+      "resolve": "标记已处理",
+      "reopen": "重新打开",
+      "done": "已处理",
+      "owner": "作者",
+      "overall": "整体意见",
+      "region": "区域",
+      "moved": "原位置已变化",
+      "version": "V{{v}}",
+      "pin": "第 {{n}} 条意见"
+    },
+    "capsuleOpen": "查看",
+    "capsuleClose": "收起",
+    "notFound": "这张图不在当前项目里",
+    "capsule_other": "{{author}}留了 {{count}} 条意见",
+    "sharedStats_other": "{{count}} 条意见，{{open}} 条未处理 · {{date}}失效"
   }
 }
