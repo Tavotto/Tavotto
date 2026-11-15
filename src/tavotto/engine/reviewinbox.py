@@ -33,7 +33,9 @@ SNAPSHOT_DIR = "snapshots"
 SCHEMA_VERSION = 1
 RETENTION_DAYS = 30
 KEEP_AFTER_EXPIRY_DAYS = 30
-UNDELIVERED_KEEP_S = 2 * 3600
+#: 与服务端 `client_*_id` 的 24 小时幂等重放窗口一致：init 已拿到管理令牌、本机却没走完（complete 成了但落盘失败 / 中途断了）的
+#: 记录留这么久，期间用户重试能补投递，不会连令牌一起丢掉一条已发布的链接
+UNDELIVERED_KEEP_S = 24 * 3600
 MAX_SHARES = 200
 KINDS = ("figure", "layout")
 
@@ -332,12 +334,16 @@ def _load_locked() -> dict:
     }
 
 
-def _save_locked(data: dict) -> bool:
+def _save_locked(data: dict, *, strict: bool = False) -> bool:
+    """落盘。`strict=True`（登记令牌 / 登记版本这两处，远端已经发布了）写不下去就**抛 OSError**，由调用方把这次分享判失败；
+    其余（未读数、游标之类可重建的东西）只记日志返回 False。"""
     payload = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     try:
         atomicio.write_bytes(path(), payload, mode=0o600)
     except OSError:
         LOG.warning("外部审阅: 本机分享记录写入失败")  # 不带路径与异常文本
+        if strict:
+            raise
         return False
     return True
 
@@ -520,7 +526,7 @@ def add_pending(
         if _find(data, share_id) is not None:
             return True
         data["shares"].append(_normalize(rec))
-        return _save_locked(data)
+        return _save_locked(data, strict=True)
 
 
 def add_version(
@@ -564,7 +570,7 @@ def add_version(
             rec["target_id"] = target_id
         if not saved:
             LOG.warning("外部审阅: 快照写入失败")
-        _save_locked(data)
+        _save_locked(data, strict=True)
         return json.loads(json.dumps(rec))
 
 

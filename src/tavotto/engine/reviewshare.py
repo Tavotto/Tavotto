@@ -243,10 +243,36 @@ def _clamp_box(x0: float, y0: float, x1: float, y1: float) -> list[float] | None
     return [round(x0, 5), round(y0, 5), round(x1 - x0, 5), round(y1 - y0, 5)]
 
 
+#: 这些角色的 manifest 显示名就是**画在图上的文字**（`manifest` 里按 `artist.get_text()` 现算：标题 / 轴标签 / 文字 / 图例项 /
+#: 刻度），可以原样上传；其余角色的显示名来自 artist 的 `label`（脚本里随便写，没进图例就不在画面上，可能是路径 / 文件名），不传。
+_RENDERED_TEXT_ROLES = frozenset({"title", "axis_label", "text", "legend_text", "ticklabel"})
+#: 其余角色 → 固定的结构性短词（+ 同角色序号）；前端按需要换成自己的显示文案
+_STRUCTURAL_NAMES: dict[str, str] = {
+    "line": "曲线",
+    "scatter": "散点",
+    "bar": "柱",
+    "bar_series": "柱",
+    "fill": "填充",
+    "errorbar": "误差棒",
+    "stem_series": "茎叶",
+    "image": "图像",
+    "linecoll": "线组",
+    "collection": "集合",
+    "patch": "形状",
+    "arrow_patch": "箭头",
+    "legend": "图例",
+    "colorbar": "色条",
+    "axes": "坐标轴",
+    "axes3d": "坐标轴",
+}
+
+
 def manifest_elements(manifest: object) -> list[dict]:
     """manifest JSON → `[{gid, label, bbox}]`（bbox 是 figure 分数 `[x, y, w, h]`、y 向下，已夹进画面）。
-    整张图（`gid == "figure"`）不要：「整体意见」另有锚点。数据图元的未裁剪包围盒可能比图幅大几百倍，所以先夹再算面积。"""
+    整张图（`gid == "figure"`）不要：「整体意见」另有锚点。数据图元的未裁剪包围盒可能比图幅大几百倍，所以先夹再算面积。
+    **label 只有两种来源**：画在图上的文字（`_RENDERED_TEXT_ROLES`），或按角色的结构性名字 + 序号；artist 的 label 一律不传。"""
     out: list[dict] = []
+    counts: dict[str, int] = {}
     els = manifest.get("elements") if isinstance(manifest, dict) else None
     for el in els if isinstance(els, list) else []:
         if not isinstance(el, dict):
@@ -257,14 +283,15 @@ def manifest_elements(manifest: object) -> list[dict]:
         box = _clamp_box(bb[0], bb[1], bb[0] + bb[2], bb[1] + bb[3])
         if box is None:
             continue
+        role = el.get("role") if isinstance(el.get("role"), str) else ""
         label = el.get("label")
-        out.append(
-            {
-                "gid": gid[:256],
-                "label": (label if isinstance(label, str) and label else gid)[:120],
-                "bbox": box,
-            }
-        )
+        if role in _RENDERED_TEXT_ROLES and isinstance(label, str) and label:
+            name = label
+        else:
+            word = _STRUCTURAL_NAMES.get(role, "元素")
+            counts[word] = counts.get(word, 0) + 1
+            name = f"{word} {counts[word]}"
+        out.append({"gid": gid[:256], "label": name[:120], "bbox": box})
     return out
 
 
@@ -461,7 +488,13 @@ def sign_headers(method: str, path: str, body: bytes, ts: int) -> dict[str, str]
 # HTTP
 # ---------------------------------------------------------------------------
 _time = time.time
-_sleep = time.sleep
+
+
+def _interruptible_sleep(cancel: threading.Event, seconds: float) -> None:
+    cancel.wait(seconds)
+
+
+_sleep = _interruptible_sleep
 
 
 def _transport(fail: _Failure) -> _Failure:
@@ -961,7 +994,7 @@ def reset_for_tests() -> None:
         if cur.thread is not None and cur.thread.is_alive():
             cur.thread.join(5)
     _RENDERER = None
-    _time, _sleep = time.time, time.sleep
+    _time, _sleep = time.time, _interruptible_sleep
     _LAST_POLL = 0.0
 
 
@@ -1038,21 +1071,28 @@ def _flow(sess: Session) -> None:
     _check_cancel(sess)
     _upload(sess, info["upload"], art.png)
     _check_cancel(sess)
-    done = _complete(target, share_id, version, token)
+    done = _complete(target, share_id, version, token, sess.cancel)
     exp = reviewinbox.parse_iso(
         done.get("expires_at"), reviewinbox.parse_iso(info.get("expires_at"), _time() + 30 * 86400)
     )
-    reviewinbox.add_version(
-        share_id,
-        version,
-        art.elements,
-        art.png,
-        expires_ts=exp,
-        note=spec.note if spec.mode == "update" else None,
-        frame="page" if spec.target["kind"] == "layout" else "figure",
-        target_id=spec.target["id"] if spec.mode == "update" else None,
-        digest=render_digest(spec.render),
-    )
+    # 远端已发布：本机记录必须落盘，落不下去就失败（可再试：同一个幂等 id 重放、complete 幂等、再补投递），不能报 done
+    try:
+        saved = reviewinbox.add_version(
+            share_id,
+            version,
+            art.elements,
+            art.png,
+            expires_ts=exp,
+            note=spec.note if spec.mode == "update" else None,
+            frame="page" if spec.target["kind"] == "layout" else "figure",
+            target_id=spec.target["id"] if spec.mode == "update" else None,
+            digest=render_digest(spec.render),
+        )
+    except OSError:
+        LOG.warning("外部审阅: 本机记录落盘失败")
+        raise _Failure("server") from None
+    if saved is None:
+        raise _Failure("client_error")
 
 
 def _upload_spec(raw: object, target: diagsend.Target) -> dict:
@@ -1238,17 +1278,24 @@ def _init_share(target: diagsend.Target, spec: _Spec, client_id: str, art: _Arti
         raise _Failure("server")
     exp = reviewinbox.parse_iso(obj.get("expires_at"), _time() + 30 * 86400)
     # 令牌一到手就落盘（complete 之前）：complete 的响应丢了，管理令牌也不会丢
-    if not reviewinbox.add_pending(
-        share_id=sid,
-        owner_token=token,
-        review_url=url,  # type: ignore[arg-type]
-        kind=spec.target["kind"],
-        target_id=spec.target["id"],
-        title=spec.title,
-        note=spec.note,
-        expires_ts=exp,
-        project=spec.project,
-    ):
+    try:
+        pending_ok = reviewinbox.add_pending(
+            share_id=sid,
+            owner_token=token,
+            review_url=url,  # type: ignore[arg-type]
+            kind=spec.target["kind"],
+            target_id=spec.target["id"],
+            title=spec.title,
+            note=spec.note,
+            expires_ts=exp,
+            project=spec.project,
+        )
+    except OSError:
+        LOG.warning("外部审阅: 本机记录落盘失败")
+        raise _Failure(
+            "server"
+        ) from None  # 令牌没落盘：重试用同一个 client id，服务端重放同一份结果
+    if not pending_ok:
         raise _Failure("client_error")
     _log("ok", "init")
     return {
@@ -1286,13 +1333,19 @@ def _init_version(
     return {"version": v, "upload": obj["upload"], "expires_at": obj.get("expires_at")}
 
 
-def _complete(target: diagsend.Target, share_id: str, version: int, token: str) -> dict:
+def _complete(
+    target: diagsend.Target, share_id: str, version: int, token: str, cancel: threading.Event
+) -> dict:
     path = f"/v1/shares/{share_id}/versions/{version}/complete"
     last: _Failure | None = None
     for attempt in range(COMPLETE_ATTEMPTS):
         if attempt:
             wait = min(last.retry_after, RETRY_AFTER_CAP_S) if last and last.retry_after else 0
-            _sleep(wait or COMPLETE_BACKOFF_S[min(attempt - 1, len(COMPLETE_BACKOFF_S) - 1)])
+            _sleep(
+                cancel, wait or COMPLETE_BACKOFF_S[min(attempt - 1, len(COMPLETE_BACKOFF_S) - 1)]
+            )
+        if cancel.is_set():  # 每次发送前查：取消之后（含退避等待中被取消）不再发
+            raise _Cancelled
         try:
             resp = _call(target, "POST", path, None, bearer=token, timeout=COMPLETE_TIMEOUT_S)
         except _Failure as fail:

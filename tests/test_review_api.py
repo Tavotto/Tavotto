@@ -36,7 +36,7 @@ def client(monkeypatch, tmp_path):
     m.app.config["TESTING"] = True
     m.reset_projects()
     reviewshare.reset_for_tests()
-    monkeypatch.setattr(reviewshare, "_sleep", lambda s: None)
+    monkeypatch.setattr(reviewshare, "_sleep", lambda ev, s: None)
     yield m.app.test_client()
     reviewshare.reset_for_tests()
     reviewshare.set_renderer(m._review_render)  # reset_for_tests 清掉了注册；还给后面的用例
@@ -282,7 +282,9 @@ def test_review_render_asks_the_export_pipeline_for_a_private_png_and_builds_ele
         m,
         "_review_manifest",
         lambda fid, ov: {
-            "elements": [{"gid": "ax0.t", "label": "标题", "bbox": [0.1, 0.1, 0.2, 0.1]}]
+            "elements": [
+                {"gid": "ax0.t", "role": "title", "label": "标题", "bbox": [0.1, 0.1, 0.2, 0.1]}
+            ]
         },
     )
     fig = m._review_render(

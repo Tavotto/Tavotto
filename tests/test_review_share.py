@@ -74,7 +74,7 @@ def _isolated(monkeypatch, tmp_path):
     monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
     reviewshare.reset_for_tests()
     sleeps: list[float] = []
-    monkeypatch.setattr(reviewshare, "_sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(reviewshare, "_sleep", lambda ev, s: sleeps.append(s))
     monkeypatch.sleeps = sleeps  # type: ignore[attr-defined]
     yield
     reviewshare.reset_for_tests()
@@ -840,7 +840,13 @@ def test_reply_validation_and_unknown_ids(on, renders):
 
 # --------------------------------------------------------------------------- 元素表
 def _man(*els):
-    return {"elements": [{"gid": g, "label": lab, "bbox": bb} for g, lab, bb in els]}
+    """`(gid, label, bbox[, role])`；role 缺省 = `text`（label 是画在图上的文字，原样上传）。"""
+    return {
+        "elements": [
+            {"gid": e[0], "label": e[1], "bbox": e[2], "role": e[3] if len(e) > 3 else "text"}
+            for e in els
+        ]
+    }
 
 
 def test_manifest_elements_clamp_drop_figure_and_empty_areas():
@@ -856,7 +862,7 @@ def test_manifest_elements_clamp_drop_figure_and_empty_areas():
     )
     assert out == [
         {"gid": "ax0.line", "label": "曲线", "bbox": [0.0, 0.0, 1.0, 1.0]},
-        {"gid": "ax0.t", "label": "ax0.t", "bbox": [0.1, 0.1, 0.2, 0.05]},
+        {"gid": "ax0.t", "label": "元素 1", "bbox": [0.1, 0.1, 0.2, 0.05]},
     ]
     assert (
         reviewshare.manifest_elements(None) == []
@@ -1138,3 +1144,164 @@ def test_changed_is_true_for_old_records_without_a_digest_and_validates_input(on
     with pytest.raises(reviewshare.ReviewError) as e:
         reviewshare.changed(sid, RENDER, project="other")
     assert e.value.status == 404
+
+
+def test_element_labels_never_carry_artist_labels_only_rendered_text_or_structural_names(
+    on, renders
+):
+    man = {
+        "elements": [
+            # 脚本里 label='/private/study.csv' 但没画图例：路径不在画面上，不许出机
+            {
+                "gid": "axes_0.lines_0",
+                "role": "line",
+                "label": "/private/study.csv",
+                "bbox": [0.1, 0.1, 0.5, 0.5],
+            },
+            {
+                "gid": "axes_0.lines_1",
+                "role": "line",
+                "label": "C:\\Users\\me\\data.csv",
+                "bbox": [0.1, 0.1, 0.4, 0.4],
+            },
+            {
+                "gid": "axes_0.scatter_0",
+                "role": "scatter",
+                "label": "secret.xlsx",
+                "bbox": [0.2, 0.2, 0.1, 0.1],
+            },
+            {
+                "gid": "axes_0.legend",
+                "role": "legend",
+                "label": "图例",
+                "bbox": [0.7, 0.1, 0.2, 0.2],
+            },
+            # 画在图上的文字：标题 / 轴标签 / 图例条目（图例里实际显示的文字）可以出现
+            {
+                "gid": "axes_0.title",
+                "role": "title",
+                "label": "标题 “Raw”",
+                "bbox": [0.3, 0.0, 0.2, 0.05],
+            },
+            {
+                "gid": "axes_0.legend.texts_0",
+                "role": "legend_text",
+                "label": "图例项 “signal”",
+                "bbox": [0.72, 0.12, 0.1, 0.03],
+            },
+            {
+                "gid": "axes_0.mystery",
+                "role": "weird",
+                "label": "/Users/x/y",
+                "bbox": [0.0, 0.5, 0.1, 0.1],
+            },
+        ]
+    }
+    out = reviewshare.manifest_elements(man)
+    labels = {e["gid"]: e["label"] for e in out}
+    assert labels == {
+        "axes_0.lines_0": "曲线 1",
+        "axes_0.lines_1": "曲线 2",
+        "axes_0.scatter_0": "散点 1",
+        "axes_0.legend": "图例 1",
+        "axes_0.title": "标题 “Raw”",
+        "axes_0.legend.texts_0": "图例项 “signal”",
+        "axes_0.mystery": "元素 1",
+    }
+    blob = json.dumps(out, ensure_ascii=False)
+    for secret in ("private", "study.csv", "Users", "secret.xlsx", "data.csv"):
+        assert secret not in blob
+    # 端到端：上传的 init 体里同样没有
+    reviewshare.set_renderer(lambda *a: reviewshare.Rendered(make_png(), out))
+    share_ok()
+    assert "study.csv" not in on.calls[0]["body"].decode() and "Raw" in on.calls[0]["body"].decode()
+
+
+def test_cancel_during_complete_backoff_stops_all_further_sends(on, renders, monkeypatch):
+    on.force("/v1/shares/", Forced("drop"), times=10)  # complete 一直断线
+    seen = []
+
+    def cancelling_sleep(ev, seconds):
+        seen.append(seconds)
+        reviewshare.cancel()  # 退避等待中用户取消
+
+    monkeypatch.setattr(reviewshare, "_sleep", cancelling_sleep)
+    assert reviewshare.start_share(body()) == {"ok": True}
+    st = wait_for({"idle", "done", "failed"})
+    assert st["stage"] == "idle" and seen == [1.0]
+    completes = [p for p in on.paths() if p.endswith("/complete")]
+    assert len(completes) == 1  # 取消之后零发送
+
+
+def test_cancel_event_interrupts_the_backoff_wait_itself():
+    import threading as _t
+
+    ev = _t.Event()
+    ev.set()
+    t0 = time.monotonic()
+    reviewshare._interruptible_sleep(ev, 30)
+    assert time.monotonic() - t0 < 1
+
+
+def test_a_failed_local_save_after_complete_is_a_retryable_failure_and_the_retry_delivers(
+    on, renders, monkeypatch
+):
+    real = reviewinbox.atomicio.write_bytes
+    state = {"shares_writes": 0}
+
+    def flaky(path, data, **kw):
+        if str(path).endswith("shares.json"):
+            state["shares_writes"] += 1
+            if (
+                state["shares_writes"] == 2
+            ):  # 第 1 次是 init 后登记令牌；第 2 次是 complete 之后登记版本
+                raise OSError("disk full")
+        return real(path, data, **kw)
+
+    monkeypatch.setattr(reviewinbox.atomicio, "write_bytes", flaky)
+    st = share_ok()
+    assert (st["stage"], st["failure"], st["retryable"]) == ("failed", "server", True)
+    assert st["share"] is None
+    # 远端已发布，本机留着带管理令牌的待投递记录，没有被当成功
+    (rec,) = reviewinbox._load_locked()["shares"]
+    assert rec["owner_token"] and not rec["delivered"]
+    assert reviewinbox.listed() == [] and reviewinbox.for_target("figure", "fig_a") is None
+    reviewshare.dismiss()
+    st = share_ok()  # 重试：同一个 id、同一份字节、不重复扣额度、不重新出图
+    assert st["stage"] == "done"
+    inits = [json.loads(c["body"]) for c in on.calls if c["path"] == "/v1/shares"]
+    assert len(inits) == 2 and inits[0] == inits[1] and len(renders["calls"]) == 1
+    assert list(on.new_used.values()) == [1]
+    got = reviewinbox.get(st["share"]["share_id"])
+    assert got["delivered"] and got["owner_token"] == rec["owner_token"]
+    assert reviewinbox.for_target("figure", "fig_a")["share_id"] == got["share_id"]
+
+
+def test_a_failed_local_save_of_the_token_is_a_retryable_failure_too(on, renders, monkeypatch):
+    real = reviewinbox.atomicio.write_bytes
+    state = {"n": 0}
+
+    def flaky(path, data, **kw):
+        if str(path).endswith("shares.json"):
+            state["n"] += 1
+            if state["n"] == 1:
+                raise OSError("read-only")
+        return real(path, data, **kw)
+
+    monkeypatch.setattr(reviewinbox.atomicio, "write_bytes", flaky)
+    st = share_ok()
+    assert (st["failure"], st["retryable"]) == ("server", True)
+    assert [p for p in on.paths() if p.startswith("PUT")] == []  # 令牌没落盘就不上传
+    reviewshare.dismiss()
+    assert share_ok()["stage"] == "done"
+    assert list(on.new_used.values()) == [1]  # 同一 client id 重放，不重复扣额度
+
+
+def test_undelivered_records_survive_the_old_two_hour_cleanup(on, renders, monkeypatch):
+    on.force("/v1/shares/", Forced("status", 400, "invalid"))
+    share_ok()
+    ts = reviewinbox._load_locked()["shares"][0]["created_ts"]
+    monkeypatch.setattr(reviewinbox, "_now", lambda: ts + 3 * 3600)
+    assert len(reviewinbox._load_pruned_locked()["shares"]) == 1  # 3 小时后仍在
+    monkeypatch.setattr(reviewinbox, "_now", lambda: ts + 25 * 3600)
+    assert reviewinbox._load_pruned_locked()["shares"] == []
