@@ -102,9 +102,9 @@ function CommentCard({ p, detail, live }: { p: PlacedComment; detail: ReviewShar
       data-review-selected={selected || undefined}
       data-review-resolved={c.resolved || undefined}
       className={cn(
-        'flex flex-col gap-1 border-b border-border px-3 py-2.5 text-sm',
-        // 选中 = selected 浅底 + 左侧 2.5 的 accent 竖线（内凹，不占宽）
-        selected && 'bg-selected shadow-[inset_2.5px_0_0_var(--color-accent)]',
+        'flex flex-col gap-1 px-3 py-2.5 text-sm',
+        // 未选中 = 细线平铺行；选中 = 浮成圆角卡片（surface 底 + 1px 较深边框，四周留 8px，卡片处细线断开），不用彩色竖条
+        selected ? 'm-2 rounded-lg border border-border-strong bg-surface' : 'border-b border-border',
       )}
       onClick={() => store().select(c.id)}
     >
