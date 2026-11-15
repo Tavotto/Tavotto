@@ -823,7 +823,10 @@ def test_text_chunk_geometry_uses_hand_calculated_font_advances(body, expected):
     source = svg(f'<text x="100" y="50" font-size="10" text-anchor="middle">{body}</text>')
     page, _ = svg_to_ir(source, 100, 100, FakeProvider())
     actual = _text_glyph_positions(page)
-    assert [(char["x"], char["y"]) for char in actual] == pytest.approx(expected)
+    # pytest 9 不再接受嵌套结构（list[tuple]）传给 approx；按点顺序展平后逐数比。
+    assert [value for char in actual for value in (char["x"], char["y"])] == pytest.approx(
+        [value for point in expected for value in point]
+    )
 
 
 def test_dom_boundary_does_not_hide_independent_ligature_characters_or_relative_positions():
