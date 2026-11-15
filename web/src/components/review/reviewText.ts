@@ -11,6 +11,9 @@ export const isoMs = (iso: string): number => {
   return Number.isFinite(n) ? n : 0
 }
 
+/** 页签顶部那行用的短日期：「12月15日」 */
+export const expiryShort = (iso: string): string => formatDateTime(isoMs(iso), { month: 'long', day: 'numeric' })
+
 export const expiryDate = (iso: string): string => formatDate(isoMs(iso))
 
 /** 失败码 → 一句话；不认识的码按「没有成功」说 */

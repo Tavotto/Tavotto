@@ -2006,7 +2006,7 @@ export default interface Resources {
       "stop": "停止分享",
       "stopConfirm": "再点一次，立刻停止",
       "tab": {
-        "all": "全部",
+        "all": "全部 {{n}}",
         "copyLink": "复制链接",
         "deleteRecord": "删除这份记录",
         "empty": "还没有意见",
@@ -2014,7 +2014,7 @@ export default interface Resources {
         "expired": "链接已过期，当时的意见留在这里",
         "filterLabel": "筛选意见",
         "label": "审阅",
-        "live": "V{{v}} · 链接 {{date}}失效",
+        "live": "V{{v}} · {{date}}失效",
         "open": "未处理 {{n}}",
         "revoked": "已停止分享，意见留在本机"
       },

@@ -10,13 +10,12 @@ import { shareLive } from '@/lib/reviewPlacement'
 import { cn } from '@/lib/utils'
 import { TAB_REFRESH_MS, useReviewStore } from '@/store/reviewStore'
 import { CopyButton } from '../settings/CopyButton'
-import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
 import { EmptyLine } from '../ui/EmptyLine'
 import { TextInput } from '../ui/Input'
 import { Segmented } from '../ui/Segmented'
 import { toastLinkCopied } from './ReviewDialog'
-import { commentWhen, expiryDate, rs } from './reviewText'
+import { commentWhen, expiryShort, rs } from './reviewText'
 import { useReviewPlacements, type PlacedComment } from './useReviewPlacements'
 
 type Filter = 'all' | 'open'
@@ -74,6 +73,10 @@ function Avatar({ name, owner }: { name: string; owner?: boolean }) {
   )
 }
 
+/** 文字动作（回复 / 标记已处理）：一行灰字，不是按钮胶囊（条间只有细线，没有卡片底） */
+const actionClass =
+  'rounded-sm text-xs text-ink-3 outline-none transition-colors duration-fast hover:text-ink focus-visible:focus-ring'
+
 function CommentCard({ p, detail, live }: { p: PlacedComment; detail: ReviewShareDetail; live: boolean }) {
   const c = p.comment
   const selected = useReviewStore((s) => s.selectedId === c.id)
@@ -90,6 +93,8 @@ function CommentCard({ p, detail, live }: { p: PlacedComment; detail: ReviewShar
       setReplying(false)
     }
   }
+  const pinned = p.placement === 'element' || p.placement === 'region'
+  const target = targetName(c, detail)
   return (
     <div
       ref={ref}
@@ -97,69 +102,85 @@ function CommentCard({ p, detail, live }: { p: PlacedComment; detail: ReviewShar
       data-review-selected={selected || undefined}
       data-review-resolved={c.resolved || undefined}
       className={cn(
-        'flex flex-col gap-1.5 border-b border-border px-3 py-2.5 text-sm',
-        selected && 'bg-selected',
-        c.resolved && 'opacity-70',
+        'flex flex-col gap-1 border-b border-border px-3 py-2.5 text-sm',
+        // 选中 = selected 浅底 + 左侧 2.5 的 accent 竖线（内凹，不占宽）
+        selected && 'bg-selected shadow-[inset_2.5px_0_0_var(--color-accent)]',
       )}
       onClick={() => store().select(c.id)}
     >
+      {/* 头部一行：头像字 称呼 V2 · 时间 …… 右侧锚点（序号小圆与画布圆点同色 / 已处理绿点 / 整体意见） */}
       <div className="flex items-center gap-1.5">
         <Avatar name={c.author} />
         <b className="min-w-0 truncate text-xs font-medium text-ink">{c.author}</b>
-        <Badge mono>{rs('comment.version', { v: c.v })}</Badge>
-        <span className="ml-auto shrink-0 text-xs text-ink-3">{commentWhen(c.created_at)}</span>
+        <span className="shrink-0 text-xs tabular-nums text-ink-3">
+          {rs('comment.version', { v: c.v })} · {commentWhen(c.created_at)}
+        </span>
+        <span className="ml-auto flex min-w-0 shrink items-center gap-1 text-xs text-ink-3" data-review-anchor>
+          {c.resolved ? (
+            <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-ok" data-review-done-dot />
+          ) : pinned ? (
+            <span
+              aria-hidden
+              className="inline-grid size-4 shrink-0 place-items-center rounded-full bg-accent text-xs leading-none text-surface tabular-nums"
+            >
+              {p.n > 9 ? '9+' : p.n}
+            </span>
+          ) : null}
+          <span className="min-w-0 truncate">
+            {target}
+            {c.resolved && ` · ${rs('comment.done')}`}
+          </span>
+        </span>
       </div>
-      <div className="flex items-center gap-1 text-xs text-ink-3">
-        <span className="min-w-0 truncate">{targetName(c, detail)}</span>
-        {c.resolved && <span>· {rs('comment.done')}</span>}
-      </div>
-      {p.placement === 'moved' && <MovedNote shareId={detail.share_id} c={c} />}
-      <p className="whitespace-pre-wrap break-words text-ink">{c.text}</p>
-      {c.replies.map((r) => (
-        <div key={r.id} className="ml-3 flex flex-col gap-0.5 border-l border-border pl-2" data-review-reply={r.from}>
-          <div className="flex items-center gap-1.5">
-            <Avatar name={r.from === 'owner' ? rs('comment.owner') : r.author} owner={r.from === 'owner'} />
-            <b className="text-xs font-medium text-ink">{r.from === 'owner' ? rs('comment.owner') : r.author}</b>
-            <span className="ml-auto text-xs text-ink-3">{commentWhen(r.created_at)}</span>
+      <div className="ml-6 flex flex-col gap-1">
+        {p.placement === 'moved' && <MovedNote shareId={detail.share_id} c={c} />}
+        <p className={cn('whitespace-pre-wrap break-words', c.resolved ? 'text-ink-3' : 'text-ink')}>{c.text}</p>
+        {c.replies.map((r) => (
+          <div key={r.id} className="flex flex-col gap-0.5 border-l border-border pl-2" data-review-reply={r.from}>
+            <div className="flex items-center gap-1.5">
+              <Avatar name={r.from === 'owner' ? rs('comment.owner') : r.author} owner={r.from === 'owner'} />
+              <b className="text-xs font-medium text-ink">{r.from === 'owner' ? rs('comment.owner') : r.author}</b>
+              <span className="ml-auto text-xs text-ink-3">{commentWhen(r.created_at)}</span>
+            </div>
+            <p className="whitespace-pre-wrap break-words text-ink-2">{r.text}</p>
           </div>
-          <p className="whitespace-pre-wrap break-words text-ink-2">{r.text}</p>
-        </div>
-      ))}
-      {live && replying && (
-        <form
-          className="flex items-center gap-1.5"
-          onClick={(e) => e.stopPropagation()}
-          onSubmit={(e) => {
-            e.preventDefault()
-            void send()
-          }}
-        >
-          <TextInput
-            autoFocus
-            value={text}
-            maxLength={500}
-            placeholder={rs('comment.replyPlaceholder')}
-            aria-label={rs('comment.reply')}
-            onChange={(e) => setText(e.target.value)}
-            data-review-reply-input
-          />
-          <Button type="submit" variant="secondary" size="md" disabled={!text.trim()}>
-            {rs('comment.send')}
-          </Button>
-        </form>
-      )}
-      {live && (
-        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-          {!replying && (
-            <Button variant="ghost" size="sm" onClick={() => setReplying(true)} data-review-reply-open>
-              {rs('comment.reply')}
+        ))}
+        {live && replying && (
+          <form
+            className="flex items-center gap-1.5"
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={(e) => {
+              e.preventDefault()
+              void send()
+            }}
+          >
+            <TextInput
+              autoFocus
+              value={text}
+              maxLength={500}
+              placeholder={rs('comment.replyPlaceholder')}
+              aria-label={rs('comment.reply')}
+              onChange={(e) => setText(e.target.value)}
+              data-review-reply-input
+            />
+            <Button type="submit" variant="secondary" size="md" disabled={!text.trim()}>
+              {rs('comment.send')}
             </Button>
-          )}
-          <Button variant="ghost" size="sm" onClick={() => void store().setResolved(c.id, !c.resolved)} data-review-resolve>
-            {c.resolved ? rs('comment.reopen') : rs('comment.resolve')}
-          </Button>
-        </div>
-      )}
+          </form>
+        )}
+        {live && (
+          <div className="flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
+            {!replying && (
+              <button type="button" className={actionClass} onClick={() => setReplying(true)} data-review-reply-open>
+                {rs('comment.reply')}
+              </button>
+            )}
+            <button type="button" className={actionClass} onClick={() => void store().setResolved(c.id, !c.resolved)} data-review-resolve>
+              {c.resolved ? rs('comment.reopen') : rs('comment.resolve')}
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -200,7 +221,7 @@ export function ReviewPanel() {
   const open = placed.filter((p) => !p.comment.resolved)
   const shown = filter === 'open' ? open : placed
   const note = live
-    ? rs('tab.live', { v: share.latest_version, date: expiryDate(share.expires_at) })
+    ? rs('tab.live', { v: share.latest_version, date: expiryShort(share.expires_at) })
     : rs(share.revoked ? 'tab.revoked' : 'tab.expired')
 
   return (
@@ -223,7 +244,7 @@ export function ReviewPanel() {
           onChange={setFilter}
           ariaLabel={rs('tab.filterLabel')}
           items={[
-            { value: 'all', label: rs('tab.all') },
+            { value: 'all', label: rs('tab.all', { n: placed.length }) },
             { value: 'open', label: rs('tab.open', { n: open.length }) },
           ]}
         />

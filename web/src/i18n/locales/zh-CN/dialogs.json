@@ -2592,13 +2592,13 @@
     },
     "tab": {
       "label": "审阅",
-      "live": "V{{v}} · 链接 {{date}}失效",
+      "live": "V{{v}} · {{date}}失效",
       "revoked": "已停止分享，意见留在本机",
       "expired": "链接已过期，当时的意见留在这里",
       "copyLink": "复制链接",
       "deleteRecord": "删除这份记录",
       "filterLabel": "筛选意见",
-      "all": "全部",
+      "all": "全部 {{n}}",
       "open": "未处理 {{n}}",
       "empty": "还没有意见",
       "emptyOpen": "没有未处理的意见"

@@ -356,7 +356,7 @@ describe('「审阅」页签内容', () => {
     await settle(10)
     expect(markReviewRead).toHaveBeenCalledWith('sh_1')
     expect(refreshReview).toHaveBeenCalledTimes(1)
-    expect(q('[data-review-note-line]')?.textContent).toMatch(/^V2 · 链接 .+失效$/)
+    expect(q('[data-review-note-line]')?.textContent).toMatch(/^V2 · .+失效$/)
     expect(q('[data-review-verdict]')).toBeNull()
     await settle(60_000)
     expect(refreshReview).toHaveBeenCalledTimes(2)

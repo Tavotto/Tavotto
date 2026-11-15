@@ -2618,13 +2618,13 @@
     },
     "tab": {
       "label": "Review",
-      "live": "V{{v}} · link expires {{date}}",
+      "live": "V{{v}} · expires {{date}}",
       "revoked": "Sharing stopped; comments stay on this computer",
       "expired": "Link expired; the comments from then are kept here",
       "copyLink": "Copy link",
       "deleteRecord": "Delete this record",
       "filterLabel": "Filter comments",
-      "all": "All",
+      "all": "All {{n}}",
       "open": "Open {{n}}",
       "empty": "No comments yet",
       "emptyOpen": "No open comments"
