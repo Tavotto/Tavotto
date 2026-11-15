@@ -4131,6 +4131,33 @@ def api_svg_import():
     return jsonify({"ok": True, **out})
 
 
+#: 复制为 SVG 的输入上限（ADR 0189 §四）：请求字节、对象数、每个对象的裁剪层数、全部路径锚点、每段文字的字数
+SVG_COPY_MAX_BYTES = 8 * 1024 * 1024
+SVG_COPY_MAX_OBJECTS = 2000
+#: IR 的嵌套上限是 16 层（`ir.MAX_DEPTH`）：每层剪切占一层组，对象自己再占一两层
+SVG_COPY_MAX_CLIP_DEPTH = 8
+SVG_COPY_MAX_NODES = 200_000
+SVG_COPY_MAX_TEXT = 20_000
+
+
+def _svg_copy_too_big(objs: list) -> bool:
+    if len(objs) > SVG_COPY_MAX_OBJECTS:
+        return True
+    nodes = 0
+    for o in objs:
+        clip = o.get("clip")
+        if clip is not None and (not isinstance(clip, list) or len(clip) > SVG_COPY_MAX_CLIP_DEPTH):
+            return True
+        for path in [o, *(clip or [])]:
+            subs = path.get("subpaths") if isinstance(path, dict) else None
+            for sp in subs if isinstance(subs, list) else ():
+                nodes += len(sp.get("nodes") or ()) if isinstance(sp, dict) else 0
+        text = o.get("text")
+        if isinstance(text, str) and len(text) > SVG_COPY_MAX_TEXT:
+            return True
+    return nodes > SVG_COPY_MAX_NODES
+
+
 @app.post("/api/svg/copy")
 def api_svg_copy():
     """复制为 SVG（ADR 0189）：选中的标注 / 形状 / 路径 / 文字按**导出 SVG 的同一个写入器**写成一段 SVG 文本。
@@ -4138,8 +4165,11 @@ def api_svg_copy():
     图（面板）不收——它的 SVG 要走导出（源文件、快照、产物验收那一套）。"""
     import tempfile
 
-    from .rendercore import facade as rc_facade, plan as rc_plan, svgwriter
+    from .rendercore import facade as rc_facade, ir as rc_ir, plan as rc_plan, svgwriter
 
+    # 输入是前端的导出载荷，但接口照样当不受信任处理（ADR 0189 §四）：先按字节数挡，再解析 JSON，再数对象 / 锚点 / 文字 / 裁剪层数
+    if (request.content_length or 0) > SVG_COPY_MAX_BYTES:
+        return jsonify({"ok": False, "error": "too_large"}), 413
     body = request.get_json(force=True, silent=True) or {}
     objs = body.get("objects")
     try:
@@ -4149,14 +4179,17 @@ def api_svg_copy():
     if (
         not isinstance(objs, list)
         or not objs
-        or len(objs) > 5000
         or not all(
             isinstance(o, dict) and o.get("type") in ("text", "arrow", "shape", "path")
             for o in objs
         )
-        or not (0 < w_mm <= 5000 and 0 < h_mm <= 5000)
+        or not (
+            math.isfinite(w_mm) and math.isfinite(h_mm) and 0 < w_mm <= 5000 and 0 < h_mm <= 5000
+        )
     ):
         return jsonify({"ok": False, "error": "bad_objects"}), 400
+    if _svg_copy_too_big(objs):
+        return jsonify({"ok": False, "error": "too_large"}), 413
     _prepare_source_fonts()
     provider = rc_facade.provider()
     try:
@@ -4173,7 +4206,7 @@ def api_svg_copy():
             out = Path(tmp) / "copy.svg"
             svgwriter.write_svg(compiled.page, out, provider)
             svg = out.read_text(encoding="utf-8")
-    except rc_plan.PlanError as exc:
+    except (rc_plan.PlanError, rc_ir.IRError) as exc:
         return jsonify({"ok": False, "error": exc.code}), 200
     return jsonify({"ok": True, "svg": svg})
 
@@ -4197,6 +4230,8 @@ def api_text_outline():
         or not all(isinstance(o, dict) and o.get("type") == "text" for o in objs)
     ):
         return jsonify({"ok": False, "error": "bad_objects"}), 400
+    if any(len(str(o.get("text") or "")) > SVG_COPY_MAX_TEXT for o in objs):
+        return jsonify({"ok": False, "error": "too_large"}), 413
     _prepare_source_fonts()
     provider = rc_facade.provider()
     math = engine_mathtypeset.layouts_for(objs, _mathtext_project())
