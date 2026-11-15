@@ -97,7 +97,9 @@ def compose(
         "%!PS-Adobe-3.0 EPSF-3.0\n"
         f"%%BoundingBox: 0 0 {w_i} {h_i}\n"
         f"%%HiResBoundingBox: 0 0 {width_pt:.6f} {height_pt:.6f}\n"
-        "%%Creator: Tavotto\n%%Pages: 1\n%%LanguageLevel: 2\n%%EndComments\n"
+        "%%Creator: Tavotto\n%%Pages: 1\n"
+        # 渐变（ADR 0186）用 Level 3 的 shfill：叠加层里有它才声明 3，没有时与从前逐字节相同
+        f"%%LanguageLevel: {3 if 'shfill' in underlay or 'shfill' in overlay else 2}\n%%EndComments\n"
         "%%BeginProlog\n%%EndProlog\n%%Page: 1 1\n"
     )
     dx, dy = offset_pt if offset_pt is not None else (0.0, 0.0)
