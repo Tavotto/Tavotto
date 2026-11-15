@@ -154,6 +154,12 @@ order: 210
   形状与倾斜对象换成路径），所以导出端不用改。⌘D 是「创建副本」，副本被挪 / 转过后再按就按同样的位移与角度差再复制（`actions.duplicateStep`）；
   ⌥⌘D 再次变换（`useKeyboard` 里排在 ⌘D 前面，⌘D 只认没按 ⌥ 的）。看护 `store/transformActions.test.tsx`、`lib/transform.golden.test.ts`、
   `canvas/primarySelection.test.tsx`、`tests/test_transform_vectors.py`。
+- **SVG 导入（2026-11-15，ADR 0185 M5 第一批）**：解析**只在后端**（`rendercore/svgimport`，`/api/svg/import`；前端不许把不受信任的 SVG
+  挂进页面去量样式）。前端只做两件事：`lib/svgImport.looksLikeSvg`（粘贴的是不是 SVG 标记）与 `placeImported`（只收认识的对象、id 与组 id
+  整批换新、平移到落点）；写入 `store/svgImportActions`（`pasteSvgText` 一次 commit；`explodeSvgPanel` 原位替换静态 SVG 图，判据
+  `canExplodeSvg`，右键菜单与命令面板同一个）。`unsupported` 非空一律不拆：粘贴时先当 SVG 素材、再不行栅格化（`lib/svgRaster`，`<img>`
+  模式）、都不行由素材导入那条路说原因；拆图时图不动。拖进来的 SVG 文件不走这里（照旧是图）。看护 `store/svgImportActions.test.tsx`、
+  `lib/svgImport.golden.test.ts`、`tests/test_svgimport.py`。
 - **不认识的对象类型原样保留（2026-11-14，ADR 0185 的前置）**：更新的构建会往文档里写本构建没有的 `type`
   （第一例是自由路径 `path`）。判据只有 `types/document.isKnownObject`（`KNOWN_OBJECT_TYPES` 闭集）。读盘、保存、
   换画布、复制画布都不碰它（文档层本来就不按类型过滤，别加）；画布上 `ObjectView` 只画虚线占位框
