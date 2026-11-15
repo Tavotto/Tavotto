@@ -15,6 +15,7 @@ import { rotateAbout } from '@/lib/pathGeom'
 import { useDocumentStore } from '@/store/documentStore'
 import { canEditAnchors, useActivePathEdit, usePathEditStore } from '@/store/pathEditStore'
 import { useSelectionStore } from '@/store/selectionStore'
+import { useInteractionStore } from '@/store/interactionStore'
 import { useUiStore } from '@/store/uiStore'
 import { clientToMm, mmToPx, mmToViewX, mmToViewY, pxToMm, type ViewTransform } from '@/store/viewportStore'
 import { objectRotation, type CanvasObject, type PathObject, type ShapeObject } from '@/types/document'
@@ -59,6 +60,7 @@ function startRect(e: ReactPointerEvent, o: ShapeObject, corner: RectCorner) {
   e.preventDefault()
   if (e.button !== 0) return
   const store = useDocumentStore.getState()
+  useInteractionStore.getState().begin('corner')
   store.beginTxn(msg('history.setCornerRadius', undefined, 'inspector'))
   const rot = objectRotation(o)
   trackPointer(e, {
@@ -74,7 +76,10 @@ function startRect(e: ReactPointerEvent, o: ShapeObject, corner: RectCorner) {
         else delete t.cornerRadius
       })
     },
-    onEnd: (moved, _ev, end) => store.endTxn({ discard: !moved || end.cancelled }),
+    onEnd: (moved, _ev, end) => {
+      useInteractionStore.getState().end()
+      store.endTxn({ discard: !moved || end.cancelled })
+    },
   })
 }
 
@@ -85,6 +90,7 @@ function startPath(e: ReactPointerEvent, o: PathObject, grabbed: CornerInfo, ref
   const store = useDocumentStore.getState()
   const base = pathToMm(o)
   const rot = objectRotation(o)
+  useInteractionStore.getState().begin('corner')
   store.beginTxn(msg('history.roundCorners', undefined, 'workspace'))
   trackPointer(e, {
     threshold: 1,
@@ -99,6 +105,7 @@ function startPath(e: ReactPointerEvent, o: PathObject, grabbed: CornerInfo, ref
       })
     },
     onEnd: (moved, _ev, end) => {
+      useInteractionStore.getState().end()
       store.endTxn({ discard: !moved || end.cancelled })
       // 圆过的角换成了两个锚点，原来的锚点下标不再对得上：清掉锚点选择
       if (moved && !end.cancelled) usePathEditStore.getState().setAnchors([])

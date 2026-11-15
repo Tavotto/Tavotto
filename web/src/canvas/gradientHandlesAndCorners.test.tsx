@@ -227,3 +227,40 @@ describe('实时圆角', () => {
     expect(host.querySelector('[data-live-corners]')).toBeNull()
   })
 })
+
+describe('拖柄 / 拖圆点时单选浮动栏让开（2026-11-15 用户拍板），松手就回来', () => {
+  it.each([
+    ['渐变柄', '[data-gradient-end="b"]', [50, 30], 'gradient'],
+    ['圆角圆点', '[data-live-corner="tl"]', [10.5, 20.5], 'corner'],
+  ] as const)('%s', async (_name, sel, from, kind) => {
+    const { ContextBar } = await import('./context-bar/ContextBar')
+    const { TooltipProvider } = await import('@/components/ui/Tooltip')
+    const { useInteractionStore } = await import('@/store/interactionStore')
+    await seed([rect({ fillGradient: LIN })], ['r'])
+    const anchor = document.createElement('div')
+    anchor.setAttribute('data-object-id', 'r')
+    document.body.appendChild(anchor)
+    const barHost = document.createElement('div')
+    document.body.appendChild(barHost)
+    const barRoot = createRoot(barHost)
+    await act(async () =>
+      barRoot.render(
+        <TooltipProvider>
+          <ContextBar />
+        </TooltipProvider>,
+      ),
+    )
+    const bar = () => document.querySelector('[data-context-bar]')
+    expect(bar()).not.toBeNull()
+    await act(async () => press(host.querySelector(sel)!, from[0], from[1]))
+    await act(async () => fire('pointermove', from[0] + 3, from[1] + 3))
+    expect(useInteractionStore.getState().kind).toBe(kind)
+    expect(bar()).toBeNull()
+    await act(async () => fire('pointerup', from[0] + 3, from[1] + 3))
+    expect(useInteractionStore.getState().kind).toBe('none')
+    expect(bar()).not.toBeNull()
+    await act(async () => barRoot.unmount())
+    barHost.remove()
+    anchor.remove()
+  })
+})

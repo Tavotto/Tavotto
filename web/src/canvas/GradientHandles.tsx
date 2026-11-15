@@ -6,6 +6,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { gradientEditFor, useGradientEditStore } from '@/store/gradientEditStore'
 import { useActivePathEdit } from '@/store/pathEditStore'
 import { useSelectionStore } from '@/store/selectionStore'
+import { useInteractionStore } from '@/store/interactionStore'
 import { useUiStore } from '@/store/uiStore'
 import { clientToMm, getTransform, mmToPx, mmToViewX, mmToViewY, snapTolMm, type ViewTransform } from '@/store/viewportStore'
 import type { CanvasObject, Gradient, PathObject, ShapeObject } from '@/types/document'
@@ -57,6 +58,7 @@ function startDrag(e: ReactPointerEvent, o: Mark, target: 'fill' | 'stroke', mov
   e.preventDefault()
   if (e.button !== 0) return
   const store = useDocumentStore.getState()
+  useInteractionStore.getState().begin('gradient')
   store.beginTxn(hist())
   trackPointer(e, {
     threshold: 1,
@@ -65,7 +67,10 @@ function startDrag(e: ReactPointerEvent, o: Mark, target: 'fill' | 'stroke', mov
       const next = move([p.x, p.y], ev)
       if (next) write(o.id, target, next)
     },
-    onEnd: (moved, _ev, end) => store.endTxn({ discard: !moved || end.cancelled }),
+    onEnd: (moved, _ev, end) => {
+      useInteractionStore.getState().end()
+      store.endTxn({ discard: !moved || end.cancelled })
+    },
   })
 }
 
