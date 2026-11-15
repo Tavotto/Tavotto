@@ -1946,23 +1946,25 @@ export default interface Resources {
       "capsuleClose": "收起",
       "capsuleOpen": "查看",
       "capsule_other": "{{author}}留了 {{count}} 条意见",
+      "changed": "画布有新改动",
       "close": "关闭",
       "comment": {
+        "allMark": "全",
         "done": "已处理",
         "moved": "原位置已变化",
-        "overall": "整体意见",
         "owner": "作者",
         "pin": "第 {{n}} 条意见",
-        "region": "区域",
         "reopen": "重新打开",
         "reply": "回复",
         "replyPlaceholder": "回复…",
-        "resolve": "标记已处理",
+        "resolve": "已处理",
         "send": "发送",
         "version": "V{{v}}"
       },
       "copy": "复制",
+      "copyLink": "复制链接",
       "create": "生成链接",
+      "dailyNew": "每天可新建 1 个",
       "failure": {
         "client_error": "没有成功，再试一次。",
         "network": "连不上审阅服务，检查网络后重试。",
@@ -1976,24 +1978,18 @@ export default interface Resources {
       "linkCopied": "链接已复制",
       "linkLabel": "审阅链接",
       "notFound": "这张图不在当前项目里",
-      "noteLabel": "给审阅者的话（可不填）",
+      "notePlaceholder": "给审阅者的话（选填）…",
       "picker": {
+        "desc": "每天可新建 1 个链接，北京时间 0 点恢复。",
         "exportPng": "导出 PNG",
-        "exportPngDesc": "存成图片，发给对方",
-        "laterNew": "明天再分享",
-        "laterNewDesc": "北京时间 0 点后可以新建",
         "newTitle": "今天已经新建过分享链接",
-        "pickOne": "换到哪个链接上",
-        "updateExisting": "更新已有的链接",
-        "updateExistingDesc": "换成这张图的画面，链接不变",
-        "updateOne": "「{{title}}」的链接，换成这张图的画面"
+        "updateMany": "更新已有的链接…",
+        "updateOne": "更新已有的链接（{{title}}）"
       },
-      "privacyFigure": "只上传这张图的画面，脚本和数据不出本机",
-      "privacyLayout": "只上传这份排版的画面，脚本和数据不出本机",
-      "quotaNew": "今天还能新建 {{n}} 个",
+      "privacyFoot": "只上传画面，脚本和数据不出本机",
       "retry": "重试",
+      "shareNote": "拿到链接可查看和留言 · {{date}}失效",
       "sharedMeta": "V{{v}} · {{when}}",
-      "sharedStats_other": "{{count}} 条意见，{{open}} 条未处理 · {{date}}失效",
       "stage": {
         "rendering": "正在生成画面…",
         "uploading": "正在上传…"
@@ -2002,19 +1998,17 @@ export default interface Resources {
       "stopConfirm": "再点一次，立刻停止",
       "tab": {
         "all": "全部 {{n}}",
-        "copyLink": "复制链接",
         "deleteRecord": "删除这份记录",
         "empty": "还没有意见",
         "emptyOpen": "没有未处理的意见",
         "expired": "链接已过期，当时的意见留在这里",
         "filterLabel": "筛选意见",
         "label": "审阅",
-        "live": "V{{v}} · {{date}}失效",
         "open": "未处理 {{n}}",
         "revoked": "已停止分享，意见留在本机"
       },
       "title": "分享审阅",
-      "update": "更新到同一链接"
+      "updateHere": "更新到这个链接"
     },
     "scriptInput": {
       "answerLabel": "你的回答",

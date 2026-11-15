@@ -148,6 +148,7 @@ function resetStore(over: Partial<ReturnType<typeof useReviewStore.getState>> = 
     picker: null,
     quota: { new_left: 1 },
     others: [],
+    changed: true,
     unread: { total: 0, latest: null },
     capsuleDismissedAt: 0,
     selectedId: null,
@@ -197,28 +198,32 @@ describe('分享弹窗三态', () => {
     vi.mocked(fetchReviewStatus).mockResolvedValue({ stage: 'done', failure: null, retryable: false, share: SHARE })
     await render(<ReviewDialog />)
     expect(document.body.textContent).toContain('脚本和数据不出本机')
-    expect(q('[data-review-quota]')?.textContent).toBe('今天还能新建 1 个')
+    expect(q('[data-review-quota]')?.textContent).toBe('每天可新建 1 个') // 不写剩余次数
     expect(shareReview).not.toHaveBeenCalled()
     await click(q('[data-review-create]'))
     expect(shareReview).toHaveBeenCalledTimes(1)
   })
-  it('次数未知（联网不通）：页脚不写剩余次数', async () => {
-    resetStore({ dialogOpen: true, quota: { new_left: null } })
-    await render(<ReviewDialog />)
-    expect(q('[data-review-quota]')).toBeNull()
-  })
-  it('已分享：链接 + 版本 · 意见数 · 失效，主按钮「更新到同一链接」，停止分享要点两次', async () => {
-    resetStore({ dialogOpen: true, share: SHARE })
+  it('已分享有改动：链接 + 唯一主按钮「复制链接」+ 一行「画布有新改动 · 更新到这个链接」；没有版本号 / 意见数 / 剩余次数；停止分享要点两次', async () => {
+    resetStore({ dialogOpen: true, share: SHARE, changed: true })
     const { revokeReview } = await import('@/lib/api')
     vi.mocked(revokeReview).mockResolvedValue({ ok: true })
     await render(<ReviewDialog />)
     expect(q('[data-review-link]')?.textContent).toContain('review.tavotto.cn/r/k7QmAAAA3fA')
-    expect(q('[data-review-stats]')?.textContent).toMatch(/3 条意见，2 条未处理/)
-    expect(q('[data-review-quota]')).toBeNull() // 更新同一链接不限次数，页脚不写更新次数
+    expect(q('[data-review-copy]')?.textContent).toBe('复制链接')
+    expect(q('[data-review-changed]')?.textContent).toContain('画布有新改动')
+    expect(q('[data-review-stats]')?.textContent).toMatch(/拿到链接可查看和留言 · .+失效/)
+    expect(document.body.textContent).not.toMatch(/V\d|条意见|还能/)
     await click(q('[data-review-stop]'))
     expect(revokeReview).not.toHaveBeenCalled()
     await click(q('[data-review-stop]'))
     expect(revokeReview).toHaveBeenCalledWith('sh_1')
+  })
+  it('已分享没改动：去掉更新那一行', async () => {
+    resetStore({ dialogOpen: true, share: SHARE, changed: false })
+    await render(<ReviewDialog />)
+    expect(q('[data-review-changed]')).toBeNull()
+    expect(q('[data-review-update]')).toBeNull()
+    expect(q('[data-review-copy]')).not.toBeNull()
   })
   it('更新：调 updateReview，做完自动复制链接并在通知轨说一句', async () => {
     resetStore({ dialogOpen: true, share: SHARE })
@@ -302,13 +307,14 @@ describe('额度用满选择卡', () => {
     vi.mocked(updateReview).mockResolvedValue({ ok: true })
     vi.mocked(fetchReviewStatus).mockResolvedValue({ stage: 'uploading', failure: null, retryable: false, share: null })
     await render(<ReviewDialog />)
-    expect(qa('[data-review-pick]').map((e) => e.dataset.reviewPick)).toEqual(['update-existing', 'export-png', 'later'])
+    expect(qa('[data-review-pick]').map((e) => e.dataset.reviewPick)).toEqual(['export-png', 'update-existing'])
+    expect(q('[data-review-pick="update-existing"]')?.textContent).toBe('更新已有的链接…')
     await click(q('[data-review-pick="update-existing"]'))
     await click(q('[data-review-pick-share="sh_9"]'))
     // 把这张图的画面更新到别的链接：带上 target
     expect(updateReview).toHaveBeenCalledWith('sh_9', undefined, expect.anything(), { kind: 'figure', id: 'fig3' })
   })
-  it('没有别的分享记录就没有「更新已有的链接」；导出 PNG 打开导出窗；明天再分享只是关窗', async () => {
+  it('没有别的分享记录就没有「更新已有的链接」；导出 PNG 打开导出窗', async () => {
     resetStore({ dialogOpen: true, picker: 'new', others: [] })
     await render(<ReviewDialog />)
     expect(q('[data-review-pick="update-existing"]')).toBeNull()
@@ -372,7 +378,7 @@ describe('「审阅」页签内容', () => {
     await settle(10)
     expect(markReviewRead).toHaveBeenCalledWith('sh_1')
     expect(refreshReview).toHaveBeenCalledTimes(1)
-    expect(q('[data-review-note-line]')?.textContent).toMatch(/^V2 · .+失效$/)
+    expect(q('[data-review-note-line]')).toBeNull() // 栏顶没有失效日期 / 复制链接（归分享弹窗）
     expect(q('[data-review-verdict]')).toBeNull()
     await settle(60_000)
     expect(refreshReview).toHaveBeenCalledTimes(2)
@@ -420,6 +426,32 @@ describe('「审阅」页签内容', () => {
   })
 })
 
+describe('意见行：序号 / 全 / ✓，版本只在非当前版本标', () => {
+  it('序号小圆对应画布圆点；整体意见「全」；已处理换 ✓；V1 · 只在旧版本出现；没有头像 / 锚点名标签', async () => {
+    const cs = [
+      cm('a', { created_at: new Date(Date.now() - 10 * 60_000).toISOString() }),
+      cm('o', { anchor: { kind: 'overall' } }),
+      cm('r', { resolved: true, v: 1 }),
+      cm('w', { replies: [{ id: 'r1', from: 'owner', author: '我', text: '好的', created_at: '2026-11-15T07:00:00Z' }] }),
+    ]
+    vi.mocked(fetchReviewShare).mockResolvedValue(DETAIL(cs))
+    resetStore({ share: SHARE, detail: DETAIL(cs) })
+    await render(<ReviewPanel />)
+    expect(q('[data-review-comment="a"] [data-review-mark]')?.getAttribute('data-review-mark')).toBe('1')
+    expect(q('[data-review-comment="o"] [data-review-mark]')?.textContent).toBe('全')
+    expect(q('[data-review-comment="r"] [data-review-check]')).not.toBeNull()
+    expect(q('[data-review-comment="r"]')?.textContent).toContain('V1 ·')
+    expect(q('[data-review-comment="a"]')?.textContent).not.toContain('V2')
+    expect(q('[data-review-comment="a"]')?.textContent).toContain('10分钟前')
+    expect(q('[data-review-comment="w"] [data-review-reply="owner"]')?.textContent).toBe('作者好的')
+    expect(q('[data-review-anchor]')).toBeNull()
+    // 动作常态不显示（只在悬停 / 选中时出现）：未选中那条的动作容器是透明的
+    expect(q('[data-review-comment="a"] [data-review-reply-open]')?.parentElement?.className).toContain('opacity-0')
+    await click(q('[data-review-comment="a"]'))
+    expect(q('[data-review-comment="a"] [data-review-reply-open]')?.parentElement?.className).toContain('opacity-100')
+  })
+})
+
 describe('画布圆点只在审阅页签打开时渲染', () => {
   const T = { zoom: 1, panX: 0, panY: 0, originX: 0, originY: 0 }
   const overlay = () => (
@@ -462,7 +494,7 @@ describe('选择卡只有一个可更新的链接时写明是哪一个', () => {
     vi.mocked(updateReview).mockResolvedValue({ ok: true })
     vi.mocked(fetchReviewStatus).mockResolvedValue({ stage: 'uploading', failure: null, retryable: false, share: null })
     await render(<ReviewDialog />)
-    expect(q('[data-review-pick="update-existing"]')?.textContent).toContain('「Figure 2」的链接')
+    expect(q('[data-review-pick="update-existing"]')?.textContent).toContain('更新已有的链接（Figure 2）')
     await click(q('[data-review-pick="update-existing"]'))
     expect(updateReview).toHaveBeenCalledWith('sh_9', undefined, expect.anything(), { kind: 'figure', id: 'fig3' })
   })
