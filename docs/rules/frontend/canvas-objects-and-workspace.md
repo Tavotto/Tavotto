@@ -146,6 +146,14 @@ order: 210
   `epsoverlay.compose(figure_clip=…)` 裁内嵌段。轮廓同源对拍 `tests/golden/clip_mask_vectors.json`（`scripts/dev/gen_clip_mask_vectors.py`）。
   与布局组（`layoutGroups`）是两回事：布局组只按 `groupId` 认成员，这里不碰它。看护 `lib/groupTree.test.ts`、`store/groupActions.test.tsx`、
   `lib/clipMask.golden.test.ts`、`tests/test_clip_mask.py`、`tests/test_export_original_clip.py`。
+- **变换面板（2026-11-15，ADR 0185 M4 第二批）**：几何唯一出处 `lib/transform`（参考点、`visibleBounds`、`scaleObject` /
+  `rotateObjectAbout` / `reflectObject` / `skewObject` / `applyTransform`），写入 `store/transformActions`（一次 commit、同 id、同数组位置，
+  锁定按单元跳过），偏好与「上一次变换」`store/transformPrefs`。属性栏 `inspector/TransformSection`：参考点在 X / Y 之间、等比锁在 W / H 之间，
+  不加行；选区恰好是一整个组时按整组看得见的范围（剪切组 = 蒙版）整体变换。**所有「选区的框」**（`OverlaySvg` 联合框、浮动栏落位、
+  `MeasureChip`、标尺选区带、缩放到选区）都用 `visibleBounds`，剪切组的选框描蒙版、不给被裁对象的单个缩放手柄。镜像 / 倾斜只写旧字段（不对称
+  形状与倾斜对象换成路径），所以导出端不用改。⌘D 是「创建副本」，副本被挪 / 转过后再按就按同样的位移与角度差再复制（`actions.duplicateStep`）；
+  ⌥⌘D 再次变换（`useKeyboard` 里排在 ⌘D 前面，⌘D 只认没按 ⌥ 的）。看护 `store/transformActions.test.tsx`、`lib/transform.golden.test.ts`、
+  `canvas/primarySelection.test.tsx`、`tests/test_transform_vectors.py`。
 - **不认识的对象类型原样保留（2026-11-14，ADR 0185 的前置）**：更新的构建会往文档里写本构建没有的 `type`
   （第一例是自由路径 `path`）。判据只有 `types/document.isKnownObject`（`KNOWN_OBJECT_TYPES` 闭集）。读盘、保存、
   换画布、复制画布都不碰它（文档层本来就不按类型过滤，别加）；画布上 `ObjectView` 只画虚线占位框
