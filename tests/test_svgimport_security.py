@@ -281,3 +281,157 @@ def test_expansion_is_bounded_again_while_converting(monkeypatch):
     t0 = time.monotonic()
     assert outcome(SVG.format(body)) == ("rejected", "too_many_elements")
     assert time.monotonic() - t0 < svgimport.DEADLINE_S + 1
+
+
+# ================================================================== 复制为 SVG 接口的输入
+# 输入是导出载荷（JSON），没有 XML 解析器可攻击；要守的是：载荷里的字符串不能变成输出 SVG 里的结构（实体、脚本、外链），
+# 输出一定能过**严格**的受限解析器；尺寸 / 数量 / 嵌套 / 字节有上限，超出的在花力气之前就拒。
+
+
+def _client():
+    from tavotto import app as m
+
+    m.app.config["TESTING"] = True
+    return m.app.test_client()
+
+
+def _text(text: str, **over) -> dict:
+    o = {
+        "type": "text", "id": "t", "x_mm": 1, "y_mm": 1, "w_mm": 40, "h_mm": 8, "text": text,
+        "size_pt": 10, "bold": False, "italic": False, "color": "#000000", "align": "left",
+    }  # fmt: skip
+    o.update(over)
+    return o
+
+
+def _rect(**over) -> dict:
+    o = {
+        "type": "shape", "shape": "rect", "id": "r", "x_mm": 0, "y_mm": 0, "w_mm": 5, "h_mm": 5,
+        "stroke_pt": 1, "color": "#000000", "fill": "#ff0000",
+    }  # fmt: skip
+    o.update(over)
+    return o
+
+
+def _copy(objs, w=50, h=30, raw: bytes | None = None):
+    c = _client()
+    if raw is not None:
+        return c.post("/api/svg/copy", data=raw, content_type="application/json")
+    return c.post("/api/svg/copy", json={"objects": objs, "w_mm": w, "h_mm": h})
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        '<!DOCTYPE x [<!ENTITY a SYSTEM "file:///etc/passwd">]>&a;',
+        '&lol;&lol;&lol;<!ENTITY lol "lol">',
+        "</text><script>alert(1)</script><text>",
+        '<image href="http://example.invalid/x.png"/>',
+        "]]><svg onload=alert(1)>",
+        '<use xlink:href="#t"/><g id="t"><use href="#t"/></g>',
+    ],
+    ids=["xxe", "entities", "script", "external-image", "cdata-onload", "use-cycle"],
+)
+def test_copy_text_payloads_never_become_svg_structure(payload):
+    r = _copy([_text(payload, w_mm=400)], w=420)  # 一行放得下：粘回来是一个文字对象
+    body = r.get_json()
+    assert r.status_code == 200 and body["ok"] is True
+    # 输出过严格的受限解析器：没有 DTD / 实体 / 脚本 / 事件 / 外链 / 引用环
+    root = svgcheck.parse_svg(body["svg"].encode())
+    tags = {el.tag.split("}")[-1] for el in root.iter()}
+    assert not tags & {"script", "image", "use", "foreignObject", "a"}
+    # 再粘回来：那段字原样是一个文字对象的内容
+    back = svgimport.import_svg(body["svg"])
+    assert back["unsupported"] == {}
+    texts = [o["text"] for o in back["objects"] if o["type"] == "text"]
+    assert texts == [" ".join(payload.split())]
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"color": "url(http://example.invalid/#g)"},
+        {"fill": "url(https://example.invalid/#g)"},
+        {"fill": "javascript:alert(1)"},
+        {"color": '#000000" onload="alert(1)'},
+    ],
+    ids=["color-url", "fill-url", "fill-javascript", "attr-injection"],
+)
+def test_copy_style_strings_cannot_inject_references(over):
+    r = _copy([_rect(**over)])
+    body = r.get_json()
+    if body.get("ok"):
+        root = svgcheck.parse_svg(body["svg"].encode())
+        assert "example.invalid" not in body["svg"] and "alert" not in body["svg"]
+        assert all(not k.lower().startswith("on") for el in root.iter() for k in el.attrib)
+    else:
+        assert body["error"] in ("bad_object", "bad_objects")
+
+
+@pytest.mark.parametrize(
+    "w,h",
+    [(1e9, 10), (10, 1e9), (0, 10), (-5, 10), (float("inf"), 10), (float("nan"), 10)],
+    ids=["huge-w", "huge-h", "zero", "negative", "inf", "nan"],
+)
+def test_copy_oversized_page_is_refused(w, h):
+    import json as _json
+
+    raw = _json.dumps({"objects": [_rect()], "w_mm": w, "h_mm": h}).encode()
+    assert _copy(None, raw=raw).status_code == 400
+
+
+def test_copy_oversized_objects_are_refused_before_rendering():
+    huge = _rect(x_mm=0, y_mm=0, w_mm=1e12, h_mm=1e12)
+    r = _copy([huge])
+    assert r.status_code in (200, 400)
+    body = r.get_json()
+    assert body.get("ok") is False or len(body["svg"]) < 100_000
+
+
+def test_copy_deep_clip_nesting_is_refused():
+    from tavotto import app as m
+
+    mask = {"type": "path", "x_mm": 0, "y_mm": 0, "w_mm": 5, "h_mm": 5,
+            "subpaths": [{"closed": True, "nodes": [{"p": [0, 0]}, {"p": [1, 0]}, {"p": [1, 1]}]}]}  # fmt: skip
+    ok = _copy([_rect(clip=[mask] * m.SVG_COPY_MAX_CLIP_DEPTH)])
+    assert ok.status_code == 200 and ok.get_json()["ok"] is True
+    assert _copy([_rect(clip=[mask] * (m.SVG_COPY_MAX_CLIP_DEPTH + 1))]).status_code == 413
+
+
+def test_copy_too_many_objects_nodes_or_characters_are_refused():
+    from tavotto import app as m
+
+    assert _copy([_rect()] * (m.SVG_COPY_MAX_OBJECTS + 1)).status_code == 413
+    nodes = [{"p": [i / 1000, (i % 7) / 7]} for i in range(m.SVG_COPY_MAX_NODES + 1)]
+    path = {"type": "path", "x_mm": 0, "y_mm": 0, "w_mm": 5, "h_mm": 5, "stroke_pt": 1,
+            "color": "#000000", "fill": None, "subpaths": [{"closed": False, "nodes": nodes}]}  # fmt: skip
+    assert _copy([path]).status_code == 413
+    assert _copy([_text("x" * (m.SVG_COPY_MAX_TEXT + 1))]).status_code == 413
+
+
+def test_copy_oversized_request_bytes_are_refused_before_parsing():
+    """data: 之类塞大字节的载荷：按 Content-Length 在解析 JSON 之前就拒（不读、不解析）"""
+    from tavotto import app as m
+
+    raw = b'{"objects": [], "pad": "' + b"A" * (m.SVG_COPY_MAX_BYTES + 1) + b'"}'
+    t0 = time.monotonic()
+    assert _copy(None, raw=raw).status_code == 413
+    assert time.monotonic() - t0 < 2.0
+
+
+def test_copy_at_the_limits_finishes_in_bounded_time():
+    """上限之内最重的一类输入（对象数顶格）也在有限时间里写完——超时靠上限兜住，不靠杀线程"""
+    from tavotto import app as m
+
+    t0 = time.monotonic()
+    r = _copy([_rect(x_mm=i % 40, y_mm=i // 40) for i in range(m.SVG_COPY_MAX_OBJECTS)], w=60, h=60)
+    assert r.status_code == 200 and r.get_json()["ok"] is True
+    assert time.monotonic() - t0 < 30.0
+
+
+def test_outline_text_length_is_bounded():
+    from tavotto import app as m
+
+    c = _client()
+    r = c.post("/api/text/outline", json={"objects": [_text("x" * (m.SVG_COPY_MAX_TEXT + 1))]})
+    assert r.status_code == 413
