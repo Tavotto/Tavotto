@@ -59,7 +59,7 @@ CLI 的写入面（任意 shell、网络、绝对路径写）也比「改一个�
 
 AI 修复（ADR 0149）的内置循环同样改为取连接视图里第一个可用的 Key 连接。
 
-这里的 CLI 回退发生在派发前；任务中途失败不会自动换执行器重放。`openai-chat` 是 runner 层协议，当前应用连接只开放 `anthropic` 与 `openai-responses`；验收必须分别标注 runner 测试、应用连接测试和真实服务测试。当前证据及定向试用记录见 [协议验收报告](../implementation/agent-external-corpus-2026-10-25/PROTOCOL-ROLLOUT.md)。
+这里的 CLI 回退发生在派发前；任务中途失败不会自动换执行器重放。`openai-chat` 是 runner 层协议（2026-11-15 起应用连接也开放，见文末「修订：自定义连接开放 openai-chat 与保存时探测协议」）；验收必须分别标注 runner 测试、应用连接测试和真实服务测试。当前证据及定向试用记录见 [协议验收报告](../implementation/agent-external-corpus-2026-10-25/PROTOCOL-ROLLOUT.md)。
 
 ### 六、仍然不做
 
@@ -168,3 +168,20 @@ Conversion output recovery remains within the existing budget: create/append sho
 同时核对 `OpenAIChatWire`：多轮工具调用、`reasoning_content` 回放、长度字段、`finish_reason`、usage（含 DeepSeek 的 `prompt_cache_hit_tokens`）逐条对照官方 / DeepSeek 文档写进类注释；
 无工具调用且无文字的续写轮 `content` 改为 `""`（`null` 会被官方端点拒收）。**真服务验收见 `docs/implementation/agent-external-corpus-2026-10-25/PROTOCOL-ROLLOUT.md` 覆盖表，未跑通之前不得写成已验证。**
 本文「`openai-chat` 是 runner 层协议，应用连接只开放 anthropic 与 openai-responses」一句不在本修订改动范围。看护 `tests/test_agent_runner_fallback.py`。
+=======
+
+### 修订：自定义连接开放 openai-chat 与保存时探测协议（2026-11-15，1.0 豁免已给）
+
+起因（反馈 TVD-HN4B）：用户自填的中转站（new-api 类）「能列型号、跑不了任务」——型号清单只证明地址通，不证明对话协议对（该网关的 Responses 每次第一轮被拒）。
+此前应用连接只开放 `anthropic` 与 `openai-responses`，保存时只核型号清单与 `/v1`，不真发对话。本次：
+
+- **开放 `openai-chat`**：记录新增字段 `protocol`（闭集 `anthropic | openai-responses | openai-chat`，缺省 = 家族默认：claude → anthropic、codex → openai-responses）。
+  **不复用 `wire_api`**（`wire_api="chat"` 是被 Codex 移除的旧记录标记，`incompatibility()` 仍判 `codex_chat_removed`，旧记录不自动改）。chat 记录的 `agent` 属 openai 家族（`codex`），
+  但**只走内置循环**：`ai_providers.builtin_only(rec)` 是唯一判据，`route_for` 的三个 CLI 出口、`spawn_overrides` 的 codex 分支、`resolve`（当前选中）、`ai_bridge.run`（显式指到）全部关死，永远不注入 Codex。
+- **保存时探测**（`engine/ai_probe.py`）：对 (地址, Key, 型号) 每种协议发一条带一个工具定义、`max_tokens ≤ 16` 的最小请求，复用 `agent_runner.wires` 的请求构造 / `parse` / `post_json`（不新增出站点）；
+  通过 = 回复体解析成合法 `Turn`（200 的网页 / 错误对象判失败）。按优先级排序、第一个通过的就停：Claude 型号 → anthropic；api.openai.com 上的 gpt / o 系列 → responses；其余 → chat；用户明确给的协议先试。
+  目录里的已知厂商只核自己那一种协议、不换协议与地址。结论写 `protocol` / `protocol_ok`（地址 + 型号 + 协议指纹，地址或型号变了失效）；全不通仍保存，`last_error = endpoint_unusable` + `probe_reason`（Key 被拒仍记 `unauthorized`）。
+- **`POST /api/ai/connections/<id>/check`** 重新探测并更新记录；失败卡 / 连接卡的「检查连接」调它。
+
+看护 `tests/test_ai_probe.py`。真实服务验证与 runner / 应用连接测试分开记录（见协议验收报告）。
+>>>>>>> 324eb753d (feat(ai): 自定义连接开放 OpenAI Chat Completions，保存时探测对话协议，chat 连接只走内置（ADR 0147 修订）)

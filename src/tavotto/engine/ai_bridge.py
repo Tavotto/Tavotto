@@ -1852,6 +1852,13 @@ def run(
                 "ai_endpoint_incompatible",
                 {"endpoint": chosen.get("label") or chosen.get("id") or ""},
             )
+        if (
+            chosen is not None
+            and agent != ai_agents.BUILTIN_ID
+            and ai_providers.builtin_only(chosen)
+        ):
+            # Chat Completions 的连接 Codex 不认：显式指到它也绝不起 CLI（注入是空的，CLI 会悄悄改用官方登录）
+            raise AgentError("ai_agent_not_usable", {"agent": agent})
         if needs_login is not None:
             raise AgentError("ai_endpoint_needs_login", needs_login)
         if agent == ai_agents.BUILTIN_ID:

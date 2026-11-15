@@ -24,7 +24,16 @@ from __future__ import annotations
 import os
 import re
 
-from . import ai_agents, ai_attachments, ai_catalog, ai_oauth, ai_providers, config, netpolicy
+from . import (
+    ai_agents,
+    ai_attachments,
+    ai_catalog,
+    ai_oauth,
+    ai_probe,
+    ai_providers,
+    config,
+    netpolicy,
+)
 from .agent_runner.wires import check_base_url
 
 #: 订阅类连接 id → (内部 agent, 厂商 id, 显示名（产品名，不翻译）, logo 键)
@@ -43,8 +52,10 @@ ENV_BUILTIN = "TAVOTTO_AI_BUILTIN"
 _KEY_RE = re.compile(r"[\x21-\x7e]{1,4096}")
 _MODEL_MAX = 200
 
-#: 内置循环支持的线上协议 → 内部家族（自定义厂商用）
-_WIRE_AGENT = {"anthropic": "claude", "openai-responses": "codex"}
+#: 内置循环支持的线上协议 → 内部家族（自定义厂商用）。chat 记录的家族是 openai（= codex），但**只走内置**（`ai_providers.builtin_only`）
+_WIRE_AGENT = {"anthropic": "claude", "openai-responses": "codex", "openai-chat": "codex"}
+#: 保存请求里 `wire` 的取值：缺省 / `"auto"` = 探测；其余是协议名（也要探测，见 `add_connection`）
+WIRE_AUTO = "auto"
 
 
 class ConnectionRefused(Exception):
@@ -260,6 +271,15 @@ def route_for(rec: dict, agents_info: dict[str, dict]) -> tuple[str | None, str 
 
     route ∈ `cli:codex` / `cli:claude` / `builtin`。"""
     agent = str(rec.get("agent") or "")
+    if ai_providers.builtin_only(rec):
+        # Chat Completions 的记录 Codex 不认、注入不了：三个 CLI 出口（强制 CLI / 偏好 CLI / 内置走不通退回 CLI）一律关死，
+        # 只有内置循环。`ai.builtin_default=false` 只是偏好，对它不适用（它没有别的路）；强制关内置（`=0`）就是走不通
+        if builtin_forced() is False:
+            return None, ai_providers.BUILTIN_ONLY
+        if ai_providers.builtin_conn(rec) is not None:
+            return ROUTE_BUILTIN, None
+        why = _why_not_builtin(rec)
+        return None, (ai_providers.BUILTIN_ONLY if why == "cli_unavailable" else why)
     # 自带凭据的账号登录（令牌由我们注入）不看 CLI 自己有没有官方登录；Key 类沿用 CLI「可派活」的判据
     cli = (
         _cli_present(agents_info, agent)
@@ -419,11 +439,17 @@ def _key_connection(
         "default_model": default_model,
         "efforts": efforts,
         "default_effort": default_effort,
-        "route": route or f"cli:{agent_id}",
+        # 只走内置的记录（chat）绝不显示成 cli:codex
+        "route": route or (ROUTE_BUILTIN if ai_providers.builtin_only(rec) else f"cli:{agent_id}"),
         "method": method,
+        # 内置循环说的协议；`protocol_checked` = 保存 / 重新检查时真发过对话请求、地址与型号至今没变
+        "protocol": ai_providers.protocol_of(rec),
+        "protocol_checked": bool(rec.get("protocol_ok")),
     }
     if error and state == "error":
         conn["error"] = error
+        if error == ai_providers.ENDPOINT_UNUSABLE and rec.get("probe_reason"):
+            conn["error_reason"] = rec["probe_reason"]  # ai_probe.REASONS 里的失败原因（闭集）
     if netpolicy.is_insecure_lan(str(rec.get("base_url") or "")):
         conn["insecure_lan"] = True  # 明文 http 的局域网网关：前端据此提示「这个地址不加密」
     return conn
@@ -471,7 +497,10 @@ def resolve_connection(cid: str, agents_info: dict[str, dict]) -> tuple[str, dic
         raise ConnectionRefused("connection_not_found", {}, 404)
     route, _why = route_for(rec, agents_info)
     if route is None:
-        raise ConnectionRefused("ai_agent_not_usable", {"agent": str(rec.get("agent") or "")}, 409)
+        params = {"agent": str(rec.get("agent") or "")}
+        if _why == ai_providers.BUILTIN_ONLY:
+            params["reason"] = _why  # 只走内置的连接被强制关内置：前端据此说「这条连接只能用内置」
+        raise ConnectionRefused("ai_agent_not_usable", params, 409)
     return (ai_agents.BUILTIN_ID if route == ROUTE_BUILTIN else route.split(":", 1)[1]), rec
 
 
@@ -485,6 +514,13 @@ def first_key_connection(*, refresh: bool = False) -> dict | None:
     for rec in sorted(recs, key=lambda r: r.get("id") not in active):
         if rec.get("last_error") == "unauthorized":
             continue  # 保存时就被服务商拒绝的密钥：不挑它去修复（会反复认证失败）；全被拒 = None，由 CLI 兜底 / 给「密钥无效」结论
+        if rec.get("last_error") == ai_providers.ENDPOINT_UNUSABLE and rec.get(
+            "probe_reason"
+        ) not in (
+            "quota",
+            "network",
+        ):
+            continue  # 保存时每种协议都试过、对话都不通：同理不挑它（额度 / 网络是暂时性的，不挡）
         if ai_providers.builtin_conn(rec) is None:
             continue
         if refresh and rec.get("auth") == "oauth":
@@ -529,12 +565,14 @@ def _key_method_id(body: dict) -> str:
     raise _invalid("unknown_vendor")
 
 
-def add_connection(body: object) -> tuple[str, str | None]:
-    """`POST /api/ai/connections`：保存一条 Key 连接 → `(连接 id, 试取型号清单失败的原因码|None)`。
+def add_connection(body: object) -> tuple[str, str | None, dict | None]:
+    """`POST /api/ai/connections`：保存一条 Key 连接 → `(连接 id, 试取型号清单失败的原因码|None, 探测摘要|None)`。
 
-    保存前用 `live_models` 试取一次型号清单；失败也保存（调用方据返回的原因码给 state="error"）。
-    body：`{vendor, api_key, base_url?, model?, label?, wire?, id?}`——`custom` 必须给 `base_url` 与 `wire`
-    （`anthropic` | `openai-responses`）；带已存在的 `id` = 换这条的 Key / 型号（其余字段缺省沿用）。"""
+    保存前用 `live_models` 试取一次型号清单；失败也保存（调用方据返回的原因码给 state="error"）。**保存后再探测一次对话协议**
+    （`ai_probe.detect`：每种协议一条带工具定义的最小请求，通的记下来；见 `_probe_and_store`），摘要见 `_probe_summary`。
+    body：`{vendor, api_key, base_url?, model?, label?, wire?, id?}`——`custom` 必须给 `base_url`；`wire` 可选：缺省或 `"auto"` = 探测，
+    `anthropic` | `openai-responses` | `openai-chat` 也探测，通过就用、没通过换探测到能通的（摘要里 `switched`）；
+    带已存在的 `id` = 换这条的 Key / 型号（其余字段缺省沿用，协议先试已存的那个）。"""
     if not isinstance(body, dict):
         raise _invalid("bad_body")
     existing = None
@@ -568,14 +606,18 @@ def add_connection(body: object) -> tuple[str, str | None]:
     base_url = (base_url or "").strip().rstrip("/")
     # 带 id 的更新以已存记录为底：请求里没给的字段（地址 / 协议 / 型号 / 名字）一律保留，只有显式给了才覆盖
     kept_url = str((existing or {}).get("base_url") or "").strip().rstrip("/")
+    requested_wire: str | None = None  # 用户这次明确要的协议（None = 没表态 / auto）
     if vid == "custom":
         wire = body.get("wire")
-        if wire is None and existing is not None:
-            wire = {"claude": "anthropic", "codex": "openai-responses"}.get(existing.get("agent"))
-        base_url = base_url or kept_url
-        if wire not in _WIRE_AGENT or not base_url:
+        if wire is not None and wire != WIRE_AUTO and wire not in _WIRE_AGENT:
             raise _invalid("custom_needs_base_url_and_wire")
-        row = next(r for r in rows if r["agent"] == _WIRE_AGENT[wire])
+        requested_wire = wire if wire in _WIRE_AGENT else None
+        base_url = base_url or kept_url
+        if not base_url:
+            raise _invalid("custom_needs_base_url_and_wire")
+        # 记录先落在哪个家族：用户明确要的 > 已存的 > 按型号猜（探测通过后再按结论改正）
+        guess = requested_wire or ai_providers.protocol_of(existing)
+        row = next(r for r in rows if r["agent"] == _WIRE_AGENT[guess]) if guess else None
     else:
         # 保留已存记录的协议族（别把 Responses 连接换回目录第一行的 Anthropic 协议）
         row = next(
@@ -602,11 +644,6 @@ def add_connection(body: object) -> tuple[str, str | None]:
     label = body.get("label")
     if label is not None and not isinstance(label, str):
         raise _invalid("bad_label")
-    label = (
-        (label or "").strip()[:60]
-        or (existing or {}).get("label")
-        or ("Custom" if vid == "custom" else row["brand"])
-    )
 
     hints = [] if vid == "custom" else list(row["models_hint"])
     live = ai_providers.live_models(None, base_url, key)
@@ -619,6 +656,17 @@ def add_connection(body: object) -> tuple[str, str | None]:
         default = model or (hints[0] if hints else None)
     if default and default not in models:
         models = [default, *models]
+    guessed = None
+    if (
+        row is None
+    ):  # custom 且没表态、也没有已存协议：按型号 / 地址的优先级先落一个协议，探测后改正
+        guessed = ai_probe.order(base_url, default or "")[0]
+        row = next(r for r in rows if r["agent"] == _WIRE_AGENT[guessed])
+    label = (
+        (label or "").strip()[:60]
+        or (existing or {}).get("label")
+        or ("Custom" if vid == "custom" else row["brand"])
+    )
     rec = {
         "label": label,
         "agent": row["agent"],
@@ -629,16 +677,103 @@ def add_connection(body: object) -> tuple[str, str | None]:
         "wire_api": "responses",
         # 只有「被服务商拒绝」才落盘（断网这类暂时性失败只在这次返回里说，下次读取照常算可用）
         "last_error": "unauthorized" if reason == "unauthorized" else "",
+        # 换 Key / 型号 / 地址：旧的探测结论与协议都按新值重来（协议由下面的探测定；先试已存的那个）
+        "protocol": None,
+        "probe_reason": "",
     }
+    if vid == "custom" and requested_wire:
+        rec["protocol"] = requested_wire
+    elif vid == "custom" and existing is not None:
+        rec["protocol"] = ai_providers.protocol_of(existing)
+    elif guessed:
+        rec["protocol"] = guessed
     if existing is not None:
         rec["id"] = existing["id"]
-        ai_providers.save(rec)
+        ai_providers.save(_reset_protocol(rec, existing))
         cid = existing["id"]
     else:
         cid = ai_providers.create({**rec, "id": vid})["id"]
-    # 型号清单会自己补 `/v1`，拿得到不等于地址对：保存时就核一次，少写了 `/v1` 直接存成改正后的（TVD-J5QG）
+    # 对话协议探测（与型号清单不同，真发一条带工具定义的最小对话请求）；通了会同时改正地址（OpenAI 系补 `/v1`）
+    summary = _probe_and_store(
+        cid,
+        preferred=requested_wire or ai_providers.protocol_of(existing),
+        custom=vid == "custom",
+        requested=requested_wire,
+    )
+    # 型号清单会自己补 `/v1`，拿得到不等于地址对：探测没拿到结论（断网）时仍核一次，少写了 `/v1` 直接存成改正后的（TVD-J5QG）
     ai_providers.ensure_api_root(ai_providers.get(cid))
-    return cid, reason
+    return cid, reason, summary
+
+
+def _reset_protocol(rec: dict, existing: dict) -> dict:
+    """`save()` 是合并写（`None` 值不覆盖）：要让「协议 / 探测结论」真被清掉，得显式给空串再由 `_clean` 丢弃。"""
+    out = dict(rec)
+    if out.get("protocol") is None:
+        out["protocol"] = ""
+    out["protocol_ok"] = ""
+    return out
+
+
+def _probe_summary(
+    result: dict, *, requested: str | None, current: str | None, checked: bool
+) -> dict:
+    """给前端的一句话信息（闭集，没有响应体）：`{checked, protocol, requested, switched, reason, reasons}`。
+    `checked` = 拿到了结论（False = 断网 / 缺型号，记录没动）；`protocol` = 现在记的协议；`switched` = 用户明确要了协议、
+    但它没通过而换成了别的能通的；`reason` = 全不通时的主要原因（通了 / 没结论 = None）；`reasons` = 每种试过的协议的结论。"""
+    passed = result.get("protocol") if checked else None
+    return {
+        "checked": checked,
+        "protocol": passed or current,
+        "requested": requested,
+        "switched": bool(requested and passed and requested != passed),
+        "reason": result.get("reason") if checked and not passed else None,
+        "reasons": dict(result.get("reasons") or {}),
+    }
+
+
+def _probe_and_store(
+    cid: str, *, preferred: str | None, custom: bool, requested: str | None = None
+) -> dict | None:
+    """对一条已存的 Key 连接做协议探测并把结论写回 → 摘要（`_probe_summary`）；记录没了 / 不是 Key 类 → None。会联网（≤ 30 s）。
+
+    * 自定义连接：每种协议都试（`preferred` 先试）；目录里的已知厂商只核它自己那一种、不换协议、不换地址。
+    * 通过：写 `protocol` / `protocol_ok` / 对应的 API 根，清掉 `last_error`（对话真通了，型号清单被拒之类的旧判断作废）；
+      通过的协议与现在记的家族不同就一并改 `agent`（chat 记录的 agent 是 openai 家族，仍只走内置）。
+    * 全不通（拿到了至少一条结论）：仍保存、不丢用户填的东西；`last_error` = `unauthorized`（Key 被拒，与型号清单同一出口）或
+      `endpoint_unusable` + `probe_reason`（主要原因）。拿不到任何结论（缺型号 / 全是网络失败）：什么都不改。"""
+    rec = ai_providers.get(cid)
+    if rec is None or rec.get("auth") == "oauth":
+        return None
+    base = str(rec.get("base_url") or "")
+    model = str(rec.get("default_model") or "").strip() or next(iter(rec.get("models") or []), "")
+    own = ai_providers.protocol_of(rec)
+    result = ai_probe.detect(
+        base,
+        str(rec.get("api_key") or ""),
+        model,
+        preferred=preferred,
+        protocols=None if custom else ((own,) if own else None),
+        root_fix=custom,
+    )
+    if not result["conclusive"]:
+        return _probe_summary(result, requested=requested, current=own, checked=False)
+    ai_providers.apply_probe(cid, base_url=base, model=model, result=result)
+    return _probe_summary(result, requested=requested, current=own, checked=True)
+
+
+def check_connection(cid: str) -> dict:
+    """`POST /api/ai/connections/<id>/check`：重新探测一条 Key 连接并更新记录 → 摘要（调用方再读连接视图）。
+    订阅类 / 账号登录类 / 不存在的 → `connection_not_found`（它们没有「Key + 地址」可探）。"""
+    rec = ai_providers.get(cid) if isinstance(cid, str) else None
+    if rec is None or rec.get("auth") == "oauth" or cid in SUBSCRIPTIONS:
+        raise ConnectionRefused("connection_not_found", {}, 404)
+    if ai_providers.incompatibility(rec):
+        raise ConnectionRefused("connection_not_found", {}, 404)  # 旧协议记录走迁移，不在这里探
+    custom = _vendor_for_record(rec)[1] == "custom:key"
+    summary = _probe_and_store(cid, preferred=ai_providers.protocol_of(rec), custom=custom)
+    if summary is None:
+        raise ConnectionRefused("connection_not_found", {}, 404)
+    return summary
 
 
 def delete_connection(cid: str) -> None:

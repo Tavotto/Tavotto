@@ -219,6 +219,26 @@ def _offline_api_root_probe(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _offline_protocol_probe(monkeypatch):
+    """保存 / 重新检查连接时的协议探测（`ai_probe.detect`）会真往服务商发一条对话请求。默认「没拿到任何结论」（不联网、记录不改，
+    与探测上线前的行为一致）；测它本身的用例自己换成真 `detect` + 桩掉 `wires.post_json`（见 `tests/test_ai_probe.py`）。"""
+    from tavotto.engine import ai_probe
+
+    monkeypatch.setattr(
+        ai_probe,
+        "detect",
+        lambda *_a, **_k: {
+            "protocol": None,
+            "base_url": None,
+            "token_field": None,
+            "reasons": {},
+            "reason": "network",
+            "conclusive": False,
+        },
+    )
+
+
+@pytest.fixture(autouse=True)
 def _pinned_pool_cap(monkeypatch):
     """worker 池上限按本机可用内存自适应（`pool.max_alive()`，ADR 0159）：测试机内存不同，淘汰 / 容量用例的
     结果就不同。默认钉成下限 3；测自适应本身的用例自己把 `pool.MAX_ALIVE` 置回 None。"""

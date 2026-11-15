@@ -199,7 +199,10 @@ AI the user chose, in one of two ways:
   may carry the call with the user's key handed to it; otherwise Tavotto's built-in
   agent sends it directly. Either way the destination is the provider's API address
   the user connected, and the key is not sent anywhere else. Plain `http` addresses
-  are accepted only on the local machine or a private network.
+  are accepted only on the local machine or a private network. When you save such a
+  connection (or press "Check connection"), Tavotto also sends that address a few very short test
+  messages (a one-word prompt, at most 16 tokens of reply) to find out which chat protocol it
+  speaks; this uses a tiny amount of your quota, and the replies are not stored or logged.
 
 What is sent is the user's instruction plus whatever the assistant reads from the
 project to do the job, which can include the script and files in the project folder,
