@@ -117,7 +117,9 @@ def test_real_complete_pair_source_points_units_and_C(provider, tmp_path, size, 
     new = render(model, frame, patches)
     assert "render_frame" not in old and "render_frame" not in old["manifest"]
     assert "frame" not in new["manifest"]
-    F = chartframe.validate_frame(new["render_frame"])
+    # #1919：/2 只在 manifest 内发一份，产物顶层不再复制。
+    assert "render_frame" not in new
+    F = chartframe.validate_frame(new["manifest"]["render_frame"])
     L, T, W, H = F["rect_pt"]
     assert F == new["manifest"]["render_frame"]
     a = next(e for e in old["manifest"]["elements"] if e["gid"] == "axes_0.lines_0")["geometry"]
@@ -213,10 +215,13 @@ def test_real_source_css_percentage_opacity_and_source_clip(provider, tmp_path):
 
     from tavotto.rendercore import ir
 
-    unframed = {k: v for k, v in new.items() if k != "render_frame"}
+    unframed = {
+        **new,
+        "manifest": {k: v for k, v in new["manifest"].items() if k != "render_frame"},
+    }
     baseline = compose_native_scene(source, binding, unframed, model)
     p0, _ = svg_to_ir(baseline["svg"], 100, 100, provider)
-    left, top, w, h = new["render_frame"]["rect_pt"]
+    left, top, w, h = new["manifest"]["render_frame"]["rect_pt"]
     p1, _ = svg_to_ir(combined["svg"], w, h, provider)
     carrier = ir.Page(
         w,
