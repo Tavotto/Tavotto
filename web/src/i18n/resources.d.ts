@@ -196,6 +196,7 @@ export default interface Resources {
         "unreadable": "这个文件读不了。"
       },
       "problem": {
+        "mismatchNext": "它的脚本还留在项目里：可以换一种画法重画，或者去文件夹里把这份脚本删掉。",
         "notDrawn": "这张图没有画出来。",
         "otherFolder": "换个文件夹",
         "otherWay": "换一种画法",
@@ -239,7 +240,7 @@ export default interface Resources {
         "value_column_mixed": "数值列里混着文字（比如「<0.1」），先整理一下再画。"
       },
       "result": {
-        "mismatch": "画出来的图和你的数据对不上，所以没有打开它。它的脚本还留在项目里：可以换一种画法重画，或者去文件夹里把这份脚本删掉。",
+        "mismatch": "画出来的图和你的数据对不上，所以没有打开它。",
         "unknown": "图画好了，数据核对没能完成。",
         "unverifiable": "图画好了，但这类图没法逐项核对数据。",
         "verified": "图画好了，数据和文件逐项对上。"

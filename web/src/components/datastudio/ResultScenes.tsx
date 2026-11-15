@@ -100,6 +100,7 @@ export function ProblemScene({
     return (
       <Centered anchor="data-studio-problem">
         <p className="type-heading">{t('dataFigureV2.result.mismatch')}</p>
+        <p className="text-base text-ink-2">{t('dataFigureV2.problem.mismatchNext')}</p>
         {/* 脚本已经在项目里了：写明在哪，用户要删就知道删哪个（Tavotto 不替用户删文件） */}
         <p className="max-w-full truncate font-mono text-sm text-ink-3" data-studio-script-path title={problem.script}>
           {problem.script}

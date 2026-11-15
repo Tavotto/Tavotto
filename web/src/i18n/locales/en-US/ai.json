@@ -641,7 +641,7 @@
     "result": {
       "verified": "The figure is ready and its data matches the file.",
       "unverifiable": "The figure is ready, but this kind of plot can’t be checked against the data.",
-      "mismatch": "The figure doesn’t match your data, so it wasn’t opened. Its script is still in the project: you can draw it another way, or delete that script from the folder.",
+      "mismatch": "The figure doesn’t match your data, so it wasn’t opened.",
       "unknown": "The figure is ready, but the data check couldn’t finish."
     },
     "mixedCells": {
@@ -723,7 +723,8 @@
       "unwritable": "This folder can’t be written to, so the figure has nowhere to go.",
       "otherFolder": "Pick another folder",
       "otherWay": "Try another way",
-      "reveal": "Show in folder"
+      "reveal": "Show in folder",
+      "mismatchNext": "Its script is still in the project: draw it another way, or delete that script from the folder."
     }
   }
 }
