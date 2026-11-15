@@ -6,6 +6,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('@/lib/reviewRender', () => ({ buildReviewRender: () => ({ canvas: { page_w_mm: 100, page_h_mm: 80, objects: [] } }) }))
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   fetchReviewCapability: vi.fn(),
@@ -224,7 +225,7 @@ describe('分享弹窗三态', () => {
     await render(<ReviewDialog />)
     await click(q('[data-review-update]'))
     await settle()
-    expect(updateReview).toHaveBeenCalledWith('sh_1', undefined)
+    expect(updateReview).toHaveBeenCalledWith('sh_1', undefined, expect.anything())
     expect(writeText).toHaveBeenCalledWith(SHARE.review_url)
     expect(JSON.stringify(useUiStore.getState().status)).toContain('review.linkCopied')
   })
@@ -265,7 +266,7 @@ describe('失败码：一句话 + 可重试', () => {
     vi.mocked(fetchReviewStatus).mockResolvedValue({ stage: 'uploading', failure: null, retryable: false, share: null })
     await render(<ReviewDialog />)
     await click(q('[data-review-retry]'))
-    expect(shareReview).toHaveBeenCalledWith({ kind: 'figure', id: 'fig3' }, 'Figure 3', 'n')
+    expect(shareReview).toHaveBeenCalledWith({ kind: 'figure', id: 'fig3' }, 'Figure 3', 'n', expect.anything())
   })
   it('服务端说额度用满：不报错，换成选择卡', async () => {
     resetStore({ dialogOpen: true })
@@ -290,7 +291,7 @@ describe('额度用满选择卡', () => {
     await click(q('[data-review-pick="update-existing"]'))
     await click(q('[data-review-pick-share="sh_9"]'))
     // 把这张图的画面更新到别的链接：带上 target
-    expect(updateReview).toHaveBeenCalledWith('sh_9', undefined, { kind: 'figure', id: 'fig3' })
+    expect(updateReview).toHaveBeenCalledWith('sh_9', undefined, expect.anything(), { kind: 'figure', id: 'fig3' })
   })
   it('没有别的分享记录就没有「更新已有的链接」；导出 PNG 打开导出窗；明天再分享只是关窗', async () => {
     resetStore({ dialogOpen: true, picker: 'new', others: [] })

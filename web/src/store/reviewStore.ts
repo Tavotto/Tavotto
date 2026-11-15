@@ -19,12 +19,14 @@ import {
   type ReviewComment,
   type ReviewFailureCode,
   type ReviewQuota,
+  type ReviewRender,
   type ReviewShareDetail,
   type ReviewShareSummary,
   type ReviewStage,
   type ReviewTarget,
   type ReviewUnread,
 } from '@/lib/api'
+import { buildReviewRender } from '@/lib/reviewRender'
 import { sameTarget } from '@/lib/reviewTarget'
 
 /**
@@ -101,11 +103,17 @@ export const useReviewStore = create<ReviewState>((set, get) => {
     )
 
   /** 发起一次生成 / 更新，然后盯 status 到终态（一次发起一个 token，关窗 / 换发起即作废旧的盯梢） */
-  const run = async (start: () => Promise<unknown>) => {
+  const run = async (start: (render: ReviewRender) => Promise<unknown>) => {
     const mine = ++genToken
+    const render = buildReviewRender()
+    if (!render) {
+      // 画面取不出来（源文件不在等）：不发请求，按「画面没生成出来」说
+      set({ stage: 'failed', failure: { code: 'render_failed', retryable: true }, picker: null })
+      return
+    }
     set({ stage: 'rendering', failure: null, picker: null })
     try {
-      await start()
+      await start(render)
     } catch {
       if (mine === genToken) set({ stage: 'failed', failure: { code: 'client_error', retryable: true } })
       return
@@ -237,18 +245,18 @@ export const useReviewStore = create<ReviewState>((set, get) => {
       const t = get().target
       if (!t) return
       set({ lastOp: { kind: 'new', title, note } })
-      await run(() => shareReview(t, title, note))
+      await run((render) => shareReview(t, title, note, render))
     },
     update: async (note) => {
       const id = get().share?.share_id
       if (!id) return
       set({ lastOp: { kind: 'update', shareId: id, note: note ?? '' } })
-      await run(() => updateReview(id, note))
+      await run((render) => updateReview(id, note, render))
     },
     updateOther: async (shareId, note) => {
       const t = get().target
       set({ lastOp: { kind: 'update', shareId, note: note ?? '', other: t ?? undefined } })
-      await run(() => updateReview(shareId, note, t ?? undefined))
+      await run((render) => updateReview(shareId, note, render, t ?? undefined))
     },
     retry: async () => {
       const op = get().lastOp

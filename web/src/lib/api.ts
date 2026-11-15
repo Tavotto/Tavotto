@@ -8235,13 +8235,15 @@ export const fetchReviewFor = (t: ReviewTarget) =>
   jsonFetch<{ share: ReviewShareSummary | null }>(
     `/api/review/for?kind=${t.kind}&id=${encodeURIComponent(t.id)}`,
   )
-export const shareReview = (target: ReviewTarget, title: string, note: string) =>
-  jsonFetch<{ ok: boolean }>('/api/review/share', reviewPost({ target, title, note }))
+/** `render` = 导出请求里的 `original` / `canvas` 段原样（`lib/reviewRender`）；缺它引擎回 `client_error` */
+export type ReviewRender = Pick<ExportRequest, 'original' | 'canvas'>
+export const shareReview = (target: ReviewTarget, title: string, note: string, render: ReviewRender) =>
+  jsonFetch<{ ok: boolean }>('/api/review/share', reviewPost({ target, title, note, render }))
 /** `target` 只在「额度用满 → 把这张图的画面更新到别的链接上」时给；缺省 = 更新那个链接自己的画面 */
-export const updateReview = (shareId: string, note?: string, target?: ReviewTarget) =>
+export const updateReview = (shareId: string, note: string | undefined, render: ReviewRender, target?: ReviewTarget) =>
   jsonFetch<{ ok: boolean }>(
     '/api/review/update',
-    reviewPost({ share_id: shareId, ...(note ? { note } : {}), ...(target ? { target } : {}) }),
+    reviewPost({ share_id: shareId, ...(note ? { note } : {}), render, ...(target ? { target } : {}) }),
   )
 /** 本机所有分享记录（额度用满选择卡列「更新已有的链接」用；local-api.md 之外的补充端点） */
 export const fetchReviewShares = () => jsonFetch<{ shares: ReviewShareSummary[] }>('/api/review/shares')

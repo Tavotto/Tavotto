@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { t as translate } from '@/i18n'
-import { owningPanel } from '@/lib/reviewGids'
+import { innerGid, owningPanel } from '@/lib/reviewGids'
 import { pageUnion } from '@/lib/panelPlacement'
 import { useReviewPlacements, type PlacedComment } from '@/components/review/useReviewPlacements'
 import { useDocumentStore } from '@/store/documentStore'
@@ -50,7 +50,7 @@ function ReviewPin({ p, objects, t }: { p: PlacedComment; objects: readonly Canv
     [a, objects, render, latest],
   )
   // 元素意见：图内元素的框（同 `IssueOverlay` 的换算）；元素就是面板本身时用面板框
-  const elRect = useElementRect((owner ?? FALLBACK) as PanelObject, a.kind === 'element' ? a.gid : '', t, 2)
+  const elRect = useElementRect((owner ?? FALLBACK) as PanelObject, a.kind === 'element' ? innerGid(a.gid) : '', t, 2)
   let rect: { x: number; y: number; width: number; height: number } | null = null
   if (a.kind === 'element' && owner) {
     rect =
