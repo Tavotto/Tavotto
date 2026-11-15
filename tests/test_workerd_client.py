@@ -175,8 +175,10 @@ def test_default_hello_never_caps_sessions_below_the_python_pool(client, monkeyp
         monkeypatch.delenv(pool.MAX_ALIVE_ENV, raising=False)
     else:
         monkeypatch.setenv(pool.MAX_ALIVE_ENV, env_cap)
-    client.ensure_started()
     ceiling = max(pool.MAX_ALIVE_CEILING, int(env_cap or 0))
+    # 池是唯一取 workerd 客户端的地方：建 WorkerdWorker 时把上限写给客户端，之后的 hello 就带着它
+    client.session_cap = max(client.session_cap, pool.workerd_session_cap())
+    client.ensure_started()
     assert client.hello["payload"]["max_sessions"] > ceiling
 
 

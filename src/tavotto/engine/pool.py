@@ -4047,6 +4047,11 @@ class WorkerdWorker:
         self._fenced = False  # 强制关闭未确认（见 force_kill）：池里保留、acquire 不得复用
         self._closing = False  # 另一线程正在强制关闭它（`force_cancel` 在池锁内置、关完清）：acquire 不得阻塞等它
         self._client = client or workerd_client.client()
+        if self._client is not None:
+            # workerd 的会话上限只做兜底、不得比池紧（ADR 0159）：在这条客户端发第一条请求（hello）之前写进去
+            self._client.session_cap = max(
+                getattr(self._client, "session_cap", 0) or 0, workerd_session_cap()
+            )
         if self._client is None:
             raise WorkerdUnavailable("workerd 不可用")
         # 与 EngineWorker 同源：项目级解释器决策的唯一出处是

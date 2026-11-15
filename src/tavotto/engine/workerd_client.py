@@ -102,6 +102,10 @@ class WorkerdError(RuntimeError):
         self.session_id = session_id
 
 
+#: workerd 自己的默认会话上限（`workerd/src/supervisor.rs` `DEFAULT_MAX_SESSIONS`）
+DEFAULT_SESSION_CAP = 3
+
+
 def _dev_tree_candidates() -> list[str]:
     """源码树里的构建产物（`cargo build` / `cargo build --release`）。
 
@@ -161,6 +165,9 @@ class WorkerdClient:
 
     def __init__(self, exe: str):
         self.exe = exe
+        #: hello 里交给 workerd 的会话上限（兜底）。默认是 workerd 自己的默认值；渲染池拿到客户端时
+        #: 写成 `pool.workerd_session_cap()`（只增不减，在第一条请求之前）。
+        self.session_cap = DEFAULT_SESSION_CAP
         self._proc: subprocess.Popen | None = None
         # 三把锁，职责不许混：
         #   _lock       —— 只保护 _proc / _pending / _seq 这几个字段，**绝不跨越
@@ -196,16 +203,15 @@ class WorkerdClient:
     ) -> None:
         """确保有一条活着的 workerd；崩过的自动重启（有上限）。
 
-        `max_sessions` 缺省 = `pool.workerd_session_cap()`：会话上限归 Python 池（ADR 0159），
-        workerd 的上限只做兜底、不得比池紧（否则它会悄悄杀掉池以为还活着的会话）。
+        `max_sessions` 缺省 = `self.session_cap`：会话上限归 Python 池（ADR 0159），池拿到客户端时把
+        `pool.workerd_session_cap()` 写进来（本模块不反向 import pool，免得多一条导入环边）；workerd 的上限
+        只做兜底、不得比池紧（否则它会悄悄杀掉池以为还活着的会话）。
 
         hello 协商**在 `_lock` 之外**发：它是一次要等响应的往返，而 reader 线程
         投递响应时要拿同一把 `_lock`——持着它去等响应就是一次必然的死锁。
         """
         if max_sessions is None:
-            from . import pool  # noqa: PLC0415 — pool 也是延后 import 本模块，模块级互引会成环
-
-            max_sessions = pool.workerd_session_cap()
+            max_sessions = self.session_cap
         with self._start_lock:
             with self._lock:
                 proc = self._proc
