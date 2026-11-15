@@ -67,7 +67,11 @@ export function acceptsScriptDrag(types: readonly string[]): boolean {
 export async function openItsProject(path: string, language: ForeignLanguage | 'notebook' | null): Promise<void> {
   const name = baseName(path)
   try {
-    await useProjectStore.getState().open(parentDir(path))
+    // 带着这个脚本进来：素材区只看脚本的图（ADR 0184 §三）；名字带首尾空白的不进范围（后端同样拒）
+    const store = useProjectStore.getState()
+    await (name === name.trim()
+      ? store.open(parentDir(path), false, { entry: 'script', script: name })
+      : store.open(parentDir(path)))
   } catch {
     say('openProjectFailed', { name }, 'error', feedbackAction())
     return

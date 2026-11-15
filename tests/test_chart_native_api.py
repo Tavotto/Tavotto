@@ -16,7 +16,6 @@ import pytest
 
 from tavotto import app as m, chartbundle
 from tavotto.engine import (
-    chartprocess,
     chartprofile,
     envlease,
     exportjob,
@@ -108,6 +107,8 @@ def test_chart_http_entries_respect_install_lease_and_recover_without_source_cha
     client, root = project
     chart = _bind(client)
     python, _source = pool.resolve_worker_python(root)
+    chart_worker = pool.acquire_chart(root)
+    assert chart_worker.task_kind == "chart"
     requests = [
         ("/api/svg/chart/bind", {"file": "chart.svg"}),
         ("/api/svg/chart/compute", {"file": "chart.svg", **chart}),
@@ -119,11 +120,15 @@ def test_chart_http_entries_respect_install_lease_and_recover_without_source_cha
             response = client.post(endpoint, json=body)
             assert response.status_code == 503, (endpoint, response.get_json())
             assert response.get_json()["code"] == envlease.ENVIRONMENT_MUTATING
-        assert chartprocess.active_count() == 0
+        assert chart_worker.alive()
         assert not envlease.native_sessions_on(python)
     _assert_line(_render(client, chart), y=0.25)
-    assert chartprocess.active_count() == 0
-    assert envlease.state_of(python) == envlease.STATE_IDLE
+    assert pool.acquire_chart(root) is chart_worker
+    assert not chart_worker.built
+    assert (
+        envlease.state_of(python, safe_workers=pool.safe_workers_using(python))
+        == envlease.STATE_SAFE_WORKERS
+    )
     assert (root / "chart.svg").read_bytes() == SOURCE
 
 

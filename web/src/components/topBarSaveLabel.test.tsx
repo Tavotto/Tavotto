@@ -140,7 +140,7 @@ describe('顶栏保存状态', () => {
     expect(shown()).toBe('save_error')
     expect(live()).toBe('保存失败')
     go('conflict')
-    expect(live()).toBe('外部冲突')
+    expect(live()).toBe('别处有改动')
     go('saved')
     expect(live()).toBe('')
   })

@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「渲染引擎核心机制」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_figure_recognition.py`、`tests/test_axes_traversal_authority.py`、`tests/test_engine_family_modules.py`、`test_parasite_axes.py`、`test_artist_families.py`、`test_worker_roundtrip.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_figure_recognition.py`、`tests/test_axes_traversal_authority.py`、`tests/test_engine_family_modules.py`、`test_parasite_axes.py`、`test_artist_families.py`、`test_worker_roundtrip.py`、`tests/test_figure_level_artists.py`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
@@ -139,6 +139,13 @@ order: 80
   `endpoints_frac`，引擎这边没有新机制。
   看护：`test_patch_shapes_are_draggable_via_pos_frac`、等价矩阵 `s7-patch-drag`
   （含写回后重开）。
+- **整张图 / SubFigure 上直接挂的元素一处登记（2026-11-12，ADR 0100 修订）**：`manifest._register_figure_level`
+  登记 `texts` / `legends` / `patches` / `lines` / `images` / `artists` 并递归进 `subfigs`；`fig.add_artist` 不按类型
+  改道，`artists` 按族分派到与子图里同一套角色。gid：根图 `fig.<列表>_j`（`texts` / `legend` / `artists` 是已发出的
+  名字），SubFigure 是 `fig.subfigs_k.<同上>`。图级形状 / 文字 / 线可拖（线是 `("line", "pos_frac")`，与形状同一套
+  transform 平移；子图里的曲线不宣称）。`ConnectionPatch` 不出端点（两端归 xyA / xyB）。SubFigure 里的图例按
+  `transSubfigure` 换算。SubFigure 子图的 `position` 仍是局部分数（兼容取舍，见 ADR）。
+  看护：`tests/test_figure_level_artists.py`。
 - 散点 marker 可整体替换（set_paths，首改前缓存原始路径，"original" 还原）；
   散点/扁平线的 bbox 走 `_padded_bbox`（PathCollection 用 datalim 换算，零厚度边
   垫 4px，否则进不了 manifest）。

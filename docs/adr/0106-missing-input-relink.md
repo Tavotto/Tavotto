@@ -260,6 +260,40 @@ AI 修复成功率的也一并加上。
 一次出图、glob 读的文件夹整个挪走指认新文件夹出图、沙盒相对不改判、静态口径）、`tests/test_fixtools_link.py`（AI 接得上动态
 路径、只被 exists 问过的常量、glob 文件夹；`import_file` 仍 `link_unreachable`）、`tests/test_script_edit.py`（改写通道继续看护）。
 
+## 修订（2026-11-14）：脚本自己 `parser.error("找不到 …")` 也认成缺数据
+
+一份用户反馈：两份脚本的 `--input` / `--data-dir` 都有默认值，`parse_args()` 之后按 `__file__` 拼出默认数据路径、
+`exists()` 答没有，就 `parser.error("找不到输入表格，请用 --input 指定 xxx.xlsx 的位置。")` 退出（exit 2 + usage）。
+`SystemExit` 是 argparse 抛的，于是判成 `script_needs_arguments`，界面引去「运行参数」；用户填了参数仍失败——缺的是数据。
+维护者（2026-11-14）选「判据扩展、直接弹选择数据文件」。
+
+1. **主语是调 `ArgumentParser.error` 的那一帧**（`worker._script_parser_error_message`）：调用者不在 `argparse` 模块里
+   （用户代码在 `parse_args()` 之后自己调）才拿它的 `message`；argparse 解析时自己报的（缺必填、未知参数、`type=` 回调抛
+   `ArgumentTypeError`）调用者是 argparse，照旧 `script_needs_arguments`。只看栈帧，不看句式，翻译过的 argparse 一样判。
+2. **点名与在不在与 2026-11-09 修订同一套**（`figcapture.parser_error_missing_input`）：消息按 `_named_miss` 的边界点了名
+   某条没救回的探路，或只写了文件名（`_named_by_basename`：只认带扩展名的文件名；左边界只排除 ASCII 路径字符，
+   中文消息里紧挨着汉字也算；几条对得上取最长的文件名），且那条此刻确实不在 → `missing_input`，事实与只读打开同形。
+3. 顺序在被拦下操作的归因之后、`_script_exit_error` 之前；对不上一律照旧（`script_needs_arguments` / `script_exited`）。
+
+代价：只写文件名的点名比整路径松——中文消息里 `物.xlsx` 与 `不同污染物.xlsx` 两条都探过且都不在时取较长的；
+仍要求「这次运行真问过、没找到、此刻不在」三条。普通 `sys.exit("找不到 …")` 不在本修订范围。
+看护：`tests/test_missing_input.py`（文件名 / 整路径点名、边界反例、此刻在不判；真 worker：中文消息 + 指认一次出图；
+缺必填、无关的 `parser.error`、`type=` 回调报错仍是 `script_needs_arguments`）。
+
+## 修订（2026-11-14）：会抛的探路落空、系统 ENOENT 到终局，也认成缺数据
+
+一份用户反馈：脚本在代码里拼出数据路径（没有可与静态证据对上的整串常量），读之前先 `SOURCE.stat()`；文件不在，系统抛的
+`FileNotFoundError` 一路到终局。上一条修订 §3 只认「脚本自己构造」的异常（`errno` 为 None），这里仍是 `script_error`；
+AI 修复找到了同目录的数据、用户也选了，`link_data_file` 答 `requested_unknown`——与 2026-11-09 同一条被堵上的路。
+
+`install_input_remap` 里会抛的探路（`os.stat|lstat|listdir|scandir`、`Path.stat|lstat`；`getsize` / `getmtime` 经它们）落空、
+改指没救回、照旧记进 `InputMisses.probes` 时，同时给**这一个**异常对象打标（`_tavotto_probe_miss` = 记账的那串）。
+`_probe_miss_of` 先看标：终局异常链里的 `FileNotFoundError` 带标、记账里有那一条、它此刻确实不在 → `missing_input`，事实与
+§3 同形（问的是文件夹时带 `probe_kind: dir`）。**认的是异常对象、不按路径比**：上一条修订排除系统 ENOENT 是为了不把
+「写进不存在的目录」当成缺数据——那种 ENOENT 不是探路抛的，没有标，照旧不认领。沙盒 cwd 下的相对探路本来不记账，也不打标
+（出口仍是「在脚本目录里运行」）。看护：`tests/test_missing_input.py`（四种 stat 写法与 listdir 打标认领、同路径写模式不认领、
+被包一层照认、此刻在了不认；真 worker：拼出来的路径先 stat 再读 → `missing_input` → 指认一次出图，沙盒与项目目录两种模式）。
+
 ## 不做的事
 
 * 不按文件名在磁盘上搜索、不猜候选（FO08 的「旁边有同名不同值」）。

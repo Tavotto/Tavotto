@@ -2,13 +2,13 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「编码 Agent 桥」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_ai_data_recipe.py`、`tests/test_ai_data_template.py`、`tests/test_ai_agents.py`、`test_ai_login.py`、`test_ai_bridge.py`、`test_ai_capabilities.py`、`test_ai_refresh.py`、`test_ai_history.py`、`test_ai_idempotency.py`、`test_ai_revert_stale.py`、`test_codex_install_cli.py`、`test_managed_cli.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_ai_data_recipe.py`、`tests/test_ai_data_template.py`、`tests/test_ai_data_propose.py`、`tests/test_ai_agents.py`、`test_ai_login.py`、`test_ai_bridge.py`、`test_ai_capabilities.py`、`test_ai_refresh.py`、`test_ai_history.py`、`test_ai_idempotency.py`、`test_ai_revert_stale.py`、`test_codex_install_cli.py`、`test_managed_cli.py`
 > `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml；revert 只回滚本次 AI 那一版（细则见 `ai-agent-bridge.md`）
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 240
-改到: `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`ai_data_recipe.py`、`ai_data_template.py`、`codexinstall.py`、`managedcli.py`、`resources/managed_cli_lock.json`、`/api/ai/*`
+改到: `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`ai_data_recipe.py`、`ai_data_template.py`、`ai_data_propose.py`、`ai_data_task.py`、`codexinstall.py`、`managedcli.py`、`resources/managed_cli_lock.json`、`/api/ai/*`
 主题: 编码 Agent 桥 → `ai-agent-bridge.md`
 必守要点: 「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml
 -->
@@ -323,11 +323,20 @@ order: 240
 - **数据出图 v2 的模板与期望指纹（`engine/ai_data_template.py`，ADR 0178）**：`render_recipe_script(entry, recipe, data_rel=, stem=, style=)` 只接受通过
   `validate_recipe` 的配方，不认识的组合抛 `TemplateError`、不画近似。**一份实现两处用**：读表 / 单元格解析 / 汇总 / 抖动 / 箱 / 核密度 / 拟合都是模块里的普通函数
   （`RUNTIME_FUNCTIONS`），这些函数的源码（`inspect.getsource`）与 `xlsxread` 的源码原文被收进**旁边的公共模块** `tavotto_plot_<sha256 前 8 位>.py`（`runtime_module()`，内容寻址、对所有图逐字节相同、不含数据，
-  落盘只新建、同字节复用、异字节按损坏报错不覆盖——落盘在下一个 PR），脚本只剩 import + 常量 + `main()`（`render_recipe_script` 返回 `Rendered`）；父进程的 `expected_fingerprints` 调用的是同一批函数；
+  落盘只新建、同字节复用、异字节按损坏报错不覆盖——落盘见下一条），脚本只剩 import + 常量 + `main()`（`render_recipe_script` 返回 `Rendered`）；父进程的 `expected_fingerprints` 调用的是同一批函数；
   列名 / 表名 / 文件名只以 `repr()` 字面量进脚本（来源注释是 ASCII JSON，不含 `why`），脚本 AST 的标识符集合与数据无关。脚本不改 `sys.path`（两条入口都把脚本目录放在 `sys.path[0]`，`tests/bridge/test_bridge_generated_figure_script.py` 钉 native）。每个数据 artist 的 label 在整张图里唯一
   （`make_label`），验证器按 label 匹配。**可核 = 散点（points / jitter）、Line2D（line / step / hline_summary / fit_line / density / ecdf）、柱组（bar / hist）；不核 = errorbar / band / box / violin**
   （误差棒容器与 `fill_between` 在 manifest 里没有 label 字段）——`fingerprint_coverage` 如实列出，不折算成 verified；没有任何可核层 = 这张图的数据没法核。
   relationship / distribution 的规则（Freedman–Diaconis 分箱、Scott 带宽、ECDF 阶梯、在画出来的坐标里拟合的最小二乘线）各只有运行时里一份实现，可画的图元组合由 `validate_recipe` 与模板同口径拒绝（ADR 0178）。样式数字取自 `profiles.load()`（`style_from_profile`，取不到才用具名默认）；分类色是 Okabe–Ito（公开色盲安全色板）。看护 `tests/test_ai_data_template.py`（真 safe worker 对拍）与 `tests/bridge/test_bridge_generated_figure_script.py`。
+- **数据出图 v2 的出备选与落盘（`engine/ai_data_recipe.default_candidates`、`ai_data_propose.py`、`ai_data_task.py` 下半、`/api/ai/data-figure/*`，ADR 0178，实验开关后面）**：
+  不调模型的整条流水（模型路径复用它）。`default_candidates(profile, table=, sheet=, confirmed=, hint=, values=, picks=)` → `Candidates | NeedsChoice`：列角色规则只有 `pick_table` / `_resolve_roles` 两处文字定义，
+  有歧义问、不猜，每个「不确定」有安全默认；`id_like` 永不当角色、没确认就没有 unit / 配对 / 轨迹；文案只走稳定码（`CANDIDATE_CODES` / `QUESTION_CODES` / `NOTHING_REASONS` / `DROP_REASONS`，前端 `ai:dataFigureV2.*`）。
+  `ai_data_propose.propose` 把每个备选的脚本 + 公共模块 + 数据字节副本放进 `data_dir()/cache/ai_data_candidates/<session>/`（独立小项目，safe worker 真渲染，`write_roots` 只开候选目录；**用户文件夹零写入**，
+  不用影子脚本是因为公共模块要在显示目录里 import，见 ADR 0178 对照；解释器先用项目已定下的（`peek_worker_python` + `pinned_interpreter`），失败静默回退默认链条并留 `interpreter_fallback`），候选数据指纹与 `expected_fingerprints` 对拍，单个失败只少一张卡、全失败回 `{kind:"nothing"}`；会话内存里、TTL 30 分钟、≤ 6 个、放弃即删（提交后保留到 TTL，同一备选重复提交靠 rid 幂等、换请求号建 `_2`）、同会话一份数据副本、
+  删除不用 `ignore_errors`；会话属于项目。落盘 = 任务类型 `data_to_figure_v2`（`TemplateExecutorV2`）：只回传 `{session, id}`，项目锁内按「目录 → 公共模块（新建 / 字节相同复用 / 不同则 `common_module_conflict` 什么都不写）→ 脚本」
+  **只新建**（`scriptlock.create_script`），再 `discover.register` → 统一刷新 → safe 渲染 → `figureverify.data_matches_expected`；登记失败撤回本次新建的脚本 / 公共模块 / 目录，复用的不删。
+  数值列夹着 ≤ 20% 文字（`numeric_like`）：**先问用户**（`{kind:"ask", question_code:"mixed_cells"}`：预览 ≤ 5 行带文件行号、选项 skip / extract / describe），回答放 `answers.cells`（`skip` / `extract` / `map`，声明式；`describe` 不可执行 → 409 `propose_cells_need_rule`；规则不合格 → 400 `propose_cells_invalid`），规则进 `FigureRecipe.cells`，脚本读表后 `apply_cells` 套规则（内存副本，用户文件不动）、图下方写说明、期望指纹按处理后的数据算，用户已决定的格子不再算 partial 理由；幂等键含请求内容摘要。**没有任何可核层 = `data.verifiable` unknown（`data_check: "unverifiable"`），绝不写成 verified**。端点：`propose` / `thumbnail/<session>/<id>` / `commit` / `discard`，`/api/ai/data-files` 带 xlsx 工作表清单；
+  请求路径只经 `ai_data_propose.normalize_rel` + `projectenv.contained_path`。看护 `tests/test_ai_data_propose.py`（真 app + 真 safe worker）。
 - **TAF 改图（`engine/ai_figure_edit.py`，Phase 3a）**：只在 `config.ai_settings()["taf"]["enabled"] is True`（默认关、无界面开关）
   时由 `ai_bridge.run` 走到；开关关着时旧路径逐字不变（cwd 是项目目录、不写任务列、`ADAPTERS` 为空）。开着时：spawn 之前在
   `data_dir()/cache/ai_candidates/<sid>/` **字节复制**目标脚本（+ 项目根的 `paper_style.py`，绝不建链接），拍原项目有界指纹（跳过
@@ -440,7 +449,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 命令数 / 失败 / 被拒（`status=declined`）/ 起了没结束、文件改动数与工作区内外（`-C` 目录，只给计数，不给路径）、是否改到目标文件名、
 `error` / `turn.failed` 次数、最后事件与最后 item 类型（`CLI_EVENT_TYPES` / `CLI_ITEM_TYPES`，集合外归 `other`）、首个事件延迟 /
 最长无事件间隔 / 末尾空闲（毫秒）、接口是 `official` 还是 `relay`（只看 base_url 有没有，不带地址与标签）。判据只用事件里**结构化**字段，
-不匹配自由文本（Codex 的 error 没有结构化 code，所以只计数）。写入两处：`agent_run` span 的 `cli_*` / `endpoint_kind` attributes
+不匹配自由文本（Codex 的 error 没有结构化 code，所以只计数）；唯一例外是 `fail_status`：最近一次 `error` / `turn.failed` 的 message **开头**是 Codex 自己拼的 `unexpected status <三位数>` 或 `exceeded retry limit, last status: <三位数>` 时只取那个 100–599 的数字（`codex_http_status`，原文不留；`merge_run_facts` 取最后一个非空的），进 `cli_fail_status`——第三方中转回 400 / 404 这类不在失败分类表里的状态时，诊断包靠它分清「协议不认」与「密钥 / 额度」（2026-11-14 一份用户反馈：中转每次几秒就失败、包里定不了根因）。写入两处：`agent_run` span 的 `cli_*` / `endpoint_kind` attributes
 （登记在 `exectrace.ATTRIBUTES`，词表由 `ai_bridge` 用上述常量登记），与「AI 会话结束」日志（`_cli_log_facts`，多次进程用
 `merge_run_facts` 合并；码类经 `logsafe.known` 放行）。新增事实先加常量集合 / ATTRIBUTES，再由 `tests/test_codex_run_facts.py` 钉住。
 会话里的 `cli_runs` 是 `SESSION_INTERNAL_KEYS`，不进任何响应。
@@ -715,7 +724,7 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
 看护 `tests/test_fixtools_link.py`（含真子进程的整链用例）、`tests/test_missing_input.py::test_the_endpoint_and_ai_repair_share_one_link_function`。
 
 - **一律问**：approve 卡 = 模型给的一句话 `summary` + 折叠 `details`（脚本要的串、完整路径、`evidence`、规则含义）。没有 `ctx.ask` / 非 yes = `needs_approval`，规则与快照都不写。
-- **判据都在弹卡之前**：默认 `mode=file` 的 `requested` 必须在 `inputremap.known_requests`（报告 `missing_input` 载荷 ∪ 脚本里以常量出现且此刻找不到的路径 ∪ 已经接上的：靠现有规则才读得到的常量与现有 `file` 规则的 `from`，TVD-6Z9R）里（按 `match_request` 规范化比对），否则 `requested_unknown`；其 `via` 不是 `open`（C++ 读取器：ovito `import_file`、h5py 等）→ `link_unreachable`（要改脚本，AI 不改）。Python 的探路（exists / isfile / isdir / stat / getsize / listdir / glob / os.walk）都查改指表，它们问的路径与「先检查、再自己 raise」认出的路径都按 `open`，接得上；glob 与文件夹条目推文件夹规则（ADR 0106 修订 2026-11-09）。
+- **判据都在弹卡之前**：默认 `mode=file` 的 `requested` 必须在 `inputremap.known_requests`（报告 `missing_input` 载荷 ∪ 脚本里以常量出现且此刻找不到的路径 ∪ 已经接上的：靠现有规则才读得到的常量与现有 `file` 规则的 `from`，TVD-6Z9R）里（按 `match_request` 规范化比对），否则 `requested_unknown`；其 `via` 不是 `open`（C++ 读取器：ovito `import_file`、h5py 等）→ `link_unreachable`（要改脚本，AI 不改）。Python 的探路（exists / isfile / isdir / stat / getsize / listdir / glob / os.walk）都查改指表，它们问的路径、「先检查、再自己 raise」认出的路径与 stat / getsize / listdir 落空直接到终局认出的路径都按 `open`，接得上；glob 与文件夹条目推文件夹规则（ADR 0106 修订 2026-11-09 / 2026-11-14）。
   `chosen` 过 `ctx.scope.check`（凭据位置 `denied`、范围外 `outside`）、存在、`inputremap.rule_for_choice` 当场推得出规则，才打扰用户。
 - **同一套推导与落盘**：文件模式写入只经 `inputremap.link`（= `rule_for_choice` + `add_rule`；`POST /api/engine/input-remap` 调的也是它）。快照先于写入，`settings_keys()` 含 `input_remap`；
   回滚经 `inputremap.restore_raw`（项目锁 + 换代），**只在改指表真的变了才动**，别的回滚不让它换代。应用侧通知 `FixContext.on_input_remap_changed(state, "added"|"restored")` 由 `app._fix_remap_notifier` 在 `bound_project` 下做收会话 / 取消试运行 / SSE（工作线程没有请求上下文）。

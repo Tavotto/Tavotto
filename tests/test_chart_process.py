@@ -1,9 +1,8 @@
-"""固定 chart command 的真实子进程、环境占用与有界 I/O 合同。"""
+"""Chart tasks use the real pool and both v1 control planes."""
 
 from __future__ import annotations
 
 import base64
-import dataclasses
 import json
 import os
 import subprocess
@@ -15,394 +14,249 @@ from types import SimpleNamespace
 
 import pytest
 
-from support import procprobe
-from tavotto.engine import chartprocess, desktopproc, envlease, launcher, pool
-from tavotto.engine.chartprofile import NATIVE_PROFILE
+from tavotto.engine import chartprocess, chartprofile, chartwire, execspec, pool, workerd_client
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON = sys.executable
 
 
-def wait_until(predicate, timeout=10):
-    deadline = time.monotonic() + timeout
-    while not predicate() and time.monotonic() < deadline:
-        time.sleep(0.01)
-    assert predicate(), "barrier did not arrive"
-
-
-@pytest.fixture
-def child(tmp_path, monkeypatch):
-    """Each real child uses this checkout and isolated configuration/startup hook."""
-    assert chartprocess.active_count() == 0
-    hook = tmp_path / "startup"
-    hook.mkdir()
-    marker, release = tmp_path / "started", tmp_path / "release"
+@pytest.fixture(params=["python", "workerd"])
+def task(request, tmp_path, monkeypatch):
+    pool.shutdown_all(wait=True)
+    workerd_client.reset_client()
+    monkeypatch.setattr(pool, "_workers", {})
+    monkeypatch.setattr(pool, "_pending_retirements", {})
+    monkeypatch.setattr(pool, "ENGINE_CACHE", tmp_path / "cache")
+    monkeypatch.setattr(
+        pool, "resolve_worker_python", lambda directory, **kw: (PYTHON, pool.SOURCE_CURRENT)
+    )
+    monkeypatch.setattr(pool, "ENVIRONMENT_DECIDERS", [])
+    monkeypatch.setattr(pool, "COLD_ACQUIRE_OBSERVER", None)
+    monkeypatch.setattr(pool, "MAX_ALIVE", 2)
+    monkeypatch.setenv("PYTHONPATH", str(ROOT / "src"))
     monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("MPLCONFIGDIR", str(tmp_path / "mpl"))
-    monkeypatch.setenv("PYTHONPATH", os.pathsep.join([str(hook), str(ROOT / "src")]))
-    monkeypatch.setattr(
-        pool, "resolve_worker_python", lambda _directory: (PYTHON, pool.SOURCE_CURRENT)
+    binary = (
+        ROOT
+        / "workerd"
+        / "target"
+        / "debug"
+        / ("tavotto-workerd.exe" if os.name == "nt" else "tavotto-workerd")
     )
-    monkeypatch.setattr(pool, "max_alive", lambda: 2)
-    monkeypatch.setattr(pool, "_overlay_for", lambda *_args: None)
-    monkeypatch.setattr(
-        chartprocess,
-        "_POLICY",
-        dataclasses.replace(chartprocess._POLICY, term_grace=0.2, kill_timeout=1, linger_grace=0.1),
+    if request.param == "workerd":
+        if not binary.is_file():
+            pytest.skip(
+                "workerd not built (not-run); build this checkout to exercise this control plane"
+            )
+        monkeypatch.setenv("TAVOTTO_WORKERD", str(binary))
+    else:
+        monkeypatch.setenv("TAVOTTO_WORKERD", "0")
+    project = tmp_path / "project"
+    project.mkdir()
+    workers = []
+
+    def get():
+        w = pool.acquire_chart(project)
+        assert isinstance(
+            w, pool.WorkerdWorker if request.param == "workerd" else pool.EngineWorker
+        )
+        workers.append(w)
+        return w
+
+    def run(payload=None, timeout=20):
+        get()
+        return chartprocess.run_request(
+            project, {"probe": True} if payload is None else payload, timeout=timeout
+        )
+
+    def fake(behavior, *, after_ping=""):
+        script = tmp_path / "worker_stub.py"
+        script.write_text(
+            "import json,sys,time,os\n"
+            "for line in sys.stdin:\n"
+            " r=json.loads(line); cmd=r['cmd']\n"
+            " if cmd=='shutdown': break\n"
+            " if cmd=='chart':\n"
+            + "".join("  " + line + "\n" for line in (behavior or "pass").splitlines())
+            + " out={k:r[k] for k in ('protocol_version','request_id','worker_generation','render_revision') if k in r}\n"
+            " out.update(ok=True,engine={'matplotlib':'m','numpy':'n','tavotto':'t'})\n"
+            " print(json.dumps(out),flush=True)\n"
+            + (" if cmd=='ping': " + after_ping + "\n" if after_ping else ""),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(pool, "WORKER_PY", script)
+
+    yield SimpleNamespace(
+        run=run,
+        get=get,
+        fake=fake,
+        project=project,
+        root=tmp_path,
+        workers=workers,
+        plane=request.param,
     )
-    owned, spawned = [], []
-    original_own, original_popen = desktopproc.own_process, subprocess.Popen
-
-    def own(*args, **kwargs):
-        owner = original_own(*args, **kwargs)
-        owned.append(owner)
-        return owner
-
-    def popen(*args, **kwargs):
-        proc = original_popen(*args, **kwargs)
-        spawned.append((proc, args[0], kwargs))
-        return proc
-
-    monkeypatch.setattr(desktopproc, "own_process", own)
-    monkeypatch.setattr(subprocess, "Popen", popen)
-    threads = []
-
-    def request(payload=None, timeout=20):
-        return chartprocess.run_request(tmp_path, payload or {"probe": True}, timeout=timeout)
-
-    def background(payload=None, timeout=20):
-        box = {}
-
-        def go():
-            try:
-                box["value"] = request(payload, timeout)
-            except BaseException as exc:
-                box["error"] = exc
-
-        thread = threading.Thread(target=go)
-        threads.append(thread)
-        thread.start()
-        return thread, box
-
-    def startup(code):
-        (hook / "sitecustomize.py").write_text(code, encoding="utf-8")
-
-    barrier = (
-        "from pathlib import Path\nimport time\n"
-        f"Path({str(marker)!r}).touch()\n"
-        "deadline=time.monotonic()+15\n"
-        f"while not Path({str(release)!r}).exists() and time.monotonic()<deadline: time.sleep(.01)\n"
-    )
-    kit = SimpleNamespace(
-        request=request,
-        background=background,
-        startup=startup,
-        barrier=barrier,
-        marker=marker,
-        release=release,
-        owned=owned,
-        spawned=spawned,
-        path=tmp_path,
-    )
-    yield kit
-    release.touch()
-    for owner in owned:
-        if not owner.finished:
-            owner.cancel()
-    for thread in threads:
-        thread.join(10)
-        assert not thread.is_alive()
-    wait_until(lambda: chartprocess.active_count() == 0)
-    assert not envlease.native_sessions_on(PYTHON)
-    for proc, _, _ in spawned:
-        assert proc.poll() is not None
+    pool.shutdown_all(wait=True)
+    workerd_client.reset_client()
+    for w in workers:
+        assert not w.alive()
 
 
-def native_payload():
+def test_real_probe_reuses_one_pooled_task_without_user_execution(task, monkeypatch):
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    result = task.run()
+    assert set(result) == {"ok", "engine"}
+    first = task.get()
+    assert task.run() == result
+    assert task.get() is first
+    assert pool.alive_count() == 1
+    assert not first.built and first.execution_id is None
+    assert first.spec.target_kind == execspec.TARGET_MODULE
+    assert first.spec.target == execspec.CHART_MODULE
+    assert first.spec.cwd == str(first.sandbox)
+    assert not first.spec.argv and not first.spec.run_config
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [chartprofile.LEGACY_PROFILE, chartprofile.NATIVE_PROFILE, chartprofile.COMPLETE_PROFILE],
+)
+def test_real_render_profiles_and_patches_preserve_results(task, profile):
     from test_chart_native import setup_chart
 
     _, model, _, frame = setup_chart()
-    return {"model": model, "frame": frame, "render_profile": NATIVE_PROFILE, "patches": []}
+    payload = {"model": model, "frame": frame, "render_profile": profile, "patches": []}
+    first = task.run(payload)
+    assert first["ok"] and base64.b64decode(first["fragment_b64"]).strip()
+    assert first["facts"]
+    assert task.run(payload) == first
+    assert not task.get().built
 
 
-def test_real_probe_and_native_render_return_complete_payload_and_close_resources(child):
-    assert child.request()["engine"]["matplotlib"]
-    result = child.request(native_payload())
-    fragment = base64.b64decode(result["fragment_b64"], validate=True)
-    assert b'id="axes_0.lines_0"' in fragment
-    assert result["manifest"]["elements"] and result["roles"]
-    assert result["coordinates"]["kind"] == "scene-viewport-figure-fraction"
-    assert result["coordinates"]["scene_size_pt"] == [100, 100]
-    assert child.owned[-1].exit_code == 0
-    assert child.owned[-1].confirmed
-    assert chartprocess.active_count() == 0
-    assert envlease.state_of(PYTHON) == envlease.STATE_IDLE
-    proc, argv, kwargs = child.spawned[-1]
-    assert argv == [PYTHON, "-B", "-m", "tavotto.engine.svgchart"]
-    assert kwargs["start_new_session"] == (os.name != "nt")
-    assert kwargs["cwd"] == str(ROOT / "src")
-    assert all(stream.closed for stream in (proc.stdin, proc.stdout, proc.stderr))
-    assert not list((child.path / "data/cache/chart-requests").iterdir())
-
-
-def test_parent_import_does_not_load_scientific_or_native_dependencies(tmp_path):
-    code = (
-        "import importlib.abc,sys\n"
-        f"sys.path.insert(0,{str(ROOT / 'src')!r})\n"
-        "class Deny(importlib.abc.MetaPathFinder):\n"
-        " def find_spec(self,fullname,*args):\n"
-        "  if fullname.split('.')[0] in {'matplotlib','numpy','scipy','PIL','pymupdf','fitz','cairocffi'}:"
-        " raise AssertionError(fullname)\n"
-        "sys.meta_path.insert(0,Deny())\n"
-        "from tavotto.engine import chartprocess\n"
-        "assert chartprocess.active_count()==0\n"
-    )
-    result = subprocess.run(
-        [PYTHON, "-B", "-c", code],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-        timeout=10,
-        encoding="utf-8",
-    )
-    assert result.returncode == 0, result.stderr
-
-
-def test_mutating_environment_refuses_before_spawning_any_chart_code(child):
-    with envlease.mutating("chart-test-install", PYTHON):
-        with pytest.raises(pool.WorkerError) as error:
-            child.request()
-        assert error.value.code == envlease.ENVIRONMENT_MUTATING
-        assert child.spawned == []
-    assert chartprocess.active_count() == 0
-
-
-def test_live_chart_lease_blocks_reverse_mutation_until_owner_confirms(child):
-    child.startup(child.barrier)
-    thread, box = child.background()
-    wait_until(child.marker.exists)
-    assert chartprocess.active_count() == 1
-    assert envlease.state_of(PYTHON) == envlease.STATE_NATIVE_SESSIONS
-    with pytest.raises(envlease.EnvironmentBusy) as error:
-        with envlease.mutating("chart-test-reverse", PYTHON):
-            pytest.fail("mutating entered while the actual chart child was alive")
-    assert error.value.code == envlease.ENVIRONMENT_IN_USE_BY_NATIVE
-    assert child.spawned[0][0].poll() is None
-    child.release.touch()
-    thread.join(20)
-    assert not thread.is_alive() and "error" not in box
-    assert envlease.state_of(PYTHON) == envlease.STATE_IDLE
-
-
-def test_chart_admission_is_global_dynamic_and_released_after_response(child, monkeypatch):
-    monkeypatch.setattr(pool, "max_alive", lambda: 1)
-    child.startup(child.barrier)
-    thread, box = child.background()
-    wait_until(child.marker.exists)
+def test_task_rejects_build_and_does_not_touch_a_real_script(task):
+    script = task.project / "plot.py"
+    script.write_text("raise RuntimeError('USER CODE RAN')", encoding="utf-8")
+    task.run()
+    w = task.get()
     with pytest.raises(pool.WorkerError) as error:
-        chartprocess.run_request(child.path / "other-project", {"probe": True}, timeout=10)
-    assert error.value.code == "chart_engine_unavailable"
-    assert error.value.extra == {"reason": "capacity"}
-    assert len(child.spawned) == 1
-    # The same authority changing at runtime admits another chart task; this is
-    # a chart-class limit, not a claim about resident/native process totals.
-    monkeypatch.setattr(pool, "max_alive", lambda: 2)
-    other, second = child.background()
-    wait_until(lambda: len(child.spawned) == 2)
-    assert chartprocess.active_count() == 2
-    child.release.touch()
-    for running in (thread, other):
-        running.join(20)
-        assert not running.is_alive()
-    assert "error" not in box and "error" not in second
-    assert child.request()["ok"] is True
+        w.request({"cmd": "build"}) if task.plane == "python" else w._call("build", 20)
+    assert error.value.code == "unknown_cmd"
+    assert task.run()["ok"]
+    assert w.last_build_execution_id is None
 
 
-def test_worker_launch_uses_existing_environment_authorities(child, monkeypatch):
-    calls = []
-    original = pool.worker_env
-
-    def worker_env(python, source):
-        calls.append(("worker_env", python, source))
-        env = dict(original(python, source) or os.environ)
-        env["CHART_WORKER_ENV_CANARY"] = "worker"
-        return env
-
-    def launch_env(lau, python, env, overlay, *, bundled):
-        calls.append(("launch_env", python, overlay, bundled))
-        assert env["CHART_WORKER_ENV_CANARY"] == "worker"
-        return {**env, "CHART_ACTIVATION_CANARY": "activated"}
-
-    monkeypatch.setattr(pool, "worker_env", worker_env)
-    monkeypatch.setattr(pool, "launch_env", launch_env)
-    monkeypatch.setattr(pool, "_overlay_for", lambda *_args: {"canary": "overlay"})
-    child.startup(
-        "import os\n"
-        "assert os.environ['CHART_ACTIVATION_CANARY']=='activated'\n"
-        "assert os.environ['CHART_WORKER_ENV_CANARY']=='worker'\n"
-    )
-    assert child.request()["ok"] is True
-    assert calls == [
-        ("worker_env", PYTHON, pool.SOURCE_CURRENT),
-        ("launch_env", PYTHON, {"canary": "overlay"}, False),
-    ]
+def test_chart_and_script_share_capacity_but_not_identity(task):
+    task.run()
+    chart = task.get()
+    script = task.project / "plot.py"
+    script.write_text("def main(): pass", encoding="utf-8")
+    ordinary = pool.get("plot.py", str(task.project), "main")
+    assert ordinary is not chart and ordinary.spec.target_kind == execspec.TARGET_SCRIPT
+    assert pool.alive_count() == 2
+    other = task.root / "other"
+    other.mkdir()
+    chart._lease_until = ordinary._lease_until = 0
+    chart.last_used = 0
+    extra = pool.acquire_chart(other)
+    assert extra is not chart
+    deadline = time.monotonic() + 10
+    while chart.alive() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not chart.alive()
+    assert ordinary.alive() and extra.alive()
 
 
-@pytest.mark.parametrize("failure", ["activation", "popen", "owner"])
-def test_spawn_failures_release_admission_and_lease_without_fallback(child, monkeypatch, failure):
-    def fail(*_args, **_kwargs):
-        if failure == "activation":
-            raise launcher.LauncherUnavailable("test activation failed")
-        raise OSError("test spawn/attach failed")
+def test_environment_change_rebuilds_task(task, monkeypatch):
+    task.run()
+    first = task.get()
+    monkeypatch.setattr(pool, "generation_stale", lambda w: w is first)
+    second = task.get()
+    assert second is not first
+    assert second.generation > first.generation
+    assert task.run()["ok"]
 
-    if failure == "activation":
-        monkeypatch.setattr(pool, "launch_env", fail)
-    elif failure == "popen":
-        monkeypatch.setattr(subprocess, "Popen", fail)
-    else:
-        monkeypatch.setattr(desktopproc, "_scope_for", fail)
+
+def test_protocol_mismatch_retires_the_worker(task):
+    task.fake("r['request_id']='wrong'")
+    w = task.get()
     with pytest.raises(pool.WorkerError) as error:
-        child.request()
-    assert error.value.code == (
-        "conda_launcher_unavailable" if failure == "activation" else "chart_engine_unavailable"
-    )
-    assert chartprocess.active_count() == 0
-    assert envlease.state_of(PYTHON) == envlease.STATE_IDLE
-    if failure != "owner":
-        assert not child.spawned
+        task.run()
+    assert error.value.code == "protocol_mismatch"
+    assert not w.alive()
 
 
-def test_nonzero_exit_is_rejected_even_after_valid_engine_json(child):
-    child.startup(
-        "import atexit,os,sys\natexit.register(lambda:(sys.stdout.flush(),os._exit(37)))\n"
-    )
+def test_transport_limit_stops_an_unterminated_response(task, monkeypatch):
+    monkeypatch.setattr(chartwire, "MAX_FRAME_BYTES", 1024)
+    task.fake("sys.stdout.write('x'*4096); sys.stdout.flush(); time.sleep(15)")
+    w = task.get()
     with pytest.raises(pool.WorkerError) as error:
-        child.request()
-    assert error.value.code == "chart_engine_unavailable"
-    assert child.owned[0].exit_code == 37
-    assert json.loads(child.owned[0].stdout.text())["ok"] is True
-
-
-def test_complete_response_larger_than_tail_and_large_stderr_are_both_drained(child):
-    child.startup("import sys\nsys.stderr.write('e'*(2*1024*1024));sys.stderr.flush()\n")
-    payload = native_payload()
-    # This is real rendered/chart metadata, not synthetic protocol padding.
-    payload["patches"] = [
-        {"gid": "axes_0.xlabel", "prop": "text", "value": "measured label " * 1200}
-    ]
-    result = child.request(payload)
-    assert result["ok"] is True
-    owner = child.owned[0]
-    assert owner.stdout.total > owner.policy.tail_bytes
-    assert len(owner.stdout.text().encode()) <= owner.policy.tail_bytes
-    assert owner.stderr.total >= 2 * 1024 * 1024  # matplotlib may add its own diagnostics
-    assert len(owner.stderr.text().encode()) == owner.policy.tail_bytes
-    assert result["manifest"]["elements"]
-    assert base64.b64decode(result["fragment_b64"]).endswith(b"</svg>\n")
-
-
-def test_stdout_overflow_is_signalled_by_pump_and_cancelled_by_request_owner(child, monkeypatch):
-    monkeypatch.setattr(chartprocess, "MAX_STDOUT_BYTES", 1024)
-    child.startup(
-        "import sys,time\nsys.stdout.write('x'*65536);sys.stdout.flush();time.sleep(30)\n"
-    )
-    cancel_threads = []
-    original = desktopproc.DesktopProcess.cancel
-
-    def cancel(owner):
-        cancel_threads.append(threading.current_thread().name)
-        return original(owner)
-
-    monkeypatch.setattr(desktopproc.DesktopProcess, "cancel", cancel)
-    started = time.monotonic()
-    with pytest.raises(pool.WorkerError) as error:
-        child.request(timeout=10)
+        task.run(timeout=5)
     assert error.value.code == "svg_resource_limit"
-    assert time.monotonic() - started < 5
-    assert cancel_threads == [threading.current_thread().name]
-    assert child.owned[0].confirmed
+    assert not w.alive()
 
 
-@pytest.mark.parametrize("probe", [False, True])
-def test_timeout_includes_blocked_stdin_and_reaps_child(child, probe):
-    child.startup("import time\ntime.sleep(30)\n")
+def test_deadline_covers_a_child_that_stops_reading_stdin(task):
+    task.fake("", after_ping="time.sleep(15)")
+    w = task.get()
+    if task.plane == "python":
+        w.request({"cmd": "ping"}, 5)
     started = time.monotonic()
     with pytest.raises(pool.WorkerError) as error:
-        child.request({"probe": probe, "padding": "x" * 2**20}, timeout=0.25)
-    assert error.value.code == ("chart_engine_unavailable" if probe else "svg_scaffold_timeout")
-    assert time.monotonic() - started < 5
-    assert child.spawned[0][0].poll() is not None
-    assert child.owned[0].confirmed
-    assert envlease.state_of(PYTHON) == envlease.STATE_IDLE
+        task.run({"probe": False, "padding": "x" * 2**20}, timeout=0.25)
+    assert error.value.code == "svg_scaffold_timeout"
+    assert time.monotonic() - started < 3
+    assert not w.alive()
 
 
-def test_timeout_cleans_descendant_holding_protocol_pipe_without_killing_unrelated(child):
-    grandchild_file = child.path / "grandchild"
-    child.startup(
-        "import os,subprocess,sys,time\nfrom pathlib import Path\n"
-        "p=subprocess.Popen([sys.executable,'-I','-c','import time;time.sleep(30)'],"
-        "stdin=subprocess.DEVNULL,creationflags=0x08000000 if os.name=='nt' else 0)\n"
-        f"Path({str(grandchild_file)!r}).write_text(str(p.pid))\n"
-        "time.sleep(30)\n"
-    )
-    # Deliberately not created through the fixture's observed/chart spawn path.
-    unrelated = subprocess.Popen(
-        [PYTHON, "-I", "-c", "import time;time.sleep(30)"],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        creationflags=chartprocess.runtime.CREATE_NO_WINDOW,
-    )
-    child.spawned.pop()  # unrelated is explicitly owned/cleaned in this test
+def test_explicit_cancel_retires_a_running_chart(task):
+    marker = task.root / "running"
+    task.fake(f"open({str(marker)!r},'w').close(); time.sleep(15)")
+    w = task.get()
+    errors = []
+
+    def run():
+        try:
+            task.run(timeout=10)
+        except pool.WorkerError as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=run)
+    thread.start()
     try:
-        started = time.monotonic()
-        with pytest.raises(pool.WorkerError) as error:
-            child.request({"probe": True}, timeout=0.5)
-        assert error.value.code == "chart_engine_unavailable"
-        assert grandchild_file.exists()
-        assert time.monotonic() - started < 5
-        owner = child.owned[0]
-        assert owner.scope_kind in (desktopproc.SCOPE_JOB, desktopproc.SCOPE_GROUP)
-        assert owner.confirmed and owner.scope.empty()
-        assert not procprobe.alive(int(grandchild_file.read_text()))
-        assert unrelated.poll() is None
+        deadline = time.monotonic() + 10
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert marker.exists()
+        w.force_kill()
     finally:
-        unrelated.kill()
-        unrelated.wait(timeout=5)
+        thread.join(15)
+    assert not thread.is_alive() and errors and not w.alive()
 
 
-def test_unconfirmed_owner_retains_environment_and_capacity_until_real_confirmation(
-    child, monkeypatch
-):
-    pending = {}
-    proc = SimpleNamespace(stdin=None, stdout=None, stderr=None, poll=lambda: None)
-    monkeypatch.setattr(subprocess, "Popen", lambda *_args, **_kwargs: proc)
+def test_domain_error_retains_old_result_shape_and_worker_remains_usable(task):
+    result = task.run({"model": {}, "frame": {}})
+    assert result["ok"] is False and result["code"] and result["error"]
+    assert task.run()["ok"]
 
-    def own(_proc, _policy, *, on_exit, **_kwargs):
-        pending["finish"] = on_exit
-        owner = SimpleNamespace(
-            start=lambda: None,
-            write_stdin=lambda _data: True,
-            close_stdin=lambda: None,
-            cancel=lambda: SimpleNamespace(confirmed=False),
-            exit_code=None,
-        )
-        return owner
 
-    monkeypatch.setattr(desktopproc, "own_process", own)
-    try:
-        with pytest.raises(pool.WorkerError) as error:
-            child.request(timeout=0.05)
-        assert error.value.code == "chart_engine_unavailable"
-        assert chartprocess.active_count() == 1
-        assert envlease.state_of(PYTHON) == envlease.STATE_NATIVE_SESSIONS
-        with pytest.raises(envlease.EnvironmentBusy):
-            with envlease.mutating("chart-test-unknown-close", PYTHON):
-                pytest.fail("unknown scope must remain occupied")
-    finally:
-        pending["finish"](0, cancelled=True)
-    assert chartprocess.active_count() == 0
-    assert envlease.state_of(PYTHON) == envlease.STATE_IDLE
+@pytest.mark.parametrize(
+    "payload,timeout", [([], 1), ({}, 0), ({}, float("inf")), ({"x": float("nan")}, 1)]
+)
+def test_invalid_request_is_rejected_before_pool_acquisition(monkeypatch, payload, timeout):
+    monkeypatch.setattr(
+        pool, "acquire_chart", lambda *a: pytest.fail("invalid request acquired a worker")
+    )
+    with pytest.raises(pool.WorkerError) as error:
+        chartprocess.run_request(".", payload, timeout=timeout)
+    assert error.value.code == "svg_scaffold_invalid"
+
+
+def test_request_budget_is_checked_before_acquisition(monkeypatch):
+    monkeypatch.setattr(chartwire, "MAX_REQUEST_BYTES", 10)
+    monkeypatch.setattr(
+        pool, "acquire_chart", lambda *a: pytest.fail("oversize request acquired a worker")
+    )
+    with pytest.raises(pool.WorkerError) as error:
+        chartprocess.run_request(".", {"padding": "too long"}, timeout=1)
+    assert error.value.code == "svg_resource_limit"
 
 
 @pytest.mark.parametrize(
@@ -427,83 +281,161 @@ def test_unconfirmed_owner_retains_environment_and_capacity_until_real_confirmat
     ],
 )
 def test_malformed_response_never_becomes_success(raw, probe):
-    with pytest.raises(pool.WorkerError) as error:
-        chartprocess._response(raw, probe)
+    with pytest.raises(chartwire.ChartWireError) as error:
+        chartwire.response(raw, probe)
     assert error.value.code == "svg_scaffold_invalid"
 
 
-def test_worker_error_envelope_is_preserved_for_app_semantic_handling(child):
-    result = child.request({"model": {}, "frame": {}})
-    assert result["ok"] is False
-    assert result["code"] and result["error"]
-    assert child.owned[0].exit_code == 0
+def test_chart_import_keeps_scientific_modules_out_of_the_parent():
+    result = subprocess.run(
+        [
+            PYTHON,
+            "-c",
+            "from tavotto.engine import chartprocess; import sys; assert not ({'numpy','matplotlib'} & sys.modules.keys())",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env={**os.environ, "PYTHONPATH": str(ROOT / "src")},
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
 
 
-def test_chart_admission_covers_complete_response_validation(child, monkeypatch):
-    original = chartprocess._response
+def test_real_eps_packing_uses_the_same_task(task):
+    import hashlib
 
-    def response(raw, probe):
-        assert chartprocess.active_count() == 1
-        assert child.owned[0].confirmed  # interpreter is no longer in use
-        assert envlease.state_of(PYTHON) == envlease.STATE_IDLE
-        return original(raw, probe)
+    from tavotto.rendercore.epscontainer import SCHEMA
 
-    monkeypatch.setattr(chartprocess, "_response", response)
-    assert child.request()["ok"] is True
-    assert chartprocess.active_count() == 0
-
-
-@pytest.mark.parametrize(
-    "payload,timeout", [([], 1), ({}, 0), ({}, float("inf")), ({"x": float("nan")}, 1)]
-)
-def test_invalid_request_never_admits_or_spawns(child, payload, timeout):
-    with pytest.raises(pool.WorkerError) as error:
-        chartprocess.run_request(child.path, payload, timeout=timeout)
-    assert error.value.code == "svg_scaffold_invalid"
-    assert not child.spawned and chartprocess.active_count() == 0
-
-
-def test_existing_json_and_svg_budgets_reject_before_launch(child, monkeypatch):
-    monkeypatch.setattr(chartprocess, "MAX_REQUEST_BYTES", 10)
-    with pytest.raises(pool.WorkerError) as error:
-        child.request({"text": "this exceeds the injected byte budget"})
-    assert error.value.code == "svg_resource_limit"
-    assert not child.spawned
+    ps = "0 0 moveto 10 10 lineto stroke\n"
+    prepared = {
+        "schema": SCHEMA,
+        "ps_ascii": ps,
+        "width_pt": 100,
+        "height_pt": 80,
+        "source_svg_sha256": "a" * 64,
+        "ps_sha256": hashlib.sha256(ps.encode("ascii")).hexdigest(),
+        "expanded_cost": 1,
+    }
+    result = task.run({"action": "pack_eps", "prepared": prepared})
+    assert result["ok"]
+    eps = base64.b64decode(result["eps_b64"])
+    assert eps.startswith(b"%!PS-Adobe-3.0 EPSF-3.0") and b"%%BoundingBox: 0 0 100 80" in eps
+    for key in ("source_svg_sha256", "ps_sha256", "width_pt", "height_pt"):
+        assert result[key] == prepared[key]
+    assert task.run()["ok"]
 
 
-def test_response_uses_existing_structure_and_svg_byte_limits(monkeypatch):
+def test_actual_task_installs_shared_file_guards_before_computation(task, monkeypatch):
+    protected = task.project / "keep.txt"
+    protected.write_text("KEEP", encoding="utf-8")
+    hook = task.root / "hook"
+    hook.mkdir()
+    marker = task.root / "guard-observed"
+    (hook / "sitecustomize.py").write_text(
+        "import sys, pathlib\n"
+        "def observe(frame,event,arg):\n"
+        " if event=='call' and frame.f_code.co_name=='execute_request':\n"
+        f"  p=pathlib.Path({str(protected)!r}); p.unlink(); p.write_text('BAD',encoding='utf-8')\n"
+        "  assert p.read_text(encoding='utf-8')=='KEEP'\n"
+        f"  pathlib.Path({str(marker)!r}).write_text(str(pathlib.Path.cwd()),encoding='utf-8')\n"
+        "sys.setprofile(observe)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join([str(hook), str(ROOT / "src")]))
+    assert task.run()["ok"]
+    assert protected.read_text(encoding="utf-8") == "KEEP"
+    assert marker.read_text(encoding="utf-8") == str(task.get().sandbox)
+
+
+def test_response_preserves_structure_and_fragment_budgets(monkeypatch):
     engine = {"matplotlib": "m", "numpy": "n", "tavotto": "t"}
     raw = {"ok": True, "engine": engine, "fragment_b64": "PHN2Zy8+", "facts": {}}
-    monkeypatch.setattr(chartprocess, "MAX_FRAGMENT_BYTES", 4)
-    with pytest.raises(pool.WorkerError) as error:
-        chartprocess._response(json.dumps(raw).encode(), False)
+    monkeypatch.setattr(chartwire, "MAX_FRAGMENT_BYTES", 4)
+    with pytest.raises(chartwire.ChartWireError) as error:
+        chartwire.response(json.dumps(raw).encode(), False)
     assert error.value.code == "svg_resource_limit"
     nested = 0
-    for _ in range(chartprocess.chartprofile.MAX_JSON_DEPTH + 1):
+    for _ in range(chartprofile.MAX_JSON_DEPTH + 1):
         nested = [nested]
-    with pytest.raises(pool.WorkerError) as error:
-        chartprocess._response(json.dumps({**raw, "nested": nested}).encode(), True)
+    with pytest.raises(chartwire.ChartWireError) as error:
+        chartwire.response(json.dumps({**raw, "nested": nested}).encode(), True)
     assert error.value.code == "svg_resource_limit"
 
 
-def test_owner_attachment_does_not_start_threads_before_callers_state_is_ready(monkeypatch):
-    scope = SimpleNamespace(kind="test")
-    proc = SimpleNamespace(pid=42, stdin=None)
-    monkeypatch.setattr(desktopproc, "_scope_for", lambda value: scope)
-    owner = desktopproc.own_process(proc, desktopproc.OwnedPolicy(), gated=True)
-    assert owner.scope is scope and owner.proc is proc
-    assert not owner._pumps and owner._waiter is None
-    assert not owner._armed.is_set()
+def test_unconfirmed_retirement_keeps_chart_identity_fenced(task, monkeypatch):
+    task.run()
+    worker = task.get()
+    with monkeypatch.context() as patch:
+        if task.plane == "workerd":
+            patch.setattr(worker._client, "call", lambda *a, **kw: {"closed": False})
+        else:
+            patch.setattr(worker, "_wait_until_exited", lambda *a: False)
+            patch.setattr(worker.proc, "kill", lambda: None)
+        assert worker.force_kill() is False
+        assert pool.is_fenced(worker)
+        with pytest.raises(pool.WorkerError):
+            task.get()
+    assert worker.force_kill() is True
 
 
-def test_owner_attach_failure_kills_and_reaps_before_raising(monkeypatch):
-    calls = []
+@pytest.mark.parametrize("reason", ["invalidate", "lru", "environment"])
+def test_unconfirmed_chart_close_blocks_replacement(task, monkeypatch, reason):
+    task.run()
+    worker = task.get()
+    entered = threading.Event()
 
-    def broken(_proc):
-        raise OSError("attach failed")
+    def unconfirmed():
+        worker._fenced = True
+        entered.set()
+        return False
 
-    monkeypatch.setattr(desktopproc, "_scope_for", broken)
-    proc = SimpleNamespace(kill=lambda: calls.append("kill"), wait=lambda: calls.append("wait"))
-    with pytest.raises(OSError, match="attach failed"):
-        desktopproc.own_process(proc, desktopproc.OwnedPolicy())
-    assert calls == ["kill", "wait"]
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(worker, "shutdown", unconfirmed)
+            patch.setattr(worker, "force_kill", lambda: False)
+            if reason == "environment":
+                patch.setattr(pool, "generation_stale", lambda w: w is worker)
+            elif reason == "invalidate":
+                pool.invalidate("", str(task.project))
+                assert entered.wait(5)
+            else:
+                patch.setattr(pool, "MAX_ALIVE", 1)
+                worker._lease_until = 0.0
+                worker.last_used = 0.0
+                (task.project / "plot.py").write_text("def main(): pass", encoding="utf-8")
+                pool.get("plot.py", str(task.project), "main")
+                assert entered.wait(5)
+            with pytest.raises(pool.WorkerError) as error:
+                task.get()
+            assert error.value.code == "session_dead"
+    finally:
+        worker.force_kill()
+
+
+def test_unconfirmed_chart_retirement_still_occupies_mixed_capacity(task, monkeypatch):
+    task.run()
+    chart = task.get()
+    first = None
+
+    def unconfirmed():
+        chart._fenced = True
+        return False
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(chart, "shutdown", unconfirmed)
+            patch.setattr(chart, "force_kill", lambda: False)
+            pool.invalidate("", str(task.project))
+            (task.project / "one.py").write_text("def main(): pass", encoding="utf-8")
+            (task.project / "two.py").write_text("def main(): pass", encoding="utf-8")
+            first = pool.get("one.py", str(task.project), "main")
+            first._lease_until = 0.0
+            first.last_used = 0.0
+            pool.get("two.py", str(task.project), "main")
+            deadline = time.monotonic() + 5
+            while first.alive() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert not first.alive()
+    finally:
+        chart.force_kill()

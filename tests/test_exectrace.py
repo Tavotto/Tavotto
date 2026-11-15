@@ -491,6 +491,7 @@ def test_attributes_and_vocabularies_are_closed_sets():
         "cli_target_bytes",
         "cli_target_tool_ok",
         "cli_sandbox_mode",
+        "cli_fail_status",
         "cli_first_event_ms",
         "cli_max_gap_ms",
         "cli_idle_end_ms",
