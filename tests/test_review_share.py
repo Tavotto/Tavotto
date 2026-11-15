@@ -1027,3 +1027,68 @@ def test_layout_versions_are_page_framed(on, renders):
         reviewinbox.detail(reviewinbox.get(st["share"]["share_id"]))["versions"][0]["frame"]
         == "page"
     )
+
+
+# --------------------------------------------------------------------------- 仅回环开发模式的放宽
+def test_dev_loopback_mode_allows_plain_http_endpoints_but_only_on_loopback(monkeypatch):
+    for good in ("http://127.0.0.1:8787", "http://localhost:8787", "https://127.0.0.1:9"):
+        monkeypatch.setenv(reviewshare.ENV_ENDPOINT, good)
+        monkeypatch.delenv(diagsend.ENV_DEV_LOOPBACK, raising=False)
+        assert reviewshare.resolve_target() is None  # 没开开发开关：一律不认
+        monkeypatch.setenv(diagsend.ENV_DEV_LOOPBACK, "1")
+        t = reviewshare.resolve_target()
+        assert t is not None and t.loopback
+    monkeypatch.setenv(reviewshare.ENV_ENDPOINT, "http://127.0.0.1:8787")
+    assert reviewshare.resolve_target().base == "http://127.0.0.1:8787"
+    for bad in (
+        "http://evil.example",
+        "http://review.tavotto.cn",
+        "http://127.0.0.1.evil.example:8787",
+        "http://u@127.0.0.1:8787",
+        "http://127.0.0.1:8787/x",
+    ):
+        monkeypatch.setenv(reviewshare.ENV_ENDPOINT, bad)
+        assert reviewshare.resolve_target() is None, bad
+
+
+def test_dev_target_accepts_any_loopback_review_url_and_upload_address(monkeypatch):
+    monkeypatch.setenv(diagsend.ENV_DEV_LOOPBACK, "1")
+    monkeypatch.setenv(reviewshare.ENV_ENDPOINT, "http://127.0.0.1:8787")
+    t = reviewshare.resolve_target()
+    assert reviewshare._review_url_ok("http://127.0.0.1:5173/r/abc?x=1", t)
+    assert reviewshare._review_url_ok("http://localhost:5173/anything", t)
+    assert not reviewshare._review_url_ok("http://evil.example/r/" + "a" * 20, t)
+    assert not reviewshare._review_url_ok("https://review.tavotto.cn/r/" + "a" * 20, t)
+    spec = reviewshare._upload_spec(
+        {"url": "http://127.0.0.1:8787/_blob/upload", "method": "POST", "fields": {"k": "v"}}, t
+    )
+    assert spec["url"].endswith("/_blob/upload")
+    for bad in (
+        "http://evil.example/_blob/upload",
+        "http://127.0.0.1.evil.example/u",
+        "http://u@127.0.0.1/u",
+    ):
+        with pytest.raises(diagsend._Failure):
+            reviewshare._upload_spec({"url": bad, "method": "PUT"}, t)
+
+
+def test_production_rules_are_untouched_by_the_dev_relaxation():
+    t = reviewshare.resolve_target()
+    assert (
+        t.host == "review.tavotto.cn" and not t.loopback and t.base == "https://review.tavotto.cn"
+    )
+    assert reviewshare._review_url_ok("https://review.tavotto.cn/r/" + "a" * 20, t)
+    for bad in (
+        "http://review.tavotto.cn/r/" + "a" * 20,
+        "https://127.0.0.1:5173/r/" + "a" * 20,
+        "http://127.0.0.1:5173/r/" + "a" * 20,
+        "https://evil.example/r/" + "a" * 20,
+    ):
+        assert not reviewshare._review_url_ok(bad, t), bad
+    for bad in (
+        "http://127.0.0.1:8787/_blob/upload",
+        "https://127.0.0.1:8787/u",
+        "http://x.myqcloud.com/",
+    ):
+        with pytest.raises(diagsend._Failure):
+            reviewshare._upload_spec({"url": bad, "method": "POST", "fields": {}}, t)

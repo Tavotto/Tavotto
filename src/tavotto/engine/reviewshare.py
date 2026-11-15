@@ -147,15 +147,63 @@ def _flag(name: str) -> bool:
     return os.environ.get(name, "").strip() == "1"
 
 
+_DEV_HOSTS = frozenset({"127.0.0.1", "localhost"})
+
+
+@dataclass(frozen=True)
+class _DevTarget(diagsend.Target):
+    """**仅回环开发模式**的端点（可以是 `http://`，本机服务端常没有 TLS）。生产 `Target` 永远是 https。"""
+
+    scheme: str = "https"
+
+    @property
+    def base(self) -> str:
+        default = 443 if self.scheme == "https" else 80
+        return f"{self.scheme}://{self.host}" + ("" if self.port == default else f":{self.port}")
+
+
+def _dev_endpoint(raw: str) -> diagsend.Target | None:
+    """回环开发模式下的端点：`http(s)://127.0.0.1|localhost[:端口]`，无用户信息 / 路径 / 查询串。"""
+    try:
+        parts = urllib.parse.urlsplit(raw.strip())
+        host, port = (parts.hostname or "").lower(), parts.port
+    except ValueError:
+        return None
+    if parts.scheme not in ("http", "https") or host not in _DEV_HOSTS:
+        return None
+    if "@" in parts.netloc or parts.query or parts.fragment or parts.path not in ("", "/"):
+        return None
+    return _DevTarget(host, port or (443 if parts.scheme == "https" else 80), True, parts.scheme)
+
+
+def _is_dev_loopback(target: diagsend.Target) -> bool:
+    return isinstance(target, _DevTarget) and target.loopback
+
+
+def _loopback_url(parts: urllib.parse.SplitResult) -> bool:
+    """回环开发模式下 review_url / 上传地址的放行规则：http(s)、主机必须是回环，端口与路径任意。"""
+    return (
+        parts.scheme in ("http", "https")
+        and (parts.hostname or "").lower() in _DEV_HOSTS
+        and parts.username is None
+        and "@" not in parts.netloc
+        and not parts.fragment
+    )
+
+
 def resolve_target() -> diagsend.Target | None:
     """此刻允许连的端点；None = 功能关闭（入口不出现、不联网）。设了 `TAVOTTO_REVIEW_ENDPOINT` 但不合规也是 None，不回退。"""
     if _flag(ENV_HARD_OFF):
         return None
     raw = os.environ.get(ENV_ENDPOINT)
     if raw is not None and raw.strip():
-        return diagsend.parse_endpoint(
-            raw, dev_loopback=_flag(diagsend.ENV_DEV_LOOPBACK), hosts=REVIEW_HOSTS
-        )
+        dev = _flag(diagsend.ENV_DEV_LOOPBACK)
+        got = diagsend.parse_endpoint(raw, dev_loopback=dev, hosts=REVIEW_HOSTS)
+        if got is not None and got.loopback:
+            return _dev_endpoint(raw)  # 回环只有开发模式才走到这里；保留 https 回环的旧行为
+        if got is None and dev:
+            return _dev_endpoint(raw)
+        return got
     return diagsend.parse_endpoint(PRODUCTION_ENDPOINT, dev_loopback=False, hosts=REVIEW_HOSTS)
 
 
@@ -1006,7 +1054,10 @@ def _upload_spec(raw: object, target: diagsend.Target) -> dict:
         host, port = (parts.hostname or "").lower(), parts.port
     except ValueError:
         raise bad from None
-    if (
+    if _is_dev_loopback(target):
+        if not _loopback_url(parts):  # 开发模式：任意回环端口 / 路径、http 也行；非回环主机照旧拒
+            raise bad
+    elif (
         parts.scheme != "https"
         or not host
         or parts.username is not None
@@ -1014,7 +1065,9 @@ def _upload_spec(raw: object, target: diagsend.Target) -> dict:
         or parts.fragment
     ):
         raise bad
-    if target.loopback:
+    if _is_dev_loopback(target):
+        pass
+    elif target.loopback:
         if host != target.host or (port or 443) != target.port:
             raise bad
     elif (
@@ -1120,6 +1173,8 @@ def _review_url_ok(url: object, target: diagsend.Target) -> bool:
         host, port = (parts.hostname or "").lower(), parts.port
     except ValueError:
         return False
+    if _is_dev_loopback(target):
+        return _loopback_url(parts)
     if (
         parts.scheme != "https"
         or parts.username is not None
