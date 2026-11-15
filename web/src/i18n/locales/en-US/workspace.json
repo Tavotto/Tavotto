@@ -493,7 +493,12 @@
     "roundCorners": "Round corners",
     "shapeBuilder": "Shape builder",
     "makeClipMask": "Make clipping mask",
-    "releaseClipMask": "Release clipping mask"
+    "releaseClipMask": "Release clipping mask",
+    "transformMove": "Move",
+    "transformScale": "Scale",
+    "transformRotate": "Rotate",
+    "transformSkew": "Skew",
+    "transformReflect": "Reflect"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -1033,7 +1038,13 @@
     "simplifyNothing": "Nothing to simplify",
     "clipNeedTwo": "Select at least 2 objects to make a clipping mask",
     "clipNeedPathOnTop": "The top object must be a path or a closed shape to act as the clipping mask",
-    "clipMade": "Clipping mask made"
+    "clipMade": "Clipping mask made",
+    "skewUnsupported": "Text and figures cannot be skewed",
+    "skewSkipped_one": "{{count}} text or figure was not skewed",
+    "skewSkipped_other": "{{count}} texts or figures were not skewed",
+    "rotatePanelUnsupported": "Figures rotate in 90° steps only",
+    "rotatePanelSkipped_one": "{{count}} figure was not rotated (figures rotate in 90° steps only)",
+    "rotatePanelSkipped_other": "{{count}} figures were not rotated (figures rotate in 90° steps only)"
   },
   "tabs": {
     "allCanvases": "All canvases",

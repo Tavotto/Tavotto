@@ -1683,6 +1683,14 @@ export default interface Resources {
           "keywords": "readiness status editable jr jieru 接入 可编辑 仅版面 仅排版 为什么不能编辑",
           "label": "显示项目接入状态"
         },
+        "reflect-horizontal": {
+          "keywords": "reflect mirror flip horizontal spjx 水平镜像 翻转",
+          "label": "水平镜像"
+        },
+        "reflect-vertical": {
+          "keywords": "reflect mirror flip vertical czjx 垂直镜像 翻转",
+          "label": "垂直镜像"
+        },
         "refresh-project": {
           "keywords": "refresh reload rescan sx shuaxin 重新扫描 新文件 检查",
           "label": "刷新项目"
@@ -1742,6 +1750,10 @@ export default interface Resources {
         "swap-fill-stroke": {
           "keywords": "swap fill stroke hhtsms 互换",
           "label": "互换填色和描边"
+        },
+        "transform-again": {
+          "keywords": "transform again repeat zcbh 再次变换 重复",
+          "label": "再次变换"
         },
         "tutorial-reset": {
           "keywords": "tutorial sample reset restart jc jiaocheng shili 示例 重置",
@@ -6172,7 +6184,33 @@ export default interface Resources {
       "zTicks": "Z 刻度"
     },
     "transform": {
+      "lockRatio": "锁定宽高比",
+      "ratioLocked": "宽高比已锁定",
+      "ratioUnlocked": "宽高比未锁定",
+      "refPoint": {
+        "b": "下中",
+        "bl": "左下",
+        "br": "右下",
+        "c": "中心",
+        "l": "左中",
+        "label": "参考点",
+        "r": "右中",
+        "t": "上中",
+        "tl": "左上",
+        "tr": "右上"
+      },
+      "refPointTip": "参考点：{{point}}。X / Y 报这个点，缩放、旋转、倾斜、镜像都以它为不动点",
+      "reflectH": "水平镜像",
+      "reflectV": "垂直镜像",
+      "rotatePanelHint": "图在「图」那一节按 90° 旋转",
       "rotation": "旋转",
+      "rotationSkew": "旋转 · 倾斜",
+      "scaleStrokes": "缩放描边和效果",
+      "scaleStrokesOff": "缩放时线宽和圆角不变",
+      "scaleStrokesOn": "缩放时线宽和圆角跟着变",
+      "skew": "水平倾斜",
+      "skewTip": "水平倾斜：形状会变成路径",
+      "skewUnsupported": "文字和图不能倾斜",
       "summary": "X {{x}} · Y {{y}} mm",
       "textHeightAuto": "文字高度随内容",
       "textWidthAuto": "竖排的宽度随列数",
@@ -7070,6 +7108,11 @@ export default interface Resources {
       "tickSideHide": "{{side}}：隐藏刻度线",
       "tickSideOff": "{{side}}：不显示{{dir}}刻度",
       "tickSideOn": "{{side}}：显示{{dir}}刻度",
+      "transformMove": "移动",
+      "transformReflect": "镜像",
+      "transformRotate": "旋转",
+      "transformScale": "缩放",
+      "transformSkew": "倾斜",
       "unbindStyle": "不再跟随样式",
       "ungroup": "取消成组",
       "unhideElement": "恢复隐藏元素",
@@ -8198,8 +8241,12 @@ export default interface Resources {
       "renderDone": "渲染完成：{{name}}",
       "renderFailed": "无法渲染 {{name}}",
       "renderFailedWithError": "无法渲染 {{name}}。{{error}}",
+      "rotatePanelSkipped_other": "有 {{count}} 张图没有旋转（图只能按 90° 旋转）",
+      "rotatePanelUnsupported": "图只能按 90° 旋转",
       "scriptChanged_other": "脚本已更新，{{count}} 张图已重新渲染",
       "simplifyNothing": "已经很简单了，没有可删的锚点",
+      "skewSkipped_other": "有 {{count}} 个文字或图没有倾斜",
+      "skewUnsupported": "文字和图不能倾斜",
       "sourceLinked_other": "已找到源脚本（{{count}} 张）",
       "sourceLostEditing": "你可能移动了该图脚本，需要重新关联。",
       "sourceLostRelink": "重新关联脚本",

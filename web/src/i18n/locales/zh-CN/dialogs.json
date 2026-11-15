@@ -700,6 +700,18 @@
       "release-clip-mask": {
         "keywords": "release clipping mask sfjqmb 释放 剪切蒙版",
         "label": "释放剪切蒙版"
+      },
+      "transform-again": {
+        "keywords": "transform again repeat zcbh 再次变换 重复",
+        "label": "再次变换"
+      },
+      "reflect-horizontal": {
+        "keywords": "reflect mirror flip horizontal spjx 水平镜像 翻转",
+        "label": "水平镜像"
+      },
+      "reflect-vertical": {
+        "keywords": "reflect mirror flip vertical czjx 垂直镜像 翻转",
+        "label": "垂直镜像"
       }
     },
     "listLabel": "命令",
