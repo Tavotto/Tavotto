@@ -5382,14 +5382,15 @@ export default interface Resources {
       }
     },
     "gradient": {
-      "addStop": "添加色标",
       "angle": "渐变角度",
       "angleTip": "0° 从左到右，逆时针增加",
-      "center": "渐变中心",
-      "centerX": "中心 X",
-      "centerY": "中心 Y",
+      "barTip": "点空白处加色标，往下拖出色带删除",
+      "fillBar": "填充色带",
+      "fillCenter": "填充中心",
+      "fillCenterX": "填充中心 X",
+      "fillCenterY": "填充中心 Y",
       "fillKind": "填充类型",
-      "fillStops": "填充色标",
+      "fillRadius": "填充半径",
       "kind": {
         "linear": "线性",
         "radial": "径向",
@@ -5397,15 +5398,19 @@ export default interface Resources {
       },
       "kindTip": "纯色、线性渐变或径向渐变",
       "mixed": "多个值",
-      "radius": "渐变半径",
       "radiusTip": "按对象长边的百分比",
-      "removeStop": "删除色标 {{n}}",
+      "reverse": "反向",
+      "stop": "色标 {{n}}",
       "stopColor": "色标 {{n}} 的颜色",
       "stopOffset": "色标 {{n}} 的位置",
       "stopOpacity": "色标 {{n}} 的不透明度",
       "stopOpacityTip": "这个色标的不透明度",
+      "strokeBar": "描边色带",
+      "strokeCenter": "描边中心",
+      "strokeCenterX": "描边中心 X",
+      "strokeCenterY": "描边中心 Y",
       "strokeKind": "描边类型",
-      "strokeStops": "描边色标"
+      "strokeRadius": "描边半径"
     },
     "gradientStops": {
       "bottom": "下端",

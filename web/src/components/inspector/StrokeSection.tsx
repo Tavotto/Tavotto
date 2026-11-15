@@ -42,7 +42,7 @@ import { INSPECTOR_LABEL_W } from './layout'
 import { ColorField, NO_COLOR, NumberField, TextInput } from '../ui/Input'
 import { Popover } from '../ui/Popover'
 import { EffectToggle } from './controls/EffectToggle'
-import { gradientOf, GradientKindSelect, GradientRows } from './controls/GradientControls'
+import { GradientEditor, GradientKindSelect, gradientOf, GradientPreview, RadialRows } from './controls/GradientControls'
 import { OptionGrid, type GridOption } from './controls/OptionGrid'
 import { PickerTrigger } from './controls/PickerTrigger'
 import { shared } from './common'
@@ -670,7 +670,11 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
   /** 渐变（ADR 0186）：填充渐变只给有填充的、描边渐变只给有描边的 */
   const fillables = objs.filter((o) => markFillable(o) && !!o.fill)
   const stroked = objs.filter(markStrokeOn)
-  const gradientOn = fillables.some((o) => gradientOf(o, 'fill')) || stroked.some((o) => gradientOf(o, 'stroke'))
+  // 这一侧的渐变以第一个对象为准（多选时编辑写给全部）
+  const fillGrad = fillables.map((o) => gradientOf(o, 'fill')).find(Boolean) ?? null
+  const strokeGrad = stroked.map((o) => gradientOf(o, 'stroke')).find(Boolean) ?? null
+  /** 径向的中心与半径在「更多」里：有径向时「更多」要在 */
+  const radialOn = fillGrad?.kind === 'radial' || strokeGrad?.kind === 'radial'
   /** 描边对齐只写封闭形状与全闭合的路径；填充规则只写有填充的路径 */
   const aligned = objs.filter((o) => markStrokeAlignCapable(o) || markPathAlignCapable(o)) as (ShapeObject | PathObject)[]
   const filledPaths = objs.filter(markFillRuleCapable)
@@ -714,7 +718,9 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
               onAdd={() => patch(hist('addFill'), (o) => (o.fill = '#FFFFFF'))}
               onOff={() => patch(hist('clearFill'), (o) => (o.fill = null))}
             />
-            {fillOn && (
+            {/* 渐变时（ADR 0186）色块与十六进制换成渐变预览条（降级纯色自动取首个色标，不再显示）；最后是类型下拉 */}
+            {fillOn && fillGrad && <GradientPreview g={fillGrad} target="fill" />}
+            {fillOn && !fillGrad && (
               <ColorField
                 ariaLabel={sk('fill')}
                 mixed={fillMixed}
@@ -722,10 +728,11 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
                 onChange={(v) => patch(hist('setFill'), (o) => (o.fill = v))}
               />
             )}
-            {/* 纯色 / 线性 / 径向（ADR 0186）：紧跟在颜色后面，不新增行；色标与角度在「更多」里 */}
             {fillOn && <GradientKindSelect objs={fillables} target="fill" />}
           </Row>
         )}
+        {/* 色带常显，紧跟在填充那一行下面（PPT 式：点空白加色标、拖动、往下拖出删除） */}
+        {hasFillable && fillOn && fillGrad && <GradientEditor objs={fillables} target="fill" />}
         {hasFillable && fillOn && (
           // 填充不透明度：填充自己的一行半列（此前挤在线宽那一行的右端，靠 index.css 的 40px 框）
           <div data-prop="fillOpacity">
@@ -767,7 +774,8 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
               onOff={() => patch(hist('clearStroke'), setMarkStrokeOff)}
             />
           )}
-          {(!hasFillable || strokeOn) && (
+          {(!hasFillable || strokeOn) && strokeGrad && <GradientPreview g={strokeGrad} target="stroke" />}
+          {(!hasFillable || strokeOn) && !strokeGrad && (
             <ColorField
               ariaLabel={sk('strokeColor')}
               mixed={strokeColor === undefined}
@@ -777,6 +785,7 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
           )}
           {showStroke && <GradientKindSelect objs={stroked} target="stroke" />}
         </Row>
+        {showStroke && strokeGrad && <GradientEditor objs={stroked} target="stroke" />}
         {showStroke && (
           <StrokeWidthRow
             value={shared(objs, (o) => (o as FillStrokeMark).strokePt)}
@@ -857,7 +866,7 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
           </Row>
         )}
     </AppearanceSection>
-    {(showStroke || filledPaths.length > 0 || gradientOn) && (
+    {(showStroke || filledPaths.length > 0 || radialOn) && (
       // 低频描边项收进一行「更多」：描边不透明度、线端、拐角（ADR 0174）
       <MoreFold
         changed={countChanged([
@@ -869,12 +878,11 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
           objs.some((o) => o.dashPattern != null),
           objs.some((o) => (o.type === 'shape' || o.type === 'path') && o.strokeAlign != null),
           objs.some((o) => o.type === 'path' && o.fillRule != null),
-          gradientOn,
         ])}
       >
-        {/* 渐变细节（ADR 0186）：色标、角度 / 中心与半径；放在「更多」最上面，开了渐变的人最先要找的就是它 */}
-        <GradientRows objs={fillables} target="fill" />
-        <GradientRows objs={stroked} target="stroke" />
+        {/* 径向渐变的中心与半径（ADR 0186）；色标与角度在色带那里 */}
+        <RadialRows objs={fillables} target="fill" />
+        <RadialRows objs={stroked} target="stroke" />
         {showStroke && headed.length > 0 && <HeadSizeRows objs={headed} patch={patchHeaded} />}
         {showStroke && aligned.length > 0 && (
           // 描边对齐（封闭形状缺省内侧、外沿贴框；全闭合的路径缺省居中，ADR 0185 M2）：内侧 / 居中 / 外侧

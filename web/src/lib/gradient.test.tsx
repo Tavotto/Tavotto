@@ -15,7 +15,13 @@ import { isEpsTranslucent } from './epsOpacity'
 import { toExportObjects } from './exportPayload'
 import {
   addStop,
+  colorAt,
   gradientGeometry,
+  insertStopAt,
+  moveStop,
+  reverseStops,
+  sortedStops,
+  stopsCss,
   linearAngle,
   remapGradients,
   removeStop,
@@ -104,6 +110,45 @@ describe('编辑函数', () => {
       page(from, LIN.from).forEach((v, i) => expect(page(to, g.from)[i]).toBeCloseTo(v, 9))
       page(from, LIN.to).forEach((v, i) => expect(page(to, g.to)[i]).toBeCloseTo(v, 9))
     }
+  })
+})
+
+describe('色带编辑（PPT 式）', () => {
+  const three: Gradient = { ...LIN, stops: [LIN.stops[1], { offset: 0.5, color: '#00ff00', opacity: 0.5 }, LIN.stops[0]] }
+
+  it('色标一律按位置排（同位置保持原次序）', () => {
+    expect(sortedStops(three).map((s) => s.color)).toEqual(['#ff0000', '#00ff00', '#0000ff'])
+  })
+
+  it('插值色：相邻两个色标之间线性插值，两端外面延续首尾色', () => {
+    expect(colorAt(three, 0.25)).toEqual({ color: '#808000', opacity: 0.75 })
+    expect(colorAt(three, -1)).toEqual({ color: '#ff0000', opacity: 1 })
+    expect(colorAt(three, 2)).toEqual({ color: '#0000ff', opacity: 1 })
+  })
+
+  it('点色带加色标：位置钳到 0–1、颜色取插值色、回它排序后的下标', () => {
+    const r = insertStopAt(three, 0.75)
+    expect(r.index).toBe(2)
+    expect(r.g.stops[2]).toEqual({ offset: 0.75, color: '#008080', opacity: 0.75 })
+  })
+
+  it('挪色标夹在左右邻居之间', () => {
+    const inner: Gradient = { ...three, stops: [{ offset: 0.2, color: '#ff0000' }, three.stops[1], { offset: 0.8, color: '#0000ff' }] }
+    expect(sortedStops(moveStop(inner, 1, 1.4))[1].offset).toBe(0.8)
+    expect(sortedStops(moveStop(inner, 1, -3))[1].offset).toBe(0.2)
+    expect(sortedStops(moveStop(three, 1, 0.3))[1].offset).toBe(0.3)
+  })
+
+  it('反向：位置镜像、次序倒过来', () => {
+    expect(reverseStops(moveStop(three, 1, 0.2)).stops.map((s) => [s.offset, s.color])).toEqual([
+      [0, '#0000ff'],
+      [0.8, '#00ff00'],
+      [1, '#ff0000'],
+    ])
+  })
+
+  it('色带的 CSS：从左到右，带透明的色标用 color-mix 混成透明（不写颜色字面量）', () => {
+    expect(stopsCss(three)).toBe('linear-gradient(to right, #ff0000 0%, color-mix(in srgb, #00ff00 50%, transparent) 50%, #0000ff 100%)')
   })
 })
 

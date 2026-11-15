@@ -172,15 +172,16 @@ const clean = (s: GradientStop): GradientStop => {
   return out
 }
 
-function mixHex(a: string, b: string): string {
+/** 两个颜色按 `k`（0 = a、1 = b）混合，回小写 #rrggbb */
+function mixHex(a: string, b: string, k = 0.5): string {
   const rgb = (h: string) => {
     const t = h.length === 4 ? h.slice(1).replace(/./g, (c) => c + c) : h.slice(1)
     return [0, 2, 4].map((i) => parseInt(t.slice(i, i + 2), 16))
   }
-  if (!HEX.test(a) || !HEX.test(b)) return HEX.test(a) ? a : '#808080'
+  if (!HEX.test(a) || !HEX.test(b)) return HEX.test(a) ? a : b
   const x = rgb(a)
   const y = rgb(b)
-  return '#' + x.map((v, i) => Math.round((v + y[i]) / 2).toString(16).padStart(2, '0')).join('')
+  return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * k).toString(16).padStart(2, '0')).join('')
 }
 
 /**
@@ -224,4 +225,64 @@ export function remapGradients<T extends { fillGradient?: Gradient; strokeGradie
   if (target.fillGradient) out.fillGradient = remapGradient(target.fillGradient, from, to, delta)
   if (target.strokeGradient) out.strokeGradient = remapGradient(target.strokeGradient, from, to, delta)
   return out
+}
+
+/* ------------------------------ 色带编辑（属性栏的横向色带） ------------------------------ */
+
+/** 色标按位置稳定排序（色带上从左到右的次序；编辑一律在这个次序上做，写回去也是排好的） */
+export function sortedStops(g: Gradient): GradientStop[] {
+  return g.stops.map((s, i) => ({ s, i })).sort((a, b) => a.s.offset - b.s.offset || a.i - b.i).map((x) => x.s)
+}
+
+/** 色带上 `t` 处的颜色与不透明度（相邻两个色标之间线性插值，两端外面延续首尾色）——点色带加节点时取它 */
+export function colorAt(g: Gradient, t: number): { color: string; opacity: number } {
+  const st = sortedStops(g)
+  const op = (s: GradientStop) => s.opacity ?? 1
+  if (t <= st[0].offset) return { color: st[0].color, opacity: op(st[0]) }
+  const last = st[st.length - 1]
+  if (t >= last.offset) return { color: last.color, opacity: op(last) }
+  for (let i = 0; i + 1 < st.length; i++) {
+    const a = st[i]
+    const b = st[i + 1]
+    if (t >= a.offset && t <= b.offset) {
+      const k = b.offset > a.offset ? (t - a.offset) / (b.offset - a.offset) : 0
+      return { color: mixHex(a.color, b.color, k), opacity: Math.round((op(a) + (op(b) - op(a)) * k) * 1000) / 1000 }
+    }
+  }
+  return { color: last.color, opacity: op(last) }
+}
+
+const round3 = (v: number) => Math.round(v * 1000) / 1000
+
+/** 在 `t` 处加一个色标（颜色取插值色）；回新渐变与新色标在排序后的下标 */
+export function insertStopAt(g: Gradient, t: number): { g: Gradient; index: number } {
+  const at = round3(clamp01(t))
+  const { color, opacity } = colorAt(g, at)
+  const st = sortedStops(g)
+  const index = st.filter((s) => s.offset <= at).length
+  st.splice(index, 0, clean({ offset: at, color, opacity }))
+  return { g: { ...g, stops: st }, index }
+}
+
+/** 把排序后第 `i` 个色标挪到 `t`：夹在左右邻居之间，不越过它们 */
+export function moveStop(g: Gradient, i: number, t: number): Gradient {
+  const st = sortedStops(g)
+  const lo = i > 0 ? st[i - 1].offset : 0
+  const hi = i + 1 < st.length ? st[i + 1].offset : 1
+  st[i] = clean({ ...st[i], offset: round3(Math.min(Math.max(t, lo), hi)) })
+  return { ...g, stops: st }
+}
+
+/** 反向：色标位置镜像（0 ↔ 1），次序倒过来 */
+export function reverseStops(g: Gradient): Gradient {
+  return { ...g, stops: sortedStops(g).reverse().map((s) => clean({ ...s, offset: round3(1 - s.offset) })) }
+}
+
+/** 色带的 CSS 预览（从左到右）：色标带透明时用 color-mix 混成透明，底下由调用方垫棋盘格 */
+export function stopsCss(g: Gradient): string {
+  const parts = sortedStops(g).map((s) => {
+    const c = (s.opacity ?? 1) < 1 ? `color-mix(in srgb, ${s.color} ${round3((s.opacity ?? 1) * 100)}%, transparent)` : s.color
+    return `${c} ${round3(s.offset * 100)}%`
+  })
+  return `linear-gradient(to right, ${parts.join(', ')})`
 }

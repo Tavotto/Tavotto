@@ -1,10 +1,11 @@
 /**
- * 渐变的属性栏（ADR 0186 §四，第一期只在属性栏调）：「填充」/「描边」那一行颜色后面一个类型下拉（不新增行），
- * 色标 / 角度 / 中心与半径在「更多」里。判据的主语是**文档里的那个对象**：每次改动一条 commit，撤销回到纯色。
+ * 渐变的属性栏（ADR 0186 §四；2026-11-15 返工成 PPT 式横向色带）：「填充」/「描边」那一行渐变时是「开关 + 预览条 + 类型下拉」，
+ * 色带常显在它下面（点空白加色标、拖动、往下拖出 / Delete 删除、键盘 slider），再下面一行只编辑选中的色标；径向的中心与半径在「更多」里。
+ * 判据的主语是**文档里的那个对象**：每个动作一条 commit（拖动整段一条），降级纯色跟着首个色标走。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
@@ -110,74 +111,190 @@ async function pickKind(label: string, option: string) {
   expect(opt, `${option} 不在`).toBeTruthy()
   await act(async () => opt!.click())
 }
-const rows = () => host.querySelectorAll('[data-prop], [data-fold]').length
+/** jsdom 没有布局：给色带一个 100px 宽、20px 高的盒子，clientX 就是百分比 */
+function sizeBar(target = 'fill') {
+  const bar = host.querySelector<HTMLElement>(`[data-gradient-bar="${target}"]`)!
+  expect(bar, '色带不在').toBeTruthy()
+  bar.getBoundingClientRect = () => ({ left: 0, top: 0, right: 100, bottom: 20, width: 100, height: 20, x: 0, y: 0, toJSON() {} }) as DOMRect
+  return bar
+}
+const node = (i: number, target = 'fill') => host.querySelector<HTMLElement>(`[data-gradient-bar="${target}"] [data-gradient-stop="${i}"]`)!
+const pointer = (el: Element, type: string, x: number, y = 10) =>
+  el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }))
+const key = (el: Element, k: string, shift = false) =>
+  el.dispatchEvent(new KeyboardEvent('keydown', { key: k, shiftKey: shift, bubbles: true, cancelable: true }))
+const fillG = () => byId<ShapeObject>('s1').fillGradient!
 
-describe('类型下拉：纯色 / 线性 / 径向', () => {
-  it('填充那一行多一个下拉、不新增行；选「线性」写 fillGradient（首色 = 当前填充），选回「纯色」删字段、fill 一直在', async () => {
+const linear = {
+  kind: 'linear' as const,
+  stops: [
+    { offset: 0, color: '#ff0000' },
+    { offset: 1, color: '#0000ff' },
+  ],
+  from: [0, 0.5] as [number, number],
+  to: [1, 0.5] as [number, number],
+}
+const three = { ...linear, stops: [linear.stops[0], { offset: 0.5, color: '#00ff00' }, linear.stops[1]] }
+
+describe('「填充」那一行：渐变时是开关 + 预览条 + 类型下拉', () => {
+  it('选「线性」：写 fillGradient（首色 = 当前填充）；色块和十六进制不见了，换成预览条；色带常显在下面、不在「更多」里', async () => {
     await seed([rect()], ['s1'])
     await mount()
-    const before = rows()
+    expect(host.querySelector('input[aria-label="填充：取色盘"]')).not.toBeNull()
     await pickKind('填充类型', '线性')
-    const g = byId<ShapeObject>('s1').fillGradient!
-    expect(g.kind).toBe('linear')
-    expect(g.stops[0].color).toBe('#ffcc00')
-    expect(byId<ShapeObject>('s1').fill).toBe('#ffcc00')
+    expect(fillG()).toMatchObject({ kind: 'linear', stops: [{ offset: 0, color: '#ffcc00' }, { offset: 1, color: '#ffffff' }] })
     expect(past()).toBe(1)
-    expect(rows()).toBe(before)
-    await pickKind('填充类型', '径向')
-    expect(byId<ShapeObject>('s1').fillGradient!.kind).toBe('radial')
-    expect(byId<ShapeObject>('s1').fillGradient!.stops).toEqual(g.stops)
+    expect(host.querySelector('input[aria-label="填充：取色盘"]')).toBeNull()
+    expect(host.querySelector('[data-gradient-preview="fill"]')).not.toBeNull()
+    const bar = host.querySelector('[data-gradient-bar="fill"]')!
+    expect(bar).not.toBeNull()
+    expect(bar.closest('[data-fold="stroke-more"]')).toBeNull()
+    // 「更多」里不再有色标 / 角度
+    expect(host.querySelector('[data-fold="stroke-more"] input[aria-label="渐变角度"]')).toBeNull()
     await pickKind('填充类型', '纯色')
     expect('fillGradient' in byId<ShapeObject>('s1')).toBe(false)
-    expect(past()).toBe(3)
+    expect(host.querySelector('[data-gradient-bar="fill"]')).toBeNull()
   })
 
-  it('没有填充时没有填充类型下拉；描边那一行也有（写 strokeGradient）', async () => {
+  it('降级纯色跟着首个色标走：改首个色标的颜色 → fill 跟着变；切回纯色就是它', async () => {
+    await seed([rect({ fillGradient: linear, fill: '#123456' })], ['s1'])
+    await mount()
+    await act(async () => node(1).focus())
+    await act(async () => key(node(1), 'ArrowLeft', true)) // 动的是第二个：首色不变，fill 被同步成首色
+    expect(byId<ShapeObject>('s1').fill).toBe('#ff0000')
+    // 把第二个拖到最前面之前那一位置不行（不越过邻居）；用反向让蓝色成为首个
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="反向"]')!.click())
+    expect(fillG().stops[0].color).toBe('#0000ff')
+    expect(byId<ShapeObject>('s1').fill).toBe('#0000ff')
+    await pickKind('填充类型', '纯色')
+    expect(byId<ShapeObject>('s1').fill).toBe('#0000ff')
+  })
+})
+
+describe('色带上的节点', () => {
+  it('点色带空白处加一个色标：位置 = 点的地方，颜色 = 那里的插值色；它成为选中的那个', async () => {
+    await seed([rect({ fillGradient: linear })], ['s1'])
+    await mount()
+    const bar = sizeBar()
+    await act(async () => pointer(bar, 'pointerdown', 25))
+    expect(fillG().stops).toEqual([linear.stops[0], { offset: 0.25, color: '#bf0040' }, linear.stops[1]])
+    expect(node(1).getAttribute('data-selected')).toBe('true')
+    expect(host.querySelector<HTMLInputElement>('input[aria-label="色标 2 的位置"]')!.value).toBe('25')
+    expect(past()).toBe(1)
+  })
+
+  it('左右拖：位置跟着走、不越过邻居；整段拖动只进一条历史', async () => {
+    await seed([rect({ fillGradient: { ...three, stops: [{ offset: 0.2, color: '#ff0000' }, three.stops[1], three.stops[2]] } })], ['s1'])
+    await mount()
+    sizeBar()
+    await act(async () => pointer(node(1), 'pointerdown', 50))
+    await act(async () => pointer(node(1), 'pointermove', 70))
+    expect(fillG().stops[1].offset).toBe(0.7)
+    await act(async () => pointer(node(1), 'pointermove', 5))
+    expect(fillG().stops[1].offset).toBe(0.2) // 夹在左邻居（0.2）上，不越过
+    await act(async () => pointer(node(1), 'pointerup', 5))
+    expect(fillG().stops.map((s) => s.color)).toEqual(['#ff0000', '#00ff00', '#0000ff'])
+    expect(past()).toBe(1)
+  })
+
+  it('往下拖出色带删除；只剩两个时拖出去也不删', async () => {
+    await seed([rect({ fillGradient: three })], ['s1'])
+    await mount()
+    sizeBar()
+    await act(async () => pointer(node(1), 'pointerdown', 50))
+    await act(async () => pointer(node(1), 'pointermove', 50, 60))
+    expect(node(1).className).toContain('opacity-30')
+    await act(async () => pointer(node(1), 'pointerup', 50, 60))
+    expect(fillG().stops.map((s) => s.color)).toEqual(['#ff0000', '#0000ff'])
+    expect(past()).toBe(1)
+    await act(async () => pointer(node(1), 'pointerdown', 100))
+    await act(async () => pointer(node(1), 'pointermove', 100, 60))
+    await act(async () => pointer(node(1), 'pointerup', 100, 60))
+    expect(fillG().stops).toHaveLength(2)
+  })
+
+  it('没有 × 按钮', async () => {
+    await seed([rect({ fillGradient: three })], ['s1'])
+    await mount()
+    expect(host.querySelector('[aria-label^="删除色标"]')).toBeNull()
+  })
+})
+
+describe('键盘', () => {
+  it('节点是 slider、能 Tab 到；←/→ 1%，⇧ 10%；Delete 删（至少两个）；Enter 开取色器', async () => {
+    await seed([rect({ fillGradient: three })], ['s1'])
+    await mount()
+    const n = node(1)
+    expect(n.getAttribute('role')).toBe('slider')
+    expect(n.tabIndex).toBe(0)
+    expect(n.getAttribute('aria-valuenow')).toBe('50')
+    await act(async () => n.focus())
+    await act(async () => key(n, 'ArrowRight'))
+    expect(fillG().stops[1].offset).toBe(0.51)
+    await act(async () => key(node(1), 'ArrowLeft', true))
+    expect(fillG().stops[1].offset).toBe(0.41)
+    // 取色器的入口与 ColorField 自己的一样：带面板时是色块按钮，否则是原生取色盘
+    const row = host.querySelector('[data-gradient-selected="fill"]')!
+    const swatch = row.querySelector<HTMLElement>('[data-color-swatch]') ?? row.querySelector<HTMLElement>('input[type=color]')!
+    const opened = vi.spyOn(swatch, 'click')
+    await act(async () => key(node(1), 'Enter'))
+    expect(opened).toHaveBeenCalled()
+    await act(async () => key(node(1), 'Delete'))
+    expect(fillG().stops).toHaveLength(2)
+    await act(async () => key(node(0), 'Delete'))
+    expect(fillG().stops).toHaveLength(2)
+  })
+
+  it('色带本身聚焦时 Enter 在最大空档的中点加一个', async () => {
+    await seed([rect({ fillGradient: linear })], ['s1'])
+    await mount()
+    const bar = host.querySelector<HTMLElement>('[data-gradient-bar="fill"]')!
+    await act(async () => bar.focus())
+    await act(async () => key(bar, 'Enter'))
+    expect(fillG().stops.map((s) => s.offset)).toEqual([0, 0.5, 1])
+  })
+})
+
+describe('选中色标那一行与色带那一行右端', () => {
+  it('只显示选中色标的颜色 · 位置 · 不透明度；改位置 / 不透明度写给它', async () => {
+    await seed([rect({ fillGradient: three })], ['s1'])
+    await mount()
+    await act(async () => node(1).focus())
+    await typeNumber('色标 2 的位置', '30')
+    await typeNumber('色标 2 的不透明度', '40')
+    expect(fillG().stops[1]).toEqual({ offset: 0.3, color: '#00ff00', opacity: 0.4 })
+    expect(host.querySelectorAll('[data-gradient-selected="fill"] [data-color-field]')).toHaveLength(1)
+  })
+
+  it('线性：角度在色带同一行（40 × 25 mm 上 90° = 从下到上）；径向没有角度，中心与半径在「更多」里', async () => {
+    await seed([rect({ fillGradient: linear })], ['s1'])
+    await mount()
+    const angle = host.querySelector<HTMLInputElement>('input[aria-label="渐变角度"]')!
+    expect(angle.closest('[data-fold="stroke-more"]')).toBeNull()
+    await typeNumber('渐变角度', '90')
+    expect(fillG()).toMatchObject({ from: [0.5, 1], to: [0.5, 0] })
+    await seed([rect({ fillGradient: { kind: 'radial', stops: linear.stops, center: [0.5, 0.5], radius: 0.5 } })], ['s1'])
+    await mount()
+    expect(host.querySelector('input[aria-label="渐变角度"]')).toBeNull()
+    await openMore()
+    await typeNumber('填充中心 X', '25')
+    await typeNumber('填充半径', '80')
+    expect(fillG()).toMatchObject({ center: [0.25, 0.5], radius: 0.8 })
+  })
+})
+
+describe('描边渐变同一套', () => {
+  it('描边类型选「径向」：描边那一行换成预览条，下面一条色带；首色同步进 color', async () => {
     await seed([rect({ fill: null })], ['s1'])
     await mount()
     expect(host.querySelector('[role="combobox"][aria-label="填充类型"]')).toBeNull()
     await pickKind('描边类型', '径向')
     expect(byId<ShapeObject>('s1').strokeGradient!.kind).toBe('radial')
-  })
-})
-
-describe('「更多」里的渐变细节', () => {
-  const linear = { kind: 'linear' as const, stops: [{ offset: 0, color: '#ff0000' }, { offset: 1, color: '#0000ff' }], from: [0, 0.5] as [number, number], to: [1, 0.5] as [number, number] }
-
-  it('色标：加一个（落在中间、中间色）、改位置、改不透明度、删到只剩两个就删不了', async () => {
-    await seed([rect({ fillGradient: linear, stroke: false })], ['s1'])
-    await mount()
-    await openMore()
-    const add = host.querySelector<HTMLButtonElement>('[data-gradient-add-stop="fill"]')!
-    await act(async () => add.click())
-    let g = byId<ShapeObject>('s1').fillGradient!
-    expect(g.stops.map((s) => s.offset)).toEqual([0, 0.5, 1])
-    expect(g.stops[1].color).toBe('#800080')
-    await typeNumber('色标 2 的位置', '30')
-    await typeNumber('色标 2 的不透明度', '40')
-    g = byId<ShapeObject>('s1').fillGradient!
-    expect(g.stops[1]).toEqual({ offset: 0.3, color: '#800080', opacity: 0.4 })
-    const del = (n: number) => host.querySelector<HTMLButtonElement>(`[aria-label="删除色标 ${n}"]`)!
-    await act(async () => del(2).click())
-    expect(byId<ShapeObject>('s1').fillGradient!.stops).toHaveLength(2)
-    expect(del(1).disabled).toBe(true)
-  })
-
-  it('线性：角度按对象的实际尺寸算（40 × 25 mm 上的 90° = 从下到上）；径向：中心与半径', async () => {
-    await seed([rect({ fillGradient: linear })], ['s1'])
-    await mount()
-    await openMore()
-    expect(host.querySelector<HTMLInputElement>('input[aria-label="渐变角度"]')!.value).toBe('0')
-    await typeNumber('渐变角度', '90')
-    const g = byId<ShapeObject>('s1').fillGradient as typeof linear
-    expect(g.from).toEqual([0.5, 1])
-    expect(g.to).toEqual([0.5, 0])
-    await seed([rect({ fillGradient: { kind: 'radial', stops: linear.stops, center: [0.5, 0.5], radius: 0.5 } })], ['s1'])
-    await mount()
-    await openMore()
-    await typeNumber('中心 X', '25')
-    await typeNumber('渐变半径', '80')
-    expect(byId<ShapeObject>('s1').fillGradient).toMatchObject({ center: [0.25, 0.5], radius: 0.8 })
+    expect(host.querySelector('[data-gradient-preview="stroke"]')).not.toBeNull()
+    sizeBar('stroke')
+    await act(async () => pointer(host.querySelector('[data-gradient-bar="stroke"]')!, 'pointerdown', 50))
+    expect(byId<ShapeObject>('s1').strokeGradient!.stops).toHaveLength(3)
+    expect(byId<ShapeObject>('s1').color).toBe(byId<ShapeObject>('s1').strokeGradient!.stops[0].color)
   })
 
   it('自由路径同一套控件', async () => {
@@ -185,5 +302,6 @@ describe('「更多」里的渐变细节', () => {
     await mount()
     await pickKind('填充类型', '线性')
     expect(byId<PathObject>('p2').fillGradient!.kind).toBe('linear')
+    expect(host.querySelector('[data-gradient-bar="fill"]')).not.toBeNull()
   })
 })

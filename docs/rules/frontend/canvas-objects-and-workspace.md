@@ -115,8 +115,9 @@ order: 210
   都是包围盒比例；色标 offset / color / opacity?），`fill` / `color` 纯色一直留着做旧版本的降级色。读取与框空间几何**只**经 `lib/gradient`
   （`readGradient` / `gradientGeometry` ↔ 后端 `geometry.read_gradient` / `gradient_paint`，共享向量 `tests/golden/gradient_vectors.json`）；
   画布 / 导出预览的 `<linearGradient>` / `<radialGradient>` 只从 `canvas/gradientPaint.usePaints` 出。包围盒换了（转为路径、`pathFromMm` 收框）
-  用 `remapGradients` 换比例坐标；新加一处改框的写法也要过它。界面：颜色后面的图标下拉 + 「更多」里的色标 / 角度 / 中心与半径
-  （`inspector/controls/GradientControls`）。EPS 判据 `lib/epsOpacity` 认色标透明。看护 `lib/gradient.test.tsx`、`lib/gradient.golden.test.ts`、
+  用 `remapGradients` 换比例坐标；新加一处改框的写法也要过它。界面（2026-11-15 用户返工成 PPT 式色带）：渐变时那一行是「开关 + 预览条 + 图标下拉」、不再显示降级纯色（每次写渐变把首个色标同步进
+  `fill` / `color`）；色带常显在下面（点空白加、拖动不越邻居、往下拖出 / Delete 删、节点是 slider），角度与反向在色带右端，再下一行只编辑选中色标；
+  径向的中心与半径在「更多」（`inspector/controls/GradientControls`，填充与描边共用一个色带）。EPS 判据 `lib/epsOpacity` 认色标透明。看护 `lib/gradient.test.tsx`、`lib/gradient.golden.test.ts`、
   `inspector/gradientInspector.test.tsx`、`tests/test_gradient.py`。
 - **不认识的对象类型原样保留（2026-11-14，ADR 0185 的前置）**：更新的构建会往文档里写本构建没有的 `type`
   （第一例是自由路径 `path`）。判据只有 `types/document.isKnownObject`（`KNOWN_OBJECT_TYPES` 闭集）。读盘、保存、

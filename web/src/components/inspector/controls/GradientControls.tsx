@@ -1,7 +1,8 @@
+import { useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate, type UiMessage } from '@/i18n'
-import { GradientLinear, GradientRadial, Plus, Square, X } from '@/components/ui/icons'
-import { IconButton, Button } from '@/components/ui/Button'
+import { ArrowLeftRight, GradientLinear, GradientRadial, Square } from '@/components/ui/icons'
+import { IconButton } from '@/components/ui/Button'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { ColorField, NumberField } from '@/components/ui/Input'
 import { Row } from '@/components/ui/Field'
@@ -9,25 +10,35 @@ import { Select } from '@/components/ui/Select'
 import {
   addStop,
   defaultGradient,
+  insertStopAt,
   linearAngle,
+  moveStop,
   readGradient,
   removeStop,
+  reverseStops,
+  sortedStops,
+  stopsCss,
   switchKind,
   updateStop,
   withLinearAngle,
 } from '@/lib/gradient'
+import { cn } from '@/lib/utils'
 import { updateObjects } from '@/store/actions'
-import type { Gradient, PathObject, ShapeObject } from '@/types/document'
+import { useDocumentStore } from '@/store/documentStore'
+import type { CanvasObject, Gradient, PathObject, ShapeObject } from '@/types/document'
 import { INSPECTOR_LABEL_W } from '../layout'
 
 /**
- * 渐变的属性栏控件（ADR 0186 §四，第一期：只在属性栏调，画布控制柄第二期）。
+ * 渐变的属性栏控件（ADR 0186 §四，第一期：只在属性栏调，画布控制柄第二期）。2026-11-15 用户返工：做成 PPT 那样的横向色带。
  *
- * - 「填充」「描边」那一行颜色后面一个紧凑的类型下拉（纯色 / 线性 / 径向）——不新增行；
- * - 色标（增 / 删 / 改颜色与位置）、线性的角度、径向的中心与半径收进「更多」。
+ * - 「填充」「描边」那一行：渐变时是「开关 + 渐变预览条 + 类型下拉」，纯色色块与十六进制不再显示；
+ * - 紧跟其下常显一条色带（占满控件列），角度与反向在色带同一行右端（径向没有角度）；再下面一行只编辑选中的那个色标
+ *   （色块 · 位置 % · 不透明度 %）。径向的中心、半径在「更多」里（`RadialRows`）；
+ * - 色带交互：点空白处加色标（插值色）、左右拖（不越过邻居）、往下拖出色带或 Delete 删（至少留两个）；色标是 slider：
+ *   ←/→ 1%、⇧ 10%、Delete 删、Enter 开取色器；色带本身聚焦时 Enter 在最大空档中点加一个；
+ * - 降级纯色不显示：每次写渐变都把**位置最靠前那个色标**的颜色同步进 `fill` / `color`（旧版本、切回纯色都用它）。
  *
- * 多选时以第一个对象的渐变为准、写给选区里这一侧生效的全部对象（与颜色下拉「多个值时取色写给全部」同一条）。
- * 字段读写只经 `lib/gradient`；`fill` / `color` 纯色一直留着（旧版本的降级色，切回纯色时就是它）。
+ * 多选时以第一个对象的渐变为准、写给这一侧生效的全部对象。字段读写只经 `lib/gradient`。填充与描边共用这一套。
  */
 
 type Mark = ShapeObject | PathObject
@@ -37,6 +48,8 @@ type Kind = 'solid' | 'linear' | 'radial'
 const gk = (key: string, values?: Record<string, unknown>) => translate(`gradient.${key}`, { ns: 'inspector', ...(values ?? {}) })
 const hist = (key: string): UiMessage => msg(`history.${key}`, undefined, 'inspector')
 const field = (t: GradientTarget) => (t === 'fill' ? 'fillGradient' : 'strokeGradient')
+/** 往下拖出色带多远算「删掉」（px） */
+const REMOVE_DRAG_PX = 24
 
 /** 这一侧的渐变（读得成才算；读不成的字段当作没有） */
 export function gradientOf(o: Mark, t: GradientTarget): Gradient | null {
@@ -49,15 +62,27 @@ export function kindOf(objs: readonly Mark[], t: GradientTarget): Kind | undefin
   return kinds.size === 1 ? ([...kinds][0] as Kind) : undefined
 }
 
+/** 写一个对象的这一侧：有渐变时把位置最靠前那个色标的颜色同步进降级纯色；null = 回纯色（降级色留着） */
+function setGradient(o: CanvasObject, t: GradientTarget, g: Gradient | null) {
+  if (o.type !== 'shape' && o.type !== 'path') return
+  if (!g) {
+    delete o[field(t)]
+    return
+  }
+  o[field(t)] = g
+  const first = sortedStops(g)[0]?.color
+  if (first) {
+    if (t === 'fill') o.fill = first
+    else o.color = first
+  }
+}
+
 function write(objs: readonly Mark[], t: GradientTarget, label: UiMessage, next: (o: Mark) => Gradient | null) {
   updateObjects(
     objs.map((o) => o.id),
     label,
     (o) => {
-      if (o.type !== 'shape' && o.type !== 'path') return
-      const g = next(o)
-      if (g) o[field(t)] = g
-      else delete o[field(t)]
+      if (o.type === 'shape' || o.type === 'path') setGradient(o, t, next(o))
     },
   )
 }
@@ -68,7 +93,7 @@ function KindIcon({ kind }: { kind: Kind }) {
   return <Icon size={ICON_SIZE.sm} data-gradient-kind={kind} aria-hidden />
 }
 
-/** 类型下拉：放在「填充」/「描边」那一行颜色的后面 */
+/** 类型下拉：放在「填充」/「描边」那一行的最后 */
 export function GradientKindSelect({ objs, target }: { objs: readonly Mark[]; target: GradientTarget }) {
   useTranslation('inspector')
   const kind = kindOf(objs, target)
@@ -78,7 +103,7 @@ export function GradientKindSelect({ objs, target }: { objs: readonly Mark[]; ta
       placeholder={gk('mixed')}
       ariaLabel={gk(target === 'fill' ? 'fillKind' : 'strokeKind')}
       title={gk('kindTip')}
-      // 触发器只画一枚图标（纯色 / 线性 / 径向），不挤颜色的十六进制框；下拉里是完整的字
+      // 触发器只画一枚图标（纯色 / 线性 / 径向）；下拉里是完整的字
       className="w-auto min-w-0 shrink-0 gap-0.5 px-1"
       triggerLabel={kind ? <KindIcon kind={kind} /> : undefined}
       options={(['solid', 'linear', 'radial'] as const).map((k) => ({ value: k, label: gk(`kind.${k}`) }))}
@@ -93,131 +118,290 @@ export function GradientKindSelect({ objs, target }: { objs: readonly Mark[]; ta
   )
 }
 
-/** 「更多」里的渐变细节：色标、角度（线性）/ 中心与半径（径向）。这一侧没有渐变就什么都不画 */
-export function GradientRows({ objs, target }: { objs: readonly Mark[]; target: GradientTarget }) {
+/** 棋盘格底：色标带透明时看得出来（颜色取纸面 token） */
+const CHECKER =
+  'conic-gradient(var(--color-paper-checker) 25%, var(--color-paper) 0 50%, var(--color-paper-checker) 0 75%, var(--color-paper) 0) 0 0 / 8px 8px'
+
+/** 「填充」/「描边」那一行里代替色块的渐变预览条（只看，不编辑） */
+export function GradientPreview({ g, target }: { g: Gradient; target: GradientTarget }) {
+  return (
+    <div
+      data-gradient-preview={target}
+      className="h-5 min-w-0 flex-1 rounded-sm border border-border"
+      style={{ background: `${stopsCss(g)}, ${CHECKER}` }}
+    />
+  )
+}
+
+/**
+ * 色带 + 选中色标那一行（填充与描边共用）。放在「填充」/「描边」那一行正下方，没有渐变就什么都不画。
+ */
+export function GradientEditor({ objs, target }: { objs: readonly Mark[]; target: GradientTarget }) {
   useTranslation('inspector')
   const live = objs.filter((o) => gradientOf(o, target))
   const first = live[0]
   const g = first ? gradientOf(first, target) : null
+  const [sel, setSel] = useState(0)
+  const [removing, setRemoving] = useState(false)
+  const barRef = useRef<HTMLDivElement | null>(null)
+  const rowRef = useRef<HTMLDivElement | null>(null)
+  const drag = useRef<{ i: number } | null>(null)
   if (!first || !g) return null
-  const set = (label: UiMessage, next: Gradient) => write(live, target, label, () => next)
+  const stops = sortedStops(g)
+  const sorted: Gradient = { ...g, stops }
+  const at = Math.min(sel, stops.length - 1)
+  const ids = live.map((o) => o.id)
+
+  const commit = (next: Gradient) => write(live, target, hist('setGradient'), () => next)
+  /** 拖动途中：同一个事务里改，松手收成一条历史 */
+  const liveUpdate = (next: Gradient) =>
+    useDocumentStore.getState().txnUpdate((d) => {
+      for (const o of d.objects) if (ids.includes(o.id)) setGradient(o, target, next)
+    })
+  /** 拖动途中读的是文档里的最新值（每一帧都从它算，不从闭包里的旧值算） */
+  const current = (): Gradient | null => {
+    const o = useDocumentStore.getState().doc.objects.find((x) => x.id === first.id)
+    return o && (o.type === 'shape' || o.type === 'path') ? gradientOf(o, target) : null
+  }
+  const tAt = (clientX: number) => {
+    const r = barRef.current!.getBoundingClientRect()
+    return r.width > 0 ? (clientX - r.left) / r.width : 0
+  }
+  const focusStop = (i: number) =>
+    requestAnimationFrame(() => barRef.current?.querySelector<HTMLElement>(`[data-gradient-stop="${i}"]`)?.focus())
+  const remove = (i: number) => {
+    if (stops.length <= 2) return
+    commit(removeStop(sorted, i))
+    setSel(Math.max(0, i - 1))
+    focusStop(Math.max(0, i - 1))
+  }
+  const openPicker = () => {
+    const row = rowRef.current
+    const btn = row?.querySelector<HTMLElement>('[data-color-swatch]') ?? row?.querySelector<HTMLElement>('input[type=color]')
+    btn?.click()
+  }
+
+  const onBarPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || e.target !== e.currentTarget) return
+    const { g: next, index } = insertStopAt(sorted, tAt(e.clientX))
+    commit(next)
+    setSel(index)
+    focusStop(index)
+  }
+  const onStopPointerDown = (e: ReactPointerEvent<HTMLButtonElement>, i: number) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    setSel(i)
+    e.currentTarget.focus()
+    e.currentTarget.setPointerCapture?.(e.pointerId)
+    drag.current = { i }
+    useDocumentStore.getState().beginTxn(hist('setGradient'))
+  }
+  const onStopPointerMove = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const d = drag.current
+    const cur = current()
+    if (!d || !cur) return
+    const r = barRef.current!.getBoundingClientRect()
+    const out = sortedStops(cur).length > 2 && e.clientY > r.bottom + REMOVE_DRAG_PX
+    setRemoving(out)
+    if (out) return
+    liveUpdate(moveStop(cur, d.i, tAt(e.clientX)))
+  }
+  const onStopPointerUp = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const d = drag.current
+    drag.current = null
+    if (!d) return
+    const cur = current()
+    const r = barRef.current!.getBoundingClientRect()
+    if (cur && sortedStops(cur).length > 2 && e.clientY > r.bottom + REMOVE_DRAG_PX) {
+      liveUpdate(removeStop({ ...cur, stops: sortedStops(cur) }, d.i))
+      setSel(Math.max(0, d.i - 1))
+    }
+    setRemoving(false)
+    useDocumentStore.getState().endTxn()
+  }
+  const onStopKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
+    const step = e.shiftKey ? 0.1 : 0.01
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault()
+      e.stopPropagation()
+      commit(moveStop(sorted, i, stops[i].offset + (e.key === 'ArrowRight' ? step : -step)))
+    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault()
+      e.stopPropagation()
+      remove(i)
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      e.stopPropagation()
+      openPicker()
+    }
+  }
+  const onBarKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Enter' || e.target !== e.currentTarget) return
+    e.preventDefault()
+    e.stopPropagation()
+    const next = sortedStops(addStop(sorted))
+    const i = next.findIndex((s, k) => s !== stops[k])
+    commit({ ...g, stops: next })
+    const idx = i < 0 ? stops.length : i
+    setSel(idx)
+    focusStop(idx)
+  }
+
+  const s = stops[at]
   const pct = (v: number) => Math.round(v * 1000) / 10
   return (
-    <div data-gradient-rows={target} className="flex flex-col gap-1.5">
-      <Row label={gk(target === 'fill' ? 'fillStops' : 'strokeStops')} labelWidth={INSPECTOR_LABEL_W}>
-        <div className="flex min-w-0 flex-col gap-1">
-          {g.stops.map((st, i) => (
-            <div key={i} data-gradient-stop={i} className="flex min-w-0 items-center gap-1">
-              <ColorField
-                swatchOnly
-                ariaLabel={gk('stopColor', { n: i + 1 })}
-                value={st.color}
-                onChange={(v) => set(hist('setGradient'), updateStop(g, i, { color: v }))}
-              />
-              <NumberField
-                fill
-                ariaLabel={gk('stopOffset', { n: i + 1 })}
-                value={pct(st.offset)}
-                step={5}
-                min={0}
-                max={100}
-                precision={0}
-                unit="%"
-                onChange={(v) => set(hist('setGradient'), updateStop(g, i, { offset: v / 100 }))}
-              />
-              <NumberField
-                fill
-                ariaLabel={gk('stopOpacity', { n: i + 1 })}
-                title={gk('stopOpacityTip')}
-                value={pct(st.opacity ?? 1)}
-                step={5}
-                min={0}
-                max={100}
-                precision={0}
-                unit="%"
-                onChange={(v) => set(hist('setGradient'), updateStop(g, i, { opacity: v / 100 }))}
-              />
-              <IconButton
-                label={gk('removeStop', { n: i + 1 })}
-                side="left"
-                disabled={g.stops.length <= 2}
-                onClick={() => set(hist('setGradient'), removeStop(g, i))}
-              >
-                <X size={ICON_SIZE.sm} />
-              </IconButton>
-            </div>
-          ))}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="self-start text-ink-2 hover:text-ink"
-            data-gradient-add-stop={target}
-            onClick={() => set(hist('setGradient'), addStop(g))}
+    <>
+      <Row label="" labelWidth={INSPECTOR_LABEL_W}>
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          <div
+            ref={barRef}
+            data-gradient-bar={target}
+            role="group"
+            tabIndex={0}
+            aria-label={gk(target === 'fill' ? 'fillBar' : 'strokeBar')}
+            title={gk('barTip')}
+            onPointerDown={onBarPointerDown}
+            onKeyDown={onBarKey}
+            className="relative mx-1.5 h-5 min-w-0 flex-1 cursor-copy rounded-sm border border-border outline-none focus-visible:focus-ring"
+            style={{ background: `${stopsCss(sorted)}, ${CHECKER}` }}
           >
-            <Plus size={ICON_SIZE.xs} aria-hidden />
-            {gk('addStop')}
-          </Button>
+            {stops.map((st, i) => (
+              <button
+                key={i}
+                type="button"
+                data-gradient-stop={i}
+                data-selected={i === at || undefined}
+                role="slider"
+                aria-label={gk('stop', { n: i + 1 })}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={pct(st.offset)}
+                aria-valuetext={`${pct(st.offset)}%`}
+                onPointerDown={(e) => onStopPointerDown(e, i)}
+                onPointerMove={onStopPointerMove}
+                onPointerUp={onStopPointerUp}
+                onPointerCancel={onStopPointerUp}
+                onFocus={() => setSel(i)}
+                onKeyDown={(e) => onStopKey(e, i)}
+                className={cn(
+                  'absolute top-1/2 h-6 w-3 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-sm border-2 border-surface outline-none',
+                  'focus-visible:focus-ring',
+                  // 白边 + 一圈细线：浅色 / 深色的色带上都看得出节点；选中的那个换成强调色
+                  i === at ? 'ring-2 ring-accent' : 'ring-1 ring-border-strong',
+                  i === at && removing && 'opacity-30',
+                )}
+                style={{ left: `${pct(st.offset)}%`, background: st.color }}
+              />
+            ))}
+          </div>
+          {g.kind === 'linear' && (
+            <NumberField
+              ariaLabel={gk('angle')}
+              title={gk('angleTip')}
+              value={linearAngle(g, first.w, first.h)}
+              step={15}
+              min={-360}
+              max={360}
+              precision={0}
+              unit="°"
+              onChange={(v) => commit(withLinearAngle(g, v, first.w, first.h))}
+            />
+          )}
+          <IconButton label={gk('reverse')} side="left" onClick={() => commit(reverseStops(sorted))}>
+            <ArrowLeftRight size={ICON_SIZE.sm} />
+          </IconButton>
         </div>
       </Row>
-      {g.kind === 'linear' ? (
-        <Row label={gk('angle')} labelWidth={INSPECTOR_LABEL_W}>
-          <NumberField
-            half
-            ariaLabel={gk('angle')}
-            title={gk('angleTip')}
-            value={linearAngle(g, first.w, first.h)}
-            step={15}
-            min={-360}
-            max={360}
-            precision={1}
-            unit="°"
-            onChange={(v) => set(hist('setGradient'), withLinearAngle(g, v, first.w, first.h))}
+      <Row label="" labelWidth={INSPECTOR_LABEL_W}>
+        <div ref={rowRef} data-gradient-selected={target} className="flex min-w-0 flex-1 items-center gap-1">
+          <ColorField
+            swatchOnly
+            ariaLabel={gk('stopColor', { n: at + 1 })}
+            value={s.color}
+            onChange={(v) => commit(updateStop(sorted, at, { color: v }))}
           />
-        </Row>
-      ) : (
-        <>
-          <Row label={gk('center')} labelWidth={INSPECTOR_LABEL_W}>
-            <NumberField
-              half
-              prefix="X"
-              ariaLabel={gk('centerX')}
-              value={pct(g.center[0])}
-              step={5}
-              min={-100}
-              max={200}
-              precision={0}
-              unit="%"
-              onChange={(v) => set(hist('setGradient'), { ...g, center: [v / 100, g.center[1]] })}
-            />
-            <NumberField
-              half
-              prefix="Y"
-              ariaLabel={gk('centerY')}
-              value={pct(g.center[1])}
-              step={5}
-              min={-100}
-              max={200}
-              precision={0}
-              unit="%"
-              onChange={(v) => set(hist('setGradient'), { ...g, center: [g.center[0], v / 100] })}
-            />
-          </Row>
-          <Row label={gk('radius')} labelWidth={INSPECTOR_LABEL_W}>
-            <NumberField
-              half
-              ariaLabel={gk('radius')}
-              title={gk('radiusTip')}
-              value={pct(g.radius)}
-              step={5}
-              min={1}
-              max={300}
-              precision={0}
-              unit="%"
-              onChange={(v) => set(hist('setGradient'), { ...g, radius: Math.max(v, 1) / 100 })}
-            />
-          </Row>
-        </>
-      )}
+          <NumberField
+            fill
+            ariaLabel={gk('stopOffset', { n: at + 1 })}
+            value={pct(s.offset)}
+            step={1}
+            min={0}
+            max={100}
+            precision={0}
+            unit="%"
+            onChange={(v) => commit(moveStop(sorted, at, v / 100))}
+          />
+          <NumberField
+            fill
+            ariaLabel={gk('stopOpacity', { n: at + 1 })}
+            title={gk('stopOpacityTip')}
+            value={pct(s.opacity ?? 1)}
+            step={5}
+            min={0}
+            max={100}
+            precision={0}
+            unit="%"
+            onChange={(v) => commit(updateStop(sorted, at, { opacity: v / 100 }))}
+          />
+        </div>
+      </Row>
+    </>
+  )
+}
+
+/** 「更多」里只剩径向的中心与半径（线性的角度在色带那一行） */
+export function RadialRows({ objs, target }: { objs: readonly Mark[]; target: GradientTarget }) {
+  useTranslation('inspector')
+  const live = objs.filter((o) => gradientOf(o, target)?.kind === 'radial')
+  const g = live[0] ? gradientOf(live[0], target) : null
+  if (!g || g.kind !== 'radial') return null
+  const set = (next: Gradient) => write(live, target, hist('setGradient'), () => next)
+  const pct = (v: number) => Math.round(v * 1000) / 10
+  const pre = target === 'fill' ? 'fill' : 'stroke'
+  return (
+    <div data-gradient-radial={target} className="flex flex-col gap-1.5">
+      <Row label={gk(`${pre}Center`)} labelWidth={INSPECTOR_LABEL_W}>
+        <NumberField
+          half
+          prefix="X"
+          ariaLabel={gk(`${pre}CenterX`)}
+          value={pct(g.center[0])}
+          step={5}
+          min={-100}
+          max={200}
+          precision={0}
+          unit="%"
+          onChange={(v) => set({ ...g, center: [v / 100, g.center[1]] })}
+        />
+        <NumberField
+          half
+          prefix="Y"
+          ariaLabel={gk(`${pre}CenterY`)}
+          value={pct(g.center[1])}
+          step={5}
+          min={-100}
+          max={200}
+          precision={0}
+          unit="%"
+          onChange={(v) => set({ ...g, center: [g.center[0], v / 100] })}
+        />
+      </Row>
+      <Row label={gk(`${pre}Radius`)} labelWidth={INSPECTOR_LABEL_W}>
+        <NumberField
+          half
+          ariaLabel={gk(`${pre}Radius`)}
+          title={gk('radiusTip')}
+          value={pct(g.radius)}
+          step={5}
+          min={1}
+          max={300}
+          precision={0}
+          unit="%"
+          onChange={(v) => set({ ...g, radius: Math.max(v, 1) / 100 })}
+        />
+      </Row>
     </div>
   )
 }
