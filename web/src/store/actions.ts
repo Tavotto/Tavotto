@@ -67,10 +67,11 @@ import type {
   ShapeObject,
   TextObject,
 } from '@/types/document'
-import { emptyProject, objectLabel, type ProjectDocument } from '@/types/document'
+import { emptyProject, isKnownObject, objectLabel, type ProjectDocument } from '@/types/document'
 import { findDocumentsForProjectFile, bindingForReuse, type ProjectFileBinding } from '@/lib/projectFile'
 import { isDocHeldElsewhere } from '@/lib/docPresence'
 import { useAssetStore } from './assetStore'
+import { vectorPrimaryFor } from '@/lib/figureGroup'
 import { useEnvStore } from './envStore'
 import {
   adoptSlotBaseline,
@@ -458,7 +459,13 @@ export function updateObjects(ids: string[], label: UiMessage, patch: (o: Canvas
 
 export function deleteSelected() {
   // 单图编辑与排版同一口径（2026-10-21）：这一屏画着这张画布上的全部对象，选区里的都看得见，删的就是选区
-  const ids = useSelectionStore.getState().ids
+  // 更新的构建写进来的对象不许从这里删（`isKnownObject`）：它们本该原样留在文档里，哪条路径把它带进了选区都一样
+  const ids = useSelectionStore
+    .getState()
+    .ids.filter((id) => {
+      const o = findObject(id)
+      return !o || isKnownObject(o)
+    })
   if (!ids.length) return
   // 单选时把对象名（用户自己的内容，不翻译）插进去，多选才说数量——这是
   // **两句不同的话**，不是同一句的单复数：中文没有单数档（Intl.PluralRules
@@ -576,7 +583,7 @@ export function revealObjects(ids: string[]) {
 }
 
 /** 「全选」收进来的对象：看得见、没锁。判据只有这一份——`selectAll` 与画布菜单「全选」可不可用都读它 */
-export const isSelectAllTarget = (o: CanvasObject): boolean => !o.hidden && !o.locked
+export const isSelectAllTarget = (o: CanvasObject): boolean => !o.hidden && !o.locked && isKnownObject(o)
 
 /**
  * 「全选」此刻收进来的 id：这张画布上看得见、没锁的对象（单图编辑与排版同一口径，2026-10-21 取消「快编只收那张图」）。⌘A、命令面板 `select-all`、任何菜单的「全选」都经 `selectAll`
@@ -2302,6 +2309,36 @@ function notifyReconstructionPanel(fileId: string, guard: AdoptionGuard, reason:
 }
 registerReconstructionNotifier(notifyReconstructionPanel)
 
+/**
+ * 没动过的 PNG 面板 → 换成同一张图的矢量主文件（ADR 0184 §二）。只在不会挪动画面的情形换：
+ * 没裁剪、没旋转、没翻转；外框左上角与宽度不变，高度按主文件的宽高比（差 ≤1% 时原样保留）。
+ * 换了回 true；任何一条不满足回 false，调用方照旧走位图采用。
+ */
+function swapToVectorPrimary(panel: PanelObject): boolean {
+  if (panel.crop || panel.rotation || panel.flipH || panel.flipV) return false
+  const primary = vectorPrimaryFor(panel.fileId, useAssetStore.getState().panels)
+  if (!primary || !(primary.native_w_mm > 0) || !(primary.native_h_mm > 0)) return false
+  const ratio = primary.native_h_mm / primary.native_w_mm
+  const h = Math.abs(panel.h / panel.w - ratio) <= 0.01 * ratio ? panel.h : panel.w * ratio
+  commit(hist('useVectorPrimary', { name: panel.name ?? primary.name }), (d) => {
+    const o = d.objects.find((x) => x.id === panel.id)
+    if (o?.type !== 'panel') return
+    o.fileId = primary.id
+    o.fileKind = primary.kind
+    o.nativeW = primary.native_w_mm
+    o.nativeH = primary.native_h_mm
+    delete o.pxW
+    delete o.pxH
+    if (primary.px_w) o.pxW = primary.px_w
+    if (primary.px_h) o.pxH = primary.px_h
+    o.script = primary.script ?? o.script ?? null
+    o.figureFrame = FIGURE_FRAME_VERSION
+    o.h = h
+  })
+  useAssetStore.getState().markUsed(primary.id)
+  return true
+}
+
 export function enterElementEdit(
   panelId: string,
   { leftTab = 'elements' }: { leftTab?: 'elements' | 'keep' } = {},
@@ -2314,6 +2351,11 @@ export function enterElementEdit(
     // 采用记录 / 图幅标记对不上：重试必然还是同一句，真做不了 →「发给我们看看」
     status(engineErrorMsg(new ArtifactValidationError(issue)), 'error', { action: feedbackStatusAction() })
     return false
+  }
+  // 同一张图有矢量主文件（ADR 0184 §二）：能不能改是图的属性，不看用户放的是哪个格式——
+  // 没动过的 PNG 改从主文件进编辑，不再单独走位图采用。换源是一条可撤销的历史；条件不满足照旧。
+  if (!isAdoptedPanel(panel) && isUnadoptedPngSource(panel) && swapToVectorPrimary(panel)) {
+    return finishElementEntry(panelId, leftTab)
   }
   // Existing edited/baked PNG panels keep their established legacy semantics.
   const sourceEntry = isAdoptedPanel(panel) || isUnadoptedPngSource(panel)

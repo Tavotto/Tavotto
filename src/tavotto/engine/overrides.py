@@ -583,8 +583,8 @@ def _restore_text_pos(t: Text, orig) -> None:
 _GENERIC_FONT_FAMILIES = ("serif", "sans-serif", "cursive", "fantasy", "monospace")
 
 
-def _mathtext_font_name(fam: str) -> str | None:
-    """把字体族名换成 **mathtext 认得的具体字体名**；换不出来返回 None。
+def _mathtext_font_name(fam: str, *, style=None, weight=None) -> str | None:
+    """把字面字体族名换成安全的 mathtext Fontconfig 模式；换不出来返回 None。
 
     `mathtext.rm` 这几个 rcParam 走的是 FontconfigPattern 语法，只吃**具体
     字体名**——喂 `"sans-serif"` 会当场抛：
@@ -598,10 +598,23 @@ def _mathtext_font_name(fam: str) -> str | None:
     通用族别名要先经 `font.<别名>` 那张候选清单解析成真实字体名，
     matplotlib 自己也是这么做的。
     """
+    from matplotlib.font_manager import FontProperties
+
     if fam in _GENERIC_FONT_FAMILIES:
         names = list(mpl.rcParams.get(f"font.{fam}") or [])
-        return str(names[0]) if names else None
-    return fam
+        if not names:
+            return None
+        fam = str(names[0])
+    # UI/document values are literal family names, not Fontconfig programs.
+    # A raw ':file=…' suffix must never become a file selector in mathtext.
+    # Delegate escaping and all property syntax to Matplotlib itself; emitting
+    # styles separately also avoids duplicate attributes hiding italic/bold.
+    props = FontProperties(family=[fam])
+    if style is not None:
+        props.set_style(style)
+    if weight is not None:
+        props.set_weight(weight)
+    return props.get_fontconfig_pattern()
 
 
 #: 字体回退尾巴里**平台无关**的那一段：正文那张脸缺字形时，逐字形先退到这里。
@@ -1260,8 +1273,8 @@ def _apply_mathtext_custom_set(fam: str) -> bool:
         return False
     try:
         mpl.rcParams["mathtext.rm"] = math_name
-        mpl.rcParams["mathtext.it"] = f"{math_name}:italic"
-        mpl.rcParams["mathtext.bf"] = f"{math_name}:bold"
+        mpl.rcParams["mathtext.it"] = _mathtext_font_name(fam, style="italic")
+        mpl.rcParams["mathtext.bf"] = _mathtext_font_name(fam, weight="bold")
         mpl.rcParams["mathtext.sf"] = math_name
     except (ValueError, KeyError):
         return False

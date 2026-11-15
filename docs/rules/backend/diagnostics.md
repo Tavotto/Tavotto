@@ -26,6 +26,10 @@ Windows 上诊断缓存原子替换若遇共享冲突（WinError 5 / 32 / 33）�
 该进程的最新缓存；等待不持写锁。长时间占用耗尽重试后记为待写，下次访问该项目记录时再尝试；
 其他写盘错误不重试，进程退出后待写标记不保留。看护 `tests/test_windows_regressions.py` 的诊断缓存用例。
 诊断包 README 和发送前说明必须明确披露包名与版本。此例外由用户在 2026-10-31 明确授权，见 ADR 0016 修订。
+装好后 worker 自检没过时，该条另带 `selftest`（2026-11-15 维护者批准，ADR 0016 修订）：失败阶段闭集
+（`deprepair.SELFTEST_STAGES` ↔ `envdiag._SELFTEST_STAGES` 同源，测试钉住相等）、退出码、worker 稳定错误码、
+`diagnostics.failure_shape` 给出的 `[structure]` 摘要与最深一帧引擎源码位置；报错文字与路径不进记录。
+看护 `tests/test_selftest_failure_shape.py`。
 
 - 文本脱敏的唯一实现下沉在 `engine/diagnostictext.py`；`diagnostics.redact_text` 保留公开入口，
   `fixtools.readscope.scrub` 共用同一实现，避免转换上下文反向依赖整份诊断采集器。
@@ -485,4 +489,6 @@ Windows 上诊断缓存原子替换若遇共享冲突（WinError 5 / 32 / 33）�
 加失败码或失败分支时同时问：包里这条记录分得清哪几种原因？带闭集事实（步骤、错误类别、退出码、`winerror`），不带原文
 和路径。为什么：六个 PR 都是读反馈包时才发现缺字段，下一份反馈才看得到。分不出杀软隔离还是安装不完整（#1508），分不出
 spawn 失败是哪一种（#1520），分不出卡在哪个启动阶段（#1550），AI 失败不知道停在哪一步（#1534），13 次失败只有
-`status=failed`（#1571），只有 code、没有底层 `OSError`，根因只能写「推测」（#1633）。
+`status=failed`（#1571），只有 code、没有底层 `OSError`，根因只能写「推测」（#1633）。认不出的那一档也要留闭集证据：
+外部 CLI 失败分类只收 401/403/429/5xx，其余状态只剩计数，一份用户反馈（中转每次几秒就失败）定不了根因，补成只留三位
+状态码（#1901，2026-11-14）。

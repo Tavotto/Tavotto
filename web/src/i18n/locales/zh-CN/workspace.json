@@ -126,6 +126,7 @@
     "unsupportedType": "「{{name}}」放不进画布，能放进来的有图片、脚本和项目包。",
     "unsupportedImage": "「{{name}}」这种格式的图还放不进画布，能放的有 PNG、JPG、TIFF、PDF、SVG。",
     "packageFailed": "「{{name}}」没能作为项目包打开。{{reason}}",
+    "packageTooNew": "「{{name}}」来自更新的 {{product}}，本版本无法打开。",
     "packageOnly_other": "已打开项目包「{{name}}」，另外 {{count}} 个文件这次没有处理"
   },
   "canvasTools": {
@@ -327,6 +328,7 @@
     "addArrow": "添加箭头",
     "addGuide": "添加参考线",
     "addPanel": "加入图 {{name}}",
+    "useVectorPrimary": "改用 {{name}} 的矢量原图",
     "addShape": "添加{{shape}}",
     "addSubLabels": "添加序号标签",
     "addText": "添加文字",
@@ -874,6 +876,7 @@
     "packageDrift_other": "已打开项目包。{{count}} 个素材与打包时不一致，请核对。",
     "packageFailed": "无法打包。{{error}}",
     "packageOpenFailed": "无法打开项目包。{{error}}",
+    "packageTooNew": "这个项目包来自更新的 {{product}}，本版本无法打开。",
     "packageOpened": "已打开项目包（{{createdAt}}），素材全部就位",
     "packaged_other": "已生成项目包 {{name}}（{{count}} 个素材）",
     "pasteNothing": "没有可粘贴的对象。缺失素材的对象已跳过。",
@@ -1208,6 +1211,7 @@
       "toManaged": "装到 Tavotto 目录",
       "toUser": "装到你电脑上已有的那套",
       "toUserLong": "你电脑上已有的那套，装坏了不能完整回滚",
+      "toConfigured": "把 {{module}} 装到你为这个项目选的 Python 里",
       "download": "需要先下载约 {{mb}} MB。",
       "managedPlace": "Tavotto 目录"
     },

@@ -188,6 +188,7 @@
     "mergePdf": "合成一个多页 PDF：{{name}}（{{count}} 页）",
     "batchNames": "每张图用各自的名字",
     "exportAgain": "再次导出",
+    "newerObjects_other": "有 {{count}} 个对象来自更新的版本，更新后才能导出",
     "routeNeedsScript": "这些图带着编辑，但找不到它们的脚本，画布导出画不出来：{{files}}。请先恢复脚本或撤销这些图的编辑。",
     "showInFolder": "在文件夹中显示",
     "finish": "完成",

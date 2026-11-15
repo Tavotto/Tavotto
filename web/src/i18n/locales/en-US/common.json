@@ -49,7 +49,8 @@
     "emptyText": "Empty text",
     "panel": "Figure",
     "shape": "Shape",
-    "text": "Text"
+    "text": "Text",
+    "unknown": "Newer object"
   },
   "presetText": {
     "annotation": "Label",

@@ -1069,6 +1069,29 @@ def _argparse_failure_kind(exc: BaseException) -> str | None:
     return None
 
 
+def _script_parser_error_message(exc: BaseException) -> str | None:
+    """这次 `SystemExit` 若是**用户代码**直接调的 `ArgumentParser.error(message)`，回那个 message；否则 None。
+
+    主语是调 `error` 的那一帧：argparse 解析时自己报错（缺必填、未知参数、取值不对）是 `argparse` 模块里的
+    `parse_known_args` 一族在调，不算；脚本 `parse_args()` 之后自己查数据、`parser.error("找不到 …")` 才算。
+    只看栈帧与局部变量，不看文字句式（argparse 被翻译也一样判），不读 stderr。"""
+    tb = exc.__traceback__
+    caller = None
+    while tb is not None:
+        frame = tb.tb_frame
+        if (
+            frame.f_code.co_name == "error"
+            and str(frame.f_globals.get("__name__") or "") == "argparse"
+        ):
+            if caller is None or str(caller.f_globals.get("__name__") or "") == "argparse":
+                return None
+            message = frame.f_locals.get("message")
+            return message if isinstance(message, str) else None
+        caller = frame
+        tb = tb.tb_next
+    return None
+
+
 def _script_exit_error(
     exc: SystemExit, *, argv_count: int = 0, argv_check: bool = False
 ) -> ProtocolError:
@@ -2093,6 +2116,22 @@ class Worker(wireproto.V1Handler):
                     ):
                         raise _blocked_operations_error(
                             ledger.material(), cause=exc, fidelity=ledger.summary()
+                        ) from exc
+                    # 脚本先探路、答没有，再自己 `parser.error("找不到 …xlsx …")` 退出：缺的是数据，不是参数
+                    # （ADR 0106 修订 2026-11-14）。参数都有默认值，引去「运行参数」是死胡同
+                    parser_message = _script_parser_error_message(exc)
+                    missing = (
+                        figcapture.parser_error_missing_input(parser_message, self._input_misses)
+                        if parser_message is not None
+                        else None
+                    )
+                    if missing is not None:
+                        raise ProtocolError(
+                            MISSING_INPUT,
+                            f"脚本要读取的文件不存在: {missing['requested']}（脚本自己的参数解析器报错退出）",
+                            retryable=False,
+                            traceback_text=traceback.format_exc(),
+                            extra={"missing_input": missing},
                         ) from exc
                     exit_error = _script_exit_error(
                         exc,

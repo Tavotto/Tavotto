@@ -6367,11 +6367,11 @@ def install_input_remap(
             return None, None
         return raw, _script_name(raw)
 
-    def _note_probe(path, kind: str) -> None:
+    def _note_probe(path, kind: str, exc: BaseException | None = None) -> None:
         with _Busy():
-            _note_probe_now(path, kind)
+            _note_probe_now(path, kind, exc)
 
-    def _note_probe_now(path, kind: str) -> None:
+    def _note_probe_now(path, kind: str, exc: BaseException | None) -> None:
         raw, _ = _probe_names(path)
         if raw is None:
             return
@@ -6381,6 +6381,13 @@ def install_input_remap(
         elif _is_sys_path_entry(raw):
             return
         misses.note_probe(raw, kind=kind)
+        if exc is not None:
+            # stat / 列目录这类会抛的探路：给**这一个**系统 ENOENT 打标，它若一路到终局就是这次落空
+            # （`_probe_miss_of`）；写进不存在的目录之类别的 ENOENT 没有标，照旧不认领
+            try:
+                exc._tavotto_probe_miss = raw  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001
+                pass
 
     def _probe_target(path, want: str) -> str | None:
         """原路径不在时按改指表换算（`whole=True`：探的可以就是规则的 `from` 文件夹本身），目标是 `want`
@@ -6430,12 +6437,12 @@ def install_input_remap(
                 return real(*args, **kwargs)
             try:
                 return real(path, *args, **kwargs)
-            except FileNotFoundError:
+            except FileNotFoundError as exc:
                 if kwargs.get("dir_fd") is not None or _reentrant():
                     raise
                 target = _probe_target(path, want)
                 if target is None:
-                    _note_probe(path, kind)
+                    _note_probe(path, kind, exc)
                     raise
             return real(target, *args, **kwargs)
 
@@ -6493,12 +6500,12 @@ def install_input_remap(
         def stat(self, *args, **kwargs):
             try:
                 return real(self, *args, **kwargs)
-            except FileNotFoundError:
+            except FileNotFoundError as exc:
                 if _reentrant():
                     raise
                 target = _probe_target(self, PROBE_WANT_ANY)
                 if target is None:
-                    _note_probe(self, PROBE_ANY_KIND)
+                    _note_probe(self, PROBE_ANY_KIND, exc)
                     raise
             return real(pathlib.Path(target), *args, **kwargs)
 
@@ -6960,20 +6967,75 @@ def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
 
 
 def _probe_miss_of(fnf: BaseException, misses: InputMisses) -> dict | None:
-    """「脚本先 `exists()` / `is_file()` 探路、答没有，再**自己** `raise FileNotFoundError(...)` 点名这条」→
-    `missing_input` 的事实（ADR 0106 修订 2026-11-09）；对不上回 None。
+    """「脚本先 `exists()` / `is_file()` 探路、答没有，再**自己** `raise FileNotFoundError(...)` 点名这条」，
+    或「`stat` / `getsize` / `listdir` 这类会抛的探路落空、改指没救回，系统抛的**那一个** ENOENT 一路到终局」→
+    `missing_input` 的事实（ADR 0106 修订 2026-11-09 / 2026-11-14）；对不上回 None。
+
+    后一种认的是 `install_input_remap` 打在那个异常对象上的标（`_tavotto_probe_miss`），不按路径比：同一条路径
+    随后写进不存在的目录抛的 ENOENT 没有标，不认领。
 
     三条都要有才判：异常是脚本构造的（`errno` 为 None——系统抛的 ENOENT 都带 errno，写进不存在的目录不在此列）；
     消息按路径段边界点了名某次落空的探路（同 `_named_miss`）；那条路径此刻确实不在（被回退 / 别处救回来的不算）。
     探路同样查改指表（`install_input_remap`），所以事实与只读打开的落空同形（不带 `via`；问的是文件夹时多带
     `probe_kind: "dir"`）：对话框给选择器，AI 的 `link_data_file` 接得上。
     """
-    if not misses.probes or getattr(fnf, "errno", None) is not None:
+    if not misses.probes:
         return None
-    requested = _named_miss(fnf, misses, misses.probes)
+    tagged = getattr(fnf, "_tavotto_probe_miss", None)
+    if isinstance(tagged, str):
+        requested: str | None = tagged
+    elif getattr(fnf, "errno", None) is not None:
+        return None
+    else:
+        requested = _named_miss(fnf, misses, misses.probes)
     if requested is None:
         return None
-    entry = next(m for m in reversed(misses.probes) if m["requested"] == requested)
+    return _absent_probe_fact(requested, misses)
+
+
+def _named_by_basename(text: str, items: list[dict]) -> str | None:
+    """消息里只写了**文件名**（`找不到 data.xlsx，请用 --input 指定`）时点了名的那次探路；对不上回 None。
+
+    只认带扩展名的文件名（`data` / `input` 这种文件夹名太常见，不认）；左边界只排除 ASCII 的
+    路径字符——中文消息里文件名前紧挨着汉字（`指定不同污染物.xlsx`）也算点名；右边界与 `_named_miss` 同一把尺子。
+    几条都对得上时取文件名最长的（`a.csv` 不抢 `data.csv`），同名取最近一次。"""
+    text = text.replace("\\", "/")
+    best: tuple[int, str] | None = None
+    for item in reversed(items):
+        base = item["requested"].replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+        stem, dot, ext = base.rpartition(".")
+        if not (stem and dot and ext):
+            continue
+        if not re.search(rf"(?<![A-Za-z0-9_.\-/]){re.escape(base)}(?![\w\-/]|\.\w)", text):
+            continue
+        if best is None or len(base) > best[0]:
+            best = (len(base), item["requested"])
+    return best[1] if best else None
+
+
+def parser_error_missing_input(message: str, misses: InputMisses) -> dict | None:
+    """脚本**自己**调 `parser.error("找不到 …")`（先探路、答没有、再用参数解析器报错退出）→ `missing_input`
+    的事实；对不上回 None（ADR 0106 修订 2026-11-14）。
+
+    调用方（worker）已证明这次 `SystemExit` 是用户代码调的 `ArgumentParser.error`，不是 argparse 解析时自己报的。
+    这里只认：消息点了名某次没救回的探路（整条路径按 `_named_miss` 的边界，或只写了文件名，`_named_by_basename`），
+    且那条此刻确实不在。事实与 `_probe_miss_of` 同形——对话框给选择器，指认后经改指表重跑。"""
+    if not misses.probes or not isinstance(message, str) or not message or len(message) > 4096:
+        return None
+    holder = FileNotFoundError(message.replace("\n", " "))
+    requested = _named_miss(holder, misses, misses.probes) or _named_by_basename(
+        message, misses.probes
+    )
+    if requested is None:
+        return None
+    return _absent_probe_fact(requested, misses)
+
+
+def _absent_probe_fact(requested: str, misses: InputMisses) -> dict | None:
+    """点了名的那条探路此刻确实不在 → `missing_input` 事实；此刻在（被回退 / 别处救回来）或判不了回 None。"""
+    entry = next((m for m in reversed(misses.probes) if m["requested"] == requested), None)
+    if entry is None:
+        return None
     try:
         os.lstat(os.path.join(entry["cwd"], requested))
         return None  # 此刻在：不是缺数据

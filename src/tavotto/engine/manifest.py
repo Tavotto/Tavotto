@@ -1714,6 +1714,21 @@ _MATHTEXT_SET_FACES = {
 }
 
 
+def _pattern_families(pattern: str) -> list[str]:
+    """`mathtext.rm` 这类 Fontconfig 模式 → 族名列表，与 mathtext 自己的解析同一口径。
+
+    写进去的是 `FontProperties(...).get_fontconfig_pattern()` 转义过的模式（`DFYanKaiW7\\-B5`），
+    不能按 `:` 切了当字面族名用：切出来的带反斜杠，解析到回退脸。解析不了才退回按 `:` 切。
+    """
+    from matplotlib.font_manager import FontProperties
+
+    try:
+        families = FontProperties(pattern).get_family()
+    except (ValueError, TypeError):
+        return [pattern.split(":")[0]]
+    return [str(f) for f in families] or [pattern.split(":")[0]]
+
+
 def font_faces(text: str, families, math_family, file=None) -> dict:
     """这段文字**真正会由哪张脸画出来**（渲染派生数据，不进文档、不是 override）。
 
@@ -1741,7 +1756,7 @@ def font_faces(text: str, families, math_family, file=None) -> dict:
             rm = str(mpl.rcParams.get("mathtext.rm") or "")
             rm_fonts = [
                 f
-                for f in (_ft_font(p, i) for p, i in _resolved_font_paths([rm.split(":")[0]]))
+                for f in (_ft_font(p, i) for p, i in _resolved_font_paths(_pattern_families(rm)))
                 if f is not None
             ]
             if rm_fonts:

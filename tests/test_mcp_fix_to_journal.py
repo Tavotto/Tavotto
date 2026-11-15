@@ -169,6 +169,11 @@ def _persisted_hash(sid: str) -> str:
     return bridge.get_session(sid).patch_hash()
 
 
+def _persisted(sid: str) -> dict:
+    """落盘记录原文（不重建会话）。"""
+    return bridge.sessionjournal.load(bridge._journal_dir(), sid) or {}
+
+
 def _eff(manifest: dict, role: str) -> list[float]:
     out = []
     for el in manifest["elements"]:
@@ -413,6 +418,8 @@ def test_rejected_artifact_withdraws_published_files_and_rolls_back(sid, tmp_pat
 
     def fake_export(session_id, **kwargs):
         assert kwargs["explicit_confirm"] is False  # 与 tavotto_export 同一条预检门，不绕
+        live = bridge._SESSIONS[session_id]
+        live.exported_hash = live.patch_hash()  # 与真 export 一样：出了文件就在内存里记下这一版
         return {
             "files": [
                 {"status": "done", "format": "pdf", "path": str(leftover)},
@@ -429,6 +436,10 @@ def test_rejected_artifact_withdraws_published_files_and_rolls_back(sid, tmp_pat
     assert not leftover.exists()  # 同一作业里已发布的其它格式也撤回
     assert not proof.exists()  # 留档一并撤回
     assert _state(sid) == before
+    # 导出标记也回到 B0：内存里撤回，候选版本的标记更没有落盘（Codex #1903 P1）
+    assert bridge.get_session(sid).exported_hash is None
+    assert _persisted(sid).get("exported_hash") is None
+    assert _persisted_hash(sid) == before[0]
 
 
 def test_successful_export_goes_through_the_real_gate_and_checks_the_page_size(sid, tmp_path):
@@ -441,6 +452,7 @@ def test_successful_export_goes_through_the_real_gate_and_checks_the_page_size(s
     assert probe["w_pt"] == pytest.approx(110.0 / 25.4 * 72, abs=0.5)
     assert entry["inspection"]  # 产物核验的逐项结果原样带出
     assert _persisted_hash(sid) == bridge.get_session(sid).patch_hash()
+    assert _persisted(sid)["exported_hash"] == bridge.get_session(sid).patch_hash()
 
 
 def test_export_out_of_scope_is_refused_before_anything_changes(sid, tmp_path):

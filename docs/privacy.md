@@ -553,6 +553,41 @@ cancelled, closed or failed send is never resumed on its own.
   its number (`TVM-…`).
 * **Switch.** `TAVOTTO_NO_CONTACT=1` removes the feature (no button, no network).
 
+## External review links
+
+*Share for review* (top bar, next to *Export*) turns the figure or layout you are
+looking at into a link that other people can open in a browser and comment on,
+without installing Tavotto or signing in. It uploads **only when you press
+*Create link* or *Update this link***; opening the window uploads nothing, and a
+cancelled or failed upload is never resumed on its own.
+
+* **What is uploaded.** A rendered picture of the current figure or layout (PNG,
+  at most 3000 px on the long side), a list of the elements' positions on that
+  picture with the text you can already see on it (axis labels, legend entries),
+  the title, and the note to reviewers if you wrote one. **Your scripts, data,
+  project files, file paths and computer details are never uploaded.**
+* **Who can see it.** Anyone who has the link. Links are not listed or indexed.
+  Reviewers type a display name of their choice; it is not verified.
+* **Where it is stored.** A service operated by the Tavotto maintainers on
+  Tencent Cloud CloudBase (mainland China), reached at `review.tavotto.cn`. No
+  other host is contacted for this feature.
+* **How long it is kept.** 30 days after the last update. *Stop sharing* deletes
+  the pictures, comments and verdicts at once; expired links are deleted the same
+  way.
+* **Daily limits.** To count the free daily limits (1 new link per device per
+  day, 5 updates per link per day) the app creates a random device key on first
+  use and signs its requests with it. The key identifies this installation only,
+  is not linked to usage statistics and is not used for anything else.
+* **What stays on your computer.** The link's number, a secret management token,
+  thumbnails of the versions you shared and a copy of the comments, in the app's
+  data folder (readable by your user only, where the platform supports it), so
+  you can still read the comments after the link expires. While you have an
+  unexpired link, the app asks the service for new comments every 30 minutes, and
+  every minute while the *Review* tab is open; with no such link it makes no
+  request at all.
+* **Turning it off.** `TAVOTTO_NO_REVIEW_SHARE=1` removes the feature and all of
+  its network requests.
+
 ## Local service
 
 The desktop application uses a local service bound to `127.0.0.1` for the user

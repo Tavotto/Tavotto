@@ -193,6 +193,8 @@
     "mergePdf": "Combine into one multi-page PDF: {{name}} ({{count}} pages)",
     "batchNames": "Each figure keeps its own name",
     "exportAgain": "Export again",
+    "newerObjects_other": "{{count}} objects come from a newer version. Update to export them.",
+    "newerObjects_one": "1 object comes from a newer version. Update to export it.",
     "routeNeedsScript": "These figures carry edits but their scripts can’t be found, so a canvas export can’t draw them: {{files}}. Restore the scripts or undo the edits first.",
     "showInFolder": "Show in folder",
     "finish": "Done",

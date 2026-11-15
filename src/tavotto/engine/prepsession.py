@@ -1783,14 +1783,23 @@ class SessionService:
                 info["code"] = str(offer.get("code") or "dependency_unresolved")
                 info["route"] = pool.INSTALL_ROUTE_UNRESOLVABLE
                 return info
+            # 受管环境装完 worker 自检过不去过、且用户为本项目选了自己的 Python：改推荐它（要用户亲手确认，
+            # `InstallGrant` 对它一律拒）；否则照旧受管
+            target_kind = deprepair.TARGET_MANAGED
+            if managed.get("selftest_failed") and any(
+                t.get("kind") == deprepair.TARGET_CONFIGURED and t.get("available") is not False
+                for t in offer.get("targets") or ()
+            ):
+                target_kind = deprepair.TARGET_CONFIGURED
             preview = deprepair.preview_impact(
-                sess.project_root, plan.script, module, target_kind=deprepair.TARGET_MANAGED
+                sess.project_root, plan.script, module, target_kind=target_kind
             )
         except Exception as exc:  # noqa: BLE001 — 预览失败 = 不能在会话里授权，如实带码
             info["code"] = str(getattr(exc, "code", "") or "dependency_unresolved")
             return info
         info.update(
             installable=True,
+            target_kind=target_kind,
             requirement=dict(offer["requirement"]),
             rounds_remaining=int(offer.get("rounds_remaining") or 0),
             impact=preview["impact"],
@@ -3775,7 +3784,7 @@ class SessionService:
                 "impact": missing["impact"],
                 "impact_digest": missing["impact_digest"],
                 "module": missing["module"],
-                "target_kind": deprepair.TARGET_MANAGED,
+                "target_kind": str(missing.get("target_kind") or deprepair.TARGET_MANAGED),
                 "scope_policy": "",
             }
         by_id = {c["id"]: c for c in checks}

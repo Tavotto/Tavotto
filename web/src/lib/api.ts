@@ -75,6 +75,18 @@ export interface PanelInfo {
    * **不是**"这张图没有规格"——解析时退到文档里那份，见 originalSpec.ts。
    */
   original_spec?: AssetOriginalSpec
+  /**
+   * 同一张图的几份文件（ADR 0184 §一，后端 `engine/figuregroup` 是唯一出处）：图键、是不是这张图的主文件
+   * （PDF > 最大位图 > SVG）、这张图的全部文件 id。老后端不发：`undefined` = 一份文件一张图（旧行为）。
+   */
+  figure_key?: string
+  primary?: boolean
+  formats?: string[]
+  /**
+   * 画这张图的脚本（项目相对路径）：Python 注册表、R / MATLAB 源码里写死的输出、或同目录同名的 R / MATLAB 脚本
+   * （ADR 0184 修订）。只用于「这张图归哪个脚本」（范围、归组）；能不能进图内编辑仍只看 `script` / `capability`。
+   */
+  source_script?: string
 }
 
 /**
@@ -211,6 +223,8 @@ export interface PanelsResponse {
    * `code` 按 `errors:backend.<code>` 翻译（params 只有 `file`）。老后端不发这个字段。
    */
   unsupported?: UnsupportedAsset[]
+  /** 素材区的显示范围（ADR 0184 §三）；老后端不发 = 整个文件夹 */
+  view_scope?: ViewScope
 }
 
 export interface UnsupportedAsset {
@@ -627,11 +641,31 @@ export const fetchOpenProjects = () =>
     (r) => r.projects,
   )
 
-export const openProjectApi = (path: string, create = false) =>
+/**
+ * 怎么进来的（ADR 0184 §三）：带着一个脚本（素材区只看脚本的图）/ 明确打开整个文件夹。
+ * 不给 = 沿用上次记的范围（最近 / 收藏重开）。
+ */
+export type ProjectEntry = { entry: 'folder' } | { entry: 'script'; script: string }
+
+export const openProjectApi = (path: string, create = false, entry?: ProjectEntry) =>
   jsonFetch<ProjectStatus>('/api/projects/open', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path, create }),
+    body: JSON.stringify({ path, create, ...entry }),
+  })
+
+/** 素材区的显示范围（后端 `config.view_scope`）。老后端不发 = 整个文件夹 */
+export interface ViewScope {
+  mode: 'folder' | 'scripts'
+  scripts: string[]
+}
+
+/** 运行了一个脚本：范围是「只看脚本的图」时把它加进去（后台顺手发，失败不打扰用户） */
+export const addViewScopeScript = (script: string) =>
+  jsonFetch<{ view_scope: ViewScope }>('/api/project/view_scope', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ add_script: script }),
   })
 
 /**
@@ -5945,13 +5979,19 @@ export interface DependencyRequirementInfo {
   installable: boolean
 }
 
+/**
+ * 安装目标的种类（后端 `deprepair.TARGETS`）。`configured_interpreter` = 用户为这个项目选的、在项目之外的 Python
+ * （ADR 0019 2026-11-15 修订）：原地装、改用户环境，与 `project_venv` 同为要明确确认的一类
+ */
+export type RepairTargetKind = 'project_venv' | 'tavotto_managed' | 'configured_interpreter'
+
 /** 一个可选的安装目标 */
 export interface DependencyTarget {
   /**
    * `system_interpreter`（ADR 0044）不是安装目标：这台机器上已有的解释器里
    * 已经装着那个包，采用它一个字节都不装——走项目环境 PATCH，不走 plan。
    */
-  kind: 'project_venv' | 'tavotto_managed' | 'system_interpreter'
+  kind: 'project_venv' | 'tavotto_managed' | 'configured_interpreter' | 'system_interpreter'
   /** 项目相对路径（项目 venv 才有） */
   venv: string
   /** 项目 venv 是项目相对路径；系统解释器是项目外的绝对路径（它本来就不跟项目走） */
@@ -5978,6 +6018,8 @@ export interface DependencyTarget {
    * 这次授权**包含先下载它**——`download_bytes` 界面必须说出口（`cached` 时为 0、不联网）。
    */
   private_python?: PrivatePythonOffer | null
+  /** 受管目标才有：最近一代装完 worker 自检没过——装到它里面也用不了，界面不再把它当主按钮 */
+  selftest_failed?: boolean
 }
 
 /** 「先准备私有 Python」段：版本 / 目标 / 体积 / 来源域名，没有机器路径 */
@@ -6057,7 +6099,7 @@ export interface DependencyRepairPlan extends DependencyRequirementInfo {
   plan_id: string
   /** 这次授权真正要装的全部包（规范串）：新建第一代时多于用户点的那一个；老后端没有这个字段 */
   requirements?: string[]
-  target_kind: 'project_venv' | 'tavotto_managed'
+  target_kind: RepairTargetKind
   /** 这份计划的影响摘要（执行请求必须回显它；老后端没有） */
   impact_digest?: string
   python: string
@@ -6131,7 +6173,7 @@ export interface DependencyProgress {
 export const createDependencyPlan = (body: {
   module: string
   script: string
-  target: 'project_venv' | 'tavotto_managed'
+  target: RepairTargetKind
   distribution?: string
 }) =>
   jsonFetch<{ plan: DependencyRepairPlan }>('/api/engine/dependency/plan', {
@@ -6242,7 +6284,7 @@ export interface JointUserSpecified {
 export interface JointDependencyPlan {
   plan_version: number
   status: 'nothing_needed' | 'ready' | 'blocked'
-  target_kind: 'project_venv' | 'tavotto_managed'
+  target_kind: RepairTargetKind
   script: string
   /** 脚本开跑就要的第三方 import（无条件） */
   needed: { module: string; distribution: string; resolution_source: string; via: string[] }[]
@@ -6326,7 +6368,7 @@ export interface DependencyPreparationOffer {
 /** `deprepair.impact_of` 的公开形态：没有机器路径 */
 export interface DependencyImpact {
   impact_version: number
-  target_kind: 'project_venv' | 'tavotto_managed'
+  target_kind: RepairTargetKind
   scope: 'managed_generation' | 'project_venv_in_place'
   installs: string[]
   constraints: string[]
@@ -6386,7 +6428,7 @@ export interface UserEnvironment {
 export interface JointDependencyRepairPlan {
   plan_id: string
   script: string
-  target_kind: 'project_venv' | 'tavotto_managed'
+  target_kind: RepairTargetKind
   python: string
   requirements: string[]
   constraints: string[]
@@ -6420,7 +6462,7 @@ export const fetchDependencyOffer = (script: string) =>
 /** 绑定一份联合计划（不装）。blocked / 什么都不缺 → 409，body.joint 里是计划 */
 export const createJointDependencyPlan = (body: {
   script: string
-  target?: 'project_venv' | 'tavotto_managed'
+  target?: RepairTargetKind
   /**
    * 用户在确认界面接受（可改）预填后提交的 `{ import 名: '包名[版本约束]' }`（PR5b）。只收 `origins[]` 里带
    * `suggested_distribution` 的那类 import；语法不合 `package_requirement_invalid`，不是来源未定的表外名

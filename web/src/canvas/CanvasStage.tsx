@@ -1,3 +1,4 @@
+import { visibleFigureCards } from '@/lib/figureGroup'
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { perfCount } from '@/perf/core'
 import { useTranslation } from 'react-i18next'
@@ -567,7 +568,9 @@ function EmptyHint() {
   const page = useDocumentStore((s) => s.doc.page)
   const assetsLoaded = useAssetStore((s) => s.loaded)
   const panels = useAssetStore((s) => s.panels)
-  const hasAssets = panels.length > 0
+  const viewScope = useAssetStore((s) => s.viewScope)
+  // 有没有可摆的图按「看得见的图」算（ADR 0184）：从脚本进来、脚本还没出图时是空状态，不是一块空的选图卡
+  const hasAssets = visibleFigureCards(panels, viewScope).length > 0
   const inTutorial = useProjectStore((s) => s.project?.tutorial === true)
   const restoreIssue = useDocumentStore((s) => (s.restoreGate.state === 'needs_user' ? s.restoreIssue : null))
   const held = useSyncExternalStore(subscribeHeldEntries, heldEntryCount) > 0

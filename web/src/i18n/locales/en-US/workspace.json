@@ -133,6 +133,7 @@
     "unsupportedType": "“{{name}}” can’t go on the canvas. Images, scripts and project packages can.",
     "unsupportedImage": "Images in the format of “{{name}}” can’t go on the canvas yet. PNG, JPG, TIFF, PDF and SVG can.",
     "packageFailed": "“{{name}}” couldn’t be opened as a project package. {{reason}}",
+    "packageTooNew": "“{{name}}” is from a newer {{product}} and this build can’t open it.",
     "packageOnly_one": "Opened the project package “{{name}}”. {{count}} other file wasn’t handled this time.",
     "packageOnly_other": "Opened the project package “{{name}}”. {{count}} other files weren’t handled this time."
   },
@@ -341,6 +342,7 @@
     "addArrow": "Add arrow",
     "addGuide": "Add guide",
     "addPanel": "Add figure {{name}}",
+    "useVectorPrimary": "Use the vector file of {{name}}",
     "addShape": "Add {{shape}}",
     "addSubLabels": "Add panel labels",
     "addText": "Add text",
@@ -917,6 +919,7 @@
     "packageDrift_other": "Project package opened. {{count}} assets differ from the packaged copies. Check the assets.",
     "packageFailed": "Couldn’t package. {{error}}",
     "packageOpenFailed": "Couldn’t open the project package. {{error}}",
+    "packageTooNew": "This project package is from a newer {{product}} and this build can’t open it.",
     "packageOpened": "Project package opened ({{createdAt}}); every asset is present",
     "packaged_one": "Created project package {{name}} ({{count}} asset)",
     "packaged_other": "Created project package {{name}} ({{count}} assets)",
@@ -1271,6 +1274,7 @@
       "toManaged": "into Tavotto's folder",
       "toUser": "into the one already on your computer",
       "toUserLong": "The one already on your computer; a failed install can't be fully undone",
+      "toConfigured": "Install {{module}} into the Python you chose for this project",
       "download": "Needs a download of about {{mb}} MB.",
       "managedPlace": "Tavotto's folder"
     },

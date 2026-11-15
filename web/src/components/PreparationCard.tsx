@@ -1990,6 +1990,14 @@ function InstallLine({ report }: { report: PreparationReport | null }) {
       ? pt('install.many', { list: installs.slice(0, 3).join(', '), count: installs.length })
       : installs.join(', ')
     : pt('install.runtime')
+  // 装进「你为这个项目选的 Python」：整句话说清装什么、装到哪（不再拼「 · 装到…」）
+  if (impact.target_kind === 'configured_interpreter') {
+    return (
+      <p className="text-sm text-ink-2" data-prep-install data-prep-install-target="configured_interpreter">
+        {pt('install.toConfigured', { module: what })}
+      </p>
+    )
+  }
   return (
     <p className="text-sm text-ink-2" data-prep-install>
       {what} · {pt(impact.modifies_user_environment ? 'install.toUser' : 'install.toManaged')}

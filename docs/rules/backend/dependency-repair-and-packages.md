@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「受控依赖修复（ADR 0019，2026-08-27）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_dependency_repair.py`、`tests/test_pypi_mirror_fallback.py`、`tests/test_pypi_slow_fallback.py`、`test_dependency_repair_e2e.py`、`test_package_management.py`、`test_package_lookup.py`、`test_environment_health_parity.py`、`test_dependency_plan.py`、`test_dependency_declared_roots.py`、`test_import_origin_static.py`、`test_import_origin_safety.py`、`test_import_origin_metadata.py`、`test_environment_coverage.py`、`test_user_environments.py`、`test_root_env_overlay.py`、`test_env_project_attribution.py`、`test_environment_adoption.py`、`test_environment_session.py`、`test_environment_autodetect.py`、`test_dependency_impact.py`、`test_dependency_scope.py`、`test_import_origin_user_specified.py`、`test_import_origin_cross_platform.py`、`test_import_origin_perf.py`、`test_import_origin_diagnostics_privacy.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_dependency_repair.py`、`tests/test_pypi_mirror_fallback.py`、`tests/test_pypi_slow_fallback.py`、`test_dependency_repair_e2e.py`、`test_package_management.py`、`test_package_lookup.py`、`test_environment_health_parity.py`、`test_dependency_plan.py`、`test_dependency_declared_roots.py`、`test_import_origin_static.py`、`test_import_origin_safety.py`、`test_import_origin_metadata.py`、`test_environment_coverage.py`、`test_user_environments.py`、`test_root_env_overlay.py`、`test_env_project_attribution.py`、`test_environment_adoption.py`、`test_environment_session.py`、`test_environment_autodetect.py`、`test_dependency_impact.py`、`test_dependency_scope.py`、`test_import_origin_user_specified.py`、`test_import_origin_cross_platform.py`、`test_import_origin_perf.py`、`test_import_origin_diagnostics_privacy.py`、`test_configured_interpreter_target.py`
 > `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-23，与正文同等有效）：内置 runtime 永不是安装目标；pip exit 0 ≠ 修好；用户显式决定过的环境不碰；环境建议纯读；环境覆盖度只有 `userenvs._probe_cache` 一份，授权检查会执行用户包、不宣称无副作用；来源解析默认零执行、来源事实不进诊断内容；默认准备/运行时自动检测、能跑就用，确认模式可选（ADR 0114 §六）；镜像回退见细则
 > `src/tavotto/AGENTS.md`「主题」压缩前原文（2026-10-24，与正文同等有效）：受控依赖修复与包管理、联合依赖准备（ADR 0061）、Import 来源解析（ADR 0119）、PyPI 镜像回退（ADR 0111 / 0112 §二） → `dependency-repair-and-packages.md`
 > `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：内置 runtime 永不是安装目标；pip exit 0 ≠ 修好；用户显式决定过的环境不碰；来源解析默认零执行；镜像回退见细则
@@ -24,8 +24,11 @@ order: 160
   记账）、`engine/pool.py` 增量（环境改动期间的 worker 生命周期）。
   全部纯标准库（Flask 父进程 import 链上）。
 - **内置 runtime 永远不是安装目标**。它是「重装就能修」这条退路的前提。
-  缺包时它只是触发器。安装目标只有两种：用户的项目 `.venv`（要明确确认）
-  与 Tavotto 受管环境（我们自己的，可删可重建）。
+  缺包时它只是触发器。安装目标只有三种：用户的项目 `.venv`（要明确确认）、
+  Tavotto 受管环境（我们自己的，可删可重建），以及用户为这个项目选的项目外 Python
+  （`TARGET_CONFIGURED`，ADR 0019 2026-11-15 修订：原地装、要明确确认、不被 `InstallGrant` 自动授权；
+  判据唯一出处 `deprepair.configured_interpreter`，只在管理环境最近一代自检失败
+  `deprepair.managed_selftest_failed` 时优先推荐，不接受任意路径）。
 - **第三种目标不是安装目标（ADR 0044）**：项目里没有 venv 时，接手那一步
   （`pool.try_project_env`）会把 `pool.system_python_candidates()`——老链条第四、
   五级本来就枚举的系统解释器——逐个 `probe_environment(python, module)`，结果挂在
