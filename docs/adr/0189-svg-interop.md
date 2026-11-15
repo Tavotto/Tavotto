@@ -70,6 +70,11 @@ ADR 0185 能力矩阵 E 节「粘贴 / 拖入 SVG 成可编辑对象」（●●
 剪贴板用 `ClipboardItem` 收 Promise（WKWebView 要求在手势里同步调 `write`），认 `image/svg+xml` 就两种都放，否则只放文本；不让写就退到
 `writeText`。图（面板）不在这里——它的 SVG 走导出。写出的 SVG 再粘贴回来能完整导入。
 
+接口的输入是导出载荷（JSON），同样当不受信任处理：先按请求字节数（8 MB）在解析 JSON 之前就拒，再数对象（2000）、每个对象的裁剪层数（8，
+IR 的嵌套上限是 16 层）、全部路径锚点（20 万）、每段文字的字数（2 万；文字转轮廓同一个字数上限）；页面尺寸 0 < w / h ≤ 5000 mm。载荷里的
+字符串只经写入器的 XML 转义落进输出，**输出一定能过严格模式的受限解析器**（没有 DTD / 实体 / 脚本 / 事件 / 外链 / 引用），文字粘回来原样
+是文字。上限之内最重的一类输入在有限时间里写完——超时靠上限兜住，不靠杀线程。
+
 ### 五、与 ADR 0182（外部 RFC #1877 的 SVG 计算图表）的边界
 
 两边都读 SVG，但要的东西不同，**解析与安全边界合一，换算各管各的**：
@@ -91,7 +96,9 @@ ADR 0185 能力矩阵 E 节「粘贴 / 拖入 SVG 成可编辑对象」（●●
 - 安全看护 `tests/test_svgimport_security.py`：XXE（文件 / 参数实体）、十亿笑声、外链（http / file / 相对 / CSS url / data:svg / data:html）、
   use 自引用与互相引用、渐变 href 环、指数展开（含解析器那一道失效时的二道）、超大 width / height / viewBox / 非有限数、超大字节、深度、
   `data:` 图片像素 / 字节超限、脚本与事件属性（script / onload / onclick / javascript: 链接 / CSS expression / foreignObject 里的 HTML / 动画 set）、
-  超时；每条都核「不联网」（socket 被替换成当场失败）与「不回显」。前端看护导入的文字与名字只当文本显示（`canvas/TextView.test.tsx`、
+  超时；每条都核「不联网」（socket 被替换成当场失败）与「不回显」。复制为 SVG 接口的输入：文字里写 XXE / 实体 / 脚本 / 外链图片 /
+  CDATA + onload / use 环，输出照样过严格解析、粘回来是原样的字；颜色 / 填充里写外链 / javascript: / 属性注入不进输出；超大或非有限的页面、
+  超大对象、裁剪层数、对象 / 锚点 / 字数、请求字节超限都在写之前拒；顶格输入有限时间写完。前端看护导入的文字与名字只当文本显示（`canvas/TextView.test.tsx`、
   `components/left/layerTree.test.tsx`），资源滥用类不栅格化（`store/svgImportActions.test.tsx`）。
 - 同源：后端快照 `tests/golden/svgimport/*.json` 前后端各测一侧；文字转轮廓按像素与导出对拍（`tests/test_text_outline.py`），快照
   `tests/golden/text_outline.json` 共用；复制出的 SVG 往返能完整导入。
