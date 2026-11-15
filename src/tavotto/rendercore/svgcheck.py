@@ -419,8 +419,74 @@ def _references(nodes, edges, refs, ids, budget):
             stack.extend((child, False) for child in reversed(edges[node]))
 
 
-def parse_svg(data: bytes, *, budget: SVGBudget | None = None) -> ET.Element:
-    """Parse a bounded safe static SVG, validating every local resource reference."""
+#: 编辑器写进来的、对画面没有作用的 CSS 声明（Illustrator 的 `enable-background`、Inkscape 的 `-inkscape-*`、clipPath 里 use 上的
+#: `overflow`……）。只在 `tolerant` 模式里**删掉**它们再验证；其余没见过的属性照旧拒绝。
+_INERT_CSS = {
+    "enable-background",
+    "overflow",
+    "line-height",
+    "text-align",
+    "font-variation-settings",
+    "font-feature-settings",
+    "-inkscape-font-specification",
+    "-inkscape-stroke",
+    "solid-color",
+    "solid-opacity",
+}
+_INERT_CSS_VALUES = {("isolation", "auto"), ("mix-blend-mode", "normal")}
+#: 公共 SVG DTD 声明（没有内部子集，所以没有实体）：Illustrator 老版本的「另存为」会写它
+_PUBLIC_SVG_DOCTYPE = re.compile(
+    r"<!DOCTYPE\s+svg\s+PUBLIC\s+\"[^\"\[\]<>]*\"\s+\"[^\"\[\]<>]*\"\s*>", re.I
+)
+
+
+_INERT_DECLARATION = re.compile(r"\s*(-?[a-z][a-z-]*)\s*:\s*(.*)\Z", re.S | re.I)
+
+
+def _inert(decl: str) -> bool:
+    m = _INERT_DECLARATION.fullmatch(decl)
+    if not m:
+        return False
+    prop, value = m.group(1).lower(), m.group(2).strip().lower()
+    return prop in _INERT_CSS or (prop, value) in _INERT_CSS_VALUES
+
+
+def _drop_inert(css_body: str) -> str:
+    return ";".join(d for d in css_body.split(";") if d.strip() and not _inert(d))
+
+
+def _tolerate(root: ET.Element) -> None:
+    """`tolerant` 模式的清理（外部 SVG 导入用，ADR 0189）：编辑器的私有命名空间元素与属性、整段 metadata、对画面没作用的
+    CSS 声明删掉；**安全规则一条不放**——脚本、事件属性、外链、DTD / 实体、引用环、预算照旧由后面的验证拒绝。"""
+    for parent in list(root.iter()):
+        for child in list(parent):
+            ns, tag = _name(child.tag) if isinstance(child.tag, str) else ("", "")
+            if (
+                not isinstance(child.tag, str)
+                or (ns not in ("", SVG_NS))
+                or (tag == "metadata" and ns in ("", SVG_NS))
+            ):
+                parent.remove(child)
+    for node in root.iter():
+        for key in list(node.attrib):
+            ans, _attr = _name(key)
+            if ans not in ("", _XML_NS, XLINK_NS):
+                del node.attrib[key]
+        if "style" in node.attrib:
+            node.set("style", _drop_inert(node.get("style") or ""))
+        if _name(node.tag)[1] == "style" and node.text:
+            node.text = _RULE.sub(
+                lambda m: m.group(1) + "{" + _drop_inert(m.group(2)) + "}", node.text
+            )
+
+
+def parse_svg(
+    data: bytes, *, budget: SVGBudget | None = None, tolerant: bool = False
+) -> ET.Element:
+    """Parse a bounded safe static SVG, validating every local resource reference.
+
+    `tolerant`（外部 SVG 导入，ADR 0189）：先删掉公共 SVG DTD 声明（没有内部子集）、编辑器私有命名空间、metadata 与对画面没作用的
+    CSS 声明，再做与严格模式**完全相同**的验证。实体、外链、脚本、事件属性、引用环、预算不放宽。"""
     budget = budget or SVGBudget()
     if len(data) > budget.max_bytes:
         raise SVGError("svg_resource_limit")
@@ -430,6 +496,8 @@ def parse_svg(data: bytes, *, budget: SVGBudget | None = None) -> ET.Element:
         raise SVGError("svg_encoding_unsupported") from exc
     if "\x00" in text:
         raise SVGError("svg_encoding_unsupported")
+    if tolerant:
+        text = _PUBLIC_SVG_DOCTYPE.sub("", text, count=1)
     if re.search(r"<!\s*(?:DOCTYPE|ENTITY)\b", text, re.I):
         raise SVGError("svg_dtd_forbidden")
     encoding = re.match(r"\s*<\?xml\b[^?]*\bencoding\s*=\s*(['\"])(.*?)\1", text, re.I)
@@ -441,6 +509,8 @@ def parse_svg(data: bytes, *, budget: SVGBudget | None = None) -> ET.Element:
         raise SVGError("svg_unparseable") from exc
     if _name(root.tag) not in ((SVG_NS, "svg"), ("", "svg")):
         raise SVGError("svg_invalid_root")
+    if tolerant:
+        _tolerate(root)
     nodes = list(root.iter())
     indices = {id(node): i for i, node in enumerate(nodes)}
     edges = [[indices[id(child)] for child in node] for node in nodes]

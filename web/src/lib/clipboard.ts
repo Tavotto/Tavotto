@@ -245,7 +245,7 @@ export function handlePasteEvent(e: ClipboardEvent): boolean {
   const text = e.clipboardData?.getData('text/plain') ?? ''
   const payload = parsePayload(text)
   if (!payload) {
-    // 外部 SVG 标记（Illustrator / Inkscape 复制出来的，ADR 0185 M5）：落成可编辑对象，做不准就整个当图片
+    // 外部 SVG 标记（Illustrator / Inkscape 复制出来的，ADR 0189）：落成可编辑对象，做不准就整个当图片
     // 两个口都要真像 SVG 才算（有的宿主对任何类型都回同一段文字）
     const raw = e.clipboardData?.getData('image/svg+xml') ?? ''
     const svg = looksLikeSvg(raw) ? raw : looksLikeSvg(text) ? text : ''

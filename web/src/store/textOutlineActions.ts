@@ -11,7 +11,7 @@ import { useSelectionStore } from './selectionStore'
 import { useUiStore } from './uiStore'
 
 /**
- * 文字转轮廓（⇧⌘O，ADR 0185 M5 第二批）：字形在后端用导出的同一份字体生成（`rendercore/textoutline`），转出来的路径与导出的字
+ * 文字转轮廓（⇧⌘O，ADR 0189）：字形在后端用导出的同一份字体生成（`rendercore/textoutline`），转出来的路径与导出的字
  * 逐点重合。一个文字对象变成一条或几条路径（底框 / 字 / 公式 / 下划线各一条时成一个新组），原位替换、留在原来的组里；
  * 一次 commit、选中结果。转不了的（字体不可用）不动它、说一句。
  */

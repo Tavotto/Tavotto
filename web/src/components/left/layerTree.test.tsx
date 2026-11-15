@@ -469,3 +469,15 @@ describe('展开 / 折叠组时不走 FLIP（TreeBranch 的 grid 过渡单独负
     }
   })
 })
+
+describe('导入对象的名字不会被当成 HTML（ADR 0189 安全边界）', () => {
+  it('名字里的标记原样显示，不长出元素', async () => {
+    const payload = '<img src=x onerror="alert(1)">'
+    await mount([
+      { id: 'p1', type: 'path', x: 0, y: 0, w: 5, h: 5, strokePt: 1, color: '#000', fill: null, name: payload, subpaths: [{ closed: false, nodes: [{ p: [0, 0] }, { p: [1, 1] }] }] } as unknown as CanvasObject,
+    ])
+    const tree = document.querySelector('[data-tree="layers"]')!
+    expect(tree.querySelector('img')).toBeNull()
+    expect(tree.textContent).toContain(payload)
+  })
+})

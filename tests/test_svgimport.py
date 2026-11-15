@@ -1,11 +1,11 @@
-"""外部 SVG 导入（ADR 0185 M5，`rendercore/svgimport.py`）。
+"""外部 SVG 导入（ADR 0189，`rendercore/svgimport.py`）。
 
 1. 样例（Illustrator / Inkscape 风格）的导入结果与快照 `tests/golden/svgimport/*.json` 逐字段相同；
 2. 几何：单位与 viewBox 换算、变换矩阵烤进锚点、弧换三次贝塞尔（中点落在圆上）、二次曲线精确升三次、S / T 反射、标志位紧写；
 3. 样式：CSS 类 / id / 标签选择器按优先级、style 属性最高、继承、currentColor、渐变（userSpaceOnUse / 比例）、虚线换 pt；
 4. 结构：组（两个以上子对象才成组）、use / defs / symbol、clipPath → 剪切组的蒙版（ADR 0188）；
 5. 文字：字号、粗体、对齐、旋转；做不准的 dx / textPath / 斜切文字 → 不支持；
-6. 安全与兜底：XXE 不展开、外链不取、滤镜 / 图片 / 复杂选择器记不支持；体积与元素数上限；接口。
+6. 兜底：图片 / 蒙版 / 图案 / 标记 / 复杂选择器 / 非静态元素记不支持；编辑器命名空间与无作用 CSS 放行；接口。攻击样例在 `test_svgimport_security.py`。
 """
 
 from __future__ import annotations
@@ -253,52 +253,66 @@ def test_text_that_cannot_be_placed_exactly_is_unsupported(body, code):
     assert code in imp(body)["unsupported"]
 
 
-# ------------------------------------------------------------------ 安全与兜底
-def test_xxe_is_not_expanded():
-    r = svgimport.import_svg((FIX / "xxe.svg").read_text(encoding="utf-8"))
-    assert "root:" not in json.dumps(r)
-    assert r["unsupported"] == {"external_ref": 1}
-
-
+# ------------------------------------------------------------------ 做不准 → 不拆（攻击样例在 test_svgimport_security.py）
 @pytest.mark.parametrize(
     "body,code",
     [
-        ('<image href="http://example.invalid/a.png" width="1" height="1"/>', "image"),
-        ('<rect width="1" height="1" filter="url(#f)"/>', "filter"),
-        ('<rect width="1" height="1" mask="url(#m)"/>', "mask"),
-        ('<rect width="1" height="1" fill="url(#p)"/><pattern id="p"/>', "pattern"),
-        ('<use href="other.svg#a"/>', "external_ref"),
+        (
+            '<image href="data:image/png;base64,'
+            + "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+            + '" width="1" height="1"/>',
+            "image",
+        ),
+        (
+            '<defs><mask id="m"><rect width="1" height="1"/></mask></defs><rect width="1" height="1" mask="url(#m)"/>',
+            "mask",
+        ),
+        (
+            '<defs><pattern id="p" width="1" height="1"><rect width="1" height="1"/></pattern></defs><rect width="1" height="1" fill="url(#p)"/>',
+            "pattern",
+        ),
+        (
+            '<defs><marker id="k"><path d="M0 0 L1 1"/></marker></defs><path d="M0 0 L1 1" stroke="#000" marker-end="url(#k)"/>',
+            "marker",
+        ),
         ('<style>g > rect{fill:red}</style><rect width="1" height="1"/>', "css_selector"),
-        ('<foreignObject width="1" height="1"/>', "foreign_object"),
-        ('<path d="M0 0 L1 1" stroke="#000" marker-end="url(#m)"/>', "marker"),
+        (
+            '<defs><filter id="f"/></defs><rect width="1" height="1" filter="url(#f)"/>',
+            "unsupported_element",
+        ),
+        ('<foreignObject width="1" height="1"/>', "unsupported_element"),
     ],
 )
 def test_unsupported_features_are_reported(body, code):
     assert code in imp(body)["unsupported"]
 
 
-def test_script_is_ignored_and_never_becomes_an_object():
-    r = imp('<script>alert(1)</script><rect width="1" height="1" onload="alert(2)"/>')
-    assert [o["type"] for o in r["objects"]] == ["path"]
-    assert "onload" not in json.dumps(r)
-
-
-@pytest.mark.parametrize("bad,code", [("<html/>", "not_svg"), ("<svg", "bad_xml")])
+@pytest.mark.parametrize("bad,code", [("<html/>", "not_svg"), ("<svg>", "bad_xml")])
 def test_not_svg(bad, code):
     with pytest.raises(svgimport.SvgImportError) as e:
         svgimport.import_svg(bad)
     assert e.value.code == code
 
 
-def test_limits(monkeypatch):
-    monkeypatch.setattr(svgimport, "MAX_ELEMENTS", 5)
-    with pytest.raises(svgimport.SvgImportError) as e:
-        imp("".join('<rect width="1" height="1"/>' for _ in range(10)))
-    assert e.value.code == "too_many_elements"
-    monkeypatch.setattr(svgimport, "MAX_BYTES", 100)
-    with pytest.raises(svgimport.SvgImportError) as e:
-        imp("x" * 200)
-    assert e.value.code == "too_large"
+def test_editor_namespaces_and_inert_css_are_tolerated():
+    r = svgimport.import_svg(
+        '<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" '
+        'xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" viewBox="0 0 10 10" '
+        'style="enable-background:new 0 0 10 10" inkscape:version="1.3">'
+        '<sodipodi:namedview id="nv"/><metadata><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"/></metadata>'
+        '<g inkscape:groupmode="layer"><rect width="2" height="2" style="fill:#f00;-inkscape-stroke:none;overflow:visible"/></g></svg>'
+    )
+    assert r["unsupported"] == {}
+    assert [o["fill"] for o in r["objects"]] == ["#ff0000"]
+
+
+def test_public_svg_doctype_without_subset_is_tolerated():
+    r = svgimport.import_svg(
+        '<?xml version="1.0"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" '
+        '"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 4">'
+        '<rect width="1" height="1"/></svg>'
+    )
+    assert r["unsupported"] == {} and len(r["objects"]) == 1
 
 
 def test_endpoint(tmp_path):

@@ -1,5 +1,5 @@
 /**
- * 文字转轮廓（⇧⌘O）与复制为 SVG（ADR 0185 M5 第二批）走真的 store 与真的快捷键；后端用快照代答
+ * 文字转轮廓（⇧⌘O）与复制为 SVG（ADR 0189）走真的 store 与真的快捷键；后端用快照代答
  * （`tests/golden/text_outline.json`，后端那一侧在 `tests/test_text_outline.py` 里按像素核与导出逐点相同）。
  */
 import { act } from 'react'

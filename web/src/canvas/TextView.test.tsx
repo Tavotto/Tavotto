@@ -357,3 +357,21 @@ describe('TextView 纸上的文字选区按实际的底取', () => {
     expect(selection({}, { bg: '#000000', transparent: true })).toEqual(LIGHT)
   })
 })
+
+describe('导入的文字不会被当成 HTML（ADR 0189 安全边界）', () => {
+  it.each([
+    '<img src=x onerror="alert(1)">',
+    '<script>alert(1)</script>',
+    '<svg onload=alert(1)>',
+    '<a href="javascript:alert(1)">x</a>',
+  ])('%s 原样当文字显示，不长出元素', (payload) => {
+    useDocumentStore.getState().silent((d) => {
+      d.objects.push(textObj({ text: payload, name: payload }))
+    })
+    act(() => {
+      root.render(<TextView obj={useDocumentStore.getState().doc.objects[0] as TextObject} />)
+    })
+    expect(container.querySelector('img, script, a, svg[onload]')).toBeNull()
+    expect(container.textContent).toContain(payload.replace(/^\s+/, '').slice(0, 4))
+  })
+})

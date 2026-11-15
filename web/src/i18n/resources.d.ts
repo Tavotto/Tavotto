@@ -8320,13 +8320,17 @@ export default interface Resources {
         "mask": "用了蒙版（mask）",
         "not_svg": "内容不是 SVG",
         "pattern": "用了图案填充",
+        "reference_cycle": "有循环引用",
+        "script": "带脚本或事件",
         "skew_text": "有斜切的文字",
         "symbol_viewbox": "符号自带缩放",
         "text_layout": "文字逐字定位",
         "text_path": "有沿路径排的文字",
+        "timeout": "太复杂、读不完",
         "too_large": "文件太大",
         "too_many_elements": "元素太多",
-        "unreadable": "读不出来"
+        "unreadable": "读不出来",
+        "unsupported_element": "用了 Tavotto 画不了的元素（比如滤镜）"
       }
     },
     "tabs": {
