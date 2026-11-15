@@ -193,6 +193,7 @@ USER_VISIBLE_CODES = {
     "package_file_missing": set(),
     "package_invalid": {"reason"},
     "package_schema_unsupported": set(),
+    "package_schema_too_new": {"schema"},
     "scan_failed": {"reason"},
     # ADR 0075 性能探针：报告形状不对 / 太大（reason = too_large / malformed / schema），落盘失败
     "perf_report_rejected": {"reason"},

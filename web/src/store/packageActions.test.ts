@@ -11,9 +11,18 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   createPackage: (...a: unknown[]) => createPackage(...a),
 }))
 const openPackageFile = vi.fn()
-vi.mock('@/lib/packageImport', () => ({ openPackageFile: (...a: unknown[]) => openPackageFile(...a) }))
+vi.mock('@/lib/packageImport', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/packageImport')>()),
+  openPackageFile: (...a: unknown[]) => openPackageFile(...a),
+}))
+let desktop = false
+vi.mock('@/lib/desktop', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/desktop')>()),
+  isDesktop: () => desktop,
+}))
 
 import { formatMessage } from '@/i18n'
+import { ApiError } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -26,6 +35,7 @@ const label = () => formatMessage(ui().statusAction?.label ?? null)
 const statusKey = () => ui().status?.key
 
 beforeEach(async () => {
+  desktop = false
   createPackage.mockReset()
   openPackageFile.mockReset()
   setCurrentProjectId('A')
@@ -109,5 +119,25 @@ describe('打开项目包失败', () => {
     ui().statusAction!.run()
     await vi.waitFor(() => expect(openPackageFile).toHaveBeenCalledTimes(2))
     await vi.waitFor(() => expect(label()).toBe('发送问题反馈'))
+  })
+})
+
+describe('打开更新版本打出的项目包', () => {
+  const tooNew = () =>
+    new ApiError('这个项目包来自更新的 Tavotto', 400, { code: 'package_schema_too_new', params: { schema: 4 } })
+
+  it('桌面版：说「来自更新的版本」，主按钮是「检查更新」，不给「再试一次」', async () => {
+    desktop = true
+    openPackageFile.mockRejectedValueOnce(tooNew())
+    await openPackageWithRetry(new File(['x'], 'new.tavotto'), 0)
+    expect(statusKey()).toBe('status.packageTooNew')
+    expect(label()).toBe('检查更新')
+  })
+
+  it('浏览器版没有更新通道：换成「发送问题反馈」', async () => {
+    openPackageFile.mockRejectedValueOnce(tooNew())
+    await openPackageWithRetry(new File(['x'], 'new.tavotto'), 0)
+    expect(statusKey()).toBe('status.packageTooNew')
+    expect(label()).toBe('发送问题反馈')
   })
 })
