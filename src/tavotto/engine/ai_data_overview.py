@@ -82,6 +82,7 @@ def _base(rel: str, status: str, code: str | None = None) -> dict:
         "status": status,
         "code": code,
         "delimiter": None,
+        "encoding": None,
         "header_row": None,
         "rows": None,
         "columns": None,
@@ -188,6 +189,7 @@ def overview(root: str | Path, path, *, sheet=None, header_row=None) -> dict:
     # 真二进制 / 散文 / 编码错这类没有 preview，`raw_lines` 为空 = 没法点一行补救（前端据 `raw_lines` 非空决定要不要让用户点一行）
     out.update(
         delimiter=adf.DELIMITER_NAMES.get(info.delimiter) if info.delimiter else None,
+        encoding=info.encoding,
         header_row=info.header_line,
         rows=info.rows,
         columns=info.columns,

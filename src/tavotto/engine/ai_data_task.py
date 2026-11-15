@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -430,6 +431,25 @@ V2_TASK_TYPE = "data_to_figure_v2"
 FIGURES_DIR = "tavotto_figures"
 
 
+#: 写 `tavotto_figures/` 时可区分的失败 → 稳定码（`task.error`；文案在前端 `dataFigure.reason.<码>`）：没有写权限 / 只读文件系统，与磁盘满。
+#: 其余 OSError 仍按原样（`executor_error:<类型名>`）——不猜原因。**详情里不放路径**（只有 errno 名），错误码本身与文案也不带路径。
+WRITE_ERROR_CODES = ("data_folder_not_writable", "disk_full")
+_NOT_WRITABLE_ERRNOS = frozenset({errno.EACCES, errno.EPERM, errno.EROFS})
+_DISK_FULL_ERRNOS = frozenset({errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC)})
+
+
+def write_failure(exc: BaseException) -> TaskError | None:
+    """把落盘时的 `OSError` 翻成稳定码；认不出就 `None`（调用方原样抛）。"""
+    if not isinstance(exc, OSError):
+        return None
+    name = errno.errorcode.get(exc.errno or 0, "")
+    if isinstance(exc, PermissionError) or exc.errno in _NOT_WRITABLE_ERRNOS:
+        return TaskError("data_folder_not_writable", name)
+    if exc.errno in _DISK_FULL_ERRNOS:
+        return TaskError("disk_full", name)
+    return None
+
+
 def _stem_free_v2(directory: Path, stem: str, taken: set[str]) -> bool:
     """同 `_stem_free`，但目录还不存在（`tavotto_figures/` 还没建）算空闲；一律 casefold 比较。"""
     key = stem.casefold()
@@ -835,7 +855,13 @@ class TemplateExecutorV2:
                 raise TaskError("figures_dir_unusable", pl.figures_dir.name)
             made_dir = not os.path.lexists(pl.figures_dir)
             if made_dir:
-                pl.figures_dir.mkdir()
+                try:
+                    pl.figures_dir.mkdir()
+                except OSError as exc:
+                    mapped = write_failure(exc)
+                    if mapped is None:
+                        raise
+                    raise mapped from None  # 目录没建出来：什么都没留下
             elif not pl.figures_dir.is_dir():
                 raise TaskError("figures_dir_unusable", pl.figures_dir.name)
             module_created = False
@@ -869,9 +895,13 @@ class TemplateExecutorV2:
                             except OSError:
                                 pass
                             raise TaskError("register_failed", type(exc).__name__) from None
-            except BaseException:
+            except BaseException as exc:
                 if not cand.committed:
+                    # 公共模块与脚本要么都在要么都不在：脚本半截写失败时 `create_script` 已删掉它，这里再撤回本次新建的公共模块与目录
                     self._undo(pl, prep, module_created, made_dir)
+                mapped = None if cand.committed else write_failure(exc)
+                if mapped is not None:
+                    raise mapped from None
                 raise
             cand.extras["module_created"] = module_created
             cand.extras["registered"] = discover.registered_stems(self.root, pl.script_rel)

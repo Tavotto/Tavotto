@@ -127,7 +127,7 @@ def test_an_unsure_guess_that_cannot_be_read_still_returns_the_raw_lines(project
         ("blob.dat", b"\x00\x01\x02" * 50, "data_binary"),
         ("README.txt", b"hello world\nno table\n", "data_not_table"),
         ("empty.csv", b"", "data_empty"),
-        ("gbk.csv", "a,b\n你,1\n".encode("gb18030"), "data_decode_error"),
+        ("bad.csv", b"a,b\n\x81\x20,1\n", "data_decode_error"),
     ],
 )
 def test_unreadable_files_are_200_with_a_stable_code_not_an_http_error(project, name, raw, code):
@@ -811,7 +811,7 @@ def test_raw_lines_of_an_unreadable_file_are_bounded_and_control_characters_are_
     [
         ("blob.dat", b"\x00\x01\x02" * 50, "data_binary"),
         ("README.txt", b"hello world\nno table\n", "data_not_table"),
-        ("gbk.csv", "a,b\n你,1\n".encode("gb18030"), "data_decode_error"),
+        ("bad.csv", b"a,b\n\x81\x20,1\n", "data_decode_error"),
         ("empty.csv", b"", "data_empty"),
     ],
 )
