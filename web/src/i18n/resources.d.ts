@@ -3826,6 +3826,7 @@ export default interface Resources {
       "oneClickChecking": "正在检查这台电脑…",
       "oneClickRepair": "一键修复",
       "oneClickSentence": "这个脚本还缺 {{packages}}，点一下自动装好。",
+      "oneClickSentenceConfigured": "把 {{module}} 装到你为这个项目选的 Python 里",
       "oneClickSentenceDownload": "这个脚本还缺 {{packages}}，点一下自动装好（需下载约 {{mb}} MB）。",
       "oneClickSentenceEnv": "这个脚本需要先准备运行环境，点一下自动准备好。",
       "oneClickSentenceEnvDownload": "这个脚本需要先准备运行环境，点一下自动准备好（需下载约 {{mb}} MB）。",
@@ -3991,6 +3992,7 @@ export default interface Resources {
       "repairFactEnvDownload": "需下载 {{product}} 自己的 Python {{version}}（约 {{mb}} MB）。",
       "repairFactNetwork": "装包需要联网。",
       "repairFactUntouched": "不改动你的源码和电脑上已有的 Python。",
+      "repairInstallToConfigured": "安装到你选的 Python",
       "repairInstallToManaged": "将 {{module}} 安装到 {{product}} 环境",
       "repairInstallToProject": "安装到项目环境",
       "repairInstalling": "正在安装 {{module}}…",
@@ -6923,6 +6925,7 @@ export default interface Resources {
         "managedPlace": "Tavotto 目录",
         "many_other": "{{list}} 等 {{count}} 个",
         "runtime": "运行组件",
+        "toConfigured": "把 {{module}} 装到你为这个项目选的 Python 里",
         "toManaged": "装到 Tavotto 目录",
         "toUser": "装到你电脑上已有的那套",
         "toUserLong": "你电脑上已有的那套，装坏了不能完整回滚"

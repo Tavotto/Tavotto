@@ -1272,6 +1272,7 @@
       "toManaged": "into Tavotto's folder",
       "toUser": "into the one already on your computer",
       "toUserLong": "The one already on your computer; a failed install can't be fully undone",
+      "toConfigured": "Install {{module}} into the Python you chose for this project",
       "download": "Needs a download of about {{mb}} MB.",
       "managedPlace": "Tavotto's folder"
     },

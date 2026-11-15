@@ -751,6 +751,8 @@
     "dependencyPreparePrivatePythonBundled": "将使用安装包自带的 {{product}} Python {{version}}，无需下载；装包仍可能需要联网。",
     "oneClickSentence": "这个脚本还缺 {{packages}}，点一下自动装好。",
     "oneClickSentenceSystem": "电脑上已有装好 {{module}} 的环境，点一下直接改用它。",
+    "oneClickSentenceConfigured": "把 {{module}} 装到你为这个项目选的 Python 里",
+    "repairInstallToConfigured": "安装到你选的 Python",
     "repairDownloadBytes": "{{done}} / {{total}} MB",
     "repairPypiMirror": "连不上默认的包源，已改用镜像 {{mirror}}。",
     "repairManagedUnavailableHint": "需要 Python {{min}}–{{max}}；如果已经装过，可以在下面指定它。",

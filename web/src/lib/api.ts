@@ -5979,13 +5979,19 @@ export interface DependencyRequirementInfo {
   installable: boolean
 }
 
+/**
+ * 安装目标的种类（后端 `deprepair.TARGETS`）。`configured_interpreter` = 用户为这个项目选的、在项目之外的 Python
+ * （ADR 0019 2026-11-15 修订）：原地装、改用户环境，与 `project_venv` 同为要明确确认的一类
+ */
+export type RepairTargetKind = 'project_venv' | 'tavotto_managed' | 'configured_interpreter'
+
 /** 一个可选的安装目标 */
 export interface DependencyTarget {
   /**
    * `system_interpreter`（ADR 0044）不是安装目标：这台机器上已有的解释器里
    * 已经装着那个包，采用它一个字节都不装——走项目环境 PATCH，不走 plan。
    */
-  kind: 'project_venv' | 'tavotto_managed' | 'system_interpreter'
+  kind: 'project_venv' | 'tavotto_managed' | 'configured_interpreter' | 'system_interpreter'
   /** 项目相对路径（项目 venv 才有） */
   venv: string
   /** 项目 venv 是项目相对路径；系统解释器是项目外的绝对路径（它本来就不跟项目走） */
@@ -6012,6 +6018,8 @@ export interface DependencyTarget {
    * 这次授权**包含先下载它**——`download_bytes` 界面必须说出口（`cached` 时为 0、不联网）。
    */
   private_python?: PrivatePythonOffer | null
+  /** 受管目标才有：最近一代装完 worker 自检没过——装到它里面也用不了，界面不再把它当主按钮 */
+  selftest_failed?: boolean
 }
 
 /** 「先准备私有 Python」段：版本 / 目标 / 体积 / 来源域名，没有机器路径 */
@@ -6091,7 +6099,7 @@ export interface DependencyRepairPlan extends DependencyRequirementInfo {
   plan_id: string
   /** 这次授权真正要装的全部包（规范串）：新建第一代时多于用户点的那一个；老后端没有这个字段 */
   requirements?: string[]
-  target_kind: 'project_venv' | 'tavotto_managed'
+  target_kind: RepairTargetKind
   /** 这份计划的影响摘要（执行请求必须回显它；老后端没有） */
   impact_digest?: string
   python: string
@@ -6165,7 +6173,7 @@ export interface DependencyProgress {
 export const createDependencyPlan = (body: {
   module: string
   script: string
-  target: 'project_venv' | 'tavotto_managed'
+  target: RepairTargetKind
   distribution?: string
 }) =>
   jsonFetch<{ plan: DependencyRepairPlan }>('/api/engine/dependency/plan', {
@@ -6276,7 +6284,7 @@ export interface JointUserSpecified {
 export interface JointDependencyPlan {
   plan_version: number
   status: 'nothing_needed' | 'ready' | 'blocked'
-  target_kind: 'project_venv' | 'tavotto_managed'
+  target_kind: RepairTargetKind
   script: string
   /** 脚本开跑就要的第三方 import（无条件） */
   needed: { module: string; distribution: string; resolution_source: string; via: string[] }[]
@@ -6360,7 +6368,7 @@ export interface DependencyPreparationOffer {
 /** `deprepair.impact_of` 的公开形态：没有机器路径 */
 export interface DependencyImpact {
   impact_version: number
-  target_kind: 'project_venv' | 'tavotto_managed'
+  target_kind: RepairTargetKind
   scope: 'managed_generation' | 'project_venv_in_place'
   installs: string[]
   constraints: string[]
@@ -6420,7 +6428,7 @@ export interface UserEnvironment {
 export interface JointDependencyRepairPlan {
   plan_id: string
   script: string
-  target_kind: 'project_venv' | 'tavotto_managed'
+  target_kind: RepairTargetKind
   python: string
   requirements: string[]
   constraints: string[]
@@ -6454,7 +6462,7 @@ export const fetchDependencyOffer = (script: string) =>
 /** 绑定一份联合计划（不装）。blocked / 什么都不缺 → 409，body.joint 里是计划 */
 export const createJointDependencyPlan = (body: {
   script: string
-  target?: 'project_venv' | 'tavotto_managed'
+  target?: RepairTargetKind
   /**
    * 用户在确认界面接受（可改）预填后提交的 `{ import 名: '包名[版本约束]' }`（PR5b）。只收 `origins[]` 里带
    * `suggested_distribution` 的那类 import；语法不合 `package_requirement_invalid`，不是来源未定的表外名

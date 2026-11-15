@@ -24,6 +24,7 @@ import {
   type JointDependencyRepairPlan,
   type PrivatePythonOffer,
   privatePythonOrigin,
+  type RepairTargetKind,
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
 import { draftFromOffer, userSpecifiedBody, type OriginDraft } from '@/lib/importOrigin'
@@ -133,7 +134,7 @@ function deliverToOwner(owner: string | null, now: () => void, park: () => void)
 export interface RepairRequest {
   module: string
   script: string
-  target: 'project_venv' | 'tavotto_managed'
+  target: RepairTargetKind
   distribution?: string
 }
 
@@ -243,7 +244,7 @@ interface DepRepairState {
    */
   pinned: InterpreterPin | null
   makePlan: (
-    args: { module: string; script: string; target: 'project_venv' | 'tavotto_managed'; distribution?: string },
+    args: { module: string; script: string; target: RepairTargetKind; distribution?: string },
     scriptOffer?: ScriptRepairOffer | null,
   ) => Promise<void>
   install: () => Promise<void>
@@ -342,7 +343,7 @@ interface DepRepairState {
    * 一步：绑定计划 → 执行（只发 plan_id）。目标由用户在框里选；脚本来自 envStore 里的载荷——素材库脚本行
    * （那里没有框、载荷住在那次运行的错误里）把载荷作为 `offerArg` 直接交进来。
    */
-  prepare: (target: 'project_venv' | 'tavotto_managed', offerArg?: DependencyPreparationOffer) => Promise<void>
+  prepare: (target: RepairTargetKind, offerArg?: DependencyPreparationOffer) => Promise<void>
   cancelPreparation: () => Promise<void>
   /** 「不准备，直接运行」：明确的 skip（这道门一直问到有答案），然后关框并重排那次失败的渲染 */
   skipPreparation: (offerArg?: DependencyPreparationOffer) => Promise<void>

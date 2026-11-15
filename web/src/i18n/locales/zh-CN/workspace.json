@@ -1209,6 +1209,7 @@
       "toManaged": "装到 Tavotto 目录",
       "toUser": "装到你电脑上已有的那套",
       "toUserLong": "你电脑上已有的那套，装坏了不能完整回滚",
+      "toConfigured": "把 {{module}} 装到你为这个项目选的 Python 里",
       "download": "需要先下载约 {{mb}} MB。",
       "managedPlace": "Tavotto 目录"
     },
