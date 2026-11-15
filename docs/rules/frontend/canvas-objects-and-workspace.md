@@ -160,6 +160,11 @@ order: 210
   `canExplodeSvg`，右键菜单与命令面板同一个）。`unsupported` 非空一律不拆：粘贴时先当 SVG 素材、再不行栅格化（`lib/svgRaster`，`<img>`
   模式）、都不行由素材导入那条路说原因；拆图时图不动。拖进来的 SVG 文件不走这里（照旧是图）。看护 `store/svgImportActions.test.tsx`、
   `lib/svgImport.golden.test.ts`、`tests/test_svgimport.py`。
+- **文字转轮廓 ⇧⌘O、复制为 SVG（2026-11-15，ADR 0185 M5 第二批）**：字形与 SVG 都只在后端生成（`rendercore/textoutline`、
+  `/api/svg/copy` 用 `svgwriter`），前端不许用浏览器字体自己描字形、不许自己拼 SVG——那样与导出不是同一份字。前端只发导出载荷
+  （`toExportObjects`，裁剪不随载荷走：转出来的路径留在原组里照样被同一个蒙版裁）、落位（`store/textOutlineActions`：原位替换、
+  多条成一个新组、留在原组里，一次 commit）与写剪贴板（`store/svgCopyActions`：`ClipboardItem` 收 Promise，退到 `writeText`）。
+  判据 `canOutlineText` / `canCopyAsSvg` 右键菜单、命令面板、快捷键共用。看护 `store/textOutlineActions.test.tsx`、`tests/test_text_outline.py`。
 - **不认识的对象类型原样保留（2026-11-14，ADR 0185 的前置）**：更新的构建会往文档里写本构建没有的 `type`
   （第一例是自由路径 `path`）。判据只有 `types/document.isKnownObject`（`KNOWN_OBJECT_TYPES` 闭集）。读盘、保存、
   换画布、复制画布都不碰它（文档层本来就不按类型过滤，别加）；画布上 `ObjectView` 只画虚线占位框
