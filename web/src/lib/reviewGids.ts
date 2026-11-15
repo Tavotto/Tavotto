@@ -26,3 +26,13 @@ export function owningPanel(
   }
   return null
 }
+
+/** 画布上有没有面板的元素表还没到（精确 / 结构 manifest 都没有）：此时「元素不在了」不成立，只是还不知道 */
+export function manifestsPending(
+  objects: readonly CanvasObject[],
+  render: Pick<RenderState, 'byKey' | 'latest'>,
+): PanelObject[] {
+  return objects.filter(
+    (o): o is PanelObject => o.type === 'panel' && !(exactPanelManifest(render, o) ?? structuralPanelManifest(render, o)),
+  )
+}

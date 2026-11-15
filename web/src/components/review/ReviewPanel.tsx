@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ReviewComment, ReviewShareDetail } from '@/lib/api'
 import { reviewSnapshotUrl } from '@/lib/api'
+import { manifestsPending } from '@/lib/reviewGids'
+import { requestRender } from '@/store/renderScheduler'
+import { useDocumentStore } from '@/store/documentStore'
+import { useRenderStore } from '@/store/renderStore'
 import { shareLive } from '@/lib/reviewPlacement'
 import { cn } from '@/lib/utils'
 import { TAB_REFRESH_MS, useReviewStore } from '@/store/reviewStore'
@@ -172,6 +176,16 @@ export function ReviewPanel() {
   const selectedId = useReviewStore((s) => s.selectedId)
   const [filter, setFilter] = useState<Filter>('all')
   const placed = useReviewPlacements()
+  const objects = useDocumentStore((s) => s.doc.objects)
+  const byKey = useRenderStore((s) => s.byKey)
+  const latestKeys = useRenderStore((s) => s.latest)
+  const hasElementComments = !!detail?.comments.some((c) => c.anchor.kind === 'element')
+  // 元素意见要对着元素表才认得出元素还在不在：表没到的面板请求一次渲染（与画布上别处读 manifest 的同一条调度）
+  useEffect(() => {
+    if (!hasElementComments) return
+    for (const p of manifestsPending(objects, { byKey, latest: latestKeys })) requestRender(p, false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasElementComments, objects])
   const shareId = share?.share_id
 
   useEffect(() => {

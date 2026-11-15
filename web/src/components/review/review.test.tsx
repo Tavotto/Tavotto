@@ -507,6 +507,21 @@ describe('排版的坐标基准是页面', () => {
   })
 })
 
+describe('元素表还没到时不判「原位置已变化」', () => {
+  it('元素意见：面板还没有 manifest → 不标 moved、不画圆点；表到了才判', async () => {
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_pending')
+    useDocumentStore.getState().commit(literal('准备'), (d) => {
+      d.objects = [{ id: 'p1', type: 'panel', fileId: 'p1.pdf', fileKind: 'pdf', x: 0, y: 0, w: 40, h: 30, overrides: [] } as never]
+    })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    const c = cm('e1', { anchor: { kind: 'element', gid: 'legend', box: [0.1, 0.1, 0.2, 0.2] } })
+    vi.mocked(fetchReviewShare).mockResolvedValue(DETAIL([c]))
+    resetStore({ share: SHARE, detail: DETAIL([c]) })
+    await render(<ReviewPanel />)
+    expect(q('[data-review-comment="e1"] [data-review-moved]')).toBeNull()
+  })
+})
+
 describe('通知轨胶囊', () => {
   const latest = { share_id: 'sh_1', author: '林老师', count: 2 }
   it('「林老师留了 2 条意见」；× 之后同样的未读数不再出现，未读增加才重现', async () => {
