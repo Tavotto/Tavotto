@@ -2,9 +2,11 @@
 
 **为什么有这个模块**：用户自填的第三方接口多是 new-api / one-api 类中转，经常「能列型号、跑不了任务」——
 同一个地址上 chat 通、responses 不通（或反过来），或者不认我们带的 `store` / `include` / `max_tokens`。
+`store: false` 是故意的（提示词里有用户未发表的脚本），**绝不自动剥**：responses 上 `store` 被点名拒绝 = 这个地址不适合 responses，
+当作「协议不对」信号（`store_rejected`），有备选才换（chat 没有 store 字段），没备选照常失败。
 这里只回答两个问题，且判据都是**闭集**：
 
-1. 第一次模型请求的失败是不是「协议不对」（`protocol_mismatch`）→ 换下一个协议重发；
+1. 第一次模型请求的失败是不是「协议不对」（`protocol_mismatch` / `store_rejected`）→ 换下一个协议重发；
 2. 400 / 422 是不是明确点名了我们发的某个**非必需**字段不被接受（`FieldAdjuster.consider`）→ 剥掉 / 换名后重发一次。
 
 **响应体原文只在内存里匹配**：不进异常、日志、事件、诊断包；对外只有闭集结果（换没换、剥了哪个字段）。
@@ -43,9 +45,9 @@ WRONG_PROTOCOL_PHRASES = (
 )
 
 #: 降级可能剥 / 换的字段名（闭集；`done.dropped_fields` 只会出现这些）
-DROPPABLE_FIELDS = ("store", "include", "max_output_tokens", "max_tokens", "max_completion_tokens")
+DROPPABLE_FIELDS = ("include", "max_output_tokens", "max_tokens", "max_completion_tokens")
 #: 各协议里「可剥」的非必需字段（chat 的长度字段是换名，不在这里）
-_DROP_CANDIDATES = {"openai-responses": ("store", "include", "max_output_tokens")}
+_DROP_CANDIDATES = {"openai-responses": ("include", "max_output_tokens")}
 _TOKEN_FIELDS = ("max_tokens", "max_completion_tokens")
 
 #: 点名之后必须带的否定措辞之一（值非法 / 超限不算：它们没有这些词）
@@ -100,6 +102,11 @@ def protocol_mismatch(status: int, body: bytes) -> bool:
         return False
     low, _ = _peek(body)
     return any(p in low for p in WRONG_PROTOCOL_PHRASES)
+
+
+def store_rejected(wire_name: str, status: int, body: bytes) -> bool:
+    """responses 上 `store` 被点名拒绝：不剥（隐私），当作「协议不对」，由调用方决定有没有备选可换。"""
+    return wire_name == "openai-responses" and names_field(status, body, "store")
 
 
 def names_field(status: int, body: bytes, field: str) -> bool:

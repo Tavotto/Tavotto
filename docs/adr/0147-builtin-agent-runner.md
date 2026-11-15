@@ -160,8 +160,8 @@ Conversion output recovery remains within the existing budget: create/append sho
 - **第一轮换协议**：`--fallback WIRE=BASE_URL`（可重复）。只在从未收到过成功回复时（没执行过工具、没有原生回放项）才换；信号是 404 / 405，或 400 / 404 / 503 且响应体含闭集短语
   （`fallback.WRONG_PROTOCOL_PHRASES`，出自 magpie 的 WrongEndpoint / NoChannel 两张表）。401 / 403 / 429 / 其余 5xx、任意其他 400 不换。备选地址必须与主地址同源——密钥与提示词不因此流向别的主机，也不放宽「不跟随重定向」。
   工具执行之后再失败，绝不换协议重放：那是「任务中途自动重放」，仍禁止。
-- **非必需字段降级**：400 / 422 明确点名 `store` / `include` / `max_output_tokens` / chat 长度字段为不被接受（值非法不算）→ 剥掉或换名后重发一次，同一字段不重复。
-  **取舍**：剥 `store` 等于放弃「不让服务端留存提示词里的未发表脚本」这条保证——该服务本来就不认这个字段，无从留存与否；但这一事实必须如实进回报（`dropped_fields`），由父进程落盘 / 展示，不得静默。
+- **非必需字段降级**：400 / 422 明确点名 `include` / `max_output_tokens` / chat 长度字段为不被接受（值非法不算）→ 剥掉或换名后重发一次，同一字段不重复。
+  **`store: false` 不属于可降级字段**：它是故意的（提示词里有用户未发表的脚本，不让服务端留存），绝不自动剥。responses 上 `store` 被点名拒绝按「协议不对」信号处理——有 `--fallback` 就换到 chat（chat 没有 store 字段），没有备选照常失败；同样只在第一轮、从未成功过时。
   剥 `include` 时回放里无加密内容的 `reasoning` 条目一并剥掉，否则第二轮（工具已执行之后）才被拒。
 - **回报**：仅 `done` 事件的四个闭集字段 `wire_used` / `wire_switched_from` / `dropped_fields` / `token_field`；响应体原文只在内存里匹配，不进事件、日志、诊断包。
 

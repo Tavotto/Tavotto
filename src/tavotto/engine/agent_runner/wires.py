@@ -649,9 +649,10 @@ class OpenAIResponsesWire:
     * `store: false`（提示词里有用户未发表的脚本，不让服务端留存）。无状态回放 `function_call` / `reasoning` 条目（带原 id）
       在 `store=false` 下的做法按官方 reasoning 指南核对过（reasoning 条目要带 `encrypted_content`，所以才 `include` 它）；
       真服务（DeepSeek 原生 Responses，2026-10）跑通过多轮回放，OpenAI 官方端点没测。
-    * `store` / `include` / `max_output_tokens` 是非必需字段：中转常见不认，被明确点名拒绝时由 `loop.HttpModel` 的字段降级
+    * `include` / `max_output_tokens` 是非必需字段：中转常见不认，被明确点名拒绝时由 `loop.HttpModel` 的字段降级
       剥掉后重发一次（`include` 被剥时回放里的 `reasoning` 条目同时剥掉：没有 `encrypted_content` 的 reasoning 条目在
-      `store=false` 下会被拒）。`store` 被剥意味着服务端可能留存请求，done 事件的 `dropped_fields` 如实报出。
+      `store=false` 下会被拒）。`store: false` **绝不自动剥**：被点名拒绝时按「协议不对」处理（有 `--fallback` 才换到 chat，
+      chat 没有 store 字段；没备选照常失败）。
     """
 
     name = "openai-responses"

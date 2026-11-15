@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import tools as toolmod
-from .fallback import DROPPABLE_FIELDS, FieldAdjuster, protocol_mismatch
+from .fallback import DROPPABLE_FIELDS, FieldAdjuster, protocol_mismatch, store_rejected
 from .tools import Limits, RunEnvelope, TaskToolset
 from .wires import (
     Msg,
@@ -142,7 +142,8 @@ class HttpModel:
 
     * **第一轮换协议**：`fallbacks` 给了备选 `(wire, base_url)`。只在**从未收到过任何成功回复**（= 没执行过工具、没有原生
       回放项）时，遇到「协议不对」信号（`fallback.protocol_mismatch`）才换下一个；换了不消耗重试次数。
-    * **非必需字段降级**：400 / 422 明确点名我们发的 `store` / `include` / 长度字段不被接受 → 剥掉 / 换名后重发，
+    * **非必需字段降级**：400 / 422 明确点名我们发的 `include` / `max_output_tokens` / 长度字段不被接受 → 剥掉 / 换名后重发（**`store` 绝不剥**：
+      responses 上被点名拒绝按「协议不对」处理，有备选才换），
       同一字段一次，之后每轮请求都沿用。
 
     `report()` 给父进程的闭集回报（`wire_used` / `wire_switched_from` / `dropped_fields` / `token_field`），
@@ -307,9 +308,13 @@ class HttpModel:
                     self._token_field = self._adjuster().token_field(req.body)
                     return turn
                 # 闭集自救：判据只看状态码与体里的闭集短语，体原文不外传（见 fallback.py）
-                if (not self._succeeded_wire and protocol_mismatch(status, data)) and (
-                    self._switch_wire()
-                ):
+                if (
+                    not self._succeeded_wire
+                    and (
+                        protocol_mismatch(status, data)
+                        or store_rejected(self.wire.name, status, data)
+                    )
+                ) and (self._switch_wire()):
                     req = build()
                     continue
                 if self._adjuster().consider(status, data, req.body):

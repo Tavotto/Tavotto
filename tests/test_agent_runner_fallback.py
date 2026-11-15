@@ -348,20 +348,47 @@ class TestWireSwitch:
 
 # ================================================================ 字段降级
 class TestFieldDegrade:
-    def test_responses_store_dropped_once_and_kept_dropped_next_turn(self):
+    def test_store_is_never_stripped_and_without_fallback_fails_normally(self):
         bodies = []
 
         def post(url, headers, body, *, timeout):
-            bodies.append(json.loads(json.dumps(body)))
-            if "store" in body:
-                return 400, {}, _err("Unknown parameter: 'store'.")
-            return _ok_resp()
+            bodies.append(dict(body))
+            return 400, {}, _err("Unknown parameter: 'store'.")
 
         m = _http_model("openai-responses", [], post)
+        with pytest.raises(wires.RunnerFailure) as ei:
+            _complete(m)
+        assert ei.value.detail == "http_400"
+        assert len(bodies) == 1 and bodies[0]["store"] is False
+        assert m.report()["dropped_fields"] == []
+
+    def test_store_rejected_switches_to_chat_when_a_fallback_exists(self):
+        seen = []
+
+        def post(url, headers, body, *, timeout):
+            seen.append((url.rsplit("/", 1)[-1], "store" in body))
+            if url.endswith("/responses"):
+                return 400, {}, _err("Unknown parameter: 'store'.")
+            return _ok_chat()
+
+        m = _http_model("openai-responses", [("openai-chat", "https://api.example.test/v1")], post)
         _complete(m)
+        assert seen == [("responses", True), ("completions", False)]
+        assert m.report()["wire_switched_from"] == "openai-responses"
+        assert m.report()["dropped_fields"] == []
+
+    def test_store_rejection_after_a_success_does_not_switch(self):
+        n = {"i": 0}
+
+        def post(url, headers, body, *, timeout):
+            n["i"] += 1
+            return _ok_resp() if n["i"] == 1 else (400, {}, _err("Unknown parameter: 'store'."))
+
+        m = _http_model("openai-responses", [("openai-chat", "https://api.example.test/v1")], post)
         _complete(m)
-        assert ["store" in b for b in bodies] == [True, False, False]
-        assert m.report()["dropped_fields"] == ["store"]
+        with pytest.raises(wires.RunnerFailure):
+            _complete(m)
+        assert n["i"] == 2
 
     def test_same_field_is_not_retried_again(self):
         """已经剥掉还被点名（服务端体不诚实）：不再试同一字段，按普通 400 失败。"""
@@ -369,9 +396,9 @@ class TestFieldDegrade:
 
         def post(url, headers, body, *, timeout):
             calls.append(sorted(body))
-            return 400, {}, _err("Unknown parameter: 'store'.")
+            return 400, {}, _err("Unknown parameter: 'include'.")
 
-        m = _http_model("openai-responses", [], post)
+        m = _http_model("openai-responses", [], post, effort="low")
         with pytest.raises(wires.RunnerFailure) as ei:
             _complete(m)
         assert ei.value.detail == "http_400" and len(calls) == 2
@@ -547,12 +574,12 @@ class TestReport:
             def report(self):
                 return {
                     "wire_used": 5,
-                    "dropped_fields": ["store", BODY_CANARY],
+                    "dropped_fields": ["include", "store", BODY_CANARY],
                     "token_field": "max_tokens",
                 }
 
         out = loop._model_report(Evil())
-        assert out["wire_used"] == "" and out["dropped_fields"] == ["store"]
+        assert out["wire_used"] == "" and out["dropped_fields"] == ["include"]
 
     def test_report_failure_never_breaks_the_run(self):
         class Boom:
