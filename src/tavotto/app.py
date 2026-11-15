@@ -4112,6 +4112,25 @@ def api_mathtext():
     )
 
 
+@app.post("/api/svg/import")
+def api_svg_import():
+    """外部 SVG → 画布上可编辑的对象（ADR 0185 M5；`rendercore/svgimport.py`）。
+
+    body `{"svg": "<svg …>"}` → `{"ok": true, "objects": [...], "size_mm": [w, h], "unsupported": {code: n}}`；
+    `unsupported` 非空时前端把整个 SVG 当图片放进来并说原因。不联网、不读盘、不执行任何东西。"""
+    from .rendercore import svgimport
+
+    body = request.get_json(force=True, silent=True) or {}
+    svg = body.get("svg")
+    if not isinstance(svg, str) or not svg.strip():
+        return jsonify({"ok": False, "error": "not_svg"}), 400
+    try:
+        out = svgimport.import_svg(svg)
+    except svgimport.SvgImportError as exc:
+        return jsonify({"ok": False, "error": exc.code}), 200
+    return jsonify({"ok": True, **out})
+
+
 def _prepare_source_fonts() -> None:
     """让「画布文字用原图字体」（ADR 0164）找得到原图那张脸：把项目解释器 / 内置 runtime 的 matplotlib
     字体目录登记为定位线索。**只算路径、不起进程、不改任何东西**；线索只影响「去哪找」，认脸仍只按 sha256。"""

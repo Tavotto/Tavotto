@@ -1,3 +1,5 @@
+import { looksLikeSvg } from './svgImport'
+import { pasteSvgText } from '@/store/svgImportActions'
 import { remapGroupPath } from './groupTree'
 import { create } from 'zustand'
 import { msg, t as translate, type UiMessage } from '@/i18n'
@@ -242,7 +244,22 @@ export function handleCopyEvent(e: ClipboardEvent): boolean {
 export function handlePasteEvent(e: ClipboardEvent): boolean {
   const text = e.clipboardData?.getData('text/plain') ?? ''
   const payload = parsePayload(text)
-  if (!payload) return pasteImageFiles(e, text)
+  if (!payload) {
+    // 外部 SVG 标记（Illustrator / Inkscape 复制出来的，ADR 0185 M5）：落成可编辑对象，做不准就整个当图片
+    // 两个口都要真像 SVG 才算（有的宿主对任何类型都回同一段文字）
+    const raw = e.clipboardData?.getData('image/svg+xml') ?? ''
+    const svg = looksLikeSvg(raw) ? raw : looksLikeSvg(text) ? text : ''
+    if (svg) {
+      return (
+        runDiscreteAction('canvas', e.target, () => {
+          e.preventDefault()
+          void pasteSvgText(svg)
+          return true
+        }) ?? false
+      )
+    }
+    return pasteImageFiles(e, text)
+  }
   // 桌面壳「编辑 → 粘贴」与预置 ⌘V 加速键直达这里，不经 keydown：先过离散动作闸门——
   // 输入框 / 对话框里让位（不收手势），否则先落定开着的连续编辑，粘贴不并进方向键
   // 微调那条撤销（Codex #671）

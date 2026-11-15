@@ -728,6 +728,10 @@
       "quick-layout": {
         "keywords": "quick layout auto arrange align yjpb",
         "label": "Auto layout"
+      },
+      "explode-svg": {
+        "keywords": "explode svg editable vector",
+        "label": "Make editable"
       }
     },
     "listLabel": "Commands",

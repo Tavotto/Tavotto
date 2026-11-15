@@ -93,6 +93,7 @@ import { openArrangeInInspector } from './context-bar/openArrange'
 import { canConvertToPath } from '@/lib/convertToPath'
 import { PATH_COMMANDS } from '@/store/pathActions'
 import { blockedReason, PATHFINDER_COMMANDS } from '@/store/pathfinderActions'
+import { canExplodeSvg, explodeSvgPanel } from '@/store/svgImportActions'
 import { canMakeClipMask, canReleaseClipMask, makeClipMask, releaseClipMask } from '@/store/groupActions'
 import { PATHFINDER_COMMAND_ICONS } from '@/components/pathfinderCommandIcons'
 import { loadVecops } from '@/lib/vecops/kernel'
@@ -218,6 +219,12 @@ export function ObjectContextMenu({
 
       {kind === 'panel' && <EditablePanelItems panel={obj as PanelObject} run={run} runAsync={runAsync} />}
       {kind === 'panel-layout-only' && <LayoutOnlyPanelItems panel={obj as PanelObject} run={run} />}
+      {/* 静态 SVG 图拆成可编辑对象（ADR 0185 M5）：判据只有 `canExplodeSvg`，与命令面板同一个 */}
+      {!multi && canExplodeSvg(obj) && (
+        <MenuItem icon={Spline} data-quick-item="explode-svg" onSelect={runAsync(() => explodeSvgPanel(obj.id))}>
+          {translate('palette.commands.explode-svg.label', { ns: 'dialogs' })}
+        </MenuItem>
+      )}
       {kind === 'text' && (
         <MenuItem
           icon={Pencil}

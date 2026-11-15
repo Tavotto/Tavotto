@@ -716,6 +716,10 @@
       "quick-layout": {
         "keywords": "一键排版 yjpb yijianpaiban auto layout arrange align",
         "label": "一键排版"
+      },
+      "explode-svg": {
+        "keywords": "explode svg editable vector cckbj 拆成 可编辑 矢量 SVG",
+        "label": "拆成可编辑对象"
       }
     },
     "listLabel": "命令",
