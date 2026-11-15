@@ -36,7 +36,10 @@ vi.mock('@/lib/api', async (orig) => ({
   extractNotebook: mocks.extractNotebook,
   importNotebook: mocks.importNotebook,
 }))
-vi.mock('@/lib/packageImport', () => ({ openPackageFile: mocks.openPackageFile }))
+vi.mock('@/lib/packageImport', async (orig) => ({
+  ...(await orig<typeof import('@/lib/packageImport')>()),
+  openPackageFile: mocks.openPackageFile,
+}))
 vi.mock('@/lib/desktop', async (orig) => ({
   ...(await orig<typeof import('@/lib/desktop')>()),
   isDesktop: mocks.isDesktop,
@@ -196,6 +199,18 @@ describe('整次放下', () => {
     expect(mocks.importAsset).not.toHaveBeenCalled()
     expect(text()).toContain('paper.tavotto')
     expect(text()).toContain('1')
+  })
+
+  it('项目包来自更新的版本：说清楚，桌面版主按钮是「检查更新」', async () => {
+    mocks.isDesktop.mockReturnValue(true)
+    mocks.openPackageFile.mockRejectedValue(
+      new ApiError('x', 400, { code: 'package_schema_too_new', params: { schema: 4 } }),
+    )
+    await drop([named('new.tavotto')])
+    expect(text()).toContain('new.tavotto')
+    expect(text()).toContain('更新的')
+    expect(formatMessage(status().statusAction!.label)).toBe('检查更新')
+    mocks.isDesktop.mockReturnValue(false)
   })
 
   it('项目包打不开：一句话 + 发送问题反馈', async () => {
