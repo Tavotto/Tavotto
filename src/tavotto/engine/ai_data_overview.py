@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import posixpath
 import re
+from decimal import Decimal
 from pathlib import Path, PurePosixPath
 
 from . import (
@@ -37,6 +38,37 @@ _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 def _clip(text: str, limit: int) -> str:
     t = _CONTROL.sub(" ", text)
     return t if len(t) <= limit else t[: limit - 1] + "…"
+
+
+#: XLSX 里存的浮点数文字（`0.6840000000000001`）：有小数点 / 指数、数字位 > 15 才是「浮点误差的尾巴」，整数与位数不多的原样
+_FLOAT_LITERAL = re.compile(r"^[+-]?(?:\d+\.\d*|\.\d+|\d+(?=[eE]))(?:[eE][+-]?\d+)?$")
+
+
+def display_number(text: str) -> str:
+    """XLSX 数值格的预览文字：与 Excel 自己显示一样取 15 位有效数字（`0.6840000000000001` → `0.684`），**只给人看**，读表 / 类型 / 资格 /
+    出图用的仍是原文。规则：整格是带小数点或指数的十进制字面量且有效数字 > 15 位才改（整数、位数不多的、日期 `2026-01-01`、
+    `TRUE` / `#N/A` / 普通文字都原样）；改写后去掉多余的尾零；绝对值在 [1e-9, 1e15) 用普通小数写法（不出科学计数法），更大 / 更小的才用
+    科学计数法（`1.5e-12`）。无法确定的原样给。"""
+    if not _FLOAT_LITERAL.match(text):
+        return text
+    mantissa = re.split(r"[eE]", text)[0].lstrip("+-").replace(".", "").lstrip("0")
+    if len(mantissa) <= 15:
+        return text
+    try:
+        x = float(text)
+    except ValueError:
+        return text
+    if x != x or x in (float("inf"), float("-inf")):
+        return text
+    sci = f"{x:.14e}"  # 15 位有效数字
+    if x == 0 or 1e-9 <= abs(x) < 1e15:
+        out = format(Decimal(sci), "f")
+        if "." in out:
+            out = out.rstrip("0").rstrip(".")
+        return out
+    m, _, e = sci.partition("e")
+    m = m.rstrip("0").rstrip(".")
+    return f"{m}e{int(e)}"
 
 
 def _lines(pairs) -> list[dict]:
@@ -62,7 +94,7 @@ def _base(rel: str, status: str, code: str | None = None) -> dict:
     }
 
 
-def _fill(out: dict, summ: adf.DataSummary) -> None:
+def _fill(out: dict, summ: adf.DataSummary, *, xlsx: bool = False) -> None:
     out["rows"] = summ.row_count if summ.row_count is not None else len(summ.rows)
     out["columns"] = len(summ.columns)
     out["layout"] = summ.layout
@@ -79,7 +111,10 @@ def _fill(out: dict, summ: adf.DataSummary) -> None:
         for name in summ.columns
     ]
     out["preview_rows"] = [
-        {"line": summ.row_number(i), "cells": [_clip(c, CELL_CHARS) for c in row]}
+        {
+            "line": summ.row_number(i),
+            "cells": [_clip(display_number(c) if xlsx else c, CELL_CHARS) for c in row],
+        }
         for i, row in enumerate(summ.rows[:PREVIEW_ROWS])
     ]
     out["truncated"] = len(summ.rows) > PREVIEW_ROWS
@@ -142,7 +177,7 @@ def overview(root: str | Path, path, *, sheet=None, header_row=None) -> dict:
             out.update(status="unreadable", code="data_unreadable")
             return out
         out["sheet"] = summ.sheet
-        _fill(out, summ)
+        _fill(out, summ, xlsx=True)
         return out
     try:
         info = adf.read_text_table(file, header_row=hrow)

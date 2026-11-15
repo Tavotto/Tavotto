@@ -28,7 +28,7 @@ from tavotto.engine import (
     ai_data_recipe as R,
     ai_data_template as tpl,
 )
-from tests.test_ai_data_profile import make_xlsx
+from tests.test_ai_data_profile import C, make_xlsx
 from tests.test_ai_data_propose import (
     project,  # noqa: F401
     put,
@@ -670,3 +670,62 @@ def test_only_the_head_of_a_huge_script_is_read(project, monkeypatch):
     monkeypatch.setattr("builtins.open", spy)
     assert ov.generated_from(figs, "big.py") is None  # 根目录脚本里的 `../a.csv` 逃出项目
     assert reads == [tpl.SOURCE_SCAN_CHARS]
+
+
+# =========================================================================== 预览文字的数值显示（只给人看）
+@pytest.mark.parametrize(
+    ("raw", "want"),
+    [
+        ("0.6840000000000001", "0.684"),
+        ("0.6879999999999999", "0.688"),
+        ("-0.30000000000000004", "-0.3"),
+        ("1234.5600000000002", "1234.56"),
+        ("2.0000000000000004", "2"),
+        ("1.0000000000000001E-5", "0.00001"),
+        ("1.2345678901234567e-12", "1.23456789012346e-12"),
+        ("1.2300000000000001e+20", "1.23e20"),
+        # 不改：整数、位数不多、15 位以内、日期、布尔、错误值、文字
+        ("12345678901234567890", "12345678901234567890"),
+        ("0.684", "0.684"),
+        ("0.123456789012345", "0.123456789012345"),
+        ("1.5e-12", "1.5e-12"),
+        ("2026-01-01", "2026-01-01"),
+        ("2026-01-01T10:30:00", "2026-01-01T10:30:00"),
+        ("TRUE", "TRUE"),
+        ("#N/A", "#N/A"),
+        ("1,000.5000000000001", "1,000.5000000000001"),
+        ("nan", "nan"),
+        ("", ""),
+    ],
+)
+def test_display_number_rounds_to_15_significant_digits_and_leaves_the_rest(raw, want):
+    assert ov.display_number(raw) == want
+
+
+def test_xlsx_preview_hides_float_noise_but_the_table_read_is_unchanged(project):
+    m, client, figs, _ = project
+    (figs / "d").mkdir()
+    rows = [["g", "v", "n"], ["a", C("n", "0.6840000000000001"), 7], ["b", C("n", "0.6879999999999999"), 8],
+            ["c", "0.684", 9], ["d", True, 10]]  # fmt: skip
+    make_xlsx(figs / "d" / "x.xlsx", {"S": rows})
+    body = get(client, "d/x.xlsx").get_json()
+    cells = [r["cells"] for r in body["preview_rows"]]
+    assert cells[0][1] == "0.684" and cells[1][1] == "0.688" and cells[0][2] == "7"
+    assert cells[2][1] == "0.684" and cells[3][1] == "TRUE"
+    # 读表链（propose / 出图用的）逐字不变：原文还是带尾巴的
+    values = adf.inspect_data_source(figs / "d" / "x.xlsx", "S", v2=True)
+    assert values.rows[0][1] == "0.6840000000000001" and values.rows[1][1] == "0.6879999999999999"
+    assert [f["kind"] for f in body["fields"]] == [
+        "text",
+        "mixed",
+        "numeric",
+    ]  # 这一列夹了文字与布尔，类型判定照旧
+    entry = adf.profile_folder(figs / "d").tables[0]
+    assert P._table_for_values(figs / "d", entry).rows == values.rows
+
+
+def test_text_tables_keep_the_raw_cell_text(project):
+    m, client, figs, _ = project
+    write(figs, "d/a.csv", "g,v\na,0.6840000000000001\nb,0.6879999999999999\nc,1\n")
+    cells = [r["cells"] for r in get(client, "d/a.csv").get_json()["preview_rows"]]
+    assert cells[0] == ["a", "0.6840000000000001"] and cells[1][1] == "0.6879999999999999"
