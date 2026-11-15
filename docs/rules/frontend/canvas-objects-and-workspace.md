@@ -166,6 +166,10 @@ order: 210
   （`toExportObjects`，裁剪不随载荷走：转出来的路径留在原组里照样被同一个蒙版裁）、落位（`store/textOutlineActions`：原位替换、
   多条成一个新组、留在原组里，一次 commit）与写剪贴板（`store/svgCopyActions`：`ClipboardItem` 收 Promise，退到 `writeText`）。
   判据 `canOutlineText` / `canCopyAsSvg` 右键菜单、命令面板、快捷键共用。看护 `store/textOutlineActions.test.tsx`、`tests/test_text_outline.py`。
+- **关键对象、阵列（2026-11-15，ADR 0185 M6）**：关键对象 = 多选里再点一下（`store/keyObject.trackKeyClick`，`ObjectView` 只在「点的对象已在
+  多选里」时挂上），落成「选区末位 + 排列参照 `primary`」——没有第二份状态，对齐 / 等宽等高 / 间距（`setSelectionSpacing`）都读这两样；轮廓粗
+  一档在 `OverlaySvg`。阵列的几何唯一出处 `lib/array`（网格步长 = 看得见的外接框 + 间距；环形圆心在选区中心正下方），写入
+  `transformActions.arraySelection`（组按单元补齐、每份一套新组 id、一次 commit）。看护 `store/arrangeExtras.test.tsx`、`lib/array.golden.test.ts`。
 - **不认识的对象类型原样保留（2026-11-14，ADR 0185 的前置）**：更新的构建会往文档里写本构建没有的 `type`
   （第一例是自由路径 `path`）。判据只有 `types/document.isKnownObject`（`KNOWN_OBJECT_TYPES` 闭集）。读盘、保存、
   换画布、复制画布都不碰它（文档层本来就不按类型过滤，别加）；画布上 `ObjectView` 只画虚线占位框
