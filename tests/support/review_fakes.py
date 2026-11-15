@@ -52,7 +52,7 @@ class Share:
 
 
 class FakeReviewServer:
-    def __init__(self, tls, *, new_limit: int = 1, update_limit: int = 5) -> None:
+    def __init__(self, tls, *, new_limit: int = 1, update_limit: int | None = None) -> None:
         self.tls = tls
         self.new_limit = new_limit
         self.update_limit = update_limit
@@ -222,7 +222,7 @@ class FakeReviewServer:
     def _quota(self, device: str, sh: Share | None = None) -> dict:
         return {
             "new_left": max(0, self.new_limit - self.new_used.get(device, 0)),
-            "update_left": None if sh is None else max(0, self.update_limit - sh.update_used),
+            "update_left": None if sh is None else 99,
             "resets_at": "2026-11-16T16:00:00Z",
         }
 
@@ -287,8 +287,8 @@ class FakeReviewServer:
                 key = f"{device}v{req['client_version_id']}"
                 seen = self.by_client_id.get(key)
                 if seen is None:
-                    if sh.update_used >= self.update_limit:
-                        return self._error(h, 429, "quota_update_exhausted")
+                    if self.update_limit is not None and sh.update_used >= self.update_limit:
+                        return self._error(h, 429, "rate_limited", 5)
                     sh.update_used += 1
                     n = max(sh.versions) + 1
                     sh.versions[n] = {

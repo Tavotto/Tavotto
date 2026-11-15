@@ -308,15 +308,25 @@ def test_new_quota_exhausted_passes_through_as_a_failure_code(on, renders):
     assert reviewinbox.for_target("figure", "fig_b") is None
 
 
-def test_update_quota_exhausted_passes_through(on, renders):
-    on.update_limit = 1
+def test_updates_to_the_same_link_are_unlimited_and_update_quota_is_always_null(on, renders):
+    sid = share_ok()["share"]["share_id"]
+    for _ in range(7):
+        reviewshare.dismiss()
+        assert update_ok(sid)["stage"] == "done"
+    assert reviewinbox.get(sid)["latest_version"] == 8
+    assert "quota_update_exhausted" not in reviewshare.FAILURES
+    assert reviewshare.quota(sid)["update_left"] is None  # 服务端就算回了数字也不显示
+
+
+def test_update_flow_rate_limited_is_retryable(on, renders):
     sid = share_ok()["share"]["share_id"]
     reviewshare.dismiss()
-    assert update_ok(sid)["stage"] == "done"
-    reviewshare.dismiss()
+    on.update_limit = 0  # 兜底限流（每小时 30 次）用 rate_limited 回
     st = update_ok(sid)
-    assert (st["stage"], st["failure"]) == ("failed", "quota_update_exhausted")
-    assert reviewinbox.get(sid)["latest_version"] == 2
+    assert (st["stage"], st["failure"], st["retryable"]) == ("failed", "rate_limited", True)
+    reviewshare.dismiss()
+    on.update_limit = None
+    assert update_ok(sid)["stage"] == "done"
 
 
 def test_quota_endpoint(on):

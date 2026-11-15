@@ -93,7 +93,6 @@ STAGES = frozenset(
 #: 失败码闭集（与前端 `review.failure.*` 对拍，local-api.md 的 FailureCode）。值 = 用户能不能再点一次。
 FAILURES: dict[str, bool] = {
     "quota_new_exhausted": False,
-    "quota_update_exhausted": False,
     "share_gone": False,
     "too_large": False,
     "rate_limited": True,
@@ -104,9 +103,7 @@ FAILURES: dict[str, bool] = {
 }
 LOG_RESULTS = frozenset(FAILURES) | {"ok", "cancelled"}
 #: 服务端 code 直通的
-_PASS_CODES = frozenset(
-    {"quota_new_exhausted", "quota_update_exhausted", "share_gone", "too_large", "rate_limited"}
-)
+_PASS_CODES = frozenset({"quota_new_exhausted", "share_gone", "too_large", "rate_limited"})
 #: 签名 / 时钟 / 请求不合法：对用户都是「客户端出错」
 _CLIENT_CODES = frozenset({"bad_signature", "clock_skew", "invalid"})
 
@@ -556,9 +553,9 @@ def _quota_part(raw: object) -> dict | None:
     if not isinstance(raw, dict):
         return None
     out: dict = {}
-    for key in ("new_left", "update_left"):
-        v = raw.get(key)
-        out[key] = v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
+    v = raw.get("new_left")
+    out["new_left"] = v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
+    out["update_left"] = None  # 更新同一链接不限次数（只限每天新建 1 个），恒 null
     return out
 
 

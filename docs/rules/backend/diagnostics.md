@@ -32,7 +32,8 @@ order: 280
 - **分享记录按项目分开**：记录带发起时的项目 id（`ProjectCtx.id`，没开项目 = 空串），`/api/review/for` 与更新都按它匹配——图 id / 排版 id 在不同项目里会重名，不分开就会把 B 项目的画面推到 A 的链接上。
 - **位图素材不认 ppi**（`scope=original` 保源像素网格）：降分辨率重出仍是同样尺寸就在本机把 PNG 等比缩小（`shrink_png`：stdlib 解本引擎自己编的 PNG + `rendercore.raster.resample_area` 面积平均，bbox 是比例坐标不受影响）；缩完仍超限 / 解不了才 `too_large`。
 - **单图元素表**取用户画布上那份热会话 manifest（`app._review_manifest`：热态不是这组 overrides 就先按它们重放再取），拿不到（没有脚本）= 空表 + 日志，不失败。
-- **失败码闭集** `reviewshare.FAILURES`（与前端 `review.failure.*` 对拍）：服务端错误体是嵌套的 `{"error": {"code"}}`；`quota_*` / `share_gone` / `too_large` / `rate_limited` 直通（**只认服务端明说的 code**：裸 404 多半是网关，归 `server`，不标 revoked、停止分享也不当成功），`bad_signature` / `clock_skew` / `invalid` 一律 `client_error`，5xx / 坏响应 `server`，传输失败（含 TLS）`network`。
+- **额度**：免费版只限每台设备每天新建 1 个链接；更新同一链接不限次数（服务端只有每链接每小时 30 次的兜底，回 `rate_limited`，可再试），所以没有 `quota_update_exhausted`，`/api/review/quota` 的 `update_left` 恒为 null。
+- **失败码闭集** `reviewshare.FAILURES`（与前端 `review.failure.*` 对拍）：服务端错误体是嵌套的 `{"error": {"code"}}`；`quota_new_exhausted` / `share_gone` / `too_large` / `rate_limited` 直通（**只认服务端明说的 code**：裸 404 多半是网关，归 `server`，不标 revoked、停止分享也不当成功），`bad_signature` / `clock_skew` / `invalid` 一律 `client_error`，5xx / 坏响应 `server`，传输失败（含 TLS）`network`。
 - **秘密不落地**：`owner_token` 只在 `reviewinbox` 的 0600 文件里，`status()` / `summary` / `detail` / 日志都没有；日志模板是字面量、参数只有闭集里的阶段名与结果码（不记 URL、令牌、标题、意见文字）。意见文字来自网络：逐项形状清洗、文字封顶（500 / 20 字）、按纯文本存。
 - **本机保留**：到期后意见副本仍在，到期 + 30 天或用户删除（只有已停止 / 已到期的才许删）才清；`for` 只回「这个 target 有没有未删除的记录」，「审阅」页签出现与否只看它。
 
