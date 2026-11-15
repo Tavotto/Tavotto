@@ -192,6 +192,7 @@
     "package_file_missing": "No file was uploaded",
     "package_invalid": "Not a valid project package: {{reason}}",
     "package_schema_unsupported": "The layout in this package is neither schema 2 nor schema 3",
+    "package_schema_too_new": "This project package is from a newer version (schema {{schema}}). Update, then open it again",
     "permission_denied": "No permission to read: {{path}}",
     "ppi_out_of_range": "Resolution {{value}} is out of range — use a value between {{min}} and {{max}}.",
     "preparation_not_found": "No such preparation task (or it belongs to another project): {{id}}",

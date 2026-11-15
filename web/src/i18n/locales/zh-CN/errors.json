@@ -192,6 +192,7 @@
     "package_file_missing": "缺少上传文件",
     "package_invalid": "不是有效的项目包：{{reason}}",
     "package_schema_unsupported": "项目包里的排版既不是 schema 2 也不是 schema 3",
+    "package_schema_too_new": "这个项目包来自更新的版本（schema {{schema}}），请升级后再打开",
     "permission_denied": "无权限读取：{{path}}",
     "ppi_out_of_range": "分辨率 {{value}} 超出范围，应在 {{min}} 到 {{max}} 之间。",
     "preparation_not_found": "没有这个准备任务（或它属于别的项目）：{{id}}",
