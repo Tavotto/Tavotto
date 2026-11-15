@@ -1,6 +1,6 @@
 # ADR 0188：嵌套组与剪切蒙版
 
-日期：2026-11-15 · 状态：**Proposed**（M4 第一批已在本地实现；待定的几处见审阅页，用户拍板后改 Accepted。1.0 豁免沿用 ADR 0185 在
+日期：2026-11-15 · 状态：**Accepted**（2026-11-15 用户拍板：M4 两批审阅页共 14 处全按推荐。1.0 豁免沿用 ADR 0185 在
 `docs/1.0-release-readiness.md` §1.8 的那一行，M4 属其范围）
 相关：[0185 画布矢量编辑](0185-vector-editing.md)（§五 M4 指定另开本 ADR）、[0059 RenderCore 路径编译](0059-render-ir-and-render-plan.md)、
 [0161 单图画布留白](0161-drag-corner-scale-edge-canvas.md)
