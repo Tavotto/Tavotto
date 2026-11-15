@@ -1,9 +1,10 @@
 import { createPackage } from '@/lib/api'
 import { msg } from '@/i18n'
-import { openPackageFile } from '@/lib/packageImport'
+import { PRODUCT_NAME } from '@/lib/brand'
+import { isPackageTooNew, openPackageFile } from '@/lib/packageImport'
 import { currentProjectId } from '@/lib/session'
 import { useDocumentStore } from './documentStore'
-import { retryOrFeedback } from './failureExit'
+import { retryOrFeedback, tooNewAction } from './failureExit'
 import { useUiStore } from './uiStore'
 
 /**
@@ -58,6 +59,13 @@ export async function openPackageWithRetry(file: File, attempt: number): Promise
   try {
     await openPackageFile(file)
   } catch (e) {
+    if (isPackageTooNew(e)) {
+      useUiStore.getState().setStatus(msg('status.packageTooNew', { product: PRODUCT_NAME }, 'workspace'), 'error', {
+        owner: PACKAGE_OPEN_OWNER,
+        action: tooNewAction(),
+      })
+      return
+    }
     useUiStore.getState().setStatus(
       msg(
         'status.packageOpenFailed',
