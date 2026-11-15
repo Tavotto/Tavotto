@@ -421,7 +421,7 @@ export function useKeyboard() {
         }
         if (ids.length === 1) {
           const obj = doc.doc.objects.find((o) => o.id === ids[0])
-          if (obj?.type === 'text') {
+          if (obj?.type === 'text' || obj?.type === 'pathText') {
             e.preventDefault()
             ui.setEditingText(obj.id)
           } else if (obj?.type === 'panel') {

@@ -270,6 +270,19 @@ function drawObject(ctx: CanvasRenderingContext2D, o: Exclude<CanvasObject, Pane
     ctx.restore()
     return
   }
+  if (o.type === 'pathText') {
+    // 路径文字：缩略图只画那条路径的细线（字形要后端排，缩略图不等它）
+    const d = pathD(pathGeometry(o, w, h, 0).fill)
+    if (d && typeof Path2D !== 'undefined') {
+      ctx.save()
+      ctx.translate(x, y)
+      ctx.strokeStyle = o.color || '#000'
+      ctx.lineWidth = 0.5
+      ctx.stroke(new Path2D(d))
+      ctx.restore()
+    }
+    return
+  }
   ctx.save()
   ctx.strokeStyle = o.color || '#000'
   ctx.lineWidth = Math.max(0.5, o.strokePt * MM_PER_PT * scale)

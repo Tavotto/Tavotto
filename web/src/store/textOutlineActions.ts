@@ -3,7 +3,7 @@ import { outlineText } from '@/lib/api'
 import { toExportObjects } from '@/lib/exportPayload'
 import { groupPathOf, setGroupPath } from '@/lib/groupTree'
 import { newId } from '@/lib/id'
-import type { CanvasObject, TextObject } from '@/types/document'
+import type { CanvasObject, PathTextObject, TextObject } from '@/types/document'
 import { useDocumentStore } from './documentStore'
 import { finishActiveGesture } from './gestureCoordinator'
 import { activePathEdit } from './pathEditStore'
@@ -21,11 +21,14 @@ const tell = (key: string, values: Record<string, unknown>, tone: 'info' | 'done
   useUiStore.getState().setStatus(msg(`status.${key}`, values, 'workspace'), tone)
 
 /** 选区里能转轮廓的文字（看得见、没锁定） */
-export function outlinableTexts(): TextObject[] {
+export function outlinableTexts(): (TextObject | PathTextObject)[] {
   const ids = new Set(useSelectionStore.getState().ids)
   return useDocumentStore
     .getState()
-    .doc.objects.filter((o): o is TextObject => ids.has(o.id) && o.type === 'text' && !o.hidden && !o.locked)
+    .doc.objects.filter(
+      (o): o is TextObject | PathTextObject =>
+        ids.has(o.id) && (o.type === 'text' || o.type === 'pathText') && !o.hidden && !o.locked,
+    )
 }
 
 export const canOutlineText = (): boolean => !activePathEdit() && outlinableTexts().length > 0

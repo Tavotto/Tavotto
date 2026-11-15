@@ -687,7 +687,9 @@
     "setStrokeAlign": "Change stroke alignment",
     "setFillRule": "Change fill rule",
     "setGradientKind": "Change paint type",
-    "setGradient": "Edit gradient"
+    "setGradient": "Edit gradient",
+    "flipPathText": "Flip text on path",
+    "pathTextStart": "Move text start"
   },
   "lock": "Lock",
   "locked": "Locked",
@@ -1446,5 +1448,13 @@
     "strokeCenterX": "Stroke center X",
     "strokeCenterY": "Stroke center Y",
     "strokeRadius": "Stroke radius"
+  },
+  "pathText": {
+    "title": "Text on path",
+    "start": "Start",
+    "alignStart": "Start at the start point",
+    "alignCenter": "Center on the start point",
+    "alignEnd": "End at the start point",
+    "flip": "Flip to the other side"
   }
 }

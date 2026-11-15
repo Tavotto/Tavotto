@@ -507,7 +507,9 @@
     "explodeSvg": "Make editable",
     "outlineText": "Create outlines ({{count}})",
     "arrayCopies_one": "Repeat ({{count}} copy)",
-    "arrayCopies_other": "Repeat ({{count}} copies)"
+    "arrayCopies_other": "Repeat ({{count}} copies)",
+    "addPathText": "Add text on path",
+    "pathTextStart": "Move text start"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -648,7 +650,8 @@
     "paste": "Paste",
     "copyAsAnnotation": "Copy as annotation",
     "pasteAsAnnotation": "Paste as annotation",
-    "pathfinder": "Pathfinder"
+    "pathfinder": "Pathfinder",
+    "addPathText": "Add text on path"
   },
   "rail": {
     "assets": "Assets",

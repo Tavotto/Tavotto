@@ -1981,6 +1981,21 @@ export type ExportClipPath = ExportBox & {
 }
 
 type ExportObjectBody =
+  | (ExportBox & {
+      /** 路径文字（ADR 0190）：一行字沿自带的路径排开，后端 `rendercore/pathtext` 落字 */
+      type: 'pathText'
+      text: string
+      size_pt: number
+      bold: boolean
+      italic: boolean
+      color: string
+      font_family?: 'serif' | 'sans-serif' | 'monospace'
+      subpaths: { closed: boolean; nodes: { p: [number, number]; in?: [number, number]; out?: [number, number] }[] }[]
+      start_offset?: number
+      text_align?: 'center' | 'end'
+      flip?: true
+      rotation_deg?: number
+    })
   | (ExportBox & ArtifactRequestFields & {
       type: 'panel'
       figure_snapshot?: FigureSnapshot

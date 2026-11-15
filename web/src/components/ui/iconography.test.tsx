@@ -62,6 +62,7 @@ const SVG_ALLOWLIST: Record<string, number> = {
   '/src/vendor/stageshow/cursors.tsx': 8, // 提示动画里的 macOS 光标图形（箭头 / 手 / 抓 / 四向缩放等 8 种；演的是鼠标本身，vendored）
   '/src/canvas/ArrowView.tsx': 1, // 画布箭头本体
   '/src/canvas/PathView.tsx': 1, // 画布自由路径本体（ADR 0185）
+  '/src/canvas/PathTextView.tsx': 1, // 画布路径文字本体（ADR 0190）：后端给的字形轮廓
   '/src/canvas/OverlaySvg.tsx': 1, // 选框 / 手柄 / 参考线覆盖层
   '/src/canvas/PageEdgeResize.tsx': 1, // 拖页面边的尺寸标注（引出线 + 双箭头，画布叠加层）
   '/src/canvas/QuickLayoutGutters.tsx': 1, // 一键排版分隔线把手里的两枚细箭头（画布叠加层；两段路径各自张开，不走图标集的比例缩放，ADR 0199）

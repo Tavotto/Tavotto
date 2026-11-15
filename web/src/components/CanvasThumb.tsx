@@ -244,7 +244,7 @@ export function CanvasThumb({
             strokeWidth: Math.max(w, h) / 150,
             className: 'text-paper-ink-3',
           }
-          if (o.type === 'path' && Array.isArray(o.subpaths)) {
+          if ((o.type === 'path' || o.type === 'pathText') && Array.isArray(o.subpaths)) {
             // 自由路径的示意：沿它自己的轮廓画一圈灰线（同一个 `pathGeometry`，不画端型、不填色）
             const d = pathD(pathGeometry({ subpaths: o.subpaths }, o.w, o.h, 0).fill)
             if (d) return <path {...common} d={d} transform={`translate(${o.x} ${o.y})`} />

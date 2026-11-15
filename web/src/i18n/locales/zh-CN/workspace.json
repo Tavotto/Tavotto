@@ -489,7 +489,9 @@
     "importSvg": "粘贴 SVG（{{count}} 个对象）",
     "explodeSvg": "拆成可编辑对象",
     "outlineText": "文字转轮廓（{{count}} 个）",
-    "arrayCopies_other": "阵列（{{count}} 份）"
+    "arrayCopies_other": "阵列（{{count}} 份）",
+    "addPathText": "在路径上加文字",
+    "pathTextStart": "移动路径文字起点"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -623,7 +625,8 @@
     "paste": "粘贴",
     "copyAsAnnotation": "复制为标注",
     "pasteAsAnnotation": "粘贴为标注",
-    "pathfinder": "路径查找器"
+    "pathfinder": "路径查找器",
+    "addPathText": "在路径上加文字"
   },
   "rail": {
     "assets": "素材",
