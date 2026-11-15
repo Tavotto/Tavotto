@@ -196,6 +196,16 @@ function objectText(o: Record<string, unknown>, unit: string): string {
     .join(' / ')
 }
 
+/**
+ * 原文语气的小标签文字：只给 required →「必须」、recommended →「建议」，其余取值（preferred / permitted /
+ * typical / example / unspecified）与缺省都不显示（null）。只是标签，不参与任何判定。
+ */
+export function strengthLabel(s: Pick<JournalFieldSource, 'strength'> | null | undefined): string | null {
+  if (s?.strength === 'required') return jt('strengthRequired')
+  if (s?.strength === 'recommended') return jt('strengthRecommended')
+  return null
+}
+
 /** 出处卡的结论（底栏第一行）：「字段 值」，如「位图分辨率 ≥ 300 dpi」。栏位的值自带名字，不再加字段名。 */
 export function cardConclusion(path: string, s: JournalFieldSource): string {
   const field = path === 'page_columns' ? '' : fieldLabel(path)

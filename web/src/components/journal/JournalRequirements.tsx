@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import { fieldLabel, requirementRows, sourcesForCheck, valueText } from '@/lib/journalPick'
+import { fieldLabel, requirementRows, sourcesForCheck, strengthLabel, valueText } from '@/lib/journalPick'
 import { panelDisplayPath } from '@/lib/journalPanelDisplay'
 import { useDocumentStore } from '@/store/documentStore'
 import { SourceButton } from './SourceButton'
@@ -38,6 +38,14 @@ export function JournalRequirements() {
             title={r.source ? valueText(displayPath, r.source) : undefined}
           >
             {r.source ? valueText(displayPath, r.source) : <span className="text-ink-3">{jt('unspecified')}</span>}
+            {r.source && strengthLabel(r.source) && (
+              <>
+                {' '}
+                <span data-journal-strength={r.source.strength} className="text-xs text-ink-3">
+                  {strengthLabel(r.source)}
+                </span>
+              </>
+            )}
           </dd>
           {r.source && (
             <SourceButton

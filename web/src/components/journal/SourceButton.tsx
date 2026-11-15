@@ -12,6 +12,7 @@ import {
   cardConclusion,
   highlightQuote,
   sourceHost,
+  strengthLabel,
 } from '@/lib/journalPick'
 
 const jt = (key: string, values?: Record<string, unknown>) =>
@@ -134,8 +135,33 @@ export function SourceCardBody({
   entries: [string, JournalFieldSource][]
 }) {
   const advice = adviceSentence(journal, Object.fromEntries(entries))
-  const conclusion = advice ?? entries.map(([path, s]) => cardConclusion(path, s)).join('；')
   const multi = entries.length > 1
+  // 语气标签跟在结论后面（同一行、小号灰字）：建议性字号那一句取第一条的语气，其余每条各带各的
+  const tag = (s: JournalFieldSource) => {
+    const label = strengthLabel(s)
+    return label ? (
+      <>
+        {' '}
+        <span data-journal-strength={s.strength} className="text-xs font-normal text-ink-3">
+          {label}
+        </span>
+      </>
+    ) : null
+  }
+  const conclusion = advice ? (
+    <>
+      {advice}
+      {tag(entries[0][1])}
+    </>
+  ) : (
+    entries.map(([path, s], i) => (
+      <Fragment key={path}>
+        {i > 0 && '；'}
+        {cardConclusion(path, s)}
+        {tag(s)}
+      </Fragment>
+    ))
+  )
   return (
     <div data-journal-card className="flex flex-col">
       {entries.map(([path, source], index) => (

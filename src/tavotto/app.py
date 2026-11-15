@@ -15033,16 +15033,25 @@ _DATA_FILES_MAX = 500
 _DATA_FILES_SCAN_MAX = 50_000
 #: 最多给多少个 XLSX 读工作表清单（每个要开一次 zip；超出的不带清单）
 _DATA_FILES_SHEETS_MAX = 100
+#: `formats=all` 时最多逐个读多少个文本文件给「状态与摘要」，以及这些文件合计最多读多少字节（超出的 `table` 是 null，不是「读不了」）
+_DATA_FILES_TABLE_MAX = 100
+_DATA_FILES_TABLE_BYTES = 64 * 1024 * 1024
 
 
 @app.get("/api/ai/data-files")
 def api_ai_data_files():
     """TAF 数据出图的数据文件列表（**实验开关后面**，只读）：**默认只列 `.csv`**（v1 表单走 `/api/ai/data-figure`，只认 CSV）；
-    带 `?formats=all` 才列 `.csv` / `.tsv` / `.tab` / `.xlsx`（v2 出备选用），后缀大小写不敏感。
+    带 `?formats=all` 才列 `.csv` / `.tsv` / `.tab` / `.txt` / `.dat` / `.asc` / `.xlsx`（v2 出备选用），后缀大小写不敏感。
 
     walk 剪枝与隐藏目录规则同 `discover.PRUNE_DIRS`；不跟随链接；最多 500 个，按项目相对 POSIX 路径排序；最多看
     `_DATA_FILES_SCAN_MAX` 个目录项，超了停下并标 `truncated`。`formats=all` 时 XLSX 带 `sheets: [{name, hidden}]`（读不了 / 超过
-    `_DATA_FILES_SHEETS_MAX` 个之后是 null）。"""
+    `_DATA_FILES_SHEETS_MAX` 个之后是 null）。
+
+    `formats=all` 时每个文本文件（非 XLSX）另带 `table`（默认只列 CSV 的响应没有这个字段）：
+    `{status: "ok" | "unsure" | "unreadable", code, delimiter, header_row, columns, rows, preview}`——`ok` 认得准；`unsure` 能读出成列
+    数据但哪一行是每列的名字拿不准（`header_row` 是猜的物理行号，`preview` 是文件前若干行原文 `[{line, text}]`，行数与每行长度有上界，
+    前端让用户点一行，再把 `{路径: 行号}` 放进 `/api/ai/data-figure/propose` 的 `header_rows`）；`unreadable` 读不了（`code` 是稳定错误码）。
+    只有 `unsure` 带 `preview`。最多读 `_DATA_FILES_TABLE_MAX` 个文件、合计 `_DATA_FILES_TABLE_BYTES` 字节，超出的 `table` 是 null。"""
     if not engine_ai_figure_edit.enabled():
         return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
     root = require_project()
@@ -15058,8 +15067,25 @@ def api_ai_data_files():
         found, truncated = found[:_DATA_FILES_MAX], True
     files = []
     sheets_read = 0
+    tables_read = 0
+    table_bytes = 0
     for rel, size in found:
         row = {"path": rel, "size": size}
+        if every and not rel.lower().endswith(engine_ai_data_figure.XLSX_SUFFIXES):
+            if (
+                tables_read < _DATA_FILES_TABLE_MAX
+                and table_bytes + size <= _DATA_FILES_TABLE_BYTES
+            ):
+                tables_read += 1
+                table_bytes += size
+                try:
+                    row["table"] = engine_ai_data_figure.read_text_table(
+                        root / rel, keep_rows=False
+                    ).to_dict()
+                except Exception:  # noqa: BLE001 —— 单个文件的任何意外只是这一个读不了，不拖垮列表
+                    row["table"] = {"status": "unreadable", "code": "data_unreadable"}
+            else:
+                row["table"] = None
         if rel.lower().endswith(engine_ai_data_figure.XLSX_SUFFIXES):
             if sheets_read < _DATA_FILES_SHEETS_MAX:
                 sheets_read += 1
@@ -15092,7 +15118,8 @@ def _propose_error(exc: "engine_ai_data_propose.ProposeError"):
 
 @app.post("/api/ai/data-figure/propose")
 def api_ai_data_figure_propose():
-    """出备选（不调模型）。body：`{folder?, table?, sheet?, hint?, answers?, client_request_id?}`（`folder` 项目相对、缺省项目根）。
+    """出备选（不调模型）。body：`{folder?, table?, sheet?, hint?, answers?, header_rows?, client_request_id?}`（`folder` 项目相对、缺省项目根；
+    `header_rows` = `{表的路径（相对 folder，同 `table`）: 每列名字所在的物理行号}`，按文件指定，生成的脚本读表用同一个行号）。
 
     回三选一：`{kind: "ask", question_code, options, unsure}`（决定科学含义的事只能用户定；选项里的 `answer` 原样并进下一次的
     `answers`）/ `{kind: "candidates", session, items: [{id, title_code, why_code, values, recommended, coverage, thumbnail_url}],
@@ -15116,6 +15143,7 @@ def api_ai_data_figure_propose():
             sheet=body.get("sheet"),
             hint=body.get("hint"),
             answers=body.get("answers"),
+            header_rows=body.get("header_rows"),
             client_request_id=rid,
         )
     except engine_ai_data_propose.ProposeError as exc:
@@ -15199,6 +15227,7 @@ def api_ai_data_figure_commit():
             confirmed=sess.confirmed,
             recipe=item.recipe,
             title_code=item.code,
+            header_line=sess.header_line,
         )
         prepared = engine_ai_data_task.prepare_v2(ctx.path, sel)
         env = engine_ai_data_task.envelope_for_v2(project_key=project, prepared=prepared, rid=rid)

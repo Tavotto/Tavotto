@@ -11,7 +11,7 @@
     publishers{ pid: { label, sources{ sid: {url, kind, retrieved, coverage?, archive_url?, page?} },
                        rules{ "<profile 字段路径>" | "info.<id>": rule } } }
     journals  { jid: { label, publisher, issn?, aliases?, sources?, rules? } }
-    rule = {value, src, quote, anchor?, qualifier?, value_alt?, stage?, mark?, derivation?, snapshot?, unset?}
+    rule = {value, src, quote, anchor?, qualifier?, strength?, value_alt?, stage?, mark?, derivation?, snapshot?, unset?}
 
 **两类规则共用一层外壳**：键是 `journal-base-v1` 里的字段路径的，折成 `JournalOverride`
 进预检（求值器一行不改）；键是 `info.<id>`（闭集 `INFO_IDS`）的只是**展示项**，同样强制
@@ -44,6 +44,17 @@ SOURCE_KINDS = ("html", "pdf")
 COVERAGES = ("publisher_general", "journal_specific", "single_journal_sample")
 #: 限定词：原文是「恰好 / 最大 / 最小 / 通常 / 区间 / 推荐」。非 exact 的值不会被当成精确判据
 QUALIFIERS = profiles_mod.QUALIFIERS
+#: 原文语气（ADR 0155 修订）：必须 / 建议 / 偏好 / 允许 / 通常 / 示例 / 未说明。只给人看的标签，
+#: 不参与折叠与判定（那是 qualifier 的事）；缺省 = 不显示。严格同源对：`journals.ts` 的 `STRENGTHS`。
+STRENGTHS = (
+    "required",
+    "recommended",
+    "preferred",
+    "permitted",
+    "typical",
+    "example",
+    "unspecified",
+)
 #: 适用阶段：初投 / 录用后生产稿 / 不分
 STAGES = ("submission", "production", "any")
 #: 求值器按「等于」判的路径只收 exact（`max` / `typical` / `range` 的宽度进 info，评估器扩展另起 PR）
@@ -424,6 +435,11 @@ def _check_rules(
         qualifier = rule.get("qualifier", "exact")
         if qualifier not in QUALIFIERS or (path in EXACT_ONLY_PATHS and qualifier != "exact"):
             raise _fail("journal_rule_qualifier_invalid", f"{w}: qualifier={qualifier!r} 不允许")
+        if "strength" in rule and rule["strength"] not in STRENGTHS:
+            raise _fail(
+                "journal_catalog_schema",
+                f"{w}: strength 必须是 {'|'.join(STRENGTHS)}",
+            )
         if rule.get("stage", "any") not in STAGES:
             raise _fail("journal_rule_stage_invalid", f"{w}: stage 必须是 {'|'.join(STAGES)}")
         if "mark" in rule and not (_non_blank(rule["mark"]) and rule["mark"] in rule["quote"]):
@@ -799,7 +815,7 @@ def _affects(path: str, eff: dict) -> str:
 def _field_source(eff: dict, path: str) -> dict:
     rule, src = eff["rule"], eff["src"]
     page = src.get("page")
-    return {
+    item = {
         "value": copy.deepcopy(rule.get("value")),
         "value_alt": copy.deepcopy(rule.get("value_alt")),
         "qualifier": rule.get("qualifier", "exact"),
@@ -822,6 +838,9 @@ def _field_source(eff: dict, path: str) -> dict:
         "retrieved": src["retrieved"],
         "archive_url": src.get("archive_url", ""),
     }
+    if "strength" in rule:  # 缺省不写：旧绑定与旧客户端的形状不变
+        item["strength"] = rule["strength"]
+    return item
 
 
 def journal_sources(journal_id: str, catalog: dict | None = None) -> dict[str, dict]:

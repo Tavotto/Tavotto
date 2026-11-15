@@ -2588,6 +2588,8 @@
     "panelHistoricalNotice": "This saved historical source concerns guidance after acceptance in principle. Current requirements are unverified; check the journal guidelines.",
     "unspecified": "Not recorded in this snapshot",
     "hasRequirement": "Has a requirement",
+    "strengthRequired": "Required",
+    "strengthRecommended": "Recommended",
     "unset": "Does not apply to this journal",
     "noJournal": "No journal",
     "cleared": "No longer checking against a journal",

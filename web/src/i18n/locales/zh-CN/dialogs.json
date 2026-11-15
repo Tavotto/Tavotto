@@ -2562,6 +2562,8 @@
     "panelHistoricalNotice": "这是已保存的历史来源，涉及原则接收后的建议；现行要求未知，请核对期刊指南。",
     "unspecified": "当前快照未记录",
     "hasRequirement": "有要求",
+    "strengthRequired": "必须",
+    "strengthRecommended": "建议",
     "unset": "本刊不适用",
     "noJournal": "不按期刊",
     "cleared": "已不按期刊检查",
