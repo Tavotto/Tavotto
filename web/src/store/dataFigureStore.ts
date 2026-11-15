@@ -264,14 +264,17 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       commitRid = null
       const outcome = res.task?.outcome
       if (!res.script || !res.stem) {
-        // 没落盘：任务没成（渲染没过 / 核对不过 / 写不进）。一句话 + 再试
+        // 没落盘：任务没成（渲染没过 / 核对不过 / 写不进）。写不进是后端早就告诉过的事实（项目 `writable` 为假、或 `figures_dir_unusable`）：
+        // 这时「再试一次」没有用，给的是换个文件夹；其余一句话 + 再试一次
+        const { useProjectStore } = await import('@/store/projectStore')
+        if (!still()) return
+        const unwritable = res.reason_code === 'figures_dir_unusable' || useProjectStore.getState().project?.writable === false
         set({
           scene: {
             kind: 'problem',
-            problem:
-              res.reason_code === 'figures_dir_unusable'
-                ? { kind: 'unwritable', error: { key: 'dataFigureV2.problem.unwritable', ns: 'ai' } }
-                : { kind: 'commit', error: null, retryable: true },
+            problem: unwritable
+              ? { kind: 'unwritable', error: { key: 'dataFigureV2.problem.unwritable', ns: 'ai' } }
+              : { kind: 'commit', error: null, retryable: true },
           },
         })
         return

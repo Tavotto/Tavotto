@@ -1,0 +1,434 @@
+/**
+ * 数据页（ADR 0178）的各屏：清单每种状态怎么说、预览 / 没认准 / 读不了、选择题、混了文字弹窗（两种选项、多列、右列跟着变、没有「我来说明」）、
+ * 选画法（默认推荐、单选、真缩略图地址）、各个失败出口、以及整页接 store 走一遍。文案断言用中文界面（默认语言）。
+ */
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { TooltipProvider } from '@/components/ui/Tooltip'
+import { ApiError, aiDataFigureCommit, aiDataFigurePropose, aiDataFilesAll, aiDataOverview, type AiDataFileEntry, type AiDataMixedColumn, type AiDataOverview } from '@/lib/api'
+import { fileRows } from '@/lib/dataFigure'
+import { setCurrentProjectId } from '@/lib/session'
+import { useDataFigureStore } from '@/store/dataFigureStore'
+import { useProjectPreparationStore } from '@/store/projectPreparationStore'
+import { useProjectStore } from '@/store/projectStore'
+import { AskScene } from './AskScene'
+import { DataList } from './DataList'
+import { DataPage } from './DataPage'
+import { MixedCellsDialog } from './MixedCellsDialog'
+import { PickScene } from './PickScene'
+import { DrawnScene, NothingScene, ProblemScene, WorkingScene } from './ResultScenes'
+import { TablePreview } from './TablePreview'
+
+declare global {
+  // eslint-disable-next-line no-var
+  var IS_REACT_ACT_ENVIRONMENT: boolean
+}
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api')>()),
+  aiDataFilesAll: vi.fn(),
+  aiDataOverview: vi.fn(),
+  aiDataFigurePropose: vi.fn(),
+  aiDataFigureCommit: vi.fn(),
+  aiDataFigureDiscard: vi.fn(async () => ({ ok: true })),
+}))
+vi.mock('@/store/liveSync', () => ({ refreshProjectNow: vi.fn(async () => {}) }))
+
+let root: Root
+let host: HTMLDivElement
+async function mount(ui: React.ReactNode) {
+  host = document.createElement('div')
+  document.body.appendChild(host)
+  root = createRoot(host)
+  await act(async () => {
+    root.render(<TooltipProvider>{ui}</TooltipProvider>)
+  })
+}
+afterEach(() => {
+  act(() => root?.unmount())
+  host?.remove()
+  document.body.innerHTML = ''
+})
+const q = <T extends Element = HTMLElement>(sel: string) => document.querySelector<T>(sel)
+const qa = <T extends Element = HTMLElement>(sel: string) => [...document.querySelectorAll<T>(sel)]
+const click = async (el: Element | null) => {
+  expect(el).not.toBeNull()
+  await act(async () => (el as HTMLElement).click())
+}
+const flush = async () => act(async () => { await new Promise((r) => setTimeout(r, 0)) })
+
+const ov = (over: Partial<AiDataOverview> = {}): AiDataOverview => ({
+  path: 'a.csv', sheet: null, status: 'ok', code: null, delimiter: 'comma', header_row: 1, rows: 3, columns: 2, layout: null,
+  fields: [
+    { name: 'day', kind: 'numeric', numeric: 3, text: 0, empty: 0, nan: 0, id_like: false },
+    { name: 'group', kind: 'text', numeric: 0, text: 3, empty: 0, nan: 0, id_like: false },
+    { name: 'sid', kind: 'numeric', numeric: 3, text: 0, empty: 0, nan: 0, id_like: true },
+  ],
+  preview_rows: [{ line: 2, cells: ['0', 'ctrl', '1'] }, { line: 3, cells: ['2', 'drug', '2'] }],
+  truncated: false, lead_lines: [], raw_lines: [], ...over,
+})
+
+describe('清单 DataList', () => {
+  const entries: AiDataFileEntry[] = [
+    { path: 'a.csv', size: 1, table: { status: 'ok', code: null, delimiter: 'comma', header_row: 1, columns: 3, rows: 32 } },
+    { path: 'sub/g.txt', size: 1, table: { status: 'unsure', code: null, delimiter: 'space', header_row: 2, columns: 2, rows: null } },
+    { path: 'sub/b.dat', size: 1, table: { status: 'unreadable', code: 'data_binary', delimiter: null, header_row: null, columns: null, rows: null } },
+    { path: 'big.csv', size: 1, table: null },
+    { path: 'book.xlsx', size: 1, sheets: [{ name: 'P1', hidden: false, rows: 24, columns: 2, status: 'ok', code: null }] },
+  ]
+
+  it('每种状态一句灰字：行数 · 列数 / 没认准，先不用 / 读不了 / 没读；xlsx 一行，可展开看工作表', async () => {
+    const onSelect = vi.fn()
+    await mount(<DataList rows={fileRows(entries)} rootName="proj" selected={null} overviews={{}} onSelect={onSelect} />)
+    const text = q('[data-studio-data]')!.textContent!
+    expect(text).toContain('32 行 · 3 列')
+    expect(text).toContain('没认准，先不用')
+    expect(text).toContain('读不了')
+    expect(text).toContain('没读')
+    expect(text).toContain('1 张工作表')
+    // 按目录分组：根目录那一组叫项目文件夹名
+    expect(qa('[data-studio-folder]').map((s) => s.getAttribute('aria-label'))).toEqual(['proj', 'sub'])
+    // 工作表默认收着；点 xlsx 一行展开，点工作表选中的是「路径 + 工作表」
+    expect(q('[data-studio-sheet]')).toBeNull()
+    await click(q('[data-studio-file-open][aria-expanded]'))
+    expect(q('[data-studio-sheet]')!.textContent).toContain('24 行 · 2 列')
+    await click(q('[data-studio-sheet] button'))
+    expect(onSelect).toHaveBeenCalledWith({ path: 'book.xlsx', sheet: 'P1' })
+  })
+
+  it('单击一行 = 选这一张表；data-* 里没有文件名（诊断轨迹会记 data 属性）', async () => {
+    const onSelect = vi.fn()
+    await mount(<DataList rows={fileRows(entries)} rootName="proj" selected={null} overviews={{}} onSelect={onSelect} />)
+    await click(qa('[data-studio-file-open]')[0]!)
+    expect(onSelect).toHaveBeenCalledWith({ path: 'a.csv', sheet: null })
+    for (const el of qa('[data-studio-data] *')) for (const a of el.getAttributeNames()) if (a.startsWith('data-')) expect(el.getAttribute(a)).not.toMatch(/\.(csv|txt|dat|xlsx)/)
+  })
+
+  it('用户改过表头行、重读成功后，这一行改说重读后的行列数', async () => {
+    const rows = fileRows(entries)
+    await mount(
+      <DataList rows={rows} rootName="proj" selected={null} overviews={{ 'sub/g.txt': ov({ path: 'sub/g.txt', rows: 40, columns: 2 }) }} onSelect={() => {}} />,
+    )
+    expect(q('[data-studio-data]')!.textContent).toContain('40 行 · 2 列')
+  })
+})
+
+describe('预览 TablePreview', () => {
+  it('认得准：列名 + 每列类型 + 前几行；编号列写「编号」；超过只显示一部分时说明', async () => {
+    await mount(<TablePreview ov={ov({ truncated: true, rows: 90 })} loading={false} onHeaderRow={() => {}} />)
+    const t = q('[data-studio-preview]')!.textContent!
+    expect(t).toContain('day')
+    expect(t).toContain('数值')
+    expect(t).toContain('文字')
+    expect(t).toContain('编号')
+    expect(t).toContain('显示前 2 行，共 90 行')
+  })
+
+  it('开头被跳过的说明行单独灰显并写明跳过了几行', async () => {
+    await mount(<TablePreview ov={ov({ lead_lines: [{ line: 1, text: '# Keithley' }, { line: 2, text: '# date' }] })} loading={false} onHeaderRow={() => {}} />)
+    expect(q('[data-studio-skipped]')!.textContent).toContain('# Keithley')
+    expect(q('[data-studio-skipped]')!.textContent).toContain('开头 2 行是说明，已跳过。')
+  })
+
+  it('没认准：原文行里猜的那一行高亮并带「当作每列的名字」；点别的行 = 按那一行重读；点已选的那行也算确认', async () => {
+    const onHeaderRow = vi.fn()
+    const raw = [1, 2, 3, 4].map((n) => ({ line: n, text: `row ${n}` }))
+    await mount(<TablePreview ov={ov({ status: 'unsure', header_row: 2, raw_lines: raw, fields: [], preview_rows: [] })} loading={false} onHeaderRow={onHeaderRow} />)
+    expect(q('[data-header]')!.getAttribute('data-look-line')).toBe('2')
+    expect(q('[data-studio-header-tag]')!.textContent).toBe('当作每列的名字')
+    await click(q('[data-look-line="4"] input'))
+    expect(onHeaderRow).toHaveBeenLastCalledWith(4)
+    await click(q('[data-look-line="2"] input'))
+    expect(onHeaderRow).toHaveBeenLastCalledWith(2)
+  })
+
+  it('读不了：一句话（后端稳定码翻出的原因），没有表', async () => {
+    await mount(<TablePreview ov={ov({ status: 'unreadable', code: 'data_binary', fields: [], preview_rows: [] })} loading={false} onHeaderRow={() => {}} />)
+    expect(q('[data-studio-unreadable]')!.textContent).toContain('读不了')
+    expect(q('table')).toBeNull()
+  })
+})
+
+describe('选择题 AskScene', () => {
+  const opts = [
+    { code: 'column', params: { column: 'y', kind: 'numeric' }, answer: { y: 'y' } },
+    { code: 'column', params: { column: 'z', kind: 'numeric' }, answer: { y: 'z' } },
+    { code: 'describe', params: {}, answer: {}, free_text: true },
+  ]
+  it('一屏一道题：题目来自后端的码；选项点一下就是回答；没有文字输入的选项；「不确定」与返回都在', async () => {
+    const onAnswer = vi.fn()
+    const onBack = vi.fn()
+    const unsure = { code: 'unsure', params: {}, answer: { y: 'unsure' } }
+    await mount(<AskScene code="pick_value" options={opts} unsure={unsure} onAnswer={onAnswer} onBack={onBack} />)
+    expect(q('[data-studio-ask] h2')!.textContent).toBe('要画的是哪一列的数值？')
+    expect(qa('[data-studio-choice]')).toHaveLength(2)
+    await click(qa('[data-studio-choice]')[1]!)
+    expect(onAnswer).toHaveBeenCalledWith(opts[1])
+    await click(q('[data-studio-unsure]'))
+    expect(onAnswer).toHaveBeenLastCalledWith(unsure)
+    await click(q('[data-studio-back]'))
+    expect(onBack).toHaveBeenCalled()
+  })
+
+  it('不认识的题 / 选项码：走一句通用的话，不显示内部码', async () => {
+    await mount(<AskScene code="pick_future" options={[{ code: 'brand_new', params: {}, answer: { x: '1' } }]} unsure={null} onAnswer={() => {}} onBack={() => {}} />)
+    expect(q('[data-studio-ask]')!.textContent).not.toContain('pick_future')
+    expect(q('[data-studio-ask]')!.textContent).not.toContain('brand_new')
+  })
+})
+
+describe('混了文字的弹窗 MixedCellsDialog', () => {
+  const col = (name: string): AiDataMixedColumn => ({
+    column: name,
+    non_numeric: 3,
+    rows: 36,
+    more: 0,
+    preview: [
+      { row: 17, text: '<0.1', others: { group: 'treated' }, extract: 0.1 },
+      { row: 31, text: 'n/a', others: { group: 'washout' }, extract: null },
+    ],
+    options: [
+      { code: 'skip', params: {}, answer: { cells: { [name]: { mode: 'skip' } } } },
+      { code: 'extract', params: {}, answer: { cells: { [name]: { mode: 'extract' } } } },
+      { code: 'describe', params: {}, answer: { cells: { [name]: { mode: 'describe' } } }, free_text: true },
+    ],
+  })
+  const uses = () => qa('[data-dirty-use]').map((e) => e.textContent)
+
+  it('默认「不画这 N 行」；右列「画图时用」跟着选项变（取不出数字的仍是不画）；左下角一句：原文件不会改', async () => {
+    await mount(<MixedCellsDialog columns={[col('value')]} onContinue={() => {}} onCancel={() => {}} />)
+    expect(document.body.textContent).toContain('原文件不会改。')
+    expect(document.body.textContent).toContain('不画这 3 行')
+    expect(document.body.textContent).toContain('只用里面的数字')
+    expect(document.body.textContent).not.toContain('我来说明')
+    expect(qa('input[type=radio]')).toHaveLength(2)
+    expect(uses()).toEqual(['不画', '不画'])
+    await click(qa('input[type=radio]')[1]!)
+    expect(uses()).toEqual(['0.1', '不画'])
+    await click(qa('input[type=radio]')[0]!)
+    expect(uses()).toEqual(['不画', '不画'])
+  })
+
+  it('后端一次问多列：每列各自选，继续时每列各交一个回答', async () => {
+    const onContinue = vi.fn()
+    await mount(<MixedCellsDialog columns={[col('c1'), col('c2')]} onContinue={onContinue} onCancel={() => {}} />)
+    expect(qa('[data-studio-mixed-column]')).toHaveLength(2)
+    await click(qa('[data-studio-mixed-column="1"] input[type=radio]')[1]!)
+    await click(q('[data-studio-mixed-continue]'))
+    const picks = onContinue.mock.calls[0]![0] as { column: string; option: { answer: unknown } }[]
+    expect(picks.map((p) => p.column)).toEqual(['c1', 'c2'])
+    expect(picks[0]!.option.answer).toEqual({ cells: { c1: { mode: 'skip' } } })
+    expect(picks[1]!.option.answer).toEqual({ cells: { c2: { mode: 'extract' } } })
+  })
+
+  it('取消 = 不回答（交给调用方回到浏览）', async () => {
+    const onCancel = vi.fn()
+    await mount(<MixedCellsDialog columns={[col('value')]} onContinue={() => {}} onCancel={onCancel} />)
+    await click([...document.querySelectorAll('button')].find((b) => b.textContent === '取消')!)
+    expect(onCancel).toHaveBeenCalled()
+  })
+})
+
+describe('选画法 PickScene', () => {
+  const items = [
+    { id: 'i1', title_code: 'line_band', why_code: 'line_band', recommended: true, unplotted: { count: 0, code: null }, thumbnail_url: '/t/1', thumb: '/t/1?pj=pa' },
+    { id: 'i2', title_code: 'scatter', why_code: 'scatter', recommended: false, unplotted: { count: 0, code: null }, thumbnail_url: '/t/2', thumb: '/t/2?pj=pa' },
+    { id: 'i3', title_code: 'brand_new_code', why_code: 'brand_new_code', recommended: false, unplotted: { count: 0, code: null }, thumbnail_url: '/t/3', thumb: '/t/3?pj=pa' },
+  ]
+  it('标题 + 来源小标签 + 行标签「画法」+ 真缩略图（带项目标识）+ 推荐默认选中 + 每张一句话；码不认识用通用名', async () => {
+    const onChoose = vi.fn()
+    await mount(<PickScene items={items} selectedId="i1" source="growth.csv" onChoose={onChoose} onDraw={() => {}} onBack={() => {}} />)
+    const t = q('[data-studio-pick]')!.textContent!
+    expect(t).toContain('这份数据可以这样画')
+    expect(q('[data-studio-source]')!.textContent).toBe('growth.csv')
+    expect(t).toContain('画法')
+    expect(t).toContain('均值线 + 误差带')
+    expect(t).toContain('推荐')
+    expect(t).not.toContain('brand_new_code')
+    expect(qa<HTMLImageElement>('img').map((i) => i.getAttribute('src'))).toEqual(['/t/1?pj=pa', '/t/2?pj=pa', '/t/3?pj=pa'])
+    expect(qa<HTMLInputElement>('input[type=radio]').map((r) => r.checked)).toEqual([true, false, false])
+    await click(qa('input[type=radio]')[1]!)
+    expect(onChoose).toHaveBeenCalledWith('i2')
+  })
+  it('没有配色行（本 PR 不做）', async () => {
+    await mount(<PickScene items={items} selectedId="i1" source="a.csv" onChoose={() => {}} onDraw={() => {}} onBack={() => {}} />)
+    expect(q('[data-studio-pick]')!.textContent).not.toContain('配色')
+  })
+})
+
+describe('结果与失败出口', () => {
+  it('等待态是不定进度：没有 aria-valuenow，不装百分比', async () => {
+    await mount(<WorkingScene kind="drawing" />)
+    expect(q('[data-studio-working]')!.textContent).toContain('正在画')
+    expect(q('[role=progressbar]')?.getAttribute('aria-valuenow') ?? null).toBeNull()
+  })
+
+  it('nothing：按原因码说一句人话 + 换一张表；渲染失败的原因码也认；不认识的码走通用句', async () => {
+    const onBack = vi.fn()
+    await mount(<NothingScene reasons={['no_numeric_column']} onBack={onBack} />)
+    expect(q('[data-studio-nothing]')!.textContent).toContain('这张表里没有数值列。')
+    await click(q('[data-studio-back]'))
+    expect(onBack).toHaveBeenCalled()
+    act(() => root.unmount())
+    host.remove()
+    await mount(<NothingScene reasons={['candidate_render_failed']} onBack={() => {}} />)
+    expect(q('[data-studio-nothing]')!.textContent).toContain('没能画出来')
+    act(() => root.unmount())
+    host.remove()
+    await mount(<NothingScene reasons={['some_future_code']} onBack={() => {}} />)
+    expect(q('[data-studio-nothing]')!.textContent).not.toContain('some_future_code')
+    expect(q('[data-studio-nothing]')!.textContent).toContain('这张表没能画出图')
+  })
+
+  it('画好但有话要说：哪几行没画出来 + 数据没核对（不写成已核对）+ 打开这张图', async () => {
+    const onOpen = vi.fn()
+    await mount(<DrawnScene notes={{ unplotted: { count: 12, rows: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12] }, check: 'unverifiable' }} onOpen={onOpen} />)
+    const t = q('[data-studio-drawn]')!.textContent!
+    expect(t).toContain('有 12 行')
+    expect(t).toContain('第 3、4、5、6、7、8、9、10 行 等')
+    expect(t).toContain('没法逐项核对')
+    expect(t).not.toContain('逐项对上')
+    await click(q('[data-studio-primary]'))
+    expect(onOpen).toHaveBeenCalled()
+  })
+
+  it('每种没成的结局都至少有一个能走的出口', async () => {
+    const cb = { onRetry: vi.fn(), onBack: vi.fn(), onChooseFolder: vi.fn() }
+    await mount(<ProblemScene problem={{ kind: 'commit', error: null, retryable: true }} {...cb} />)
+    await click(q('[data-studio-retry]'))
+    expect(cb.onRetry).toHaveBeenCalled()
+    await click(q('[data-studio-back]'))
+    expect(cb.onBack).toHaveBeenCalled()
+    act(() => root.unmount())
+    host.remove()
+    await mount(<ProblemScene problem={{ kind: 'unwritable', error: { key: 'dataFigureV2.problem.unwritable', ns: 'ai' } }} {...cb} />)
+    expect(q('[data-studio-problem]')!.textContent).toContain('写不进')
+    await click(q('[data-studio-primary]'))
+    expect(cb.onChooseFolder).toHaveBeenCalled()
+    act(() => root.unmount())
+    host.remove()
+    await mount(<ProblemScene problem={{ kind: 'mismatch', script: 'tavotto_figures/a.py' }} {...cb} />)
+    expect(q('[data-studio-problem]')!.textContent).toContain('对不上')
+    await click(q('[data-studio-primary]'))
+    expect(cb.onBack).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('整页 DataPage 接 store 走一遍', () => {
+  const files = vi.mocked(aiDataFilesAll)
+  const overview = vi.mocked(aiDataOverview)
+  const propose = vi.mocked(aiDataFigurePropose)
+  const commit = vi.mocked(aiDataFigureCommit)
+  const prepOpen = vi.fn(async (..._a: unknown[]) => {})
+
+  beforeEach(() => {
+    for (const f of [files, overview, propose, commit, prepOpen]) f.mockReset()
+    setCurrentProjectId('pa')
+    useDataFigureStore.getState().clear()
+    useProjectStore.setState({ project: { open: true, name: 'proj', writable: true } })
+    useProjectPreparationStore.setState({ open: prepOpen })
+    files.mockResolvedValue({
+      files: [
+        { path: 'a.csv', size: 1, table: { status: 'ok', code: null, delimiter: 'comma', header_row: 1, columns: 2, rows: 3 } },
+        { path: 'g.txt', size: 1, table: { status: 'unsure', code: null, delimiter: 'space', header_row: 2, columns: 2, rows: null } },
+        { path: 'b.dat', size: 1, table: { status: 'unreadable', code: 'data_binary', delimiter: null, header_row: null, columns: null, rows: null } },
+      ],
+      truncated: false,
+    })
+  })
+
+  const start = async () => {
+    await act(async () => useDataFigureStore.getState().enter())
+    await mount(<DataPage />)
+    await flush()
+  }
+  const open = async (i: number) => {
+    await click(qa('[data-studio-file-open]')[i]!)
+    await flush()
+  }
+
+  it('进页：清单来自后端；没选表时舞台是一句话，没有「开始」', async () => {
+    await start()
+    expect(files).toHaveBeenCalledWith('pa')
+    expect(qa('[data-studio-file]')).toHaveLength(3)
+    expect(q('[data-studio-empty-stage]')).not.toBeNull()
+    expect(q('[data-studio-start]')).toBeNull()
+  })
+
+  it('认得准的表：预览 + 开始；没认准的：点哪一行当列名之后才有开始；读不了的：没有开始', async () => {
+    overview.mockImplementation(async (qy) =>
+      qy.path === 'g.txt'
+        ? qy.headerRow == null
+          ? ov({ path: 'g.txt', status: 'unsure', header_row: 2, raw_lines: [{ line: 1, text: 'a' }, { line: 2, text: 'b' }, { line: 3, text: 'c' }], fields: [], preview_rows: [] })
+          : ov({ path: 'g.txt', status: 'ok', header_row: qy.headerRow })
+        : qy.path === 'b.dat'
+          ? ov({ path: 'b.dat', status: 'unreadable', code: 'data_binary', fields: [], preview_rows: [] })
+          : ov(),
+    )
+    await start()
+    await open(0)
+    expect(q('[data-studio-start]')).not.toBeNull()
+    await open(1)
+    expect(q('[data-studio-start]')).toBeNull()
+    expect(q('[data-studio-look]')).not.toBeNull()
+    await click(q('[data-look-line="3"] input'))
+    await flush()
+    expect(overview).toHaveBeenLastCalledWith({ path: 'g.txt', sheet: null, headerRow: 3 }, 'pa')
+    expect(q('[data-studio-start]')).not.toBeNull()
+    await open(2)
+    expect(q('[data-studio-start]')).toBeNull()
+    expect(q('[data-studio-unreadable]')).not.toBeNull()
+  })
+
+  it('开始 → 选择题 → 选画法 → 画这张 → 进编辑器（准备会话的「打开并运行」）', async () => {
+    overview.mockResolvedValue(ov())
+    propose.mockResolvedValueOnce({ kind: 'ask', question_code: 'pick_value', unsure: null, options: [{ code: 'column', params: { column: 'day', kind: 'numeric' }, answer: { y: 'day' } }] })
+    propose.mockResolvedValueOnce({
+      kind: 'candidates', session: 'S1', dropped: [],
+      items: [{ id: 'i1', title_code: 'hist', why_code: 'hist', recommended: true, unplotted: { count: 0, code: null }, thumbnail_url: '/api/ai/data-figure/thumbnail/S1/i1' }],
+    })
+    commit.mockResolvedValueOnce({ task: { outcome: 'completed' }, script: 'tavotto_figures/a_figure.py', stem: 'a_figure', data_check: 'verified' })
+    await start()
+    await open(0)
+    await click(q('[data-studio-start]'))
+    await flush()
+    expect(q('[data-studio-ask]')).not.toBeNull()
+    await click(q('[data-studio-choice]'))
+    await flush()
+    expect(q('[data-studio-pick] img')!.getAttribute('src')).toBe('/api/ai/data-figure/thumbnail/S1/i1?pj=pa')
+    await click(q('[data-studio-primary]'))
+    await flush()
+    expect(prepOpen).toHaveBeenCalledTimes(1)
+    expect(useDataFigureStore.getState().view).toBe('none')
+  })
+
+  it('出备选失败：一句话 + 再试一次 / 换一张表，不卡住', async () => {
+    overview.mockResolvedValue(ov())
+    propose.mockRejectedValueOnce(new ApiError('x', 400, { code: 'data_not_found' }))
+    await start()
+    await open(0)
+    await click(q('[data-studio-start]'))
+    await flush()
+    expect(q('[data-studio-problem]')).not.toBeNull()
+    expect(q('[data-studio-retry]')).not.toBeNull()
+    expect(q('[data-studio-back]')).not.toBeNull()
+  })
+
+  it('文件夹里没有数据文件：一句话 + 换个文件夹', async () => {
+    files.mockResolvedValue({ files: [], truncated: false })
+    await start()
+    expect(q('[data-studio-no-files]')!.textContent).toContain('没找到数据文件')
+  })
+
+  it('清单读失败：一句话 + 再试一次（再试一次真的重读）', async () => {
+    files.mockRejectedValueOnce(new ApiError('x', 500, {}))
+    await start()
+    expect(q('[data-studio-data]')!.textContent).toContain('没能看清')
+    files.mockResolvedValueOnce({ files: [], truncated: false })
+    await click([...document.querySelectorAll('button')].find((b) => b.textContent === '再试一次')!)
+    await flush()
+    expect(files).toHaveBeenCalledTimes(2)
+  })
+})
