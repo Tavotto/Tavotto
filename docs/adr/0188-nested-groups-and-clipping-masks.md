@@ -80,6 +80,7 @@ ADR 0185 §五原写「文档级加 `groups: { id, parentId?, clipBy? }[]`」。
 
 - 新构建写的嵌套组 / 蒙版在旧构建里退化为一层组、不裁剪，对象都在、蒙版看不见；旧构建保存后再用新构建打开，结构按 §一的读法恢复或退化。
 - 双击组里的对象要先进组：以前成组的文字双击一次就能改，现在要两次（与 Illustrator 一致）。
-- 没做（留到后面）：选中剪切组时选框仍是全部成员的范围（Illustrator 用蒙版的范围）；剪切路径在画布上只能从图层树选中；文字当蒙版。
+- 选中剪切组时选框按蒙版范围、描蒙版轮廓，属性栏的 X / Y / W / H 也是蒙版范围（ADR 0185 M4 第二批「变换面板」）。
+- 没做（留到后面）：剪切路径在画布上只能从图层树选中；文字当蒙版。
 - 看护：`lib/groupTree.test.ts`、`store/groupActions.test.tsx`、`lib/clipMask.golden.test.ts`、`canvas/workspaceContextBar.test.tsx`、
   `tests/test_clip_mask.py`、`tests/test_export_original_clip.py`。
