@@ -26,8 +26,8 @@
   },
   "outputs": {
     "u07.pdf": {
-      "sha256": "ebeda2a634cb7db1e27ce7da2ebd06388c5ef7d433e17e230db9e61d381c8a08",
-      "bytes": 8239
+      "sha256": "32d4e6d577888e2fd7cc8d199352839f95a994fe68b527371358a73a5627810b",
+      "bytes": 8236
     },
     "u07_pdfium.png": {
       "sha256": "b62bbd450cf74c670cb957b75c3002cd12eca18985ecf742b9c5fbda4525c6ff",
@@ -337,7 +337,7 @@
     {
       "name": "pdf.deterministic",
       "ok": true,
-      "sha256": "ebeda2a634cb7db1e27ce7da2ebd06388c5ef7d433e17e230db9e61d381c8a08"
+      "sha256": "32d4e6d577888e2fd7cc8d199352839f95a994fe68b527371358a73a5627810b"
     },
     {
       "name": "pdf.imported_pages",
