@@ -13,10 +13,10 @@ order: 280
 必守要点: 先脱敏再交出；report.json 换形必升 bundle schema；不写盘不进 telemetry；不自动上传（唯一例外是用户逐次确认）
 -->
 
-## 外部审阅（决策记录 0187；1.0 纪律下已由维护者豁免的新能力）
+## 外部审阅（[ADR 0187](../../adr/0187-external-review-share.md)；1.0 纪律下已由维护者豁免的新能力）
 
 `engine/reviewshare.py`（出站、设备签名、分享 / 更新 / 停止 / 回复 / 标记已处理、feed 轮询）与 `engine/reviewinbox.py`（本机分享记录）是 `contactsend` / `contactinbox` 的同形状兄弟：
-把当前这张图 / 这份排版的**画面**分享成链接。线上格式 v1 的唯一出处是 决策记录 0187 §六；本机接口 `/api/review/*` 全部在会话认证之内（ADR 0008，`test_browser_auth` 从 url_map 枚举）。
+把当前这张图 / 这份排版的**画面**分享成链接。线上格式 v1 的唯一出处是 ADR 0187 §六；本机接口 `/api/review/*` 全部在会话认证之内（ADR 0008，`test_browser_auth` 从 url_map 枚举）。
 
 - **只上传画面**：每个版本只有 `snapshot.png`（走现有导出管线，长边 ≤ 3000 px、≤ 8 MiB，超了降分辨率重出）、元素位置表（≤ 4000 项 / 256 KiB，超了按面积从小到大丢并只在日志记个数）与标题 / 给审阅者的话。脚本、数据、路径、本机信息一律不传。
   出图与元素表由 `app._review_render` 注册给引擎（`reviewshare.set_renderer`）：父进程这里不碰 `manifest` / `figsession`；只调 `_export_produce`（不经 `exportjob.run`），中间文件在 `data_dir()/review/tmp/` 的私有目录、用完即删，**不写项目导出目录**。
