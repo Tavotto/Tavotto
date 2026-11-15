@@ -18,6 +18,7 @@ order: 280
 `engine/reviewshare.py`（出站、设备签名、分享 / 更新 / 停止 / 回复 / 标记已处理、feed 轮询）与 `engine/reviewinbox.py`（本机分享记录）是 `contactsend` / `contactinbox` 的同形状兄弟：
 把当前这张图 / 这份排版的**画面**分享成链接。线上格式 v1 的唯一出处是 ADR 0187 §六；本机接口 `/api/review/*` 全部在会话认证之内（ADR 0008，`test_browser_auth` 从 url_map 枚举）。
 
+- **上线开关 `PRODUCTION_LIVE`**：线上服务部署并验通（建链接、更新、审阅页、额度计数）之前为 `False`——不设 `TAVOTTO_REVIEW_ENDPOINT` 时入口不出现、零网络；验通后单独一个 PR 改成 `True`（发版依赖，先报合并大队长）。
 - **只上传画面**：每个版本只有 `snapshot.png`（走现有导出管线，长边 ≤ 3000 px、≤ 8 MiB，超了降分辨率重出）、元素位置表（≤ 4000 项 / 256 KiB，超了按面积从小到大丢并只在日志记个数）与标题 / 给审阅者的话。脚本、数据、路径、本机信息一律不传。
   出图与元素表由 `app._review_render` 注册给引擎（`reviewshare.set_renderer`）：父进程这里不碰 `manifest` / `figsession`；只调 `_export_produce`（不经 `exportjob.run`），中间文件在 `data_dir()/review/tmp/` 的私有目录、用完即删，**不写项目导出目录**。
   出图描述 `render` 由前端带来（图 `{"original": …}`、排版 `{"canvas": {page_w_mm, page_h_mm, objects}}`，与 `POST /api/export` 同名段一致）：排版文档是前端 schema、worker 热会话只记 patch 哈希，引擎无法自己反推；缺 `render` = 同步 422。

@@ -51,6 +51,11 @@ ENV_HARD_OFF = "TAVOTTO_NO_REVIEW_SHARE"
 ENV_ENDPOINT = "TAVOTTO_REVIEW_ENDPOINT"
 REVIEW_HOSTS: frozenset[str] = frozenset({"review.tavotto.cn"})
 PRODUCTION_ENDPOINT = "https://review.tavotto.cn"
+#: 线上服务是否已部署并验通（ADR 0187 §六）。False 时只有显式设了 `TAVOTTO_REVIEW_ENDPOINT`
+#: （开发 / 验收）才可用，正式安装里「分享审阅」入口不出现、零网络——免得服务端上线前
+#: 用户点了只能看到「连不上审阅服务」。部署并验通（建链接、更新、审阅页、额度计数）后，
+#: 单独一个 PR 把它改成 True（发版依赖，先报合并大队长）。
+PRODUCTION_LIVE = False
 
 #: 直传存储地址的主机白名单（COS 桶域名 + CloudBase 存储域名）；回环开发模式另允许与端点同源。
 UPLOAD_HOST_SUFFIXES: tuple[str, ...] = (".myqcloud.com", ".tcb.qcloud.la", ".tcloudbaseapp.com")
@@ -201,6 +206,8 @@ def resolve_target() -> diagsend.Target | None:
         if got is None and dev:
             return _dev_endpoint(raw)
         return got
+    if not PRODUCTION_LIVE:
+        return None
     return diagsend.parse_endpoint(PRODUCTION_ENDPOINT, dev_loopback=False, hosts=REVIEW_HOSTS)
 
 

@@ -166,7 +166,19 @@ def test_default_process_is_off_and_never_touches_the_network(monkeypatch, srv):
     assert srv.calls == []
 
 
-def test_builtin_endpoint_is_exactly_the_whitelisted_host():
+def test_production_entry_stays_hidden_until_the_service_is_live(monkeypatch, srv):
+    # 线上服务未部署前：不设端点 = 入口不出现、零网络（发版依赖，见 PRODUCTION_LIVE）
+    monkeypatch.delenv(reviewshare.ENV_ENDPOINT, raising=False)
+    monkeypatch.setattr(reviewshare, "PRODUCTION_LIVE", False)
+    assert reviewshare.resolve_target() is None
+    assert reviewshare.capability() == {"enabled": False}
+    assert reviewshare.poll_once(force=True)["polled"] == 0
+    assert srv.calls == []
+
+
+def test_builtin_endpoint_is_exactly_the_whitelisted_host(monkeypatch):
+    monkeypatch.delenv(reviewshare.ENV_ENDPOINT, raising=False)
+    monkeypatch.setattr(reviewshare, "PRODUCTION_LIVE", True)
     t = reviewshare.resolve_target()
     assert t is not None and (t.host, t.port, t.loopback) == ("review.tavotto.cn", 443, False)
     assert reviewshare.REVIEW_HOSTS == {"review.tavotto.cn"}
@@ -1088,7 +1100,8 @@ def test_dev_target_accepts_any_loopback_review_url_and_upload_address(monkeypat
             reviewshare._upload_spec({"url": bad, "method": "PUT"}, t)
 
 
-def test_production_rules_are_untouched_by_the_dev_relaxation():
+def test_production_rules_are_untouched_by_the_dev_relaxation(monkeypatch):
+    monkeypatch.setattr(reviewshare, "PRODUCTION_LIVE", True)
     t = reviewshare.resolve_target()
     assert (
         t.host == "review.tavotto.cn" and not t.loopback and t.base == "https://review.tavotto.cn"
