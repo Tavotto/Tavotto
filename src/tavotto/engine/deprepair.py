@@ -2664,6 +2664,59 @@ def _selftest_error(selftest: dict) -> "RepairError":
     return RepairError(ERROR_SELFTEST_FAILED, detail)
 
 
+#: 自检没过时「失败在哪一步」的闭集（诊断包 `managed_environment_jobs[].selftest.stage`，`envdiag` 按同一张表再投影）。
+SELFTEST_STAGE_SPAWN = "spawn_failed"  # 子进程根本没起来（OSError）
+SELFTEST_STAGE_LAUNCHER = "launcher_unavailable"  # Conda 激活取环境失败
+SELFTEST_STAGE_TIMEOUT = "timeout"
+SELFTEST_STAGE_ERROR_REPLY = "error_reply"  # worker 起来了，回了 ok=false 的信封
+SELFTEST_STAGE_NO_REPLY = "no_reply"  # 进程结束了，却没有一条对得上的信封（多半启动阶段就崩了）
+SELFTEST_STAGES = frozenset(
+    {
+        SELFTEST_STAGE_SPAWN,
+        SELFTEST_STAGE_LAUNCHER,
+        SELFTEST_STAGE_TIMEOUT,
+        SELFTEST_STAGE_ERROR_REPLY,
+        SELFTEST_STAGE_NO_REPLY,
+    }
+)
+
+
+def _reply_traceback(resp: dict) -> str:
+    err = resp.get("error")
+    tb = err.get("traceback") if isinstance(err, dict) else resp.get("traceback")
+    return tb if isinstance(tb, str) else ""
+
+
+def _selftest_failure(
+    stage: str,
+    *,
+    exit_code: int | None = None,
+    worker_code: object = None,
+    text: str | None = None,
+    exc_type: str | None = None,
+) -> dict:
+    """自检没过的**闭集形状**（TVD-JXMR：六次自检失败、诊断包里只有错误码，查不出原因）。
+
+    只放：哪一步、退出码、worker 回的稳定错误码、报错文本的 `[structure]` 摘要与最深一帧引擎位置
+    （`diagnostics.failure_shape`，与 worker 日志同一套白名单）。`detail` 原文不进这里——它只给界面。"""
+    shape: dict = {"structure": [], "engine_frame": None}
+    if text:
+        try:
+            from . import diagnostics
+
+            shape = diagnostics.failure_shape(text)
+        except Exception:  # noqa: BLE001 — 诊断不该拖垮自检的结论
+            pass
+    if exc_type and not shape["structure"]:
+        shape["structure"] = [f"[structure] {exc_type}"]
+    return {
+        "stage": stage,
+        "exit_code": exit_code,
+        "worker_code": worker_code if isinstance(worker_code, str) else None,
+        **shape,
+    }
+
+
 def worker_self_test(python: str) -> dict:
     """真起一次 worker 跑通一次 build——验证的第三层。
 
@@ -2720,7 +2773,11 @@ def worker_self_test(python: str) -> dict:
             )
         except subprocess.TimeoutExpired:
             _kill(proc)
-            return {"ok": False, "detail": f"worker 自检超时（{SELFTEST_TIMEOUT_S}s）"}
+            return {
+                "ok": False,
+                "detail": f"worker 自检超时（{SELFTEST_TIMEOUT_S}s）",
+                "failure": _selftest_failure(SELFTEST_STAGE_TIMEOUT),
+            }
         for line in (stdout or "").splitlines():
             try:
                 resp = json.loads(line)
@@ -2736,12 +2793,37 @@ def worker_self_test(python: str) -> dict:
                     # `stems` 才是「捕获到几张图」——调用方据此断言 worker
                     # 是真跑通了，而不是「函数返回了 True」。
                     return {"ok": True, "figures": len(resp.get("stems") or {})}
-                return {"ok": False, "detail": str(resp.get("error", ""))[:800]}
-        return {"ok": False, "detail": (stderr or stdout or "")[-800:]}
+                err = resp.get("error")
+                return {
+                    "ok": False,
+                    "detail": str(err or "")[:800],
+                    "failure": _selftest_failure(
+                        SELFTEST_STAGE_ERROR_REPLY,
+                        exit_code=proc.returncode,
+                        worker_code=err.get("code") if isinstance(err, dict) else None,
+                        text=_reply_traceback(resp) or stderr,
+                    ),
+                }
+        return {
+            "ok": False,
+            "detail": (stderr or stdout or "")[-800:],
+            "failure": _selftest_failure(
+                SELFTEST_STAGE_NO_REPLY, exit_code=proc.returncode, text=stderr
+            ),
+        }
     except launcher.LauncherUnavailable as exc:
-        return {"ok": False, "detail": str(exc)[:800], "code": exc.code}
+        return {
+            "ok": False,
+            "detail": str(exc)[:800],
+            "code": exc.code,
+            "failure": _selftest_failure(SELFTEST_STAGE_LAUNCHER),
+        }
     except OSError as exc:
-        return {"ok": False, "detail": str(exc)[:800]}
+        return {
+            "ok": False,
+            "detail": str(exc)[:800],
+            "failure": _selftest_failure(SELFTEST_STAGE_SPAWN, exc_type=type(exc).__name__),
+        }
     finally:
         import shutil
 
@@ -5597,6 +5679,7 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         )
     selftest = worker_self_test(python)
     if not selftest.get("ok"):
+        job.diagnostic["selftest"] = selftest.get("failure")
         managedenv.mark_generation(
             project, generation, managedenv.GEN_STATE_INCOMPLETE, "worker 自检未通过"
         )
