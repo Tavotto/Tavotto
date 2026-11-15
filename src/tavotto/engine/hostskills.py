@@ -7,7 +7,8 @@ scripts）。来源只有桌面版自己带的那一份，**不联网**；写进
 ## 规则
 
 * 来源：冻结产物 `_MEIPASS/skills/tavotto-figure`（`packaging/tavotto.spec` 收进）；源码树
-  `codex-plugin/skills/tavotto-figure`；都没有（pip 安装）就是 None，如实报 `skill_source_missing`。
+  `codex-plugin/skills/tavotto-figure`；都没有就是 None。pip / pipx / uvx 装的 wheel 本来就不带技能文件，
+  按 `builtin` 算（AI 用 MCP 工具 `tavotto_guide` 读全文），不算失败；桌面版或源码树缺了才如实报 `skill_source_missing`。
 * 写法：先写同级临时目录，再换名（原子替换）；绝不往包目录写。
 * **用户改过的不覆盖**：目标已存在而没有记录、或内容与记录里的 sha256 不符 → `modified`，原样保留。
   同一份内容已经在那里 → `skipped`（幂等）。旧版本且没被改 → 替换（`stale` → `current`）。
@@ -74,6 +75,17 @@ def skill_source() -> Path | None:
     else:
         cand = Path(__file__).resolve().parents[3] / "codex-plugin" / "skills" / SKILL_NAME
     return cand if cand is not None and (cand / "SKILL.md").is_file() else None
+
+
+def wheel_install() -> bool:
+    """pip / pipx / uvx 装的 wheel：不是冻结产物，也不在源码树里（包上三层没有 `codex-plugin/`）。这种装法有意不带技能。"""
+    if getattr(sys, "frozen", False):
+        return False
+    return not (Path(__file__).resolve().parents[3] / "codex-plugin").is_dir()
+
+
+#: wheel 装法技能那一步的说明
+WHEEL_DETAIL = "pip / pipx / uvx 装法不带技能文件，AI 用 tavotto_guide 读说明"
 
 
 def _version() -> str:
@@ -163,6 +175,8 @@ def skill_state(host: str) -> str:
     if not dirs:
         return "missing"
     src = skill_source()
+    if src is None and wheel_install():
+        return "builtin"
     try:
         sha = tree_sha256(src) if src else None
     except OSError:
@@ -235,6 +249,8 @@ def install_skill(host: str, *, force: bool = False) -> dict:
     if not dirs:
         return _res(True, "none", "没找到这个编辑器的技能目录", skipped=True)
     src = skill_source()
+    if src is None and wheel_install():
+        return _res(True, "builtin", WHEEL_DETAIL, skipped=True)
     if src is None:
         return _res(False, "failed", "这份 Tavotto 里没有技能文件", ERR_SOURCE)
     try:

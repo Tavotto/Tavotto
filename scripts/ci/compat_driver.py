@@ -580,9 +580,21 @@ def run_native_ref(req: dict) -> int:
         if entry["path"] and entry["path"].startswith(root_real + os.sep):
             rel = os.path.relpath(entry["path"], root_real).replace(os.sep, "/")
             last_writer[rel] = {"figure": entry["figure"], "titles": entry["titles"]}
+    # 被后写者顶掉的中间图：存过、写过的每个路径最后都是别的图写的、没 show 过、退出时已关闭。
+    # 用户拿到的只有磁盘上留下的内容，这些图从未交给过用户（同路径循环 + close 的写法）。
+    last_by_path = {e["path"]: e["figure"] for e in saved if e["path"]}
+    superseded = sorted(
+        i
+        for i, fig in enumerate(figures)
+        if any(e["figure"] == i for e in saved)
+        and all(e["path"] and last_by_path[e["path"]] != i for e in saved if e["figure"] == i)
+        and not any(fig is f for f in shown)
+        and not any(fig is f for f in open_figures)
+    )
     return _ok(
         exit_status=exit_status,
         error=error,
+        superseded_figures=superseded,
         script_entries=entries,
         figure_count=len(figures),
         figures_shown=len(shown),

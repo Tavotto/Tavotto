@@ -59,7 +59,9 @@ if path == "graphql":
     assert "branch=main" in sys.argv and "owner=o" in sys.argv and "name=r" in sys.argv
     calls = open(log, encoding="utf-8").read().splitlines().count("graphql")
     if st.get("queue_down"): sys.exit(1)
-    for page in st["queue_before" if calls % 2 else "queue_after"]: emit(page)
+    seq = st.get("queue_sequence")
+    pages = seq[min(calls, len(seq)) - 1] if seq else st["queue_before" if calls % 2 else "queue_after"]
+    for page in pages: emit(page)
     sys.exit(0)
 u = urlsplit(path)
 if "/contents/" in u.path:
@@ -139,6 +141,19 @@ def _commit(sha: str, login: str | None, uid: int | None, message="c") -> dict:
     }
 
 
+def _disabled_policy(p: dict) -> dict:
+    """仓库 policy 已启用服务（ADR 0183 切换）；造一份「服务未启用」的样本。"""
+    p = json.loads(json.dumps(p))
+    p["provider"] = {
+        "configured": False,
+        "name": None,
+        "check_name": None,
+        "note": "test: disabled",
+    }
+    p.pop("authority_origin", None)
+    return p
+
+
 def _policy(*, service=True) -> dict:
     p = json.loads((ROOT / ".github" / "cla-policy.json").read_text(encoding="utf-8"))
     if service:
@@ -154,7 +169,10 @@ def _policy(*, service=True) -> dict:
         }
         ids = {"erwanjun": HOLDER, "dependabot[bot]": DEPENDABOT, "github-actions[bot]": ACTIONS}
         for ex in p["exemptions"]:
-            ex["github_id"] = ids[ex["login"]]
+            if ex["kind"] != "countersigned_paper":
+                ex["github_id"] = ids[ex["login"]]
+    else:
+        p = _disabled_policy(p)
     return p
 
 
@@ -306,6 +324,7 @@ class Rig:
             "PR_HEAD": HEAD,
             "GROUP_BASE": BASE,
             "GROUP_HEAD": HEAD,
+            "CLA_GROUP_SNAPSHOT_RETRY_DELAY": "0",
         }
 
     def _bash(self, script: str, **env):
@@ -596,6 +615,43 @@ def test_group_bad_independent_github_snapshot_never_reaches_authority(tmp_path,
     proc = rig.collect()
     if proc.returncode == 0:
         assert rig.judge()[0] == 2
+    assert rig.requests() == []
+
+
+def _queue_with_head_ref(state, sha):
+    pages = copy.deepcopy(state["queue_before"])
+    pages[0]["data"]["repository"]["mergeQueue"]["entries"]["nodes"][0]["pullRequest"][
+        "headRefOid"
+    ] = sha
+    return pages
+
+
+def test_group_queue_that_moves_once_is_recollected_not_failed(tmp_path):
+    """前面的组合入 / 后面有人入队，队列在两次快照之间变一次：整轮重采，第二轮稳定就照常判定。"""
+    rig = Rig(tmp_path, "merge_group", commits=HOLDER_COMMIT)
+    state = json.loads(rig.state.read_text(encoding="utf-8"))
+    stable = state["queue_before"]
+    state["queue_sequence"] = [stable, _queue_with_head_ref(state, "e" * 40), stable, stable]
+    rig.state.write_text(json.dumps(state), encoding="utf-8")
+    proc = rig.collect()
+    assert proc.returncode == 0, proc.stderr
+    assert "mergeQueue 在收集期间变化（第 1 轮）" in proc.stdout
+    assert rig.log.read_text(encoding="utf-8").splitlines().count("graphql") == 4
+    rc, verdict, _ = rig.judge()
+    assert rc == 0 and verdict["reason"] == "merge_candidate_exempt_by_id", verdict
+
+
+def test_group_queue_that_never_settles_still_fails_closed_after_five_rounds(tmp_path):
+    rig = Rig(tmp_path, "merge_group", commits=HOLDER_COMMIT)
+    state = json.loads(rig.state.read_text(encoding="utf-8"))
+    state["queue_after"] = _queue_with_head_ref(state, "e" * 40)
+    rig.state.write_text(json.dumps(state), encoding="utf-8")
+    proc = rig.collect()
+    assert proc.returncode == 0, proc.stderr
+    assert rig.log.read_text(encoding="utf-8").splitlines().count("graphql") == 10
+    rc, verdict, _ = rig.judge()
+    assert rc == 2 and verdict["reason"] == "config_error", verdict
+    assert verdict["problems"] == ["mergeQueue 在收集期间改变"]
     assert rig.requests() == []
 
 
