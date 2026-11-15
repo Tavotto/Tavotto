@@ -191,7 +191,7 @@ const COMMANDS: Command[] = [
   { id: 'add-text', shortcut: keyOf('toolText'), run: () => void addText() },
   { id: 'sub-labels', run: addSubLabels },
   { id: 'select-all', shortcut: keyOf('selectAll'), run: selectAll },
-  // 成组 / 取消成组 / 剪切蒙版（ADR 0188）：表在 `GROUP_COMMANDS`，右键菜单与快捷键读同一份
+  // 成组 / 取消成组 / 剪切蒙版（ADR 0191）：表在 `GROUP_COMMANDS`，右键菜单与快捷键读同一份
   // 再次变换 / 镜像（ADR 0185 M4 第二批）：表在 `TRANSFORM_COMMANDS`
   ...TRANSFORM_COMMANDS.map((c) => ({ id: c.id, shortcut: c.key ? keyOf(c.key) : undefined, needsSelection: true, available: c.available, run: c.run })),
   ...GROUP_COMMANDS.map((c) => ({ id: c.id, shortcut: keyOf(c.key), needsSelection: true, available: c.available, run: c.run })),

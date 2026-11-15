@@ -128,7 +128,7 @@ order: 210
   覆盖层 `canvas/ShapeBuilderOverlay`；几何 `lib/pathfinder.builderFaces / mergeFaces / builderPlan`（vecops 内核的分割 / 合并）。会话开着时
   `useKeyboard` 只认 Esc / Enter。看护 `store/shapeBuilder.test.tsx`。取色面板的「图内配色 / 推荐配色」在 `lib/swatches`，宿主
   `ColorFieldHost.figureColors / recommended` 由属性栏挂上；看护 `lib/swatches.test.tsx`。
-- **嵌套组、组内编辑、剪切蒙版（2026-11-15，ADR 0188，即 ADR 0185 M4 第一批）**：组的结构只在对象身上——`groupId` 是**最内层**组（旧构建只认它，
+- **嵌套组、组内编辑、剪切蒙版（2026-11-15，ADR 0191，即 ADR 0185 M4 第一批）**：组的结构只在对象身上——`groupId` 是**最内层**组（旧构建只认它，
   照样当一层组用）、`groupPath` 是外 → 内整条链（两层及以上才写，末项必须等于 `groupId`，对不上就按 `[groupId]` 读）、`clipMask`
   = 「我是我最内层组的剪切路径」；**没有文档级的组表**（组存在 = 有对象挂在它下面）。判据唯一出处 `lib/groupTree`（链、单元、图层树、
   连续化、每组生效的蒙版、裁一个对象的蒙版链、孤立蒙版、复制换 id），别处不许再按 `groupId` 相等判「同组」。**选择按单元**：点中一个对象

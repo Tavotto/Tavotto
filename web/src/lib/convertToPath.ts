@@ -173,7 +173,7 @@ export function toPathObject(o: ShapeObject | ArrowObject): PathObject | null {
     ...(o.hidden ? { hidden: o.hidden } : {}),
     ...(o.name != null ? { name: o.name } : {}),
     ...(o.groupId != null ? { groupId: o.groupId } : {}),
-    // 嵌套组的整条链与剪切蒙版的身份一起带过去（ADR 0188）：只带 groupId 会把对象从外层组里摘出来
+    // 嵌套组的整条链与剪切蒙版的身份一起带过去（ADR 0191）：只带 groupId 会把对象从外层组里摘出来
     ...(o.groupPath ? { groupPath: [...o.groupPath] } : {}),
     ...(o.clipMask ? { clipMask: true as const } : {}),
     ...(o.layoutPinned ? { layoutPinned: o.layoutPinned } : {}),

@@ -1,5 +1,5 @@
 /**
- * 嵌套组与剪切蒙版的判据（ADR 0188，`lib/groupTree`）：组链的读法与旧构建改过 groupId 时的退路、作用域里的单元、
+ * 嵌套组与剪切蒙版的判据（ADR 0191，`lib/groupTree`）：组链的读法与旧构建改过 groupId 时的退路、作用域里的单元、
  * 图层树、连续化、每个组生效的蒙版、裁一个对象的蒙版链、孤立蒙版、复制时换组 id。
  */
 import { describe, expect, it } from 'vitest'

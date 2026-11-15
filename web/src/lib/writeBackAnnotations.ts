@@ -76,7 +76,7 @@ export function collectPanelAnnotations(
     if (!anns?.length) continue
     out.set(p.id, {
       objectIds: anns.map((o) => o.id),
-      // 剪切蒙版（ADR 0188）：蒙版是隐藏的、不在 anns 里，按全集找；轮廓与对象同一套换算
+      // 剪切蒙版（ADR 0191）：蒙版是隐藏的、不在 anns 里，按全集找；轮廓与对象同一套换算
       objects: toExportObjects(anns, objects).map((o) => toFigureMm(o, p)),
     })
   }

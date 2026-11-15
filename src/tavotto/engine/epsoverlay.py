@@ -89,7 +89,7 @@ def compose(
 
     单图留白（ADR 0161 §3）：`offset_pt = (x, y)` 是原图包围盒左下角在页面里的落点（pt，原点左下；缺省 (0, 0)
     = 与从前逐字节相同）；`clip_page` 把整页内容裁到 BoundingBox（留白为负时原图会伸出页面）。
-    `figure_clip`：剪切蒙版裁这张图（ADR 0188）的 PostScript 裁剪段（`epswriter.clip_ops`，页面坐标）；只包住嵌入段，
+    `figure_clip`：剪切蒙版裁这张图（ADR 0191）的 PostScript 裁剪段（`epswriter.clip_ops`，页面坐标）；只包住嵌入段，
     标注不受它影响（标注自己的裁剪在叠加层的 IR 里）。缺省空 = 与从前逐字节相同。"""
     if not inner.startswith(b"%!PS-Adobe"):
         raise EpsOverlayError("embedded file is not a DSC EPS")

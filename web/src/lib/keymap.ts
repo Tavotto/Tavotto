@@ -105,7 +105,7 @@ export const KEYMAP = {
   // 复合路径 ⌘8 / 释放 ⌥⇧⌘8（Illustrator 的键位，ADR 0185 M2）：选着两个以上能参与的对象 / 一个多子路径的路径时才消费。按 code 认
   makeCompound: k(`${MOD}8`, { code: 'Digit8', mod: true, shift: false, alt: false }),
   releaseCompound: k(`${ALT}⇧${MOD}8`, { code: 'Digit8', mod: true, shift: true, alt: true }),
-  // 成组 ⌘G / 取消成组 ⇧⌘G、剪切蒙版 ⌘7 / 释放 ⌥⌘7（Illustrator 的键位，ADR 0188）：选区够条件时才消费。按 code 认
+  // 成组 ⌘G / 取消成组 ⇧⌘G、剪切蒙版 ⌘7 / 释放 ⌥⌘7（Illustrator 的键位，ADR 0191）：选区够条件时才消费。按 code 认
   groupObjects: k(`${MOD}G`, { code: 'KeyG', mod: true, shift: false, alt: false }),
   ungroupObjects: k(`⇧${MOD}G`, { code: 'KeyG', mod: true, shift: true, alt: false }),
   makeClipMask: k(`${MOD}7`, { code: 'Digit7', mod: true, shift: false, alt: false }),

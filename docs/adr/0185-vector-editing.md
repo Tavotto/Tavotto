@@ -68,7 +68,7 @@ Illustrator 用户最常按的三个颜色键）。两项都按其余项的频�
   Okabe-Ito 色盲友好八色，说明里写明所选期刊没有规定配色，不编期刊配色；将来目录里有了配色字段在 `lib/swatches.recommendedSwatches` 接上。
 
 **修订（2026-11-15，M4 第一批：嵌套组、组内编辑、剪切蒙版）**：覆盖率 76.1% → **80.3%**。设计按 §五 另开
-[ADR 0188](0188-nested-groups-and-clipping-masks.md)；与本 ADR 原写法不同的一处：组结构放在对象上（`groupPath` / `clipMask`），不加文档级 `groups` 表。
+[ADR 0191](0191-nested-groups-and-clipping-masks.md)；与本 ADR 原写法不同的一处：组结构放在对象上（`groupPath` / `clipMask`），不加文档级 `groups` 表。
 
 **修订（2026-11-15，M4 第二批：变换面板）**：覆盖率 80.3% → **87.0%**。纯函数在 `lib/transform`，写入在 `store/transformActions`，
 偏好与「上一次变换」在 `store/transformPrefs`。
@@ -78,7 +78,7 @@ Illustrator 用户最常按的三个颜色键）。两项都按其余项的频�
 - **单个 / 多个独立对象**：X / Y 报各自框上的参考点；改 W / H、旋转都以它为不动点（旋转 = 框中心绕参考点转，参考点在中心时就是原来的
   「绕中心转」）。**选区恰好是一整个组**（含剪切组）：X / Y / W / H 是整组**看得见的范围**（`transform.visibleBounds`：每个对象的视觉框
   与裁它的蒙版外接框求交——剪切组 = 蒙版范围），改它 = 整组变换：位移、按参考点缩放（文字字号随 √(kx·ky)、面板保持宽高比）、绕参考点转。
-  画布上剪切组的选框也按这个范围画、描蒙版的轮廓（ADR 0188 审阅第 5 处）。
+  画布上剪切组的选框也按这个范围画、描蒙版的轮廓（ADR 0191 审阅第 5 处）。
 - **镜像**：页面上的翻转 = 自身框里同一根轴的翻转 + 角度取反（F·R(θ) = R(−θ)·F）：框关于参考点翻过去、角度取反；路径翻比例坐标的
   锚点与渐变，箭头 / 直线翻端点，面板切自己的 flipH / flipV（面板落位是「先翻再转」），文字只翻位置（字不倒过来），自身对称的形状不动几何，
   不对称的（三角 / 多边形 / 星形上下翻、弧线、大括号左右翻、带渐变的形状）先换成等价路径再翻。
@@ -174,7 +174,7 @@ interface PathNode {
   快捷键与 MCP 用同一份——AI 也能画。快捷键按 Illustrator 习惯，开工前对一遍与现有快捷键的冲突。
 - **M2 路径查找器**：§三。
 - **M3 渐变**：见 [ADR 0186](0186-gradients.md)（扩 `ir.Paint` 闭集：PDF Shading Pattern、SVG `<linearGradient>`、EPS `shfill`）。
-- **M4 剪切蒙版与嵌套组**：现在的 `groupId` 是平铺一层；~~文档级加 `groups: { id, parentId?, clipBy? }[]`~~（2026-11-15 修订：改成对象上的 `groupPath` / `clipMask`，见 [ADR 0188](0188-nested-groups-and-clipping-masks.md)），导出映射到 `ir.Group(clip=…)`。
+- **M4 剪切蒙版与嵌套组**：现在的 `groupId` 是平铺一层；~~文档级加 `groups: { id, parentId?, clipBy? }[]`~~（2026-11-15 修订：改成对象上的 `groupPath` / `clipMask`，见 [ADR 0191](0191-nested-groups-and-clipping-masks.md)），导出映射到 `ir.Group(clip=…)`。
   必须与 `LayoutGroup`（行 / 列 / 网格排版组）分开，不许变成第二套组模型。另开 ADR。
 - **M5 SVG 互通**：粘贴 / 拖入 SVG 落成可编辑对象，复制为 SVG。
 

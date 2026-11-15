@@ -497,7 +497,7 @@ export function deleteSelected() {
     ids.length === 1 ? hist('deleteObject', { name }) : hist('deleteObjects', { count: ids.length })
   commit(label, (d) => {
     d.objects = d.objects.filter((o) => !ids.includes(o.id))
-    // 剪切组里被裁的对象删光了：蒙版还原成普通可见对象，不留一个看不见的东西（ADR 0188）
+    // 剪切组里被裁的对象删光了：蒙版还原成普通可见对象，不留一个看不见的东西（ADR 0191）
     releaseOrphanMasks(d)
     // 成员不足 2 个的布局组失去意义，一并清掉（约束消失，剩余对象原地不动）
     if (d.layoutGroups?.length) {
@@ -1104,7 +1104,7 @@ export function reorderObject(fromId: string, targetId: string, position: 'above
 export function toggleHidden(id: string) {
   const o = findObject(id)
   if (!o) return
-  // 剪切路径（ADR 0188）：隐藏 / 显示的是「裁不裁」（`clipOff`），`hidden` 永远留给旧构建
+  // 剪切路径（ADR 0191）：隐藏 / 显示的是「裁不裁」（`clipOff`），`hidden` 永远留给旧构建
   if (o.clipMask) {
     updateObject(id, hist(o.clipOff ? 'showObject' : 'hideObject'), (obj) => {
       if (obj.clipOff) delete obj.clipOff
@@ -1157,7 +1157,7 @@ export function setObjectsLocked(ids: string[], locked: boolean) {
 
 /** 批量隐藏 / 显示：同上，一条历史。隐藏后对象仍留在选区里（与 `toggleHidden` 一致，图层树里可恢复） */
 export function setObjectsHidden(ids: string[], hidden: boolean) {
-  // 剪切路径不跟着批量隐藏 / 显示走：它的 hidden 是给旧构建的，「裁不裁」只在图层树那一行上切（ADR 0188）
+  // 剪切路径不跟着批量隐藏 / 显示走：它的 hidden 是给旧构建的，「裁不裁」只在图层树那一行上切（ADR 0191）
   const targets = doc().objects.filter((o) => ids.includes(o.id) && !o.clipMask && !!o.hidden !== hidden)
   if (!targets.length) return
   finishActiveGesture()
@@ -2871,7 +2871,7 @@ export function startLayoutAutoReflow(): () => void {
 
 /**
  * 点中这个对象时一起选中的对象 id（文档顺序）：它在当前这一层（组内编辑的作用域，`isolationStore`）里所在的
- * 单元——直接成员就是它自己，否则是它所在的、紧挨着这一层的那个子组的全员（嵌套组，ADR 0188）。
+ * 单元——直接成员就是它自己，否则是它所在的、紧挨着这一层的那个子组的全员（嵌套组，ADR 0191）。
  * 不在当前这一层里（组外的对象）= 只有它自己。
  * 不含更新的构建写进来的组员（`isKnownObject`，#2037）：点中组里认识的成员不会把它们带进选区。
  */
@@ -2965,7 +2965,7 @@ export function selectedUnits(ids: readonly string[] = useSelectionStore.getStat
 }
 
 /**
- * 把选区里的单元收进一个新组（⌘G，嵌套组 ADR 0188）：新组挂在当前这一层下面，子组整体成为它的成员；
+ * 把选区里的单元收进一个新组（⌘G，嵌套组 ADR 0191）：新组挂在当前这一层下面，子组整体成为它的成员；
  * 成员挪成连续的一段、落在最上面那个的位置（Illustrator 同一做法）。返回新组 id；不足两个单元 = null。
  * `extra` 在同一次 commit 里对草稿再做一步（建剪切蒙版用）。
  */
