@@ -310,12 +310,13 @@ describe('额度用满选择卡', () => {
 })
 
 describe('「审阅」页签出现条件', () => {
-  it('没分享过：没有审阅页签；分享过：出现并带未处理数', async () => {
+  it('没分享过：没有审阅页签；分享过：出现，有未读时带小圆点', async () => {
     await render(<Inspector />)
     expect(q('[data-inspector-tab="review"]')).toBeNull()
     await act(async () => useReviewStore.setState({ share: SHARE }))
     expect(q('[data-inspector-tab="review"]')).not.toBeNull()
-    expect(q('[data-review-tab-count]')?.textContent).toBe('2')
+    expect(q('[data-review-tab-dot]')).not.toBeNull() // 有未读：字后一个小圆点，没有数字徽标
+    expect(q('[data-review-tab-count]')).toBeNull()
   })
   it('功能关着不出现；页签停在审阅而记录没了，落回属性页', async () => {
     resetStore({ enabled: false, share: SHARE })
