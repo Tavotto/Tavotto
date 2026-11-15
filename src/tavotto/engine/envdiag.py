@@ -7,6 +7,7 @@ place in the persisted record. These observations never control a job.
 
 from __future__ import annotations
 
+import builtins
 import json
 import re
 import threading
@@ -113,6 +114,7 @@ def _project(record: dict) -> dict:
             for field in ("requested", "installed", "failed")
         ),
         "render": _render(record.get("render")),
+        "selftest": _selftest(record.get("selftest")),
     }
 
 
@@ -144,6 +146,53 @@ _PIP_ERRORS = {
     "dependency_hash_mismatch",
     "dependency_requires_build",
 }
+
+
+#: 自检失败的阶段闭集——与 `deprepair.SELFTEST_STAGES` 同一张表（父进程侧不 import deprepair，测试钉住相等）。
+_SELFTEST_STAGES = frozenset(
+    {"spawn_failed", "launcher_unavailable", "timeout", "error_reply", "no_reply"}
+)
+_WORKER_CODE = re.compile(r"[a-z][a-z0-9_]{0,63}")
+_ENGINE_FRAME = re.compile(r"[a-z_][a-z0-9_]{0,40}\.py:[0-9]{1,6}")
+#: `[structure]` 摘要行的形状：异常名 / 占位 + 可选 `module=` + 可选 `frames=N (分类=个数, …)`。
+_STRUCTURE = re.compile(
+    r"\[structure\] (?P<name>[A-Za-z_][A-Za-z0-9_-]{0,63})"
+    r"(?: module=(?:(?:[A-Za-z_][A-Za-z0-9_.]{0,63}\.)?mod:[0-9a-f]{6,16}|[A-Za-z_][A-Za-z0-9_.]{0,63}))?"
+    r"(?: frames=[0-9]{1,5} \((?:user|engine|runtime|site:[A-Za-z0-9_.-]{1,64})=[0-9]{1,5}"
+    r"(?:, (?:user|engine|runtime|site:[A-Za-z0-9_.-]{1,64})=[0-9]{1,5}){0,15}\))?"
+)
+_STRUCTURE_NAMES = frozenset(
+    {"no-exception-line", "omitted-exception"}
+    | {n for n, o in vars(builtins).items() if isinstance(o, type) and issubclass(o, BaseException)}
+)
+
+
+def _selftest(value: object) -> dict | None:
+    """worker 自检没过的闭集形状（TVD-JXMR）。读回的本地记录同样逐字段重投影，不认识的一律丢。"""
+    if not isinstance(value, dict) or value.get("stage") not in _SELFTEST_STAGES:
+        return None
+    code = value.get("exit_code")
+    worker_code = value.get("worker_code")
+    frame = value.get("engine_frame")
+    raw = value.get("structure")
+    structure = []
+    for line in raw if isinstance(raw, list) else []:
+        m = _STRUCTURE.fullmatch(line) if isinstance(line, str) else None
+        if m and m.group("name") in _STRUCTURE_NAMES:
+            structure.append(line)
+    return {
+        "stage": value["stage"],
+        "exit_code": code
+        if isinstance(code, int) and not isinstance(code, bool) and -(2**31) <= code < 2**32
+        else None,
+        "worker_code": worker_code
+        if isinstance(worker_code, str) and _WORKER_CODE.fullmatch(worker_code)
+        else None,
+        "structure": structure[:3],
+        "engine_frame": frame
+        if isinstance(frame, str) and _ENGINE_FRAME.fullmatch(frame)
+        else None,
+    }
 
 
 def _render(value: object) -> dict | None:

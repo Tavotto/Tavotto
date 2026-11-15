@@ -101,7 +101,9 @@ WORKER_LOG_SENSITIVE_SCAN_BYTES = 16 * 1024 * 1024
 #: `pool.health_snapshot()`，闭集字段，不带脚本名与路径，TVM-Y37X）。
 #: 15 = report.json 的 project 段新增 `missing_commands`（脚本拉起外部命令却找不到可执行文件时的闭集事实：命令名白名单
 #: 原样/其余哈希、渲染进程 PATH 上有没有、固定常见目录枚举里有没有、Homebrew keg 未链接布尔、PATH 形状；TVD-1FCJ）。
-BUNDLE_SCHEMA_VERSION = 15
+#: 16 = `project.managed_environment_jobs` 每条新增 `selftest`（worker 自检没过时的闭集形状：失败在哪一步、退出码、
+#: worker 回的稳定错误码、`[structure]` 摘要与最深一帧引擎源码位置；不带报错文字与路径，TVD-JXMR）。
+BUNDLE_SCHEMA_VERSION = 16
 #: 两个子 schema 各自独立演进（ADR 0016 §20）。读取方**忽略不认识的字段**。
 FRONTEND_SNAPSHOT_SCHEMA = 1
 TRACE_SCHEMA = 1
@@ -1333,6 +1335,30 @@ def _structure_summaries(orphans: list[str], *, sensitive: bool) -> list[str]:
     return dedup[-STRUCTURE_MAX_SUMMARIES:]
 
 
+#: 引擎自己的源文件名（`tavotto/engine/<名字>.py`）：公开源码里的模块名，不是用户的东西。
+_ENGINE_FILE = re.compile(r"[a-z_][a-z0-9_]{0,40}\.py")
+
+
+def failure_shape(text: str) -> dict:
+    """一段报错文本（traceback / stderr）→ 只含闭集事实的形状，给受管环境 worker 自检失败用（TVD-JXMR）。
+
+    `structure`：与 worker 日志 `[structure]` 摘要同一套规则（builtins 异常名、缺的模块名白名单 / 哈希、帧分类计数），
+    最多 `STRUCTURE_MAX_SUMMARIES` 条；`engine_frame`：最深的一帧 Tavotto 引擎源码位置（`worker.py:752`）——
+    引擎文件名是公开源码，行号定位到我们自己的哪一行出的错。报错文字、路径、用户文件名一个字都不出。"""
+    lines = str(text or "").splitlines()[-400:]
+    engine_frame = None
+    for ln in lines:
+        fm = _TB_FRAME.match(ln)
+        if fm and _frame_class(fm.group("path")) == "engine":
+            name = re.split(r"[\\/]+", fm.group("path"))[-1]
+            if _ENGINE_FILE.fullmatch(name):
+                engine_frame = f"{name}:{int(fm.group('line'))}"
+    return {
+        "structure": _structure_summaries(lines, sensitive=False),
+        "engine_frame": engine_frame,
+    }
+
+
 def evidence_lines(tail: list[str]) -> tuple[list[str], int]:
     """`evidence_blocks` 摊平成行（老口径）。"""
     blocks, dropped = evidence_blocks(tail)
@@ -1931,7 +1957,8 @@ def _readme(
         "  （只有公开常见工具原样，其余换成哈希）、渲染进程的 PATH 上有没有它、几个固定常见安装位置\n"
         "  （只写位置名，不写路径）里有没有、Homebrew 装了但未链接的是/否（目录太多没扫完时标 scan_truncated，是/否留空），以及 PATH 的段数；不含任何路径）\n"
         "  （report.json 的 project.managed_environment_jobs 段：受管环境安装和重建请求的 Python 包名、\n"
-        "  实际观察到的已安装包名和版本、结果及环境代；不含路径、包源网址、凭据或 pip 原始输出）\n"
+        "  实际观察到的已安装包名和版本、结果及环境代；装好后自检没过时另记失败在哪一步、退出码、稳定错误码、\n"
+        "  上面那种 [structure] 摘要和出错的 Tavotto 引擎源码行号；不含路径、包源网址、凭据、报错文字或 pip 原始输出）\n"
         + extra_zh
         + "- manifest.json：本诊断包自身的格式说明\n"
         "\n"
@@ -1959,10 +1986,10 @@ def _readme(
         "  only, no paths), whether a Homebrew install is present but unlinked (null plus scan_truncated when too many\n"
         "  directories to scan), and the PATH segment count; no paths at all)\n"
         "  (report.json, project.managed_environment_jobs: requested Python package names, observed installed\n"
-        "  package names and versions, outcomes and environment generations; no paths, index URLs,\n"
-        "  credentials or raw pip output)\n"
-        + extra_en
-        + "- manifest.json: describes this package's own format\n"
+        "  package names and versions, outcomes and environment generations; when the post-install self-test\n"
+        "  fails, also the step that failed, the exit code, the stable error code, a [structure] summary as above\n"
+        "  and the Tavotto engine source line it failed at; no paths, index URLs, credentials, error text or\n"
+        "  raw pip output)\n" + extra_en + "- manifest.json: describes this package's own format\n"
         "\n"
         "不包含 / It does NOT intentionally contain:\n"
         "- 图中文字（标题、坐标轴标签、图例、标注）\n"
