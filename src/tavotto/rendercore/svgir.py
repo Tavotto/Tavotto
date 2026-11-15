@@ -787,6 +787,9 @@ class _Translator:
         def collect(ch, style, owners=(), angle=0.0, keep=preserve):
             if style.get("display") == "none":
                 return
+            if "textLength" in ch.attrib or "lengthAdjust" in ch.attrib:
+                # 显式文字长度会改写字距/字形宽度；现有 shaping 不应用它，拒绝而非静默。
+                raise SVGIRError("svgir_unsupported_element", "textLength/lengthAdjust")
             styles[ch] = style
             owners = (*owners, ch)
             space = ch.get(XML_SPACE)
@@ -1123,6 +1126,9 @@ class _Translator:
             style = self._style(el, parent_style)
             if style.get("display") == "none":
                 return
+            if style.get("clip-path", "none") != "none":
+                # 交集无法用现有 IR 表达（只有并集）；明确拒绝，不静默放大裁剪。
+                raise SVGIRError("svgir_unsupported_element", "nested clip-path")
             if _tag(el) in ("clipPath", "g"):
                 for child in el:
                     gather(child, local, style)
