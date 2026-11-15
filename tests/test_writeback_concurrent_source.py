@@ -1,8 +1,11 @@
-"""External edits during replay must survive both original-file write routes.
+"""Source identity checks for both original-file write routes.
 
-The existing writeback fixture owns the fake rendering boundary. Its staging
-outputs here are valid PDF/PNG files, while the real HTTP transaction, backup,
-pixel gate, persistence and cleanup all run unchanged.
+External edits during replay must survive publication and rollback. The same
+fingerprint also refuses a prepare baseline that cannot be read, instead of
+silently skipping the check. The existing writeback fixture owns the fake
+rendering boundary; its staging outputs here are valid PDF/PNG files, while the
+real HTTP transaction, backup, pixel gate, persistence and cleanup all run
+unchanged.
 """
 
 from __future__ import annotations
@@ -119,3 +122,67 @@ def test_external_edit_with_same_size_and_nanosecond_mtime_survives_writeback(
     assert writeback._leftovers(root) == []
     assert m.load_baked() == history
     assert discarded == [fresh] and fresh.shutdowns == 1
+
+
+def test_an_unreadable_prepare_baseline_is_an_error_not_a_skip(tmp_path):
+    """prepare 时读不到原件：没有可比的基准也不能跳过核验。"""
+    source = tmp_path / "Fig1.pdf"
+    source.write_bytes(b"%PDF-1.4\n")
+    with pytest.raises(m.WriteBackPersistError) as excinfo:
+        m._assert_sources_unchanged({source: None}, [source])
+    assert "无法核验写回原件" in str(excinfo.value)
+    assert source.name in str(excinfo.value)
+
+
+def test_a_source_that_cannot_be_hashed_at_prepare_is_a_409_before_any_backup(
+    client, tmp_path, monkeypatch
+):
+    """prepare 时原件读不到：409，原件零改动，不产生备份或历史。"""
+    root = writeback._figs(tmp_path)
+    source = root / "Fig1.pdf"
+    png = root / "Fig1.png"
+    originals = {path: path.read_bytes() for path in (source, png)}
+    hot, fresh = writeback._pair(root, tmp_path)
+    discarded = writeback._use(monkeypatch, hot, fresh)
+    real_sha1 = m._sha1_of
+    failures = []
+
+    def sha1(path):
+        if Path(path) == source and not failures:
+            failures.append(Path(path))
+            raise PermissionError("source is locked")
+        return real_sha1(path)
+
+    monkeypatch.setattr(m, "_sha1_of", sha1)
+    history = copy.deepcopy(m.load_baked())
+    response = client.post(
+        "/api/engine/update_source",
+        json={"id": "Fig1.pdf", "patches": [], "expected_mtime": int(source.stat().st_mtime)},
+    )
+
+    # The failure really came from the prepare baseline, not from a later read.
+    assert failures == [source], "prepare 没有读到原件"
+    assert response.status_code == 409, response.get_json()
+    body = response.get_json()
+    assert body["code"] == "write_back_persist_failed", body
+    assert source.name in body["params"]["reason"], body
+    assert all(path.read_bytes() == before for path, before in originals.items())
+    assert writeback._leftovers(root) == []
+    assert writeback._backup_files() == []
+    assert m.load_baked() == history
+    assert discarded == [fresh] and fresh.shutdowns == 1
+
+
+def test_the_baseline_binds_content_to_the_observed_stat(tmp_path):
+    """同长度、同纳秒 mtime 的内容变化也必须换掉指纹：核验读的是全文。"""
+    source = tmp_path / "Fig1.pdf"
+    source.write_bytes(b"one")
+    stamp = source.stat()
+    first = m._source_fingerprint([source])[source]
+    source.write_bytes(b"two")
+    os.utime(source, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    second = m._source_fingerprint([source])[source]
+
+    assert first is not None and second is not None
+    assert first[:2] == second[:2] == (stamp.st_mtime_ns, stamp.st_size)
+    assert first[2] != second[2]

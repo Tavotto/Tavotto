@@ -18,6 +18,7 @@ import { readProjectFile } from '@/lib/projectFile'
 import {
   activeProjectFile,
   captureFigureSnapshotSave,
+  getWindowHold,
   mergeSavedFigureSnapshots,
   projectFileSnapshot,
   setProjectFile,
@@ -85,6 +86,11 @@ export function writeBoundProjectFile(ctx: SaveContext): Promise<boolean> {
 }
 
 async function writeOnce(ctx: SaveContext): Promise<boolean> {
+  // 硬闸：只读窗口（ADR 0181）绝不写项目文件——入口（`runManualSave`）已经把保存记住了，这里兜住绕过入口的调用
+  if (getWindowHold()) {
+    useUiStore.getState().setStatus(msg('docWindow.choose', undefined, 'workspace'), 'info')
+    return false
+  }
   // 轮到时已经切走了：不把此刻开着的那份写进按 ⌘S 时那份的文件——但要说出来
   const binding = stillCurrent(ctx) ? activeProjectFile() : null
   if (!binding) {

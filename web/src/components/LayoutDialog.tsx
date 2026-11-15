@@ -21,7 +21,8 @@ import {
 import { normalizeLayout } from '@/lib/migrate'
 import { cn } from '@/lib/utils'
 import { openLayoutDocument } from '@/store/actions'
-import { captureFigureSnapshotSave, mergeSavedFigureSnapshots, projectFileSnapshot, setProjectFile, useDocumentStore } from '@/store/documentStore'
+import { captureFigureSnapshotSave, mergeSavedFigureSnapshots, projectFileSnapshot, getWindowHold, setProjectFile, suspendAutosaveFor, useDocumentStore } from '@/store/documentStore'
+import { installFork, resumeAutosaveAfterFork } from '@/store/documentFork'
 import { useProjectStore } from '@/store/projectStore'
 import { captureSaveContext, ifStillCurrent, stillCurrent } from '@/store/saveContext'
 import { useUiStore } from '@/store/uiStore'
@@ -80,6 +81,8 @@ export function LayoutDialog() {
   const intent = useUiStore((s) => s.layoutIntent)
   const toProject = intent === 'saveToProject'
   const saving = intent === 'save' || toProject
+  /** 另存为 = 分叉成一份新排版（新 documentId） */
+  const fork = intent === 'save'
   const [names, setNames] = useState<string[]>([])
   /** 每份的修改时间（epoch 秒）；老后端没有这个字段 = 空表，行上不写日期 */
   const [modified, setModified] = useState<Record<string, number>>({})
@@ -150,6 +153,11 @@ export function LayoutDialog() {
     // 回车连按两下：`busy` 要等下一次渲染才进闭包，两次提交会带着同一个基线并发写同一个
     // 文件，后到的那次撞上前一次刚写成的修订号，回一个「被别处改过」——而别处就是自己
     if (inFlight.current) return
+    // 只读窗口（ADR 0181）不把过时的内容存进项目文件：先在画布上选「在这里编辑」或「存成副本」
+    if (toProject && getWindowHold()) {
+      useUiStore.getState().setStatus(msg('docWindow.choose', undefined, 'workspace'), 'info')
+      return
+    }
     inFlight.current = true
     setBusy(true)
     setError(null)
@@ -158,20 +166,29 @@ export function LayoutDialog() {
     // （`saveContext.ts`）。改名只动文档名，不换排版、不换载入代次，先取后取一样
     const ctx = captureSaveContext()
     const pj = ctx.pj
+    /** 已经换成了新排版：之后哪一步再出错都不是「这次另存没成」，不再拿旧上下文去判（它已不是当前了） */
+    let forkedDone = false
     try {
       // 保存整份文档（schema 3，含全部画布）；文件名即文档名
-      if (!overwrite) useDocumentStore.getState().renameProject(stem)
+      // 另存为（`save`）是真分叉：写好这个名字下的文件，再换成一份新排版（新 documentId），**原排版一个字节不动**——
+      // 所以不在原排版上改名。存进项目（`saveToProject`，⌘S 第一次）仍是给当前排版起名并绑定
+      if (!overwrite && !fork) useDocumentStore.getState().renameProject(stem)
       const edited = projectFileSnapshot()
       const baseRevision = overwrite?.revision ?? knownLayoutRevision(stem, pj) ?? REVISION_ABSENT
-      const pd = useDocumentStore.getState().buildProject()
+      const built = useDocumentStore.getState().buildProject()
+      const forkTitle = overwrite ? name.trim() || stem : stem
+      const pd = fork ? { ...built, project: { ...built.project, name: forkTitle } } : built
       const snapshots = captureFigureSnapshotSave(pd, pj)
+      // 分叉：写文件这段 await 里原排版就摘出自动保存（原排版的本机槽位 / 磁盘一个字节不动）；没成就在 catch 里接回去
+      if (fork) suspendAutosaveFor(ctx.documentId)
       const res = await saveLayout(
         stem,
         pd,
         baseRevision,
         toProject ? { target: 'project' } : undefined,
       )
-      mergeSavedFigureSnapshots(snapshots, res.figure_snapshots)
+      // 分叉时合并留到换走之前、且先把原排版摘出自动保存（见下）：这次合并不能把原排版写回盘
+      if (!fork) mergeSavedFigureSnapshots(snapshots, res.figure_snapshots)
       // 写成了：立刻说「排版写成了」，时间线打「保存」点（ADR 0101 §7）——在后面任何一步
       // （关对话框、记账、状态条）之前，与它们的成败无关（Codex #679）；点属于点下另存为的
       // 那一份（`ctx.moment`：入口取的快照，与上面序列化的是同一刻）。存进项目的是项目文件，
@@ -184,17 +201,31 @@ export function LayoutDialog() {
       // 后端净化过的名字（空格 → `_`）：之后按输入名查修订号也要落到同一份上
       rememberLayoutName(stem, res.name)
       rememberLayoutRevision(res.name ?? stem, res.revision, pj)
+      // 分叉：换成新排版，绑定记在**新排版**名下（原排版保留它原来的绑定与槽位）；切走了就不动此刻开着的那份
+      let boundId = ctx.documentId
+      let forked = false
+      if (fork && stillCurrent(ctx)) {
+        suspendAutosaveFor(ctx.documentId)
+        mergeSavedFigureSnapshots(snapshots, res.figure_snapshots)
+        const latest = useDocumentStore.getState().buildProject()
+        const id = await installFork({ ...latest, project: { ...latest.project, name: forkTitle } })
+        if (id) {
+          boundId = id
+          forked = true
+          forkedDone = true
+        }
+      }
       // 存进了项目（后端交回了项目里的相对路径）→ 绑定，之后 ⌘S 写回这个文件
-      if (pj && res.file) {
+      if (pj && res.file && (!fork || forked)) {
         setProjectFile(
           {
             projectId: pj,
             name: res.name ?? stem,
             file: res.file,
             revision: res.revision,
-            dirty: edited(),
+            dirty: forked ? false : edited(),
           },
-          ctx.documentId,
+          boundId,
         )
       }
       // 状态条是全局通知、话里点名了写到哪：切走了也照说（结果要说出来）
@@ -207,6 +238,8 @@ export function LayoutDialog() {
           'done',
         )
     } catch (e) {
+      if (forkedDone) return
+      if (fork) resumeAutosaveAfterFork(ctx.documentId)
       const revision =
         e instanceof ApiError && e.status === 409 && e.body.code === 'external_change'
           ? e.body.revision

@@ -238,7 +238,12 @@ class ServiceTests(unittest.TestCase):
             ),
             webhook_secret=b"synthetic-webhook-secret-only-32bytes",
             evidence_key=Fernet.generate_key(),
-            exempt_ids={"erwanjun": 1, "dependabot[bot]": 2, "github-actions[bot]": 3},
+            exempt_ids={
+                "erwanjun": 1,
+                "dependabot[bot]": 2,
+                "github-actions[bot]": 3,
+                "mvanhorn": 5,
+            },
             signing_enabled=True,
             test_mode=True,
             api_base=f"http://127.0.0.1:{self.peer.server_port}",
@@ -1209,9 +1214,13 @@ class GateTests(unittest.TestCase):
         self.assertEqual(result["status"], "failure")
         self.assertEqual(result["reason"], "verification_deadline_exceeded")
 
-    def test_repository_policy_stays_unconfigured(self):
+    def test_repository_policy_never_points_at_this_service(self):
+        """Only one service may be the signing authority: the Cloudflare one (ADR 0172 / 0183)."""
         actual = json.loads((ROOT / ".github/cla-policy.json").read_text())
-        self.assertIs(actual["provider"]["configured"], False)
+        if actual["provider"]["configured"]:
+            self.assertEqual(actual["provider"]["protocol"], "tavotto-cla-v1")
+            self.assertEqual(actual["authority_origin"], "https://cla.tavotto.com")
+            self.assertEqual(actual["provider"]["app_slug"], "tavotto-cla")
 
 
 if __name__ == "__main__":

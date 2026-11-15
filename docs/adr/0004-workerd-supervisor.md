@@ -83,6 +83,7 @@ worker 结果字段（`manifest` / `warnings` / `path` / `stems`）**平铺在�
 | `hello` | `max_sessions`, `max_queue` | `workerd_version`, `worker_protocol_version`, `pid`, `capabilities` | 主循环 |
 | `open_session` | `argv`, `env`, `cwd`, `log_path`, `handshake_timeout_ms`, `label` | `session_id`, `spec_hash`, `pid`（复用时 `reused: true`） | 会话线程 |
 | `build` | — | `stems` | 会话线程 |
+| `chart` | 固定 chart 请求（ADR 0182） | engine 及对应产物；不合并 | 会话线程 |
 | `render` | `patches` | `manifest`, `warnings` | 会话线程 |
 | `render_png` | `width` | `path` | 会话线程 |
 | `preview_png` | `patches`, `width`, `tag` | `path` | 会话线程 |
@@ -268,3 +269,10 @@ worker 那五个（`bad_request` / `unknown_cmd` / `unknown_stem` / `script_erro
   argv 同源**、错误码到会话死亡的映射、超时档位随请求下发。
 - `tests/test_worker_roundtrip.py` 末节：真 workerd + 真 matplotlib 的全链路
   （渲染 / 全量列表还原 / 导出状态中立与矢量文字 / 超时重建），缺二进制整组跳过。
+
+## 固定 chart 任务的有界传输（2026-11-15，ADR 0182）
+
+`hello.capabilities` 的 `bounded_chart_tasks` 表示支持 `chart` 转发及 spawn 规格的可选
+`max_frame_bytes`。预算由 Python 产生，Rust 限制发往 child 和从 child 读取的 UTF-8 帧字节数；
+超限回 `svg_resource_limit`，响应超限时 kill/reap child。非空预算参与 spawn 哈希，避免复用不同限制的会话。
+缺少能力时 Python 层使用现有 Python 池，不建立池外 chart 进程；原有无预算 spawn 身份保持。
