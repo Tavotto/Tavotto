@@ -731,6 +731,10 @@ def _probe_summary(
     }
 
 
+#: 目录厂商落 `endpoint_unusable` 的失败原因（其余不落盘，见 `_probe_and_store`）
+_FIRM_REASONS = ("unauthorized", "no_model", "web_page", "wrong_protocol")
+
+
 def _probe_and_store(
     cid: str, *, preferred: str | None, custom: bool, requested: str | None = None
 ) -> dict | None:
@@ -755,7 +759,9 @@ def _probe_and_store(
         protocols=None if custom else ((own,) if own else None),
         root_fix=custom,
     )
-    if not result["conclusive"]:
+    # 目录里的已知厂商只在「确凿」的失败上落盘：Key 被拒 / 型号不存在 / 回网页 / 没有这套协议；额度、坏回复这类可能是暂时的 → 不落盘
+    firm = result["protocol"] is not None or result["reason"] in _FIRM_REASONS
+    if not result["conclusive"] or (not custom and not firm):
         return _probe_summary(result, requested=requested, current=own, checked=False)
     ai_providers.apply_probe(cid, base_url=base, model=model, result=result)
     return _probe_summary(result, requested=requested, current=own, checked=True)

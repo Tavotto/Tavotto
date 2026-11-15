@@ -160,9 +160,11 @@ def _chat_rec(pid="gw", **kw):
         (404, b"<html>not found</html>", "wrong_protocol"),
         (405, b"{}", "wrong_protocol"),
         (404, b'{"error": {"message": "The model `x` does not exist"}}', "no_model"),
-        (503, b'{"error": {"message": "No available channel for model x"}}', "no_model"),
+        (503, b'{"error": {"message": "No available channel for model x"}}', "wrong_protocol"),
+        (503, b'{"error": {"message": "overloaded"}}', "network"),
+        (502, b"<html>bad gateway</html>", "network"),
+        (500, b'{"error": {"message": "internal"}}', "network"),
         (400, b'{"error": {"message": "model not found"}}', "no_model"),
-        (500, b'{"error": {"message": "internal"}}', "bad_reply"),
     ],
 )
 def test_classify_closed_set(status, body, want):
@@ -659,3 +661,52 @@ def test_check_of_a_legacy_incompatible_record_is_refused(client, gw):
     config.set_ai_settings(ai)
     assert client.post("/api/ai/connections/old/check").status_code == 404
     assert gw.calls == []
+
+
+def test_5xx_is_transient_no_conclusion_and_does_not_stop_other_protocols(gw):
+    gw.routes = {
+        "https://gw.example.org/v1/chat/completions": _j({"error": {"message": "x"}}, 502),
+        "https://gw.example.org/v1/responses": _j(RESP_OK),
+    }
+    r = ai_probe.detect("https://gw.example.org/v1", KEY, "m1")
+    assert r["reasons"]["openai-chat"] == "network" and r["protocol"] == "openai-responses"
+    gw.routes = {
+        u: _j({"error": {"message": "x"}}, 500)
+        for u in (
+            "https://gw.example.org/v1/chat/completions",
+            "https://gw.example.org/v1/responses",
+            "https://gw.example.org/v1/messages",
+        )
+    }
+    r = ai_probe.detect("https://gw.example.org/v1", KEY, "m1")
+    assert r["conclusive"] is False and r["protocol"] is None
+
+
+def test_save_with_5xx_everywhere_is_not_persisted_as_unusable(client, gw):
+    gw.routes = {
+        u: _j({"error": {"message": "x"}}, 500)
+        for u in (
+            "https://gw.example.org/v1/chat/completions",
+            "https://gw.example.org/v1/responses",
+            "https://gw.example.org/v1/messages",
+        )
+    }
+    body = _post(
+        client, vendor="custom", api_key=KEY, base_url="https://gw.example.org/v1", model="m1"
+    ).get_json()
+    assert body["probe"]["checked"] is False and body["connection"]["state"] == "ready"
+    assert "last_error" not in ai_providers.get(body["connection"]["id"])
+
+
+@pytest.mark.parametrize(
+    ("status", "persisted"),
+    [(401, True), (404, True), (400, False), (429, False), (500, False)],
+)
+def test_catalog_vendor_persists_only_firm_failures(client, gw, status, persisted):
+    msg = {"error": {"message": "x"}}
+    gw.routes = {"https://api.deepseek.com/anthropic/v1/messages": _j(msg, status)}
+    conn = _post(client, vendor="deepseek", api_key=KEY, model="deepseek-v4-pro").get_json()[
+        "connection"
+    ]
+    rec = ai_providers.get(conn["id"])
+    assert ("last_error" in rec) is persisted, (status, rec)

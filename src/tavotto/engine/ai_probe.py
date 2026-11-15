@@ -66,6 +66,7 @@ _MODEL_GONE = (
     "no available",
     "model_not_found",
 )
+_NO_CHANNEL = ("no available channel", "无可用渠道", "no channel available")
 _QUOTA_WORDS = ("quota", "insufficient", "balance", "credit", "billing", "余额", "额度")
 _OPENAI_HOST = "api.openai.com"
 _OPENAI_MODEL = re.compile(r"^(gpt-|chatgpt-|o\d)", re.IGNORECASE)
@@ -173,6 +174,11 @@ def classify(wire, status: int, data: bytes) -> tuple[str, bool]:
     if 300 <= status < 400:
         return "web_page", False  # 跳去登录页 / 首页（不跟随重定向）
     text = _err_text(obj)
+    if status >= 500:
+        # 5xx 是暂时性的（服务商抖动 / 过载）：没结论，不落盘。唯一例外：中转站的「没有可用渠道」503 = 这个地址上没有这套协议的渠道
+        if status == 503 and any(w in text for w in _NO_CHANNEL):
+            return "wrong_protocol", False
+        return "network", False
     if status in (404, 405) and html:
         return "wrong_protocol", False
     if html:
@@ -202,8 +208,9 @@ class _Budget:
         return None if left < 1.0 else min(self.per, left)
 
 
-def _attempt(protocol, base, key, model, budget: _Budget) -> tuple[str, str]:
-    """对一个具体地址发探测 → (结论, token_field)；`token_field` 只对 chat 有意义。"""
+def _attempt(protocol, base, key, model, budget: _Budget) -> tuple[str, str, bool]:
+    """对一个具体地址发探测 → (结论, token_field, 传输层失败)；`token_field` 只对 chat 有意义。
+    传输层失败 = 连不上 / 超时 / 证书（同主机不必再试）；5xx 也归 `network` 但主机是通的，不算。"""
     fields = (
         ("max_tokens", "max_completion_tokens") if protocol == "openai-chat" else ("max_tokens",)
     )
@@ -212,16 +219,16 @@ def _attempt(protocol, base, key, model, budget: _Budget) -> tuple[str, str]:
         used = field
         timeout = budget.slice()
         if timeout is None:
-            return "network", used
+            return "network", used, True
         wire, req = _build(protocol, base, key, model, field)
         try:
             status, _h, data = wires.post_json(req.url, req.headers, req.body, timeout=timeout)
         except wires.RunnerFailure:
-            return "network", used
+            return "network", used, True
         reason, retry = classify(wire, status, data)
         if not retry:
-            return reason, used
-    return "bad_reply", used
+            return reason, used, False
+    return "bad_reply", used, False
 
 
 def detect(
@@ -270,10 +277,10 @@ def detect(
         cands = [known_root[family]] if family in known_root else candidates(proto, base)
         if not root_fix:
             cands = cands[:1]
-        reason, field, root = "network", "max_tokens", cands[0]
+        reason, field, root, transport = "network", "max_tokens", cands[0], False
         for cand in cands:
             root = cand
-            reason, field = _attempt(proto, cand, key, model, budget)
+            reason, field, transport = _attempt(proto, cand, key, model, budget)
             if reason not in ("web_page", "wrong_protocol"):
                 break
         reasons[proto] = reason
@@ -286,9 +293,9 @@ def detect(
                 "reason": None,
                 "conclusive": True,
             }
-        if reason == "network":
+        if transport:
             host_dead = True
-        elif reason != "web_page" and reason != "wrong_protocol":
+        elif reason not in ("web_page", "wrong_protocol", "network"):
             known_root[family] = root  # 这个根上有真 API 在答（哪怕拒了）：同族协议别再换根
     seen = [r for r in reasons.values() if r != "network"]
     primary = next((r for r in _PRIMARY_ORDER if r in reasons.values()), "network")
