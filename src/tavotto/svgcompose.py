@@ -748,7 +748,8 @@ def compose_native_scene(source_svg: bytes, binding: dict, scaffold: dict, model
             node.set("id", value)
             source_ids.add(value)
     resolver = svgir._Translator(scene, *size, None, None)
-    render_frame = scaffold.get("render_frame")
+    # 只读 manifest 内那一份（#1919）：产物顶层不再复制 render_frame。
+    render_frame = (scaffold.get("manifest") or {}).get("render_frame")
     source_nodes = None
     viewport_clip = None
     if render_frame is not None:
