@@ -1,0 +1,3 @@
+## Exporting a layout with more than three script figures no longer fails with "Figure session expired"
+
+On machines with enough memory, Tavotto keeps up to eight script figures ready at once, but its background process still closed every figure beyond the third on its own. In a project with four or more script figures, exporting could then fail for whole batches of figures ("The existing Figure session expired; SVG capture cannot rerun it"), and switching between figures often re-ran a script you had just opened. Figures that Tavotto keeps ready now stay ready, so these exports go through and switching back is instant again.

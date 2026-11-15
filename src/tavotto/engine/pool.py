@@ -100,6 +100,21 @@ def _env_cap() -> int | None:
     return max(1, min(MAX_ALIVE_ENV_LIMIT, value))
 
 
+#: workerd 自己的会话上限在 Python 池上限之外多留的余量：写回重放之类的一次性会话也住在 workerd 里，
+#: 池满时它们不该把池以为还活着的热会话挤掉。
+WORKERD_TRANSIENT_HEADROOM = 2
+
+
+def workerd_session_cap() -> int:
+    """hello 里交给 workerd 的会话上限：**盖住 `max_alive()` 可能取到的最大值**再加一次性会话的余量。
+
+    淘汰策略只归 Python 池（`max_alive()` + LRU，淘汰时关掉 workerd 里那条会话）；workerd 的上限只是
+    防失控的兜底，绝不能比池紧——比池紧时 workerd 会按自己的 LRU 悄悄杀掉池以为还活着的会话，
+    下一次渲染白白冷启动，导出（`require_built`）直接失败成 `svg_source_unavailable`。
+    workerd 进程整个生命期只 hello 一次，而 `max_alive()` 随内存变，所以这里取上界，不取当前值。"""
+    return max(MAX_ALIVE_CEILING, _env_cap() or 0) + WORKERD_TRANSIENT_HEADROOM
+
+
 def max_alive() -> int:
     """worker 会话数上限的**唯一出处**（淘汰、冷启动容量、发布账本都问它）。
 

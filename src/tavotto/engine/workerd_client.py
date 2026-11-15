@@ -189,13 +189,23 @@ class WorkerdClient:
         return str(base / "workerd.log")
 
     def ensure_started(
-        self, max_sessions: int = 3, max_queue: int = 32, acquire_lease_ms: int = ACQUIRE_LEASE_MS
+        self,
+        max_sessions: int | None = None,
+        max_queue: int = 32,
+        acquire_lease_ms: int = ACQUIRE_LEASE_MS,
     ) -> None:
         """确保有一条活着的 workerd；崩过的自动重启（有上限）。
+
+        `max_sessions` 缺省 = `pool.workerd_session_cap()`：会话上限归 Python 池（ADR 0159），
+        workerd 的上限只做兜底、不得比池紧（否则它会悄悄杀掉池以为还活着的会话）。
 
         hello 协商**在 `_lock` 之外**发：它是一次要等响应的往返，而 reader 线程
         投递响应时要拿同一把 `_lock`——持着它去等响应就是一次必然的死锁。
         """
+        if max_sessions is None:
+            from . import pool  # noqa: PLC0415 — pool 也是延后 import 本模块，模块级互引会成环
+
+            max_sessions = pool.workerd_session_cap()
         with self._start_lock:
             with self._lock:
                 proc = self._proc
