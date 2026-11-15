@@ -121,8 +121,6 @@ export function Inspector({
               key={id}
               variant="segmented"
               data-inspector-tab={id}
-              // 五个页签时再收紧内边距：最窄的右栏（320）里「改图助手」也要完整显示、不省略
-              className={reviewShare ? 'px-0' : undefined}
               panelId={PANEL_ID[id]}
               active={tab === id}
               onClick={() => setTab(id)}

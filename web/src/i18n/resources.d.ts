@@ -406,7 +406,7 @@ export default interface Resources {
       "running": "运行中",
       "timeout": "超时"
     },
-    "tabLabel": "改图助手",
+    "tabLabel": "助手",
     "trace": {
       "agent": {
         "builtin": "内置执行器",
