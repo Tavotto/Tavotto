@@ -127,9 +127,9 @@ def test_sandbox_mode_is_a_closed_set_fact_in_logs_and_trace():
         assert ai_bridge._cli_fact_attributes(facts) == {"cli_sandbox_mode": mode}
     # 日志里是明文码；集合外的值不会被当成闭集码放行（见 test_codex_run_facts 的哈希用例）
     sess = {"cli_runs": [_minimal_snapshot("unsandboxed")]}
-    shown = ai_bridge._cli_log_facts(sess)[-1]
+    shown = ai_bridge._cli_log_facts(sess)[20]  # sandbox_mode 槽位（其后是 cli_fail_status）
     assert str(shown) == "unsandboxed"
-    assert str(ai_bridge._cli_log_facts({})[-1]) == "-"
+    assert str(ai_bridge._cli_log_facts({})[20]) == "-"
 
 
 def _minimal_snapshot(mode: str) -> dict:

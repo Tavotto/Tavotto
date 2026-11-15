@@ -88,7 +88,10 @@ order: 20
   （出图前的能力门槛）；widget 缺失时 open/apply 在 structuredContent 里带
   `canvas_ui: {available: false, code: "widget_missing"}` 并在文字里说出口，
   `resources/read` 对缺失产物报「缺失 + 修法」而不是回空 HTML。
-  看护 `tests/test_mcp_resolver.py` + `tests/test_mcp_stdio.py`。
+  pip / pipx / uvx 装的 wheel 本来就不带画布（装法判定唯一出处 `widget.install_form()`）：code 改报
+  `widget_not_in_install`、文字不带「!」、不叫人重装插件；`tavotto_health` 的 `checks.package` /
+  `canvas_resource` 报 `{ok: true, applicable: false}`。
+  看护 `tests/test_mcp_resolver.py` + `tests/test_mcp_stdio.py` + `tests/test_mcp_health_install_form.py`。
 - **降级诊断窄的先判、宽的兜底（#285、#721）**：`found["cmd"]` 有东西时依次判
   `engine_too_old`（清单有下限、版本低于它）→ `engine_incompatible`（CLI 背后**有**装着 tavotto
   的解释器，桥却 import 不全，而说不出是不是太旧：插件没带 `plugin-build.json`，或版本够了却

@@ -24,6 +24,7 @@
 import { create } from 'zustand'
 import {
   actOnPreparationSession,
+  addViewScopeScript,
   ApiError,
   cancelNativeSession,
   createPreparationSession,
@@ -515,6 +516,16 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     open: async (target, opts) => {
       const key = keyOfTarget(target)
       const pj = currentProjectId()
+      // 明确「打开并运行」一个脚本：范围是「只看脚本的图」时把它加进去（ADR 0184 §三）。后台顺手做，失败不打扰
+      if (opts?.run && 'script' in target) {
+        void addViewScopeScript(target.script)
+          .then(async (r) => {
+            // 动态 import：与下面取素材清单同一个理由（避免 store 之间的静态环）
+            const { useAssetStore } = await import('@/store/assetStore')
+            if (currentProjectId() === pj) useAssetStore.getState().setViewScope(r.view_scope)
+          })
+          .catch(() => undefined)
+      }
       const prev = entry(key)
       // 同一脚本换了参数再打开：上一份报告属于旧参数的会话，不许留（留着的话，新会话建不出来时 refresh 会去补拉旧会话，
       // 报告和动作就按旧参数展示 / 执行，而条目记着新目标，「草稿不同」的提示也就不亮了）。同参数再打开才保留不闪空
