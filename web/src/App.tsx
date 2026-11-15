@@ -64,6 +64,8 @@ import { startDocumentLoadSync, syncLoadedDocument } from '@/store/liveSync'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectStore } from '@/store/projectStore'
+import { useDataFigureStore } from '@/store/dataFigureStore'
+import { DataPage } from '@/components/datastudio/DataPage'
 import { useEnvStore } from '@/store/envStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
@@ -182,6 +184,8 @@ function Workspace() {
   // 模式按画布各自判：单图编辑的这一张画布若还有别的画布，标签行要留着，否则切不走
   const multiCanvas = useDocumentStore((s) => s.canvases.length > 1)
   const showTabs = !fastEdit || multiCanvas
+  // 「从数据到图」的数据页是项目里的一个视图：开着时它占满工作面板，画布与属性栏原样留在后面（display: none，状态不丢）
+  const showData = useDataFigureStore((s) => s.view !== 'none')
   const leftOpen = useUiStore((s) => s.leftOpen)
   const rightOpen = useUiStore((s) => s.rightOpen)
   const layoutKind = useWorkspaceLayout()
@@ -282,7 +286,7 @@ function Workspace() {
         <div className="relative flex min-h-0 flex-1">
           <LeftRail />
           {/* 窄屏时抽屉盖在画布上（绝对定位在轨道右侧），画布宽度不被侵占 */}
-          {left.mounted && <LeftPanel overlay={overlay} state={left.state} />}
+          {left.mounted && !showData && <LeftPanel overlay={overlay} state={left.state} />}
           {/* 工作面板（2026-09-30 重设计，参照 OpenBitFun）：灰色桌面上放导航，作品放进这一块
               白色圆角面板——画布标签行 + 画布 + 属性栏。画布灰直接铺到面板边缘、由面板圆角裁切，
               不留一圈白边；标签行与属性栏页签条同高 44，底边 hairline 连成一条 */}
@@ -290,6 +294,9 @@ function Workspace() {
             data-work-panel
             className="relative mb-2 mr-2 flex min-w-0 flex-1 overflow-hidden rounded-panel bg-surface shadow-card"
           >
+            {showData && <DataPage />}
+            {/* 数据页开着时整块编辑器收起：`contents` 让它的三块仍是工作面板的直接子项（版式与之前逐字相同），`hidden` 只在数据页时才有 */}
+            <div className={showData ? 'hidden' : 'contents'}>
             <div className="relative flex min-w-0 flex-1 flex-col">
               {/* 工作面板里不再有提示条（2026-10-16 UI 2.0）：文档的事（冲突 / 保存失败……）在顶栏的文档状态芯片里，
                   项目接入状态在项目名后面的胶囊里，「构建版本不一致」是顶栏右侧的 `BuildMismatchChip`——
@@ -325,6 +332,7 @@ function Workspace() {
               </div>
             </div>
             {right.mounted && <Inspector overlay={rightOverlay} state={right.state} />}
+            </div>
             {/* ⌥⌘S 命名小框：挂在工作面板里，居中于面板自己（不是整行，左栏 / 属性栏开合都不偏） */}
             <NamedNodeQuickBox />
           </div>

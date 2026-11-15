@@ -537,7 +537,8 @@
       "pick_x": "Which column goes on the x axis?",
       "pick_design": "Is the same subject measured repeatedly in this data?",
       "pick_unit": "Which column says which subject a row belongs to?",
-      "mixed_cells": "{{count}} cells in “{{column}}” aren’t numbers (out of {{rows}} rows with data). What should be done with them?"
+      "mixed_cells": "{{count}} cells in “{{column}}” aren’t numbers (out of {{rows}} rows with data). What should be done with them?",
+      "other": "One more thing to decide."
     },
     "option": {
       "table": "{{file}}: {{rows}} rows, {{groups}} groups",
@@ -546,9 +547,10 @@
       "design_independent": "Every row is a different subject",
       "design_repeated": "The same subject is measured several times",
       "unsure": "Not sure",
-      "skip": "Ignore those rows",
-      "extract": "Take the number inside",
-      "describe": "Let me explain"
+      "skip": "Don’t plot these {{count}} rows",
+      "extract": "Use only the numbers inside",
+      "describe": "Let me explain",
+      "other": "This one"
     },
     "candidate": {
       "points_mean": {
@@ -606,6 +608,10 @@
       "box_points_single": {
         "title": "Box + points",
         "why": "Shows the median and range, with every observation kept as a point."
+      },
+      "other": {
+        "title": "This style",
+        "why": "One way to draw this data."
       }
     },
     "reason": {
@@ -644,6 +650,79 @@
       "cannotExtract": "No number found; it will be ignored",
       "more": "{{count}} more rows",
       "placeholder": "Say how these cells should count, for example “ND counts as 0”"
+    },
+    "list": {
+      "heading": "Data",
+      "fileMeta": "{{rows}} rows · {{columns}} columns",
+      "sheets": "{{count}} sheets",
+      "unsure": "Not sure about this one, skipped for now",
+      "unreadable": "Can’t read",
+      "unread": "Not read",
+      "expand": "Show sheets",
+      "collapse": "Hide sheets",
+      "empty": "No data files found in this folder.",
+      "loadFailed": "Couldn’t look through this folder."
+    },
+    "stage": {
+      "pickOne": "Pick a table on the left."
+    },
+    "working": {
+      "reading": "Reading…",
+      "proposing": "Drawing a few options…",
+      "drawing": "Drawing…"
+    },
+    "preview": {
+      "unreadable": "This file can’t be read.",
+      "headerPick": "Which row holds the column names",
+      "lineN": "Row {{n}}",
+      "headerTag": "Use as column names",
+      "skipped": "Skipped {{count}} note lines at the top.",
+      "shown": "Showing the first {{shown}} of {{total}} rows",
+      "type": {
+        "numeric": "Number",
+        "date": "Date",
+        "text": "Text",
+        "mixed": "Mixed",
+        "id": "ID"
+      }
+    },
+    "start": "Start",
+    "back": "Back",
+    "mixed": {
+      "title": "Some cells aren’t numbers",
+      "colRow": "Row",
+      "colOthers": "Other columns in the row",
+      "colRaw": "As written",
+      "colUse": "Used in the plot",
+      "none": "Not plotted",
+      "note": "Your file won’t be changed.",
+      "continue": "Continue",
+      "cancel": "Cancel"
+    },
+    "pick": {
+      "title": "Ways to draw this data",
+      "methods": "Style",
+      "recommended": "Recommended",
+      "draw": "Draw this one",
+      "another": "Pick another table"
+    },
+    "nothing": {
+      "generic": "Couldn’t draw anything from this table.",
+      "another": "Pick another table"
+    },
+    "drawn": {
+      "rows": "Rows {{rows}}",
+      "andMore": " and more",
+      "open": "Open this figure"
+    },
+    "problem": {
+      "retry": "Try again",
+      "notDrawn": "The figure wasn’t drawn.",
+      "proposeFailed": "Couldn’t prepare the options.",
+      "unwritable": "This folder can’t be written to, so the figure has nowhere to go.",
+      "otherFolder": "Pick another folder",
+      "otherWay": "Try another way",
+      "reveal": "Show in folder"
     }
   }
 }

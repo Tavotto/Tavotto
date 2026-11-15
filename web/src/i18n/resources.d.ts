@@ -58,6 +58,7 @@ export default interface Resources {
       "unconfirmedHint": "上一次的结果还没确认，请先在对话里查询结果。"
     },
     "dataFigureV2": {
+      "back": "返回",
       "candidate": {
         "bar_error": {
           "title": "柱 + 误差线",
@@ -99,6 +100,10 @@ export default interface Resources {
           "title": "每个对象一条线",
           "why": "同一对象的重复测量连成线，看每个对象各自怎么变。"
         },
+        "other": {
+          "title": "这种画法",
+          "why": "用这份数据画出来的一种样子。"
+        },
         "points_mean": {
           "title": "原始点 + 均值",
           "why": "每个点都画出来，再标出各组均值，能同时看到差别和离散程度。"
@@ -116,6 +121,34 @@ export default interface Resources {
           "why": "看每组数值分布的形状，点保留了每个观测。"
         }
       },
+      "drawn": {
+        "andMore": " 等",
+        "open": "打开这张图",
+        "rows": "第 {{rows}} 行"
+      },
+      "list": {
+        "collapse": "收起工作表",
+        "empty": "这个文件夹里没找到数据文件。",
+        "expand": "展开工作表",
+        "fileMeta": "{{rows}} 行 · {{columns}} 列",
+        "heading": "数据",
+        "loadFailed": "没能看清这个文件夹里有什么。",
+        "sheets": "{{count}} 张工作表",
+        "unread": "没读",
+        "unreadable": "读不了",
+        "unsure": "没认准，先不用"
+      },
+      "mixed": {
+        "cancel": "取消",
+        "colOthers": "同一行的其它列",
+        "colRaw": "原文",
+        "colRow": "行",
+        "colUse": "画图时用",
+        "continue": "继续",
+        "none": "不画",
+        "note": "原文件不会改。",
+        "title": "有几格不是数字"
+      },
       "mixedCells": {
         "cannotExtract": "取不出数字，会被忽略",
         "extracted": "取数字后是 {{value}}",
@@ -123,19 +156,56 @@ export default interface Resources {
         "placeholder": "说说这些格子该怎么算，比如「ND 记为 0」",
         "previewRow": "第 {{row}} 行：{{text}}"
       },
+      "nothing": {
+        "another": "换一张表",
+        "generic": "这张表没能画出图。"
+      },
       "option": {
         "column": "{{column}}",
         "describe": "我来说明",
         "design_independent": "每一行是不同的对象",
         "design_repeated": "同一个对象被重复测了好几次",
-        "extract": "取出里面的数字",
-        "skip": "忽略这些行",
+        "extract": "只用里面的数字",
+        "other": "这一项",
+        "skip": "不画这 {{count}} 行",
         "table": "{{file}}：{{rows}} 行，{{groups}} 组",
         "table_sheet": "{{file}} 的「{{sheet}}」：{{rows}} 行，{{groups}} 组",
         "unsure": "不确定"
       },
+      "pick": {
+        "another": "换一张表",
+        "draw": "画这张",
+        "methods": "画法",
+        "recommended": "推荐",
+        "title": "这份数据可以这样画"
+      },
+      "preview": {
+        "headerPick": "哪一行是每列的名字",
+        "headerTag": "当作每列的名字",
+        "lineN": "第 {{n}} 行",
+        "shown": "显示前 {{shown}} 行，共 {{total}} 行",
+        "skipped": "开头 {{count}} 行是说明，已跳过。",
+        "type": {
+          "date": "日期",
+          "id": "编号",
+          "mixed": "混有文字",
+          "numeric": "数值",
+          "text": "文字"
+        },
+        "unreadable": "这个文件读不了。"
+      },
+      "problem": {
+        "notDrawn": "这张图没有画出来。",
+        "otherFolder": "换个文件夹",
+        "otherWay": "换一种画法",
+        "proposeFailed": "没能准备好画法。",
+        "retry": "再试一次",
+        "reveal": "在文件夹中显示",
+        "unwritable": "这个文件夹写不进，图放不下。"
+      },
       "question": {
         "mixed_cells": "「{{column}}」里有 {{count}} 个格子不是数字（共 {{rows}} 行有数据），怎么处理？",
+        "other": "还需要你定一件事。",
         "pick_design": "这些数据是同一个对象被重复测量的吗？",
         "pick_group": "按哪一列分组比较？",
         "pick_table": "用哪张表画？",
@@ -172,6 +242,15 @@ export default interface Resources {
         "unknown": "图画好了，数据核对没能完成。",
         "unverifiable": "图画好了，但这类图没法逐项核对数据。",
         "verified": "图画好了，数据和文件逐项对上。"
+      },
+      "stage": {
+        "pickOne": "从左边选一张表。"
+      },
+      "start": "开始",
+      "working": {
+        "drawing": "正在画…",
+        "proposing": "正在画几种画法…",
+        "reading": "正在读…"
       }
     },
     "dependency": {
@@ -5923,6 +6002,13 @@ export default interface Resources {
     "home": {
       "backHome": "返回主页",
       "browseMore": "浏览更多项目",
+      "entry": {
+        "dataHint": "选数据文件夹，让助手帮你画出来。",
+        "dataTitle": "只有数据，还没有图",
+        "scriptHint": "把 .py 拖到这里，或点击选择。",
+        "scriptHintPicker": "点击选择脚本所在的文件夹。",
+        "scriptTitle": "已有画图脚本，想精修"
+      },
       "import": {
         "dropNoPath": "系统没有告诉 {{product}}「{{name}}」在哪个文件夹，请在接下来的窗口里选中它。",
         "dropNotScript": "「{{name}}」打不开。主页可以拖入脚本（.py、.R、.m）、笔记本（.ipynb）或项目文件夹。",

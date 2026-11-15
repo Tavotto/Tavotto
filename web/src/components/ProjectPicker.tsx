@@ -35,6 +35,7 @@ import { disambiguateRecent, looksLikePath, splitRecent, submitTargetFor } from 
 import { cn } from '@/lib/utils'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { useProjectStore } from '@/store/projectStore'
+import { useDataFigureStore } from '@/store/dataFigureStore'
 import { DirBrowser, NewProjectNameDialog, TailPath } from './DirBrowser'
 import { HomeView } from './home/HomeView'
 import { Button } from './ui/Button'
@@ -76,6 +77,16 @@ export function ProjectPicker() {
     }
   }
 
+  // 主页左卡「只有数据，还没有图」（实验开关 `ai.taf.enabled` 开着才画）：选一个文件夹，按「整个文件夹」打开，成功后进数据页。
+  // 先占住数据页的位置（`beginEntering`），免得打开完成到进数据页之间闪一帧画布
+  const dataEntry = useProjectEntry((path) => {
+    useDataFigureStore.getState().beginEntering()
+    void openPath(path, false, { entry: 'folder' }).then((ok) => {
+      if (ok) useDataFigureStore.getState().enter()
+      else useDataFigureStore.getState().cancelEntering()
+    })
+  })
+
   // 选择器不在工作台的 TooltipProvider 里（App 在没有项目时只渲染这一屏）：行的「⋯」与 Windows 桌面版
   // 左上角的「菜单」按钮都是带气泡的 IconButton，主页与「全部项目」两个视图都要有这一层
   // （只给「全部项目」包过：Windows 桌面版主页因 AppMenuButton 直接崩到「界面出错了」，#1080）
@@ -96,6 +107,7 @@ export function ProjectPicker() {
           error={error}
           busyPath={busyPath}
           openPath={(path, entry) => openPath(path, false, entry)}
+          onOpenData={dataEntry.startOpen}
           onShowAll={() => {
             setError(null)
             setView('all')
@@ -112,6 +124,7 @@ export function ProjectPicker() {
           }}
         />
       )}
+      {dataEntry.dialogs}
     </TooltipProvider>
   )
 }

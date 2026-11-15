@@ -530,7 +530,8 @@
       "pick_x": "横轴用哪一列？",
       "pick_design": "这些数据是同一个对象被重复测量的吗？",
       "pick_unit": "哪一列标出了是哪个对象？",
-      "mixed_cells": "「{{column}}」里有 {{count}} 个格子不是数字（共 {{rows}} 行有数据），怎么处理？"
+      "mixed_cells": "「{{column}}」里有 {{count}} 个格子不是数字（共 {{rows}} 行有数据），怎么处理？",
+      "other": "还需要你定一件事。"
     },
     "option": {
       "table": "{{file}}：{{rows}} 行，{{groups}} 组",
@@ -539,9 +540,10 @@
       "design_independent": "每一行是不同的对象",
       "design_repeated": "同一个对象被重复测了好几次",
       "unsure": "不确定",
-      "skip": "忽略这些行",
-      "extract": "取出里面的数字",
-      "describe": "我来说明"
+      "skip": "不画这 {{count}} 行",
+      "extract": "只用里面的数字",
+      "describe": "我来说明",
+      "other": "这一项"
     },
     "candidate": {
       "points_mean": {
@@ -599,6 +601,10 @@
       "box_points_single": {
         "title": "箱线 + 原始点",
         "why": "看中位数和分布范围，点保留了每个观测。"
+      },
+      "other": {
+        "title": "这种画法",
+        "why": "用这份数据画出来的一种样子。"
       }
     },
     "reason": {
@@ -637,6 +643,79 @@
       "cannotExtract": "取不出数字，会被忽略",
       "more": "还有 {{count}} 行",
       "placeholder": "说说这些格子该怎么算，比如「ND 记为 0」"
+    },
+    "list": {
+      "heading": "数据",
+      "fileMeta": "{{rows}} 行 · {{columns}} 列",
+      "sheets": "{{count}} 张工作表",
+      "unsure": "没认准，先不用",
+      "unreadable": "读不了",
+      "unread": "没读",
+      "expand": "展开工作表",
+      "collapse": "收起工作表",
+      "empty": "这个文件夹里没找到数据文件。",
+      "loadFailed": "没能看清这个文件夹里有什么。"
+    },
+    "stage": {
+      "pickOne": "从左边选一张表。"
+    },
+    "working": {
+      "reading": "正在读…",
+      "proposing": "正在画几种画法…",
+      "drawing": "正在画…"
+    },
+    "preview": {
+      "unreadable": "这个文件读不了。",
+      "headerPick": "哪一行是每列的名字",
+      "lineN": "第 {{n}} 行",
+      "headerTag": "当作每列的名字",
+      "skipped": "开头 {{count}} 行是说明，已跳过。",
+      "shown": "显示前 {{shown}} 行，共 {{total}} 行",
+      "type": {
+        "numeric": "数值",
+        "date": "日期",
+        "text": "文字",
+        "mixed": "混有文字",
+        "id": "编号"
+      }
+    },
+    "start": "开始",
+    "back": "返回",
+    "mixed": {
+      "title": "有几格不是数字",
+      "colRow": "行",
+      "colOthers": "同一行的其它列",
+      "colRaw": "原文",
+      "colUse": "画图时用",
+      "none": "不画",
+      "note": "原文件不会改。",
+      "continue": "继续",
+      "cancel": "取消"
+    },
+    "pick": {
+      "title": "这份数据可以这样画",
+      "methods": "画法",
+      "recommended": "推荐",
+      "draw": "画这张",
+      "another": "换一张表"
+    },
+    "nothing": {
+      "generic": "这张表没能画出图。",
+      "another": "换一张表"
+    },
+    "drawn": {
+      "rows": "第 {{rows}} 行",
+      "andMore": " 等",
+      "open": "打开这张图"
+    },
+    "problem": {
+      "retry": "再试一次",
+      "notDrawn": "这张图没有画出来。",
+      "proposeFailed": "没能准备好画法。",
+      "unwritable": "这个文件夹写不进，图放不下。",
+      "otherFolder": "换个文件夹",
+      "otherWay": "换一种画法",
+      "reveal": "在文件夹中显示"
     }
   }
 }

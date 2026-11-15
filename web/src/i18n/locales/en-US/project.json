@@ -126,6 +126,13 @@
       "dropTitle": "Drag a Python script here",
       "sample": "Try a sample script",
       "sampleHint": "{{product}} finds the figures the script makes and opens the layout view."
+    },
+    "entry": {
+      "dataTitle": "I have data, no figure yet",
+      "dataHint": "Pick a data folder and let the assistant draw it for you.",
+      "scriptTitle": "I have a plotting script to polish",
+      "scriptHint": "Drop a .py here, or click to choose.",
+      "scriptHintPicker": "Click to choose the folder with your script."
     }
   },
   "switcher": {

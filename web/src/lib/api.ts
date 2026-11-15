@@ -4452,6 +4452,167 @@ export const aiDataFigure = (
     pj,
   )
 
+/* ---------------- 数据出图 v2（ADR 0178）：数据清单 / 概览 / 出备选 / 提交 ---------------- */
+
+/** 文本表读得怎么样：`ok` 认得准、`unsure` 能读但哪一行是列名拿不准、`unreadable` 读不了（`code` 稳定码） */
+export interface AiDataTable {
+  status: 'ok' | 'unsure' | 'unreadable'
+  code: string | null
+  delimiter: 'comma' | 'tab' | 'semicolon' | 'space' | null
+  /** 「每列的名字」所在的物理行号（1 起；`unsure` 时是猜的） */
+  header_row: number | null
+  columns: number | null
+  rows: number | null
+  /** 只有 `unsure` 带：文件前若干行原文 */
+  preview?: { line: number; text: string }[]
+}
+
+/** XLSX 的一张工作表；行列数 / status / code 全是 null = 没读（超出读取预算），不是读不了 */
+export interface AiDataSheet {
+  name: string
+  hidden: boolean
+  rows: number | null
+  columns: number | null
+  status: 'ok' | 'unreadable' | null
+  code: string | null
+}
+
+/** `GET /api/ai/data-files?formats=all` 的一项。`table: null` = 超出读取预算没读；`sheets: null` = 整本没读 / 读不开 */
+export interface AiDataFileEntry {
+  path: string
+  size: number
+  table?: AiDataTable | null
+  sheets?: AiDataSheet[] | null
+}
+
+export const aiDataFilesAll = (pj?: string | null) =>
+  jsonFetch<{ files: AiDataFileEntry[]; truncated: boolean }>('/api/ai/data-files?formats=all', undefined, pj)
+
+export interface AiDataOverview {
+  path: string
+  sheet: string | null
+  status: 'ok' | 'unsure' | 'unreadable'
+  code: string | null
+  delimiter: AiDataTable['delimiter']
+  header_row: number | null
+  rows: number | null
+  columns: number | null
+  layout: string | null
+  fields: {
+    name: string
+    kind: 'numeric' | 'date' | 'text' | 'mixed'
+    numeric: number
+    text: number
+    empty: number
+    nan: number
+    id_like: boolean
+  }[]
+  preview_rows: { line: number; cells: string[] }[]
+  truncated: boolean
+  lead_lines: { line: number; text: string }[]
+  raw_lines: { line: number; text: string }[]
+}
+
+/** 一个数据文件（或 XLSX 的一张表）的概览；读不了不是 HTTP 错误（200 + `status: "unreadable"`） */
+export const aiDataOverview = (
+  q: { path: string; sheet?: string | null; headerRow?: number | null },
+  pj?: string | null,
+) => {
+  const qs = new URLSearchParams({ path: q.path })
+  if (q.sheet) qs.set('sheet', q.sheet)
+  if (q.headerRow != null) qs.set('header_row', String(q.headerRow))
+  return jsonFetch<AiDataOverview>(`/api/ai/data-overview?${qs}`, undefined, pj)
+}
+
+/** 提问里一个选项：`code` + `params` 给文案，`answer` 原样并进下一次 propose 的 `answers` */
+export interface AiDataOption {
+  code: string
+  params: Record<string, string | number>
+  answer: Record<string, unknown>
+  free_text?: boolean
+}
+
+export interface AiDataMixedColumn {
+  column: string
+  non_numeric: number
+  rows: number
+  preview: { row: number; text: string; others: Record<string, string>; extract: number | null }[]
+  more: number
+  options: AiDataOption[]
+}
+
+export interface AiDataProposeItem {
+  id: string
+  title_code: string
+  why_code: string
+  recommended: boolean
+  coverage?: Record<string, unknown>
+  unplotted: { count: number; code: string | null }
+  /** 服务端给的相对路径；加项目标识要经 `aiDataThumbnailUrl` */
+  thumbnail_url: string
+}
+
+export type AiDataProposeResponse =
+  | {
+      kind: 'ask'
+      question_code: string
+      /** 选择题的选项 + 可选的「不确定」；`mixed_cells` 没有这两项、给 `columns` */
+      options?: AiDataOption[]
+      unsure?: AiDataOption | null
+      columns?: AiDataMixedColumn[]
+    }
+  | { kind: 'candidates'; session: string; items: AiDataProposeItem[]; dropped: { reason_code: string }[] }
+  | { kind: 'nothing'; reasons: string[]; dropped?: { reason_code: string }[] }
+
+export interface AiDataProposeBody {
+  folder?: string
+  table?: string
+  sheet?: string
+  answers?: Record<string, unknown>
+  header_rows?: Record<string, number>
+  client_request_id?: string
+}
+
+export const aiDataFigurePropose = (body: AiDataProposeBody, pj?: string | null) =>
+  jsonFetch<AiDataProposeResponse>(
+    '/api/ai/data-figure/propose',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    pj,
+  )
+
+/** 缩略图是 `<img>` 要直接请求的地址：`<img>` 发不了项目请求头，项目标识走查询串（`apiUrlFor`），钉在发起那一刻 */
+export const aiDataThumbnailUrl = (thumbnailUrl: string, pj: string | null) => apiUrlFor(thumbnailUrl, pj)
+
+export interface AiDataCommitResult {
+  task: AiDataFigureResult['task']
+  script?: string
+  stem?: string
+  module?: string
+  /** 没有它（去重的回应 / 没落盘）= 没核对过，不得当成已核对 */
+  data_check?: 'verified' | 'unverifiable' | 'mismatch' | 'unknown'
+  reason_code?: string
+  can_delete_script?: boolean
+  unplotted?: { count: number; rows: { row: number; column: string; reason: string }[]; code: string | null }
+  cells?: unknown
+}
+
+export const aiDataFigureCommit = (
+  body: { session: string; id: string; client_request_id: string },
+  pj?: string | null,
+) =>
+  jsonFetch<AiDataCommitResult>(
+    '/api/ai/data-figure/commit',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    pj,
+  )
+
+export const aiDataFigureDiscard = (session: string, pj?: string | null) =>
+  jsonFetch<{ ok: boolean }>(
+    '/api/ai/data-figure/discard',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session }) },
+    pj,
+  )
+
 /** 会话详情（转录 + diff）；查询到已登记的会话后补全界面用 */
 export interface AiSessionDetail {
   /** 任务结局；老后端没有 */
