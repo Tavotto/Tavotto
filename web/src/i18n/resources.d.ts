@@ -3442,7 +3442,7 @@ export default interface Resources {
       "convert_write_failed": "无法把新版本写进项目，请检查文件夹是否可写。",
       "coord_not_allowed": "只有按角度排布的数据才能用极坐标。",
       "data_binary": "这个文件不是文本表格（像是二进制数据），读不了。",
-      "data_decode_error": "这份数据的文字编码认不出来，读不出来；另存为 UTF-8 编码的 CSV 再试。",
+      "data_decode_error": "认不出这份数据的文字编码，另存为 UTF-8 的 CSV 再试。",
       "data_empty": "这份数据是空的。",
       "data_excel_unsupported": "不支持旧版 Excel 文件（.xls / .xlsm / .xlsb），请在 Excel 里另存为 .xlsx 或 CSV。",
       "data_figure_input_missing": "请选一份数据文件，并说明想画什么。",
