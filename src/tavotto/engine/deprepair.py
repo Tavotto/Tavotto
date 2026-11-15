@@ -1135,7 +1135,7 @@ def configured_interpreter(project: str | Path) -> str | None:
 
     五条全过才回路径，否则 None：项目记住的解释器是用户亲手选的（`trigger == user_selected`）、文件在、
     属于「项目之外的系统 Python / Conda」档（非项目 venv、非受管、非内置）、此刻项目解析出的正是它、没有
-    全局显式解释器压着。只读设置与 `stat`（解析走进程内缓存的体检结论），不装任何东西。"""
+    全局显式解释器压着。只读设置与 `stat`，不起任何子进程、不装任何东西。"""
     root = str(Path(project))
     try:
         record = projectenv.remembered_record(root)
@@ -1146,8 +1146,9 @@ def configured_interpreter(project: str | Path) -> str | None:
             return None
         if pool.explicit_worker_python():
             return None
-        resolved, _source = pool.resolve_worker_python(root, discover=False)
-        if not pool.same_python(resolved, python):
+        # 只 stat、不体检、不写配置（`offer` 在渲染失败的响应路径上不许起解释器）：与解析时第 3 档同一判据
+        peek = pool.peek_project_resolution(root)
+        if peek is None or not pool.same_python(peek[0], python):
             return None
         return python
     except Exception:  # noqa: BLE001 — 判据读不出来 = 不提供这个目标（失败只会少一个选项，不会多装一个）

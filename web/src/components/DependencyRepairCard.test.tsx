@@ -1683,8 +1683,11 @@ describe('第三种目标：你为这个项目选的 Python（ADR 0019 2026-11-1
     await click(en('oneClickRepair'))
     expect(planMock.mock.calls[0][0]).toMatchObject({ target: 'configured_interpreter' })
     expect(installMock).not.toHaveBeenCalled()
-    // 确认页：与项目 venv 一样说明会改用户环境；句子用新文案
-    expect(text()).toContain(en('repairModifiesEnv'))
+    // 确认页：说明会改用户环境，但不说成「项目的环境」；按钮是「安装」而不是「安装到项目环境」
+    expect(text()).toContain(en('repairModifiesConfiguredEnv'))
+    expect(text()).not.toContain(en('repairModifiesEnv'))
+    expect(byName(en('repairInstallToProject'))).toBeUndefined()
+    expect(byName(t('workspace:prep.btn.install'))).toBeDefined()
     expect(text()).toContain(en('oneClickSentenceConfigured', { module: 'lmfit' }))
   })
 

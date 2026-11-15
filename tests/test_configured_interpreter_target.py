@@ -74,12 +74,13 @@ def _select(project: Path, python: str, *, automatic=False, trigger="user_select
 
 @pytest.fixture
 def resolves_to_remembered(monkeypatch):
-    """判据最后一道「此刻解析出的正是它」：占位解释器不能真被体检，这里直接让解析回记住的那条。"""
+    """判据最后一道「此刻解析出的正是它」只许纯读（`peek_project_resolution`：只 stat）：`offer` 在渲染失败的
+    响应路径上不许起解释器——真解析（会对记住的解释器起 `import matplotlib` 复检、失败还会作废记录）一调就红。"""
 
-    def _resolve(figures_dir=None, *, script=None, discover=True):
-        return projectenv.remembered(figures_dir) or sys.executable, engine_pool.SOURCE_SYSTEM
+    def _forbidden(*a, **k):
+        raise AssertionError("configured_interpreter 不许调 resolve_worker_python（会起子进程）")
 
-    monkeypatch.setattr(engine_pool, "resolve_worker_python", _resolve)
+    monkeypatch.setattr(engine_pool, "resolve_worker_python", _forbidden)
 
 
 # ---------------------------------------------------------------- 判据：configured_interpreter
@@ -131,7 +132,7 @@ class TestConfiguredInterpreterCriterion:
         _select(proj, python)
         monkeypatch.setattr(
             engine_pool,
-            "resolve_worker_python",
+            "peek_project_resolution",
             lambda *a, **k: (sys.executable, engine_pool.SOURCE_SYSTEM),
         )
         assert deprepair.configured_interpreter(proj) is None

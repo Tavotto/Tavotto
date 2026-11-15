@@ -266,7 +266,9 @@ export function DependencyRepairCard({
           </p>
           {toProject && (
             // 改用户自己的环境是不可逆的，这句不能藏起来
-            <p className="mt-1 text-xs leading-relaxed text-warn-content">{en('repairModifiesEnv')}</p>
+            <p className="mt-1 text-xs leading-relaxed text-warn-content">
+              {en(toConfigured ? 'repairModifiesConfiguredEnv' : 'repairModifiesEnv')}
+            </p>
           )}
           <p className="mt-1 text-xs leading-relaxed text-ink-3">
             {en('repairWillInstall', {
@@ -278,7 +280,12 @@ export function DependencyRepairCard({
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <Button variant="primary" disabled={busy} onClick={() => install()}>
-            {toProject ? en('repairInstallToProject') : en('repairPrepareAndContinue')}
+            {/* 装到用户选的 Python：不是「项目环境」，按钮与准备卡同一个「安装」 */}
+            {toConfigured
+              ? translate('workspace:prep.btn.install')
+              : toProject
+                ? en('repairInstallToProject')
+                : en('repairPrepareAndContinue')}
           </Button>
           <Button onClick={reset}>{en('repairBack')}</Button>
         </div>
@@ -784,7 +791,8 @@ function OtherPython({ primary = false }: { primary?: boolean }) {
   return (
     <div className="flex flex-col gap-1.5">
       {/* 只留主句：括号里的附加条件是「填错了再说」的事，这里先把出口指清楚 */}
-      <span className="text-xs text-ink-2">{en('repairUseOtherPythonShort')}</span>
+      {/* 作主按钮时（管理环境自检失败、无路可走）上面那一句已经说了原因，「或者…」这行不再出 */}
+      {!primary && <span className="text-xs text-ink-2">{en('repairUseOtherPythonShort')}</span>}
       {/* 占位符是「这里还没填」的提示，不是要读的正文，压到 faint 一档。写在行
           容器上（而不是传 className）是因为 placeholder 的样式归 TextInput 自己
           管，这条后代变体的特指度更高，能盖住它的默认色。 */}
@@ -822,7 +830,7 @@ function OtherPython({ primary = false }: { primary?: boolean }) {
  */
 function label(target: DependencyTarget, pkg: string): string {
   if (target.kind === 'project_venv') return en('repairUseProjectEnv')
-  if (target.kind === 'configured_interpreter') return en('repairInstallToConfigured', { module: pkg })
+  if (target.kind === 'configured_interpreter') return en('oneClickSentenceConfigured', { module: pkg })
   if (target.kind === 'system_interpreter') return en('repairUseSystemPython')
   return en('repairInstallToManaged', { module: pkg, product: PRODUCT_NAME })
 }
