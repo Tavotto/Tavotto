@@ -500,7 +500,8 @@
     "transformSkew": "Skew",
     "transformReflect": "Reflect",
     "importSvg": "Paste SVG ({{count}} objects)",
-    "explodeSvg": "Make editable"
+    "explodeSvg": "Make editable",
+    "outlineText": "Create outlines ({{count}})"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",
@@ -1051,7 +1052,15 @@
     "svgImported_other": "Turned into {{count}} editable objects",
     "svgAsImage": "Placed as an image because {{reason}}",
     "svgExplodeFailed": "Kept as a figure because {{reason}}",
-    "svgAsRaster": "Placed as a {{dpi}} dpi bitmap because {{reason}}"
+    "svgAsRaster": "Placed as a {{dpi}} dpi bitmap because {{reason}}",
+    "outlined_one": "{{count}} text converted to outlines",
+    "outlined_other": "{{count}} texts converted to outlines",
+    "outlinePartial_one": "{{count}} text could not be converted (font unavailable)",
+    "outlinePartial_other": "{{count}} texts could not be converted (font unavailable)",
+    "outlineFailed_one": "{{count}} text could not be converted to outlines (font unavailable)",
+    "outlineFailed_other": "{{count}} texts could not be converted to outlines (font unavailable)",
+    "svgCopied": "Copied as SVG — paste into Illustrator, Inkscape or Figma",
+    "svgCopyFailed": "Could not copy as SVG"
   },
   "tabs": {
     "allCanvases": "All canvases",

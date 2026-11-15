@@ -568,7 +568,7 @@ describe('文字 / 箭头 / 形状', () => {
   it('文字：编辑文字 / 全部属性 ── 副本 / 锁 / 隐藏 / 层级 ── 删除；编辑文字 → setEditingText', async () => {
     await openOn('t1')
     expect(menu()?.dataset.quickMenu).toBe('text')
-    expect(itemKeys()).toEqual(['edit-text', 'open-inspector', 'copy', 'paste', 'duplicate', 'lock', 'hide', 'z-order', 'delete'])
+    expect(itemKeys()).toEqual(['edit-text', 'outline-text', 'open-inspector', 'copy', 'copy-as-svg', 'paste', 'duplicate', 'lock', 'hide', 'z-order', 'delete'])
     await click(item('edit-text'))
     expect(useUiStore.getState().editingTextId).toBe('t1')
   })
@@ -585,6 +585,7 @@ describe('文字 / 箭头 / 形状', () => {
         ...(id === 's1' ? ['pathfinder'] : []),
         'open-inspector',
         'copy',
+        'copy-as-svg',
         'paste',
         'duplicate',
         'lock',
@@ -876,12 +877,15 @@ describe('多选', () => {
     expect(menu()?.dataset.quickMenuCount).toBe('3')
     expect(document.querySelector('[data-quick-heading]')?.textContent).toBe('已选 3 个对象')
     expect(itemKeys()).toEqual([
+      // 三个都是文字：文字转轮廓（ADR 0185 M5）
+      'outline-text',
       'arrange',
       'align-samew',
       'align-sameh',
       'group',
       'open-arrange',
       'copy',
+      'copy-as-svg',
       'paste',
       'duplicate',
       'lock',
@@ -1063,7 +1067,7 @@ describe('键盘、关闭与无障碍', () => {
     await key('ArrowDown', menu())
     expect(document.activeElement).toBe(item('edit-text'))
     await key('ArrowDown')
-    expect(document.activeElement).toBe(item('open-inspector'))
+    expect(document.activeElement).toBe(item('outline-text'))
     await key('ArrowUp')
     expect(document.activeElement).toBe(item('edit-text'))
     await key('End')

@@ -1269,6 +1269,11 @@ def _prune_groups(objs: list[dict]) -> None:
     for _ in range(8):
         counts = Counter(g for o in objs for g in set(chain(o)))
         lonely = {g for g, n in counts.items() if n < 2}
+        # 包住全部对象的那一层（SVG 写入器为翻 y 包的根组、Inkscape 的图层）：粘贴后本来就全选着，再包一层只是多一次双击
+        top = chain(objs[0])[:1] if objs else []
+        clip_groups = {chain(o)[-1] for o in objs if o.get("clipMask") and chain(o)}
+        if top and counts.get(top[0]) == len(objs) and top[0] not in clip_groups:
+            lonely.add(top[0])
         if not lonely:
             return
         for o in objs:

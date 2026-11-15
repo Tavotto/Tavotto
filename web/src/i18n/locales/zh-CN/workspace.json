@@ -483,7 +483,8 @@
     "transformSkew": "倾斜",
     "transformReflect": "镜像",
     "importSvg": "粘贴 SVG（{{count}} 个对象）",
-    "explodeSvg": "拆成可编辑对象"
+    "explodeSvg": "拆成可编辑对象",
+    "outlineText": "文字转轮廓（{{count}} 个）"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -993,7 +994,12 @@
     "svgImported_other": "已变成 {{count}} 个可编辑对象",
     "svgAsImage": "这个 SVG {{reason}}，已整体当图片放进来",
     "svgExplodeFailed": "这张图{{reason}}，没有拆开",
-    "svgAsRaster": "这个 SVG {{reason}}，已整体当位图（{{dpi}} dpi）放进来"
+    "svgAsRaster": "这个 SVG {{reason}}，已整体当位图（{{dpi}} dpi）放进来",
+    "outlined_other": "{{count}} 个文字已转成轮廓",
+    "outlinePartial_other": "有 {{count}} 个文字没转成（字体不可用）",
+    "outlineFailed_other": "{{count}} 个文字没转成轮廓（字体不可用）",
+    "svgCopied": "已复制为 SVG，可以粘贴到 Illustrator、Inkscape、Figma",
+    "svgCopyFailed": "没能复制为 SVG"
   },
   "tabs": {
     "allCanvases": "全部画布",

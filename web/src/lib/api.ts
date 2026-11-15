@@ -2434,6 +2434,26 @@ export const importSvg = (svg: string) =>
     body: JSON.stringify({ svg }),
   })
 
+/** 复制为 SVG（ADR 0185 M5）：导出 SVG 的同一个写入器写出来的一段 SVG 文本 */
+export const copyAsSvg = (objects: ExportObject[], w_mm: number, h_mm: number) =>
+  jsonFetch<{ ok: boolean; svg?: string; error?: string }>('/api/svg/copy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ objects, w_mm, h_mm }),
+  })
+
+/** 文字转轮廓（ADR 0185 M5）：每个文字对象一份结果，路径对象是页面 mm、不带 id */
+export interface TextOutlineResult {
+  ok: boolean
+  results: ({ paths: unknown[] } | { error: string })[]
+}
+export const outlineText = (objects: ExportObject[]) =>
+  jsonFetch<TextOutlineResult>('/api/text/outline', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ objects }),
+  })
+
 export const typesetMath = (items: { src: string; family: string }[]) =>
   jsonFetch<{ ok: boolean; results: MathBox[] }>('/api/mathtext', {
     method: 'POST',
