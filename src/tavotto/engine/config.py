@@ -374,6 +374,64 @@ def set_project_settings(path: str, patch: dict) -> dict:
         return merged
 
 
+#: 素材区的视图范围（ADR 0184 §三）：`folder` = 整个文件夹（缺省、今天的行为）；`scripts` = 只看这些脚本的图
+VIEW_SCOPE_MODES = ("folder", "scripts")
+#: 范围里最多记多少个脚本（超出丢最早加进来的）：一个文件夹里真用到的脚本不会这么多，上限只防配置无界增长
+VIEW_SCOPE_MAX_SCRIPTS = 64
+
+
+def _clean_view_scope(raw) -> dict:
+    """配置里存的范围 → 规整形状；坏的 / 缺的一律 `folder`（宁可多显示，不凭空藏图）。"""
+    if not isinstance(raw, dict) or raw.get("mode") != "scripts":
+        return {"mode": "folder", "scripts": []}
+    scripts = raw.get("scripts")
+    if not isinstance(scripts, list):
+        scripts = []
+    clean = [s for s in scripts if isinstance(s, str) and s and s == s.strip()]
+    return {"mode": "scripts", "scripts": clean[-VIEW_SCOPE_MAX_SCRIPTS:]}
+
+
+def view_scope(path: str) -> dict:
+    """项目的视图范围 `{mode, scripts}`。"""
+    return _clean_view_scope(project_settings(path).get("view_scope"))
+
+
+def set_view_scope(
+    path: str, *, mode: str, add_script: str | None = None, only_if_scripts: bool = False
+) -> dict:
+    """改项目的视图范围（读-改-写持锁），回改后的范围。
+
+    * `mode="folder"`：回到整个文件夹，脚本表清空；
+    * `mode="scripts"`：只看脚本的图；`add_script` 给了就加进脚本表（已在表里则挪到末尾）；
+    * `only_if_scripts=True`：此刻是 `folder` 就什么都不改、原样回（判断与改在同一把锁里）。
+    """
+    if mode not in VIEW_SCOPE_MODES:
+        raise ValueError(f"view scope mode: {mode!r}")
+    with _LOCK:
+        cfg = load()
+        key = str(Path(path))
+        settings = dict(cfg["projects"].get(key, {}))
+        if only_if_scripts and _clean_view_scope(settings.get("view_scope"))["mode"] != "scripts":
+            return _clean_view_scope(settings.get("view_scope"))
+        if mode == "folder":
+            scope = {"mode": "folder", "scripts": []}
+        else:
+            scope = _clean_view_scope(settings.get("view_scope"))
+            scope["mode"] = "scripts"
+            if add_script and add_script == add_script.strip():
+                scope["scripts"] = [s for s in scope["scripts"] if s != add_script] + [add_script]
+                scope["scripts"] = scope["scripts"][-VIEW_SCOPE_MAX_SCRIPTS:]
+        settings["view_scope"] = scope
+        cfg["projects"][key] = settings
+        save(cfg)
+        return scope
+
+
+def add_view_scope_script(path: str, script: str) -> dict:
+    """运行了一个脚本：范围是 `scripts` 时把它加进脚本表；`folder` 时什么都不改（整个文件夹本来就都看得见）。"""
+    return set_view_scope(path, mode="scripts", add_script=script, only_if_scripts=True)
+
+
 #: 项目内的 Tavotto 收纳目录名（画布 / 导出 / 版本历史都在里面）
 PROJECT_STORE_DIRNAME = "tavottofile"
 

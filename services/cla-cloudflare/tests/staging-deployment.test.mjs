@@ -17,7 +17,8 @@ test('staging manifest passes only the staging profile',()=>{
   const plan=deploymentPlan(manifest(),{profile:'staging'});
   assert.equal(plan.profile,'staging');assert.equal(plan.ready_to_deploy,false);assert.equal(plan.network_operations,0);
   assert.throws(()=>deploymentPlan(manifest()),e=>e.message==='disabled_manifest_required');
-  assert.throws(()=>deploymentPlan(manifest(),{profile:'production'}),e=>e.message==='profile_invalid');
+  assert.throws(()=>deploymentPlan(manifest(),{profile:'production'}),e=>e.message==='production_route_or_cron_invalid');
+  assert.throws(()=>deploymentPlan(manifest(),{profile:'prod'}),e=>e.message==='profile_invalid');
 });
 test('staging profile keeps one exact custom-domain route and known crons',()=>{
   let m=manifest();m.routes.push({pattern:'cla.tavotto.com',custom_domain:true});rejects(m,'staging_route_or_cron_invalid');

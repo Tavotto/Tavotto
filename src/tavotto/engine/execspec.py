@@ -71,6 +71,9 @@ TARGET_SCRIPT = "script"
 TARGET_MODULE = "module"
 TARGET_KINDS = (TARGET_SCRIPT, TARGET_MODULE)
 
+# Fixed safe-worker task; never a user module invocation.
+CHART_MODULE = "tavotto.engine.svgchart"
+
 #: native 档的进程所有权（见模块头「进程所有权」）。safe 的 `owner` 恒为空串。
 OWNER_TERMINAL = "terminal"
 OWNER_DESKTOP = "desktop"
@@ -632,6 +635,7 @@ def safe_spec(
     write_roots: tuple[str, ...] | list[str] | None = None,
     ignored_paths: tuple[str, ...] | list[str] = (),
     stem_aliases=None,
+    task: str | None = None,
 ) -> ExecutionSpec:
     """safe 档的**唯一权威构造函数**——运行时默认值只写在这里。
 
@@ -649,6 +653,29 @@ def safe_spec(
     照旧。脚本用相对路径**写**的中间文件会像终端里一样落进项目目录——
     这是这两个模式的定义，不是漏洞；文案里要如实说。
     """
+    if task is not None:
+        if (
+            task != "chart"
+            or script
+            or argv
+            or run_config
+            or input_remap
+            or write_roots is not None
+        ):
+            raise ValueError("Invalid fixed worker task")
+        return ExecutionSpec(
+            profile=PROFILE_SAFE,
+            interpreter=interpreter,
+            target_kind=TARGET_MODULE,
+            target=CHART_MODULE,
+            entry="__main__",
+            argv=(),
+            cwd=sandbox,
+            env=env,
+            project_root=str(figures_dir),
+            passthrough_savefig=False,
+            sandbox=sandbox,
+        )
     cwd = run_cwd(figures_dir, script, cwd_mode)
     if cwd is None:
         cwd = sandbox
@@ -892,14 +919,18 @@ def worker_argv(
     重构不是改语义。`out_dir` 是会话产物目录（不属于执行语义，所以不在
     spec 里）；`runtime_args` 是 bundled runtime 的 `-B` 那一类解释器参数。
     """
-    if spec.profile != PROFILE_SAFE or spec.target_kind != TARGET_SCRIPT:
+    chart = spec.target_kind == TARGET_MODULE and spec.target == CHART_MODULE
+    if spec.profile != PROFILE_SAFE or (spec.target_kind != TARGET_SCRIPT and not chart):
         raise ValueError("worker_argv 目前只服务 safe/script（native 是 PR 2）")
     out = [
         spec.interpreter,
         *runtime_args,
         str(worker_py),
-        "--script",
-        str(Path(spec.project_root) / spec.target),
+        *(
+            ["--task", "chart"]
+            if chart
+            else ["--script", str(Path(spec.project_root) / spec.target)]
+        ),
         "--figures-dir",
         spec.project_root,
         "--out-dir",

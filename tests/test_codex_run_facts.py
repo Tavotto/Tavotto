@@ -521,3 +521,70 @@ def test_generating_silent_ignores_external_tool_calls(tmp_path):
     )
     clock.t += 90.0
     assert not facts.generating_silent(45_000)
+
+
+# ------------------------------------------------------------------ 失败时的 HTTP 状态码（一份用户反馈：第三方中转每次几秒就失败，包里定不了根因）
+
+
+def test_failed_turn_records_the_http_status_codex_formatted(tmp_path):
+    """Codex 自己拼的 `unexpected status <三位数>` / `exceeded retry limit, last status: <三位数>` 只取数字；
+    第三方中转回来的 400 / 404 / 422 这类不在失败分类表里的状态也要记下（原文不留）。"""
+    clock = Clock()
+    _, facts = _session(tmp_path, clock)
+    _feed(
+        facts,
+        clock,
+        [
+            (1.0, _ev(type="thread.started")),
+            (1.0, _ev(type="error", message=f"unexpected status 400 Bad Request: {CANARY_TEXT}")),
+            (
+                1.0,
+                _ev(
+                    type="turn.failed",
+                    error={"message": f"unexpected status 404 Not Found: {CANARY_PATH}"},
+                ),
+            ),
+        ],
+    )
+    snap = facts.snapshot(True)
+    assert snap["fail_status"] == 404, "取最后一次失败的状态码"
+    attrs = ai_bridge._cli_fact_attributes(snap)
+    kept, rejected = exectrace.project_attributes(attrs)
+    assert rejected == 0 and kept["cli_fail_status"] == 404
+    out = _exported({"status": "failed", "cli_runs": [snap]})
+    assert "cli_fail_status=404" in out
+    for canary in ("alice", "Alice", "Secret", "HeLa", "Bad Request", "Not Found"):
+        assert canary not in out
+
+    _, retry = _session(tmp_path / "r", clock)
+    retry.observe(
+        _ev(type="error", message="exceeded retry limit, last status: 429 Too Many Requests")
+    )
+    assert retry.snapshot(True)["fail_status"] == 429
+
+
+def test_fail_status_ignores_free_text_and_out_of_range(tmp_path):
+    clock = Clock()
+    for msg in (
+        "stream disconnected before completion",
+        "model said: unexpected status 401",  # 不在开头 = 不是 Codex 自己拼的
+        "unexpected status 999 Weird",
+        "unexpected status 4000",
+        None,
+    ):
+        facts = ai_agents.CliRunFacts(str(tmp_path), "x.py", clock=clock)
+        facts.observe(_ev(type="turn.failed", error={"message": msg}))
+        facts.observe(_ev(type="error", message=msg))
+        assert facts.snapshot(False)["fail_status"] is None, msg
+    # 没有失败 → 日志槽位照样有（None）
+    assert "cli_fail_status=None" in _exported({"status": "done"})
+
+
+def test_merge_keeps_the_last_known_fail_status(tmp_path):
+    clock = Clock()
+    a = ai_agents.CliRunFacts(str(tmp_path), "x.py", clock=clock)
+    a.observe(_ev(type="turn.failed", error={"message": "unexpected status 400 Bad Request"}))
+    b = ai_agents.CliRunFacts(str(tmp_path), "x.py", clock=clock)
+    b.observe(_ev(type="turn.completed"))
+    merged = ai_agents.merge_run_facts([a.snapshot(True), b.snapshot(True)])
+    assert merged["fail_status"] == 400

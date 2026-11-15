@@ -47,7 +47,9 @@ export function OriginEntryList({ origins, title }: { origins: JointOrigin[]; ti
           <li key={o.import_name} data-origin-entry={o.import_name} data-origin-reason={o.reason}>
             <span className="font-mono text-ink-2">{o.import_name}</span> ·{' '}
             {o.not_pip_installable
-              ? og('detail.notPip', { name: o.not_pip_installable.label })
+              ? og(o.not_pip_installable.hint === 'ai_sandbox' ? 'detail.notPipAiSandbox' : 'detail.notPip', {
+                  name: o.not_pip_installable.label,
+                })
               : o.local_module_missing
                 ? og('detail.localMissing', {
                     name: o.import_name,

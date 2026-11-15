@@ -1,4 +1,5 @@
 import { refuseArtifactOperation } from '@/lib/artifactValidation'
+import { deferWhileWindowHeld } from '@/store/documentRestore'
 import { useEffect, useMemo, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 import { RotateCcw, TriangleAlert } from '@/components/ui/icons'
@@ -255,6 +256,8 @@ function RestoreDialog({
 
   const run = async () => {
     if (!version) return
+    // 只读窗口里的内容可能是旧的：恢复会换掉原图并替换面板 override（commit 还会被门挡住，窗口与文件就对不上）
+    if (deferWhileWindowHeld(() => void run())) return
     // 写回记录恢复同样是离散动作：先收掉还开着的连续编辑，否则整份
     // overrides 替换会被并进上一条历史（issue #131 的同一条毛病）
     finishActiveGesture()
