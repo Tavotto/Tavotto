@@ -77,7 +77,7 @@ import type {
   ShapeObject,
   TextObject,
 } from '@/types/document'
-import { emptyProject, objectLabel, type ProjectDocument } from '@/types/document'
+import { emptyProject, isKnownObject, objectLabel, type ProjectDocument } from '@/types/document'
 import { findDocumentsForProjectFile, bindingForReuse, type ProjectFileBinding } from '@/lib/projectFile'
 import { isDocHeldElsewhere } from '@/lib/docPresence'
 import { useAssetStore } from './assetStore'
@@ -472,7 +472,13 @@ export function updateObjects(ids: string[], label: UiMessage, patch: (o: Canvas
 
 export function deleteSelected() {
   // 单图编辑与排版同一口径（2026-10-21）：这一屏画着这张画布上的全部对象，选区里的都看得见，删的就是选区
-  const ids = useSelectionStore.getState().ids
+  // 更新的构建写进来的对象不许从这里删（`isKnownObject`）：它们本该原样留在文档里，哪条路径把它带进了选区都一样
+  const ids = useSelectionStore
+    .getState()
+    .ids.filter((id) => {
+      const o = findObject(id)
+      return !o || isKnownObject(o)
+    })
   if (!ids.length) return
   // 单选时把对象名（用户自己的内容，不翻译）插进去，多选才说数量——这是
   // **两句不同的话**，不是同一句的单复数：中文没有单数档（Intl.PluralRules
@@ -590,7 +596,7 @@ export function revealObjects(ids: string[]) {
 }
 
 /** 「全选」收进来的对象：看得见、没锁。判据只有这一份——`selectAll` 与画布菜单「全选」可不可用都读它 */
-export const isSelectAllTarget = (o: CanvasObject): boolean => !o.hidden && !o.locked
+export const isSelectAllTarget = (o: CanvasObject): boolean => !o.hidden && !o.locked && isKnownObject(o)
 
 /**
  * 「全选」此刻收进来的 id：这张画布上看得见、没锁的对象（单图编辑与排版同一口径，2026-10-21 取消「快编只收那张图」）。⌘A、命令面板 `select-all`、任何菜单的「全选」都经 `selectAll`

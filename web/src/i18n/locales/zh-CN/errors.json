@@ -201,6 +201,7 @@
     "package_file_missing": "缺少上传文件",
     "package_invalid": "不是有效的项目包：{{reason}}",
     "package_schema_unsupported": "项目包里的排版既不是 schema 2 也不是 schema 3",
+    "package_schema_too_new": "这个项目包来自更新的版本（schema {{schema}}），请升级后再打开",
     "package_source_outside_project": "项目包引用了项目目录以外的资源，未生成项目包。请先将资源移入项目。",
     "figure_snapshot_unavailable": "项目包引用的 Figure 配对或原件无法核验，未生成项目包。请恢复缺失资源或重新生成这张图。",
     "permission_denied": "无权限读取：{{path}}",
