@@ -18,7 +18,7 @@ import { TooltipProvider } from '@/components/ui/Tooltip'
 import { t } from '@/i18n'
 import { ObjectView } from '@/canvas/ObjectView'
 import { useDocumentStore } from '@/store/documentStore'
-import { selectAllIds } from '@/store/actions'
+import { deleteSelected, selectAllIds } from '@/store/actions'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
@@ -88,6 +88,46 @@ describe('图层树', () => {
     const rows = Array.from(document.querySelectorAll<HTMLElement>('li[data-layer]'))
     expect(rows).toHaveLength(2)
     expect(rows.some((r) => r.textContent?.includes(t('objectType.unknown')))).toBe(true)
+  })
+})
+
+describe('图层树不让它进选区（Codex #1913：选进去就能被 Delete 删掉）', () => {
+  const mount = async () => {
+    useDocumentStore.setState({
+      doc: { ...emptyProject(), objects: [text(), newer()] }, past: [], future: [], txn: null,
+    } as never)
+    await act(async () => {
+      root.render(<TooltipProvider><LayerTree /></TooltipProvider>)
+    })
+  }
+  const row = (id: string) => document.querySelector<HTMLElement>(`li[data-layer="${id}"]`)!
+  const press = async (el: HTMLElement) => {
+    await act(async () => {
+      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))
+    })
+  }
+
+  it('点、Enter、焦点都选不中它；同样的操作选得中已知对象（反证）', async () => {
+    await mount()
+    await press(row('n1'))
+    expect(useSelectionStore.getState().ids).toEqual([])
+    await act(async () => {
+      row('n1').dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter' }))
+    })
+    expect(useSelectionStore.getState().ids).toEqual([])
+    await act(async () => row('n1').focus())
+    expect(useSelectionStore.getState().ids).toEqual([])
+    await press(row('t1'))
+    expect(useSelectionStore.getState().ids).toEqual(['t1'])
+  })
+
+  it('哪条路径把它带进了选区，Delete 也不删它；同一选区里的已知对象照删', async () => {
+    useDocumentStore.setState({
+      doc: { ...emptyProject(), objects: [text(), newer()] }, past: [], future: [], txn: null,
+    } as never)
+    useSelectionStore.getState().set(['t1', 'n1'])
+    deleteSelected()
+    expect(useDocumentStore.getState().doc.objects.map((o) => o.id)).toEqual(['n1'])
   })
 })
 

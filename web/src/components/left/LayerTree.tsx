@@ -36,7 +36,7 @@ import { useFlip } from '@/lib/motion'
 import { renameObject, reorderObject, toggleHidden, toggleLocked } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
-import { objectLabel, type CanvasObject, type LayoutGroup } from '@/types/document'
+import { isKnownObject, objectLabel, type CanvasObject, type LayoutGroup } from '@/types/document'
 import { layoutKindLabel } from '@/store/actions'
 import { Badge } from '../ui/Badge'
 import { EmptyLine } from '../ui/EmptyLine'
@@ -339,7 +339,9 @@ function GroupRow({
   onNavKey: (key: string) => boolean
 }) {
   useTranslation('workspace')
-  const selectAllMembers = () => useSelectionStore.getState().set(members.map((m) => m.id))
+  // 组里混着更新的构建写进来的对象时只选认识的：选进去就能被 Delete / 拖动改掉，文档里原样保留的承诺就破了
+  const selectAllMembers = () =>
+    useSelectionStore.getState().set(members.filter(isKnownObject).map((m) => m.id))
   const labelRef = useBoldTrackingLock<HTMLSpanElement>(allSelected, lt('groupLabel', { count: members.length }))
   return (
     <li
@@ -434,6 +436,8 @@ function LayerRow({
   const menu = useRowMenu({ enabled: !editing })
   const Icon = iconFor(obj)
   const isScript = obj.type === 'panel' && !!obj.script
+  // 更新的构建写进来的对象：行照常显示、能改名 / 隐藏 / 调层级，但不进选区（选进去就能被 Delete 删掉）
+  const known = isKnownObject(obj)
   const pointerFocusing = useRef(false)
   const [dragging, setDragging] = useState(false)
   const labelRef = useBoldTrackingLock<HTMLSpanElement>(selected, objectLabel(obj))
@@ -463,7 +467,7 @@ function LayerRow({
       onFocus={(e) => {
         menu.rowProps.onFocus(e)
         // 焦点即选中（方向键漫游）；子按钮的焦点冒泡上来时不动选区
-        if (e.target === e.currentTarget && !selected && !pointerFocusing.current) {
+        if (e.target === e.currentTarget && !selected && !pointerFocusing.current && known) {
           useSelectionStore.getState().set([obj.id])
         }
       }}
@@ -484,7 +488,7 @@ function LayerRow({
         } else if (e.key === 'Enter') {
           e.preventDefault()
           e.stopPropagation()
-          useSelectionStore.getState().set([obj.id])
+          if (known) useSelectionStore.getState().set([obj.id])
         } else if (e.key === 'F2') {
           e.preventDefault()
           e.stopPropagation()
@@ -526,6 +530,7 @@ function LayerRow({
         pointerFocusing.current = false
         // Mac Control-click 是上下文菜单入口；接住焦点，但不改变已有选区。
         if (isMac && e.ctrlKey) return
+        if (!known) return
         const sel = useSelectionStore.getState()
         if (e.shiftKey || e.ctrlKey || e.metaKey) sel.toggle(obj.id)
         else sel.set([obj.id])

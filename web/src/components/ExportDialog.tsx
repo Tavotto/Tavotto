@@ -1928,14 +1928,15 @@ export function ExportDialog() {
                   </p>
                 </FormRow>
               )}
-              {newerObjects > 0 && (
-                <FormRow>
-                  <p data-export-newer-objects className="text-sm text-danger-content">
-                    {ex("newerObjects", { count: newerObjects })}
-                  </p>
-                </FormRow>
-              )}
             </section>
+            )}
+            {/* 两种导出方式都要说清按钮为什么灰（「每张图单独导出」也会被它拦下） */}
+            {newerObjects > 0 && (
+              <FormRow>
+                <p data-export-newer-objects className="text-sm text-danger-content">
+                  {ex("newerObjects", { count: newerObjects })}
+                </p>
+              </FormRow>
             )}
 
             {/* 2. 位置 —— 导出之前就看得见文件会落到哪（审计 §10.2 P0）；「更改…」直接弹选择文件夹 */}
