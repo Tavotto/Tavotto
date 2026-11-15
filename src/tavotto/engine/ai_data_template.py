@@ -38,6 +38,7 @@ from dataclasses import dataclass
 
 from . import ai_data_figure as adf, ai_data_recipe as recipe_mod, xlsxread
 from .ai_data_figure import (
+    SemicolonCell,
     apply_cells,
     date_number,
     delimited_records,
@@ -623,6 +624,7 @@ def pick_fonts(latin, cjk):
 
 
 RUNTIME_FUNCTIONS = (
+    SemicolonCell,
     parse_cell,
     parse_date,
     date_number,

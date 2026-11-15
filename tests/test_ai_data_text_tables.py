@@ -735,3 +735,68 @@ def test_naming_a_prose_txt_as_the_table_is_a_400_not_a_table_error(project):
     (figs / "data" / "notes.txt").write_text("just some words\nand more words\n", encoding="utf-8")
     r = propose(client, table="notes.txt")
     assert r.status_code == 400 and r.get_json()["code"] == "data_not_table"
+
+
+# =========================================================================== 分号分隔的表：带逗号的数不按千分位认
+def _semi(tmp_path, cells, name="e.csv"):
+    text = "g;v\n" + "".join(f"{'a' if i % 2 else 'b'};{c}\n" for i, c in enumerate(cells))
+    return write(tmp_path, name, text)
+
+
+def test_in_a_semicolon_table_comma_numbers_are_text_never_thousands_never_decimals(tmp_path):
+    p = _semi(tmp_path, ["1,234", "2,345", "3,456", "4,567"])
+    t = adf.read_text_table(p)
+    assert t.delimiter == ";"
+    c = t.summary.per_column["v"]
+    assert (
+        c.kind == "text" and c.numeric == 0 and c.text_count == 4
+    )  # 没被读成 1234，也没被读成 1.234
+    # 公共模块（脚本侧）读出来同样是文字
+    ns = _runtime_ns()
+    _h, rows = ns["read_delimited"](str(p), ";", None)
+    assert [ns["parse_cell"](r[1])[0] for r in rows] == ["text"] * 4
+
+
+def test_a_semicolon_column_mixing_plain_numbers_and_comma_numbers_asks(project):
+    m, client, figs, _ = project
+    cells = [str(i) for i in range(1, 10)] + ["1,234"]
+    (figs / "data").mkdir()
+    p = _semi(figs / "data", cells)
+    c = adf.read_text_table(p).summary.per_column["v"]
+    assert c.kind == "mixed" and c.text == ["1,234"]
+    body = propose(client).get_json()
+    assert body["kind"] == "ask" and body["question_code"] == "mixed_cells"
+    assert body["columns"][0]["preview"][0]["text"] == "1,234"
+
+
+def test_a_semicolon_table_with_only_comma_numbers_draws_nothing_instead_of_a_wrong_picture(
+    project,
+):
+    m, client, figs, _ = project
+    (figs / "data").mkdir()
+    _semi(figs / "data", ["1,234", "2,345", "3,456", "4,567", "5,678", "6,789"])
+    body = propose(client).get_json()
+    assert body["kind"] == "nothing", body
+
+
+@pytest.mark.parametrize("delim_name", ["comma", "tab", "space"])
+def test_other_delimiters_keep_reading_thousands_as_numbers(tmp_path, delim_name):
+    cells = ["1,000", "2,500", "3,250"]
+    if delim_name == "comma":
+        text = "g,v\n" + "".join(f'a,"{c}"\n' for c in cells)
+    elif delim_name == "tab":
+        text = "g\tv\n" + "".join(f"a\t{c}\n" for c in cells)
+    else:
+        text = "g v\n" + "".join(f"a {c}\n" for c in cells)
+    s = adf.read_text_table(write(tmp_path, "t.txt", text)).summary
+    assert s.per_column["v"].kind == "numeric"
+
+
+def test_a_column_with_a_decimal_comma_makes_its_thousands_cells_a_mixed_column_not_numbers(
+    tmp_path,
+):
+    text = 'g,n\na,"1,5"\nb,"1,234"\nc,"2,345"\nd,"3,456"\ne,"4,567"\nf,"5,678"\ng,"6,789"\nh,"7,890"\n'
+    c = adf.inspect_data_source(write(tmp_path, "m.csv", text), v2=True).per_column["n"]
+    assert (
+        c.kind == "mixed" and c.text == ["1,5"] and c.numeric == 7
+    )  # 混列：交给「夹着文字」那条问用户路径

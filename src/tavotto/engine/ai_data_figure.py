@@ -98,13 +98,21 @@ class DataSourceError(ValueError):
 
 
 # --------------------------------------------------------------------------- 单元格解析（与模板里的 `_cell` 同一规则）
+class SemicolonCell(str):
+    """分号分隔的文本表里带逗号的格子（`table_from_text` 打的标记，内容仍是原文）：分号文件里的逗号多半是欧式小数点，
+    `parse_cell` 对它**不按千分位认**（`1,234` 是 1.234 还是 1234 分不清，不猜）——整格是文字，走「数值列混了文字」问用户。
+    **运行时类**（与 `parse_cell` 一起进公共模块）。"""
+
+
 def parse_cell(s: str) -> tuple[str, float | None]:
     """`(类别, 值)`：`empty` / `nan`（缺失，值为 NaN）、`numeric`（有限浮点）、`text`（不是数，值为 None）。
 
     **千分位**（v2）：`1,000` / `-12,345,678.9` 认成数。规则只有一条——整格（去首尾空白）是「首组 1–3 位且不以 0 开头，
     后面每组恰好 3 位」的逗号分组整数，可跟小数点与小数：`1,000` → 1000、`1,000.5` → 1000.5；**不认**的有：`1,2` / `0,5` /
     `12,75`（欧式小数，各组不是 3 位或首组是 0）、`1,000,5` / `1,00` / `1,0000`（乱格式）、`,100`、`1,000,`。
-    三位小数的欧式写法（`1,234` = 1.234）与千分位无法区分，按千分位读（整格就是一个写法，不做列级猜测）。
+    三位小数的欧式写法（`1,234` = 1.234）与千分位无法区分：**分号分隔的表**里带逗号的格子（`SemicolonCell`）一律不按千分位认、
+    也不猜成小数，整格是文字（于是该列是「混了文字」或「没有数值」，由用户决定）；逗号 / 制表 / 空白分隔的表按千分位读。
+    同一列里出现过不符合千分位写法的逗号数（`1,5`）时，那一列本来就是混列、先问用户，`1,234` 不会被悄悄认成数。
     **这是运行时函数**：父进程与生成的脚本共用同一份源码；v1 的摘要走 `legacy_parse_cell`（不认千分位，v1 逐字不变）。"""
     t = s.strip()
     if not t:
@@ -112,7 +120,11 @@ def parse_cell(s: str) -> tuple[str, float | None]:
     try:
         v = float(t)
     except ValueError:
-        if "," in t and re.fullmatch(r"[-+]?[1-9]\d{0,2}(?:,\d{3})+(?:\.\d+)?", t):
+        if (
+            "," in t
+            and not isinstance(s, SemicolonCell)
+            and re.fullmatch(r"[-+]?[1-9]\d{0,2}(?:,\d{3})+(?:\.\d+)?", t)
+        ):
             return "numeric", float(t.replace(",", ""))
         return "text", None
     if math.isnan(v):
@@ -317,6 +329,8 @@ def table_from_text(text, delimiter, header_row=None):
         return [], [], []
     first_line, first = records[0]
     rest = records[1:]
+    if delimiter == ";":
+        rest = [(n, [SemicolonCell(c) if "," in c else c for c in cells]) for n, cells in rest]
     if header_row is None:
         return [h.strip() for h in first], [c for _, c in rest], [n for n, _ in rest]
     probe = next((c for _, c in rest if not c[0].lstrip().startswith("#")), None)
@@ -418,19 +432,25 @@ def _detect(text: str, suffix: str) -> TextLayout | None:
     if len(sample) > SNIFF_CHARS:
         cut = sample.rfind("\n", 0, SNIFF_CHARS)
         sample = sample[: cut if cut > 0 else SNIFF_CHARS]
+    # `.csv` / `.tsv` / `.tab`：先只认自己的分隔符，且数据块要覆盖全部非注释行（干净的老文件）；有说明行 / 列数对不上就和别的分隔符
+    # 一起比（自己的排在并列时的最前）。否则分号 CSV 里带逗号的数会被当成逗号分隔的表。
     stages = (
-        [(primary,), tuple(d for d in _SNIFF_ORDER if d != primary)] if primary else [_SNIFF_ORDER]
+        [(primary,), (primary, *(d for d in _SNIFF_ORDER if d != primary))]
+        if primary
+        else [_SNIFF_ORDER]
     )
-    for stage in stages:
+    for stage_no, stage in enumerate(stages):
         best = None
         for pref, d in enumerate(stage):
             recs = delimited_records(sample, d)
             blk = _block(recs)
             if blk is None:
                 continue
-            width, block, _plain = blk
+            width, block, plain = blk
+            if primary and stage_no == 0 and len(block) != plain:
+                continue
             numeric = _numeric_columns(block, width)
-            if primary is None and not numeric:
+            if (primary is None or stage_no == 1) and not numeric and d != primary:
                 continue
             cells = [c.strip() for _, r in block[1:] for c in r if c.strip()]
             frac = sum(_numlike(c) for c in cells) / len(cells) if cells else 0.0
