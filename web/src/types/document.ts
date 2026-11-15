@@ -17,20 +17,25 @@ export interface ObjectBase {
   hidden?: boolean
   name?: string
   /**
-   * 成组：同 groupId 的对象一起选中、一起移动。嵌套组（ADR 0185 M4）里它是对象所在的**最内层**组——
+   * 成组：同 groupId 的对象一起选中、一起移动。嵌套组（ADR 0188）里它是对象所在的**最内层**组——
    * 只认 groupId 的旧构建照样把最内层组当一层组用，对象一个不丢。
    */
   groupId?: string
   /**
-   * 嵌套组的完整链（ADR 0185 M4）：外 → 内，末项必须等于 `groupId`。只有两层及以上才写；对不上（旧构建改过
+   * 嵌套组的完整链（ADR 0188）：外 → 内，末项必须等于 `groupId`。只有两层及以上才写；对不上（旧构建改过
    * groupId）就按只有 `[groupId]` 一层读——判据唯一出处 `lib/groupTree.groupPathOf`。
    */
   groupPath?: string[]
   /**
-   * 剪切蒙版（ADR 0185 M4）：这个对象是它最内层组的剪切路径（只认闭合形状与路径，判据在 `lib/groupTree`）。
+   * 剪切蒙版（ADR 0188）：这个对象是它最内层组的剪切路径（只认闭合形状与路径，判据在 `lib/groupTree`）。
    * 做蒙版时同时写 `hidden: true`：旧构建不画它、也不裁剪，内容照样都在。
    */
   clipMask?: true
+  /**
+   * 剪切路径本身被隐藏（ADR 0188）：在图层树上对蒙版点「隐藏」= 暂时不裁（Illustrator 同一做法），组里的内容全部露出来；
+   * 蒙版仍是 `hidden: true`（旧构建照旧）。只对 `clipMask` 的对象有意义。
+   */
+  clipOff?: true
   /**
    * 布局组成员的「固定当前位置」：重排时跳过该对象。
    * 只对 layoutGroups 里登记的组生效，普通成组不受影响。

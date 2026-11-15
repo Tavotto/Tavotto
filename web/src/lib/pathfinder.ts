@@ -130,7 +130,7 @@ function styleBase(src: PathObject, groupId: string | undefined): PathObject {
     strokeGradient: _sg,
     ...rest
   } = src
-  // 嵌套组（ADR 0185 M4）：留在原对象那个组里时整条链跟着走；剪切蒙版的身份不传给结果（结果是可见的新形状）
+  // 嵌套组（ADR 0188）：留在原对象那个组里时整条链跟着走；剪切蒙版的身份不传给结果（结果是可见的新形状）
   const path = groupId && groupId === src.groupId && src.groupPath ? { groupPath: [...src.groupPath] } : {}
   return { ...rest, ...(groupId ? { groupId, ...path } : {}) }
 }

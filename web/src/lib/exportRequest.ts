@@ -258,7 +258,7 @@ export interface ExportRequestInput {
   annotations?: readonly CanvasObject[]
   /** `annotations` 里前几个在图的下面（保留图层次序） */
   annotationsBelow?: number
-  /** 裁这张图的剪切蒙版轮廓（ADR 0185 M4，`lib/singleExportDoc.figureClipOf`）；进 `original.clip`，空 = 不发 */
+  /** 裁这张图的剪切蒙版轮廓（ADR 0188，`lib/singleExportDoc.figureClipOf`）；进 `original.clip`，空 = 不发 */
   figureClip?: readonly ExportClipPath[]
   /** 单图画布留白（ADR 0161，导出 mm）；非零时进 `original.pad_mm`，全 0 / 缺省时载荷与从前逐字节相同 */
   framePad?: FramePad | null

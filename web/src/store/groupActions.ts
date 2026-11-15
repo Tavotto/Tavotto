@@ -10,7 +10,7 @@ import { useSelectionStore } from './selectionStore'
 import { useUiStore } from './uiStore'
 
 /**
- * 嵌套组、组内编辑、剪切蒙版的**动作与命令表**（ADR 0185 M4）。结构与 `pathfinderActions.PATHFINDER_COMMANDS` 相同：
+ * 嵌套组、组内编辑、剪切蒙版的**动作与命令表**（ADR 0188）。结构与 `pathfinderActions.PATHFINDER_COMMANDS` 相同：
  * 命令面板、右键菜单、快捷键读同一份。判据在 `lib/groupTree`（纯函数）；成组 / 取消成组的写入在 `actions.groupUnits /
  * ungroupSelected`（选择、移动、锁定共用的「单元」规则也在那边），这里只做蒙版与组内编辑。
  */
@@ -58,7 +58,7 @@ export function makeClipMask(): void {
 /** 选区涉及的剪切组：选中的组单元里带蒙版的，加上正在编辑的那一层（在剪切组里面编辑时） */
 function clipGroupsInSelection(): string[] {
   const objs = objects()
-  const masks = groupMasks(objs)
+  const masks = groupMasks(objs, { includeOff: true })
   const out = new Set(selectedUnits().filter(isGroupKey).map(gidOfKey).filter((g) => masks.has(g)))
   const scope = isolationScope(objs)
   if (scope && masks.has(scope) && useSelectionStore.getState().ids.length) out.add(scope)
@@ -72,12 +72,13 @@ export function releaseClipMask(): void {
   const gids = new Set(clipGroupsInSelection())
   if (!gids.size) return
   finishActiveGesture()
-  const masks = groupMasks(objects())
+  const masks = groupMasks(objects(), { includeOff: true })
   const ids = new Set([...gids].map((g) => masks.get(g)!.id))
   useDocumentStore.getState().commit(hist('releaseClipMask'), (d) => {
     for (const o of d.objects) {
       if (!ids.has(o.id)) continue
       delete o.clipMask
+      delete o.clipOff
       delete o.hidden
     }
   })

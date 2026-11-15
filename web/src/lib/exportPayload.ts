@@ -23,7 +23,7 @@ export function toExportObjects(
 ): ExportObject[] {
   // 不认识的类型（更新的构建写进来的）不进载荷：`toExportObject` 对它回 undefined，序列化成 null 后被后端
   // 静默丢掉。界面在导出前用 `newerObjectCount` 拦下，这里只保证载荷里没有空洞。
-  // 剪切组里生效的蒙版不画（ADR 0185 M4）：它只作为被裁对象的 `clip` 出现
+  // 剪切组里生效的蒙版不画（ADR 0188）：它只作为被裁对象的 `clip` 出现
   const masks = groupMasks(context)
   return objects
     .filter((o) => !o.hidden && isKnownObject(o) && !isActiveMask(o, masks))

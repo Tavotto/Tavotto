@@ -5,7 +5,7 @@ import { pathGeometry, rotateAbout, type PathSeg } from './pathGeom'
 import { MM_PER_PT } from './units'
 
 /**
- * 剪切蒙版的几何（ADR 0185 M4）：蒙版对象 → 页面 mm（顶原点、y 向下）里的轮廓。画布（CSS `clip-path: path()`）与导出
+ * 剪切蒙版的几何（ADR 0188）：蒙版对象 → 页面 mm（顶原点、y 向下）里的轮廓。画布（CSS `clip-path: path()`）与导出
  * 载荷（蒙版一律以 `path` 发给后端，后端 `plan._clipped` 用 `geometry.path_segments` 的填充几何 + 对象变换）读的是
  * 同一份：形状先经 `convertToPath.toPathObject` 变成路径（画面逐点不动的那一份），所以前后端只有「路径 → 轮廓」这一条规则。
  * 蒙版只借几何：填充、描边、透明度都不参与。同源看护 `tests/golden/clip_mask_vectors.json`。
