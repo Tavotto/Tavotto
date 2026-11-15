@@ -641,7 +641,7 @@
     "result": {
       "verified": "The figure is ready and its data matches the file.",
       "unverifiable": "The figure is ready, but this kind of plot can’t be checked against the data.",
-      "mismatch": "The data in the figure doesn’t match the file; you can delete the new script.",
+      "mismatch": "The figure doesn’t match your data, so it wasn’t opened. Its script is still in the project: you can draw it another way, or delete that script from the folder.",
       "unknown": "The figure is ready, but the data check couldn’t finish."
     },
     "mixedCells": {

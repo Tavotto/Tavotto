@@ -1,11 +1,13 @@
-import { Fragment, useSyncExternalStore } from 'react'
+import { Fragment, useEffect, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Folder, Images, LayoutList, ListChecks, Paintbrush, Settings } from '@/components/ui/icons'
+import { ChartLine, Folder, Images, LayoutList, ListChecks, Paintbrush, Settings } from '@/components/ui/icons'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { cn } from '@/lib/utils'
 import { RAIL_ICON_ONLY, RAIL_W, useUiStore, type LeftTab } from '@/store/uiStore'
 import { useValidationStore } from '@/store/validationStore'
+import { useDataFigureStore } from '@/store/dataFigureStore'
+import { useTafFlagStore } from '@/store/tafFlagStore'
 import { Tip } from '../ui/Tooltip'
 
 /**
@@ -70,6 +72,18 @@ export function LeftRail() {
   const railClick = useUiStore((s) => s.railClick)
   const problems = useValidationStore((s) => s.issues.length)
   const iconOnly = useRailIconOnly()
+  // 「数据」：实验开关开着、且项目里有数据文件（或此刻就在数据页）才出现。开关关着时这一整段什么都不渲染、不请求
+  const taf = useTafFlagStore((s) => s.enabled)
+  const dataActive = useDataFigureStore((s) => s.view === 'data')
+  const filesStatus = useDataFigureStore((s) => s.files.status)
+  const hasData = useDataFigureStore((s) => {
+    const f = s.files
+    return (f.status === 'ready' || f.status === 'error' || f.status === 'loading') && (f.entries?.length ?? 0) > 0
+  })
+  useEffect(() => {
+    if (taf && filesStatus === 'idle') void useDataFigureStore.getState().loadFiles()
+  }, [taf, filesStatus])
+  const showData = taf && (dataActive || hasData)
   const blocking = useValidationStore((s) => s.issues.reduce((n, i) => n + (i.severity === 'error' ? 1 : 0), 0))
 
   return (
@@ -81,7 +95,7 @@ export function LeftRail() {
       className="flex shrink-0 flex-col items-center gap-1 pb-2 pt-1"
     >
       {ITEMS.map(({ id, icon: Icon }) => {
-        const active = open && tab === id
+        const active = open && tab === id && !dataActive
         // 角标只写进无障碍名，不再单独挂一个 aria-live——轨道是导航，不是播报区
         const label =
           id !== 'problems' || problems === 0
@@ -91,7 +105,14 @@ export function LeftRail() {
               : t('rail.problemsCount', { count: problems })
         const button = (
           <button
-            onClick={() => railClick(id)}
+            onClick={() => {
+              // 在数据页里点别的轨道项 = 离开数据页（视图切换，状态留在 store 里）；那个抽屉本来就开着时别再点一次把它收起
+              if (dataActive) {
+                useDataFigureStore.getState().hide()
+                if (open && tab === id) return
+              }
+              railClick(id)
+            }}
             // 焦点救援的落点（`lib/focusRescue.ts`）：aria-label 是本地化文案，
             // 不能当选择器用
             data-rail={id}
@@ -125,12 +146,36 @@ export function LeftRail() {
         )
         // 抽屉开着时不出气泡：它会落在抽屉第二行上、盖住内容，而面板头已经写着这个名字
         // （左栏审计 L15）；开合状态由 aria-expanded 说，可达名不变（e2e 按它找这颗钮）
-        return active && !iconOnly ? (
-          <Fragment key={id}>{button}</Fragment>
-        ) : (
-          <Tip key={id} label={label} side="right">
-            {button}
-          </Tip>
+        const item =
+          active && !iconOnly ? (
+            <Fragment key={id}>{button}</Fragment>
+          ) : (
+            <Tip key={id} label={label} side="right">
+              {button}
+            </Tip>
+          )
+        if (id !== 'assets' || !showData) return item
+        // 「数据」（从数据到图）：正式的轨道项，点它切到数据页视图；挨在「素材」后面，样子与别的轨钮一样
+        return (
+          <Fragment key={id}>
+            {item}
+            <Tip label={t('rail.data')} side="right">
+              <button
+                onClick={() => useDataFigureStore.getState().show()}
+                data-rail="data"
+                aria-label={t('rail.data')}
+                aria-current={dataActive ? 'page' : undefined}
+                className={cn(RAIL_BUTTON, iconOnly && RAIL_BUTTON_ICON, dataActive ? RAIL_ACTIVE : RAIL_IDLE)}
+              >
+                <ChartLine size={ICON_SIZE.md} filled={dataActive} />
+                {!iconOnly && (
+                  <span aria-hidden className="max-w-full truncate px-0.5 text-xs leading-none">
+                    {t('rail.short.data')}
+                  </span>
+                )}
+              </button>
+            </Tip>
+          </Fragment>
         )
       })}
 

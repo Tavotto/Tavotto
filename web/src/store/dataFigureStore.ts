@@ -112,6 +112,9 @@ interface DataFigureStore {
   cancelEntering: () => void
   enter: () => void
   leave: () => void
+  /** 左轨「数据」：回到数据页（上次选中的表与状态都留着）；收起 = 去编辑器（状态不丢） */
+  show: () => void
+  hide: () => void
   loadFiles: () => Promise<void>
   select: (ref: TableRef) => void
   setHeaderRow: (path: string, sheet: string | null, line: number) => void
@@ -345,6 +348,13 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       set({ ...initial, view: 'data' })
       void get().loadFiles()
     },
+    show: () => {
+      if (get().view === 'data') return
+      set({ view: 'data' })
+      // 清单可能是上一轮的：回来时静默再读一次（失败不清空）
+      void get().loadFiles()
+    },
+    hide: () => set((s) => (s.view === 'data' ? { view: 'none' } : s)),
     leave: () => {
       const sc = get().scene
       if (sc.kind === 'pick') void aiDataFigureDiscard(sc.session, currentProjectId()).catch(() => undefined)

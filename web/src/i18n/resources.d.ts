@@ -239,7 +239,7 @@ export default interface Resources {
         "value_column_mixed": "数值列里混着文字（比如「<0.1」），先整理一下再画。"
       },
       "result": {
-        "mismatch": "图里的数据和文件对不上；不对的话可以删掉这份新脚本。",
+        "mismatch": "画出来的图和你的数据对不上，所以没有打开它。它的脚本还留在项目里：可以换一种画法重画，或者去文件夹里把这份脚本删掉。",
         "unknown": "图画好了，数据核对没能完成。",
         "unverifiable": "图画好了，但这类图没法逐项核对数据。",
         "verified": "图画好了，数据和文件逐项对上。"
@@ -7392,6 +7392,7 @@ export default interface Resources {
     },
     "rail": {
       "assets": "素材",
+      "data": "从数据到图",
       "elements": "图内元素",
       "navLabel": "工作区侧栏",
       "outline": "大纲",
@@ -7401,6 +7402,7 @@ export default interface Resources {
       "settings": "设置",
       "short": {
         "assets": "素材",
+        "data": "数据",
         "elements": "图内",
         "outline": "大纲",
         "problems": "问题",

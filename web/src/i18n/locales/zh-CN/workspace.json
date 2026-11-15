@@ -580,11 +580,13 @@
       "problems": "问题",
       "settings": "设置",
       "style": "样式",
-      "workspace": "项目"
+      "workspace": "项目",
+      "data": "数据"
     },
     "style": "样式",
     "workspace": "项目",
-    "problemsBlocking_other": "问题 · {{count}} 项阻断（共 {{total}}）"
+    "problemsBlocking_other": "问题 · {{count}} 项阻断（共 {{total}}）",
+    "data": "从数据到图"
   },
   "readiness": {
     "foreign": {
