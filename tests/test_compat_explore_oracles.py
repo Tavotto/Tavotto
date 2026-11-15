@@ -129,6 +129,58 @@ class PixelJudgment(unittest.TestCase):
         plain = OR.pixel_judgment({"s-2": a, "c": a}, {"s-2": b, "c": b}, self.out)
         self.assertEqual(len(plain["differences"]), 2)
 
+    def test_an_unsaved_declared_figure_is_recognised_by_its_roles(self):
+        """cl-ad2800ee80：show_only 等变换让图没存过盘，stem 对不上声明，按图的元素角色认。"""
+        a, b = png(self.tmp / "a.png"), png(self.tmp / "b.png", dots=64)
+        roles = [
+            (
+                ["axes", "colorbar", "image"],
+                "ax_c: expected.fidelity=false (identified by figure roles)",
+            )
+        ]
+        have = {"s-2": ["axes", "colorbar", "image", "line", "title"], "s": ["axes", "line"]}
+        got = OR.pixel_judgment(
+            {"s-2": a, "s": a}, {"s-2": b, "s": b}, self.out, None, None, roles, have
+        )
+        self.assertEqual([d["evidence"]["stem"] for d in got["differences"]], ["s"])
+        self.assertEqual(sorted(got["declared_unjudged"]), ["s-2"])
+        # 反证：角色不全的图、或没有声明时，同样的像素差照常报
+        self.assertEqual(
+            len(
+                OR.pixel_judgment({"s": a}, {"s": b}, self.out, None, None, roles, have)[
+                    "differences"
+                ]
+            ),
+            1,
+        )
+        self.assertEqual(
+            len(
+                OR.pixel_judgment({"s-2": a}, {"s-2": b}, self.out, None, None, [], have)[
+                    "differences"
+                ]
+            ),
+            1,
+        )
+
+    def test_a_saved_figure_is_never_exempted_by_roles(self):
+        """Codex #1916 P1：存过盘的图 stem 已定身份，角色匹配不得把它免判。"""
+        a, b = png(self.tmp / "a.png"), png(self.tmp / "b.png", dots=64)
+        roles = [(["axes", "line"], "declared")]
+        have = {"m": ["axes", "line", "title"]}
+        got = OR.pixel_judgment({"m": a}, {"m": b}, self.out, None, {"m": ["m"]}, roles, have)
+        self.assertEqual(len(got["differences"]), 1)
+
+    def test_roles_shared_with_a_judged_sibling_do_not_declare_anything(self):
+        """Codex #1916 P1：sci_cjk 与 sci_mathtext 角色相同，认不出是哪张，不免判。"""
+        got = OR.declared_unjudged_roles(xt.load_parent("compat_engine", "sci_mathtext"))
+        self.assertEqual(got, [])
+
+    def test_role_declarations_come_from_the_same_script_siblings(self):
+        got = OR.declared_unjudged_roles(xt.load_parent("compat_engine", "ax_aspect_equal"))
+        self.assertEqual(len(got), 1)
+        self.assertIn("colorbar", got[0][0])
+        self.assertEqual(OR.declared_unjudged_roles(fake_parent()), [])
+
     def test_declarations_come_from_siblings_on_the_same_script_and_entry(self):
         got = OR.declared_unjudged(xt.load_parent("compat_engine", "ax_tight_layout"))
         self.assertIn("ax_constrained_layout", got)
@@ -702,6 +754,46 @@ class DriverNativeSavedStems(unittest.TestCase):
         self.assertEqual(saved["t"], ["t"])
         copies = {k: v for k, v in saved.items() if k not in ("c", "t")}
         self.assertEqual(sorted(v[0] for v in copies.values()), ["c", "t"], saved)
+
+
+class DriverNativeRefSuperseded(unittest.TestCase):
+    """native_ref 的 `superseded_figures`：被同路径后写者顶掉、已关闭、没 show 过的中间图。"""
+
+    def run_script(self, body: str) -> dict:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "p"
+            project.mkdir()
+            (project / "s.py").write_text(
+                "import matplotlib.pyplot as plt\n" + body, encoding="utf-8"
+            )
+            out = cm.run_driver(
+                sys.executable,
+                "native_ref",
+                {"script": str(project / "s.py"), "project": str(project), "entry": "__main__"},
+            )
+        self.assertTrue(out["ok"], out)
+        return out
+
+    def test_the_first_pass_of_a_same_path_loop_is_superseded(self):
+        out = self.run_script(
+            "for i in range(2):\n    plt.figure().savefig('a.png')\n    plt.figure().savefig('b.png')\n    plt.close('all')\n"
+        )
+        self.assertEqual((out["figure_count"], out["superseded_figures"]), (4, [0, 1]))
+
+    def test_a_figure_left_open_or_shown_or_with_its_own_path_is_not_superseded(self):
+        # 反证：不关闭 → 仍开着，用户在退出时能看到
+        out = self.run_script("for i in range(2):\n    plt.figure().savefig('a.png')\n")
+        self.assertEqual(out["superseded_figures"], [])
+        # show 过的图用户看见过
+        out = self.run_script(
+            "for i in range(2):\n    f = plt.figure(); f.savefig('a.png'); plt.show(); plt.close('all')\n"
+        )
+        self.assertEqual(out["superseded_figures"], [])
+        # 另写了一个没被覆盖的路径
+        out = self.run_script(
+            "for i in range(2):\n    f = plt.figure(); f.savefig('a.png'); f.savefig(f'k{i}.png'); plt.close('all')\n"
+        )
+        self.assertEqual(out["superseded_figures"], [])
 
 
 class DriverNativeRefTitles(unittest.TestCase):

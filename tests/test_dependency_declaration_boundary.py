@@ -167,6 +167,36 @@ class TestNotPipInstallable:
         entry = plan.to_payload()["not_pip_installable"][0]
         assert entry["name"] == "ROOT" and entry["sources"] == ["requirements.txt"]
 
+    @pytest.mark.parametrize("module", ["artifact_tool", "ace_tools", "caas_jupyter_tools"])
+    def test_ai_sandbox_modules_are_named_and_never_sent_to_pip(self, tmp_path, module):
+        """TVD-NH7S：ChatGPT 生成的脚本 `import artifact_tool`，预填的 `artifact-tool` 被送进 pip、整批依赖一起失败。"""
+        proj = tmp_path / "p"
+        _write(proj, "a.py", f"import {module}\nimport numpy\n")
+        plan = depplan.plan(proj, "a.py", facts=_facts(), target_kind=MANAGED)
+        assert plan.requirements == ()
+        origin = next(o for o in plan.origins if o["import_name"] == module)
+        assert origin["not_pip_installable"] == {
+            "label": module,
+            "hint": depresolve.NOT_PIP_HINT_AI_SANDBOX,
+        }
+        assert "suggested_distribution" not in origin
+        assert depresolve.suggest_distribution(module) == ""
+        with pytest.raises(depplan.UserSpecifiedRejected):
+            depplan.plan(
+                proj,
+                "a.py",
+                facts=_facts(),
+                target_kind=MANAGED,
+                user_specified={module: module.replace("_", "-")},
+            )
+
+    def test_ai_sandbox_offer_names_the_hint(self, tmp_path):
+        proj = tmp_path / "p"
+        _write(proj, "a.py", "import artifact_tool\n")
+        out = deprepair.offer(proj, "a.py", "artifact_tool")
+        assert out["requirement"] is None
+        assert out["not_pip_installable"]["hint"] == depresolve.NOT_PIP_HINT_AI_SANDBOX
+
     def test_table_is_structured_for_more_entries(self):
         assert depresolve.not_pip_installable("ROOT")["hint"] == depresolve.NOT_PIP_HINT_OWN_ENV
         assert depresolve.not_pip_installable("numpy") is None

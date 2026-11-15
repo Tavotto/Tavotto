@@ -18,7 +18,8 @@ import { currentProjectId } from '@/lib/session'
 import { correctRecordedProject, isForeignDocument } from '@/lib/docOwnership'
 import { cn } from '@/lib/utils'
 import { openDocumentAs } from '@/store/actions'
-import { acceptProbe, probeDocument, useDocumentStore } from '@/store/documentStore'
+import { acceptProbe, dropRecentEntry, probeDocument, useDocumentStore } from '@/store/documentStore'
+import { retryOrFeedback, tooNewAction } from '@/store/failureExit'
 import { useProjectStore } from '@/store/projectStore'
 import { captureSaveContext, stillCurrent } from '@/store/saveContext'
 import { useUiStore } from '@/store/uiStore'
@@ -62,6 +63,9 @@ function savedAt(it: RecoveryCandidateItem): number | null {
   return it.updatedAt
 }
 
+/** 点开一行读不到那条提示的主人：点「再试一次」先收掉自己那一条 */
+const OPEN_FAILURE_OWNER = 'layout.recoverOpenFailure'
+
 export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t } = useTranslation(['dialogs', 'common'])
   const currentId = useDocumentStore((s) => s.documentId)
@@ -76,6 +80,8 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
   /** 代次：重开 / 换项目 / 刷新之后，旧请求的结果不许落进新的列表 */
   const seq = useRef(0)
   const inFlight = useRef(false)
+  /** 点开时发现已不在的排版：列表重读之后也不再出现这一行（后端的扫描结果可能还没跟上） */
+  const gone = useRef(new Set<string>())
   /** 每组列表是替哪个项目读的：点击时对不上此刻的项目就拒绝（界面还没来得及换也不放行） */
   const listPj = useRef<{ project: string | null; unknown: string | null }>({ project: null, unknown: null })
 
@@ -86,7 +92,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
       set(prev ? { state: 'loading', list: prev } : { state: 'loading' })
       const pj = currentProjectId()
       listPj.current[scope] = pj
-      const res = await loadCandidates(scope, pj, prev, new Set([useDocumentStore.getState().documentId]))
+      const res = await loadCandidates(scope, pj, prev, new Set([useDocumentStore.getState().documentId, ...gone.current]))
       if (mine !== seq.current) return
       set(asGroup(res))
     },
@@ -117,6 +123,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
     expectedRevision: string | null,
     scope: 'project' | 'unknown',
     verifiedTarget = false,
+    attempt = 0,
   ): Promise<boolean> => {
     const ctx = captureSaveContext()
     const probe = await probeDocument(id, ctx.pj)
@@ -125,9 +132,37 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
       return false
     }
     if (!probe.doc) {
-      useUiStore
-        .getState()
-        .setStatus(msg(probe.kind === 'too_new' ? 'status.recentTooNew' : 'status.recentMissing', undefined, 'workspace'), 'error')
+      if (probe.kind === 'too_new') {
+        // 桌面版「检查更新」，浏览器版「发给我们看看」
+        useUiStore.getState().setStatus(msg('status.recentTooNew', undefined, 'workspace'), 'error', { action: tooNewAction() })
+      } else if (probe.kind === 'missing') {
+        // 确认不在了：这一行从列表里去掉（本机槽位里的数据不动）并说一句，列表按新状态重读
+        gone.current.add(id)
+        dropRecentEntry(id)
+        useUiStore.getState().setStatus(msg('status.recentMissing', undefined, 'workspace'), 'info')
+        seq.current += 1
+        void load(scope)
+      } else {
+        // 暂时读不到（文件多半还在）→「再试一次」；读到了但坏 → 重试没用，直接「发给我们看看」。都保留这一行
+        const invalid = probe.kind === 'invalid'
+        useUiStore.getState().setStatus(
+          invalid ? msg('layout.recoverFailInvalid', { name }, 'dialogs') : msg('layout.recoverFailUnavailable', undefined, 'dialogs'),
+          'error',
+          {
+            owner: OPEN_FAILURE_OWNER,
+            action: retryOrFeedback({
+              owner: OPEN_FAILURE_OWNER,
+              attempt,
+              retryable: !invalid,
+              run: async (next) => {
+                // 点的时候已换了项目：只收提示
+                if (currentProjectId() !== ctx.pj) return
+                if (await openSafely(id, name, expectedRevision, scope, verifiedTarget, next)) onClose()
+              },
+            }),
+          },
+        )
+      }
       return false
     }
     // 扫描之后这个槽位的正文被改过（同一个 doc id，别的项目存了新的一版）：只有后端证明它现在仍属于本项目

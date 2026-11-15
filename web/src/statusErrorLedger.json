@@ -2,12 +2,6 @@
   "_说明": "红色状态提示（setStatus(…, 'error')）不带 action 按钮的调用点台账；规则见 docs/rules/frontend/ui-visual-discipline.md「失败出口三种结局」，门禁是 web/src/statusErrorActions.test.ts。键 = file + 文案 key（不用行号），同键多处用 count。reason 以 TODO(dead-end): 开头 = 真死胡同、待修，数量上限钉在测试里只许降不许升。",
   "entries": [
     {
-      "file": "App.tsx",
-      "key": "autosave.docConflict",
-      "count": 1,
-      "reason": "TODO(dead-end): 同一排版在另一个窗口也开着，只给一句话；真出口是把这个窗口分叉成一份新排版（新 documentId、新自动保存槽位、改绑项目文件、更新 presence），现在「另存为」只写命名文件、不换 documentId，两个窗口仍写同一槽位，需另开 PR 做分叉。"
-    },
-    {
       "file": "canvas/IssueOverlay.tsx",
       "key": "focusFailureMessage()",
       "count": 1,
@@ -69,12 +63,6 @@
     },
     {
       "file": "components/LayoutRecover.tsx",
-      "key": "status.recentTooNew|status.recentMissing",
-      "count": 1,
-      "reason": "TODO(dead-end): 「文档版本太新读不了」应挂「检查更新」按钮；「找不到了」应顺手刷新恢复列表并把那一行去掉，现在只有一句话。"
-    },
-    {
-      "file": "components/LayoutRecover.tsx",
       "key": "layout.recoverUnverified",
       "count": 2,
       "reason": "核对不了这个槽位是否属于本项目，所以不装；紧跟着 load(scope) 重读恢复列表，用户在刷新后的列表里重选即可。"
@@ -110,19 +98,7 @@
       "reason": "用户点的「还原」没成功，后端原因写在句子里；「还原」入口仍在原处，再点一次就是原动作。"
     },
     {
-      "file": "components/TopBar.tsx",
-      "key": "status.packageFailed",
-      "count": 1,
-      "reason": "TODO(dead-end): 导出项目包失败只有一句后端原因；应挂「再试一次」，或复用 feedbackAction()（发给我们看看）。"
-    },
-    {
-      "file": "components/TopBar.tsx",
-      "key": "status.packageOpenFailed",
-      "count": 1,
-      "reason": "TODO(dead-end): 打开项目包失败只有一句后端原因；应挂「选择别的文件」，或复用 feedbackAction()（发给我们看看）。"
-    },
-    {
-      "file": "components/TopBar.tsx",
+      "file": "store/failureExit.ts",
       "key": "docBanner.updateCheckFailed",
       "count": 1,
       "reason": "用户点的是「检查更新」，多半是网络不通；菜单项仍在，网络恢复后再点就是原动作，没有别的出路可给。"
@@ -231,12 +207,6 @@
     },
     {
       "file": "hooks/useServerEvents.ts",
-      "key": "status.aiChangedRefreshFailed",
-      "count": 1,
-      "reason": "TODO(dead-end): AI 改了代码但项目没刷新成功，只有一句话；应挂「重新刷新」按钮（走 refreshProjectNow()）。"
-    },
-    {
-      "file": "hooks/useServerEvents.ts",
       "key": "msg()",
       "count": 1,
       "reason": "AI 任务以失败 / 被拒收尾；改图助手面板里的对话就是原动作的入口（可再发一次、可回滚），这条只是同步状态。"
@@ -270,12 +240,6 @@
       "key": "pasteNothing",
       "count": 1,
       "reason": "粘贴的内容里没有能放进当前画布的对象；句子说明了，用户复制别的内容再粘贴即可。"
-    },
-    {
-      "file": "lib/onboarding/tutorial.ts",
-      "key": "$out.message",
-      "count": 1,
-      "reason": "TODO(dead-end): 「使用示例脚本试试看」打开示例项目失败只有一句话；应挂「再试一次」，或复用 feedbackAction()。"
     },
     {
       "file": "lib/openRequest.ts",
@@ -321,18 +285,6 @@
     },
     {
       "file": "store/actions.ts",
-      "key": "status:recentTooNew|recentMissing",
-      "count": 1,
-      "reason": "TODO(dead-end): 打开本机最近文档时「版本太新」或「找不到」只有一句话；太新应挂「检查更新」，找不到应把那一行从最近列表去掉。"
-    },
-    {
-      "file": "store/actions.ts",
-      "key": "status:engineErrorMsg()",
-      "count": 3,
-      "reason": "TODO(dead-end): 三处里 reportAdmissionFailure 的非产物失败分支只有一句引擎报错，应挂「再试一次」或 feedbackAction()；另两处（rebuildPanel / 产物校验）是确定性拒绝，句子已说明原因，不需要按钮。"
-    },
-    {
-      "file": "store/actions.ts",
       "key": "status:rebuildFailed",
       "count": 1,
       "reason": "重新构建时引擎失效缓存没成功，原因在句子里；「重新构建」入口仍在原处，再点一次就是原动作。"
@@ -342,12 +294,6 @@
       "key": "status:$message",
       "count": 1,
       "reason": "已采用 PNG 面板的保存数据冲突 / 等用户选的背景：该函数注释明写「原文案原规则，error 色调，不加按钮」，句子是结论，没有可代做的动作。"
-    },
-    {
-      "file": "store/actions.ts",
-      "key": "status:artifact.rebuildFailed",
-      "count": 1,
-      "reason": "TODO(dead-end): 重建核对的预览取不回来只有一句话；应挂「再试一次」（重新进核对），或 feedbackAction()。"
     },
     {
       "file": "store/actions.ts",
@@ -372,12 +318,6 @@
       "key": "status.sourceLostEditing",
       "count": 1,
       "reason": "TODO(dead-end): 正在编辑的图失去了脚本来源只有一句话；应挂「重新关联」按钮（进入重新指认数据 / 脚本的流程）。"
-    },
-    {
-      "file": "store/pngRebuild.ts",
-      "key": "artifact.rebuildFailed",
-      "count": 1,
-      "reason": "TODO(dead-end): 「重建为可编辑图」没跑成只有一句话；应挂「再试一次」，或 feedbackAction()。"
     },
     {
       "file": "store/projectSave.ts",
