@@ -147,6 +147,6 @@
 
 - **主语与判据。** 渲染进程（safe worker）在每次脚本运行结束时从 `sys.modules`（与失败时 traceback 帧里的文件）挑：真身是常规 `.py`、不在项目内、不是引擎 / 解释器 / stdlib / site-packages，且所在的 sys.path 根不在脚本运行前的快照里（只认脚本自己加进去的目录）。成功与失败两条路都带回父进程（build 响应可选字段 / 错误 `extra`，加字段不升协议）。父进程取走即丢：项目外的绝对路径只进持久记录，不留在 `err.extra` / 响应里（诊断、投影、遥测读得到的那一份）；敏感运行（`sensitive_argv`）两条路都不带。
 - **持久化。** 父进程把它按 (项目, 脚本) 记进应用数据目录的小 JSON（有界、30 天、原子写、读失败当没有）：用户常重启应用后才发包。
-- **收集时重新校验。** 渲染进程自报的路径一个都不信：常规文件、路径无符号链接、不在项目内、不在 `readscope` 敏感目录、同一文件只收一次、沿用 SOURCE 的单文件与总条数上限；内容走 `scrub_script` 与现有脱敏；成员名虚拟写法 `external/<父目录短哈希>/<名>`（内层 zip 里拍平成 `ext-NN-external__<哈希>__<名>`），`index.json` 条目 `reason: imported_external` + `imported_by`。
+- **收集时重新校验。** 渲染进程自报的路径一个都不信：常规文件、路径无符号链接、不在项目内、不在 `readscope` 敏感目录、不直接放在主目录根 / 盘符根下、同一文件只收一次、沿用 SOURCE 的单文件与总条数上限；内容走 `scrub_script` 与现有脱敏；成员名虚拟写法 `external/<父目录短哈希>/<名>`（内层 zip 里拍平成 `ext-NN-external__<哈希>__<名>`），`index.json` 条目 `reason: imported_external` + `imported_by`。
 - **不变。** 登记 / 尝试过但解析到项目外的**脚本本身**仍不收；没勾 = 零字节；native 执行配置（`bridge_runner`）本次未接这条记录。
 - **未验证（NOT_RUN）。** 服务端（infra）对 `index.json` 条目 `reason` 取值是否有闭集校验；真机 Windows 路径（盘符 / 大小写）。

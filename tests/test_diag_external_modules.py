@@ -495,9 +495,12 @@ class TestCollect:
         inside = _write(proj / "inner.py", f"{EXT_CANARY} = 1\n")
         sensitive = _write(home / ".ssh" / "keys.py", f"{EXT_CANARY} = 2\n")
         notpy = _write(tmp_path / "pub" / "data.txt", f"{EXT_CANARY} = 3\n")
+        # 直接放在主目录根下的 .py：脚本把整个主目录加进 sys.path 时也不收（边界写在 privacy.md）
+        loose_in_home = _write(home / "loose.py", f"{EXT_CANARY} = 4\n")
         cands = [
             str(inside),
             str(sensitive),
+            str(loose_in_home),
             str(notpy),
             "relative/h.py",
             str(tmp_path / "gone.py"),

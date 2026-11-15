@@ -2670,6 +2670,7 @@ def external_candidates(
         from .fixtools import readscope
 
         scope = readscope.ReadScope(home=Path.home(), project_root=root)
+        home = os.path.normcase(os.path.realpath(Path.home()))
     except Exception:  # noqa: BLE001 — 判不了敏感目录就一个都不收
         return []
     taken: set[str] = set()
@@ -2694,6 +2695,9 @@ def external_candidates(
                 nroot = os.path.normcase(root)
                 if key == nroot or key.startswith(nroot.rstrip(os.sep) + os.sep):
                     continue  # 项目内的：别的路收
+                parent = os.path.normcase(os.path.dirname(real))
+                if parent == home or os.path.dirname(parent) == parent:
+                    continue  # 直接放在主目录根 / 盘符根下的不收：那是整个主目录 / 整个盘被加进了 sys.path
                 st = os.lstat(real)
                 if not stat.S_ISREG(st.st_mode) or scope.is_denied(real):
                     continue
