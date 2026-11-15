@@ -104,7 +104,8 @@ class TestObservedExternalModules:
         proj.mkdir()
         ext = tmp_path / "ext"
         so = _write(ext / "native.so", "binary")
-        stray = _write(tmp_path / "stray" / "stray.py")  # 不在任何 sys.path 根下
+        stray = _write(ext / "stray.py", "X = 1\n")
+        stray.unlink()  # 记录里有、文件已经不在：不收
         gone = ext / "gone.py"  # 文件已经不存在
         mods = {
             "native": _mod(so),
@@ -113,6 +114,23 @@ class TestObservedExternalModules:
             "nofile": types.ModuleType("x"),
         }
         assert _observe(proj, mods, [], [str(ext)]) == []
+
+    def test_directory_added_then_removed_from_sys_path_is_still_recognised(self, tmp_path):
+        """脚本临时把公共目录加进 `sys.path`、import 完又在 `finally` 里恢复（Codex #1953 P2）：观察发生在运行之后，
+        此刻 `sys.path` 里已经没有那个目录——模块不在运行前的任何 sys.path 根下，仍算脚本自己加载的项目外模块。"""
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        ext = tmp_path / "公共代码"
+        helper = _write(ext / "shared_plot.py")
+        got = _observe(proj, {"shared_plot": _mod(helper)}, [str(proj)], [str(proj)])
+        assert got == [os.path.realpath(helper)]
+
+    def test_module_under_a_baseline_root_stays_excluded_after_sys_path_changes(self, tmp_path):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        pre = tmp_path / "preexisting"
+        helper = _write(pre / "h.py")
+        assert _observe(proj, {"h": _mod(helper)}, [str(proj), str(pre)], [str(proj)]) == []
 
     def test_module_removed_from_sys_modules_is_found_through_traceback_frames(self, tmp_path):
         """导入到一半抛错的模块会被解释器从 `sys.modules` 摘掉——它正是要查的那一个。"""

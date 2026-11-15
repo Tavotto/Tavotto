@@ -5723,7 +5723,8 @@ def observed_external_modules(
     """脚本运行时实际加载的、**位于项目外的本地 `.py` 模块**（绝对 realpath，有界）——诊断包「脚本源码」据此带上它们。
 
     主语：跑用户脚本的这个进程、这一次运行。只认脚本**自己**加进 `sys.path` 的目录里的模块：模块所在的 sys.path 根
-    （此刻 `sys_path` 里包含它的最深一项）若在运行前就有（`baseline_paths`）就不是。排除：项目内的（别的路收）、
+    （此刻 `sys_path` 里包含它的最深一项）若在运行前就有（`baseline_paths`）就不是；此刻已不在任何根下的（脚本加了又移走），
+    只要不在运行前的任何根下就算。排除：项目内的（别的路收）、
     `exclude_dirs`（引擎自己的目录）、解释器前缀 / stdlib / site-packages / 路径段含 `site-packages` /
     `dist-packages` 的第三方包。`extra_files` 是失败时 traceback 帧里的文件名：模块导入到一半抛错会从
     `sys.modules` 里被摘掉，但它正是要查的那一个。只收真正加载过的，不猜没加载的文件。"""
@@ -5774,10 +5775,13 @@ def observed_external_modules(
         if {p.lower() for p in pathlib.PurePath(n).parts} & {"site-packages", "dist-packages"}:
             continue
         holders = [r for r in roots if _within(n, r)]
-        if not holders:
-            continue  # 不在任何 sys.path 根下：不是「脚本加进 sys.path」的模块
-        if max(holders, key=len) in base:
+        if holders:
+            if max(holders, key=len) in base:
+                continue  # 此刻持有它的最深 sys.path 根在运行前就有
+        elif any(_within(n, b) for b in base):
             continue
+        # 此刻不在任何 sys.path 根下、也不在运行前的任何根下：脚本加进又移走了那个目录（`finally` 里恢复
+        # sys.path，Codex #1953 P2）——观察发生在运行之后，只能这样认，仍算脚本自己加载的项目外模块
         out.append(os.path.realpath(f))
         if len(out) >= EXTERNAL_MODULES_MAX:
             break
