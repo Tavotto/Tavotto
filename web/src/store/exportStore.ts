@@ -61,7 +61,7 @@ const TERMINAL = new Set(['done', 'partial', 'failed', 'cancelled', 'conflict', 
 
 export type PreparedExport = (
   | (ReturnType<typeof buildExportRequest> & { error: null })
-  | { request: null; names: []; revision: null; error: ArtifactValidationError }
+  | { request: null; names: []; revision: null; newerObjects: 0; error: ArtifactValidationError }
 ) & {
   /** 文件名不合法的原因；合法为 null。**在输入的那一刻就知道**（§六） */
   filenameProblem: FilenameReason | null
@@ -304,7 +304,7 @@ export function prepareExport(input: ExportRequestInput): PreparedExport {
     return { ...buildExportRequest(input), error: null, filenameProblem: problem }
   } catch (error) {
     if (!(error instanceof ArtifactValidationError)) throw error
-    return { request: null, names: [], revision: null, error, filenameProblem: problem }
+    return { request: null, names: [], revision: null, newerObjects: 0, error, filenameProblem: problem }
   }
 }
 

@@ -5022,7 +5022,18 @@ def api_package_open():
                 "params": {"reason": str(exc)},
             }
         ), 400
-    if doc.get("schema") not in (2, 3):
+    schema = doc.get("schema")
+    if type(schema) is int and schema > engine_documents.SCHEMA_CURRENT:
+        # 更新的 Tavotto 打出的包：与排版的 `schema_too_new` 同一结局（界面给「检查更新」），
+        # 不说成「不是项目包」——这份包本身没坏，是这个版本读不了（#1921）
+        return jsonify(
+            {
+                "error": f"这个项目包来自更新的 Tavotto（schema {schema}），请升级后再打开",
+                "code": "package_schema_too_new",
+                "params": {"schema": schema},
+            }
+        ), 400
+    if schema not in engine_documents.SUPPORTED_SCHEMAS:
         return jsonify(
             {
                 "error": "项目包里的布局既不是 schema 2 也不是 schema 3",
