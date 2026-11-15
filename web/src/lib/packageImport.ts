@@ -6,7 +6,7 @@
  * 成功的那句话在这里说；**失败原样抛出**，由调用方决定怎么说（顶栏说原因，画布拖放给「发送问题反馈」）。
  */
 import { msg } from '@/i18n'
-import { openPackage } from '@/lib/api'
+import { ApiError, openPackage } from '@/lib/api'
 import { requestRelinkMissing } from '@/lib/clipboard'
 import { openLayoutDocument } from '@/store/actions'
 import { useUiStore } from '@/store/uiStore'
@@ -22,4 +22,9 @@ export async function openPackageFile(file: File): Promise<void> {
   } else if (drift) {
     ui.setStatus(msg('status.packageDrift', { count: drift }, 'workspace'), 'error')
   }
+}
+
+/** 包来自更新的 Tavotto（排版 schema 比本版本新）：调用方给「检查更新」，不说成坏包（#1921） */
+export function isPackageTooNew(e: unknown): boolean {
+  return e instanceof ApiError && e.body?.code === 'package_schema_too_new'
 }

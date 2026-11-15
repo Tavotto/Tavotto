@@ -201,6 +201,7 @@
     "package_file_missing": "No file was uploaded",
     "package_invalid": "Not a valid project package: {{reason}}",
     "package_schema_unsupported": "The layout in this package is neither schema 2 nor schema 3",
+    "package_schema_too_new": "This project package is from a newer version (schema {{schema}}). Update, then open it again",
     "package_source_outside_project": "A package resource is outside the project directory. No package was created. Move the resource into the project first.",
     "figure_snapshot_unavailable": "A referenced Figure snapshot or its original could not be verified. No package was created. Restore the missing resource or regenerate the figure.",
     "permission_denied": "No permission to read: {{path}}",
