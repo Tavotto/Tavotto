@@ -11,8 +11,9 @@ import pytest
 
 from tavotto import app as m
 from tavotto.engine import pool, project_watch
-from tavotto.rendercore.svgcheck import SVGBudget
-from tavotto.svgscene import SceneError, read_scene, scene_inventory
+from tavotto.rendercore.svgcheck import SVGBudget, parse_svg
+from tavotto.svgasset import inspect_bytes
+from tavotto.svgscene import SceneError, build_node_index, read_scene, scene_inventory
 
 CORPUS = Path(__file__).resolve().parent / "support" / "svg_corpus"
 
@@ -44,6 +45,41 @@ def test_generated_ids_for_idless_nodes_are_deterministic():
     tags = {n["id"]: n["tag"] for n in inv["nodes"]}
     # 轴框与数据点都进了清单（可绑定候选）
     assert set(tags.values()) >= {"rect", "circle", "path", "text"}
+
+
+def test_scene_dimensions_match_the_asset_authority():
+    """同一份 viewBox-only SVG：盘点与静态资产读出的物理尺寸必须一致。"""
+    data = (
+        b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50">'
+        b'<rect width="10" height="10"/></svg>'
+    )
+    inv = scene_inventory(data)
+    asset = inspect_bytes(data)[1]
+    assert (inv["w_pt"], inv["h_pt"]) == (asset["w_pt"], asset["h_pt"]) == (75.0, 37.5)
+
+
+def test_one_explicit_dimension_scales_by_the_viewbox_aspect():
+    data = (
+        b'<svg xmlns="http://www.w3.org/2000/svg" width="72pt" viewBox="0 0 100 50">'
+        b'<rect width="10" height="10"/></svg>'
+    )
+    inv = scene_inventory(data)
+    assert (inv["w_pt"], inv["h_pt"]) == (72.0, 36.0)
+
+
+def test_synthetic_ids_do_not_steal_explicit_descendant_ids():
+    """根无 id 时合成 id 不得占用后代显式 id（nsvg 曾撞车导致整份 SVG 被拒）。"""
+    data = (
+        b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+        b'<g id="nsvg"><rect width="10" height="10"/></g></svg>'
+    )
+    inv = scene_inventory(data)
+    ids = [n["id"] for n in inv["nodes"]]
+    assert len(ids) == len(set(ids))
+    assert "nsvg" in ids
+    index = build_node_index(parse_svg(data))
+    assert index["nsvg"].get("id") == "nsvg"
+    assert index["nsvg"].tag.endswith("g")
 
 
 def test_text_and_style_facts_are_listed_for_binding_ui():
