@@ -71,7 +71,10 @@ export function fileRows(entries: AiDataFileEntry[]): DataFileRow[] {
           : t.status === 'unsure'
             ? { kind: 'unsure' }
             : t.status === 'unreadable'
-              ? { kind: 'unreadable', code: t.code }
+              ? // 读不了但后端带着原文行（指定表头行就能救回来，如仪器说明行触发的 data_ragged）：和「没认准」同一档，别让人直接放弃
+                Array.isArray(t.preview) && t.preview.length > 0
+                ? { kind: 'unsure' }
+                : { kind: 'unreadable', code: t.code }
               : { kind: 'unread' }
     return { path: e.path, workbook: false, unread: false, rows: [{ ref: { path: e.path, sheet: null }, status }] }
   })
@@ -81,7 +84,8 @@ export function fileRows(entries: AiDataFileEntry[]): DataFileRow[] {
 export function withOverview(row: DataRow, ov: AiDataOverview | undefined): RowStatus {
   if (!ov || ov.path !== row.ref.path || (ov.sheet ?? null) !== row.ref.sheet) return row.status
   if (ov.status === 'ok' && ov.rows != null && ov.columns != null) return { kind: 'table', rows: ov.rows, columns: ov.columns }
-  if (ov.status === 'unreadable') return { kind: 'unreadable', code: ov.code }
+  // 重读后仍读不了但还有原文行：还是「没认准」（可以接着点别的行）；没有原文行才是真读不了
+  if (ov.status === 'unreadable') return (ov.raw_lines?.length ?? 0) > 0 ? { kind: 'unsure' } : { kind: 'unreadable', code: ov.code }
   return row.status
 }
 

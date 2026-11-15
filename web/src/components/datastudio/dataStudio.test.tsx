@@ -512,3 +512,89 @@ describe('整页 DataPage 接 store 走一遍', () => {
     expect(files).toHaveBeenCalledTimes(2)
   })
 })
+
+describe('读不了但能补救的文本表（仪器说明行触发 data_ragged）', () => {
+  const raw = [1, 2, 3, 4, 5].map((n) => ({ line: n, text: `line ${n}` }))
+  const ragged = (over: Partial<AiDataOverview> = {}) => ov({ status: 'unreadable', code: 'data_ragged', header_row: 3, raw_lines: raw, fields: [], preview_rows: [], ...over })
+
+  it('侧栏：清单里 unreadable 且带 preview → 「没认准」；没有 preview 的才是「读不了」', async () => {
+    const rows = fileRows([
+      { path: 'inst.txt', size: 1, table: { status: 'unreadable', code: 'data_ragged', delimiter: 'comma', header_row: 3, columns: null, rows: null, preview: [{ line: 1, text: 'Temperature,25' }] } },
+      { path: 'bin.dat', size: 1, table: { status: 'unreadable', code: 'data_binary', delimiter: null, header_row: null, columns: null, rows: null, preview: [] } },
+    ])
+    expect(rows[0]!.rows[0]!.status).toEqual({ kind: 'unsure' })
+    expect(rows[1]!.rows[0]!.status).toEqual({ kind: 'unreadable', code: 'data_binary' })
+    await mount(<DataList rows={rows} selected={null} overviews={{}} onSelect={() => {}} />)
+    const txt = qa('[data-studio-nav]').map((r) => r.textContent)
+    expect(txt.find((x) => x!.includes('inst.txt'))).toContain('没认准')
+    expect(txt.find((x) => x!.includes('bin.dat'))).toContain('读不了')
+  })
+
+  it('点行重读：成功 → 清单变行数；仍读不了但有原文行 → 仍是「没认准」；没有原文行 → 读不了', async () => {
+    const row = fileRows([{ path: 'inst.txt', size: 1, table: { status: 'unreadable', code: 'data_ragged', delimiter: 'comma', header_row: 3, columns: null, rows: null, preview: [{ line: 1, text: 'x' }] } }])[0]!.rows[0]!
+    const { withOverview } = await import('@/lib/dataFigure')
+    expect(withOverview(row, ov({ path: 'inst.txt', rows: 7, columns: 2 }))).toEqual({ kind: 'table', rows: 7, columns: 2 })
+    expect(withOverview(row, ragged({ path: 'inst.txt', code: 'data_header_row_invalid' }))).toEqual({ kind: 'unsure' })
+    expect(withOverview(row, ragged({ path: 'inst.txt', raw_lines: [] }))).toEqual({ kind: 'unreadable', code: 'data_ragged' })
+  })
+
+  it('预览：和没认准同一套（原文行、猜的行高亮、当作每列的名字、点别的行重读）；还没点过时不说原因', async () => {
+    const onHeaderRow = vi.fn()
+    await mount(<TablePreview ov={ragged()} loading={false} onHeaderRow={onHeaderRow} />)
+    expect(q('[data-header]')!.getAttribute('data-look-line')).toBe('3')
+    expect(q('[data-studio-header-tag]')!.textContent).toBe('当作每列的名字')
+    expect(q('[data-studio-pick-why]')).toBeNull()
+    expect(q('[data-studio-unreadable]')).toBeNull()
+    await click(q('[data-look-line="5"] input'))
+    expect(onHeaderRow).toHaveBeenCalledWith(5)
+  })
+
+  it('点的那一行读不成表：留在这一屏，用稳定码说一句为什么（中文，不露英文原文）；码不认识就不说', async () => {
+    await mount(<TablePreview ov={ragged({ code: 'data_header_row_invalid' })} loading={false} picked onHeaderRow={() => {}} />)
+    expect(q('[data-studio-pick-why]')!.textContent).toBe('指定的那一行不能当列名，换一行试试。')
+    expect(qa('[data-look-line]').length).toBe(5)
+    act(() => root.unmount())
+    host.remove()
+    await mount(<TablePreview ov={ragged({ code: 'data_future_code' })} loading={false} picked onHeaderRow={() => {}} />)
+    expect(q('[data-studio-pick-why]')).toBeNull()
+    expect(q('[data-studio-look]')).not.toBeNull()
+  })
+
+  it('真读不了（没有原文行）：保持那一句说明，没有行可点', async () => {
+    await mount(<TablePreview ov={ragged({ raw_lines: [], code: 'data_binary' })} loading={false} onHeaderRow={() => {}} />)
+    expect(q('[data-studio-unreadable]')!.textContent).toContain('读不了')
+    expect(q('[data-studio-look]')).toBeNull()
+  })
+
+  it('整页：点开 → 原文行（没有开始）→ 点错行（仍读不了 + 原因，还能点）→ 点对行（预览 + 开始）→ 出图带 header_rows', async () => {
+    const overview = vi.mocked(aiDataOverview)
+    const propose = vi.mocked(aiDataFigurePropose)
+    const files = vi.mocked(aiDataFilesAll)
+    setCurrentProjectId('pa')
+    useDataFigureStore.getState().clear()
+    useProjectStore.setState({ project: { open: true, name: 'proj', writable: true } })
+    files.mockResolvedValue({ files: [{ path: 'inst.txt', size: 1, table: { status: 'unreadable', code: 'data_ragged', delimiter: 'comma', header_row: 3, columns: null, rows: null, preview: [{ line: 1, text: 'Temperature,25' }] } }], truncated: false })
+    overview.mockImplementation(async (qy) => (qy.headerRow === 4 ? ov({ path: 'inst.txt', header_row: 4, rows: 7, columns: 2 }) : qy.headerRow === 2 ? ragged({ path: 'inst.txt', code: 'data_header_row_invalid', header_row: 2 }) : ragged({ path: 'inst.txt' })))
+    propose.mockResolvedValue({ kind: 'nothing', reasons: ['no_usable_table'] })
+    await act(async () => useDataFigureStore.getState().enter())
+    await mount(<DataPage />)
+    await flush()
+    expect(qa('[data-studio-nav]')[0]!.textContent).toContain('没认准')
+    await click(qa('[data-studio-file]')[0]!)
+    await flush()
+    expect(q('[data-studio-look]')).not.toBeNull()
+    expect(q('[data-studio-start]')).toBeNull()
+    await click(q('[data-look-line="2"] input'))
+    await flush()
+    expect(q('[data-studio-pick-why]')).not.toBeNull()
+    expect(q('[data-studio-start]')).toBeNull()
+    expect(qa('[data-studio-nav]')[0]!.textContent).toContain('没认准')
+    await click(q('[data-look-line="4"] input'))
+    await flush()
+    expect(q('[data-studio-start]')).not.toBeNull()
+    expect(qa('[data-studio-nav]')[0]!.textContent).toContain('7 行')
+    await click(q('[data-studio-start]'))
+    await flush()
+    expect(propose.mock.calls[0]![0]).toMatchObject({ table: 'inst.txt', header_rows: { 'inst.txt': 4 } })
+  })
+})

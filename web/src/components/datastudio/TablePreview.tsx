@@ -15,26 +15,31 @@ const KIND_KEY = { numeric: 'numeric', date: 'date', text: 'text', mixed: 'mixed
 export function TablePreview({
   ov,
   loading,
+  picked = false,
   onHeaderRow,
 }: {
   ov: AiDataOverview
   /** 点了别的行、重读还在路上：旧内容淡一点，不清空 */
   loading: boolean
+  /** 用户已经点过某一行当列名（这次的结果是按那一行读的） */
+  picked?: boolean
   onHeaderRow: (line: number) => void
 }) {
   const { t } = useTranslation('ai')
   const fm = useFormatMessage()
 
-  if (ov.status === 'unreadable') {
-    // 原因句（后端的稳定码翻出来的）本身就说了「读不了」；码不认识就只说这一句
-    const reason = fm(backendCodeMsg(ov.code ?? undefined, undefined, ''))
-    return <Notice tone="neutral" data-studio-unreadable title={reason || t('dataFigureV2.preview.unreadable')} />
-  }
-
   const lines = ov.raw_lines
-  if (ov.status === 'unsure' && lines.length > 0) {
+  if ((ov.status === 'unsure' || ov.status === 'unreadable') && lines.length > 0) {
     const guess = ov.header_row
+    // 用户点的那一行读不成表：按后端的稳定码说一句为什么，留在这一屏接着点别的行（码不认识就不说原因）
+    const why = ov.status === 'unreadable' && picked ? fm(backendCodeMsg(ov.code ?? undefined, undefined, '')) : ''
     return (
+      <div className="flex w-full max-w-[720px] flex-col gap-2">
+        {why && (
+          <p className="text-sm text-ink-2" data-studio-pick-why>
+            {why}
+          </p>
+        )}
       <div role="radiogroup" aria-label={t('dataFigureV2.preview.headerPick')} data-studio-look className={cn('flex w-full max-w-[720px] flex-col gap-0.5 rounded-lg bg-surface-2 p-1.5', loading && 'opacity-60')}>
         {lines.map((l) => {
           const on = l.line === guess
@@ -69,7 +74,14 @@ export function TablePreview({
           )
         })}
       </div>
+      </div>
     )
+  }
+
+  if (ov.status === 'unreadable') {
+    // 原因句（后端的稳定码翻出来的）本身就说了「读不了」；码不认识就只说这一句
+    const reason = fm(backendCodeMsg(ov.code ?? undefined, undefined, ''))
+    return <Notice tone="neutral" data-studio-unreadable title={reason || t('dataFigureV2.preview.unreadable')} />
   }
 
   const numericCols = ov.fields.map((f) => f.kind === 'numeric')

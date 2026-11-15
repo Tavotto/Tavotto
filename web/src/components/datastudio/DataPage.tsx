@@ -101,7 +101,7 @@ export function DataPage() {
             ) : !ov ? (
               <ProgressBar pct={null} label={t('dataFigureV2.working.reading')} className="w-56" />
             ) : (
-              <TablePreview ov={ov} loading={loadingOv} onHeaderRow={(line) => st().setHeaderRow(selected.path, selected.sheet, line)} />
+              <TablePreview ov={ov} loading={loadingOv} picked={headerRows[selected.path] != null} onHeaderRow={(line) => st().setHeaderRow(selected.path, selected.sheet, line)} />
             )}
             {/* 只有认准了、读得了的表才有「开始」：没认准的先点哪一行是每列的名字，读不了的没有下一步 */}
             {ov?.status === 'ok' && (
