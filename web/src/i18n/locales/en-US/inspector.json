@@ -14,7 +14,7 @@
   },
   "alignRef": {
     "page": "Canvas",
-    "primary": "Last selected",
+    "primary": "Key object",
     "selection": "Selection"
   },
   "arrange": {
@@ -78,7 +78,21 @@
     "zTop": "Bring to front",
     "zUp": "Bring forward",
     "zorderLabel": "Layer",
-    "pathfinderLabel": "Pathfinder"
+    "pathfinderLabel": "Pathfinder",
+    "arrayLabel": "Repeat",
+    "arrayKind": "Mode",
+    "arrayGrid": "Grid",
+    "arrayRadial": "Radial",
+    "arrayRowsCols": "Rows · columns",
+    "arrayRows": "Rows",
+    "arrayCols": "Columns",
+    "arrayCountRadius": "Copies · radius",
+    "arrayCount": "Copies (incl. original)",
+    "arrayRadius": "Radius",
+    "arrayRotate": "Rotate copies",
+    "arrayMake_one": "Make {{count}} copy",
+    "arrayMake_other": "Make {{count}} copies",
+    "arrayTooMany": "At most {{max}} copies at once"
   },
   "assistantRunningTip": "Assistant is running",
   "autoHideAria": "Right panel auto-hides; click to pin it",
