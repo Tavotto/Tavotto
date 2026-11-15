@@ -4,6 +4,7 @@ import {
   deleteReviewRecord,
   dismissReview,
   fetchReviewCapability,
+  fetchReviewChanged,
   fetchReviewFor,
   fetchReviewQuota,
   fetchReviewShare,
@@ -59,6 +60,8 @@ interface ReviewState {
   quota: ReviewQuota
   /** 选择卡里「更新已有的链接」可选的本机未到期分享 */
   others: ReviewShareSummary[]
+  /** 画布相对最新版本有没有新改动（弹窗打开时问引擎，决定「更新」那一行出不出现）；没问到 / 失败按 true（宁可多给更新入口） */
+  changed: boolean
   unread: ReviewUnread
   /** 通知轨胶囊：用户 × 掉时的未读总数；未读数再增加才会重新出现 */
   capsuleDismissedAt: number
@@ -71,6 +74,7 @@ interface ReviewState {
   reloadShare: () => Promise<void>
   /** 剩余次数 + 选择卡的候选；联网不通时数字是 null，界面就不显示 */
   loadQuota: () => Promise<void>
+  loadChanged: () => Promise<void>
   loadDetail: () => Promise<void>
   openDialog: () => void
   closeDialog: () => void
@@ -133,7 +137,7 @@ export const useReviewStore = create<ReviewState>((set, get) => {
       }
       if (mine !== genToken) return
       if (st.stage === 'done') {
-        set({ stage: 'done', failure: null })
+        set({ stage: 'done', failure: null, changed: false })
         void dismissReview().catch(() => {})
         await get().reloadShare()
         void get().loadQuota()
@@ -165,6 +169,7 @@ export const useReviewStore = create<ReviewState>((set, get) => {
     picker: null,
     quota: { new_left: null, update_left: null },
     others: [],
+    changed: true,
     unread: { total: 0, latest: null },
     capsuleDismissedAt: 0,
     selectedId: null,
@@ -220,6 +225,18 @@ export const useReviewStore = create<ReviewState>((set, get) => {
       }
     },
 
+    loadChanged: async () => {
+      const id = get().share?.share_id
+      const render = buildReviewRender()
+      if (!id || !render) return set({ changed: true })
+      try {
+        const r = await fetchReviewChanged(id, render)
+        set({ changed: r?.changed !== false })
+      } catch {
+        set({ changed: true })
+      }
+    },
+
     loadDetail: async () => {
       const id = get().share?.share_id
       if (!id) return set({ detail: null })
@@ -235,6 +252,7 @@ export const useReviewStore = create<ReviewState>((set, get) => {
     openDialog: () => {
       set({ dialogOpen: true, picker: null, failure: null, stage: 'idle' })
       void get().loadQuota()
+      void get().loadChanged()
     },
     closeDialog: () => {
       const { stage } = get()

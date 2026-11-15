@@ -25,6 +25,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   resolveReviewComment: vi.fn(),
   markReviewRead: vi.fn(),
   fetchReviewUnread: vi.fn(),
+  fetchReviewChanged: vi.fn(),
   fetchPanels: vi.fn().mockResolvedValue({ figures_dir: '', panels: [] }),
   fetchReadiness: vi.fn().mockResolvedValue(null),
 }))
@@ -32,6 +33,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 import {
   ApiError,
   dismissReview,
+  fetchReviewChanged,
   fetchReviewShare,
   fetchReviewStatus,
   markReviewRead,
@@ -519,6 +521,31 @@ describe('元素表还没到时不判「原位置已变化」', () => {
     resetStore({ share: SHARE, detail: DETAIL([c]) })
     await render(<ReviewPanel />)
     expect(q('[data-review-comment="e1"] [data-review-moved]')).toBeNull()
+  })
+})
+
+describe('画布相对最新版有没有新改动', () => {
+  it('打开弹窗时问引擎：false 就是没改动；404 / 失败 / 没有分享记录都按「有改动」', async () => {
+    resetStore({ share: SHARE })
+    vi.mocked(fetchReviewChanged).mockResolvedValue({ changed: false })
+    await act(async () => useReviewStore.getState().openDialog())
+    expect(fetchReviewChanged).toHaveBeenCalledWith('sh_1', expect.anything())
+    expect(useReviewStore.getState().changed).toBe(false)
+    vi.mocked(fetchReviewChanged).mockRejectedValue(new ApiError('nf', 404, {}))
+    await act(async () => useReviewStore.getState().openDialog())
+    expect(useReviewStore.getState().changed).toBe(true)
+    vi.mocked(fetchReviewChanged).mockResolvedValue({ changed: false })
+    resetStore({ share: null })
+    await act(async () => useReviewStore.getState().openDialog())
+    expect(useReviewStore.getState().changed).toBe(true)
+  })
+  it('更新成功后画布与最新版一致：changed 变 false', async () => {
+    resetStore({ share: SHARE, dialogOpen: true, changed: true })
+    vi.mocked(updateReview).mockResolvedValue({ ok: true })
+    vi.mocked(fetchReviewStatus).mockResolvedValue({ stage: 'done', failure: null, retryable: false, share: SHARE })
+    await act(async () => void useReviewStore.getState().update())
+    await settle()
+    expect(useReviewStore.getState().changed).toBe(false)
   })
 })
 

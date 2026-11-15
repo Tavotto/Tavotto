@@ -8270,4 +8270,7 @@ export const resolveReviewComment = (shareId: string, commentId: string, resolve
 export const markReviewRead = (shareId: string) => jsonFetch<unknown>(`${rv(shareId)}/read`, reviewPost())
 export const reviewSnapshotUrl = (shareId: string, v: number) =>
   apiUrl(`${rv(shareId)}/versions/${v}/snapshot.png`)
+/** 画布相对该分享的最新版本有没有改动（本机比对、不联网）；404 / 422 由调用方按「有改动」处理 */
+export const fetchReviewChanged = (shareId: string, render: ReviewRender) =>
+  jsonFetch<{ changed: boolean }>('/api/review/changed', reviewPost({ share_id: shareId, render }))
 export const fetchReviewUnread = () => jsonFetch<ReviewUnread>('/api/review/unread')
