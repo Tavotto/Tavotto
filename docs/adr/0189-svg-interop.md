@@ -1,6 +1,6 @@
 # ADR 0189：SVG 互通——导入成可编辑对象、文字转轮廓、复制为 SVG
 
-日期：2026-11-15 · 状态：**Proposed**（M5 两批已在本地实现；审阅页的待定项用户拍板后改 Accepted。1.0 豁免沿用 ADR 0185 在
+日期：2026-11-15 · 状态：**Accepted**（2026-11-15 用户拍板：M5 两批审阅页共 11 处全按推荐，含第 6 处「解析和安全边界合一，换算各管各的」。1.0 豁免沿用 ADR 0185 在
 `docs/1.0-release-readiness.md` §1.8 的那一行，M5 属其范围；PR 按 risk:high 走）
 相关：[0185 画布矢量编辑](0185-vector-editing.md)（§五 M5）、[0188 嵌套组与剪切蒙版](0188-nested-groups-and-clipping-masks.md)、
 [0182 SVG 计算图表编辑（外部 RFC #1877，Proposed）](https://github.com/Tavotto/Tavotto/issues/1877)、
