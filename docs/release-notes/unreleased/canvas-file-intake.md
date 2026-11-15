@@ -1,3 +1,0 @@
-## Drag or paste images onto the canvas
-
-You can now drop a PNG, JPG, TIFF, PDF or SVG file onto the canvas, or paste a screenshot with Cmd/Ctrl+V, and it goes straight onto the canvas. The file is copied into your project folder as a normal figure (never overwriting a file that is already there; a same-named file with different content gets a “(2)” name). Dropping several files handles each one by type and ends with one summary line. Project packages dropped on the canvas open like “Import project package”, and a script that is outside the current project now offers “Open its project” instead of asking you to go back to the home screen. Anything that cannot be added says so in one sentence with a button to send feedback.

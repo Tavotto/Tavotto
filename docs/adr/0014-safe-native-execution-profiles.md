@@ -70,6 +70,11 @@ class ExecutionSpec:
 第一批消费者。**Python 池与 workerd 的行为一个字节不变**——这是重构不是
 改语义。
 
+固定 chart 任务（ADR 0182，#1877）复用 safe worker 的机制，但不是用户脚本执行：
+`safe_spec(task="chart")` 只接受空脚本/argv/运行配置，产生既有 `module` 目标形态中的固定
+`tavotto.engine.svgchart`；`worker_argv` 映射为 `--task chart`，不开放任意 safe module invocation。
+该进程固定沙盒、共享文件守卫、不 build、不产生用户执行事实；原有用户脚本的 spec 与 argv 不变。
+
 ### 2. 两档 profile 的诚实定义
 
 | 维度 | safe（现状语义，收进 spec） | native（新增，`tavotto run`） |

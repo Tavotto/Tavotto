@@ -11,6 +11,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PanelInfo, TutorialMetadata } from '@/lib/api'
 import type { PanelObject } from '@/types/document'
 import { setTelemetryEnabled } from '@/lib/telemetry'
+import { formatMessage } from '@/i18n'
+import { useDiagSendStore } from '@/store/diagSendStore'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore, isAutosaveSuspendedFor, restoreSession } from '@/store/documentStore'
 import { startDocumentLoadSync, syncLoadedDocument } from '@/store/liveSync'
@@ -348,6 +350,49 @@ describe('openSampleProject：只打开示例项目', () => {
       status: { available: true, problems: [], copy: { exists: true, complete: true, missing: [], registry_ok: true } },
     })
     expect(hasSampleProject()).toBe(true)
+  })
+})
+
+describe('打开示例项目失败：红色提示带出口（失败出口三种结局）', () => {
+  const action = () => useUiStore.getState().statusAction
+  const label = () => formatMessage(action()?.label ?? null)
+  const opens = () => calls.filter((c) => c.url === '/api/tutorial/open').length
+
+  it('打不开（open_failed）：「再试一次」重做同一次打开，成功后示例项目装好、提示收掉', async () => {
+    stubFetch({ '/api/tutorial/open': () => json({ error: 'boom' }, 500) })
+    expect((await openSampleProject()).ok).toBe(false)
+    expect(useUiStore.getState().statusTone).toBe('error')
+    expect(label()).toBe('再试一次')
+    stubFetch()
+    action()!.run()
+    await vi.waitFor(() => expect(useProjectStore.getState().project?.id).toBe('p_tut'))
+    expect(opens()).toBe(1)
+    expect(useUiStore.getState().statusAction).toBeNull()
+  })
+
+  it('文件被占用（locked）同样可以再试一次', async () => {
+    stubFetch({ '/api/tutorial/open': () => json({ code: 'tutorial_locked', error: 'x', params: {} }, 409) })
+    await openSampleProject()
+    expect(label()).toBe('再试一次')
+  })
+
+  it('示例资源缺失（unavailable）：重试必然还是一样，直接「发给我们看看」', async () => {
+    useDiagSendStore.setState({ capability: { enabled: true } as never })
+    stubFetch({ '/api/tutorial/open': () => json({ code: 'tutorial_resources_missing', error: 'x', params: {} }, 500) })
+    await openSampleProject()
+    expect(label()).toBe('发送问题反馈')
+    action()!.run()
+    expect(useDiagSendStore.getState().open).toBe(true)
+    expect(opens()).toBe(1)
+  })
+
+  it('重试又失败：换成「发给我们看看」，不再给第二次重试', async () => {
+    useDiagSendStore.setState({ capability: { enabled: true } as never })
+    stubFetch({ '/api/tutorial/open': () => json({ error: 'boom' }, 500) })
+    await openSampleProject()
+    action()!.run()
+    await vi.waitFor(() => expect(opens()).toBe(2))
+    await vi.waitFor(() => expect(label()).toBe('发送问题反馈'))
   })
 })
 

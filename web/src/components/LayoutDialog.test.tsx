@@ -349,6 +349,40 @@ describe('存进项目与绑定', () => {
     expect(formatMessage(useUiStore.getState().status)).toContain('tavottofile/我的排版.json')
   })
 
+  it('只读窗口（ADR 0181）里「存进项目」不写：不发请求，说一句先选', async () => {
+    const { setWindowHold } = await import('@/store/documentStore')
+    setWindowHold({ role: 'contested', docId: 'd_bind' })
+    try {
+      await open([], 'saveToProject')
+      await act(async () => {
+        buttonByText('存进项目')!.click()
+      })
+      expect(mockSave).not.toHaveBeenCalled()
+      expect(useUiStore.getState().status?.key).toBe('docWindow.choose')
+    } finally {
+      setWindowHold(null)
+    }
+  })
+
+  it('另存为是真分叉：换成新 documentId，绑定记在新排版名下，原排版保留原绑定、原名不改', async () => {
+    setProjectFile({ projectId: 'p1', name: '原文件', file: 'tavottofile/原文件.json', revision: 'r0', dirty: false }, 'd_bind')
+    mockSave.mockResolvedValue({ ok: true, revision: 'r', name: '另一份', file: 'tavottofile/另一份.json' })
+    await open([], 'save')
+    const input = dialog().querySelector<HTMLInputElement>('#layout-save-name')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '另一份')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await clickSave()
+    const s = useDocumentStore.getState()
+    expect(s.documentId).not.toBe('d_bind')
+    expect(s.projectMeta.name).toBe('另一份')
+    expect(readProjectFile(s.documentId)?.file).toBe('tavottofile/另一份.json')
+    // 原排版的绑定一个字没动（它没有被改绑、也没有被改名）
+    expect(readProjectFile('d_bind')).toMatchObject({ file: 'tavottofile/原文件.json', revision: 'r0' })
+    expect(JSON.parse(localStorage.getItem('tavotto.autosave.d_bind') ?? '{"project":{"name":"我的排版"}}').project.name).toBe('我的排版')
+  })
+
   it('另存为进了项目同样绑定；没打开项目（后端不给 file）就不绑定', async () => {
     mockSave.mockResolvedValue({ ok: true, revision: 'r', name: '我的排版', file: 'tavottofile/我的排版.json' })
     await open([], 'save')
@@ -747,10 +781,10 @@ describe('Save As immutable Figure references', () => {
     await useDocumentStore.getState().switchDocument(doc, 'd_figure_snapshot_save')
     mockSave.mockResolvedValueOnce({ ok: true, revision: 'ref-rev', figure_snapshots: { 'snapshot-panel': snapshot } })
     await open()
-    const past = useDocumentStore.getState().past
     await clickSave()
+    // 另存为是分叉：换成的新排版里带着回执的快照引用，历史是空的（不继承、也没有被记一笔用户编辑）
     expect((useDocumentStore.getState().doc.objects[0] as PanelObject).figureSnapshot).toEqual(snapshot)
-    expect(useDocumentStore.getState().past).toBe(past)
+    expect(useDocumentStore.getState().past).toEqual([])
     expect(useUiStore.getState().layoutOpen).toBe(false)
   })
 })

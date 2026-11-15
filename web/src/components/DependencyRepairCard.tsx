@@ -15,7 +15,7 @@ import { listJoin } from '@/i18n/format'
 import { isRepairRunning, managedPreviewKey, useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
-import { Settings } from '@/components/ui/icons'
+import { Check, Copy, Settings } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { RepairProgressLine, RepairStageList } from './RepairProgressLine'
 import { PRODUCT_NAME } from '@/lib/brand'
@@ -432,6 +432,20 @@ export function DependencyRepairCard({
     )
   }
 
+  if (notPip && !exhausted && notPip.hint === 'ai_sandbox') {
+    // 只在 AI 聊天网页沙箱里有的模块（artifact_tool 等，TVD-NH7S）：哪个环境都没有，「选环境」是死路——
+    // 一句话 + 一个主按钮把「请 AI 去掉它重新生成」的话复制走；用户脚本不改
+    return (
+      <Card className="flex flex-col gap-2" data-repair-not-pip={notPip.hint}>
+        <p className="text-sm leading-relaxed text-ink" data-repair-not-pip-sentence>
+          {en('repairNotPipAiSandbox', { name: notPip.label })}
+        </p>
+        <CopyForAi name={notPip.label} />
+        {advanced}
+      </Card>
+    )
+  }
+
   if (notPip && !exhausted) {
     // 已知装不了的包（ROOT 等，PyPI 上没有）：一句话 + 一个主按钮（选环境），不给「指定包名」——输进去也会被后端拒
     return (
@@ -546,6 +560,35 @@ function Rejections({ rejected, pkg }: { rejected: SystemInterpreterRejection[];
 }
 
 /** 就地打开渲染环境对话框（`EngineEnvironmentDialog`，与脚本行恢复说明同一个入口，不深链设置页） */
+/** 把「请去掉这个沙箱模块、重新生成脚本」的话复制到剪贴板；复制成功才改口，剪贴板被挡住时保持原样（不装成功） */
+function CopyForAi({ name }: { name: string }) {
+  useTranslation('errors')
+  const [done, setDone] = useState(false)
+  useEffect(() => {
+    if (!done) return
+    const timer = window.setTimeout(() => setDone(false), 2000)
+    return () => window.clearTimeout(timer)
+  }, [done])
+  return (
+    <Button
+      variant="primary"
+      size="sm"
+      className="self-start"
+      data-repair-copy-for-ai
+      data-copied={done || undefined}
+      onClick={() =>
+        void navigator.clipboard
+          ?.writeText(en('repairAiSandboxPrompt', { name }))
+          .then(() => setDone(true))
+          .catch(() => {})
+      }
+    >
+      {done ? <Check size={ICON_SIZE.sm} /> : <Copy size={ICON_SIZE.sm} />}
+      {en(done ? 'repairCopiedForAi' : 'repairCopyForAi')}
+    </Button>
+  )
+}
+
 function OpenEnvironment({ primary = false }: { primary?: boolean }) {
   useTranslation('workspace')
   return (

@@ -67,6 +67,7 @@ from .engine import (
     ai_connections as engine_ai_connections,
     ai_convert as engine_ai_convert,
     ai_data_figure as engine_ai_data_figure,
+    ai_data_propose as engine_ai_data_propose,
     ai_data_task as engine_ai_data_task,
     ai_figure_edit as engine_ai_figure_edit,
     ai_history as engine_ai_history,
@@ -112,8 +113,10 @@ from .engine import (
     exportroute as engine_exportroute,
     exporttelemetry as engine_exporttelemetry,
     figcapture as engine_figcapture,
+    figuregroup as engine_figuregroup,
     fixsession as engine_fixsession,
     folderrepair as engine_folderrepair,
+    foreignoutputs as engine_foreignoutputs,
     foreignsource as engine_foreignsource,
     handoff as engine_handoff,
     handoffreceipt as engine_handoffreceipt,
@@ -731,6 +734,19 @@ def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
             LOG.warning("素材扫描跳过 %s（probe 失败）", p, exc_info=True)
             continue
         panels.append(entry)
+    # 同一张图的几份文件（ADR 0184 §一）：图键 / 主文件 / 全部格式 / 画它的脚本，唯一出处 `engine/figuregroup`。
+    # R / MATLAB 与 Python 一样认作来源（修订）：源码里写死的输出 + 同目录同名脚本，只读、不运行
+    dir_cache = engine_foreignsource.DirCache(root)
+
+    def _sibling(rel: str) -> str | None:
+        found = engine_foreignsource.sibling_of(root, dir_cache, rel)
+        return found["script"] if found else None
+
+    try:
+        foreign = engine_foreignoutputs.output_map(root)
+    except OSError:
+        foreign = {}
+    engine_figuregroup.annotate(panels, current_registry(), foreign, _sibling)
     return panels
 
 
@@ -1214,8 +1230,15 @@ def api_experiments():
 def api_panels():
     unsupported: list[dict] = []
     panels = scan_panels(unsupported)
+    root = require_project()
     resp = jsonify(
-        {"figures_dir": str(require_project()), "panels": panels, "unsupported": unsupported}
+        {
+            "figures_dir": str(root),
+            "panels": panels,
+            "unsupported": unsupported,
+            # 素材区的显示范围（ADR 0184 §三）：只影响显示与计数，清单本身不按它裁
+            "view_scope": engine_config.view_scope(str(root)),
+        }
     )
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -6267,11 +6290,61 @@ def api_projects_open():
                 }
             ), 400
     try:
-        return jsonify(open_project(str(p), make_default=body.get("default", True)))
+        status = open_project(str(p), make_default=body.get("default", True))
+        _apply_entry_scope(status, body)
+        return jsonify(status)
     except (RuntimeError, OSError) as exc:
         return jsonify(
             {"error": str(exc), "code": "open_project_failed", "params": {"reason": str(exc)}}
         ), 400
+
+
+#: 进入方式（ADR 0184 §三）：`script` = 带着一个脚本进来（只看脚本的图）；`folder` = 明确打开整个文件夹。
+#: 缺省（最近 / 收藏重开、旧前端）= 沿用上次记的范围。
+_ENTRY_KINDS = ("script", "folder")
+_SCOPE_SCRIPT_MAX = 512
+
+
+def _scope_script_name(raw) -> str | None:
+    """范围里的脚本名：项目相对路径（`/` 分隔），首尾无空白、不越出项目、不超长；不合格 = None（不进范围）。"""
+    if not isinstance(raw, str) or not raw or raw != raw.strip() or len(raw) > _SCOPE_SCRIPT_MAX:
+        return None
+    rel = raw.replace("\\", "/")
+    parts = rel.split("/")
+    if rel.startswith("/") or ":" in parts[0] or any(x in ("", ".", "..") for x in parts):
+        return None
+    return rel
+
+
+def _apply_entry_scope(status: dict, body: dict) -> None:
+    """打开成功之后按进入方式改视图范围，并把改后的设置放回响应（`settings.view_scope`）。只是显示范围，失败不拖垮打开。"""
+    entry = body.get("entry")
+    if entry not in _ENTRY_KINDS or not status.get("open"):
+        return
+    path = status["figures_dir"]
+    try:
+        if entry == "folder":
+            engine_config.set_view_scope(path, mode="folder")
+        else:
+            script = _scope_script_name(body.get("script"))
+            if script is None:
+                return
+            engine_config.set_view_scope(path, mode="scripts", add_script=script)
+        status["settings"] = engine_config.project_settings(path)
+    except OSError:
+        LOG.warning("视图范围没能记下（不影响打开项目）", exc_info=True)
+
+
+@app.post("/api/project/view_scope")
+def api_project_view_scope():
+    """运行了一个脚本：范围是「只看脚本的图」时把它加进去（ADR 0184 §三）；整个文件夹时不改。回此刻的范围。"""
+    body = request.get_json(force=True, silent=True)
+    body = body if isinstance(body, dict) else {}
+    script = _scope_script_name(body.get("add_script"))
+    if script is None:
+        return jsonify({"error": "脚本名不合法", "code": "invalid_script_name"}), 400
+    root = require_project()
+    return jsonify({"view_scope": engine_config.add_view_scope_script(str(root), script)})
 
 
 @app.post("/api/projects/close")
@@ -9565,11 +9638,13 @@ class WriteBackVerifyError(RuntimeError):
 
 
 class WriteBackPersistError(RuntimeError):
-    """commit 的落盘准备（拷备份 + fsync 备份与 staging）没过，一个目标都还没替换。
+    """commit 的落盘准备（拷备份 + fsync 备份与 staging）或原件核验没过，一个目标都还没替换。
 
     与 `FileLockedError` 分成两类是刻意的（issue #252）：这一类发生在任何
     `replace` **之前**，不存在回滚，原文件一字未动；「replace 之后目录项落盘
     失败」则根本不走异常，只记日志——文件已换，再报失败只会让人误以为没写进去。
+    prepare 时读不到原件、或读取前后元信息变化时也没有可核验的基准：不跳过，
+    同样落进这一类。
     """
 
     def __init__(self, reason: str):
@@ -10093,7 +10168,7 @@ def _write_source_files(
             # 重放可能分钟级：备份之前先确认要被覆盖的仍是用户看到的那一版（零改动 409）
             try:
                 _check_write_back_sources(tmps, source_versions)
-            except SourceChangedError:
+            except (SourceChangedError, WriteBackPersistError):
                 _discard_updating(tmps)
                 raise
             backup_dir = _backup_targets(tmps, project_backup_dir(), stem)
@@ -10112,7 +10187,12 @@ def _write_source_files(
                     rolled, failed, kept = _rollback(done, backup_dir, published)
                     if failed:
                         raise FileLockedError(
-                            exc.name, str(exc), failed + kept, rolled, failed, kept
+                            getattr(exc, "name", target.name),
+                            str(exc),
+                            failed + kept,
+                            rolled,
+                            failed,
+                            kept,
                         ) from exc
                     exc.kept_external = kept
                     raise
@@ -10283,8 +10363,8 @@ def _write_back_error_response(exc):
     if isinstance(exc, WriteBackPersistError):
         return jsonify(
             {
-                "error": f"写回前的落盘准备失败（备份或临时文件没能写入磁盘）：{exc.reason}。"
-                "写回已取消，原文件未做任何改动。请检查磁盘空间与目录权限后重试。",
+                "error": f"写回前的准备失败：{exc.reason}。"
+                "写回已取消，原文件未做任何改动。请检查文件是否可读、磁盘空间与目录权限后重试。",
                 "code": "write_back_persist_failed",
                 "params": {"reason": exc.reason},
             }
@@ -14935,25 +15015,218 @@ def _deduped_data_script(root: Path, task_id) -> tuple[str, str] | None:
 _DATA_FILES_MAX = 500
 #: 列表接口最多看多少个目录项（大项目里一次点击不至于无界遍历；超了就 truncated，不假装列全了）
 _DATA_FILES_SCAN_MAX = 50_000
+#: 最多给多少个 XLSX 读工作表清单（每个要开一次 zip；超出的不带清单）
+_DATA_FILES_SHEETS_MAX = 100
 
 
 @app.get("/api/ai/data-files")
 def api_ai_data_files():
-    """TAF 数据出图的数据文件列表（**实验开关后面**，只读）：当前项目内的 `.csv`（后缀大小写不敏感）。
+    """TAF 数据出图的数据文件列表（**实验开关后面**，只读）：**默认只列 `.csv`**（v1 表单走 `/api/ai/data-figure`，只认 CSV）；
+    带 `?formats=all` 才列 `.csv` / `.tsv` / `.tab` / `.xlsx`（v2 出备选用），后缀大小写不敏感。
 
     walk 剪枝与隐藏目录规则同 `discover.PRUNE_DIRS`；不跟随链接；最多 500 个，按项目相对 POSIX 路径排序；最多看
-    `_DATA_FILES_SCAN_MAX` 个目录项，超了停下并标 `truncated`。"""
+    `_DATA_FILES_SCAN_MAX` 个目录项，超了停下并标 `truncated`。`formats=all` 时 XLSX 带 `sheets: [{name, hidden}]`（读不了 / 超过
+    `_DATA_FILES_SHEETS_MAX` 个之后是 null）。"""
     if not engine_ai_figure_edit.enabled():
         return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
     root = require_project()
     # walk 规则（剪枝 / 隐藏 / 不跟随链接 / 扫描预算）与数据文件夹摘要共用 `discover.walk_files` 那一份
-    found, truncated = engine_discover.walk_files(root, (".csv",), scan_max=_DATA_FILES_SCAN_MAX)
-    found.sort()
+    every = request.args.get("formats") == "all"
+    found, truncated = engine_discover.walk_files(
+        root,
+        engine_ai_data_figure.TABLE_SUFFIXES if every else engine_ai_data_figure.CSV_SUFFIXES,
+        scan_max=_DATA_FILES_SCAN_MAX,
+    )
+    found = sorted(f for f in found if not Path(f[0]).name.startswith("~$"))
     if len(found) > _DATA_FILES_MAX:
         found, truncated = found[:_DATA_FILES_MAX], True
-    resp = jsonify({"files": [{"path": p, "size": n} for p, n in found], "truncated": truncated})
+    files = []
+    sheets_read = 0
+    for rel, size in found:
+        row = {"path": rel, "size": size}
+        if rel.lower().endswith(engine_ai_data_figure.XLSX_SUFFIXES):
+            if sheets_read < _DATA_FILES_SHEETS_MAX:
+                sheets_read += 1
+                row["sheets"] = engine_ai_data_figure.xlsx_sheets(root / rel)
+            else:
+                row["sheets"] = None
+        files.append(row)
+    resp = jsonify({"files": files, "truncated": truncated})
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+# --- 数据出图 v2（ADR 0178）：出备选 → 缩略图 → 选中落盘。全部在实验开关后面、过会话认证 guard ---------------------
+_PROPOSE_STATUS = {
+    "propose_session_expired": 404,
+    "propose_candidate_unknown": 404,
+    "propose_data_changed": 409,
+    "propose_input_invalid": 400,
+    "propose_cells_invalid": 400,
+    "propose_cells_need_rule": 409,
+}
+
+
+def _propose_error(exc: "engine_ai_data_propose.ProposeError"):
+    body = {"error": str(exc), "code": exc.code}
+    if exc.params:
+        body["params"] = exc.params
+    return jsonify(body), _PROPOSE_STATUS.get(exc.code, 400)
+
+
+@app.post("/api/ai/data-figure/propose")
+def api_ai_data_figure_propose():
+    """出备选（不调模型）。body：`{folder?, table?, sheet?, hint?, answers?, client_request_id?}`（`folder` 项目相对、缺省项目根）。
+
+    回三选一：`{kind: "ask", question_code, options, unsure}`（决定科学含义的事只能用户定；选项里的 `answer` 原样并进下一次的
+    `answers`）/ `{kind: "candidates", session, items: [{id, title_code, why_code, values, recommended, coverage, thumbnail_url}],
+    dropped}` / `{kind: "nothing", reasons, dropped}`。**用户文件夹里不写任何东西**（候选在 `data_dir()/cache/`）；数据问题 400 + 稳定码。
+    提示与回答里的文字不进日志、不发遥测。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    ctx = current_ctx()
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict):
+        abort(400)
+    rid = body.get("client_request_id")
+    if rid is not None and not _valid_client_request_id(rid):
+        abort(400)
+    try:
+        out = engine_ai_data_propose.propose(
+            ctx.path,
+            project=str(ctx.path.resolve()),
+            folder=body.get("folder"),
+            table=body.get("table"),
+            sheet=body.get("sheet"),
+            hint=body.get("hint"),
+            answers=body.get("answers"),
+            client_request_id=rid,
+        )
+    except engine_ai_data_propose.ProposeError as exc:
+        return _propose_error(exc)
+    except engine_ai_data_figure.DataSourceError as exc:
+        return jsonify({"error": str(exc), "code": exc.code}), 400
+    resp = jsonify(out)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/ai/data-figure/thumbnail/<session>/<item>")
+def api_ai_data_figure_thumbnail(session, item):
+    """候选缩略图（只读缓存里我们自己写的那份 PNG）。`session` / `item` 是服务端登记的不透明 id，路径不由请求拼出来。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    ctx = current_ctx()
+    try:
+        path = engine_ai_data_propose.thumbnail_path(str(ctx.path.resolve()), session, item)
+    except engine_ai_data_propose.ProposeError as exc:
+        return _propose_error(exc)
+    resp = send_file(path, mimetype="image/png", conditional=False)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/ai/data-figure/discard")
+def api_ai_data_figure_discard():
+    """放弃一个候选会话（删候选目录）。幂等：会话已不在也回 200。body：`{session}`。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    ctx = current_ctx()
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("session"), str):
+        abort(400)
+    engine_ai_data_propose.discard(str(ctx.path.resolve()), body["session"])
+    return jsonify({"ok": True})
+
+
+@app.post("/api/ai/data-figure/commit")
+def api_ai_data_figure_commit():
+    """选中一个备选，只**新建**脚本落盘：`{session, id, client_request_id?}`——只回传 id，配方在服务端的候选会话里。
+
+    新建 `<数据文件夹>/tavotto_figures/<stem>.py`（与同目录内容寻址的公共模块，不存在才建、字节相同复用、字节不同什么都不写）→ 登记 →
+    统一刷新 → safe 渲染 → 数据指纹核对。回 `{task, script?, stem?, module?, data_check, reason_code?, can_delete_script?}`：
+    `data_check` 是 `verified` / `unverifiable`（这张图没有任何一层能核，不写成 verified）/ `mismatch`（画出来的数据与文件对不上，
+    可删这份新脚本）/ `unknown`。会话过期 404、数据在出备选后变了 409（前端据此重新出备选）。候选会话留到 TTL（可再提交同一批里的别的备选），`discard` 放弃。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    ctx = current_ctx()
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict):
+        abort(400)
+    session_id, item_id = body.get("session"), body.get("id")
+    rid = body.get("client_request_id")
+    if not isinstance(session_id, str) or not isinstance(item_id, str):
+        abort(400)
+    if rid is not None and not _valid_client_request_id(rid):
+        abort(400)
+    project = str(ctx.path.resolve())
+    if rid:
+        # 先去重、后取会话（同 v1）：首次请求已提交、响应丢了（或会话已过期 / 被放弃），同 id 重发只回既有任务的结局，不再取会话
+        known = engine_ai.find_request(str(ctx.path.resolve()), rid)
+        if known is not None and known["status"] == engine_ai.REQUEST_SUPERSEDED:
+            return _agent_error(engine_ai.AgentError("ai_request_superseded"))
+        if known is not None:
+            sid = known["session"]
+            found = engine_ai_tasks.load(sid) or {"task_id": sid, "outcome": None, "final": None}
+            out = {"task": {**found, "deduped": True}}
+            recorded = _deduped_data_script(ctx.path, found.get("task_id"))
+            if recorded is not None:
+                out.update(script=recorded[0], stem=recorded[1])
+            return jsonify(out)
+    try:
+        sess, item = engine_ai_data_propose.get_item(project, session_id, item_id)
+        sel = engine_ai_data_task.Selection(
+            folder_rel=sess.folder_rel,
+            table=sess.table,
+            sheet=sess.sheet,
+            data_sha256=sess.data_sha256,
+            confirmed=sess.confirmed,
+            recipe=item.recipe,
+            title_code=item.code,
+        )
+        prepared = engine_ai_data_task.prepare_v2(ctx.path, sel)
+        env = engine_ai_data_task.envelope_for_v2(project_key=project, prepared=prepared, rid=rid)
+    except engine_ai_data_propose.ProposeError as exc:
+        return _propose_error(exc)
+    except engine_ai_data_figure.DataSourceError as exc:
+        return jsonify({"error": str(exc), "code": exc.code}), 400
+    except engine_ai_tasks.TaskError as exc:
+        return jsonify({"error": str(exc), "code": "data_figure_recipe_invalid"}), 409
+    engine_ai_data_task.ensure_registered_v2()
+    pl = prepared.placement
+    executor = engine_ai_data_task.TemplateExecutorV2(
+        ctx.path,
+        sel,
+        refresh=lambda script: engine_ai.refresh_outcome(
+            lambda s: _after_ai_change(ctx, s), script, True
+        ),
+        render=lambda sha: _ai_task_hooks(ctx, pl.script_rel, "main")["after"](sha),
+    )
+    res = engine_ai_tasks.run_task(env, executor)
+    cand = executor.candidate
+    out = {"task": res}
+    committed = bool(cand is not None and cand.committed)
+    if res.get("deduped"):
+        recorded = _deduped_data_script(ctx.path, res.get("task_id"))
+        if recorded is not None:
+            out.update(script=recorded[0], stem=recorded[1])
+    elif committed:
+        out.update(script=pl.script_rel, stem=pl.stem, module=pl.module_rel)
+        verdict = engine_ai_data_task.data_verdict(engine_ai_history.get(res.get("task_id")))
+        out["data_check"] = verdict
+        out["can_delete_script"] = verdict == "mismatch"
+        # 候选会话留到 TTL：用户可以接着把同一批里的另一个备选也出成图
+        out["cells"] = prepared.cell_stats  # 处理规则实际作用的计数（与图下方说明同一份）
+        out["unplotted"] = {
+            "count": len(prepared.not_plotted),
+            "rows": prepared.not_plotted[:50],
+            "code": engine_ai_data_propose.UNPLOTTED_CODE if prepared.not_plotted else None,
+        }
+    else:
+        unmet = ((res.get("verification") or {}).get("unmet")) or []
+        if unmet:
+            out["reason_code"] = unmet[0].get("reason_code")
+    return jsonify(out)
 
 
 # --- 助手草稿与待确认账本（ADR 0132）：存后端（data_dir 的 ai_history 库），不存浏览器 -----------------

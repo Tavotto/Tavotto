@@ -4,6 +4,7 @@ import {
   type PanelInfo,
   type PanelsResponse,
   type UnsupportedAsset,
+  type ViewScope,
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
 import { t } from '@/i18n'
@@ -89,6 +90,10 @@ interface AssetState {
   error: string | null
   /** fileId → 最近一次加入画布的时间戳；「最近使用」排序用，与文件 mtime 是两回事 */
   recentlyUsed: Record<string, number>
+  /** 素材区的显示范围（ADR 0184 §三）：只影响显示与计数，`panels` 本身不按它裁 */
+  viewScope: ViewScope
+  /** 运行了一个脚本：后端加进范围后回的那份（只在同一项目里落地） */
+  setViewScope: (scope: ViewScope) => void
   /**
    * 重取素材清单。返回**本次真正生效的**那份响应；被丢弃（旧响应 / 换了项目）
    * 或失败时返回 `null`——调用方据此决定要不要拿它去同步文档里的派生元数据。
@@ -110,6 +115,9 @@ interface AssetState {
   clear: () => void
 }
 
+/** 老后端 / 还没加载：整个文件夹（宁可多显示，不凭空藏图） */
+const FOLDER_SCOPE: ViewScope = { mode: 'folder', scripts: [] }
+
 export const useAssetStore = create<AssetState>((set, get) => ({
   panels: [],
   byId: {},
@@ -119,6 +127,8 @@ export const useAssetStore = create<AssetState>((set, get) => ({
   loaded: false,
   error: null,
   recentlyUsed: readUsed(),
+  viewScope: FOLDER_SCOPE,
+  setViewScope: (viewScope) => set({ viewScope }),
 
   load: (opts) => {
     if (!opts?.force && inflight && inflight.pj === currentProjectId()) {
@@ -150,6 +160,7 @@ export const useAssetStore = create<AssetState>((set, get) => ({
           byId: Object.fromEntries(data.panels.map((p) => [p.id, p])),
           unsupported: data.unsupported ?? [],
           figuresDir: data.figures_dir,
+          viewScope: data.view_scope ?? FOLDER_SCOPE,
           loaded: true,
           error: null,
         })
@@ -199,6 +210,7 @@ export const useAssetStore = create<AssetState>((set, get) => ({
       byId: {},
       unsupported: [],
       figuresDir: '',
+      viewScope: FOLDER_SCOPE,
       loading: false,
       loaded: false,
       error: null,

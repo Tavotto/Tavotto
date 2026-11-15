@@ -10,16 +10,14 @@ It supplies no real authorization, provider activation, deployment or CI wiring.
 The [activation checklist](../implementation/cla-delegated-authority/README.md)
 remains outstanding; observations cannot satisfy the live CLA gate.
 
-**The agreements are final and signable; no signature service is connected
-yet.** The check qualifies the rights holder and the two exempt bots, and blocks
-everyone else **with an explanation** — it never treats an unsigned contributor
-as signed. What is missing is only the collection mechanism, and that is a
-deliberate deferral rather than an omission: there have been no external
-contributions to date, so there is nothing for a provider to collect.
-
-Policy infrastructure being ready and a signature service being connected are
-two different things. The first is done; the second is a decision waiting for a
-reason.
+**The agreements are final and signable, and the signing service is enabled**
+(`tavotto-cla-v1` at <https://cla.tavotto.com>, ADR 0172). Contributors sign
+online with their GitHub account; the check asks the service live and blocks
+anyone who has not signed **with an explanation** — it never treats an unsigned
+contributor as signed. The rights holder, the two bots and contributors who
+countersigned a paper agreement before the service existed (ADR 0183) are
+exempt by immutable account id. Deployment, flags and rollback:
+[`services/cla-cloudflare/deployment/production/README.md`](../../services/cla-cloudflare/deployment/production/README.md).
 
 | Piece | State |
 |---|---|
@@ -27,10 +25,10 @@ reason.
 | Versioning + hash-binding policy | In force — CI red on drift |
 | Repository-side qualification check | **Live** — the `cla-check` job feeds `CI fast gate` |
 | Security model of that check | Complete; no secrets, no PR code executed |
-| Signature source of truth | **Defined: the provider.** Until one is configured: countersigned paper agreements held by the rights holder, indexed (no personal data) by `offline_signatures` — see [CLA_VERSIONING.md](CLA_VERSIONING.md#before-a-provider-exists-countersigned-paper-agreements). Never both at once. |
+| Signature source of truth | **The service.** Exception: countersigned paper agreements signed before the service existed, held by the rights holder and indexed (no personal data) as `countersigned_paper` exemptions — see [CLA_VERSIONING.md](CLA_VERSIONING.md#countersigned-paper-agreements-signed-before-the-service-existed). One authority per person. |
 | Rights holder | **Resolved — Jiaqi Wan (natural person), Hong Kong SAR law, <support@tavotto.com>** |
 | Agreement version | **`1.0` — signable** |
-| Signature provider | Not configured (`provider.configured: false`) — deliberate, see below |
+| Signature provider | **Enabled** — Tavotto's own service (`provider.protocol: tavotto-cla-v1`, `authority_origin: https://cla.tavotto.com`, GitHub App `tavotto-cla` id 5740523) |
 
 ## Why it was built this way
 
@@ -207,14 +205,17 @@ because it is named in the file, not because of its suffix. An exemption nobody
 can justify is one nobody will dare delete later.
 
 Currently exempt: `erwanjun` (rights holder), `dependabot[bot]`,
-`github-actions[bot]`.
+`github-actions[bot]`, and `mvanhorn` (`countersigned_paper`, ADR 0183). Every
+entry carries its immutable `github_id`; in service mode a login match alone
+proves nothing.
 
-### 7. Offline signatures are bound to an account id, a version, and "no provider"
+### 7. Paper signatures are bound to an account id and a version
 
-Before a provider exists, a contributor who has countersigned the paper
-agreement is listed in `offline_signatures` (format and rationale:
-[CLA_VERSIONING.md](CLA_VERSIONING.md#before-a-provider-exists-countersigned-paper-agreements)).
-Three properties keep that from widening the check:
+A contributor who countersigned the paper agreement before the service existed
+is listed as a `countersigned_paper` exemption (format and rationale:
+[CLA_VERSIONING.md](CLA_VERSIONING.md#countersigned-paper-agreements-signed-before-the-service-existed),
+[ADR 0183](../adr/0183-cla-paper-signatures-as-exemptions.md)). Two properties
+keep that from widening the check:
 
 - **Identity is the immutable account id, not the login.** A login can be
   renamed and later registered by someone else. Only trusted sources supply an
@@ -226,12 +227,15 @@ Three properties keep that from widening the check:
   equal the recorded `github_id`, at least one must exist, and if the signer is
   the PR author, the author's id must have been supplied.
 - **A signature covers one version.** If the agreement version moves on, the
-  entry stops qualifying until the contributor signs the new text.
-- **It cannot coexist with a provider.** `provider.configured: true` with a
-  non-empty `offline_signatures` is a configuration error.
+  entry stops qualifying until the contributor signs the new text online. The
+  service exempts by account id without looking at versions, so the gate checks
+  the version itself in every case — including mixed pull requests and merge
+  groups, where a stale entry turns the check red even if the service answers
+  `eligible`.
 
 The entries are read from the default branch like the rest of the policy, so a
-pull request cannot add itself.
+pull request cannot add itself. The former `offline_signatures` section is
+retired; the gate rejects it if present.
 
 ## How it fits the existing CI
 
@@ -330,10 +334,10 @@ When the time comes:
 3. Check where it stores signatures and whether that is acceptable. CLA
    Assistant's README states Azure Cosmos DB in Europe. If not acceptable,
    self-host, or collect countersigned documents and use a manual check instead.
-4. **Move every `offline_signatures` entry into the provider first** (each
-   contributor's executed copy is the evidence), then empty that list in the
-   same change that sets `provider.configured: true` — the gate rejects the
-   two together.
+4. ~~Move every `offline_signatures` entry into the provider first.~~
+   Superseded by [ADR 0183](../adr/0183-cla-paper-signatures-as-exemptions.md):
+   countersigned paper records stay as `countersigned_paper` exemptions and are
+   not moved; the `offline_signatures` section is retired.
 5. **Wire it into the gate — four edits, all in this repository:**
    - `.github/cla-policy.json`: set `provider.configured: true`,
      `provider.name`, `provider.check_name` (the **exact** check-run name the

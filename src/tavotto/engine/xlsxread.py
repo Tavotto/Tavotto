@@ -177,6 +177,13 @@ def _serial_to_text(raw: str, date1904: bool) -> str:
 
 
 # --------------------------------------------------------------------------- 工作簿
+def _int_or_none(text: str | None) -> int | None:
+    try:
+        return int(text) if text else None
+    except ValueError:
+        return None
+
+
 def _col_index(ref: str) -> int | None:
     m = re.match(r"^([A-Za-z]{1,3})(\d+)$", ref)
     if not m:
@@ -378,13 +385,19 @@ class XlsxBook:
         sst = self._shared_strings()
         date_xf = self._date_styles()
         rows: list[dict[int, str]] = []
+        numbers: list[int] = []
         cur: dict[int, str] | None = None
+        cur_no = 0
+        last_no = 0
         next_col = 0
         for ev, el in _iter_xml(data):
             tag = _local(el.tag)
             if ev == "start":
                 if tag == "row":
                     cur, next_col = {}, 0
+                    ref_no = _int_or_none(el.get("r"))
+                    cur_no = ref_no if ref_no is not None else last_no + 1
+                    last_no = cur_no
                 continue
             if tag == "c" and cur is not None:
                 ref = el.get("r") or ""
@@ -401,11 +414,14 @@ class XlsxBook:
             elif tag == "row" and cur is not None:
                 if cur:
                     rows.append(cur)
+                    numbers.append(cur_no)
                     if len(rows) > MAX_ROWS + 1:
                         raise XlsxError("data_too_long", str(len(rows)))
                 cur = None
                 el.clear()
         width = max((max(r) + 1 for r in rows), default=0)
+        #: 与返回的行逐项对应的工作表行号（人看到的行号：全空行被丢掉，所以不是下标 + 1）
+        self.row_numbers = numbers
         return [[r.get(c, "") for c in range(width)] for r in rows]
 
     def _cell_text(self, c: ET.Element, sst: list[str], date_xf: list[bool]) -> str:

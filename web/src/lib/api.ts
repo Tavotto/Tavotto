@@ -75,6 +75,18 @@ export interface PanelInfo {
    * **不是**"这张图没有规格"——解析时退到文档里那份，见 originalSpec.ts。
    */
   original_spec?: AssetOriginalSpec
+  /**
+   * 同一张图的几份文件（ADR 0184 §一，后端 `engine/figuregroup` 是唯一出处）：图键、是不是这张图的主文件
+   * （PDF > 最大位图 > SVG）、这张图的全部文件 id。老后端不发：`undefined` = 一份文件一张图（旧行为）。
+   */
+  figure_key?: string
+  primary?: boolean
+  formats?: string[]
+  /**
+   * 画这张图的脚本（项目相对路径）：Python 注册表、R / MATLAB 源码里写死的输出、或同目录同名的 R / MATLAB 脚本
+   * （ADR 0184 修订）。只用于「这张图归哪个脚本」（范围、归组）；能不能进图内编辑仍只看 `script` / `capability`。
+   */
+  source_script?: string
 }
 
 /**
@@ -211,6 +223,8 @@ export interface PanelsResponse {
    * `code` 按 `errors:backend.<code>` 翻译（params 只有 `file`）。老后端不发这个字段。
    */
   unsupported?: UnsupportedAsset[]
+  /** 素材区的显示范围（ADR 0184 §三）；老后端不发 = 整个文件夹 */
+  view_scope?: ViewScope
 }
 
 export interface UnsupportedAsset {
@@ -627,11 +641,31 @@ export const fetchOpenProjects = () =>
     (r) => r.projects,
   )
 
-export const openProjectApi = (path: string, create = false) =>
+/**
+ * 怎么进来的（ADR 0184 §三）：带着一个脚本（素材区只看脚本的图）/ 明确打开整个文件夹。
+ * 不给 = 沿用上次记的范围（最近 / 收藏重开）。
+ */
+export type ProjectEntry = { entry: 'folder' } | { entry: 'script'; script: string }
+
+export const openProjectApi = (path: string, create = false, entry?: ProjectEntry) =>
   jsonFetch<ProjectStatus>('/api/projects/open', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path, create }),
+    body: JSON.stringify({ path, create, ...entry }),
+  })
+
+/** 素材区的显示范围（后端 `config.view_scope`）。老后端不发 = 整个文件夹 */
+export interface ViewScope {
+  mode: 'folder' | 'scripts'
+  scripts: string[]
+}
+
+/** 运行了一个脚本：范围是「只看脚本的图」时把它加进去（后台顺手发，失败不打扰用户） */
+export const addViewScopeScript = (script: string) =>
+  jsonFetch<{ view_scope: ViewScope }>('/api/project/view_scope', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ add_script: script }),
   })
 
 /**

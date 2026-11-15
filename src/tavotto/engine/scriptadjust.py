@@ -176,7 +176,7 @@ NOT_WRITABLE: dict[str, str] = {
     "linestyle",
     "patch": "pos_frac size_frac hatch_linewidth hatchcolor fill",
     "artist": "pos_frac visible zorder",
-    "line": "label",
+    "line": "label pos_frac",
     "legend": "loc_anchor title title_fontsize entry_order ncol borderpad labelspacing "
     "handlelength handletextpad columnspacing frame_rounded",
     "axes": "visible position aspect grid_color grid_linestyle grid_linewidth grid_alpha "
@@ -577,13 +577,26 @@ def _math_custom(family):
     if not name:
         return False
     try:
-        _mpl.rcParams["mathtext.rm"] = name
-        _mpl.rcParams["mathtext.it"] = name + ":italic"
-        _mpl.rcParams["mathtext.bf"] = name + ":bold"
-        _mpl.rcParams["mathtext.sf"] = name
+        # A family is a literal name, not a Fontconfig program: Matplotlib
+        # escapes it, so punctuation such as "-" or ":file=" stays in the name.
+        _mpl.rcParams["mathtext.rm"] = _math_pattern(name)
+        _mpl.rcParams["mathtext.it"] = _math_pattern(name, style="italic")
+        _mpl.rcParams["mathtext.bf"] = _math_pattern(name, weight="bold")
+        _mpl.rcParams["mathtext.sf"] = _math_pattern(name)
     except (ValueError, KeyError):
         return False
     return True
+
+
+def _math_pattern(name, style=None, weight=None):
+    from matplotlib.font_manager import FontProperties
+
+    props = FontProperties(family=[name])
+    if style is not None:
+        props.set_style(style)
+    if weight is not None:
+        props.set_weight(weight)
+    return props.get_fontconfig_pattern()
 
 
 def _font_to(t, chain, family):

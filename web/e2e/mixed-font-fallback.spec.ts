@@ -59,17 +59,23 @@ test('中文回退字体：编辑、撤销、保存、重开和导出', { tag: '
   if (shots) await panel.screenshot({ path: path.join(shots, 'inspector-auto.png') })
   const latin = panel.locator('[data-prop="fontfamily"] [data-select-trigger]')
   await expect(latin).toHaveCount(1)
+  // 两个字体下拉都有 Noto Sans SC（非 macOS 上 coveredName 就是 chineseName）：上一个下拉
+  // 收起动画没走完时整页定位会命中两个，按所属列表限定
+  const latinList = page.getByRole('listbox', { name: '英文字体' })
+  const cjkList = page.getByRole('listbox', { name: '中文字体' })
   await latin.click()
-  await page.locator(`[data-select-option=${JSON.stringify(coveredName)}]`).click()
+  await latinList.locator(`[data-select-option=${JSON.stringify(coveredName)}]`).click()
   await fallback.click()
-  await page.locator(`[data-select-option=${JSON.stringify(chineseName)}]`).click()
+  await cjkList.locator(`[data-select-option=${JSON.stringify(chineseName)}]`).click()
   // 英文字体自带中文字形：中文那格置灰，悬停说明原因（不再有单独的 ⓘ）
   await expect(fallback).toBeDisabled({ timeout: 60_000 })
   await expect(fallback).toHaveAttribute('title', '请改选不含中文字符的英文字体。')
   if (shots) await panel.screenshot({ path: path.join(shots, 'inspector-covered.png') })
   await latin.click()
-  await expect(page.locator('[data-select-option="PingFang SC"]')).toHaveCount(0)
-  await page.locator(`[data-select-option=${JSON.stringify(latinName)}]`).click()
+  const latinOption = latinList.locator(`[data-select-option=${JSON.stringify(latinName)}]`)
+  await expect(latinOption).toBeVisible()
+  await expect(latinList.locator('[data-select-option="PingFang SC"]')).toHaveCount(0)
+  await latinOption.click()
   await expect(fallback).toBeEnabled()
   // 中文格只有 64px：收起时显示短名（去掉「-简」「 SC」之类），完整名在悬停 title 里
   await expect(fallback).toContainText(mac ? /^中宋体$/ : /Noto Sans|思源黑体/)
