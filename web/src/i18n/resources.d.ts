@@ -1989,6 +1989,7 @@ export default interface Resources {
         "pickOne": "换到哪个链接上",
         "updateExisting": "更新已有的链接",
         "updateExistingDesc": "换成这张图的画面，链接不变",
+        "updateOne": "「{{title}}」的链接，换成这张图的画面",
         "updateTitle": "这个链接今天不能再更新了"
       },
       "privacyFigure": "只上传这张图的画面，脚本和数据不出本机",
