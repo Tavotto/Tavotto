@@ -149,7 +149,14 @@ export function ReviewDialog() {
 
   const quiet = 'type-caption text-ink-3'
   let body: React.ReactNode
-  if (s.picker) {
+  if (s.resolving) {
+    // 切图后新图的 target 还在解析：不显示旧图的缩略图 / 链接，也不能生成
+    body = (
+      <div className="flex flex-col gap-1.5 py-4" data-review-resolving>
+        <ProgressBar pct={null} label={rs('stage.rendering')} />
+      </div>
+    )
+  } else if (s.picker) {
     body = <Picker onClose={close} />
   } else if (share) {
     body = (

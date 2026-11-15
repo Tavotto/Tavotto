@@ -5,7 +5,7 @@ import type { ReviewComment, ReviewShareSummary } from '@/lib/api'
  *
  * - `overall`：整体意见，没有位置，不画圆点、也不说位置变了；
  * - `element`：元素 `gid` 在当前画布里还在 → 圆点跟着元素现在的位置走（哪个版本留的都一样）；
- * - `region`：区域意见，且就是最新版留的 → 画面比例坐标在当前画布上仍成立，画在原处；
+ * - `region`：区域意见，是最新版留的、且画布此后没有改过（`changed=false`）→ 画面比例坐标仍成立，画在原处；
  * - `moved`：元素没了，或是旧版本留的区域意见 → 不在画布上硬画，列表里用该版本快照标原位置。
  */
 export type Placement = 'overall' | 'element' | 'region' | 'moved'
@@ -14,11 +14,13 @@ export function placeComment(
   c: Pick<ReviewComment, 'v' | 'anchor'>,
   latestVersion: number,
   hasGid: (gid: string) => boolean,
+  /** 当前画布与最新版本一致（`/api/review/changed` 说没改动）；区域意见的比例坐标只在画布没动过时才成立 */
+  canvasMatchesLatest: boolean,
 ): Placement {
   const a = c.anchor
   if (a.kind === 'overall') return 'overall'
   if (a.kind === 'element') return hasGid(a.gid) ? 'element' : 'moved'
-  return c.v === latestVersion ? 'region' : 'moved'
+  return c.v === latestVersion && canvasMatchesLatest ? 'region' : 'moved'
 }
 
 /** 分享记录是否还活着（能更新 / 能复制链接）：已停止或已过期的只剩意见副本 */

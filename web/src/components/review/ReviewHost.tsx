@@ -26,6 +26,8 @@ export function ReviewHost() {
   useEffect(() => {
     if (!enabled) return
     let live = true
+    // 切图：新图的 target 可能要问引擎（`/api/panel-stem`），解析完成前旧 target / 分享立即作废，不让「B 的画面 + A 的链接」混在一起
+    useReviewStore.getState().beginResolve()
     const [kind, fileId, stem] = (key ? JSON.parse(key) : ['']) as string[]
     const panel = kind === 'p' ? { fileId, ...(stem ? { stem } : {}) } : null
     void resolveReviewTarget({ panel, hasObjects: kind === 'l', canvasId }).then((t) => {

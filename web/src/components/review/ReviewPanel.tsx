@@ -187,6 +187,13 @@ export function ReviewPanel() {
   }, [hasElementComments, objects])
   const shareId = share?.share_id
 
+  // 区域意见的坐标只在画布与最新版一致时才画：页签开着时，画布每改一下（停手 0.8 秒后）问引擎一次（本机比对、不联网）
+  useEffect(() => {
+    if (!shareId) return
+    const t = window.setTimeout(() => void useReviewStore.getState().loadChanged(), 800)
+    return () => window.clearTimeout(t)
+  }, [shareId, objects])
+
   useEffect(() => {
     if (!shareId) return
     void useReviewStore.getState().refreshTab({ markRead: true })

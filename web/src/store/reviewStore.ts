@@ -50,6 +50,8 @@ export const TAB_REFRESH_MS = 60 * 1000
 interface ReviewState {
   enabled: boolean
   target: ReviewTarget | null
+  /** 新图的 target 正在解析：此时 `target` / `share` 一律是空的，弹窗显示加载态 */
+  resolving: boolean
   /** 当前 target 的未删除分享记录；null = 没分享过（页签不出现） */
   share: ReviewShareSummary | null
   detail: ReviewShareDetail | null
@@ -72,6 +74,8 @@ interface ReviewState {
 
   loadCapability: () => Promise<void>
   setTarget: (t: ReviewTarget | null) => Promise<void>
+  /** 切图后、新图的 target 还在解析（要问引擎 stem）：立刻作废旧 target / 分享，分享审阅在解析完成前不可用 */
+  beginResolve: () => void
   reloadShare: () => Promise<void>
   /** 剩余次数 + 选择卡的候选；联网不通时数字是 null，界面就不显示 */
   loadQuota: () => Promise<void>
@@ -162,6 +166,7 @@ export const useReviewStore = create<ReviewState>((set, get) => {
   return {
     enabled: false,
     target: null,
+    resolving: false,
     share: null,
     detail: null,
     dialogOpen: false,
@@ -185,7 +190,14 @@ export const useReviewStore = create<ReviewState>((set, get) => {
       if (get().enabled) void get().loadUnread()
     },
 
+    beginResolve: () => {
+      targetToken++
+      genToken++
+      set({ target: null, resolving: true, share: null, detail: null, selectedId: null, picker: null, failure: null, stage: 'idle', changed: true })
+    },
+
     setTarget: async (t) => {
+      if (get().resolving) set({ resolving: false })
       if (sameTarget(t, get().target)) return
       const mine = ++targetToken
       set({ target: t, share: null, detail: null, selectedId: null, picker: null, failure: null, stage: 'idle' })
@@ -350,6 +362,7 @@ export const useReviewStore = create<ReviewState>((set, get) => {
       if (get().share && !get().share!.revoked && !get().share!.expired) await refreshReview(id).catch(() => null)
       await get().reloadShare()
       await get().loadDetail()
+      void get().loadChanged()
       void get().loadUnread()
     },
 

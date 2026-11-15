@@ -8,18 +8,23 @@ const has = (...gids: string[]) => (g: string) => gids.includes(g)
 
 describe('placeComment：原位置已变化的判据', () => {
   it('整体意见没有位置', () => {
-    expect(placeComment({ v: 1, anchor: { kind: 'overall' } }, 2, has())).toBe('overall')
+    expect(placeComment({ v: 1, anchor: { kind: 'overall' } }, 2, has(), true)).toBe('overall')
   })
   it('元素还在：圆点跟着元素走，不管哪个版本留的', () => {
-    expect(placeComment({ v: 1, anchor: el('legend') }, 3, has('legend'))).toBe('element')
-    expect(placeComment({ v: 3, anchor: el('legend') }, 3, has('legend'))).toBe('element')
+    expect(placeComment({ v: 1, anchor: el('legend') }, 3, has('legend'), true)).toBe('element')
+    expect(placeComment({ v: 3, anchor: el('legend') }, 3, has('legend'), true)).toBe('element')
   })
   it('元素没了：不在画布画，列表标原位置已变化', () => {
-    expect(placeComment({ v: 3, anchor: el('legend') }, 3, has('axis'))).toBe('moved')
+    expect(placeComment({ v: 3, anchor: el('legend') }, 3, has('axis'), true)).toBe('moved')
   })
-  it('区域意见：最新版留的画在原处，旧版本留的算原位置已变化', () => {
-    expect(placeComment({ v: 2, anchor: region }, 2, has())).toBe('region')
-    expect(placeComment({ v: 1, anchor: region }, 2, has())).toBe('moved')
+  it('区域意见：最新版留的、画布没动过才画在原处；旧版本留的算原位置已变化', () => {
+    expect(placeComment({ v: 2, anchor: region }, 2, has(), true)).toBe('region')
+    expect(placeComment({ v: 1, anchor: region }, 2, has(), true)).toBe('moved')
+  })
+  it('分享后本地画布改过（changed=true）：最新版的区域意见也不再画在旧坐标上；元素意见不受影响', () => {
+    expect(placeComment({ v: 2, anchor: region }, 2, has(), false)).toBe('moved')
+    expect(placeComment({ v: 2, anchor: el('legend') }, 2, has('legend'), false)).toBe('element')
+    expect(placeComment({ v: 2, anchor: { kind: 'overall' } }, 2, has(), false)).toBe('overall')
   })
 })
 

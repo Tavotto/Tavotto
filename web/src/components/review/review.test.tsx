@@ -34,6 +34,7 @@ import {
   ApiError,
   dismissReview,
   fetchReviewChanged,
+  fetchReviewFor,
   fetchReviewShare,
   fetchReviewStatus,
   markReviewRead,
@@ -140,6 +141,7 @@ function resetStore(over: Partial<ReturnType<typeof useReviewStore.getState>> = 
   useReviewStore.setState({
     enabled: true,
     target: { kind: 'figure', id: 'fig3' },
+    resolving: false,
     share: null,
     detail: null,
     dialogOpen: false,
@@ -163,6 +165,7 @@ beforeEach(async () => {
   vi.mocked(dismissReview).mockResolvedValue({})
   vi.mocked(markReviewRead).mockResolvedValue({})
   vi.mocked(refreshReview).mockResolvedValue({ ok: true, unread: 0 })
+  vi.mocked(fetchReviewChanged).mockResolvedValue({ changed: false })
   useUiStore.setState({ rightTab: 'properties', rightOpen: true, status: null })
   resetStore()
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_review')
@@ -370,7 +373,7 @@ describe('「审阅」页签出现条件', () => {
 describe('「审阅」页签内容', () => {
   const seed = (comments: ReviewComment[], share = SHARE) => {
     vi.mocked(fetchReviewShare).mockResolvedValue(DETAIL(comments, share))
-    resetStore({ share, detail: DETAIL(comments, share) })
+    resetStore({ share, detail: DETAIL(comments, share), changed: false })
   }
   it('顶部一行灰字 + 复制链接；没有结论条；打开时读一遍并清未读，每 60 秒拉一次', async () => {
     seed([cm('c1')])
@@ -463,7 +466,7 @@ describe('画布圆点只在审阅页签打开时渲染', () => {
     useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
   })
   it('属性页：没有圆点；审阅页：区域意见有圆点；关了右栏：没有', async () => {
-    resetStore({ share: SHARE, detail: DETAIL([cm('c1'), cm('c2', { v: 1 })]) })
+    resetStore({ share: SHARE, detail: DETAIL([cm('c1'), cm('c2', { v: 1 })]), changed: false })
     await render(overlay())
     expect(q('[data-review-pins]')).toBeNull()
     await act(async () => useUiStore.setState({ rightTab: 'review' }))
@@ -473,7 +476,7 @@ describe('画布圆点只在审阅页签打开时渲染', () => {
     expect(q('[data-review-pins]')).toBeNull()
   })
   it('点圆点 = 选中那条意见并描边', async () => {
-    resetStore({ share: SHARE, detail: DETAIL([cm('c1')]) })
+    resetStore({ share: SHARE, detail: DETAIL([cm('c1')]), changed: false })
     useUiStore.setState({ rightTab: 'review' })
     await render(overlay())
     await click(q('[data-review-pin="c1"] [role="button"]'))
@@ -540,7 +543,7 @@ describe('排版的坐标基准是页面', () => {
     await seedLayout(10)
     const d = DETAIL([cm('r1', { anchor: { kind: 'region', box: [0.5, 0.5, 0.2, 0.2] } })])
     d.versions[0].frame = 'page'
-    resetStore({ share: { ...SHARE, kind: 'layout' }, detail: d })
+    resetStore({ share: { ...SHARE, kind: 'layout' }, detail: d, changed: false })
     await render(
       <svg>
         <ReviewOverlay objects={useDocumentStore.getState().doc.objects} t={T} />
@@ -592,6 +595,71 @@ describe('画布相对最新版有没有新改动', () => {
     await act(async () => void useReviewStore.getState().update())
     await settle()
     expect(useReviewStore.getState().changed).toBe(false)
+  })
+})
+
+describe('分享后本地画布改过：区域意见不再画在旧坐标上', () => {
+  const T = { zoom: 1, panX: 0, panY: 0, originX: 0, originY: 0 }
+  it('changed=true：最新版的区域意见不画圆点，列表里走「原位置已变化」；changed=false 才画', async () => {
+    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
+    useUiStore.setState({ rightTab: 'review', rightOpen: true })
+    const d = DETAIL([cm('r1')])
+    vi.mocked(fetchReviewShare).mockResolvedValue(d)
+    resetStore({ share: SHARE, detail: d, changed: true })
+    vi.mocked(fetchReviewChanged).mockResolvedValue({ changed: true })
+    await render(
+      <>
+        <svg>
+          <ReviewOverlay objects={[]} t={T} />
+        </svg>
+        <ReviewPanel />
+      </>,
+    )
+    await settle(900)
+    expect(q('[data-review-pin="r1"]')).toBeNull()
+    expect(q('[data-review-comment="r1"] [data-review-moved]')).not.toBeNull()
+    vi.mocked(fetchReviewChanged).mockResolvedValue({ changed: false })
+    await act(async () => useReviewStore.setState({ changed: false }))
+    expect(q('[data-review-pin="r1"]')).not.toBeNull()
+    expect(q('[data-review-comment="r1"] [data-review-moved]')).toBeNull()
+  })
+})
+
+describe('切图：新图 target 解析中不拼出「B 的画面 + A 的链接」', () => {
+  it('beginResolve 立刻作废 A 的 target / 分享：弹窗不显示 A 的链接、不能生成；解析完成才恢复', async () => {
+    resetStore({ dialogOpen: true, share: SHARE, target: { kind: 'figure', id: 'A' } })
+    await render(<ReviewDialog />)
+    expect(q('[data-review-link]')).not.toBeNull()
+    await act(async () => useReviewStore.getState().beginResolve())
+    expect(q('[data-review-link]')).toBeNull()
+    expect(q('[data-review-create]')).toBeNull()
+    expect(q('[data-review-resolving]')).not.toBeNull()
+    expect(shareReview).not.toHaveBeenCalled()
+    const st = useReviewStore.getState()
+    expect(st.target).toBeNull()
+    expect(st.share).toBeNull()
+    // 在解析期间调 create / update 也不会发出请求（没有 target、没有分享）
+    await act(async () => {
+      await st.create('x', '')
+      await st.update()
+    })
+    expect(shareReview).not.toHaveBeenCalled()
+    expect(updateReview).not.toHaveBeenCalled()
+    vi.mocked(fetchReviewFor).mockResolvedValue({ share: null })
+    await act(async () => useReviewStore.getState().setTarget({ kind: 'figure', id: 'B' }))
+    expect(useReviewStore.getState().resolving).toBe(false)
+    expect(q('[data-review-create]')).not.toBeNull()
+    expect(q('[data-review-link]')).toBeNull()
+  })
+  it('旧解析的迟到结果被丢弃（解析序号递增）', async () => {
+    resetStore({ share: null, target: null })
+    let resolveA!: (v: { share: typeof SHARE }) => void
+    vi.mocked(fetchReviewFor).mockImplementationOnce(() => new Promise((r) => (resolveA = r)))
+    const p = useReviewStore.getState().setTarget({ kind: 'figure', id: 'A' })
+    useReviewStore.getState().beginResolve() // 切到 B，B 还在解析
+    resolveA({ share: SHARE })
+    await p
+    expect(useReviewStore.getState().share).toBeNull() // A 的分享不会落到 B 上
   })
 })
 
