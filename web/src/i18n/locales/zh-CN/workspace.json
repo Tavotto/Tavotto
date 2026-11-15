@@ -474,7 +474,9 @@
     "reversePath": "反转路径方向",
     "simplifyPath": "简化路径",
     "roundCorners": "圆角",
-    "shapeBuilder": "形状生成器"
+    "shapeBuilder": "形状生成器",
+    "makeClipMask": "建立剪切蒙版",
+    "releaseClipMask": "释放剪切蒙版"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -497,7 +499,10 @@
     "rowActions": "{{label}} 的操作",
     "moveUp": "上移一层",
     "moveDown": "下移一层",
-    "rename": "重命名"
+    "rename": "重命名",
+    "clipGroupLabel_other": "剪切组 · {{count}} 个对象",
+    "clipPath": "剪切路径",
+    "clipPathTip": "这个形状只用来裁剪组里的其他对象，不会画出来"
   },
   "layoutKind": {
     "col": "列布局",
@@ -970,7 +975,10 @@
     "eyedropperNoTarget": "先选中要上色的形状、路径或箭头",
     "pathfinderUnavailable": "这里用不了路径查找器",
     "pathfinderEmpty": "算出来是空的，没有改动",
-    "simplifyNothing": "已经很简单了，没有可删的锚点"
+    "simplifyNothing": "已经很简单了，没有可删的锚点",
+    "clipNeedTwo": "至少选中 2 个对象才能建立剪切蒙版",
+    "clipNeedPathOnTop": "最上面的对象要是路径或封闭形状，才能当剪切蒙版",
+    "clipMade": "已建立剪切蒙版"
   },
   "tabs": {
     "allCanvases": "全部画布",
@@ -1874,5 +1882,10 @@
   "pathfinder": {
     "blockedEmbedded": "在这里用不了，请在 Tavotto 桌面版或浏览器里打开",
     "blockedFailed": "这台电脑上没能加载路径查找器"
+  },
+  "isolation": {
+    "label": "组内编辑",
+    "exit": "退出组内编辑",
+    "exitTip": "按 Esc 退出一层"
   }
 }

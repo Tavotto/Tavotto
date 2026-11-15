@@ -121,3 +121,30 @@ describe('老文档', () => {
     expect(effectiveCanvasFamily(o)).toBe(CANVAS_TEXT_DEFAULT_FAMILY)
   })
 })
+
+describe('写回：被剪切蒙版裁的标注（ADR 0185 M4）', () => {
+  it('蒙版（隐藏的）按全集找；轮廓与标注同一套换算到图自身 mm', () => {
+    const p = panel({ w: 160, h: 120 })
+    const mask = {
+      id: 'm',
+      type: 'path',
+      x: 0,
+      y: 0,
+      w: 40,
+      h: 20,
+      strokePt: 1,
+      color: '#000000',
+      fill: null,
+      subpaths: [{ closed: true, nodes: [{ p: [0, 0] }, { p: [1, 0] }, { p: [1, 1] }] }],
+      groupId: 'g',
+      clipMask: true,
+      hidden: true,
+    } as never
+    const out = collectPanelAnnotations([p], [text({ groupId: 'g' }), mask])
+    const t = out.get('p1')!.objects[0]
+    expect(t.clip).toHaveLength(1)
+    // 面板放大两倍显示：蒙版的框跟着缩一半
+    expect(t.clip![0].w_mm).toBeCloseTo(20, 6)
+    expect(t.clip![0].h_mm).toBeCloseTo(10, 6)
+  })
+})

@@ -692,6 +692,14 @@
       "shape-builder": {
         "keywords": "shape builder merge regions xszcq 形状生成器 合并 区域",
         "label": "形状生成器"
+      },
+      "make-clip-mask": {
+        "keywords": "clipping mask clip crop jqmb 剪切蒙版 裁剪",
+        "label": "建立剪切蒙版"
+      },
+      "release-clip-mask": {
+        "keywords": "release clipping mask sfjqmb 释放 剪切蒙版",
+        "label": "释放剪切蒙版"
       }
     },
     "listLabel": "命令",

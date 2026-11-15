@@ -1627,6 +1627,10 @@ export default interface Resources {
           "keywords": "open load layout zr zairu dk dakai pb paiban",
           "label": "打开排版…"
         },
+        "make-clip-mask": {
+          "keywords": "clipping mask clip crop jqmb 剪切蒙版 裁剪",
+          "label": "建立剪切蒙版"
+        },
         "make-compound": {
           "keywords": "compound path hole jlfhlj 复合路径 挖洞",
           "label": "建立复合路径"
@@ -1682,6 +1686,10 @@ export default interface Resources {
         "refresh-project": {
           "keywords": "refresh reload rescan sx shuaxin 重新扫描 新文件 检查",
           "label": "刷新项目"
+        },
+        "release-clip-mask": {
+          "keywords": "release clipping mask sfjqmb 释放 剪切蒙版",
+          "label": "释放剪切蒙版"
         },
         "release-compound": {
           "keywords": "release compound sffhlj 释放 复合路径",
@@ -6989,6 +6997,7 @@ export default interface Resources {
       "lockElement": "锁定图内元素",
       "lockObject": "锁定对象",
       "lockObjects": "锁定 {{count}} 个对象",
+      "makeClipMask": "建立剪切蒙版",
       "makeCompound": "建立复合路径",
       "mcpOpenFigure": "打开图",
       "moveAnchors": "移动锚点",
@@ -7018,6 +7027,7 @@ export default interface Resources {
       "playgroundResetEdits": "重置修改",
       "reflowLayoutGroup": "重新排列布局组",
       "refreshJournalV2": "更新期刊要求",
+      "releaseClipMask": "释放剪切蒙版",
       "releaseCompound": "释放复合路径",
       "relinkAssets_other": "重新链接 {{count}} 个素材",
       "renameCanvas": "重命名画布",
@@ -7075,7 +7085,15 @@ export default interface Resources {
       "zTop": "置于顶层",
       "zUp": "上移一层"
     },
+    "isolation": {
+      "exit": "退出组内编辑",
+      "exitTip": "按 Esc 退出一层",
+      "label": "组内编辑"
+    },
     "layerTree": {
+      "clipGroupLabel_other": "剪切组 · {{count}} 个对象",
+      "clipPath": "剪切路径",
+      "clipPathTip": "这个形状只用来裁剪组里的其他对象，不会画出来",
       "collapseGroup": "折叠组",
       "editableBadge": "可编辑",
       "editableState": "可编辑",
@@ -8098,6 +8116,9 @@ export default interface Resources {
       "blockedGroupsSkipped_other": "组内有锁定对象，已跳过 {{count}} 个组",
       "building": "正在构建 {{name}}…",
       "buildingWithHint": "正在构建 {{name}}（{{hint}}）",
+      "clipMade": "已建立剪切蒙版",
+      "clipNeedPathOnTop": "最上面的对象要是路径或封闭形状，才能当剪切蒙版",
+      "clipNeedTwo": "至少选中 2 个对象才能建立剪切蒙版",
       "clipboardReadDenied": "无法读取剪贴板。浏览器未授权。",
       "clipboardReadUnsupported": "浏览器不支持读取剪贴板，无法粘贴对象",
       "clipboardWriteDenied": "无法访问剪贴板。浏览器未授权。",

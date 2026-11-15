@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { type CanvasObject, type FigureDocument, type PanelObject } from '@/types/document'
-import { annotationsBelow, annotationsOf, singleAnnotatedDocument } from './singleExportDoc'
+import { annotationsBelow, annotationsOf, figureClipOf, singleAnnotatedDocument } from './singleExportDoc'
+import { toExportObjects } from './exportPayload'
 import type { OriginalOutputSpec } from './originalSpec'
 
 const panel: PanelObject = {
@@ -138,5 +139,52 @@ describe('singleAnnotatedDocument：留白与标注同比缩放一起生效（AD
     const t = out.objects[1] as CanvasObject & { sizePt: number }
     expect([t.x, t.y, t.w, t.h]).toEqual([25, 22, 20, 6])
     expect(t.sizePt).toBe(18)
+  })
+})
+
+describe('剪切蒙版裁这张图（ADR 0185 M4）', () => {
+  const mask = {
+    id: 'm',
+    type: 'shape',
+    shape: 'ellipse',
+    x: 30,
+    y: 20,
+    w: 40,
+    h: 60,
+    strokePt: 1,
+    color: '#000000',
+    fill: null,
+    groupId: 'g',
+    clipMask: true,
+    hidden: true,
+  } as unknown as CanvasObject
+  const clippedPanel = { ...panel, groupId: 'g' } as PanelObject
+
+  it('只有蒙版（隐藏）没有可见标注：照样合成，original.clip 有一条、坐标换到图幅里', () => {
+    const doc = docOf([clippedPanel, mask])
+    const out = singleAnnotatedDocument(doc, clippedPanel, spec())!
+    expect(out).not.toBeNull()
+    const clip = figureClipOf(out)
+    expect(clip).toHaveLength(1)
+    expect(clip[0].type).toBe('path')
+    // 画布上蒙版左边贴着图左边（x = 30）：换到图幅里 ≈ 0（再加描边内缩）
+    expect(clip[0].x_mm).toBeLessThan(1)
+    expect(clip[0].x_mm).toBeGreaterThanOrEqual(0)
+  })
+
+  it('蒙版进 annotationsOf（给 toExportObjects 找 clip 用），但不进载荷；被裁的标注带 clip', () => {
+    const t = text({ groupId: 'g' })
+    const out = singleAnnotatedDocument(docOf([clippedPanel, t, mask]), clippedPanel, spec())!
+    const anns = annotationsOf(out)
+    expect(anns.map((o) => o.id)).toEqual(['t1', 'm'])
+    const payload = toExportObjects(anns)
+    expect(payload.map((o) => o.type)).toEqual(['text'])
+    expect(payload[0].clip).toHaveLength(1)
+    expect(annotationsBelow(out)).toBe(0)
+  })
+
+  it('没被裁：figureClipOf 为空，没有标注照旧返回 null', () => {
+    expect(singleAnnotatedDocument(docOf([panel]), panel, spec())).toBeNull()
+    expect(figureClipOf(singleAnnotatedDocument(docOf([panel, text()]), panel, spec())!)).toEqual([])
   })
 })

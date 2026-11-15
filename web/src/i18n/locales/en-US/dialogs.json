@@ -704,6 +704,14 @@
       "shape-builder": {
         "keywords": "shape builder merge regions",
         "label": "Shape builder"
+      },
+      "make-clip-mask": {
+        "keywords": "clipping mask clip crop",
+        "label": "Make clipping mask"
+      },
+      "release-clip-mask": {
+        "keywords": "release clipping mask",
+        "label": "Release clipping mask"
       }
     },
     "listLabel": "Commands",
