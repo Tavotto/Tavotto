@@ -655,13 +655,15 @@
       "heading": "Data",
       "fileMeta": "{{rows}} rows · {{columns}} columns",
       "sheets": "{{count}} sheets",
-      "unsure": "Not sure about this one, skipped for now",
+      "unsure": "Not sure",
       "unreadable": "Can’t read",
       "unread": "Not read",
       "expand": "Show sheets",
       "collapse": "Hide sheets",
       "empty": "No data files found in this folder.",
-      "loadFailed": "Couldn’t look through this folder."
+      "loadFailed": "Couldn’t look through this folder.",
+      "rows": "{{rows}} rows",
+      "unsureTitle": "Not sure about this one, skipped for now"
     },
     "stage": {
       "pickOne": "Pick a table on the left."

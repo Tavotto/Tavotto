@@ -70,48 +70,128 @@ const ov = (over: Partial<AiDataOverview> = {}): AiDataOverview => ({
   truncated: false, lead_lines: [], raw_lines: [], ...over,
 })
 
-describe('清单 DataList', () => {
+describe('清单 DataList（文件树）', () => {
+  const ok = (rows: number, columns = 3) => ({ status: 'ok' as const, code: null, delimiter: 'comma' as const, header_row: 1, columns, rows })
   const entries: AiDataFileEntry[] = [
-    { path: 'a.csv', size: 1, table: { status: 'ok', code: null, delimiter: 'comma', header_row: 1, columns: 3, rows: 32 } },
+    { path: 'a.csv', size: 1, table: ok(32) },
     { path: 'sub/g.txt', size: 1, table: { status: 'unsure', code: null, delimiter: 'space', header_row: 2, columns: 2, rows: null } },
     { path: 'sub/b.dat', size: 1, table: { status: 'unreadable', code: 'data_binary', delimiter: null, header_row: null, columns: null, rows: null } },
+    { path: 'sub/deep/d.csv', size: 1, table: ok(5, 2) },
     { path: 'big.csv', size: 1, table: null },
     { path: 'book.xlsx', size: 1, sheets: [{ name: 'P1', hidden: false, rows: 24, columns: 2, status: 'ok', code: null }] },
   ]
+  const mountTree = (over: Partial<React.ComponentProps<typeof DataList>> = {}, e = entries) =>
+    mount(<DataList rows={fileRows(e)} selected={null} overviews={{}} onSelect={() => {}} {...over} />)
+  const rowsText = () => qa('[data-studio-nav]').map((r) => r.textContent)
+  const row = (txt: string) => qa('[data-studio-nav]').find((r) => r.textContent!.includes(txt))!
 
-  it('每种状态一句灰字：行数 · 列数 / 没认准，先不用 / 读不了 / 没读；xlsx 一行，可展开看工作表', async () => {
+  it('role=tree；文件夹行是箭头 + 图标 + 名字 + 行尾文件个数，顶层文件夹默认展开；文件行单行、行尾灰字', async () => {
+    await mountTree()
+    expect(q('[role=tree]')).not.toBeNull()
+    const sub = row('sub')
+    expect(sub.getAttribute('role')).toBe('treeitem')
+    expect(sub.getAttribute('aria-expanded')).toBe('true')
+    expect(sub.querySelector('[data-tree-count]')!.textContent).toBe('3') // g.txt / b.dat / deep/d.csv
+    expect(row('a.csv').textContent).toContain('32 行')
+    expect(row('g.txt').textContent).toContain('没认准')
+    expect(row('b.dat').textContent).toContain('读不了')
+    expect(row('big.csv').textContent).toContain('没读')
+    // 列数不放在行上
+    expect(row('a.csv').textContent).not.toContain('3 列')
+    // 完整信息进 title
+    expect(row('a.csv').getAttribute('title')).toContain('32 行 · 3 列')
+    expect(row('g.txt').getAttribute('title')).toContain('没认准，先不用')
+  })
+
+  it('子文件夹默认：文件总数少于规则线全展开；多了只展开顶层', async () => {
+    await mountTree()
+    expect(row('deep').getAttribute('aria-expanded')).toBe('true')
+    act(() => root.unmount())
+    host.remove()
+    const many: AiDataFileEntry[] = Array.from({ length: 40 }, (_, i) => ({ path: `top/in/f${i}.csv`, size: 1, table: ok(1) }))
+    await mountTree({}, many)
+    expect(row('top').getAttribute('aria-expanded')).toBe('true')
+    expect(row('in').getAttribute('aria-expanded')).toBe('false')
+    expect(qa('[data-studio-file]').length).toBe(0)
+  })
+
+  it('点整行展开 / 收起；展开才出现子项；工作簿同一套交互，子项是工作表、行尾是行数', async () => {
+    await mountTree()
+    expect(rowsText().join('|')).not.toContain('P1')
+    await click(row('book.xlsx'))
+    expect(row('P1').textContent).toContain('24 行')
+    expect(row('book.xlsx').getAttribute('aria-expanded')).toBe('true')
+    await click(row('sub'))
+    expect(row('sub').getAttribute('aria-expanded')).toBe('false')
+    await click(row('book.xlsx'))
+    expect(row('book.xlsx').getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('错峰淡入只给用户刚展开的那一枝（首屏默认展开的不演），延迟走动效令牌、前 8 个以后一起', async () => {
+    const many: AiDataFileEntry[] = Array.from({ length: 12 }, (_, i) => ({ path: `d/f${i}.csv`, size: 1, table: ok(1) }))
+    await mountTree({}, many)
+    expect(qa('.animate-rise-in').length).toBe(0)
+    await click(row('d'))
+    await click(row('d'))
+    const kids = qa('[data-studio-file]')
+    expect(kids.length).toBe(12)
+    expect(kids.every((k) => k.className.includes('animate-rise-in'))).toBe(true)
+    expect(kids[11]!.style.animationDelay).toBe(kids[8]!.style.animationDelay)
+    expect(kids[1]!.style.animationDelay).toContain('--duration-exit')
+  })
+
+  it('键盘：↑↓ 走行、→ 展开 / 进子项、← 收起 / 回父、Enter 打开预览、空格同 Enter', async () => {
     const onSelect = vi.fn()
-    await mount(<DataList rows={fileRows(entries)} rootName="proj" selected={null} overviews={{}} onSelect={onSelect} />)
-    const text = q('[data-studio-data]')!.textContent!
-    expect(text).toContain('32 行 · 3 列')
-    expect(text).toContain('没认准，先不用')
-    expect(text).toContain('读不了')
-    expect(text).toContain('没读')
-    expect(text).toContain('1 张工作表')
-    // 按目录分组：根目录那一组叫项目文件夹名
-    expect(qa('[data-studio-folder]').map((s) => s.getAttribute('aria-label'))).toEqual(['proj', 'sub'])
-    // 工作表默认收着；点 xlsx 一行展开，点工作表选中的是「路径 + 工作表」
-    expect(q('[data-studio-sheet]')).toBeNull()
-    await click(q('[data-studio-file-open][aria-expanded]'))
-    expect(q('[data-studio-sheet]')!.textContent).toContain('24 行 · 2 列')
-    await click(q('[data-studio-sheet] button'))
-    expect(onSelect).toHaveBeenCalledWith({ path: 'book.xlsx', sheet: 'P1' })
+    await mountTree({ onSelect })
+    const key = async (el: HTMLElement, k: string) => {
+      el.focus()
+      await act(async () => { el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true })) })
+    }
+    const sub = row('sub')
+    await key(sub, 'ArrowLeft')
+    expect(row('sub').getAttribute('aria-expanded')).toBe('false')
+    await key(row('sub'), 'ArrowRight')
+    expect(row('sub').getAttribute('aria-expanded')).toBe('true')
+    await key(row('sub'), 'ArrowRight') // 已展开 → 进第一个子节点（文件夹在前：deep）
+    expect(document.activeElement).toBe(row('deep'))
+    await key(row('deep'), 'ArrowLeft') // 展开着 → 先收起
+    await key(row('deep'), 'ArrowLeft') // 已收起 → 回父
+    expect(document.activeElement).toBe(row('sub'))
+    await key(row('sub'), 'ArrowDown')
+    expect(document.activeElement).toBe(qa('[data-studio-nav]')[qa('[data-studio-nav]').indexOf(row('sub')) + 1])
+    await key(row('a.csv'), 'Enter')
+    expect(onSelect).toHaveBeenLastCalledWith({ path: 'a.csv', sheet: null })
+    await key(row('a.csv'), ' ')
+    expect(onSelect).toHaveBeenCalledTimes(2)
+    await key(row('book.xlsx'), 'Enter')
+    expect(row('P1')).toBeTruthy()
+  })
+
+  it('选中行 aria-selected、是唯一的 Tab 停靠点；没选中时第一行是', async () => {
+    await mountTree({ selected: { path: 'a.csv', sheet: null } })
+    expect(row('a.csv').getAttribute('aria-selected')).toBe('true')
+    expect(qa('[data-studio-nav][tabindex="0"]').map((e) => e.textContent)).toEqual([row('a.csv').textContent])
+    act(() => root.unmount())
+    host.remove()
+    await mountTree()
+    expect(qa('[data-studio-nav][tabindex="0"]').length).toBe(1)
+    expect(qa('[data-studio-nav]')[0]!.getAttribute('tabindex')).toBe('0')
   })
 
   it('单击一行 = 选这一张表；data-* 里没有文件名（诊断轨迹会记 data 属性）', async () => {
     const onSelect = vi.fn()
-    await mount(<DataList rows={fileRows(entries)} rootName="proj" selected={null} overviews={{}} onSelect={onSelect} />)
-    await click(qa('[data-studio-file-open]')[0]!)
+    await mountTree({ onSelect })
+    await click(row('a.csv'))
     expect(onSelect).toHaveBeenCalledWith({ path: 'a.csv', sheet: null })
+    await click(row('book.xlsx'))
+    await click(row('P1'))
+    expect(onSelect).toHaveBeenLastCalledWith({ path: 'book.xlsx', sheet: 'P1' })
     for (const el of qa('[data-studio-data] *')) for (const a of el.getAttributeNames()) if (a.startsWith('data-')) expect(el.getAttribute(a)).not.toMatch(/\.(csv|txt|dat|xlsx)/)
   })
 
-  it('用户改过表头行、重读成功后，这一行改说重读后的行列数', async () => {
-    const rows = fileRows(entries)
-    await mount(
-      <DataList rows={rows} rootName="proj" selected={null} overviews={{ 'sub/g.txt': ov({ path: 'sub/g.txt', rows: 40, columns: 2 }) }} onSelect={() => {}} />,
-    )
-    expect(q('[data-studio-data]')!.textContent).toContain('40 行 · 2 列')
+  it('用户改过表头行、重读成功后，这一行改说重读后的行数', async () => {
+    await mountTree({ overviews: { 'sub/g.txt': ov({ path: 'sub/g.txt', rows: 40, columns: 2 }) } })
+    expect(row('g.txt').textContent).toContain('40 行')
   })
 })
 
@@ -345,7 +425,7 @@ describe('整页 DataPage 接 store 走一遍', () => {
     await flush()
   }
   const open = async (i: number) => {
-    await click(qa('[data-studio-file-open]')[i]!)
+    await click(qa('[data-studio-file]')[i]!)
     await flush()
   }
 

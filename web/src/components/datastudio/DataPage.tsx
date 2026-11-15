@@ -31,7 +31,6 @@ export function DataPage() {
   const overviews = useDataFigureStore((s) => s.overviews)
   const headerRows = useDataFigureStore((s) => s.headerRows)
   const scene = useDataFigureStore((s) => s.scene)
-  const projectName = useProjectStore((s) => s.project?.name ?? '')
   const st = useDataFigureStore.getState
 
   // 进页时 `enter()` 已经发了清单请求；这里只在「还没开始」时兜一次（热重载 / 直接挂载）
@@ -90,6 +89,12 @@ export function DataPage() {
             <h2 className="type-heading min-w-0 truncate" title={selected.path}>
               {baseName(selected.path)}
               {selected.sheet ? <span className="text-ink-3"> · {selected.sheet}</span> : null}
+              {ov?.status === 'ok' && ov.rows != null && ov.columns != null ? (
+                <span className="text-base font-normal text-ink-3" data-studio-dims>
+                  {' · '}
+                  {t('dataFigureV2.list.fileMeta', { rows: ov.rows, columns: ov.columns })}
+                </span>
+              ) : null}
             </h2>
             {ovState?.status === 'error' && !ov ? (
               <Notice tone="neutral" title={ovState.error ? fm(ovState.error) : t('dataFigureV2.preview.failed')} action={<Button variant="ghost" size="sm" onClick={() => st().select(selected)}>{t('dataFigureV2.problem.retry')}</Button>} />
@@ -154,7 +159,6 @@ export function DataPage() {
       ) : (
         <DataList
           rows={rows}
-          rootName={projectName}
           selected={selected}
           overviews={listOverviews}
           onSelect={(ref) => {

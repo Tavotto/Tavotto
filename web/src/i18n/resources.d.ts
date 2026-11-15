@@ -133,10 +133,12 @@ export default interface Resources {
         "fileMeta": "{{rows}} 行 · {{columns}} 列",
         "heading": "数据",
         "loadFailed": "没能看清这个文件夹里有什么。",
+        "rows": "{{rows}} 行",
         "sheets": "{{count}} 张工作表",
         "unread": "没读",
         "unreadable": "读不了",
-        "unsure": "没认准，先不用"
+        "unsure": "没认准",
+        "unsureTitle": "没认准，先不用"
       },
       "mixed": {
         "cancel": "取消",

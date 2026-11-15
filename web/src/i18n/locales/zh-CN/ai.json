@@ -648,13 +648,15 @@
       "heading": "数据",
       "fileMeta": "{{rows}} 行 · {{columns}} 列",
       "sheets": "{{count}} 张工作表",
-      "unsure": "没认准，先不用",
+      "unsure": "没认准",
       "unreadable": "读不了",
       "unread": "没读",
       "expand": "展开工作表",
       "collapse": "收起工作表",
       "empty": "这个文件夹里没找到数据文件。",
-      "loadFailed": "没能看清这个文件夹里有什么。"
+      "loadFailed": "没能看清这个文件夹里有什么。",
+      "rows": "{{rows}} 行",
+      "unsureTitle": "没认准，先不用"
     },
     "stage": {
       "pickOne": "从左边选一张表。"
