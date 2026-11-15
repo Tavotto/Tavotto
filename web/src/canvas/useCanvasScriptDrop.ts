@@ -31,8 +31,10 @@ import { createCanvasDropPairer, projectRelativePath, projectRelativeScript, typ
 import { isDesktop, nativeFileDropAvailable, onNativeFileDrop, pickScriptFile, type NativeFileDrop } from '@/lib/desktop'
 import { foreignLanguageOf, type ForeignLanguage } from '@/lib/foreignScript'
 import { runNotebook } from '@/lib/notebookRun'
-import { openPackageFile } from '@/lib/packageImport'
+import { PRODUCT_NAME } from '@/lib/brand'
+import { isPackageTooNew, openPackageFile } from '@/lib/packageImport'
 import { baseName, dragHasFiles, dropTargetOf, parentDir, pathFromFileUri, type DropData } from '@/lib/scriptImport'
+import { tooNewAction } from '@/store/failureExit'
 import { useForeignScriptStore } from '@/store/foreignScriptStore'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
@@ -286,6 +288,10 @@ export function useCanvasScriptDrop() {
     try {
       await openPackageFile(file)
     } catch (e) {
+      if (isPackageTooNew(e)) {
+        say('packageTooNew', { name: file.name, product: PRODUCT_NAME }, 'error', tooNewAction())
+        return
+      }
       say('packageFailed', { name: file.name, reason: backendErrorMsg(e) }, 'error', feedbackAction())
       return
     }

@@ -26,6 +26,10 @@ Windows 上诊断缓存原子替换若遇共享冲突（WinError 5 / 32 / 33）�
 该进程的最新缓存；等待不持写锁。长时间占用耗尽重试后记为待写，下次访问该项目记录时再尝试；
 其他写盘错误不重试，进程退出后待写标记不保留。看护 `tests/test_windows_regressions.py` 的诊断缓存用例。
 诊断包 README 和发送前说明必须明确披露包名与版本。此例外由用户在 2026-10-31 明确授权，见 ADR 0016 修订。
+装好后 worker 自检没过时，该条另带 `selftest`（2026-11-15 维护者批准，ADR 0016 修订）：失败阶段闭集
+（`deprepair.SELFTEST_STAGES` ↔ `envdiag._SELFTEST_STAGES` 同源，测试钉住相等）、退出码、worker 稳定错误码、
+`diagnostics.failure_shape` 给出的 `[structure]` 摘要与最深一帧引擎源码位置；报错文字与路径不进记录。
+看护 `tests/test_selftest_failure_shape.py`。
 
 - 文本脱敏的唯一实现下沉在 `engine/diagnostictext.py`；`diagnostics.redact_text` 保留公开入口，
   `fixtools.readscope.scrub` 共用同一实现，避免转换上下文反向依赖整份诊断采集器。
