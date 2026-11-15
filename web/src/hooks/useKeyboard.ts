@@ -1,5 +1,6 @@
 import { exitGroupLevel, GROUP_COMMANDS } from '@/store/groupActions'
 import { TRANSFORM_COMMANDS } from '@/store/transformActions'
+import { canOutlineText, outlineSelectedText } from '@/store/textOutlineActions'
 import { useEffect } from 'react'
 import { formatMessage, msg } from '@/i18n'
 import { usePalette } from '@/components/CommandPalette'
@@ -259,6 +260,14 @@ export function useKeyboard() {
         const label = doc.redo()
         if (label) {
           ui.setStatus(msg('status.redone', { label: formatMessage(label) }, 'workspace'), 'done')
+        }
+        return
+      }
+      // ⇧⌘O 文字转轮廓（ADR 0185 M5）：选着文字时才消费
+      if (mod && e.shiftKey && !e.altKey && e.code === 'KeyO') {
+        if (canOutlineText()) {
+          e.preventDefault()
+          void outlineSelectedText()
         }
         return
       }

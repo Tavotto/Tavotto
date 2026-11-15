@@ -1547,6 +1547,10 @@ export default interface Resources {
           "keywords": "convert path zwlj 路径 钢笔",
           "label": "转为路径"
         },
+        "copy-as-svg": {
+          "keywords": "copy svg clipboard illustrator fzwsvg 复制为 SVG 矢量",
+          "label": "复制为 SVG"
+        },
         "cut-path": {
           "keywords": "cut scissors jd 剪刀 断开",
           "label": "在锚点处断开"
@@ -1650,6 +1654,10 @@ export default interface Resources {
         "outline-stroke": {
           "keywords": "outline stroke expand lkhmb 轮廓化 描边 扩展",
           "label": "轮廓化描边"
+        },
+        "outline-text": {
+          "keywords": "outline text create outlines path wzzlk 文字转轮廓 转曲",
+          "label": "文字转轮廓"
         },
         "pathfinder-divide": {
           "keywords": "divide split fg 分割 切开 路径查找器",
@@ -7102,6 +7110,7 @@ export default interface Resources {
       "moveObjects": "移动 {{count}} 个对象",
       "offsetPath": "偏移路径",
       "outlineStroke": "轮廓化描边",
+      "outlineText": "文字转轮廓（{{count}} 个）",
       "pasteObjects_other": "粘贴 {{count}} 个对象",
       "pasteStyle": "粘贴样式",
       "pathfinder": {
@@ -8297,6 +8306,9 @@ export default interface Resources {
       "nudgeNotMovable": "选中的图内元素不能移动",
       "objectCopied": "已复制 {{name}}",
       "objectsCopied": "已复制 {{count}} 个对象",
+      "outlineFailed_other": "{{count}} 个文字没转成轮廓（字体不可用）",
+      "outlinePartial_other": "有 {{count}} 个文字没转成（字体不可用）",
+      "outlined_other": "{{count}} 个文字已转成轮廓",
       "overridesCleared": "已清空这张图的图内修改",
       "packageDrift_other": "已打开项目包。{{count}} 个素材与打包时不一致，请核对。",
       "packageFailed": "无法打包。{{error}}",
@@ -8365,6 +8377,8 @@ export default interface Resources {
       "subLabelsAdded_other": "已添加 {{count}} 个序号标签",
       "svgAsImage": "这个 SVG {{reason}}，已整体当图片放进来",
       "svgAsRaster": "这个 SVG {{reason}}，已整体当位图（{{dpi}} dpi）放进来",
+      "svgCopied": "已复制为 SVG，可以粘贴到 Illustrator、Inkscape、Figma",
+      "svgCopyFailed": "没能复制为 SVG",
       "svgExplodeFailed": "这张图{{reason}}，没有拆开",
       "svgImported_other": "已变成 {{count}} 个可编辑对象",
       "undone": "撤销：{{label}}"

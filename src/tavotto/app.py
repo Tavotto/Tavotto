@@ -4131,6 +4131,84 @@ def api_svg_import():
     return jsonify({"ok": True, **out})
 
 
+@app.post("/api/svg/copy")
+def api_svg_copy():
+    """复制为 SVG（ADR 0185 M5 第二批）：选中的标注 / 形状 / 路径 / 文字按**导出 SVG 的同一个写入器**写成一段 SVG 文本。
+    body `{"objects": [<导出载荷，坐标已平移到选区左上为原点>], "w_mm": w, "h_mm": h}` → `{"ok": true, "svg": "…"}`。
+    图（面板）不收——它的 SVG 要走导出（源文件、快照、产物验收那一套）。"""
+    import tempfile
+
+    from .rendercore import facade as rc_facade, plan as rc_plan, svgwriter
+
+    body = request.get_json(force=True, silent=True) or {}
+    objs = body.get("objects")
+    try:
+        w_mm, h_mm = float(body.get("w_mm")), float(body.get("h_mm"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "bad_size"}), 400
+    if (
+        not isinstance(objs, list)
+        or not objs
+        or len(objs) > 5000
+        or not all(
+            isinstance(o, dict) and o.get("type") in ("text", "arrow", "shape", "path")
+            for o in objs
+        )
+        or not (0 < w_mm <= 5000 and 0 < h_mm <= 5000)
+    ):
+        return jsonify({"ok": False, "error": "bad_objects"}), 400
+    _prepare_source_fonts()
+    provider = rc_facade.provider()
+    try:
+        compiled = rc_plan.compile_page(
+            w_mm,
+            h_mm,
+            objs,
+            sources=None,  # type: ignore[arg-type]
+            faces=provider,
+            background=None,
+            math=engine_mathtypeset.layouts_for(objs, _mathtext_project()),
+        )
+        with tempfile.TemporaryDirectory(prefix="tavotto-svgcopy-") as tmp:
+            out = Path(tmp) / "copy.svg"
+            svgwriter.write_svg(compiled.page, out, provider)
+            svg = out.read_text(encoding="utf-8")
+    except rc_plan.PlanError as exc:
+        return jsonify({"ok": False, "error": exc.code}), 200
+    return jsonify({"ok": True, "svg": svg})
+
+
+#: `/api/text/outline` 一次最多转几个文字对象
+TEXT_OUTLINE_MAX = 200
+
+
+@app.post("/api/text/outline")
+def api_text_outline():
+    """文字转轮廓（ADR 0185 M5 第二批；`rendercore/textoutline.py`）：字形取自导出用的同一份字体，转出来的路径与导出
+    的字逐点重合。body `{"objects": [<导出载荷形状的文字对象>]}` → `{"ok": true, "results": [{"paths": [...]} | {"error": code}]}`。"""
+    from .rendercore import facade as rc_facade, plan as rc_plan, textoutline
+
+    body = request.get_json(force=True, silent=True) or {}
+    objs = body.get("objects")
+    if (
+        not isinstance(objs, list)
+        or not objs
+        or len(objs) > TEXT_OUTLINE_MAX
+        or not all(isinstance(o, dict) and o.get("type") == "text" for o in objs)
+    ):
+        return jsonify({"ok": False, "error": "bad_objects"}), 400
+    _prepare_source_fonts()
+    provider = rc_facade.provider()
+    math = engine_mathtypeset.layouts_for(objs, _mathtext_project())
+    results = []
+    for o in objs:
+        try:
+            results.append({"paths": textoutline.outline_text(o, faces=provider, math=math)})
+        except rc_plan.PlanError as exc:
+            results.append({"error": exc.code})
+    return jsonify({"ok": True, "results": results})
+
+
 def _prepare_source_fonts() -> None:
     """让「画布文字用原图字体」（ADR 0164）找得到原图那张脸：把项目解释器 / 内置 runtime 的 matplotlib
     字体目录登记为定位线索。**只算路径、不起进程、不改任何东西**；线索只影响「去哪找」，认脸仍只按 sha256。"""

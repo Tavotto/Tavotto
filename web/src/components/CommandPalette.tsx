@@ -56,6 +56,8 @@ import { APPEARANCE_COMMANDS } from '@/store/appearanceActions'
 import { PATHFINDER_COMMANDS } from '@/store/pathfinderActions'
 import { GROUP_COMMANDS } from '@/store/groupActions'
 import { canExplodeSvg, explodeSvgPanel } from '@/store/svgImportActions'
+import { canOutlineText, outlineSelectedText } from '@/store/textOutlineActions'
+import { canCopyAsSvg, copySelectionAsSvg } from '@/store/svgCopyActions'
 import { TRANSFORM_COMMANDS } from '@/store/transformActions'
 import { PATH_COMMAND_ICONS } from './pathCommandIcons'
 import { rankCommands, type PaletteSection } from '@/lib/commandRanking'
@@ -225,6 +227,10 @@ const COMMANDS: Command[] = [
     available: c.available,
     run: c.run,
   })),
+  // 复制为 SVG（ADR 0185 M5）：判据 `canCopyAsSvg`，与右键菜单同一个
+  { id: 'copy-as-svg', needsSelection: true, available: canCopyAsSvg, run: () => void copySelectionAsSvg() },
+  // 文字转轮廓（ADR 0185 M5）：判据 `canOutlineText`，与右键菜单、快捷键同一个
+  { id: 'outline-text', shortcut: keyOf('outlineText'), needsSelection: true, available: canOutlineText, run: () => void outlineSelectedText() },
   // 静态 SVG 图拆成可编辑对象（ADR 0185 M5）：判据 `canExplodeSvg`，与右键菜单同一个
   {
     id: 'explode-svg',

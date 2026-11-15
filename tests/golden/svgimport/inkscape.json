@@ -80,8 +80,7 @@
    "color": "#d62728",
    "strokePt": 1.417323,
    "lineJoin": "miter",
-   "miterLimit": 4.0,
-   "groupId": "sg1"
+   "miterLimit": 4.0
   },
   {
    "id": "s2",
@@ -174,8 +173,7 @@
    },
    "color": "#000000",
    "strokePt": 1,
-   "stroke": false,
-   "groupId": "sg1"
+   "stroke": false
   },
   {
    "id": "s3",
@@ -212,8 +210,7 @@
    "fill": "#333333",
    "color": "#000000",
    "strokePt": 1,
-   "stroke": false,
-   "groupId": "sg1"
+   "stroke": false
   },
   {
    "id": "s4",
@@ -267,8 +264,7 @@
    "color": "#2ca02c",
    "strokePt": 0.850394,
    "lineJoin": "miter",
-   "miterLimit": 4.0,
-   "groupId": "sg1"
+   "miterLimit": 4.0
   }
  ],
  "size_mm": [

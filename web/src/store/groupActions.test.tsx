@@ -13,7 +13,7 @@ import { LayerObjects } from '@/canvas/CanvasStage'
 import { groupPathOf } from '@/lib/groupTree'
 import { toExportObjects } from '@/lib/exportPayload'
 import { emptyProject, type CanvasObject } from '@/types/document'
-import { deleteSelected, duplicateSelected, groupMates, movableTargets, setObjectsHidden, toggleHidden, ungroupSelected } from './actions'
+import { deleteSelected, duplicateSelected, groupMates, movableTargets, selectAllIds, setObjectsHidden, toggleHidden, ungroupSelected } from './actions'
 import { useDocumentStore } from './documentStore'
 import { canMakeClipMask, canReleaseClipMask, enterGroupAt, groupCommand, makeClipMask, releaseClipMask } from './groupActions'
 import { isolationScope, useIsolationStore } from './isolationStore'
@@ -306,6 +306,23 @@ describe('剪切蒙版', () => {
     releaseClipMask()
     expect(byId('m')).not.toHaveProperty('clipOff')
     expect(byId('m')).not.toHaveProperty('hidden')
+  })
+
+  it('⌘A 把剪切组的蒙版一起选上：⌘A + Delete 删干净，不冒出一个还原的形状', async () => {
+    await setup()
+    cmd7()
+    useSelectionStore.getState().set(selectAllIds(objs()))
+    expect(useSelectionStore.getState().ids).toContain('m')
+    deleteSelected()
+    expect(objs()).toHaveLength(0)
+  })
+
+  it('孤立蒙版还原时，组里只剩它：这一层组也拿掉', async () => {
+    await setup()
+    cmd7()
+    useSelectionStore.getState().set(['img', 't'])
+    deleteSelected()
+    expect(byId('m').groupId).toBeUndefined()
   })
 
   it('释放：在剪切组里面编辑时也能释放这一层', async () => {

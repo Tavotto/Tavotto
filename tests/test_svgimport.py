@@ -196,6 +196,16 @@ def test_clip_path_becomes_a_clip_group():
     assert mask["w"] == pytest.approx(40 * PX)
 
 
+def test_a_group_wrapping_everything_is_dropped_but_not_a_clip_group():
+    # SVG 写入器为翻 y 包的根组、Inkscape 的图层：包住全部对象的那一层不留
+    r = imp(
+        '<g><g><rect width="1" height="1"/><rect x="2" width="1" height="1"/></g><circle r="1"/></g>'
+    )
+    o = r["objects"]
+    assert "groupId" not in o[2]
+    assert o[0]["groupId"] == o[1]["groupId"] and "groupPath" not in o[0]
+
+
 def test_clip_path_in_bounding_box_units_is_unsupported():
     r = imp(
         '<clipPath id="c" clipPathUnits="objectBoundingBox"><rect width="0.5" height="1"/></clipPath>'
