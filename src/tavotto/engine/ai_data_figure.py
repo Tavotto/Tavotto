@@ -27,6 +27,7 @@ import json
 import math
 import re
 import struct
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -235,6 +236,8 @@ class DataSummary:
     delimiter: str | None = None
     header_row: int | None = None
     header_line: int | None = None
+    #: 文本表格实际用的编码（`TEXT_ENCODINGS`；父进程定下、脚本照抄 codec 名，不自己探测）；XLSX / v1 是 None
+    encoding: str | None = None
 
     def row_number(self, i: int) -> int:
         return self.row_numbers[i] if i < len(self.row_numbers) else i + 2
@@ -567,17 +570,66 @@ class TextTable:
     summary: DataSummary | None = None
     #: 表头行之前被跳过的说明行（`_lead`）；只给数据概览端点用，不进 `to_dict`（`/api/ai/data-files` 的响应不变）
     lead: tuple[tuple[int, str], ...] = ()
+    #: 实际用的编码（`TEXT_ENCODINGS`）；解码之前就读不了的（太大 / 二进制 / 解不开）是 None
+    encoding: str | None = None
 
     def to_dict(self) -> dict:
         return {
             "status": self.status,
             "code": self.code,
             "delimiter": DELIMITER_NAMES.get(self.delimiter) if self.delimiter else None,
+            "encoding": self.encoding,
             "header_row": self.header_line,
             "columns": self.columns,
             "rows": self.rows,
             "preview": [{"line": n, "text": t} for n, t in self.preview],
         }
+
+
+#: 文本表格认的编码（稳定名，给界面显示；不外露 Python 的 codec 名）。判定规则只有这一条、确定且可解释：
+#: 先看 BOM（UTF-8 BOM / UTF-16 LE·BE），没有 BOM 就严格按 UTF-8 解，失败再严格按 GB18030 解（覆盖 GBK / GB2312），都失败 = 读不了。
+#: 不探测、不打分、不引第三方库；**不加** Big5 / Shift-JIS / Latin-1 / Windows-1252：它们的字节大多也是合法的 GB18030，
+#: 先后顺序只会把一种编码的文字悄悄解成另一种的乱码（Latin-1 更是什么字节都解得开），科研数据被静默读错比说「读不了」严重。
+TEXT_ENCODINGS = ("utf-8", "utf-8-bom", "utf-16le", "utf-16be", "gb18030")
+#: 生成的脚本里 `.decode(...)` 用的 codec 名；UTF-8 / UTF-8 BOM 不在表里（脚本沿用 `read_delimited` 的 `utf-8-sig`，逐字不变）
+_SCRIPT_CODECS = {"utf-16le": "utf-16", "utf-16be": "utf-16", "gb18030": "gb18030"}
+
+
+def script_codec(encoding: str | None) -> str | None:
+    """脚本必须显式写出的 codec 名；`None` = 用 `read_delimited`（UTF-8 / UTF-8 BOM，与此前生成的脚本逐字相同）。"""
+    return _SCRIPT_CODECS.get(encoding or "")
+
+
+def _plausible_cjk(text: str) -> bool:
+    """GB18030 严格解码通过之后的合理性检查：映射到私用区 / 未分配码位的文字多半是别的编码（Big5 / Shift-JIS）被硬解，拒绝。"""
+    return not any(
+        unicodedata.category(ch) in ("Co", "Cn", "Cs") for ch in set(text) if ch > "\x7f"
+    )
+
+
+def decode_text(raw: bytes) -> tuple[str, str] | None:
+    """`(文本, 编码名)`；认不出 = `None`（调用方报 `data_decode_error`）。父进程唯一的解码入口，生成的脚本用同一个 codec 名
+    `bytes.decode` 同一份字节（`script_codec`），不经平台换行转换，读出的就是父进程读的那段文本。"""
+    try:
+        if raw.startswith(b"\xef\xbb\xbf"):
+            return raw.decode("utf-8-sig"), "utf-8-bom"
+        if raw.startswith(b"\xff\xfe\x00\x00") or raw.startswith(b"\x00\x00\xfe\xff"):
+            return None  # UTF-32：不支持
+        if raw.startswith(b"\xff\xfe"):
+            return raw.decode("utf-16"), "utf-16le"
+        if raw.startswith(b"\xfe\xff"):
+            return raw.decode("utf-16"), "utf-16be"
+    except UnicodeDecodeError:
+        return None
+    try:
+        return raw.decode("utf-8"), "utf-8"
+    except UnicodeDecodeError:
+        pass
+    try:
+        text = raw.decode("gb18030")
+    except UnicodeDecodeError:
+        return None
+    return (text, "gb18030") if _plausible_cjk(text) else None
 
 
 def _unreadable(code: str) -> TextTable:
@@ -601,14 +653,18 @@ def read_text_table(
         raw = p.read_bytes()
     except OSError:
         return _unreadable("data_unreadable")
-    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
-        return _unreadable("data_decode_error")  # UTF-16：不是 UTF-8，读不了（不是二进制）
-    if b"\x00" in raw:
-        return _unreadable("data_binary")
-    try:
-        text = raw.decode("utf-8-sig")
-    except UnicodeDecodeError:
+    if b"\x00" in raw and not raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return _unreadable("data_binary")  # 有 BOM 的 UTF-16 本来就带 NUL 字节，解码后再查
+    decoded = decode_text(raw)
+    if decoded is None:
         return _unreadable("data_decode_error")
+    text, encoding = decoded
+
+    def _tt(*a, **kw):
+        return TextTable(*a, encoding=encoding, **kw)
+
+    if "\x00" in text:
+        return _unreadable("data_binary")
     if sum(1 for ch in text if ch < " " and ch not in "\t\r\n\f") > max(8, len(text) // 50):
         return _unreadable("data_binary")  # 控制字符占 2% 以上：不是文本
     if not text.strip():
@@ -622,7 +678,7 @@ def read_text_table(
         return _unreadable("data_malformed")
     if isinstance(layout, RaggedLayout):
         if header_row is None:
-            return TextTable(
+            return _tt(
                 "unreadable",
                 code="data_ragged",
                 delimiter=layout.delimiter,
@@ -638,7 +694,7 @@ def read_text_table(
     delim = layout.delimiter
     lines = re.split(r"\r\n|\r|\n", text)
     if header_row is not None and not 1 <= header_row <= len(lines):
-        return TextTable(
+        return _tt(
             "unreadable", code="data_header_row_invalid", preview=_preview(text, 1)
         )  # 指定的行不在文件里：原文照给，用户可以重新点一行
     if layout.header_line == 0 and header_row is None:
@@ -658,10 +714,11 @@ def read_text_table(
                 parse=parse_cell,
                 delimiter=delim,
                 header_line=1,
+                encoding=encoding,
             )
         except DataSourceError as exc:
             return _unreadable(exc.code)
-        return TextTable(
+        return _tt(
             "ok", delimiter=delim, header_line=1, columns=len(summ.columns),
             rows=summ.row_count if summ.row_count is not None else len(summ.rows), summary=summ,
         )  # fmt: skip
@@ -677,7 +734,7 @@ def read_text_table(
         return _unreadable("data_malformed")
     if not header:
         if header_row is not None:
-            return TextTable(
+            return _tt(
                 "unreadable", code="data_header_row_invalid", delimiter=delim,
                 header_line=line, preview=_preview(text, line),
             )  # fmt: skip
@@ -695,22 +752,23 @@ def read_text_table(
             delimiter=delim,
             header_row=script_header,
             header_line=line,
+            encoding=encoding,
         )
     except DataSourceError as exc:
         if guessed and exc.code == "data_header_invalid":
-            return TextTable(
+            return _tt(
                 "unsure", delimiter=delim, header_line=line, columns=len(header),
                 preview=_preview(text, line), lead=_lead(lines, line),
             )  # fmt: skip
         if (
             header_row is not None
         ):  # 用户指定的行读不成表（畸形行 / 列名空或重复…）：原文照给，用户可以再点一行
-            return TextTable(
+            return _tt(
                 "unreadable", code=exc.code, delimiter=delim, header_line=line,
                 preview=_preview(text, line),
             )  # fmt: skip
         return _unreadable(exc.code)
-    return TextTable(
+    return _tt(
         "unsure" if guessed else "ok",
         delimiter=delim,
         header_line=line,
@@ -754,7 +812,7 @@ def inspect_data_source(
     管，如 `ai_data_task` 的 `data_not_csv`）。UTF-8 / UTF-8 BOM。调用方负责路径在项目内（`contained_path`）。
 
     `v2=True`（数据出图 v2 的读法，v1 不传）：文本格式走 `read_text_table`（嗅探分隔符、跳过说明行、找表头行，`.txt` / `.dat` / `.asc` 也认；
-    `header_row` 是调用方指定的表头物理行号），单元格规则认千分位（`1,000`）；读不了抛 `DataSourceError`（稳定码）。XLSX 的读法不变，
+    `header_row` 是调用方指定的表头物理行号；编码认 UTF-8 / UTF-8 BOM / 有 BOM 的 UTF-16 / GB18030，见 `decode_text`），单元格规则认千分位（`1,000`）；读不了抛 `DataSourceError`（稳定码）。XLSX 的读法不变，
     只是同样认千分位的文字格。"""
     p = Path(path)
     suffix = p.suffix.lower()
@@ -811,6 +869,7 @@ def _summarize(
     delimiter: str | None = None,
     header_row: int | None = None,
     header_line: int | None = None,
+    encoding: str | None = None,
 ) -> DataSummary:
     #: 单元格规则：默认 v1 的（不认千分位）；v2 传 `parse_cell`
     parse = parse or legacy_parse_cell
@@ -875,6 +934,7 @@ def _summarize(
         delimiter=delimiter,
         header_row=header_row,
         header_line=header_line,
+        encoding=encoding,
     )
 
 

@@ -421,7 +421,7 @@
     "data_too_long": "数据行数太多（超过 10 万行），没有读取。",
     "data_too_wide": "数据列数太多（超过 64 列），没有读取。",
     "data_unreadable": "读不了这份数据文件。",
-    "data_decode_error": "这份数据不是 UTF-8 编码，读不出来。",
+    "data_decode_error": "认不出这份数据的文字编码，另存为 UTF-8 的 CSV 再试。",
     "data_malformed": "这份文本表格的格式有误，读不出来。",
     "data_empty": "这份数据是空的。",
     "data_header_invalid": "数据的表头有空列名或重复列名。",

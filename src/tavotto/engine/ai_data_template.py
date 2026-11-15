@@ -1653,7 +1653,7 @@ def _render_distribution(entry, recipe, data_rel, stem, style) -> str:
 
 
 def _reader_expr(entry, is_xlsx: bool) -> str:
-    """脚本里读表那一句。文本表格的读法（分隔符 + 显式表头行）取自摘要（`read_text_table` 嗅探 / 调用方指定的结果），以字面量写进脚本——
+    """脚本里读表那一句。文本表格的读法（编码 + 分隔符 + 显式表头行）取自摘要（`read_text_table` 嗅探 / 调用方指定的结果），以字面量写进脚本——
     脚本不嗅探；Tavotto 算期望值读表用的是同一组参数（同一个 `table_from_text`），所以脚本读出来的和预览 / 资格判定读出来的是同一张表。
     老读法（首行表头、按后缀分隔）写成 `read_delimited(DATA, ',')`，与此前生成的脚本逐字相同。"""
     if is_xlsx:
@@ -1661,6 +1661,11 @@ def _reader_expr(entry, is_xlsx: bool) -> str:
     s = entry.summary
     delim = s.delimiter or ("\t" if entry.path.lower().endswith((".tsv", ".tab")) else ",")
     args = [repr(delim)] + ([repr(s.header_row)] if s.header_row is not None else [])
+    codec = adf.script_codec(s.encoding)
+    if codec is not None:
+        # 非 UTF-8（GB18030 / 有 BOM 的 UTF-16）：编码由父进程定下、以字面量写进脚本，脚本不探测。字节原样 `decode`（不经平台换行转换），
+        # 再交给公共模块里同一个 `table_from_text`——与父进程读出的是同一张表；公共模块不变（哈希不换）。
+        return f"table_from_text(DATA.read_bytes().decode({codec!r}), {', '.join(args)})[:2]"
     return f"read_delimited(DATA, {', '.join(args)})"
 
 

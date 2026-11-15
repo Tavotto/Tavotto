@@ -421,7 +421,7 @@
     "data_too_long": "The data has too many rows (over 100,000) and wasn’t read.",
     "data_too_wide": "The data has too many columns (over 64) and wasn’t read.",
     "data_unreadable": "The data file can’t be read.",
-    "data_decode_error": "The data isn’t UTF-8 encoded and can’t be read.",
+    "data_decode_error": "Couldn’t tell this data’s text encoding; save it as a UTF-8 CSV and try again.",
     "data_malformed": "The text table is malformed and can’t be read.",
     "data_empty": "The data file is empty.",
     "data_header_invalid": "The header has an empty or duplicate column name.",
