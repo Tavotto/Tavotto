@@ -1,5 +1,13 @@
 # ADR 0016：诊断 V2 —— 前端状态快照与交互轨迹
 
+## 修订（2026-11-15）：受管环境自检失败的闭集形状
+
+维护者 2026-11-15 批准（一份用户反馈里管理环境连续十次「自检未通过」，包里只有错误码，查不出原因）：
+`managed_environment_jobs` 每条可带 `selftest`——失败阶段（闭集：spawn_failed / launcher_unavailable / timeout /
+error_reply / no_reply）、退出码、worker 回的稳定错误码、与 worker 日志同一套规则的 `[structure]` 摘要（builtins
+异常名、缺的模块白名单 / 哈希、帧分类计数），以及最深一帧 Tavotto 引擎源码位置（`worker.py:752`，公开源码文件名）。
+不导出报错文字、路径或用户文件名；读回本地记录时逐字段重投影。bundle schema 16。
+
 ## 修订（2026-10-31）：受管环境作业的包名与版本
 
 用户授权在 `report.json` 的 `project.managed_environment_jobs` 中披露受管环境安装和换代作业请求的
