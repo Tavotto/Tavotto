@@ -367,7 +367,7 @@ export function useKeyboard() {
         } else if (ui.cropTargetId) cancelCrop()
         else if (activePathEdit()) exitAnchorEdit()
         else if (ui.tool !== 'select') ui.setTool('select')
-        // 组内编辑（ADR 0185 M4）：Esc 退一层，选中刚退出的那个组
+        // 组内编辑（ADR 0188）：Esc 退一层，选中刚退出的那个组
         else if (exitGroupLevel()) return
         else useSelectionStore.getState().clear()
         return

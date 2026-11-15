@@ -4,7 +4,7 @@ import type { CanvasObject } from '@/types/document'
 import { useDocumentStore } from './documentStore'
 
 /**
- * 组内编辑（隔离模式，ADR 0185 M4）：双击组里的对象进到那一层，组外的对象变淡、点不中；Esc 一层层退出。
+ * 组内编辑（隔离模式，ADR 0188）：双击组里的对象进到那一层，组外的对象变淡、点不中；Esc 一层层退出。
  * 状态只有一条组链（外 → 内），不进文档、不进历史。链上的组没了（被拆 / 被删 / 换了画布）就退回还在的那一截。
  */
 interface IsolationState {

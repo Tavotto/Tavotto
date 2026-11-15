@@ -1,7 +1,7 @@
 import type { CanvasObject } from '@/types/document'
 
 /**
- * 嵌套组与剪切蒙版（ADR 0185 M4）的**唯一判据**：纯函数，不碰 store。
+ * 嵌套组与剪切蒙版（ADR 0188）的**唯一判据**：纯函数，不碰 store。
  *
  * 数据只在对象身上：`groupId` = 最内层组（旧构建只认它，照样当一层组用），`groupPath` = 外 → 内的整条链
  * （两层及以上才写），`clipMask` = 「我是我最内层组的剪切路径」。没有文档级的组表：组存在 = 有对象挂在它下面，
@@ -91,11 +91,17 @@ export function canBeMask(o: CanvasObject): boolean {
   return o.type === 'shape' && MASK_SHAPES.has((o as { shape?: string }).shape ?? '')
 }
 
-/** 每个组生效的剪切路径：组里（直接成员）标了 `clipMask`、能当蒙版的最上面那个 */
-export function groupMasks(objects: readonly CanvasObject[]): Map<string, CanvasObject> {
+/**
+ * 每个组生效的剪切路径：组里（直接成员）标了 `clipMask`、能当蒙版的最上面那个。`clipOff`（蒙版本身被隐藏 = 暂时不裁）的
+ * 不算生效；`includeOff` 时也算上（释放蒙版、图层树标「剪切组」用）。
+ */
+export function groupMasks(
+  objects: readonly CanvasObject[],
+  { includeOff = false }: { includeOff?: boolean } = {},
+): Map<string, CanvasObject> {
   const out = new Map<string, CanvasObject>()
   for (const o of objects) {
-    if (!o.clipMask || !o.groupId || !canBeMask(o)) continue
+    if (!o.clipMask || !o.groupId || !canBeMask(o) || (o.clipOff && !includeOff)) continue
     const p = groupPathOf(o)
     out.set(p[p.length - 1], o) // 越往后越靠上：上面的覆盖下面的
   }
@@ -156,7 +162,8 @@ export type LayerNode =
  * 节点按「整条前缀」认：旧构建改乱的链（同一个组 id 挂在两个不同的父组下）各自成一棵，不会把对象挂丢。
  */
 export function layerTree(objects: readonly CanvasObject[]): LayerNode[] {
-  const masks = groupMasks(objects)
+  // 暂时不裁（`clipOff`）的剪切组仍标成剪切组，蒙版行仍是「剪切路径」
+  const masks = groupMasks(objects, { includeOff: true })
   const root: LayerNode[] = []
   const nodes = new Map<string, Extract<LayerNode, { kind: 'group' }>>()
   for (let i = objects.length - 1; i >= 0; i--) {

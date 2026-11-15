@@ -1933,7 +1933,7 @@ type ExportHeadType = 'none' | 'triangle' | 'open' | 'bar' | 'dot' | 'diamond' |
 
 export type ExportObject = ExportObjectBody & {
   /**
-   * 剪切蒙版（ADR 0185 M4）：裁这个对象的蒙版轮廓，外 → 内。蒙版一律以路径的几何发（形状先换成等价路径，
+   * 剪切蒙版（ADR 0188）：裁这个对象的蒙版轮廓，外 → 内。蒙版一律以路径的几何发（形状先换成等价路径，
    * `lib/clipMask.maskAsPath`）；没有就不发——不带剪切组的文档载荷与以前逐字节一致
    */
   clip?: ExportClipPath[]
@@ -2092,7 +2092,7 @@ type ExportObjectBody =
 /** `scope=original` 的一张图的来源（`original` 段，以及多页 PDF 里每一页）。**没有 x/y/w/h，也没有页面尺寸** */
 export type ExportOriginalSource = ArtifactRequestFields & {
   figure_id: string
-  /** 裁这张图的剪切蒙版轮廓（ADR 0185 M4），外 → 内；没有就不发 */
+  /** 裁这张图的剪切蒙版轮廓（ADR 0188），外 → 内；没有就不发 */
   clip?: ExportClipPath[]
   figure_snapshot?: FigureSnapshot
   overrides?: { gid: string; prop: string; value: unknown }[]

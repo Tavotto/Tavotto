@@ -142,7 +142,7 @@ describe('singleAnnotatedDocument：留白与标注同比缩放一起生效（AD
   })
 })
 
-describe('剪切蒙版裁这张图（ADR 0185 M4）', () => {
+describe('剪切蒙版裁这张图（ADR 0188）', () => {
   const mask = {
     id: 'm',
     type: 'shape',

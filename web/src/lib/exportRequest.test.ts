@@ -483,7 +483,7 @@ describe('修改后的 .py（ADR 0171）', () => {
   })
 })
 
-describe('剪切蒙版裁这张图：original.clip（ADR 0185 M4）', () => {
+describe('剪切蒙版裁这张图：original.clip（ADR 0188）', () => {
   const clip = [{ type: 'path' as const, x_mm: 0, y_mm: 0, w_mm: 10, h_mm: 10, subpaths: [] }]
   it('有就发、没有就不发（载荷与从前逐字节相同）', () => {
     const base = { scope: 'original' as const, figureId: 'Fig1.pdf' }

@@ -483,7 +483,7 @@ function DropGhost({ box }: { box: { x: number; y: number; w: number; h: number 
  */
 function CanvasLayers() {
   const objects = useDocumentStore((s) => s.doc.objects)
-  // 组内编辑（ADR 0185 M4）：只对激活画布生效；链失效的部分不算
+  // 组内编辑（ADR 0188）：只对激活画布生效；链失效的部分不算
   const isoPath = useIsolationStore((s) => s.path)
   const isolation = useMemo(() => validPath(isoPath, objects).at(-1) ?? null, [isoPath, objects])
   const openTabs = useDocumentStore((s) => s.openTabs)
@@ -512,7 +512,7 @@ function CanvasLayers() {
 }
 
 /**
- * 一张画布的对象（ADR 0185 M4）：剪切组里生效的蒙版不画（只拿来裁），被裁的对象外面一层层包上
+ * 一张画布的对象（ADR 0188）：剪切组里生效的蒙版不画（只拿来裁），被裁的对象外面一层层包上
  * `clip-path`（外层组的蒙版在外）。包裹层是贴在世界原点、零尺寸的 div，所以蒙版轮廓直接用世界坐标，
  * 不管对象自己转没转；`clip-path` 同时裁掉命中，点不到被裁掉的那部分。组内编辑时组外的对象变淡、不接指针。
  */

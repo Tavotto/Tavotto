@@ -1,5 +1,5 @@
 /**
- * 嵌套组、组内编辑、剪切蒙版（ADR 0185 M4）走真的 store 与真的快捷键：
+ * 嵌套组、组内编辑、剪切蒙版（ADR 0188）走真的 store 与真的快捷键：
  * ⌘G 把子组整体收进新组（成员挪成连续一段）、⇧⌘G 只拆一层；点谁选谁的单元、双击进组、Esc 一层层退；
  * 组里有锁定成员整组不动；⌘7 建蒙版（蒙版不画、写 hidden 给旧构建）、⌥⌘7 释放、删光被裁的对象蒙版还原；
  * 导出载荷带 `clip`、蒙版不进载荷；画布上被裁的对象外面包 clip-path、组内编辑时组外变淡；旧构建改过的链按一层读。
@@ -13,9 +13,9 @@ import { LayerObjects } from '@/canvas/CanvasStage'
 import { groupPathOf } from '@/lib/groupTree'
 import { toExportObjects } from '@/lib/exportPayload'
 import { emptyProject, type CanvasObject } from '@/types/document'
-import { deleteSelected, duplicateSelected, groupMates, movableTargets, ungroupSelected } from './actions'
+import { deleteSelected, duplicateSelected, groupMates, movableTargets, setObjectsHidden, toggleHidden, ungroupSelected } from './actions'
 import { useDocumentStore } from './documentStore'
-import { canMakeClipMask, enterGroupAt, groupCommand, makeClipMask, releaseClipMask } from './groupActions'
+import { canMakeClipMask, canReleaseClipMask, enterGroupAt, groupCommand, makeClipMask, releaseClipMask } from './groupActions'
 import { isolationScope, useIsolationStore } from './isolationStore'
 import { useSelectionStore } from './selectionStore'
 import { useUiStore } from './uiStore'
@@ -261,6 +261,28 @@ describe('剪切蒙版', () => {
     deleteSelected()
     expect(objs().map((o) => o.id)).toEqual(['m'])
     expect(byId('m')).not.toHaveProperty('clipMask')
+    expect(byId('m')).not.toHaveProperty('hidden')
+  })
+
+  it('图层树上隐藏剪切路径 = 暂时不裁（clipOff）；hidden 不动；批量显示不碰蒙版；释放时一起清掉', async () => {
+    await setup()
+    cmd7()
+    toggleHidden('m')
+    expect(byId('m')).toMatchObject({ clipMask: true, clipOff: true, hidden: true })
+    let out = toExportObjects(objs())
+    expect(out.map((o) => o.type)).toEqual(['shape', 'text']) // 蒙版仍不画
+    expect(out.every((o) => !o.clip)).toBe(true) // 内容全露出来
+    setObjectsHidden(['img', 't', 'm'], false)
+    expect(byId('m').hidden).toBe(true)
+    toggleHidden('m')
+    expect(byId('m').clipOff).toBeUndefined()
+    out = toExportObjects(objs())
+    expect(out.every((o) => o.clip?.length === 1)).toBe(true)
+    toggleHidden('m')
+    useSelectionStore.getState().set(['img', 't', 'm'])
+    expect(canReleaseClipMask()).toBe(true) // 暂时不裁的也能释放
+    releaseClipMask()
+    expect(byId('m')).not.toHaveProperty('clipOff')
     expect(byId('m')).not.toHaveProperty('hidden')
   })
 
