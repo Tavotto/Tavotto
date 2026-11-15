@@ -128,7 +128,7 @@ order: 210
   覆盖层 `canvas/ShapeBuilderOverlay`；几何 `lib/pathfinder.builderFaces / mergeFaces / builderPlan`（vecops 内核的分割 / 合并）。会话开着时
   `useKeyboard` 只认 Esc / Enter。看护 `store/shapeBuilder.test.tsx`。取色面板的「图内配色 / 推荐配色」在 `lib/swatches`，宿主
   `ColorFieldHost.figureColors / recommended` 由属性栏挂上；看护 `lib/swatches.test.tsx`。
-- **嵌套组、组内编辑、剪切蒙版（2026-11-15，ADR 0185 M4 第一批）**：组的结构只在对象身上——`groupId` 是**最内层**组（旧构建只认它，
+- **嵌套组、组内编辑、剪切蒙版（2026-11-15，ADR 0188，即 ADR 0185 M4 第一批）**：组的结构只在对象身上——`groupId` 是**最内层**组（旧构建只认它，
   照样当一层组用）、`groupPath` 是外 → 内整条链（两层及以上才写，末项必须等于 `groupId`，对不上就按 `[groupId]` 读）、`clipMask`
   = 「我是我最内层组的剪切路径」；**没有文档级的组表**（组存在 = 有对象挂在它下面）。判据唯一出处 `lib/groupTree`（链、单元、图层树、
   连续化、每组生效的蒙版、裁一个对象的蒙版链、孤立蒙版、复制换 id），别处不许再按 `groupId` 相等判「同组」。**选择按单元**：点中一个对象
@@ -137,7 +137,7 @@ order: 210
   （`groupActions.enterGroupAt`），进到直接成员那一层后双击才交给对象自己；Esc 退一层（`useKeyboard`，排在工具复位之后、清选区之前），
   双击空白处全退；出口与面包屑在 `WorkspaceContextBar`（「我在改哪一层」只说一遍）。⌘G 把单元收进新组（子组整体成为成员）、成员挪成连续
   一段；⇧⌘G 只拆一层。**剪切蒙版**：⌘7 要求选区最上面那个是这一层的直接成员且 `canBeMask`（路径 / 封闭形状），建组并给它写
-  `clipMask + hidden`（hidden 是给旧构建的：不画蒙版、内容不裁、对象都在）；新构建只看 `clipMask` 判生效，不看 hidden。⌥⌘7 释放（组留着），
+  `clipMask + hidden`（hidden 是给旧构建的：不画蒙版、内容不裁、对象都在）；新构建只看 `clipMask` 判生效，不看 hidden；图层树上隐藏蒙版 = 暂时不裁（`clipOff`，`toggleHidden` 切它，批量隐藏跳过蒙版）。⌥⌘7 释放（组留着），
   ⇧⌘G 拆剪切组 = 释放；删光被裁的对象蒙版还原（`actions.releaseOrphanMasks`）。画布：`CanvasStage.LayerObjects` 不画生效的蒙版、被裁的对象
   外面一层层包贴在世界原点的零尺寸 div（`clip-path: path()`，外层蒙版在外，同时裁掉命中）；组内编辑时组外变淡、不接指针。导出：
   `exportPayload.toExportObjects(objects, context)` 不发蒙版、被裁的对象带 `clip`（外 → 内的路径轮廓，形状先 `clipMask.maskAsPath`）；单图编辑
