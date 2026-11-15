@@ -864,6 +864,29 @@ def start_share(
     return _begin(spec)
 
 
+def render_digest(render: object) -> str:
+    """出图描述的规范化摘要：sha256(JSON，键排序、无空格)。「画布自上个版本以来改过没有」只比它。"""
+    blob = json.dumps(
+        render, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str
+    )
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def changed(share_id: object, render: object, *, project: str = "") -> dict:
+    """当前 `render` 与最新版本的摘要不同 = 改过。没有摘要的老记录一律 `changed=True`。只读本机，不联网。"""
+    clean = _clean_render(render)
+    rec = (
+        reviewinbox.get(share_id)
+        if isinstance(share_id, str) and _SHARE_ID.match(share_id)
+        else None
+    )
+    if rec is None or not rec["delivered"] or rec["project"] != project:
+        raise ReviewError("not_found", 404)
+    latest = next((v for v in rec["versions"] if v["v"] == rec["latest_version"]), None)
+    digest = latest["digest"] if latest else ""
+    return {"changed": not digest or digest != render_digest(clean)}
+
+
 def start_update(
     body: object, *, scope: Callable[[], AbstractContextManager] = nullcontext, project: str = ""
 ) -> dict:
@@ -1031,6 +1054,7 @@ def _flow(sess: Session) -> None:
         note=spec.note if spec.mode == "update" else None,
         frame="page" if spec.target["kind"] == "layout" else "figure",
         target_id=spec.target["id"] if spec.mode == "update" else None,
+        digest=render_digest(spec.render),
     )
 
 

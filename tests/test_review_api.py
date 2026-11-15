@@ -85,6 +85,7 @@ def test_the_routes_exist_in_the_url_map_so_the_default_deny_sweep_sees_them():
         ("/api/review/for", ("GET",)),
         ("/api/review/share", ("POST",)),
         ("/api/review/update", ("POST",)),
+        ("/api/review/changed", ("POST",)),
         ("/api/review/status", ("GET",)),
         ("/api/review/dismiss", ("POST",)),
         ("/api/review/revoke", ("POST",)),
@@ -151,6 +152,20 @@ def test_end_to_end_share_update_reply_resolve_revoke_delete(client, on):
     assert client.get(f"/api/review/shares/{sid}/versions/9/snapshot.png").status_code == 404
     assert client.get("/api/review/shares/rs_notexist/versions/1/snapshot.png").status_code == 404
 
+    assert client.post(
+        "/api/review/changed", json={"share_id": sid, "render": RENDER}
+    ).get_json() == {"changed": False}
+    other = {"original": {"figure_id": "fig_a", "overrides": [1]}}
+    assert client.post(
+        "/api/review/changed", json={"share_id": sid, "render": other}
+    ).get_json() == {"changed": True}
+    assert client.post("/api/review/changed", json={"share_id": sid}).status_code == 422
+    assert (
+        client.post(
+            "/api/review/changed", json={"share_id": "rs_" + "a" * 16, "render": RENDER}
+        ).status_code
+        == 404
+    )
     # 更新到同一链接
     assert (
         client.post("/api/review/update", json={"share_id": sid, "render": RENDER}).status_code

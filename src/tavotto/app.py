@@ -6290,6 +6290,16 @@ def api_review_share():
         return _review_error(exc)
 
 
+@app.post("/api/review/changed")
+def api_review_changed():
+    body = _review_body()
+    return _review_result(
+        lambda: engine_reviewshare.changed(
+            body.get("share_id"), body.get("render"), project=_review_project()
+        )
+    )
+
+
 @app.post("/api/review/update")
 def api_review_update():
     try:

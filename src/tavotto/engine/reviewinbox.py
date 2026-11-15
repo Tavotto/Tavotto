@@ -239,6 +239,9 @@ def _clean_version(raw: object) -> dict | None:
         "v": v,
         "created_at": created[:40],
         "frame": frame,
+        "digest": raw["digest"]
+        if isinstance(raw.get("digest"), str) and re.fullmatch(r"[0-9a-f]{64}", raw["digest"])
+        else "",
         "elements": clean_elements(raw.get("elements")),
     }
 
@@ -530,6 +533,7 @@ def add_version(
     note: str | None = None,
     frame: str = "figure",
     target_id: str | None = None,
+    digest: str = "",
 ) -> dict | None:
     """一个版本 complete 之后：存元素表与快照、更新最新版本号与到期时间；首版同时把记录转正（`delivered`）。"""
     with _LOCK:
@@ -545,6 +549,7 @@ def add_version(
                 "v": v,
                 "created_at": _iso(now),
                 "frame": frame if frame in ("page", "figure") else "figure",
+                "digest": digest,
                 "elements": clean_elements(elements),
             }
         )

@@ -1092,3 +1092,39 @@ def test_production_rules_are_untouched_by_the_dev_relaxation():
     ):
         with pytest.raises(diagsend._Failure):
             reviewshare._upload_spec({"url": bad, "method": "POST", "fields": {}}, t)
+
+
+def test_changed_compares_the_render_digest_with_the_latest_version(on, renders):
+    sid = share_ok()["share"]["share_id"]
+    n = len(on.calls)
+    assert reviewshare.changed(sid, RENDER) == {"changed": False}
+    reordered = {"original": {"overrides": [], "figure_id": "fig_a"}}  # 键序不同、内容相同
+    assert reviewshare.changed(sid, reordered) == {"changed": False}
+    other = {
+        "original": {"figure_id": "fig_a", "overrides": [{"gid": "g", "prop": "p", "value": 1}]}
+    }
+    assert reviewshare.changed(sid, other) == {"changed": True}
+    assert len(on.calls) == n  # 只读本机，不联网
+    reviewshare.dismiss()
+    assert update_ok(sid, render=other)["stage"] == "done"
+    assert reviewshare.changed(sid, other) == {"changed": False}  # 以最新版本为准
+    assert reviewshare.changed(sid, RENDER) == {"changed": True}
+    assert reviewinbox.get(sid)["versions"][-1]["digest"] == reviewshare.render_digest(other)
+
+
+def test_changed_is_true_for_old_records_without_a_digest_and_validates_input(on, renders):
+    sid = share_ok()["share"]["share_id"]
+    data = reviewinbox._load_locked()
+    for v in data["shares"][0]["versions"]:
+        v["digest"] = ""
+    reviewinbox._save_locked(data)
+    assert reviewshare.changed(sid, RENDER) == {"changed": True}
+    with pytest.raises(reviewshare.ReviewError) as e:
+        reviewshare.changed(sid, None)
+    assert (e.value.code, e.value.status) == ("render_required", 422)
+    with pytest.raises(reviewshare.ReviewError) as e:
+        reviewshare.changed("rs_" + "z" * 16, RENDER)
+    assert e.value.status == 404
+    with pytest.raises(reviewshare.ReviewError) as e:
+        reviewshare.changed(sid, RENDER, project="other")
+    assert e.value.status == 404
