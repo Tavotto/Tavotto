@@ -406,7 +406,7 @@ export default interface Resources {
       "running": "运行中",
       "timeout": "超时"
     },
-    "tabLabel": "改图助手",
+    "tabLabel": "助手",
     "trace": {
       "agent": {
         "builtin": "内置执行器",
@@ -1940,6 +1940,77 @@ export default interface Resources {
       "skipPanel": "跳过这张图",
       "titleDoc": "重新链接素材",
       "titlePaste": "粘贴前重新链接素材"
+    },
+    "review": {
+      "button": "分享审阅",
+      "buttonUnread": "分享审阅（有新意见）",
+      "cancel": "取消",
+      "capsuleClose": "收起",
+      "capsuleOpen": "查看",
+      "capsule_other": "{{author}}留了 {{count}} 条意见",
+      "changed": "画布有新改动",
+      "close": "关闭",
+      "comment": {
+        "allMark": "全",
+        "done": "已处理",
+        "moved": "原位置已变化",
+        "owner": "作者",
+        "pin": "第 {{n}} 条意见",
+        "reopen": "重新打开",
+        "reply": "回复",
+        "replyPlaceholder": "回复…",
+        "resolve": "已处理",
+        "send": "发送",
+        "version": "V{{v}}"
+      },
+      "copy": "复制",
+      "copyLink": "复制链接",
+      "create": "生成链接",
+      "dailyNew": "每天可新建 1 个",
+      "failure": {
+        "client_error": "没有成功，再试一次。",
+        "network": "连不上审阅服务，检查网络后重试。",
+        "quota_new_exhausted": "今天新建的次数用完了。",
+        "rate_limited": "请求太频繁，过一会儿再试。",
+        "render_failed": "画面没生成出来，再试一次。",
+        "server": "审阅服务暂时出错了，稍后再试。",
+        "share_gone": "这个链接已经失效了，本机留着当时的意见。",
+        "too_large": "画面太大了，缩小图幅后再试。"
+      },
+      "linkCopied": "链接已复制",
+      "linkLabel": "审阅链接",
+      "notFound": "这张图不在当前项目里",
+      "notePlaceholder": "给审阅者的话（选填）…",
+      "picker": {
+        "desc": "每天可新建 1 个链接，北京时间 0 点恢复。",
+        "exportPng": "导出 PNG",
+        "newTitle": "今天已经新建过分享链接",
+        "updateMany": "更新已有的链接…",
+        "updateOne": "更新已有的链接（{{title}}）"
+      },
+      "privacyFoot": "只上传画面，脚本和数据不出本机",
+      "retry": "重试",
+      "shareNote": "拿到链接可查看和留言 · {{date}}失效",
+      "sharedMeta": "V{{v}} · {{when}}",
+      "stage": {
+        "rendering": "正在生成画面…",
+        "uploading": "正在上传…"
+      },
+      "stop": "停止分享",
+      "stopConfirm": "再点一次，立刻停止",
+      "tab": {
+        "all": "全部 {{n}}",
+        "deleteRecord": "删除这份记录",
+        "empty": "还没有意见",
+        "emptyOpen": "没有未处理的意见",
+        "expired": "链接已过期，当时的意见留在这里",
+        "filterLabel": "筛选意见",
+        "label": "审阅",
+        "open": "未处理 {{n}}",
+        "revoked": "已停止分享，意见留在本机"
+      },
+      "title": "分享审阅",
+      "updateHere": "更新到这个链接"
     },
     "scriptInput": {
       "answerLabel": "你的回答",

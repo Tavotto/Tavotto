@@ -2542,5 +2542,76 @@
       "info_text_height_mm": "文字高度",
       "info_panel_label": "子图标签"
     }
+  },
+  "review": {
+    "button": "分享审阅",
+    "buttonUnread": "分享审阅（有新意见）",
+    "title": "分享审阅",
+    "create": "生成链接",
+    "cancel": "取消",
+    "close": "关闭",
+    "copy": "复制",
+    "linkCopied": "链接已复制",
+    "sharedMeta": "V{{v}} · {{when}}",
+    "stop": "停止分享",
+    "stopConfirm": "再点一次，立刻停止",
+    "linkLabel": "审阅链接",
+    "stage": {
+      "rendering": "正在生成画面…",
+      "uploading": "正在上传…"
+    },
+    "failure": {
+      "quota_new_exhausted": "今天新建的次数用完了。",
+      "share_gone": "这个链接已经失效了，本机留着当时的意见。",
+      "too_large": "画面太大了，缩小图幅后再试。",
+      "rate_limited": "请求太频繁，过一会儿再试。",
+      "network": "连不上审阅服务，检查网络后重试。",
+      "server": "审阅服务暂时出错了，稍后再试。",
+      "client_error": "没有成功，再试一次。",
+      "render_failed": "画面没生成出来，再试一次。"
+    },
+    "retry": "重试",
+    "picker": {
+      "newTitle": "今天已经新建过分享链接",
+      "exportPng": "导出 PNG",
+      "updateOne": "更新已有的链接（{{title}}）",
+      "desc": "每天可新建 1 个链接，北京时间 0 点恢复。",
+      "updateMany": "更新已有的链接…"
+    },
+    "tab": {
+      "label": "审阅",
+      "revoked": "已停止分享，意见留在本机",
+      "expired": "链接已过期，当时的意见留在这里",
+      "deleteRecord": "删除这份记录",
+      "filterLabel": "筛选意见",
+      "all": "全部 {{n}}",
+      "open": "未处理 {{n}}",
+      "empty": "还没有意见",
+      "emptyOpen": "没有未处理的意见"
+    },
+    "comment": {
+      "reply": "回复",
+      "replyPlaceholder": "回复…",
+      "send": "发送",
+      "resolve": "已处理",
+      "reopen": "重新打开",
+      "owner": "作者",
+      "moved": "原位置已变化",
+      "version": "V{{v}}",
+      "pin": "第 {{n}} 条意见",
+      "allMark": "全",
+      "done": "已处理"
+    },
+    "capsuleOpen": "查看",
+    "capsuleClose": "收起",
+    "notFound": "这张图不在当前项目里",
+    "capsule_other": "{{author}}留了 {{count}} 条意见",
+    "copyLink": "复制链接",
+    "changed": "画布有新改动",
+    "updateHere": "更新到这个链接",
+    "shareNote": "拿到链接可查看和留言 · {{date}}失效",
+    "privacyFoot": "只上传画面，脚本和数据不出本机",
+    "dailyNew": "每天可新建 1 个",
+    "notePlaceholder": "给审阅者的话（选填）…"
   }
 }
