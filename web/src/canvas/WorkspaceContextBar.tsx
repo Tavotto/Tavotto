@@ -62,7 +62,7 @@ export function WorkspaceContextBar() {
   )
   const editingHere = !!panel && elementPanelId === panel.id
   const manifest = usePanelDisplayManifest(editingHere ? panel : null)
-  // 组内编辑（ADR 0188）也是「我在改哪一层」：同一条浮条说，出口是「退出组内编辑」（Esc 退一层）
+  // 组内编辑（ADR 0191）也是「我在改哪一层」：同一条浮条说，出口是「退出组内编辑」（Esc 退一层）
   const isoPath = useIsolationStore((s) => s.path)
   const objects = useDocumentStore((s) => s.doc.objects)
   const isolating = !editingHere && validPath(isoPath, objects).length > 0

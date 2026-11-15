@@ -305,7 +305,7 @@ class OriginalSource:
     #: 非零时页面 = `w_mm + l + r` × `h_mm + t + b`、面板落在 `(l, t)`，走带标注的合成路径（没有标注也走）；
     #: `objects` 的坐标已由前端换算到页面坐标（以页面左上为原点）。非零时 `w_mm` / `h_mm` 必填。
     pad_mm: tuple[float, float, float, float] | tuple[()] = ()
-    #: 裁这张图的剪切蒙版轮廓（ADR 0188），外 → 内；坐标与 `objects` 同一套（页面 mm）。为空 = 不裁（请求与输出与从前
+    #: 裁这张图的剪切蒙版轮廓（ADR 0191），外 → 内；坐标与 `objects` 同一套（页面 mm）。为空 = 不裁（请求与输出与从前
     #: 逐字节相同）。非空时走带标注的合成路径（没有标注也走），图外面包同样的 `Group(clip=…)`（`plan._clipped`）。
     clip: tuple[dict, ...] = ()
 
@@ -708,7 +708,7 @@ def _objects_below(source: dict, count: int) -> int:
 
 
 def _original_clip(source: dict) -> tuple[dict, ...]:
-    """`original.clip`（ADR 0188）：裁这张图的蒙版轮廓，一律是路径的几何；缺席 = 不裁。带它必须给出图幅。"""
+    """`original.clip`（ADR 0191）：裁这张图的蒙版轮廓，一律是路径的几何；缺席 = 不裁。带它必须给出图幅。"""
     raw = source.get("clip")
     if raw is None:
         return ()

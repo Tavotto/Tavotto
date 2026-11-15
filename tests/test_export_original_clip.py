@@ -1,4 +1,4 @@
-"""ADR 0188：`original.clip`——单图编辑里剪切蒙版裁这张图。
+"""ADR 0191：`original.clip`——单图编辑里剪切蒙版裁这张图。
 
 缺席 = 请求与输出与从前逐字节相同；非空 = 走「原图 + 标注」那条 RenderCore 合成路径（没有标注也走），图外面包
 `Group(clip=…)`：PDF / PNG 里蒙版外是纸；EPS 由 `epsoverlay.compose(figure_clip=…)` 把内嵌原图裁住，仍是矢量。

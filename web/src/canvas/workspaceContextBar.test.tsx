@@ -288,7 +288,7 @@ describe('覆盖式侧栏下让位', () => {
   })
 })
 
-describe('组内编辑（ADR 0188）', () => {
+describe('组内编辑（ADR 0191）', () => {
   it('排版里进了组：同一条浮条说「组内编辑」，出口是「退出组内编辑」，点了回到顶层', async () => {
     const { useIsolationStore } = await import('@/store/isolationStore')
     useDocumentStore.getState().commit(literal('组'), (d) => {

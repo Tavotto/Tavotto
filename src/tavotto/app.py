@@ -2709,7 +2709,7 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
         "w_mm": src.w_mm,
         "h_mm": src.h_mm,
         **({"overrides": src.overrides} if src.overrides else {}),
-        # 剪切蒙版裁这张图（ADR 0188）：与画布上被裁的对象同一条路（`plan._clipped`）
+        # 剪切蒙版裁这张图（ADR 0191）：与画布上被裁的对象同一条路（`plan._clipped`）
         **({"clip": list(src.clip)} if src.clip else {}),
         **({"figure_snapshot": src.figure_snapshot} if src.figure_snapshot is not None else {}),
         **({"source_policy": src.source_policy} if src.source_policy is not None else {}),
@@ -2883,7 +2883,7 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
             "clip_page": True,
         }
     if src.clip:
-        # 剪切蒙版裁这张图（ADR 0188）：外 → 内逐条 clip（PostScript 的 clip 本来就取交集）
+        # 剪切蒙版裁这张图（ADR 0191）：外 → 内逐条 clip（PostScript 的 clip 本来就取交集）
         clip_text = ""
         for m in src.clip:
             outline = rc_plan.clip_outline(m, page_h_pt)

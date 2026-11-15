@@ -390,7 +390,7 @@ function MultiItems({
   const grouped = selectionHasGroupIn(selected)
   // 选区恰好是**一整个组**：再「成组」一次只会换个组 id、多一条历史，没有意义；
   // 含组的混合选区两个动作都给（把它们并成一组 / 把里面的组拆开），不替用户猜
-  // 嵌套组（ADR 0188）按当前这一层的单元数：只有一个单元且它是组 = 整个一组
+  // 嵌套组（ADR 0191）按当前这一层的单元数：只有一个单元且它是组 = 整个一组
   const units = selectedUnits(selected.map((o) => o.id))
   const wholeGroup = grouped && units.length === 1
   return (

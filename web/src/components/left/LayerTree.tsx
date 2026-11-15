@@ -75,7 +75,7 @@ function iconFor(o: CanvasObject) {
 const lt = (key: string, values?: Record<string, unknown>) =>
   translate(`layerTree.${key}`, { ns: 'workspace', ...(values ?? {}) })
 
-/** 显示行：普通对象 / 组标题（组成员挂在标题下，可折叠；嵌套组逐层缩进，ADR 0188） */
+/** 显示行：普通对象 / 组标题（组成员挂在标题下，可折叠；嵌套组逐层缩进，ADR 0191） */
 type TreeRow =
   | { kind: 'object'; obj: CanvasObject; depth: number; pos: number; size: number; mask: boolean }
   | { kind: 'group'; gid: string; members: CanvasObject[]; depth: number; pos: number; size: number; clip: boolean }
@@ -342,7 +342,7 @@ function GroupRow({
 }: {
   gid: string
   members: CanvasObject[]
-  /** 剪切组（ADR 0188）：标题换成「剪切组」 */
+  /** 剪切组（ADR 0191）：标题换成「剪切组」 */
   clip: boolean
   /** 嵌套层级（顶层 = 0） */
   depth: number
@@ -418,7 +418,7 @@ function GroupRow({
 
 interface RowProps {
   obj: CanvasObject
-  /** 这一行是剪切路径（ADR 0188）：不画、只裁；「已隐藏」与菜单里的隐藏 / 显示指的是暂时不裁（`clipOff`），不是 hidden */
+  /** 这一行是剪切路径（ADR 0191）：不画、只裁；「已隐藏」与菜单里的隐藏 / 显示指的是暂时不裁（`clipOff`），不是 hidden */
   mask?: boolean
   depth?: number
   pos: number
@@ -460,7 +460,7 @@ function LayerRow({
   // ⋯ / 右键 / ⇧F10 同一份菜单（`ui/RowMenu`）；行有焦点时 ⋯ 进 Tab 顺序
   const menu = useRowMenu({ enabled: !editing })
   const Icon = mask ? ClipMask : iconFor(obj)
-  // 剪切路径的 hidden 只是给旧构建看的（ADR 0188），这里不当「已隐藏」
+  // 剪切路径的 hidden 只是给旧构建看的（ADR 0191），这里不当「已隐藏」
   const hidden = mask ? !!obj.clipOff : !!obj.hidden
   const isScript = obj.type === 'panel' && !!obj.script
   // 更新的构建写进来的对象：行照常显示、能改名 / 隐藏 / 调层级，但不进选区（选进去就能被 Delete 删掉）
@@ -612,7 +612,7 @@ function LayerRow({
         </span>
       )}
       {/* 「基准」是一个词不是取值代号：type-meta，不用等宽（左栏审计 L29） */}
-      {/* 剪切路径（ADR 0188）：行尾一个词说清它是什么，与「基准」同一副 */}
+      {/* 剪切路径（ADR 0191）：行尾一个词说清它是什么，与「基准」同一副 */}
       {mask && !editing && <span className="shrink-0 type-meta font-normal">{lt('clipPath')}</span>}
       {primary && !editing && (
         <span className="shrink-0 type-meta font-normal">{lt('primary')}</span>
@@ -638,7 +638,7 @@ function LayerRow({
           <MenuItem icon={obj.locked ? LockOpen : Lock} onSelect={() => toggleLocked(obj.id)}>
             {lt(obj.locked ? 'unlock' : 'lock')}
           </MenuItem>
-          {/* 剪切路径：隐藏 = 暂时不裁（`toggleHidden` 切的是 clipOff，ADR 0188） */}
+          {/* 剪切路径：隐藏 = 暂时不裁（`toggleHidden` 切的是 clipOff，ADR 0191） */}
           <MenuItem icon={hidden ? Eye : EyeOff} onSelect={() => toggleHidden(obj.id)}>
             {lt(hidden ? 'show' : 'hide')}
           </MenuItem>

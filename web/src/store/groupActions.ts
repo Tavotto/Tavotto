@@ -10,7 +10,7 @@ import { useSelectionStore } from './selectionStore'
 import { useUiStore } from './uiStore'
 
 /**
- * 嵌套组、组内编辑、剪切蒙版的**动作与命令表**（ADR 0188）。结构与 `pathfinderActions.PATHFINDER_COMMANDS` 相同：
+ * 嵌套组、组内编辑、剪切蒙版的**动作与命令表**（ADR 0191）。结构与 `pathfinderActions.PATHFINDER_COMMANDS` 相同：
  * 命令面板、右键菜单、快捷键读同一份。判据在 `lib/groupTree`（纯函数）；成组 / 取消成组的写入在 `actions.groupUnits /
  * ungroupSelected`（选择、移动、锁定共用的「单元」规则也在那边），这里只做蒙版与组内编辑。
  */

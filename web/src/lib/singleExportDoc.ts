@@ -40,7 +40,7 @@ export function singleAnnotatedDocument(
   if (!panel || panel.hidden) return null
   const visible = doc.objects.filter((o) => !o.hidden)
   if (visible.filter((o) => o.type === 'panel').length !== 1) return null
-  // 图被剪切蒙版裁着（ADR 0188）：蒙版本身是隐藏的，但这一张图要裁，同样走合成路径
+  // 图被剪切蒙版裁着（ADR 0191）：蒙版本身是隐藏的，但这一张图要裁，同样走合成路径
   const clipped = clipChainOf(panel, groupMasks(doc.objects)).length > 0
   if (!visible.some((o) => o.type !== 'panel') && isZeroPad(pad) && !clipped) return null
   if (!visible.some((o) => o.id === panel.id)) return null
@@ -104,7 +104,7 @@ function scaleLengths(o: CanvasObject, k: number): CanvasObject {
 
 /** 合成文档里的标注部分（非面板、可见）——就是请求里 `original.objects` 要带的那些，坐标已在原图图幅里 */
 export function annotationsOf(annotated: FigureDocument): CanvasObject[] {
-  // 剪切组里生效的蒙版（隐藏的）也带上：`toExportObjects` 要靠它给被裁的标注算 `clip`，它自己不进载荷（ADR 0188）
+  // 剪切组里生效的蒙版（隐藏的）也带上：`toExportObjects` 要靠它给被裁的标注算 `clip`，它自己不进载荷（ADR 0191）
   const masks = groupMasks(annotated.objects)
   return annotated.objects.filter((o) => o.type !== 'panel' && (!o.hidden || isActiveMask(o, masks)))
 }

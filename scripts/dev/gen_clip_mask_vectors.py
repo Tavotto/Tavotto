@@ -1,4 +1,4 @@
-"""生成 tests/golden/clip_mask_vectors.json：剪切蒙版轮廓的前后端同源对（ADR 0188）。
+"""生成 tests/golden/clip_mask_vectors.json：剪切蒙版轮廓的前后端同源对（ADR 0191）。
 
 每个用例给出画布上的蒙版路径（前端 `PathObject` 形状）、它在导出载荷里的样子（`exportPayload.toExportClip`），以及
 后端 `plan.clip_outline` 算出的页面轮廓（换回页面 mm、顶原点 y 向下）。前端 `lib/clipMask.golden.test.ts` 断言
