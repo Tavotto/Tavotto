@@ -93,39 +93,7 @@ Illustrator 用户最常按的三个颜色键）。两项都按其余项的频�
 - 没做：竖直倾斜（Illustrator 可选轴）；旋转过的对象非等比缩放时按它自己的框缩（Illustrator 会斜切出来）；对齐到关键对象、按指定间距分布、
   阵列（矩阵里仍是 ⬜，留到后面）。
 
-**修订（2026-11-15，M5 第二批：文字转轮廓、复制为 SVG；与第一批同一份待领编号的 ADR）**：覆盖率 88.8% → **91.2%**。
-- **文字转轮廓 ⇧⌘O**（后端 `rendercore/textoutline.py`，`POST /api/text/outline`；前端 `store/textOutlineActions`）：文字对象按导出的同一条路
-  编成 IR（同一张字体登记表、同一次 HarfBuzz 排字、同一份公式排版），每个字形的轮廓（fontTools，与 `svgwriter` 画轮廓字同一份 glyph set；
-  TrueType 的二次样条精确升三次）按 IR 的落笔位置、字号、模拟斜体错切、对象旋转换到页面——**字形在后端生成**（前端拿不到导出用的字体文件，
-  浏览器画字用的是系统字体）。同色的字并成一条复合路径；模拟粗体 = 同色描边；底框 / 边框 / 下划线 / 公式原样成路径；不止一条时成一个新组，
-  留在原文字所在的组里，原位替换、一次 commit。同源判据是像素：同一个文字按文字导出与按转出来的路径导出，PDFium 栅格化后平均差 < 1/255
-  （`tests/test_text_outline.py`：横排、旋转、粗斜 + 模拟斜体、下划线 + 底框、上下标、竖排 + 旋转）；快照 `tests/golden/text_outline.json` 前后端共用。
-- **复制为 SVG**（`POST /api/svg/copy`；前端 `store/svgCopyActions`）：选中的标注 / 形状 / 路径 / 文字用**导出 SVG 的同一个写入器**写成一段 SVG，
-  页面 = 选区看得见的范围（剪切组按蒙版）。剪贴板用 `ClipboardItem` 收 Promise（WKWebView 要求在手势里同步调 `write`），环境认
-  `image/svg+xml` 就两种都放，否则只放文本；不让写就退到 `writeText`，再不行说一句。图（面板）不在这里——它的 SVG 走导出。写出来的 SVG
-  再粘贴回来（第一批的导入）没有做不准的东西，对象都在（`tests/test_text_outline.py` 的往返用例 + 截图）。
-- 顺带修了两处 M4 的漏洞：⌘A 不选隐藏的蒙版 → ⌘A + Delete 后蒙版被当成孤立的还原出来（现在全选把组里的蒙版一起带上）；孤立蒙版还原时组里
-  只剩它，留下「组 · 1 个对象」（现在这一层组一起拿掉）。导入时包住全部对象的那一层组（写入器翻 y 的根组、Inkscape 图层）不留。
-
-**修订（2026-11-15，M5 第一批：SVG 导入；设计另开 ADR，编号待领，拿到后整段移过去）**：覆盖率 87.0% → **88.8%**。
-- **解析在后端**（`rendercore/svgimport.py`，接口 `POST /api/svg/import`）：不受信任的输入只在那里读。lxml 不解析实体、不读 DTD、
-  不联网（没有 XXE、不取外链），`<script>` 与事件属性根本不看，体积 8 MB / 元素 5 万封顶；有实体声明就算做不准。
-- **落成什么**：path / rect / circle / ellipse / line / polyline / polygon 一律变成自由路径（变换矩阵烤进锚点，弧换三次贝塞尔，二次曲线精确升
-  三次）；线宽按变换的 √|det| 换成 pt；`<style>` 的类 / id / 标签选择器按优先级、style 属性最高、继承、currentColor；线性 / 径向渐变换成
-  对象框的比例坐标（`userSpaceOnUse` 与 `gradientTransform` 都换过来）；两个以上子对象的 `<g>` 成组；`use` / `defs` / `symbol` 展开；
-  `clipPath`（用户坐标）成剪切组（ADR 0188）；`<text>` 落成文字对象（字号、颜色、粗斜——含 Illustrator 写在 PostScript 名里的、对齐、
-  旋转），位置按基线估算（框顶 = 基线 − 0.8 em，字宽估算，前端落定后按实际量回写）。
-- **兜底不许半张图**：滤镜、蒙版、图案填充、图片、foreignObject、textPath、线端标记、外链、复杂选择器、比例坐标的剪切、逐字定位 / 斜切的文字
-  → `unsupported`（原因码 + 次数）。有一条就整个不拆：粘贴时先当 SVG 素材放（与粘贴图片文件同一条路）；素材检查也不收（RenderCore 画不准
-  的，比如滤镜）就按浏览器画出来的样子栅格化成 600 dpi PNG 放进来（`<img>` 模式下的 SVG 不执行脚本、不取外链）。每种结局说一句原因。
-- **入口**：粘贴 SVG 标记（Illustrator / Inkscape 复制出来的）直接变对象，一次 commit、全部选中、放在页面中间；**拖进来的 SVG 文件照旧是
-  「图」**（matplotlib 导出的 SVG 多半要当图排版，「脚本即图片」也靠它），静态 SVG 图（没有脚本、没裁剪 / 旋转 / 翻转、没锁定）右键或命令
-  面板「拆成可编辑对象」：按图在画布上的大小缩放（线宽、字号一起）、原位替换、接着待在图原来的组里；做不准就图不动。
-- **同源**：后端快照 `tests/golden/svgimport/*.json`（`scripts/dev/gen_svgimport_golden.py`，样例在 `tests/fixtures/svgimport`）——后端
-  `tests/test_svgimport.py` 核导入结果、前端 `lib/svgImport.golden.test.ts` 核落位后每个对象都认识、剪切组生效、导出载荷收得下；对象本身
-  只用旧字段，画与导出走已有的同源管线。
-- 没做：`mask`、`pattern`、滤镜（当图片）；文字的精确基线与 dx / dy；`symbol` 自带 viewBox；组的 `opacity` 乘进每个子对象（重叠处与浏览器
-  的透明组不同）。
+**修订（2026-11-15，M5：SVG 导入、文字转轮廓、复制为 SVG）**：覆盖率 87.0% → **91.2%**。设计在 [ADR 0189](0189-svg-interop.md)。
 
 ### 二、新对象类型 `path`
 
@@ -210,7 +178,7 @@ interface PathNode {
 - **M3 渐变**：见 [ADR 0186](0186-gradients.md)（扩 `ir.Paint` 闭集：PDF Shading Pattern、SVG `<linearGradient>`、EPS `shfill`）。
 - **M4 剪切蒙版与嵌套组**：现在的 `groupId` 是平铺一层；~~文档级加 `groups: { id, parentId?, clipBy? }[]`~~（2026-11-15 修订：改成对象上的 `groupPath` / `clipMask`，见 [ADR 0191](0191-nested-groups-and-clipping-masks.md)），导出映射到 `ir.Group(clip=…)`。
   必须与 `LayoutGroup`（行 / 列 / 网格排版组）分开，不许变成第二套组模型。另开 ADR。
-- **M5 SVG 互通**：粘贴 / 拖入 SVG 落成可编辑对象，复制为 SVG。
+- **M5 SVG 互通**：粘贴 / 拖入 SVG 落成可编辑对象，复制为 SVG。设计见 [ADR 0189](0189-svg-interop.md)。
 
 ### 六、旧构建的兜底（M0 第一个 PR，先于 `path` 发出）
 
