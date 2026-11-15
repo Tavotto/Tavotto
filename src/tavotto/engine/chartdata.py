@@ -2,8 +2,10 @@
 
 普通用户带进来的数据是 CSV 或粘贴的表格。这里只做**解析与定位**：每个
 问题（非数值、缺失值、日期列、千分位、列长不齐）都带行列地址，让确认
-预览能指到具体格子；解析成功的产品是纯 `float` 列，NaN/Infinity 在格级
-就死（与 chartmodel 的读入闸同口径）。
+预览能指到具体格子；解析成功的产品是纯 `float` 列，NaN 记缺失、Infinity
+记非有限（与 chartmodel 的读入闸同口径）。单元格判据的唯一出处是
+`ai_data_figure.parse_cell` / `parse_date`；本模块只保留分隔符探测、引号
+表头、格子地址与诊断探针。
 """
 
 from __future__ import annotations
@@ -13,17 +15,20 @@ import io
 import math
 import re
 
+from .ai_data_figure import MAX_COLUMNS, MAX_ROWS, parse_cell, parse_date
+
 #: 数据问题的稳定码（前端文案落地时同步 errors.json）。
 ISSUE_CODES = (
     "data_not_numeric",  # 该格不是数（含日期/文字列）
-    "data_missing",  # 该格为空
-    "data_non_finite",  # 该格是 NaN/Infinity 字面量
+    "data_missing",  # 该格为空或 NaN
+    "data_non_finite",  # 该格是 Infinity 或溢出成非有限数的字面量
     "data_thousands_separator",  # 千分位（1,234.5）——需要用户清理，不猜
     "data_row_length",  # 该行列数与表头不一致
+    "data_too_long",  # 数据行数超过 0178 的上限
+    "data_too_wide",  # 列数超过 0178 的上限
 )
 
 _DELIMITERS = ("\t", ";", ",")
-_NUM_RE = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$")
 _DATE_HINT = re.compile(r"^\d{4}[-/]\d{1,2}([-/]\d{1,2})?$|^\d{1,2}/\d{1,2}/\d{2,4}$")
 
 
@@ -87,12 +92,48 @@ def _header_names(values: list[str], record: str) -> list[str]:
     return names
 
 
+def _text_issue(raw: str, row: int, col: int, column: str | None = None) -> dict:
+    """`parse_cell` 判 `text` 之后的诊断；顺序固定，不复制数值正则。
+
+    日期提示优先；`float()` 能认下的 Infinity/溢出记 `data_non_finite`；
+    去千分位后能解析的记 `data_thousands_separator`；其余是
+    `data_not_numeric`。表列带 `column`，网格不带。
+    """
+    text = raw.strip()
+    issue = {"row": row, "col": col, **({"column": column} if column is not None else {})}
+    if parse_date(text) is not None or _DATE_HINT.fullmatch(text):
+        detail = (
+            f"column {column!r}: date-like value needs conversion"
+            if column is not None
+            else f"grid cell {raw!r}"
+        )
+        return {**issue, "code": "data_not_numeric", "detail": detail}
+    try:
+        probe = float(text)
+    except ValueError:
+        probe = None
+    if probe is not None and math.isinf(probe):
+        detail = f"column {column!r}" if column is not None else f"grid cell {raw!r}"
+        return {**issue, "code": "data_non_finite", "detail": detail}
+    if "," in text:
+        try:
+            float(text.replace(",", ""))
+        except ValueError:
+            pass
+        else:
+            detail = f"column {column!r}: {raw!r}" if column is not None else f"grid cell {raw!r}"
+            return {**issue, "code": "data_thousands_separator", "detail": detail}
+    detail = f"column {column!r}: {raw!r}" if column is not None else f"grid cell {raw!r}"
+    return {**issue, "code": "data_not_numeric", "detail": detail}
+
+
 def parse_table(text: str) -> dict:
     """解析表格文本 → ``{"columns": {...}, "issues": [...]}``。
 
     列名取第一个 CSV 记录；分隔符只按表头引号外的候选定一次。
     引号、双写引号和跨行单元格由标准库解析；格地址使用记录的物理起始行。
     返回的 columns 只含**全数值**的列；含问题的列缺席并记 issues。
+    超过 0178 的列/行上限时整表拒绝，不返回部分列。
     """
     if not text.strip():
         return {
@@ -105,6 +146,7 @@ def parse_table(text: str) -> dict:
     header: list[str] | None = None
     rows: list[tuple[int, list[str]]] = []
     issues: list[dict] = []
+    data_rows = 0
     while True:
         start_row, start_offset = reader.line_num + 1, stream.tell()
         try:
@@ -124,9 +166,36 @@ def parse_table(text: str) -> dict:
         record = text[start_offset : stream.tell()]
         if header is None:
             header = _header_names(cells or [""], record)
+            if len(header) > MAX_COLUMNS:
+                return {
+                    "columns": {},
+                    "text_columns": {},
+                    "issues": [
+                        {
+                            "code": "data_too_wide",
+                            "row": 1,
+                            "col": 1,
+                            "detail": f"table has {len(header)} columns (max {MAX_COLUMNS})",
+                        }
+                    ],
+                }
             continue
         if not record.strip():
             continue
+        data_rows += 1
+        if data_rows > MAX_ROWS:
+            return {
+                "columns": {},
+                "text_columns": {},
+                "issues": [
+                    {
+                        "code": "data_too_long",
+                        "row": 1,
+                        "col": 1,
+                        "detail": f"table has more than {MAX_ROWS} rows",
+                    }
+                ],
+            }
         if len(cells) != len(header):
             issues.append(
                 {
@@ -149,8 +218,8 @@ def parse_table(text: str) -> dict:
         column_issues: list[dict] = []
         for r, cells in rows:
             raw = cells[c]
-            numeric = raw.strip()
-            if numeric == "":
+            kind, value = parse_cell(raw)
+            if kind in ("empty", "nan"):
                 column_issues.append(
                     {
                         "code": "data_missing",
@@ -162,56 +231,15 @@ def parse_table(text: str) -> dict:
                 )
                 text_ok = False
                 continue
-            if _NUM_RE.fullmatch(numeric):
-                value = float(numeric)
-                if not math.isfinite(value):
-                    column_issues.append(
-                        {
-                            "code": "data_non_finite",
-                            "row": r,
-                            "col": c + 1,
-                            "column": col_name,
-                            "detail": f"column {col_name!r}",
-                        }
-                    )
-                    text_ok = False
-                    continue
-                values.append(value)
+            if kind == "numeric":
+                values.append(float(value))
                 texts.append(raw)
                 continue
             texts.append(raw)  # 非数值格：数值列的 issue；文本列候选同步积累
-            if _DATE_HINT.fullmatch(numeric):
-                column_issues.append(
-                    {
-                        "code": "data_not_numeric",
-                        "row": r,
-                        "col": c + 1,
-                        "column": col_name,
-                        "detail": f"column {col_name!r}: date-like value needs conversion",
-                    }
-                )
-                continue
-            cleaned = numeric.replace(",", "")
-            if "," in numeric and _NUM_RE.fullmatch(cleaned):
-                column_issues.append(
-                    {
-                        "code": "data_thousands_separator",
-                        "row": r,
-                        "col": c + 1,
-                        "column": col_name,
-                        "detail": f"column {col_name!r}: {raw!r}",
-                    }
-                )
-                continue
-            column_issues.append(
-                {
-                    "code": "data_not_numeric",
-                    "row": r,
-                    "col": c + 1,
-                    "column": col_name,
-                    "detail": f"column {col_name!r}: {raw!r}",
-                }
-            )
+            issue = _text_issue(raw, r, c + 1, col_name)
+            column_issues.append(issue)
+            if issue["code"] == "data_non_finite":
+                text_ok = False
         if not column_issues:
             columns[col_name] = values
         else:
@@ -226,18 +254,45 @@ def parse_grid(text: str) -> dict:
     """解析数值矩阵（空白/逗号分隔，无表头）→ ``{"values": [[...]], "issues": []}``。
 
     网格数据（热图/标量场）不带类别表头；任何非数值格都是带行列地址的问题，
-    绝不静默填零。
+    绝不静默填零。NaN 记缺失、Infinity/溢出记非有限；超过 0178 的列/行上限
+    时整表拒绝。
     """
     values: list[list[float]] = []
     issues: list[dict] = []
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     width = None
+    data_rows = 0
     for r, line in enumerate(lines, start=1):
         if not line.strip():
             continue
+        data_rows += 1
+        if data_rows > MAX_ROWS:
+            return {
+                "values": [],
+                "issues": [
+                    {
+                        "code": "data_too_long",
+                        "row": 1,
+                        "col": 1,
+                        "detail": f"grid has more than {MAX_ROWS} rows",
+                    }
+                ],
+            }
         cells = [c.strip() for c in re.split(r"[,\s]+", line.strip()) if c != ""]
         if width is None:
             width = len(cells)
+            if width > MAX_COLUMNS:
+                return {
+                    "values": [],
+                    "issues": [
+                        {
+                            "code": "data_too_wide",
+                            "row": 1,
+                            "col": 1,
+                            "detail": f"grid has {width} columns (max {MAX_COLUMNS})",
+                        }
+                    ],
+                }
         elif len(cells) != width:
             issues.append(
                 {
@@ -250,12 +305,15 @@ def parse_grid(text: str) -> dict:
             continue
         row: list[float] = []
         for c, raw in enumerate(cells, start=1):
-            if _NUM_RE.fullmatch(raw):
-                row.append(float(raw))
-            else:
+            kind, value = parse_cell(raw)
+            if kind in ("empty", "nan"):
                 issues.append(
-                    {"code": "data_not_numeric", "row": r, "col": c, "detail": f"grid cell {raw!r}"}
+                    {"code": "data_missing", "row": r, "col": c, "detail": f"grid cell {raw!r}"}
                 )
+            elif kind == "numeric":
+                row.append(float(value))
+            else:
+                issues.append(_text_issue(raw, r, c))
         if len(row) == len(cells):
             values.append(row)
     return {"values": values, "issues": issues}
