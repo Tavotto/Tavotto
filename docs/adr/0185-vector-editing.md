@@ -93,6 +93,26 @@ Illustrator 用户最常按的三个颜色键）。两项都按其余项的频�
 - 没做：竖直倾斜（Illustrator 可选轴）；旋转过的对象非等比缩放时按它自己的框缩（Illustrator 会斜切出来）；对齐到关键对象、按指定间距分布、
   阵列（矩阵里仍是 ⬜，留到后面）。
 
+**修订（2026-11-15，M5 第一批：SVG 导入；设计另开 ADR，编号待领，拿到后整段移过去）**：覆盖率 87.0% → **88.8%**。
+- **解析在后端**（`rendercore/svgimport.py`，接口 `POST /api/svg/import`）：不受信任的输入只在那里读。lxml 不解析实体、不读 DTD、
+  不联网（没有 XXE、不取外链），`<script>` 与事件属性根本不看，体积 8 MB / 元素 5 万封顶；有实体声明就算做不准。
+- **落成什么**：path / rect / circle / ellipse / line / polyline / polygon 一律变成自由路径（变换矩阵烤进锚点，弧换三次贝塞尔，二次曲线精确升
+  三次）；线宽按变换的 √|det| 换成 pt；`<style>` 的类 / id / 标签选择器按优先级、style 属性最高、继承、currentColor；线性 / 径向渐变换成
+  对象框的比例坐标（`userSpaceOnUse` 与 `gradientTransform` 都换过来）；两个以上子对象的 `<g>` 成组；`use` / `defs` / `symbol` 展开；
+  `clipPath`（用户坐标）成剪切组（ADR 0188）；`<text>` 落成文字对象（字号、颜色、粗斜——含 Illustrator 写在 PostScript 名里的、对齐、
+  旋转），位置按基线估算（框顶 = 基线 − 0.8 em，字宽估算，前端落定后按实际量回写）。
+- **兜底不许半张图**：滤镜、蒙版、图案填充、图片、foreignObject、textPath、线端标记、外链、复杂选择器、比例坐标的剪切、逐字定位 / 斜切的文字
+  → `unsupported`（原因码 + 次数）。有一条就整个不拆：粘贴时先当 SVG 素材放（与粘贴图片文件同一条路）；素材检查也不收（RenderCore 画不准
+  的，比如滤镜）就按浏览器画出来的样子栅格化成 600 dpi PNG 放进来（`<img>` 模式下的 SVG 不执行脚本、不取外链）。每种结局说一句原因。
+- **入口**：粘贴 SVG 标记（Illustrator / Inkscape 复制出来的）直接变对象，一次 commit、全部选中、放在页面中间；**拖进来的 SVG 文件照旧是
+  「图」**（matplotlib 导出的 SVG 多半要当图排版，「脚本即图片」也靠它），静态 SVG 图（没有脚本、没裁剪 / 旋转 / 翻转、没锁定）右键或命令
+  面板「拆成可编辑对象」：按图在画布上的大小缩放（线宽、字号一起）、原位替换、接着待在图原来的组里；做不准就图不动。
+- **同源**：后端快照 `tests/golden/svgimport/*.json`（`scripts/dev/gen_svgimport_golden.py`，样例在 `tests/fixtures/svgimport`）——后端
+  `tests/test_svgimport.py` 核导入结果、前端 `lib/svgImport.golden.test.ts` 核落位后每个对象都认识、剪切组生效、导出载荷收得下；对象本身
+  只用旧字段，画与导出走已有的同源管线。
+- 没做：`mask`、`pattern`、滤镜（当图片）；文字的精确基线与 dx / dy；`symbol` 自带 viewBox；组的 `opacity` 乘进每个子对象（重叠处与浏览器
+  的透明组不同）。
+
 ### 二、新对象类型 `path`
 
 ```ts
