@@ -2,7 +2,7 @@
 
 日期：2026-11-15 · 状态：**Accepted**（2026-11-15 用户拍板：M5 两批审阅页共 11 处全按推荐，含第 6 处「解析和安全边界合一，换算各管各的」。1.0 豁免沿用 ADR 0185 在
 `docs/1.0-release-readiness.md` §1.8 的那一行，M5 属其范围；PR 按 risk:high 走）
-相关：[0185 画布矢量编辑](0185-vector-editing.md)（§五 M5）、[0188 嵌套组与剪切蒙版](0188-nested-groups-and-clipping-masks.md)、
+相关：[0185 画布矢量编辑](0185-vector-editing.md)（§五 M5）、[0191 嵌套组与剪切蒙版](0191-nested-groups-and-clipping-masks.md)、
 [0182 SVG 计算图表编辑（外部 RFC #1877，Proposed）](https://github.com/Tavotto/Tavotto/issues/1877)、
 [0059 RenderCore 路径编译](0059-render-ir-and-render-plan.md)、[0176 粘贴 / 拖入图片](0176-canvas-file-intake.md)
 
@@ -44,7 +44,7 @@ ADR 0185 能力矩阵 E 节「粘贴 / 拖入 SVG 成可编辑对象」（●●
   线宽按变换的 √|det| 换成 pt；
 - 样式：`<style>` 的类 / id / 标签选择器按优先级、style 属性最高、继承、currentColor；线性 / 径向渐变换成对象框的比例坐标（含 `userSpaceOnUse`、
   `gradientTransform`、href 继承）；
-- 结构：两个以上子对象的 `<g>` 成组（ADR 0188 的 `groupPath`），包住全部对象的那一层（写入器翻 y 的根组、Inkscape 图层）不留；`use` / `defs` /
+- 结构：两个以上子对象的 `<g>` 成组（ADR 0191 的 `groupPath`），包住全部对象的那一层（写入器翻 y 的根组、Inkscape 图层）不留；`use` / `defs` /
   `symbol` 展开；用户坐标的 `clipPath` 成剪切组；
 - `<text>` → 文字对象（字号、颜色、粗斜——含 Illustrator 写在 PostScript 名里的、对齐、旋转），位置按基线估算。
 

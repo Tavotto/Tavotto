@@ -3,7 +3,7 @@
 1. 样例（Illustrator / Inkscape 风格）的导入结果与快照 `tests/golden/svgimport/*.json` 逐字段相同；
 2. 几何：单位与 viewBox 换算、变换矩阵烤进锚点、弧换三次贝塞尔（中点落在圆上）、二次曲线精确升三次、S / T 反射、标志位紧写；
 3. 样式：CSS 类 / id / 标签选择器按优先级、style 属性最高、继承、currentColor、渐变（userSpaceOnUse / 比例）、虚线换 pt；
-4. 结构：组（两个以上子对象才成组）、use / defs / symbol、clipPath → 剪切组的蒙版（ADR 0188）；
+4. 结构：组（两个以上子对象才成组）、use / defs / symbol、clipPath → 剪切组的蒙版（ADR 0191）；
 5. 文字：字号、粗体、对齐、旋转；做不准的 dx / textPath / 斜切文字 → 不支持；
 6. 兜底：图片 / 蒙版 / 图案 / 标记 / 复杂选择器 / 非静态元素记不支持；编辑器命名空间与无作用 CSS 放行；接口。攻击样例在 `test_svgimport_security.py`。
 """
