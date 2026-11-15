@@ -180,7 +180,7 @@ beforeEach(() => {
   clearGlobalMock.mockReset()
   useDepRepairStore.getState().reset()
   // 预读按卡分格、`reset()` 不动它们（关一张卡不该让另一张回到「正在检查」）：用例之间自己清
-  useDepRepairStore.setState({ managedPreviews: {} })
+  useDepRepairStore.setState({ managedPreviews: {}, managedSelftestFailed: {} })
 })
 
 afterEach(async () => {
@@ -1530,6 +1530,43 @@ describe('安装进度', () => {
     expect(text()).not.toContain(en('repairCancelledManaged', { product: PRODUCT_NAME }))
   })
 
+  it('取消装进「你为这个项目选的 Python」：说这个 Python 可能已改了一半，不说成项目环境或受管重建（Codex #1934 P2）', async () => {
+    await render()
+    await progress('cancelled', { target_kind: 'configured_interpreter', code: 'dependency_install_cancelled' })
+    expect(text()).toContain(en('repairCancelledConfiguredEnv'))
+    expect(text()).not.toContain(en('repairCancelledProjectEnv'))
+    expect(text()).not.toContain(en('repairCancelledManaged', { product: PRODUCT_NAME }))
+  })
+
+  it('当场看到管理环境自检没过：关掉失败后，旧 offer（selftest_failed=false）也不再推荐管理环境（Codex #1934 P2）', async () => {
+    const configured = {
+      kind: 'configured_interpreter' as const, venv: '', python: '/opt/py312/bin/python',
+      modifies_user_environment: true, creates_environment: false, available: true, reason: '',
+    }
+    const stale = { ...OFFER, targets: [configured, { ...OFFER.targets[1], selftest_failed: false }] }
+    await render(stale)
+    await progress('failed', { target_kind: 'tavotto_managed', code: 'dependency_worker_selftest_failed' })
+    await act(() => useDepRepairStore.getState().reset())
+    expect(document.querySelector('[data-one-click-repair]')?.getAttribute('data-one-click-repair')).toBe(
+      'configured_interpreter',
+    )
+    // 同一项目后来管理环境装成功：记号撤掉，回到原来的推荐
+    await progress('done', { plan_id: 'plan-abc', target_kind: 'tavotto_managed' })
+    await act(() => useDepRepairStore.getState().reset())
+    expect(Object.keys(useDepRepairStore.getState().managedSelftestFailed)).toHaveLength(0)
+  })
+
+  it('别的标签页的管理环境作业（plan_id 不是本标签页发起的）不记到此刻开着的项目上（Codex #1934 P2）', async () => {
+    await render()
+    await act(() => {
+      useDepRepairStore.getState().onProgress({
+        plan_id: 'plan-from-another-tab', state: 'failed', log: '', error: null,
+        code: 'dependency_worker_selftest_failed', target_kind: 'tavotto_managed',
+      } as never)
+    })
+    expect(Object.keys(useDepRepairStore.getState().managedSelftestFailed)).toHaveLength(0)
+  })
+
   it('装完之后把那次失败的渲染重新排上 —— 否则图永远不会自己出来', async () => {
     // Codex 评审 P1：失败那次的 wantPatches 仍等于当前 overrides，同步器
     // 会跳过它。少了这一步，「点一次 → 图出来」这条主路走不完，用户要
@@ -1641,5 +1678,79 @@ describe('联网失败按原因各说一句（net_cause）', () => {
       t('errors:engine.repairErrorShort.dependency_conflict', { product: PRODUCT_NAME }),
     )
     expect(t('errors:engine.repairNetBoth')).not.toBe(t('errors:engine.repairNetUserSource'))
+  })
+})
+
+describe('第三种目标：你为这个项目选的 Python（ADR 0019 2026-11-15 修订）', () => {
+  const CONFIGURED = {
+    kind: 'configured_interpreter' as const,
+    venv: '',
+    python: '/opt/py312/bin/python',
+    modifies_user_environment: true,
+    creates_environment: false,
+    available: true,
+    reason: '',
+  }
+  const managed = (selftest_failed: boolean) => ({ ...OFFER.targets[1], selftest_failed })
+  const card = () => document.querySelector('[data-one-click-repair]')!
+  const primaries = () => buttons().filter((b) => b.getAttribute('data-variant') === 'primary')
+
+  it('管理环境自检没失败过：主按钮仍是受管环境（回归）', async () => {
+    await render({ ...OFFER, targets: [CONFIGURED, managed(false)] })
+    expect(card().getAttribute('data-one-click-repair')).toBe('tavotto_managed')
+    expect(primaries()).toHaveLength(1)
+  })
+
+  it('管理环境自检失败过且有该目标：它是主按钮，一句话是新文案，点下去先到确认页（不一键执行）', async () => {
+    planMock.mockResolvedValue({
+      plan: {
+        ...PLAN,
+        plan_id: 'plan-configured',
+        impact_digest: 'dg-configured',
+        target_kind: 'configured_interpreter',
+        python: '/opt/py312/bin/python',
+      },
+    })
+    await render({ ...OFFER, targets: [CONFIGURED, managed(true)] })
+    expect(card().getAttribute('data-one-click-repair')).toBe('configured_interpreter')
+    expect(card().querySelector('[data-one-click-sentence]')?.textContent).toBe(
+      en('oneClickSentenceConfigured', { module: 'lmfit' }),
+    )
+    expect(primaries()).toHaveLength(1)
+    await click(en('oneClickRepair'))
+    expect(planMock.mock.calls[0][0]).toMatchObject({ target: 'configured_interpreter' })
+    expect(installMock).not.toHaveBeenCalled()
+    // 确认页：说明会改用户环境，但不说成「项目的环境」；按钮是「安装」而不是「安装到项目环境」
+    expect(text()).toContain(en('repairModifiesConfiguredEnv'))
+    expect(text()).not.toContain(en('repairModifiesEnv'))
+    expect(byName(en('repairInstallToProject'))).toBeUndefined()
+    expect(byName(t('workspace:prep.btn.install'))).toBeDefined()
+    expect(text()).toContain(en('oneClickSentenceConfigured', { module: 'lmfit' }))
+  })
+
+  it('已装好包的现成 Python 仍排在最前', async () => {
+    await render({
+      ...OFFER,
+      targets: [
+        { ...OFFER.targets[1], kind: 'system_interpreter', python: '/usr/bin/python3' },
+        CONFIGURED,
+        managed(true),
+      ],
+    })
+    expect(card().getAttribute('data-one-click-repair')).toBe('system_interpreter')
+  })
+
+  it('自检失败过且没有该目标：不把受管环境当主按钮，一句话说原因，主按钮是「选择其他 Python」，受管重试在详情里', async () => {
+    await render({ ...OFFER, targets: [managed(true)] })
+    expect(card().getAttribute('data-one-click-repair')).toBe('selftest_failed')
+    expect(card().querySelector('[data-repair-selftest-failed]')?.textContent).toBe(
+      repairShortMessage('dependency_worker_selftest_failed'),
+    )
+    expect(byName(en('oneClickRepair'))).toBeUndefined()
+    const apply = card().querySelector('[data-repair-other-python-apply]') as HTMLButtonElement
+    expect(apply.getAttribute('data-variant')).toBe('primary')
+    expect(primaries()).toHaveLength(1)
+    const advanced = document.querySelector('[data-repair-advanced]') as HTMLDetailsElement
+    expect(advanced.contains(byName(en('repairInstallToManaged', { module: 'lmfit', product: PRODUCT_NAME }))!)).toBe(true)
   })
 })

@@ -131,6 +131,25 @@ describe('智能修复（ADR 0148）：主按钮读 remedy，每张失败卡都�
     expect(t('prep.line.feedback', { ns: 'workspace' })).toBe('这个脚本暂时用不了，发给我们看看？')
   })
 
+  it('装进「你为这个项目选的 Python」：改用户环境，主按钮是逐次确认的「安装」，不走「打开并运行」的自动授权', () => {
+    const impactAction = {
+      id: 'a-prepare_dependencies',
+      kind: 'prepare_dependencies',
+      config_revision: 1,
+      impact: { installs: ['scipy'], modifies_user_environment: true, target_kind: 'configured_interpreter' },
+    }
+    const v = view(
+      failed(undefined, {
+        phase: 'awaiting_confirmation',
+        outcome: { kind: 'needs_dependencies', code: 'dependency_preparation_required' },
+        requirements: [{ id: 'dependencies', kind: 'dependency_authorization', origin: 'static', code: 'dependency_preparation_required', payload: {} }],
+        actions: [impactAction, action('run_when_ready'), action('recheck')],
+      }),
+    )
+    expect(v.primary).toMatchObject({ kind: 'action', action: 'prepare_dependencies' })
+    expect(t('prep.install.toConfigured', { ns: 'workspace', module: 'scipy' })).toBe('把 scipy 装到你为这个项目选的 Python 里')
+  })
+
   it('确定的修法（装包 / 选环境 / 转写）：主按钮照旧，AI 次按钮也在', () => {
     const install = view(
       failed({ kind: 'install_packages', packages: ['scipy'], ask: false }, {
