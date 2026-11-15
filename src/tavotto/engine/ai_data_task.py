@@ -532,6 +532,8 @@ class Selection:
     confirmed: ai_data_recipe.Confirmed
     recipe: ai_data_recipe.FigureRecipe
     title_code: str
+    #: 出备选时用的表头物理行号（文本表格）：提交按同一读法重读
+    header_line: int | None = None
 
 
 @dataclass
@@ -553,7 +555,9 @@ def prepare_v2(root: Path, sel: Selection) -> PreparedV2:
     期望数据指纹与覆盖情况。纯读，不写任何东西。"""
     module_name, module_bytes = ai_data_template.runtime_module()
     pl = place_v2(root, sel.folder_rel, sel.table, module_name)
-    values = ai_data_figure.inspect_data_source(pl.data_path, sel.sheet)
+    values = ai_data_figure.inspect_data_source(
+        pl.data_path, sel.sheet, v2=True, header_row=sel.header_line
+    )
     if values.sha256 != sel.data_sha256:
         raise ai_data_propose.ProposeError("propose_data_changed")
     entry = ai_data_figure.TableEntry(sel.table, sel.sheet, False, values)
