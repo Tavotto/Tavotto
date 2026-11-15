@@ -300,17 +300,17 @@ def parse_header_rows(raw) -> dict[str, int]:
         raise ProposeError("propose_input_invalid", "header_rows")
     out = {}
     for k, v in raw.items():
-        if (
-            not isinstance(k, str)
-            or not 0 < len(k) <= 1024
-            or "\x00" in k
-            or isinstance(v, bool)
-            or not isinstance(v, int)
-            or not 1 <= v <= 2 * adf.MAX_ROWS + 1000
-        ):
+        if not isinstance(k, str) or not 0 < len(k) <= 1024 or "\x00" in k:
             raise ProposeError("propose_input_invalid", "header_rows")
-        out[k] = v
+        out[k] = parse_header_row(v)
     return out
+
+
+def parse_header_row(v) -> int:
+    """一个表头物理行号：1 到 `adf.MAX_ROWS * 2 + 1000` 之间的整数，不收布尔；`parse_header_rows` 与数据概览端点共用这一份判据。"""
+    if isinstance(v, bool) or not isinstance(v, int) or not 1 <= v <= 2 * adf.MAX_ROWS + 1000:
+        raise ProposeError("propose_input_invalid", "header_rows")
+    return v
 
 
 def _text(value, what: str, limit: int = _ANSWER_MAX) -> str | None:
@@ -807,6 +807,7 @@ __all__ = [
     "get_item",
     "get_session",
     "normalize_rel",
+    "parse_header_row",
     "parse_header_rows",
     "path_key",
     "propose",

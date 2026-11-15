@@ -337,6 +337,12 @@ order: 240
   **只新建**（`scriptlock.create_script`），再 `discover.register` → 统一刷新 → safe 渲染 → `figureverify.data_matches_expected`；登记失败撤回本次新建的脚本 / 公共模块 / 目录，复用的不删。
   数值列夹着 ≤ 20% 文字（`numeric_like`）：**先问用户**（`{kind:"ask", question_code:"mixed_cells"}`：预览 ≤ 5 行带文件行号、选项 skip / extract / describe），回答放 `answers.cells`（`skip` / `extract` / `map`，声明式；`describe` 不可执行 → 409 `propose_cells_need_rule`；规则不合格 → 400 `propose_cells_invalid`），规则进 `FigureRecipe.cells`，脚本读表后 `apply_cells` 套规则（内存副本，用户文件不动）、图下方写说明、期望指纹按处理后的数据算，用户已决定的格子不再算 partial 理由；幂等键含请求内容摘要。**没有任何可核层 = `data.verifiable` unknown（`data_check: "unverifiable"`），绝不写成 verified**。端点：`propose` / `thumbnail/<session>/<id>` / `commit` / `discard`，`/api/ai/data-files` 带 xlsx 工作表清单；
   请求路径只经 `ai_data_propose.normalize_rel` + `projectenv.contained_path`。看护 `tests/test_ai_data_propose.py`（真 app + 真 safe worker）。
+- **数据出图 v2 的数据概览与脚本来源（`engine/ai_data_overview.py`，ADR 0178「数据概览与脚本来源」，实验开关后面）**：`GET /api/ai/data-overview?path=&sheet=&header_row=`
+  只读：状态（`ok` / `unsure` / `unreadable` + 稳定码，读不了是 200 不是 4xx）、行列数、`fields`（`ColumnSummary.kind` 口径）、前 20 行单元格原文、表头行前的说明行；**读表必须是 propose 读表的那两个函数**
+  （`read_text_table` / `inspect_data_source(v2=True)`），`header_row` 经 `ai_data_propose.parse_header_row`（与 `header_rows` 一份判据）——别在这里另写读法。路径只经 `normalize_rel` + `contained_path` +
+  与 `discover.walk_files` 结果逐字比对，打开的是遍历结果里的那一项。响应一律有上界、控制字符换空格（表里的文字不可信）。XLSX 每个工作表的行列数在 `/api/ai/data-files?formats=all` 的 `sheets` 里
+  （有预算，超出 `null` = 没读）。`/api/registry` 的 `all_scripts[]` 对 v2 生成的脚本加 `generated_from: {data, sheet}`：解析只有 `ai_data_template.parse_source_comment` 一处（严格：tokenize 真注释、第一条、固定键集合；
+  只外传路径与工作表名，不给配方与哈希），开关关着整个不读、响应逐字不变。不写文件、不发遥测。看护 `tests/test_ai_data_overview.py`。
 - **TAF 改图（`engine/ai_figure_edit.py`，Phase 3a）**：只在 `config.ai_settings()["taf"]["enabled"] is True`（默认关、无界面开关）
   时由 `ai_bridge.run` 走到；开关关着时旧路径逐字不变（cwd 是项目目录、不写任务列、`ADAPTERS` 为空）。开着时：spawn 之前在
   `data_dir()/cache/ai_candidates/<sid>/` **字节复制**目标脚本（+ 项目根的 `paper_style.py`，绝不建链接），拍原项目有界指纹（跳过
