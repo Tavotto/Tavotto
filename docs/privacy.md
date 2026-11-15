@@ -412,7 +412,7 @@ Offering the option uploads nothing; sending does:
   checkboxes that start unticked every time it opens: *script source* (the scripts
   registered in the open project, the scripts of recent test runs and of recent "generate editable
   version" conversions — including R and MATLAB scripts — and the unadopted candidate script such
-  a conversion left in Tavotto's local cache, attached as they are — **secret removal in scripts is best
+  a conversion left in Tavotto's local cache, and the local Python modules those scripts loaded from outside the project folder when they last ran — only modules that were really loaded, never third-party packages or Python's own, attached as they are — **secret removal in scripts is best
   effort and cannot be guaranteed, so do not tick it if your scripts contain secrets**;
   without it the bundle contains no script source at all, including the source lines normally
   printed inside tracebacks), *system crash

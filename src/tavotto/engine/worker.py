@@ -1535,6 +1535,8 @@ class Worker(wireproto.V1Handler):
         #: 回执的 `inputs`（U09）：build 那一刻定格的输入观察（`figcapture.InputObserver.report()`）。
         self._input_observer: figcapture.InputObserver | None = None
         self._inputs_report: dict | None = None
+        #: 脚本这次运行里从项目外加载过的本地模块（绝对路径；诊断包「脚本源码」用）
+        self._external_modules: list[str] = []
         #: 本次 build 的问答通道（ADR 0099）：build 开始时建，响应的 `script_inputs` 从它取。
         self._input_channel: "scriptinput.Channel | None" = None
         #: 数据改指（ADR 0106）：用户指认过的只读改指表（`--input-remap`，父进程按项目给），
@@ -2171,6 +2173,8 @@ class Worker(wireproto.V1Handler):
                     ) from exc
                 raise
             finally:
+                # 诊断包「脚本源码」要的：脚本自己加进 sys.path 的项目外目录里、实际加载过的本地模块（成功与失败都记）
+                self._external_modules = self._observe_external_modules(sys.exc_info()[1])
                 # 脚本跑完了：之后再有谁读 stdin 一律 EOF，绝不再发问（也绝不再碰协议管道）
                 channel.closed = True
                 _record_write_attempts(False)
@@ -2603,6 +2607,41 @@ class Worker(wireproto.V1Handler):
                 extra=facts or None,
             ) from exc
 
+    def _observe_external_modules(self, exc: BaseException | None) -> list[str]:
+        """这次脚本运行里加载过的、位于项目外的本地 `.py` 模块（`figcapture.observed_external_modules`）。
+        失败时再并上异常链 traceback 帧里的文件：导入到一半抛错的模块会被解释器从 `sys.modules` 摘掉。
+        只读、任何意外都当没有，绝不盖掉脚本原来的结果或错误。"""
+        try:
+            frames: list[str] = []
+            seen = 0
+            cur = exc
+            while cur is not None and seen < 8:
+                tb = cur.__traceback__
+                while tb is not None and len(frames) < 200:
+                    frames.append(tb.tb_frame.f_code.co_filename)
+                    tb = tb.tb_next
+                cur = cur.__cause__ or cur.__context__
+                seen += 1
+            return figcapture.observed_external_modules(
+                str(self.figures_dir),
+                sys.modules,
+                getattr(self, "_path_baseline", ()),
+                (str(Path(__file__).resolve().parent),),
+                extra_files=frames,
+            )
+        except Exception:  # noqa: BLE001
+            return []
+
+    def external_module_facts(self) -> dict:
+        """协议层（`wireproto`）的钩子：build 失败的错误也带上同一份事实（成功路径在 `build_result`）。
+        没有就回 `{}`——响应形状与没装这层观察时逐字节相同（加字段，不升协议版本）。"""
+        if (
+            self.sensitive_argv
+        ):  # 与失败路径（`diagnostic_response` 白名单剥掉它）同一口径：敏感运行一律不带
+            return {}
+        mods = getattr(self, "_external_modules", None)
+        return {"external_modules": list(mods)} if mods else {}
+
     def _probe_miss_facts(self) -> dict:
         """沙盒 cwd 下落空的探路调用（#1254）→ 错误 / 响应里的 `probe_misses`；一条都没有回 `{}`
         （响应形状与没装这层观察时逐字节相同）。是不是「脚本目录里找得到」由父进程判。"""
@@ -2733,6 +2772,8 @@ class Worker(wireproto.V1Handler):
             ),
             # 沙盒里落空的相对探路调用（#1254）：只在有记录时才有这个字段，响应形状不变
             **self._probe_miss_facts(),
+            # 脚本自己加进 sys.path 的项目外目录里加载过的本地模块（诊断包「脚本源码」用）：同样只在有时才有
+            **self.external_module_facts(),
             # 本次 build 实际用到的每一问（ADR 0099 §二）：写回的一次性重放按它严格重放；T08 起带上下文摘要，
             # 口令那一问只有 `secret: true`、没有答案（记账里本来就没有）
             "script_inputs": [

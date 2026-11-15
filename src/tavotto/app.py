@@ -93,6 +93,7 @@ from .engine import (
     deprepair as engine_deprepair,
     desktopproc as engine_desktopproc,
     diagdetail as engine_diagdetail,
+    diagexternal as engine_diagexternal,
     diagnostics as engine_diagnostics,
     diagnostics_frontend as engine_diagnostics_frontend,
     diagsend as engine_diagsend,
@@ -5783,6 +5784,16 @@ def _build_diagnostics_bundle(
         fix_audit=engine_fixsession.audit_tail(engine_fixsession.SESSIONS.ids_for(pid))
         if pid
         else None,
+        # 已收脚本运行时从项目外加载过的本地模块（持久记录，收集时在 diagdetail 里重新校验）
+        external_lookup=(
+            (
+                lambda rel, fd=(status or {}).get("figures_dir"): engine_diagexternal.modules_for(
+                    fd, rel
+                )
+            )
+            if (status or {}).get("figures_dir")
+            else None
+        ),
     )
     items = engine_diagdetail.collect(src, detail.options)
     # report.json 只算一次：超限时 `fit` 会按优先级截断重建几次 ZIP，不该每次都重新探测渲染环境
