@@ -913,13 +913,20 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
         releaseRebuild(owner, p.plan_id)
       }
     }
-    // 管理环境这一代的结局记到所属项目那格（不论此刻开着哪个项目）：自检没过 → 记下；装成功 → 撤掉
+    // 管理环境这一代的结局记到所属项目那格（不论此刻开着哪个项目）：自检没过 → 记下；装成功 → 撤掉。
+    // **只认本标签页自己发起的作业**：`engine.dependency` 事件不按项目过滤，别的标签页的作业 id 不在 `startedPlans` 里，
+    // 不知道它属于谁就不记——不能拿此刻开着的项目兜底（Codex #1934 P2）
     const kind = p.target_kind ?? seen?.target_kind
-    if (kind === 'tavotto_managed' && (p.state === 'done' || (p.state === 'failed' && p.code === 'dependency_worker_selftest_failed'))) {
-      const key = projectKey(startedPlans.get(p.plan_id) ?? currentProjectId())
+    const managedOutcome =
+      kind === 'tavotto_managed' &&
+      (p.state === 'done' || (p.state === 'failed' && p.code === 'dependency_worker_selftest_failed'))
+    const noteManagedOutcome = (owner: string | null) => {
+      const key = projectKey(owner)
       const { [key]: _was, ...rest } = get().managedSelftestFailed
       set({ managedSelftestFailed: p.state === 'done' ? rest : { ...rest, [key]: true } })
     }
+    const recordOwner = startedPlans.get(p.plan_id)
+    if (managedOutcome && recordOwner !== undefined) noteManagedOutcome(recordOwner)
     // 作业属于**别的项目**（本标签页起的、起完切走了）：进度只更新它那一格，此刻的界面与副作用
     // （刷环境 / 重排渲染 / 关框 / 错误文案）一个都不碰——那些说的都是此刻开着的项目（issue #590）
     // 同一条规则（`deliverToOwner`）：所属项目此刻开着（含 A → B → A 已经切回）就往下走、当场派发；不是就停放
@@ -942,6 +949,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     const { plan, jointPlan, progress } = get()
     const owned = p.plan_id === plan?.plan_id || p.plan_id === jointPlan?.plan_id || p.plan_id === progress?.plan_id
     if (!owned) return
+    // 没登记在 `startedPlans`、但确是这张卡此刻的作业（上面判过）：属于此刻开着的项目
+    if (managedOutcome && recordOwner === undefined) noteManagedOutcome(currentProjectId())
     set({ progress: keepTarget(p, progress) })
     if (p.state === 'done' || p.state === 'failed' || p.state === 'cancelled') {
       // 环境那半边变了（换了解释器 / 建了受管环境），刷一次环境状态

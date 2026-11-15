@@ -1556,6 +1556,17 @@ describe('安装进度', () => {
     expect(Object.keys(useDepRepairStore.getState().managedSelftestFailed)).toHaveLength(0)
   })
 
+  it('别的标签页的管理环境作业（plan_id 不是本标签页发起的）不记到此刻开着的项目上（Codex #1934 P2）', async () => {
+    await render()
+    await act(() => {
+      useDepRepairStore.getState().onProgress({
+        plan_id: 'plan-from-another-tab', state: 'failed', log: '', error: null,
+        code: 'dependency_worker_selftest_failed', target_kind: 'tavotto_managed',
+      } as never)
+    })
+    expect(Object.keys(useDepRepairStore.getState().managedSelftestFailed)).toHaveLength(0)
+  })
+
   it('装完之后把那次失败的渲染重新排上 —— 否则图永远不会自己出来', async () => {
     // Codex 评审 P1：失败那次的 wantPatches 仍等于当前 overrides，同步器
     // 会跳过它。少了这一步，「点一次 → 图出来」这条主路走不完，用户要
