@@ -710,3 +710,153 @@ def test_catalog_vendor_persists_only_firm_failures(client, gw, status, persiste
     ]
     rec = ai_providers.get(conn["id"])
     assert ("last_error" in rec) is persisted, (status, rec)
+
+
+# =========================================================================== 叠栈：runner 备选协议与自救回报落盘
+def _custom(pid="gw", **kw):
+    return _chat_rec(pid, **kw)
+
+
+def test_fallback_routes_convert_the_address_per_protocol():
+    rec = _custom()  # chat @ https://gw.example.org/v1
+    assert ai_providers.fallback_routes(rec, "m1") == [
+        ("openai-responses", "https://gw.example.org/v1"),
+        ("anthropic", "https://gw.example.org"),
+    ]
+    anth = _custom("a", agent="claude", protocol="anthropic", base_url="https://gw.example.org")
+    assert ai_providers.fallback_routes(anth, "m1") == [
+        ("openai-chat", "https://gw.example.org/v1"),
+        ("openai-responses", "https://gw.example.org/v1"),
+    ]
+    # 目录厂商 / 账号登录不给备选
+    catalog = _custom(
+        "d", agent="claude", protocol="anthropic", base_url="https://api.deepseek.com/anthropic"
+    )
+    assert ai_providers.fallback_routes(catalog, "m1") == []
+
+
+def test_spawn_overrides_pass_fallback_that_the_runner_accepts():
+    from tavotto.engine.agent_runner import runner_cli
+
+    rec = _custom()
+    args, _env = ai_providers.spawn_overrides("builtin", rec)
+    specs = [args[i + 1] for i, a in enumerate(args) if a == "--fallback"]
+    assert specs == [
+        "openai-responses=https://gw.example.org/v1",
+        "anthropic=https://gw.example.org",
+    ]
+    # runner 的合规校验（同源、协议名、不重复）认这份
+    assert (
+        runner_cli._parse_fallbacks(specs, "openai-chat", "https://gw.example.org/v1") is not None
+    )
+    cat = _custom(
+        "d", agent="claude", protocol="anthropic", base_url="https://api.deepseek.com/anthropic"
+    )
+    assert "--fallback" not in ai_providers.spawn_overrides("builtin", cat)[0]
+
+
+def test_runtime_report_switches_protocol_and_records_fields():
+    rec = _custom(
+        "r",
+        agent="codex",
+        protocol="openai-responses",
+        last_error="endpoint_unusable",
+        probe_reason="wrong_protocol",
+    )
+    out = ai_providers.apply_runtime_report(
+        "r",
+        model="m1",
+        report={
+            "wire_used": "anthropic",
+            "wire_switched_from": "openai-responses",
+            "dropped_fields": ["include", "bogus"],
+            "token_field": "",
+        },
+    )
+    assert out["protocol"] == "anthropic" and out["agent"] == "claude"
+    assert out["base_url"] == "https://gw.example.org"
+    assert out["protocol_ok"] == {
+        "base_url": "https://gw.example.org",
+        "model": "m1",
+        "protocol": "anthropic",
+        "dropped_fields": ["include"],
+    }
+    assert "last_error" not in out and "probe_reason" not in out
+    assert rec["id"] == "r"
+
+
+def test_runtime_report_records_chat_token_field_without_switching():
+    _custom("c")
+    out = ai_providers.apply_runtime_report(
+        "c", model="m1", report={"wire_used": "openai-chat", "token_field": "max_completion_tokens"}
+    )
+    assert out["protocol"] == "openai-chat"
+    assert out["protocol_ok"]["token_field"] == "max_completion_tokens"
+    # 下次起跑就带上
+    args, _ = ai_providers.spawn_overrides("builtin", ai_providers.get("c"))
+    assert args[args.index("--max-tokens-field") + 1] == "max_completion_tokens"
+
+
+def test_runtime_report_is_ignored_when_it_cannot_be_trusted():
+    _custom("c")
+    assert ai_providers.apply_runtime_report("c", model="m1", report={"wire_used": ""}) is None
+    assert (
+        ai_providers.apply_runtime_report("c", model="other", report={"wire_used": "anthropic"})
+        is None
+    )
+    assert (
+        ai_providers.apply_runtime_report("nope", model="m1", report={"wire_used": "anthropic"})
+        is None
+    )
+    assert ai_providers.get("c")["protocol"] == "openai-chat"
+    # 目录厂商不传备选，runner 报来的换协议不信
+    _custom(
+        "d", agent="claude", protocol="anthropic", base_url="https://api.deepseek.com/anthropic"
+    )
+    assert (
+        ai_providers.apply_runtime_report("d", model="m1", report={"wire_used": "openai-chat"})
+        is None
+    )
+
+
+def test_builtin_classify_event_keeps_the_runner_report():
+    agent = ai_agents.get_agent("builtin")
+    st: dict = {}
+    line = json.dumps(
+        {
+            "type": "done",
+            "ok": True,
+            "reason": "completed",
+            "wire_used": "openai-chat",
+            "wire_switched_from": "openai-responses",
+            "dropped_fields": [],
+            "token_field": "max_tokens",
+        }
+    )
+    agent.classify_event(line, st)
+    assert st["runner_report"]["wire_used"] == "openai-chat"
+
+
+def test_fix_path_builds_fallbacks_and_persists_the_report():
+    from tavotto.engine import fixsession
+
+    rec = _custom("fx", protocol="openai-responses")
+    conn = ai_providers.builtin_conn(rec)
+    assert conn["provider_id"] == "fx" and conn["fallbacks"]
+    model, _red = fixsession.build_model(conn)
+    assert [w.name for w, _u in model._routes] == ["openai-responses", "openai-chat", "anthropic"]
+    wrapped = fixsession._FinishAware(model, __import__("threading").Event())
+    assert wrapped.report() == model.report()
+    s = fixsession.FixSession(
+        id="x", scope="p", script="a.py", prep_session_id="s", endpoint=("fx", "m1")
+    )
+    fixsession.FixSessions._persist_runtime_report(
+        s,
+        {
+            "wire_used": "openai-chat",
+            "wire_switched_from": "openai-responses",
+            "token_field": "max_tokens",
+        },
+    )
+    assert ai_providers.get("fx")["protocol"] == "openai-chat"
+    assert ai_providers.get("fx")["agent"] == "codex"

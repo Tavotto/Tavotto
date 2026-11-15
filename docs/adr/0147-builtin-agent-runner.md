@@ -167,7 +167,7 @@ Conversion output recovery remains within the existing budget: create/append sho
 
 同时核对 `OpenAIChatWire`：多轮工具调用、`reasoning_content` 回放、长度字段、`finish_reason`、usage（含 DeepSeek 的 `prompt_cache_hit_tokens`）逐条对照官方 / DeepSeek 文档写进类注释；
 无工具调用且无文字的续写轮 `content` 改为 `""`（`null` 会被官方端点拒收）。**真服务验收见 `docs/implementation/agent-external-corpus-2026-10-25/PROTOCOL-ROLLOUT.md` 覆盖表，未跑通之前不得写成已验证。**
-本文「`openai-chat` 是 runner 层协议，应用连接只开放 anthropic 与 openai-responses」一句不在本修订改动范围。看护 `tests/test_agent_runner_fallback.py`。
+本文「`openai-chat` 是 runner 层协议，应用连接只开放 anthropic 与 openai-responses」一句已被下一节修订取代。看护 `tests/test_agent_runner_fallback.py`。
 
 ### 修订：自定义连接开放 openai-chat 与保存时探测协议（2026-11-15，1.0 豁免已给）
 

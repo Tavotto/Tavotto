@@ -32,7 +32,7 @@ from . import cli_failure, exectrace, fixtools, folderrepair, pool
 from .agent_runner import loop
 from .agent_runner.redact import NO_REDACTION, Redactor
 from .agent_runner.tools import Limits, RunEnvelope, Tool
-from .agent_runner.wires import WIRES, AnthropicWire, Turn
+from .agent_runner.wires import WIRES, AnthropicWire, OpenAIChatWire, Turn
 from .fixtools.audit import AuditLog
 from .fixtools.observe import read_run_report
 
@@ -296,6 +296,10 @@ class _FinishAware:
     def release_recovery_state(self, history) -> int:
         return getattr(self.inner, "release_recovery_state", lambda history: 0)(history)
 
+    def report(self) -> dict:
+        # 内层模型的自救回报（换协议 / 字段降级，见 `HttpModel.report`）原样交出，`loop.run` 写进 done 事件
+        return getattr(self.inner, "report", lambda: {})()
+
 
 @dataclass
 class _Pending:
@@ -331,6 +335,8 @@ class FixSession:
     scope: str  # 项目 id
     script: str
     prep_session_id: str
+    #: 这次修复用的连接 `(provider id, 型号)`：结束后把 runner 的自救回报落进这条记录（没有 = 不落）
+    endpoint: tuple[str, str] | None = None
     state: str = STATE_RUNNING
     card: dict | None = None
     outcome: str | None = None
@@ -544,6 +550,7 @@ class FixSessions:
         script_path: Path | None = None,
         background: bool = True,
         locale: object = None,
+        endpoint: tuple[str, str] | None = None,
     ) -> FixSession:
         with self._lock:
             cur = self.active()
@@ -556,6 +563,7 @@ class FixSessions:
                 scope=scope,
                 script=script,
                 prep_session_id=prep_session_id,
+                endpoint=endpoint,
                 token=secrets.token_urlsafe(32) if cli is not None else "",
                 tool_timeout=min(TOOL_TIMEOUT, (limits or FIX_LIMITS).max_seconds),
                 deadline=time.monotonic() + (limits or FIX_LIMITS).max_seconds,
@@ -654,7 +662,20 @@ class FixSessions:
             LOG.exception("fix session crashed")
             done.setdefault("ok", False)
             done.setdefault("reason", "internal")
+        self._persist_runtime_report(s, done)
         self._settle(s, str(done.get("reason") or "internal"))
+
+    @staticmethod
+    def _persist_runtime_report(s: FixSession, done: dict) -> None:
+        """循环结束后（不在执行中途）把 runner 自救回报落进连接记录：换协议 / 长度字段 / 被剥字段下次直接用。失败不影响修复结局。"""
+        if s.endpoint is None or not done.get("wire_used"):
+            return
+        try:
+            from . import ai_providers
+
+            ai_providers.apply_runtime_report(s.endpoint[0], model=s.endpoint[1], report=done)
+        except Exception:  # noqa: BLE001
+            LOG.warning("修复会话的自救回报落盘失败", exc_info=True)
 
     def _settle(self, s: FixSession, failed_reason: str) -> None:
         """会话收尾：`finish` 交来了结论就采用，取消就是 cancelled，否则 failed（原因码是闭集，界面按它选一句话）。"""
@@ -1185,18 +1206,24 @@ def cli_launcher(
     return build
 
 
+def _wire_for(name: str, conn: dict):
+    """协议名 → Wire 对象（账号登录的 anthropic 只发 Bearer；chat 带探测 / 目录给的长度字段）。"""
+    if name == "anthropic" and conn.get("auth") == "bearer":
+        return AnthropicWire(bearer_only=True)
+    if name == "openai-chat":
+        return OpenAIChatWire(token_field=conn.get("token_field") or "max_tokens")
+    return WIRES[name]
+
+
 def build_model(conn: dict):
-    """连接 → `HttpModel`。密钥只放进模型对象（`repr` 不含），返回的 `Redactor` 用于过滤卡片里的回显。"""
-    wire = (
-        AnthropicWire(bearer_only=True)
-        if conn.get("auth") == "bearer" and conn["wire"] == "anthropic"
-        else WIRES[conn["wire"]]
-    )
+    """连接 → `HttpModel`。密钥只放进模型对象（`repr` 不含），返回的 `Redactor` 用于过滤卡片里的回显。
+    自填地址带备选协议（`conn["fallbacks"]`，与改图的 `--fallback` 同一份）：第一轮「协议不对」时换。"""
     model = loop.HttpModel(
-        wire,
+        _wire_for(conn["wire"], conn),
         base_url=conn["base_url"],
         api_key=conn["api_key"],
         model=conn["model"],
+        fallbacks=[(_wire_for(w, conn), u) for w, u in conn.get("fallbacks") or ()],
     )
     return model, Redactor(conn["api_key"])
 

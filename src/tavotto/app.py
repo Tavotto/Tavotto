@@ -10919,6 +10919,7 @@ def api_ai_fix():
             project_root=ctx.path,
             model=model,
             cli=cli,
+            endpoint=(conn["provider_id"], conn["model"]) if conn is not None else None,
             report=lambda: _session_report(ctx, sess),
             redactor=redactor,
             audit=engine_fixsession.AuditLog(),

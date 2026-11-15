@@ -2331,6 +2331,17 @@ def run(
                         sess["transcript"].append({"kind": kind, "text": text})
                     emit("ai.delta", {"session": sid, "kind": kind, "text": text})
             _await_exit(sess)
+            if agent == ai_agents.BUILTIN_ID and endpoint and st.get("runner_report"):
+                # 进程已退出：把 runner 的自救回报（换协议 / 长度字段 / 被剥字段）落进记录，下次直接用；失败不影响会话
+                try:
+                    ai_providers.apply_runtime_report(
+                        str(endpoint.get("id") or ""),
+                        model=str(model or endpoint.get("default_model") or ""),
+                        report=st["runner_report"],
+                    )
+                    invalidate_capabilities()
+                except Exception:  # noqa: BLE001
+                    LOG.warning("runner 自救回报落盘失败", exc_info=True)
             if st.get("runner_error"):  # 内置执行器与 Codex / Claude 适配器都可能写
                 sess["runner_error"] = st["runner_error"]
                 sess["runner_detail"] = st.get("runner_detail")

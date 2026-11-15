@@ -615,6 +615,10 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
     每协议结论是闭集 `ok | unauthorized | quota | no_model | wrong_protocol | network | web_page | bad_reply`；**响应体原文只在 `classify` 里被读，不进返回值 / 日志 / 诊断包**。地址按协议换算：OpenAI 系先试原样再试补 `/v1`，Anthropic 系先试原样再试去掉 `/v1`；换协议时记录的 `base_url` 跟着换。
     顺序与「第一个通过就停」：Claude 型号 → anthropic；api.openai.com 的 gpt / o 系列 → responses；其余 → chat（与 magpie `usable()` 一致）；用户明确给的协议先试，通过就尊重。预算：每条 ≤ 15 s、总 ≤ 30 s；同主机传输层失败就不再试别的。全是网络失败 = 没结论：记录不改、不记错误。
     目录里的已知厂商只核自己那一种协议（不换协议、不换地址），失败码同上。
+  - **备选协议与自救回报（叠在 runner 的 `--fallback` 之上）**：自填地址（不在厂商目录里；目录厂商与账号登录不给）的 `builtin_conn` 带 `fallbacks`（`ai_providers.fallback_routes`：其余两种协议、按协议换算地址——OpenAI 系带 `/v1`、Anthropic 系去 `/v1`、同 scheme / 主机 / 端口，顺序同探测），
+    改图经 `_builtin_overrides` 传 `--fallback WIRE=BASE_URL`（可重复），AI 修复经 `fixsession.build_model` 给 `HttpModel(fallbacks=…)`。运行**结束后**（不在执行中途）读 `done` 事件的 `wire_used` / `wire_switched_from` / `dropped_fields` / `token_field`：
+    改图由 `BuiltinAgent.classify_event` 记进会话状态、`ai_bridge` 在进程退出后调 `ai_providers.apply_runtime_report`；AI 修复由 `FixSessions._persist_runtime_report`（`_FinishAware.report()` 把内层模型的回报交出）。
+    `wire_used` ≠ 记录的协议 → 改 `protocol` / `agent` / `base_url` / `protocol_ok`；`token_field` 写进 `protocol_ok`（下次起跑带 `--max-tokens-field`）；`dropped_fields` 只记进 `protocol_ok`（runner 暂无「起跑即不发」参数）；有成功回复就清 `last_error` / `probe_reason`。目录厂商报来的换协议不信。
   - **出站**：探测请求发往用户连接的那个服务商地址（与正式任务同一个、同一套 `wires.post_json`），带用户 Key；隐私说明里写明「保存连接时会发一条很短的测试请求」。
   - **接口**：`POST /api/ai/connections` 的 `wire` 可选（缺省 / `"auto"` = 探测；`anthropic | openai-responses | openai-chat` 也探测，没通过就换探测到能通的），返回 `{ok, connection, probe}`；
     `POST /api/ai/connections/<id>/check` 重新探测，返回同形状（订阅 / 账号登录 / 不存在 → 404 `connection_not_found`）。`probe` = `{checked, protocol, requested, switched, reason, reasons}`；连接视图多 `protocol` / `protocol_checked` / `error_reason`。
