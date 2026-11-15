@@ -234,7 +234,13 @@ def _clean_version(raw: object) -> dict | None:
     v, created = raw.get("v"), raw.get("created_at")
     if isinstance(v, bool) or not isinstance(v, int) or v < 1 or not isinstance(created, str):
         return None
-    return {"v": v, "created_at": created[:40], "elements": clean_elements(raw.get("elements"))}
+    frame = raw.get("frame") if raw.get("frame") in ("page", "figure") else "figure"
+    return {
+        "v": v,
+        "created_at": created[:40],
+        "frame": frame,
+        "elements": clean_elements(raw.get("elements")),
+    }
 
 
 def _int(value: object, default: int = 0) -> int:
@@ -403,7 +409,7 @@ def summary(rec: dict) -> dict:
 def detail(rec: dict) -> dict:
     out = summary(rec)
     out["versions"] = [
-        {"v": v["v"], "created_at": v["created_at"], "elements": v["elements"]}
+        {"v": v["v"], "created_at": v["created_at"], "frame": v["frame"], "elements": v["elements"]}
         for v in sorted(rec["versions"], key=lambda x: x["v"])
     ]
     out["comments"] = rec["comments"]
@@ -522,6 +528,8 @@ def add_version(
     *,
     expires_ts: float,
     note: str | None = None,
+    frame: str = "figure",
+    target_id: str | None = None,
 ) -> dict | None:
     """一个版本 complete 之后：存元素表与快照、更新最新版本号与到期时间；首版同时把记录转正（`delivered`）。"""
     with _LOCK:
@@ -533,7 +541,12 @@ def add_version(
         now = _now()
         rec["versions"] = [x for x in rec["versions"] if x["v"] != v]
         rec["versions"].append(
-            {"v": v, "created_at": _iso(now), "elements": clean_elements(elements)}
+            {
+                "v": v,
+                "created_at": _iso(now),
+                "frame": frame if frame in ("page", "figure") else "figure",
+                "elements": clean_elements(elements),
+            }
         )
         rec["versions"] = sorted(rec["versions"], key=lambda x: x["v"])[-MAX_VERSIONS:]
         rec["latest_version"] = max(rec["latest_version"], v)
@@ -542,6 +555,8 @@ def add_version(
         rec["delivered"] = True
         if note is not None:
             rec["note"] = note[:NOTE_MAX]
+        if target_id is not None and _TARGET_ID.match(target_id):
+            rec["target_id"] = target_id
         if not saved:
             LOG.warning("外部审阅: 快照写入失败")
         _save_locked(data)

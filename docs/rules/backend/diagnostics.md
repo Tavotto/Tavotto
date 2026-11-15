@@ -27,6 +27,7 @@ order: 280
 - **设备签名**：Ed25519（PyNaCl，延后 import）私钥 32 字节 0600 存 `data_dir()/review/device.key`；签名消息 `tavotto-review-v1\nMETHOD\nPATH(含 query)\nTS\nsha256(body)`，签的就是发出去的那份字节。写不下去密钥 = `client_error`，**不用一次性密钥**（那等于每次新设备、绕额度）。
 - **逐次授权与零网络**：上传只由 `start_share` / `start_update`（一次点击）触发；失败后不自己重试。**没有未到期且未停止的记录就一次网络都不发**（后台轮询每 30 分钟，`/api/review/refresh` 手动）。
 - **重试幂等**：`client_share_id` / `client_version_id` 与渲染好的 PNG、元素表跟着失败的尝试留在内存（`_REUSE`，指纹 = 模式 / 目标 / 标题 / 说明 / 出图描述），内容没变的重试逐字节相同、不重复扣额度；init 一拿到管理令牌就写本机记录（`delivered=False`，只留 2 小时、不出现在列表、不被轮询），complete 之后转正。
+- **直传存储**：review-api 签发的是 COS 的 `POST` multipart（签名在 `fields`、url 无查询串），也认 `PUT`；主机只认后缀 `UPLOAD_HOST_SUFFIXES`（`.myqcloud.com` / `.tcb.qcloud.la` / `.tcloudbaseapp.com`，环境开通后收紧）+ 回环同源。版本记录带 `frame`（排版 `page` = 快照只含页面范围，单图 `figure`）；update 可带 `target` 改指别的图 / 排版（同 kind）。
 - **分享记录按项目分开**：记录带发起时的项目 id（`ProjectCtx.id`，没开项目 = 空串），`/api/review/for` 与更新都按它匹配——图 id / 排版 id 在不同项目里会重名，不分开就会把 B 项目的画面推到 A 的链接上。
 - **位图素材不认 ppi**（`scope=original` 保源像素网格）：降分辨率重出仍是同样尺寸就直接 `too_large`，不白出五次图。
 - **失败码闭集** `reviewshare.FAILURES`（与前端 `review.failure.*` 对拍）：服务端错误体是嵌套的 `{"error": {"code"}}`；`quota_*` / `share_gone` / `too_large` / `rate_limited` 直通（**只认服务端明说的 code**：裸 404 多半是网关，归 `server`，不标 revoked、停止分享也不当成功），`bad_signature` / `clock_skew` / `invalid` 一律 `client_error`，5xx / 坏响应 `server`，传输失败（含 TLS）`network`。

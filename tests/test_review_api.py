@@ -202,6 +202,7 @@ def test_end_to_end_share_update_reply_resolve_revoke_delete(client, on):
     assert client.post(f"/api/review/shares/{sid}/read").get_json() == {"ok": True, "unread": 0}
     assert client.get("/api/review/unread").get_json() == {"total": 0, "latest": None}
 
+    assert [x["share_id"] for x in client.get("/api/review/shares").get_json()["shares"]] == [sid]
     # 删除：没停止分享前 409；停止后成功，意见副本在删除前仍可读
     assert client.delete(f"/api/review/shares/{sid}").status_code == 409
     assert client.post("/api/review/revoke", json={"share_id": sid}).get_json() == {"ok": True}

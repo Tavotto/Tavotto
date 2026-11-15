@@ -52,9 +52,10 @@ REVIEW_HOSTS: frozenset[str] = frozenset({"review.tavotto.cn"})
 PRODUCTION_ENDPOINT = "https://review.tavotto.cn"
 
 #: 直传存储地址的主机白名单（COS 桶域名 + CloudBase 存储域名）；回环开发模式另允许与端点同源。
+UPLOAD_HOST_SUFFIXES: tuple[str, ...] = (".myqcloud.com", ".tcb.qcloud.la", ".tcloudbaseapp.com")
+#: 开通 CloudBase 环境、确认真实存储主机后再收紧到具体桶域名
 UPLOAD_HOST_PATTERNS: tuple[re.Pattern[str], ...] = (
-    diagsend._COS_HOST,
-    re.compile(r"^[a-z0-9][a-z0-9-]{0,62}\.(?:tcb\.qcloud\.la|tcloudbaseapp\.com)$"),
+    re.compile(r"^[a-z0-9][a-z0-9-]{0,62}(?:\.[a-z0-9-]{1,63}){1,4}$"),
 )
 
 # ---------------------------------------------------------------------------
@@ -751,9 +752,16 @@ def start_update(
     if rec["revoked"] or reviewinbox.is_expired(rec):
         raise ReviewError("share_gone", 409)
     note = body.get("note")
+    target = {"kind": rec["kind"], "id": rec["target_id"]}
+    if (
+        body.get("target") is not None
+    ):  # 把这张图的画面更新到别的链接：成功后本机记录改指新的 target
+        target = _clean_target(body["target"])
+        if target["kind"] != rec["kind"]:
+            raise ReviewError("target_invalid", 422)
     spec = _Spec(
         "update",
-        {"kind": rec["kind"], "id": rec["target_id"]},
+        target,
         rec["title"],
         rec["note"]
         if note is None
@@ -893,6 +901,8 @@ def _flow(sess: Session) -> None:
         art.png,
         expires_ts=exp,
         note=spec.note if spec.mode == "update" else None,
+        frame="page" if spec.target["kind"] == "layout" else "figure",
+        target_id=spec.target["id"] if spec.mode == "update" else None,
     )
 
 
@@ -927,7 +937,11 @@ def _upload_spec(raw: object, target: diagsend.Target) -> dict:
     if target.loopback:
         if host != target.host or (port or 443) != target.port:
             raise bad
-    elif not any(p.match(host) for p in UPLOAD_HOST_PATTERNS) or port not in (None, 443):
+    elif (
+        not host.endswith(UPLOAD_HOST_SUFFIXES)
+        or not any(p.match(host) for p in UPLOAD_HOST_PATTERNS)
+        or port not in (None, 443)
+    ):
         raise bad
     headers: dict[str, str] = {}
     raw_headers = raw.get("headers")

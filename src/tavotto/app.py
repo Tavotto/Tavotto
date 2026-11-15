@@ -6260,6 +6260,15 @@ def api_review_for():
     return _review_json({"share": engine_reviewinbox.summary(rec) if rec else None})
 
 
+@app.get("/api/review/shares")
+def api_review_list():
+    if not engine_reviewshare.enabled():
+        return _review_off()
+    return _review_json(
+        {"shares": [engine_reviewinbox.summary(r) for r in engine_reviewinbox.listed()]}
+    )
+
+
 @app.post("/api/review/share")
 def api_review_share():
     try:

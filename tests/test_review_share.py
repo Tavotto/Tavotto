@@ -434,6 +434,24 @@ def test_upload_spec_validation_rejects_unsafe_shapes(spec):
     assert e.value.code == "client_error"
 
 
+def test_upload_spec_accepts_cloudbase_cos_post_with_signed_fields():
+    target = reviewshare.diagsend.Target("review.tavotto.cn", 443, False)
+    spec = reviewshare._upload_spec(
+        {
+            "url": "https://bkt-1234567.cos.ap-shanghai.myqcloud.com/",
+            "method": "POST",
+            "headers": {},
+            "fields": {"key": "k", "Signature": "s", "x-cos-security-token": "t"},
+        },
+        target,
+    )
+    assert spec["method"] == "POST" and len(spec["fields"]) == 3
+    with pytest.raises(diagsend._Failure):
+        reviewshare._upload_spec(
+            {"url": "https://x.myqcloud.com.evil.example/", "method": "POST", "fields": {}}, target
+        )
+
+
 def test_upload_spec_accepts_a_presigned_cos_put():
     target = reviewshare.diagsend.Target("review.tavotto.cn", 443, False)
     spec = reviewshare._upload_spec(
@@ -959,3 +977,30 @@ def test_layout_flow_uses_layout_kind(on, renders):
     assert st["share"]["kind"] == "layout" and st["share"]["target_id"] == "doc_1"
     assert json.loads(on.calls[0]["body"])["kind"] == "layout"
     assert renders["calls"][0][0] == {"kind": "layout", "id": "doc_1"}
+
+
+def test_update_can_retarget_and_versions_carry_their_frame(on, renders):
+    sid = share_ok()["share"]["share_id"]
+    assert reviewinbox.detail(reviewinbox.get(sid))["versions"][0]["frame"] == "figure"
+    reviewshare.dismiss()
+    st = update_ok(sid, target={"kind": "figure", "id": "fig_b"})
+    assert st["share"]["target_id"] == "fig_b"
+    assert reviewinbox.for_target("figure", "fig_b")["share_id"] == sid
+    assert reviewinbox.for_target("figure", "fig_a") is None
+    reviewshare.dismiss()
+    with pytest.raises(reviewshare.ReviewError) as e:
+        reviewshare.start_update(
+            {"share_id": sid, "render": RENDER, "target": {"kind": "layout", "id": "d"}}
+        )
+    assert e.value.status == 422
+
+
+def test_layout_versions_are_page_framed(on, renders):
+    st = share_ok(
+        target={"kind": "layout", "id": "doc_1"},
+        render={"canvas": {"page_w_mm": 100, "page_h_mm": 100, "objects": []}},
+    )
+    assert (
+        reviewinbox.detail(reviewinbox.get(st["share"]["share_id"]))["versions"][0]["frame"]
+        == "page"
+    )
