@@ -2500,6 +2500,8 @@
     "requirements": "Journal requirements",
     "unspecified": "Not specified by the journal",
     "hasRequirement": "Has a requirement",
+    "strengthRequired": "Required",
+    "strengthRecommended": "Recommended",
     "unset": "Does not apply to this journal",
     "noJournal": "No journal",
     "cleared": "No longer checking against a journal",
