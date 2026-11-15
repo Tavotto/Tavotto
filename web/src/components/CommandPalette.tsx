@@ -55,6 +55,7 @@ import { PATH_COMMANDS } from '@/store/pathActions'
 import { APPEARANCE_COMMANDS } from '@/store/appearanceActions'
 import { PATHFINDER_COMMANDS } from '@/store/pathfinderActions'
 import { GROUP_COMMANDS } from '@/store/groupActions'
+import { canExplodeSvg, explodeSvgPanel } from '@/store/svgImportActions'
 import { TRANSFORM_COMMANDS } from '@/store/transformActions'
 import { PATH_COMMAND_ICONS } from './pathCommandIcons'
 import { rankCommands, type PaletteSection } from '@/lib/commandRanking'
@@ -212,6 +213,16 @@ const COMMANDS: Command[] = [
     available: c.available,
     run: c.run,
   })),
+  // 静态 SVG 图拆成可编辑对象（ADR 0185 M5）：判据 `canExplodeSvg`，与右键菜单同一个
+  {
+    id: 'explode-svg',
+    needsSelection: true,
+    available: () => {
+      const ids = useSelectionStore.getState().ids
+      return ids.length === 1 && canExplodeSvg(useDocumentStore.getState().doc.objects.find((o) => o.id === ids[0]))
+    },
+    run: () => void explodeSvgPanel(useSelectionStore.getState().ids[0]),
+  },
   // 转为路径（ADR 0185）：判据与右键菜单同一个（`canConvertToPath`，选区里每个都能转才出现），写入只有 `convertToPath`
   {
     id: 'convert-to-path',

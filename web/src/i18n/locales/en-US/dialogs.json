@@ -724,6 +724,10 @@
       "reflect-vertical": {
         "keywords": "reflect mirror flip vertical",
         "label": "Reflect vertically"
+      },
+      "explode-svg": {
+        "keywords": "explode svg editable vector",
+        "label": "Make editable"
       }
     },
     "listLabel": "Commands",

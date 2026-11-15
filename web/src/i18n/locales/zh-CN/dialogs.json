@@ -712,6 +712,10 @@
       "reflect-vertical": {
         "keywords": "reflect mirror flip vertical czjx 垂直镜像 翻转",
         "label": "垂直镜像"
+      },
+      "explode-svg": {
+        "keywords": "explode svg editable vector cckbj 拆成 可编辑 矢量 SVG",
+        "label": "拆成可编辑对象"
       }
     },
     "listLabel": "命令",
