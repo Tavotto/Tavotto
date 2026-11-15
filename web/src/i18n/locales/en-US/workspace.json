@@ -133,6 +133,7 @@
     "unsupportedType": "“{{name}}” can’t go on the canvas. Images, scripts and project packages can.",
     "unsupportedImage": "Images in the format of “{{name}}” can’t go on the canvas yet. PNG, JPG, TIFF, PDF and SVG can.",
     "packageFailed": "“{{name}}” couldn’t be opened as a project package. {{reason}}",
+    "packageTooNew": "“{{name}}” is from a newer {{product}} and this build can’t open it.",
     "packageOnly_one": "Opened the project package “{{name}}”. {{count}} other file wasn’t handled this time.",
     "packageOnly_other": "Opened the project package “{{name}}”. {{count}} other files weren’t handled this time."
   },
@@ -921,6 +922,7 @@
     "packageDrift_other": "Project package opened. {{count}} assets differ from the packaged copies. Check the assets.",
     "packageFailed": "Couldn’t package. {{error}}",
     "packageOpenFailed": "Couldn’t open the project package. {{error}}",
+    "packageTooNew": "This project package is from a newer {{product}} and this build can’t open it.",
     "packageOpened": "Project package opened ({{createdAt}}); every asset is present",
     "packagedIncomplete_one": "Created project package {{name}} with {{count}} missing asset. Add the missing asset before restoring.",
     "packagedIncomplete_other": "Created project package {{name}} with {{count}} missing assets. Add the missing assets before restoring.",

@@ -2,7 +2,7 @@ import { figureSnapshotFor } from './figureSnapshot'
 import { artifactRequestFields } from './artifactValidation'
 import type { ExportObject } from './api'
 import type { CanvasObject } from '@/types/document'
-import { panelRotation, shapeStrokeOn } from '@/types/document'
+import { isKnownObject, panelRotation, shapeStrokeOn } from '@/types/document'
 import { DEFAULT_LINE_CAP, defaultLineJoin, strokeOpacityOf } from './shapeGeometry'
 
 /**
@@ -13,7 +13,14 @@ import { DEFAULT_LINE_CAP, defaultLineJoin, strokeOpacityOf } from './shapeGeome
  * - **隐藏对象不发**，locked 照常导出（锁只挡编辑，不改变成图）。
  */
 export function toExportObjects(objects: CanvasObject[]): ExportObject[] {
-  return objects.filter((o) => !o.hidden).map(toExportObject)
+  // 不认识的类型（更新的构建写进来的）不进载荷：`toExportObject` 对它回 undefined，序列化成 null 后被后端
+  // 静默丢掉。界面在导出前用 `newerObjectCount` 拦下，这里只保证载荷里没有空洞
+  return objects.filter((o) => !o.hidden && isKnownObject(o)).map(toExportObject)
+}
+
+/** 会进这次导出、但本构建画不出来的对象个数（看得见且类型不认识，`isKnownObject`）。非 0 时导出不许开始 */
+export function newerObjectCount(objects: readonly CanvasObject[]): number {
+  return objects.filter((o) => !o.hidden && !isKnownObject(o)).length
 }
 
 function toExportObject(o: CanvasObject): ExportObject {
