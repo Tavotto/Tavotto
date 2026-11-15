@@ -6,6 +6,7 @@ import { ProgressBar } from '@/components/ui/ProgressBar'
 import type { AiDataOverview } from '@/lib/api'
 import { fileRows, sameTable } from '@/lib/dataFigure'
 import { useFormatMessage } from '@/i18n/react'
+import '@/lib/dataFigureHost' // 注册宿主（刷新 / 打开并运行 / 项目可写性），见该文件头
 import { overviewKeyOf, useDataFigureStore } from '@/store/dataFigureStore'
 import { useProjectStore } from '@/store/projectStore'
 import { AskScene } from './AskScene'
@@ -91,7 +92,7 @@ export function DataPage() {
               {selected.sheet ? <span className="text-ink-3"> · {selected.sheet}</span> : null}
             </h2>
             {ovState?.status === 'error' && !ov ? (
-              <Notice tone="neutral" title={fm(ovState.error)} action={<Button variant="ghost" size="sm" onClick={() => st().select(selected)}>{t('dataFigureV2.problem.retry')}</Button>} />
+              <Notice tone="neutral" title={ovState.error ? fm(ovState.error) : t('dataFigureV2.preview.failed')} action={<Button variant="ghost" size="sm" onClick={() => st().select(selected)}>{t('dataFigureV2.problem.retry')}</Button>} />
             ) : !ov ? (
               <ProgressBar pct={null} label={t('dataFigureV2.working.reading')} className="w-56" />
             ) : (

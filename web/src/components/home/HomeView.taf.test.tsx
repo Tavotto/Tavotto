@@ -1,9 +1,10 @@
 /**
  * 主页 × 实验开关 `ai.taf.enabled`（「从数据到图」）：
- *  - 开关关着：现有用户看到的一切逐字不变——两版的 DOM 与录自合入前主干的快照逐字相同（`__snapshots__/home-*.html`）；
+ *  - 开关关着：现有用户看到的一切逐字不变——两版的 DOM 与合入前主干上取的摘要逐字相同；
  *  - 开关开着：老手版 = 品牌标 + 并排两张入口卡 + 灰字示例链接，没有叙事句；左卡点击选数据文件夹并进数据页（只做点击）；
  *  - 开关怎么拿：先按本机记的上一次画（不闪、不等后端），后台问一次、不一样才换；读不到当没变。
  */
+import { createHash } from 'node:crypto'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -92,9 +93,12 @@ afterEach(() => {
 })
 
 describe('开关关着：现有用户看到的一切逐字不变', () => {
-  it.each([['returning', 'completed'], ['newcomer', 'not_started']] as const)('%s 版：DOM 与合入前主干的快照逐字相同', async (name, status) => {
+  // 两个摘要是在**合入前的主干**（本 PR 动 HomeView / ProjectPicker 之前）上渲染同样的屏取的；开关关着时本 PR 的渲染必须与它逐字相同。
+  // 摘要而不是整段 HTML 快照：src 下不放 .html（`pagePtLens` 的扩展名门禁），整段又太长；对不上时先看是不是有意改了首页。
+  const BASE_DIGEST = { returning: '3c3be2879f5551c4', newcomer: '94356a7f49e3dbbe' } as const
+  it.each([['returning', 'completed'], ['newcomer', 'not_started']] as const)('%s 版：DOM 与合入前主干逐字相同（摘要）', async (name, status) => {
     await mount(status, false)
-    await expect(html()).toMatchFileSnapshot(`./__snapshots__/home-flag-off-${name}.html`)
+    expect(createHash('sha256').update(html()).digest('hex').slice(0, 16)).toBe(BASE_DIGEST[name])
   })
 
   it('没有入口卡、叙事句与示例脚本按钮都在', async () => {

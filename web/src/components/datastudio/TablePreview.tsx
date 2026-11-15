@@ -93,11 +93,13 @@ export function TablePreview({
           <thead>
             <tr>
               {ov.fields.map((f, i) => (
-                <th key={i} scope="col" className={cn('min-w-24 px-4 pb-1.5 pt-2.5 font-medium', numericCols[i] ? 'text-right' : 'text-left')}>
-                  <span className="block max-w-56 truncate">{f.name}</span>
-                  <span className="block text-xs font-normal text-ink-3">
-                    {f.id_like ? t('dataFigureV2.preview.type.id') : t(`dataFigureV2.preview.type.${KIND_KEY[f.kind] ?? 'text'}`)}
-                  </span>
+                <th key={i} scope="col" className="min-w-24 px-4 pb-1.5 pt-2.5 font-medium">
+                  <div className={cn('flex flex-col', numericCols[i] ? 'items-end text-right' : 'items-start text-left')}>
+                    <span className="max-w-56 truncate">{f.name}</span>
+                    <span className="text-xs font-normal text-ink-3">
+                      {f.id_like ? t('dataFigureV2.preview.type.id') : t(`dataFigureV2.preview.type.${KIND_KEY[f.kind] ?? 'text'}`)}
+                    </span>
+                  </div>
                 </th>
               ))}
             </tr>

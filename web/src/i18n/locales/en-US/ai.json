@@ -684,7 +684,8 @@
         "text": "Text",
         "mixed": "Mixed",
         "id": "ID"
-      }
+      },
+      "failed": "Couldn’t read this table."
     },
     "start": "Start",
     "back": "Back",

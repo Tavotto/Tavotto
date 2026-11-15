@@ -6,6 +6,7 @@ import {
   aiDataFigurePropose,
   aiDataFilesAll,
   aiDataOverview,
+  aiDataThumbnailUrl,
   backendErrorMsg,
   isDefiniteRunFailure,
   type AiDataCommitResult,
@@ -34,12 +35,12 @@ export type FilesState =
   | { status: 'idle' }
   | { status: 'loading'; entries: AiDataFileEntry[] | null }
   | { status: 'ready'; entries: AiDataFileEntry[]; truncated: boolean }
-  | { status: 'error'; entries: AiDataFileEntry[] | null; error: UiMessage }
+  | { status: 'error'; entries: AiDataFileEntry[] | null; error: UiMessage | null }
 
 export type OverviewState =
   | { status: 'loading'; data: AiDataOverview | null }
   | { status: 'ready'; data: AiDataOverview }
-  | { status: 'error'; data: AiDataOverview | null; error: UiMessage }
+  | { status: 'error'; data: AiDataOverview | null; error: UiMessage | null }
 
 export interface PickItem extends AiDataProposeItem {
   /** 带项目标识的缩略图地址（`<img>` 发不了项目请求头） */
@@ -76,6 +77,22 @@ export type Scene =
   | { kind: 'problem'; problem: ProblemKind }
 
 type View = 'none' | 'entering' | 'data'
+
+/**
+ * 这个 store 要借用的「项目 / 编辑器」那一头的几件事。**不在这里 import 它们**：`projectStore` 在换项目时要调本 store 的 `clear()`，
+ * 本 store 再反过来 import `liveSync` / `projectStore` 就是一个环（`importArchitecture` 门禁）。由 `lib/dataFigureHost.ts` 在数据页挂上时注册
+ * （和 `prepEnterEdit` 的持有者同一个办法）。没注册 = 什么都不做、项目可写性未知。
+ */
+export interface DataFigureHost {
+  /** 把项目刷新到新脚本已经在的状态，然后用「打开并运行」那条现有路径进编辑器（准备会话检查 → 运行 → 放进画布进单图快速编辑） */
+  openScript: (script: string) => Promise<void>
+  /** 项目文件夹可不可写（后端给的 `writable`）；不知道回 undefined */
+  projectWritable: () => boolean | undefined
+}
+let host: DataFigureHost = { openScript: async () => {}, projectWritable: () => undefined }
+export const configureDataFigureHost = (h: DataFigureHost): void => {
+  host = h
+}
 
 interface DataFigureStore {
   view: View
@@ -126,6 +143,12 @@ const overviewKey = (ref: TableRef, headerRow: number | null): string => `${tabl
 /** 这张表此刻（按用户指过的表头行）的概览在 `overviews` 里的键 */
 export const overviewKeyOf = (ref: TableRef, headerRows: Record<string, number>): string => overviewKey(ref, headerRows[ref.path] ?? null)
 
+/**
+ * 失败的原因只说后端明确说过的（`ApiError` 带稳定码 / 后端那句话）；网络断了、浏览器自己的 `Failed to fetch` 之类的原文不显示——
+ * 不猜原因、也不把英文报错摆给用户（错题本 L-143）：没有原因就只有标题那一句。
+ */
+const reasonOf = (e: unknown): UiMessage | null => (e instanceof ApiError ? backendErrorMsg(e) : null)
+
 function codeOf(e: unknown): string {
   return e instanceof ApiError && typeof e.body?.code === 'string' ? e.body.code : ''
 }
@@ -160,7 +183,6 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     proposeSeq += 1
     const { pj, still } = capture(seq)
     set({ scene: { kind: 'proposing' } })
-    const { aiDataThumbnailUrl } = await import('@/lib/api')
     const answers = get().answers
     const hasHeaders = Object.keys(get().headerRows).length > 0
     try {
@@ -204,7 +226,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       }
     } catch (e) {
       if (!still()) return
-      set({ scene: { kind: 'problem', problem: { kind: 'propose', error: backendErrorMsg(e) } } })
+      set({ scene: { kind: 'problem', problem: { kind: 'propose', error: reasonOf(e) } } })
     }
   }
 
@@ -224,7 +246,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       set((s) => ({ overviews: { ...s.overviews, [key]: { status: 'ready', data } } }))
     } catch (e) {
       if (ep !== epoch || overviewSeq.get(key) !== mine) return
-      set((s) => ({ overviews: { ...s.overviews, [key]: { status: 'error', data: prev?.data ?? null, error: backendErrorMsg(e) } } }))
+      set((s) => ({ overviews: { ...s.overviews, [key]: { status: 'error', data: prev?.data ?? null, error: reasonOf(e) } } }))
     }
   }
 
@@ -238,16 +260,12 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     }
   }
 
-  /** 进编辑器：就是「打开并运行」一个脚本的那条现有路径（准备会话检查 → 运行 → 把捕获的图放进画布并进单图快速编辑） */
+  /** 进编辑器（宿主那一头做刷新与「打开并运行」）；先收起数据页：准备卡与落图的提示都出在编辑器那一边 */
   async function goEditor(script: string): Promise<void> {
     const ep = epoch
-    const { refreshProjectNow } = await import('@/store/liveSync')
-    await refreshProjectNow().catch(() => undefined)
-    if (ep !== epoch) return
-    const { useProjectPreparationStore, scriptTarget } = await import('@/store/projectPreparationStore')
-    // 先收起数据页再开：准备卡与落图的提示都出在编辑器那一边
     set({ view: 'none', scene: { kind: 'browse' } })
-    await useProjectPreparationStore.getState().open(scriptTarget(script, { reuse: true }), { run: true }).catch(() => undefined)
+    if (ep !== epoch) return
+    await host.openScript(script).catch(() => undefined)
   }
 
   async function commit(sessionId: string, items: PickItem[], itemId: string, retried: boolean): Promise<void> {
@@ -266,9 +284,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       if (!res.script || !res.stem) {
         // 没落盘：任务没成（渲染没过 / 核对不过 / 写不进）。写不进是后端早就告诉过的事实（项目 `writable` 为假、或 `figures_dir_unusable`）：
         // 这时「再试一次」没有用，给的是换个文件夹；其余一句话 + 再试一次
-        const { useProjectStore } = await import('@/store/projectStore')
-        if (!still()) return
-        const unwritable = res.reason_code === 'figures_dir_unusable' || useProjectStore.getState().project?.writable === false
+        const unwritable = res.reason_code === 'figures_dir_unusable' || host.projectWritable() === false
         set({
           scene: {
             kind: 'problem',
@@ -286,8 +302,6 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       const notes = notesOf(res)
       if (notes.unplotted || notes.check) {
         set({ scene: { kind: 'drawn', script: res.script, notes } })
-        // 图已经在项目里：先把项目刷新到位，用户点「打开」时就是现成的
-        void import('@/store/liveSync').then((m) => m.refreshProjectNow()).catch(() => undefined)
         return
       }
       await goEditor(res.script)
@@ -312,13 +326,13 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       }
       if (e instanceof ApiError && (code === 'figures_dir_unusable' || code === 'common_module_conflict')) {
         commitRid = null
-        set({ scene: { kind: 'problem', problem: { kind: 'unwritable', error: backendErrorMsg(e) } } })
+        set({ scene: { kind: 'problem', problem: { kind: 'unwritable', error: reasonOf(e) ?? { key: 'dataFigureV2.problem.unwritable', ns: 'ai' } } } })
         return
       }
       // 后端明确拒绝了：这次请求号作废；没收到结果（断网 / 网关）：保留请求号，「再试一次」复用，不会画出第二份
       const definite = isDefiniteRunFailure(e)
       if (definite) commitRid = null
-      set({ scene: { kind: 'problem', problem: { kind: 'commit', error: backendErrorMsg(e), retryable: true } } })
+      set({ scene: { kind: 'problem', problem: { kind: 'commit', error: reasonOf(e), retryable: true } } })
     }
   }
 
@@ -352,7 +366,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         set({ files: { status: 'ready', entries: r.files, truncated: r.truncated === true } })
       } catch (e) {
         if (ep !== epoch || mine !== filesSeq) return
-        set({ files: { status: 'error', entries: keep, error: backendErrorMsg(e) } })
+        set({ files: { status: 'error', entries: keep, error: reasonOf(e) } })
       }
     },
 

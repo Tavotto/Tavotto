@@ -174,6 +174,17 @@ id 是服务端登记的不透明串）、`POST /api/ai/data-figure/commit`（`{
 
 出口：`GET /api/registry` 的 `all_scripts[]`（素材库 / 脚本库本来就按脚本名 join 它；面板条目带 `script`，前端用它找到来源）。**只在认出来源的条目上加** `generated_from: {data, sheet}`，其余条目一个键都不加。开关关着时整个不读、不加，`/api/registry` 的响应与没有这个功能时**逐字相同**（用例比较开 / 关两份响应去掉该键后相等）。读脚本只读开头 16 KiB、不跟随链接、钉在项目内、最多读 2000 个脚本、基础设施脚本（`tavotto_plot_*`）不读；伪造的注释最坏结果是「某张脚本被标成来自某个项目内的表格路径」，路径只作前端的匹配键、从不被后端打开。
 
+## 前端：首页入口与数据页（第一个前端 PR：一张表的整条链；`web/src/components/datastudio/`、`store/dataFigureStore.ts`）
+
+整件事在 `ai.taf.enabled` 后面；**开关关着时首页、左轨与全部文案逐字不变**（`HomeView.taf.test.tsx` 把关着时的 DOM 与合入前主干上取的摘要逐字对拍）。前端只翻译后端的话，不判断、不编造读取进度 / 步骤。
+
+* **开关怎么拿**：后端只有 `GET /api/ai/capabilities` 带 `taf_enabled`，它第一次调用要探测本机编码助手、可能很慢。首页不等它：`tafFlagStore` 先按本机记的上一次（`localStorage`，读写都不假设可用）画，后台问一次，回来不一样才换版；读不到当没变。助手面板已探测过就直接用它的结果。
+* **首页**：开关开着时，大拖放卡拆成并排两张入口卡——左「只有数据，还没有图」只做点击（`useProjectEntry` 选一个文件夹，`entry:'folder'` 打开，成功后进数据页；打开期间 `view: 'entering'` 先占住数据页，不闪一帧画布），不收拖入（整页的拖放处理仍只认脚本 / 项目文件夹）；右卡就是原来的拖放 / 选脚本入口。老手版没有叙事句、示例脚本退成灰字链接；新手版同样换成两张卡（否则新用户没有入口）。
+* **数据页是项目里的一个视图**，不是第二个应用：`App` 在 `view !== 'none'` 时把工作面板换成 `DataPage`，画布与属性栏原样留在后面（`display: none`，状态不丢），顶栏 / 左轨 / 工作面板都是现成的。左清单 = `/api/ai/data-files?formats=all`（行数 · 列数 / 没认准，先不用 / 读不了 / 没读；`table: null`、`sheets: null` 与工作表四项全空都是「没读」，不是「读不了」）；单击一行 = `/api/ai/data-overview` 预览，没认准的文件点哪一行当「每列的名字」就按那一行重读，之后出图带 `header_rows`。
+* **一轮的屏**（`dataFigureStore.scene`）：浏览 → 出备选中 → `ask`（选择题；回答原样并进下一次 `answers`，`answers.cells` 按列深合并）/ `mixed_cells`（弹窗，每列二选一；带文字输入的选项按 `free_text` 滤掉，这版没有「我来说明」）/ `candidates`（选画法，缩略图地址带项目标识）/ `nothing`（按原因码一句话 + 换一张表）→ 画 → 进编辑器（`projectPreparationStore.open(scriptTarget(script), {run: true})`，即素材库里「打开并运行」那条现有路径，自动进单图快速编辑）。
+* **结局**：只有明确的 `data_check: "verified"` 才直接进编辑器；`unverifiable` / `unknown` / 缺字段（去重的回应）先停在「图画好了，但……」一屏说清（绝不写成已核对），有行没画出来则写出是哪几行；`mismatch` 留在数据页（脚本已落盘；Tavotto 不替用户删文件，写明脚本路径，桌面壳里给「在文件夹中显示」）；没落盘且项目 `writable === false`（或 `figures_dir_unusable`）是「换个文件夹」，其余「再试一次」；`propose_session_expired` / `propose_data_changed` / `propose_candidate_unknown` 静默重新出备选、按 `title_code` 对号再提交一次，对不上就让用户看新的备选。一次点击一个 `client_request_id`，没收到结果的重试复用它。
+* **store 规矩**：项目代际（`clear()` 在 `resetForNewProject` 里调，在飞请求按 `epoch` 作废）、每类请求一个序号、请求带发起那一刻的项目；键是 `tableKey({path, sheet})`（项目相对路径 + 工作表名的结构化键），`data-*` 里不放文件名（诊断轨迹会记 data 属性）。
+
 ## 注入分析：Agent 能读整个文件，表里的文字能影响模型
 
 表里的文字（列名、单元格、工作表名）可以诱导模型，但**模型能交出的只有一份闭集配方**：未知键、未知取值、层数不对、`why` 含换行都在 `from_dict` 当场拒收；

@@ -180,6 +180,7 @@ export default interface Resources {
         "title": "这份数据可以这样画"
       },
       "preview": {
+        "failed": "没能读出这张表。",
         "headerPick": "哪一行是每列的名字",
         "headerTag": "当作每列的名字",
         "lineN": "第 {{n}} 行",

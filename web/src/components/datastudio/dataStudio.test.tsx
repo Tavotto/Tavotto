@@ -6,7 +6,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/Tooltip'
-import { ApiError, aiDataFigureCommit, aiDataFigurePropose, aiDataFilesAll, aiDataOverview, type AiDataFileEntry, type AiDataMixedColumn, type AiDataOverview } from '@/lib/api'
+import { ApiError, aiDataFigureCommit, aiDataFigurePropose, aiDataFilesAll, aiDataOverview, type AiDataFileEntry, type AiDataMixedColumn, type AiDataOption, type AiDataOverview } from '@/lib/api'
 import { fileRows } from '@/lib/dataFigure'
 import { setCurrentProjectId } from '@/lib/session'
 import { useDataFigureStore } from '@/store/dataFigureStore'
@@ -152,7 +152,7 @@ describe('预览 TablePreview', () => {
 })
 
 describe('选择题 AskScene', () => {
-  const opts = [
+  const opts: AiDataOption[] = [
     { code: 'column', params: { column: 'y', kind: 'numeric' }, answer: { y: 'y' } },
     { code: 'column', params: { column: 'z', kind: 'numeric' }, answer: { y: 'z' } },
     { code: 'describe', params: {}, answer: {}, free_text: true },

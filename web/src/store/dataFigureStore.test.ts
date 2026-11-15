@@ -17,6 +17,7 @@ import {
 import { setCurrentProjectId } from '@/lib/session'
 import { useProjectStore } from '@/store/projectStore'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
+import '@/lib/dataFigureHost' // 宿主：刷新 + 「打开并运行」+ 项目可写性
 import { useDataFigureStore } from './dataFigureStore'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
@@ -314,9 +315,10 @@ describe('画这张：各结局', () => {
   })
 
   it('没收到结果（断网）：保留请求号，再试一次复用它（不会画出第二份）；后端明确拒绝则换号', async () => {
-    commit.mockRejectedValueOnce(new TypeError('network'))
+    commit.mockRejectedValueOnce(new TypeError('Failed to fetch'))
     await st().draw()
-    expect(st().scene).toMatchObject({ kind: 'problem', problem: { kind: 'commit' } })
+    // 浏览器自己的英文报错不摆给用户（只有标题那一句）；后端明确说过的才显示原因
+    expect(st().scene).toMatchObject({ kind: 'problem', problem: { kind: 'commit', error: null } })
     const rid = commit.mock.calls[0]![0].client_request_id
     commit.mockRejectedValueOnce(apiError(409, 'data_figure_recipe_invalid'))
     await st().retry()
