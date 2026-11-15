@@ -3,7 +3,7 @@
 日期：2026-11-15 · 状态：**Proposed**（M6 第二批；用户 11-15 在 M6 审阅页第 6 处选方案 B「只做路径文字，用新类型、后端排字形位置、画布照后端结果画」；
 本 ADR 的待拍板点列在 M6 第二批审阅页）
 相关：[0185 画布矢量编辑](0185-vector-editing.md)（§一 能力矩阵「路径文字」、§六 旧构建兜底）、[0189 SVG 互通](0189-svg-interop.md)（文字转轮廓）、
-[0188 嵌套组与剪切蒙版](0188-nested-groups-and-clipping-masks.md)、[0059 RenderCore 路径编译](0059-render-ir-and-render-plan.md)
+[0191 嵌套组与剪切蒙版](0191-nested-groups-and-clipping-masks.md)、[0059 RenderCore 路径编译](0059-render-ir-and-render-plan.md)
 
 ## 问题
 
