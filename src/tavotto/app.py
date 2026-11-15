@@ -158,6 +158,8 @@ from .engine import (
     receipt as engine_receipt,
     registry as engine_registry,
     reinstall_marker as engine_reinstall_marker,
+    reviewinbox as engine_reviewinbox,
+    reviewshare as engine_reviewshare,
     runcodes as engine_runcodes,
     runconfig as engine_runconfig,
     runtime as engine_runtime,
@@ -6093,6 +6095,255 @@ def api_contact_forget(mid: str):
     """从本机记录里删掉一封信（只删本机记录；服务端按保留期自行清理）。"""
     engine_contactinbox.forget(mid)
     return _contact_json({"unread": engine_contactinbox.unread_count()})
+
+
+# --------------------- 外部审阅（ADR 0187）---------------------
+# 全部在会话认证之内（ADR 0008，全局 before_request guard，没有旁路）。逻辑在 `engine/reviewshare.py`（出站 / 轮询）与
+# `engine/reviewinbox.py`（本机分享记录）；这里只做 HTTP 形状与出图回调。**只有 `POST /api/review/{share,update,revoke,refresh}`、
+# 回复 / 标记已处理与 `GET /api/review/quota` 会引出远程请求**（后台轮询另在 `engine_reviewshare.start_poller`，没有未到期的分享就
+# 一次网络都不发）；状态 / 详情对象里没有管理令牌。`TAVOTTO_NO_REVIEW_SHARE=1` 或端点不合规：能力说明回 `{"enabled": false}`，
+# 其余一律 404。出图描述 `render` 由前端带来（图：`{"original": <original 段>}`；排版：`{"canvas": {page_w_mm, page_h_mm, objects}}`，
+# 与 `POST /api/export` 的同名段一致）——排版文档是前端 schema，引擎无法自己反推。
+
+
+def _review_error(exc: engine_reviewshare.ReviewError):
+    resp = jsonify({"ok": False, "error": exc.code, "code": f"review_{exc.code}"})
+    resp.status_code = exc.status
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _review_json(payload: dict, status: int = 200):
+    resp = jsonify(payload)
+    resp.status_code = status
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _review_off():
+    return _review_error(engine_reviewshare.ReviewError("disabled", 404))
+
+
+def _review_render(target: dict, render: dict, long_edge: int):
+    """出图回调（`reviewshare.set_renderer`）：现有导出管线出一张 PNG（长边约 `long_edge` px）+ 元素表。
+
+    只调 `_export_produce`（不经 `exportjob.run`），中间文件全在这次私有的临时目录，**不写项目导出目录**。
+    元素表取 worker 的 manifest JSON（`_hot_manifest`）；拿不到（位图 / 矢量素材没有脚本）只有面板外框。"""
+    pdfbackend.selected()
+    kind = target["kind"]
+    if kind == "figure":
+        seg = render.get("original")
+        if not isinstance(seg, dict):
+            raise ValueError("render_original_missing")
+        long_mm = max(float(seg.get("w_mm") or 0), float(seg.get("h_mm") or 0))
+        spec = {"scope": engine_exportreq.SCOPE_ORIGINAL, "original": seg}
+    else:
+        seg = render.get("canvas")
+        if not isinstance(seg, dict):
+            raise ValueError("render_canvas_missing")
+        long_mm = max(float(seg.get("page_w_mm") or 0), float(seg.get("page_h_mm") or 0))
+        spec = {"scope": engine_exportreq.SCOPE_CANVAS, "canvas": seg}
+    ppi = round(long_edge / (long_mm / 25.4)) if long_mm > 0 else round(long_edge / 12)
+    spec.update(
+        {
+            "formats": [engine_exportreq.FORMAT_PNG],
+            "filename": "review",
+            "ppi": max(engine_exportreq.PPI_MIN, min(engine_exportreq.PPI_MAX, ppi)),
+            "overwrite": engine_exportreq.OVERWRITE_REPLACE,
+        }
+    )
+    tmp = Path(tempfile.mkdtemp(prefix="render-", dir=_review_tmp_root()))
+    try:
+        job = engine_exportjob.prepare(spec, tmp / "out")
+        artifact_sources = _export_artifact_sources(job.request)
+        produced = _export_produce(
+            job, tmp, **({"artifact_sources": artifact_sources} if artifact_sources else {})
+        )
+        png = next(
+            (
+                p
+                for p in produced
+                if p.format == engine_exportreq.FORMAT_PNG and p.tmp_path and not p.error_code
+            ),
+            None,
+        )
+        if png is None:
+            raise ValueError("render_no_png")
+        data = Path(png.tmp_path).read_bytes()
+        return engine_reviewshare.Rendered(data, _review_elements(kind, job.request, seg))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _review_tmp_root() -> Path:
+    root = engine_config.data_path("review", "tmp")
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _review_manifest(figure_id: str, overrides: list):
+    """一张图的 manifest JSON（热会话刚按这组 overrides 渲染过）；没有脚本 / 拿不到回 None，从不抛。"""
+    try:
+        worker, stem = _edited_script_worker(figure_id)
+        if worker is None:
+            return None
+        return _hot_manifest(worker, stem, list(overrides or []))
+    except Exception as exc:  # noqa: BLE001 — 元素表是锦上添花，拿不到只是少了「点选元素」
+        LOG.info("外部审阅: 元素表不可用 类型=%s", type(exc).__name__)
+        return None
+
+
+def _review_elements(kind: str, req, seg: dict) -> list:
+    if kind == "figure":
+        man = _review_manifest(req.original.figure_id, req.original.overrides)
+        return engine_reviewshare.manifest_elements(man)
+    manifests = {}
+    for obj in (req.canvas.objects if req.canvas else [])[:60]:
+        if obj.get("type") == "panel" and not obj.get("hidden") and isinstance(obj.get("id"), str):
+            manifests[obj["id"]] = _review_manifest(obj["id"], obj.get("overrides") or [])
+    return engine_reviewshare.layout_elements(
+        seg.get("page_w_mm"),
+        seg.get("page_h_mm"),
+        req.canvas.objects if req.canvas else [],
+        manifests,
+    )
+
+
+engine_reviewshare.set_renderer(_review_render)
+
+
+def _review_scope():
+    """后台出图线程的项目绑定：有项目就钉在**发起请求的那个项目**上（线程里没有 request context，不钉会落到默认项目）；
+    没开项目（排版可以不属于任何项目）就不绑。"""
+    ctx = _request_ctx()
+    return (lambda: bound_project(ctx)) if ctx is not None else contextlib.nullcontext
+
+
+def _review_body() -> dict:
+    body = request.get_json(silent=True)
+    return body if isinstance(body, dict) else {}
+
+
+@app.get("/api/review/capability")
+def api_review_capability():
+    return _review_json(engine_reviewshare.capability())
+
+
+@app.get("/api/review/quota")
+def api_review_quota():
+    return _review_json(engine_reviewshare.quota(request.args.get("share_id", "")))
+
+
+@app.get("/api/review/for")
+def api_review_for():
+    if not engine_reviewshare.enabled():
+        return _review_json({"share": None})
+    rec = engine_reviewinbox.for_target(request.args.get("kind", ""), request.args.get("id", ""))
+    return _review_json({"share": engine_reviewinbox.summary(rec) if rec else None})
+
+
+@app.post("/api/review/share")
+def api_review_share():
+    try:
+        return _review_json(engine_reviewshare.start_share(_review_body(), scope=_review_scope()))
+    except engine_reviewshare.ReviewError as exc:
+        return _review_error(exc)
+
+
+@app.post("/api/review/update")
+def api_review_update():
+    try:
+        return _review_json(engine_reviewshare.start_update(_review_body(), scope=_review_scope()))
+    except engine_reviewshare.ReviewError as exc:
+        return _review_error(exc)
+
+
+@app.get("/api/review/status")
+def api_review_status():
+    if not engine_reviewshare.enabled():
+        return _review_off()
+    return _review_json(engine_reviewshare.status())
+
+
+@app.post("/api/review/dismiss")
+def api_review_dismiss():
+    return _review_json(engine_reviewshare.dismiss())
+
+
+def _review_result(fn, *args):
+    if not engine_reviewshare.enabled():
+        return _review_off()
+    try:
+        return _review_json(fn(*args))
+    except engine_reviewshare.ReviewError as exc:
+        return _review_error(exc)
+
+
+@app.post("/api/review/revoke")
+def api_review_revoke():
+    return _review_result(engine_reviewshare.revoke, str(_review_body().get("share_id") or ""))
+
+
+@app.delete("/api/review/shares/<share_id>")
+def api_review_forget(share_id: str):
+    outcome = engine_reviewinbox.forget(share_id)
+    if outcome == "ok":
+        return _review_json({"ok": True})
+    status = 404 if outcome == "missing" else 409
+    return _review_json({"ok": False, "error": outcome, "code": f"review_{outcome}"}, status)
+
+
+@app.get("/api/review/shares/<share_id>")
+def api_review_detail(share_id: str):
+    rec = engine_reviewinbox.get(share_id)
+    if rec is None or not rec["delivered"]:
+        return _review_error(engine_reviewshare.ReviewError("not_found", 404))
+    return _review_json(engine_reviewinbox.detail(rec))
+
+
+@app.post("/api/review/refresh")
+def api_review_refresh():
+    if not engine_reviewshare.enabled():
+        return _review_off()
+    sid = _review_body().get("share_id")
+    info = engine_reviewshare.poll_once(force=True, share_id=sid if isinstance(sid, str) else None)
+    return _review_json(
+        {"ok": bool(info.get("ok")), "unread": engine_reviewinbox.unread_summary()["total"]}
+    )
+
+
+@app.post("/api/review/shares/<share_id>/comments/<cid>/reply")
+def api_review_reply(share_id: str, cid: str):
+    return _review_result(engine_reviewshare.reply, share_id, cid, _review_body().get("text"))
+
+
+@app.post("/api/review/shares/<share_id>/comments/<cid>/resolve")
+def api_review_resolve(share_id: str, cid: str):
+    return _review_result(engine_reviewshare.resolve, share_id, cid, _review_body().get("resolved"))
+
+
+@app.post("/api/review/shares/<share_id>/read")
+def api_review_read(share_id: str):
+    if not engine_reviewinbox.mark_read(share_id):
+        return _review_error(engine_reviewshare.ReviewError("not_found", 404))
+    return _review_json({"ok": True, "unread": engine_reviewinbox.unread_summary()["total"]})
+
+
+@app.get("/api/review/shares/<share_id>/versions/<int:v>/snapshot.png")
+def api_review_snapshot(share_id: str, v: int):
+    snap = engine_reviewinbox.snapshot_file(share_id, v)
+    if snap is None:
+        return _review_error(engine_reviewshare.ReviewError("not_found", 404))
+    resp = send_file(snap, mimetype="image/png", conditional=True)
+    resp.headers["Cache-Control"] = "private, no-cache"
+    return resp
+
+
+@app.get("/api/review/unread")
+def api_review_unread():
+    if not engine_reviewshare.enabled():
+        return _review_json({"total": 0, "latest": None})
+    return _review_json(engine_reviewinbox.unread_summary())
 
 
 @app.get("/api/project")
@@ -18156,6 +18407,7 @@ def main():
         # 桌面模式的升级由 Tauri 层负责，Python updater 连后台检查都不跑
         engine_updater.check_in_background()  # 默认每天一次；设置里可关，关了不联网
     engine_contactsend.start_poller()  # 联系作者的回信：启动时 + 每 6 小时；没有已发的信就一次网络都不发
+    engine_reviewshare.start_poller()  # 外部审阅的意见：启动时 + 每 30 分钟；没有未到期的分享就一次网络都不发
 
     # --figures 最高优先；否则恢复最近项目；都没有（或无效）→ 界面里的
     # Project Picker 接手，进程不再直接退出。

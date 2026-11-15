@@ -2,16 +2,34 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「诊断与排障」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_diagnostics_bundle.py`、`test_diag_send.py`、`test_diag_send_api.py`、`test_diagnostics_worker_evidence.py`、`test_diagnostics_worker_structure.py`、`test_diagnostics_log_privacy.py`、`test_task_diagnostics.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_review_share.py`、`test_review_api.py`、`tests/test_diagnostics_bundle.py`、`test_diag_send.py`、`test_diag_send_api.py`、`test_diagnostics_worker_evidence.py`、`test_diagnostics_worker_structure.py`、`test_diagnostics_log_privacy.py`、`test_task_diagnostics.py`
 > `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：先脱敏再交出；report.json 换形必升 bundle schema；不写盘不进 telemetry；不自动上传（唯一例外：用户逐次确认的「发送问题反馈」，默认开启，ADR 0118）；日志只读出门版；导出包严格脱敏不变，仅发送包多 `detail/`（schema 8）
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 280
-改到: `engine/diagnostics.py`、`diagnostictext.py`、`diagnostics_frontend.py`、`diagdetail.py`、`taskdiag.py`、`diagsend.py`、`contact*.py`、`/api/diagnostics/*`
+改到: `engine/diagnostics.py`、`diagnostictext.py`、`diagnostics_frontend.py`、`diagdetail.py`、`taskdiag.py`、`diagsend.py`、`contact*.py`、`review*.py`、`/api/diagnostics/*`、`/api/review/*`
 主题: 诊断包与任务绑定诊断 → `diagnostics.md`
 必守要点: 先脱敏再交出；report.json 换形必升 bundle schema；不写盘不进 telemetry；不自动上传（唯一例外是用户逐次确认）
 -->
+
+## 外部审阅（决策记录 0187；1.0 纪律下已由维护者豁免的新能力）
+
+`engine/reviewshare.py`（出站、设备签名、分享 / 更新 / 停止 / 回复 / 标记已处理、feed 轮询）与 `engine/reviewinbox.py`（本机分享记录）是 `contactsend` / `contactinbox` 的同形状兄弟：
+把当前这张图 / 这份排版的**画面**分享成链接。线上格式 v1 的唯一出处是 决策记录 0187 §六；本机接口 `/api/review/*` 全部在会话认证之内（ADR 0008，`test_browser_auth` 从 url_map 枚举）。
+
+- **只上传画面**：每个版本只有 `snapshot.png`（走现有导出管线，长边 ≤ 3000 px、≤ 8 MiB，超了降分辨率重出）、元素位置表（≤ 4000 项 / 256 KiB，超了按面积从小到大丢并只在日志记个数）与标题 / 给审阅者的话。脚本、数据、路径、本机信息一律不传。
+  出图与元素表由 `app._review_render` 注册给引擎（`reviewshare.set_renderer`）：父进程这里不碰 `manifest` / `figsession`；只调 `_export_produce`（不经 `exportjob.run`），中间文件在 `data_dir()/review/tmp/` 的私有目录、用完即删，**不写项目导出目录**。
+  出图描述 `render` 由前端带来（图 `{"original": …}`、排版 `{"canvas": {page_w_mm, page_h_mm, objects}}`，与 `POST /api/export` 同名段一致）：排版文档是前端 schema、worker 热会话只记 patch 哈希，引擎无法自己反推；缺 `render` = 同步 422。
+- **元素 gid**：单图就是 manifest 的 gid；排版里面板外框 gid = 对象 id，面板内元素 gid = `<对象id>::<manifest gid>`；面板内元素按面板的裁剪 → 顺时针 90° 旋转 → 翻转（与 `rendercore/plan._panel_node` 同序）换算到页面比例坐标。manifest 里 `gid == "figure"` 不进表（「整体意见」另有锚点）。
+- **目的地钉死**：`REVIEW_HOSTS = {review.tavotto.cn}`；`TAVOTTO_REVIEW_ENDPOINT` 设了就必须合规（或回环开发模式 `TAVOTTO_DIAG_DEV_LOOPBACK=1`），不合规整个功能关闭、**不回退内置端点**；`TAVOTTO_NO_REVIEW_SHARE=1` 整个功能不出现、不联网（测试进程由 conftest 硬关，生产主机被会话级探针兜底）。
+  出站只经 `diagsend._send`；直传存储地址不复用 `diagsend.validate_upload_url`（它拒收查询串，而预签名 PUT 带签名查询串），另有 `reviewshare._upload_spec`：https、主机必须匹配 `UPLOAD_HOST_PATTERNS`（COS 桶域名 + CloudBase 存储域名）或（回环开发）与端点同源，头部有禁用名单，不带任何 Tavotto 签名 / 令牌头。
+- **设备签名**：Ed25519（PyNaCl，延后 import）私钥 32 字节 0600 存 `data_dir()/review/device.key`；签名消息 `tavotto-review-v1\nMETHOD\nPATH(含 query)\nTS\nsha256(body)`，签的就是发出去的那份字节。写不下去密钥 = `client_error`，**不用一次性密钥**（那等于每次新设备、绕额度）。
+- **逐次授权与零网络**：上传只由 `start_share` / `start_update`（一次点击）触发；失败后不自己重试。**没有未到期且未停止的记录就一次网络都不发**（后台轮询每 30 分钟，`/api/review/refresh` 手动）。
+- **重试幂等**：`client_share_id` / `client_version_id` 与渲染好的 PNG、元素表跟着失败的尝试留在内存（`_REUSE`，指纹 = 模式 / 目标 / 标题 / 说明 / 出图描述），内容没变的重试逐字节相同、不重复扣额度；init 一拿到管理令牌就写本机记录（`delivered=False`，只留 2 小时、不出现在列表、不被轮询），complete 之后转正。
+- **失败码闭集** `reviewshare.FAILURES`（与前端 `review.failure.*` 对拍）：服务端错误体是嵌套的 `{"error": {"code"}}`；`quota_*` / `share_gone` / `too_large` / `rate_limited` 直通，`bad_signature` / `clock_skew` / `invalid` 一律 `client_error`，5xx / 坏响应 `server`，传输失败（含 TLS）`network`。
+- **秘密不落地**：`owner_token` 只在 `reviewinbox` 的 0600 文件里，`status()` / `summary` / `detail` / 日志都没有；日志模板是字面量、参数只有闭集里的阶段名与结果码（不记 URL、令牌、标题、意见文字）。意见文字来自网络：逐项形状清洗、文字封顶（500 / 20 字）、按纯文本存。
+- **本机保留**：到期后意见副本仍在，到期 + 30 天或用户删除（只有已停止 / 已到期的才许删）才清；`for` 只回「这个 target 有没有未删除的记录」，「审阅」页签出现与否只看它。
 
 ## 受管环境作业的披露例外（2026-10-31 用户授权）
 
