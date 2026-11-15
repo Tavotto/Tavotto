@@ -31,9 +31,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import tools as toolmod
+from .fallback import DROPPABLE_FIELDS, FieldAdjuster, protocol_mismatch
 from .tools import Limits, RunEnvelope, TaskToolset
 from .wires import (
     Msg,
+    Request,
     RunnerFailure,
     ToolCall,
     ToolResult,
@@ -94,6 +96,14 @@ DONE_REASONS = frozenset(
     }
 )
 
+#: `done` 事件里「模型客户端自救回报」的字段（闭集；值只会是协议名 / 字段名 / 空串，绝不含服务端文字）。
+#: 没有这些能力的模型对象（Demo、`fixsession._FinishAware` 的包装）回空值。父进程只认这几个键。
+#: * `wire_used`          最后一次**成功回复**所用的协议名（`WIRES` 的键）；一次成功都没有 = ""
+#: * `wire_switched_from` 发生过第一轮换协议时 = 最初那个协议名，否则 ""
+#: * `dropped_fields`     被剥 / 换掉的非必需字段（`fallback.DROPPABLE_FIELDS` 的子集，按首次出现排序）
+#: * `token_field`        openai-chat 最后成功请求实际用的长度字段（`max_tokens` / `max_completion_tokens`），否则 ""
+DONE_REPORT_FIELDS = ("wire_used", "wire_switched_from", "dropped_fields", "token_field")
+
 #: 子进程 stderr 里 `agent_runner: <词>` 的第一个词（`runner_cli.diag` 只写这几种短码）
 STDERR_CODES = frozenset({"log", "bad_prompt", "internal"})
 
@@ -126,7 +136,18 @@ class Ledger:
 
 # --------------------------------------------------------------------------- 模型客户端
 class HttpModel:
-    """三种线上协议的客户端：构造请求、发送、分类失败、指数退避重试（429 / 5xx / 传输失败）。"""
+    """三种线上协议的客户端：构造请求、发送、分类失败、指数退避重试（429 / 5xx / 传输失败）。
+
+    两个**闭集**自救（判据在 `fallback.py`，原文只在内存里匹配；ADR 0147 修订 2026-11-15）：
+
+    * **第一轮换协议**：`fallbacks` 给了备选 `(wire, base_url)`。只在**从未收到过任何成功回复**（= 没执行过工具、没有原生
+      回放项）时，遇到「协议不对」信号（`fallback.protocol_mismatch`）才换下一个；换了不消耗重试次数。
+    * **非必需字段降级**：400 / 422 明确点名我们发的 `store` / `include` / 长度字段不被接受 → 剥掉 / 换名后重发，
+      同一字段一次，之后每轮请求都沿用。
+
+    `report()` 给父进程的闭集回报（`wire_used` / `wire_switched_from` / `dropped_fields` / `token_field`），
+    由 `run()` 写进 `done` 事件。
+    """
 
     def __init__(
         self,
@@ -141,6 +162,7 @@ class HttpModel:
         max_attempts: int = 4,
         retry_base: float = 1.0,
         post: Callable = post_json,
+        fallbacks: tuple[tuple[Wire, str], ...] | list[tuple[Wire, str]] = (),
     ):
         self.wire, self.base_url, self.model, self.effort = wire, base_url, model, effort
         self.thinking = thinking
@@ -151,6 +173,34 @@ class HttpModel:
             retry_base,
         )
         self._post = post
+        self._routes: list[tuple[Wire, str]] = [(wire, base_url), *fallbacks]
+        self._route = 0
+        self._adjusters: dict[str, FieldAdjuster] = {}
+        self._first_wire = wire.name
+        self._switched = False
+        self._succeeded_wire = ""
+        self._token_field = ""
+
+    def report(self) -> dict:
+        """父进程要的回报：只有闭集名字 / 空串 / 名字列表。"""
+        dropped = [f for a in self._adjusters.values() for f in a.dropped if f in DROPPABLE_FIELDS]
+        return {
+            "wire_used": self._succeeded_wire,
+            "wire_switched_from": self._first_wire if self._switched else "",
+            "dropped_fields": list(dict.fromkeys(dropped)),
+            "token_field": self._token_field,
+        }
+
+    def _adjuster(self) -> FieldAdjuster:
+        return self._adjusters.setdefault(self.wire.name, FieldAdjuster(self.wire.name))
+
+    def _switch_wire(self) -> bool:
+        if self._succeeded_wire or self._route + 1 >= len(self._routes):
+            return False
+        self._route += 1
+        self.wire, self.base_url = self._routes[self._route]
+        self._switched = True
+        return True
 
     def __repr__(self) -> str:  # 密钥不进 repr / 日志
         return f"HttpModel({self.wire.name}, model={self.model!r})"
@@ -206,19 +256,25 @@ class HttpModel:
         cancel: threading.Event,
         deadline: float,
     ) -> Turn:
-        req = self.wire.build(
-            base_url=self.base_url,
-            api_key=self._key,
-            model=self.model,
-            system=system,
-            tools=tools,
-            history=history,
-            effort=self.effort,
-            thinking=self.thinking,
-            max_output_tokens=max_output_tokens,
-        )
+        def build() -> Request:
+            req = self.wire.build(
+                base_url=self.base_url,
+                api_key=self._key,
+                model=self.model,
+                system=system,
+                tools=tools,
+                history=history,
+                effort=self.effort,
+                thinking=self.thinking,
+                max_output_tokens=max_output_tokens,
+            )
+            self._adjuster().apply(req.body)
+            return req
+
+        req = build()
         last: RunnerFailure | None = None
-        for attempt in range(self.max_attempts):
+        attempt = 0
+        while attempt < self.max_attempts:
             if cancel.is_set():
                 raise RunnerFailure("cancelled")
             remaining = deadline - time.monotonic()
@@ -246,7 +302,19 @@ class HttpModel:
                         raise RunnerFailure("network", detail) from None
                     if not isinstance(body, dict):
                         raise RunnerFailure("network", "bad_response")
-                    return self.wire.parse(body)
+                    turn = self.wire.parse(body)
+                    self._succeeded_wire = self.wire.name
+                    self._token_field = self._adjuster().token_field(req.body)
+                    return turn
+                # 闭集自救：判据只看状态码与体里的闭集短语，体原文不外传（见 fallback.py）
+                if (not self._succeeded_wire and protocol_mismatch(status, data)) and (
+                    self._switch_wire()
+                ):
+                    req = build()
+                    continue
+                if self._adjuster().consider(status, data, req.body):
+                    req = build()
+                    continue
                 last = classify_status(status, data)
                 if not last.retryable:
                     raise last
@@ -262,6 +330,7 @@ class HttpModel:
                     raise RunnerFailure("budget", "time")
                 if cancel.wait(delay):
                     raise RunnerFailure("cancelled")
+            attempt += 1
         assert last is not None
         # 重试用尽：429 → quota（被限流），其余 → network
         if last.detail == "http_429":
@@ -498,9 +567,25 @@ def run(
             "output_recoveries": res.output_recoveries,
             "protocol_recoveries": res.protocol_recoveries,
             "recovery_state_releases": res.recovery_state_releases,
+            **_model_report(model),
         }
     )
     return res
+
+
+def _model_report(model) -> dict:
+    """模型对象的自救回报，只留 `DONE_REPORT_FIELDS` 且类型合规的值；任何异常 → 空值（回报不许影响结局）。"""
+    out: dict = {"wire_used": "", "wire_switched_from": "", "dropped_fields": [], "token_field": ""}
+    try:
+        rep = model.report() if callable(getattr(model, "report", None)) else {}
+        for k in ("wire_used", "wire_switched_from", "token_field"):
+            if isinstance(rep.get(k), str):
+                out[k] = rep[k]
+        if isinstance(rep.get("dropped_fields"), list):
+            out["dropped_fields"] = [f for f in rep["dropped_fields"] if f in DROPPABLE_FIELDS]
+    except Exception:  # noqa: BLE001
+        pass
+    return out
 
 
 def _finish(res: RunResult, ok: bool, reason: str, detail: str = "") -> None:

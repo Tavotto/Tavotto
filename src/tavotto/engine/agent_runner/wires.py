@@ -7,8 +7,8 @@
 `build_opener(tlstrust.https_handler(ctx))`、不跟随重定向。回环 http 不经 opener：`http.client.HTTPConnection("127.0.0.1", …)`
 直连 socket，不读代理环境变量（与 `session_client` 同一写法）。只许 https，或主机恰为字面量 `127.0.0.1` 的 http。
 
-线上字段细节（Anthropic Messages / OpenAI Chat Completions / OpenAI Responses）按官方文档的记忆写，
-每个类的注释里标「待核」的地方是没把握的。
+线上字段细节（Anthropic Messages / OpenAI Chat Completions / OpenAI Responses）按官方文档写；
+每个类的注释里区分「文档核对」与「真服务核对」：没跑过真服务的地方明说，不写成已验证。
 """
 
 from __future__ import annotations
@@ -268,13 +268,22 @@ def _code(value: object) -> str:
 
 
 def _chat_usage(body: dict) -> Usage:
+    """OpenAI 写法 `prompt_tokens` / `completion_tokens`；缓存命中取 `prompt_tokens_details.cached_tokens`，
+    DeepSeek 的 `prompt_cache_hit_tokens` 也认。个别中转按 Anthropic 写法回 `input_tokens` / `output_tokens`，兜底认它。"""
     u = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+    pk, ck = (
+        ("prompt_tokens", "completion_tokens")
+        if _reported(u, "prompt_tokens", "completion_tokens")
+        or not _reported(u, "input_tokens", "output_tokens")
+        else ("input_tokens", "output_tokens")
+    )
     details = u.get("prompt_tokens_details")
+    cached = _int(details.get("cached_tokens")) if isinstance(details, dict) else 0
     return Usage(
-        input_tokens=_int(u.get("prompt_tokens")),
-        output_tokens=_int(u.get("completion_tokens")),
-        cached_input_tokens=_int(details.get("cached_tokens")) if isinstance(details, dict) else 0,
-        reported=_reported(u, "prompt_tokens", "completion_tokens"),
+        input_tokens=_int(u.get(pk)),
+        output_tokens=_int(u.get(ck)),
+        cached_input_tokens=cached or _int(u.get("prompt_cache_hit_tokens")),
+        reported=_reported(u, pk, ck),
     )
 
 
@@ -469,6 +478,21 @@ class OpenAIChatWire:
       规则：**这一轮存过非空 `reasoning_content` 才放回，否则不加该键**（请求字节不变，拒收多余字段的
       厂商如 Mistral 不受影响）。runner 整个会话只用同一个模型，思考模式是整场会话的属性，不会出现
       「别的轮有、这一轮没有」，所以不做空格占位。
+
+    核对状态（逐条，「文档」= 对照 OpenAI Chat Completions 官方文档与 DeepSeek 文档；「真服务」= 跑过真实端点）：
+
+    * 多轮工具调用：assistant `tool_calls` 之后必须**逐个** `tool_call_id` 回 `role=tool`，之后才能再出现 user / assistant；
+      本类按此写，图片放在全部 tool 消息之后的 user 消息里。文档核对；真服务见 PROTOCOL-ROLLOUT.md 覆盖表。
+    * assistant 消息：有 `tool_calls` 时 `content` 可为 `null`（官方允许）；没有工具调用且没有文字（上下文续写里只带
+      `reasoning_content` 的那种轮）时 `content` 用 `""`——`null` + 无 `tool_calls` 会被官方端点拒收。
+    * 长度字段：`max_tokens` 是兼容网关的通用写法，官方已标记弃用，o 系列 / 部分新模型只认 `max_completion_tokens`。
+      起手按调用方声明；被拒时由 `loop.HttpModel` 的字段降级换成另一个（只换一次）。
+    * `finish_reason`：`stop` → end；`length` → max_tokens；`tool_calls` / `function_call` → 看 `tool_calls` 是否真有内容
+      （没有 = 不是完成，走 `bad_stop_*`）；`content_filter` → 拒答。大小写不敏感（部分中转回 `STOP`）。其余 → other。
+    * usage：`prompt_tokens` / `completion_tokens`；缓存命中认 `prompt_tokens_details.cached_tokens` 与 DeepSeek 的
+      `prompt_cache_hit_tokens`；`usage` 缺失 / 非法 → `reported=False`，由 loop 按字符数估算记账。
+    * 回复 `content` 个别网关给文字块数组 `[{type:"text", text}]`，按拼接处理；`reasoning` / `reasoning_content`
+      都只用来数思考字符，**只有 `reasoning_content` 会回放**（别的字段名各家语义不一，不猜）。
     """
 
     name = "openai-chat"
@@ -497,7 +521,10 @@ class OpenAIChatWire:
             if m.role == "user":
                 msgs.append({"role": "user", "content": m.text})
             elif m.role == "assistant" and m.turn is not None:
-                a: dict[str, Any] = {"role": "assistant", "content": m.turn.text or None}
+                a: dict[str, Any] = {
+                    "role": "assistant",
+                    "content": m.turn.text or (None if m.turn.tool_calls else ""),
+                }
                 if m.turn.tool_calls:
                     a["tool_calls"] = [
                         {
@@ -564,7 +591,7 @@ class OpenAIChatWire:
             isinstance(rf, str) and rf.strip()
         ):  # content:null + refusal + finish_reason:stop 不是空成功
             raise _refused("refusal", _chat_usage(body))
-        turn = Turn(text=msg["content"] if isinstance(msg.get("content"), str) else "")
+        turn = Turn(text=_chat_text(msg.get("content")))
         for c in msg.get("tool_calls") or []:
             fn = c.get("function") if isinstance(c, dict) else None
             if isinstance(fn, dict):
@@ -579,8 +606,11 @@ class OpenAIChatWire:
         turn.thinking_chars = len(rc) if isinstance(rc, str) else 0
         if isinstance(rc, str) and rc:
             turn.native = {"reasoning_content": rc}
+        elif isinstance(msg.get("reasoning"), str):  # 别的网关的字段名：只计数，不回放
+            turn.thinking_chars = len(msg["reasoning"])
         turn.usage = _chat_usage(body)
         fin = choices[0].get("finish_reason")
+        fin = fin.lower() if isinstance(fin, str) else fin
         if fin == "content_filter":
             raise _refused("content_filter", turn.usage)
         # 截断优先于工具调用（同 AnthropicWire）
@@ -595,6 +625,18 @@ class OpenAIChatWire:
         return turn
 
 
+def _chat_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):  # 个别网关给文字块数组
+        return "".join(
+            p["text"]
+            for p in content
+            if isinstance(p, dict) and p.get("type") == "text" and isinstance(p.get("text"), str)
+        )
+    return ""
+
+
 # --------------------------------------------------------------------------- openai responses
 class OpenAIResponsesWire:
     """POST `{base}/responses`。
@@ -604,8 +646,12 @@ class OpenAIResponsesWire:
     * 回复 `output[]`：`message`（`content[].output_text`）、`function_call{call_id, name, arguments}`、`reasoning`；
       回填为 `{"type": "function_call_output", "call_id", "output"}`。回放 assistant 轮时把 `output` 条目原样带回。
     * 思考：给了 effort 才传 `reasoning: {"effort": …}`，并 `include: ["reasoning.encrypted_content"]`。
-    * `store: false`（提示词里有用户未发表的脚本，不让服务端留存）。待核：无状态回放 `function_call` / `reasoning`
-      条目（带原 id）在 `store=false` 下是否都被接受；这里按官方「无状态用法」的记忆写。
+    * `store: false`（提示词里有用户未发表的脚本，不让服务端留存）。无状态回放 `function_call` / `reasoning` 条目（带原 id）
+      在 `store=false` 下的做法按官方 reasoning 指南核对过（reasoning 条目要带 `encrypted_content`，所以才 `include` 它）；
+      真服务（DeepSeek 原生 Responses，2026-10）跑通过多轮回放，OpenAI 官方端点没测。
+    * `store` / `include` / `max_output_tokens` 是非必需字段：中转常见不认，被明确点名拒绝时由 `loop.HttpModel` 的字段降级
+      剥掉后重发一次（`include` 被剥时回放里的 `reasoning` 条目同时剥掉：没有 `encrypted_content` 的 reasoning 条目在
+      `store=false` 下会被拒）。`store` 被剥意味着服务端可能留存请求，done 事件的 `dropped_fields` 如实报出。
     """
 
     name = "openai-responses"
