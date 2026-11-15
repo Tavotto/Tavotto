@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import {
+  ApiError,
   deleteReviewRecord,
   dismissReview,
   fetchReviewCapability,
@@ -114,8 +115,10 @@ export const useReviewStore = create<ReviewState>((set, get) => {
     set({ stage: 'rendering', failure: null, picker: null })
     try {
       await start(render)
-    } catch {
-      if (mine === genToken) set({ stage: 'failed', failure: { code: 'client_error', retryable: true } })
+    } catch (e) {
+      // 同步 422（`review_render_required` / `target_invalid`）= 这次的画面 / 对象不成立：按「画面没生成出来」说，可重试
+      const code: ReviewFailureCode = e instanceof ApiError && e.status === 422 ? 'render_failed' : 'client_error'
+      if (mine === genToken) set({ stage: 'failed', failure: { code, retryable: true } })
       return
     }
     for (;;) {

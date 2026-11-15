@@ -30,6 +30,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 }))
 
 import {
+  ApiError,
   dismissReview,
   fetchReviewShare,
   fetchReviewStatus,
@@ -269,6 +270,17 @@ describe('失败码：一句话 + 可重试', () => {
     await click(q('[data-review-retry]'))
     expect(shareReview).toHaveBeenCalledWith({ kind: 'figure', id: 'fig3' }, 'Figure 3', 'n', expect.anything())
   })
+  for (const error of ['review_render_required', 'target_invalid']) {
+    it(`同步 422 ${error}：按「画面没生成出来」说，可重试`, async () => {
+      resetStore({ dialogOpen: true })
+      vi.mocked(shareReview).mockRejectedValue(new ApiError(error, 422, { ok: false, error }))
+      await render(<ReviewDialog />)
+      await click(q('[data-review-create]'))
+      expect(q('[data-review-failure="render_failed"]')).not.toBeNull()
+      expect(q('[data-review-retry]')).not.toBeNull()
+      expect(fetchReviewStatus).not.toHaveBeenCalled()
+    })
+  }
   it('服务端说额度用满：不报错，换成选择卡', async () => {
     resetStore({ dialogOpen: true })
     vi.mocked(shareReview).mockResolvedValue({ ok: true })
