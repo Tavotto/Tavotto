@@ -1,7 +1,7 @@
 """外部 SVG → 画布上可编辑的对象（ADR 0189）。
 
 输入是**不受信任**的 SVG 文本（Illustrator / Inkscape / BioRender 之类导出或复制出来的），输出是画布文档里的对象
-（前端 `types/document` 的形状：`path` / `text`，组用 `groupId` / `groupPath`，剪切用 `clipMask`，ADR 0188）。坐标是
+（前端 `types/document` 的形状：`path` / `text`，组用 `groupId` / `groupPath`，剪切用 `clipMask`，ADR 0191）。坐标是
 页面 mm、以 SVG 视口左上为原点；id 是临时的（`s1`… / 组 `sg1`…），前端落到画布时整批换新。
 
 **安全**：只经 `svgcheck.parse_svg(tolerant=True)` 解析——与静态 SVG 素材、ADR 0182 场景解析**同一个受限解析器**（标准库

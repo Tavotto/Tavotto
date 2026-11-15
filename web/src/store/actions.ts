@@ -639,7 +639,7 @@ export const isSelectAllTarget = (o: CanvasObject): boolean => !o.hidden && !o.l
  * 走这一处——快速编辑里曾经把整版看不见的对象全选上，接着 Delete 就把它们从版上删掉（Codex #833）。
  */
 export function selectAllIds(objects: readonly CanvasObject[]): string[] {
-  // 剪切组的蒙版是隐藏的（给旧构建的，ADR 0188），但它是组的一部分：组里有成员被全选，蒙版跟着进选区——
+  // 剪切组的蒙版是隐藏的（给旧构建的，ADR 0191），但它是组的一部分：组里有成员被全选，蒙版跟着进选区——
   // 否则 ⌘A + Delete 删掉内容、蒙版被当成孤立的还原出来，平白多出一个形状
   const base = objects.filter(isSelectAllTarget)
   const gids = new Set(base.flatMap((o) => groupPathOf(o)))
