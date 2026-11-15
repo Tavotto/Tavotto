@@ -6986,6 +6986,7 @@ export default interface Resources {
       "rotate": "旋转 {{deg}}°",
       "rotateObjects": "旋转对象",
       "rotateReset": "取消旋转",
+      "roundCorners": "圆角",
       "scaleLegend": "缩放图例",
       "scriptWinsOverStyle": "脚本改动优先于样式",
       "seedBaked": "载入文件中的基线",

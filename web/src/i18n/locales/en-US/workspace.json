@@ -489,7 +489,8 @@
     "offsetPath": "Offset path",
     "outlineStroke": "Outline stroke",
     "reversePath": "Reverse path direction",
-    "simplifyPath": "Simplify path"
+    "simplifyPath": "Simplify path",
+    "roundCorners": "Round corners"
   },
   "layerTree": {
     "collapseGroup": "Collapse group",

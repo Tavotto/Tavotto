@@ -25,6 +25,7 @@ import {
 import { cn } from '@/lib/utils'
 import { updateObjects } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
+import { useGradientEditStore } from '@/store/gradientEditStore'
 import type { CanvasObject, Gradient, PathObject, ShapeObject } from '@/types/document'
 import { INSPECTOR_LABEL_W } from '../layout'
 
@@ -163,12 +164,15 @@ export function GradientEditor({ objs, target }: { objs: readonly Mark[]; target
   const live = objs.filter((o) => gradientOf(o, target))
   const first = live[0]
   const g = first ? gradientOf(first, target) : null
-  const [sel, setSel] = useState(0)
+  // 选中的色标与画布上的渐变柄共用（`gradientEditStore`）：这边点了，画布上那个点跟着亮，反之亦然
+  const edit = useGradientEditStore()
   const [removing, setRemoving] = useState(false)
   const barRef = useRef<HTMLDivElement | null>(null)
   const rowRef = useRef<HTMLDivElement | null>(null)
   const drag = useRef<{ i: number } | null>(null)
   if (!first || !g) return null
+  const sel = edit.objectId === first.id && edit.target === target ? edit.stop : 0
+  const setSel = (i: number) => edit.set(first.id, { target, stop: i })
   const stops = sortedStops(g)
   const sorted: Gradient = { ...g, stops }
   const at = Math.min(sel, stops.length - 1)
