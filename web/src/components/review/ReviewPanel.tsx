@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ReviewComment, ReviewShareDetail } from '@/lib/api'
 import { reviewSnapshotUrl } from '@/lib/api'
+import { reviewRenderSignature } from '@/lib/reviewRender'
 import { manifestsPending } from '@/lib/reviewGids'
 import { requestRender } from '@/store/renderScheduler'
 import { useDocumentStore } from '@/store/documentStore'
@@ -188,11 +189,19 @@ export function ReviewPanel() {
   const shareId = share?.share_id
 
   // 区域意见的坐标只在画布与最新版一致时才画：页签开着时，画布每改一下（停手 0.8 秒后）问引擎一次（本机比对、不联网）
+  // 判据是「会影响 render 的全部输入」的签名（页面尺寸、留白、对象……都算），不是只看对象数组；
+  // 一旦签名变了先乐观作废（changed=true，区域圆点立刻消失），重查返回 false 才恢复
+  const doc = useDocumentStore((s) => s.doc)
+  const lastSig = useRef<string | null>(null)
   useEffect(() => {
     if (!shareId) return
-    const t = window.setTimeout(() => void useReviewStore.getState().loadChanged(), 800)
+    const sig = reviewRenderSignature()
+    const first = lastSig.current === null
+    lastSig.current = sig
+    if (!first) useReviewStore.getState().invalidateChanged()
+    const t = window.setTimeout(() => void useReviewStore.getState().loadChanged(), first ? 0 : 800)
     return () => window.clearTimeout(t)
-  }, [shareId, objects])
+  }, [shareId, doc])
 
   useEffect(() => {
     if (!shareId) return

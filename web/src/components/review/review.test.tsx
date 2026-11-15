@@ -6,7 +6,11 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/reviewRender', () => ({ buildReviewRender: () => ({ canvas: { page_w_mm: 100, page_h_mm: 80, objects: [] } }) }))
+// 只替掉 buildReviewRender（弹窗发请求时要有个 render）；签名用真实现，才能量到「页面尺寸变了」这类输入变化
+vi.mock('@/lib/reviewRender', async (orig) => ({
+  ...(await orig<typeof import('@/lib/reviewRender')>()),
+  buildReviewRender: () => ({ canvas: { page_w_mm: 100, page_h_mm: 80, objects: [] } }),
+}))
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   fetchReviewCapability: vi.fn(),
@@ -622,6 +626,62 @@ describe('分享后本地画布改过：区域意见不再画在旧坐标上', (
     await act(async () => useReviewStore.setState({ changed: false }))
     expect(q('[data-review-pin="r1"]')).not.toBeNull()
     expect(q('[data-review-comment="r1"] [data-review-moved]')).toBeNull()
+  })
+})
+
+describe('一致性重查', () => {
+  const T = { zoom: 1, panX: 0, panY: 0, originX: 0, originY: 0 }
+  it('只改页面尺寸（对象数组不变）：区域圆点立刻消失，重查返回 false 才回来', async () => {
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_pagesize')
+    useDocumentStore.getState().commit(literal('准备'), (d) => {
+      d.page = { w: 100, h: 80 }
+      d.objects = [{ id: 'p1', type: 'panel', fileId: 'p1.pdf', fileKind: 'pdf', x: 10, y: 0, w: 40, h: 30, overrides: [] } as never]
+    })
+    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
+    useUiStore.setState({ rightTab: 'review', rightOpen: true })
+    const d = DETAIL([cm('r1')])
+    d.versions[0].frame = 'page'
+    vi.mocked(fetchReviewShare).mockResolvedValue(d)
+    vi.mocked(fetchReviewChanged).mockResolvedValue({ changed: false })
+    resetStore({ share: { ...SHARE, kind: 'layout' }, detail: d, changed: false })
+    await render(
+      <>
+        <svg>
+          <ReviewOverlay objects={useDocumentStore.getState().doc.objects} t={T} />
+        </svg>
+        <ReviewPanel />
+      </>,
+    )
+    await settle(900)
+    expect(q('[data-review-pin="r1"]')).not.toBeNull()
+    // 拖页面边只改 doc.page：对象数组还是同一个
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('改页面'), (dd) => {
+        dd.page = { w: 120, h: 90 }
+      })
+    })
+    expect(useReviewStore.getState().changed).toBe(true) // 乐观作废，重查还没返回
+    expect(q('[data-review-pin="r1"]')).toBeNull()
+    await settle(900) // 重查（mock 返回 false）
+    expect(fetchReviewChanged).toHaveBeenCalled()
+    expect(q('[data-review-pin="r1"]')).not.toBeNull()
+  })
+
+  it('A 的 changed 查询慢返回 false、B 先返回 true：最终是 true（迟到结果被丢弃）', async () => {
+    resetStore({ share: SHARE, changed: true })
+    let resolveA!: (v: { changed: boolean }) => void
+    vi.mocked(fetchReviewChanged).mockImplementationOnce(() => new Promise((r) => (resolveA = r)))
+    const pa = useReviewStore.getState().loadChanged() // A 在途
+    // 切到 B：旧序号作废
+    useReviewStore.getState().beginResolve()
+    vi.mocked(fetchReviewFor).mockResolvedValue({ share: { ...SHARE, share_id: 'sh_b' } })
+    await act(async () => useReviewStore.getState().setTarget({ kind: 'figure', id: 'B' }))
+    vi.mocked(fetchReviewChanged).mockResolvedValueOnce({ changed: true })
+    await act(async () => useReviewStore.getState().loadChanged())
+    expect(useReviewStore.getState().changed).toBe(true)
+    resolveA({ changed: false })
+    await pa
+    expect(useReviewStore.getState().changed).toBe(true)
   })
 })
 

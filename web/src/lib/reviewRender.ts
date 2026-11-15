@@ -8,6 +8,14 @@ import { exactPanelManifest, useRenderStore } from '@/store/renderStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import type { PanelObject } from '@/types/document'
 
+/** 此刻 render 输入的签名（djb2 over JSON）：页面尺寸 / 留白 / 对象 / 图内修改任何一项变了它就变；取不出 render = 固定串 */
+export function reviewRenderSignature(): string {
+  const json = JSON.stringify(buildReviewRender()) ?? 'null'
+  let h = 5381
+  for (let i = 0; i < json.length; i++) h = ((h << 5) + h + json.charCodeAt(i)) | 0
+  return `${json.length}:${h}`
+}
+
 const OBJECT_ID = /^[A-Za-z0-9_-]{1,64}$/
 
 /**

@@ -80,6 +80,8 @@ interface ReviewState {
   /** 剩余次数 + 选择卡的候选；联网不通时数字是 null，界面就不显示 */
   loadQuota: () => Promise<void>
   loadChanged: () => Promise<void>
+  /** 本地画布输入变了：先把 changed 置 true 并作废在途的 changed 查询（乐观作废，避免重查返回前画错） */
+  invalidateChanged: () => void
   loadDetail: () => Promise<void>
   openDialog: () => void
   closeDialog: () => void
@@ -100,6 +102,8 @@ interface ReviewState {
 }
 
 let genToken = 0
+/** changed 查询的序号：切图 / 作废 / 新查询都会递增，旧查询的迟到结果不写回 */
+let changedToken = 0
 let targetToken = 0
 let unreadTimer: number | undefined
 const sleep = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms))
@@ -193,6 +197,7 @@ export const useReviewStore = create<ReviewState>((set, get) => {
     beginResolve: () => {
       targetToken++
       genToken++
+      changedToken++
       set({ target: null, resolving: true, share: null, detail: null, selectedId: null, picker: null, failure: null, stage: 'idle', changed: true })
     },
 
@@ -200,6 +205,7 @@ export const useReviewStore = create<ReviewState>((set, get) => {
       if (get().resolving) set({ resolving: false })
       if (sameTarget(t, get().target)) return
       const mine = ++targetToken
+      changedToken++
       set({ target: t, share: null, detail: null, selectedId: null, picker: null, failure: null, stage: 'idle' })
       genToken++
       if (!t || !get().enabled) return
@@ -240,13 +246,23 @@ export const useReviewStore = create<ReviewState>((set, get) => {
     loadChanged: async () => {
       const id = get().share?.share_id
       const render = buildReviewRender()
+      const mine = ++changedToken
       if (!id || !render) return set({ changed: true })
+      // 只在序号、分享都还是发起时的那一个才写回：A 的迟到结果不能盖掉 B 的
+      const apply = (v: boolean) => {
+        if (mine === changedToken && get().share?.share_id === id) set({ changed: v })
+      }
       try {
         const r = await fetchReviewChanged(id, render)
-        set({ changed: r?.changed !== false })
+        apply(r?.changed !== false)
       } catch {
-        set({ changed: true })
+        apply(true)
       }
+    },
+
+    invalidateChanged: () => {
+      changedToken++
+      set({ changed: true })
     },
 
     loadDetail: async () => {
