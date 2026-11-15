@@ -111,6 +111,13 @@ order: 210
   （内嵌画布 `VITE_VECOPS=off`、编译失败）要内核的命令灰掉、`blockedReason` 说原因。路径的 `strokeAlign`（缺省居中，只给全闭合的路径）：
   两倍线宽描边裁到里面 / 外面，判据 `pathGeom.pathStrokeAlign` ↔ `geometry.path_stroke_align`。看护 `lib/pathfinder.test.ts`（真内核 +
   `tests/golden/pathfinder_vectors.json` 金样）、`canvas/pathStrokeAlign.test.tsx`、`tests/test_path_object.py`。
+- **渐变（2026-11-15，ADR 0186 第一期）**：形状与路径多两个可选字段 `fillGradient` / `strokeGradient`（线性 from / to、径向 center / radius，
+  都是包围盒比例；色标 offset / color / opacity?），`fill` / `color` 纯色一直留着做旧版本的降级色。读取与框空间几何**只**经 `lib/gradient`
+  （`readGradient` / `gradientGeometry` ↔ 后端 `geometry.read_gradient` / `gradient_paint`，共享向量 `tests/golden/gradient_vectors.json`）；
+  画布 / 导出预览的 `<linearGradient>` / `<radialGradient>` 只从 `canvas/gradientPaint.usePaints` 出。包围盒换了（转为路径、`pathFromMm` 收框）
+  用 `remapGradients` 换比例坐标；新加一处改框的写法也要过它。界面：颜色后面的图标下拉 + 「更多」里的色标 / 角度 / 中心与半径
+  （`inspector/controls/GradientControls`）。EPS 判据 `lib/epsOpacity` 认色标透明。看护 `lib/gradient.test.tsx`、`lib/gradient.golden.test.ts`、
+  `inspector/gradientInspector.test.tsx`、`tests/test_gradient.py`。
 - **不认识的对象类型原样保留（2026-11-14，ADR 0185 的前置）**：更新的构建会往文档里写本构建没有的 `type`
   （第一例是自由路径 `path`）。判据只有 `types/document.isKnownObject`（`KNOWN_OBJECT_TYPES` 闭集）。读盘、保存、
   换画布、复制画布都不碰它（文档层本来就不按类型过滤，别加）；画布上 `ObjectView` 只画虚线占位框
