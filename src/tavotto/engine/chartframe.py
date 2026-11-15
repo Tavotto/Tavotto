@@ -1,7 +1,11 @@
 """Computed SVG output frame; source inputs remain in the original pt basis.
 
 Pure stdlib. The /2 policy is union(source viewport, actual same-draw ink bbox)
-plus one physical point, rounded outwards to whole points. Not savefig provenance.
+plus FRAME_OUTER_PT, rounded outwards to whole points. Not savefig provenance.
+
+FRAME_OUTER_PT is the contract constant (#1919): define it only here, and the
+golden vectors pin it. KEYS below is a closed set; a new field requires
+native-manifest/3, never an optional key in /2.
 """
 
 from __future__ import annotations
@@ -9,6 +13,10 @@ from __future__ import annotations
 import copy
 import math
 
+#: /2 显示框在 union(viewport, ink) 外再留的物理边距（pt）；合同常量，只此一处。
+FRAME_OUTER_PT = 1
+
+#: render_frame 的键闭集；新字段必须升 native-manifest/3，不在 /2 加可选键（#1919）。
 KEYS = {"version", "source", "source_viewport_pt", "rect_pt", "edit_basis"}
 MARKER = "data-tavotto-native-render-frame-pt"
 
@@ -54,8 +62,14 @@ def from_ink(source_size, ink):
     x0, y0, x1, y1 = _numbers(ink, 4)
     if min(sw, sh) <= 0 or x1 <= x0 or y1 <= y0:
         raise ValueError("actual ink extent unavailable")
-    left, top = math.floor(min(0, x0 * sw) - 1), math.floor(min(0, y0 * sh) - 1)
-    right, bottom = math.ceil(max(sw, x1 * sw) + 1), math.ceil(max(sh, y1 * sh) + 1)
+    left, top = (
+        math.floor(min(0, x0 * sw) - FRAME_OUTER_PT),
+        math.floor(min(0, y0 * sh) - FRAME_OUTER_PT),
+    )
+    right, bottom = (
+        math.ceil(max(sw, x1 * sw) + FRAME_OUTER_PT),
+        math.ceil(max(sh, y1 * sh) + FRAME_OUTER_PT),
+    )
     return validate_frame(
         {
             "version": 1,

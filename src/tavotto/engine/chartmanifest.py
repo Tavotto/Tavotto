@@ -486,7 +486,7 @@ def render_scaffold(
         "unrestored": len(failed | state.unrestored),
     }
     if render_frame is not None:
-        result["render_frame"] = render_frame
+        # 只保留 manifest 内一份（#1919）；产物顶层不再复制，避免两个身份。
         result["manifest"]["render_frame"] = copy.deepcopy(render_frame)
     if coordinate_space == "scene-viewport-pt":
         result["svg_members"] = _gid_svg_members(state, gid_roles, svg_ids, runtime)
