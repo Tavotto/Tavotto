@@ -1,7 +1,6 @@
 import { useMemo } from 'react'
 import { t as translate } from '@/i18n'
 import { innerGid, owningPanel } from '@/lib/reviewGids'
-import { pageUnion } from '@/lib/panelPlacement'
 import { useReviewPlacements, type PlacedComment } from '@/components/review/useReviewPlacements'
 import { useDocumentStore } from '@/store/documentStore'
 import { useRenderStore } from '@/store/renderStore'
@@ -45,6 +44,7 @@ function ReviewPin({ p, objects, t }: { p: PlacedComment; objects: readonly Canv
   const mode = useWorkspaceStore((s) => s.mode)
   const activePanelId = useWorkspaceStore((s) => s.activePanelId)
   const page = useDocumentStore((s) => s.doc.page)
+  const detail = useReviewStore((s) => s.detail)
   const owner = useMemo(
     () => (a.kind === 'element' ? owningPanel(objects, { byKey: render, latest }, a.gid) : null),
     [a, objects, render, latest],
@@ -58,11 +58,12 @@ function ReviewPin({ p, objects, t }: { p: PlacedComment; objects: readonly Canv
         ? elRect
         : { x: mmToViewX(owner.x, t), y: mmToViewY(owner.y, t), width: mmToPx(owner.w, t), height: mmToPx(owner.h, t) }
   } else if (a.kind === 'region') {
-    // 区域的画面比例坐标：单图编辑相对那张图，排版相对整个画布（页面 ∪ 图）
+    // 区域的画面比例坐标：排版相对**页面**（快照就是导出 scope=canvas 的页面图），单图相对整张图；版本记录带 `frame` 时以它为准
+    const frame = detail?.versions.find((v) => v.v === p.comment.v)?.frame ?? (mode === 'fast_edit' ? 'figure' : 'page')
     const base =
-      mode === 'fast_edit'
+      frame === 'figure'
         ? (objects.find((o) => o.id === activePanelId) ?? null)
-        : pageUnion(page, ...objects)
+        : { x: 0, y: 0, w: page.w, h: page.h }
     if (base) {
       const [bx, by, bw, bh] = a.box
       rect = {

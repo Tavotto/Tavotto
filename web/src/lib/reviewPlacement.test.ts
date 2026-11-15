@@ -57,3 +57,13 @@ describe('通知轨胶囊重现逻辑', () => {
     expect(reviewCapsuleShown({ ...base, slotsFree: false })).toBe(false)
   })
 })
+
+import { rectsOverlap } from './reviewPlacement'
+describe('rectsOverlap：页面外的面板不在快照里', () => {
+  const page = { x: 0, y: 0, w: 100, h: 80 }
+  it('有重叠 / 完全在外 / 只贴边', () => {
+    expect(rectsOverlap({ x: 90, y: 70, w: 40, h: 30 }, page)).toBe(true)
+    expect(rectsOverlap({ x: 500, y: 0, w: 40, h: 30 }, page)).toBe(false)
+    expect(rectsOverlap({ x: 100, y: 0, w: 40, h: 30 }, page)).toBe(false)
+  })
+})

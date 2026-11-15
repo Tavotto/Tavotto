@@ -2613,7 +2613,8 @@
       "laterNew": "Share tomorrow",
       "laterNewDesc": "New links reset at midnight Beijing time",
       "laterUpdate": "Update tomorrow",
-      "laterUpdateDesc": "Resets at midnight Beijing time"
+      "laterUpdateDesc": "Resets at midnight Beijing time",
+      "updateOne": "Swap this figure into the link “{{title}}”"
     },
     "tab": {
       "label": "Review",

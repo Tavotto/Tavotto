@@ -121,19 +121,30 @@ export function Inspector({
               key={id}
               variant="segmented"
               data-inspector-tab={id}
+              // 五个页签时再收紧内边距：最窄的右栏（320）里「改图助手」也要完整显示、不省略
+              className={reviewShare ? 'px-0' : undefined}
               panelId={PANEL_ID[id]}
               active={tab === id}
               onClick={() => setTab(id)}
               // 助手页签：可达名带上「有任务在运行」，视觉上是页签右上角的一颗点
               aria-label={
-                id === 'assistant' && runningAi ? `${assistantTabLabel()} · ${t('aiRunning')}` : undefined
+                id === 'assistant' && runningAi
+                  ? `${assistantTabLabel()} · ${t('aiRunning')}`
+                  : id === 'review' && reviewShare && reviewShare.open_count > 0
+                    ? `${tabLabel(id)} ${reviewShare.open_count}`
+                    : undefined
               }
               title={id === 'assistant' && runningAi ? t('assistantRunningTip') : tabLabel(id)}
             >
               {tabLabel(id)}
+              {/* 未处理数 = 页签右上角的小数字徽标（不占字的宽度，五个页签在最窄栏里也排得下） */}
               {id === 'review' && reviewShare && reviewShare.open_count > 0 && (
-                <span className="ml-1 tabular-nums text-ink-3" data-review-tab-count>
-                  {reviewShare.open_count}
+                <span
+                  aria-hidden
+                  className="absolute right-0 top-0 min-w-3.5 rounded-full bg-accent px-1 text-xs leading-3.5 text-surface tabular-nums"
+                  data-review-tab-count
+                >
+                  {reviewShare.open_count > 9 ? '9+' : reviewShare.open_count}
                 </span>
               )}
               {id === 'assistant' && runningAi && (
@@ -165,7 +176,7 @@ export function Inspector({
               aria-pressed={pinned}
               // 四个页签（含「时间线」）在英文（Linux 字体 281px）下，压缩间距后簇里带图钉要 ≥ 350px 才排得下：
               // 容器 < 350px 时图钉让位给页签行（钉住是偏好，不丢；栏拉宽到 350 就回来）
-              className="@max-[349px]:hidden"
+              className={reviewShare ? '@max-[419px]:hidden' : '@max-[349px]:hidden'}
               onClick={() => useUiStore.getState().setRightPinned(!pinned)}
             >
               <Pin size={ICON_SIZE.sm} filled={pinned} className={pinned ? 'text-ink' : 'text-ink-3'} />

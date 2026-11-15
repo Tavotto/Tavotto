@@ -40,3 +40,9 @@ export function reviewCapsuleShown(o: {
 }): boolean {
   return o.enabled && o.total > 0 && o.total > o.dismissedAt && !o.dialogOpen && o.slotsFree
 }
+
+/** 两个 mm 矩形有没有重叠：排版里元素所在的面板完全在页面外 = 不在快照里，意见走「原位置已变化」 */
+export const rectsOverlap = (
+  a: { x: number; y: number; w: number; h: number },
+  b: { x: number; y: number; w: number; h: number },
+): boolean => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h

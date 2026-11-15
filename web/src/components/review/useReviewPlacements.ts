@@ -1,10 +1,11 @@
 import { useMemo } from 'react'
 import type { ReviewComment } from '@/lib/api'
 import { owningPanel } from '@/lib/reviewGids'
-import { placeComment, type Placement } from '@/lib/reviewPlacement'
+import { placeComment, rectsOverlap, type Placement } from '@/lib/reviewPlacement'
 import { useDocumentStore } from '@/store/documentStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useReviewStore } from '@/store/reviewStore'
+import { useWorkspaceStore } from '@/store/workspaceStore'
 
 export interface PlacedComment {
   comment: ReviewComment
@@ -19,12 +20,18 @@ export function useReviewPlacements(): PlacedComment[] {
   const objects = useDocumentStore((s) => s.doc.objects)
   const byKey = useRenderStore((s) => s.byKey)
   const latest = useRenderStore((s) => s.latest)
+  const page = useDocumentStore((s) => s.doc.page)
+  const layout = useWorkspaceStore((s) => s.mode !== 'fast_edit')
   return useMemo(() => {
     if (!detail) return []
     return detail.comments.map((comment, i) => ({
       comment,
       n: i + 1,
-      placement: placeComment(comment, detail.latest_version, (gid) => !!owningPanel(objects, { byKey, latest }, gid)),
+      placement: placeComment(comment, detail.latest_version, (gid) => {
+        const o = owningPanel(objects, { byKey, latest }, gid)
+        // 排版的快照就是页面图：面板整个在页面外的元素不在快照里，不在画布硬画
+        return !!o && (!layout || rectsOverlap(o, { x: 0, y: 0, w: page.w, h: page.h }))
+      }),
     }))
-  }, [detail, objects, byKey, latest])
+  }, [detail, objects, byKey, latest, page, layout])
 }

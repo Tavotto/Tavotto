@@ -223,7 +223,7 @@ export const useReviewStore = create<ReviewState>((set, get) => {
       const mine = targetToken
       try {
         const d = await fetchReviewShare(id)
-        if (mine === targetToken && get().share?.share_id === id) set({ detail: d })
+        if (d && mine === targetToken && get().share?.share_id === id) set({ detail: d })
       } catch {
         /* 留着上一份 */
       }

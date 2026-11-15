@@ -10,6 +10,7 @@ import { Notice } from '../ui/Notice'
 import { ProgressBar } from '../ui/ProgressBar'
 import { shareLive } from '@/lib/reviewPlacement'
 import { cn } from '@/lib/utils'
+import { listRowClass } from '../ui/listRow'
 import { useDocumentStore } from '@/store/documentStore'
 import { useReviewStore } from '@/store/reviewStore'
 import { useUiStore } from '@/store/uiStore'
@@ -31,7 +32,7 @@ function ShareThumb() {
   const page = panel ? { w: panel.w, h: panel.h } : { w: doc.page.w, h: doc.page.h }
   const objects = panel ? [{ ...panel, x: 0, y: 0 }] : doc.objects
   return (
-    <div className="h-20 w-28 shrink-0 overflow-hidden rounded-md bg-surface-hover" data-review-thumb>
+    <div className="h-20 w-28 shrink-0 overflow-hidden rounded-md bg-paper inset-ring inset-ring-border" data-review-thumb>
       <CanvasThumb page={page} objects={objects} className="size-full" />
     </div>
   )
@@ -51,8 +52,7 @@ function Picker({ onClose }: { onClose: () => void }) {
   const [choosing, setChoosing] = useState(false)
   const isNew = s.picker === 'new'
   const canUpdateOther = isNew && s.others.length > 0
-  const cardClass =
-    'flex w-full flex-col items-start gap-0.5 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-surface-hover focus-visible:focus-ring outline-none'
+  const cardClass = cn(listRowClass({ size: 'md' }), 'w-full flex-col items-start justify-center gap-0.5 px-3 text-left')
   if (choosing) {
     return (
       <div className="flex flex-col gap-1" data-review-picker-list>
@@ -75,9 +75,16 @@ function Picker({ onClose }: { onClose: () => void }) {
   return (
     <div className="flex flex-col gap-1" data-review-picker={s.picker}>
       {canUpdateOther && (
-        <button type="button" className={cardClass} data-review-pick="update-existing" onClick={() => setChoosing(true)}>
+        <button
+          type="button"
+          className={cardClass}
+          data-review-pick="update-existing"
+          onClick={() => (s.others.length === 1 ? void s.updateOther(s.others[0].share_id) : setChoosing(true))}
+        >
           <b className="text-sm font-medium text-ink">{rs('picker.updateExisting')}</b>
-          <span className="type-caption text-ink-3">{rs('picker.updateExistingDesc')}</span>
+          <span className="type-caption text-ink-3">
+            {s.others.length === 1 ? rs('picker.updateOne', { title: s.others[0].title }) : rs('picker.updateExistingDesc')}
+          </span>
         </button>
       )}
       <button

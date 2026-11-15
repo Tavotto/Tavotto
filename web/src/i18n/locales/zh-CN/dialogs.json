@@ -2587,7 +2587,8 @@
       "laterNew": "明天再分享",
       "laterNewDesc": "北京时间 0 点后可以新建",
       "laterUpdate": "明天再更新",
-      "laterUpdateDesc": "北京时间 0 点后恢复"
+      "laterUpdateDesc": "北京时间 0 点后恢复",
+      "updateOne": "「{{title}}」的链接，换成这张图的画面"
     },
     "tab": {
       "label": "审阅",

@@ -8197,6 +8197,8 @@ export interface ReviewShareDetail extends ReviewShareSummary {
   versions: {
     v: number
     created_at: string
+    /** 坐标基准：page = 排版的页面图（导出 scope=canvas 的页面，超出页面的不在快照里）；figure = 整张图 */
+    frame?: 'page' | 'figure'
     elements: { gid: string; label: string; bbox: ReviewBox }[]
   }[]
   comments: ReviewComment[]

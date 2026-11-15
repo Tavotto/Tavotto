@@ -56,6 +56,7 @@ import { useReviewStore } from '@/store/reviewStore'
 import { useUiStore } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import { emptyProject } from '@/types/document'
+import { literal } from '@/i18n'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -283,7 +284,7 @@ describe('失败码：一句话 + 可重试', () => {
 
 describe('额度用满选择卡', () => {
   it('新建用满：更新已有（本机有未到期分享才列）/ 导出 PNG / 明天再分享', async () => {
-    resetStore({ dialogOpen: true, picker: 'new', others: [{ ...SHARE, share_id: 'sh_9', title: 'Figure 2' }] })
+    resetStore({ dialogOpen: true, picker: 'new', others: [{ ...SHARE, share_id: 'sh_9', title: 'Figure 2' }, { ...SHARE, share_id: 'sh_8', title: 'Figure 4' }] })
     vi.mocked(updateReview).mockResolvedValue({ ok: true })
     vi.mocked(fetchReviewStatus).mockResolvedValue({ stage: 'uploading', failure: null, retryable: false, share: null })
     await render(<ReviewDialog />)
@@ -423,6 +424,73 @@ describe('画布圆点只在审阅页签打开时渲染', () => {
     useUiStore.setState({ rightTab: 'review' })
     await render(overlay())
     expect(q('[data-review-pin]')).toBeNull()
+  })
+})
+
+describe('选择卡只有一个可更新的链接时写明是哪一个', () => {
+  it('直接点就更新它，说明里带链接的名字', async () => {
+    resetStore({ dialogOpen: true, picker: 'new', others: [{ ...SHARE, share_id: 'sh_9', title: 'Figure 2' }] })
+    vi.mocked(updateReview).mockResolvedValue({ ok: true })
+    vi.mocked(fetchReviewStatus).mockResolvedValue({ stage: 'uploading', failure: null, retryable: false, share: null })
+    await render(<ReviewDialog />)
+    expect(q('[data-review-pick="update-existing"]')?.textContent).toContain('「Figure 2」的链接')
+    await click(q('[data-review-pick="update-existing"]'))
+    expect(updateReview).toHaveBeenCalledWith('sh_9', undefined, expect.anything(), { kind: 'figure', id: 'fig3' })
+  })
+})
+
+describe('排版的坐标基准是页面', () => {
+  const T = { zoom: 1, panX: 0, panY: 0, originX: 0, originY: 0 }
+  const panelAt = (x: number) =>
+    ({ id: 'p1', type: 'panel', fileId: 'p1.pdf', fileKind: 'pdf', x, y: 0, w: 40, h: 30, overrides: [] }) as never
+  async function seedLayout(x: number) {
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_layout')
+    useDocumentStore.getState().commit(literal('准备'), (d) => {
+      d.page = { w: 100, h: 80 }
+      d.objects = [panelAt(x)]
+    })
+    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
+    useUiStore.setState({ rightTab: 'review', rightOpen: true })
+  }
+  it('页面内的面板意见：圆点在；面板整个在页面外：不画圆点，列表标「原位置已变化」', async () => {
+    const c = cm('e1', { v: 2, anchor: { kind: 'element', gid: 'p1', box: [0.1, 0.1, 0.2, 0.2] } })
+    await seedLayout(10)
+    vi.mocked(fetchReviewShare).mockResolvedValue(DETAIL([c]))
+    resetStore({ share: { ...SHARE, kind: 'layout' }, detail: DETAIL([c]) })
+    await render(
+      <>
+        <svg>
+          <ReviewOverlay objects={useDocumentStore.getState().doc.objects} t={T} />
+        </svg>
+        <ReviewPanel />
+      </>,
+    )
+    expect(q('[data-review-pin="e1"]')).not.toBeNull()
+    expect(q('[data-review-comment="e1"] [data-review-moved]')).toBeNull()
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('挪'), (d) => {
+        d.objects = [panelAt(500)]
+      })
+    })
+    expect(q('[data-review-pin="e1"]')).toBeNull()
+    expect(q('[data-review-comment="e1"] [data-review-moved]')?.textContent).toContain('原位置已变化')
+  })
+  it('区域意见：版本 frame=page 时落在页面上（页面 100×80 的一半处）', async () => {
+    await seedLayout(10)
+    const d = DETAIL([cm('r1', { anchor: { kind: 'region', box: [0.5, 0.5, 0.2, 0.2] } })])
+    d.versions[0].frame = 'page'
+    resetStore({ share: { ...SHARE, kind: 'layout' }, detail: d })
+    await render(
+      <svg>
+        <ReviewOverlay objects={useDocumentStore.getState().doc.objects} t={T} />
+      </svg>,
+    )
+    const c = q('[data-review-pin="r1"] circle')!
+    const cx = Number(c.getAttribute('cx'))
+    const cy = Number(c.getAttribute('cy'))
+    // 圆点在区域框右上角：x = (0.5+0.2)*页宽、y = 0.5*页高（同一换算：比例 × 页面 mm 的屏幕长度）
+    const px = (mm: number) => mm * (cx / 70)
+    expect(cy / px(40)).toBeCloseTo(1, 1)
   })
 })
 

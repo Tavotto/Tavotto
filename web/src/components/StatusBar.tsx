@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type Rea
 import { createPortal } from 'react-dom'
 import { perfCount } from '@/perf/core'
 import { useTranslation } from 'react-i18next'
-import { Check, CircleAlert, Copy, Info, Lightbulb, X } from '@/components/ui/icons'
+import { Check, CircleAlert, Copy, Info, Lightbulb, MessageSquare, X } from '@/components/ui/icons'
 import { Button } from '@/components/ui/Button'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Spinner } from '@/components/ui/Spinner'
@@ -582,7 +582,7 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
           tone="info"
           state={reviewPresence.state}
           data-review-capsule={String(lastReviewUnread.current.total)}
-          icon={<Info size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />}
+          icon={<MessageSquare size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />}
           text={translate('review.capsule', {
             ns: 'dialogs',
             author: lastReviewUnread.current.author,
