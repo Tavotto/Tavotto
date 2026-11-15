@@ -1109,6 +1109,8 @@ export default interface Resources {
       "searchAria": "搜索期刊",
       "source": "出处",
       "sourceOf": "{{name}}的出处",
+      "strengthRecommended": "建议",
+      "strengthRequired": "必须",
       "title": "期刊",
       "unset": "本刊不适用",
       "unspecified": "该期刊未规定",
