@@ -419,8 +419,42 @@ class TextLayout:
     sure: bool
 
 
-def _detect(text: str, suffix: str) -> TextLayout | None:
-    """从内容定读法；不是表（没有成列的数据）→ None。
+@dataclass(frozen=True)
+class RaggedLayout:
+    """像一张表、但有行的列数对不上：**不当成别的表读**（不丢表头和前面的观测），报 `data_ragged`。`line` 是猜的表头行（用户可点另一行覆盖）。"""
+
+    delimiter: str
+    line: int
+
+
+def _ragged_hint(sample: str) -> RaggedLayout | None:
+    """所有候选的数据块都认不出来时（例如最后一行列数不符，尾部连续等宽的那一段不存在）：看有没有「至少 3 条等宽记录且有数值列」的分隔符，
+    有就是畸形的表而不是散文。"""
+    best = None
+    for pref, d in enumerate(_SNIFF_ORDER):
+        recs = [r for r in delimited_records(sample, d) if not _is_hash(r[1])]
+        counts: dict[int, int] = {}
+        for _, c in recs:
+            if len(c) >= 2:
+                counts[len(c)] = counts.get(len(c), 0) + 1
+        if not counts:
+            continue
+        width = max(counts, key=lambda w: (counts[w], w))
+        same = [r for r in recs if len(r[1]) == width]
+        if len(same) < 3 or not _numeric_columns(same, width):
+            continue
+        key = (len(same), -pref)
+        if best is None or key > best[0]:
+            best = (key, RaggedLayout(d, same[0][0]))
+    return best[1] if best else None
+
+
+def _detect(text: str, suffix: str) -> TextLayout | RaggedLayout | None:
+    """从内容定读法；不是表（没有成列的数据）→ None；像表但有列数不符的行 → `RaggedLayout`。
+
+    **畸形行规则**（表头定下之后，数据区里列数不符的行一律不收）：数据块是文件末尾连续等宽的一段；块**之前**若还有等宽的非注释记录，
+    说明块不是整张表（中间 / 开头有一行畸形），报 `RaggedLayout` 而不是把后缀当成新表；块之前只有列数不同的说明行 = 仪器导出的说明行，正常。
+    尾部：空行忽略、`#` 开头的行忽略（注释）；其它列数不符的尾行（footer 也一样）一律算畸形，不静默丢弃。
 
     * 候选分隔符：`.csv` / `.tsv` / `.tab` 先只试自己的（干净的老文件逐字不变），不成才试其它（分号 CSV）；其余后缀四种都试。
     * 打分：数据块的记录数大的赢；相同则「像数」的格子占比高的赢（欧式小数 `1,5` 也算像数，所以 `1,5;2,5` 判分号、`1,5 2,5` 判空白）；
@@ -460,6 +494,9 @@ def _detect(text: str, suffix: str) -> TextLayout | None:
         if best is None:
             continue
         _key, d, width, block, numeric, recs = best
+        if any(r[0] < block[0][0] and not _is_hash(r[1]) and len(r[1]) == width for r in recs):
+            first = next(r for r in recs if not _is_hash(r[1]) and len(r[1]) == width)
+            return RaggedLayout(d, first[0])
         # 表头候选
         k = 1
         if numeric:
@@ -481,7 +518,7 @@ def _detect(text: str, suffix: str) -> TextLayout | None:
             if (_is_hash(prev[1]) or d == "ws") and len(hdr) == width and all(hdr):
                 return TextLayout(d, prev[0], True)
         return TextLayout(d, first_line, False)
-    return None
+    return _ragged_hint(sample)
 
 
 def _preview(text: str, guess: int) -> tuple[tuple[int, str], ...]:
@@ -561,6 +598,16 @@ def read_text_table(
         layout = _detect(text, suffix)
     except csv.Error:
         return _unreadable("data_malformed")
+    if isinstance(layout, RaggedLayout):
+        if header_row is None:
+            return TextTable(
+                "unreadable",
+                code="data_ragged",
+                delimiter=layout.delimiter,
+                header_line=layout.line,
+                preview=_preview(text, layout.line),
+            )  # 猜的表头行与原文预览一并给出：用户点对表头行后按它读（指定行之后的畸形行同样拒绝）
+        layout = TextLayout(layout.delimiter, layout.line, True)
     if layout is None:
         if suffix not in CSV_SUFFIXES + TSV_SUFFIXES:
             return _unreadable("data_not_table")
