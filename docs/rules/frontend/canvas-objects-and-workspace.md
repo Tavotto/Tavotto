@@ -124,6 +124,10 @@ order: 210
   实时圆角 `canvas/LiveCorners`（几何 `lib/liveCorners`）：矩形改 `cornerRadius`，路径把角烤成圆弧（锚点下标变，松手清锚点选择）。
   拖动都走 `beginTxn / txnUpdate / endTxn`。看护 `canvas/gradientHandlesAndCorners.test.tsx`、`lib/gradientHandles.test.ts`、
   `lib/liveCorners.test.ts`、`lib/liveCorners.golden.test.ts`、`tests/test_live_corners.py`。
+- **形状生成器 ⇧M（2026-11-15，ADR 0185 M3 第三批）**：会话在 `store/shapeBuilder`（区域放会话里、不碰文档，退出时有改动才一次 commit），
+  覆盖层 `canvas/ShapeBuilderOverlay`；几何 `lib/pathfinder.builderFaces / mergeFaces / builderPlan`（vecops 内核的分割 / 合并）。会话开着时
+  `useKeyboard` 只认 Esc / Enter。看护 `store/shapeBuilder.test.tsx`。取色面板的「图内配色 / 推荐配色」在 `lib/swatches`，宿主
+  `ColorFieldHost.figureColors / recommended` 由属性栏挂上；看护 `lib/swatches.test.tsx`。
 - **不认识的对象类型原样保留（2026-11-14，ADR 0185 的前置）**：更新的构建会往文档里写本构建没有的 `type`
   （第一例是自由路径 `path`）。判据只有 `types/document.isKnownObject`（`KNOWN_OBJECT_TYPES` 闭集）。读盘、保存、
   换画布、复制画布都不碰它（文档层本来就不按类型过滤，别加）；画布上 `ObjectView` 只画虚线占位框
