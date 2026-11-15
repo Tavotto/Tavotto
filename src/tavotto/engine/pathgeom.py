@@ -564,28 +564,51 @@ def output_kwargs(fig) -> dict:
     return {} if frame is None else {"bbox_inches": frame}
 
 
+def _subfigure_rect(fig, rect, *, to_root: bool) -> list:
+    """SubFigure 里子图的 `get_position()` 是**子图幅**的分数（`transSubfigure`），manifest 的
+    `axes.position` 与别的元素一样按**根图幅**算（ADR 0100 修订 2026-11-13）。两边都换到
+    显示坐标再换回来：嵌套的 SubFigure、显示原点的平移（`in_frame` / savefig 的 adjust_bbox）
+    在这一来一回里都抵消。`fig` 不是 SubFigure 时原样返回。"""
+    vals = [float(v) for v in rect]
+    if not isinstance(fig, SubFigure):
+        return vals
+    root = root_figure(fig)
+    src, dst = (fig.transSubfigure, root.transFigure)
+    if not to_root:
+        src, dst = dst, src
+    x, y, rw, rh = vals
+    (x0, y0), (x1, y1) = dst.inverted().transform(src.transform([(x, y), (x + rw, y + rh)]))
+    return [float(x0), float(y0), float(x1 - x0), float(y1 - y0)]
+
+
 def axes_rect_to_figsize(fig, rect) -> list:
-    """`axes.position` 的值（F 里的分数，bottom-origin 的 `[x, y, w, h]`）→ figsize 的分数。"""
+    """`axes.position` 的值（根图幅 F 里的分数，bottom-origin 的 `[x, y, w, h]`）→
+    `ax.set_position` 收的那个分数：根 figsize 的分数，SubFigure 里则是它自己子图幅的分数。"""
     frame = frame_bbox(fig)
     if frame is None:
-        return [float(v) for v in rect]
+        return _subfigure_rect(fig, rect, to_root=False)
     w, h = _figsize(root_figure(fig))
     x, y, rw, rh = (float(v) for v in rect)
-    return [
-        (frame.x0 + x * frame.width) / w,
-        (frame.y0 + y * frame.height) / h,
-        rw * frame.width / w,
-        rh * frame.height / h,
-    ]
+    return _subfigure_rect(
+        fig,
+        [
+            (frame.x0 + x * frame.width) / w,
+            (frame.y0 + y * frame.height) / h,
+            rw * frame.width / w,
+            rh * frame.height / h,
+        ],
+        to_root=False,
+    )
 
 
 def axes_rect_to_frame(fig, rect) -> list:
-    """figsize 的分数（`ax.get_position().bounds`）→ F 里的分数。`axes_rect_to_figsize` 的逆。"""
+    """`ax.get_position().bounds`（SubFigure 里是子图幅的分数）→ 根图幅 F 里的分数。
+    `axes_rect_to_figsize` 的逆。"""
+    x, y, rw, rh = _subfigure_rect(fig, rect, to_root=True)
     frame = frame_bbox(fig)
     if frame is None:
-        return [float(v) for v in rect]
+        return [x, y, rw, rh]
     w, h = _figsize(root_figure(fig))
-    x, y, rw, rh = (float(v) for v in rect)
     return [
         (x * w - frame.x0) / frame.width,
         (y * h - frame.y0) / frame.height,

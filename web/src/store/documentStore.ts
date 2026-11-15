@@ -401,9 +401,83 @@ export function onBlockedWrite(fn: (() => void) | null): void {
 
 /** 写入口的门：占位文档不许写。`notify` = 用户动作被拒，要说一句；派生写入静默 */
 function writesBlocked(notify = true): boolean {
+  if (windowHold) {
+    if (notify) windowBlockedNotifier?.()
+    return true
+  }
   if (!isDocumentPlaceholder()) return false
   if (notify && gate.state === 'needs_user') blockedWriteNotifier?.()
   return true
+}
+
+/**
+ * 同一份排版在两个窗口开着时，这个窗口的编辑权（ADR 0181）：
+ *  - `contested`：后开的窗口，收到「另一个窗口已端着这份」——选「在这里编辑」/「存成副本」之前只读；
+ *  - `yielding`：正被另一个窗口接管，在把没存的改动存好——此时已不收新编辑，但还要写盘；
+ *  - `yielded`：已被接管——只读，自动保存不写盘（改动留在这个窗口里，可「存成副本」）。
+ * 只读靠两样：写入口的门（`writesBlocked`）+ 自动保存挂起（`suspendAutosaveFor`，换文档即解除）。
+ * `switchDocument` 换到任何文档都清掉它——权属于「这份排版」，不属于窗口。
+ */
+export interface WindowHold {
+  role: 'contested' | 'yielding' | 'yielded'
+  docId: string
+  /**
+   * 让出时那次存盘没确认成功（`yielded` 才有意义）：此刻内存里的内容不一定在盘上。
+   * `dirty` 不能当「已落盘」的证据——`flushAutosaveNow` 排队写盘时就把它清了，写盘失败才在后面把
+   * `saveState` 推成 `save_error` / `conflict`；进入只读时记下的内容摘要又已经含着这些改动。
+   */
+  unsaved?: boolean
+}
+let windowHold: WindowHold | null = null
+/** 挂起是不是这里设的（别把教程等别处设的挂起一并放开） */
+let holdSuspended = false
+export const getWindowHold = (): WindowHold | null => windowHold
+/** 进入只读那一刻内存里文档的摘要：只读期间内存被改了（`endTxn` 收尾不过门，进行中的事务可能落地）要认得出来 */
+let holdDigest: string | null = null
+
+/**
+ * 只读期间内存里的文档被改过吗（与进入只读那一刻比）。`dirty` 管不到这条：只读窗口的自动保存被挂起，
+ * 落进内存的改动不会把 `dirty` 置位——接管时载入最新版前要靠它判「有没有自己的改动要保护」。
+ */
+export function holdContentChanged(): boolean {
+  return holdDigest !== null && documentDigest(useDocumentStore.getState().doc) !== holdDigest
+}
+
+/**
+ * 这个窗口手里有没有「不确定已经落盘」的内容：让出时存盘没成功、保存状态卡在失败 / 冲突、`dirty`、
+ * 或只读期间内存被改过。接管载入最新版之前问它——是就必须把内存里这份保护进恢复槽位。
+ */
+export function holdHasUnconfirmedContent(): boolean {
+  const s = useDocumentStore.getState()
+  return (
+    windowHold?.unsaved === true ||
+    s.dirty ||
+    s.saveState === 'save_error' ||
+    s.saveState === 'conflict' ||
+    holdContentChanged()
+  )
+}
+
+export function setWindowHold(next: WindowHold | null): void {
+  windowHold = next
+  useDocumentStore.setState({ windowHold: next })
+  if (next && next.role !== 'yielding') {
+    holdDigest = documentDigest(useDocumentStore.getState().doc)
+    suspendAutosaveFor(next.docId)
+    holdSuspended = true
+  } else if (!next) {
+    holdDigest = null
+    if (holdSuspended) {
+      holdSuspended = false
+      resumeAutosave()
+    }
+  }
+}
+
+/** 只读期间用户动手被拒：由 `documentRestore` 登记，说一句先选（与 `onBlockedWrite` 平行） */
+let windowBlockedNotifier: (() => void) | null = null
+export function onWindowBlockedWrite(fn: (() => void) | null): void {
+  windowBlockedNotifier = fn
 }
 
 /** 保存元数据（下次自动恢复用的 last / owner）没写成：与 `saveState` 正交 */
@@ -460,6 +534,8 @@ interface DocumentState {
   docNotice: DocNotice | null
   /** 恢复门的镜像（只读，给界面用；写入口只在本文件的 `setGate`） */
   restoreGate: RestoreGate
+  /** 这个窗口对这份排版的编辑权（同一份排版在两个窗口开着，ADR 0181）；null = 正常 */
+  windowHold: WindowHold | null
   /**
    * 上次的排版没能恢复、等用户处理的那件事（一句话 + 一个主按钮，见顶栏芯片）。与 `saveState` 正交：
    * 一次 `saved → clean` 清不掉它；只有恢复成功 / 用户选了出口才清。
@@ -685,6 +761,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   saveIssue: null,
   docNotice: null,
   restoreGate: gate,
+  windowHold: null,
   restoreIssue: null,
   restoreMetaIssue: null,
   loadSeq: 0,
@@ -1137,6 +1214,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
     // 换文档 = 挂起结束（上面那次 flush 已经按挂起跳过了，旧文档的编辑随它一起放弃）
     autosaveSuspendedFor = null
+    // 编辑权属于「那份排版」：换到哪份都清（只读状态不跟着带过去）
+    windowHold = null
+    holdDigest = null
+    holdSuspended = false
     // 归属在**换进来那一刻**定，不在落盘那一刻现问（见 `docProject`）。
     // 必须排在上面那次 flush 之后：那一次写的是**旧**文档，它属于旧项目。
     // 占位文档没有归属：转正（`settleRestore`）或被真文档取代时才定
@@ -1159,6 +1240,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         saveIssue: null,
         docNotice: null,
         restoreMetaIssue: null,
+        windowHold: null,
         loadSeq: get().loadSeq + 1,
         lastPersisted: null,
         projectFile: readProjectFile(nextId),
@@ -1753,6 +1835,15 @@ export function dismissDocNotice(): void {
 }
 
 /**
+ * 只把「最近的排版」列表里的这一条去掉（读不到它了）：不碰自动保存槽位 / 恢复副本——
+ * 那些是用户数据，「读不到」可能只是暂时的，删不删不归列表管。
+ */
+export function dropRecentEntry(id: string): void {
+  const kept = writeIndex(readIndex().filter((e) => e.id !== id))
+  useDocumentStore.setState({ recentDocs: kept })
+}
+
+/**
  * 忘掉本机关于某个 documentId 的一切：自动保存槽位、待恢复副本、最近文档
  * 条目。**只动本机、只动这一个 id**——磁盘上的文档不归这里管。
  *
@@ -1784,21 +1875,35 @@ export function forgetLocalDocument(id: string): void {
  * 没清），把它挪进恢复槽位，加载完立刻以 `recovery_available` 提供出来。
  * 所以"重新加载"不是一个会丢东西的按钮。
  */
-export async function reloadFromDisk(): Promise<boolean> {
+export async function reloadFromDisk(opts: { keepMine?: boolean } = {}): Promise<boolean> {
   const id = useDocumentStore.getState().documentId
-  // 先落一次本机副本：冲突可能发生在防抖窗口之前，副本未必是最新的内存内容
-  try {
-    localStorage.setItem(slotKey(id), JSON.stringify(useDocumentStore.getState().buildProject()))
-  } catch {
-    /* 存不下就用已有的那份副本（可能旧一点，总比没有强） */
+  // 发请求那一刻的上下文：读盘期间用户切了排版 / 重新载入过 / 切了项目，响应不属于现在开着的这份，
+  // 绝不装进去（A 项目的响应不得落进 B）。请求也按这一刻的项目发，不按回来时的
+  const loadSeq0 = useDocumentStore.getState().loadSeq
+  const pj0 = currentProjectId()
+  const stillHere = () => {
+    const cur = useDocumentStore.getState()
+    return cur.documentId === id && cur.loadSeq === loadSeq0 && currentProjectId() === pj0
   }
-  const backup = promoteToRecovery(id)
+  // `keepMine: false` = 这个窗口没有自己的改动要保护（只读窗口接管时载入最新版）：不把内存里那份旧内容
+  // 写进本机副本再晋升成恢复——槽位是各窗口共用的，那样会把一份过时的内容当成「未恢复的编辑」摆出来
+  const keepMine = opts.keepMine ?? true
+  if (keepMine) {
+    // 先落一次本机副本：冲突可能发生在防抖窗口之前，副本未必是最新的内存内容
+    try {
+      localStorage.setItem(slotKey(id), JSON.stringify(useDocumentStore.getState().buildProject()))
+    } catch {
+      /* 存不下就用已有的那份副本（可能旧一点，总比没有强） */
+    }
+  }
+  const backup = keepMine ? promoteToRecovery(id) : null
   let fetched: Awaited<ReturnType<typeof fetchAutosave>>
   try {
-    fetched = await fetchAutosave(id)
+    fetched = await fetchAutosave(id, pj0)
   } catch {
     return false // 读不回来就别动内存里那份
   }
+  if (!stillHere()) return false // 上下文已被取代：丢弃响应
   const pd = fetched ? migrateToProject(fetched.doc) : null
   if (!pd) return false
   disk.rememberRevision(id, fetched)
@@ -1884,6 +1989,8 @@ function localRecoveryKind(local: LocalSnapshot | null, diskDoc: ProjectDocument
 export interface LoadedDoc {
   doc: ProjectDocument | null
   notice: DocNotice | null
+  /** 没有 doc 时为什么：`missing`（确认过不在了）/ `unavailable`（暂时读不到，文件多半还在）/ `invalid`（读到了但坏）/ `too_new` */
+  kind: ProbeResult['kind']
 }
 
 /** `migrateToProject` 认不出的载荷里，是不是一份"来自更新的 Tavotto"？ */
@@ -2045,7 +2152,7 @@ export async function readAutosaveDoc(id: string): Promise<LoadedDoc> {
     probe = { ...probe, kind: 'found', doc: probe.local, from: 'local' }
   }
   const notice = acceptProbe(probe, pj)
-  return { doc: probe.doc, notice }
+  return { doc: probe.doc, notice, kind: probe.kind }
 }
 
 /**

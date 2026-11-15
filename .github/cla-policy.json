@@ -14,20 +14,19 @@
     "改完正文跑 `python3 scripts/ci/cla_gate.py --refresh-hashes` 重算，",
     "版本号是否要 bump 见 docs/legal/CLA_VERSIONING.md（那是个决定，脚本不替你做）。",
     "",
-    "provider：签名服务商。configured=false 时**没有任何人能被判成已签**——",
-    "非豁免的人类贡献者一律阻断并给出明确指引，绝不假装他签过。",
-    "启用步骤（含要加的 checks: read 权限）见 CLA_AUTOMATION_SETUP.md。",
+    "provider：签名服务。configured=true + protocol=tavotto-cla-v1 时，CI 直接问",
+    "authority_origin 上的服务做实时判定（ADR 0172）；问不到一律判红，绝不假装谁签过。",
+    "启用与回退步骤见 docs/legal/CLA_AUTOMATION_SETUP.md 与 services/cla-cloudflare/deployment/production/。",
     "",
     "exemptions：**显式点名**的豁免，每一条都要写得出 kind 与 reason。",
     "这里没有「名字带 [bot] 就放行」这种规则，也没有「PR 作者 == 仓库 owner",
     "就放行」这种动态猜测——dependabot 能过是因为它写在下面，不是因为后缀。",
     "",
-    "offline_signatures：**服务商启用之前**的唯一签署途径——贡献者与著作权人双签",
-    "纸面协议（执行副本由著作权人私下保存，上面有住址，永不进仓库）。这里每条只是",
-    "指向那份执行副本的索引：账号、不可变账号 id、协议与版本、两个签署日期。",
-    "判定器按 login 找到条目后再按账号 id 核人、按版本核文本。",
-    "**任何时刻只有一个权威**：provider.configured=true 时这一节必须为空，",
-    "启用服务商前先把这里的人迁进服务商（判定器结构性地拒绝两者并存）。"
+    "exemptions 里 kind=countersigned_paper：服务启用前已与著作权人双签纸面协议的人（ADR 0183）。",
+    "执行副本由著作权人私下保存，上面有住址，永不进仓库；这里每条只是索引：账号、",
+    "不可变账号 id、协议与版本、两个签署日期。判定器按账号 id 核人、按版本核文本，",
+    "版本过期即不算。**每个人只有一个权威**：这些账号只认纸面记录，其余的人只认服务；",
+    "服务启用后新贡献者一律在线签署，不再新增这一类条目。"
   ],
   "agreements": {
     "individual": {
@@ -42,37 +41,43 @@
     }
   },
   "provider": {
-    "configured": false,
-    "name": null,
-    "check_name": null,
-    "note": "未配置——这是**刻意的**，不是遗漏：至今零外部人类贡献，配了也没人用。RIGHTS_HOLDER_CONFIGURATION_REQUIRED 已解决（Jiaqi Wan / 香港法），协议已定版 1.0，因此现在随时可以启用。启用步骤见 docs/legal/CLA_AUTOMATION_SETUP.md。在此之前判定器对任何非豁免的人类贡献者一律阻断并给出指引，绝不假装谁签过。"
+    "configured": true,
+    "protocol": "tavotto-cla-v1",
+    "name": "Tavotto CLA",
+    "check_name": "Tavotto CLA",
+    "app_slug": "tavotto-cla",
+    "app_id": 5740523,
+    "note": "Tavotto 自建签名服务 https://cla.tavotto.com（Cloudflare Workers + D1，ADR 0172）。签署：用 GitHub 登录签署页，著作权人联署后生效。"
   },
   "exemptions": [
     {
       "login": "erwanjun",
       "kind": "rights_holder",
-      "reason": "本仓库的著作权人 Jiaqi Wan 本人（GitHub 账号 erwanjun）。main 可达的 423 个 commit 中 422 个出自这个身份（三个邮箱，同一人；审计见 docs/legal/IP_PROVENANCE.md）。著作权人不需要向自己授权。若权利将来转移给某个实体，这一条要改成那个实体与本人的关系。"
+      "reason": "本仓库的著作权人 Jiaqi Wan 本人（GitHub 账号 erwanjun）。main 可达的 423 个 commit 中 422 个出自这个身份（三个邮箱，同一人；审计见 docs/legal/IP_PROVENANCE.md）。著作权人不需要向自己授权。若权利将来转移给某个实体，这一条要改成那个实体与本人的关系。",
+      "github_id": 88193520
     },
     {
       "login": "dependabot[bot]",
       "kind": "bot",
-      "reason": "GitHub 官方依赖升级机器人。它的 PR 只改依赖版本号与锁文件，不产生具有著作权意义的表达。main 历史里有 1 个它的 commit（依赖升级）。"
+      "reason": "GitHub 官方依赖升级机器人。它的 PR 只改依赖版本号与锁文件，不产生具有著作权意义的表达。main 历史里有 1 个它的 commit（依赖升级）。",
+      "github_id": 49699333
     },
     {
       "login": "github-actions[bot]",
       "kind": "bot",
-      "reason": "本仓库 workflow 自己的提交身份（发布链里的受管产物与清单）。产出由仓库自有脚本机械生成，著作权归仓库既有代码的权利人。"
-    }
-  ],
-  "offline_signatures": [
+      "reason": "本仓库 workflow 自己的提交身份（发布链里的受管产物与清单）。产出由仓库自有脚本机械生成，著作权归仓库既有代码的权利人。",
+      "github_id": 41898282
+    },
     {
       "login": "mvanhorn",
+      "kind": "countersigned_paper",
       "github_id": 455140,
       "agreement": "individual",
       "version": "1.0",
       "contributor_signed_on": "2026-11-01",
       "countersigned_on": "2026-11-02",
-      "record": "Executed Individual CLA 1.0 (both signatures), held privately by the rights holder Jiaqi Wan; contains the contributor's postal address and is never committed. First contribution: PR #826."
+      "reason": "Executed Individual CLA 1.0 (both signatures), held privately by the rights holder Jiaqi Wan; contains the contributor's postal address and is never committed. First contribution: PR #826."
     }
-  ]
+  ],
+  "authority_origin": "https://cla.tavotto.com"
 }

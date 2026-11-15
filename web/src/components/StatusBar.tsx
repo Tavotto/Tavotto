@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FocusEvent, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { perfCount } from '@/perf/core'
 import { useTranslation } from 'react-i18next'
@@ -50,6 +50,20 @@ const RAIL_MAX = 3
 const HUD_BOX =
   'inline-flex min-h-7 max-w-full items-center rounded-full bg-surface px-3 py-1 text-sm text-ink-2 shadow-pop'
 
+/** 工具提示与它上方 / 下方那条通知之间留的缝（px） */
+export const HUD_NOTICE_GAP = 6
+
+/**
+ * 工具提示要不要为底部通知轨让位、让多少：轨上有在场通知（`noticeTop` = 最上面那条的顶边，窗口坐标）时，提示整块抬到
+ * 那条通知的上方——两者同在画布底边、一个靠左一个居中，画布一窄（左右栏都开着）长一点的提示就伸进通知底下
+ * （2026-11-14 实测：文字工具 300px、钢笔 388px 的提示在 708px 宽的画布里都被「问题」提示卡压住）。
+ * 回的是 `bottom`（px，相对提示所在的定位容器）；没有通知 / 量不到容器 = null（按工具条位置的缺省落）。纯函数，用例直接喂数。
+ */
+export function hudLift(noticeTop: number | null, containerBottom: number | null): number | null {
+  if (noticeTop == null || containerBottom == null) return null
+  return Math.max(0, containerBottom - noticeTop + HUD_NOTICE_GAP)
+}
+
 export function CanvasHud() {
   perfCount('render.CanvasHud')
   const { t } = useTranslation('workspace')
@@ -57,20 +71,40 @@ export function CanvasHud() {
   const nudge = useInteractionStore((s) => s.nudge)
   const tool = useUiStore((s) => s.tool)
   const toolbarUp = useCanvasToolbarVisible()
+  const noticeTop = useNoticeRailStore((s) => s.top)
+  const ref = useRef<HTMLDivElement>(null)
+  // 定位容器的底边（窗口坐标）：通知轨的顶边是窗口坐标，换成相对容器的 bottom 要它。窗口尺寸变了重量
+  const [containerBottom, setContainerBottom] = useState<number | null>(null)
 
   // 拖动 / 微调进行中不说工具提示：那时读数在选区旁边（MeasureChip），左下角安静
   const interacting = kind !== 'none' || !!nudge
   const hint = !interacting && tool !== 'select' ? t(`toolHint.${tool}`) : null
+
+  useLayoutEffect(() => {
+    const measure = () => {
+      const parent = ref.current?.offsetParent
+      setContainerBottom(parent ? Math.round(parent.getBoundingClientRect().bottom) : null)
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [hint, noticeTop])
+
   if (!hint) return null
+  const lift = hudLift(noticeTop, containerBottom)
 
   return (
     <div
+      ref={ref}
       data-canvas-hud
-      // 左下角位：12px 内距；画布底部有浮动工具条时抬到它上面去（读数 / 提示与工具条同在底边会叠在一起）
+      data-hud-lifted={lift != null || undefined}
+      // 左下角位：12px 内距；画布底部有浮动工具条时抬到它上面去（读数 / 提示与工具条同在底边会叠在一起）；
+      // 底部通知轨有通知时再抬到通知上方（`hudLift`）。窄画布里长提示折行，不越过画布右边
       className={cn(
         'pointer-events-none absolute left-3 z-sticky flex max-w-[calc(100%-1.5rem)] flex-col items-start',
-        toolbarUp ? 'bottom-16' : 'bottom-3',
+        lift == null && (toolbarUp ? 'bottom-16' : 'bottom-3'),
       )}
+      style={lift != null ? { bottom: lift } : undefined}
       aria-hidden
     >
       <p className={HUD_BOX}>{hint}</p>
@@ -283,12 +317,22 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   // 压上去的只有对话框自己动作的结果（状态 / 引擎退出 / 带一次性出口的环境与答案提示）；背景性的几条
   // （加入说明、操作提示、作者回信胶囊）在模态期间不画——它们与对话框里的事无关，浮在遮罩上只会打岔，关掉对话框后照常回来
   const overModal = useDialogLayerStore((s) => s.open > 0)
-  useEffect(() => {
+  const measureRailTop = () => {
     const tops = [...(overModal ? [] : (railRef.current?.querySelectorAll('[data-toast-layout][data-state="open"]') ?? []))].map((e) =>
       Math.round(e.getBoundingClientRect().top),
     )
     useNoticeRailStore.getState().setTop(tops.length ? Math.min(...tops) : null)
-  })
+  }
+  useEffect(measureRailTop)
+  // 顶边是窗口坐标：窗口变高 / 变矮时通知跟着 CSS 底边锚走，渲染却不一定重来——只在渲染后量会留下旧值，
+  // 读它的浮动胶囊（工具提示、上下文栏、拖动读数、提示卡）就按旧位置避让、又叠上去。尺寸一变就重量
+  const measureRef = useRef(measureRailTop)
+  measureRef.current = measureRailTop
+  useEffect(() => {
+    const onResize = () => measureRef.current()
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
   useEffect(() => () => useNoticeRailStore.getState().setTop(null), [])
   const { t } = useTranslation('workspace')
   const fmt = useFormatMessage()

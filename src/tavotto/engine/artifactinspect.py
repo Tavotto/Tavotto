@@ -24,7 +24,8 @@ def normalize_worker_svg(path: Path, expected: dict | None = None) -> None:
     """Normalize only trusted worker output before its bytes are frozen or inspected.
 
     The parser itself always rejects DTDs. Only this producer boundary removes the
-    exact inert Matplotlib declaration; custom DTDs and active content still fail.
+    exact inert Matplotlib declaration and renames ids outside the safe grammar
+    (`svgcheck.repair_worker_ids`); custom DTDs and active content still fail.
     """
     from ..rendercore import svgcheck
 
@@ -43,7 +44,18 @@ def normalize_worker_svg(path: Path, expected: dict | None = None) -> None:
                 "export_render_failed", "SVG companion changed", {"reason": "source_changed"}
             )
     normalized = svgcheck.strip_matplotlib_doctype(data)
-    svgcheck.parse_svg(normalized, budget=budget)
+    try:
+        svgcheck.parse_svg(normalized, budget=budget)
+    except svgcheck.SVGError:
+        # 用户 `set_gid("面板 A")` 是合法的 matplotlib 输出，只是不在安全 id 语法里。闸按文档顺序报第一处
+        # 问题：引用 / 样式表写在定义前面时先报的是 svg_external_resource / svg_unsafe_css，所以不按错误码
+        # 分流——只在可信 worker 边界试一次改名（引用同步）；没东西可改就原样抛，改了就让结果重新过整道闸。
+        # 任意导入文件不走这条（svgcheck.repair_worker_ids）
+        repaired = svgcheck.repair_worker_ids(normalized, budget=budget)
+        if repaired == normalized:
+            raise
+        svgcheck.parse_svg(repaired, budget=budget)
+        normalized = repaired
     if normalized != data:
         Path(path).write_bytes(normalized)
 

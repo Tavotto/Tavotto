@@ -1,3 +1,0 @@
-## Animated hint cards: text editing, drawing, panning, multi-select, and where the shortcuts are
-
-Five more animated hint cards round out the set. Changing a figure's text from the sidebar suggests double-clicking the text itself; drawing an almost-square rectangle or an almost-level line suggests holding ⇧; panning a zoomed-in canvas one wheel notch at a time suggests holding Space and dragging; changing the same style property on one element after another suggests ⇧-clicking to select them all first; and once you have picked up five gestures, a last card points to the full shortcut list (press ?).

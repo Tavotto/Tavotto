@@ -1,0 +1,124 @@
+"""同一张图的几份文件（ADR 0184 §一）：图键与主文件的**唯一出处**。
+
+素材区的单位是「图」：同一张图可以同时有 PDF / SVG / PNG……几份文件，用户要排版的是图本身，
+不想挑格式。这里只回答两件事，不碰磁盘、不调用户代码：
+
+* `figure_key(rel, reg)`——这份文件属于哪张图；
+* `pick_primary(entries)`——一张图的几份文件里，画布上用哪一份。
+
+`/api/panels`（`app.scan_panels`）与就绪度共用它们；前端只按后端给的 `figure_key` / `primary` 归组，
+不自己再切一次文件名。
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable, Mapping
+from pathlib import PurePosixPath
+
+#: 按格式分目录时常见的目录名（大小写不敏感）：`figures/pdf/fig1.pdf` 与 `figures/png/fig1.png` 是同一张图。
+FORMAT_DIR_NAMES = frozenset({"pdf", "png", "svg", "jpg", "jpeg", "tif", "tiff"})
+
+SCRIPT_PREFIX = "script:"
+#: R / MATLAB 画的图（ADR 0184 修订）：`foreign:<脚本>|<文件名 stem>`——同一个脚本存的同名文件跨目录、跨格式是一张图
+FOREIGN_PREFIX = "foreign:"
+DIR_PREFIX = "dir:"
+
+#: 主文件的格式次序：PDF 优先（用户 2026-11-14 拍板「自动挑矢量」），然后位图，SVG 最后。
+#: SVG 排在位图之后是导出的硬约束（Codex #1906）：没编辑过的 SVG 素材不进画布合成导出
+#: （`exportroute` 的 `static_svg_asset`，`svg_asset_export_unsupported`），把它挑成主文件会让排版导不出去。
+_KIND_RANK = {"pdf": 0, "raster": 1, "svg": 2}
+
+
+def _norm(rel: str) -> PurePosixPath:
+    return PurePosixPath(str(rel).replace("\\", "/"))
+
+
+def source_of(
+    rel: str, reg=None, foreign: Mapping[str, str] | None = None, sibling=None
+) -> tuple[str, str] | None:
+    """这份文件是哪个脚本画的：`(图键, 脚本)`；认不得 → None。
+
+    次序：Python 注册表（`Registry.for_artifact`）→ R / MATLAB 源码里写死的输出（`foreignoutputs.output_map`）
+    → 同目录同名的 R / MATLAB 脚本（`foreignsource.sibling_of`，`sibling(rel)` 回脚本或 None）。
+    """
+    p = _norm(rel)
+    key = p.as_posix()
+    if reg is not None:
+        try:
+            info = reg.for_artifact(key)
+        except Exception:  # noqa: BLE001 —— 注册表读不动不该让素材清单失败：往下认
+            info = None
+        if info is not None:
+            return SCRIPT_PREFIX + str(info["stem"]), str(info["script"])
+    script = (foreign or {}).get(key)
+    if script is None and sibling is not None:
+        try:
+            script = sibling(key)
+        except Exception:  # noqa: BLE001 —— 读不动同名脚本 = 认不得
+            script = None
+    if script:
+        return f"{FOREIGN_PREFIX}{script}|{p.stem}", str(script)
+    return None
+
+
+def figure_key(rel: str, reg=None) -> str:
+    """项目相对路径 → 图键。
+
+    * 注册表认得（`Registry.for_artifact`，#1251 的唯一出处）：`script:<stem>`——stem → 脚本一对一，
+      跨目录、跨格式的同一张图天然同键；
+    * 认不得：`dir:<归一目录>/<文件名 stem>`。归一目录 = 所在目录；目录名本身是格式名时取上一级。
+      不跨普通目录（`a/fig1.png` 与 `b/fig1.png` 可能是两张不同的图）。
+    """
+    p = _norm(rel)
+    if reg is not None:
+        try:
+            info = reg.for_artifact(p.as_posix())
+        except Exception:  # noqa: BLE001 —— 注册表读不动不该让素材清单失败：退回目录键
+            info = None
+        if info is not None:
+            return SCRIPT_PREFIX + str(info["stem"])
+    parent = p.parent
+    if parent.name.lower() in FORMAT_DIR_NAMES:
+        parent = parent.parent
+    base = parent.as_posix()
+    base = "" if base == "." else base
+    return f"{DIR_PREFIX}{base}/{p.stem}" if base else f"{DIR_PREFIX}{p.stem}"
+
+
+def _primary_rank(entry: Mapping) -> tuple:
+    kind = str(entry.get("kind") or "")
+    px = (entry.get("px_w") or 0) * (entry.get("px_h") or 0)
+    return (_KIND_RANK.get(kind, 3), -px, str(entry.get("id") or ""))
+
+
+def pick_primary(entries: Iterable[Mapping]) -> str | None:
+    """一张图的几份文件（`/api/panels` 条目：`id` / `kind` / `px_w` / `px_h`）→ 主文件的 id。
+
+    PDF > 位图 > SVG（见 `_KIND_RANK`）；位图之间像素面积大者优先；再按路径，结果确定。空 → None。
+    """
+    ranked = sorted(entries, key=_primary_rank)
+    return str(ranked[0]["id"]) if ranked else None
+
+
+def annotate(
+    panels: list[dict], reg=None, foreign: Mapping[str, str] | None = None, sibling=None
+) -> None:
+    """给 `/api/panels` 的条目就地挂上 `figure_key`、`primary`（bool）、`formats`（同图全部文件 id，按路径排序），
+    认得出来源时再挂 `source_script`（画它的脚本：Python / R / MATLAB，项目相对路径）。
+
+    加字段协议：不删、不改任何已有字段（`script` 仍只表示「Python 注册表声明了映射、可进图内编辑」），老前端照旧一份文件一张卡。
+    """
+    groups: dict[str, list[dict]] = {}
+    for entry in panels:
+        source = source_of(str(entry["id"]), reg, foreign, sibling)
+        key = source[0] if source else figure_key(str(entry["id"]))
+        if source:
+            entry["source_script"] = source[1]
+        entry["figure_key"] = key
+        groups.setdefault(key, []).append(entry)
+    for members in groups.values():
+        primary = pick_primary(members)
+        formats = sorted(str(m["id"]) for m in members)
+        for m in members:
+            m["primary"] = str(m["id"]) == primary
+            m["formats"] = formats

@@ -74,10 +74,19 @@ test('同一项目开两个标签页：标签 A 复制面板，标签 B 粘贴',
   }).toPass({ timeout: 40_000 })
   await tabB.bringToFront()
   await tabB.locator('[data-canvas-stage]').click({ position: { x: 300, y: 200 } })
+  // 同一份排版已经在标签 A 开着：标签 B 是后开的，先只读（ADR 0181）——画布中间出卡，粘贴被记住。
+  // 点「在这里编辑」接管（A 先存好再让出），记住的粘贴接着做，不用再按一次
+  const card = tabB.locator('[data-doc-window-card]')
+  await expect(card).toBeVisible({ timeout: 10_000 })
   await tabB.keyboard.press('ControlOrMeta+v')
+  await expect(tabB.locator('[data-object-id]')).toHaveCount(2)
+  await card.locator('[data-doc-window-action="take"]').click()
+  await expect(card).toBeHidden({ timeout: 15_000 })
   await expect(tabB.locator('[data-status-live]')).toHaveText(/已粘贴 1 个对象/, {
     timeout: 10_000,
   })
+  // 标签 A 让出了：它那边出同一张卡（「拿回来编辑」）
+  await expect(tabA.locator('[data-doc-window-card]')).toBeVisible({ timeout: 10_000 })
   // 断言的是**这次粘贴多出来一个**（2 → 3），不是「一共只有一个」
   await expect(tabB.locator('[data-object-id]')).toHaveCount(3)
 
