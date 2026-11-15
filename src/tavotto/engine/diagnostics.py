@@ -1349,10 +1349,18 @@ def failure_shape(text: str) -> dict:
     engine_frame = None
     for ln in lines:
         fm = _TB_FRAME.match(ln)
-        if fm and _frame_class(fm.group("path")) == "engine":
-            name = re.split(r"[\\/]+", fm.group("path"))[-1]
-            if _ENGINE_FILE.fullmatch(name):
-                engine_frame = f"{name}:{int(fm.group('line'))}"
+        if not fm:
+            continue
+        # 按路径末三段认引擎帧（`…/tavotto/engine/worker.py`）：wheel 安装时它在 site-packages 下，
+        # `_frame_class` 会先判成 `site:other`（Codex #1932 P2）；分类本身不动——worker 日志摘要也用它
+        parts = [seg for seg in re.split(r"[\\/]+", fm.group("path")) if seg]
+        if (
+            len(parts) >= 3
+            and parts[-3].lower() == "tavotto"
+            and parts[-2].lower() == "engine"
+            and _ENGINE_FILE.fullmatch(parts[-1])
+        ):
+            engine_frame = f"{parts[-1]}:{int(fm.group('line'))}"
     return {
         "structure": _structure_summaries(lines, sensitive=False),
         "engine_frame": engine_frame,

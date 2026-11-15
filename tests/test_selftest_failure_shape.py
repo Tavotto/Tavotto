@@ -148,3 +148,18 @@ def test_reloaded_record_is_reprojected_field_by_field():
     }
     assert envdiag._selftest({"stage": "something_else"}) is None
     assert envdiag._selftest("no_reply") is None
+
+
+def test_engine_frame_is_found_under_site_packages_too():
+    """wheel 安装：引擎文件在 site-packages/tavotto/engine/ 下，引擎行号照样记下（Codex #1932 P2）。"""
+    from tavotto.engine import diagnostics
+
+    tb = (
+        "Traceback (most recent call last):\n"
+        '  File "/home/alice/venv/lib/python3.12/site-packages/tavotto/engine/worker.py", line 752, in build\n'
+        "OSError: [Errno 5] boom /home/alice/secret_lab\n"
+    )
+    shape = diagnostics.failure_shape(tb)
+    assert shape["engine_frame"] == "worker.py:752"
+    assert shape["structure"] and shape["structure"][0].startswith("[structure] OSError")
+    _no_private(shape)
