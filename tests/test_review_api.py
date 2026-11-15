@@ -266,7 +266,7 @@ def test_review_render_asks_the_export_pipeline_for_a_private_png_and_builds_ele
         m,
         "_review_manifest",
         lambda fid, ov: {
-            "elements": [{"gid": f"{fid}.t", "label": "标题", "bbox": [0.1, 0.1, 0.2, 0.1]}]
+            "elements": [{"gid": "ax0.t", "label": "标题", "bbox": [0.1, 0.1, 0.2, 0.1]}]
         },
     )
     fig = m._review_render(
@@ -281,7 +281,7 @@ def test_review_render_asks_the_export_pipeline_for_a_private_png_and_builds_ele
         381,
     )  # 3000 px / (200 mm / 25.4)
     assert fig.png.startswith(b"\x89PNG") and fig.elements == [
-        {"gid": "fig_a.t", "label": "标题", "bbox": [0.1, 0.1, 0.2, 0.1]}
+        {"gid": "ax0.t", "label": "标题", "bbox": [0.1, 0.1, 0.2, 0.1]}
     ]
     assert not seen["tmp"].exists()  # 私有临时目录用完即删
     lay = m._review_render(
@@ -291,14 +291,25 @@ def test_review_render_asks_the_export_pipeline_for_a_private_png_and_builds_ele
                 "page_w_mm": 100,
                 "page_h_mm": 50,
                 "objects": [
-                    {"type": "panel", "id": "p1", "x_mm": 0, "y_mm": 0, "w_mm": 50, "h_mm": 50}
+                    {
+                        "type": "panel",
+                        "id": "figs/a.pdf",
+                        "object_id": "obj_1",
+                        "x_mm": 0,
+                        "y_mm": 0,
+                        "w_mm": 50,
+                        "h_mm": 50,
+                    }
                 ],
             }
         },
         3000,
     )
     assert seen["request"].scope == "canvas" and seen["request"].ppi == 762
-    assert [e["gid"] for e in lay.elements] == ["p1", "p1::p1.t"]
+    # 面板键是不透明的 `object_id`（`id` 是图的项目内路径，不许出机）；`object_id` 不进导出请求
+    assert [e["gid"] for e in lay.elements] == ["obj_1", "obj_1::ax0.t"]
+    assert "figs" not in json.dumps(lay.elements)
+    assert "object_id" not in json.dumps(seen["request"].canvas.objects)
     # 描述缺段 / 导出没给 PNG：抛，由引擎收成 render_failed
     with pytest.raises(ValueError):
         m._review_render({"kind": "layout", "id": "d"}, {"original": {}}, 3000)

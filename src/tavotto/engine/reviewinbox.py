@@ -288,6 +288,7 @@ def _normalize(rec: dict) -> dict:
         "review_url": rec["review_url"],
         "kind": rec["kind"],
         "target_id": rec["target_id"],
+        "project": rec["project"][:64] if isinstance(rec.get("project"), str) else "",
         "title": (_text(rec.get("title", ""), TITLE_MAX) or ""),
         "note": (_text(rec.get("note", ""), NOTE_MAX) or ""),
         "created_ts": created,
@@ -431,13 +432,17 @@ def listed() -> list[dict]:
         return [r for r in _load_pruned_locked()["shares"] if r["delivered"]]
 
 
-def for_target(kind: str, target_id: str) -> dict | None:
-    """这个 target 的分享记录：优先仍有效的，其次最近更新的；没有 None。"""
+def for_target(kind: str, target_id: str, project: str = "") -> dict | None:
+    """这个 target 的分享记录：优先仍有效的，其次最近更新的；没有 None。图 id / 排版 id 在不同项目里会重名，
+    所以按**分享时所在的项目**（`project`，没开项目 = `""`）一起匹配。"""
     with _LOCK:
         recs = [
             r
             for r in _load_pruned_locked()["shares"]
-            if r["delivered"] and r["kind"] == kind and r["target_id"] == target_id
+            if r["delivered"]
+            and r["kind"] == kind
+            and r["target_id"] == target_id
+            and r["project"] == project
         ]
     if not recs:
         return None
@@ -480,6 +485,7 @@ def add_pending(
     title: str,
     note: str,
     expires_ts: float,
+    project: str = "",
 ) -> bool:
     """init 一拿到令牌就登记（complete 之前）：complete 的响应丢了也不会丢管理令牌。幂等：同编号已有则不动。"""
     now = _now()
@@ -489,6 +495,7 @@ def add_pending(
         "review_url": review_url,
         "kind": kind,
         "target_id": target_id,
+        "project": project,
         "title": title,
         "note": note,
         "created_ts": now,

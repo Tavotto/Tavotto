@@ -6142,7 +6142,15 @@ def _review_render(target: dict, render: dict, long_edge: int):
         if not isinstance(seg, dict):
             raise ValueError("render_canvas_missing")
         long_mm = max(float(seg.get("page_w_mm") or 0), float(seg.get("page_h_mm") or 0))
-        spec = {"scope": engine_exportreq.SCOPE_CANVAS, "canvas": seg}
+        # `object_id`（文档对象的不透明 id）只给元素表用，不进导出请求
+        export_seg = {
+            **seg,
+            "objects": [
+                {k: v for k, v in o.items() if k != "object_id"} if isinstance(o, dict) else o
+                for o in seg.get("objects") or []
+            ],
+        }
+        spec = {"scope": engine_exportreq.SCOPE_CANVAS, "canvas": export_seg}
     ppi = round(long_edge / (long_mm / 25.4)) if long_mm > 0 else round(long_edge / 12)
     spec.update(
         {
@@ -6197,15 +6205,17 @@ def _review_elements(kind: str, req, seg: dict) -> list:
     if kind == "figure":
         man = _review_manifest(req.original.figure_id, req.original.overrides)
         return engine_reviewshare.manifest_elements(man)
+    # 前端原样的对象（带 `object_id`）与规范化后的请求对象一一对齐；面板键（`panel_keys`）是不透明的：
+    # 导出请求里对象的 `id` 是图的项目内路径，不许进元素表
+    src = [o for o in (seg.get("objects") or []) if isinstance(o, dict)]
+    objects = req.canvas.objects if req.canvas else []
     manifests = {}
-    for obj in (req.canvas.objects if req.canvas else [])[:60]:
-        if obj.get("type") == "panel" and not obj.get("hidden") and isinstance(obj.get("id"), str):
-            manifests[obj["id"]] = _review_manifest(obj["id"], obj.get("overrides") or [])
+    for i, key in list(engine_reviewshare.panel_keys(src).items())[:60]:
+        obj = objects[i]
+        if not obj.get("hidden") and isinstance(obj.get("id"), str):
+            manifests[key] = _review_manifest(obj["id"], obj.get("overrides") or [])
     return engine_reviewshare.layout_elements(
-        seg.get("page_w_mm"),
-        seg.get("page_h_mm"),
-        req.canvas.objects if req.canvas else [],
-        manifests,
+        seg.get("page_w_mm"), seg.get("page_h_mm"), src, manifests
     )
 
 
@@ -6217,6 +6227,12 @@ def _review_scope():
     没开项目（排版可以不属于任何项目）就不绑。"""
     ctx = _request_ctx()
     return (lambda: bound_project(ctx)) if ctx is not None else contextlib.nullcontext
+
+
+def _review_project() -> str:
+    """分享记录按发起时所在的项目分开（图 id 在不同项目里会重名）；没开项目 = 空串。"""
+    ctx = _request_ctx()
+    return str(getattr(ctx, "id", "") or "") if ctx is not None else ""
 
 
 def _review_body() -> dict:
@@ -6238,14 +6254,20 @@ def api_review_quota():
 def api_review_for():
     if not engine_reviewshare.enabled():
         return _review_json({"share": None})
-    rec = engine_reviewinbox.for_target(request.args.get("kind", ""), request.args.get("id", ""))
+    rec = engine_reviewinbox.for_target(
+        request.args.get("kind", ""), request.args.get("id", ""), _review_project()
+    )
     return _review_json({"share": engine_reviewinbox.summary(rec) if rec else None})
 
 
 @app.post("/api/review/share")
 def api_review_share():
     try:
-        return _review_json(engine_reviewshare.start_share(_review_body(), scope=_review_scope()))
+        return _review_json(
+            engine_reviewshare.start_share(
+                _review_body(), scope=_review_scope(), project=_review_project()
+            )
+        )
     except engine_reviewshare.ReviewError as exc:
         return _review_error(exc)
 
@@ -6253,7 +6275,11 @@ def api_review_share():
 @app.post("/api/review/update")
 def api_review_update():
     try:
-        return _review_json(engine_reviewshare.start_update(_review_body(), scope=_review_scope()))
+        return _review_json(
+            engine_reviewshare.start_update(
+                _review_body(), scope=_review_scope(), project=_review_project()
+            )
+        )
     except engine_reviewshare.ReviewError as exc:
         return _review_error(exc)
 

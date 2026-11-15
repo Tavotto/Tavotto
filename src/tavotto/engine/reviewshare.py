@@ -240,11 +240,35 @@ def _to_local(
     return u, v
 
 
+_PANEL_KEY = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def panel_keys(objects: object) -> dict[int, str]:
+    """排版里每个面板（按 `objects` 下标）的**不透明键**：前端在出图描述的对象上带 `object_id`（文档对象自己的随机 id）就用它，
+    缺 / 不合规 / 重复就用 `p<第几个面板>`（1 起、按 z 序）。**绝不用对象的 `id`**——导出请求里 `id` 是图的项目内相对路径（`fileId`），
+    路径不许出机（ADR 0187 §二），同一张图的两个面板也会撞键。"""
+    out: dict[int, str] = {}
+    taken: set[str] = set()
+    n = 0
+    for i, o in enumerate(objects if isinstance(objects, list) else []):
+        if not isinstance(o, dict) or o.get("type") != "panel":
+            continue
+        n += 1
+        key = o.get("object_id")
+        if not isinstance(key, str) or not _PANEL_KEY.match(key) or key in taken:
+            key = f"p{n}"
+            while key in taken:
+                key += "_"
+        taken.add(key)
+        out[i] = key
+    return out
+
+
 def layout_elements(
     page_w_mm: object, page_h_mm: object, objects: object, manifests: dict[str, object]
 ) -> list[dict]:
-    """排版 → 元素表：每个面板一个框（gid = 对象 id）+ 面板内元素按面板在页面上的位置换算后的框
-    （gid = `<对象id>::<manifest gid>`）。`manifests` 以对象 id 为键，缺 / 空 = 该面板只有外框。
+    """排版 → 元素表：每个面板一个框（gid = `panel_keys` 给的不透明键）+ 面板内元素按面板在页面上的位置换算后的框
+    （gid = `<键>::<manifest gid>`）。`manifests` 以面板键为键，缺 / 空 = 该面板只有外框。
     隐藏对象不要；文字 / 形状不是「元素」。裁剪 / 90° 旋转 / 翻转都计入换算；**不认任意角旋转**（面板本就限 90° 倍数）。"""
     try:
         pw, ph = float(page_w_mm), float(page_h_mm)  # type: ignore[arg-type]
@@ -254,20 +278,26 @@ def layout_elements(
         return []
     boxes: list[dict] = []
     inner: list[dict] = []
-    for n, o in enumerate(objects if isinstance(objects, list) else [], 1):
-        if not isinstance(o, dict) or o.get("type") != "panel" or o.get("hidden"):
+    keys = panel_keys(objects)
+    ordinal = {i: n for n, i in enumerate(sorted(keys), 1)}
+    for i, o in enumerate(objects if isinstance(objects, list) else []):
+        if i not in keys or o.get("hidden"):
             continue
-        oid = o.get("id")
-        if not isinstance(oid, str) or not oid or len(oid) > 128:
-            continue
+        oid, n = keys[i], ordinal[i]
         try:
             x, y, w, h = (float(o[k]) for k in ("x_mm", "y_mm", "w_mm", "h_mm"))
         except (KeyError, TypeError, ValueError):
             continue
         if not all(map(math.isfinite, (x, y, w, h))) or w <= 0 or h <= 0:
             continue
+        # 显示名只认前端明说的 `label` / `name`；像路径的（含 / 或 \\）一律当没有——路径不许出机
         name = next(
-            (o[k] for k in ("name", "label", "title") if isinstance(o.get(k), str) and o[k]), ""
+            (
+                o[k]
+                for k in ("label", "name")
+                if isinstance(o.get(k), str) and o[k] and "/" not in o[k] and "\\" not in o[k]
+            ),
+            "",
         )
         panel = _clamp_box(x / pw, y / ph, (x + w) / pw, (y + h) / ph)
         if panel is None:
@@ -411,8 +441,9 @@ def classify(status: int, server_code: str) -> str:
         return "client_error"
     if status == 413:
         return "too_large"
+    # 裸 404（没有服务端错误码）多半是网关 / 路径出了问题，不是「链接没了」：不能据此标记 revoked，当 `server`（可再试）
     if status == 404:
-        return "share_gone"
+        return "server"
     if status == 429:
         return "rate_limited"
     if status >= 500:
@@ -535,6 +566,7 @@ def _render(spec: "_Spec") -> _Artifact:
     if fn is None:
         raise _Failure("render_failed")
     edge = LONG_EDGE_PX
+    prev: tuple[int, int] | None = None
     for _ in range(RENDER_ATTEMPTS):
         try:
             with spec.scope():
@@ -555,6 +587,10 @@ def _render(spec: "_Spec") -> _Artifact:
             factor = min(factor, LONG_EDGE_PX / long_edge * 0.99)
         if len(res.png) > MAX_PNG_BYTES:
             factor = min(factor, 0.7)
+        if factor < 1.0 and dims == prev:
+            # 降了分辨率出来的尺寸还是一样（位图素材保源像素网格、不认 ppi）：再试也一样，别白出几次图
+            raise _Failure("too_large")
+        prev = dims
         if factor >= 1.0:
             elements, dropped = trim_elements(res.elements)
             if dropped:
@@ -583,13 +619,22 @@ class _Spec:
     note: str
     render: dict = field(repr=False)
     share_id: str = ""
+    project: str = ""
     scope: Callable[[], AbstractContextManager] = field(
         default=nullcontext, repr=False, compare=False
     )
 
     def fingerprint(self) -> str:
         blob = json.dumps(
-            [self.mode, self.target, self.title, self.note, self.share_id, self.render],
+            [
+                self.mode,
+                self.target,
+                self.title,
+                self.note,
+                self.share_id,
+                self.project,
+                self.render,
+            ],
             sort_keys=True,
             ensure_ascii=False,
             default=str,
@@ -669,7 +714,9 @@ def _clean_render(raw: object) -> dict:
     return raw
 
 
-def start_share(body: object, *, scope: Callable[[], AbstractContextManager] = nullcontext) -> dict:
+def start_share(
+    body: object, *, scope: Callable[[], AbstractContextManager] = nullcontext, project: str = ""
+) -> dict:
     """**用户点了「生成链接」**：render → init → 直传 → complete。已在进行中 → 409。`scope`：后台线程里包住出图的上下文
     （`app.bound_project(ctx)`——线程里没有 request context，不绑定会落到默认项目）。"""
     if not isinstance(body, dict):
@@ -682,13 +729,14 @@ def start_share(body: object, *, scope: Callable[[], AbstractContextManager] = n
         _clean_text(body.get("title"), TITLE_MAX, "title_invalid", required=True),
         _clean_text(body.get("note"), NOTE_MAX, "note_invalid", required=False),
         _clean_render(body.get("render")),
+        project=project,
         scope=scope,
     )
     return _begin(spec)
 
 
 def start_update(
-    body: object, *, scope: Callable[[], AbstractContextManager] = nullcontext
+    body: object, *, scope: Callable[[], AbstractContextManager] = nullcontext, project: str = ""
 ) -> dict:
     """**用户点了「更新到同一链接」**：版本 +1。"""
     if not isinstance(body, dict):
@@ -697,7 +745,8 @@ def start_update(
         raise ReviewError("disabled", 404)
     sid = body.get("share_id")
     rec = reviewinbox.get(sid) if isinstance(sid, str) and _SHARE_ID.match(sid) else None
-    if rec is None or not rec["delivered"]:
+    # 别的项目里的同名图不能把自己的画面推到这条链接上
+    if rec is None or not rec["delivered"] or rec["project"] != project:
         raise ReviewError("not_found", 404)
     if rec["revoked"] or reviewinbox.is_expired(rec):
         raise ReviewError("share_gone", 409)
@@ -711,6 +760,7 @@ def start_update(
         else _clean_text(note, NOTE_MAX, "note_invalid", required=False),
         _clean_render(body.get("render")),
         share_id=rec["share_id"],
+        project=project,
         scope=scope,
     )
     return _begin(spec)
@@ -1027,6 +1077,7 @@ def _init_share(target: diagsend.Target, spec: _Spec, client_id: str, art: _Arti
         title=spec.title,
         note=spec.note,
         expires_ts=exp,
+        project=spec.project,
     ):
         raise _Failure("client_error")
     _log("ok", "init")
@@ -1073,7 +1124,7 @@ def _complete(target: diagsend.Target, share_id: str, version: int, token: str) 
             wait = min(last.retry_after, RETRY_AFTER_CAP_S) if last and last.retry_after else 0
             _sleep(wait or COMPLETE_BACKOFF_S[min(attempt - 1, len(COMPLETE_BACKOFF_S) - 1)])
         try:
-            resp = _call(target, "POST", path, {}, bearer=token, timeout=COMPLETE_TIMEOUT_S)
+            resp = _call(target, "POST", path, None, bearer=token, timeout=COMPLETE_TIMEOUT_S)
         except _Failure as fail:
             if fail.code != "network":  # 响应可能丢在路上：complete 幂等，同样的请求再发
                 raise

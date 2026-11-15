@@ -136,6 +136,17 @@ def share_ok(**over) -> dict:
     return wait_for({"done", "failed"})
 
 
+def share_ok_in(project: str, **over) -> dict:
+    assert reviewshare.start_share(body(**over), project=project) == {"ok": True}
+    return wait_for({"done", "failed"})
+
+
+def update_ok_in(share_id: str, project: str, **over) -> dict:
+    spec = {"share_id": share_id, "render": RENDER, **over}
+    assert reviewshare.start_update(spec, project=project) == {"ok": True}
+    return wait_for({"done", "failed"})
+
+
 def update_ok(share_id: str, **over) -> dict:
     assert reviewshare.start_update({"share_id": share_id, "render": RENDER, **over}) == {
         "ok": True
@@ -461,6 +472,13 @@ def test_a_renderer_that_overshoots_the_long_edge_is_asked_again(on, renders):
     assert renders["calls"][1][1] < 3000
 
 
+def test_a_bitmap_source_that_ignores_ppi_fails_fast_instead_of_rendering_five_times(on, renders):
+    renders["script"] = [(5000, 4000, 0)] * 10  # 位图素材保源像素网格：降分辨率请求也是同样的尺寸
+    st = share_ok()
+    assert (st["failure"], st["retryable"]) == ("too_large", False)
+    assert len(renders["calls"]) == 2 and on.calls == []
+
+
 def test_hopelessly_large_png_fails_as_too_large(on, renders):
     renders["script"] = [(3000, 2000, reviewshare.MAX_PNG_BYTES + 10)] * 10
     st = share_ok()
@@ -518,6 +536,31 @@ def test_a_second_share_while_one_is_running_is_409(on, renders):
 
 
 # --------------------------------------------------------------------------- 停止分享与轮询
+def test_a_bare_404_is_not_share_gone(on, renders):
+    """裸 404（没有服务端错误码，多半是网关）不能当「链接没了」：不标 revoked、停止分享不假装成功。"""
+    sid = share_ok()["share"]["share_id"]
+    on.force("/v1/shares/", Forced("status", 404, ""), times=3)
+    assert reviewshare.poll_once(force=True)["ok"] is False
+    assert reviewshare.revoke(sid) == {"ok": False, "failure": "server"}
+    reviewshare.dismiss()
+    assert reviewinbox.get(sid)["revoked"] is False
+    st = update_ok(sid)
+    assert st["failure"] == "server" and reviewinbox.get(sid)["revoked"] is False
+
+
+def test_records_are_scoped_to_the_project_they_were_shared_from(on, renders):
+    st = share_ok_in("proj_a")
+    sid = st["share"]["share_id"]
+    assert reviewinbox.for_target("figure", "fig_a", "proj_a")["share_id"] == sid
+    assert reviewinbox.for_target("figure", "fig_a", "proj_b") is None  # 别的项目的同名图看不到它
+    assert reviewinbox.for_target("figure", "fig_a") is None  # 没开项目也看不到
+    reviewshare.dismiss()
+    with pytest.raises(reviewshare.ReviewError) as e:  # 也推不了画面上去
+        reviewshare.start_update({"share_id": sid, "render": RENDER}, project="proj_b")
+    assert e.value.status == 404
+    assert update_ok_in(sid, "proj_a")["stage"] == "done"
+
+
 def test_polling_with_no_records_makes_zero_requests(on, renders):
     assert reviewshare.poll_once(force=True) == {"polled": 0, "ok": True}
     assert on.calls == []
@@ -818,7 +861,8 @@ def test_two_panel_layout_conversion():
     # 页面 200 × 100 mm：左面板 (0,0,100,100) 原样；右面板 (100,0,100,100) 裁左半 + 水平翻转
     objects = [
         {
-            "id": "pA",
+            "id": "figs/a.pdf",
+            "object_id": "pA",
             "type": "panel",
             "name": "A 图",
             "x_mm": 0,
@@ -827,7 +871,8 @@ def test_two_panel_layout_conversion():
             "h_mm": 100,
         },
         {
-            "id": "pB",
+            "id": "figs/a.pdf",  # 同一张图的第二个面板：`id` 是项目内路径，既不能出机也会撞
+            "object_id": "pB",
             "type": "panel",
             "x_mm": 100,
             "y_mm": 0,
@@ -856,6 +901,7 @@ def test_two_panel_layout_conversion():
         "pB::ax0.left",
     ]  # 外框在前、隐藏 / 文字 / 被裁掉的元素都不在
     assert by["pA"] == {"gid": "pA", "label": "A 图", "bbox": [0.0, 0.0, 0.5, 1.0]}
+    assert "figs" not in json.dumps(out) and ".pdf" not in json.dumps(out)  # 路径不出机
     assert by["pB"]["label"] == "#2" and by["pB"]["bbox"] == [0.5, 0.0, 0.5, 1.0]
     # pA：左面板占页面左半 → x = 0.25 * 0.5, w = 0.5 * 0.5；y 不变
     assert by["pA::ax0.title"]["bbox"] == pytest.approx([0.125, 0.1, 0.25, 0.1], abs=1e-5)
@@ -865,10 +911,18 @@ def test_two_panel_layout_conversion():
 
 def test_layout_conversion_rotation_and_garbage():
     objects = [
-        {"id": "p", "type": "panel", "x_mm": 0, "y_mm": 0, "w_mm": 100, "h_mm": 100, "rotation": 90}
+        {
+            "id": "a.pdf",
+            "type": "panel",
+            "x_mm": 0,
+            "y_mm": 0,
+            "w_mm": 100,
+            "h_mm": 100,
+            "rotation": 90,
+        }
     ]
     out = reviewshare.layout_elements(
-        100, 100, objects, {"p": _man(("e", "e", [0.0, 0.0, 0.2, 0.1]))}
+        100, 100, objects, {"p1": _man(("e", "e", [0.0, 0.0, 0.2, 0.1]))}
     )
     # 顺时针 90°：源图左上角元素 → 右上角；宽高互换
     assert out[1]["bbox"] == pytest.approx([0.9, 0.0, 0.1, 0.2], abs=1e-5)
@@ -878,6 +932,23 @@ def test_layout_conversion_rotation_and_garbage():
     assert (
         reviewshare.layout_elements(100, 100, [{"id": "p", "type": "panel", "x_mm": "a"}], {}) == []
     )
+
+
+def test_panel_keys_are_opaque_unique_and_never_the_object_id():
+    objs = [
+        {"type": "text"},
+        {"type": "panel", "id": "a/b.pdf", "object_id": "obj_1"},
+        {"type": "panel", "id": "a/b.pdf"},  # 没带 object_id：按第几个面板
+        {"type": "panel", "id": "c.pdf", "object_id": "obj_1"},  # 重复
+        {"type": "panel", "id": "d.pdf", "object_id": "../../etc"},  # 不合规
+    ]
+    keys = reviewshare.panel_keys(objs)
+    assert keys == {1: "obj_1", 2: "p2", 3: "p3", 4: "p4"}
+    assert not any("/" in k or ".pdf" in k for k in keys.values())
+    assert reviewshare.panel_keys("nope") == {}
+    # 显示名像路径就不用
+    named = {"type": "panel", "x_mm": 0, "y_mm": 0, "w_mm": 10, "h_mm": 10, "name": "figs/a.pdf"}
+    assert reviewshare.layout_elements(100, 100, [named], {})[0]["label"] == "#1"
 
 
 def test_layout_flow_uses_layout_kind(on, renders):
