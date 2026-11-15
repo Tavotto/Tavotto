@@ -1,6 +1,6 @@
 """诊断包「脚本源码」附带脚本运行时从项目外加载的本地模块（ADR 0118 修订 2026-11-15）。
 
-起因：组图脚本先 `sys.path.insert(0, 项目外的公共目录)` 再 `from assemble import render`，出错的 `assemble.py` 在项目外，
+起因：组图脚本先 `sys.path.insert(0, 项目外的公共目录)` 再 `from shared_plot import draw`，出错的 `shared_plot.py` 在项目外，
 包里没有它。判据的主语：**脚本这一次运行里、脚本自己加进 `sys.path` 的项目外目录里实际加载过的本地 `.py`**——
 stdlib / 第三方包 / 运行前就在 `sys.path` 上的目录 / 项目内的都不是。分四层：渲染进程的纯函数、真 worker 的成功与失败两条路、
 父进程的持久记录、诊断包收集（勾了收、没勾零字节、符号链接 / 敏感目录 / 项目内 / 脚本本身在项目外一律不收）。
@@ -52,11 +52,11 @@ class TestObservedExternalModules:
     def test_module_from_a_directory_the_script_added_is_recognised(self, tmp_path):
         proj = tmp_path / "proj"
         proj.mkdir()
-        ext = tmp_path / "00_公共代码"
-        helper = _write(ext / "assemble.py")
+        ext = tmp_path / "公共代码"
+        helper = _write(ext / "shared_plot.py")
         got = _observe(
             proj,
-            {"assemble": _mod(helper)},
+            {"shared_plot": _mod(helper)},
             baseline=[str(proj)],
             sys_path=[str(ext), str(proj)],
         )
@@ -187,13 +187,13 @@ def _build(proc) -> dict:
 def _script_with_helper(tmp_path: Path, tail: str) -> tuple[Path, Path, Path]:
     figs = tmp_path / "figures"
     figs.mkdir()
-    ext = tmp_path / "00_公共代码"
-    helper = _write(ext / "assemble.py", "def render():\n    return 1\n")
+    ext = tmp_path / "公共代码"
+    helper = _write(ext / "shared_plot.py", "def draw():\n    return 1\n")
     script = _write(
-        figs / "plot_group.py",
+        figs / "make_panels.py",
         "import sys\n"
         f"sys.path.insert(0, {str(ext)!r})\n"
-        "from assemble import render\n"
+        "from shared_plot import draw\n"
         "import matplotlib.pyplot as plt\n"
         f"{tail}",
     )
@@ -215,19 +215,19 @@ class TestRealWorker:
     def test_success_build_reports_the_helper(self, tmp_path):
         resp, helper = self._run(
             tmp_path,
-            "render()\nfig, ax = plt.subplots()\nax.plot([0, 1], [1, 0])\nfig.savefig('a.pdf')\n",
+            "draw()\nfig, ax = plt.subplots()\nax.plot([0, 1], [1, 0])\nfig.savefig('a.pdf')\n",
         )
         assert resp["ok"], resp
         assert resp["external_modules"] == [os.path.realpath(helper)]
 
     def test_failure_after_import_reports_the_helper(self, tmp_path):
-        resp, helper = self._run(tmp_path, "render()\nraise RuntimeError('boom after import')\n")
+        resp, helper = self._run(tmp_path, "draw()\nraise RuntimeError('boom after import')\n")
         assert resp["ok"] is False
         assert resp["error"]["code"] == "script_error"
         assert resp["error"]["external_modules"] == [os.path.realpath(helper)]
 
     def test_nonzero_system_exit_reports_the_helper(self, tmp_path):
-        resp, helper = self._run(tmp_path, "render()\nsys.exit(3)\n")
+        resp, helper = self._run(tmp_path, "draw()\nsys.exit(3)\n")
         assert resp["ok"] is False
         assert resp["error"]["external_modules"] == [os.path.realpath(helper)]
 
@@ -236,10 +236,10 @@ class TestRealWorker:
         figs = tmp_path / "figures"
         figs.mkdir()
         ext = tmp_path / "pub"
-        helper = _write(ext / "assemble.py", "raise ValueError('bad at import time')\n")
+        helper = _write(ext / "shared_plot.py", "raise ValueError('bad at import time')\n")
         script = _write(
-            figs / "plot_group.py",
-            f"import sys\nsys.path.insert(0, {str(ext)!r})\nimport assemble\n",
+            figs / "make_panels.py",
+            f"import sys\nsys.path.insert(0, {str(ext)!r})\nimport shared_plot\n",
         )
         proc = _spawn(script, figs, tmp_path)
         try:
@@ -284,8 +284,8 @@ class TestPersistence:
     ):
         proj = tmp_path / "proj"
         proj.mkdir()
-        diagexternal.note(proj, "plot_group.py", ["/x/assemble.py"])
-        assert diagexternal.modules_for(proj, "plot_group.py") == ["/x/assemble.py"]
+        diagexternal.note(proj, "make_panels.py", ["/x/shared_plot.py"])
+        assert diagexternal.modules_for(proj, "make_panels.py") == ["/x/shared_plot.py"]
         assert diagexternal.store_path().parent == datadir
         assert list(proj.iterdir()) == []  # 项目文件夹里一个字节都没多
         assert [p.name for p in datadir.iterdir()] == [diagexternal.STORE_NAME]  # 无遗留临时文件
@@ -357,7 +357,7 @@ class TestPersistence:
         self, tmp_path, datadir
     ):
         """err.extra / build 响应是诊断、投影、遥测读得到的那一份：项目外的绝对路径只进持久记录，不留在里面。"""
-        helper = "/somewhere/00_公共代码/assemble.py"
+        helper = "/somewhere/公共代码/shared_plot.py"
         w = types.SimpleNamespace(
             figures_dir=str(tmp_path),
             script_name="a.py",
@@ -429,7 +429,7 @@ def proj(tmp_path):
 
 class TestCollect:
     def test_ticked_collects_the_imported_external_module(self, tmp_path, proj):
-        helper = _write(tmp_path / "00_公共代码" / "assemble.py", f"{EXT_CANARY} = 1\n")
+        helper = _write(tmp_path / "公共代码" / "shared_plot.py", f"{EXT_CANARY} = 1\n")
         items, index = _collect(proj, lambda rel: [str(helper)] if rel == "fig.py" else [])
         (row,) = _external_rows(index)
         fig_row = next(r for r in index["scripts"] if r["script"] == "fig.py")
@@ -444,7 +444,7 @@ class TestCollect:
         home = tmp_path / "canaryhome9"
         monkeypatch.setenv("HOME", str(home))
         monkeypatch.setenv("USERPROFILE", str(home))
-        helper = _write(home / "共享" / "assemble.py", "X = 1\n")
+        helper = _write(home / "共享" / "shared_plot.py", "X = 1\n")
         scrub = diagdetail.Scrubber()
         assert scrub.text(str(home)) != str(home)  # 反证：家目录替换确实在起作用
         src = diagdetail.Sources(
@@ -466,7 +466,7 @@ class TestCollect:
 
     def test_secrets_in_the_module_are_scrubbed_like_any_script(self, tmp_path, proj):
         helper = _write(
-            tmp_path / "pub" / "assemble.py", f'api_key = "{EXT_SECRET}"\n# token={EXT_SECRET}\n'
+            tmp_path / "pub" / "shared_plot.py", f'api_key = "{EXT_SECRET}"\n# token={EXT_SECRET}\n'
         )
         items, _index = _collect(proj, lambda rel: [str(helper)])
         blob = b"".join(i.data for i in items).decode()
@@ -474,13 +474,15 @@ class TestCollect:
 
     @pytest.mark.skipif(os.name == "nt", reason="符号链接需要权限")
     def test_symlinked_file_or_directory_is_refused(self, tmp_path, proj):
-        real = _write(tmp_path / "real" / "assemble.py", f"{EXT_CANARY} = 1\n")
+        real = _write(tmp_path / "real" / "shared_plot.py", f"{EXT_CANARY} = 1\n")
         link_file = tmp_path / "pub" / "link.py"
         link_file.parent.mkdir()
         link_file.symlink_to(real)
         link_dir = tmp_path / "linkdir"
         link_dir.symlink_to(real.parent, target_is_directory=True)
-        items, index = _collect(proj, lambda rel: [str(link_file), str(link_dir / "assemble.py")])
+        items, index = _collect(
+            proj, lambda rel: [str(link_file), str(link_dir / "shared_plot.py")]
+        )
         assert _external_rows(index) == []
         assert EXT_CANARY.encode() not in b"".join(i.data for i in items)
 
@@ -506,7 +508,7 @@ class TestCollect:
 
     def test_the_same_file_is_collected_once_and_total_count_cap_holds(self, tmp_path, proj):
         _write(proj / "fig2.py", "FIG2 = 1\n")
-        helper = _write(tmp_path / "pub" / "assemble.py", "Z = 1\n")
+        helper = _write(tmp_path / "pub" / "shared_plot.py", "Z = 1\n")
         _items, index = _collect(
             proj, lambda rel: [str(helper), str(helper)], scripts=("fig.py", "fig2.py")
         )
@@ -597,7 +599,7 @@ class TestBundleEndToEnd:
             "    fig.savefig('fig_one.pdf')\n    return fig\n",
         )
         assert client.post("/api/projects/open", json={"path": str(proj)}).status_code == 200
-        helper = _write(tmp_path / "00_公共代码" / "ext_assemble_helper.py", f"{EXT_CANARY} = 1\n")
+        helper = _write(tmp_path / "公共代码" / "ext_shared_helper.py", f"{EXT_CANARY} = 1\n")
         diagexternal.note(proj, "fig_one.py", [os.path.realpath(helper)])
         return proj, helper
 
@@ -606,7 +608,7 @@ class TestBundleEndToEnd:
         z = _prepare(client)  # 没勾任何额外内容
         blob = _all_bytes(z)
         assert EXT_CANARY.encode() not in blob
-        assert b"ext_assemble_helper" not in blob and "00_公共代码".encode() not in blob
+        assert b"ext_shared_helper" not in blob and "公共代码".encode() not in blob
         assert "optional-source.zip" not in z.namelist()
 
     def test_ticked_attaches_it(self, client, wired):
@@ -616,4 +618,4 @@ class TestBundleEndToEnd:
         index = json.loads(inner.read("index.json"))
         (row,) = _external_rows(index)
         assert EXT_CANARY.encode() in inner.read(row["file"])
-        assert "ext_assemble_helper.py" in row["script"]
+        assert "ext_shared_helper.py" in row["script"]

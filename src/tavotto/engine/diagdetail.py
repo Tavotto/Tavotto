@@ -2691,7 +2691,8 @@ def external_candidates(
                 key = os.path.normcase(real)
                 if key in taken or os.path.normcase(real) != os.path.normcase(os.path.abspath(raw)):
                     continue  # 同一文件只收一次；路径里有符号链接（写下之后被换过）一律不收
-                if real == root or real.startswith(root.rstrip(os.sep) + os.sep):
+                nroot = os.path.normcase(root)
+                if key == nroot or key.startswith(nroot.rstrip(os.sep) + os.sep):
                     continue  # 项目内的：别的路收
                 st = os.lstat(real)
                 if not stat.S_ISREG(st.st_mode) or scope.is_denied(real):

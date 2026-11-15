@@ -1,6 +1,6 @@
 """脚本运行时从项目外加载的本地模块的持久记录（诊断包「脚本源码」用，纯标准库）。
 
-问题：脚本先 `sys.path.insert(0, 项目外的公共目录)` 再 `from assemble import render`，真正出错的 `assemble.py`
+问题：脚本先 `sys.path.insert(0, 项目外的公共目录)` 再 `from shared_plot import draw`，真正出错的 `shared_plot.py`
 不在项目文件夹里，诊断包的「脚本源码」只收项目内的脚本，维护者看不到它。渲染进程在每次运行后把「脚本自己加进
 `sys.path` 的项目外目录里实际加载过的本地 `.py` 模块」带回来（`figcapture.observed_external_modules`），本模块把它们
 按 (项目, 脚本的项目相对路径) 记进**应用数据目录**里的一个小 JSON。持久化是必需的：用户常常重启应用之后才发反馈包，
