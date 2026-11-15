@@ -1657,7 +1657,6 @@ def _chart_scaffold_via_worker(
         "paint_order_overrides",
         "warnings",
         "unrestored",
-        "render_frame",
     ):
         if key in payload:
             result[key] = payload[key]
@@ -2015,7 +2014,7 @@ def _render_chart_snapshot(
         edits,
         scaffold.get("manifest"),
         scaffold.get("composition"),
-        scaffold.get("render_frame"),
+        (scaffold.get("manifest") or {}).get("render_frame"),
     )
 
 
@@ -2075,7 +2074,6 @@ def api_svg_chart_compute():
             "model_digest": chartmodel.digest_of(model),
             "binding_digest": chartmodel.digest_of(binding),
             "engine": snapshot.engine,
-            "render_frame": snapshot.render_frame,
             **({"manifest": snapshot.manifest} if snapshot.manifest is not None else {}),
         }
     )
@@ -2163,7 +2161,6 @@ def _api_chart_render_body(body, *, png: bool = False):
                 "manifest": snapshot.manifest,
                 "warnings": [],
                 "unrestored": 0,
-                "render_frame": snapshot.render_frame,
                 "preview": previewbudget.metadata(
                     svg_bytes=len(snapshot.svg), mode=mode, reason=reason, estimated_nodes=count
                 ),
