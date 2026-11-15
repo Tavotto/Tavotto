@@ -678,7 +678,8 @@ export default interface Resources {
       "emptyText": "空文字",
       "panel": "图",
       "shape": "形状",
-      "text": "文字"
+      "text": "文字",
+      "unknown": "新版对象"
     },
     "presetText": {
       "annotation": "标注",
@@ -947,6 +948,7 @@ export default interface Resources {
       "missingSourceNote": "有一张图找不到了：{{name}}。",
       "mmSize": "{{w}} × {{h}} mm",
       "needsRerun": "这张图需要重新运行脚本才能按原图导出。也可以改按画布导出（版面按画布，保真度较低）。",
+      "newerObjects_other": "有 {{count}} 个对象来自更新的版本，更新后才能导出",
       "openProblems": "在问题面板中查看",
       "operationFailed": "无法完成：{{error}}",
       "outputFailed": "无法导出 {{format}}：{{reason}}",
@@ -3515,6 +3517,7 @@ export default interface Resources {
       "output_folder_read_only": "因为 {{product}} 没有该文件夹的写入权限，因此某些输出文件未生成。",
       "package_file_missing": "缺少上传文件",
       "package_invalid": "不是有效的项目包：{{reason}}",
+      "package_schema_too_new": "这个项目包来自更新的版本（schema {{schema}}），请升级后再打开",
       "package_schema_unsupported": "项目包里的排版既不是 schema 2 也不是 schema 3",
       "paired_incomplete": "配对数据要有两个条件，每个个体在两个条件下各一个值。",
       "paired_unconfirmed": "只有你确认过是配对数据，才能画配对连线。",
@@ -6063,6 +6066,7 @@ export default interface Resources {
       "outsideProject": "「{{name}}」不在当前项目里，还没有运行。",
       "packageFailed": "「{{name}}」没能作为项目包打开。{{reason}}",
       "packageOnly_other": "已打开项目包「{{name}}」，另外 {{count}} 个文件这次没有处理",
+      "packageTooNew": "「{{name}}」来自更新的 {{product}}，本版本无法打开。",
       "placedMany_other": "已放进 {{count}} 张图",
       "placedOne": "已放进画布：「{{name}}」",
       "running": "正在运行「{{name}}」，出图后放进这张画布",
@@ -7455,6 +7459,7 @@ export default interface Resources {
       "packageFailed": "无法打包。{{error}}",
       "packageOpenFailed": "无法打开项目包。{{error}}",
       "packageOpened": "已打开项目包（{{createdAt}}），素材全部就位",
+      "packageTooNew": "这个项目包来自更新的 {{product}}，本版本无法打开。",
       "packaged_other": "已生成项目包 {{name}}（{{count}} 个素材）",
       "panelRebuilt": "已按源脚本重新构建",
       "panelRerenderedNoRerun": "已按当前修改重新渲染；源脚本没有重跑",
