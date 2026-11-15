@@ -568,6 +568,7 @@
     "repairCancelled": "安装已取消",
     "repairCancelledManaged": "{{product}} 环境已标记为未完成，下次会重新创建。",
     "repairCancelledProjectEnv": "项目的 Python 环境可能已有部分改动。",
+    "repairCancelledConfiguredEnv": "这个 Python 环境可能已有部分改动。",
     "repairClose": "知道了",
     "repairConfirmManaged": "会创建一个独立的 Python 环境并装在那里，不改动你的源码和现有环境。",
     "repairConfirmProject": "安装到项目现有的 Python 环境（{{path}}）。",

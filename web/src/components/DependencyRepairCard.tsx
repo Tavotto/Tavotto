@@ -144,7 +144,9 @@ export function DependencyRepairCard({
   const installTarget = offer.targets.find((tg) => tg.kind !== 'system_interpreter')
   const managedTarget = offer.targets.find((tg) => tg.kind === 'tavotto_managed') ?? null
   // 管理环境装完 worker 自检没过（最近一代）：装进去也用不了，不再当主按钮——有用户为本项目选的 Python 就推荐它
-  const selftestFailed = managedTarget?.selftest_failed === true
+  // offer 是失败之前算的：本标签页刚看到这个项目的管理环境自检没过，也按失败过处理（Codex #1934 P2）
+  const seenSelftestFailure = useDepRepairStore((s) => s.managedSelftestFailed[currentProjectId() ?? ''] === true)
+  const selftestFailed = managedTarget?.selftest_failed === true || seenSelftestFailure
   // 受管目标能不能用 offer 形成时还不知道（后端在后台探基础解释器，于是也没挂私有 Python）：先形成一份计划
   // 读出真实要素（计划这一步什么都不装）。不预读的话，一键修复点下去计划多出一段下载，只能停在确认页再点一次
   const previewArgs = { module, script, target: 'tavotto_managed' as const }
@@ -952,7 +954,10 @@ function RepairProgress({
         )}
         {cancelled && (
           <p className="mt-1 text-xs leading-relaxed text-ink-2">
-            {progress.target_kind === 'project_venv'
+            {/* 原地装进用户自己的环境（项目 venv / 你为这个项目选的 Python）：取消时可能已改了一半，不能说成「下次重建」 */}
+            {progress.target_kind === 'configured_interpreter'
+              ? en('repairCancelledConfiguredEnv')
+              : progress.target_kind === 'project_venv'
               ? en('repairCancelledProjectEnv')
               : en('repairCancelledManaged', { product: PRODUCT_NAME })}
           </p>

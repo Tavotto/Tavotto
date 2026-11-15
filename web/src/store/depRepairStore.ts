@@ -327,6 +327,12 @@ interface DepRepairState {
    */
   rebuilding: Readonly<Record<string, string>>
   rebuildRunningFor: (project: string | null) => boolean
+  /**
+   * 本标签页里亲眼看到过「管理环境装完 worker 自检没过」的项目（项目 → true）。修复卡手里的 offer 是失败之前算的
+   * （`selftest_failed: false`），关掉失败之后不能再拿它推荐同一条注定失败的路（Codex #1934 P2）；同一项目后来管理环境
+   * 装成功就撤掉。按项目分格，`clear()` 不动——它说的是那个项目的事实，不是此刻界面的状态。
+   */
+  managedSelftestFailed: Readonly<Record<string, true>>
 
   // ---- 联合准备（U04，ADR 0061）：跑前的那一次授权 ----
   // 载荷本身（整份联合计划 + 可选目标）住在 `envStore.dependencyPreparation`（与运行目录的确认
@@ -406,6 +412,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   managedPreviews: {},
   parked: {},
   rebuilding: {},
+  managedSelftestFailed: {},
   rebuildRunningFor: (project) => !!get().rebuilding[projectKey(project)],
 
   prepare: async (target, offerArg) => {
@@ -905,6 +912,13 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
         rebuildTerminal = get().rebuilding[projectKey(owner)] === p.plan_id
         releaseRebuild(owner, p.plan_id)
       }
+    }
+    // 管理环境这一代的结局记到所属项目那格（不论此刻开着哪个项目）：自检没过 → 记下；装成功 → 撤掉
+    const kind = p.target_kind ?? seen?.target_kind
+    if (kind === 'tavotto_managed' && (p.state === 'done' || (p.state === 'failed' && p.code === 'dependency_worker_selftest_failed'))) {
+      const key = projectKey(startedPlans.get(p.plan_id) ?? currentProjectId())
+      const { [key]: _was, ...rest } = get().managedSelftestFailed
+      set({ managedSelftestFailed: p.state === 'done' ? rest : { ...rest, [key]: true } })
     }
     // 作业属于**别的项目**（本标签页起的、起完切走了）：进度只更新它那一格，此刻的界面与副作用
     // （刷环境 / 重排渲染 / 关框 / 错误文案）一个都不碰——那些说的都是此刻开着的项目（issue #590）

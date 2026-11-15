@@ -1130,6 +1130,16 @@ def pinned_payload() -> dict | None:
     return out
 
 
+#: 用户亲手为项目选的解释器在设置里的触发记号（`configured_interpreter` 判据认它）
+TRIGGER_USER_SELECTED = "user_selected"
+
+
+def _remember_trigger(target_kind: str) -> str:
+    """原地装完要重新记一次解释器（环境代变了，不记会被当成「被重建」）。装进「你为这个项目选的 Python」时
+    **保留** `user_selected`：它仍是用户的选择，换成 `dependency_repair` 的话下一次缺包这条目标就消失了（Codex #1934 P2）。"""
+    return TRIGGER_USER_SELECTED if target_kind == TARGET_CONFIGURED else TRIGGER_DEPENDENCY_REPAIR
+
+
 def configured_interpreter(project: str | Path) -> str | None:
     """「你为这个项目选的 Python」——第三种安装目标的**唯一判据出处**（ADR 0019 2026-11-15 修订）。
 
@@ -1139,7 +1149,7 @@ def configured_interpreter(project: str | Path) -> str | None:
     root = str(Path(project))
     try:
         record = projectenv.remembered_record(root)
-        if not record or record.get("trigger") != "user_selected" or not record.get("exists"):
+        if not record or record.get("trigger") != TRIGGER_USER_SELECTED or not record.get("exists"):
             return None
         python = str(record.get("path") or "")
         if not python or pool.remembered_source(root, python) != pool.SOURCE_SYSTEM:
@@ -1795,7 +1805,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         project,
         python,
         automatic=False,
-        trigger=TRIGGER_DEPENDENCY_REPAIR,
+        trigger=_remember_trigger(plan.target_kind),
         module=req.import_name,
         health=health,
     )
@@ -5335,7 +5345,9 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
             plan.plan_id, STATE_CANCELLED, on_event, joint=plan, code=ERROR_CANCELLED, result=detail
         )
         return {"ok": False, "code": ERROR_CANCELLED, **detail}
-    projectenv.remember(plan.project, python, automatic=False, trigger=TRIGGER_DEPENDENCY_REPAIR)
+    projectenv.remember(
+        plan.project, python, automatic=False, trigger=_remember_trigger(plan.target_kind)
+    )
     pool.note_project_python_ok(python)
     pool.invalidate(plan.script, plan.project)
     depplan.reset_cache(python)

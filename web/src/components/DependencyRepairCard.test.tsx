@@ -180,7 +180,7 @@ beforeEach(() => {
   clearGlobalMock.mockReset()
   useDepRepairStore.getState().reset()
   // 预读按卡分格、`reset()` 不动它们（关一张卡不该让另一张回到「正在检查」）：用例之间自己清
-  useDepRepairStore.setState({ managedPreviews: {} })
+  useDepRepairStore.setState({ managedPreviews: {}, managedSelftestFailed: {} })
 })
 
 afterEach(async () => {
@@ -1528,6 +1528,32 @@ describe('安装进度', () => {
     expect(text()).toContain(en('repairCancelledProjectEnv'))
     // 受管环境那句是另一种处置，不能混用
     expect(text()).not.toContain(en('repairCancelledManaged', { product: PRODUCT_NAME }))
+  })
+
+  it('取消装进「你为这个项目选的 Python」：说这个 Python 可能已改了一半，不说成项目环境或受管重建（Codex #1934 P2）', async () => {
+    await render()
+    await progress('cancelled', { target_kind: 'configured_interpreter', code: 'dependency_install_cancelled' })
+    expect(text()).toContain(en('repairCancelledConfiguredEnv'))
+    expect(text()).not.toContain(en('repairCancelledProjectEnv'))
+    expect(text()).not.toContain(en('repairCancelledManaged', { product: PRODUCT_NAME }))
+  })
+
+  it('当场看到管理环境自检没过：关掉失败后，旧 offer（selftest_failed=false）也不再推荐管理环境（Codex #1934 P2）', async () => {
+    const configured = {
+      kind: 'configured_interpreter' as const, venv: '', python: '/opt/py312/bin/python',
+      modifies_user_environment: true, creates_environment: false, available: true, reason: '',
+    }
+    const stale = { ...OFFER, targets: [configured, { ...OFFER.targets[1], selftest_failed: false }] }
+    await render(stale)
+    await progress('failed', { target_kind: 'tavotto_managed', code: 'dependency_worker_selftest_failed' })
+    await act(() => useDepRepairStore.getState().reset())
+    expect(document.querySelector('[data-one-click-repair]')?.getAttribute('data-one-click-repair')).toBe(
+      'configured_interpreter',
+    )
+    // 同一项目后来管理环境装成功：记号撤掉，回到原来的推荐
+    await progress('done', { plan_id: 'plan-abc', target_kind: 'tavotto_managed' })
+    await act(() => useDepRepairStore.getState().reset())
+    expect(Object.keys(useDepRepairStore.getState().managedSelftestFailed)).toHaveLength(0)
   })
 
   it('装完之后把那次失败的渲染重新排上 —— 否则图永远不会自己出来', async () => {

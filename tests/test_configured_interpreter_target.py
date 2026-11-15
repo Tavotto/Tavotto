@@ -331,3 +331,6 @@ class TestRealInPlaceInstall:
         assert _importable(python, ALPHA[1])
         assert managedenv.read_manifest(proj) is None  # 没建受管环境
         assert engine_pool.same_python(projectenv.remembered(proj), python)
+        # 装完重新记解释器时仍是「用户亲手选的」：下一次缺包这条目标还在（Codex #1934 P2）
+        assert (projectenv.remembered_record(proj) or {}).get("trigger") == "user_selected"
+        assert engine_pool.same_python(deprepair.configured_interpreter(proj), python)

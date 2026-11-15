@@ -568,6 +568,7 @@
     "repairCancelled": "Installation cancelled",
     "repairCancelledManaged": "This {{product}} environment is marked incomplete and will be rebuilt next time.",
     "repairCancelledProjectEnv": "This project’s Python environment may have been partially modified.",
+    "repairCancelledConfiguredEnv": "That Python environment may have been partially modified.",
     "repairClose": "Got it",
     "repairConfirmManaged": "Creates a separate Python environment and installs it there. Your source files and existing environments are not touched.",
     "repairConfirmProject": "Into this project’s existing Python environment ({{path}}).",

@@ -3859,6 +3859,7 @@ export default interface Resources {
       "repairBody": "当前渲染环境缺少这个包。",
       "repairCancel": "取消",
       "repairCancelled": "安装已取消",
+      "repairCancelledConfiguredEnv": "这个 Python 环境可能已有部分改动。",
       "repairCancelledManaged": "{{product}} 环境已标记为未完成，下次会重新创建。",
       "repairCancelledProjectEnv": "项目的 Python 环境可能已有部分改动。",
       "repairClose": "知道了",
