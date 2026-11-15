@@ -6628,6 +6628,7 @@ export default interface Resources {
         "openPrivacy": "打开系统设置",
         "openRegistry": "打开接入中心",
         "openRun": "打开并运行",
+        "openRunEntry": "打开并运行",
         "openSettings": "打开设置",
         "otherData": "换一份数据",
         "pickPython": "换用我的 Python",
@@ -6640,6 +6641,7 @@ export default interface Resources {
         "run": "运行",
         "runAgain": "再运行",
         "runAnyway": "仍然运行",
+        "runEntry": "运行它",
         "send": "发送",
         "sendUs": "发给我们看看",
         "skipFolder": "跳过这个文件夹重跑",
@@ -6935,6 +6937,10 @@ export default interface Resources {
         "toUser": "装到你电脑上已有的那套",
         "toUserLong": "你电脑上已有的那套，装坏了不能完整回滚"
       },
+      "library": {
+        "openFailed": "没能打开那个文件夹",
+        "partial": "只查了一部分文件，可能还有别的脚本调用它"
+      },
       "line": {
         "aiEditBroke": "AI 改过之后运行出错了",
         "aiUnavailable": "这个问题 AI 暂时还不会修",
@@ -6987,6 +6993,9 @@ export default interface Resources {
         "inputUnanswered": "脚本中途要你回答，再运行一次就能答",
         "inputUnansweredSecret": "脚本要口令，再运行一次时输入（口令不会被记住）",
         "install": "要先安装缺少的组件",
+        "libraryEntry": "{{script}} 只定义了画图函数，真正画图的是 {{entry}}",
+        "libraryEntryOutside": "{{script}} 只定义了画图函数，真正画图的是项目外的 {{entry}}",
+        "libraryNone": "{{script}} 只定义了画图函数、没有调用，运行它不会出图",
         "missingData": "找不到要读的数据",
         "needsArgs": "脚本要运行参数",
         "noFigure": "跑完了，没有出图",

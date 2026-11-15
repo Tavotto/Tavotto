@@ -7275,6 +7275,28 @@ export interface GuiDialogPayload {
   truncated: boolean
 }
 
+/**
+ * 只定义了画图函数、没有调用的库模块（后端 `engine/libmodule`，反馈包 TVD-Y5JF）里，import 了它的入口脚本。
+ * `open_root` / `open_script`：打开哪个文件夹、运行其中哪个脚本（在项目里的就是当前项目根，`script` 是项目相对路径）。
+ * `path` 是本机绝对路径，只用来显示 title，不往别处发。
+ */
+export interface LibraryEntryScript {
+  path: string
+  in_project: boolean
+  direct: boolean
+  open_root: string
+  open_script: string
+  script?: string
+}
+
+export interface LibraryModulePayload {
+  entries: LibraryEntryScript[]
+  /** 预算没停、没有读不动的候选；false = 「没找到」不代表真的没有 */
+  complete: boolean
+  /** `repo` = 找到了项目外的仓库根，在那里找过 */
+  scope: 'project' | 'repo'
+}
+
 export type PreparationRequirement =
   | { id: 'environment'; kind: 'environment_choice'; code: string; payload: EnvRecommendation }
   | { id: 'workdir'; kind: 'workdir_choice'; code: string; payload: WorkdirConfirmation | null }
@@ -7295,6 +7317,8 @@ export type PreparationRequirement =
   | { id: 'data'; kind: 'workdir_hint'; code: string; origin: 'last_attempt'; blocking: false; payload: WorkdirConfirmation }
   /** 脚本源码里有弹窗选文件 / 询问的写法（`engine/dialogscan`）：不阻塞的提示，运行照样可用 */
   | { id: 'interaction'; kind: 'gui_dialog'; code: string; blocking: false; payload: GuiDialogPayload }
+  /** 只定义了画图函数的库模块：不阻塞的提示，主按钮换成「运行调用它的脚本」（TVD-Y5JF） */
+  | { id: 'entry'; kind: 'library_module'; code: string; blocking: false; payload: LibraryModulePayload }
   | {
       id: 'arguments'
       kind: 'script_arguments'

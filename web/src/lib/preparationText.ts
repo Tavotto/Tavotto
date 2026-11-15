@@ -19,6 +19,7 @@ import {
   type ConvertSourceLanguage,
   type EnvCandidate,
   type GuiDialogPayload,
+  type LibraryEntryScript,
   type MissingInputCopy,
   type MissingInputCopyState,
   type MissingInputOffer,
@@ -56,6 +57,11 @@ export type PrepPrimary =
   | { kind: 'open_registry' }
   /** 跑完没出 Matplotlib 图、但脚本自己写了图片：去素材库找（项目里的图片文件素材库本来就列） */
   | { kind: 'open_assets' }
+  /**
+   * 只定义了画图函数的库模块（TVD-Y5JF）：改为运行 import 了它的入口脚本。在项目里就在当前项目里「打开并运行」；
+   * 在项目外就打开它所在的仓库文件夹再运行（与拖进项目外脚本的「打开它所在的项目」同一条路）
+   */
+  | { kind: 'run_entry'; entry: LibraryEntryScript }
   /** 运行 / 安装期间：缩成角标，后台照跑（不是取消） */
   | { kind: 'background' }
   /** 跑完没图：知道了，收起卡片 */
@@ -437,6 +443,39 @@ const offline = (v: Record<string, unknown>, engineExited?: boolean) =>
   // 不画活动条：断线 / 引擎已停时没有任何东西在推进，一条在扫的条是假的「还在动」
   view('offline', engineExited ? 'engineStopped' : 'offline', v, null, { tone: 'mute', step: 1 })
 
+/**
+ * 只定义了画图函数、没有调用的库模块（后端 `libmodule`，TVD-Y5JF）：跑它不会出图。找到了 import 它的入口脚本就把主按钮换成
+ * 「运行它」（排第一的那个；其余在详情里），「仍然运行」作次按钮；一个都没找到就只说这一句，主按钮仍是运行。
+ * 不是 `ready`：「打开并运行」入口不会代用户认领，也不会先为它装依赖。
+ * 不带状态图标：这是一句说明、不是要用户回答的问题（灰色问号既不对意思，两行标题时也显得没对齐，2026-11-15 用户）。
+ */
+function libraryView(report: PreparationReport, v: { script: string }): PrepView | null {
+  const lib = find(report, 'library_module')
+  if (!lib) return null
+  const [top] = lib.payload.entries
+  if (top) {
+    return view('library_module', top.in_project ? 'libraryEntry' : 'libraryEntryOutside', { ...v, entry: baseNameOf(top.open_script) }, { kind: 'run_entry', entry: top }, {
+      secondary: runPrimary(report, 'runAnyway'),
+      ghost: null,
+    })
+  }
+  // 此刻没有可运行的动作（解释器被固定 / 作用域冲突…）：主按钮也不能空着，退到「知道了」
+  return view('library_module_none', 'libraryNone', v, runPrimary(report, 'runAnyway') ?? { kind: 'dismiss' }, {
+    ghost: null,
+  })
+}
+
+/**
+ * 用户已经选了「仍然运行」、此刻有一件事要他回答（运行目录 / 要改他自己环境的安装 / 跑到一半才发现的缺包 / 数据在哪）：
+ * 库模块卡让位给那张卡——否则那张卡被盖住，「仍然运行」就走进死胡同。
+ */
+const userAwaitsAnswer = (report: PreparationReport): boolean =>
+  report.intent?.status === 'active' ||
+  report.outcome.kind === 'needs_dependencies' ||
+  report.requirements.some((r) => 'origin' in r && (r.origin === 'runtime_missing' || r.origin === 'last_attempt'))
+
+const baseNameOf = (rel: string): string => rel.slice(rel.lastIndexOf('/') + 1)
+
 function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContext, script: string): PrepView {
   const v = { script }
   switch (report.phase) {
@@ -477,6 +516,9 @@ function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContex
       })
     }
     case 'ready_to_run': {
+      // 库模块排在所有「可以运行」的分支前面：跑它不会出图（TVD-Y5JF）
+      const lib = libraryView(report, v)
+      if (lib) return lib
       // 来源事实（Import Origin PR4/PR6，只有计数与闭集原因码）：有 import 没有可信的安装名时不说「可以运行了」——
       // 带预填的（后端数在 `confirmable` 里）让用户确认包名；其余只说来源还没法确定，主按钮仍是报告里的运行（改口成「仍然运行」）
       const origins = originFactsOf(report)
@@ -525,6 +567,9 @@ function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContex
             step: 1,
           })
         }
+        // 只定义了画图函数的库模块：跑完没图是它本来的样子，指向调用它的入口脚本（不摆 AI 修复，TVD-Y5JF）
+        const lib = libraryView(report, v)
+        if (lib) return lib
         if (report.no_figure_hint?.kind === 'copied_images') {
           // 只复制现成图片的脚本（不画图）：说清楚它本来就没画图，直接打开输出的图片；不是失败卡，不摆 AI 修复（TVD-537W）
           return view('no_figure_copied', 'noFigureCopied', v, { kind: 'open_assets' }, {
@@ -651,6 +696,10 @@ const BLOCKED_OWN_EXIT: Record<string, PrepPrimary> = {
 /** 等用户 / 走不通：先看要先答的事，再看结局 */
 function needsSomething(report: PreparationReport, script: string, ctx: PrepContext): PrepView {
   const v = { script }
+  // 库模块先于运行目录 / 装依赖：跑它不会出图，不该先让用户为它选目录、装几分钟依赖（TVD-Y5JF）。
+  // 用户已经选了「仍然运行」、正等他回答一件事时让位
+  const lib = userAwaitsAnswer(report) ? null : libraryView(report, v)
+  if (lib) return lib
   const env = find(report, 'environment_choice')
   if (env) {
     // 只在确认模式（`TAVOTTO_ENV_ADOPTION=confirm`）出现：默认检测模式下用哪一套由程序决定，不问（ADR 0114 §六）
