@@ -13,6 +13,7 @@ import {
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { ShapeObject } from '@/types/document'
 import { isStrokeOnlyShape, lineEndpoints, shapeStrokeOn } from '@/types/document'
+import { usePaints } from './gradientPaint'
 
 /**
  * 形状：几何公式与后端 _draw_shape 一一对应（engine 侧同名注释），
@@ -31,8 +32,9 @@ export function ShapeView({ obj, hit = 'none' }: { obj: ShapeObject; hit?: 'stro
   // 描边居中，内缩半个线宽让外沿正好贴合包围盒；无边框时不内缩，填充铺满包围盒
   const inset = shapeInset(obj, sw)
   const strokeOn = shapeStrokeOn(obj)
-  const fill = obj.fill ?? 'none'
-  const fillOpacity = obj.fill ? (obj.fillOpacity ?? 1) : undefined
+  // 填充 / 描边可以是渐变（ADR 0186）：`usePaints` 给 url(#…) 与 <defs>，没有渐变时就是原来的纯色
+  const paints = usePaints(obj, w, h, strokeOn)
+  const { fill, fillOpacity } = paints
   // 描边内缩后的矩形（与后端 rect 同一个 Rect），圆角钳制也以它为准
   const rectW = Math.max(w - 2 * inset, 0.001)
   const rectH = Math.max(h - 2 * inset, 0.001)
@@ -42,7 +44,7 @@ export function ShapeView({ obj, hit = 'none' }: { obj: ShapeObject; hit?: 'stro
 
   // dotted 的「点」全靠圆线帽，svgStroke 里点线强制圆头（与后端 `geometry.stroke_cap` 同源）；
   // 无边框 = 一个描边属性都不给（SVG 缺省 stroke 就是 none）
-  const stroke = strokeOn ? svgStroke(obj, sw, defaultLineJoin(obj.shape)) : {}
+  const stroke = strokeOn ? { ...svgStroke(obj, sw, defaultLineJoin(obj.shape)), ...paints.strokeOverride } : {}
 
   const poly = (pts: [number, number][]) => (
     <polygon
@@ -61,6 +63,7 @@ export function ShapeView({ obj, hit = 'none' }: { obj: ShapeObject; hit?: 'stro
       width={Math.max(w, 1)}
       height={Math.max(h, 1)}
     >
+      {paints.defs}
       {obj.shape === 'rect' && (
         <rect
           x={inset}

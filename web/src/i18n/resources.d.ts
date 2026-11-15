@@ -5381,6 +5381,32 @@ export default interface Resources {
         "symlog": "对称对数"
       }
     },
+    "gradient": {
+      "addStop": "添加色标",
+      "angle": "渐变角度",
+      "angleTip": "0° 从左到右，逆时针增加",
+      "center": "渐变中心",
+      "centerX": "中心 X",
+      "centerY": "中心 Y",
+      "fillKind": "填充类型",
+      "fillStops": "填充色标",
+      "kind": {
+        "linear": "线性",
+        "radial": "径向",
+        "solid": "纯色"
+      },
+      "kindTip": "纯色、线性渐变或径向渐变",
+      "mixed": "多个值",
+      "radius": "渐变半径",
+      "radiusTip": "按对象长边的百分比",
+      "removeStop": "删除色标 {{n}}",
+      "stopColor": "色标 {{n}} 的颜色",
+      "stopOffset": "色标 {{n}} 的位置",
+      "stopOpacity": "色标 {{n}} 的不透明度",
+      "stopOpacityTip": "这个色标的不透明度",
+      "strokeKind": "描边类型",
+      "strokeStops": "描边色标"
+    },
     "gradientStops": {
       "bottom": "下端",
       "followSwatch": "让「{{name}}」的图例色块跟着改",
@@ -5452,6 +5478,8 @@ export default interface Resources {
       "setFillRule": "修改填充规则",
       "setFontFamily": "修改字体",
       "setFontSize": "修改字号",
+      "setGradient": "改渐变",
+      "setGradientKind": "改填充 / 描边类型",
       "setHeadEnd": "修改终点端型",
       "setHeadSizeEnd": "修改终点端型大小",
       "setHeadSizeStart": "修改起点端型大小",

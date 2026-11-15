@@ -113,11 +113,28 @@ export function decodeSubpaths(b: readonly number[], at = 0): { subs: MmSubpath[
   return { subs, next: i }
 }
 
-/** 结果对象的样式底子：沿用 `src` 的填充 / 描边 / 线型，去掉旋转、填充规则与几何（几何由 `pathFromMm` 填） */
+/**
+ * 结果对象的样式底子：沿用 `src` 的填充 / 描边 / 线型，去掉旋转、填充规则与几何（几何由 `pathFromMm` 填）。
+ * 渐变（ADR 0186）先拿掉、算完再按原比例放回（`withGradients`）——结果铺满它自己的新框，`pathFromMm` 不拿假框去换算它。
+ */
 function styleBase(src: PathObject, groupId: string | undefined): PathObject {
-  const { rotationDeg: _r, fillRule: _f, name: _n, groupId: _g, layoutPinned: _l, ...rest } = src
+  const {
+    rotationDeg: _r,
+    fillRule: _f,
+    name: _n,
+    groupId: _g,
+    layoutPinned: _l,
+    fillGradient: _fg,
+    strokeGradient: _sg,
+    ...rest
+  } = src
   return { ...rest, ...(groupId ? { groupId } : {}) }
 }
+const withGradients = (made: PathObject, src: PathObject): PathObject => ({
+  ...made,
+  ...(src.fillGradient && made.fill ? { fillGradient: src.fillGradient } : {}),
+  ...(src.strokeGradient ? { strokeGradient: src.strokeGradient } : {}),
+})
 
 /** 一组原对象共同的组（全在同一个组里才有） */
 function commonGroup(objs: readonly CanvasObject[]): string | undefined {
@@ -155,7 +172,7 @@ export function planReplace(
     const inherit = !used.has(r.key)
     used.add(r.key)
     add.push({
-      ...made,
+      ...withGradients(made, src),
       id: inherit ? src.id : newId('p'),
       ...(inherit && src.name != null ? { name: src.name } : {}),
     })
@@ -266,7 +283,7 @@ export function offsetPaths(
     if (!d) continue
     const base = styleBase(o, o.groupId)
     const made = pathFromMm({ ...base, x: 0, y: 0, w: 1, h: 1 }, d.subs)
-    if (made) out.push({ after: o.id, add: { ...made, id: newId('p') } })
+    if (made) out.push({ after: o.id, add: { ...withGradients(made, o), id: newId('p') } })
   }
   return out.length ? out : null
 }
@@ -335,11 +352,13 @@ export function outlineStrokes(
       d.subs,
     )
     if (!made) continue
+    // 描边渐变变成轮廓的填充渐变（ADR 0186）：比例坐标照原样，铺满轮廓的框
+    const outlined: PathObject = p.strokeGradient ? { ...made, fillGradient: p.strokeGradient } : made
     if (p.fill) {
       const kept: PathObject = { ...p, stroke: false }
-      out.push({ replace: kept, extra: { ...made, id: newId('p') } })
+      out.push({ replace: kept, extra: { ...outlined, id: newId('p') } })
     } else {
-      out.push({ replace: { ...made, id: p.id, ...(p.name != null ? { name: p.name } : {}) }, extra: null })
+      out.push({ replace: { ...outlined, id: p.id, ...(p.name != null ? { name: p.name } : {}) }, extra: null })
     }
   }
   return out.length ? out : null
