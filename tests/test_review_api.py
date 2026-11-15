@@ -317,3 +317,58 @@ def test_review_render_asks_the_export_pipeline_for_a_private_png_and_builds_ele
     monkeypatch.setattr(m, "_export_produce", lambda job, tmp, **kw: [])
     with pytest.raises(ValueError):
         m._review_render({"kind": "figure", "id": "a"}, {"original": {"figure_id": "a"}}, 3000)
+
+
+def test_single_figure_elements_come_from_the_live_session_manifest(tmp_path, monkeypatch):
+    """真 matplotlib 脚本 + 真 worker：`_review_manifest` → `manifest_elements` 非空（没热过也会按这组 overrides 重放取）。
+    只验元素表这一半；PNG 栅格化要批准字体（本机缺时导出用例同样跑不了）。"""
+    import subprocess
+
+    from tavotto.engine import pool
+
+    wp = pool.find_worker_python()
+    if wp is None:
+        pytest.skip("找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）")
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
+    m.app.config["TESTING"] = True
+    m.reset_projects()
+    monkeypatch.setattr(m, "BAKED_DIR", tmp_path / "_baked")
+    monkeypatch.setattr(m, "BAKED_PATH", tmp_path / "_legacy_baked.json")
+    monkeypatch.setattr(m, "CACHE_DIR", tmp_path / "_cache")
+    monkeypatch.setattr(m, "EXPORT_DIR", tmp_path / "exports")
+    figs = tmp_path / "figures"
+    figs.mkdir()
+    (figs / "fig1.py").write_text(
+        "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n\n"
+        "def main():\n    fig, ax = plt.subplots(figsize=(3.2, 2.4))\n"
+        "    ax.plot([0, 1, 2], [1, 3, 2], label='signal')\n    ax.set_xlabel('Time (s)')\n"
+        "    ax.set_title('Raw')\n    ax.legend()\n    fig.savefig('Fig1.pdf')\n\n"
+        "if __name__ == '__main__':\n    main()\n",
+        encoding="utf-8",
+    )
+    (figs / "tavotto_registry.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "scripts": {
+                    "fig1.py": {"entry": "main", "cost": "light", "notes": "", "stems": ["Fig1"]}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run([wp, "fig1.py"], cwd=figs, check=True)
+    m.open_project(str(figs))
+    try:
+        man = m._review_manifest(
+            "Fig1.pdf", [{"gid": "axes_0.title", "prop": "fontsize", "value": 15}]
+        )
+        els = reviewshare.manifest_elements(man)
+        assert els, man
+        assert all(0 <= e["bbox"][0] <= 1 and e["bbox"][2] > 0 for e in els)
+        assert any("title" in e["gid"] for e in els)
+        # 没有脚本的素材：空表、不抛
+        assert m._review_manifest("nope.pdf", []) is None
+    finally:
+        m.reset_projects()
+        pool.shutdown_all(figures_dir=str(figs), wait=True)

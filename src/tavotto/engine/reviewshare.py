@@ -35,6 +35,7 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
+import zlib
 from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
@@ -561,6 +562,80 @@ class _Artifact:
     elements: list[dict] = field(repr=False)
 
 
+_RESAMPLE_MAX_PIXELS = 16_000_000
+
+
+def _decode_png(data: bytes):
+    """本机引擎自己编的 PNG（8 bit RGB / RGBA、非交错、滤波 0）→ `RasterBuffer`；别的形态 None。纯标准库。"""
+    from ..rendercore.raster import RasterBuffer
+
+    if png_size(data) is None:
+        return None
+    pos, idat, head = 8, [], None
+    while pos + 8 <= len(data):
+        (n,) = struct.unpack(">I", data[pos : pos + 4])
+        tag, body = data[pos + 4 : pos + 8], data[pos + 8 : pos + 8 + n]
+        if tag == b"IHDR":
+            head = struct.unpack(">IIBBBBB", body)
+        elif tag == b"IDAT":
+            idat.append(body)
+        elif tag == b"IEND":
+            break
+        pos += 12 + n
+    if head is None or head[2:] not in ((8, 2, 0, 0, 0), (8, 6, 0, 0, 0)):
+        return None
+    w, h = head[0], head[1]
+    ch = 4 if head[3] == 6 else 3
+    if w * h > 64_000_000:
+        return None
+    try:
+        raw = zlib.decompress(b"".join(idat))
+    except zlib.error:
+        return None
+    rb = w * ch
+    if len(raw) != (rb + 1) * h:
+        return None
+    rows = []
+    for y in range(h):
+        base = y * (rb + 1)
+        if raw[base] != 0:
+            return None
+        rows.append(raw[base + 1 : base + 1 + rb])
+    return RasterBuffer(w, h, ch, b"".join(rows), rb)
+
+
+def shrink_png(data: bytes, factor: float) -> bytes | None:
+    """把本机出的 PNG 等比缩到长边 ≤ `LONG_EDGE_PX` 且 ≤ `MAX_PNG_BYTES`（面积平均；超过重采样像素预算的先隔点抽样）。
+    解不了 / 缩完仍超限回 None。"""
+    from ..rendercore import raster
+
+    buf = _decode_png(data)
+    if buf is None:
+        return None
+    k = 1
+    while (buf.width // k) * (buf.height // k) > _RESAMPLE_MAX_PIXELS:
+        k += 1
+    if k > 1:
+        ch = buf.channels
+        rows = []
+        for y, row in enumerate(buf.rows()):
+            if y % k == 0:
+                rows.append(b"".join(row[x * ch : (x + 1) * ch] for x in range(0, buf.width, k)))
+        w = (buf.width + k - 1) // k
+        buf = raster.RasterBuffer(w, len(rows), ch, b"".join(rows), w * ch)
+    scale = min(factor, LONG_EDGE_PX / max(buf.width, buf.height) * 0.995, 1.0)
+    for _ in range(4):
+        w, h = max(1, int(buf.width * scale)), max(1, int(buf.height * scale))
+        try:
+            out = raster.encode_png(raster.resample_area(buf, w, h, dpi=None, dpi_y=None))
+        except raster.RasterError:
+            return None
+        if max(w, h) <= LONG_EDGE_PX and len(out) <= MAX_PNG_BYTES:
+            return out
+        scale *= 0.7
+    return None
+
+
 def _render(spec: "_Spec") -> _Artifact:
     """出图：长边 ≤ 3000 px 且 ≤ 8 MiB，超了降分辨率重出；元素表超限按面积从小到大丢。"""
     fn = _RENDERER
@@ -589,8 +664,13 @@ def _render(spec: "_Spec") -> _Artifact:
         if len(res.png) > MAX_PNG_BYTES:
             factor = min(factor, 0.7)
         if factor < 1.0 and dims == prev:
-            # 降了分辨率出来的尺寸还是一样（位图素材保源像素网格、不认 ppi）：再试也一样，别白出几次图
-            raise _Failure("too_large")
+            # 降了分辨率出来的尺寸还是一样（位图素材保源像素网格、不认 ppi）：再出也一样，改在本机把 PNG 等比缩小
+            # （bbox 是比例坐标，不受影响）。缩完仍超限 / 解不了才 too_large。
+            small = shrink_png(res.png, factor)
+            if small is None:
+                raise _Failure("too_large")
+            elements, dropped = trim_elements(res.elements)
+            return _Artifact(small, elements)
         prev = dims
         if factor >= 1.0:
             elements, dropped = trim_elements(res.elements)

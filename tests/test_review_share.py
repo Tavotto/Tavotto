@@ -490,11 +490,34 @@ def test_a_renderer_that_overshoots_the_long_edge_is_asked_again(on, renders):
     assert renders["calls"][1][1] < 3000
 
 
-def test_a_bitmap_source_that_ignores_ppi_fails_fast_instead_of_rendering_five_times(on, renders):
-    renders["script"] = [(5000, 4000, 0)] * 10  # 位图素材保源像素网格：降分辨率请求也是同样的尺寸
+def test_a_bitmap_source_that_ignores_ppi_is_shrunk_locally(on, renders, monkeypatch):
+    """位图素材保源像素网格、不认 ppi：本机把 PNG 等比缩到长边上限，用户不被尺寸卡死。"""
+    from tavotto.rendercore import raster
+
+    monkeypatch.setattr(reviewshare, "LONG_EDGE_PX", 300)
+    px = bytes((x * 7 + y) % 256 for y in range(400) for x in range(500) for _ in range(3))
+    big = raster.encode_png(raster.RasterBuffer(500, 400, 3, px, 1500))
+
+    def render(target, spec, edge):
+        renders["calls"].append((target, edge))
+        return reviewshare.Rendered(big, list(ELEMENTS))
+
+    reviewshare.set_renderer(render)
+    st = share_ok()
+    assert st["stage"] == "done"
+    sid = st["share"]["share_id"]
+    got = on.shares[sid].uploads[f"{sid}/1"]
+    w, h = reviewshare.png_size(got)
+    assert max(w, h) <= 300 and abs(w / h - 500 / 400) < 0.02
+    assert json.loads(on.calls[0]["body"])["elements"] == ELEMENTS  # 比例坐标不变
+    assert len(renders["calls"]) == 2
+
+
+def test_shrink_gives_up_on_unreadable_png_as_too_large(on, renders):
+    renders["script"] = [(5000, 4000, 0)] * 10  # 假 PNG：解不了 → too_large
     st = share_ok()
     assert (st["failure"], st["retryable"]) == ("too_large", False)
-    assert len(renders["calls"]) == 2 and on.calls == []
+    assert on.calls == []
 
 
 def test_hopelessly_large_png_fails_as_too_large(on, renders):

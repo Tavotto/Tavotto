@@ -6190,12 +6190,21 @@ def _review_tmp_root() -> Path:
 
 
 def _review_manifest(figure_id: str, overrides: list):
-    """一张图的 manifest JSON（热会话刚按这组 overrides 渲染过）；没有脚本 / 拿不到回 None，从不抛。"""
+    """一张图的 manifest JSON = 用户画布上看到的那份（热会话按这组 overrides 的当前状态）。热态不是这组 patches 时
+    先让 worker 按它们重放一次（与画布同一组、幂等），再取；没有脚本 / 仍拿不到回 None（日志只记个数），从不抛。"""
+    patches = list(overrides or [])
     try:
         worker, stem = _edited_script_worker(figure_id)
         if worker is None:
+            LOG.info("外部审阅: 元素表为空（没有脚本）")
             return None
-        return _hot_manifest(worker, stem, list(overrides or []))
+        man = _hot_manifest(worker, stem, patches)
+        if man is None:
+            worker.override(stem, patches)
+            man = _hot_manifest(worker, stem, patches)
+        if man is None:
+            LOG.info("外部审阅: 元素表为空（热会话没有这组 overrides）")
+        return man
     except Exception as exc:  # noqa: BLE001 — 元素表是锦上添花，拿不到只是少了「点选元素」
         LOG.info("外部审阅: 元素表不可用 类型=%s", type(exc).__name__)
         return None
