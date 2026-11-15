@@ -1,11 +1,14 @@
 import type { ExportRequest } from '@/lib/api'
 import { buildExportRequest, originalAvailability } from '@/lib/exportRequest'
+import { isKnownObject } from '@/types/document'
 import { frameCanvasOf, isZeroPad } from '@/lib/framePad'
 import { annotationsBelow, annotationsOf, singleAnnotatedDocument } from '@/lib/singleExportDoc'
 import { useDocumentStore } from '@/store/documentStore'
 import { exactPanelManifest, useRenderStore } from '@/store/renderStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import type { PanelObject } from '@/types/document'
+
+const OBJECT_ID = /^[A-Za-z0-9_-]{1,64}$/
 
 /**
  * 「分享审阅」要引擎渲染什么（ADR 0187 / local-api 补充）：就是导出那条路径里的 `original` 段（单图编辑）或 `canvas` 段（排版）
@@ -38,7 +41,17 @@ export function buildReviewRender(): Pick<ExportRequest, 'original' | 'canvas'> 
       return request.original ? { original: request.original } : null
     }
     const { request } = buildExportRequest({ ...base, scope: 'canvas' })
-    return request.canvas ? { canvas: request.canvas } : null
+    if (!request.canvas) return null
+    // 排版里每个面板带文档对象自己的不透明 id：导出请求里的 `id` 是图的项目内路径，不能出机（引擎只认 object_id）。
+    // 与 `toExportObjects` 同一条过滤（隐藏的、不认识的不进载荷），所以按下标对应；面板名不含路径分隔符时一并带作显示名
+    const visible = doc.objects.filter((o) => !o.hidden && isKnownObject(o))
+    const objects = request.canvas.objects.map((e, i) => {
+      const o = visible[i]
+      if (!o || o.type !== 'panel' || !OBJECT_ID.test(o.id)) return e
+      const label = o.name && !/[\\/]/.test(o.name) ? { label: o.name } : {}
+      return { ...e, object_id: o.id, ...label }
+    })
+    return { canvas: { ...request.canvas, objects } }
   } catch {
     return null
   }

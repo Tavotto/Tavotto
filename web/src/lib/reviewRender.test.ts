@@ -29,7 +29,22 @@ describe('buildReviewRender：取自导出请求，不另拼', () => {
     const { doc, documentId } = useDocumentStore.getState()
     const want = buildExportRequest({ ...base(documentId, doc), scope: 'canvas' }).request.canvas
     expect(want?.objects.length).toBe(1)
-    expect(buildReviewRender()).toEqual({ canvas: want })
+    // 与导出给的那一段相比，只多了面板的 object_id（文档对象自己的 id）；导出里的 `id`（项目内路径）原样还在，由引擎不用
+    const got = buildReviewRender()!.canvas!
+    expect(got.objects).toEqual(want!.objects.map((o) => ({ ...o, object_id: 'p1' })))
+    expect({ ...got, objects: [] }).toEqual({ ...want, objects: [] })
+  })
+
+  it('排版：隐藏的对象不进载荷，object_id 仍按下标对到各自的面板；不合法的 id 不带；含路径的名字不当 label', async () => {
+    const p2 = { ...panel, id: 'p2', name: 'Fig 2' } as PanelObject
+    const hidden = { ...panel, id: 'hid', hidden: true } as PanelObject
+    const bad = { ...panel, id: 'a/b', name: 'x/y' } as PanelObject
+    await seed([hidden, p2, bad])
+    const objs = buildReviewRender()!.canvas!.objects as { object_id?: string; label?: string }[]
+    expect(objs).toHaveLength(2)
+    expect(objs[0]).toMatchObject({ object_id: 'p2', label: 'Fig 2' })
+    expect(objs[1].object_id).toBeUndefined()
+    expect(objs[1].label).toBeUndefined()
   })
 
   it('单图编辑：original 段与导出给的那一段逐字相等', async () => {
