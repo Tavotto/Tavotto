@@ -17,7 +17,8 @@ import { fetchHistory, restoreHistory, updateSourceFiles, type HistoryVersion } 
 import { literal, t } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
-import { useDocumentStore } from '@/store/documentStore'
+import { heldEntryCount, takeWindowEntries } from '@/store/documentRestore'
+import { setWindowHold, useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { WriteBackDialog, WriteBackRecordsButton } from './UpdateSourceButton'
@@ -238,6 +239,22 @@ describe('恢复仍是原来那条路', () => {
     expect(p.overrides[0].gid).toBe('axes_0.xlabel')
     // 恢复完成 → 写回窗口随之关掉（原先是历史弹层关掉）
     expect(closed).toHaveBeenCalledWith(false)
+  })
+
+  it('只读窗口（ADR 0181）里恢复不发请求：记住，编辑权放开后才做', async () => {
+    vi.mocked(fetchHistory).mockResolvedValue({ versions: [version(0), version(1)] } as never)
+    vi.mocked(restoreHistory).mockResolvedValue({ updated: ['A.pdf'], backup_dir: '/b', patches: [] } as never)
+    setWindowHold({ role: 'contested', docId: useDocumentStore.getState().documentId })
+    await mount(<WriteBackDialog panels={[panel()]} open initialPage="records" onOpenChange={() => {}} />)
+    const restoreBtns = [...document.body.querySelectorAll<HTMLElement>('[data-write-back="restore"]')]
+    await click(restoreBtns[1])
+    await click(byText(vh('confirmRestore')))
+    expect(restoreHistory).not.toHaveBeenCalled()
+    expect(heldEntryCount()).toBe(1)
+    const entries = takeWindowEntries()
+    setWindowHold(null)
+    await act(async () => entries.run())
+    expect(restoreHistory).toHaveBeenCalledTimes(1)
   })
 
   it('恢复确认框按项目实际备份目录提示，不再写死 cache/original_backups（QA-WIN-49）', async () => {

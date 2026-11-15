@@ -35,6 +35,7 @@ const DEFAULT_ACQUIRE_LEASE_MS: u64 = 30_000;
 fn worker_cmd(op: &str) -> Option<(&'static str, bool)> {
     match op {
         "build" => Some(("build", false)),
+        "chart" => Some(("chart", false)),
         "render" => Some(("render", true)),
         "render_png" => Some(("render_png", false)),
         "preview_png" => Some(("preview_png", false)),
@@ -126,6 +127,7 @@ impl Supervisor {
                 "max_queue": self.max_queue,
                 "acquire_lease_ms": self.acquire_lease.as_millis() as u64,
                 "capabilities": [
+                    "bounded_chart_tasks",
                     "queue_merge_latest",   // per (会话, stem) 的 render 只留最新一条
                     "cancel_kill",          // 在飞的取消 = 杀进程（没有协作中断）
                     "generation_fencing",   // 上一代的迟到响应一律丢弃

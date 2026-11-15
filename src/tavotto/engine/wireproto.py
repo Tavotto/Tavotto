@@ -194,6 +194,10 @@ class V1Handler:
     def commands(self) -> frozenset:
         return V1_COMMANDS
 
+    def unbuilt_commands(self) -> frozenset:
+        """Fixed task commands that have no user-code build phase."""
+        return frozenset()
+
     def ensure_built(self, timings: dict | None = None) -> None:
         return None
 
@@ -257,6 +261,9 @@ class V1Handler:
             return {}
         if cmd == "cancel":
             return self.cancel(payload)
+
+        if cmd in self.unbuilt_commands():
+            return self.handle_extra(cmd, req, payload)
 
         patches = payload.get("patches", [])
         if cmd in PATCH_COMMANDS and not isinstance(patches, list):

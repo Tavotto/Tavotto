@@ -303,6 +303,57 @@ def install_colorbar_capture(mfigure) -> None:
     mfigure.FigureBase.colorbar = colorbar
 
 
+def _is_ft_glyph_load_error(exc: BaseException) -> bool:
+    """FreeType 载入字形失败（ft2font 抛的 RuntimeError）：`failed to load glyph` / `FT_Load_Glyph ... failed`。"""
+    if type(exc) is not RuntimeError:
+        return False
+    text = str(exc)
+    return "failed to load glyph" in text or "FT_Load_Glyph" in text
+
+
+def install_agg_unhinted_glyph_fallback(backend_agg) -> None:
+    """Agg 量 / 画文字时 FreeType 载不进字形，只对**那一次调用**按无 hinting 重试。
+
+    macOS 系统 Helvetica（`Helvetica.ttc`）在像素尺寸很小（约 < 7–8 px：Nature 要求的 5–7 pt 配
+    72–100 dpi）、带 hinting 时 FreeType 报 `division by zero`，整张图起不来。用户直接 `python fig.py`
+    用的是 macosx 后端（Retina 上 figure dpi 200，像素够大，不触发）；worker 固定 Agg、dpi 100。
+    所以不改脚本、不改 dpi，只在 Agg 的文字入口碰到这类错误时放开 hinting 重试一次：
+
+    * 只认 ft2font 的这一类 RuntimeError；重试仍失败就原样抛出（不吞别的错）。
+    * `rcParams["text.hinting"]` 只在这次重试里临时改、`finally` 还原——不是全局改 hinting，
+      其它字号 / 字体的度量与像素仍是 matplotlib 自己的 hinting 值（写回的像素门与几何比对不变）。
+    * 度量与绘制两个入口一致地回退，同一字号不会「量得过、画不了」。
+    """
+    from functools import wraps
+
+    renderer_cls = backend_agg.RendererAgg
+    rc = backend_agg.mpl.rcParams
+
+    def retry_unhinted(original):
+        if getattr(original, "_tavotto_unhinted_fallback", False):
+            return original
+
+        @wraps(original)
+        def wrapper(self, *args, **kwargs):
+            try:
+                return original(self, *args, **kwargs)
+            except RuntimeError as exc:
+                if not _is_ft_glyph_load_error(exc):
+                    raise
+            saved = rc["text.hinting"]
+            rc["text.hinting"] = "no_hinting"
+            try:
+                return original(self, *args, **kwargs)
+            finally:
+                rc["text.hinting"] = saved
+
+        wrapper._tavotto_unhinted_fallback = True  # noqa: SLF001
+        return wrapper
+
+    for name in ("get_text_width_height_descent", "draw_text"):
+        setattr(renderer_cls, name, retry_unhinted(getattr(renderer_cls, name)))
+
+
 #: 每次执行的观察预算，独立于旧的逐 stem 调用表。超限必须说历史不完整，
 #: 不能把「最后一条留下的记录」当成「磁盘上最后一次保存」。不保留 Figure 强引用。
 MAX_SAVEFIG_OBSERVATIONS = 128
@@ -6344,11 +6395,11 @@ def install_input_remap(
             return None, None
         return raw, _script_name(raw)
 
-    def _note_probe(path, kind: str) -> None:
+    def _note_probe(path, kind: str, exc: BaseException | None = None) -> None:
         with _Busy():
-            _note_probe_now(path, kind)
+            _note_probe_now(path, kind, exc)
 
-    def _note_probe_now(path, kind: str) -> None:
+    def _note_probe_now(path, kind: str, exc: BaseException | None) -> None:
         raw, _ = _probe_names(path)
         if raw is None:
             return
@@ -6358,6 +6409,13 @@ def install_input_remap(
         elif _is_sys_path_entry(raw):
             return
         misses.note_probe(raw, kind=kind)
+        if exc is not None:
+            # stat / 列目录这类会抛的探路：给**这一个**系统 ENOENT 打标，它若一路到终局就是这次落空
+            # （`_probe_miss_of`）；写进不存在的目录之类别的 ENOENT 没有标，照旧不认领
+            try:
+                exc._tavotto_probe_miss = raw  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001
+                pass
 
     def _probe_target(path, want: str) -> str | None:
         """原路径不在时按改指表换算（`whole=True`：探的可以就是规则的 `from` 文件夹本身），目标是 `want`
@@ -6407,12 +6465,12 @@ def install_input_remap(
                 return real(*args, **kwargs)
             try:
                 return real(path, *args, **kwargs)
-            except FileNotFoundError:
+            except FileNotFoundError as exc:
                 if kwargs.get("dir_fd") is not None or _reentrant():
                     raise
                 target = _probe_target(path, want)
                 if target is None:
-                    _note_probe(path, kind)
+                    _note_probe(path, kind, exc)
                     raise
             return real(target, *args, **kwargs)
 
@@ -6470,12 +6528,12 @@ def install_input_remap(
         def stat(self, *args, **kwargs):
             try:
                 return real(self, *args, **kwargs)
-            except FileNotFoundError:
+            except FileNotFoundError as exc:
                 if _reentrant():
                     raise
                 target = _probe_target(self, PROBE_WANT_ANY)
                 if target is None:
-                    _note_probe(self, PROBE_ANY_KIND)
+                    _note_probe(self, PROBE_ANY_KIND, exc)
                     raise
             return real(pathlib.Path(target), *args, **kwargs)
 
@@ -6937,20 +6995,75 @@ def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
 
 
 def _probe_miss_of(fnf: BaseException, misses: InputMisses) -> dict | None:
-    """「脚本先 `exists()` / `is_file()` 探路、答没有，再**自己** `raise FileNotFoundError(...)` 点名这条」→
-    `missing_input` 的事实（ADR 0106 修订 2026-11-09）；对不上回 None。
+    """「脚本先 `exists()` / `is_file()` 探路、答没有，再**自己** `raise FileNotFoundError(...)` 点名这条」，
+    或「`stat` / `getsize` / `listdir` 这类会抛的探路落空、改指没救回，系统抛的**那一个** ENOENT 一路到终局」→
+    `missing_input` 的事实（ADR 0106 修订 2026-11-09 / 2026-11-14）；对不上回 None。
+
+    后一种认的是 `install_input_remap` 打在那个异常对象上的标（`_tavotto_probe_miss`），不按路径比：同一条路径
+    随后写进不存在的目录抛的 ENOENT 没有标，不认领。
 
     三条都要有才判：异常是脚本构造的（`errno` 为 None——系统抛的 ENOENT 都带 errno，写进不存在的目录不在此列）；
     消息按路径段边界点了名某次落空的探路（同 `_named_miss`）；那条路径此刻确实不在（被回退 / 别处救回来的不算）。
     探路同样查改指表（`install_input_remap`），所以事实与只读打开的落空同形（不带 `via`；问的是文件夹时多带
     `probe_kind: "dir"`）：对话框给选择器，AI 的 `link_data_file` 接得上。
     """
-    if not misses.probes or getattr(fnf, "errno", None) is not None:
+    if not misses.probes:
         return None
-    requested = _named_miss(fnf, misses, misses.probes)
+    tagged = getattr(fnf, "_tavotto_probe_miss", None)
+    if isinstance(tagged, str):
+        requested: str | None = tagged
+    elif getattr(fnf, "errno", None) is not None:
+        return None
+    else:
+        requested = _named_miss(fnf, misses, misses.probes)
     if requested is None:
         return None
-    entry = next(m for m in reversed(misses.probes) if m["requested"] == requested)
+    return _absent_probe_fact(requested, misses)
+
+
+def _named_by_basename(text: str, items: list[dict]) -> str | None:
+    """消息里只写了**文件名**（`找不到 data.xlsx，请用 --input 指定`）时点了名的那次探路；对不上回 None。
+
+    只认带扩展名的文件名（`data` / `input` 这种文件夹名太常见，不认）；左边界只排除 ASCII 的
+    路径字符——中文消息里文件名前紧挨着汉字（`指定不同污染物.xlsx`）也算点名；右边界与 `_named_miss` 同一把尺子。
+    几条都对得上时取文件名最长的（`a.csv` 不抢 `data.csv`），同名取最近一次。"""
+    text = text.replace("\\", "/")
+    best: tuple[int, str] | None = None
+    for item in reversed(items):
+        base = item["requested"].replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+        stem, dot, ext = base.rpartition(".")
+        if not (stem and dot and ext):
+            continue
+        if not re.search(rf"(?<![A-Za-z0-9_.\-/]){re.escape(base)}(?![\w\-/]|\.\w)", text):
+            continue
+        if best is None or len(base) > best[0]:
+            best = (len(base), item["requested"])
+    return best[1] if best else None
+
+
+def parser_error_missing_input(message: str, misses: InputMisses) -> dict | None:
+    """脚本**自己**调 `parser.error("找不到 …")`（先探路、答没有、再用参数解析器报错退出）→ `missing_input`
+    的事实；对不上回 None（ADR 0106 修订 2026-11-14）。
+
+    调用方（worker）已证明这次 `SystemExit` 是用户代码调的 `ArgumentParser.error`，不是 argparse 解析时自己报的。
+    这里只认：消息点了名某次没救回的探路（整条路径按 `_named_miss` 的边界，或只写了文件名，`_named_by_basename`），
+    且那条此刻确实不在。事实与 `_probe_miss_of` 同形——对话框给选择器，指认后经改指表重跑。"""
+    if not misses.probes or not isinstance(message, str) or not message or len(message) > 4096:
+        return None
+    holder = FileNotFoundError(message.replace("\n", " "))
+    requested = _named_miss(holder, misses, misses.probes) or _named_by_basename(
+        message, misses.probes
+    )
+    if requested is None:
+        return None
+    return _absent_probe_fact(requested, misses)
+
+
+def _absent_probe_fact(requested: str, misses: InputMisses) -> dict | None:
+    """点了名的那条探路此刻确实不在 → `missing_input` 事实；此刻在（被回退 / 别处救回来）或判不了回 None。"""
+    entry = next((m for m in reversed(misses.probes) if m["requested"] == requested), None)
+    if entry is None:
+        return None
     try:
         os.lstat(os.path.join(entry["cwd"], requested))
         return None  # 此刻在：不是缺数据

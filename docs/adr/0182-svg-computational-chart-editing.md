@@ -3,8 +3,9 @@
 日期：2026-11-12 · 状态：**Proposed，待上游维护者确认**。
 
 来源：[PR #1873 维护者意见](https://github.com/Tavotto/Tavotto/pull/1873#issuecomment-6818238300)。
-编号由上游维护者于 2026-11-13 [分配为 ADR 0182](https://github.com/Tavotto/Tavotto/pull/1873#issuecomment-6846699749)；编号分配不表示方案或 1.0 豁免已获批准。
-本文件描述拆分候选中的完整方案，不表示架构、1.0 扩展豁免或发布资格已获批准。
+编号由上游维护者于 2026-11-13 [分配为 ADR 0182](https://github.com/Tavotto/Tavotto/pull/1873#issuecomment-6846699749)。
+维护者在 [#1877](https://github.com/Tavotto/Tavotto/issues/1877#issuecomment-6847781708) 已确认方向、默认开启及登记 1.0 豁免的安排，
+并要求复用 ADR 0178、先确认新格式合同、复用现有 worker。维护者已确认 ADR 0178 接入方案与 native-manifest/2 合同，并要求修改其余存储、包和运行参数合同；这些后续接入尚未在本轮实现，整体保持 Proposed，不表示已取得合入或发布资格。
 现役约束见 ADR 0017、0072、0096、0108、0120、0150、0178 及相关规则。
 
 ## 问题与目标
@@ -34,7 +35,7 @@
 
 与 ADR 0178 的关系：两者都需要确定性计算和数据事实，但本方案服务于“已有 SVG 的显式绑定”，
 不增加模型写代码或任意执行入口。配方、统计规则、数据出图工具集继续以 ADR 0178 为唯一权威；
-是否复用其类型、模板或读表接口，由维护者在架构讨论中确认，避免形成第二份科学规则。
+复用其数据读取、指纹和合法性判据是 #1877 第 1 条的要求；具体模块接入继续独立跟踪，本次 worker 接入不代替该项工作。
 
 ### 2. `native-manifest/2` 与完整显示框
 
@@ -42,7 +43,7 @@
 请求、缓存、exact、PNG、历史和导出共同消费 profile 身份。新的几何写操作只通过统一 F→S 适配。
 显示框原点、原生尺寸和面板几何在同一文档事务中采用；legacy 与 `/1` 的缺省语义保持。
 
-**待确认**：是否接受该版本化合同、物理尺寸与采用规则，以及后续生产入口的启用范围。
+**维护者已确认，待独立落实**（[#1919](https://github.com/Tavotto/Tavotto/issues/1919)）：1pt 外扩为唯一合同常量，`render_frame` 保持闭集且只保留在 manifest 内；补齐旧版回退表现。本轮仅同步 worker，不实施这些格式调整。
 
 ### 3. schema 4、附件与保存
 
@@ -50,7 +51,7 @@ schema 4 显式表达计算状态及不可变 SVG 来源附件；旧 `SCHEMA_CUR
 附件先按精确字节和摘要保存，正文仍通过原 writer 单次提交。缺失或篡改的附件明确报错，
 不回退到同名路径。项目文件身份、保存回执、恢复选择和预览归属沿同一文档代际与事务链传递。
 
-**待确认**：schema 4 的必要性、命名空间及迁移政策，并与上游文档保存和窗口交接工作协调。
+**维护者要求修改，待独立落实**（[#1920](https://github.com/Tavotto/Tavotto/issues/1920)）：schema 必须升号，但使用同一套存储、列表与历史；首次加入计算图表原地升级并保留版本历史。上面的隔离命名空间是候选现状，不是已批准合同。
 本草案不重定义现役保存 writer，也不预先宣称该格式已成为现役标准。
 
 ### 4. 项目包封存、检视与安装
@@ -59,22 +60,26 @@ schema 4 显式表达计算状态及不可变 SVG 来源附件；旧 `SCHEMA_CUR
 向用户明确选择的新目录安装时先验证预算和成员身份，再排他发布，不覆盖既有目标。
 安装不执行包内脚本，不继承其他机器的授权；后续运行仍经现有批准、解释器和资源租约链。
 
-**待确认**：容器及完整性合同、安装/采用边界、缺失依赖的处理，以及与现役项目包的兼容路线。
+**维护者要求修改，待独立落实**（[#1921](https://github.com/Tavotto/Tavotto/issues/1921)、[#1922](https://github.com/Tavotto/Tavotto/issues/1922)）：共用项目包入口并按内容分流；运行参数本机优先、冲突跳过计数，发布目录前完成校验。合同修订及对应实现不属于本轮 worker 接入。
 
-## `chartprocess` 的进程边界与备选方案
+## `chartprocess` 复用现有 worker
 
-当前候选实现由 `chartprocess.run_request()` 在 resident worker 池之外运行固定的 `svgchart` 命令。
-它不执行用户脚本、不接受任意 argv、不建立常驻 Figure；科学栈仅在子进程装载。
-解释器由 `pool.resolve_worker_python()` 选择；生命周期由现有 `DesktopProcess` owner 管理，
-临时缓冲走 `config.data_dir()`，请求与响应均有字节/结构预算和 deadline，退出必须 reap。
-未确认关闭时继续持有 admission 与环境租约，不以发出 kill 当作已经释放。
+维护者在 [#1877 第 3 条](https://github.com/Tavotto/Tavotto/issues/1877#issuecomment-6847781708)
+确定：请求信封、容量计数和沙盒复用现有 worker，不在池外启动 chart 进程。
 
-**容量边界需明确**：chart admission 仅限制 chart 任务，读取 `pool.max_alive()` 的数值；
-它不是 resident/native/one-shot 的统一全产品容量账本。方案不把这几类占用相加后假称已有统一限额。
+`chartprocess.run_request()` 保持调用与业务结果合同，转交 `pool.acquire_chart()`。
+任务的池键显式区分项目与固定 chart 身份，不冒充项目脚本；启动规格使用既有 safe/module
+形态，目标固定为 `tavotto.engine.svgchart`，由 `execspec.worker_argv()` 生成 `--task chart`。
+该入口仅接受 v1 `chart` 和管理命令，不 build、不读取用户脚本、不产生用户脚本 execution fact。
+probe、脚手架及 EPS 封装共用一个计算入口；每次恢复 rc 状态并释放本次 Figure。
 
-另一候选是把固定 chart command 纳入现有 worker 调度。优点是容量和取消集中；代价是需明确
-无用户脚本的任务身份、工作目录、科学依赖及状态中立性，不能借重构改变原 worker/native 合同。
-本次拆分先保留现实现及其超时、容量、输出预算、失败回收测试，提交维护者比较后决定。
+chart 与脚本会话共用 `pool.max_alive()`、LRU/租约、环境代次及退役围栏；保留既有软上限政策，
+不将 native 或 one-shot 改造成常驻池会话。取消、超时、协议错乱和未确认关闭都走现有生命周期。
+工作目录固定为数据目录中的会话沙盒，文件操作守卫由 worker 与脚本 build 共用同一实现。
+
+JSON/SVG/EPS 的既有预算保留在 `chartwire`；共享传输层有界读写，Python 产生的帧预算交给
+workerd 消费。workerd 通过 `bounded_chart_tasks` 能力握手；旧二进制回退到现有 Python 池，
+没有池外 chart 回退路径。格式合同与 ADR 0178 接入按各自议题的维护者决定继续独立落实，本节不替代那些工作。
 
 ## 保存、导出与安全不变量
 
@@ -86,6 +91,7 @@ schema 4 显式表达计算状态及不可变 SVG 来源附件；旧 `SCHEMA_CUR
 
 ## 审查与交付
 
-原 #1873 保留参考；其代码拆为九份 fork 草稿 PR，并在上游方案 Issue 汇总。依赖 PR 只展示
-相对下层分支的增量；本地验证与上游 CI/CLA/维护者批准分开记录。方案确认前不进入合并或发布。
+原 #1873 保留历史参考；拆分候选与再拆层在 #1877 汇总。fork 依赖及固定 SHA 比较提供逐层增量，
+上游 PR 仍以 main 为 base，等待维护者准备真实父分支；不能将 fork 叠栈视为已完成上游叠栈。
+本地验证与上游 CI/CLA/维护者批准分开记录，未满足合入资格前不进入合并或发布。
 实施进度、会话提示词和临时验收报告不入库；规则与待发片段随所属修改维护。

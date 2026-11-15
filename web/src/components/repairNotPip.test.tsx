@@ -44,11 +44,11 @@ afterEach(async () => {
   await i18n.changeLanguage('zh-CN')
 })
 
-async function mount() {
+async function mount(offer: DependencyRepairOffer = OFFER, module = 'ROOT') {
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
-  await act(async () => root.render(<DependencyRepairCard offer={OFFER} module="ROOT" script="fig.py" />))
+  await act(async () => root.render(<DependencyRepairCard offer={offer} module={module} script="fig.py" />))
   await act(async () => {})
 }
 
@@ -73,5 +73,44 @@ describe('装不了的包（ROOT）修复卡', () => {
       'ROOT can’t be installed with pip; run it in a Python environment that already has it.',
     )
     expect(host.querySelector(PKG_INPUT())).toBeNull()
+  })
+})
+
+// TVD-NH7S：ChatGPT 网页沙箱专有的模块（artifact_tool）：哪个环境都没有，主按钮复制「请 AI 去掉它重新生成」的话，不给选环境
+const SANDBOX: DependencyRepairOffer = {
+  ...OFFER,
+  import_name: 'artifact_tool',
+  not_pip_installable: { label: 'artifact_tool', hint: 'ai_sandbox' },
+}
+
+describe('AI 网页沙箱模块修复卡', () => {
+  it('一句话 + 复制给 AI 的话；没有选环境、没有指定包名', async () => {
+    await i18n.changeLanguage('zh-CN')
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    await mount(SANDBOX, 'artifact_tool')
+    expect(host.querySelector('[data-repair-not-pip-sentence]')?.textContent).toBe(
+      'artifact_tool 只在 ChatGPT 网页里有、本机装不了，请让 AI 去掉它重新生成脚本。',
+    )
+    expect(host.querySelector(PKG_INPUT())).toBeNull()
+    // 选环境只剩收起的「高级」里那一颗备选（和别的卡一样），不是主按钮
+    for (const b of host.querySelectorAll('[data-repair-open-environment]')) expect(b.closest('details')).not.toBeNull()
+    const btn = host.querySelector('[data-repair-copy-for-ai]') as HTMLButtonElement
+    expect(btn.textContent).toBe('复制给 AI 的话')
+    await act(async () => btn.click())
+    await act(async () => {})
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('请去掉 artifact_tool'))
+    expect(btn.textContent).toBe('已复制，粘贴给 AI')
+  })
+
+  it('剪贴板被挡住时不装成功', async () => {
+    await i18n.changeLanguage('zh-CN')
+    const writeText = vi.fn().mockRejectedValue(new Error('denied'))
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    await mount(SANDBOX, 'artifact_tool')
+    const btn = host.querySelector('[data-repair-copy-for-ai]') as HTMLButtonElement
+    await act(async () => btn.click())
+    await act(async () => {})
+    expect(btn.textContent).toBe('复制给 AI 的话')
   })
 })

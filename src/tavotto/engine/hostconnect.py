@@ -47,6 +47,7 @@ import argparse
 import copy
 import datetime as _dt
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -112,14 +113,15 @@ BACKOFF_KEY = "plugin_update_failed"
 
 # ----------------------------------------------------------------------------- 起服务端的命令
 def mcp_launch() -> dict | None:
-    """这一份 Tavotto 起 MCP 服务端的命令：{"command", "args"}；起不了（pip 装的没有服务端）就是 None。"""
+    """这一份 Tavotto 起 MCP 服务端的命令：{"command", "args"}；起不了（冻结产物没带 tavotto-cli / 找不到 `tavotto_mcp`）就是 None。"""
     if getattr(sys, "frozen", False):
         exe = Path(sys.executable)
         cli = exe.with_name("tavotto-cli" + exe.suffix)
         return {"command": str(cli), "args": ["mcp"]} if cli.is_file() else None
     from . import mcpserve  # noqa: PLC0415
 
-    if mcpserve._source_tree_mcp_dir() is None:
+    if mcpserve._source_tree_mcp_dir() is None and importlib.util.find_spec("tavotto_mcp") is None:
+        # pip / pipx / uvx 装的 wheel 自带 `tavotto_mcp`（#1862）：同一条 `-m tavotto mcp`
         return None
     return {"command": sys.executable, "args": ["-m", "tavotto", "mcp"]}
 
