@@ -269,7 +269,17 @@ const RASTER_LIBRARY_NAME: Record<string, string> = {
 
 const BUSY = new Set(['running', 'awaiting_runtime_input', 'preparing_environment'])
 /** 这几种状态下「运行」的前提是参数：必填参数没填齐就换成参数卡（任何卡都不说「可以运行」） */
-const ARGS_GATED = new Set(['ready', 'gui_dialog', 'restarted', 'needs_args', 'args_changed', 'origin_unknown'])
+const ARGS_GATED = new Set([
+  'ready',
+  'gui_dialog',
+  'restarted',
+  'needs_args',
+  'args_changed',
+  'origin_unknown',
+  // 库模块卡的「仍然运行」同样要先答必填参数（Codex #1940）
+  'library_module',
+  'library_module_none',
+])
 
 /**
  * 失败卡：下面这些状态都是「跑不了 / 没出图 / 走不通」的结局（`prepView` 的 `state`）。智能修复的次按钮只摆在它们上面；
@@ -466,11 +476,13 @@ function libraryView(report: PreparationReport, v: { script: string }): PrepView
 }
 
 /**
- * 用户已经选了「仍然运行」、此刻有一件事要他回答（运行目录 / 要改他自己环境的安装 / 跑到一半才发现的缺包 / 数据在哪）：
- * 库模块卡让位给那张卡——否则那张卡被盖住，「仍然运行」就走进死胡同。
+ * 用户已经选过「仍然运行」（这个会话里认领过运行意图——不论它此刻还在等、已执行，还是因为要改他自己的环境被撤回到逐次确认；
+ * 或已经跑过一次），或此刻有一件上一次尝试留下的事要他回答：库模块卡让位给原来那张卡——否则要他确认的安装 / 运行目录 / 缺包
+ * 被盖住，「仍然运行」就走进死胡同（Codex #1940 P1：意图被撤回成 `revoked` 时也要让位）。用户自己取消的意图不算选过。
  */
 const userAwaitsAnswer = (report: PreparationReport): boolean =>
-  report.intent?.status === 'active' ||
+  (!!report.intent && report.intent.status !== 'cancelled') ||
+  (report.provider?.attempts ?? 0) > 0 ||
   report.outcome.kind === 'needs_dependencies' ||
   report.requirements.some((r) => 'origin' in r && (r.origin === 'runtime_missing' || r.origin === 'last_attempt'))
 
@@ -516,18 +528,19 @@ function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContex
       })
     }
     case 'ready_to_run': {
-      // 库模块排在所有「可以运行」的分支前面：跑它不会出图（TVD-Y5JF）
-      const lib = libraryView(report, v)
-      if (lib) return lib
       // 来源事实（Import Origin PR4/PR6，只有计数与闭集原因码）：有 import 没有可信的安装名时不说「可以运行了」——
       // 带预填的（后端数在 `confirmable` 里）让用户确认包名；其余只说来源还没法确定，主按钮仍是报告里的运行（改口成「仍然运行」）
       const origins = originFactsOf(report)
       // 可确认的来源优先于弹窗提示：弹窗提示每次检查都在，排在前面这类脚本就永远进不了确认包名；提示仍在详情里（SessionDetails 读 requirements）
+      // 也优先于库模块卡：确认包名的对话框只有这张卡的主按钮打得开（Codex #1940）
       if (origins && origins.confirmable) {
         return view('origin_confirm', 'originConfirm', { ...v, count: origins.confirmable }, { kind: 'confirm_origins' }, {
           tone: 'mute',
         })
       }
+      // 库模块排在其余「可以运行」的分支前面：跑它不会出图（TVD-Y5JF）；用户已经选过「仍然运行」就让位
+      const lib = userAwaitsAnswer(report) ? null : libraryView(report, v)
+      if (lib) return lib
       // 脚本会弹窗选文件 / 询问（后端静态识别，不阻塞）：先说这件事，主按钮仍是报告里的 run，只是改口成「仍然运行」。
       // 不另造「让助手改脚本」的入口——叠栈里没有现成的
       const dialog = find(report, 'gui_dialog')

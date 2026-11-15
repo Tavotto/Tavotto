@@ -605,6 +605,33 @@ describe('只定义了画图函数的库模块（TVD-Y5JF）：指向调用它�
     expect(v.state).toBe('deps_runtime')
   })
 
+  it('「仍然运行」的意图因为要改用户自己的环境被撤回（revoked）：让位给逐次确认的安装卡（Codex #1940 P1）', () => {
+    const v = view(
+      report({
+        phase: 'awaiting_confirmation',
+        outcome: { kind: 'pending' },
+        requirements: [{ id: 'dependencies', kind: 'dependency_authorization', code: 'x', payload: null }, lib([inside])],
+        actions: [action('prepare_dependencies'), action('recheck')],
+        intent: { id: 'i1', status: 'revoked', reason: 'outside_grant', waiting_on: '', steps: 0, max_steps: 2, expires_at: 0, attempt_id: null, transferred: false },
+      }),
+    )
+    expect(v.state).toBe('deps')
+  })
+
+  it('有可确认的依赖来源：确认包名那张卡排在库模块卡前面（Codex #1940）', () => {
+    const v = view(
+      report({
+        checks: [{ id: 'dependencies', status: 'ok', detail: { origins: { count: 1, confirmable: 1, by_reason: {} } } }],
+      }),
+    )
+    expect(v.state).toBe('origin_confirm')
+  })
+
+  it('必填参数没填齐：库模块卡同样换成参数卡（Codex #1940）', () => {
+    const v = prepView({ ...lost, connection: 'ok', report: report() } as PrepEntry, { ...ctx, missingArgs: 1 })
+    expect(v.state).toBe('args')
+  })
+
   it('此刻没有可运行的动作（解释器被固定）：没找到入口的那张卡主按钮也不为空', () => {
     const v = view(
       report({

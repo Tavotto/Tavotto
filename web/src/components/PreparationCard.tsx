@@ -631,6 +631,8 @@ const ARGS_FOLDED = new Set([
   'no_figure',
   'no_figure_raster',
   'no_figure_copied',
+  'library_module',
+  'library_module_none',
   'completed',
   'completed_unlinked',
   'completed_partial',

@@ -57,6 +57,21 @@ def test_the_user_shaped_plot_helper_module_is_a_library():
     assert _is_lib(LIB)
 
 
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "plt.rcParams.update({'font.size': 8})\n",
+        "plt.style.use('default')\n",
+        "import seaborn as sns\nsns.set_theme()\n",
+        "np.random.seed(0)\n",
+        "import os\nHERE = os.path.dirname(os.path.abspath(__file__))\n",
+        "class Settings:\n    dpi = 300\n\n    def scaled(self, k):\n        return self.dpi * k\n",
+    ],
+)
+def test_configuration_at_import_time_still_reads_as_a_library(tail):
+    assert _is_lib(LIB + "\n" + tail)
+
+
 def test_a_package_module_with_relative_imports_is_a_library():
     assert _is_lib("from .config import Settings\n" + LIB)
 
@@ -108,6 +123,13 @@ def test_try_import_and_type_checking_blocks_do_not_hide_a_library():
         "RESULTS = list(map(plot_curves, [{}], ['a.png']))\n",
         "import fire\nfire.Fire(plot_curves)\n",
         "import pandas as pd\nDF = pd.DataFrame({'k': [1]})\nDF.groupby('k').apply(plot_curves)\n",
+        # 画图库的非配置调用（改名导入按原名判）、画图库的高层函数、来历不明的第三方（Codex #1940）
+        "from matplotlib.pyplot import subplots as make_canvas\nFIG, AX = make_canvas()\n",
+        "import seaborn as sns\nsns.relplot(x=[1], y=[1])\n",
+        "import mysterious_pkg\nmysterious_pkg.go()\n",
+        # 类体与注解在定义时就执行
+        "class Preview:\n    fig = plt.figure()\n",
+        "def other(x: plt.figure()):\n    return x\n",
         # 实例化本文件的类
         "class Plotter:\n    def run(self):\n        plt.plot([1])\n\n\nPlotter().run()\n",
     ],
@@ -237,6 +259,43 @@ def test_an_in_project_entry_that_only_resolves_from_the_repo_root_opens_the_rep
     assert entry["in_project"] is False and "script" not in entry
     assert Path(entry["open_root"]) == Path(os.path.realpath(repo))
     assert entry["open_script"] == "labkit/run_figs.py"
+
+
+def test_an_entry_that_only_works_as_python_dash_m_is_not_offered(tmp_path):
+    """包里用相对导入调用它的脚本：按 `python -m` 才解析得到，产品按脚本路径跑会 ImportError，不推荐（Codex #1940）。"""
+    repo = _repo(tmp_path)
+    _write(
+        repo / "labkit" / "run_rel.py",
+        "from .plot_helpers import plot_curves\n\nplot_curves({'x': [1], 'y': [1]}, 'a.png')\n",
+    )
+    assert libmodule.analyze(repo, "labkit/plot_helpers.py")["entries"] == []
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="chmod 000 在 Windows 上不挡读")
+def test_an_unreadable_candidate_makes_the_search_incomplete(tmp_path):
+    repo = _repo(tmp_path)
+    locked = _write(
+        repo / "draw.py", "from labkit.plot_helpers import plot_curves\nplot_curves({}, 'a')\n"
+    )
+    locked.chmod(0)
+    try:
+        hint = libmodule.analyze(repo, "labkit/plot_helpers.py")
+    finally:
+        locked.chmod(0o644)
+    assert hint["entries"] == [] and hint["complete"] is False
+
+
+def test_the_in_project_recheck_shares_the_scan_budget(tmp_path, monkeypatch):
+    """项目内复核与前面共用解析次数：用完了就按「打开仓库再运行」给（在仓库根跑两种情况都成立），不另开一份预算。"""
+    repo = _repo(tmp_path)
+    _write(
+        repo / "labkit" / "run_figs.py", "import labkit.plot_helpers as h\nh.plot_curves({}, 'a')\n"
+    )
+    monkeypatch.setattr(libmodule, "MAX_SCANS", 1)
+    hint = libmodule.analyze(repo / "labkit", "plot_helpers.py")
+    (entry,) = hint["entries"]
+    assert entry["in_project"] is False
+    assert Path(entry["open_root"]) == Path(os.path.realpath(repo))
 
 
 def test_a_file_that_only_mentions_the_name_is_not_an_importer(tmp_path):

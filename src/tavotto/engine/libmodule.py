@@ -66,6 +66,88 @@ _CACHE_MAX = 32
 _NOT_ENTRY_PREFIXES = ("test_", "conftest")
 _NOT_ENTRY_SUFFIXES = ("_test.py",)
 
+#: 画图库家族：顶层调用只认 `CONFIG_CALLS` 里的配置与常量构造（`rasterhint.MATPLOTLIB_FAMILY` 加上别的画图库）。
+PLOT_FAMILY = frozenset(
+    {
+        "matplotlib",
+        "pylab",
+        "seaborn",
+        "plotnine",
+        "mpl_toolkits",
+        "scienceplots",
+        "proplot",
+        "plotly",
+        "bokeh",
+        "altair",
+        "pygal",
+    }
+)
+#: 画图库里 import 期常见、不会建出 Figure 的配置 / 常量构造（按调用的最后一段 / 改名导入的原名判）。
+CONFIG_CALLS = frozenset(
+    {
+        "use",
+        "rc",
+        "rcdefaults",
+        "update",
+        "set_theme",
+        "set_style",
+        "set_context",
+        "set_palette",
+        "set_color_codes",
+        "from_list",
+        "ListedColormap",
+        "LinearSegmentedColormap",
+        "Normalize",
+        "TwoSlopeNorm",
+        "LogNorm",
+        "BoundaryNorm",
+        "PowerNorm",
+        "CenteredNorm",
+        "register",
+        "register_cmap",
+        "get_cmap",
+        "color_palette",
+        "light_palette",
+        "dark_palette",
+        "diverging_palette",
+        "cubehelix_palette",
+        "blend_palette",
+        "to_rgba",
+        "to_rgb",
+        "to_hex",
+        "addfont",
+        "FontProperties",
+        "findfont",
+        "reversed",
+        "resampled",
+        "with_extremes",
+        "MaxNLocator",
+        "MultipleLocator",
+        "AutoMinorLocator",
+        "FuncFormatter",
+        "FormatStrFormatter",
+        "ScalarFormatter",
+        "PercentFormatter",
+    }
+)
+#: 不画图的常见数据 / 工具包：顶层调用它们（读常量、建数组、设随机种子）不会出图。
+SAFE_PACKAGES = frozenset(
+    {
+        "numpy",
+        "pandas",
+        "scipy",
+        "sklearn",
+        "statsmodels",
+        "sympy",
+        "typing_extensions",
+        "attr",
+        "attrs",
+        "yaml",
+        "joblib",
+        "tqdm",
+    }
+)
+
 _BUILTINS = frozenset(dir(builtins))
 
 _cache: OrderedDict[tuple, tuple[float, dict | None]] = OrderedDict()
@@ -90,9 +172,9 @@ def _root_name(node: ast.expr) -> str:
             return ""
 
 
-def _import_bindings(tree: ast.Module) -> tuple[dict[str, tuple[str, int]], bool]:
-    """顶层（含 try / if 里）的 import 绑定：名字 → (顶层模块名, 相对层数)；第二项 = 有没有 `import *`。"""
-    out: dict[str, tuple[str, int]] = {}
+def _import_bindings(tree: ast.Module) -> tuple[dict[str, tuple[str, int, str]], bool]:
+    """顶层（含 try / if 里）的 import 绑定：名字 → (顶层模块名, 相对层数, `from X import 原名` 的原名)；第二项 = 有没有 `import *`。"""
+    out: dict[str, tuple[str, int, str]] = {}
     star = False
 
     def visit(body: list[ast.stmt]) -> None:
@@ -101,14 +183,14 @@ def _import_bindings(tree: ast.Module) -> tuple[dict[str, tuple[str, int]], bool
             if isinstance(st, ast.Import):
                 for a in st.names:
                     top = a.name.split(".")[0]
-                    out[a.asname or top] = (top, 0)
+                    out[a.asname or top] = (top, 0, "")
             elif isinstance(st, ast.ImportFrom):
                 top = (st.module or "").split(".")[0]
                 for a in st.names:
                     if a.name == "*":
                         star = True
                         continue
-                    out[a.asname or a.name] = (top, st.level)
+                    out[a.asname or a.name] = (top, st.level, a.name)
             elif isinstance(st, ast.Try):
                 visit(st.body)
                 for h in st.handlers:
@@ -145,7 +227,7 @@ def _is_guard_test(test: ast.expr) -> bool:
 def _calls_quiet(
     node: ast.AST,
     funcs: frozenset[str],
-    bindings: dict[str, tuple[str, int]],
+    bindings: dict[str, tuple[str, int, str]],
     is_local: Callable[[str], bool],
 ) -> bool:
     """`node` 里的每个调用都不会在 import 期画图 / 跑用户逻辑：不调本文件函数、不调本地模块的名字、不是画图调用。"""
@@ -166,27 +248,35 @@ def _calls_quiet(
 def _callee_quiet(
     func: ast.expr,
     funcs: frozenset[str],
-    bindings: dict[str, tuple[str, int]],
+    bindings: dict[str, tuple[str, int, str]],
     is_local: Callable[[str], bool],
 ) -> bool:
-    """被调用的那个东西（调用的 `func`，或装饰器表达式本身）不会在 import 期画图 / 跑用户逻辑。"""
+    """被调用的那个东西（调用的 `func`，或装饰器表达式本身）不会在 import 期画图 / 跑用户逻辑。
+
+    正面清单，判不出就不算：标准库与常见数据库（`SAFE_PACKAGES`）的调用；画图库家族（`PLOT_FAMILY`）只认配置与常量构造
+    （`CONFIG_CALLS`：`matplotlib.use`、`rcParams.update`、`LinearSegmentedColormap.from_list`……，改名导入按原名判）；
+    其余第三方一律当判不出。根是先前赋值得到的值（`CMAP.reversed()`）或内置名时按配置算。"""
     if discover._func_name(func) in discover.PLOT_FUNCS:
         return False
     root = _root_name(func)
     if not root or root in funcs:
         return False
     bound = bindings.get(root)
-    if bound is not None:
-        top, level = bound
-        return level == 0 and bool(top) and not is_local(top)
-    # 内置名 / 先前赋值得到的值（`CMAP.reversed()`）：按配置与常量构造算
-    return True
+    if bound is None:
+        return True  # 内置名 / 先前赋值得到的值
+    top, level, orig = bound
+    if level > 0 or not top or is_local(top):
+        return False
+    if top in PLOT_FAMILY:
+        name = discover._func_name(func) if isinstance(func, ast.Attribute) else (orig or root)
+        return name in CONFIG_CALLS
+    return top in importscan.HOST_STDLIB or top in SAFE_PACKAGES
 
 
 def _quiet_body(
     body: list[ast.stmt],
     funcs: frozenset[str],
-    bindings: dict[str, tuple[str, int]],
+    bindings: dict[str, tuple[str, int, str]],
     is_local: Callable[[str], bool],
 ) -> bool:
     for st in body:
@@ -200,8 +290,27 @@ def _quiet_body(
             parts: list[ast.AST] = list(st.decorator_list)
             if isinstance(st, ast.ClassDef):
                 parts += list(st.bases) + [k.value for k in st.keywords]
+                if not _quiet_body(st.body, funcs, bindings, is_local):
+                    return False  # 类体在定义时就执行（`class P: fig = plt.figure()`）
             else:
                 parts += list(st.args.defaults) + [d for d in st.args.kw_defaults if d is not None]
+                # 没有延迟注解时，注解在定义时求值：只看里面的调用（提到本文件的类做类型注解不算）
+                annotations = [
+                    a.annotation
+                    for a in (
+                        *st.args.posonlyargs,
+                        *st.args.args,
+                        *st.args.kwonlyargs,
+                        *(x for x in (st.args.vararg, st.args.kwarg) if x is not None),
+                    )
+                    if a.annotation is not None
+                ] + ([st.returns] if st.returns is not None else [])
+                for ann in annotations:
+                    for sub in ast.walk(ann):
+                        if isinstance(sub, ast.Call) and not _callee_quiet(
+                            sub.func, funcs, bindings, is_local
+                        ):
+                            return False
             if not all(_calls_quiet(p, funcs, bindings, is_local) for p in parts):
                 return False
             continue
@@ -212,6 +321,11 @@ def _quiet_body(
                 continue
             return False
         if isinstance(st, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            if isinstance(st, ast.AnnAssign) and any(
+                isinstance(sub, ast.Call) and not _callee_quiet(sub.func, funcs, bindings, is_local)
+                for sub in ast.walk(st.annotation)
+            ):
+                return False
             if st.value is None or _calls_quiet(st.value, funcs, bindings, is_local):
                 continue
             return False
@@ -275,7 +389,7 @@ def is_library(
 
 
 def _delegates_to_local(
-    fn: ast.AST, bindings: dict[str, tuple[str, int]], is_local: Callable[[str], bool]
+    fn: ast.AST, bindings: dict[str, tuple[str, int, str]], is_local: Callable[[str], bool]
 ) -> bool:
     """函数体里调了本地模块（相对导入 / 本地文件）导入的名字：画图交给了同一个包里的另一个模块。"""
     for sub in ast.walk(fn):
@@ -369,11 +483,10 @@ def _module_name(root: Path, rel: str) -> str | None:
 
 def _reaches(
     root: Path, rel: str, tree: ast.Module, target_rel: str, deadline: float
-) -> bool | None:
+) -> str | None:
     """`rel` 的 import（含跟进到的本地模块）读不读到 `target_rel`：`importscan` 的正向解析说了算。
-    读不动 / 预算停了 → None（「没读到」不代表没有）。
-
-    包里的模块用相对导入（`from . import x`）时，按脚本跑它解不出包，改按 `python -m 包.模块` 的入口再解一次。
+    回 `"script"`（按脚本跑就读得到——产品的 safe worker 正是这么跑的）/ `"module"`（只有按 `python -m 包.模块` 才读得到：
+    包里用相对导入的模块）/ `""`（读不到）/ None（读不动 / 预算停了：「没读到」不代表没有）。
     每次解析都只给到 `deadline` 为止的墙钟预算。"""
 
     def budget() -> scanbudget.Budget | None:
@@ -385,11 +498,11 @@ def _reaches(
         if b is None:
             return None
         if target_rel in importscan.scan(root, rel, tree=tree, no_follow=True, budget=b).files:
-            return True
+            return "script"
         relative = any(isinstance(n, ast.ImportFrom) and n.level > 0 for n in ast.walk(tree))
         module = _module_name(root, rel) if relative else None
         if module is None:
-            return False if b.stop_reason() is None else None
+            return "" if b.stop_reason() is None else None
         b = budget()
         if b is None:
             return None
@@ -400,8 +513,8 @@ def _reaches(
             target_rel
             in importscan.scan(root, rel, tree=tree, entry=entry, no_follow=True, budget=b).files
         ):
-            return True
-        return False if b.stop_reason() is None else None
+            return "module"
+        return "" if b.stop_reason() is None else None
     except (OSError, ValueError, RecursionError):
         return None
 
@@ -457,12 +570,14 @@ def find_entries(project_root: Path, script: str) -> dict:
                 break
             text = text_of(rel)
             if text is None:
+                complete = False  # 读不动 / 太大 / 解不了码 / 云盘占位：没看过它，不算「没有」
                 continue
             if not pattern.search(text):
                 continue
             try:
                 tree = ast.parse(text)
             except (SyntaxError, ValueError):
+                complete = False
                 continue
             scans += 1
             reached = _reaches(root, rel, tree, mod_rel, deadline)
@@ -479,7 +594,8 @@ def find_entries(project_root: Path, script: str) -> dict:
                 if hop < MAX_HOPS:
                     frontier.append((rel, hop + 1))
                 continue
-            if _not_entry_name(cand.name):
+            if _not_entry_name(cand.name) or reached != "script":
+                # 只有按 `python -m` 才解析得到的（包里用相对导入）不推荐成脚本：safe worker 按脚本路径跑它会 ImportError
                 continue
             found.setdefault(
                 rel,
@@ -491,7 +607,6 @@ def find_entries(project_root: Path, script: str) -> dict:
                 },
             )
     entries = []
-    recheck_deadline = time.monotonic() + MAX_SECONDS
     for row in found.values():
         path = root / row["rel"]
         in_project = _is_within(path, project_root)
@@ -503,8 +618,12 @@ def find_entries(project_root: Path, script: str) -> dict:
                 tgt_p = target.relative_to(project_root).as_posix()
             except ValueError:
                 rel_p = tgt_p = ""
-            ok = bool(rel_p) and _reaches(project_root, rel_p, row["tree"], tgt_p, recheck_deadline)
-            in_project = ok is True
+            # 与前面共用同一个截止时间与解析次数；预算不够就按「打开仓库再运行」给（在仓库根跑两种情况都成立）
+            ok = None
+            if rel_p and scans < MAX_SCANS:
+                scans += 1
+                ok = _reaches(project_root, rel_p, row["tree"], tgt_p, deadline)
+            in_project = ok == "script"
         entry = {
             "path": str(path),
             "in_project": in_project,
