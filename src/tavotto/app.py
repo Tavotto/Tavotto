@@ -67,6 +67,7 @@ from .engine import (
     ai_connections as engine_ai_connections,
     ai_convert as engine_ai_convert,
     ai_data_figure as engine_ai_data_figure,
+    ai_data_overview as engine_ai_data_overview,
     ai_data_propose as engine_ai_data_propose,
     ai_data_task as engine_ai_data_task,
     ai_figure_edit as engine_ai_figure_edit,
@@ -7093,6 +7094,9 @@ def api_registry():
     )
     for item in inventory:
         item["linked"] = item["script"] in linked
+    if engine_ai_figure_edit.enabled():
+        # 实验开关后面才加（关着时响应逐字不变）：v2 从数据生成的脚本带 `generated_from: {data, sheet}`（只给认出来源的条目加）
+        engine_ai_data_overview.annotate_generated_from(ctx.path, inventory)
     return jsonify(
         {
             "source": ctx.registry.source(),
@@ -15224,6 +15228,9 @@ _DATA_FILES_SHEETS_MAX = 100
 #: `formats=all` 时最多逐个读多少个文本文件给「状态与摘要」，以及这些文件合计最多读多少字节（超出的 `table` 是 null，不是「读不了」）
 _DATA_FILES_TABLE_MAX = 100
 _DATA_FILES_TABLE_BYTES = 64 * 1024 * 1024
+#: `formats=all` 时最多给多少个 XLSX 逐表数行列、这些工作簿合计最多多少字节；超出的工作簿只带表名（行列数是 null = 没读）
+_DATA_FILES_SHEET_COUNT_MAX = 30
+_DATA_FILES_SHEET_COUNT_BYTES = 32 * 1024 * 1024
 
 
 @app.get("/api/ai/data-files")
@@ -15232,8 +15239,10 @@ def api_ai_data_files():
     带 `?formats=all` 才列 `.csv` / `.tsv` / `.tab` / `.txt` / `.dat` / `.asc` / `.xlsx`（v2 出备选用），后缀大小写不敏感。
 
     walk 剪枝与隐藏目录规则同 `discover.PRUNE_DIRS`；不跟随链接；最多 500 个，按项目相对 POSIX 路径排序；最多看
-    `_DATA_FILES_SCAN_MAX` 个目录项，超了停下并标 `truncated`。`formats=all` 时 XLSX 带 `sheets: [{name, hidden}]`（读不了 / 超过
-    `_DATA_FILES_SHEETS_MAX` 个之后是 null）。
+    `_DATA_FILES_SCAN_MAX` 个目录项，超了停下并标 `truncated`。`formats=all` 时 XLSX 带 `sheets: [{name, hidden, rows, columns, status, code}]`（读不了 / 超过
+    `_DATA_FILES_SHEETS_MAX` 个之后整个是 null）；`rows` / `columns` 是该表的数据行数与列数（口径同 `propose` 读到的表），`status` 是
+    `ok` / `unreadable`（`code` 稳定码，此时行列数 null）；超过预算（`_DATA_FILES_SHEET_COUNT_MAX` 个工作簿 / `_DATA_FILES_SHEET_COUNT_BYTES`
+    字节 / 每个工作簿 `adf.SHEET_COUNT_MAX` 张表）的四项是 null = 没读（不是读不了）。单张表的详情走 `GET /api/ai/data-overview`。
 
     `formats=all` 时每个文本文件（非 XLSX）另带 `table`（默认只列 CSV 的响应没有这个字段）：
     `{status: "ok" | "unsure" | "unreadable", code, delimiter, header_row, columns, rows, preview}`——`ok` 认得准；`unsure` 能读出成列
@@ -15257,6 +15266,8 @@ def api_ai_data_files():
     sheets_read = 0
     tables_read = 0
     table_bytes = 0
+    counted_books = 0
+    counted_bytes = 0
     for rel, size in found:
         row = {"path": rel, "size": size}
         if every and not rel.lower().endswith(engine_ai_data_figure.XLSX_SUFFIXES):
@@ -15277,11 +15288,49 @@ def api_ai_data_files():
         if rel.lower().endswith(engine_ai_data_figure.XLSX_SUFFIXES):
             if sheets_read < _DATA_FILES_SHEETS_MAX:
                 sheets_read += 1
-                row["sheets"] = engine_ai_data_figure.xlsx_sheets(root / rel)
+                counted = (
+                    counted_books < _DATA_FILES_SHEET_COUNT_MAX
+                    and counted_bytes + size <= _DATA_FILES_SHEET_COUNT_BYTES
+                )
+                if counted:
+                    counted_books += 1
+                    counted_bytes += size
+                row["sheets"] = engine_ai_data_figure.xlsx_sheets(root / rel, counts=counted)
             else:
                 row["sheets"] = None
         files.append(row)
     resp = jsonify({"files": files, "truncated": truncated})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/ai/data-overview")
+def api_ai_data_overview():
+    """数据概览（**实验开关后面**，只读）：一个数据文件（文本表或 XLSX 的一张表）的状态、行列数、每列名字与类型、前 20 行原文、
+    表头行之前被跳过的说明行。query：`path`（项目相对路径，必填）、`sheet`（XLSX 的工作表名，缺省第一张可见表）、`header_row`
+    （「每列名字」所在的物理行号，与 propose 的 `header_rows` 同一口径；点了某一行后用它立刻看到按那一行重读的结果）。
+
+    读表就是 propose 读表的那一份（预览看到的就是之后出图读到的那张表）。读不了不是 HTTP 错误：200 + `status: "unreadable"` + 稳定 `code`；
+    路径出界 / 文件不在 / 工作表不存在 / 参数不对才是 400 + 稳定码。路径经 `normalize_rel` + `contained_path` + 与遍历结果逐字比对才打开。
+    返回里的文字（列名、单元格、说明行）是不可信输入，有长度 / 条数上界、控制字符已换成空格。用户文件只读不改；不发遥测。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    ctx = current_ctx()
+    raw_row = request.args.get("header_row")
+    if raw_row is not None:
+        raw_row = int(raw_row) if re.fullmatch(r"[0-9]{1,9}", raw_row) else raw_row
+    try:
+        out = engine_ai_data_overview.overview(
+            ctx.path,
+            request.args.get("path"),
+            sheet=request.args.get("sheet"),
+            header_row=raw_row,
+        )
+    except engine_ai_data_propose.ProposeError as exc:
+        return _propose_error(exc)
+    except engine_ai_data_figure.DataSourceError as exc:
+        return jsonify({"error": str(exc), "code": exc.code}), 400
+    resp = jsonify(out)
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

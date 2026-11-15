@@ -31,9 +31,11 @@ import datetime
 import functools
 import hashlib
 import inspect
+import io
 import json
 import math
 import re
+import tokenize
 from dataclasses import dataclass
 
 from . import ai_data_figure as adf, ai_data_recipe as recipe_mod, xlsxread
@@ -932,6 +934,16 @@ def _footer(recipe, style, n_lines: list[str], n_text_expr: str | None) -> list[
     return out
 
 
+#: 脚本头的来源注释：生产（`_source_comment`、`_header`）与解析（`parse_source_comment`）共用这两个常量
+SOURCE_COMMENT_PREFIX = "# tavotto-source: "
+SOURCE_GENERATOR = "data_to_figure/v2"
+#: 解析来源注释只看脚本开头这么多行 / 字符，注释本身最长这么多字符（脚本是不可信输入）
+SOURCE_SCAN_LINES = 64
+SOURCE_SCAN_CHARS = 16 * 1024
+SOURCE_COMMENT_MAX = 4096
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+
+
 def _source_comment(entry: adf.TableEntry, recipe: recipe_mod.FigureRecipe, data_rel: str) -> str:
     body = {
         k: v for k, v in recipe.to_dict().items() if k != "why"
@@ -941,11 +953,67 @@ def _source_comment(entry: adf.TableEntry, recipe: recipe_mod.FigureRecipe, data
             "data": data_rel,
             "sha256": entry.summary.sha256,
             "recipe": body,
-            "generator": "data_to_figure/v2",
+            "generator": SOURCE_GENERATOR,
         },
         ensure_ascii=True,
         sort_keys=True,
     )
+
+
+def parse_source_comment(head: str) -> dict | None:
+    """从一个脚本的开头文字里读出来源注释：`{"data": <脚本里写的数据路径，相对脚本所在目录>, "sheet": <工作表名 | None>}`；**格式不对一律回 None**。
+
+    注释内容是不可信输入（任何脚本都能写一行一样的），所以严格：只看开头 `SOURCE_SCAN_LINES` 行；必须是 tokenize 认得的**真注释**
+    （不是字符串 / docstring 里的一行字）、从第 0 列起、以 `SOURCE_COMMENT_PREFIX` 开头；整行纯 ASCII 且不超过 `SOURCE_COMMENT_MAX`；
+    只认**第一条**（它不合格就是没有，不往后找）；JSON 对象的键恰好是 `data` / `sha256` / `recipe` / `generator`，`generator` 等于
+    `SOURCE_GENERATOR`，`sha256` 是 64 位小写十六进制，`recipe` 是对象且其 `sheet` 缺省 / null / 1–255 字符不含控制字符的字符串，
+    `data` 是 1–1024 字符、不含 NUL 与反斜杠的字符串。只返回路径与工作表名：配方、哈希都不外传。**不碰文件系统**。"""
+    lines = head.splitlines(keepends=True)[:SOURCE_SCAN_LINES]
+    comment = None
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO("".join(lines)).readline):
+            if (
+                tok.type == tokenize.COMMENT
+                and tok.start[1] == 0
+                and tok.string.startswith(SOURCE_COMMENT_PREFIX.rstrip())
+            ):
+                comment = tok.string
+                break
+    except (tokenize.TokenError, SyntaxError):
+        pass  # 开头之后读不下去了：之前已经找到的照用，没找到就是没有
+    if (
+        comment is None
+        or not comment.startswith(SOURCE_COMMENT_PREFIX)
+        or len(comment) > SOURCE_COMMENT_MAX
+        or not comment.isascii()
+    ):
+        return None
+    try:
+        meta = json.loads(comment[len(SOURCE_COMMENT_PREFIX) :])
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(meta, dict) or set(meta) != {"data", "sha256", "recipe", "generator"}:
+        return None
+    data, sha, rec = meta["data"], meta["sha256"], meta["recipe"]
+    if (
+        meta["generator"] != SOURCE_GENERATOR
+        or not isinstance(sha, str)
+        or not _SHA256_HEX.fullmatch(sha)
+        or not isinstance(rec, dict)
+        or not isinstance(data, str)
+        or not 0 < len(data) <= 1024
+        or "\x00" in data
+        or "\\" in data
+    ):
+        return None
+    sheet = rec.get("sheet")
+    if sheet is not None and (
+        not isinstance(sheet, str)
+        or not 0 < len(sheet) <= 255
+        or any(ord(c) < 32 or ord(c) == 127 for c in sheet)
+    ):
+        return None
+    return {"data": data, "sheet": sheet}
 
 
 XLSX_BEGIN = "# ---- begin xlsxread（Tavotto 的 XLSX 读取，原文内嵌）"
@@ -1026,7 +1094,7 @@ def _header(entry, recipe, data_rel, title, is_xlsx):
     return [
         f'"""由 Tavotto 根据数据生成的图（data_to_figure v2：{title}）。之后就是一份普通的绘图脚本，可以随意修改。\n\n'
         f'读表、汇总、布局的函数在同目录的 {name}.py 里（Tavotto 生成，别改它；它不含数据）。"""',
-        f"# tavotto-source: {_source_comment(entry, recipe, data_rel)}",
+        f"{SOURCE_COMMENT_PREFIX}{_source_comment(entry, recipe, data_rel)}",
         "from __future__ import annotations",
         "",
         "from pathlib import Path",

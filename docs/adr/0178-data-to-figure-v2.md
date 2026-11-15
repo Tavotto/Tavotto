@@ -120,7 +120,31 @@ id 是服务端登记的不透明串）、`POST /api/ai/data-figure/commit`（`{
 
 **千分位**（`parse_cell`，v2 与脚本共用；v1 走 `legacy_parse_cell`）：整格是「首组 1–3 位且不以 0 开头、其后每组恰好 3 位」的逗号分组整数，可带小数——`1,000` → 1000、`-12,345.5` → -12345.5。不认：`1,2` / `0,5` / `12,75`（欧式小数）、`1,000,5` / `1,00` / `1,0000` / `0,123` / `01,000`（乱格式）。纯千分位的整列是数值列，不触发「混了文字」；千分位列里夹 `1,5` 仍是混列、先问用户。`apply_cells` 的「取数字」同规则：`<1,000` → 1000；不是千分位写法的仍取逗号前的数（`1,2` → 1）。已知歧义与防护（2026-11-15 用户定：科研数据被静默读错比多问一次严重）：三位小数的欧式写法（`1,234` = 1.234）与千分位分不开，所以**分号分隔的表里带逗号的格子一律不自动认**——`table_from_text` 给这些格子打 `SemicolonCell` 标记（运行时类，进公共模块），`parse_cell` 对它整格当文字（不按千分位、也不猜成小数），该列于是是「混了文字」（先问用户，走既有的 `mixed_cells`）或「没有数值」（出不了图，`nothing`），绝不静默读成 1000 倍。同一列里出现过不合千分位写法的逗号数（`1,5`）时该列同样是混列、先问，`1,234` 不会被悄悄认成数。逗号 / 制表 / 空白分隔的表维持 `1,000` → 1000。`.csv` 嗅探另加一条：数据块没覆盖全部非注释行时，自己的分隔符要和别的一起比（否则分号 CSV 里带逗号的数会被当成逗号表）。XLSX 的文字格同样认千分位（读法不动）。
 
-**没做**：非 UTF-8 编码（GBK / UTF-16）自动识别、无表头文件自动编列名（`header_row = 0`）、按覆盖值重新预览的接口（前端用 propose 的结果与 400 码）、`.mat` / `.npy` / HDF5。
+**没做**：非 UTF-8 编码（GBK / UTF-16）自动识别、无表头文件自动编列名（`header_row = 0`）、`.mat` / `.npy` / HDF5。
+
+## 数据概览与脚本来源（`ai_data_overview.py`，都只读、都在 `ai.taf.enabled` 后面）
+
+前端数据页要三样 propose 给不了的东西：侧栏里每个工作表的行列数、点开一个文件看的预览（列名 / 类型 / 前几行 / 被跳过的说明行）、没认准时点某一行当「每列的名字」后**立刻**看到按那一行重读的结果（此时用户还没点「开始」，拿不到 propose 的结果）。再加上素材库要分「从数据生成」组、数据页要给画过的表标「已画」，需要知道一张脚本是从哪份数据生成的。本节两件事都**不写任何文件、不调模型、不执行任何代码、不发遥测**。
+
+**`GET /api/ai/data-overview?path=<项目相对路径>[&sheet=<工作表名>][&header_row=<物理行号>]`**。选 GET：纯读、参数全是短标量，与同族的 `/api/ai/data-files` 一致。开关关着 404 `taf_disabled`；过会话认证 guard。返回（所有键恒在，读不到的是 `null` / `[]`）：
+
+* `path`（遍历结果里的规范路径）、`sheet`（XLSX 实际读的工作表名，文本表 null）、`status`（`ok` / `unsure` / `unreadable`，XLSX 没有 `unsure`）、`code`（`unreadable` 时的稳定码）；
+* `delimiter`（`comma` / `tab` / `semicolon` / `space`，XLSX null）、`header_row`（实际用的表头**物理行号**，与 `/api/ai/data-files` 的 `table.header_row` 同口径；XLSX 的表头永远是第一条非空行，null）、`rows`（数据行数，不含表头）、`columns`（列数）、`layout`；
+* `fields: [{name, kind, numeric, text, empty, nan, id_like}]`——`kind` 就是 `ColumnSummary.kind`（`numeric` / `date` / `text` / `mixed`），不另造分类；
+* `preview_rows: [{line, cells}]`（前 20 行，`line` 是物理行号 / 工作表行号，`cells` 是单元格原文）、`truncated`（是否还有更多行）；
+* `lead_lines: [{line, text}]`——表头行**之前**被跳过的说明行（空行不给，最多 20 行）；`raw_lines: [{line, text}]`——`unsure` 时文件开头的原文行（同 `/api/ai/data-files` 的 `preview`），给用户点「哪一行是每列的名字」。
+
+**预览 = 之后出图读到的那张表。** 文本表走 `read_text_table(path, header_row=…)`、XLSX 走 `inspect_data_source(v2=True)`，就是 propose 的 `profile_folder` / `_table_for_values` 用的那两个读表函数；`header_row` 经 `ai_data_propose.parse_header_row`（`parse_header_rows` 也用它，一份判据：1 到 `2 × MAX_ROWS + 1000` 的整数、不收布尔，否则 400 `propose_input_invalid`），XLSX 与 propose 一样不使用它。用例把概览的行列数 / 列名 / 类型 / 表头行 / 前 N 行与 propose 那条链逐项对拍。**「读不了但可以让用户点一行试试」的信号 = `raw_lines` 非空**（不另设布尔）：`read_text_table` 对可以靠指定表头行补救的读不了（仪器说明行触发的 `data_ragged`；用户指定的行读不成表：`data_header_row_invalid` / `data_header_invalid` / 指定行之后仍有畸形行的 `data_ragged`）会带着原文行与猜的 / 用的行号，概览原样带出（同样的上界与控制字符处理），`header_row` 是那个猜的 / 用的行号；真二进制、散文、编码错、空文件、太大等没有补救办法的 `raw_lines` 为空，XLSX 恒为空。用例覆盖 Codex 的仪器例子（无覆盖 → unreadable + `raw_lines` + 猜的行号；`header_row=3` → ok）。读不了**不是** HTTP 错误：200 + `status: "unreadable"` + 稳定码（含 `data_header_row_invalid`：指定的行读不出表，propose 对同一情形给 400 + 同一个码）；请求本身不对才是 400：路径出界 `data_path_outside_project`、文件不在（含链接、隐藏项、剪枝目录、非表格后缀、`~$` 锁文件、目录）`data_not_found`、工作表不存在 `data_sheet_not_found`、参数形状 `propose_input_invalid`。**没有新增错误码**（全是已登记的码）。
+
+**路径**：只经 `normalize_rel`（字符串层）→ `projectenv.contained_path`（realpath 后钉在项目内）→ `discover.walk_files` 遍历项目并与结果**逐字比对**，打开的是遍历结果里的那一项，不拿请求字符串拼路径（与 `with_explicit_table` 同做法）。
+
+**上界**（表里的文字是不可信输入，只显示）：前 20 行、列数 ≤ `MAX_COLUMNS`（64）、每格 ≤ 80 字符、列名 ≤ 200 字符、说明行 ≤ 20 条且每条 ≤ 200 字符、`raw_lines` 沿用 `PREVIEW_*`；单元格 / 列名里的控制字符（含制表符、换行、C1）换成空格，超长截断加 `…`。**XLSX 数值格的预览文字取 15 位有效数字**（与 Excel 显示一致：`0.6840000000000001` → `0.684`）：只对带小数点 / 指数、有效数字 > 15 位的十进制字面量改写，去尾零；绝对值在 [1e-9, 1e15) 用普通小数、更大 / 更小才用科学计数法（`1.5e-12`）；整数、日期、布尔、错误值、位数不多的原样。它只改 `preview_rows` 里给人看的文字，读表、类型判定、资格判定与出图用的数值不变（用例对拍 `inspect_data_source` 原文）；文本表的格子永远是原文。已知局限：读表层不区分「数值格」与「长得像浮点数的文字格」，XLSX 里一个有 16 位以上有效数字的文字格在预览里也会被取整。注意截断只在这个展示里：列名要回传给 propose 时用 propose 自己给的（`ask` 选项里的 `answer`），不要用概览里被截断的名字。
+
+**XLSX 的行列数：放进 `/api/ai/data-files?formats=all` 的 `sheets` 每一项**（`{name, hidden, rows, columns, status, code}`），而不是让前端逐表调概览。理由：侧栏要一次拿齐，逐表调用 = 每个工作表打开一次 zip；列表本来就开一次工作簿。有预算，做法对齐文本表的 `table`：最多 30 个工作簿、合计 32 MiB、每个工作簿前 20 张表（`SHEET_COUNT_MAX`），超出的 `rows` / `columns` / `status` / `code` 是 `null`（= 没读，不是读不了）；读不了的那张表 `status: "unreadable"` + 稳定码。数字与概览端点同一份读法（`_summarize_book` + `parse_cell`），用例互相对拍。这改了 `sheets` 每项的键（原先只有 `name` / `hidden`），只在开关后面的 `formats=all` 里，开关关着响应逐字不变。
+
+**脚本来源 `generated_from`**。v2 生成的脚本头有 `# tavotto-source: <JSON>`（`ai_data_template._source_comment`）。解析与生产在同一个模块（`SOURCE_COMMENT_PREFIX` / `SOURCE_GENERATOR` 两个常量共用，`parse_source_comment` 与 `_source_comment` 互为往返用例）：只看脚本开头 64 行 / 16 KiB；必须是 tokenize 认得的**真注释**（字符串 / docstring 里长得一样的一行不算）、第 0 列起、整行纯 ASCII 且 ≤ 4096 字符；**只认第一条**，它不合格就是没有；JSON 对象的键恰好是 `data` / `sha256` / `recipe` / `generator`，`generator` 必须是 `data_to_figure/v2`，`sha256` 是 64 位小写十六进制，`recipe.sheet` 缺省 / null / 1–255 字符无控制字符，`data` 是 1–1024 字符无 NUL / 反斜杠。格式不对一律当没有；**只外传** `{data, sheet}`，不给配方 JSON、不给哈希。`data` 在注释里是相对脚本目录的（`../sub/a.csv`），`ai_data_overview._data_path` 换算成**项目相对 POSIX 路径**（纯字符串：绝对路径 / 盘符 / 逃出项目 / 非表格后缀都当没有），**不核对数据文件还在不在**。
+
+出口：`GET /api/registry` 的 `all_scripts[]`（素材库 / 脚本库本来就按脚本名 join 它；面板条目带 `script`，前端用它找到来源）。**只在认出来源的条目上加** `generated_from: {data, sheet}`，其余条目一个键都不加。开关关着时整个不读、不加，`/api/registry` 的响应与没有这个功能时**逐字相同**（用例比较开 / 关两份响应去掉该键后相等）。读脚本只读开头 16 KiB、不跟随链接、钉在项目内、最多读 2000 个脚本、基础设施脚本（`tavotto_plot_*`）不读；伪造的注释最坏结果是「某张脚本被标成来自某个项目内的表格路径」，路径只作前端的匹配键、从不被后端打开。
 
 ## 注入分析：Agent 能读整个文件，表里的文字能影响模型
 

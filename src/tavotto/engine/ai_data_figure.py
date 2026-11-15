@@ -521,14 +521,34 @@ def _detect(text: str, suffix: str) -> TextLayout | RaggedLayout | None:
     return _ragged_hint(sample)
 
 
+def _clip_line(t: str) -> str:
+    """一行原文给人看：控制字符换空格（保留制表符），超长截断。表里的文字是不可信输入，只显示。"""
+    t = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", " ", t)
+    return t if len(t) <= PREVIEW_CHARS else t[: PREVIEW_CHARS - 1] + "…"
+
+
+#: 表头行之前被跳过的说明行，最多给多少行
+LEAD_MAX_LINES = 20
+
+
+def _lead(lines: list[str], header_line: int) -> tuple[tuple[int, str], ...]:
+    """表头行之前的原文行（说明行）：`((物理行号, 原文),…)`，空行不给，最多 `LEAD_MAX_LINES` 行，每行长度有上界。"""
+    out = []
+    for n in range(1, min(header_line, len(lines) + 1)):
+        if lines[n - 1].strip():
+            out.append((n, _clip_line(lines[n - 1])))
+            if len(out) >= LEAD_MAX_LINES:
+                break
+    return tuple(out)
+
+
 def _preview(text: str, guess: int) -> tuple[tuple[int, str], ...]:
     """没认准时给用户点的那几行原文：`((物理行号, 原文),…)`。行数与每行长度都有上界；控制字符换成空格（表里的文字是不可信输入，只显示）。"""
     lines = re.split(r"\r\n|\r|\n", text, maxsplit=PREVIEW_MAX_LINES)[:PREVIEW_MAX_LINES]
     last = min(len(lines), max(PREVIEW_LINES, guess + 5))
     out = []
     for n in range(1, last + 1):
-        t = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", " ", lines[n - 1])
-        out.append((n, t if len(t) <= PREVIEW_CHARS else t[: PREVIEW_CHARS - 1] + "…"))
+        out.append((n, _clip_line(lines[n - 1])))
     return tuple(out)
 
 
@@ -545,6 +565,8 @@ class TextTable:
     rows: int | None = None
     preview: tuple[tuple[int, str], ...] = ()
     summary: DataSummary | None = None
+    #: 表头行之前被跳过的说明行（`_lead`）；只给数据概览端点用，不进 `to_dict`（`/api/ai/data-files` 的响应不变）
+    lead: tuple[tuple[int, str], ...] = ()
 
     def to_dict(self) -> dict:
         return {
@@ -616,7 +638,9 @@ def read_text_table(
     delim = layout.delimiter
     lines = re.split(r"\r\n|\r|\n", text)
     if header_row is not None and not 1 <= header_row <= len(lines):
-        return _unreadable("data_header_row_invalid")
+        return TextTable(
+            "unreadable", code="data_header_row_invalid", preview=_preview(text, 1)
+        )  # 指定的行不在文件里：原文照给，用户可以重新点一行
     if layout.header_line == 0 and header_row is None:
         # 老读法（嗅探不出）：错误码与 v1 一致，行号按记录序号（与 v1 一致）
         try:
@@ -652,7 +676,12 @@ def read_text_table(
     except csv.Error:
         return _unreadable("data_malformed")
     if not header:
-        return _unreadable("data_header_row_invalid" if header_row is not None else "data_empty")
+        if header_row is not None:
+            return TextTable(
+                "unreadable", code="data_header_row_invalid", delimiter=delim,
+                header_line=line, preview=_preview(text, line),
+            )  # fmt: skip
+        return _unreadable("data_empty")
     guessed = not layout.sure and header_row is None
     try:
         summ = _summarize(
@@ -671,6 +700,13 @@ def read_text_table(
         if guessed and exc.code == "data_header_invalid":
             return TextTable(
                 "unsure", delimiter=delim, header_line=line, columns=len(header),
+                preview=_preview(text, line), lead=_lead(lines, line),
+            )  # fmt: skip
+        if (
+            header_row is not None
+        ):  # 用户指定的行读不成表（畸形行 / 列名空或重复…）：原文照给，用户可以再点一行
+            return TextTable(
+                "unreadable", code=exc.code, delimiter=delim, header_line=line,
                 preview=_preview(text, line),
             )  # fmt: skip
         return _unreadable(exc.code)
@@ -682,6 +718,7 @@ def read_text_table(
         rows=summ.row_count if summ.row_count is not None else len(summ.rows),
         preview=_preview(text, line) if guessed else (),
         summary=summ,
+        lead=_lead(lines, line),
     )
 
 
@@ -951,12 +988,43 @@ def _structure(
     return layout, groups, id_like, repeats
 
 
-def xlsx_sheets(path: str | Path) -> list[dict] | None:
-    """一个 XLSX 的工作表清单 `[{"name", "hidden"}]`（工作簿里的顺序，隐藏表也列）；读不了回 None。只读工作簿目录，不读单元格。
-    `/api/ai/data-files` 给每个 XLSX 带上它；整文件夹的逐表摘要仍只有 `profile_folder` 那一份遍历。"""
+#: 一个工作簿最多逐表数行列的工作表个数（超出的只给名字，数字是 None）
+SHEET_COUNT_MAX = 20
+
+
+def xlsx_sheets(
+    path: str | Path, *, counts: bool = False, max_counted: int | None = None
+) -> list[dict] | None:
+    """一个 XLSX 的工作表清单（工作簿里的顺序，隐藏表也列）；读不了回 None。每项 `{name, hidden, rows, columns, status, code}`。
+
+    `counts=False`（默认）：只读工作簿目录、不读单元格，`rows` / `columns` / `status` / `code` 都是 None（= 没读）。
+    `counts=True`：前 `max_counted`（缺省 `SHEET_COUNT_MAX`）张表各读一次，口径与整文件夹摘要（`profile_folder`）和 `propose` 读到的那张表同一份
+    （`_summarize_book` + `parse_cell`）：`rows` 是数据行数（不含表头、全空行不算）、`columns` 是列数、`status` 是 `ok` / `unreadable`
+    （`code` 是稳定错误码，此时行列数是 None）；超出 `max_counted` 的表四项仍是 None。
+    `/api/ai/data-files` 给每个 XLSX 带上它。"""
+    limit = SHEET_COUNT_MAX if max_counted is None else max_counted
     try:
         with xlsxread.XlsxBook(Path(path)) as book:
-            return [{"name": i.name, "hidden": bool(i.hidden)} for i in book.sheets]
+            out = []
+            for n, info in enumerate(book.sheets):
+                item = {
+                    "name": info.name,
+                    "hidden": bool(info.hidden),
+                    "rows": None,
+                    "columns": None,
+                    "status": None,
+                    "code": None,
+                }
+                if counts and n < limit:
+                    try:
+                        summ = _summarize_book(book, info.index, keep_rows=False, parse=parse_cell)
+                        item.update(rows=summ.row_count, columns=len(summ.columns), status="ok")
+                    except (DataSourceError, xlsxread.XlsxError) as exc:
+                        item.update(status="unreadable", code=exc.code)
+                    except Exception:  # noqa: BLE001 —— 单张表的任何意外只是这一张读不了
+                        item.update(status="unreadable", code="data_unreadable")
+                out.append(item)
+            return out
     except Exception:  # noqa: BLE001 —— 单个文件读不了只是不带清单，不拖垮列表
         return None
 
