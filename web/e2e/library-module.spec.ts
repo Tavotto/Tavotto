@@ -52,7 +52,9 @@ const ENTRY = (importLine: string, log: string) =>
   ].join("\n");
 
 const lines = (log: string) =>
-  existsSync(log) ? readFileSync(log, "utf-8").split("\n").filter(Boolean) : [];
+  existsSync(log)
+    ? readFileSync(log, "utf-8").split(/\r?\n/).filter(Boolean)
+    : [];
 
 async function shot(page: Page, name: string): Promise<void> {
   const dir = process.env.TAVOTTO_SHOT_DIR;
@@ -135,7 +137,7 @@ test(
             timeout: 60_000,
           },
         )
-        .toBe(realpathSync(repo));
+        .toBe(realpathSync.native(repo)); // Windows 临时目录是 8.3 短名（RUNNER~1）：.native 才展开成长名，与后端 realpath 同口径
       await expect
         .poll(() => lines(log), { timeout: 120_000 })
         .toEqual(["entry"]);
