@@ -167,6 +167,8 @@ class Session:
     items: dict[str, Item]
     dir: Path
     touched: float = 0.0
+    #: 出备选时实际用的「每列名字」所在的物理行号（文本表格；XLSX 是 None）。提交时按它重读，不重新嗅探
+    header_line: int | None = None
 
     def item(self, item_id: str) -> Item | None:
         return self.items.get(item_id)
@@ -284,6 +286,33 @@ def reset_for_tests() -> None:
 
 
 # =========================================================================== 请求解析
+#: `header_rows` 最多给多少个文件、行号上限（与 `adf.MAX_ROWS` 同量级的物理行号）
+_HEADER_ROWS_MAX = 64
+
+
+def parse_header_rows(raw) -> dict[str, int]:
+    """`header_rows`：`{表的路径（相对所选文件夹的 POSIX 路径，与 `table` 同一口径）: 每列名字所在的物理行号（1 起）}`，按文件指定。
+    只校验形状（对象、≤ 64 项、键是 ≤ 1024 字符的字符串、值是 1 到 `adf.MAX_ROWS * 2 + 1000` 之间的整数，不收布尔）；键对不对由
+    遍历结果逐字比对（对不上的静默忽略，不拿它拼路径），行号对不对由读表判（`data_header_row_invalid`）。"""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or len(raw) > _HEADER_ROWS_MAX:
+        raise ProposeError("propose_input_invalid", "header_rows")
+    out = {}
+    for k, v in raw.items():
+        if (
+            not isinstance(k, str)
+            or not 0 < len(k) <= 1024
+            or "\x00" in k
+            or isinstance(v, bool)
+            or not isinstance(v, int)
+            or not 1 <= v <= 2 * adf.MAX_ROWS + 1000
+        ):
+            raise ProposeError("propose_input_invalid", "header_rows")
+        out[k] = v
+    return out
+
+
 def _text(value, what: str, limit: int = _ANSWER_MAX) -> str | None:
     if value is None:
         return None
@@ -521,7 +550,11 @@ def _render_candidates(
 
 # =========================================================================== 出备选
 def with_explicit_table(
-    profile: adf.FolderProfile, folder: Path, table: str | None, sheet: str | None
+    profile: adf.FolderProfile,
+    folder: Path,
+    table: str | None,
+    sheet: str | None,
+    header_rows: dict[str, int] | None = None,
 ) -> adf.FolderProfile:
     """用户**显式选中**的表（含指定工作表）不受发现预算（`MAX_PROFILE_TABLES`）限制：不在截断后的 profile 里就单独读一份摘要并补进去。
     只认发现遍历实际列得出的文件（所选数据文件夹内、链接不跟随、隐藏项与剪枝目录不读、表格后缀）、只读。
@@ -539,7 +572,9 @@ def with_explicit_table(
     )
     if rel is None:
         return profile
-    values = adf.inspect_data_source(folder / PurePosixPath(rel), sheet)
+    values = adf.inspect_data_source(
+        folder / PurePosixPath(rel), sheet, v2=True, header_row=(header_rows or {}).get(rel)
+    )
     summary = replace(values, rows=[], row_numbers=[], row_count=len(values.rows))
     entry = adf.TableEntry(rel, values.sheet, False, summary)
     return adf.FolderProfile(
@@ -548,7 +583,13 @@ def with_explicit_table(
 
 
 def _table_for_values(root_folder: Path, entry: adf.TableEntry) -> adf.DataSummary:
-    return adf.inspect_data_source(root_folder / PurePosixPath(entry.path), entry.sheet)
+    # 同一读法：表头行取摘要里实际用的那一行（预览 / 资格判定 / 脚本读出来的是同一张表）
+    return adf.inspect_data_source(
+        root_folder / PurePosixPath(entry.path),
+        entry.sheet,
+        v2=True,
+        header_row=entry.summary.header_line,
+    )
 
 
 def item_to_dict(sess: Session, item: Item, recommended: bool) -> dict:
@@ -588,6 +629,7 @@ def propose(
     sheet: str | None = None,
     hint: str | None = None,
     answers=None,
+    header_rows=None,
     client_request_id: str | None = None,
 ) -> dict:
     """出备选。返回三选一：`{"kind": "ask", question_code, options, unsure}` / `{"kind": "candidates", session, items, dropped}` /
@@ -600,10 +642,13 @@ def propose(
     table = _text(table, "table")
     sheet = _text(sheet, "sheet")
     ans = parse_answers(answers)
+    hrows = parse_header_rows(header_rows)
     # 幂等键 = (项目, 请求号, 请求内容的摘要)：同一请求号带了不同的回答（换了处理方式）必须重新出图，不回旧的
     digest = hashlib.sha256(
         json.dumps(
-            [folder, table, sheet, hint, _answers_digest(ans)], ensure_ascii=False, sort_keys=True
+            [folder, table, sheet, hint, _answers_digest(ans), hrows],
+            ensure_ascii=False,
+            sort_keys=True,
         ).encode("utf-8")
     ).hexdigest()
     if client_request_id is not None:
@@ -629,7 +674,11 @@ def propose(
         raise adf.DataSourceError("data_not_found")
     root_real = Path(os.path.realpath(root))
     folder_rel = folder_path.relative_to(root_real).as_posix() if folder_path != root_real else ""
-    profile = with_explicit_table(adf.profile_folder(folder_path), folder_path, table, sheet)
+    folder_profile = adf.profile_folder(folder_path, hrows)
+    for bad in folder_profile.skipped:
+        if bad.path in hrows:  # 用户指定了表头行、按它读不出来：直说原因（不是悄悄「没有可画的」）
+            raise adf.DataSourceError(bad.code)
+    profile = with_explicit_table(folder_profile, folder_path, table, sheet, hrows)
     confirmed, picks = confirmed_from(ans)
     chosen = recipe_mod.pick_table(profile, table, sheet, hint)
     if isinstance(chosen, recipe_mod.NeedsChoice):
@@ -712,6 +761,7 @@ def propose(
         sheet=chosen.sheet,
         data_sha256=values.sha256,
         data_size=values.size,
+        header_line=values.header_line,
         confirmed=res.confirmed,
         items=items,
         dir=sdir,
@@ -757,6 +807,7 @@ __all__ = [
     "get_item",
     "get_session",
     "normalize_rel",
+    "parse_header_rows",
     "path_key",
     "propose",
     "script_data_rel",

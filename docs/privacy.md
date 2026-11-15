@@ -568,8 +568,8 @@ cancelled or failed upload is never resumed on its own.
 * **How long it is kept.** 30 days after the last update. *Stop sharing* deletes
   the pictures, comments and verdicts at once; expired links are deleted the same
   way.
-* **Daily limits.** To count the free daily limits (1 new link per device per
-  day, 5 updates per link per day) the app creates a random device key on first
+* **Daily limit.** To count the free daily limit (1 new link per device per
+  day; updating an existing link is not limited) the app creates a random device key on first
   use and signs its requests with it. The key identifies this installation only,
   is not linked to usage statistics and is not used for anything else.
 * **What stays on your computer.** The link's number, a secret management token,
