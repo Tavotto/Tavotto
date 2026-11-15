@@ -737,11 +737,15 @@ export default interface Resources {
     },
     "colorField": {
       "documentColors": "排版里的颜色",
+      "figureColors": "图内配色",
       "hex": "{{label}}：色号",
       "none": "无",
       "open": "{{label}}：选色",
       "picker": "{{label}}：取色盘",
       "recent": "最近使用",
+      "recommended": "推荐配色",
+      "recommendedTip": "Okabe-Ito 色盲友好配色，科研图常用",
+      "recommendedTipJournal": "{{journal}} 没有规定配色；这是 Okabe-Ito 色盲友好配色",
       "system": "系统取色器…"
     },
     "count": {
