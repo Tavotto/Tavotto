@@ -1675,6 +1675,8 @@ _UNCHECKED = {
     "box": "matplotlib_derived",  # 箱线由 matplotlib 的 bxp 拼成多条无 label 的线
     "violin": "fill_has_no_label",
 }
+#: 公开别名：图表桥接层按图元查不可核原因；行为与 `_UNCHECKED` 完全相同。
+UNCHECKED_MARKS = _UNCHECKED
 _CHECKED_RAW = frozenset({"points", "jitter", "ecdf"})  # ecdf 的阶梯点就是排序后的全部原始值
 
 
