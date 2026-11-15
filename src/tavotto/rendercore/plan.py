@@ -32,7 +32,7 @@ import math
 from dataclasses import dataclass, field
 
 from ..engine import exportreq
-from . import geometry, typography, vertical
+from . import geometry, pathtext, typography, vertical
 from .ir import (
     IDENTITY,
     RGB,
@@ -474,6 +474,66 @@ def _clipped(node: Node, clips: object, page_h: float) -> Node | None:
     return node
 
 
+def _path_text_node(
+    o: dict,
+    page_h: float,
+    faces: FaceSet,
+    resources: dict[str, Resource],
+    problems: list[dict],
+) -> Node | None:
+    """路径文字（`pathtext`）：排成一行，再逐字落到路径上。每个字一个 `ShapedText`（基线原点在 0, 0），外面包一个组把字的
+    局部空间（x 沿切线、y 向上 = 切线的左法线）放到框空间、再经对象变换放到页面——IR 与三个写入器都不用认识新东西。"""
+    _x, _y, w, h = _box_pt(o, allow_zero=True)
+    pts, cum, closed = pathtext.path_of(o, w, h)
+    if len(pts) < 2 or cum[-1] <= 0:
+        return None
+    block = typography.layout_text(pathtext.line_text(o), faces, None)
+    if block is None or not block.lines:
+        return None
+    line = block.lines[0]
+    run_w = sum(p.width for p in line.pieces)
+    s = pathtext.start_of(cum[-1], run_w, o)
+    oid = str(o.get("id", ""))
+    color = Paint(hex2rgb(block.color))
+    to_page = _object_transform(o, page_h)
+    children: list[Node] = []
+    for piece in line.pieces:
+        key = f"font:{piece.face.resource.face_id}"
+        resources.setdefault(key, piece.face.resource)
+        scale = piece.size / piece.face.resource.units_per_em
+        for g in piece.glyphs:
+            adv = g.x_advance * scale
+            mid = pathtext.point_at(pts, cum, s + adv / 2, closed)
+            s += adv
+            if mid is None or piece.invisible:
+                continue
+            mx, my, th = mid
+            c, sn = math.cos(th), math.sin(th)
+            # 局部（x 沿切线、y 向上）→ 框空间（y 向下）：x 轴 = (cos, sin)，y 轴 = (sin, −cos)；原点 = 中点往回退半个字宽
+            local = (c, sn, sn, -c, mx - c * adv / 2, my - sn * adv / 2)
+            run = GlyphRun(
+                font=key,
+                size=piece.size,
+                glyphs=(g,),
+                rise=piece.rise,
+                actual_text=None,
+                invisible=False,
+                **_synth_of(piece.face),
+            )
+            children.append(
+                Group(
+                    (ShapedText(0.0, 0.0, (run,), color, oid),),
+                    transform=compose(local, to_page),
+                    object_id=oid,
+                )
+            )
+    if block.missing:
+        problems.append({"code": "glyph_missing", "object_id": oid, "chars": list(block.missing)})
+    if not children:
+        return None
+    return Group(tuple(children), object_id=oid)
+
+
 def _synth_of(face) -> dict[str, bool]:
     """这张脸要模拟的粗斜 → `GlyphRun` 的字段。"""
     return {
@@ -581,7 +641,7 @@ def compile_page(
         node: Node | None
         if kind == "panel":
             node = _panel_node(o, page_h, sources, resources, frozen)
-        elif kind == "text":
+        elif kind in ("text", "pathText"):
             try:
                 user_face, user_cjk = _user_faces(o, faces, problems)
                 fs = faces_for(
@@ -598,7 +658,11 @@ def compile_page(
                     str(exc),
                     {"id": str(o.get("id", "")), "font_code": getattr(exc, "code", "")},
                 ) from exc
-            node = _text_node(o, page_h, fs, resources, problems, math)
+            node = (
+                _text_node(o, page_h, fs, resources, problems, math)
+                if kind == "text"
+                else _path_text_node(o, page_h, fs, resources, problems)
+            )
         elif kind in ("arrow", "shape"):
             node = _shape_node(o, page_h)
         elif kind == "path":

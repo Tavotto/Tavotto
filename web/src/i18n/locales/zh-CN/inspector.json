@@ -669,7 +669,9 @@
     "setStrokeAlign": "修改描边对齐",
     "setFillRule": "修改填充规则",
     "setGradientKind": "改填充 / 描边类型",
-    "setGradient": "改渐变"
+    "setGradient": "改渐变",
+    "flipPathText": "翻转路径文字",
+    "pathTextStart": "移动路径文字起点"
   },
   "lock": "锁定",
   "locked": "已锁定",
@@ -1414,5 +1416,13 @@
     "strokeCenterX": "描边中心 X",
     "strokeCenterY": "描边中心 Y",
     "strokeRadius": "描边半径"
+  },
+  "pathText": {
+    "title": "路径文字",
+    "start": "起点",
+    "alignStart": "从起点开始",
+    "alignCenter": "以起点居中",
+    "alignEnd": "到起点结束",
+    "flip": "翻到路径另一侧"
   }
 }

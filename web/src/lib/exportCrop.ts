@@ -83,6 +83,9 @@ function miterOverflow(o: Extract<CanvasObject, { type: 'shape' }>): number {
 
 function strokeOutset(o: CanvasObject): number {
   switch (o.type) {
+    case 'pathText':
+      // 路径文字（ADR 0190）：字立在路径上，最多越出一个字号（升部 + 降部）；路径两端的字再越出半个字宽，也在这里头
+      return ptToMm(Math.max(o.sizePt, 1) * 1.2)
     case 'text':
       return o.borderColor ? ptToMm(Math.max(o.borderPt ?? 0.75, 0.05) / 2) : 0
     case 'shape':

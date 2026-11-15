@@ -4,7 +4,7 @@ import { artifactRequestFields } from './artifactValidation'
 import type { ExportClipPath, ExportObject } from './api'
 import { clipChainOf, groupMasks, isActiveMask } from './groupTree'
 import { maskAsPath } from './clipMask'
-import type { CanvasObject, Gradient } from '@/types/document'
+import type { CanvasObject, Gradient, PathTextObject } from '@/types/document'
 import { DEFAULT_STAR_POINTS, DEFAULT_STAR_RATIO, isKnownObject, isStrokeOnlyShape, panelRotation, readPath, shapeStrokeOn } from '@/types/document'
 import { DEFAULT_LINE_CAP, defaultLineJoin, miterLimitOf, STROKE_MITER_LIMIT, strokeOpacityOf, validDashPattern } from './shapeGeometry'
 import { PATH_DEFAULT_JOIN } from './pathGeom'
@@ -232,5 +232,32 @@ function toExportObject(o: CanvasObject): ExportObject {
         rotation_deg: o.rotationDeg || undefined,
       }
     }
+    case 'pathText':
+      return pathTextExport(o)
+  }
+}
+
+/** 路径文字的导出字段：缺省不发（后端 `pathtext` 补同一份缺省）。画布预览接口也用这一份 */
+export function pathTextExport(o: PathTextObject): ExportObject {
+  return {
+    x_mm: o.x,
+    y_mm: o.y,
+    w_mm: o.w,
+    h_mm: o.h,
+    type: 'pathText',
+    text: o.text,
+    size_pt: o.sizePt,
+    bold: o.bold,
+    italic: o.italic === true,
+    color: o.color,
+    font_family: o.fontFamily,
+    subpaths: o.subpaths.map((sp) => ({
+      closed: sp.closed,
+      nodes: sp.nodes.map((n) => ({ p: n.p, ...(n.in ? { in: n.in } : {}), ...(n.out ? { out: n.out } : {}) })),
+    })),
+    start_offset: o.startOffset || undefined,
+    text_align: o.textAlign,
+    flip: o.flip === true ? true : undefined,
+    rotation_deg: o.rotationDeg || undefined,
   }
 }

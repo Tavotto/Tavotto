@@ -54,7 +54,8 @@
     "path": "路径",
     "shape": "形状",
     "text": "文字",
-    "unknown": "新版对象"
+    "unknown": "新版对象",
+    "pathText": "路径文字"
   },
   "presetText": {
     "annotation": "标注",

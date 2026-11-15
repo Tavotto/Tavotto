@@ -10,6 +10,8 @@ export type DragKind =
   | 'rotate' | 'anchor'
   /** 拖画布渐变柄（ADR 0186 第二期）/ 拖实时圆角圆点（ADR 0185 M3）：拖的过程中单选浮动栏让开（2026-11-15 用户拍板） */
   | 'gradient' | 'corner'
+  /** 拖路径文字的起点柄（ADR 0190） */
+  | 'pathTextStart'
 
 export type DraftPreview = Rect & {
   tool: string

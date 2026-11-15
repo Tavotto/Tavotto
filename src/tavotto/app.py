@@ -4179,7 +4179,7 @@ def api_svg_copy():
         not isinstance(objs, list)
         or not objs
         or not all(
-            isinstance(o, dict) and o.get("type") in ("text", "arrow", "shape", "path")
+            isinstance(o, dict) and o.get("type") in ("text", "arrow", "shape", "path", "pathText")
             for o in objs
         )
         or not (
@@ -4226,7 +4226,7 @@ def api_text_outline():
         not isinstance(objs, list)
         or not objs
         or len(objs) > TEXT_OUTLINE_MAX
-        or not all(isinstance(o, dict) and o.get("type") == "text" for o in objs)
+        or not all(isinstance(o, dict) and o.get("type") in ("text", "pathText") for o in objs)
     ):
         return jsonify({"ok": False, "error": "bad_objects"}), 400
     if any(len(str(o.get("text") or "")) > SVG_COPY_MAX_TEXT for o in objs):
@@ -18458,7 +18458,8 @@ def _version_sketch(v: dict, max_objects: int, max_text: int) -> dict | None:
             item["text"] = text[:max_text]
         elif kind == "shape" and isinstance(o.get("shape"), str):
             item["shape"] = o["shape"]
-        elif kind == "path":
+        elif kind in ("path", "pathText"):
+            # 路径文字（ADR 0190）在草图里只画它那条路径（与前端小缩略图同一画法）
             subpaths = _sketch_subpaths(o.get("subpaths"))
             if subpaths is not None:
                 item["subpaths"] = subpaths

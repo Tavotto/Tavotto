@@ -773,6 +773,7 @@ export default interface Resources {
       "emptyText": "空文字",
       "panel": "图",
       "path": "路径",
+      "pathText": "路径文字",
       "shape": "形状",
       "text": "文字",
       "unknown": "新版对象"
@@ -5519,9 +5520,11 @@ export default interface Resources {
       "clearTextBorder": "清除文字描边",
       "editText": "编辑文字",
       "flipH": "水平翻转",
+      "flipPathText": "翻转路径文字",
       "flipV": "垂直翻转",
       "insertNewline": "插入换行",
       "matchFigureSize": "对齐图内字号",
+      "pathTextStart": "移动路径文字起点",
       "resetTextProp": "恢复文字属性",
       "restoreVersion": "恢复历史版本",
       "reverseArrow": "反转箭头方向",
@@ -5704,6 +5707,14 @@ export default interface Resources {
       "unknown": "未知"
     },
     "panelLabel": "右侧面板",
+    "pathText": {
+      "alignCenter": "以起点居中",
+      "alignEnd": "到起点结束",
+      "alignStart": "从起点开始",
+      "flip": "翻到路径另一侧",
+      "start": "起点",
+      "title": "路径文字"
+    },
     "pathfinder": {
       "modes": "形状模式",
       "offsetDistance": "偏移距离",
@@ -6959,6 +6970,7 @@ export default interface Resources {
       "addArrow": "添加箭头",
       "addGuide": "添加参考线",
       "addPanel": "加入图 {{name}}",
+      "addPathText": "在路径上加文字",
       "addShape": "添加{{shape}}",
       "addSubLabels": "添加序号标签",
       "addText": "添加文字",
@@ -7037,6 +7049,7 @@ export default interface Resources {
       "outlineText": "文字转轮廓（{{count}} 个）",
       "pasteObjects_other": "粘贴 {{count}} 个对象",
       "pasteStyle": "粘贴样式",
+      "pathTextStart": "移动路径文字起点",
       "pathfinder": {
         "crop": "裁剪",
         "divide": "分割",
@@ -7854,6 +7867,7 @@ export default interface Resources {
       }
     },
     "quickEdit": {
+      "addPathText": "在路径上加文字",
       "aria": "快捷编辑",
       "arrange": "对齐与分布",
       "arrangeRef": "参照：{{ref}}",

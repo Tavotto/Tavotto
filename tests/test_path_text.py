@@ -1,0 +1,367 @@
+"""路径文字（ADR 0190，`rendercore/pathtext.py` + `plan._path_text_node`）。
+
+判据：
+- 落字：一行字按弧长逐字落到路径上——直路径上每个字的原点就是起点 + 前面字宽之和（与普通文字同一次排字的 advance），
+  居中 / 末尾按字串宽往回退，翻转 = 反着走（字头朝另一侧），开放路径越界的字不画、闭合路径绕回来；
+- 同源：画布照「文字转轮廓」的结果画（`/api/text/outline`），它与导出的字**按像素**比过（与 `test_text_outline` 同一判据）；
+- 三个写入器都写得出；导出载荷、接口认这个类型；`break_lines` 不经过（一行）；
+- 弧长几何与前端对拍：`tests/golden/path_text_vectors.json`。
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import math
+from pathlib import Path
+
+import pytest
+
+from tavotto.rendercore import ir, pathtext, plan, textoutline, typography
+
+HAS = all(
+    importlib.util.find_spec(m) is not None for m in ("pikepdf", "uharfbuzz", "PIL", "pypdfium2")
+)
+pytestmark = pytest.mark.skipif(not HAS, reason="RenderCore 依赖未装（not_run，不是绿）")
+
+GOLDEN = Path(__file__).parent / "golden" / "path_text_vectors.json"
+PT = 72 / 25.4
+ARC = [{"p": [0, 1], "out": [0.3, -0.4]}, {"p": [1, 1], "in": [0.7, -0.4]}]
+LINE = [{"p": [0, 0.5]}, {"p": [1, 0.5]}]
+CIRCLE = [
+    {"p": [0.5, 0], "in": [0.224, 0], "out": [0.776, 0]},
+    {"p": [1, 0.5], "in": [1, 0.224], "out": [1, 0.776]},
+    {"p": [0.5, 1], "in": [0.776, 1], "out": [0.224, 1]},
+    {"p": [0, 0.5], "in": [0, 0.776], "out": [0, 0.224]},
+]
+
+
+@pytest.fixture(scope="module")
+def provider():
+    from tavotto.rendercore import fonts
+    from tavotto.rendercore.hbshaper import HbFaceProvider
+
+    return HbFaceProvider(fonts.FontRegistry.discover())
+
+
+def _pt(**over):
+    o = {
+        "type": "pathText",
+        "id": "pt",
+        "x_mm": 8,
+        "y_mm": 10,
+        "w_mm": 50,
+        "h_mm": 16,
+        "text": "Hag Ωμ 中文",
+        "size_pt": 12,
+        "bold": False,
+        "italic": False,
+        "color": "#1f4e9a",
+        "subpaths": [{"closed": False, "nodes": ARC}],
+    }
+    o.update(over)
+    return o
+
+
+def _glyph_groups(o, provider):
+    page = plan.compile_page(80, 50, [o], sources=None, faces=provider).page  # type: ignore[arg-type]
+    (obj,) = page.children
+    assert isinstance(obj, ir.Group)
+    return page, list(obj.children)
+
+
+def _origins(groups):
+    """每个字的原点（页面 pt，PDF y 向上）与 x 轴方向。字不许成反字：变换的行列式 > 0（翻转是转 180°，不是镜像）。"""
+    out = []
+    for g in groups:
+        a, b, c, d, e, f = g.transform
+        assert a * d - b * c > 0, g.transform
+        out.append((e, f, math.atan2(b, a)))
+    return out
+
+
+def _line(o, provider):
+    """与 `_path_text_node` 同一次排字：每个字的 advance（pt）。"""
+    fs = plan.faces_for(
+        provider, o.get("font_family"), o.get("bold", False), o.get("italic", False)
+    )
+    block = typography.layout_text(pathtext.line_text(o), fs, None)
+    (line,) = block.lines
+    adv = []
+    for p in line.pieces:
+        scale = p.size / p.face.resource.units_per_em
+        adv += [g.x_advance * scale for g in p.glyphs]
+    return adv
+
+
+# --------------------------------------------------------------- 弧长几何（与前端对拍）
+def test_golden_vectors_match_the_backend():
+    g = json.loads(GOLDEN.read_text(encoding="utf-8"))
+    assert g["flatten_steps"] == pathtext.FLATTEN_STEPS
+    for c in g["cases"]:
+        o = {"subpaths": c["subpaths"], **({"flip": True} if c.get("flip") else {})}
+        pts, cum, closed = pathtext.path_of(o, c["w"], c["h"])
+        assert len(pts) == c["n_pts"] and closed == c["closed"]
+        assert cum[-1] == pytest.approx(c["total"], abs=1e-9)
+        for f, want in c["samples"]:
+            got = pathtext.point_at(pts, cum, f * cum[-1], closed)
+            if want is None:
+                assert got is None, (c["name"], f)
+            else:
+                assert got == pytest.approx(want, abs=1e-7), (c["name"], f)
+
+
+def test_arc_length_of_a_quarter_circle_is_close_to_exact():
+    # 一段 90° 圆弧的标准贝塞尔近似：弧长 ≈ πr/2（展平 32 段的误差远小于 0.1%）
+    k = 0.5523
+    o = {
+        "subpaths": [
+            {
+                "closed": False,
+                "nodes": [{"p": [0, 1], "out": [0, 1 - k]}, {"p": [1, 0], "in": [1 - k, 0]}],
+            }
+        ]
+    }
+    _pts, cum, _closed = pathtext.path_of(o, 100, 100)
+    assert cum[-1] == pytest.approx(math.pi * 100 / 2, rel=1e-3)
+
+
+# --------------------------------------------------------------- 落字
+def test_straight_path_places_glyphs_at_cumulative_advances(provider):
+    o = _pt(
+        subpaths=[{"closed": False, "nodes": LINE}], text="Hello wd", h_mm=0.5, start_offset=0.1
+    )
+    _page, groups = _glyph_groups(o, provider)
+    adv = _line(o, provider)
+    assert len(groups) == len(adv)
+    org = _origins(groups)
+    x0 = o["x_mm"] * PT + 0.1 * o["w_mm"] * PT
+    run = 0.0
+    for (ex, _ey, ang), a in zip(org, adv):
+        assert ex == pytest.approx(x0 + run, abs=1e-6)
+        assert ang == pytest.approx(0, abs=1e-9)
+        run += a
+    # 基线在路径上：所有字同一个 y，等于路径的 y（页面 50 mm 高，PDF y 向上）
+    ys = {round(ey, 6) for _ex, ey, _a in org}
+    assert ys == {round((50 - (o["y_mm"] + o["h_mm"] / 2)) * PT, 6)}
+
+
+@pytest.mark.parametrize("align,shift", [("center", 0.5), ("end", 1.0)])
+def test_alignment_pulls_the_run_back_from_the_start_point(provider, align, shift):
+    base = _pt(subpaths=[{"closed": False, "nodes": LINE}], text="Abc", h_mm=0.5, start_offset=0.5)
+    _p, g0 = _glyph_groups(base, provider)
+    _p, g1 = _glyph_groups({**base, "text_align": align}, provider)
+    run = sum(_line(base, provider))
+    assert _origins(g1)[0][0] == pytest.approx(_origins(g0)[0][0] - shift * run, abs=1e-6)
+
+
+def test_flip_walks_the_path_backwards_with_glyphs_upside_down(provider):
+    o = _pt(subpaths=[{"closed": False, "nodes": LINE}], text="Ab", h_mm=0.5, flip=True)
+    _p, groups = _glyph_groups(o, provider)
+    (x1, _y1, a1), (x2, _y2, _a2) = _origins(groups)
+    right = (o["x_mm"] + o["w_mm"]) * PT
+    assert x1 == pytest.approx(right, abs=1e-6)  # 第一个字从路径的终点起
+    assert x2 < x1  # 往左走
+    assert abs(a1) == pytest.approx(math.pi, abs=1e-9)  # 字头朝下（翻到路径另一侧）
+
+
+def test_open_path_drops_glyphs_past_its_end(provider):
+    o = _pt(subpaths=[{"closed": False, "nodes": LINE}], w_mm=6, h_mm=0.5, text="ABCDEFGHIJ")
+    _p, groups = _glyph_groups(o, provider)
+    adv = _line(o, provider)
+    fits = 0
+    s = 0.0
+    for a in adv:
+        if s + a / 2 <= 6 * PT:
+            fits += 1
+        s += a
+    assert 0 < len(groups) == fits < len(adv)
+
+
+def test_closed_path_wraps_round(provider):
+    o = _pt(
+        subpaths=[{"closed": True, "nodes": CIRCLE}],
+        w_mm=30,
+        h_mm=30,
+        text="Around the ring",
+        start_offset=0.9,
+    )
+    _p, groups = _glyph_groups(o, provider)
+    assert len(groups) == len(_line(o, provider))
+
+
+def test_glyphs_follow_the_tangent_on_a_curve(provider):
+    o = _pt(text="Wave")
+    _p, groups = _glyph_groups(o, provider)
+    angs = [a for _x, _y, a in _origins(groups)]
+    # 上拱的弧（屏幕 y 向下、PDF y 向上）：起头往上爬（PDF 里角度为正），越往后越平
+    assert angs[0] > 0.3 and angs[0] > angs[-1]
+
+
+def test_newlines_fold_into_one_line(provider):
+    o = _pt(text="A\nB")
+    assert pathtext.line_text(o)["text"] == "A B"
+    _p, groups = _glyph_groups(o, provider)
+    assert len(groups) == 3
+
+
+def test_empty_or_degenerate_draws_nothing(provider):
+    page = plan.compile_page(80, 50, [_pt(text="  ")], sources=None, faces=provider).page  # type: ignore[arg-type]
+    assert page.children == ()
+    page = plan.compile_page(
+        80,
+        50,
+        [_pt(subpaths=[{"closed": False, "nodes": [{"p": [0, 0]}]}])],
+        sources=None,
+        faces=provider,
+    ).page  # type: ignore[arg-type]
+    assert page.children == ()
+
+
+def test_one_line_through_the_unchanged_break_lines(provider, monkeypatch):
+    calls = []
+    real = typography.break_lines
+
+    def spy(*a, **k):
+        calls.append(a[0])
+        return real(*a, **k)
+
+    monkeypatch.setattr(typography, "break_lines", spy)
+    _glyph_groups(_pt(text="a b c d e f g h i j k l m n o p"), provider)
+    # 排一行走的是 layout_text → break_lines，但框宽给够了，结果只有一行（规则一个字不改）
+    assert calls and all("\n" not in c for c in calls)
+
+
+# --------------------------------------------------------------- 同源：画布 = 文字转轮廓 = 导出
+def _as_export(p: dict) -> dict:
+    out = {
+        "type": "path",
+        "x_mm": p["x"],
+        "y_mm": p["y"],
+        "w_mm": p["w"],
+        "h_mm": p["h"],
+        "subpaths": p["subpaths"],
+        "stroke_pt": p["strokePt"],
+        "color": p["color"],
+        "fill": p["fill"],
+    }
+    if p.get("fillRule") == "evenodd":
+        out["fill_rule"] = "evenodd"
+    if p.get("stroke") is False:
+        out["stroke"] = False
+    return out
+
+
+def _raster(objs, provider, tmp_path, name, scale=6):
+    import pypdfium2 as pdfium
+
+    from tavotto.rendercore import pdfwriter
+
+    page = plan.compile_page(80, 50, objs, sources=None, faces=provider).page  # type: ignore[arg-type]
+    out = tmp_path / f"{name}.pdf"
+    pdfwriter.write_pdf(page, out, provider)
+    return pdfium.PdfDocument(str(out))[0].render(scale=scale).to_pil().convert("L")
+
+
+def _diff(a, b):
+    from PIL import ImageChops
+
+    hist = ImageChops.difference(a, b).histogram()
+    total = sum(hist)
+    return sum(i * n for i, n in enumerate(hist)) / total, sum(
+        n for i, n in enumerate(hist) if i > 96
+    )
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {},
+        {"rotation_deg": 30},
+        {"flip": True, "text_align": "center", "start_offset": 0.5},
+        {"bold": True, "italic": True, "font_family": "sans-serif"},
+        {
+            "subpaths": [{"closed": True, "nodes": CIRCLE}],
+            "w_mm": 34,
+            "h_mm": 34,
+            "start_offset": 0.6,
+        },
+        {"text": "x² + y² = r²"},
+    ],
+    ids=["arc", "rotated", "flip-center", "bold-italic-sans", "circle", "superscript"],
+)
+def test_outline_preview_renders_like_the_export(provider, tmp_path, over):
+    o = _pt(**over)
+    paths = textoutline.outline_text(o, faces=provider)
+    assert paths and all(p["type"] == "path" for p in paths)
+    a = _raster([o], provider, tmp_path, "pt")
+    b = _raster([_as_export(p) for p in paths], provider, tmp_path, "paths")
+    mean, big = _diff(a, b)
+    assert mean < 1.0, mean
+    assert big < a.size[0] * a.size[1] * 0.0005, big
+    # 有字画出来（不是两张空白相等）
+    assert a.getextrema()[0] < 128
+
+
+def test_canvas_preview_payload_moves_to_origin_and_back(provider):
+    """画布把对象挪到原点、去掉旋转发给接口（`PathTextView.localPayload`）：拿回来的轮廓平移回去就是原位的轮廓。"""
+    o = _pt()
+    here = textoutline.outline_text(o, faces=provider)
+    there = textoutline.outline_text({**o, "x_mm": 0, "y_mm": 0}, faces=provider)
+    assert len(here) == len(there)
+    for p, q in zip(here, there):
+        assert p["x"] == pytest.approx(q["x"] + o["x_mm"], abs=1e-4)
+        assert p["y"] == pytest.approx(q["y"] + o["y_mm"], abs=1e-4)
+        assert p["w"] == pytest.approx(q["w"], abs=1e-4)
+
+
+# --------------------------------------------------------------- 写入器 / 载荷 / 接口
+def test_all_three_writers(provider, tmp_path):
+    from tavotto.rendercore import epswriter, pdfwriter, svgwriter
+
+    page = plan.compile_page(80, 50, [_pt()], sources=None, faces=provider).page  # type: ignore[arg-type]
+    pdfwriter.write_pdf(page, tmp_path / "a.pdf", provider)
+    assert (tmp_path / "a.pdf").stat().st_size > 1000
+    svgwriter.write_svg(page, tmp_path / "a.svg", provider)
+    svg = (tmp_path / "a.svg").read_text(encoding="utf-8")
+    # 每个字一个带变换的组：SVG 里字是转着的
+    assert svg.count("rotate(") + svg.count("matrix(") >= len("Hag Ωμ 中文".replace(" ", ""))
+    ps, _facts = epswriter.overlay_ps(page, provider)
+    # EPS 覆盖层：每个字（9 个画得出的字）各自一次 concat
+    assert ps.count(" concat") >= 9
+
+
+def test_export_request_accepts_path_text():
+    from tavotto.engine import exportreq
+
+    assert "pathText" in exportreq.ORIGINAL_OBJECT_TYPES
+
+
+def test_outline_endpoint_accepts_path_text():
+    from tavotto import app as m
+
+    m.app.config["TESTING"] = True
+    client = m.app.test_client()
+    r = client.post("/api/text/outline", json={"objects": [_pt(text="Hi")]})
+    body = r.get_json()
+    assert r.status_code == 200 and body["ok"] is True
+    assert body["results"][0]["paths"][0]["type"] == "path"
+
+
+def test_copy_as_svg_endpoint_takes_path_text():
+    from tavotto import app as m
+
+    m.app.config["TESTING"] = True
+    client = m.app.test_client()
+    r = client.post(
+        "/api/svg/copy", json={"objects": [_pt(x_mm=2, y_mm=2)], "w_mm": 70, "h_mm": 40}
+    )
+    body = r.get_json()
+    assert r.status_code == 200 and body["ok"] is True and "<svg" in body["svg"]
+
+
+def test_preview_golden_is_what_the_backend_gives_now(provider):
+    """前端画布测试的代答（golden 里的 preview）就是后端此刻的结果：改了落字规则不重新生成，这里先红。"""
+    g = json.loads(GOLDEN.read_text(encoding="utf-8"))["preview"]
+    now = textoutline.outline_text(g["object"], faces=provider)
+    assert json.loads(json.dumps(now)) == g["paths"]
