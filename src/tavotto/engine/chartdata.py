@@ -28,21 +28,37 @@ _DATE_HINT = re.compile(r"^\d{4}[-/]\d{1,2}([-/]\d{1,2})?$|^\d{1,2}/\d{1,2}/\d{2
 
 
 def _table_delimiter(text: str) -> str:
-    """优先按表头选一次；歧义候选交给标准库，不逐行重新选择。"""
+    """优先按表头选一次；平票时用前几条记录的宽度一致性定，不逐行重新选择。"""
     widths = {}
+    uniform = {}
     for delimiter in _DELIMITERS:
+        rows = []
+        clean = True
         try:
             reader = csv.reader(io.StringIO(text, newline=""), delimiter=delimiter, strict=True)
-            widths[delimiter] = len(next(reader, []))
+            for index, row in enumerate(reader):
+                rows.append(len(row))
+                if index >= 7:
+                    break
         except csv.Error:
+            # 表头之后才炸的候选不是这张表的方言；仍保留表头宽度参与平票。
+            clean = False
+        if not rows:
             continue
+        widths[delimiter] = rows[0]
+        uniform[delimiter] = clean and len(set(rows)) == 1
     highest = max(widths.values(), default=0)
     candidates = [delimiter for delimiter, width in widths.items() if width == highest]
     if highest > 1 and len(candidates) == 1:
         return candidates[0]
+    if highest > 1:
+        # 表头引号里可以合法出现其他分隔符，宽度会平票；正确方言的整段记录宽度一致。
+        steady = [delimiter for delimiter in candidates if uniform[delimiter]]
+        if len(steady) == 1:
+            return steady[0]
+        candidates = steady or candidates
     if highest > 1 or len(widths) < len(_DELIMITERS):
-        # 表头本身可含其他合法分隔符；平票时由 CSV 方言探测核对整表。
-        # 仅有一列时，异常候选仍可能是分隔符：不能把畸形CSV降成合法的一列TSV。
+        # 仍无法区分时交给标准库方言探测；候选只来自表头宽度平票集。
         options = "".join(candidates if highest > 1 else _DELIMITERS)
         for sample in (text, io.StringIO(text, newline="").readline()):
             try:
