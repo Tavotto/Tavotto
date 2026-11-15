@@ -438,7 +438,7 @@ def _path_node(o: dict, page_h: float) -> Node | None:
 
 
 def clip_outline(m: dict, page_h: float) -> tuple[tuple, str] | None:
-    """剪切蒙版（ADR 0185 M4）→ 页面空间（pt、y 向上）的裁剪轮廓与填充规则；画不出轮廓 = None。
+    """剪切蒙版（ADR 0188）→ 页面空间（pt、y 向上）的裁剪轮廓与填充规则；画不出轮廓 = None。
 
     蒙版在载荷里一律是路径的几何（前端 `clipMask.maskAsPath`：形状先换成等价路径），轮廓 = `geometry.path_segments`
     的填充几何（框空间），再按对象变换（框 → 页面，绕框中心旋转）逐点换过去——与前端 `clipMask.maskOutline` 同一条规则。"""

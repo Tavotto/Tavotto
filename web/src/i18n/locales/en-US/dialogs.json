@@ -712,6 +712,18 @@
       "release-clip-mask": {
         "keywords": "release clipping mask",
         "label": "Release clipping mask"
+      },
+      "transform-again": {
+        "keywords": "transform again repeat",
+        "label": "Transform again"
+      },
+      "reflect-horizontal": {
+        "keywords": "reflect mirror flip horizontal",
+        "label": "Reflect horizontally"
+      },
+      "reflect-vertical": {
+        "keywords": "reflect mirror flip vertical",
+        "label": "Reflect vertically"
       }
     },
     "listLabel": "Commands",

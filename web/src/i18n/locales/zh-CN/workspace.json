@@ -476,7 +476,12 @@
     "roundCorners": "圆角",
     "shapeBuilder": "形状生成器",
     "makeClipMask": "建立剪切蒙版",
-    "releaseClipMask": "释放剪切蒙版"
+    "releaseClipMask": "释放剪切蒙版",
+    "transformMove": "移动",
+    "transformScale": "缩放",
+    "transformRotate": "旋转",
+    "transformSkew": "倾斜",
+    "transformReflect": "镜像"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -978,7 +983,11 @@
     "simplifyNothing": "已经很简单了，没有可删的锚点",
     "clipNeedTwo": "至少选中 2 个对象才能建立剪切蒙版",
     "clipNeedPathOnTop": "最上面的对象要是路径或封闭形状，才能当剪切蒙版",
-    "clipMade": "已建立剪切蒙版"
+    "clipMade": "已建立剪切蒙版",
+    "skewUnsupported": "文字和图不能倾斜",
+    "skewSkipped_other": "有 {{count}} 个文字或图没有倾斜",
+    "rotatePanelUnsupported": "图只能按 90° 旋转",
+    "rotatePanelSkipped_other": "有 {{count}} 张图没有旋转（图只能按 90° 旋转）"
   },
   "tabs": {
     "allCanvases": "全部画布",

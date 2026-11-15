@@ -60,7 +60,9 @@ export const KEYMAP = {
   redo: k(`⇧${MOD}Z`, { key: 'z', mod: true, shift: true }, { key: 'y', mod: true }),
   copy: native(`${MOD}C`),
   paste: native(`${MOD}V`),
-  duplicate: k(`${MOD}D`, { key: 'd', mod: true }),
+  duplicate: k(`${MOD}D`, { key: 'd', mod: true, alt: false }),
+  // 再次变换 ⌥⌘D（ADR 0185 M4 第二批）：⌥ 会改写 key，按 code 认；有上一次变换、有选区时才消费
+  transformAgain: k(`${ALT}${MOD}D`, { code: 'KeyD', mod: true, shift: false, alt: true }),
   delete: k('Delete', { key: 'delete' }, { key: 'backspace' }),
   nudge: k(
     '↑ ↓ ← →',

@@ -1,3 +1,5 @@
+import { clipChainOf, groupMasks, isActiveMask } from '@/lib/groupTree'
+import { visibleBounds } from '@/lib/transform'
 import { Fragment, useLayoutEffect } from 'react'
 import { perfCount } from '@/perf/core'
 import type { ElementGeometry, ManifestElement } from '@/lib/api'
@@ -185,13 +187,19 @@ export function OverlaySvg() {
   const cropTarget = objects.find((o) => o.id === cropTargetId && o.type === 'panel')
   const elementPanel = objects.find((o) => o.id === elementPanelId && o.type === 'panel')
   // 图内编辑时不显示对象缩放手柄，避免和元素选择混淆
-  const single = selected.length === 1 && !cropTarget && !elementPanel ? selected[0] : null
+  // 选中的是剪切组（ADR 0185 M4 第二批）：选框按蒙版范围、描的是蒙版的轮廓，不给被裁对象的单个缩放手柄
+  const masks = groupMasks(objects)
+  const selMasks = objects.filter((o) => selectedIds.includes(o.id) && isActiveMask(o, masks))
+  const clipSel = selMasks.length > 0 && selected.length > 0 && selected.every((o) => clipChainOf(o, masks).length > 0)
+  const outlined = clipSel ? selMasks : selected
+  const single = selected.length === 1 && !clipSel && !cropTarget && !elementPanel ? selected[0] : null
   // 单图编辑里那张图的缩放手柄不画（ADR 0161）：拖它的角 / 边是改画布（`FigureEdgeHandles` 的角柄与边带，
   // 贴在画布框上），不是视觉缩放 / 拉伸；两套手柄叠在一起时这一层在上、会抢走指针。选区轮廓照画
   const fastEditFigure = single?.type === 'panel' && fastEdit && single.id === activePanelId
   // 锚点编辑（直接选择，ADR 0185 M1）里不画缩放手柄：拖的是锚点，不是框
   const anchorEditId = useActivePathEdit()?.path.id ?? null
-  const groupBounds = selected.length > 1 ? boundsOf(selected.map(visualBounds)) : null
+  // 剪切组按蒙版范围（ADR 0185 M4 第二批）：被裁的对象只算看得见的那一块
+  const groupBounds = selected.length > 1 || clipSel ? (visibleBounds(selected, objects) ?? boundsOf(selected.map(visualBounds))) : null
   const hovered =
     hoverId && !selectedIds.includes(hoverId) && dragKind === 'none'
       ? objects.find((o) => o.id === hoverId && !o.hidden)
@@ -306,7 +314,7 @@ export function OverlaySvg() {
 
       {/* 选择框；同上——形状对象只有沿真实轮廓的描示，没有矩形外框 */}
       {!cropTarget &&
-        selected.map((o) => (
+        outlined.map((o) => (
           <ObjectOutline
             key={o.id}
             obj={o}

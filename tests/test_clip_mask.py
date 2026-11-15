@@ -1,4 +1,4 @@
-"""剪切蒙版（ADR 0185 M4）的后端一侧。
+"""剪切蒙版（ADR 0188）的后端一侧。
 
 1. 共享向量 `tests/golden/clip_mask_vectors.json`：`plan.clip_outline` 与前端 `lib/clipMask.maskOutline` 出同一条轮廓；
 2. IR：带 `clip` 的对象外面一层层包 `Group(clip=…)`（外层蒙版在外）；画不出轮廓的蒙版 = 这个对象整个不画；

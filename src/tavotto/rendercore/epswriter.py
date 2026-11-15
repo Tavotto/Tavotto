@@ -118,7 +118,7 @@ def _path_ops(segments: tuple) -> list[str]:
 
 
 def clip_ops(segments: tuple | None, fill_rule: str = "nonzero") -> str:
-    """一条裁剪轮廓（页面 pt、y 向上）→ PostScript `… clip newpath`（剪切蒙版裁内嵌原图 EPS 用，ADR 0185 M4）。
+    """一条裁剪轮廓（页面 pt、y 向上）→ PostScript `… clip newpath`（剪切蒙版裁内嵌原图 EPS 用，ADR 0188）。
     `segments = None`（蒙版画不出轮廓）= 空路径裁剪，什么都不剩——与 PDF / 画布同一条。"""
     ops = _path_ops(segments or ())
     ops.append("eoclip" if fill_rule == "evenodd" else "clip")

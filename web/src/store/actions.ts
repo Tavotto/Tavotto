@@ -69,7 +69,7 @@ import type {
   ShapeObject,
   TextObject,
 } from '@/types/document'
-import { emptyProject, isKnownObject, objectLabel, type ProjectDocument } from '@/types/document'
+import { emptyProject, isKnownObject, objectLabel, objectRotation, type ProjectDocument } from '@/types/document'
 import { findDocumentsForProjectFile, bindingForReuse, type ProjectFileBinding } from '@/lib/projectFile'
 import { isDocHeldElsewhere } from '@/lib/docPresence'
 import { useAssetStore } from './assetStore'
@@ -96,6 +96,7 @@ import { fitContentCrop, isContentFit } from '@/lib/panelEdgeCrop'
 import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, structuralPanelManifest, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
 import { isolationScope } from './isolationStore'
+import { useTransformPrefs } from './transformPrefs'
 import {
   gatherContiguous,
   gidOfKey,
@@ -519,13 +520,20 @@ export function duplicateSelected() {
   // 对任何 Proxy 都直接抛 DataCloneError（引擎级行为）——复制会 100% 静默失败。
   // 对已 finalize 的 plain object 克隆好再整体 push，与 clipboard.materializePaste 同一模式。
   const regroup = new Map<string, string>()
-  const clones: CanvasObject[] = doc()
-    .objects.filter((o) => ids.includes(o.id))
+  const sources = doc().objects.filter((o) => ids.includes(o.id))
+  const step = duplicateStep(sources)
+  const clones: CanvasObject[] = sources
     .map((o) => {
       const copy = structuredClone(o)
       copy.id = newId(o.type[0])
-      copy.x += DUPLICATE_OFFSET_MM
-      copy.y += DUPLICATE_OFFSET_MM
+      copy.x += step.dx
+      copy.y += step.dy
+      // 重复复制（ADR 0185 M4 第二批）：副本上次被转过，这一份再转同样的角度（面板只走 90°，不跟）
+      if (step.ddeg && copy.type !== 'panel') {
+        const d = (((objectRotation(copy) + step.ddeg) % 360) + 540) % 360 - 180
+        if (Math.abs(d) > 1e-9) copy.rotationDeg = d
+        else delete copy.rotationDeg
+      }
       // 组要跟着复制成新的一份，否则副本会和原件粘成同一组（嵌套组整条链一起换）
       remapGroupPath(copy, (g) => {
         const next = regroup.get(g) ?? newId('g')
@@ -538,7 +546,23 @@ export function duplicateSelected() {
   commit(hist('duplicateObjects'), (d) => {
     d.objects.push(...clones)
   })
+  useTransformPrefs.getState().rememberDup(sources.map((o) => o.id), clones.map((c) => c.id))
   select(clones.map((c) => c.id))
+}
+
+/**
+ * ⌘D 这一次的位移与角度差（ADR 0185 M4 第二批「重复复制和位移」）：选区正好是上一次 ⌘D 的副本、而且副本之后被挪 / 转过，
+ * 就按「副本 − 原件」再走一步（Figma / PPT 的做法，用来排一排）；否则照旧错开 `DUPLICATE_OFFSET_MM`。
+ */
+export function duplicateStep(sources: readonly CanvasObject[]): { dx: number; dy: number; ddeg: number } {
+  const plain = { dx: DUPLICATE_OFFSET_MM, dy: DUPLICATE_OFFSET_MM, ddeg: 0 }
+  const last = useTransformPrefs.getState().lastDup
+  if (!last || last.to.length !== sources.length || !sources.every((o) => last.to.includes(o.id))) return plain
+  const objs = doc().objects
+  const a = objs.find((o) => o.id === last.from[0])
+  const b = objs.find((o) => o.id === last.to[0])
+  if (!a || !b) return plain
+  return { dx: b.x - a.x, dy: b.y - a.y, ddeg: a.type === 'panel' ? 0 : objectRotation(b) - objectRotation(a) }
 }
 
 export type ZMove = 'top' | 'bottom' | 'up' | 'down'
