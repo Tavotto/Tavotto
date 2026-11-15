@@ -144,6 +144,26 @@ def test_parse_table_preserves_quoted_headers_and_category_characters(delimiter)
     assert all(issue["column"] == headers[0] for issue in parsed["issues"])
 
 
+def test_parse_table_delimiter_does_not_depend_on_the_sniffer_heuristic(monkeypatch):
+    """表头引号里的 , 和 \\t 会与 ; 平票；正确方言靠整段记录宽度一致定。
+
+    只看表头宽度时三个候选都是 2 列；交给 csv.Sniffer 会随环境漂移（CI 上
+    曾把 ; 判成 \\t，整表错位）。这里把启发式关掉，正确方言仍必须选中。
+    """
+    headers = ["category,\tlabel", "value\nmeasure"]
+    stream = io.StringIO(newline="")
+    writer = csv.writer(stream, delimiter=";", lineterminator="\r\n")
+    writer.writerow(headers)
+    writer.writerows([[f"v{index}", index + 1] for index in range(6)])
+
+    def unavailable(*_args, **_kwargs):
+        raise csv.Error("heuristic unavailable")
+
+    monkeypatch.setattr(csv.Sniffer, "sniff", unavailable)
+    parsed = chartdata.parse_table(stream.getvalue())
+    assert parsed["columns"] == {headers[1]: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]}
+
+
 @pytest.mark.parametrize(
     ("text", "row"),
     [
