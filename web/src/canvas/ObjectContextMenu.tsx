@@ -27,6 +27,8 @@ import {
   SlidersHorizontal,
   Trash2,
   Ungroup,
+  ClipMask,
+  ReleaseClipMask,
 } from '@/components/ui/icons'
 import { formatMessage, t as translate } from '@/i18n'
 import { emitActivity } from '@/lib/activity'
@@ -62,6 +64,7 @@ import {
   groupSelected,
   rebuildPanel,
   resetOverridesConfirmed,
+  selectedUnits,
   selectionHasGroupIn,
   setObjectsHidden,
   setObjectsLocked,
@@ -90,6 +93,7 @@ import { openArrangeInInspector } from './context-bar/openArrange'
 import { canConvertToPath } from '@/lib/convertToPath'
 import { PATH_COMMANDS } from '@/store/pathActions'
 import { blockedReason, PATHFINDER_COMMANDS } from '@/store/pathfinderActions'
+import { canMakeClipMask, canReleaseClipMask, makeClipMask, releaseClipMask } from '@/store/groupActions'
 import { PATHFINDER_COMMAND_ICONS } from '@/components/pathfinderCommandIcons'
 import { loadVecops } from '@/lib/vecops/kernel'
 import { PATH_COMMAND_ICONS } from '@/components/pathCommandIcons'
@@ -122,6 +126,8 @@ const qe = (key: string, values?: Record<string, unknown>) =>
   translate(`quickEdit.${key}`, { ns: 'workspace', ...(values ?? {}) })
 const ins = (key: string, values?: Record<string, unknown>) =>
   translate(key, { ns: 'inspector', ...(values ?? {}) })
+/** 与命令面板同名的命令（剪切蒙版等）：标签就用命令面板那一条 */
+const palLabel = (id: string) => translate(`palette.commands.${id}.label`, { ns: 'dialogs' })
 
 /** 菜单形态：Prompt 21 的引导按它挂钩（`data-quick-menu`） */
 export type ObjectMenuKind = 'panel' | 'panel-layout-only' | 'text' | 'mark' | 'multi'
@@ -384,8 +390,9 @@ function MultiItems({
   const grouped = selectionHasGroupIn(selected)
   // 选区恰好是**一整个组**：再「成组」一次只会换个组 id、多一条历史，没有意义；
   // 含组的混合选区两个动作都给（把它们并成一组 / 把里面的组拆开），不替用户猜
-  const wholeGroup =
-    grouped && selected.every((o) => !!o.groupId && o.groupId === selected[0].groupId)
+  // 嵌套组（ADR 0185 M4）按当前这一层的单元数：只有一个单元且它是组 = 整个一组
+  const units = selectedUnits(selected.map((o) => o.id))
+  const wholeGroup = grouped && units.length === 1
   return (
     <>
       <MenuSub label={qe('arrange')} data-quick-item="arrange">
@@ -403,6 +410,16 @@ function MultiItems({
       {grouped && (
         <MenuItem icon={Ungroup} data-quick-item="ungroup" onSelect={run(ungroupSelected)}>
           {ins('arrange.ungroup')}
+        </MenuItem>
+      )}
+      {canMakeClipMask() && (
+        <MenuItem icon={ClipMask} shortcut={keyOf('makeClipMask')} data-quick-item="make-clip-mask" onSelect={run(makeClipMask)}>
+          {palLabel('make-clip-mask')}
+        </MenuItem>
+      )}
+      {canReleaseClipMask() && (
+        <MenuItem icon={ReleaseClipMask} shortcut={keyOf('releaseClipMask')} data-quick-item="release-clip-mask" onSelect={run(releaseClipMask)}>
+          {palLabel('release-clip-mask')}
         </MenuItem>
       )}
       <ChangeKindSub objs={selected} run={run} />

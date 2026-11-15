@@ -54,6 +54,7 @@ import { canConvertToPath } from '@/lib/convertToPath'
 import { PATH_COMMANDS } from '@/store/pathActions'
 import { APPEARANCE_COMMANDS } from '@/store/appearanceActions'
 import { PATHFINDER_COMMANDS } from '@/store/pathfinderActions'
+import { GROUP_COMMANDS } from '@/store/groupActions'
 import { PATH_COMMAND_ICONS } from './pathCommandIcons'
 import { rankCommands, type PaletteSection } from '@/lib/commandRanking'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -63,11 +64,9 @@ import {
   addText,
   createLayoutGroup,
   enterElementEdit,
-  groupSelected,
   newBlankDocument,
   runManualSave,
   selectAll,
-  ungroupSelected,
   convertToPath,
   startNamedNode,
   openTimeline,
@@ -191,8 +190,8 @@ const COMMANDS: Command[] = [
   { id: 'add-text', shortcut: keyOf('toolText'), run: () => void addText() },
   { id: 'sub-labels', run: addSubLabels },
   { id: 'select-all', shortcut: keyOf('selectAll'), run: selectAll },
-  { id: 'group', needsSelection: true, run: groupSelected },
-  { id: 'ungroup', needsSelection: true, run: ungroupSelected },
+  // 成组 / 取消成组 / 剪切蒙版（ADR 0185 M4）：表在 `GROUP_COMMANDS`，右键菜单与快捷键读同一份
+  ...GROUP_COMMANDS.map((c) => ({ id: c.id, shortcut: keyOf(c.key), needsSelection: true, available: c.available, run: c.run })),
   // 路径编辑（ADR 0185 M1）：钢笔 / 编辑锚点 / 加删转换锚点——整张表来自 `PATH_COMMANDS`，右键菜单与快捷键读同一份
   // 外观（ADR 0185 第二批）：D / ⇧X / / / I，表在 `APPEARANCE_COMMANDS`，快捷键读同一份
   ...APPEARANCE_COMMANDS.map((c) => ({ id: c.id, shortcut: keyOf(c.key), available: c.available, run: c.run })),

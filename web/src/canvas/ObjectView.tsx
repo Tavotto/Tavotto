@@ -12,6 +12,7 @@ import { PATH_HIT_SHAPES } from '@/lib/shapeGeometry'
 import { startMoveDrag } from './interactions'
 import { openQuickEdit } from './quickEditStore'
 import { editAnchors } from '@/store/pathActions'
+import { enterGroupAt } from '@/store/groupActions'
 import { ArrowView } from './ArrowView'
 import { PanelView } from './PanelView'
 import { PathView } from './PathView'
@@ -109,6 +110,8 @@ export const ObjectView = memo(function ObjectView({
 
   const onDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation()
+    // 组里的对象：双击先进到组里（组内编辑，ADR 0185 M4），进到它是直接成员的那一层后，双击才改字 / 编辑锚点 / 进图内编辑
+    if (enterGroupAt(obj.id)) return
     if (obj.type === 'text') useUiStore.getState().setEditingText(obj.id)
     // 路径：双击进锚点编辑（直接选择，ADR 0185 M1）
     else if (obj.type === 'path') editAnchors(obj.id)

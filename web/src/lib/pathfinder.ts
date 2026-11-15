@@ -123,12 +123,16 @@ function styleBase(src: PathObject, groupId: string | undefined): PathObject {
     fillRule: _f,
     name: _n,
     groupId: _g,
+    groupPath: _gp,
+    clipMask: _cm,
     layoutPinned: _l,
     fillGradient: _fg,
     strokeGradient: _sg,
     ...rest
   } = src
-  return { ...rest, ...(groupId ? { groupId } : {}) }
+  // 嵌套组（ADR 0185 M4）：留在原对象那个组里时整条链跟着走；剪切蒙版的身份不传给结果（结果是可见的新形状）
+  const path = groupId && groupId === src.groupId && src.groupPath ? { groupPath: [...src.groupPath] } : {}
+  return { ...rest, ...(groupId ? { groupId, ...path } : {}) }
 }
 const withGradients = (made: PathObject, src: PathObject): PathObject => ({
   ...made,

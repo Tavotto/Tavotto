@@ -1,3 +1,4 @@
+import { remapGroupPath } from './groupTree'
 import { create } from 'zustand'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { intakePastedImages, pastedAssetFiles } from '@/lib/canvasFileIntake'
@@ -542,11 +543,11 @@ export function materializePaste(payload: ClipPayload, resolved: MissingAsset[])
     const nid = newId(src.type[0])
     idMap.set(src.id, nid)
     copy.id = nid
-    if (copy.groupId) {
-      const next = groupMap.get(copy.groupId) ?? newId('g')
-      groupMap.set(copy.groupId, next)
-      copy.groupId = next
-    }
+    remapGroupPath(copy, (g) => {
+      const next = groupMap.get(g) ?? newId('g')
+      groupMap.set(g, next)
+      return next
+    })
     if (copy.type === 'panel') {
       const target = relink.get(copy.fileId)
       if (target) {
