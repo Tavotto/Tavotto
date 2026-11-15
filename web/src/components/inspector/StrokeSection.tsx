@@ -42,7 +42,7 @@ import { INSPECTOR_LABEL_W } from './layout'
 import { ColorField, NO_COLOR, NumberField, TextInput } from '../ui/Input'
 import { Popover } from '../ui/Popover'
 import { EffectToggle } from './controls/EffectToggle'
-import { GradientEditor, GradientKindSelect, gradientOf, GradientPreview, RadialRows } from './controls/GradientControls'
+import { GradientEditor, GradientKindSelect, gradientOf, GradientTools, RadialRows } from './controls/GradientControls'
 import { OptionGrid, type GridOption } from './controls/OptionGrid'
 import { PickerTrigger } from './controls/PickerTrigger'
 import { shared } from './common'
@@ -718,8 +718,7 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
               onAdd={() => patch(hist('addFill'), (o) => (o.fill = '#FFFFFF'))}
               onOff={() => patch(hist('clearFill'), (o) => (o.fill = null))}
             />
-            {/* 渐变时（ADR 0186）色块与十六进制换成渐变预览条（降级纯色自动取首个色标，不再显示）；最后是类型下拉 */}
-            {fillOn && fillGrad && <GradientPreview g={fillGrad} target="fill" />}
+            {/* 渐变时（ADR 0186）色块与十六进制不显示（降级纯色自动取首个色标），这一行是类型下拉 + 角度 + 反向 */}
             {fillOn && !fillGrad && (
               <ColorField
                 ariaLabel={sk('fill')}
@@ -729,6 +728,7 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
               />
             )}
             {fillOn && <GradientKindSelect objs={fillables} target="fill" />}
+            {fillOn && fillGrad && <GradientTools objs={fillables} target="fill" />}
           </Row>
         )}
         {/* 色带常显，紧跟在填充那一行下面（PPT 式：点空白加色标、拖动、往下拖出删除） */}
@@ -774,7 +774,6 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
               onOff={() => patch(hist('clearStroke'), setMarkStrokeOff)}
             />
           )}
-          {(!hasFillable || strokeOn) && strokeGrad && <GradientPreview g={strokeGrad} target="stroke" />}
           {(!hasFillable || strokeOn) && !strokeGrad && (
             <ColorField
               ariaLabel={sk('strokeColor')}
@@ -784,6 +783,7 @@ export function ShapeSection({ objs }: { objs: FillStrokeMark[] }) {
             />
           )}
           {showStroke && <GradientKindSelect objs={stroked} target="stroke" />}
+          {showStroke && strokeGrad && <GradientTools objs={stroked} target="stroke" />}
         </Row>
         {showStroke && strokeGrad && <GradientEditor objs={stroked} target="stroke" />}
         {showStroke && (

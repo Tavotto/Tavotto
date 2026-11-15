@@ -136,8 +136,8 @@ const linear = {
 }
 const three = { ...linear, stops: [linear.stops[0], { offset: 0.5, color: '#00ff00' }, linear.stops[1]] }
 
-describe('「填充」那一行：渐变时是开关 + 预览条 + 类型下拉', () => {
-  it('选「线性」：写 fillGradient（首色 = 当前填充）；色块和十六进制不见了，换成预览条；色带常显在下面、不在「更多」里', async () => {
+describe('「填充」那一行：渐变时是开关 + 类型下拉 + 角度 + 反向（没有预览条）', () => {
+  it('选「线性」：写 fillGradient（首色 = 当前填充）；色块和十六进制不见了、没有预览条，角度与反向在这一行；色带常显在下面、不在「更多」里', async () => {
     await seed([rect()], ['s1'])
     await mount()
     expect(host.querySelector('input[aria-label="填充：取色盘"]')).not.toBeNull()
@@ -145,8 +145,16 @@ describe('「填充」那一行：渐变时是开关 + 预览条 + 类型下拉'
     expect(fillG()).toMatchObject({ kind: 'linear', stops: [{ offset: 0, color: '#ffcc00' }, { offset: 1, color: '#ffffff' }] })
     expect(past()).toBe(1)
     expect(host.querySelector('input[aria-label="填充：取色盘"]')).toBeNull()
-    expect(host.querySelector('[data-gradient-preview="fill"]')).not.toBeNull()
+    expect(host.querySelector('[data-gradient-preview]')).toBeNull()
+    // 角度与反向和类型下拉在同一行（「填充」那一行），不在色带那一行
+    const kindRow = host.querySelector('[role="combobox"][aria-label="填充类型"]')!.closest('[data-row-grid]')!
+    expect(kindRow.querySelector('input[aria-label="渐变角度"]')).not.toBeNull()
+    expect(kindRow.querySelector('[aria-label="反向"]')).not.toBeNull()
+    expect(kindRow.querySelector('[data-gradient-bar]')).toBeNull()
     const bar = host.querySelector('[data-gradient-bar="fill"]')!
+    // 色带那一行只有色带本身：占满控件列
+    expect(bar.parentElement!.children).toHaveLength(1)
+    expect(bar.parentElement!.querySelector('input')).toBeNull()
     expect(bar).not.toBeNull()
     expect(bar.closest('[data-fold="stroke-more"]')).toBeNull()
     // 「更多」里不再有色标 / 角度
@@ -255,7 +263,7 @@ describe('键盘', () => {
   })
 })
 
-describe('选中色标那一行与色带那一行右端', () => {
+describe('选中色标那一行与角度', () => {
   it('只显示选中色标的颜色 · 位置 · 不透明度；改位置 / 不透明度写给它', async () => {
     await seed([rect({ fillGradient: three })], ['s1'])
     await mount()
@@ -266,7 +274,7 @@ describe('选中色标那一行与色带那一行右端', () => {
     expect(host.querySelectorAll('[data-gradient-selected="fill"] [data-color-field]')).toHaveLength(1)
   })
 
-  it('线性：角度在色带同一行（40 × 25 mm 上 90° = 从下到上）；径向没有角度，中心与半径在「更多」里', async () => {
+  it('线性：角度在「填充」那一行（40 × 25 mm 上 90° = 从下到上）；径向没有角度，中心与半径在「更多」里', async () => {
     await seed([rect({ fillGradient: linear })], ['s1'])
     await mount()
     const angle = host.querySelector<HTMLInputElement>('input[aria-label="渐变角度"]')!
@@ -290,7 +298,10 @@ describe('描边渐变同一套', () => {
     expect(host.querySelector('[role="combobox"][aria-label="填充类型"]')).toBeNull()
     await pickKind('描边类型', '径向')
     expect(byId<ShapeObject>('s1').strokeGradient!.kind).toBe('radial')
-    expect(host.querySelector('[data-gradient-preview="stroke"]')).not.toBeNull()
+    expect(host.querySelector('[data-gradient-preview]')).toBeNull()
+    expect(host.querySelector('input[aria-label="描边：取色盘"]')).toBeNull()
+    expect(host.querySelector('[aria-label="反向"]')).not.toBeNull()
+    expect(host.querySelector('input[aria-label="渐变角度"]')).toBeNull() // 径向没有角度
     sizeBar('stroke')
     await act(async () => pointer(host.querySelector('[data-gradient-bar="stroke"]')!, 'pointerdown', 50))
     expect(byId<ShapeObject>('s1').strokeGradient!.stops).toHaveLength(3)

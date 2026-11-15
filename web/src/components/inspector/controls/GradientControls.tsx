@@ -31,8 +31,9 @@ import { INSPECTOR_LABEL_W } from '../layout'
 /**
  * 渐变的属性栏控件（ADR 0186 §四，第一期：只在属性栏调，画布控制柄第二期）。2026-11-15 用户返工：做成 PPT 那样的横向色带。
  *
- * - 「填充」「描边」那一行：渐变时是「开关 + 渐变预览条 + 类型下拉」，纯色色块与十六进制不再显示；
- * - 紧跟其下常显一条色带（占满控件列），角度与反向在色带同一行右端（径向没有角度）；再下面一行只编辑选中的那个色标
+ * - 「填充」「描边」那一行：渐变时是「开关 + 类型下拉 + 角度（线性才有）+ 反向」，纯色色块与十六进制不再显示，也没有预览条
+ *   （与下面的色带重复）；
+ * - 紧跟其下常显一条色带，占满整个控件列；再下面一行只编辑选中的那个色标
  *   （色块 · 位置 % · 不透明度 %）。径向的中心、半径在「更多」里（`RadialRows`）；
  * - 色带交互：点空白处加色标（插值色）、左右拖（不越过邻居）、往下拖出色带或 Delete 删（至少留两个）；色标是 slider：
  *   ←/→ 1%、⇧ 10%、Delete 删、Enter 开取色器；色带本身聚焦时 Enter 在最大空档中点加一个；
@@ -122,14 +123,35 @@ export function GradientKindSelect({ objs, target }: { objs: readonly Mark[]; ta
 const CHECKER =
   'conic-gradient(var(--color-paper-checker) 25%, var(--color-paper) 0 50%, var(--color-paper-checker) 0 75%, var(--color-paper) 0) 0 0 / 8px 8px'
 
-/** 「填充」/「描边」那一行里代替色块的渐变预览条（只看，不编辑） */
-export function GradientPreview({ g, target }: { g: Gradient; target: GradientTarget }) {
+/**
+ * 「填充」/「描边」那一行渐变时的工具：角度框（线性才有）+ 反向。跟在类型下拉后面，不新增行。
+ */
+export function GradientTools({ objs, target }: { objs: readonly Mark[]; target: GradientTarget }) {
+  useTranslation('inspector')
+  const live = objs.filter((o) => gradientOf(o, target))
+  const first = live[0]
+  const g = first ? gradientOf(first, target) : null
+  if (!first || !g) return null
+  const commit = (next: Gradient) => write(live, target, hist('setGradient'), () => next)
   return (
-    <div
-      data-gradient-preview={target}
-      className="h-5 min-w-0 flex-1 rounded-sm border border-border"
-      style={{ background: `${stopsCss(g)}, ${CHECKER}` }}
-    />
+    <>
+      {g.kind === 'linear' && (
+        <NumberField
+          ariaLabel={gk('angle')}
+          title={gk('angleTip')}
+          value={linearAngle(g, first.w, first.h)}
+          step={15}
+          min={-360}
+          max={360}
+          precision={0}
+          unit="°"
+          onChange={(v) => commit(withLinearAngle(g, v, first.w, first.h))}
+        />
+      )}
+      <IconButton label={gk('reverse')} side="left" onClick={() => commit(reverseStops({ ...g, stops: sortedStops(g) }))}>
+        <ArrowLeftRight size={ICON_SIZE.sm} />
+      </IconButton>
+    </>
   )
 }
 
@@ -296,22 +318,6 @@ export function GradientEditor({ objs, target }: { objs: readonly Mark[]; target
               />
             ))}
           </div>
-          {g.kind === 'linear' && (
-            <NumberField
-              ariaLabel={gk('angle')}
-              title={gk('angleTip')}
-              value={linearAngle(g, first.w, first.h)}
-              step={15}
-              min={-360}
-              max={360}
-              precision={0}
-              unit="°"
-              onChange={(v) => commit(withLinearAngle(g, v, first.w, first.h))}
-            />
-          )}
-          <IconButton label={gk('reverse')} side="left" onClick={() => commit(reverseStops(sorted))}>
-            <ArrowLeftRight size={ICON_SIZE.sm} />
-          </IconButton>
         </div>
       </Row>
       <Row label="" labelWidth={INSPECTOR_LABEL_W}>
