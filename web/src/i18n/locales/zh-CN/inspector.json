@@ -14,7 +14,7 @@
   },
   "alignRef": {
     "page": "画布",
-    "primary": "最后选中",
+    "primary": "关键对象",
     "selection": "选区"
   },
   "arrange": {
@@ -77,7 +77,20 @@
     "zTop": "置于顶层",
     "zUp": "上移一层",
     "zorderLabel": "层级",
-    "pathfinderLabel": "路径查找器"
+    "pathfinderLabel": "路径查找器",
+    "arrayLabel": "阵列",
+    "arrayKind": "方式",
+    "arrayGrid": "网格",
+    "arrayRadial": "环形",
+    "arrayRowsCols": "行 · 列",
+    "arrayRows": "行数",
+    "arrayCols": "列数",
+    "arrayCountRadius": "份数 · 半径",
+    "arrayCount": "份数（含原件）",
+    "arrayRadius": "半径",
+    "arrayRotate": "跟着转",
+    "arrayMake_other": "生成 {{count}} 份",
+    "arrayTooMany": "一次最多 {{max}} 份"
   },
   "assistantRunningTip": "助手运行中",
   "autoHideAria": "右栏自动收起中，点击改为常驻",

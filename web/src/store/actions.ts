@@ -97,6 +97,7 @@ import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, st
 import { useSelectionStore } from './selectionStore'
 import { isolationScope } from './isolationStore'
 import { useTransformPrefs } from './transformPrefs'
+import { useArrangeStore } from './arrangeStore'
 import {
   gatherContiguous,
   gidOfKey,
@@ -3227,17 +3228,23 @@ export function alignSelectedTo(mode: AlignMode, ref: AlignRef) {
 export function setSelectionSpacing(axis: 'x' | 'y', gap: number) {
   const ids = useSelectionStore.getState().ids
   if (ids.length < 2) return
+  finishActiveGesture()
+  // 有关键对象（ADR 0185 M6）：它不动，其余的按间距排在它两边；没有就是第一个不动（原来的规则）
+  const key = useArrangeStore.getState().alignRef === 'primary' ? ids.at(-1) : undefined
   commit(hist(axis === 'x' ? 'spacingX' : 'spacingY'), (d) => {
     const objs = d.objects.filter((o) => ids.includes(o.id))
     const s = axis === 'x' ? 'w' : 'h'
     // 间距量的是看得见的盒（旋转过的标注取外接框），写回只平移
     const sorted = objs.slice().sort((a, b) => visualBounds(a)[axis] - visualBounds(b)[axis])
+    const starts = new Map<CanvasObject, number>()
     let cur = visualBounds(sorted[0])[axis]
     for (const o of sorted) {
-      const vb = visualBounds(o)
-      o[axis] += cur - vb[axis]
-      cur += vb[s] + gap
+      starts.set(o, cur)
+      cur += visualBounds(o)[s] + gap
     }
+    const anchor = sorted.find((o) => o.id === key)
+    const shift = anchor ? visualBounds(anchor)[axis] - starts.get(anchor)! : 0
+    for (const o of sorted) o[axis] += starts.get(o)! + shift - visualBounds(o)[axis]
   })
 }
 

@@ -1,3 +1,4 @@
+import { useArrangeStore } from '@/store/arrangeStore'
 import { clipChainOf, groupMasks, isActiveMask } from '@/lib/groupTree'
 import { visibleBounds } from '@/lib/transform'
 import { Fragment, useLayoutEffect } from 'react'
@@ -183,6 +184,8 @@ export function OverlaySvg() {
   // 主选 = 选区末位（对齐 / 等宽等高的「主选」参照）。多选时它的轮廓略粗——
   // 联合框只说「选了这一片」，说不出「以谁为基准」
   const primaryId = selectedIds.at(-1) ?? null
+  // 排列参照是「主选对象」= 有关键对象（`store/keyObject`）
+  const keyRef = useArrangeStore((s) => s.alignRef === 'primary')
   const multi = selected.length > 1
   const cropTarget = objects.find((o) => o.id === cropTargetId && o.type === 'panel')
   const elementPanel = objects.find((o) => o.id === elementPanelId && o.type === 'panel')
@@ -321,6 +324,7 @@ export function OverlaySvg() {
             t={t}
             dashed={o.id === editingTextId}
             primary={multi && o.id === primaryId}
+            keyObject={multi && keyRef && o.id === primaryId}
           />
         ))}
 
@@ -538,9 +542,12 @@ function ObjectOutline({
   hover,
   dashed,
   primary,
+  keyObject,
 }: {
   obj: CanvasObject
   t: ViewTransform
+  /** 关键对象（ADR 0185 M6）：再粗一档（3px），挂 `data-key-object`——对齐 / 间距以它为准 */
+  keyObject?: boolean
   /** 悬停预示：描边按 `--sel-hover-opacity` 淡一档 */
   hover?: boolean
   dashed?: boolean
@@ -549,8 +556,11 @@ function ObjectOutline({
 }) {
   if (isLinear(obj)) return <LinearOutline obj={obj} t={t} hover={hover} primary={primary} />
   const box = toScreen(obj, t)
-  const strokeWidth = primary ? 2 : 1
-  const anchor = primary ? { 'data-primary-selection': obj.id } : {}
+  const strokeWidth = keyObject ? 3 : primary ? 2 : 1
+  const anchor = {
+    ...(primary ? { 'data-primary-selection': obj.id } : {}),
+    ...(keyObject ? { 'data-key-object': obj.id } : {}),
+  }
   const outline =
     obj.type === 'path'
       ? pathOutline(obj, box.w, box.h, Math.max(mmToPx(obj.strokePt * MM_PER_PT, t), 0.05))

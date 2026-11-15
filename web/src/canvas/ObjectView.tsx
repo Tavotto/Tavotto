@@ -13,6 +13,7 @@ import { startMoveDrag } from './interactions'
 import { openQuickEdit } from './quickEditStore'
 import { editAnchors } from '@/store/pathActions'
 import { enterGroupAt } from '@/store/groupActions'
+import { trackKeyClick } from '@/store/keyObject'
 import { ArrowView } from './ArrowView'
 import { PanelView } from './PanelView'
 import { PathView } from './PathView'
@@ -82,9 +83,13 @@ export const ObjectView = memo(function ObjectView({
       sel.set([...sel.ids, ...mates.filter((id) => !sel.ids.includes(id))])
     } else if (!mates.every((id) => sel.ids.includes(id))) {
       sel.set(mates)
-    } else if (sel.ids.at(-1) !== obj.id) {
-      // 已在选区内：把它提为主选，供对齐 / 等宽等高作基准
-      sel.set([...sel.ids.filter((id) => id !== obj.id), obj.id])
+    } else {
+      // 多选里再点一下（不拖）= 设成关键对象，再点一下取消（Illustrator 的 key object，`store/keyObject`）
+      if (sel.ids.length > mates.length) trackKeyClick(obj.id, e)
+      if (sel.ids.at(-1) !== obj.id) {
+        // 已在选区内：把它提为主选，供对齐 / 等宽等高作基准
+        sel.set([...sel.ids.filter((id) => id !== obj.id), obj.id])
+      }
     }
     startMoveDrag(e, obj.id)
   }

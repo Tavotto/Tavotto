@@ -488,7 +488,8 @@
     "quickLayoutRatios": "调整排版比例",
     "importSvg": "粘贴 SVG（{{count}} 个对象）",
     "explodeSvg": "拆成可编辑对象",
-    "outlineText": "文字转轮廓（{{count}} 个）"
+    "outlineText": "文字转轮廓（{{count}} 个）",
+    "arrayCopies_other": "阵列（{{count}} 份）"
   },
   "layerTree": {
     "collapseGroup": "折叠组",
@@ -1039,7 +1040,8 @@
     "outlinePartial_other": "有 {{count}} 个文字没转成（字体不可用）",
     "outlineFailed_other": "{{count}} 个文字没转成轮廓（字体不可用）",
     "svgCopied": "已复制为 SVG，可以粘贴到 Illustrator、Inkscape、Figma",
-    "svgCopyFailed": "没能复制为 SVG"
+    "svgCopyFailed": "没能复制为 SVG",
+    "arrayTooMany": "一次最多阵列 {{max}} 份"
   },
   "tabs": {
     "allCanvases": "全部画布",
