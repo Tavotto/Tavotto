@@ -111,7 +111,7 @@ describe('桌面壳的「新建项目」', () => {
     expect(document.body.textContent).toContain('/Users/jiaqi/Desktop')
     typeInto(nameInput(), 'my_paper_figures')
     await act(async () => button('在此新建')!.click())
-    expect(open).toHaveBeenCalledWith('/Users/jiaqi/Desktop/my_paper_figures', true)
+    expect(open).toHaveBeenCalledWith('/Users/jiaqi/Desktop/my_paper_figures', true, { entry: 'folder' })
   })
 
   it('名字为空时建不了（不许悄悄拿上级目录当项目）', async () => {
@@ -201,6 +201,6 @@ describe('项目名必须是一个路径分量', () => {
     typeInto(nameInput(), 'my_paper_figures')
     expect(button('在此新建')!.disabled).toBe(false)
     await act(async () => button('在此新建')!.click())
-    expect(open).toHaveBeenCalledWith('/Users/jiaqi/my_paper_figures', true)
+    expect(open).toHaveBeenCalledWith('/Users/jiaqi/my_paper_figures', true, { entry: 'folder' })
   })
 })

@@ -333,7 +333,7 @@ def test_native_split_placements_remain_explicit_and_do_not_move_unowned_nodes(b
         assert not any(e.get("id") == actual_id for e in axes.iter())
 
 
-def test_native_main_passes_paired_manifest_and_roles_over_json():
+def test_pooled_native_task_passes_paired_manifest_and_roles_over_json():
     _, model, _, frame = setup_chart()
     request = {
         "model": model,
@@ -348,7 +348,7 @@ def test_native_main_passes_paired_manifest_and_roles_over_json():
             sys.executable,
             "-I",
             "-c",
-            "import sys,runpy;sys.path.insert(0,sys.argv[1]);runpy.run_module('tavotto.engine.svgchart',run_name='__main__')",
+            "import sys,json;sys.path.insert(0,sys.argv[1]);from tavotto.engine import chartprocess,pool;pool.resolve_worker_python=lambda *a,**kw:(sys.executable,pool.SOURCE_CURRENT);req=json.load(sys.stdin);print(json.dumps(chartprocess.run_request('.',req,timeout=25)));pool.shutdown_all(wait=True)",
             str(Path(__file__).resolve().parents[1] / "src"),
         ],
         input=json.dumps(request),

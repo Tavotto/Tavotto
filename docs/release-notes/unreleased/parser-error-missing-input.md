@@ -1,0 +1,3 @@
+## Scripts that report missing data through their argument parser ask for the file
+
+Some scripts give every option a default, look for their data file, and when it is not there exit with their own argument-parser error (`parser.error("cannot find data.xlsx, use --input …")`). Tavotto used to treat this as "the script needs command-line arguments" and sent you to fill in run arguments, which did not help. When the message names a data file the script just looked for and did not find, Tavotto now shows the missing-data dialog instead: point it at the file once and the script runs, without editing it. Errors that argparse itself raises while parsing (a missing required option, an invalid value) still ask for run arguments.

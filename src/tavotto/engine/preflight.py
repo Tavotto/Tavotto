@@ -206,6 +206,17 @@ class _Sink:
 
 
 # ------------------------------ 各组检查 ------------------------------------
+def judged_page_columns(profile: dict) -> list[dict]:
+    """页宽判据认的栏位（`page-width` 的合格范围由它们划定）：exact（等于）与 max（上限），
+    有 `width_mm`；typical / range 不参与。每项带 `qualifier`（缺省补 exact）。
+    与前端 `judgedPageColumns` 同一口径；预检与 MCP 的栏位选择都读这一份，不许各写筛选条件。"""
+    return [
+        {**c, "qualifier": c.get("qualifier", "exact")}
+        for c in profiles_mod.derive_page_columns(profile)
+        if _num(c.get("width_mm")) is not None and c.get("qualifier", "exact") in ("exact", "max")
+    ]
+
+
 def _check_page(spec: dict, profile: dict, sink: _Sink) -> None:
     page = spec.get("page") or {}
     w = _num_or(page.get("w_mm"), 0.0)
@@ -213,33 +224,48 @@ def _check_page(spec: dict, profile: dict, sink: _Sink) -> None:
     widths = profile.get("widths_mm") or {}
     tol = _num_or(widths.get("tolerance_mm"), 0.5)
     single, double = _num(widths.get("single")), _num(widths.get("double"))
+
     # 栏位只有一种读法：`page_columns`（期刊自有栏位），没写就由 widths_mm 派生单栏 / 双栏。
-    # 只有 exact 的栏位参与判据（max / typical / range 的宽度不是「等于」）。
-    columns = [
-        c
-        for c in profiles_mod.derive_page_columns(profile)
-        if c.get("qualifier", "exact") == "exact" and _num(c.get("width_mm")) is not None
-    ]
-    matched = any(abs(w - float(c["width_mm"])) <= tol for c in columns)
+    def _q(c: dict) -> str:
+        return c.get("qualifier", "exact")
+
+    columns = judged_page_columns(profile)
+    all_cols = columns
+    exact = [c for c in all_cols if _q(c) == "exact"]
+    maxes = [c for c in all_cols if _q(c) == "max"]
+    matched = any(abs(w - float(c["width_mm"])) <= tol for c in exact) or any(
+        w <= float(c["width_mm"]) + tol for c in maxes
+    )
     if columns and not matched:
-        want = "/".join(f"{float(c['width_mm']):g}" for c in columns)
-        zh = " / ".join(f"{c['label']['zh']} {float(c['width_mm']):g}" for c in columns)
-        both = " / ".join(
-            f"{c['label']['zh']} ({c['label']['en']}) {float(c['width_mm']):g}" for c in columns
-        )
+        # detail.columns 里 exact 栏位保持 {id, width_mm}（缺省即 exact），非 exact 的带 qualifier
+        col_detail = [
+            {"id": c["id"], "width_mm": float(c["width_mm"])}
+            if _q(c) == "exact"
+            else {"id": c["id"], "width_mm": float(c["width_mm"]), "qualifier": _q(c)}
+            for c in columns
+        ]
+        if maxes:
+            cap = max(float(c["width_mm"]) for c in maxes)
+            message = ("pageWidthMax", {"actual": f"{w:g}", "max": f"{cap:g}"})
+            text = f"页面宽 {w:g}mm 超过规范允许的最大宽度 {cap:g}mm"
+        else:
+            want = "/".join(f"{float(c['width_mm']):g}" for c in columns)
+            zh = " / ".join(f"{c['label']['zh']} {float(c['width_mm']):g}" for c in columns)
+            both = " / ".join(
+                f"{c['label']['zh']} ({c['label']['en']}) {float(c['width_mm']):g}" for c in columns
+            )
+            text = f"页面宽 {w:g}mm 不是规范里的栏宽（{zh} mm）"
+            message = ("pageWidth", {"actual": f"{w:g}", "want": want, "columns": both})
         sink.add(
             "page-width",
-            f"页面宽 {w:g}mm 不是规范里的栏宽（{zh} mm）",
-            message=(
-                "pageWidth",
-                {"actual": f"{w:g}", "want": want, "columns": both},
-            ),
+            text,
+            message=message,
             detail={
                 "page_w_mm": _r2(w),
                 "single_mm": single,
                 "double_mm": double,
                 "column": None,
-                "columns": [{"id": c["id"], "width_mm": float(c["width_mm"])} for c in columns],
+                "columns": col_detail,
             },
         )
 

@@ -54,6 +54,7 @@
 |---|---|---|
 | `ping` | — | — |
 | `build` | — | `stems: {stem: {size_mm}}` |
+| `chart` | 固定 chart 任务的 probe / model+frame+profile+patches+legend / prepared EPS | engine 及对应图表产物（ADR 0182）；不触发 build |
 | `render` | `patches`（+可选 `preview_dpi` §10、`inline_svg` §11） | `manifest`, `warnings`（+`svg`，仅当要了） |
 | `render_png` | `width` | `path` |
 | `preview_png` | `patches`, `width`, `tag` | `path` |

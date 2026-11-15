@@ -38,6 +38,7 @@ import { engineLabel } from '@/components/inspector/roles/registry'
 import { ApiError } from '@/lib/api'
 import { refreshProjectNow } from '@/store/liveSync'
 import { AiLedgerError, connectionInfo, effortsForModel, isDataFigureSession, isOpenSession, isSessionOf, modelDetail, resolveEffort, ProjectChangedError, submissionBlocks, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
+import { deferWhileWindowHeld } from '@/store/documentRestore'
 import { useDocumentStore } from '@/store/documentStore'
 import { attachTargetKey, useAiAttachStore, type AddSummary, type AttachItem } from '@/store/aiAttachStore'
 import { AttachPreviewCard } from './AttachCards'
@@ -509,6 +510,8 @@ function AssistantPanelBody() {
     const pinned = req.pinned
     const text = (req.source === 'history' ? req.text : prompt).trim()
     if (!text || !canSend || !panel) return
+    // 只读窗口里的内容可能是旧的：发出去的 override 会成为改图助手的上下文。记住、先选，选完再发（ADR 0181）
+    if (deferWhileWindowHeld(() => void send(req))) return
     setError(null)
     setCheckNote(null)
     // 自己发的消息一定要看见：不管刚才翻到哪，发出去就回到底部

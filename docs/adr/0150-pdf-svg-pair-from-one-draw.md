@@ -76,3 +76,20 @@ Figure 的 PDF / SVG 配对原来是「同一命令里 PDF 画一遍、SVG 再�
 `tests/test_teedraw.py`（三档 matplotlib：PDF 字节同、SVG 结构同、文字落位同、计数器回调同一串、`draw_event` 只一次、SVG 失败不拖累 PDF、tight 探测无残片、自检）；
 `tests/test_worker_svg_pair.py` / `test_worker_svg_canvas.py`（只算值回调的用例翻成「必须配对成功且文字一致」，能看到 renderer 的回调保留阻断，自定义 canvas / savefig 类保留阻断）；
 `tests/test_export_svg.py`（带计数器 FuncFormatter 的脚本图画布导 SVG 与 PDF 同一串刻度；被保留的阻断说成用户话）。
+
+## 修订（2026-11-13）：worker 边界给不合规 id 改名
+
+一份用户反馈：脚本 `set_gid` 了中文 / 带空格的名字，matplotlib 原样写成 `id="面板 A"`，`svgcheck` 的 id 语法
+（`[A-Za-z_][A-Za-z0-9_.:-]*`、不许重复）整份拒收，于是导出级 SVG 快照永远拿不到，导出退回重跑脚本，重跑一失败
+PDF / PNG / SVG 一起挂。
+
+决定：`artifactinspect.normalize_worker_svg`（只处理可信 worker 产物、hash 已核过）被闸拒收时试一次
+`svgcheck.repair_worker_ids`（不按错误码分流：闸按文档顺序报第一处问题，引用 / 样式表在定义前面时先报的是
+`svg_external_resource` / `svg_unsafe_css`）。语法外的 id 换成 `tvid<n>`，引用只在**结构位置**跟着改：精确的
+`href="#…"`、属性与声明里的 `url(#…)`、样式表选择器里的 id 记号——自由文本（`stroke:#000000`）一律不碰，
+数字 gid `"000000"` 不会把黑色描边改成悬空引用。重复 id 的后来者换新名、引用仍指向第一个（渲染器本来就解析到
+第一个）；但样式表选择器点名了重复 id 时（`#p` 会选中每一份），改名保不住语义，原样不改、照旧拒收。
+没东西可改就原样抛原错误；改了的字节**仍过完整的 `parse_svg`**，DTD / 脚本 / 外链照旧拒。
+任意导入文件（`svgasset`、画布导入）不走这条，严格语法不放松。
+看护：`tests/test_rendercore_svginspect.py`（改名与引用、十六进制颜色不动、选择器里的 id 记号、重复 id 被选择器点名时不改、引用在定义之前、改完仍过闸、导入边界照旧拒、真 matplotlib `set_gid`）、
+`tests/test_export_svg.py::test_canvas_svg_of_a_script_figure_with_user_gid_exports`。

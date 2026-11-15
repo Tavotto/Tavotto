@@ -220,6 +220,7 @@ ATTRIBUTES: dict[str, str] = {
     "cli_last_item": "enum:cli_item",
     "endpoint_kind": "enum:endpoint_kind",
     "cli_sandbox_mode": "enum:sandbox_mode",
+    "cli_fail_status": "count",
 }
 
 # ---------------------------------------------------------------- 上限
