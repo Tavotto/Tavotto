@@ -13,13 +13,19 @@ import { useSelectionStore } from './selectionStore'
 import { useUiStore } from './uiStore'
 
 /**
- * 外部 SVG 落成可编辑对象（ADR 0185 M5 第一批）。两个入口：
+ * 外部 SVG 落成可编辑对象（ADR 0189）。两个入口：
  *
  * - **粘贴 SVG 标记**（从 Illustrator / Inkscape 复制）：变成路径、文字、组、剪切组，一次 commit；做不准（滤镜、图片……）或
  *   后端读不了 → 整个 SVG 当图片放进来（与粘贴图片文件同一条路），说一句原因。
  * - **「拆成可编辑对象」**：画布上一张静态 SVG 图（没有脚本、没有裁剪 / 旋转 / 翻转）拆成对象，按图在画布上的大小缩放、
  *   原位替换这张图；做不准 → 图不动，说一句原因。拖进来的 SVG 文件照旧是「图」（matplotlib 导出的 SVG 多半要当图排版）。
  */
+
+/**
+ * 被受限解析器当成「可能是攻击 / 资源滥用」拒掉的（超大、超时、引用环、坏 XML）：不再交给浏览器栅格化——那一步也要把它完整
+ * 读一遍。只有「画不准」的（滤镜、图片、外链……）才退到位图
+ */
+const NO_RASTER: ReadonlySet<string> = new Set(['too_large', 'too_many_elements', 'timeout', 'reference_cycle', 'bad_xml', 'not_svg', 'script'])
 
 const hist = (key: string, values?: Record<string, unknown>): UiMessage => msg(`history.${key}`, values, 'workspace')
 const svgStatus = (key: string, values: Record<string, unknown>, tone: 'info' | 'done') =>
@@ -62,7 +68,8 @@ export async function pasteSvgText(svg: string): Promise<'objects' | 'image'> {
       return 'image'
     }
     // 项目里的 SVG 素材检查也不收（滤镜、外链……RenderCore 画不准）：按浏览器画出来的样子栅格化成 PNG 放进来
-    const png = await rasterizeSvg(svg, res?.size_mm ?? [0, 0])
+    const code = res?.ok ? reason : (res?.error ?? reason ?? 'unreadable')
+    const png = code && NO_RASTER.has(code) ? null : await rasterizeSvg(svg, res?.size_mm ?? [0, 0])
     const r2 = png ? await importAndPlace([new File([png], 'pasted.png', { type: 'image/png' })], { nameOf }) : null
     if (r2?.placed.length) svgStatus('svgAsRaster', { reason: why, dpi: RASTER_DPI }, 'info')
     else reportImageResult(r2 && !r2.aborted ? r2 : r)

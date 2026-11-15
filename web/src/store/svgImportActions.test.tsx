@@ -1,5 +1,5 @@
 /**
- * SVG 导入的两个入口（ADR 0185 M5）：粘贴 SVG 标记 → 可编辑对象（一条历史、选中）；做不准 / 读不了 → 整个当图片放进来并说原因；
+ * SVG 导入的两个入口（ADR 0189）：粘贴 SVG 标记 → 可编辑对象（一条历史、选中）；做不准 / 读不了 → 整个当图片放进来并说原因；
  * 「拆成可编辑对象」→ 按图在画布上的大小缩放、原位替换、接着待在图原来的组里；做不准 → 图不动。粘贴事件认出 SVG 标记。
  * 后端用快照代答（`tests/golden/svgimport`，真的后端在 `tests/test_svgimport.py` 里测）。
  */
@@ -94,6 +94,26 @@ describe('粘贴 SVG 标记', () => {
     expect(second.type).toBe('image/png')
     expect(report).not.toHaveBeenCalled()
     expect(useUiStore.getState().status).toBeTruthy()
+  })
+
+  it.each(['too_large', 'timeout', 'reference_cycle'])('被当成资源滥用拒掉的（%s）：不交给浏览器栅格化', async (code) => {
+    await seed()
+    reply = { ok: false, error: code }
+    intake.mockResolvedValueOnce({ placed: [], problems: [{ name: 'pasted.svg', reason: literal('不收') }], aborted: false } as never)
+    raster.mockResolvedValue(new Blob(['png'], { type: 'image/png' }))
+    expect(await pasteSvgText(SVG)).toBe('image')
+    expect(raster).not.toHaveBeenCalled()
+    expect(report).toHaveBeenCalledTimes(1)
+    raster.mockReset()
+    raster.mockResolvedValue(null)
+  })
+
+  it('脚本 / 事件属性（script）：同样不栅格化', async () => {
+    await seed()
+    reply = { ok: true, objects: [], size_mm: [1, 1], unsupported: { script: 1 } }
+    intake.mockResolvedValueOnce({ placed: [], problems: [{ name: 'pasted.svg', reason: literal('不收') }], aborted: false } as never)
+    expect(await pasteSvgText(SVG)).toBe('image')
+    expect(raster).not.toHaveBeenCalled()
   })
 
   it('当图片也没放成（素材检查不收、也栅格化不了）：由那条路说它的原因，不说「已当图片放进来」', async () => {

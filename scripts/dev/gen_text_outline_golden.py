@@ -1,4 +1,4 @@
-"""生成 tests/golden/text_outline.json：文字转轮廓（ADR 0185 M5）的后端结果快照。
+"""生成 tests/golden/text_outline.json：文字转轮廓（ADR 0189）的后端结果快照。
 
 字体是 allowlist 按 sha256 钉死的批准字体（`scripts/fetch_fonts.py`），所以快照与机器无关。后端 `tests/test_text_outline.py`
 核 `outline_text` 与快照一致；前端 `store/textOutlineActions.test.tsx` 拿同一份结果当后端的回答，核落到画布的规则。

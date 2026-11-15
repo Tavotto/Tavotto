@@ -1,11 +1,10 @@
 {
  "objects": [],
  "size_mm": [
-  13.229167,
-  13.229167
+  0.0,
+  0.0
  ],
  "unsupported": {
-  "filter": 1,
-  "image": 1
+  "unsupported_element": 1
  }
 }

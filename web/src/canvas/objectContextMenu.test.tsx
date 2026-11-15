@@ -877,7 +877,7 @@ describe('多选', () => {
     expect(menu()?.dataset.quickMenuCount).toBe('3')
     expect(document.querySelector('[data-quick-heading]')?.textContent).toBe('已选 3 个对象')
     expect(itemKeys()).toEqual([
-      // 三个都是文字：文字转轮廓（ADR 0185 M5）
+      // 三个都是文字：文字转轮廓（ADR 0189）
       'outline-text',
       'arrange',
       'align-samew',

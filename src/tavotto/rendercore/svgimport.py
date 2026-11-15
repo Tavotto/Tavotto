@@ -1,26 +1,31 @@
-"""外部 SVG → 画布上可编辑的对象（ADR 0185 M5 第一批；设计另开 ADR，编号待领）。
+"""外部 SVG → 画布上可编辑的对象（ADR 0189）。
 
 输入是**不受信任**的 SVG 文本（Illustrator / Inkscape / BioRender 之类导出或复制出来的），输出是画布文档里的对象
 （前端 `types/document` 的形状：`path` / `text`，组用 `groupId` / `groupPath`，剪切用 `clipMask`，ADR 0188）。坐标是
 页面 mm、以 SVG 视口左上为原点；id 是临时的（`s1`… / 组 `sg1`…），前端落到画布时整批换新。
 
-**安全**：lxml 解析时不解析实体、不读 DTD、不联网（`resolve_entities=False, load_dtd=False, no_network=True`），没有 XXE；
-`<script>`、事件属性一律不看（这里只读几何与样式，不执行任何东西）；只认文档内的 `#id` 引用，外链（`href="http…"`、
-`file:`、`data:` 图片）一律不取，记成不支持。体积与元素数有上限。
+**安全**：只经 `svgcheck.parse_svg(tolerant=True)` 解析——与静态 SVG 素材、ADR 0182 场景解析**同一个受限解析器**（标准库
+expat + 有界 TreeBuilder）：DTD / 实体（XXE、十亿笑声）、`<script>` 与一切非静态元素、`on*` 事件属性、外链与 `data:` 以外的 href、
+`data:` 图片超限、引用环与指数展开、深度 / 元素数 / 属性 / 文字预算一律在这里被拒；`tolerant` 只多删编辑器私有命名空间与无作用的 CSS。
+被拒的输入记一条原因、整个不拆。之后的换算另有视口上限（10 m、viewBox 1e7）与墙钟上限（5 秒，逐元素查）。这里只读几何与样式，
+不执行、不联网、不读盘。
 
 **兜底**：做不准的东西（滤镜、蒙版、图案填充、外链 / 内嵌图片、foreignObject、textPath、标记、复杂选择器……）**一个都不
 悄悄丢**：记进 `unsupported`（原因码 + 次数），调用方据此把整个 SVG 当图片放进来并说一句原因，不出半张图。
 
 几何规则：所有图形（path / rect / circle / ellipse / line / polyline / polygon）一律变成自由路径——变换矩阵烤进锚点（编辑起来
 就是一条普通路径）；椭圆弧换成三次贝塞尔（每段 ≤ 90°）。线宽按变换的面积比例（√|det|）换成 pt。`<text>` 落成文字对象（字号、
-颜色、粗斜、对齐、旋转），位置按基线估算。纯标准库 + lxml。
+颜色、粗斜、对齐、旋转），位置按基线估算。纯标准库。
 """
 
 from __future__ import annotations
 
 import math
 import re
+import time
 from dataclasses import dataclass, field
+
+from . import svgcheck
 
 MM_PER_PX = 25.4 / 96.0
 MM_PER_PT = 25.4 / 72.0
@@ -43,6 +48,9 @@ UNSUPPORTED_CODES = (
     "text_layout",
     "skew_text",
     "symbol_viewbox",
+    "unsupported_element",
+    "script",
+    "reference_cycle",
 )
 
 
@@ -604,6 +612,7 @@ class _Ctx:
     gseq: int = 0
     count: int = 0
     use_depth: int = 0
+    deadline: float = math.inf
 
     def note(self, code: str) -> None:
         self.notes[code] = self.notes.get(code, 0) + 1
@@ -1063,8 +1072,10 @@ def _clip_mask(cid: str, ctm: Matrix, ctx: _Ctx, bbox_ctm: Matrix) -> list[dict]
 
 def _walk(el, st_parent: dict, ctm: Matrix, path: list[str], ctx: _Ctx, opacity: float) -> None:
     ctx.count += 1
-    if ctx.count > MAX_ELEMENTS:
-        raise SvgImportError("too_many_elements", f"元素超过 {MAX_ELEMENTS} 个")
+    if ctx.count > IMPORT_BUDGET.max_expanded_elements:
+        raise SvgImportError("too_many_elements", "展开后的元素超出上限")
+    if time.monotonic() > ctx.deadline:
+        raise SvgImportError("timeout", f"超过 {DEADLINE_S:g} 秒")
     tag = _local(el.tag)
     if tag in (
         "defs", "title", "desc", "metadata", "style", "script", "linearGradient",
@@ -1185,35 +1196,74 @@ def _walk_inner(el, tag: str, st: dict, m: Matrix, path: list[str], ctx: _Ctx, o
         ctx.objects.append(obj)
 
 
-def _parse(svg_text: str):
-    from lxml import etree
+#: 导入用的预算：比静态 SVG 素材（`svgcheck.SVGBudget` 缺省）更紧——这是粘贴进来的一段，不是一张图的产物
+IMPORT_BUDGET = svgcheck.SVGBudget(
+    max_bytes=MAX_BYTES,
+    max_depth=64,
+    max_elements=MAX_ELEMENTS,
+    max_image_bytes=4 * 1024 * 1024,
+    max_image_pixels=40_000_000,
+    max_expanded_elements=200_000,
+)
+#: 视口（width / height / viewBox）的上限：一张图不会超过 10 m；更大的多半是故意撑爆的坐标
+MAX_VIEWPORT_MM = 10_000.0
+MAX_VIEWBOX = 1e7
+#: 解析与换算的墙钟上限（秒）：逐元素、逐个路径命令查，超时就停（`timeout`）
+DEADLINE_S = 5.0
 
+#: `svgcheck` 的拒绝码 → 本模块的原因码（前端按它说一句原因）
+_CHECK_CODES = {
+    "svg_resource_limit": "too_large",
+    "svg_dtd_forbidden": "external_ref",
+    "svg_external_resource": "external_ref",
+    "svg_missing_reference": "external_ref",
+    "svg_reference_cycle": "reference_cycle",
+    "svg_unsafe_element": "unsupported_element",
+    "svg_unsafe_attribute": "script",
+    "svg_unsafe_css": "css_selector",
+    "svg_foreign_namespace": "unsupported_element",
+    "svg_invalid_id": "bad_xml",
+    "svg_invalid_root": "not_svg",
+    "svg_unparseable": "bad_xml",
+    "svg_encoding_unsupported": "bad_xml",
+    "svg_processing_instruction_forbidden": "bad_xml",
+    "svg_invalid_image": "image",
+}
+
+
+def _parse(svg_text: str):
+    """唯一的入口是 `svgcheck.parse_svg`（与静态 SVG 素材、ADR 0182 的场景解析同一个受限解析器），`tolerant` 模式：只多删掉
+    编辑器私有命名空间与无作用的 CSS，安全规则一条不放。被拒绝的输入根本到不了下面的换算。"""
     data = svg_text.encode("utf-8") if isinstance(svg_text, str) else svg_text
     if len(data) > MAX_BYTES:
         raise SvgImportError("too_large", f"SVG 超过 {MAX_BYTES // 1024 // 1024} MB")
-    parser = etree.XMLParser(
-        resolve_entities=False,
-        load_dtd=False,
-        no_network=True,
-        huge_tree=False,
-        remove_comments=True,
-        remove_pis=True,
-        recover=False,
-    )
+    if not re.search(rb"<svg[\s>]", data[:65536]):
+        raise SvgImportError("not_svg", "没有 <svg> 元素")
     try:
-        root = etree.fromstring(data, parser)
-    except etree.XMLSyntaxError as exc:
-        raise SvgImportError("bad_xml", str(exc)) from exc
-    if _local(root.tag) != "svg":
-        raise SvgImportError("not_svg", "根元素不是 <svg>")
-    return root
+        return svgcheck.parse_svg(data, budget=IMPORT_BUDGET, tolerant=True)
+    except svgcheck.SVGError as exc:
+        code = _CHECK_CODES.get(exc.code, "bad_xml")
+        if code in ("bad_xml", "not_svg", "too_large"):
+            raise SvgImportError(code, exc.code) from exc
+        raise _Rejected(code) from exc
+
+
+class _Rejected(Exception):
+    """受限解析器拒绝了，但不是「不是 SVG」：当成一条做不准（`unsupported`），调用方整个当图片"""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
 
 
 def import_svg(svg_text: str) -> dict:
     """SVG 文本 → `{objects, size_mm: [w, h], unsupported: {code: count}}`。
 
     `unsupported` 非空 = 有做不准的东西，调用方应把整个 SVG 当图片放进来（`objects` 仍给出，只供诊断）。"""
-    root = _parse(svg_text)
+    try:
+        root = _parse(svg_text)
+    except _Rejected as rej:
+        return {"objects": [], "size_mm": [0.0, 0.0], "unsupported": {rej.code: 1}}
     ids = {}
     css = []
     for el in root.iter():
@@ -1224,13 +1274,10 @@ def import_svg(svg_text: str) -> dict:
         if _local(el.tag) == "style" and el.text:
             css.append(el.text)
     notes: dict[str, int] = {}
-    # 内部 DTD 里声明的实体不展开（防 XXE）：用到它的文字会少字，所以有实体声明就算做不准
-    if "<!ENTITY" in svg_text:
-        notes["external_ref"] = 1
     rules: list[_Rule] = []
     for c in css:
         rules += parse_css(c, notes, len(rules))
-    ctx = _Ctx(ids=ids, rules=rules, notes=notes)
+    ctx = _Ctx(ids=ids, rules=rules, notes=notes, deadline=time.monotonic() + DEADLINE_S)
     # 视口：width / height（缺省按 viewBox，单位 px = 1/96 in）；viewBox 等比放进视口（preserveAspectRatio 缺省 xMidYMid meet）
     vb = _nums(root.get("viewBox") or "")
     vbw, vbh = (vb[2], vb[3]) if len(vb) == 4 and vb[2] > 0 and vb[3] > 0 else (None, None)
@@ -1240,6 +1287,12 @@ def import_svg(svg_text: str) -> dict:
         if root.get("height")
         else (vbh or 150.0)
     )
+    if (
+        not all(math.isfinite(v) for v in (w, h, *vb))
+        or max(w, h) * MM_PER_PX > MAX_VIEWPORT_MM
+        or (vbw and max(abs(v) for v in vb) > MAX_VIEWBOX)
+    ):
+        raise SvgImportError("too_large", "视口或 viewBox 超出上限")
     m = IDENTITY
     if vbw:
         k = min(w / vbw, h / vbh)

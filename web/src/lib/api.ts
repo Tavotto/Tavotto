@@ -2419,7 +2419,7 @@ export const fetchSourceFontBytes = async (sha256: string, face: number): Promis
   return res.arrayBuffer()
 }
 
-/** 外部 SVG 导入（ADR 0185 M5）：后端 `rendercore/svgimport` 的结果。`unsupported` 非空 = 有做不准的东西，整个当图片放 */
+/** 外部 SVG 导入（ADR 0189）：后端 `rendercore/svgimport` 的结果。`unsupported` 非空 = 有做不准的东西，整个当图片放 */
 export interface SvgImportResult {
   ok: boolean
   error?: string
@@ -2434,7 +2434,7 @@ export const importSvg = (svg: string) =>
     body: JSON.stringify({ svg }),
   })
 
-/** 复制为 SVG（ADR 0185 M5）：导出 SVG 的同一个写入器写出来的一段 SVG 文本 */
+/** 复制为 SVG（ADR 0189）：导出 SVG 的同一个写入器写出来的一段 SVG 文本 */
 export const copyAsSvg = (objects: ExportObject[], w_mm: number, h_mm: number) =>
   jsonFetch<{ ok: boolean; svg?: string; error?: string }>('/api/svg/copy', {
     method: 'POST',
@@ -2442,7 +2442,7 @@ export const copyAsSvg = (objects: ExportObject[], w_mm: number, h_mm: number) =
     body: JSON.stringify({ objects, w_mm, h_mm }),
   })
 
-/** 文字转轮廓（ADR 0185 M5）：每个文字对象一份结果，路径对象是页面 mm、不带 id */
+/** 文字转轮廓（ADR 0189）：每个文字对象一份结果，路径对象是页面 mm、不带 id */
 export interface TextOutlineResult {
   ok: boolean
   results: ({ paths: unknown[] } | { error: string })[]

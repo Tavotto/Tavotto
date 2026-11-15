@@ -227,11 +227,11 @@ const COMMANDS: Command[] = [
     available: c.available,
     run: c.run,
   })),
-  // 复制为 SVG（ADR 0185 M5）：判据 `canCopyAsSvg`，与右键菜单同一个
+  // 复制为 SVG（ADR 0189）：判据 `canCopyAsSvg`，与右键菜单同一个
   { id: 'copy-as-svg', needsSelection: true, available: canCopyAsSvg, run: () => void copySelectionAsSvg() },
-  // 文字转轮廓（ADR 0185 M5）：判据 `canOutlineText`，与右键菜单、快捷键同一个
+  // 文字转轮廓（ADR 0189）：判据 `canOutlineText`，与右键菜单、快捷键同一个
   { id: 'outline-text', shortcut: keyOf('outlineText'), needsSelection: true, available: canOutlineText, run: () => void outlineSelectedText() },
-  // 静态 SVG 图拆成可编辑对象（ADR 0185 M5）：判据 `canExplodeSvg`，与右键菜单同一个
+  // 静态 SVG 图拆成可编辑对象（ADR 0189）：判据 `canExplodeSvg`，与右键菜单同一个
   {
     id: 'explode-svg',
     needsSelection: true,

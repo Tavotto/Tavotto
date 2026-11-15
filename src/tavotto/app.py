@@ -4114,7 +4114,7 @@ def api_mathtext():
 
 @app.post("/api/svg/import")
 def api_svg_import():
-    """外部 SVG → 画布上可编辑的对象（ADR 0185 M5；`rendercore/svgimport.py`）。
+    """外部 SVG → 画布上可编辑的对象（ADR 0189；`rendercore/svgimport.py`）。
 
     body `{"svg": "<svg …>"}` → `{"ok": true, "objects": [...], "size_mm": [w, h], "unsupported": {code: n}}`；
     `unsupported` 非空时前端把整个 SVG 当图片放进来并说原因。不联网、不读盘、不执行任何东西。"""
@@ -4133,7 +4133,7 @@ def api_svg_import():
 
 @app.post("/api/svg/copy")
 def api_svg_copy():
-    """复制为 SVG（ADR 0185 M5 第二批）：选中的标注 / 形状 / 路径 / 文字按**导出 SVG 的同一个写入器**写成一段 SVG 文本。
+    """复制为 SVG（ADR 0189）：选中的标注 / 形状 / 路径 / 文字按**导出 SVG 的同一个写入器**写成一段 SVG 文本。
     body `{"objects": [<导出载荷，坐标已平移到选区左上为原点>], "w_mm": w, "h_mm": h}` → `{"ok": true, "svg": "…"}`。
     图（面板）不收——它的 SVG 要走导出（源文件、快照、产物验收那一套）。"""
     import tempfile
@@ -4184,7 +4184,7 @@ TEXT_OUTLINE_MAX = 200
 
 @app.post("/api/text/outline")
 def api_text_outline():
-    """文字转轮廓（ADR 0185 M5 第二批；`rendercore/textoutline.py`）：字形取自导出用的同一份字体，转出来的路径与导出
+    """文字转轮廓（ADR 0189；`rendercore/textoutline.py`）：字形取自导出用的同一份字体，转出来的路径与导出
     的字逐点重合。body `{"objects": [<导出载荷形状的文字对象>]}` → `{"ok": true, "results": [{"paths": [...]} | {"error": code}]}`。"""
     from .rendercore import facade as rc_facade, plan as rc_plan, textoutline
 

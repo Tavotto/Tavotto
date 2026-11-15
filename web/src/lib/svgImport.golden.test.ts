@@ -1,5 +1,5 @@
 /**
- * SVG 导入的**前端那一侧**（ADR 0185 M5）：读后端快照 `tests/golden/svgimport/*.json`（`scripts/dev/gen_svgimport_golden.py`），
+ * SVG 导入的**前端那一侧**（ADR 0189）：读后端快照 `tests/golden/svgimport/*.json`（`scripts/dev/gen_svgimport_golden.py`），
  * 核前端落位（换 id / 组 id、平移到落点）后：每个对象本构建都认识、组链完整、剪切组的蒙版生效、导出载荷收得下（被裁的对象带 clip）。
  */
 import { describe, expect, it } from 'vitest'

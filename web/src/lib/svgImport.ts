@@ -4,7 +4,7 @@ import { newId } from './id'
 import { remapGroupPath } from './groupTree'
 
 /**
- * 外部 SVG 导入的前端那一半（ADR 0185 M5）：解析在后端（`rendercore/svgimport`，不受信任的输入只在那里读），这里只做
+ * 外部 SVG 导入的前端那一半（ADR 0189）：解析在后端（`rendercore/svgimport`，不受信任的输入只在那里读），这里只做
  * 「认不认得出是 SVG」与「把后端给的对象落到画布上」——id 与组 id 整批换新、平移到落点。
  */
 

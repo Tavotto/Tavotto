@@ -1998,7 +1998,11 @@
       "not_svg": "内容不是 SVG",
       "too_large": "文件太大",
       "too_many_elements": "元素太多",
-      "unreadable": "读不出来"
+      "unreadable": "读不出来",
+      "unsupported_element": "用了 Tavotto 画不了的元素（比如滤镜）",
+      "script": "带脚本或事件",
+      "reference_cycle": "有循环引用",
+      "timeout": "太复杂、读不完"
     }
   }
 }

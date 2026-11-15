@@ -8,7 +8,7 @@ import { useSelectionStore } from './selectionStore'
 import { useUiStore } from './uiStore'
 
 /**
- * 复制为 SVG（ADR 0185 M5 第二批）：选中的标注 / 形状 / 路径 / 文字，用**导出 SVG 的同一个写入器**（后端 `svgwriter`，
+ * 复制为 SVG（ADR 0189）：选中的标注 / 形状 / 路径 / 文字，用**导出 SVG 的同一个写入器**（后端 `svgwriter`，
  * `/api/svg/copy`）写成一段 SVG，放进剪贴板——Illustrator、Inkscape、Figma 粘贴进去就是矢量。页面 = 选区看得见的范围
  * （剪切组按蒙版）。图（面板）不在这里：它的 SVG 走导出。
  *

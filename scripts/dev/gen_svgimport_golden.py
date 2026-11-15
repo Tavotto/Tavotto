@@ -1,4 +1,4 @@
-"""生成 tests/golden/svgimport/*.json：样例 SVG（tests/fixtures/svgimport）导入后的对象快照（ADR 0185 M5）。
+"""生成 tests/golden/svgimport/*.json：样例 SVG（tests/fixtures/svgimport）导入后的对象快照（ADR 0189）。
 
 后端 `tests/test_svgimport.py` 核导入结果与快照逐字段相同；前端 `lib/svgImport.golden.test.ts` 读同一份快照，核前端落位
 （换 id、平移到落点）后每个对象都是本构建认识、导出载荷收得下的对象。改了导入规则要重新生成并在 PR 里说明差异。

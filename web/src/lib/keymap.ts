@@ -110,7 +110,7 @@ export const KEYMAP = {
   ungroupObjects: k(`⇧${MOD}G`, { code: 'KeyG', mod: true, shift: true, alt: false }),
   makeClipMask: k(`${MOD}7`, { code: 'Digit7', mod: true, shift: false, alt: false }),
   releaseClipMask: k(`${ALT}${MOD}7`, { code: 'Digit7', mod: true, shift: false, alt: true }),
-  // 文字转轮廓 ⇧⌘O（Illustrator 的键位，ADR 0185 M5）：选着文字时才消费。按 code 认
+  // 文字转轮廓 ⇧⌘O（Illustrator 的键位，ADR 0189）：选着文字时才消费。按 code 认
   outlineText: k(`⇧${MOD}O`, { code: 'KeyO', mod: true, shift: true, alt: false }),
   // 形状生成器 ⇧M（Illustrator 的键位，ADR 0185 M3）：选着两个以上能参与的对象时才消费
   shapeBuilder: k('⇧M', { key: 'm', shift: true, mod: false, alt: false }),

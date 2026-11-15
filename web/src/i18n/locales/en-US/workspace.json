@@ -2076,7 +2076,11 @@
       "not_svg": "it is not SVG",
       "too_large": "the file is too large",
       "too_many_elements": "it has too many elements",
-      "unreadable": "it could not be read"
+      "unreadable": "it could not be read",
+      "unsupported_element": "it uses elements Tavotto cannot draw (such as filters)",
+      "script": "it contains scripts or event handlers",
+      "reference_cycle": "it has circular references",
+      "timeout": "it is too complex to read in time"
     }
   }
 }

@@ -263,7 +263,7 @@ export function useKeyboard() {
         }
         return
       }
-      // ⇧⌘O 文字转轮廓（ADR 0185 M5）：选着文字时才消费
+      // ⇧⌘O 文字转轮廓（ADR 0189）：选着文字时才消费
       if (mod && e.shiftKey && !e.altKey && e.code === 'KeyO') {
         if (canOutlineText()) {
           e.preventDefault()
